@@ -1,0 +1,837 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import gui;
+import string;
+import ui/scrollable;
+import ui/textinputwithfocus;
+
+// Use TTextInput wrapper with better interface from tropic/tropic_ui.flow
+
+export {
+	TextEditorWithScrollbar(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle],
+		state: DynamicBehaviour<[TextInputState]>, stateReader: (() -> TextInputModel) -> void,
+		focusIn : () -> void, focusOut : () -> void, setHandledForKeyEvents : bool, tabKeyHandler : () -> void
+	) -> Form;
+
+	TextEditorWithScrollbar2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle],
+		state: DynamicBehaviour<[TextInputState]>, stateReader: (() -> TextInputModel) -> void,
+		focusIn : () -> void, focusOut : () -> void, setHandledForKeyEvents : bool, tabKeyHandler : () -> void,
+		editStyle : [TextEditorStyle]
+	) -> Form;
+
+	// Multi-line text editors with automatic scrollbar
+	SimpleEditor(text: DynamicBehaviour<string>, width: double, height: double, style : [CharacterStyle]) -> Form;
+	TextEditor(text: DynamicBehaviour<string>, width: double, height: double, style : [CharacterStyle], editStyle : [TextEditorStyle]) -> Form;
+	TextEditor2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], editStyle: [TextEditorStyle],
+		focusIn : () -> void, focusOut : () -> void) -> Form;
+
+	TextEditorStyle ::= Focus, ReadOnly, EditorGroup, KeyboardShortcutsSupport, Multiline, TabKeyHandler, TabIndex, FocusOutOnEnter;
+		// You can have a nice API to interface with the text input with the EditorGroup.
+		// First, use makeNewEditorGroupFormatter below to construct a controller:
+		//	formatter = makeNewEditorGroupFormatter();
+		//	TextEditor(..., [formatter.group)]);
+		// The formatPanel also uses the formatter. You can construct multiple text editors
+		// with the same formatter, and it will dispatch the API calls to the current text
+		// with focus.
+		// Note: ReadOnly(true) does not work on mobile devices; the same with TTextInput
+		EditorGroup : (currentId : ref int, count : ref int,
+						textTaggers : ref [(string, string) -> void],
+						textInserters : ref [(string) -> void],
+						cleaners : ref [() -> void],
+						containingTagsFinders : ref [(string, string) -> Pair<bool,string>]
+		);
+		KeyboardShortcutsSupport();
+		FocusOutOnEnter();
+
+		// Use this style to set fn handler on Tab key event.
+		// It could be useful to prevent switching out to the element in the background when form is shown by showModal.
+		// For example, https://github.com/LearnSmartTech/flowapps/commit/53bb2734ec30fef9a416be3c22d61acc264ceabf
+		TabKeyHandler(fn : () -> void);
+
+		makeNewEditorGroupFormatter() -> GroupTextFormatter;
+
+			GroupTextFormatter(
+				// Will wrap the current selection with these tags
+				tagText : (startTag : string, endTag : string) -> void,
+				// Inserts the given text at the cursor position
+				textInsert : (string) -> void,
+				// Clear all content
+				clearText : () -> void,
+				// Finds text starting with ot, ending with ct and containing current selection start or end inside.
+				// Possible nesting is taken into account. Longest possible text is returned.
+				// Otherwise current selection if returned
+				findContainingTags : (ot:string, ct:string) -> Pair<bool, string>,
+
+				// This member is inserted into the TextEditor
+				group : EditorGroup
+			);
+
+	// Supports Undo(ctrl + z), Redo(ctrl + y), Select all (ctrl + a). Legacy: Try to use TextEditor instead
+	BufferedEditor(text: DynamicBehaviour<string>, width: double, height: double, style : [CharacterStyle], state: DynamicBehaviour<[TextInputState]>,
+		stateReader: (() -> TextInputModel) -> void) -> Form;
+
+	// One-liners
+	OneLineEditor(text: DynamicBehaviour<string>, width: double, height: double, style : [CharacterStyle]) -> Form;
+	OneLineEditor2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], state : [TextInputState]) -> Form;
+	OneLineEditor3(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], state : [TextInputState],
+		eventHandlers : [EventHandler], stateChange : DynamicBehaviour<[TextInputState]>, onFocus : (bool) -> void ) -> Form;
+	OneLineNumericEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form;
+	SimplePasswordEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form;
+	ReadOnlyOneLine(text: string, width: double, height: double, style: [CharacterStyle]) -> Form;
+	OneLineEditorWithState(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], state : [TextInputState],
+		stateChange : DynamicBehaviour<[TextInputState]>, onFocus : (bool) -> void) -> Form;
+
+	OneLineNumFormat(
+		number: DynamicBehaviour<double>,
+		width: double,
+		height: double,
+		style: [CharacterStyle],
+		state : [TextInputState],
+		fmtFn : (double) -> string
+	) -> Form;
+
+	makeTextInputNumericState(width : double, height : double) -> [TextInputState];
+	makeTextInputNumericStateNoFocus(width : double, height : double) -> [TextInputState];
+
+	//Inserts text in given field. Inserted text is selected.
+	insertAtSelection(editorText : DynamicBehaviour<string>, state : DynamicBehaviour<[TextInputState]>,
+				  editorStateReader : ref () -> TextInputModel, toInsert : string) -> void;
+	//Returns text enclosed by the tags given if exists pair of tags containing cursor.
+	// Otherwise current selection is returned. result.first is true if tags were found.
+	findContainingTagsAtSelection(editorText : DynamicBehaviour<string>, state : DynamicBehaviour<[TextInputState]>,
+					  editorStateReader : ref () -> TextInputModel, openTag : string, closeTag : string) -> Pair<bool, string>;
+}
+
+isFontSize(s : CharacterStyle) -> bool {
+	switch(s : CharacterStyle) { FontSize(__): true; default: false; };
+}
+
+setCursorToTheEndOfContent(stch : [TextInputState]) -> [TextInputState] {
+	lastPos = strlen(extractStruct(stch, Content("", [])).content);
+	startSel = Selection(0, 0);
+	concat(stch, if (lastPos == 0) [startSel] else [startSel, Selection(lastPos, lastPos)]);
+}
+
+// Updates a state property (if exists) or adds a new one
+setStateProperty(state : DynamicBehaviour<[TextInputState]>, property : TextInputState) -> void {
+	properties = getValue(state);
+
+	// For most properties, only one instance can be in use, namely the last one
+	index = lastfindi(properties, \p -> isSameStructType(p, property));
+	newProperties = switch (index : Maybe<int>) {
+		Some(i): replace(properties, i, property);
+		None(): arrayPush(properties, property);
+	};
+
+	nextDistinct(state, newProperties);
+}
+
+copyTextToBuffer(selection : Selection, eraseSource : bool, text : DynamicBehaviour<string>, state: DynamicBehaviour<[TextInputState]>) -> void {
+	start = selection.start;
+	end = selection.end;
+	len = end - start;
+	if (len > 0) {
+		bufferedText = getValue(text);
+		copiedText = substring(bufferedText, start, len);
+		setClipboard(strReplace(copiedText, "\x0d", "\n"));
+		if (eraseSource) {
+			next(text, strLeft(bufferedText, start) + strRight(bufferedText, end));
+			setStateProperty(state, Selection(start, start));
+		}
+	}
+}
+
+BufferedEditor(text, width, height, style, state, stateReader) {
+	BufferedEditor2(text, width, height, style, state, stateReader, nop, nop, false, nop, [])
+}
+
+BufferedEditor2(text : DynamicBehaviour<string>, width : double, height : double, _style : [CharacterStyle],
+	state : DynamicBehaviour<[TextInputState]>, stateReader : (() -> TextInputModel) -> void, focusIn : () -> void, focusOut : () -> void,
+	setHandledForKeyEvents : bool,  tabKeyHandler : () -> void, editStyle : [TextEditorStyle]) -> Form {
+	style = _style |> addDefaultsToTextEditorStyle;
+	myReader = ref \ -> TextInputModel(" ", 15.0, 15.0, 0, Selection(0, 0), true, None());
+
+	generateFrames = \ -> generate(0, 10, \i -> (^myReader)());
+	frames : ref [TextInputModel] = ref [];
+	cur = ref 0;
+	last = ref timestamp();
+
+	myUpdate = ref false;
+
+	change = \ -> {
+		tim = (^myReader)();
+		if (tim.content != (^frames[^cur]).content) {
+			frames := concatA([[(^myReader)()], subrange(^frames, ^cur, min(9, 10 - ^cur)), generate(0, max(0, ^cur - 1), \i -> ^frames[9])]);
+			cur := 0;
+		}
+	}
+
+	shift = \up : bool -> {
+		prev = ^cur;
+		if (up && ^cur > 0) cur := ^cur - 1
+		else if (!up && ^cur < 9) cur := ^cur + 1;
+
+		if ((^frames[prev]).content != (^frames[^cur]).content && trim((^frames[^cur]).content) != "") {
+			tim = ^frames[^cur];
+			sel = strlen(tim.content);
+			scrollinfo = switch(tim.scrollinfo : Maybe) {
+				None(): ScrollInfo(0, 0, 0);
+				Some(s): s;
+			};
+			next(state, [Content(tim.content, style), Focus(true), Selection(sel, sel), scrollinfo]);
+			next(text, tim.content);
+		} else {
+			cur := prev;
+		}
+	}
+
+	Constructor(
+		Interactive(
+			[KeyDown2(
+				\h, e -> {
+					tim = ^(myReader)();
+					if (tim.focus) {
+						if (!h && e.ctrl) {
+							if (e.utf == "z") {
+								myUpdate := true;
+								change();
+								shift(false);
+								myUpdate := false;
+							} else if (e.utf == "y") {
+								myUpdate := true;
+								change();
+								shift(true);
+								myUpdate := false;
+							} else if (e.utf == "a") {
+								myUpdate := true;
+								next(state, [Selection(0, strlen(tim.content))]);
+								myUpdate := false;
+							}
+						}
+						// TextEditorWithScrollbar we are using as foundation sets handled for all the KeyDown events to false by default.
+						// We override that but set handled to true ourselves.
+						false
+					} else {
+						h
+					}
+				})],
+			TextEditorWithScrollbar(text, width, height, style, state, \r -> {myReader := r; frames := generateFrames(); stateReader(r); },
+				focusIn, focusOut, false, tabKeyHandler)
+		),
+		\ -> {
+			subscribe2(text, \t -> {
+				if (!^myUpdate) {
+					last := timestamp();
+					timer(1000, \ -> {
+						tt = timestamp();
+						if (tt - ^last >= 999.0) change()
+					})
+				}
+			})
+		}
+	)
+}
+
+SimpleEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form {
+	TextEditor(text, width, height, style, [])
+}
+
+TextEditor2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], editStyle: [TextEditorStyle],
+	focusIn : () -> void, focusOut : () -> void) -> Form {
+	mgroup = fold(editStyle, None(), \acc, s -> switch (s) { EditorGroup(__,__,__,__,__, __): Some(s); default: acc });
+	tabKeyHandler = extractStruct(editStyle, TabKeyHandler(nop)).fn;
+	state = fold(editStyle, [], \acc, s -> switch (s : TextEditorStyle) {
+		ReadOnly(__): arrayPush(acc, s);
+		Multiline(__): arrayPush(acc, s);
+		TabIndex(__): arrayPush(acc, s);
+		default: {
+			if (isSameStructType(s, Focus(false)))
+				arrayPush(acc, cast(s : TextEditorStyle -> Focus))
+			else
+				acc;
+		}
+	});
+
+	editorState = make(state);
+	undoSupport = contains(editStyle, KeyboardShortcutsSupport());
+	makeTextEditor : (DynamicBehaviour<string>, double, double, [CharacterStyle], DynamicBehaviour<[TextInputState]>, (() -> TextInputModel) -> void,
+		() -> void, () -> void, bool, () -> void, [TextEditorStyle]) -> Form = if (undoSupport) BufferedEditor2 else TextEditorWithScrollbar2;
+	switch (mgroup) {
+		None(): {
+			makeTextEditor(text, width, height, style, editorState, nop1, focusIn, focusOut, true, tabKeyHandler, editStyle)
+		}
+		Some(group): {
+			// If we have an editor group, this is where we handle it
+			editorStateReader = ref \ -> TextInputModel("", 0.0, 0.0, 0, Selection(0, 0), false, None());
+			tagText = \beginTag, endTag -> {
+				// Let's find where to insert tag - it basically should overwrite current selection
+				curText = getValue(text);
+				curState = ^editorStateReader();
+
+				selectionStart = curState.selection.start;
+				selectionEnd = curState.selection.end;
+
+				// Now we are just surrounding selection interval with tag
+				newText = strLeft(curText, selectionStart) + beginTag + substring(curText, selectionStart, selectionEnd- selectionStart) + endTag +
+					substring(curText, selectionEnd, strlen(curText) - selectionEnd);
+				next(text, newText);
+
+				newSelectionStart = selectionStart;
+				newSelectionEnd = selectionEnd + strlen(beginTag) + strlen(endTag);
+
+				// And finally, let's make proper selection - doesn't work exactly as expected, but at least sets proper cursor position
+				next(editorState, concat(getValue(editorState), [Focus(true), Selection(newSelectionStart, newSelectionEnd)]));
+			};
+
+			clearText = \ -> {
+				//workaround for Flash text editor strange behaviour
+				next(text, " ");
+				deferUntilRender(\ -> {
+					next(text, "");
+				});
+			}
+
+			insertText = \textToInsert -> insertAtSelection(text, editorState, editorStateReader, textToInsert);
+
+
+			findContainingTags = \ot, ct -> findContainingTagsAtSelection(text, editorState, editorStateReader, ot, ct);
+
+			currentEditorId = group.currentId;
+			myId = addToEditorGroupGetNewId(group, tagText, insertText, clearText, findContainingTags);
+
+			onFocusIn = \ -> {
+				//println("Setting editor id = " + i2s(myId));
+				currentEditorId := myId;
+				focusIn()
+			};
+			onFocusOut = \ -> {
+				focusOut()
+			};
+
+			makeTextEditor(
+				text, width, height, style, editorState, \stateReader -> editorStateReader := stateReader,
+				onFocusIn, onFocusOut, true, tabKeyHandler, editStyle
+			)
+		}
+	}
+}
+
+TextEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], editStyle: [TextEditorStyle]) -> Form {
+	TextEditor2(text, width, height, style, editStyle, nop, nop)
+}
+
+addToEditorGroupGetNewId(group : EditorGroup, tagText : (beginTag : string, endTag : string) -> void, textInsert :(txt : string) -> void,
+	clear : () -> void, findContainingTags) -> int {
+	newId = ^(group.count);
+	group.count := ^(group.count) + 1;
+	group.textTaggers := arrayPush(^(group.textTaggers), tagText);
+	group.textInserters := arrayPush(^(group.textInserters), textInsert);
+	group.cleaners := arrayPush(^(group.cleaners), clear);
+	group.containingTagsFinders := arrayPush(^(group.containingTagsFinders), findContainingTags);
+	newId
+}
+
+makeNewEditorGroupFormatter() {
+	group = EditorGroup(ref 0, ref 0, ref [], ref [], ref [], ref []);
+	tagger = \s1, s2 -> {
+		if (0 < ^(group.count) && 0 <= ^(group.currentId) && ^(group.currentId) < ^(group.count)) {
+			((^(group.textTaggers))[^(group.currentId)])(s1, s2)
+		}
+	}
+	inserter = \s -> {
+		if (0 < ^(group.count) && 0 <= ^(group.currentId) && ^(group.currentId) < ^(group.count)) {
+			((^(group.textInserters))[^(group.currentId)])(s)
+		}
+	}
+	cleaner = \ -> {
+		if (0 < ^(group.count) && 0 <= ^(group.currentId) && ^(group.currentId) < ^(group.count)) {
+			((^(group.cleaners))[^(group.currentId)])()
+		}
+	}
+	containingTagsFinder = \s1, s2 -> {
+		if (0 < ^(group.count) && 0 <= ^(group.currentId) && ^(group.currentId) < ^(group.count)) {
+			((^(group.containingTagsFinders))[^(group.currentId)])(s1, s2)
+		} else {
+			Pair(false, "")
+		}
+	}
+	GroupTextFormatter(tagger, inserter, cleaner, containingTagsFinder, group)
+}
+
+addDefaultsToTextEditorStyle(style : [CharacterStyle])->[CharacterStyle] {
+	if (exists(style, isFontSize)) style else arrayPush(style, FontSize(15.0));
+}
+
+TextEditorWithScrollbar(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle],
+		state: DynamicBehaviour<[TextInputState]>, stateReader: (() -> TextInputModel) -> void,
+		focusIn : () -> void, focusOut : () -> void, setHandledForKeyEvents : bool, tabKeyHandler : () -> void
+) -> Form {
+	TextEditorWithScrollbar2(text, width, height, style, state, stateReader, focusIn, focusOut, setHandledForKeyEvents, tabKeyHandler, [])
+}
+
+TextEditorWithScrollbar2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle],
+		state: DynamicBehaviour<[TextInputState]>, stateReader: (() -> TextInputModel) -> void,
+		focusIn : () -> void, focusOut : () -> void, setHandledForKeyEvents : bool, tabKeyHandler : () -> void,
+		editStyle : [TextEditorStyle]
+) -> Form {
+
+	scrollbarButtonSize = 10.0;
+	internalUpdate = ref false;
+	tabFlag = ref false;
+	numLines = make(1);
+	bottomScrollV = make(1);
+	scrollV = make(1);
+	continuousScrollV = make(0.0);
+
+	newstyle = addDefaultsToTextEditorStyle(style);
+	tabInd = extractStruct(getValue(state), TabIndex(0)).index;
+
+	//Flash returns strange values for bottomScrollV and scrollV when PageUp and PageDown are used.
+	//So, let fakeFormHeight preserve old value on incorrect input
+	fakeFormHeight = filterWithLast(
+		select3(numLines, bottomScrollV, scrollV, \nl, bs, s -> {
+			i2d(nl) / i2d(bs - s + 1) * height
+		}),
+		\__, new -> !isNanOrInf(new)
+	);
+
+	fakeFormWidthHeight = select(fakeFormHeight, \h -> WidthHeight(0.0, h));
+
+	relation = select2(continuousScrollV, fakeFormHeight, \s, h -> {
+		if (h <= height) {
+			0.0
+		} else {
+			s / (h - height)
+		}
+	});
+
+	setLineByScrollable = \r -> {
+		s = getValue(scrollV);
+		bs = getValue(bottomScrollV);
+		nl = getValue(numLines);
+		visibleLines = bs - s + 1;
+		maxScroll = nl - visibleLines + 1;
+		newScroll = round(i2d(maxScroll) * r);
+		setStateProperty(state, ScrollInfo(newScroll, bs, nl));
+
+		// Visible content must be adjusted, if a text has been changed before scrolling
+		setStateProperty(state, Content(getValue(text), newstyle));
+	};
+
+	setScrollableByLine = \ -> {
+		s = getValue(scrollV);
+		bs = getValue(bottomScrollV);
+		nl = getValue(numLines);
+		visibleLines = bs - s + 1;
+		maxScroll = nl - visibleLines + 1;
+		r = if (maxScroll == 1) 0.0 else i2d(s - 1) / i2d(maxScroll - 1);
+		next(continuousScrollV, r * (getValue(fakeFormHeight) - height));
+	}
+
+	fakeFormToScroll = Size2(fakeFormWidthHeight, Empty());
+	scrollForm = if(js)
+			Size2(make(WidthHeight(scrollbarButtonSize * 2.0, height)), Empty())
+		else
+			styledScrollable(make(0.0), continuousScrollV, make(scrollbarButtonSize), make(height), fakeFormToScroll,
+				standartScrollableStyleWithoutGap, true);
+
+	_f = if (cpp) // need to set focus on texteditor by default in cpp target, not sure if this will work for flash or other targets
+		extract(getValue(state), false, \s -> switch(s) { Focus(b): Some(b); default: None()})
+		else false;
+
+	focus = ref _f;
+	focusId = getFocusId();
+
+	getTextInputModelProc = ref \ -> {
+		TextInputModel("", 0.0, 0.0, 1, Selection(0, 0), false, None());
+	};
+
+	lastFocusIn = ref 0.0;
+
+	focusOutOnEnter = contains(editStyle, FocusOutOnEnter());
+
+	focusInInterceptor = \ -> {
+		focus := true;
+		updateKeyboardFocus(focusId);
+		tabFlag := false;
+		focusIn();
+
+		// http://process.area9.dk/cases/default.asp?41274
+		// Causes #41830. Fixed.
+		if (flash) {
+			curTime = timestamp();
+			if (50.0 < curTime - ^lastFocusIn) { //#41830. Protection from oscillation after setScrollRect which is called after any resize
+				setStateProperty(state, Content(getValue(text), newstyle));
+				next(state, setCursorToTheEndOfContent(getValue(state)));
+			}
+			lastFocusIn := curTime;
+		}
+	};
+
+	focusOutInterceptor = \ -> {
+		focus := false;
+		keyboardFocusDies(focusId);
+		if (^tabFlag) deferUntilRender(\ -> tabKeyHandler());
+		focusOut();
+	};
+
+	stateReaderIntercepter = \getTextInputModel-> {
+		getTextInputModelProc := getTextInputModel;
+
+		maybeApply(getTextInputModel().scrollinfo, \si -> {
+			nextDistinct(scrollV, si.scrollV);
+			nextDistinct(bottomScrollV, si.bottomScrollV);
+			nextDistinct(numLines, si.numLines);
+		});
+
+		stateReader(getTextInputModel);
+	}
+
+	baseOptions = [
+		Multiline(true),
+		AutoAlign(AutoAlignNone()),
+		TextSize(width, height),
+		TabIndex(tabInd)
+	];
+	options = if (setHandledForKeyEvents) arrayPush(baseOptions, EatKeyDownOnFocus()) else baseOptions;
+
+	ti = TextInput(
+		options,
+		[
+			TextChange(\tim -> {
+				internalUpdate := true;
+				nextDistinct(text, tim.content);
+				// Numlines changes its value on TextScroll for some reason.
+				// That lead to infinite updates.
+				maybeApply(tim.scrollinfo, \si -> {
+					nextDistinct(numLines, si.numLines);
+				});
+				internalUpdate := false;
+			}),
+			TextScroll(\tim -> {
+				internalUpdate := true;
+				maybeApply(tim.scrollinfo, \si -> {
+					nextDistinct(scrollV, si.scrollV);
+					nextDistinct(bottomScrollV, si.bottomScrollV);
+				});
+				setScrollableByLine();
+				internalUpdate := false;
+			}),
+			FocusIn(focusInInterceptor),
+			FocusOut(focusOutInterceptor)
+		],
+		[
+			StateChanger(state),
+			StateQuery(stateReaderIntercepter),
+			StateQuery2(getTextInputModelProc) //Do not delete. Used in takeSnapshot
+		]
+	);
+
+	onKeyDown = \h, e -> {
+		texinputModel = (^getTextInputModelProc)();
+		if (^focus) {
+			if (e.ctrl && e.utf == "g") {
+				println("Ctrl+g");
+				copyTextToBuffer(texinputModel.selection, false, text, state);
+				true;
+			} else if (e.ctrl && e.utf == "h") {
+				println("Ctrl+h");
+				copyTextToBuffer(texinputModel.selection, true, text, state);
+				true;
+			} else if (!e.ctrl && !e.alt && e.utf == "tab") {
+				tabFlag := true;
+				true;
+			} else if (focusOutOnEnter && e.keycode == 13) {
+				next(state, [Focus(false)]);
+				true
+			} else h;
+		} else h;
+	};
+
+	advancedTextInput =	if (cpp) {
+		controlFocus = make(^focus);
+		Interactive([
+				MouseClick(\h -> {
+					next(controlFocus, true)
+				}),
+				KeyDown2(onKeyDown)
+			],
+			ControlFocus(controlFocus, ti)
+		);
+	} else {
+		Interactive([KeyDown2(onKeyDown)], ti);
+	}
+
+	ati = Access([AccessRole("textbox"), AccessTabindex(tabInd)], advancedTextInput);
+
+	editorWithScrollbar = Size2(const(WidthHeight(width + scrollbarButtonSize, height)), Group([ati, Offset(width + 2.0, 0.0, scrollForm)]));
+	editorWithoutScrollbar = Size2(const(WidthHeight(width, height)), ati);
+
+	// Scrollbar is useless and looks ugly when there is no free space for it - minimum size of
+	// its border and central buttons is 10.0, 10.0 and 5.0
+	result = if (!cpp && height > 2.5 * scrollbarButtonSize) editorWithScrollbar else editorWithoutScrollbar;
+
+	Constructor(result, \ -> {
+		next(state, setCursorToTheEndOfContent(getValue(state)));
+		uns1 = subscribe(relation, \r -> if (!^internalUpdate) setLineByScrollable(r));
+		uns2 = subscribe(text, \newText -> if (!^internalUpdate) setStateProperty(state, Content(newText, newstyle)));
+		\ -> { uns1(); uns2(); keyboardFocusDies(focusId); }
+	})
+}
+
+OneLineEditor2(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle], state : [TextInputState]) -> Form {
+	OneLineEditorWithState(text, width, height, style, state, make([]), nop1)
+}
+
+OneLineEditorWithState(
+		text: DynamicBehaviour<string>,
+		width: double,
+		height: double,
+		style: [CharacterStyle],
+		state : [TextInputState],
+		stateChange : DynamicBehaviour<[TextInputState]>,
+		onFocus : (bool) -> void
+) -> Form {
+
+	OneLineEditor3(text, width, height, style, state,
+		[ MouseClick(nop1) ],
+		stateChange,
+		onFocus
+	)
+}
+
+OneLineEditor3(
+	text: DynamicBehaviour<string>,
+	width: double,
+	height: double,
+	style: [CharacterStyle],
+	state : [TextInputState],
+	eventHandlers : [EventHandler],
+	stateChange : DynamicBehaviour<[TextInputState]>,
+	onFocus : (bool) -> void
+) -> Form {
+
+	newstyle = if (exists(style, isFontSize)) style else arrayPush(style, FontSize(15.0));
+	internalUpdate = ref false;
+
+	Constructor(
+		Interactive(
+			eventHandlers,
+			textInputWithFocus(
+				concat(state, [Multiline(false), TextSize(width - 1.0, height)]),
+				[
+					TextChange(\tim -> {
+								internalUpdate := true;
+								next(text, tim.content);
+								internalUpdate := false;
+					}),
+					FocusIn(\ -> onFocus(true)),
+					FocusOut(\ -> onFocus(false)),
+				],
+				[StateChanger(stateChange)]
+			) |> \f -> Offset(1.0, 0.0, f)
+		),
+		\ -> {
+			subscribe(text, \newText -> {
+				if (!^internalUpdate)
+					next(stateChange, setCursorToTheEndOfContent([Content(newText, newstyle)]));
+			});
+		}
+	)
+}
+
+OneLineEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form {
+	OneLineEditor2(text, width, height, style, [
+						AutoAlign(AutoAlignNone()),
+					])
+}
+
+OneLineNumericEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form {
+	OneLineEditor2(text, width, height, style, makeTextInputNumericState(width, height))
+}
+
+SimplePasswordEditor(text: DynamicBehaviour<string>, width: double, height: double, style: [CharacterStyle]) -> Form {
+	OneLineEditor2(text, width, height, style, [
+			AutoAlign(AutoAlignNone()),
+			TabIndex(-1),
+			PasswordMode(true)
+		])
+}
+
+ReadOnlyOneLine(text, width, height, style) {
+	OneLineEditor2(make(text), width, height, style,
+		[
+			AutoAlign(AutoAlignNone()),
+			ReadOnly(true)
+		]
+	)
+}
+
+OneLineNumFormat(
+	number: DynamicBehaviour<double>,
+	width: double,
+	height: double,
+	style: [CharacterStyle],
+	state : [TextInputState],
+	fmtFn : (double) -> string
+
+) -> Form {
+	displayMode = make(true);
+	newstyle = if (exists(style, isFontSize)) style else arrayPush(style, FontSize(15.0));
+
+	inttxt = ref "";
+	myState = make([]);
+
+	form = Interactive(
+		[
+			MouseClick(nop1)
+		],
+		Access([AccessRole("textinput")],
+			textInputWithFocus(
+				concat(state, [Multiline(false), TextSize(width, height)]),
+				[
+					TextChange(\tim -> {
+						inttxt := tim.content;
+					}),
+					FocusIn(\ -> { nextDistinct(displayMode, false); inttxt := fmtFn(getValue(number)) }),
+					FocusOut(\ -> { nextDistinct(displayMode, true); next(number, s2d(^inttxt)); })
+				],
+				[StateChanger(myState)]
+			)
+		)
+	);
+	Constructor(form,
+		\ -> {
+			ms = select2u(displayMode, number, \dis, num -> {
+				setCursorToTheEndOfContent(
+					if (dis) {
+						[
+							Content(fmtFn(num), newstyle),
+							Numeric(false),
+							Multiline(false), TextSize(width, height)
+						]
+
+					} else {
+						[
+							Content(toString(num), newstyle),
+							Numeric(true),
+							Multiline(false), TextSize(width, height)
+						]
+					}
+				)
+			}) |> makeDisposable;
+			uns = connectDistinct(ms.value, myState);
+			\ -> {
+				uns();
+				ms.dispose();
+			}
+		}
+	)
+}
+
+insertAtSelection(editorText : DynamicBehaviour<string>, state : DynamicBehaviour<[TextInputState]>, editorStateReader : ref () -> TextInputModel,
+	toInsert : string) {
+	// Let's find where to insert picture code - it basically should overwrite current selection
+	curText = getValue(editorText);
+
+	curState = ^editorStateReader();
+
+	selectionStart = curState.selection.start;
+	selectionEnd = curState.selection.end;
+
+	// Now we are just replacing selection interval with picture code
+	newText = strLeft(curText, selectionStart) + toInsert + substring(curText, selectionEnd, strlen(curText) - selectionEnd);
+	next(editorText, newText);
+
+	newSelectionStart = selectionStart;
+	newSelectionEnd = newSelectionStart + strlen(toInsert);
+
+	// And finally, let's make proper selection - doesn't work exactly as expected, but at least sets proper cursor position
+	next(state, concat(getValue(state), [Focus(true), Selection(newSelectionStart, newSelectionEnd)]));
+}
+
+findContainingTagsAtSelection(editorText : DynamicBehaviour<string>, state : DynamicBehaviour<[TextInputState]>,
+	editorStateReader : ref () -> TextInputModel, ot : string, ct : string) {
+	curText = getValue(editorText);
+	curState = ^editorStateReader();
+
+	selectionStart = curState.selection.start;
+	selectionEnd = curState.selection.end;
+
+	notFoundResult = Pair(false, substring(curText, selectionStart, selectionEnd - selectionStart));
+
+	len = strlen(curText);
+	ctl = strlen(ct);
+	otl = strlen(ot);
+
+	checkForCorrectness = \cursorPos, saStart, saEnd -> saStart <= cursorPos && cursorPos < saEnd;
+
+	getStartEnd = \cursorPos -> {
+		res = for(
+			Pair(0, 0),
+			\pos -> pos.first != -1 && pos.second <= cursorPos && !checkForCorrectness(cursorPos, pos.first, pos.second),
+			\pos -> {
+				offset = pos.second;
+				restText = substring(curText, offset, len - offset);
+				val : Pair<int, int> = eitherMap(
+					findClosingTagM(restText, ot, ct, [ot]),
+					\p -> Pair(p.first + offset, p.second + offset),
+					Pair(-1, -1)
+				);
+				val
+			}
+		);
+
+		if (checkForCorrectness(cursorPos, res.first, res.second)) Some(res) else None();
+
+	}
+
+	processStartEndData = \sePair:Maybe<Pair<int,int>> -> {
+		eitherMap(
+			sePair,
+			\se -> {
+				newSelectionStart = se.first;
+				newSelectionEnd = se.second;
+				next(state, [Focus(true), Selection(newSelectionStart, newSelectionEnd)]);
+				Pair(true, substring(curText, se.first, se.second - se.first))
+			},
+			notFoundResult
+		)
+	};
+
+	findSmartArtToProcessInInterval = \ss, se -> {
+		cursorPositions = [ss, se];
+		sePairs = map(cursorPositions, getStartEnd);
+		somePairs = filter(sePairs, isSome);
+		if (0 < length(somePairs)) {
+			somePairs[0]
+		} else {
+			None()
+		}
+	}
+
+	res = if (selectionStart == selectionEnd) {
+		getStartEnd(selectionStart);
+	} else {
+		findSmartArtToProcessInInterval(selectionStart, selectionEnd)
+	};
+
+	res |> processStartEndData
+}
+
+makeTextInputNumericState(width, height) {
+	[
+		Numeric(true),
+		Focus(true),
+		AutoAlign(AutoAlignCenter())
+	]
+}
+
+makeTextInputNumericStateNoFocus(width, height) {
+	[
+		Numeric(true),
+		//Focus(true),
+		AutoAlign(AutoAlignCenter()),
+		TextSize(width, height),
+	]
+}

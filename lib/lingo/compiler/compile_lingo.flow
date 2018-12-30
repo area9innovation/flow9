@@ -1,0 +1,1191 @@
+import lingo/linecolumn;
+import lingo/pegcode/grammar2code;
+import lingo/pegcode/optimize_grammar;
+
+import lingo/compiler/syntaxtree;
+import lingo/compiler/nested_choices;
+import lingo/compiler/compile_ast_functions;
+import lingo/pegaction;
+import blueprint;
+import until;
+import filesystem;
+
+export {
+	// Returns an error, and then the code for a parser that parses the grammar
+	compileSyntaxWithGrammar(lingofilename : string, lingo : string, options : [CompileSyntaxWithGrammarOption]) -> Pair<string, string>;
+	CompileSyntaxWithGrammarOption ::= cswgoUseDirectSourceAccess, cswgoInnerFunctionsPrefix, cswgoProfiling;
+		cswgoUseDirectSourceAccess(value : bool);
+		cswgoInnerFunctionsPrefix(value : string);
+		cswgoProfiling(value : bool);
+
+	// The same, except you might have parsed the grammar already
+	compileSyntaxGrammarToFlow(gr : Grammar, options : [CompileSyntaxWithGrammarOption]) ->  Pair<string, string>;
+}
+
+compileSyntaxWithGrammar(lingofilename : string, lingo : string, options : [CompileSyntaxWithGrammarOption]) -> Pair<string, string> {
+	r = runPeg(lingo, pegOps4Lingo, makeTree(), defaultPegActions);
+	switch (r.result) {
+		None(): {
+			Pair("Could not parse grammar file `" + lingofilename + "`", "");
+		}
+		Some(gr): {
+			grammarError = parseLingoError(lingo, r);
+			if (grammarError != "") {
+				Pair(lingofilename + ":" + grammarError, "");
+			} else {
+				prefix = extractStruct(options, cswgoInnerFunctionsPrefix("")).value;
+				compileSyntaxGrammarToFlow(gr, options);
+			}
+		}
+	}
+}
+
+compileSyntaxGrammarToFlow(gr : Grammar, options : [CompileSyntaxWithGrammarOption]) ->  Pair<string, string> {
+	grammar0 = stripActionsBindings(gr);
+	grammar1 = optimizeGrammar(grammar0);
+	grammar2 = processNestedChoices(grammar1);
+	grammar = processNestedSequences(grammar2);
+
+	// At this stage, the grammar has this form:
+	// grammar = rules*;
+	// rule = alternatives*;  Each rule has cache, and whether the result matters as suffix _
+	// alternative = sequence;
+	// sequence = atom+;
+	// atom = char | ruleref | star | opt | plus | not;
+
+
+	// TODO: We could probably identify identical auto-rules, and avoid them
+
+	if (isUrlParameterTrue("flowparserdebug")) {
+		println("Grammar processed for flow-based parser:");
+		printGrammar(grammar);
+	}
+
+	astfile = getUrlParameter("flowparserast");
+	if (astfile != "") {
+		astMnemoFile = changeFileExt(astfile, "") + "_mnemonics.flow";
+		astMnemonics = compileAstMnemonics(grammar);
+		setFileContent(astMnemoFile, astMnemonics);
+		astfuns = compileAstFunctions(grammar, astMnemoFile);
+		r = setFileContent(astfile, astfuns);
+		if (r) {
+			println("Saved " + astfile + " with AST functions");
+		} else {
+			println("ERROR: Could not save " + astfile + " with AST functions");
+		}
+	}
+
+	code = if (extractStruct(options, cswgoUseDirectSourceAccess(false)).value) syntaxGrammar2codeB(grammar, options) else syntaxGrammar2code(grammar, options);
+	Pair("", code);
+}
+
+syntaxGrammar2code(g : Grammar, options : [CompileSyntaxWithGrammarOption]) -> string {
+	prefix = {
+		prefix = extractStruct(options, cswgoInnerFunctionsPrefix(g.productions[0].name)).value;
+		if (prefix == "") "" else prefix + "_";
+	}
+	ruleName = \n -> {
+		prefix + syntaxRuleName(n);
+	}
+
+	profiling = extractStruct(options, cswgoProfiling(isUrlParameterTrue("flowparserprofile"))).value;
+	options2 = replaceStruct(options, cswgoProfiling(profiling));
+	gname = syntaxRuleName(g.productions[0].name);
+
+
+	// A map from production index to the cache index
+	cacheIndexMap = foldi(g.productions, makeTree(), \i, acc, p -> {
+		if (p.caching) {
+			setTree(acc, i, sizeTree(acc))
+		} else acc;
+	});
+
+	astfile = getUrlParameter("flowparserast");
+	astMnemoFile = changeFileExt(astfile, "") + "_mnemonics";
+
+	exports = blueprint("
+			import string;
+			import lingo/compiler/syntaxtree_types;
+			%mnemo%
+			export {
+				parse_%name%(t : string) -> Pair<SyntaxTree, ExpectError>;
+			%profiling%}
+
+			parse_%name%(t : string) -> Pair<SyntaxTree, ExpectError> {
+				acc = SyntaxParseAcc(t, strlen(t), 0, [%cache%], noExpectError);
+				r = do_parse_%name2%(acc);
+				Pair(r, acc.expect);
+			}
+		",
+		[
+			"name", gname,
+			"name2", ruleName(g.productions[0].name),
+			"profiling", if (profiling) "\tprofile_" + gname + "() -> void;\n" else "",
+			"cache", strGlue(generate(0, sizeTree(cacheIndexMap), \i -> "ref makeTree()"), ", "),
+			"mnemo", (if (astfile != "") "import " + astMnemoFile + ";\n" else "")
+		]
+	);
+
+	profiles = if (profiling) fold(g.productions, "", \acc, p -> {
+		name = ruleName(p.name);
+		acc + "\t" + blueprint("%name%_profile = ref 0;\n",
+			[
+				"name", name,
+			]
+		);
+	}) else "";
+
+	profiler = if (profiling) {
+		foldi(g.productions, "profile_name() {", \i, acc, p -> {
+			name = ruleName(p.name);
+			acc + "\tprintln(i2s(^" + name + "_profile) + \" " + name + "\");\n"
+		}) + "}\n";
+	} else "";
+
+	top = exports + profiles + profiler;
+
+
+	foldi(g.productions, top, \i, acc, p -> {
+		acc + syntaxProduction2code(g, p, lookupTreeDef(cacheIndexMap, i, -1), options2) + "\n\n";
+	});
+}
+
+syntaxGrammar2codeB(g : Grammar, options : [CompileSyntaxWithGrammarOption]) -> string {
+	prefix = {
+		prefix = extractStruct(options, cswgoInnerFunctionsPrefix(g.productions[0].name)).value;
+		if (prefix == "") "" else prefix + "_";
+	}
+	ruleName = \n -> {
+		prefix + syntaxRuleName(n);
+	}
+	profiling = extractStruct(options, cswgoProfiling(isUrlParameterTrue("flowparserprofile"))).value;
+	options2 = replaceStruct(options, cswgoProfiling(profiling));
+
+	gname = syntaxRuleName(g.productions[0].name);
+
+	// A map from production index to the cache index
+	cacheIndexMap = foldi(g.productions, makeTree(), \i, acc, p -> {
+		if (p.caching) {
+			setTree(acc, i, sizeTree(acc))
+		} else acc;
+	});
+
+	exports = blueprint("
+			import string;
+			import lingo/compiler/syntaxtree_types;
+			export {
+				parse_%name%_b(t : [[int]]) -> Pair<SyntaxTreeB, ExpectErrorB>;
+			%profiling%}
+
+			find_next_non_empty_line_%prefix%b(t : [[int]], start : int) -> int {
+				if (start >= length(t) || length(t[start]) > 0 ) start
+				else find_next_non_empty_line_%prefix%b(t, start + 1);
+			}
+
+			parse_%name%_b(t : [[int]]) -> Pair<SyntaxTreeB, ExpectErrorB> {
+				acc = SyntaxParseAccB(t, 0, 0, [%cache%], noExpectErrorB);
+				r = do_parse_%name2%_b(acc);
+				Pair(r, acc.expect);
+			}
+		",
+		[
+			"name", gname,
+			"name2", ruleName(g.productions[0].name),
+			"prefix", prefix,
+			"profiling", if (profiling) "\tprofile_" + gname + "_b() -> void;\n" else "",
+			"cache", strGlue(generate(0, sizeTree(cacheIndexMap), \i -> "ref makeTree()"), ", ")
+		]
+	);
+
+	profiles = if (profiling) fold(g.productions, "", \acc, p -> {
+		name = ruleName(p.name);
+		acc + "\t" + blueprint("%name%_profile_b = ref 0;\n",
+			[
+				"name", name,
+			]
+		);
+	}) else "";
+
+	profiler = if (profiling) {
+		foldi(g.productions, "profile_name_b() {", \i, acc, p -> {
+			name = ruleName(p.name);
+			acc + "\tprintln(i2s(^" + name + "_profile_b) + \" " + name + "\");\n"
+		}) + "}\n";
+	} else "";
+
+	top = exports + profiles + profiler;
+
+	foldi(g.productions, top, \i, acc, p -> {
+		acc + syntaxProduction2codeB(g, p, lookupTreeDef(cacheIndexMap, i, -1), options2) + "\n\n";
+	});
+}
+
+syntaxProduction2code(g : Grammar, p : Production, cacheIndex : int, options : [CompileSyntaxWithGrammarOption]) -> string {
+	profiling = extractStruct(options, cswgoProfiling(false)).value;
+	prefix = {
+		prefix = extractStruct(options, cswgoInnerFunctionsPrefix(g.productions[0].name)).value;
+		if (prefix == "") "" else prefix + "_";
+	}
+	ruleName = \n -> {
+		prefix + syntaxRuleName(n);
+	}
+	nc = length(p.choices);
+//		Production(name : string, caching : bool, type : PegType, choices : [Seq]);
+
+	name0 = syntaxRuleName(p.name);
+	name = ruleName(p.name);
+
+	body = if (nc == 0) {
+		"SyntaxTree(st_" + name0 + ", 0, acc.i, acc.i, []);"
+	} else if (nc == 1) {
+		syntaxSequence2code(g, name0, 0, p.choices[0].seq, false, ruleName);
+	} else {
+		"i = acc.i;\n" + foldi(reverseA(p.choices),
+			"SyntaxTree(st_Expected_" + name0 + ", -1, i, i, [])", \i, acc, c -> {
+
+			j = length(p.choices) - i - 1;
+			blueprint(
+				"
+				acc.i ::= i;
+				r%i% = {
+					%seq%
+				}
+				if (r%i% != failSyntaxTree) r%i%
+				else {
+					%choices%
+				}
+				",
+				["i", i2s(j),
+				"seq", syntaxSequence2code(g, name0, j, c.seq, true, ruleName),
+				"choices", acc]
+			);
+		});
+	}
+
+	blueprint(
+		if (profiling) {
+			"
+			do_parse_%name%(acc : SyntaxParseAcc) -> SyntaxTree {
+				%name%_profile := ^%name%_profile + 1;
+				%body%
+			}"
+		} else if (p.caching) {
+			"
+			do_parse_%name%(acc : SyntaxParseAcc) -> SyntaxTree {
+				cache = (acc.caches)[%cacheIndex%];
+				ci = acc.i;
+				cached = lookupTree(^cache, ci);
+				switch (cached) {
+					None(): {
+						rs = {
+							%body%
+						};
+						cache := setTree(^cache, ci, rs);
+						rs;
+					}
+					Some(st): {
+						acc.i ::= st.end;
+						st;
+					}
+				}
+			}"
+		} else {
+			"
+			do_parse_%name%(acc : SyntaxParseAcc) -> SyntaxTree {
+				%body%
+			}"
+		},
+		[
+			"name", name,
+			"body", body,
+			"cacheIndex", i2s(cacheIndex)
+		]
+	);
+}
+
+syntaxProduction2codeB(g : Grammar, p : Production, cacheIndex : int, options : [CompileSyntaxWithGrammarOption]) -> string {
+	profiling = extractStruct(options,cswgoProfiling(false)).value;
+	prefix = {
+		prefix = extractStruct(options, cswgoInnerFunctionsPrefix(g.productions[0].name)).value;
+		if (prefix == "") "" else prefix + "_";
+	}
+	ruleName = \n -> {
+		prefix + syntaxRuleName(n);
+	}
+	nc = length(p.choices);
+	name0 = syntaxRuleName(p.name);
+	name = ruleName(p.name);
+	prf = "curpos = \\-> Pair(acc.row, acc.col);
+len = length(acc.input);
+pos = curpos();
+rstpos2 = \\p : Pair<int, int> -> {acc.row ::= p.first; acc.col ::= p.second;}
+rstpos = \\-> rstpos2(pos);
+nxtrow = \\-> {acc.col ::= 0; acc.row ::= find_next_non_empty_line_" + prefix + "b(acc.input, acc.row + 1);}
+nxtcol1 = \\-> if (acc.row < len) {l = length(acc.input[acc.row]); if (acc.col < l+1) acc.col ::= acc.col + 1 else nxtrow()};
+nxtcol = \\cnt -> {generate(0, cnt, \\c -> nxtcol1()); {}}
+cc = \\-> {
+	if (acc.row < len && acc.col == length(acc.input[acc.row])) 32 // fake space to avoid empty comment bug
+	else if (acc.row < len && acc.col > length(acc.input[acc.row])) 10 // line break
+	else if (acc.row < len) bitAnd(0xFFFF, acc.input[acc.row][acc.col])
+	else 0;
+}
+cc2 = \\offs-> if (acc.row < len && acc.col + offs < length(acc.input[acc.row])) bitAnd(0xFFFF, acc.input[acc.row][acc.col + offs]) else 10;
+cmpB = \\v -> {
+	if (acc.row < len) {
+		a = s2a(v);
+		l = length(a);
+		src1 = subrange(acc.input[acc.row], acc.col, l);
+		if (length(src1) != l) false
+		else {
+			src = map(src1, \\t -> bitAnd(0xFFFF, t));
+			foldi(a, true, \\ix, res, c -> res && src[ix] == c);
+		}
+	} else false;
+}
+";
+	body = if (nc == 0) {
+		"SyntaxTreeB(st_" + name0 + ", 0, curpos(), curpos(), []);"
+	} else if (nc == 1) {
+		syntaxSequence2codeB(g, name0, 0, p.choices[0].seq, false, ruleName);
+	} else {
+		foldi(reverseA(p.choices),
+			"SyntaxTreeB(" + toString("Expected " + name0) + ", -1, pos, pos, [])", \i, acc, c -> {
+			j = length(p.choices) - i - 1;
+			blueprint(
+				"
+				rstpos();
+				r%i% = {
+					%seq%
+				}
+				if (r%i% != failSyntaxTreeB) r%i%
+				else {
+					%choices%
+				}
+				",
+				["i", i2s(j),
+				"seq", syntaxSequence2codeB(g, name0, j, c.seq, true, ruleName),
+				"choices", acc]
+			);
+		});
+	}
+
+	blueprint(
+		if (profiling) {
+			"
+			do_parse_%name%_b(acc : SyntaxParseAccB) -> SyntaxTreeB {
+				%prf%
+				%name%_profile_b := ^%name%_profile_b + 1;
+				%body%
+			}"
+		} else if (p.caching) {
+			"
+			do_parse_%name%_b(acc : SyntaxParseAccB) -> SyntaxTreeB {
+				%prf%
+				cache = (acc.caches)[%cacheIndex%];
+				ci = curpos();
+				cached = lookupTree(^cache, ci);
+				switch (cached) {
+					None(): {
+						rs = {
+							%body%
+						};
+						cache := setTree(^cache, ci, rs);
+						rs;
+					}
+					Some(st): {
+						rstpos2(st.end);
+						st;
+					}
+				}
+			}"
+		} else {
+			"
+			do_parse_%name%_b(acc : SyntaxParseAccB) -> SyntaxTreeB {
+				%prf%
+				%body%
+			}"
+		},
+		[
+			"prf", prf,
+			"name", name,
+			"body", body,
+			"cacheIndex", i2s(cacheIndex)
+		]
+	);
+}
+
+numSyntaxResults(g : Grammar, p : Parsing) -> int {
+	switch (p : Parsing) {
+		Term(__): 0;
+		CharRange(first, last): 0;
+		Rule(r): if (endsWith(r, "_")) 0 else 1;
+		iRule(r): 1;
+		Opt(o): if (numSyntaxResults(g, o) == 0) 0 else 2;
+		Star(o): if (numSyntaxResults(g, o) == 0) 0 else 2;
+		Plus(o): if (numSyntaxResults(g, o) == 0) 0 else 2;
+		Negation(__): 0;
+		Action2(__): 0;
+		BindResult(__, r): numSyntaxResults(g, r);
+		BindMatched(__, r): numSyntaxResults(g, r);
+		CutDown(r): numSyntaxResults(g, r);
+		CutUp(r): numSyntaxResults(g, r);
+		default: {
+			println("TODO numResults: " + toString(p));
+			-1;
+		}
+	}
+}
+
+numSyntaxProductionResults(g : Grammar, p : Production) -> int {
+	if (p.choices == []) 0
+	else {
+		seq = lastElement(p.choices, Seq([]));
+		anyresult = exists(seq.seq, \s -> numSyntaxResults(g, s) != -1);
+		if (anyresult) 1 else 0;
+	}
+}
+
+syntaxSequence2code(g : Grammar, name : string, i : int, s : [Parsing], inchoice : bool, ruleName : (string) -> string) -> string {
+	if (length(s) == 1 && isSameStructType(s[0], Rule(""))) {
+		// A single rule only - we do not need to keep the intermediate result
+		syntaxParsing2code(g, s[0], "c0", 0, inchoice, ruleName);
+	} else {
+		args = strGlue(filter(mapi(s, \j, p -> {
+			nr = numSyntaxResults(g, p);
+			if (nr == 0) ""
+			else if (nr == 1) "[c" + i2s(j) + "]"
+			else if (nr == 2) "c" + i2s(j)
+			else "/*TODO: " + toString(p) + "*/";
+		}), neq("")), ", ");
+
+		(if (inchoice) "" else "i = acc.i;\n")
+		+ foldi(reverseA(s),
+			"SyntaxTree(st_" + name + ", " + i2s(i) + ", i, acc.i, [" + args + "]);",
+			\j, acc, p -> {
+				syntaxParsing2code(g, p, acc, length(s) - j - 1, inchoice, ruleName)
+			}
+		);
+
+	}
+}
+
+syntaxSequence2codeB(g : Grammar, name : string, i : int, s : [Parsing], inchoice : bool, ruleName : (string) -> string) -> string {
+	if (length(s) == 1 && isSameStructType(s[0], Rule(""))) {
+		// A single rule only - we do not need to keep the intermediate result
+		syntaxParsing2codeB(g, s[0], "c0", 0, inchoice, ruleName);
+	} else {
+		args = strGlue(filter(mapi(s, \j, p -> {
+			nr = numSyntaxResults(g, p);
+			if (nr == 0) ""
+			else if (nr == 1) "[c" + i2s(j) + "]"
+			else if (nr == 2) "c" + i2s(j)
+			else "/*TODO: " + toString(p) + "*/";
+		}), neq("")), ", ");
+
+		(if (inchoice) "" else "")
+		+ foldi(reverseA(s),
+			"SyntaxTreeB(st_" + name + ", " + i2s(i) + ", pos, curpos(), [" + args + "]);",
+			\j, acc, p -> {
+				syntaxParsing2codeB(g, p, acc, length(s) - j - 1, inchoice, ruleName)
+			}
+		);
+
+	}
+}
+
+syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : bool, ruleName : (string) -> string) -> string {
+	switch (p : Parsing) {
+		Term(t): {
+			if (inchoice) {
+				blueprint("
+					if (%stringat%) {
+						acc.i ::= acc.i + %len%;
+						%seq%
+					} else failSyntaxTree;",
+					["stringat", makeStringAt(t),
+					"len", i2s(strlen(t)),
+					"seq", seq]
+				);
+			} else {
+				blueprint("
+					if (%stringat%) {
+						acc.i ::= acc.i + %len%;
+						%seq%
+					} else {
+						// %expected%
+						updateExpectError(acc, \"\", %t%, i);
+						failSyntaxTree;
+					}",
+					["stringat", makeStringAt(t),
+					"len", i2s(strlen(t)),
+					"expected", toString("Expected '" + t + "'"),
+					"seq", seq,
+					"t", toString(t)]
+				);
+			}
+		}
+		CharRange(l, u): {
+			if (inchoice) {
+				blueprint("
+					if ({c = getCharCodeAt(acc.input, acc.i); %l% <= c && c <= %u%}) {
+						acc.i ::= acc.i + 1;
+						%seq%
+					} else failSyntaxTree;",
+					["l", i2s(getCharCodeAt(l, 0)),
+					"u", i2s(getCharCodeAt(u, 0)),
+					"expected", toString("Expected '" + l + "'-'" + u + "'"),
+					"seq", seq]
+				);
+			} else {
+				blueprint("
+					if ({c = getCharCodeAt(acc.input, acc.i); %l% <= c && c <= %u%}) {
+						acc.i ::= acc.i + 1;
+						%seq%
+					} else {
+						// %expected%
+						updateExpectError(acc, \"\", %t%, i);
+						failSyntaxTree;
+					}",
+					["l", i2s(getCharCodeAt(l, 0)),
+					"u", i2s(getCharCodeAt(u, 0)),
+					"expected", toString("Expected '" + l + "'-'" + u + "'"),
+					"seq", seq,
+					"t", toString("'" + l + "'-'" + u + "'")]
+				);
+			}
+		}
+		Rule(r): {
+			if (inchoice) {
+				blueprint("
+					c%i% = do_parse_%r%(acc);
+					if (c%i%.choice != -1) {
+						%seq%
+					} else failSyntaxTree;",
+				["i", i2s(i),
+					"r", ruleName(r),
+					"seq", seq,
+				]);
+			} else {
+				blueprint("
+					c%i% = do_parse_%r%(acc);
+					if (c%i%.choice != -1) {
+						%seq%
+					} else c%i%",
+					["i", i2s(i),
+					"r", ruleName(r),
+					"seq", seq
+				]);
+			}
+		}
+		iRule(ir): {
+			syntaxParsing2code(g, Rule(g.productions[ir].name), seq, i, inchoice, ruleName);
+		}
+		Opt(t): {
+			switch (t) {
+				Term(tm): {
+					blueprint("
+						if (%stringat%) {
+							acc.i ::= acc.i + %len%;
+						}
+						%seq%",
+						["stringat", makeStringAt(tm),
+						"len", i2s(strlen(tm)),
+						"seq", seq]
+					);
+				}
+				Rule(r): {
+					blueprint("
+						i%i% = acc.i;
+						t%i% = do_parse_%r%(acc);
+						c%i% = if (t%i%.choice == -1) {acc.i ::= i%i%; [] } else [t%i%];
+						%seq%",
+						["i", i2s(i),
+						"r", ruleName(r),
+						"seq", seq
+					]);
+				}
+				iRule(ir): {
+					syntaxParsing2code(g, Opt(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 1: " + toString(p);
+			}
+		}
+		Star(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							SyntaxStar(acc, \\na ->
+								if (%stringat%) {
+									acc.i ::= acc.i + %len%;
+									dummySyntaxTree;
+								} else {
+									failSyntaxTree
+								}
+							);
+							%seq%",
+							["i", i2s(i),
+							"stringat", makeStringAt(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							SyntaxStar(acc, \\na ->
+								if (%stringat%) {
+									acc.i ::= acc.i + %len%;
+									dummySyntaxTree;
+								} else {
+									failSyntaxTree
+								}
+							);
+							%seq%",
+							["i", i2s(i),
+							"stringat", makeStringAt(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxStar(acc, do_parse_%r%);
+							if (c%i% != []) {
+								%seq%
+							} else failSyntaxTree;",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq,
+						]);
+					} else {
+						blueprint("
+							c%i% = SyntaxStar(acc, do_parse_%r%);
+							%seq%",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2code(g, Star(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				CutDown(ir): {
+					syntaxParsing2code(g, Star(ir), seq, i, inchoice, ruleName);
+				}
+				CutUp(ir): {
+					syntaxParsing2code(g, Star(ir), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 3: " + toString(p);
+			}
+		}
+		Plus(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxPlus(acc, \\na ->
+								if (%stringat%) {
+									acc.i ::= acc.i + %len%;
+									dummySyntaxTree;
+								} else {
+									failSyntaxTree
+								}
+							);
+							if (c%i% != []) {
+								%seq%
+							} else failSyntaxTree;",
+							["i", i2s(i),
+							"stringat", makeStringAt(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							c%i% = SyntaxPlus(acc, \\na ->
+								if (%stringat%) {
+									acc.i ::= acc.i + %len%;
+									dummySyntaxTree;
+								} else {
+									failSyntaxTree
+								}
+							);
+							if (c%i% != []) {
+								%seq%
+							} else {
+								// %expected%
+								updateExpectError(acc, \"\", %t%, i);
+								failSyntaxTree;
+							}",
+							["i", i2s(i),
+							"stringat", makeStringAt(tt),
+							"len", i2s(strlen(tt)),
+							"expected", toString("Expected '" + tt + "'"),
+							"seq", seq,
+							"t", toString(tt)]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxPlus(acc, do_parse_%r%);
+							if (length(c%i%) >= 1) {
+								%seq%
+							} else failSyntaxTree;",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq,
+						]);
+					} else {
+						blueprint("
+							c%i% = SyntaxPlus(acc, do_parse_%r%);
+							if (length(c%i%) >= 1) {
+								%seq%
+							} else {
+								// %expected%
+								updateExpectError(acc, \"\", %t%, i);
+								failSyntaxTree;
+							}",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"expected", toString("Expected at least one " + r),
+							"seq", seq,
+							"t", toString(r)
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2code(g, Plus(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 4: " + toString(p);
+			}
+		}
+		Negation(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							if (%stringat%) {
+								failSyntaxTree
+							} else {
+								%seq%
+							}",
+							[
+							"stringat", makeStringAt(tt),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							if (%stringat%) {
+								SyntaxTree(%notexpected%, -1, i, i, [])
+							} else {
+								%seq%
+							}",
+							["stringat", makeStringAt(tt),
+							"notexpected", i2s(-getCharCodeAt(tt, 0)),
+							"seq", seq]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = do_parse_%r%(acc);
+							if (c%i%.choice == -1) {
+								%seq%
+							} else failSyntaxTree;",
+							[
+								"i", i2s(i),
+								"r", ruleName(r),
+								"seq", seq
+							]
+						);
+					} else {
+						blueprint("
+							c%i% = do_parse_%r%(acc);
+							if (c%i%.choice == -1) {
+								%seq%
+							} else SyntaxTree(st_DidNotExpect%r%, -1, %i%, acc.i, []);",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2code(g, Negation(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 5: " + toString(p);
+			}
+		}
+		BindResult(__, r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
+		BindMatched(__, r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
+		CutDown(r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
+		CutUp(r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
+		default: "TODO 6: " + toString(p);
+	}
+}
+
+syntaxParsing2codeB(g : Grammar, p : Parsing, seq : string, i : int, inchoice : bool, ruleName : (string) -> string) -> string {
+	switch (p : Parsing) {
+		Term(t): {
+			if (inchoice) {
+				blueprint("
+					if (%stringat%) {
+						nxtcol(%len%);
+						%seq%
+					} else failSyntaxTreeB;",
+					["stringat", makeStringAtB(t),
+					"len", i2s(strlen(t)),
+					"seq", seq]
+				);
+			} else {
+				blueprint("
+					if (%stringat%) {
+						nxtcol(%len%);
+						%seq%
+					} else {
+						// %expected%
+						updateExpectErrorB(acc, \"\", %t%, pos);
+						failSyntaxTreeB;
+					}",
+					["stringat", makeStringAtB(t),
+					"len", i2s(strlen(t)),
+					"expected", toString("Expected '" + t + "'"),
+					"seq", seq,
+					"t", toString(t)]
+				);
+			}
+		}
+		CharRange(l, u): {
+			if (inchoice) {
+				blueprint("
+					if ({c = cc(); %l% <= c && c <= %u%}) {
+						nxtcol1();
+						%seq%
+					} else failSyntaxTreeB;",
+					["l", i2s(getCharCodeAt(l, 0)),
+					"u", i2s(getCharCodeAt(u, 0)),
+					"expected", toString("Expected '" + l + "'-'" + u + "'"),
+					"seq", seq]
+				);
+			} else {
+				blueprint("
+					if ({c = cc(); %l% <= c && c <= %u%}) {
+						nxtcol1();
+						%seq%
+					} else {
+						// %expected%
+						updateExpectErrorB(acc, \"\", %t%, pos);
+						failSyntaxTreeB;
+					}",
+					["l", i2s(getCharCodeAt(l, 0)),
+					"u", i2s(getCharCodeAt(u, 0)),
+					"expected", toString("Expected '" + l + "'-'" + u + "'"),
+					"seq", seq,
+					"t", toString("'" + l + "'-'" + u + "'")]
+				);
+			}
+		}
+		Rule(r): {
+			if (inchoice) {
+				blueprint("
+					c%i% = do_parse_%r%_b(acc);
+					if (c%i%.choice != -1) {
+						%seq%
+					} else failSyntaxTreeB;",
+				["i", i2s(i),
+					"r", ruleName(r),
+					"seq", seq,
+				]);
+			} else {
+				blueprint("
+					c%i% = do_parse_%r%_b(acc);
+					if (c%i%.choice != -1) {
+						%seq%
+					} else c%i%",
+					["i", i2s(i),
+					"r", ruleName(r),
+					"seq", seq
+				]);
+			}
+		}
+		iRule(ir): {
+			syntaxParsing2codeB(g, Rule(g.productions[ir].name), seq, i, inchoice, ruleName);
+		}
+		Opt(t): {
+			switch (t) {
+				Term(tm): {
+					blueprint("
+						if (%stringat%) {
+							nxtcol(%len%);
+						}
+						%seq%",
+						["stringat", makeStringAtB(tm),
+						"len", i2s(strlen(tm)),
+						"seq", seq]
+					);
+				}
+				Rule(r): {
+					blueprint("
+						i%i% = curpos();
+						t%i% = do_parse_%r%_b(acc);
+						c%i% = if (t%i%.choice == -1) {rstpos2(i%i%); [] } else [t%i%];
+						%seq%",
+						["i", i2s(i),
+						"r", ruleName(r),
+						"seq", seq
+					]);
+				}
+				iRule(ir): {
+					syntaxParsing2codeB(g, Opt(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 1: " + toString(p);
+			}
+		}
+		Star(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							SyntaxStarB(acc, \\na ->
+								if (%stringat%) {
+									nxtcol(%len%);
+									dummySyntaxTreeB;
+								} else {
+									failSyntaxTreeB;
+								}
+							);
+							%seq%",
+							["i", i2s(i),
+							"stringat", makeStringAtB(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							SyntaxStarB(acc, \\na ->
+								if (%stringat%) {
+									nxtcol(%len%);
+									dummySyntaxTreeB;
+								} else {
+									failSyntaxTreeB;
+								}
+							);
+							%seq%",
+							["i", i2s(i),
+							"stringat", makeStringAtB(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxStarB(acc, do_parse_%r%_b);
+							if (c%i% != []) {
+								%seq%
+							} else failSyntaxTreeB;",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq,
+						]);
+					} else {
+						blueprint("
+							c%i% = SyntaxStarB(acc, do_parse_%r%_b);
+							%seq%",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2codeB(g, Star(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				CutDown(ir): {
+					syntaxParsing2codeB(g, Star(ir), seq, i, inchoice, ruleName);
+				}
+				CutUp(ir): {
+					syntaxParsing2codeB(g, Star(ir), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 3: " + toString(p);
+			}
+		}
+		Plus(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxPlusB(acc, \\na ->
+								if (%stringat%) {
+									nxtcol(%len%);
+									dummySyntaxTreeB;
+								} else {
+									failSyntaxTreeB;
+								}
+							);
+							if (c%i% != []) {
+								%seq%
+							} else failSyntaxTreeB;",
+							["i", i2s(i),
+							"stringat", makeStringAtB(tt),
+							"len", i2s(strlen(tt)),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							c%i% = SyntaxPlusB(acc, \\na ->
+								if (%stringat%) {
+									nxtcol(%len%);
+									dummySyntaxTreeB;
+								} else {
+									failSyntaxTreeB;
+								}
+							);
+							if (c%i% != []) {
+								%seq%
+							} else {
+								// %expected%
+								updateExpectErrorB(acc, \"\", %t%, pos);
+								failSyntaxTreeB;
+							}",
+							["i", i2s(i),
+							"stringat", makeStringAtB(tt),
+							"len", i2s(strlen(tt)),
+							"expected", toString("Expected '" + tt + "'"),
+							"seq", seq,
+							"t", toString(tt)]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = SyntaxPlusB(acc, do_parse_%r%_b);
+							if (length(c%i%) >= 1) {
+								%seq%
+							} else failSyntaxTreeB;",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq,
+						]);
+					} else {
+						blueprint("
+							c%i% = SyntaxPlusB(acc, do_parse_%r%_b);
+							if (length(c%i%) >= 1) {
+								%seq%
+							} else {
+								// %expected%
+								updateExpectErrorB(acc, \"\", %t%, pos);
+								failSyntaxTreeB;
+							}",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"expected", toString("Expected at least one " + r),
+							"seq", seq,
+							"t", toString(r)
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2codeB(g, Plus(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 4: " + toString(p);
+			}
+		}
+		Negation(t): {
+			switch (t) {
+				Term(tt): {
+					if (inchoice) {
+						blueprint("
+							if (%stringat%) {
+								failSyntaxTreeB;
+							} else {
+								%seq%
+							}",
+							[
+							"stringat", makeStringAtB(tt),
+							"seq", seq]
+						);
+					} else {
+						blueprint("
+							if (%stringat%) {
+								SyntaxTreeB(%notexpected%, -1, pos, pos, [])
+							} else {
+								%seq%
+							}",
+							["stringat", makeStringAtB(tt),
+							"notexpected", toString("Did not expect '" + tt + "'"),
+							"seq", seq]
+						);
+					}
+				}
+				Rule(r): {
+					if (inchoice) {
+						blueprint("
+							c%i% = do_parse_%r%_b(acc);
+							if (c%i%.choice == -1) {
+								%seq%
+							} else failSyntaxTreeB;", ["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq
+						]);
+					} else {
+						blueprint("
+							c%i% = do_parse_%r%_b(acc);
+							if (c%i%.choice == -1) {
+								%seq%
+							} else SyntaxTreeB(\"Did not expect %r%\", -1, pos, curpos(), []);",
+							["i", i2s(i),
+							"r", ruleName(r),
+							"seq", seq
+						]);
+					}
+				}
+				iRule(ir): {
+					syntaxParsing2codeB(g, Negation(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+				}
+				default: "TODO 5: " + toString(p);
+			}
+		}
+		BindResult(__, r): syntaxParsing2codeB(g, r, seq, i, inchoice, ruleName);
+		BindMatched(__, r): syntaxParsing2codeB(g, r, seq, i, inchoice, ruleName);
+		CutDown(r): syntaxParsing2codeB(g, r, seq, i, inchoice, ruleName);
+		CutUp(r): syntaxParsing2codeB(g, r, seq, i, inchoice, ruleName);
+		default: "TODO 6: " + toString(p);
+	}
+}
+
+makeStringAt(term : string) -> string {
+	n = strlen(term);
+	if (n == 0) {
+		"true"
+	} else if (n == 1) {
+		"getCharCodeAt(acc.input, acc.i) == " + i2s(getCharCodeAt(term, 0)) + " /* " + term + " */"
+	} else if (n == 2) {
+		"getCharCodeAt(acc.input, acc.i) == " + i2s(getCharCodeAt(term, 0)) +
+		" && getCharCodeAt(acc.input, acc.i + 1) == " + i2s(getCharCodeAt(term, 1))
+		+ (if (term != "*/") " /* " + term + " */" else "/* * / */")
+	} else {
+		// "strContainsAt(acc.input, acc.i, " + toString(term) + ")"
+		"strRangeIndexOf(acc.input, " + toString(term) + ", acc.i, acc.i + " + i2s(strlen(term)) + ") == acc.i";
+	}
+}
+
+makeStringAtB(term : string) -> string {
+	n = strlen(term);
+	if (n == 0) {
+		"true"
+	} else if (n == 1) {
+		"cc() == " + i2s(getCharCodeAt(term, 0)) + " /* " + term + " */"
+	} else if (n == 2) {
+		"cc() == " + i2s(getCharCodeAt(term, 0)) + " && cc2(1) == " + i2s(getCharCodeAt(term, 1))
+		+ (if (term != "*/") " /* " + term + " */" else "/* * / */")
+	} else {
+		"cmpB(" + toString(term) + ")";
+	}
+}

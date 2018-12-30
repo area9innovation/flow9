@@ -1,0 +1,169 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/manipulation/freevars;
+import binarytreeutils;
+// This import is used for FcError and FcPosition
+import tools/flowc/fcmodule;
+
+export {
+	// Find unused local variables (and arguments)
+	findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) -> void;
+	// Find unused exports and unused functions
+	findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcError) -> void) -> void;
+}
+
+findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) {
+	iter(getTreeValues(prog.modules), \module ->
+		iter(module.functions, \fn : FiFunctionDec ->
+			findUnusedLocalsExp(fn.lambda, makeSet(), module.fileinfo.flowfile, findUnusedArguments, onError)
+		)
+	)
+}
+
+findUnusedLocalsExp(expr : FiExp, bound : Set<string>, flowfile : string, arguments : bool, onError : (FcError) -> void) -> void {
+	rec = \e -> findUnusedLocalsExp(e, bound, flowfile, arguments, onError);
+	switch (expr) {
+		FiLambda(args, body, __, start): {
+			rec(body);
+			if (arguments) {
+				iter(
+					args, 
+					\a -> {
+						if (a.name != "__" && !containsSet(fifreevars(body), a.name)) {
+							onError(FcError("Unused argument " + a.name, [FcPosition(flowfile, start, start)]));
+						}
+					}
+				)
+			}
+		}
+		FiCall(f, args, __, __): { rec(f); iter(args, rec); }
+		FiVar(__, __, __): { };
+		FiLet(x, __, e1, e2, __, start): {
+			rec(e1); rec(e2);
+			if (!containsSet(bound, x) && !containsSet(fifreevars(e2), x)) {
+				onError(FcError("Unused local " + x, [FcPosition(flowfile, start, start)]));
+			}
+		}
+		FiIf(e1, e2, e3, __, __): { rec(e1); rec(e2); rec(e3); }
+		FiSwitch(e, __, cs, __, __): {
+			rec(e);
+			iter(cs, \c -> findUnusedLocalsExp(c.body, mergeSets(bound, buildSet(c.argNames)), flowfile, arguments, onError));
+		}
+		FiCast(e, __, __, __, __):    rec(e);
+		FiSeq(es, __, __):           iter(es, rec);
+		FiCallPrim(__, es, __, __):  iter(es, rec);
+		FiString(__, __): { }
+		FiBool(__, __):   { }
+		FiDouble(__, __): { }
+		FiVoid(__):       { }
+		FiInt(__, __):    { }
+		FiRequire(__, e, __, __): rec(e);
+		FiUnsafe(__, fb, __, __): rec(fb);
+	}
+}
+
+findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcError) -> void) {
+	modules = filtermap(prog.traversal, \flowfile -> eitherMap(lookupTree(prog.modules, flowfile), \m -> Some(m), None()));
+	module2symbols = fold(
+		modules, 
+		makeTree(),
+		\a, module -> {
+			symbols1 = fold(module.functions, makeSet(), \acc, fn : FiFunctionDec -> mergeSets(acc, fifreevars(fn.lambda)));
+			symbols2 = fold(module.natives, symbols1, \acc, nat : FiNativeDec -> {
+				fallbackLambda : FiExp = nat.fallbackLambda;
+				switch (fallbackLambda) {
+					FiLambda(__, __, __, __): mergeSets(acc, fifreevars(nat.fallbackLambda));
+					default: acc;
+				}
+			});
+			symbols3 = fold(module.globalVars, symbols2, \acc, gvar : FiGlobalVar -> mergeSets(acc, fifreevars(gvar.value)));
+			setTree(a, module.fileinfo.flowfile, symbols3);
+		}
+	);
+	iter(
+		modules, 
+		\module -> {
+			funcsVars = FuncVars(
+				pairs2tree(map(module.functions, \fn -> Pair(fn.name, fn))),
+				pairs2tree(map(module.globalVars, \gv -> Pair(gv.name, gv)))
+			);
+			findUnusedExportsInModule(module, modules, module2symbols, onError, funcsVars);
+			if (findUnusedFunctions) {
+				findUnusedFunctionsInModule(module, modules, module2symbols, onError, funcsVars);
+			}
+		}
+	)
+}
+
+FuncVars : (funcs : Tree<string, FiFunctionDec>, gvars : Tree<string, FiGlobalVar>);
+
+findUnusedExportsInModule(module : FiModule, modules : [FiModule], module2symbols : Tree<string, Set<string>>, onError : (FcError) -> void, funcVars : FuncVars) -> void {
+	flowfile = module.fileinfo.flowfile;
+	func_names = buildSet(map(module.functions, \func -> func.name));
+	gvar_names = buildSet(map(module.globalVars, \gvar -> gvar.name));
+	exported_funcs = filter(module.exports, \name -> containsSet(func_names, name));
+	exported_gvars = filter(module.exports, \name -> containsSet(gvar_names, name));
+	iter(
+		exported_funcs, 
+		\fname -> {
+			unused = !exists(
+				modules, 
+				\m -> {
+					mname = m.fileinfo.flowfile;
+					(flowfile != mname) && containsSet(lookupTreeDef(module2symbols, mname, makeSet()), fname)
+				}
+			);
+			if (unused) {
+				maybeApply(lookupTree(funcVars.funcs, fname), \fn : FiFunctionDec ->
+					onError(FcError("Unused function export " + fname, [FcPosition(flowfile, fn.declStart, fn.declStart)]))
+				);
+			}
+		}
+	);
+	iter(
+		exported_gvars, 
+		\vname -> {
+			unused = !exists(
+				modules, 
+				\m -> {
+					mname = m.fileinfo.flowfile;
+					(flowfile != mname) && containsSet(lookupTreeDef(module2symbols, mname, makeSet()), vname)
+				}
+			);
+			if (unused) {
+				maybeApply(lookupTree(funcVars.gvars, vname), \gv : FiGlobalVar ->
+					onError(FcError("Unused global variable export " + vname, [FcPosition(flowfile, gv.declStart, gv.declStart)]))
+				);
+			}
+		}
+	);
+}
+
+findUnusedFunctionsInModule(module : FiModule, modules : [FiModule], module2symbols : Tree<string, Set<string>>, onError : (FcError) -> void, funcVars : FuncVars) -> void {
+	flowfile = module.fileinfo.flowfile;
+	moduleExportsSet = buildSet(module.exports);
+	allUsedSymbols = foldTree(module2symbols, makeSet(), \__, sym, acc -> mergeSets(acc, sym));
+	traverseInOrder(
+		funcVars.funcs, 
+		\fname, __ -> {
+			if (!containsSet(moduleExportsSet, fname) && fname != "main") {
+				if (!containsSet(allUsedSymbols, fname)) {
+					maybeApply(lookupTree(funcVars.funcs, fname), \fn : FiFunctionDec ->
+						onError(FcError("Unused function " + fname, [FcPosition(flowfile, fn.declStart, fn.declStart)]))
+					)
+				}
+			}
+		}
+	);
+	traverseInOrder(
+		funcVars.gvars, 
+		\vname, __ -> {
+			if (!containsSet(moduleExportsSet, vname)) {
+				if (!containsSet(allUsedSymbols, vname)) {
+					maybeApply(lookupTree(funcVars.gvars, vname), \gv : FiGlobalVar ->
+						onError(FcError("Unused global variable " + vname, [FcPosition(flowfile, gv.declStart, gv.declStart)]))
+					)
+				}
+			}
+		}
+	)
+}

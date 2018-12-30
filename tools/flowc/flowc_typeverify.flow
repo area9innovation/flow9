@@ -1,0 +1,731 @@
+import binarytree;
+import tools/flowc/fctypeenv;
+import tools/flowc/incremental/fimodule;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_module;
+
+export {
+	// Check that all types in a module are consistent with FcTypeEnvGlobal
+	typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError) -> void) -> bool;
+}
+
+TypeVerifyEnv(
+	module : TypeVerifyModuleEnv,
+	local : TypeVerifyLocalEnv
+);
+
+TypeVerifyModuleEnv(
+	name : string, 
+	global : FcTypeEnvProgram,
+	moduleStructsUnions : Tree<string, FiStructOrUnion>,
+	globalNames : Set<string>,
+	moduleNames : Set<string>,
+	exprError : ref bool,
+	typeError : ref bool,
+	imports : Set<string>
+);
+
+TypeVerifyLocalEnv(
+	typarsInst : ref Tree<string, FiType>,
+	tyvarsInst : ref Tree<int, FiType>,
+	varNames : Set<string>
+);
+
+typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError) -> void) -> bool {
+	t = timestamp();
+	moduleNames = fold(module.structs,
+		fold(module.unions,
+			fold(module.functions, 
+				fold(module.globalVars, 
+					fold(module.natives, 
+						makeSet(),
+						\all1, nat -> insertSet(all1, nat.name)
+					),
+					\all2, gvar -> insertSet(all2, gvar.name)
+				),
+				\all3, func -> insertSet(all3, func.name)
+			),
+			\all4, union -> insertSet(all4, union.name)
+		),
+		\all5, struct -> insertSet(all5, struct.name)
+	);
+	moduleEnv = TypeVerifyModuleEnv(
+		module.fileinfo.flowfile,
+		env,
+		fold(module.structs, 
+			fold(module.unions, 
+				makeTree(), 
+				\acc : Tree<string, FiStructOrUnion>, union -> setTree(acc, union.name, union)
+			), 
+			\acc, struct -> setTree(acc, struct.name, struct)
+		),
+		env.exported,
+		moduleNames,
+		ref false,
+		ref false,
+		fold(module.imports, makeSet(), \acc, imp ->
+			mergeSets(
+				mergeSets(acc, makeSet1(imp.flowfile)),
+				lookupTreeDef(env.acc.names.moduleImports, imp.flowfile, makeSet())
+			)
+		)
+	);
+	ret = fold(module.structs,    true, \ok, struct -> ok && typeverifyFiTypeStruct(moduleEnv, struct, onError)) &&
+	fold(module.unions,     true, \ok, union -> ok && typeverifyFiTypeUnion(moduleEnv, union, onError)) &&
+	fold(module.functions,  true, \ok, func -> ok && typeverifyFiFunctionDec(moduleEnv, func, onError)) &&
+	fold(module.globalVars, true, \ok, var -> ok && typeverifyFiGlobalVar(moduleEnv, var, onError)) &&
+	fold(module.natives,    true, \ok, nat -> ok && typeverifyFiNativeDec(moduleEnv, nat, onError));
+	incrementTimePhase(fcTimePhases.typeverify, t);
+	ret
+}
+
+typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, onError : (FcError) -> void) -> bool {
+	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	ret = 
+		verifyNameUnused(moduleEnv, struct.name, onError, struct.start) &&
+		fold(struct.typars, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, struct.start)) &&
+		fold(struct.args,   true, \ok, arg -> ok && typeverifyFiType(tenv, arg.type, onError, struct.start));
+	if (!ret) {
+		onError(FcError("in struct '" + struct.name + "'", [FcPosition(moduleEnv.name, struct.start, struct.start)]));
+	}
+	ret
+}
+
+typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onError : (FcError) -> void) -> bool {
+	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	ret = 
+		verifyNameUnused(moduleEnv, union.name, onError, union.start) &&
+		fold(union.typeparameters, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, union.start));
+	if (!ret) {
+		onError(FcError("in union '" + union.name + "'", [FcPosition(moduleEnv.name, union.start, union.start)]));
+	}
+	ret
+}
+
+verifyNameUnused(env : TypeVerifyModuleEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
+	names = env.global.acc.names;
+	ret = 
+		!containsKeyTree(names.structs, name) &&
+		!containsKeyTree(names.unions, name) &&
+		!containsKeyTree(names.toplevel, name);
+	if (!ret) {
+		position : FcPosition = switch (lookupTree(names.structs, name)) {
+			Some(struct): {
+				module = lookupTreeDef(names.struct2module, name, "");
+				FcPosition(module, struct.info.start, struct.info.end);
+			}
+			None(): {
+				switch (lookupTree(names.unions, name)) {
+					Some(union): {
+						module = lookupTreeDef(names.union2module, name, "");
+						FcPosition(module, union.info.start, union.info.end);
+					}
+					None(): {
+						switch (lookupTree(names.toplevel, name)) {
+							Some(decl): {
+								switch (decl) {
+									FcFunctionDec(__,__,__,declInfo, defiInfo): {
+										module = lookupTreeDef(names.function2module, name, "");
+										FcPosition(module, declInfo.start, declInfo.end);
+									}
+									FcGlobalVar(__,__,declInfo, bodyInfo): {
+										module = lookupTreeDef(names.globalVar2module, name, "");
+										FcPosition(module, declInfo.start, declInfo.end);
+									}
+									FcNativeDec(__,__,__,__,__, info): {
+										module = lookupTreeDef(names.native2module, name, "");
+										FcPosition(module, info.start, info.end);
+									}
+								}
+							}
+							None(): {
+								onError(FcError("this branch is impossible", []));
+								FcPosition("", -1, -1);
+							}
+						}
+					}
+				}
+			}
+		}
+		if (position.file == env.name) {
+			// in this case 'name' is defined in this module, so there's no collision
+			true
+		} else {
+			onError(FcError(
+				"name '" + name + "' is already used", 
+				[position, FcPosition(env.name, start, start)]
+			));
+			false
+		}
+	} else {
+		ret
+	}
+}
+
+typeverifyFiFunctionDec(moduleEnv : TypeVerifyModuleEnv, func : FiFunctionDec, onError : (FcError) -> void) -> bool {
+	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	ret = 
+		verifyNameUnused(moduleEnv, func.name, onError, func.declStart) &&
+		typeverifyFiExp(tenv, func.lambda, onError) &&
+		typeverifyFiType(tenv, func.type, onError, func.declStart);
+	if (!ret) {
+		onError(FcError("in function '" + func.name + "'", [FcPosition(moduleEnv.name, func.declStart, func.declStart)]));
+	}
+	ret
+}
+
+typeverifyFiGlobalVar(moduleEnv : TypeVerifyModuleEnv, var : FiGlobalVar, onError : (FcError) -> void) -> bool {
+	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	ret = 
+		verifyNameUnused(moduleEnv, var.name, onError, var.declStart) &&
+		typeverifyFiExp(tenv, var.value, onError) &&
+		typeverifyFiType(tenv, var.type, onError, var.declStart);
+	if (!ret) {
+		onError(FcError("in global variable '" + var.name + "'", [FcPosition(moduleEnv.name, var.declStart, var.declStart)]));
+	}
+	ret
+}
+
+typeverifyFiNativeDec(moduleEnv : TypeVerifyModuleEnv, nat : FiNativeDec, onError : (FcError) -> void) -> bool {
+	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	ret = 
+		verifyNameUnused(moduleEnv, nat.name, onError, nat.declStart) &&
+		typeverifyFiExp(tenv, nat.fallbackLambda, onError) &&
+		typeverifyFiType(tenv, nat.type, onError, nat.declStart);
+	if (!ret) {
+		onError(FcError("in native '" + nat.name + "'", [FcPosition(moduleEnv.name, nat.declStart, nat.declStart)]));
+	}
+	ret
+}
+
+typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) -> bool {
+	ret = switch (expr) {
+		FiLambda(args, body, type, __): {
+			newEnv = TypeVerifyEnv(
+				env.module,
+				TypeVerifyLocalEnv(
+					env.local.typarsInst, 
+					env.local.tyvarsInst,
+					fold(args, env.local.varNames, \acc, arg -> insertSet(acc, arg.name))
+				)
+			);
+			typeverifyFiType(newEnv, type, onError, expr.start) && 
+			typeverifyFiExp(newEnv, body, onError) && 
+			fold(args, true, \ok, arg -> ok && typeverifyFiType(newEnv, arg.type, onError, expr.start));
+		}
+		FiCall(f, args, type, __):
+			typeverifyFiType(env, type, onError, expr.start) && 
+			typeverifyFiExp(env, f, onError) && 
+			fold(args, true, \ok, arg -> ok && typeverifyFiExp(env, arg, onError));
+		FiVar(name, type, s):
+			typeverifyFiVar(env, expr, onError) && checkNameAccessible(env, name, onError,s);
+		FiLet(x, tp, e1, e2, type, __): {
+			newEnv = TypeVerifyEnv(
+				env.module,
+				TypeVerifyLocalEnv(
+					env.local.typarsInst, 
+					env.local.tyvarsInst,
+					insertSet(env.local.varNames, x)
+				)
+			);
+			typeverifyFiType(newEnv, type, onError, expr.start) && 
+			typeverifyFiType(newEnv, tp, onError, expr.start) && 
+			typeverifyFiExp(newEnv, e1, onError) && 
+			typeverifyFiExp(newEnv, e2, onError);
+		}
+		FiIf(e1, e2, e3, type, __):
+			typeverifyFiType(env, type, onError, expr.start) && 
+			typeverifyFiExp(env, e1, onError) && 
+			typeverifyFiExp(env, e2, onError) && 
+			typeverifyFiExp(env, e3, onError);
+		FiSwitch(e, typ, cs, type, __):
+			typeverifyFiSwitch(env, expr, onError);
+		FiCast(e, from, to, type, __):
+			typeverifyFiType(env, type, onError, expr.start) && 
+			typeverifyFiType(env, from, onError, expr.start) && 
+			typeverifyFiType(env, to, onError, expr.start) && 
+			typeverifyFiExp(env, e, onError);
+		FiSeq(es, type, __):
+			typeverifyFiType(env, type, onError, expr.start) && 
+			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
+		FiCallPrim(prim, es, type, s):   {
+			switch (prim) {
+				FcStructPrim(struct_name): {
+					checkNameAccessible(env, struct_name, onError, s) &&
+					typeverifyFcStructPrim(env, struct_name, es, onError, s);
+				}
+				FcFieldPrim(field_name): {
+					// Check, that the given field name exists
+					switch (fiExpType(es[0])) {
+						FiTypeName(type_name, __): {
+							fieldExists = ensureFieldExists(
+								env.module.global.acc.names,
+								env.module.moduleStructsUnions,
+								field_name, type_name, onError,
+								env.module.name, s
+							);
+							checkNameAccessible(env, type_name, onError, s) && fieldExists;
+						}
+						FiTypeFlow():
+							true;  // We can't do better, if type is flow
+						default:
+							false; // This branch must never occur
+					}
+				}
+				default: true;
+			} && 
+			typeverifyFiType(env, type, onError, expr.start) && 
+			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
+		}
+		FiString(__, __):               true;
+		FiBool(__, __):                 true;
+		FiDouble(__, __):               true;
+		FiVoid(__):                     true;
+		FiInt(__, __):                  true;
+		FiRequire(__, e, type, __):     typeverifyFiType(env, type, onError, expr.start) && typeverifyFiExp(env, e, onError);
+		FiUnsafe(__, fb, type, __):     typeverifyFiType(env, type, onError, expr.start) && typeverifyFiExp(env, fb, onError);
+	}
+	if (!ret && !^(env.module.exprError)) {
+		env.module.exprError := true;
+		onError(FcError(
+			"in expression '" + cutoffString(prettyFiExp(dummyPretty, expr), 32) + "'", 
+			[FcPosition(env.module.name, expr.start, expr.start)])
+		);
+	}
+	ret
+}
+
+typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError : (FcError) -> void, start : int) -> bool {
+	// Check the number and types of arguments
+	switch (lookupTree(env.module.global.acc.names.structs, name)) {
+		Some(struct): {
+			// Case of FcTypeStruct - origin from the outer module
+			if (length(struct.args) != length(es)) {
+				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, name));
+				onError(FcError(
+					"number of struct args: " + i2s(length(struct.args)) + " mismatch with number of arguments: " + i2s(length(es)),
+					[
+						FcPosition(env.module.name, start, start),
+						FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), struct_start, struct_start)
+					]
+				));
+			}
+			length(struct.args) == length(es) &&
+			forall(
+				zipWith(struct.args, es, \a, e -> Pair(a, e)),
+				\p -> consistentInstantiationOfFcTypeWithFiType(
+					TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())),
+					fiExpType(p.second), p.first.type, onError, start
+				)
+			);
+		}
+		None(): {
+			switch (lookupTree(env.module.moduleStructsUnions, name)) {
+				Some(su): {
+					// Case of FiTypeStruct - origin from the current module
+					switch (su) {
+						FiTypeStruct(n, __, args, __): {
+							if (length(args) != length(es)) {
+								struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, name));
+								onError(FcError("number of struct args: " + i2s(length(args)) + " mismatch with number of arguments: " + i2s(length(es)), 
+									[
+										FcPosition(env.module.name, start, start),
+										FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), struct_start, struct_start)
+									]
+								));
+							}
+							length(args) == length(es) &&
+							forall(
+								zipWith(args, es, \a, e -> Pair(a, e)),
+								\p -> p.first.type == fiExpType(p.second) || typeverifyIsSubtype(env, name, n, onError, start)
+							)
+						}
+						FiTypeUnion(__,__,__,__): false;
+					}
+				}
+				None(): false;
+			}
+		}
+	}
+}
+
+typeverifyFiVar(env : TypeVerifyEnv, var : FiVar, onError : (FcError) -> void) -> bool {
+	typeverifyFiType(env, var.type, onError, var.start) &&
+	switch (lookupTree(env.module.global.types, var.name)) {
+		Some(tp): {
+			consistentInstantiationOfFcTypeWithFiType(
+				TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())), 
+				var.type, tp, onError, var.start
+			);
+		}
+		None(): true;
+	}
+}
+
+typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> void) -> bool {
+	switchCaseTypes = fold(sw.cases, makeSet(), \caseTypes, c -> insertSet(caseTypes, c.struct));
+	switchTypeName = switch (sw.switchType) {
+		FiTypeFlow(): "";
+		FiTypeName(name, __): name;
+		default: {
+			onError(FcError(
+				"Did not expect a switch on type '" + prettyFiType(dummyPretty, sw.switchType, makeSet()) + "'", 
+				[FcPosition(env.module.name, sw.start, sw.start)]
+			));
+			"";
+		}
+	};
+
+	// Look in the global environment
+	subtypes = buildSet(getTreeKeys(typeVerifyName2structs(env, switchTypeName, makeTree())));
+       
+	caseTypesCoincide = (switchTypeName == "" || containsSet(switchCaseTypes, "default") || equalSet(switchCaseTypes, subtypes));
+	if (!caseTypesCoincide) {
+		diff_set = \s1, s2 -> foldSet(s1, makeSet(), \acc, x -> if (containsSet(s2, x)) acc else insertSet(acc, x));
+		diff_1 = diff_set(subtypes, switchCaseTypes);
+		if (sizeSet(diff_1) > 0) {
+			onError(FcError(
+				"switch cases do not cover type variants: " + strGlueSetWithCutoff(diff_1, 16),
+				[FcPosition(env.module.name, sw.start, sw.start)]
+			));
+		}
+		diff_2 = diff_set(switchCaseTypes, subtypes);
+		if (sizeSet(diff_2) > 0) {
+			onError(FcError(
+				"switch cases which have no corresponding structs: " + strGlueSetWithCutoff(diff_2, 16),
+				[FcPosition(env.module.name, sw.start, sw.start)]
+			));
+		}
+	}
+	caseTypesCoincide &&
+	typeverifyFiType(env, sw.type, onError, sw.start) && 
+	typeverifyFiType(env, sw.switchType, onError, sw.start) && 
+	fold(sw.cases, true, 
+		\ok, c -> {
+			newEnv = TypeVerifyEnv(
+				env.module,
+				TypeVerifyLocalEnv(
+					env.local.typarsInst, 
+					env.local.tyvarsInst,
+					fold(c.argNames, env.local.varNames, \acc, argname -> insertSet(env.local.varNames, argname))
+				)
+			);
+			argsNumIsOk = (
+				c.struct == "default" ||
+				length(c.argNames) == 0 || // This exception is added because unions in switch cases always produce structs with no args
+				typeverifyNumberOfStructArgs(env, c.struct) == length(c.argNames)
+			);
+			if (!argsNumIsOk) {
+				struct_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, c.struct));
+				onError(
+					FcError(
+						"struct '" + c.struct + "' has wrong number of args: " + i2s(length(c.argNames)),
+						[
+							FcPosition(env.module.name, c.start, c.start),
+							FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, c.struct), struct_start, struct_start)
+						]
+					)
+				);
+			}
+			ok && 
+			typeverifyFiExp(newEnv, c.body, onError) && 
+			argsNumIsOk
+		}
+	) && 
+	forall(set2array(switchCaseTypes), \caseTypeName -> (caseTypeName == "default" || checkNameAccessible(env, caseTypeName, onError, sw.start)));
+}
+
+
+typeVerifyName2structs(env : TypeVerifyEnv, name : string, acc : Tree<string, int>) -> Tree<string, int> {
+	// Look in the global environment
+	subtypes0 = switch (lookupTree(env.module.global.acc.names.unions, name)) {
+		Some(switchTypeUnion): fold(switchTypeUnion.typenames, acc, \acc2, subtype -> typeVerifyName2structs(env, subtype.name, acc2));
+		None(): {
+			switch (lookupTree(env.module.global.acc.names.structs, name)) {
+				Some(st): setTree(acc, name, st.info.start);
+				None(): acc;
+			}
+		}
+	}
+	// Look for this in the local environment as well
+	switch (lookupTree(env.module.moduleStructsUnions, name)) {
+		None(): subtypes0;
+		Some(su): {
+			switch (su) {
+				FiTypeStruct(__, __, __, s): setTree(subtypes0, name, s);
+				FiTypeUnion(__, __, tns, __): {
+					fold(tns, subtypes0, \acc2, tn -> typeVerifyName2structs(env, tn.name, acc2));
+				}
+			}
+		}
+	};
+}
+
+typeverifyFiType(env : TypeVerifyEnv, type : FiType, onError : (FcError) -> void, start : int) -> bool {
+	ret = switch (type) {
+		FiTypeArray(at):
+			typeverifyFiType(env, at, onError, start);
+		FiTypeFunction(ats, rt):
+			typeverifyFiType(env, rt, onError, start) && 
+			fold(ats, true, \ok, at : FiFunArg -> ok && typeverifyFiType(env, at.type, onError, start));
+		FiTypeRef(rt):
+			typeverifyFiType(env, rt, onError, start);
+		FiTypeParameter(s1): true; // TODO: any checks?...
+		FiTypeBool():   true;
+		FiTypeInt():    true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+		FiTypeFlow():   true;
+		FiTypeVoid():   true;
+		FiTypeNative(): true;
+		FiTypeName(name,__):
+			checkNameAccessible(env, name, onError, 0) && 
+			typeverifyFiTypeName(env, type, onError, start);
+	}
+	if (!ret && !^(env.module.typeError)) {
+		env.module.typeError := true;
+		onError(FcError(
+			"in type '" + cutoffString(prettyFiType(dummyPretty, type, makeSet()), 32) + "'", 
+			[FcPosition(env.module.name, start, start)]
+		));
+	}
+	ret
+}
+
+checkNameAccessible(env : TypeVerifyEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
+	isLocalScope = containsSet(env.local.varNames, name);
+	isModuleScope = containsSet(env.module.moduleNames, name);
+	isGlobalScope = !isModuleScope && containsSet(env.module.globalNames, name);
+	isDefinedSomewhere = isGlobalScope || isModuleScope || isLocalScope;
+	definition_module = moduleWhereNameIsDefined(env.module.global.acc.names, name);
+	isImported = containsSet(env.module.imports, definition_module);
+
+	ret = (isDefinedSomewhere && (!isGlobalScope || isImported)) || typeverifyIsStructOrUnionName(env, name, onError, start);
+	if (!ret) {
+		if (!isDefinedSomewhere) {
+			onError(FcError("name '" + name + "' is not accessible in context", [FcPosition(env.module.name, start, start)]));
+		}
+		if (isGlobalScope && !isImported) {
+			onError(FcError("name '" + name + "' is not imported, use 'import " + definition_module + ";' to fix", [FcPosition(env.module.name, start, start)]));
+		}
+	}
+	ret
+}
+
+typeverifyFiTypeName(env : TypeVerifyEnv, type : FiTypeName, onError : (FcError) -> void, start : int) -> bool {
+	fold(type.typeparameters, true, \ok, tp -> ok && typeverifyFiType(env, tp, onError, start)) &&
+	typeverifyIsStructOrUnionName(env, type.name, onError, start)
+}
+
+typeverifyIsStructOrUnionName(env : TypeVerifyEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
+	switch (typeverifyName2StructOrUnion(env, name)) {
+		Some(su): true;
+		None(): {
+			onError(FcError(
+				"name '" + name + "' is not a name of struct or union", 
+				[FcPosition(env.module.name, start, start)]
+			));
+			false;
+		}
+	}
+}
+
+FcStructOrUnion ::= FcTypeStruct, FcTypeUnion;
+FcFiStructOrUnion ::= FcStructOrUnion, FiStructOrUnion;
+
+typeverifyName2StructOrUnion(env : TypeVerifyEnv, name : string) -> Maybe<FcFiStructOrUnion> {
+	struct : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.structs, name);
+	switch (struct) {
+		Some (s): Some(s);
+		None(): {
+			union : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.unions, name);
+			switch (union) {
+				Some(u): Some(u);
+				None(): {
+					switch (lookupTree(env.module.moduleStructsUnions, name)) {
+						Some(su): Some(su);
+						None(): None();
+					}
+				}
+			}
+		}
+	}
+}
+
+typeverifyNumberOfStructArgs(env : TypeVerifyEnv, typename : string) -> int {
+	switch (lookupTree(env.module.global.acc.names.structs, typename)) {
+		Some(st): length(st.args);
+		None(): {
+			switch (lookupTree(env.module.moduleStructsUnions, typename)) {
+				Some(su): {
+					switch (su) {
+						FiTypeStruct(__,__, args,__): length(args);
+						FiTypeUnion(__,__,__,__): -1;
+					}
+				}
+				None(): -1;
+			}
+		}
+	}
+}
+
+consistentInstantiationOfFcTypeWithFiType(env : TypeVerifyEnv, t1 : FiType, t2 : FcType, onError : (FcError) -> void, start : int) -> bool {
+	ret = switch (t2) {
+		FcTypeParameter(n, __): {
+			switch (lookupTree(^(env.local.typarsInst), n)) {
+				Some(t1_inst): {
+					switch (t1_inst) {
+						FiTypeParameter(n1_inst):
+							switch (t1) {
+								FiTypeFlow(): true; 
+								FiTypeParameter(n1): n1_inst == n1 || typeverifyIsSubtype(env, n1, n1_inst, onError, start);
+								default: {
+									env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1);
+									true;
+								}
+							}
+						default: switch (t1) { FiTypeFlow(): true; default: t1 == t1_inst; }
+					}
+				}
+				None(): { env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1); true; }
+			}
+		}
+		FcTypeVar(id, __):
+			switch (lookupTree(^(env.local.tyvarsInst), id)) {
+				Some(t1_inst): switch (t1) { FiTypeFlow(): true; default: t1 == t1_inst; }
+				None(): { env.local.tyvarsInst := setTree(^(env.local.tyvarsInst), id, t1); true; }
+			}
+		FcTypeArray(t2_arr, __): switch (t1) { FiTypeFlow(): true; FiTypeArray(t1_arr): consistentInstantiationOfFcTypeWithFiType(env, t1_arr, t2_arr, onError, start); default: false; }
+		FcTypeRef(t2_ref, __):   switch (t1) { FiTypeFlow(): true; FiTypeRef(t1_ref):   consistentInstantiationOfFcTypeWithFiType(env, t1_ref, t2_ref, onError, start); default: false; }
+		FcTypeFunction(t2_at, t2_rt, __):
+			switch (t1) {
+				FiTypeFlow(): true; 
+				FiTypeFunction(t1_at, t1_rt):
+					consistentInstantiationOfFcTypeWithFiType(env, t1_rt, t2_rt, onError, start) &&
+					length(t1_at) == length(t2_at) &&
+					foldi(t1_at, true, \i, ok, a -> ok && consistentInstantiationOfFcTypeWithFiType(env, a.type, t2_at[i].type, onError, start));
+				default: false;
+			}
+		FcTypeBool(__):        switch (t1) { FiTypeFlow(): true; FiTypeBool():   true; default: false; }
+		FcTypeInt(__):         switch (t1) { FiTypeFlow(): true; FiTypeInt():    true; default: false; }
+		FcTypeDouble(__):      switch (t1) { FiTypeFlow(): true; FiTypeDouble(): true; default: false; }
+		FcTypeString(__):      switch (t1) { FiTypeFlow(): true; FiTypeString(): true; default: false; }
+		FcTypeFlow(__):        true;
+		FcTypeVoid(__):        switch (t1) { FiTypeFlow(): true; FiTypeVoid():   true; default: false; }
+		FcTypeNative(__):      switch (t1) { FiTypeFlow(): true; FiTypeNative(): true; default: false; }
+		FcTypeName(n2, typars2, __):
+			switch (t1) {
+				FiTypeFlow(): true; 
+				FiTypeName(n1, typars1):
+					(n1 == n2 || typeverifyIsSubtype(env, n2, n1, onError, start)) &&
+					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
+				default: false;
+			}
+		FcTypeStruct(n2, typars2, __, __):
+			switch (t1) {
+				FiTypeFlow(): true; 
+				FiTypeName(n1, typars1):
+					n1 == n2 &&
+					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
+				default: false;
+			}
+		FcTypeUnion(n2, typars2, __, __):
+			switch (t1) {
+				FiTypeFlow(): true; 
+				FiTypeName(n1, typars1):
+					(n1 == n2 || typeverifyIsSubtype(env, n2, n1, onError, start)) &&
+					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
+				default: false;
+			}
+	}
+	if (!ret) {
+		onError(FcError(
+			"type '" + prettyFcType(dummyPretty, t2, makeSet()) + "' cannot be substituted with '" + prettyFiType(dummyPretty, t1, makeSet()) + "'", 
+			[FcPosition(env.module.name, start, start)]
+		));
+	}
+	ret
+}
+
+typeverifyIsSubtype(env : TypeVerifyEnv, supertype_name : string, subtype_name, onError : (FcError) -> void, start : int) -> bool {
+	diff_tree = \s1, s2 -> 
+		foldTree(s1, makeTree(), \x, s, acc -> if (containsKeyTree(s2, x)) acc else setTree(acc, x, s));
+	full_diff = diff_tree(
+		typeVerifyName2structs(env, subtype_name, makeTree()),
+		typeVerifyName2structs(env, supertype_name, makeTree())
+	);
+	if (sizeTree(full_diff) > 0) {
+		super_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, supertype_name));
+		sub_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, subtype_name));
+		onError(FcError("subtyping error occured",
+				[FcPosition(env.module.name, start, start)]
+			)
+		);
+		onError(FcError("type '" + supertype_name + "' is not a supertype for type '" + subtype_name + "'", 
+			[
+				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, supertype_name), super_start, super_start),
+				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, subtype_name), sub_start, sub_start)
+			])
+		);
+		cutoff_diff = cutoffTree(full_diff, 3);
+		onError(FcError(
+			"absent in '" + supertype_name + "' structs from a '" + subtype_name + "': " + 
+			strGlueTreeKeysWithCutoff(full_diff, 3),
+			foldTree(cutoff_diff, [], 
+				\name, s, acc -> 
+					concat(acc, [FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), s, s)])
+				)
+			)
+		);
+		false;
+	} else true;
+}
+
+startOfStructOrUnion(msu : Maybe<FcFiStructOrUnion>) -> int {
+	eitherMap(msu, \su -> 
+		switch(su) {
+			FiTypeStruct(__,__,__, s): s;
+			FiTypeUnion(__,__,__, s):  s;
+			FcTypeStruct(__,__,__, i): i.start;
+			FcTypeUnion(__,__,__, i):  i.start;
+		},
+		-1
+	)
+}
+
+// Take at most 'max_size' elements from 'set'
+cutoffSet(set : Set<?>, max_size : int) -> Set<?> {
+	foldSet(set, Pair(makeSet(), 0), \acc, x -> 
+		if (acc.second < max_size)
+			Pair(insertSet(acc.first, x), acc.second + 1)
+		else
+			acc
+	).first
+}
+
+// Take at most 'max_size' elements from 'tree'
+cutoffTree(tree : Tree<?, ??>, max_size : int) -> Tree<?, ??> {
+	foldTree(tree, Pair(makeTree(), 0), \x, y, acc -> 
+		if (acc.second < max_size)
+			Pair(setTree(acc.first, x, y), acc.second + 1)
+		else
+			acc
+	).first
+}
+
+cutoffString(str : string, max_size : int) -> string {
+	str1 = strReplace(str, "\n", "");
+	if (strlen(str1) <= max_size) str1 else substring(str1, 0, max_size) + "..."
+}
+
+strGlueTreeKeysWithCutoff(tree : Tree<string, ?>, max_size : int) -> string {
+	cutoff_tree = cutoffTree(tree, max_size);
+	strGlue(getTreeKeys(cutoff_tree), ", ") + (if (sizeTree(cutoff_tree) < sizeTree(tree)) " ..." else "")
+}
+
+strGlueSetWithCutoff(set : Set<string>, max_size : int) -> string {
+	cutoff_set = cutoffSet(set, max_size);
+	strGlue(set2array(cutoff_set), ", ") + (if (sizeSet(cutoff_set) < sizeSet(set)) " ..." else "")
+}

@@ -1,0 +1,91 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import runtime;
+import string;
+
+export {
+	// Database API
+
+	native connectDb : io (host : string, port : int, socket : string, user : string, password : string, database : string) -> native = Database.connectDb;
+	// In case the connection fails, you can get the exception here
+	native connectExceptionDb : io (database : native) -> string = Database.connectExceptionDb;
+
+	native closeDb : io (database : native) -> void = Database.closeDb;
+
+	// Return the given string with special characters escaped ready for use in SQL queries. Add " around yourself
+	native escapeDb : io (database : native, s : string) -> string = Database.escapeDb;
+
+	// Do a request to the db. Use requestExceptionDb to check whether the request succeeds
+	native requestDb : io (database : native, query : string) -> native = Database.requestDb;
+	native requestExceptionDb : io (database : native, result : native) -> string = Database.requestExceptionDb;
+
+	native lastInsertIdDb : io (database : native) -> int = Database.lastInsertIdDb;
+
+	// Management of the result sets from queries
+	native resultLengthDb : io (result : native) -> int = Database.resultLengthDb;
+
+	// Do we have more results?
+	native hasNextResultDb : io (result : native) -> bool = Database.hasNextResultDb;
+
+	// Get all fields and values of the next result as an array
+	native nextResultDb : io (result : native) -> [DbField] = Database.nextResultDb;
+
+	DbField ::= DbIntField, DbDoubleField, DbStringField, DbNullField;
+		DbIntField(name : string, value : int);
+		DbDoubleField(name : string, value : double);
+		DbStringField(name : string, value : string);
+		// It turns out that the haXe database wrapper can not return null values. These fields are simply absent.
+		// If you use getFieldValueDb below, it will work.
+		DbNullField(name : string); 
+
+	// In the given result, get the value of the named field
+	getFieldValueDb(result : [DbField], field : string) -> DbField;
+
+	// formatDb(db, "select * where %d, %s, %f", [1, "Test '\with' escape\"", 3.9])
+	formatDb(db : native, sql : string, pars : [flow]) -> string;
+
+	// These ones below: I'm not sure we want to expose these after all
+
+	// Transaction support
+	native startTransactionDb : io (database : native) -> void = Database.startTransactionDb;
+	native commitDb : io (database : native) -> void = Database.commitDb;
+	native rollbackDb : io (database : native) -> void = Database.rollbackDb;
+	// Get field #n as int in next result
+	native getIntResultDb : io (result : native, n : int) -> int = Database.getIntResultDb;
+	// Get field #n as double in next result
+	native getFloatResultDb : io (result : native, n : int) -> double = Database.getFloatResultDb;
+	// Get field #n as string in next result
+	native getResultDb : io (result : native, n : int) -> string = Database.getResultDb;
+
+}
+
+getFieldValueDb(result, field) {
+	r = find(result, \r -> r.name == field);
+	either(r, DbNullField(field));
+}
+
+
+formatDb(db, sql, pars) {
+	i = strIndexOf(sql, "%");
+	if (i == -1) {
+		sql;
+	} else {
+		before = strLeft(sql, i);
+		format = substring(sql, i + 1, 1);
+		after = substring(sql, i + 2, strlen(sql) - i - 2);
+		rest = formatDb(db, after, subrange(pars, 1, length(pars) - 1));
+		v = pars[0];
+		t =  before	+ 
+				if (format == "s") {
+					escapeDb(db, v)
+				} else if (format == "d") {
+					i2s(flow(v))
+				} else if (format == "f") {
+					d2s(flow(v))
+				} else {
+					"%" + format
+				};
+		t + rest;
+	}
+}
+

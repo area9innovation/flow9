@@ -1,0 +1,185 @@
+import material/internal/material_grid;
+import material/internal/material_ellipsis;
+
+// Internal to material
+
+export {
+	MGridList2T(manager : MaterialManager, parent :  MFocusGroup, m : MGridList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+isHeader(style : [MGridListCellStyle]) {
+	fold(style, false, \acc, s -> {
+		switch (s) {
+			MGridListHeader(): true;
+			MGridListFooter(): false;
+			default: acc;
+		}
+	})
+}
+
+makeBackground(manager : MaterialManager, parent : MFocusGroup, content : Material, m2t : (Material, MFocusGroup) -> Tropic) {
+	// If content is TPicture, show spinner while image is not loaded
+	(switch (content : Material) {
+		TPicture(url, style) : {
+			showspinner = make(true);
+			onloaded = extractStruct(style, OnLoaded(\ -> {})).fn;
+
+			Pair(
+				TPicture(url, arrayPush(style, OnLoaded(\ -> {next(showspinner, false); onloaded()}))),
+				MShow(showspinner, MCenter(MProgressCircle([])))
+			)
+		}
+		default: {
+			Pair(
+				TEmpty(),
+				content
+			)
+		}
+	})
+	|> (\f -> TGroup2(
+		TZoomToFill(m2t(firstOfPair(f), parent), TFillXY(), true),
+		m2t(secondOfPair(f), parent)
+			|> alignRightForRTL
+	));
+}
+
+// TODO: Lazy load the cell content, mainly so we don't download images that are not visible.
+MGridListCell2T(manager : MaterialManager, parent : MFocusGroup, cell : MGridListCell, onClick : () -> void, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	textColor = extractStruct(cell.style, MGridListTextColor(MWhite())).color;
+	footerColor = extractStruct(cell.style, MGridListHeaderFooterColor(MGrey(900))).color;
+	footerOpacity = extractStruct(cell.style, FillOpacity(0.8));
+	footerStyle = [MFill(footerColor), footerOpacity];
+
+	isheader = isHeader(cell.style);
+	paddingTop = if (isheader) TEmpty() else TFillY();
+	paddingBottom = if (isheader) TFillY() else TEmpty();
+
+	isrighticon = !contains(cell.style, MGridListIconLeft());
+	icon = \p2 -> fold(cell.style, TFixed(16.0, 0.0), \acc, s ->
+		switch (s) {
+			MIconButton(name, onIconClick, style, state) : m2t(MIconButton(name, onIconClick, style, state), p2);
+			default : acc
+		});
+
+	background = \p2 -> makeBackground(manager, p2, cell.content, m2t);
+
+	nlines = length(cell.text);
+
+	(\p2 -> (if (nlines > 0) {
+		captionHeight = if (nlines == 1) 48.0 else 68.0;
+		cornerLeft = if (!isrighticon) icon(p2) else TFixed(16.0, 0.0);
+		cornerRight = if (isrighticon) icon(p2) else TFixed(16.0, 0.0);
+
+		title = MEllipsisText2T(manager, parent, MEllipsisText(cell.text[0], [MSubheading(), textColor]));
+
+		subtitle = if (nlines == 2) {
+			MEllipsisText2T(manager, parent, MEllipsisText(cell.text[1], [MCaption(), textColor]));
+		} else {
+			TEmpty();
+		}
+
+		TGroup2(
+			TRectangle(footerStyle, TFillXH(captionHeight)),
+			TColsA([
+				cornerLeft
+					|> (\f -> TCenterYIn(f, TFixed(0., captionHeight))),
+				TLinesA([
+					TFixed(0.0, 16.0),
+					title,
+					subtitle
+				])
+					|> (\f -> TGroup2(f, TFillX())),
+				cornerRight
+					|> (\f -> TCenterYIn(f, TFixed(0., captionHeight)))
+			])
+		)
+		|> (\f -> if (isheader) f else TLines2(TFillY(), f))
+	} else {
+		TEmpty()
+	})
+	|> (\f -> TGroup2(background(p2), f)))
+	|> (\f ->
+		MFocusClickable2T(manager, parent, "MGridListCell", [MFocusEnabled(const(false)), MOnClick(onClick), MAddFocusGroup(true)],
+			\focus -> f(focus.parent)
+		)
+	)
+}
+
+// TODO: Provide default image for tiles that lack an image
+MGridList2T(manager : MaterialManager, parent : MFocusGroup, m : MGridList, m2t : (Material, MFocusGroup) -> Tropic) {
+	padding = extractStruct(m.style, MGridListPadding(4.)).padding;
+	minCellWidth = extractStruct(m.style, MGridListCellMinWidth(120.0)).w;
+	maxCellWidth = extractStruct(m.style, MGridListCellMaxWidth(-1.0)).w;
+	colsNumber = extractStruct(m.style, MGridListColsNumber(-1)).n;
+	specCellHeight = extractStruct(m.style, MGridListCellHeight(-1.0)).h;
+	aspect = extractStruct(m.style, MGridListCellAspectRatio(4.0/3.0)).ratio;
+	shouldScroll = !contains(m.style, MNoScroll());
+	availableWidthB = make(0.);
+	selected = extractStruct(m.style, MSingleSelection(make(-1))).selected;
+	onClick = extractStruct(m.style, MOnListClick(const(true), nop1));
+
+	countCols = \availableWidth -> {
+		n1 = floor((availableWidth - padding) / (minCellWidth + padding));
+		n2 = if (colsNumber > 0) min(n1, colsNumber) else n1;
+		if (maxCellWidth > 0.) max(n2, floor((availableWidth - padding) / (maxCellWidth + padding))) else n2;
+	};
+
+	availableSize = fselect(availableWidthB, FLift(\aw -> {
+		ncols = countCols(aw);
+		cellWidth = (aw - padding)/i2d(ncols) - padding;
+		cellHeight = if (specCellHeight > 0.0) specCellHeight else cellWidth / aspect;
+		WidthHeight(cellWidth - 2., cellHeight - 2.);
+	}));
+
+	onGridCellClick = \i -> \ -> {
+		if (fgetValue(onClick.enabled)) {
+			onClick.onClick(i);
+			nextDistinct(selected, i);
+		}
+	};
+
+	TAttachBoxCopyAvailableWidth(
+		MGetFocusGroup(\p ->
+			TCopySize2(
+				TSized(availableSize),
+				\sz, tr ->
+					MFlexibleGrid2T(
+						manager,
+						p,
+						MFlexibleGrid(
+							fmapi(m.cells, \i, cell ->
+								MGetFocusGroup(\p2 ->
+									TBorder4(
+										padding / 2.,
+										TAvailable(
+											MGridListCell2T(manager, p2, cell, onGridCellClick(i), m2t),
+											if (i != 0) tr else sz
+										)
+									)
+								)
+							),
+							[]
+						),
+						m2t
+					)
+			)
+			|> (\f -> TBorder4(padding / 2., f))
+		)
+		|> (\f ->
+			if (shouldScroll)
+				MScroll2T(
+					manager,
+					parent,
+					MScroll(
+						f,
+						TFillXY(),
+						[TScrollBound(true, true)]
+					),
+					m2t
+				)
+			else
+				m2t(f, parent)
+		),
+		availableWidthB
+	)
+}

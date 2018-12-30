@@ -1,0 +1,263 @@
+import formats/xml;
+import filesystem;
+import system;
+import target;
+import binarytreeutils;
+import set;
+import algorithms;
+
+pathJoin(dir : string, filename : string) -> string {
+	if (windows()) {
+		dir + "\\" + filename;
+	} else {
+		dir + "/" + filename;
+	}
+}
+
+pathFixSeparator(path : string) {
+	if (windows()) {
+		strReplace(path, "/", "\\");
+	} else {
+		path;
+	}
+}
+
+main() {
+	separator = if (windows()) "\\" else "/";
+	folder = getUrlParameterDef("folder", "resources");
+
+	resourceFiles = getUrlParameterDef("resourcefiles", "");
+	resources =
+		if (resourceFiles != "")
+			strSplit(resourceFiles, ",")
+		else
+			// Find all .xml files with font defs
+			filter(readDirectory(folder), \f -> endsWith(f, ".xml"));
+
+ 	trail = \d -> if (!endsWith(d, "/")) d + "/" else d;
+	flowdir = trail(getUrlParameterDef("flowdir", "./"));
+	swfdir = trail(getUrlParameterDef("swf", "resources/"));
+	dfontdir = trail(getUrlParameterDef("dfont", "resources/dfont/"));
+	dfontjsdir = trail(getUrlParameterDef("dfontjs", "www/dfontjs/"));
+
+	// A map from .ttf file to the flow name and the glyphs it contains
+	fonts : ref Tree<string, FontGlyphs> = ref makeTree();
+	hasErrors : ref bool = ref false;
+	applyAllAsync(map(resources, \r -> {
+		\onDone -> {
+			resource = pathJoin(folder, r);
+
+			cont = \ -> {
+				println("\nExtracting glyphs from " + r + " at " + resource);
+				fontErrors = ref false;
+				fonts := processResource(flowdir, strReplace(swfdir + r, ".xml", ".fontnames"), getFileContent(resource), ^fonts, fontErrors);
+				hasErrors := ^hasErrors || ^fontErrors;
+				onDone();
+			}
+
+			if (!isUrlParameterTrue("norender") && (windows() || macosx() || linux())) {
+				swffile = pathFixSeparator(strReplace(swfdir + r, ".xml", ".swf"));
+				ensureDirectoryExists(swfdir);
+				println("Making " + swffile + " from " + resource);
+				// swfmill to make the .swf file
+				cmd = if (windows()) resolveRelativePath(flowdir + "resources/swfmill.bat") else "swfmill";
+				args = if (windows()) [folder, r, swffile] else ["simple", pathJoin(folder, r), swffile];
+				startProcess(cmd, args, "", "", \ec, so, se -> {
+					println(so);
+					println(se);
+					cont();
+				});
+			} else cont();
+		}
+	}), \ -> {
+		if (^hasErrors) {
+			println("ERROR: Input data contains some errors. See output above for more information.");
+			quit(1);
+		} else if (isUrlParameterTrue("norender")) {
+			quit(0);
+		} else {
+			processFonts(flowdir, dfontdir, dfontjsdir, folder, ^fonts, \ -> {
+				println("All done!");
+				quit(0);
+			});
+		}
+	});
+}
+
+
+FontGlyphs(ttf : string, name : string, glyphs : Set<int>);
+
+// Process the XML file to extract the glyphs and font files
+processResource(flowdir : string, fontnamefile : string, resources : string, ttfs : Tree<string, FontGlyphs>, errOut : ref bool) -> Tree<string, FontGlyphs> {
+	// The base map which we want on the first screen
+	basechars = getFileContent(flowdir + "resources/chars.txt");
+	baseGlyphs = differenceSets(buildSet(s2a(basechars)), buildSet(s2a("\n")));
+
+	xml = parseXml2(resources);
+	frame = getXmlChildren(xml)[1];
+	library = getXmlChildren(frame)[0];
+	fonts = getXmlChildren(library);
+
+	fontnames = fold(fonts, "", \acc, f -> {
+		attributes = getXmlAttributes(f);
+		name = getXmlAttribute(attributes, "name", "<unknown>");
+		acc + name + "\n";
+	});
+	setFileContent(fontnamefile, fontnames);
+
+
+	formatHex4 = \code -> {
+		lpad(formatHex(code), "0", 4)
+	}
+
+	fold(fonts, ttfs, \acc, f -> {
+		attributes = getXmlAttributes(f);
+		name = getXmlAttribute(attributes, "name", "<unknown>");
+		file = getXmlAttribute(attributes, "import", "<unknown>");
+		glyphs = getXmlAttribute(attributes, "glyphs", "");
+		glyphCodes = filter(strSplit(glyphs, ";"), \c -> c != "");
+
+		hex = map(glyphCodes, \c -> {
+			if (startsWith(c, "&#x")) {
+				parseHex(strRight(c, 3));
+			} else if (startsWith(c, "&#")) {
+				s2i(strRight(c, 2));
+			} else {
+				getCharCodeAt(c, 0);
+			}
+		});
+
+		currentFont = name + " in " + strReplace(fontnamefile, ".fontnames", ".xml");
+		// OK, check if we already know this font.
+		fontglyphs = FontGlyphs(file, name, buildSet(hex));
+		uniqueGlyphs = fontglyphs.glyphs |> set2array;
+		hasDuplicates = ref false;
+		traverseInOrder(
+			fold(
+				uniqueGlyphs, //array of unique glyphs
+				fold(
+					hex, //array of all glyphs
+					makeTree(), 
+					incTreeValue
+				), 
+				decTreeValue
+			),
+			\k, v -> {
+				if (v != 0) {
+					hasDuplicates := true;
+					println("ERROR: Duplicate glyph (0x" + formatHex4(k) + " / " + i2s(v) + " extra) is found while processing " + currentFont);
+				}
+			}
+		);
+		if (^hasDuplicates) {
+			println("List of glyphs for "  + currentFont + " contains duplicates. Extra count = " + i2s(length(hex) - length(uniqueGlyphs)) + ". Cleared list = ");
+			map(uniqueGlyphs, \code -> "&#x" + formatHex4(code) + ";") |> concatStrings |> println
+
+		}
+		errOut := ^errOut || ^hasDuplicates;
+		exist = lookupTreeDef(acc, file, fontglyphs);
+		// If so, merge the glyphs together
+		allGlyphs = mergeSets(exist.glyphs, fontglyphs.glyphs);
+		extraGlyphs = differenceSets(allGlyphs, baseGlyphs);
+
+		characters = map(set2array(extraGlyphs), fromCharCode);
+		println("  extract " + i2s(sizeSet(baseGlyphs) + length(characters)) + " glyphs "  + file + " to fontmaps/" + name + ".txt");
+
+		content = foldi(characters, basechars, \i, acc2, c -> {
+			acc2 + (if (i % 8 == 0) "\n" else "") + (if ((i % 64) == 0) "\n" else "")
+			+ c
+		});
+		setFileContent(flowdir + "resources/fontmaps/" + name + ".txt", content);
+
+		setTree(acc, file, FontGlyphs(file, name, allGlyphs));
+	});
+}
+
+// Takes the font files and renders them for JS and c++
+processFonts(flowdir : string, dfontdir : string, dfontjsdir : string, folder : string, fonts : Tree<string, FontGlyphs>, onDone : () -> void) -> void {
+	render = if (windows()) {
+		resolveRelativePath(flowdir + "QtByteRunner\\bin\\fontconvertor\\FlowFontConvertor.exe");
+	} else if (macosx()) {
+		resolveRelativePath(flowdir + "QtByteRunner/bin/mac/FlowFontConvertor.app/Contents/MacOS/FlowFontConvertor");
+	} else {
+		resolveRelativePath(flowdir + "QtByteRunner/bin/linux/FlowFontConvertor");
+	}
+
+	applyAllAsync(foldTree(fonts, [], \ttf, fontglyphs, acc -> {
+		name = fontglyphs.name;
+		arrayPush(acc, 
+			\done -> {
+				// Ensure the dfontjs folder exists
+				ensureDirectoryExists(dfontjsdir + name);
+
+				// First render the fonts for JS
+				println("Rendering " + ttf + " for JS");
+				// -t tile-size
+				// -i grid-size
+				// -p generate .pgm for JS dfont
+				// -g glyph-file
+				// -r dist-radius can be tweaked with. Default is tilesize/4
+				args = ["-t", "32", "-i", "16", "-p", "-o", dfontjsdir + name, "-g", "resources/fontmaps/" + name + ".txt", folder + "/" + ttf];
+				startProcess(render, args,
+					"", "", \ec, so, se -> {
+					println(so);
+					pgms = filter(readDirectory(dfontjsdir + name), \f -> endsWith(f, ".pgm"));
+					convertPgms(flowdir, dfontjsdir, name, pgms, \ -> {
+						// Ensure the dfont folder exists
+						ensureDirectoryExists(dfontdir + name);
+						// And then render the fonts for C++
+						println("Rendering " + ttf + " for C++");
+						glyphfile = flowdir + "resources/fontmaps/" + name + ".txt";
+						cppargs = ["-t", "64", "-i", "4", "-x", "-o", dfontdir + name, "-g", glyphfile, folder + "/" + ttf];
+						startProcess(render, cppargs,
+							"", "", \ec2, so2, se2 -> {
+							println("All done for " + ttf);
+							done();
+						})
+					});
+				});
+			}
+		)
+	}), onDone);
+}
+
+convertPgms(flowdir : string, dfontjsdir : string, name : string, pgms : [string], onDone : () -> void) -> void {
+	applyAllAsync(map(pgms, \pgm -> {
+		\done -> {
+			png = strReplace(pgm, ".pgm", ".png");
+			pgm_path = dfontjsdir + name + "/" + pgm;
+			println("Converting " + pgm_path + " to " + png);
+			// Here, convert the .pgm and grab the index.json
+			if (windows()) {
+				startProcess(
+					resolveRelativePath(flowdir + "resources\\pgm2png.bat"),
+					[ dfontjsdir + name, pgm, png],
+					"", "", \ec, so, se -> {
+						deleteFile(pgm_path);
+						done();
+					}
+				);
+			} else {
+				startProcess("convert",
+					[pgm_path, dfontjsdir + name + "/" + png],
+					"", "", \ec, so, se -> {
+						deleteFile(pgm_path);
+						done();
+					}
+				);
+			}
+
+		}
+	}), onDone)
+}
+
+copyFile(from : string, to : string) -> bool {
+	file = getFileContentBinary(from);
+	setFileContentBinary(to, file);
+}
+
+moveFile(from : string, to : string) -> string {
+	if (copyFile(from, to)) {
+		deleteFile(from);
+	} else "Could not copy " + from;
+}

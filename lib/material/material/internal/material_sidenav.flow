@@ -1,0 +1,239 @@
+import material/internal/material_button;
+
+// Internal to material
+
+export {
+	MSideNav2T(manager : MaterialManager, parent : MFocusGroup, m : MSideNav, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MSNSmallHead2T(manager : MaterialManager, parent : MFocusGroup, content : [Tropic], fillColor : MColor, expander : Transform<bool>) -> Tropic {
+	MIconButton2T(
+		manager,
+		parent,
+		MIconButton(
+			"keyboard_arrow_left",
+			\ -> applyIfDynamic(expander, \ -> !fgetValue(expander)),
+			[],
+			[]
+		)
+	)
+	|> (\f -> TCols(arrayPush(content, TFillX())))
+	|> (\f -> TFrame(0., 0., [MFill(fillColor)], f))
+	|> (\f -> TAvailable(f, TFillXH(56.0)))
+}
+
+MSNHeadPhoto2M(manager : MaterialManager, parent : MFocusGroup, mcolor : MColor, m : MSNHeadPhoto, r : double, name : Transform<string>) -> Tropic {
+	TGroup2(
+		TSelect(name, \t ->
+			if (t != "")
+				MLetterIcon2T(
+					manager,
+					parent,
+					MLetterIcon(toUpperCase(substring(t, 0, 1)), [mcolor, MIconSize(r * 2.), FillOpacity(1.)], [])
+				)
+			else
+				TEmpty()
+		),
+		TSelect(m.url, \u ->
+			if (u != "")
+				TPicture(u, [])
+				|> (\f -> TMask(TZoomToFill(f, TFixed(r * 2., r * 2.), false), TCircle(r, [Fill(0xffffff)])))
+			else
+				TEmpty()
+		)
+	)
+	|> (\f -> clickable(manager, parent, f, m.onClick))
+	|> (\f -> MRippleOnDownDefault2T(manager, parent, f, const(MRippleCenter())))
+	|> makeTropicConstant(None(), None())
+}
+
+MSNCardHead2T(manager : MaterialManager, parent : MFocusGroup, background : string, photo : MSNHeadPhoto, additionalPictures : [MSNHeadPhoto],
+	name : Transform<string>, additionalInfo : Transform<string>, expander : Transform<bool>, mini : bool, miniWidth : double) -> Tropic {
+	mcolor = parent.theme.primaryColor;
+
+	TLinesA([
+		concat(
+			[
+				MSNHeadPhoto2M(manager, parent, mcolor, photo, 36., name),
+				TFillX(),
+			],
+			map(additionalPictures, \ap ->
+				MSNHeadPhoto2M(manager, parent, mcolor, ap, 20., const(""))
+				|> (\f -> TBorderA(16., 0., 0., 0., f))),
+		)
+		|> TColsA,
+		TFillY(),
+		TAvailable(
+			TCenterY(TLines([
+				TSelect(name, \n -> MText2T(parent, n, [MBodyBold(), MWhite()])),
+				TFixed(0., 4.),
+				TSelect(additionalInfo, \ai -> MText2T(parent, ai, [MBody(), MWhite()])),
+			])),
+			TFillXH(56.0),
+		),
+	])
+	|> (\f -> TBorder(16.0, 16.0, 16.0, 8.0, f))
+	|> (\f -> if (background != "") TGroup2(TZoomToFill(TPicture(background, []), TFillXH(160.), true), f) else f)
+	|> (\f -> TAvailable(f, TFillXH(160.0)))
+	|> (\f ->
+		if (mini)
+			TIf(
+				expander,
+				f,
+				MSNHeadPhoto2M(manager, parent, mcolor, photo, 16., name)
+				|> (\f2 -> TCenterIn(f2, TFixed(miniWidth, 72.)))
+				|> (\f2 -> TFixSize(f2, TFixed(miniWidth, 56.)))
+			)
+		else
+			f
+	)
+	|> (\f ->
+		TGroup2(
+			f,
+			concat(map(additionalPictures, \ap -> ap.url), [photo.url, const(background)])
+			|> (\f2 -> map(f2, \f3 -> TSelect(f3, \u -> if (u != "") TPicture(u, []) else TEmpty())))
+			|> TGroup
+			|> (\f2 -> TFixSize(f2, TEmpty()))
+			|> (\f2 -> TAlpha(zero, f2))
+		)
+	)
+}
+
+MNavList2M(manager : MaterialManager, parent : MFocusGroup, subList : Material, width : double, scrollInspect : TScrollInspectVisible, mini : bool, miniWidth : double,
+	expander : Transform<bool>, addSeparator : bool) -> Material {
+	switch (subList) {
+		MList(__, __, __): {
+			if (length(subList.lines) > 0)
+				MList(
+					subList.lines,
+					replaceStruct(subList.style, MListWidth(width, width))
+					|> (\f2 ->
+						if (length(extractStructMany(f2, MSelectedColor(MBlack()))) == 0)
+							arrayPush(f2, MSelectedColor(parent.theme.primaryColor))
+						else
+							f2
+					)
+					|> (\f2 ->
+						if (mini)
+							concat(f2, [MListMinimize(fnot(expander)), MListMinimizedWidth(miniWidth)])
+						else
+							f2
+					),
+					replaceStruct(subList.state, scrollInspect)
+				)
+				|> (\f2 -> MBorder(0.0, 8.0, 0.0, 8.0, f2))
+				|> (\f2 ->
+					if (addSeparator)
+						MLines2(
+							MSeparator(true),
+							f2
+						)
+					else
+						f2
+				)
+			else
+				TEmpty()
+		}
+		MMutable(v): {
+			MMutable(fselect(v, FLift(\vv -> MNavList2M(manager, parent, vv, width, scrollInspect, mini, miniWidth, expander, addSeparator))))
+		}
+		default: {
+			subList
+		}
+	}
+}
+
+MSideNav2T(manager : MaterialManager, parent : MFocusGroup, m : MSideNav, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	stageWidth = getRealStageWidthHeight(manager).width;
+	width = extractStruct(m.style, MSideNavWidth(if (stageWidth > 360.) 320. else stageWidth / 9. * 8.)).width;
+	mini = contains(m.style, MSideNavMini());
+	miniWidth = extractStruct(m.style, MListMinimizedWidth(72.)).width;
+	fillColor = extractStruct(m.style, MDialogColor(parent.theme.lightBackground));
+	fillOpacity = extractStruct(m.style, FillOpacity(1.0)).opacity;
+	scrollInspect = extractStruct(m.style, makeTScrollInspectVisible());
+	subList0 = extractStructMany(m.style, MSubList(TEmpty()));
+
+	list = MNavList2M(manager, parent, m.list, width, scrollInspect, mini, miniWidth, m.expander, false);
+
+	(if (length(subList0) > 0) {
+		MLines2(
+			list,
+			MNavList2M(manager, parent, subList0[0].list, width, scrollInspect, mini, miniWidth, m.expander, true)
+		)
+	} else {
+		list
+	})
+	|> (\f -> MScroll2T(manager, parent, MScroll(f, TFillXY(), [scrollInspect]), m2t))
+	|> (\f ->
+		TLines2(
+			switch (m.head) {
+				MSNSmallHead(c):  MSNSmallHead2T(manager, parent, map(c, \c0 -> m2t(c0, parent)), fillColor, m.expander);
+				MSNCardHead(b, p, aP, n, aI): MSNCardHead2T(manager, parent, b, p, aP, n, aI, m.expander, mini, miniWidth);
+				MSNCustomHead(c): m2t(c, parent);
+			},
+			f
+		)
+	)
+	|> (\f ->
+		TGroup2(
+			TRectangle([MFill(fillColor), FillOpacity(fillOpacity)], TFillXY())
+			|> (\f2 -> TInteractive([TMouseDown(make(false))], f2)),
+			f
+		)
+	)
+	|> (\f -> TAvailable(f, TFillWY(width)))
+	|> makeTropicConstantWidth(width |> Some)
+}
+
+/*
+MSNSmallHead(
+	[
+		TFixed(16.0, 16.0),
+		MCenterY(TMask(TPicture("http://api.adorable.io/avatars/40/bott@adorable.io.png", [WidthHeight(32.0, 32.0)]),
+			TRounded(16.0, 16.0, 16.0, 16.0, [Fill(0xffffff)], TFixed(32.0, 32.0)))),
+		TFixed(16.0, 16.0),
+		MCenterY(MText("Jonathan", [])),
+		MIconButton("arrow_drop_down", [], []),
+	],
+),
+
+MSNCustomHead(
+	MGroup([
+		TPicture("./head_background.jpg", [WidthHeight(sidenavWidth, 160.0)]),
+		MCols([
+			TFixed(16.0, 16.0),
+			MLines([
+				TFixed(16.0, 16.0),
+				MCols([
+					TMask(TPicture("http://api.adorable.io/avatars/72/eott@adorable.io.png", []),
+						TRounded(36.0, 36.0, 36.0, 36.0, [Fill(0xffffff)], TFixed(72.0, 72.0))),
+					TFillX(),
+					TMask(TPicture("http://api.adorable.io/avatars/40/rott@adorable.io.png", []),
+						TRounded(20.0, 20.0, 20.0, 20.0, [Fill(0xffffff)], TFixed(40.0, 40.0))),
+					TFixed(16.0, 16.0),
+					TMask(TPicture("http://api.adorable.io/avatars/40/tott@adorable.io.png", []),
+						TRounded(20.0, 20.0, 20.0, 20.0, [Fill(0xffffff)], TFixed(40.0, 40.0))),
+					MIconButton("keyboard_arrow_left", [], [MOnClick(\ -> next(leftexpander2, !getValue(leftexpander2)))])
+				]),
+				TFixed(16.0, 16.0),
+				MText("Jonathan Lee", []),
+				MText("heyfromjonathan@gmail.com", [])
+			])
+		])
+	])
+),
+
+MSNCardHead(
+	TPicture("/head_background.jpg", [WidthHeight(sidenavWidth, 160.0)]),
+	TPicture("http://api.adorable.io/avatars/72/eott@adorable.io.png", []),
+	[
+		TMask(TPicture("http://api.adorable.io/avatars/40/rott@adorable.io.png", []),
+			TRounded(20.0, 20.0, 20.0, 20.0, [Fill(0xffffff)], TFixed(40.0, 40.0))),
+		TFixed(16.0, 16.0),
+		TMask(TPicture("http://api.adorable.io/avatars/40/tott@adorable.io.png", []),
+			TRounded(20.0, 20.0, 20.0, 20.0, [Fill(0xffffff)], TFixed(40.0, 40.0)))
+	],
+	"Jonathan Lee",
+	"heyfromjonathan@gmail.com",
+),
+*/

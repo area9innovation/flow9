@@ -1,0 +1,345 @@
+import lingo/parse;
+import string;
+
+import lingo/linecolumn;
+
+export {
+	// Parse a text with a given grammar, and the given semantic actions.
+	// !!! Notice this is obsolete. Use pegcode instead. Check doc/lingo.html.
+	// It does not support the latest version of Lingo, and exists mostly for
+	// legacy reasons.
+	parsi(g : Grammar, text : string, sem : SemanticActions) -> flow;
+	parsi3(g : Grammar, text : string, sem : SemanticActions) -> Triple<Maybe<flow>, int, string>;
+
+	// When you want to combine with this one, it is useful to have direct access to it.
+	// This is also obsolete. The better way is to use the pegcompiler to combine grammars.
+	lingogrammar : Grammar;
+
+	// Get the top nonterminal, presumably the start nonterminal
+	firstNonterminal(g : Grammar) -> string;
+}
+
+/*
+For reference, this is a grammar for a PEG parser similar to what is found at
+http://www.tinlizzie.org/ometa-js/#MetaToo
+*/
+
+// TODO:
+// Support foreign.name to reference rules in other grammars
+// &lookahead ?
+// #string
+// /* and // for comments */
+// [ for lists when we start matching non-strings ]
+// _ for matching anything?
+
+lingodebug(s, f) {
+	\t -> {
+		println(s);
+		traverseInOrder(t, \k, v -> println(k + ": " + ruleResultString(v) + "   " + toString(v.result)));
+		r = f(t);
+		println("  result: " + toString(r));
+		r;
+	}
+}
+
+lingogrammar = Grammar([
+	// grammar = production (";" production)* ws end
+	Production("grammar", false, PegUnknown(), [
+				   Seq([BindResult("head", Rule("production")), BindResult("rest", Star(Rule("semicolonrule"))), Rule("ws"), Opt(Term(";")), Rule("ws"),
+				Action(struct(literal("Grammar"), [consArray(ast("head"), ast("rest"))]))
+				])
+	]),
+	Production("semicolonrule", false, PegUnknown(), [
+		Seq([Rule("ws"), Term(";"), BindResult("r", Rule("production")),
+				Action(ast("r"))
+				])
+	]),
+	
+	// production = name "!"? "=" choices
+	Production("production", false, PegUnknown(), [
+		Seq([
+			BindResult("n", Rule("name")), 
+			BindMatched("nocache", Opt(Term("!"))),
+			Rule("ws"), Term("="), BindResult("rule", Rule("choices")),
+			Action(struct(literal("Production"), [ast("n"), flow(\t-> {
+				rr = lookupTree(t.bindings, "nocache");
+				switch (rr : Maybe<RuleResult>) {
+					Some(rrr): {
+						rrr.len == 1;
+					}
+					None(): false;
+				};
+				// Enable cache analysis here: To force caching for all, uncomment this:
+				// true
+			}), struct(literal("PegUnknown"), []), ast("rule")]))
+		])
+	]),
+
+	// name = ws letter letterOrDigit*    -- return type: [string]
+	Production("name", false, PegUnknown(), [
+		  Seq([Rule("ws"), BindResult("nameNoWs", Rule("nameNoWs")),
+		  Action(matched("nameNoWs"))
+		])
+	]),
+	
+	Production("nameNoWs", false, PegUnknown(), [	// return type:  none, use matched() if you want the token
+	  Seq([Rule("letter"), Star(Rule("letterOrDigit"))])
+	]),
+	
+	// choices = choice "|" choices | choice    -- return type: [Seq(...)]
+	Production("choices", false, PegUnknown(), [ 
+	  Seq([BindResult("first", Rule("choice")), Rule("ws"), Term("|"), BindResult("rest", Rule("choices")),
+			  Action(consArray(ast("first"), ast("rest")))
+			  ]),
+				
+	  Seq([BindResult("choice", Rule("choice")),
+			  Action(arrayOf1(ast("choice")))
+			  ]),
+	]),
+	
+	// choice = term*    -- return type: [Seq(...)]
+	Production("choice", true, PegUnknown(), [
+	  Seq([BindResult("terms", Star(Rule("term"))),
+			  Action(struct(literal("Seq"), [ast("terms")]))
+			  ]),
+	]),
+
+	// term = term1 ":" name    -- return type: [BindResult|Action|Star|Opt|...]
+	//      | term1;
+	Production("term", false, PegUnknown(), [
+		Seq([BindResult("term", Rule("term1")), Rule("ws"), Term(":"), BindResult("name", Rule("name")),
+				Action(struct(literal("BindResult"), [ast("name"), ast("term")]))
+				]),
+		Seq([BindResult("term", Rule("term1")), Rule("ws"), Term("$"), BindResult("name", Rule("name")),
+				Action(struct(literal("BindMatched"), [ast("name"), ast("term")]))
+				]),
+		Seq([BindResult("term", Rule("term1")),
+				Action(ast("term"))
+				]),
+	]),
+
+	// term1 = "!"  term0    -- return type: [BindResult|Action|Star|Opt|...]
+	//      | term0 "?"
+	//      | term0 "*"
+	//      | term0 "+"
+	//      | term0;
+	Production("term1", true, PegUnknown(), [
+		Seq([Rule("ws"), Term("!"), BindResult("term", Rule("term0")),
+				Action(struct(literal("Negation"), [ast("term")])) ]),
+		Seq([BindResult("c1", Rule("quotedchar")), Rule("ws"), Term("-"), BindResult("c2", Rule("quotedchar")),
+				Action(struct(literal("CharRange"), [ast("c1"), ast("c2")]))]),
+		Seq([BindResult("term", Rule("term0")), BindResult("postfix", Rule("postfix")),
+				Action(struct(ast("postfix"), [ast("term")]))
+		]),
+		Seq([BindResult("term", Rule("term0")), Action(ast("term")) ]),
+	]),
+	
+	Production("postfix", false, PegUnknown(), [
+		Seq([Rule("ws"), Term("?"), Action(literal("Opt")) ]),
+		Seq([Rule("ws"), Term("*"), Action(literal("Star")) ]),
+		Seq([Rule("ws"), Term("+"), Action(literal("Plus")) ]),
+	]),
+
+	{
+	charAction = \ -> Action(struct(literal("Term"), [\t-> {
+				  m = matched("text")(t);
+				  if (strIndexOf(m, "\\") == -1) m
+				  else fold(ast("text")(t), "", \ac, c -> ac + c);
+	}]));
+	
+	//	term0 = "'"  (!'\'' oneChar)*:cs '\''
+	//        | "\"" (!'"'  oneChar)*:cs '"'
+	//        | name
+	//        | "(" seq ")"
+	Production("term0", true, PegUnknown(), [
+	  Seq([Rule("ws"), Term("'"), BindResult("text", Star(Rule("nonquotechar1"))), Term("'"), charAction()]),
+	  Seq([Rule("ws"), Term("\""), BindResult("text", Star(Rule("nonquotechar2"))), Term("\""), charAction()]),
+	  Seq([BindResult("n", Rule("name")), Action(struct(literal("Rule"), [ast("n")]))]),
+	  Seq([Rule("ws"), Term("("), BindResult("t", Rule("seq")), Rule("ws"), Term(")"),
+			  Action(ast("t"))]),
+	  Seq([Rule("ws"), Term("{"), BindResult("a", Rule("action")), Rule("ws"), Term("}"),
+			  Action(struct(literal("Action"), [ast("a")]))
+			  ])
+	 ])},
+	
+	// seq = term*    -- return type: [Seq(...)]
+	Production("seq", true, PegUnknown(), [
+	  Seq([BindResult("terms", Star(Rule("term"))),
+			  Action(struct(literal("Seq"), [ast("terms")]))
+			  ]),
+	]),
+
+	Production("action", false, PegUnknown(), [
+	   Seq([Rule("ws"), Term("$"), BindResult("n", Rule("name")),
+			   Action(\t-> matched(ast("n")(t)))]),
+	   Seq([Rule("ws"), Term("^"), BindResult("n", Rule("name")),
+			   Action(\t-> ast(ast("n")(t)))]),
+	   Seq([Rule("ws"), Term(":"), BindResult("n", Rule("name")),
+			   Action(\t-> ast(ast("n")(t)))]),
+	   Seq([BindResult("n", Rule("name")), Rule("ws"), Term("("), BindResult("as", Opt(Rule("actions"))), Rule("ws"), Term(")"),
+			   Action(\t-> {
+					 structname : string = ast("n")(t);
+					 ofs : [[(PegEnv)-> flow]] = ast("as")(t);
+					 fs : [(PegEnv)-> flow] = if (length(ofs) == 0) [] else ofs[0];
+					 switch (semanticAction(structname)(t) : Maybe<([flow]) -> flow>) {
+						 None(): {
+							 // not a semantic action, so treat it as a struct
+							 // application; warn if it does not look like a struct name
+							 c = getCharAt(structname, 0);
+							 if (c < "A" || "Z" < c) {
+								 println("Warning: '" + structname + "' does not look like a struct name, and it is not a function.");
+							 }
+							 struct(literal(structname), fs);
+						 }
+					 Some(f): {
+							 // call f on the arguments
+							 \u -> f(map(fs, \fa -> fa(u)));
+						 }
+					 }
+				   })
+				  ])]),
+	Production("actions", false, PegUnknown(), [Seq([BindResult("a", Rule("action")), BindResult("as", Star(Rule("moreactions"))),
+										 Action(\t-> {
+													act : (Tree) -> flow = ast("a")(t);
+													acts : [(Tree) -> flow] = ast("as")(t);
+													res : [(Tree) -> flow] = concat([act], acts);
+													res;
+										 })
+										 ])]),
+	Production("moreactions", false, PegUnknown(), [Seq([Rule("ws"), Term(","), BindResult("a", Rule("action")),
+											 Action(ast("a"))])]),
+
+	Production("nonquotechar1", false, PegUnknown(), [ //    -- return type: [string]
+	   Seq([Negation(Term("'")), BindResult("c", Rule("onechar")), Action(ast("c"))]),
+     ]),
+	Production("nonquotechar2", false, PegUnknown(), [ //    -- return type: [string]
+	   Seq([Negation(Term("\"")), BindResult("c", Rule("onechar")), Action(ast("c"))]),
+	]),
+
+	// letter = "a"-"z" | "A" - "Z" | "_"   -- return type: none, use matched() if you want the token
+	Production("letter", false, PegUnknown(), [
+		Seq([CharRange("a", "z")]),
+		Seq([CharRange("A", "Z")]),
+		Seq([Term("_")])
+	]),
+
+	// letterOrDigit = digit | letter    -- return type: none, use matched() if you want the token
+	Production("letterOrDigit", false, PegUnknown(), [
+		Seq([Rule("digit")]),
+		Seq([Rule("letter")])
+	]),
+
+	// digit = "0"-"9"      -- return type: none, use matched() if you want the token
+	Production("digit", false, PegUnknown(), [
+		Seq([CharRange("0", "9")]),
+	]),
+
+	// onechar = "\" char | char    -- return type: [string]
+	Production("onechar", false, PegUnknown(), [
+	    Seq([Term("\\u"), BindResult("h", Rule("hexword")), 
+				Action(\t-> fromCharCode(parseHex(matched("h")(t))))]),
+		Seq([Term("\\"), BindResult("c", Rule("char")),
+				Action(\t-> {c = matched("c")(t);
+								  if (c == "n") "\n"
+								  else if (c == "t") "\t"
+								  else if (c == "\\") "\\"
+								  else if (c == "\n") ""
+								  else if (c == "\"") "\""
+								  else if (c == "\"") "\""
+								  else if (c == "'") "'"
+								  else {
+									  println("ILLEGAL ESCAPE FOR " + c);
+									  c;
+								  }
+				})]),
+		Seq([BindResult("c", Rule("char")), Action(matched("c"))]),
+	]),
+
+	// hexword = hexdigit hexdigit hexdigit hexdigit   -- return type: none, just get what was matched
+	Production("hexword", false, PegUnknown(), [Seq([Rule("hexdigit"), Rule("hexdigit"), Rule("hexdigit"), Rule("hexdigit")])]),
+	
+	// hexdigit = digit | "a" - "f"   -- return type: none, just get what was matched
+	Production("hexdigit", false, PegUnknown(), [
+		Seq([CharRange("0", "9")]), 
+		Seq([CharRange("a", "f")]),
+		Seq([CharRange("A", "F")]),
+	]),
+
+	// char = "\u0000"-"\uffff"    -- return type:  none, just get what was matched
+	Production("char", false, PegUnknown(), [
+		Seq([CharRange("\u0000", "\uffff")]),
+	]),
+
+	// quotedchar = ws \"'\" onechar \"'\";  -- return type: [string], without quotes
+	Production("quotedchar", false, PegUnknown(), [
+ 	   Seq([Rule("ws"), Term("'"), BindResult("c", Rule("onechar")), Term("'"),
+			   Action(ast("c"))])
+    ]),
+	
+	// ws = " "*
+	Production("ws", true, PegUnknown(), [
+	  Seq([Star(Rule("whitespace"))])
+	]),
+	
+	// whitespace = " \t\r\n"
+	Production("whitespace", false, PegUnknown(), [
+	  Seq([Term(" ")]),
+	  Seq([Term("\n")]),		// lf
+	  Seq([Term("\x0d")]),	// cr
+	  Seq([Term("\t")]),		// tab
+	  Seq([Rule("comment")]),
+	  Seq([Rule("linecomment")]),
+	]),
+
+	Production("comment", false, PegUnknown(), [
+		Seq([Term("/*"), Star(Rule("noendcomment")), Term("*/")])
+	]),
+	
+	Production("noendcomment", false, PegUnknown(), [
+		Seq([Negation(Term("*/")), Rule("char")])
+	]),
+	
+	Production("linecomment", false, PegUnknown(), [
+		Seq([Term("//"), Star(Rule("nonlinebreakchar")), Term("\n") ])
+	]),
+
+	Production("nonlinebreakchar", false, PegUnknown(), [
+		Seq([Negation(Term("\n")), Rule("char") ])
+	]),
+	
+	Production("ws2", false, PegUnknown(), [
+	  Seq([Star(Rule("whitespace2"))])
+	]),
+	
+	// whitespace = " \t\r\n"
+	Production("whitespace2", false, PegUnknown(), [
+	  Seq([Term(" ")]),
+	  Seq([Term("\t")]),
+	]),
+]);
+
+firstNonterminal(g : Grammar) (g.productions)[0].name;
+
+parsi(g : Grammar, text : string, sem : SemanticActions) -> flow {
+	result = parse(g, firstNonterminal(g), text, sem);
+	if (result.pos < 0) {
+		println("SYNTAX ERROR <0: \"" + strLeft(text, 130)+ "...\"");
+		printParseError(text, result);
+	} else if (result.pos < strlen(text)) {
+		printParseError(text, result);
+	};
+	either(result.result, "PARSING FAILED");
+}
+
+parsi3(g : Grammar, text : string, sem : SemanticActions) -> Triple<Maybe<flow>, int, string> {
+	result = parse(g, firstNonterminal(g), text, sem);
+
+	error = if (result.pos < 0) {
+		"SYNTAX ERROR";
+	} else if (result.pos < strlen(text)) {
+		resolver = makeLineResolver(text);
+		line = findLine(resolver, result.pos);
+		"SYNTAX ERROR at <" + i2s(line.lineno) + ":" + i2s(line.column) + "> : " + strLeft(line.line, 80);
+	} else "";
+	Triple(result.result, result.pos, error);
+}

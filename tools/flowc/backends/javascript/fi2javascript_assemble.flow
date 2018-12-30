@@ -1,0 +1,467 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/javascript/fi2javascript_defines;
+import tools/flowc/backends/javascript/fi2javascript_utils;
+import tools/flowc/backends/javascript/fi2javascript_dfont;
+import tools/flowc/incremental/fiprogram;
+import list;
+import blueprint;
+import formats/json/json;
+import system;
+
+// TODO:
+// This module requires grammar2code, which is forbidden
+// import formats/uri/uri;
+
+export {
+	fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) -> void;
+	fiAssembleJsFile(program : FiProgram, cfg : FiJsConfig, ovl : FiJsOverlayGroup, headerCode : string, runtimeContent : string, code : List<string>) -> void;
+	fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) -> List<string>;
+	fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
+	fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback : () -> void) -> void;
+	fiEnsureModulesDirectory(cfg : FiJsConfig) -> void;
+}
+
+fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, code : List<string>, callback : (runtimeContent : string) -> void) {
+	if (cfg.haxeRuntime) {
+		delfile = if (cfg.debug) \s -> "" else deleteFile;
+		deleteFiles = \filenames : [string] -> iter(filenames, \fn -> {delfile(fn); {}});
+
+		rt = "import HaxeRuntime;\n";
+
+		imports = foldSet(ovl.nativeClasses, "",  \acc, e -> {
+			importName = if (e == "RenderSupportHx" && (cfg.jsmode == NODEJS_MODE || !isEmptySet(cfg.jslibrary))) {
+				"RenderSupportNodeJs" 
+			} else {
+				e
+			};
+
+			acc + "import " + importName + ";\n";
+		});
+
+		class = "FlowJsProgram";
+		jsfile = class + if (cfg.jsmode == TS_MODE) ".ts" else ".js";
+		hx = class + ".hx";
+
+		cls = "\nclass " + class + " {
+			static public var globals__  = {
+				HaxeRuntime._structnames_    = new haxe.ds.IntMap<String>();
+				HaxeRuntime._structids_      = new haxe.ds.StringMap<Int>();
+				HaxeRuntime._structargs_     = new haxe.ds.IntMap<Array<String>>();
+				HaxeRuntime._structargtypes_ = new haxe.ds.IntMap<Array<RuntimeType>>();
+				";
+
+		rs = if (containsSet(ovl.nativeClasses, "RenderSupportHx")) {
+				"  new RenderSupportHx();\n";
+			} else {
+				""
+			}
+
+		fin = "  }\n}\n";
+		saveFileContent(hx, rt + imports + cls + rs + fin);
+		srcDir = getFlowDir() + "src";
+		hxparams =
+			if (cfg.jsmode == NODEJS_MODE && cfg.webmodule)
+				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D flow_webmodule", "-D js-classic", "-lib node-express"]
+			else if (cfg.jsmode == NODEJS_MODE)
+				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D js-classic"]
+			else if (cfg.jsmode == NWJS_MODE)
+				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D nwjs", "-D js-classic"]
+			else
+				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-D js-classic"];
+
+		tmpfiles = ref [];
+		hxparams1 = if (containsSet(ovl.nativeClasses, "RenderSupportHx") && cfg.jsmode != NODEJS_MODE) {
+				p = fiPrepareDFonts(cfg);
+				tmpfiles := p.first;
+				fontparams = p.second;
+				concat(
+					concat(
+						concat(hxparams, ["-lib pixijs"]),
+						fontparams
+					), ["-D flow_main=\"" + ovl.mainFn + "\""])
+			} else hxparams;
+
+		// Push 'readable' into haxe code.
+		hxparams2 = if (cfg.readable) {
+				concat(hxparams1, ["-D readable"])
+			} else if (!isEmptySet(cfg.jslibrary)) {
+				concat(hxparams1, ["-D jslibrary"])
+			} else hxparams1;
+
+		hxparams3 = if (getConfigParameterDef(program.config.config, "dce", "") == "2") {
+				fcVerbose(cfg, 0, "Dead Haxe code elimination...");
+				natives = getTreeValues(fiCollectAllNativeNames(cfg, program, ovl));
+				if (natives != []) {
+					natives1 = concat(
+						fiHaxeDCESurvivors, natives);
+					concat(["-v", "-dce full", "--macro \"keep(["+strGlue(map(natives1, \e -> "'"+e+"'"), ",")+"])\""], hxparams2);
+				} else {
+					hxparams2
+				}
+			} else {
+				hxparams2
+			}
+		//fcPrintln("HIA: hxparams3 = " + toString(hxparams3));
+		buildFile = "haxe_build.hxml";
+		fcVerbose(cfg, 1, "Call 'haxe " + buildFile + "'");
+
+		setFileContent(buildFile, strGlue(hxparams3, "\n"));
+		startProcess("haxe", [buildFile], ".", "",
+			\c, o, e -> {
+				fcVerbose(cfg, 1, "Haxe succseeded");
+				r = getFileContent(jsfile);
+				if (c != 0) {
+					fcPrintln(e);
+					fcPrintln(o);
+					fcPrintln(i2s(c));
+				}
+				if (!cfg.code) {
+					delfile(jsfile);
+					delfile(hx);
+					delfile(buildFile);
+					deleteFiles(^tmpfiles);
+				}
+				callback(r);
+			}
+		);
+	} else {
+		callback("/* TODO: non-Haxe runtime goes here */\n");
+	}
+}
+
+fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeContent) {
+	hasRequire = ovl.requireList != [];
+	haxeRuntimeModule =
+		"define('haxeruntime', [], function() {\n" + fcJsStrict(cfg) +
+	(if (cfg.jsmode == TS_MODE) runtimeContent
+		// Due to moduling. Otherwise, with return{RenderSupportHx:RenderSupportHx} haxeruntime.RenderSupportHx != haxeruntime.RenderSupportJSPixi
+		else strReplace(runtimeContent, "window.RenderSupportHx = window.RenderSupportJSPixi;", "RenderSupportHx = RenderSupportJSPixi;")) +
+	"\n  return {\n" +
+	"    RuntimeType: RuntimeType,\n"+
+	"    HaxeRuntime: HaxeRuntime,\n"+
+	"    Util: Util,\n"+
+	"    Std: Std"+
+	if (isEmptySet(ovl.nativeClasses))
+		""
+	else
+		fold(set2array(ovl.nativeClasses), "", \acc, item->{
+			acc + ",\n    " + item + ": " + item
+		}) +
+	"\n  }\n"+
+	"});";
+
+	ovl.haxeRuntimeModuleItem ::= haxeRuntimeModule;
+
+	if (!hasRequire) {
+		haxeRuntimeModuleName = (if (cfg.modules != "") cfg.modules + "/" else "") + "haxeruntime.js";
+		ovl.beautifyList ::= arrayPush(ovl.beautifyList, haxeRuntimeModuleName);
+		saveFileContent(haxeRuntimeModuleName, haxeRuntimeModule);
+		if (cfg.jsmode == TS_MODE) {
+			saveFileContent((if (cfg.modules != "") cfg.modules + "/" else "") + "haxeruntime.d.ts", 
+				fold(
+					set2array(mergeSets(buildSet(["RuntimeType", "HaxeRuntime", "Util", "Std"]), ovl.nativeClasses)),
+					"",
+					\acc, hr -> acc + "    export var " + hr + ";\n"
+				)
+			);
+			{}
+		}
+	}
+
+	rModuleBody = strGlue(
+		map(
+			concat([
+					["CMP", "header.CMP"],
+					["OTC", "header.OTC"],
+					["RuntimeType", "haxeruntime.RuntimeType"],
+					["HaxeRuntime", "haxeruntime.HaxeRuntime"],
+					["Util", "haxeruntime.Util"],
+					["Std", "haxeruntime.Std"]
+				],
+				map(set2array(ovl.nativeClasses), \item -> [item, "haxeruntime." + item]) 
+			),
+			\x -> "    " + (if (cfg.jsmode == TS_MODE) "export var " + x[0] + "=" + x[1] else x[0] + ":" + x[1])
+		),
+		(if (cfg.jsmode == TS_MODE) ";" else ",") + "\n"
+	);
+
+	rModule = if (cfg.jsmode == TS_MODE) "" /*
+			unpair(
+				tsModuleWrap([Pair("haxeruntime", "haxeruntime"), Pair("header", "header")], "R", 1),
+				\topW, bottomW -> topW + rModuleBody + bottomW
+			) */
+		else
+			"define('R', ['haxeruntime', 'header'], function(haxeruntime, header) {\n"+
+	"  return {\n" +
+	"    CMP: header.CMP,\n" +
+	"    OTC: header.OTC,\n" +
+	"    RuntimeType: haxeruntime.RuntimeType,\n" +
+	"    HaxeRuntime: haxeruntime.HaxeRuntime,\n" +
+	"    Util: haxeruntime.Util,\n" +
+	"    Std: haxeruntime.Std" +
+	if (isEmptySet(ovl.nativeClasses))
+		""
+	else
+		fold(set2array(ovl.nativeClasses), "", \acc, item->{
+			acc + ",\n    " + item + ": haxeruntime." + item
+		}) +
+	"\n  }\n" +
+	"});";
+
+	ovl.rModuleItem ::= rModule;
+
+	if (!hasRequire) {
+		rModuleName = cfg.modules + "/R." + if (cfg.jsmode == TS_MODE) "ts" else "js";
+		ovl.beautifyList ::= arrayPush(ovl.beautifyList, rModuleName);
+		saveFileContent(rModuleName, rModule);
+	}
+}
+
+fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
+	hasRequire = ovl.requireList != [];
+
+	separatedHeaderCode =
+		if (cfg.jsmode == TS_MODE) "" /*
+			unpair(tsModuleWrap([Pair("haxeruntime", "haxeruntime")], "header", 1),
+				\topW, bottomW ->
+				topW +
+				//"'use strict'" +
+				"export " + "var HaxeRuntime = haxeruntime.HaxeRuntime;\n" +
+				"export " + "var RuntimeType = haxeruntime.RuntimeType;\n" +
+				header_code +
+				bottomW
+			) */
+		else
+			"define('header', ['haxeruntime'], function(haxeruntime) {\n" +
+			"var HaxeRuntime = haxeruntime.HaxeRuntime;\n" +
+			"var RuntimeType = haxeruntime.RuntimeType;\n" +
+			headerCode +
+			"\n  return {\n"  +
+			"    OTC: OTC,\n" +
+			"    CMP: CMP\n"  +
+			"  }\n" +
+		"});";
+
+	if (cfg.modules != "") {
+		ensureDirectoryExists(cfg.modules);
+		if (!hasRequire) {
+			hName = cfg.modules + "/" + "header." + if (cfg.jsmode == TS_MODE) "ts" else "js";
+			saveFileContent(hName, separatedHeaderCode);
+		}
+	}
+
+
+	amdModuleItem = "if (typeof define !== 'function') {var define = require('amdefine')(module);}";
+	mainfn = ovl.mainFn;
+	// Exclude main() called twice.
+	webModuleInitializationStart = if (cfg.jsmode == NODEJS_MODE && cfg.webmodule)
+		"var initializeWebModule = function (request, response) {\n\t"
+	else
+		"";
+	exportOrMain = if (cfg.jsmode == NODEJS_MODE && cfg.webmodule) {
+		concatStrings([
+			mainfn + "();\n",
+			"}\n",
+			"module.exports = initializeWebModule;\n"
+		]);
+	} else if (cfg.jsmode == NODEJS_MODE && !isEmptySet(cfg.jslibrary)) {
+		concatStrings([
+			"module.exports = {\n\t",
+			concatStrings(map(
+				set2array(cfg.jslibrary), 
+				\name -> name + ": " + lookupTreeDef(ovl.renamings, name, name) + ",\n\t"
+			)),
+			"};\n"
+		])
+	} else if (!containsSet(ovl.nativeClasses, "RenderSupportHx") && cfg.callMain) {
+		mainfn + "();"
+	} else {
+		""
+	}
+
+	fcVerbose(cfg, 1, "Assembling output file...");
+
+	// name of function, called from stub
+	htmlStub = getConfigParameter(program.config.config, "html-stub");
+	isJsLibrary = !isEmptySet(cfg.jslibrary);
+
+	if (htmlStub != "") {
+		if (isJsLibrary) {
+			stubText = "<html><head></head><body><script type='text/javascript' src='" + cfg.outputfile +
+			"'></script><script>console.log(" + htmlStub + "());</script></body></html>";
+
+			stubFileName = "jslibrary_stub.html";
+
+			setFileContent(stubFileName, stubText);
+
+			fcVerbose(cfg, 0, "Generated HTML stub file '" + stubFileName + "' for '" + htmlStub + "()'");
+		} else {
+			fcPrintln("WARNING: 'html-stub' parameter is set, but 'jslibrary' is not set.");
+			fcPrintln("HTML stub file was not generated.");
+		}
+	}
+
+	if (cfg.modules != "")
+		fcAssembleMandatoryModules(cfg, ovl, runtimeContent);
+
+	generatedContent =
+		if (hasRequire) list2string(reverseList(
+				Cons(amdModuleItem,
+					Cons(ovl.haxeRuntimeModuleItem,
+						Cons(separatedHeaderCode,
+							Cons(ovl.rModuleItem, reverseList(ovl.requireModulesList))))))
+		) else list2string(Cons(exportOrMain, code));
+	fcVerbose(cfg, 1, "Assembling done.");
+
+	fcVerbose(cfg, 1, "Saving output file...");
+	saveFileContent((if (hasRequire) cfg.modules + "/" else "") + cfg.outputfile, fcJsStrict(cfg) + webModuleInitializationStart + (if (hasRequire) "" else runtimeContent) + generatedContent);
+	if (cfg.code) {
+		saveFileContent("code_" + cfg.outputfile, fcJsStrict(cfg) + generatedContent);
+	}
+	fcVerbose(cfg, 1, "File saved.");
+	jsmode = fiJavascriptMode(cfg);
+	fcVerbose(cfg, 0, "Javascript (" + jsmode+ ") '" + resolveRelativePath(cfg.outputfile) + "' saved.");
+}
+
+fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<string>, module : FiModule) {
+	hasRequire = ovl.requireList != [];
+	if (cfg.flowfile != module.fileinfo.flowfile) {
+		// Create folders for modules like ui/fontmapping;
+		dn = dirName(module.fileinfo.flowfile);
+		if (dn != module.fileinfo.flowfile && (!hasRequire || (hasRequire && contains(ovl.requireList, module.fileinfo.flowfile)))) {
+			ensureDirectoryExists(cfg.modules + "/" + dn);
+			{}
+		}
+	}
+	getImports = \list : [string], objectNames : bool -> {
+		if (list == []) "" else {
+			reqs = fold(module.imports, [], \accu, item: FiImport -> {
+				if (item.dynamic) arrayPush(accu, item.flowfile) else accu;
+			});
+			excludeReqs = filter(list, \e->!contains(reqs, e));
+			lst = map(excludeReqs, \e -> if (objectNames) fiJsMangleModuleName(ovl, e) else e);
+			(if (objectNames) ", " else ", '") + strGlue(lst, if (objectNames) ", " else "', '") +
+			(if (objectNames) "" else "'");
+		}
+	}
+	i2 = if (cfg.debug) "  " else "";
+	i4 = if (cfg.debug) "    " else "";
+	// TODO: maybe we can avoid creation of this tree at each function call?
+	module_unions = fold(module.unions, makeTree(), \a, u -> setTree(a, u.name, u));
+	getExports = \list : [string] -> {
+		strGlue(filter(map(list, \e -> {
+			protected = if (cfg.debug) (if (containsSet(ovl.keywords, e)) e + "__" else e) else e;
+			isStructure = lookupTree(ovl.structs, protected) != None() || lookupTree(module_unions, protected) != None();
+			if (isStructure)
+				""
+			else {
+				pr = if (cfg.debug) protected else either(lookupTree(ovl.mangledNames, protected), "");
+				if (pr == "") "" else pr + ": " + pr
+			}
+		}), \e -> e != ""), ",\n" + i4);
+	}
+
+	moduleNameOnly = cfg.modules + "/" +
+	(if (cfg.flowfile == module.fileinfo.flowfile) {
+		if (endsWith(cfg.outputfile, ".js") || endsWith(cfg.outputfile, ".ts")) strsubsmart(cfg.outputfile, 0, -3) else cfg.outputfile;
+	} else module.fileinfo.flowfile);
+	generated = list2string(r);
+
+	moduleContent = if (cfg.jsmode == TS_MODE) { "" /*
+		imports = fold(ovl.importedModules, [Pair("R","R"), Pair("header","header")], \importing, module -> arrayPush(importing, Pair(module, jsMangleModuleName(module, ovl))));
+		unpair(
+			tsModuleWrap(imports, strsubsmart(getImports([am.flowfile], true), 2, 0), 1),
+			\topW, bottomW ->
+				topW +
+			// "OTC is not defined", CMP, RenderSupportHx, etc due to moduling therefore
+			"var OTC=R.OTC;\nvar CMP=R.CMP;\n" +
+			(if (!contains(set2array(ovl.nativeClasses), "RenderSupportHx") || params.node) ""
+				else "var RenderSupportHx=R.RenderSupportHx;\n") +
+			generated + "\n" +
+			(if (flowfile == am.flowfile) "try {main();}catch (err) {if (err) console.log(err.stack);};"
+				else "") +
+			bottomW
+		);*/
+		} else {
+			if (cfg.flowfile == module.fileinfo.flowfile) {
+				mandatoryModules = ["haxeruntime", "header", "R"];
+				bundles = "[" + strGlue(map(concat(mandatoryModules, ovl.requireListStatic), \e -> "'" + e + "'"), ", ") + "]";
+				// main module differs
+				"var requirejs = require('requirejs');\n\n" +
+				(if (hasRequire) ("requirejs.config({bundles: {'" + cfg.outputfile + "': " + bundles + "}});") else "") +
+				(if (hasRequire) "define" else "requirejs")+"(['R'" + getImports(ovl.importedModules, false) +
+				"], function(R" + getImports(ovl.importedModules, true) + ") {\n\n" +
+				"'use strict';\n"+
+				generated + i2 +
+				"try {" + (if (cfg.debug) "main" else either(lookupTree(ovl.mangledNames, "main"), "main")) + "();}catch (err) {if (err) console.log(err.stack);}});"
+			} else
+				"define('" + module.fileinfo.flowfile + "', ['R'" +  getImports(ovl.importedModules, false) +
+			"], function(R" + getImports(ovl.importedModules, true) + ") {\n" +
+			"'use strict';\n"+
+			generated + "\n" + i2 +
+			// Is DCE removed all exports?
+			(if (length(module.exports) == 0)
+				"return {}"
+			else
+				"return {\n" + i4 + getExports(module.exports) + "\n" + i2 + "}") + "\n});";
+		};
+
+	// Separate main module
+	if ((hasRequire && contains(ovl.requireList, module.fileinfo.flowfile)) || !hasRequire) {
+		moduleName = moduleNameOnly + if (cfg.jsmode == TS_MODE) ".ts" else ".js";
+		ovl.beautifyList ::= arrayPush(ovl.beautifyList, moduleName);
+		saveFileContent(moduleName, moduleContent);
+	}
+	// Push module into list for solid file generation.
+	m = Cons(moduleContent, ovl.requireModulesList);
+	if (hasRequire && !contains(ovl.requireList, module.fileinfo.flowfile))
+		ovl.requireModulesList ::= m;
+	m;
+}
+
+fiJsCompress(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
+	callback()
+}
+
+fiJsBeautify(cfg : FiJsConfig, ovl : FiJsOverlayGroup, callback) {
+	beautifyParams = if (cfg.modules == "") ["-r", cfg.outputfile] else concat(["-r"], ovl.beautifyList);
+	startProcess("js-beautify", beautifyParams, ".", "",
+		\c, o, e -> {
+			fcVerbose(cfg, 0, "Running js-beautify for " + (if (cfg.modules != "") "all modules of " else "") + "'" + cfg.outputfile + "'");
+			fcVerbose(cfg, 1, "Call '" + strGlue(concat(["js-beautify"], beautifyParams), " ") + "'");
+			if (c != 0) {
+				// Windows version of js-beautify utility named differently
+				startProcess("js-beautify.cmd", beautifyParams, ".", "",
+					\c1, o1, e1 -> {
+						fcVerbose(cfg, 0, "Trying js-beautify.cmd for '" + cfg.outputfile + "'");
+						callback();
+						if (c1 != 0) {
+							fcPrintln("js-beautify.cmd failed.");
+							fcPrintln(e1);
+							fcPrintln(o1);
+							fcPrintln(i2s(c1));
+						}
+					}
+				);
+			} else {
+				fcVerbose(cfg, 0, "Beautify done.");
+				callback();
+			}
+			if (cfg.modules != "") {
+				deleteFile(cfg.outputfile);
+				{}
+			}
+		}
+	);
+}
+
+fiEnsureModulesDirectory(cfg : FiJsConfig) -> void {
+	if (cfg.modules != "") {
+		ensureDirectoryExists(cfg.modules);
+	} else { "" }
+	{}
+}
+
+fcJsStrict(cfg : FiJsConfig) {
+	if ((cfg.jsmode == STANDARD_ES6) || (cfg.jsmode == NODEJS_MODE) || (cfg.jsmode == NWJS_MODE)) "'use strict';\n" else "";
+}

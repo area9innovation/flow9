@@ -1,0 +1,144 @@
+import wigi/wigi_engine;
+import wigi/types;
+import wigi/wigi2text;
+import wigi/wigi2php_types;
+import formats/php/php_ast;
+
+export {
+	wigi2php(element : WigiElement, functionName : string) -> string;
+
+	wigi2phpParseFormula : (string) -> Pair<WigiExpr, [PhpVar]>;
+	wigi2phpWigiExpr2string : (WigiExpr) -> string;
+	wigi2phpFoldElements : (PhpContext, [WigiElement]) -> PhpBlock;
+	wigi2phpFoldElementsi : (PhpContext, [WigiElement], (PhpContext, int, WigiElement) -> PhpBlock) -> PhpBlock;
+}
+
+wigi2php(element : WigiElement, functionName : string) -> string {
+	phpElement2string(wigi2phpFunction(emptyPhpContext, element, functionName))
+}
+
+combinePhpBlocks(blocks : [PhpBlock]) -> PhpBlock {
+	newBlock = fold(blocks, emptyPhpBlock, \acc, block -> {
+		PhpBlock(
+			uniqCustomByIds(concat(acc.externalVars, filter(block.externalVars, \v -> !contains(acc.declaredVars, v))), \id -> id.name),
+			uniqCustomByIds(concat(acc.declaredVars, block.declaredVars), \id -> id.name),
+			concat(acc.statements, block.statements),
+			uniqCustomByIds(concat(acc.returnVars, block.returnVars), \id -> id.name)
+		);
+	});
+
+	newBlock;
+}
+
+combinePhpContext(contexts : [PhpContext]) -> PhpContext {
+	newContext = fold(contexts, emptyPhpContext, \acc, context -> {
+		PhpContext(
+			uniqCustomByIds(concat(acc.externalVars, filter(context.externalVars, \v -> !contains(acc.declaredVars, v))), \id -> id.name),
+			uniqCustomByIds(concat(acc.declaredVars, context.declaredVars), \id -> id.name),
+			mergeTree(acc.tempVars, context.tempVars)
+		);
+	});
+
+	newContext;
+}
+
+phpBlock2context(b : PhpBlock) -> PhpContext {
+	PhpContext(b.externalVars, b.declaredVars, makeTree());
+}
+
+wigi2phpFunction(context : PhpContext, element : WigiElement, functionName : string) -> PhpFunction {
+	PhpFunction(functionName, wigi2phpBlock(context, element));
+}
+
+wigi2phpWigiExpr2string(expr: WigiExpr) -> string {
+	mapWigiExpr(expr, \e -> switch (e : WigiExpr) {
+		WigiVarRef(x): WigiVarRef(phpElement2string(PhpVar(x)));
+		default: e;
+	}) |> wigiExpr2string;
+}
+
+wigi2phpFoldElementsi(ctx : PhpContext, elements : [WigiElement], fn : (PhpContext, int, WigiElement) -> PhpBlock) -> PhpBlock {
+	foldi(elements, emptyPhpBlock, \idx, acc, el -> {
+		newContext = combinePhpContext([ctx, phpBlock2context(acc)]);
+		combinePhpBlocks([acc, fn(newContext, idx, el)]);
+	});
+}
+
+wigi2phpFoldElements(ctx : PhpContext, elements : [WigiElement]) -> PhpBlock {
+	wigi2phpFoldElementsi(ctx, elements, \ctx1, __, elements1 -> wigi2phpBlock(ctx1, elements1));
+}
+
+wigi2phpParseFormula(formula : string) -> Pair<WigiExpr, [PhpVar]> {
+	expr = parseWigiExprNoPreprocessing(checkOnEqualsSign(formula));
+	exprWithBuilins = mapWigiExpr(expr, \e -> switch (e : WigiExpr) {
+		WigiCall(fn, args): {
+			switch (fn : WigiExpr) {
+				WigiVarRef(name): {
+					if (containsKeyTree(getWigiBuiltIns(), toUpperCase(name))) {
+						WigiCall(WigiBuiltInName(name), args);
+					} else e;
+				}
+				default: e;
+			}
+		}
+		default: e;
+	});
+
+	vars = foldWigiExpr(exprWithBuilins, [], \acc, e -> {
+		switch (e : WigiExpr){
+			WigiVarRef(x): arrayPush(acc, PhpVar(x));
+			default: acc;
+		}
+	});
+
+	Pair(
+		exprWithBuilins,
+		vars
+	)
+}
+
+wigi2phpBlock(context : PhpContext, element : WigiElement) -> PhpBlock {
+	switch (element) {
+		WigiDocument(root, style): wigi2phpBlock(context, root);
+		WigiStory(paragraphs, views, style): wigi2phpFoldElements(context, ^paragraphs);
+		WigiParagraph(elements, style): wigi2phpFoldElements(context, elements);
+		WigiText(text, style): emptyPhpBlock;
+		WigiEmpty(): emptyPhpBlock;
+		WigiRecursive(elements, type, style): {
+			switch (type : WigiRecursiveType) {
+				WigiExternalRecursive(exType, content): {
+					eitherFn(
+						getExternalRecursiveAPI(exType),
+						\api -> {
+							wigi2phpFn = extractStruct(api.style, Recursive2PhpFn(\__, __, __, elementsAsPhp -> combinePhpBlocks(elementsAsPhp))).fn;
+							wigi2phpFn(content, context, elements, map(elements, \e -> wigi2phpBlock(context, e)));
+						},
+						\ -> {
+							println("wigi2php.WigiExternalRecursive Unsupported type: " + exType);
+							wigi2phpFoldElements(context, elements);
+						}
+					);
+				}
+				default: wigi2phpFoldElements(context, elements);
+			}
+		}
+		WigiBlock(type, style): {
+			switch (type) {
+				WigiExternalBlock(exType, content): {
+					eitherFn(
+						getExternalBlockAPI(exType),
+						\api -> {
+							wigi2phpFn = extractStruct(api.style, Block2PhpFn(\__ -> emptyPhpBlock)).fn;
+							wigi2phpFn(content);
+						},
+						\ -> {
+							println("wigi2php.WigiExternalBlock Unsupported type: " + exType);
+							emptyPhpBlock;
+						}
+					);
+				}
+				default: emptyPhpBlock;
+			}
+		}
+	}
+}

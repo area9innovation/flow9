@@ -1,0 +1,1034 @@
+import wigi/types;
+import wigi/wigi2html_types;
+import wigi/wigify;
+import wigi/plumbing;
+import wigi/wigi2string;
+
+export {
+	wigi2html(wigi : WigiElement, style : [Wigi2HtmlStyle]) -> Pair<string, [string]>;
+}
+
+wigi2html(wigi : WigiElement, style : [Wigi2HtmlStyle]) -> Pair<string, [string]> {
+	errors = ref [];
+	extraStyles = ExtraHtmlStyles(ref makeTree(), ref makeTree());
+
+	Pair(
+		extractHtml(wigi, errors, wigiDefaultFn, extraStyles, style),
+		^errors
+	)
+}
+
+wigiDefaultFn(__ : WigiElement, ___ : string) "";
+
+	Wigi2HtmlTableStyle ::= WigiTableStyle, WigiInt, Wigi2HtmlCellSpans, Wigi2HtmlTableSize, Wigi2HtmlEmptyStyle, Wigi2HtmlCellRowSpan, Wigi2HtmlIndex2RowCol;
+		Wigi2HtmlCellSpans(cellSpans : [WigiCellSpan]);
+		Wigi2HtmlTableSize(columns : int, rows : int, maxWidth : double, maxHeight : double);
+		Wigi2HtmlEmptyStyle();
+		Wigi2HtmlCellRowSpan(spans : int, currentRow : int);
+		Wigi2HtmlIndex2RowCol(map : Tree<int, Pair<int, int>>);
+
+
+	// This is struct for extra wigi2html styles, each tree is for corresponding wigi hierarchy level
+	ExtraHtmlStyles(
+		story : ref Tree<string, int>,
+		table : ref Tree<string, Wigi2HtmlTableStyle>
+	);
+
+// Keys for extra styles trees
+wigiNumberedCounter = "wigiNumberedCounter";
+wigiCellSpans = "wigiCellSpans";
+wigiShowGrid = "wigiShowGrid";
+wigiTableCellCounter = "wigiTableCellCounter";
+wigiTableRows = "wigiTableRows";
+wigiTableCols = "wigiTableCols";
+wigiTableCellColSpan = "wigiTableCellColSpan";
+wigiTableCellRowSpan = "wigiTableCellRowSpan";
+wigiTableColumnWidths = "wigiTableColumnWidths";
+wigiTableShowHeaders = "wigiTableShowHeaders";
+wigiSameRowHeight = "wigiSameRowHeight";
+wigiTableHighlight = "wigiTableHighlight";
+wigiTableSize = "wigiTableSize";
+wigiTableIndex2RowCol = "wigiTableIndex2RowCol";
+
+applyAdvancedWigiTextStyle(html : string, style : [WigiTextStyle], errors : ref [string]) -> string {
+	fold(style, html, \str, s -> {
+
+		switch(s) {
+			Underline(): "<u>" + str + "</u>";
+			DoubleUnderline(): "<span style=\"text-decoration:underline; border-bottom: 1px solid #000;\">" + str + "</span>";
+			BaselineShift(shift): formatString("<span style=\"vertical-align: %1\">", [d2s(shift)]) + str + "</span>";
+			WigiRelativeFontSize(delta): formatString("<span style=\"font-size: %1em;\">", [i2s(delta)]) + str + "</span>";
+			WigiHtmlRelativeFontSizeWithEm(em): {
+				ratio = extractStruct(style, WigiHtmlResponsiveFontSize(1.0, 0.0, 0.0)).ratio;
+				if (!strContains(str, "font-size:"))
+					formatString("<span style=\"font-size: %1em;\">", [d2s(em * ratio)]) + str + "</span>"
+				else {
+					separator = if (strContains(str, "font-size: calc(")) "font-size: calc("
+						else "font-size:";
+					currentFontSize = takeBetween(str, separator, "px", "") + "px";
+					newFontSize = d2s(em * ratio) + "em";
+					strReplace(str, separator + currentFontSize, separator + newFontSize)
+				}
+			}
+			WigiHtmlResponsiveFontSize(ratio, vw, vh): {
+				styleStr = takeBetween(str, "<span style=\"", "\">", "");
+				proprA = strSplit2WithoutLeave(styleStr, [";"]);
+				currentFontSize = takeBetween(findDef(proprA, \p -> startsWith(p, "font-size"), ""), ":", "px", "") |> s2i;
+				newFontSize = formatString("font-size: calc(%1px + %2vw + %3vh);", [d2s(i2d(currentFontSize) * ratio), d2s(vw), d2s(vh)]);
+				newStyleStr = strGlue(
+					fold(proprA, [], \acc, p -> {
+						arrayPush(acc, if (startsWith(p, "font-size")) newFontSize else p)
+					}),
+					";"
+				);
+				strReplace(str, styleStr, newStyleStr)
+			};
+			default: str
+		}
+	});
+}
+
+convertWigiVideo(errors :ref [string], url : string, styles : [WigiVideoStyle]) -> string {
+	styleAndSubtitles = fold(styles, Pair("controls=\"controls\" autoplay=\"autoplay\" ", ""), \acc : Pair<string, string>, s -> {
+		switch(s : WigiVideoStyle) {
+			LoopPlayback(): {
+				Pair(acc.first + "loop=\"loop\" ", acc.second);
+			}
+			PlayerSize(w, h): {
+				Pair(acc.first + formatString("width=\"%1\" height=\"%2\" ", [d2s(w), d2s(h)]), acc.second);
+			}
+			PlayerAvailableSize(awh): acc; // TODO: figure out how to implement it for html
+			NoAutoPlay(): {
+				Pair(strReplace(acc.first, "autoplay=\"autoplay\" ", ""), acc.second)
+			}
+			NoControls(): {
+				Pair(strReplace(acc.first, "controls=\"controls\" ", ""), acc.second)
+			}
+			ClosedCaptions(file): {
+				refArrayPush(errors, "Warning: Only English subtitles are supported");
+				Pair(acc.first, acc.second +
+					formatString("<track src=\"%1\" kind=\"subtitles\" srclang=\"en\" label=\"English\">", [file]));
+			}
+			WigiVideoScale(scale): acc; // TODO: figure out how to implement it for html
+			WigiVideoFormat(format) : acc;
+		}
+	});
+	// http://www.w3schools.com/tags/tag_video.asp
+	formatFromStyle = extractStruct(styles, WigiVideoFormat("")).format;
+	mp4Ext = ["mp4"];
+	webmExt = ["webm"];
+	oggExt = ["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"];
+	videoType = fold(concatA([mp4Ext, webmExt, oggExt]), formatFromStyle, \acc : string, t -> {
+		type = strRight(url, strlen(url) - strlen(t));
+		if (contains(mp4Ext, type)) {
+			"mp4";
+		} else if (contains(webmExt, type)) {
+			"webm";
+		} else if (contains(oggExt, type)) {
+			"ogg";
+		} else {
+			acc;
+		}
+	});
+	if (videoType == "") {
+		refArrayPush(errors, "Not supported: WigiVideo format" + strRight(url, strlen(url) - 3));
+		"";
+	} else {
+		src = formatString("<source src=\"%1\" type=\"video/%2\"/>", [url, videoType]);
+		fallback = "<strong class=\"fallback-message\">This device cannot play video.</strong>";
+		formatString("<video %1>%2%3%4</video>", [styleAndSubtitles.first, src, fallback, styleAndSubtitles.second]);
+	}
+}
+
+convertWigiPicture(url : string, style : [WigiPictureStyle]) -> string {
+	scale = fold(style, 1.0, \acc, s -> {
+		switch (s : WigiPictureStyle) {
+			PictureScale(sc) : sc / 100.0;
+			default : acc;
+		}
+	});
+	picStyle = fold(style, "style=\"", \acc, s -> {
+		switch (s : WigiPictureStyle) {
+			PictureWidthHeight(w, h) : {
+				acc + "width:" + d2s(w * scale) + "px; height:" + d2s(h * scale) + "px; ";
+			}
+			default: acc;
+		}
+	}) + "\"";
+	"<img src=\"" + url + "\" " + picStyle + "/>";
+}
+
+convertWigiAudio(errors :ref [string], url : string, styles : [WigiAudioStyle]) -> string {
+	style = fold(styles, "autoplay=\"autoplay\" ", \acc, s -> {
+		switch(s) {
+			LoopPlayback(): {
+				acc + "loop=\"loop\" ";
+			}
+			NoAutoPlay(): {
+				strReplace(acc, "autoplay=\"autoplay\" ", "");
+			}
+			ClosedCaptions(file): {
+				// TODO: try to use <track> html5 tag
+				refArrayPush(errors, "Not supported: WigiAudio style ClosedCaptions");
+				acc;
+			}
+		}
+	});
+	// http://www.w3schools.com/tags/tag_audio.asp
+	mp3Ext = ["mp3"];
+	wavExt = ["wav"];
+	oggExt = ["ogg", "ogv", "oga", "ogx", "ogm", "spx", "opus"];
+	audioType = fold(concatA([mp3Ext, wavExt, oggExt]), "", \acc, t -> {
+		type = strRight(url, strlen(url) - strlen(t));
+		if (contains(mp3Ext, type)) {
+			"mpeg";
+		} else if (contains(oggExt, type)) {
+			"ogg";
+		} else if (contains(wavExt, type)) {
+			"wav";
+		} else {
+			acc;
+		}
+	});
+	if (audioType == "") {
+		refArrayPush(errors, "Not supported: WigiAudio format" + strRight(url, strlen(url) - 3));
+		"";
+	} else {
+		src = formatString("<source src=\"%1\" type=\"audio/%2\"/>", [url, audioType]);
+		fallback = "<strong class=\"fallback-message\">This device cannot play audio.</strong>";
+		formatString("<audio controls=\"controls\" %1>%2%3</audio>", [style, src, fallback]);
+	}
+}
+
+convertWigiSlider(errors : ref [string], value : DynamicBehaviour<double>, minValue : double, maxValue : double,
+	step : double, width : double, style : [WigiSliderStyle]) -> string {
+	iter(style, \s : WigiSliderStyle -> {
+		switch(s) {
+			default: {
+				refArrayPush(errors, "Not supported: WigiSliderStyle " + s.structname);
+			}
+		}
+	});
+	formatString("<input type=\"range\" min=\"%1\" max=\"%2\" value=\"%3\" step=\"%4\" style=\"width: %5px\">",
+		[d2s(minValue), d2s(maxValue), d2s(getValue(value)), d2s(step), d2s(width)]);
+}
+
+convertNaturalMath(errors : ref [string], formula : string) {
+	res = useFormulaTextBuilder(formula, []);
+	eitherFn(res, idfn, \-> {
+		refArrayPush(errors, "Cannot convert formula " + formula);
+		""
+	});
+}
+
+// convert number to absolute (in px) or relative (in em) size
+convertToSize(px: double, isRelative: bool) -> string {
+	if (isRelative)
+		d2s(roundWithPrecision(px / dwfs.size, 2)) + "em;"
+	else
+		d2s(px) + "px;"
+}
+
+applyParagraphStyle(
+	html : string,
+	styles : [WigiStyle],
+	errors : ref [string],
+	extraStyles : ExtraHtmlStyles,
+	fontSize : FontSize,
+	fontColor : Fill
+) -> string {
+	addStyle = \p1, style -> Triple(p1.first, p1.second, p1.third + style);
+	cssColor = lpad(formatHex(fontColor.color),"0", 6);
+	isRelative = containsStruct(styles, WigiConvertToRelativeSize());
+	startend = if (getDefaultRtl()) Pair("right", "left") else Pair("left", "right");
+
+	paragraph = fold(styles, Triple(html, "", ""), \p : Triple<string, string, string>, s -> {
+		switch (s : WigiStyle) {
+			// We do not consider this style attribute of Listed
+			Listed(type, style): {
+				switch (type : ListIndexType) {
+					Bulleted(__): addStyle(
+						Triple("<li>" + p.first + "</li>", p.second, p.third),
+						"color:#"+cssColor+";"
+					);
+					Numbered(number, numtype): {
+						// Just add a number at the beginning of paragraph
+						// TODO: somehow implement it via <ol> <li> tags
+						dot = if (isSameStructType(numtype, DottedNumber())) "." else "";
+						value = if (number < 0) {
+							counter = lookupTreeDef(^(extraStyles.story), wigiNumberedCounter, 0) + 1;
+							extraStyles.story := setTree(^(extraStyles.story), wigiNumberedCounter, counter);
+							counter
+						} else number;
+						pad = convertToSize(20.0, isRelative);
+						addStyle(
+							Triple(i2s(value) + dot + " " + p.first, p.second, p.third + "padding-left:" + pad),
+							"color:#"+cssColor+";"
+						)
+					}
+				}
+			}
+			// The align attribute not supported in HTML5.
+			CenterAlign(): Triple(p.first, p.second + " align=\"center\" ", p.third + "text-align:center;");
+			LeftAlign(): Triple(p.first, p.second + " align=\"left\" ", p.third + "text-align:left;");
+			RightAlign(): Triple(p.first, p.second + " align=\"right\" ", p.third + "text-align:right;");
+			Justify(): Triple(p.first, p.second + " align=\"justify\" ", p.third + "text-align:justify;");
+			StartAlign(): Triple(p.first, p.second + " align=\""+startend.first+"\" ", p.third + "text-align:start;");
+			EndAlign(): Triple(p.first, p.second + " align=\""+startend.second+"\" ", p.third + "text-align:end;");
+			TightWidth(): addStyle(p, "width:auto;"); // CHECK, could be width:0%;
+			FixedWidth(): addStyle(p, "width:100%;"); // CHECK
+			InterlineSpacing(d): {
+				// In wigi, the FontSize does not equals to the line height. We can estimate the height of the text by
+				// measuring the actual height of the text with different sizes.
+				// The example of such estimation is recorded in the getFontHeight lambda below.
+				// see paragraph3.flow, renderParaLines how lines are rendered in wigi
+				getFontHeight = \fs ->
+					fs + if (fs <= 4.) 1.
+					else if (fs <= 16. && fs != 13.) 2.
+					else if (fs <= 20.) 3.
+					else if (fs <= 24. || fs == 28.) 4.
+					else if (fs <= 32.) 5.
+					else if (fs <= 36.) 6.
+					else if (fs <= 45. && fs != 41.) 7.
+					else 8.;
+				h = convertToSize(getFontHeight(fontSize.size) + d, isRelative);
+				newStyle = formatString("clear:both; line-height:%1", [h]);
+				addStyle(p, newStyle)
+			}
+			FirstLineIndent(indent): addStyle(p, formatString("text-indent:%1", [convertToSize(indent, isRelative)]));
+			GeneralIndent(indent): addStyle(p, formatString("padding-left:%1", [convertToSize(indent, isRelative)]));
+			ParagraphBorder(top, bottom): {
+				addStyle(p, formatString("padding-top:%1", [convertToSize(top, isRelative)]));
+				addStyle(p, formatString("padding-bottom:%1", [convertToSize(bottom, isRelative)]));
+			}
+			default: p;
+		}
+	});
+	formatString("<div%3%2>%1</div>", [
+		paragraph.first,
+		paragraph.second,
+		if (strlen(paragraph.third) > 0)
+			formatString(" style=\"%1\"", [paragraph.third])
+		else ""
+	])
+}
+
+convertWigiSmartArt(externalWigiViewerUrl: string) -> (WigiElement) -> string {
+	\wigi : WigiElement -> {
+		switch (wigi : WigiElement) {
+			WigiBlock(type, style): {
+				switch (type : WigiBlockType) {
+					WigiSmartArt(c, s) : {
+						fold(
+							either(
+								CallSmartArt2htmlParser(c),
+								[""]),
+							"",
+							\acc, sahtml -> acc + " " + sahtml
+						);
+					}
+					default: "";
+				}
+			}
+			default: "";
+		}
+	}
+}
+
+useExternalViewer(externalWigiViewerUrl: string) -> (WigiElement) -> string {
+	\wigi -> {
+		form = joinWigiPages(map(Wigify(wigi, [], []), \f -> f.form));
+		fm = getStaticFormSize(form);
+		content = escapeHtml(wigi2string(wigi));
+		"<iframe class=\"frame\" src=\"" + externalWigiViewerUrl + content + "\" width=\"" + i2s(round(fm.width)) + "\" height=\"" + i2s(round(fm.height)) + "\" marginheight=\"0\" marginwidth=\"0\" frameborder=\"0\"></iframe>";
+	}
+}
+
+extractHtml(wigi : WigiElement, errors : ref [string], fn : (WigiElement, string) -> string, extraStyles : ExtraHtmlStyles, htmlStyle : [Wigi2HtmlStyle]) -> string {
+	applyFnOrDefault = \str, defaultFn : (WigiElement, string) -> string -> {
+		s = fn(wigi, str);
+		if (s != "") {
+			s;
+		} else {
+			defaultFn(wigi, str);
+		}
+	}
+
+	switch(wigi : WigiElement) {
+		WigiDocument(root, style): {
+			html = extractHtml(root, errors, fn, extraStyles, htmlStyle);
+			docAndStyle = fold(style, Pair(html, ""), \acc, s -> {
+				switch(s) {
+					WigiName(name): { Pair(acc.first, acc.second + "<h1>" + name + "</h1>"); }
+				}
+			});
+			docAndStyle.second + docAndStyle.first;
+		}
+		WigiStory(elements, views, style): {
+			newStoryTree = ref setTree(makeTree(), wigiNumberedCounter, 0);
+			// parameter WigiConvertToRelativeSize could be passed in two ways: through WigiStoryStyles or through Wigi2HtmlStyle
+			htmlStyle2 = if (contains(style, WigiConvertToRelativeSize()))
+					replaceStruct(htmlStyle, WigiConvertToRelativeSize())
+				else htmlStyle;
+
+			paragraphs = map(^elements, \e : WigiElement -> {
+				extractHtml(e, errors, fn, ExtraHtmlStyles(newStoryTree, extraStyles.table), htmlStyle2)
+			});
+			storyAndStyle = fold(style, Pair(paragraphs, ""), \acc : Pair<[string], string>, s -> {
+				switch(s : WigiStoryStyle) {
+					WigiName(name): Pair(acc.first, formatString("%1<h2>%2</h2>", [acc.second, name]));
+					ParagraphSpacing(d): {
+						margin = convertToSize(d, contains(htmlStyle2, WigiConvertToRelativeSize()));
+						Pair(map(acc.first, \p -> formatString("<div style=\"margin-bottom:%1\">%2</div>", [margin, p])), acc.second);
+					}
+					WigiReference(__): acc;
+					WigiConvertToRelativeSize(): acc;
+					RemoveAllListSpacing(): acc;
+				}
+			});
+
+			// combine all list items into list by adding tags <ul></ul>
+			listStyle = if (contains(htmlStyle2, RemoveAllListSpacing()) || contains(style, RemoveAllListSpacing())) {
+				" style=\"padding: 0em; margin-left: 1em; margin-top: 0em; margin-bottom: 0em;\"";
+			} else {
+				""
+			};
+			paragraphsWithLists = fold(storyAndStyle.first, Pair("", false), \acc : Pair<string, bool>, paragraph : string -> {
+				if (strContains(paragraph, "<li>")) {
+					if (acc.second == false) // it's begin of list
+						Pair(acc.first + "<ul" + listStyle + ">" + paragraph, true)
+					else Pair(acc.first + paragraph, acc.second)
+				} else {
+					if (acc.second == true) // it's end of list
+						Pair(acc.first + "</ul>" + paragraph, false)
+					else Pair(acc.first + paragraph, acc.second)
+				}
+			});
+			paragraphsGlue = if (strContains(lastElement(storyAndStyle.first, ""), "<li>"))
+				paragraphsWithLists.first + "</ul>"
+			else paragraphsWithLists.first;
+
+			storyAndStyle.second + paragraphsGlue;
+		}
+		WigiParagraph(elements, styles): {
+			html0 = strGlue(
+				map(elements, \e : WigiElement -> {
+					extractHtml(e, errors, fn, extraStyles, htmlStyle)
+				}),
+				""
+			);
+
+			getFontSz = \t : WigiText, defFs -> extractStruct(t.style, FontSize(defFs));
+			texts = extractStructMany(elements, emptyWigiText);
+			fontColor = if (texts == []) {
+				Fill(0)
+			} else {
+				extractStruct(texts[0].style, Fill(0));
+			};
+			// this is a best attempt to be as close as possible with wigi rendering
+			// we scan all texts in paragraph and use max font size to generate interline spacing
+			parMaxText : WigiText = fold(
+				extractStructMany(elements, emptyWigiText),
+				WigiText("", []),
+				\acc : WigiText, t : WigiText -> if (getFontSz(acc, 0.) >= getFontSz(t, 0.)) acc else t
+			);
+			html = if (trim(html0) != "" || length(elements) != 1) html0
+			else {
+				// special case.
+				// we have a paragraph with empty text and must render it as separate line in order to match wigi rendering.
+				// We could not use empty text because browser would just ignore resulting span element so we use space
+				// for empty paragraph we must use "zero-width space" as text in order to not lost the line
+				extractHtml(WigiText("\u200b", parMaxText.style), errors, fn, extraStyles, htmlStyle)
+			}
+
+			applyFnOrDefault(html, \w, s -> {
+				styles2 = if (containsStruct(htmlStyle, WigiConvertToRelativeSize()))
+					arrayPush(styles, WigiConvertToRelativeSize())
+				else styles;
+				applyParagraphStyle(s, styles2, errors, extraStyles, getFontSz(parMaxText, dwfs.size), fontColor);
+			});
+		}
+		WigiText(text, style): {
+			applyFnOrDefault(escapeHtml(unescapeHtml(text)), \w, txt -> {
+				converter = tryExtractStruct(htmlStyle, WigiTextConverter(\__ -> ""));
+				htmlFontSize = tryExtractStruct(htmlStyle, WigiHtmlResponsiveFontSize(1.00, 0.00, 0.00));
+				// set up font size to default wigi font size if it wasn't assigned or default itself
+				// because if we don't do this function text2htmlUnsafe set up font size to default html size which is different
+				fontSize = tryExtractStruct(style, dwfs);
+				style2 = switch (fontSize) {
+					Some(f): style;
+					None(): replaceStruct(style, dwfs)
+				};
+
+				s = if (trim(txt) == "") {
+					txt
+				} else if (isSome(converter)) {
+					wigi |> either(converter, WigiTextConverter(\__ -> "")).fn
+				} else {
+					text2htmlUnsafe(Text(txt, wigiHtmlFontMap(getCharacterStyleFromWigiTextStyle(style2), htmlStyle)));
+				}
+
+				// Add extra html style
+				style3 = eitherMap(htmlFontSize, \tstyle -> arrayPush(style2, tstyle), style2);
+
+				// convert all absolute font sizes to relative if asked and text isn't empty
+				style4 = if (containsStruct(htmlStyle, WigiConvertToRelativeSize()) && trim(text) != "" && !containsStruct(style3, WigiHtmlRelativeFontSizeWithEm(0.0))) {
+					px = extractStruct(style3, dwfs).size; // get size in pixels from current style
+					em = roundWithPrecision(px / dwfs.size, 2); // convert size in px to relative size in em
+					tmpstl = removeAllStructs(style3, dwfs); // remove absolute font sizes from style
+					replaceStruct(tmpstl, WigiHtmlRelativeFontSizeWithEm(em)); // add relative font size
+				} else style3;
+
+				applyAdvancedWigiTextStyle(s, style4, errors);
+			});
+		}
+		WigiRecursive(elements, type, styles): {
+			processElements = \f : (WigiElement, string) -> string, newExtraStyles : Maybe<ExtraHtmlStyles> -> {
+				map(elements, \e : WigiElement -> {
+					extractHtml(e, errors, f, either(newExtraStyles, extraStyles), htmlStyle)
+				})
+			}
+			isNum = \s -> { s == d2s(s2d(s)) };
+			text2mathmlId = \w, s -> {
+				switch(w) {
+					WigiText(text, style): {
+						if (isNum(text)) {
+							"<mn>" + s + "</mn>";
+						} else {
+							"<mi>" + s + "</mi>";
+						}
+					}
+					WigiParagraph(elems, st): s;
+					default: "";
+				}
+			}
+			engine = dummyWigiEngine();
+
+			notSupportedWigiRecursive = \-> { refArrayPush(errors, "Not supported: WigiRecursive type " + type.structname); "" };
+			externalRecursiveConverter = extractStruct(htmlStyle, WigiExternalRecursiveConverter(\__, __, __, __, __ -> notSupportedWigiRecursive())).fn;
+			html = switch(type : WigiRecursiveType) {
+				WigiBrackets(leftBracketType, rightBracketType): notSupportedWigiRecursive();
+				WigiComap(collapsed): notSupportedWigiRecursive();
+				WigiDottedElement(left, right, top, bottom, leftSign, rightSign): notSupportedWigiRecursive();
+				WigiFraction(): {
+					elems = processElements(text2mathmlId, None());
+					assert(length(elems) == 2, "Error: WigiFraction arguments count is not 2");
+					makeMmlExpression(makeMmlFrac(elems[0], elems[1]));
+				}
+				WigiProduct(): {
+					elems = processElements(text2mathmlId, None());
+					assert(length(elems) == 3, "Error: WigiProduct arguments count is not 3");
+					makeMmlExpression(elems[0] + makeMmlOperator("*") +  elems[1]);
+				}
+				WigiEvaluatingIntegral(): notSupportedWigiRecursive();
+				WigiRoot(): {
+					elems = processElements(text2mathmlId, None());
+					assert(length(elems) == 2, "Error: WigiRoot arguments count is not 2");
+					makeMmlExpression(makeMmlRoot(elems[0], elems[1]));
+				}
+				WigiLongDivision(): notSupportedWigiRecursive();
+				WigiIntegral(): notSupportedWigiRecursive();
+				WigiIntegral2(signType): notSupportedWigiRecursive();
+				WigiTopModificator(t, size): notSupportedWigiRecursive();
+				WigiSum(): {
+					elems = processElements(text2mathmlId, None());
+					assert(length(elems) == 3, "Error: WigiSum arguments count is not 3");
+					makeMmlExpression(elems[0] + makeMmlOperator("+") +  elems[1]);
+				}
+				WigiSupscript(): notSupportedWigiRecursive();
+				WigiSubscript(): notSupportedWigiRecursive();
+				WigiSupSubscript(): notSupportedWigiRecursive();
+				WigiOverscript(): notSupportedWigiRecursive();
+				WigiUnderscript(): notSupportedWigiRecursive();
+				WigiOverlay(): notSupportedWigiRecursive();
+				WigiAltText(): {
+					strGlue(processElements(\w : WigiElement, s : string -> {
+						switch(w) {
+							WigiText(text, style): {
+								html = text2htmlUnsafe(Text(formatString("<img alt=\"%1\"/>", [s]), wigiHtmlFontMap(getCharacterStyleFromWigiTextStyle(style), htmlStyle)));
+								applyAdvancedWigiTextStyle(html, style, errors);
+							}
+							default: "";
+						}
+					}, None()), "");
+				}
+				WigiTable(rows, cols, cellSpans, style): {
+					// Reset WigiTableCell counter for each new WigiTable
+					newTableTree : ref Tree<string, Wigi2HtmlTableStyle> = ref makeTree1(wigiTableCellCounter, WigiInt(0));
+					// Set WigiTable rows and cols for futher using in WigiTableCell
+					newTableTree := setTree(^newTableTree, wigiTableRows, WigiInt(rows));
+					newTableTree := setTree(^newTableTree, wigiTableCols, WigiInt(cols));
+					if (length(cellSpans) > 0) {
+						// Set WigiCellSpan array of current WigiTable
+						newTableTree := setTree(^newTableTree, wigiCellSpans, Wigi2HtmlCellSpans(cellSpans));
+					}
+
+					wigi_showHeaders = ref "";
+					tableBorder = ref "";
+					borderColor = ref "";
+					borderRadius = ref "";
+					tableWidth = ref "100%";
+					iter(style, \s -> {
+						switch (s : WigiTableStyle) {
+							WigiShowGrid(): {
+								// Set if current WigiTable has WigiShowGrid style or not
+								newTableTree := setTree(^newTableTree, wigiShowGrid, s);
+							}
+							WigiSameRowHeight(): {
+								newTableTree := setTree(^newTableTree, wigiSameRowHeight, s);
+							}
+							WigiTableColumnWidths(widths): {
+								tableWidth := "auto";
+								newTableTree := setTree(^newTableTree, wigiTableColumnWidths, s);
+							}
+							WigiTableShowHeaders(): {
+								newTableTree := setTree(^newTableTree, wigiTableShowHeaders, s);
+								wigi_showHeaders := formatString("<tr>%1</tr>", [generateColumnHeaders(cols)]);
+							}
+							WigiTableShowFormulaBar(): {} // not converted to html
+							WigiTableBorder(width, radius, color): {
+								// border-radius is not supported for tables with border-collapse: collapse
+								tableBorder := d2s(width);
+								borderColor := formatString("rgba(%1, %2, %3, %4)",
+									{
+										rgba = hsva2rgba(color);
+										[i2s(rgba.r), i2s(rgba.g), i2s(rgba.b), d2s(rgba.a)]
+									}
+								);
+								borderRadius := d2s(radius);
+							}
+							WigiFirstTabColumn(index): {} // not converted to html
+							WigiTableHighlight(column, row): {
+								newTableTree := setTree(^newTableTree, wigiTableHighlight, s);
+							}
+							WigiTableSize(columns1, rows1): {
+								newTableTree := setTree(^newTableTree, wigiTableSize, Wigi2HtmlTableSize(columns1, rows1, 0.0, 0.0));
+							}
+							WigiTableRowHeights(heights): {
+								{}
+							}
+							WigiTableVisibleFormula(__) : {}
+							WigiTableTightWidth(): {}
+							WigiTableRigidCols() : {}
+							WigiTableDontFitToAvailableWidth() : {}
+							WigiTableDisableForceShrinkOnMobile() : {}
+						}
+					});
+
+					newTableTree := setTree(^newTableTree, wigiTableIndex2RowCol, createWigi2HtmlIndex2RowCol(rows, cols, cellSpans, errors));
+
+					elems = processElements(wigiDefaultFn, Some(ExtraHtmlStyles(extraStyles.story, newTableTree)));
+					formatString(
+						"<table border=\"1\" style=\"border:%2px solid %3;width:%6;border-collapse:collapse;border-radius:%5\">%4%1</table>",
+						[
+							strGlue(elems, ""),
+							^tableBorder,
+							^borderColor,
+							^wigi_showHeaders,
+							^borderRadius,
+							^tableWidth
+						]
+					) |> \table -> addTableScrolls(table, rows, cols, newTableTree)
+				}
+				WigiTableCell(widthHeight, cellStyle): doWigiCell(extraStyles, cellStyle, widthHeight, errors, processElements);
+				WigiSpreadsheetCell(widthHeight, editMode, cellStyle): doWigiCell(extraStyles, cellStyle, widthHeight, errors, processElements);
+				WigiFrame(width, height, style): notSupportedWigiRecursive();
+				WigiCode(showCode, showResult): notSupportedWigiRecursive();
+				WigiTyped(t): notSupportedWigiRecursive();
+				WigiButton(width, style): notSupportedWigiRecursive();
+				WigiHyperlink(url): notSupportedWigiRecursive();
+				WigiInteractiveTable(__, __, __): notSupportedWigiRecursive();
+				WigiRadioOption(__, __): notSupportedWigiRecursive();
+				WigiVersions(__): notSupportedWigiRecursive();
+				WigiVisible(__): notSupportedWigiRecursive();
+				WigiExternalRecursive(exType, content): {
+					externalRecursiveConverter(WigiExternalRecursive(exType, content), elements, engine, styles, htmlStyle);
+				}
+			}
+			fold(styles, html, \acc, style -> {
+				notSupportedWigiRecursiveStyle = \ -> { refArrayPush(errors, "Not supported: WigiRecursiveStyle " + style.structname); acc }
+				switch(style : WigiRecursiveStyle) {
+					WigiName(name): formatString("<div class=\"%1\">%2</div>", [name, acc]);
+					Underline(): notSupportedWigiRecursiveStyle();
+					BaselineShift(shift): notSupportedWigiRecursiveStyle();
+					DoubleUnderline(): notSupportedWigiRecursiveStyle();
+					WigiEnabled(__): notSupportedWigiRecursiveStyle();
+					WigiEditorPreview(): notSupportedWigiRecursiveStyle();
+					WigiRecursiveFontStyle(__) : notSupportedWigiRecursiveStyle();
+				}
+			})
+		}
+		WigiBlock(blocktype, blockstyle): {
+			notSupportedBlock = \ -> { refArrayPush(errors, "Not supported: WigiBlock type " + blocktype.structname); "" }
+			externalBlockConverter = extractStruct(htmlStyle, WigiExternalBlockConverter(\__, __, __, __ -> notSupportedBlock())).fn;
+			engine = dummyWigiEngine();
+			html = switch(blocktype : WigiBlockType) {
+				WigiPicture(url, styles): {
+					// Do we really need external viewer for pictures?
+					//wigi |> useExternalViewer(wigiViewerUrl);
+					convertWigiPicture(url, styles);
+				}
+				WigiVideo(url, styles): {
+					convertWigiVideo(errors, url, styles);
+				}
+				WigiAudio(url, styles): {
+					convertWigiAudio(errors, url, styles);
+				}
+				WigiCoach(text): notSupportedBlock();
+				WigiSlider(value, minValue, maxValue, step, width, style): {
+					convertWigiSlider(errors, value, minValue, maxValue, step, width, style);
+				}
+				WigiCheckBox(value, style): {
+					notSupportedBlock();
+				}
+				WigiRadioButton(value, style): {
+					notSupportedBlock();
+				}
+				WigiPositionTag(id): notSupportedBlock();
+				WigiCustomSymbol(type, size): notSupportedBlock();
+				WigiFormdesigner(drawing, style): {
+					wigiViewerUrl = extractStruct(htmlStyle, WigiHTMLViewerUrl("")).url;
+					wigi |> useExternalViewer(wigiViewerUrl);
+				}
+				WigiSmartArt(content, style): {
+					wigiViewerUrl = extractStruct(htmlStyle, WigiHTMLViewerUrl("")).url;
+					wigi |> convertWigiSmartArt(wigiViewerUrl);
+				}
+				WigiFormula(formula, style): notSupportedBlock();
+				WigiPageBreak(append, autoScroll): {
+					"<div style=\"page-break-after: always\"></div>";
+				}
+				WigiPageName(name, disableCondition): {
+					"<head><title>" + name + "</title></head>";
+				}
+				WigiNaturalMath(formula): {
+					convertNaturalMath(errors, formula)
+				}
+				WigiComboBox(selected, values, reorderElements, width): notSupportedBlock();
+				WigiNativeWiki(wiki): notSupportedBlock();
+				WigiDotplot(range, style): notSupportedBlock();
+				WigiHistogram(range, style): {
+					// FixMe
+					staticForm2html(Wigify(wigi, [], [])[0].form());
+					notSupportedBlock();
+				}
+				WigiHistogramClasses(range, style): notSupportedBlock();
+				WigiBoxplot(range, style): notSupportedBlock();
+				WigiScatterplot(range, style): notSupportedBlock();
+				WigiCalculator(): notSupportedBlock();
+				WigiHTML(url, width, height, style): notSupportedBlock();
+				WigiReferenceDocument(title, document): notSupportedBlock();
+				WigiSetClipboardButton(__, __): notSupportedBlock();
+				WigiExternalBlock(exType, content): {
+					externalBlockConverter(WigiExternalBlock(exType, content), engine, blockstyle, htmlStyle)
+				}
+				default: notSupportedBlock();
+			}
+			iter(blockstyle, \style -> {
+				notSupportedBlockStyle = \ -> { refArrayPush(errors, "Not supported: WigiBlockStyle " + style.structname); }
+				switch(style : WigiBlockStyle) {
+					WigiName(name): {}; //Let's just ignore it now
+					default: notSupportedBlockStyle();
+				}
+			});
+			html
+		}
+		WigiEmpty(): "";
+	}
+}
+
+doWigiCell(extraStyles : ExtraHtmlStyles, cellStyles : [WigiTableCellStyle], widthHeight : Behaviour<WidthHeight>,
+	errors : ref [string], processElements : ((WigiElement, string) -> string, Maybe<ExtraHtmlStyles>) -> [string]) {
+	cellElem = strGlue(processElements(wigiDefaultFn, None()), "");
+	wh = getValue(widthHeight);
+
+	// WigiCellBorder style is compulsory for html
+	st1 = if (exists(cellStyles, \s -> isSameStructType(s, DefaultCellBorder)))
+		cellStyles
+	else arrayPush(cellStyles, DefaultCellBorder);
+
+	// Default WigiCellPadding
+	st2 = if (exists(cellStyles, \s -> isSameStructType(s, DefaultCellPadding)))
+		cellStyles
+	else arrayPush(cellStyles, DefaultCellPadding);
+
+	cellStyle1 = fold(st2, "", \acc, s -> {
+		notSupportedWigiTableCellStyle = \ -> { refArrayPush(errors, "Not supported: WigiTableCellStyle " + s.structname); acc }
+		switch(s : WigiTableCellStyle) {
+			WigiCellBorder(top, end, bottom, start): {
+				acc + if (isSome(lookupTree(^(extraStyles.table), wigiShowGrid))) {
+					if (top == end && end == bottom && bottom == start)
+						formatString("border:%1px solid black;", [d2s(top)])
+					else {
+						left = if (getDefaultRtl()) end else start;
+						right = if (getDefaultRtl()) start else end;
+						formatString("border-left:%1px solid black;", [d2s(left)])
+						+ formatString("border-top:%1px solid black;", [d2s(top)])
+						+ formatString("border-right:%1px solid black;", [d2s(right)])
+						+ formatString("border-bottom:%1px solid black;", [d2s(bottom)])
+					}
+				} else "";
+			}
+			WigiCellPadding(start, top, end, bottom): {
+				acc + if (start == top && top == end && end == bottom)
+					formatString("padding:%1px;", [d2s(top)])
+				else {
+					left = if (getDefaultRtl()) end else start;
+					right = if (getDefaultRtl()) start else end;
+					formatString("padding-left:%1px;", [d2s(left)])
+					+ formatString("padding-top:%1px;", [d2s(top)])
+					+ formatString("padding-right:%1px;", [d2s(right)])
+					+ formatString("padding-bottom:%1px;", [d2s(bottom)])
+				}
+			}
+			WigiCellColors(border, background): notSupportedWigiTableCellStyle();
+			PlaceholderText(text): notSupportedWigiTableCellStyle();
+			WigiCellInnerBorder(thickness, radius, color, padding): notSupportedWigiTableCellStyle();
+			WigiCellFormatting(formattingStyle): notSupportedWigiTableCellStyle();
+			WigiCellVerticalAlign(align): notSupportedWigiTableCellStyle();
+			WigiCellTightWidth(): notSupportedWigiTableCellStyle();
+			WigiCellContentFit(fit): notSupportedWigiTableCellStyle();
+			WigiSuppressTableBorder(): notSupportedWigiTableCellStyle();
+		}
+	});
+
+	getWigTableInt : (string, int) -> int = \key : string, defValue : int -> {
+		switch (lookupTreeDef(^(extraStyles.table), key, WigiInt(defValue))) {
+			WigiInt(v): v;
+			default: defValue;
+		}
+	}
+
+	setWigiTableValue = \key : string, value : Wigi2HtmlTableStyle -> {
+		extraStyles.table := setTree(^(extraStyles.table), key, value)
+	}
+
+	i : int = getWigTableInt(wigiTableCellCounter, 0);
+	setWigiTableValue(wigiTableCellCounter, WigiInt(i + 1));
+	rows : int = getWigTableInt(wigiTableRows, 0);
+	cols : int = getWigTableInt(wigiTableCols, 0);
+
+	index2rowColMap = switch (lookupTreeDef(^(extraStyles.table), wigiTableIndex2RowCol, Wigi2HtmlEmptyStyle())) {
+		Wigi2HtmlIndex2RowCol(index2rowColMap): index2rowColMap;
+		default: makeTree();
+	}
+
+	currentRowCol = lookupTreeDef(index2rowColMap, i, Pair(0, 0));
+	nextRowCol = lookupTreeDef(index2rowColMap, i + 1, Pair(0, 0));
+
+	currentRow = currentRowCol.first;
+	currentCol = currentRowCol.second;
+
+	header = if (currentCol == 0 && isSome(lookupTree(^(extraStyles.table), wigiTableShowHeaders)))
+		formatString("<th>%1</th>", [i2s(currentRow + 1)])
+	else "";
+	rowHeight = if (isSome(lookupTree(^(extraStyles.table), wigiSameRowHeight)))
+		formatString(" style = \"height:%1px\"", [d2s(wh.height)])
+	else "";
+
+	spans = getWigiCellSpan(i, extraStyles, errors);
+
+	rowspan = if (spans.row > 1) formatString(" rowspan=%1", [i2s(spans.row)]) else "";
+	colspan = if (spans.col > 1) formatString(" colspan=%1", [i2s(spans.col)]) else "";
+
+	prefix = if (i == 0) formatString("<tr%1>", [rowHeight]) else "";
+	suffix = if (nextRowCol == Pair(0, 0)) {
+		"</tr>"
+	} else if (nextRowCol.first != currentRowCol.first) {
+		formatString("</tr><tr%1>", [rowHeight])
+	} else {
+		"";
+	}
+
+	tableSize = lookupTree(^(extraStyles.table), wigiTableSize);
+	if (isSome(tableSize)) {
+		switch (either(tableSize, Wigi2HtmlEmptyStyle())) {
+			Wigi2HtmlTableSize(columns1, rows1, maxWidth, maxHeight): {
+				accWidth = if (currentCol < columns1 && columns1 < cols && currentRow == 0) wh.width else 0.0;
+				accHeight = if (currentRow < rows1 && rows1 < rows && currentCol == 0) wh.height else 0.0;
+				setWigiTableValue(wigiTableSize, Wigi2HtmlTableSize(columns1, rows1, maxWidth + accWidth, maxHeight + accHeight));
+			}
+			default: {}
+		}
+	}
+
+	highlight = switch (lookupTreeDef(^(extraStyles.table), wigiTableHighlight, Wigi2HtmlEmptyStyle())) {
+		WigiTableHighlight(column1, row1): WigiTableHighlight(column1, row1);
+		default: nullWigiTableHighlight;
+	}
+	sameCol = s2i(highlight.column) == currentCol + 1;
+	sameRow = s2i(highlight.row) == currentRow + 1;
+	cellStyle2 = if (highlight == nullWigiTableHighlight) ""
+	else if (sameCol || sameRow)
+		formatString(
+			"background:%1;",
+			[if (sameCol && sameRow) "gold" else "yellow"]
+		)
+	else "";
+
+	wigiTableWidthsStyle =
+		if (currentRow == 0) {
+		 	eitherFn(
+		 		lookupTree(^(extraStyles.table), wigiTableColumnWidths),
+		 		\columnWidthsStyle -> {
+		 			columnWidths = switch (columnWidthsStyle) {
+		 				WigiTableColumnWidths(width1): width1;
+		 				default: [];
+		 			}
+					if (i < length(columnWidths)) {
+						width = columnWidths[i];
+						htmlWidth = if (width == 0.0) d2s(wh.width) else d2s(width);
+						"width:" + htmlWidth + "px;"
+					} else ""
+		 		},
+		 		\ -> ""
+		 	);
+	 	} else "";
+
+	cellStyle = cellStyle1 + wigiTableWidthsStyle + cellStyle2;
+
+	formatString("%5%7<td%2%3%4>%1</td>%6", [
+		cellElem,
+		if (strlen(cellStyle) > 0)
+			formatString(" style=\"%1\"", [cellStyle])
+		else "",
+		rowspan,
+		colspan,
+		prefix,
+		suffix,
+		header,
+	])
+}
+
+getWigiCellSpan(cellNo : int, extraStyles : ExtraHtmlStyles, errors : ref [string]) -> WigiCellSpan {
+	noSpans = \-> WigiCellSpan(1, 1);
+	eitherFn(
+		lookupTree(^(extraStyles.table), wigiCellSpans),
+		\cellSpansStyle -> {
+			spans = switch (cellSpansStyle) {
+				Wigi2HtmlCellSpans(cellSpans): cellSpans;
+				default: [];
+			}
+			if (cellNo >= length(spans)) {
+				refArrayPush(errors, "Wrong WigiTable.cellSpans structure.");
+				noSpans()
+			} else {
+				currentSpan : WigiCellSpan = spans[cellNo];
+				if (currentSpan.row < 1 || currentSpan.col < 1) {
+					refArrayPush(errors, "Wrong WigiTable.cellSpans value.");
+					noSpans()
+				} else {
+					currentSpan
+				}
+			}
+		},
+		noSpans
+	);
+}
+
+generateColumnHeaders(cols : int) -> string {
+	"<th></th>" + strGlue(generate(0, cols, \i -> formatString("<th>%1</th>", [getWigiColName(i)])), "")
+}
+
+addTableScrolls(table : string, rows : int, cols : int, tableTree : ref Tree<string, Wigi2HtmlTableStyle>) -> string {
+	// Using sum of width/height is not the same value in px
+	areScrolls = lookupTree(^tableTree, wigiTableSize);
+	if (isSome(areScrolls)) {
+		switch (either(areScrolls, Wigi2HtmlEmptyStyle())) {
+			Wigi2HtmlTableSize(columns1, rows1, maxWidth, maxHeight): {
+				if (columns1 < cols || rows1 < rows) {
+					formatString("<div style=\"float:left;%1%2\">%3</div>", [
+						if (columns1 < cols)
+							formatString("overflow-x:scroll;max-width:%1px;", [d2s(maxWidth)])
+						else "",
+						if (rows1 < rows)
+							formatString("overflow-y:scroll;max-height:%1px;", [d2s(maxHeight)])
+						else "",
+						table
+					])
+				} else table
+			}
+			default: table;
+		}
+	} else table
+}
+
+wigiHtmlFontMap(style : [CharacterStyle], mapFont : [Wigi2HtmlStyle]) -> [CharacterStyle] {
+	mapFamilyFont = extractStruct(mapFont, WigiHtmlFontMapping(makeTree())).map;
+	if (length(style) == 0) {
+		[FontFamily(trim2(foldTree(mapFamilyFont, "", \__, font1, font2 -> font1 + ", " + font2), ", "))]
+	} else {
+		map(style, \s -> switch (s : CharacterStyle) {
+			FontFamily(font): FontFamily(lookupTreeDef(mapFamilyFont, font, font));
+			default: s;
+		})
+	}
+}
+
+// create layout of table taking innto account all cols / rows spans and produce a map between cell index and upper left corner of cell from the layout map
+createWigi2HtmlIndex2RowCol(rows : int, cols : int, cellSpans : [WigiCellSpan], errors : ref [string]) -> Wigi2HtmlIndex2RowCol {
+	findFirstFreeCol = \aMap : Tree<Pair<int, int>, int>, row : int, col : int -> {
+		if (col < cols) {
+			busyCells : [int] = sort(filtermapTreeToArray(aMap, \p : Pair<int, int>, id : int -> {
+				if (p.first == row && p.second >= col) Some(p.second) else None()
+			}));
+			if (busyCells == []) col
+			else {
+				firstFreeCol = lastElement(busyCells, cols) + 1;
+				if (firstFreeCol < cols) firstFreeCol else -1;
+			}
+		} else {
+			-1;
+		}
+	}
+
+	makePlainIndexMap = \ -> {
+		Wigi2HtmlIndex2RowCol(
+			fold(generate(0, rows * cols, idfn),
+				makeTree(),
+				\acc : Tree<int, Pair<int, int>>, i : int -> setTree(acc, i, Pair(i / cols, i % cols))
+			)
+		);
+	}
+
+	if (cellSpans != [] && length(cellSpans) != rows * cols) {
+		// create a layout of a table as it looks in material  and should looks in html
+		rowCol2indexMap = foldi(cellSpans, Triple(0, 0, makeTree()), \cellId : int, acc : Triple<int, int, Tree<Pair<int, int>, int>>, span : WigiCellSpan -> {
+			row = acc.first;
+			col = acc.second;
+			aMap = acc.third;
+			newMap = fold(generate(row, row + span.row, idfn), aMap, \acc1, row1 -> {
+				fold(generate(col, col + span.col, idfn), acc1, \acc2, col1 -> {
+					setTree(acc2, Pair(row1, col1), cellId)
+				});
+			});
+			nextColCandidate = findFirstFreeCol(newMap, row, col + span.col);
+
+			nextRow = if (nextColCandidate == -1) row + 1 else row;
+			nextCol = if (nextColCandidate == -1) findFirstFreeCol(newMap, nextRow, 0) else nextColCandidate;
+
+			Triple(nextRow, nextCol, newMap);
+		}).third;
+
+		if (sizeTree(rowCol2indexMap) != rows * cols) {
+			refArrayPush(errors, "Wrong WigiTable.cellSpans structure.");
+			makePlainIndexMap();
+		} else {
+			// convert table layout into map index -> (row, col) of the upper left corner of cells
+			index2rowColMap : Tree<int, Pair<int, int>> = foldTree(rowCol2indexMap, makeTree(), \rc : Pair<int, int>, index : int, acc : Tree<int, Pair<int, int>> -> {
+				eitherFn(
+					lookupTree(acc, index),
+					\oldRc -> {
+						if (rc.first < oldRc.first || rc.first == oldRc.first && rc.second < oldRc.second) setTree(acc, index, rc)
+						else acc
+					},
+					\ -> setTree(acc, index, rc)
+				)
+			});
+
+			Wigi2HtmlIndex2RowCol(index2rowColMap);
+		}
+	} else {
+		makePlainIndexMap();
+	}
+}

@@ -1,0 +1,72 @@
+import tools/flowc/incremental/fiexp;
+import set;
+
+export {
+	// Find the last references of this variable.
+
+	// For a given function, you can call this for all arguments, as well as for all FcLet, and then 
+	// just compare varref against this array, and thus determine if a given varref is the last one. 
+	// (This works since we have unique position info in each varref)
+	findLastVarRefs(varname : string, e : FiExp) -> Set<FiVar>;
+}
+
+findLastVarRefs(varname : string, e : FiExp) -> Set<FiVar> {
+	captured = ref false;
+	r = doFindLastVarRefs(makeSet(), varname, captured, e);
+	if (^captured) makeSet()
+	else r;
+}
+
+doFindLastVarRefs(acc : Set<FiVar>, varname : string, captured : ref bool, expr : FiExp) -> Set<FiVar> {
+	rec = \acc0, e0 -> doFindLastVarRefs(acc0, varname, captured, e0);
+	switch (expr) {
+		FiLambda(args, body, __, __): {
+			// We see if the var occurs in the body of the lambda
+			a0 = rec(makeSet(), body);
+			if (isEmptySet(a0)) acc
+			else {
+				// OK, if we are captured, we signal that
+				captured := true;
+				a0;
+			}
+		}
+		FiCall(f, args, __, __): { 
+			accf = rec(acc, f);
+			lasts = map(args, \c -> rec(makeSet(), c));
+			nonEmptylasts = filter(lasts, \s -> !isEmptySet(s));
+			if (length(nonEmptylasts) > 1) makeSet() else firstElement(nonEmptylasts, accf);
+		}
+		FiVar(x, __, __): if (varname == x) makeSet1(expr) else acc;
+		FiLet(x, t, e1, e2, __, __): {
+			a0 = rec(acc, e1);
+			rec(a0, e2);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			a0 = rec(acc, e1);
+			t = rec(makeSet(), e2);
+			e = rec(makeSet(), e3);
+			if (isEmptySet(t) && isEmptySet(e)) a0 else mergeSets(t, e);
+		}
+		FiSwitch(e0, typ, cs, __, __): {
+			a0 = rec(acc, e0);
+			lasts = map(cs, \c -> rec(makeSet(), c.body));
+			if (forall(lasts, isEmptySet)) a0 else mergeSetsA(lasts);
+		}
+		FiCast(e0, tFrom, tTo, __, __): rec(acc, e0);
+		FiSeq(es, __, __): fold(es, acc, rec);
+		FiCallPrim(op, es, __, __): {
+			lasts = map(es, \c -> rec(makeSet(), c));
+			nonEmptylasts = filter(lasts, \s -> !isEmptySet(s));
+			if (length(nonEmptylasts) > 1) makeSet() else firstElement(nonEmptylasts, acc);
+			fold(lasts, acc, \acc2, s -> mergeSets(acc2, s));
+		}
+		FiString(__, __): acc;
+		FiBool(__, __): acc;
+		FiDouble(__, __): acc;
+		FiVoid(__): acc;
+		FiInt(__, __): acc;
+		FiRequire(flowfile2, e2, __, __): rec(acc, e2);
+		FiUnsafe(name, fallback, __, __): rec(acc, fallback);
+	};
+}
+

@@ -1,0 +1,69 @@
+unify = ws import*:fs alphabinding*:ts constraint*:cs final?:f { Unify(:fs, :ts, :cs, :f) };
+
+import = "import" s path$p ";" ws { $p };
+	path = id "/" path | id;
+
+alphabinding = alpha:a "=" ws ftype:t ";" ws { FBinding(:a, :t) };
+
+constraint =
+	ftype:f "c= ." ws ftype:t ";" ws { FConstraint(:f, FUnifyRight(), :t) }
+	| ftype:f "c=" ws ftype:t ";" ws { FConstraint(:f, FUnifyLeft(), :t) }
+	| ftype:f "reduce_left" ws ftype:t ";" ws { FConstraint(:f, FReduceLeft(), :t) }
+	| ftype:f "grow_right" ws ftype:t ";" ws { FConstraint(:f, FGrowRight(), :t) }
+	;
+
+final = "finalize" ws { true() };
+
+ftype = alpha | bounded | fields | unnamed | topbottom | type;
+
+	alpha = "α" int$n ws { FTypeVar(s2i($n)) };
+
+	bounded = "{" ws ftype:l ".." ws ftype:u "}" ws { FBounded(:l, :u) };
+
+	fields = ".(" ws field:f ("," ws field:tf {:tf})*:fs ")" ws { FFields( consArray(:f, :fs), Set(TreeEmpty()), Set(TreeEmpty())) }
+		| ".(" ws ")" ws { FFields(array(), Set(TreeEmpty()), Set(TreeEmpty())) };
+
+		field =  "." id:f ws ":" ws ftype:t { FField(:f, :t, FGetField()) };
+
+	unnamed = "<union> ::=" ws "(" ws ftypes:t ")" ws { FUnnamedUnion(:t) };
+		ftypes = ftype:t "," ws ftypes:tl {consArray(:t, :tl)} | ftype:t {array(:t)};
+
+	topbottom = "*" ws { FTopBottom() };
+
+type = "[" ws ftype:t ws "]" ws { FArray(:t) }
+     | "(" ws ftypes?:a ")" ws "->" ws ftype:t { FFunction(unarray(:a), :t) }
+     | ("?"+)$s  ws {FTypePar($s)}
+     | {#}:i ("bool") !letterOrDigit {#}:ei ws {FBasicType(FcTypeBool(FcInfo2(:i, :ei)))}
+     | {#}:i ("int") !letterOrDigit {#}:ei ws {FBasicType(FcTypeInt(FcInfo2(:i, :ei)))}
+     | {#}:i ("double") !letterOrDigit {#}:ei ws {FBasicType(FcTypeDouble(FcInfo2(:i, :ei)))}
+     | {#}:i ("string") !letterOrDigit {#}:ei ws {FBasicType(FcTypeString(FcInfo2(:i, :ei)))}
+     | {#}:i ("void") !letterOrDigit {#}:ei ws {FBasicType(FcTypeVoid(FcInfo2(:i, :ei)))}
+     | {#}:i ("native") !letterOrDigit {#}:ei ws {FBasicType(FcTypeNative(FcInfo2(:i, :ei)))}
+     | ("flow") !letterOrDigit ws {FFlow()}
+     | ("ref") !letterOrDigit ws ftype:t {FRef(:t, :t)}
+     | "union" s id:i ws typelist?:tl {FUnion(:i, unarray(:tl))}	// It sucks, but we need a prefix to know what unions are
+     | id:i ws typelist?:tl {FStruct(:i, unarray(:tl))}
+     ;
+
+		typelist = "<" ws ftypes:tl ">" ws {:tl}
+			| "<" ws ">" ws { array() };
+
+int! = digit+;
+id! = (letter letterOrDigit*)$s {$s};
+letterOrDigit = 'a'-'z' | 'A'-'Z' | '_' | '0'-'9'; // We inline this for speed only!
+letter = 'a'-'z' | 'A'-'Z' | '_';
+digit = '0'-'9';
+
+ws = whitespace*;
+s = whitespace+;
+
+whitespace = ' ' | '\t' | '\n' | comment | '\u000d';
+// For speed, we pull out the shared leading / to avoid having to backtrack
+comment = '/' {#}:i restOfComment$s {#}:j { storeComment(:i, :j, $s) } ;
+restOfComment = '*' nonstarchar* '*/' ((' ' | '\t')* '\n')? // cut whitespaces after comment also.
+	      | '/' nonlinebreakchar* '\n';
+
+nonstarchar = !'*/' char;
+nonlinebreakchar = !'\n' char;
+
+char = '\u0000' - '\uffff';

@@ -1,0 +1,566 @@
+import tools/flowc/typechecker/ftype;
+import tools/flowc/typechecker/ftype_resolve;
+import tools/flowc/typechecker/solve_expectations;
+import tools/flowc/typechecker/ftype2fctype;
+import tools/flowc/fcexp_description;
+import tools/flowc/typechecker/fautomaton;
+
+export {
+	// This extracts the final type, and does final checks. Does side-effects for tyvars
+	ftypeFinalize(name : string, pos : FcPosition, count : int, env : FcTypeEnv, fenv : FEnv, 
+		funify: (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType) -> void;
+}
+
+// Good order:
+// - Resolve fields
+// - Unify unbound tyvar with bound tyvars
+// - Unify unbound tyvar vs unbound tyvar
+
+
+ftypeFinalize(name : string, pos : FcPosition, count : int, env : FcTypeEnv, be00 : FEnv, 
+		funify: (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType) -> void {
+	// To help resolve positions, we build a map of tyvar to infos once
+	tyvar2infoMap : ref Maybe<Tree<int, [Pair<string, FcInfo2>]>> = ref None();
+	// We track which tyvars errors we have reported errors on to reduce duplicates
+	seenTyvarErrors : ref Set<int> = ref makeSet();
+
+	onError = \tyvar, m -> {
+		reportErrorOnTyvar(be00, tyvar2infoMap, seenTyvarErrors, name, pos, tyvar, m)
+	};
+	finalizeIteration(name, pos, count, env, be00, funify, onError);
+}
+
+reportErrorOnTyvar(env : FEnv, tyvar2infoMap : ref Maybe<Tree<int, [Pair<string, FcInfo2>]>>, seenTyvarErrors : ref Set<int>,
+	name : string, pos : FcPosition, tyvar : int, message : string) -> void {
+	infomap = onlyOnce(tyvar2infoMap, \ -> buildFTyvarInfos(env.env));
+
+	if (!containsSet(^seenTyvarErrors, tyvar)) {
+		// Find the placement more precisely
+		infos = getTreeArrayValue(infomap, tyvar);
+		if (^(env.env.local.debugTyping) > 0)  {
+			printStay(env.env, message);
+		}
+
+		if (infos == []) {
+			// OK, maybe it is one of the tyvars we constructed during constraint solving.
+			// Let us see if we can find something bound to this tyvar.
+			parentTyvar = foldTree(env.tyvars, None(), \tv, type, acc -> {
+				ptvs = extractFTypeVars(env, type, makeSet());
+				if (containsSet(ptvs, tyvar)) {
+					Some(tv);
+				} else acc;
+			});
+			switch (parentTyvar) {
+				None(): addFcTypeError(env.env.program, FcError(name + ": " + message + " (alpha" + i2s(tyvar) + ")", [pos]));
+				Some(ptv): {
+					reportErrorOnTyvar(env, tyvar2infoMap, seenTyvarErrors, name, pos, ptv, message);
+				}
+			}
+			
+		} else {
+			iteri(reverseA(infos), \i, in -> {
+				poss = FcPosition(pos.file, in.second.start, in.second.end);
+				error0 = if (i == 0) name + (if (in.first != "") ": " + in.first + ": " else ": ") + message
+						+ (if (length(infos) > 1) ". The conflict is with the following:" else "")
+					else if (in.first != "") "    in " + in.first else "and here";
+				error = error0 + if (i == 0 && env.verbose >= 2) ". α" + i2s(tyvar) else "";
+				addFcTypeError(env.env.program, FcError(
+					error,
+					[poss]
+				));
+			})
+		}
+		seenTyvarErrors := insertSet(^seenTyvarErrors, tyvar);
+	}
+}
+
+
+finalizeIteration(name : string, pos : FcPosition, count : int, env : FcTypeEnv, be00 : FEnv, 
+		funify: (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError : (int, string) -> void) -> void {
+
+	if (be00.verbose >= 2)  {
+		fcPrintln("\n" + name + ": Finalize iteration #" + i2s(count) + ":\n--------------------------------------------------------------");
+	}
+
+	if (be00.verbose >= 2)  {
+		fcPrintln("\nTyvars:");
+		traverseInOrder(be00.tyvars, \tv, type -> {
+			fcPrintln("  α" + i2s(tv) + "=" + ftype2string(be00, type));
+		});
+	}
+	if (be00.verbose >= 3)  {
+		fcPrintln("\nTyvar deps:");
+		traverseInOrder(be00.tyvarDeps, \tv, tos -> {
+			fcPrintln("  " + ftype2string(be00, tv) + superglue(tos, \t -> {
+					fkind2string(t.kind) + ftype2string(be00, t.type)
+				}, ", ")
+			);
+		});
+	}
+
+	if (be00.verbose >= 2)  {
+		infomap = buildFTyvarInfos(env);
+		descrs : Tree<int, [string]> = mapTree2(infomap, \tv, as -> {
+			map(as, \a -> a.first)
+		});
+
+		// Make a graph displaying the same thing
+		n = name + i2s(count);
+		fcPrintln("\nBuild resolving graph. Run mkdot.bat to see");
+		graph = buildFGraph(be00);
+		dot = fgraph2dot(graph, n, descrs);
+		setFileContent(n + ".dot", dot);
+		batch = getFileContent("mkdot.bat");
+		batch0 = batch + "dot "+ n + ".dot -Tsvg -o" + n + ".svg\nstart " + n + ".svg\n";
+		setFileContent("mkdot.bat", batch0);
+		{}
+	}
+
+	clear = clearSeen(be00);
+
+	// Resolve all row types and unnamed unions we can
+	resolved = resolveAllTypes(clear, funify, onError); 	// Exact
+	bounds = resolveBounds(resolved, 0, funify, onError);  // Exact: Unify bounds
+	finalUnify = rerunDeps(bounds, funify, onError);	// Exact
+
+	if (count < 2 && updatedEnv(finalUnify, be00)) {
+		finalizeIteration(name, pos, count + 1, env, finalUnify, funify, onError);
+	} else {
+
+		// Resolve all cassiopeia constructs
+		cassiopeia0 = resolveKisses(finalUnify, funify, onError);
+		cassiopeia1 = resolveCassiopeia(cassiopeia0, funify, onError); // Heuristic
+		cassiopeia = resolveCassiopeia2(cassiopeia1, funify, onError); // Heuristic
+
+		if (count < 3 && updatedEnv(finalUnify, cassiopeia)) {
+			// OK, one more round the town
+			finalizeIteration(name, pos, count + 1, env, cassiopeia, funify, onError);
+		} else {
+			merged = resolveBounds(cassiopeia, 1, funify, onError);  // Heuristic
+
+			if (count < 5 && updatedEnv(merged, cassiopeia)) {
+				finalizeIteration(name, pos, count + 1, env, merged, funify, onError);
+			} else {
+				// In the odd chance we have some lower bounds only, resolve those
+				resolve = resolveBounds(merged, 2, funify, onError);  // Heuristic
+
+				// With these things resolved, let us rerun deps
+				rerun = rerunDeps(clearSeen(resolve), funify, onError);	// Exact
+
+				// OK, now find tyvar vs tyvar problems, and fix them
+				tyvars = resolveTyvarVsTyvar(rerun, onError); // Heuristic
+
+				// Now, bind unbound tyvars to typars
+				typars = foldTree(tyvars.tyvars, makeSet(), \tyvar, type, acc -> {
+					extractFTypePars(tyvars, type, acc)
+				});
+				bound = resolveTyvarsToTypars(tyvars, typars, onError);
+
+				if (false && count < 15 && updatedEnv(bound, merged)) {
+					finalizeIteration(name, pos, count + 1, env, bound, funify, onError);
+				} else {
+					// Now, go through all tyvars and resolve them to a single type
+					if (be00.verbose >= 2)  {
+						fcPrintln("\nSetting tyvars:");
+					}
+					foldTree(bound.tyvars, makeSet(), \tyvar, type : FType, unclear : Set<Pair<int, FType>> -> {
+						success = setFTyvar(bound, tyvar, type, \e -> onError(tyvar, e));
+						if (success) unclear else insertSet(unclear, Pair(tyvar, type));
+					});
+
+					if (^(env.local.debugTyping) > 2)  {
+						fcPrintln("\nCheck final checks");
+					}
+
+					onError2 = \m, is -> {
+						addFcTypeError(env.program, FcError(name + ": " + m, map(is, \i -> {
+								FcPosition(pos.file, i.start, i.end)
+							})
+						));
+					};
+					applyList(^(env.local.checks), \e -> {
+						checkFinalTypeExpect(env, e, onError2);
+					});
+
+					// And we have resolved all expectations
+					env.local.expects := makeList();
+					env.local.checks := makeList();
+				}
+			}
+		}
+	}
+}
+
+clearSeen(env : FEnv) -> FEnv {
+	FEnv(
+		env.env,
+		env.tyvarIdGroup, 
+		env.verbose,
+		env.tyvars,
+		makeTree(),
+		env.tyvarDeps,
+	);
+}
+
+updatedEnv(env1 : FEnv, env2 : FEnv) -> bool {
+	env1.tyvars != env2.tyvars || env1.tyvarDeps != env2.tyvarDeps
+}
+
+resolveAllTypes(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError : (int, string) -> void) -> FEnv {
+	// Resolve fields and such
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving row types and unnamed union");
+	}
+	runIndented(env.env, \ -> {
+		foldTree(env.tyvars, env, \tv, type, acc -> {
+			lt = lookupTreeDef(acc.tyvars, tv, type);
+			if (env.verbose >= 3)  {
+				printIndent(env.env, "Resolving α" + i2s(tv) + " = " + ftype2string(acc, type));
+			}
+			et = resolveFType(acc, lt, funify, \m -> onError(tv, m));
+			renv = updateFTyvar(et.env, tv, et.type, \ -> ftype2string(acc, lt));
+			if (env.verbose >= 3)  {
+				printDedent(env.env, "Resolved α" + i2s(tv) + " = " + ftype2string(renv, et.type));
+			}
+			renv;
+		});
+	});
+}
+
+
+rerunDeps(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
+	if (env.verbose >= 2)  {
+		printIndent(env.env, "\nRerunning unification");
+	}
+	rt = foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
+		fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
+			if (isFDetermined(acc2, from, makeSet()) && isFDetermined(acc2, to.type, makeSet())) {
+				// TODO: Figure this out. There is a weakness that unbound tyvars, which are really 
+				// typars are not resolved, so we will keep resolving those
+
+				// See error 29: Just because both are determined, we have to check them anyways.
+				// That is an example where it does not work because we don't do that.
+				acc2;
+			} else {
+				if (env.verbose >= 2)  {
+					printIndent(env.env, "Unifying " + ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type));
+				}
+				et = funify(acc2, from, to.type, to.kind, \e -> {
+					tyvar1 = switch (from) {
+						FTypeVar(id): id;
+						default: 10000000;
+					}
+					tyvar2 = switch (to.type) {
+						FTypeVar(id): id;
+						default: 10000000;
+					}
+					tyvar = min(tyvar1, tyvar2);
+					onError(tyvar, e)
+				});
+				if (env.verbose >= 2)  {
+					printDedent(env.env, "Unified " + ftype2string(et.env, from) + fkind2string(to.kind) + ftype2string(et.env, to.type) + "\n");
+				}
+				et.env;
+			}
+		});
+	});
+	if (env.verbose >= 2)  {
+		printDedent(env.env, "");
+	}
+	rt
+}
+
+// The Cassiopeia heuristic:
+// Collect all cases of 
+//    ..u <= a   ->  a = u..
+// and resolve them as a union of all upper bounds
+resolveCassiopeia(env : FEnv, funify, onError) -> FEnv {
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving Cassiopeia's heuristically");
+	}
+	cassiopeias : Tree<int, [FType]> = foldTree(env.tyvarDeps, makeTree(), \from : FType, tos : [FUnifyType], acc : Tree<int, [FType]> -> {
+		rfrom = resolveFVar(env, from, makeSet(), \m -> onError(-1, m));
+		fold(tos, acc, \acc2, to : FUnifyType -> {
+			switch (to.type) {
+				FTypeVar(tv): {
+					if (!containsKeyTree(env.tyvars, tv)) {	// We do not care about tyvars nestedly resolved
+						// We have an unbound tyvar
+						switch (rfrom) {
+							FBounded(lower, upper): {
+								if (lower == FTopBottom()) {
+									buster = FBounded(upper, lower);
+									treePushToArrayValue(acc2, tv, buster);
+								} else {
+									acc2;
+								}
+							}
+							default: {
+								acc2;
+							}
+						}
+					} else acc2;
+				}
+				default: {
+					acc2;
+				}
+			}
+		});
+	});
+
+	foldTree(cassiopeias, env, \from : int, tos : [FType], acc : FEnv -> {
+		if (tos != []) {
+			joint : FEnvType = fold(tail(tos), FEnvType(acc, tos[0]), \acc2 : FEnvType, to -> {
+				funify(acc2.env, acc2.type, to, FGrowRight(), \e -> onError(from, e))
+			});
+			updateFTyvar(joint.env, from, joint.type, \ -> superglue(tos, \t -> ftype2string(acc, t), ", "))
+		} else acc;
+	});
+}
+
+// The Reverse Cassiopeia heuristic:
+// Collect all cases of
+//    a <= l..     ->  a = l..
+// and resolve them as a union of all lower bounds
+resolveCassiopeia2(env : FEnv, funify, onError) -> FEnv {
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving Reverse Cassiopeia's heuristically");
+	}
+	foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
+		switch (from) {
+			FTypeVar(tv): {
+				if (!containsKeyTree(env.tyvars, tv)) {	// We do not care about tyvars nestedly resolved
+					// We have an unbound tyvar
+					busted = fold(tos, [], \acc2, to : FUnifyType -> {
+						rto = resolveFVar(acc, to.type, makeSet(), \m -> onError(tv, m));
+						switch (rto) {
+							FBounded(lower, upper): {
+								if (upper == FTopBottom()) {
+									buster = makeFBounded(env, lower, upper, \e -> onError(tv, e));
+									arrayPush(acc2, buster);
+								} else {
+									acc2;
+								}
+							}
+							default: acc2;
+						}
+					});
+					if (busted != []) {
+						joint : FEnvType = fold(tail(busted), FEnvType(acc, busted[0]), \acc2 : FEnvType, to -> {
+							funify(acc2.env, acc2.type, to, FGrowRight(), \e -> onError(tv, e))
+						});
+						updateFTyvar(joint.env, tv, joint.type, \ -> superglue(tos, \t : FUnifyType -> fkind2string(t.kind) + ftype2string(acc, t.type), ", "))
+					} else acc;
+				} else acc;
+			}
+			default: acc;
+		}
+	});
+}
+
+// Kissing heuristic:
+// Collect all cases of
+//  a = { ... U }   <=   b = { L ... }
+// where the types "kiss", but there is no transfer of info.
+// In these cases, try to resolve U <= L, and if this works
+// without errors, we keep it. If it fails, we just ignore
+resolveKisses(env : FEnv, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError : (int, string) -> void) -> FEnv {
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving kisses heuristically");
+	}
+	foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
+		ma = resolveFVar(env, from, makeSet(), \m -> onError(-1, m));
+		switch (ma) {
+			FBounded(lowera, uppera): {
+				if (lowera == FTopBottom()) {
+					// We have one tyvar ready for a kiss
+					fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
+						rto = resolveFVar(acc, to.type, makeSet(), \m -> onError(-1, m));
+						switch (rto) {
+							FBounded(lowerb, upperb): {
+								if (upperb == FTopBottom()) {
+									// OK, we have a kiss. Try to bust it
+									errors = ref false;
+									et = funify(acc2, uppera, lowerb, to.kind, \e -> errors := true);
+									if (! ^errors) {
+										// OK, the kiss worked. Let us keep the resulting environment
+										et.env
+									} else acc2
+								} else {
+									acc2;
+								}
+							}
+							default: acc2;
+						}
+					});
+				} else acc;
+			}
+			default: acc;
+		}
+	});
+}
+
+resolveBounds(env : FEnv, heuristic : int, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnv {
+	if (env.verbose >= 2)  {
+		if (heuristic == 0) {
+			fcPrintln("\nUnifying bounds");
+		} else if (heuristic == 1) {
+			fcPrintln("\nResolving upper bounds");
+		} else {
+			fcPrintln("\nResolving lower bounds");
+		}
+	}
+	foldTree(env.tyvars, env, \tyvar, type : FType, acc : FEnv -> {
+		rt = lookupTreeDef(acc.tyvars, tyvar, type);
+
+		if (env.verbose >= 2)  {
+			printIndent(env.env, "Unifying " + ftype2string(env, FTypeVar(tyvar)));
+		}
+
+		mt = mergeFRange(acc, rt, heuristic, funify, \e -> onError(tyvar, e));
+
+		if (env.verbose >= 2)  {
+			printDedent(env.env, "Unified " + ftype2string(env, FTypeVar(tyvar)) + " to " + ftype2string(mt.env, mt.type));
+		}
+
+		if (heuristic >= 1) {
+			updateFTyvar(mt.env, tyvar, mt.type, \ -> ftype2string(env, rt))
+		} else {
+			mt.env;
+		}
+	});
+}
+
+
+resolveTyvarVsTyvar(env : FEnv, onError : (int, string) -> void) -> FEnv {
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving tyvar vs tyvar");
+	}
+	foldTree(env.tyvarDeps, env, \from : FType, tos : [FUnifyType], acc : FEnv -> {
+		fold(tos, acc, \acc2 : FEnv, to : FUnifyType -> {
+			// Important we lookup this one again, since it might be changed in this loop
+			rfrom = resolveFVar(acc2, from, makeSet(), \m -> onError(-1, m));
+			rto = resolveFVar(acc2, to.type, makeSet(), \m -> onError(-1, m));
+			switch (rto) {
+				FTypeVar(tv): {
+					if (rto != rfrom && !containsKeyTree(acc2.tyvars, tv)) {	// We do not care about tyvars nestedly resolved
+						// The alpha on the to side is unbound.
+						switch (rfrom) {
+							FTypeVar(ftv): {
+								explain = \ -> ftype2string(acc2, from) + fkind2string(to.kind) + ftype2string(acc2, to.type);
+								// OK, alpha <= beta, pick the lowest for bigger side
+								if (tv < ftv) {
+//									fcPrintln("α" + i2s(ftv) + " is " + ftype2string(acc2, to.type));
+									updateFTyvar(acc2, ftv, rto, explain)
+								} else {
+//									fcPrintln("α" + i2s(tv) + " is " + ftype2string(acc2, rfrom));
+									updateFTyvar(acc2, tv, rfrom, explain)
+								}
+							}
+							default: acc2;
+						}
+					} else {
+						acc2;
+					}
+				}
+				default: {
+					acc2;
+				}
+			}
+		});
+	});
+}
+
+resolveTyvarsToTypars(env : FEnv, typars : Set<string>, onError : (int, string) -> void) -> FEnv {
+	if (env.verbose >= 2)  {
+		fcPrintln("\nResolving free tyvars to typars");
+	}
+	freetyvars = foldTree(env.tyvarDeps, makeSet(), \from, tos : [FUnifyType], acc : Set<int> -> {
+		acc1 = extractFreeFTypeVars(env, from, acc);
+		fold(tos, acc1, \acc2 : Set<int>, to : FUnifyType -> {
+			extractFreeFTypeVars(env, to.type, acc2)
+		});
+	});
+
+	mtypar = popMaxSet(typars);
+	lasttypar = eitherMap(mtypar, \r -> r.value, "");
+
+	strict = getConfigParameter(env.env.program.acc.config.config, "strict") == "1";
+
+	foldi(set2array(freetyvars), env, \i, acc, tv -> {
+		tvtypar = lasttypar + strRepeat("?", i + 1);
+		if (strict) {
+			onError(tv, "Implicit type parameter")
+		}
+
+		updateFTyvar(acc, tv, FTypePar(tvtypar), \ -> "")
+	});
+}
+
+
+extractFreeFTypeVars(env : FEnv, t : FType, acc : Set<int>) -> Set<int> {
+	tvs = extractFTypeVars(env, t, makeSet());
+	foldSet(tvs, acc, \acc2, tv -> {
+		if (!containsKeyTree(env.tyvars, tv)) insertSet(acc2, tv)
+		else acc2
+	});
+}
+
+
+updateFTyvar(env : FEnv, tyvar : int, type : FType, explain : () -> string) -> FEnv {
+	if (FTypeVar(tyvar) == type || lookupTreeDef(env.tyvars, tyvar, FTypeVar(tyvar)) == type) {
+		env
+	} else {
+		if (env.verbose >= 2) {
+			fcPrintln("  α" + i2s(tyvar) + " = " + ftype2string(env, type) + "   from   " + explain());
+		}
+		nt = setTree(env.tyvars, tyvar, type);
+		FEnv(
+			env.env,
+			env.tyvarIdGroup, 
+			env.verbose,
+			nt,
+			env.seen,
+			env.tyvarDeps,
+		)
+	}
+}
+
+
+buildFTyvarInfos(env : FcTypeEnv) -> Tree<int, [Pair<string, FcInfo2>]> {
+	// OK, we should build a map of tyvars to info positions here
+	foldList(^(env.local.expects), makeTree(), \acc : Tree<int, [Pair<string, FcInfo2>]>, e -> {
+
+		add1 = \tyvars, info -> {
+			foldSet(tyvars, acc, \acc2, tv -> {
+				treePushToArrayUnique(acc2, tv, Pair("", info))
+			});
+		}
+
+		switch (e : FcTypeExpect) {
+			FcLessOrEqual(e1, e2, d, info, ex): {
+				tyvars1 = collectFcTyvars(env, e1, makeSet());
+				tyvars = collectFcTyvars(env, e2, tyvars1);
+				desc = d + " (" + fcexpDescription(ex) + ")";
+
+				foldSet(tyvars, acc, \acc2, tv -> {
+					treePushToArrayUnique(acc2, tv, Pair(desc, info))
+				});
+			}
+			FcExpectField(field, ftype, t, info, ex): {
+				tyvars1 = collectFcTyvars(env, ftype, makeSet());
+				tyvars = collectFcTyvars(env, t, tyvars1);
+				add1(tyvars, info);
+			}
+			FcSetMutableField(stype, field, ftype, info): {
+				tyvars1 = collectFcTyvars(env, stype, makeSet());
+				tyvars = collectFcTyvars(env, ftype, tyvars1);
+				add1(tyvars, info);
+			}
+			FcVerifyType(e1, e2, info): {
+				tyvars1 = collectFcTyvars(env, e1, makeSet());
+				tyvars = collectFcTyvars(env, e2, tyvars1);
+				add1(tyvars, info);
+			}
+		}
+	});
+}

@@ -1,0 +1,284 @@
+import wigi/editor_types;
+import wigi/storage;
+import serialize;
+import wigi/write2wigi;
+import wigi/wigi2text;
+import ui/messagebox;
+import ui/fontmapping;
+import wigi/wigi2string;
+import wigi/testcaserecorder_api;
+import formats/writeparser;
+import wigi/fixup;
+import wigi/wigi_wiki;
+
+
+export {
+	//some browsers (such as IE) allow us to handle only KeyUp (not KeyDown) events for specific CTRL+Letter combinations
+	// these two bools define which key handler to be used in editor (KeyUp or KeyDown) for Ctrl+letter
+	handleKeyUpEvents : bool;
+	handleKeyDownEvents : bool;
+
+	innerAppClipboardKey : string = "innerAppClipboard";
+
+	makeSystemClipboardBuffer(state : WigiEditorState, onPaste : (WigiEditorState, string) -> void) -> (()-> void);
+
+	WigiCopyToClipboardMode ::= PreserveFormatting, PlainText, TryToSimplifyToPlainText;
+		PreserveFormatting();
+		PlainText();
+		// Special case when we try to return plain text for ctrl+c action, when there is only WigiText without styles
+		TryToSimplifyToPlainText();
+
+	copyToClipboards(state : WigiEditorState, wigi : Maybe <WigiElement>, formatting : WigiCopyToClipboardMode) -> void;
+
+	pasteFromClipboards(state : WigiEditorState, onPaste : (string, Maybe<ParagraphSpacing>) -> void) -> WigiSendEventResult;
+
+	maybeGetWigiElement(content : string) -> Maybe<Pair<WigiElement, [string]>>;
+
+	WigiSendEventResult ::= WigiSendEventResultDeferred, WigiSendEventResultImmediate, WigiSendEventResultWaitCompleted;
+		WigiSendEventResultWaitCompleted(handled : bool, completed : ref () -> void);
+		WigiSendEventResultDeferred(handled : bool);
+		WigiSendEventResultImmediate(handled : bool);
+}
+
+// it is true when we want to use KeyUp handler in the editor
+// TODO: Get rid of it? Seems it doesn't work in IE Flash which it was added for
+handleKeyUpEvents = {
+	flash && {
+		upTypeBrowserNames = ["explorer"];
+		curBrowser = getBrowser() |> toLowerCase;
+		fold(upTypeBrowserNames, false, \acc, name ->{
+			if (!acc){
+				strIndexOf(curBrowser, name) != -1
+			} else acc;
+		});
+	}
+}
+
+// it is true when we want to use KeyDown handler in the editor
+handleKeyDownEvents = !handleKeyUpEvents;
+
+// it is true when we need to click twice to paste
+isDoublePressPaste  = {
+	handleKeyUpEvents;
+}
+
+// it is true when we need to click twice to copy
+isDoublePressCopy  = {
+	false;
+}
+
+bufferContentStyle  = [getUniversalFont()];
+
+// We need to filter out some characters, see case http://process.area9.dk/cases/default.asp?35327
+// But we don't have to filter "line break", see case http://process.area9.dk/cases/default.asp?40471
+filterTextFromNonprintables(text: string) -> string {
+	if (strlen(text) == 0) text
+	else doFilterText(text, 0, 0, "", \c -> isPrintableCharCode(c) || (c == 0x0A));
+}
+
+doFilterText(text : string, i : int, n : int, acc : string, checkFn : (int) -> bool) -> string {
+	if ((i + n) == strlen(text))
+		if (n > 0)
+			acc + substring(text, i, n)
+		else acc
+	else if (getCharCodeAt(text, i + n) |> checkFn)
+		doFilterText(text, i, n + 1, acc, checkFn)
+	else if (n > 0)
+		doFilterText(text, i + n + 1, 0, acc + substring(text, i, n), checkFn)
+	else doFilterText(text, i + 1, 0, acc, checkFn)
+}
+
+bufferContentChange(state : WigiEditorState, text : TextInputModel) {
+	if (^(state.clipboardBuffer.mode) == Pasting()) {
+
+		filteredContent = filterTextFromNonprintables(text.content);
+		if (filteredContent != text.content) {
+			println("Some characters were filtered in " + text.content);
+		}
+
+		next(state.clipboardBuffer.content, filteredContent);
+	}
+}
+
+clearBuffer(state : WigiEditorState) -> void {
+	state.clipboardBuffer.mode := Waiting();
+	next(state.clipboardBuffer.state, [Content("", bufferContentStyle), Focus(false)]);
+	next(state.clipboardBuffer.content,  "");
+}
+
+firstAction = ref true;
+
+escortBufferAction(state : WigiEditorState) -> void {
+	// in case copy/paste is not completed within 1 seconds
+	timer(1000, \-> {
+		if (^(state.clipboardBuffer.mode) != Waiting())
+			clearBuffer(state);
+	});
+	// clear indication of copy/paste shotrcuts when either copy or paste done for the first time
+	if (^firstAction && (isDoublePressPaste || isDoublePressCopy) ) {
+		timer(100, \-> {
+			firstAction := false;
+			arr = ref [];
+			if (isDoublePressCopy)	refArrayPush(arr, "press Ctrl-C TWICE to COPY");
+			if (isDoublePressPaste)	refArrayPush(arr, "press Ctrl-V TWICE to PASTE");
+			disposer = warningBox2(strGlue(^arr, "\n\n"));
+			timer(4000, \-> {
+				resetKeyboardFocus(^(state.focusId));
+				disposer();
+			})
+		});
+	};
+}
+
+
+filterElementsR(children : [XmlNode], tagFilter : string) -> [XmlElement] {
+	fold(children, [], \acc, v -> {
+		tags = getXmlTagElements(v, tagFilter);
+		if (tags != []) concat(acc, tags)
+		else concat(acc, filterElementsR(getXmlChildren(v), tagFilter))
+	})
+}
+
+// MS Word and Google Docs use margin-bottom attribute of <p> tag to define space after each paragraph
+// wigi define ParagraphSpacing on the WigiStory level, so we use the first margin-bottom found on <p> tag
+getParagraphSpacingFromHtml(htmlStr : string) -> Maybe<ParagraphSpacing> {
+	pElems = filterElementsR(getXmlChildren(parseXml2(htmlStr)), "p");
+
+	if (pElems == []) None()
+	else {
+		getCssProperties = \e : XmlNode -> {
+			cssStr = strSplit(unescapeHtml(strReplace(getXmlAttribute(getXmlAttributes(e), "style", "default value"), "\n", "")), ";");
+			filtermap(cssStr,
+				\s -> { p = strSplit(s, ":"); if (length(p) == 2) Some(Pair(trim(p[0]), trim(p[1]))) else None() }
+			)
+		};
+
+		// MS Word with default paragraph spacing "after" means 8pt but it does not define "margin-bottom" attribute
+		// Google Docs define this attribute always, and Word Online neve provides the attribute
+		// so if we have html with <p> but without "margin-bottom" it is safe to assume 8 pt
+		marginBottom = findmap(pElems, \e -> findmap(getCssProperties(e), \p -> if (p.first == "margin-bottom") Some(p.second) else None()));
+		pt2double = \pt, def -> if (endsWith(pt, "pt")) s2d(strLeft(pt, strlen(pt)-2)) else def;
+
+		// wigi has by default 3 type of spacing: "single", "1.5", "double". map vaules from html to them.
+		html2paragraphSpacing = \s -> ParagraphSpacing(if (s >= 6.) 6. else if (s < 6. && s >= 3.0) 3. else 0.);
+
+		Some(html2paragraphSpacing(pt2double(either(marginBottom, "8.0pt"), 8.)))
+	}
+}
+
+// PASTE for js/cpp - Ctrl-V directly, Flash - Ctrl-V (Opera, Chrome, FireFox), Ctrl-V + Ctrl-V (IE) through buffer,
+pasteFromClipboards(state : WigiEditorState, onPaste : (string, Maybe<ParagraphSpacing>) -> void) -> WigiSendEventResult {
+	getWigiSpacing = \ -> {
+		html = getTestAwareSystemClipboard().html;
+		if (html == "") None()
+		else getParagraphSpacingFromHtml(html)
+	}
+
+	if (cpp || js) {
+		onPaste(filterTextFromNonprintables(getGlobalClipboard()), getWigiSpacing());
+		WigiSendEventResultImmediate(true);
+	} else {
+		if (^(state.clipboardBuffer.mode) == Waiting()) {
+			escortBufferAction(state);
+			state.clipboardBuffer.mode := Pasting();
+			next(state.clipboardBuffer.state, [Content("", bufferContentStyle), Focus(true)]);
+		}
+		WigiSendEventResultImmediate(true);
+	}
+}
+
+// COPY by Ctrl-C directly if it is possible,
+// otherwise by Ctrl-C + Ctrl-C through buffer
+copyToClipboards(state : WigiEditorState, wigiM : Maybe <WigiElement>, formatting : WigiCopyToClipboardMode) -> void {
+	tryToSimplifyToPlainText = \w -> switch (w : WigiElement) {
+		// copy_formulas_inside_spreadsheet.test
+		WigiText(text, style): if (style == []) wigi2text(w) else wigi2string(w);
+		default: wigi2string(w);
+	}
+
+	mode = switch (formatting : WigiCopyToClipboardMode) {
+		PreserveFormatting(): wigi2string;
+		PlainText(): wigi2text;
+		TryToSimplifyToPlainText(): tryToSimplifyToPlainText;
+	}
+	wigi = either(wigiM, makeWigiDocument(""));
+	content = eitherMap(wigiM, mode, "");
+
+	if (!isDoublePressCopy) {
+		next(state.clipboard, wigiM);
+		setClipboard(content);
+		customCopyFn = extractStruct(state.wigiEditorStyle, WigiEditorCustomCopy(nop3)).customCopyFn;
+		customCopyFn(
+			wigi,
+			content,
+			\newWigi -> setClipboard(mode(newWigi))
+		);
+	} else {
+		switch (^(state.clipboardBuffer.mode)){
+			Waiting() : { // first Ctrl-C
+				next(state.clipboard, wigiM);
+				escortBufferAction(state);
+				state.clipboardBuffer.mode := Copying();
+				next(state.clipboardBuffer.state, [Content(content, bufferContentStyle), Selection(0, strlen(content) ), Focus(true)]);
+			}
+			Copying() : { //second Ctrl-C
+				// as long as selection for TextInput is deferred (case #29942) we give some time for completing
+				timer(100, \-> clearBuffer(state));
+			}
+			Pasting() : {}
+		}
+	}
+}
+
+makeSystemClipboardBuffer(state : WigiEditorState, onPaste : (WigiEditorState, string) -> void) -> (()-> void) {
+	if (!cpp && !js) {
+		uns = selectu(state.clipboardBuffer.content, \s -> {
+			if (^(state.clipboardBuffer.mode) == Pasting()) {
+				onPaste(state, s);
+				clearBuffer(state);
+			}
+		});
+		// render buffer outside the window
+		dispose = render(Offset( 0.0, -100.0,
+			TextInput(
+				[Multiline(true), Content("", bufferContentStyle), Focus(false)],
+				[
+					TextChange(\text -> bufferContentChange(state, text)),
+					FocusOut(\-> resetKeyboardFocus(^(state.focusId)))
+				],
+				[StateChanger(state.clipboardBuffer.state)]
+		)));
+
+		\-> {
+			uns.second();
+			dispose();
+		}
+	} else {
+		nop;
+	}
+}
+
+maybeGetWigiElement(content0 : string) -> Maybe<Pair<WigiElement, [string]>> {
+	content = trim2(content0, "\n \u000d\t");
+
+	if (isWriteContent(content)) {
+		write = parseWrite(content, [FontSize(20.0)]);
+		if (write.stories != []) { // write content should exist
+			wigi =	write2wigi(write);
+			errors = if (wigi.second != [])
+					concat(["XML-Wigi conversion errors:"], wigi.second)
+				else [];
+			Some(Pair(wigi.first, errors))
+		} else None()
+	} else if (isWigiContent(content)) {
+		wigi = deserialize2(content, wigiFixup(), IllegalStruct());
+		if (flow(wigi) != IllegalStruct()) Some(Pair(wigi, [])) else None()
+	} else if (startsWith(content, "=")) {
+		Some(Pair(WigiText(content, []), []))
+	} else None()
+}
+
+resetKeyboardFocus(focusId : int) -> void {
+	releaseKeyboardFocus();
+	updateKeyboardFocus(focusId);
+}

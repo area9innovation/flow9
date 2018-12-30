@@ -1,0 +1,187 @@
+import math;
+import string;
+import devmode;
+
+export {
+	callScormApi(name : string, params : [flow], callback : (flow) -> void) -> void;
+
+	getScormLearnerId(cont : (string) -> void, err : (string) -> void) -> void;
+	getScormLearnerName(cont : (last_name : string, first_name : string) -> void, err : (string) -> void) -> void;
+	getScormUrl(cont : (string) -> void, err : (string) -> void) -> void;
+
+	setScormScore(score : double, cont : () -> void, err : (string) -> void) -> void;
+
+	setScormComplete(cont : () -> void, err : (string) -> void) -> void;
+
+	getScormMasteryScore(cont : (mastery_score : double) -> void) -> void;
+
+	isScorm() -> bool; 
+
+	SCORMLessonStatus ::= SLS_Complete, SLS_Incomplete, SLS_NotAttempted;
+		SLS_Complete();
+		SLS_Incomplete();
+		SLS_NotAttempted();
+
+	getScormLessonStatus(cont : (SCORMLessonStatus) -> void, err : (string) -> void) -> void;
+	setScormLessonStatus(status : SCORMLessonStatus, cont : () -> void, err : (string) -> void) -> void;
+}
+
+isScorm() -> bool {
+	getUrlParameter("scormAuth") == "1" || getUrlParameter("scormAPI") == "1" || isUrlParameterTrue("testscormui");
+}
+
+
+callbackInitialized = ref false;
+
+callScormApi(name : string, params : [flow], callback : (flow) -> void) -> void {
+	// if (! ^callbackInitialized) {
+		hostAddCallback("handleScormMessage", 
+			\ -> {
+				// drop callback for this call
+				hostAddCallback("handleScormMessage", \ -> {println("Callback is already dropped for " + name + " : " + toString(params)); 0});
+				callback(hostCall("getScormReply", []));
+				0;
+			}
+		);
+		// callbackInitialized := true;
+	// }
+
+	// callbackFn := \f -> { callbackFn := \__ -> {}; callback(f); }
+	hostCall(name, params) |> ignore;
+} 
+
+getScormLearnerId(cont, err) {
+	callScormApi("getScormValue", ["cmi.core.student_id"],  
+		\f -> {
+			s = toStringNoExtraQuotes(f);
+			if (!isNotSpace(s)) err("Empty cmi.core.student_id. Unable to identify user.")
+			else if (s != "null" /* ??? */) cont(s)
+			else err(s)
+		}
+	)
+}
+
+getScormLearnerName(cont : (last_name : string, first_name : string) -> void, err : (string) -> void) -> void {
+	/* from SCORM12 Conformance docs:
+	 Last name, first name and middle intial.
+	 Last name and first name are separated by comma.
+	*/
+	callScormApi("getScormValue", ["cmi.core.student_name"],  
+		\f -> {
+			s = toStringNoExtraQuotes(f);
+			if (isDevMode()) {
+				println("[SCORM-dev]: received name ->"+s);
+			}
+			if (s != "null" /* ??? */) {
+				user_name = strSplit(s, ",");
+				//lets perfrom own check by length to prevent unexpected results
+				data_length = length(user_name);
+
+				data = if (data_length == 1) Pair(user_name[0], "")
+					else if (data_length >= 2) Pair(user_name[0], user_name[1])
+					else Pair("", "");
+				cont(data.first, data.second); 
+			} else err(s)
+		}
+	)
+}
+
+getScormMasteryScore(cont : (mastery_score : double) -> void) -> void {
+	callScormApi("getScormValue", ["cmi.student_data.mastery_score"],  
+		\f -> {
+
+			mastery_score1 = toStringNoExtraQuotes(f);
+
+			//we treat zero or empty mastery_score as 100.0, as it make no sense to have 0.0 as mastery_score
+			mastery_score2 = 
+				if (mastery_score1 == "") 100.0 
+				else if (s2d(mastery_score1) == 0.0) 100.0
+				else s2d(mastery_score1);
+			cont(mastery_score2);
+		}
+	)
+}
+
+
+
+getScormUrl(cont, err) {
+	callScormApi("getScormUrl", [],  
+		\f -> {
+			s = toStringNoExtraQuotes(f);
+			if (s != "null" /* ??? */) cont(s) else err(s)
+		}
+	)
+}
+
+// callScormApi("ScormCommit", [], \f2 -> warningBox(toString(f2)))
+
+getScormValue(name : string, cont : (string) -> void) {
+	callScormApi("getScormValue", [name],
+		\f -> cont(toString(f))
+	)
+}
+
+setScormValue(name : string, val : string, cont : () -> void, err : (string) -> void) {
+	callScormApi("setScormValue", [name, val  |> pprint("value : ")],
+		\f -> if (toStringNoExtraQuotes(f)  == "true") 
+				cont() 
+			else 
+				callScormApi("getScormError", [], \e -> err("SCORM value " + name + " is not set.\n" + toString(e)))
+			
+	)
+}
+
+scormCommit(cont : () -> void, err : (string) -> void) {
+	callScormApi("ScormCommit", [], 
+		\f -> if (toStringNoExtraQuotes(f) == "true") 
+				cont() 
+			else 
+				callScormApi("getScormError", [], \e -> err("Error committing SCORM updates.\n" + toString(e)))
+	)	
+}
+
+setScormScore(score, cont, err) {
+	setScormValue("cmi.core.score.raw", 
+		i2s(trunc(100.0 * score)),  
+		\ -> scormCommit(cont, err),
+		err
+	)
+}
+
+setScormComplete(cont, err) {
+	callScormApi("setScormComplete", [], 
+		\f -> if (toStringNoExtraQuotes(f) == "true") 
+				cont() 
+			else 
+				callScormApi("getScormError", [], \e -> err("Error setting SCORM complete.\n" + toString(e)))
+	)	
+}
+
+getScormLessonStatus(cont, err) {
+	getScormValue("cmi.core.lesson_status",
+		\st -> {
+			if (st == "completed" || st == "passed") {
+				cont(SLS_Complete())
+			} else if (st == "incomplete") {
+				cont(SLS_Incomplete())
+			} else if (st == "not attempted") {
+				cont(SLS_NotAttempted())
+			} else {
+				err("Unknown status : " + st)
+			}
+		}
+	)
+}
+
+setScormLessonStatus(st, cont, err) {
+	s = switch(st) {
+		SLS_Complete() : "completed";
+		SLS_Incomplete() : "incomplete";
+		SLS_NotAttempted() : "not attempted";
+	}
+
+	setScormValue("cmi.core.lesson_status", s,	
+		\ -> scormCommit(cont, err),
+		err
+	)
+}

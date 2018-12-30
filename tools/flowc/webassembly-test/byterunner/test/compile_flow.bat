@@ -1,0 +1,1 @@
+call flow -c ../out/%1.bytecode %1.flow

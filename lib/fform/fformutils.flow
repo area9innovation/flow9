@@ -1,0 +1,1146 @@
+import fform/fform;
+import render;
+
+export {
+	isConvertableForm(form : Form) -> bool;
+	fform2form(fform : FForm) -> Form;
+	form2fform(form : Form) -> FForm;
+
+	AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty];
+	FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProperty], () -> () -> void>;
+
+	FVideo2Video(fvideo : FVideo) -> Pair<Video, () -> () -> void>;
+	Video2FVideo(video : Video) -> Pair<FVideo, () -> () -> void>;
+
+	TextInput2FTextInput(textInput : TextInput) -> Pair<FTextInput, () -> () -> void>;
+	FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> void>;
+
+	style2characterStyle(s : [?]) -> [CharacterStyle];
+
+	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
+	renderFText(text : string, style : [CharacterStyle]) -> FRenderResult;
+	renderFTexts(texts : [Text]) -> FRenderResult;
+	renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult;
+	renderFParagraphs(texts : [Text]) -> FRenderResult;
+
+	fform2s(rform : FForm, level : int) -> string;
+	interruptibleDeferUntilNextFrameRendered(fn : () -> void) -> () -> void;
+
+	FClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
+	allFClipCapabilities = FClipCapabilities(true, true, true, true, true);
+
+	FRenderResult(clips : [native], disposers : [() -> void], capabilities : FClipCapabilities);
+	emptyFRenderResult = FRenderResult([], [], allFClipCapabilities);
+}
+
+switchTransform(tr : Transform<?>, fn : (b : Behaviour<?>) -> Form) -> Form {
+	switch (tr) {
+		ConstBehaviour(__) : fn(tr);
+		DynamicBehaviour(__, __) : fn(tr);
+		default: {
+			trB = make(fgetValue(tr));
+
+			Constructor(
+				fn(trB),
+				\ -> fconnect(tr, trB)
+			)
+		}
+	}
+}
+
+switchTransform2(tr : Transform<?>, convertFn : (?) -> (??), fn : (b : Behaviour<??>) -> Form) -> Form {
+	switch (tr) {
+		ConstBehaviour(__) : fn(const(convertFn(fgetValue(tr))));
+		default: {
+			trB = make(convertFn(fgetValue(tr)));
+
+			Constructor(
+				fn(trB),
+				makeSubscribe(tr, \tr0 -> nextDistinct(trB, convertFn(tr0)))
+			)
+		}
+	}
+}
+
+isConvertableForm(form : Form) -> bool {
+	switch (form : Form) {
+		DynamicGroup2(__, combiner, __, __): combiner == GroupCombiner();
+		Grid(__): false;
+		Camera(__, __, __, __): false;
+		default: true;
+	}
+}
+
+fform2form(fform : FForm) -> Form {
+	switch (fform) {
+		FText(text, style) : Text(text, style);
+		FParagraph(__, __) : FParagraph2Form(fform);
+		FGraphics(path, style) : Graphics(path, style);
+		FTranslate(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Translate(x0, y0, fform2form(form))));
+		FScale(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Scale(x0, y0, fform2form(form))));
+		FRotate(degree, form) : switchTransform(degree, \dg -> Rotate(dg, fform2form(form)));
+		FAlpha(alpha, form) : switchTransform(alpha, \al -> Alpha(al, fform2form(form)));
+		FVisible(visible, form) : switchTransform2(visible, b2i, \vi -> Visible(vi, fform2form(form)));
+		FRenderable(renderable, form) : switchTransform2(renderable, b2i, \r -> Visible(r, fform2form(form)));
+		FGroup(layers, __) : Group(map(layers, fform2form));
+		FGroup2(layer1, layer2, __) : Group([fform2form(layer1), fform2form(layer2)]);
+		FEmpty() : Empty();
+		FBorder(left, top, right, bottom, form) : Border(left, top, right, bottom, fform2form(form));
+		FMask2(form, mask, stack) : Mask2(fform2form(form), fform2form(mask), stack);
+		FInteractive(listeners, form) : Interactive(listeners, fform2form(form));
+		FFilter2(filt, form, stack) : Filter2(filt, fform2form(form), stack);
+		FCursor(shape, form) : Cursor(shape, fform2form(form));
+		FInspect(inspectors, form) : Inspect(inspectors, fform2form(form));
+		FMutable2(form, stack) : switchTransform2(form, fform2form, \fo -> Mutable2(fo, stack));
+		FDecorator2(form, decorators, above, stack) : {
+			f1 = fform2form(form);
+
+			f2 = map(decorators, \d -> {
+				c = make(Empty());
+
+				Constructor(Mutable2(c, stack), makeSubscribe(d.first, \en -> next(c, if (en) fform2form(d.second()) else Empty())));
+			});
+
+			Group(if (above) concat([f1], f2) else arrayPush(f2, f1));
+		}
+		FCrop2(left, top, width, height, form, stack) : switchTransform(left, \l -> switchTransform(top, \t -> switchTransform(width, \w ->
+			switchTransform(height, \h -> Crop2(l, t, w, h, fform2form(form), stack)))));
+		FControlFocus(focus, form) : ControlFocus(focus, fform2form(form));
+		FPicture(url, size, s) : Inspect([ISize(size)], Picture(url, s));
+		FConstructor(form, fn) : Constructor(fform2form(form), fn);
+		FCreate2(current, fn) : Create2(ref fform2form(^current), \ -> fform2form(fn()));
+		FFullWindow(fullscreen, available, form) : FullWindow(fullscreen, Inspect([IAvailable(available)], fform2form(form)));
+		FBaseline(b, form) : Baseline(b, fform2form(form));
+		FSize2(s, form) : Size2(s, fform2form(form));
+		FAvailable2(a, form) : Available2(a, fform2form(form));
+		FAccess(prop, form) : FAccessProperties2AccessProperties(prop) |> (\f -> Constructor(Access(f.first, fform2form(form)), f.second));
+		FSetPending(setpending, form) : switchTransform(setpending, \sp -> SetPending(sp, fform2form(form)));
+		FRealHTML(url, wh, style) : switchTransform(wh, \whB -> RealHTML2(url, whB, style));
+		FMForm(form) : form;
+		FDynamicGroup2(__, __, __) : FDynamicGroup2DynamicGroup(fform) |> (\f -> Constructor(f.first, f.second));
+		FVideo(__, __, __) : FVideo2Video(fform) |> (\f -> Constructor(f.first, f.second));
+		FNativeForm(init, metrics, ff, fn): NativeForm(init, metrics, \ -> fform2form(ff()), fn);
+		FTextInput(__, __, __) : FTextInput2TextInput(fform) |> (\f -> Constructor(f.first, f.second));
+	}
+}
+
+form2fform(_form : Form) -> FForm {
+	switch (_form : Form) {
+		Text(text, style) : FText(text, style);
+		Graphics(path, style) : FGraphics(path, style);
+		Translate(x, y, form) : FTranslate(x, y, form2fform(form));
+		Scale(x, y, form) : FScale(x, y, form2fform(form));
+		Rotate(deg, form) : FRotate(deg, form2fform(form));
+		Alpha(alpha, form) : FAlpha(alpha, form2fform(form));
+		Visible(visible, form) : FVisible(fselect(visible, FLift(\v -> i2b(v))), form2fform(form));
+		Group(layers) : FGroup(map(layers, form2fform), true);
+		Empty() : FEmpty();
+		Border(left, top, right, bottom, form) : FBorder(left, top, right, bottom, form2fform(form));
+		Mask2(form, mask, stack) : FMask2(form |> form2fform, mask |> form2fform, stack);
+		Interactive(listeners, form) : FInteractive(listeners, form2fform(form));
+		Filter2(filt, form, stack) : FFilter2(filt, form2fform(form), stack);
+		Cursor(shape, form) : FCursor(shape, form2fform(form));
+		Mutable2(form, stack) : FMutable2(fselect(form, FLift(\f -> form2fform(f))), stack);
+		Crop2(left, top, width, height, form, stack) : FCrop2(left, top, width, height, form2fform(form), stack);
+		Picture(url, s) : FPicture(url, make(zeroWH), s);
+		Constructor(form, fn) : FConstructor(form2fform(form), fn);
+		FullWindow(fw, form) : FFullWindow(fw, make(zeroWH), form2fform(form));
+		Baseline(b, form) : FBaseline(b, form2fform(form));
+		Size2(s, form) : FSize2(s, form2fform(form));
+		Available2(a, form) : FAvailable2(a, form2fform(form));
+		Access(prop, form) : FAccess(AccessProperties2FAccessProperties(prop), form2fform(form));
+		Inspect(inspectors, form) : FInspect(inspectors, form2fform(form));
+		SetPending(pending, form) : FSetPending(pending, form2fform(form));
+		ControlFocus(focus, form) : FControlFocus(focus, form2fform(form));
+		RealHTML2(url, wh, style) : FRealHTML(url, wh, style);
+		Create2(current, fn) : FCreate2(ref form2fform(^current), \ -> form2fform(fn()));
+		Camera(filename, parameters, listeners, controls) : FMForm(_form); // TODO:
+		Video(__, __, __, __) : Video2FVideo(_form) |> (\f -> FConstructor(f.first, f.second));
+		TextInput(__, __, __) : TextInput2FTextInput(_form) |> (\f -> FConstructor(f.first, f.second));
+		Switch(val, cases) : FMutable(fselect(val, FLift(\v -> form2fform(cases[v]))));
+		NativeForm(init, metrics, f, fn) : FNativeForm(init, metrics, \ -> form2fform(f()), fn);
+		Grid(cells) : FMForm(_form); // TODO:
+		DynamicGroup2(__, __, __, __) : {
+			if (isConvertableForm(_form))
+				FMForm(_form)
+			else
+				DynamicGroup2FDynamicGroup(_form) |> (\f -> FConstructor(f.first, f.second));
+		}
+	}
+}
+
+AccessProperties2FAccessProperties(prop : [AccessProperty]) -> [FAccessProperty] {
+	fold(prop, [], \acc, p ->
+		switch (p : AccessProperty) {
+			AccessChildSelected(__) : arrayPush(acc, p);
+			AccessRole(__) : arrayPush(acc, p);
+			AccessGroup(__) : acc;
+			AccessFocused(__) : arrayPush(acc, p);
+			AccessEnabled(enabled) : arrayPush(acc, FAccessEnabled(enabled));
+			AccessCallback(__) : arrayPush(acc, p);
+			AccessAttribute(name, value) : arrayPush(acc, FAccessAttribute(name, value));
+			AccessDescription(__) : arrayPush(acc, p);
+			AccessKbdShortcutString(__) : arrayPush(acc, p);
+			AccessTabOrder(tabOrder) : arrayPush(acc, FAccessTabOrder(tabOrder));
+			AccessTabindex(ti) : arrayPush(acc, FAccessTabindex(const(ti)));
+			AccessSelectable() : arrayPush(acc, p);
+			AccessState(__) : arrayPush(acc, p);
+			AccessZorder(zOrder) : arrayPush(acc, FAccessZorder(zOrder));
+		}
+	)
+}
+
+FAccessProperties2AccessProperties(prop : [FAccessProperty]) -> Pair<[AccessProperty], () -> () -> void> {
+	fold(prop, Pair([], []), \acc : Pair<[AccessProperty], [() -> () -> void]>, p ->
+		switch (p : FAccessProperty) {
+			AccessChildSelected(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessRole(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessFocused(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessCallback(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessSelectable() :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessState(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessDescription(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			AccessKbdShortcutString(__) :
+				Pair(
+					arrayPush(firstOfPair(acc), p),
+					secondOfPair(acc)
+				);
+			FAccessTabindex(ti) : {
+				Pair(
+					arrayPush(firstOfPair(acc), AccessTabindex(fgetValue(ti))),
+					secondOfPair(acc)
+				);
+			}
+			FAccessEnabled(enabled) : {
+				enabledB = make(fgetValue(enabled));
+
+				Pair(
+					arrayPush(firstOfPair(acc), AccessEnabled(enabledB)),
+					arrayPush(secondOfPair(acc), makeSubscribe2(enabled, \en -> nextDistinct(enabledB, en)))
+				);
+			}
+			FAccessAttribute(name, value) : {
+				valueB = make(fgetValue(value));
+
+				Pair(
+					arrayPush(firstOfPair(acc), AccessAttribute(name, valueB)),
+					arrayPush(secondOfPair(acc), makeSubscribe2(value, \v -> nextDistinct(valueB, v)))
+				);
+			}
+			FAccessTabOrder(tabOrder) : {
+				tabOrderB = make(fgetValue(tabOrder));
+
+				Pair(
+					arrayPush(firstOfPair(acc), AccessTabOrder(tabOrderB)),
+					arrayPush(secondOfPair(acc), makeSubscribe2(tabOrder, \to -> nextDistinct(tabOrderB, to)))
+				);
+			}
+			FAccessZorder(zOrder) : {
+				zOrderB = make(fgetValue(zOrder));
+
+				Pair(
+					arrayPush(firstOfPair(acc), AccessZorder(zOrderB)),
+					arrayPush(secondOfPair(acc), makeSubscribe2(zOrder, \z -> nextDistinct(zOrderB, z)))
+				);
+			}
+			FAccessVisible(__): {
+				acc;
+			}
+		}
+	)
+	|> (\f : Pair<[AccessProperty], [() -> () -> void]> -> Pair(f.first, \ -> {disp = map(f.second, apply0); \ -> applyall(disp);}))
+}
+
+FVideo2Video(fvideo : FVideo) -> Pair<Video, () -> () -> void> {
+	playing = extractStruct(fvideo.style, FVideoPlay(make(false))).play;
+	paused = make(!getValue(playing));
+	position = extractStruct(fvideo.style, FVideoPosition(make(0.))).position;
+	errorHandlerFn = extractStruct(fvideo.style, OnVideoLoadingError(nop));
+	streamListenerFn = extractStruct(fvideo.style, StreamStatus(nop1));
+	synchroCalls = extractStruct(fvideo.style, SynchroCalls(nop, nop));
+	duration = extractStruct(fvideo.style, FVideoLength(make(1.))).length;
+
+	volume = extractStruct(fvideo.style, FVideoVolume(make(1.))).volume;
+	fullscreen = extractStruct(fvideo.style, FVideoFullscreen(make(false))).fullscreen;
+	controls = extractStruct(fvideo.style, FVideoControls([])).controls;
+	subtitles = extractStruct(fvideo.style, FVideoSubtitles(const(VideoSubtitle("", [])))).subtitles;
+	looping = extractStruct(fvideo.style, FVideoLoop(const(false))).loop;
+	timeRange = tryExtractStruct(fvideo.style, FVideoTimeRange(const(0.), const(0.)));
+
+	videoSubtitles = make(fgetValue(subtitles));
+	videoFullscreen = ref make(getValue(fullscreen));
+
+	Pair(
+		Video(
+			fvideo.filename,
+			[
+				VideoSize(floor(fgetValue(fvideo.wh).width),floor(fgetValue(fvideo.wh).height)),
+				errorHandlerFn
+			]
+			|> (\videoParameters ->
+				if (fgetValue(looping))
+					arrayPush(videoParameters, LoopPlayback())
+				else
+					videoParameters
+			)
+			|> (\videoParameters ->
+				if (!getValue(playing))
+					arrayPush(videoParameters, NoAutoPlay())
+				else
+					videoParameters
+			)
+			|> (\videoParameters ->
+				eitherMap(
+					timeRange,
+					\tr ->
+						concat(
+							videoParameters,
+							[
+								StreamStartOffset(fgetValue(tr.start)),
+								StreamEndOffset(fgetValue(tr.end))
+							]
+						),
+					videoParameters
+				)
+			),
+			[
+				streamListenerFn,
+				synchroCalls,
+				PlayerLength(duration),
+				PlayerIsPlaying(playing),
+				PlayerPosition(position, 33)
+			],
+			[
+				PlayerVolume(volume),
+				PlayerPause(paused),
+				PlayerSeek(position),
+				VideoFullScreen(\fs -> {
+					nextDistinct(fs, getValue(^videoFullscreen));
+					videoFullscreen := fs
+				}),
+				VideoPlayerControls(controls),
+				VideoPlayerSubtitles(videoSubtitles)
+			]
+		),
+		\ -> {
+			disp =
+				[
+					fconnect(subtitles, videoSubtitles),
+					fconnect(fnot(playing), paused),
+					makeSubscribe(fullscreen, \fs -> nextDistinct(^videoFullscreen, fs))()
+				];
+
+			\ -> applyall(disp);
+		}
+	);
+}
+
+Video2FVideo(video : Video) -> Pair<FVideo, () -> () -> void> {
+	videoFullscreen = make(false);
+	videoVolume = make(1.);
+
+	videoSize = extractStruct(video.parameters, VideoSize(-1, -1));
+	loopVideo = contains(video.parameters, LoopPlayback());
+	autoPlay = !contains(video.parameters, NoAutoPlay());
+	onVideoLoadingError = extractStruct(video.parameters, OnVideoLoadingError(nop));
+	startOffset = extractStruct(video.parameters, StreamStartOffset(0.)).offset;
+	endOffset = extractStruct(video.parameters, StreamEndOffset(0.)).offset;
+
+	streamStatus = extractStruct(video.listeners, StreamStatus(nop1));
+	synchroCalls = extractStruct(video.listeners, SynchroCalls(nop, nop));
+	videoDuration = extractStruct(video.listeners, PlayerLength(make(0.))).length;
+	videoPlaying = extractStruct(video.listeners, PlayerIsPlaying(make(autoPlay))).isPlaying;
+	videoPosition = extractStruct(video.listeners, PlayerPosition(extractStruct(video.listeners, PlayerPosition2(make(0.), make(0.))).position, 0)).position;
+
+	playerVolume = extractStruct(video.controls, PlayerVolume(make(1.))).volume;
+	playerPause = extractStruct(video.controls, PlayerPause(make(!autoPlay))).pause;
+	playerSeek = extractStruct(video.controls, PlayerSeek(make(0.))).position;
+	fsInit = extractStruct(video.controls, VideoFullScreen(nop1)).stateInitializer;
+	playerControls = extractStruct(video.controls, VideoPlayerControls([])).controls;
+	playerSubtitles = extractStruct(video.controls, VideoPlayerSubtitles(make(VideoSubtitle("", [])))).subtitle;
+
+	nextDistinct(videoPlaying, autoPlay);
+	fsInit(videoFullscreen);
+
+	Pair(
+		FVideo(
+			video.filename,
+			make(WidthHeight(videoSize.width |> i2d, videoSize.height |> i2d)),
+			concatA([
+				[
+					FVideoLoop(make(loopVideo)),
+					onVideoLoadingError,
+					streamStatus,
+					synchroCalls,
+					FVideoLength(videoDuration),
+					FVideoPlay(videoPlaying),
+					FVideoPosition(videoPosition),
+					FVideoVolume(videoVolume),
+					FVideoControls(playerControls),
+					FVideoSubtitles(playerSubtitles),
+				],
+				if (startOffset != 0. || endOffset != 0.)
+					[FVideoTimeRange(const(startOffset), faddition(videoDuration, const(endOffset)))]
+				else
+					[]
+			])
+		),
+		\ -> {
+			disp =
+				[
+					fconnect(fnot(playerPause), videoPlaying),
+					fconnect(playerSeek, videoPosition),
+					fconnect(playerVolume, videoVolume),
+				];
+
+			\ -> applyall(disp);
+		}
+	)
+}
+
+TextInput2FTextInput(textInput : TextInput) -> Pair<FTextInput, () -> () -> void> {
+	autoAlign = make(AutoAlignLeft());
+	multiline = make(false);
+	textSize = make(WidthHeight(-1., -1.));
+	focused = make(false);
+	wordWrap = make(false);
+	numeric = make(false);
+	readOnly = make(false);
+	maxChars = make(-1);
+	content = make("");
+	charStyle = make([]);
+	position = make(-1);
+	selection = make(-1);
+	eatKeyDownOnFocus = make(false);
+	scrollInfo = make(ScrollInfo(-1, -1, -1));
+	inputType = make(TextType());
+	inputFilter = make(\__ -> true);
+	tabIndex = make(-1);
+	tabEnabled = make(false);
+
+	stateFn = \state -> {
+		nextDistinct(autoAlign, extractStruct(state, AutoAlign(getValue(autoAlign))).autoalign);
+		nextDistinct(multiline, extractStruct(state, Multiline(getValue(multiline))).multiline);
+		nextDistinct(textSize, extractStruct(state, getValue(textSize) |> (\ts -> TextSize(ts.width, ts.height)))
+			|> (\ts -> WidthHeight(ts.width, ts.height)));
+		nextDistinct(focused, extractStruct(state, Focus(getValue(focused))).focus);
+		nextDistinct(wordWrap, extractStruct(state, WordWrap(getValue(wordWrap))).wordWrap);
+		nextDistinct(numeric, extractStruct(state, Numeric(getValue(numeric))).numeric);
+		nextDistinct(readOnly, extractStruct(state, ReadOnly(getValue(readOnly))).readOnly);
+		nextDistinct(maxChars, extractStruct(state, MaxChars(getValue(maxChars))).n);
+		extractStruct(state, Content(getValue(content), getValue(charStyle)))
+		|> (\c -> {
+			nextDistinct(content, c.content);
+			nextDistinct(charStyle, c.style);
+		});
+
+		extractStruct(state, Selection(getValue(position), getValue(selection)))
+		|> (\s -> {
+			nextDistinct(position, s.start);
+			nextDistinct(selection, s.end);
+		});
+
+		if (extractStruct(state, PasswordMode(getValue(inputType) == PasswordType())).password)
+			nextDistinct(inputType, PasswordType());
+
+		nextDistinct(eatKeyDownOnFocus, contains(state, EatKeyDownOnFocus()));
+		nextDistinct(scrollInfo, extractStruct(state, getValue(scrollInfo)));
+		nextDistinct(inputType, extractStruct(state, TextInputType(getValue(inputType))).inputType);
+		nextDistinct(inputFilter, extractStruct(state, TextInputFilter(getValue(inputFilter))).f);
+		nextDistinct(tabIndex, extractStruct(state, TabIndex(getValue(tabIndex))).index);
+		nextDistinct(tabEnabled, extractStruct(state, TabEnabled(getValue(tabEnabled))).enabled);
+	}
+
+	modelFn = \ ->
+		TextInputModel(
+			getValue(content),
+			getValue(textSize).width,
+			getValue(textSize).height,
+			getValue(position),
+			Selection(getValue(position), getValue(selection)),
+			getValue(focused),
+			if (getValue(scrollInfo) != ScrollInfo(-1, -1, -1))
+				Some(getValue(scrollInfo))
+			else
+				None()
+		);
+
+	stateFn(textInput.state);
+
+	prevContent = ref getValue(content);
+
+	textChange = tryExtractStruct(textInput.listeners, TextChange(nop1));
+	textScroll = tryExtractStruct(textInput.listeners, TextScroll(nop1));
+	focusIn = tryExtractStruct(textInput.listeners, FocusIn(nop));
+	focusOut = tryExtractStruct(textInput.listeners, FocusOut(nop));
+
+	stateChanger = tryExtractStruct(textInput.stateaccess, StateChanger(const([])));
+	stateQuery = extractStruct(textInput.stateaccess, StateQuery(nop1)).reader;
+	stateQuery2 = extractStruct(textInput.stateaccess, StateQuery2(ref \ -> modelFn())).reader;
+
+	stateQuery(modelFn);
+	stateQuery2 := modelFn;
+
+	Pair(
+		FTextInput(
+			content,
+			textSize,
+			[
+				FWordWrap(wordWrap),
+				FMultiline(multiline),
+				FInputType(inputType),
+				FReadOnly(readOnly),
+				FInputFilter(\s -> if (getValue(inputFilter)(s)) {prevContent := s; s} else ^prevContent),
+				FMaxChars(maxChars),
+				FAutoAlign(autoAlign),
+				FFocus(focused),
+				FPosition(position),
+				FSelection(selection),
+				FScrollInfo(scrollInfo),
+			]
+		),
+		\ -> {
+			disp =
+				concatA([
+					eitherMap(
+						textChange,
+						\tc -> [make4Subscribe(content, position, selection, focused, \__, __, __, __ -> tc.fn(modelFn()))()],
+						[]
+					),
+					eitherMap(
+						textScroll,
+						\ts -> [makeSubscribe(scrollInfo, \__ -> ts.fn(modelFn()))()],
+						[]
+					),
+					eitherMap(
+						focusIn,
+						\fi -> [makeSubscribe(focused, \f -> if (f) fi.fn())()],
+						[]
+					),
+					eitherMap(
+						focusOut,
+						\fo -> [makeSubscribe(focused, \f -> if (!f) fo.fn())()],
+						[]
+					),
+					eitherMap(
+						stateChanger,
+						\sc -> [makeSubscribe(sc.state, stateFn)()],
+						[]
+					),
+				]);
+
+			\ -> applyall(disp);
+		}
+	)
+}
+
+FTextInput2TextInput(ftextInput : FTextInput) -> Pair<TextInput, () -> () -> void> {
+	state = make([]);
+	content = ftextInput.content;
+	textSize = ftextInput.wh;
+	charStyle = style2characterStyle(ftextInput.style);
+	autoAlign = extractStruct(ftextInput.style, FAutoAlign(const(AutoAlignLeft()))).align;
+	multiline = extractStruct(ftextInput.style, FMultiline(const(false))).multiline;
+	focused = extractStruct(ftextInput.style, FFocus(make(false))).focus;
+	wordWrap = extractStruct(ftextInput.style, FWordWrap(const(fgetValue(multiline)))).wrap;
+	readOnly = extractStruct(ftextInput.style, FReadOnly(const(false))).readOnly;
+	maxChars = extractStruct(ftextInput.style, FMaxChars(const(-1))).maxChars;
+	position = extractStruct(ftextInput.style, FPosition(make(-1))).position;
+	selection = extractStruct(ftextInput.style, FSelection(make(-1))).selection;
+	scrollInfo = extractStruct(ftextInput.style, FScrollInfo(make(ScrollInfo(-1, -1, -1)))).info;
+	inputType = extractStruct(ftextInput.style, FInputType(const(TextType()))).type;
+	inputFilter = extractStruct(ftextInput.style, FInputFilter(idfn)).fn;
+
+	stateFn = \ -> {
+		nextDistinct(
+			state,
+			[
+				Content(getValue(content), charStyle),
+				TextSize(getValue(textSize).width, getValue(textSize).height),
+				AutoAlign(fgetValue(autoAlign)),
+				Multiline(fgetValue(multiline)),
+				Focus(getValue(focused)),
+				WordWrap(fgetValue(wordWrap)),
+				ReadOnly(fgetValue(readOnly)),
+				MaxChars(fgetValue(maxChars)),
+				Selection(getValue(position), getValue(selection)),
+				TextInputType(fgetValue(inputType)),
+				TextInputFilter(\s -> inputFilter(s) == s)
+			]
+		)
+	}
+
+	modelFn = \model : TextInputModel -> {
+		nextDistinct(content, model.content);
+		nextDistinct(textSize, WidthHeight(model.width, model.height));
+		nextDistinct(position, model.cursorPosition);
+		nextDistinct(selection, model.selection.end);
+		nextDistinct(focused, model.focus);
+		nextDistinct(scrollInfo, either(model.scrollinfo, ScrollInfo(-1, -1, -1)));
+	}
+
+	Pair(
+		TextInput(
+			[],
+			[
+				TextChange(modelFn),
+				TextScroll(modelFn),
+				FocusIn(\ -> nextDistinct(focused, true)),
+				FocusOut(\ -> nextDistinct(focused, false)),
+			],
+			[
+				StateChanger(state)
+			]
+		),
+		\ -> {
+			disp = [
+				makeSubscribe(content, \__ -> stateFn())(),
+				makeSubscribe(textSize, \__ -> stateFn())(),
+				makeSubscribe(autoAlign, \__ -> stateFn())(),
+				makeSubscribe(multiline, \__ -> stateFn())(),
+				makeSubscribe(focused, \__ -> stateFn())(),
+				makeSubscribe(wordWrap, \__ -> stateFn())(),
+				makeSubscribe(readOnly, \__ -> stateFn())(),
+				makeSubscribe(maxChars, \__ -> stateFn())(),
+				makeSubscribe(position, \__ -> stateFn())(),
+				makeSubscribe(selection, \__ -> stateFn())(),
+				makeSubscribe(inputType, \__ -> stateFn())(),
+			];
+
+			\ -> applyall(disp);
+		}
+	)
+}
+
+style2characterStyle(s : [?]) -> [CharacterStyle] {
+	concatA(map(
+		[
+			FontFamily(""),
+			FontSize(0.),
+			Fill(0),
+			FillOpacity(0.),
+			BackgroundFill(0),
+			BackgroundFillOpacity(0.),
+			LetterSpacing(0.),
+			Sharpness(0, FontAntiAliasNormal(), FontGridFitNone()),
+			Underlined([]),
+			EscapeHTML(false)
+		],
+		\st -> extractStructMany(s, st)
+	))
+}
+
+FDynamicGroup2DynamicGroup(group : FDynamicGroup2) -> Pair<DynamicGroup2, () -> () -> void> {
+	formChanges : DynamicBehaviour<[GroupChange]> = make([]);
+
+	Pair(
+		DynamicGroup2(formChanges, GroupCombiner(), make(map(getValue(group.currentStack), \cs -> fform2form(cs))), group.stack),
+		makeSubscribe(group.stackChanges, \changes -> {
+			recentChanges : [GroupChange] =
+				fold(changes, [], \acc, change -> {
+					switch (change : FGroupChange) {
+						FGroupAdd(f, z) : arrayPush(acc, GroupAdd(fform2form(f), z));
+						FGroupDelete(z) : arrayPush(acc, GroupDelete(z));
+						FGroupMove(f, t) : arrayPush(acc, GroupMove(f, t));
+						FGroupReplace(f, z) : concat(acc, [GroupDelete(z), GroupAdd(fform2form(f), z)]);
+					}
+				});
+
+			nextDistinct(group.stackChanges, []);
+			next(formChanges, recentChanges);
+		})
+	)
+}
+
+DynamicGroup2FDynamicGroup(group : DynamicGroup2) -> Pair<FDynamicGroup2, () -> () -> void> { // TODO:
+	fformChanges : DynamicBehaviour<[FGroupChange]> = make([]);
+
+	Pair(
+		FDynamicGroup2(fformChanges, make(map(getValue(group.currentStack), \cs -> form2fform(cs))), group.stack),
+		makeSubscribe(group.stackChanges, \changes -> {
+			recentChanges : [FGroupChange] =
+				fold(changes, [], \acc, change -> {
+					switch (change : GroupChange) {
+						GroupAdd(f, z) : arrayPush(acc, FGroupAdd(form2fform(f), z));
+						GroupDelete(z) : arrayPush(acc, FGroupDelete(z));
+						GroupMove(f, t) : arrayPush(acc, FGroupMove(f, t));
+					}
+				});
+
+			nextDistinct(group.stackChanges, []);
+			next(fformChanges, recentChanges);
+		})
+	)
+}
+
+// form2FNativeForm(form : Form) -> FNativeForm {
+// 	met = make(FormMetrics(0., 0., 0., 0.));
+
+// 	FNativeForm(
+// 		form,
+// 		met,
+// 		\ -> form2fform(form),
+// 		\a, t, z  ->
+// 			renderForm(form, a, t, z)
+// 			|> (\rr : RenderResult -> {
+// 				disp = make2Subscribe(rr.widthHeight, rr.baseline, \wh, b ->
+// 					nextDistinct(met, FormMetrics(wh.width, wh.height, b, wh.height)))();
+
+// 				NativeRenderResult(rr.clips, \ -> applyall(arrayPush(rr.disposers, disp)))
+// 			})
+// 	)
+// }
+
+FParagraph2Form(fParagraph : FParagraph) -> Form {
+	wh = make(zeroWH);
+	met = make(FormMetrics(0., 0., 0., 0.));
+	fform =
+		FParagraph(
+			fParagraph.text,
+			eitherFn(
+				tryExtractStruct(fParagraph.style, ParagraphMetrics(nop1)),
+				\pm -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {pm.fn(m); nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))})),
+				\ -> replaceStruct(fParagraph.style, ParagraphMetrics(\m -> {nextDistinct(met, m); nextDistinct(wh, WidthHeight(m.width, m.height))}))
+			)
+		);
+
+	NativeForm(
+		fform,
+		met,
+		\ -> Size2(wh, Text(fParagraph.text, style2characterStyle(fParagraph.style))),
+		\__, __, __ -> {
+			renderFParagraph(fform.text, fform.style)
+			|> (\f -> NativeRenderResult(f.clips, \ -> applyall(f.disposers)))
+		}
+	)
+}
+
+renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult {
+	if (js && isUrlParameterTrue("newjs")) {
+		clip = makeGraphics();
+		setClipDebugInfo(clip, "form", FGraphics(path, style));
+
+		fillcolour = ref None();
+		fillopacity = ref 1.0;
+		gradientFill = ref None();
+		gradientType = ref "linear";
+		strokecolour = ref None();
+		strokeopacity = ref 1.0;
+		strokewidth = ref 1.0;
+		strokeLineGradient = ref None();
+
+		iter(style, \s : GraphicsStyle ->
+			switch (s : GraphicsStyle) {
+				Fill(col): fillcolour := Some(col);
+				FillOpacity(op): fillopacity := op;
+				GradientFill(c, rotation): gradientFill := Some(s);
+				RadialGradient(): gradientType := "radial";
+				Stroke(colour): strokecolour := Some(colour);
+				StrokeOpacity(opacity): strokeopacity := opacity;
+				StrokeWidth(width): strokewidth := width;
+				StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+			}
+		);
+
+		matrix = if (isSome(^strokeLineGradient) || isSome(^gradientFill)) {
+			updateQRange = \acc : Quadruple<double, double, double, double>, x : double, y : double -> {
+				Quadruple(
+					min(x, acc.first),
+					max(x, acc.second),
+					min(y, acc.third),
+					max(y, acc.fourth),
+				)
+			}
+
+			m = fold(path, Quadruple(doubleMax, doubleMin, doubleMax, doubleMin), \acc : Quadruple<double, double, double, double>, op : StaticGraphicOp ->
+				switch (op : StaticGraphicOp) {
+					MoveTo(x, y) : updateQRange(acc, x, y);
+					LineTo(x, y) : updateQRange(acc, x, y);
+					CubicBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+					QuadraticBezierTo(x, y, cx, cy): updateQRange(acc, x, y);
+					ClosePath(): acc;
+				}
+			);
+
+			Some(\r -> makeMatrix(abs(m.second - m.first), abs(m.fourth - m.third), r, m.first, m.third))
+		} else {
+			None()
+		}
+
+		maybeApply(^fillcolour, \fc : int -> beginFill(clip, fc, ^fillopacity));
+		maybeApply(^strokecolour, \sc : int -> setLineStyle(clip, ^strokewidth, sc, ^strokeopacity));
+		maybeApply(^strokeLineGradient, \sg : StrokeLineGradient-> {
+			colors = map(sg.points, \c -> c.color);
+			alphas = map(sg.points, \c -> c.alpha);
+			offsets = map(sg.points, \c -> c.offset);
+			maybeApply(matrix, \m -> setLineGradientStroke(clip, colors, alphas, offsets, m(sg.rotation)));
+		});
+		maybeApply(^gradientFill, \gf : GradientFill -> {
+			colors = map(gf.points, \c -> c.color);
+			alphas = map(gf.points, \c -> c.alpha);
+			offsets = map(gf.points, \c -> c.offset);
+			maybeApply(matrix, \m -> beginGradientFill(clip, colors, alphas, offsets, m(gf.rotation), ^gradientType));
+		});
+
+		// Render the path
+		needClose = ref false;
+		moveTo(clip, 0.0, 0.0);
+
+		iter(path, \op : StaticGraphicOp ->
+			switch (op : StaticGraphicOp) {
+				MoveTo(x, y) : {
+					moveTo(clip, x, y);
+				}
+				LineTo(x, y) : {
+					needClose := true;
+					lineTo(clip, x, y);
+				}
+				CubicBezierTo(x, y, cx, cy): {
+					needClose := true;
+					curveTo(clip, cx, cy, x, y);
+				}
+				QuadraticBezierTo(x, y, cx, cy): {
+					needClose := true;
+					curveTo(clip, cx, cy, x, y);
+				}
+				ClosePath(): {
+					needClose := false;
+					endFill(clip);
+				}
+			}
+		);
+
+		if (^needClose) {
+			endFill(clip);
+		}
+
+		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+	} else {
+		clip = makeClip();
+		setClipDebugInfo(clip, "form", FGraphics(path, style));
+		renderGraphics(clip, path, style) |> ignore;
+
+		FRenderResult([clip], [\ -> deleteNative(clip)], allFClipCapabilities)
+	}
+}
+
+renderFTexts(texts : [Text]) -> FRenderResult {
+	results = mapi(texts, \i, t -> renderFText(t.text, t.style));
+
+	caps = FClipCapabilities(false, false, true, false, true);
+	clips = map(results, \r -> r.clips) |> concatA;
+	disposers = map(results, \r -> r.disposers) |> concatA;
+
+	FRenderResult(clips, disposers, caps);
+}
+
+renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
+	textfield = makeTextfield(getFontFamily(style));
+	defineTextStyle(textfield, text, style);
+	if (getDefaultRtl()) {
+		setTextDirection(textfield, "rtl");
+	} else {
+		setTextDirection(textfield, "ltr");
+	}
+
+	disposer = \ -> {
+		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
+		if (flash && getFocus(textfield)) {
+			setFocus(getStage(), true);
+		}
+
+		deleteNative(textfield);
+	}
+
+	caps = FClipCapabilities(true, false, true, false, true);
+
+	eitherFn(
+		tryExtractStruct(style, Underlined([])),
+		\undr -> {
+			uStyle = undr.style;
+			wd = getTextFieldWidth(textfield);
+			hgt = getTextFieldHeight(textfield) - 1.;
+
+			urr =
+				renderFGraphics(
+					[
+						MoveTo(0., hgt),
+						LineTo(wd, hgt),
+					],
+					if (uStyle != [])
+						uStyle
+					else
+						[Stroke(extractStruct(style, Fill(0x000000)).color)]
+				);
+
+			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), caps)
+		},
+		\ ->
+			FRenderResult([textfield], [disposer], caps)
+	)
+}
+
+renderFParagraphs(texts : [Text]) -> FRenderResult {
+	results = mapi(texts, \i, t -> renderFParagraph(t.text, t.style));
+
+	caps = FClipCapabilities(false, false, true, false, true);
+	clips = map(results, \r -> r.clips) |> concatA;
+	disposers = map(results, \r -> r.disposers) |> concatA;
+
+	FRenderResult(clips, disposers, caps);
+}
+
+renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
+	d = renderFText(text, style2characterStyle(style));
+	textfield = d.clips[length(d.clips) - 1];
+	disposers = ref [];
+
+	setTextFieldCropWords(textfield, extractStruct(style, CropWords(true)).crop);
+
+	updateMetricsFn =
+		eitherMap(
+			tryExtractStruct(style, ParagraphMetrics(nop1)),
+			\fn -> \ ->
+				fn.fn(
+					FormMetrics(
+						getTextFieldWidth(textfield),
+						getTextFieldHeight(textfield),
+						getTextMetrics(textfield)[0],
+						getTextFieldHeight(textfield)
+					)
+				),
+			nop
+		);
+
+	maybeApply(
+		tryExtractStruct(style, InterlineSpacing(0.)),
+		\interlineSpacing -> {
+			setTextFieldInterlineSpacing(textfield, interlineSpacing.d);
+			updateMetricsFn();
+		}
+	);
+
+	if (contains(style, LeftAlign()))
+		setAutoAlign(textfield, "AutoAlignLeft")
+	else if (contains(style, RightAlign()))
+		setAutoAlign(textfield, "AutoAlignRight")
+	else if (contains(style, CenterAlign()))
+		setAutoAlign(textfield, "AutoAlignCenter")
+	else
+		setAutoAlign(textfield, "AutoAlignNone");
+
+	eitherFn(
+		tryExtractStruct(style, ParagraphWidth(const(-1.))),
+		\width -> {
+			setWordWrap(textfield, true);
+			refArrayPush(
+				disposers,
+				makeSubscribe(width.width, \wd -> {
+					setTextFieldWidth(textfield, wd);
+					updateMetricsFn();
+				})()
+			)
+		},
+		updateMetricsFn
+	);
+
+	FRenderResult(d.clips, concat(d.disposers, ^disposers), d.capabilities)
+}
+
+fform2s(rform : FForm, level : int) -> string {
+	generateSpaces = concatStrings(generate(0, level, \__ -> " "));
+	structName = rform.structname + "(";
+
+	switch (rform) {
+		FEmpty(): {
+			generateSpaces + structName + ")"
+		}
+		FConstructor(form, construct): {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FCreate2(current, fn): {
+			generateSpaces + structName + "\n" +
+			fform2s(^current, level + 1) + "\n" +
+			fform2s(fn(), level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FText(text, style): {
+			generateSpaces + structName /*+ text*/ + ")"
+		}
+		FParagraph(text, style): {
+			generateSpaces + structName /*+ text*/ + ")"
+		}
+		FPicture(url_, wh, style): {
+			generateSpaces + structName + url_ + ")"
+		}
+		FGraphics(path, style): {
+			generateSpaces + structName + toString(path) + ")"
+		}
+		FTranslate(x, y, form): {
+			generateSpaces + structName + toString(fgetValue(x)) + ", " + toString(fgetValue(y)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FBorder(left, top, right, bottom, form): {
+			generateSpaces + structName + toString(left) + ", " + toString(top) + ", " + toString(right) + ", " + toString(bottom) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FScale(x, y, form): {
+			generateSpaces + structName + toString(fgetValue(x)) + ", " + toString(fgetValue(y)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FRotate(degrees, form): {
+			generateSpaces + structName + toString(fgetValue(degrees)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FAlpha(alpha, form): {
+			generateSpaces + structName + toString(fgetValue(alpha)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FVisible(visible, form): {
+			generateSpaces + structName + toString(fgetValue(visible)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FRenderable(renderable, form): {
+			generateSpaces + structName + toString(fgetValue(renderable)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FDynamicGroup2(stackChanges, currentStack, stack) : {
+			generateSpaces + structName + "[" + "\n" +
+			concatStrings(map(fgetValue(currentStack), \cs -> fform2s(cs, level + 1) + "," + "\n")) +
+			generateSpaces + "])"
+		}
+		FGroup(forms, z) : {
+			generateSpaces + structName + "[" + "\n" +
+			concatStrings(map(forms, \cs -> fform2s(cs, level + 1) + "," + "\n")) +
+			generateSpaces + "])"
+		}
+		FGroup2(form1, form2, z) : {
+			generateSpaces + structName + "[" + "\n" +
+			fform2s(form1, level + 1) + "," + "\n" +
+			fform2s(form2, level + 1) + "," + "\n" +
+			generateSpaces + "])"
+		}
+		FMutable2(behaviour, stack) : {
+			generateSpaces + structName + "\n" +
+			fform2s(fgetValue(behaviour), level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FDecorator2(form, decorators, above, stack) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "," + "\n" +
+			concatStrings(map(decorators, \d -> fform2s(d.second(), level + 1) + "," + "\n")) +
+			generateSpaces + ")"
+		}
+		FFullWindow(fullscreen, wh, form) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FInteractive(listeners, form) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FMask2(form, mask, stack): {
+			generateSpaces + structName + "[" + "\n" +
+			fform2s(form, level + 1) + "," + "\n" +
+			fform2s(mask, level + 1) + "," + "\n" +
+			generateSpaces + "])"
+		}
+		FFilter2(filters, form, stack) : {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FCursor(shape, form) : {
+			generateSpaces + structName + toString(shape) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FInspect(inspectors, form): {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FCrop2(left, top, cwidth, cheight, form, stack): {
+			generateSpaces + structName + toString(fgetValue(left)) + ", " + toString(fgetValue(top)) + ", " +
+				toString(fgetValue(cwidth)) + ", " + toString(fgetValue(cheight)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FControlFocus(focus, form): {
+			generateSpaces + structName + toString(fgetValue(focus)) + "," + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FMForm(form): {
+			generateSpaces + structName + ")"
+		}
+		FBaseline(__, form): fform2s(form, level);
+		FSize2(__, form): fform2s(form, level);
+		FAvailable2(__, form): fform2s(form, level);
+		FAccess(properties, form): {
+			generateSpaces + structName + "\n" +
+			fform2s(form, level + 1) + "\n" +
+			generateSpaces + ")"
+		}
+		FRealHTML(url, wh, style): {
+			generateSpaces + structName + stringEncodeFix(url) + ")"
+		}
+		FVideo(filename, wh, style): {
+			generateSpaces + structName + stringEncodeFix(filename) + ")"
+		}
+		FTextInput(content, wh, style): {
+			generateSpaces + structName + stringEncodeFix(getValue(content)) + ")"
+		}
+      	FSetPending(pen, form): fform2s(form, level);
+      	FNativeForm(__, __, ff, __): {
+      		generateSpaces + structName + "\n" +
+			fform2s(ff(), level + 1) + "\n" +
+			generateSpaces + ")"
+      	}
+	}
+}
+
+interruptibleDeferUntilNextFrameRendered(fn : () -> void) -> () -> void {
+	execute = ref true;
+	deferUntilNextFrameRendered(\ -> {if (^execute) fn();});
+	\ -> {execute := false;}
+}

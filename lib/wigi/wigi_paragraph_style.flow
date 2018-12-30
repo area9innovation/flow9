@@ -1,0 +1,218 @@
+import wigi/external_block;
+import set;
+
+export {
+	getDefaultDocumentStyle(defaultStyles : [WigiStyles]) -> WigiParentStyle;
+
+	// default style (paragraph and text) for an element
+	getDefaultElementStyle(defaultStyles : [WigiStyles], element : WigiElement) -> WigiParentStyle;
+
+	setWigiTextStyleFromParagraph(text : WigiText, wigiStyles : [WigiStyles], styleName : string) -> WigiText;
+
+	// get [WigiParagraphStyle] according to WigiStylesName
+	getWigiParagraphStyleFromParagraph(styles : [WigiParagraphStyle], wigiStyles : [WigiStyles], styleName : string) -> [WigiParagraphStyle];
+
+	// resolves WigiAspect styles fixing the content according to the styles
+	resolveWigiAspectStyles(elements : [WigiElement], styles : [WigiParagraphStyle]) -> [WigiElement];
+
+	extractWpsFromWigiStyles(styles : [WigiStyles]) -> [WigiStyles];
+
+	filterAspectsInWigiParagraph(elements : [WigiElement], aspects : [WigiAspect]) -> [WigiElement];
+
+	// removes elements that do not have effect
+	// Example: if ps = [CenterAlign(), FixedWidth(), InterlineSpacing(10.0), Justify(), InterlineSpacing(20.0), TightWidth()]
+	// the result is [Justify(), InterlineSpacing(20.0), TightWidth()]
+	normalizeWigiParagraphStyle(ps : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+
+	// lightweight version, it does nothing if one of these styles is empty
+	mergeWigiParagraphStyles(style1 : [WigiParagraphStyle], style2 : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+}
+
+getDefaultDocumentStyle(defaultStyles : [WigiStyles]) -> WigiParentStyle {
+	getDefaultElementStyle(defaultStyles, WigiDocument(WigiEmpty(), []));
+}
+
+getDefaultElementStyle(defaultStyles : [WigiStyles], element : WigiElement) -> WigiParentStyle {
+	type = switch (element : WigiElement) {
+		WigiDocument(__, __): element.structname;
+		WigiRecursive(__, type, __): {
+			switch (type : WigiRecursiveType) {
+				WigiFraction(): type.structname;
+				WigiComap(__): type.structname;
+				WigiHyperlink(__): type.structname;
+				default: "";
+			}
+		}
+		default: "";
+	}
+	if (type != "") {
+		switch (find(defaultStyles, \st -> type == st.type)) {
+			Some(defStyle): WigiParentStyle(defStyle.paragraphStyle, defStyle.textStyle, 0.0);
+			None(): WigiParentStyle([], [], 0.0);
+		}
+	} else {
+		WigiParentStyle([], [], 0.0);
+	}
+}
+
+setWigiTextStyleFromParagraph(text : WigiText, wigiStyles : [WigiStyles], styleName : string) -> WigiText {
+	style = find(wigiStyles, \s -> s.type == styleName);
+	eitherMap(style, \st -> {
+		newStyle = fold(st.textStyle, text.style, \acc, s -> replaceStruct(acc, s));
+		defaultTextStyles = getDefaultDocumentStyle(wigiStyles).textStyle;
+		shortStyle = filter(newStyle, \s -> !contains(defaultTextStyles, s));
+		WigiText(text.text, shortStyle)
+	}, text)
+}
+
+getWigiParagraphStyleFromParagraph(styles : [WigiParagraphStyle], wigiStyles : [WigiStyles], styleName : string) -> [WigiParagraphStyle] {
+	style = find(wigiStyles, \s -> s.type == styleName);
+	eitherMap(style, \st -> st.paragraphStyle, [])
+}
+
+filterAspectsInWigiParagraph(elements : [WigiElement], aspects : [WigiAspect]) -> [WigiElement] {
+	existedAspects = ref makeSet();
+
+	filter(elements, \e -> switch (e : WigiElement) {
+		WigiBlock(type, style): switch (type : WigiBlockType) {
+			WigiExternalBlock(exType, __): {
+				eitherFn(
+					getExternalBlockAPI(exType),
+					\api -> {
+						isAspect = containsStruct(api.style, dummyWigiAspectConfiguration);
+						if (isAspect) {
+							isSome(find(aspects, \a -> {
+								toKeep = a.exType == exType && !containsSet(^existedAspects, exType);
+								if (toKeep) existedAspects := insertSet(^existedAspects, exType);
+								toKeep
+							}))
+						} else true
+					},
+					\ -> {
+						println("filterAspectsInWigiParagraph: Unsupported external block type: " + exType);
+						true
+					}
+				)
+			}
+			default: true;
+		}
+		default: true;
+	})
+}
+
+	WigiAspectPlacement(
+		placement : int,
+		aspect : WigiBlock
+	);
+
+resolveWigiAspectStyles(elements : [WigiElement], styles : [WigiParagraphStyle]) -> [WigiElement] {
+	clearParagraph = filterAspectsInWigiParagraph(elements, []);
+
+	aspects = fold(styles, Pair([], []), \acc : Pair<[WigiAspectPlacement], [WigiAspectPlacement]>, s -> {
+		switch (s : WigiParagraphStyle) {
+			WigiAspect(exType, conf): {
+				eitherMap(
+					getExternalBlockAPI(exType),
+					\api -> {
+						confM = fold(api.style, None(), \acc2, st -> switch (st) {
+							WigiAspectConfiguration(name, __, __): if (name == conf) Some(st) else acc2;
+							default: acc2;
+						});
+						eitherMap(
+							confM,
+							\c -> {
+								aspect = WigiAspectPlacement(c.placement, c.aspect);
+								if (aspect.placement >= 0) {
+									Pair(arrayPush(acc.first, aspect), acc.second)
+								} else {
+									Pair(acc.first, arrayPush(acc.second, aspect))
+								}
+							},
+							acc
+						)
+					},
+					acc
+				)
+			}
+			default: acc;
+		}
+	});
+
+	createWigiElements = \a : [WigiAspectPlacement] -> {
+		map(sortCustom(a, \e -> e.placement, true), \e -> e.aspect)
+	}
+
+	leftPart = createWigiElements(aspects.first);
+	rightPart = createWigiElements(aspects.second);
+
+	concatA([leftPart, clearParagraph, rightPart])
+}
+
+extractWpsFromWigiStyles(styles : [WigiStyles]) -> [WigiStyles] {
+	filter(styles, \s -> startsWith(s.type, "WPS-"))
+}
+
+	WigiParagraphStyleContainer(
+		align : [ParagraphAlignment],
+		width : [WigiParagraphStyle],
+		others : [WigiParagraphStyle]
+	);
+
+mergeWigiParagraphStyles(style1 : [WigiParagraphStyle], style2 : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	if (style1 == []) style2
+	else if (style2 == []) style1
+	else normalizeWigiParagraphStyle(concat(style1, style2))
+}
+
+normalizeWigiParagraphStyle(styles : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	container0 = fold(styles, WigiParagraphStyleContainer([], [], []), \acc, st -> {
+		switch (st : WigiParagraphStyle) {
+			LeftAlign(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			RightAlign(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			CenterAlign(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			StartAlign(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			EndAlign(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			Justify(): WigiParagraphStyleContainer([st], acc.width, acc.others);
+			TightWidth(): WigiParagraphStyleContainer(acc.align, [st], acc.others);
+			FixedWidth(): WigiParagraphStyleContainer(acc.align, [st], acc.others);
+			InterlineSpacing(__): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			FirstLineIndent(__): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			GeneralIndent(__): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			Listed(__, __): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			ReplaceTightWidthWithAlign(): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			ReplaceAlignWithTightWidth(): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			WigiStylesName(__): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			WigiAspect(exType, __): {
+				aspect = find(acc.others, \st2 -> switch (st2 : WigiParagraphStyle) {
+					WigiAspect(exType2, __): exType == exType2;
+					default: false;
+				});
+				// for aspects we keep conf as it was before
+				others = if (isSome(aspect)) acc.others else arrayPush(acc.others, st);
+				WigiParagraphStyleContainer(acc.align, acc.width, others)
+			}
+			ParagraphBorder(__, __): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+			WigiParagraphExternalStyle(__): WigiParagraphStyleContainer(acc.align, acc.width, arrayPush(acc.others, st));
+			DynamicBlockDelay(__): WigiParagraphStyleContainer(acc.align, acc.width, replaceStruct(acc.others, st));
+		}
+	});
+
+	needReplacing = container0.align != [] && container0.align != [StartAlign()] && container0.width == [TightWidth()];
+
+	container = if (contains(container0.others, ReplaceAlignWithTightWidth())) {
+		WigiParagraphStyleContainer(
+			if (needReplacing) [] else container0.align,
+			container0.width,
+			removeFirst(container0.others, ReplaceTightWidthWithAlign())
+		)
+	} else if (contains(container0.others, ReplaceTightWidthWithAlign())) {
+		WigiParagraphStyleContainer(
+			container0.align,
+			if (needReplacing) [] else container0.width,
+			container0.others
+		)
+	} else container0;
+
+	concatA([container.align, container.width, container.others])
+}
+

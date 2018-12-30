@@ -1,0 +1,127 @@
+import concurrent;
+import binarytreeutils;
+import tools/common/compilerconfig;
+import tools/flowc/flowcacc;
+import tools/flowc/flowc_module;
+import tools/flowc/incremental/fc2fi;
+
+export {
+	preloadedFcImports(preloaded : FcPreloadedModule) -> [FcImport];
+
+	preloadedFcForbids(preloaded : FcPreloadedModule) -> [FcForbid];
+
+	preloadedFiFileInfo(preloaded : FcPreloadedModule) -> FiFileInfo;
+
+	// Preloads the given module recursively including imports. Either loads from cache or parses files.
+	preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, errHandler : (FcError) -> void) -> Tree<string, FcPreloadedModule>;
+
+	reparseOutdatedModule(flowfile : string, config : CompilerConfig, errHandler : (FcError) -> void) -> FcParsed;
+}
+
+FcImport2(flowfile : string, fromfile : string, start : int, end : int);
+
+preloadedFcImports(preloaded : FcPreloadedModule) -> [FcImport] {
+	switch (preloaded) {
+		FcParsed(fileinfo, syntaxtree, imports, __, oldExports): imports;
+		FcLoaded(module, __): map(module.imports, fiimport2fc);
+	}
+}
+
+preloadedFcForbids(preloaded : FcPreloadedModule) -> [FcForbid] {
+	switch (preloaded) {
+		FcParsed(fileinfo, syntaxtree, __, forbids, oldExports): forbids;
+		FcLoaded(module, __): map(module.forbids, fiforbid2fc);
+	}
+}
+
+preloadedFiFileInfo(preloaded : FcPreloadedModule) -> FiFileInfo {
+	switch (preloaded) {
+		FcParsed(fileinfo, syntaxtree, imports, __, oldExports): fcfileinfo2fi(fileinfo);
+		FcLoaded(module, __): module.fileinfo;
+	}
+}
+
+preloadModules(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, errHandler : (FcError) -> void) -> Tree<string, FcPreloadedModule> {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	flowfile = trimFlowfile(file, config.includes, workingDir);
+	preloadedModulesAndErrors = preloadModulesInParallel(config, globEnv, makeTree1(flowfile, FcImport2(flowfile, "", 0, 0)), Pair(makeTree(), []));
+	if (preloadedModulesAndErrors.second == []) {
+		// No errors.
+		preloadedModulesAndErrors.first
+	} else {
+		iter(preloadedModulesAndErrors.second, errHandler);
+		makeTree()
+	}
+}
+
+// Preloads given modules recursively adding imports. Either loads from cache or parses file.
+preloadModulesInParallel(
+	config : CompilerConfig,
+	globEnv : FcTypeEnvGlobal,
+	files : Tree<string, FcImport2>, 
+	preloadedModulesAndErrors : Pair<Tree<string, FcPreloadedModule>, [FcError]>
+) -> Pair<Tree<string, FcPreloadedModule>, [FcError]> {
+
+	filesToLoad : [FcImport2] = map(tree2pairs(files), \pr -> pr.second);
+	t = timestamp();
+
+	// Load the incremental or parse all the files given in parallel (no recursion)
+	// Triple<flowfile, module, error>
+	results : [Triple<string, FcPreloadedModule, Maybe<FcError>>] = concurrent(true, map(filesToLoad, \im : FcImport2 -> \ -> {
+		pr2 = parseFlowFileOrLoadCached(config, globEnv, im.flowfile, im.fromfile, im.start, im.end);
+		preloadedModule : FcPreloadedModule = pr2.first;
+		errM = if (pr2.second != dummyFcError) Some(pr2.second) else None();
+		Triple(preloadedFiFileInfo(preloadedModule).flowfile, preloadedModule, errM)
+	}));
+	incrementTimePhase(fcTimePhases.parse, t);
+
+	// Grab the results
+	parsedFiles2 : Tree<string, FcPreloadedModule> = fold(results, preloadedModulesAndErrors.first, \acc, r -> {
+		setTree(acc, r.first, r.second)
+	});
+	newErrors = concat(preloadedModulesAndErrors.second, filtermap(results, \r -> r.third));
+
+	// Find all the new imports in these files
+	newImports : Tree<string, FcImport2> = fold(results, makeTree(), \acc, r -> {
+		fold(getFcImport2s(r.second, r.first), acc, \acc2, im2 -> {
+			if (containsKeyTree(parsedFiles2, im2.flowfile)) acc2
+			else setTree(acc2, im2.flowfile, im2)
+		})
+	});
+
+	if (newImports != TreeEmpty()) preloadModulesInParallel(config, globEnv, newImports, Pair(parsedFiles2, newErrors))
+	else Pair(parsedFiles2, newErrors)
+}
+
+getFcImport2s(m : FcPreloadedModule, fromfile : string) -> [FcImport2] {
+	switch (m) {
+		FcParsed(fileinfo, syntaxtree, imports, __, oldExports): {
+			map(imports, \im -> FcImport2(im.flowfile, fromfile, im.start, im.end))
+		}
+		FcLoaded(module, __): {
+			map(module.imports, \im -> FcImport2(im.flowfile, fromfile, im.start, im.start))
+		}
+	}
+}
+
+reparseOutdatedModule(flowfile : string, config : CompilerConfig, errHandler : (FcError) -> void) -> FcParsed {
+	p = reloadOutdatedModule(flowfile, config, errHandler);
+	fileinfo = p.first;
+	st = p.second;
+	// TODO: Figure out if we have some old exports here
+	oldExports = makeTree();
+	FcParsed(fileinfo, st, extractFcImports(fileinfo, st), extractFcForbids(fileinfo, st), oldExports)
+}
+
+reloadOutdatedModule(flowfile : string, config : CompilerConfig, errHandler : (FcError) -> void) -> Pair<FcFileInfo, SyntaxTree> {
+	// remove outdated cached module for safety and simplicity
+	deleteIncrementalModule(config, flowfile);
+	if (config.verbose >= 1) fcPrintln("Reparsing outdated module " + flowfile);
+	fileinfo = getFcFileInfo(flowfile, config);
+	fromfile = "";	// TODO: fix this later if possible
+	t = timestamp();
+	stErrPair = parseFlowfile(config, fileinfo, fromfile);
+	incrementTimePhase(fcTimePhases.parse, t);
+	maybeApply(stErrPair.second, \error -> errHandler(error));
+	Pair(fileinfo, stErrPair.first)
+}

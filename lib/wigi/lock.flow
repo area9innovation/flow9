@@ -1,0 +1,132 @@
+
+import interactiveutils; // absorbMouseEvents
+import wigi/position;
+import basecolors;
+import gui;
+
+export {
+	addLockHighlightToForm(visible: Behaviour<bool>, form : Form, style : [WigiStyle], disableInteractives : bool) -> Form;
+	lockForm(form : Form, lock : WigiLockType, ignoreLock: Behaviour<bool>) -> Form;
+
+	applyLockToWigiElement(element : WigiElement, lock : WigiLockType) -> WigiElement;
+	unlockWigiElement(e : WigiElement) ->  WigiElement;
+
+	getLockAtPosition(doc : WigiElement, path : [int]) -> WigiLockType;
+	isUnlockedWigiElement(e : WigiElement) -> bool;
+	lock2string(lock : WigiLockType, preview : bool) -> string;
+
+	// Global variable for all locks highlight monitoring
+	// Used in wigi/element_view.flow
+	wigiLockHighlightMonitor = make(false);
+}
+
+lock2string(lock : WigiLockType, preview : bool) -> string {
+	switch(lock){
+		WigiReadOnly() : if (preview) "Here you can read only" else "Read-only";
+		WigiSelectOnly() : if (preview)"Here you can make selection" else "Select-only";
+		WigiAddOnly() : if (preview) "Here you can type your answer" else "Add-only";
+		WigiNoLock() : if (preview) "Here you can type your answer" else "Unlocked";
+	}
+}
+
+// get a lock type at a path of the document
+getLockAtPosition(doc : WigiElement, path : [int]) -> WigiLockType {
+	e = getElementAtPosition(doc, path);
+	getWigiStyle(e) |> extractLockFromWigiStyle;
+}
+
+extractLockFromWigiStyle(style : [WigiStyle]) -> WigiLockType {
+	either(extractLockFromWigiStyle2(style), WigiNoLock());
+}
+
+extractLockFromWigiStyle2(style : [WigiStyle]) -> Maybe<WigiLockType>{
+	fold(style, None(), \acc, s -> switch(s){
+		WigiLock(type): Some(type);
+		default: acc
+	});
+}
+
+getWigiStyle(element : WigiElement) -> [WigiStyle]{
+	switch (element){
+		WigiDocument(__, style): style;
+		WigiStory(__, __, style): style;
+		WigiParagraph(__, style): style;
+		WigiRecursive(__, __, style): style;
+		WigiText(__, style): style;
+		WigiBlock(__, style): style;
+		WigiEmpty(): []
+	}
+}
+
+applyLockToWigiElement(element : WigiElement, lock : WigiLockType) -> WigiElement{
+	switch (element){
+		WigiDocument(root, style): WigiDocument(applyLockToWigiElement(root, lock), style);
+		WigiStory(elements, views, style): WigiStory(ref map(^elements, \e -> applyLockToWigiElement(e, lock)), ref [], style);
+		WigiParagraph(elements, style): WigiParagraph(map(elements, \e -> applyLockToWigiElement(e, lock)), style);
+		WigiRecursive(elements, type, style): WigiRecursive(map(elements, \e -> applyLockToWigiElement(e, lock)), type, style);
+		WigiText(text, style): WigiText(text,
+			concat(
+				filter(style, \st -> !isSameStructType(st, WigiLock(WigiNoLock()))),
+				if (isLockedWigi(lock)) [WigiLock(lock)] else []
+			)
+		);
+		WigiBlock(block, style): WigiBlock(block,
+			concat(
+				filter(style, \st -> !isSameStructType(st, WigiLock(WigiNoLock()))),
+				if (isLockedWigi(lock)) [WigiLock(lock)] else []
+			)
+		);
+		WigiEmpty(): element;
+	}
+}
+
+addLockHighlightToForm(visible: Behaviour<bool>, form : Form, style : [WigiStyle], above : bool) -> Form {
+	lock = extractLockFromWigiStyle2(style);
+	eitherMap(lock, \l -> highlightLockedForm(visible, form, l, above), form);
+}
+
+highlightLockedForm(visible: Behaviour<bool>, form : Form, lock : WigiLockType, above : bool) -> Form{
+	if (isLockedWigi(lock)){
+		color = switch(lock){
+			WigiReadOnly() : 0xFFE0E0;
+			WigiSelectOnly() : 0xE0FFE0;
+			WigiAddOnly() : 0xFFEBCD;
+			WigiNoLock() : 0xFFFFFF; // actually it never works
+		}
+		select(visible, \v -> next(wigiLockHighlightMonitor, true));
+		highlightFn = \w, h -> Visibleb(visible, Size2(zeroSize, Rectangle(w, h, [Fill(color), FillOpacity(0.5)])));
+		if (above)
+			Above(highlightFn, form)
+		else
+			Behind(highlightFn, form);
+	} else {
+		form
+	}
+}
+
+lockForm(form : Form, lock : WigiLockType, ignoreLockB: Behaviour<bool>) -> Form {
+	Select(ignoreLockB, \ignoreLock -> if (!ignoreLock && isLockedWigi(lock)) {
+			screen = \w,h -> absorbMouseEvents(Size2(zeroSize, Rectangle(w, h, [Fill(white), FillOpacity(0.0)])));
+			Above(screen, form);
+		} else {
+			form
+		}
+	);
+}
+
+isUnlockedWigiElement(e : WigiElement) -> bool{
+	switch (e){
+		WigiDocument(root, style): isUnlockedWigiElement(root);
+		WigiStory(elements, views, style): all(map(^elements, isUnlockedWigiElement));
+		WigiParagraph(elements, style): all(map(elements, isUnlockedWigiElement));
+		WigiRecursive(elements, type, style): all(map(elements, isUnlockedWigiElement));
+		WigiText(text, style): isNone(extractLockFromWigiStyle2(style));
+		WigiBlock(block, style): isNone(extractLockFromWigiStyle2(style));
+		WigiEmpty(): true;
+	}
+}
+
+unlockWigiElement(e : WigiElement) ->  WigiElement{
+	applyLockToWigiElement(e, WigiNoLock());
+}
+

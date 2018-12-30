@@ -1,0 +1,475 @@
+import arrayutils;
+import wigi/wigi_fontmapping;
+import wigi/position;
+import wigi/normalize;
+import basecolors;
+
+export {
+	// These are constant global system defaults, we can filter them out
+	globalSystemDefaultBackgroundFillOpacity = BackgroundFillOpacity(0.0);
+	globalSystemDefaultFill = Fill(black);
+	globalSystemDefaultFontFamily = FontFamily("Book");
+	globalSystemDefaultFontSize = dwfs;
+	globalSystemDefaultBackgroundFill = BackgroundFill(black);
+	globalSystemDefaultBaselineShift = BaselineShift(0.0);
+	globalSystemDefaultFillOpacity = FillOpacity(1.0);
+	globalSystemDefaultLetterSpacing = LetterSpacing(0.0);
+	globalSystemDefaultTextStyle = [
+		globalSystemDefaultBackgroundFillOpacity,
+		globalSystemDefaultFill,
+		globalSystemDefaultFontSize,
+		globalSystemDefaultFontFamily,
+		globalSystemDefaultBackgroundFill,
+		globalSystemDefaultBaselineShift,
+		globalSystemDefaultFillOpacity,
+		globalSystemDefaultLetterSpacing,
+	];
+	//default style (paragraph and text) for the whole document
+	getDefaultDocumentFontSize(defaultStyles : [WigiStyles]) -> double;
+	getDefaultDocumentFontColor(defaultStyles : [WigiStyles]) -> int;
+
+	concatWigiParentStyles(defStyle : WigiParentStyle, style : WigiParentStyle) -> WigiParentStyle;
+	concatWigiTextStyles(defStyle : [WigiTextStyle], style : [WigiTextStyle]) -> [WigiTextStyle];
+	concatWigiParagraphStyles(defStyle : [WigiParagraphStyle], style : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+	updateBlockStyle(defaultTextStyle : [WigiTextStyle], blockStyle : [WigiBlockStyle]) -> [WigiBlockStyle];
+
+	// add/update styles with default values
+	getWigiTextStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiTextStyle]) -> [WigiTextStyle];
+	getWigiParagraphStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+	getWigiBlockStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiBlockStyle]) -> [WigiBlockStyle];
+
+	// remove from styles default values
+	getWigiTextStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiTextStyle]) -> [WigiTextStyle];
+	getWigiParagraphStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+	getWigiBlockStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiBlockStyle]) -> [WigiBlockStyle];
+	getWigiParentStyleShort(parentStyle : WigiParentStyle, elementStyle : WigiParentStyle) -> WigiParentStyle;
+
+	// gets full text style at path if it is a WigiText element
+	maybeGetFullWigiTextStyle(defaultStyles : [WigiStyles], root : WigiElement, path : [int]) -> Maybe<[WigiTextStyle]>;
+
+	//apply function to style of each element within range
+	mapWigiStylesFromRange(defaultStyles : [WigiStyles], rootDoc : WigiElement, rangeStart : [int], rangeEnd : [int], fn : (e : WigiElement, path : [int], style : [WigiStyle]) -> ?) -> [?];
+
+	// extract paragraph alignment
+	extractWigiParagraphAlignment(wigiStyle : [WigiParagraphStyle]) -> [WigiParagraphStyle];
+
+	replaceTextStyleInBlockStyle(blockStyle : [WigiBlockStyle], textStyle : [WigiTextStyle]) -> [WigiBlockStyle];
+	getWigiParagraphAlignment(paraStyle : [WigiParagraphStyle]) -> WigiParagraphStyle;
+
+	getCharacterStyleFromWigiTextStyle(wigiStyle : [WigiTextStyle]) -> [CharacterStyle];
+	// fontMap maps primary font family name to comma-separated list of primary and one or several fallback names
+	getCharacterStyleFromWigiTextStyleExt(wigiStyle : [WigiTextStyle], fontMap : Tree<string, string>) -> [CharacterStyle];
+
+	getWigiTextStyleFromCharacterStyle(charStyle : [CharacterStyle]) -> [WigiTextStyle];
+	extractWigiTextStyleFromBlockStyle(styles : [WigiBlockStyle]) -> [WigiTextStyle];
+	extractParagraphStyle(wigiStyle : [WigiParagraphStyle]) -> [ParagraphStyle];
+
+	makeWigiDocumentStyles(defParaStyle : [WigiParagraphStyle], defTextStyle : [WigiTextStyle]) -> [WigiStyles];
+	makeWigiDocumentStylesExtended(defParaStyle : [WigiParagraphStyle], defTextStyle : [WigiTextStyle]) -> [WigiStyles];
+
+	// return styles of first elements of such a story WigiStory(ref [WigiParagraph([WigiText(),...]), ...])
+	findAllStylesInsideStory(e : WigiElement) -> Triple<[WigiTextStyle], [WigiParagraphStyle], [WigiStoryStyle]>;
+}
+
+getDefaultDocumentFontSize(defaultStyles : [WigiStyles]) -> double {
+	defFontSize : FontSize = extractStruct(getDefaultDocumentStyle(defaultStyles).textStyle, dwfs);
+	defFontSize.size;
+}
+
+getDefaultDocumentFontColor(defaultStyles : [WigiStyles]) -> int {
+	extractStruct(getDefaultDocumentStyle(defaultStyles).textStyle, globalSystemDefaultFill).color
+}
+
+concatWigiParentStyles(defStyle : WigiParentStyle, style : WigiParentStyle) -> WigiParentStyle {
+	textStyle = concatWigiTextStyles2(defStyle.textStyle, defStyle.accRelativeFontSizeChange, style.textStyle);
+	WigiParentStyle(
+		concatWigiParagraphStyles(defStyle.paragraphStyle, style.paragraphStyle),
+		textStyle.first,
+		textStyle.second
+	);
+}
+
+concatWigiTextStyles(defStyle : [WigiTextStyle], style : [WigiTextStyle]) -> [WigiTextStyle] {
+	concatWigiTextStyles2(defStyle, 0.0, style).first;
+}
+
+concatWigiTextStyles2(defStyle : [WigiTextStyle], accRelativeFontSizeChange : double, style : [WigiTextStyle]) -> Pair<[WigiTextStyle], double> {
+	absStyle = getAbsoluteFontSize(defStyle, accRelativeFontSizeChange, style);
+	Pair(
+		replaceStructMany(defStyle, absStyle.first),
+		absStyle.second
+	);
+}
+
+// convert relative font size to absolute one if necessary and returns accumulated value of base font size change
+getAbsoluteFontSize(defStyle : [WigiTextStyle], accRelativeFontSizeChange : double, style : [WigiTextStyle]) -> Pair<[WigiTextStyle], double> {
+	// we allow to change font size in relative way no more than by 5 relative points (up to 50%)
+	absDeltaLimit = 5;
+	// relative font size of +1 means +10% to base font size
+	getCoeff = \delta -> 1.0 + i2d(delta) * 0.1;
+	getAbsFontSize = \base, acc, delta -> {
+		if (base > 0.0) {
+			size = base * getCoeff(delta);
+			base0 = if (acc == 0.0) base else base / acc;
+			absSizeChangeLimit = base0 * (getCoeff(absDeltaLimit) - 1.0);
+			newSize = min(max(size, base0 - absSizeChangeLimit), base0 + absSizeChangeLimit);
+			Pair(newSize, newSize / base0);
+		} else {
+			Pair(base, 0.0);
+		}
+	}
+
+	delta = ref intMax;
+	fs = ref 0.0;
+	//extract absolute and relative font sizes from style
+	style0 = filtermap(style, \st -> switch (st : WigiTextStyle) {
+		WigiRelativeFontSize(d): {
+			delta := d;
+			None()
+		}
+		FontSize(s): {
+			fs := s;
+			Some(st)
+		}
+		default: Some(st);
+	});
+
+	if (^delta == intMax || ^fs != 0.0) {
+		// no relative font size or absolute font size is defined
+		Pair(style0, 0.0);
+	} else {
+		//  font size is defined in relative way
+		base = extractStruct(defStyle, FontSize(11.0)).size;
+		absSize = getAbsFontSize(base, accRelativeFontSizeChange, ^delta);
+		Pair(arrayPush(style0, FontSize(absSize.first)), absSize.second);
+	}
+}
+
+updateBlockStyle(defTextStyle : [WigiTextStyle], blockStyle : [WigiBlockStyle]) -> [WigiBlockStyle] {
+	ts = extractWigiTextStyleFromBlockStyle(blockStyle);
+	newStyle = concatWigiTextStyles(defTextStyle, ts);
+	replaceTextStyleInBlockStyle(blockStyle, newStyle);
+}
+
+concatWigiParagraphStyles(defStyle : [WigiParagraphStyle], style : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	normalizeWigiParagraphStyle(concat(defStyle, style));
+}
+
+getDefaultWigiParentStyle(defaultStyles : [WigiStyles], root : WigiElement, childPath : [int]) -> WigiParentStyle {
+	path = ref [];
+	fold(subrange(childPath, 0, length(childPath) - 1), getDefaultDocumentStyle(defaultStyles), \acc, i -> {
+		refArrayPush(path, i);
+		e = getElementAtPosition(root, ^path);
+		concatWigiParentStyles(acc, getDefaultElementStyle(defaultStyles, e));
+	})
+}
+
+getWigiBlockStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiBlockStyle]) -> [WigiBlockStyle] {
+	ts = extractWigiTextStyleFromBlockStyle(style);
+	newStyle = getWigiTextStyleFull(defaultStyles, root, path, ts);
+	replaceTextStyleInBlockStyle(style, newStyle);
+}
+
+getWigiTextStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiTextStyle]) -> [WigiTextStyle] {
+	getWigiParentStyleFull(defaultStyles, root, path, WigiParentStyle([], style, 0.0)).textStyle;
+}
+
+getWigiParagraphStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	getWigiParentStyleFull(defaultStyles, root, path, WigiParentStyle(style, [], 0.0)).paragraphStyle;
+}
+
+getWigiParentStyleFull(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : WigiParentStyle) -> WigiParentStyle {
+	concatWigiParentStyles(getDefaultWigiParentStyle(defaultStyles, root, path), style);
+}
+
+getWigiTextStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiTextStyle]) -> [WigiTextStyle] {
+	defStyle = concatWigiTextStyles(globalSystemDefaultTextStyle, getDefaultWigiParentStyle(defaultStyles, root, path).textStyle);
+	filtermap(style, \st -> if (!contains(defStyle, st)) Some(st) else None())
+}
+
+getWigiBlockStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiBlockStyle]) -> [WigiBlockStyle] {
+	ts = extractWigiTextStyleFromBlockStyle(style);
+	newStyle = getWigiTextStyleShort(defaultStyles, root, path, ts);
+	replaceTextStyleInBlockStyle(style, newStyle);
+}
+
+getWigiParagraphStyleShort(defaultStyles : [WigiStyles], root : WigiElement, path : [int], style : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	defStyle = getDefaultWigiParentStyle(defaultStyles, root, path).paragraphStyle;
+	filter(style, \s -> !contains(defStyle, s));
+}
+
+maybeGetFullWigiTextStyle(defaultStyles : [WigiStyles], root : WigiElement, path : [int]) -> Maybe<[WigiTextStyle]> {
+	switch (getElementAtPosition(root, path)) {
+		WigiText(text, style): {
+			if (text != ""){
+				Some(getWigiTextStyleFull(defaultStyles, root, path, style));
+			} else None();
+		}
+		default: None();
+	}
+}
+
+mapWigiStylesFromRange(defaultStyles : [WigiStyles], rootDoc : WigiElement, rangeStart : [int], rangeEnd : [int], fn : (e : WigiElement, path : [int], style : [WigiStyle]) -> ?) -> [?] {
+	if (rangeStart != rangeEnd) {
+		start = min(rangeStart, rangeEnd);
+		maybeEnd = max(rangeStart, rangeEnd);
+		end = if (lastElement(maybeEnd, -1) == 0) subrange(maybeEnd, 0, length(maybeEnd) - 1) else maybeEnd;
+		rangeRootPath = commonPath(start, end);
+		rangeRoot = getElementAtPosition(rootDoc, rangeRootPath);
+		firstRootPos = concat(rangeRootPath, getStartPositionOfDocument(rangeRoot));
+		lastRootPos = concat(rangeRootPath, getEndPositionOfDocument(rangeRoot, false));
+		// if the whole root selection element is selected we also apply function to it
+		wholeElement = rangeStart == firstRootPos && rangeEnd == lastRootPos;
+		concat3(
+			if (wholeElement) [applyToWigiElementStyle(defaultStyles, rootDoc, rangeRootPath, fn)] else [],
+			[applyToWigiElementStyle(defaultStyles, rootDoc, start, fn)],
+			mapWigiStylesFromRange2(defaultStyles, rootDoc, rangeRoot, rangeRootPath, start, end, fn)
+		);
+	} else {
+		[]
+	}
+}
+
+// applies fn to all elements within a range [start, end] but for the first
+mapWigiStylesFromRange2(defaultStyles : [WigiStyles], doc : WigiElement, root: WigiElement, rPath : [int], start : [int], end : [int], fn : (e : WigiElement, path : [int], style : [WigiStyle]) -> ?) -> [?] {
+	pathOk = \path -> path >= start && path < end;
+	applyFn = \e, path, style -> if (pathOk(path)) [fn(e, path, style)] else [];
+	processElements = \children, parentPath -> {
+		mapiConcat(children, \i, e ->
+			mapWigiStylesFromRange2(defaultStyles, doc, e, arrayPush(parentPath, i), start, end, fn)
+		)
+	}
+	switch(root) {
+		WigiDocument(r, s): concat(applyFn(root, rPath, s), mapWigiStylesFromRange2(defaultStyles, r, r, [], start, end, fn));
+		WigiStory(ps, v, s): concat(applyFn(root, rPath, s), processElements(^ps, rPath));
+		WigiParagraph(es, s): concat(applyFn(root, rPath, getWigiParagraphStyleFull(defaultStyles, doc, rPath, s)), processElements(es, rPath));
+		WigiText(t, s): applyFn(root, rPath, getWigiTextStyleFull(defaultStyles, doc, rPath, s));
+		WigiRecursive(er, t, s): concat(applyFn(root, rPath, s), processElements(er, rPath));
+		WigiBlock(t, s): applyFn(root, rPath, getWigiBlockStyleFull(defaultStyles, doc, rPath, s));
+		WigiEmpty(): [];
+	};
+}
+
+applyToWigiElementStyle(defaultStyles : [WigiStyles], rootDoc : WigiElement, path : [int], fn : (e : WigiElement, path : [int], style : [WigiStyle]) -> ?) -> ? {
+	el = getElementAtPosition(rootDoc, path);
+	switch(el) {
+		WigiDocument(r, s): fn(el, path, s);
+		WigiStory(ps, v, s): fn(el, path, s);
+		WigiParagraph(es, s): fn(el, path, s);
+		WigiText(t, s): fn(el, path, getWigiTextStyleFull(defaultStyles, rootDoc, path, s));
+		WigiRecursive(er, t, s): fn(el, path, s);
+		WigiBlock(t, s): fn(el, path, getWigiBlockStyleFull(defaultStyles, rootDoc, path, s));
+		WigiEmpty(): fn(el, path, []);
+	};
+}
+
+extractWigiParagraphAlignment(style : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	fold(style, [], \align, st ->
+		switch(st) {
+			LeftAlign(): [st];
+			RightAlign(): [st];
+			CenterAlign(): [st];
+			StartAlign(): [st];
+			EndAlign(): [st];
+			Justify(): [st];
+			default: align;
+		}
+	);
+}
+
+replaceTextStyleInBlockStyle(blockStyle : [WigiBlockStyle], textStyle : [WigiTextStyle]) -> [WigiBlockStyle] {
+	bs = filtermap(blockStyle, \s -> switch (s : WigiBlockStyle) {
+		WigiName(__): { r : Maybe<WigiBlockStyle> = Some(s); r }
+		FontFamily(__): None();
+		FontSize(__): None();
+		Fill(__): None();
+		FillOpacity(n): None();
+		LetterSpacing(n): None();
+		BackgroundFill(n): None();
+		BackgroundFillOpacity(n): None();
+		Underline(): None();
+		BaselineShift(__): None();
+		WigiRelativeFontSize(__): None();
+		DoubleUnderline(): None();
+		WigiLock(__): Some(s);
+		Language(__): None();
+		ExternalDeleteElement(__): Some(s);
+		WigiEditorPreview(): Some(s);
+		WigiHtmlResponsiveFontSize(__, __, __): None();
+		WigiHtmlRelativeFontSizeWithEm(__): None();
+		WigiAnnotation(__) : None();
+	});
+	// ignore locking of text style
+	ts = filter(textStyle, \s -> !isSameStructType(s, WigiLock(WigiNoLock())));
+	concat(bs, ts);
+}
+
+getWigiParentStyleShort(defaults : WigiParentStyle, style : WigiParentStyle) -> WigiParentStyle {
+	WigiParentStyle(
+		subtractA(style.paragraphStyle, defaults.paragraphStyle),
+		subtractA(style.textStyle, concatWigiTextStyles(globalSystemDefaultTextStyle, defaults.textStyle)),
+		0.0
+	);
+}
+
+getWigiParagraphAlignment(paraStyle : [WigiParagraphStyle]) -> WigiParagraphStyle {
+	fold(paraStyle, StartAlign(), \acc, st -> switch(st){
+		LeftAlign(): st;
+		CenterAlign(): st;
+		RightAlign(): st;
+		StartAlign(): st;
+		EndAlign(): st;
+		Justify(): st;
+		default: acc;
+	})
+}
+
+extractWigiTextStyleFromBlockStyle(styles : [WigiBlockStyle]) -> [WigiTextStyle] {
+	filtermap(styles, \s -> switch (s : WigiBlockStyle) {
+		FontFamily(__): { r : Maybe<WigiTextStyle> = Some(s); r }
+		FontSize(__): Some(s);
+		Fill(__): Some(s);
+		FillOpacity(__): Some(s);
+		LetterSpacing(__): Some(s);
+		BackgroundFill(__): Some(s);
+		BackgroundFillOpacity(__): Some(s);
+		Underline(): Some(s);
+		BaselineShift(__): Some(s);
+		WigiRelativeFontSize(__): {
+			//we should not get here, relative font size must be converted to absolute one earlier
+			println("Consider using WigiRelativeFontSize in WigiBlock");
+			None();
+		}
+		WigiName(__): None();
+		DoubleUnderline(): Some(s);
+		WigiLock(__): None();
+		Language(__): None();
+		ExternalDeleteElement(__): None();
+		WigiEditorPreview(): None();
+		WigiHtmlResponsiveFontSize(__, __, __): None();
+		WigiHtmlRelativeFontSizeWithEm(__): None();
+		WigiAnnotation(__) : None();
+	});
+}
+
+getCharacterStyleFromWigiTextStyle(wigiStyle : [WigiTextStyle]) -> [CharacterStyle] {
+	getCharacterStyleFromWigiTextStyleExt(wigiStyle, makeTree());
+}
+
+getCharacterStyleFromWigiTextStyleExt(wigiStyle : [WigiTextStyle], fontMap : Tree<string, string>) -> [CharacterStyle] {
+	familyIsCalculated = ref false;
+	cs = filtermap(wigiStyle, \s ->
+		switch(s : WigiTextStyle) {
+			Underline(): None();
+			DoubleUnderline(): None();
+			BaselineShift(__): None();
+			FontFamily(n): {
+				familyIsCalculated := true;
+				translated = translateWigiFontFamily(n);
+				Some(FontFamily(lookupTreeDef(fontMap, translated, translated)))
+			};
+			FontSize(__): { r : Maybe<CharacterStyle> = Some(s); r }
+			Fill(__): Some(s);
+			FillOpacity(__): Some(s);
+			LetterSpacing(__): Some(s);
+			BackgroundFill(__): Some(s);
+			BackgroundFillOpacity(__): Some(s);
+			WigiRelativeFontSize(__): {
+				//we should not be here
+				println("WigiRelativeFontSize should not go to CharacterStyle directly");
+				None();
+			}
+			WigiLock(__): None();
+			Language(__): None();
+			WigiHtmlResponsiveFontSize(__, __, __): None();
+			WigiHtmlRelativeFontSizeWithEm(__): None();
+			WigiAnnotation(__) : None();
+		}
+	);
+	if (^familyIsCalculated) {
+		cs
+	} else {
+		baseFont = globalSystemDefaultFontFamily.name;
+		mappedBaseFont = translateWigiFontFamily(baseFont);
+		if (mappedBaseFont != baseFont) {
+			arrayPush(cs, FontFamily(mappedBaseFont))
+		} else {
+			cs
+		}
+	}
+}
+
+getWigiTextStyleFromCharacterStyle(charStyle : [CharacterStyle]) -> [WigiTextStyle] {
+	filtermap(charStyle, \s -> switch(s : CharacterStyle) {
+		FontFamily(__): { r : Maybe<WigiTextStyle> = Some(s); r }
+		FontSize(__): Some(s);
+		Fill(__): Some(s);
+		FillOpacity(__): Some(s);
+		LetterSpacing(__): Some(s);
+		BackgroundFill(__): Some(s);
+		BackgroundFillOpacity(__): Some(s);
+		Sharpness(__, __, __): None();
+		Underlined(__): None();
+		EscapeHTML(__): None();
+	});
+}
+
+extractParagraphStyle(wigiStyle : [WigiParagraphStyle]) -> [ParagraphStyle] {
+	filtermap(wigiStyle, \st -> switch (st : WigiParagraphStyle) {
+		LeftAlign(): { r : Maybe<ParagraphStyle> = Some(st); r }
+		CenterAlign(): Some(st);
+		RightAlign(): Some(st);
+		StartAlign(): Some(st);
+		EndAlign(): Some(st);
+		Justify(): Some(st);
+		TightWidth(): Some(st);
+		InterlineSpacing(__): Some(st);
+		FirstLineIndent(__): Some(st);
+		DynamicBlockDelay(__): Some(st);
+		ParagraphBorder(__, __): Some(st);
+		FixedWidth(): None();
+		ReplaceTightWidthWithAlign(): None();
+		ReplaceAlignWithTightWidth(): None();
+		GeneralIndent(__): None();
+		Listed(__, __): None();
+		WigiStylesName(__): None();
+		WigiAspect(__, __): None(); 
+		WigiParagraphExternalStyle(__): None(); 
+	})
+}
+
+makeWigiDocumentStyles(defParaStyle: [WigiParagraphStyle], defTextStyle : [WigiTextStyle]) -> [WigiStyles] {
+	[WigiStyles("WigiDocument", defParaStyle, defTextStyle)]
+}
+
+makeWigiDocumentStylesExtended(defParaStyle: [WigiParagraphStyle], defTextStyle : [WigiTextStyle]) -> [WigiStyles] {
+	concat(
+		makeWigiDocumentStyles(defParaStyle, defTextStyle),
+		[
+			WigiStyles("WigiFraction", [StartAlign()], defTextStyle), // LSTSBU-741
+			WigiStyles("WigiHyperlink", [StartAlign()], defTextStyle) // LSTSBU-302
+		]
+	)
+}
+
+// return styles of first elements of such a story WigiStory(ref [WigiParagraph([WigiText(),...]), ...])
+findAllStylesInsideStory(e : WigiElement) -> Triple<[WigiTextStyle], [WigiParagraphStyle], [WigiStoryStyle]> {
+	switch (e : WigiElement) {
+		WigiStory(paragraphs, __, sstyle): {
+			if (^paragraphs != []) {
+				switch(^paragraphs[0]) {
+					WigiParagraph(elements, pstyle): {
+						if (elements != []) {
+							switch (elements[0] : WigiElement) {
+								WigiText(__, tstyle): Triple(tstyle, pstyle, sstyle);
+								default: Triple([], pstyle, sstyle)
+							}
+						} else Triple([], pstyle, sstyle)
+					}
+					default: Triple([], [], sstyle)
+				}
+			} else Triple([], [], sstyle)
+		}
+		default: Triple([], [], [])
+	}
+}

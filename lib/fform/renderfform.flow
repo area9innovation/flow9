@@ -1,0 +1,1531 @@
+import fform/optimizefform;
+import fform/fformutils;
+import renderform;
+import formats/svg/svg;
+
+export {
+	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
+	renderFForm(rform : FForm, zorder : [int]) -> FRenderResult;
+
+	// Override to set custom stage wh
+	stageWidthHeight = make(None());
+	fAccessibilityEnabled = ref false;
+}
+
+currentFFormCount = ref 0;
+
+frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void) {
+	renCt = ^globalRenderCount;
+	globalRenderCount := ^globalRenderCount + 1;
+
+	d1 = monitorFResize(awh);
+	d2 = optimizeAndRenderFForm(currentClip(), form, [renCt]);
+
+	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
+}
+
+monitorFResize(awh : DynamicBehaviour<WidthHeight>) -> () -> void {
+	enableResize();
+	sendStageSize = \ -> {
+		nextDistinct(awh, WidthHeight(getStageWidth(), getStageHeight()));
+	}
+
+	// We have to explicitly hold on to this function to keep it alive
+	r = ref Some(sendStageSize);
+
+	disposer =
+		makeSubscribeUns(stageWidthHeight, \swh : Maybe<WidthHeight> ->
+			eitherFn(
+				swh,
+				\wh : WidthHeight -> {
+					nextDistinct(awh, wh);
+
+					[]
+				},
+				\ -> {
+					sendStageSize();
+
+					[addEventListener(currentClip(), "resize", sendStageSize)]
+				}
+			)
+		)();
+
+	\ -> { r := Some(nop); disposer(); }
+}
+
+optimizeAndRenderFForm(parent : native, form : FForm, zorder : [int]) -> FRenderResult {
+	renderFForm(optimizeFForm(form), zorder)
+	|> (\r  -> attachFChildren(parent, r.clips, r.disposers, r.capabilities))
+}
+
+optimizeAndRenderFFormAt(parent : native, form : FForm, zorder : [int], id : int) -> FRenderResult {
+	renderFForm(optimizeFForm(form), zorder)
+	|> (\r  -> attachFChildrenAt(parent, r.clips, r.disposers, r.capabilities, id))
+}
+
+attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : FClipCapabilities) -> FRenderResult {
+	iter(children, \c -> addChild(clip, c));
+
+	FRenderResult(
+		[clip],
+		concat([\ -> iter(children, \c -> removeChild(clip, c))], disposers),
+		cap
+	)
+}
+
+attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], cap : FClipCapabilities, id : int) -> FRenderResult {
+	iteri(children, \i, c -> addChildAt(clip, c, id + i));
+
+	FRenderResult(
+		[clip],
+		concat([\ -> iter(children, \c -> removeChild(clip, c))], disposers),
+		cap
+	)
+}
+
+attachFChildAndCapability(form : FForm, d : FRenderResult, hasCapability : bool, cap : FClipCapabilities, fn : (native) -> () -> void) -> FRenderResult {
+	if (length(d.clips) > 0) {
+		if (hasCapability) {
+			FRenderResult(d.clips, concat(map(d.clips, fn), d.disposers), cap);
+		} else {
+			c = makeClip();
+			setClipDebugInfo(c, "form", form);
+
+			attachFChildren(c, d.clips, concat(d.disposers, [fn(c), \ -> deleteNative(c)]), cap)
+		}
+	} else {
+		FRenderResult(d.clips, d.disposers, cap)
+	}
+}
+
+sharedFCapabilities(rs : [FRenderResult]) -> FClipCapabilities {
+	moveable = forall(rs, \r : FRenderResult -> r.capabilities.move);
+	scalable = forall(rs, \r : FRenderResult -> r.capabilities.scale);
+	alphable = forall(rs, \r : FRenderResult -> r.capabilities.alpha);
+	single = length(rs) == 1;
+
+	FClipCapabilities(
+		moveable,
+		single,	// Filters do not commute
+		single, // Interactions do not commute
+		scalable,
+		alphable,
+	)
+}
+
+sharedFCapabilities2(r1 : FRenderResult, r2 : FRenderResult) -> FClipCapabilities {
+	FClipCapabilities(
+		r1.capabilities.move && r2.capabilities.move,
+		false,	// Filters do not commute
+		false, // Interactions do not commute
+		r1.capabilities.scale && r2.capabilities.scale,
+		r1.capabilities.alpha && r2.capabilities.alpha,
+	)
+}
+
+renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
+	// println(rform.structname);
+	// currentFFormCount := ^currentFFormCount + 1;
+
+	switch (rform) {
+		FEmpty(): {
+			emptyFRenderResult
+		}
+		FConstructor(form, construct): {
+			uns = construct();
+			d = renderFForm(form, zorder);
+
+			FRenderResult(d.clips, arrayPush(d.disposers, uns), d.capabilities)
+		}
+		FCreate2(current, fn): {
+			current := fn();
+			d = renderFForm(optimizeFForm(^current), zorder);
+
+			FRenderResult(d.clips, d.disposers, d.capabilities)
+		}
+		FText(text, style): {
+			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
+				renderFText(text |> escapeHtml, style);
+			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+				texts = html2text(text, style);
+
+				if (length(texts) == 0) {
+					renderFText("", style);
+				} else if (length(texts) == 1) {
+					renderFText(texts[0].text, texts[0].style);
+				} else {
+					renderFTexts(texts);
+				}
+			} else {
+				renderFText(text, style);
+			}
+		}
+		FParagraph(text, style): {
+			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
+				renderFParagraph(text |> escapeHtml, style);
+			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+				texts = html2text(text, extractStructMany(style, FontFamily("")));
+
+				if (length(texts) == 0) {
+					renderFParagraph("", style);
+				} else if (length(texts) == 1) {
+					renderFParagraph(texts[0].text, replaceStructMany(style, texts[0].style));
+				} else {
+					renderFParagraphs(texts);
+				}
+			} else {
+				renderFParagraph(text, style);
+			}
+		}
+		FPicture(url_, wh, style): {
+			if (downloadPictures) {
+				cache = ref true;
+				onlydl = ref false;
+				picErrorHandler = ref nop1;
+				onLoaded = ref nop;
+
+				decreaseFFilesCount = increaseFFilesCount();
+				url = applyMediaPathMapping(url_);
+
+				iter(style, \s ->
+					switch (s : PictureStyle) {
+						DontCache(): cache := false;
+						OnlyDownloadToCache(): onlydl := true;
+						OnLoadingError(fn): picErrorHandler := fn;
+						OnLoaded(fn): {
+							onLoaded := {
+								prevOnLoaded = ^onLoaded;
+								\ -> {
+									prevOnLoaded();
+									fn();
+								}
+							}
+						}
+					}
+				);
+
+				picture =
+					if (endsWith(url, ".svg")) {
+						container = makeClip();
+
+						httpRequest(
+							addServerPathIfRelative(url),
+							false,
+							[],
+							[],
+							\d -> {
+								form = svgString2Form(d, []);
+								formWH = getStaticFormSize(form) |> (\fm -> WidthHeight(fm.width, fm.height));
+
+								iter(renderFForm(form |> form2fform |> optimizeFForm, zorder).clips, \c -> addChild(container, c));
+
+								CachedPicturesSizes := setTree(^CachedPicturesSizes, url, formWH);
+								nextDistinct(wh, formWH);
+
+								decreaseFFilesCount();
+
+								^onLoaded();
+							},
+							\er -> {
+								e = "Cannot load " + url + " " + er;
+
+								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+								nextDistinct(wh, zeroWH);
+
+								^picErrorHandler(e);
+								decreaseFFilesCount();
+
+								println(e);
+							},
+							\s -> {}
+						);
+
+						container;
+					} else {
+						makePicture(
+							addServerPathIfRelative(url),
+							^cache,
+							\w, h -> {
+								CachedPicturesSizes := setTree(^CachedPicturesSizes, url, WidthHeight(w, h));
+								nextDistinct(wh, WidthHeight(w, h));
+
+								decreaseFFilesCount();
+
+								^onLoaded();
+							},
+							\e -> {
+								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+								nextDistinct(wh, zeroWH);
+
+								^picErrorHandler(e);
+								decreaseFFilesCount();
+
+								if (e != "") {
+									println(e);
+								}
+
+							},
+							^onlydl
+						);
+					}
+
+				FRenderResult(
+					[picture],
+					[
+						\ -> {
+							//Decrease loading files count if Form is closed until onOK or onError has happened.
+							decreaseFFilesCount();
+							deleteNative(picture);
+						}
+					],
+					FClipCapabilities(true, false, false, false, false)
+				)
+			} else
+				emptyFRenderResult
+		}
+		FGraphics(path, style): {
+			renderFGraphics(path, style);
+		}
+		FTranslate(x, y, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				d,
+				d.capabilities.move,
+				FClipCapabilities(false, d.capabilities.filters, d.capabilities.interactive, false, d.capabilities.alpha),
+				\clip ->
+					[
+						makeSubscribe(x, \x0 -> setClipX(clip, x0))(),
+						makeSubscribe(y, \y0 -> setClipY(clip, y0))()
+					]
+					|> (\f -> \ -> applyall(f))
+			)
+		}
+		FBorder(left, top, right, bottom, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				FRenderResult(d.clips, d.disposers, d.capabilities),
+				d.capabilities.move,
+				FClipCapabilities(false, d.capabilities.filters, d.capabilities.interactive, false, d.capabilities.alpha),
+				\clip -> {
+					if (left != 0.0)
+						setClipX(clip, left);
+
+					if (top != 0.0)
+						setClipY(clip, top);
+
+					nop
+				}
+			)
+		}
+		FScale(x, y, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				FRenderResult(d.clips, d.disposers, d.capabilities),
+				d.capabilities.scale,
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, false, false, d.capabilities.alpha),
+				\clip ->
+					[
+						makeSubscribe(x, \x0 -> setClipScaleX(clip, x0))(),
+						makeSubscribe(y, \y0 -> setClipScaleY(clip, y0))()
+					]
+					|> (\f -> \ -> applyall(f))
+			)
+		}
+		FRotate(degrees, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				FRenderResult(d.clips, d.disposers, d.capabilities),
+				false,
+				d.capabilities,
+				\clip ->
+					makeSubscribe(degrees, \de -> setClipRotation(clip, de))()
+			)
+		}
+		FAlpha(alpha, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				d,
+				d.capabilities.alpha,
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false),
+				\clip ->
+					makeSubscribe(alpha, \a -> setClipAlpha(clip, a))()
+			)
+		}
+		FVisible(visible, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				FRenderResult(d.clips, d.disposers, d.capabilities),
+				d.capabilities.alpha,
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false),
+				\clip ->
+					makeSubscribe(visible, \v -> setClipVisible(clip, v))()
+			)
+		}
+		FRenderable(renderable, form): {
+			d = renderFForm(form, zorder);
+
+			attachFChildAndCapability(
+				rform,
+				FRenderResult(d.clips, d.disposers, d.capabilities),
+				d.capabilities.alpha,
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, false),
+				\clip ->
+					makeSubscribe(renderable, \r -> setClipRenderable(clip, r))()
+			)
+		}
+		FDynamicGroup2(stackChanges, currentStack, stack) : {
+			parentClip = makeClip();
+
+			setClipCallstack(parentClip, stack);
+			setClipDebugInfo(parentClip, "form", rform);
+
+			childDisposers : ref [[() -> void]] = ref [[]];
+			childrenClips : ref [[native]] = ref [[]];
+			childrenCount : ref [int] = ref [];
+
+			handleAdd = \form, z -> {
+				childrenAfter = tailFrom(^childrenClips, z);
+
+				childResult = renderFForm(form, arrayPush(zorder, z));
+				clipsBefore = length(concatA(subrange(^childrenClips, 0, z)));
+				iteri(childResult.clips, \i, d -> addChildAt(parentClip, d, clipsBefore + i));
+
+				childrenClips := insertArray(^childrenClips, z, childResult.clips);
+				childDisposers := insertArray(^childDisposers, z, childResult.disposers);
+			};
+
+			handleDelete = \z -> if (existsIndex(^childrenClips, z)) {
+				iter(^childrenClips[z], \clip -> removeChild(parentClip, clip));
+				childrenClips := removeIndex(^childrenClips, z);
+
+				applyall(^childDisposers[z]);
+				childDisposers := removeIndex(^childDisposers, z);
+			}
+
+			handleReplace = \form, z -> {
+				childrenAfter = tailFrom(^childrenClips, z);
+
+				iter(childrenAfter, \children ->
+					iter(children, \child -> removeChild(parentClip, child))
+				);
+
+				applyall(^childDisposers[z]);
+
+				childResult = renderFForm(form, arrayPush(zorder, z));
+
+				iter(
+					replace(childrenAfter, 0, childResult.clips),
+					\childClips ->
+						iter(childClips, \clip -> addChild(parentClip, clip))
+				);
+
+				childrenClips := replace(^childrenClips, z, childResult.clips);
+				childDisposers := replace(^childDisposers, z, childResult.disposers);
+			}
+
+			handleMove = \from, to -> {
+				childrenFixedOrder = moveElement(^childrenClips, from, to);
+				childrenChanged = tailFrom(childrenFixedOrder, min(from, to));
+
+				iter(childrenChanged, \children ->
+					iter(children, \child -> removeChild(parentClip, child))
+				);
+
+				iter(
+					childrenChanged,
+					\childClips ->
+						iter(childClips, \clip -> addChild(parentClip, clip))
+				);
+
+				childrenClips := childrenFixedOrder;
+				childDisposers := moveElement(^childDisposers, from, to);
+			}
+
+			iteri(getValue(currentStack), \i, f -> handleAdd(f, i));
+
+			handleChanges = \changes -> if (length(changes) > 0) {
+				next(stackChanges, []);
+
+				iter(changes, \change -> {
+					switch (change : FGroupChange) {
+						FGroupAdd(form, z) : {
+							next(currentStack, insertArray(getValue(currentStack), z, form));
+							handleAdd(form, z);
+						}
+						FGroupDelete(z) : {
+							next(currentStack, removeIndex(getValue(currentStack), z));
+							handleDelete(z);
+						}
+						FGroupMove(from, to) : {
+							currentStackValue = getValue(currentStack);
+							toFixed = forceRange(to, 0, length(currentStackValue) - 1);
+
+							if (existsIndex(currentStackValue, from) && from != toFixed) {
+								next(
+									currentStack,
+									moveElement(currentStackValue, from, toFixed)
+								);
+
+								handleMove(from, toFixed);
+							}
+						}
+						FGroupReplace(form, z) : {
+							next(currentStack, replace(getValue(currentStack), z, form));
+							handleReplace(form, z);
+						}
+					}
+				});
+			}
+
+			disposeChanges = fsubscribe(stackChanges, handleChanges);
+
+			disposeGroup =
+				\ -> {
+					callList(disposeChanges);
+
+					iter(^childrenClips, \childClips -> iter(childClips, \clip -> removeChild(parentClip, clip)));
+					childrenClips := [];
+
+					iter(^childDisposers, applyall);
+					childDisposers := [];
+
+					deleteNative(parentClip);
+				};
+
+			FRenderResult([parentClip], [disposeGroup], allFClipCapabilities);
+		}
+		FGroup(forms, z) : {
+			results : [FRenderResult] = mapi(forms, \i, form -> renderFForm(form, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, i) else zorder));
+			clips = concatA(map(results, \r -> r.clips));
+			disposers = concatA(map(results, \r -> r.disposers));
+
+			FRenderResult(clips, disposers, sharedFCapabilities(results))
+		}
+		FGroup2(form1, form2, z) : {
+			r1 = renderFForm(form1, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, 0) else zorder);
+			r2 = renderFForm(form2, if (z || ^accessibilityEnabled || ^fAccessibilityEnabled) arrayPush(zorder, 1) else zorder);
+
+			FRenderResult(concat(r1.clips, r2.clips), concat(r1.disposers, r2.disposers), sharedFCapabilities2(r1, r2))
+		}
+		FDecorator2(form, decorators, above, stack) : {
+			clip = makeClip();
+			setClipCallstack(clip, stack);
+			setClipDebugInfo(clip, "form", rform);
+
+			clips : ref [[native]] = ref generate(0, length(decorators), \__ -> []);
+
+			d1 = renderFForm(
+					optimizeFForm(form),
+					if (^accessibilityEnabled || ^fAccessibilityEnabled)
+						arrayPush(zorder, b2i(!above))
+					else
+						zorder
+				);
+
+			map(d1.clips, \d -> addChild(clip, d));
+
+			d2 = mapi(decorators, \i, d -> {
+				uns = ref [];
+
+				makeSubscribe(d.first, \en -> {
+					iter(^clips[i], \c -> removeChild(clip, c));
+					clips := replace(^clips, i, []);
+					applyall(^uns);
+
+					uns :=
+						if (en) {
+							r = renderFForm(
+								optimizeFForm(d.second()),
+								if (^accessibilityEnabled || ^fAccessibilityEnabled)
+									arrayPush(zorder, b2i(above))
+								else
+									zorder,
+							);
+
+							clipsBefore = length(concatA(subrange(^clips, 0, i)));
+							iteri(r.clips, \j, c -> addChildAt(clip, c, clipsBefore + j + if (above) length(d1.clips) else 0));
+							clips := replace(^clips, i, r.clips);
+
+							r.disposers
+						} else {
+							[]
+						}
+				})()
+				|> (\f -> \ -> {f(); applyall(^uns);})
+			});
+
+			FRenderResult([clip], concat3(d1.disposers, d2, [\ -> deleteNative(clip)]), allFClipCapabilities)
+		}
+		FMutable2(behaviour, stack) : {
+			old = ref [];
+			nested = ref 0;
+
+			clip = makeClip();
+			setClipCallstack(clip, stack);
+			setClipDebugInfo(clip, "form", rform);
+
+			dodisplay = \form -> {
+				// Block post-destroy calls
+				if (^nested == 0) {
+					nested := 1;
+					applyall(^old);
+					old := optimizeAndRenderFForm(clip, form, zorder).disposers;
+
+					if (showRedraw) {
+						gr = getGraphics(clip);
+						setLineStyle(gr, 1.0, floor(random() * i2d(0xffffff)), 1.0);
+						moveTo(gr, 0.0, 0.0);
+						lineTo(gr, 100., 100.);
+						endFill(gr);
+					}
+
+					// If re-entrant destroy pending, finish it
+					if (^nested < 0) {
+						applyall(^old);
+						old := [];
+
+						deleteNative(clip);
+					} else {
+						nested := 0;
+					}
+				}
+			};
+
+			unsub =
+				makeSubscribe(behaviour, \form ->
+					// Postpone re-entrant updates if necessary
+					if (^nested > 0)
+						deferred(\ -> {
+							impersonateCallstackItem(stack, 1);
+							dodisplay(form);
+						})
+					else {
+						impersonateCallstackItem(stack, 1);
+						dodisplay(form);
+					}
+				)();
+
+			FRenderResult(
+				[clip],
+				[
+					\ -> {
+						unsub();
+
+						if (^nested == 0) {
+							impersonateCallstackItem(stack, 1);
+							applyall(^old);
+							old := [];
+
+							deleteNative(clip);
+						}
+
+						nested := -1;
+					}
+				],
+				allFClipCapabilities
+			)
+		}
+		FFullWindow(fullwindow, wh, form) : {
+			resize = ref nop;
+			d = renderFForm(form, zorder);
+			container = makeClip();
+
+			setResize = \fw -> {
+				^resize();
+
+				if (fw) {
+					nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
+					resize := monitorFResize(wh);
+				} else {
+					resize := nop;
+				}
+			};
+
+			setFullWindow = \fw -> {
+				setFullWindowTarget(container);
+				toggleFullWindow(fw);
+			};
+
+			if (getValue(fullwindow)) {
+				setResize(true);
+				deferred(\ -> setFullWindow(true));
+			};
+
+			uns = subscribe2(fullwindow, \fw -> {
+				setResize(fw);
+				setFullWindow(fw);
+			});
+
+			attachFChildAndCapability(
+				rform,
+				attachFChildren(
+					container,
+					d.clips,
+					arrayPush(
+						d.disposers,
+						\ -> {
+							uns();
+							^resize();
+							if (getValue(fullwindow))
+								setFullWindow(false);
+							resetFullWindowTarget();
+							deleteNative(container);
+						}
+					),
+					d.capabilities
+				),
+				false,
+				FClipCapabilities(false, false, false, false, false),
+				\__ -> nop
+			);
+
+		}
+		FInteractive(listeners, form) : {
+			d = renderFForm(form, zorder);
+
+			clipalive = ref true;
+
+			needMove =
+				fold(listeners, false, \acc, l ->
+					switch (l : EventHandler) {
+						MouseMove2(mfn): true;
+						default: acc;
+					}
+				);
+
+			attachFChildAndCapability(
+				rform,
+				d,
+				d.capabilities.interactive && (!needMove || d.capabilities.move),
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, false, d.capabilities.scale, d.capabilities.alpha),
+				\clip -> {
+					stage = getStage();
+					disposers = map(listeners, \l -> handleRealEvents(l, clip, clipalive, stage, zorder, true, false));
+
+					\ -> {
+						applyall(disposers);
+						clipalive := false
+					}
+				}
+			)
+		}
+		FMask2(form, mask, stack): {
+			clip = makeClip();
+			setClipCallstack(clip, stack);
+			setClipDebugInfo(clip, "form", rform);
+			d1 = renderFForm(form, zorder);
+			r1 = attachFChildren(clip, d1.clips, d1.disposers, d1.capabilities);
+
+			maskClip = makeClip();
+			setClipCallstack(maskClip, stack);
+			setClipDebugInfo(maskClip, "form", rform);
+			d2 = renderFForm(mask, zorder);
+			r2 = attachFChildren(maskClip, d2.clips, d2.disposers, d2.capabilities);
+
+			setClipMask(clip, maskClip);
+
+			FRenderResult(
+				[clip, maskClip],
+				concat3(r1.disposers, r2.disposers, [\ -> {deleteNative(clip); deleteNative(maskClip)}]),
+				FClipCapabilities(true, false, false, true, false)
+			)
+		}
+		FFilter2(filters, form, stack) : {
+			d = renderFForm(form, zorder);
+
+			if (targetNoFilters()) {
+				// Not supported
+				d
+			} else {
+				attachFChildAndCapability(
+					rform,
+					d,
+					d.capabilities.filters,
+					FClipCapabilities(d.capabilities.move, false, d.capabilities.interactive, d.capabilities.scale, d.capabilities.alpha),
+					\clip -> {
+						fils = map(filters, \f -> switch(f : Filters) {
+							Bevel(params): {
+								angle = ref 45.0;
+								distance = ref 3.0;
+								radius = ref 3.0;
+								spread = ref 1.0;
+								color1 = ref 0xffffff;
+								alpha1 = ref 1.0;
+								color2 = ref 0x000000;
+								alpha2 = ref 1.0;
+								inner = ref true;
+								iter(params, \p -> switch (p : BevelParameter) {
+									Placement(a, ds): { angle := a; distance := ds; }
+									Radius(r): radius := r;
+									Spread(s): spread := s;
+									Color(c, a): { color1 := c; alpha1 := a; }
+									ShadowColor(c, a): { color2 := c; alpha2 := a; }
+									Inner(i): inner := i;
+								});
+								makeBevel(^angle, ^distance, ^radius, ^spread, ^color1, ^alpha1, ^color2, ^alpha2, ^inner);
+							}
+							DropShadow(params): {
+								angle = ref 45.0;
+								distance = ref 4.0;
+								radius = ref 4.0;
+								spread = ref 1.0;
+								color = ref 0x000000;
+								alpha = ref 1.0;
+								inner = ref false;
+								iter(params, \p -> switch (p : DropShadowParameter) {
+									Placement(a, ds): { angle := a; distance := ds; }
+									Radius(r): radius := r;
+									Spread(s): spread := s;
+									Color(c, a): { color := c; alpha := a; }
+									Inner(i): inner := i;
+								});
+								makeDropShadow(^angle, ^distance, ^radius, ^spread, ^color, ^alpha, ^inner);
+							}
+							Blur(params): {
+								radius = ref 3.0;
+								spread = ref 1.0;
+								iter(params, \p -> switch (p : BlurParameter) {
+									Radius(r): radius := r;
+									Spread(s): spread := s;
+								});
+								makeBlur(^radius, ^spread);
+							}
+							Glow(params): {
+								radius = ref 4.0;
+								spread = ref 1.0;
+								color = ref 0x000000;
+								alpha = ref 1.0;
+								inner = ref false;
+								iter(params, \p -> switch (p : GlowParameter) {
+									Radius(r): radius := r;
+									Spread(s): spread := s;
+									Color(c, a): { color := c; alpha := a; }
+									Inner(i): inner := i;
+								});
+								makeGlow(^radius, ^spread, ^color, ^alpha, ^inner);
+							}
+						});
+						setClipCallstack(clip, stack);
+						addFilters(clip, fils);
+
+						\ -> iter(fils, deleteNative)
+					}
+				)
+			}
+		}
+		FCursor(shape, form) : {
+			cursorListeners = makeGlobalCursorListeners(shape, zorder);
+
+			d = renderFForm(
+				FInteractive(
+					cursorListeners.first,
+					form
+				),
+				zorder
+			);
+
+			FRenderResult(
+				d.clips,
+				arrayPush(d.disposers, cursorListeners.second),
+				d.capabilities
+			)
+		}
+		FInspect(inspectors, form): {
+			d = renderFForm(form, zorder);
+			disps : ref [() -> void] = ref [];
+
+			iter(inspectors, \i ->
+				switch (i : FInspector) {
+					ITransformMatrix(setfn): {
+						if (length(d.clips) > 0) {
+							// interruptibleDeferUntilNextFrameRendered to have form built and transforms calculated
+							refArrayPush(disps, interruptibleDeferUntilNextFrameRendered(\ -> setfn(\ -> getGlobalTransform(d.clips[0]))));
+							refArrayPush(disps, \ -> setfn(getDummyTransformMatrix));
+						}
+					}
+					default: {}
+				}
+			);
+
+			if (length(^disps) > 0)
+				FRenderResult(
+					d.clips,
+					concat(d.disposers, ^disps),
+					d.capabilities
+				)
+			else
+				d
+		}
+		FCrop2(left, top, cwidth, cheight, form, stack): {
+			d = renderFForm(form, zorder);
+			// TODO: Find out if the child supports clipping
+			clip = makeClip();
+			setClipCallstack(clip, stack);
+			setClipDebugInfo(clip, "form", rform);
+
+			u = makeSubscribe(fselect4(left, top, cwidth, cheight, \l, t, w, h -> setScrollRect(clip, l, t, w, h)), nop1)();
+
+			// Opengl target forbids using any transformation natives on the same clip as setScrollRect
+			caps = if (opengl) FClipCapabilities(false, false, false, false, true) else allFClipCapabilities;
+
+			attachFChildren(
+				clip,
+				d.clips,
+				arrayPush(d.disposers, \ -> {u(); deleteNative(clip)}),
+				caps
+			)
+		}
+		FControlFocus(focus, form): {
+			d = renderFForm(form, zorder);
+
+			if (length(d.clips) > 0) {
+				uns = makeSubscribe(focus, \fc -> setFocus(d.clips[0], fc))();
+
+				FRenderResult(
+					d.clips,
+					arrayPush(d.disposers, uns),
+					d.capabilities
+				);
+			} else {
+				d;
+			}
+		}
+		FMForm(form): {
+			d = renderForm(form, const(zeroWH), zorder, zorder);
+
+			FRenderResult(
+				d.clips,
+				d.disposers,
+				FClipCapabilities(d.capabilities.move, d.capabilities.filters, d.capabilities.interactive, d.capabilities.scale, d.capabilities.alpha)
+			)
+		}
+		FBaseline(__, form): renderFForm(form, zorder);
+		FSize2(__, form): renderFForm(form, zorder);
+		FAvailable2(__, form): renderFForm(form, zorder);
+		FAccess(properties, form): {
+			accessVisible = extractStruct(properties, FAccessVisible(const(true))).visible;
+			accessCallback = ref None();
+
+			if (^accessibilityEnabled || ^fAccessibilityEnabled) {
+				attributes : (native) -> () -> void = \clip ->
+					fold(properties, Pair(setTree(makeTree1("zorder", \ -> i2s(zorder[0])), "nodeindex", \ -> strGlue(map(zorder, i2s), " ")), []),
+						\acc : Pair<Tree<string, () -> string>, [() -> () -> void]>, p -> {
+							switch (p : FAccessProperty) {
+								AccessRole(r): {
+									Pair(
+										setTree(acc.first, "role", \ -> r),
+										acc.second
+									);
+								}
+								AccessDescription(ds): {
+									Pair(
+										setTree(acc.first, "description", \ -> ds),
+										acc.second
+									);
+								}
+								FAccessTabOrder(ti): {
+									uns = makeSubscribe2(ti, \i -> setAccessAttributes(clip, [["nodeindex", strGlue(map(i, i2s), " ")]]));
+
+									Pair(
+										setTree(acc.first, "nodeindex", \ -> strGlue(map(fgetValue(ti), i2s), " ")),
+										arrayPush(acc.second, uns)
+									)
+								}
+								AccessKbdShortcutString(s) : {
+									uns = \ -> addKeyboardShortcut(s, extractStruct(properties, AccessDescription("")).description);
+
+									Pair(
+										acc.first,
+										arrayPush(acc.second, uns)
+									)
+								}
+								FAccessAttribute(name, val): {
+									uns = makeSubscribe2(val, \v -> setAccessAttributes(clip, [[name, v]]));
+
+									Pair(
+										setTree(acc.first, name, \ -> fgetValue(val)),
+										arrayPush(acc.second, uns)
+									)
+								}
+								AccessSelectable(): {
+									Pair(
+										setTree(acc.first, "selectable", \ -> "true"),
+										acc.second
+									)
+								}
+								AccessCallback(cb): {
+									accessCallback := Some(cb);
+
+									acc
+								}
+								AccessChildSelected(acsFn): {
+									uns = \ -> addExtendedEventListener(clip, "childfocused", \args : [flow]-> {
+										a0 = flow2d(args[0]);
+										a1 = flow2d(args[1]);
+										a2 = flow2d(args[2]);
+										a3 = flow2d(args[3]);
+										acsFn(Point(a0, a1), WidthHeight(a2, a3))
+									});
+
+									Pair(
+										acc.first,
+										arrayPush(acc.second, uns)
+									)
+								}
+								AccessFocused(focused) : {
+									focusGate = make(true);
+
+									switchFocus = \focus -> {
+										nextDistinct(focusGate, false);
+										nextDistinct(focused, focus);
+										nextDistinct(focusGate, true);
+									};
+
+									uns =
+										[
+											\ -> addEventListener(clip, "focusin", \ -> switchFocus(true)),
+											\ -> addEventListener(clip, "focusout", \ -> switchFocus(false)),
+											\ -> {
+												ignoreGate = ignoreu(focusGate, focused);
+
+												[
+													subscribe2(ignoreGate.value, \v -> setFocus(clip, v)),
+													ignoreGate.dispose
+												]
+												|> (\f -> \ -> applyall(f))
+											}
+										];
+
+									Pair(
+										acc.first,
+										concat(acc.second, uns)
+									)
+								}
+								FAccessEnabled(en): {
+									uns = makeSubscribe2(en, \e -> setAccessAttributes(clip, [["enabled", b2s(e)]]));
+
+									Pair(
+										setTree(acc.first, "enabled", \ -> b2s(fgetValue(en))),
+										arrayPush(acc.second, uns)
+									)
+								}
+								FAccessTabindex(ti) : {
+									uns = makeSubscribe2(ti, \t -> setAccessAttributes(clip, [["tabindex", i2s(t)]]));
+
+									Pair(
+										setTree(acc.first, "tabindex", \ -> i2s(fgetValue(ti))),
+										arrayPush(acc.second, uns)
+									)
+								}
+								AccessState(state): {
+									uns = makeSubscribe2(state, \v -> setAccessAttributes(clip, [["aria-checked", v]]));
+
+									Pair(
+										setTree(acc.first, "aria-checked", \ -> getValue(state)),
+										arrayPush(acc.second, uns)
+									)
+								}
+								FAccessZorder(zo): {
+									uns = makeSubscribe2(zo, \z -> setAccessAttributes(clip, [["zorder", i2s(z)]]));
+
+									Pair(
+										setTree(acc.first, "zorder", \ -> i2s(fgetValue(zo))),
+										arrayPush(acc.second, uns)
+									)
+								}
+								FAccessVisible(__): {
+									acc;
+								}
+						}
+					})
+					|> (\attributes : Pair<Tree<string, () -> string>, [() -> () -> void]> -> {
+						uns =
+							makeSubscribeUns(accessVisible, \av ->
+								if (!av) {
+									removeAccessAttributes(clip);
+									[]
+								} else {
+									disp = map(attributes.second, apply0);
+									setAccessAttributes(clip, map(tree2pairs(attributes.first), \p : Pair<string, () -> string> -> [p.first, p.second()]));
+									maybeApply(^accessCallback, \cb -> setAccessCallback(clip, cb));
+									disp;
+								}
+							)();
+
+						\ -> {
+							uns();
+							removeAccessAttributes(clip);
+						}
+					});
+
+				d = renderFForm(form, zorder);
+
+				makeAccessClip = !contains(["", "button", "checkbox", "textbox", "video", "iframe"], extractStruct(properties, AccessRole("")).role) ||
+					isSome(tryExtractStruct(properties, AccessChildSelected(nop2)));
+
+				if (makeAccessClip) {
+					attachFChildAndCapability(
+						rform,
+						attachFChildAndCapability(
+							rform,
+							d,
+							true,
+							d.capabilities,
+							\__ -> nop
+						),
+						false,
+						d.capabilities,
+						attributes
+					);
+				} else {
+					attachFChildAndCapability(
+						rform,
+						d,
+						true,
+						d.capabilities,
+						attributes
+					);
+				}
+			} else {
+				renderFForm(form, zorder);
+			}
+		}
+		FRealHTML(url, wh, style): {
+			zoom_enabled = ref const(false);
+			mouse_disabled = ref const(false);
+			sandbox = ref None();
+
+			domain = extractStruct(style, OverridePageDomain("")).domain;
+			updateCachedContent = extractStruct(style, UpdateCachedContent(true)).update;
+			reloadBlock = extractStruct(style, ReloadBlock(false)).show;
+
+			flowCallback = extractStruct(style, FlowCallback(\args : [string] -> { "" })).fn;
+			onPageLoaded = extractStruct(style, OnPageLoaded(nop)).fn;
+			onError = extractStruct(style, OnError(nop1)).fn;
+			onDone = \s -> if (s == "OK") onPageLoaded() else onError(s);
+			shrink2fit = containsStruct(style, RealHtmlShrink2Fit());
+
+			clip = makeWebClip(url, domain, updateCachedContent, reloadBlock, flowCallback, onDone, shrink2fit);
+
+			disp =
+				fold(
+					style,
+					[makeSubscribe(wh, \whv ->  {setClipScaleX(clip, whv.width / 100.0); setClipScaleY(clip, whv.height / 100.0);})()],
+					\acc, st ->
+						switch(st : RealHTMLStyle) {
+							PageHostcallSetter(fn): {
+								fn(\name, args -> webClipHostCall(clip, name, args));
+								acc;
+							}
+							PageEvalJS(fn): {
+								fn(\code -> webClipEvalJS(clip, code));
+								acc;
+							}
+							ZoomEnabled(enabled): {
+								arrayPush(acc, makeSubscribe(enabled, \en -> setWebClipZoomable(clip, en))())
+							}
+							MouseDisabled(disabled): {
+								arrayPush(acc, makeSubscribe(disabled, \dis -> setWebClipDisabled(clip, dis))())
+							}
+							SandBoxJS(sboxes) : {
+								setWebClipSandBox(
+									clip,
+									strGlue(
+										map(sboxes, \sb ->
+											switch (sb : SandBoxJSStyle) {
+												AllowSameOrigin()		: "allow-same-origin";
+												AllowTopNavigation()	: "allow-top-navigation";
+												AllowForms()	: "allow-forms";
+												AllowScripts()	: "allow-scripts";
+											}
+										),
+										" "
+									)
+								);
+
+								acc;
+							}
+							WhitelistDomains(domains): {
+								setWebClipDomains(clip, domains);
+
+								acc;
+							}
+							default: acc;
+						}
+				)
+				|> (\disp -> arrayPush(disp, \ -> deleteNative(clip)));
+
+			if (^accessibilityEnabled || ^fAccessibilityEnabled) {
+				setAccessAttributes(clip, [["zorder", toString(zorder[0])]]);
+			}
+
+			FRenderResult(
+				[clip],
+				disp,
+				FClipCapabilities(true, false, true, false, true)
+			);
+		}
+		FVideo(filename, wh, style): {
+			streamListenerResponse = ref false;
+			decreaseFFilesCount = if (cpp) increaseFFilesCount() else nop;
+			realVideoSize = extractStruct(style, FVideoRealSize(make(getValue(wh)))).size;
+
+			playing = extractStruct(style, FVideoPlay(make(true))).play;
+			position = extractStruct(style, FVideoPosition(make(0.))).position;
+			errorHandlerFn = extractStruct(style, OnVideoLoadingError(nop)).fn;
+			streamListenerFn = extractStruct(style, StreamStatus(nop1)).fn;
+			synchroCalls = extractStruct(style, SynchroCalls(nop, nop));
+			keepAspectRation = extractStruct(style, FVideoKeepAspectRatio(const(true))).keep;
+			duration = extractStruct(style, FVideoLength(make(1.))).length;
+
+			volume = tryExtractStruct(style, FVideoVolume(make(1.)));
+			fullscreen = tryExtractStruct(style, FVideoFullscreen(make(false)));
+			controls = extractStruct(style, FVideoControls([])).controls;
+			subtitles = tryExtractStruct(style, FVideoSubtitles(const(VideoSubtitle("", []))));
+			looping = tryExtractStruct(style, FVideoLoop(const(false)));
+			timeRange = tryExtractStruct(style, FVideoTimeRange(const(0.), const(0.)));
+			playbackRate = tryExtractStruct(style, FVideoPlaybackRate(make(0.)));
+
+			video =
+				makeVideo(
+					\w, h -> {
+						nextDistinct(realVideoSize, WidthHeight(w, h));
+						if (getValue(wh).width == 0. && getValue(wh).height == 0.) {
+							nextDistinct(wh, WidthHeight(w, h));
+						}
+
+						decreaseFFilesCount();
+					},
+					\p -> {
+						streamListenerResponse := true;
+						nextDistinct(playing, p);
+						streamListenerResponse := false;
+					},
+					\len -> {
+						nextDistinct(duration, len);
+					},
+					\pos -> {
+						streamListenerResponse := true;
+						nextDistinct(position, pos);
+						streamListenerResponse := false;
+					}
+				);
+
+			playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing));
+
+			if (controls != []) setVideoControls(video, controls);
+
+			streamListener = addStreamStatusListener(video, \code -> {
+				if (code == "NetStream.Play.StreamNotFound") {
+					errorHandlerFn();
+					decreaseFFilesCount();
+					synchroCalls.onStart();
+					timer(1000, synchroCalls.onStop);
+				} else if (code == "NetStream.Play.Start") {
+					synchroCalls.onStart();
+				} else if (code == "NetStream.Play.Stop") {
+					synchroCalls.onStop();
+				} else if (code == "FlowGL.User.Resume") {
+					if (!getValue(playing)) {
+						synchroCalls.onStart();
+					}
+				} else if (code == "FlowGL.User.Stop") {
+					synchroCalls.onStop();
+				}
+
+				streamListenerFn(code);
+			});
+
+			disp =
+				concatA([
+					[
+						streamListener,
+						make2Subscribe(fpair(realVideoSize, wh), keepAspectRation, \pr, kar -> {
+							rwh = firstOfPair(pr);
+							cwh = secondOfPair(pr);
+
+							if (rwh.width > 0. && cwh.width > 0. && rwh.height > 0. && cwh.height > 0.) {
+								xScale = cwh.width / rwh.width;
+								yScale = cwh.height / rwh.height;
+
+								if (kar) {
+									xyScale = min(xScale, yScale);
+									setClipScaleX(video, xyScale);
+									setClipScaleY(video, xyScale);
+									setClipX(video, max(cwh.width - rwh.width * xyScale, 0.) / 2.);
+									setClipY(video, max(cwh.height - rwh.height * xyScale, 0.) / 2.);
+								} else {
+									setClipScaleX(video, xScale);
+									setClipScaleY(video, yScale);
+									setClipX(video, 0.);
+									setClipY(video, 0.);
+								}
+							}
+						})(),
+						makeSubscribe2(playing, \pl -> if (!^streamListenerResponse) { if (pl) resumeVideo(video) else pauseVideo(video) })(),
+						makeSubscribe(position, \pos -> if (!^streamListenerResponse) seekVideo(video, pos))(),
+						decreaseFFilesCount
+					],
+					if (targetVideoLooping())
+						eitherMap(
+							looping,
+							\lp ->
+								[
+									makeSubscribe(lp.loop, \l -> setVideoLooping(video, l))()
+								],
+							[]
+						)
+					else
+						[],
+					eitherMap(
+						volume,
+						\vol ->
+							[
+								makeSubscribe(vol.volume, \v -> setVideoVolume(video, v))()
+							],
+						[]
+					),
+					eitherMap(
+						timeRange,
+						\tr ->
+							[
+								make2Subscribe(tr.start, tr.end, \s, e -> setVideoTimeRange(video, s, e))()
+							],
+						[]
+					),
+					if (!android())
+						eitherMap(
+							playbackRate,
+							\pr ->
+								[
+									makeSubscribe(pr.rate, \rate -> setVideoPlaybackRate(video, rate))()
+								],
+							[]
+						)
+					else
+						[],
+					eitherMap(
+						fullscreen,
+						\fs -> {
+							resize = ref nop;
+							prevWH = ref getValue(wh);
+
+							[
+								onFullScreen(\v -> nextDistinct(fs.fullscreen, v)),
+								makeSubscribe(fs.fullscreen, \v -> {
+									setFullWindowTarget(video);
+
+									^resize();
+
+									if (v) {
+										prevWH := getValue(wh);
+										nextDistinct(wh, WidthHeight(getStageWidth(), getStageHeight()));
+										resize := monitorFResize(wh);
+									} else {
+										nextDistinct(wh, ^prevWH);
+									}
+
+									toggleFullScreen(v);
+									toggleFullWindow(v);
+								})(),
+								resetFullWindowTarget,
+								\ -> ^resize()
+							]
+						},
+						[]
+					),
+					eitherMap(
+						subtitles,
+						\sbt ->
+							[
+								makeSubscribe(sbt.subtitles, \s -> {
+									definedTextStyle = getDefinedTextStyle(s.style);
+									setVideoSubtitle(
+										video,
+										s.text,
+										definedTextStyle.fontFamily,
+										definedTextStyle.fontSize,
+										definedTextStyle.fontWeight,
+										definedTextStyle.fontSlope,
+										definedTextStyle.fillColor,
+										definedTextStyle.fillOpacity,
+										definedTextStyle.letterSpacing,
+										definedTextStyle.backgroundColor,
+										definedTextStyle.backgroundOpacity
+									);
+								})()
+							],
+						[]
+					),
+					[
+						\ -> closeVideo(video),
+						\ -> deleteNative(video),
+					]
+				]);
+
+			FRenderResult(
+				[video],
+				disp,
+				FClipCapabilities(true, false, false, false, false)
+			);
+		}
+		FTextInput(content, wh, style): {
+			textInputResponse = ref false;
+			characterStyle = style2characterStyle(style);
+			textfield = makeTextfield(getFontFamily(characterStyle));
+			setTextInput(textfield);
+			setTextDirection(textfield, if (getDefaultRtl()) "rtl" else "ltr");
+
+			focus = extractStruct(style, FFocus(make(false))).focus;
+			position = extractStruct(style, FPosition(make(0))).position;
+			selection = extractStruct(style, FSelection(make(-1))).selection;
+			scrollInfo = extractStruct(style, FScrollInfo(make(ScrollInfo(0, 0, 0)))).info;
+
+			inputType = extractStruct(style, FInputType(const(TextType()))).type;
+			autoAlign = extractStruct(style, FAutoAlign(const(AutoAlignNone()))).align;
+			wordWrap = extractStruct(style, FWordWrap(const(true))).wrap;
+			multiline = extractStruct(style, FMultiline(const(false))).multiline;
+			readOnly = extractStruct(style, FReadOnly(const(false))).readOnly;
+			maxChars = extractStruct(style, FMaxChars(const(-1))).maxChars;
+			filterFn = tryExtractStruct(style, FInputFilter(idfn));
+			keyFilterFn = tryExtractStruct(style, FInputKeyFilter(\__, __ -> true));
+			cursorColor = extractStruct(style, FCursorColor(const(extractStruct(characterStyle, Fill(0)).color))).color;
+			cursorOpacity = extractStruct(style, FCursorOpacity(const(extractStruct(characterStyle, FillOpacity(1.)).opacity))).opacity;
+			cursorWidth = tryExtractStruct(style, FCursorWidth(const(2.)));
+
+			disp =
+				concatA([
+					[
+						makeSubscribe(content, \c ->
+							if (!^textInputResponse) defineTextStyle(textfield, c, characterStyle)
+						)(),
+						makeSubscribe(wh, \v -> /*if (!^textInputResponse)*/ {
+							setTextFieldWidth(textfield, v.width);
+							setTextFieldHeight(textfield, v.height);
+						})(),
+						makeSubscribe(focus, \f ->
+							if (!^textInputResponse) deferred(\ -> setFocus(textfield, f))
+						)(),
+						make2Subscribe(position, selection, \p, s -> if (!^textInputResponse) setSelection(textfield, p, s))(),
+						makeSubscribe(inputType, \t -> setTextInputType(textfield,
+							switch (t : InputType) {
+								EmailType(): "email";
+								TelType(): "tel";
+								UrlType(): "url";
+								TextType(): "text";
+								NumericType(): "number";
+								SearchType(): "search";
+								PasswordType(): "password";
+							}
+						))(),
+						makeSubscribe(autoAlign, \aa -> setAutoAlign(textfield,
+							switch (aa : AutoAlignType) {
+								AutoAlignLeft(): "AutoAlignLeft";
+								AutoAlignRight(): "AutoAlignRight";
+								AutoAlignCenter(): "AutoAlignCenter";
+								AutoAlignNone(): "AutoAlignNone";
+							}
+						))(),
+						makeSubscribe(wordWrap, \ww -> {
+							setTextFieldCropWords(textfield, ww && fgetValue(multiline));
+							setWordWrap(textfield, ww);
+						})(),
+						makeSubscribe(multiline, \ml -> {
+							setTextFieldCropWords(textfield, ml && fgetValue(wordWrap));
+							setMultiline(textfield, ml);
+						})(),
+						makeSubscribe(readOnly, \ro -> setReadOnly(textfield, ro))(),
+						makeSubscribe(maxChars, \mc -> setMaxChars(textfield, mc))(),
+						addEventListener(textfield, "change", \ -> {
+							textInputResponse := true;
+							nextDistinct(content, getContent(textfield));
+							// nextDistinct(wh, WidthHeight(getTextFieldWidth(textfield), getTextFieldHeight(textfield)));
+							nextDistinct(position, getCursorPosition(textfield));
+							nextDistinct(selection, getSelectionEnd(textfield));
+							nextDistinct(focus, getFocus(textfield));
+							textInputResponse := false;
+						}),
+						addEventListener(textfield, "scroll", \ ->
+							nextDistinct(scrollInfo, ScrollInfo(
+								getScrollV(textfield),
+								getBottomScrollV(textfield),
+								getNumLines(textfield)
+							))
+						),
+						addEventListener(textfield, "focusin", \ -> {
+							textInputResponse := true;
+							nextDistinct(focus, true);
+							textInputResponse := false;
+						}),
+						addEventListener(textfield, "focusout", \ -> {
+							textInputResponse := true;
+							nextDistinct(focus, false);
+							textInputResponse := false;
+						}),
+						make2Subscribe(cursorColor, cursorOpacity, \c, o -> setTextFieldCursorColor(textfield, c, o))()
+					],
+					eitherMap(
+						filterFn,
+						\fn ->
+							[addTextInputFilter(textfield, fn.fn)],
+						[]
+					),
+					eitherMap(
+						keyFilterFn,
+						\fn ->
+							[
+								addTextInputKeyEventFilter(textfield, "keydown", \utf, ctrl, shift, alt, meta, keycode ->
+									fn.fn("keydown", KeyEvent(utf, ctrl, shift, alt, meta, keycode, nop))),
+								addTextInputKeyEventFilter(textfield, "keyup", \utf, ctrl, shift, alt, meta, keycode ->
+									fn.fn("keyup", KeyEvent(utf, ctrl, shift, alt, meta, keycode, nop)))
+							],
+						[]
+					),
+					eitherMap(
+						cursorWidth,
+						\cw ->
+							[makeSubscribe(cw.width, \w -> setTextFieldCursorWidth(textfield, w))()],
+						[]
+					)
+				]);
+
+			FRenderResult(
+				[textfield],
+				disp,
+				FClipCapabilities(true, false, true, false, false)
+			);
+		}
+		FSetPending(pen, form): renderFForm(form, zorder);
+		FNativeForm(__, __, __, fn): {
+			d = fn(const(zeroWH), [], []);
+
+			FRenderResult(
+				d.clips,
+				[d.dispose],
+				FClipCapabilities(false, false, false, false, false)
+			)
+		}
+	}
+}
+
+increaseFFilesCount() -> () -> void {
+	alreadyDecreased = ref false;
+
+	next(loadingContentFilesCount, getValue(loadingContentFilesCount) + 1);
+	\ -> if (!^alreadyDecreased) {
+		alreadyDecreased := true;
+		next(loadingContentFilesCount, getValue(loadingContentFilesCount) - 1);
+	}
+}

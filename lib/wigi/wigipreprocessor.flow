@@ -1,0 +1,41 @@
+import illusion/illusion_preprocessor;
+import formats/wiki/wikipreprocessor;
+
+import wigi/wigi_engine;
+export {
+	makeIuWigiPreprocessor(engine : WigiEngine, logVarUsage : (string) -> void) -> IuPreprocessor;
+}
+
+makeIuWigiPreprocessor(engine, logVarUsage) {
+	// vb = getValueFromEngine(engine, "x", WigiDouble(0.0));
+	// db : Behaviour<double> = select(vb, wigiValue2Double);
+	doublePreprocessor = \d : IuDoubleVar -> {
+		getWigiVarName = \s -> strRight(s, 1); //Drop leading $
+		subselect(
+			d.source,
+			\source -> {
+				eitherFn(
+					getValueFromEngine2(engine, globalWigiNamespace, getWigiVarName(source), false),
+					\wb -> {
+						logVarUsage(getWigiVarName(source));
+						select(wb, \val -> Pair(true, wigiValue2Double(val)))
+					},
+					\ -> {
+						r : DynamicBehaviour<Pair<bool, double>> = make(Pair(false, 0.0));
+						doPreprocess = \ -> {
+							next(r, wikiPreprocessDouble(source))
+						} //#38173
+						vars = doPreprocess |> GetAllTheUsedVarsEx |> wikiVarsList2array;
+						if (getValue(r).first) {
+							iter(vars, \var -> var |> logVarUsage)
+						}
+						r
+					}
+				)
+			}
+		)
+	}
+	intPreprocessor = doublePreprocessor |> makeIntPreprocessor;
+	IuPreprocessor(intPreprocessor, doublePreprocessor) |> makePreviewPreprocessor
+}
+

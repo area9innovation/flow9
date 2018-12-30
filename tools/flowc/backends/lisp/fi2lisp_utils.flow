@@ -1,0 +1,164 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/lisp/fi2lisp_defines;
+import tools/flowc/incremental/fiprogram;
+import list;
+
+export {
+	fiType2LispType(cfg: FcLISPConfig, program: FiProgram, type: FiType) -> string;
+	fiType2LispCoerce(cfg: FcLISPConfig, program: FiProgram, type: FiType) -> string;
+	fiCollectLispStructs(cfg: FcLISPConfig, program: FiProgram) -> string;
+	fiEscapeStringLisp(s : string) -> string;
+	/// Similar to stringFold, but transforms Flow's escape sequences \xHH, \XHHHH and \uHHHH to
+	/// their integer representation, for example, \xAB -> 171.
+	// stringFoldDecode : (s : string, a : ?, f : (a2 : ?, c : int) -> ?) -> ?;
+}
+
+fiType2LispType(cfg, program, type) {
+	switch (type) {
+		FiTypeArray(t)               : "(SIMPLE-VECTOR *)";
+		FiTypeFunction(args, rt)     : "(FUNCTION (" + strGlue(map(args, \__ -> "T"), " ") + "))";
+		FiTypeRef(t)                 : "Reference";
+		FiTypeParameter(n)           : "T";
+		FiTypeBool()                   : "T";
+		FiTypeInt()                    : "FIXNUM";
+		FiTypeDouble()                 : "DOUBLE-FLOAT";
+		FiTypeString()                 : "(SIMPLE-ARRAY CHARACTER (*))";
+		FiTypeFlow()                   : "T";
+		FiTypeVoid()                   : "T";
+		FiTypeNative()                 : "T";
+		FiTypeName(name, params)     : "T";
+	}
+}
+
+fiType2LispCoerce(cfg, program, type) {
+	switch (type) {
+		FiTypeArray(t)               : "ARRAY";
+		FiTypeFunction(args, rt)     : "FUNCTION";
+		FiTypeRef(t)                 : "REF";
+		FiTypeParameter(n)           : "PARAMETER";
+		FiTypeBool()                   : "BOOL";
+		FiTypeInt()                    : "INT";
+		FiTypeDouble()                 : "DOUBLE";
+		FiTypeString()                 : "STRING";
+		FiTypeFlow()                   : "FLOW";
+		FiTypeVoid()                   : "VOID";
+		FiTypeNative()                 : "NATIVE";
+		FiTypeName(name, params)     : "NAME";
+	}
+}
+
+fiLispDefmethodContents(cfg : FcLISPConfig, args : [FiStructArg], structName : string) {
+	if (args == []) {
+		"  0"
+	} else {
+		zeroAnswer = strRepeat(" ", (length(args) * 2)) + "    0\n";
+		foldi(reverseA(args), zeroAnswer, \ix, acc, e -> {
+			ename = fiLispRenameKeyword(cfg, e.name, true);
+			fcmp = "cmp-" + ename;
+			getter = structName + "-" + ename;
+			ind = strRepeat(" ", ((length(args)-ix) * 2));
+			ind + "(let ((" + fcmp + " (FCompare (" + getter + " a) (" + getter + " b))))\n" + 
+			ind + "  (if (zerop " + fcmp + ")\n" +
+			acc +
+			ind + "    " + fcmp + "))" + (if (ix == length(args)-1) "" else "\n");
+		});
+	}
+}
+
+fiProcessLispStruct(cfg : FcLISPConfig, program : FiProgram, name : string, struct : FiTypeStruct, init : string, n : int) {
+	// fcPrintln("HIA: name (enter) = " + name);
+	//	if (name == "JsonObject") fcPrintln("HIA: " + toString(struct));
+	fields0 = if (length(struct.args) == 0)
+			""
+		else {
+			"\n" + fiLispIndent + strGlue(mapi(struct.args, \i, e -> {
+				tp = fiType2LispType(cfg, program, e.type);
+				tpe = fiType2LispCoerce(cfg, program, e.type);
+				ename = fiLispRenameKeyword(cfg, e.name, true);
+				"(" + ename +
+				" nil" +
+				(if (tp != "") " :type " + (if (tpe == "DOUBLE") " T" else tp) else "") + " :read-only " + (if (e.ismutable) "NIL" else "T") + ")";
+			}), "\n" + fiLispIndent);
+		}
+
+
+	if (name == "List") {
+		fcPrintln("HIA: name = " + name);
+		fcPrintln(fiLispRenameKeyword(cfg, name, true));
+	}
+	structName = fiLispRenameKeyword(cfg, name, false);
+	nameNfields = "(list \"" + name + "\" " +
+	strGlue(map(struct.args, \e -> {
+		"'" + structName + "-" + fiLispRenameKeyword(cfg, e.name, true)
+	}), " ") +
+	")";
+	cfg.structNames ::= setTree(cfg.structNames, name, n);
+	cfg.structFields ::= setTree(cfg.structFields, name, nameNfields);
+	defmethodContents = fiLispDefmethodContents(cfg, struct.args, structName);
+	defmethod =
+		";(declaim (ftype (function (" + structName + " " + structName + ") fixnum) fl-compare))\n"+
+		"(defmethod fl-compare ((a " + structName + ") (b " + structName + "))\n" +
+		defmethodContents +
+		")\n\n";
+
+
+	list2string(
+		Cons(defmethod,
+			Cons("(defstruct (" + structName + " (:include Flow))" + fields0 + ")\n\n",
+				Cons(init, EmptyList()))));
+}
+
+
+fiCollectLispStructs(cfg, program) {
+	n : ref int = ref 2; // 0 - flow, 1 - reference
+	unions = if (program.names.unions == makeTree())
+			""
+	else {
+		uns = fold(program.traversal, "", \acc, mname -> {
+			md = lookupTree(program.modules, mname);
+			eitherFn(md, \module -> {
+				unions1  = fold(module.unions, acc, \acc1, union -> {
+					acc1 + "(defstruct (" + fiLispRenameKeyword(cfg, union.name, false) + " (:include Flow)))\n\n"
+				});
+				structs1 = fold(module.structs, unions1, \acc1, struct -> {
+					n := ^n + 1;
+					fiProcessLispStruct(cfg, program, struct.name, struct, acc1, ^n);
+				});
+				structs1;
+			}, \ -> acc);
+		});
+		uns;
+	}
+	"(in-package :sm)\n\n" + 
+	unions;
+}
+
+fiEscapeStringLisp(s) {
+	if (strlen(s) == 1 && getCharCodeAt(s, 0) < 256)  {
+		// Since Common Lisp can use any UTF characters in string,
+		// usage of non-UTF character sequences is not so easy.
+		// If we insert \xFF symbol into string (ÿ), it will be changed
+		// to UTF sequence 195 191, two symbols.
+		// So, in generated code we change one-symbol-string to next
+		// command.
+		// It obviously will not work for characters inside string,
+		// but Flowc compiler has only \xFF sequence in use
+		// (no other symbols in form \xHH above \x7F.
+		cc = getCharCodeAt(s, 0);
+		"(string (code-char " + i2s(cc) + "))"
+	} else if (strlen(s) > 0 && getCharCodeAt(s, 0) < 32) {
+		stringFold(s, "(concatenate 'string ", \acc, code -> {
+			acc + "(string (code-char " + i2s(code) + "))"
+		}) + ")";
+	} else {
+		// We use Cons() concatenation instead of string concatenation,
+		// because structures creation and list2string() call is
+		// much cheaper than usual string concatenation.
+		f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+			Cons(if (code == 0x22) "\\\""
+				else if (code == 0x5c) "\\\\"
+				else fromCharCode(code), acc)
+		});
+		list2string(Cons("\"", f));
+	}
+}

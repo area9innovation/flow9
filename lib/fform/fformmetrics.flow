@@ -1,0 +1,259 @@
+import fform/fformutils;
+import formtransforms;
+import loop;
+
+export {
+	isStaticFForm(fform : FForm) -> bool;
+	findTaggedFFormPositionScale(f : FForm, tag : int) -> Maybe<PositionScale>;
+	takeFSnapshot(fform : FForm) -> FForm;
+}
+
+isStaticFForm(fform : FForm) -> bool {
+	switch (fform : FForm) {
+		FEmpty() : true;
+		FGraphics(__, __) : true;
+		FText(__, __) : true;
+
+		FCreate2(current, fn) : isStaticFForm(if (^current != FEmpty()) ^current else fn());
+		FMutable2(form, __) : isFConst(form) && isStaticFForm(fgetValue(form));
+		FRealHTML(__, wh, __) : isFConst(wh);
+		FParagraph(__, style) : false; // TODO:
+		FPicture(__, __, __) : false;
+		FDynamicGroup2(__, __, __) : false;
+		FVideo(__, __, __) : false;
+		FTextInput(__, __, __) : false;
+		FNativeForm(__, __, __, __) : false;
+		FDecorator2(__, __, __, __) : false; // TODO:
+
+		FTranslate(x, y, form) : isFConst(x) && isFConst(y) && isStaticFForm(form);
+		FScale(x, y, f) : isFConst(x) && isFConst(y) && isStaticFForm(f);
+		FRotate(d, form) : isFConst(d) && isStaticFForm(form);
+		FAlpha(a, form) : isFConst(a) && isStaticFForm(form);
+		FVisible(v, form) : isFConst(v) && isStaticFForm(form);
+		FRenderable(r, form) : isFConst(r) && isStaticFForm(form);
+		FMask2(form, mask, stack) : isStaticFForm(form) && isStaticFForm(mask);
+		FGroup(layers, __) : forall(layers, \l -> isStaticFForm(l));
+		FGroup2(layer1, layer2, __) : isStaticFForm(layer1) && isStaticFForm(layer2);
+		FSize2(wh, form) : isConst(wh) && isStaticFForm(form);
+		FBaseline(baseline, form) : isConst(baseline) && isStaticFForm(form);
+		FCrop2(l, t, w, h, form, __) : isFConst(l) && isFConst(t) && isFConst(w) && isFConst(h) && isStaticFForm(form);
+
+		FBorder(__, __, __, __, form) : isStaticFForm(form);
+		FAvailable2(__, form) : isStaticFForm(form);
+		FInteractive(__, form) : isStaticFForm(form);
+		FFilter2(__, form, __) : isStaticFForm(form);
+		FCursor(__, form) : isStaticFForm(form);
+		FInspect(__, form) : isStaticFForm(form);
+		FFullWindow(__, __, form) : isStaticFForm(form);
+		FConstructor(form, __) : isStaticFForm(form);
+		FAccess(__, form) : isStaticFForm(form);
+		FControlFocus(__, form) : isStaticFForm(form);
+		FSetPending(__, form) : isStaticFForm(form);
+
+		FMForm(form) : {
+			if (isConvertableForm(form))
+				isStaticFForm(form2fform(form))
+			else
+				isStaticForm(form);
+		}
+	}
+}
+
+findTaggedFFormPositionScale(f : FForm, tag : int) -> Maybe<PositionScale> {
+	ftfps = \ff -> findTaggedFFormPositionScale(ff, tag);
+	cps = \ps, ff -> eitherMap(ftfps(ff), \p -> Some(concatPositionScale(ps, p)), None());
+
+	switch (f) {
+		FInspect(i, form) : if (extractStruct(i, ITag(tag - 1)).i == tag) Some(zeroPositionScale) else ftfps(form);
+
+		FEmpty() : None();
+		FText(__, __) : None();
+		FParagraph(__, __) : None();
+		FGraphics(__, __) : None();
+		FPicture(__, __, __) : None();
+		FRealHTML(__, __, __) : None();
+		FVideo(__, __, __) : None();
+		FTextInput(__, __, __) : None();
+
+		FTranslate(x, y, form) : cps(PositionScale(Point(fgetValue(x), fgetValue(y)), zeroScale), form);
+		FCrop2(left, top, width, height, form, stack) : cps(PositionScale(Point(-fgetValue(left), -fgetValue(top)), zeroScale), form);
+		FBorder(left, top, right, bottom, form) : cps(PositionScale(Point(left, top), zeroScale), form);
+		FScale(x, y, form) : cps(PositionScale(zeroPoint, zeroScale), form);
+
+		FGroup(layers, __) : foldWhile2(layers, None(), \__, l -> eitherMap(ftfps(l), \ps -> Pair(Some(ps), true), Pair(None(), false)));
+		FGroup2(layer1, layer2, __) : eitherFn(ftfps(layer1), \ps -> Some(ps), \ -> ftfps(layer2));
+		FDecorator2(layer1, decorators, __, __) : eitherFn(ftfps(layer1), \ps -> Some(ps), \ ->
+			foldWhile2(decorators, None(), \__, d -> eitherMap(ftfps(d.second()), \ps -> Pair(Some(ps), true), Pair(None(), false))));
+		FDynamicGroup2(__, currentStack, __) :
+			foldWhile2(getValue(currentStack), None(), \__, l -> eitherMap(ftfps(l), \ps -> Pair(Some(ps), true), Pair(None(), false)));
+
+		FRotate(__, form) : ftfps(form); // TODO:
+		FAlpha(__, form) : ftfps(form);
+		FVisible(__, form) : ftfps(form);
+		FRenderable(__, form) : ftfps(form);
+		FMask2(form, __, __) : ftfps(form);
+		FInteractive(__, form) : ftfps(form);
+		FFilter2(__, form, __) : ftfps(form);
+		FCursor(__, form) : ftfps(form);
+		FMutable2(form, __) : ftfps(fgetValue(form));
+		FControlFocus(__, form) : ftfps(form);
+		FConstructor(form, __) : ftfps(form);
+		FCreate2(current, fn) : ftfps(if (^current != FEmpty()) ^current else fn());
+		FFullWindow(__, __, form) : ftfps(form);
+		FBaseline(__, form) : ftfps(form);
+		FSize2(__, form) : ftfps(form);
+		FAvailable2(__, form) : ftfps(form);
+		FAccess(__, form) : ftfps(form);
+		FSetPending(__, form) : ftfps(form);
+		FNativeForm(__, __, form, __) : ftfps(form());
+
+		FMForm(form) : {
+			if (isConvertableForm(form))
+				ftfps(form2fform(form))
+			else if (hasTaggedForm(form, tag))
+				Some(PositionScale(
+					findTaggedFormPosition(form, tag),
+					findTaggedFormScale(form, tag)
+				))
+			else
+				None()
+		}
+	}
+}
+
+_d2c(d : Transform<?>) -> ConstBehaviour<?> {
+	const(fgetValue(d))
+}
+
+takeFSnapshot(fform : FForm) -> FForm {
+	tfs = \f -> takeFSnapshot(f);
+
+	switch (fform : FForm) {
+		FEmpty() : fform;
+		FGraphics(__, __) : fform;
+		FText(__, __) : fform;
+
+		FCreate2(current, fn) : tfs(if (^current != FEmpty()) ^current else fn());
+		FMutable2(form, __) : tfs(fgetValue(form));
+		FRealHTML(url, wh, style) : FRealHTML(url, _d2c(wh), style);
+		FParagraph(text, style) : FParagraphSnapshot(text, style);
+		FPicture(url, sz, st) : FPictureSnapshot(url, sz, st);
+		FDynamicGroup2(sc, cs, stack) : FDynamicGroup2(make([]), make(map(fgetValue(cs), tfs)), stack);
+		FVideo(f, wh, st) : FVideoSnapshot(f, wh, st);
+		FTextInput(c, wh, st) : FTextInputSnapshot(c, wh, st);
+
+		FBorder(l, t, r, b, form) : FBorder(l, t, r, b, tfs(form));
+		FFilter2(f, form, stack) : FFilter2(f, tfs(form), stack);
+		FTranslate(x, y, form) : FTranslate(_d2c(x), _d2c(y), tfs(form));
+		FScale(x, y, form) : FScale(_d2c(x), _d2c(y), tfs(form));
+		FRotate(d, form) : FRotate(_d2c(d), tfs(form));
+		FAlpha(a, form) : FAlpha(_d2c(a), tfs(form));
+		FVisible(v, form) : FVisible(_d2c(v), tfs(form));
+		FRenderable(r, form) : FRenderable(_d2c(r), tfs(form));
+		FSize2(wh, form) : FSize2(_d2c(wh), tfs(form));
+		FBaseline(b, form) : FBaseline(_d2c(b), tfs(form));
+		FAvailable2(a, form) : FAvailable2(_d2c(a), tfs(form));
+		FCrop2(l, t, w, h, form, stack) : FCrop2(_d2c(l), _d2c(t), _d2c(w), _d2c(h), tfs(form), stack);
+		FMask2(form, mask, stack) : FMask2(tfs(form), tfs(mask), stack);
+		FGroup(l, stack) : FGroup(map(l, tfs), stack);
+		FGroup2(l1, l2, stack) : FGroup2(tfs(l1), tfs(l2), stack);
+		FDecorator2(l1, decorators, above, stack) : FDecorator2(tfs(l1), map(decorators, \d -> Pair(_d2c(d.first), \ -> tfs(d.second()))), above, stack);
+
+		FFullWindow(fw, av, form) : FFullWindow(make(getValue(fw)), make(getValue(av)), tfs(form));
+		FInteractive(__, form) : tfs(form);
+		FConstructor(form, __) : tfs(form);
+		FAccess(__, form) : tfs(form);
+		FControlFocus(__, form) : tfs(form);
+		FSetPending(__, form) : tfs(form);
+		FCursor(__, form) : tfs(form);
+		FInspect(__, form) : tfs(form);
+		FNativeForm(__, __, form, __) : tfs(form());
+
+		FMForm(form) : {
+			if (isConvertableForm(form))
+				tfs(form2fform(form))
+			else
+				FMForm(takeSnapshot(form))
+		}
+	}
+}
+
+FParagraphSnapshot(text : string, style : [FParagraphStyle]) -> FParagraph {
+	FParagraph(
+		text,
+		filtermap(style, \s ->
+			switch (s : FParagraphStyle) {
+				ParagraphMetrics(__) : None();
+				ParagraphWidth(wd) : Some(ParagraphWidth(_d2c(wd)));
+				default : Some(s);
+			}
+		)
+	)
+}
+
+FPictureSnapshot(url : string, size : DynamicBehaviour<WidthHeight>, style : [PictureStyle]) -> FPicture {
+	FPicture(
+		url,
+		make(fgetValue(size)),
+		filtermap(style, \s ->
+			switch (s : PictureStyle) {
+				DontCache() : Some(s);
+				OnlyDownloadToCache() : Some(s);
+				default : None();
+			}
+		)
+	)
+}
+
+FVideoSnapshot(filename : string, wh : DynamicBehaviour<WidthHeight>, style : [FVideoStyle]) -> FVideo {
+	FVideo(
+		filename,
+		make(fgetValue(wh)),
+		filtermap(style, \s ->
+			switch (s : FVideoStyle) {
+				FVideoKeepAspectRatio(keep) : cast(Some(FVideoKeepAspectRatio(_d2c(keep))) : Some<FVideoKeepAspectRatio> -> Maybe<FVideoStyle>); // annoying typechecker
+				FVideoLoop(lp) : Some(FVideoLoop(_d2c(lp)));
+				FVideoSubtitles(subtitles) : Some(FVideoSubtitles(_d2c(subtitles)));
+				FVideoTimeRange(start, end) : Some(FVideoTimeRange(_d2c(start), _d2c(end)));
+				FVideoControls(controls) : Some(s);
+
+				FVideoPlay(play) : Some(FVideoPlay(make(fgetValue(play))));
+				FVideoPosition(position) : Some(FVideoPosition(make(fgetValue(position))));
+				FVideoFullscreen(fullscreen) : Some(FVideoFullscreen(make(fgetValue(fullscreen))));
+				FVideoVolume(volume) : Some(FVideoVolume(make(fgetValue(volume))));
+				FVideoLength(ln) : Some(FVideoLength(make(fgetValue(ln))));
+				FVideoPlaybackRate(rate) : Some(FVideoPlaybackRate(make(fgetValue(rate))));
+				FVideoRealSize(size) : Some(FVideoRealSize(make(fgetValue(size))));
+				default: None();
+			}
+		)
+	);
+}
+
+FTextInputSnapshot(content : DynamicBehaviour<string>, wh : DynamicBehaviour<WidthHeight>, style : [FTextInputStyle]) -> FTextInput {
+	FTextInput(
+		make(fgetValue(content)),
+		make(fgetValue(wh)),
+		filtermap(style, \s ->
+			switch (s : FTextInputStyle) {
+				FWordWrap(wrap) : cast(Some(FWordWrap(_d2c(wrap))) : Some<FWordWrap> -> Maybe<FTextInputStyle>); // annoying typechecker part 2
+				FMultiline(multiline) : Some(FMultiline(_d2c(multiline)));
+				FInputType(type) : Some(FInputType(_d2c(type)));
+				FReadOnly(readOnly) : Some(FReadOnly(_d2c(readOnly)));
+				FInputFilter(__): None();
+				FInputKeyFilter(__): None();
+				FMaxChars(maxChars) : Some(FMaxChars(_d2c(maxChars)));
+				FAutoAlign(align) : Some(FAutoAlign(_d2c(align)));
+				FCursorColor(color) : Some(FCursorColor(_d2c(color)));
+				FCursorOpacity(opacity) : Some(FCursorOpacity(_d2c(opacity)));
+				FCursorWidth(width) : Some(FCursorWidth(_d2c(width)));
+
+				FFocus(focus) : Some(FFocus(make(fgetValue(focus))));
+				FPosition(position) : Some(FPosition(make(fgetValue(position))));
+				FSelection(selection) : Some(FSelection(make(fgetValue(selection))));
+				FScrollInfo(info) : Some(FScrollInfo(make(fgetValue(info))));
+				default: Some(s);
+			}
+		)
+	)
+}

@@ -1,0 +1,130 @@
+import lingo/peg;
+import serialize;
+import formats/json/json;
+import lingo/pegcode/pegcode;
+
+export {
+	// Pass this to the parser to be able to construct Json in your Lingo grammar
+	jsonPegActions : SemanticActions;
+
+	// Updates pegcode to be able to produce JSON in the actions. Give a function
+	// which can construct the JSON values based on the struct id.
+	convertPegActionsToJson(code : [PegOp], mkJson : (id : string, args : [Json]) -> Json) -> [PegOp];
+}
+
+jsonPegActions  = {
+	t = ref makeTree();
+	add = \n, fn : ([flow]) -> Json -> {
+		t := setTree(^t, n, fn);
+	}
+
+	ga = \j -> getJsonArrayValue(j, []);
+	add("consArray", \xs : [flow] -> JsonArray(concat([xs[0]], ga(xs[1]))));
+	add("strUnescape", \xs : [flow] -> {
+		quote = if (xs[1] == "'") "\"" else "'";
+		JsonString(deserializeString("\"" + strReplace(xs[0], quote, "\\" + quote) + "\"").first);
+	});
+	add("concat", \xs : [flow] -> JsonArray(concat(ga(xs[0]), ga(xs[1]))));
+	add("s2i", \xs : [flow] -> {JsonDouble(i2d(s2i(xs[0])))});
+	add("trim", \xs : [flow] -> {JsonString(trim(xs[0]))});
+	add("s2d", \xs : [flow] -> {JsonDouble(s2d(xs[0]))});
+	// Return the children as an array
+	add("array", \xs : [flow] -> JsonArray(xs));
+	// Take the first element of an array
+	add("unarray", \xs : [flow] -> JsonArray(if (length(xs[0]) > 0) xs[0][0] else []));
+	// Useful to debug what value is passed along
+	add("debug", \xs : [flow] -> {
+		println("Debug: " + toString(if (length(xs) == 1) xs[0] else xs));
+		xs[0]
+	});
+
+	add("string", \xs : [flow] -> {
+		if (length(xs) == 1) {
+			JsonString(xs[0])
+		} else JsonString("");
+	});
+
+	add("true", \xs : [flow] -> JsonBool(true));
+	add("false", \xs : [flow] -> JsonBool(false));
+	add("zero", \xs : [flow] -> JsonDouble(0.0));
+	add("one", \xs : [flow] -> JsonDouble(1.0));
+	add("two", \xs : [flow] -> JsonDouble(2.0));
+	add("three", \xs : [flow] -> JsonDouble(3.0));
+	add("null", \xs : [flow] -> JsonNull());
+
+	SemanticActions(^t);
+}
+
+convertPegActionsToJson(code : [PegOp], mkJson : (id : string, args : [Json]) -> Json) -> [PegOp] {
+	map(code, \p : PegOp -> {
+		switch (p) {
+			PegAction2(a): {
+				convertPegActionToJson(a, mkJson)
+			}
+			default: p;
+		}
+	})
+}
+
+convertPegActionToJson(action : ActionExp, mkJson : (id : string, args : [Json]) -> Json) -> PegOp {
+	switch (action) {
+		ActionCallDebug(n, args): {
+			fn = lookupTree(jsonPegActions.t, n);
+			switch (fn) {
+				None(): {
+					PegAction(\env -> {
+						mkJson(n, map(args, \ar -> evalJsonArgs(env, ar, mkJson)));
+					});
+				}
+				Some(__): {
+					PegAction2(action);
+				}
+			}
+		}
+		ActionCall(n, args): {
+			PegAction(\env -> {
+				mkJson(n, map(args, \ar -> evalJsonArgs(env, ar, mkJson)));
+			});
+		}
+		ActionIndex(): PegAction2(action);
+		ActionVar(i): PegAction2(action);
+		ActionConstantString(s): PegAction2(action);
+		ActionConstantInt(s): PegAction2(action);
+	}
+}
+
+evalJsonArgs(env : PegEnv, a : ActionExp, mkJson : (id : string, args : [Json]) -> Json) -> Json {
+	switch (a) {
+		ActionCallDebug(n, args): {
+			fn = lookupTree(jsonPegActions.t, n);
+			eargs = map(args, \ar -> evalJsonArgs(env, ar, mkJson));
+			switch (fn) {
+				None(): mkJson(n, eargs);
+				Some(tfn): tfn(eargs);
+			}
+		}
+		ActionCall(n, args): {
+			fn = lookupTree(jsonPegActions.t, n);
+			eargs = map(args, \ar -> evalJsonArgs(env, ar, mkJson));
+			switch (fn) {
+				None(): mkJson(n, eargs);
+				Some(tfn): tfn(eargs);
+			}
+		}
+		ActionIndex(): JsonDouble(0.0);
+		ActionVar(id): {
+			v = lookupTree(env.bindings, id);
+			switch (v) {
+				None(): {
+					println("Unknown var: " + id);
+					JsonNull();
+				}
+				Some(mv): {
+					either(mv.result, JsonNull());
+				}
+			}
+		}
+		ActionConstantString(s): JsonString(s);
+		ActionConstantInt(i): JsonDouble(i2d(i));
+	}
+}

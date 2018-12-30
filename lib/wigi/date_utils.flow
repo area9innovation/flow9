@@ -1,0 +1,177 @@
+import date;
+
+export {
+	days360(start : Date, end : Date, method : bool) -> int;
+	dateValue2Date(dateValue : int) -> Date;
+	getDateValue(date : Date) -> int;
+	getYearFrac(start : Date, end : Date, basis : int) -> Maybe<double>;
+	daysBetweenDatesWithBasis(start : Date, end : Date, basis : int) -> int;
+	daysInYearWithBasis(start : Date, end : Date, basis : int) -> double;
+	isCorrectDate(date: Date) -> bool;
+	getWeekOfYear(d : Date, startDayOfWeek : int, isSystem1 : bool) -> int;
+
+	SECONDS_PER_MINUTE = 60;
+	MINUTES_PER_HOUR = 60;
+	HOURS_PER_DAY = 24;
+	SECONDS_PER_HOUR = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
+	SECONDS_PER_DAY = i2d(HOURS_PER_DAY * SECONDS_PER_HOUR);
+}
+
+getYearFrac(start : Date, end : Date, basis : int) -> Maybe<double> {
+	start_date = if (compareDates(start, end) == DateBefore()) start else end;
+	end_date = if (compareDates(start, end) == DateBefore()) end else start;
+	months = end_date.month - start_date.month;
+	years = end_date.year - start_date.year;
+	if (basis == 0) Some(i2d(getDayCount30_360(start_date, end_date)) / 360.)
+	else if (basis == 1) Some(getYearFracAct_Act(start_date, end_date))
+	else if (basis == 2) Some(i2d(getDaysBetweenDates(start_date, end_date)) / 360.)
+	else if (basis == 3) Some(i2d(getDaysBetweenDates(start_date, end_date)) / 365.)
+	else if (basis == 4) {
+		days = min(end_date.day, 30) - min(start_date.day, 30);
+		Some(i2d(years * 360 + months * 30 + days) / 360.)
+	} else None();
+}
+
+getDayCount30_360(startDate : Date, endDate : Date) -> int {
+	startDay1 = startDate.day;
+	endDay1 = endDate.day;
+
+	day1day2 = if (startDay1 == 31 && endDay1 == 31) Pair(30, 30)
+		else if (startDay1 == 31) Pair(30, endDay1)
+		else if (startDay1 == 30 && endDay1 == 31) Pair(30, 30)
+		else if (isLastDayOfFebruary(startDate)) Pair(30, if (isLastDayOfFebruary(endDate)) 30 else endDay1)
+		else Pair(startDay1, endDay1);
+
+	days = day1day2.second - day1day2.first;
+	years = endDate.year - startDate.year;
+	months = endDate.month - startDate.month;
+	years * 360 + months * 30 + days
+}
+
+isLastDayOfFebruary(date : Date) -> bool {
+	isLeapYear_ = date.year |> isLeapYear;
+	date.month == 2 && ((isLeapYear_ && date.day == 29) || (!isLeapYear_ && date.day == 28))
+}
+
+getYearFracAct_Act(start : Date, end : Date) -> double {
+	countYearFrac = \denominator -> i2d(getDaysBetweenDates(start, end)) / denominator;
+	if (compareDates(end, addYearsToDate(start, 1)) == DateAfter()) {
+		countYearFrac(
+			i2d(getDaysBetweenDates(Date(start.year, 1, 1), Date(end.year + 1, 1, 1))) /
+			i2d((end.year - start.year + 1))
+		)
+	} else {
+		isStartLeapYear	= isLeapYear(start.year);
+		isEndLeapYear	= isLeapYear(end.year);
+		if(isStartLeapYear && isEndLeapYear) countYearFrac(366.)
+		else if(isStartLeapYear || isEndLeapYear) {
+			leapYearsFeb29th = if (isStartLeapYear) Date(start.year, 2, 29)	else Date(end.year, 2, 29);
+			// Check position of February 29th
+			if (
+				compareDates(start, leapYearsFeb29th) != DateAfter() &&
+				compareDates(end, leapYearsFeb29th) != DateBefore()
+			) countYearFrac(366.)
+			else countYearFrac(365.)
+		} else countYearFrac(365.)
+	}
+}
+
+dateValue2Date(dateValue : int) -> Date {
+	stamp2date(i2d(dateValue - 25569) * 3600. * 24. * 1000.)
+}
+
+getDatePart(datePart : string) -> Date {
+	dateParts = strSplit(datePart, "-");
+	if (length(dateParts) == 3 && isDigits(dateParts[0]) && isDigits(dateParts[1]) && isDigits(dateParts[2])) {
+		Date(
+			s2i(dateParts[0]),
+			s2i(dateParts[1]),
+			s2i(dateParts[2])
+		)
+	} else nullDate
+}
+
+getTimePart(timePart : string) -> Time {
+	timeParts = strSplit(timePart, ":");
+	if (length(timeParts) > 0 && isDigits(timeParts[0])) {
+		hour = timeParts[0] |> s2i;
+		if (length(timeParts) > 1 && isDigits(timeParts[1])) {
+			minute = timeParts[1] |> s2i;
+			if (length(timeParts) > 2 && isDigits(timeParts[2])) {
+				second = timeParts[2] |> s2i;
+				Time(0, 0, 0, hour, minute, second)
+			} else Time(0, 0, 0, hour, minute, 0)
+		} else Time(0, 0, 0, hour, 0, 0)
+	} else nullTime
+}
+
+isCorrectDate(date: Date) -> bool {
+	compareDates(date, Date(1900, 1, 1)) != DateBefore()
+}
+
+getDateValue(date : Date) -> int {
+	// We use "+ 2" instead of expected "+ 1" as a correction to fix MS Office mistake.
+	// That stupid guys thought that 1900 is a leap year and messed up this counter.
+	// So we do the same as Google considering that getDateValue(Date(1900, 1, 1)) equals 2.
+	getDaysBetweenDates(Date(1900, 1, 1), date) + 2
+}
+
+daysBetweenDatesWithBasis(start : Date, end : Date, basis : int) -> int {
+	if (basis == 1 || basis == 2 || basis == 3) getDaysBetweenDates(start, end)
+	else days360(start, end, basis == 4)
+}
+
+daysInYearWithBasis(start : Date, end : Date, basis : int) -> double {
+	if (basis == 1) {
+		if (compareDates(addYearsToDate(start, 1), end) == DateBefore() || isLeapYear(start.year) == isLeapYear(end.year)) {
+			i2d(getDaysBetweenDates(Date(start.year, 1, 1), Date(end.year + 1, 1, 1))) / i2d((end.year - start.year + 1))
+		} else {
+			feb29 = if (isLeapYear(start.year)) Date(start.year, 2, 29) else Date(end.year, 2, 29);
+			if (isDateBetween(feb29, start, end)) 366.
+			else 365.
+		}
+	} else if (basis == 3) 365.
+	else 360.
+}
+
+days360(start : Date, end : Date, method : bool) -> int {
+	if (method) {
+		years = end.year - start.year;
+		months = end.month - start.month;
+		days = min(end.day, 30) - min(start.day, 30);
+		years * 360 + months * 30 + days
+	} else {
+		startDay = if (start.day == 31 || isLastDayOfFebruary(start)) 30
+			else start.day;
+
+		endDay = if (end.day == 31) {
+			if (startDay != 30) 1
+			else 30
+		} else end.day;
+
+		endYearMonth = if (end.day == 31) {
+				if (startDay != 30) {
+					if (end.month == 12) Pair(end.year + 1, 1)
+					else Pair(end.year, end.month + 1);
+				} else Pair(end.year, end.month);
+			} else Pair(end.year, end.month);
+
+		years = endYearMonth.first - start.year;
+		months = endYearMonth.second - start.month;
+		years * 360 + months * 30 + (endDay - startDay)
+	}
+}
+
+
+getWeekOfYear(d : Date, startDayOfWeek : int, isSystem1 : bool) -> int {
+	startDayOfYear = dayOfWeek(Date(d.year, 1, 1));
+	daysInFirstWeek = if (startDayOfWeek == startDayOfYear) 7 else (startDayOfWeek + 7 - startDayOfYear) % 7;
+	secondWeekFirstDay = Date(d.year, 1, 1 + daysInFirstWeek);
+	if (compareDates(d, secondWeekFirstDay) != DateBefore()) {
+		getDaysBetweenDates(secondWeekFirstDay, d) / 7 + 1 + b2i(isSystem1 || daysInFirstWeek > 3)
+	} else {
+		if (isSystem1 || daysInFirstWeek > 3) 1
+		else getWeekOfYear(Date(d.year - 1, 12, 31), startDayOfWeek, isSystem1)
+	};
+}
+

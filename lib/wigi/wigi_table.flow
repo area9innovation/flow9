@@ -1,0 +1,547 @@
+import wigi/table_control;
+import wigi/wigi_namespace;
+import wigi/wigi_expr_parser;
+import colorspace;
+import ui/scrollable;
+import formutils;
+
+export {
+	// Construct a form of table
+	makeWigiTable(views : [() -> Form], table : WigiTable, namespace : WigiScope, elements : [WigiElement], style : [WigiRecursiveStyle],
+		engine : WigiEngine, preview : bool, registerToEngine : bool, cellSizes: Maybe<[DynamicBehaviour<WidthHeight>]>, contextMenuVis : DynamicBehaviour<bool>) -> Form;
+	makeCellInnerBorderForm(w : double, h: double, cellInnerBorder : WigiCellInnerBorder, cellBackground : int) -> Form;
+}
+
+	WigiTableWidth(
+		columnsWidth : [double],
+		columnsGreedy : [bool],
+		greedyColumnsQuantity : double,
+		safeWidth : double,
+		visibleTableWidth : double
+	);
+
+makeWigiTable(views : [() -> Form], table : WigiTable, namespace : WigiScope, elements : [WigiElement], style : [WigiRecursiveStyle],
+		engine : WigiEngine, preview : bool, registerToEngine : bool, cellSizes: Maybe<[DynamicBehaviour<WidthHeight>]>, contextMenuVis : DynamicBehaviour<bool>) -> Form {
+
+	rows = table.rows;
+	columns = table.cols;
+	cellSpans = table.cellSpans;
+	tableStyle = table.style;
+	viewsCount = length(views);
+
+	forceShrink = !containsStruct(tableStyle, WigiTableDisableForceShrinkOnMobile()) && (isUrlParameterTrue("fix47132") || mobile);
+
+	// TODO: If we have a name, then be sure to expose the value of this spreadsheet as a record in the environment or something
+	wigiName : WigiName = extractStruct(style, WigiName(""));
+
+	cellWidths = generate(0, viewsCount, \i -> make(0.0));
+	cellHeights = generate(0, viewsCount, \i -> make(0.0));
+
+	columnWidths = generate(0, columns, \i -> make(0.0));
+	rowHeights = generate(0, rows, \i -> make(0.0));
+
+	minimumColumnWidth = 20.0;
+
+	styleColumnWidths0 = extractStruct(tableStyle, WigiTableColumnWidths([])).widths;
+	styleColumnWidths = map(styleColumnWidths0, number2double);
+
+	rigidFixedColumns = contains(tableStyle, WigiTableRigidCols()) && !contains(tableStyle, WigiTableTightWidth());
+	wholeFixedWidth = dsum(styleColumnWidths);
+	autoColsQuantity = columns - countA(styleColumnWidths, \w -> w > 0.0);
+	
+	autoWidth = \aw, fw -> {
+		if (rigidFixedColumns) {
+			(aw - wholeFixedWidth) / i2d(autoColsQuantity)
+		} else {
+			fw
+		}
+	}
+
+	styleRowHeights = extractStruct(tableStyle, WigiTableRowHeights([])).heights;
+
+	_showGrid = contains(tableStyle, WigiShowGrid());
+
+	showGrid = _showGrid || !preview;
+
+	sameRowHeight = contains(tableStyle, WigiSameRowHeight());
+	showTableHeaders = contains(tableStyle, WigiTableShowHeaders());
+	tableBorder = extractStruct(tableStyle, WigiTableBorder(1.0, 0.0, 0x7F808285));
+	tableBorderWidth = tableBorder.width;
+	tableBorderRadius = tableBorder.radius;
+	tableSize = extractStruct(tableStyle, WigiTableSize(0, 0));
+
+	tableBorderColor = if (_showGrid) tableBorder.color else 0x7FEDEDED;
+
+	awBFull = make(0.0);
+	awB = make(0.0);
+
+	headerWidth = if (showTableHeaders) 40.0 else 0.0;
+	headerHeight = if (showTableHeaders) 18.0 else 0.0;
+
+	cr = getTableColumnsRows(table);
+
+	cs = cr.first;
+	rs = cr.second;
+
+	isGreedyColumn = \desiredWidth : double, aw : double -> desiredWidth >= aw / i2d(columns);
+
+	isGreedyTable = make(false);
+
+	fixedWidth = make(0.0);
+	fixedHeight = make(0.0);
+
+	tableWidth = make(1000.0);
+	tableHeight = make(1000.0);
+
+	minWidth = make(0.0);
+	minHeight = make(0.0);
+
+	scrollsB = make(0);
+	useAvailableWidth = !contains(tableStyle, WigiTableDontFitToAvailableWidth());
+
+	isRowAutoHeights = forall(extractStruct(table.style, WigiTableRowHeights([0.0])).heights, \h -> h == 0.0);
+
+	useTableBorder = tableBorderWidth > 0.0 && all(mapi(elements, \i, el -> {
+		cellStyle = getWigiTableCellStyle(el);
+		cellBorder : WigiCellBorder = extractStruct(cellStyle, DefaultCellBorder);
+
+		!containsStruct(cellStyle, WigiSuppressTableBorder()) || 
+		(rs[i] != 0 || cellBorder.topBorder == tableBorderWidth) &&
+		(cs[i] != columns - 1 || cellBorder.endBorder == tableBorderWidth) &&
+		(rs[i] != rows - 1 || cellBorder.bottomBorder == tableBorderWidth) &&
+		(cs[i] != 0 || cellBorder.startBorder == tableBorderWidth)
+	}));
+
+	setWidths = \id, awBForFirstRow -> {
+		select2u(cellWidths[id], awBForFirstRow, \cw, aw -> {
+			if (cw > 0.0) {
+				wtw : WigiTableWidth = fold(enumFromTo(0, columns - 1), WigiTableWidth([], [], 0.0, 0.0, 0.0), \acc, c -> {
+					newColumnWidth = fold(enumFromTo(0, rows - 1), minimumColumnWidth, \acc1, r -> {
+						ind = getWigiTableCellId(cr, c, r, cellSpans);
+						width = if (ind >= 0 && ind < viewsCount) {
+							if (styleColumnWidths != [] && styleColumnWidths[c] > 0.0)
+								styleColumnWidths[c]
+							else autoWidth(aw, getValue(cellWidths[ind]) / i2d(cellSpans[ind].col))
+						} else 0.0;
+						max(acc1, width)
+					});
+					isGreedy = isGreedyColumn(newColumnWidth, aw);
+					isVisible = tableSize.columns == 0 || c < tableSize.columns;
+
+
+					WigiTableWidth(
+						arrayPush(acc.columnsWidth, newColumnWidth),
+						arrayPush(acc.columnsGreedy, isGreedy),
+						acc.greedyColumnsQuantity + b2d(isGreedy && isVisible),
+						acc.safeWidth + if (!isGreedy && isVisible) newColumnWidth else 0.0,
+						acc.visibleTableWidth + if (isVisible) newColumnWidth else 0.0
+					)
+				});
+
+				igt = wtw.visibleTableWidth > aw;
+				nextDistinct(isGreedyTable, igt);
+
+				greedyAvailableWidth = aw - wtw.safeWidth;
+
+				ntfw : Pair<double, double> = foldi(wtw.columnsWidth, Pair(0.0, 0.0), \i, acc, width -> {
+					ncw = if (useAvailableWidth && igt && wtw.columnsGreedy[i]) greedyAvailableWidth / wtw.greedyColumnsQuantity else width;
+					nextDistinct(columnWidths[i], ncw);
+					Pair(acc.first + ncw, acc.second + if (i < tableSize.columns) ncw else 0.0);
+				});
+
+				nextDistinct(tableWidth, ntfw.first);
+				nextDistinct(fixedWidth, ntfw.second);
+			}
+		}).second;
+	};
+
+	setHeights = \id -> {
+		subscribe(cellHeights[id], \ch -> {
+			if (ch > 0.0) {
+				newHeights = generate(0, rows, \r -> {
+					fold(enumFromTo(0, columns - 1), 0.0, \acc1, c -> {
+						ind = getWigiTableCellId(cr, c, r, cellSpans);
+						height = if (ind >= 0 && ind < viewsCount) {
+							if (cellSpans[ind].row == 1 && styleRowHeights != [] && styleRowHeights[r] > 0.0)
+								styleRowHeights[r]
+							else getValue(cellHeights[ind]) / i2d(cellSpans[ind].row)
+						} else 0.0;
+						max(acc1, height)
+					})
+				});
+
+				maxHeight = either(maxA(newHeights), 0.0);
+
+				ntfh = foldi(newHeights, Pair(0.0, 0.0), \r, acc, nch -> {
+					fnch = if (sameRowHeight) maxHeight else nch;
+					nextDistinct(rowHeights[r], fnch);
+					Pair(acc.first + fnch, acc.second + if (r < tableSize.rows) fnch else 0.0);
+				});
+
+				nextDistinct(tableHeight, ntfh.first);
+				nextDistinct(fixedHeight, ntfh.second);
+			}
+		});
+	};
+
+	addBorder = \cellWidth, cellHeight, cellBorder: WigiCellBorder, cellBorderColor, cellColor,
+		highlighted : Behaviour<Pair<int, int>>, highlightfn, cellInnerBorder, form -> {
+		borderColor = if (_showGrid) cellBorderColor else 0x7FEDEDED;
+		cellBox = \w, h ->{
+			if (cellInnerBorder == DummyCellInnerBorder) {
+				Rectangle(w, h, [Fill(cellColor), FillOpacity(getOpacity(cellColor))]);
+			} else {
+				makeCellInnerBorderForm(w, h, cellInnerBorder, cellColor);
+			}
+		}
+
+		leftBorder = (if (getDefaultRtl()) cellBorder.endBorder else cellBorder.startBorder);
+		rightBorder = (if (getDefaultRtl()) cellBorder.startBorder else cellBorder.endBorder);
+		left = leftBorder != 0.0 && showGrid;
+		right = rightBorder != 0.0 && showGrid;
+		top = cellBorder.topBorder != 0.0 && showGrid;
+		bottom = cellBorder.bottomBorder != 0.0 && showGrid;
+
+		Group([
+			Select2(cellWidth, cellHeight, \w, h -> {
+				leftLine = \ -> Graphics([MoveTo(0.0, 0.0), LineTo(0.0, h)], [Stroke(borderColor), StrokeOpacity(getOpacity(borderColor)), StrokeWidth(leftBorder)]);
+				rightLine = \ -> Graphics([MoveTo(w, 0.0), LineTo(w, h)], [Stroke(borderColor), StrokeOpacity(getOpacity(borderColor)), StrokeWidth(rightBorder)]);
+				topLine = \ -> Graphics([MoveTo(0.0, 0.0), LineTo(w, 0.0)], [Stroke(borderColor), StrokeOpacity(getOpacity(borderColor)), StrokeWidth(cellBorder.topBorder)]);
+				bottomLine = \ -> Graphics([MoveTo(0.0, h), LineTo(w, h)], [Stroke(borderColor), StrokeOpacity(getOpacity(borderColor)), StrokeWidth(cellBorder.bottomBorder)]);
+				Group([
+					cellBox(w, h),
+					Select(highlighted, \ohl -> {
+						hl = highlightfn(ohl);
+						if (hl > 0) Rectangle(w, h, [Fill(if (hl == 1) 0xFFFF00 else 0xFFBB00), FillOpacity(0.5), StrokeWidth(0.0)]) else Empty()
+					}),
+					Iff(left, leftLine),
+					Iff(right, rightLine),
+					Iff(top, topLine),
+					Iff(bottom, bottomLine)
+				])
+			}),
+			form
+		]);
+	};
+
+	getTableHighlight : () -> Pair<Behaviour<Pair<int, int>>, [()->void]> = \ -> {
+		tableHighlight = extractStruct(tableStyle, nullWigiTableHighlight);
+		if (tableHighlight != nullWigiTableHighlight) {
+			// TODO: Notice we always register these, because register would have no idea how yet.
+			hcv = addFormulaToEngine(engine, namespace, wigiName.name + "highlightcolumn", namespace, parseWigiExpr(tableHighlight.column), true, true);
+			hrv = addFormulaToEngine(engine, namespace, wigiName.name + "highlightrow", namespace, parseWigiExpr(tableHighlight.row), true, true);
+
+			b = select2u(hcv.first, hrv.first, \_hcv, _hrv -> {
+				hc = switch (_hcv) {
+					WigiBool(v) : b2i(v);
+					WigiInt(v) : v;
+					WigiDouble(v) : round(v);
+					default: -1;
+				};
+
+				hr = switch (_hrv) {
+					WigiBool(v) : b2i(v);
+					WigiInt(v) : v;
+					WigiDouble(v) : round(v);
+					default: -1;
+				};
+
+				Pair(hc - 1, hr - 1);
+			});
+			Pair(b.first, concat3(hcv.second, hrv.second, [b.second]));
+		} else {
+			Pair(const(Pair(-1, -1)), [])
+		};
+	};
+
+	highlight = make(Pair(-1, -1));
+
+	addHeaders = \view -> {
+		left = make(0.0);
+		top = make(0.0);
+
+		v = if (tableSize.columns == 0 && tableSize.rows == 0) SelectSize(tableWidth, tableHeight, view)
+		else Scrollable(left, top, minWidth, minHeight, SelectSize(tableWidth, tableHeight, view));
+
+		if (showTableHeaders) {
+			headerColumn = Lines(generate(0, rows, \i ->
+				addBorder(
+					const(headerWidth), rowHeights[i],
+					if (tableBorderWidth > 0.0)
+						WigiCellBorder(1.0, 1.0, if (i == rows - 1) 0.0 else 1.0, 0.0)
+					else
+						DefaultCellBorder,
+					tableBorderColor, 0x7FBDBDBD, highlight, \h -> b2i(h.second == i), DummyCellInnerBorder,
+					Align2(0.5, 0.5, Text(i2s(i + 1), []))
+				)
+			));
+
+			headerRow = Cols(generate(0, columns, \col -> {
+				i = if (getDefaultRtl()) columns-1-col else col;
+				addBorder(
+					columnWidths[i], const(headerHeight),
+					if (tableBorderWidth > 0.0)
+						WigiCellBorder(0.0, if (i == columns - 1) 0.0 else 1.0, 1.0, 1.0)
+					else
+						DefaultCellBorder,
+					tableBorderColor, 0x7FBDBDBD, highlight, \h -> b2i(h.first == i), DummyCellInnerBorder,
+					Align2(0.5, 0.5, Text(getWigiColName(i), []))
+				)
+			}));
+
+			topCornerRBord = if (getDefaultRtl()) 0.0 else 1.0;
+			topCornerLBord = if (getDefaultRtl()) 1.0 else 0.0;
+			topCorner = addBorder(
+				const(headerWidth), const(headerHeight),
+				if (tableBorderWidth > 0.0)
+					WigiCellBorder(0.0, topCornerRBord, 1.0, topCornerLBord)
+				else
+					DefaultCellBorder,
+				tableBorderColor, 0x7FBDBDBD, const(Pair(0,0)), \h -> 0, DummyCellInnerBorder,
+				Empty()
+			);
+			cropB = make(0.0);
+			Constructor(
+				Grid(if (getDefaultRtl())
+					[
+						[Crop(cropB, const(0.0), minWidth, const(headerHeight), headerRow), topCorner],
+						[v, Crop(const(0.0), top, const(headerWidth), minHeight, headerColumn)]
+					]
+				else
+					[
+						[topCorner, Crop(cropB, const(0.0), minWidth, const(headerHeight), headerRow)],
+						[Crop(const(0.0), top, const(headerWidth), minHeight, headerColumn), v]
+					]
+				),
+				\ -> {
+					select2u(scrollsB, left, \scrolls, l -> {
+						next(cropB, if (scrolls > 1) l else 0.0)
+					}).second
+				}
+			)
+		} else v;
+	};
+
+	addTableBorder = \view -> {
+		isFixedTableSize = tableSize.columns > 0 || tableSize.rows > 0;
+		getRoundedRect = \s -> Select2(
+			if (isFixedTableSize) minWidth else tableWidth,
+			if (isFixedTableSize) minHeight else tableHeight,
+			\tw, th -> Graphics(roundedRect(headerWidth + tw, headerHeight + th, tableBorderRadius), s)
+		);
+
+		needStroke = showGrid && useTableBorder;
+
+		if (needStroke) {
+			Group([
+				Mask(view, getRoundedRect([Fill(0xffffff)])),
+				getRoundedRect([Stroke(tableBorderColor), StrokeOpacity(getOpacity(tableBorderColor)), StrokeWidth(tableBorderWidth)])
+			])
+		} else {
+			view
+		}
+	};
+
+	form = \ -> {
+		cellForms = mapi(views, \i, view -> {
+			cellStyle = getWigiTableCellStyle(elements[i]);
+
+			cellColors = extractStruct(cellStyle, DefaultCellColors);
+
+			cellBorderFromCellStyle : WigiCellBorder = extractStruct(cellStyle, DefaultCellBorder);
+
+			cellBorder = if (useTableBorder || !containsStruct(cellStyle, WigiSuppressTableBorder())) {
+				WigiCellBorder(
+					if (rs[i] == 0) tableBorderWidth else cellBorderFromCellStyle.topBorder,
+					if (cs[i] == columns - 1) tableBorderWidth else cellBorderFromCellStyle.endBorder,
+					if (rs[i] == rows - 1) tableBorderWidth else cellBorderFromCellStyle.bottomBorder,
+					if (cs[i] == 0) tableBorderWidth else cellBorderFromCellStyle.startBorder
+				);
+			} else {
+				cellBorderFromCellStyle;
+			}
+
+			cellInnerBorder = extractStruct(cellStyle, DummyCellInnerBorder);
+			cellPadding = extractStruct(cellStyle, DefaultCellPadding);
+
+			cellBackgroundColor = cellColors.background;
+			cellBorderColor = cellColors.border;
+
+			cellFit = extractStruct(cellStyle, DefaultCellContentFit).fit;
+
+			cellWidth = make(0.0);
+			cellHeight = make(0.0);
+			cellWH = makeWH();
+
+			inspectCellSizes  = \ -> {
+				cellWidthPair = arraySumu(subrange(columnWidths, cs[i], cellSpans[i].col));
+				cellHeightPair = arraySumu(subrange(rowHeights, rs[i], cellSpans[i].row));
+				uns1 = connectDistinct(cellWidthPair.first, cellWidth);
+				uns2 = connectDistinct(cellHeightPair.first, cellHeight);
+				\ -> applyall([uns1, uns2, cellWidthPair.second, cellHeightPair.second]);
+			};
+
+			cellAvailableWidth = make(1000.0);
+			isFixedColumnFlag = all(generate(0, cellSpans[i].col, \j -> {
+				idx = cs[i] + j;
+				// Added this condition because this block causes FatalError on broken table
+				if ((0 <= idx) && (idx < length(styleColumnWidths)))
+					styleColumnWidths[idx] > 0.0
+				else {
+					// Unexpected case, it seems table is broken
+					false
+				}
+			}));
+			isFixedColumn = styleColumnWidths != [] && isFixedColumnFlag;
+
+			cellSize = switch (elements[i]) {
+				WigiRecursive(__, t, __): {
+					switch (t) {
+						WigiTableCell(wh, __): wh;
+						WigiSpreadsheetCell(wh, __, __): wh;
+						default: makeWH();
+					}
+				}
+				default: makeWH();
+			}
+
+			dx = make(0.0);
+			dy = make(0.0);
+
+			Constructor(
+				Translate(dx, dy,
+					Available(cellWidth, cellHeight,
+						addBorder(
+							cellWidth, cellHeight,
+							cellBorder, cellBorderColor, cellBackgroundColor, highlight, \h -> b2i(h.first == cs[i]) + b2i(h.second == rs[i]), cellInnerBorder,
+							Inspect([Width(cellWidths[i]), Height(cellHeights[i])], Available(cellAvailableWidth, const(1000.0), view())) |>
+								\f -> {
+									if (forceShrink) {
+										shrinkToFitB(cellWH, f)
+									} else {
+										switch (cellFit) {
+		 									CellCrop(): Crop(zero, zero, cellWidth, cellHeight, f);
+		 									CellShrink(): shrinkToFitB(cellWH, f);
+		 									CellScroll(): {
+		 										if (isRowAutoHeights) HorizontalScrollable(make(0.0), make(0.0), cellWidth, cellHeight, f)
+		 										else Scrollable(make(0.0), make(0.0), cellWidth, cellHeight, f)
+		 									}
+		 								}
+									}
+								}
+						)
+					)
+				),
+				\ -> {
+					dxPair = if (getDefaultRtl())
+						arraySumu(subrange(columnWidths, cs[i]+cellSpans[i].col, length(cs))) |> makeDisposable
+					else
+						arraySumu(subrange(columnWidths, 0, cs[i])) |> makeDisposable;
+					dyPair = arraySumu(subrange(rowHeights, 0, rs[i])) |> makeDisposable;
+					dxConnectUns = connectDistinct(dxPair.value, dx);
+					dyConnectUns = connectDistinct(dyPair.value, dy);
+					highlightB = getTableHighlight();
+					highlightConnectUns = connectDistinct(highlightB.first, highlight);
+
+					// only the first row handles available width's changes
+					unsw = setWidths(i, awB);
+					unsh = setHeights(i);
+
+					unsInspectSizes = inspectCellSizes();
+
+					uns1 = select3u(cellWidth, awB, isGreedyTable, \cw, aw, igt -> {
+						if ((aw > 0.0 && igt && isGreedyColumn(cw / i2d(cellSpans[i].col), aw) || isFixedColumn) || rigidFixedColumns)
+							nextDistinct(cellAvailableWidth, cw)
+					}).second;
+		
+
+					uns2 = select2u(cellWidth, cellHeight, \cw, ch -> {
+						extraSpace = if (cellInnerBorder == DummyCellInnerBorder) 0.0 else cellInnerBorder.padding + cellInnerBorder.thickness;
+						newWidth0 = cw - cellPadding.startPadding - cellPadding.endPadding - 2.0 * extraSpace;
+						// Looks like there is no sense to update it with negative width.
+						// Maybe we should even do max(newWidth0, getValue(cellSize).width), but let's start with positive values.
+						newWidth = if (newWidth0 > 0.0) newWidth0 else getValue(cellSize).width;
+						newWH = WidthHeight(roundTo(newWidth, 0.1), roundTo(ch, 0.1));
+						// println("OLD W " + i2s(i) + ": " + d2s(getValue(cellSize).width));
+						// println("NEW W " + i2s(i) + ": " + d2s(newWidth0));
+						nextDistinct(cellSize, newWH);
+						maybeApply(cellSizes, \sizes -> nextDistinct(sizes[i], newWH));
+					}).second;
+
+					cellWHuns = connectSelect2Distinctu(cellWidth, cellHeight, cellWH, \w, h -> WidthHeight(w, h));
+
+					\ -> {
+						unsInspectSizes();
+						unsw();
+						unsh();
+						uns1();
+						uns2();
+						applyall(highlightB.second);
+						highlightConnectUns();
+						dxPair.dispose();
+						dyPair.dispose();
+						dyConnectUns();
+						dxConnectUns();
+						cellWHuns();
+					}
+				}
+			);
+		});
+
+		f0 = Inspect([AvailableWidth2(awBFull)], cellForms |> Group |> addHeaders |> addTableBorder);
+
+		showContextMenu = \ -> next(contextMenuVis, true);
+		listeners = [MouseRightClick(\mi -> if (mi.inside()) showContextMenu())];
+		Interactive(listeners, f0)
+	}
+
+	isVisibleWigiTable = make(false);
+	Constructor(
+		if (isUrlParameterTrue("case48152") && isLiteEditStyle()) Visibleb(isVisibleWigiTable, form())
+		else VisiblebLazy(isVisibleWigiTable, form),
+		\ -> {
+			visible = calculateElementBoolFormula(
+				"visible",
+				makeTree1("visible", extractStruct(tableStyle, WigiTableVisibleFormula("=true")).formula),
+				engine, wigiCellName(wigiName.name, globalWigiNamespace), preview
+			);
+			uns = connectDistinct(visible.value, isVisibleWigiTable);
+			uns1 = connectSelectDistinctu(awBFull, awB, \awFull -> awFull - headerWidth);
+
+			uns2 = connectSelect4u(tableWidth, fixedWidth, tableHeight, fixedHeight, scrollsB, \tw, fw, th, fh -> {
+				minw = if (fw > 0.0) min(tw, fw) else tw;
+				minh = if (fh > 0.0) min(th, fh) else th;
+
+				if ((fw > 0.0 && fw + 10.0 < tw) && (fh > 0.0 && fh + 10.0 < th)) {
+					nextDistinct(minWidth, minw + 10.0);
+					nextDistinct(minHeight, minh + 10.0);
+					3;
+				} else if (fw > 0.0 && fw + 10.0 < tw) {
+					nextDistinct(minWidth, minw);
+					nextDistinct(minHeight, minh + 10.0);
+					2;
+				} else if (fh > 0.0 && fh + 10.0 < th) {
+					nextDistinct(minWidth, minw + 10.0);
+					nextDistinct(minHeight, minh);
+					1;
+				} else {
+					nextDistinct(minWidth, tw);
+					nextDistinct(minHeight, th);
+					0;
+				}
+			});
+			\ -> {
+				uns();
+				uns1();
+				visible.dispose();
+				uns2();
+			}
+		}
+	)
+}
+
+makeCellInnerBorderForm(w : double, h: double, cellInnerBorder : WigiCellInnerBorder, cellBackground : int) -> Form {
+	d = cellInnerBorder.padding + cellInnerBorder.thickness / 2.0;
+	style = [Fill(cellBackground), FillOpacity(getOpacity(cellBackground)), Stroke(cellInnerBorder.color), StrokeWidth(cellInnerBorder.thickness)];
+	Offset(d, d, customRoundedRect2(w - 2.0 * d, h - 2.0 * d, cellInnerBorder.radius, cellInnerBorder.radius, cellInnerBorder.radius, cellInnerBorder.radius, style));
+}

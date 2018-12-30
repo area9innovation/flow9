@@ -1,0 +1,339 @@
+import material/internal/material_menu;
+
+// Internal to material
+
+export {
+	MCard2T(manager : MaterialManager, parent : MFocusGroup, m : MCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+defaultCardRoundness = 2.0;
+defaultCardBorder = 4.0;
+defaultCardMargin = 16.0;
+defaultCardMarginBorders = 24.0;
+defaultCardMarginActions = 8.0;
+defaultCardElevation = 2.0;
+
+MCard2T(manager : MaterialManager, parent : MFocusGroup, m : MCard, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	wd = extractStruct(m.style, MCardWidth(0.)).width;
+	hgt = extractStruct(m.style, MCardHeight(0.)).height;
+
+	style =
+		ifArrayPush(m.style,
+			!containsStruct(m.style, MWhite()) && !containsStruct(m.style, MBackgroundImage("", false)),
+			MDialogColor(parent.theme.lightBackground)
+		)
+		|> (\f -> replaceStruct(f, MCardWidth(wd)))
+		|> (\f -> replaceStruct(f, MCardHeight(hgt)));
+
+	MCardBlock2T(manager, parent, MCard(m.blocks, style, []), TEmpty(), TEmpty(), [], false, m2t)
+	|> (\f -> MCardAddShadow(manager, parent, f, m.state, style))
+}
+
+MCardAddShadow(manager : MaterialManager, parent : MFocusGroup, card : Tropic, state : [MButtonState], style : [MCardStyle]) -> Tropic {
+	onClick = tryExtractStruct(state, MOnClick(nop));
+	elevation = \hover, focused -> extractStruct(state, MElevation(fif(fOr(hover, focused), const(6.), const(2.)))).elevation;
+	outerBorders = !contains(style, MCardNoOuterBorders());
+	focusState = concatStyles(state, [AccessRole("button"), MRippleType(const(MRippleFill()))]);
+
+	TCopySize2(
+		card,
+		\cardSize, cardTropic ->
+			TMask(cardTropic, TRounded(defaultCardRoundness, defaultCardRoundness, defaultCardRoundness, defaultCardRoundness, [Fill(black)], cardSize))
+	)
+	|> (\f -> \hover, focused, enabled ->
+		TCopySize(
+			TEasedShadow(manager, parent, elevation(hover, focused), f, 0.3),
+			\tr ->
+				TShowLazy(
+					fnot(enabled),
+					\ ->
+						TRounded(defaultCardRoundness, defaultCardRoundness, defaultCardRoundness, defaultCardRoundness,
+							[Fill(white), FillOpacity(0.36)], tr)
+				),
+			true
+		)
+	)
+	|> (\makeShadowedCard ->
+		eitherFn(onClick,
+			\__ -> MFocusClickable2T(manager, parent, "MCard", focusState, \focus -> makeShadowedCard(focus.hover, focus.focused, focus.enabled)),
+			\ -> makeShadowedCard(const(false), const(false), const(true))
+		))
+	|> (\f ->
+		if (outerBorders)
+			TBorder(defaultCardBorder, defaultCardBorder, defaultCardBorder, defaultCardBorder, f)
+		else
+			f
+	)
+}
+
+MCardBlock2T(manager : MaterialManager, parent : MFocusGroup, block : MCardBlock, above : MCardBlock, below : MCardBlock, belowStyle : [MCardStyle],
+	lines : bool, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	l = ref defaultCardMargin;
+	t = ref if (above == TEmpty()) defaultCardMargin else defaultCardMarginBorders;
+	r = ref defaultCardMargin;
+	b = ref if (below == TEmpty()) defaultCardMargin else defaultCardMarginBorders;
+
+	borders = \st ->
+		extractStruct(st, extractStruct(belowStyle, MContentBorders(true))).borders;
+
+	itemsColor = \st ->
+		normalizeColor(MCardTextColor2MColor(st, belowStyle));
+
+	cardWidth = \st, bord ->
+		extractStruct(concat(belowStyle, st), MCardWidth(-1.)).width - (if (bord) ^l + ^r else 0.);
+
+	makeParagraph = \text, fontStyle : MFontStyle, iColor : MColor, cw ->
+		MParagraph2T(
+			parent,
+			text,
+			[fontStyle, iColor, MWidth(cw), InterlineSpacing(0.), ParagraphMargin(0., 0.)]
+		);
+
+	wrapToFrame = \bord, style ->
+		\f -> MCardStyle2Frame(manager, parent, f, style, if (bord) Quadruple(^l, ^t, ^r, ^b) else Quadruple(0., 0., 0., 0.), itemsColor(style), m2t);
+
+	switch (block) {
+		MRichMediaBlock(content, style): {
+			m2t(content, parent)
+			|> wrapToFrame(borders(style), style)
+		}
+		MActionBlock(left, right, style0): {
+			style = replaceStruct(style0, extractStruct(style0, MCardHeight(52.0)));
+
+			l := defaultCardMarginActions;
+			t := 0.;
+			r := defaultCardMarginActions;
+			b := 0.;
+
+			actionFn = \item -> MCardAction2T(manager, parent, item, style, belowStyle, m2t);
+
+			concat3(
+				map(left, actionFn),
+				[TFillX()],
+				map(right, actionFn)
+			)
+			|> TColsA
+			|> (\f -> TAvailable(f, TFillX()))
+			|> wrapToFrame(borders(style), style)
+		}
+		MPrimaryTextBlock(title, text, style): {
+			bord = borders(style);
+			iColor = itemsColor(style);
+
+			if (lines)
+				switch (above) {
+					MRichMediaBlock(__, __): t := defaultCardMarginBorders;
+					default: {}
+				};
+			cw = cardWidth(style, bord);
+
+			TLines2(
+				makeParagraph(title, MHeadline(), iColor, cw)
+				|> TBorderBottom(4.),
+				makeParagraph(text, MBody(), iColor, cw)
+			)
+			|> wrapToFrame(bord, style)
+		}
+		MSupportingTextBlock(text, style): {
+			bord = borders(style);
+
+			if (lines)
+				switch (above) {
+					MRichMediaBlock(__, __): t := defaultCardMarginBorders;
+					MPrimaryTextBlock(__, __, __): t := 0.0;
+					default: {}
+				};
+			makeParagraph(text, MBody(), itemsColor(style), cardWidth(style, bord))
+			|> wrapToFrame(bord, style)
+		}
+		MCard(blocks, style, state): {
+			(
+				if (length(blocks) == 1)
+					MCardBlock2T(
+						manager,
+						parent,
+						blocks[0],
+						TEmpty(),
+						TEmpty(),
+						fold(style, belowStyle, \acc, s -> replaceStruct(acc, s)),
+						!lines,
+						m2t
+					)
+				else
+					mapi(blocks, \i, bl ->
+						MCardBlock2T(
+							manager,
+							parent,
+							bl,
+							if (i > 0) blocks[i - 1] else TEmpty(),
+							if (i < length(blocks) - 1) blocks[i + 1] else TEmpty(),
+							fold(style, belowStyle, \acc, s -> replaceStruct(acc, s)),
+							!lines,
+							m2t
+						)
+					)
+					|> (\f -> if (!lines) TLinesA(f) else TColsA(f))
+			)
+			|> wrapToFrame(false, style)
+		}
+		MExpanderBlock(header, details, expander, style): {
+			MCardBlock2T(
+				manager,
+				parent,
+				MRichMediaBlock(
+					extractStruct(belowStyle, MCardWidth(-1.)).width
+					|> (\f ->
+						MExpander(
+							MBorder(24., 0., 0., 0., header)
+							|> (\m -> if (f > 0.) MAvailable(m, TFixed(f - 64., 0.)) else m),
+							
+							if (f > 0.)
+								\ -> MAvailable(details(), TFixed(f, 0.))
+							else
+								details,
+							expander,
+							style
+						)
+					),
+					[MContentBorders(false)]
+				),
+				above,
+				below,
+				belowStyle,
+				lines,
+				m2t
+			)
+		}
+		MSeparatorBlock(): {
+			TRectangle(
+				[MFill(MCardTextColor2MColor(belowStyle, belowStyle)), FillOpacity(0.12)],
+				(if (lines) TFillXH(1.0) else TFillWY(1.0))
+			)
+		}
+		TEmpty(): {
+			TEmpty();
+		}
+	}
+}
+
+MCardTextColor2MColor(style : [MCardStyle], belowStyle : [MCardStyle]) -> MColor {
+	eitherFn(
+		tryExtractStruct(style, MCardTextColor(MWhite())),
+		\col -> col.color,
+		\ ->
+			eitherFn(
+				tryExtractStruct(belowStyle, MCardTextColor(MWhite())),
+				\col -> col.color,
+				\ ->
+					eitherFn(
+						tryExtractStruct(style, MBackgroundImage("", false)),
+						\im -> MDefaultTextColor(im.light),
+						\ ->
+							eitherFn(
+								tryExtractStruct(style, MWhite()),
+								MTextMColor,
+								\ ->
+									eitherFn(
+										tryExtractStruct(belowStyle, MBackgroundImage("", false)),
+										\bi -> MDefaultTextColor(bi.light),
+										\ -> MTextMColor(extractStruct(belowStyle, MWhite()))
+									)
+							)
+					)
+			)
+	)
+}
+
+MCardAction2T(manager : MaterialManager, parent : MFocusGroup, action : Material, style : [MCardStyle], belowStyle : [MCardStyle],
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	switch (action) {
+		MTextButton(text, onClick, style2, state2): {
+			buttonStyle : [MTextButtonStyle] = 
+				if (containsStruct(style2, MCardTextColor(MWhite())))
+					style2
+				else
+					eitherFn(
+						tryExtractStruct(style, MCardTextColor(MWhite())),
+						\col -> arrayPush(style2, normalizeColor(col.color)),
+						\ ->
+							ifArrayPush(
+								style2,
+								containsStruct(style, MBackgroundImage("", false)) || containsStruct(style2, MBackgroundImage("", false)),
+								normalizeColor(MCardTextColor2MColor(style, belowStyle))
+							)
+					);
+
+			MTextButton2T(
+				manager,
+				parent,
+				MTextButton(
+					text,
+					onClick,
+					buttonStyle,
+					state2
+				)
+			)
+			|> (\t -> TBorder(0.0, defaultCardMarginActions, 0.0, defaultCardMarginActions, t))
+		}
+		default: {
+			TCenterY(m2t(action, parent));
+		}
+	}
+}
+
+MCardStyle2Frame(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MCardStyle], borders : Quadruple<double, double, double, double>,
+	itemsColor : MColor, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	normalize = \f -> if (f > 0.) i2d(floor(f / 4.0)) * 4.0 else f;
+
+	color = tryExtractStruct(style, MWhite());
+	image = extractStruct(style, MBackgroundImage("", false));
+	opacity = extractStruct(style, FillOpacity(1.0));
+	cardWidth = extractStruct(style, MCardWidth(-1.0)).width |> normalize;
+	cardHeight = extractStruct(style, MCardHeight(-1.0)).height |> normalize;
+	moreMenu = extractStruct(style, MMoreMenu([], []));
+	alignBottom = contains(style, MAlignBottom());
+
+	content
+	|> alignRightForRTL
+	|> (\f -> if (alignBottom) TLines2(TFillY(), f) else f)
+	|> (\f -> TGroup2(TFillXY(), f))
+	|> (\f -> TBorder(borders.first, borders.second, borders.third, borders.fourth, f))
+	|> (\f -> if (cardWidth >= 0.0) TAvailable(f, TFillWY(cardWidth)) else f)
+	|> (\f -> if (cardHeight >= 0.0) TAvailable(f, TFillXH(cardHeight)) else f)
+	|> (\f ->
+		TCopySize(
+			f,
+			\tr ->
+				if (image.image != "")
+					TAlpha(const(opacity.opacity), TZoomToFill(TPicture(image.image, []), tr, true))
+					|> (\f2 -> TGroup2(TRectangle([MFill(MBackgroundColor(image.light))], tr), f2))
+				else 
+					eitherMap(color, \col -> TRectangle([MFill(col), opacity], tr), TEmpty()),
+			false
+		)
+	)
+	|> (\f ->
+		if (moreMenu.items != []) {
+			mmenu =
+				MMenu2T(
+					manager,
+					parent,
+					MMenu(MIconButton("more_vert", nop, [itemsColor], []), moreMenu.items, moreMenu.state),
+					m2t
+				);
+
+			TCopySize(
+				f,
+				\tr ->
+					TTweak([TAlign(const(b2d(!getDefaultRtl())), zero)], mmenu, tr),
+				true
+			)
+		} else
+			f
+	)
+}
+
+normalizeColor(col : MColor) -> MColor {
+	if (col == MWhite()) MWhite() else MBlack()
+}

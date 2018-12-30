@@ -1,0 +1,129 @@
+import bits;
+import string;
+
+// Original source code: https://raw.githubusercontent.com/kvz/phpjs/master/functions/strings/sha1.js
+
+// original by: Webtoolkit.info (http://www.webtoolkit.info/)
+// improved by: Michael White (http://getsprink.com)
+// improved by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+//    input by: Brett Zamir (http://brett-zamir.me)
+
+export {
+	// Takes am 8-bit string and calculates the SHA-1.
+	// With the c++ runner, 32kb of text takes about 0.3 s. 100 kb takes 2.5 s
+	SHA1(str : string) -> string;
+}
+
+SHA1(str : string) -> string {
+	str_len = strlen(str);	
+
+	// Get the bytes of the string, with the stop code and zero-fill
+	chars = concat(s2a(str), [0x80, 0x00, 0x00, 0x00]);
+
+	// Convert to words
+	words0 = foldi(chars, [], \i, acc, c -> {
+		if (i % 4 == 0) {
+			arrayPush(acc, c);
+		} else {
+			last = lastElement(acc, 0);
+			replace(acc, length(acc) - 1, bitOr(bitShl(last, 8), c));
+		}
+	});
+
+	// Empty string should give:
+	words1 = concat(words0, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+	nwords = 16 * (((str_len + 1 + 3) / 4 + 16) / 16);
+
+	words2 = subrange(words1, 0, nwords);
+	// Put the string length in some encoding at the end
+	words3 = replace(words2, nwords - 2, bitUshr(str_len, 29));
+	words = replace(words3, nwords - 1, bitShl(str_len, 3));
+
+	h = doSha1Loop(words, 0, nwords, [
+		0x67452301,
+		0xEFCDAB89,
+		0x98BADCFE,
+		0x10325476,
+		0xC3D2E1F0
+	]);
+
+	fh = \i -> lpad(formatHex(i), "0", 8);
+
+	temp = fh(h[0]) + fh(h[1]) + fh(h[2]) + fh(h[3]) + fh(h[4]);
+	toLowerCase(temp);
+}
+
+doSha1Loop(words : [int], blockstart : int, nwords : int, H : [int]) -> [int] {
+	if (blockstart < nwords) {
+		w0 = subrange(words, blockstart, 16);
+		w1 = concat(
+			w0,
+			generate(16, 80, \i -> 0)
+		);
+
+		rotate_left = \n : int, s : int -> {
+			bitOr(bitShl(n, s), bitUshr(n, 32 - s));
+		};
+
+		w1r = map(w1, \w -> ref w);
+
+		w2 = mapi(w1r, \i, w : ref int -> {
+			if (i < 16) ^w
+			else {
+				v = rotate_left(bitXor(bitXor(^(w1r[i - 3]), ^(w1r[i - 8])), bitXor(^(w1r[i - 14]), ^(w1r[i - 16]))), 1);
+				w1r[i] := v;
+				v
+			}
+		});
+
+		A = ref H[0];
+		B = ref H[1];
+		C = ref H[2];
+		D = ref H[3];
+		E = ref H[4];
+
+		fori(0, 19, \i -> {
+			temp = (rotate_left(^A, 5) + (bitOr(bitAnd(^B, ^C), bitAnd(bitNot(^B), ^D))) + ^E + w2[i] + 0x5A827999);
+			E := ^D;
+			D := ^C;
+			C := rotate_left(^B, 30);
+			B := ^A;
+			A := temp;
+		});
+
+		fori(20, 39, \i -> {
+			temp = (rotate_left(^A, 5) + (bitXor(bitXor(^B, ^C), ^D)) + ^E + w2[i] + 0x6ED9EBA1);
+			E := ^D;
+			D := ^C;
+			C := rotate_left(^B, 30);
+			B := ^A;
+			A := temp;
+		});
+
+		fori(40, 59, \i -> {
+			temp = (rotate_left(^A, 5) + bitOr(bitOr(bitAnd(^B, ^C), bitAnd(^B, ^D)), bitAnd(^C, ^D)) + ^E + w2[i] + 0x8F1BBCDC);
+			E := ^D;
+			D := ^C;
+			C := rotate_left(^B, 30);
+			B := ^A;
+			A := temp;
+		});
+
+		fori(60, 79, \i -> {
+			temp = (rotate_left(^A, 5) + bitXor(bitXor(^B, ^C), ^D) + ^E + w2[i] + 0xCA62C1D6);
+			E := ^D;
+			D := ^C;
+			C := rotate_left(^B, 30);
+			B := ^A;
+			A := temp;
+		});
+
+		H0 = (H[0] + ^A);
+		H1 = (H[1] + ^B);
+		H2 = (H[2] + ^C);
+		H3 = (H[3] + ^D);
+		H4 = (H[4] + ^E);
+		doSha1Loop(words, blockstart + 16, nwords, [H0, H1, H2, H3, H4]);
+	} else H
+}

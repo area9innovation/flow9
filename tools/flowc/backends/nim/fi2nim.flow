@@ -1,0 +1,58 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/nim/fi2nim_assemble;
+import tools/flowc/backends/nim/fi2nim_defines;
+import tools/flowc/backends/nim/fi2nim_utils;
+import tools/flowc/backends/nim/fi2nim_compile;
+
+export {
+	fi2nim(program : FiProgram, cfg : FiNimConfig, callback : () -> void) -> void;
+}
+
+fi2nim(program : FiProgram, cfg : FiNimConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making NIM '" + cfg.outputfile + "'...");
+
+	fcVerbose(cfg, 1, "Collecting code for all imported files...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	runtimeContent = fiGetNimRuntime(cfg);
+	env = FiNimEnv(program, fiStruct2unions(program));
+	structsCode = fiCollectNIMStructs2(cfg, env);//+fcCollectNIMStructs(cfg, program);
+	moduleCount = i2s(length(decls));
+
+	fcVerbose(cfg, 0, "Generating Nim code for declarations...");
+	modulesCode = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Nim code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiNimCompileToplevel(cfg, env, v, fiNimIndent);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	contents =
+		Cons("main()\n",
+			Cons(list2string(modulesCode),
+				Cons("\n",
+					Cons(list2string(^nimProcDefinition),
+						Cons(structsCode,
+							Cons(runtimeContent, makeList()))))));
+
+	fiAssembleNimFile(cfg, contents);
+
+	callback();
+}

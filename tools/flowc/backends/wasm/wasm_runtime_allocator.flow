@@ -1,0 +1,174 @@
+import tools/flowc/backends/wasm/wasm_opcodes;
+
+/**
+ * Simple malloc implementation
+ *  - uses double-linked list of blocks
+ *  - uses first-fit approach to find the right one
+ */
+export {
+	wasm_init_allocator() -> void;
+
+	// Allocates this amount of bytes. Returns a memory address
+	wasm_alloc(size: int) -> int;
+	// Frees the block allocated at this address.
+	wasm_free(address: int) -> void;
+
+	// compiler will replace calls to this with the actual heap start
+	native wasm_heap_start : () -> int = wasm_compiler.heap_start;
+	
+	// For debugging
+	wasm_read_head() -> int;
+}
+
+// flow structs are not yet available, so malloc cannot use them 
+
+// block descriptor:
+// i32 next
+// i32 pre
+// i32 size, in bytes
+
+wasm_memsize = 65536;
+wasm_header_size = 12;
+
+// head is stored in memory[0]
+wasm_read_head() {
+	wasm_i32_load(wasm_heap_start());
+}
+
+wasm_write_head(address: int) {
+	wasm_i32_store(wasm_heap_start(), address);
+}
+
+wasm_write_header(address: int, next: int, prev: int, size: int) {
+	wasm_i32_store(wasm_get_next_field(address), next);
+	wasm_i32_store(wasm_get_prev_field(address), prev);
+	wasm_i32_store(wasm_get_size_field(address), size)
+}
+
+// helper functions - block field navigation
+wasm_get_next_field(address: int) {
+	address;
+}
+
+wasm_get_prev_field(address: int) {
+	address + 4;
+}
+
+wasm_get_size_field(address: int) {
+	address + 8;
+}
+
+// helper functions - read-write block fields
+wasm_get_next_block(address: int) {
+	wasm_i32_load(wasm_get_next_field(address));
+}
+
+wasm_get_prev_block(address: int) {
+	wasm_i32_load(wasm_get_prev_field(address));
+}
+
+wasm_get_block_size(address: int) {
+	wasm_i32_load(wasm_get_size_field(address));
+}
+
+wasm_set_next_block(address: int, next_block_offset: int) {
+	wasm_i32_store(wasm_get_next_field(address), next_block_offset);
+}
+
+wasm_set_prev_block(address: int, prev_block_offset: int) {
+	wasm_i32_store(wasm_get_prev_field(address), prev_block_offset);
+}
+
+// linked list management
+// insert between prev and next linking to them directly
+wasm_list_insert(prev: int, next: int, address: int) {
+	if (prev > 0) {
+		wasm_set_next_block(prev, address);
+	} else {
+		wasm_write_head(address)
+	}
+	wasm_set_prev_block(address, prev);
+
+	if (next > 0) {
+		wasm_set_prev_block(next, address);
+	}
+	wasm_set_next_block(address, next);
+}
+
+// remove item from the list
+wasm_list_remove(address: int) {
+	if (wasm_get_prev_block(address) > 0) {
+		wasm_set_next_block(wasm_get_prev_block(address), wasm_get_next_block(address));
+	} else {
+		wasm_write_head(wasm_get_next_block(address));
+	}
+
+	if (wasm_get_next_block(address) > 0) {
+		wasm_set_prev_block(wasm_get_next_block(address), wasm_get_prev_block(address));
+	}
+}
+
+// splits block if needed, returns either newly created block or next block
+wasm_split_or_use_block(size: int, address: int) {
+	if (wasm_get_block_size(address) - size >= wasm_header_size) {
+		next = wasm_get_next_block(address);
+		prev = wasm_get_prev_block(address);
+		// create a new block and 
+		non_aligned = address + wasm_header_size + size;
+		next_free_block = 
+			if (non_aligned % 4 == 0)
+				non_aligned
+			else
+				(non_aligned + 4) / 4 * 4;
+
+		// write its header and put pointers to prev and next
+		wasm_write_header(next_free_block, next, prev,
+			wasm_get_block_size(address) - (next_free_block - address));
+
+		wasm_list_insert(prev, next, next_free_block);
+
+		// update address header
+		wasm_write_header(address, -1, -1, size);
+	} else {
+		wasm_list_remove(address);    
+	}
+}
+
+// recursive list traversal
+wasm_alloc_tail(size: int, startAt: int) -> int {
+	if (startAt <= 0) {
+		-1; // means out of memory
+	} else if (wasm_get_block_size(startAt) >= size) {
+		wasm_split_or_use_block(size, startAt);
+		startAt;
+	} else { 
+		wasm_alloc_tail(size, wasm_get_next_block(startAt));
+	}
+}
+
+wasm_free_tail(address: int, startAt: int) {
+	if (address < startAt) // if we found a free higher than we need, insert before
+		wasm_list_insert(wasm_get_prev_block(startAt), startAt, address)
+	else if (wasm_get_next_block(startAt) > 0) // otherwise, iterate
+		wasm_free_tail(address, wasm_get_next_block(startAt))
+	else // otherwise, add to the end of free block list
+		wasm_list_insert(startAt, -1, address);
+}
+
+wasm_alloc(size: int) {
+	allocated = wasm_alloc_tail(size, wasm_read_head());
+	if (allocated > 0) allocated + wasm_header_size else -1;
+}
+wasm_free(address: int) {
+	if (wasm_read_head() < 0) {
+		wasm_write_head(address);
+		wasm_set_next_block(address, -1);
+		wasm_set_prev_block(address, -1);
+	} else
+		wasm_free_tail(address - wasm_header_size, wasm_read_head());
+}
+
+wasm_init_allocator() {
+	wasm_write_head(wasm_heap_start() + 4); // real memory starts from wasm_heap_start + 4
+	wasm_write_header(wasm_read_head(), -1, -1, wasm_memsize - wasm_header_size - wasm_heap_start() - 4); // 4 for head storage 
+}

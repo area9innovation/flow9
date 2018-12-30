@@ -1,0 +1,148 @@
+import tools/flowc/incremental/fiexp;
+import math;
+import blueprint;
+
+export {
+	// These are the values we do CSE on.
+	FvValue ::= FvBool, FvInt, FvDouble, FvString, FvArray, FvStruct;
+		FvBool(b: bool);
+		FvInt(i : int);
+		FvDouble(d : double);
+		FvString(s : string);
+		// Due to polymorphism and other fun things, we keep the type here
+		FvArray(vs : [FvValue], type : FiType);
+		// Due to polymorphism and other fun things, we keep the type here
+		FvStruct(name : string, args : [FvValue], type : FiType);
+
+
+	fvValue2string(v : FvValue) -> string;
+	fvValue2FiExp(v : FvValue) -> FiExp;
+	fiValue2FiType(v : FvValue) -> FiType;
+
+	// A estimate for the size of this value in the resulting code
+	// We support bytecode and JS estimates
+	fvValueCodeSize(v : FvValue, bytecode : bool) -> int;
+	
+	// If these expressions are constants, give us them
+	getFvValues(es : [FiExp]) -> [FvValue];
+}
+
+fvValue2string(v : FvValue) -> string {
+	switch (v) {
+		FvBool(b): b2s(b);
+		FvInt(i): i2s(i);
+		FvDouble(d): d2s(d) + ".0";
+		FvString(s): toString(s);
+		FvArray(as, __): "[" + superglue(as, fvValue2string, ", ") + "]";
+		FvStruct(n, as, __): n + "(" + superglue(as, fvValue2string, ", ") + ")";
+	}
+}
+
+fvValue2FiExp(v : FvValue) -> FiExp {
+	switch (v) {
+		FvBool(b): FiBool(b, 0);
+		FvInt(i): FiInt(i, 0);
+		FvDouble(d): FiDouble(d, 0);
+		FvString(s): FiString(s, 0);
+		FvArray(as, t): FiCallPrim(FcArrayPrim(), map(as, fvValue2FiExp), t, 0);
+		FvStruct(n, as, t): FiCallPrim(FcStructPrim(n), map(as, fvValue2FiExp), t, 0);
+	}
+}
+
+
+fiValue2FiType(v : FvValue) -> FiType {
+	switch (v) {
+		FvBool(b): FiTypeBool();
+		FvInt(i): FiTypeInt();
+		FvDouble(d): FiTypeDouble();
+		FvString(s): FiTypeString();
+		FvArray(as, t): t;
+		FvStruct(n, as, t): t;
+	}
+}
+
+fvValueCodeSize(v : FvValue, bytecode : bool) -> int {
+	switch (v) {
+		FvBool(b): if (bytecode) 2 else if (b) 4 else 5;
+		FvInt(i): if (bytecode) 5 else strlen(i2s(i));
+		FvDouble(d): {
+			if (bytecode) 9
+			else {
+				if (isNanOrInf(d)) 8 // Math.NaN
+				else {
+					s = d2s(d);
+					(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) 2 else 0)
+					+ (if (getCharAt(s, 0) == "-") 2 else 0)
+					+ strlen(s);
+				}
+			}
+		}
+		FvString(s): {
+			if (bytecode) {
+				utfbytes = string2utf8(s);
+				1 + 4 + length(utfbytes);
+			} else {
+				stringFold(s, 2, \acc, code -> {
+					acc + if (code < 0x20) {
+							if (code == 0x09 || code == 0x0a || code == 0x0d) 2
+							else 6;
+						} else if (code >= 0x80) {
+							6
+						} else {
+							if (code == 0x22) 2
+							else if (code == 0x5c) 2
+							else 1;
+						}
+				});
+			}
+		}
+		FvArray(as, t): {
+			if (bytecode) {
+				fold(as, 5, \acc, a -> acc + fvValueCodeSize(a, bytecode));
+			} else {
+				fold(as, 2, \acc, a -> acc + fvValueCodeSize(a, bytecode)) 
+				+ length(as) /* commas */;
+			}
+		}
+		FvStruct(n, as, t): {
+			if (bytecode) {
+				fold(as, 5, \acc, a -> acc + fvValueCodeSize(a, bytecode));
+			} else {
+				fold(as, 0, \acc, a -> acc + fvValueCodeSize(a, bytecode)) 
+				+ 2 // { }
+				+ 7 // "_id:194"
+				+ 4*length(as) /* ,id: */;
+			}
+		}
+	}
+}
+
+// If these expressions are constants, give us them
+getFvValues(es : [FiExp]) -> [FvValue] {
+	list2array(fold(es, makeList(), \acc : List<FvValue>, e -> {
+		switch (e) {
+			FiBool(b, __): Cons(FvBool(b), acc);
+			FiInt(i, __): Cons(FvInt(i), acc);
+			FiDouble(d, __): Cons(FvDouble(d), acc);
+			FiString(s, __): Cons(FvString(s), acc);
+			FiCallPrim(o, pes, type, __): {
+				switch (o) {
+					FcStructPrim(n): {
+						args = getFvValues(pes);
+						if (length(args) == length(pes)) {
+							Cons(FvStruct(n, args, type), acc);
+						} else makeList()
+					}
+					FcArrayPrim(): {
+						args = getFvValues(pes);
+						if (length(args) == length(pes)) {
+							Cons(FvArray(args, type), acc);
+						} else makeList()
+					}
+					default: makeList();
+				}
+			}
+			default: makeList();
+		}
+	}));
+}

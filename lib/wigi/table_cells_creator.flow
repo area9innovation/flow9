@@ -1,0 +1,141 @@
+import wigi/types;
+
+
+
+export {
+	setWigiCellEditMode(cell : WigiElement, editMode : bool) -> void;
+
+	createWigiTableCells(cellsCount : int, cellStyle : [WigiTableCellStyle]) -> [WigiRecursive];
+	createWigiSpreadsheetCells(cellsCount : int, cellStyle : [WigiTableCellStyle]) -> [WigiElement];
+
+	createWigiTableCell(text: string, cellStyle : [WigiTableCellStyle]) -> WigiRecursive;
+	createWigiSpreadsheetCell(text: string, cellStyle : [WigiTableCellStyle]) -> WigiRecursive;
+
+	setWigiTableCellNames(table : WigiElement) -> WigiElement;
+
+	getTableColumnsRows(table : WigiTable) -> Pair<[int], [int]>;
+
+	getWigiColName(column : int) -> string;
+
+	updateWigiCell(cell : WigiElement) -> void;
+}
+
+setWigiCellEditMode(cell : WigiElement, editMode : bool) -> void {
+	switch(cell) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiSpreadsheetCell(wh, em, cellStyle): next(em, editMode);
+				default: {};
+			}
+		}
+		default: {};
+	}
+}
+
+updateWigiCell(cell : WigiElement) -> void {
+	switch(cell) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiSpreadsheetCell(wh, em, cellStyle): next(em, getValue(em));
+				default: {};
+			}
+		}
+		default: {};
+	}
+}
+
+createWigiTableCells(cellsCount : int, cellStyle : [WigiTableCellStyle]) -> [WigiRecursive] {
+	generate(0, cellsCount, \i -> createWigiTableCell("", cellStyle));
+}
+
+createWigiTableCell(text: string, cellStyle : [WigiTableCellStyle]) -> WigiRecursive {
+	tightWidth = if (contains(cellStyle, WigiCellTightWidth())) [TightWidth()] else [];
+
+	WigiRecursive(
+		[makeWigiStory([WigiParagraph([WigiText(text, [])], tightWidth)], [])], 
+		WigiTableCell(make(zeroWH), cellStyle), 
+		[]
+	);
+}
+
+createWigiSpreadsheetCells(cellsCount : int, cellStyle : [WigiTableCellStyle]) -> [WigiElement] {
+	generate(0, cellsCount, \i -> createWigiSpreadsheetCell("", cellStyle));
+}
+
+createWigiSpreadsheetCell(text: string, cellStyle : [WigiTableCellStyle]) -> WigiRecursive {
+	tightWidth = if (contains(cellStyle, WigiCellTightWidth())) [TightWidth()] else [];
+
+	WigiRecursive(
+		[makeWigiStory([WigiParagraph([WigiText(text, [])], tightWidth)], [])], 
+		WigiSpreadsheetCell(make(zeroWH), make(false), cellStyle), 
+		[]
+	);
+}
+
+getWigiColName(column : int) -> string {
+	a = column / 26;
+	prefix = if (a > 0) getWigiColName(a - 1) else "";
+	prefix + fromCharCode(65 + column % 26);
+}
+
+setWigiTableCellNames(table : WigiElement) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(__, __, __, __): {
+					columnsRows = getTableColumnsRows(type);
+					newElements = mapi(elements, \i, e -> {
+						switch(e) {
+							WigiRecursive(cellElements, cellType, cellStyle): {
+								switch (cellType) {
+									WigiSpreadsheetCell(__, __, __): {
+										newName = getWigiColName(columnsRows.first[i]) + i2s(columnsRows.second[i] + 1);
+										newCellStyle = arrayPush(filter(cellStyle, \cst -> switch(cst) {WigiName(__): false; default: true;}), WigiName(newName));
+										WigiRecursive(cellElements, cellType, newCellStyle);
+									}
+									default: e;
+								}
+							}
+							default: e;
+						}
+					});
+
+					WigiRecursive(newElements, type, style);
+				}
+				default: table;
+			}
+		}
+		default: table;
+	};
+}
+
+calculateNextColumnRow(skipRows : [Pair<int, int>], cols : int, i : int, col : int, row : int) -> Triple<[Pair<int, int>], int, int> {
+	if (skipRows[i].first > 0 && i == col) 
+		calculateNextColumnRow(replace(skipRows, i, Pair(skipRows[i].first - 1, skipRows[i].second)), cols, (i + 1) % cols, (col + skipRows[i].second) % cols, if (col == 0) row + 1 else row)
+	else if (i >= col) Triple(skipRows, col, row)
+	else calculateNextColumnRow(skipRows, cols, i + 1, col, row);
+}
+
+getTableColumnsRows(table : WigiTable) -> Pair<[int], [int]> {
+	skipRows = ref generate(0, table.cols, \i -> Pair(0, 0));
+
+	col = ref 0;
+	row = ref -1;
+
+	fold(table.cellSpans, Pair([], []), \cr, cellSpan -> {
+		scr = calculateNextColumnRow(^skipRows, table.cols, 0, ^col, ^row);
+		skipRows := scr.first;
+		col := scr.second;
+		row := scr.third;
+
+		if (^col == 0) row := ^row + 1;
+
+		newcr = Pair(arrayPush(cr.first, ^col), arrayPush(cr.second, ^row));
+
+		skipRows := replace(^skipRows, ^col % table.cols, Pair(cellSpan.row - 1, cellSpan.col));
+
+		col := (^col + cellSpan.col) % table.cols;
+
+		newcr;
+	});
+}

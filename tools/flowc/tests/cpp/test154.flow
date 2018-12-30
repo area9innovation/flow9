@@ -1,0 +1,141 @@
+// testing parallel parsing
+
+forbid tools/flowc/flowc_helpers;
+
+import url_parameter;
+import set;
+import concurrent;
+import tools/common/compilerconfig;
+import tools/flowc/flow_parser;
+import tools/flowc/fcmodule;
+import tools/flowc/flow_ast;
+import lingo/compiler/syntaxtree_util;
+
+
+print_time(t1 : double, t2 : double) {
+	d2i2 = \d -> cast(d : double -> int); 
+	println("t = " + i2s(d2i2(t2 - t1)) + " ms");
+}
+
+
+parseFlowfile(config : CompilerConfig, fileinfo : FcFileInfo) -> Pair<SyntaxTree, Maybe<FcError>> {
+	pr = parse_flow(fileinfo.content);
+	st = pr.first;
+	err = pr.second;
+	errorM = if (st.end != strlen(fileinfo.content)) {
+		Some(FcError("Syntax error: expected one of " + strGlue(list2array(err.expected), ", "), [FcPosition(fileinfo.flowfile, err.pos, err.pos)]));
+	} else None();
+	Pair(st, errorM)
+}
+
+getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
+	realfile = findFlowPath(file, true, config.includes);
+	content = getFileContent(realfile);
+
+	FcFileInfo(
+		trimFlowfile(file, config.includes),
+		fileModified(realfile),
+		realfile,
+		md5(content),
+		content,
+		0,
+		fileSize(realfile)
+	);
+}
+
+extractFcImports(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcImport] {
+	grab = \t -> grabSTText(t, fileinfo.content);
+
+	importExport : [SyntaxTree] = get_flow_importExport_s(st);
+	fold(importExport, [], \acc, ts : SyntaxTree -> {
+		if (ts.rule == "import") {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), false, ts.start, ts.end));
+		} else if (ts.rule == "dynamicImport") {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), true, ts.start, ts.end));
+		} else {
+			// forbid & export
+			acc;
+		}
+	});
+}
+
+// load(file, config) -> [FcImport] {
+load(file, config) -> Pair<FcFileInfo, SyntaxTree> {
+	// println(file);
+	fileinfo = getFcFileInfo(file, config);
+	err = Pair(fileinfo, dummySyntaxTree);
+	if (!fileExists(fileinfo.fullpath)) {
+		println("Cannot load '" + file + "'");
+		err
+	} else {
+		p = parseFlowfile(config, fileinfo);
+		if (isSome(p.second)) {
+			println(toString(p.second));
+			err
+		} else {
+			st = p.first;
+			// extractFcImports(fileinfo, st)
+			Pair(fileinfo, st)
+		}
+	}
+}
+
+Context(parsed : Set<string>, pending : Set<string>);
+
+makeStep(config, ctx : Context, parallel : bool, verbose : bool) {
+	a  = set2array(ctx.pending);
+	if (verbose) {
+		println(i2s(length(a)));
+		println(toString(a));
+	}
+	
+	tasks = map(a, \f -> \ -> {
+		load(f, config)
+	});
+	
+	results = if (parallel) concurrent(true, tasks)
+			  else sequential(true, tasks);
+			  
+	results2 = map(results, \p -> {
+		fileinfo = p.first;
+		st = p.second;
+		r = extractFcImports(fileinfo, st);
+		map(r, \im : FcImport -> im.flowfile)
+	});
+	
+	imports : [string] = concatA(results2);
+	
+	newParsed = mergeSets(ctx.parsed, ctx.pending);
+	
+	imports2 = filter(imports, \f -> !containsSet(newParsed, f));
+	// println(imports2);
+	
+	Context(newParsed, buildSet(imports2))
+}
+
+test2(config : CompilerConfig, file) {
+	parallel = isUrlParameterTrue("parallel");
+	println("Parsing '" + file + "'...");
+	println("parallel = " + toString(parallel));
+	ctx = Context(makeSet(), makeSet1(file));
+	verbose = !isUrlParameterFalse("verbose");
+	t1 = timestamp();
+	ctx2 = for(ctx, \c -> !isEmptySet(c.pending), \c -> {
+		makeStep(config, c, parallel, verbose)
+	});
+	t2 = timestamp();
+	print_time(t1, t2);
+	println("loaded " + i2s(sizeSet(ctx2.parsed)) + " files");
+	println("DONE");
+}
+
+
+main() {
+	// file = "tools/flowc/incremental";
+	file = "tools/flowc/flowc";
+	// file = "tools/flowc/fcmodule";
+	switch (getCompilerConfig()) {
+		Some(config): test2(config, file);
+		default: println("ERROR getting config!");
+	}
+}

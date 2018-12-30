@@ -1,0 +1,66 @@
+import wigi/wigi_date_grammar;
+import lingo/pegcode/driver;
+import date;
+
+export {
+	parseTimeString(inputString : string, onOK : (Time) -> ?, onError : (string) -> ?) -> ?;
+
+	parseDateString(inputString : string, onOK : (Date) -> ?, onError : (string) -> ?) -> ?;
+
+	str2TimeLocal(s : string) -> Time;
+}
+
+lingoDateGrammarOp : ref Maybe<[PegOp]> = ref None();
+
+timePegActionsOp : ref Maybe<SemanticActions> = ref None();
+
+timePegActions() {
+	onlyOnce(timePegActionsOp, \-> {
+		SemanticActions(
+			setTree(defaultPegActions.t, "add12", \xs : [flow] -> 12 + xs[0])
+			|> (\t : Tree<string, ([flow]) -> flow > -> setTree(t, "concatDateTime", \xs : [flow] -> Time(xs[0].year, xs[0].month, xs[0].day, xs[1].hour, xs[1].min, xs[1].sec)))
+			|> (\t : Tree<string, ([flow]) -> flow > -> setTree(t, "mod12", \xs : [flow] -> mod(xs[0], 12)))
+			|> (\t : Tree<string, ([flow]) -> flow > -> setTree(t, "nulltime", \xs : [flow] -> nullTime))
+			|> (\t : Tree<string, ([flow]) -> flow > -> setTree(t, "correct_short_year", \xs : [flow] -> {
+				yy : int = xs[0];
+				yy + (if (yy < 30) 2000 else 1900)
+			}))
+		)
+	})
+}
+
+parseTimeString(inputString : string, onOK : (Time) -> ?, onError : (string) -> ?) -> ? {
+	result = parsic3(pegOps4Wigi_date, inputString, timePegActions(), nullTime);
+	if (strlen(result.third) == 0) correctWigiTime(result.first, onOK, onError)
+	else onError(result.third)
+}
+
+parseDateString(inputString : string, onOK : (Date) -> ?, onError : (string) -> ?) -> ? {
+	parseTimeString(inputString, \time -> Date(time.year, time.month, time.day) |> onOK, onError)
+}
+
+str2TimeLocal(s : string) -> Time {
+	result = parsic3(pegOps4Wigi_date, s, timePegActions(), nullTime);
+	if (strlen(result.third) == 0) correctWigiTime(result.first, idfn, \__ -> nullTime)
+	else nullTime
+}
+
+correctWigiTime(t: Time, onOK : (Time) -> ?, onError : (string) -> ?) -> ? {
+	if (t == nullTime)
+		onError("Wrong time format")
+	else {
+		sec = t.sec % 60;
+		min1 = t.sec / 60 + t.min;
+		min_ = min1 % 60;
+		hour1 = min1 / 60 + t.hour;
+		hour = hour1 % 24;
+		month1 = t.month % 12;
+		month2 = if (month1 == 0) 12 else month1;
+		dayInMonth = if (t.year < 1900) 32 else getNumberOfDaysPerMonthInTheYear(t.year)[month2];
+
+		if (t.day > dayInMonth) onError("Incorrect count of days on Month!")
+		else {
+			onOK(Time(t.year, t.month, t.day + hour1 / 24, hour, min_, sec));
+		}
+	}
+}

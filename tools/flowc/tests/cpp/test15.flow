@@ -1,0 +1,127 @@
+forbid serialize;
+// forbid tools/flowc/incremental;
+forbid tools/flowc/flowc_module;
+// forbid deserialize_string;
+forbid formats/json/json;
+
+import tools/common/compilerconfig;
+import tools/flowc/flow_parser;
+import tools/flowc/flowc_helpers;
+import tools/flowc/desugar;
+import tools/flowc/prettyprint;
+import tools/flowc/typechecker/typechecker;
+
+import tools/flowc/tests/cpp/test_utils;
+
+parseFile(file : string, config) -> FcParsed {
+	fileinfo = getFcFileInfo(file, config);
+	if (0 == strlen(fileinfo.content)) {
+		println("ERROR! Cannot find " + file);
+	}
+	pr = parse_flow(fileinfo.content);
+	st = pr.first;
+	if (st.end != strlen(fileinfo.content)) {
+		println("ERROR! Parsing error in " + file);
+	}
+	FcParsed(fileinfo, st, extractFcImports(fileinfo, st));
+}
+
+desugarParsed(tenv : FcTypeEnv, parsed : FcParsed) -> FcTypeEnv {
+	acc = tenv.global.acc;
+	config = acc.config;
+	module = desugarFcModule(acc, tenv.local, parsed.fileinfo, parsed.syntaxtree, config);
+	tenv_ndep = addDesugaredModuleToGlobal(tenv.global, module);
+	tenv2 = FcTypeEnv(tenv_ndep.first, tenv.local);
+	typechecked = typecheckFcModule(tenv2, module);
+	FcTypeEnv(mergeTypingToFcTypeEnv(typechecked.first, typechecked.second, module, tenv2.global), tenv.local)
+}
+
+addModule(tenv : FcTypeEnv, file : string) -> FcTypeEnv {
+	parsed = parseFile(file, tenv.global.acc.config);
+	desugarParsed(tenv, parsed)
+}
+
+makeTenv(config) -> FcTypeEnv {
+	idfactory = makeIdFactory(0, 10000);
+	globalid = makeIdFactory(10000000, 0);	// With bucket zero, it becomes atomic
+	acc = FlowcAcc(
+		makeDependencyTracker(),
+		makeTree(),
+		makeTree(), 
+		[],
+		FcGlobalNames(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree()), 
+		config, 
+		idfactory,
+		makeIdGroup(globalid),
+	);
+	errors = ref 0;
+	FcTypeEnv(
+		FcTypeEnvGlobal(
+			acc, 
+			makeTree(), 
+			\e -> {
+				errors := ^errors + 1;
+				printFcError(acc, e)
+			},
+			errors
+		),
+		initFcTypeEnvLocal()
+	);
+}
+
+run(f : (CompilerConfig) -> void) {
+	config1 = getCompilerConfig();
+	switch (config1) {
+		Some(config): f(config);
+		default: println("ERROR getting config!");
+	}
+}
+
+test1(config : CompilerConfig, files : [string]) {
+	tenv = makeTenv(config);
+	t1 = timestamp();
+	iter(enumFromTo(0, 3), \__ -> {
+		tenv2 = fold(files, tenv, \tenvacc, fn -> addModule(tenvacc, "lib/" + fn));
+	});
+	t2 = timestamp();
+	print_time(t1, t2);
+}
+
+test2(config : CompilerConfig, files : [string]) {
+	tenv = makeTenv(config);
+	acc = tenv.global.acc;
+	parsed = map(files, \f -> parseFile("lib/" + f, acc.config));
+	t1 = timestamp();
+	iter(enumFromTo(0, 19), \__ -> {
+		modules = map(parsed, \p -> {
+			desugarFcModule(acc, tenv.local, p.fileinfo, p.syntaxtree, acc.config)
+		});
+	});
+	t2 = timestamp();
+	print_time(t1, t2);
+}
+
+main() {
+	files = [
+		"maybe.flow",
+		"array.flow",
+		"flowstructs.flow",
+		"dlist.flow",
+		"securitymode.flow",
+		"url.flow",
+		"runtime.flow",
+		"tuples.flow",
+		"binarytree.flow",
+		"list.flow",
+		"string.flow",
+		"math.flow",
+		"behaviour.flow",
+		"url_parameter.flow",
+		"devmode.flow",
+		"transforms.flow",
+		// "renderform.flow",
+	];
+	run(\config -> test1(config, files));
+	// run(\config -> test2(config, files));
+}
+

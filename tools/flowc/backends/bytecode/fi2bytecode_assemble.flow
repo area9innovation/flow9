@@ -1,0 +1,125 @@
+import tools/flowc/backends/common;
+import lingo/flow/bytecode;
+import md5;
+import system;
+import list;
+import dlist;
+import tools/flowc/backends/bytecode/fi2bytecode_defines;
+
+export {
+	fcBcSaveBytecode(cfg : FcBytecodeConfig, gctx : FiBcGlobalContext, bcChunk : BytecodeChunks, callback : () -> void) -> void;
+}
+
+FC_UPLOAD_SCRIPT_URL = "https://binrunner.dev.area9learning.com/flow/php/uploadbytecode.php";
+fcBcSaveBytecode(cfg, ctx, bcChunk, callback) {
+	iterator : ref List<string> = ref EmptyList();
+
+	bytes = fiBytecode2String(bcChunk);
+	isBytecodeWritten = setFileContentBytes(cfg.outputfile, bytes);
+
+	// TODO: this parameter is only required for debugging debuginfo generation itself.
+	// Subject to remove as well as comment field in BCDPosition
+	isDebugVerbose = cfg.debugVerbose;
+
+	if (cfg.debug) {
+		// First section of the debug info is
+		//     position function-name
+
+		fcVerbose(cfg, 1, "Preparing functions...");
+		iterator0 : ref List<BCDFunction> = ref EmptyList();
+		iterDList(cfg.debugInfoFunctions, \e -> iterator0 := Cons(e, ^iterator0));
+
+		functions0 = fold(
+			mergeSort(list2array(^iterator0), \a, b -> {
+				if (a.pc == b.pc) 0	else if (a.pc < b.pc) -1 else 1;
+			}),
+			makeList(),
+			\acc, v -> {
+				Cons((if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc)) + " " + v.name + "\n", acc);
+			});
+
+		functions = list2string(functions0);
+
+		fcVerbose(cfg, 1, "Preparing positions...");
+		// Second section of the debug info is line positions
+		//    position file line token-index/column
+		iterator := fold(
+			mergeSort(getTreeValues(cfg.debugInfoPositions), \a, b -> {
+				if (a.pc == b.pc) 0	else if (a.pc < b.pc) -1 else 1;
+			}),
+			makeList(),
+			\acc, v -> {
+				filename = switch(lookupTree(ctx.program.modules, v.file)) {
+					Some(m) : {
+						m.fileinfo.fullpath;
+					}
+					None() : v.file
+				}
+
+				lineCol = switch(lookupTree(ctx.resolvers, v.file)) {
+					Some(r) : {
+						// Here we use iabs() function as a workaround for
+						// desugaring of switch cases with variables.
+						// Refer to desugar.flow:989
+						lc = findLineRaw(r, iabs(v.pos));
+						Pair(lc.lineno, lc.column);
+					}
+					None() : Pair(v.pos, 0);
+				}
+
+				address = (if (isDebugVerbose) i2s(v.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(v.pc)), "0", 8) + "]" else i2s(v.pc));
+				line = (address + " ") +
+				(if (filename == "--end--") filename else resolveRelativePath(filename)) +
+				(" " + i2s(lineCol.first) + " " + (if (filename == "--end--") "-1" else i2s(lineCol.second)) + (if (isDebugVerbose) " " + v.comment else "") + "\n");
+				Cons(line, acc)
+			}
+		);
+
+		positions = list2string(^iterator);
+
+		// Third part of the debug info are local variables
+		//    L position type id name
+		// Types: 0 for local variables, 1 for function arguments, 2 for bound variables (free variables in closures)
+
+		iterator1 : ref List<BCDLocal> = ref EmptyList();
+
+		fcVerbose(cfg, 1, "Preparing locals...");
+		iterDList(cfg.debugInfoLocals, \e -> iterator1 := Cons(e, ^iterator1));
+
+		sorted = mergeSort(list2array(^iterator1), \a, b -> {
+			if (a.pc == b.pc) 0 else if (a.pc < b.pc) -1 else 1;
+		});
+
+		locals = list2string(fold(
+			sorted,
+			EmptyList(),
+			\acc, e -> {
+				Cons("L " + (if (isDebugVerbose) i2s(e.pc) + " :[" + "0x" + lpad(toLowerCase(formatHex(e.pc)), "0", 8) + "]" else i2s(e.pc))
+					+ " " + i2s(e.type) + " " + i2s(e.id) + " " + e.name + "\n", acc)}));
+
+		fcVerbose(cfg, 1, "Saving content...");
+		saveFileContent(
+			changeFileExt(cfg.outputfile, ".debug"),
+			list2string(Cons(locals, Cons("\n", Cons(positions, Cons("\n", Cons(functions, makeList())))))));
+	}
+
+	if (isBytecodeWritten) {
+		fcVerbose(cfg, 0, "Saved '" + resolveRelativePath(cfg.outputfile) + "'");
+		if (cfg.upload) {
+			fcPrintln("Uploading to " + FC_UPLOAD_SCRIPT_URL);
+			startProcess("curl", [FC_UPLOAD_SCRIPT_URL, "-Fbytecode=@" + cfg.outputfile, "-Fhash=" + md5binary(bytes), "-s", "-S", "-k"], ".", "",
+				\e, stdout, stderr->{
+					if (e == 0) fcPrintln(stdout)
+					else if (e > 0) fcPrintln(stderr)
+					else if (e < 0) fcPrintln("Troubles in startProcess(curl, ...");
+					callback()
+				}
+			);
+		} else {
+			callback();
+		}
+	} else {
+		fcPrintln("Couldn't write bytecode file '" + cfg.outputfile + "'");
+		callback()
+	}
+}

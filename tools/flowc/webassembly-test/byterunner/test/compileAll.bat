@@ -1,0 +1,1 @@
+for %%i in (test*.flow) do call compile_flowc %%~ni

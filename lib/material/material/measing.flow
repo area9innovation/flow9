@@ -1,0 +1,289 @@
+import material/material;
+import material/make_subscribe;
+import ui/animate/easing;
+import material/attach_select;
+
+export {
+	MEasingAnimation(manager : MaterialManager, parent : MFocusGroup, duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
+		percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Tropic) -> Tropic;
+	MMEasingAnimation(duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
+		percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Material) -> Material;
+
+		MEasingAnimationStyle<?> ::=
+			MLoop, MAutoStart, MContinueOnNone, MForceAnimation, MDelay, MFreezeAnimation;
+
+			MLoop(beforeLoop : (?) -> Maybe<?>);
+			MAutoStart();
+			MContinueOnNone();
+			MForceAnimation();
+			MDelay(delay : double);
+			// Lets you freeze and unfreeze the animation. When freezed,
+			//   it doesn't react to either trigger or timer changes. When
+			//   unfreezed, animation starts from same point it finished at
+			MFreezeAnimation(freeze : Transform<bool>);
+
+	MEasing(
+		start : () -> void,
+		stop : () -> void,
+		percent : Behaviour<double>
+	);
+
+	makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDeltaTimer) -> MEasing;
+
+	MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
+	MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
+
+	mLeavingDuration = if (mobile) 0.195 else 0.15;
+	mEnteringDuration = if (mobile) 0.225 else 0.16;
+	mTransitionDuration = if (mobile) 0.375 else 0.2;
+	mStepOf5TransitionDuration = \step : int -> mTransitionDuration * i2d(step) / 5.;
+
+	mStandartCurve = CubicBezierEasing(0.4, 0., 0.2, 1.);
+	mDecelerationCurve = CubicBezierEasing(0., 0., 0.2, 1.);
+	mAccelerationCurve = CubicBezierEasing(0.4, 0., 1., 1.);
+	mSharpCurve = CubicBezierEasing(0.4, 0., 0.6, 1.);
+}
+
+MEasingAnimation(manager : MaterialManager, parent : MFocusGroup, duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
+	percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Tropic) -> Tropic {
+	animFn = makeMEasingAnimationFn(manager, parent, duration, bezier, trigger, beforeEach, percent, style);
+
+	TConstruct([animFn], t)
+}
+
+MMEasingAnimation(duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
+	percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Material) -> Material {
+	MGetManager(\manager -> MGetFocusGroup(\parent -> {
+		animFn = makeMEasingAnimationFn(manager, parent, duration, bezier, trigger, beforeEach, percent, style);
+
+		MConstruct([animFn], t)
+	}))
+}
+
+makeMEasingAnimationFn(manager : MaterialManager, parent : MFocusGroup, duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
+	percent : (??, double) -> void, style : [MEasingAnimationStyle<??>]) -> () ->  () -> void {
+	\ -> {
+		bezierY = ref lerpCurve(0., 1., fgetValue(bezier));
+		passed = ref 0.;
+		mloop : (??) -> Maybe<??> = extractStruct(style, MLoop(\__ -> None())).beforeLoop;
+		autoStart = contains(style, MAutoStart());
+		continueOnNone = contains(style, MContinueOnNone());
+		context : ref Maybe<??> = ref None();
+		forceAnim = contains(style, MForceAnimation());
+		delay = extractStruct(style, MDelay(-1.)).delay;
+		freeze = extractStruct(style, MFreezeAnimation(const(false))).freeze;
+		animUns = ref nop;
+		timerUns = ref nop;
+		checkTimerUns = ref nop;
+
+		retriggerFn = ref nop;
+
+		makeCheckTimerFn = \dr -> {
+			dispUns(checkTimerUns);
+
+			checkTimerUns := interruptibleTimer(max(floor((dr - ^passed + max(delay, 0.)) * 1000. - 6.), 0), \ -> ^retriggerFn());
+		};
+
+		resetPassedFn = \cont -> {
+			context := Some(cont);
+			passed := 0.;
+
+			makeCheckTimerFn(fgetValue(duration));
+			if (delay >= 0.) dispUns(timerUns);
+			percent(cont, 0.);
+		};
+
+		finishAnimationFn = \ -> {
+			if (delay >= 0.) dispUns(timerUns);
+			dispUns(animUns);
+
+			maybeApply(^context, \c -> percent(c, 1.));
+		};
+
+		retriggerFn := \ -> {
+			passed := fgetValue(duration);
+
+			maybeApply(^context, \con ->
+				switch (mloop(con)) {
+					None(): finishAnimationFn();
+					Some(context2): resetPassedFn(context2);
+				}
+			)
+		};
+
+		newPassedFn = \dt -> if (!fgetValue(freeze)) deferred(\ -> {
+			(^passed + dt)
+			|> (\newPassed ->
+				if (newPassed < fgetValue(duration)) {
+					passed := newPassed;
+
+					maybeApply(^context, \con ->
+						percent(con, ^bezierY(newPassed / fgetValue(duration)))
+					);
+				}
+			)
+		});
+
+		subscribeToDeltaTimerFn = \ -> {
+			if (^animUns == nop) {
+				manager.manager.deltaTimer.attach();
+
+				animUns :=
+					subscribe2(manager.manager.deltaTimer.timer, newPassedFn) // Works much better with deferred
+					|> (\f -> \ -> {dispUns(checkTimerUns); f(); timer(1000, \ -> manager.manager.deltaTimer.detach())})
+			}
+		};
+
+		startingDelayFn = \fn -> {
+			if (delay >= 0.) {
+				dispUns(timerUns);
+				timerUns := interruptibleTimer(floor(delay * 1000.), fn)
+			} else
+				fn();
+		}
+
+		switchTrigger = \tv -> if (!fgetValue(freeze))
+			switch (beforeEach(tv)) {
+				None(): {
+					if (!continueOnNone) {
+						if (delay >= 0.) dispUns(timerUns);
+						dispUns(animUns);
+					}
+				}
+				Some(cont): {
+					startingDelayFn(\ ->
+						if (parent.theme.enableAnimations || forceAnim) {
+							resetPassedFn(cont);
+							subscribeToDeltaTimerFn();
+						} else {
+							percent(cont, 1.);
+						}
+					);
+				}
+			}
+
+		disp =
+			if (autoStart)
+				makeSubscribe(trigger, switchTrigger)()
+			else
+				makeSubscribe2(trigger, switchTrigger)();
+
+		dispBezier =
+			makeSubscribe2(bezier, \bz ->
+				bezierY := lerpCurve(0., 1., bz)
+			)();
+		dispDuration =
+			makeSubscribe2(duration, \dr ->
+				if (^animUns != nop) makeCheckTimerFn(dr)
+			)();
+		dispFreeze =
+			makeSubscribe(freeze, \f ->
+				if (f) dispUns(checkTimerUns)
+				else makeCheckTimerFn(fgetValue(duration))
+			)();
+
+		\ -> {
+			disp();
+			dispBezier();
+			dispDuration();
+			dispFreeze();
+			if (delay >= 0.) dispUns(timerUns);
+
+			if (^animUns != nop) {
+				dispUns(animUns);
+
+				maybeApply(^context, \c -> percent(c, 1.));
+			}
+		}
+	}
+}
+
+makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDeltaTimer) -> MEasing {
+	bezierY = lerpCurve(0., 1., bezier);
+	percent = make(0.);
+	uns = ref nop;
+	passed = ref 0.;
+
+	fn = \p -> if (^uns != nop) {
+		passed := p;
+
+		if (p >= duration) {
+			dispUns(uns);
+			nextDistinct(percent, 1.);
+		} else {
+			nextDistinct(percent, bezierY(p / duration))
+		}
+	};
+
+	MEasing(
+		\ -> {
+			dispUns(uns);
+			passed := 0.;
+			nextDistinct(percent, 0.);
+			deltaTimer.attach();
+
+			uns :=
+				subscribe(deltaTimer.timer, \dt -> deferred(\ -> fn(^passed + dt)))
+				|> (\f -> \ -> {f(); timer(1000, \ -> deltaTimer.detach())})
+		},
+		\ -> {
+			dispUns(uns);
+			nextDistinct(percent, 0.);
+		},
+		percent
+	)
+}
+
+MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic {
+	scaleRange = 0.1;
+	trigger = make(true);
+	scale = make(1.);
+	contentWH = makeWH();
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(mEnteringDuration),
+		fif(trigger, const(mDecelerationCurve), const(mAccelerationCurve)),
+		trigger,
+		\tr ->
+			Some(tr),
+		\tr, v ->
+			nextDistinct(
+				scale,
+				if (tr)
+					lerp(1., 1. + scaleRange, v)
+				else
+					lerp(1. + scaleRange, 1. + scaleRange * 3. / 4., v)
+			),
+		[
+			MLoop(\tr -> if (tr) Some(!tr) else None()),
+			MAutoStart()
+		],
+		TTranslate(
+			fselect2(scale, contentWH, FLift2(\sc, wh -> Point(wh.width * (0.5 - sc / 2.), wh.height * (0.5 - sc / 2.)))),
+			TScale(fselect(scale, FLift(\sc -> Factor(sc, sc))), TAttachBoxCopy(content, contentWH))
+		)
+	)
+}
+
+MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic {
+	transformation = make(1.);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(0.5),
+		const(mSharpCurve),
+		make(true),
+		\tr -> Some(tr),
+		\tr, v -> nextDistinct(transformation, v),
+		[
+			MAutoStart()
+		],
+		TScale(
+			fselect(transformation, FLift(\tr -> Factor(lerp(1., 2., tr), lerp(1., 2., tr)))),
+			TAlpha(fselect(transformation, FLift(\tr -> lerp(0.75, 0., tr))), content)
+		)
+	)
+}

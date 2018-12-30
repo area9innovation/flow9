@@ -1,0 +1,75 @@
+import string;
+import binarytree;
+import math;
+import tools/flowc/flowc_println;
+
+export {
+	// Given output from the compiler, find all places where we need to apply structs, and then do it!
+	fixApplyStruct(errors : string) -> void;
+}
+
+
+fixApplyStruct(erroroutput : string) -> void {
+	lines = strSplit(erroroutput, "\n");
+	errors = filter(lines, \line -> {
+		strContains(line, "Add () after");
+	});
+	sites = fold(errors, makeTree(), \acc, line -> {
+		file = takeBefore(line, ".flow:", line);
+		linecol = takeBefore(takeAfter(line, ".flow:", line), ": Add", "");
+		lineno = takeBefore(linecol, ":", linecol);
+		col = takeAfter(linecol, ":", linecol);
+		name = takeBefore(takeAfter(line, "Add () after ", line), " ", "");
+
+		treePushToArrayUnique(acc, file + ".flow", Pair(s2i(lineno), name));
+	});
+
+	traverseInOrder(sites, \file, filesites : [Pair<int, string>] -> {
+		applyStructsInFile(file, filesites);
+	});	
+}
+
+
+applyStructsInFile(file: string, sites : [Pair<int, string>]) -> void {
+	content = getFileContent(file);
+	fcPrintln(file);
+	lines = strSplit(content, "\n");
+	newlines = fold(sites, lines, \acc, site -> {
+		line = acc[site.first - 1];
+		newline = applyStructsInLine(line, 0, site.second);
+		replace(acc, site.first - 1, newline);
+	});
+
+	newcontent = strGlue(newlines, "\n");
+	setFileContent(file, newcontent);
+	{}
+}
+
+applyStructsInLine(line : string, index : int, struct : string) -> string {
+	col = strRangeIndexOf(line, struct, index, strlen(line));
+	if (col == -1) line
+	else {
+		before = strLeft(line, col);
+		after = strRight(line, col + strlen(struct));
+
+		charbefore = strsubsmart(before, -1, 0);
+		charafter = getCharAt(after, 0);
+
+		if (isIdChar(charbefore) || charafter == "(" || isIdChar(charafter) ) {
+			applyStructsInLine(line, col + strlen(struct), struct)
+		} else {
+			newline = before + struct + "()" + after;
+			applyStructsInLine(newline, col + strlen(struct), struct)
+		}
+	}
+}
+
+isIdChar(s : string) -> bool {
+	isDigit(s) || isLetter(s) || s == "_"
+}
+
+main() {
+	errors = getFileContent("out.flow");
+	fixApplyStruct(errors);
+	quit(0);
+}

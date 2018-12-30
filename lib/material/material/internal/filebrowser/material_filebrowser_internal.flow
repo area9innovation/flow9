@@ -1,0 +1,1440 @@
+import material/internal/filebrowser/material_filebrowser_internal_api;
+import material/internal/material_menu;
+import material/internal/material_dialog_internal;
+import material/internal/material_slider;
+import material/internal/material_textinput;
+import material/internal/material_splitter;
+import tropic/tropic_ui;
+
+export {
+	// Initialization and start of filebrowser using custom style
+	renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles : [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void;
+
+	//checks if file name has no conflicts with existing names
+	validateFileName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string], ignoreName : string) -> void;
+
+	//checks if partition name has no conflicts with existing names
+	validatePartitionName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string]) -> void;
+}
+
+FilebrowserState(
+	startDir : string,
+	limitAccess : bool,
+	limitDir : string,
+	maybeMultiselectB : Maybe<DynamicBehaviour<bool>>,
+	currentPathB : DynamicBehaviour<string>,
+	selectedElementsB : DynamicBehaviour<[string]>,
+	copiedElementsB : DynamicBehaviour<Pair<string, bool>>,
+	searchTextB : DynamicBehaviour<string>,
+	focusedIdB : DynamicBehaviour<string>,
+	iconSizeB : DynamicBehaviour<double>,
+	contentViewIconsB : DynamicBehaviour<bool>,
+	onClickB : DynamicBehaviour<() -> void>,
+	onRightClickB : DynamicBehaviour<(string, (string) -> void) -> void>,
+	// convert array of "FilesPaths" to array of Pairs of "FilePath" and "FilePreview"
+	getPreviews : ([string]) -> Maybe<DynamicBehaviour<[Pair<string, Material>]>>
+);
+
+//
+makeFilebrowserState(styles : [FbMStyle]) -> FilebrowserState {
+	previewCacheB : DynamicBehaviour<[Pair<string, Material>]> = make([]);
+
+	startDir = extractStruct(styles, FbStartDir("DB:/")).dir |> addSlash2pathEnd;
+	limitAccess = extractStruct(styles, FbLimitAccessToUpperFolder(false)).mode;
+
+	FilebrowserState(
+		startDir,
+		limitAccess,
+		if (limitAccess) startDir else ":::",
+		if (contains(styles, FbMultiSelect())) Some(make(false)) else None(),
+		make(""),
+		make([]),
+		make(Pair("", false)),
+		make(""),
+		make(""),
+		make(0.5),
+		make(true),
+		make(\-> {}),
+		make(\__, __ -> {}),
+		eitherMap(
+			tryExtractStruct(styles, FbGetFilesPreview(\__, fn -> fn([]))),
+			\fn -> {
+				\files -> {
+					filterNewFiles = filter(files, \f -> !exists(getValue(previewCacheB), \p -> p.first == f));
+					fn.fn(filterNewFiles, \pairs -> nextDistinct(previewCacheB, concat(getValue(previewCacheB), pairs)));
+					Some(previewCacheB);
+				}
+			},
+			\__ -> None()
+		)
+	)
+}
+
+SearchState(
+	text : string,
+	ext : [string],
+	counterB : DynamicBehaviour<int>,
+	breakSearchB : DynamicBehaviour<bool>,
+	currentPathB : DynamicBehaviour<string>,
+	selectedNameB : DynamicBehaviour<[string]>
+);
+
+//
+makeSearchState(text : string, ext : [string], currentPathB : DynamicBehaviour<string>, selectedNameB : DynamicBehaviour<[string]>) -> SearchState {
+	SearchState(
+		text,
+		ext,
+		make(0),
+		make(false),
+		currentPathB,
+		selectedNameB
+	)
+}
+
+// function to add filesystem element to the Selection list
+onDownElementFn(state : FilebrowserState, fullName : string, isFile : bool) -> void {
+	selectedElements = getValue(state.selectedElementsB);
+	newSelection =
+		switch (state.maybeMultiselectB) {
+			Some(ctrlKeyB): {
+				if (!getValue(ctrlKeyB)) {
+					[fullName]
+				} else if (contains(selectedElements, fullName)) {
+					removeFirst(selectedElements, fullName)
+				} else {
+					arrayPush(selectedElements, fullName)
+				}
+			}
+			None(): [fullName];
+		}
+
+	next(state.selectedElementsB, newSelection);
+}
+
+__dblClickCatch = ref false;
+__catchDblClickDispose = ref nop;
+
+// creating material view of the filebrowser element using own "icon"
+fsCustomElement(state : FilebrowserState, contentM : Material, text : string, tooltip : string, isSelectedB : Transform<bool>, onDown : () -> void, onClick : () -> void, onRightClick : () -> void) -> Material {
+	downB = make(false);
+	hoverB = make(false);
+	onClickB = make(true);
+	rightClickB = make(false);
+
+	onRightClick2 = \-> {
+		next(onClickB, false);
+		onRightClick();
+	};
+
+	getFolderFileClick = \click -> {
+		catchDblClick = \-> {
+			//println("dblClickCatch start timer...");
+			^__catchDblClickDispose();
+			__dblClickCatch := true;
+			__catchDblClickDispose := interruptibleTimer(500, \-> {
+				if (^__dblClickCatch) {
+					//println("dblClickCatch released");
+					__dblClickCatch := false;
+
+				}
+			});
+		}
+		\-> {
+			if (!^__dblClickCatch) {
+				//println("dblClickCatch first click");
+				catchDblClick();
+				click();
+			}
+		}
+	}
+
+	onClick2 = \-> {
+		if (onClickB |> getValue) onClick()
+		else next(onClickB, true);
+	};
+
+	MSelect(state.iconSizeB, \iconSize -> {
+		MSelect(state.contentViewIconsB, \contentViewIcons -> {
+			// calculating of text length which size will be corresponds to the element icon width
+			// min text length is 4
+			maxTextLength =
+				if (contentViewIcons) {
+					if (iconSize < 31.0) 4
+					else 3 + (trunc(iconSize) - 30) / 5;
+				} else 255;
+
+			{
+				if (contentViewIcons)
+					MLines2(
+						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+						MFixSize(
+							MCenterXIn(
+								MSelect(hoverB, \ishovered ->
+									MText(ellipsis(text, maxTextLength), [if (ishovered) MPurple(500) else MBlack()]),
+								),
+								TFixed(iconSize, 23.0)
+							),
+							TFixed(iconSize, 23.0)
+						)
+					)
+				else
+					MCols([
+						MZoomToFill(contentM, TFixed(iconSize, iconSize), true),
+						TFixed(5.0, 0.0),
+						MCenterYIn(MSelect(hoverB, \ishovered -> MText(text, [if (ishovered) MPurple(500) else MBlack()])), TFixed(iconSize, iconSize)),
+						//TFillXH(23.0)
+					])
+			}
+			|> (\m -> MBorder(6.0, 3.0, 6.0, 3.0, m))
+			|> (\content ->
+				MGroup([
+					MIf(
+						isSelectedB,
+						MAvailable(
+							TRounded(2.0, 2.0, 2.0, 2.0, [Fill(lightBlue), FillOpacity(0.7)], TFillXY()),
+							MSizeOf(content)
+						),
+						TEmpty()
+					),
+					MIf(
+						hoverB,
+						MAvailable(
+							MFrame(0.0, 1.0, [Stroke(gray), StrokeWidth(0.5)], TFillXY()),
+							MSizeOf(content)
+						),
+						TEmpty()
+					),
+					content
+				])
+			)
+			|> (\m -> if ((strlen(text) > maxTextLength - 1) || tooltip != "") MTooltip(m, MText(text + "\n" + tooltip, []), []) else m)
+		})
+	})
+	|> (\m -> MInteractive([TMouseRightDown(rightClickB), TMouseDownGhost(downB), TMouseInside(hoverB, true)], m))
+	|> (\m -> MClickable(m, getFolderFileClick(onClick2)))
+	|> (\m -> MConstruct(
+		[
+			// select an element if: the mouse down on element (not click)
+			\-> subscribe(downB, \isDown -> if (isDown) onDown()),
+			\-> subscribe(rightClickB, \isDown -> if (isDown) { onDown(); getFolderFileClick(onRightClick2)(); }),
+			// if element hovered 766 msec - it is the same like onDown
+			\-> subscribe(hoverB, \hovered -> if (hovered) timer(766, \-> if (hoverB |> getValue) onDown()))
+		],
+		m
+	))
+	|> (\m -> MSelect(state.contentViewIconsB, \contentViewIcons -> if (!contentViewIcons) MCols2(m, TFillX()) else m))
+	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m));
+}
+
+// creating material view of the filebrowser element using exists icon (by icon name)
+fsIconElement(state : FilebrowserState, icon : string, text : string, tooltip : string, isSelectedB : Transform<bool>, iconColor : MColor, onDown : () -> void, onClick : () -> void, onLongClick : () -> void) -> Material {
+	contentM = MSelect(state.iconSizeB, \iconSize -> MIcon(icon, [MIconSize(iconSize), iconColor, /*MElevation(const(10.0))*/]));
+	fsCustomElement(state, contentM, text, tooltip, isSelectedB, onDown, onClick, onLongClick)
+}
+
+// creating material view of the folder
+createFolderUI(state : FilebrowserState, curPath : string, curName : string) -> Transform<Maybe<Material>> {
+	correctedCurPath = addSlash2pathEnd(curPath);
+	nameB = make(curName);
+
+	fselect(nameB, FLift(\name ->
+		if (name == "") {
+			None();
+		} else {
+			fullName = correctedCurPath + name + "/";
+			isSelectedB = fselect(state.selectedElementsB, FLift(\elements -> contains(elements, fullName)));
+			tooltip = if (correctedCurPath != (state.currentPathB |> getValue)) fullName else "";
+
+			// after calling onClick is called onDown, but onClick changed a current path and this element destoryed,
+			// we need no selection on it (because we check the current path)
+			onDown = \-> if (getValue(state.currentPathB) == correctedCurPath) onDownElementFn(state, fullName, false);
+			onClick = \-> next(state.currentPathB, fullName);
+			onLongClick = \-> getValue(state.onRightClickB)(fullName, \str ->
+				if (str == "") next(nameB, "")
+				else next(nameB, split2Name_Path(str).first)
+			);
+
+			Some(fsIconElement(state, "folder", name, tooltip, isSelectedB, MOrange(500), onDown, onClick, onLongClick))
+		}
+	));
+}
+
+// creating material view of the file
+createFileUI(state : FilebrowserState, curPath : string, curName : string, contentsPreviewsBM : Maybe<DynamicBehaviour<[Pair<string, Material>]>>) -> Transform<Maybe<Material>> {
+	correctedCurPath = addSlash2pathEnd(curPath);
+	nameB = make(curName);
+
+	fselect(nameB, FLift(\name ->
+		if (name == "") {
+			None()
+		} else {
+			fullName = correctedCurPath + name;
+			isSelectedB = fselect(state.selectedElementsB, FLift(\elements -> contains(elements, fullName)));
+			tooltip = if (correctedCurPath != (state.currentPathB |> getValue)) fullName else "";
+
+			defaultContent = MSelect(state.iconSizeB, \iconSize -> MIcon("insert_drive_file", [MIconSize(iconSize), MTeal(500)]));
+			
+			tryResolveContent = \-> {
+				eitherMap(
+					resolveContent2Material(fullName),
+					idfn,
+					defaultContent
+				)
+			}
+
+			fContent = eitherFn(contentsPreviewsBM,
+				\contentsPreviewsB -> {
+					MSelect(contentsPreviewsB, \contentsPreviews ->
+						eitherMap(
+							find(contentsPreviews, \p -> p.first == fullName),
+							\p -> p.second,
+							defaultContent
+						)
+					)
+				},
+				tryResolveContent
+			);
+
+			Some(fsCustomElement(
+				state,
+				fContent,
+				name,
+				tooltip,
+				isSelectedB,
+				\-> onDownElementFn(state, fullName, true),
+				\-> {
+					next(state.selectedElementsB, [fullName]);
+					getValue(state.onClickB)()
+				},
+				\-> getValue(state.onRightClickB)(fullName, \str -> {
+					if (str == "") next(nameB, "")
+					else next(nameB, split2Name_Path(str).first);
+				})
+			))
+		}
+	));
+}
+
+// creating filebrowser content view
+getContentUI(state : FilebrowserState, dirs : [string], files : [string], contentsPreviewsBM : Maybe<DynamicBehaviour<[Pair<string, Material>]>>) -> Material {
+	correctCurPath = state.currentPathB |> getValue |> addSlash2pathEnd;
+	curPath = if (strlen(correctCurPath) > 0) strLeft(correctCurPath, strlen(correctCurPath) - 1) else correctCurPath;
+
+	lastSlashIdx = strLastIndexOf(curPath, "/");
+	boxSize = make(zeroWH);
+
+	backButton = if (lastSlashIdx != -1 && contains(dirs, "..") && (!endsWith(correctCurPath, state.limitDir))) {
+			prevPath = if (lastSlashIdx > 0) strLeft(curPath, lastSlashIdx) else "";
+			name = if (endsWith(prevPath, ":")) prevPath + "/" else prevPath + "/";
+
+			[fsIconElement(state, "reply", "..", "", const(false), MGrey(300), \-> {}, \-> next(state.currentPathB, name), \-> {})]
+		} else {
+			[]
+	}
+
+	MDynamicGrid(
+		fconcat(
+			const(backButton),
+			concat(
+				map(filter(dirs, \dir -> dir != ".." && dir != "."), \dName -> createFolderUI(state, correctCurPath, dName)),
+				map(files, \fName -> createFileUI(state, correctCurPath, fName, contentsPreviewsBM))
+			)
+			|> fmerge
+			|> (\f -> ffiltermap(f, idfn)),
+		),
+		[
+			MBoxSize(boxSize),
+			MItemSize(fselect3(boxSize, state.contentViewIconsB, state.iconSizeB, \bs, ic, is -> {
+				if (ic)
+					WidthHeight(is + 20., is + 37.)
+				else
+					WidthHeight(bs.width, is + 14.)
+			}))
+		]
+	)
+}
+
+// calls the content loading and view creating for the current path
+getLibraryUI(state : FilebrowserState, ext : [string], onUpdate : (Material) -> void, filterFn : (string) -> bool, changesCallback : ([string], [string]) -> void, folderSelection : bool) -> void {
+	itemB = MLoading("Loading content, please wait...") |> make;
+	onContentUpdate(state, [], itemB, \m -> onUpdate(m));
+
+	// a bit of time to render MLoading()
+	deferUntilRender(\->{
+		currentPath = getValue(state.currentPathB);
+		getContentAPI(currentPath, ext, true, filterFn, \dirs, files -> {
+			next(itemB, getContentUI(state, dirs, if (folderSelection) [] else files, state.getPreviews(map(files, \f -> currentPath + f))));
+			checkWhatIsChanged(currentPath, dirs, files, changesCallback)
+		}, \error -> {
+			next(itemB, MCenter(MText("Error: " + error, [])));
+		})
+	})
+}
+
+FSPathContent(
+	basePath : string,
+	dirs : [string],
+	files : [string]
+);
+
+lastCheckResultR : ref Maybe<FSPathContent> = ref None();
+
+checkWhatIsChanged(basePath : string, dirs : [string], files : [string], callback : ([string], [string]) -> void) -> void {
+	maybeApply(
+		^lastCheckResultR,
+		\lcr -> {
+			if (basePath == lcr.basePath) {
+				added = concat(
+					map(subtractA(dirs, lcr.dirs), \p -> basePath + p + "/"),
+					map(subtractA(files, lcr.files), \p -> basePath + p)
+				);
+				removed = concat(
+					map(subtractA(lcr.dirs, dirs), \p -> basePath + p + "/"),
+					map(subtractA(lcr.files, files), \p -> basePath + p)
+				);
+
+				if (added != [] || removed != [])
+					callback(added, removed);
+			}
+		}
+	);
+
+	lastCheckResultR := Some(FSPathContent(basePath, dirs, files));
+}
+
+// loading content of the selected folder using API
+getContentAPI(path : string, ext : [string], sorting : bool, filterFn : (string) -> bool, callback : (dirs : [string], files : [string]) -> void, onError : (string) -> void) {
+	getFilesystemExtAPI().readDirectory(path, \dirs, files -> {
+		funcs = ref [];
+		nonEmpty = neq("");
+		okExt = if (ext == [])
+				\f -> true
+			else
+				\f -> exists(ext, \val -> endsWith(f, val));
+
+		// input structure is Pair(dirs, files)
+		refArrayPush(funcs, \input : Pair<[string], [string]>, onDone -> {
+			dirs2 = filter(input.first, \fe -> nonEmpty(fe) && filterFn(fe));
+			files2 = filter(input.second, \fe -> nonEmpty(fe) && okExt(fe) && filterFn(fe));
+			onDone(Pair(dirs2, files2));
+		});
+
+		if (sorting) {
+			// sort of dirs
+			refArrayPush(funcs, \input : Pair<[string], [string]>, onDone -> {
+				onDone(Pair(sort(input.first), input.second));
+			});
+
+			// sort of files
+			refArrayPush(funcs, \input, onDone -> {
+				onDone(Pair(input.first, sort(input.second)));
+			});
+		}
+
+		refArrayPush(funcs, \input, onDone -> {
+			callback(input.first, input.second);
+		});
+
+		threadApplyDeferred(Pair(dirs, files), ^funcs);
+	}, onError);
+}
+
+// start the elements searching (which names contains searchText string) and updating the content view
+getSearchResultUI(state : FilebrowserState, searchText : string, ext : [string], filterFn : (string) -> bool, onUpdate : (Material) -> void) -> void {
+	stateSearch = makeSearchState(searchText |> toLowerCase, ext, state.currentPathB, state.selectedElementsB);
+	next(stateSearch.counterB, getValue(stateSearch.counterB) + 1);
+	currentPath = state.currentPathB |> getValue;
+	boxSize = make(zeroWH);
+
+	itemB = TEmpty() |> make;
+	resD = ref [];
+	resF = ref [];
+
+	resultScreen = \-> {
+		resultM = concat(
+			map(^resD, split2Name_Path)
+			|> sortPairByFirst
+			|> (\res -> map(res, \r -> createFolderUI(state, r.second, r.first))),
+
+			map(^resF, split2Name_Path)
+			|> sortPairByFirst
+			|> (\res -> map(res, \r -> createFileUI(state, r.second, r.first, None())))
+		)
+		|> fmerge
+		|> (\f -> ffiltermap(f, idfn));
+
+		if (!getValue(stateSearch.breakSearchB))
+			next(
+				itemB,
+				MSelect(fselect(resultM, length |> FLift), \l ->
+					if (l == 0)
+						MCenter(MText("Files for criteria \"" + searchText + "\" are not found.", []))
+					else
+						MLines2(
+							MText("Elements found: " + i2s(l), []),
+							MDynamicGrid(
+								resultM,
+								[
+									MBoxSize(boxSize),
+									MItemSize(fselect3(boxSize, state.contentViewIconsB, state.iconSizeB, \bs, ic, is -> {
+										if (ic)
+											WidthHeight(is + 20., is + 37.)
+										else
+											WidthHeight(bs.width, is + 14.)
+									}))
+								]
+							)
+						)
+				)
+			)
+	};
+
+	onContentUpdate(
+		state,
+		[
+			\-> subscribe(state.searchTextB, \text -> nextDistinct(stateSearch.breakSearchB, text != searchText)),
+			\-> subscribe(stateSearch.counterB, \count -> if (count == 0) resultScreen())
+		],
+		itemB,
+		onUpdate
+	);
+
+	// adding new founded elenents to the result array
+	addResult = \dirs, files -> {
+		if (!getValue(stateSearch.breakSearchB)) {
+			resD := concat(^resD, dirs);
+			resF := concat(^resF, files);
+		}
+	};
+
+	next(itemB, MLoading("Searching, please wait..."));
+
+	// a bit of time to render MLoading()
+	deferUntilRender(\-> {
+		getContentRecursive(stateSearch, currentPath, filterFn, addResult, \error ->
+			next(itemB, MCenter(MText("Error: " + error, [])))
+		);
+
+		next(stateSearch.counterB, getValue(stateSearch.counterB) - 1);
+	});
+}
+
+// updating content view in the filebowser
+onContentUpdate(state : FilebrowserState, uns : [() -> ()-> void], content : DynamicBehaviour<Material>, onUpdate : (Material) -> void) -> void {
+	keyBroadcast = makeTKeyBroadcast();
+	downB = make(false);
+	rightClickB = make(false);
+
+	onLongClick = \-> {
+		next(state.selectedElementsB, []);
+		getValue(state.onRightClickB)("", \__-> {});
+	};
+
+	addCtrlSubscribe = \-> {
+		switch (state.maybeMultiselectB) {
+			Some(ctrlKeyB): makeSubscribe(keyBroadcast.pressed, \ke -> nextDistinct(ctrlKeyB, ke.ctrl));
+			None(): \-> \-> {}
+		}
+	};
+
+	MMutable(content)
+	|> (\m -> MScroll(m, TFillXY(), [TScrollDontHandle()]))
+	|> (\m -> MInteractive([TMouseRightDown(rightClickB), TMouseDownGhost(downB), keyBroadcast], m))
+	|> (\m -> MConstruct(
+		concat(
+			uns,
+			[
+				\-> subscribe(downB, \isDown -> if (isDown) next(state.selectedElementsB, [])),
+				\-> subscribe(rightClickB, \isDown -> if (isDown) onLongClick()),
+				// look for "ctrl" button pressed
+				addCtrlSubscribe()
+			]
+		),
+		m
+	))
+	|> (\m -> MBorder(4.0, 4.0, 4.0, 4.0, m))
+	|> (\m -> onUpdate(m));
+}
+
+// files and folders searching in the "currentPath", including subfolders
+getContentRecursive(state : SearchState, currentPath : string, filterFn : (string) -> bool, onOK : ([string], [string]) -> void, onError : (string) -> void) -> void {
+	//start search in the currentPath
+	next(state.counterB, getValue(state.counterB) + 1);
+	correctedCurPath = addSlash2pathEnd(currentPath);
+
+	getContentAPI(currentPath, state.ext, false, filterFn, \dirs, files -> {
+		if (!getValue(state.breakSearchB)) {
+			resD = filter(dirs, \dir -> strContains(dir |> toLowerCase, state.text) && dir != "..");
+			resF = filter(files, \file -> strContains(file |> toLowerCase, state.text));
+
+			if (length(resD) + length(resF) > 0)
+				onOK(
+					map(resD, \d -> correctedCurPath + d + "/"),
+					map(resF, \f -> correctedCurPath + f)
+				);
+		}
+
+		// currentPath processing complete
+		next(state.counterB, getValue(state.counterB) - 1);
+
+		// go to in the sub folders
+		if (!getValue(state.breakSearchB))
+			iter(filter(dirs, \d -> d != ".."), \dir ->
+				getContentRecursive(state, correctedCurPath + dir + "/", filterFn, onOK, onError)
+			);
+	}, onError
+	);
+}
+
+//
+getPathExistsNames(currentPath : string, ext : string, isFolder : bool, filterFn : (string) -> bool, callback : (names : [string]) -> void, onError : (string) -> void) -> void {
+	callback2 = \dirs, files -> {
+		callback(
+			if (isFolder) dirs
+			else map(files, \f -> f |> split2name_ext |> firstOfPair)
+		)
+	};
+
+	getContentAPI(currentPath, [ext], false, filterFn, callback2, onError);
+}
+
+// file browser dialod view
+renderCustomMFileBrowser(manager : MaterialManager, parent : MFocusGroup, caption : string, ext : [string], buttons : [FileBrowserButtonsM], styles : [FbMStyle], m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeB = make(false);				// Close filebrowser dialog
+	fileNameB = make("");				// "Filename" field value
+	selectedElementPathB = make("");	// Path + name of the currently selected file or folder
+	inSearchB = make(false);			// Show or hide searching panel
+	inPathInputB = make(false);			// Show/hide path text input
+	pathInputTextB = make("");		// Show/hide path text input
+	showSliderB =  make(false);			// Show or hide view zoom slider
+	zoomValueB = make(0.5);				// zoom silder position
+	dialogContentB = make(TEmpty());
+	closeMe = \-> next(closeB, true);
+
+	curPathOutArrB = map(extractStructMany(styles, FbGetCurrentPathB(make(""))), \s -> s.path);
+	doUpdateCallArr =  map(extractStructMany(styles, FbGetContentUpdateFn(\__ -> {})), \s -> s.fn);
+	additionalText = extractStruct(styles, FbAdditionalText("")).text;
+	getRealPath = extractStruct(styles, FbPathProcessing(\p -> p)).func;
+	folderSelection = contains(styles, FbFolderSelection());
+	initSelection = extractStruct(styles, FbInitialSelection("")).sel;
+	dropFnM = tryExtractStruct(styles, FbDropFileFn(\__ -> {}));
+	onCancelFn = extractStruct(buttons, CancelExtFBB(nop)).func;
+	hideBottomPanel = contains(styles, FbHideBottomPanel());
+	allowPathInput = contains(styles, FbAllowPathInput());
+	fileFilterFn = extractStruct(styles, FbFileFilter(\__ -> true)).fn;
+	selectedFilesB = extractStruct(styles, FbSelectedNames(make([]))).filenamesB;
+	callbackOnUpdateFns = map(extractStructMany(styles, FbWhatIsChanged(nop3)), \s -> s.fn);
+
+	//currentPathAccessRight = make(FileAccessRightOwner());
+	curDirAccessRightB = make(makePathAccessRight());
+	fsAPI : FilesystemExtAPI = getFilesystemExtAPI();
+
+	state = makeFilebrowserState(styles);
+
+	filterFn = \name -> {
+		fullName = getValue(state.currentPathB) + (if (name != "." && name != ".." && name != "/." && name != "/..")  name else "");
+		fileFilterFn(fullName);
+	}
+
+	changesCallbackFn = \added, removed -> iter(callbackOnUpdateFns, \fn -> fn(added, removed, closeMe));
+
+	iter(doUpdateCallArr, \fn -> fn(\-> getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection)));
+
+	fsAPI.isDirectory(
+		state.startDir,
+		\doesExists -> {
+			if (!doesExists) println("WARNING: Filebrowser start path \"" + state.startDir + "\" does not exists");
+			next(state.currentPathB, {
+				defPath = if (state.startDir != "" && doesExists) state.startDir
+				else strReplace(fsAPI.resolveRelativePath("."), "\\", "/");
+
+				extractStruct(styles, FbCurrentPath(make(addSlash2pathEnd(defPath)))).path |> getValue;
+			})
+		}
+	);
+
+	next(state.onRightClickB, \filename, onUpdate -> {
+		fileAccessRight = fsAPI.getAccessRight(filename);
+		curDirAccessRight = getValue(curDirAccessRightB);
+
+		MDialogMenu(manager, parent, [
+			MDialogMenuItem("content_copy", "copy", filename != "", \-> next(state.copiedElementsB, Pair(filename, false))),
+			MDialogMenuItem("content_cut", "cut", filename != "" && fileAccessRight.arUpdate && fileAccessRight.arDelete, \-> next(state.copiedElementsB, Pair(filename, true))),
+			MDialogMenuItem("create_new_folder", "create folder", filename == "" && curDirAccessRight.arCreate, \-> {
+				closeDialogB = make(false);
+				nameB = make("new folder");
+				errorText = None() |> make;
+				saveEnable = make(true);
+
+				showDialog = \existsNames -> {
+					renderMDialog(manager, closeDialogB,
+						[
+							MDialogTitle("Create new folder"),
+							MDialogUseFrame(),
+							MDialogActions([
+								MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
+								MTextButton(_("CREATE"), \-> {
+									fsAPI.createFolder(
+										getValue(state.currentPathB) + getValue(nameB) + "/",
+										\-> getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection),
+										println
+									);
+									next(closeDialogB, true);
+								}, [], [MShortcut("enter"), MEnabled(saveEnable)])
+							]),
+							MDialogScroll(),
+						],
+						MConstruct(
+							[
+								makeSubscribe(nameB, \n -> validatePartitionName(n, errorText, existsNames)),
+								makeSubscribe(errorText, \t -> nextDistinct(saveEnable, t |> isNone))
+							],
+							MCols([
+								MFixSize(MText("Folder name:", []), TFixed(75.0, 20.0)),
+								TFixed(8.0, 0.0),
+								MPad(0.0, -14.0,
+									MTextInput(
+										nameB,
+										[MWidth(400.0), MMaxLines(1)],
+										[MInputError(errorText, []), MEnabled(const(true))]
+									)
+								)
+							])
+						), m2t
+					);
+				}
+
+				getPathExistsNames(getValue(state.currentPathB), "", true, \__ -> true, showDialog, println);
+			}),
+			MDialogMenuItem("delete", "delete", filename != "" && fileAccessRight.arDelete, \-> {
+				closeDialogB = make(false);
+				renderMDialog(manager, closeDialogB,
+					[
+						MDialogTitle(_("Are you sure?")),
+						MDialogUseFrame(),
+						MDialogActions([
+							MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
+							MTextButton(_("DELETE"), \-> {
+								fsAPI.deleteElement(filename, \-> {
+										onUpdate("");
+										maybeApply(^lastCheckResultR,
+											\lcr -> {
+												if (getValue(state.currentPathB) == lcr.basePath) {
+													pair = split2Name_Path(filename);
+													if (contains(lcr.files, pair.first)) {
+														lastCheckResultR := Some(FSPathContent(lcr.basePath, lcr.dirs, subtractA(lcr.files, [pair.first])));
+													} else {
+														lastCheckResultR := Some(FSPathContent(lcr.basePath, subtractA(lcr.dirs, [pair.first]), lcr.files));
+													}
+												}
+											}
+										);
+										changesCallbackFn([], [filename]);
+									}, println
+								);
+								next(closeDialogB, true);
+							}, [], [MShortcut("enter")])
+						]),
+						MDialogScroll(),
+					],
+					TEmpty(), m2t
+				);
+			}),
+			MDialogMenuItem("create", "rename", filename != "" && fileAccessRight.arUpdate, \-> {
+				isFolder = endsWith(filename, "/");
+				pair = split2Name_Path(filename);
+				name_ext = pair.first |> split2name_ext;
+				nameB = make(name_ext.first);
+				errorText = None() |> make;
+				saveEnable = make(true);
+				closeDialogB = make(false);
+
+				showDialog = \existsNames -> {
+					renderMDialog(manager, closeDialogB,
+						[
+							MDialogTitle("Renaming"),
+							MDialogUseFrame(),
+							MDialogActions([
+								MTextButton(_("CANCEL"), \-> next(closeDialogB, true), [], [MShortcut("esc")]),
+								MTextButton(_("RENAME"), \-> {
+									newNameFull = pair.second + getValue(nameB) + (if (name_ext.second != "") "." + name_ext.second else "") + (if (isFolder) "/" else "");
+									fsAPI.renameElement(filename, getValue(nameB), \-> onUpdate(newNameFull), println);
+									next(closeDialogB, true);
+								}, [], [MShortcut("enter"), MEnabled(saveEnable)])
+							]),
+							MDialogScroll(),
+						],
+						MConstruct(
+							[
+								makeSubscribe(nameB, \n -> validateFileName(n, errorText, existsNames, "")),
+								makeSubscribe(errorText, \t -> nextDistinct(saveEnable, t |> isNone))
+							],
+							MCols([
+								MFixSize(MText("Filename:", []), TFixed(75.0, 20.0)),
+								TFixed(8.0, 0.0),
+								MPad(0.0, -14.0,
+									MTextInput(
+										nameB,
+										[MWidth(400.0), MMaxLines(1)],
+										[MInputError(errorText, []), MEnabled(const(true))]
+									)
+								),
+								if (isFolder) TEmpty()
+								else MText("." + name_ext.second, [])
+							])
+						), m2t
+					);
+				}
+
+				getPathExistsNames(getValue(state.currentPathB), if (isFolder) "" else "." + name_ext.second, isFolder, \__ -> true, showDialog, println);
+			}),
+			MDialogMenuItem(
+				"content_paste",
+				"paste",
+				strlen(getValue(state.copiedElementsB).first) > 0 && !getValue(inSearchB) && curDirAccessRight.arCreate,
+				\-> {
+					copied = getValue(state.copiedElementsB);
+					pair = copied.first |> split2Name_Path;
+					copyTo = getValue(state.currentPathB);
+
+					// do nothing if we cut/paste at the same place
+					if (pair.second != copyTo || !copied.second) {
+						fn = if (copied.second) fsAPI.moveElement
+							else fsAPI.copyElement;
+
+						fn(
+							copied.first,
+							copyTo,
+							\-> {
+								getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection);
+								if (copied.second) next(state.copiedElementsB, Pair("", false));
+							},
+							println
+						);
+					}
+				}
+			)
+		], m2t)
+	});
+
+	if (getValue(state.currentPathB) == "") {
+		path = if (strlen(state.startDir) > 0) {
+			state.startDir;
+		} else {
+			p = strReplace(fsAPI.resolveRelativePath("."), "\\", "/");
+			p + (if (p != "") "/" else "");
+		};
+
+		next(state.currentPathB, path);
+	};
+
+	setSelected = \-> {};
+
+	statusPanel = {
+		iconsR = ref [];
+
+		addInfoIcon = \iconName, tooltip -> {
+			MIcon(iconName, [MIconSize(24.0)])
+			|> (\m -> MTooltip(m, MText(tooltip, [MCaption()]), []))
+			|> MCenter
+			|> (\m -> MFixSize(m, TFixed(30.0, 30.0)))
+			|> (\m -> MCols2(TFixed(8.0, 0.0), m))
+			|> (\m -> refArrayPush(iconsR, m));
+		};
+
+		if (additionalText != "") addInfoIcon("info", additionalText);
+
+		if (length(ext) > 0) addInfoIcon(
+				"filter_list",
+				"Supported extensions: \"" + strGlue(ext, ", ") + "\""
+			);
+
+		if (folderSelection) addInfoIcon("folder_shared", "Directory selection mode installed");
+
+		switch (state.maybeMultiselectB) {
+			Some(ctrlKeyB): {
+				MSelect(ctrlKeyB, \ctrlKey -> MIcon("add_to_photos", [if (ctrlKey) MRed(500) else MBlack(), MIconSize(24.0)]))
+					|> (\m -> MTooltip(m, MText("Multiselection mode: use \"ctrl\" key to select several elements", [MCaption()]), []))
+					|> MCenter
+					|> (\m -> MFixSize(m, TFixed(30.0, 30.0)))
+					|> (\m -> MCols2(TFixed(8.0, 0.0), m))
+					|> (\m -> refArrayPush(iconsR, m));
+			}
+			None(): {};
+		};
+
+		MSelect(state.copiedElementsB, \copied -> {
+			if (copied.first == "") TEmpty()
+			else {
+				{
+					if (copied.second)
+						MIcon("content_cut", [MIconSize(24.0)])
+						|> (\m -> MTooltip(m, MText("Element to cut: " + copied.first, [MCaption()]), []))
+					else
+						MIcon("content_copy", [MIconSize(24.0)])
+						|> (\m -> MTooltip(m, MText("Element to copy: " + copied.first, [MCaption()]), []));
+				}
+				|> MCenter
+				|> (\m -> MFixSize(m, TFixed(30.0, 30.0)))
+			}
+		})
+		|> (\m -> MCols2(TFixed(8.0, 0.0), m))
+		|> (\m -> refArrayPush(iconsR, m));
+
+		refArrayPush(iconsR, TFixed(8.0, 0.0));
+
+		MSelect(state.copiedElementsB, \copied ->
+			if (length(^iconsR) == 2 && copied.first == "") TEmpty()
+			else
+				MCols(concat([TFixed(8.0, 0.0)], ^iconsR))
+		);
+	};
+
+	buttonFunc = \updateFilenameFn, fileExistsFn, noFileFn, folderFn -> {
+		selectedElementsPath = getValue(state.selectedElementsB);
+		currentPath = getValue(state.currentPathB);
+
+		filesFuncRespectExistence = \filesNames -> checkIsFilesAll(fsAPI, filesNames, true, \resultFiles -> {
+			if (resultFiles) {
+				closeMe();
+				fileExistsFn(filesNames);
+			} else {
+				noFileFn(filesNames)
+			}
+		});
+
+		if (selectedElementsPath != []) {
+			checkIsDirectoryAll(fsAPI, selectedElementsPath, true, \resultDir -> {
+				if (resultDir) {
+					// in case if single folder selected - we open it
+					if (length(selectedElementsPath) == 1) next(state.currentPathB, selectedElementsPath[0]);
+					if (folderSelection) folderFn(selectedElementsPath);
+				} else if (!folderSelection) {
+					filesFuncRespectExistence(map(selectedElementsPath, updateFilenameFn));
+				}
+			})
+		// if nothing selected we return the current path (in folder selection mode)
+		} else if (folderSelection) {
+			folderFn([currentPath]);
+		} else {
+			filesFuncRespectExistence([currentPath + updateFilenameFn(getValue(fileNameB))]);
+		}
+	}
+
+	dialogActions = map(buttons, \button -> {
+		switch(button) {
+			OpenExtFBB(func): {
+				action = \-> buttonFunc(
+					\name -> name,
+					\filesNames -> func(map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))),
+					\filesNames -> println("Files or folders '" + strGlue(filesNames, "', '") + "' doesn't exists."),
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(f, fsAPI.convert2realPath(f)))); }
+				);
+
+				next(state.onClickB, \-> action());
+
+				enabledB = make(false);
+
+				MConstruct(
+					[\-> subscribe(state.selectedElementsB, \sel -> {
+						if (folderSelection) {
+							checkIsDirectoryAll(fsAPI, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
+						} else if (sel == []) {
+							nextDistinct(enabledB, false);
+						} else {
+							checkIsFilesAll(fsAPI, sel, true, \resultFiles -> nextDistinct(enabledB, resultFiles));
+						}
+					})],
+					MTextButton("OPEN" + if (folderSelection) " FOLDER" else "", action, [], [MEnabled(enabledB), MShortcut("Enter")])
+				)
+			};
+			SaveExtFBB(func): {
+				action = \-> buttonFunc(
+					\name -> if (strContains(name, ".")) name
+						else if (length(ext) > 0) name + ext[0]
+						else name,
+					\filesNames -> {
+						withConfirmation2(
+							"File with specified name has already exist.\nDo you want to rewrite it?",
+							\-> func(map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))),
+							onCancelFn
+						)
+					},
+					\filesNames -> {
+						closeMe();
+						func(
+							if (filesNames == []) [FbObject(getValue(state.currentPathB) + getValue(fileNameB) + if (folderSelection) "/" else "", "")]
+							else map(filesNames, \f -> FbObject(f, fsAPI.convert2realPath(f)))
+						);
+					},
+					\foldersPaths -> { closeMe(); func(map(foldersPaths, \f -> FbObject(f, fsAPI.convert2realPath(f)))); }
+				);
+
+				next(state.onClickB, \-> action());
+
+				enabledB = make(false);
+
+				MConstruct(
+					[\-> subscribe(fileNameB, \fileName -> {
+						sel = getValue(state.selectedElementsB);
+						if (folderSelection) {
+							checkIsDirectoryAll(fsAPI, sel, true, \resultDir -> nextDistinct(enabledB, (sel == [] || resultDir)));
+						} else {
+							nextDistinct(enabledB, fileName != "");
+						}
+					})],
+					MTextButton("SAVE", action, [], [MEnabled(enabledB), MShortcut("Enter")])
+				)
+			};
+			CancelExtFBB(func): {
+				MTextButton("CANCEL", \-> { closeMe(); func(); }, [], [MShortcut("Esc")])
+			};
+			CustomExtFBB(cap, func): {
+				MTextButton(cap |> toUpperCase, \-> func(getValue(state.currentPathB), getValue(state.selectedElementsB)), [], [])
+			};
+			CustomWithUpdateFBB(cap, func): {
+				MTextButton(cap |> toUpperCase, \->
+					func(getValue(state.currentPathB), getValue(state.selectedElementsB), \->
+						getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection)
+					),
+					[],
+					[]
+				)
+			};
+		}
+	});
+
+	checkForClicable = \path -> {
+		if (state.limitAccess && startsWith(state.startDir, path)) false
+		else true;
+	}
+
+	makePathView = \curPath -> {
+		nextDistinct(state.searchTextB, "");
+		nextDistinct(inSearchB, false);
+		nextDistinct(inPathInputB, false);
+		nextDistinct(pathInputTextB, "");
+
+		pathSplitted = strSplit(curPath, "/");
+		MCols2(
+			MScroll(
+				MCols([
+					TFixed(8.0, 0.0),
+					MCenterY(MText("Files in: ", [])),
+					MSelect(inPathInputB, \inPathInput ->
+						if (inPathInput) {
+							nextDistinct(pathInputTextB, getValue(state.currentPathB));
+							MCols([
+								TFixed(5.0, 0.0),
+								MTextInput(pathInputTextB, [MInputBorders(8., 8., 8., 8.), MCustomTextStyle([MButtonStyle()]), MShowUnderline(false)], [MEnabled(const(true)), TTextInputFocus(inPathInputB)])
+							])
+						} else {
+							newPath = strReplace(getValue(pathInputTextB), "\\", "/");
+							if (fileExists(newPath)) {
+								nextDistinct(state.currentPathB, newPath);
+							}
+							MCols(
+								interleave(
+									mapi(pathSplitted, \i, name -> {
+										path = strGlue(take(pathSplitted, i + 1), "/") + "/";
+										if (name == "") TEmpty()
+										else MTextButton(name, \-> { nextDistinct(state.searchTextB, ""); nextDistinct(state.currentPathB, path) }, [MBlack()], [MEnabled(const(checkForClicable(path)))])
+									}),
+									MCenterY(MText("/", [MCustomFont(20.0, "Roboto", 0.5)]))
+								)
+							)
+						}
+					),
+					MSelect(state.searchTextB, \searchText ->
+						if (strlen(searchText) > 0)
+							MCols2(
+								MCenterY(MText("  Search result  ", [MBodyBold()])),
+								MCenterY(MText("/", [MCustomFont(20.0, "Roboto", 0.5)]))
+							)
+						else
+							TEmpty()
+					),
+					TFixed(8.0, 0.0),
+					MClickable(TFillXH(36.0), \-> { 
+						if (!getValue(inPathInputB) && allowPathInput) nextDistinct(inPathInputB, true); 
+					}),
+				]),
+				TFillXH(36.0),
+				[TScrollBarsStyle(minimalScrollBarLight, minimalScrollBarLight), TScrollDontHandle()]
+			),
+			MSelect(inPathInputB, \inPathInput ->
+				if (inPathInput || !allowPathInput)
+					TEmpty()
+				else
+					MIconButton("edit", \-> { nextDistinct(inPathInputB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [])
+			)
+		)
+		|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+	}
+
+	menuIconB = make(MIcon("view_module", [MIconSize(32.0)]));
+	updateViewStyle = \icon -> {
+		nextDistinct(menuIconB, MIcon(icon, [MIconSize(32.0)]));
+		if (icon == "view_module") {
+			nextDistinct(state.contentViewIconsB, true);
+		} else if (icon == "format_list_bulleted") {
+			nextDistinct(state.contentViewIconsB, false);
+		}
+	};
+
+	topActions =
+		filtermap(styles, \s ->
+			switch(s) {
+				FbTopPanelCustomItem(getItem, requiredAccessRight): {
+					enabled = fselect(curDirAccessRightB, FLift(\curDirAR : PathAccessRight -> {
+						{if (requiredAccessRight.arCreate) curDirAR.arCreate else true} &&
+						{if (requiredAccessRight.arRead  ) curDirAR.arRead   else true} &&
+						{if (requiredAccessRight.arUpdate) curDirAR.arUpdate else true} &&
+						{if (requiredAccessRight.arDelete) curDirAR.arDelete else true}
+					}));
+					Some(getItem(closeMe, enabled));
+				}
+				default: None()
+			}
+		)
+		|> (\customItems ->
+			if (customItems == []) TEmpty()
+			else {
+				MCols(arrayPush(
+					interleave(customItems, TFixed(8.0, 0.0)),
+					TFixed(8.0, 0.0)
+				))
+			}
+		);
+
+	topNavPanel = MCols([
+		MSelect(state.currentPathB, makePathView),
+		TFixed(8.0, 0.0),
+		topActions,
+		MSelect(inSearchB, \inSearch ->
+			if (inSearch) {
+				MFixSize(
+					MCols([
+						TFixed(5.0, 0.0),
+						MPad(0.0, -6.0, MTextInput(state.searchTextB, [], [MEnabled(const(true))])),
+						MIconButton("close", \-> {nextDistinct(state.searchTextB, ""); nextDistinct(inSearchB, false);}, [MIconButtonBorder(1.0), MIconSize(34.0), MOrange(500)], [])
+					]),
+					TFixed(200.0, 36.0)
+				)
+				|> (\m -> MFrame(1.0, 1.0, [Stroke(newOrangeColor)], m))
+			} else {
+				MIconButton("search", \-> { nextDistinct(inSearchB, true); }, [MIconButtonBorder(1.0), MIconSize(34.0)], [])
+			}
+		),
+		TFixed(8.0, 0.0),
+		MSelect(
+			showSliderB,
+			\showSlider -> MIconButton(
+				"linear_scale",
+				\-> next(showSliderB, !showSlider),
+				[MIconButtonBorder(1.0), MIconSize(34.0), if (showSlider) MOrange(500) else MBlack()],
+				[]
+			)
+		),
+		TFixed(8.0, 0.0),
+		MFixSize(
+			MMenu(
+				MCenter(MMutable(menuIconB)),
+				[
+					MMenuSingleLine("Icons view", [MPrimaryAction(MIcon("view_module", [])), MOnClick(\-> updateViewStyle("view_module"))]),
+					MMenuSingleLine("List view", [MPrimaryAction(MIcon("format_list_bulleted", [])), MOnClick(\-> updateViewStyle("format_list_bulleted"))])
+				],
+				[MOpenOnClick(), MBelowButton()]
+			),
+			TFixed(36.0, 36.0)
+		)
+	]);
+
+	updateZoom = \toDown -> {
+		newZoom = getValue(zoomValueB) + 0.1 * (if (toDown) -1.0 else 1.0);
+		if (newZoom >= 0.0 && newZoom <= 1.0)
+			next(zoomValueB, newZoom);
+	};
+
+	zoomSlider = MShow(
+		showSliderB,
+		MLines2(
+			TFixed(0.0, 8.0),
+			MCols([
+				MIconButton("zoom_out", \-> updateZoom(true), [MIconSize(19.0)], [MEnabled(const(true))]),
+				MCenterYIn(MSlider(zoomValueB, [MOrange(500), MSliderRange(0.0, 1.0), MSliderStep(0.1)]), TFillXH(36.0)),
+				MIconButton("zoom_in", \-> updateZoom(false), [MIconSize(19.0)], [MEnabled(const(true))]),
+			])
+		)
+	);
+
+	dialogContent = MDispose(
+		[	// Every time path changes we don't have a selection anymore
+			subscribe(state.currentPathB, \cp -> {
+				nextDistinct(state.selectedElementsB, []);
+				iter(curPathOutArrB, \pB -> nextDistinct(pB, cp));
+				// Updating of the access rights for the current path
+				nextDistinct(curDirAccessRightB, fsAPI.getAccessRight(cp));
+			}),
+			// Creating file full name (including full path)
+			subscribe(fileNameB, \fileName -> {
+				sel = getValue(state.selectedElementsB);
+				if (isNone(state.maybeMultiselectB) && sel != [] && (sel[0] |> split2Name_Path |> firstOfPair) != fileName || sel == []) {
+					if (toUpperCase(strLeft(fileName, 4)) == "DB:/") {
+						nextDistinct(state.selectedElementsB, [toUpperCase(strLeft(fileName, 4)) + strRight(fileName, 4)]);
+					} else {
+						nextDistinct(state.selectedElementsB, [getValue(state.currentPathB) + fileName]);
+					}
+				}
+			}),
+			// On the selection changed set only the file name into the Filename field (in non multiselect mode)
+			subscribe(state.selectedElementsB, \selectedPaths -> {
+				if (isNone(state.maybeMultiselectB) && selectedPaths != [] && !endsWith(selectedPaths[0], "/"))
+					nextDistinct(fileNameB, selectedPaths[0] |> split2Name_Path |> firstOfPair);
+				nextDistinct(selectedFilesB, map(selectedPaths, \path -> split2Name_Path(path).first));
+			}),
+			subscribe(zoomValueB, \zoomValue -> nextDistinct(state.iconSizeB, 20.0 + zoomValue * 100.0)),
+			// Update content if the current path changed
+			subscribe(state.currentPathB, \curPath -> getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection)),
+			// Update content if the "searchText" changed. Updating starts if the "searchText" has not changed during one sec.
+			subscribe2(state.searchTextB, \searchText -> {
+				// clear selection on search start
+				nextDistinct(state.selectedElementsB, []);
+
+				if (strlen(searchText) == 0) getLibraryUI(state, ext, \content -> next(dialogContentB, content), filterFn, changesCallbackFn, folderSelection)
+				else timer(1000, \-> {
+					if (searchText == getValue(state.searchTextB))
+						getSearchResultUI(state, searchText, ext, filterFn, \content -> next(dialogContentB, content))
+				})
+			}),
+			// If smb wants to change a current folder from out of the MFileBrowser (Not tested)
+			/*subscribe(curPathOutArrB, \cp -> {
+				next(state.selectedElementsB, []);
+				nextDistinct(state.currentPathB, cp);
+				// Updating of the access rights for the current path
+				next(curDirAccessRightB, fsAPI.getAccessRight(cp));
+			}),*/
+			// If smb change selection in the current folder from out of the MFileBrowser
+			subscribe(selectedFilesB, \selected -> {
+				curPath = getValue(state.currentPathB);
+				nextDistinct(state.selectedElementsB, map(selected, \fileName -> curPath + fileName));
+			})
+		],
+		MMutable(dialogContentB)
+	)
+	|> (\m -> MFrame(1.0, 1.0, [Stroke(gray)], m));
+
+	dialogFileName = MFixSize(
+		MCols([
+			TFixed(5.0, 0.0),
+			MPad(0.0, -5.0, MTextInput(fileNameB, [MLabel(if (folderSelection) "folder name" else "filename"), MCustomTextStyle([MBody()])], [])),
+			TFixed(5.0, 0.0)
+		]),
+		TFillXH(30.0)
+	);
+
+	renderMDialog2(
+		manager,
+		closeB,
+		[
+			MDialogTitle(caption),
+			MDialogActions(dialogActions),
+			MDialogUseFrame(),
+			MDialogResizable(),
+			MDialogFocusOnPrevious()
+		],
+		MLines([
+			TFixed(0.0, 1.0),
+			topNavPanel,
+			zoomSlider,
+			TFixed(0.0, 8.0),
+			eitherMap(dropFnM,
+				\dropFn -> {
+					// we accept only list of extensions without "*." and "." prefixes
+					eRegFilter = if (ext == []) "" else strGlue(map(ext, \e -> toLowerCase(strReplace(strReplace(e, "*.", ""), ".", ""))), "|");
+					MInteractive([TFileDrop(-1, eRegFilter, dropFn.fn)], dialogContent);
+				},
+				dialogContent
+			),
+			if (!hideBottomPanel) {
+				MLines2(TFixed(0.0, 8.0), MCols2(dialogFileName, statusPanel))
+			} else {
+				MEmpty()
+			},
+		]),
+		m2t,
+		\t ->
+			trender(
+				(if (contains(manager.style, MIScriptPanel()))
+					MSplitter2T(
+						manager,
+						dummyParent(manager),
+						MSplitter(
+							TFixSize(
+								TLines2(
+									TFixed(48., 48.),
+									t
+								),
+								TFillXY()
+							),
+							TFillXY(),
+							TFillXY(),
+							[MEnabled(manager.iscript.panelsShowSidebar), MSplitterValue(manager.iscript.panelsSplitterValue)]
+						),
+						dummyM2t
+					)
+				else
+					t)
+				|> (\f ->
+					materialLogFn(
+						\ ->
+							TFixSize(
+								TLines2(
+									TFixed(36., 36.),
+									f
+								),
+								TFillXY()
+							),
+						MaterialError(),
+						\ -> f
+					)
+				),
+				manager.manager.renderStyle
+			)
+	);
+
+	next(fileNameB, initSelection);
+}
+
+//////////
+// Utils
+//////////
+
+checkIsDirectoryAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+	if (paths == [] || !lastResult) {
+		callback(lastResult)
+	} else {
+		api.isDirectory(paths[0], \resultDir -> checkIsDirectoryAll(api, tail(paths), lastResult && resultDir, callback))
+	}
+}
+
+checkIsFilesAll(api : FilesystemExtAPI, paths : [string], lastResult : bool, callback : (bool) -> void) -> void {
+	if (paths == [] || !lastResult) {
+		callback(lastResult)
+	} else {
+		api.fileExists(paths[0], \resultDir -> checkIsFilesAll(api, tail(paths), lastResult && resultDir, callback))
+	}
+}
+
+addSlash2pathEnd(path : string) -> string {
+	if (path == "") ""
+	else if (endsWith(path, "/")) path
+	else path + "/"
+}
+
+split2Name_Path(fullPath : string) -> Pair<string /*name*/, string /*path*/> {
+	if (fullPath == "") Pair("", "")
+	else {
+		fullPath2 = if (endsWith(fullPath, "/")) rtrim2(fullPath, "/") else fullPath;
+
+		lastSlashIdx = strLastIndexOf(fullPath2, "/");
+
+		if (lastSlashIdx == -1) {
+			if (endsWith(fullPath2, ":"))
+				Pair("", fullPath2 + "/")
+			else
+				Pair("", "")
+		} else {
+			Pair(
+				strRight(fullPath2, lastSlashIdx + 1),
+				strLeft(fullPath2, lastSlashIdx) + "/"
+			)
+		}
+	}
+}
+
+split2name_ext(filename : string) -> Pair<string, string> {
+	idx = strLastIndexOf(filename, ".");
+
+	if (idx == -1) Pair(filename, "")
+	else Pair(strLeft(filename, idx), strRight(filename, idx + 1));
+}
+
+sortPairByFirst(arr : [Pair<?, ?>]) -> [Pair<?, ?>] {
+	sortCustom(arr, firstOfPair, true);
+}
+
+MDialogMenuItem : (icon : string, tooltip : string, enabled : bool, onClick : () -> void);
+
+MDialogMenu(manager : MaterialManager, parent : MFocusGroup, items : [MDialogMenuItem], m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	us = ref [];
+	mousePoint = make(Point(0.0, 0.0));
+	pressed = make(false);
+
+	closeDialog = \-> applyall(^us);
+
+	count = (if (length(items) > 6) 6 else (length(items))) |> i2d;
+	if (count > 0.0) {
+
+		step = 360.0 / count;
+
+		MGroup2(
+			MInteractive(
+				[
+					TMouseDownGhost(pressed),
+					TMouseRightDownGhost(pressed),
+					TMouseInside(make(true), true),
+					TMouseXY(mousePoint)
+				],
+				TRectangle(interactiveRectangleStyle, TFillXY())
+				|> (\m -> MConstruct(
+					[\ -> subscribe2(pressed, \p -> if (p) closeDialog())],
+					m
+				))
+			),
+			MCenter(MIcon("touch_app", [MIconSize(40.0), MCircleBackground(MGrey(500), 250.0)]))
+			|> (\m -> MGroup(
+				concat(
+					[m],
+					mapi(items, \i, item : MDialogMenuItem -> {
+						point = polarDegree2cartesian(160.0, i2d(i) * step - 90.0);
+						MIconButton(
+							item.icon,
+							\-> { item.onClick(); closeDialog(); },
+							[MIconSize(25.0), MCircleBackground(if (item.enabled) MOrange(300) else MGrey(400), 70.0)],
+							[MEnabled(const(item.enabled))]
+						)
+						|> (\mi -> if (strlen(item.tooltip) > 0) MTooltip(mi, MText(item.tooltip, []), []) else mi)
+						|> MCenter
+						|> (\mi -> MPad(point.x, point.y, mi))
+					})
+				)
+			))
+			|> (\m -> { p = mousePoint |> getValue; MPad(p.x, p.y, m) })
+		)
+		|> (\m -> m2t(m, parent))
+		|> (\t -> us := [pushZorder(manager), trender(t, manager.manager.renderStyle)])
+	}
+}
+
+polarDegree2cartesian(radius : double, angleDegree : double) -> Point {
+	x = radius * cos(angleDegree * PI / 180.);
+	y = radius * sin(angleDegree * PI / 180.);
+
+	Point(x, y);
+}
+
+validateFileName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string], ignoreName : string) -> void {
+	nextDistinct(errorB,
+		if (contains(map(existsNames, toLowerCase), toLowerCase(name)) && toLowerCase(name) != toLowerCase(ignoreName)) Pair("such name exists", false) |> Some
+		else None()
+	)
+}
+
+validatePartitionName(name : string, errorB : DynamicBehaviour<Maybe<Pair<string, bool>>>, existsNames : [string]) -> void {
+	nextDistinct(errorB,
+		if (strlen(name) == 0) Pair("specify the name", false) |> Some
+		else if (contains(map(existsNames, toLowerCase), toLowerCase(name))) Pair("such name exists", false) |> Some
+		else None()
+	)
+}

@@ -1,0 +1,208 @@
+import wigi/table_cells_creator;
+import wigi/recursive_tools;
+
+export {
+	getWigiTableColumnsCount(table : WigiElement) -> int;
+	getWigiTableRowsCount(table : WigiElement) -> int;
+
+	getWigiTableStyle(table : WigiElement) -> Maybe<[WigiTableStyle]>;
+
+	getWigiTableCellStyle(cell : WigiElement) -> [WigiTableCellStyle];
+
+	getTableColumnsRowsByElement(element : WigiElement) -> Pair<[int], [int]>;
+
+	getWigiTableCellId(columnsRows : Pair<[int], [int]>, column : int, row : int, cellSpans : [WigiCellSpan]) -> int;
+
+	setEmptyTableCellContent(cell : WigiElement, content : WigiElement) -> WigiElement;
+
+	isOneTableWigi(we : WigiElement) -> bool;
+	getCompleteWigiTableWidth(we : WigiElement) -> double;
+	isWigiTableOrSpreadsheetCell(we : WigiElement) -> bool;
+
+	insideWigiTableOrSpreadsheet(root : WigiElement, cursor : [int]) -> bool;
+}
+
+getWigiTableColumnsCount(table : WigiElement) -> int {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(rows, cols, cellSpans, tableStyle): {
+					cols;
+				}
+				default: 0;
+			}
+		}
+		default: 0;
+	}
+}
+
+getTableColumnsRowsByElement(element : WigiElement) -> Pair<[int], [int]> {
+	switch(element) {
+		WigiRecursive(__, type, __): {
+			switch(type) {
+				WigiTable(__, __, __, __): {
+					getTableColumnsRows(type);
+				}
+				default: Pair([], []);
+			}
+		}
+		default: Pair([], []);
+	}
+}
+
+getWigiTableRowsCount(table : WigiElement) -> int {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(rows, cols, cellSpans, tableStyle): {
+					rows;
+				}
+				default: 0;
+			}
+		}
+		default: 0;
+	}
+}
+
+getWigiTableStyle(table : WigiElement) -> Maybe<[WigiTableStyle]> {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(__, __, __, tableStyle): Some(tableStyle);
+				default: None();
+			}
+		}
+		default: None();
+	}
+}
+
+getWigiTableCellStyle(cell : WigiElement) -> [WigiTableCellStyle] {
+	switch(cell) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTableCell(__, cellStyle): cellStyle;
+				WigiSpreadsheetCell(__, __, cellStyle): cellStyle;
+				default: [];
+			}
+		}
+		default: [];
+	}
+}
+
+getWigiTableCellId(columnsRows : Pair<[int], [int]>, column : int, row : int, cellSpans : [WigiCellSpan]) -> int {
+	l = length(columnsRows.first);
+	findCellId = \col, r -> iteriUntil(columnsRows.first, \i, c -> c == col && columnsRows.second[i] == r);
+
+	cellId = findCellId(column, row);
+	if (cellId < l) cellId
+	else {
+		dc = countUntilDown(column - 1, -1, \j -> findCellId(j, row) < l);
+		if (dc >= 0 && cellSpans[findCellId(dc, row)].col - 1 >= column - dc) findCellId(dc, row)
+		else {
+			dr = countUntilDown(row - 1, -1, \j -> findCellId(column, j) < l);
+			if (dr >= 0 && cellSpans[findCellId(column, dr)].row - 1 >= row - dr) findCellId(column, dr)
+			else -1;
+		}
+	}
+}
+
+setEmptyTableCellContent(cell : WigiElement, content : WigiElement) -> WigiElement {
+	switch(cell) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTableCell(__, cellStyle): {
+					if (elements != [] && isEmptyElement(elements[0]) && !isEmptyElement(content))
+						WigiRecursive([content], type, style)
+					else cell;
+				}
+				default: cell;
+			}
+		}
+		default: cell;
+	}
+}
+
+getWigiTablesColumnsCount(we : WigiElement) -> [int] {
+	switch(we) {
+		WigiDocument(root, style): getWigiTablesColumnsCount(root);
+		WigiStory(paragraphs, views, style): mapConcat(^paragraphs, getWigiTablesColumnsCount);
+		WigiParagraph(elements, style): mapConcat(elements, getWigiTablesColumnsCount);
+		WigiRecursive(__, __, __): [getWigiTableColumnsCount(we)];
+		default: [];
+	}
+}
+
+maxWigiTableCellsNumLimit = ref 0;
+getWigiTableWidths(we : WigiElement, nCols : int) -> [double] {
+
+	switch(we : WigiElement) {
+		WigiDocument(root, style): getWigiTableWidths(root, nCols);
+		WigiStory(paragraphs, views, style): mapConcat(^paragraphs, \pg -> getWigiTableWidths(pg, nCols));
+		WigiParagraph(elements, style): mapConcat(elements, \el -> getWigiTableWidths(el, nCols));
+		WigiRecursive(elements, type, style): {
+
+			elsWs =  mapConcat(elements, \el -> getWigiTableWidths(el, nCols));
+
+			tableOrCellW = switch(type : WigiRecursiveType) {
+				WigiTable(rows, cols, cellSpans, wtstyle): {
+					mapConcat(wtstyle, \wtstl -> switch(wtstl : WigiTableStyle) {
+						WigiTableBorder(width, radius, color): [2.0 * width];
+						default: [];
+					})
+				};
+				WigiTableCell(widthHeightB, cellStyle): {
+					if (^maxWigiTableCellsNumLimit < nCols) {
+
+						maxWigiTableCellsNumLimit := ^maxWigiTableCellsNumLimit + 1;
+
+						borderAndPadding = {
+							cellBorderW = extract(cellStyle, 2.0, \cStl -> switch(cStl : WigiTableCellStyle) { WigiCellBorder(tB, rB, bB, lB):Some(lB + rB); default:None(); });
+							cellPaddingW = extract(cellStyle, 10.0, \cStl -> switch(cStl : WigiTableCellStyle) { WigiCellPadding(lP, tP, rP, bP):Some(lP + rP); default:None(); });
+							cellBorderW + cellPaddingW
+						};
+
+						[getValue(widthHeightB).width, borderAndPadding]
+					} else {
+						[]
+					}
+				};
+				default: [];
+			}
+
+			concat(tableOrCellW, elsWs)
+
+		};
+		default: [];
+	}
+
+}
+
+isOneTableWigi(we) {
+	1 == length(getWigiTablesColumnsCount(we))
+}
+
+getCompleteWigiTableWidth(we) {
+	nCols = getWigiTablesColumnsCount(we)[0];
+	resW = fold(
+		getWigiTableWidths(we, nCols), 0.0,
+		\acc2, oneW -> acc2 + oneW
+	);
+	maxWigiTableCellsNumLimit := 0;
+	resW
+}
+
+isWigiTableOrSpreadsheetCell(we : WigiElement) -> bool {
+	switch (we : WigiElement) {
+		WigiRecursive(__, type, __): switch (type : WigiRecursiveType) {
+			WigiTableCell(__, __): true;
+			WigiSpreadsheetCell(__, __, __): true;
+			default: false;
+		}
+		default: false;
+	}
+}
+
+insideWigiTableOrSpreadsheet(root : WigiElement, cursor : [int]) -> bool {
+	cellPath = wigiFindParentRecursive(root, [dummyWigiTableCell, dummyWigiSpreadsheetCell], cursor);
+	cellPath != []
+}

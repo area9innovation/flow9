@@ -1,0 +1,203 @@
+import material/material2tropic;
+import hash;
+import material/material_manager;
+import material/material_dialog;
+Todo(t : string, date : Date, time : Time, remind : bool);
+
+displayTodos(todos : Behaviour<[Todo]>, editing : DynamicBehaviour<Maybe<int>>, inspectVisible : TScrollInspectVisible) -> Material {
+	todoColors = [MRed(500), MPink(500), MPurple(500), MIndigo(500), MBlue(500), MTeal(500), MGreen(500), MLime(500), MOrange(500)];
+	listSelected = make(-1);
+
+	MSelect(todos, \ts ->
+		MList(
+			mapi(ts, \i, t ->
+				MDoubleLine(
+					t.t,
+					todoDateToString(t.date) + "  " + todoTimeToString(t.time),
+					[
+						MPrimaryAction(MLetterIcon(toUpperCase(substring(t.t, 0, 1)),
+							[todoColors[iabs(hashString(t.t)) % length(todoColors)], MIconSize(40.)], [MWhite(), MTitle()]
+							)),
+						MOnClick(\ -> next(editing, Some(i)))
+					]
+				)
+			),
+			[
+				MEmptyMessage(
+					[
+						MIcon("event", [MBlue(500), MIconSize(64.), FillOpacity(0.8)]),
+						TFixed(0., 8.),
+						MText("You don't have any todos", [MGrey(500)])
+					]
+					|> (\f -> map(f, \f2 -> MCenterX(f2)))
+					|> MLines
+					|> MCenterY
+				),
+				MAddShadows(),
+				MAddSeparators()
+			], []
+		)
+		|> (\f -> MBorder(0., 8., 0., 88., f))
+		|> (\f ->
+			MConstruct([
+					makeSubscribe(listSelected, \i ->
+						if (i >= 0) {
+							next(editing, Some(i));
+							next(listSelected, -1)
+						}
+					)
+				],
+				f
+			)
+		)
+	)
+}
+
+main() {
+	todos = make([]);
+	editing : DynamicBehaviour<Maybe<int>> = make(None());
+	manager = makeMaterialManager([makeMaterialTheme(true, MIndigo(500), MBlue(500))]);
+	text = make("");
+	remindMe = make(false);
+	selectedDate = make(stamp2date(timestamp()));
+	selectedTime = make(stamp2time(timestamp()));
+	inspectVisible = makeTScrollInspectVisible();
+
+	MAppStructure([
+		MSelect(editing, \sel ->
+			switch (sel) {
+				None(): MToolbar(make(false), MCenterY(MText("Minimal", [MTitle(), MWhite()])), [], [MShowExpander(const(false))]);
+				Some(i): {
+					open = make(true);
+					MToolbar(
+						open,
+						TEmpty(),
+						[],
+						[
+							MCustomExpander(MIconToggle("close", [manager.theme.toolbarItemsColor, MToggleFalseIcon("menu", [manager.theme.toolbarItemsColor])], [])),
+							MToolbarContent(MTextInput(text, [MLabel("Title"), MFloatingLabel(), MCustomTextStyle([MWhite()])], []), true),
+							MFloatingButton(
+								"send",
+								[MRight(), MFabHalfUp()],
+								[
+									MOnClick(\ ->
+										if (getValue(text) != "") {
+											next(todos, replace(getValue(todos), i, Todo(getValue(text), getValue(selectedDate), getValue(selectedTime), getValue(remindMe))));
+											next(editing, None());
+										}
+									)
+								]
+							)
+						]
+					)
+					|> (\f ->
+						MConstruct([ \ -> subscribe(open, \o -> if (!o) next(editing, None()))],
+							f
+						)
+					)
+				}
+			}
+		)
+		|> MAppBar,
+		MSelect(editing, \sel ->
+			switch (sel) {
+				None(): displayTodos(todos, editing, inspectVisible);
+				Some(i): {
+					// Display the editor for a TODO item
+					t = if (i < length(getValue(todos))) getValue(todos)[i] else Todo("", addDaysToDate(stamp2date(timestamp()), 1), stamp2time(timestamp()), true);
+
+					next(text, t.t);
+					next(remindMe, t.remind);
+					next(selectedDate, t.date);
+					selectedDateStr = make(todoDateToString(t.date));
+					dateFocus = make(false);
+					next(selectedTime, t.time);
+					selectedTimeStr = make(todoTimeToString(t.time));
+					timeFocus = make(false);
+
+					MLines([
+						MBaselineCols([
+							MIcon("alarm_add", [])
+							|> (\f -> MBorder(8., 8., 8., 8., f)),
+							MText("Remind Me", [MListBody()])
+							|> (\f -> MBorder(8., 12., 8., 8., f)),
+							TFillX(),
+							MSwitchControl(remindMe, [])
+							|> (\f -> MBorder(0., 0., -16., 0., f))
+						]),
+						MBaselineCols([
+							MTextInput(selectedDateStr, [AutoAlign(AutoAlignCenter())], [TTextInputFocus(dateFocus)])
+							|> (\f -> MBorder(8., 8., 8., 8., f)),
+							MText("@", [MBlue(500), MListBody()])
+							|> (\f -> MBorder(8., 16., 8., 8., f)),
+							MTextInput(selectedTimeStr, [AutoAlign(AutoAlignCenter())], [TTextInputFocus(timeFocus)])
+							|> (\f -> MBorder(8., 8., 8., 8., f)),
+						]),
+						MSelect(fselect2(selectedDateStr, selectedTimeStr, FLift2(\sd, st -> sd + ", " + st)), \st ->
+							MText("Reminder set for " + st, [MCaptionColumn()]))
+						|> (\f -> MBorder(8., 16., 8., 8., f))
+					])
+					|> (\f -> MBorder(32., 56., 32., 8., f))
+					|> (\f ->
+						MConstruct([
+							\ -> subscribe(dateFocus, \ds -> if (ds) {
+									close = make(false);
+									prevDate = fgetValue(selectedDate);
+									ShowMDialog(manager, close, [],
+										MDatePicker(selectedDate, [
+											MDialogButtons([
+												MButtonOk("enter", \ -> {next(selectedDateStr, todoDateToString(fgetValue(selectedDate))); next(close, true);}),
+												MButtonCancel("esc", \ -> {next(selectedDate, prevDate); next(close, true);})
+											]),
+											MDateMin(stamp2date(timestamp())),
+										])
+									);
+									next(dateFocus, false);
+							}),
+							\ -> subscribe(timeFocus, \ds -> if (ds) {
+									close = make(false);
+									prevTime = fgetValue(selectedTime);
+									ShowMDialog(manager, close, [],
+										MTimePicker(selectedTime, [
+											MDialogButtons([
+												MButtonOk("enter", \ -> {next(selectedTimeStr, todoTimeToString(fgetValue(selectedTime))); next(close, true);}),
+												MButtonCancel("esc", \ -> {next(selectedTime, prevTime); next(close, true);})
+											]),
+											MTimeAMPM(true),
+										])
+									);
+									next(timeFocus, false);
+							})
+							],
+							f
+						)
+					)
+				}
+			}
+		)
+		|> MContent,
+		MSelect(editing, \sel ->
+			switch (sel) {
+				None():
+					MFloatingButton(
+						"add",
+						[MRight(), MBottom()],
+						[MOnClick(\ -> next(editing, Some(length(getValue(todos)))))]
+					);
+				Some(i): TEmpty()
+			}
+		)
+		|> MFloatingContent
+		],
+		[MNoContentBorder(), inspectVisible]
+	)
+	|> (\f -> mrender(manager, true, f))
+}
+
+todoTimeToString(time : Time) -> string {
+	getTimeOnlyString(time, false, true)
+}
+
+todoDateToString(date : Date) -> string {
+	date2formatString(date, "%D %MMM, %YYYY")
+}

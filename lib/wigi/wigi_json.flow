@@ -1,0 +1,174 @@
+import wigi/wigi_value;
+import wigi/wigi_engine;
+import formats/json/json;
+
+export {
+	// When converting WigiValue to Json we are losing type info of WigiInt, so we record the map with name to real type mapping
+	// This map will be populated while converting WigiEnvironment to Json and can be used in the process of converting back.
+	// the json2wigiEngine, json2wigiEngineWithNamespace and copyWigiEnginesUnlinked in material/extra/wigi/wigi_namespace.flow (material repo)
+	// depends on such ability
+	wigiEnv2json(env : WigiEnvironment, style : [WigiEnvStyle]) -> Pair<Json, Tree<string, WigiValue>>;
+		WigiEnvStyle ::= WigiEnvFilterNamespace, WigiEnvVariables;
+			// creating Json for the env variables which are in the given namespace
+			WigiEnvFilterNamespace(namespace : string);
+			// create a json only for variables from the given list
+			// it's used for the env updating when the wigi button inside other element
+			WigiEnvVariables(vars : [string]);
+
+	json2wigiEngine(engine : WigiEngine, j : Json, typeMap : Tree<string, WigiValue>) -> [() -> void];
+	// recursiveCall parameter allows us to go deeper through Json structure and collect all names
+	// to namespaces sequence instead of adding cell with WigiRecord value as for common case
+	// if contains member Pair("namespaces", WigiArray([])) then appropriate elements will be treated as namespaces not a WigiRecords
+	// namespace name should be in form like "state!subname1!subname2" and so on
+	json2wigiEngineWithNamespace(engine : WigiEngine, j : Json, namespace : Maybe<string>, recursiveCall : bool, typeMap : Tree<string, WigiValue>) -> [() -> void];
+	// for non-recursive namespace the isNamespaceFn could be providded to find if the json element is namespace or WigiRecord
+	json2wigiEngineWithNamespaceEx(engine : WigiEngine, j : Json, namespace : Maybe<string>, recursiveCall : bool, typeMap : Tree<string, WigiValue>, isNamespaceFn : (string) -> bool) -> [() -> void];
+	// preprocess env json and converts into json + lookup fn to check if element is namespace
+	json2wigiExtractNamespaces(j : Json) -> Pair<Json, (string) -> bool>;
+
+	jsonNamespacesNS = "namespaces";
+
+	// Variables with this namespaces will not be added to result of wigiEnv2json
+	ignoreJsonNamespace = "ignore_json";
+}
+
+wigiEnv2json(env : WigiEnvironment, style : [WigiEnvStyle]) -> Pair<Json, Tree<string, WigiValue>> {
+	namespaceStructM = tryExtractStruct(style, WigiEnvFilterNamespace(""));
+	namespaceM = maybeMap(namespaceStructM, \namespaceStruct -> namespaceStruct.namespace);
+	vars = extractStruct(style, WigiEnvVariables([])).vars;
+
+	realTypeMap : ref Tree<string, WigiValue> = ref makeTree();
+	transformFn = \name : string, v : WigiValue -> wigiValue2jsonExt(v, name, realTypeMap);
+
+	cellValues = getJsonMembers(env.cellnames, idfn, namespaceM, vars, transformFn);
+	formulaValues = getJsonMembers(env.cellformulas, \f -> f.value, namespaceM, vars, transformFn);
+	members = concat(cellValues, formulaValues);
+	Pair(
+		JsonObject(uniq(members)),
+		^realTypeMap
+	)
+}
+
+getJsonMembers(tree : Tree<WigiCellName, ?>, fn : (?) -> Behaviour<WigiValue>, namespaceM : Maybe<string>, vars : [string], transformFn : (string, WigiValue) -> Json) -> [Pair<string, Json>] {
+	filtermapTreeToArray(
+		tree,
+		\key, value -> {
+			maybeBind(
+				wigiCell2jsonKey(key, namespaceM),
+				\v -> {
+					if (vars == [] || contains(vars, key.name)) {
+						varName = toLowerCase(v);
+						Some(Pair(varName, transformFn(varName, getValue(fn(value)))))
+					} else {
+						None()
+					}
+				}
+			)
+		}
+	)
+}
+
+wigiCell2jsonKey(cell : WigiCellName, namespaceM : Maybe<string>) -> Maybe<string> {
+	namespaces = cell.namespace.names;
+	if (contains(namespaces, toUpperCase(ignoreJsonNamespace))) {
+		None()
+	} else {
+		ns = strGlue(reverseA(namespaces), "!");
+		makeKey = \-> {
+			key = if (length(namespaces) > 0) ns + "!" + cell.name else cell.name;
+			Some(key)
+		}
+		eitherFn(
+			namespaceM,
+			\namespace -> {
+				if (namespace == ns) {
+					makeKey()
+				} else {
+					None()
+				}
+			},
+			makeKey
+		)
+	}
+}
+
+json2wigiEngine(engine : WigiEngine, j : Json, typeMap : Tree<string, WigiValue>) -> [() -> void] {
+	if (j == JsonNull()) []
+	else json2wigiEngineWithNamespace(engine, j, None(), false, typeMap)
+}
+
+json2wigiExtractNamespaces(j : Json) -> Pair<Json, (string) -> bool> {
+	switch (j : Json) {
+		JsonObject(members): {
+			namespaces = pairs2tree(map(getJsonArrayField(j, jsonNamespacesNS), \json -> {
+				switch (json : Json) {
+					JsonString(s): Pair(s, true);
+					default: Pair("", false);
+				}
+			}));
+			filteredJson = if (namespaces == TreeEmpty()) j else JsonObject(filter(members, \p : Pair<string, Json> -> p.first != jsonNamespacesNS));
+			Pair(filteredJson, \name -> lookupTreeDef(namespaces, name, false));
+		}
+		default: Pair(j, \__ -> false);
+	}
+}
+
+json2wigiEngineWithNamespace(engine : WigiEngine, j : Json, namespace : Maybe<string>, recursiveCall : bool, typeMap : Tree<string, WigiValue>) -> [() -> void] {
+	switch (j : Json) {
+		JsonObject(members): {
+			ns = json2wigiExtractNamespaces(j);
+			json2wigiEngineWithNamespaceEx(engine, ns.first, namespace, recursiveCall, typeMap, ns.second);
+		}
+		default: json2wigiEngineWithNamespaceEx(engine, j, namespace, recursiveCall, typeMap, \__ -> false)
+	}
+}
+
+json2wigiEngineWithNamespaceEx(engine : WigiEngine, j : Json, namespace : Maybe<string>, recursiveCall : bool, typeMap : Tree<string, WigiValue>, isNamespaceFn : (string) -> bool) -> [() -> void] {
+	unsubs = switch (j : Json) {
+		JsonObject(members): {
+			ns = switch (namespace : Maybe<string>) {
+				Some(s): s + "!";
+				None(): "";
+			}
+			fold(members, [], \acc, p : Pair<string, Json> -> {
+				if (p.first != "") {
+					name = ns + p.first;
+					if (recursiveCall || isNamespaceFn(name)) {
+						uns = json2wigiEngineWithNamespaceEx(engine, p.second, Some(name), recursiveCall, typeMap, isNamespaceFn);
+						concat(acc, uns)
+					} else {
+						arrayPush(acc, loadJsonValueToWigiEngine(name, p.second, typeMap, engine))
+					}
+				} else {
+					println("JSON -> WIGI_ENV ERROR: cell name should not be empty: " + toString(p));
+					devtrace(j);
+					acc
+				}
+			})
+		}
+		default: {
+			name = either(namespace, "");
+			[if (name == "") {
+				println("JSON -> WIGI_ENV ERROR: cell name should not be empty");
+				devtrace(j);
+				nop
+			} else {
+				loadJsonValueToWigiEngine(name, j, typeMap, engine)
+			}]
+		}
+	}
+	filter(unsubs, \f -> f != nop)
+}
+
+loadJsonValueToWigiEngine(name : string, json : Json, typeMap : Tree<string, WigiValue>, engine : WigiEngine) -> () -> void {
+	cell = jsonKey2WigiName(name);
+	wigiValue = json2WigiValueExt(json, name, typeMap);
+	linkValueToEngineExtended(engine, cell, const(wigiValue), [])
+}
+
+jsonKey2WigiName(key : string) -> WigiCellName {
+	parts = reverseA(strSplit(key, "!"));
+	name = parts[0];
+	namespace = if (length(parts) == 1) [] else tail(parts);
+	wigiCellName2(name, namespace)
+}

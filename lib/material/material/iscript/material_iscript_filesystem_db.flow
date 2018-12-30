@@ -1,0 +1,141 @@
+import material/internal/types;
+import material/iscript/material_iscript_util;
+import material/extra/filesystem/localfilesystem_extended_api;
+import material/iscript/material_iscript_pack;
+import material/extra/filesystem/filesystemdb_partition;
+
+export {
+	setIScriptFilesystemDBHandler(manager : MaterialManager, jwt : string, iScriptPartitionId : int) -> void;
+	resetIScriptFilesystemDBHandler(manager : MaterialManager) -> void;
+
+	isIScriptFilesystemDBInitialized(manager : MaterialManager) -> bool;
+	getIScriptFilesystemDBPartitionName(manager : MaterialManager) -> string;
+	getIScriptFilesystemDBPartitionId(manager : MaterialManager) -> int;
+
+	storeCurrentAndSetIScriptDBPartition(manager : MaterialManager) -> void;
+	restoreCurrentDBPartition(manager : MaterialManager) -> void;
+
+	saveDBIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+
+	iScriptToDB(manager : MaterialManager, filename : string) -> void;
+	iScriptToDB2(manager : MaterialManager, filename : string, storedIScript : StoredIScript, onDone : () -> void, onError : (string) -> void ) -> void;
+	iScriptFromDB(manager : MaterialManager, scriptname : string) -> void;
+	iScriptFromDB2(manager : MaterialManager, scriptname : string, onDone: (storedIScript : StoredIScript) -> void, onError : (string) -> void) -> void;
+	storedIScriptFromDB(manager : MaterialManager, scriptname : string, onDone: (storedIScript : StoredIScript) -> void, onError : (string) -> void) -> void;
+}
+
+setIScriptFilesystemDBHandler(manager : MaterialManager, jwt : string, iScriptPartitionId : int) -> void {
+	next(manager.iscript.filesystemDB, Some(IScriptFilesystemDB("IScripts", jwt, iScriptPartitionId, fsAPIGetPartitionId())));
+}
+
+resetIScriptFilesystemDBHandler(manager : MaterialManager) -> void {
+	next(manager.iscript.filesystemDB, None());
+}
+
+isIScriptFilesystemDBInitialized(manager : MaterialManager) -> bool {
+	isSome(getValue(manager.iscript.filesystemDB))
+}
+
+getIScriptFilesystemDBPartitionName(manager : MaterialManager) -> string {
+	eitherMap(getValue(manager.iscript.filesystemDB), \fs -> fs.partitionName, "IScripts");
+}
+
+getIScriptFilesystemDBPartitionId(manager : MaterialManager) -> int {
+	eitherMap(getValue(manager.iscript.filesystemDB), \fs -> fs.iScriptPartitionId, -1);
+}
+
+storeCurrentAndSetIScriptDBPartition(manager : MaterialManager) -> void {
+	maybeApply(getValue(manager.iscript.filesystemDB), \fs -> {
+		fs.storedPartitionId ::= fsAPIGetPartitionId();
+		fsAPISetPartitionId(getIScriptFilesystemDBPartitionId(manager));
+	});
+}
+
+restoreCurrentDBPartition(manager : MaterialManager) -> void {
+	maybeApply(getValue(manager.iscript.filesystemDB), \fs -> {
+		fsAPISetPartitionId(fs.storedPartitionId);
+	});
+}
+
+saveDBIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	if (isIScriptFilesystemDBInitialized(manager)) {
+		fileName = changeFileExt(name, ".iscript");
+		iScriptToDB2(
+			manager,
+			fileName,
+			prepareCurrentIScriptForSave(manager),
+			\ -> next(manager.iscript.scriptChangedB, false),
+			\err_msg -> {
+				closeB = make(false);
+				renderMDialog(
+					manager,
+					closeB,
+					[
+						MDialogUseFrame(),
+						MDialogActions([MTextButton("OK", \ -> next(closeB, true), [], [MShortcut("enter")])])
+					],
+					MText("Error saving IScript!", []),
+					m2t
+				)
+			}
+		)
+	}
+}
+
+iScriptToDB(manager : MaterialManager, filename : string) -> void {
+	iScriptToDB2(
+		manager,
+		filename,
+		prepareCurrentIScriptForSave(manager),
+		nop,
+		\err_msg -> iScriptInfo(manager, err_msg, None())
+	)
+}
+
+iScriptToDB2(manager : MaterialManager, filename : string, storedIScript : StoredIScript, onDone : () -> void, onError : (string) -> void ) -> void {
+	if (isIScriptFilesystemDBInitialized(manager)) {
+		getFilesystemExtAPI().setFileContent(
+			filename,
+			packStoredIScript(storedIScript),
+			onDone,
+			\err_msg -> onError(err_msg)
+		)
+	} else onError("IScriptDBFilesystemExtAPI is not set")
+}
+
+iScriptFromDB(manager : MaterialManager, scriptname : string) -> void {
+	iScriptFromDB2(
+		manager,
+		scriptname,
+		\storedIScript : StoredIScript -> {
+			next(manager.iscript.iScriptB, storedIScript.script);
+		},
+		\err_msg -> {
+			iScriptInfo(manager, err_msg, None())
+		}
+	);
+}
+
+iScriptFromDB2(manager : MaterialManager, scriptname : string, onDone: (storedIScript : StoredIScript) -> void, onError : (string) -> void) -> void {
+	if (isIScriptFilesystemDBInitialized(manager)) {
+		getFilesystemExtAPI().getFileContent(
+			scriptname,
+			\s : string -> {
+				storedIScript : StoredIScript = unpackStoredIScript(s);
+				loadAdditionalIScriptInfo(manager, storedIScript.additionalInfo);
+				onDone(storedIScript)
+				},
+			\err_msg -> onError(err_msg)
+		)
+	} else onError("IScriptDBFilesystemExtAPI is not set")
+}
+
+storedIScriptFromDB(manager : MaterialManager, scriptname : string, onDone: (storedIScript : StoredIScript) -> void, onError : (string) -> void) -> void {
+	if (isIScriptFilesystemDBInitialized(manager)) {
+		getFilesystemExtAPI().getFileContent(
+			scriptname,
+			\s : string -> onDone(unpackStoredIScript(s)),
+			\err_msg -> onError(err_msg)
+		)
+	} else onError("IScriptDBFilesystemExtAPI is not set")
+}

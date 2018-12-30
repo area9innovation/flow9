@@ -1,0 +1,179 @@
+import wigi/types;
+import wigi/wigi_expr;
+import wigi/wigi_engine;
+import wigi/wigi_expr_parser;
+import wigi/interactive_table_utils;
+
+export {
+	// Register all values into the engine in the given namespace, with bidrectional links to
+	// the actual behaviours in the WigiElements.
+	// Also parses and registers all formulas into the engine, with dependencies tracked as well.
+	// Returns a unsubscriber which cleans everything up.
+	// Notice: Does NOT link to Wiki environment.
+	registerToWigiEngine(doc : WigiElement, engine : WigiEngine, namespace : WigiScope) -> [()->void];
+
+	// Differs from "registerToWigiEngine" in that it registers only stubs of formulas into the engine
+	// and also fills the last argument "formulas" with these registrants,
+	// so that formulas' dependencies could be resolved correctly after all names are registered
+	registerToWigiEngineStub(doc : WigiElement, engine : WigiEngine, namespace : WigiScope, formulas : ref Tree<WigiCellName, WigiExpr>) -> [()->void];
+}
+
+registerToWigiEngine(doc : WigiElement, engine : WigiEngine, namespace : WigiScope) -> [()->void] {
+	formulas = ref makeTree();
+	uns1 = registerToWigiEngineStub(doc, engine, namespace, formulas);
+	uns2 = foldTree(^formulas, [], \cell, formula, u -> {
+		ns = namespaceOfCellName(cell);
+		concat(u, addFormulaToEngine(engine, ns, cell.name, ns, formula, false, true).second)
+	});
+	concat(uns1, uns2);
+}
+
+registerToWigiEngineStub(doc : WigiElement, engine : WigiEngine, namespace : WigiScope, formulas : ref Tree<WigiCellName, WigiExpr>) -> [()->void] {
+	switch (doc) {
+		WigiEmpty(): [];
+		WigiStory(pars, views, style): {
+			localNamespace = refineWigiNamespace(namespace, style);
+			concatA(map(^pars, \p -> registerToWigiEngineStub(p, engine, localNamespace, formulas)));
+		}
+		WigiRecursive(els, type, style): {
+			localNamespace = refineWigiNamespace(namespace, style);
+			name = extractStruct(style, WigiName("")).name;
+
+			uns0 = switch(type: WigiRecursiveType) {
+				WigiInteractiveTable(f, r, s): {
+					// "registerRecursiveElementToWigiEngine" is not called because it cannot issue formulas/values
+					unsA = concatA(mapi(getValue(r), \i, rec : WigiRecord -> {
+						ns = interactiveTableRowNamespace(i, localNamespace);
+						el = wigiForStorage(els[0], false);
+						registerToWigiEngineStub(el, engine, ns, formulas);
+					}));
+					concat(unsA, [registerValueToWigiEngine(engine, wigiCellName(name, localNamespace), make(WigiRecord([])))])
+				}
+				default: []
+			}
+			// unlike "wigiRecursiveLayout", noname values/formulas are always ignored
+			uns1 = concatA(map(els, \e -> registerToWigiEngineStub(e, engine, localNamespace, formulas)));
+			uns2 = registerRecursiveElementToWigiEngine(formulas, type, els, engine, wigiCellName(name, localNamespace));
+			concat3(uns0, uns1, uns2)
+		}
+		WigiParagraph(elements, style): {
+			localNamespace = refineWigiNamespace(namespace, style);
+			concatA(map(elements, \e -> registerToWigiEngineStub(e, engine, localNamespace, formulas)));
+		}
+		WigiText(text, style): [];
+		WigiDocument(root, style): {
+			localNamespace = refineWigiNamespace(namespace, style);
+			registerToWigiEngineStub(root, engine, localNamespace, formulas);
+		}
+		WigiBlock(type, style): {
+			localNamespace = refineWigiNamespace(namespace, style);
+			name = extractStruct(style, WigiName("")).name;
+
+			// unlike "wigiBlock2form", noname values/formulas are always ignored
+			// beware that WigiFormula with noname will get "random"+random() name
+			if (name == "") []
+			else registerBlockToWigiEngine(formulas, doc, engine, wigiCellName(name, localNamespace))
+		}
+	}
+}
+
+registerRecursiveElementToWigiEngine(formulas : ref Tree<WigiCellName, WigiExpr>, type : WigiRecursiveType, els : [WigiElement], engine : WigiEngine, cell : WigiCellName) -> [()->void] {
+	switch (type) {
+		WigiTable(__, __, __, tableStyle): []; // beware that formulas with names ending with "highlightcolumn", "highlightrow" could be created for WigiTable
+		WigiInteractiveTable(__, __, __): [];
+		WigiSpreadsheetCell(__, __, __): {
+			switch (simplifyElement(els[0])) {
+				WigiText(t, s): {
+					if (t == "") []
+					else registerTextFormulaToWigiEngine(formulas, engine, cell, t, true)
+				}
+				default: []
+			}
+		}
+		WigiButton(__, s): {
+			//clickFormula = extractStruct(s, OptionalFormula("")).formula;
+			// TODO: We should add the value here
+			[registerValueToWigiEngine(engine, cell, make(WigiInt(0)))]
+		}
+		default: [] // beware that formula with name "todo" in globalWigiNamespace will be created for WigiCode
+	}
+}
+
+
+registerTextFormulaToWigiEngine(formulas : ref Tree<WigiCellName, WigiExpr>, engine : WigiEngine, cell : WigiCellName, formula : string, forbidCircularReference : bool) -> [()->void] {
+	parsed = parseWigiExpr(formula);
+	if (isWigiValue(parsed)) {
+		[registerValueToWigiEngine(engine, cell, make(cast(parsed : WigiExpr -> WigiValue)))]
+	} else {
+		if (forbidCircularReference && isCircularReferenceExpr(parsed, cell.name)) []
+		else registerFormulaToWigiEngine(formulas, engine, cell, parsed)
+	}
+}
+
+registerFormulaToWigiEngine(formulas : ref Tree<WigiCellName, WigiExpr>, engine : WigiEngine, cell : WigiCellName, formula : WigiExpr) -> [()->void] {
+	engine.env := addWigiFormula(^(engine.env), cell, WigiFormulaType(WigiDefaultValue(), make(WigiDefaultValue()), namespaceOfCellName(cell)));
+	formulas := setTree(^formulas, cell, formula);
+	[\-> { engine.env := removeWigiFormula(^(engine.env), cell) }]
+}
+
+registerBlockToWigiEngine(formulas : ref Tree<WigiCellName, WigiExpr>, block : WigiBlock, engine : WigiEngine, cell : WigiCellName) -> [()->void] {
+	switch(block.type : WigiBlockType) {
+		WigiSlider(val, __, __, __, __, __): {
+			s = make(WigiDouble(number2double(getValue(val))));
+			uns1 = bidirectionalLink(val, s, \v -> WigiDouble(number2double(v)), wigiValue2Double);
+			uns2 = registerValueToWigiEngine(engine, cell, s);
+			[ uns1, uns2 ]
+		}
+
+		WigiInputBox(val, __, __, __): {
+			s = make(WigiString(getValue(val)));
+			uns1 = bidirectionalLink(val, s, \v -> WigiString(v), wigiValue2String);
+			uns2 = registerValueToWigiEngine(engine, cell, s);
+			[ uns1, uns2 ]
+		}
+
+		WigiCheckBox(val, __): {
+			s = make(WigiBool(getValue(val)));
+			uns1 = bidirectionalLink(val, s, \v -> WigiBool(v), wigiValue2Bool);
+			uns2 = registerValueToWigiEngine(engine, cell, s);
+			[ uns1, uns2 ]
+		}
+
+		WigiComboBox(selected, __, __, __): {
+			s = make(WigiInt(getValue(selected)));
+			uns1 = bidirectionalLink(selected, s, \v -> WigiInt(v), wigiValue2Int);
+			uns2 = registerValueToWigiEngine(engine, cell, s);
+			[ uns1, uns2 ]
+		}
+
+		WigiFormula(formula, __): registerTextFormulaToWigiEngine(formulas, engine, cell, formula, false);
+
+		default: {
+			if (isDevMode())
+				println("registerBlockToWigiEngine ignored " + block.type.structname);
+			[] // beware that formula with name "range"+random() may be created for WigiDotplot, WigiHistogram, WigiHistogramClasses, WigiBoxplot, WigiScatterplot
+		}
+	}
+}
+
+registerValueToWigiEngine(engine : WigiEngine, cell : WigiCellName, value : DynamicBehaviour<WigiValue>) -> ()->void {
+	existingValue = lookupWigiCellName(^(engine.env), cell);
+	switch (existingValue) {
+		None(): {
+			// TODO: Warn if this exists as a formula
+			addValueToWigiEngine(engine, cell, value);
+		}
+		Some(ev): {
+			if (isConst(ev)) {
+				// We can not bind, so we just override.
+				println("Collision for " + cellName2string(cell));
+				addValueToWigiEngine(engine, cell, value);
+			} else {
+				// println("Setting bidirectionalLink for " + cellName2string(cell));
+				dev = cast(ev : Behaviour<WigiValue> -> DynamicBehaviour<WigiValue>);
+				bidirectionalLink(dev, value, idfn, idfn);
+			}
+		}
+	}
+}
+

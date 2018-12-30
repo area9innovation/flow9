@@ -1,0 +1,171 @@
+import formats/svg/svgpath;
+import formats/xml;
+import svg_colorname;
+import formats/css/parse_css;
+
+export {
+	SvgStyle ::= SvgTint, SvgBgColor;
+	// Tint whole icon with the given color:
+	SvgTint(tint : int);
+	// This color is used to fill detected path holes. Flow graphics does not support path with holes:
+	SvgBgColor(color : int);
+
+	SvgForm(url : string, style : [SvgStyle]) -> Form;
+	svgNode2Form(node : XmlNode, style : [SvgStyle]) -> Form;
+	svgString2Form(s : string, style : [SvgStyle]) -> Form; // Converts content of SVG file to flow form
+
+	SvgIcon(iconset : Tree<string, Form>, name : string, style : [SvgStyle]) -> Form;
+}
+
+getNumValue(s : string, max_value : double) -> double{
+	st = trim(s);
+	if (endsWith(st, "%")) {
+		s2d(takeBefore(st, "%", "0")) / 100.0 * max_value
+	} else {
+		s2d(st)
+	}
+}
+
+svgColor2Int(s : string) -> int {
+	if ( startsWith(s, "rgb") ) {
+		fold(map(strSplit(takeBetween(s, "(", ")", ""), ","), \st -> floor( getNumValue(st, 255.0) ) ), 0, \clr, e -> bitShl(clr, 8) + e);
+	} else if ( startsWith(s, "#") ) {
+		hs = takeAfter(s, "#", "0");
+		if (strlen(hs) == 3) { // triple hex code
+			parseHex(strRepeat(getCharAt(hs, 0), 2) + strRepeat(getCharAt(hs, 1), 2) + strRepeat(getCharAt(hs, 2), 2));
+		} else {
+			parseHex(hs);
+		}
+	} else {
+		svgName2color(s, 0x000000);
+	}
+}
+
+attributes2GraphicsStyle(atts : [XmlAttribute], tint : Maybe<SvgTint>, ss : Stylesheet) -> [GraphicsStyle] {
+	tintOrColor = \v -> switch(tint) { Some(t): t.tint; None(): v; };
+
+	css_style = eitherFn( find(atts, \a -> a.key == "class"), \class -> lookupTree(ss.styles, "." + class.value), \ -> None() );
+	gs_css_style = ref [];
+
+	eitherFn(css_style, \s -> {
+		if (defCssStyle.fill != s.style.fill) refArrayPush(gs_css_style, Fill(s.style.fill));
+		if (defCssStyle.stroke != s.style.stroke) refArrayPush(gs_css_style, Stroke(s.style.stroke));
+		if (defCssStyle.strokeWidth != s.style.strokeWidth) refArrayPush(gs_css_style, StrokeWidth(s.style.strokeWidth));
+	}, nop );
+
+	none_fill = ref false;
+	r : [GraphicsStyle] = filtermap(atts, \a -> {
+		k = a.key; v = a.value;
+		if (k == "fill") {
+			if (v == "none") {  none_fill := true; None() } else Some( Fill( tintOrColor(svgColor2Int(v)) ) ) 
+		} else if (k == "stroke") {
+			if (v == "none") None() else Some( Stroke( tintOrColor(svgColor2Int(v)) ) )
+		} else if (k == "fill-opacity") {
+			Some( FillOpacity(getNumValue(v, 1.0)) )
+		} else if (k == "stroke-opacity") {
+			Some( StrokeOpacity(getNumValue(v, 1.0)) )
+		} else if (k == "stroke-width") {
+			Some( StrokeWidth(s2d(v)) )
+		} else {
+			None()
+		}
+	});
+
+	gs = concat(^gs_css_style, r);
+
+	if ( containsStruct(gs, Fill(0)) || containsStruct(gs, Stroke(0)) || ^none_fill ) gs else arrayPush(gs, Fill( tintOrColor(0x000000) ) ); 
+}
+
+doSvgNode2Form(node : XmlNode, style : [SvgStyle], ss : Stylesheet) -> Form {
+	bgcolor = extractStruct(style, SvgBgColor(0xFFFFFF)).color;
+	tint = tryExtractStruct(style, SvgTint(0x000000));
+
+	getFloatAttr = \atts, n -> s2d( getXmlAttribute(atts, n, "0") );
+
+	switch (node) {
+		XmlElement(t, atts, childs): {
+			if (t == "path") {
+				svgPath2Form(getXmlAttribute(atts, "d", ""), attributes2GraphicsStyle(atts, tint, ss), bgcolor)
+			} else if (t == "circle") {
+				Circle(getFloatAttr(atts, "cx"), getFloatAttr(atts, "cy"), getFloatAttr(atts, "r"), attributes2GraphicsStyle(atts, tint, ss)); 
+			} else if (t == "rect") {
+				Translate(const(getFloatAttr(atts, "x")), const(getFloatAttr(atts, "y")),
+					Rectangle(getFloatAttr(atts, "width"), getFloatAttr(atts, "height"), attributes2GraphicsStyle(atts, tint, ss))
+				)
+			} else {
+				Group( map(childs, \c -> doSvgNode2Form(c, style, ss) ) )
+			}
+		}
+		default: Empty();
+	}
+}
+
+// Collect embedded CSSs from the document
+// Adobe Illustrator embeds CSS with style tags
+// Loading of external CSS is not supported
+fetchStylesheet(node : XmlNode) -> Stylesheet {
+	switch (node) {
+		XmlElement(t, atts, childs): {
+			if (t == "style") {
+				css = xmlUnescape( xml2text(node) );
+				parseCss(css);
+			} else {
+				fold( childs, emptyStylesheet, \acc : Stylesheet, c : XmlNode -> Stylesheet( mergeTree(acc.styles, fetchStylesheet(c).styles ) ) );
+			}
+		}
+		default: emptyStylesheet;
+	};
+}
+
+svgNode2Form(node : XmlNode, style : [SvgStyle]) -> Form {
+	ss = fetchStylesheet(node);
+	doSvgNode2Form(node, style, ss);
+}
+
+svgString2Form(s : string, style : [SvgStyle]) -> Form {
+	//t0 = timestamp();
+	r = svgNode2Form(parseXml2(s), style);
+	//println( toString(timestamp() - t0) +  " ms" );
+	r
+}
+
+// TO DO : caching results and offline
+SvgForm(url : string, style : [SvgStyle]) -> Form {
+	f = make(Empty());
+
+	httpRequest(url, false, [], [],
+		\d -> next(f, svgString2Form(d, style)),
+		\e -> println("Cannot load " + url + " " + e),
+		\s -> {}
+	);
+
+	Mutable(f)
+}
+
+tintIconForm(f : Form, color : int, bgcolor : int) {
+	switch(f) {
+		Group(g): Group( map(g, \gf -> tintIconForm(gf, color, bgcolor) ) );
+		Graphics(gops, st): {
+			switch(tryExtractStruct(st, Fill(0))) {
+				Some(clr): {
+					if (clr.color == 0xFFFFFA) { // A hole
+						Graphics(gops, replaceStruct(st, Fill(bgcolor)))
+					} else {
+						Graphics(gops, replaceStruct(st, Fill(color)))
+					}
+				}
+				None(): f
+			}
+		}
+		default: f;
+	}
+}
+
+SvgIcon(iconset : Tree<string, Form>, name : string, style : [SvgStyle]) {
+	iconf = lookupTreeDef(iconset, name, Empty());
+	tnt = tryExtractStruct(style, SvgTint(0));
+	switch (tnt) {
+		None(): iconf;
+		Some(c): tintIconForm(iconf, c.tint,  extractStruct(style, SvgBgColor(0xFFFFFF)).color)
+	}
+}

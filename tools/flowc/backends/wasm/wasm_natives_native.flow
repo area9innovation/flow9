@@ -1,0 +1,955 @@
+import tools/flowc/backends/wasm/wasm_opcodes;
+import tools/flowc/backends/wasm/wasm_runtime;
+import wasm_internals;
+
+// Implementations of natives which should run Wasm side
+export {
+
+	bitNot(int) -> int;
+	bitAnd(int, int) -> int;
+	bitOr(int, int) -> int;
+	bitXor(int, int) -> int;
+	bitShl(int, int) -> int;
+	bitUshr(int, int) -> int;
+	
+	isArray(int) -> bool;
+	isSameStructType(int, int) -> bool;
+	makeStructValue(structname : int, args : int, default_value : int) -> int;
+	
+	isSameObj(int, int) -> bool;
+	number2double2(int) -> double;
+	toString2(int) -> int;
+	toString222(int) -> int;
+
+	
+	list2string(int) -> int;
+	list2array(int) -> int;
+	
+	//////////////////////////////////////////////////////////////////////////////
+	// Natives from array.flow
+
+	// native length : ([?]) -> int = Native.length;
+	wasm_length(int) -> int;
+	
+	// native concat : ([?], [?]) -> [?] = Native.concat;
+	wasm_concat_i32(int, int) -> int;	
+	wasm_concat_f64(int, int) -> int;	
+	wasm_concat_i32_ref(int, int) -> int;	
+
+	// native elemIndex : (a : [?], elem : ?, illegal : int) -> int = Native.elemIndex;
+	// elemIndex(int, int, int) -> int;
+	
+	// native map : ([?], (?) -> ??) -> [??] = Native.map;
+	map(int, int) -> int;
+	
+	// native mapi : ([?], (int, ?) -> ??) -> [??] = Native.mapi;
+	mapi(int, int) -> int;
+	
+	// native fold : (xs : [?], init : ??, fn : (??, ?)->??) -> ?? = Native.fold;
+	wasm_fold_i32(int, int, int) -> int;
+	wasm_fold_f64(int, double, int) -> double;
+	wasm_fold_i32_ref(int, int, int) -> int;
+	
+	// native foldi : (xs : [?], init : ??, fn : (int, ??, ?)->??) -> ?? = Native.foldi;
+	wasm_foldi_i32(int, int, int) -> int;
+	wasm_foldi_f64(int, double, int) -> double;
+	wasm_foldi_i32_ref(int, int, int) -> int;
+	
+	// native replace : ([?], int, ?) -> [?] = Native.replace;
+	replace(int, int, int) -> int;
+	
+	// native subrange : ([?], index : int, length : int) -> [?] = Native.subrange;
+	subrange(int, int, int) -> int;
+	
+	// native enumFromTo : (start : int, end : int) -> [int] = Native.enumFromTo;
+	enumFromTo(int, int) -> int;
+	
+	// native iter : ([?], (?)->void) -> void = Native.iter;
+	iter(int, int) -> void;
+	
+	// native iteri : ([?], (int, ?)->void) -> void = Native.iteri;
+	iteri(int, int) -> void;
+	
+	// native iteriUntil : ([?], (int, ?)->bool) -> int = Native.iteriUntil;
+	iteriUntil(int, int) -> int;
+	
+	// native filter : ([?], (?)->bool) -> [?] = Native.filter;
+	// filter(int, int) -> int;
+
+
+	//////////////////////////////////////////////////////////////////////////////
+	// Natives from string.flow
+	
+	strlen(int) -> int;
+	wasm_s2a(int) -> int;
+	wasm_string2utf8(int) -> int;
+	strIndexOf(int, int) -> int;
+	substring(int, int, int) -> int;
+	strRangeIndexOf(int, int, int, int) -> int;
+	fromCharCode(int) -> int;
+	getCharCodeAt(int, int) -> int;
+
+	// those are placeholders for isXX natives that actually work in compile time
+	wasm_true1_ref(int) -> bool;
+	wasm_false1_ref(int) -> bool;
+	
+	//////////////////////////////////////////////////////////////////////////////
+	// Natives from runtime.flow
+	
+	// native println2 : io (flow) -> void = Native.println;
+	println2(int) -> void;
+	
+	//////////////////////////////////////////////////////////////////////////////
+	// Some stubs
+	
+	printCallstack() -> void;
+	captureCallstack() -> int;
+
+	// TODO:
+	// native quit : io (code : int) -> void = Native.quit;
+	// native gc : io () -> void = Native.gc;
+	// native deleteNative : io (native) -> void = Native.deleteNative;
+
+	// native fcPrintln2 : io (flow) -> void = Native.fcPrintln;
+
+	// native captureStringCallstack : io () -> string = Native.captureStringCallstack;
+	// native captureCallstackItem : io (index : int) -> native = Native.captureCallstackItem;
+	// native callstack2string : io (native) -> string = Native.callstack2string
+
+	// native impersonateCallstackItem : io (callstack : native, flags : int) -> void = Native.impersonateCallstackItem;
+	// native impersonateCallstackFn : io (fn : flow, flags : int) -> void = Native.impersonateCallstackFn;
+	// native impersonateCallstackNone : io (flags : int) -> void = Native.impersonateCallstackNone;
+
+	// native fail : io (msg : string) -> void = Native.failWithError;
+	// native fail0 : io (msg : string) -> ? = Native.failWithError;
+}
+
+
+bitNot(b : int) -> int {
+	wasm_i32_xor(b, 0xffffffff)
+}
+
+bitAnd(a : int, b : int) -> int {
+	wasm_i32_and(a, b)
+}
+
+bitOr(a : int, b : int) -> int {
+	wasm_i32_or(a, b)
+}
+
+bitXor(a : int, b : int) -> int {
+	wasm_i32_xor(a, b)
+}
+
+bitShl(a : int, b : int) -> int {
+	wasm_i32_shl(a, b)
+}
+
+bitUshr(a : int, b : int) -> int {
+	wasm_i32_shr_u(a, b)
+}
+
+isArray(v : int) -> bool {
+	9 == wasm_i32_load8_u(wasm_i32_load(v + 4))
+}
+
+wasm_true1_ref(v : int) -> bool {
+	wasm_dec_refcnt(v);
+	true;
+}
+wasm_false1_ref(v: int) -> bool {
+	wasm_dec_refcnt(v);
+	false;
+}
+
+wasm_debug_ensure_flow_type(addr : int) -> void {
+	t = wasm_i32_load8_u(addr);
+	if (t != 5) {
+		prints("ERROR! Expected flow-type but got:");
+		printi(t);
+		wasm_unreachable();
+	}
+}
+
+isSameStructType(v1 : int, v2 : int) -> bool {
+	addr1 = wasm_i32_load(v1 + 4);
+	addr2 = wasm_i32_load(v2 + 4);
+	// wasm_debug_ensure_flow_type(addr1);
+	// wasm_debug_ensure_flow_type(addr2);
+	t1 = wasm_i32_load8_u(addr1);
+	t2 = wasm_i32_load8_u(addr2);
+	// printi(t1);
+	// printi(t2);
+	(t1 == 10) && (t2 == 10) && (addr1 == addr2)
+}
+
+wasm_calc_struct_size(typedesc : int) -> int {
+	snamelen = wasm_i32_load8_u(typedesc + 1);
+	nfields = wasm_i32_load8_u(typedesc + 2 + snamelen);
+	wasm_do_calc_struct_size(typedesc + 3 + snamelen, 0, nfields) + 8
+}
+
+wasm_do_calc_struct_size(typedesc : int, acc : int, count : int) -> int {
+	if (count == 0) {
+		acc 
+	} else {
+		size = wasm_type_size(typedesc);
+		wasm_do_calc_struct_size(typedesc + size, acc + size, count - 1)
+	}
+}
+
+wasm_set_struct_values(struct : int, typedesc : int, args : int) -> void {
+	snamelen = wasm_i32_load8_u(typedesc + 1);
+	nfields = wasm_i32_load8_u(typedesc + 2 + snamelen);
+	firstField = typedesc + 3 + snamelen;
+	wasm_do_set_struct_values(struct + 8, firstField, args, 0, nfields)
+}
+
+wasm_do_set_struct_values(dst : int, typedesc0 : int, arr : int, idx : int, nfields : int) -> void {
+	typedesc = typedesc0 + 2;	// skipping field id
+	if (idx < nfields) {
+		type = wasm_i32_load8_u(typedesc);
+		if (type == 2) { // int
+			// add refcnt before invoking to compensate for automatic decrease
+			f = wasm_get_array_i32_ref(wasm_inc_refcnt_passthru(arr), idx);
+			v = wasm_i32_load(f + 8);
+			wasm_i32_store(dst, v);
+		} else {
+			printi(type);
+			wasm_unreachable();	// not supported yet
+		}
+		wasm_do_set_struct_values(
+			dst + 4,
+			wasm_next_typedescriptor(typedesc),
+			arr,
+			idx + 1,
+			nfields
+		)
+	}
+}
+
+makeStructValue(structname : int, args : int, default_value : int) -> int {
+	typedesc = wasm_find_struct_descriptor(structname);
+	
+	if (typedesc != -1) {
+		struct = wasm_alloc_struct(typedesc, wasm_calc_struct_size(typedesc));
+		wasm_set_struct_values(struct, typedesc, args);
+	
+		// printi(wasm_i32_load(struct + 0));
+		// printi(wasm_i32_load(struct + 4));
+		// printi(wasm_i32_load(struct + 8));
+		// printi(wasm_i32_load(struct + 12));
+		// printi(wasm_i32_load(struct + 16));
+		// printi(wasm_i32_load(struct + 20));
+		
+		wasm_alloc_flow_i32_ref(struct, 12, typedesc)
+	} else {
+		default_value
+	}
+}
+
+isSameObj(v1 : int, v2 : int) -> bool{
+	v1 == v2
+}
+
+number2double2(v : int) -> double {
+	t = wasm_i32_load8_u(wasm_i32_load(v + 4));
+	if (t == 3) {
+		wasm_f64_load(v + 8)
+	} else {
+		wasm_f64_convert_s_i32(wasm_i32_load(v + 8))
+	}
+}
+
+wasm_i2s(v : int) -> int {
+	wasm_int_to_string(v)
+}
+
+wasm_d2s(v : double) -> int {
+	wasm_double_to_string(v)
+}
+
+wasm_b2s(v : int) -> int {
+	wasm_bool_to_string(v)
+}
+
+wasm_array2string(v : int, type : int) -> int {
+	wasm_array_to_string(v, type)
+}
+
+toString222(v : int) -> int {
+	toString2(v)
+}
+
+toString2(v : int) -> int {
+	type = wasm_i32_load8_u(wasm_i32_load(v + 4));
+
+	res = if (type == 3) {	// double
+		wasm_d2s(wasm_f64_load(v + 8))
+	} else if (type == 4) {	// string
+		wasm_i32_load(v + 8)
+	} else {
+		val = wasm_i32_load(v + 8);
+		if (type == 1) {	// bool
+			wasm_b2s(val)
+		} else if (type == 2) {	// int
+			wasm_i2s(val)
+		} else if (type == 9) {	// array
+			arr_type = wasm_i32_load8_u(wasm_i32_load(v + 4) + 1);
+			wasm_array2string(val, arr_type)
+		} else {
+			prints("Type not known!");
+			wasm_address_of("")
+		}
+	}
+
+	wasm_inc_refcnt_passthru(res)	// we shall increase the refcount for function return value
+}
+
+wasm_struct_nfields_address(v : int) {
+	typedesc = wasm_i32_load(v + 4);
+	snamelen = wasm_i32_load8_u(typedesc+1);
+	typedesc + 2 + snamelen
+}
+
+wasm_calc_struct_nfields(v : int) {
+	wasm_i32_load8_u(wasm_struct_nfields_address(v));
+}
+
+wasm_do_calc_string_list_length(v : int) {
+	if (wasm_calc_struct_nfields(v) == 2) {	// Cons
+		head = wasm_i32_load(v + 8);
+		len = wasm_i32_load(head + 4);
+		tail = wasm_i32_load(v + 12);
+		len + wasm_do_calc_string_list_length(tail)
+	} else { // EmptyList
+		0
+	}
+}
+
+wasm_copy_strings_from_list(dst : int, v : int) -> void {
+	if (wasm_calc_struct_nfields(v) == 2) {	// Cons
+		head = wasm_i32_load(v + 8);
+		len = wasm_i32_load(head + 4);
+		tail = wasm_i32_load(v + 12);
+		wasm_copy_mem(head + 8, len, dst - len);
+		wasm_copy_strings_from_list(dst - len, tail);
+	}
+}
+
+list2string(v : int) -> int {
+	len = wasm_do_calc_string_list_length(v);
+	str = wasm_alloc(8 + (len + 3) / 4 * 4);
+	wasm_i32_store(str, 1); // initial refcnt is 1
+	wasm_i32_store(str + 4, len);
+	wasm_copy_strings_from_list(str + 8 + len, v);
+	str
+}
+
+wasm_length(arr : int) -> int {
+	wasm_i32_load(arr + 4)
+}
+
+list2array(l : int) -> int {
+	type = wasm_load_list_type(l);
+	elemSize = if (type == 3) 8 else 4; // 3 == double
+	n = wasm_do_calc_list_size(l, elemSize);
+	arr = wasm_alloc_array(n, 8 + n * elemSize);
+	if (n > 0) {
+		wasm_do_copy_list_to_array(arr + 8 + (n-1) * elemSize, l, elemSize, type);
+	}
+	arr
+}
+
+wasm_load_list_type(l : int) -> int {
+	nfieldsAddr = wasm_struct_nfields_address(l);
+	nfields = wasm_i32_load8_u(nfieldsAddr);
+	if (nfields == 2) wasm_i32_load8_u(nfieldsAddr + 1 + 2)
+	else -1;
+}
+
+wasm_do_calc_list_size(v : int, elemSize : int) -> int {
+	if (wasm_calc_struct_nfields(v) == 2) {	// Cons
+		tail = wasm_i32_load(v + 8 + elemSize);
+		1 + wasm_do_calc_list_size(tail, elemSize)
+	} else { // EmptyList
+		0
+	}
+}
+
+wasm_copy_item(dst : int, src : int, type : int) {
+	if (type == 3) { // double
+		// doesn't compile by some reason...
+		// v = wasm_f32_load(src);	
+		// wasm_f32_store(dst, v);
+		
+		// workaround
+		wasm_i32_store(dst, wasm_i32_load(src));
+		wasm_i32_store(dst + 4, wasm_i32_load(src + 4));
+	} else if (type == 1 || type == 2) { // bool, int
+		wasm_i32_store(dst, wasm_i32_load(src));
+	} else if (type == 4 || type == 10) { // string, struct
+		addr = wasm_i32_load(src);
+		wasm_i32_store(dst, addr);
+		wasm_inc_refcnt(addr);
+	} else {
+		wasm_unreachable();
+	}
+}
+
+wasm_do_copy_list_to_array(dst : int, src : int, elemSize : int, type : int) -> void {
+	if (wasm_calc_struct_nfields(src) == 2) {	// Cons
+		wasm_copy_item(dst, src + 8, type);
+		tail = wasm_i32_load(src + 8 + elemSize);
+		wasm_do_copy_list_to_array(dst - elemSize, tail, elemSize, type)
+	} else { // EmptyList
+	}
+}
+
+wasm_find_arg_address(arg_pnt : int, arg_idx : int) -> int {
+	if (arg_idx == 0) {
+		arg_pnt
+	} else {
+		next = wasm_next_typedescriptor(arg_pnt);
+
+		wasm_find_arg_address(next, arg_idx - 1)
+	}
+}
+
+// we expect f to be a function here. 
+// f : int = function address
+// args : int = number of args to function.
+// ret : bool = if true get return type, else elemtype of last arg
+// returns descriptor bytes for last arg in function f, or ret type. e.g. 2 = int, 3 = double
+// We can add an index argument to this function, if we ever want to get the elemtype of an element
+// that is not the last, or return type.
+wasm_get_argtype(f : int, args : int, ret : bool) -> int {
+	funcDescr = wasm_struct_nfields_address(f) + 1 + 2;
+
+	if (wasm_i32_load8_u(funcDescr + 0) != 12) {
+		prints("not a function");
+		printi(wasm_i32_load8_u(funcDescr + 0));
+		wasm_unreachable();
+	}
+	nargs = wasm_i32_load8_u(funcDescr + 1);
+
+	if (nargs != args) {
+		prints("nargs != args");
+		wasm_unreachable();
+	}
+	
+	arg_idx = if (ret) args else args - 1;
+	arg_address = wasm_find_arg_address(funcDescr + 1 + 1, arg_idx);
+
+	elemType = wasm_i32_load8_u(arg_address);
+
+	if (!(
+		elemType == 1 ||	// bool
+		elemType == 2 ||	// int
+		elemType == 3 ||	// double
+		elemType == 4 ||	// string
+		elemType == 5 ||	// flow
+		elemType == 9 ||	// array
+		elemType == 10 ||	// struct
+		elemType == 11		// union
+	)) {
+		prints("unknown elemType");
+		printi(elemType);
+		wasm_unreachable();
+	}
+	elemType;
+}
+
+isHeap(type : int) -> bool {
+	//type is not bool-int-double
+	!(type == 1 || type == 2 || type == 3)
+}
+
+type2size(elemType : int) -> int {
+	if (elemType == 3) 8 else 4;
+}
+
+iter(arr : int, f : int) -> void {
+	wasm_iter(arr, f, false);
+}
+
+iteri(arr : int, f : int) -> void {
+	wasm_iter(arr, f, true);
+}
+
+wasm_iter(arr : int, f : int, isIteri : bool) -> void {
+	
+	elemType = if (isIteri) wasm_get_argtype(f, 2, false) else wasm_get_argtype(f, 1, false);
+	elemSize = type2size(elemType);
+	
+	heap = isHeap(elemType);
+	
+	n = wasm_i32_load(arr + 4);
+	if (n > 0) {
+		faddr = wasm_i32_load(f+8);
+		wasm_do_iter(arr + 8, f, faddr, elemSize, 0, n, isIteri, heap);
+	}
+}
+
+wasm_do_iter_call(idx : int, v : ?, f : int, faddr : int, isIteri : bool) -> void {
+	wasm_inc_refcnt(f);
+	if (!isIteri) wasm_call_indirect1(v, f, faddr)
+	else wasm_call_indirect2(idx, v, f, faddr)
+}
+
+wasm_i32_load_inc(src : int, heap : bool) -> int {
+	v = wasm_i32_load(src);
+	if (heap) wasm_inc_refcnt(v);
+	v
+}
+
+wasm_do_iter(src : int, f : int, faddr : int, elemSize : int, idx : int, n : int, isIteri : bool, heap : bool) -> void {
+	if (idx < n) {
+		if (elemSize == 8) {
+			wasm_do_iter_call(idx, wasm_f64_load(src), f, faddr, isIteri);
+		} else {
+			wasm_do_iter_call(idx, wasm_i32_load_inc(src, heap), f, faddr, isIteri);
+		}
+		wasm_do_iter(src + elemSize, f, faddr, elemSize, idx + 1, n, isIteri, heap);
+	}
+}
+
+iteriUntil(arr: int, f : int) -> int {
+	n = wasm_length(arr);
+
+	elemType = wasm_get_argtype(f, 2, false);
+	elemSize = type2size(elemType);
+	heap = isHeap(elemType);
+
+	wasm_do_iteriUntil(arr + 8, f, elemSize, n, 0, heap);	
+}
+
+wasm_do_iteriUntil(arr : int, f : int, elemSize : int, n : int, idx : int, heap : bool) -> int {
+	if (idx == n) {
+		idx
+	} else {
+		faddr = wasm_i32_load(f + 8);
+		wasm_inc_refcnt(f);
+		cur = arr + idx * elemSize;
+		y = if (elemSize == 8) {
+			wasm_call_indirect2ret(idx, wasm_f64_load(cur), f, faddr);
+		} else {
+			wasm_call_indirect2ret(idx, wasm_i32_load_inc(cur, heap), f, faddr);
+		}
+		if (y == 1) {
+			idx
+		} else {
+			wasm_do_iteriUntil(arr, f, elemSize, n, idx + 1, heap);
+		}
+	}
+}
+
+map(arr : int, f : int) -> int {
+	wasm_map(arr, f, false)
+}
+
+mapi(arr : int, f : int) -> int {
+	wasm_map(arr, f, true);
+}
+
+wasm_map(arr : int, f : int, isMapi : bool) -> int {
+	n = wasm_length(arr);
+
+	idx = if (isMapi) 2 else 1;
+	
+	elemType = wasm_get_argtype(f, idx, false);
+	elemSize = type2size(elemType);
+
+	retType = wasm_get_argtype(f, idx, true);
+	retSize = type2size(retType);
+
+	heap = isHeap(elemType);
+
+	res = wasm_alloc_array(n, 8 + n * retSize);
+
+	wasm_do_map(res + 8, arr + 8, n, 0, f, elemSize, retSize, isMapi, heap);
+	
+	res
+}
+
+wasm_do_map_call(idx : int, xx : ?, f : int, isMapi : bool) -> ?? {
+	faddr = wasm_i32_load(f+8);
+	wasm_inc_refcnt(f);
+	if (!isMapi) wasm_call_indirect1ret(xx, f, faddr)
+	else wasm_call_indirect2ret(idx, xx, f, faddr)
+}
+
+wasm_do_map(dst : int, src : int, n : int, idx : int, f : int, elemSize : int, retSize : int, isMapi : bool, heap : bool) -> void {
+	if (idx < n) {
+		curSrc = src + idx * elemSize;
+		curDst = dst + idx * retSize;
+		if (elemSize == 8) {
+			xx = wasm_f64_load(curSrc);
+			if (retSize == 8) {
+				wasm_f64_store(curDst, wasm_do_map_call(idx, xx, f, isMapi))
+			} else {
+				wasm_i32_store(curDst, wasm_do_map_call(idx, xx, f, isMapi))
+			}
+
+		} else {
+			x = wasm_i32_load_inc(curSrc, heap);
+			if (retSize == 8) {
+				wasm_f64_store(curDst, wasm_do_map_call(idx, x, f, isMapi))
+			} else {
+				wasm_i32_store(curDst, wasm_do_map_call(idx, x, f, isMapi))
+			}
+		}
+		wasm_do_map(dst, src, n, idx + 1, f, elemSize, retSize, isMapi, heap);
+	}
+}
+
+/*
+filter(arr : int, f : int) -> int {
+	elemType = wasm_get_argtype(f, 1, false);
+	elemSize = if (elemType == 3) 8 else 4;
+	heap = !(
+			elemType == 1 || // bool
+			elemType == 2 || // int
+			elemType == 3	 // double
+			);
+
+	n = length(arr);
+
+	// alloc full array, but change length afterwards.
+	// TODO: instead, maybe use Cons, and list2array. 
+	// or find some other way to save memory
+	res = wasm_alloc_array(n, 8 + n * elemSize);
+	wasm_do_filter(res + 8, arr + 8, n, f, elemSize, 0, 0, heap);
+	res;
+}
+
+wasm_do_filter(dst : int, src : int, n : int, f : int, elemSize : int, idx : int, new_len : int, heap : bool) -> void {
+	if (idx == n) {
+		wasm_i32_store(dst - 4, new_len);
+	} else {
+		faddr = wasm_i32_load(f + 8);
+		wasm_inc_refcnt(f);
+
+		if (elemSize == 8) {
+			xx = wasm_f64_load(src + idx * elemSize);
+			yy = wasm_call_indirect1ret(xx, f, faddr);
+			if (yy == 1) {
+				// true
+				wasm_f64_store(dst + new_len * elemSize, xx);
+				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len + 1, heap);
+			} else {
+				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len, heap);
+			}
+		} else {
+			x = wasm_i32_load(src + idx * elemSize);
+			if (heap) wasm_inc_refcnt(x);
+
+			y = wasm_call_indirect1ret(x, f, faddr);
+			if (y == 1) {
+				// true
+				wasm_i32_store(dst + new_len * elemSize, x);
+				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len + 1, heap);
+			} else {
+				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len, heap);
+			}
+		}
+	}
+}
+*/
+
+wasm_fold_i32(arr : int, acc : int, f : int) -> int {
+	wasm_do_fold_init(arr, acc, f, false, false)	
+}
+
+wasm_fold_i32_ref(arr : int, acc : int, f : int) -> int {
+	wasm_do_fold_init(arr, acc, f, true, false)
+}
+
+wasm_foldi_i32(arr : int, acc : int, f : int) -> int {
+	wasm_do_fold_init(arr, acc, f, false, true)	
+}
+
+wasm_foldi_i32_ref(arr : int, acc : int, f : int) -> int {
+	wasm_do_fold_init(arr, acc, f, true, true)
+}
+
+wasm_fold_f64(arr : int, acc : double, f : int) -> double {
+	wasm_do_fold_init(arr, acc, f, false, false)
+}
+
+wasm_foldi_f64(arr : int, acc : double, f : int) -> double {
+	wasm_do_fold_init(arr, acc, f, false, true)
+}
+
+wasm_do_fold_init(arr : int, acc : ?, f : int, heap : bool, isFoldi : bool) -> ? {
+	idx = if (isFoldi) 3 else 2;
+	elemType = wasm_get_argtype(f, idx, false);
+	elemSize = type2size(elemType);
+	
+	n = wasm_length(arr);
+
+	if (n == 0) {
+		acc
+	} else {
+		wasm_do_fold(arr + 8, acc, f, elemSize, n, 0, isFoldi, heap)
+	}	
+}
+
+wasm_do_fold_call(idx : int, acc : ?, xx : ??, f : int, isFoldi : bool) -> ? {
+	faddr = wasm_i32_load(f + 8);
+	wasm_inc_refcnt(f);
+	if(!isFoldi) wasm_call_indirect2ret(acc, xx, f, faddr)
+	else wasm_call_indirect3ret(idx, acc, xx, f, faddr)
+}
+
+wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, heap : bool) -> ? {
+	if (idx == n) {
+		acc;
+	} else {
+		src = arr + idx * elemSize;
+		y = if (elemSize == 8) {
+			wasm_do_fold_call(idx, acc, wasm_f64_load(src), f, isFoldi)
+		} else {
+			wasm_do_fold_call(idx, acc, wasm_i32_load_inc(src, heap), f, isFoldi)
+		}
+		wasm_do_fold(arr, y, f, elemSize, n, idx + 1, isFoldi, heap);
+	}
+}
+
+enumFromTo(start : int, end : int) -> int {
+	n = if (start <= end) end - start + 1 else 0;
+	res = wasm_alloc_array(n, 8 + n * 4);
+	wasm_do_enumFromTo(res + 8, start, n);
+	res
+}
+
+wasm_do_enumFromTo(dst : int, cur : int, count : int) -> void {
+	if (count > 0) {
+		wasm_i32_store(dst, cur);
+		wasm_do_enumFromTo(dst + 4, cur + 1, count - 1);
+	}
+}
+
+/*
+subrange(arr : int, start : int, len : int) -> int {
+	arr_len = length(arr);
+
+	//get real elemsize. 
+	elemSize = 4;
+
+	if (start == 0 && arr_len <= len) {
+		arr;
+	} else if (start >= arr_len || start < 0) {
+		wasm_alloc_array(0, 8);
+	} else {
+		real_len = if(len + start > arr_len) arr_len - start else len;
+
+		res = wasm_alloc_array(real_len, 8 + elemSize * real_len);
+		wasm_copy_mem(arr + 8 + start * elemSize, elemSize * real_len, res + 8);
+		res;
+	}
+}
+
+replace(arr : int, idx : int, elem : int) -> int {
+	len = length(arr);
+
+	elemSize = 4;
+
+	if (idx > len || idx < 0) {
+		// wasm_nop();
+		wasm_alloc(1);
+	} else if (idx == len) {
+		res = wasm_alloc_array(len + 1, 8 + elemSize * (len + 1));
+		wasm_copy_mem(arr + 8, elemSize * len, res + 8);
+		wasm_i32_store(res + 8 + elemSize * len, elem);
+		res;
+	} else {
+		res = wasm_alloc_array(len, 8 + elemSize * len);
+		wasm_copy_mem(arr + 8, len * elemSize, res + 8);
+		wasm_i32_store(res + 8 + idx * elemSize, elem);
+		res;
+	}
+}
+*/
+
+wasm_concat_i32(arr1 : int, arr2 : int) -> int {
+	wasm_concat_impl(arr1, arr2, 4, false);
+}
+
+wasm_concat_f64(arr1 : int, arr2 : int) -> int {
+	wasm_concat_impl(arr1, arr2, 8, false);
+}
+
+wasm_concat_i32_ref(arr1 : int, arr2 : int) -> int {
+	wasm_concat_impl(arr1, arr2, 4, true);
+}
+
+wasm_concat_impl(arr1 : int, arr2 : int, elemSize : int, isRefCnt : bool) -> int {
+	len1 = wasm_length(arr1);
+	len2 = wasm_length(arr2);
+	res = wasm_alloc_array(len1 + len2, 8 + elemSize * (len1 + len2));
+	wasm_copy_mem(arr1 + 8, len1 * elemSize, res + 8);
+	wasm_copy_mem(arr2 + 8, len2 * elemSize, res + 8 + len1 * elemSize);
+	if (isRefCnt) {
+		wasm_inc_refcnt_array(res + 8, len1 + len2);
+	}
+	res;
+}
+
+wasm_inc_refcnt_array(address : int, len : int) -> void {
+	if (len > 0) {
+		wasm_inc_refcnt(address);
+		wasm_inc_refcnt_array(address + 4, len - 1);
+	}
+}
+
+strlen(s : int) -> int {
+	wasm_i32_load(s + 4) / 2
+}
+
+wasm_s2a(str : int) -> int {
+	len = wasm_i32_load(str + 4) / 2;
+	arr = wasm_alloc_array(len, 8 + len * 4);
+	wasm_do_s2a(str + 8, arr + 8, len);
+	arr
+}
+
+wasm_do_s2a(src : int, dst : int, count : int) -> void {
+	if (count > 0) {
+		c = wasm_i32_load16_u(src);
+		wasm_i32_store(dst, c);
+		wasm_do_s2a(src + 2, dst + 4, count - 1);
+	}
+}
+
+wasm_string2utf8(str : int) -> int {
+	// TODO: works only for ascii, fix it later
+	wasm_s2a(str)
+}
+
+
+strIndexOf(str : int, substr : int) -> int {
+	len = strlen(str);
+	sub_len = strlen(substr);
+	
+	if (sub_len > len)
+		-1
+	else if (sub_len == 0)
+		0
+	else 
+		wasm_do_strIndexOf(str, substr, len, sub_len, 0, 0)
+}
+
+strRangeIndexOf(str : int, substr : int, start : int, end : int) -> int {
+	str_len = strlen(str);
+	sub_len = strlen(substr);
+
+	len = if (end > str_len) str_len - start else end - start;
+
+	if (sub_len > len)
+		-1
+	else if (sub_len == 0)
+		0
+	else
+		wasm_do_strIndexOf(str, substr, end, sub_len, start, 0)
+}
+
+wasm_do_strIndexOf(str : int, substr : int, len : int, sub_len : int, index : int, sub_index : int) -> int {
+	if (index == len) {
+		-1
+	} else{
+		str_index_char = wasm_i32_load16_u(str + 8 + index * 2);
+		sub_index_char = wasm_i32_load16_u(substr + 8 + sub_index * 2);
+
+		if (str_index_char == sub_index_char) {
+			if (sub_index == sub_len - 1) {
+				//full substring matched - return index of first matched char in string
+				index - (sub_len - 1)
+			} else {
+				//char matches, check next.
+				wasm_do_strIndexOf(str, substr, len, sub_len, index + 1, sub_index + 1)
+			}
+		} else {
+				//chars did not match, start over from substring[0]
+				wasm_do_strIndexOf(str, substr, len, sub_len, index + 1, 0)
+		}
+	}
+}
+
+substring(str : int, start : int, new_length : int) -> int {
+	len = strlen(str);
+	if (start == 0 && new_length >= len) {
+		str;
+	} else if (start >= len) {
+		//return empty string
+		new_string = wasm_alloc(8);
+		wasm_i32_store(new_string, 1); // initial refcnt set to 1
+		wasm_i32_store(new_string + 4, 0);
+		new_string;
+	} else {
+		//if start + length > strlen(str), we just take the rest of string to avoid allocating too much mem.
+		new_length_real = if (new_length + start > len) len - start else new_length;  
+
+		new_string = wasm_alloc(new_length_real * 2 + 8);
+		wasm_i32_store(new_string, 1); // initial refcnt set to 1
+		wasm_i32_store(new_string + 4, new_length_real * 2);
+		wasm_copy_mem(str + 8 + start * 2, new_length_real * 2, new_string + 8);
+		new_string;
+	}
+
+}
+
+fromCharCode(code : int) -> int {
+	char = wasm_alloc(4 + 4 + 2);
+	wasm_i32_store(char, 1); // initial refcnt set to 1
+	wasm_i32_store(char + 4, 2);
+	wasm_i32_store16(char + 8, code);
+	char;
+}
+
+getCharCodeAt(str : int, index : int) -> int {
+	if (index < strlen(str) && index >= 0){  
+		wasm_i32_load16_u(str + 8 + index * 2)
+	} else {
+		0
+	}
+}
+
+println2(x : int) -> void {
+	typedesc = wasm_i32_load(x + 4);
+	type = wasm_i32_load8_u(typedesc);
+	if (!(
+		(type == 2) ||	// int
+		(type == 3) ||	// double
+		(type == 4) ||	// string
+		(type == 9)		// array
+	)) {
+		prints("Unsupported type in println2: ");
+		printi(type);
+	}
+	wasm_inc_refcnt(x);
+	prints(wasm_get_string_by_addr(toString2(x)));
+}
+
+
+// some stubs to be implemented later
+
+printCallstack() -> void {
+	wasm_unreachable();
+}
+
+captureCallstack() -> int {
+	wasm_unreachable();
+	0
+}
+
+subrange(arr : int, start : int, len : int) -> int {
+	wasm_unreachable();
+	0
+}
+
+replace(arr : int, idx : int, elem : int) -> int {
+	wasm_unreachable();
+	0
+}
+

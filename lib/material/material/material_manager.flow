@@ -1,0 +1,187 @@
+import material/internal/material_capture;
+
+export {
+	makeMaterialManager(style : [MRenderStyle]) -> MaterialManager;
+}
+
+managerId = ref 0;
+
+makeMaterialManager(_style : [MRenderStyle]) -> MaterialManager {
+	nextRenderId = ref 0;
+	grabSnapshotTree = ref makeTree();
+
+	style = if (isUrlParameterTrue("recordiscript") || getUrlParameter("playiscript") != "" || getUrlParameter("playbatchiscript") != "") arrayPush(_style, MIScriptPanel()) else _style;
+
+	closedDialogue = make(true);
+	forceRender = make(false);
+
+	grabSnapshot = \grabFn -> {
+		renderId = ^nextRenderId;
+		nextRenderId := renderId + 1;
+		grabSnapshotTree := setTree(^grabSnapshotTree, renderId, grabFn);
+		\-> {
+			grabSnapshotTree := removeFromTree(^grabSnapshotTree, renderId);
+		}
+	}
+	tGrabSnapshot = TGrabSnapshot(grabSnapshot);
+	theme = extractStruct(style, defaultMaterialTheme);
+	feedbackOptions = extractStruct(style, MFeedbackOptions("", \__, __, __ -> {}, \__, __ -> {}));
+
+	awh : TInspectStageWH = extractStruct(style, TInspectStageWH(make(WidthHeight(getStageWidth(), getStageHeight()))));
+	dpi : TDpi = extractStruct(style, TDpi(screenDPI));
+	stageWH : TStageWH = extractStruct(style, TStageWH(getStageWidth(), getStageHeight()));
+	// Density-independent pixel (dp) scaling (https://material.io/guidelines/layout/units-measurements.html)
+	// In js, 1dp = 1px
+	dpiff : TDpif = extractStruct(style, TDpif(screenDPI2pixelDensity(dpi.dpi)));
+	if (isUrlParameterTrue("debugMaterial")) {
+		println(stageWH.width);
+		println(dpiff);
+	}
+	sheet : Stylesheet = extractStruct(style, emptyStylesheet);
+	dpiFactor : TInspectDpiFactor = extractStruct(style, TInspectDpiFactor(make(Factor(1.0, 1.0))));
+
+	tStyle : [TRenderStyle] = [dpiff, dpi, stageWH, sheet, dpiFactor, tGrabSnapshot, awh];
+
+	captures = [
+		MCaptureKeys(\manager ->
+			captureKeysMaterial(
+				manager,
+				closedDialogue,
+				feedbackOptions.saveFeedback,
+				feedbackOptions.showFeedbacks
+			)
+		),
+		MCaptureMouse(\manager -> captureMouseMaterial(manager)),
+		MCaptureLongTouch(\manager -> captureLongTouch(manager, closedDialogue, feedbackOptions.saveFeedback)),
+	];
+
+	currentManagerId = ^managerId;
+	managerId := currentManagerId + 1;
+
+	mStyle = concat(style, captures);
+	foc = MFocusGroup(currentManagerId, const(0), FEmpty(), const([]), const(-1), None(), "MaterialManagerFocus", None(), None(), None(), make(-1), make(-1), -1,
+		make(makeTree()), make(makeTree()), const(true), const(true), extractStruct(style, MFocusEnabled(const(true))).enabled, const(true), const(false), make(false),
+		\ -> zeroPositionScale, \ -> zeroWH, theme, makeTree());
+
+	tManager =
+		makeTManager(-1, tStyle)
+		|> (\tManager ->
+			if (contains(mStyle, MIScriptPanel()))
+				TManager(
+					tManager.dragging,
+					tManager.drop,
+					tManager.none,
+					\ ->
+						Point(
+							getMouseX(getStage()) /
+							fgetValue(dpiFactor.factor).x,
+							(getMouseY(getStage()) - 48.) /
+							fgetValue(dpiFactor.factor).y
+						),
+					tManager.hovering,
+					tManager.onDrop,
+					tManager.nextTagId,
+					tManager.findPositionScaleFn,
+					tManager.sheet,
+					tManager.renderStyle,
+					tManager.deltaTimer
+				)
+			else
+				tManager
+		);
+
+
+	MaterialManager(
+		currentManagerId,
+		make(theme.lightBackground),
+		make(0),
+		foc,
+		make(None()),
+		tManager,
+		makeTree(),
+		\ -> ^nextRenderId,
+		mStyle,
+		\ -> map(^grabSnapshotTree |> getTreeValues, apply0) |> TGroup,
+		theme,
+		makeTree(),
+		make([]),
+		None(),
+		make(false),
+		make([]),
+		makeIScriptManager(),
+		forceRender,
+		fselect2(awh.wh, dpiFactor.factor, FLift2(\wh, dp -> WidthHeight(wh.width / dp.x, wh.height / dp.y)))
+	);
+}
+
+makeIScriptManager() -> IScriptManager {
+	state : DynamicBehaviour<IScriptState> = make(IScriptDisabled());
+	settings = defaultIScriptSettings();
+
+	IScriptManager(
+		make(makeEmptyIScript()),
+		state,
+		make(makeList()),
+		make(makeList()),
+
+		fselect(state, FLift(\iss : IScriptState -> isSameStructType(iss, IScriptAddMFocusRecord(None())))),
+		fselect(state, FLift(\iss : IScriptState -> isSameStructType(iss, IScriptAddMFocusGroupRecord(None())))),
+		fselect(state, FLift(\iss : IScriptState -> isSameStructType(iss, IScriptMakeAlias(None())))),
+		fselect(state, FLift(\iss : IScriptState -> isSameStructType(iss, IScriptMakeGroupAlias(None())))),
+
+		make([]),
+		make([]),
+		make(makeTree()),
+		ref nop,
+		ref nop,
+		make(false),
+		make(false),
+		make(false),
+		make(false),
+		ref None(),
+		ref None(),
+		ref None(),
+		make(false),
+		make(0.5),
+		make(0),
+
+		settings,
+		\ -> {
+			CaptureOptions(
+				getValue(settings.captureCallstack),
+				getValue(settings.captureTextDetails),
+				getValue(settings.captureHttpRequests),
+				getValue(settings.captureMouseEvents),
+				getValue(settings.captureKeyEvents),
+				getValue(settings.captureInteractionEvents),
+				getValue(settings.captureHover),
+				getValue(settings.captureClickEvents),
+				getValue(settings.captureAppearanceEvents),
+				getValue(settings.captureValueEvents),
+				getValue(settings.captureEnableEvents),
+				getValue(settings.captureSelectionEvents),
+				getValue(settings.captureInputValues),
+				getValue(settings.captureWigiEvents),
+				getValue(settings.capturePebbleEvents),
+				getValue(settings.captureCustomTypes),
+				getValue(settings.captureMiscEvents),
+			)
+		},
+
+		make(false),
+		make(""),
+		make(""),
+		make([]),
+		make(WidthHeight(0.,0.)),
+
+		ref makeTree(),
+		ref 0,
+		make(None()),
+
+		make(true),
+		make(Point(0.0, 0.0)),
+		make(false),
+		make(TEmpty()),
+		make(Point(0.0, 0.0)),
+	)
+}

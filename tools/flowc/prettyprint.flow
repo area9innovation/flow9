@@ -1,0 +1,271 @@
+import blueprint;
+import tools/flowc/fcexp;
+import set;
+
+export {
+	FcPretty(
+		// Include types in expression. Expand struct/union types in types
+		types : bool, 
+		human : bool, 
+		tyvars : Tree<int, FcType>, 
+		typars : Tree<string, FcTypeVar>
+	);
+
+	dummyPretty = FcPretty(false, true, makeTree(), makeTree());
+
+	prettyFcExp(conf : FcPretty, e : FcExp) -> string;
+	prettyFcType(conf : FcPretty, type : FcType, seen : Set<int>) -> string;
+}
+
+prettyFcExp(acc : FcPretty, e : FcExp) -> string {
+	pt = \t -> doPrettyFcType(acc, t, true, makeSet(), makeSet());
+	body = switch (e : FcExp) {
+		FcVoid(__): "{}";
+		FcBool(v, __): b2s(v);
+		FcInt(v, __): i2s(v);
+		FcDouble(d, __): {
+			s = d2s(d);
+			if (strContains(s, ".")) s
+			else s + ".0";
+		}
+		FcString(s, i): toString(s);
+		FcCast(ce, tFrom, tTo, i): {
+			"cast("
+			+ prettyFcExp(acc, ce)
+			+ " : "
+			+ pt(tFrom)
+			+ " -> "
+			+ pt(tTo)
+			+ ")";
+		}
+		FcCall(f, args, i): {
+			prettyFcExp(acc, f)
+			+ "(" + superglue(args, \a -> {
+				prettyFcExp(acc, a)
+			}, ", ") + ")";
+		}
+		FcLambda(args, body, in): {
+
+			fargs = switch (^(in.type) : Maybe<FcType>) {
+				None(): args;
+				Some(ft): {
+					switch (ft : FcType) {
+						FcTypeFunction(fargs, frt, __): fargs;
+						default: args;
+					}
+				}
+			}
+
+			blueprint(
+				"
+				\\%args% ->
+					%body%
+				",
+				[
+					"args", superglue(fargs, \a -> {
+							(if (a.name != "") a.name + ":" else "") + pt(a.type)
+						}, ", "),
+					"body", prettyFcExp(acc, body)
+				]
+			);
+		}
+		FcLet(name, type, e1, e2, i): {
+			blueprint(
+				"
+				%name% : %type% = %e1%;
+				%e2%",
+				[
+					"name", name,
+					"type", pt(type),
+					"e1", prettyFcExp(acc, e1),
+					"e2", prettyFcExp(acc, e2),
+				]
+			);
+		}
+		FcIf(e1, e2, e3, i): {
+			blueprint(
+				"
+				if (%c%) {
+					%t%
+				} else {
+					%e%
+				}
+				", [
+					"c", prettyFcExp(acc, e1),
+					"t", prettyFcExp(acc, e2),
+					"e", prettyFcExp(acc, e3),
+				]
+			);
+		}
+		FcCallPrim(op, es, i): {
+			s = map(es, \ees -> prettyFcExp(acc, ees));
+			bin = \o -> "(" + s[0] + " " + o + " " + s[1] + ")";
+			pref = \o -> o + s[0];
+			switch (op) {
+				FcEqPrim(): bin("==");
+				FcNePrim(): bin("!=");
+				FcGePrim(): bin(">=");
+				FcLePrim(): bin("<=");
+				FcGtPrim(): bin(">");
+				FcLtPrim(): bin("<");
+
+				FcPlusPrim(): bin("+");
+				FcMinusPrim(): bin("-");
+				FcMulPrim(): bin("*");
+				FcDivPrim(): bin("/");
+				FcModPrim(): bin("%");
+				FcNegPrim(): pref("-");
+
+				FcAndPrim(): bin("&&");
+				FcOrPrim(): bin("||");
+				FcNotPrim(): pref("!");
+
+				FcDerefPrim(): pref("^");
+				FcRefPrim(): pref("ref ");
+
+				FcFieldPrim(n): s[0] + "." + n;
+				FcIndexPrim(): s[0] + "[" + s[1] + "]";
+				FcArrayPrim(): "[" + strGlue(s, ", ") + "]";
+
+				FcAssignPrim(): bin(" := ");
+				FcStructPrim(n): n + "(" + strGlue(s, ", ") + ")";
+
+				FcSetMutablePrim(name): s[0] + "." + name + " ::= " + s[1];
+				FcCreateClosurePrim(structName, functionName) : "closure(" + functionName + ", "+ strGlue(s, ", ") + ")";
+			}
+		}
+		FcVar(name, i): {
+			name;
+		}
+		FcSeq(es, i): {
+			blueprint(
+				"
+				{
+					%s%
+				}
+				",
+				[
+					"s", superglue(es, \se -> prettyFcExp(acc, se), ";\n")
+				]
+			);
+		}
+		FcSwitch(x, t, cases, i): {
+			blueprint(
+				"
+				switch (%x% : %t%) {
+					%c%
+				}",
+				[
+					"x", x.name,
+					"t", pt(t),
+					"c",
+					superglue(cases, \c -> {
+						blueprint(
+							"
+							%s%(%a%): {
+								%b%
+							}",[
+								"s", c.struct,
+								"a", strGlue(c.argNames, ","),
+								"b", prettyFcExp(acc, c.body)
+							]
+						)
+					}, "\n")
+				]
+			);
+		}
+
+		FcRequire(flowfile, ex, i): {
+			"TODO: Require pretty print";
+		}
+		FcUnsafe(name, fallback, i): {
+			"TODO: Unsafe pretty print";
+		}
+	}
+
+	if (acc.types) {
+		switch (^(e.info.type) : Maybe<FcType>) {
+			None(): body;
+			Some(t): {
+				"(" + body + " : " + pt(t) + ")";
+			}
+		}
+	} else body;
+}
+
+prettyFcType(conf : FcPretty, type : FcType, seen : Set<int>) -> string {
+	doPrettyFcType(conf, type, false, seen, makeSet())
+}
+
+doPrettyFcType(acc : FcPretty, type : FcType, nested : bool, seen : Set<int>, structs : Set<string>) -> string {
+	switch (type) {
+		FcTypeVoid(__): "void";
+		FcTypeBool(__): "bool";
+		FcTypeInt(__): "int";
+		FcTypeDouble(__): "double";
+		FcTypeString(__): "string";
+		FcTypeFlow(__): "flow";
+		FcTypeNative(__): "native";
+		FcTypeArray(at, __): "[" + doPrettyFcType(acc, at, true, seen, structs) + "]";
+		FcTypeRef(at, __): "ref " + doPrettyFcType(acc, at, true, seen, structs);
+		FcTypeName(id, typelist, __): {
+			id
+			+ (if (typelist == []) ""
+				else "<" + superglue(typelist, \rt -> doPrettyFcType(acc, rt, true, seen, structs), ", ") + ">"
+			);
+		}
+		FcTypeParameter(n, __): {
+			tv = lookupTree(acc.typars, n);
+			switch (tv) {
+				None(): n;
+				Some(tvid): n + (if (acc.human) "" else "=α" + i2s(tvid.id));
+			}
+		}
+		FcTypeStruct(n, tp, args, __): {
+			if (containsSet(structs, n)) n
+			else {
+				structs1 = insertSet(structs, n);
+				n 
+				+ (if (tp == []) ""
+					else "<" + superglue(tp, \rt -> doPrettyFcType(acc, rt, true, seen, structs1), ", ") + ">"
+				)
+				+ (
+					if (acc.human && !nested && acc.types)
+					 "(" + superglue(args, \a -> (if (a.ismutable) "mutable " else "") + a.name + " : " + doPrettyFcType(acc, a.type, true, seen, structs1), ", ") + ")"
+					 else ""
+				);
+			}
+		}
+		FcTypeUnion(n, typelist, args, __): {
+			if (containsSet(structs, n)) n
+			else {
+				structs1 = insertSet(structs, n);
+				(if (acc.human && !nested) "(" else "")
+				+ n
+				+ (if (typelist == []) ""
+					else "<" + superglue(typelist, \rt -> doPrettyFcType(acc, rt, true, seen, structs1), ", ") + ">"
+				)
+				+ (if (acc.human && !nested && acc.types) " ::= " + superglue(args, \a -> doPrettyFcType(acc, a, true, seen, structs1) , ", ")
+					else "")
+				+ (if (acc.human && !nested && acc.types) ")" else "")
+				;
+			}
+		}
+		FcTypeFunction(args, rt, __): {
+			"(" 
+			+ superglue(args, \a -> (if (a.name != "") a.name + " : " else "") + doPrettyFcType(acc, a.type, true, seen, structs), ", ")
+			+ ") -> " + doPrettyFcType(acc, rt, true, seen, structs);
+		}
+		FcTypeVar(id, __): {
+			if (containsSet(seen, id)) {
+				"α" + i2s(id)
+			} else {
+				v = lookupTree(acc.tyvars, id);
+				switch (v) {
+					None(): "α" + i2s(id);
+					Some(tt): (if (acc.human) "" else "α" + i2s(id) + "=") + doPrettyFcType(acc, tt, true, insertSet(seen, id), structs);
+				}
+			}
+		}
+	}
+}

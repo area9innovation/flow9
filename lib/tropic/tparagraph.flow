@@ -1,0 +1,326 @@
+import paragraphtypes;
+import tropic/tropic_resolve_css;
+import tropic/tropic_metrics;
+import bidi_text;
+
+export {
+	// If you give it a TText, it will word wrap at space, zero width space (\u200b),
+	// as well as break at newlines. We will not wrap between other elements (i.e. implicit
+	// GlueFragments between all other elements.)
+
+	// The last space at the end of a line will not be displayed.
+
+	// Notice! Does not reflow when dynamically sized elements change size.
+
+	// The size is based on a linear interpolation between the mininum size and the maximum
+	// size. Thus, there is often waste in the height because of this requirement for compositionality.
+	// For this reason, make sure you give reasonable minimum and maximum widths. If you need
+	// predictable heights, then you have to give the same min and max width.
+
+	TropicParagraph(elements : [Tropic], minWidth : double, maxWidth : double, style : [TropicParagraphStyle], stylesheet : Stylesheet) -> Tropic;
+		TropicParagraphStyle ::= CommonAlignment, InterlineSpacing, ParagraphMargin, CropWords;
+
+	// A useful helper, which automatically infers suitable widths.
+	TTextParagraph(text : string, char : [TCharacterStyle], style : [TropicParagraphStyle], stylesheet : Stylesheet) -> Tropic;
+}
+
+C_SP = " ";
+C_NL = "\n";
+C_ZSP = "\u200B";
+
+TropicParagraphs(paragraphs : [TropicParagraphOne]);
+TropicParagraphOne(words : [TWord]);
+
+TropicParagraphAcc(paragraphs : [TropicParagraphOne], words : [TWord]);
+
+TropicParagraph(elements : [Tropic], minWidth : double, maxWidth : double, style : [TropicParagraphStyle], stylesheet : Stylesheet) -> Tropic {
+	resolve = map(elements, \e -> resolveTropicCss(e, stylesheet));
+
+	pars = fold(resolve, TropicParagraphAcc([], []), \acc, tr -> {
+		switch (tr) {
+			TText(t, s): {
+				breakTText(t, s, 0, strlen(t), acc, max(minWidth, maxWidth), extractStruct(style, CropWords(false)).crop);
+			}
+			default: {
+				par = arrayPush(acc.words, tr);
+				TropicParagraphAcc(acc.paragraphs, par);
+			}
+		};
+	});
+
+	nomargin = ParagraphMargin(0.0, 0.0);
+	parmargin = extractStruct(style, nomargin);
+
+	flush = arrayPush(pars.paragraphs, TropicParagraphOne(pars.words));
+
+	t = map(flush, \p -> {
+		par = renderTropicParagraph(p.words, minWidth, maxWidth, style);
+		if (parmargin == nomargin) par else TBorder(0.0, parmargin.top, 0.0, parmargin.bottom, par)
+	});
+	TLines(t);
+}
+
+// Analogue of likely named function in paragraph.flow
+applyRelativeScaleT(tx: TText) -> TText {
+	TText(tx.text, map(tx.style, \s -> {
+		switch (s) {
+			FontSize(v): {
+				// println(formatHex(getCharCodeAt(tx.text, 0))+" "+d2s(getCharRelativeScale(getCharCodeAt(tx.text, 0))));
+				FontSize(v * getCharRelativeScale(getCharCodeAt(tx.text, strlen(tx.text)-1)));
+			}
+			default: s;
+		}
+	}))
+}
+
+checkMaxWidth(t : string, s : [TCharacterStyle], maxWidth : double, cropLongWords : bool) -> [TWord] {
+	relativelyScaled = applyRelativeScaleT(TText(t, s));
+	if (!cropLongWords || getTWordMetrics(relativelyScaled, makeTree()).width <= maxWidth)
+		[relativelyScaled]
+	else
+		stringFold(t, [""], \acc0, ns0 -> {
+			ns = concatStrings([acc0[length(acc0) - 1], fromCharCode(ns0)]);
+
+			if (getTWordMetrics(TText(ns, relativelyScaled.style), makeTree()).width > maxWidth)
+				concat(acc0, [" ", fromCharCode(ns0)])
+			else
+				arrayPush(take(acc0, length(acc0) - 1), ns);
+		})
+		|> (\f -> map(f, \ns -> if (ns == " ") TSpace(relativelyScaled.style) else TText(ns, relativelyScaled.style)))
+}
+
+isTWordEmpty(w: TWord) -> bool {
+	switch(w) { TText(wt, __): wt == ""; default: false; };
+}
+
+getTWordText(w: TWord) -> string {
+	switch(w) {
+		TText(t, __): t;
+		default: "";
+	};
+};
+
+setTWordText(w: TWord, t: string) -> TWord {
+	switch(w) {
+		TText(__, s): TText(t, s);
+		default: w;
+	};
+};
+
+// Breaks a text at newlines, spaces and zero-width spaces.
+// TODO: Support hyphenation (looks Forms text break algo supports, and looks more optimal).
+// We could also support more unicode space chars:
+// - 0009, 1680, 2000-200a, 205f, 3000
+// Hyphens:
+// - 00ad (invisible hypen)
+// Please avoid heap allocations here hence this is performance-critical part.
+// Structs, arrays — any complex stuff should be avoided.
+breakTText(t : string, s : [TCharacterStyle], i : int, l : int, acc : TropicParagraphAcc, maxWidth : double, cropLongWords : bool) -> TropicParagraphAcc {
+	if (i < l) {
+		fixednextpos = nextValidStrPos(nextValidStrPos(
+			strRangeIndexOf(t, C_SP, i, l),
+			strRangeIndexOf(t, C_NL, i, l)),
+			strRangeIndexOf(t, C_ZSP, i, l),
+		);
+		charcatsplitpos = if (isBiDiEnabled()) getCharCatSplitPos(t, i+1, fixednextpos) else -1;
+		nextpos = nextValidStrPos(charcatsplitpos, fixednextpos);
+		iscat = if (charcatsplitpos == nextpos) 1 else 0;
+		chr = if (nextpos < 0) "" else substring(t, nextpos, 1);
+		if (chr == "") {
+			// Nothing, so we can take all of it
+			TropicParagraphAcc(acc.paragraphs, concat(acc.words, checkMaxWidth(strRight(t, i), s, maxWidth, cropLongWords)));
+		} else {
+			before = if (nextpos == i) [] else checkMaxWidth(substring(t, i, nextpos - i), s, maxWidth, cropLongWords);
+			nacc = if (chr == C_ZSP || iscat == 1) {
+				// Soft hyphen
+				TropicParagraphAcc(acc.paragraphs, concat3(acc.words, before, [TZeroWidthSpace(s)]));
+			} else if (chr == C_NL) {
+				par = concat(acc.words, before);
+				npars = arrayPush(acc.paragraphs, TropicParagraphOne(if (par == []) [tzeroWidthSpace(s)] else par));
+				TropicParagraphAcc(npars, []);
+			} else if (chr == C_SP) {
+				TropicParagraphAcc(acc.paragraphs, concat3(acc.words, before, [TSpace(s)]));
+			} else {
+				// Need to be splitted after punctuation
+				TropicParagraphAcc(acc.paragraphs, concatA([acc.words, before, [TZeroWidthSpace(s)], [TText(substring(t, nextpos, 1), s)], [TZeroWidthSpace(s)]]));
+			}
+			breakTText(t, s, nextpos + 1 - iscat, l, nacc, maxWidth, cropLongWords);
+		}
+	} else acc
+}
+
+renderTropicParagraph(par : [TWord], minWidth : double, maxWidth : double, style : [TropicParagraphStyle]) -> Tropic {
+	alignment : TropicParagraphStyle = fold(style, StartAlign(), \acc, st -> {
+		switch (st : TropicParagraphStyle) {
+			LeftAlign(): st;
+			CenterAlign(): st;
+			RightAlign(): st;
+			EndAlign(): st;
+			default: acc;
+		};
+	});
+
+	interlineSpacing = extractStruct(style, InterlineSpacing(0.0)).d;
+
+	// Collect tropics with no line-break opportunities in between them.
+	// We can break between any of these guys.
+	chunk0 : Pair<[TWord], [Tropic]> = fold(par, Pair([], []), \acc : Pair<[TWord], [Tropic]>, p -> {
+		if (canTWordWrap(p)) {
+			nchunk = if (acc.second == []) acc.first
+			else arrayPush(acc.first, TBaselineCols(acc.second));
+			Pair(arrayPush(nchunk, p), []);
+		} else {
+			Pair(acc.first, arrayPush(acc.second, cast(p : TWord -> Tropic)))
+		}
+	});
+	chunk : [TWord] = if (chunk0.second == []) chunk0.first else arrayPush(chunk0.first, TBaselineCols(chunk0.second));
+
+	// Prep the metrics
+	metrics = map(chunk, \c -> getTWordMetrics(c, makeTree()));
+
+ 	maxWrap = if (maxWidth < 0.) [TLine0(chunk)] else twordwrap(chunk, metrics, maxWidth, style);
+	if (minWidth == maxWidth) {
+		// Same size, so just wrap and be done with it
+		TAvailable(
+			TLines(map(maxWrap, \l -> TLine(l.words, maxWidth, alignment, interlineSpacing))),
+			TFillWY(maxWidth)
+		);
+	} else {
+		// The word wrap at minimum and maximum width to find min and max metrics
+		minWrap = twordwrap(chunk, metrics, minWidth, style);
+
+		minW = TLines(map(minWrap, \l -> TLine(l.words, 0.0, StartAlign(), interlineSpacing)));
+		maxW = TLines(map(maxWrap, \l -> TLine(l.words, 0.0, StartAlign(), interlineSpacing)));
+
+		minMet = getTWordMetrics(minW, makeTree());
+		maxMet = getTWordMetrics(maxW, makeTree());
+
+		minWid = min(minMet.width, maxMet.width);
+		maxWid = max(minMet.width, maxMet.width);
+		minHeight = min(minMet.height, maxMet.height);
+		maxHeight = max(minMet.height, maxMet.height);
+
+		TAttach(
+			TFillXYXY(minWid, minHeight, maxWid, maxHeight),
+			\m -> {
+				TSelect(m.width, \w : double -> {
+					wrap = twordwrap(chunk, metrics, w, style);
+					n = length(wrap);
+					TAvailable(
+						TLines(mapi(wrap, \i, l -> TLine(l.words, w, alignment,
+							// No interline for the last line
+							if (i == n - 1) 0.0 else interlineSpacing
+						))), TFillWY(w)
+					)
+				})
+			}
+		)
+	}
+}
+
+canTWordWrap(t : TWord) {
+	switch (t) {
+		TSpace(s): true;
+		TZeroWidthSpace(s): true;
+		TLinePart(f, m, l): true;
+		default: false;
+	}
+}
+
+TWordwrapAcc(lines : [TLine0], line : [TWord], available : double);
+	TLine0(words : [TWord]);
+
+twordwrap(p : [TWord], metrics : [FormMetrics], width : double, style : [TropicParagraphStyle]) -> [TLine0] {
+	wrap = foldi(p, TWordwrapAcc([], [], width), \i, acc : TWordwrapAcc, w -> {
+		me = metrics[i];
+		navail = acc.available - me.width;
+		if (navail < 0.0) {
+			// Word wrap required
+			nlines = if (!forall(acc.line, canTWordWrap)) arrayPush(acc.lines, TLine0(acc.line)) else acc.lines;
+			if (canTWordWrap(w)) {
+				// OK, it is a space, we can just ignore it
+				TWordwrapAcc(nlines, [], width);
+			} else {
+				// Only space for this guy
+				if (me.width > width) {
+					// We have to put it on a line by itself!
+					TWordwrapAcc(arrayPush(nlines, TLine0([w])), [], width - me.width);
+				} else {
+					TWordwrapAcc(nlines, [w], width - me.width);
+				}
+			}
+		} else {
+			TWordwrapAcc(acc.lines, arrayPush(acc.line, w), navail);
+		}
+	});
+	lines: [TLine0] = if (wrap.line != []) arrayPush(wrap.lines, TLine0(wrap.line)) else wrap.lines;
+	if (isBiDiEnabled())
+		map(reflowTextToBiDi(map(lines, \l -> l.words), isTWordEmpty, getTWordText, setTWordText), \l -> TLine0(l))
+	else
+		lines;
+}
+
+TLine(t : [TWord], width : double, align : TropicParagraphStyle, interline : double) -> Tropic {
+	n = length(t);
+	content = TBaselineCols(foldi(t, [], \i, acc, w -> {
+		switch (w : TWord) {
+			TLinePart(first, inline, last): {
+				resolved =
+					if (i == 0) first
+					else if (i == n - 1) last
+					else inline;
+				arrayPush(acc, resolved);
+			}
+			TSpace(s): {
+				if (i == 0) {
+					// Ignored at the start of a line
+					acc
+				} else if (i == n - 1) {
+					// The last thing
+					if (acc == []) {
+						// A lone space on a line - we add a zero-width space to get the height right
+						[tzeroWidthSpace(s)];
+					} else acc;
+				}
+				else arrayPush(acc, TText(" ", s));
+			}
+			TZeroWidthSpace(s): {
+				if (i == n - 1) {
+					// The last thing
+					if (acc == []) {
+						// A lone space on a line - we add a zero-width space to get the height right
+						[tzeroWidthSpace(s)];
+					} else acc;
+				} else {
+					acc;
+				}
+			}
+			default: arrayPush(acc, cast(w : TWord -> Tropic));
+		}
+	}));
+
+	startAlignSolution = TCols2A(content, TFillX());
+	endAlignSolution = TCols2A(TFillX(), content);
+	l = switch(align) {
+		CenterAlign(): TColsA([TFillX(), content, TFillX()]);
+		RightAlign(): if (getDefaultRtl()) startAlignSolution else endAlignSolution;
+		LeftAlign(): if (getDefaultRtl()) endAlignSolution else startAlignSolution;
+		EndAlign(): endAlignSolution;
+		default: startAlignSolution;
+	}
+	if (interline == 0.0) l else TBorder(0.0, 0.0, 0.0, interline, l)
+}
+
+TTextParagraph(text : string, char : [TCharacterStyle], style : [TropicParagraphStyle], stylesheet : Stylesheet) -> Tropic {
+	n = i2d(strlen(text));
+	if (n == 0.0) TEmpty()
+	else {
+		t = resolveTropicCss(TText(text, char), stylesheet);
+		met = getTWordMetrics(t, makeTree());
+
+		avgwidth = if (n == 1.0) met.width else met.width / (n - 1.0);
+
+		// Aim for between 40 and 65 characters per line
+		TropicParagraph([TText(text, char)], 1.0 + min(40.0, n) * avgwidth, 1.0 + min(65.0, n) * avgwidth, style, stylesheet);
+	}
+}

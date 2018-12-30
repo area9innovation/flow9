@@ -1,0 +1,111 @@
+import lingo/peg;
+
+/*
+TODO:
+- Use the types to find out if we should do BindMatched or BindResult
+  to propagate any results
+- Allow defining prefix for names of results
+- Handle choices which all end with the same rule, but differ in prefixes:
+    "NOT" expr
+    | exp
+*/
+
+export {
+	inferPegActions(g : Grammar, types : Tree<string, PegType>) -> Grammar;
+}
+
+
+
+inferPegActions(g : Grammar, types : Tree<string, PegType>) -> Grammar {
+	Grammar(map(g.productions, \p -> {
+		Production(p.name, p.caching, p.type, map(p.choices, \c -> {
+			Seq(inferSeqActions(types, p.name, c.seq));
+		}));
+	}));
+}
+
+inferSeqActions(types : Tree<string, PegType>, name : string, seq : [Parsing]) -> [Parsing] {
+	l = lastElement(seq, Epsilon());
+	if (hasPegAction(types, l)) {
+		seq
+	} else {
+		namefn = \i -> { ["a", "b", "c", "d", "e", "f", "g", "h"][i]}
+
+		r = fold(seq, Pair(0, []), \acc : Pair<int, [Parsing]>, p : Parsing -> {
+			if (givesPegResult(types, p)) {
+				Pair(acc.first + 1, arrayPush(acc.second, BindMatched(namefn(acc.first), p)))
+			}  else Pair(acc.first, arrayPush(acc.second, p))
+		});
+		if (r.first > 0) {
+			arrayPush(r.second, Action2(ActionCall(name, 
+				generate(0, r.first, \i -> {
+					ActionVar(namefn(i))
+				}))
+			));
+		} else r.second
+	}
+}
+
+hasPegAction(types : Tree<string, PegType>, pa : Parsing) -> bool {
+	switch (pa) {
+		Action(fn): true;
+		Action2(e): true;
+
+		Rule(r): {
+			type = lookupTreeDef(types, r, PegUnknown());
+			// We recursively expect each rule to return a result, unless it actively returns void
+			type != PegVoid();
+		}
+		iRule(i): true;
+
+		Choices(p): forall(p, \ps -> hasPegAction(types, ps));
+		Seq(s): hasPegAction(types, lastElement(s, Epsilon()));
+
+		ActionIndex(): false;
+		Epsilon(): false;
+		LingoValue(v): false;
+		Negation(p): false;
+
+		CharRange(f, l): false;
+		Term(t): false;
+		Opt(p): false;
+		Star(p): false;
+		Plus(p): false;
+		CutUp(p): false;
+		CutDown(p): false;
+		BindResult(n, v): false;
+		BindMatched(n, v): false;
+	}
+}
+
+givesPegResult(types : Tree<string, PegType>, pa : Parsing) -> bool {
+	switch (pa) {
+		Action(fn): true;
+		Action2(e): true;
+		Rule(r): {
+			// We recursively expect each rule to return a result
+			lookupTreeDef(types, r, PegUnknown()) != PegVoid()
+		}
+		iRule(i): true;
+		ActionIndex(): true;
+		LingoValue(v): true;
+
+		Choices(p): forall(p, \ps -> givesPegResult(types, ps));
+		Seq(s): givesPegResult(types, lastElement(s, Epsilon()));
+
+		Opt(p): givesPegResult(types, p);
+		Star(p): givesPegResult(types, p);
+		Plus(p): givesPegResult(types, p);
+
+		BindResult(n, v): false;
+		BindMatched(n, v): false;
+
+		Epsilon(): false;
+		Negation(p): false;
+
+		CharRange(f, l): false;
+		Term(t): false;
+		CutUp(p): false;
+		CutDown(p): false;
+	}
+}

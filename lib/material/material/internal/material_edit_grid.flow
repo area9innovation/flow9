@@ -1,0 +1,304 @@
+import material/internal/material_edit_grid_types;
+
+export {
+	MEGItem2T(parent : MFocusGroup, item : MEGItem, gstyle : [MEGItemStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MEGComponent(label : string, value : DynamicBehaviour<flow>, style : [MEGComponentStyle]) -> MEGItem;
+	MEGSwitchControlOrTextInput(label : string, value : DynamicBehaviour<flow>, style : [MEGSwitchControlOrTextInputStyle]) -> MEGItem;
+	MEGAutoComplete(label : string, value : DynamicBehaviour<flow>, items : [string], style : [MEGTextInputStyle]) -> MEGTextInput;
+	MEGDropDownOrAutoComplete(label : string, value : DynamicBehaviour<flow>, undefined : Pair<flow, string>,
+		items : [Pair<flow, string>], style : [MEGTextInputStyle]) -> MEGItem;
+}
+
+MEGItem2T(parent : MFocusGroup, item : MEGItem, gstyle : [MEGItemStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	switch (item : MEGItem) {
+		MEGTextInput(label, value, mstyle): {
+			v = getValue(value);
+			type = getTypeString(v);
+			inputFilter = extractStruct(mstyle, MInputFilter(\s, __ -> s));
+
+			gmstyle = replaceStructMany(gstyle, mstyle);
+			style = extractMTextInputStyle(gmstyle, label);
+			state = extractMTextInputState(gmstyle);
+			elevation = isSome(tryExtractStruct(style, MElevation(const(0.))));
+			convertFn = tryExtractStruct(mstyle, MEGConvertFn(\__ -> "", \__ -> false));
+
+			eitherFn(
+				convertFn,
+				\cfn : MEGConvertFn -> {
+					s = make(cfn.v2sFn(value));
+
+					MConstruct(
+						[
+							\ -> bidirectionalLink(value, s, cfn.v2sFn, cfn.s2vFn)
+						],
+						MTextInput(
+							s,
+							style,
+							state
+						)
+					)
+				},
+				\ ->
+					if (type == "string") {
+						svalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<string>);
+						MTextInput(svalue, style, state)
+					} else {
+						s = make(serialize(v));
+
+						if (type == "int") {
+							ivalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<int>);
+							MConstruct(
+								[
+									\ -> bidirectionalLink(ivalue, s, i2s, s2i)
+								],
+								MTextInput(
+									s,
+									replaceStructMany(style, [TextInputType(NumericType())]),
+									replaceStructMany(state, [MInputFilter(\str, foc -> inputFilter.fn(i2s(s2i(str)), foc))])
+								)
+							)
+						} else if  (type == "double") {
+							dvalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<double>);
+							MConstruct(
+								[
+									\ -> bidirectionalLink(dvalue, s, d2s, s2d)
+								],
+								MTextInput(
+									s,
+									replaceStructMany(style, [TextInputType(NumericType())]),
+									replaceStructMany(state, [MInputFilter(\str, foc -> inputFilter.fn(d2s(s2d(str)), foc))])
+								)
+							)
+						} else
+							MConstruct(
+								[
+									\ -> bidirectionalLink(value, s, serialize, \str -> deserialize(str, getValue(value)))
+								],
+								MTextInput(
+									s,
+									style,
+									state
+								)
+							);
+					}
+			)
+
+
+			|> (\f -> MBorder(if (elevation) -8. else 0., 8., if (elevation) -8. else 0., 9., f))
+		}
+		MEGDropDown(label, value, undefined, items, mstyle): {
+			s = make(-1);
+
+			style = extractMEGItemState(replaceStructMany(gstyle, mstyle), label);
+
+			MConstruct(
+				[
+					\ ->
+						bidirectionalLink(
+							value,
+							s,
+							\v0 ->
+								findiDef(items, \it -> firstOfPair(it) == v0, -1),
+							\i ->
+								if (i >= 0 && i < length(items))
+									firstOfPair(items[i])
+								else
+									firstOfPair(undefined)
+						)
+				],
+				MDropDown(s, undefined.second, map(items, secondOfPair), style)
+				|> (\f -> MBorder(0., 12., 0., 8., f))
+			)
+		}
+		MEGTimePicker(label, value, mstyle): {
+			secEnabled = false;
+			is12hr = false;
+			close = make(true);
+			timeStr = make(getTimeOnlyString(getValue(value), secEnabled, is12hr));
+			timeFocus = make(false);
+			ampm = extractStructMany(mstyle, MTimeAMPM(true));
+			minTime = extractStructMany(mstyle, MTimeMin(stamp2time(timestamp())));
+			maxTime = extractStructMany(mstyle, MTimeMax(stamp2time(timestamp())));
+
+			gmstyle = replaceStructMany(gstyle, mstyle);
+			style =
+				replaceStructMany(
+					extractMTextInputStyle(gmstyle, label),
+					[ReadOnly(true), MShowDropDownArrow(true)]
+				);
+			state = arrayPush(extractMTextInputState(gmstyle), TTextInputFocus(timeFocus));
+
+			showMEGTimePicker = \manager -> {
+				next(close, false);
+				pickedTime = make(if (isNullTime(getValue(value))) stamp2time(timestamp()) else getValue(value));
+				renderMDialog(manager, close, [],
+					MTimePicker(pickedTime, [
+						MDialogButtons([
+							MButtonOk("enter", \ -> {
+								pTime = getValue(pickedTime);
+								next(value, Time(pTime.year, pTime.month, pTime.day, pTime.hour, pTime.min, pTime.sec));
+								next(close, true);
+							}),
+							MButtonCancel("esc", \ -> next(close, true)),
+							MTextButton("RESET", \ -> {next(value, nullTime); next(close, true);}, [], [])
+						])
+					]
+					|> (\f : [MTimePickerStyle] -> concatA([f, ampm, minTime, maxTime]))),
+					m2t
+				)
+			};
+
+			MGetManager(\manager ->
+				MConstruct(
+					[
+						makeSubscribe(value, \t -> nextDistinct(timeStr, if (isNullTime(t)) "" else getTimeOnlyString(t, secEnabled, is12hr))),
+						makeSubscribe2(timeFocus, \foc ->
+							if (foc && getValue(close)) {
+								showMEGTimePicker(manager);
+								deferred(\ -> next(timeFocus, false));
+							}
+						)
+					],
+					MTextInput(timeStr, style, state)
+					|> (\f -> MBorder(0., 8., 0., 9., f))
+				)
+			)
+		}
+		MEGDatePicker(label, valueB, mstyle): {
+			value = make(stamp2date(timestamp()));
+			dateFormat = const("%D.%MM.%YY");
+			dateStr = make(date2formatString(getValue(value), dateFormat |> fgetValue));
+			close = make(true);
+			dateFocus = make(false);
+			minDate = extractStructMany(mstyle, MDateMin(stamp2date(timestamp())));
+			maxDate = extractStructMany(mstyle, MDateMax(stamp2date(timestamp())));
+
+			gmstyle = replaceStructMany(gstyle, mstyle);
+			style =
+				replaceStructMany(
+					extractMTextInputStyle(gmstyle, label),
+					[ReadOnly(true), MShowDropDownArrow(true)]
+				);
+			state = arrayPush(extractMTextInputState(gmstyle), TTextInputFocus(dateFocus));
+
+			showMEGDatePicker = \manager -> {
+				next(close, false);
+				pickedDate = make(if (isNullDate(getValue(value))) stamp2date(timestamp()) else getValue(value));
+				renderMDialog(manager, close, [],
+					MDatePicker(pickedDate, [
+						MDialogButtons([
+							MButtonOk("enter", \ -> {
+								pDate = getValue(pickedDate);
+								next(value, Date(pDate.year, pDate.month, pDate.day));
+								next(close, true);
+							}),
+							MButtonCancel("esc", \ -> next(close, true)),
+							MTextButton("RESET", \ -> {next(value, nullDate); next(close, true);}, [], [])
+						])
+					]
+					|> (\f -> concat3(f, minDate, maxDate))),
+					m2t
+				)
+			};
+
+			MGetManager(\manager ->
+				MConstruct(
+					[
+						make2Subscribe(value, dateFormat, \d, fmt -> nextDistinct(dateStr, if (isNullDate(d)) "" else date2formatString(d, fmt))),
+						makeSubscribe2(dateFocus, \foc ->
+							if (foc && getValue(close)) {
+								showMEGDatePicker(manager);
+								deferred(\ -> next(dateFocus, false));
+							}
+						),
+						\ ->
+							switch (getValue(valueB)) {
+								Date(__, __, __): {
+									bidirectionalLink(cast(valueB : DynamicBehaviour<DateOrTime> -> DynamicBehaviour<Date>), value, idfn, idfn)
+								}
+								Time(__, __, __, __, __, __): {
+									bidirectionalLink(cast(valueB : DynamicBehaviour<DateOrTime> -> DynamicBehaviour<Time>), value, time2date, date2time)
+								}
+							}
+					],
+					MTextInput(dateStr, style, state)
+					|> (\f -> MBorder(0., 8., 0., 9., f))
+				)
+			)
+		}
+		MEGSwitchControl(label, valueB, mstyle): {
+			style =
+				arrayPush(
+					extractMEGItemState(replaceStructMany(gstyle, mstyle), label),
+					extractStruct(mstyle, MOnOffText("True", "False"))
+				);
+
+			MSwitchControl(valueB, style);
+		}
+		MEGCheckBox(label, valueB, mstyle): {
+			style = extractMEGItemState(replaceStructMany(gstyle, mstyle), label);
+
+			MCheckBox(TEmpty(), valueB, style)
+		}
+		MEGMutable(content): {
+			MGetManager(\manager -> MSelect2T(manager, parent, "MEGMutable", [], content, \c, p -> MEGItem2T(p, c, gstyle, m2t)))
+		}
+		default:
+			cast(item : MEGItem -> Material)
+			|> (\f ->
+				extractStruct(gstyle, MWidth(-1.)).width
+				|> (\f2 -> if (f2 >= 0.) MAvailable(f, TFillWY(f2)) else f)
+			)
+	}
+	|> (\f -> m2t(f, parent))
+}
+
+MEGComponent(label : string, value : DynamicBehaviour<flow>, style : [MEGComponentStyle]) -> MEGItem {
+	MEGMutable(
+		fselect(
+			fselect(value, getTypeString |> FLift),
+			FLift(\type ->
+				if (type == "Time") {
+					tvalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<Time>);
+					MEGTimePicker(label, tvalue, extractMEGTextInputStyle(style))
+				} else if (type == "Date" || type == "DateOrTime") {
+					dvalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<DateOrTime>);
+					MEGDatePicker(label, dvalue, extractMEGDatePickerStyle(style))
+				} else if (type == "bool") {
+					bvalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<bool>);
+					MEGSwitchControl(label, bvalue, extractMEGSwitchControlStyle(style))
+				} else {
+					svalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<string>);
+					MEGTextInput(label, svalue, extractMEGTextInputStyle(style))
+				}
+			)
+		)
+	)
+}
+
+MEGSwitchControlOrTextInput(label : string, value : DynamicBehaviour<flow>, style : [MEGSwitchControlOrTextInputStyle]) -> MEGItem {
+	MEGMutable(
+		fselect(
+			fselect(value, getTypeString |> FLift),
+			FLift(\type ->
+				if (type == "bool") {
+					bvalue = cast(value : DynamicBehaviour<flow> -> DynamicBehaviour<bool>);
+					MEGSwitchControl(label, bvalue, extractMEGSwitchControlStyle(style))
+				} else
+					MEGTextInput(label, value, extractMEGTextInputStyle(style))
+			)
+		)
+	)
+}
+
+MEGAutoComplete(label : string, value : DynamicBehaviour<flow>, items : [string], style : [MEGTextInputStyle]) -> MEGTextInput {
+	MEGTextInput(label, value, arrayPush(style, MDictionary(items)))
+}
+
+MEGDropDownOrAutoComplete(label : string, value : DynamicBehaviour<flow>, undefined : Pair<flow, string>,
+		items : [Pair<flow, string>], style : [MEGTextInputStyle]) -> MEGItem {
+	if (length(items) > 20)
+		MEGDropDown(label, value, undefined, items, extractMEGItemStyle(style))
+	else
+		MEGAutoComplete(label, value, map(items, secondOfPair), style)
+}

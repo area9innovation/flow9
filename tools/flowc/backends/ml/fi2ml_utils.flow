@@ -1,0 +1,170 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/ml/fi2ml_defines;
+import tools/flowc/incremental/fi_helpers;
+import list;
+import string;
+
+export {
+	fiType2MLType(cfg: FcMLConfig, program: FiProgram, type: FiType) -> string;
+	fiCollectMLStructs(cfg: FcMLConfig, program: FiProgram) -> string;
+	fiMLParams(cfg: FcMLConfig, program: FiProgram, typeparameters : [FiType]) -> string;
+	fiMLCombineUnions(cfg: FcMLConfig, program: FiProgram) -> void;
+}
+
+fiMLCombineUnions(cfg, program) {
+	// TODO Get combination automatically
+	dummy = FiTypeUnion("", [], [], -1);
+	maybe1 = lookupTree(program.names.unions, "Maybe");
+	fail1 = lookupTree(program.names.unions, "Fail");
+	umaybe = either(maybe1, dummy);
+	ufail = either(fail1, dummy);
+
+	combined = FiTypeUnion("MaybeFail", uniq(concat(umaybe.typeparameters, ufail.typeparameters)),
+		uniq(concat(umaybe.typenames, ufail.typenames)), 0);
+	combined2 = FiTypeUnion(combined.name, combined.typeparameters, combined.typenames, -1);
+	fcPrintln("HIA: combined = " + toString(combined));
+	fcPrintln("HIA: combined2 = " + toString(combined2));
+	cfg.combinedUnions ::= setTree(cfg.combinedUnions, "Maybe", combined);
+	cfg.combinedUnions ::= setTree(cfg.combinedUnions, "Fail", combined2);
+}
+
+
+fiMLParams(cfg, program, typeparameters) {
+	if (typeparameters == []) 
+		""
+	else {
+		"[" + strGlue(map(sort(filter(map(typeparameters, \e -> {
+			switch (e) {
+				FiTypeParameter(n): n;
+				default: ""
+			}
+		}), \e1 -> e1 != "")), \e2 -> {"'" + fromCharCode(96 + strlen(e2))}), ", ") + "]";
+	}
+}
+
+fiMLUnion2String(cfg, program, union: FiTypeUnion) {
+	(if (union.typeparameters != []) {
+		if (length(union.typeparameters) == 1)
+			fiType2MLType(cfg, program, union.typeparameters[0]) + " "
+		else {
+			"(" + strGlue(map(union.typeparameters, \e -> fiType2MLType(cfg, program, e)), ", ") + ") "
+		}
+	} else "") + "r" + toLowerCase(union.name);
+}
+
+fiMLStruct2String(cfg, program, struct : FiTypeStruct, includeFields : bool) {
+	"R" + struct.name + (if (includeFields && struct.args != []) {
+			" of " + strGlue(map(struct.args, \e -> {fiType2MLType(cfg, program, e.type)}), " * ")
+		} else "");
+}
+
+fiType2MLType(cfg, program, type) {
+	switch (type) {
+		FiTypeArray(t)                 : "(SIMPLE-VECTOR *)";
+		FiTypeFunction(args, rt)       : "(FUNCTION (" + strGlue(map(args, \__ -> "T"), " ") + "))";
+		FiTypeRef(t)                   : "ref " + fiType2MLType(cfg, program, t);
+		FiTypeParameter(n)             : "'" + fromCharCode(96 + strlen(n));
+		FiTypeBool()                   : "bool";
+		FiTypeInt()                    : "int";
+		FiTypeDouble()                 : "float";
+		FiTypeString()                 : "string";
+		FiTypeFlow()                   : "T";
+		FiTypeVoid()                   : "()";
+		FiTypeNative()                 : "()";
+		FiTypeName(name, params)     : {
+			rtype = resolveFiTypeName(program.names, type);
+			switch (rtype) {
+				FiTypeUnion(__, __, __, __): {
+					fiMLUnion2String(cfg, program, rtype)
+				}
+				FiTypeStruct(sname, typars, args, __): {
+					fiMLStruct2String(cfg, program, rtype, false);
+				}
+			}
+		};
+	}
+}
+
+fiMLGetCombinedUnion(cfg: FcMLConfig, union: FiTypeUnion) {
+	union0 = lookupTree(cfg.combinedUnions, union.name);
+	switch(union0) {
+		None(): union;
+		Some(v): v;
+	}
+}
+
+fiProcessMLStruct(cfg : FcMLConfig, program : FiProgram, name : string, struct : FiTypeStruct, init : string, n : int) {
+	// fcPrintln("HIA: name (enter) = " + name);
+	//	if (name == "JsonObject") fcPrintln("HIA: " + toString(struct));
+	fields0 = if (length(struct.args) == 0)
+			""
+		else { 
+			" " + strGlue(mapi(struct.args, \i, e -> {
+				fiMLRenameKeyword(cfg, e.name, "a");
+			}), " ");
+		}
+
+
+	if (name == "List") {
+		fcPrintln("HIA: name = " + name);
+		fcPrintln(fiMLRenameKeyword(cfg, name, "f"));
+	}
+	structName =  toLowerCase(fiMLRenameKeyword(cfg, name, "r"));
+	
+	fields1 = strGlue(map(struct.args, \e -> {
+		fiMLIndent + "val " + (if (e.ismutable) "mutable " else "") +
+		fiMLRenameKeyword(cfg, e.name, "f") + " : " + fiType2MLType(cfg, program, e.type) + " = " + fiMLRenameKeyword(cfg, e.name, "a") + "\n" +
+		fiMLIndent + "method " + fiMLRenameKeyword(cfg, e.name, "g") + " : " + fiType2MLType(cfg, program, e.type) + " = " +
+		fiMLRenameKeyword(cfg, e.name, (if (e.ismutable) "f" else "a")) + "\n" +
+		(if (e.ismutable) {
+			fiMLIndent + "method " + fiMLRenameKeyword(cfg, e.name, "m") + " x = " + fiMLRenameKeyword(cfg, e.name, "f") + " <- x\n";  
+		} else "");
+	}), "");
+	
+	typarams = fiMLParams(cfg, program, struct.typars);
+	cfg.structNames ::= setTree(cfg.structNames, name, n);
+
+	list2string(
+		Cons("class " + (if (typarams != "") typarams + " " else "") + structName + fields0 + 
+			" =\nobject\n" + fiMLIndent + "inherit flow " + i2s(n) + " as super\n" + fields1 + "end;;\n\n",
+			Cons(init, EmptyList())));
+}
+
+
+fiCollectMLStructs(cfg, program) {
+	n : ref int = ref -1;
+	unions = if (program.names.unions == makeTree())
+			""
+	else {
+		uns = fold(program.traversal, "", \acc, mname -> {
+			md = lookupTree(program.modules, mname);
+			eitherFn(md, \module -> {
+				unions1  = fold(module.unions, acc, \acc1, union -> {
+					union0 = fiMLGetCombinedUnion(cfg, union);
+					acc1 +
+					// Skip generation of combined union.
+					if (union0.start >= 0) {
+						"type " + fiMLUnion2String(cfg, program, union0) + " =\n" +
+						fiMLIndent + "| " +
+						strGlue(map(union0.typenames, \e -> {
+							dummys = FiTypeStruct("dummy " + e.name, [], [], -1);
+							struct = either(lookupTree(program.names.structs, e.name), dummys);
+							fiMLStruct2String(cfg, program, struct, true)
+						}), "\n" + fiMLIndent + "| ") + ";;\n\n"
+					} else ""
+				});
+				/*
+				structs1 = fold(module.structs, unions1, \acc1, struct -> {
+					n := ^n + 1;
+					fiProcessMLStruct(cfg, program, struct.name, struct, acc1, ^n);
+				});
+				structs1;
+				*/
+				unions1;
+			}, \ -> acc);
+		});
+		uns;
+	}
+	unions;
+}
+

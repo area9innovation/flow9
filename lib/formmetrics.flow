@@ -1,0 +1,526 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import render;
+import formats/html/html2text;
+
+export {
+	// For dynamic sizes, see formtransforms.flow
+
+	// Get the metrics for the given form. Uncached!
+	getStaticFormSize(form : Form) -> FormMetrics;
+
+	// Get the metrics for the given form. Uncached!
+	// partially implemented. Tested to be correct with a very small set of predefined cases with getExactTopPoint = true
+	getStaticFormSize2(form : Form, getExactTopPoint : bool) -> FormMetrics;
+
+
+	// And this version is cached
+	getStaticFormSizeCached(form : Form) -> FormMetrics;
+
+	// And this version is cached
+	// partially implemented. Tested to be correct with a very small set of predefined cases with getExactTopPoint = true
+	getStaticFormSizeCached2(form : Form, getExactTopPoint : bool) -> FormMetrics;
+
+	// FormMetrics constructors
+	zeroMetrics : FormMetrics;
+	makeMetrics(width : double, height : double) -> FormMetrics;
+
+	// How wide is this form? Finds the answer by constructing (with a cache)
+	getFormWidth(form : Form) -> double;
+	getFormHeight(form : Form) -> double;
+
+	// Where is the baseline for this form? (Has a cache)
+	getFormBaseline(form : Form) -> double;
+
+	// A form is static if it never changes size
+	isStaticForm(form : Form) -> bool;
+
+	isStaticForm2(form : Form, getExactTopPoint : bool) -> bool;
+
+	///////////////////////////
+	// Text Metrics
+	///////////////////////////
+	getTextSize(text : string, style : [CharacterStyle]) -> TextSize;
+	getOneCharWidth(fontSize : double) -> double;
+}
+
+// A helper for the case where the form does not have any specific ascent, descent or leading
+makeMetrics(width : double, height : double) -> FormMetrics {
+	FormMetrics(width, height, height, 0.0);
+}
+
+// This is common enough to have a specific instance
+zeroMetrics = FormMetrics(0.0, 0.0, 0.0, 0.0);
+
+// For quick lookup of sizes, we keep a cache of textfields for each family
+familyTextFields : ref Tree<string, native> = ref makeTree();
+
+getStaticFormSizeReal(form : Form, getExactTopPoint : bool) -> FormMetrics {
+	switch(form: Form) {
+		Empty() : zeroMetrics;
+		Border(l, t, r, b, child) : {
+			c = getStaticFormSize2(child, getExactTopPoint);
+			FormMetrics(l + r + c.width, t + b + c.height, t + c.baseline, t + c.dHeight);
+		};
+		Text(text, style): {
+			calculateTextMetrics = \t, s -> {
+				family = getFontFamily(s);
+				textField = switch (lookupTree(^familyTextFields, family)) {
+					None(): {
+						tf = makeTextfield(family);
+						familyTextFields := setTree(^familyTextFields, family, tf);
+						tf;
+					}
+					Some(tf): tf;
+				}
+				defineTextStyle(textField, t, s);
+				metrics = getTextMetrics(textField);
+
+				// For now, we ignore descent and leading in metrics[1] and metrics[2]
+				fieldW = getTextFieldWidth(textField);
+				fieldH = getTextFieldHeight(textField);
+				res = {
+					if (getExactTopPoint) {
+						// Currenly we have simple heuristics here.
+						// Most general decision is to get symbol height
+						// table based on s, lookup for each symbol and then find max.
+						smallSymbols = "acegmnopqrstuvwxyz~-+_=:;<>,.";
+						fontFamily = fold(s, "", \acc, v -> switch (v) {FontFamily(fam): fam; default: acc});
+						minion = fontFamily == "Minion" || fontFamily == "MinionItalics";
+						fontDH = if (minion) -1.0 else 0.0;
+						dH = if (trim2(t, smallSymbols) == "") {
+							fieldH * 0.25 + fontDH
+						} else {
+							fontDH
+						}
+						FormMetrics(fieldW, fieldH, metrics[0], dH);
+					} else {
+						FormMetrics(fieldW, fieldH, metrics[0], 0.0);
+					}
+				};
+				res
+			}
+
+			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
+				calculateTextMetrics(text |> escapeHtml, style)
+			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
+				texts = html2text(text, style);
+
+				if (length(texts) == 0) {
+					calculateTextMetrics("", style);
+				} else if (length(texts) == 1) {
+					calculateTextMetrics(texts[0].text, texts[0].style);
+				} else {
+					textsMetrics = map(texts, \t -> calculateTextMetrics(t.text, t.style));
+					fold(
+						textsMetrics,
+						FormMetrics(0.0, 0.0, 0.0, textsMetrics[0].dHeight),
+						\acc : FormMetrics, m : FormMetrics -> FormMetrics(
+							acc.width + m.width,
+							max(acc.height, m.height),
+							max(acc.baseline, m.baseline),
+							min(acc.dHeight, m.dHeight)
+						)
+					);
+				}
+			} else {
+				calculateTextMetrics(text, style)
+			}
+		}
+		Graphics(p, s): {
+			// Determine dimensions
+			w = ref 0.0;
+			h = ref 0.0;
+			mymax = \r, v -> if (v > ^r) r := v;
+			iter(p, \ope ->
+				switch(ope : StaticGraphicOp) {
+				MoveTo(x, y) : {
+					mymax(w, x);
+					mymax(h, y);
+				}
+				LineTo(x, y) : {
+					mymax(w, x);
+					mymax(h, y);
+				}
+				CubicBezierTo(x, y, cx, cy): {
+					mymax(w, x);
+					mymax(h, y);
+				}
+				QuadraticBezierTo(x, y, cx, cy): {
+					mymax(w, x);
+					mymax(h, y);
+				}
+				ClosePath(): {}
+				}
+			);
+			makeMetrics(^w, ^h);
+		}
+		Picture(url, s): {
+			// Works correctly only for pictures that are already rendered during this session.
+			// Default value is zero metrics i.e. the same as in the previous implementation.
+			wh = either(getCachedPictureSize(url), zeroWH);
+			makeMetrics(wh.width, wh.height)
+		}
+		Camera(filename, parameters, listeners, controls): {
+			w = ref 0;
+			h = ref 0;
+			iter(parameters, \p -> switch (p : RecordParameter) {
+				VideoSize(vw, vh) : {
+					w := vw;
+					h := vh;
+				};
+				default: {}
+			});
+			makeMetrics(i2d(^w), i2d(^h));
+		};
+		Translate(x, y, child) : {
+			c = getStaticFormSize2(child, getExactTopPoint);
+			if (getExactTopPoint) {
+				FormMetrics(c.width, c.height, c.baseline, c.dHeight + getValue(y))
+			} else {
+				c
+			}
+		}
+		Scale(x, y, f) : {
+			c = getStaticFormSize(f);
+			// Not accurate, but best bet
+			FormMetrics(getValue(x) * c.width, getValue(y) * c.height, getValue(y) * c.baseline, 0.0);
+		}
+		Rotate(d, child) : getStaticFormSize(child);
+		Visible(v, child) : {
+			if (isConst(v) && getValue(v) == 0) {
+				zeroMetrics;
+			} else {
+				// Not accurate, but best bet
+				getStaticFormSize(child);
+			}
+		}
+		Alpha(a, child) : getStaticFormSize(child);
+		Mask2(main1, mask, stack): getStaticFormSize(mask);// The size of this form is given by the mask only!
+		Group(layers) : {
+			if (length(layers) == 0) {
+				zeroMetrics
+			} else {
+				baseMetrics = getStaticFormSizeReal(layers[0], getExactTopPoint);
+				fold(tail(layers), baseMetrics, \acc : FormMetrics, f -> {
+					c = getStaticFormSizeReal(f, getExactTopPoint);
+					FormMetrics(max(c.width, acc.width), max(c.height, acc.height), max(c.baseline, acc.baseline), min(c.dHeight, acc.dHeight));
+				});
+			}
+		}
+		Grid(cells) : {
+			height = ref 0.0;
+			dHeight = ref doubleMax;
+			widths = ref [];
+			lastBaseline = ref 0.0;
+			lastRowHeight = ref 0.0;
+			isLastline = eq(length(cells) - 1);
+			iteri(cells, \r, row -> {
+				rowHeight = ref 0.0;
+				rowDHeight = ref doubleMax;
+
+				iteri(row, \i, f -> {
+					c = getStaticFormSize2(f, getExactTopPoint);
+					if (c.height > ^rowHeight) {
+						rowHeight := c.height;
+					}
+					if (c.dHeight < ^rowDHeight) {
+						rowDHeight := c.dHeight
+					}
+					if (isLastline(r) && c.baseline > ^lastBaseline) {
+						lastBaseline := c.baseline;
+					}
+					ws = ^widths;
+					if (i < length(ws)) {
+						if (c.width > ^(ws[i])) {
+							ws[i] := c.width;
+						}
+					} else {
+						widths := replace(^widths, i, ref c.width);
+					}
+				});
+				lastRowHeight := ^rowHeight;
+				dHeight := if (^dHeight != doubleMax) min(^dHeight, ^height + ^rowDHeight) else ^rowDHeight;
+				height := ^height + ^rowHeight;
+			});
+
+			width = fold(^widths, 0.0, \w1, w2 -> w1 + ^w2);
+
+			FormMetrics(width, ^height, ^height - ^lastRowHeight + ^lastBaseline, if (^dHeight != doubleMax) ^dHeight else 0.0);
+		}
+		Available2(wh, child) : getStaticFormSize(child);
+		Size2(wh, f): {
+			sz = getValue(wh); // Not accurate, but best bet
+			makeMetrics(sz.width, sz.height);
+		}
+		SetPending(pending, f): getStaticFormSize(f);
+		Baseline(baseline, f): {
+			m = getStaticFormSize2(f, getExactTopPoint);
+			FormMetrics(m.width, m.height, getValue(baseline), m.dHeight);
+		}
+		Interactive(l, child) : getStaticFormSize(child);
+		TextInput(state, listeners, stateaccess): {
+			width = ref 0.0;
+			height = ref 0.0;
+			baseline = ref -1.0;
+			iter(state, \s -> {
+				switch (s : TextInputState) {
+				TextSize(w, h) : {
+					width := w;
+					height := h;
+				}
+				Content(c, style) : {
+					textField = makeTextfield(getFontFamily(style));
+					defineTextStyle(textField, c, style);
+					width := getTextFieldWidth(textField);
+					height := getTextFieldHeight(textField);
+					metrics = getTextMetrics(textField);
+					baseline := metrics[0];
+					deleteNative(textField);
+				}
+				default: {};
+				}
+			});
+			if (^baseline == -1.0) {
+				baseline := ^height;
+			}
+			FormMetrics(^width, ^height, ^baseline, 0.0);
+		}
+		Filter2(filters, child, stack) : getStaticFormSize(child);
+		Cursor(kind, child) : getStaticFormSize(child);
+		Inspect(inspectors, child) : getStaticFormSize(child);
+		Mutable2(f, stack): getStaticFormSize(getValue(f)); // Not accurate, but best bet
+		Switch(case, cases) : {
+			getStaticFormSize(cases[getValue(case)]); // Not accurate, but best bet
+		}
+		Crop2(l, t, w, h, f, stack) : makeMetrics(getValue(w), getValue(h)); // Not accurate, but best bet
+		Constructor(f, l): getStaticFormSize(f);
+		Create2(current, fn): getStaticFormSize(if (^current != Empty()) ^current else fn());
+		Video(file, parameters, list, list1): {
+			w = ref 0;
+			h = ref 0;
+			iter(parameters, \p -> switch (p : VideoParameter) {
+				VideoSize(vw, vh) : {
+					w := vw;
+					h := vh;
+				};
+				default: {}
+			});
+			makeMetrics(i2d(^w), i2d(^h));
+		};
+		Access(props, fo): getStaticFormSize(fo);
+		RealHTML2(url, wh, style): {
+			sz = getValue(wh); // Not accurate, but best bet
+			makeMetrics(sz.width, sz.height);
+		}
+		ControlFocus(focus, f): getStaticFormSize(f);
+		FullWindow(fs, f): getStaticFormSize(f);
+		NativeForm(__, metrics, __, fn): {
+			getValue(metrics);
+		}
+		DynamicGroup2(__, combiner, currentStack, __): {
+			plus : (double, double) -> double =
+				\x, y -> x + y;
+			combineWidth =
+				if (combiner == ColsCombiner()) plus else max;
+			combineHeight =
+				if (combiner == LinesCombiner()) plus else max;
+			combine = \fm1, fm2 ->
+				makeMetrics(
+					combineWidth(fm1.width, fm2.width),
+					combineHeight(fm1.height, fm2.height)
+				);
+			fold(
+				getValue(currentStack),
+				zeroMetrics,
+				\metrics : FormMetrics, f : Form ->
+					combine(
+						metrics,
+						getStaticFormSizeReal(f, getExactTopPoint)
+					)
+			);
+		}
+	}
+}
+
+getStaticFormSize(form : Form) -> FormMetrics {
+	getStaticFormSize2(form, false)
+}
+
+getStaticFormSize2(form : Form, getExactTopPoint : bool) -> FormMetrics {
+	if (nogui) {
+		zeroMetrics;
+	} else {
+		getStaticFormSizeReal(form, getExactTopPoint);
+	}
+}
+
+//metricsCacheHits = ref 0;
+//metricsCacheMisses = ref 0;
+
+metricsCache : ref Tree<Form, FormMetrics> = ref makeTree();
+// A special tree for text metrics only, indexes by ints
+// textMetricsCache = ref makeIntTrie();
+
+getStaticFormSizeCached(form : Form) -> FormMetrics {
+	getStaticFormSizeCached2(form, false)
+}
+
+getStaticFormSizeCached2(form : Form, getExactTopPoint : bool) -> FormMetrics {
+	switch(form : Form) {
+		// This is common enough to short-circuit
+		Empty(): zeroMetrics;
+		default: {
+			if (isCacheWorthy(form)) {
+				cached = lookupTree(^metricsCache, form);
+				switch (cached : Maybe) {
+					None(): {
+		//				println("-" + form.structname);
+		/*				metricsCacheMisses := ^metricsCacheMisses + 1;
+						if (^metricsCacheMisses % 100 == 0) {
+							println("Hits: " + i2s(^metricsCacheHits) + " misses: " + i2s(^metricsCacheMisses));
+						}*/
+						size = getStaticFormSize2(form, getExactTopPoint);
+						//metricsCache := setTree(^metricsCache, form, size);
+						size;
+					}
+					Some(v): {
+		/*				println("+" + form.structname);
+						// println(form);
+						metricsCacheHits := ^metricsCacheHits + 1;*/
+						v;
+					}
+				}
+			} else {
+				getStaticFormSize2(form, getExactTopPoint);
+			}
+		}
+	}
+}
+
+isCacheWorthy(form) {
+	switch (form: Form) {
+		Empty() : true;
+		Border(l, t, r, b, child) : isCacheWorthy(child);
+		Text(t,s) : true;  // [-Revise-] Text metrics can change on font mapping change, e.g. on language switch (see fontmapping.flow)
+		Graphics(p, s) : true;
+		Picture(url, s) : false;
+		Camera(file, pars, listeners, controls) : false;
+		Translate(x, y, child) : isCacheWorthy(child);
+		Scale(x, y, f) : isConst(x) && isConst(y) && isCacheWorthy(f);
+		Rotate(d, child) : isCacheWorthy(child);
+		Alpha(a, child) : isCacheWorthy(child);
+		Visible(v, child) : isConst(v) && (isCacheWorthy(child) || getValue(v) == 0);
+		Mask2(main1, mask, stack) : isCacheWorthy(mask);// The size of this form is given by the mask only!
+		Group(layers) : forall(layers, isCacheWorthy);
+		Grid(cells) : forall(cells, \row -> forall(row, isCacheWorthy));
+		Available2(wh, child) : isCacheWorthy(child);
+		Size2(wh, f) : isConst(wh) && isCacheWorthy(f);
+		SetPending(p, f) : isConst(p) && isCacheWorthy(f);
+		Baseline(baseline, f) : isConst(baseline) && isCacheWorthy(f);
+		Interactive(l, child) : false; // We do not want to capture closures!
+		TextInput(state, listeners, stateaccess) : {
+			hasStateChanger = exists(stateaccess, \sa -> switch(sa : StateAccess) { StateChanger(fn): true; default: false; });
+			hasSize = exists(state, \sa -> switch(sa : TextInputState) { TextSize(w, h): true; default: false; });
+			hasSize && !hasStateChanger
+		}
+		Filter2(filters, child, stack) : isCacheWorthy(child);
+		Cursor(kind, child) : isCacheWorthy(child);
+		Inspect(inspectors, child) : false; // We do not want to capture closures!
+		Mutable2(f, stack) : false;
+		Switch(case, cases) : false; // the case where all variants are the same size is rather rare
+		Crop2(l, t, w, h, f, stack): false;
+		Constructor(f, l): false; // We do not want to capture closures!
+		Create2(__, __): false;
+		Video(file, pars, listeners, controls): false;
+		Access(props, f): isCacheWorthy(f);
+		RealHTML2(url, wh, style): false;  // We do not want to capture closures!
+		ControlFocus(focus, f): isCacheWorthy(f);
+		FullWindow(fs, f): isCacheWorthy(f);
+		NativeForm(__, __, __, fn): false;
+		DynamicGroup2(__, __, __, __): false;
+	}
+}
+
+getFormWidth(form) {
+	(getStaticFormSizeCached(form)).width;
+}
+
+getFormHeight(form) {
+	(getStaticFormSizeCached(form)).height;
+}
+
+getFormBaseline(form) {
+	(getStaticFormSizeCached(form)).baseline;
+}
+
+isStaticForm(form) {
+	isStaticForm2(form, false)
+}
+
+isStaticForm2(form, getExactTopPoint) {
+	switch(form: Form) {
+		Empty() : true;
+		Border(l, t, r, b, child) : isStaticForm2(child, getExactTopPoint);
+		Text(t,s) : true;  // [-Revise-] Text metrics can change on font mapping change, e.g. on language switch (see fontmapping.flow)
+		Graphics(p, s) : true;
+		Picture(url, s) : false; // Since we get the result only after it is loaded, this is not static
+		Camera(file, pars, listeners, controls) : false;
+		Translate(x, y, child) : isStaticForm2(child, getExactTopPoint);
+		Scale(x, y, f) : isConst(x) && isConst(y) && isStaticForm2(f, getExactTopPoint);
+		Rotate(d, child) : isStaticForm2(child, getExactTopPoint);
+		Alpha(a, child) : isStaticForm2(child, getExactTopPoint);
+		Visible(v, child) : isConst(v) && (isStaticForm2(child, getExactTopPoint) || getValue(v) == 0);
+		Mask2(main1, mask, stack) : isStaticForm2(mask, getExactTopPoint);// The size of this form is given by the mask only!
+		Group(layers) : forall(layers, \l -> isStaticForm2(l, getExactTopPoint));
+		Grid(cells) : forall(cells, \row -> forall(row, \r -> isStaticForm2(r, getExactTopPoint)));
+		Available2(wh, child) : isStaticForm2(child, getExactTopPoint);
+		Size2(wh, f) : !getExactTopPoint && isConst(wh);
+		SetPending(p, f) : isStaticForm2(f, getExactTopPoint);
+		Baseline(baseline, f) : isConst(baseline) && isStaticForm2(f, getExactTopPoint);
+		Interactive(l, child) : isStaticForm2(child, getExactTopPoint);
+		TextInput(state, listeners, stateaccess) : {
+			hasStateChanger = exists(stateaccess, \sa -> switch(sa : StateAccess) { StateChanger(fn): true; default: false; });
+			hasSize = exists(state, \sa -> switch(sa : TextInputState) { TextSize(w, h): true; default: false; });
+			hasSize && !hasStateChanger
+		}
+		Filter2(filters, child, stack) : isStaticForm2(child, getExactTopPoint);
+		Cursor(kind, child) : isStaticForm2(child, getExactTopPoint);
+		Inspect(inspectors, child) : isStaticForm2(child, getExactTopPoint);
+		Mutable2(f, stack) : false;
+		Switch(case, cases) : false; // the case where all variants are the same size is rather rare
+		Crop2(l, t, w, h, f, stack) : false;
+		Constructor(f, l): isStaticForm2(f, getExactTopPoint);
+		Create2(__, __): false;
+		Video(file, pars, listeners, controls): false;
+		Access(props, f): isStaticForm2(f, getExactTopPoint);
+		RealHTML2(url, wh, style): true;
+		ControlFocus(focus, f): isStaticForm2(f, getExactTopPoint);
+		FullWindow(fs, f): isStaticForm2(f, getExactTopPoint);
+		NativeForm(__, __, __, fn): false;
+		DynamicGroup2(__, __, __, __): false;
+	}
+}
+
+///////////////////////////
+// Text metrics
+///////////////////////////
+getTextSize(text : string, style : [CharacterStyle]) -> TextSize {
+	test = if (strlen(text) > 0) { text } else { "m" };
+
+	fm = getStaticFormSizeCached(Text(escapeHtml(test), style));
+
+	TextSize(fm.width + 0.1, fm.height);
+}
+
+getOneCharWidth(fontSize : double) -> double {
+	// currently all variables are one letter long. so, it's more common that box
+	// will consist of couple of digits rather than letters. that's why we are
+	// using digit as average length measure
+	if (fontSize == 0.0) {
+		0.0
+	} else {
+		wh = getTextSize("5", [FontSize(fontSize), FontFamily("Minion")]);
+		wh.width
+	}
+}

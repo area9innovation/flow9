@@ -1,0 +1,89 @@
+import tools/flowc/backends/java/fi2java_compile;
+
+export {
+	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void;
+}
+
+fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making Java '" + cfg.flowfile + "'...");
+
+	fcVerbose(cfg, 1, "Collecting code for all imported files...");
+
+	package_path = pathCombineMany(concat([cfg.outputdir], strSplit(cfg.packageName, ".")));
+	ensureDirectoryExists(package_path);
+	cmodules_info = indexJavaModules(program);
+	cstructs = indexJavaStructs(program, cmodules_info.first);
+
+	gcontext = JavaGlobalContext(
+		program, cfg.packageName,
+		cmodules_info.first, cmodules_info.second, cstructs,
+
+		// globals, globalFuncs
+		makeTree(), makeTree(),
+
+		// has_func_def
+		fold(enumFromTo(0,5), makeTree(), \a,i -> setTree(a,i,true)),
+		// has_field_accessor
+		makeTree(),
+
+		// uses_host
+		makeTree(),
+		// init_code
+		ref makeList(),
+		// ctor_code
+		ref makeList(),
+		// wrapper_code
+		ref makeList(),
+		// main_file_text
+		javaFileStringList(cfg.packageName),
+	);
+
+	rlistPush(gcontext.main_file_text, "@SuppressWarnings(\"unchecked\")\npublic final class Main extends FlowRuntime {\n");
+
+	indexJavaGlobals(gcontext);
+	struct_list = generateJavaStructList(gcontext);
+	generateJavaModules(gcontext, package_path);
+
+	generateJavaStructDefs(gcontext, package_path);
+	
+	generateJavaInitCode(gcontext, struct_list);
+
+	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
+		if (has) {
+			ftext = javaFileStringList(cfg.packageName);
+			text = "interface Field_" + name + "<T> {\n" +
+				"\tT get_" + name + "();\n" +
+				"\tvoid set_" + name + "(T value);\n" +
+			"}\n";
+			rlistPush(ftext, text);
+			field_fname = pathCombine(package_path, "Field_" + name + ".java");
+			setFileContent(field_fname, javaList2String(ftext, ""));
+			{}
+		}
+	});
+
+	traverseInOrder(gcontext.has_func_def, \nargs,has -> {
+		if (nargs > 11 && has) {
+			ftext = javaFileStringList(cfg.packageName);
+
+			rlistPush(ftext,
+				"interface Func"+i2s(nargs) + "<RT," +
+				strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
+			);
+			rlistPush(ftext,
+				"\tRT invoke(" +
+				strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
+				");\n"
+			);
+
+			func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".java");
+			setFileContent(func_fname, javaList2String(ftext, "}\n"));
+			{}
+		}
+	});
+
+	main_fname = pathCombine(package_path, "Main.java");
+	setFileContent(main_fname, javaList2String(gcontext.main_file_text, "}\n"));
+
+	callback();
+}

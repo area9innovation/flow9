@@ -1,0 +1,961 @@
+import material/internal/material_util;
+import material/internal/material_icons;
+import material/internal/types;
+import material/internal/material_progress;
+import material/unittests_support_types;
+
+// Internal to material
+
+export {
+	MStepper2T(parent : MFocusGroup, m : MStepper, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MStepperAction ::= MStepperActionContinue, MStepperActionBack;
+	MStepperActionContinue();
+	MStepperActionBack();
+
+MStepper2T(parent : MFocusGroup, m : MStepper, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	switch (m.type) {
+		HorizontalStepper(type): {
+			makeStepper(parent, m, type, m2t, true);
+		}
+		VerticalStepper(type): {
+			makeStepper(parent, m, type, m2t, false);
+		}
+		MobileStepper(type, bottomBarStyle): {
+			makeMobileStepper(parent, m, type, bottomBarStyle, m2t);
+		}
+	}
+
+}
+
+makeMobileStepper(parent : MFocusGroup, m : MStepper, type : MobileStepperType, bottomBarStyle : [MSBottomBarStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	style = m.style;
+	steps = m.steps;
+	selectedId = m.selectedId;
+	prevSelectedId = ref selectedId |> getValue;
+	showSFeedback = make(false);
+	feedbacks = map(steps, \step -> extractStruct(step.state, MStepperFeedback(\ -> TEmpty())));
+	continueFns = map(steps, \step -> extractStruct(step.state, MContinueFn(\-> true)).fn);
+	completes = map(steps, \step -> extractStruct(step.state, MCompleteStatus(make(false))).complete);
+	enabledSteps = map(steps, \step -> extractStruct(step.state, MEnabled(const(true))).enabled);
+	editableSteps = map(steps, \step -> extractStruct(step.type, MEditableStep(false)).editable);
+	showErrorMessage = make(false);
+	enabledBackButton = make(false);
+	enabledContinueButton = make(true);
+	sProgressPercent = make(0.0);
+	linearStepper = true;
+	onlyContinueButton = contains(bottomBarStyle, MOnlyContinueButton());
+
+	currentId = (selectedId |> fgetValue);
+	if (currentId < 0 || currentId >= length(steps) || !(enabledSteps[currentId] |> fgetValue)) {
+		id = foldi(enabledSteps, -1, \id, def, enabled -> if (def == -1 && (enabled |> fgetValue)) id else def);
+		next(selectedId, id);
+	}
+
+	continueFn = \-> {
+			id = max(min(getValue(selectedId), length(steps) - 1), 0);
+			next(showSFeedback, true && feedbacks[id].content != \ -> TEmpty());
+
+			timer(if (feedbacks[id].content != \ -> TEmpty()) 200 else 0, \-> {
+				continue = continueFns[id]();
+				if (continue) next(completes[id], true);
+				if (getValue(selectedId) < length(steps)) {
+					next(showErrorMessage, !continue);
+				}
+				if (continue) {
+					if ((selectedId |> getValue) > -1 && (selectedId |> getValue) < length(steps))
+						prevSelectedId := selectedId |> getValue;
+					next(selectedId, getNextSelectedId(id, true, enabledSteps, editableSteps, completes, steps));
+				}
+				nextDistinct(showSFeedback, false);
+			});
+	};
+
+	backFn = \-> {
+		id = max(min(getValue(selectedId), length(steps) - 1), 0);
+		next(selectedId, getPrevSelectedId(id, true, enabledSteps, editableSteps, completes, steps, false));
+	}
+
+	continueButtonStyle = extractStruct(m.style, MContinueButton(_("NEXT"), [MRightIcon("keyboard_arrow_right")], []));
+	backButtonStyle = extractStruct(m.style, MBackButton(_("BACK"), [MLeftIcon("keyboard_arrow_left")], []));
+
+	continueButton = \ ->
+		m2t(MStepperTextButtonAddEnabled(MTextButton(continueButtonStyle.text, continueFn, continueButtonStyle.style, continueButtonStyle.state), enabledContinueButton), parent);
+	backButton = \ ->
+		m2t(MStepperTextButtonAddEnabled(MTextButton(backButtonStyle.text, backFn, backButtonStyle.style, backButtonStyle.state), enabledBackButton), parent);
+
+	MSelect(selectedId, \id -> {
+		if (id > -1 && id < length(steps))
+			steps[id].content()
+		else
+			if (^prevSelectedId > -1 && ^prevSelectedId < length(steps))
+		 		steps[^prevSelectedId].content()
+		 	else
+		 		TEmpty()
+	})
+	|> (\f -> MScroll(f, TFillXY(), []))
+	|> (\f -> m2t(f, parent))
+	|> (\f -> TConstruct(
+		[
+			makeSubscribe(selectedId, \id -> {
+				nextDistinct(enabledBackButton, checkEnabledBackButton(id, linearStepper, completes, editableSteps, enabledSteps, false));
+				nextDistinct(enabledContinueButton, id < length(steps));
+				next(sProgressPercent, countCompliteSteps(completes, enabledSteps) / countVisisbleSteps(enabledSteps));
+			})
+		],
+		f
+	))
+	|> (\st ->
+		switch (type) {
+			MobileStepText() : {
+			simle_buttons : Tropic = TCols([
+				backButton(),
+				TFillX(),
+				continueButton(),
+			])
+			|> (\f -> TBorder(8.0, 8.0, 8.0, 8.0, f));
+
+				TLines([
+					TCenterIn(
+						TSelect(selectedId, \id -> {
+							enabledCount = countVisisbleSteps(enabledSteps);
+							m2t(MText("Step " + d2s(min(i2d(id + 1), enabledCount)) + " of " + d2s(enabledCount), [MTitle()]), parent);
+						}),
+						TFixed(0.0, 36.0)
+					)
+					|> (\f -> TBorder(24.0, 8.0, 24.0, 8.0, f)),
+					st,
+					simle_buttons,
+				])
+			};
+			MobileStepDots() : {
+				TLines([
+					st,
+					TCols([
+						backButton(),
+						TFillX(),
+						continueButton(),
+					])
+				])
+			};
+			MobileStepProgressBar(progressBarStyle) : {
+				progressBarDetermStyle = extractStruct(progressBarStyle, MProgressBarDetermStyle(parent.theme.primaryColor, MGrey(500), WidthHeight(-1.0, 3.0)));
+				pBarDeterm = TCenterIn(
+					m2t(MProgressBarDeterm(sProgressPercent, [progressBarDetermStyle.color, MProgressBackgroundColor(progressBarDetermStyle.backgroundColor), progressBarDetermStyle.size]), parent),
+					TFixed(0.0, 36.0)
+				);
+
+				(if (onlyContinueButton) {
+					[
+						(if (progressBarDetermStyle.size.width < 0.0)
+							[
+								TFixed(8.0, 0.0),
+								pBarDeterm,
+								TFixed(8.0, 0.0),
+							]
+						else
+							[
+								TFillX(),
+								pBarDeterm
+								|> (\l -> TBorder(-32., 0., 0., 0., l)),
+								TFillX(),
+							]
+						)
+						|> TCols,
+						(if (contains(continueButtonStyle.style, MFullWidth()))
+							[
+								TFixed(8.0, 0.0),
+								continueButton(),
+								TFixed(8.0, 0.0),
+							]
+						else
+							[
+								TFillX(),
+								continueButton(),
+								TFillX(),
+							]
+						)
+						|> TCols
+					]
+					|> TLines
+				} else
+					{
+					TCols([
+						backButton(),
+						TFillX(),
+						pBarDeterm,
+						TFillX(),
+						continueButton(),
+					])
+				})
+				|> (\f -> TBorder(8.0, 8.0, 8.0, 8.0, f))
+				|> (\f ->
+					[
+						st,
+						f
+					]
+					|> TLines
+				)
+			}
+		}
+	)
+}
+
+makeStepper(parent : MFocusGroup, m : MStepper, type : [MStepsType], m2t : (Material, MFocusGroup) -> Tropic, horizontal : bool) -> Tropic {
+	steps = m.steps;
+	selectedId = m.selectedId;
+	color = extractStruct(m.style, parent.theme.primaryColor);
+
+	cancelButtonStyle = extractStruct(m.style, MCancelButton(_("CANCEL"), [MGrey(800)], []));
+	continueButtonStyle = extractStruct(m.style, MContinueButton(_("CONTINUE"), [color, MButtonRaised()], []));
+	completeButtonStyle = extractStruct(m.style, MCompleteButton(continueButtonStyle.text, continueButtonStyle.style, continueButtonStyle.state));
+	backButtonStyle = extractStruct(m.style, MBackButton(_("BACK"), [MLeftIcon("keyboard_arrow_left")], []));
+
+	stepsRenumbering = contains(m.style, MUpdatingStepsNumLabels());
+	enabledSteps = map(steps, \step -> extractStruct(step.state, MEnabled(const(true))).enabled);
+	stepsEnabledArr = fmerge(enabledSteps);
+	stepIconSize = extractStruct(m.style, MIconSize(24.0)).size;
+
+	makeLetterIcon = \style, id ->
+		(
+			if (stepsRenumbering)
+				MSelect(
+					fselect(stepsEnabledArr, FLift(\arr -> i2s(foldi(arr, 0, \i, acc, stepEnabled -> if (stepEnabled && i <= id) acc + 1 else acc)))),
+					\num ->	MLetterIcon(num, style, [MCaptionSolid(), MWhite()])
+				)
+			else
+				MLetterIcon(i2s(id + 1), style, [MCaptionSolid(), MWhite()])
+		)
+		|> (\ic -> MBorder4(2., ic))
+		|> (\f -> m2t(f, parent));
+
+	activeIconColor = extractStruct(m.style, MActiveIconColor(color)).color;
+	activeIconStyle : [MIconStyle] = [MIconSize(stepIconSize), activeIconColor, FillOpacity(0.87)];
+	activeLetterIcon = \id -> makeLetterIcon(activeIconStyle, id);
+
+	inactiveIconColor = extractStruct(m.style, MInactiveIconColor(MGrey(500))).color;
+	inactiveIconStyle : [MIconStyle] = [MIconSize(stepIconSize), inactiveIconColor];
+	inactiveLetterIcon = \id -> makeLetterIcon(inactiveIconStyle, id);
+
+	warningIconColor = extractStruct(m.style, MWarningIconColor(MErrorColor())).color;
+	warningIcon = 
+		MIcon("warning", [warningIconColor, MIconSize(stepIconSize), FillOpacity(0.87)])
+		|> (\ic -> MBorder4(2., ic))
+		|> (\f -> m2t(f, parent));
+
+	editIconColor = extractStruct(m.style, MEditIconColor(color)).color;
+	editIcon =
+		MIcon("edit", [MIconSize(stepIconSize - 8.), MCircleBackground(editIconColor, stepIconSize + 4.), sameLightMColor(parent), FillOpacity(1.0)])
+		|> (\f -> m2t(f, parent));
+
+	checkCircleIconColor = extractStruct(m.style, MCheckCircleIconColor(color)).color;
+	checkCircleIcon =
+		MIcon("check", [MIconSize(stepIconSize - 4.), MCircleBackground(checkCircleIconColor, stepIconSize + 4.), sameLightMColor(parent), FillOpacity(1.0)])
+		|> (\f -> m2t(f, parent));
+
+	linearStepper = extractStruct(type, LinearStepper(true)).linear;
+	alternativeLabel = contains(type, AlternativeLabel());
+	stepEditableOnComplete = contains(type, StepEditableOnComplete());
+
+	continueFns = map(steps, \step -> extractStruct(step.state, MContinueFn(\ -> true)).fn);
+	cancelFns = map(steps, \step -> extractStruct(step.state, MCancelFn(nop)).fn);
+	feedbacks = map(steps, \step -> extractStruct(step.state, MStepperFeedback(\ -> TEmpty())));
+	completes = map(steps, \step -> extractStruct(step.state, MCompleteStatus(make(false))).complete);
+	editableSteps = map(steps, \step -> extractStruct(step.type, MEditableStep(false)).editable);
+	clickableSteps = mapi(editableSteps, \i, es -> if (es) extractStruct(steps[i].type, MClickableStep(const(true))).clickable else const(true));
+	contentBorder = extractStruct(m.style, if (horizontal) MHStepperContentBorder(24.0, 0.0, 24.0, 12.0) else MHStepperContentBorder(24.0, 8.0, 40.0, 16.0));
+	footerBorder = extractStruct(m.style, if (horizontal) MHStepperFooterBorder(24.0, 12.0, 40.0, 12.0) else MHStepperFooterBorder(24.0, 0.0, 40.0, 52.0));
+	stepperAddScroll = contains(m.style, MStepperAddScroll());
+	showCancelButton = make(!contains(m.style, MHideCancelButton()));
+	intervalBtwTitles = extractStruct(m.style, MSetIntervalBetweenTitles(0.0)).size;
+	showFirstOnStartB = !contains(m.style, MHideFirstStepOnStart()) |> make;
+	enabledBackButton = make(false);
+	enabledCancelButton = make(false);
+	enabledContinueButton = make(true);
+	showErrorMessage = make(false);
+	showSFeedback = make(false);
+	gap = TFixed(8., 0.);
+	footerLayout =
+		extractStruct(
+			m.style,
+			MStepperCustomFooter(\p, c, n, b ->
+				if (horizontal)
+					MCols([p, TFillX(), c, gap, n]) |> b
+				else
+					MCols([n, gap, p, TShow(enabledBackButton, gap), c]) |> b
+			)
+		).layout;
+
+	currentId = (selectedId |> fgetValue);
+	if (currentId < 0 || currentId >= length(steps) || !(enabledSteps[currentId] |> fgetValue)) {
+		id = foldi(enabledSteps, -1, \id, def, enabled -> if (def == -1 && (enabled |> fgetValue)) id else def);
+		next(selectedId, id);
+	}
+
+	mwTestSupport = extractStruct(m.style, MStepperTestSupport(createMWTestSupport(), \ -> false));
+
+	continueFn = \-> {
+			next(^(mwTestSupport.support.actionHandler), Some(MStepperActionContinue()));
+			id = max(min(getValue(selectedId), length(steps) - 1), 0);
+			next(showSFeedback, true && feedbacks[id].content != \ -> TEmpty());
+			nextDistinct(showFirstOnStartB, true);
+
+			continueAction = \-> {
+				continue = continueFns[id]();
+				if (continue) next(completes[id], true);
+				if (getValue(selectedId) < length(steps)) {
+					next(showErrorMessage, !continue);
+				}
+				if (continue || !linearStepper)
+					next(selectedId, getNextSelectedId(id, linearStepper, enabledSteps, editableSteps, completes, steps));
+				nextDistinct(showSFeedback, false);
+			};
+
+			if (mwTestSupport.isTestPlaybackMode()) continueAction()
+			else timer(if (feedbacks[id].content != \ -> TEmpty()) 200 else 0, continueAction);
+	};
+
+	backFn = \-> {
+		next(^(mwTestSupport.support.actionHandler), Some(MStepperActionBack()));
+		id = max(min(getValue(selectedId), length(steps) - 1), 0);
+		next(selectedId, getPrevSelectedId(id, linearStepper, enabledSteps, editableSteps, completes, steps, stepEditableOnComplete));
+	}
+
+	mwTestSupport.support.actionRunner := \ma : flow ->
+		eitherFn(cast(ma : flow -> Maybe<MStepperAction>), \a : MStepperAction ->
+			switch (a) {
+				MStepperActionContinue(): continueFn();
+				MStepperActionBack(): backFn();
+			}, nop);
+
+	buildFooter = \ ->
+		footerLayout(
+			MSelect(selectedId, \id ->
+				if (id == length(steps))
+					TEmpty()
+				else
+					extractStruct(steps[id].state, backButtonStyle)
+					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, backFn, f.style, f.state), enabledBackButton))
+			)
+			|> (\f ->
+				if (horizontal)
+					f
+				else
+					MShow(enabledBackButton, f)
+			),
+			MSelect(selectedId, \id ->
+				if (id == length(steps))
+					TEmpty()
+				else
+					extractStruct(steps[id].state, cancelButtonStyle)
+					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, cancelFns[id], f.style, f.state), enabledCancelButton))
+			)
+			|> (\f ->
+				MShow(
+					if (horizontal)
+						showCancelButton
+					else
+						fand(showCancelButton, fOr(enabledCancelButton, fnot(enabledBackButton))),
+					f
+				)
+			),
+			MSelect(selectedId, \id ->
+				if (id == length(steps))
+					TEmpty()
+				else
+				 if (id == length(steps) - 1)
+					extractStruct(steps[id].state, completeButtonStyle)
+					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, continueFn, f.style, f.state), enabledContinueButton))
+				else
+					extractStruct(steps[id].state, continueButtonStyle)
+					|> (\f -> MStepperTextButtonAddEnabled(MTextButton(f.text, continueFn, f.style, f.state), enabledContinueButton))
+			),
+			\f -> MBorder(footerBorder.left, footerBorder.top, footerBorder.right, footerBorder.bottom, f)
+		);
+
+	// TODO: integrate MHeaderTextStyles() style into horizontal also
+	(
+		if (horizontal)
+			[
+				MSeparator(true),
+				createHeader(
+					parent, steps, completes, clickableSteps, editableSteps, showFirstOnStartB,
+					selectedId, alternativeLabel, linearStepper, showErrorMessage,
+					stepEditableOnComplete, intervalBtwTitles, warningIcon, activeLetterIcon,
+					editIcon, checkCircleIcon, inactiveLetterIcon, m2t
+				),
+				MSeparator(true),
+				MIf(
+					fand(fselect(selectedId, FLift(\id -> existsIndex(steps, id))), showFirstOnStartB),
+					MLines2(
+						MSelect(selectedId,
+							\id -> if (id >= length(steps) || id < 0)
+								TEmpty()
+							else
+								steps[id].content()
+						)
+						|> (\f -> if (stepperAddScroll) MScroll(f, TFillXY(), []) else f)
+						|> (\f -> m2t(f, parent))
+						|> (\t -> TCopySize(t, \tr ->
+								TShowLazy(showSFeedback,
+									\ -> TGroup2(
+										TRectangle([MFill(MBackgroundColor(parent.theme.lightBackground))], tr),
+										TCenterIn(
+											m2t(MProgressCircle([]), parent),
+											tr
+										)
+									)
+								),
+								true
+							))
+						|> (\t -> TBorder(contentBorder.left, contentBorder.top, contentBorder.right, contentBorder.bottom, t))
+						|> alignMRightForRTL,
+						buildFooter()
+					),
+					TEmpty()
+				),
+			]
+			|> MLinesA
+			|> (\f -> m2t(f, parent))
+		else {
+		//vertical stepper
+			connectorLine = \_size -> TRectangle([Fill(contrastingColor(parent))], TFixed(1.0, _size)) |> \f -> TAlpha(const(0.12), f);
+
+			addConnectorLine = \f ->
+				TGroup2(
+					TCenterIn(f, TFixed(0.0, 32.0)),
+					TFixed(8.0, 0.0),
+				);
+
+			defColor = parent.theme.textColor;
+			defFontStyles = extractStruct(m.style, MHeaderTextStyles([], [], false));
+
+			fontSizeTitle = extractStruct(defFontStyles.titleStyle, MCustomFont(14.0, "Roboto", 0.87)).size;
+			fontSizeSubtitle = extractStruct(defFontStyles.subtitleStyle, MCustomFont(12.0, "Roboto", 0.54)).size;
+
+			textColorTitle : MColor = extractStruct(defFontStyles.titleStyle, defColor);
+			textColorSubtitle : MColor = extractStruct(defFontStyles.subtitleStyle, defColor);
+
+			textStyleTitle = \val : MFontStyle -> MTextStyle2CharacterStyle([val, textColorTitle], parent.theme.lightBackground);
+			textStyleSubtitle = \val : MFontStyle -> MTextStyle2CharacterStyle([val, textColorSubtitle], parent.theme.lightBackground);
+
+			createTextTitle = \text, isSelected, isError, opacity -> {
+				textColor : MColor = if (isError) MErrorColor() else textColorTitle;
+				textFontFamily = if (isSelected && !isError) "RobotoMedium" else "Roboto";
+
+				if (defFontStyles.truncateText)
+					MEllipsisText(text, [MShowTooltip(const(true)), MCustomFont(fontSizeTitle, textFontFamily, opacity), textColor])
+					|> (\f -> m2t(f, parent))
+				else
+					TText(text, [FontSize(fontSizeTitle), FontFamily(textFontFamily), FillOpacity(opacity), MFill(textColor)]);
+			}
+
+			createTextSubtitle = \text, isError, opacity -> {
+				textColor : MColor = if (isError) MErrorColor() else textColorSubtitle;
+
+				subtitle =
+					if (text == "")
+						TEmpty()
+					else if (defFontStyles.truncateText)
+						MEllipsisText(text, [MShowTooltip(const(true)), MCustomFont(fontSizeSubtitle, "Roboto", opacity), textColor])
+						|> (\f -> m2t(f, parent))
+					else
+						MParagraph2T(parent, text, [MCustomFont(fontSizeSubtitle, "Roboto", opacity), textColor]);
+				
+				subtitle		
+				|> TBorderTop(intervalBtwTitles)
+				|> (\t -> if (text == "") TSizeOf(t) else t)
+			}
+
+			makeStep = \id, step -> {
+				complete = completes[id];
+				optionalMsg = extractStruct(step.type, MOptionalStep(make(""))).text;
+				errorMsg = extractStruct(step.state, MultilineErrorState(make(""))).text;
+				showStepError = make(false);
+				enabled = extractStruct(step.state, MEnabled(const(true))).enabled;
+				isFirstVisibleStepB = make(false);
+				isLastVisibleStepB = make(false);
+				click = make(false);
+				inside = make(false);
+
+				TIf(showStepError,
+					warningIcon,
+					TIf(feq(selectedId, id),
+						activeLetterIcon(id),
+						TIf(complete,
+							TIf(fand(clickableSteps[id], const(!stepEditableOnComplete)), editIcon, checkCircleIcon),
+							inactiveLetterIcon(id)
+						)
+					)
+				)
+				|> addConnectorLine
+				|> (\f -> TBorder(0., 4., 12., 0., f))
+				|> (\f -> MCols2(
+						f,
+						TSelect3(showStepError, selectedId, complete, \showErr, selId, isComplete -> {
+							isSelected = selId == id;
+							op =
+								if (showErr) Pair(0.87, 0.54)
+								else if (isSelected) Pair(0.87, 0.54)
+								else if (!isComplete) Pair(0.26, 0.20)
+								else if (stepEditableOnComplete) Pair(0.87, 0.54)
+								else Pair(0.56, 0.54);
+
+							TLines2(
+								createTextTitle(step.title, isSelected, showErr, op.first),
+								TIf(
+									if (showErr) fneq(errorMsg, "") else const(false),
+									TSelect(errorMsg, \val -> createTextSubtitle(val, showErr, op.second)),
+									TSelect(optionalMsg, \val -> createTextSubtitle(val, showErr, op.second))
+								)
+							)
+						})
+						|> (\t -> TCenterYIn(t, TFixed(0.0, 40.0)))
+					)
+				)
+				|> (\f : Material -> {
+					isClickable = if (linearStepper) {
+						allowClickOnStartB = fmax(isFirstVisibleStepB, fand(feq(selectedId, id), fnot(showFirstOnStartB)));
+						editable =
+							fand(
+								clickableSteps[id],
+								fOr(
+									const(editableSteps[id]),
+									fif(complete,
+										const(stepEditableOnComplete),
+										allowClickOnStartB
+									)
+								)
+							);
+
+						fif(showStepError, const(true), editable);
+					} else
+						fif(complete, clickableSteps[id], const(true));
+
+					MIf(
+						isClickable,
+						MCursor(FingerCursor(), MMouseDownAround(None(), click, inside, nop, f)),
+						f
+					)
+				})
+				|> (\f ->
+					MLines2A(
+						f,
+						MIf(fand(feq(selectedId, id), showFirstOnStartB),
+							MLet("content",
+								MLines([
+									MBorder(contentBorder.left, contentBorder.top, contentBorder.right, contentBorder.bottom,
+										TCopySize(
+											steps[forceRange(id, 0, length(steps) - 1)].content()
+											|> (\f2 -> m2t(f2, parent)),
+											\tr ->
+												TShowLazy(
+													showSFeedback,
+													\ -> TGroup2(
+														TRectangle([MFill(MBackgroundColor(parent.theme.lightBackground))], tr),
+														TCenterIn(
+															m2t(MProgressCircle([]), parent),
+															tr
+														)
+													)
+												),
+											true
+										)
+									),
+									buildFooter(),
+								]),
+								MCols2(
+									// Without of MAvailable() the height of MSeparator() will be zero regardless of content height
+									MSeparator(false) |> (\s -> MAvailable(s, TGhost("content"))),
+									TDisplay("content")
+								)
+								|> MBorderLeft(stepIconSize / 2.0 + 1.0)
+							),
+							MIf(isLastVisibleStepB,
+								TEmpty(),
+								connectorLine(24.0)
+								|> MBorderLeft(stepIconSize / 2.0 + 1.0)
+								|> (\m2 -> MGroup2(m2, TFixed(0.0, 24.0)))
+							)
+						)
+					)
+				)
+				|> (\f ->
+					MConstruct(
+						[
+							makeSubscribe2(showErrorMessage, \val ->
+								if (getValue(selectedId) == id) nextDistinct(showStepError, val)
+								else nextDistinct(showStepError, false)
+							),
+							makeSubscribe2(click, \c -> if (c) {
+								nextDistinct(showFirstOnStartB, true);
+								next(selectedId, id);
+							}),
+							makeSubscribe(stepsEnabledArr, \arr -> {
+								nextDistinct(isFirstVisibleStepB, id == elemIndex(arr, true, -1));
+								nextDistinct(isLastVisibleStepB, id == either( lastfindi(arr, eq(true)), -1));
+							}),
+						],
+						f
+					)
+				)
+				|> (\f -> MShow(enabled, f))
+			};
+
+			mapi(steps, makeStep)
+			|> MLines
+			|> (\f -> MBorder4(24.0, f))
+			|> (\m2 -> 
+				if (stepperAddScroll)
+					MScroll(
+						m,
+						TFillXY(),
+						[
+							TScrollBound(true, true),
+							TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)
+						]
+					)
+				else m2)
+			|> (\f -> m2t(f, parent))
+		}
+	)
+	|> (\t -> TConstruct([
+			makeSubscribe(selectedId, \id -> {
+				nextDistinct(enabledBackButton, checkEnabledBackButton(id, linearStepper, completes, editableSteps, enabledSteps, stepEditableOnComplete));
+				if (id >= 0 && id < length(steps))
+					nextDistinct(enabledCancelButton, !(cancelFns[id] == nop));
+				nextDistinct(enabledContinueButton, id < length(steps));
+			})
+		], t))
+}
+
+createHeader(parent : MFocusGroup, steps, completes, clickableSteps, editableSteps, showFirstOnStartB, selectedId, alternativeLabel,
+	linearStepper, showErrorMessage, stepEditableOnComplete, intervalBtwTitles, warningIcong : Tropic,
+	activeLetterIcon : (int) -> Tropic, editIcon : Tropic, checkCircleIcon : Tropic, inactiveLetterIcon : (int) -> Tropic, m2t) -> Tropic {
+	if (alternativeLabel)
+		createAlternativeSpec(parent, steps, completes, clickableSteps, editableSteps, showFirstOnStartB, selectedId, linearStepper,
+			showErrorMessage, stepEditableOnComplete, intervalBtwTitles, warningIcong, activeLetterIcon,
+			editIcon, checkCircleIcon, inactiveLetterIcon, m2t
+		)
+	else
+		createSpec(parent, steps, completes, clickableSteps, editableSteps, showFirstOnStartB, selectedId, linearStepper,
+			showErrorMessage, stepEditableOnComplete, intervalBtwTitles, warningIcong, activeLetterIcon, editIcon, checkCircleIcon,
+			inactiveLetterIcon, m2t
+		)
+}
+
+createAlternativeSpec(parent : MFocusGroup, steps : [MStep], completes : [DynamicBehaviour<bool>], clickableSteps : [Transform<bool>], editableSteps : [bool], showFirstOnStartB: DynamicBehaviour<bool>, selectedId: DynamicBehaviour<int>,
+	linearStepper: bool, showErrorMessage: DynamicBehaviour<bool>, stepEditableOnComplete : bool,
+	intervalBtwTitles : double, warningIcon : Tropic, activeLetterIcon : (int) -> Tropic, editIcon : Tropic, checkCircleIcon : Tropic,
+	inactiveLetterIcon : (int) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	enabledSteps = map(steps, \step -> extractStruct(step.state, MEnabled(const(true))).enabled);
+	stepsEnabledArr = fmerge(enabledSteps);
+
+	isFirstEnabled = \id -> id == either(findi(enabledSteps, fgetValue), -1);
+	isLastEnabled = \id -> id == either(lastfindi(enabledSteps, fgetValue), -1);
+
+	hLine = TRectangle([MFill(MGrey(400))], TFillXH(1.));
+	hLineHidden = TRectangle([MFill(MGrey(700)), FillOpacity(0.)], TFillXH(1.));
+	makeLine = \isHidden ->
+		TCenterYIn(
+			if (isHidden) hLineHidden else hLine,
+			THeight(TGhost("icon"))
+		);
+
+	block = TScale(fselect(stepsEnabledArr, FLift(\arr -> Factor(1. / i2d(length(filter(arr, idfn))), 0.))), TFillX());
+	centerInBlock = \txt -> TCenterXIn(txt, block);
+
+	makeStepHeaderBlock = \id, icon, text ->
+		/* Icons have already 2dp border */
+		TLines2(
+			TColsA([
+				makeLine(isFirstEnabled(id)),
+				TDisplay("icon") |> TBorderLeftRight(6.),
+				makeLine(isLastEnabled(id)),
+			]),
+			text
+			|> TBorderTop(14.)
+		)
+		|> (\t -> TAvailable(t, TGroup2(block, TFillY())))
+		|> (\t -> TLet("icon", icon, t));
+
+	textColor = parent.theme.textColor;
+	textFill = Fill(contrastingColor(parent));
+	textStyle = \val -> MTextStyle2CharacterStyle([val, textColor], parent.theme.lightBackground);
+	makeStyle = \size, opacity, color ->
+		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MFill(color)];
+
+	makeTitle = \step, style ->
+		TText(step.title, style)
+		|> centerInBlock;
+
+	makeAdditionText = \msg, style ->
+		TDynamicText(msg, style)
+		|> centerInBlock
+		|> TBorderTop(intervalBtwTitles);
+
+	makeStep = \id, step -> {
+		complete = completes[id];
+		optionalMsg = extractStruct(step.type, MOptionalStep(make(""))).text;
+		errorMsg = extractStruct(step.state, MultilineErrorState(make(""))).text;
+		showStepError = make(false);
+		isFirstVisibleStepB = make(id == elemIndex(stepsEnabledArr |> fgetValue, true, -1));
+		click = make(false);
+
+		makeText = \addMsg, titleStyle, addStyle ->
+			TLines2(
+				makeTitle(step, titleStyle),
+				makeAdditionText(addMsg, addStyle)
+			);
+
+		TShowLazy(enabledSteps[id],
+			\ ->
+				makeStepHeaderBlock(id,
+					TIf(showStepError,
+						warningIcon,
+						TIf(feq(selectedId, id),
+							activeLetterIcon(id),
+							TIf(complete,
+								TIf(clickableSteps[id], editIcon, checkCircleIcon),
+								inactiveLetterIcon(id)
+							)
+						)
+					),
+					TIf(showStepError,
+						makeText(
+							fif(feq(errorMsg, ""), optionalMsg, errorMsg),
+							makeStyle(14., 0.87, MErrorColor()),
+							makeStyle(12., 0.54, MErrorColor())
+						),
+						TIf(feq(selectedId, id),
+							makeText(
+								optionalMsg,
+								textStyle(MButtonStyle()),
+								textStyle(MCaption())
+							),
+							TIf(complete,
+								makeText(
+									optionalMsg,
+									makeStyle(14., 0.56, contrastingMColor(parent)),
+									makeStyle(12., 0.54, contrastingMColor(parent))
+								),
+								makeText(
+									optionalMsg,
+									makeStyle(14., 0.26, contrastingMColor(parent)),
+									makeStyle(12., 0.2, contrastingMColor(parent))
+								)
+							)
+						)
+					)
+				)
+				|> (\t -> TConstruct([
+					makeSubscribe2(showErrorMessage, \val -> if (getValue(selectedId) == id) nextDistinct(showStepError, val)),
+					makeSubscribe2(click, \c -> if (c) {
+						next(selectedId, id);
+						nextDistinct(showFirstOnStartB, true);
+					}),
+					makeSubscribe2(stepsEnabledArr, \arr ->
+						nextDistinct(isFirstVisibleStepB, id == elemIndex(arr, true, -1))
+					)
+				], t))
+		)
+		|> (\f -> {
+			isClickable = 
+				if (linearStepper) {
+					allowClickOnStartB = fand(isFirstVisibleStepB, fnot(fand(feq(selectedId, id), showFirstOnStartB)));
+					editable = fand(clickableSteps[id], fOr(const(editableSteps[id]), fif(complete, const(stepEditableOnComplete), allowClickOnStartB)));
+
+					fif(showStepError, const(true), editable)
+				} else
+					fif(complete, clickableSteps[id], const(true));
+
+			TIf(
+				isClickable,
+				TInteractive([TMouseDown(click)], TCursor(FingerCursor(), f)),
+				f
+			)
+		})
+	};
+
+	mapi(steps, makeStep)
+	|> TColsA
+	|> (\f -> TBorder(24., 22., 24., 24., f))
+}
+
+createSpec(parent : MFocusGroup, steps : [MStep], completes : [DynamicBehaviour<bool>], clickableSteps : [Transform<bool>], editableSteps : [bool], showFirstOnStartB: DynamicBehaviour<bool>, selectedId : DynamicBehaviour<int>,
+	linearStepper : bool, showErrorMessage: DynamicBehaviour<bool>, stepEditableOnComplete : bool,
+	intervalBtwTitles : double, warningIcon : Tropic, activeLetterIcon : (int) -> Tropic, editIcon : Tropic, checkCircleIcon : Tropic,
+	inactiveLetterIcon : (int) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	enabledSteps = map(steps, \step -> extractStruct(step.state, MEnabled(const(true))).enabled);
+	stepsEnabledArr = fmerge(enabledSteps);
+
+	textColor = parent.theme.textColor;
+	textFill = Fill(contrastingColor(parent));
+	textStyle = \val -> MTextStyle2CharacterStyle([val, textColor], parent.theme.lightBackground);
+	makeStyle = \size, opacity, color ->
+		[FontSize(size), FontFamily("Roboto"), FillOpacity(opacity), MFill(color)];
+
+	makeTitle = \step, style ->
+		TText(step.title, style);
+
+	makeAdditionText = \msg, style ->
+		TDynamicText(msg, style)
+		|> TBorderTop(intervalBtwTitles);
+
+	makeStep = \id, step -> {
+		showStepError = make(false);
+		complete = completes[id];
+		optionalMsg = extractStruct(step.type, MOptionalStep(const(""))).text;
+		errorMsg = extractStruct(step.state, MultilineErrorState(make(""))).text;
+		isFirstVisibleStepB = make((id == elemIndex(stepsEnabledArr |> fgetValue, true, -1)));
+		click = make(false);
+		inside = make(false);
+
+		connectorLine =
+			m2t(MCenterY(MSeparatorSize(true, 16.0)), parent)
+			|> TBorderLeftRight(8.)
+			|> (\t -> TShow(isFirstVisibleStepB, t));
+
+		withConnectorLine = \icon, label ->
+			[
+				connectorLine,
+				TCenterYIn(icon, TFixed(0.0, 32.0))
+				|> TBorderRight(8.),
+				TCenterIn(label, TFixed(0.0, 32.0))
+			]
+			|> TColsA;
+
+		makeText = \addMsg, titleStyle, addStyle ->
+			TLines2(
+				makeTitle(step, titleStyle),
+				makeAdditionText(addMsg, addStyle)
+			);
+
+		TIf(showStepError,
+			withConnectorLine(
+				warningIcon,
+				makeText(
+					fif(feq(errorMsg, ""), optionalMsg, errorMsg),
+					makeStyle(14., 0.87, MErrorColor()),
+					makeStyle(12., 0.54, MErrorColor())
+				)
+			),
+			TIf(feq(selectedId, id),
+				withConnectorLine(
+					activeLetterIcon(id),
+					makeText(optionalMsg, textStyle(MButtonStyle()), textStyle(MCaption()))
+				),
+				TIf(complete,
+					withConnectorLine(
+						TIf(clickableSteps[id], editIcon, checkCircleIcon),
+						makeText(
+							optionalMsg,
+							makeStyle(14., 0.56, contrastingMColor(parent)),
+							makeStyle(12., 0.54, contrastingMColor(parent))
+						)
+					),
+					withConnectorLine(
+						inactiveLetterIcon(id),
+						makeText(
+							optionalMsg,
+							makeStyle(14., 0.26, contrastingMColor(parent)),
+							makeStyle(12., 0.2, contrastingMColor(parent))
+						)
+					)
+				)
+			)
+		)
+		|> (\f ->
+			TConstruct(
+				[
+					makeSubscribe2(showErrorMessage, \val -> if (getValue(selectedId) == id) nextDistinct(showStepError, val)),
+					makeSubscribe2(click, \c -> if (c) {
+						next(selectedId, id);
+						nextDistinct(showFirstOnStartB, true);
+					}),
+					makeSubscribe2(stepsEnabledArr, \arr ->
+						nextDistinct(isFirstVisibleStepB, id == elemIndex(arr, true, -1))
+					)
+				],
+				f
+			)
+		)
+		|> (\f -> TShowLazy(enabledSteps[id], \ -> f))
+		|> (\f -> {
+			isClickable = if (linearStepper) {
+				allowClickOnStartB = fand(isFirstVisibleStepB, fnot(fand(feq(selectedId, id), showFirstOnStartB)));
+				editable = fand(clickableSteps[id], fOr(const(editableSteps[id]), fif(complete, const(stepEditableOnComplete), allowClickOnStartB)));
+
+				fif(showStepError, const(true), editable)
+			} else
+				fif(complete, clickableSteps[id], const(true));
+
+			TIf(isClickable,
+				TInteractive([TMouseDown(click), TMouseInside(inside, true)], TCursor(FingerCursor(), f)),
+				f
+			)
+		})
+	};
+
+	mapi(steps, makeStep)
+	|> TCols
+	|> (\f -> TBorder(24., 20., 24., 20., f))
+	|> (\m -> m2t(MScroll(
+			m,
+			TFillXY(),
+			[
+				TScrollBound(true, true),
+				TScrollDontHandle(),
+				TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)
+			]
+		), parent))
+	|> (\f -> TAvailable(f, TFillXH(72.0)))
+}
+
+checkEnabledBackButton(currentId, linearStepper, completes, editableSteps, enabledSteps : [Transform<bool>], stepEditableOnComplete : bool) -> bool {
+	if ((currentId > 0 && !linearStepper) ||
+			foldi(subrange(completes, 0, currentId), false, \id, res, complite -> res || (!getValue(complite) && (enabledSteps[id] |> fgetValue)))) true
+	else if (currentId > 0 && linearStepper && stepEditableOnComplete)
+		true
+	else
+		foldi(subrange(editableSteps, 0, currentId), false, \id, res, editeble -> (res || (editeble && (enabledSteps[id] |> fgetValue))))
+}
+
+getNextSelectedId(id : int, linearStepper, enabledSteps, editableSteps, completes, steps) -> int {
+	if (id >= length(steps) - 1)
+		length(steps)
+	else if (id < 0)
+		0
+	else if (!fgetValue(enabledSteps[id + 1]) || (!editableSteps[id + 1] && (fgetValue(completes[id + 1]) || (linearStepper && fgetValue(completes[id + 1])))))
+		getNextSelectedId(id + 1, linearStepper, enabledSteps, editableSteps, completes, steps)
+	else
+		id + 1;
+}
+
+getPrevSelectedId(id : int, linearStepper, enabledSteps, editableSteps, completes, steps, stepEditableOnComplete) -> int {
+	if (id >= length(steps))
+		id
+	else if (id <= 0)
+		0
+	else if (fgetValue(enabledSteps[id - 1]) && (!linearStepper || editableSteps[id - 1] || !fgetValue(completes[id - 1])))
+		id - 1
+	else if (fgetValue(enabledSteps[id - 1]) && (linearStepper && stepEditableOnComplete && fgetValue(completes[id - 1])))
+		id - 1
+	else
+		getPrevSelectedId(id - 1, linearStepper, enabledSteps, editableSteps, completes, steps, stepEditableOnComplete);
+}
+
+MStepperTextButtonAddEnabled = \m : MTextButton, enabled : Transform<bool> -> {
+	MTextButton(m.text, m.onClick, m.style, replaceStruct(m.state, MEnabled(fmin(extractStruct(m.state, MEnabled(const(true))).enabled, enabled))))
+}
+
+countCompliteSteps(completes : [DynamicBehaviour<bool>], enabledSteps : [Transform<bool>]) -> double {
+	foldi(completes, 0.0, \id, acc, complete -> if (getValue(complete) && fgetValue(enabledSteps[id])) acc + 1.0 else acc)
+}
+
+countVisisbleSteps(enabledSteps : [Transform<bool>]) -> double {
+	fold(enabledSteps, 0.0, \acc, enabled -> if (enabled |> fgetValue) acc + 1.0 else acc)
+}

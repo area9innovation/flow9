@@ -1,0 +1,149 @@
+import wigi/selection;
+import wigi/recursive_tools;
+import wigi/table_cells_creator;
+
+export {
+	// Checks if specified selection is a rectangular one inside a table
+	getRectangularSelection(selection : WigiSelection, root : WigiElement, allowSingleCellSelection : bool) -> Maybe<RectangularSelection>;
+		RectangularSelection: (
+			path: [int],
+			isInside: (int) -> bool,	// A function that checks if a cell with given index is inside the selection
+			minRow: int,	// Including both ends, min and max
+			maxRow: int,
+			minCol: int,
+			maxCol: int,
+			rangeStr: string
+		);
+
+	// Checks for a rectangular selection inside a table, otherwise defaults to regular selection
+	isInsideWigiSelection(selection : WigiSelection, elementPath : [int], element : WigiElement, root : WigiElement, allowSingleCellSelection : bool) -> bool;
+
+	applyToSelection(root : WigiElement, cursor: [int], selection : WigiSelection, fn : ([int]) -> void) -> void;
+}
+
+rectangularSelectionEnabled = getUrlParameter("wigirect") != "0";
+
+getRectangularSelection(selection : WigiSelection, root : WigiElement, allowSingleCellSelection : bool) -> Maybe<RectangularSelection> {
+	if (!rectangularSelectionEnabled) {
+		None()
+	} else {
+		tablePath = wigiFindParentRecursive(root, [dummyWigiTable], selection.start);
+
+		if (tablePath != [] && isPositionParentGeneral(tablePath, selection.end)) {
+			// We have found our table, but let's make sure it is a table
+			table = getElementAtPosition(root, tablePath);
+
+			switch (table: WigiElement) {
+				WigiRecursive(elements, type, style): {
+					switch (type: WigiRecursiveType) {
+						WigiTable(__, __, __, __): {
+							// Finally, check that start and end of selection belong to different cells
+							l = length(tablePath);
+
+							if (!allowSingleCellSelection && (l < 0 || l >= length(selection.start) || l >= length(selection.end) || selection.start[l] == selection.end[l])) {
+								None()
+							} else {
+								rowsCols = getTableColumnsRows(type);
+
+								// Helper to find which row and column the path belongs to
+								getRowColumn = \cellIndex -> {
+									if (cellIndex < 0 || cellIndex >= length(rowsCols.first) || cellIndex >= length(rowsCols.second)) {
+										Pair(-1, -1)	// We give it -1 so that it is guaranteed to be outside of any selection
+									} else {
+										colIndex = rowsCols.first[cellIndex];
+										rowIndex = rowsCols.second[cellIndex];
+										Pair(rowIndex, colIndex)
+									}
+								}
+
+								// Now, let's see which column/row start/end of the selection belong to
+								startCell = getRowColumn(selection.start[l]);
+								endCell = getRowColumn(selection.end[l]);
+
+								// Our rectangular selection
+								minRow = min(startCell.first, endCell.first);
+								minCol = min(startCell.second, endCell.second);
+								maxRow = max(startCell.first, endCell.first);
+								maxCol = max(startCell.second, endCell.second);
+
+								isInside = \i -> {
+									rowcol = getRowColumn(i);
+									minRow <= rowcol.first && rowcol.first <= maxRow &&
+									minCol <= rowcol.second && rowcol.second <= maxCol
+								}
+
+								rangeStr = {
+									aCode = getCharCodeAt("A", 0);
+
+									if (minCol == maxCol && minRow == maxRow) {
+										fromCharCode(aCode + minCol) + i2s(minRow + 1)
+									} else {
+										fromCharCode(aCode + minCol) + i2s(minRow + 1) + ":" +
+										fromCharCode(aCode + maxCol) + i2s(maxRow + 1)
+									}
+								}
+
+								Some(RectangularSelection(
+									tablePath,
+									isInside,
+									minRow, maxRow, minCol, maxCol,
+									rangeStr
+								))
+							}
+						}
+						default: None();
+					}
+				}
+				default: None();
+			}
+		} else {
+			None()
+		}
+	}
+}
+
+isInsideWigiSelection(selection : WigiSelection, elementPath : [int], element : WigiElement, root : WigiElement, allowSingleCellSelection : bool) -> bool {
+	regularCheck = \ -> isInsideRegularWigiSelection(selection, elementPath, element);
+
+	if (rectangularSelectionEnabled) {
+		// First, check if both ends of selection are inside a table
+		rectangularSelection = getRectangularSelection(selection, root, allowSingleCellSelection);
+
+		eitherFn(rectangularSelection, \rectSelection -> {
+			if (isPositionParentGeneral(rectSelection.path, elementPath) && elementPath != rectSelection.path) {
+				// OK, we are inside the same table, let's find out cell indices of start/end and of the element
+				posCellIndex = elementPath[length(rectSelection.path)];
+				rectSelection.isInside(posCellIndex)
+			} else {
+				regularCheck()
+			}
+		}, regularCheck)
+	} else {
+		regularCheck()
+	}
+}
+
+applyToSelection(root : WigiElement, cursor: [int], selection : WigiSelection, fn : ([int]) -> void) -> void {
+	rectSelectionMaybe = getRectangularSelection(selection, root, true);
+	switch (rectSelectionMaybe: Maybe<RectangularSelection>) {
+		Some(rectSelection): {
+			table = cast(getElementAtPosition(root, rectSelection.path): WigiElement -> WigiRecursive);
+			a = concatA(mapi(table.elements, \i, el -> if (rectSelection.isInside(i)) [i] else []));
+			iter(a, \i -> {
+				if (i > 0) {
+					fn(concat(rectSelection.path, [i, 0, 0, 0, 0]));
+				} else  {
+					// for the first selected cell we have to honor the start of the selection instead of using just the start of the cell
+					fn(selection.start);
+				}
+			});
+		}
+		None(): {
+			el = getElementAtPosition(root, cursor);
+			cursor_ = if (isWigiRecursive(el, [dummyWigiSpreadsheetCell]))
+						concat(cursor, [0, 0, 0, 0])
+					else cursor;
+			fn(cursor_)
+		}
+	}
+}

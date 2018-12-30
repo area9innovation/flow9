@@ -1,0 +1,572 @@
+import tropic/tropic_gui;
+import ui/scrollable;
+
+export {
+	// A text input box.
+	TTextInput(
+		content : DynamicBehaviour<string>,
+		style : [TTextInputStyle],
+		state : [TTextInputState],
+		size : Tropic, // A single line will only take one line height space, ignoring the height of this
+	) -> Tropic;
+
+		TTextInputStyle ::=
+			CharacterStyle, // ignore parameter
+			WordWrap, // ignore parameter
+			Multiline, // ignore parameter
+			Numeric, // ignore parameter, not supported for cpp
+			ReadOnly, // ignore parameter
+			PasswordMode, // ignore parameter
+			TextInputType,
+			TextInputFilter,
+			MaxChars,
+			TabIndex,
+			TabEnabled,
+			FrameStyle,
+			AutoWidth,	// only for single line
+			EatKeyDownOnFocus,
+			ForceSizeHeight, // forces single line input to take height of the size tropic
+			AccessProperty,
+			TTextPlaceholder, //placeholder text for empty text input
+			AutoAlign, // Works only in js now
+			HideCustomScroll;
+
+				FrameStyle(margin : double, radius : double, style : [GraphicsStyle]); // Default is white with dark gray hairline frame (margin is 1.0, radius is 1.0)
+				AutoWidth();
+				ForceSizeHeight();
+				HideCustomScroll();
+
+		extractCharacterStyles(style : [TTextInputStyle]) -> [CharacterStyle];
+		TTextPlaceholder(text : string, style : [CharacterStyle]);
+
+		TTextInputState ::= TTextInputFocus, TTextInputPosition, TTextInputSelection, TTextInputScroll;
+			TTextInputFocus : (focus : DynamicBehaviour<bool>);
+			TTextInputPosition : (position : DynamicBehaviour<int>);
+			TTextInputSelection : (selection : DynamicBehaviour<int>); // -1 for no selection
+			TTextInputScroll : (info : DynamicBehaviour<ScrollInfo>); // not supported for cpp (only number of lines is reliable)
+
+
+
+		// TODO:
+			// js: drag resizing icon in the right bottom
+
+	/*
+		Examples of usage in Form:
+		- fixed size, multiline
+			tropic2form(
+				TTextInput(textB, [FontSize(20.0), Multiline(true)], [], TFixed(100.0, 40.0))
+			)
+
+		- autosize, single line
+			tropic2form(
+				TTextInput(textB, [FontSize(20.0), AutoWidth], [], TEmpty)
+			)
+	*/
+}
+
+///////////////////////
+// styles processing
+extractCharacterStyles(style : [TTextInputStyle]) -> [CharacterStyle] {
+	style2 =
+		filter(style, \s ->
+			switch(s) {
+				FontFamily(__): true;
+				FontSize(__): true;
+				Fill(__): true;
+				FillOpacity(__): true;
+				LetterSpacing(__): true;
+				Sharpness(__,__,__): true;
+				BackgroundFill(__): true;
+				BackgroundFillOpacity(__): true;
+				default: false;
+			}
+		);
+
+	map(style2, \s -> cast(s : TTextInputStyle -> CharacterStyle))
+}
+
+extractStandartTextInputStyles(style : [TTextInputStyle]) -> [TextInputState] {
+	fold(style, [extractStruct(style, AutoAlign(AutoAlignNone()))], \acc, s ->
+		switch(s) {
+			TextInputType(__): arrayPush(acc, s);
+			WordWrap(__): arrayPush(acc, s);
+			Multiline(__): arrayPush(acc, s);
+			Numeric(__): arrayPush(acc, s);
+			ReadOnly(__): arrayPush(acc, s);
+			MaxChars(__): arrayPush(acc, s);
+			PasswordMode(__): arrayPush(acc, s);
+			TabIndex(__): arrayPush(acc, s);
+			TabEnabled(__) : arrayPush(acc, s);
+			TextInputFilter(__): arrayPush(acc, s);
+			default: acc;
+		}
+	);
+}
+
+dummyTextInputModel() -> TextInputModel {
+	TextInputModel("", 0.0, 0.0, 0, Selection(0, 0), false, None())
+}
+
+TTextInput(
+	contentB : DynamicBehaviour<string>,
+	style : [TTextInputStyle],
+	state : [TTextInputState],
+	size : Tropic,
+) -> Tropic {
+	stateChange : DynamicBehaviour<[TextInputState]> = make([]);
+
+	reader = ref dummyTextInputModel;
+
+	accessProperties = TTextInputStyle2AccessProperty(style);
+
+	///////////////////
+	// external state
+	///////////////////
+	focusB = extractStruct(state, TTextInputFocus(make(false))).focus;
+	positionB = extractStruct(state, TTextInputPosition(make(0))).position;
+	selectionPositionB = extractStruct(state, TTextInputSelection(make(-1))).selection;
+	scrollInfoB = extractStruct(state, TTextInputScroll(make(ScrollInfo(1, 1, 1)))).info;
+
+	///////////////////
+	// iternal state
+	///////////////////
+	awhB = makeWH(); // available box size
+	ahB = make(0.0); // same as awhB.height
+	heightB = make(0.0); // real text height. if bigger than ahB, scrollbar will be added
+
+	// selectionB - defined below
+
+	scrollPosB = make(0.0);
+	numLinesB = make(1);
+	visibleNumLinesB = make(1);
+
+	//////////////
+	// styles
+	//////////////
+	characterStyle = extractCharacterStyles(style);
+	multiline = extractStruct(style, Multiline(false)).multiline;
+	forceSizeHeight = contains(style, ForceSizeHeight());
+	hideCustomScroll = contains(style, HideCustomScroll());
+
+	autoWidth = contains(style, AutoWidth());
+	frameStyle = extractStruct(style, FrameStyle(1.0, 1.0, [Fill(white), Stroke(darkGray), StrokeWidth(1.0)]));
+	eatKeyDownOnFocus = contains(style, EatKeyDownOnFocus());
+
+	//////////////
+	// placeholder
+	//////////////
+	placeholder = extractStruct(style, TTextPlaceholder("", []));
+	placeholderText = placeholder.text;
+	defaultPlaceholderStyle = arrayPush(characterStyle, FillOpacity(0.5));
+	placeholderStyle = if (placeholder.style == []) defaultPlaceholderStyle else placeholder.style;
+	showPlaceholder = make(false);
+
+	//////////////
+	// focus
+	//////////////
+	focusId = getFocusId();
+	if (focusId == -1) {
+		println("A TextInput should not have a focus id of -1.");
+	}
+
+	//////////////////////////
+	// position/selection
+	//////////////////////////
+	positions2selection : (int, int) -> Selection = \position0, selectionPosition0 -> {
+		position = min(max(position0, 0), strlen(getValue(contentB)));
+
+		if (selectionPosition0 == -1) {
+			Selection(position, position)
+		} else {
+			selectionPosition = min(max(selectionPosition0, 0), strlen(getValue(contentB)));
+
+			Selection(position, selectionPosition)
+		}
+	}
+
+	// proxy between internal flash data and extrnal pair of position and selectionPosition
+	selectionB = make(positions2selection(getValue(positionB), getValue(selectionPositionB)));
+
+	readSelection = \-> {
+		tim = ^reader();
+
+		if (tim.selection.start == tim.selection.end) {
+			positions2selection(tim.cursorPosition, -1)
+		} else {
+			positions2selection(tim.selection.start, tim.selection.end)
+		}
+	}
+
+	updateSelectionAndPosition = \-> {
+		nextDistinct(selectionB, readSelection());
+	};
+
+	////////////////
+	// sizes
+	////////////////
+	text2textSize = \text -> {
+		line = strReplace(text, "\n", " ");
+		ts = getTextSize(line, characterStyle);
+		if (line == "") {
+			TextSize(5.0, ts.height)
+		} else {
+			ts
+		}
+	}
+
+	oneLineTextSize = text2textSize(getValue(contentB));
+	scrollbarWidth1 = getVScrollWidth(standartScrollableStyleWithoutGap) + standartScrollableStyleWithoutGap.borderGap;
+
+	getSmartTextSize : (int) -> TextSize = \id-> {
+		awh = getValue(awhB);
+		if(multiline) {
+			if (awh.height >= getValue(heightB)) {
+				TextSize(awh.width, awh.height)
+			} else if (cpp && getValue(focusB)) {
+				// In cpp we are hiding vertical scrollbar in edit mode because there is native one
+				TextSize(awh.width, awh.height)
+			} else {
+				TextSize(awh.width - scrollbarWidth1, awh.height)
+			}
+		} else {
+			if (autoWidth) {
+				ts = text2textSize(getValue(contentB));
+				TextSize(max(ts.width, awh.width), if (forceSizeHeight) awh.height else ts.height)
+			} else {
+				TextSize(awh.width, if (forceSizeHeight) awh.height else oneLineTextSize.height)
+			}
+		}
+	}
+
+	//////////////
+	// scroll
+	//////////////
+	updateScrollInfo = \si, id -> {
+		ah = getValue(ahB);
+
+		visibleLinesNumber = si.bottomScrollV - si.scrollV + 1;
+		nextDistinct(visibleNumLinesB, visibleLinesNumber);
+		nextDistinct(numLinesB, si.numLines);
+
+		height = i2d(si.numLines) / i2d(visibleLinesNumber) * ah;
+
+		nextDistinct(heightB, height);
+
+		maxScroll = si.numLines - visibleLinesNumber + 1;
+		r = if (maxScroll == 1) 0.0 else i2d(si.scrollV - 1) / i2d(maxScroll - 1);
+		nextDistinct(scrollPosB, r * (getValue(heightB) - ah));
+
+		nextDistinct(scrollInfoB, si);
+	}
+
+	readAndUpdateScrollInfo = \id -> {
+		tim = ^reader();
+
+		switch(tim.scrollinfo) {
+			Some(si): updateScrollInfo(si, id);
+			None(): nextDistinct(scrollInfoB, ScrollInfo(1, 1, 1));
+		}
+	}
+
+	scrollPosition2info = \scrollPosition -> {
+		ah = getValue(ahB);
+		height = getValue(heightB);
+
+		numLines = getValue(numLinesB);
+		visibleLinesNumber = getValue(visibleNumLinesB);
+
+		scrollV = if (height <= ah) 1 else round(scrollPosition/(height-ah) * i2d(numLines - visibleLinesNumber)) + 1;
+
+		ScrollInfo(scrollV, scrollV + visibleLinesNumber, numLines)
+	}
+
+	//////////////
+	// content
+	//////////////
+
+	readAndUpdateContent = \content -> {
+		tim = ^reader();
+		if (tim.content != content) {
+			content2 = if (multiline) content else strReplace(content, "\n", " ");
+
+			next(stateChange,
+				Content(content2, characterStyle)
+				|> (\c -> if (flash) [c, c] /* needed for flash when content is empty */ else [c])
+			);
+
+			deferUntilRender(\-> {
+				updateSelectionAndPosition();
+
+				// scrollbar might disappear
+				next(stateChange, [getSmartTextSize(4)]);
+				readAndUpdateScrollInfo(5);
+			});
+		}
+	}
+
+	//////////////
+	// FORM
+	//////////////
+	TFrame(frameStyle.margin, frameStyle.radius, frameStyle.style,
+		TFormIn(
+			Inspect([IAvailable2(awhB)], {
+				// scrollbar
+				scrollForm =
+					if (multiline && !hideCustomScroll) {
+						fakeFormToScroll = Select(heightB, \h -> Fixed(0.0, h));
+
+						scrollbar =
+							VerticalStyledScrollable(make(0.0), scrollPosB, make(0.0), ahB, fakeFormToScroll, standartScrollableStyleWithoutGap, true);
+
+						if (cpp) {
+							Invisibleb(focusB, scrollbar)
+						} else {
+							scrollbar
+						}
+					} else {
+						Empty()
+					};
+
+				textinput = TextInput(
+					concat(
+						extractStandartTextInputStyles(style),
+						// Note, this can work strange if you use constructor/destructor as
+						// global behaviors (those that comes as parameters are out of scope here)
+						[
+							// Order of the following lines is critical!
+							Content(getValue(contentB), characterStyle),
+							getSmartTextSize(21),
+							ScrollInfo(1, 1, 1),
+							Focus(getValue(focusB)),
+							positions2selection(getValue(positionB), -1),
+						]
+						|> (\c -> if (flash) insertArray(c, 1, Content(getValue(contentB), characterStyle)) /* needed for flash when content is empty */else c)
+					),
+					[
+						TextChange(\tim -> {
+							nextDistinct(contentB, tim.content);
+						}),
+						// TODO: flash.events.IMEEvent.IME_COMPOSITION should be processed to update content
+						FocusIn(\-> {
+							nextDistinct(focusB, true);
+						}),
+						FocusOut(\-> {
+							nextDistinct(focusB, false);
+						}),
+						TextScroll(\__ -> {
+							readAndUpdateScrollInfo(66);
+						})
+					],
+					[
+						StateChanger(stateChange),
+						StateQuery2(reader) //Do not delete if there is a need to add StateQuery. Used in takeSnapshot
+					]
+				);
+
+				baseline = getFormBaseline(textinput);
+
+				accessTextInput = if (length(accessProperties) > 0) Access(accessProperties, textinput) else textinput;
+				addPlaceholderText = \input ->
+					if (placeholderText != "")
+						Group([
+							Visibleb(showPlaceholder, Text(placeholderText, placeholderStyle)),
+							input
+						])
+					else
+						input;
+
+				Constructor(
+					Cols([
+						Interactive(
+							[
+								// key events are processed in textinput itself
+								MouseDown2(\handled, __ -> {
+									if (getValue(focusB)) {
+										updateSelectionAndPosition();
+									}
+									handled
+								}),
+								MouseUp2(\handled, __ -> {
+									if (getValue(focusB)) {
+										// double click won't work without it
+										updateSelectionAndPosition();
+									}
+									handled
+								}),
+								KeyDown2(\handled, __ -> {
+									if (getValue(focusB)) {
+										//println("key down");
+										deferred(\->
+											// cursor update doesn't come in the same moment for some reason
+											updateSelectionAndPosition()
+										);
+										if (eatKeyDownOnFocus) true else handled
+									} else {
+										handled
+									}
+								}),
+								MouseMove2(\handled, __ -> {
+									if (getValue(focusB)) {
+										updateSelectionAndPosition();
+									}
+									handled
+								}),
+							],
+							Baseline(const(baseline), accessTextInput |> addPlaceholderText)
+						),
+						scrollForm // Empty if single line
+					]),
+					\-> {
+						deferUntilRender(\-> {
+							// Here we can collect current status from TextInput itself. Don't change it's state here.
+							// For example, cursor might change position after textinout is fully rendered
+							updateSelectionAndPosition();
+							// We need to get height to decide if we need scrollbar or not.
+							readAndUpdateScrollInfo(32);
+							// We need to update content in cases when it's changed right before textinput creation,
+							// for example, in bidirectionalLink etc.
+							readAndUpdateContent(getValue(contentB));
+							// Force focus update
+							focus = getValue(focusB);
+							if (^reader().focus != focus)
+								next(focusB, focus);
+						});
+						unsubscribers = [
+							// subscribe(positionB, \p -> println("p:" + i2s(p))),
+							// subscribe(selectionPositionB, \s -> println("s:" + i2s(s))),
+							// subscribe(selectionB, \sel -> println("sel:" + toString(sel))),
+							// subscribe(heightB, \height -> println("height:" + toString(height))),
+							// subscribe(scrollPosB, \scrollPosition -> println("scrollPosition:" + toString(scrollPosition))),
+							subscribe2(contentB, readAndUpdateContent),
+							subscribe2(focusB, \focus -> {
+								tim = ^reader();
+
+								// http://process.area9.dk/cases/default.asp?41274
+								if (flash) {
+									if(focus) {
+										// without this check seelection appears everytime you put a cursor inside
+										newState : [TextInputState] = [Focus(focus), readSelection()];
+										next(stateChange, newState)
+									}
+								} else {
+									if (tim.focus != focus) {
+										next(stateChange, [Focus(focus)]);
+									}
+								}
+
+								if (focus) {
+									//println("focus in");
+									updateKeyboardFocus(focusId);
+									updateSelectionAndPosition();
+								} else {
+									//println("focus out");
+									releaseKeyboardFocus();
+								}
+							}),
+							if (cpp) subscribe2(focusB, \__ -> {
+								// In cpp we are hiding vertical scrollbar in edit mode because there is native one
+								next(stateChange, [getSmartTextSize(88)])
+							}) else nop,
+							bidirectionalLink(
+								selectionB,
+								positionB,
+								\selection -> {
+									if (selection.start == selection.end) {
+										selection.start
+									} else {
+										// Potentinal problem here. There was a bug in other case (selection.start == selection.end)
+										// so there could be a bug here too
+										tim = ^reader();
+										tim.cursorPosition
+									}
+								},
+								\position -> {
+									positions2selection(position, -1)
+								}
+							),
+							bidirectionalLink(
+								selectionB,
+								selectionPositionB,
+								\selection -> {
+									position = getValue(positionB);
+									if (selection.start == selection.end) {
+										-1
+									} else {
+										if (position == selection.start) {
+											selection.end
+										} else {
+											selection.start
+										}
+									}
+								},
+								\selectionPosition -> {
+									position = getValue(positionB);
+
+									positions2selection(position, selectionPosition)
+								}
+							),
+							subscribe2(selectionB, \selection : Selection -> {
+								currentSelection = readSelection();
+
+								if (currentSelection != selection) {
+									// without this check selection would be setted to (-1,-1) in cpp
+									next(stateChange, [selection]);
+								}
+
+								deferred(\-> updateSelectionAndPosition());
+							}),
+							subscribe(scrollPosB, \scrollPosition -> {
+								next(stateChange, [scrollPosition2info(scrollPosition)])
+							}),
+							subscribe(scrollInfoB, \scrollInfo -> {
+								updateScrollInfo(scrollInfo, 77)
+							}),
+							subscribe2(heightB, \height -> {
+								deferred(\->
+									next(stateChange, [getSmartTextSize(99)])
+								)
+							}),
+							subscribe(awhB, \awh -> {
+								nextDistinct(ahB, awh.height);
+
+								next(stateChange, [getSmartTextSize(94)])
+							}),
+							connectSelect2Distinctu(contentB, focusB, showPlaceholder, \text, focus -> text == "" && !focus)
+						];
+						if (getValue(focusB)) {
+							updateKeyboardFocus(focusId);
+						}
+						\-> {
+							reader := dummyTextInputModel;
+							applyall(unsubscribers);
+							keyboardFocusDies(focusId);
+						}
+					}
+				)
+			}),
+			size
+		)
+	)
+}
+
+TTextInputStyle2AccessProperty(style : [TTextInputStyle]) -> [AccessProperty] {
+	fold(style, [], \acc : [AccessProperty], st : TTextInputStyle -> {
+		switch (st : TTextInputStyle) {
+			AccessRole(__): arrayPush(acc, st);
+			AccessDescription(__): arrayPush(acc, st);
+			AccessKbdShortcutString(__): arrayPush(acc, st);
+			AccessTabindex(__): arrayPush(acc, st);
+			AccessState(__): arrayPush(acc, st);
+			AccessSelectable(): arrayPush(acc, st);
+			AccessCallback(__): arrayPush(acc, st);
+			AccessGroup(__): arrayPush(acc, st);
+			AccessChildSelected(__): arrayPush(acc, st);
+			AccessFocused(__): arrayPush(acc, st);
+			AccessEnabled(__): arrayPush(acc, st);
+			AccessAttribute(__, __): arrayPush(acc, st);
+			AccessTabOrder(__): arrayPush(acc, st);
+			AccessZorder(__): arrayPush(acc, st);
+			default : acc;
+		}
+	})
+}

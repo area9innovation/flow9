@@ -1,0 +1,61 @@
+import tools/flowc/incremental/fiprogram;
+import set;
+
+export {
+	livestructs(prog : FiProgram) -> Set<string>;
+}
+
+livestructs(prog : FiProgram) {
+	proceed = \l : FiExp, acc -> livestructsFiExp(l, acc, makeSet());
+	foldTree(
+		prog.names.toplevel,
+		makeSet(),
+		\__, fd, acc -> {
+			switch (fd) {
+				FiFunctionDec(__, lambda, __, __, __):   proceed(lambda, acc);
+				FiGlobalVar(__, value, __, __, __):      proceed(value, acc);
+				FiNativeDec(__, __, __, __, fb, __, __):
+					switch (fb) {
+						FiLambda(__, __, __, __): proceed(fb, acc);
+						default: acc;
+					}
+			}
+		}
+	)
+}
+
+livestructsFiExp(expr : FiExp, live : Set<string>, covered : Set<string>) -> Set<string> {
+	switch (expr) {
+		FiLambda(__, e, __, __):       livestructsFiExp(e, live, covered);
+		FiCall(f, es, __, __):         foldlivestructsFiExp(es, livestructsFiExp(f, live, covered), covered);
+		FiLet(__, __, e1, e2, __, __): livestructsFiExp(e2, livestructsFiExp(e1, live, covered), covered);
+		FiIf(e1, e2, e3, __, __):      foldlivestructsFiExp([e1, e2, e3], live, covered);
+		FiSwitch(e, __, cs, __, __):
+			fold(
+				cs,
+				livestructsFiExp(e, live, covered), 
+				\acc, c -> livestructsFiExp(c.body, acc, insertSet(covered, c.struct))
+			);
+		FiCast(e, __, __, __, __):     livestructsFiExp(e, live, covered);
+		FiSeq(es, __, __):             foldlivestructsFiExp(es, live, covered);
+		FiCallPrim(op, es, __, __): {
+			live1 = switch (op) {
+				FcStructPrim(sn): if (containsSet(covered, sn)) live else insertSet(live, sn);
+				default: live;
+			}
+			foldlivestructsFiExp(es, live1, covered);
+		}
+		FiVar(__, __, __):        live;
+		FiString(__, __):         live;
+		FiBool(__, __):           live;
+		FiDouble(__, __):         live;
+		FiVoid(__):               live;
+		FiInt(__, __):            live;
+        FiRequire(__, e, __, __): livestructsFiExp(e, live, covered);
+        FiUnsafe(__, fb, __, __): livestructsFiExp(fb, live, covered);
+	}
+}
+
+foldlivestructsFiExp(es : [FiExp], live : Set<string>, covered : Set<string>) -> Set<string> {
+	fold(es, live, \acc, e -> livestructsFiExp(e, acc, covered));
+}

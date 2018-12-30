@@ -1,0 +1,204 @@
+import tools/flowc/backends/wasm/fi2wasm_compile;
+import tools/flowc/backends/wasm/wasm_type_descriptor;
+import tools/flowc/manipulation/lambda_lifting;
+
+export {
+	wrap_natives(cfg : FiWasmConfig, program : FiProgram, names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>) -> FiProgram;
+}
+
+wrap_natives(cfg : FiWasmConfig, program : FiProgram, names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>) -> FiProgram {
+	fold(program.traversal, program, \prg, moduleName ->{
+		switch (lookupTree(prg.modules, moduleName)) {
+			None(): prg;
+			Some(m): {
+				newfuncs = map(m.functions, \f -> {
+					body = embedd_lambda(names, types, natives, (f.lambda.body), ref makeTree(), false);
+
+					new_lambda = FiLambda(f.lambda.args, body, f.lambda.type, f.lambda.start);
+
+					FiFunctionDec(f.name, new_lambda, f.type, f.declStart, f.defiStart);
+				});
+
+				module = FiModule(m with functions = newfuncs);
+
+				toplevel : Tree<string, FiDeclaration> = fold(module.functions, prg.names.toplevel, \tls, s -> setTree(tls, s.name, s));
+
+				prgTmp = FiProgram(
+					prg.config,
+					setTree(prg.modules, moduleName, module),
+					prg.traversal,
+					// FiGlobalNames(prg.names with toplevel = newtoplevel)
+					FiGlobalNames(
+						prg.names.struct2module,
+						prg.names.union2module,
+						prg.names.function2module,
+						prg.names.globalVar2module,
+						prg.names.native2module,
+						prg.names.structs,
+						prg.names.unions,
+						toplevel
+					)
+				);
+
+				lift_lambdas_module(prgTmp, moduleName);
+			}
+		}
+	});
+}
+
+lambdaIndex : ref int = ref 0;
+next_lambda_indx() {
+	ret = ^lambdaIndex;
+	lambdaIndex := ret + 1;
+	ret;
+}
+
+// this function will create wrapper for js callback.
+// i.e. it will replace function f(args) with lambda \args -> invoke(f, args)
+wrap_create_js_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg) -> FiExp {
+	switch (arg.type) {
+		FiTypeFunction(jsargs, jsretType): {											
+			// create another lambda here and call js callback insid
+			i_name = fiInvokeName(fitype2wasmtype(names, arg.type), types);
+			args2 = map(jsargs, \aaa -> {
+				var = FiVar(aaa.name, aaa.type, 0);
+				wrap_create_wasm_lambda(names, types, aaa, var);				
+			});
+
+			type = FiTypeFunction(concat([FiFunArg(arg.name, FiTypeInt())], jsargs), jsretType);
+
+			FiLambda(
+				jsargs, 
+				FiCall(
+					FiVar(i_name, type, 0),	// this is js callback
+					concat([FiVar(arg.name, FiTypeInt(), 0)], args2),
+					jsretType,
+					0
+				),
+				arg.type, 
+				next_lambda_indx()
+			)
+		}
+		default: FiVar(arg.name, arg.type, 0)
+	}
+}
+
+// fn - native function which may have 'callback' arguments
+// so we'll replace that arguments with lambda which will call those callbacks
+// i.e. call to fn(f : (cb : (str : string) -> void) -> void)
+// fn(cb);
+// 
+// becomes 
+// fn(\cb ->
+// 	f(cb)
+// )
+wrap_create_wasm_lambda(names : FiGlobalNames, types : FiWasmTypeTable, arg : FiFunArg, callEx : FiExp) -> FiExp {
+	switch (arg.type) {
+		FiTypeFunction(args, retType): {
+			// we don't need to create an extra lambda if call doesn't contains callback to js
+			if (exists(args, \a -> isSameStructType(a.type, FiTypeFunction([], FiTypeVoid())))) {
+				pars = mapi(args, \i, a -> {
+					wrap_create_js_lambda(names, types, a);	
+				});
+			
+				FiLambda(
+					args, 
+					FiCall(
+						callEx,
+						pars,
+						retType,
+						0
+					),
+					arg.type, 
+					next_lambda_indx()
+				);
+			} else {
+				callEx;
+			}
+		}
+		default: callEx;
+	}
+}
+
+wrap_create_lambda(names : FiGlobalNames, types : FiWasmTypeTable, fn : FiCall, v : FiVar) -> FiExp {
+	switch (v.type) {
+		FiTypeFunction(fargs, fretType): {	
+			if (exists(fargs, \a -> isSameStructType(a.type, FiTypeFunction([], FiTypeVoid())))) {
+				FiCall(
+					v,
+					mapi(fargs, \i, a -> {
+						wrap_create_wasm_lambda(names, types, a, fn.args[i]);
+					}),
+					fn.type, 
+					0
+				);
+			} else {
+				// no callbacks
+				fn;
+			}		
+		}
+		default: fn; // error
+	}
+}
+
+embedd_lambda(names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>, e : FiExp, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool) -> FiExp {
+	process = \ex -> embedd_lambda(names, types, natives, ex, local, isnative);
+
+	switch (e) {
+		FiLambda(args, b, type, start): 
+			FiLambda(args, process(b), type, start);
+		FiCall(f, args, type, start): {
+			switch (f) {
+				FiVar(fname, ftype, __): {
+					nativeDec = lookupTree(natives, fname);
+					switch (nativeDec) {
+						Some(v): {
+							wrap_create_lambda(names, types, e, f);
+						}
+						None(): {
+							FiCall(process(f), map(args, \a -> process(a)), type, start);
+						}
+					}
+				}
+				default: {
+					FiCall(process(f), map(args, \a -> process(a)), type, start);
+				}
+			}
+		}
+		FiVar(name, type, start): e;
+		FiLet(name, type, e1, e2, type2, start): {
+			e1_conv = process(e1);
+			e2_conv = process(e2);
+			FiLet(name, type, e1_conv, e2_conv, type2, start);
+		}
+		FiIf(e1, e2, e3, type, start): 
+			FiIf(
+				process(e1), 
+				process(e2), 
+				process(e3), 
+				type, start
+			);
+		FiSwitch(x, switchType, cases, type, start): 
+			FiSwitch(
+				x, 
+				switchType, 
+				map(cases, \c -> FiCase(c.struct, c.argNames, process(c.body), c.start)),
+				type, start
+			);
+		FiCast(ex, tFrom, tTo, type, start): 
+			FiCast(process(ex), tFrom, tTo, type, start);
+		FiSeq(es, type, start): 
+			FiSeq(map(es, \stmt -> process(stmt)), type, start);
+		FiCallPrim(op, es, type, start): 
+			FiCallPrim(op, map(es, \stmt -> process(stmt)), type, start);
+		FiVoid(start): e;
+		FiDouble(d, start): e;
+		FiInt(i, start): e;
+		FiString(s, start): e;
+		FiBool(b, start): e;
+		FiRequire(flowfile, ex, type, start): 
+			FiRequire(flowfile, process(ex), type, start); 
+		FiUnsafe(name, fallback, type, start): 
+			FiUnsafe(name, process(fallback), type, start);
+	}
+}

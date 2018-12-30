@@ -1,0 +1,122 @@
+import material/iscript/material_iscript_filesystem_local;
+import material/iscript/material_iscript_filesystem_db;
+
+export {
+	updateBatchTestFilenames(manager : MaterialManager, path : string) -> void;
+	playIScriptFromFile(manager : MaterialManager, fileName : string) -> void;
+	playIScriptIfNeeded(manager : MaterialManager) -> void;
+	playBatchTestsFromDirectory(manager : MaterialManager, directory : string) -> void;
+	saveIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+
+	updateIScriptFile(manager : MaterialManager, currentScriptFilename : string,
+		updateFn : (storedIScript : StoredIScript) -> StoredIScript) -> void;
+}
+
+updateBatchTestFilenames(manager : MaterialManager, path : string) -> void {
+	getFilesystemExtAPI().readDirectory(
+		path,
+		\__, files -> {
+			testFiles = sort(filter(files, \v1 -> endsWith(v1, ".iscript")));
+			next(manager.iscript.batchTestFileNamesB, testFiles);
+		},
+		\error -> iScriptInfo(manager, "Too few elements. " + error, None())
+	)
+}
+
+playIScriptFromFile(manager : MaterialManager, fileName : string) -> void {
+	iScriptFromFile(manager, fileName);
+	next(manager.iscript.iScriptStateB, IScriptReplaying());
+}
+
+playIScriptIfNeeded(manager : MaterialManager) -> void {
+	storeFilesystemExtAPI = getFilesystemExtAPI();
+
+	setLocalFilesystemExtAPI();
+
+	scriptFileName = getUrlParameter("playiscript");
+	batchTestsDirectory = getUrlParameter("playbatchiscript");
+
+	if (!js && scriptFileName != "") {
+		if (fileExists(scriptFileName)) {
+			iScriptInfo(manager, "playiscript: " + scriptFileName, None());
+			playIScriptFromFile(manager, scriptFileName);
+		} else {
+			iScriptInfo(manager, "IScript file not found: " + scriptFileName, None());
+		}
+	} else if (!js && batchTestsDirectory != "") {
+		if (isDirectory(batchTestsDirectory)) {
+			folderName = if (!endsWith(batchTestsDirectory, "\\")) batchTestsDirectory + "\\" else batchTestsDirectory;
+			iScriptInfo(manager, "playbatchiscript: " + folderName, None());
+			playBatchTestsFromDirectory(manager, folderName)
+		} else {
+			iScriptInfo(manager, "Batch directory not found: " + batchTestsDirectory, None());
+		}
+	}
+
+	setFilesystemExtAPI(storeFilesystemExtAPI)
+}
+
+playBatchTestsFromDirectory(manager : MaterialManager, folderName : string) -> void {
+	if (folderName != "") {
+		next(manager.iscript.currentBatchTestsDirectoryB, folderName);
+		updateBatchTestFilenames(manager, folderName);
+		next(manager.iscript.iScriptStateB, IScriptBatchReplaying());
+	}
+}
+
+saveIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	fileName = changeFileExt(name, ".iscript");
+
+	next(manager.iscript.currentFileNameB, fileName);
+
+	if (iScriptToFile(manager, fileName)) {
+		next(manager.iscript.scriptChangedB, false);
+	} else {
+		closeB = make(false);
+		renderMDialog(manager, closeB, [
+				MDialogUseFrame(),
+				MDialogActions([MTextButton("OK", \ -> next(closeB, true), [], [MShortcut("enter")])])
+			],
+			MText("Error saving IScript!", []),
+			m2t
+		);
+	}
+}
+
+updateIScriptFile(
+	manager : MaterialManager,
+	currentScriptFilename : string,
+	updateFn : (storedIScript : StoredIScript) -> StoredIScript) -> void {
+
+	if (startsWith(currentScriptFilename, "DB:/")) {
+		storeCurrentAndSetIScriptDBPartition(manager);
+
+		iScriptFromDB2(manager, currentScriptFilename,
+			\currentScript : StoredIScript -> {
+				resultScript = updateFn(currentScript);
+				iScriptToDB2(
+					manager,
+					currentScriptFilename,
+					resultScript,
+					\ -> restoreCurrentDBPartition(manager),
+					\err_msg -> {
+						restoreCurrentDBPartition(manager);
+						iScriptInfo(manager, err_msg, None());
+					}
+				)
+			},
+			\err_msg -> {
+				restoreCurrentDBPartition(manager);
+				iScriptInfo(manager, err_msg, None());
+			}
+		)
+	}
+	else {
+		currentScript = storedIScriptFromFile(currentScriptFilename);
+		resultScript = updateFn(currentScript);
+		res = iScriptToFile2(manager, resultScript, currentScriptFilename);
+		if (!res) {
+			iScriptInfo(manager, "Update of local iScript file failed.", None());
+		}
+	}
+}

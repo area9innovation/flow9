@@ -1,0 +1,452 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import runtime;
+import dlist;
+import binarytree;
+
+export {
+	// Construct a new behaviour with a given value
+	make(value : ?) -> DynamicBehaviour<?>;
+
+	const(value : ?) -> ConstBehaviour<?>;
+
+	// Register a function to register notifications of changes to the given behaviour.
+	// Notice: It is called immediately with the current value!
+	// You get a function call, which you can call to unsubscribe from the behaviour again.
+	// Note: performing multiple unsubscribe in the single callback function is not fully supported:
+	// if callback function remove the node AND the next node the rest nodes will not be called
+	subscribe(b : Behaviour<?>, fn : (?) -> void) -> () -> void;
+
+	// This is like subscribe, except that it does not call immediately
+	subscribe2(b  : Behaviour<?>, fn : (?) -> void) -> () -> void;
+
+	// Set a new value to the given behaviour and send latest value
+	// of this behaviour along to all subscribers.
+	// WARNING: Use it only if you really need to fire subscribers actions for the same new value.
+	// Use nextDistinct instead to update only with distinct new values and fire on diffrent ones.
+	// Usually nextDistinct is what you need.
+	next : (DynamicBehaviour<?>, value : ?) -> void;
+
+	// Do the same, but only if the value is different from the current value
+	nextDistinct : (DynamicBehaviour<?>, value : ?) -> void;
+
+	// Same as next, but uses updateFn that takes current value, instead of just new value
+	updateBehaviour(b: DynamicBehaviour<?>, fn: (?) -> ?) -> void;
+	updateBehaviourDistinct(b: DynamicBehaviour<?>, fn: (?) -> ?) -> void;
+
+	// Similar to next but sends the given value to subscribers even the value
+	// of the given behaviour has been changed recursively or by asynchronous call during handling
+	nextLegacy : (DynamicBehaviour<?>, value : ?) -> void;
+
+	// Query the current value of the behaviour
+	getValue : (Behaviour<?>) -> ?;
+
+	isConst(b : Behaviour<?>) -> bool;
+
+	Behaviour<?> ::= ConstBehaviour<?>, DynamicBehaviour<?>;
+
+	// The runtime representation of a behaviour
+	DynamicBehaviour(value : ref ?, subscribers : DList<(?) -> void>);
+	ConstBehaviour : (constv : ?);
+
+	startDebuggingBehavioursNow(categoryTag: ?, instanceTag: ??) -> void;
+	stopDebuggingBehavioursNow() -> void;
+	setCountNexts(count : bool) -> void;
+
+	// Wrap suspicious code with it, add a category tag, instance tag and then call examineSuspects with your category tag.
+	// Category is meant to identify place in code, instance - concrete occurrence of that code.
+	debugBehaviours: (categoryTag: ?, instanceTag: ??, code: () -> ???) -> ???;
+
+	// Prints out all debugged subscribers with a given category tag. For each subscriber prints its instance tag.
+	examineSuspects: (categoryTag: ?) -> void;
+
+	// Retrieves the leaks
+	getSuspectCallStacks(categoryTag : ?) -> [string];
+
+	// Get currently debugged subscribers array
+	getDebuggedSubscribers(categoryTag : ?) -> [DebuggedSubscriber];
+
+	// Get currently debugged subscribers array that were created before debugging started and removed during it
+	getRemovedDebuggedSubscribers(categoryTag : ?) -> [DebuggedSubscriber];
+
+	// Clears all suspects in a given category
+	clearSuspects: (categoryTag: ?) -> void;
+
+	// Commonly used constant behaviours
+	zero : ConstBehaviour<double>;
+
+	// Leaking subscribers stuff
+	// Handler gets -1 if called when subscribers count is decreased from minCountToReport to minCountToReport - 1
+	setLeakingSubscribersHandler(minCountToReport : int, reportStep : int, handler : (int, Behaviour<flow>) -> void) -> void;
+	clearLeakingSubscribersHandler() -> void;
+
+	getCurrentSubscribersCount() -> int;
+	getCurrentSubscribersCountBehaviour() -> Behaviour<int>;
+	getCurrentNextCount() -> int;
+	getCurrentNextCountBehaviour() -> Behaviour<int>;
+	getCurrentNextTreeReport() -> string;
+
+	subscribersCountBelowThreshold = -1;
+
+	behaviourValueToString(value : flow) -> string;
+
+	// Executes the function given in x ms if not interrupted before.
+	interruptibleTimer : (int, () -> void) -> (() -> void);
+
+	cloneBehaviour(b : Behaviour<?>) -> DynamicBehaviour<?>;
+
+	// Changes bool value to opposite, may be useful for triggers
+	reverseBehaviour(b : DynamicBehaviour<bool>) -> void;
+
+	WidthHeight(width : double, height : double);
+	zeroWH = WidthHeight(0., 0.);
+}
+
+behaviourValueToString(v : flow) -> string {
+	if (isSameStructType((v), (v))) (v).structname else toString(v)
+}
+
+debuggingBehavioursNow : ref bool = ref false;
+currentCategoryTag : ref flow = ref flow("no category");
+currentInstanceTag : ref flow = ref flow("");
+
+DebuggedSubscriber: (
+	behValue: flow,	// At the moment of subscription
+	fn: (flow) -> void,
+	category: flow,
+	instance: flow,
+	callstack : native
+);
+
+debuggedSubscribers : ref [DebuggedSubscriber] = ref [];
+removedDebuggedSubscribers : ref [DebuggedSubscriber] = ref [];
+
+oldDebuggingBehavioursNow : ref bool = ref ^debuggingBehavioursNow;
+oldCategoryTag : ref flow = ref ^currentCategoryTag;
+oldInstanceTag : ref flow = ref ^currentInstanceTag;
+
+startDebuggingBehavioursNow(categoryTag: ?, instanceTag: ??) -> void {
+	oldDebuggingBehavioursNow := ^debuggingBehavioursNow;
+	debuggingBehavioursNow := true;
+
+	oldCategoryTag := ^currentCategoryTag;
+	currentCategoryTag := flow(categoryTag);
+
+	oldInstanceTag := ^currentInstanceTag;
+	currentInstanceTag := flow(instanceTag);
+}
+
+stopDebuggingBehavioursNow() -> void {
+	currentInstanceTag := ^oldInstanceTag;
+	currentCategoryTag := ^oldCategoryTag;
+
+	debuggingBehavioursNow := ^oldDebuggingBehavioursNow;
+}
+
+setCountNexts(count : bool) -> void {
+	countNexts := if (count) Some(true) else None();
+}
+
+getDebuggedSubscribers(categoryTag : ?) -> [DebuggedSubscriber] {
+	flowtag = flow(categoryTag);
+	filter(^debuggedSubscribers, \d -> d.category == flowtag);
+}
+
+getRemovedDebuggedSubscribers(categoryTag : ?) -> [DebuggedSubscriber] {
+	flowtag = flow(categoryTag);
+	filter(^removedDebuggedSubscribers, \d -> d.category == flowtag);
+}
+
+clearSuspects(categoryTag: ?) {
+	flowtag = flow(categoryTag);
+	debuggedSubscribers := filter(^debuggedSubscribers, \suspect : DebuggedSubscriber -> suspect.category != flowtag);
+	removedDebuggedSubscribers := filter(^removedDebuggedSubscribers, \suspect : DebuggedSubscriber -> suspect.category != flowtag);
+}
+
+debugBehaviours(categoryTag: ?, instanceTag: ??, code: () -> ???) {
+	startDebuggingBehavioursNow(categoryTag, instanceTag);
+
+	result = code();
+
+	stopDebuggingBehavioursNow();
+
+	result
+}
+
+getSuspectCallStacks(categoryTag : ?) -> [string] {
+	suspects = filter(^debuggedSubscribers, \d -> d.category == categoryTag);
+	map(suspects, \suspect -> {
+		callstack2string(suspect.callstack)
+	});
+}
+
+examineSuspects(categoryTag: ?) {
+	suspects = filter(^debuggedSubscribers, \d -> d.category == categoryTag);
+	if (suspects == []) {
+		println("No suspects in category " + toString(categoryTag));
+	} else {
+		iter(suspects, \suspect -> {
+			sv = suspect.behValue;
+			dumpValue = behaviourValueToString(sv);
+			println(toString(suspect.instance) + " subscribed to " + dumpValue);
+			stack = callstack2string(suspect.callstack);
+			if (stack == "") {
+				println("   callstack only with flowcpp in debug or profiling mode")
+			} else {
+				println(stack);
+			}
+		});
+		println("Total: " + cast(length(suspects): int -> string) + " suspects in category " + toString(categoryTag));
+	}
+}
+
+lookingForSubscribersLeak = ref false;
+minimumNumberOfSubscribersToReport = ref 300;
+leakingSubscribersReportStep = ref 50;
+leakingSubscribersHandler : ref (int, Behaviour<flow>) -> void = ref nop2;
+subscribersCounter = DynamicBehaviour(ref 0, makeDList());
+nextCounter = DynamicBehaviour(ref 0, makeDList());
+countNexts : ref Maybe<bool> = ref None();
+nextCounterTree : DynamicBehaviour<Tree<string, int>> = DynamicBehaviour(ref makeTree(), makeDList());
+
+setLeakingSubscribersHandler(minCount, step, handler) {
+	leakingSubscribersHandler := handler;
+	minimumNumberOfSubscribersToReport := minCount;
+	leakingSubscribersReportStep := step;
+	lookingForSubscribersLeak := true;
+}
+
+clearLeakingSubscribersHandler() {
+	lookingForSubscribersLeak := false;
+}
+
+getCurrentSubscribersCount() -> int {
+	if (^lookingForSubscribersLeak) getValue(subscribersCounter) else -1
+}
+
+getCurrentSubscribersCountBehaviour() -> Behaviour<int> {
+	subscribersCounter
+}
+
+getCurrentNextCount() -> int {
+	if (^lookingForSubscribersLeak) getValue(nextCounter) else -1
+}
+
+getCurrentNextCountBehaviour() -> Behaviour<int> {
+	nextCounter
+}
+
+getCurrentNextTreeReport() -> string {
+	cTree = getValue(nextCounterTree);
+
+	toString(filterTree(cTree, \k, v -> v > 100))
+}
+
+make(value) {
+	DynamicBehaviour(ref value, makeDList());
+}
+
+const(value) {
+	ConstBehaviour(value);
+}
+
+zero = const(0.0);
+
+isConst(b) {
+	switch (b : Behaviour) {
+		ConstBehaviour(v): true;
+		DynamicBehaviour(v, sub): false;
+	}
+}
+
+subscribe(b, f) {
+	// Send the existing value
+	switch (b : Behaviour) {
+		ConstBehaviour(value): {
+			f(value);
+			behaviourNop
+		}
+		DynamicBehaviour(value, sub): {
+			f(^value);
+			subscribe2(b, f);
+		}
+	}
+}
+
+behaviourNop() {}
+
+subscribe2(behaviour, fn) {
+	switch (behaviour : Behaviour) {
+		ConstBehaviour(v): behaviourNop;
+		DynamicBehaviour(v, subscribers): {
+			if (^debuggingBehavioursNow) {
+				disposed = ref false;
+				lookedForSubscribersLeak = ref false;
+
+				fn2 = \x : flow -> {
+					xx : ? = cast(x : flow -> ?);
+					fn(xx);
+				}
+				suspect = DebuggedSubscriber(
+					flow(^v),
+					fn2,
+					^currentCategoryTag,
+					^currentInstanceTag,
+					captureCallstack()
+				);
+				refArrayPush(debuggedSubscribers, suspect);
+
+				n = pushDList(subscribers, fn);
+
+				if (^lookingForSubscribersLeak) {
+					lookedForSubscribersLeak := true;
+
+					uncountNexts(subscribersCounter, getValue(subscribersCounter) + 1);
+
+					subscribersCount = lengthDList(subscribers);
+					if (^minimumNumberOfSubscribersToReport <= subscribersCount && subscribersCount % ^leakingSubscribersReportStep == 0
+						|| subscribersCount == ^minimumNumberOfSubscribersToReport) {
+						^leakingSubscribersHandler(subscribersCount, behaviour);
+					}
+				}
+
+				\ -> {
+					if (!^disposed) {
+						disposed := true;
+						debuggedSubscribers := removeFirst(^debuggedSubscribers, suspect);
+
+						if (^lookedForSubscribersLeak) {
+							uncountNexts(subscribersCounter, getValue(subscribersCounter) - 1);
+						}
+
+						removeDList(subscribers, n);
+					} else {
+						println("double dispose");
+						printCallstack();
+					}
+				}
+			} else if (^lookingForSubscribersLeak) {
+				disposed = ref false;
+
+				n = pushDList(subscribers, fn);
+				uncountNexts(subscribersCounter, getValue(subscribersCounter) + 1);
+
+				fn2 = \x : flow -> {
+					xx : ? = cast(x : flow -> ?);
+					fn(xx);
+				}
+				suspect = DebuggedSubscriber(
+					flow(^v),
+					fn2,
+					^currentCategoryTag,
+					^currentInstanceTag,
+					captureCallstack()
+				);
+
+				subscribersCount = lengthDList(subscribers);
+				if (^minimumNumberOfSubscribersToReport <= subscribersCount && subscribersCount % ^leakingSubscribersReportStep == 0
+					|| subscribersCount == ^minimumNumberOfSubscribersToReport) {
+					^leakingSubscribersHandler(subscribersCount, behaviour);
+				}
+
+				\ -> {
+					if (!^disposed) {
+						disposed := true;
+						if (^debuggingBehavioursNow) {
+							refArrayPush(removedDebuggedSubscribers,
+								DebuggedSubscriber(
+									suspect.behValue,
+									suspect.fn,
+									^currentCategoryTag,
+									^currentInstanceTag,
+									suspect.callstack
+								)
+							);
+						}
+
+						uncountNexts(subscribersCounter, getValue(subscribersCounter) - 1);
+
+						removeDList(subscribers, n);
+					} else {
+						println("double dispose");
+						printCallstack();
+					}
+				}
+			} else {
+				n = pushDList(subscribers, fn);
+				\ -> {
+					removeDList(subscribers, n);
+				}
+			}
+		}
+	}
+}
+
+uncountNexts(behaviour : DynamicBehaviour<?>, value : ?) -> void {
+	if (^countNexts == Some(true)) {
+		countNexts := Some(false);
+		next(behaviour, value);
+		countNexts := Some(true);
+	} else {
+		next(behaviour, value);
+	}
+}
+
+next(behaviour : DynamicBehaviour<?>, value : ?) -> void {
+	// We could check to make sure the behaviour is not const here, but
+	// since this is called so often, we just don't. If it happens,
+	// we will get a nice little crash as deserved
+	r = behaviour.value;
+	r := value;
+	applyRefDList(behaviour.subscribers, r);
+
+	if (^lookingForSubscribersLeak && ^countNexts == Some(true)) {
+		uncountNexts(nextCounter, getValue(nextCounter) + lengthDList(behaviour.subscribers));
+		// cTree = getValue(nextCounterTree);
+		// tString = getTypeString2(value);
+		// uncountNexts(nextCounterTree, setTree(cTree, tString, either(lookupTree(cTree, tString), 0) + 1));
+	}
+}
+
+updateBehaviour(b: DynamicBehaviour<?>, fn: (?) -> ?) -> void {
+	next(b, fn(getValue(b)));
+}
+
+updateBehaviourDistinct(b: DynamicBehaviour<?>, fn: (?) -> ?) -> void {
+	nextDistinct(b, fn(getValue(b)));
+}
+
+nextLegacy(behaviour, value) {
+	behaviour.value := value;
+	iterDList(behaviour.subscribers, \fn -> fn(value));
+}
+
+nextDistinct(behaviour, value) {
+	// We could check to make sure the behaviour is not const here, but
+	// since this is called so often, we just don't. If it happens,
+	// we will get a nice little crash as deserved
+	if (value != ^(behaviour.value)) {
+		next(behaviour, value);
+	}
+}
+
+getValue(behaviour) {
+	switch (behaviour : Behaviour) {
+		ConstBehaviour(v): v;
+		DynamicBehaviour(v,s): ^v;
+	}
+}
+
+interruptibleTimer(t, fn) {
+	execute = ref true;
+	timer (t, \ -> {if (^execute) fn();});
+	\ -> {execute := false;}
+}
+
+cloneBehaviour(b : Behaviour<?>) -> DynamicBehaviour<?> {
+	make(getValue(b))
+}
+
+reverseBehaviour(b : DynamicBehaviour<bool>) -> void {
+	next(b, !getValue(b))
+}

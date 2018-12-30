@@ -1,0 +1,139 @@
+import material/material;
+
+// MDynamicLines allows to construct MLines with ability to add/remove line without redrawing and constructing Material for existing lines
+// Usage examples: 
+// - test_dynamic_lines.flow
+// - editCondition with ConditionDynamicLines style.
+// Implementation details:
+// - Inner structure: MLines([MMutable]). Initial length of array set with initMaxLines value
+// - When addLine executed, last available MMutable with MEmpty inside will be used.
+// - When you delete some line with onDelete callback, value of this Mutable will be changed to MEmpty.
+//   If MDynamicLines had inner structure like this(MMutable omitted in this example and Material != MEmpty):
+//   MLines([Material, Material, Material, Material, Material, MEmpty, MEmpty, MEmpty])
+//   and we delete line 1(counting from 0) it will look like this:
+//   MLines([Material, MEmpty, Material, Material, Material, MEmpty, MEmpty, MEmpty])
+//   if we will execute MDynamicLines.addLine after that, it will look like this:
+//   MLines([Material, MEmpty, Material, Material, Material, Material, MEmpty, MEmpty])
+// - If we call MDynamicLines.addLine and we exceed number of existing pregenerated containers
+//   regenerateLines will be called. You should restore all your lines inside this call, including the one that you wanted to add
+//   When regenerateLines is executed and there is not enough pregenerated containers, more will be added.
+//   It will lead to performance penalty, since we regenerate a lot of content. Choose your initMaxLines and maxLinesIncreaseStep carefully
+// - regenerateLines will be executed initially. I.e. if you want to have some lines at the beginning, you should generate them inside this call
+// - If you want to track your indicies between your data array and MDynamicLines, use DynamicLinesTrack.
+export {
+	MDynamicLines(
+		material : Material,
+		addLine : (generateLine : (onDelete : () -> void) -> Material) -> void
+	);
+
+	makeMDynamicLines(regenerateLines : (onDelete : (lineIdx : int) -> void) -> [Material]) -> MDynamicLines;
+	// Pick initMaxLines and maxLinesIncreaseStep carefully. Too small or too big numbers can reduce performance
+	makeMDynamicLinesCustom(
+		// initial number of pregenerated containers for Material lines.
+		initMaxLines : int,
+		// if we got an overflow when we try to add a new line, we will increase number of pregenerated containers by this number and call regenerateLines
+		maxLinesIncreaseStep : int,
+		// called when we want to regenerate all lines
+		regenerateLines : (onDelete : (lineIdx : int) -> void) -> [Material]
+	) -> MDynamicLines;
+
+	// When we add/remove line from MDynamicLines, we also probably also remove an element from some array with data
+	// and we can't restore real idx in data array after that without some kind of mapping. This helper allow us to track this changes
+	// don't change values in this struct directly
+	DynamicLinesTrack(counter : DynamicBehaviour<int>, mappingTree : ref Tree<int, int>);
+	dynamicLinesTrackAdd(tracker : DynamicLinesTrack, realIdx : int) -> int;
+	dynamicLinesTrackRemove(tracker : DynamicLinesTrack, trackIdx : int) -> void;
+	makeDynamicLinesTrack() -> DynamicLinesTrack;
+	resetDynamicLinesTrack(tracker : DynamicLinesTrack) -> void;
+}
+
+makeMDynamicLines(regenerateLines : (onDelete : (lineIdx : int) -> void) -> [Material]) -> MDynamicLines {
+	makeMDynamicLinesCustom(100, 50, regenerateLines);
+}
+
+makeMDynamicLinesCustom(
+	initMaxLines : int,
+	maxLinesIncreaseStep : int,
+	regenerateLines : (onDelete : (lineIdx : int) -> void) -> [Material]
+) -> MDynamicLines {
+	updateLines = make(0);
+	maxLines = ref initMaxLines;
+	lastFreeIdx = ref 0;
+	mutableLines : ref [DynamicBehaviour<Material>] = ref [];
+	materialLines : ref [Material] = ref [];
+	generateLinesFromScratch : ref () -> void = ref nop;
+
+	deleteLineWithIdx = \lineIdx -> {
+		if (lineIdx >= ^maxLines) { // Unlikely if code around makeMDynamicLinesCustom is correct
+			devtrace("Incorrect line index in makeMDynamicLinesCustom ");
+		} else {
+			next(^mutableLines[lineIdx], MEmpty());
+			eitherFn(
+				lastfindi(^mutableLines, \mr -> getValue(mr) != MEmpty()),
+				\idx -> lastFreeIdx := idx + 1,
+				\-> {
+					if (^maxLines > 0 && getValue(^mutableLines[0]) != MEmpty()) {
+						// we have a huge problem here, we should render everything again;
+						// unlikely, but it can happen in some scenarios
+						^generateLinesFromScratch();
+					} else {
+						lastFreeIdx := 0;
+					}
+				}
+			);
+		}
+	};
+
+	// TODO: possible optimisation, we can just add extra rows to satisfy maxRows, instead of complete array regeneration
+	// but don't forget to set all unused to MEmpty
+	generateLinesFromScratch := \-> {
+		newLines = regenerateLines(deleteLineWithIdx);
+		lastFreeIdx := length(newLines);
+		// just to be safe
+		maxLines := if (^lastFreeIdx >= ^maxLines) ^lastFreeIdx + maxLinesIncreaseStep else ^maxLines;
+		mutableLines := concat(
+			map(newLines, \nl -> make(nl)),
+			generate(0, ^maxLines - ^lastFreeIdx, \__ -> make(MEmpty())),
+		);
+		materialLines := map(^mutableLines, \r -> MMutable(r));
+		next(updateLines, getValue(updateLines) + 1);
+	};
+	^generateLinesFromScratch();
+
+	addLine = \generateLine : (onDelete : () -> void) -> Material -> {
+		if (^lastFreeIdx >= ^maxLines) {
+			maxLines := ^maxLines + maxLinesIncreaseStep;
+			^generateLinesFromScratch();
+		} else {
+			lineIdxToDelete = ^lastFreeIdx;
+			next(^mutableLines[^lastFreeIdx], generateLine(\-> deleteLineWithIdx(lineIdxToDelete)));
+			lastFreeIdx := ^lastFreeIdx + 1;
+		}
+	};
+
+	material = MSelect(updateLines, \__ -> MLines(^materialLines));
+
+	MDynamicLines(material, addLine);
+}
+
+makeDynamicLinesTrack() -> DynamicLinesTrack {
+	DynamicLinesTrack(make(-1), ref makeTree());
+}
+
+resetDynamicLinesTrack(tracker : DynamicLinesTrack) -> void {
+	next(tracker.counter, -1);
+	tracker.mappingTree := makeTree();
+}
+
+dynamicLinesTrackAdd(tracker : DynamicLinesTrack, realIdx : int) -> int {
+	newCounterValue = getValue(tracker.counter) + 1;
+	tracker.mappingTree := setTree(^(tracker.mappingTree), newCounterValue, realIdx);
+	next(tracker.counter, newCounterValue);
+	newCounterValue;
+}
+
+dynamicLinesTrackRemove(tracker : DynamicLinesTrack, trackIdx : int) -> void {
+	// we just ignore incorrect trackIdx for now
+	tracker.mappingTree := removeFromTree(^(tracker.mappingTree), trackIdx);
+	tracker.mappingTree := mapTree2(^(tracker.mappingTree), \key, value -> if (key > trackIdx) value - 1 else value);
+}

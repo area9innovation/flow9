@@ -1,0 +1,722 @@
+import flowutils;
+import wigi/wigi_expr;
+import wigi/excel_math;
+import wigi/excel_common;
+import wigi/excel_stats_utils;
+
+import algorithms;
+import array;
+
+export {
+	wigiSum(l : [WigiValue]) -> WigiValue;
+	wigiAverage(l : [WigiValue]) -> WigiValue;
+	wigiCount(l : [WigiValue]) -> WigiValue;
+	wigiCountA(l : [WigiValue]) -> WigiValue;
+	wigiMinMax(l : [WigiValue], isMinF : bool)  -> WigiValue;
+	wigiLargeSmall(l : [WigiValue], isLargeF : bool) -> WigiValue;
+	wigiMedian(l : [WigiValue]) -> WigiValue;
+	wigiStdev(l : [WigiValue]) -> WigiValue;
+	wigiStdevA(l : [WigiValue]) -> WigiValue;
+	wigiStdevP(l : [WigiValue]) -> WigiValue;
+	wigiStdevPa(l : [WigiValue]) -> WigiValue;
+	wigiKurt(l : [WigiValue]) -> WigiValue;
+	wigiSkew(l : [WigiValue]) -> WigiValue;
+	wigiVar(l : [WigiValue]) -> WigiValue;
+	wigiVarA(l : [WigiValue]) -> WigiValue;
+	wigiVarP(l : [WigiValue]) -> WigiValue;
+	wigiVarPa(l : [WigiValue]) -> WigiValue;
+	wigiPercentile(l : [WigiValue]) -> WigiValue;
+	wigiMode(l : [WigiValue])  -> WigiValue;
+	wigiAvedev(l : [WigiValue])  -> WigiValue;
+	wigiProduct(l : [WigiValue]) -> WigiValue;
+	wigiCountIf(l : [WigiValue]) -> WigiValue;
+	wigiPoisson(l : [WigiValue]) -> WigiValue;
+	wigiBinomdist(l : [WigiValue]) -> WigiValue;
+	wigiNormdist(l : [WigiValue]) -> WigiValue;
+	wigiNormInv(l : [WigiValue]) -> WigiValue;
+	wigiErf(l : [WigiValue]) -> WigiValue;
+	wigiTdist(l : [WigiValue]) -> WigiValue;
+	wigiTInv(l : [WigiValue]) -> WigiValue;
+	wigiFdist(l : [WigiValue]) -> WigiValue;
+	wigiFdistLT(l : [WigiValue]) -> WigiValue;
+	wigiSubtotal(l : [WigiValue]) -> WigiValue;
+	wigiChiSqDist(l : [WigiValue]) -> WigiValue;
+	wigiChiSqInv(l : [WigiValue]) -> WigiValue;
+	wigiShuffle(l: WigiValue) -> WigiValue;
+	wigiSubrange(args : [WigiValue]) -> WigiValue;
+}
+
+wigiCountIf(l : [WigiValue]) -> WigiValue {
+	values = l[0];
+	condition = l[1];
+
+	switch(condition) {
+		WigiString(condition2) : {
+			wigiTemplateStatFunction1([values], 1, \values2 : [WigiValue], __ -> {
+				wigiIfExp2(
+					values2, condition2,
+					WigiDouble(0.0),
+					\acc, __ -> {
+						// condition is true for `s`
+						wigiValue2Double(acc) + 1.0 |> WigiDouble
+					},
+					\acc, __ -> {
+						// condition is false for `s`
+						acc
+					}
+				)
+			})
+		}
+		default : WigiString("Invalid type of the second argument")
+	}
+}
+
+// http://office.microsoft.com/en-001/excel-help/product-HP005209223.aspx?CTT=5&origin=HP005201253
+wigiProduct(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue] -> WigiDouble(fold(arr, 1.0, \a, b -> a * wigiValue2Double(b))))
+}
+
+// http://office.microsoft.com/en-001/excel-help/avedev-HP005208993.aspx?CTT=5&origin=HP005203066
+wigiAvedev(l : [WigiValue])  -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue] -> {
+		n = i2d(length(arr));
+		avg = wigiValue2Double(_wigiAverage(arr));
+		if (n < 2.0) WigiError("Array should has more than 1 element")
+		else WigiDouble(fold(arr, 0.0, \a, b -> a + abs(wigiValue2Double(b)-avg))/n);
+	});
+}
+
+// http://office.microsoft.com/en-001/excel-help/mode-HP005209183.aspx?CTT=5&origin=HP005203066
+wigiMode(l : [WigiValue])  -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue] -> {
+		v = sort(arr);
+		vr = sortUnique(arr);
+		vrp = map(vr, \v_ -> Pair(v_, countA(v, \c -> wigiValue2Double(c) == wigiValue2Double(v_))));
+		if (length(v) == length(vr)) WigiString("None")
+		else fold(vrp, Pair(vr[0],1), \a : Pair<WigiValue, int>, b : Pair<WigiValue, int> -> if (b.second > a.second) b else a).first;
+	});
+}
+
+// http://office.microsoft.com/en-001/excel-help/percentile-HP005209211.aspx?CTT=5&origin=HP005203066
+wigiPercentile(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 2, \arr : [WigiValue], arg : [WigiValue]-> {
+		switch(arg[0]) {
+			WigiDouble(v) : {
+				n = i2d(length(arr));
+				if (n < 2.0) WigiError("Array should has more than 1 elements")
+				else if (v <= 0.0 && v >= 1.1) WigiError("The second argument out of range (0<k<1).")
+				else sort(arr)[floor(v*n)]
+			}
+			default : WigiError("Invalid type of the second argument. Only double type is valid")
+		}
+	})
+}
+
+_wigiVar(l : [WigiValue], isVarP : bool) -> WigiValue {
+	n = i2d(length(l));
+	avg = wigiValue2Double(_wigiAverage(l));
+	if (n < 2.0) WigiError("Array should has more than 1 element")
+	else WigiDouble(fold(l, 0.0, \a, b -> a + dpow((wigiValue2Double(b)-avg), 2.0))/(n- if(isVarP) 0.0 else 1.0))
+}
+
+// http://office.microsoft.com/en-001/excel-help/var-HP005209330.aspx?CTT=5&origin=HP005203066
+wigiVar(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue]-> _wigiVar(arr, false));
+}
+
+// https://support.office.com/en-US/article/VARA-function-6de273cd-f0aa-44c7-88ea-6c3afac35cc5
+wigiVarA(l : [WigiValue]) -> WigiValue {
+	switch(l[0]) {
+		WigiArray(a) : {
+			switch(a[0]) {
+				WigiArray(b) : {
+					arr = filter(b, \v -> {
+									switch(v) {
+										WigiInt(i) : true;
+										WigiDouble(d) : true;
+										WigiBool(b_) : true;
+										default : false;
+									}
+							});
+					_wigiVar(arr, false);
+				}
+				default : WigiError("Invalid arguments")
+			}
+		}
+		default : WigiError("Invalid arguments")
+	}
+}
+
+// https://support.office.com/en-US/article/varp-function-2a99fafb-3857-4a5c-81c5-f5ec3c3192e5
+wigiVarP(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue]-> _wigiVar(arr, true));
+}
+
+// https://support.office.com/en-us/article/VARPA-function-a3f22438-71a7-4941-96b9-10e978c0422c?ui=en-US&rs=en-US&ad=US
+wigiVarPa(l : [WigiValue]) -> WigiValue {
+	switch(l[0]) {
+		WigiArray(a) : {
+			switch(a[0]) {
+				WigiArray(b) : {
+					arr = filter(b, \v -> {
+									switch(v) {
+										WigiInt(i) : true;
+										WigiDouble(d) : true;
+										WigiBool(b_) : true;
+										default : false;
+									}
+							});
+					_wigiVar(arr, false);
+				}
+				default : WigiError("Invalid arguments")
+			}
+		}
+		default : WigiError("Invalid arguments")
+	}
+}
+
+
+// http://office.microsoft.com/en-001/excel-help/skew-HP005209261.aspx?CTT=5&origin=HP005203066
+wigiSkew(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue]-> {
+		n = i2d(length(arr));
+		avg = wigiValue2Double(_wigiAverage(arr));
+		stdev = wigiValue2Double(_wigiStdev(arr, false));
+		if (n < 3.0) WigiError("Array should has more than 2 elements")
+		else if (stdev == 0.0) WigiError("The standard deviation equals zero")
+		else WigiDouble(n/((n-1.0)*(n-2.0))*fold(arr, 0.0, \a, b -> a + dpow((wigiValue2Double(b)-avg)/stdev, 3.0)))
+	});
+}
+
+// http://office.microsoft.com/en-001/excel-help/kurt-HP005209150.aspx?CTT=5&origin=HP005203066
+wigiKurt(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue]-> {
+		n = i2d(length(arr));
+		avg = wigiValue2Double(_wigiAverage(arr));
+		stdev = wigiValue2Double(_wigiStdev(arr, false));
+		if (n < 4.0) WigiError("Array should has more than 3 elements")
+		else if (stdev == 0.0) WigiError("The standard deviation equals zero")
+		else WigiDouble((n*(n+1.0))/((n-1.0)*(n-2.0)*(n-3.0))*fold(arr, 0.0, \a, b -> a + dpow((wigiValue2Double(b)-avg)/stdev, 4.0))-(3.0*dpow(n-1.0,2.0))/((n-2.0)*(n-3.0)))
+	});
+}
+
+_wigiStdev(l : [WigiValue], isStdevP : bool) -> WigiValue {
+	avg = wigiValue2Double(_wigiAverage(l));
+	n = i2d(length(l));
+	if (n < 2.0) WigiError("Array should has more than 2 elements")
+	else WigiDouble(sqrt(fold(l, 0.0, \a, b -> a + dpow(wigiValue2Double(b)-avg, 2.0))/(n - if(isStdevP) 0.0 else 1.0)))
+}
+
+// https://support.office.com/en-US/article/STDEV-function-a0179959-f6e4-47ec-8818-a0b43026223f
+wigiStdev(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue] -> _wigiStdev(arr, false))
+}
+
+// https://support.office.com/en-us/article/STDEVA-function-d6398e70-1250-46d2-946d-e7d9cab0c859?ui=en-US&rs=en-US&ad=US
+wigiStdevA(l : [WigiValue]) -> WigiValue {
+	switch(l[0]) {
+		WigiArray(a) : {
+			switch(a[0]) {
+				WigiArray(b) : {
+					arr = filter(b, \v -> {
+									switch(v) {
+										WigiInt(i) : true;
+										WigiDouble(d) : true;
+										WigiBool(b_) : true;
+										default : false;
+									}
+							});
+					_wigiStdev(arr, false);
+				}
+				default : WigiError("Invalid arguments")
+			}
+		}
+		default : WigiError("Invalid arguments")
+	}
+}
+
+// https://support.office.com/en-us/article/STDEVP-function-b29e61f6-e42a-4fd3-81ca-d4393270f7b9?ui=en-US&rs=en-US&ad=US
+wigiStdevP(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg : [WigiValue] -> _wigiStdev(arr, true))
+}
+
+// https://support.office.com/en-US/article/stdevpa-function-94f15db1-6cdd-465f-96b0-07ad86178902
+wigiStdevPa(l : [WigiValue]) -> WigiValue {
+	switch(l[0]) {
+		WigiArray(a) : {
+			switch(a[0]) {
+				WigiArray(b) : {
+					arr = filter(b, \v -> {
+									switch(v) {
+										WigiInt(i) : true;
+										WigiDouble(d) : true;
+										WigiBool(b_) : true;
+										default : false;
+									}
+							});
+					_wigiStdev(arr, true);
+				}
+				default : WigiError("Invalid arguments")
+			}
+		}
+		default : WigiError("Invalid arguments")
+	}
+}
+
+wigiMedian(l : [WigiValue])  -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr, arg -> {
+		v = sort(arr);
+		len = length(v);
+		index = trunc(i2d(len/2));
+		if (len % 2 != 0) WigiDouble(wigiValue2Double(v[index]))
+		else WigiDouble(average([wigiValue2Double(v[index-1]), wigiValue2Double(v[index])]));
+	});
+}
+
+wigiLargeSmall(l : [WigiValue], isLargeF : bool) -> WigiValue {
+	wigiTemplateStatFunction(l, 2, \arr : [WigiValue], arg -> {
+		switch(arg[0]) {
+			WigiInt(v) : {
+				if (v > 0 && v <= length(arr)) WigiDouble(wigiValue2Double(if (isLargeF) sort(arr)[length(arr)-v] else sort(arr)[v-1]))
+				else WigiError("The second argument out of range.")
+			}
+			default : WigiError("Invalid type of the second argument. Only int type is valid")
+		}
+	})
+}
+
+wigiMinMax(l : [WigiValue], isMinF : bool)  -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr : [WigiValue], arg -> {
+		WigiDouble(
+			fold(arr, if (isMinF) doubleMax else doubleMin, \a, b -> {
+				if (isMinF)
+					min(a, wigiValue2Double(b))
+				else
+					max(a, wigiValue2Double(b))
+			})
+		)
+	})
+}
+
+wigiCount(l : [WigiValue]) -> WigiValue {
+	fold(l, 0, \res, val -> res + switch (val) {
+		WigiArray(arr): length(arr);
+		default: 1
+	}) |> WigiInt
+}
+
+wigiCountA(l : [WigiValue]) -> WigiValue {
+	switch(l[0]) {
+		WigiArray(a) : {
+			switch(a[0]) {
+				WigiArray(b) : {
+					WigiInt(fold(b, 0, \ac, v -> {
+								if (getWigiText(v)!="") ac + 1
+								else ac;
+							}));
+				}
+				default : WigiError("Invalid arguments");
+			}
+		}
+		default : WigiError("Invalid arguments")
+	}
+}
+
+_wigiAverage(l : [WigiValue]) -> WigiValue {
+	WigiDouble(wigiValue2Double(_wigiSum(l))/i2d(length(l)))
+}
+
+wigiAverage(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction(l, 1, \arr, arg -> _wigiAverage(arr))
+}
+
+_wigiSum(l : [WigiValue]) -> WigiValue {
+	WigiDouble(fold(l, 0.0, \a, b -> a + wigiValue2Double(b)))
+}
+
+wigiSum(l : [WigiValue]) -> WigiValue {
+	wigiTemplateStatFunction3(l, -1, _wigiSum)
+}
+
+// http://office.microsoft.com/en-001/excel-help/poisson-HP005209216.aspx?CTT=5&origin=HP005203066
+wigiPoisson(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 3, \arg : [WigiValue] -> {
+		x = wigiValue2Int(arg[0]);
+		mean = wigiValue2Double(arg[1]);
+		cumulative = wigiValue2Bool(arg[2]);
+
+		if (x < 0 || mean < 0.0) {
+			WigiError("Arguments can't be negative");
+		} else {
+			poisson = \k -> exp(-mean)*dpow(mean, i2d(k))/i2d(factorial(k));
+
+			res =
+				if (cumulative) {
+					fold(enumFromTo(0, x), 0.0, \acc, k -> {
+						acc + poisson(k)
+					})
+				} else {
+					poisson(x)
+				};
+
+			WigiDouble(res)
+		}
+	})
+}
+
+// http://office.microsoft.com/en-001/excel-help/binomdist-HP005209005.aspx?CTT=5&origin=HP005203066
+wigiBinomdist(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 4, \arg : [WigiValue] -> {
+		x = wigiValue2Int(arg[0]); // the number of successes in trials
+		n = wigiValue2Int(arg[1]); // the number of independent trials
+		p = wigiValue2Double(arg[2]); // the probability of success on each trial
+		cumulative = wigiValue2Bool(arg[3]);
+
+		if (x < 0 || x > n || p < 0.0 || p > 1.0) {
+			WigiError("Invalid arguments");
+		} else {
+			binomdist = \y -> {
+				c = wigiCombin([WigiInt(n), WigiInt(y)]);
+
+				wigiValue2Double(c)*dpow(p, i2d(y))*dpow(1.0-p, i2d(n-y))
+			};
+
+			res =
+				if (cumulative) {
+					fold(enumFromTo(0, x), 0.0, \acc, k -> {
+						acc + binomdist(k)
+					})
+				} else {
+					binomdist(x)
+				};
+
+			WigiDouble(res)
+		}
+	})
+}
+
+// https://support.office.microsoft.com/en-us/article/NORMDIST-function-4508dd96-4e3d-4717-8f85-aa01e0521a9d
+wigiNormdist(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 4, \arg : [WigiValue] -> {
+		x = wigiValue2Double(arg[0]); // The value for which you want the distribution.
+		mu = wigiValue2Double(arg[1]); // The arithmetic mean of the distribution.
+		sigma = wigiValue2Double(arg[2]); //  The standard deviation of the distribution.
+		cumulative = wigiValue2Bool(arg[3]);
+
+		if (sigma <= 0.0) {
+			WigiError("Invalid arguments");
+		} else {
+			phi = \y -> dpow(E_CONST, -dpow(y, 2.0) / 2.0) / sqrt(2.0 * PI);
+
+			erf = \y -> wigiErf([WigiDouble(y)]) |> wigiValue2Double;
+
+			Phi = \y -> (1.0 + erf(y/sqrt(2.0))) / 2.0;
+
+			res =
+				if (cumulative) {
+					Phi((x-mu)/sigma)
+				} else {
+					phi((x-mu)/sigma) / sigma
+				};
+
+			WigiDouble(res)
+		}
+	})
+}
+
+// https://support.office.microsoft.com/en-US/Article/ERF-function-c53c7e7b-5482-4b6c-883e-56df3c9af349?ui=en-US&rs=en-US&ad=US
+// http://www.johndcook.com/blog/cpp_erf/
+wigiErf(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 1, \arg : [WigiValue] -> {
+		x = wigiValue2Double(arg[0]);
+
+		a1 =  0.254829592;
+		a2 = -0.284496736;
+		a3 =  1.421413741;
+		a4 = -1.453152027;
+		a5 =  1.061405429;
+		p  =  0.3275911;
+
+		// Save the sign of x
+		s = if (x < 0.0) -1.0 else 1.0;
+		ax = abs(x);
+
+		// A&S formula 7.1.26
+		t = 1.0/(1.0 + p*ax);
+		y = 1.0 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*exp(-ax*ax);
+
+		WigiDouble(s*y)
+	})
+}
+
+// https://support.office.microsoft.com/en-US/article/TDIST-function-4329459f-ae91-48c2-bba8-1ead1c6c21b2?ui=en-US&rs=en-US&ad=US
+wigiTdist(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 3, \arg : [WigiValue] -> {
+		x = wigiValue2Double(arg[0]); // The numeric value at which to evaluate the distribution
+		nu = wigiValue2Int(arg[1]) |> i2d; // An integer indicating the number of degrees of freedom.
+		cumulative = wigiValue2Bool(arg[2]);
+
+		if (nu < 1.0) {
+			WigiError("Invalid arguments");
+		} else {
+			if (cumulative) {
+				X = nu / (x * x + nu );
+
+				betaDistM = getBetaDist(X, 0.5 * nu, 0.5 );
+
+				switch(betaDistM) {
+					Some(betaDist): {
+						R = 0.5 * betaDist;
+
+						res = if (x < 0.0) R else 1.0 - R;
+
+						WigiDouble(res)
+					}
+					None(): {
+						WigiError("Invalid arguments");
+					}
+				}
+			} else {
+				betaM = getBeta(0.5, nu / 2.0);
+
+				switch(betaM) {
+					Some(beta): {
+						res = dpow(1.0 + dpow(x, 2.0) / nu, -(nu + 1.0)/2.0) / (sqrt(nu) * beta);
+
+						WigiDouble(res)
+					}
+					None(): {
+						WigiError("Invalid arguments");
+					}
+				}
+			}
+		}
+	})
+}
+
+// https://support.office.microsoft.com/en-US/article/NORMINV-function-54b30935-fee7-493c-bedb-2278a9db7e13?ui=en-US&rs=en-US&ad=US
+wigiNormInv(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 3, \arg : [WigiValue] -> {
+		p = wigiValue2Double(arg[0]); // The probability corresponding to the normal distribution.
+		mu = wigiValue2Double(arg[1]); // The arithmetic mean of the distribution.
+		sigma = wigiValue2Double(arg[2]); //  The standard deviation of the distribution.
+
+		if ((p <= 0.0 || p >= 1.0) || (sigma <= 0.0)) WigiError("Invalid arguments")
+		else {
+			q = p - 0.5;
+			val = if (abs(q) <= 0.425) {
+				r = 0.180625 - q * q;
+				q * (((((((r * 2509.0809287301226727 + 33430.575583588128105) *
+							r + 67265.770927008700853) *
+							r + 45921.953931549871457) *
+							r + 13731.693765509461125) *
+							r + 1971.5909503065514427) *
+							r + 133.14166789178437745) *
+							r + 3.387132872796366608)
+					/ (((((((r * 5226.495278852854561 + 28729.085735721942674) *
+							r + 39307.89580009271061) *
+							r + 21213.794301586595867) *
+							r + 5394.1960214247511077) *
+							r + 687.1870074920579083) *
+							r + 42.313330701600911252) * r + 1.0)
+				}
+		 		else {
+					r = sqrt(-log(if(q > 0.0) 1.0 - p else p));
+
+					v = if(r <= 5.0) {
+						r_ = r-1.6;
+						(((((((r_ * 0.000774545014278341407 + 0.0227238449892691845833) *
+							r_ + 0.24178072517745061177) *
+							r_ + 1.27045825245236838258) *
+							r_ + 3.64784832476320460504) *
+							r_ + 5.7694972214606914055) *
+							r_ + 4.6303378461565452959) * r_ + 1.42343711074968357734)
+						/ (((((((r_ *
+									0.00000000105075007164441684324 + 0.0005475938084995344946) *
+									r_ + 0.0151986665636164571966) *
+									r_ + 0.14810397642748007459) *
+									r_ + 0.68976733498510000455) *
+									r_ + 1.6763848301838038494) *
+									r_ + 2.05319162663775882187) *
+									r_ + 1.0)
+					 } else {
+						r_ = r-5.0;
+						(((((((r_ * 0.000000201033439929228813265 + 0.0000271155556874348757815) *
+								r_ + 0.0012426609473880784386) *
+								r_ + 0.026532189526576123093) *
+								r_ + 0.29656057182850489123) *
+								r_ + 1.7848265399172913358) *
+								r_ + 5.4637849111641143699) *
+								r_ + 6.6579046435011037772)
+						/ (((((((r_ *
+									0.00000000000000204426310338993978564 + 0.00000014215117583164458887) *
+									r_ + 0.000018463183175100546818) *
+									r_ + 0.0007868691311456132591) *
+									r_ + 0.0148753612908506148525) *
+									r_ + 0.13692988092273580531) *
+									r_ + 0.59983220655588793769) *
+									r_ + 1.0);
+					}
+
+					if (q < 0.0) -v else v;
+			}
+
+			WigiDouble(mu + sigma * val)
+		}
+	})
+}
+
+getStatCom(q : double, k : int, j : int, z : double, zz : double) -> double {
+	if(k <= j) {
+		zz_ = zz*(q*i2d(k)/(i2d(k)+1.0));
+		getStatCom(q, k+2, j, z + zz_, zz_);
+	}
+	else z
+}
+
+getStudentT(t : double, n : int) -> double {
+	th = atan(abs(t)/sqrt(i2d(n)));
+	pi2 = acos(-1.0)/2.0;
+
+	if(n == 1) 1.0 - th / pi2
+	else {
+		sth = sin(th);
+		cth = cos(th);
+		if(n%2 == 1) 1.0 - (th+sth*cth*getStatCom(cth*cth, 2, n-3, 1.0, 1.0))/pi2
+		else 1.0 - sth*getStatCom(cth * cth, 1, n-3, 1.0, 1.0);
+	}
+}
+
+getTInv(p : double, n : int, v : double, dv : double, t : double) -> double {
+	if(dv > 0.0000000001) {
+		t_ = 1.0/v-1.0;
+		dv_ = dv/2.0;
+		getTInv(p, n, if(getStudentT(t_,n)>p) v-dv_ else v+dv_, dv_, t_)
+	}
+	else t;
+}
+
+// https://support.office.microsoft.com/en-US/Article/TINV-function-2908272b-4e61-4942-9df9-a25fec9b0e2e
+wigiTInv(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 2, \arg : [WigiValue] -> {
+		p = wigiValue2Double(arg[0]); // The probability associated with the two-tailed Student's t-distribution.
+		df = trunc(wigiValue2Double(arg[1])); // The number of degrees of freedom with which to characterize the distribution.
+		if ((p <= 0.0 || p >= 1.0) || (df < 1)) WigiError("Invalid arguments")
+		else WigiDouble(getTInv(p, df, 0.5, 0.5, 0.0))
+	})
+}
+
+wigiFdist_(x : double, deg_fr1 : double, deg_fr2 : double) -> double {
+	arg = deg_fr2/(deg_fr2+deg_fr1*x);
+	alpha = deg_fr2/2.0;
+	beta = deg_fr1/2.0;
+	getBetaDist2(arg, alpha, beta);
+}
+
+// https://support.office.microsoft.com/en-us/article/FDIST-function-24e3adce-53f4-400e-b97e-3d9df8e4837b?ui=en-US&rs=en-US&ad=US
+wigiFdist(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 3, \arg : [WigiValue] -> {
+		x = wigiValue2Double(arg[0]); // x is the value at which to evaluate the function
+		deg_fr1 = wigiValue2Double(arg[1]); // Degrees_freedom1 is the numerator degrees of freedom
+		deg_fr2 = wigiValue2Double(arg[2]); // Degrees_freedom1 is the numerator degrees of freedom
+		maxDegFrVal = dpow(10.0, 10.0);
+		if ((x < 0.0) || (deg_fr1 < 1.0) || (deg_fr1 > maxDegFrVal) || (deg_fr2 < 1.0) || (deg_fr2 > maxDegFrVal)) WigiError("Invalid arguments")
+		else WigiDouble(wigiFdist_(x, deg_fr1, deg_fr2));
+	})
+}
+
+wigiFdistLT(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(take(l, 3), -1, \arg : [WigiValue] -> {
+		wigiTemplateLogicalFunction([lastElement(l, WigiBool(true))], -1, \arg1 : [WigiValue] -> {
+			x = wigiValue2Double(arg[0]); // x is the value at which to evaluate the function
+			deg_fr1 = i2d(trunc(wigiValue2Double(arg[1]))); // Degrees_freedom1 is the numerator degrees of freedom
+			deg_fr2 = i2d(trunc(wigiValue2Double(arg[2]))); // Degrees_freedom1 is the numerator degrees of freedom
+			cumulative = wigiValue2Bool(arg1[0]); // If cumulative is TRUE it returns the cumulative distribution else it returns the probability density function.
+			if ((x < 0.0) || (deg_fr1 < 1.0) || (deg_fr2 < 1.0)) WigiError("Invalid arguments")
+			else {
+				if(cumulative) { // left tail cumulative distribution
+					WigiDouble(1.0 - wigiFdist_(x, deg_fr1, deg_fr2))
+				}
+				else { // probability density function
+					beta = getBeta(deg_fr1/2.0, deg_fr2/2.0);
+					switch(beta) {
+						Some(b) : WigiDouble(dpow(deg_fr1/deg_fr2, deg_fr1/2.0) * dpow(x, (deg_fr1/2.0) - 1.0) /
+										(dpow((1.0 + (x*deg_fr1/deg_fr2)), (deg_fr1 + deg_fr2)/2.0) * b));
+						None() : WigiError("Invalid arguments");
+					}
+				}
+			}
+		})
+	})
+}
+
+
+// https://support.office.microsoft.com/en-US/article/SUBTOTAL-function-e27c301c-be9a-458b-9d12-b9a2ce3c62af
+wigiSubtotal(l : [WigiValue]) -> WigiValue {
+	wigiTemplateIntFunction([l[0]], 1, \a : [WigiValue] -> {
+			fun_num = wigiValue2Int(a[0]);
+			if (fun_num == 3 || fun_num == 103) wigiCountA(tail(l))
+			else {
+				wigiTemplateStatFunction2([l[1]], 1, \arr_ : [WigiValue], arg : [WigiValue] -> {
+					arr = [WigiArray(arr_)];
+					if (fun_num == 1 || fun_num == 101) wigiAverage(arr)
+					else if (fun_num == 2 || fun_num == 102) wigiCount(arr)
+					else if (fun_num == 4 || fun_num == 104) wigiMinMax(arr, false)
+					else if (fun_num == 5 || fun_num == 105) wigiMinMax(arr, true)
+					else if (fun_num == 6 || fun_num == 106) wigiProduct(arr)
+					else if (fun_num == 7 || fun_num == 107) wigiStdev(arr)
+					else if (fun_num == 8 || fun_num == 108) wigiStdevP(arr)
+					else if (fun_num == 9 || fun_num == 109) wigiSum(arr)
+					else if (fun_num == 10 || fun_num == 110) wigiVar(arr)
+					else if (fun_num == 11 || fun_num == 111) wigiVarP(arr)
+					else WigiError("Invalid function number");
+				})
+			}
+	})
+}
+
+wigiChiSqDist(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 3, \arg : [WigiValue] -> {
+		x = wigiValue2Double(arg[0]); // The value for which you want the distribution.
+		deg_fr = i2d(trunc(wigiValue2Double(arg[1]))); // deg_fr is the numerator degrees of freedom
+		cumulative = wigiValue2Bool(arg[2]);
+		maxDegFrVal = dpow(10.0, 10.0);
+		if ((x < 0.0) || (deg_fr < 1.0) || (deg_fr > maxDegFrVal)) WigiError("Invalid arguments")
+		else WigiDouble(if(cumulative) getChiSqDistCDF(x, deg_fr) else getChiSqDistPDF(x, deg_fr))
+	})
+}
+
+wigiChiSqInv(l : [WigiValue]) -> WigiValue {
+	wigiTemplateMathFunction(l, 2, \arg : [WigiValue] -> {
+		p = wigiValue2Double(arg[0]); // The probability associated with the chi-squared distribution.
+		df = i2d(trunc(wigiValue2Double(arg[1]))); // The number of degrees of freedom.
+		if ((p <= 0.0 || p >= 1.0) || (df < 1.0)) WigiError("Invalid arguments")
+		else WigiDouble(getChiSqInv(p, df))
+	})
+}
+
+wigiShuffle(l: WigiValue) -> WigiValue {
+	switch (l : WigiValue) {
+		WigiArray(vs): WigiArray(shuffleArray(vs));
+		default: WigiError("Invalid type of first argument. Only array type is valid.");
+	}
+}
+
+wigiSubrange(args : [WigiValue]) -> WigiValue {
+	array = switch (args[0]) {
+		WigiArray(arr) : arr;
+   		default : [];
+  	}
+
+	index = switch (args[1]) {
+   		WigiInt(i) : i;
+   		default : -1;
+	}
+
+	len =   switch (args[2]) {
+   		WigiInt(l) : l;
+		default : -1;
+	}
+
+	WigiArray(subrange(array, index, len))
+}

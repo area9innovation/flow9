@@ -1,0 +1,618 @@
+import lingo/pegcode/driver;
+import formats/css/css_pegop;
+import formats/css/css;
+import formats/css/cssterm;
+import formats/css/stylesheet;
+
+export {
+	// Parses a CSS snippet to a stylesheet
+	parseCss(css : string) -> Stylesheet;
+}
+
+parseCss(css : string) -> Stylesheet {
+    result = parsic(pegOps4Css, css, defaultPegActions);
+    if (result == "PARSING FAILED") {
+        Stylesheet(makeTree());
+    } else {
+        css2stylesheet(result);
+    }
+}
+
+defTreeValue = StyleWithSelectors(defCssStyle, makeTree());
+
+css2stylesheet(css : CssStylesheet) -> Stylesheet {
+	Stylesheet(fold(css.rules, makeTree(), \acc, r : CssRuleset -> {
+		style = cssDeclarations2style(r.declarations);
+
+		fold(r.selectors, acc, \ac2, selector : CssSelector -> {
+			switch (selector) {
+				CssSimple(name) : {
+					origStyle = lookupTreeDef(ac2, name, defTreeValue);
+					styleName = cssSelectorName(name);
+					mergedStyle = mergeCssStyle(origStyle.style, style);
+					setTree(ac2, styleName, StyleWithSelectors(mergedStyle, origStyle.selectors));
+				}
+				CssExtender(name, extendsFrom) : {
+					parentStyle = lookupTreeDef(acc, name, defTreeValue);
+					mergedStyle = mergeCssStyle(parentStyle.style, style);
+					// currently we copy all selectors, without modifying them
+					setTree(acc, extendsFrom, StyleWithSelectors(mergedStyle, parentStyle.selectors));
+				}
+				CssModifier(name, selectorName) : {
+					parentStyle = lookupTreeDef(acc, name, defTreeValue);
+					// currently we just merge styles, it is duplicate of data.
+					// should be changed in the future
+					mergedStyle = mergeCssStyle(parentStyle.style, style);
+					setTree(acc, name,
+						StyleWithSelectors(
+							parentStyle.style,
+							setTree(parentStyle.selectors, selectorName, mergedStyle),
+						)
+					);
+				}
+			}
+		})
+	}));
+}
+
+cssSelectorName(s : string) -> string {
+	s;
+}
+
+cssDeclarations2style(ds : [CssDeclaration]) -> CssStyle {
+	fold(ds, defCssStyle, \acc, d -> {
+		addCssDeclaration2style(acc, d)
+	})
+}
+
+addCssDeclaration2style(style : CssStyle, d : CssDeclaration) -> CssStyle {
+	prop = d.property;
+	if (prop == "font-family") {
+		switch (d.expr) {
+			CssList(terms): {
+				fams = filter(map(terms, \t -> cssTerm2string(t, "")), \t -> t != "");
+				CssStyle(concat(style.family, fams), style.fontSize, style.letterSpacing, style.bold, style.italic,
+					style.color, style.fontBackgroundFill, style.backgroundFill,
+					style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+					style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+				);
+			}
+			default: {
+				fam = cssTerm2string(d.expr, "");
+				if (fam != "") {
+					CssStyle(arrayPush(style.family, fam), style.fontSize, style.letterSpacing, style.bold, style.italic,
+						style.color, style.fontBackgroundFill, style.backgroundFill,
+						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+						style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+					);
+				} else style;
+			}
+		}
+	} else if (prop == "font-size") {
+		size = cssTerm2double(d.expr, 0.0);
+		if (size != 0.0) {
+			CssStyle(style.family, size, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else style;
+	} else if (prop == "font-background") {
+		col = cssTerm2color(d.expr, -1);
+		if (col != -1) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, col, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "font-weight") {
+
+		v = switch (d.expr : CssTerm) {
+			CssName(n): {
+				if (n == "bold") 700
+				else if (n == "bolder") 900
+				else if (n == "normal") 400
+				else if (n == "lighter") 300
+				else 0;
+			}
+			default: cssTerm2int(d.expr, 0);
+		}
+
+		if (300 <= v && v < 600) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, false, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else if (600 <= v) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, true, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown font-weight: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "font-style") {
+		st = toLowerCase(cssTerm2string(d.expr, ""));
+		if (st == "italic") {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, true,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else if (st == "normal") {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, false,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown font-style: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "text-decoration") {
+		st = toLowerCase(cssTerm2string(d.expr, ""));
+		if (st == "none") {
+			style;
+		} else {
+			println("Unknown text-decoration: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "color") {
+		col = cssTerm2color(d.expr, -1);
+		if (col != -1) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				col, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "stroke") { // stroke is SVG CSS
+		col = cssTerm2color(d.expr, -1);
+		if (col != -1) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, col, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "stroke-width") {
+		v = cssTerm2double(d.expr, -1.0);
+		if (v > 0.0) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, v, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "fill") { // fill is SVG CSS
+		col = cssTerm2color(d.expr, -1);
+		if (col != -1) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, col, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "opacity") {
+		v = cssTerm2double(d.expr, -1.0);
+		if (v >= 0.0 && v <= 1.0) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, v, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			style;
+		}
+	} else if (prop == "background") {
+		switch (d.expr : CssTerm) {
+			CssList(terms) : {
+				parseCssBackground(terms, style);
+			}
+			CssArray(terms) : {
+				parseCssBackground(terms, style);
+			}
+			default: {
+				parseCssBackground([d.expr], style);
+			}
+		}
+	} else if (prop == "background-color") {
+		v = cssTerm2color(d.expr, -1);
+		if (v != -1) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, v,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown background-color: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "background-image") {
+		switch (d.expr : CssTerm) {
+			/*CssList(terms) : {
+				parseCssBackground(terms, style);
+			}
+			CssArray(terms) : {
+				parseCssBackground(terms, style);
+			}*/
+			CssUrl(__) : {
+				parseCssBackground([d.expr], style);
+			}
+			default: {
+				println("Unknown background-image: " + toString(d.expr));
+				style;
+			}
+		}
+	} else if (prop == "width") {
+		v = cssTerm2double(d.expr, 0.0);
+		if (v != 0.0) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				v, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown width: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "height") {
+		v = cssTerm2double(d.expr, 0.0);
+		if (v != 0.0) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, v, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown height: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "letter-spacing") {
+		v = cssTerm2double(d.expr, defCssStyle.letterSpacing);
+		if (v != defCssStyle.letterSpacing) {
+			CssStyle(style.family, style.fontSize, v, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			)
+		} else {
+			println("Unknown letter-spacing: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "border") {
+		gs = cssTerm2Border(d.expr, []);
+		CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+			style.color, style.fontBackgroundFill, style.backgroundFill,
+			style.width, style.height, style.opacity, gs, style.borderRadius, style.background, 
+			style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+		)
+	} else if (prop == "border-radius") {
+		br = cssTerm2BorderRadius(d.expr, emptyBorderRadius);
+		if (br != emptyBorderRadius) {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, br, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			);
+		} else {
+			println("Unknown border-radius: " + toString(d.expr));
+			style;
+		}
+	} else if (prop == "border-top-left-radius" || prop == "border-top-right-radius"
+			|| prop == "border-bottom-right-radius" || prop == "border-bottom-left-radius") {
+		v = cssTerm2double(d.expr, -1.0);
+		if (v != -1.0) {
+			br = if (prop == "border-top-left-radius") {
+					BorderRadius(v, max(0.0, style.borderRadius.topRight),
+						max(0.0, style.borderRadius.bottomRight), max(0.0, style.borderRadius.bottomLeft));
+				} else if (prop == "border-top-right-radius") {
+					BorderRadius(max(0.0, style.borderRadius.topLeft), v,
+						max(0.0, style.borderRadius.bottomRight), max(0.0, style.borderRadius.bottomLeft));
+				} else if (prop == "border-bottom-right-radius") {
+					BorderRadius(max(0.0, style.borderRadius.topLeft), max(0.0, style.borderRadius.topRight),
+						v, max(0.0, style.borderRadius.bottomLeft));
+				} else { // if (prop == "border-bottom-left-radius")
+					BorderRadius(max(0.0, style.borderRadius.topLeft), max(0.0, style.borderRadius.topRight),
+						max(0.0, style.borderRadius.bottomRight), v);
+				}
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, br, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, style.svgExtra, style.display
+			);
+		} else {
+			style;
+		}
+	} else if (contains(["fill-rule", "text-anchor", "text-transform", "stroke-linejoin"], prop)) {
+		// Extra SVG attributes
+		extra = setTree(style.svgExtra, prop, d.expr);
+		CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+			style.color, style.fontBackgroundFill, style.backgroundFill,
+			style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+			style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form, extra, style.display
+		);
+	} else if (prop == "display") {
+		v = cssTerm2string(d.expr, "");
+		if (v == "none") {
+			CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+				style.color, style.fontBackgroundFill, style.backgroundFill,
+				style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+				style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
+				style.svgExtra, CssDisplayNone()
+			);
+		} else {
+			println("Unknown display: " + toString(d.expr));
+			style;
+		}
+	} else {
+		println("Unknown CSS property: " + prop + " " + toString(d.expr));
+		style;
+	}
+}
+
+cssTerm2Border(c : CssTerm, def : [GraphicsStyle]) -> [GraphicsStyle] {
+	getGraphicsStyleFromCssTerms = \terms -> {
+		getWidthFromCss = \-> {
+			width = fold(terms, 0.0, \acc, t -> {
+				switch (t : CssTerm) {
+					CssPt(value): {
+						cssTerm2double(value, acc);
+					}
+					CssPx(value): {
+						cssTerm2double(value, acc);
+					}
+					default: {
+						acc;
+					}
+				}
+			});
+			if (width != 0.0) {
+				[StrokeWidth(width)]
+			} else {
+				[];
+			}
+		};
+		fold(terms, def, \acc, t -> {
+			switch (t : CssTerm) {
+				CssSolid(): {
+					color = fold(terms, 0, \colorAcc, t1 -> {
+						switch (t1 : CssTerm) {
+							CssString(__): cssTerm2color(t1, colorAcc);
+							CssName(__): cssTerm2color(t1, colorAcc);
+							CssDouble(__): cssTerm2color(t1, colorAcc);
+							CssInt(__): cssTerm2color(t1, colorAcc);
+							CssHexInt(__): cssTerm2color(t1, colorAcc);
+							CssNegate(__): cssTerm2color(t1, colorAcc);
+
+							CssPercentage(v): cssTerm2color(t1, colorAcc);
+
+							default: colorAcc;
+						}
+					});
+					concat([Stroke(color)], getWidthFromCss());
+				}
+				CssLinearGradient(rotation, colors): {
+					gs = CssLinearGradient2GraphicsStyle(CssLinearGradient(rotation, colors), true, []);
+					concat(
+						CssLinearGradient2GraphicsStyle(CssLinearGradient(rotation, colors), true, []),
+						getWidthFromCss()
+					);
+				}
+				default: acc;
+			}
+		});
+	};
+
+	switch (c : CssTerm) {
+		CssSolid(): {
+			[Stroke(svgName2color("black", 0))];
+		}
+		CssList(terms): {
+			getGraphicsStyleFromCssTerms(terms);
+		}
+		CssArray(terms): {
+			getGraphicsStyleFromCssTerms(terms);
+		}
+		CssInherit(): {
+			defCssStyle.border;
+		}
+
+		default: {
+			println("Expected CssSolid or CssLinearGradient or CssList in CSS term: " + toString(c));
+			def
+		}
+	}
+}
+
+cssTerm2BorderRadius(c : CssTerm, def : BorderRadius) -> BorderRadius {
+	switch (c : CssTerm) {
+		CssInherit(): {
+			defCssStyle.borderRadius;
+		}
+		CssList(terms): {
+			r = fold(terms, [], \acc, t ->{
+				v = cssTerm2double(t, -1.0);
+				if (v != -1.0) {
+					arrayPush(acc, v);
+				} else {
+					acc;
+				}
+			});
+			len = length(r);
+			if (len == 1) {
+				BorderRadius(r[0], r[0], r[0], r[0]);
+			} else if (len == 2) {
+				BorderRadius(r[0], r[1], r[0], r[1]);
+			} else if (len == 3) {
+				BorderRadius(r[0], r[1], r[2], r[1]);
+			} else if (len == 4) {
+				BorderRadius(r[0], r[1], r[2], r[3]);
+			} else {
+				println("Invalid value for border-radius: " + toString(c));
+				def;
+			}
+		}
+		default: {
+			v = cssTerm2double(c, -1.0);
+			if (v != -1.0) {
+				BorderRadius(v, v, v, v);
+			} else {
+				println("Invalid value for border-radius: " + toString(c));
+				def;
+			}
+		}
+	}
+}
+
+CssLinearGradient2GraphicsStyle(c : CssLinearGradient, isStroke : bool, def : [GraphicsStyle]) -> [GraphicsStyle] {
+	// Add 270.0deg, because browsers and renderform have different opinions about angle 0deg.
+	rotation = 270.0 + switch (c.rotation : CssTerm) {
+		CssDeg(value): {
+			cssTerm2double(value, 0.0);
+		}
+		// TODO: add support of "to right", "to left", "to top", "to bottom"
+		// and their combinations
+		/*CssString(value) : {
+		}*/
+		default: {
+			0.0;
+		}
+	}
+	switch (c.colors : CssTerm) {
+		CssList(terms): {
+			rawColors = fold(terms, [], \acc, t -> {
+				col = cssTerm2color(t, -1);
+				if (col != -1) {
+					arrayPush(acc, col);
+				} else {
+					acc;
+				}
+			});
+			if (length(rawColors) > 1) {
+				eachColorPercent = 1.0 / i2d(length(rawColors) - 1);
+				points = foldi(rawColors, [], \idx, acc, color -> {
+					arrayPush(acc, GradientPoint(color, 1.0, eachColorPercent * i2d(idx)));
+				});
+				if (isStroke) {
+					[StrokeLineGradient(rotation, points)];
+				} else {
+					[GradientFill(rotation, points)];
+				}
+			} else {
+				def;
+			}
+		}
+		default: {
+			def;
+		}
+	}
+}
+
+parseCssBackground(cssTerms : [CssTerm], cssStyle : CssStyle) -> CssStyle {
+	fold(cssTerms, cssStyle, \style, term -> {
+		switch (term : CssTerm) {
+			CssLinearGradient(rotation, colors): {
+				gs = CssLinearGradient2GraphicsStyle(CssLinearGradient(rotation, colors), false, []);
+				CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+					style.color, style.fontBackgroundFill, style.backgroundFill,
+					style.width, style.height, style.opacity, style.border, style.borderRadius, gs, 
+					style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
+					style.svgExtra, style.display
+				)
+			}
+			CssUrl(value) : {
+				if(value != "") {
+					CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+						style.color, style.fontBackgroundFill, style.backgroundFill,
+						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+						concat([term], style.backgroundImage), style.stroke, style.strokeWidth, style.fill, style.form,
+						style.svgExtra, style.display
+					)
+				} else {
+					style;
+				}
+			}
+			default: {
+				col = cssTerm2color(term, -1);
+				if (col != -1) {
+					CssStyle(style.family, style.fontSize, style.letterSpacing, style.bold, style.italic,
+						style.color, style.fontBackgroundFill, col,
+						style.width, style.height, style.opacity, style.border, style.borderRadius, style.background, 
+						style.backgroundImage, style.stroke, style.strokeWidth, style.fill, style.form,
+						style.svgExtra, style.display
+					)
+				} else {
+					style;
+				}
+			}
+		}
+	});
+}
+
+mergeCssStyle(orig : CssStyle, new : CssStyle) -> CssStyle {
+	CssStyle(
+		concat(orig.family, new.family), 
+		if (new.fontSize == defCssStyle.fontSize) orig.fontSize else new.fontSize,
+		if (new.letterSpacing == defCssStyle.letterSpacing) orig.letterSpacing else new.letterSpacing,
+		new.bold,
+		new.italic,
+		if (new.color == defCssStyle.color) orig.color else new.color,
+		if (new.fontBackgroundFill == defCssStyle.fontBackgroundFill) orig.fontBackgroundFill else new.fontBackgroundFill,
+		if (new.backgroundFill == defCssStyle.backgroundFill) orig.backgroundFill else new.backgroundFill,
+		if (new.width == defCssStyle.width) orig.width else new.width,
+		if (new.height == defCssStyle.height) orig.height else new.height,
+		if (new.opacity == defCssStyle.opacity) orig.opacity else new.opacity,
+		if (length(new.border) == 0) orig.border else new.border,
+		if (new.borderRadius == defCssStyle.borderRadius) orig.borderRadius else new.borderRadius,
+		if (length(new.background) == 0) orig.background else new.background,
+		if (length(new.backgroundImage) == 0) orig.backgroundImage else new.backgroundImage,
+		if (new.stroke == defCssStyle.stroke) orig.stroke else new.stroke,
+		if (new.strokeWidth == defCssStyle.strokeWidth) orig.strokeWidth else new.strokeWidth,
+		if (new.fill == defCssStyle.fill) orig.fill else new.fill,
+		if (new.form == defCssStyle.form) orig.form else new.form,
+		if (new.svgExtra == defCssStyle.svgExtra) orig.svgExtra else new.svgExtra,
+		if (new.display == defCssStyle.display) orig.display else new.display
+	)
+}
+
+/*
+main() {
+    // Here we parse a string against the grammar using the precompiled peg opcodes
+    css1 = "<!--table
+.font519545
+	{color:black;
+	font-size:11.0pt;
+	font-weight:400;
+	font-style:italic;
+	text-decoration:none;
+	font-family:Calibri, sans-serif;
+	mso-font-charset:0;}
+.font619545
+	{color:black;
+	font-size:11.0pt;
+	font-weight:700;
+	font-style:italic;
+	text-decoration:none;
+	font-family:Calibri, sans-serif;
+	mso-font-charset:0;}
+-->
+";
+	css2 = "#include sandbox/tropic/normal.css";
+	println(parseCss(css1));
+}
+*/

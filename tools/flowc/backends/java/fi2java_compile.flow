@@ -1,0 +1,1413 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/java/fi2java_defines;
+
+export {
+	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
+	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct>;
+	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
+	generateJavaStructList(gctx : JavaGlobalContext) -> string;
+	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
+	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
+	generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void;
+	javaFileStringList(package_name : string) -> ref List<string>;
+	javaList2String(lst : ref List<string>, endstr : string) -> string;
+}
+
+javaKnownNatives = fold([
+	"Native.strRangeIndexOf"
+], makeTree(), \a,v -> setTree(a,v,true));
+
+indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]> {
+	init = Triple(makeTree(), makeTree(), []);
+
+	res = fold(program.traversal, init, \acc ,name -> {
+		module = lookupTreeDef(program.modules, name, dummyFiModule);
+		id = chooseJavaModuleId(module.fileinfo.flowfile, acc.second);
+		ndecls : Tree<string, FiDeclaration> = fold(
+			module.globalVars, makeTree(),
+			\acc2, d : FiGlobalVar -> setTree(acc2, d.name, d)
+		);
+		all_decls : [FiDeclaration] = if (true) {
+			// variables sorted by init order
+			odecls : [FiDeclaration] = mapConcat(
+				module.initOrder,
+				\n -> {
+					def = lookupTree(ndecls, n);
+					switch (def) {
+						Some(dec): [dec];
+						None(): [];
+					}
+				}
+			);
+			concat(module.natives, concat(odecls, module.functions));
+		} else {
+			// alphabetical order for comparing files
+			ndecls2 : Tree<string, FiDeclaration> = fold(
+				module.functions, ndecls,
+				\acc2, d : FiFunctionDec -> setTree(acc2, d.name, d)
+			);
+			ndecls3 : Tree<string, FiDeclaration> = fold(
+				module.natives, ndecls2,
+				\acc2, d : FiNativeDec -> setTree(acc2, d.name, d)
+			);
+			foldTree(ndecls3, [], \k,v,acc2 -> arrayPush(acc2,v))
+		}
+		// result
+		csm = JavaModule(name, module, id, ref makeList(), all_decls);
+		Triple(
+			setTree(acc.first, name, csm),
+			setTree(acc.second, id, true),
+			arrayPush(acc.third, csm)
+		);
+	});
+
+	Pair(res.first, res.third);
+}
+
+chooseJavaModuleId(name : string, known : Tree<string,bool>) -> string {
+	lastSlash = strLastIndexOf(name, "/");
+	nametk = if (lastSlash >= 0) strRight(name, lastSlash + 1) else name;
+	nametk2 = strReplace(nametk, ".", "_");
+	chooseJavaIdIndex(nametk2, 1, known);
+}
+
+chooseJavaIdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string {
+	name = stem + (if (idx != 1) toString(idx) else "");
+	if (lookupTreeDef(known, name, false)) {
+		chooseJavaIdIndex(stem, idx + 1, known);
+	} else {
+		name;
+	}
+}
+
+indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct> {
+	// Order all structs by name
+	struct_list = foldTree(modules, makeTree(), \name, javaModule, acc ->
+		fold(javaModule.module.structs, acc, \acc2, struct ->
+			setTree(acc2, struct.name, Pair(javaModule, struct))
+		)
+	);
+	// Assign id values
+	init = Pair(0, makeTree());
+	res = foldTree(struct_list, init, \name, pair, acc -> {
+		id = acc.first;
+		javaModule = pair.first;
+		struct = pair.second;
+		fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
+		data = JavaStruct(id, name, javaModule, fields);
+		Pair(id + 1, setTree(acc.second, name, data));
+	});
+	res.second;
+}
+
+indexJavaGlobals(gctx : JavaGlobalContext) -> void {
+	pushstr = \s -> rlistPush(gctx.main_file_text, s);
+	pushistr = \s -> rlistPush(gctx.init_code, s);
+
+	iter(gctx.csm_list, \csm -> {
+		iter(csm.decl_order, \decl -> {
+			switch (decl : FiDeclaration) {
+				FiFunctionDec(name, lambda, type, __, __): {
+					ginfo = JavaGlobalInfo("f_" + name, csm, type, false);
+					gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+				}
+				FiGlobalVar(name, expr, type,__,__): {
+					tstr = type2javaObjType(gctx, type, true, false);
+					rlistPush(csm.vars, "\tpublic " + tstr + " g_" + name + ";\n");
+
+					ginfo = JavaGlobalInfo("g_" + name, csm, type, false);
+					gctx.globals ::= setTree(gctx.globals, name, ginfo);
+				}
+				FiNativeDec(name, io, type, nname, fallback, __, s): {
+					switch (type) {
+						FiTypeFunction(__, __): {
+							parts = strSplit(nname, ".");
+							if (length(parts) != 2)
+								fail0("Invalid native identifier: " + nname);
+							gctx.uses_host ::= setTree(gctx.uses_host, parts[0], true);
+							switch (checkJavaKnownNative(fallback, s, nname)) {
+								FiLambda(args, body, __, __): {
+									wrapper_t = emitJavaFnWrapper(
+										gctx, csm, type, "\t",
+										\wargs, rt -> "return m_" + csm.id + ".nf_" + name + "(" + wargs + ");"
+									);
+									tstr = wrapper_t.second;
+
+									pushstr("\tfinal " + tstr + " nw_" + name + " = " + wrapper_t.first + ";\n");
+									pushstr("\t" + tstr + " n_" + name + " = nw_" + name + ";\n");
+
+									ginfo = JavaGlobalInfo("n_" + name, csm, type, true);
+									gctx.globals ::= setTree(gctx.globals, name, ginfo);
+
+									aclasses = map(type.args, \arg -> type2javaObjType(gctx, arg.type, false, true) + ".class");
+									cstr = if (aclasses == []) "" else ", " + strGlue(aclasses, ", ");
+
+									wrapper_r = emitJavaFnWrapper(
+										gctx, csm, type, "\t\t\t",
+										\wargs,rt -> {
+											astr = if (wargs == "") "" else ", " + wargs;
+											"try { return (" + rt + ")method.invoke(h_" + parts[0] + astr + "); } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }";
+										}
+									);
+
+									pushistr(
+										"\t\ttry {\n"+
+										"\t\t\tfinal java.lang.reflect.Method method = " + parts[0] + ".class.getMethod(\"" + parts[1] + "\"" + cstr + ");\n" +
+										"\t\t\tn_" + name + " = " + wrapper_r.first + ";\n" +
+										"\t\t} catch (ReflectiveOperationException e) {};\n"
+									);
+								}
+								default: {
+									ginfo = JavaGlobalInfo("h_" + nname, csm, type, true);
+									gctx.globalFuncs ::= setTree(gctx.globalFuncs, name, ginfo);
+								}
+							}
+						}
+						default: {
+							fcPrintln("this should never happen: indexJavaGlobals")
+						}
+					}
+				}
+			}
+		});
+	});
+}
+
+generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
+	pushgstr = \s -> rlistPush(gctx.main_file_text, s);
+	pushistr = \s -> rlistPush(gctx.init_code, s);
+
+	iter(gctx.csm_list, \csm -> {
+		module_text = javaFileStringList(gctx.package_name);
+		pushstr = \s -> rlistPush(module_text, s);
+
+		// pushstr("/* "+csm.module.fullpath+" */\n");
+		pushstr("@SuppressWarnings(\"unchecked\")\n");
+		pushstr("final class Module_" + csm.id + " {\n");
+		pushstr("\tfinal Main runtime;\n");
+		pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
+		pushstr("\t\tthis.runtime = runtime;\n");
+		pushstr("\t}\n");
+
+		pushstr(javaList2String(csm.vars, ""));
+
+		iter(csm.decl_order, \decl -> {
+			switch (decl : FiDeclaration) {
+				FiFunctionDec(name, lambda, type, __, __): {
+					code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+					pushstr(code);
+				}
+				FiGlobalVar(name, expr, type, __, __): {
+					local_counter = ref 0;
+					fctx = JavaFunctionContext(
+						gctx, csm, None(), ref makeList(), local_counter,
+						javaStatementPullContext(local_counter),
+						"", false, []
+					);
+					ctx = JavaScopeContext(fctx, "\t\t", makeTree());
+					tstr = type2javaObjType(gctx, type, true, false);
+					emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
+					body = javaList2String(fctx.text, "");
+					pushstr("\tpublic void init_" + name + "() {\n");
+					pushstr(body);
+					pushstr("\t}\n");
+					pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+				}
+				FiNativeDec(name, io, type, nname, fallback,__,__): {
+					fbexp = checkJavaKnownNative(fallback, -1, nname);
+					switch (fbexp) {
+						FiLambda(xs, body, __, __): {
+							funcType = cast(type: FiType -> FiTypeFunction);
+							code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
+							pushstr(code);
+						}
+						default: {}
+					}
+				}
+			}
+		});
+
+		fname = pathCombine(output_dir, "Module_" + csm.id + ".java");
+		setFileContent(fname, javaList2String(module_text, "}\n"));
+		{}
+	});
+}
+
+generateJavaStructList(gctx : JavaGlobalContext) -> string {
+	pushstr = \s -> rlistPush(gctx.main_file_text, s);
+	pushstr("\tstatic final Object[] arr_empty = new Object[0];\n");
+	inits = foldTree(gctx.cstructs, [], \sname, sdata : JavaStruct,acc -> {
+		if (length(sdata.fields) == 0) {
+			pushstr("\tstatic final SingletonStruct str_" + sname + " = SingletonStruct.make(" + i2s(sdata.id) + ",\"" + sname + "\");\n");
+			arrayPush(acc, "\t\t\tstr_" + sname);
+		} else {
+			arrayPush(acc, "\t\t\tnew Struct_" + sname + "()");
+		}
+	});
+	strGlue(inits, ",\n");
+}
+
+generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void {
+	pushstr = \s -> rlistPush(gctx.main_file_text, s);
+
+	// constructor
+	inits = fold(gctx.csm_list, makeList(), \acc, csm -> {
+		pushstr("\tfinal Module_" + csm.id + " m_" + csm.id + ";\n");
+		Cons("\t\tm_" + csm.id + " = new Module_" + csm.id + "(this);\n", acc);
+	});
+
+	pushstr("\tpublic Main(String[] args) {\n");
+	pushstr("\t\tsuper(new Struct[] {\n");
+	pushstr(struct_list);
+	pushstr("\n\t\t}, args);\n");
+	pushstr(list2string(inits));
+	pushstr(javaList2String(gctx.ctor_code, ""));
+	pushstr("\t}\n");
+
+	pushstr(javaList2String(gctx.wrapper_code, ""));
+
+	// init function
+	host_init = foldTree(gctx.uses_host, makeList(), \host, v, acc -> {
+		pushstr("\t" + host + " h_" + host + ";\n");
+		Cons("\t\th_" + host + " = super.getNativeHost(" + host + ".class);\n", acc);
+	});
+
+	pushstr("\tprivate void init() {\n");
+	pushstr(list2string(host_init));
+	pushstr(javaList2String(gctx.init_code, ""));
+	pushstr("\t}\n");
+
+	// main function
+	pushstr("\tprotected void main() {\n");
+	pushstr("\t\tinit();\n");
+
+	switch (lookupTree(gctx.globalFuncs, "main")) {
+		Some(finfo):
+			pushstr("\t\tm_" + finfo.csmodule.id + "." + finfo.name + "();\n");
+		None():
+			fail0("No main function");
+	}
+	pushstr("\t}\n");
+	
+	pushstr("\tpublic static void main(String[] args) {\n");
+	pushstr("\t\tMain runner = new Main(args);\n");
+	pushstr("\t\trunner.start(null);\n");
+	pushstr("\t}\n");
+}
+
+javaFileStringList(package_name : string) -> ref List<string> {
+	header =
+		"package " + package_name + ";\n\n" +
+		"import com.area9innovation.flow.*;\n\n";
+	ref Cons(header, makeList())
+}
+
+javaList2String(lst : ref List<string>, endstr : string) -> string {
+	// convert to single string and free old list data for gc
+	str = list2string(Cons(endstr, ^lst));
+	lst := Cons(str, EmptyList());
+	str
+}
+
+generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
+	foldTree(gctx.cstructs, 0, \sname, sdata : JavaStruct, acc -> {
+		if (length(sdata.fields) > 0) {
+			str_data = javaFileStringList(gctx.package_name);
+			pushstr = \s -> str_data := Cons(s, ^str_data);
+
+			fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
+				Quadruple(
+					n, type2javaObjType(gctx, f.type, true, false),
+					f.type, type2javaObjType(gctx, f.type, false, false)
+				)
+			);
+			accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
+
+			fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
+			
+			pushstr(
+				"class Struct_" + sname + " extends Struct" +
+				(if (fieldstr != "") " implements " + fieldstr else "") +
+				" {\n"
+			);
+
+			// fields
+			iter(fnametypes, \f -> 
+				pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
+			);
+
+			// constructor
+			pushstr("\n\tpublic Struct_" + sname + "() {}\n");
+			pushstr(
+				"\tpublic Struct_" + sname + "(" +
+				strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
+				") {\n"
+			);
+			iter(fnametypes, \f ->
+				pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
+			);
+			pushstr("\t}\n");
+
+			// accessors
+			iter(accessor_flds, \f -> {
+				name = f.first;
+				pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
+				pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
+			});
+
+			// metadata
+			pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
+			pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
+
+			pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
+			pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
+
+			pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
+			pushstr(strGlue(map(sdata.fields,\f -> type2javaRuntimeType(f.type)), ", "));
+
+			pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
+			pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
+
+			// generic field access
+			pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
+			pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
+			pushstr("\n\t\t};\n\t}\n");
+
+			pushstr("\t@SuppressWarnings(\"unchecked\")\n");
+			pushstr("\tpublic void setFields(Object[] values) {\n");
+			pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
+			pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
+			iteri(fnametypes, \i, f ->
+				pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
+			);
+			pushstr("\t}\n\n");
+
+			// comparison
+			pushstr("\tpublic int compareTo(Struct other_gen) {\n");
+			pushstr("\t\tif (other_gen == this) return 0;\n");
+			pushstr("\t\tint tmp = other_gen.getTypeId();\n");
+			pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
+			pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
+
+			tmp = fold(fnametypes, false, \tmp, f -> {
+				if (tmp) {
+					pushstr("\t\tif (tmp != 0) return tmp;\n");
+				}
+				emitJavaComparison(pushstr, f.first, f.third);
+			});
+			if (tmp)
+				pushstr("\t\treturn tmp;\n\t}\n")
+			else
+				pushstr("\t\treturn 0;\n\t}\n");
+
+			fname = pathCombine(output_dir, "Struct_" + sname + ".java");
+			setFileContent(fname, javaList2String(str_data, "}\n"));
+			{}
+		}
+
+		0;
+	});
+
+	{}
+}
+
+emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, tree : FiLambda, parent : Maybe<JavaScopeContext>, indent0 : string, type : FiTypeFunction) -> string {
+	is_closure = (parent != None());
+	atypes = map(tree.args, \arg -> arg.type);
+	rtype = type.returnType;
+
+	local_counter = ref 0;
+
+	arg_locals = mapi(tree.args, \i, arg -> {
+		aname2 = "a" + (if (arg.name == "__") i2s(i) else arg.name);
+		//aname2 = javaNewLocalName(local_counter, aname);
+		atypestr = type2javaObjType(gctx, atypes[i], !is_closure, false);
+		JavaLocalInfo(arg.name, aname2, atypestr, is_closure, is_closure);
+	});
+
+	fctx = JavaFunctionContext(
+		gctx, csm,
+		switch (parent) {
+			Some(p): Some(ref p);
+			None(): None();
+		},
+		ref makeList(), local_counter,
+		javaStatementPullContext(local_counter),
+
+		// tail call
+		if (is_closure) "" else global,
+		false,
+
+		arg_locals
+	);
+
+	indent = if (is_closure) indent0 + "\t" else indent0;
+
+	ctx = JavaScopeContext(
+		fctx, indent + "\t",
+		fold(arg_locals, makeTree(), \t, l -> setTree(t, l.name, l))
+	);
+
+	rtypestr = type2javaObjType(gctx, rtype, !is_closure, false);
+	emitJavaStatement(ctx, tree.body, JavaReturnStmt(rtypestr));
+
+	prefix = if (is_closure)
+		indent + "final public " + rtypestr + " invoke"
+	else
+		indent + rtypestr + " " + name;
+
+	arg_text = map(arg_locals, \loc -> {
+		(if (is_closure) "final " else "") + loc.type + " " + loc.id
+	});
+
+	body = javaList2String(fctx.text, "");
+
+	reslist = ref makeList();
+
+	if (is_closure) {
+		rlistPush(reslist, "new Func" + i2s(length(arg_locals)) + "<" + rtypestr);
+		iter(arg_locals, \loc -> rlistPush(reslist, "," + loc.type));
+		rlistPush(reslist, ">() {\n");
+	}
+
+	rlistPush(reslist, prefix + "(" + strGlue(arg_text, ", ") + ") {\n");
+
+	if (fctx.has_tail_call) {
+		rlistPush(reslist, indent + " TAIL_CALL: for(;;) {\n");
+		rlistPush(reslist, body);
+		rlistPush(reslist, indent + " }\n");
+	} else {
+		rlistPush(reslist, body);
+	}
+
+	rlistPush(reslist, indent + "}\n");
+
+	if (is_closure) {
+		rlistPush(reslist, indent0 + "}");
+	}
+
+	list2string(^reslist);
+}
+
+emitJavaStatement(ctx0 : JavaScopeContext, code0 : FiExp, retloc : JavaReturnLocation) {
+	unw_code = unfoldJavaStatements(ctx0, code0, true);
+	code = unw_code.first;
+	ctx = unw_code.second;
+
+	switch (code) {
+		FiIf(cond, then, elseExp, __, __): {
+			cond_code = unfoldJavaStatements(ctx, cond, false);
+			condstr = emitJavaExpression(cond_code.second, cond_code.first, "boolean");
+			jctxPushStr(ctx, ctx.indent + "if (" + condstr + ") {\n");
+			subctx = jctxPushIndent(ctx, "\t");
+			emitJavaStatement(subctx, then, retloc);
+			jctxPushStr(ctx, ctx.indent + "} else {\n");
+			emitJavaStatement(subctx, elseExp, retloc);
+			jctxPushStr(ctx, ctx.indent + "}\n");
+		}
+		FiSwitch(x, __, cases,__,__): {
+			arg_code = unfoldJavaStatements(ctx, x, false);
+			argstr = emitJavaExpression(arg_code.second, arg_code.first, "Struct");
+			tmpvar = javaNewLocalName(ctx.func.next_local_id, "_tmp");
+			jctxPushStr(ctx, ctx.indent + "Struct " + tmpvar + " = " +  argstr + ";\n");
+			jctxPushStr(ctx, ctx.indent + "switch (" + tmpvar + ".getTypeId()) {\n");
+			subctx = jctxPushIndent(ctx, "\t");
+			tmpvar2 = javaNewLocalName(ctx.func.next_local_id, "_tmp");
+			inputvar = switch (x) {
+				FiVar(name,__,__): name;
+				default: "";
+			};
+			has_default = fold(cases, false, \hasdef, case -> {
+				case_ctx_v = if (case.struct == "default") {
+					jctxPushStr(ctx, ctx.indent + "default: {\n");
+					Pair(subctx, true);
+				} else {
+					switch (lookupTree(ctx.func.gctx.cstructs, case.struct)) {
+						Some(cstruct): {
+							jctxPushStr(ctx, ctx.indent + "case " + i2s(cstruct.id) + "/*" + cstruct.name + "*/: {\n");
+
+							has_args = exists(case.argNames, \a -> a != "__");
+
+							castctx = if (has_args || (length(cstruct.fields) > 0 && inputvar != "")) {
+								stype = "Struct_" + cstruct.name;
+								jctxPushStr(ctx, subctx.indent + "final " + stype + " " + tmpvar2 +
+									" = (" + stype + ")" + tmpvar + ";\n");
+
+								if (inputvar != "")
+									jctxPushLocal(subctx, JavaLocalInfo(inputvar, tmpvar2, stype, true, false))
+								else
+									subctx;
+							}
+							else
+								subctx;
+
+							ectx = if (!has_args)
+								castctx
+							else {
+								foldi(case.argNames, castctx, \i, sctx, arg -> {
+									if (arg == "__")
+										sctx
+									else {
+										aname = javaNewLocalName(ctx.func.next_local_id, arg);
+										ty = type2javaObjType(ctx.func.gctx, cstruct.fields[i].type, true, false);
+										jctxPushStr(ctx, subctx.indent + "final " + ty + " " + aname +
+											" = " + tmpvar2 + ".f_" + cstruct.fields[i].name + ";\n");
+
+										jctxPushLocal(sctx, JavaLocalInfo(arg,aname,ty,true,false));
+									}
+								});
+							}
+
+							Pair(ectx, hasdef);
+						}
+						None():
+							fail0("invalid struct in case: " + case.struct);
+					}
+				}
+
+				emitJavaStatement(case_ctx_v.first, case.body, retloc);
+
+				if (!isJavaReturnStmt(retloc))
+					jctxPushStr(ctx, subctx.indent + "break;\n");
+				jctxPushStr(ctx, ctx.indent + "}\n");
+
+				case_ctx_v.second;
+			});
+
+			if (!has_default) {
+				jctxPushStr(ctx, ctx.indent + "default:\n");
+				jctxPushStr(ctx, subctx.indent +
+					"throw new RuntimeException(\"Unexpected struct in switch: \"+" +
+					tmpvar + ".getTypeName());\n");
+			}
+
+			jctxPushStr(ctx, ctx.indent + "}\n");
+		}
+
+		FiCallPrim(op, es, type, __): {
+			switch (op) {
+				FcArrayPrim():
+					if (length(es) == 0)
+						javaReturnValue(ctx, retloc, "runtime.arr_empty")
+					else if (length(es) > 10) {
+						tmpvar = javaNewLocalName(ctx.func.next_local_id, "arrtmp");
+						jctxPushStr(ctx, ctx.indent + "Object[] " + tmpvar +
+							"=new Object[" + i2s(length(es)) + "];\n");
+
+						iteri(es, \idx,arg -> {
+							val_code = unfoldJavaStatements(ctx, arg, false);
+							valstr = emitJavaExpression(val_code.second, val_code.first, "Object");
+							jctxPushStr(ctx, ctx.indent + tmpvar + "[" + i2s(idx) + "] = " + valstr + ";\n");
+						});
+
+						javaReturnValue(ctx, retloc, tmpvar);
+					}
+					else {
+						emitJavaDefaultStmt(ctx, code, retloc);
+					}
+				FcAssignPrim(): {
+					vtype = ctxtype2javaObjType(ctx, fiExpType(es[1]), false, false);
+
+					ref_code = unfoldJavaStatements(ctx, es[0], false);
+					refstr = emitJavaExpression(ref_code.second, ref_code.first, "Reference<"+vtype+">");
+					val_code = unfoldJavaStatements(ctx, es[1], false);
+					valstr = emitJavaExpression(val_code.second, val_code.first, vtype);
+
+					jctxPushStr(ctx, ctx.indent + refstr + ".value = " + valstr + ";\n");
+					javaReturnNull(ctx, retloc);
+				}
+				FcSetMutablePrim(field): {
+					sinfo = type2javaStruct(ctx.func.gctx, type);
+					type1s = ctxtype2javaObjType(ctx, type, true, false);
+
+					vtype = switch (sinfo) {
+						Some(cstruct): {
+							argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
+							if (argid < 0)
+								fail0("Struct " + cstruct.name + " has no field " + field);
+							type2javaObjType(ctx.func.gctx, cstruct.fields[argid].type, true, false);
+						}
+						None():
+							ctxtype2javaObjType(ctx, fiExpType(es[1]), true, false);
+					}
+
+					ref_code = unfoldJavaStatements(ctx, es[0], false);
+					refstr = emitJavaExpression(ref_code.second, ref_code.first, type1s);
+					val_code = unfoldJavaStatements(ctx, es[1], false);
+					valstr = emitJavaExpression(val_code.second, val_code.first, vtype);
+
+					switch (sinfo) {
+						Some(cstruct): {
+							jctxPushStr(ctx, ctx.indent + refstr + ".f_" + field + "=" + valstr + ";\n");
+						}
+						None(): {
+							javaRequireAccessor(ctx.func.gctx, field);
+							jctxPushStr(ctx, ctx.indent + "((Field_" + field + ")" + refstr +
+								").set_" + field + "(" + valstr + ");\n");
+						}
+					}
+					javaReturnNull(ctx, retloc);
+				}
+				default:
+					emitJavaDefaultStmt(ctx, code, retloc);
+			}
+		}
+		default:
+			emitJavaDefaultStmt(ctx, code, retloc);
+	}
+}
+
+emitJavaDefaultStmt(ctx : JavaScopeContext, code : FiExp, retloc : JavaReturnLocation) -> void {
+	switch (retloc) {
+		JavaReturnIgnore():
+			switch (code) {
+				FiVoid(__): {}
+				default:
+					if (isSafeJavaStatement(ctx.func.gctx, code))
+						emitJavaExprStmt(ctx, code, "", "Object")
+					else {
+						tmpvar = javaNewLocalName(ctx.func.next_local_id, "_unused");
+						emitJavaExprStmt(ctx, code, "Object " + tmpvar + "=", "Object");
+					}
+			}
+		JavaReturnLocal(name,type):
+			emitJavaExprStmt(ctx, code, name + "=", type);
+		JavaReturnStmt(type):
+			switch (code) {
+				FiCall(fn, es, __, __): {
+					can_tail = switch (fn) {
+						FiVar(x, __, __): x == ctx.func.can_tail_call;
+						default: false;
+					};
+					if (can_tail)
+						emitJavaTailCall(ctx, code, type)
+					else
+						emitJavaExprStmt(ctx, code, "return ", type);
+				}
+				default:
+					emitJavaExprStmt(ctx, code, "return ", type);
+			}
+	}
+}
+
+emitJavaExprStmt(ctx : JavaScopeContext, code : FiExp, eexpr : string, etype : string) -> void {
+	switch (code) {
+		FiLambda(__,__,__,__):
+			emitJavaClosure(ctx, code, eexpr, etype);
+		default:
+			jctxPushStr(ctx, ctx.indent + eexpr + emitJavaExpression(ctx, code, etype) + ";\n");
+	}
+}
+
+emitJavaTailCall(ctx : JavaScopeContext, code : FiCall, rtype : string) -> void {
+	subindent = ctx.indent + "\t";
+	(ctx.func).has_tail_call ::= true;
+
+	jctxPushStr(ctx, ctx.indent + "{\n");
+
+	args = code.args;
+
+	var_assigns = mapi(ctx.func.arg_locals, \i, arg -> {
+		is_same = switch (args[i]) {
+			FiVar(x, __, __):
+				x == arg.name &&
+				eitherMap(lookupTree(ctx.locals, x), \l -> l==arg, false);
+			default:
+				false;
+		};
+
+		if (is_same)
+			""
+		else {
+			arg_code = unfoldJavaStatements(ctx, args[i], false);
+			tmpvar = javaNewLocalName(ctx.func.next_local_id, "__tmp");
+			argstr = emitJavaExpression(arg_code.second, arg_code.first, arg.type);
+
+			jctxPushStr(ctx, subindent + "final " + arg.type + " " + tmpvar + " = " + argstr + ";\n");
+
+			subindent + arg.id + " = " + tmpvar + ";\n";
+		}
+	});
+
+	iter(var_assigns, \s -> if (s != "") jctxPushStr(ctx, s));
+
+	jctxPushStr(ctx, subindent + "continue TAIL_CALL;\n" + ctx.indent + "}\n");
+}
+
+emitJavaClosure(ctx : JavaScopeContext, code : FiLambda, rloc : string, rtype : string) {
+	fctx = ctx.func;
+	bodycode = emitJavaFunction(fctx.gctx, fctx.csm, "", "", code, Some(ctx), ctx.indent, cast(code.type : FiType -> FiTypeFunction));
+
+	type1 = type2javaObjType(fctx.gctx, fiExpType(code), true, false);
+	type2 = rtype;
+
+	jctxPushStr(ctx, ctx.indent + rloc);
+	jctxPushStr(ctx, wrapJavaCast(bodycode, type1, type2));
+	jctxPushStr(ctx, ";\n");
+}
+
+emitJavaExpression(ctx : JavaScopeContext, expcode : FiExp, rtype : string) -> string {
+	result = \str, type -> {
+		wrapJavaCast(str, type, rtype);
+	};
+	switch (expcode) {
+		FiVoid(__): "null";
+		FiBool(v, __): result(if (v) "true" else "false", "boolean");
+		FiInt(v, __):  result(if (v < 0) "(" + i2s(v) + ")" else i2s(v), "int");
+		FiDouble(d, i): {
+			//TODO: infinity
+			vs = if (isNanOrInf(d)) {
+				"Math.NaN"
+			} else {
+				s = d2s(d);
+				s1 = if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s + ".0" else s;
+				if (getCharAt(s, 0) == "-") "(" + s1 + ")" else s1;
+			};
+			result(vs, "double");
+		}
+		FiString(s, __): {
+			vs = stringFold(s, "\"", \acc,code ->
+				acc + if (code < 0x20) {
+					if (code == 0x09) "\\t"
+					else if (code == 0x0a) "\\n"
+					else if (code == 0x0d) "\\r"
+					else "\\u"+lpad(formatHex(code), "0", 4);
+				} else if (code >= 0x80) {
+					"\\u" + lpad(formatHex(code), "0", 4)
+				} else {
+					if (code == 0x22) "\\\""
+					else if (code == 0x5c) "\\\\"
+					else fromCharCode(code);
+				}
+			) + "\"";
+			result(vs, "String");
+		}
+		FiSeq(es, type, __): {
+			if (length(es) == 0) {
+				"null"
+			} else {
+				if (length(es) != 1) fail0("unexpected sequence in expression");
+				emitJavaExpression(ctx, es[0], rtype);
+			}
+		}
+		FiVar(name, type, __):
+			switch (resolveJavaLocal(ctx, name)) {
+				Some(linfo):
+					wrapJavaCast(linfo.id, linfo.type, rtype);
+				None(): {
+					gctx = ctx.func.gctx;
+					switch (lookupTree(gctx.globals, name)) {
+						Some(ginfo): {
+							tstr = type2javaObjType(gctx, ginfo.type, true, false);
+							wrapJavaCast(jctxWrapModuleRef(ctx, ginfo), tstr, rtype);
+						}
+						None():
+							switch (lookupTree(gctx.globalFuncs, name)) {
+								Some(finfo): {
+									ftype = cast(finfo.type : FiType -> FiTypeFunction);
+									id = "gfw_" + name;
+
+									wrapper_t = emitJavaFnWrapper(
+										gctx, finfo.csmodule, ftype, "\t",
+										\args, rt -> {
+											"return "+
+												(if (finfo.global_scope) "" else "m_" + finfo.csmodule.id + ".")
+												+ finfo.name + "(" + args + ");"
+										}
+									);
+									tstr = wrapper_t.second;
+
+									rlistPush(gctx.wrapper_code, "\tfinal " + tstr + " " + id + " = " + wrapper_t.first + ";\n");
+
+									fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
+									gctx.globals ::= setTree(gctx.globals, name, fglobal);
+									wrapJavaCast("runtime.gfw_" + name, tstr, rtype);
+								}
+								None():
+									switch (lookupTree(gctx.cstructs, name)) {
+										Some(cstruct):
+											wrapJavaCast("runtime.str_" + name, "SingletonStruct", rtype);
+										None():
+											"$UNKNOWN_NAME_" + name + "$";
+									}
+							}
+					}
+				}
+			}
+		FiCall(f, es, type, __): {
+			gctx = ctx.func.gctx;
+			global = switch (f) {
+				FiVar(fname, tp, __): {
+					switch (lookupTree(gctx.globals, fname)) {
+						Some(__): None();
+						None(): lookupTree(gctx.globalFuncs, fname);
+					}
+				}
+				default: None();
+			};
+			switch (global) {
+				Some(finfo): {
+					ftype = cast(finfo.type : FiType -> FiTypeFunction);
+					rname = jctxWrapModuleRef(ctx, finfo);
+					aexprs = mapi(es, \j, expr ->
+						emitJavaExpression(ctx, expr, type2javaObjType(gctx, ftype.args[j].type, true, false))
+					);
+					result(rname + "(" + strGlue(aexprs, ", ") + ")", type2javaObjType(gctx, ftype.returnType, true, false));
+				}
+				None(): {
+					arrow = javaVerifyFiTypeFunction(fiExpType(f));
+					typeinfo = switch (arrow) {
+						Some(funcType):
+							Triple(
+								ctxtype2javaObjType(ctx, funcType, false, false),
+								map(funcType.args, \arg -> ctxtype2javaObjType(ctx, arg.type, false, false)),
+ 								ctxtype2javaObjType(ctx, funcType.returnType, false, false)
+							);
+						None():
+							Triple(
+								javaRequireFunction(gctx, length(es)),
+								map(es, \__ -> "Object"),
+								"Object"
+							);
+					}
+					fnexpr = emitJavaExpression(ctx, f, typeinfo.first);
+					aexprs = zipWith(es, typeinfo.second,
+						\expr, t -> emitJavaExpression(ctx, expr, t));
+					result(fnexpr + ".invoke(" + strGlue(aexprs, ", ") + ")", typeinfo.third);
+				}
+			}
+		}
+		FiIf(cond, ethen, eelse, type, __): {
+			etype = ctxtype2javaObjType(ctx, type, true, false);
+			result(
+				"(" + emitJavaExpression(ctx, cond, "boolean") + "?" +
+					emitJavaExpression(ctx, ethen, etype) + ":" +
+					emitJavaExpression(ctx, eelse, etype) + ")",
+				etype
+			);
+		}
+		FiCast(e0, tFrom, tTo, type, __): {
+			csm = ctx.func.csm;
+			sfrom = ctxtype2javaObjType(ctx, tFrom, true, false);
+			sto = ctxtype2javaObjType(ctx, tTo, true, false);
+			arg = emitJavaExpression(ctx, e0, sfrom);
+			result(
+				switch (tFrom) {
+					FiTypeInt(): 
+						switch (tTo) {
+							FiTypeInt():    arg;
+							FiTypeDouble(): "((double)" + arg + ")";
+							FiTypeString(): "Integer.toString((int)(" + arg + "))";  
+							default:        "((" + sto + ")" + arg + ")";
+						}
+					FiTypeDouble():
+						switch (tTo) {
+							FiTypeInt():    "((int)" + arg + ")";
+							FiTypeDouble(): arg;
+							FiTypeString(): "FlowRuntime.doubleToString(" + arg + ")";
+							default:        "((" + sto + ")" + arg + ")";
+						}
+					default: "((" + sto + ")" + arg + ")";
+				},
+				sto
+			);
+		}
+		FiCallPrim(op, es, type, __):
+			switch (op) {
+				FcRefPrim(): {
+					result(
+						"(new Reference(" + emitJavaExpression(ctx, es[0], "Object") + "))",
+						"Reference"
+					);
+				}
+				FcDerefPrim(): {
+					rettype = ctxtype2javaObjType(ctx, type, false, false);
+					reftype = if (rettype == "Object") "Reference" else "Reference<" + rettype + ">";
+					result(
+						emitJavaExpression(ctx, es[0], reftype) + ".value",
+						rettype
+					);
+				}
+				FcArrayPrim():
+					result(
+						if (length(es) == 0)
+							"runtime.arr_empty"
+						else
+							"(new Object[] { " + strGlue(map(es, \e -> emitJavaExpression(ctx, e, "Object")), ", ") + " })", 
+						"Object[]"
+					);
+				FcIndexPrim(): {
+					rtypestr = if (rtype == "Object") ctxtype2javaObjType(ctx, type, false, false) else rtype;
+					"((" + rtypestr + ")(" + emitJavaExpression(ctx, es[0], "Object[]") + "[" + emitJavaExpression(ctx, es[1], "int") + "]))";
+				}
+				FcStructPrim(sname):
+					switch (lookupTree(ctx.func.gctx.cstructs, sname)) {
+						None(): fail0("unknown struct " + sname);
+						Some(sinfo): {
+							nfields = length(sinfo.fields);
+							if (nfields != length(es))
+								fail0("Invalid number of arguments constructing " + sname + ": " + i2s(length(es)) + " instead of " + i2s(nfields));
+							if (nfields == 0)
+								result("runtime.str_" + sname, "SingletonStruct")
+							else {
+								stype = "Struct_" + sname;
+								result(
+									"(new " + stype + "(" +
+									strGlue(mapi(es, \j, e ->
+										emitJavaExpression(ctx, e,
+											type2javaObjType(ctx.func.gctx, sinfo.fields[j].type, true, false))),
+										", ") +
+									"))",
+									stype
+								);
+							}
+						}
+					}
+				FcFieldPrim(field): {
+					gctx = ctx.func.gctx;
+					type1 = fiExpType(es[0]);
+					sinfo = type2javaStruct(gctx, type1);
+					refstr = emitJavaExpression(ctx, es[0], ctxtype2javaObjType(ctx, type1, true, false));
+
+					if (field == "structname")
+						result("((Struct)" + refstr + ").getTypeName()", "String")
+					else
+						switch (sinfo) {
+							Some(cstruct): {
+								argid = elemIndex(map(cstruct.fields, \f -> f.name), field, -1);
+								if (argid < 0)
+									fail0("Struct " + cstruct.name+" has no field " + field);
+								vtype = type2javaObjType(gctx, cstruct.fields[argid].type, true, false);
+								result(refstr + ".f_" + field, vtype);
+							}
+							None(): {
+								javaRequireAccessor(gctx, field);
+								result("((Field_" + field + ")" + refstr + ").get_" + field + "()", "Object");
+							}
+						}
+				}
+				FcAndPrim():
+					result(
+						"(" + emitJavaExpression(ctx, es[0], "boolean") + "&&" + emitJavaExpression(ctx, es[1], "boolean") + ")",
+						"boolean"
+					);
+				FcOrPrim():
+					result(
+						"(" + emitJavaExpression(ctx, es[0], "boolean") + "||" + emitJavaExpression(ctx, es[1], "boolean") + ")",
+						"boolean"
+					);
+				FcNotPrim():
+					result("!" + emitJavaExpression(ctx, es[0], "boolean"), "boolean");
+				FcNegPrim(): 
+					switch (type) {
+						FiTypeInt():    result("(-" + emitJavaExpression(ctx, es[0], "int") + ")", "int");
+						FiTypeDouble(): result("(-" + emitJavaExpression(ctx, es[0], "double") + ")", "double");
+						default:        result("FlowRuntime.negate(" + emitJavaExpression(ctx, es[0], "Object") + ")", "Object");
+					}
+				FcPlusPrim():  emitJavaArith(ctx, "+", "FlowRuntime.add", es[0], es[1], type, rtype);
+				FcMinusPrim(): emitJavaArith(ctx, "-", "FlowRuntime.sub", es[0], es[1], type, rtype);
+				FcMulPrim():   emitJavaArith(ctx, "*", "FlowRuntime.mul", es[0], es[1], type, rtype);
+				FcDivPrim():   emitJavaArith(ctx, "/", "FlowRuntime.div", es[0], es[1], type, rtype);
+				FcModPrim():   emitJavaArith(ctx, "%", "FlowRuntime.mod", es[0], es[1], type, rtype);
+				FcEqPrim():    emitJavaCompare(ctx, "==", es[0], es[1], rtype);
+				FcNePrim():    emitJavaCompare(ctx, "!=", es[0], es[1], rtype);
+				FcLtPrim():    emitJavaCompare(ctx, "<",  es[0], es[1], rtype);
+				FcLePrim():    emitJavaCompare(ctx, "<=", es[0], es[1], rtype);
+				FcGtPrim():    emitJavaCompare(ctx, ">",  es[0], es[1], rtype);
+				FcGePrim():    emitJavaCompare(ctx, ">=", es[0], es[1], rtype);
+				default: "/*TODO*/";
+			}
+		default:
+			"/*TODO*/"
+	}
+}
+
+emitJavaFnWrapper(gctx : JavaGlobalContext, csmodule : JavaModule, ftype : FiTypeFunction, indent : string, body : (string,string) -> string) -> Pair<string,string> {
+	tstr = type2javaObjType(gctx, ftype, false, false);
+
+	atypes = ftype.args;
+	anames = mapi(atypes, \j, t -> type2javaObjType(gctx, t.type, false, false) + " a" + i2s(j));
+	auses = mapi(atypes, \j, t -> "a" + i2s(j));
+	rtypestr = type2javaObjType(gctx, ftype.returnType, false, false);
+
+	wrapper = (
+		"new " + tstr + "() {\n" +
+		(indent + "\tfinal public " + rtypestr + " invoke(" + strGlue(anames, ", ") + ") {\n") +
+		(indent + "\t\t" + body(strGlue(auses, ", "), rtypestr) + "\n") +
+		indent + "\t}\n" + indent + "}"
+	);
+
+	Pair(wrapper, tstr);
+}
+
+emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rtype : string) -> string {
+	opwrap = \ts -> {
+		"(" + emitJavaExpression(ctx, e1, ts) + op + emitJavaExpression(ctx, e2, ts) + ")";
+	}
+	fnwrap = \fn,ts -> {
+		"(" + fn + "(" + emitJavaExpression(ctx, e1, ts) + "," + emitJavaExpression(ctx, e2, ts) + ")" + op + "0)";
+	}
+	strwrap = \ -> {
+		s1 = emitJavaExpression(ctx, e1, "String");
+		s2 = emitJavaExpression(ctx, e2, "String");
+		if (op == "==")
+			"(" + s1 + ").equals(" + s2 + ")"
+		else if (op == "!=")
+			"(!(" + s1 + ").equals(" + s2 + "))"
+		else
+			"((" + s1 + ").compareTo(" + s2 + ")" + op + "0)";
+	}
+	switch (fiExpType(e1)) {
+		FiTypeInt():    opwrap("int");
+		FiTypeDouble(): opwrap("double");
+		FiTypeString(): strwrap();
+		default:        fnwrap("FlowRuntime.compareByValue","Object");
+	}
+}
+
+emitJavaArith(ctx : JavaScopeContext, op : string, fn : string, e1 : FiExp, e2 : FiExp, type : FiType, rtype : string) -> string {
+	opwrap = \ts -> {
+		wrapJavaCast("(" + emitJavaExpression(ctx, e1, ts) + op + emitJavaExpression(ctx, e2, ts) + ")", ts, rtype);
+	}
+	defwrap = \-> {
+		wrapJavaCast(fn+ "(" + emitJavaExpression(ctx, e1, "Object") + "," + emitJavaExpression(ctx, e2, "Object") + ")", "Object", rtype)
+	}
+	switch (type) {
+		FiTypeInt():    opwrap("int");
+		FiTypeDouble(): opwrap("double");
+		FiTypeString(): opwrap("String");
+		default:        defwrap();
+	}
+}
+
+emitJavaComparison(pushstr : (string) -> void, name : string, t : FiType) -> bool {
+	defcase = \ -> {
+		pushstr("\t\ttmp = FlowRuntime.compareByValue(f_" + name + ", other.f_" + name + ");\n");
+		true;
+	};
+	cmpcase = \ -> {
+		pushstr("\t\ttmp = f_" + name + ".compareTo(other.f_" + name + ");\n");
+		true;
+	};
+	numcase = \ -> {
+		pushstr("\t\tif (f_" + name + " != other.f_" + name + ")\n");
+		pushstr("\t\t\treturn (f_" + name + " > other.f_" + name + ") ? 1 : -1;\n");
+		false;
+	};
+	boolcase = \ -> {
+		pushstr("\t\tif (f_" + name + " != other.f_" + name + ")\n");
+		pushstr("\t\t\treturn f_" + name + " ? 1 : -1;\n");
+		false;
+	};
+	strcase = \ -> {
+		pushstr("\t\ttmp = f_" + name+".compareTo(other.f_" + name + ");\n");
+		true;
+	};
+	switch (t) {
+		FiTypeArray(__):        defcase();
+		FiTypeFunction(__, __): defcase();
+		FiTypeRef(__):          cmpcase();
+		FiTypeParameter(__):    defcase(); // TODO:?
+		FiTypeBool():           boolcase();
+		FiTypeInt():            numcase();
+		FiTypeDouble():         numcase();
+		FiTypeString():         strcase();
+		FiTypeFlow():           defcase();
+		FiTypeVoid():           defcase();
+		FiTypeNative():         defcase();
+		FiTypeName(__, __):     cmpcase();
+	}
+}
+
+unfoldJavaStatements(ctx : JavaScopeContext, code : FiExp, allow_stmt : bool) -> Pair<FiExp,JavaScopeContext> {
+	switch (code) {
+		FiSeq(es, __, __): {
+			if (length(es) == 0) {
+				Pair(code, ctx)
+			} else {
+				lasti = length(es) - 1;
+				head = subrange(es, 0, lasti);
+				iter(head, \item ->
+					emitJavaStatement(ctx, item, JavaReturnIgnore())
+				);
+				unfoldJavaStatements(ctx, es[lasti], allow_stmt);
+			}
+		}
+		FiLet(x, type, e1, e2, type2, __): {
+			value_body = unfoldJavaStatements(ctx, e1, true);
+			body = value_body.first;
+			ln = javaNewLocalName(ctx.func.next_local_id, x);
+			stype = ctxtype2javaObjType(ctx, type, true, false);
+			is_final = switch (body) {
+				FiLambda(__, __, __, __): {
+					rexpr = "final " + stype + " " + ln + " = ";
+					emitJavaClosure(value_body.second, body, rexpr, stype);
+					true;
+				}
+				default: {
+					head = stype + " " + ln;
+					if (isJavaStatement(body, true)) {
+						jctxPushStr(ctx, ctx.indent + head + ";\n");
+						emitJavaStatement(value_body.second, body, JavaReturnLocal(ln, stype));
+						false;
+					} else {
+						expr = emitJavaExpression(value_body.second, body, stype);
+						jctxPushStr(ctx, ctx.indent + "final " + head + " = " + expr + ";\n");
+						true;
+					}
+				}
+			}
+			subscope = jctxPushLocal(ctx, JavaLocalInfo(x, ln, stype, is_final, false));
+			unfoldJavaStatements(subscope, e2, allow_stmt);
+		}
+		default: {
+			if (!allow_stmt || !isJavaStatement(code, true)) {
+				eitherMap(
+					pullFiStatements(ctx.func.pullctx, code),
+					\code2 -> unfoldJavaStatements(ctx, code2, false),
+					Pair(code, ctx)
+				);
+			} else {
+				Pair(code, ctx)
+			}
+		}
+	}
+}
+
+type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool) -> string {
+	switch (t) {
+		FiTypeArray(arr):              "Object[]";
+		FiTypeFunction(args, retType): {
+			arity = length(args);
+			javaRequireFunction(gctx, arity);
+			ft = "Func" + i2s(arity);
+			if (no_args)
+				ft
+			else {
+				astr = strGlue(map(args, \t3 -> type2javaObjType(gctx, t3.type, false, no_args)), ", ");
+				
+				(ft + "<" + type2javaObjType(gctx, retType, false, no_args))+
+					(if (arity == 0) "" else "," + astr) + ">";
+			}
+		};
+		FiTypeRef(tp):                 if (no_args) "Reference" else "Reference<" + type2javaObjType(gctx, tp, false, no_args) + ">";
+		FiTypeParameter(nm):           "Object"; // TODO: is it right ?
+		FiTypeBool():                  if (field) "boolean" else "Boolean";
+		FiTypeInt():                   if (field) "int" else "Integer";
+		FiTypeDouble():                if (field) "double" else "Double";
+		FiTypeString():                "String";
+		FiTypeFlow():                  "Object";
+		FiTypeVoid():                  "Object";
+		FiTypeNative():                "Object";
+		FiTypeName(nm, __):
+			switch(lookupTree(gctx.cstructs, nm)) {
+				Some(cstruct):
+					if (length(cstruct.fields) > 0)
+						"Struct_" + cstruct.name
+					else
+						"SingletonStruct";
+				None():
+					"Struct";
+			}
+	}
+}
+
+jctxWrapModuleRef(ctx : JavaScopeContext, global : JavaGlobalInfo) {
+	if (global.csmodule == ctx.func.csm && !global.global_scope)
+		global.name
+	else {
+		"runtime." +
+		(if (global.global_scope) "" else "m_" + global.csmodule.id + ".") +
+		global.name;
+	}
+}
+
+javaRequireFunction(gctx : JavaGlobalContext, arity : int) -> string {
+	ftypestr = "Func" + i2s(arity);
+
+	if (!lookupTreeDef(gctx.has_func_def, arity, false)) {
+		gctx.has_func_def ::= setTree(gctx.has_func_def, arity, true);
+	}
+	ftypestr;
+}
+
+javaRequireAccessor(gctx : JavaGlobalContext, name : string) {
+	if (!lookupTreeDef(gctx.has_field_accessor, name, false)) {
+		gctx.has_field_accessor ::= setTree(gctx.has_field_accessor, name, true);
+	}
+}
+
+javaVerifyFiTypeFunction(t : FiType) -> Maybe<FiTypeFunction> {
+	switch (t) {
+		FiTypeFunction(__, __): Some(t);
+		default: None();
+	}
+}
+
+type2javaRuntimeType(t : FiType) -> string {
+	switch (t) {
+		FiTypeArray(__):        "RuntimeType.ARRAY";
+		FiTypeFunction(__, __): "RuntimeType.UNKNOWN";
+		FiTypeRef(__):          "RuntimeType.REF";
+		FiTypeParameter(__):    "RuntimeType.UNKNOWN";
+		FiTypeBool():           "RuntimeType.BOOL";
+		FiTypeInt():            "RuntimeType.INT";
+		FiTypeDouble():         "RuntimeType.DOUBLE";
+		FiTypeString():         "RuntimeType.STRING";
+		FiTypeFlow():           "RuntimeType.UNKNOWN";
+		FiTypeVoid():           "RuntimeType.UNKNOWN";
+		FiTypeNative():         "RuntimeType.UNKNOWN";
+		FiTypeName(__, __):     "RuntimeType.STRUCT"
+	}
+}
+
+type2javaStruct(gctx : JavaGlobalContext, t : FiType) -> Maybe<JavaStruct> {
+	switch (t) {
+		FiTypeName(name, __): 
+			switch(lookupTree(gctx.cstructs, name)) {
+				Some(cstruct):
+					if (length(cstruct.fields) > 0)
+						Some(cstruct)
+					else
+						None();
+				None(): None();
+			}
+		default: None();
+	}
+}
+
+ctxtype2javaObjType(ctx : JavaScopeContext, type : FiType, field : bool, no_args : bool) {
+	fctx = ctx.func;
+	type2javaObjType(fctx.gctx, type, field, no_args);
+}
+
+jctxPushStr(ctx : JavaScopeContext, str : string) {
+	rlistPush(ctx.func.text, str);
+}
+
+jctxPushLocal(ctx : JavaScopeContext, info : JavaLocalInfo) {
+	JavaScopeContext(ctx.func, ctx.indent, setTree(ctx.locals, info.name, info))
+}
+
+jctxPushIndent(ctx : JavaScopeContext, delta : string) {
+	JavaScopeContext(ctx.func, ctx.indent + delta, ctx.locals)
+}
+
+wrapJavaCast(expr : string, srct : string, dstt : string) {
+	if (srct == dstt || dstt == "Object" || (dstt == "Struct" && startsWith(srct,"Struct_"))) {
+		expr
+	} else {
+		igen = strIndexOf(dstt, "<");
+		if (igen > 0 && strlen(srct) > igen && startsWith(srct, substring(dstt, 0, igen)))
+			"((" + dstt + ")(" + substring(dstt, 0, igen) + ")" + expr + ")"
+		else
+			"((" + dstt + ")" + expr + ")";
+	}
+}
+
+resolveJavaLocal(ctx : JavaScopeContext, name : string) -> Maybe<JavaLocalInfo> {
+	lt = lookupTree(ctx.locals, name);
+	switch (lt) {
+		Some(info): lt;
+		None():
+			switch (ctx.func.parent) {
+				Some(rp): {
+					pctx = ^rp;
+					lt2 = resolveJavaLocal(pctx, name);
+					switch (lt2) {
+						Some(info):
+							if (info.is_final)
+								lt2
+							else {
+								lname = javaNewLocalName(pctx.func.next_local_id, name);
+								info3 = JavaLocalInfo(name, lname, info.type, true, false);
+
+								jctxPushStr(pctx, pctx.indent + "final " + info.type + " " + lname + " = " + info.id + ";\n");
+
+								rp := jctxPushLocal(^rp, info3);
+								Some(info3);
+							}
+						None(): None();
+					}
+				}
+				None(): None();
+			}
+	}
+}
+
+isJavaStatement(code : FiExp, if_is_statement : bool) {
+	switch (code) {
+		FiSeq(es, __, __):             length(es) != 1;
+		FiLet(__, __, __, __, __, __): true;
+		FiLambda(__, __, __, __):      true;
+		FiSwitch(__, __, __, __, __):  true;
+		FiIf(__, __, __, __, __):      if_is_statement;
+		FiCallPrim(op, es, __, __):
+			switch (op) {
+				FcAssignPrim():        true;
+				FcSetMutablePrim(__):  true;
+				FcArrayPrim():         length(es) > 10;
+				default:               false;
+			}
+		default: false;
+	}
+}
+
+isSafeJavaStatement(gctx : JavaGlobalContext, code : FiExp) {
+	switch (code) {
+		FiCall(f, es, __, __):
+			switch (f) {
+				FiVar(x, __, __):
+					lookupTree(gctx.cstructs, x) == None();
+				default:
+					true;
+			}
+		default:
+			false;
+	}
+}
+
+isJavaReturnStmt(retloc : JavaReturnLocation) {
+	switch (retloc) {
+		JavaReturnStmt(t): true;
+		default: false;
+	}
+}
+
+javaReturnValue(ctx : JavaScopeContext, retloc : JavaReturnLocation, valstr : string) -> void {
+	switch (retloc) {
+		JavaReturnIgnore(): {}
+		JavaReturnLocal(name,type):
+			jctxPushStr(ctx, ctx.indent + name + "=" + valstr + ";\n");
+		JavaReturnStmt(type):
+			jctxPushStr(ctx, ctx.indent + "return " + valstr + ";\n");
+	}
+}
+
+javaReturnNull(ctx : JavaScopeContext, retloc : JavaReturnLocation) -> void {
+	javaReturnValue(ctx, retloc, "null");
+}
+
+javaStatementPullContext(local_counter : ref int) {
+	FiStatementPullContext(
+		\s -> isJavaStatement(s, false),
+		\ -> {
+			id = ^local_counter;
+			local_counter := id + 1;
+			"$" + i2s(id);
+		}
+	)
+}
+
+checkJavaKnownNative(fallback : FiExp, start : int, nname : string) -> FiExp {
+	if (lookupTreeDef(javaKnownNatives, nname, false))
+		FiVoid(start)
+	else
+		fallback
+}
+
+javaNewLocalName(counter : ref int, name : string) {
+	id = ^counter;
+	counter := id + 1;
+	"l" + i2s(id) + "_" + name;
+}

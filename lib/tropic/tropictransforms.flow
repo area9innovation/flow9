@@ -1,0 +1,300 @@
+import tropic/tropic2form;
+
+export {
+	// Make static copy of a Tropic
+	takeTSnapshot : (tropic : Tropic) -> Tropic;
+
+	form2tropic(form : Form) -> Tropic;
+}
+
+// Creates transform with the value as original
+__cb(b : Transform<?>) -> Transform<?> {const(fgetValue(b));}
+
+takeTSnapshot(t : Tropic) -> Tropic {
+	switch(t : Tropic) {
+		TForm(form) : TSFForm(fform2sfform(form2fform(form), false), getStaticFormSize(form)
+			|> (\fs -> TFormMetrics(const(fs.width), const(fs.height), const(fs.baseline))));
+		TFForm(form, met) : TSFForm(fform2sfform(form, false), met);
+		TSFForm(__, __) : t;
+		default :
+			TSFForm(
+				fform2sfform(tropic2fform(t, emptyStylesheet, const(WidthHeight(getStageWidth(), getStageHeight()))), true),
+				TFormMetrics(const(getStageWidth()), const(getStageHeight()), const(getStageHeight()))
+			);
+	}
+}
+
+fform2tropic(f : FForm) -> Tropic {
+	switch (f) {
+		FText(text, style) : TText(text, style);
+		FParagraph(text, style) : TParagraph(text, style);
+		FGraphics(path, style) : TGraphics(path, style);
+		FTranslate(x, y, form) : TTranslate(fpoint(x, y), fform2tropic(form));
+		FScale(x, y, form) : TScale(ffactor(x, y), fform2tropic(form));
+		FRotate(degree, form) : TRotate(degree, fform2tropic(form));
+		FAlpha(alpha, form) : TAlpha(alpha, fform2tropic(form));
+		FVisible(visible, form) : TVisible(visible, fform2tropic(form));
+		FRenderable(renderable, form) : TVisible(renderable, fform2tropic(form)); // TODO: Add TRenderable
+		FGroup(layers, __) : TGroup(map(layers, fform2tropic));
+		FGroup2(layer1, layer2, __) : TGroup2(fform2tropic(layer1), fform2tropic(layer2));
+		FDecorator2(layer1, decorators, above, __) : TDecorator(fform2tropic(layer1), map(decorators, \d -> Pair(d.first, \__ -> fform2tropic(d.second()))), above);
+		FEmpty() : TEmpty();
+		FBorder(left, top, right, bottom, form) : TBorder(left, top, right, bottom, fform2tropic(form));
+		FMask2(form, mask, stack) : TMask(fform2tropic(form), fform2tropic(mask));
+		FInteractive(listeners, form) : TInteractive(listeners, fform2tropic(form));
+		FFilter2(filt, form, stack) : TFilter(filt, fform2tropic(form));
+		FCursor(shape, form) : TCursor(shape, fform2tropic(form));
+		FInspect(inspectors, form) : TInspect(inspectors, fform2tropic(form));
+		FMutable2(form, stack) : TMutable(fselect(form, fform2tropic |> FLift));
+		FCrop2(left, top, width, height, form, stack) : TCrop(fpoint(left, top), fwidthheight(width, height), fform2tropic(form));
+		FControlFocus(focus, form) : TControlFocus(focus, fform2tropic(form));
+		FPicture(url, size, s) :
+			TPicture(
+				url,
+				if (getValue(size).width > 0. && getValue(size).height > 0.)
+					replaceStruct(s, WidthHeight(getValue(size).width, getValue(size).height))
+				else
+					s
+			);
+		FConstructor(form, fn) : TConstruct([fn], fform2tropic(form));
+		FCreate2(current, fn) : TCreate2(ref fform2tropic(^current), \ -> fform2tropic(fn()));
+		FFullWindow(fullscreen, available, form) : TFullWindow(fullscreen, TAvailable(fform2tropic(form), TSized(available)));
+		FBaseline(b, form) : TBaseline(b, fform2tropic(form));
+		FSize2(size, form) : TSize(TSized(size), fform2tropic(form));
+		FAvailable2(a, form) : TAvailable(TSized(a), fform2tropic(form));
+		FAccess(prop, form) : TAccess(prop, fform2tropic(form));
+		FSetPending(setpending, form) : fform2tropic(form);
+		FRealHTML(url, wh, style) : TRealHTML(url, wh, style);
+		FMForm(form) : TForm(form);
+		FDynamicGroup2(stackChanges, currentStack, callstack) : {
+			tStackChanges = make([]);
+			TConstruct(
+				[
+					\ -> fconnect(
+						fmap(stackChanges, \sc ->
+							switch (sc : FGroupChange) {
+								FGroupAdd(form, z) : TGroupAdd(fform2tropic(form), z);
+								FGroupDelete(z) : TGroupDelete(z);
+								FGroupMove(from, to) : TGroupMove(from, to);
+								FGroupReplace(form, z) : TGroupReplace(fform2tropic(form), z);
+							}
+						),
+						tStackChanges
+					)
+				],
+				TDynamicGroup2(tStackChanges, ref map(getValue(currentStack), fform2tropic), TGroupCombiner())
+			);
+		}
+		FVideo(filename, wh, style) : TVideo(filename, wh, style);
+		FTextInput(__, __, __) : TEmpty(); // TODO:
+		FNativeForm(init, __, __, __) : cast(init : flow -> Tropic);
+	}
+}
+
+form2tropic(form : Form) -> Tropic {
+	// println(form.structname);
+	switch (form : Form) {
+		Empty(): TEmpty();
+		Border(l, t, r, b, child): TBorder(l, t, r, b, form2tropic(child));
+		Text(t, s): TText(t, s);
+		Graphics(p, s): TGraphics(p, s);
+		Picture(url, s): TPicture(url, s);
+		// Camera(file, pars, listeners, controls) : false;
+		Translate(x, y, child): TTranslate(fselect2(x, y, FLift2(\x0, y0 -> Point(x0, y0))), form2tropic(child));
+		Scale(x, y, child): TScale(fselect2(x, y, FLift2(\x0, y0 -> Factor(x0, y0))), form2tropic(child));
+		Rotate(d, child): TRotate(d, form2tropic(child));
+		Alpha(a, child): TAlpha(a, form2tropic(child));
+		Visible(v, child): TVisible(fselect(v, FLift(i2b)), form2tropic(child));
+		Mask2(main1, mask, stack): TMask(form2tropic(main1), form2tropic(mask));
+		Group(layers): TGroup(map(layers, form2tropic));
+		Grid(cells) : TGrid(map(cells, \c -> map(c, form2tropic)));
+		Available2(wh, child): /*TAvailable(*/form2tropic(child)/*, TSized(wh))*/;
+		Size2(wh, child): TSize(TSized(wh), form2tropic(child));
+		SetPending(p, child): form2tropic(child); // fix
+		Baseline(baseline, child): TBaseline(baseline, form2tropic(child));
+		Interactive(l, child): TInteractive(l, form2tropic(child));
+		// TextInput(state, listeners, stateaccess) : {
+		// 	hasStateChanger = exists(stateaccess, \sa -> switch(sa : StateAccess) { StateChanger(fn): true; default: false; });
+		// 	hasSize = exists(state, \sa -> switch(sa : TextInputState) { TextSize(w, h): true; default: false; });
+		// 	hasSize && !hasStateChanger
+		// }
+		Filter2(filters, child, stack): TFilter(filters, form2tropic(child));
+		Cursor(kind, child): TCursor(kind, form2tropic(child));
+		Inspect(inspectors, child) : TInspect(inspectors, form2tropic(child)); // fix
+		Mutable2(child, stack): TMutable(fselect(child, FLift(form2tropic)));
+		Switch(case, cases) : TMutable(fselect(case, FLift(\cs -> form2tropic(cases[cs]))));
+		Crop2(l, t, w, h, child, stack): TCrop(fselect2(l, t, FLift2(\l0, t0 -> Point(l0, t0))),
+			fselect2(w, h, FLift2(\w0, h0 -> WidthHeight(w0, h0))) , form2tropic(child));
+		Constructor(child, l): TConstructor(form2tropic(child), l);
+		// Video(file, pars, listeners, controls): false;
+		Access(props, child): TAccess(AccessProperties2FAccessProperties(props), form2tropic(child));
+		// RealHTML2(url, wh, style): false;
+		ControlFocus(focus, child): form2tropic(child); // fix
+		FullWindow(fs, child): TFullWindow(fs, form2tropic(child));
+		NativeForm(init, __, __, __): cast(init : flow -> Tropic);
+		default: {
+			TFormAvailable(form, TFillXY());
+		}
+	}
+}
+
+TInspect(inspectors : [Inspector], tr : Tropic) -> Tropic {
+	TransformTAcc(\t2a, pi, st, mo -> {
+		b = t2a(tr, pi, st, mo);
+
+		disp =
+			fold(
+				inspectors,
+				b.disposers,
+				\acc, insp ->
+					switch (insp : Inspector) {
+						Width(width):
+							arrayPush(
+								acc,
+								fconnect(b.metrics.width, width)
+							);
+						Height(height):
+							arrayPush(
+								acc,
+								fconnect(b.metrics.height, height)
+							);
+						AvailableWidth(width):
+							arrayPush(
+								acc,
+								fconnect(pi.maxX, width)
+							);
+						AvailableWidth2(width):
+							arrayPush(
+								acc,
+								fconnect(pi.maxX, width)
+							);
+						AvailableHeight(height):
+							arrayPush(
+								acc,
+								fconnect(pi.maxY, height)
+							);
+						ISize(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(b.metrics.width, b.metrics.height), widthHeight)
+							);
+						IMetrics(metrics):
+							arrayPush(
+								acc,
+								fconnect(
+									fselect3(b.metrics.width, b.metrics.height, b.metrics.baseline,
+										\wd, hgt, bsln -> FormMetrics(wd, hgt, bsln, hgt)
+									),
+									metrics
+								)
+							);
+						IAvailable(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
+							);
+						IAvailable2(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
+							);
+						default: acc;
+						// IPending : (pending : DynamicBehaviour<int>);
+						// // This is useful for finding elements inside a form. findTaggedFormPosition in formtransforms.flow look them up for you.
+						// ITag(i : int);
+						// ITransformMatrix(setfn : ( fn : () -> TransformMatrix ) -> void );
+					}
+			);
+
+
+		TAcc(
+			b.form,
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			disp
+		)
+	})
+}
+
+
+// Provides a way to set focus to this item. The item should have a suitable TAccess role of button, checkbox or dialog,
+// or it should be a TextInput for this to work.
+TControlFocus(f : DynamicBehaviour<bool>, tr : Tropic) {
+	TransformTAcc2(\t2a -> {
+		b = tr |> t2a;
+
+		TAcc(
+			FControlFocus(
+				f,
+				b.form
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
+TConstructor(tr : Tropic, constructor : () -> () -> void) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = tr |> t2a;
+
+		TAcc(
+			FConstructor(
+				b.form,
+				constructor
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
+TSetPending(p : Transform<int>, tr : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = tr |> t2a;
+
+		TAcc(
+			FSetPending(
+				p,
+				b.form
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}

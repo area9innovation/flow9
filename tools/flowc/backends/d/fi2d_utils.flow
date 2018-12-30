@@ -1,0 +1,193 @@
+import tools/flowc/backends/d/fi2d_defines;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fiCollectDStructs(cfg : FiDConfig, program : FiProgram) -> string;
+	fiType2DType(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+	fiType2DTypeInst(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+	fiType2DTypeNameInst(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+	fiType2DTypeInCall(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+	fiDTypeParamsListStruct(program : FiProgram, types : [FiType]) -> string;
+	fiDTypeParamsListFn(program : FiProgram, fn : FiFunctionDec) -> string;
+	fiDExtractSwitchTypes(cfg  : FiDConfig, program : FiProgram, e: FiExp, s: FiTypeStruct, j: int, cnt: int) -> string;
+	fiDNeedBrace(e : FiExp) -> bool;
+}
+
+fiDExtractSwitchTypes(cfg  : FiDConfig, program : FiProgram, e: FiExp, s: FiTypeStruct, j: int, cnt: int) -> string {
+	if (j == cnt) ""
+	else {
+		switch (e) {
+			FiLet(lx, ltp, le1, le2, __, __) : {
+				tp = switch (s.args[j].type) {
+					FiTypeParameter(__) : fiType2DTypeInst(cfg, program, ltp);
+					default : "";
+				}
+				tpr = fiDExtractSwitchTypes(cfg, program, le2, s, j+1, cnt);
+				tp + (if ((tp != "") && (tpr != "")) "," else "") + tpr;
+			}
+			default: "FiSwitch error";
+		}
+	}
+}
+
+fiDNeedBrace(e : FiExp) -> bool {
+	switch (e) {
+		FiIf(__, __, __, __, __)  : true;
+		FiSeq(s,__, __)           : length(s) > 1;
+		FiSwitch(__,__,__,__, __) : true;
+		FiLet(__,__,__,__,__, __) : true;
+		FiVoid(__)                : true;
+		FiCallPrim(__,__,__, __)  : false;
+		default                   : false;
+	}
+}
+
+fiDTypeParamsListStruct(program : FiProgram, types : [FiType]) -> string {
+	tps = fold(types, makeSet(), \acc1, t ->
+		fiCollectTypars(program, t, acc1)
+	);
+	tp = foldSet(tps, [], \acc1, e ->
+		concat(acc1, ["T" + i2s(strlen(e))])
+	);
+	if (tp == []) "" else "(" + strGlue(tp, ", ") + ")"
+}
+
+fiDTypeParamsListFn(program : FiProgram, fn : FiFunctionDec) {
+	fullList = fiCollectTypars(program, fn.type, makeSet());
+	tp = foldSet(fullList, [], \acc1, e ->
+		concat(acc1, ["T" + i2s(strlen(e))])
+	);
+	if (tp == []) "" else "(" + strGlue(tp, ", ") + ")"
+}
+
+fiProcessDStruct(cfg : FiDConfig, program : FiProgram, name : string, struct : FiTypeStruct, init : string) -> string {
+//	if (name == "JsonObject") fcPrintln("HIA: " + toString(struct));
+	fldList = map(struct.args, \e -> {
+		typ = fiType2DTypeNameInst(cfg, program, e.type);
+		nm = fiDRenameKeyword(cfg, e.name);
+		Pair(typ, nm);
+	});
+	fields = if (length(struct.args) == 0) ""
+	else strGlue(map(fldList, \e ->fiDIndent + e.first + " " + e.second + ";"), "\n");
+
+	cfields = if (length(struct.args) == 0) ""
+	else strGlue(map(fldList, \e -> e.first + " _" + e.second), ", ");
+
+	assignFields = if (length(struct.args) == 0) ""
+	else strGlue(map(fldList, \e -> fiDIndent + fiDIndent + e.second + " = _" + e.second + ";"), "\n");
+
+	constructor = if (length(struct.args) == 0) fiDIndent + "this(){}\n" else {
+		"\n" + fiDIndent + "this(" + cfields + "){\n" + assignFields + "\n" + fiDIndent + "}\n";
+	}
+	init + "class " + name + fiDTypeParamsListStruct(program, map(struct.args, \a -> a.type)) + " {\n" + fields + constructor + "}\n\n";
+}
+
+fiCollectDStructs(cfg : FiDConfig, program : FiProgram) -> string {
+	unions = if (program.names.unions == makeTree()) ""
+	else {
+		fold(program.traversal, "", \acc, mname -> {
+			md = lookupTree(program.modules, mname);
+			eitherFn(md, \module -> {
+				unions1  = fold(module.unions, acc, \acc1, union ->
+					acc1 + "alias " + union.name + " = Object;\n\n"
+				);
+				fold(module.structs, unions1, \acc1, struct ->
+					fiProcessDStruct(cfg, program, struct.name, struct, acc1)
+				)
+			}, \ -> acc);
+		})
+	}
+	"alias Flow = Object;\n" + unions
+}
+
+fiType2DTypeInst(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+//	fcPrintln("HIA: toString(type) == " + toString(type));
+	switch (type) {
+		FiTypeName(name, args) : {
+			if (args == []) name 
+			else {
+				switch (lookupTree(program.names.structs, name)) {
+					Some(st): {
+						tps = filter(mapi(args, \idx, e ->
+							switch (st.args[idx].type) {
+								FiTypeParameter(__): fiType2DTypeInst(cfg, program, e);
+								default: "";
+							}
+						), \e -> e != "");
+						name + if (tps == []) "" else {
+							"!(" + strGlue(tps, ", ") + ")"
+						}
+					}
+					None(): {
+						"STRUCT ERROR"; 
+					}
+				}
+			}
+		}
+		default: fiType2DType(cfg, program, type);
+	}
+}
+
+fiType2DTypeNameInst(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+//	fcPrintln("HIA: toString(type) == " + toString(type));
+	switch (type) {
+		FiTypeArray(t) : fiType2DTypeNameInst(cfg, program, t) + "[]";
+		FiTypeRef(t)   : fiType2DTypeNameInst(cfg, program, t);
+		FiTypeName(name, args) : {
+			if (args == []) name
+			else {
+				switch (lookupTree(program.names.structs, name)) {
+					Some(st): {
+						tps = filter(mapi(args, \idx, e->
+							fiType2DTypeNameInst(cfg, program, e)
+						), \e -> e != "");
+						name + if (tps == []) "" else {
+							"!(" + strGlue(tps, ", ") + ")"
+						}
+					}
+					None(): fiType2DType(cfg, program, type);
+				}
+			}
+		}
+		default: fiType2DType(cfg, program, type);
+	}
+}
+
+
+fiType2DType(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+	switch (type) {
+		FiTypeFunction(args, rt) : {
+			fparams = strGlue(mapi(args, \ix, arg -> {
+				varType = fiType2DType(cfg, program, arg.type);
+				varType + " " + (if (arg.name == "") "t" + i2s(ix) else fiDRenameKeyword(cfg, arg.name))
+			}), ", ");
+			fiType2DType(cfg, program, rt) + " delegate(" + fparams + ")"
+		}
+		FiTypeArray(t)       : fiType2DType(cfg, program, t) + "[]";
+		FiTypeRef(t)         : fiType2DType(cfg, program, t);
+		FiTypeParameter(n)   : "T" + i2s(strlen(n));
+		FiTypeBool()         : "bool";
+		FiTypeInt()          : "int";
+		FiTypeDouble()       : "double";
+		FiTypeString()       : "string";
+		FiTypeFlow()         : "/*[flow]*/ Flow";
+		FiTypeVoid()         : "void";
+		FiTypeNative()       : "/*[native]*/ Flow";
+		FiTypeName(name, __) : "/* typename */ " + name;
+	}
+}
+
+fiType2DTypeInCall(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+	switch (type) {
+		FiTypeFunction(args, rt) : {
+			fparams = strGlue(mapi(args, \ix, arg -> {
+				varType = fiType2DType(cfg, program, arg.type);
+				varType + " " + (if (arg.name == "") "t" + i2s(ix) else fiDRenameKeyword(cfg, arg.name))
+			}), ", ");
+			"delegate(" + fparams + ")"
+		}
+		default: {
+			fiType2DType(cfg, program, type);
+		}
+	}
+}

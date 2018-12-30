@@ -1,0 +1,2446 @@
+import material/material_dialog;
+import material/material_ui;
+import wigi/excel_datetime;
+import translation;
+
+export {
+    CalendarForEvents(
+        allEvents : DynamicBehaviour<[CalendarEvent]>,
+        currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>,
+    	manager : MaterialManager,
+        dateMin : Date,
+        dateMax : Date,
+        monthNumber : int,
+        displayedEventsInOneDay : int,
+        onlyOneSameTypeEventsByDay : bool,
+        colorizeDayHeaders : bool,
+        styles : [CalendarForEventsStyle]) -> Material;
+
+    CalendarEventDecription(
+        name : string,
+        mainColor : MColor,
+        backColor : MColor,
+        icon : string,
+        editAction : (id : int) -> void,
+        addAction : (fullDate : Time) -> void,
+        deleteAction : (id : int) -> void,
+        additionalActions : [CalendarAdditionalAction]
+    );
+
+    CalendarEvent(
+        startDate : Time,
+        endDate : Time,
+        id : int,
+        eventType : string,
+        title : string,
+        description : string,
+        additionalFields : Tree<string, string>
+    );
+
+    CalendarAdditionalAction(
+        icon : string,
+        name : string,
+        action : (id : int) -> void
+    );
+
+    CalendarDefaultDisplayedEventsInOneDay = 3;
+
+    CalendarForEventsStyle ::= ShowMonthViewSwitchMenu, DefaultMonthView, TabOrder, DefaultTab, TabColors, HideAddEventButton,
+        CloseDayPopupAfterAdditionalAction, EventListSettings, PlannedTableDateFormat, BlackAndWhiteTextColor, HideTimeInfo, HiddenEventTypes;
+        ShowMonthViewSwitchMenu();
+        DefaultMonthView(byWeek : bool);
+        TabOrder(tabs : [CalendarTab]);
+        DefaultTab(tab : CalendarTab);
+        TabColors(activeTabColor : MColor, nonActiveTabColor : MColor);
+        HideAddEventButton();
+        // It is possible to assign task for date only.
+        HideTimeInfo();
+        CloseDayPopupAfterAdditionalAction();
+        // settings for dayEventsPopup, cols can be for text - "event type", "event description", "event title",
+        // and for date and time - "start", "end"
+        EventListSettings(cols : [string], showDate : bool, showTime : bool);
+        //"%D" to date.day, "%M" to date.month, "%YYYY" to date.year, "%YY" to last two number of date.year
+        //(like date2formatString)
+        PlannedTableDateFormat(tableDateFormat : string);
+        //autochoose text color - between black and white
+        BlackAndWhiteTextColor();
+        // Hide event types by default
+        HiddenEventTypes(types : [string]);
+
+    CalendarTab ::= YearTab, MonthTab, PlannedTab, RangeTab, WeekTab;
+        YearTab(); MonthTab(); PlannedTab(); RangeTab(); WeekTab();
+}
+
+emptyEvent = CalendarEvent(Time(2050, 1, 1, 1, 1, 1), Time(2050, 1, 1, 1, 1, 1), 999, "_EMPTY_", "", "", makeTree());
+
+calendarDateCellW = 32.0;
+calendarDateCellH = 30.0;
+calendarDateNavSize = 40.0;
+
+calendarPickerWidthCells = calendarDateCellW * 7.0;
+calendarPickerMarginCells = 12.0;
+calendarMpickerWidth = calendarPickerWidthCells + calendarPickerMarginCells * 2.0;
+maxDisplayedEventsInOneDay = ref 3;
+isOnlyOneSameTypeEventsByDay = ref true;
+isColorizeDayHeaders = ref true;
+
+isDateEnable(
+    thisDate : Date,
+    dateMin : Date,
+    dateMax : Date) -> bool {
+
+    compareDates(thisDate, dateMin) != DateBefore()
+    && compareDates(thisDate, dateMax) != DateAfter()
+}
+
+timeYearCheck(start : int, end : int, year : int) -> bool {
+    (start <= year && year <= end)
+}
+
+timeMonthCheck(start : Time, end : Time, current : Date) -> bool {
+    if (start.year == end.year)
+        (start.month <= current.month && current.month <= end.month)
+    else if (current.year < end.year)
+        if (current.year == start.year)
+            (current.month >= start.month)
+        else
+            true
+    else
+        (current.month <= end.month)
+}
+
+timeDayCheck(start : Time, end : Time, current : Date, dayNumber : int) -> bool {
+    if (start.month == end.month && start.year == end.year) //event in one month
+        (start.day <= dayNumber && dayNumber <= end.day)
+    else if (current.year < end.year) {     //event in two or more years
+        if (current.year > start.year)      //in each year between start and end we need ALL days
+            true
+        else if (current.month > start.month) //in first year we need ALL days after first month
+            true
+        else                                //in first month we need ONLY days after start
+            (dayNumber >= start.day)
+    } else if (start.year != end.year) {    //in last year
+        if (current.month < end.month)      //we need ALL days before end month
+            true
+        else
+            (dayNumber <= end.day)          //in last month we need ALL days before last day
+    } else if (current.month < end.month) {
+        if (current.month == start.month)   //in start month we need ONLY days after start
+           (dayNumber >= start.day)
+        else                                //in other we need ALL days
+            true
+    } else {                                //in last month we need ONLY days before end
+        (dayNumber <= end.day)
+    }
+}
+
+oneNumberInDateCheck(number : int) -> string {
+    if (number >= 10)
+        i2s(number)
+    else
+        "0" + i2s(number)
+}
+
+getMultiDayEvents(events : [CalendarEvent]) -> [CalendarEvent] {
+    filter(events, \event -> time2date(event.startDate) != time2date(event.endDate))
+}
+
+sortEvents(events : [CalendarEvent]) -> [CalendarEvent] {
+    timeSort = \event : CalendarEvent -> event.startDate;
+    //Multi-day events should be earlier than usual, even if they go later.
+    //Otherwise, the union between days will not work
+    concat(
+        sortCustom(getMultiDayEvents(events), timeSort, true),
+        sortCustom(filter(events, \event -> time2date(event.startDate) == time2date(event.endDate)), timeSort, true)
+    )
+}
+
+makeCalendarEventDescription() -> CalendarEventDecription {
+    CalendarEventDecription("", MBlack(), MWhite(), "", nop1, nop1, nop1, [])
+}
+
+getEventTitle(event : CalendarEvent) -> string {
+    if (event.title != "") event.title else if (event.description != "") event.description else event.eventType
+}
+
+isTooltipEnabled(event : CalendarEvent) -> bool {
+    event.description != "" && event.title != ""
+}
+
+//like in DatePicker
+CalendarCells(
+    manager : MaterialManager,
+    color : MColor,
+    parent : MFocusGroup,
+    month : Behaviour<Date>,
+    currentDate : DynamicBehaviour<Date>,
+    dateMin : Date,
+    dateMax : Date,
+    monthEvents : [CalendarEvent],
+    monthNumber : DynamicBehaviour<int>,
+    openPopupForDay : (curDate : DynamicBehaviour<Date>, dayEvents : [CalendarEvent]) -> void,
+    currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>
+    ) -> Tropic {
+
+    maxDayInMonth = 31;
+    invisible = Point(0.0, calendarDateCellH * 6.0);
+
+    offsets = map(enumFromTo(0, maxDayInMonth - 1), \i -> make(invisible));
+
+    monthValue = getValue(month);
+    firstDayInWeekOffset = 8 - ((1 + dayOfWeek(monthValue)) % 7);
+    dayOfWeekNames = map(enumFromTo(0, 6), \i -> {
+        strLeft(dayOfWeekString(addDaysToDate(monthValue, firstDayInWeekOffset + i), true), 1);
+    });
+    timeSort = \item : CalendarEvent -> item.startDate;
+
+    filteredByDay = generate(1, maxDayInMonth + 1, \dayNumber -> {
+        allEvents = filter(monthEvents, \item -> timeDayCheck(item.startDate, item.endDate, monthValue, dayNumber));
+        sortEvents(allEvents)
+    });
+
+    TConstruct(
+        [
+            makeSubscribe(month, \mv -> {
+                // days of week start from 0
+                startOffset = dayOfWeek(mv) % 7;
+                daysNum = getNumberOfDaysPerMonthInTheYear(mv.year)[mv.month];
+                fold(enumFromTo(0, maxDayInMonth - 1), startOffset, \linearOffset, i -> {
+                    next(
+                        offsets[i],
+                        if (i >= daysNum) invisible
+                        else Point(calendarDateCellW * i2d(linearOffset % 7), calendarDateCellH * i2d(linearOffset / 7))
+                    );
+                    linearOffset + 1
+                });
+                {}
+            })
+        ],
+        TLines([
+            TCenterIn(
+                TSelect(month, \mv -> {
+                    MText2T(parent, monthString(mv, true), [])
+                }),
+                TFixed(calendarDateCellW * 7.0, calendarDateNavSize)
+            ),
+            TCols(map(dayOfWeekNames, \wday -> {
+                TCenterIn(
+                    MText2T(parent, wday, [MCaption()]),
+                    TFixed(calendarDateCellW, calendarDateCellH)
+                )
+            })),
+            TGroup(mapi(offsets, \i, offset -> {
+                TTranslate(
+                    offset,
+                    CalendarCell(manager, color, parent, month, i+1, currentDate, dateMin,
+                        dateMax, filteredByDay[i], monthNumber,
+                        openPopupForDay, currentEventTypes
+                    )
+                )
+            }))
+        ])
+    )
+}
+
+//like in DatePicker
+CalendarCell(
+    manager : MaterialManager,
+    color : MColor,
+    parent : MFocusGroup,
+    thisMonth : Behaviour<Date>,
+    day : int,
+    currentDate : DynamicBehaviour<Date>,
+    dateMin : Date,
+    dateMax : Date,
+    dayEvents : [CalendarEvent],
+    monthNumber : DynamicBehaviour<int>,
+    openPopupForDay : (curDate : DynamicBehaviour<Date>, dayEvents : [CalendarEvent]) -> void,
+    eventTypes : DynamicBehaviour<[CalendarEventDecription]>
+    ) -> Tropic {
+
+    makeDate = \mon, d -> Date(getValue(currentDate).year, mon.month, d);
+
+    enabled = make(true);
+
+    textColor = make(MWhite());
+    updateTextColor = \month, date, hov -> {
+        thisDate = makeDate(month, day);
+        nextDistinct(
+            textColor,
+            if (!isDateEnable(thisDate, dateMin, dateMax)) MGrey(500)
+            else if (hov || thisDate == stamp2date(timestamp())) MWhite()
+            else MBlack()
+        )
+    }
+
+    diam = 30.0;
+    bhoriz = if (day < 10) 11.0 else 7.5;
+    hover = make(false);
+    text = TBorder(bhoriz + 0.5, 7.8, bhoriz - 0.5, 7.8,
+        TGroup2(
+            TSelectConstantMetrics(textColor, \col ->
+                MText2T(parent, i2s(day), [MCaptionSolid(), col])
+            ),
+            TFixed(if (day < 10) 8.0 else 15.0, 14.4)
+        )
+    );
+
+    multiStart = \fillColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(fillColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            LongSegment(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(fillColor)]) |> TForm
+        ])
+    }
+
+    multiStartWithStart = \mainColor, secondColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(secondColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiMiddle = \fillColor -> {
+        TRectangle([Fill(fillColor), FillOpacity(1.0)], TFixed(diam + 2., diam))
+    }
+
+    multiMiddleWithStart = \mainColor, secondColor -> {
+        TGroup([
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam + 2., diam)),
+            TGroup2(
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(secondColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            )
+        ])
+    }
+
+    multiMiddleWithEnd = \mainColor, secondColor -> {
+        TGroup([
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam + 2., diam)),
+            TGroup2(
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(secondColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 0., 180., [Fill(mainColor)]) |> TForm
+            )
+        ])
+    }
+
+    multiMiddleWithStartAndEnd = \mainColor, startColor, endColor -> {
+        TGroup([
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam + 2., diam)),
+            TGroup2(
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(startColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            ),
+            TGroup2(
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(endColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 0., 180., [Fill(mainColor)]) |> TForm
+            )
+        ])
+    }
+
+    multiEnd = \fillColor -> {
+        TGroup([
+            TRectangle([Fill(fillColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            LongSegment(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(fillColor)]) |> TForm
+        ])
+    }
+
+    multiEndWithEnd = \mainColor, secondColor -> {
+        TGroup([
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(secondColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 0., 180., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiEndWithStart = \mainColor, secondColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(secondColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(mainColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(secondColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiEndWithStartAndEnd = \mainColor, startColor, endColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(startColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(endColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 0., 180., [Fill(mainColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(startColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiEndWithMiddleAndEnd = \mainColor, middleColor, endColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(middleColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(endColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 0., 180., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiEndWithMiddleAndStart = \mainColor, middleColor, startColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(middleColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            TGroup([
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(mainColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0, 180., 360., [Fill(startColor)]) |> TForm,
+                Sector2(diam / 2.0, diam / 2.0, diam / 2.0 - 2., 180., 360., [Fill(mainColor)]) |> TForm
+            ])
+        ])
+    }
+
+    multiEndWithMiddle = \mainColor, secondColor -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0, 0.),
+                TRectangle([Fill(secondColor), FillOpacity(1.0)], TFixed(diam / 2.0 + 2.0, diam)),
+            ]),
+            TRectangle([Fill(mainColor), FillOpacity(1.0)], TFixed(diam / 2.0, diam)),
+            LongSegment(diam / 2.0, diam / 2.0, diam / 2.0, 0., 180., [Fill(mainColor)]) |> TForm
+        ])
+    }
+
+    plusEventsBar = \number -> {
+        TGroup([
+            TCols([
+                TFixed(diam / 2.0 + 1.5, 0.),
+                TGroup([
+                    Sector2(1.0, diam / 8.0 + 2., diam / 8.0 + 1.5, 0., 360., [Fill(black)]) |> TForm,
+                    TCols([
+                        TFixed(diam / 16.0, 0.),
+                        TRectangle([Fill(black), FillOpacity(1.0)], TFixed(diam / 4.0, diam / 4.0 + 3.2)),
+                    ]),
+                    TCols([
+                        TFixed(diam / 16.0 + diam / 4.0, 0.),
+                        Sector2(0.0, diam / 8.0 + 2., diam / 8.0 + 1.5, 0., 360., [Fill(black)]) |> TForm,
+                    ]),
+                    TCenterIn(
+                        MText2T(parent, "+" + i2s(number), [MWhite(), MCustomFont(9., "Roboto", 1.)]),
+                        TFixed(diam / 2.0 - 5., 0.0)
+                    )
+                ])
+            ]),
+        ])
+    }
+
+    eventsCheck = \-> {
+        multiDayEvents = getMultiDayEvents(dayEvents);
+        currentEventTypes = getValue(eventTypes);
+
+        if (length(multiDayEvents) > 0) {
+            thisDate = makeDate(getValue(thisMonth), day);
+            //events that started on this day
+            startEvents : [CalendarEvent] = filter(multiDayEvents, \item -> time2date(item.startDate) == thisDate);
+
+            //events that goes on this day
+            middleEvents : [CalendarEvent] = filter(multiDayEvents, \item -> time2date(item.startDate) < thisDate && thisDate < time2date(item.endDate));
+
+            //events that ended on this day
+            endEvents : [CalendarEvent] = filter(multiDayEvents, \item -> time2date(item.endDate) == thisDate);
+
+            firstEvent = multiDayEvents[0];
+            //Depending on what event happens before we have 11 possible situations to display.
+            //From simple "beginning", "middle", "end", then more complex combinations
+            if (contains(startEvents, firstEvent)) {
+                if (length(startEvents) >= 2) {
+                    firstColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == firstEvent.eventType), -1)].backColor);
+                    secondColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == startEvents[1].eventType), -1)].backColor);
+
+                    TGroup2(
+                        multiStartWithStart(firstColor, secondColor),
+                        if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                    );
+                } else {
+                    firstColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == firstEvent.eventType), -1)].backColor);
+                    TGroup2(
+                        multiStart(firstColor),
+                        if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                    );
+                }
+            } else if (contains(middleEvents, firstEvent)) {
+                firstColor = MColor2int( currentEventTypes[
+                    either(findi(currentEventTypes, \p -> p.name == firstEvent.eventType), -1)].backColor);
+
+                if (length(dayEvents) >= 3) {
+                    secondColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[1].eventType), -1)].backColor);
+                    thirdColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[2].eventType), -1)].backColor);
+
+                    if (contains(endEvents, dayEvents[1]) && contains(startEvents, dayEvents[2])) {
+                        TGroup2(
+                            multiMiddleWithStartAndEnd(firstColor, thirdColor, secondColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (contains(startEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiMiddleWithStart(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else if (contains(endEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiMiddleWithEnd(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else {
+                        TGroup2(
+                            multiMiddle(firstColor),
+                            if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                        )
+                    }
+
+                } else if (length(dayEvents) >= 2) {
+                    secondColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[1].eventType), -1)].backColor);
+                    if (contains(startEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiMiddleWithStart(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else if (contains(endEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiMiddleWithEnd(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else {
+                        TGroup2(
+                            multiMiddle(firstColor),
+                            if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                        )
+                    }
+
+                } else {
+                    TGroup2(
+                        multiMiddle(firstColor),
+                        if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                    )
+                }
+            } else {
+                firstColor = MColor2int( currentEventTypes[
+                    either(findi(currentEventTypes, \p -> p.name == firstEvent.eventType), -1)].backColor);
+
+                if (length(dayEvents) >= 3) {
+                    secondColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[1].eventType), -1)].backColor);
+                    thirdColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[2].eventType), -1)].backColor);
+
+                    if (contains(endEvents, dayEvents[1]) && contains(startEvents, dayEvents[2])) {
+                        TGroup2(
+                            multiEndWithStartAndEnd(firstColor, thirdColor, secondColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (contains(middleEvents, dayEvents[1]) && contains(endEvents, dayEvents[2])) {
+                        TGroup2(
+                            multiEndWithMiddleAndEnd(firstColor, secondColor, thirdColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (contains(middleEvents, dayEvents[2]) && contains(endEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithMiddleAndEnd(firstColor, thirdColor, secondColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (length(middleEvents) > 0 && contains(endEvents, dayEvents[1])) {
+                        fourthColor = MColor2int( currentEventTypes[
+                            either(findi(currentEventTypes, \p -> p.name == middleEvents[0].eventType), -1)].backColor);
+                        TGroup2(
+                            multiEndWithMiddleAndEnd(firstColor, fourthColor, secondColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (contains(middleEvents, dayEvents[1]) && contains(startEvents, dayEvents[2])) {
+                        TGroup2(
+                            multiEndWithMiddleAndStart(firstColor, secondColor, thirdColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+
+                    } else if (contains(startEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithStart(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else if (contains(endEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithEnd(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+
+                    } else if (contains(middleEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithMiddle(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+                    } else if (length(middleEvents) > 0) {
+                        fourthColor = MColor2int( currentEventTypes[
+                            either(findi(currentEventTypes, \p -> p.name == middleEvents[0].eventType), -1)].backColor);
+                        TGroup2(
+                            multiEndWithMiddle(firstColor, fourthColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+                    } else {
+                        TGroup2(
+                            multiEnd(firstColor),
+                            if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                        )
+                    }
+
+                } else if (length(dayEvents) >= 2) {
+                    secondColor = MColor2int( currentEventTypes[
+                        either(findi(currentEventTypes, \p -> p.name == dayEvents[1].eventType), -1)].backColor);
+
+                    if (contains(startEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithStart(firstColor, secondColor),
+                            if (length(dayEvents) > 3) plusEventsBar(length(dayEvents) - 3) else TEmpty()
+                        )
+                    } else if (contains(endEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithEnd(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+                    } else if (contains(middleEvents, dayEvents[1])) {
+                        TGroup2(
+                            multiEndWithMiddle(firstColor, secondColor),
+                            if (length(dayEvents) > 2) plusEventsBar(length(dayEvents) - 2) else TEmpty()
+                        )
+                    } else {
+                        TGroup2(
+                            multiEnd(firstColor),
+                            if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                        )
+                    }
+
+                } else {
+                    TGroup2(
+                        multiEnd(firstColor),
+                        if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+                    )
+                }
+            }
+        } else {
+            eventType = dayEvents[0].eventType;
+            eventIndex = either(findi(currentEventTypes, \p -> p.name == eventType), -1);
+            TGroup2(
+                TCircle(diam / 2.0, [MFill(currentEventTypes[eventIndex].backColor)]),
+                if (length(dayEvents) > 1) plusEventsBar(length(dayEvents) - 1) else TEmpty()
+            )
+        }
+    }
+
+    bubble = TGroup2(
+        TSelect(thisMonth, \month -> {
+            TSelect(currentDate, \date -> {
+                if (length(dayEvents) > 0) {
+                    eventsCheck()
+                } else if (stamp2date(timestamp()) != makeDate(month, day)) {
+                    TEmpty()
+                } else {
+                    TCircle(diam / 2.0, [MFill(color)])
+                }
+            })
+        }),
+        text
+    );
+
+    bubbleAnimated =
+        if (manager.theme.enableAnimations)
+            TCopySize(
+                bubble,
+                \tr ->
+                        MRipple2T(manager, parent, tr, hover, [MRippleColor(const(color)), MRippleType(const(MRippleCenter()))]),
+                false
+            )
+        else
+            TGroup2(
+                TVisible(hover, TCircle(diam / 2., [MFill(color), FillOpacity(0.5)])),
+                bubble
+            );
+
+    click2 = \-> if (isDateEnable(Date(getValue(currentDate).year, getValue(thisMonth).month, day), dateMin, dateMax)) {
+        next(monthNumber, getValue(thisMonth).month);
+        next(currentDate, Date(getValue(currentDate).year, getValue(thisMonth).month, day));
+        openPopupForDay(currentDate, dayEvents);
+    } else {
+        println("this day not available!");
+    }
+
+    bubbleClickable = TGroup2(
+        mouseDownAround(manager, None(), make(false), hover, click2,
+            TFrame(0.0, 0.0, [Fill(green), FillOpacity(0.0)], bubbleAnimated)
+        ),
+        TCursor(FingerCursor(), TRectangle([Fill(white), FillOpacity(0.0)], TFixed(calendarDateCellW, calendarDateCellH)))
+    );
+
+    TConstruct(
+        [
+            makeSubscribe(thisMonth, \month -> updateTextColor(month, getValue(currentDate), getValue(hover))),
+            makeSubscribe(currentDate, \date -> updateTextColor(getValue(thisMonth), date, getValue(hover))),
+            makeSubscribe(hover, \hov -> updateTextColor(getValue(thisMonth), getValue(currentDate), hov)),
+            makeSubscribe(thisMonth, \month -> nextDistinct(enabled, isDateEnable(makeDate(month, day), dateMin, dateMax)))
+        ],
+        TSize(
+            TFixed(calendarDateCellW, calendarDateCellH),
+            TIf(enabled, bubbleClickable, text)
+        )
+    )
+}
+
+//Small popup to confirm deletion
+eventDeletePopup(
+    cancelAction : () -> void,
+    okAction : () -> void
+    ) -> Material {
+
+    //fontsSizes
+    littleFontSize = MCustomFont(14.0, "Roboto", 1.);
+    mediumFontSize = MCustomFont(16.0, "Roboto", 1.);
+    bigBoldFontSize = MCustomFont(20., "RobotoMedium", 0.87);
+    buttonFontSize = bigBoldFontSize;
+    //colors
+    veryLightGrey = MGrey(50);
+    lightGrey = MGrey(200);
+    mediumGrey = MGrey(600);
+    notSoDarkGrey = MGrey(700);
+    darkGrey = MGrey(800);
+
+    title = MCols([
+        TFixed(25., 0.),
+        MCenterIn(
+            MText(_("Are you sure?"), [bigBoldFontSize]),
+            TFixed(330., 80.)
+        ),
+        TFixed(25., 0.),
+    ]);
+
+    footer = MCols([
+        TFixed(25., 0.),
+        MCenterYIn(
+            MCols([
+                MCard(
+                    [
+                        MRichMediaBlock(
+                            MCenter(
+                                MText(_("CANCEL"), [buttonFontSize, MWhite()])
+                            ),
+                        [])
+                    ],
+                    [MCardHeight(50.), MCardWidth(150.0), MContentBorders(false), mediumGrey],
+                    [MOnClick(cancelAction)]
+                ),
+                TFixed(20., 0.),
+                MCard(
+                    [
+                        MRichMediaBlock(
+                            MCenter(
+                                MText(_("DELETE"), [buttonFontSize])
+                            ),
+                        [])
+                    ],
+                    [MCardHeight(50.), MCardWidth(150.0), MContentBorders(false), MCustomColor(0xFDB22B)],
+                    [MOnClick(okAction)]
+                ),
+            ]),
+            TFixed(0., 80.)
+        ),
+        TFixed(25., 0.)
+    ]);
+
+    MGroup([
+        TRectangle([Fill(white), FillOpacity(1.0)], TFixed(380., 160.)),
+        MLines([
+            title,
+            footer
+        ])
+    ])
+}
+
+dayEventsPopup(
+    curDate : Date,
+    dayEventsStatic : [CalendarEvent],
+    eventTypesB : DynamicBehaviour<[CalendarEventDecription]>,
+    manager : MaterialManager,
+    choosedFilters : [string],
+    rangeType : int, // 0 - day, 1 - week, 2 - month
+    styles : [CalendarForEventsStyle]
+    ) -> void {
+
+    listSettings = extractStruct(styles, EventListSettings(["event any text", "start", "end"], false, true));
+    colsToShow = listSettings.cols;
+    showDate = listSettings.showDate;
+    showTime = listSettings.showTime;
+    showStart = contains(colsToShow, "start");
+    showEnd = contains(colsToShow, "end");
+    closePopupAfterAdditionalAction = contains(styles, CloseDayPopupAfterAdditionalAction());
+
+    close = make(false);
+    dayEvents = make(dayEventsStatic);
+
+    curTime = stamp2time(timestamp());
+    dayNumber = curDate.day;
+    monthNumber = curDate.month;
+    dateForAdd = Time(curDate.year, curDate.month, curDate.day, curTime.hour, curTime.min, curTime.sec);
+
+    textCols = ["event type", "event description", "event title"];
+    dateCols = ["start", "end"];
+    additionalCols = subtractA(colsToShow, concat(textCols, dateCols));
+
+    dateExpandingFactor = 1.65;
+
+    getDateWidth = \-> {
+        if ((showDate && showTime) && (showStart && showEnd)) dateExpandingFactor
+        else b2d((showDate || showTime) && (showStart || showEnd))
+    }
+
+    getTextWidth = \-> {
+        if (length(colsToShow) == 0 || contains(colsToShow, "event any text")) 1.
+        else i2d(length(intersection(colsToShow, textCols)))
+    }
+
+    additionalColsWidth = i2d(length(additionalCols)) * 166.;
+
+    lineWidth = 264. + getTextWidth() * 276. + getDateWidth() * 156. + additionalColsWidth;
+    popupWidth = lineWidth + 85.;
+    titleHeight = 60.;
+    lineHeight = 88.;
+    buttonHeight = 70.;
+
+    leftOffset = TFixed(40., 0.);
+    iconBox = TFixed(100., lineHeight);
+    nameBox = TFixed(260., lineHeight);
+    additionalColBox = TFixed(150., lineHeight);
+    editButtonBox = TFixed(44., lineHeight);
+    deleteButtonBox = TFixed(70., lineHeight);
+    timeBox = TFixed(getDateWidth() * 156., lineHeight);
+
+    mediumFont = MCustomFont(18., "RobotoMedium", 0.87);
+    normalFont = MCustomFont(18., "Roboto", 0.87);
+    littleFont = MCustomFont(14., "Roboto", 0.87);
+
+    centeredTitleText = \text -> MCenterIn(MText(text, [mediumFont, MGrey(800)]), TFillXH(titleHeight));
+
+    titleText = if (rangeType == 0) {
+        MCols([
+            MCenterYIn(
+                MText(i2s(dayNumber) + " " + monthString(curDate, true), [mediumFont, MGrey(800)]),
+                TFixed(100., titleHeight)
+            ),
+            TFillX(),
+            MCenterYIn(
+                MParagraph(dayOfWeekString(curDate, true), [littleFont, MGrey(800), RightAlign(), MWidth(80.)]),
+                TFixed(80., titleHeight)
+            ),
+        ])
+    }   else if (rangeType == 1) centeredTitleText(i2s(getWeekOfYear(curDate, 0, true)))
+        else centeredTitleText(_(monthString(curDate, true)));
+
+    addLeftOffset = \m : Material -> MCols2(leftOffset, m);
+
+    title = MGroup([
+        TRectangle([MFill(MGrey(200))], TFixed(popupWidth, titleHeight)),
+        MFixSize(
+            addLeftOffset(MCols2(
+                titleText,
+                MCenterYIn(
+                    MIconButton("close",
+                        \ -> next(close, true),
+                        [MBlack(), MIconSize(20.)],
+                        [MShortcut("esc")]
+                    ),
+                    TFixed(20., 55.)
+                )
+            )),
+            TFixed(popupWidth, titleHeight)
+        )
+    ]);
+
+    separatorLine = TRectangle([Fill(grey), FillOpacity(0.7)], TFixed(lineWidth, 0.5));
+
+    //line with "empty" icon and text
+    emptyLine = MLines2(
+        MCols2(
+            MBorder(0., 0., 8., 0., MCenterYIn(TCircle(28., [Fill(grey)]), TFixed(70., lineHeight))),
+            MCenterYIn(MText(_("No added events"), [normalFont]), TFixed(100., lineHeight))
+        ),
+        separatorLine
+    );
+
+    makeTextCol = \text : string, boxSize : Material -> {
+        MBorder(8., 0., 8., 0.,
+            MFixSize(MCenterY(MEllipsisText(text, [mediumFont, MShowTooltip(const(true)), MMaxLines(2)])), boxSize)
+        );
+    }
+
+    makeTextCols = \event : CalendarEvent -> {
+        makeNameTextCol = \text : string -> makeTextCol(text, nameBox);
+        MCols([
+            if (contains(colsToShow, "event any text")) makeNameTextCol(getEventTitle(event)) else MEmpty(),
+            if (contains(colsToShow, "event type") || (length(colsToShow) == 0 && event.title == "")) makeNameTextCol(event.eventType) else MEmpty(),
+            if (contains(colsToShow, "event title") || (length(colsToShow) == 0 && event.title != "")) makeNameTextCol(event.title) else MEmpty(),
+            if (contains(colsToShow, "event description")) makeNameTextCol(event.description) else MEmpty()
+        ])
+    }
+
+    makeAdditionalCols = \event : CalendarEvent -> {
+        MCols(map(additionalCols, \col -> makeTextCol(lookupTreeDef(event.additionalFields, col, ""), additionalColBox)))
+    }
+
+    makeDateCol = \event : CalendarEvent -> {
+        getDateText = \dt : Time -> {
+            timeString = lpad(getTimeOnlyString(dt, false, false), "0", 5);
+            dateString = date2formatString(time2date(dt), "%DD.%MM.%YY");
+            if (showDate && showTime) dateString + " " + timeString
+            else if (showDate) dateString
+            else if (showTime) timeString
+            else ""
+        }
+        text = if (showStart && showEnd) getDateText(event.startDate) + " - " + getDateText(event.endDate)
+            else if (showStart) getDateText(event.startDate)
+            else if (showEnd) getDateText(event.endDate)
+            else "";
+        if (text != "" && text != " - ") MFixSize(MCenterY(MEllipsisText(text, [normalFont, MShowTooltip(const(true))])), timeBox)
+        else MEmpty()
+    }
+
+    makeAddButtonsMenu = \event, eventType -> {
+        mainButton = MIconButton("more_horiz",
+            nop,
+            [MIconSize(22.), MGrey(700)],
+            []
+        );
+
+        items = map(eventType.additionalActions, \act -> {
+            MMenuCustomLine(
+                MCols([
+                    MCenterYIn(
+                        MIcon(act.icon, [MIconSize(22.)]),
+                        TFixed(50., 44.)
+                    ),
+                    MCenterYIn(
+                        MText(act.name, [normalFont]),
+                        TFixed(0., 44.)
+                    )
+                ]),
+            [])
+        });
+
+        MCenterYIn(
+            MMenu(
+                mainButton,
+                items,
+                [MOnListClick(const(true), \index -> eventType.additionalActions[index].action(event.id))]
+            ),
+            editButtonBox
+        )
+    }
+
+    makeAddButtonsCol = \event : CalendarEvent, eventType : CalendarEventDecription -> {
+        if (length(eventType.additionalActions) > 0) {
+            if (length(eventType.additionalActions) == 1) {
+                MCenterYIn(
+                    MIconButton(eventType.additionalActions[0].icon,
+                        \-> {
+                            eventType.additionalActions[0].action(event.id);
+                            if (closePopupAfterAdditionalAction) next(close, true);
+                        },
+                        [MIconSize(22.), MGrey(700)],
+                        []
+                    ),
+                    editButtonBox
+                )
+            } else makeAddButtonsMenu(event, eventType)
+        } else editButtonBox
+    }
+
+    makeEditButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
+        MCenterYIn(
+            MIconButton("mode_edit",
+                \-> {
+                    eventType.editAction(event.id);
+                    next(close, true);
+                },
+                [MGrey(700), MIconSize(22.)],
+                []
+            ),
+            editButtonBox
+        )
+    }
+
+    makeDeleteButton = \event : CalendarEvent, eventType : CalendarEventDecription -> {
+        MCenterYIn(
+            MIconButton("delete",
+                \-> {
+                    popupClose = make(false);
+                    ShowMDialog(manager, popupClose, [],
+                        eventDeletePopup(
+                            \-> next(popupClose, true),
+                            \-> {
+                                next(popupClose, true);
+                                evIndexInDay = either(findi(getValue(dayEvents), \p -> p.id == event.id), -1);
+                                if (evIndexInDay != -1) next(dayEvents, removeIndex(getValue(dayEvents), evIndexInDay));
+                                eventType.deleteAction(event.id);
+                            }
+                        )
+                    );
+                },
+                [MGrey(700), MIconSize(22.)],
+                []
+            ),
+            deleteButtonBox
+        )
+    }
+
+    makeAvatar = \eventType : CalendarEventDecription -> {
+        MCenterYIn(
+            MAvatar(eventType.icon, [MIconSize(56.0)]),
+            iconBox
+        )
+    }
+
+    //line with icon, event name, event time and buttons for edit and delete
+    eventLine = \event : CalendarEvent, eventType : CalendarEventDecription -> {
+        MLines2(
+            MCols([
+                makeAvatar(eventType),
+                makeTextCols(event),
+                makeAdditionalCols(event),
+                makeDateCol(event),
+                editButtonBox,
+                makeAddButtonsCol(event, eventType),
+                makeEditButton(event, eventType),
+                makeDeleteButton(event, eventType)
+            ]),
+            separatorLine
+        );
+    }
+
+    eventAddButton = \evType ->  {
+        MLines2(
+            MClickable(
+                MGroup([
+                    MCenterYIn(
+                        MShadow(const(4.0),
+                            MFrame(2., 2., [MFill(MGrey(200))], TFixed(lineWidth, buttonHeight))
+                        ),
+                        TFixed(0., buttonHeight)
+                    ),
+                    MCenterIn(
+                        MFrame(2., 2., [MFill(MWhite())], TFixed(lineWidth - 2., buttonHeight - 2.)),
+                        TFixed(lineWidth, buttonHeight)
+                    ),
+                    MCenterIn(
+                        MText(_("ADD ") + toUpperCase(evType.name), [mediumFont, evType.mainColor]),
+                        TFixed(lineWidth, buttonHeight)
+                    )
+                ]),
+                \ -> {
+                    evType.addAction(dateForAdd);
+                    next(close, true)
+                }
+            ),
+            TFixed(popupWidth - 40., 20.)
+        )
+    };
+
+    popup = MLines2(
+        MShadow(const(4.0), title),
+        MSelect2(dayEvents, eventTypesB, \events, eventTypes -> {
+            notAddedEvents = if (^isOnlyOneSameTypeEventsByDay)
+                    filter(eventTypes, \ev -> {
+                        evIndexInDay = findiDef(getValue(dayEvents), \p -> p.eventType == ev.name, -1);
+                        evIndexInDay == -1 && !contains(choosedFilters, ev.name)
+                    })
+                else
+                    eventTypes;
+
+            eventsList : Material = if (length(events) == 0)
+                    emptyLine
+                else MLines(
+                    filtermap(events, \dayEvent -> {
+                        eventTypeIndex = findiDef(eventTypes, \p -> p.name == dayEvent.eventType, -1);
+                        if (eventTypeIndex != -1) Some(eventLine(dayEvent, eventTypes[eventTypeIndex])) else None()
+                    })
+                );
+
+            content = MLet(
+                "m",
+                MLines([
+                    eventsList,
+                    TRectangle([Fill(white)], TFixed(popupWidth - 40., 40.)),
+                    MLines(map(notAddedEvents,
+                        \notAddedEvent ->
+                            if (notAddedEvent.addAction == nop1) MEmpty()
+                            else eventAddButton(notAddedEvent)
+                        )
+                    )
+                ]),
+                MAttach(MGhost("m"), \formMetrics -> MGroup2(
+                    TSizedHeight(popupWidth, formMetrics.height)
+                    |> addTBackground(MWhite()),
+                    addLeftOffset(MDisplay("m"))
+                ))
+            );
+
+            MScroll(
+                content,
+                TFillWY(popupWidth),
+                [TScrollBarsStyle(invisibleScrollBar, standardScrollBar), MScrollCropByContent(), MScrollDisableOutOfBounds(ref true)]
+            )
+        }),
+    );
+
+    ShowMDialog(
+        manager,
+        close,
+        [MDialogClickOutToClose(), MDialogScroll()],
+        MShadow(const(20.0), popup)
+    );
+}
+
+makeLineOfDaysBlockForMonthView(
+    startIndex : int,
+    blankDaySize : Material,
+    daysBlock : [Material],
+    result : [Material]) -> [Material] {
+
+    blocksLength = length(daysBlock);
+
+    if (startIndex >= blocksLength) {
+        result
+    } else {
+        newLine = MCols(
+            generate(startIndex, startIndex + 7, \blockIndex -> {
+                if (blockIndex < blocksLength)
+                    daysBlock[blockIndex]
+                else
+                    blankDaySize
+            })
+        );
+        makeLineOfDaysBlockForMonthView(startIndex + 7, blankDaySize, daysBlock, arrayPush(result, newLine))
+    }
+}
+
+//create cards with events for each day in current month
+MonthTable(
+    currentEvents : DynamicBehaviour<[CalendarEvent]>,
+    eventTypesB : DynamicBehaviour<[CalendarEventDecription]>,
+    currentDate : DynamicBehaviour<Date>,
+    dateMin : Date,
+    dateMax : Date,
+    manager : MaterialManager,
+    multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>,
+    choosedFilters : DynamicBehaviour<[string]>,
+    styles : [CalendarForEventsStyle]) -> Material {
+
+    lineBox =                                   TFillXYXY(50., 30., 141.5 * 3., 30. * 3.);
+    lineBoxForBlockWithEvent =                  TFillXYXY(50., 28., 138.5 * 3., 28. * 3.);
+    lineBoxForBlockWithFirstMultiDayEvent =     TFillXYXY(50., 28., 140.0 * 3., 28. * 3.);
+    lineBoxForBlockWithNotFirstMultiDayEvent =  TFillXYXY(50., 28., 141.5 * 3., 28. * 3.);
+    lineBoxForBlockWithFirstMultiDayEvent2 =    TFillXYXY(50., 30., 140.0 * 3., 30. * 3.);
+    lineBoxWithoutBorderLines =                 TFillXYXY(50., 30., 141.1 * 3., 30. * 3.);
+    lineBoxWithoutOneBorderLine =               TFillXYXY(50., 30., 141.3 * 3., 30. * 3.);
+    weekDaySize =                               TFillXYXY(50., 55., 141.5 * 3., 55.);
+    blankDaySize =                              TFillXYXY(50., 120., 141.5 * 3., 120. * 3.);
+    borderLineBox =                             TFixed(0.15, 30.);
+
+    showMonthSwitchView = contains(styles, ShowMonthViewSwitchMenu());
+    isUseMTextMColor = contains(styles, BlackAndWhiteTextColor());
+    byWeekViewB = make(extractStruct(styles, DefaultMonthView(true)).byWeek);
+    hideTimeInfo = contains(styles, HideTimeInfo());
+
+    calendarDayTouch = \item : CalendarEvent, dayDate : Date -> {
+        eventTypes = getValue(eventTypesB);
+        isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
+        eventName = item.eventType;
+        eventTime = if (hideTimeInfo) ""
+            else i2s(item.startDate.hour) + ":" + substring(item.startDate |> time2stamp2 |> time2string, 14, 2) + "   ";
+
+        eventIndex = either(findi(eventTypes, \p -> p.name == item.eventType), -1);
+        eventText = if (!isMultiDay)
+                eventTime + getEventTitle(item)
+            else if (dayDate == time2date(item.startDate))
+                getEventTitle(item)
+            else
+                " ";
+
+        block = if (eventIndex != -1) {
+            eventTextColor = if (isUseMTextMColor) MTextMColor(eventTypes[eventIndex].mainColor) else eventTypes[eventIndex].mainColor;
+            MClickable(
+                MGroup([
+                    if (!isMultiDay) {
+                        MGroup([
+                            MCols([
+                                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                                TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutBorderLines),
+                                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                            ]),
+                            MCenterIn(
+                                TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithEvent),
+                                lineBox
+                            )
+                        ])
+                    } else {
+                        if (dayDate == time2date(item.startDate)) {
+                            MGroup([
+                                MCols([
+                                    TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                                    TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutOneBorderLine),
+                                ]),
+                                MCols([
+                                    TFixed(1.5, 0.),
+                                    MCenterYIn(
+                                        TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent),
+                                        lineBoxForBlockWithFirstMultiDayEvent2
+                                    )
+                                ]),
+                            ])
+                        } else if (dayDate == time2date(item.endDate)) {
+                            MGroup([
+                                MCols([
+                                    TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutOneBorderLine),
+                                    TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                                ]),
+                                MCols([
+                                    MCenterYIn(
+                                        TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithFirstMultiDayEvent),
+                                        lineBoxForBlockWithFirstMultiDayEvent2
+                                    ),
+                                    TFixed(1.5, 0.),
+                                ]),
+                            ])
+                        } else {
+                            MGroup([
+                                TRectangle([Fill(white), FillOpacity(1.0)], lineBox),
+                                MCenterYIn(
+                                    TRectangle([MFill(eventTypes[eventIndex].backColor), FillOpacity(1.0)], lineBoxForBlockWithNotFirstMultiDayEvent),
+                                    lineBox
+                                ),
+                            ])
+                        }
+                    },
+                    MTooltip(
+                        MCenterIn(
+                            MBorder(2., 0., 2., 0., MEllipsisText(eventText, [eventTextColor])),
+                            lineBox
+                        ),
+                        MText(item.description, []),
+                        [MEnabled(const(isTooltipEnabled(item)))]
+                    ),
+                ]),
+                \-> eventTypes[eventIndex].editAction(item.id)
+            )
+        } else {
+            TEmpty()
+        }
+        block
+    }
+
+    openDayEventsPopup = \dayNumber, isEnable, events : [CalendarEvent] -> {
+        curD = getValue(currentDate);
+        dayDate = Date(curD.year, curD.month, dayNumber);
+        if (isEnable) dayEventsPopup(dayDate, events, eventTypesB, manager, getValue(choosedFilters), 0, styles);
+    }
+
+    makeTitle = \eventColor, dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
+        MGroup2(
+            TRectangle([MFill(eventColor), FillOpacity(1.0)], lineBox),
+            MCenterIn(
+                MText(i2s(dayNumber), [MWhite()]),
+                lineBox
+            )
+        ),
+        \-> openDayEventsPopup(dayNumber, isEnable, events)
+    );
+
+    makeEmptyBlock = \dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
+        MGroup2(
+            MCols([
+                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                TRectangle([Fill(white), FillOpacity(1.0)], lineBoxWithoutBorderLines),
+                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+            ]),
+            MCenterIn(
+                MText("  ", [MWhite()]),
+                lineBox
+            )
+        ),
+        \-> openDayEventsPopup(dayNumber, isEnable, events)
+    );
+
+    makeAdditionalEventsBlock = \addDaysCount, dayNumber, isEnable, events : [CalendarEvent] -> MClickable(
+        MGroup2(
+            MCols([
+                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+                TRectangle([MFill(MGrey(400)), FillOpacity(1.0)], lineBoxWithoutBorderLines),
+                TRectangle([MFill(MGrey(600)), FillOpacity(1.0)], borderLineBox),
+            ]),
+            MCenterIn(
+                MText(i2s(addDaysCount) + _("+ events"), [MWhite()]),
+                lineBox
+            )
+        ),
+        \-> openDayEventsPopup(dayNumber, isEnable, events)
+    );
+
+    // "Empty" day consists of a header with the number of the day and maxDisplayedEventsInOneDay empty units.
+    // By clicking on the card - opens a window with a choice of added events
+    makeEmptyCalendarDay = \dayDate, isEnable -> {
+        dayNumber = dayDate.day;
+        maxEvents = ^maxDisplayedEventsInOneDay;
+
+        title = makeTitle(MGrey(600), dayNumber, isEnable, []);
+
+        blocks = concat([title],
+            generate(0, maxEvents, \empty -> makeEmptyBlock(dayNumber, isEnable, []))
+        );
+
+        card = MLines(blocks);
+        card
+    }
+
+    // "NotEmpty" day consists of a header with a background color number of the day of the first (in time) of the event,
+    // as well as maxDisplayedEventsInOneDay blocks of the events.
+    // If the event is less than maxDisplayedEventsInOneDay  - fill the "empty" blocks
+    makeNotEmptyCalendarDay = \dayDate, events : [CalendarEvent], isEnable -> {
+        eventTypes = getValue(eventTypesB);
+        dayNumber = dayDate.day;
+        eventName = events[0].eventType;
+        maxEvents = ^maxDisplayedEventsInOneDay;
+
+        fullDayEvents = if (length(events) < maxEvents) {
+            concat(events, generate(0, maxEvents - length(events),
+                \__ -> emptyEvent)
+            )
+        } else {
+            events
+        };
+        newEvents = checkOneDayEventsPosition(fullDayEvents, multiDayEventsPosition);
+
+        notEmptyEventIndex = either(findi(newEvents, \p -> p.eventType != "_EMPTY_"), -1);
+        eventIndex = if (notEmptyEventIndex != -1) either(findi(eventTypes, \p -> p.name == newEvents[notEmptyEventIndex].eventType), -1) else -1;
+
+        eventColor = if (!^isColorizeDayHeaders) {
+            MGrey(600)
+        } else if (eventIndex != -1) {
+            eventTypes[eventIndex].mainColor
+        } else {
+            MWhite()
+        };
+
+        title = makeTitle(eventColor, dayNumber, isEnable, events);
+        getAdditionalNonEmptyEvents = \-> foldi(newEvents, 0, \index, res, e -> if (index >= maxEvents - 1 && e.eventType != "_EMPTY_") res + 1 else res);
+
+        blocks = concat([title],
+            mapi(take(newEvents, maxEvents), \i, e ->
+                if ( (i == maxEvents - 1) && (length(newEvents) > maxEvents) )
+                    makeAdditionalEventsBlock(getAdditionalNonEmptyEvents(), dayNumber, isEnable, events)
+                else if (newEvents[i].eventType != "_EMPTY_")
+                    calendarDayTouch(newEvents[i], dayDate)
+                else
+                    makeEmptyBlock(dayNumber, isEnable, events)
+            )
+        );
+
+        card = MLines(blocks);
+        card
+    }
+
+    //if day consists 0 events or this day is not available - show emptyDay
+    makeCalendarDay = \dayDate, events : [CalendarEvent], isEnable -> {
+        if (length(events) > 0 && isEnable)
+            makeNotEmptyCalendarDay(dayDate, events, isEnable)
+        else
+            makeEmptyCalendarDay(dayDate, isEnable)
+    }
+
+
+    // First, we keep out all events except the events for the current month. Then create a list of events for each day
+    calendarFiltering = \items : [CalendarEvent] -> {
+
+        filteredByMonth = filter(
+            items,
+            \item -> timeYearCheck(item.startDate.year, item.endDate.year, getValue(currentDate).year)
+                    && timeMonthCheck(item.startDate, item.endDate, getValue(currentDate))
+        );
+
+        daysCount = getNumberOfDaysPerMonthInTheYear(getValue(currentDate).year)[getValue(currentDate).month];
+        timeSort = \item : CalendarEvent -> item.startDate;
+        filteredByDay = generate(1, daysCount + 1, \dayNumber -> {
+            isEnable = isDateEnable(Date(getValue(currentDate).year, getValue(currentDate).month, dayNumber), dateMin, dateMax);
+            allEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, getValue(currentDate), dayNumber));
+
+            makeCalendarDay(
+                Date(getValue(currentDate).year, getValue(currentDate).month, dayNumber),
+                sortEvents(allEvents),
+                isEnable
+            )
+        });
+        filteredByDay
+    }
+
+    calendarOffset = \firstWeekOffset : int -> {
+        generate(0, firstWeekOffset, \i ->
+            blankDaySize
+        )
+    };
+
+    weekDayNames = [strsubsmart(_("Monday"), 0, 3), strsubsmart(_("Tuesday"), 0, 3), strsubsmart(_("Wednesday"), 0, 3),
+        strsubsmart(_("Thursday"), 0, 3), strsubsmart(_("Friday"), 0, 3), strsubsmart(_("Saturday"), 0, 3), strsubsmart(_("Sunday"), 0, 3)];
+    makeWeekDayNameCell = \name : string -> {
+        MCenterIn(MText(name, []), weekDaySize)
+    };
+
+    MonthViewByWeek = \curD : Date, items : [CalendarEvent] -> {
+        MLines([
+            MCols(fold(weekDayNames, [], \days, item -> arrayPush(days, makeWeekDayNameCell(item)))),
+            MScroll(
+                MLines(
+                    makeLineOfDaysBlockForMonthView(0, blankDaySize,
+                        concat(calendarOffset(dayOfWeek(curD) % 7), calendarFiltering(items)),
+                        []
+                    )
+                ),
+                TFillXY(),
+                [TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)]
+            )
+        ])
+    }
+
+    MonthViewByDay = \curD : Date, items : [CalendarEvent] -> {
+        lastMonthDayDate = Date(curD.year, curD.month, getNumberOfDaysPerMonthInTheYear(curD.year)[curD.month]);
+        RangeView(
+            items,
+            eventTypesB,
+            Date(curD.year, curD.month, 1),
+            lastMonthDayDate,
+            \date, events -> dayEventsPopup(date, events, eventTypesB, manager, getValue(choosedFilters), 0, styles),
+            dateMin,
+            dateMax,
+            0,
+            false
+        )
+    }
+
+    MonthViewSwitchMenu = \ -> {
+        MIconToggle("view_module", [
+                MOrange(600), MIconButtonBorder(8.), MIconSize(32.),
+                MToggleFalseIcon("view_column", [MGrey(600), MIconSize(32.)])
+            ], []
+        )
+        |> (\m -> MCols2(TFillXH(48.), m))
+    }
+
+    MGroup2(
+        TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
+        MLines2(
+            if (showMonthSwitchView) MOnTop(TRectangle([Fill(black)], TFillXH(48.)), MonthViewSwitchMenu()) else MEmpty(),
+            MSelect2(currentEvents, currentDate,
+                \items : [CalendarEvent], curD -> MIf(byWeekViewB, MonthViewByWeek(curD, items), MonthViewByDay(curD, items))
+            )
+        )
+    )
+}
+
+// week utils
+getWeeksBetweenDates(date1 : Date, date2 : Date, acc : int) -> int {
+    start = min(date1, date2);
+    end = max(date1, date2);
+    res = if (start.year == end.year) acc + getWeekOfYear(end, 0, true) - getWeekOfYear(start, 0, true)
+        else getWeeksBetweenDates(start, Date(end.year - 1, 12, 31), getWeekOfYear(end, 0, true) + acc);
+    if (date1 <= date2) res else -res
+}
+
+getWeekStartDate(weekNum : int, year : int) -> Date {
+    if (weekNum == 1) Date(year, 1, 1)
+    else {
+        lastYearDay = Date(year, 12, 31);
+        lastWeekNum = getWeekOfYear(lastYearDay, 0, true);
+        weekDate = addDaysToDate(lastYearDay, 7 * (weekNum - lastWeekNum));
+        addDaysToDate(weekDate, -dayOfWeek(weekDate))
+    }
+}
+
+getWeekEndDate(start : Date) -> Date {
+    end = addDaysToDate(start, 6 - dayOfWeek(start));
+    if (end.year == start.year) end else Date(start.year, 12, 31)
+}
+
+getNextWeekStartDate(weekNum : int, year : int, weeksToAdd : int) -> Date {
+    lastWeekNum = getWeekOfYear(Date(year, 12, 31), 0, true);
+    weeksToAddThisYear = lastWeekNum - weekNum;
+    if (weeksToAddThisYear < weeksToAdd) getNextWeekStartDate(0, year + 1, weeksToAdd - weeksToAddThisYear)
+    else getWeekStartDate(weekNum + weeksToAdd, year)
+}
+
+getMonthsBetweenDates(date1 : Date, date2 : Date, acc : int) -> int {
+    start = min(date1, date2);
+    end = max(date1, date2);
+    res = if (start.year == end.year) acc + end.month - start.month else getMonthsBetweenDates(start, Date(end.year - 1, 12, 31), acc + end.month);
+    if (date1 <= date2) res else -res
+}
+
+RangeView(
+    events : [CalendarEvent],
+    eventTypes : DynamicBehaviour<[CalendarEventDecription]>,
+    startDate : Date,
+    endDate : Date,
+    showDayEventsPopup : (date : Date, events : [CalendarEvent]) -> void,
+    dateMin : Date,
+    dateMax : Date,
+    rangeType : int,
+    showMonthRow : bool
+) -> Material {
+    byDayCellHeight = 48.;
+    byDayCellSize : Tropic = TFillXH(byDayCellHeight);
+
+    getRangeColumnsCount = \start : Date, end : Date -> {
+        if (rangeType == 0) getDaysBetweenDates(start, end)
+        else if (rangeType == 1) getWeeksBetweenDates(start, end, 0)
+        else end.month - start.month + 12 * (end.year - start.year)
+    }
+
+    getNextDate = \oldDate : Date, dateNum : int -> {
+        newDate = if (rangeType == 0) addDaysToDate(oldDate, 1 * dateNum)
+            else if (rangeType == 1) getNextWeekStartDate(getWeekOfYear(oldDate, 0, true), oldDate.year, dateNum)
+            else addMonthsToDate(oldDate, 1 * dateNum);
+        min(max(newDate, startDate), endDate)
+    }
+
+    columnsCountInRange = getRangeColumnsCount(startDate, endDate) + 1;
+    rangeEvents = filter(events, \event -> time2date(event.startDate) <= endDate && startDate <= time2date(event.endDate));
+
+    cellBorder = \colour : int -> TRectangle([Fill(colour)], TFillMax(2., byDayCellHeight));
+
+    eventsByRow : [[CalendarEvent]] = fold(sortCustom(rangeEvents, \event -> event.endDate, true), [], \res, event : CalendarEvent -> {
+        eitherFn(
+            findi(res, \x -> getRangeColumnsCount(time2date(lastElement(x, emptyEvent).endDate), time2date(event.startDate)) > 0),
+            \idx -> replace(res, idx, arrayPush(res[idx], event)),
+            \ -> arrayPush(res, [event])
+        )
+    });
+
+    titleRow = MCols(generate(0, columnsCountInRange, \dateNum -> {
+        date = getNextDate(startDate, dateNum);
+        text = if (rangeType == 0) date.day else if (rangeType == 1) getWeekOfYear(date, 0, true) else date.month;
+        MCenterIn(MEllipsisText(i2s(text), [if (dayOfWeek(date) >= 5 && rangeType == 0) MRed(600) else MBlack(), MBodyBold()]), byDayCellSize)
+    }));
+
+    dayClickGrid = MCols(generate(0, columnsCountInRange, \dateNum -> {
+        date = getNextDate(startDate, dateNum);
+        eventsToShow = {
+            sectionStart = if (rangeType <= 1) date else Date(date.year, date.month, 1);
+            sectionEnd = if (rangeType == 0) date
+                    else if (rangeType == 1) getWeekEndDate(sectionStart)
+                    else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month]);
+            filter(
+                rangeEvents,
+                \event -> max(sectionStart, startDate) <= time2date(event.endDate) && time2date(event.startDate) <= min(sectionEnd, endDate)
+            )
+        }
+        MClickable(TFillXY(), \ -> if (isDateBetween(date, dateMin, dateMax)) showDayEventsPopup(date, eventsToShow))
+    }));
+
+    EventCells = \len : int, event : CalendarEvent -> {
+        eventType = findDef(getValue(eventTypes), \et -> et.name == event.eventType, makeCalendarEventDescription());
+        backColourInt = MColor2int(eventType.backColor);
+        eventCells = MCols(generate(0, len, \cellNum : int -> {
+            leftCorner = b2d(cellNum == 0) * 4.;
+            rightCorner = b2d(cellNum == len - 1) * 4.;
+            MCols2(
+                TRounded(leftCorner, rightCorner, rightCorner, leftCorner, [Fill(backColourInt)], byDayCellSize),
+                cellBorder(if (cellNum == len - 1) white else backColourInt)
+            )
+        }));
+        text = MCenterYIn(MBorder(8., 0., 8., 0., MEllipsisText(getEventTitle(event), [eventType.mainColor, MShowTooltip(make(true))])), eventCells);
+        MClickable(
+            MGroup2(eventCells, MTooltip(text, MText(event.description, []), [MEnabled(const(isTooltipEnabled(event)))])),
+            \ -> eventType.editAction(event.id)
+        )
+    };
+    EmptyCells = \len : int -> MCols(generate(0, len, \__ -> MCols2(byDayCellSize, cellBorder(white))));
+
+    eventRows = MLines(map(eventsByRow, \evs : [CalendarEvent] -> {
+        mapi(evs, \i, event -> {
+            eventLength = getRangeColumnsCount(max(time2date(event.startDate), startDate), min(time2date(event.endDate), endDate)) + 1;
+            blankLength = if (i == 0) {
+                getRangeColumnsCount(startDate, time2date(event.startDate));
+            } else {
+                getRangeColumnsCount(time2date(evs[i - 1].endDate), time2date(event.startDate)) - 1;
+            }
+            res = [EventCells(eventLength, event)]
+                // insert empty cells before event, if any
+                |> (\r -> if (blankLength > 0) insertArray(r, 0, EmptyCells(blankLength)) else r)
+                // insert empty cells after event, if it's the last
+                |> (\r -> if (i == length(evs) - 1) arrayPush(r, EmptyCells(getRangeColumnsCount(time2date(event.endDate), endDate))) else r);
+            res
+        }) |> concatA |> MCols
+    }));
+
+    monthCount = getMonthsBetweenDates(startDate, endDate, 1);
+    monthNamesRow = MCols(generate(0, monthCount, \idx -> {
+        date = addMonthsToDate(startDate, idx);
+        len = getDaysBetweenDates(
+            if (idx == 0) startDate else Date(date.year, date.month, 1),
+            if (idx == monthCount - 1) endDate else Date(date.year, date.month, getNumberOfDaysPerMonthInTheYear(date.year)[date.month])
+        ) + 1;
+        MCols2(
+            TRectangle([Fill(if (idx == 0) white else black)], TFixed(1., 24.)),
+            MOnTop(
+                MCols(generate(0, len, \__ -> TFillXH(24.))),
+                MCenter(MEllipsisText(monthString(date, true), [MBodyBold(), MShowTooltip(const(true))]))
+            )
+        )
+    }));
+
+    gridLine = TRectangle([MFill(MGrey(400)), FillOpacity(0.4)], TFillWY(1.));
+    verticalGrid = MCols(concatA(generate(0, columnsCountInRange, \__ -> [gridLine, TFillX()])));
+    horizontalLine = TRectangle([Fill(black)], TFillXH(1.));
+
+    rangeTable = MOnTop(
+        dayClickGrid,
+        MOnTop(
+            MLines([titleRow, horizontalLine, MScroll(eventRows, TFillXY(), [])]),
+            verticalGrid
+        )
+    );
+    MLines([if (rangeType == 0 && showMonthRow) monthNamesRow else MEmpty(), horizontalLine, rangeTable])
+}
+
+//Shows ONLY the upcoming events
+PlannedEventsTable(
+    currentEvents : DynamicBehaviour<[CalendarEvent]>,
+    eventTypesB : DynamicBehaviour<[CalendarEventDecription]>,
+    manager : MaterialManager,
+    styles : [CalendarForEventsStyle]
+    ) -> Material {
+
+
+    tableDateFormat = extractStruct(styles, PlannedTableDateFormat("%YYYY/%MM/%DD")).tableDateFormat;
+    hideTimeInfo = contains(styles, HideTimeInfo());
+    littleFont = MCustomFont(14., "Roboto", 0.87);
+
+    timeSort = \item : CalendarEvent -> item.startDate;
+
+    getLastEvents = \events -> {
+        today = stamp2time2(timestamp());
+        eventsAfterToday = filter(events, \event -> event.startDate >= today);
+        sortCustom(eventsAfterToday, timeSort, true);
+    }
+
+    getLastEventsWithDescription = \events -> {
+        today = stamp2time2(timestamp());
+        filter(events, \event -> event.startDate >= today && event.description != "")
+    }
+
+    currentLine = make(-1);
+
+    lineHeight = 60.;
+
+    title = MGroup([
+        TRectangle([Fill(black), FillOpacity(1.0)], TFillXH(50.)),
+        MCols([
+            TFixed(20., 0.),
+            MCenterYIn(
+                MSelect(currentEvents, \events -> MText(i2s(length(getLastEvents(events))) + " " + _("planned events"), [MCustomFont(20., "RobotoMedium", 1.), MWhite()])),
+                TFillXH(50.)
+            )
+        ])
+    ]);
+
+    createTimeColumn = \_columnHeader -> {
+        if (hideTimeInfo) TEmpty()
+        else
+            MCenterYIn(
+                MText(_columnHeader, [littleFont, MGrey(800)]),
+                TFixed(150., lineHeight)
+            )
+    }
+
+    columnNames = MGroup([
+        MLines2(
+            TRectangle([MFill(MGrey(200)), FillOpacity(1.0)], TFillXH(lineHeight)),
+            TRectangle([MFill(MGrey(500)), FillOpacity(0.3)], TFillXH(2.))
+        ),
+        MCols([
+            TFixed(25., 0.),
+            MCenterYIn(
+                MText(_("Date"), [littleFont, MGrey(800)]),
+                TFixed(80., lineHeight)
+            ),
+            TFixed(100., 0.),
+            MCenterYIn(
+                MText(_("Event name"), [littleFont, MGrey(800)]),
+                TFixed(200., lineHeight)
+            ),
+            TFixed(5., 0.),
+            MIf(
+                fselect(currentEvents, FLift(\events -> length(getLastEventsWithDescription(events)) > 0)),
+                MCenterYIn(
+                    MText(_("Description"), [littleFont, MGrey(800)]),
+                    TFillXH(lineHeight)
+                ),
+                TFillXH(lineHeight)
+            ),
+            TFixed(5., 0.),
+            createTimeColumn(_("Start time")),
+            createTimeColumn(_("End time"))
+        ])
+    ]);
+
+    makeAddButtonsMenu = \ev, evType -> {
+        mainButton = MIconButton("more_horiz",
+            nop,
+            [MIconSize(22.), FillOpacity(1.0)],
+            []
+        );
+
+        items = map(evType.additionalActions, \act -> {
+            MMenuCustomLine(
+                MCols([
+                    MCenterYIn(
+                        MIcon(act.icon, [MIconSize(22.), FillOpacity(1.0)]),
+                        TFixed(50., 44.)
+                    ),
+                    MCenterYIn(
+                        MText(act.name, [littleFont]),
+                        TFixed(0., 44.)
+                    )
+                ]),
+            [])
+        });
+
+        MCenterYIn(
+            MMenu(
+                mainButton,
+                items,
+                [MOnListClick(const(true), \index -> evType.additionalActions[index].action(ev.id))]
+            ),
+            TFixed(50., lineHeight)
+        )
+    }
+
+    eventLine = \number, event -> {
+        eventTypes = getValue(eventTypesB);
+        eventIndex = either(findi(eventTypes, \p -> p.name == event.eventType), -1);
+        eventName = if (event.title != "") event.title else event.eventType;
+        eventDate = date2formatString(time2date(event.startDate), tableDateFormat);
+
+        createTimeLabel = \_curTime -> {
+            if (hideTimeInfo) TEmpty()
+            else
+                MCenterYIn(
+                    MText(oneNumberInDateCheck(_curTime.hour) + ":" + oneNumberInDateCheck(_curTime.min), [littleFont]),
+                    TFixed(150., lineHeight)
+                )
+        };
+
+        MClickable(
+            MGroup([
+                MGroup2(
+                    MSelect(feq(currentLine, number), \isCurrent ->
+                        TRectangle([MFill(if (isCurrent) MCustomColor(0xFFECB3) else MWhite()), FillOpacity(1.0)], TFillXH(61.))),
+                    TRectangle([Fill(grey), FillOpacity(0.6)], TFillXH(1.))
+                    |> (\m -> MBorder(25., lineHeight, 25., 0., m))
+                ),
+                MCols([
+                    TFixed(25., 0.),
+                    MCenterYIn(
+                        MText(eventDate, [littleFont]),
+                        TFixed(80., lineHeight)
+                    ),
+                    MCenterIn(
+                        MAvatar(eventTypes[eventIndex].icon, [MIconSize(40.0)]),
+                        TFixed(100., lineHeight)
+                    ),
+                    MCenterYIn(
+                        MEllipsisText(eventName, [littleFont]),
+                        TFixed(200., lineHeight)
+                    ),
+                    TFixed(5., 0.),
+                    MCenterYIn(
+                        MEllipsisText(event.description, [littleFont]),
+                        TFillXH(lineHeight)
+                    ),
+                    TFixed(5., 0.),
+                    createTimeLabel(event.startDate),
+                    MSelect(currentLine, \line -> {
+                        if (line != number) createTimeLabel(event.endDate)
+                        else {
+                            MCols([
+                                if (length(eventTypes[eventIndex].additionalActions) > 0) {
+                                    if (length(eventTypes[eventIndex].additionalActions) == 1) {
+                                        MCenterYIn(
+                                            MIconButton(eventTypes[eventIndex].additionalActions[0].icon,
+                                                \-> {eventTypes[eventIndex].additionalActions[0].action(event.id)},
+                                                [MIconSize(22.), FillOpacity(1.0)],
+                                                []
+                                            ),
+                                            TFixed(50., lineHeight)
+                                        )
+                                    } else {
+                                        makeAddButtonsMenu(event, eventTypes[eventIndex])
+                                    }
+                                } else {
+                                    TFixed(0., 0.)
+                                },
+                                MCenterYIn(
+                                    MIconButton("mode_edit",
+                                        \-> {
+                                            eventTypes[eventIndex].editAction(event.id)
+                                        },
+                                        [MIconSize(22.), FillOpacity(0.8)],
+                                        []
+                                    ),
+                                    TFixed(50., lineHeight)
+                                ),
+                                MCenterYIn(
+                                    MIconButton("close",
+                                        \-> {
+                                            close = make(false);
+                                            ShowMDialog(manager, close, [],
+                                                eventDeletePopup(
+                                                    \-> next(close, true),
+                                                    \-> {
+                                                        eventTypes[eventIndex].deleteAction(event.id);
+                                                        next(close, true);
+                                                    }
+                                                )
+                                            );
+                                        },
+                                        [MIconSize(22.), FillOpacity(0.8)],
+                                        []
+                                    ),
+                                    TFixed(50., lineHeight)
+                                ),
+                                if (length(eventTypes[eventIndex].additionalActions) == 0)
+                                    TFixed(50., 0.)
+                                else
+                                    TFixed(0., 0.)
+                            ])
+                        }
+                    })
+                ])
+            ]),
+            \-> next(currentLine, number)
+        )
+    };
+
+    MLines([
+        title,
+        columnNames,
+        MScroll(
+            MGroup([
+                TRectangle([Fill(white), FillOpacity(1.0)], TFillXY()),
+                MSelect(currentEvents, \eventUnsort -> {
+                    eventSorted = getLastEvents(eventUnsort);
+                    MLines(mapi(eventSorted, eventLine))
+                })
+            ]),
+            TFillXY(),
+            [TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)]
+        )
+    ])
+}
+
+reshuffleEvents(
+    events : [CalendarEvent],
+    startPos : int,
+    endPos : int,
+    eventToChange : CalendarEvent
+    ) -> [CalendarEvent] {
+
+    if (startPos < endPos) {
+        newPos = startPos + 1;
+        newEvents = if (newPos < length(events)) {
+            replace(events, startPos, events[newPos]);
+        } else {
+        //if we need to place an event outside the array - just insert an empty event into its place
+            newEvents = replace(events, startPos, emptyEvent);
+            arrayPush(newEvents, eventToChange);
+        }
+        reshuffleEvents(newEvents, newPos, endPos, eventToChange);
+    } else {
+        newEvents = replace(events, endPos, eventToChange);
+        newEvents
+    }
+}
+
+checkOneDayEventsPosition(
+    events : [CalendarEvent],
+    multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
+    ) -> [CalendarEvent] {
+
+    printEvents = \evt -> println(foldi(evt, "", \index, res, it -> res + " #" + i2s(index) + " " + it.eventType));
+
+    //To avoid an endless loop with an attempt to take one "seat" by two events
+    eventsInWrongPositionWithoutCorrection = foldi(events, [], \i, res, item -> {
+        index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+        if (index != -1) {
+            currentPosition = i;
+            rigthPosition = getValue(multiDayEventsPosition)[index].second;
+            arrayPush(res, Pair(currentPosition, rigthPosition))
+        } else {
+            res
+        }
+    });
+
+    eventsInWrongPosition = foldi(events, [], \i, res, item -> {
+        index = either(findi(multiDayEventsPosition |> getValue, \p2 -> p2.first == item), -1);
+        if (index != -1) {
+            currentPosition = i;
+            rigthPosition = getValue(multiDayEventsPosition)[index].second;
+            corrRightPosition = if (rigthPosition >= length(events)) {
+                //if we already have a non-empty event in this position, we don't occupy it
+                index2 = either(findi(eventsInWrongPositionWithoutCorrection, \p2 ->
+                    (p2.first != currentPosition && (p2.second == ^maxDisplayedEventsInOneDay - 1 || p2.second >= ^maxDisplayedEventsInOneDay ))), -1);
+                if (index2 == -1) ^maxDisplayedEventsInOneDay - 1 else rigthPosition;
+            } else {
+                rigthPosition;
+            }
+            //println("c - " + i2s(currentPosition) + " r - " + i2s(rigthPosition) + " cr - " + i2s(corrRightPosition));
+            if (currentPosition != corrRightPosition) {
+                arrayPush(res, Pair(currentPosition, corrRightPosition))
+            } else
+                res
+        } else {
+            res
+        }
+    });
+
+    if (length(eventsInWrongPosition) > 0) {
+        //printEvents(events);
+        newEvents = reshuffleEvents(events, eventsInWrongPosition[0].first, eventsInWrongPosition[0].second, events[eventsInWrongPosition[0].first]);
+        //printEvents(newEvents);
+        checkOneDayEventsPosition(newEvents, multiDayEventsPosition);
+    } else {
+        events
+    }
+
+}
+
+//Multi-day events must go in one position through all the days.
+//Therefore, before displaying, you need to know the positions of ALL events
+checkMultiDayEventsPosition(
+    dateMin : Date,
+    dateMax : Date,
+    allEvents : DynamicBehaviour<[CalendarEvent]>,
+    multiDayEventsPosition : DynamicBehaviour<[Pair<CalendarEvent, int>]>
+    ) -> void {
+
+    items = getValue(allEvents);
+    minYear = dateMin.year;
+    maxYear = dateMax.year;
+    years = enumFromTo(minYear, maxYear);
+    months = enumFromTo(1, 12);
+
+    iter(years, \year -> {
+        filteredByYear = filter(items, \item -> timeYearCheck(item.startDate.year, item.endDate.year, year));
+
+        iter(months, \month -> {
+            filteredByMonth = filter(filteredByYear, \item -> timeMonthCheck(item.startDate, item.endDate, Date(year, month, 1)));
+
+            daysNum = getNumberOfDaysPerMonthInTheYear(year)[month];
+            days = enumFromTo(1, daysNum);
+
+            iter(days, \day -> {
+                timeSort = \item : CalendarEvent -> item.startDate;
+
+                currentDate = Date(year, month, day);
+
+                dayEvents = filter(filteredByMonth, \item -> timeDayCheck(item.startDate, item.endDate, currentDate, day));
+
+                events = sortEvents(dayEvents)
+                    |> \evs -> concat(evs, generate(0, ^maxDisplayedEventsInOneDay - length(evs), \__ -> emptyEvent));
+
+                newEvents = checkOneDayEventsPosition(events, multiDayEventsPosition);
+                iteri(newEvents, \i, item -> {
+                    isMultiDay = (time2date(item.startDate) != time2date(item.endDate));
+                    if (isMultiDay) {
+                        if (currentDate == time2date(item.startDate)) {
+                            index = either(findi(multiDayEventsPosition |> getValue, \p -> p.first == item), -1);
+                            if (index == -1)
+                                next(multiDayEventsPosition, arrayPush(getValue(multiDayEventsPosition), Pair(item, i)));
+                        }
+                    }
+                });
+            });
+        });
+    });
+}
+
+showDatePickerDialog(
+    date : Date,
+    manager : MaterialManager,
+    onOk : (Date) -> void,
+    dateMin : Date,
+    dateMax : Date,
+    markDays : (Date) -> bool
+) -> void {
+    value = make(date);
+    close = make(false);
+    ShowMDialog(manager, close, [MDialogClickOutToClose()],
+        MDatePicker(
+            value,
+            [
+                MDialogButtons([
+                    MButtonOk("enter", \ -> { next(close, true); onOk(getValue(value)) }),
+                    MButtonCancel("esc", \ -> next(close, true))
+                ]),
+                MMarkDays(markDays), MDateMin(dateMin), MDateMax(dateMax)
+            ]
+        )
+    )
+}
+
+CalendarForEvents(
+    allEvents : DynamicBehaviour<[CalendarEvent]>,
+    currentEventTypes : DynamicBehaviour<[CalendarEventDecription]>,
+    manager : MaterialManager,
+    dateMin : Date,
+    dateMax : Date,
+    defaultMonthNumber : int,
+    displayedEventsInOneDay : int,
+    onlyOneSameTypeEventsByDay : bool,
+    colorizeDayHeaders : bool,
+    styles : [CalendarForEventsStyle]) -> Material {
+
+    maxDisplayedEventsInOneDay := if (displayedEventsInOneDay <= 0) CalendarDefaultDisplayedEventsInOneDay else displayedEventsInOneDay;
+    isOnlyOneSameTypeEventsByDay := onlyOneSameTypeEventsByDay;
+    isColorizeDayHeaders := colorizeDayHeaders;
+    hideAddEventButton = contains(styles, HideAddEventButton());
+
+    filteredEvents = make(getValue(allEvents));
+    hiddenEventTypes = extractStruct(styles, HiddenEventTypes([])).types;
+    choosedFilters = make(hiddenEventTypes);
+    multiDayEventsPosition = make([]);
+
+    tabOrder = extractStruct(styles, TabOrder([YearTab(), MonthTab(), PlannedTab()])).tabs;
+    //0 - year, 1 - month, 2 - planned - by default
+    choosedTab = make(
+        findiDef(
+            tabOrder,
+            eq(extractStruct(styles, DefaultTab(YearTab())).tab),
+            0
+    ));
+    tabColors = extractStruct(styles, TabColors(MWhite(), MGrey(300)));
+    activeTabColor = tabColors.activeTabColor;
+    nonActiveTabColor = tabColors.nonActiveTabColor;
+
+    maxYear = dateMax.year;
+    minYear = dateMin.year;
+
+    choosedTabsColor = MCustomColor(0xFDB22B);
+
+    monthValue = \dt, month -> Date(dt.year, month, 1);
+    currentMonthNumber = make(defaultMonthNumber);
+    currentDate = make(monthValue(stamp2date(timestamp()), defaultMonthNumber));
+
+    color2 = manager.theme.primaryColor;
+
+    width = calendarDateCellW * 7.0;
+    height = calendarDateCellH * 7.0 + calendarDateNavSize;
+
+    openPopupForDay = \curDate : DynamicBehaviour<Date>, dayEvents : [CalendarEvent] -> {
+        dayEventsPopup(getValue(curDate), dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, styles)
+    }
+
+    //It creates an image for one month (as in DatePicker)
+    monthView = \monthNumber : int -> {
+        datesSection = MCols([
+            TFixed(calendarPickerMarginCells, 0.0),
+            MSelect2(currentDate, filteredEvents, \curDate, events -> {
+                mMonth = make(monthValue(curDate, monthNumber));
+
+                filteredByMonth = filter(
+                    events,
+                    \item -> timeYearCheck(item.startDate.year, item.endDate.year, curDate.year)
+                            && timeMonthCheck(item.startDate, item.endDate, getValue(mMonth))
+                );
+
+                MClickable(
+                    MCrop(
+                        const(zeroPoint),
+                        const(WidthHeight(width, height)),
+                        MGetFocusGroup(\parent -> CalendarCells(manager, color2, parent, mMonth, currentDate, dateMin, dateMax,
+                            filteredByMonth, currentMonthNumber, openPopupForDay, currentEventTypes))
+                    ),
+                    \-> {
+                        next(currentMonthNumber, monthNumber);
+                        next(currentDate, Date(getValue(currentDate).year, monthNumber, 1));
+                        next(choosedTab, findiDef(tabOrder, eq(MonthTab()), 0));
+                    }
+                );
+            }),
+            TFixed(calendarPickerMarginCells, 0.0)
+        ]);
+        datesSection
+    };
+
+    annualView = MFlexibleGrid(generate(1, 13, monthView) |> const, [CenterAlign()]);
+
+    getTabName = \tab : CalendarTab -> {
+        switch(tab) {
+            YearTab(): _("YEAR");
+            MonthTab(): _("MONTH");
+            PlannedTab(): _("PLANNED");
+            RangeTab(): _("RANGE");
+            WeekTab(): _("WEEK");
+        }
+    }
+
+    makeTabTitle = \tabNumber : int, tabType : CalendarTab -> {
+        minWidth = 120.;
+        maxWidth = 210.;
+        MClickable(
+            MGroup2(
+                MSelect(choosedTab, \tab ->
+                    TRectangle(
+                        [MFill(choosedTabsColor),
+                        FillOpacity(if (tab == tabNumber) 1.0 else 0.0)],
+                        TFillXYXY(minWidth, 5., maxWidth, 5.)
+                    )
+                ),
+                MCenterIn(
+                    MSelect(choosedTab, \tab ->
+                        MParagraph(
+                            getTabName(tabType),
+                            [
+                                if (tab == tabNumber) activeTabColor else nonActiveTabColor,
+                                if (tab == tabNumber) MCustomFont(20., "RobotoMedium", 1.) else MTitle(),
+                                CenterAlign(), MWidth(maxWidth)
+                            ]
+                        )
+                    ),
+                    TFillXYXY(minWidth, 80., maxWidth, 80.)
+                )
+            ),
+            \ -> nextDistinct(choosedTab, tabNumber)
+        )
+    }
+
+    tabTitles = MCenterXIn(MCols(mapi(tabOrder, makeTabTitle)), TFillX());
+
+    makeLegend = \eventDescription -> {
+        focused = make(false);
+        eventIndex = either(findi(choosedFilters |> getValue, \p -> p == eventDescription.name), -1);
+        clicked = make((eventIndex != -1));
+
+        MBorder(0., 10., 0., 10.,
+            MCols([
+                MMouseDownAround(None(), make(false), focused, nop,
+                    MGroup2(
+                        TCircle(10., [MFill(eventDescription.backColor)]),
+                        MSelect(clicked, \f-> if (f)
+                                MIconButton("visibility_off", \-> {
+                                        index = either(findi(choosedFilters |> getValue, \p -> p == eventDescription.name), -1);
+                                        if (index != -1) next(choosedFilters, removeIndex(getValue(choosedFilters), index));
+                                        next(clicked, false);
+                                    }, [MIconSize(10.)], []
+                                )
+                            else
+                                MSelect(focused, \f2-> if (f2)
+                                    MIconButton("visibility", \-> {
+                                            next(choosedFilters, arrayPush(getValue(choosedFilters), eventDescription.name));
+                                            next(clicked, true);
+                                        }, [MIconSize(10.)], []
+                                    ) else TEmpty()
+                                )
+                        )
+                    )
+                ),
+                TFixed(16., 0.),
+                MCenterYIn(
+                    MText(eventDescription.name, []),
+                    TFixed(0., 20.)
+                ),
+                TFixed(30., 0.),
+            ])
+        )
+    }
+
+    subMenuIconStyle = [MIconSize(50.), MCustomColor(0xFDB22B)];
+
+    monthTable = MonthTable(filteredEvents, currentEventTypes, currentDate, dateMin, dateMax, manager, multiDayEventsPosition, choosedFilters, styles);
+    plannedTable = PlannedEventsTable(filteredEvents, currentEventTypes, manager, styles);
+
+    legendOffset = 40.;
+    legend = MSelect(currentEventTypes, \eventTypes -> MLines2(
+        TFillY(),
+        MGroup2(
+            TRectangle([MFill(MGrey(100))], TFillXH(legendOffset)),
+            MScroll(
+                MCenterX(MCols(map(eventTypes, makeLegend))),
+                TFillXH(legendOffset),
+                [TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)]
+            )
+    )));
+
+    TabContent = \tab : CalendarTab -> {
+        updateCurrentDate = \newDate : Date -> if (isDateBetween(newDate, dateMin, dateMax)) next(currentDate, newDate);
+        customFontStyle = [MWhite(), MCustomFont(20., "RobotoMedium", 1.)];
+        subMenuSize = TFillXH(50.);
+
+        isSwipePaused = make(false);
+        pauseSwipe = \ -> {
+            next(isSwipePaused, true);
+            timer(1000, \ -> next(isSwipePaused, false))
+        }
+
+        TabMenu = \items : [Material] -> MGroup2(TRectangle([Fill(black)], subMenuSize), MCols(items));
+        TabBody = \body : Material -> MGroup([
+                TRectangle([Fill(white)], TFillXY()),
+                MScroll(
+                    MLines2(body, TFixed(0., legendOffset)),
+                    TFillXY(),
+                    [TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)]
+                ),
+                legend
+        ]);
+
+        tabContent = switch(tab) {
+            YearTab(): {
+                menuItems = [
+                        MClickable(
+                            MIcon("keyboard_arrow_left", subMenuIconStyle),
+                            \ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1))
+                        ),
+                        MSelect(currentDate, \date ->
+                            MCenterIn(MText(i2s(date.year), customFontStyle), subMenuSize)
+                        ),
+                        MClickable(
+                            MIcon("keyboard_arrow_right", subMenuIconStyle),
+                            \ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1))
+                        )
+                ];
+                MLines([TabMenu(menuItems), TabBody(MLines2(MFixedY(20.), annualView))])
+            }
+
+            MonthTab(): {
+                menuItems = [
+                    MClickable(
+                        MIcon("first_page", subMenuIconStyle),
+                        \ -> updateCurrentDate(addYearsToDate(getValue(currentDate), -1))
+                    ),
+                    MClickable(
+                        MIcon("keyboard_arrow_left", subMenuIconStyle),
+                        \ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), -1))
+                    ),
+                    MSelect(currentDate, \date ->
+                        MCenterIn(MText(i2s(date.year) + " " + toUpperCase(monthString(date, true)), customFontStyle), subMenuSize)
+                    ),
+                    MClickable(
+                        MIcon("keyboard_arrow_right", subMenuIconStyle),
+                        \ -> updateCurrentDate(addMonthsToDate(getValue(currentDate), 1))
+                    ),
+                    MClickable(
+                        MIcon("last_page", subMenuIconStyle),
+                        \ -> updateCurrentDate(addYearsToDate(getValue(currentDate), 1))
+                    )
+                ];
+                MLines([TabMenu(menuItems), TabBody(monthTable)])
+            }
+
+            PlannedTab(): plannedTable;
+
+            RangeTab(): {
+                startDate = make(getCurrentDate());
+                endDate = make(addDaysToDate(getValue(startDate), 7));
+                // 0 - day, 1 - week, 2 - month
+                rangeTypeB = make(0);
+
+                dateButton = \dateB : DynamicBehaviour<Date>, pickMinDate : Date, pickMaxDate : Date -> MTextClickable(
+                        date2formatString(getValue(dateB), "%DD.%MM.%YYYY"),
+                        \ -> showDatePickerDialog(
+                            getValue(dateB),
+                            manager,
+                            \newDate -> nextDistinct(dateB, newDate),
+                            pickMinDate, pickMaxDate,
+                            \d -> isDateBetween(d, getValue(startDate), getValue(endDate))
+                        ),
+                        customFontStyle,
+                        [MHighlightOnHover(make(true), [])]
+                );
+
+                types = map(["days", "weeks", "months"], \s -> "grouped by " + s);
+                groupedByMenu = MDropDown(
+                    rangeTypeB, "", types,
+                    [MCustomButton(
+                        MSelect(rangeTypeB, \rangeType -> MTextButton(types[rangeType], nop, [MRightIcon("arrow_drop_down"), MOrange(600)], []))
+                    )]
+                );
+
+                menuItems = [
+                    MGroup2(
+                        MCenterIn(
+                            MSelect2(startDate, endDate, \start, end ->
+                                MCols([
+                                    dateButton(startDate, dateMin, addDaysToDate(end, -1)),
+                                    MBorder(4., 4., 4., 4., MText(" — ", customFontStyle)),
+                                    dateButton(endDate, addDaysToDate(start, 1), dateMax),
+                                ]),
+                            ),
+                            subMenuSize
+                        ),
+                        MCenterYIn(MRightShift(groupedByMenu), subMenuSize)
+                    )
+                ];
+
+                MLines([
+                    TabMenu(menuItems),
+                    TabBody(
+                        MSelect2(startDate, endDate, \start, end ->
+                            MSelect2(rangeTypeB, filteredEvents, \rangeType, events ->
+                                RangeView(
+                                    events, currentEventTypes, start, end,
+                                    \date, dayEvents -> dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), rangeType, styles),
+                                    dateMin, dateMax, rangeType, true
+                                )
+                        ))
+                    )
+                ])
+            }
+
+            WeekTab(): {
+                // set current date as start of current week
+                updateCurrentDate(getCurrentDate() |> \d -> addDaysToDate(d, -dayOfWeek(d)));
+
+                menuItems = [
+                    MClickable(
+                        MIcon("first_page", subMenuIconStyle),
+                        \ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -28))
+                    ),
+                    MClickable(
+                        MIcon("keyboard_arrow_left", subMenuIconStyle),
+                        \ -> updateCurrentDate(addDaysToDate(getValue(currentDate), -7))
+                    ),
+                    MSelect(currentDate, \date ->
+                        MCenterIn(MText(formatString("WEEK %1 OF %2", [i2s(getWeekOfYear(date, 0, true)), i2s(date.year)]), customFontStyle), subMenuSize)
+                    ),
+                    MClickable(
+                        MIcon("keyboard_arrow_right", subMenuIconStyle),
+                        \ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 7))
+                    ),
+                    MClickable(
+                        MIcon("last_page", subMenuIconStyle),
+                        \ -> updateCurrentDate(addDaysToDate(getValue(currentDate), 28))
+                    )
+                ];
+
+                content = MSelect2(currentDate, filteredEvents, \start, events -> {
+                    RangeView(
+                        events, currentEventTypes, start, addDaysToDate(start, 6),
+                        \date, dayEvents -> dayEventsPopup(date, dayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, styles),
+                        dateMin, dateMax, 0, false
+                    )
+                });
+
+                MLines2(TabMenu(menuItems), TabBody(content))
+            }
+
+        }
+
+        MSwipe(
+            tabContent,
+            [
+                MOnSwipeLeft(\point, delta -> {
+                    if (!getValue(isSwipePaused) && delta.x < -20. && getValue(choosedTab) != 0) {
+                        next(choosedTab, getValue(choosedTab) - 1);
+                        pauseSwipe();
+                    }
+                    true;
+                }),
+                MOnSwipeRight(\point, delta -> {
+                    if (!getValue(isSwipePaused) && delta.x > 20. && getValue(choosedTab) != length(tabOrder) - 1) {
+                        next(choosedTab, getValue(choosedTab) + 1);
+                        pauseSwipe();
+                    }
+                    true;
+                })
+            ]
+        )
+    }
+
+    MConstruct(
+        [
+            makeSubscribe2(allEvents, \events -> {
+                filters = getValue(choosedFilters);
+                nextDistinct(filteredEvents, filter(events, \item -> !contains(filters, item.eventType)));
+            }),
+            makeSubscribe2(choosedFilters, \cf -> {
+                nextDistinct(filteredEvents, filter(getValue(allEvents), \item -> !contains(cf, item.eventType)));
+            }),
+            makeSubscribe(filteredEvents, \__ -> {
+                next(multiDayEventsPosition, []);
+                checkMultiDayEventsPosition(dateMin, dateMax, filteredEvents, multiDayEventsPosition);
+            })
+        ],
+        MGroup([
+            MLines([
+                tabTitles,
+                MBorder(16., 0., 16., 0.,
+                    MSelect(choosedTab, \tabNumber -> TabContent(elementAt(tabOrder, tabNumber, YearTab())))
+                )
+            ]),
+            if (hideAddEventButton) MEmpty()
+            else MLines2(
+                TFillY(),
+                MCols2(
+                    TFillX(),
+                    MFloatingButton("add",
+                        [MBlack()],
+                        [MOnClick(\-> {
+                            today = stamp2date(timestamp());
+                            todayEvents = filter(getValue(filteredEvents), \item -> time2date(item.startDate) == today);
+                            dayEventsPopup(today, todayEvents, currentEventTypes, manager, getValue(choosedFilters), 0, styles)
+                        })]
+                    )
+                )
+            )
+        ])
+    )
+}

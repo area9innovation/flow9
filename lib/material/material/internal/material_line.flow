@@ -1,0 +1,186 @@
+import material/material;
+
+export {
+	makeLineByType(
+		lines : [StaticGraphicOp],
+		lineType: MMLineType,
+		isCurve : bool,
+		style : [TGraphicsStyle]
+	) -> Tropic;
+}
+
+makeLineByType(
+	lines : [StaticGraphicOp],
+	lineType: MMLineType,
+	isCurve : bool,
+	style : [TGraphicsStyle]
+) -> Tropic {
+	lines2TGraphics = \l -> TGraphics(l, style);
+
+	if (isCurve) {
+		lines2TGraphics(lines)
+	} else {
+		width = extractStruct(style, StrokeWidth(1.0)).width;
+		color = extractStruct(style, MStroke(MBlack())).colour;
+		opacity = extractStruct(style, StrokeOpacity(1.0)).opacity;
+		switch (lineType : MMLineType) {
+			MLineDashed(): makeDashedLine(lines, width) |> lines2TGraphics;
+			MLineSolid(): lines2TGraphics(lines);
+			MLineDotted(): makeDottedLine(lines, width, color, opacity) |> TGroup;
+		}
+	}
+}
+
+makeDashedLine(linesOp : [StaticGraphicOp], lineWidth : double) -> [StaticGraphicOp] {
+	lines = getLines(linesOp);
+	dashLength = lineWidth * 3.0;
+	segments = makeSegments(lines, dashLength, 0.0, []);
+
+	dashedLines = filtermapi(segments, \i,segment -> {
+		if (even(i)) {
+			s = map(segment, \seg -> [
+				MoveTo(seg.first.x, seg.first.y),
+				LineTo(seg.second.x, seg.second.y)
+			]);
+			Some(concatA(s))
+		} else {
+			None()
+		}
+	});
+
+	concatA(dashedLines)
+}
+
+getLines(linesOp : [StaticGraphicOp]) -> [Pair<Point, Point>] {
+	points = filtermap(linesOp, \op -> {
+		switch (op : StaticGraphicOp) {
+			LineTo(x, y): Some(Point(x, y));
+			MoveTo(x, y): Some(Point(x, y));
+			default: None();
+		} ;
+	})
+	|> uniq;
+
+	zip(removeIndex(points, length(points) - 1), tail(points));
+}
+
+makeSegments(
+	lines : [Pair<Point, Point>],
+	dashLength : double,
+	offset : double,
+	dashedResult : [[Pair<Point, Point>]]
+) -> [[Pair<Point, Point>]] {
+	getLineLength = \l : Pair<Point, Point> -> {
+		p1 = l.first;
+		p2 = l.second;
+		sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y))
+	};
+
+	sPoint = \point : Point, v : Pair<double, double>, len : double -> {
+		Point(
+			point.x + v.first * len,
+			point.y + v.second * len,
+		)
+	};
+
+	if (length(lines) == 0) {
+		dashedResult
+	} else {
+		line = lines[0];
+
+		lineLength = getLineLength(line);
+
+		lineV = Pair(
+			(line.second.x - line.first.x) / lineLength,
+			(line.second.y - line.first.y) / lineLength,
+		);
+
+		lineLengthCorrected = lineLength - offset;
+		pointOffset = sPoint(line.first, lineV, offset);
+
+		countOfFull = floor(lineLengthCorrected / dashLength);
+
+		initDash = if (offset == 0.0) {
+			[]
+		} else {
+			[[Pair(line.first, pointOffset)]]
+		};
+
+		dashedP = if (countOfFull == 0) {
+			s = Pair(pointOffset, line.second);
+			Pair(
+				[
+					[Pair(pointOffset, line.second)]
+				],
+				dashLength - getLineLength(s)
+			)
+		} else {
+			lengthFull = i2d(countOfFull) * dashLength;
+			restLenght = lineLengthCorrected - lengthFull;
+
+			s = map(enumFromTo(0, countOfFull - 1), \n -> {
+				segmentOffset = dashLength * i2d(n);
+				beginPoint = sPoint(line.first, lineV, offset + segmentOffset);
+				endPoint = sPoint(line.first, lineV, offset + segmentOffset + dashLength);
+				[Pair(beginPoint, endPoint)]
+			});
+
+			lastDash = [
+				[Pair(sPoint(line.first, lineV, offset + lengthFull), line.second)]
+			];
+
+			Pair(
+				concatA([
+					initDash,
+					s,
+					lastDash
+				]),
+				dashLength - restLenght
+			)
+		};
+
+		removeLast = \p -> removeIndex(p, length(p) - 1);
+		dashedCurrent = dashedP.first;
+		offsetNext = dashedP.second;
+
+		result = if (offset != 0.0) {
+			concat3(
+				removeLast(dashedResult),
+				[concat(
+					lastElement(dashedResult, []),
+					firstElement(dashedCurrent, [])
+				)],
+				tail(dashedCurrent)
+			);
+		} else {
+			concat(
+				dashedResult,
+				dashedCurrent
+			)
+		};
+		
+		makeSegments(tail(lines), dashLength, offsetNext, result)
+	}
+}
+
+makeDottedLine(
+	linesOp : [StaticGraphicOp],
+	lineWidth : double,
+	color : int,
+	opacity : double
+) -> [Tropic] {
+	lines = getLines(linesOp);
+	dashLength = lineWidth * 2.5;
+	radius = lineWidth / 2.0;
+	segments = makeSegments(lines, dashLength, 0.0, []);
+
+	drawCircle = \p -> TTranslate(
+		const(Point(p.x - radius, p.y - radius)),
+		TCircle(radius, [Fill(color), FillOpacity(opacity)])
+	);
+
+	map(segments, \segment -> {
+		centerPoint = firstElement(segment, Pair(zeroPoint, zeroPoint)).first;
+		drawCircle(centerPoint);
+	});
+}

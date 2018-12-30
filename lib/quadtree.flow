@@ -1,0 +1,95 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+// TODO: Move to the ds/ folder
+
+// Quad-trees are two-dimensional trees that can efficiently represent a set of 2d points
+// in a way that supports quick lookup, and similar.
+// A quad-tree is defined over a square box. Each node in the quadtree divides
+// the area into 4 equally-sized squares.
+
+export {
+	// When the new type checker works, we can change this to be ? in the children as well
+	QuadTree(point : Maybe<QPoint>, v : ref ?, children : [QuadTree<?>]); 
+
+		QPoint(x : double, y : double);
+	// Each quadtree point has a value. We need a default value "d" here
+	// for "internal" nodes.
+	makeQTree(d : ?) -> QuadTree<?>;
+
+	// Inserts the point p into a QuadTree or one of its children with the value "v". 
+	// The bounds of our world are defined by [x1, x2] and [y1, y2].
+	// We need a default value "d" to be able to construct "internal" nodes.
+	insertQTree(t : QuadTree<?>, p : QPoint, v : ?, d : ?, x1 : double, y1 : double, x2 : double, y2 : double) -> QuadTree<?>;
+
+	// Iterate a quadtree until a given criteria is met.
+	// To help distinguish between "internal" nodes and real nodes, we need the default "d" value.
+	// In other words, we only call fn with real points.
+	iterQTreeUntil(t : QuadTree<?>, d : ?, x1 : double, y1 : double, x2 : double, y2 : double, 
+		fn : (t : QuadTree<?>, x1 : double, y1 : double, x2 : double, y2 : double) -> bool) -> void;
+}
+
+import maybe;
+import math;
+
+makeQTree(d : ?) -> QuadTree<?> {
+	QuadTree(None(), ref d, []);
+}
+
+insertQTree(t : QuadTree<?>, p : QPoint, v : ?, d : ?, x1 : double, y1 : double, x2 : double, y2 : double) -> QuadTree<?> {
+	if (length(t.children) == 0) {
+		// A leaf
+		switch (t.point) {
+			None(): QuadTree(Some(p), ref v, []);
+			Some(tp): {
+				if (abs(tp.x - p.x) + abs(tp.y - p.y) < 0.1) {
+					insertQChild(t, p, v, d, x1, y1, x2, y2);
+				} else {
+					// First, push the existing point down into a node
+					t1 = insertQChild(makeQTree(d), tp, ^(t.v), d, x1, y1, x2, y2);
+					t1.v := d;
+					// And then insert the new point as well
+					insertQChild(t1, p, v, d, x1, y1, x2, y2);
+				}
+			}
+		}
+	} else {
+		insertQChild(t, p, v, d, x1, y1, x2, y2);
+	}
+}
+
+insertQChild(t : QuadTree<?>, p : QPoint, v : ?, d : ?, x1 : double, y1 : double, x2 : double, y2 : double) -> QuadTree<?> {
+	// Find the middle lines, and the quadrant in which to insert p.
+	sx = (x1 + x2) * 0.5;
+	sy = (y1 + y2) * 0.5;
+	right = p.x >= sx;
+	bottom = p.y >= sy;
+	i = (b2i(bottom) * 2) + b2i(right);
+
+	children = if (length(t.children) == 0) { [ makeQTree(d), makeQTree(d), makeQTree(d), makeQTree(d) ]
+		} else t.children;
+
+	child = children[i];
+	// Find the bounds of the quadrant
+	nx1 = if (right) sx else x1;
+	ny1 = if (bottom) sy else y1;
+	nx2 = if (right) x2 else sx;
+	ny2 = if (bottom) y2 else sy;
+	// Recursive insert
+	newchild = insertQTree(child, p, v, d, nx1, ny1, nx2, ny2);
+	QuadTree(t.point, ref d, replace(children, i, newchild));
+}
+
+iterQTreeUntil(t : QuadTree<?>, d : ?, x1 : double, y1 : double, x2 : double, y2 : double, 
+	fn : (t : QuadTree<?>, x1 : double, y1 : double, x2 : double, y2 : double) -> bool) -> void {
+	if (^(t.v) != d && !fn(t, x1, y1, x2, y2)) {
+		sx = (x1 + x2) * 0.5;
+		sy = (y1 + y2) * 0.5;
+		children = t.children;
+		if (length(children) > 0) {
+			iterQTreeUntil(children[0], d, x1, y1, sx, sy, fn);
+			iterQTreeUntil(children[1], d, sx, y1, x2, sy, fn);
+			iterQTreeUntil(children[2], d, x1, sy, sx, y2, fn);
+			iterQTreeUntil(children[3], d, sx, sy, x2, y2, fn);
+		}
+	}
+}

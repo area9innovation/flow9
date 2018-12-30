@@ -1,0 +1,469 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fiprettyprint;
+import arrayutils;
+
+export {
+	lintCode(prog : FiProgram, picky : bool, onError : (FcError) -> void) -> void;
+}
+
+/*
+TODO:
+- Global functions without comments
+- Too long functions
+- Global var could be local
+- type of main is wrong
+- Missing parenthesis for a || b && c or such
+- Unused arguments
+- Unused structs
+- Use of "select" rather than "selectu" and friends. See list in transforms.
+- Use of "for", "loop", "while".
+- Specific code patterns, which are known to be bad.
+- Detect stupid functions
+	fold(fields, env, \acc, field -> {
+		addPerformEnvStateField(acc, field)
+	})
+  can be fold(fields, env, addPerformEnvStateField)
+- Detect fold used as map
+- Detect side-effects in third argument to ifArrayPush
+
+Common library problems:
+- either(lookupTree... is the same as lookupTreeDef.
+- lookupTree(__, __) != None() is the same as containsKeyTree
+
+Formatting:
+- Indent structs in a union after the union
+- Detect "start = rect.first; end = rect.second;"" on one line.
+- Do not have empty lines at the start and end of export.
+- recommended space around operators
+
+Formattng rules from rubrics:
+- whitespace around operators;
+- whitespace after commas;
+- opening bracket on the same line;
+- do not use both whitespaces and tabs for indents in the same file;
+- either put the whole if-else statement in one line (both branches) or put "else" on a new line.
+*/
+
+lintCode(prog : FiProgram, picky : bool, onErr : (FcError) -> void) -> void {
+	pt = \t -> prettyFiType(FcPretty(false, true, makeTree(), makeTree()), t, makeSet());
+
+	env = LintEnv(prog, picky, fiStruct2unions(prog));
+	iter(getTreeValues(prog.modules), \module -> {
+		onError = \m : string, start : int -> {
+			onErr(FcError(m, [FcPosition(module.fileinfo.flowfile, start, start)]));
+		}
+
+		// Check number of lines in file, length of lines, and indentation
+		content = getFileContent(module.fileinfo.fullpath);
+		lines = strSplit(content, "\n");
+		if (strlen(content) > 64 * 1024 && length(lines) <= 1000) {
+			onError("File is more than 64 kb. Consider to split into multiple.", -1);
+		}
+		if (length(lines) > 1000) {
+			if (module.fileinfo.flowfile != "string") {
+				onError("File has more than 1000 lines. Consider to split into multiple.", -1);
+			}
+		}
+		iteri(lines, \i, line -> {
+			if (strlen(line) >= 180) {
+				pos = sum(map(subrange(lines, 0, i), \l -> strlen(l) + 1));
+				// Special case which we allow
+				if (!strContains(line, "doubleMax")) {
+					onError("Line is more than 180 chars long.", pos);
+				}
+			}
+			indents = strlen(line) - strlen(ltrim2(line, "\t"));
+			if (indents > 8) {
+				pos = sum(map(subrange(lines, 0, i), \l -> strlen(l) + 1));
+				onError("Line is indented more than 8 levels.", pos);
+			}
+			if (picky) {
+				spaceIndents = strlen(line) - strlen(ltrim2(line, " "));
+				if (spaceIndents > 3) {
+					pos = sum(map(subrange(lines, 0, i), \l -> strlen(l) + 1));
+					onError("Line is indented with spaces instead of tabs", pos);
+				}
+			}
+		});
+
+		// Check for space after ( and before )
+		parenSpace = multipleStrIndexOf(content, "( ");
+		iter(parenSpace, \i -> {
+			onError( "Do not have space after (", i);
+		});
+		spaceParen = multipleStrIndexOf(content, " )");
+		iter(spaceParen, \i -> {
+			onError("Do not have space before )", i );
+		});
+		spaceComma = multipleStrIndexOf(content, " ,");
+		iter(spaceComma, \i -> {
+			onError("Do not have space before ," , i);
+		});
+		ifParen = multipleStrIndexOf(content, "\tif(");
+		iter(ifParen, \i -> {
+			if(true) {}
+			onError("Need space after if", i);
+		});
+		switchParen = multipleStrIndexOf(content, "\tswitch(");
+		iter(switchParen, \i -> {
+			onError("Need space after switch", i);
+		});
+		elseVoid =  multipleStrIndexOf(content, "else {}");
+		iter(elseVoid, \i -> {
+			onError("No need for else {}", i);
+		});
+		elseVoid1 =  multipleStrIndexOf(content, "else { }");
+		iter(elseVoid1, \i -> {
+			onError("No need for else {}", i);
+		});
+
+		// Check that we have no imports after the export-section
+		exportStart = if (startsWith(content, "export {\n")) 0 else strIndexOf(content, "\nexport {\n");
+		if (exportStart == -1) {
+			if (length(module.exports) > 0) {
+				expStart = strIndexOf(content, "\nexport {");
+				if (expStart == -1) {
+					onError("Formatting: 'export {' is not formatted right.", -1);
+				} else {
+					onError("Formatting: 'export {' should not have trailing whitespace or comments.", expStart);
+				}
+			}
+		} else {
+			// We have an export. Check if all imports are before this
+			iter(module.imports, \im -> {
+				if (im.start > exportStart) {
+					onError("import " + im.flowfile + "; should be before the export section", im.start);
+				}
+			});
+		}
+
+		// Check all functions
+		iter(module.functions, \fn : FiFunctionDec -> 
+			// Check the code
+			lintExp(env, fn.lambda, onError)
+		);
+
+		// Check that structs start with a capital letter
+		iter(module.structs, \s -> {
+			firstChar = getCharAt(s.name, 0);
+			if (!isUpperLetter(firstChar)) {
+				onError("Naming convention: Structs should start with a capital letter. " + s.name + " should maybe be " + toUpperCase(firstChar) + strRight(s.name, 1), -1);
+			}
+			if (underscoreViolation(s.name)) {
+				my_name = 0;
+				onError("Naming convention: Do not use underscore in " + s.name, -1);
+			}
+		});
+
+		// Check that unions start with a capital letter
+		iter(module.unions, \u -> {
+			firstChar = getCharAt(u.name, 0);
+			if (!isUpperLetter(firstChar)) {
+				onError("Naming convention: Unions should start with a capital letter. " + u.name + " should maybe be " + toUpperCase(firstChar) + strRight(u.name, 1), -1);
+			}
+			if (underscoreViolation(u.name)) {
+				my_name = 0;
+				onError("Naming convention: Do not use underscore in " + u.name, -1);
+			}
+		});
+
+		// Check that globals follow good naming conventions
+		iter(module.globalVars, \v : FiGlobalVar -> {
+			// Check that we are not initializing a global with a function
+			if (isFunction(fiExpType(v.value))) {
+				onError("Do not use assignment syntax for global functions for " + v.name, v.declStart);
+			}
+
+			firstChar = getCharAt(v.name, 0);
+			if (isUpperLetter(firstChar) && toUpperCase(v.name) != v.name) {
+				onError("Naming convention: Global variables should start with a small letter. " + v.name + " should maybe be " + toLowerCase(firstChar) + strRight(v.name, 1), v.declStart);
+			}
+			if (underscoreViolation(v.name)) {
+				my_name = 0;
+				onError("Naming convention: Do not use underscore in " + v.name, v.declStart);
+			}
+		});
+	});
+}
+
+LintEnv(
+	prog : FiProgram,
+	picky : bool,
+	struct2unions : Tree<string, [string]>
+);
+
+lintExp(env : LintEnv, expr : FiExp, onErr : (string, int) -> void) -> void {
+	onError = \s -> onErr(s, expr.start);
+	rec = \e -> lintExp(env, e, onErr);
+	switch (expr) {
+		FiLambda(args, body, type, start): {
+			iter(args, \a -> lintVarName(env, a.name, onError));
+			rec(body);
+		}
+		FiCall(f, args, __, __): {
+			switch (f) {
+				FiLambda(__, __, __, __): {
+					onError("Immediate call of local function is inefficient");
+				}
+				default: {}
+			}
+
+			rec(f); iter(args, rec); 
+		}
+		FiVar(x, __, __): {
+			lintVarName(env, x, onError);
+		}
+		FiLet(x, t, e1, e2, __, __): {
+			lintVarName(env, x, onError);
+			rec(e1); rec(e2);
+		}
+		FiIf(e1, e2, e3, __, __): { 
+			if (isBoolExp(e2, false) && isBoolExp(e3, false)) {
+				if (false) true else false;
+				onError("Redundant if with bool constants in both branches");
+			}
+
+			// This is turned off until we have tail-call optimization working for short-curcuit logical operations
+			if (false && isBoolExp(e2, true) && isBoolExp(e3, true)) {
+				fn = \ -> true;
+				if (false) fn() else fn();
+				onError("if with bool types in both branches can sometimes be written more clearly with logical operations.");
+			}
+
+			if (env.picky) {
+				// Check for a chain of ifs, and if there are any duplicate bodies
+				checkIfChain(makeSet(), makeSet(), [expr], onError);
+				{}
+			} else {
+				// Just do a simple check of each branch
+				if (isSameFiExp(e1, e2)) {
+					onError("Duplicate branches in if");
+				}
+			}
+
+			rec(e1); rec(e2); rec(e3); 
+		}
+		FiSwitch(e0, typ, cs, __, __): {
+			// OK, find out what type we are switching on
+			name = getFiTypeName(typ);
+			structs = fiUnion2typenames(env.prog, name);
+			missing = length(structs) - length(cs);
+
+			if (0 < missing && missing < 3) {
+				missingCases = fold(structs, [], \acc : [string], s : FiTypeName -> {
+					if (exists(cs, \c -> c.struct == s.name)) {
+						acc
+					} else {
+						arrayPush(acc, s.name);
+					}
+				});
+				onError("switch on " + name + " misses just " + i2s(missing + 1) + " cases to avoid using default:\n\t" + superglue(missingCases, \c -> structCaseLine(env, c), "\n\t"));
+			}
+
+			rec(e0);
+			iter(cs, \c -> {
+				rec(c.body);
+			});
+		}
+		FiCast(e0, tFrom, tTo, __, __): rec(e0);
+		FiSeq(es, __, __): iter(es, rec);
+		FiCallPrim(op, es, __, __): {
+			wantDifferentSides = switch (op) {
+				FcOrPrim(): true;
+				FcAndPrim(): true;
+				FcEqPrim(): true;
+				FcNePrim(): true;
+				FcLePrim(): true;
+				FcGePrim(): true;
+				FcLtPrim(): true;
+				FcGtPrim(): true;
+				FcMinusPrim(): true;
+				FcDivPrim(): true;
+				FcModPrim(): true;
+				FcNotPrim(): false;
+				FcPlusPrim(): false;
+				FcMulPrim(): false;
+				FcNegPrim(): false;
+				FcArrayPrim(): false;
+				FcIndexPrim(): false;
+				FcDerefPrim(): false;
+				FcAssignPrim(): false;
+				FcRefPrim(): false;
+				FcStructPrim(__): false;
+				FcFieldPrim(__): false;
+				FcSetMutablePrim(__): false;
+				FcCreateClosurePrim(__, __): false;
+			}
+			if (wantDifferentSides && length(es) == 2 && isSameFiExp(es[0], es[1])) {
+				if (op == FcNePrim() && getFiVarName(es[0]) == "d") {
+					// Special case in math is allowed'
+					//	|| d != d // works for 0/0
+				} else {
+					onError("Same argument to operator that want differences");
+				}
+			}
+
+			detestBools = switch (op) {
+				FcLePrim(): true;
+				FcGePrim(): true;
+				FcLtPrim(): true;
+				FcGtPrim(): true;
+
+				FcEqPrim(): false;
+				FcNePrim(): false;
+				FcMinusPrim(): false;
+				FcDivPrim(): false;
+				FcModPrim(): false;
+				FcOrPrim(): false;
+				FcAndPrim(): false;
+				FcNotPrim(): false;
+				FcPlusPrim(): false;
+				FcMulPrim(): false;
+				FcNegPrim(): false;
+				FcArrayPrim(): false;
+				FcIndexPrim(): false;
+				FcDerefPrim(): false;
+				FcAssignPrim(): false;
+				FcRefPrim(): false;
+				FcStructPrim(__): false;
+				FcFieldPrim(__): false;
+				FcSetMutablePrim(__): false;
+				FcCreateClosurePrim(__, __): false;
+			}
+			if (detestBools && exists(es, \e -> isBoolExp(e, true))) {
+				onError("Do not compare bools");
+			}
+
+			iter(es, rec);
+		}
+		FiString(s, __): {}
+		FiBool(b, __): {}
+		FiDouble(d, __): {}
+		FiVoid(__): {}
+		FiInt(i, __): {}
+		FiRequire(flowfile2, e2, __, __): rec(e2);
+		FiUnsafe(name, fallback, __, __): rec(fallback);
+	};
+}
+
+structCaseLine(env : LintEnv, name : string) -> string {
+	mstructdef = lookupTree(env.prog.names.structs, name);
+	switch (mstructdef) {
+		None(): name + "():";
+		Some(structdef): {
+			name + "(" + superglue(structdef.args, \a -> a.name, ", ") + "):";
+		}
+	}
+}
+
+lintVarName(env : LintEnv, name : string, onError : (string) -> void) -> void {
+	type =  {
+		mdecl = lookupTree(env.prog.names.toplevel, name);
+		switch (mdecl) {
+			None(): FiTypeBool();
+			Some(decl): {
+				switch (decl) {
+					FiFunctionDec(__, __, t, __, __): t;
+					FiGlobalVar(__, __, t, __, __): t;
+					FiNativeDec(__, __, t, __, __, __, __): t;
+				}
+			}
+		}
+	}
+
+	isGuiName = {
+		// Check to see if this is a Form, Tropic or Material
+		rtype = returnFiType(type);
+		tname = getFiTypeName(rtype);
+
+		if (tname != "") {
+			unions = arrayPush(fiNames2unions(env.prog, env.struct2unions, [tname], true), tname);
+			// fcPrintln(tname + " " + strGlue(unions, ", "));
+			isIntersecting(["Form", "Tropic", "Material", "EventHandler", "MColorName", "FForm", "MColor", "GraphicsStyle"], unions);
+		} else false;
+	}
+
+	firstChar = getCharAt(name, 0);
+	if (isUpperLetter(firstChar) && toUpperCase(name) != name && !(isGuiName && isFunction(type))) {
+		// Non-gui names should start with lowercase
+		First = 0;
+		onError("Naming convention: " + name + " should maybe be " + toLowerCase(firstChar) + strRight(name, 1));
+	}
+
+	if (false && isGuiName && !isUpperLetter(firstChar) && isFunction(type)) {
+		// Gui names should start with uppercase, if they are functions!
+		// It turns out this is too much
+		onError("Naming convention: " + name + " should maybe be " + toUpperCase(firstChar) + strRight(name, 1));
+	}
+
+	if (underscoreViolation(name)) {
+		my_name = 0;
+		onError("Naming convention: Do not use underscore in " + name);
+	}
+}
+
+checkIfChain(conditions : Set<FiExp>, branches : Set<FiExp>, queue : [FiExp], onError : (string) -> void) -> Pair<Set<FiExp>, Set<FiExp>> {
+	if (queue == []) Pair(conditions, branches)
+	else {
+		head = queue[0];
+		remaining = tail(queue);
+		switch (head) {
+			FiIf(e1, e2, e3, __, __): {
+				if (existsSet(conditions, \c -> isSameFiExp(c, e1))) {
+					onError("Duplicate conditions in if-chain");
+				}
+
+				if (existsSet(branches, \c -> isSameFiExp(c, e2))
+					|| existsSet(branches, \c -> isSameFiExp(c, e3))) {
+					onError("Duplicate branches in if-chain");
+				}
+				nbr = insertSet(insertSet(branches, e2), e3);
+				checkIfChain(insertSet(conditions, e1), nbr, concat(remaining, [e2, e3]), onError);
+			}
+			default: checkIfChain(conditions, branches, remaining, onError);
+		}
+	};
+}
+
+
+underscoreViolation(name : string) -> bool {
+	strContains(name, "_") && name != "_" && name != "__" && name != "default_" && toUpperCase(name) != name;
+}
+
+// This is special. () -> [() -> Form] has Form as the return type
+returnFiType(type : FiType) -> FiType {
+	switch (type) {
+		FiTypeFunction(__, rt): returnFiType(rt);
+		FiTypeArray(at):        returnFiType(at);
+		default:                type;
+	}
+}
+
+isFunction(type : FiType) -> bool {
+	switch (type) {
+		FiTypeFunction(__, rt): true;
+		default: false;
+	}
+}
+
+isBoolExp(e : FiExp, checkType : bool) -> bool {
+	switch (e) {
+		FiBool(__, __): true;
+		default: checkType && isBool(fiExpType(e));
+	}
+}
+
+isBool(type : FiType) -> bool {
+	switch (type) {
+		FiTypeBool(): true;
+		default: false;
+	}
+}
+
+getFiVarName(e : FiExp) -> string {
+	switch (e) {
+		FiVar(n, __, __): n;
+		default: "";
+	}
+}

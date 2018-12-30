@@ -1,0 +1,235 @@
+import ui/imagedecorated_editor_types;
+import ui/imagedecorated;
+
+export {
+	modifyFontFamily(bold : bool, italic : bool) -> ((style:[CharacterStyle]) -> [CharacterStyle]);
+
+	convertDecorationToEditable(decoration: ImageDecoration) -> Maybe<ImageDecorationEditable>;
+	convertEditableDecoration(decoration: ImageDecorationEditable) -> ImageDecoration;
+
+	// probably obsolete ex-featureswitch
+	fix34821 = any(map(["fix34821", "fix41657", "release_parser_incompatible_features", "all_authoring_ui"], isUrlParameterTrue));
+}
+
+
+convertDecorationToEditable(decoration: ImageDecoration) -> Maybe<ImageDecorationEditable> {
+	if (isSameStructType(decoration, IllegalStruct())) {
+		println("imagedecoratededitor: convertDecorationToEditable(" + toString(decoration) + ")");
+		None()
+	} else {
+		switch (decoration: ImageDecoration) {
+			ImageArrow(x0, y0, rotate, _length, color, thickness, label): {
+				angleRad = rotate |> deg2rad;
+
+				x1 = x0 + _length * cos(angleRad);
+				y1 = y0 - _length * sin(angleRad);
+
+				res : ImageDecorationEditable = ImageArrowEditable(make(Point(x0, y0)), make(Point(x1, y1)), make(color), make(thickness), label);
+				Some(res)
+			}
+
+			ImageCircle(x, y, radius, style, inverted): {
+				bColor = extractStruct(style, Stroke(0x000000)).colour;
+				bOpacity = extractStruct(style, StrokeOpacity(1.0)).opacity;
+				fColor = extractStruct(style, Fill(0x000000)).color;
+				fOpacity = extractStruct(style, FillOpacity(0.0)).opacity;
+				ImageCircleEditable(
+					make(Point(x, y)),
+					make(radius),
+					make(combineIntColor(bOpacity, bColor)),
+					make(combineIntColor(fOpacity, fColor)),
+					make(inverted)
+				) |> Some;
+			}
+			ImageRectangle(x, y, width, height, style, inverted): {
+				bColor = extractStruct(style, Stroke(0x000000)).colour;
+				bOpacity = extractStruct(style, StrokeOpacity(1.0)).opacity;
+				fColor = extractStruct(style, Fill(0x000000)).color;
+				fOpacity = extractStruct(style, FillOpacity(0.0)).opacity;
+				ImageRectangleEditable(
+					make(Point(x, y)),
+					make(Point(x + width, y + height)),
+					make(combineIntColor(bOpacity, bColor)),
+					make(combineIntColor(fOpacity, fColor)),
+					make(inverted)
+				) |> Some;
+			}
+			ImageCrop(x, y, width, height):
+				ImageCropEditable(make(None()), make(Point(x, y)), make(Point(x + width, y + height)), make(false)) |> Some;
+			ImageAdaptiveCrop(x, y, width, height, __):
+				ImageCropEditable(make(None()), make(Point(x, y)), make(Point(x + width, y + height)), make(true)) |> Some;
+			ImageBorder(radius, color, thickness):
+				ImageBorderEditable(make(radius), make(color), make(thickness)) |> Some;
+			ImageLabel(x, y, label): {
+				switch (label : Form) {
+					Text(text, style) : {
+						color = colorOfText(style);
+						fontsize = sizeOfText(style);
+						bold = isBold(style);
+						italic = isItalic(style);
+						backColor = backColorOfText(style);
+						backOpacity = backOpacityOfText(style);
+						fullBackColor = combineIntColor(backOpacity, backColor);
+						ImageLabelEditable(make(Point(x, y)), make(text), make(color), make(fontsize), make(bold), make(italic), make(fullBackColor)) |> Some
+					}
+					default : None();
+				}
+			}
+			ImageLabel2(x, y, ha, va, cs, text, rotation, stable): {
+				color = colorOfText(cs);
+				fontsize = sizeOfText(cs);
+				bold = isBold(cs);
+				ImageLabel2Editable(make(Point(x, y)), make(ha), make(va), make(text), make(color), make(fontsize), make(bold), make(rotation), make(stable)) |> Some;
+			}
+			ImageAltText(text, cs): {
+				bold = isBold(cs);
+				italic = isItalic(cs);
+				ImageAltTextEditable(make(text), make(bold), make(italic)) |> Some;
+			}
+			ImageHeader(label, fontsize, color): {
+				ImageHeaderEditable(make(label), make(fontsize), make(color)) |> Some;
+			}
+			ImageFooter(label, fontsize, color): {
+				ImageFooterEditable(make(label), make(fontsize), make(color)) |> Some;
+			}
+			ImageCopyright(text, cs) : {
+				textandfile = getImageCopyrightPair(text);
+				bold = isBold(cs);
+				italic = isItalic(cs);
+				color = extractStruct(cs, Fill(0x525252)).color;
+				ImageCopyrightEditable(make(textandfile.first), make(bold), make(italic), make(textandfile.second), make(color)) |> Some;
+			}
+			ImageCaption(text, fontsize, color, cs, ps): {
+				bold = isBold(cs);
+				italic = isItalic(cs);
+				center = contains(ps, CenterAlign());
+				ImageCaptionEditable(make(text), make(fontsize), make(color), make(bold), make(italic), make(center)) |> Some;
+			}
+			ImagePadding(l ,t, r, b) : {
+				ImagePaddingEditable(make(l), make(t), make(r), make(b)) |> Some
+			}
+			ImageTextBox(label, alignment, rec) : {
+				textSize = sizeOfText(label.style);
+				textColor = colorOfText(label.style);
+				backOpacity = extractStruct(rec.style, FillOpacity(1.0)).opacity;
+				backColor = extractStruct(rec.style, Fill(white)).color;
+				topLeft = Point(rec.x, rec.y);
+				rightBottom = Point(
+					rec.x + rec.width,
+					rec.y + rec.height
+				);
+				Some(ImageTextBoxEditable(
+					make(label.text),
+					make(alignment),
+					make(topLeft),
+					make(rightBottom),
+					make(textColor),
+					make(textSize),
+					make(backColor),
+					make(backOpacity)
+				));
+			}
+			ImageShadow() : None();
+		}
+
+	}
+}
+
+convertEditableDecoration(decoration: ImageDecorationEditable) -> ImageDecoration {
+	switch (decoration: ImageDecorationEditable) {
+		ImageArrowEditable(headPoint, tailPoint, _color, thickness, label): {
+			x0 = getValue(headPoint).x;
+			y0 = getValue(headPoint).y;
+			x1 = getValue(tailPoint).x;
+			y1 = getValue(tailPoint).y;
+
+			aLength = sqrt((x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1));
+			angleRad = atan2(y0 - y1, x1 - x0);
+			rotate = angleRad |> rad2deg;
+
+			ImageArrow(x0, y0, rotate, aLength, getValue(_color), getValue(thickness), label);
+		}
+		ImageCircleEditable(p, radius, bColor, fColor, inverted):
+			ImageCircle(getValue(p).x, getValue(p).y, getValue(radius), makeImageShapeGraphicsStyle(getValue(bColor), getValue(fColor)), getValue(inverted));
+		ImageRectangleEditable(pLeft, pRight, bColor, fColor, inverted):
+			ImageRectangle(
+				getValue(pLeft).x, getValue(pLeft).y, getValue(pRight).x - getValue(pLeft).x, getValue(pRight).y - getValue(pLeft).y,
+				makeImageShapeGraphicsStyle(getValue(bColor), getValue(fColor)),
+				getValue(inverted)
+			);
+		ImageCropEditable(__, p0, p1, ac):
+			if (getValue(ac))
+				ImageAdaptiveCrop(getValue(p0).x, getValue(p0).y, getValue(p1).x - getValue(p0).x, getValue(p1).y - getValue(p0).y, makeWH())
+			else 
+				ImageCrop(getValue(p0).x, getValue(p0).y, getValue(p1).x - getValue(p0).x, getValue(p1).y - getValue(p0).y);
+		ImageBorderEditable(radius, color, thickness):
+			ImageBorder(getValue(radius), getValue(color), getValue(thickness));
+		ImageLabelEditable(p, text, color, fontsize, bold, italic, backColor):
+			ImageLabel(
+				getValue(p).x,
+				getValue(p).y,
+				Text(
+					getValue(text),
+					[
+						FontSize(getValue(fontsize)), Fill(getValue(color)), 
+						BackgroundFill(getRGB(getValue(backColor))), BackgroundFillOpacity(getOpacity(getValue(backColor)))
+					] |> modifyFontFamily(getValue(bold), getValue(italic))
+				)
+			);
+		ImageLabel2Editable(p, ha, va, text, color, fontsize, bold, rotation, stable):
+			ImageLabel2(
+				getValue(p).x, getValue(p).y,
+				getValue(ha), getValue(va),
+				[FontSize(getValue(fontsize)), Fill(getValue(color))] |> modifyFontFamily(getValue(bold), false),
+				getValue(text),
+				getValue(rotation),
+				getValue(stable)
+			);
+		ImageAltTextEditable(text, bold, italic):
+			ImageAltText(getValue(text), [] |> modifyFontFamily(getValue(bold), getValue(italic)));
+		ImageHeaderEditable(label, fontsize, color):
+			ImageHeader(getValue(label), getValue(fontsize), getValue(color));
+		ImageFooterEditable(label, fontsize, color):
+			ImageFooter(getValue(label), getValue(fontsize), getValue(color));
+		ImageCopyrightEditable(text, bold, italic, filename, color): {
+			textandfile =
+				if (getValue(filename) == "") getValue(text)
+				else getValue(text) + "\u001f" + getValue(filename); // unit separator
+			ImageCopyright(textandfile, [Fill(getValue(color))] |> modifyFontFamily(getValue(bold), getValue(italic)));
+		}
+		ImageCaptionEditable(text, fontsize, color, bold, italic, center):
+			ImageCaption(getValue(text), getValue(fontsize), getValue(color), [] |> modifyFontFamily(getValue(bold), getValue(italic)), if (getValue(center)) [CenterAlign()] else []);
+		ImagePaddingEditable(left, top, right, bottom):
+			ImagePadding(getValue(left), getValue(top), getValue(right), getValue(bottom));
+		ImageTextBoxEditable(textB, alignB, topLeftB, rightBottomB, textColorB, textSizeB, backColorB, backOpacityB) : {
+			topLeft = getValue(topLeftB);
+			rightBottom = getValue(rightBottomB);
+			ImageTextBox(
+				Text(getValue(textB), [FontSize(getValue(textSizeB)), Fill(getValue(textColorB))]),
+				getValue(alignB),
+				ImageRectangle(
+					topLeft.x,
+					topLeft.y,
+					rightBottom.x - topLeft.x,
+					rightBottom.y - topLeft.y,
+					[Fill(getValue(backColorB)), FillOpacity(getValue(backOpacityB))],
+					false
+				)
+			);
+		}
+	}
+}
+
+modifyFontFamily(bold, italic) {
+	\cs -> {
+		if (bold && italic)
+			asBoldItalic(cs)
+		else if (bold)
+			asBold(cs)
+		else if (italic)
+			asItalic(cs)
+		else
+			cs
+	}
+}
+

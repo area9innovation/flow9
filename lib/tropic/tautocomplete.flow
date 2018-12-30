@@ -1,0 +1,169 @@
+import tropic/tropic_ui;
+import tropic/ttextinput;
+import tropic/tlistbox;
+import tropic/tropic_manager;
+import tropic/tautocomplete_types;
+import algorithms;
+
+export {
+	// Construct an input box with auto-completion based on the Trie of words, as
+	// constructed by buildDictionary from dictionary_levenshtein.
+	// Supports presenting a list of completions, keyboard navigation.
+
+	TAutoComplete(
+		// To be able to present the list of completions on top, we need this manager
+		manager : TManager, 
+		// To find the completions, we need at least one of these
+		matchers : [SentenceMatcher], 
+		// The text the user enters goes here
+		content : DynamicBehaviour<string>,
+		// The font style and so on
+		style : [TTextInputStyle],
+		// The state of the text input, for detail control
+		state : [TTextInputState],
+		// How should the auto-completer work?
+		autoStyle : [TAutoCompleteStyle],
+		// How big the completion window should be
+		completionSize : Tropic,
+	) -> Tropic;
+}
+
+TAutoComplete(manager : TManager, matchers : [SentenceMatcher], content : DynamicBehaviour<string>, 
+			inputStyle : [TTextInputStyle], inputState : [TTextInputState], autoStyle : [TAutoCompleteStyle], 
+			completionSize : Tropic) -> Tropic {
+	focus : TTextInputFocus = extractStruct(inputState, TTextInputFocus(make(true)));
+
+	position : TTextInputPosition = extractStruct(inputState, TTextInputPosition(make(0)));
+
+	fontStyle = extractCharacterStyles(inputStyle);
+
+	fontSize = extractStruct(fontStyle, FontSize(12.0)).size;
+
+	completedMatched : TCompletedMatches = extractStruct(autoStyle, TCompletedMatches(make([])));
+
+	uns1 = ref nop;
+
+	setWord = \matches : [SentenceMatch], match : SentenceMatch -> {
+		w = match.sentence;
+		// default TMatchedHandler fn does not consider current content and position
+		composeContentFn = extractStruct(autoStyle, TMatchedHandler(\m, __, __ -> m)).fn;
+		newContent = composeContentFn(w, getValue(content), getValue(position.position));
+		// Force an update so that the list disappears
+
+		// TODO: Here, we should find all matched words, and remove them.
+		// Then insert the match as written where the the first match word was
+		next(content, newContent);
+
+		deferUntilRender(\ -> {
+			// Give the input focus again
+			next(focus.focus, true);
+			// And move the cursor
+			next(position.position, strlen(newContent));
+
+			// Update the array of matched items
+			completed = arrayPush(getValue(completedMatched.matches), match);
+			remaining = filter(completed, \c -> contains(matches, c));
+			next(completedMatched.matches, remaining);
+
+			// And remove any popup
+			(^uns1)();
+			uns1 := nop;
+		});
+	}
+
+	completionFn = extractStruct(autoStyle, TCompletionFn(\com, isSelected, setWordFn -> {
+		style = if (isSelected) TBlue else TWhite;
+		TTextButton(com.sentence, "", concat([FontSize(fontSize), style, TForeground(
+				TGroup2(
+					TWidth(completionSize),
+					TFixed(0.0, fontSize)
+				)
+			), StrokeWidth(0.0)], fontStyle), OnClick(\ -> {
+			setWordFn(com);
+		}));
+	}));
+
+	r = TOnTop(
+			manager,
+			TTextInput(content, inputStyle, concat(inputState, [focus, position]),
+				TGroup2(
+					TWidth(completionSize),
+					TFixed(0.0, fontSize + 4.0)
+				)
+			)
+	);
+
+	un = subscribe(content, \c -> {
+		allCompl = fold(matchers, [], \acc, matcher -> {
+			concat(acc, approximateSentenceMatch(matcher, c, 10, true, false, -1));
+		});
+
+		compl = subrange(mergeSort(allCompl, \sm1, sm2 -> {
+			genericCompareDesc(sm1.score, sm2.score);
+		}), 0, 10);
+
+		(^uns1)();
+
+		if (compl == []) {
+			uns1 := nop;
+		} else {
+
+			selected = make(-1);
+			completions = mapi(compl, \i, com -> {
+				TSelect(feq(selected, i), \isSelected -> {
+					completionFn.fn(com, isSelected, \w -> setWord(allCompl, w));
+				});
+			});
+
+			keypress = makeTKey(\k -> contains(["up", "down", "enter", "esc"], k.utf));
+
+			uns1 := r.second(
+				TConstruct([\ -> subscribe2(keypress.pressed, \k -> {
+						sel = getValue(selected);
+						if (k.utf == "up") {
+							next(selected, max(-1, sel - 1));
+						} else if (k.utf == "down") {
+							next(selected, min(length(compl)-1, sel + 1));
+						} else if (k.utf == "enter") {
+							if (sel != -1) {
+								setWord(allCompl, compl[sel]);
+							}
+						} else if (k.utf == "esc") {
+							(^uns1)();
+							uns1 := nop;
+						}
+					})], 
+					TPad(0.0, fontSize + 4.0, 
+						TFrame(
+							1.0, 0.0, [Stroke(darkGray), Fill(white)],
+							TInteractive([keypress], 
+								TListBox(completions, selected, TBorder(0.0, 0.0, 0.0, 0.0, completionSize), standartScrollableStyle, [])
+							)
+						)
+					)
+				)
+			)
+		}
+	});
+
+	// TODO: Figure out how to to TConstruct here
+	TDispose(
+		[ un, \ -> {(^uns1)()}],
+		r.first
+	);
+}
+
+
+/*
+main() {
+	words = mapi(strSplit("#include databases/redgrapes.txt", "\n"), \i, s -> Pair(s, 1));
+
+	trie = buildDictionary(words);
+
+	grape = make("");
+
+	trender(
+		TAutoComplete(trie, grape), []
+	);
+}
+*/

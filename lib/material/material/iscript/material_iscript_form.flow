@@ -1,0 +1,438 @@
+import material/extra/feedback/parse_form;
+import material/internal/material_edit_grid;
+
+export {
+	IScriptForm ::= FForm, ISTranslate, ISScale, ISRotate, ISAlpha, ISAvailable2, ISSize2, ISSetPending, ISBaseline, ISGroup, ISGroup2, ISDecorator2,
+		ISBorder, ISMask2, ISFilter2, ISCrop2, ISAccess, ISFullWindow, ISSetPending, ISDynamicGroup2, ISMForm;
+
+		ISTranslate : (x : double, y : double, form : IScriptForm);
+		ISScale : (x : double, y : double, form : IScriptForm);
+		ISRotate : (degree : double, form : IScriptForm);
+		ISAlpha : (alpha : double, form : IScriptForm);
+		ISAvailable2 : (widthHeight : WidthHeight, form : IScriptForm);
+		ISSize2 : (widthHeight : WidthHeight, form : IScriptForm);
+		ISSetPending : (pending : int, form : IScriptForm);
+		ISBaseline : (baseline : double, form : IScriptForm);
+		ISGroup : (layers : [IScriptForm], zorder : bool);
+		ISGroup2 : (layer1 : IScriptForm, layer2 : IScriptForm, zorder : bool);
+		ISDecorator2 : (layer1 : IScriptForm, decorators : [IScriptForm], above : bool);
+		ISBorder(left : double, top : double, right : double, bottom : double, form : IScriptForm);
+		ISMask2 : (main : IScriptForm, mask : IScriptForm);
+		ISFilter2(filters : [Filters], form : IScriptForm);
+		ISSize2 : (widthHeight : WidthHeight, form : IScriptForm);
+		ISCrop2 : (left : double, top : double, width : double, height : double, form : IScriptForm);
+		ISAccess : (id : List<IScriptIdentifier>, form : IScriptForm);
+		ISFullWindow : (fullscreen : bool, available : WidthHeight, form : IScriptForm);
+		ISSetPending : (pending : int, form : IScriptForm);
+		ISDynamicGroup2(stackChanges : [FGroupChange], currentStack : [IScriptForm]);
+		ISMForm : (form : PForm);
+
+	takeLogicalSnapshot(f : FForm) -> IScriptForm;
+	deserializeLogicalSnapshot(manager : MaterialManager, serializeForm : string, inputs : bool, m2t : (Material, MFocusGroup) -> Tropic) -> FForm;
+
+	isOutputNameUnique(manager : MaterialManager, name : string) -> bool;
+	isInputNameUnique(manager : MaterialManager, name : string) -> bool;
+	outputNameNotUniqueMsg(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+}
+
+_ct(b : Transform<?>) -> ? {fgetValue(b);}
+
+takeLogicalSnapshot(f : FForm) -> IScriptForm {
+	switch (f : FForm) {
+		FEmpty() : f;
+		FBorder(left, top, right, bottom, form): ISBorder(left, top, right, bottom, takeLogicalSnapshot(form));
+		FConstructor(form, fn): takeLogicalSnapshot(form);
+		FCreate2(current, fn): takeLogicalSnapshot(if (^current != FEmpty()) ^current else fn());
+		FText(t, s) : f;
+		FParagraph(text, style) : {
+			FParagraph(
+				text,
+				fold(style, [], \acc, st -> {
+					switch (st) {
+						ParagraphMetrics(__): acc;
+						ParagraphWidth(wd): arrayPush(acc, ParagraphWidth(const(_ct(wd))));
+						default: arrayPush(acc, st);
+					}
+				})
+			)
+		}
+		FGraphics(p, s) : f;
+		FPicture(url, sz, s) : {
+			filteredStyle = filter(s, \style -> {
+				switch (style : PictureStyle) {
+					OnLoadingError(__) : false;
+					OnLoaded(__) : false;
+					DontCache() : true;
+					OnlyDownloadToCache() : true;
+				}
+			});
+			FPicture(url, make(getValue(sz)), filteredStyle)
+		};
+		FTranslate(x, y, form): ISTranslate(_ct(x), _ct(y), takeLogicalSnapshot(form));
+		FScale(x, y, form): ISScale(_ct(x), _ct(y), takeLogicalSnapshot(form));
+		FRotate(degree, form): ISRotate(_ct(degree), takeLogicalSnapshot(form));
+		FAlpha(alpha, form): ISAlpha(_ct(alpha), takeLogicalSnapshot(form));
+		FVisible(v, form): if (fgetValue(v)) takeLogicalSnapshot(form) else FEmpty();
+		FRenderable(r, form): if (fgetValue(r)) takeLogicalSnapshot(form) else FEmpty();
+		FMask2(main1, mask, stack): ISMask2(takeLogicalSnapshot(main1), takeLogicalSnapshot(mask));
+		FGroup(layers, zorder): ISGroup(map(layers, takeLogicalSnapshot), zorder);
+		FGroup2(layer1, layer2, zorder): ISGroup2(takeLogicalSnapshot(layer1), takeLogicalSnapshot(layer2), zorder);
+		FDecorator2(layer1, decorators, above, __):
+			ISDecorator2(
+				takeLogicalSnapshot(layer1),
+				filtermap(decorators, \d -> if (fgetValue(d.first)) Some(takeLogicalSnapshot(d.second())) else None()),
+				above
+			);
+		FAvailable2(widthHeight, form): ISAvailable2(_ct(widthHeight), takeLogicalSnapshot(form));
+		FSize2(widthHeight, form): ISSize2(_ct(widthHeight), takeLogicalSnapshot(form));
+		FBaseline(baseline, form): ISBaseline(_ct(baseline), takeLogicalSnapshot(form));
+		FInteractive(listeners, form): takeLogicalSnapshot(form);
+		FFilter2(filters, form, stack): ISFilter2(filters, takeLogicalSnapshot(form));
+		FCursor(kind, form): takeLogicalSnapshot(form);
+		FInspect(inspectors, form): takeLogicalSnapshot(form);
+		FMutable2(form, stack): takeLogicalSnapshot(fgetValue(form));
+		FCrop2(left, top, width, height, form, stack): ISCrop2(_ct(left), _ct(top), _ct(width), _ct(height), takeLogicalSnapshot(form));
+		FAccess(props, form): {
+			iScriptId = filter(extractStructMany(props, FAccessAttribute("", const(""))), \aa -> aa.name == "id");
+
+			if (length(iScriptId) > 0) {
+				ISAccess(Cons(IScriptId(fgetValue(iScriptId[0].value)), makeList()), takeLogicalSnapshot(form))
+			} else {
+				eitherFn(
+					tryExtractStruct(props, AccessTabOrder(const([]))),
+					\tabOrder ->
+						ISAccess(
+							map(fgetValue(tabOrder.tabOrder), \i -> IScriptFocusTreePosition(i)) |> reverseA |> array2list,
+							takeLogicalSnapshot(form)
+						),
+					\ ->
+						takeLogicalSnapshot(form)
+				);
+			}
+		}
+		FSetPending(sp, form): ISSetPending(_ct(sp), takeLogicalSnapshot(form));
+		FControlFocus(focus, form): takeLogicalSnapshot(form);
+		FFullWindow(fullscreen, av, form):
+			if (getValue(fullscreen))
+				ISFullWindow(true, _ct(av), takeLogicalSnapshot(form))
+			else
+				takeLogicalSnapshot(form);
+		FRealHTML(url, wh, style):
+			FRealHTML(
+				url,
+				const(fgetValue(wh)),
+				fold(style, [], \acc, st -> {
+					switch (st) {
+						UpdateCachedContent(__): arrayPush(acc, st);
+						OverridePageDomain(__): arrayPush(acc, st);
+						ZoomEnabled(enabled): arrayPush(acc, ZoomEnabled(const(getValue(enabled))));
+						ReloadBlock(__): arrayPush(acc, st);
+						MouseDisabled(disabled): arrayPush(acc, MouseDisabled(const(getValue(disabled))));
+						SandBoxJS(__): arrayPush(acc, st);
+						default: acc;
+					}
+				})
+			);
+		FDynamicGroup2(stackChanges, currentStack, stack): ISDynamicGroup2(_ct(stackChanges), map(_ct(currentStack), takeLogicalSnapshot));
+		FVideo(url, wh, style):
+			FVideo(
+				url,
+				make(fgetValue(wh)),
+				fold(style, [], \acc, st -> {
+					switch (st : FVideoStyle) {
+						FVideoKeepAspectRatio(keep): arrayPush(acc, FVideoKeepAspectRatio(const(fgetValue(keep))));
+						FVideoPlay(play): arrayPush(acc, FVideoPlay(make(getValue(play))));
+						FVideoPosition(position): arrayPush(acc, FVideoPosition(make(getValue(position))));
+						FVideoFullscreen(fullscreen): arrayPush(acc, FVideoFullscreen(make(getValue(fullscreen))));
+						FVideoLoop(lp): arrayPush(acc, FVideoLoop(const(fgetValue(lp))));
+						FVideoVolume(volume): arrayPush(acc, FVideoVolume(make(getValue(volume))));
+						FVideoLength(len): arrayPush(acc, FVideoLength(make(getValue(len))));
+						FVideoControls(__): arrayPush(acc, st);
+						FVideoTimeRange(start, end): arrayPush(acc, FVideoTimeRange(const(fgetValue(start)), const(fgetValue(end))));
+						default: acc;
+					}
+				})
+			);
+		FTextInput(__, __, __): FEmpty(); //TODO:
+		FMForm(form): ISMForm(takeSnapshot(form) |> form2PForm);
+		FNativeForm(__, __, fform, __): takeLogicalSnapshot(fform());
+	}
+}
+
+deserializeLogicalSnapshot(manager : MaterialManager, serializeForm : string, inputs : bool, m2t : (Material, MFocusGroup) -> Tropic) -> FForm {
+	f = cast(deserialize(serializeForm, FEmpty()) : flow -> IScriptForm);
+	IScriptForm2FForm(manager, f, m2t, makeList(), inputs);
+}
+
+IScriptForm2FForm(manager : MaterialManager, f : IScriptForm, m2t : (Material, MFocusGroup) -> Tropic, id : List<IScriptIdentifier>, inputs : bool) -> FForm {
+	switch (f : IScriptForm) {
+		FEmpty() : f;
+		ISBorder(left, top, right, bottom, form): FBorder(left |> number2double, top |> number2double, right |> number2double, bottom |> number2double,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISTranslate(x, y, form): FTranslate(x |> const, y |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISScale(x, y, form): FScale(x |> const, y |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISRotate(degree, form): FRotate(degree |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISAlpha(alpha, form): FAlpha(alpha |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISMask2(main1, mask): FMask(
+			IScriptForm2FForm(manager, main1, m2t, id, inputs),
+			IScriptForm2FForm(manager, mask, m2t, concatList(id, Cons(IScriptFormPosition(1), makeList())), inputs));
+		ISGroup(layers, zorder): FGroup(mapi(layers, \i, l ->
+			IScriptForm2FForm(manager, l, m2t, concatList(id, Cons(IScriptFormPosition(i), makeList())), inputs)), zorder);
+		ISGroup2(layer1, layer2, zorder): FGroup([
+			IScriptForm2FForm(manager, layer1, m2t, concatList(id, Cons(IScriptFormPosition(0), makeList())), inputs),
+			IScriptForm2FForm(manager, layer2, m2t, concatList(id, Cons(IScriptFormPosition(1), makeList())), inputs)], zorder);
+		ISDecorator2(layer1, decorators, above):
+			FDecorator(
+				IScriptForm2FForm(manager, layer1, m2t, concatList(id, Cons(IScriptFormPosition(b2i(!above)), makeList())), inputs),
+				map(decorators, \d -> Pair(const(true), \ -> IScriptForm2FForm(manager, d, m2t, concatList(id, Cons(IScriptFormPosition(b2i(above)), makeList())), inputs))),
+				above
+			);
+		ISAvailable2(widthHeight, form): FAvailable2(widthHeight |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISSize2(widthHeight, form): FSize2(widthHeight |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISSetPending(pending, form): FSetPending(const(pending),
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISBaseline(baseline, form): FBaseline(baseline |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISFilter2(filters, form): FFilter2(filters |> checkFilters,
+			IScriptForm2FForm(manager, form, m2t, id, inputs), captureCallstack());
+		ISCrop2(left, top, width, height, form): FCrop(left |> const, top |> const, width |> const, height |> const,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISFullWindow(fullscreen, available, form) : FFullWindow(fullscreen |> make, available |> make,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		ISAccess(tabOrder, form) :
+			IScriptForm2FForm(manager, form, m2t, concatList(tabOrder, Cons(IScriptFormPosition(0), makeList())), inputs);
+		ISDynamicGroup2(stackChanges, currentStack):
+			FDynamicGroup2(make(stackChanges), make(map(currentStack, \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), captureCallstack());
+		ISMForm(form) : FMForm(form |> pForm2Form);
+		FParagraph(text, style): f; //TODO:
+		FText(text, characterStyle): {
+			if (inputs && text != "") {
+				sz = getTextSize(text, characterStyle);
+				openMenu = MOpenMenu(make(false));
+				inside = make(false);
+
+				closeWhen = make(false);
+				// record = editRecord.second;
+				recordTime = make(0.);
+
+				// value = make(record.value);
+				// recordType = make(recordType2int(record.type));
+				// customName = make(recordType2name(record.type));
+				initialUniqueName = "";
+				uniqueOutputNameB = make(initialUniqueName);
+				monitorDelay = make(0.);
+
+				MTextInput(
+					make(text),
+					[
+						ReadOnly(true),
+						MCustomTextStyle([
+							MCustomFont(
+								extractStruct(characterStyle, FontSize(14.)).size,
+								extractStruct(characterStyle, FontFamily("Roboto")).name,
+								extractStruct(characterStyle, FillOpacity(1.)).opacity
+							),
+							MCustomColor(extractStruct(characterStyle, Fill(black)).color)
+						]),
+						MShowUnderline(false),
+						MNativeInput(false),
+						MInputBorders(0., 0., 0., 0.)
+					],
+					[MTooltipText(const(_("Right click to add to stack")))]
+				)
+				|> (\f2 -> MMenu(f2, [MMenuSingleLine("Add to Stack", [MOnClick(\ -> {
+						MGetFocusGroup(\p ->
+							[
+								MParagraph("Id: [" + IScriptId2s(id) + "]", [MSubheading(), MWidth(-1.)]),
+								MEGTextInput("Delay (ms)", recordTime, [MInputFilter(\s, foc -> d2s(max(s2d(s), 0.)))]),
+								// MEGSwitchControlOrTextInput(record.behaviourName, value,
+								//	[MHelperText(const(Some(getTypeString(getValue(value)))), true)]),
+								MEGTextInput("Re-Assign unique output name", uniqueOutputNameB, []), // TODO check uniquity of id
+					            MEGTextInput("Monitor Value Delay (ms)", monitorDelay, [])
+							]
+							|> (\f3 -> map(f3, \it -> MEGItem2T(p, it, [MWidth(400.)], m2t)))
+							|> MLines
+						)
+						|> (\f3 ->
+							renderMDialog(
+								manager,
+								closeWhen,
+								[
+									MDialogTitle(text),
+									MDialogUseFrame(),
+									MDialogScroll(),
+									MDialogActions([
+										MTextButton("CANCEL", \ -> {
+											next(closeWhen, true);
+										}, [], [MShortcut("esc")]),
+										MTextButton("OK", \ -> {
+											outputName = getValue(uniqueOutputNameB);
+
+											if (initialUniqueName == outputName || isOutputNameUnique(manager, outputName)) {
+												next(closeWhen, true);
+
+												addIScriptRecordWithDelay(
+													manager,
+													getValue(recordTime),
+													IScriptBehaviourRecord(
+														IScriptBehaviourDescriptor(IScriptComponentDescriptor("", id), ""),
+														text,
+														ISInteractionEvent(),// TODO stub
+														getCallstackIfNeeded(manager)
+													)
+												);
+
+												nextDistinct(manager.iscript.scriptChangedB, true);
+											} else {
+												outputNameNotUniqueMsg(manager, m2t);
+											}
+										}, [], [MShortcut("enter")])
+									]),
+									IScriptRecordingEnabled(const(false))
+								],
+								f3,
+								m2t
+							)
+						);
+					})])], [openMenu]))
+				|> (\f2 -> m2t(f2, dummyEnabledParent(manager)))
+				|> (\f2 -> TAvailable(f2, TFixed(sz.width + 2., sz.height)))
+				|> (\f2 -> TFixSize(f2, TFixed(sz.width, sz.height)))
+				|> (\f2 -> TGroup2(TVisible(inside, TRectangle([MFill(MGrey(500)), FillOpacity(0.8)], TFixed(sz.width, sz.height))), f2))
+				|> (\f2 -> TInteractive([
+					MouseRightDown2(\h, mi -> {
+						if (mi.inside()) {
+							nextDistinct(openMenu.opened, true);
+							// addBehaviourToRecordStack(manager, "", "", text, id, MOutputValue(0., ""), callstack2string(captureCallstack()));
+						}
+
+					 	h
+					 }), TMouseInside(inside, true)],
+					TFrame(0., 0., interactiveRectangleStyle, f2)
+				))
+				|> (\f2 -> tropic2fformTranslated(f2, emptyStylesheet))
+			} else {
+				f
+			}
+		}
+		FPicture(__, __, __): f;
+		FGraphics(__, __): f;
+		FAvailable2(av, form): FAvailable2(av,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FRotate(rt, form): FRotate(rt,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FInteractive(__, form):
+			IScriptForm2FForm(manager, form, m2t, id, inputs);
+		FVisible(vis, form): FVisible(vis,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FRenderable(renderable, form): FRenderable(renderable,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FAlpha(al, form): FAlpha(al,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FMask2(main1, mask, callstack): FMask2(
+			IScriptForm2FForm(manager, main1, m2t, id, inputs),
+			IScriptForm2FForm(manager, mask, m2t, concatList(id, Cons(IScriptFormPosition(1), makeList())), inputs), callstack);
+		FGroup(layers, zorder): FGroup(mapi(layers, \i, l ->
+			IScriptForm2FForm(manager, l, m2t, concatList(id, Cons(IScriptFormPosition(i), makeList())), inputs)), zorder);
+		FGroup2(layer1, layer2, zorder): FGroup([
+			IScriptForm2FForm(manager, layer1, m2t, concatList(id, Cons(IScriptFormPosition(0), makeList())), inputs),
+			IScriptForm2FForm(manager, layer2, m2t, concatList(id, Cons(IScriptFormPosition(1), makeList())), inputs)], zorder);
+		FDecorator2(layer1, decorators, above, stack) :
+			FDecorator2(
+				IScriptForm2FForm(manager, layer1, m2t, concatList(id, Cons(IScriptFormPosition(b2i(!above)), makeList())), inputs),
+				map(decorators, \d -> Pair(d.first, \ -> IScriptForm2FForm(manager, d.second(), m2t, concatList(id, Cons(IScriptFormPosition(b2i(above)), makeList())), inputs))),
+				above,
+				stack
+			);
+		FSize2(sz, form): FSize2(sz,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FSetPending(sp, form): FSetPending(sp,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FBaseline(bsln, form): FBaseline(bsln,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FAccess(properties, form) : {
+			eitherMap(
+				tryExtractStruct(properties, AccessTabOrder(const([]))),
+				\dscpt -> {
+					accessPosition : List<IScriptIdentifier> = map(fgetValue(dscpt.tabOrder), \i -> IScriptFocusTreePosition(i)) |> array2list;
+
+					IScriptForm2FForm(manager, form, m2t, concatList(accessPosition, Cons(IScriptFormPosition(0), makeList())), inputs)
+				},
+				IScriptForm2FForm(manager, form, m2t, id, inputs)
+			)
+		}
+		FCursor(cur, form):
+			IScriptForm2FForm(manager, form, m2t, id, inputs);
+		FFilter2(flt, form, callstack): FFilter2(flt,
+			IScriptForm2FForm(manager, form, m2t, id, inputs), callstack);
+		FInspect(insp, form):
+			IScriptForm2FForm(manager, form, m2t, id, inputs);
+		FMutable2(form, callstack):  FMutable2(const(
+			IScriptForm2FForm(manager, fgetValue(form), m2t, id, inputs)), callstack);
+		FConstructor(form, constructors):
+			IScriptForm2FForm(manager, form, m2t, id, inputs);
+		FCreate2(__, __): f;
+		FControlFocus(cf, form):
+			IScriptForm2FForm(manager, form, m2t, id, inputs);
+		FCrop2(l, t, w, h, form, callstack): FCrop2(l, t, w, h,
+			IScriptForm2FForm(manager, form, m2t, id, inputs), callstack);
+		FTranslate(x, y, form): FTranslate(x, y,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FBorder(l, t, r, b, form): FBorder(l, t, r, b,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FScale(x, y, form): FScale(x, y,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FFullWindow(fw, av, form): FFullWindow(fw, av,
+			IScriptForm2FForm(manager, form, m2t, id, inputs));
+		FDynamicGroup2(stackChanges, currentStack, stack):
+			FDynamicGroup2(stackChanges, make(map(getValue(currentStack), \cs -> IScriptForm2FForm(manager, cs, m2t, id, inputs))), stack);
+		FRealHTML(__, __, __): f;
+		FVideo(__, __, __): f;
+		FTextInput(__, __, __): f;
+		FMForm(__) : f;
+		FNativeForm(__, __, __, __): f;
+	}
+}
+
+isOutputNameUnique(manager : MaterialManager, name : string) -> bool {
+	outputsNames = map(getValue(manager.iscript.outputValuesB), \output -> output.name);
+
+	isNameUnique(outputsNames, name)
+}
+
+isInputNameUnique(manager : MaterialManager, name : string) -> bool {
+	inputsNames = map(getValue(manager.iscript.inputValuesB), \input -> input.name);
+
+	isNameUnique(inputsNames, name)
+}
+
+isNameUnique(definedNames : [string], name : string) -> bool {
+	if (name == "")
+		true
+	else
+		!exists(definedNames, \definedName -> definedName == name)
+}
+
+outputNameNotUniqueMsg(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeB = make(false);
+
+	renderMDialog(
+		manager,
+		closeB,
+		[
+			MDialogUseFrame(),
+			MDialogActions([
+				MTextButton("OK", \ -> next(closeB, true), [], [MShortcut("enter")])
+			]),
+			IScriptRecordingEnabled(const(false))
+		],
+		MText("Chosen output value name is not unique!", []),
+		m2t
+	)
+}

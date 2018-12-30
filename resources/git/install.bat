@@ -1,0 +1,1 @@
+copy git-update "C:\Program Files (x86)\Git\libexec\git-core\"

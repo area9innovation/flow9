@@ -1,0 +1,988 @@
+import generated/admin_panel_types;
+import material/material_snackbar;
+import meta_app/version;
+import oauth/oauth_requests;
+import remote_server/remote_server_types;
+import remote_server/remote_server_messages;
+
+export {
+	// loading of info about remote server URL, alternative servers URLs, schema changes and
+	//  creation of RemoteServerState (without remote JWT - will be updated on log in)
+	loadRemoteServerState(manager : MaterialManager, onOK : () -> void) -> void;
+
+	// Used in MMyOwnAuthentication() style to make pass-through authentication
+	//  from the current server to the remoteServer
+	remoteServerOwnRequestFn(
+		params : [KeyValue],
+		onOk : (jwt : string) -> void,
+		onError : (err : string) -> void,
+		addActions : [OAuthAdditionalActions]
+	) -> void;
+
+	// Authentication on the remote server
+	authenticateOnRemoteServer(
+		jwt : string,
+		roles : [ProductRole],
+		manager : MaterialManager,
+		onOK : () -> void,
+		onDirtyRequest : (/*usedTables*/ [string], /*operation*/ string, /*params*/ [KeyValue]) -> void
+	) -> void;
+
+	// oauthDatawarpRequest wrapper, which takes an additional parameter `usedTables` and decides to where request should be send - 
+	//  to he current server or to the remoteServer
+	oauthDatawarpRequestRemoteServer(
+		usedTables : [string],
+		url : string,
+		postMethod : bool,
+		headers : [KeyValue],
+		params : [KeyValue],
+		onData : (string) -> void,
+		onError : (string) -> void,
+		onStatus : (int) -> void
+	) -> void;
+
+	// Returns RemoteServer Url for RsModeRedirect(...) or None() otherwise
+	getBaseRemoteServerUrl() -> Maybe<string>;
+
+	// make a remoteSrever status view, which shows info about mode,
+	//  remoteServer name and requests statistic.
+	getRemoteServerHeader() -> Material;
+
+	// adding new tables to the Critical list
+	addRemoteServerCriticalTables(tables : [string]) -> void;
+}
+
+// RemoteServer state
+dbRemoteServerB : DynamicBehaviour<Maybe<DbRemoteServer>> = make(None());
+
+// Keywords to classify the request on read data / write data
+warningDialogWasShownR = ref false;
+readOperations = ["load", "read", "get", "download"];
+writeOperations = ["insert", "update", "create", "set", "delete", "remove", "copy", "move"];
+
+// The list of tables, which should be used on remote server only
+criticalTablesR : ref [string] = ref [];
+addRemoteServerCriticalTables(tables : [string]) -> void {
+	criticalTablesR := uniq(concat(^criticalTablesR, tables));
+}
+
+loadRemoteServerState(manager : MaterialManager, onOK : () -> void) -> void {
+	onOK2 = \remoteServerM -> {
+		next(dbRemoteServerB, remoteServerM);
+		onOK();
+	}
+
+	onError = \error -> {
+		println("Error: " + error);
+		mrender(manager, true, MCenter(MText(error, [MTitle()]))) |> ignore;
+	}
+
+	rsModeUrl = getUrlParameterDef("remoteServerMode", "");
+	if (rsModeUrl == "") {
+		onOK2(None());
+	} else {
+		getRemoteServerDataJsonStr(\remoteServerUrl, alternativeServerUrls, jsonStr -> {
+				list = getJsonObjectValue(parseJson(jsonStr), []);
+				cleanDirty = partition(list, \l -> getJsonStringValue(l.second, "") == "clean");
+				getDbTables = \tables -> map(tables, \table -> table2humpCase(table.first));
+				
+				updateRemoteServerState = \rsModeM -> {
+					eitherFn(rsModeM,
+						\rsMode -> {
+							state = DbRemoteServer(
+								manager,
+								"",
+								remoteServerUrl,
+								alternativeServerUrls,
+								getDbTables(cleanDirty.second),
+								getDbTables(cleanDirty.first),
+								[],
+								[],
+								make([]),
+								nop3,
+								rsMode
+							);
+
+							if (exists(state.dirtyTables, \dTable -> contains(^criticalTablesR, dTable)) && !(^warningDialogWasShownR)) {
+								warningDialogWasShownR := true;
+								showCriticalTablesMessage(manager, \-> onOK2(Some(state)), Some(\-> goToRemoteServer(state)));
+							} else {
+								onOK2(Some(state))
+							}
+						},
+						\-> onOK2(None())
+					)
+				}
+
+				if (rsModeUrl == "skip") {
+					updateRemoteServerState(None());
+				} else if (rsModeUrl == "demo") {
+					updateRemoteServerState(Some(RsModeDemo()));
+				} else if (rsModeUrl == "split") {
+					updateRemoteServerState(Some(RsModeSplit()));
+				} else {
+					showRemoteServerModeDialog(manager, remoteServerUrl, alternativeServerUrls, updateRemoteServerState);
+				}
+			}, onError
+		);
+	}
+}
+
+RsRequest : (
+	params : [KeyValue],
+	addActions : [OAuthAdditionalActions]
+);
+
+// Authentication data from the current server for pass-through authentication 
+//  on remoteServer (used temporary, on app start)
+authenticationRequestR : ref RsRequest = ref RsRequest([], []);
+
+remoteServerOwnRequestFn(params : [KeyValue], onOk : (jwt : string) -> void, onError : (err : string) -> void, addActions : [OAuthAdditionalActions]) -> void {
+	onOkFn = \jwt -> {
+		authenticationRequestR := RsRequest(map(params, \d : KeyValue -> if (d.key == "app") KeyValue("app", "remote_server_" + d.value) else d), addActions);
+		setKeyValue("remote_server_" + getMOAuthInnerState().rememberName + "_hide_attention", "0");
+		warningDialogWasShownR := false;
+		resetRemoteServerStats();
+		onOk(jwt);
+	}
+
+	authenticateByLoginAndPassword(getAppUrl(), params, onOkFn, onError, addActions);
+}
+
+authenticateOnRemoteServer(
+	jwt : string,
+	roles : [ProductRole],
+	manager : MaterialManager,
+	onOK : () -> void,
+	onDirtyRequest : (/*usedTables*/ [string], /*operation*/ string, /*params*/ [KeyValue]) -> void
+) -> void {
+	remoteServerRoleName = "TestProduction";
+
+	onOK2 = \remoteServerM -> {
+		next(dbRemoteServerB, remoteServerM);
+		onOK();
+	}
+
+	eitherFn(
+		getValue(dbRemoteServerB),
+		\remoteServer -> {
+			useRemoteServer = \-> {
+				remoteServerAuthorization(
+					jwt,
+					remoteServer.manager,
+					if (remoteServer.mode == RsModeDemo()) "_demomode" else "",
+					if (remoteServer.mode == RsModeDemo()) getAppUrl() else remoteServer.baseUrl,
+					\remoteJwt -> {
+						onOK2(Some(DbRemoteServer(
+							manager,
+							remoteJwt,
+							remoteServer.baseUrl,
+							remoteServer.alternativeUrls,
+							remoteServer.dirtyTables,
+							remoteServer.cleanTables,
+							remoteServer.greyTables,
+							remoteServer.usedClean,
+							remoteServer.ditryRequestsLogB,
+							onDirtyRequest,
+							remoteServer.mode
+						)));
+					}
+				);
+			}
+
+			backToDefaultApp = \-> showHasNoRoleMessage(manager, \-> onOK2(None()));
+
+			if (!exists(roles, \r -> r.name == remoteServerRoleName)) {
+				switch (remoteServer.mode : RsMode) {
+					RsModeDemo(): backToDefaultApp();
+					RsModeSplit(): backToDefaultApp();
+					RsModeRedirect(baseUrl): useRemoteServer();
+				}
+			} else {
+				useRemoteServer();
+			}
+		},
+		\-> onOK2(None())
+	);
+}
+
+oauthDatawarpRequestRemoteServer(
+	usedTables : [string],
+	url : string,
+	postMethod : bool,
+	headers : [KeyValue],
+	params : [KeyValue],
+	onData : (string) -> void,
+	onError : (string) -> void,
+	onStatus : (int) -> void
+) -> void {
+	defaultRequest = \-> oauthDatawarpRequest(url, postMethod, headers, params, onData, onError, onStatus);
+	eitherFn(getValue(dbRemoteServerB),
+		\remoteServer : DbRemoteServer -> {
+			onClean = \-> {
+				if (remoteServer.remoteJwt == "") {
+					defaultRequest();
+				} else {
+					switch (remoteServer.mode : RsMode) {
+						RsModeDemo(): defaultRequest();
+						RsModeSplit(): {
+							params2 : [KeyValue] = map(params, \p : KeyValue -> if (p.key == "jwt") KeyValue("jwt", remoteServer.remoteJwt) else p);
+							oauthDatawarpRequestExt(remoteServer.baseUrl, url, postMethod, headers, params2, onData, onError, onStatus);
+						}
+						RsModeRedirect(baseUrl): {
+							params2 : [KeyValue] = map(params, \p : KeyValue -> if (p.key == "jwt") KeyValue("jwt", remoteServer.remoteJwt) else p);
+							oauthDatawarpRequestExt(baseUrl, url, postMethod, headers, params2, onData, onError, onStatus);
+						}
+					}
+				}
+			}
+
+			goToProdM = Some(\-> goToRemoteServer(remoteServer));
+
+			onDirty = \-> {
+				r = addDitryRequestsLog(usedTables, params, remoteServer);
+				remoteServer.onDirtyRequest(usedTables, findRequestParameter(params, "operation", ""), params);
+				if (!^warningDialogWasShownR) {
+					switch (r.type : RsRequestType) {
+						RsRequestRead(): { defaultRequest(); };
+						RsRequestWrite(): { warningDialogWasShownR := true; showAttentionMessage(remoteServer.manager, false, defaultRequest, goToProdM); };
+						RsRequestUnknown(): { warningDialogWasShownR := true; showAttentionMessage(remoteServer.manager, true, defaultRequest, goToProdM); };
+					}
+				} else {
+					defaultRequest();
+				}
+			}
+
+			checkForConflicts(usedTables, remoteServer, onClean, onDirty, onError);
+		},
+		defaultRequest
+	);
+}
+
+// Authentication on remoteServer (pass-through authentication or shows dialog to enter password)
+remoteServerAuthorization(jwt : string, manager : MaterialManager, appNamePostfix : string, baseRemoteServerUrl : string, onOK : (string) -> void) -> void {
+	params = ^authenticationRequestR.params;
+	addActions = ^authenticationRequestR.addActions;
+	app_name = "remote_server_" + getMOAuthInnerState().rememberName + appNamePostfix;
+
+	onOK2 = \jwt2 -> {
+		email = getEmailFromJWT(jwt2);
+		setKeyValue(app_name + "_for" + email, jwt2);
+		onOK(jwt2);
+	}
+
+	checkSavedJwt = \email, onFailure -> {
+		jwt2 = getKeyValue(app_name + "_for" + email, "");
+		if (jwt2 == "") onFailure(email)
+		else verifyJWT(baseRemoteServerUrl, jwt2, false, onOK2, \__ -> onFailure(email));
+	}
+
+	onDialog = \email, data2 -> {
+		closeDialog = make(false);
+		pass = make("");
+		emailOk = make(true);
+		passwordOk = make(true);
+		passwdInputError = make(None());
+
+		doRequest = \ -> {
+			data3 = map(data2, \d -> if (d.key == "password") KeyValue("password", getValue(pass)) else d);
+
+			onOK3 = \jwt2 -> {
+				next(closeDialog, true);
+				onOK2(jwt2);
+			}
+
+			onErrorFn = \error -> {
+				next(passwdInputError, Some(Pair(error, false)));
+			}
+
+			authenticateByLoginAndPassword(baseRemoteServerUrl, data3, onOK3, onErrorFn, addActions);
+		}
+
+		ShowMDialog(manager, closeDialog,
+			[
+				MDialogTitle(_("Remote Server authentication")),
+				MDialogUseFrame()
+			],
+			MAvailable(
+				MLines([
+					MTextInput(make(email),
+						[MFloatingLabel(), MLabel(_("Email")), MWidth(-1.)],
+						[IScriptId("email"), MEnabled(const(false)),
+							MInputError(make(None()), [MMaxLines(-1), MRequiredField(), MInputIsOk(emailOk)])]
+					),
+					MTextInput(pass,
+						[MFloatingLabel(), TextInputType(PasswordType()), MLabel(_("Password")), MWidth(-1.)],
+						[MInputShowPassword(make(false)), FAccessAttribute("autocomplete", const("current-password")),
+							FAccessAttribute("name", const("password")), IScriptId("password"), 
+							MInputError(passwdInputError, [MMaxLines(-1), MRequiredField(), MInputIsOk(passwordOk)])
+						]
+					),
+					TFixed(0., 16.),
+					MTextButton(
+						_("SIGN IN"),
+						doRequest,
+						[MButtonRaised(), MFullWidth()],
+						[MShortcut("enter"), MEnabled(fmin(emailOk, passwordOk)), IScriptId("sign_in")]
+					)
+				]),
+				TFixed(272., 0.)
+			)
+		);
+	}
+
+	if (params == []) {
+		checkSavedJwt(
+			getEmailFromJWT(jwt),
+			\email -> onDialog(email, [KeyValue("app", app_name), KeyValue("password", ""), KeyValue("login", email)]));
+	} else {
+		checkSavedJwt(
+			findRequestParameter(params, "login", ""),
+			\email -> authenticateByLoginAndPassword(baseRemoteServerUrl, params, onOK2, \__ -> onDialog(email, params), addActions)
+		);
+	}
+}
+
+getBaseRemoteServerUrl() -> Maybe<string> {
+	maybeBind(
+		getValue(dbRemoteServerB),
+		\remoteServer -> {
+			switch (remoteServer.mode : RsMode) {
+				RsModeDemo(): None();
+				RsModeSplit(): None();
+				RsModeRedirect(baseUrl): Some(baseUrl);
+			}
+		}
+	)
+}
+
+table2humpCase(tableName : string) -> string {
+	tableName2 = humpCase(tableName, true);
+	plural2single(tableName2)
+}
+
+// Estimation of status of current request and updating remoteServer state
+checkForConflicts(usedTables : [string], remoteServer : DbRemoteServer, onClean : () -> void, onDirty : () -> void, onError : (string) -> void) -> void {
+	usedTables2 = filter(usedTables, \tableName -> tableName != "");
+	// splitting the usedTables list on 'exists in the `Dirty` list' and others
+	// usedDirty.first  - names of `Dirty` tables, used in the current request
+	// usedDirty.second - others tables names
+	usedDirty = partition(usedTables2, \tableName -> contains(remoteServer.dirtyTables, tableName));
+	// splitting the list of tables (which are not in the `Dirty` tables list), on 'exists in the `Grey` list' and others
+	//  `Grey` tables are clean tables used together (in the same query) with `Dirty` tables
+	// usedGrey.first  - names of `Grey` tables, used in the current request
+	// usedGrey.second - others tables names (they are probably new `Grey` tables)
+	usedGrey = partition(usedDirty.second, \tableName -> contains(remoteServer.greyTables, tableName));
+	// splitting the list of tables (which are not in the `Dirty` and `Grey` tables list), on 'exists in the `usedClean` list' and others
+	//  `usedClean` tables - tables which are clean and we have alreay did requests used them
+	// conflictTables.first  - names of `usedClean` tables, used in the current request (we already did `clean` request using those `clean` tables)
+	// conflictTables.second - probably new `clean` tables names (we did not do request using those `clean` tables)
+	conflictTables = partition(usedGrey.second, \tableName -> contains(remoteServer.usedClean, tableName));
+
+	next(
+		dbRemoteServerB,
+		Some(DbRemoteServer(
+			remoteServer.manager,
+			remoteServer.remoteJwt,
+			remoteServer.baseUrl,
+			remoteServer.alternativeUrls,
+			remoteServer.dirtyTables,
+			remoteServer.cleanTables,
+			// if the current request is `Dirty` we add all 'probably new `Grey` tables' to the `Grey` list
+			if (usedDirty.first != []) concat(remoteServer.greyTables, usedGrey.second) else remoteServer.greyTables,
+			// if the current request is `Clean` we add all 'probably new `clean` tables' to the `usedClean` list
+			if (usedDirty.first == []) concat(remoteServer.usedClean, conflictTables.second) else remoteServer.usedClean,
+			remoteServer.ditryRequestsLogB,
+			remoteServer.onDirtyRequest,
+			remoteServer.mode
+		))
+	);
+
+	//
+	if (usedTables2 == []) {
+		onClean();
+	} else if (usedDirty.first != [] || usedGrey.first != []) {
+		if (conflictTables.first != []) {
+			errorText = "Can't to send request to Dirty table, because previously it used as Clean table: " + strGlue(conflictTables.first, ", ");
+			switch (remoteServer.mode : RsMode) {
+				RsModeDemo(): {
+					showMSnackbar(remoteServer.manager, "CONFLICT in the request. See details in the console.", []);
+					println("CONFLICT in the request: " + errorText);
+					onError(errorText);
+				}
+				RsModeSplit(): {
+					showMSnackbar(remoteServer.manager, "CONFLICT in the request. See details in the console.", []);
+					println("CONFLICT in the request: " + errorText);
+					onError(errorText);
+				}
+				RsModeRedirect(baseUrl): {
+					onClean();
+				}
+			}
+		} else {
+			onDirty();
+		}
+	} else {
+		onClean();
+	}
+}
+
+// Adding a new record into requests log
+addDitryRequestsLog(usedTables : [string], params : [KeyValue], remoteServer : DbRemoteServer) -> RsDitryRequest {
+	operation = findRequestParameter(params, "operation", "");
+	record = RsDitryRequest(usedTables, operation, params, getCurrentTime(), getRequestType(operation));
+	dynArrayPush(remoteServer.ditryRequestsLogB, record);
+
+	record
+}
+
+// Trying to calc request type (read or write)
+getRequestType(operation : string) -> RsRequestType {
+	op = toLowerCase(operation);
+	if (startsWith(op, "update") && endsWith(op, "wholedbstate")) {
+		 RsRequestRead()
+	} else {
+		isRead = exists(readOperations, \r -> strContains(op, r));
+		isWrite = exists(writeOperations, \w -> strContains(op, w));
+
+		if (isWrite) RsRequestWrite()
+		else if (isRead) RsRequestRead()
+		else RsRequestUnknown();
+	}
+}
+
+// Trying to extract some parameter from the request
+findRequestParameter(params : [KeyValue], name, defValue) -> string {
+	findDef(params, \p -> p.key == name, KeyValue(name, defValue)).value;
+}
+
+// Clearning the logs
+resetRemoteServerStats() -> void {
+	nextDistinct(
+		dbRemoteServerB,
+		maybeMap(
+			getValue(dbRemoteServerB),
+			\rs -> DbRemoteServer(
+				rs.manager,
+				rs.remoteJwt,
+				rs.baseUrl,
+				rs.alternativeUrls,
+				rs.dirtyTables,
+				rs.cleanTables,
+				[],
+				[],
+				make([]),
+				rs.onDirtyRequest,
+				rs.mode
+			)
+		)
+	);
+}
+
+getRemoteServerHeader() -> Material {
+	MSelect(dbRemoteServerB, \remoteServerM ->
+		eitherMap(
+			remoteServerM,
+			\remoteServer -> {
+				headerText = switch (remoteServer.mode : RsMode) {
+					RsModeDemo(): "Demo mode for \"";
+					RsModeSplit(): "You are working with \"";
+					RsModeRedirect(baseUrl): "You are working with \"";
+				}
+				modeText = switch (remoteServer.mode : RsMode) {
+					RsModeDemo(): "Demo mode";
+					RsModeSplit(): "Split mode";
+					RsModeRedirect(baseUrl): "Redirect mode";
+				}
+				headerColor = switch (remoteServer.mode : RsMode) {
+					RsModeDemo(): MBlack();
+					RsModeSplit(): MRed(500);
+					RsModeRedirect(baseUrl): MRed(500);
+				}
+				dirtyWriteCountB = fselect(
+					remoteServer.ditryRequestsLogB,
+					FLift(\arr : [RsDitryRequest] -> countA(arr, \a : RsDitryRequest -> a.type != RsRequestRead()))
+				);
+
+				mFullWidth = MBaselineCols([
+					MText(headerText, [MSubheading(), headerColor]),
+					MTextClickable(
+						remoteServer.baseUrl,
+						\-> goToRemoteServer(remoteServer),
+						[MCustomFont(16., "RobotoMedium", 0.87), headerColor, MButtonBorders(0., 0., 0., 0.)],
+						[MTooltipText(const("Click here to open the same page on the production server."))]
+					),
+					MText("\"", [MSubheading(), headerColor]),
+					if (remoteServer.mode == RsModeDemo() || remoteServer.mode == RsModeSplit()) {
+						MIf(
+							feq(dirtyWriteCountB, 0),
+							MIconButton(
+								"mood",
+								\-> showRemoteServerDirtyTables(remoteServer),
+								[MGreen(400)],
+								[MTooltipText(const("There were no requests to Dirty tables"))]
+							),
+							MIconButton(
+								"mood_bad",
+								\-> showRemoteServerLogs(remoteServer),
+								[MRed(400), MIconCounter(dirtyWriteCountB, [MBlue(500)])],
+								[MTooltipText(const("Amount of requests to Dirty tables"))]
+							)
+						)
+					} else {
+						MEmpty();
+					}
+				]);
+
+				mIcon = MIf(
+					feq(dirtyWriteCountB, 0),
+					MIcon("mood", [MGreen(400)]),
+					MIcon("mood_bad", [MRed(400), MIconCounter(dirtyWriteCountB, [MBlue(500)])])
+				);
+
+				mSmallWidth = MMenu(mIcon, [
+					MMenuSingleLine(modeText, [MClickEnabled(const(false)), MCustomTextStyle([headerColor, MSubheading()])]),
+					MSeparatorLine(),
+					MMenuSingleLine(
+						"Go to production",
+						[
+							MOnClick(\-> goToRemoteServer(remoteServer)),
+							MTooltipText(const("Click here to open the same page on the production server."))
+						]
+					),
+					MMenuCustomLine(
+						MIf(feq(dirtyWriteCountB, 0),
+							MText("Dirty tables", [MSubheading()]),
+							MText("Requests log", [MSubheading()])
+						),
+						[
+							MOnClick(\->
+								if (fgetValue(dirtyWriteCountB) == 0) showRemoteServerDirtyTables(remoteServer)
+								else showRemoteServerLogs(remoteServer)
+							)
+						]
+					)
+				], [MOpenOnClick()]);
+
+				MFrame(0., 4., [MFill(MWhite())], MBorder(16., 8., 16., 8., MCase(
+					[
+						mFullWidth,
+						TFixed(0.0, 0.0),
+					],
+					[
+						mFullWidth,
+						mSmallWidth
+					]
+				)))
+			},
+			MEmpty()
+		)
+	);
+}
+
+goToRemoteServer(remoteServer : DbRemoteServer) -> void {
+	basePart = lastElement(strSplit(takeBefore(loaderUrl(), "?", "/flowjs.html"), "/"), "flowjs.html");
+	paramsStr = strGlue(
+		filtermap(
+			getAllUrlParametersArray(),
+			\arr ->
+				if (exists(arr, \p -> toLowerCase(p) == "remoteservermode")) None()
+				else Some(strGlue(arr, "="))
+		),
+			"&"
+	) + getUrlHash();
+
+	newURL = switch (remoteServer.mode : RsMode) {
+		RsModeRedirect(baseUrl): baseUrl;
+		default: remoteServer.baseUrl;
+	} + basePart + "?" + paramsStr;
+	getUrl(newURL, "_blank");
+}
+
+// To store processed statistic info 
+RsLogView(
+	isCritical : bool,
+	isGrey : bool,
+	table : string,
+	operations : [string],
+	logs : [RsDitryRequest],
+	count : int,
+	lastTimeM : Maybe<Time>,
+	type : RsRequestType,
+	materials : [Material]
+);
+
+// Show the dialog with dirty and grey tables requests statistic
+showRemoteServerLogs(remoteServer : DbRemoteServer) -> void {
+	createLog2 = \isCritical, isGrey, table, operations, logs, count, lastTimeM, type -> {
+		callColor = \defColor -> {
+			if (count > 0) {
+				switch (type : RsRequestType) {
+					RsRequestRead(): MOrange(500);
+					RsRequestWrite(): MRed(500);
+					RsRequestUnknown(): MPink(200);
+				}
+			} else {
+				defColor
+			}
+		}
+		color1 : MColor = callColor(MBlack());
+		color2 : MColor = callColor(MGrey(500));
+		reqCount = if (count > 0) i2s(count) + " request(s)" else " no requests";
+
+		RsLogView(
+			isCritical,
+			isGrey,
+			table,
+			operations,
+			logs,
+			count,
+			lastTimeM,
+			type,
+			[
+				if (isCritical) MIcon("star", [color2, MIconSize(18.)]) else MEmpty(),
+				if (isGrey) MTooltip(MIcon("cloud", [color2, MIconSize(18.)]), MText("Grey table: " + reqCount, []), [])
+				else MTooltip(MIcon("flash_on", [color2, MIconSize(18.)]), MText("Dirty table: " + reqCount, []), []),
+				MEllipsisText(table, [MDataRow(), MBlack(), MShowTooltip(const(true))]),
+				MEllipsisText(strGlue(operations, "\n"), [MDataRow(), MBlack(), MShowTooltip(const(true))]),
+				MText(i2s(count), [MDataRow(), color1]),
+				MText(if (count > 0) rsRequestType2string(type) else "", [MDataRow(), MBlack()]),
+				MText(
+					time2stringDef(either(lastTimeM, nullTime), ""),
+					[MDataRow(), MBlack()]
+				),
+				MIconButton(
+					"assignment",
+					\-> showDirtyTableDetails(remoteServer.manager, table, logs),
+					[MIconButtonBorder(1.), color1, MIconSize(18.)],
+					[MTooltipText(const("Show details")), MEnabled(const(count > 0))]
+				)
+			]
+		)
+	}
+
+	logs = getValue(remoteServer.ditryRequestsLogB);
+	logs2 = concat(
+		map(sort(remoteServer.dirtyTables), \t -> {
+			list = filter(logs, \l -> contains(l.usedTables, t));
+			isCritical = contains(^criticalTablesR, t);
+
+			createLog2(isCritical, false, t,
+				sort(uniq(filtermap(list, \l -> if (l.operation != "") Some(l.operation) else None()))),
+				list,
+				length(list),
+				maxA(map(list, \l -> l.requestTime)),
+				if (exists(list, \l -> l.type == RsRequestWrite())) RsRequestWrite()
+				else if (exists(list, \l -> l.type == RsRequestRead())) RsRequestRead()
+				else RsRequestUnknown()
+			)
+		}),
+		map(sort(remoteServer.greyTables), \t -> {
+			list = filter(logs, \l -> contains(l.usedTables, t));
+			isCritical = contains(^criticalTablesR, t);
+
+			createLog2(isCritical, true, t,
+				sort(uniq(filtermap(list, \l -> if (l.operation != "") Some(l.operation) else None()))),
+				list,
+				length(list),
+				maxA(map(list, \l -> l.requestTime)),
+				if (exists(list, \l -> l.type == RsRequestWrite())) RsRequestWrite()
+				else if (exists(list, \l -> l.type == RsRequestRead())) RsRequestRead()
+				else RsRequestUnknown()
+			)
+		})
+	);
+
+	arListFilteredB = make(logs2);
+
+	fTableB = make("");
+	fOperationB = make("");
+	fTableFocusedB = make(false);
+	fOperationFocusedB = make(false);
+
+	fCriticalIdxB = make(0);
+	fTypeIdxB = make(0);
+	fCountIdxB = make(2);
+	fOpTypeIdxB = make(0);
+
+	fCriticalList = ["All", "Critical", " Non Critical"];
+	fTypeList = ["All", "Dirty", "Grey"];
+	fCountList = ["All", "Zero", "Not zero"];
+	fOpTypeList = ["All", "Read", "Write", "Unknown"];
+
+	filterRow = [
+		MDropDown(fCriticalIdxB, "All", fCriticalList, [MWidth(-1.), MDataTableRow()]) |> (\m -> MBorder(-24., 0., -24., 0., m)),
+		MDropDown(fTypeIdxB, "All", fTypeList, [MWidth(-1.), MDataTableRow()]) |> (\m -> MBorder(-24., 0., -24., 0., m)),
+		MTextInput(fTableB, [MWidth(-1.), MLabel("Table name"), remoteServer.manager.theme.primaryColor, MCustomTextStyle([MDataRow()]), MInputBorders(0., 8., 0., 8.)], [TTextInputFocus(fTableFocusedB)]),
+		MTextInput(fOperationB, [MWidth(-1.), MLabel("Request operation"), remoteServer.manager.theme.primaryColor, MCustomTextStyle([MDataRow()]), MInputBorders(0., 8., 0., 8.)], [TTextInputFocus(fOperationFocusedB)]),
+		MDropDown(fCountIdxB, "All", fCountList, [MWidth(-1.), MDataTableRow()]) |> (\m -> MBorder(-24., 0., -24., 0., m)),
+		MDropDown(fOpTypeIdxB, "All", fOpTypeList, [MWidth(-1.), MDataTableRow()]) |> (\m -> MBorder(-24., 0., -24., 0., m)),
+		MEmpty(),
+		MEmpty(),
+	];
+
+	applyFilter = \tablename, operation, isCritical, isGrey, isNotZero, opTypeName -> {
+		isFocused1 = getValue(fTableFocusedB);
+		isFocused2 = getValue(fOperationFocusedB);
+
+		nextDistinct(
+			arListFilteredB,
+			filter(logs2, \l -> {
+				rsCheckSimilarityCriteria(isCritical, l.isCritical) &&
+				rsCheckSimilarityCriteria(isGrey, l.isGrey) &&
+				rsCheckStrLikeCriteria(tablename, l.table) &&
+				((isNone(operation) && l.operations == []) || exists(l.operations, \op -> rsCheckStrLikeCriteria(operation, op))) &&
+				rsCheckSimilarityCriteria(isNotZero, l.count > 0) &&
+				rsCheckSimilarityCriteria(opTypeName, rsRequestType2string(l.type))
+			})
+		);
+
+		if (isFocused1) next(fTableFocusedB, true)
+		else if (isFocused2) next(fOperationFocusedB, true);
+	};
+
+	table = MSelect(arListFilteredB, \arListFiltered : [RsLogView] -> {
+		MDataTable(
+			[
+				MColumn("Critical", "Critical", 40, [MMaxWidth(48), CenterAlign(), MSort(\i1, i2 -> genericCompare(!arListFiltered[i1].isCritical, !arListFiltered[i2].isCritical))]),
+				MColumn("Type", "", 40, [MMaxWidth(48), CenterAlign(), MSort(\i1, i2 -> genericCompare(arListFiltered[i1].isGrey, arListFiltered[i2].isGrey))]),
+				MColumn("Table", "Dirty table name", 360, [MMaxWidth(480), MAutoSort()]),
+				MColumn("Operation", "Request operation", 200, [MMaxWidth(360), MAutoSort()]),
+				MColumn("Count", "Dirty requests count", 64, [MMaxWidth(64), CenterAlign(), MSort(\i1, i2 -> genericCompare(arListFiltered[i1].count, arListFiltered[i2].count))]),
+				MColumn("Type", "Kind of operations with data", 120, [MMaxWidth(120), MAutoSort()]),
+				MColumn("Time", "Request start time", 120, [MMaxWidth(120), MSort(\i1, i2 -> genericCompare(arListFiltered[i1].lastTimeM, arListFiltered[i2].lastTimeM))]),
+				MColumn("", "", 40, [MMaxWidth(40)]),
+			],
+			map(arListFiltered, \item -> item.materials),
+			[
+				MCondensed(true), TScrollEnabled(const(true)), MNoFooter(), MFixedRow(const(true), filterRow, [MFill(MGrey(100))]),
+				MHeaderStyle([MFill(remoteServer.manager.theme.primaryColor)], [remoteServer.manager.theme.toolbarItemsColor], [])
+			]
+		)
+	})
+	|> (\m -> MConstruct([
+		make3Subscribe(
+			fTableB, fOperationB, fmerge([fCriticalIdxB, fTypeIdxB, fCountIdxB, fOpTypeIdxB]), \fTable, fOperation, fIdsArr -> {
+				// Waiting for 766 msec if user type a text
+				timer(766, \-> {
+					if (fTable == getValue(fTableB) && fOperation == getValue(fOperationB))
+						applyFilter(
+							if (trim(fTable) == "") None() else Some(trim(fTable)),
+							if (trim(fOperation) == "") None() else Some(trim(fOperation)),
+							if (fIdsArr[0] == 0) None() else Some(fIdsArr[0] == 1),
+							if (fIdsArr[1] == 0) None() else Some(fIdsArr[1] == 2),
+							if (fIdsArr[2] == 0) None() else Some(fIdsArr[2] == 2),
+							if (fIdsArr[3] == 0) None() else Some(fOpTypeList[fIdsArr[3]]),
+						)
+				});
+			}
+		)
+	], m));
+		
+	closeDialog = make(false);
+	ShowMDialog(remoteServer.manager, closeDialog,
+		[
+			MDialogUseFrame(),
+			MDialogClickOutToClose(),
+			MDialogActions([MTextButton(_("CLOSE"), \-> next(closeDialog, true), [MButtonRaised()], [MShortcut("esc")])])
+		],
+		MLet(
+			"MLogsTable",
+			table,
+			MLines([
+				MAvailable(
+					MCols([
+						MText(_("Dirty requests log"), [MHeadline()]),
+						TFillX(),
+						MIconButton(
+							"help_outline",
+							\-> showNotations(remoteServer.manager),
+							[MBlue(500), MIconSize(24.)],
+							[MTooltipText(const("Notations, used in the log"))]
+						)
+					]),
+					MMinimumGroup2(TWidth(TGhost("MLogsTable")), TFillX())
+				),
+				TFixed(0., 24.),
+				MScroll(TDisplay("MLogsTable"), MSubtractGroup2(TFillXY(), TFixed(0., 40.)), [MScrollCropByContent()])
+			])
+		)
+	);
+}
+
+// Show the dialog with detailed info about selected table
+showDirtyTableDetails(manager : MaterialManager, tableName : string, logs : [RsDitryRequest]) -> void {
+	log2MRow = \item : RsDitryRequest -> {
+		params2 = filter(item.params, \p -> p.key != "operation");
+
+		[
+			MEllipsisText(item.operation, [MDataRow(), MBlack(), MShowTooltip(const(true))]),
+			MTooltip(
+				MEllipsisText(strGlue(map(params2, \p -> p.key), ", "), [MDataRow(), MBlack(), MShowTooltip(const(false))]),
+				MText(strGlue(map(params2, \p -> p.key + ": " + p.value), ", "), []),
+				[]
+			),
+			MText(time2stringDef(item.requestTime, ""), [MDataRow(), MBlack()])
+		]
+	}
+
+	closeDialog = make(false);
+	ShowMDialog(manager, closeDialog,
+		[
+			MDialogTitle(_("Details for " + toUpperCase(tableName) + " table")),
+			MDialogUseFrame(),
+			MDialogClickOutToClose(),
+			MDialogActions([MTextButton(_("CLOSE"), \-> next(closeDialog, true), [MButtonRaised()], [MShortcut("esc")])])
+		],
+		MDataTable(
+			[
+				MColumn("Operation", "Request operation", 200, [MMaxWidth(480), MAutoSort()]),
+				MColumn("Parameters", "Request parameters", 200, [MMaxWidth(560)]),
+				MColumn("Time", "Request start time", 120, [MMaxWidth(120), MSort(\i1, i2 -> genericCompare(logs[i1].requestTime, logs[i2].requestTime))]),
+			],
+			map(logs, \item -> log2MRow(item)),
+			[MCondensed(true), TScrollEnabled(const(true)), MNoFooter()]
+		)
+	);
+}
+
+// Initial dialog to choose in which mode RemoteServer should works
+showRemoteServerModeDialog(manager : MaterialManager, remoteServerUrl : string, alternativeServerUrls : [string], onRsMode : (Maybe<RsMode>) -> void) -> void {
+	remoteServerWidth = 360.;
+	us = ref \-> {};
+	index1 = make(0);
+	index2 = make(0);
+	
+	whiteTheme = MWhiteTheme(const(manager.theme.lightBackground)).white;
+	color = manager.theme.primaryColor;
+	frame = InputFrame(24., 2., [MFill(MDialogColor(fgetValue(whiteTheme)))]);
+
+	makeRadioItem = \name, serverName -> {
+		if (serverName == "") MText(name, [MSubheading()])
+		else MBaselineCols([
+			MText(name, [MSubheading()]),
+			TFixed(8., 0.),
+			MText(serverName, [MListBody()])
+		]);
+	}
+
+	radiosList1 = concat([
+			makeRadioItem("Skip", "(disable `Remote Server` feature)"),
+			makeRadioItem("Demo mode", "(" + remoteServerUrl + ")"),
+			makeRadioItem("Split mode", "(" + remoteServerUrl + ")")
+		],
+		if (alternativeServerUrls != []) [makeRadioItem("Redirect mode", "")] else []
+	);
+
+	radiosList2 = map(alternativeServerUrls, \s -> makeRadioItem(s, ""));
+
+	onClick = \-> {
+		^us();
+		idx1 = getValue(index1);
+		idx2 = getValue(index2);
+		onRsMode(
+			if (idx1 == 0) None()
+			else if (idx1 == 1) Some(RsModeDemo())
+			else if (idx1 == 2) Some(RsModeSplit())
+			else Some(RsModeRedirect(alternativeServerUrls[idx2]))
+		)
+	}
+
+	us := MLines(concatA([
+		[
+			MText("Remote Server Mode", [MDisplay1()]) |> MCenterX,
+			TFixed(0., 24.)
+		],
+		MRadios(index1, [manager.theme.primaryColor], radiosList1),
+		if (alternativeServerUrls != []) [MCols2(
+			TFixed(48., 0.),
+			MLines(MRadios(index2, [manager.theme.primaryColor, MEnabled(feq(index1, 3))], radiosList2))
+		)] else [],
+		[
+			TFixed(0., 36.),
+			MTextButton("APPLY",
+				onClick,
+				[MFullWidth(), MButtonRaised(), MButtonTextColor(color != MWhite()), color],
+				[MShortcut("enter")]
+			)
+		]
+	]))
+	|> (\f -> MBorder(frame.m, 0., frame.m, 24., f))
+	|> (\f -> MAvailable(f, TMinimumGroup2(TFillXY(), TFillWY(remoteServerWidth + frame.m * 2.))))
+	|> (\f -> MScroll(f, TFillXY(), [MScrollCropByContent()]))
+	|> (\f -> MBorder(0., frame.m, 0., 0., f))
+	|> (\f -> MFrame(0., frame.r, frame.gStyle, f))
+	|> (\f ->
+		if (frame.gStyle != [] && !contains(frame.gStyle, FillOpacity(0.)))
+			MShadowShape(const(2.), f, RectangleShape())
+		else
+			f
+	)
+	|> (\f -> MBorder(8., 8., 8., 8., f))
+	|> MCenter
+	|> (\f -> MSelect(whiteTheme, \wt -> MActivate(f, [MLightBackground(wt)])))
+	|> (\f -> mrender(manager, true, f));
+}
+
+// Show the dialog with dirty and critical tables
+showRemoteServerDirtyTables(remoteServer : DbRemoteServer) -> void {
+	item2material = \table, isCritical, isDirty -> [
+		if (isCritical) MIcon("star", [MBlack(), MIconSize(18.)]) else MEmpty(),
+		if (isDirty) MIcon("flash_on", [MBlack(), MIconSize(18.)]) else MEmpty(),
+		MEllipsisText(table, [MDataRow(), MBlack(), MShowTooltip(const(true))])
+	];
+
+	table = MDataTable(
+		[
+			MColumn("Critical", "Is Critical table", 48, [MMaxWidth(56), CenterAlign()]),
+			MColumn("Dirty", "Is Dirty table", 40, [MMaxWidth(48), CenterAlign()]),
+			MColumn("Table name", "", 360, [MMaxWidth(480), MAutoSort()])
+		],
+		map(
+			uniq(concat(^criticalTablesR, remoteServer.dirtyTables)),
+			\table -> item2material(table, contains(^criticalTablesR, table), contains(remoteServer.dirtyTables, table))
+		),
+		[
+			MCondensed(true), TScrollEnabled(const(true)), MNoFooter(), /*MFixedRow(const(true), filterRow, [MFill(MGrey(100))]),*/
+			MHeaderStyle([MFill(remoteServer.manager.theme.primaryColor)], [remoteServer.manager.theme.toolbarItemsColor], [])
+		]
+	);
+		
+	closeDialog = make(false);
+	ShowMDialog(remoteServer.manager, closeDialog,
+		[
+			MDialogUseFrame(),
+			MDialogClickOutToClose(),
+			MDialogActions([MTextButton(_("CLOSE"), \-> next(closeDialog, true), [MButtonRaised()], [MShortcut("esc")])])
+		],
+		MLet(
+			"MTablesList",
+			table,
+			MLines([
+				MAvailable(
+					MCols([
+						MText(_("List of tables"), [MHeadline()]),
+						TFillX(),
+						MIconButton(
+							"help_outline",
+							\-> showNotations(remoteServer.manager),
+							[MBlue(500), MIconSize(24.)],
+							[MTooltipText(const("Notations, used in the list"))]
+						)
+					]),
+					MMinimumGroup2(TWidth(TGhost("MTablesList")), TFillX())
+				),
+				TFixed(0., 24.),
+				MScroll(TDisplay("MTablesList"), MSubtractGroup2(TFillXY(), TFixed(0., 40.)), [MScrollCropByContent()])
+			])
+		)
+	);
+}
+
+rsCheckSimilarityCriteria(criteria : Maybe<?>, val : ?) -> bool {
+	eitherMap(criteria, \crVal -> val == crVal, true);
+}
+
+rsCheckStrLikeCriteria(criteria : Maybe<string>, val : string) -> bool {
+	eitherMap(criteria, \crVal -> strContains(toLowerCase(val), toLowerCase(crVal)), true);
+}

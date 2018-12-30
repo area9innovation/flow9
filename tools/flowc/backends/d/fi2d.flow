@@ -1,0 +1,53 @@
+import tools/flowc/backends/d/fi2d_compile;
+import tools/flowc/backends/d/fi2d_assemble;
+
+export {
+	fi2d(program : FiProgram, cfg : FiDConfig, callback : () -> void) -> void;
+}
+
+fi2d(program : FiProgram, cfg : FiDConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making D '" + cfg.outputfile + "'...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	runtimeContent = fiGetDRuntime(cfg);
+	structsCode = fiCollectDStructs2(cfg, program);
+	moduleCount = i2s(length(decls));
+
+	fcVerbose(cfg, 0, "Generating D code for declarations...");
+	modulesCode = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating D code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiDCompileToplevel(cfg, program, v, "");
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	contents =
+			Cons(list2string(modulesCode),
+				Cons("\n",
+					Cons(runtimeContent,
+						Cons(structsCode, makeList()))));
+
+	fiAssembleDFile(cfg, contents);
+	
+	fcVerbose(cfg, 0, "Making D '" + cfg.outputfile + "' finished.");
+
+	callback();
+}
+

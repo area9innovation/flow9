@@ -1,0 +1,628 @@
+import material/material_gui;
+import array;
+
+/*
+	Component for managing and displaying TreeView.
+	Visualizes as an MScroll filling all its container size.
+	Visualizes only elements which are currently visible inside scroll-box viewport, so technically can work with big lists of items.
+	Uses lazy render.
+	Allows dynamically add, modify or delete tree nodes, reflecting on visual Material.
+*/
+
+export {
+
+	/*
+	Creates TreeView core. This object allows to dynamically add, delete and modify tree items.
+	It is used as manager for visual wrapper MTreeView
+
+	There is a default view for the component. It is based on Material standard types.
+	But you can customize items displaying with some options below.
+
+	*/
+
+	makeMTreeViewManager(options : [MTreeViewOption]) -> MTreeViewManager;
+
+	// visualizer of TreeView to be used inside Material
+	// This creates scroll box and shows the tree content inside
+	// It will render only elements, which are currently visible inside scrollbox viewport.
+
+	MTreeView(manager : MTreeViewManager) -> Material;
+
+	MTreeViewOption ::= MTreeViewOptionRenderItem,
+		MTreeViewOptionItemHeight, MTreeViewOptionCaptionStyles,
+		MTreeViewOptionItemStateIcons,MTreeViewOptionItemStateIconStyles,
+		MTreeViewOptionExpandedChanged, MTreeViewOptionItemClick,
+		MTreeViewOptionAdditionMaterials,
+		MTreeViewOptionItemIsFolderOverride;
+
+
+		/*
+		Item height.
+		Currently all items should have same height for calculation optimizations.
+		*/
+		MTreeViewOptionItemHeight(value : double);
+
+		/*
+		Caption styles overrides
+		We can support different styles for Folder and Single items.
+		Folder means, that this node contains subitems.
+			Note: The behaviour can vary depending on child items addition/removing.
+			To make item constantly be a Folder or Single use MTreeViewOptionItemIsFolderOverride option.
+		*/
+		MTreeViewOptionCaptionStyles(folder : [MTextStyle], single : [MTextStyle]);
+
+		/*
+		Render callback function for rendering single element.
+		This will be requested when item has changed.
+			Note: This renderer will be called every time the item state is changed.
+			So, no need to add dynamic Material structs, like MSelect, for Expanded or Title properties.
+		*/
+		MTreeViewOptionRenderItem(value : (item : MTreeViewItem) -> Material);
+
+		/*
+		This is a callback for expanding/collapsing item.
+		Use for lazy adding child nodes, for example.
+		*/
+		MTreeViewOptionExpandedChanged(value : (item : MTreeViewItem, expanded : bool) -> void);
+
+		/*
+		This is a callback for item click.
+		This will work with custom renderer either.
+		If you want more inner interactivity for your customized item, keep this in mind.
+		*/
+		MTreeViewOptionItemClick(value : (item : MTreeViewItem, button : MTreeViewOptionItemClickMouseButton, pos : Point) -> void);
+		MTreeViewOptionItemClickMouseButton ::= MTreeViewOptionItemClickMouseButtonLeft, MTreeViewOptionItemClickMouseButtonRight, MTreeViewOptionItemClickMouseButtonMiddle;
+			MTreeViewOptionItemClickMouseButtonLeft();
+			MTreeViewOptionItemClickMouseButtonRight();
+			MTreeViewOptionItemClickMouseButtonMiddle();
+
+		/*
+		Expand/Collapse icons overrides.
+		Supports diffenet icon names for 3 states : collapsed folder, expanded folder and single item.
+		If particular icon name is empty - then empty square will be placed instead of icon.
+			Note: Empty expan/collapse icons are non-interactive.
+			So, if you use, for example, empty collapse icon - user will not be able to collapse item with mouse.
+			Then the only way to collapse item will be programmatically.
+
+		In addition you can override displaying styles of icons.
+			Note: The behaviour can vary depending on child items addition/removing.
+			To make item constantly be a Folder or Single use MTreeViewOptionItemIsFolderOverride option.
+
+		*/
+		MTreeViewOptionItemStateIcons(collapsed : string, expanded : string, single : string);
+		MTreeViewOptionItemStateIconStyles(collapsed : [MIconStyle], expanded : [MIconStyle], single : [MIconStyle]);
+
+		/*
+		Folders are displayed with expand/collapse icon to the left which allows to expand and collapse node.
+		If there are no child nodes, the item is treated as single by default.
+		This can override whether the item is a folder or single.
+		*/
+		MTreeViewOptionItemIsFolderOverride(value : (item : MTreeViewItem) -> bool);
+
+		// Place additional elements under and over the resulting TreeView material.
+		MTreeViewOptionAdditionMaterials(foreground : [Material], background : [Material]);
+
+	MTreeViewItem(
+
+		// the text of a tree node
+		title: DynamicBehaviour<string>,
+
+		// expanded state
+		expanded : DynamicBehaviour<bool>,
+
+		// selected state
+		// setting this will override MTreeViewManager`s selected
+		// makes this item to be selected exlusively
+		// to use multiselect - apply a selected array to MTreeViewManager`s selected property.
+		selected : DynamicBehaviour<bool>,
+
+		// add children to the end of subitems of this item and returns them as an array
+		// all new children are clear initially - you should apply title after item is added
+		// example: next(treeView.add(1)[0].title, "new node");
+		add : (count : int) -> [MTreeViewItem],
+
+		// add children and set their titles
+		addTitles : (titles : [string]) -> [MTreeViewItem],
+
+		// insert child into specified position and set it title
+		insertTitle : (title : string, index : int) -> [MTreeViewItem],
+
+		// removes one or more elements from subitems list, starting from an specified index, and returns them as an array
+		remove : (index : int, count : int) -> [MTreeViewItem],
+
+		// removes one or more elements from subitems list, starting from an specified index, and returns them as an array
+		removeItem : (MTreeViewItem) -> [MTreeViewItem],
+
+		// find item by it`s path which is presented as an array of elements. returns an array from the current item. if resulting length is less than requested, then item was not found.
+		find : (path : [string]) -> [MTreeViewItem],
+
+		// just returns a subset of children
+		get : (index : int, count : int) -> [MTreeViewItem],
+
+		// removes all children
+		clear : () -> [MTreeViewItem],
+
+		// returns all children
+		items : () -> [MTreeViewItem],
+
+		// returns count of children
+		length : () -> int,
+
+		// returns a nesting level of this item (starting with 1)
+		level : () -> int,
+
+		// renders this item (using MTreeViewOptionRenderItem parameter)
+		// should always return an array with single element inside
+		material : () -> [Material],
+
+		// when collapsed, returns just itself
+		// when expanded returnd an array containing itself as first element and all children recursively
+		collect : () -> [MTreeViewItem],
+
+		// this is an extra  field which can be used for custom purposes.
+		// affects item re-render
+		extra : DynamicBehaviour<string>,
+
+		// returns a string combining all parents of this item raising to the root element.
+		// uses title property to build path
+		// adds a delimiter between all elements
+		// just a helper for serializing or customizing
+		path : (delimiter : string) -> string,
+
+		// returns all parents chain up to the root of treeview
+		// last item in array is node itself
+		// topmost node comes first
+		parents : () -> [MTreeViewItem],
+		// scrolls to make it visible
+		makeVisible : () -> void,
+		// get indexo of item in plain render list
+		visibilityIndex : () -> int,
+		// item disposer
+		dispose : () -> void,
+	);
+
+	MTreeViewItemParent ::= MTreeViewManager, MTreeViewItem;
+
+	dummyMTreeViewItem = MTreeViewItem(
+		make(""),
+		make(false),
+		make(false),
+		\__-> [],
+		\__-> [],
+		\__,__-> [],
+		\__,__ -> [],
+		\__-> [],
+		\__-> [],
+		\__,__ -> [],
+		\-> [],
+		\-> [],
+		\-> 0,
+		\-> 0,
+		\-> [],
+		\-> [],
+		make(""),
+		\__-> "",
+		\-> [],
+		nop,
+		\-> 0,
+		nop,
+	);
+
+	MTreeViewManager(
+		// Adds required number of items to root
+		add : (count : int) -> [MTreeViewItem],
+		// Adds items and set their titles
+		addTitles : (titles : [string]) -> [MTreeViewItem],
+		insertTitle : (title : string, index : int) -> [MTreeViewItem],
+		remove : (index : int, count : int) -> [MTreeViewItem],
+		removeItem : (MTreeViewItem) -> [MTreeViewItem],
+		// find item by it`s path which is presented as an array of elements. returns an array from the root. if resulting length is less than requested, then item was not found.
+		find : (path : [string]) -> [MTreeViewItem],
+		get : (index : int, count : int) -> [MTreeViewItem],
+		items : () -> [MTreeViewItem],
+		length : () -> int,
+		material : () -> Material,
+		selected : DynamicBehaviour<[MTreeViewItem]>,
+		dispose : () -> void,
+	);
+
+}
+
+makeMTreeViewManager(options : [MTreeViewOption]) -> MTreeViewManager {
+	this = ref MTreeViewManager(
+		\__-> [],
+		\__-> [],
+		\__,__ -> [],
+		\__,__ -> [],
+		\__-> [],
+		\__ -> [],
+		\__,__ -> [],
+		\-> [],
+		\-> 0,
+		\-> MEmpty(),
+		make([]),
+		nop,
+	);
+	prevSelected = ref [];
+	selectedItems = make([]);
+
+	addSel = \item -> {
+		a = getValue(selectedItems);
+		if (!contains(a, item)) {
+			//next(selectedItems, arrayPush(a, item));
+			next(selectedItems, [item]);
+		}
+	}
+
+	rmSel = \item -> {
+		a = getValue(selectedItems);
+		if (contains(a, item)) next(selectedItems, filter(a, \itm -> itm != item));
+	}
+
+
+	rebuildMaterialTicker = make(false);
+	rebuildMaterialInterrupt = ref nop;
+
+	updateNow = \-> {
+		rebuildMaterialInterrupt := nop;
+		reverseBehaviour(rebuildMaterialTicker);
+	}
+	update = \-> {
+		^rebuildMaterialInterrupt();
+		rebuildMaterialInterrupt := interruptibleTimer(1, updateNow);
+	}
+
+
+	itemHeight = extractStruct(options, MTreeViewOptionItemHeight(32.0)).value;
+	captionStyles = extractStruct(options, MTreeViewOptionCaptionStyles([MSubheading()], [MSubheading()]));
+	stateIcons = extractStruct(options, MTreeViewOptionItemStateIcons("keyboard_arrow_right","keyboard_arrow_down",""));
+	iconStyles = {
+		custom = extractStruct(options, MTreeViewOptionItemStateIconStyles([], [], []));
+		MTreeViewOptionItemStateIconStyles(concat([MIconSize(itemHeight)], custom.collapsed), concat([MIconSize(itemHeight)], custom.expanded), concat([MIconSize(itemHeight)], custom.single));
+	}
+
+	onExpanded = extractStruct(options, MTreeViewOptionExpandedChanged(nop2)).value;
+
+	itemClick = extractStruct(options, MTreeViewOptionItemClick(nop3)).value;
+
+	makeIcon = \id, style -> if (id == "") MFixedX(itemHeight) else MIcon(id, style);
+	makeIconButton = \id, style, click -> if (id == "") MFixedX(itemHeight) else MCursor(FingerCursor(), MIconButton(id, click, concat(style, [MIconButtonBorder(0.0)]), []));
+	iconExpanded = \item -> makeIconButton(stateIcons.expanded, iconStyles.expanded, \-> {
+		next(item.expanded, false);
+	});
+	iconCollapsed = \item -> makeIconButton(stateIcons.collapsed, iconStyles.collapsed, \-> {
+		next(item.expanded, true)
+	});
+	iconSingle = makeIcon(stateIcons.single, iconStyles.single);
+	isFolderFn = extractStruct(options, MTreeViewOptionItemIsFolderOverride(\item -> item.length() > 0)).value;
+
+	renderItemDefaultFn = \item : MTreeViewItem -> {
+		MText(getValue(item.title), if (isFolderFn(item)) captionStyles.folder else captionStyles.single);
+	}
+
+	renderItemFn = extractStruct(options, MTreeViewOptionRenderItem(renderItemDefaultFn)).value;
+
+	scrollOffs = make(zeroPoint);
+	scrollHeight : ref Transform<double> = ref make(0.0);
+	mousePos = make(zeroPoint);
+	scrollToItemIndex = \ix -> {
+		y = i2d(ix) * itemHeight;
+		b =  itemHeight * 2.0;
+		y1 = getValue(scrollOffs).y;
+		y2 = y1 + fgetValue(^scrollHeight);
+
+		if (y >= 0.0) {
+			if (y < y1 + b ) {
+				next(scrollOffs, Point(0.0, y - b));
+			}
+			else if (y + itemHeight > y2 - b ) {
+				next(scrollOffs, Point(0.0, y1 + y - y2 + b + itemHeight));
+			}
+		}
+	};
+
+	spacer = itemHeight * 0.2;
+	renderItem = \item : MTreeViewItem -> {
+		level = item.level();
+		isFolder = isFolderFn(item);
+
+		lmb = make(false);
+		rmb = make(false);
+		mmb = make(false);
+		clk = \b -> itemClick(item, b, getValue(mousePos));
+		upd = make(false);
+		upd2 = \ -> reverseBehaviour(upd);
+		uns = [
+			\-> subscribe2(lmb, \b -> if (!b) clk(MTreeViewOptionItemClickMouseButtonLeft())),
+			\-> subscribe2(rmb, \b -> if (!b) clk(MTreeViewOptionItemClickMouseButtonRight())),
+			\-> subscribe2(mmb, \b -> if (!b) clk(MTreeViewOptionItemClickMouseButtonMiddle())),
+			\-> subscribe2(item.title, \__ -> upd2()),
+		];
+
+		renderInner = MSelect(upd, \__ -> renderItemFn(item));
+
+		row = MCols([
+			MFixedX(itemHeight * i2d(level-1) + spacer),
+			MSelect(item.expanded, \ex -> if ( !isFolder ) iconSingle else if (ex) iconExpanded(item) else iconCollapsed(item)),
+			MFixedX(spacer),
+			MInteractive([
+				TMouseXY(mousePos),
+				TMouseDown(lmb),
+				TMouseRightDown(rmb),
+				TMouseMiddleDown(mmb),
+			], MCursor(FingerCursor(), MFrame(0.0, 0.0, [Fill(0), FillOpacity(0.0)], MCenterYIn(renderInner, TFillXH(itemHeight))))),
+		]);
+
+		h = \h, m -> if (!h) m else MFrame(0.0, 0.0, [FillOpacity(0.1), Fill(0)], m);
+		hh = \hh, m -> MSelect(hh, \h1 -> h(h1, m));
+		hover = make(false);
+
+		MCropSize(
+			TFillXH(itemHeight),
+			MConstruct(uns, MInteractive([TMouseInside(hover, false)], hh(item.selected, hh(hover, row))))
+		);
+
+	}
+
+	makeItemFn = ref \getParent : () -> MTreeViewItemParent -> dummyMTreeViewItem;
+	makeItem = \getParent : () -> MTreeViewItemParent -> {
+		disposed = ref false;
+		makeItem = ^makeItemFn;
+		t_cur = ref dummyMTreeViewItem;
+		cur = \-> ^t_cur;
+		title = make("");
+		extra = make("");
+		expanded = make(false);
+		selected = make(false);
+
+		items : ref [MTreeViewItem] = ref [];
+
+		t_mat = ref [];
+
+		mat = \-> {
+			if (^t_mat == []) t_mat := [renderItem(cur())];
+			^t_mat;
+		}
+
+		uns = [
+			subscribe2(selected, \sel -> {
+				if (sel) addSel(cur()) else rmSel(cur());
+			}),
+			subscribe2(expanded, \ex -> {
+					onExpanded(cur(), ex);
+					update();
+			}),
+		];
+
+		t_cur := MTreeViewItem(
+			title,
+			expanded,
+			selected,
+			//add
+			\cnt -> if (cnt > 0) {
+				res = generate(0, cnt, \__ -> makeItem(cur));
+				items := concat(^items, res);
+				if (getValue(expanded)) update();
+				res;
+			} else [],
+			//add Titles
+			\titles -> if (titles == []) []
+			else  {
+				res = map(titles, \t -> {
+					r = makeItem(cur);
+					next(r.title, t);
+					r;
+				});
+				items := concat(^items, res);
+				if (getValue(expanded)) update();
+				res;
+			},
+			// insert title
+			\titlename, index -> {
+				res = {
+					r = makeItem(cur);
+					next(r.title, titlename);
+					r;
+				};
+				items := insertArray(^items, index, res);
+				if (getValue(expanded)) update();
+				[res];
+			},
+			// remove
+			\ix, cnt -> if (cnt > 0) {
+				res = subrange(^items, ix, cnt);
+				items := concat(take(^items, ix), tailFrom(^items, ix + cnt));
+				if (getValue(expanded)) update();
+				iter(res,\item -> item.dispose());
+				res;
+			} else [],
+			// remove item
+			\i -> {
+				a = removeFirst(^items, i);
+				if (length(a) < length(^items)) {
+					// deletion has place
+					items := a;
+					if (getValue(expanded)) update();
+					i.dispose();
+					[i];
+				} else [];
+			},
+			// find
+			\pth -> {
+				l = length(pth);
+				if (pth == [] || pth[0] != getValue(title)) []
+				else if (l == 1) [cur()] else concat([cur()], fold(^items, [], \res, itm -> if (res == []) itm.find(tail(pth)) else res));
+			},
+			// get
+			\ix, cnt -> if (cnt > 0) subrange(^items, ix, cnt) else [],
+			// clear
+			\-> {
+				res = ^items;
+				items := [];
+				iter(res,\item -> item.dispose());
+				if (getValue(expanded)) update();
+				res;
+			},
+			//items
+			\-> {
+				res = ^items;
+				res;
+			},
+			// length
+			\-> {
+				res = length(^items);
+				res;
+			},
+			// level
+			\-> switch(getParent()) {
+				MTreeViewManager(__,__,__,__,__,__,__,__,__,__,__,__) : 0;
+				MTreeViewItem(__,__,__,__,__,__,__,__,__,__,__,__,__, lvl, __,__,__,__,__,__,__,__) : lvl() + 1;
+			},
+			// material
+			\-> mat(),
+			// collect
+			\-> if (!getValue(expanded)) [cur()] else concat([cur()], concatA(map(^items, \item -> item.collect()))),
+			extra,
+			// path
+			\sep -> switch(getParent()) {
+				MTreeViewManager(__,__,__,__,__,__,__,__,__,__,__,__) : "";
+				MTreeViewItem(__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__, pth,__,__,__,__) : {
+					p = pth(sep);
+					prev = if (p == "" ) "" else p + sep;
+					prev + getValue(title);
+				}
+			},
+			// parents
+			\-> switch(getParent()) {
+				MTreeViewManager(__,__,__,__,__,__,__,__,__,__,__,__) : [];
+				MTreeViewItem(__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__,__, pts,__,__,__) : arrayPush(pts(), cur());
+			},
+			// makeVisible
+			\-> {
+				pts = {
+					pts = cur().parents();
+					take(pts, length(pts)-1);
+				}
+				iter(pts, \itm -> nextDistinct(itm.expanded, true));
+				timer(10, \-> {
+					ix = cur().visibilityIndex();
+					scrollToItemIndex(ix);
+				});
+			},
+			// visibilityIndex
+			\-> switch(getParent()) {
+				MTreeViewManager(__,__,__,__,__,__,__,__,__,__,__,__) : 0;
+				MTreeViewItem(__,__,__,__,__,__,__,__,__,__,__, pItems, __,__,__,__,__,__,__,__, ix, __) : {
+					up = ix();
+					c = cur();
+					itms = pItems();
+					cix = elemIndex(itms, c, -1);
+					a1 = foldi(itms, 0, \i, res, itm -> {
+						if (i >= cix) res
+						else {
+							cc = itm.collect();
+							res + length(cc);
+						}
+					});
+					up + a1 + 1;
+				}
+			},
+			//dispose
+			\-> {
+				if (!^disposed) {
+					nextDistinct(selected, false);
+					iter(^items, \item -> item.dispose());
+					iter(uns, \un -> un());
+					disposed := true;
+				}
+			}
+		);
+		^t_cur;
+	}
+	makeItemFn := makeItem;
+
+	disposed = ref false;
+	root = makeItem(\-> ^this);
+	next(root.title, "root");
+	nextDistinct(root.expanded, true);
+
+	mats = extractStruct(options, MTreeViewOptionAdditionMaterials([], []));
+	matFg = mats.foreground;
+	matBg = mats.background;
+
+	material = \-> {
+
+		// TODO: optimize not to render all elements - just make placeholder here
+		allLines = fselect(rebuildMaterialTicker, FLift(\__-> {
+			concatA(map(root.items(), \item -> item.collect()));
+		}));
+
+		res = MLet("box", TFillXY(),
+			MGroup2(
+				TDisplay("box"),
+				MAttach(TGhost("box"), \wh -> {
+					boxHeight = wh.height;
+					scrollHeight := boxHeight;
+					skipLinesTop = fselect(scrollOffs, FLift(\p -> floor(p.y / itemHeight)));
+					restLinesCount = fselect2(skipLinesTop, allLines, FLift2(\skip, t_all -> length(t_all) - skip));
+					visibleLinesCount = fselect2(boxHeight, restLinesCount, FLift2(\h, rest -> if (rest <= 0 || h < itemHeight) 0 else floor(h / itemHeight) + 2 ));
+					skipLinesBottom = fselect2(restLinesCount, visibleLinesCount, FLift2(\rest, vis -> if (rest > vis) rest-vis else 0));
+					visibleLines = fselect3(allLines, skipLinesTop, visibleLinesCount, \t_all, skip, vis -> subrange(t_all, skip, vis));
+
+					content = {
+						MLines([
+							MSelect(skipLinesTop, \n -> MFixedY(i2d(n) * itemHeight)),
+							MSelect(visibleLines, \ll -> MLines(map(ll, \l -> l.material()[0]))),
+							MSelect(skipLinesBottom, \n -> MFixedY(i2d(n) * itemHeight)),
+						]);
+					};
+					styles = [
+						MScrollPosition(scrollOffs),
+						//MScrollWidthHeight(visibleContent, visibleBox)
+						MScrollbarsVisible(make(false), make(true)),
+
+					];
+					MScroll(content, TGhost("box"), styles);
+				})
+			)
+		);
+		MInteractive([TMouseXY(mousePos)], if (matFg == [] && matBg == []) res else MGroup(concat3(matBg, [res], matFg)));
+	}
+
+	uns = [
+		subscribe(selectedItems, \itms -> {
+			remove = filter(^prevSelected, \prv -> !contains(itms, prv));
+			add = filter(itms, \itm -> !contains(^prevSelected, itm));
+			prevSelected := itms;
+			iter(remove, \itm -> nextDistinct(itm.selected, false));
+			iter(add, \itm -> nextDistinct(itm.selected, true));
+		}),
+	];
+
+	dispose = \-> if (!^disposed) {
+		root.dispose();
+		map(uns, \un -> un());
+		disposed := true;
+	}
+
+	this := MTreeViewManager(
+		root.add,
+		root.addTitles,
+		root.insertTitle,
+		root.remove,
+		root.removeItem,
+		root.find,
+		root.get,
+		root.items,
+		root.length,
+		material,
+		selectedItems,
+		dispose,
+	);
+
+	^this;
+}
+
+MTreeView(manager : MTreeViewManager) -> Material {
+	manager.material();
+}

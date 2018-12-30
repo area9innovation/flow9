@@ -1,0 +1,388 @@
+import tropic/tropic_gui;
+import formmetrics;
+
+export {
+	// An inaccurate snapshot size of this Tropic.
+	// For normal user interfaces, it should never be necessary to use this. It is used for low-level stuff only.
+	getTropicMetrics(t : Tropic) -> FormMetrics;
+
+	// Is this tropic constant size?
+	isConstantSizeTropic(t : Tropic) -> bool;
+
+	// A snapshot size of this word, with the associated environment. Used by tparagraph.
+	getTWordMetrics(pt : TWord, env : Tree<string, Tropic>) -> FormMetrics;
+
+	// We can word wrap after TLinePart, TSpace, TZeroWidthSpace, but not between other Tropics.
+	TWord ::= Tropic, TLinePart, TSpace, TZeroWidthSpace;
+
+		// A word, in the different forms it can have depending on where it is placed.
+		// There can be a word wrap before and after this
+		TLinePart(first : Tropic, inline : Tropic, last : Tropic);
+
+		// There can be a word wrap before and after this
+		TSpace(style : [TCharacterStyle]);
+
+		// There can be a word wrap before and after this
+		TZeroWidthSpace(style : [TCharacterStyle]);
+}
+
+getTropicMetrics(t : Tropic) -> FormMetrics {
+	getTWordMetrics(t, makeTree());
+}
+
+getTWordMetrics(pt : TWord, env : Tree<string, Tropic>) -> FormMetrics {
+	switch (pt) {
+		TText(t, s): {
+			getStaticFormSize(Text(t, tcharacterStyle2charStyle(s)));
+		}
+		TParagraph(t, s): {
+			getStaticFormSize(Text(t, [])); // TODO:
+		}
+		TGraphics(p, s): {
+			getStaticFormSize(Graphics(p, tgraphicsStyle2graphicsStyle(s)));
+		}
+		TLinePart(first, inline, last): getTWordMetrics(inline, env);
+		TSpace(s): getTWordMetrics(TText(" ", s), env);
+		TZeroWidthSpace(s): getTWordMetrics(tzeroWidthSpace(s), env);
+		TCols2(left, right): {
+			lm = getTWordMetrics(left, env);
+			rm = getTWordMetrics(right, env);
+			FormMetrics(lm.width + rm.width, max(lm.height, rm.height), max(lm.baseline, rm.baseline), max(lm.dHeight, rm.dHeight));
+		}
+		TBaselineCols2(left, right): {
+			lm = getTWordMetrics(left, env);
+			rm = getTWordMetrics(right, env);
+
+			base = max(lm.baseline, rm.baseline);
+			o1 = base - lm.baseline;
+			o2 = base - rm.baseline;
+
+			FormMetrics(
+				lm.width + rm.width,
+				max(lm.height, rm.height),
+				base,
+				max(lm.dHeight + o1, rm.dHeight + o2)
+			);
+		}
+		TBaselineLines2(top, bottom): {
+			tm = getTWordMetrics(top, env);
+			bm = getTWordMetrics(bottom, env);
+
+			FormMetrics(
+				max(tm.width, bm.width),
+				tm.height + bm.height,
+				tm.baseline,
+				tm.dHeight + bm.dHeight
+			);
+		}
+		TLines2(up, down): {
+			um = getTWordMetrics(up, env);
+			dm = getTWordMetrics(down, env);
+			FormMetrics(max(um.width, dm.width), um.height + dm.height, um.height + dm.baseline, um.dHeight);
+		}
+		TGroup2(down, up): {
+			um = getTWordMetrics(up, env);
+			dm = getTWordMetrics(down, env);
+			FormMetrics(max(um.width, dm.width), max(um.height, dm.height), max(um.baseline, dm.baseline), max(um.dHeight, dm.dHeight));
+		}
+		TMinimumGroup2(down, up): {
+			um = getTWordMetrics(up, env);
+			dm = getTWordMetrics(down, env);
+			FormMetrics(min(um.width, dm.width), min(um.height, dm.height), min(um.baseline, dm.baseline), min(um.dHeight, dm.dHeight));
+		}
+		TScale(fac, t): {
+			f = fgetValue(fac);
+			fm = getTWordMetrics(t, env);
+			FormMetrics(fm.width * f.x, fm.height * f.y, fm.baseline * f.y, fm.dHeight * f.y);
+		}
+		TConstruct(__, t): {
+			getTropicMetrics(t);
+		}
+		TCreate2(current, fn): getTropicMetrics(if (^current != TEmpty()) ^current else fn());
+		TCrop(__, size, __): {
+			s = fgetValue(size);
+			makeMetrics(s.width, s.height);
+		}
+		TBaselineOffset(b, t): {
+			m = getTropicMetrics(t);
+			FormMetrics(m.width, m.height, fgetValue(b), m.dHeight)
+		}
+		TTag(__, t): getTWordMetrics(t, env);
+		TTag2(__, t): getTWordMetrics(t, env);
+		TRealHTML(__, wh, __): fgetValue(wh) |> (\whv -> FormMetrics(whv.width, whv.height, whv.height, whv.height));
+		TVideo(__, wh, __): fgetValue(wh) |> (\whv -> FormMetrics(whv.width, whv.height, whv.height, whv.height));
+		TForm(f): getStaticFormSize(f);
+		TFForm(__, met): FormMetrics(fgetValue(met.width), fgetValue(met.height), fgetValue(met.height), fgetValue(met.height));
+		TSFForm(__, met): FormMetrics(fgetValue(met.width), fgetValue(met.height), fgetValue(met.height), fgetValue(met.height));
+		TFormIn(__, b): getTWordMetrics(b, env);
+		TFormAvailable(__, b): getTWordMetrics(b, env);
+		TTranslate(__, t): getTWordMetrics(t, env);
+		TRotate(__, t): getTWordMetrics(t, env);
+		TInteractive(__, t): getTWordMetrics(t, env);
+		TAccess(__, t): getTWordMetrics(t, env);
+		TAlpha(__, t): getTWordMetrics(t, env);
+		TCursor(__, t): getTWordMetrics(t, env);
+		TCropSize(size, t): getTWordMetrics(size, env);
+		TSize(size, t): getTWordMetrics(size, env);
+		TDispose(__, t): getTWordMetrics(t, env);
+		TRounded(__, __, __, __, __, t): getTWordMetrics(t, env);
+		TBorder(left, top, right, bottom, t): {
+			m = getTWordMetrics(t, env);
+			FormMetrics(m.width + left + right, m.height + top + bottom, m.baseline + top, m.dHeight + top);
+		}
+		TEmpty(): zeroMetrics;
+		TTweak(style, c2, s2): {
+			c = getTWordMetrics(c2, env);
+			s = if (s2 == TEmpty()) c else getTWordMetrics(s2, env);
+			fillZoom = extractStructMany(style, TFillZoom(false));
+			fitZoom = extractStructMany(style, TFitZoom(false, false));
+			snapSize = extractStruct(style, TSnapSize(0.0, 0.0, false));
+
+			snapSizeFn = \val, sn ->
+				if (sn <= 0.0) val
+				else if (snapSize.ceil) dceil(val / sn) * sn
+				else i2d(floor(val / sn)) * sn;
+
+			if (length(fillZoom) == 0 && length(fitZoom) == 0)
+				FormMetrics(
+					max(c.width, snapSizeFn(s.width, snapSize.xsnap)),
+					max(c.height, snapSizeFn(s.height, snapSize.ysnap)),
+					max(c.baseline, s.baseline),
+					max(c.dHeight, s.dHeight))
+			else
+				FormMetrics(
+					snapSizeFn(s.width, snapSize.xsnap),
+					snapSizeFn(s.height, snapSize.ysnap),
+					s.baseline,
+					s.dHeight);
+		}
+		TAttach(ghost, fn): {
+			gm = getTWordMetrics(ghost, env);
+			tr = fn(TFormMetrics(const(gm.width), const(gm.height), const(gm.baseline)));
+			getTWordMetrics(tr, env);
+		}
+		// These are not accurate, but we have to do something
+		TFillX(): zeroMetrics;
+		TFillY(): zeroMetrics;
+		TIf(cond, t, e): {
+			getTWordMetrics(if (fgetValue(cond)) t else e, env);
+		}
+		TAvailable(t, __): getTWordMetrics(t, env);
+		TFilter(__, t): getTWordMetrics(t, env);
+		TDebug(__, t): getTWordMetrics(t, env);
+		TPicture(u, s): {
+			size = extractStruct(s, WidthHeight(-1.0, -1.0));
+			size2 =
+				if (size != WidthHeight(-1.0, -1.0)) size
+				else {
+					cache = getCachedPictureSize(u);
+					either(cache, WidthHeight(20.0, 20.0));
+				}
+			makeMetrics(size2.width, size2.height);
+		}
+		TLet(v, val, scope): {
+			getTWordMetrics(scope, setTree(env, v, val));
+		}
+		TLetAvailable(v, scope): {
+			getTWordMetrics(scope, setTree(env, v, TGroup2(TFillX(), TFillY())));
+		}
+		TGhost(n): {
+			v = lookupTreeDef(env, n, TEmpty());
+			getTWordMetrics(v, env);
+		}
+		TDisplay(n): {
+			v = lookupTreeDef(env, n, TEmpty());
+			getTWordMetrics(v, env);
+		}
+		TCase(sizes, cases): {
+			// We just pick the smallest non-zero thing
+			fold(cases, zeroMetrics, \acc, c -> {
+				cm = getTWordMetrics(c, env);
+				if (acc == zeroMetrics) cm
+				else if (cm < acc) cm
+				else acc
+			});
+		}
+		TVisible(visible, t): {
+			if (fgetValue(visible)) getTWordMetrics(t, env) else zeroMetrics;
+		}
+		TMutable(mt): {
+			tr = fgetValue(mt);
+			getTWordMetrics(tr, env);
+		}
+		TDynamicGroup2(__, cs, combiner): {
+			getTWordMetrics(
+				if (combiner == TGroupCombiner())
+					TGroup(^cs)
+				else if (combiner == TColsCombiner())
+					TCols(^cs)
+				else if (combiner == TColsACombiner())
+					TColsA(^cs)
+				else
+					TLines(^cs),
+				env
+			);
+		}
+		TScrollable(__, maxbox, __, __): {
+			getTWordMetrics(maxbox, env);
+		}
+		TSubtractGroup2(t1, t2): {
+			m1 = getTWordMetrics(t1, env);
+			m2 = getTWordMetrics(t2, env);
+			FormMetrics(m1.width - m2.width, m1.height - m2.height, m1.baseline - m2.baseline, m1.dHeight - m2.dHeight);
+		}
+		TGhostMin(n): {
+		 	v = lookupTreeDef(env, n, TEmpty());
+			getTWordMetrics(v, env);
+		}
+		TShift(t, __): {
+			getTWordMetrics(t, env);
+		}
+		TCssBlock(__, t): {
+		 	getTWordMetrics(t, env);
+		}
+		TMask(__, t): {
+			getTWordMetrics(t, env);
+		}
+		TSizeOf(t): {
+			getTWordMetrics(t, env);
+		}
+		TNamespace(t): {
+			getTWordMetrics(t, env);
+		}
+		TZoomFill(box): getTWordMetrics(box, env);
+		TPositionScale(__, t): {
+			getTropicMetrics(t);
+		}
+		TNative(fn): {
+			acc = fn(const(0.0), const(0.0));
+			m = acc.metrics;
+			applyall(acc.disposers);
+			FormMetrics(fgetValue(m.width), fgetValue(m.height), fgetValue(m.baseline), fgetValue(m.height));
+		}
+		TransformTAcc(fn): {
+			bf = fn(
+					\tr, p, s, mo -> {
+						met = getTWordMetrics(tr, env);
+
+						TAcc(FEmpty(), TFormMetrics(const(met.width), const(met.height), const(met.baseline)), zero, zero, zero, zero, zero, zero, const(false), false, false, [])
+					},
+					zeroTParentInfo,
+					emptyStylesheet,
+					false
+				);
+
+			applyall(bf.disposers);
+
+			FormMetrics(fgetValue(bf.metrics.width), fgetValue(bf.metrics.height), fgetValue(bf.metrics.baseline), fgetValue(bf.metrics.height))
+		}
+		TFullWindow(__, t): {
+			getTWordMetrics(t, env);
+		}
+	}
+}
+
+// Is this tropic constant size?
+isConstantSizeTropic(tr : Tropic) -> bool {
+	switch (tr) {
+		TEmpty(): true;
+		TText(t, s): true;
+		TGraphics(p, s): true;
+		TCols2(left, right): isConstantSizeTropic(left) && isConstantSizeTropic(right);
+		TBaselineCols2(left, right): isConstantSizeTropic(left) && isConstantSizeTropic(right);
+		TBaselineLines2(top, bottom): isConstantSizeTropic(top) && isConstantSizeTropic(bottom);
+		TLines2(up, down): isConstantSizeTropic(up) && isConstantSizeTropic(down);
+		TGroup2(down, up): isConstantSizeTropic(up) && isConstantSizeTropic(down);
+		TMinimumGroup2(down, up): isConstantSizeTropic(up) && isConstantSizeTropic(down);
+		TScale(fac, t): isFConst(fac) && isConstantSizeTropic(t);
+		TConstruct(__, t): isConstantSizeTropic(t);
+		TCrop(__, size, __): isFConst(size);
+		TTag(__, t): isConstantSizeTropic(t);
+		TFormIn(__, b): isConstantSizeTropic(b);
+		TForm(f): false;
+		TTranslate(__, t): isConstantSizeTropic(t);
+		TRotate(__, t): isConstantSizeTropic(t);
+		TInteractive(__, t): isConstantSizeTropic(t);
+		TAccess(__, t): isConstantSizeTropic(t);
+		TAlpha(__, t): isConstantSizeTropic(t);
+		TCursor(__, t): isConstantSizeTropic(t);
+		TCropSize(size, t): isConstantSizeTropic(size);
+		TSize(size, t): isConstantSizeTropic(size);
+		TDispose(__, t): isConstantSizeTropic(t);
+		TRounded(__, __, __, __, __, t): isConstantSizeTropic(t);
+		TBorder(left, top, right, bottom, t): isConstantSizeTropic(t);
+		TTweak(style, content, s): isConstantSizeTropic(content) && isConstantSizeTropic(s) &&
+			(extractStruct(style, TAlign(const(0.), const(0.))) |> (\ta -> isFConst(ta.xalign) && isFConst(ta.yalign)));
+		TAttach(ghost, fn): false;
+		TFillX(): false;
+		TFillY(): false;
+		TIf(cond, t, e): {
+			if (isConstantSizeTropic(t) && isConstantSizeTropic(e)) {
+				ts = getTropicMetrics(t);
+				es = getTropicMetrics(e);
+				ts.width == es.width && ts.height == es.height
+			} else false;
+		}
+		TFilter(__, t): isConstantSizeTropic(t);
+		TDebug(__, t): isConstantSizeTropic(t);
+/*		TAvailable(t, __): getTWordMetrics(t, env);
+		TPicture(u, s): {
+			size = extractStruct(s, WidthHeight(-1.0, -1.0));
+			size2 =
+				if (size != WidthHeight(-1.0, -1.0)) size
+				else {
+					cache = getCachedPictureSize(u);
+					either(cache, WidthHeight(20.0, 20.0));
+				}
+			makeMetrics(size2.width, size2.height);
+		}*/
+		TLet(v, val, scope): isConstantSizeTropic(scope);
+		TGhost(n): false;	// Requires env. tracking
+		TDisplay(n): false; // Requires env. tracking
+		TCase(sizes, cases): false;	// Little reason to use this otherwise
+		TVisible(visible, t): false;
+		TMutable(mt): false;
+		TScrollable(__, maxbox, __, __): false && isConstantSizeTropic(maxbox);	// TODO: Check if this might be right
+		TSubtractGroup2(t1, t2): isConstantSizeTropic(t1) && isConstantSizeTropic(t2);
+/*		TGhostMin(n): {
+		 	v = lookupTreeDef(env, n, TEmpty);
+			getTWordMetrics(v, env);
+		}
+		TControlFocus(__, t): {
+			getTWordMetrics(t, env);
+		}
+		TShift(t, __): {
+			getTWordMetrics(t, env);
+		}
+		TCssBlock(__, t): {
+		 	getTWordMetrics(t, env);
+		}
+		TMask(__, t): {
+			getTWordMetrics(t, env);
+		}*/
+		TSizeOf(t): isConstantSizeTropic(t);
+		TNamespace(t): isConstantSizeTropic(t);
+		// TZoomFill(box): false;
+		TNative(fn): false;
+		TransformTAcc(fn): {
+			bf = fn(
+					\t, p, s, mo -> {
+						c = isConstantSizeTropic(t);
+
+						TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(false), false, false, [])
+					},
+					zeroTParentInfo,
+					emptyStylesheet,
+					false
+				);
+
+			applyall(bf.disposers);
+
+			bf.xConstant && bf.yConstant
+		}
+		default: {
+			// println("TODO: const? " + tr.structname);
+			false;
+		}
+	}
+}

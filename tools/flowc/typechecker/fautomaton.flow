@@ -1,0 +1,130 @@
+import tools/flowc/typechecker/ftype_basic;
+import tools/flowc/debug;
+import tools/flowc/typechecker/fautomaton_types;
+import set;
+
+export {
+	// Given the dependencies of the environment, build a graph for debugging
+	buildFGraph(env : FEnv) -> FGraphEnv;
+
+	fgraph2dot(env : FGraphEnv, label : string, descriptions : Tree<int, [string]>) -> string;
+}
+
+buildFGraph(env : FEnv) -> FGraphEnv {
+	graph = fold(getTreeKeys(env.tyvarDeps), makeFGraphEnv(env), \acc, tv -> {
+		addFType2Graph(acc, tv).first
+	});
+	// OK, we should clear out the deps in the FEnv, since we are done with that
+	FGraphEnv(
+		FEnv(
+			graph.env.env,
+			graph.env.tyvarIdGroup, 
+			graph.env.verbose,
+			graph.env.tyvars,
+			makeTree(),	// We have to clear out the seen relations as well, so we will re-record any dependencies not resolved. See test 71
+			if (true) graph.env.tyvarDeps else makeTree(),
+		),
+		graph.graph,
+		graph.type2state,
+	);
+}
+
+makeFGraphEnv(env : FEnv) -> FGraphEnv {
+	FGraphEnv(
+		env,
+		FGraph(makeTree(), makeTree(), 0),
+		makeTree(),
+	);
+}
+
+addFType2Graph(env : FGraphEnv, type : FType) -> Pair<FGraphEnv, State> {
+	mexist = lookupTree(env.type2state, type);
+	switch (mexist) {
+		None(): {
+			state = State(env.graph.nstates, type);
+			ngraph = FGraph(
+				setTree(env.graph.states, env.graph.nstates, state),
+				env.graph.transitions,
+				env.graph.nstates + 1
+			);
+			nenv = FGraphEnv(
+				env.env,
+				ngraph,
+				setTree(env.type2state, type, state),
+			);
+			deps = getTreeArrayValue(env.env.tyvarDeps, type);
+			env1 = fold(deps, nenv, \acc, dep -> {
+				// TODO: What about the kind of unification?
+				addFTypeEdge(acc, state, dep.kind, dep.type)
+			});
+			Pair(env1, state);
+		}
+		Some(s): {
+			Pair(env, s);
+		}
+	}
+}
+
+addFTypeEdge(env : FGraphEnv, fromState : State, kind : FUnification, to : FType) -> FGraphEnv {
+	es = addFType2Graph(env, to);
+	nenv = es.first;
+	tr = es.second.id;
+	ngraph = FGraph(
+		nenv.graph.states,
+		treePushToArrayUnique(nenv.graph.transitions, fromState.id, KindTo(kind, tr)),
+		nenv.graph.nstates
+	);
+	FGraphEnv(
+		env.env,
+		ngraph,
+		nenv.type2state,
+	);
+}
+
+fgraph2dot(env : FGraphEnv, label : string, descriptions : Tree<int, [string]>) -> string {
+	a = env.graph;
+
+	nodesDump = foldTree(a.states, "", \id, st, acc -> {
+		acc + i2s(id) + " [" 
+			/*+ (if (containsSet(a.startStates, id) && containsSet(a.endStates, id)) " root=\"true\" shape=\"doubleoctagon\" " 
+				else if (containsSet(a.startStates, id)) " root=\"true\" shape=\"octagon\" " 
+				else if (containsSet(a.endStates, id)) " shape=\"doublecircle\" " 
+				else "")*/
+			+ " label=\"" 
+				+ ftype2string(env.env, st.type) + "\\n"
+				+ i2s(st.id)
+				+ {
+					switch (st.type) {
+						FTypeVar(tv): {
+							descs = getTreeArrayValue(descriptions, tv);
+							": " + strGlue(uniq(descs), " ") + "\\n";
+						}
+						default: "";
+					}
+
+				}
+				+ "\""
+			+ " style=\"filled\"" 
+		+ "];\n"
+	});
+
+	edgesDump = foldTree(a.transitions, "", \from, trs : [KindTo], acc -> {
+		fold(trs, acc, \acc2, tr : KindTo -> {
+			acc2 + i2s(tr.to) + " -> " + i2s(from) + " [label=\""
+				+ switch (tr.kind) {
+					FUnifyLeft(): "⊆";
+					FUnifyRight(): "⊆ .";
+					FGrowRight(): "grow right";
+					FReduceLeft(): "reduce left";
+				} +
+			"\"];\n"
+		})
+	});
+
+	"digraph graphname {\n"
+	    + "label=\"" + label + "\"\n"
+		+ nodesDump + "\n"
+		+ edgesDump + "\n"
+//		strGlue(stylesAttrs, " ") + "\n"
+	+ "}"
+}

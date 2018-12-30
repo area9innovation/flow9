@@ -1,0 +1,1936 @@
+import material/material2tropic;
+import formats/html/form2html;
+import wigi/wigi_expr_parser;
+import material/extra/material2html/types;
+import material/extra/material2html/utils;
+import blueprint;
+import binarytreeutils;
+import renderform;
+
+export {
+	material2Tags(material : Material, manager : Material2HtmlManager) -> TagsState;
+
+	tags2HTML(ts : TagsState) -> string;
+
+	parseStyles(styles : TextStyles) -> string;
+}
+
+TagAttributes ::= TagClass, TagProperty, TagStyle, TagNoAttribute;
+	TagClass(name : string);
+	TagProperty(name : string, value : string);
+	TagStyle(name : string, value : string);
+	TagNoAttribute();
+
+Tags ::= HtmlTag0, HtmlTag1, HtmlTag2, HtmlBlock, HtmlSelector;
+	HtmlTag0(parent : int);
+	HtmlTag1(name : string, attributes : [TagAttributes], parent : int);
+	HtmlTag2(name : string, attributes : [TagAttributes], parent : int);
+	HtmlBlock(html : string, parent : int);
+	HtmlSelector(name : string, styles : [TagStyle], parent : int);
+
+TagsState(array : [Tags], index : int);
+
+htmlTag0() \ts : TagsState -> ts;
+
+htmlTag1(name : string, attributes : [TagAttributes]) \ts : TagsState -> TagsState(arrayPush(ts.array, HtmlTag1(name, attributes, ts.index)), length(ts.array));
+
+htmlTag2(name : string, attributes : [TagAttributes], content : [(TagsState) -> TagsState])
+	\ts : TagsState -> {
+		index = length(ts.array);
+
+		fold(
+			content,
+			TagsState(arrayPush(ts.array, HtmlTag2(name, attributes, ts.index)), index),
+			\state,
+			c -> { s = state |> c; TagsState(s.array, index); }
+		);
+	}
+
+htmlBlock(html : string) \ts : TagsState -> TagsState(arrayPush(ts.array, HtmlBlock(html, ts.index)), length(ts.array));
+
+htmlTagStyle(attributes : [TagAttributes], content : [(TagsState) -> TagsState]) \ts : TagsState -> ts |> htmlTag2("style", attributes, content);
+
+htmlTagStyleSelector(name : string, styles : [TagStyle]) \ts : TagsState -> TagsState(arrayPush(ts.array, HtmlSelector(name, styles, ts.index)), length(ts.array));
+
+foldFromI(a : [?], acc : ??, fn : (??, int, ?) -> ??, i : int) -> ?? { if (i < length(a)) foldFromI(a, fn(acc, i, a[i]), fn, i + 1) else acc; }
+
+getTagParent(ts : TagsState)
+	if (existsIndex(ts.array, ts.index)) TagsState(ts.array, ts.array[ts.index].parent)
+	else TagsState(ts.array, -1);
+
+getTagChildren(ts : TagsState) foldFromI(ts.array, [], \acc, i, tag -> if (tag.parent == ts.index) arrayPush(acc, TagsState(ts.array, i)) else acc, ts.index + 1);
+
+getTagChild(index : int)
+	\ts : TagsState -> {
+		indexes = foldFromI(ts.array, [], \acc, i, tag -> if (tag.parent == ts.index) arrayPush(acc, i) else acc, ts.index + 1);
+
+		if (existsIndex(indexes, index)) TagsState(ts.array, indexes[index]) else TagsState(ts.array, -1);
+	}
+
+getNextTag(ts : TagsState) {
+	parent = ts |> getTagParent;
+
+	if (parent.index == -1) TagsState(ts.array, -1)
+	else TagsState(ts.array,
+		switch (findiex(ts.array, \tag -> tag.parent == parent.index, ts.index + 1)) {
+			None(): -1;
+			Some(i): i;
+		}
+	)
+}
+
+nextTagUntil(fn : (TagsState) -> TagsState) \ts : TagsState -> if (ts.index != -1) TagsState((ts |> fn).array, ts.index) |> getNextTag |> nextTagUntil(fn) else ts;
+
+isRequiredAttribute(type : string, name : string)
+	\a : TagAttributes -> {
+		a.structname == type &&
+		switch (a) {
+			TagClass(n): n == name;
+			TagProperty(n, __): n == name;
+			TagStyle(n, __): n == name;
+			TagNoAttribute(): false;
+		}
+	}
+
+indexTagAttribute(type : string, name : string)
+	\ts : TagsState -> {
+		tag : Tags = ts.array[ts.index];
+
+		switch (tag) {
+			HtmlBlock(__, __): -1;
+			HtmlTag0(__): -1;
+			HtmlSelector(__, __, __): -1;
+			HtmlTag1(__, attributes, parent): iteriUntil(attributes, \i, a -> a |> isRequiredAttribute(type, name)) |> (\i -> if (i == length(attributes)) -1 else i);
+			HtmlTag2(__, attributes, parent): iteriUntil(attributes, \i, a -> a |> isRequiredAttribute(type, name)) |> (\i -> if (i == length(attributes)) -1 else i);
+		}
+	}
+
+addTagAttribute(attribute : TagAttributes)
+	\ts : TagsState -> {
+		tag : Tags = ts.array[ts.index];
+
+		TagsState(
+			replace(
+				ts.array,
+				ts.index,
+				switch (tag) {
+					HtmlTag1(n, a, p): HtmlTag1(n, arrayPush(a, attribute), p);
+					HtmlTag2(n, a, p): HtmlTag2(n, arrayPush(a, attribute), p);
+					default: tag;
+				}
+			),
+			ts.index
+		)
+	}
+
+removeTagAttribute(i : int)
+	\ts : TagsState ->
+		if (i != -1) {
+			tag : Tags = ts.array[ts.index];
+
+			TagsState(
+				replace(
+					ts.array,
+					ts.index,
+					switch (tag) {
+						HtmlTag1(n, a, p): HtmlTag1(n, removeIndex(a, i), p);
+						HtmlTag2(n, a, p): HtmlTag2(n, removeIndex(a, i), p);
+						default: tag;
+					}
+				),
+				ts.index
+			)
+		} else ts;
+
+getTagAttributeValue(type : string, name : string)
+	\ts : TagsState ->
+		ts |> indexTagAttribute(type, name)
+			|> (\i ->
+				if (i == -1) None()
+				else {
+					tag : Tags = ts.array[ts.index];
+					attribute = (
+						switch (tag) {
+							HtmlTag1(__, a, __): a;
+							HtmlTag2(__, a, __): a;
+							default: [ TagNoAttribute() ];
+						})[i];
+
+					switch (attribute) {
+						TagProperty(__, value): Some(value);
+						TagStyle(__, value): Some(value);
+						default: None();
+					};
+				}
+			);
+
+indexTagClass(name : string) \ts : TagsState -> (ts |> indexTagAttribute("TagClass", name));
+
+indexTagProperty(name : string) \ts : TagsState -> (ts |> indexTagAttribute("TagProperty", name));
+
+indexTagStyle(name : string) \ts : TagsState -> (ts |> indexTagAttribute("TagStyle", name));
+
+existTagClass(name : string) \ts : TagsState -> i2b((ts |> indexTagClass(name)) + 1);
+
+existTagProperty(name : string) \ts : TagsState -> i2b((ts |> indexTagProperty(name)) + 1);
+
+existTagStyle(name : string) \ts : TagsState -> i2b((ts |> indexTagStyle(name)) + 1);
+
+addTagClass(name : string) \ts : TagsState -> if (!(ts |> existTagClass(name))) ts |> addTagAttribute(TagClass(name)) else ts;
+
+addTagProperty(name : string, value : string) \ts : TagsState -> (ts |> removeTagProperty(name) |> addTagAttribute(TagProperty(name, value)));
+
+addTagStyle(name : string, value : string)
+	\ts : TagsState -> {
+		tag : Tags = ts.array[ts.index];
+
+		switch (tag) {
+			HtmlBlock(h, p): // Experimental
+				TagsState(
+					replace(
+						ts.array,
+						ts.index,
+						HtmlBlock(
+							/*map(parseXml3(h), \xml ->
+								switch (xml : XmlNode) {*/
+							switch (h |> parseXml2) {
+								XmlElement(t, a, c):
+									XmlElement(
+										t,
+										fold(a, Pair([], ""), \acc : Pair<[XmlAttribute], string>, attribute : XmlAttribute -> {
+											f = (toLowerCase(attribute.key) == "style");
+
+											Pair(if (f) acc.first else arrayPush(acc.first, attribute),	if (f) attribute.value else acc.second)
+										}) |> (\pair ->
+											arrayPush(
+												pair.first,
+												XmlAttribute(
+													"style",
+													fold(strSplit(pair.second, ";"), [], \acc2, style ->
+														if (style == "") acc2
+														else {
+															s = strSplit(style, ":");
+															n = trim(s[0]);
+
+															if (n == name) acc2 else arrayPush(acc2, n + ":" + trim(s[1]));
+														}
+													) |> (\s -> arrayPush(s, name + ":" + value)) |> glue("; ")
+												)
+											)
+										),
+										c
+									) |> xml2string;
+								XmlText(text): text;
+							},
+								/*}
+							) |> glue(""),*/
+							p
+						)
+					),
+					ts.index
+				);
+			default: ts |> removeTagStyle(name) |> addTagAttribute(TagStyle(name, value));
+		}
+	}
+
+addCustomFontFamily(family : string)
+	\ts : TagsState -> {
+		htmlFont = font2htmlFont(family);
+		(ts
+			|> addTagStyle("font-family", htmlFont2familiesString(htmlFont))
+			|> eitherMap(htmlFont.weight, \w -> addTagStyle("font-weight", i2s(w)), idfn)
+			|> eitherMap(htmlFont.style, \s -> addTagStyle("font-style", s), idfn)
+		)
+	}
+
+removeTagClass(name : string) \ts : TagsState -> (ts |> indexTagClass(name)) |> (\i -> (ts |> removeTagAttribute(i)));
+
+removeTagProperty(name : string) \ts : TagsState -> (ts |> indexTagProperty(name)) |> (\i -> (ts |> removeTagAttribute(i)));
+/*
+removeTagStyle(name : string)
+	\ts : TagsState -> {
+		tag : Tags = ts.array[ts.index];
+
+		switch (tag) {
+			HtmlBlock(h, p): -1;
+			default: (ts |> indexTagStyle(name)) |> (\i -> (ts |> removeTagAttribute(i)));
+		}
+	}
+*/
+removeTagStyle(name : string) \ts : TagsState -> (ts |> indexTagStyle(name)) |> (\i -> (ts |> removeTagAttribute(i)));
+
+getTagStyleValue(name : string)
+	\ts : TagsState -> {
+		tag : Tags = ts.array[ts.index];
+
+		switch (tag) {
+			HtmlBlock(h, p): { // Experimental
+				h |> parseXml2 |> getXmlAttributes
+					|> (\a -> getXmlAttribute(a, "style", ""))
+					|> (\s -> strSplit(s, ";"))
+					|> (\s ->
+						switch (find(s, \style -> (trim(strSplit(style, ":")[0]) == name))) {
+							Some(v): Some(trim(strSplit(v, ":")[1]));
+							None(): None();
+						}
+					);
+			}
+			default: ts |> getTagAttributeValue("TagStyle", name);
+		}
+	}
+
+getTagPropertyValue(name : string) \ts : TagsState -> ts |> getTagAttributeValue("TagProperty", name);
+
+loopFor(values : [?], func : (?) -> (TagsState) -> TagsState) -> (TagsState) -> TagsState { \ts : TagsState -> fold(values, ts, \t, value -> t |> func(value)) }
+
+forFunc(func : (TagsState) -> TagsState) \tf : (TagsState) -> TagsState -> (\ts : TagsState -> { tfs = ts |> tf; TagsState((tfs |> func).array, tfs.index) });
+
+getMColor(color : MColor)
+	if (color.color == CCustom())
+		"#" + formatColor(color.shade)
+	else {
+		concat(
+			strSplit(toLowerCase(mColorName2s(color)), " "),
+			[
+				if (color.shade > 0) ((if (color.accent) "A" else "") + i2s(color.shade))
+				else ""
+			]
+		) |> glue("-");
+	}
+
+getMColorHex(color : MColor) "#" + formatColor(MColor2int(color));
+
+color_style_names : [string] = [ "color", "background-color" ];
+color_class_names : [string] = [ "mdl-color-text--", "mdl-color--" ];
+
+applyColorStyle(type : int) \color : MColor -> color |> getMColorHex |> (\c -> addTagStyle(color_style_names[type], c));
+
+applyColorStyleOrClass(type : int)
+	\color : MColor -> color |> getMColor |> (\c -> if (getCharAt(c, 0) == "#") addTagStyle(color_style_names[type], c) else addTagClass(color_class_names[type] + c));
+
+GraphicsStyles ::= TGraphicsStyle, GraphicsStyle;
+TextStyles ::= MTextStyle, MFontStyle;
+ButtonStates ::= MButtonState, MRippleStyle, MCheckableStyle, MSliderStyle;
+
+applyGraphicsStyle(style : GraphicsStyles)
+	switch (style) {
+		Fill(color): addTagStyle("background-color", "#" + formatColor(color));
+		FillOpacity(opacity): addTagStyle("opacity", d2s(opacity));
+		default: idfn;
+	}
+
+applyTGraphicsStyle(style : GraphicsStyles) style |> applyGraphicsStyle;
+
+applyPictureStyle(style : MPictureStyle)
+	switch (style) {
+		DontCache(): idfn;
+		OnlyDownloadToCache(): addTagStyle("display", "none");
+//		OnLoadingError(fn): idfn;
+//		OnLoaded(fn): idfn;
+		default: idfn;
+	}
+
+applyMPictureStyle(style : MPictureStyle)
+	switch (style) {
+//		TCssStyle: idfn;
+		WidthHeight(width, height):
+			\ts -> ts |> addTagProperty("width", d2s(width)) |> addTagProperty("height", d2s(height));
+//		TIgnoreCachedPictureSize(): idfn;
+		default: style |> applyPictureStyle;
+	}
+
+applyMTextButtonStyle(style : MTextButtonStyle)
+	switch (style) {
+		MColor(color, shade, accent):
+			\ts -> ts
+				|> removeTagClass("mdl-button--" + (if (accent) "colored" else "accent"))
+				|> addTagClass("mdl-button--" + (if (accent) "accent" else "colored"))
+				|> (style |> (applyColorStyleOrClass(if (ts |> existTagClass("mdl-button--raised")) 1 else 0))); // color applying depend on "mdl-button--raised" class exists
+		//MButtonTextColor(w): idfn; // made in code
+		MFullWidth(): addTagStyle("width", "100%");
+		default: idfn;
+	}
+
+applyCursorShape(cursor : CursorShape) {
+	name = getCursorShapeName(cursor);
+	if (name == "") {
+		idfn;
+	} else {
+		addTagStyle("cursor", name);
+	}
+}
+
+applyRippleType(type : RippleType)
+	switch (type) {
+		MRippleFill(): addTagClass("mdl-js-ripple-effect");
+		MRippleCenter(): idfn; // ???
+		MRippleCustom(rippleRadius, rippleOffset): idfn; // ???
+		MNoRipple(): removeTagClass("mdl-js-ripple-effect");
+	}
+
+applyMRippleStyle(style : ButtonStates)
+	switch (style) {
+		MRippleColor(color): idfn; // ???
+		MRippleOpacity(opacity): idfn; // ???
+		MRippleType(type): fgetValue(type) |> applyRippleType;
+		default: idfn;
+	}
+
+applyMButtonState(state : ButtonStates)
+	switch (state) {
+		MEnabled(enabled): if (fgetValue(enabled)) removeTagProperty("disabled") else addTagProperty("disabled", "");
+		MCursorShape(shape): fgetValue(shape) |> applyCursorShape;
+		default: state |> applyMRippleStyle;
+	}
+
+applyMIconStyle(style : MIconStyle)
+	switch (style) {
+//		MColor(color, shade, accent): idfn; // Changed by code
+		MCircleBackground(color, size):
+			\ts ->
+				ts |> (color |> applyColorStyleOrClass(1))
+					|> addTagStyle("border-radius", "50%")
+					|> addTagStyle("width", d2s(size - 4.) + "px")
+					|> addTagStyle("height", d2s(size - 4.) + "px")
+					|> addTagStyle("line-height", d2s(size - 4.) + "px")
+					|> addTagStyle("text-align", "center");
+//		FillOpacity(opacity): idfn; // Changed by code
+		MIconSize(size):addTagStyle("font-size", d2s(size) + "px");
+//		MIconDisabled(): idfn; // Changed by code
+		MElevation(z): addTagStyle("text-shadow", "rgba(0,0,0,.3) 0 " + d2s(fgetValue(z)) + "px " + d2s(fgetValue(z)) + "px"); // Test shadow
+		default: idfn;
+	}
+
+applyMFontStyle(style : TextStyles)
+	switch (style) {
+		MDisplay2(): \ts -> ts |> addTagStyle("font-size", "45px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.54"); //FontSize(45.0), FontFamily("Roboto"), FillOpacity(0.54)
+		MDisplay1(): \ts -> ts |> addTagStyle("font-size", "34px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.54"); //FontSize(34.0), FontFamily("Roboto"), FillOpacity(0.54)
+		MDisplay1Medium(): \ts -> ts |> addTagStyle("font-size", "34px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.54"); //FontSize(34.0), FontFamily("RobotoMedium"), FillOpacity(0.54)
+		MHeadline(): \ts -> ts |> addTagStyle("font-size", "24px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(24.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MSubheading(): \ts -> ts |> addTagStyle("font-size", "16px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(16.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MTitle(): \ts -> ts |> addTagStyle("font-size", "20px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(20.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MBody(): \ts -> ts |> addTagStyle("font-size", "14px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(14.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MListBody(): \ts -> ts |> addTagStyle("font-size", "14px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.54"); //FontSize(14.0), FontFamily("Roboto"), FillOpacity(0.54)
+		MBodyBold(): \ts -> ts |> addTagStyle("font-size", "14px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.87"); //FontSize(14.0), FontFamily("RobotoMedium"), FillOpacity(0.87)
+		MCaption(): \ts -> ts |> addTagStyle("font-size", "12px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.54"); //FontSize(12.0), FontFamily("Roboto"), FillOpacity(0.54)
+		MButtonStyle(): \ts -> ts |> addTagStyle("font-size", "14px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.87"); //FontSize(14.0), FontFamily("RobotoMedium"), FillOpacity(0.87)
+		MSecondaryButtonStyle(): \ts -> ts |> addTagStyle("font-size", "14px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.54"); //FontSize(14.0), FontFamily("RobotoMedium"), FillOpacity(0.54)
+
+		MCaptionSolid(): \ts -> ts |> addTagStyle("font-size", "12px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(12.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MCaptionColumn(): \ts -> ts |> addTagStyle("font-size", "12px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.54"); //FontSize(12.0), FontFamily("RobotoMedium"), FillOpacity(0.54)
+		MCaptionColumnSelected(): \ts -> ts |> addTagStyle("font-size", "12px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.87"); //FontSize(12.0), FontFamily("RobotoMedium"), FillOpacity(0.87)
+		MDataRow(): \ts -> ts |> addTagStyle("font-size", "13px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "400") |> addTagStyle("opacity", "0.87"); //FontSize(13.0), FontFamily("Roboto"), FillOpacity(0.87)
+		MTooltipDesktop(): \ts -> ts |> addTagStyle("font-size", "12px") |> addTagStyle("font-family", "Roboto") |> addTagStyle("font-weight", "500") |> addTagStyle("opacity", "0.87"); //FontSize(12.0), FontFamily("RobotoMedium"), FillOpacity(0.87)
+		MCustomFont(size, family, opacity): \ts -> ts |> addTagStyle("font-size", d2s(size) + "px") |> addCustomFontFamily(family) |> addTagStyle("opacity", d2s(opacity));
+		default: idfn;
+	}
+
+applyMTextStyle(style : TextStyles)
+	switch (style) {
+		MColor(color, shade, accent): style |> applyColorStyleOrClass(0);
+		Underlined(styles) : addTagStyle("text-decoration", "underline");
+		default: style |> applyMFontStyle;
+	}
+
+applyMInputStyle(style : MTextInputStyle)
+	switch (style) {
+		MWidth(width): addTagStyle("width", d2s(width) + "px"); // Width of the input
+//		Numeric(numeric : bool): idfn;
+//		TextInputFilter(f : (string) -> bool): idfn; // Callback receives content of textfield which is set if cb returns true.
+//		TextInputType(inputType): [ inputType |> getInputType ];
+		MFloatingLabel(): addTagClass("mdl-textfield--floating-label");
+//		MDynamicSize(): idfn;
+		default: idfn;
+	}
+
+applyAutoAlignType(style : AutoAlignType)
+	switch (style) {
+		AutoAlignLeft(): addTagStyle("text-align", "left");
+		AutoAlignRight(): addTagStyle("text-align", "right");
+		AutoAlignCenter(): addTagStyle("text-align", "center");
+		AutoAlignNone(): removeTagStyle("text-align");
+	}
+
+applyMInputStyle2(style : MTextInputStyle)
+	switch (style) {
+		MCustomTextStyle(styles): loopFor(styles, applyMTextStyle); // Custom size and color, use MCustomFont for custom fontfamilies and opacities.
+		MMaxLines(lines): addTagProperty("rows", i2s(lines));
+		MaxChars(n): addTagProperty("maxlength", i2s(n));
+		ReadOnly(readOnly): if (readOnly) addTagProperty("readonly", "") else idfn;
+		AutoAlign(autoalign): autoalign |> applyAutoAlignType;
+		default: idfn;
+	}
+
+applyMTextInputStyle(style : MTextInputStyle)
+	switch (style) {
+//		WordWrap(wordWrap: bool): idfn; // Wordwrap is equal to fixed size. Fixed size blocks align. Do not use. Introduced for very special case. Default true
+//		MColor(color, shade, accent): idfn; // Changed by style class replacing
+//		MEditIcon(enabled : bool): idfn;
+//		MCondensed(condensed : bool): idfn; //Style for slimmer rows (height = 32 dp)
+//		MInputTemplate(template : string, check : (s : string) -> bool): idfn;
+//		MFilterAction(action : (string) -> void): idfn;
+		default: style |> applyMInputStyle;
+	}
+
+applyMCheckableStyle(style : ButtonStates)
+	switch (style) {
+//		MColor(color, shade, accent): idfn; // Changed by style classes replacing
+		MIconButtonBorder(border):
+			\ts ->
+				TagsState(
+					(ts |> addTagStyle("padding-left", d2s(16. + border) + "px")
+						|> getTagParent
+							|> addTagStyle("padding-top", d2s(border) + "px")
+							|> addTagStyle("padding-bottom", d2s(border) + "px")
+							|> addTagStyle("padding-left", d2s(border) + "px")).array,
+					ts.index
+				);
+		default: style |> applyMButtonState;
+	}
+
+applyMSliderStyle(style : ButtonStates)
+	switch (style) {
+//		MColor(color, shade, accent): idfn; // made in code
+//		MSliderDiscrete(): idfn; // library don't support green cursor
+		default: style |> applyMButtonState;
+	}
+
+applyMExpanderStyle(style : MExpanderStyle)
+	switch (style) {
+		MColor(color, shade, accent): style |> applyColorStyleOrClass(0);
+		FillOpacity(opacity): addTagStyle("opacity", d2s(opacity));
+//		MNoDispose(): idfn; // ???
+//		MExpanderNarrowHeader(): idfn; // ???
+		default: idfn;
+	}
+
+applyMCardStyle(style : MCardStyle)
+	switch (style) {
+		MColor(color, shade, accent): style |> applyColorStyleOrClass(1);
+		FillOpacity(opacity): addTagStyle("opacity", d2s(opacity));
+		MCardNoOuterBorders(): idfn; // Implemented in code
+		MBackgroundImage(image, light):
+			\ts ->
+				ts |> addTagStyle("background", "url('" + image + "') no-repeat")
+					|> addTagStyle("background-size", "cover")
+					|> addTagStyle("background-position", "center");
+		MCardWidth(width):
+			\ts ->
+				ts |> addTagStyle("min-width", d2s(width) + "px")
+					|> addTagStyle("width", d2s(width) + "px");
+		MCardHeight(height): addTagStyle("height", d2s(height) + "px");
+		MCardTextColor(color): idfn; // Implemented in code by function
+		MAlignBottom(): idfn; // Force align to bottom inside block
+		MContentBorders(borders): if (!borders) addTagStyle("padding", "0px") else idfn;
+		MMoreMenu(items, state): idfn; // MMoreMenu(items : [MMenuLine], state : [MMenuStyle]); // Three dot menu at top right corner (see. MMenu for structure)
+		default: idfn;
+	}
+
+
+applyMCardColor(styles : [ MCardStyle ], type : int, style_only : bool) {
+	image = extractStruct(styles, MBackgroundImage("", false));
+	text_color = extractStruct(styles, MCardTextColor(MColor(CWhite(), -1, false))).color;
+	bg_color = extractStruct(styles, MColor(CWhite(), -1, false));
+
+	(
+		if (text_color != MColor(CWhite(), -1, false)) text_color
+		else
+			if (bg_color == MColor(CWhite(), -1, false)) {
+				if (image == MBackgroundImage("", false)) MBlack()
+				else { if (image.light) MBlack() else MWhite() }
+			} else MColor(CCustom(), MTextColor(bg_color), false)
+	) |> (if (style_only) applyColorStyle(type) else applyColorStyleOrClass(type));
+}
+
+applyMCardActionColor(material : Material, styles : [ MCardStyle ]) -> Material {
+	switch (material) {
+		MTextButton(text, on_click, button_styles, button_states): {
+			MTextButton(text,
+				on_click,
+				if (length(extractStructMany(button_styles, MColor(CWhite(), -1, false))) > 0) button_styles
+				else {
+					if (length(extractStructMany(button_styles, MColor(CWhite(), -1, false))) == 0) concat([ MBlack() ], button_styles)
+					else concat([ if (extractStruct(styles, MCardTextColor(MWhite())).color == MWhite()) MWhite() else MBlack() ], button_styles)
+				},
+				button_states
+			);
+		}
+		default: MCenterY(material);
+	}
+}
+
+makeStyle4Values(a, b, c, d) map([ a, b, c, d ], \n -> d2s(n) + "px") |> glue(" ");
+
+struct2Array(m : Material, name : string)
+	\a : [Material] ->
+		switch (m) {
+			TEmpty(): a;
+			MGroup2(m1, m2): if (m.structname == name) a |> struct2Array(m1, name) |> struct2Array(m2, name) else arrayPush(a, m);
+			MCols2(m1, m2): if (m.structname == name) a |> struct2Array(m1, name) |> struct2Array(m2, name) else arrayPush(a, m);
+			MLines2(m1, m2): if (m.structname == name) a |> struct2Array(m1, name) |> struct2Array(m2, name) else arrayPush(a, m);
+			default: arrayPush(a, m);
+		}
+
+isWideTag(material : Material)
+	\ts : TagsState ->
+		switch (material) {
+			TFillX(): true;
+			MTextInput(__, __, __):
+				switch (ts |> getTagStyleValue("width")) {
+					None(): true;
+					Some(v): (!strContains(v, "%"));
+				}
+			default: false;
+		}
+
+material2HtmlBlock(material : Material, manager : Material2HtmlManager) -> (TagsState) -> TagsState {
+	\ts : TagsState ->
+		ts |> htmlBlock(staticMaterial2tropic(manager.mm, material) |> (\tropic -> staticTropic2form(tropic, emptyStylesheet)) |> (\form -> staticForm2html(form)));
+}
+
+wigiExpr2JsExprEx(expression : WigiExpr, templates : ref Tree<string, Pair<int, string>>) -> Pair<string, [string]> {
+	switch (expression) {
+		WigiBool(value): Pair(b2s(value), []);
+		WigiInt(value): Pair(i2s(value), []);
+		WigiDouble(value): Pair(d2s(value), []);
+		WigiString(value): Pair(value, []);
+		WigiVarRef(value): // Temporary solution: if value is absent in wigiExprFunctions then translate value to function
+			if (lookupTree(^templates, toUpperCase(value)) == None()) Pair(value + "()", [ value ]) else Pair(value, []);
+		WigiCall(fn, args): {
+			template = lookupTreeDef(^templates, toUpperCase(wigiExpr2JsExprEx(fn, templates).first), Pair(0, ""));
+
+			params = foldi(subrange(args, 0, template.first), Pair([], []), \i, acc, arg -> {
+				pair = wigiExpr2JsExprEx(arg, templates);
+
+				Pair(
+					concat(acc.first, [ "arg" + i2s(i), pair.first ]),
+					concat(acc.second, pair.second)
+				)
+			});
+
+			Pair(blueprint(template.second, params.first), params.second)
+		}
+		WigiMultiplicative(args): {
+			pair0 = wigiExpr2JsExprEx(args[0], templates); pair1 = wigiExpr2JsExprEx(args[1], templates);
+			Pair(pair0.first + pair1.first, concat(pair0.second, pair1.second))
+		}
+		WigiMult(oper, expr): { pair = wigiExpr2JsExprEx(expr, templates); Pair(pair.first + " " + oper + " ", pair.second) }
+		default: Pair("", []);
+	}
+}
+
+wigiExpr2JsExpr(expression : WigiExpr) {
+	templates = pairs2tree([
+		Pair("+", Pair(2, "(%arg0% + %arg1%)")),
+		Pair("-", Pair(2, "(%arg0% - %arg1%)")),
+		Pair(">", Pair(2, "(%arg0% > %arg1%)")),
+		Pair(">=", Pair(2, "(%arg0% >= %arg1%)")),
+		Pair("<", Pair(2, "(%arg0% < %arg1%)")),
+		Pair("<=", Pair(2, "(%arg0% <= %arg1%)")),
+		Pair("=", Pair(2, "(%arg0% == %arg1%)")),
+		Pair("<>", Pair(2, "(%arg0% != %arg1%)")),
+		Pair("NOT", Pair(1, "!(%arg0%)")),
+		Pair("AND", Pair(2, "(%arg0% && %arg1%)")),
+		Pair("OR", Pair(2, "(%arg0% || %arg1%)")),
+		Pair("IF", Pair(3, "(%arg0% ? %arg1% : %arg2%)"))
+	]);
+
+	pair = wigiExpr2JsExprEx(expression, ref templates);
+
+	Pair(pair.first, pair.second |> uniq |> glue(", "))
+}
+
+material2Tags(material : Material, manager : Material2HtmlManager) TagsState([ HtmlTag0(-1) ], 0) |> material2TagsEx(material, manager);
+
+makeTagId(manager : Material2HtmlManager) -> string {
+	"id" + i2s(makeTropicTag(manager.mm));
+}
+
+parseStyles(styles : TextStyles) -> string {
+	strsubsmart(
+		TagsState([ HtmlTag0(-1) ], 0) |>
+			htmlTag2("", [], [])|>
+			applyMTextStyle(styles) |> tags2HTML,
+		9, -2);
+}
+
+material2TagsEx(material : Material, manager : Material2HtmlManager) -> (TagsState) -> TagsState {
+	\ts : TagsState ->
+		switch (material : Material) {
+			TEmpty(): ts |> htmlTag0();
+
+			TMutable(m): ts |> material2TagsEx(fgetValue(m), manager);
+
+			TBorder(left, top, right, bottom, m):
+				ts |> (
+					if (right == 0.0 && bottom == 0.0 && isSameStructType(m, TEmpty()))
+						htmlTag2("div", [ TagStyle("width", d2s(left) + "px"), TagStyle("height", d2s(top) + "px") ], [])
+					else material2HtmlBlock(material, manager)
+				);
+
+			TRounded(left_top, right_top, right_bottom, left_bottom, styles, avail): {
+				// all of styles not implemented yet
+
+				ts |> material2TagsEx(avail, manager)
+					|> loopFor(styles, applyTGraphicsStyle)
+					|> addTagStyle("border-radius", makeStyle4Values(left_top, right_top, right_bottom, left_bottom));
+			}
+
+			TFormAvailable(form, box): {
+				tag = ts |> material2TagsEx(box, manager);
+
+				TagsState((tag |> htmlBlock(form |> staticForm2html)).array, tag.index);
+			}
+
+			MConstruct(constructors, m): ts |> material2TagsEx(m, manager);
+
+			MMutable(m): ts |> material2TagsEx(fgetValue(m), manager);
+
+			MActivate(m, states): ts |> material2TagsEx(m, manager);
+
+			MAvailable(m, avail): {
+				tag = ts |> material2TagsEx(avail, manager);
+
+				TagsState((tag |> material2TagsEx(m, manager)).array, tag.index);
+			}
+
+			MTranslate(point, m): {
+				p = fgetValue(point);
+
+				ts |> htmlTag2("div",
+					[ TagStyle("transform", "translate(" + d2s(p.x) + "px," +  d2s(p.y) + "px)"), TagStyle("transform-origin", "0") ],
+					[ material2TagsEx(m, manager) ]
+				);
+			}
+
+			MOffset(dx, dy, m): ts |> material2TagsEx(MTranslate(const(Point(dx, dy)), m), manager);
+
+			MText(text, styles): ts |> htmlTag2("span", [ TagStyle("white-space", "nowrap") ], [ htmlBlock(text) ]) |> loopFor(styles, applyMTextStyle);
+
+			MPicture(url, styles): {
+				// PictureStyle not implemented yet:
+				//	OnLoadingError : (fn : (string) -> void);
+				//	OnLoaded : (fn : ()->void);
+				// TCssStyle not yet implemented
+
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+
+				value_formula = wigiExpr2JsExpr(ivalue);
+
+				id = makeTagId(manager);
+
+				ts |> htmlTag2("span", [],
+					[
+						\t ->
+							t |> htmlTag1("img", [ TagProperty("id", id), TagProperty("src", if (contains(styles, DontCache())) "" else url) ])
+								|> loopFor(styles, applyMPictureStyle),
+						if (contains(styles, DontCache()))
+							htmlTag2("script", [], [
+								htmlBlock(
+									"document.getElementById('" + id + "').src = '" + url +
+									(if (strContains(url, "?")) "&' + Date.now()" else "?' + Date.now()") + ";"
+								)
+							])
+						else htmlTag0(),
+						htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+									fmdl.interact.init('" + id + "', '" + iname + "', '" + url + "',
+										function (value, id) {
+											var elem = document.getElementById(id);
+											elem.src = value;
+										},
+										function (id) {
+											var elem = document.getElementById(id);
+											return elem.src;										}
+									).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+								});"
+							)
+						])
+					]
+				);
+			}
+
+			MBorder(left, top, right, bottom, m): ts |> htmlTag2("div", [ TagStyle("padding", makeStyle4Values(top, right, bottom, left)) ], [ material2TagsEx(m, manager) ]);
+
+			MGroup(ms): ts |> material2TagsEx(fold(ms, TEmpty(), \acc, m : Material -> MGroup2(acc, m)), manager);
+
+			MGroup2(m1, m2): {
+				ms = [] |> struct2Array(material, "MGroup2");
+
+				ts |> htmlTag2("div",
+					[ TagStyle("position", "relative") ],
+					mapi(ms, \i, m -> htmlTag2("div", [ TagStyle("position", "relative"), if (i > 0) TagStyle("margin-top", "-100%") else TagNoAttribute() ], [ material2TagsEx(m, manager) ]))
+				);
+			}
+
+			MBaselineCols(ms): ts |> material2TagsEx(MCols(ms), manager); // Temporary solution
+
+			MCols(ms): ts |> material2TagsEx(fold(ms, TEmpty(), \acc, m -> MCols2(acc, m)), manager);
+
+			MCols2(m1, m2): {
+				ms = [] |> struct2Array(material, "MCols2");
+
+				tag = ts |>
+					htmlTag2("div",
+						[ TagStyle("display", "table")/*, TagStyle("height", "100%")*/ ], // Need to invent when set "height:100%" style (when TFillY inside and maybe more cases)
+						map(ms, \m ->
+							htmlTag2("div",
+								[
+									TagStyle("display", "table-cell"),
+									if (m.structname == "TFillX") TagNoAttribute() else TagStyle("vertical-align", "top")
+								],
+								[ if (m.structname == "TFillX") htmlTag0() else material2TagsEx(m, manager) ]
+							)
+						)
+					);
+
+				children = tag |> getTagChildren;
+
+				wide_tags = foldi(ms, [], \i, acc, m -> if (children[i] |> isWideTag(m)) arrayPush(acc, i) else acc);
+
+				l = length(wide_tags);
+
+				if (l != 0) {
+					width = d2s(100. / i2d(l)) + "%";
+
+					fold(wide_tags, tag |> addTagStyle("width", "100%"), \t, i -> TagsState((t |> getTagChild(i) |> addTagStyle("width", width)).array, tag.index));
+				} else tag;
+			}
+
+			MLines(ms): ts |> material2TagsEx(fold(ms, TEmpty(), \acc, m -> MLines2(acc, m)), manager);
+
+			MLines2(m1, m2): {
+				ms = [] |> struct2Array(material, "MLines2");
+
+				filly_count = countA(ms, \m -> m.structname == "TFillY");
+
+				ts |> htmlTag2("div",
+					[
+						TagStyle("display", "table"), TagStyle("width", "100%"),
+						if (filly_count == 0) TagNoAttribute() else TagStyle("height", "100%")
+					],
+					map(ms, \m ->
+						htmlTag2("div",
+							[
+								TagStyle("display", "table-row"),
+								if (m.structname == "TFillY") TagNoAttribute() else TagStyle("height", "1px")
+							],
+							[
+								htmlTag2("div", [ TagStyle("display", "table-cell") ], [ if (m.structname == "TFillY") htmlTag0() else material2TagsEx(m, manager) ])
+							]
+						)
+					)
+				);
+			}
+
+			TFillX(): ts |> htmlTag2("div", [ TagStyle("width", "100%") ], []);
+
+			TFillY(): ts |> htmlTag2("div", [ TagStyle("height", "100%") ], []);
+
+			MCenterX(m): ts |> material2TagsEx(MCols([ TFillX(), m, TFillX() ]), manager);
+
+			MCenterY(m): ts |> material2TagsEx(MLines([ TFillY(), m, TFillY() ]), manager);
+
+			MCenter(m): ts |> material2TagsEx(MCenterY(MCenterX(m)), manager);
+
+			MCenterIn(m, avail): {
+				tag = ts |> material2TagsEx(avail, manager);
+
+				TagsState((tag |> material2TagsEx(MCenter(m), manager)).array, tag.index);
+			}
+
+			MGrid(ms): ts |> material2TagsEx(fold(ms, TEmpty(), \acc, row -> MLines2(acc, MCols(row))), manager);
+
+			MShow(s, m): {
+				show = fgetValue(s);
+
+				name = extractStruct(manager.interact, MaterialWigiName("")).name;
+				iname = if (name == "") "" else name + "_visible";
+				id = makeTagId(manager);
+
+				ivisible = extractStruct(manager.interact, MaterialWigiVisible(WigiBool(show))).formula;
+				visible_formula = wigiExpr2JsExpr(ivisible);
+
+				ts |> htmlTag2("div",
+					[
+						if (iname == "") TagNoAttribute() else TagProperty("name", iname),
+						TagStyle("display", if (show) "block" else "none"),
+						TagProperty("id", id)
+					],
+					[
+						material2TagsEx(m, manager),
+						if (iname == "") htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+									fmdl.interact.init('" + id + "', '" + iname + "', " + b2s(show) + ",
+										function (value, id) {
+											document.getElementById(id).style.display = value ? '' : 'none';
+										}
+									).visibleFormula('" + visible_formula.first + "', '" + visible_formula.second + "');
+								});"
+							)
+						])
+					]
+				); // Maybe DIV wrap is invalid in some cases
+				// Or this:
+				/*ts |> material2TagsEx(m, manager)
+					|> (\t ->
+						if (show) t
+						else t |> addTagStyle(	// Save a original display style
+							"fmdl-last-display",
+							switch (t |> getTagStyleValue("display")) {
+								Some(v): v;
+								None(): "";
+							}
+						) |> addTagStyle("display", "none")
+					);
+				*/
+			}
+
+			MIcon(name, styles): {
+				rgba = extractStruct(styles, MBlack()) |> MColor2int |> hsva2rgba;
+				disabled = contains(styles, MIconDisabled());
+				opacity = if (disabled) 0.38 else extractStruct(styles, FillOpacity(0.54)).opacity;
+
+				ts |> htmlTag2("i",
+					[
+						TagClass("material-icons"), TagStyle("margin", "2px"),
+						TagStyle("color", "rgba(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + "," + d2s(opacity) + ")")
+					],
+					[ htmlBlock(name) ]
+				) |> loopFor(styles, applyMIconStyle);
+			}
+
+			MTextButton(text, onClick, styles, states): { //need default settings, when disabled then gray color
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				button_text_color = extractStructMany(styles, MButtonTextColor(false));
+
+				tag = ts |> htmlTag2("button",
+					[
+						TagClass("mdl-button"), TagClass("mdl-js-button"),
+						TagClass("mdl-button--colored"), TagClass("mdl-js-ripple-effect"),
+						if (contains(styles, MButtonRaised())) TagClass("mdl-button--raised") else TagNoAttribute()
+					],
+					[ htmlBlock(text) ]
+				) |> loopFor(styles, applyMTextButtonStyle) |> loopFor(states, applyMButtonState);
+
+				if (length(button_text_color) > 0)
+					tag |> addTagStyle("color", if (button_text_color[0].white) "#FFFFFF" else "#000000")
+				else tag;
+			}
+
+			MIconButton(name, onClick, styles, states): {
+				icon_size = extractStruct(styles, MIconSize(standardIconSize)).size;
+				background = extractStruct(styles, MCircleBackground(MRed(500), 0.));
+				border = extractStruct(styles, MIconButtonBorder(icon_size / 2.)).border;
+				enabled = fgetValue(extractStruct(states, MEnabled(const(true))).enabled);
+
+				full_size = max(background.size, icon_size + border * 2.);
+				background_size = (if (background.size > 0.) background.size else icon_size) + 4.;
+
+				s = killStruct(styles, MIconSize(icon_size))
+					|> (\s -> if (background.size > 0.) replaceStruct(s, MCircleBackground(background.color, background_size)) else s)
+					|> (\s -> if (!enabled) arrayPush(s, MIconDisabled()) else s);
+
+				tag = ts |> htmlTag2("button",
+					[ TagClass("mdl-button"), TagClass("mdl-js-button"), TagClass("mdl-button--icon")/*, TagClass("mdl-button--colored")*/ ],
+					[ material2TagsEx(MIcon(name, s), manager) ]
+				) |> loopFor(states, applyMButtonState)
+					|> addTagStyle("font-size", d2s(icon_size) + "px")
+					|> addTagStyle("width", d2s(full_size) + "px")
+					|> addTagStyle("min-width", d2s(full_size) + "px")
+					|> addTagStyle("height", d2s(full_size) + "px");
+
+				TagsState(
+					(tag |> getTagChild(0)
+						|> addTagStyle("transform", "translate(-" + d2s(background_size / 2.) + "px, -" + d2s(background_size / 2.) + "px)")
+						|> addTagStyle("-webkit-transform", "translate(-" + d2s(background_size / 2.) + "px, -" + d2s(background_size / 2.) + "px)")).array,
+					tag.index
+				);
+			}
+
+			MTextInput(content, styles, states): { //need default settings
+				edit_icon = extractStruct(styles, MShowEditIcon(false));
+				clear_icon = extractStruct(styles, MShowClearIcon(false, false));
+
+				if (edit_icon.enabled || clear_icon.onFocus || clear_icon.onHover) {
+					ss = killStruct(styles, clear_icon);
+					s = killStruct(ss, edit_icon);
+
+					ts |> material2TagsEx(
+						MCols([
+							MTextInput(content, s, states),
+							if (clear_icon.onHover || clear_icon.onFocus) MCenterY(
+								MBorder(8., 0., 8., 2.,
+									MIcon("clear", [ MIconSize(16.), FillOpacity(0.56) ])
+								)
+							) else MEmpty(),
+							if (edit_icon.enabled) MCenterY(
+								MBorder(8., 0., 8., 2.,
+									MIcon("create", [ MIconSize(16.), FillOpacity(0.56) ])
+								)
+							) else MEmpty()
+						]), manager
+					);
+				} else {
+					value = getValue(content);
+
+					iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+					ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+					wigiContent = extractStruct(manager.interact, MaterialWigiContent(TreeEmpty())).content;
+					dataType = toLowerCase(lookupTreeDef(wigiContent, "dataType", "Text"));
+
+					isPickerNeeded = (dataType == "date" && s2b(lookupTreeDef(wigiContent, "showDatePicker", "false")))
+						|| (dataType == "time" && s2b(lookupTreeDef(wigiContent, "showTimePicker", "false")));
+
+					viewType = lookupTreeDef(wigiContent, "viewType", "");
+					dateTypeForStoreStr = lookupTreeDef(wigiContent, "dateTypeForStore", viewType);
+
+					pickerFormat = if (strContains(viewType, "a.m.") || strContains(viewType, "p.m.")) {
+						"LT"
+					} else {
+						strReplaces(
+							viewType,
+							["MI", "mm", "SS", "ss"]
+						)
+					};
+
+					value_formula = wigiExpr2JsExpr(ivalue);
+
+					id = makeTagId(manager);
+
+					label = extractStruct(styles, MLabel("")).label;
+					multiline = extractStruct(styles, Multiline(false)).multiline;
+					password = extractStruct(styles, PasswordMode(false)).password;
+					color = extractStruct(styles, manager.mm.theme.accentColor);
+
+					ts |> htmlTag2("div",
+						[ TagClass("mdl-textfield"), TagClass("mdl-js-textfield"), TagStyle("width", "100%") ],
+						[
+							\t ->
+								t |> (
+									if (multiline)
+										htmlTag2("textarea",
+											[
+												if (iname == "") TagNoAttribute() else TagProperty("name", iname),
+												TagClass("mdl-textfield__input"), TagProperty("id", id)
+											],
+											[ htmlBlock(value) ]
+										)
+									else
+										htmlTag1("input", [
+											if (iname == "") TagNoAttribute() else TagProperty("name", iname),
+											TagClass("mdl-textfield__input"), TagProperty("id", id),
+											TagProperty("type", if (password) "password" else "text"),
+											TagProperty("value", value)
+										])
+									) |> loopFor(styles, applyMInputStyle2),
+							htmlTag2("label",
+								[ TagClass("mdl-textfield__label"), TagClass("fmdl-textfield__label-" + id), TagProperty("for", id) ],
+								[ htmlBlock(label) ]
+							),
+							if (iname == "") htmlTag0()
+							else htmlTag2("script", [], [
+								htmlBlock(
+									"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+										fmdl.interact.init('" + id + "', '" + iname + "', '" + value + "',
+											function (value, id) {
+												var elem = document.getElementById(id);
+												if (value.length) fmdl.lib.addClass(elem.parentNode, 'is-dirty')
+												else fmdl.lib.removeClass(elem.parentNode, 'is-dirty');
+												var formatedValue = value;
+												if ('date' === '" + dataType + "') {
+													var momentForFormating = moment(value, '" + dateTypeForStoreStr + "', true);
+													formatedValue = momentForFormating.isValid() ? momentForFormating.format('" + pickerFormat + "') : value;
+												}
+												elem.value = formatedValue;
+											},
+											function (id) {
+												var elem = document.getElementById(id);
+												if ('date' === '" + dataType + "')
+													return moment(elem.value, '" + pickerFormat + "').format('" + dateTypeForStoreStr + "');
+												return elem.value;
+											},
+											[ 'input', 'keyup', 'сut', 'onOk' ]
+										).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+									});"
+								)
+							]),
+							if (isPickerNeeded) htmlTag2("script", [], [
+								htmlBlock(
+									"(function () {
+										var inputWithPicker = document.getElementById('" + id + "');
+
+										var picker = new mdDateTimePicker.default({
+											type : '" + dataType + "',
+											future : moment().add(21, 'years'),
+											trigger : inputWithPicker,
+											orientation : 'PORTRAIT',
+											mode : true,
+											prevHandle : '<i class = \"material-icons\">keyboard_arrow_left</i>',
+											nextHandle : '<i class = \"material-icons\">keyboard_arrow_right</i>'
+										});
+
+										inputWithPicker.addEventListener('click', function() {
+											picker.toggle()
+										});
+
+										inputWithPicker.addEventListener('onOk', function(e) {
+											this.value = picker.time.format('" + pickerFormat + "')
+										})
+									}).call(this)"
+								)
+							]) else htmlTag0(),
+							htmlTagStyle([],
+								[ // Replacing MDL style classes for right colors setting
+									htmlTagStyleSelector(
+										".mdl-textfield--floating-label.is-dirty .mdl-textfield__label, .mdl-textfield--floating-label.has-placeholder .mdl-textfield__label",
+										[ TagStyle("color", "rgba(0,0,0,.26)") ]
+									),
+									htmlTagStyleSelector(".mdl-textfield--floating-label.is-focused .fmdl-textfield__label-" + id, [ TagStyle("color", getMColorHex(color)) ]),
+									htmlTagStyleSelector(".fmdl-textfield__label-" + id + ":after", [ TagStyle("background-color", getMColorHex(color)) ])
+								]
+							)
+						]
+					) |> loopFor(styles, applyMTextInputStyle);
+				}
+			}
+
+			MCheckBox(caption, v, styles): {
+				value = getValue(v);
+
+				id = makeTagId(manager);
+
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+				value_formula = wigiExpr2JsExpr(ivalue);
+
+				enabled = fgetValue(extractStruct(styles, MEnabled(const(true))).enabled);
+				color = extractStruct(styles, manager.mm.theme.primaryColor);
+
+				s = replaceStruct(styles, MEnabled(const(enabled)));
+
+				ts |> htmlTag2("div",
+					[ TagStyle("padding-top", "12px"), TagStyle("padding-bottom", "12px"), TagStyle("padding-left", "12px"), TagStyle("display", "inline-block") ],
+					[
+						\t ->
+							t |> htmlTag2("label",
+								[
+									TagClass("mdl-checkbox"), TagClass("mdl-js-checkbox"), TagClass("mdl-js-ripple-effect"), TagClass("fmdl-checkbox-" + id),
+									TagProperty("for", id), TagStyle("padding-left", "28px") // (16px is circle width) + 12px
+								],
+								[
+									htmlTag1("input",
+										[
+											if (iname == "") TagNoAttribute() else TagProperty("name", iname),
+											TagClass("mdl-checkbox__input"), TagProperty("type", "checkbox"), TagProperty("id", id),
+											TagProperty("value", b2s(value)), if (value) TagProperty("checked", "") else TagNoAttribute(),
+											if (!enabled) TagProperty("disabled", "") else TagNoAttribute()
+										]
+									),
+									htmlTag2("span", [ TagClass("mdl-checkbox__label") ], [ material2TagsEx(caption, manager) ])
+								]
+							) |> loopFor(s, applyMCheckableStyle),
+						if (iname == "") htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+									fmdl.interact.init('" + id + "', '" + iname + "', " + b2s(value) + ",
+										function (value, id) {
+											var elem = document.getElementById(id).parentNode;
+
+											if (value) fmdl.lib.addClass(elem, 'is-checked')
+											else fmdl.lib.removeClass(elem, 'is-checked');
+										},
+										function (id) { return document.getElementById(id).checked },
+										[ 'change' ]
+									).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+								});"
+							)
+						]),
+						htmlTagStyle([],
+							[ // Replacing MDL style classes for right colors setting
+								htmlTagStyleSelector(".fmdl-checkbox-" + id + ".is-checked .mdl-checkbox__box-outline", [ TagStyle("border-color", getMColorHex(color)) ]),
+								htmlTagStyleSelector(".fmdl-checkbox-" + id + ".is-checked .mdl-checkbox__tick-outline", [ TagStyle("background-color", getMColorHex(color)) ])
+							]
+						)
+					]
+				);
+			}
+
+			MRadio(caption, thisValue, activeValue, styles): {
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+				value_formula = wigiExpr2JsExpr(ivalue);
+
+				name =
+					switch (lookupTree(^(manager.radios), activeValue.value)) {
+						Some(v): v;
+						None(): {
+							//n = if (iname == "") "name" + i2s(manager.mm.nextInteractionItemId()) else iname;
+							n = "name" + i2s(makeTropicTag(manager.mm));
+
+							manager.radios := setTree(^(manager.radios), activeValue.value, n);
+
+							n;
+						}
+					}
+
+				id = makeTagId(manager);
+
+				color = extractStruct(styles, manager.mm.theme.accentColor);
+
+				ts |> htmlTag2("div",
+					[ TagStyle("padding-top", "12px"), TagStyle("padding-bottom", "12px"), TagStyle("padding-left", "12px") ],
+					[
+						\t ->
+							t |> htmlTag2("label",
+								[
+									TagClass("mdl-radio"), TagClass("mdl-js-radio"), TagClass("mdl-js-ripple-effect"), TagClass("fmdl-radio-" + id),
+									TagProperty("for", id), TagProperty("name", id), TagStyle("padding-left", "28px") // (16px is circle width) + 12px
+								],
+								[
+									htmlTag1("input",
+										[
+											TagClass("mdl-radio__button"), TagProperty("type", "radio"), TagProperty("id", id), TagProperty("name", name),
+											TagProperty("value", i2s(thisValue)), if (thisValue == getValue(activeValue)) TagProperty("checked", "") else TagNoAttribute()
+										]
+									),
+									htmlTag2("span", [ TagClass("mdl-radio__label") ], [ material2TagsEx(caption, manager) ])
+								]
+							) |> loopFor(styles, applyMCheckableStyle),
+						if (iname == "") htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+									fmdl.interact.init('" + id + "', '" + iname + "', " + i2s(getValue(activeValue)) + ",
+										function (value, id) {
+											var label = document.getElementsByName(id)[0],
+												elem = document.getElementById(id);
+
+											if (elem.type == 'radio') {
+												if (elem.value == value.toString()) fmdl.lib.addClass(label, 'is-checked')
+												else fmdl.lib.removeClass(label, 'is-checked');
+											}
+										},
+										function (id) {
+											var elem = document.getElementById(id),
+												elems = document.getElementsByName(elem.name);
+
+											for (var i = 0, l = elems.length; i < l; i++) if (elems[i].type == 'radio' && elems[i].checked) return elems[i].value;
+											return -1;
+										},
+										[ 'click' ]
+									).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+								});"
+
+							)
+						]),
+						htmlTagStyle([],
+							[ // Replacing MDL style classes for right colors setting
+								htmlTagStyleSelector(".fmdl-radio-" + id + ".is-checked .mdl-radio__outer-circle", [ TagStyle("border-color", getMColorHex(color)) ]),
+								htmlTagStyleSelector(".fmdl-radio-" + id + " .mdl-radio__inner-circle", [ TagStyle("background-color", getMColorHex(color)) ])
+							]
+						)
+					]
+				);
+			}
+
+			MDropDown(current, nonSpecified, strings, styles): {
+				id = makeTagId(manager);
+
+				ss = mapi(strings, \i, s -> Pair(i, s));
+
+				groups = extractStruct(styles, MGroups([])).groups;
+				separators = extractStruct(styles, MSeparators(true)).separators;
+
+				items = fold(groups, ss, \acc, group -> if (group.first > 0) insertArray(acc, group.first - 1, Pair(-1, "-")) else acc);
+
+				divider = ref false;
+
+				ts |> htmlTag2("div",
+					[
+						TagClass("mdl-textfield"), TagClass("mdl-js-textfield"), TagClass("mdl-textfield--floating-label"),
+						TagClass("getmdl-select"), TagClass("getmdl-select__fix-height")
+					],
+					arrayPush(
+						simpleMdlSelectInput(id, "", nonSpecified, true, true),
+						htmlTag2("ul",
+							[ TagProperty("for", id), TagClass("mdl-menu"), TagClass("mdl-menu--bottom-left"), TagClass("mdl-js-menu") ],
+							map(items, \item : Pair<int, string> ->
+								if (item.first == -1) { divider := true; htmlTag0(); }
+								else htmlTag2("li",
+									[
+										TagClass("mdl-menu__item"),
+										if (separators && ^divider) { divider := false; TagClass("mdl-menu__item--full-bleed-divider"); } else TagNoAttribute(),
+										TagProperty("data-val", i2s(item.first))
+									],
+									[ htmlBlock(item.second) ]
+								)
+							)
+						)
+					)
+
+				);
+			}
+
+			MSlider(v, styles): { // Ripple isn't works, I need to think. Bad slider appearance in IE is library bug
+				value = getValue(v);
+
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+				value_formula = wigiExpr2JsExpr(ivalue);
+
+				width = extractStruct(styles, MWidth(0.)).width;
+				range = extractStruct(styles, MSliderRange(0., 1.));
+				step = extractStruct(styles, MSliderStep(-1.)).value;
+				display = extractStruct(styles, MSliderDisplayValue(false)).display;
+				left_name = extractStruct(styles, MSliderIconLeft("")).name;
+				right_name = extractStruct(styles, MSliderIconRight("")).name;
+
+				rgba = extractStruct(styles, manager.mm.theme.accentColor) |> MColor2int |> hsva2rgba;
+
+				slider_id = makeTagId(manager);
+				value_id = if (display) makeTagId(manager) else "";
+
+				extra_value_width = if (step > 0.) i2d(strlen(d2s(step)) - 1) else 2.;
+				value_width = (i2d(max(strlen(i2s(floor(range.min))), strlen(i2s(floor(range.max))))) + extra_value_width) * 10.;
+
+				extra_slider_width = 26. * 2.; // left and right margins
+
+				ts |> htmlTag2("div",
+					[ TagStyle("display", "table"), if (width == 0.) TagStyle("width", "100%") else TagNoAttribute() ],
+					[
+						if (left_name == "") htmlTag0()
+						else htmlTag2("div",
+							[ TagStyle("display", "table-cell"), TagStyle("vertical-align", "middle") ],
+							[ htmlTag2("i", [ TagClass("material-icons") ], [ htmlBlock(left_name) ]) ]
+						),
+						htmlTag2("div",
+							[
+								TagClass("fmdl-slider-" + slider_id), TagStyle("display", "table-cell"), TagStyle("vertical-align", "middle"),
+								if (width > 0.) TagStyle("width", d2s(width + extra_slider_width) + "px") else TagStyle("width", "100%")
+							],
+							[
+								\t ->
+									t |> htmlTag1("input",
+										[
+											TagClass("mdl-slider"), TagClass("mdl-js-slider"),
+											TagProperty("type", "range"), TagProperty("min", d2s(range.min)), TagProperty("max", d2s(range.max)),
+											TagProperty("step", d2s(if (step > 0.) step else 0.0001)),
+											TagProperty("id", slider_id), TagProperty("name", iname), TagProperty("value", d2s(value))
+										]
+									) |> loopFor(styles, applyMSliderStyle)
+							]
+						),
+						htmlTag2("div",
+							[ TagStyle("display", "table-cell"), TagStyle("vertical-align", "middle") ],
+							[
+								if (!display) htmlBlock("&nbsp") // This condition was move here for full-width slider when Wigi slider converting
+								else htmlTag2("div",
+									[ TagClass("mdl-textfield"), TagClass("mdl-js-textfield"), TagStyle("margin-right", "8px"), TagStyle("width", d2s(value_width) + "px") ],
+									[
+										htmlTag1("input", [ TagClass("mdl-textfield__input"), TagProperty("type", "text"), TagProperty("id", value_id), TagProperty("value", d2s(value)) ])
+											|> forFunc(applyMFontStyle(MSubheading()))
+									]
+								)
+							]
+						),
+						if (right_name == "") htmlTag0()
+						else htmlTag2("div",
+							[ TagStyle("display", "table-cell"), TagStyle("vertical-align", "middle") ],
+							[ htmlTag2("i", [ TagClass("material-icons") ], [ htmlBlock(right_name) ]) ]
+						),
+						htmlTagStyle([],
+							[ // Replacing MDL style classes for right colors setting
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded",
+									[
+										TagStyle("background", "0 0"),
+										TagStyle("color", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-moz-range-track",
+									[ TagStyle("background", "0 0") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-ms-track",
+									[
+										TagStyle("background", "0 0"),
+										TagStyle("color", "transparent")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-ms-fill-lower",
+									[
+										TagStyle("background",
+											"linear-gradient(to right,transparent,transparent 16px," +
+											"rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")" +
+											"16px," +
+											"rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")" +
+											"0)"
+										)
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-ms-fill-upper",
+									[ TagStyle("background", "linear-gradient(to left,transparent,transparent 16px,rgba(0,0,0,.26)16px,rgba(0,0,0,.26)0)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-webkit-slider-runnable-track",
+									[ TagStyle("background", "0 0") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-webkit-slider-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-moz-range-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:focus:not(:active)::-webkit-slider-thumb",
+									[ TagStyle("box-shadow", "0 0 0 10px rgba(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ",.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:focus:not(:active)::-moz-range-thumb",
+									[ TagStyle("box-shadow", "0 0 0 10px rgba(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ",.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:active::-webkit-slider-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:active::-moz-range-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded::-ms-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:focus:not(:active)::-ms-thumb",
+									[
+										TagStyle("background",
+											"radial-gradient(circle closest-side," +
+											"rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")" +
+											"0%," +
+											"rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")" +
+											"37.5%," +
+											"rgba(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ",.26)" +
+											"37.5%," +
+											"rgba(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ",.26)" +
+											"100%)"
+										)
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:active::-ms-thumb",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value::-webkit-slider-thumb",
+									[
+										TagStyle("border", "2px solid rgba(0,0,0,.26)"),
+										TagStyle("background", "0 0")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value::-moz-range-thumb",
+									[ TagStyle("border", "2px solid rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:focus:not(:active)::-webkit-slider-thumb",
+									[
+										TagStyle("box-shadow", "0 0 0 10px rgba(0,0,0,.12)"),
+										TagStyle("background", "rgba(0,0,0,.12)")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:focus:not(:active)::-moz-range-thumb",
+									[
+										TagStyle("box-shadow", "0 0 0 10px rgba(0,0,0,.12)"),
+										TagStyle("background", "rgba(0,0,0,.12)")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:active::-webkit-slider-thumb",
+									[ TagStyle("border", "1.6px solid rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:active::-moz-range-thumb",
+									[ TagStyle("border", "1.5px solid rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value::-ms-thumb",
+									[ TagStyle("background", "radial-gradient(circle closest-side,transparent 0%,transparent 66.67%,rgba(0,0,0,.26)66.67%,rgba(0,0,0,.26)100%)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:focus:not(:active)::-ms-thumb",
+									[ TagStyle("background", "radial-gradient(circle closest-side,rgba(0,0,0,.12)0%,rgba(0,0,0,.12)25%,rgba(0,0,0,.26)25%,rgba(0,0,0,.26)37.5%,rgba(0,0,0,.12)37.5%,rgba(0,0,0,.12)100%)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:active::-ms-thumb",
+									[ TagStyle("background", "radial-gradient(circle closest-side,transparent 0%,transparent 77.78%,rgba(0,0,0,.26)77.78%,rgba(0,0,0,.26)100%)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value::-ms-fill-lower",
+									[ TagStyle("background", "0 0") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:focus::-webkit-slider-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:active::-webkit-slider-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled::-webkit-slider-thumb",
+									[ TagStyle("background", "rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:focus::-moz-range-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:active::-moz-range-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled::-moz-range-thumb",
+									[ TagStyle("background", "rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled+.fmdl-slider-" + slider_id + " .mdl-slider__background-flex>.mdl-slider__background-lower",
+									[ TagStyle("background-color", "rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:focus::-webkit-slider-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:active::-webkit-slider-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled::-webkit-slider-thumb",
+									[
+										TagStyle("border", "3px solid rgba(0,0,0,.26)"),
+										TagStyle("background", "0 0")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:focus::-moz-range-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:active::-moz-range-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled::-moz-range-thumb",
+									[
+										TagStyle("border", "3px solid rgba(0,0,0,.26)"),
+										TagStyle("background", "0 0")
+									]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:focus::-ms-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled:active::-ms-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled::-ms-thumb",
+									[ TagStyle("background", "rgba(0,0,0,.26)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:focus::-ms-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled:active::-ms-thumb,.fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded.is-lowest-value:disabled::-ms-thumb",
+									[ TagStyle("background", "radial-gradient(circle closest-side,transparent 0%,transparent 50%,rgba(0,0,0,.26)50%,rgba(0,0,0,.26)100%)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider.is-upgraded:disabled::-ms-fill-lower",
+									[ TagStyle("background", "linear-gradient(to right,transparent,transparent 25px,rgba(0,0,0,.26)25px,rgba(0,0,0,.26)0)") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider__container,.fmdl-slider-" + slider_id + " .mdl-slider__background-flex",
+									[ TagStyle("background", "0 0") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider__background-lower",
+									[ TagStyle("background", "rgb(" + i2s(rgba.r) + "," + i2s(rgba.g) + "," + i2s(rgba.b) + ")") ]
+								),
+								htmlTagStyleSelector(
+									".fmdl-slider-" + slider_id + " .mdl-slider__background-upper",
+									[ TagStyle("background", "rgba(0,0,0,.26)") ]
+								)
+							]
+						),
+						if (!display) htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + slider_id + "', function (e) {
+									fmdl.slider(document.getElementById('" + slider_id + "')).displayValue(document.getElementById('" + value_id + "'));
+								});"
+							)
+						]),
+						if (iname == "") htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + slider_id + "', function (e) {
+									fmdl.interact.init(" + slider_id +  ", '" + iname + "', " + d2s(value) + ",
+										function (value) {
+											var s = document.getElementById('" + slider_id + "'),
+												event = document.createEvent(\"Event\");
+
+											event.initEvent(\"change\", true, true);" +
+
+											(if (display) "var v = document.getElementById('" + value_id + "'); " else "") +
+											(if (display) "v" else "s") + ".value = value; " +
+											(if (display) "v" else "s") + ".dispatchEvent(event);
+										},
+										function () { return document.getElementById('" + slider_id + "').value },
+										[ 'mousemove', 'change' ]
+									).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+								});"
+							)
+						])
+					]
+				);
+			}
+
+			MExpander(header, details, expander, styles): {
+				expander_id = makeTagId(manager);
+
+				arrow_color = extractStruct(styles, MGrey(600));
+				arrow_opacity = extractStruct(styles, FillOpacity(0.54));
+				arrow_enabled = extractStruct(styles, MEnabled(const(true)));
+
+				separator = !i2b(length(filter(styles, \e -> isSameStructType(e, MExpanderHideSeparator()))));
+				arrow_only = i2b(length(filter(styles, \e -> isSameStructType(e, MExpandByArrowOnly()))));
+				narrow_header = contains(styles, MExpanderNarrowHeader());
+				enabled = fgetValue(arrow_enabled.enabled);
+				opened = getValue(expander);
+
+				ts |> htmlTag2("div",
+					[ TagClass("mdl-collapse"), if (opened) TagClass("mdl-collapse--opened") else TagNoAttribute(), TagProperty("id", expander_id) ],
+					[
+						(\t ->
+							TagsState(
+								(
+									t |> material2TagsEx(
+										MCols([
+											header,
+											if (narrow_header) TEmpty() else TFillX(),
+											MIconButton("expand_more", \ -> {}, concat([ arrow_color, arrow_opacity ], if (narrow_header) [ MIconButtonBorder(0.) ] else []), [ arrow_enabled ])
+										]),
+										manager
+									) |> (if (enabled && !arrow_only) addTagClass("mdl-collapse__button") else idfn)
+										|> getTagChild(0) |> addTagStyle("vertical-align", "middle") |> getTagParent
+										|> getTagChild(if (narrow_header) 1 else 2) |> getTagChild(0)
+										|> (if (enabled && arrow_only) addTagClass("mdl-collapse__button") else idfn)
+										|> addTagClass("mdl-collapse__icon") |> addTagClass("mdl-animation--default")
+								).array,
+								t.index
+							)
+						),
+						htmlTag2("div",
+							[ TagClass("mdl-collapse__content-wrapper") ],
+							[
+								htmlTag2("div",
+									[ TagClass("mdl-collapse__content"), TagClass("mdl-animation--default"), TagStyle("display", "none") ],
+									[ material2TagsEx(details(), manager) ]
+								)
+							]
+						),
+						htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + expander_id + "', function (e) {
+									fmdl.expander(document.getElementById('" + expander_id + "')).init(" + b2s(separator) + ");
+								});"
+							)
+						])
+					]
+				);
+			}
+
+			MCard(blocks, styles, states): {
+				ss = (
+					if (extractStruct(styles, MColor(CWhite(), -1, false)) == MColor(CWhite(), -1, false) &&
+						extractStruct(styles, MBackgroundImage("", false)) == MBackgroundImage("", false))
+						arrayPush(styles, MWhite())
+					else styles
+				);
+
+				outer_borders = !(contains(ss, MCardNoOuterBorders()) || manager.card.level > 0);
+				elevation = fgetValue(extractStruct(ss, MElevation(const(2.))).elevation);
+				elevation_on_events = !(length(extractStructMany(ss, MElevation(const(2.)))) > 0 || manager.card.level > 0);
+
+				id = makeTagId(manager);
+
+				tag = ts |> htmlTag2("div",
+					[
+						TagProperty("id", id),
+						TagClass("mdl-card"),
+						if (manager.card.level == 0) TagClass("mdl-shadow--" + d2s(elevation) + "dp") else TagNoAttribute(),
+						if (manager.card.horizontal) TagClass("fmdl-card__horizontal") else TagNoAttribute(),
+						TagStyle("width", "100%"), TagStyle("min-height", "0px"),
+						if (outer_borders) TagStyle("margin", "4px") else TagNoAttribute()
+
+					],
+					[
+						if (!elevation_on_events) htmlTag0()
+						else htmlTag2("script", [], [
+							htmlBlock(
+								"fmdl.interact.registerInteractListener('" + id + "', function (e) {
+									var elem = document.getElementById('" + id + "');
+
+									function elevationOn(e) {
+										if (!fmdl.lib.parentOf(this, e.relatedTarget)) {
+											fmdl.lib.removeClass(elem, 'mdl-shadow--2dp');
+											fmdl.lib.addClass(elem, 'mdl-shadow--6dp');
+										}
+									}
+
+									function elevationOff(e) {
+										if (!fmdl.lib.parentOf(this, e.relatedTarget)) {
+											fmdl.lib.removeClass(elem, 'mdl-shadow--6dp');
+											fmdl.lib.addClass(elem, 'mdl-shadow--2dp');
+										}
+									}
+
+									elem.addEventListener('mouseover', elevationOn);
+									elem.addEventListener('mouseout', elevationOff);
+									elem.addEventListener('focus', elevationOn);
+									elem.addEventListener('blur', elevationOff);
+								});"
+							)
+						])
+					]
+				);
+
+				content = fold(blocks, tag, \acc, block : MCardBlock ->
+					TagsState(
+						(switch (block : MCardBlock) {
+							MActionBlock(left, right, block_styles):
+								acc |> htmlTag2("div",
+									[ TagClass("mdl-card__actions") ],
+									[
+										material2TagsEx(
+											concat3(
+												map(left, \l -> applyMCardActionColor(l, block_styles)),
+												[ TFillX() ],
+												map(right, \r -> applyMCardActionColor(r, block_styles))
+											) |> MCols,
+											manager
+										) |> forFunc(applyMCardColor(block_styles, 0, false))
+									]
+								) |> loopFor(block_styles, applyMCardStyle);
+							MPrimaryTextBlock(title, text, block_styles):
+								acc |> htmlTag2("div",
+									[ TagClass("mdl-card__title") ],
+									[
+										htmlTag2("h2", [ TagClass("mdl-card__title-text") ], [ htmlBlock(title) ])
+											|> forFunc(applyMFontStyle(MHeadline())) |> forFunc(applyMCardColor(block_styles, 0, false)),
+										material2TagsEx(MText(text, [ MBody() ]) |> (\m -> MBorder(0., 4., 0., 0., m)), manager)
+											|> forFunc(addTagClass("mdl-card__subtitle-text")) |> forFunc(applyMCardColor(block_styles, 0, false))
+											|> forFunc(getTagChild(0) |> forFunc(addTagStyle("white-space", "normal")))
+									]
+								) |> loopFor(block_styles, applyMCardStyle);
+							MSupportingTextBlock(text, block_styles):
+								acc |> htmlTag2("div", [ TagClass("mdl-card__supporting-text"), TagStyle("box-sizing", "border-box"), TagStyle("width", "100%") ], [ htmlBlock(text) ])
+									|> loopFor(block_styles, applyMCardStyle) |> applyMFontStyle(MBody())
+									|> applyMCardColor(block_styles, 0, false);
+							MSeparatorBlock():
+								acc |> htmlTag2("div", [ TagClass("fmdl-card__separator-" + (if (!manager.card.horizontal) "horizontal" else "vertical")) ], [ htmlBlock("&nbsp;") ])
+									|> applyMCardColor(ss, 1, false);
+							MRichMediaBlock(m, block_styles):
+								acc |> htmlTag2("div",
+									[ TagClass("mdl-card__media"), TagStyle("background-color", "initial") ],
+									[
+										material2TagsEx(m, manager)
+											|> forFunc(applyMCardColor(block_styles, 0, false))
+									]
+								) |> loopFor(block_styles, applyMCardStyle);
+							MExpanderBlock(header, details, expander, block_styles):
+								acc |> htmlTag2("div",
+									[ TagClass("mdl-card__media"), TagStyle("background-color", "initial") ],
+									[ material2TagsEx(MExpander(MBorder(24., 0., 0., 0., header), details, expander, block_styles), manager) ]
+								);
+							MCard(block_blocks, block_styles, block_states): {
+								acc |> material2TagsEx(
+									MCard(block_blocks, block_styles, block_states),
+									Material2HtmlManager(manager.mm, manager.radios, MaterialCardValues(manager.card.level + 1, !(manager.card.horizontal)), manager.interact)
+								);
+							}
+							TEmpty(): ts |> htmlTag0();
+						}).array,
+						acc.index
+					)
+				) |> loopFor(ss, applyMCardStyle) |> loopFor(states, applyMButtonState);
+
+				TagsState(content.array, tag.index);
+			}
+
+			MDropDownMenu(items, current, style) : {
+
+				id = makeTagId(manager);
+				width = d2s(extractStruct(style, MWidth(300.)).width) + "px";
+
+				iname = extractStruct(manager.interact, MaterialWigiName("")).name;
+				ivalue = extractStruct(manager.interact, MaterialWigiValue(WigiVarRef(iname))).formula;
+				value_formula = wigiExpr2JsExpr(ivalue);
+
+				properties = extractStruct(manager.interact, MaterialWigiContent(TreeEmpty())).content;
+				saveContent = s2b(lookupTreeDef(properties, "saveContent", "false"));
+				nonSpecItem = lookupTreeDef(properties, "nonSpecified", "Select");
+				nonSpecifiedValue = lookupTreeDef(properties, "nonSpecifiedValue", "");
+
+				initValue = lookupTreeDef(properties, "calculatedvalue", nonSpecifiedValue);
+
+				calculatedIems = lookupTreeDef(properties, "calculateditems", "");
+
+				extractedStrings = if (items == [])
+					strSplit(calculatedIems, "\n")
+				else
+					map(items, \line -> switch (line : MDropDownMenuLine) {
+						MMenuSingleLine(title, __) : title;
+						MMenuGroupLine(title, __) : title;
+						MMenuCustomLine(content, __) : switch(content : Material) {
+							MText(text, __) : text;
+							default : ""
+						};
+						MSeparatorLine() : ""
+					});
+
+				itemTag = \index, item -> htmlTag2("li",
+					[
+						TagProperty("data-val", if (saveContent) item else i2s(index)),
+						TagClass("mdl-menu__item"),
+						TagProperty("name", id)
+					],
+					[ htmlBlock(item) ]
+				);
+
+				ts |> htmlTag2(
+					"div",
+					[
+						TagClass("mdl-textfield"),
+						TagClass("mdl-js-textfield"),
+						TagClass("getmdl-select"),
+						TagClass("getmdl-select__fix-height"),
+						TagStyle("width", width),
+					],
+					ifArrayPush(
+						[
+							htmlTag2(
+								"button",
+								[
+									TagClass("mdl-button"),
+									TagClass("mdl-js-button"),
+									TagClass("mdl-button-raised"),
+									TagProperty("id", id),
+								],
+								simpleMdlSelectInput(id, iname, "", false, true)
+							),
+							htmlTag2("ul",
+								[
+									TagClass("mdl-menu"),
+									TagClass("mdl-menu--bottom-left"),
+									TagClass("mdl-js-menu"),
+									TagProperty("for", id)
+								],
+								mapi(extractedStrings, itemTag)
+							)
+						],
+						iname != "",
+						htmlTag2("script", [], [ htmlBlock(
+							"fmdl.interact.registerInteractListener('" + id + "', function(e) {
+								var elem = document.getElementById('" + id + "');
+								var selectInput = elem ? elem.children[0] : elem;
+								var menuItems = document.getElementsByName('" + id + "');
+								fmdl.interact.init('" + id + "', '" + iname + "', '" + initValue + "',
+									function(value, index) {
+										for (var i = 0; i < menuItems.length; i++) {
+											if (value == menuItems[i].getAttribute('data-val')) {
+												var currentItem = menuItems[i];
+												selectInput.value = currentItem.innerHTML;
+												selectInput.setAttribute('data-val', currentItem.getAttribute('data-val'));
+												return;
+											}
+										}
+										if (value == '" + nonSpecifiedValue + "') {
+											selectInput.value = '" + nonSpecItem +"';
+											selectInput.setAttribute('data-val', '" + nonSpecifiedValue + "');
+										}
+									},
+									function(index) {
+										return selectInput.getAttribute('data-val');
+									},
+									[ 'change' ],
+									function() {
+										return selectInput;
+									}
+								).valueFormula('" + value_formula.first + "', '" + value_formula.second + "');
+							});"
+						)])
+					)
+				)
+			}
+
+			MVideoPlayer(src, whB, style) : {
+				id = makeTagId(manager);
+				ts |> htmlTag2(
+					"video",
+					[TagProperty("controls", "")],
+					[htmlTag1("source", [TagProperty("src", src) ])]
+				);
+			}
+
+			default: ts |> material2HtmlBlock(material, manager);
+		}
+}
+
+makeTagStyles(styles : [TagStyle]) map(styles, \style -> style.name + ":" + style.value) |> glue("; ");
+
+makeTagAttributes(attributes : [TagAttributes]) -> string {
+	as = fold(attributes, Triple([], [], []), \acc : Triple<[TagClass], [TagProperty], [TagStyle]>, attribute -> {
+		switch (attribute : TagAttributes) {
+			TagClass(name): if (name == "") acc else Triple(arrayPush(acc.first, attribute), acc.second, acc.third);
+			TagProperty(name, __): if (name == "") acc else Triple(acc.first, arrayPush(acc.second, attribute), acc.third);
+			TagStyle(name, __): if (name == "") acc else Triple(acc.first, acc.second, arrayPush(acc.third, attribute));
+			TagNoAttribute(): acc;
+		}
+	});
+
+	s = concat3(
+		[
+			as.first
+				|> (\attrs -> map(attrs, \attr -> attr.name))
+				|> glue(" ")
+				|> enclose("class=\"", "\"")
+		],
+		as.second |> (\attrs -> map(attrs, \attr -> attr.name + (if (attr.value != "") "=" + (attr.value |> enclose("\"", "\"")) else ""))),
+		[
+			as.third
+				|> makeTagStyles
+				|> enclose("style=\"", "\"")
+		]
+	) |> glue(" ");
+
+	(if (strlen(s) > 0) " " else "") + s;
+}
+
+tags2HTML(ts : TagsState) switch (ts.array[ts.index]) {
+		HtmlTag0(__): (map(ts |> getTagChildren, \t -> t |> tags2HTML) |> glue(""));
+		HtmlTag1(name, attributes, __): (name + (attributes |> makeTagAttributes)) |> enclose("<", "/>");
+		HtmlTag2(name, attributes, __):
+			((name + (attributes |> makeTagAttributes)) |> enclose("<", ">")) +
+				(map(ts |> getTagChildren, \t -> t |> tags2HTML) |> glue("")) +
+			(name |> enclose("</", ">"));
+		HtmlBlock(html, __): html;
+		HtmlSelector(name, styles, __): name + (styles |> makeTagStyles |> enclose("{", "}"));
+}
+
+simpleMdlSelectInput(
+	id : string,
+	iname : string,
+	nonSpecified : string,
+	isLabel : bool, readOnly : bool
+) -> [ (TagsState) -> TagsState ] {
+	ifArrayPush(
+		[
+			htmlTag1("input",
+				[
+					TagClass("mdl-textfield__input"),
+					TagProperty("type", "text"),
+					TagProperty("id", id),
+					TagProperty("value", ""),
+					if (iname == "") TagNoAttribute() else TagProperty("name", iname),
+					if (readOnly) TagProperty("readonly", "") else TagNoAttribute()
+				]
+			),
+			htmlTag2("label",
+				[TagProperty("for", id)],
+				[
+					htmlTag2("i",
+						[TagClass("mdl-icon-toggle__label"), TagClass("material-icons") ],
+						[htmlBlock("keyboard_arrow_down")]
+					)
+				]
+			)
+		],
+		isLabel,
+			htmlTag2("label",
+				[ TagProperty("for", id), TagClass("mdl-textfield__label") ],
+				[ htmlBlock(if (nonSpecified == "") _("Pick") else nonSpecified) ]
+			)
+	)
+}

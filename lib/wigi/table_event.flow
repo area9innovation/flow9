@@ -1,0 +1,1177 @@
+import wigi/table_control;
+import wigi/controller;
+
+
+export {
+	handleTableEvent(state : WigiEditorState, el : WigiRecursiveType, event : WigiEvent) -> bool;
+}
+
+handleTableEvent(state : WigiEditorState, el : WigiRecursiveType, event : WigiEvent) -> bool {
+	document = getValue(state.document);
+	cursor = getValue(state.cursor);
+
+	tablePath = wigiFindParentRecursive(document, [dummyWigiTable], cursor);
+	cellPath = wigiFindParentRecursive(document, [dummyWigiTableCell, dummyWigiSpreadsheetCell], cursor);
+
+	table = getElementAtPosition(document, tablePath);
+	last = length(cellPath) - 1;
+	cellId = cellPath[last];
+
+	getTableCellsCount = \ -> switch(table) {
+		WigiRecursive(e, __, __): length(e);
+		default: 1;
+	};
+
+	resetTabColumn = \ -> {
+		style = either(getWigiTableStyle(table), []);
+		newStyle = filter(style, \s -> switch (s) { WigiFirstTabColumn(__): false; default: true; });
+		newTable = setWigiTableStyle(table, newStyle);
+		if (newTable != table) {
+			replaceElementInDocument(state, tablePath, newTable);
+		}
+	};
+
+	moveOutsideTable = \cp : [int], d : int, l : int, selecting : bool -> {
+		np = doPositionDelta(document, subrange(cp, 0, l), d);
+		npe = getElementAtPosition(document, np);
+		newPos = concat(np, if (d > 0) getStartPositionOfDocument(npe) else getEndPositionOfDocument(npe, true));
+
+		wigiSetCursor(state, newPos, selecting);
+		[];
+	}
+
+	getNewPosition = \newCellPath, f -> {
+		currentPosTail = tailFrom(cursor, length(newCellPath));
+		if (length(currentPosTail) == 0) newCellPath
+		else {
+			newCellEnd = getEndPositionOfDocument(getElementAtPosition(document, newCellPath), true);
+			newCellWithLastParagraph = concat(newCellPath, subrange(newCellEnd, 0, length(newCellEnd) - 2));
+			newCellWithParagraph = if (f) replace(newCellWithLastParagraph, length(newCellWithLastParagraph) - 1, 0)
+			else newCellWithLastParagraph;
+			newCellParagraphEnd = concat(newCellWithParagraph, getEndPositionOfDocument(getElementAtPosition(document, newCellWithParagraph), true));
+			newCellParagraphEndLast = length(newCellParagraphEnd) - 1;
+			currentPosEnd = cursor[length(cursor) - 1];
+			replace(newCellParagraphEnd, newCellParagraphEndLast, min(newCellParagraphEnd[newCellParagraphEndLast], currentPosEnd));
+		}
+	};
+
+	moveCursorLeftRight = \selecting: bool, cp : [int], d : int, reset : bool -> {
+		move = \ -> {
+			l = length(cp) - 1;
+			newCellId = cp[l] + d;
+			if (newCellId >= 0 && newCellId < getTableCellsCount()) {
+				newCellPath = replace(cp, l, newCellId);
+				if (cp != newCellPath) {
+					wigiSetCursor(state, getNewPosition(newCellPath, d > 0), selecting);
+					if (reset) resetTabColumn();
+					newCellPath;
+				} else [];
+			} else moveOutsideTable(cp, d, l, false);
+		};
+
+		switch(el) {
+			WigiSpreadsheetCell(__, editMode, __): if(!getValue(editMode)) move() else [];
+			WigiTableCell(__, __): move();
+			default: cp;
+		}
+	};
+
+	moveCursorUpDown = \selecting : bool, cp : [int], d : int, enterEvent : bool -> {
+		recursivePath = wigiFindParentRecursive(document, [], cursor);
+		recursive = getElementAtPosition(document, recursivePath);
+
+		if (isWigiRecursive(recursive, [dummyWigiTableCell, dummyWigiSpreadsheetCell])) {
+			move = \isSpreadsheet -> {
+				l = length(cp) - 1;
+				cr = getTableColumnsRowsByElement(table);
+				newRow = cr.second[cp[l]] + d;
+				if (newRow >= 0 && newRow < getWigiTableRowsCount(table)) {
+					newCellId = getWigiTableCellId(cr, cr.first[cp[l]], cr.second[cp[l]] + d, getWigiTableCellSpans(table));
+					if (newCellId >= 0) {
+						newCellPath = replace(cp, l, newCellId);
+						if (cp != newCellPath) {
+							wigiSetCursor(state, getNewPosition(newCellPath, d > 0), (selecting /* && !isSpreadsheet */));
+							resetTabColumn();
+							newCellPath;
+						} else [];
+					} else [];
+				} else if (!enterEvent) moveOutsideTable(cp, d, l, selecting && !isSpreadsheet)
+				else [];
+			}
+			switch(el) {
+				WigiSpreadsheetCell(__, editMode, __): {
+					newCell = if(!getValue(editMode) || enterEvent || selecting) move(true) else [];
+					if(enterEvent) wigiSetCursor(state, if(newCell == []) recursivePath else newCell, false);
+					newCell;
+				}
+				WigiTableCell(__, __): if (!enterEvent) move(false) else cp;
+				default: cp;
+			}
+		} else cp;
+	};
+
+	getSelectedCells = \getIds : bool -> {
+		selection = getValue(state.selection);
+		if (selection.start == selection.end) {
+			if (getIds) [[cellId]] else [cellPath]
+		} else {
+			cells = getWigiElementChildren(table, false);
+			foldi(cells, [], \i, acc, cell -> {
+				cp = replace(cellPath, last, i);
+				if (isInsideWigiSelection(selection, cp, cell, getValue(state.document), true)) {
+					if (getIds) arrayPush(acc, [i]) else arrayPush(acc, cp);
+				} else acc;
+			});
+		}
+	};
+
+	setCellsStyle = \cells, newCellStyle -> {
+		fold(cells, false, \acc, cp -> {
+			cell = getElementAtPosition(document, cp);
+			cellStyle = getWigiTableCellStyle(cell);
+
+			replaceStyle = \style : [WigiTableCellStyle], oldStyle : WigiTableCellStyle, newStyle : WigiTableCellStyle -> {
+				withoutOld = removeFirst(style, oldStyle);
+				switch (newStyle : WigiTableCellStyle) {
+					WigiCellBorder(topBorder, endBorder, bottomBorder, startBorder): {
+						border = cast(oldStyle : WigiTableCellStyle -> WigiCellBorder);
+						res = WigiCellBorder(
+							if (topBorder == -1.0) border.topBorder else topBorder,
+							if (endBorder == -1.0) border.endBorder else endBorder,
+							if (bottomBorder == -1.0) border.bottomBorder else bottomBorder,
+							if (startBorder == -1.0) border.startBorder else startBorder
+						);
+						if (res == DefaultCellBorder) withoutOld else arrayPush(withoutOld, res);
+					};
+					WigiCellPadding(startPadding, topPadding, endPadding, bottomPadding): {
+						padding = cast(oldStyle : WigiTableCellStyle -> WigiCellPadding);
+						res = WigiCellPadding(
+							if (startPadding == -1.0) padding.startPadding else startPadding,
+							if (topPadding == -1.0) padding.topPadding else topPadding,
+							if (endPadding == -1.0) padding.endPadding else endPadding,
+							if (bottomPadding == -1.0) padding.bottomPadding else bottomPadding
+						);
+						if (res == DefaultCellPadding) withoutOld else arrayPush(withoutOld, res);
+					};
+					WigiCellColors(border, background): {
+						colors = cast(oldStyle : WigiTableCellStyle -> WigiCellColors);
+						res = WigiCellColors(
+							if (border == -1) colors.border else border,
+							if (background == -1) colors.background else background
+						);
+						if (res == DefaultCellColors) withoutOld else arrayPush(withoutOld, res);
+					};
+
+					WigiCellTightWidth(): arrayPush(withoutOld, newStyle);
+					WigiCellInnerBorder(__, __, __, __): arrayPush(withoutOld, newStyle);
+					WigiCellFormatting(__): arrayPush(withoutOld, newStyle);
+					WigiCellVerticalAlign(__): arrayPush(withoutOld, newStyle);
+					WigiCellContentFit(__): arrayPush(withoutOld, newStyle);
+					PlaceholderText(__): arrayPush(withoutOld, newStyle);
+					WigiSuppressTableBorder(): arrayPush(withoutOld, newStyle);
+				}
+			};
+
+			filteredCellStyle = filter(cellStyle, \s -> !(isSameStructType(s, DummyCellInnerBorder) || isSameStructType(s, DefaultCellFormatting) || isSameStructType(s, DefaultCellVerticalAlign) || isSameStructType(s, DefaultCellContentFit) || isSameStructType(s, WigiSuppressTableBorder())));
+
+			changedStyle = fold(newCellStyle, filteredCellStyle, \styles, newStyle -> {
+				defaultAction = \-> {
+					oldStyle = extractStruct(styles, switch (newStyle : WigiTableCellStyle) {
+						WigiCellBorder(__, __, __, __): DefaultCellBorder;
+						WigiCellPadding(__, __, __, __): DefaultCellPadding;
+						WigiCellColors(__, __): DefaultCellColors;
+						PlaceholderText(__) : PlaceholderText("");
+
+						WigiCellTightWidth(): newStyle;
+						WigiCellInnerBorder(__, __, __, __): newStyle;
+						WigiCellFormatting(__): newStyle;
+						WigiCellVerticalAlign(__): newStyle;
+						WigiCellContentFit(__): newStyle;
+						WigiSuppressTableBorder(): newStyle;
+					});
+					if (oldStyle != newStyle) replaceStyle(styles, oldStyle, newStyle)
+					else styles;
+				}
+
+				switch(newStyle : WigiTableCellStyle){
+					WigiCellInnerBorder(__, __, __, __): arrayPush(styles, newStyle);
+					WigiCellFormatting(__): arrayPush(styles, newStyle);
+					WigiCellVerticalAlign(__): arrayPush(styles, newStyle);
+					WigiCellContentFit(__): arrayPush(styles, newStyle);
+					WigiSuppressTableBorder(): arrayPush(styles, newStyle);
+
+					WigiCellTightWidth(): defaultAction();
+					WigiCellPadding(__, __, __, __): defaultAction();
+					WigiCellBorder(__, __, __, __): defaultAction();
+					PlaceholderText(__): defaultAction();
+					WigiCellColors(__, __): defaultAction();
+				}
+			});
+
+			newCell = setWigiTableCellStyle(cell, changedStyle);
+			if (cell != newCell) {
+				replaceElementInDocument(state, cp, newCell);
+				true;
+			} else acc;
+		});
+	}
+
+	pair = switch(event) {
+		WigiInsertText(__): {
+			cell = getElementAtPosition(document, cellPath);
+			newPos = concat(cellPath, getEndPositionOfDocument(cell, false));
+			if (length(newPos) > length(cursor)) wigiSetCursor(state, newPos, false);
+			Pair(false, false);
+		}
+
+		WigiSetTableHighlight(__, __): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetShowGrid(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetDontFitToAvailableWidth(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetSameRowHeight(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetShowHeaders(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetShowFormulaBar(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetTableBorder(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetTableSize(__, __): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+		WigiSetCellsTightWidth(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetVisibleFormula(__): {
+			Pair(doChangeWigiTableStyle(state, event), false);
+		}
+
+		WigiSetColumnsRigid(__) : {
+			Pair(doChangeWigiTableStyle(state, event), false)
+		}
+
+		WigiInsertColumn(place, copyCellStyle): {
+			columnsRows = getTableColumnsRowsByElement(table);
+			currentColumn = columnsRows.first[cellId];
+
+			column = switch (place) {
+				WigiTableInsertBefore(): currentColumn;
+				WigiTableInsertAfter(): currentColumn + 1;
+				WigiTableInsertAtTheEnd(): getWigiTableColumnsCount(table);
+			}
+
+			newTable = wigiInsertColumnToTable(table, column, columnsRows, if (copyCellStyle) cellId else -1);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				newColumn = switch (place) {
+					WigiTableInsertBefore(): min(currentColumn + 1, getWigiTableColumnsCount(newTable) - 1);
+					default: currentColumn;
+				}
+
+				newColumnsRows = getTableColumnsRowsByElement(newTable);
+				newCellId = getWigiTableCellId(newColumnsRows, newColumn, columnsRows.second[cellId], getWigiTableCellSpans(newTable));
+				if (newCellId >= 0) {
+					newCellPath = concat(replace(cellPath, last, newCellId), [0, 0, 0, 0]);
+					wigiSetCursor(state, newCellPath, false);
+				}
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiDeleteColumn(): {
+			columnsRows = getTableColumnsRowsByElement(table);
+
+			newTable = wigiDeleteColumn(table, columnsRows.first[cellId]);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				newColumnsRows = getTableColumnsRowsByElement(newTable);
+
+				newCellId = getWigiTableCellId(newColumnsRows, min(columnsRows.first[cellId], getWigiTableColumnsCount(newTable) - 1), columnsRows.second[cellId], getWigiTableCellSpans(newTable));
+
+				if (newCellId >= 0) {
+					newCellPath = concat(replace(cellPath, last, newCellId), [0, 0, 0, 0]);
+					wigiSetCursor(state, newCellPath, false);
+				}
+
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiInsertRow(place, copyCellStyle): {
+			columnsRows = getTableColumnsRowsByElement(table);
+			currentRow = columnsRows.second[cellId];
+
+			row = switch (place) {
+				WigiTableInsertBefore(): currentRow;
+				WigiTableInsertAfter(): currentRow + 1;
+				WigiTableInsertAtTheEnd(): getWigiTableRowsCount(table);
+			};
+
+			newTable = wigiInsertRowToTable(table, row, columnsRows, if (copyCellStyle) cellId else -1);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				newRow = switch (place) {
+					WigiTableInsertBefore(): min(currentRow + 1, getWigiTableRowsCount(newTable) - 1);
+					default: currentRow;
+				}
+				newColumnsRows = getTableColumnsRowsByElement(newTable);
+				newCellId = getWigiTableCellId(newColumnsRows, columnsRows.first[cellId], newRow, getWigiTableCellSpans(newTable));
+				if (newCellId >= 0) {
+					newCellPath = concat(replace(cellPath, last, newCellId), [0, 0, 0, 0]);
+					wigiSetCursor(state, newCellPath, false);
+				}
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiDeleteRow(): {
+			columnsRows = getTableColumnsRowsByElement(table);
+
+			newTable = wigiDeleteRow(table, columnsRows.second[cellId]);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				newColumnsRows = getTableColumnsRowsByElement(newTable);
+
+				newCellId = getWigiTableCellId(newColumnsRows, columnsRows.first[cellId], min(columnsRows.second[cellId], getWigiTableRowsCount(newTable) - 1), getWigiTableCellSpans(newTable));
+
+				if (newCellId >= 0) {
+					newCellPath = concat(replace(cellPath, last, newCellId), [0, 0, 0, 0]);
+					wigiSetCursor(state, newCellPath, false);
+				}
+
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiMergeCellsRight(): {
+			newTable = wigiMergeCellsRight(table, cellId);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, false);
+			} else Pair(false, false);
+		}
+
+		WigiMergeCellsDown(): {
+			newTable = wigiMergeCellsDown(table, cellId);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, false);
+			} else Pair(false, false);
+		}
+
+		WigiSplitCellsHorizontal(): {
+			newTable = wigiSplitCellsHorizontal(table, cellId);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiSplitCellsVertical(): {
+			newTable = wigiSplitCellsVertical(table, cellId);
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, true);
+			} else Pair(false, false);
+		}
+
+		WigiSetColumnWidth(width): {
+			ids = getSelectedCells(true);
+			columns = getTableColumnsRowsByElement(table).first;
+
+			newTable = fold(ids, Pair(table, []), \acc : Pair<WigiElement, [int]>, id : [int] -> {
+				column = columns[id[0]];
+				if (!contains(acc.second, column)) {
+					Pair(wigiSetColumnWidth(acc.first, column, width, id[0]), arrayPush(acc.second, column));
+				} else acc;
+			}).first;
+
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, false);
+			} else Pair(false, false);
+		}
+
+		WigiSetRowHeight(height): {
+			ids = getSelectedCells(true);
+			rows = getTableColumnsRowsByElement(table).second;
+
+			newTable = fold(ids, Pair(table, []), \acc : Pair<WigiElement, [int]>, id : [int] -> {
+				row = rows[id[0]];
+				if (!contains(acc.second, row)) {
+					Pair(wigiSetRowHeight(acc.first, row, height, id[0]), arrayPush(acc.second, row));
+				} else acc;
+			}).first;
+
+			if (table != newTable) {
+				replaceElementInDocument(state, tablePath, newTable);
+				Pair(true, false);
+			} else Pair(false, false);
+		}
+
+		WigiSetTableCellStyle(styleToSet): {
+			cps = getSelectedCells(false);
+			h = setCellsStyle(cps, styleToSet);
+			Pair(h, h);
+		}
+
+		WigiApplyTableCellTemplate(cellTemplate): {
+			cps = getSelectedCells(false);
+			templateCellStyle = getWigiTableCellStyle(cellTemplate);
+			hStyle = setCellsStyle(cps, templateCellStyle);
+			hContent = fold(cps, false, \acc, cp -> {
+				cell = getElementAtPosition(document, cp);
+				newCell = setEmptyTableCellContent(cell, wigiForStorage(cellTemplate.elements[0], true));
+				if (cell != newCell) {
+					replaceElementInDocument(state, cp, newCell);
+					true;
+				} else acc;
+			});
+			h = hStyle || hContent;
+			Pair(h, h);
+		}
+
+		WigiDeleteTable(): {
+			deleteElementSafely(state, tablePath);
+			Pair(true, false)
+		}
+
+		WigiSetCellCursor(): {
+			if (cellPath != [] && isWigiRecursive(getElementAtPosition(document, cellPath), [dummyWigiSpreadsheetCell])) {
+				wigiSetCursor(state, cellPath, false);
+				resetTabColumn();
+				Pair(true, false);
+			} else Pair(false, false);
+		}
+
+		WigiCursorLeft(selecting): {
+			Pair(moveCursorLeftRight(selecting, cellPath, -1, true) != cellPath, false);
+		}
+
+		WigiCursorRight(selecting): {
+			Pair(moveCursorLeftRight(selecting, cellPath, 1, true) != cellPath, false);
+		}
+
+		WigiCursorDown(selecting): {
+			Pair(moveCursorUpDown(selecting, cellPath, 1, false) != cellPath, false)
+		}
+
+		WigiCursorUp(selecting): {
+			Pair(moveCursorUpDown(selecting, cellPath, -1, false) != cellPath, false)
+		}
+
+		WigiEnter(shift): {
+			newCellPath = moveCursorUpDown(false, cellPath, if (shift) -1 else 1, true);
+			if (newCellPath != [] && newCellPath != cellPath && !shift) {
+				tabColumn = extractStruct(either(getWigiTableStyle(table), []), WigiFirstTabColumn(-1)).index;
+				if (tabColumn > -1) moveCursorLeftRight(false, newCellPath, tabColumn - getTableColumnsRowsByElement(table).first[cellId], false) |> ignore;
+			};
+
+			Pair(newCellPath != cellPath, false);
+		}
+
+		WigiSpace(): {
+			cell = getElementAtPosition(document, cellPath);
+			wigiSetCursor(state, concat(cellPath, getEndPositionOfDocument(cell, false)), false);
+			Pair(true, false);
+		}
+
+		WigiDelete(): {
+			if (isCellCursor(state)) Pair(clearWigiTableCell(state, cellPath), false)
+			else {
+				handled = isEmptySelection(getValue(state.selection)) && concat(cellPath, getEndPositionOfDocument(getElementAtPosition(document, cellPath), false)) == cursor;
+				if (handled) {
+					// We still need to move cursor to the right
+					wigiMoveCursor(state, 1, false);
+				}
+
+				Pair(handled, false)
+			}
+		}
+
+		WigiDeleteWord(): {
+			if (isCellCursor(state)) Pair(clearWigiTableCell(state, cellPath), false)
+			else Pair(false, false);
+		}
+
+		WigiBackspace(): {
+			isSpeadsheet = \ -> {
+							doc = getValue(state.document);
+							isWigiRecursive(getElementAtPosition(doc, wigiFindParentRecursive(doc, [], getValue(state.cursor))), [dummyWigiSpreadsheetCell])
+						};
+
+			if (isCellCursor(state)) Pair(clearWigiTableCell(state, cellPath), false)
+			else {
+				// [0, 0, 0, 0] isn't the most reliable thing in the world
+				// basically, it assumes we got WigiFrame(WigiStory(WigiParagraph(WigiText(""))))
+				handled = isEmptySelection(getValue(state.selection)) && concat(cellPath, [0, 0, 0, 0]) == cursor;
+				if (handled && !isSpeadsheet()) {
+					// We still need to move cursor to the left
+					wigiMoveCursor(state, -1, false);
+				}
+
+				Pair(handled, false)
+			}
+		}
+
+		WigiBackspaceWord(): {
+			if (isCellCursor(state)) Pair(clearWigiTableCell(state, cellPath), false)
+			else Pair(false, false);
+		}
+		WigiEnd(__): Pair(false, false);
+		WigiRedo(): Pair(false, false);
+		WigiDeleteRadioOption(): Pair(false, false);
+		WigiUndo(): Pair(false, false);
+		WigiInsertNativeWiki(__): Pair(false, false);
+		WigiSetCursor(__, __): Pair(false, false);
+		WigiInsertNaturalMath(): Pair(false, false);
+		WigiChangeRecursive(__): Pair(false, false);
+		WigiRenameRadioGroup(__): Pair(false, false);
+		WigiHome(__): Pair(false, false);
+		WigiNone(): Pair(false, false);
+		WigiInsertHTML(__): Pair(false, false);
+		WigiChangeRadioOptionValue(__): Pair(false, false);
+		WigiPageUp(__): Pair(false, false);
+		WigiModifyFontSize(__, __): Pair(false, false);
+		WigiSetBaselineShift(__): Pair(false, false);
+		WigiDeleteRadioGroup(): Pair(false, false);
+		WigiCopySpecial(__): Pair(false, false);
+		WigiInsertElement(__): Pair(false, false);
+		WigiSelectSentence(): Pair(false, false);
+		WigiTab(__): Pair(false, false);
+		WigiZoomIn(): Pair(false, false);
+		WigiPaste(): Pair(false, false);
+		WigiRightWord(__): Pair(false, false);
+		WigiSetLock(__): Pair(false, false);
+		WigiDownWord(__): Pair(false, false);
+		WigiModifyParagraphStyle(__): Pair(false, false);
+		WigiReplaceParagraphStyle(__): Pair(false, false);
+		WigiCopy(__): Pair(false, false);
+		WigiSetFontSize(__): Pair(false, false);
+		WigiSetAnnotation(__): Pair(false, false);
+		WigiModifyStoryStyle(__): Pair(false, false);
+		WigiDeleteElement(__): Pair(false, false);
+		WigiLeftWord(__): Pair(false, false);
+		WigiSelectWord(): Pair(false, false);
+		WigiSetStoryStyle(__, __): Pair(false, false);
+		WigiSelectAll(): Pair(false, false);
+		WigiSetRadioGroupLayout(__): Pair(false, false);
+		WigiSetBackgroundColor(__): Pair(false, false);
+		WigiSetRadioGroupWidth(__): Pair(false, false);
+		WigiZoomOut(): Pair(false, false);
+		WigiResetZoom(): Pair(false, false);
+		WigiSetLanguage(__): Pair(false, false);
+		WigiSetName(__): Pair(false, false);
+		WigiSetDoubleUnderline(__): Pair(false, false);
+		WigiClearTextFormatting(): Pair(false, false);
+		WigiInsertFormula(__): Pair(false, false);
+		WigiSetColor(__): Pair(false, false);
+		WigiUpWord(__): Pair(false, false);
+		WigiInsertPageBreak(): Pair(false, false);
+		WigiSetUnderline(__): Pair(false, false);
+		WigiCut(): Pair(false, false);
+		WigiSetFontFamily(__): Pair(false, false);
+		WigiSetLetterSpacing(__) : Pair(false, false);
+		WigiSwitchFontFamily(__, __): Pair(false, false);
+		WigiPageDown(__): Pair(false, false);
+		WigiSetParagraphStyle(__, __): Pair(false, false);
+		WigiChangeBlock(__): Pair(false, false);
+		WigiClearParagraphFormatting(): Pair(false, false);
+		// TODO: do we need these events in tables
+		WigiSwapParagraph(__): Pair(false, false);
+		WigiCleanUpParagrapshIndents(__): Pair(false, false);
+	};
+
+	if (pair.second) {
+		newTable = setWigiTableCellNames(getElementAtPosition(getValue(state.document), tablePath));
+		if (newTable != table) replaceElementInDocument(state, tablePath, newTable);
+	}
+
+	pair.first;
+}
+
+isWigiTable(element : WigiElement) -> bool {
+	switch(element) {
+		WigiRecursive(e, t, s): {
+			switch(t) {
+				WigiTable(__, __, __, __): {
+					true;
+				}
+				default: false;
+			}
+		}
+		default: false;
+	}
+}
+
+clearWigiTableCell(state : WigiEditorState, cellPath : [int]) -> bool {
+	cell = getElementAtPosition(getValue(state.document), cellPath);
+	newCell = switch (cell) {
+		WigiRecursive(e, t, s): {
+			switch (e[0]) {
+				WigiStory(p, sv, ss): {
+					switch (^p[0]) {
+						WigiParagraph(es, ps): {
+							switch (es[0]) {
+								WigiText(__, ts): {
+									WigiRecursive([makeWigiStory([WigiParagraph([WigiText("", ts)], ps)], ss)], t, s)
+								}
+								default: cell;
+							}
+						}
+						default: cell;
+					}
+				}
+				default: cell;
+			}
+		}
+		default: cell;
+	};
+
+	if (cell != newCell) {
+		replaceElementInDocument(state, cellPath, newCell);
+		true;
+	} else false;
+}
+
+wigiInsertColumnToTable(table : WigiElement, column : int, columnsRows : Pair<[int], [int]>, currentCellId : int) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(r, c, cellSpans, st): {
+					isSpreadsheetCell = isWigiRecursive(elements[0], [dummyWigiSpreadsheetCell]);
+					columns = columnsRows.first;
+					rows = columnsRows.second;
+					currentColumnIds = getCurrentColumnIds(currentCellId, r, c);
+
+					getNewElements = ref \col : int, row : int, elems : Quadruple<[WigiCellSpan], [WigiElement], int, int>, cellStyle : [WigiTableCellStyle] -> elems;
+
+					getNewElements := \col : int, row : int, elems : Quadruple<[WigiCellSpan], [WigiElement], int, int>, cellStyle : [WigiTableCellStyle] -> {
+						if (col >= c) {
+							cellId = getWigiTableCellId(columnsRows, c - 1, row, cellSpans) + 1 + row;
+							if (cellId >= 0) {
+								Quadruple(insertArray(elems.first, cellId , WigiCellSpan(1, 1)), insertArray(elems.second, cellId,
+									if (isSpreadsheetCell) createWigiSpreadsheetCell("", cellStyle)
+									else createWigiTableCell("", cellStyle)), 0, 0)
+							} else elems;
+						} else {
+							cellId = getWigiTableCellId(columnsRows, col, row, cellSpans);
+							if (cellId >= 0) {
+								if (cellSpans[cellId].col == 1 || columns[cellId] == col) {
+									if (rows[cellId] == row) {
+										Quadruple(insertArray(elems.first, cellId + elems.third, WigiCellSpan(1, 1)), insertArray(elems.second, cellId + elems.fourth,
+											if (isSpreadsheetCell) createWigiSpreadsheetCell("", cellStyle)
+											else createWigiTableCell("", cellStyle)), elems.third + 1, elems.fourth + 1)
+									} else {
+										^getNewElements(col + 1, row, elems, cellStyle);
+									}
+								} else {
+									Quadruple(replace(elems.first, cellId + elems.third, WigiCellSpan(cellSpans[cellId].row, cellSpans[cellId].col + 1)), elems.second, elems.third + 1, elems.fourth)
+								}
+							} else elems;
+						}
+					};
+
+					quad = fold(generate(0, r, idfn), Quadruple(cellSpans, elements, 0, 0), \acc, i -> {
+						cellStyle = if (currentCellId < 0) []
+							else getWigiTableCellStyle(getElementAtPosition(table, [currentColumnIds[i]]));
+						^getNewElements(column, i, acc, cellStyle);
+					});
+
+					columnWidths0 = extractStruct(st, WigiTableColumnWidths([])).widths;
+					columnWidths = map(columnWidths0, number2double);
+					newColumnWidths = if (columnWidths != []) WigiTableColumnWidths(insertArray(columnWidths, column, 0.0)) else WigiTableColumnWidths([]);
+					newst = arrayPush(filter(st, \s -> switch(s) {WigiTableColumnWidths(__): false; default: true}), newColumnWidths);
+
+					newType = WigiTable(r, c + 1, quad.first, newst);
+					WigiRecursive(quad.second, newType, style);
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiDeleteColumn(table : WigiElement, column : int) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(r, c, cellSpans, st): {
+					columns = getTableColumnsRows(type).first;
+
+					if (c > 1 && column >= 0 && column < c) {
+						newCellSpans = foldi(cellSpans, [], \i, spans, span -> {
+							if (all(generate(0, span.col, \j -> columns[i] + j != column))) arrayPush(spans, span) else if (span.col > 1) arrayPush(spans, WigiCellSpan(span.row, span.col - 1)) else spans;
+						});
+
+						columnWidths = extractStruct(st, WigiTableColumnWidths([])).widths;
+						newColumnWidths = if (columnWidths != []) WigiTableColumnWidths(removeIndex(columnWidths, column)) else WigiTableColumnWidths([]);
+						newst = arrayPush(filter(st, \s -> switch(s) {WigiTableColumnWidths(__): false; default: true}), newColumnWidths);
+
+						newType = WigiTable(r, c - 1, newCellSpans, newst);
+
+						newElements = foldi(elements, [], \i, elems, element -> {
+							if (columns[i] != column || cellSpans[i].col > 1) arrayPush(elems, element) else elems;
+						});
+
+						WigiRecursive(newElements, newType, style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiInsertRowToTable(table : WigiElement, row : int, columnsRows : Pair<[int], [int]>, currentCellId : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					isSpreadsheetCell = isWigiRecursive(elements[0], [dummyWigiSpreadsheetCell]);
+					currentRowIds = getCurrentRowIds(currentCellId, c);
+					p = fold(generate(0, c, idfn), Pair(cellSpans, elements), \acc : Pair<[WigiCellSpan], [WigiElement]>, i -> {
+						cellStyle = if (currentCellId < 0) []
+							else getWigiTableCellStyle(getElementAtPosition(table, [currentRowIds[i]]));
+						if (row >= r) {
+							Pair(
+								arrayPush(acc.first, WigiCellSpan(1, 1)),
+								arrayPush(acc.second,
+									if (isSpreadsheetCell) createWigiSpreadsheetCell("", cellStyle)
+									else createWigiTableCell("", cellStyle)
+								)
+							);
+						} else {
+							cellId = getWigiTableCellId(columnsRows, i, row, cellSpans);
+							if (cellId >= 0) {
+								if (cellSpans[cellId].row == 1 || columnsRows.second[cellId] == row) {
+									Pair(insertArray(acc.first, cellId, WigiCellSpan(1, 1)), insertArray(acc.second, cellId,
+										if (isSpreadsheetCell) createWigiSpreadsheetCell("", cellStyle)
+										else createWigiTableCell("", cellStyle)
+									));
+								} else {
+									Pair(replace(acc.first, cellId, WigiCellSpan(cellSpans[cellId].row + 1, cellSpans[cellId].col)), acc.second);
+								}
+							} else acc;
+						}
+					});
+
+					newType = WigiTable(r + 1, c, p.first, st);
+					WigiRecursive(p.second, newType, style);
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiDeleteRow(table : WigiElement, row : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					if (r > 1 && row >= 0 && row < r) {
+						rows = getTableColumnsRows(type).second;
+
+						newCellSpans = foldi(cellSpans, [], \i, spans, span -> {
+							if (all(generate(0, span.row, \j -> rows[i] + j != row))) arrayPush(spans, span)
+							else if (span.row > 1) arrayPush(spans, WigiCellSpan(span.row - 1, span.col))
+							else spans;
+						});
+
+						newType = WigiTable(r - 1, c, newCellSpans, st);
+
+						newElements = foldi(elements, [], \i, elems, element -> {
+							if (rows[i] != row || cellSpans[i].row > 1) arrayPush(elems, element) else elems;
+						});
+
+						WigiRecursive(newElements, newType, style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiMergeCellsRight(table : WigiElement, ind : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					rows = getTableColumnsRows(type).second;
+
+					if (ind + 1 < length(rows) && rows[ind] == rows[ind + 1] && cellSpans[ind].row == cellSpans[ind + 1].row) {
+						newCellSpans = removeIndex(replace(cellSpans, ind, WigiCellSpan(cellSpans[ind].row, cellSpans[ind].col + cellSpans[ind + 1].col)), ind + 1);
+						newType = WigiTable(r, c, newCellSpans, st);
+
+						merged = mergeWigiCells(elements[ind], elements[ind + 1]);
+						if (merged != WigiEmpty()) {
+							newElements = removeIndex(replace(elements, ind, merged), ind + 1);
+							WigiRecursive(newElements, newType, style);
+						} else table;
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiMergeCellsDown(table : WigiElement, ind1 : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					elementsCount = length(elements);
+
+					cr = getTableColumnsRows(type);
+
+					columns = cr.first;
+					rows = cr.second;
+
+					ind2 = iteriUntil(columns, \i, col -> columns[ind1] == col && rows[ind1] + cellSpans[ind1].row == rows[i] && cellSpans[ind1].col == cellSpans[i].col);
+
+					if (ind2 < elementsCount) {
+						merged = mergeWigiCells(elements[ind1], elements[ind2]);
+
+						if (merged != WigiEmpty()) {
+							newCellSpans = removeIndex(replace(cellSpans, ind1, WigiCellSpan(cellSpans[ind1].row + cellSpans[ind2].row, cellSpans[ind1].col)), ind2);
+							newType = WigiTable(r, c, newCellSpans, st);
+
+							newElements = removeIndex(replace(elements, ind1, merged), ind2);
+							WigiRecursive(newElements, newType, style);
+						} else table;
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiSplitCellsHorizontal(table : WigiElement, ind : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					if (cellSpans[ind].col > 1) {
+						newCellSpans = ref replace(cellSpans, ind, WigiCellSpan(cellSpans[ind].row, 1));
+						newElements = ref elements;
+
+						fori(1, cellSpans[ind].col - 1, \i -> {
+							newCellSpans := insertArray(^newCellSpans, ind + i, WigiCellSpan(cellSpans[ind].row, 1));
+							newElements := insertArray(^newElements, ind + i,
+								if (isWigiRecursive(elements[0], [dummyWigiSpreadsheetCell]))
+									createWigiSpreadsheetCell("", [])
+								else createWigiTableCell("", []));
+						});
+
+						newType = WigiTable(r, c, ^newCellSpans, st);
+
+						WigiRecursive(^newElements, newType, style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiSplitCellsVertical(table : WigiElement, ind : int) -> WigiElement {
+	switch (table) {
+		WigiRecursive(elements, type, style): {
+			switch (type) {
+				WigiTable(r, c, cellSpans, st): {
+					cr = getTableColumnsRows(type);
+					columns = cr.first;
+					rows = cr.second;
+
+					col = (if (columns[ind] == 0) c else columns[ind]) - 1;
+					row = rows[ind] - b2i(columns[ind] == 0);
+
+					if (cellSpans[ind].row > 1) {
+						newCellSpans = ref replace(cellSpans, ind, WigiCellSpan(1, cellSpans[ind].col));
+						newElements = ref elements;
+
+						fori(1, cellSpans[ind].row - 1, \i -> {
+							ind2 = getWigiTableCellId(cr, col, row + i, cellSpans);
+							if (ind2 >= 0) {
+								newCellSpans := insertArray(^newCellSpans, ind2 + i, WigiCellSpan(1, cellSpans[ind].col));
+								newElements := insertArray(^newElements, ind2 + i,
+									if (isWigiRecursive(elements[0], [dummyWigiSpreadsheetCell]))
+										createWigiSpreadsheetCell("", [])
+									else createWigiTableCell("", []));
+							}
+						});
+
+						newType = WigiTable(r, c, ^newCellSpans, st);
+
+						WigiRecursive(^newElements, newType, style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+setTableCellParagraphsTightWidth(cell : WigiElement, set : bool) -> WigiElement {
+	switch (cell) {
+		WigiRecursive(elements, type, style): {
+			newElements = map(elements, \e -> {
+				switch (e : WigiElement) {
+					WigiStory(paragraphs, storyViews, storyStyle): {
+						newParagraphs = map(^paragraphs, \p -> {
+							switch (p) {
+								WigiParagraph(paragraphElements, paragraphStyle): {
+									WigiParagraph(paragraphElements, if (set) arrayPush(paragraphStyle, TightWidth()) else removeAll(paragraphStyle, TightWidth()));
+								}
+								default: p;
+							}
+						});
+
+						WigiStory(ref newParagraphs, storyViews, storyStyle)
+					}
+					default: e;
+				}
+			});
+			WigiRecursive(newElements, type, style);
+		}
+		default: cell;
+	}
+}
+
+setTableCellTightWidth(table : WigiElement, set : bool) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(rows, cols, cellSpans, tableStyle): {
+					newElements = map(elements, \e -> {
+						switch (e : WigiElement) {
+							WigiRecursive(cellContent, cellType, __): {
+								switch (cellType) {
+									WigiTableCell(__, cellStyle): {
+										newCellStyle = if (set) arrayPush(cellStyle, WigiCellTightWidth()) else removeAll(cellStyle, WigiCellTightWidth());
+										setTableCellParagraphsTightWidth(setWigiTableCellStyle(e, newCellStyle), set);
+									}
+									default: e;
+								}
+							}
+							default: e;
+						}
+					});
+					WigiRecursive(newElements, type, style);
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+doChangeWigiTableStyle(state : WigiEditorState, event : WigiSetTableStyle) -> bool {
+	document = getValue(state.document);
+	cursor = getValue(state.cursor);
+
+	tablePath = wigiFindParentRecursive(document, [dummyWigiTable], cursor);
+	if (tablePath != []) {
+		table = getElementAtPosition(document, tablePath);
+
+		style : [WigiTableStyle] = either(getWigiTableStyle(table), []);
+
+		styleFilter = switch (event: WigiSetTableStyle) {
+			WigiSetTableHighlight(__, __): \s : WigiTableStyle -> !isSameStructType(s, WigiTableHighlight("",""));
+			WigiSetShowGrid(__): \s : WigiTableStyle -> !isSameStructType(s, WigiShowGrid());
+			WigiSetDontFitToAvailableWidth(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableDontFitToAvailableWidth());
+			WigiSetSameRowHeight(__): \s : WigiTableStyle -> !isSameStructType(s, WigiSameRowHeight());
+			WigiSetShowHeaders(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableShowHeaders());
+			WigiSetShowFormulaBar(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableShowFormulaBar());
+			WigiSetTableBorder(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableBorder(0., 0., 0));
+			WigiSetTableSize(__, __): \s : WigiTableStyle -> !isSameStructType(s, WigiTableSize(0, 0));
+			WigiSetCellsTightWidth(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableTightWidth());
+			WigiSetVisibleFormula(__): \s : WigiTableStyle -> !isSameStructType(s, WigiTableVisibleFormula(""));
+			WigiSetColumnsRigid(__) : \s : WigiTableStyle -> !isSameStructType(s, WigiTableRigidCols());
+		};
+
+		stripStyle = filter(style, styleFilter);
+
+		newStyle = switch (event: WigiSetTableStyle) {
+			WigiSetTableHighlight(c, r): arrayPush(stripStyle, WigiTableHighlight(c, r));
+			WigiSetShowGrid(set): if (set) arrayPush(stripStyle, WigiShowGrid()) else stripStyle;
+			WigiSetDontFitToAvailableWidth(set): if (set) arrayPush(stripStyle, WigiTableDontFitToAvailableWidth()) else stripStyle;
+			WigiSetSameRowHeight(set): if (set) arrayPush(stripStyle, WigiSameRowHeight()) else stripStyle;
+			WigiSetShowHeaders(set): if (set) arrayPush(stripStyle, WigiTableShowHeaders()) else stripStyle;
+			WigiSetShowFormulaBar(set): if (set) arrayPush(stripStyle, WigiTableShowFormulaBar()) else stripStyle;
+			WigiSetTableBorder(border): arrayPush(stripStyle, WigiTableBorder(border.width, border.radius, border.color));
+			WigiSetTableSize(columns, rows): arrayPush(stripStyle, WigiTableSize(columns, rows));
+			WigiSetCellsTightWidth(set): if (set) arrayPush(stripStyle, WigiTableTightWidth()) else stripStyle;
+			WigiSetVisibleFormula(formula): arrayPush(stripStyle, WigiTableVisibleFormula(formula));
+			WigiSetColumnsRigid(isRigid) : ifArrayPush(stripStyle, isRigid, WigiTableRigidCols());
+		};
+
+		newTable = switch (event: WigiSetTableStyle) {
+			WigiSetCellsTightWidth(set): setTableCellTightWidth(table, set);
+			WigiSetTableHighlight(__, __): table;
+			WigiSetShowGrid(__): table;
+			WigiSetDontFitToAvailableWidth(__): table;
+			WigiSetSameRowHeight(__): table;
+			WigiSetShowHeaders(__): table;
+			WigiSetShowFormulaBar(__): table;
+			WigiSetTableBorder(__): table;
+			WigiSetTableSize(__, __): table;
+			WigiSetVisibleFormula(__): table;
+			WigiSetColumnsRigid(__): table;
+		}
+
+		replaceElementInDocument(state, tablePath, setWigiTableStyle(newTable, newStyle));
+		true;
+	} else false;
+}
+
+
+wigiSetColumnWidth(table : WigiElement, column : int, width : double, cellId : int) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(rows, cols, cellSpans, tableStyle): {
+					if (column >= 0 && column < cols) {
+						colSpan = cellSpans[cellId].col;
+						cws0 = extractStruct(tableStyle, WigiTableColumnWidths([])).widths;
+						cws = map(cws0, number2double);
+						columnWidths = if (cws == []) generate(0, cols, \i -> 0.0) else cws;
+						newColumnWidths = fold(generate(0, colSpan, \i -> i), columnWidths, \acc, i -> replace(acc, column + i, width / i2d(colSpan)));
+						newTableStyle = arrayPush(filter(tableStyle, \s -> switch(s) {WigiTableColumnWidths(__): false; default: true;}), WigiTableColumnWidths(newColumnWidths));
+						WigiRecursive(elements, WigiTable(rows, cols, cellSpans, newTableStyle), style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+wigiSetRowHeight(table : WigiElement, row : int, height : double, cellId : int) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(rows, cols, cellSpans, tableStyle): {
+					if (row >= 0 && row < rows) {
+						rowSpan = cellSpans[cellId].row;
+						rhs = extractStruct(tableStyle, WigiTableRowHeights([])).heights;
+						rowHeights = if (rhs == []) generate(0, rows, \i -> 0.0) else rhs;
+						newRowHeights = fold(generate(0, rowSpan, \i -> i), rowHeights, \acc, i -> replace(acc, row + i, height / i2d(rowSpan)));
+						newTableStyle = arrayPush(filter(tableStyle, \s -> switch(s) {WigiTableRowHeights(__): false; WigiSameRowHeight(): false; default: true;}), WigiTableRowHeights(newRowHeights));
+						WigiRecursive(elements, WigiTable(rows, cols, cellSpans, newTableStyle), style);
+					} else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+mergeWigiCells(cell1 : WigiElement, cell2 : WigiElement) -> WigiElement {
+	switch(cell1) {
+		WigiRecursive(elements1, type1, style1): {
+			switch(cell2) {
+				WigiRecursive(elements2, type2, style2): {
+					switch(elements1[0]) {
+						WigiStory(paragraphs1, views1, storyStyle1): {
+							switch(elements2[0]) {
+								WigiStory(paragraphs2, views2, storyStyle2): {
+									WigiRecursive([makeWigiStory(concat(^paragraphs1, ^paragraphs2), storyStyle1)], type1, style1);
+								}
+								default: WigiEmpty();
+							}
+						}
+						default: WigiEmpty();
+					}
+				}
+				default: WigiEmpty();
+			}
+		}
+		default: WigiEmpty();
+	}
+}
+
+setWigiTableStyle(table : WigiElement, newStyle : [WigiTableStyle]) -> WigiElement {
+	switch(table) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTable(r, c, cs, s): {
+					if (s != newStyle) WigiRecursive(elements, WigiTable(r, c, cs, newStyle), style)
+					else table;
+				}
+				default: table;
+			}
+		}
+		default: table;
+	}
+}
+
+setWigiTableCellStyle(cell : WigiElement, newStyle : [WigiTableCellStyle]) -> WigiElement {
+	switch(cell) {
+		WigiRecursive(elements, type, style): {
+			switch(type) {
+				WigiTableCell(widthHeight, cellStyle): {
+					WigiRecursive(elements, WigiTableCell(make(getValue(widthHeight)), newStyle), style);
+				}
+				WigiSpreadsheetCell(widthHeight, editMode, cellStyle): {
+					WigiRecursive(elements, WigiSpreadsheetCell(make(getValue(widthHeight)), make(getValue(editMode)), newStyle), style);
+				}
+				default: cell;
+			}
+		}
+		default: cell;
+	}
+}
+
+getWigiTableCellSpans(table : WigiElement) -> [WigiCellSpan] {
+	switch(table) {
+		WigiRecursive(__, type, __): {
+			switch(type) {
+				WigiTable(__, __, cellSpans, __): cellSpans;
+				default: [];
+			}
+		}
+		default: [];
+	}
+}
+
+getCurrentRowIds(currentCellId : int, colNum : int) -> [int] {
+	ind = currentCellId / colNum;
+	enumFromTo(ind * colNum, (ind + 1) * colNum - 1);
+}
+
+getCurrentColumnIds(currentCellId : int, rowNum : int, colNum : int) -> [int] {
+	ind = currentCellId % colNum;
+	generate(0, rowNum, \i -> i * colNum + ind);
+}

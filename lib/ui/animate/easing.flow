@@ -1,0 +1,96 @@
+import ui/animate/spring;
+
+export {
+	// analogue of css "cubic-bezier" for timing
+	// i.e. you specify only P1 and P2, while P0 always (0,0) and P3 always (1,1)
+	CubicBezierEasing(x1 : double, y1 : double, x2 : double, y2 : double);
+
+	easingFastOutSlowIn = CubicBezierEasing(0.4, 0.0, 0.2, 1.0);
+	easingFastOutLinearIn = CubicBezierEasing(0.4, 0.0, 1.0, 1.0);
+	easingLinearOutSlowIn = CubicBezierEasing(0.0, 0.0, 0.2, 1.0);
+
+	EasingAnimation(
+		start : () -> void,
+		percent : Behaviour<double>
+	);
+
+	// returns behaviour that changes it's value from 0.0 to 1.0 within duration
+	// and calls onEnd when end is reached
+	makeEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDeltaTimer, onEnd : () -> void) -> EasingAnimation;
+
+	// Helper for transitions from start to end, t is between 0 and 1
+	lerp(start : double, end : double, t : double) -> double;
+	// Helper for transitions from start to end using cubic bezier curve, t is between 0 and 1
+	// Returns function that converts percent to transition value
+	lerpCurve(start : double, end : double, curve : CubicBezierEasing) -> (t : double) -> double;
+}
+
+makeEasing(duration : double, curve : CubicBezierEasing, deltaTimer : LazyDeltaTimer, onEnd : () -> void) -> EasingAnimation {
+	bezierY = lerpCurve(0., 1., curve);
+
+	uns = ref [];
+
+	passed = make(0.0);
+
+	easing = make(0.0);
+	ended = ref false;
+
+	started = ref false;
+	EasingAnimation(
+		\ -> {
+			if (!^started) {
+				started := true;
+
+				refArrayPush(uns, subscribe(passed, \p -> {
+					if (!^ended) {
+						if (p >= duration) {
+							ended := true;
+							deferred(\ -> applyall(^uns));
+
+							nextDistinct(easing, 1.0);
+							onEnd();
+						} else {
+							nextDistinct(easing, bezierY(p / duration))
+						}
+					}
+				}));
+
+				deltaTimer.attach();
+				// TODO: find out why detach() may happen right after attach()
+				refArrayPush(uns, \ -> timer(1000, \ -> deltaTimer.detach()));
+				refArrayPush(uns, subscribe(deltaTimer.timer, \dt -> next(passed, getValue(passed) + dt)));
+			}
+		},
+		easing
+	)
+}
+
+findRootNewton(fn : (double) -> double, deriv : (double) -> double, initx : double, curx : double, iteration : int) -> double {
+	if (iteration <= 0) curx
+	else {
+		d = fn(curx) - initx;
+		if (abs(d) < 0.001) curx
+		else findRootNewton(fn, deriv, initx, curx - d / deriv(curx), iteration - 1)
+	}
+}
+
+lerp(start : double, end : double, t : double) -> double { 
+	(1.0 - t) * start + t * end; 
+}
+
+lerpCurve(start : double, end : double, curve : CubicBezierEasing) -> (t : double) -> double {
+	cx = 3.0 * curve.x1;
+	bx = 3.0 * (curve.x2 - curve.x1) - cx;
+	ax = 1.0 - cx - bx;
+	bezierX = \t -> t * (cx + t * (bx + t * ax));
+	bezierXDeriv = \t -> cx + t * (2.0 * bx + 3.0 * ax * t);
+
+	cy = 3.0 * curve.y1;
+	by = 3.0 * (curve.y2 - curve.y1) - cy;
+	ay = 1.0 - cy - by;
+	bezierY = \t -> t * (cy + t * (by + t * ay));
+
+	(\t -> 
+		bezierY(findRootNewton(bezierX, bezierXDeriv, t, t, 5))
+		|> (\f -> (1.0 - f) * start + f * end));
+}

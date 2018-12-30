@@ -1,0 +1,145 @@
+import formats/uri2/uri2_parser;
+import formats/uri2/uri2_ast;
+import lingo/compiler/syntaxtree_util;
+import target;
+import urlhash;
+import url;
+import binarytreeutils;
+
+forbid formats/uri/uri;
+
+export {
+	URI(scheme : string, authority : URIAuthority, path : string, query : string, fragment : string);
+	URIAuthority(userinfo : string, host : string, port : string);
+
+	// Parse a URI as defined by https://tools.ietf.org/html/rfc3986
+	// We also allow relative URI references (https://tools.ietf.org/html/rfc3986#page-25)
+	// in order to parse strings like "/www/index.html".
+	parseURI(s : string) -> URI;
+
+	// Parses a query string into key/val pairs
+	parseQueryString(query : string) -> Tree<string,string>;
+
+	// Converting URI struct into url string
+	uri2string(uri : URI) -> string;
+
+	// Extracting only host name from the URI struct
+	uri2hostString(uri : URI) -> string;
+
+	// Replacing all backslashes into "/" and adding the "/" at the end of url
+	correctUrl(url : string) -> string;
+	
+	// Converting relative path into absolute
+	resolveUrlToAbsolute(url : string, appName : string) -> string;
+
+	// Extract parameter by the given name after the '?' symbol (including # parameters)
+	getParameterFromUrl(parameter : string) -> string;
+
+}
+
+parseURI(s) {
+	emptyURI = URI("", URIAuthority("", "", ""), "", "", "");
+	
+	pr = parse_URI(s);
+	st = pr.first;
+	
+	grab = \t -> grabSTText(t, s);
+	
+	if (st.end != strlen(s)) {
+		// There are parse errors
+		emptyURI;
+	} else {
+		if (st.rule == st_URI_full) {
+			scheme = grab(get_URI_scheme(st));
+			authorityST = get_URI_authority(st);
+			userinfo_s = get_URI_userinfo_s(authorityST);
+			userinfo = if (userinfo_s == []) "" else rtrim2(grab(userinfo_s[0]), "@");			
+			host = grab(get_URI_host(authorityST));
+			port_s = get_URI_port_s(authorityST);
+			port = if (port_s == []) "" else ltrim2(grab(port_s[0]), ":");
+			path_abempty = grab(get_URI_path_abempty(st));
+			query_s = get_URI_query_s(st);
+			query = if (query_s == []) "" else ltrim2(grab(query_s[0]), "?");
+			fragment_s = get_URI_fragment_s(st);
+			fragment = if (fragment_s == []) "" else ltrim2(grab(fragment_s[0]), "#");
+			
+			URI(scheme, URIAuthority(userinfo, host, port), path_abempty, query, fragment);
+		} else
+			if (st.rule == st_URI_reference) {
+
+				path_absolute = grab(get_URI_path_absolute(st));
+				query_s = get_URI_query_s(st);
+				query = if (query_s == []) "" else ltrim2(grab(query_s[0]), "?");
+				fragment_s = get_URI_fragment_s(st);
+				fragment = if (fragment_s == []) "" else ltrim2(grab(fragment_s[0]), "#");
+				URI("", URIAuthority("", "", ""), path_absolute, query, fragment);
+				
+		} else {
+			emptyURI
+		}
+	}
+	
+}
+
+parseQueryString(query : string) -> Tree<string,string> {
+	// TODO: Decode the query strings
+	pairs2tree(map(strSplit(query, "&"), \s -> {
+		kv = strSplit(s, "=");
+		Pair(if (length(kv) > 0) kv[0] else "", if (length(kv) > 1) kv[1] else "");
+	}));
+}
+
+uri2string(uri : URI) -> string {
+	(if (uri.scheme != "") uri.scheme + "://" else "") +
+	(if (uri.authority.host != "") uri.authority.host else "") +
+	(if (uri.authority.userinfo != "") ":" + uri.authority.userinfo else "") +
+	(if (uri.authority.port != "") ":" + uri.authority.port else "") +
+	(if (uri.path != "") uri.path else "") +
+	(if (uri.query != "") "?" + uri.query else "") +
+	(if (uri.fragment != "") "#" + uri.fragment else "");
+}
+
+uri2hostString(uri : URI) -> string {
+	(if (uri.scheme != "") uri.scheme + "://" else "") +
+	(if (uri.authority.host != "") uri.authority.host else "") +
+	(if (uri.authority.userinfo != "") ":" + uri.authority.userinfo else "") +
+	(if (uri.authority.port != "") ":" + uri.authority.port else "") + "/";
+}
+
+correctUrl(url : string) -> string {
+	url2 = strReplace(url, "\\", "/");
+
+	if (endsWith(url2, "/")) url2 else url2 + "/"
+}
+
+resolveUrlToAbsolute(url : string, appName : string) -> string {
+	// loaderUrl is our friend only in JS
+	loader = loaderUrl();
+	if (startsWith(url, "http://") || startsWith(url, "https://") || startsWith(url, "ftp://")) {
+		url
+	} else if (cpp) {
+		pUrl = getUrlParameter("url");
+		baseUrl =
+			if (pUrl != "") {
+				correctUrl(pUrl)
+			} else {
+				port = getUrlParameter("port");
+				if (port != "") {
+					"http://localhost:" + port + "/"
+				} else {
+					"http://localhost:80/"
+				}
+			};
+		baseUrl + appName + "/" + url;
+ 	} else if (js || !strContains(loader, "swf")) {
+		uri2hostString(parseURI(loader)) + appName + "/" + url
+	} else {
+		url
+	}
+}
+
+getParameterFromUrl(parameter : string) -> string {
+	parameterHash = getUrlHashParameter(parameter);
+	parameterUrl = getUrlParameter(parameter);
+	if (parameterHash == "") parameterUrl else parameterHash;
+}

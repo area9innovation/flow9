@@ -1,0 +1,422 @@
+import lingo/pegcode/pegcode;
+import lingo/peg;
+
+export {
+	// Produces a program as well as debug info map
+	grammar2code(g : Grammar) -> Pair<[PegOp], Tree<int, string>>;
+	sharePrefix(p1 : [Parsing], p2 : [Parsing]) -> ShareAcc;
+}
+
+grammar2code(g : Grammar) -> Pair<[PegOp], Tree<int, string>> {
+	t = foldi(g.productions, Pair([PegCall(2), PegEnd()], makeTree()), \i, acc, p -> {
+		c = production2code(g, p);
+		Pair(concat(acc.first, c), setTree(acc.second, i, length(acc.first)));
+	});
+	code = renumberPegcode(t.first, t.second);
+	Pair(code, foldTree(t.second, makeTree(), \k, v, acc -> {
+		setTree(acc, v, g.productions[k].name)
+	}));
+}
+
+production2code(g : Grammar, p : Production) -> [PegOp] {
+	nc = length(p.choices);
+	if (nc == 0) {
+		[PegReturn()]
+	} else if (nc == 1) {
+		choices : [[PegOp]] = map(p.choices, \c -> sequence2code(g, c.seq));
+		arrayPush(choices[0], PegReturn());
+	} else {
+		prefix = sharePrefix((p.choices)[0].seq, (p.choices)[1].seq);
+		if (nc == 2 && prefix.prefix != []) {
+			// println("1 orig: " + sequence2string(g, (p.choices)[0].seq));
+			// println("2 orig: " + sequence2string(g, (p.choices)[1].seq));
+			// println("Common: " + sequence2string(g, prefix.prefix));
+			// println("1 tail: " + sequence2string(g, prefix.suffix1));
+			// println("2 tail: " + sequence2string(g, prefix.suffix2));
+			// println("");
+
+			//       <prefix>
+			//       PegChoice L1
+			//       <suffix1>
+			//       PegCommit LEnd
+			// L1:   <suffix2>
+			// LEnd: PegReturn
+
+			prefixcode = sequence2code(g, prefix.prefix);
+			suffix1 = sequence2code(g, prefix.suffix1);
+			s1 = length(suffix1);
+			suffix2 = sequence2code(g, prefix.suffix2);
+			s2 = length(suffix2);
+
+			concatA(
+				[ 
+					prefixcode,
+					[ PegChoice(2 + s1) ],
+					suffix1,
+					[ PegCommit(1 + s2) ],
+					suffix2,
+					[ PegReturn() ]
+				]
+			);
+
+		} else {
+			//     PegChoice L1
+			//     <choice1>
+			//     PegCommit LEnd
+			// L1: PegChoice L2
+			//     <choice2>
+			//     PegCommit LEnd
+			// L2: 				// Notice, no PegChoice before the last choice!
+			// ...
+			// LEnd
+			choices : [[PegOp]] = map(p.choices, \c -> sequence2code(g, c.seq));
+			arrayPush(fold(reverseA(choices), [], \acc : [PegOp], c : [PegOp] -> {
+				if (acc == []) {
+					// The last one should not have a choice, and no commit either
+					c;
+				} else {
+					if (length(c) == 1) {
+						switch (c[0] : PegOp) {
+							PegString(s): {
+								concat([PegStringChoice(s, length(acc) + 1)], acc)
+							}
+							PegRange(low, up): {
+								concat([PegRangeChoice(low, up, length(acc) + 1)], acc)
+							}
+							default: {
+								concat3([PegChoice(length(c) + 2)], c, concat([PegCommit(length(acc) + 1)], acc))
+							}
+						}
+					} else {
+						concat3([PegChoice(length(c) + 2)], c, concat([PegCommit(length(acc) + 1)], acc))
+					}
+
+				};
+			}), PegReturn());
+		}
+	}
+}
+
+sequence2code(g : Grammar, s : [Parsing]) -> [PegOp] {
+	ns = concatA(map(s, \p -> arrayPush(parsing2code(g, p), PegDrop())));
+	subrange(ns, 0, length(ns)- 1);
+}
+
+parsing2code(g : Grammar, parsing : Parsing) -> [PegOp] {
+	switch (parsing : Parsing) {
+		Choices(s): {
+			choices2code(g, s);
+		}
+		BindMatched(n, p): {
+			c = parsing2code(g, p);
+			concat3([PegStartString()], c, [PegBindString(n)]);
+		}
+		BindResult(n, p): {
+			if (p == Action2(ActionIndex())) {
+				// Common case: {#}:n
+				[PegBindIndex(n)];
+			} else {
+				c = parsing2code(g, p);
+				concat(c, [PegBindValue(n)]);
+			}
+		}
+		Opt(p): {
+			c = surroundChoice(g, p, 1);
+			concat3([PegStartCaptureList(), ], c, [PegCaptureList()]);
+		}
+		Plus(p): {
+			c = parsing2code(g, p);
+			concatA([[PegStartCaptureList()], c, [PegChoice(length(c) + 2)], c, [PegCommit(-(length(c) + 1)), PegCaptureList()]]);
+		}
+		Star(p): {
+			c = parsing2code(g, p);
+			concat3([PegStartCaptureList(), PegChoice(length(c) + 2)], c, [PegCommit(-(length(c) + 1)), PegCaptureList()]);
+		}
+		Seq(s): {
+			sequence2code(g, s);
+		}
+		Negation(p): {
+			c = parsing2code(g, p);
+			concat3([PegChoice(length(c) + 3)], c, [PegCommit(1), PegFail()]);
+		};
+		CutUp(p): {
+			// TODO: We need a new opcode for this
+			concat([PegClearCache()], parsing2code(g, p));
+		}
+		CutDown(p): {
+			// TODO: We need a new opcode for this
+			concat(parsing2code(g, p), [PegClearCache()]);
+		}
+		iRule(i): [PegCall(production2mark(i))];
+		Rule(name): [
+		{
+			i = either(findi(g.productions, \p -> p.name == name), -1);
+			if (i == -1) {
+				println("Unknown rule: " + name);
+			}
+			// Enable cache analysis here:
+			if (/* true || */ g.productions[i].caching) {
+				PegCacheCall(production2mark(i), i)
+			} else {
+				PegCall(production2mark(i))
+			}
+		}
+		];
+		Action(fn): [PegAction(fn)];
+		Action2(e): {
+			act = if (true) {
+					// Lift actions to be debug actions that check if we produce IllegalStruct
+					switch (e : ActionExp) {
+						ActionIndex(): e;
+						ActionVar(id): e;
+						ActionCall(id, args): ActionCallDebug(id, args);
+						ActionCallDebug(id, args): e;
+						ActionConstantString(s): e;
+						ActionConstantInt(i): e;
+					}
+				} else {
+					e;
+				};
+			[PegAction2(act)];
+		}
+		ActionIndex(): [PegActionIndex()];
+		Epsilon(): [];
+		Term(text): {
+			[PegString(text)];
+		}
+		CharRange(first, last): {
+			[PegRange(first, last)];
+		}
+		LingoValue(v): [];
+	}
+}
+
+
+choices2code(g : Grammar, chs : [Parsing]) -> [PegOp] {
+	choices = map(chs, \c -> parsing2code(g, c));
+	if (length(choices) == 1) {
+		choices[0];
+	} else {
+		//     PegChoice L1
+		//     <choice1>
+		//     PegCommit LEnd
+		// L1: PegChoice L2
+		//     <choice2>
+		//     PegCommit LEnd
+		// L2: 				// Notice, no PegChoice before the last choice!
+		// ...
+		// LEnd
+		fold(reverseA(choices), [PegEnd()], \acc : [PegOp], c -> {
+			if (acc == [PegEnd()]) {
+				// The last one should not have a choice, and no commit either
+				c;
+			} else {
+				concat3([PegChoice(length(c) + 2)], c, concat([PegCommit(length(acc) + 1)], acc))
+			};
+		});
+	}
+}
+
+surroundChoice(g : Grammar, p : Parsing, commit : int) -> [PegOp] {
+	switch (p) {
+		Term(text): {
+			[PegStringChoice(text, commit)];
+		}
+		CharRange(low, up): {
+			[PegRangeChoice(low, up, commit)];
+		}
+		default: {
+			c = parsing2code(g, p);
+			concat3([PegChoice(length(c) + 2)], c, [PegCommit(commit)]);
+		}
+	}
+}
+
+// Find common prefixes between parsings, and collect the result here
+ShareAcc(prefix : [Parsing], suffix1 : [Parsing], suffix2 : [Parsing]);
+
+sharePrefix(p1 : [Parsing], p2 : [Parsing]) -> ShareAcc {
+	l = min(length(p1), length(p2));
+	doSharePrefix(p1, p2, ShareAcc([], [], []), 0, 0, l);
+}
+
+doSharePrefix(p1 : [Parsing], p2 : [Parsing], acc : ShareAcc, i1 : int, i2 : int, l : int) -> ShareAcc {
+	if (i1 < l && i2 < l) {
+		np1 = p1[i1];
+		np2 = p2[i2];
+		if (!semanticParsing(np1) && !semanticParsing(np2)) {
+			// Both have an index. Keep one of them
+			doSharePrefix(p1, p2,
+				// TODO: We should rename p1
+				ShareAcc(arrayPush(acc.prefix, np1), [], []), 
+				i1 + 1, i2 +1, l
+			)
+		} else if (!semanticParsing(np1)) {
+			// Only p1 has an index - keep it for both, but rename to avoid collision
+			name = extractBindingName(np1);
+			rp1 = renameBindings2(p1, name, "s" + strRight(name, 1));
+			rnp1 = rp1[i1];
+
+			doSharePrefix(rp1, p2,
+				// TODO: We should rename p1
+				ShareAcc(arrayPush(acc.prefix, rnp1), [], []), i1 + 1, i2, l
+			)
+		} else if (!semanticParsing(np2)) {
+			// p2 has an index - keep it for both
+			name = extractBindingName(np2);
+			rp2 = renameBindings2(p2, name, "s" + strRight(name, 1));
+			rnp2 = rp2[i2];
+
+			doSharePrefix(p1, rp2, 
+				// TODO: We should rename p2
+				ShareAcc(arrayPush(acc.prefix, rnp2), [], []), i1, i2 + 1, l
+			)
+		} else {
+			if (sameParsing(np1, np2)) {
+				// Both are the same. Keep one of them
+				name1 = extractBindingName(np1);
+				name2 = extractBindingName(np2);
+
+				newname = "s" + strRight(name1, 1);
+
+				rp1 = renameBindings2(p1, name1, newname);
+				rp2 = renameBindings2(p2, name2, newname);
+
+				rnp1 = rp1[i1];
+
+				doSharePrefix(rp1, rp2, 
+					ShareAcc(arrayPush(acc.prefix, rnp1), [], []), i1 + 1, i2 +1, l
+				);
+			} else {
+				ShareAcc(acc.prefix, 
+					subrange(p1, i1, length(p1)), 
+					subrange(p2, i2, length(p2)), 
+				)
+			}
+		}
+	} else {
+		ShareAcc(acc.prefix, 
+			subrange(p1, i1, length(p1)), 
+			subrange(p2, i2, length(p2)), 
+		)
+	}
+}
+
+// Does this action have any real effect?
+semanticParsing(p : Parsing) -> bool {
+	switch (p) {
+		BindResult(n, r): semanticParsing(r);
+		Action2(a): a != ActionIndex();
+		default: true;
+	}
+}
+
+// Are these essentially the same, sans names?
+sameParsing(p1 : Parsing, p2 : Parsing) -> bool {
+	stripBind(p1) == stripBind(p2);
+}
+
+stripBind(p : Parsing) {
+	switch (p) {
+		BindResult(n, r): r;
+		default: p;
+	}
+}
+
+extractBindingName(p : Parsing) -> string {
+	switch (p) {
+		BindResult(n, r): n;
+		default: {
+			"";
+		}
+	}
+}
+
+renameBindings2(s : [Parsing], name : string, newname : string) -> [Parsing] {
+	fold(s, [], \acc, p -> {
+		arrayPush(acc, renameBinding(p, name, newname))
+	});
+}
+
+renameBinding(p : Parsing, name : string, newname : string) -> Parsing {
+	switch (p) {
+		BindResult(n, r): {
+			if (n == name) BindResult(newname, renameBinding(r, name, newname))
+			else p;
+		}
+		BindMatched(n, r): {
+			if (n == name) BindMatched(newname, renameBinding(r, name, newname))
+			else p;
+		}
+		iRule(i): p;
+		CharRange(f, l): p;
+		Term(n): p;
+		ActionIndex(): p;
+		Epsilon(): p;
+		Rule(m): p;
+		Action(fn): p;
+		Seq(seq): Seq(renameBindings2(seq, name, newname));
+		Choices(seq): Choices(renameBindings2(seq, name, newname));
+		Opt(r): Opt(renameBinding(r, name, newname));
+		Star(r): Star(renameBinding(r, name, newname));
+		Plus(r): Plus(renameBinding(r, name, newname));
+		Negation(r): Negation(renameBinding(r, name, newname));
+		CutUp(r): CutUp(renameBinding(r, name, newname));
+		CutDown(r): CutDown(renameBinding(r, name, newname));
+		Action2(e): {
+			Action2(renameBindingInAction(e, name, newname));
+		}
+		LingoValue(v): p;
+	}
+}
+
+renameBindingInAction(a : ActionExp, name : string, newname : string) -> ActionExp {
+	switch (a) {
+		ActionIndex(): a;
+		ActionVar(id): if (id == name) ActionVar(newname) else a;
+		ActionCall(id, args): ActionCall(id, map(args, \arg -> renameBindingInAction(arg, name, newname)));
+		ActionCallDebug(id, args): ActionCallDebug(id, map(args, \arg -> renameBindingInAction(arg, name, newname)));
+		ActionConstantString(s): a;
+		ActionConstantInt(s): a;
+	}
+}
+
+
+renumberPegcode(code : [PegOp], productionAddresses : Tree<int, int>) -> [PegOp] {
+	fix = \l -> if (l >= 1000000) lookupTreeDef(productionAddresses, mark2production(l), -1) else l;
+	map(code, \p -> {
+		switch (p : PegOp) {
+			PegString(x): p;
+			PegRange(l, u): p;
+			PegJump(l): PegJump(fix(l));
+			PegChoice(l): PegChoice(fix(l));
+			PegStringChoice(x, l): PegStringChoice(x, fix(l));
+			PegRangeChoice(low, up, l): PegRangeChoice(low, up, fix(l));
+			PegCall(l): PegCall(fix(l));
+			PegCacheCall(l, c): PegCacheCall(fix(l), c);
+			PegReturn(): p;
+			PegDrop(): p;
+			PegCommit(l): PegCommit(fix(l));
+			PegStartString(): p;
+			PegBindString(v): p;
+			PegStartCaptureList(): p;
+			PegBindValue(v): p;
+			PegBindIndex(v): p;
+			PegAction(v): p;
+			PegAction2(e): p;
+			PegActionIndex(): p;
+			PegFail(): p;
+			PegEnd(): p;
+			PegCaptureList(): p;
+			PegClearCache(): p;
+		}
+	});
+}
+
+production2mark(i : int) -> int {
+	(i + 1000000);
+}
+
+mark2production(i : int) -> int {
+	i - 1000000;
+}

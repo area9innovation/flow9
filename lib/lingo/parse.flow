@@ -1,0 +1,539 @@
+import lingo/peg;
+import url_parameter;
+
+export {
+	//
+	// The following is obsolete. Use pegcode instead. Check doc/lingo.html
+	//
+
+
+	// Parse string according to grammar (with given start nonterminal)
+	parse(grammar : Grammar, start : string, input : string, sem : SemanticActions) -> ParseResult;
+
+	// Parse an array of values according to grammar (with given start nonterminal)
+	parse2(grammar : Grammar, start : string, input : [flow], sem : SemanticActions) -> ParseResult;
+
+	// make g a faster grammar by converting production name lookup to ints (i.e., Rule() to iRule())
+	preprocess(g : Grammar) -> Grammar;
+
+	// Does not handle mutual dependencies correctly, simply concats the 2 grammars
+	combineGrammars(g1 : Grammar, g2 : Grammar) -> Grammar;
+
+
+
+	ruleResultString(rr : RuleResult) -> string;
+
+	
+	//
+	// AST construction helpers.  They are combinators that work on functions abstracted
+	// over the parsing environment in order to allow looking up parsing variables (bound
+	// by BindResult & BindMatched) at parse time.
+	//
+	
+	struct(sn : (PegEnv) -> flow, args : [(PegEnv) -> flow]) -> (PegEnv) -> flow;
+
+	// the literal value s, i.e., no matter what was parsed this, i.e., a constant.
+	literal(s : flow) -> (PegEnv) -> flow;
+
+	// the value synthesised for r
+	ast(r : string) -> (PegEnv) -> flow;
+
+	// lookup one of the builtin semantic actions (functions) that can be used in grammar
+	// actions; None if r is not a semantic action (in which case presumably it is a
+	// structname)
+	semanticAction(r : string) -> (PegEnv) -> Maybe<([flow]) -> flow>;
+
+	// the string matched by r
+	matched(r : string) -> (PegEnv) -> string;
+
+	// the combined list of values synthesised for variables f1 & f2
+	flatten2(f1 : (PegEnv) -> [flow], f2 : (PegEnv) -> [flow]) -> (PegEnv) -> [flow];
+
+	arrayOf1(x : (PegEnv) -> flow) -> (PegEnv) -> [flow];
+
+	consArray(x  : (PegEnv) -> flow, xs : (PegEnv) -> [flow]) -> (PegEnv) -> [flow];
+
+	consArrayMeta(x  : (PegEnv) -> flow, xs : [(PegEnv) -> flow]) -> (PegEnv) -> [flow];
+
+	// use with "x?": if it matches, return whatever it matched to (stripped of the
+	// wrapping array), if not, return the default value
+	optDefault(default : (PegEnv) -> flow, value : (PegEnv) -> [flow]) -> (PegEnv) -> flow;
+	
+}
+
+
+
+// Here is our parsing cache
+memo : ref IntTree<ParseResult> = makeIntTree();
+
+// We keep a memory of rule parsings. This is the key: A rule and an input position
+memoentry(g : Grammar, rule : int, pos : int) -> int {
+	n = length(g.productions);
+	rule + n * pos;
+}
+
+parse(grammar : Grammar, start : string, input : string, sem : SemanticActions) -> ParseResult {
+	parse3(grammar, start, input, strlen(input), sem);
+}
+
+parse2(grammar : Grammar, start : string, input : [flow], sem : SemanticActions) -> ParseResult {
+	parse3(grammar, start, input, length(input), sem);
+}
+
+parse3(grammar : Grammar, start : string, input : flow, inputlen : int, sem : SemanticActions) -> ParseResult {
+	if (getUrlParameter("debuglingo") == "1") println("parse: "+input);
+	memo := ^(makeIntTree());
+	//parseCacheHits := ^(makeIntTree());
+	//parseCacheMisses := ^(makeIntTree());
+	lastParsing := -1;
+	
+	// Check that we can cache things
+	gn = length(grammar.productions);
+	if ((gn * inputlen) / gn != inputlen) {
+		fail("Overflow in parser memoentry.  Seek help.");
+	}
+	
+	constants = ParseConstants(input, inputlen, grammar, sem);
+
+	applyRule(constants, start, 0);
+}
+
+/** 
+ * Parse (or continue parsing) the given rule on the given input starting from
+ * position i.  Returns the last character parsed according to the rules. -1 on error.
+ * applyRule() caches results; use parse() to start parsing from scratch.x
+ */
+applyRule(constants : ParseConstants, rulename : string, i : int) -> ParseResult {
+	applyRuleNumber(constants, ruleIndex(constants.grammar, rulename), i);
+}
+
+applyRuleNumber(constants : ParseConstants, n : int, i : int) -> ParseResult {
+	prod = (constants.grammar.productions)[n];
+	if (prod.caching) {
+		me = memoentry(constants.grammar, n, i);
+		cached = lookupIntTree(memo, me);
+		switch (cached : Maybe<ParseResult>) {
+			None(): {
+				p = parseRule(constants, prod, i);
+				memo := addOrUpdateIntTree(memo, me, p);
+				
+				// Enable cache analysis here:
+				// misses = either(lookupIntTree(parseCacheMisses, n), 0);
+				// parseCacheMisses := addOrUpdateIntTree(parseCacheMisses, n, misses + 1);
+				
+				p;
+			}
+			Some(r): {
+				// Enable cache analysis here:
+				// hits = either(lookupIntTree(parseCacheHits, n), 0);
+				// parseCacheHits := addOrUpdateIntTree(parseCacheHits, n, hits + 1);
+				r;
+			}
+		}
+	} else {
+		parseRule(constants, prod, i);
+	}
+}
+
+parseRule(constants : ParseConstants, production : Production, i : int) -> ParseResult {
+	choices = production.choices;
+	/* Try each choice in turn until one matches. */
+	parseRule2(constants, choices, i, 0, length(choices));
+}
+
+parseRule2(constants : ParseConstants, choices : [Seq], i : int, ci : int, n : int) -> ParseResult {
+	if (ci == n) {
+		nilParseResult
+	} else {
+		c = choices[ci];
+		ni = parseLoop(constants, i, c.seq, 0, makeTree(), false, None());
+		if (ni.pos >= i) {
+			// println("Match " + /*production.name + */ " " + i2s(i) + "-" + i2s(ni.pos - 1) + ": '" + substring(constants.input, i, ni.pos - i) + "'.");
+			// println(ni.result);
+			ni;
+		} else {
+			parseRule2(constants, choices, i, ci + 1, n);
+		}
+	}
+}
+
+parseLoopDebug(constants : ParseConstants, i : int, seq : [Parsing], seqno : int,
+			   bindings : Tree<string, RuleResult>, collect : bool,
+			   result0 : Maybe<flow>) -> ParseResult {
+	result = parseLoop(constants, i, seq, 0, bindings, collect, result0);
+	if (result.pos > -1) {
+		println(toString(result) + "                   from: '" + toString(seq) + "'");
+	}
+	result;
+}
+
+parseLoop(constants : ParseConstants, i : int, seq : [Parsing], seqno : int,
+		  bindings : Tree<string, RuleResult>, collect : bool,
+		  result : Maybe<flow>) -> ParseResult {
+	seqlen = length(seq);
+	// println("Loop '" + strRight(constants.input, i) + "' seqlen: " + i2s(seqlen));
+	if (seqno == seqlen)
+		ParseResult(i, result)
+	else {
+		h = seq[seqno];
+		if (^lastParsing < i) {
+			lastParsing := i;
+		}
+		switch (h : Parsing) {
+		Epsilon(): parseLoop(constants, i, seq, seqno + 1, bindings, collect, result);
+		iRule(n): {
+			ni = applyRuleNumber(constants, n, i);
+			if (ni.pos >= i) {
+				parseLoop(constants, ni.pos, seq, seqno + 1, bindings, collect, ni.result)
+			} else nilParseResult;
+		}
+		Rule(n): {
+			ni = applyRule(constants, n, i);
+			if (ni.pos >= i) {
+				parseLoop(constants, ni.pos, seq, seqno + 1, bindings, collect, ni.result)
+			} else nilParseResult;
+		}
+		Term(str): {
+			slen = strlen(str);
+			if (str == substring(constants.input, i, slen)) {
+				parseLoop(constants, i + slen, seq, seqno + 1, bindings, collect, result) // no change because terminal
+			} else {
+				nilParseResult;
+			}
+		}
+		LingoValue(value): {
+			if (i >= constants.inputlen) {
+				nilParseResult;
+			} else {
+				v = (constants.input)[i];
+				if (v == value) {
+					parseLoop(constants, i + 1, seq, seqno + 1, bindings, collect, result) // ditto
+				} else {
+					nilParseResult;
+				}
+			}
+		}
+		CharRange(c1, c2): {
+	        if (i >= constants.inputlen) {
+				nilParseResult;
+	        } else {
+				ch = getCharAt(constants.input, i);
+				if (c1 <= ch && ch <= c2) {
+					parseLoop(constants, i + 1, seq, seqno + 1, bindings, collect, result) // ditto
+				} else {
+					nilParseResult;
+				}
+			}
+		}
+		Star(subr): {
+			ni = greedy(constants, 0, 1000000, subr, i, bindings, collect, []); // [], because starting afresh within the *
+			if (ni.pos >= i) parseLoop(constants, ni.pos, seq, seqno + 1, bindings, collect, ni.result)
+			else nilParseResult;
+		}
+		Plus(subr): {
+			ni = greedy(constants, 1, 1000000, subr, i, bindings, collect, []); // []
+			if (ni.pos >= i) parseLoop(constants, ni.pos, seq, seqno + 1, bindings, collect, ni.result)
+			else nilParseResult;
+		}
+		Opt(subr): {
+			ni = greedy(constants, 0, 1, subr, i, bindings, collect, []);
+			if (ni.pos >= i) parseLoop(constants, ni.pos, seq, seqno + 1, bindings, collect, ni.result)
+			else nilParseResult;
+		}
+		Negation(subr): {
+			ni = parseLoop(constants, i, [subr], 0, bindings, false, None());
+			if (ni.pos >= i) nilParseResult
+			else parseLoop(constants, i, seq, seqno + 1, bindings, collect, result)
+		}
+		BindResult(n, subr): {
+			// Even though this is almost the same as BindMatched below, we keep things here to have tail calls
+			ni = parseLoop(constants, i, [subr], 0, bindings, true, None()); // None to start afresh
+			if (ni.pos < 0) {
+				nilParseResult;
+			} else {
+				rr = RuleResult(constants.input, i, ni.pos - i, ni.result);
+				//println("BindResult " + n + " to: " + toString(ni.result));
+				newbindings = setTree(bindings, n, rr);
+				parseLoop(constants, ni.pos, seq, seqno + 1, newbindings, true, ni.result);
+			}
+		}
+		BindMatched(n, subr): {
+			// Even though this is almost the same as BindResult above, we keep things here to have tail calls
+			ni = parseLoop(constants, i, [subr], 0, bindings, false, None()); // None to start afresh
+			if (ni.pos < 0) {
+				nilParseResult;
+			} else {
+				rr = RuleResult(constants.input, i, ni.pos - i, None());
+				//println("BindResult " + n + " to: " + toString(ni.result));
+				newbindings = setTree(bindings, n, rr);
+				parseLoop(constants, ni.pos, seq, seqno + 1, newbindings, false, ni.result);
+			}
+		}
+		Action(fn): {
+			elmt = fn(PegEnv(bindings, constants.semantics.t));
+			parseLoop(constants, i, seq, seqno + 1, bindings, collect, Some(elmt));
+		}
+		Action2(e): {
+			// TODO: Eval the expression
+			println("Can not evaluate Action2: " + toString(e));
+			parseLoop(constants, i, seq, seqno + 1, bindings, collect, Some(e));
+		}
+		ActionIndex(): {
+			parseLoop(constants, i, seq, seqno + 1, bindings, collect, Some(i));
+		}
+		Seq(s): {
+			fail("You have to preprocess the grammar to get a nested sequence to work");
+			nilParseResult;
+		}
+		Choices(s): {
+			fail("Nested choices do not work in the interpreter");
+			nilParseResult;
+		}
+		default: {
+			println(h);
+			fail("was not caught: \"" + substring(constants.input, i, 130) + "...\"");
+			nilParseResult;
+		}
+		};
+	}
+}
+
+greedy(constants : ParseConstants, mini : int, maxi : int, 
+	   subr : Parsing, i : int, bindings : Tree<string, RuleResult>, collect : bool,
+	   acc : [flow]) -> ParseResult {
+	//println(i2s(mini) + "-" + i2s(maxi) + " " + i2s(i));
+	if (maxi == 0) ParseResult(i, Some(acc)) else {
+		ni = parseLoop(constants, i, [subr], 0, bindings, collect, None());
+		newacc = if (collect) pushResult(acc, ni) else acc;
+		if (mini > 0) {
+	        // we must match at least min or fail
+			if (ni.pos >= i) {
+				greedy(constants, mini - 1, maxi, subr, ni.pos, bindings, collect, newacc);
+			} else {
+				nilParseResult;
+			}
+		} else {
+			// Try matching, doesn't matter if we fail.  Note, >, not >=, here because
+			// (c*)* would loop infinitely because c* keeps matching epsilon
+			if (ni.pos > i) {
+				greedy(constants, 0, maxi - 1, subr, ni.pos, bindings, collect, newacc);
+			} else {
+				// don't fail, return longest match
+				ParseResult(i, Some(newacc));
+			}
+		}
+	}
+}
+
+pushResult(acc, ni : ParseResult) -> [flow] {
+	switch (ni.result : Maybe<flow>) {
+		None(): acc;
+		Some(r): arrayPush(acc, r);
+	}
+}
+
+printLastParses(g : Grammar, text : string, ep : int) {
+	iterIntTree(memo, \k, v -> {
+				n = length(g.productions);
+				rule = k % n;
+				pos = k / n;
+				if (v.pos == ^lastParsing) {
+					println("..." + substring(text, pos, ep - pos) + "... parsed as "+ (g.productions)[rule].name);
+				}
+	});
+}
+
+
+
+
+// AST construction helpers
+
+struct(sn : (PegEnv) -> flow, args : [(PegEnv) -> flow]) -> (PegEnv) -> flow {
+	\t -> {
+		n = sn(t);
+		sargs = map(args, \a -> a(t));
+		v= makeStructValue(n, sargs, IllegalStruct());
+		if (v == IllegalStruct()) {
+			println("Could not construct " + n + "(" + strGlue(map(sargs, toString), ", ") + ")");
+		}
+		v;
+	}
+}
+
+literal(s : flow) -> (PegEnv) -> flow {
+	\t -> s;
+}
+
+ast(r : string) -> (PegEnv) -> flow {
+	\t -> {
+ 		mrr = lookupTree(t.bindings, r);
+		switch (mrr : Maybe<RuleResult>) {
+			None(): {
+				fail(r + " lingo var missing");
+				flow("");
+			}
+			Some(rr): {
+				switch (rr.result : Maybe<flow>) {
+					None(): {
+						fail("looking up binding '" + r + "' gave None. You can only use it for matching(\""
+							 + r + "\").  If you really expected a value, check all choices have an action associated that generate a value.");
+						flow("");
+					}
+					Some(rrr): rrr;
+				}
+			}
+		};
+	}
+}
+
+semanticAction(r) {
+	\t -> {
+		/*
+		println("looking up semanticAction " + r);
+		println(t.functions);
+		*/
+ 		lookupTree(t.functions, r);
+	}
+}
+
+matched(r : string) {
+	\t -> {
+ 		rr = lookupTree(t.bindings, r);
+		switch (rr : Maybe<RuleResult>) {
+			Some(rrr): ruleResultString(rrr);
+			None(): {
+				fail(r + " lingo var missing");
+				"";
+			}
+		};
+	}
+}
+
+ruleResultString(rr : RuleResult) -> string {
+	substring(rr.input, rr.pos, rr.len);
+}
+
+arrayOf1(x) {
+	\t -> [x(t)];
+}
+
+consArray(x, xs) {
+	\t -> {
+		//println("consArray: x: " + toString(x) + ", xs: " + toString(xs));
+	   concat([x(t)], xs(t));
+	}
+}
+
+consArrayMeta(x, xs) {
+	\t -> {
+		//println("consArray: x: " + toString(x) + ", xs: " + toString(xs));
+	   concat([x(t)], map(xs, \x1 -> x1(t)));
+	}
+}
+
+optDefault(default, value) {
+	\t -> {
+		x = value(t);
+		if (length(x) == 0) default(t) else x[0];
+	}
+}
+
+flatten2(f1 : (PegEnv) -> [flow], f2 : (PegEnv) -> [flow]) -> (PegEnv) -> [flow] {
+	\t -> {
+		concat(f1(t), f2(t));
+	}
+}
+
+//
+
+combineGrammars(g1, g2) {
+	// todo: give an error if there are iRule occurrences in g2, or renumber them
+	// correctly.  Give an error for duplicates in production names.
+	Grammar(concat(g1.productions, g2.productions));
+}
+
+preprocess(g) {
+	// Auto-bind rules and convert Rule to iRule
+	process = Grammar(mapi(g.productions, \i : int, p : Production -> {
+		Production(p.name, p.caching, p.type, map(p.choices, \c : Seq -> {
+			if (length(c.seq) > 0 && (c.seq)[0] == Rule(p.name)) {
+				println("Left recursion in " + p.name + " not supported!");
+				Seq([]);
+ 			} else {
+				boundSequence = autobindSequence(c.seq);
+				Seq(map(boundSequence, \par -> {
+					convertRule2iRule(g, par);
+				}));
+			}
+		}))
+	}));
+
+	inlined = if (true) inlineProductions(process) else process;
+	
+	// Next, outline nested sequences
+	processNestedSequences(inlined);
+}
+
+
+// If a choice contains an action, but no bindings, automatically bind all rules to the name of the rule
+autobindSequence(sequence : [Parsing]) {
+	action = exists(sequence, \par -> {
+		switch (par : Parsing) {
+		Action(fn): true;
+		Action2(fn): true;
+		default: false;
+		}
+	});
+	if (action) {
+		bindings = exists(sequence, \par -> {
+			(par.structname == "BindResult" || par.structname == "BindMatched")
+		});
+		if (!bindings) {
+			// OK, we introduce automatic bindings for all rules
+			map(sequence, \par -> {
+				switch (par : Parsing) {
+					Rule(name): BindResult(name, par);
+					default: par;
+				}
+			});
+		} else {
+			sequence;
+		}
+	} else {
+		sequence;
+	}
+}		
+
+convertRule2iRule(g : Grammar, par : Parsing) -> Parsing {
+	switch (par : Parsing) {
+		Rule(name): iRule(ruleIndex(g, name));
+		Star(p): Star(convertRule2iRule(g, p));
+		Plus(p): Plus(convertRule2iRule(g, p));
+		Opt(p): Opt(convertRule2iRule(g, p));
+		Negation(p): Negation(convertRule2iRule(g, p));
+		BindResult(name, p): BindResult(name, convertRule2iRule(g, p));
+		BindMatched(name, p): BindMatched(name, convertRule2iRule(g, p));
+		iRule(i): par;
+		Term(name): par;
+		CharRange(first, last): par;
+		LingoValue(v): par;
+		Epsilon(): par;
+		Action(fn): par;
+		Action2(e): par;
+		ActionIndex(): par;
+		Choices(s): Choices(map(s, \p -> convertRule2iRule(g, p)));
+		Seq(s): Seq(map(s, \p -> convertRule2iRule(g, p)));
+		CutUp(p): CutUp(convertRule2iRule(g, p));
+		CutDown(p): CutDown(convertRule2iRule(g, p));
+	}
+}
+
+
+// 0-based index of the rule in the array of productions; -1 if not found
+ruleIndex(g : Grammar, name : string) -> int {
+	switch (findi(g.productions, \p -> p.name == name) : Maybe<int>) {
+		None(): {fail("Error in grammar: unknown rulename " + name); -1;}
+		Some(i): i;
+	}
+}
+

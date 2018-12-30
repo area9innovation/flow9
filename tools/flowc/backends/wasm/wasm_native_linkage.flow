@@ -1,0 +1,66 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/backends/wasm/wasm_type_descriptor;
+import tools/flowc/backends/wasm/f2wasm_utils;
+import tools/flowc/backends/common;
+import binarytree;
+
+export {
+    wasmLinkNative(cfg : FiWasmConfig, program : FiProgram, nativ : FiNativeDec) -> FiNativeDec;
+}
+
+linkageMap : Tree<string, (FiNativeDec, WasmTypeFunction) -> string> = buildLinkageMap();
+
+linkIsIntArray(decl : FiNativeDec, wt : WasmTypeFunction) -> string {
+    argType = cast(wt.args[0].type : WasmTypeDescriptor -> WasmTypeArray);
+    switch (argType.type) {
+        WasmTypeInt(): "wasm_true1_ref";
+        default: "wasm_false1_ref";
+    }
+}
+
+unpackArrayArgumentType(t : WasmTypeFunction) -> WasmTypeDescriptor {
+    argType = t.args[0].type;
+    cast(argType : WasmTypeDescriptor -> WasmTypeArray).type;
+}
+
+unpackArgumentType(t : WasmTypeFunction, argidx : int) -> WasmTypeDescriptor {
+    t.args[argidx].type;
+}
+
+
+link3way(prefix : string, wasmType : WasmTypeDescriptor) -> string {
+    switch (wasmType) {
+        WasmTypeDouble(): prefix + "_f64";
+        default: if (wasmTypeUsesWasmHeap(wasmType)) prefix + "_i32_ref"
+            else prefix + "_i32";
+    }
+}
+
+
+buildLinkageMap() {
+    linkages = [
+        Pair("Native.isIntArray", \x, wt -> linkIsIntArray(x, wt)),
+        Pair("Native.concat", \x, wt -> 
+            link3way("wasm_concat", unpackArrayArgumentType(wt))),
+        Pair("Native.length", \x, wt -> "wasm_length"),
+        Pair("Native.s2a", \x, wt -> "wasm_s2a"),
+        Pair("Native.string2utf8", \x, wt -> "wasm_string2utf8"),
+        Pair("Native.fold", \x, wt -> 
+            link3way("wasm_fold", unpackArgumentType(wt, 1))),
+        Pair("Native.foldi", \x, wt -> 
+            link3way("wasm_foldi", unpackArgumentType(wt, 1))),
+    ];
+    pairs2tree(linkages);
+}
+
+
+wasmLinkNative(cfg : FiWasmConfig, program : FiProgram, n : FiNativeDec) {
+    converter = lookupTreeDef(linkageMap, n.nativeName, \x, wt -> x.nativeName);
+    wt = cast(fitype2wasmtype(program.names, n.type) : WasmTypeDescriptor -> WasmTypeFunction);
+    newNativeName = converter(n, wt);
+    if (n.nativeName == newNativeName) 
+        n 
+    else
+        FiNativeDec(newNativeName, n.io, n.type, newNativeName, n.fallbackLambda, n.declStart, n.defiStart)
+}

@@ -1,0 +1,424 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fimodule;
+import binarytree;
+import tools/flowc/backends/ml/fi2ml_defines;
+import tools/flowc/backends/ml/fi2ml_utils;
+import tools/flowc/backends/ml/fi2ml_assemble;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fiexp;
+
+export {
+	fiMLCompileToplevel(
+		cfg : FcMLConfig,
+		program : FiProgram,
+		decl: FiDeclaration,
+		indent : string) -> string;
+
+	fiMLCompileToExpr(
+		cfg  : FcMLConfig,
+		program : FiProgram,
+		expr : FiExp,
+		indent : string) -> string;
+
+	fiMLCompileMath(
+		cfg  : FcMLConfig,
+		program : FiProgram,
+		arg1 : FiExp,
+		op   : string,
+		arg2 : FiExp) -> string;
+
+	fiMLCompileCompare(
+		cfg  : FcMLConfig,
+		program : FiProgram,
+		arg1 : FiExp,
+		op   : string,
+		arg2 : FiExp) -> string;
+}
+
+fiMLCompileToplevel(cfg, program, decl, indent) {
+	nm = decl.name;
+
+	fcVerbose(cfg, 1, "Generating ML code for " + nm + "...");
+
+	subindent = indent;
+	toplevel = switch (decl : FiDeclaration) {
+		FiNativeDec(name, io, type, nativeName, flowfallback, __, __) : {
+			if (containsSet(MLForbiddenFunctions, name)) {
+				"; " + name + " forbidden with MLForbiddenFunctions\n"
+			} else {
+				na = strSplit(nativeName, ".");
+
+				nname = if (length(na) > 1) {
+						na[1] + na[0];
+					} else {
+						name + "Native";
+					}
+				s = switch (flowfallback) {
+					FiVoid(st): {
+						"(*" + fiMLRenameKeyword(cfg, name, "") + " " + nname + "*)\n";
+					}
+					FiLambda(args, body, tp, st): {
+						// fd = FiFunctionDec(
+						// 	name,
+						// 	e.lambda,
+						// 	[],
+						// 	FiTypeFunction2([], None(), FiInfo2(0,0)),
+						// 	info
+						// );
+						// "(if (fboundp '" + nname + ")\n" +
+						// fiMLIndent + "(defalias " + fiMLRenameKeyword(cfg, name, false) + " " + nname + ")\n" +
+						// fiMLIndent + "(progn\n" +
+						// fiMLIndent + fiMLIndent + fiMLCompileToplevel(cfg, program, fd, fiMLIndent + fiMLIndent + subindent) +
+						// "))\n\n"
+						"FiLambda"
+					}
+					default : "FiLambda error";
+				}
+				s;
+			}
+		}
+		FiFunctionDec(name, lambda, ft, __, __): {
+			
+			if (name == "concatA") {
+				//fcPrintln("HIA: decl == " + toString(decl));
+			}
+			if (containsSet(MLForbiddenFunctions, name))
+				"; " + name + " forbidden with MLForbiddenFunctions\n"
+			else if (containsSet(MLSubstitutedFunctions, name)) {
+				fiGetMLSubstitute(cfg, name);
+			} else {
+				fparams = map(lambda.args, \e -> e.name);
+				bodyTxt = fiMLCompileToExpr(cfg, program, lambda.body, subindent);
+				"let " + fiMLRenameKeyword(cfg, name, "") + " " +
+				strGlue(fparams, " ") +
+				" = \n" +
+				indent + bodyTxt +
+				";;\n";
+			}
+		}
+
+		FiGlobalVar(name, value, declInfo, __, __): {
+			if (containsSet(MLForbiddenVars, name)) {
+				"; " + name + " forbidden with MLForbiddenVars\n"
+			} else {
+				eVal = fiMLCompileToExpr(cfg, program, value, indent);
+				"let " + name + " = " + eVal + ";;\n";
+			}
+		}
+	}
+	toplevel
+}
+
+fiMLCompileToExpr(cfg, program, expr, indent) {
+	subindent = indent+fiMLIndent;
+	switch (expr : FiExp) {
+		FiVoid(start): "()";
+		FiBool(b, start): if (b) "true" else "false";
+
+		FiInt(v, start): {
+/*
+			// Simple heuristic:
+			// Hex numbers 0..9 are the same as decimals
+			if (v >= 0 && v <= 9) {
+			i2s(v)
+			} else {
+				// For larger numbers detect hex numbers first
+
+				// Check file content availability
+				fcCheckAvailableContent(cfg.fileinfo);
+				intval = substring(cfg.fileinfo.content, i.start, i.end-i.start);
+				// Check if value is hexadecimal
+				if (startsWith(intval, "0x")) {
+					if (intval == "0x80000000") 
+						"#x80000000"
+					else
+						"#" +substring(intval, 1, strlen(intval)-1);
+				} else
+					i2s(v);
+				// In Flow negative numbers are not part of a grammar,
+				// this check is not required at all.
+				// if (v < 0) "("+i2s(v)+")" else i2s(v);
+			}
+			*/
+			i2s(v); 
+		}
+
+		FiDouble(d, start): {
+			s = d2s(d);
+			(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s+".0" else s);
+		}
+
+		FiString(s, start): "\"" + s + "\"";
+		FiVar(x, type, start): {
+			/*
+			toplevelName = lookupTree(program.names.toplevel, x);
+			var = fiMLRenameKeyword(cfg, x, false);
+			prefix = switch(toplevelName) {
+				Some(tn): {
+					switch(tn) {
+						FiFunctionDec(__, __, __, __, __): "#'";
+						FiNativeDec(__, __, __, __, __, __, __): "#'";
+						FiGlobalVar(__, __, __, __): "";
+					}
+				}
+				None() : ""
+			}
+			// (if (toplevelName == None()) "" else "#'")
+			prefix + var // + "#|" + toString(toplevelName) + "|#"
+			*/
+			fiMLRenameKeyword(cfg, x, "");
+		}
+
+		FiLet(x, tp, e1, e2, t2, start): {
+			/*
+			letVal = fiMLCompileToExpr(cfg, program, e1, indent);
+			vn = fiMLRenameKeyword(cfg, x, false);
+			rt = getResolvedFiType(program, tp);
+			tt = fiType2LispCoerce(cfg, program, rt);
+			declare = if (tt == "INT" || tt == "FLOAT" || tt == "STRING" || tt == "FUNCTION" || tt == "ARRAY") {
+				tr = fiType2LispType(cfg, program, rt);
+					"(declare (type " + tr + " " + vn + "))\n";
+				} else {
+					""
+				}
+
+			if (x == "__") {
+				indent + fiMLCompileToExpr(cfg, program, e2, indent)
+			} else {
+				"(let ((" + vn + " " + letVal + "))\n" +
+				(if (declare != "") subindent + declare else "") +
+				subindent + fiMLCompileToExpr(cfg, program, e2, subindent) +
+				")"
+			}
+			*/
+			letVal = fiMLCompileToExpr(cfg, program, e1, indent);
+			vn = fiMLRenameKeyword(cfg, x, "");
+			"let " + vn + " = " + letVal + " in\n" + subindent +
+			fiMLCompileToExpr(cfg, program, e2, subindent);
+		}
+
+		FiLambda(xs, e0, tp, start): {
+			body = e0;
+			bodyOrSeq = switch (body) {
+				FiSeq(__, __, __): body;
+				default: FiSeq([body], fiExpType(body), start);
+			}
+
+			"\n" + subindent + "fun " + (if (xs == []) "()" else strGlue(map(xs, \a -> {fiMLRenameKeyword(cfg, a.name, "");}), " ")) + " -> \n" +
+			fiMLIndent + subindent +
+			fiMLCompileToExpr(cfg, program, bodyOrSeq, subindent)
+		}
+		FiCall(call, es, tp, start): {
+			name = switch (call) {
+				FiVar(x, vtp, start2) : {
+					fiMLRenameKeyword(cfg, x, "");
+				}
+				default : {
+					fiMLCompileToExpr(cfg, program, call, indent);
+				}
+			}
+			args = (if (es == []) "" else " ") + strGlue(map(es, \e -> {"(" + fiMLCompileToExpr(cfg, program, e, subindent) + ")"}), " ");
+			name + args
+		}
+
+		FiSeq(es, tp, start): {
+			l = length(es)-1;
+			if (length(es) == 1) {
+				fiMLCompileToExpr(cfg, program, es[0], indent);
+			} else {
+				inner =
+					if (l >= 0)
+						list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+							code = fiMLCompileToExpr(cfg, program, e, subindent);
+							Cons((if (idx == length(es)-1) "" else (";\n" + indent)), Cons(code, acc));
+						}))
+					else
+						"";
+				inner;
+			}
+		}
+		FiIf(e1, e2, e3, tp, start): {
+			
+			cond = fiMLCompileToExpr(cfg, program, e1, indent);
+			trueBranch = fiMLCompileToExpr(cfg, program, e2, subindent);
+			falseBranch = fiMLCompileToExpr(cfg, program, e3, subindent);
+			if (trueBranch == "")
+				""
+			else 
+				"if " + cond + " then (" + trueBranch + ")" + (if (falseBranch != "") " else (" + falseBranch + ")" else "");
+		}
+		FiCallPrim(op, es, tp, start): {
+			opt = switch (op : FcPrim) {
+				FcOrPrim():    fiMLCompileToExpr(cfg, program, es[0], "") + " || " + fiMLCompileToExpr(cfg, program, es[1], "");
+				FcAndPrim():   fiMLCompileToExpr(cfg, program, es[0], "") + " && " + fiMLCompileToExpr(cfg, program, es[1], "");
+				FcNotPrim():   "not " + fiMLCompileToExpr(cfg, program, es[0], "");
+				FcEqPrim():    fiMLCompileCompare(cfg, program, es[0], "=", es[1]);
+				FcNePrim():    fiMLCompileCompare(cfg, program, es[0], "!=", es[1]);
+				FcLePrim():    fiMLCompileCompare(cfg, program, es[0], "<=", es[1]);
+				FcGePrim():    fiMLCompileCompare(cfg, program, es[0], ">=", es[1]);
+				FcLtPrim():    fiMLCompileCompare(cfg, program, es[0], "<", es[1]);
+				FcGtPrim():    fiMLCompileCompare(cfg, program, es[0], ">", es[1]);
+				FcPlusPrim():  fiMLCompileMath(cfg, program, es[0], "+", es[1]);
+				FcMinusPrim(): fiMLCompileMath(cfg, program, es[0], "-", es[1]);
+				FcMulPrim():   fiMLCompileMath(cfg, program, es[0], "*", es[1]);
+				FcDivPrim():   fiMLCompileMath(cfg, program, es[0], "/", es[1]);
+				FcModPrim():   fiMLCompileToExpr(cfg, program, es[0], "") + " mod " + fiMLCompileToExpr(cfg, program, es[1], "");
+				FcNegPrim():   "-" + fiMLCompileToExpr(cfg, program, es[0], "");
+				FcArrayPrim(): {
+					"[|" + (if (es == []) "" else " ") + strGlue(map(es, \e->fiMLCompileToExpr(cfg, program, e, "")), "; ") + "|]";
+				}
+				FcIndexPrim(): fiMLCompileToExpr(cfg, program, es[0], "") + ".(" + fiMLCompileToExpr(cfg, program, es[1], "") + ")";
+				FcDerefPrim(): "!(" + fiMLCompileToExpr(cfg, program, es[0], "") + ")";
+				FcAssignPrim(): fiMLCompileToExpr(cfg, program, es[0], "") + " := " + fiMLCompileToExpr(cfg, program, es[1], "");
+				FcRefPrim():   "ref " + fiMLCompileToExpr(cfg, program, es[0], "");
+				// This is struct runtime constructor, the only place, where structrure
+				// created at runtime.
+				//
+				// After typechecking we definitely know structure exists, so skip sanity checks.
+				FcStructPrim(structname): {
+					str = lookupTree(program.names.structs, structname);
+
+					fields = switch(str) {
+						Some(v): map(v.args, \e -> fiMLRenameKeyword(cfg, e.name, "g"));
+						None():  ["STRUCT ERROR"]; // Normally should never happen
+					}
+					id = either(lookupTree(cfg.structNames, structname), -1);
+
+					"new " + toLowerCase(fiMLRenameKeyword(cfg, structname, "r") +
+					(if (es == []) "" else " ") +
+					strGlue(mapi(es, \ix, e -> {
+						"(" + fiMLCompileToExpr(cfg, program, e, "") + ")"
+					}), " "));
+				}
+				FcFieldPrim(name): {
+					vr = switch (es[0]) {
+						FiVar(n, __, __) : fiMLRenameKeyword(cfg, n, "");
+						default : fiMLCompileToExpr(cfg, program, es[0], indent);
+					}
+
+					vr + "#" + fiMLRenameKeyword(cfg, name, "g");
+				}
+				
+				FcSetMutablePrim(name): {
+					fiMLCompileToExpr(cfg, program, es[0], "") + "#" +
+					fiMLRenameKeyword(cfg, name, "m") + " " +
+					fiMLCompileToExpr(cfg, program, es[1], "")
+				};
+				FcCreateClosurePrim(__, __): ""; // should not happen - ML does not use lambda lifting
+			}
+			opt
+		}
+		
+		FiCast(e, tFrom, tTo, tp, start): {
+			ex = fiMLCompileToExpr(cfg, program, e, indent);
+			
+			if (tFrom == FiTypeDouble() && tTo == FiTypeString()) {
+				"string_of_float " + ex 
+			} else if (tFrom == FiTypeInt() && tTo == FiTypeString()) {
+				"string_of_int " + ex
+			} else if (tFrom == FiTypeInt() && tTo == FiTypeDouble()) {
+				"float_of_int " + ex
+			} else if (tFrom == FiTypeDouble() && tTo == FiTypeInt()) {
+				"int_of_float " + ex
+			} else {
+				"cast " + ex
+			}
+		}
+
+		FiSwitch(e0, e0type, cs, tp, start): {
+			
+			aVar = fiMLCompileToExpr(cfg, program, e0, indent);
+
+			cases = foldi(cs, Cons("", EmptyList()), \ix, acc, item : FiCase -> {
+				stDef = lookupTree(program.names.structs, item.struct);
+
+				if (item.struct == "default") {
+					acc
+				} else {
+					ex = switch(item.body) {
+						FiSeq(__, __, __): item.body;
+						default: FiSeq([item.body], fiExpType(item.body), start);
+					}
+					id = either(lookupTree(cfg.structNames, item.struct), -1);
+					// fiMLRenameKeyword(cfg, item.struct, false)
+					Cons("| " + "R" + item.struct + (if (item.argNames != []) {"(" + strGlue(item.argNames, ", ") + ")"} else "")
+						+ " -> " + fiMLCompileToExpr(cfg, program, ex, subindent) + " " +
+						(if (ix == length(cs) - 1) "" else ("\n" + subindent)), acc);
+				}
+
+			});
+
+			defCase0 = fold(cs, "", \acc1, item1: FiCase -> {
+				if (item1.struct == "default") {
+					ex = switch(item1.body) {
+						FiSeq(__, __, __): item1.body;
+						default: FiSeq([item1.body], fiExpType(item1.body), item1.body.start);
+					}
+					"| _ -> " + fiMLCompileToExpr(cfg, program, ex, subindent) + "";
+				} else {
+					acc1;
+				}
+			});
+
+			defCase = if (defCase0 == "") "| _ -> raise Unmatched_Struct " else defCase0;
+
+			"match " + aVar + " with\n" +
+			subindent +
+			list2string(Cons("\n" + subindent + defCase, cases))
+		}
+		FiRequire(flowfile, e, type, start): "FiRequire";
+		FiUnsafe(name, fallback, type, start): "FiUnsafe";
+	}
+}
+
+fiMLCompileCompare(cfg, program, arg1, op, arg2) {
+	a1 = fiMLCompileToExpr(cfg, program, arg1, fiMLIndent);
+	a2 = fiMLCompileToExpr(cfg, program, arg2, fiMLIndent);
+
+	a1 + op + a2;
+	/*
+	if (isString && (op == "=")) {
+		a1 + " = " + a2
+	} else if (isString) {
+		"(string" + op + " " + a1 + " " + a2 + ")"
+	} else if (isInt) {
+		"(" + op + " (the fixnum " + a1 + ") (the fixnum " + a2 + "))"
+	} else if (isDbl) {
+		"(" + op + " (the double-float " + a1 + ") (the double-float " + a2 + "))"
+	} else {
+		"(F" + op + " " + a1 + " " + a2 + ")"
+	}
+	*/
+}
+
+fiMLCompileMath(cfg, program, arg1, op, arg2) {
+	a1 = fiMLCompileToExpr(cfg, program, arg1, fiMLIndent);
+	a2 = fiMLCompileToExpr(cfg, program, arg2, fiMLIndent);
+
+	isString = switch(fiExpType(arg1)) {
+		FiTypeString(): true;
+		default : false;
+	}
+
+	isInt = switch(fiExpType(arg1)) {
+		FiTypeInt(): true;
+		default : false;
+	}
+
+	isDbl = switch(fiExpType(arg1)) {
+		FiTypeDouble(): true;
+		default : false;
+	}
+
+	//if (isString && (op == "+")) a1 + "~" + a2 else a1 + op + a2;
+	
+	if (isString && (op == "+")) {
+		"(" + a1 + " ^ " + a2 + ")"
+	} else if (isInt) {
+		"(" + a1 + op + a2 + ")"
+	} else if (isDbl) {
+		"(" + a1 + " " + op + ". " + a2 + ")"
+	} else {
+		"(" + a1 + op + a2 + ")"
+	}
+}

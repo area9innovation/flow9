@@ -1,0 +1,184 @@
+import tools/flowc/type_helpers;
+import tools/flowc/typechecker/type_expect;
+import tools/flowc/typechecker/type_expect_helpers;
+import tools/flowc/fctypeenv;
+import tools/flowc/debug;
+import arrayutils;
+
+export {
+	// Here, we keep the constraints to be solved, as well as the checks
+	// to be done at the end of type checkering.
+	checkOrRecordTypeExpect(env : FcTypeEnv, e : FcTypeExpect) -> void;
+	recordTypeCheck(env : FcTypeEnv, e : FcTypeCheck) -> void;
+	checkFinalTypeExpect(env : FcTypeEnv, check : FcTypeCheck, error : (string, [FcInfo2]) -> void) -> void;
+}
+
+checkOrRecordTypeExpect(env : FcTypeEnv, e : FcTypeExpect) -> void {
+	// fcPrintln("Recording: " + fcExpect2string(env, e));
+	if (^(env.local.debugTyping) > 0)  {
+		if (^(env.local.debugTyping) > 1)  {
+			printStay(env, "Recording: " + fcExpect2string(env, e));
+		}
+		env.local.debugExpects := insertSet(^(env.local.debugExpects), e);
+	}
+	env.local.expects := Cons(e, ^(env.local.expects));
+}
+
+recordTypeCheck(env : FcTypeEnv, e : FcTypeCheck) -> void {
+	// fcPrintln("Recording: " + fcExpect2string(env, e));
+	env.local.checks := Cons(e, ^(env.local.checks));
+}
+
+checkFinalTypeExpect(env : FcTypeEnv, check : FcTypeCheck, error : (string, [FcInfo2]) -> void) -> void {
+	pt =\t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+	switch (check : FcTypeCheck) {
+		FcExpectOneOf(bt, t, i): {
+			re = getResolvedFcType(env, t);
+			ok = exists(bt, \bb : FcBaseType -> {
+				isSameFcType(env, bb, re, false)
+			});
+			if (!ok && !isFlowType(re))  {
+				error("Expected one of " + superglue(bt, \tt : FcBaseType -> pt(tt), ", ") + ", but got "
+					+ pt(re), [i]
+				);
+			}
+		}
+		FcCheckStructs(names, open, t, info): {
+			re = getResolvedFcType(env, t);
+			switch (re) {
+				FcTypeUnion(un, __, structs, __): {
+					checkStructs(env, names, open, un, \m -> error(m, [info]))
+				}
+				FcTypeName(na, tp, i): {
+					rt = getFcNamedType(env, env.program.acc.tyvarIdGroup, re);
+					switch (rt) {
+						FcTypeUnion(un, __, structs, __): {
+							checkStructs(env, names, open, un, \m -> error(m, [info]))
+						}
+						FcTypeStruct(sn, __, __, __): {
+							without = removeFirst(names, sn);
+							if (names != [] && (!contains(names, sn) || length(without) > 0)) {
+								error("Superfluous cases: " + strGlue(without, ", ") + " for " + sn, [info]);
+							}
+						}
+						default: {
+							error("Expected struct or union", [info])
+						}
+					}
+				}
+				FcTypeStruct(sn, __, __, i): {
+					without = removeFirst(names, sn);
+					if (names != [] && (!contains(names, sn) || length(without) > 0)) {
+						error("Superfluous cases: " + strGlue(without, ", "), [info]);
+					}
+				}
+				FcTypeFlow(__): {}
+				default: error("Expected struct or union" + (if (names == []) "" else " with fields " + strGlue(names, ", ")) + ", not " + pt(re), [info]);
+			}
+		}
+		FcCheckMutable(field, t0, info): {
+			t = getResolvedFcType(env, t0);
+			checkFieldMutable = \sn : string, args : [FcStructArg] -> {
+				a = find(args, \sa -> sa.name == field);
+				switch (a) {
+					None(): {
+						// We could not find it
+						error("Unknown field " + field + " in " + sn, [info]);
+					}
+					Some(aa): {
+						if (!aa.ismutable) {
+							error(field + " is not mutable", [info]);
+						}
+					}
+				}
+			}
+			// We have a suitable type, so go and extract the type of the field
+			switch (t) {
+				FcTypeStruct(sn, __, args, i0): {
+					checkFieldMutable(sn, args);
+				}
+				FcTypeName(tn, pars, ti): {
+					typedef = getFcNamedType(env, env.program.acc.tyvarIdGroup, t);
+					switch (typedef) {
+						FcTypeStruct(sn, __, args, i0): {
+							checkFieldMutable(sn, args);
+						}
+						FcTypeUnion(un, __, sn, i0): {
+							structs = typename2structs(env, t);
+							// OK, all entries should have this field
+							iter(structs,  \s -> {
+								checkFieldMutable(s.name, s.args)
+							});
+						}
+						// TODO: We could consider to allow this on flow types
+						default: {
+							error("TODO: Check the mutability of the field " + field, [info]);
+						}
+					}
+				}
+				FcTypeUnion(un, pars, sn, i0): {
+					structs = typename2structs(env, FcTypeName(un, pars, i0));
+					// OK, all entries should have this field
+					iter(structs, \s -> {
+						checkFieldMutable(s.name, s.args)
+					});
+				}
+				FcTypeFlow(__): {
+					// We just have to assume it is ok
+				}
+				default: {
+					error("Can not check the mutability of the field " + field + " on " + pt(t), [info]);
+				}
+			}
+		}
+		FcNotVoid(t, i): {
+			rt = getResolvedFcType(env, t);
+			switch (rt) {
+				FcTypeVoid(__): error("Expected value, but got " + pt(rt), [i]);
+				default: {}
+			}
+		}
+		FcNotFunction(t, i): {
+			rt = getResolvedFcType(env, t);
+			switch (rt) {
+				FcTypeFunction(__, __, __): error("Can not compare functions " + pt(rt), [i]);
+				default: {}
+			}
+		}
+	}
+}
+
+checkStructs(env : FcTypeEnv, names : [string], open : bool, union : string, error : (string) -> void) -> void {
+	structs = union2typenames(env, union);
+	if (!forall(names, \n -> {
+		exists(structs, \s -> s.name == n)
+	})) {
+		error("Expected " + strGlue(names, ", ") + " in " + union + " for switch");
+	}
+	if (!open && length(structs) != length(names)) {
+		// We try to be nice and print which ones are missing here
+		missing = subtractA(map(structs, \st -> getFcTypeName(env, st)), names);
+
+		error("Expected " + union + " to have " + i2s(length(structs)) + " entries in switch, but got " + i2s(length(names)) + ". Missing cases:"
+			+ superglue(missing, \m -> {
+				mstruct = lookupTree(env.program.acc.names.structs, m);
+				args = switch (mstruct) {
+					None(): "";
+					Some(structdef): {
+						superglue(structdef.args, \a -> a.name, ", ");
+					}
+				}
+				"\n\t" + m + "(" + args + "): "
+			}, "")
+		);
+	} else if (open && length(structs) == length(names)) {
+		error("Unnecessary default case in union");
+	}
+}
+
+isFlowType(f : FcType) -> bool {
+	switch (f) {
+		FcTypeFlow(__): true;
+		default: false;
+	}
+}

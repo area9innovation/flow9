@@ -1,0 +1,1670 @@
+import tools/common/pathutil;
+import tools/flowc/fcmodule;
+import tools/flowc/flow_ast;
+import lingo/compiler/syntaxtree_util;
+import deserialize_string;
+import tools/flowc/type_helpers;
+import tools/flowc/flow_ast_mnemonics;
+import tools/flowc/flowc_println;
+
+export {
+	// Extract the imports of a file
+	extractFcImports(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcImport];
+
+	// Extract the forbids of a file
+	extractFcForbids(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcForbid];
+
+	// Desugar a file, once we know all dependencies are registered in the global names
+	desugarFcModule(acc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, st : SyntaxTree) -> FcModule;
+}
+
+extractFcImports(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcImport] {
+	grab = \t -> grabSTText(t, fileinfo.content);
+
+	importExport : [SyntaxTree] = get_flow_importExport_s(st);
+	fold(importExport, [], \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_import) {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), false, ts.start, ts.end));
+		} else if (ts.rule == st_dynamicImport) {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), true, ts.start, ts.end));
+		} else {
+			// forbid & export
+			acc;
+		}
+	});
+}
+
+extractFcForbids(fileinfo : FcFileInfo, st : SyntaxTree) -> [FcForbid] {
+	grab = \t -> grabSTText(t, fileinfo.content);
+
+	importExport : [SyntaxTree] = get_flow_importExport_s(st);
+	fold(importExport, [], \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_forbid) {
+			arrayPush(acc, FcForbid(grab(get_flow_path(ts)), ts.start, ts.end));
+		} else {
+			// import & export
+			acc;
+		}
+	});
+}
+
+
+DesugarAcc(
+	fileinfo : FcFileInfo, 
+	names : FcGlobalNames, 
+	fileStructs : Tree<string, FcTypeStruct>, 
+	fileUnions : Tree<string, FcTypeUnion>, 
+	// Should we instantiate type names we see?
+	instantiateTypenames : bool,
+	env : FcTypeEnv, 
+	tyvarIdGroup : IdGroup,
+	errors : ref [FcError],
+	stringIncludes : ref [string],
+);
+
+desugarFcModule(facc : FlowcAcc, local : FcTypeEnvLocal, fileinfo : FcFileInfo, st : SyntaxTree) -> FcModule {
+	if (fileinfo.flowfile == "n") fcPrintln("HIA: st = " + toString(st));
+	config = facc.config;
+	if (config.verbose >= 2) {
+		fcPrintln("Desugaring '" + fileinfo.flowfile + "'");
+	}
+	// flow = '\ufeff'? ws (~importExport)*:e (~toplevelDeclaration)*:d lastLineComment? {FaProgram(:e, :d, zero())};
+	// Yep, ugly
+	errors : ref [FcError] = ref [];
+
+	// TODO: Traverse the fc modules for syntax errors in the STs.
+	if (st.end != strlen(fileinfo.content)) {
+		// TODO: This is not very precise. We could inspect the caches in the grammar to find out where the last parsed bit is.
+		refArrayPush(errors, FcError("Syntax error: Did not parse all of file", [FcPosition(fileinfo.flowfile, st.end, st.end)]));
+	}
+
+	grab = \t -> grabSTText(t, fileinfo.content);
+
+	importExport : [SyntaxTree] = get_flow_importExport_s(st);
+	imports = fold(importExport, [], \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_import) {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), false, ts.start, ts.end));
+		} else if (ts.rule == st_dynamicImport) {
+			arrayPush(acc, FcImport(grab(get_flow_path(ts)), true, ts.start, ts.end));
+		} else {
+			// forbid & export
+			acc;
+		}
+	});
+
+	forbids = fold(importExport, [], \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_forbid) {
+			arrayPush(acc, FcForbid(grab(get_flow_path(ts)), ts.start, ts.end));
+		} else acc;
+	});
+
+	exports = fold(importExport, makeSet(), \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_export) {
+			decls = get_flow_toplevelDeclaration_s(ts);
+			fold(decls, acc, \acc2, d -> {
+				name = grab(get_flow_id(d));
+				insertSet(acc2, name)
+			});
+		} else acc;
+	});
+
+	// Find the decls in export sections
+	exporttoplevels = fold(importExport, [], \acc, ts -> {
+		if (ts.rule == st_export) {
+			decls = get_flow_toplevelDeclaration_s(ts);
+			concat(acc, decls);
+		} else acc;
+	});
+	// ...together with the main ones
+	toplevel = get_flow_toplevelDeclaration_s(st);
+
+	checkTopDeclsForDuplicates(toplevel, fileinfo.flowfile, grab, errors);
+
+	toplevels = concat(exporttoplevels, toplevel);
+
+	dummyFcTypeEnv = FcTypeEnv(
+		FcTypeEnvGlobal(ref makeTree()),
+		FcTypeEnvProgram(
+			facc,
+			makeTree(),
+			makeSet(),
+			\e : FcError -> fcPrintln(e.message),
+			ref 0,
+			ref makeTree()
+		),
+		local
+	);
+
+	// OK, we construct a new tyvar group factory
+	dacc0 = DesugarAcc(fileinfo, facc.names, makeTree(), makeTree(), false, dummyFcTypeEnv, makeIdGroup(facc.tyvarIdFactory), errors, ref []);
+
+	// Find all struct defs
+	structs : Tree<string, FcTypeStruct> = fold(toplevels, makeTree(), \acc, t -> {
+		structWithCount = \s1 : FcTypeStruct -> {
+			typars = collectTypars(dummyFcTypeEnv, s1, makeSet());
+			ntp = mapSet(typars, \tp -> {
+				tt : FcType = FcTypeParameter(tp, s1.info);
+				tt
+			});
+			FcTypeStruct(s1.name, set2array(ntp), s1.args, s1.info);
+		}
+
+		if (t.rule == st_structdecl) {
+			id = grab(get_flow_id(t));
+			funargs = get_flow_funargs_s(t);
+			types = if (funargs == []) [] else desugarStructArgs(dacc0, errors, id, funargs[0]);
+
+			s1 = FcTypeStruct(id, [], types, FcInfo2(t.start, t.end));
+			s2 = structWithCount(s1);
+			setTree(acc, id, s2);
+		} else if (t.rule == st_function) {
+			fargs = get_flow_function_args(t);
+			// Functions without a return type nor code is a struct
+			if (fargs.choice == 0 && get_flow_returnType_s(fargs) == []) {
+				id = grab(get_flow_id(t));
+				funargs = get_flow_funargs2_s(fargs);
+				args = if (funargs == []) [] else desugarStructArgs2(dacc0, errors, id, funargs);
+				s1 = FcTypeStruct(id, [], args, FcInfo2(t.start, t.end));
+				s2 = structWithCount(s1);
+				setTree(acc, id, s2);
+			} else acc
+		} else acc
+	});
+
+	// Look for the toplevels that have some code in them
+	initOrder = fold(toplevels, [], \acc, t -> {
+		if (t.rule == st_assign || t.rule == st_function || t.rule == st_vardecl) {
+			id = grab(get_flow_id(t));
+			if (containsKeyTree(structs, id)) acc
+			else {
+				if (t.rule == st_function) {
+					fargs = get_flow_function_args(t);
+					if (fargs.choice == 1) {
+						// There is a body
+						arrayPush(acc, id);
+					} else {
+						// This is the declaration without a body.
+						acc;
+					}
+				} else if (t.rule == st_assign) {
+					// Variable?
+					arrayPush(acc, id);
+				} else if (t.rule == st_vardecl) {
+					ae = get_flow_assignExp_s(t);
+					if (ae != []) {
+						// A var decl with code
+						arrayPush(acc, id);
+					} else acc;
+				} else {
+					fcPrintln(i2s(t.rule));
+					acc;
+				}
+			}
+		} else {
+			acc;
+		}
+	});
+
+	dacc1 = DesugarAcc(fileinfo, facc.names, structs, makeTree(), false, dacc0.env, dacc0.tyvarIdGroup, dacc0.errors, dacc0.stringIncludes);
+
+	// Find all unions, but keep them named, and unresolved
+	unions : Tree<string, FcTypeUnion> = fold(toplevels, makeTree(), \acc, t -> {
+		if (t.rule == st_union) {
+			id = grab(get_flow_id(t));
+			typelist = get_flow_typelist_s(t);
+
+			tnames = get_flow_typenames(t);
+
+			fcstructs = desugarTypenames(dacc1, tnames);
+
+			polytypes = if (typelist == []) [] else desugarTypes(dacc1, get_flow_types(typelist[0]));
+			setTree(acc, id, FcTypeUnion(id, polytypes, fcstructs, FcInfo2(t.start, t.end)));
+		} else acc;
+	});
+
+	dacc = DesugarAcc(fileinfo, facc.names, structs, unions, true, dacc1.env, dacc1.tyvarIdGroup, dacc1.errors, dacc1.stringIncludes);
+
+	// Collect all definitions and declaration of each function
+	functions1 : Tree<string, [FcFunctionDec]> = fold(toplevels, makeTree(), \acc, t -> {
+		info = \ -> FcInfo(ref None(), t.start, t.end);
+		if (t.rule == st_function) {
+			id = grab(get_flow_id(t));
+			fargs = get_flow_function_args(t);
+			ci = FcInfo2(t.start, t.end);
+
+			if (fargs.choice == 0) {
+				returnType = get_flow_returnType_s(fargs);
+				if (returnType != []) {
+					r = returnType[0];
+					ty = get_flow_type(r);
+					rettype = desugarFcType(dacc, ty);
+
+					args = get_flow_funargs2_s(fargs);
+					targs = if (args == []) [] else desugarFcFunArgs2(dacc, errors, args[0]);
+					type = FcTypeFunction2(targs, rettype, ci);
+
+					fn = FcFunctionDec(id, None(), type, info(), info());
+					treePushToArrayValue(acc, id, fn);
+				} else {
+					// A struct
+					acc;
+				}
+			} else {
+				args = get_flow_funargs_s(fargs);
+				targs = if (args == []) [] else desugarFcFunArgs(dacc, args[0]);
+				fun2 = get_flow_function_2(fargs);
+				fn = if (fun2.choice == 0) {
+					returnType = get_flow_returnType(fun2);
+					ty = get_flow_type(returnType);
+					rettype = desugarFcType(dacc, ty);
+					brace_semi = get_flow_brace_or_semi(fun2);
+					brace = get_flow_brace(brace_semi);
+					fcexp = desugarFcExp(dacc, brace);
+					type = FcTypeFunction2(targs, rettype, ci);
+
+					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, info());
+
+					FcFunctionDec(id, Some(lambda), type, info(), info());
+				} else {
+					expr = get_flow_exp(fun2);
+					rettype = None();
+					fcexp = desugarFcExp(dacc, expr);
+					type = FcTypeFunction2(targs, rettype, ci);
+					lambda = FcLambda(map(targs, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci)), fcexp, info());
+					FcFunctionDec(id, Some(lambda), type, info(), info());
+				}
+				treePushToArrayValue(acc, id, fn);
+			}
+
+		} else if (t.rule == st_functiondecl) {
+			id = grab(get_flow_id(t));
+			args = get_flow_argtypes_s(t);
+			returnType = get_flow_returnType(t);
+			rt = get_flow_type(returnType);
+
+			targs = if (args == []) [] else desugarArgTypes(dacc, args[0]);
+			rtype = desugarFcType(dacc, rt);
+			type = FcTypeFunction2(targs, rtype, FcInfo2(t.start, t.end));
+
+			treePushToArrayValue(acc, id, FcFunctionDec(id, None(), type, info(), info()));
+		} else {
+			acc;
+		}
+	});
+
+	functions : Tree<string, FcFunctionDec> = foldTree(functions1, makeTree(), \name : string, fns : [FcFunctionDec], acc : Tree<string, FcFunctionDec> -> {
+		n = length(fns);
+		if (n == 0) {
+			fcPrintln("NOT SUPPOSED TO HAPPEN");
+			acc;
+		} else {
+			// Resolve all functions to one canonical for each
+			ffn : FcFunctionDec = fold(tail(fns), fns[0], \acc2 : FcFunctionDec, fn : FcFunctionDec -> {
+				alam : Maybe<FcLambda> = acc2.lambda;
+				flam : Maybe<FcLambda> = fn.lambda;
+				lam : Maybe<FcLambda> = eitherMap(alam, \ll -> {
+					maybeApply(flam, \ll2 : FcLambda -> {
+						// If we have two bodies, complain!
+						refArrayPush(errors, FcError("Two bodies for " + name, [
+							FcPosition(fileinfo.flowfile, ll.info.start, ll.info.end),
+							FcPosition(fileinfo.flowfile, ll2.info.start, ll2.info.end),
+						]));
+					});
+					alam;
+				}, flam);
+
+				// Which of the two might have a body? This is the primary function type to fill
+				filledType : FcTypeFunction2 = fillFcTypeFunction(dummyFcTypeEnv, acc2.declType, fn.declType,
+					\m, t1, t2 -> {
+						refArrayPush(errors, FcError(m, [
+							FcPosition(fileinfo.flowfile, t1.info.start, t2.info.end),
+							FcPosition(fileinfo.flowfile, t2.info.start, t2.info.end),
+						]));
+					}
+				);
+				infos = switch (fn.lambda) {
+					Some(__): Pair(acc2.declInfo, fn.defiInfo); // fn is a definition
+					None():   Pair(fn.declInfo, acc2.defiInfo); // fn is a declaration
+				}
+				FcFunctionDec(name, lam, filledType, infos.first, infos.second)
+			});
+			switch (ffn.lambda) {
+				None(): {
+					refArrayPush(errors, FcError("Missing body for " + name, [
+						FcPosition(fileinfo.flowfile, ffn.declInfo.start, ffn.declInfo.end),
+					]));
+					acc;
+				}
+				Some(ffnlambda): {
+					// Convert the FcTypeFunction2 to FcTypeFunction and put in the info field
+					fntype : FcTypeFunction = FcTypeFunction(mapi(ffn.declType.args, \i, a -> {
+						if (i < length(ffnlambda.args)) {
+							aname = ffnlambda.args[i].name;
+							FcFunArg(aname, switch (a.type) {
+								None(): makeFcTyVar2(dacc.tyvarIdGroup, ffn.declType.info);
+								Some(at): at
+							})
+						} else {
+							FcFunArg("", makeFcTyVar2(dacc.tyvarIdGroup, ffn.declType.info));
+						}
+					}), switch (ffn.declType.returnType) {
+						None(): makeFcTyVar2(dacc.tyvarIdGroup, ffn.declType.info);
+						Some(rt): rt;
+					}, ffn.declType.info);
+
+					(ffn.declInfo).type := Some(fntype);
+					(ffn.defiInfo).type := Some(fntype);
+
+					fnf = switch (ffn.lambda) {
+						None(): ffn;
+						Some(lm): {
+							(lm.info).type := Some(fntype);
+							// Make sure the function arguments are the right type in the lambda
+							FcFunctionDec(
+								ffn.name, 
+								Some(FcLambda(fntype.args, lm.body, lm.info)),
+								ffn.declType, ffn.declInfo, ffn.defiInfo
+							);
+						}
+					}
+
+					setTree(acc, name, fnf);
+				}
+			}
+		}
+	});
+
+	// Check type consistency of all function declarations:
+	// arity, types of arguments and return types (if specified) must be the same
+	traverseInOrder(functions1, \name, decls ->
+		iter(decls, \decl1 ->
+			switch (lookupTree(functions, name)) {
+				Some(decl2): {
+					if (!fcTypeFunctionsAreConsistent(decl1.declType, decl2.declType)) {
+						refArrayPush(errors, FcError("Inconsistent " + name + " function declarations", [
+							FcPosition(fileinfo.flowfile, decl1.declInfo.start, decl1.declInfo.end),
+							FcPosition(fileinfo.flowfile, decl2.declInfo.start, decl2.declInfo.end),
+						]));
+					}
+				}
+				None(): {
+					fcPrintln("impossible branch in function desugarFcModule, function declarations consistency check");
+				}
+			}
+		)
+	);
+
+	globalVars1 : Tree<string, [FcGlobalVar]> = fold(toplevels, makeTree(), \acc, t -> {
+		if (t.rule == st_assign) {
+			id = grab(get_flow_id(t));
+			ex = desugarFcExp(dacc, get_flow_exp(t));
+			gv = FcGlobalVar(id, Some(ex), FcInfo(ref None(), t.start, t.end), FcInfo(ref None(), t.start, t.end));
+			treePushToArrayValue(acc, id, gv);
+		} else if (t.rule == st_vardecl) {
+			id = grab(get_flow_id(t));
+			type = desugarFcType(dacc, get_flow_type(t));
+			aex = get_flow_assignExp_s(t);
+			if (aex == []) {
+				gv = FcGlobalVar(id, None(), FcInfo(ref type, t.start, t.end), FcInfo(ref None(), t.start, t.end));
+				treePushToArrayValue(acc, id, gv);
+			} else {
+				ex = desugarFcExp(dacc, get_flow_exp(aex[0]));
+				gv = FcGlobalVar(id, Some(ex), FcInfo(ref None(), t.start, t.end), FcInfo(ref type, t.start, t.end));
+				treePushToArrayValue(acc, id, gv);
+			}
+		} else {
+			acc;
+		}
+	});
+
+	// TODO: Resolve all global vars to one canonical for each
+	globalVars : Tree<string, FcGlobalVar> = foldTree(globalVars1, makeTree(), \name : string, vars : [FcGlobalVar], acc : Tree<string, FcGlobalVar> -> {
+		n = length(vars);
+		if (n == 0) {
+			fcPrintln("NOT SUPPOSED TO HAPPEN");
+			acc;
+		} else {
+			// Resolve all functions to one canonical for each
+			gvar = fold(tail(vars), vars[0], \acc2 : FcGlobalVar, var : FcGlobalVar -> {
+				abody : Maybe<FcExp> = acc2.value;
+				fbody : Maybe<FcExp> = var.value;
+
+				onError = \e, info1, info2 -> refArrayPush(errors, FcError(name + ": " + e, [
+							FcPosition(fileinfo.flowfile, info1.start, info1.end),
+							FcPosition(fileinfo.flowfile, info2.start, info2.end),
+						]));
+
+				body : Maybe<FcExp> = switch (abody : Maybe<FcExp>) {
+					None(): fbody;
+					Some(__): {	// Workaround since Some(ll) results in wrong type FcBool instead of FcExp
+						ll : FcExp = abody.value;
+						maybeApply(fbody, \ll2 : FcExp -> {
+							onError("Two values", ll.info, ll2.info)
+						});
+						abody;
+					}
+				}
+
+				declInfo : FcInfo = joinInfos(dummyFcTypeEnv, var.declInfo, acc2.declInfo, \e -> {
+						onError(e, var.declInfo, acc2.declInfo)
+					});
+				bodyInfo : FcInfo = joinInfos(dummyFcTypeEnv, var.bodyInfo, acc2.bodyInfo, \e -> {
+						onError(e, var.declInfo, acc2.declInfo)
+					});
+
+				combinedInfo = joinInfos(dummyFcTypeEnv, declInfo, bodyInfo, \e -> {
+						onError(e, declInfo, declInfo)
+					});
+				FcGlobalVar(name, body, combinedInfo, combinedInfo)
+			});
+
+			if (gvar.value == None()) {
+				refArrayPush(errors, FcError("Missing value for " + name, [
+					FcPosition(fileinfo.flowfile, gvar.declInfo.start, gvar.declInfo.end),
+				]));
+			}
+
+			setTree(acc, name, gvar);
+		}
+	});
+
+	natives : Tree<string, FcNativeDec> = fold(toplevels, makeTree(), \acc, t -> {
+		if (t.rule == st_native) {
+			//native = {#}:in "native" s id:i ws ":" ws ("io" ws { one() })?:io type:t "=" ws name$n ws ";" {#}:e ws { FaNativeDecl(:i, :io, :t, $n, :in, :e)};
+			id = grab(get_flow_id(t));
+			io = get_flow_native_io_s(t) != [];
+			type = get_flow_type(t);
+			name = grab(get_flow_name(t));
+
+			fctype = desugarFcType(dacc, type);
+
+			switch (fctype : Maybe<FcType>) {
+				None(): acc;
+				Some(fct): {
+					// Grab any fall-back native implementation here
+					fallback = lookupTree(functions, id);
+
+					// OK, we should fill in the type of the fallback from the native type
+					fallback2 = eitherMap(fallback, \ffn -> {
+							switch (fct) {
+								FcTypeFunction(__, __, __): {
+									ft : FcTypeFunction2 = ffn.declType;
+									// Join ntf : FcTypeFunction and ft and make a new FcFunctionDec
+									// with a new declType : FcTypeFunction2 with the joined result
+
+									nt : FcTypeFunction2 = fcTypeFunction2(fct);
+									jt2 = fillFcTypeFunction(dummyFcTypeEnv, ft, nt, 
+										\m, t1, t2 -> {
+											refArrayPush(errors, FcError(m, [
+												FcPosition(fileinfo.flowfile, t1.info.start, t2.info.end),
+												FcPosition(fileinfo.flowfile, t2.info.start, t2.info.end),
+											]));
+										}
+									);
+
+									// Now we have the new type
+									jt : FcTypeFunction = fcTypeFunction(jt2, fct);
+
+									// This type has to go into the lambda of the fallback function
+									jlambda = switch (ffn.lambda) {
+										None(): ffn.lambda;
+										Some(ll): {
+											ll.info.type := Some(jt);
+											// Update the type of the function arguments
+											Some(FcLambda(
+												mapi(ll.args, \i, arg -> {
+													FcFunArg(arg.name, jt.args[i].type)
+												}),
+												ll.body,
+												ll.info
+											));
+										}
+									}
+
+									jfn = FcFunctionDec(
+										ffn.name,
+										jlambda,
+										jt2,
+										ffn.declInfo,
+										ffn.defiInfo
+									);
+									ffn.declInfo.type := Some(jt);
+									ffn.defiInfo.type := Some(jt);
+									Some(jfn);
+								}
+								default: fallback;
+							}
+					}, fallback);
+
+					nat = FcNativeDec(id, io, fct, name, fallback2, FcInfo(ref None(), t.start, t.end));
+					setTree(acc, id, nat);
+				}
+			}
+		} else acc;
+	});
+
+	// We might have updated some fallback function types based on natives, so grab those
+	functions2 = foldTree(natives, functions, \name, nat, acc -> {
+		switch (nat.flowfallback) {
+			None(): acc;
+			Some(fb): {
+				setTree(acc, name, fb)
+			}
+		}
+	});
+
+	init = FcModule(
+		FcFileInfo(
+			fileinfo.flowfile,
+			fileinfo.trampstamp,
+			fileinfo.fullpath,
+			fileinfo.md5sum,
+			if (isConfigParameterTrue(config.config, "keep-sources"))
+				fileinfo.content
+			else
+				"", // We clear the content to save memory!
+			fileinfo.gensymid,
+			fileinfo.filesize
+		),
+		imports, // unresolved paths to included modules
+		forbids, // unresolved paths to forbid
+		exports, // names of exported unions, structs, functions, values, natives
+		structs, // structs : Tree<string, FcTypeStruct>,
+		unions, // unions : Tree<string, FcTypeUnion>,
+		functions2, // functions: [FcFunctionDec],
+		globalVars, // globalVars: [FcGlobalVar],
+		natives, // natives: [FcNativeDec],
+		uniq(initOrder), // initOrder : [string],
+		createStringIncludes(^(dacc.stringIncludes), config),
+		^errors,
+		getGroupId(dummyFcTypeEnv.program.acc.tyvarIdGroup),
+		false, // isCached
+		st.start,
+		st.end
+	);
+
+	init;
+}
+
+createStringIncludes(includes : [string], config : CompilerConfig) -> [FiFileInfo] {
+	useMd5 = getConfigParameter(config.config, "use-md5") == "1";
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	fold(includes, [], \acc, include -> {
+		realfile = findFlowRelativePath(include, false, config.includes, workingDir); 
+		fileexists = fileExists(realfile);
+		fileinfo = FiFileInfo(
+			include, 
+			if (fileexists) fileModified(realfile) else 0.0, 
+			realfile, 
+			if (useMd5) md5(getFileContent(realfile)) else dummyFiFileInfo.md5sum,
+			if (fileexists) fileSize(realfile) else 0.0,
+		);
+		concat(acc, [fileinfo])
+	})
+}
+
+checkTopDeclsForDuplicates(toplevel : [SyntaxTree], flowfile : string, grab : (SyntaxTree) -> string, errors : ref [FcError]) -> void {
+
+	skip = \t -> {
+		if (t.rule == st_function) get_flow_function_args(t).choice == 0
+		else if (t.rule == st_structdecl) false
+		else if (t.rule == st_union) false
+		else true;
+	}
+
+	nm = \tp -> {
+		if (tp == st_function) "function"
+		else if (tp == st_structdecl) "struct"
+		else if (tp == st_union) "union"
+		else "";
+	}
+
+	fold(toplevel, makeTree(), \ids, t -> {
+		id = grab(get_flow_id(t));
+		if (id == "" || skip(t)) ids else {
+			dup_local = lookupTree(ids, id);
+			switch (dup_local) {
+				Some(dup_t): {
+					refArrayPush(errors, FcError("Duplicate " + nm(t.rule)  + " name " + id + " with previously defined " + nm(dup_t.rule), [
+						FcPosition(flowfile, dup_t.start, dup_t.end),
+						FcPosition(flowfile, t.start, t.end),
+					]));
+				}
+				None(): { }
+			}
+			setTree(ids, id, t);
+		}
+	});
+	{ }
+}
+
+joinInfos(env : FcTypeEnv, info1 : FcInfo, info2 : FcInfo, onError : (string) -> void) -> FcInfo {
+	switch (^(info1.type)) {
+		None(): info2;
+		Some(vdt): {
+			switch (^(info2.type)) {
+				None(): info1;
+				Some(adt): {
+					// Try to join the types
+					declType : Maybe<FcType> = fillTypes(env, ^(info1.type), ^(info2.type), \e, t1, t2 -> {
+						onError(e);
+					});
+					FcInfo(ref declType, info1.start, info1.end);
+				}
+			}
+		}
+	}
+}
+
+resolveFunArg2(tyvarIdGroup : IdGroup, a : FcFunArg2, info : FcInfo2) -> FcFunArg {
+	FcFunArg(
+		a.name,
+		switch (a.type) {
+			None(): makeFcTyVar2(tyvarIdGroup, info);
+			Some(at): at;
+		}
+	)
+}
+
+desugarFcExp(dacc : DesugarAcc, st : SyntaxTree) -> FcExp {
+	info = dacc.fileinfo;
+	finfo = \ -> FcInfo(ref None(), st.start, st.end);
+	ci = FcInfo2(st.start, st.end);
+	if (st.rule == st_exp) {
+		if (st.choice == 0) {
+			id = grabSTText(get_flow_id(st), info.content);
+			colontype = get_flow_colontype_s(st);
+			type = if (colontype != []) {
+				ctype = get_flow_type(colontype[0]);
+				desugarFcType(dacc, ctype);
+			} else None();
+			right = desugarFcExp(dacc, get_flow_exp(st));
+
+			rtype = switch (type) {
+				None(): {
+					switch (right) {
+						FcLambda(args, rt, __): {
+							// OK, we know the body is a function, so let us make such a type
+							FcTypeFunction(map(args, \arg -> FcFunArg("", makeFcTyVar2(dacc.tyvarIdGroup, ci))), makeFcTyVar2(dacc.tyvarIdGroup, ci), ci);
+						}
+						FcCallPrim(op, args, pi): {
+							switch (op) {
+								FcRefPrim(): {
+									FcTypeRef(makeFcTyVar2(dacc.tyvarIdGroup, ci), ci);
+								}
+								FcArrayPrim(): {
+									FcTypeArray(makeFcTyVar2(dacc.tyvarIdGroup, ci), ci);
+								}
+								default: {
+									makeFcTyVar2(dacc.tyvarIdGroup, ci);
+								}
+							}
+
+						}
+						default: {
+							makeFcTyVar2(dacc.tyvarIdGroup, ci);
+						}
+					}
+				}
+				Some(tt): tt;
+			}
+
+			FcLet(id, rtype, right, FcVoid(finfo()), finfo());
+		} else if (st.choice == 1) {
+			cond = get_flow_condexp(st);
+			thene = get_flow_exp(st);
+			elsee = get_flow_elseExp_s(st);
+			elseee = if (elsee == []) FcVoid(finfo()) else {
+				els = get_flow_exp(elsee[0]);
+				desugarFcExp(dacc, els);
+			}
+			FcIf(desugarFcExp(dacc, cond), desugarFcExp(dacc, thene), elseee, finfo());
+		} else if (st.choice == 2) {
+			atom = get_flow_atom(st);
+			id = grabSTText(get_flow_id(st), info.content);
+			right = get_flow_exp(st);
+
+			FcCallPrim(FcSetMutablePrim(id), [desugarFcExp(dacc, atom), desugarFcExp(dacc, right)], finfo());
+		} else {
+			desugarFcExp(dacc, get_flow_exp1(st));
+		}
+	} else if (st.rule == st_exp1) {
+		fcexp = desugarFcExp(dacc, get_flow_exp2(st));
+		assigns = get_flow_exp1_assign_s(st);
+		if (assigns != []) {
+			re = get_flow_exp(assigns[0]);
+			FcCallPrim(FcAssignPrim(), [fcexp, desugarFcExp(dacc, re)], finfo());
+		} else {
+			fcexp
+		}
+	} else if (st.rule == st_exp2) {
+		fcexp = desugarFcExp(dacc, get_flow_exp3(st));
+		pipes = get_flow_pipeExp_s(st);
+		fold(pipes, fcexp, \acc, pipe -> {
+			fn = get_flow_exp3(pipe);
+			desugarFcCall(dacc, FcCall(desugarFcExp(dacc, fn), [acc], finfo()));
+		});
+	} else if (st.rule == st_exp3) {
+		fcexp = desugarFcExp(dacc, get_flow_exp4(st));
+		ors = get_flow_orExp_s(st);
+		fold(ors, fcexp, \acc, or -> {
+			left = get_flow_exp4(or);
+			FcCallPrim(FcOrPrim(), [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_exp4) {
+		fcexp = desugarFcExp(dacc, get_flow_exp5(st));
+		ands = get_flow_andExp_s(st);
+		fold(ands, fcexp, \acc, and -> {
+			left = get_flow_exp5(and);
+			FcCallPrim(FcAndPrim(), [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_exp5) {
+		fcexp = desugarFcExp(dacc, get_flow_exp6(st));
+		comps = get_flow_exp5_compare_s(st);
+		fold(comps, fcexp, \acc, comp -> {
+			left = get_flow_exp6(comp);
+			op = get_flow_comparisonOp(comp);
+			ops = grabSTText(op, info.content);
+			primop = if (ops == "==") FcEqPrim()
+				else if (ops == "!=") FcNePrim()
+				else if (ops == "<=") FcLePrim()
+				else if (ops == ">=") FcGePrim()
+				else if (ops == "<") FcLtPrim()
+				else if (ops == ">") FcGtPrim()
+				else {
+					fcPrintln("Unexpected operation: " + ops);
+					FcEqPrim()
+				};
+			FcCallPrim(primop, [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_exp6) {
+		fcexp = desugarFcExp(dacc, get_flow_term(st));
+		adds = get_flow_additiveExp_s(st);
+		fold(adds, fcexp, \acc, add -> {
+			left = get_flow_term(add);
+			op = get_flow_plusMinus(add);
+			ops = grabSTText(op, info.content);
+			primop = if (ops == "+") FcPlusPrim()
+				else if (ops == "-") FcMinusPrim()
+				else {
+					fcPrintln("Unexpected operation: " + ops);
+					FcPlusPrim()
+				};
+			FcCallPrim(primop, [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_term) {
+		fcexp = desugarFcExp(dacc, get_flow_factor(st));
+		muls = get_flow_multiExp_s(st);
+		fold(muls, fcexp, \acc, mul -> {
+			left = get_flow_factor(mul);
+			op = get_flow_multiOp(mul);
+			ops = grabSTText(op, info.content);
+			primop = if (ops == "*") FcMulPrim()
+				else if (ops == "/") FcDivPrim()
+				else if (ops == "%") FcModPrim()
+				else {
+					fcPrintln("Unexpected operation: " + ops);
+					FcMulPrim()
+				};
+			FcCallPrim(primop, [acc, desugarFcExp(dacc, left)], finfo());
+		});
+	} else if (st.rule == st_factor) {
+		if (st.choice == 0) {
+			// ! factor
+			rfactor = desugarFcExp(dacc, get_flow_factor(st));
+			FcCallPrim(FcNotPrim(), [rfactor], finfo());
+		} else if (st.choice == 1) {
+			// - factor
+			rfactor = desugarFcExp(dacc, get_flow_factor(st));
+
+			// Negation of constants can be done sooner
+			switch (rfactor : FcExp) {
+				FcInt(i, __): FcInt(-i, finfo());
+				FcDouble(d, __): FcDouble(-d, finfo());
+				default: FcCallPrim(FcNegPrim(), [rfactor], finfo());
+			}
+		} else if (st.choice == 2) {
+			// Lambda
+			names = get_flow_argNames_s(st);
+			left = get_flow_exp(st);
+			args = if (names == []) [] else desugarArgNames(dacc, names[0]);
+			fargs = map(args, \ta -> resolveFunArg2(dacc.tyvarIdGroup, ta, ci));
+			FcLambda(fargs, desugarFcExp(dacc, left), finfo());
+		} else {
+			desugarFcExp(dacc, get_flow_factor(st));
+		}
+	} else if (st.rule == st_call) {
+		fcexp = desugarFcExp(dacc, get_flow_atom(st));
+		postfixes = get_flow_postfix_s(st);
+		fold(postfixes, fcexp, \acc, postfix -> {
+			if (postfix.choice == 0) {
+				// Call
+				arglist = get_flow_arglist_s(postfix);
+				args = if (arglist == []) [] else desugarArglist(dacc, arglist[0]);
+				desugarFcCall(dacc, FcCall(acc, args, FcInfo(ref None(), postfix.start, postfix.end)));
+			} else if (postfix.choice == 1) {
+				id = grabSTText(get_flow_id(postfix), info.content);
+				FcCallPrim(FcFieldPrim(id), [acc], FcInfo(ref None(), postfix.start, postfix.end));
+			} else if (postfix.choice == 2) {
+				// array indexing
+				index = get_flow_exp(postfix);
+				FcCallPrim(FcIndexPrim(), [acc, desugarFcExp(dacc, index)], FcInfo(ref None(), postfix.start, postfix.end));
+			} else {
+				// "With" construction
+				sourceType = switch (acc) {
+					FcVar(typeName, __) : typeName;
+					default : "";
+				}
+				fcCall = switch (lookupTree(dacc.fileStructs, sourceType)) {
+					None() : {
+						switch (lookupTree(dacc.names.structs, sourceType)) {
+							None() : {
+								refArrayPush(dacc.errors, FcError("Unknown struct type " + sourceType, [
+									FcPosition(dacc.fileinfo.flowfile, postfix.start, postfix.end),
+								]));
+								FcCall(acc, [], FcInfo(ref None(), postfix.start, postfix.end))
+							}
+							Some(sourceStructDef) : FcCall(acc, constructStructArgs(dacc, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end));
+						}
+					}
+					Some(sourceStructDef) : FcCall(acc, constructStructArgs(dacc, sourceStructDef.args, finfo, postfix), FcInfo(ref None(), postfix.start, postfix.end));
+				}
+				desugarFcCall(dacc, fcCall);
+			}
+		});
+	} else if (st.rule == st_atom) {
+		if (st.choice == 0) {
+			key = get_flow_keywords(st);
+			desugarFcExp(dacc, key);
+		} else if (st.choice == 1) {
+			id = grabSTText(get_flow_id(st), info.content);
+			if (false && (containsKeyTree(dacc.fileStructs, id) || containsKeyTree(dacc.names.structs, id))) {
+				fcPrintln(id + " is struct");
+				// TODO: Somehow, we could check if the following is a call, and if not convert
+				// this to CallPrim(struct)
+				FcVar(id, finfo());
+			} else {
+				FcVar(id, finfo());
+			}
+		} else if (st.choice == 2) {
+			number = get_flow_number(st);
+			desugarNumber(info, number);
+		} else if (st.choice == 4) {
+			expr = get_flow_exp(st);
+			desugarFcExp(dacc, expr);
+		} else if (st.choice == 5) {
+			FcVoid(finfo());
+		} else if (st.choice == 6) {
+			brace = get_flow_brace(st);
+			desugarBraces(dacc, brace);
+		} else if (st.choice == 7) {
+			exps = get_flow_exps_s(st);
+			ess = if (exps == []) [] else {
+				es1 = get_flow_exp(exps[0]);
+				ess2 = get_flow_exps2_s(exps[0]);
+				concat([desugarFcExp(dacc, es1)], map(ess2, \e -> {
+					desugarFcExp(dacc, get_flow_exp(e));
+				}));
+			}
+			FcCallPrim(FcArrayPrim(), ess, finfo());
+		} else if (st.choice == 8) {
+			atom = get_flow_atom(st);
+			FcCallPrim(FcDerefPrim(), [desugarFcExp(dacc, atom)], finfo());
+		} else {
+			fcPrintln("TODO atom " + i2s(st.choice));
+			FcVoid(FcInfo(ref None(), st.start, st.end));
+		}
+	} else if (st.rule == st_keywords) {
+		if (st.choice == 0) {
+			FcBool(true, finfo());
+		} else if (st.choice == 1) {
+			FcBool(false, finfo());
+		} else if (st.choice == 2) {
+			cond = get_flow_condexp(st);
+			thene = get_flow_exp(st);
+			elsee = get_flow_elseExp_s(st);
+			elseee = if (elsee == []) FcVoid(finfo()) else {
+				els = get_flow_exp(elsee[0]);
+				desugarFcExp(dacc, els);
+			}
+			FcIf(desugarFcExp(dacc, cond), desugarFcExp(dacc, thene), elseee, finfo());
+		} else if (st.choice == 3) {
+			refe = get_flow_exp(st);
+			FcCallPrim(FcRefPrim(), [desugarFcExp(dacc, refe)], finfo());
+		} else if (st.choice == 5) {
+			e2 = get_flow_exp2(st);
+			t1 = get_flow_type(st);
+			ty1 = desugarFcType(dacc, t1);
+			t2 = get_flow_totype(st);
+			ty2 = desugarFcType(dacc, t2);
+			switch (ty1) {
+				None(): {
+					fcPrintln("Something is wrong");
+					FcVoid(finfo());
+				}
+				Some(typ1): switch (ty2) {
+					None(): {
+						fcPrintln("Something is wrong");
+						FcVoid(finfo());
+					}
+					Some(typ2): {
+						FcCast(desugarFcExp(dacc, e2), typ1, typ2, finfo());
+					}
+				}
+			}
+		} else {
+			fcPrintln("TODO: Keywords " + i2s(st.choice));
+			FcVoid(finfo());
+		}
+	} else if (st.rule == st_brace) {
+		desugarBraces(dacc, st);
+	} else if (st.rule == st_switch) {
+		se = get_flow_exp2(st);
+		st1 = get_flow_switchType_s(st);
+		st2 = if (st1 == []) None() else desugarFcType(dacc, get_flow_type(st1[0]));
+		st3 = switch (st2) {
+			None(): makeFcTyVar2(dacc.tyvarIdGroup, ci);
+			Some(stt): stt;
+		}
+		cases = get_flow_defaultOrNamedCase_s(st);
+
+		fce = desugarFcExp(dacc, se);
+		// Is it already a var?
+		existingvar = switch (fce : FcExp) {
+			FcVar(id, __): id;
+			default: "";
+		}
+		// If not, we produce a new name for it
+		varname = if (existingvar == "") desugarGenSym(info, "switch") else existingvar;
+
+		typars = ref makeTree();
+
+		body = FcSwitch(
+				FcVar(varname, finfo()), 
+				st3,
+				concatA(map(cases, \c : SyntaxTree -> {
+					struct = if (c.choice == 0) {
+						"default"
+					} else {
+						grabSTText(get_flow_id(c), info.content);
+					}
+					// 	| id ws '(' ws names? ')' ws ':' ws exp ';'? ws;
+
+					argnames1 = get_flow_names_s(c);
+					argnames = if (argnames1 == []) [] else {
+						argnames2 = argnames1[0];
+						id = grabSTText(get_flow_id(argnames2), info.content);
+						more = get_flow_names_more_s(argnames2);
+						concat([id], map(more, \m -> {
+							grabSTText(get_flow_id(m), info.content);
+						}));
+					}
+
+					bexp = get_flow_exp(c);
+					body = desugarFcExp(dacc, bexp);
+
+					if (struct == "default") {
+						if (argnames != []) {
+							refArrayPush(dacc.errors, FcError("default case should not have arguments", [FcPosition(info.flowfile, c.end, c.end)]));
+						};
+						[FcCase(struct, [], body, FcInfo(body.info.type, c.start, c.end))];
+					} else {
+						structdef0 = lookupTree(dacc.names.structs, struct);
+						structdef = switch (structdef0) {
+							None(): {
+								lookupTree(dacc.fileStructs, struct);
+							}
+							Some(sf): structdef0;
+						}
+
+						switch (structdef) {
+							None(): {
+								// Maybe it is a union?
+								uniondef0 = lookupTree(dacc.names.unions, struct);
+								uniondef = switch (uniondef0) {
+									None(): {
+										lookupTree(dacc.fileUnions, struct);
+									}
+									Some(sf): uniondef0;
+								}
+
+								switch (uniondef) {
+									None(): {
+										refArrayPush(dacc.errors, FcError("Unknown struct or union '" + struct + "' in switch", [FcPosition(info.flowfile, c.start, c.end)]));
+										[];
+									}
+									Some(uf): {
+										// First, expand "local" unions
+										unionstructs = uniq(expandDesugarUnion2structs(dacc, uf));
+
+										// Also see if there are any local union
+										filtermap(unionstructs, \ts : FcTypeStruct -> {
+											if (exists(cases, \cs -> {
+												// We want to skip those that already have a case
+													cstruct = if (cs.choice == 0) {
+														"default"
+													} else {
+														grabSTText(get_flow_id(cs), info.content);
+													}
+													ts.name == cstruct
+												})) None()
+											else {
+												// TODO: This is a bit of a hack, but we ignore parameters!
+												// TODO: We do not handle unions inside unions.
+												Some(FcCase(ts.name, [], body, FcInfo(body.info.type, c.start, c.end)))
+											}
+										});
+									}
+								}
+							}
+							Some(sf): {
+								// A struct. Unfold let-bindings
+								stargs : [FcStructArg] = sf.args;
+								rnames = reverseA(argnames);
+								bb = foldi(reverseA(stargs), body, \i, acc, starg -> {
+									// We have to instantiate any typars from the struct field here!
+									at = instantiateTypeTyPars(dacc.env, dacc.tyvarIdGroup, typars, starg.type);
+
+									// Here we set start-end to negative values because the introduced entities are not really present in code
+									cinfo1 = FcInfo(ref None(), -c.start, -c.end);
+									cinfo2 = FcInfo(ref Some(at), -c.start, -c.end);
+									cinfo3 = FcInfo(ref None(), -c.start, -c.end);
+									name = if (i < length(rnames)) {
+										rnames[i];
+									} else {
+										refArrayPush(dacc.errors, FcError("Expected " + i2s(length(stargs)) + " arguments, not " + i2s(length(rnames)) + ", to struct " + struct + " in switch", [FcPosition(info.flowfile, c.start, c.end)]));
+										"";
+									}
+
+									var : FcExp = FcVar(varname, cinfo1);
+									FcLet(name, at, 
+										FcCallPrim(FcFieldPrim(starg.name), [var], cinfo2),
+										acc,
+										cinfo3
+									)
+								});
+								[FcCase(struct, argnames, bb, FcInfo(bb.info.type, c.start, c.end))];
+
+							}
+						}
+
+					}
+				})),
+				finfo()
+			);
+		if (existingvar == "") {
+			FcLet(varname, st3, fce, body, finfo())
+		} else body;
+	} else if (st.rule == st_string) {
+		if (st.choice == 0) {
+			// string include
+			pathsnippet = get_flow_stringinclude(st);
+			path = grabSTText(pathsnippet, info.content);
+			workingDir = getConfigParameterDef(dacc.env.program.acc.config.config, "working-dir", "");
+
+			resolved = findFlowRelativePath(path, false, dacc.env.program.acc.config.includes, workingDir);
+			if (!fileExists(resolved)) {
+				refArrayPush(dacc.errors, FcError("Could not find string #include " + path, [FcPosition(info.flowfile, st.start, st.end)]));
+			} else {
+				refArrayPush(dacc.stringIncludes, path);
+			}
+			content = getFileContent(resolved);
+			FcString(content, finfo());
+		} else {
+			// Concatenate all strings, and de-escape it
+			strings = get_flow_singlestring_s(st);
+			strin = fold(strings, "", \acc, str -> {
+				// We skip the first " and include the final "
+				snip = substring(info.content, str.start + 1, str.children[0][0].start - str.start - 1);
+				acc + deserializeRestOfString(snip).first;
+			});
+			FcString(strin, finfo())
+		}
+	} else {
+		fcPrintln("TODO: " + i2s(st.rule));
+		// printSyntaxTree(re, info.content);
+		FcVoid(FcInfo(ref None(), st.start, st.end));
+	}
+}
+
+desugarFcType(dacc : DesugarAcc, st : SyntaxTree) -> Maybe<FcType> {
+	if (st == failSyntaxTree) None()
+	else {
+		name = grabSTText(st, dacc.fileinfo.content);
+		type = get_flow_type(st);
+		type_fn = get_flow_type_fn_par(st);
+		argtypes = get_flow_argtypes_s(type_fn);
+		typename = get_flow_typename(st);
+		fcinfo = FcInfo2(st.start, st.end);
+		if (st.choice == 1) {
+			// parenthesis
+			if (type_fn.choice == 0) {
+				// TODO: Rewrite grammar to avoid explicit choice numbers
+				args = if (argtypes == []) [] else desugarArgTypes(dacc, argtypes[0]);
+				rettype = get_flow_type_rettype(type_fn);
+				rettyp2 = get_flow_type(rettype);
+				rtype = desugarFcType(dacc, rettyp2);
+				rt = switch (rtype) {
+					None(): {
+						fcPrintln("TODO: Unknown return type: '" + name + "'");
+						fcPrintln(dacc.fileinfo.flowfile);
+						FcTypeVoid(fcinfo);
+					}
+					Some(rtt): rtt;
+				}
+				fargs = map(args, \a -> FcFunArg(a.name, switch (a.type) {
+					None(): {
+						fcPrintln("TODO: Unknown argument type for " + a.name);
+						FcTypeVoid(fcinfo);
+					}
+					Some(at): at;
+				}));
+				Some(FcTypeFunction(fargs, rt, fcinfo));
+			} else {
+				typ = get_flow_type(type_fn);
+				desugarFcType(dacc, typ);
+			}
+		} else if (st.choice == 11) {
+			// ref
+			rt = desugarFcType(dacc, type);
+			switch (rt) {
+				None(): None();
+				Some(rrt): Some(FcTypeRef(rrt, fcinfo));
+			}
+		} else if (st.choice == 12) {
+			// Type with parameters
+			tn = desugarTypename(dacc, typename);
+			it = if (dacc.instantiateTypenames) {
+				instantiateDesugarTypename(dacc, tn);
+			} else {
+				tn;
+			}
+			Some(it);
+		} else if (type == failSyntaxTree && argtypes == [] && typename == failSyntaxTree) {
+			// TODO: Rewrite grammar to avoid explicit checking of strings.
+			if (st.choice == 4 && startsWith(name, "bool")) {
+				Some(FcTypeBool(fcinfo));
+			} else if (st.choice == 5 && startsWith(name, "int")) {
+				Some(FcTypeInt(fcinfo));
+			} else if (st.choice == 6 && startsWith(name, "double")) {
+				Some(FcTypeDouble(fcinfo));
+			} else if (st.choice == 7 && startsWith(name, "string")) {
+				Some(FcTypeString(fcinfo));
+			} else if (st.choice == 8 && startsWith(name, "flow")) {
+				Some(FcTypeFlow(fcinfo));
+			} else if (st.choice == 9 && startsWith(name, "void")) {
+				Some(FcTypeVoid(fcinfo));
+			} else if (st.choice == 10 && startsWith(name, "native")) {
+				Some(FcTypeNative(fcinfo));
+			} else if (st.choice == 3 && startsWith(name, "?")) {
+				end = strLastIndexOf(name, "?");
+				shortname = if (end == -1) name else strLeft(name, end + 1);
+				Some(FcTypeParameter(shortname, fcinfo));
+			} else {
+				fcPrintln("TODO: Unknown type: '" + name + "'");
+				cast(None() : None -> Maybe<FcType>);
+			}
+		} else if (type != failSyntaxTree && st.choice == 0 && startsWith(name, "[")) {
+			// TODO: Rewrite grammar to avoid explicit checking of strings
+			rt = desugarFcType(dacc, type);
+			switch (rt) {
+				None(): None();
+				Some(rrt): Some(FcTypeArray(rrt, fcinfo));
+			}
+		} else {
+			fcPrintln("TODO: Complicated type " + name + " with case " + i2s(st.choice));
+			cast(None() : None -> Maybe<FcType>);
+		}
+	}
+}
+
+constructStructArgs(dacc : DesugarAcc, structArgs : [FcStructArg], finfo : () -> FcInfo, postfix : SyntaxTree) -> [FcExp] {
+	// "with" construction consists of assignments, separated by comma
+	// Since that this is syntax sugar, we transform it into regular struct copy
+	// If assignment is to one of struct's fields, we place it as an struct argument
+	// Otherwise field will contain source copy
+
+	source = desugarFcExp(dacc, get_flow_call(postfix));
+	fields = get_flow_fields(postfix);
+	first = get_flow_assign(fields);
+	other = get_flow_fields_tail_s(fields);
+
+	onError = \text, start, end -> {
+		refArrayPush(dacc.errors, FcError(text, [
+			FcPosition(dacc.fileinfo.flowfile, start, end),
+		]));
+	}
+
+	firstFieldName = grabSTText(get_flow_id(first), dacc.fileinfo.content);
+	initialTree =
+		if (!exists(structArgs, \arg -> arg.name == firstFieldName)) {
+			// Incorrect field name passed(does not present in struct)
+			onError("Unknown field: " + firstFieldName, first.start, first.end);
+			makeTree();
+		} else
+			makeTree1(firstFieldName, desugarFcExp(dacc, get_flow_exp(first)));
+
+	fieldsWithValues = foldi(other,
+		initialTree,
+		\i, acc2, tl -> {
+			assign = get_flow_assign(tl);
+			fieldName = grabSTText(get_flow_id(assign), dacc.fileinfo.content);
+
+			if (!exists(structArgs, \arg -> arg.name == fieldName)) {
+				onError("Unknown field: " + fieldName, assign.start, assign.end);
+				acc2
+			} else if (containsKeyTree(acc2, fieldName)) {
+				onError("Duplicate field: " + fieldName, assign.start, assign.end);
+				acc2
+			} else
+				setTree(acc2, fieldName, desugarFcExp(dacc, get_flow_exp(assign)));
+		}
+	);
+
+	map(structArgs, \arg -> {
+		switch(lookupTree(fieldsWithValues, arg.name)) {
+			None() : FcCallPrim(FcFieldPrim(arg.name), [source], finfo());
+			Some(value) : value;
+		}
+	})
+}
+
+desugarStructArgs(dacc : DesugarAcc, errors : ref [FcError], structid : string, args : SyntaxTree) -> [FcStructArg] {
+	arg1 = get_flow_funarg(args);
+	rargs = get_flow_funargs_more_s(args);
+	concat([desugarStructArg(dacc, errors, structid, arg1)], map(rargs, \r -> {
+		arg2 = get_flow_funarg(r);
+		desugarStructArg(dacc, errors, structid, arg2);
+	}));
+}
+
+desugarStructArg(dacc : DesugarAcc, errors : ref [FcError], structid : string, arg : SyntaxTree) -> FcStructArg {
+	id = grabSTText(get_flow_id(arg), dacc.fileinfo.content);
+	if (id == "") {
+		// If id is empty, report an error
+		refArrayPush(errors, FcError("Missing name in struct argument for " + structid, [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+	}
+	colontype = get_flow_colontype_s(arg);
+	if (colontype == []) {
+		// Record an error
+		refArrayPush(errors, FcError("Missing type in struct argument for " + structid, [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+		FcStructArg(id, FcTypeVoid(FcInfo2(arg.start, arg.end)), false);
+	} else {
+		ctype = get_flow_type(colontype[0]);
+		type = desugarFcType(dacc, ctype);
+		mut = get_flow_funarg_mutable_s(arg) != [];
+		FcStructArg(id, either(type, FcTypeVoid(FcInfo2(arg.start, arg.end))), mut);
+	}
+}
+
+desugarStructArgs2(dacc : DesugarAcc, errors : ref [FcError], structid : string, args : [SyntaxTree]) -> [FcStructArg] {
+	fold(args, [], \acc, arg -> {
+		farg = get_flow_funarg2(arg);
+		sa = desugarStructArg2(dacc, errors, structid, farg);
+		fargs = get_flow_funargs2_more_s(arg);
+		concat3(acc, [sa], desugarStructArgs2(dacc, errors, structid, fargs));
+	});
+}
+
+desugarStructArg2(dacc : DesugarAcc, errors : ref [FcError], structid : string, farg : SyntaxTree) -> FcStructArg {
+	arg = get_flow_funarg2_arg(farg);
+	id = grabSTText(get_flow_id(arg), dacc.fileinfo.content);
+	if (id == "") {
+		// If id is empty, report an error
+		refArrayPush(errors, FcError("Missing name in struct argument for " + structid, [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+	}
+	colontype = get_flow_colontype_s(arg);
+	if (colontype == []) {
+		// Record an error
+		refArrayPush(errors, FcError("Missing name/type in struct argument for " + structid, [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+		FcStructArg(id, FcTypeVoid(FcInfo2(arg.start, arg.end)), false);
+	} else {
+		ctype = get_flow_type(colontype[0]);
+		type = desugarFcType(dacc, ctype);
+		mut = get_flow_funarg_mutable_s(farg) != [];
+		FcStructArg(id, either(type, FcTypeVoid(FcInfo2(arg.start, arg.end))), mut);
+	}
+}
+
+desugarTypes(dacc : DesugarAcc, types : SyntaxTree) -> [FcType] {
+	if (types == failSyntaxTree) []
+	else {
+		type = get_flow_type(types);
+		stypes = get_flow_types2_s(types);
+		atypes = concat([type], map(stypes, \sty -> {
+			get_flow_type(sty)
+		}));
+
+		concatA(map(atypes, \t -> {
+			fctype = desugarFcType(dacc, t);
+			eitherMap(fctype, \ty -> [ty], []);
+		}));
+	}
+}
+
+desugarTypenames(dacc : DesugarAcc, typenames : SyntaxTree) -> [FcTypeName] {
+	typename = get_flow_typename(typenames);
+	dtn = desugarTypename(dacc, typename);
+
+	typens = get_flow_typenames2_s(typenames);
+	fold(typens, [dtn], \acc, ts -> {
+		tn = get_flow_typename(ts);
+		dtn2 = desugarTypename(dacc, tn);
+		arrayPush(acc, dtn2);
+	});
+}
+
+desugarTypename(dacc : DesugarAcc, typename : SyntaxTree) -> FcTypeName {
+	// Grab the name
+	id = grabSTText(get_flow_id(typename), dacc.fileinfo.content);
+
+	// Grab any polymorphic ? arguments
+	typelists = get_flow_typelist_s(typename);
+	polytypes = if (typelists == []) [] else desugarTypes(dacc, get_flow_types(typelists[0]));
+	FcTypeName(id, polytypes, FcInfo2(typename.start, typename.end));
+}
+
+desugarFcFunArgs2(dacc : DesugarAcc, errors : ref [FcError], args : SyntaxTree) -> [FcFunArg2] {
+	arg1 = get_flow_funarg2(args);
+	rargs = get_flow_funargs2_more_s(args);
+	concat([desugarFcFunArg2(dacc, errors, arg1)], map(rargs, \r -> {
+		arg2 = get_flow_funarg2(r);
+		desugarFcFunArg2(dacc, errors, arg2);
+	}));
+}
+
+desugarFcFunArg2(dacc : DesugarAcc, errors : ref [FcError], farg : SyntaxTree) -> FcFunArg2 {
+	arg = get_flow_funarg2_arg(farg);
+	id = grabSTText(get_flow_id(arg), dacc.fileinfo.content);
+	if (id == "") {
+		// If id is empty, report an error
+		refArrayPush(errors, FcError("Missing name in function argument", [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+	}
+	colontype = get_flow_colontype_s(arg);
+	if (colontype == []) {
+		FcFunArg2(id, None());
+	} else {
+		ctype = get_flow_type(colontype[0]);
+		type = desugarFcType(dacc, ctype);
+		mut = get_flow_funarg_mutable_s(farg) != [];
+		if (mut) {
+			refArrayPush(errors, FcError("Does not support mutable in functions", [FcPosition(dacc.fileinfo.flowfile, arg.end, arg.end)]));
+		}
+		FcFunArg2(id, type);
+	}
+}
+
+desugarFcFunArgs(dacc : DesugarAcc, args : SyntaxTree) -> [FcFunArg2] {
+	arg1 = get_flow_funarg(args);
+	rargs = get_flow_funargs_more_s(args);
+	concat([desugarFcFunArg(dacc, arg1)], map(rargs, \r -> {
+		arg2 = get_flow_funarg(r);
+		desugarFcFunArg(dacc, arg2);
+	}));
+}
+
+desugarFcFunArg(dacc : DesugarAcc, arg : SyntaxTree) -> FcFunArg2 {
+	id = grabSTText(get_flow_id(arg), dacc.fileinfo.content);
+	colontype = get_flow_colontype_s(arg);
+	type = get_flow_type(arg);
+	if (colontype == []) {
+		FcFunArg2(id, desugarFcType(dacc, type));
+	} else {
+		ctype = get_flow_type(colontype[0]);
+		atype = desugarFcType(dacc, ctype);
+
+		// TODO: If id is empty, report an error somewhere
+		FcFunArg2(id, atype);
+	}
+}
+
+desugarArgTypes(dacc : DesugarAcc, argtypes : SyntaxTree) -> [FcFunArg2] {
+	arg1 = get_flow_argtype(argtypes);
+	rargs = get_flow_argtypes2_s(argtypes);
+	concat([desugarArgType(dacc, arg1)], map(rargs, \r -> {
+		arg2 = get_flow_argtype(r);
+		desugarArgType(dacc, arg2);
+	}));
+}
+
+desugarArgType(dacc : DesugarAcc, arg : SyntaxTree) -> FcFunArg2 {
+	if (arg.rule == st_type) {
+		// The second case
+		FcFunArg2("", desugarFcType(dacc, arg));
+	} else {
+		desugarFcFunArg(dacc, arg)
+	}
+}
+
+desugarArgNames(dacc : DesugarAcc, argnames : SyntaxTree) -> [FcFunArg2] {
+	argName = get_flow_argName(argnames);
+	names = get_flow_argNames2_s(argnames);
+	concat([desugarArgName(dacc, argName)], map(names, \n -> {
+		an = get_flow_argName(n);
+		desugarArgName(dacc, an);
+	}));
+}
+
+desugarArgName(dacc : DesugarAcc, argname : SyntaxTree) -> FcFunArg2 {
+	id = grabSTText(get_flow_id(argname), dacc.fileinfo.content);
+/*	if (id == "") {
+		// If id is empty, report an error
+		refArrayPush(errors, FcError("Missing name in argument for lambda", [FcPosition(info.flowfile, arg.end, arg.end)]));
+	}*/
+	colontype = get_flow_colontype_s(argname);
+	type = if (colontype == []) {
+		None();
+	} else {
+		ctype = get_flow_type(colontype[0]);
+		desugarFcType(dacc, ctype);
+	}
+
+	FcFunArg2(id, type);
+}
+
+desugarArglist(dacc : DesugarAcc, arglist : SyntaxTree) -> [FcExp] {
+	left = get_flow_exp(arglist);
+	more = get_flow_one_more_exp_s(arglist);
+	concat([desugarFcExp(dacc, left)], map(more, \m -> {
+		right = get_flow_exp(m);
+		desugarFcExp(dacc, right)
+	}));
+}
+
+desugarNumber(info : FcFileInfo, number : SyntaxTree) -> FcConst {
+	text = grabSTText(number, info.content);
+	if (number.rule == st_number && number.choice == 0) {
+		t : FcType = FcTypeInt(FcInfo2(number.start, number.end));
+		FcInt(
+			parseHex(strRight(text, 2)), 
+			FcInfo(ref Some(t), number.start, number.end)
+		);
+	} else if (number.rule == st_number_float1 || number.rule == st_number_float2) {
+		t : FcType = FcTypeDouble(FcInfo2(number.start, number.end));
+		FcDouble(
+			s2d(text), 
+			FcInfo(ref Some(t), number.start, number.end)
+		);
+	} else {
+		t : FcType = FcTypeInt(FcInfo2(number.start, number.end));
+		FcInt(
+			s2i(text), 
+			FcInfo(ref Some(t), number.start, number.end)
+		);
+	}
+}
+
+desugarBraces(dacc : DesugarAcc, brace : SyntaxTree) -> FcExp {
+	finfo = FcInfo(ref None(), brace.start, brace.end);
+	exps = get_flow_brace_exps_s(brace);
+	if (exps == []) FcVoid(finfo)
+	else {
+		brace_exps = exps[0];
+		exp0 = get_flow_exp(brace_exps);
+		more = get_flow_brace_exps_more_s(brace_exps);
+		es = concat([desugarFcExp(dacc, exp0)], map(more, \e -> {
+			ex = get_flow_exp(e);
+			desugarFcExp(dacc, ex);
+		}));
+
+		// Check for semicolons or brace
+		iteri(more, \i, e -> {
+			prev = if (i == 0) exp0 else more[i - 1];
+			semi = get_flow_brace_semi_s(e);
+			if (semi == [])  {
+				// No semicolon, Expect the previous to end with }
+				prevText = grabSTText(prev, dacc.fileinfo.content);
+				endbrace = strLastIndexOf(prevText, "}");
+				if (endbrace == -1) {
+					refArrayPush(dacc.errors, FcError("Expected semi-colon", [FcPosition(dacc.fileinfo.flowfile, prev.end, prev.end)]));
+				}
+			}
+		});
+
+		/*
+		foo
+		a = 1
+		a
+		bar
+		b = 2
+		baz
+		b
+		fooz
+
+		->
+
+		foo
+		a = 1
+			a
+			bar
+			b = 2
+				baz
+				b
+				fooz
+		*/
+
+		/*
+		fcPrintln("Sequence before:");
+		fcPrintln(
+			prettyFcExp(
+				FcPretty(false, makeTree(), makeTree()),
+				FcSeq(es, finfo)
+			)
+		);*/
+
+		seq = fold(reverseA(es), [], \acc, e -> {
+			switch (e : FcExp) {
+				FcLet(name, type, ex, body, info): {
+					s = switch (body : FcExp) {
+						FcVoid(__): acc;
+						default: concat([body], acc);
+					};
+					let : FcExp = FcLet(name, type, ex, FcSeq(s, copyFcInfo(info)), info);
+					[let]
+				}
+				default: {
+					concat([e], acc);
+				}
+			}
+		});
+
+/*
+		fcPrintln("Sequence after:");
+		fcPrintln(
+			prettyFcExp(
+				FcPretty(false, makeTree(), makeTree()),
+				FcSeq(seq, finfo)
+			)
+		);*/
+
+
+		if (length(seq) == 1) seq[0]
+		else {
+			FcSeq(seq, finfo);
+		}
+	}
+}
+
+desugarGenSym(info : FcFileInfo, base : string) -> string {
+	n = "gsym" + base + i2s(info.gensymid);
+	info.gensymid ::= info.gensymid + 1;
+	n;
+}
+
+desugarFcCall(dacc : DesugarAcc, call : FcCall) {
+	switch (call.f) {
+		FcVar(varname, i) : {
+			struct = lookupTree(dacc.fileStructs, varname);
+			structGlobal = lookupTree(dacc.names.structs, varname);
+			switch (struct) {
+				Some(s) : FcCallPrim(FcStructPrim(varname), call.args, i);
+				None() : {
+					switch (structGlobal) {
+						Some(s1) : FcCallPrim(FcStructPrim(varname), call.args, i);
+						None() : call;
+					}
+				}
+			}
+		}
+		default: call;
+	}
+}
+
+
+// Instantiate a typename by expanding it to a struct or union with the given types bound to the type parameters
+instantiateDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
+	error = \m -> {
+		refArrayPush(dacc.errors, 
+			FcError(m, [FcPosition(dacc.fileinfo.flowfile, typename.info.start, typename.info.end)])
+		);
+	}
+	type = lookupDesugarTypename(dacc, typename);
+	instantiateTypename(dacc.env, dacc.tyvarIdGroup, typename, type, error);
+}
+
+
+expandDesugarUnion2structs(dacc : DesugarAcc, union : FcTypeUnion) -> [FcTypeStruct] {
+	concatA(map(union.typenames, \tn : FcTypeName -> {
+		type = lookupDesugarTypename(dacc, tn);
+		switch (type) {
+			FcTypeStruct(__, __, __, __): [type];
+			FcTypeName(__, __, __): [];	// Already reported error for this
+			FcTypeUnion(un, __, __, __): expandDesugarUnion2structs(dacc, type);
+			default: [];
+		}
+	}));
+}
+
+lookupDesugarTypename(dacc : DesugarAcc, typename : FcTypeName) -> FcType {
+	mfilestruct = lookupTree(dacc.fileStructs, typename.name);
+	switch (mfilestruct) {
+		None(): {
+			mstruct = lookupTree(dacc.names.structs, typename.name);
+			switch (mstruct) {
+				None(): {
+					mfileunion = lookupTree(dacc.fileUnions, typename.name);
+					switch (mfileunion) {
+						None(): {
+							munion = lookupTree(dacc.names.unions, typename.name);
+							switch (munion) {
+								None(): {
+									error = \m -> {
+										refArrayPush(dacc.errors, 
+											FcError(m, [FcPosition(dacc.fileinfo.flowfile, typename.info.start, typename.info.end)])
+										);
+									}
+									error("Unknown type name " + typename.name);
+									typename;
+								}
+								Some(m): m;
+							}
+						}
+						Some(fu): fu;
+					}
+				}
+				Some(s): s;
+			}
+		}
+		Some(fs): fs;
+	}
+}

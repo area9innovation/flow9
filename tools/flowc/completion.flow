@@ -1,0 +1,242 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	codeCompletion(prog : FiProgram, e : FiExp, line : int, character : int) -> void;
+	codeCompleteName(prog : FiProgram, name : string, line : int, character : int) -> void;
+}
+
+/*
+TODO:
+- Function/struct arguments
+- import paths
+- export section can complete functions in the body
+- switch can expand to cases
+- local variables
+- types
+*/
+
+codeCompletion(prog : FiProgram, e : FiExp, line : int, character : int) -> void {
+	completions = doCodeCompletion(prog, e, makeList());
+	printCodeCompletions(completions, line, character);
+}
+
+codeCompleteName(prog : FiProgram, name : string, line : int, character : int) -> void {
+	completions = doCodeCompleteName(prog, name, makeList());
+	printCodeCompletions(completions, line, character);
+}
+
+doCodeCompletion(prog : FiProgram, ex : FiExp, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+	def = \ -> {
+		fcPrintln("TODO: Complete " + prettyFiExp(FcPretty(true, true, makeTree(), makeTree()), ex));
+		println(ex);
+		acc;
+	}
+	acc2 = switch (ex) {
+		FiLambda(args, body, type, start): def();
+		FiCall(f, args, type, start): {
+			doCodeCompletion(prog, f, acc);
+		}
+		FiVar(name, type, start): {
+			doCodeCompleteName(prog, name, acc);
+		}
+		FiLet(name, type, e1, e2, type2, start): def();
+		FiIf(e1, e2, e3, type, start): def();
+		FiSwitch(x, switchType, cases, type, start): def();
+		FiCast(e, tFrom, tTo, type, start): def();
+		FiSeq(es, type, start): def();
+		FiCallPrim(op, es, type, start): def();
+		FiVoid(start): def();
+		FiDouble(d, start): def();
+		FiInt(i, start): def();
+		FiString(s, start): def();
+		FiBool(b, start): def();
+		FiRequire(flowfile, e, type, start): def();
+		FiUnsafe(name, fallback, type, start): def();
+	}
+
+	codeCompleteType(prog, fiExpType(ex), acc2);
+}
+
+doCodeCompleteName(prog : FiProgram, name : string, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+	conf = FcPretty(true, true, makeTree(), makeTree());
+
+	acc1 = foldTree(prog.names.structs, acc, \s, ts, acc0 -> {
+		if (startsWith(s, name)) {
+			Cons(
+				CodeCompletion(
+					s,
+					CompletionConstructor(),
+					prettyFiStructOrUnion(conf, ts, makeSet()),
+					"struct"
+				),
+				acc0
+			)
+		} else acc0
+	});
+
+	acc2 = foldTree(prog.names.unions, acc1, \s, ts, acc0 -> {
+		if (startsWith(s, name)) {
+			Cons(
+				CodeCompletion(
+					s,
+					CompletionConstructor(),
+					prettyFiStructOrUnion(conf, ts, makeSet()),
+					"union"
+				),
+				acc0
+			)
+		} else acc0
+	});
+
+	acc3 = foldTree(prog.names.toplevel, acc2, \s, ts, acc0 -> {
+		if (startsWith(s, name)) {
+			Cons(
+				CodeCompletion(
+					s,
+					CompletionFunction(), // TODO: It might be variable?
+					prettyFiType(conf, ts.type, makeSet()),
+					""	// TODO: Maybe we can use something from the doc backend to grab comments
+				),
+				acc0
+			)
+		} else acc0;
+	});
+
+	acc3;
+}
+
+codeCompleteType(prog : FiProgram, type : FiType, acc : List<CodeCompletion>) -> List<CodeCompletion> {
+	conf = FcPretty(true, true, makeTree(), makeTree());
+	switch (type) {
+		FiTypeArray(t): {acc}
+		FiTypeFunction(args, returnType): {acc}
+		FiTypeRef(t): {acc}
+		FiTypeParameter(n): {acc}
+		FiTypeBool(): {acc}
+		FiTypeInt(): {acc}
+		FiTypeDouble(): {acc}
+		FiTypeString(): {acc}
+		FiTypeFlow(): {acc}
+		FiTypeVoid(): {acc}
+		FiTypeNative(): {acc}
+		FiTypeName(name, typeparameters): {
+			foldTree(prog.names.structs, acc, \s, ts, acc0 -> {
+				if (s == name) {
+					// OK, complete the field names
+					// Somehow, we should give this high priority
+					fold(ts.args, acc0, \acc1, arg : FiStructArg -> {
+						Cons(
+							CodeCompletion(
+								"." + arg.name,
+								CompletionField(),
+								prettyFiType(conf, arg.type, makeSet()),
+								"", // Maybe have the entire struct here?
+							),
+							acc1
+						)
+					}); 
+				} else acc0
+			});
+
+/*			
+			traverseInOrder(prog.names.unions, \s, ts -> {
+				if (s == name) {
+					// TODO: Here we can traverse the structs and find the fields that all have in common
+					println(s + " : " + prettyFiStructOrUnion(conf, ts, makeSet()))
+				}
+			});*/
+		}
+	}
+}
+
+
+
+CodeCompletion(
+	// What is to be inserted
+	label : string,
+	// What kind of completion is this?
+	kind : CodeCompletionKind,
+	// What type or symbol information
+	detail : string,
+	// Any documentation we would want
+	documentation : string,
+);
+
+CodeCompletionKind ::= CompletionText, 
+	CompletionFunction, CompletionConstructor, CompletionField,
+	CompletionVariable, CompletionFolder;
+
+	CompletionText();
+	CompletionFunction();
+	CompletionConstructor();
+	CompletionField();
+	CompletionVariable();
+	CompletionFolder();
+
+/*
+	export const Method = 2;
+	export const Class = 7;
+	export const Interface = 8;
+	export const Module = 9;
+	export const Property = 10;
+	export const Unit = 11;
+	export const Value = 12;
+	export const Enum = 13;
+	export const Keyword = 14;
+	export const Snippet = 15;
+	export const Color = 16;
+	export const File = 17;
+	export const Reference = 18;
+	export const EnumMember = 20;
+	export const Constant = 21;
+	export const Struct = 22;
+	export const Event = 23;
+	export const Operator = 24;
+	export const TypeParameter = 25;
+*/
+
+codeCompletion2json(c : CodeCompletion, line : int, character : int) -> Json {
+	JsonObject([
+		Pair("label", JsonString(c.label)),
+		Pair("textEdit", JsonObject([
+			Pair("range", JsonObject([
+				Pair("start", JsonObject([
+					Pair("line", JsonDouble(i2d(line))),
+					Pair("character", JsonDouble(i2d(character))),
+				])),
+				Pair("end", JsonObject([
+					Pair("line", JsonDouble(i2d(line))),
+					Pair("character", JsonDouble(i2d(character + 1))),
+				])),
+			])),
+			Pair("newText", JsonString(c.label))
+		])),
+		Pair("documentation", JsonString(c.documentation)),
+		Pair("kind", JsonDouble(i2d(switch (c.kind) {
+			CompletionText(): 1;
+			CompletionFunction(): 3;
+			CompletionConstructor(): 4;
+			CompletionField(): 5;
+			CompletionVariable(): 6;
+			CompletionFolder(): 19;
+		}))),
+		// TODO: Define a fixed priority for types, and then the string
+		Pair("sortText", JsonString(c.label)),
+		Pair("detail", JsonString(c.detail)),
+	])
+}
+
+printCodeCompletions(c : List<CodeCompletion>, line : int, character : int) -> void {
+	allCompletions = list2array(c);
+	completions = subrange(allCompletions, 0, 100);
+	result = JsonObject([
+		Pair("isIncomplete", JsonBool(length(completions) != length(allCompletions))),
+		Pair("items", JsonArray(
+			map(completions, \cm -> codeCompletion2json(cm, line, character))
+		))
+	]);
+
+	println(json2string(result));
+}

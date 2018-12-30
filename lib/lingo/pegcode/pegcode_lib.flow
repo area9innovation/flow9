@@ -1,0 +1,212 @@
+import list;
+import string;
+import lingo/peg;
+
+export {
+	PegVmCacheItem(pos : int, capture : RuleResult);
+	// A cache from cache entry number (based on what production is cached) to input position and the result we got for that
+	PegVmCache(caches : [ref IntTree<PegVmCacheItem>]);
+
+	PegStackEntry ::= PegStackPc, PegStackChoice, PegStackPcCache;
+		PegStackPc(pc : int, capture : List<PegCaptureEntry>);
+		PegStackChoice(pc : int, i : int, capture : List<PegCaptureEntry>);
+		PegStackPcCache(pc : int, ce : int, start : int, capture : List<PegCaptureEntry>);
+
+	PegCaptureEntry ::= PegCaptureStringStart, RuleResult, PegCaptureStartList;
+		PegCaptureStringStart(start : int);
+		PegCaptureStartList();
+
+	// The constant data in our loop
+	PegCodeConst(input : string, program : [?], fns : Tree<string, ([flow]) -> flow>, cache : PegVmCache, capture : RuleResult);
+
+	grabUntilMarker(acc : List<PegCaptureEntry>, list : List<PegCaptureEntry>) -> Pair<List<PegCaptureEntry>, List<PegCaptureEntry>>;
+
+	evalActionExp(e : ActionExp, i : int, env : Tree<string, RuleResult>, fns : Tree<string, ([flow]) -> flow>) -> flow;
+
+	pegReturn(cache : PegVmCache, pc : ref int, i : ref int, stack : ref List<PegStackEntry>, capture : ref List<PegCaptureEntry>, env : ref List<Tree<string, RuleResult>>) -> void;
+	pegCaptureList(input : string, pc : ref int, i : ref int, capture : ref List<PegCaptureEntry>) -> void;
+
+	pegResultFromCapture(r : List<PegCaptureEntry>) -> Maybe<flow>;
+
+	peg_fail_cache_item = PegVmCacheItem(-1, RuleResult(flow(""), -1, -1, None()));
+
+	pegAddress2rule(fns : Tree<string, ([flow]) -> flow>, pc : int) -> string;
+	formatPegErrorPlace(message : string, s : string, position : int) -> string;
+}
+
+
+grabUntilMarker(acc : List<PegCaptureEntry>, list : List<PegCaptureEntry>) -> Pair<List<PegCaptureEntry>, List<PegCaptureEntry>> {
+	switch (list) {
+		EmptyList(): Pair(acc, list);
+		Cons(h, t): {
+			switch (h) {
+				PegCaptureStartList(): 
+					// Our marker
+					Pair(acc, t);
+				default:
+					grabUntilMarker(Cons(h, acc), t);
+			}
+		}
+	}
+}
+
+evalActionExp(e : ActionExp, i : int, env : Tree<string, RuleResult>, fns : Tree<string, ([flow]) -> flow>) -> flow {
+	switch (e : ActionExp) {
+		ActionVar(id): {
+			v = lookupTree(env, id);
+			switch (v) {
+				None(): {
+					flow("Unknown var: " + id);
+				}
+				Some(mv): {
+					either(mv.result, flow(IllegalStruct()));
+				}
+			}
+		}
+		ActionCall(id, args): {
+			vargs = map(args, \ce -> evalActionExp(ce, i, env, fns));
+			fn = lookupTree(fns, id);
+			switch (fn) {
+				None(): {
+					makeStructValue(id, vargs, IllegalStruct());
+				}
+				Some(v): {
+					v(vargs);
+				}
+			}
+		}
+		ActionCallDebug(id, args): {
+			vargs = map(args, \ce -> evalActionExp(ce, i, env, fns));
+			fn = lookupTree(fns, id);
+			switch (fn) {
+				None(): {
+					r = makeStructValue(id, vargs, IllegalStruct());
+					if (flow(r) == IllegalStruct() || contains(vargs, IllegalStruct())) {
+						sargs = strGlue(map(vargs, toString), ", ");
+						println("Could not make struct: " + id + "(" + sargs + ") in semantic action { " + action2string(e) + " }");
+					}
+					r;
+				}
+				Some(v): {
+					if (contains(vargs, IllegalStruct())) {
+						sargs = strGlue(map(vargs, toString), ", ");
+						println("Could not call: " + id + "(" + sargs + ") in semantic action { " + action2string(e) + " }");
+					}
+					v(vargs);
+				}
+			}
+		}
+		ActionIndex(): flow(i);
+		ActionConstantString(s): flow(s);
+		ActionConstantInt(in): flow(in);
+	}
+}
+
+pegReturn(cache : PegVmCache, pc : ref int, i : ref int, stack : ref List<PegStackEntry>, capture : ref List<PegCaptureEntry>, env : ref List<Tree<string, RuleResult>>) -> void {
+	switch (^stack) {
+		EmptyList(): {
+			println("The stack is empty");
+			pc := -2;
+		}
+		Cons(h, t): {
+			switch (h : PegStackEntry) {
+				PegStackPc(pc0, tl): {
+					pc := pc0;
+					stack := t;
+					capture := Cons(headList(^capture, RuleResult(flow(""), 0, 0, None())), tl);
+					env := tailList(^env);
+				}
+				PegStackPcCache(pc0, ce, si, tl): {
+					res = headList(^capture, RuleResult(flow(""), 0, 0, None()));
+					switch (res) {
+						RuleResult(__, p, l, r): {
+							// Cache
+							// println("Cache " + i2s(ce) + " at " + i2s(si) + "-" + i2s(i) + ": " + captureEntry2String(res));
+							it = cache.caches[ce];
+							it := addOrUpdateIntTree(it, si, PegVmCacheItem(^i, res));
+						}
+						default: {}
+					}
+					pc := pc0;
+					stack := t;
+					capture := Cons(res, tl);
+					env := tailList(^env);
+				}
+				PegStackChoice(pc0, i0, c): {
+					println("Wrong stack entry.");
+					stack := t;
+				}
+			}
+		}
+	}
+}
+
+pegCaptureList(input : string, pc : ref int, i : ref int, capture : ref List<PegCaptureEntry>) -> void {
+	listAndRest = grabUntilMarker(makeList(), ^capture);
+	results = foldList(listAndRest.first, [], \acc, p : PegCaptureEntry -> {
+		switch (p) {
+			RuleResult(__, __, __, v): {
+				switch (v) {
+					None(): acc;
+					Some(va): arrayPush(acc, va);
+				}
+			}
+			default: acc;
+		}
+	});
+	rr = RuleResult(flow(input), ^i, strlen(input), Some(results));
+	pc := ^pc + 1;
+	capture := Cons(rr, listAndRest.second);
+}
+
+pegResultFromCapture(r : List<PegCaptureEntry>) -> Maybe<flow> {
+	switch(r) {
+		EmptyList(): None();
+		Cons(h, tail_): switch (h) {
+			RuleResult(__, __, __, result): result;
+			default: {
+				println(captureStack2String(r));
+				None();
+			}
+		}
+	}
+}
+
+captureStack2String(s : List<PegCaptureEntry>) -> string {
+	foldList(s, "", \acc, p : PegCaptureEntry -> {
+		acc + " " + captureEntry2String(p)
+	});
+}
+
+captureEntry2String(p : PegCaptureEntry) -> string {
+	switch (p) {
+		PegCaptureStartList(): "<startlist>";
+		PegCaptureStringStart(s): "stringstart:" + i2s(s);
+		RuleResult(__, __, __, result): toString(result);
+	}
+}
+
+pegAddress2rule(fns : Tree<string, ([flow]) -> flow>, pc : int) -> string {
+	fn : ([flow]) -> flow = lookupTreeDef(fns, "callstack", \a : [flow] -> flow(""));
+	flow2s(fn([flow(pc)]));
+}
+
+formatPegErrorPlace(message : string, s : string, position : int) -> string {
+	n = strlen(s);
+	if (position < 0 || position > n) {
+		strLeft(s, 120);
+	} else {
+		start = max(position - 50, 0);
+		end = min(position + 50, n);
+
+		begin = message + "\"" + (if (start > 0) "..." else "") 
+			+ substring(s, start, position - start);
+
+		begin + strReplace(substring(s, position, end - position), "\n", "¶")
+			+ (if (end < n) "..." else "")
+			+ "\"" 
+			+ "\n"
+			+ rpad("", " ", strlen(begin)) + "^";
+	}
+}
+

@@ -1,0 +1,67 @@
+import tools/flowc/fctypeenv;
+import tools/flowc/manipulation/freevars;
+import tools/flowc/flowc_println;
+
+export {
+	// Given an order of global vars and functions, find an initialization order
+	// which respects internal dependencies. They come in batches that can be
+	// run in parallel
+	makeInitOrder(env : FcTypeEnv, module : FcModule, initOrder : [string]) -> [[string]];
+}
+
+
+makeInitOrder(env : FcTypeEnv, module : FcModule, initOrder : [string]) -> [[string]] {
+	names = buildSet(initOrder);
+
+	track = fold(initOrder, makeDependencyTracker(), \acc, o -> {
+		gvar = lookupTree(module.globalVars, o);
+		mexp : Maybe<FcExp> = switch (gvar) {
+			None(): {
+				gfn = lookupTree(module.functions, o);
+				switch (gfn) {
+					None(): None();
+					Some(fn): eitherMap(fn.lambda, \l : FcLambda -> {
+									ll : FcExp = l;
+									Some(ll)
+								}, None());
+				}
+			}
+			Some(gv): gv.value;
+		}
+		fv = switch (mexp) {
+			Some(e): fcfreevars(e);
+			None(): makeSet();
+		}
+
+		// We filter this to only the names amongst our selves
+		internalFv = intersectSets(fv, names);
+		// Also, remove direct recursion to ourselves
+		norec = removeSet(internalFv, o);
+
+		addDependencies(acc, o, set2array(norec));
+	});
+
+	order = makeOrder(env.program.acc.config, track, []);
+	order;
+}
+
+makeOrder(config : CompilerConfig, d : DependencyTracker<string>, acc : [[string]]) -> [[string]] {
+	n = extractNonDependent(d);
+	resolved = set2array(n.second);
+	if (resolved == []) {
+		// OK, we might have a group of names we can not resolve
+		unresolved = getTreeKeys(d.fileRequires);
+		if (unresolved != [] && getConfigParameter(config.config, "verbose") >= "2") {
+			// TODO: Check that these have reasonable types declared
+			fcPrintln("There is a loop amongst these names: " + strGlue(unresolved, ", "));
+		}
+		// When there is a loop, we will have to do them one by one to avoid any problems
+		concat(acc, map(unresolved, \u -> [u]));
+	} else {
+		nacc = arrayPush(acc, resolved);
+		nd = fold(resolved, n.first, \acc2, res -> {
+			resolveDependency(acc2, res);
+		});
+		makeOrder(config, nd, nacc)
+	}
+}

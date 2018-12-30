@@ -1,0 +1,105 @@
+import material/material_dialog;
+
+export {
+	MCPDialogStyle ::= MCPHideClearColorButtons, MCPDefaultColor, MCPDisableMainPalette, MCPAdditionalColors, MCPForceUpdate;
+		MCPHideClearColorButtons : ();
+		MCPDefaultColor : (defaultColor : MColor);
+		MCPDisableMainPalette : ();
+		MCPAdditionalColors : (additionalColors : DynamicBehaviour<[int]>);
+		// use next instead nextDistinct
+		MCPForceUpdate();
+
+	showMColorPickerDialogPopup(
+		manager : MaterialManager,
+		color : DynamicBehaviour<int>,
+		style : [MCPDialogStyle]
+	) -> void;
+
+	embeddedMultiSelectColorPicker(colorsB : DynamicBehaviour<[int]>, additionalColors: DynamicBehaviour<[int]>) -> Material;
+}
+
+showMColorPickerDialogPopup(
+	manager : MaterialManager,
+	color : DynamicBehaviour<int>,
+	style : [MCPDialogStyle]
+) -> void {
+
+	hideClearColorButtons = containsStruct(style, MCPHideClearColorButtons());
+	defaultColor = extractStruct(style, MCPDefaultColor(MBlack())).defaultColor;
+	disableMainPalette = containsStruct(style, MCPDisableMainPalette());
+	additionalColors = extractStruct(style, MCPAdditionalColors(make([]))).additionalColors;
+
+	onOK = \c -> {
+		if (containsStruct(style, MCPForceUpdate())) {
+			next(color, MColor2int(c));
+		} else {
+			nextDistinct(color, MColor2int(c));
+		}
+	}
+
+	showClearButtons = MClearCustomColorsButtons(
+		\colorToRemove -> next(additionalColors, removeAll(getValue(additionalColors), MColor2int(colorToRemove))),
+		\ -> next(additionalColors, [])
+	);
+	mColor = color |> getValue |> MCustomColor |> make;
+	close = make(false);
+	ShowMDialog(manager, close, [MDialogFocusOnPrevious()],
+		MColorPicker(mColor,
+			concatA([
+				[
+					MDialogButtons([
+						MTextButton(_("RESET"), \ -> nextDistinct(mColor, defaultColor), [MLeftIcon("format_color_reset")], []),
+						MTextButton(_("CANCEL"), \ -> next(close, true), [], [MShortcut("esc")]),
+						MTextButton(_("SAVE"), \ -> {
+							updateAdditionalColors(additionalColors, MColor2int(getValue(mColor)));
+							onOK(getValue(mColor));
+							next(close, true);
+						}, [MButtonRaised()], [MShortcut("enter")]),
+					]),
+					MaterialColorPicker(),
+
+				],
+				getCommonStylesForAdditionalColors(additionalColors),
+				if (!hideClearColorButtons) [showClearButtons] else [],
+				if (disableMainPalette) [MColorPickerDisableMainPalette()] else []
+			])
+		)
+	);
+}
+
+updateAdditionalColors(additionalColors : DynamicBehaviour<[int]>, newColor : int) -> void {
+	colors = getValue(additionalColors);
+	if (!contains(colors, newColor)) {
+		nextDistinct(additionalColors, arrayPush(colors, newColor));
+	}
+}
+
+getCommonStylesForAdditionalColors(additionalColors : DynamicBehaviour<[int]>) -> [MColorPickerMultiSelectStyle] {
+	[
+		MColorPickerAdditionalColors(
+			fmap(additionalColors, \c -> mCustomColor2MColor(MCustomColor(c)))
+		),
+		MCustomColorPickerDialog(
+			MTextButton(_("CUSTOM COLOR"), nop, [MWhite()], []),
+			\c -> updateAdditionalColors(additionalColors, MColor2int(c))
+		)
+	]
+}
+
+embeddedMultiSelectColorPicker(colorsB : DynamicBehaviour<[int]>, additionalColors: DynamicBehaviour<[int]>) -> Material {
+	colorsSetB = make(makeSet());
+	MConstruct(
+		[
+			\ -> bidirectionalLink(
+				colorsB,
+				colorsSetB,
+				\colorsIntArr -> buildSet(map(colorsIntArr, \i -> mCustomColor2MColor(MCustomColor(i)))),
+				\colorsSet -> map(set2array(colorsSet), MColor2int)
+			)
+		],
+		MColorPickerMultiSelect(
+			colorsSetB,
+			getCommonStylesForAdditionalColors(additionalColors)
+		)
+	)
+}

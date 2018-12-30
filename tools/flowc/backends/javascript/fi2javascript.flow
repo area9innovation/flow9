@@ -1,0 +1,155 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/javascript/fi2javascript_utils;
+import tools/flowc/backends/javascript/fi2javascript_compile;
+import tools/flowc/backends/javascript/fi2javascript_assemble;
+import tools/flowc/backends/javascript/size_tracker;
+import tools/flowc/manipulation/optimizer;
+import tools/flowc/incremental/fitype;
+import lingo/flow/javascript_keywords;
+
+export {
+	fi2javascript(program : FiProgram, cfg : FiJsConfig, callback : () -> void) -> void;
+}
+
+fi2javascript(orig_program : FiProgram, cfg : FiJsConfig, callback : ()  -> void) -> void {
+
+	program = if (isConfigParameterTrue(orig_program.config.config, "optimize")) {
+		makeBool = \v -> { e : FiExp = FiBool(v, -1); e };
+		optimizeCode(
+			orig_program,
+			cfg.flowfile, 
+			pairs2tree([Pair("js", makeBool(true)), Pair("cpp", makeBool(false))])
+		)
+	} else orig_program;
+
+	jsmode = fiJavascriptMode(cfg);
+	fcVerbose(cfg, 0, "Making Javascript (" + jsmode+ ") '" + cfg.outputfile + "'...");
+
+	ovl = fiMakeOverlayGroup(cfg, program);
+
+	fcVerbose(cfg, 1, "Collecting code for all imported files...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	// 'nativeNames' is a relation between native names and
+	// (possibly mangled) names in classes, for example:
+	// Declaration
+	// native fcPrintln2 : io (flow) -> void = Native.fcPrintln;
+	// will produce leaf ("fcPrintln2" -> "NativeHx.fcPrintln")
+	// in debug mode and  ("fcPrintln2" -> "Native.fcPrintln")
+	// in non-debug mode.
+	nativeNames = fiPrepareNativeNames(cfg, program, ovl);
+
+	// 'renamings' holds relation between id and its short form,
+	// for example ("main" -> "$o2") in debug mode and
+	// ("main" -> "main") (identity) in non-debug mode.
+	renamings = fiPrepareRenamings(cfg, program, ovl, decls);
+
+	fcVerbose(cfg, 0, "Code for all files collected.");
+
+	// TODO: Detect concurrency() calls after DCE.
+	hasConcurrencyCalls = false;
+
+	// 'headerCode' is a collection of all Flow structures, converted to JS,
+	// set of predefined functions for values compare, tail call manipulation
+	// stored in files, selected depending on cfg.jsmode and asynchronous functions.
+
+	// All structs resides then in ovl.structs (side effect of fcGetFcStructDefs)
+	// and reffered from fc2javascript_compile module.
+	headerCode = fiGetHeaderCode(cfg, program, ovl, hasConcurrencyCalls);
+
+	// Create directory for separated modules, if necessary
+	fiEnsureModulesDirectory(cfg);
+
+	moduleCount = i2s(length(decls));
+
+	// For tracking the size of files
+	sizeTracker = ref makeSizeTracker();
+
+	// Generating JS code for all declarations.
+	fcVerbose(cfg, 0, "Generating JS code for declarations...");
+	modulesCode = foldi(decls, Cons(if (cfg.modules != "") "" else headerCode, makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating JS code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				ovl.currentModule ::= module.fileinfo.flowfile;
+				ovl.importedModules ::= [];
+
+				// TODO: Comments probably will be processed in another way.
+
+				// jsCmtTree  := either(lookupTree(^commentsTree, module.fullpath), makeTree());
+				// jsComments := getTreeKeys(^jsCmtTree);
+				// jsContents := getFileContent(module.fullpath);
+
+				// TODO: Detect types for TS
+
+				//ns0 = mSharedNames.fromStrings(module.names);
+				//ns = if (params.isTypeScript) tsSharedNames(ns0, ["", "?"][b2i(params.modules != "")]) else ns0;
+				//tSubst = typeSubstTreeToSubst(module.typeSubst);
+
+				moduleSize: ref int = ref 0;
+				jsReportSizes = isConfigParameterTrue(program.config.config, "js-report-sizes");
+
+				r = fold(p.second, if (cfg.modules != "") Cons("", makeList()) else acc, \l, v: FiDeclaration -> {
+					name = v.name;
+					id = lookupTreeDef(renamings, name, name);
+					args = fiDeclarationArgNames(v);
+					gctx = FiJsToplevelContext(
+						ovl,
+						renamings,
+						nativeNames,
+						name,
+						args,
+						0,
+						makeTree(),
+						false,
+						false,
+						if (cfg.debug) " " else "",
+						if (cfg.debug) "  " else "",
+						if (cfg.debug) "    " else "",
+						0,
+						module.fileinfo,
+						program
+					);
+
+					// TODO Support for dead code elimination required.
+					tl = fiJsCompileToplevel(cfg, gctx, v, id, "", None());
+					moduleSize := ^moduleSize + strlen(tl);
+					Cons(if (tl == "" || !cfg.debug) "" else "\n", Cons(tl, l));
+				});
+
+				sizeTracker := registerFileSize(^sizeTracker, p.first, ^moduleSize);
+
+				// This branch is for jsmodules=<dir>
+				// Save output to separate files
+				// Side effect - ovl modified by separated modules
+				if (cfg.modules != "") {
+					fiAssembleSeparatedModule(cfg, ovl, r, module)
+				} else r;
+			}
+		}
+	});
+
+	fiLinkRuntime(cfg, program, ovl, modulesCode, \runtimeContents -> {
+		if (isConfigParameterTrue(program.config.config, "js-report-sizes")) {
+			reportFileSizes(^sizeTracker);
+		}
+
+		fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContents, modulesCode);
+		// Beautify and compress are mutually exclusive
+		if (cfg.beautify && !cfg.compress)
+			fiJsBeautify(cfg, ovl, callback)
+		else
+			if (cfg.compress) fiJsCompress(cfg, ovl, callback) else callback()
+	});
+}
+

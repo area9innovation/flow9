@@ -1,0 +1,367 @@
+/*
+
+Promise
+-------
+
+The core idea behind promises is that a promise represents the result of an asynchronous operation.
+A promise is in one of three different states:
+
+	pending - The initial state of a promise.
+	fulfilled - The state of a promise representing a successful operation.
+	rejected - The state of a promise representing a failed operation.
+
+Three main operations are `then`, `catch` and `done`. Use `then` whenever you're going to do something
+with the result (even if that's just waiting for it to finish), use `catch` whenever you're going to
+do something with the error and use `done` whenever you aren't planning on doing anything with the
+result or error.
+
+Example:
+
+	dumpPromise(promise : Promise<?, ??>) -> void {
+		doneP(promise,
+			\result -> {
+				// fulfilled
+				println("result: " + toString(result))
+			},
+			\error -> {
+				// rejected
+				println("error: " + toString(error))
+			}
+		)
+	}
+
+	request(url : string) {
+		p : Promise<string, string> = Promise(\fulfill, reject -> {
+			httpRequest3(url, fulfill, reject)
+		});
+		dumpPromise(p);
+	}
+
+See more:
+
+	https://www.promisejs.org/
+	https://davidwalsh.name/promises
+	http://www.html5rocks.com/en/tutorials/es6/promises/
+
+This library gets good reviews:
+	http://bluebirdjs.com/docs/api-reference.html
+
+*/
+
+import runtime;
+
+export {
+	Promise : (
+		f : (/* fulfill */ (?) -> void, /* reject */(??) -> void) -> void
+	);
+
+	// The convention is f you don't need to return anything when promise is fulfilled return 0.
+
+	// The `done` corresponding callback is triggered when the promise is fulfilled or rejected
+	doneP(promise : Promise<?, ??>, fulfill : (?) -> void, reject : (??) -> void) -> void;
+	// The `then` callback is triggered when the promise is fulfilled
+	thenP(promise : Promise<?, ??>, transformResult : (?) -> ???) -> Promise<???, ??>;
+	// The `catch` callback is executed when the promise is rejected:
+	catchP(promise : Promise<?, ??>, transformError : (??) -> ???) -> Promise<?, ???>;
+
+	// The `all` function takes an array of promises and fires one callback once they are
+	// all fulfilled or as soon as one of then is rejected.
+	allP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
+
+	// Parallel version of `all`.
+	parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
+	// Parallel version with a limit on a number of simultaneous calls.
+	// As for all promises, if any request gets an error, the whole promise is rejected.
+	// Consider to use applyAsyncUntilCancel() from array_exec.flow instead.
+	parallelXP(promises : [Promise<?, ??>], simultaneous : int) -> Promise<[?], ??>;
+	// Parallel with same error type
+	parallel2P(p1 : Promise<?, ???>, p2 : Promise<??, ???>) -> Promise<Pair<?, ??>, ???>;
+
+	//mapP and mapPparallel were moved to arrayutils.flow
+
+
+	// These could be useful when you do not have a common type, because it could allow you to construct
+	// a kind of tree of promises. Otherwise, just use "flow" with the parallelP thing above if you don't tell anyone.
+	//	parallel2P(promise1 : Promise<?, ??>, promise2 : Promise<???, ??>) -> Promise<Pair<?, ???>, ??>;
+	//	parallel3P(promise1 : Promise<?, ??>, promise2 : Promise<???, ??>) -> Promise<Pair<?, ???>, ??>;
+	//	parallel4P(promise1 : Promise<?, ??>, promise2 : Promise<???, ??>) -> Promise<Pair<?, ???>, ??>;
+
+	// TODO:
+	// Instead of waiting for all promises to be fulfilled or rejected,
+	// `race` triggers as soon as any promise in the array is fulfilled or rejected:
+	// raceP(promises : [Promise<?, ??>]) -> Promise<[?], ??>;
+
+	/*
+		Functions to support composition for the Promise context.
+
+		Example of usage:
+
+			Suppose you have some action which gives you person ID from database by some info:
+				getPersonId : (info : Info) -> Promise<int, string>
+
+			And you want then to receive all details about this Person with the other request:
+				getPersonById : (id : int) -> Promise<Person, string>
+
+			To glue this two functions into the one sequence of operations you can use bindP:
+				person : Promise<Person, string> = getPersonId(info) |> bindP(getPersonById);
+
+			Now if you want to modify the result and error of the resulting Promise by some modifiers, for example:
+				personToHuman : (person : Person) -> Human;
+				getDetailedError : (errMsg : string) -> ErrorInfo;
+
+			So, now you can easily map those using pipes and mapResultP and mapErrorsP functions:
+				human : Promise<Human, ErrorInfo> =
+					getPersonId(info)
+						|> bindP(getPersonById)
+						|> mapResultP(personToHuman)
+						|> mapErrorsP(getDetailedError);
+	*/
+	bindP : (action : (?) -> Promise<??, ???>) -> (Promise<?, ???>) -> Promise<??, ???>;
+	mapResultP : (transformResult : (?) -> ??) -> (Promise<?, ???>) -> Promise<??, ???>;
+	mapErrorsP : (transformError  : (?) -> ??) -> (Promise<???, ?>) -> Promise<???, ??>;
+}
+
+doneP(promise : Promise<?, ??>, fulfill : (?) -> void, reject : (??) -> void) -> void {
+	promise.f(
+		fulfill,
+		reject
+	)
+}
+
+thenP(promise : Promise<?, ??>, transformResult : (?) -> ???) -> Promise<???, ??> {
+	Promise(\fulfill, reject -> {
+		doneP(promise,
+			\result -> result |> transformResult |> fulfill,
+			reject
+		)
+	})
+}
+
+catchP(promise : Promise<?, ??>, transformError : (??) -> ???) -> Promise<?, ???> {
+	Promise(\fulfill, reject -> {
+		doneP(promise,
+			fulfill,
+			\error -> error |> transformError |> reject
+		)
+	})
+}
+
+allP(promises : [Promise<?, ??>]) -> Promise<[?], ??> {
+	Promise(
+		\fulfill, reject -> {
+			allP2(promises, makeList(), fulfill, reject)
+		}
+	)
+}
+
+allP2(promises : [Promise<?, ??>], acc : List<?>, fulfill : ([?]) -> void, reject : (??) -> void) -> void {
+	if (promises == []) {
+		fulfill(list2array(acc))
+	} else {
+		promise = promises[0];
+
+		doneP(promise,
+			\result -> allP2(tail(promises), Cons(result, acc), fulfill, reject),
+			reject
+		)
+	}
+}
+
+parallelP(promises : [Promise<?, ??>]) -> Promise<[?], ??> {
+	count = ref 0;
+
+	resultsR = ref map(promises, \__ -> None());
+	errorR = ref None();
+
+	Promise(
+		\fulfill : ([?]) -> void, reject : (??) -> void -> {
+			if (promises == []) {
+				fulfill([])
+			} else {
+				onDoneFn = \-> {
+					count := ^count + 1;
+					if (^count == length(promises)) {
+						// all promises processed (either fulfilled or rejected)
+						errorM : Maybe<??> = ^errorR;
+						switch (errorM) {
+							Some(error): reject(error);
+							None(): {
+								results = ^resultsR;
+								results2 = filtermap(results, idfn);
+
+								assert(length(results) == length(results2), "Parallel promises failed."); //  Maybe both fulfilled and rejected was called for some stupid promise
+
+								fulfill(results2);
+							}
+						}
+					}
+				}
+
+				iteri(promises, \i, promise -> {
+					doneP(promise,
+						\result : ? -> {
+							resultsR := replace(^resultsR, i, Some(result));
+							onDoneFn();
+						},
+						\error : ?? -> {
+							errorR := Some(error);
+							onDoneFn();
+						}
+					)
+				})
+			}
+		}
+	)
+}
+
+parallelXP(promises : [Promise<?, ??>], simultaneous : int) -> Promise<[?], ??> {
+	if (simultaneous <= 0 || simultaneous > length(promises)) {
+		parallelP(promises)
+	} else {
+		started = ref 0;
+		finished = ref 0;
+
+		resultsR = ref map(promises, \__ -> None());
+		errorR = ref None();
+
+		Promise(
+			\fulfill : ([?]) -> void, reject : (??) -> void -> {
+				if (promises == []) {
+					fulfill([])
+				} else {
+					iter(enumFromTo(0, simultaneous - 1), \__ -> startParallelXP(promises, started, finished, resultsR, errorR, fulfill, reject))
+				}
+			}
+		)
+	}
+}
+
+startParallelXP(
+	promises : [Promise<?, ??>], started : ref int, finished : ref int,
+	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>,
+	fulfill : ([?]) -> void, reject : (??) -> void
+) {
+	i = ^started;
+	started := ^started + 1;
+	promise = promises[i];
+	doneP(promise,
+		\result : ? -> {
+			resultsR := replace(^resultsR, i, Some(result));
+			onDoneParallerXP(promises, started, finished, resultsR, errorR, fulfill, reject);
+		},
+		\error : ?? -> {
+			errorR := Some(error);
+			onDoneParallerXP(promises, started, finished, resultsR, errorR, fulfill, reject);
+		}
+	)
+}
+
+onDoneParallerXP(
+	promises : [Promise<?, ??>], started : ref int, finished : ref int,
+	resultsR : ref [Maybe<?>], errorR : ref Maybe<??>,
+	fulfill : ([?]) -> void, reject : (??) -> void
+) {
+	finished := ^finished + 1;
+	switch (^errorR : Maybe<??>) {
+		Some(error): {
+			// once we encounter an error, we should skip all further promises
+			finished := length(promises);
+			reject(error);
+		};
+		None(): {
+			if (^finished == length(promises)) {
+				// all promises processed without errors (fulfilled)
+				results = ^resultsR;
+				results2 = filtermap(results, idfn);
+
+				assert(length(results) == length(results2), "Parallel promises failed."); //  Maybe both fulfilled and rejected was called for some stupid promise
+
+				fulfill(results2);
+			} else if (^started < length(promises)) {
+				startParallelXP(promises, started, finished, resultsR, errorR, fulfill, reject)
+			}
+		}
+	}
+}
+
+parallel2P(p1 : Promise<?, ???>, p2 : Promise<??, ???>) -> Promise<Pair<?, ??>, ???> {
+	result1 : ref Maybe<?> = ref None();
+	result2 : ref Maybe<??> = ref None();
+	error : ref Maybe<???> = ref None();
+	count = ref 0;
+
+	Promise(
+		\fulfill : (Pair<?, ??>) -> void, reject : (???) -> void -> {
+			onDoneFn = \ -> {
+				count := ^count + 1;
+				if (^count == 2) {
+					errorM : Maybe<???> = ^error;
+					switch (errorM) {
+						None(): {
+							mres1 : Maybe<?> = ^result1;
+							switch (mres1) {
+								None(): {}	// should never happen
+								Some(r1): {
+									mres2 : Maybe<??> = ^result2;
+									switch (mres2) {
+										None(): {}
+										Some(r2): fulfill(Pair(r1, r2));
+									}
+								}
+							}
+						}
+						Some(err): reject(err);
+					}
+				}
+			}
+
+			doneP(p1, \result : ? -> {
+				result1 := Some(result);
+				onDoneFn();
+			}, \e : ??? -> {
+				error := Some(e);
+				onDoneFn();
+			});
+
+			doneP(p2, \result : ?? -> {
+				result2 := Some(result);
+				onDoneFn();
+			}, \e : ??? -> {
+				error := Some(e);
+				onDoneFn();
+			});
+		}
+	)
+}
+
+
+joinP(promise : Promise<Promise<?, ??>, ??>) -> Promise<?, ??> {
+	Promise(
+		\fullfill : (?) -> void, reject : (??) -> void -> {
+			promise.f(
+				\innerPromise -> {
+					doneP(innerPromise, fullfill, reject)
+				},
+				reject
+			)
+		}
+	)
+}
+
+bindP(action : (?) -> Promise<??, ???>) -> (promise : Promise<?, ???>) -> Promise<??, ???> {
+	\promise -> {
+		thenP(promise, action) |> joinP
+	}
+}
+
+mapResultP(transformResult : (?) -> ??) -> (Promise<?, ???>) -> Promise<??, ???> {
+	\promise -> {
+		thenP(promise, transformResult)
+	}
+}
+
+mapErrorsP(transformError : (?) -> ??) -> (Promise<???, ?>) -> Promise<???, ??> {
+	\promise -> {
+		catchP(promise, transformError)
+	}
+}

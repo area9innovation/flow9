@@ -1,0 +1,372 @@
+import algorithms;
+import wigi/path;
+import wigi/block_debug;
+
+export {
+	// A position in a document is an array of indexes down the tree
+	getStartPositionOfDocument(element : WigiElement) -> [int];
+	getEndPositionOfDocument(element : WigiElement, visibleOnly : bool) -> [int];
+
+	compareDocumentPosition(p1 : [int], p2 : [int]) -> int;
+
+	// Is this the position just inside this element, i.e. are we a direct parent?
+	isPositionParent(parent : [int], child : [int]) -> bool;
+
+	// Is child is inside parent at any level
+	isPositionParentGeneral(parent: [int], child: [int]) -> bool;
+
+	// What is the new path when moved this amount?
+	doPositionDelta(root : WigiElement, path : [int], delta : int) -> [int];
+
+	getElementAtPosition(root : WigiElement, path : [int]) -> WigiElement;
+
+	// Get element at specified path or default if not exists
+	getElementAtPositionDef(root : WigiElement, path : [int], def : WigiElement) -> WigiElement;
+
+	isCorrectPosition(root : WigiElement, path : [int]) -> bool;
+
+	// Does this kind of element support cell-wise navigation? This is everything but text and empty, which need a traditional cursor
+	isWigiCell(element : WigiElement) -> bool;
+
+	// Find the closest parent cell
+	wigiFindParentCell(root : WigiElement, path : [int]) -> [int];
+
+	// Find the common parts of these two parts
+	commonPath(start : [int], end : [int]) -> [int];
+
+	elementPosition2string(d : WigiElement, p : [int]) -> string;
+
+	// Find element in hierarchy. Returns [] if not found
+	// [- Unsafe -] be careful: returns only first occurrence if there are several the same items. Good idea is to avoid using this function.
+	findWigiElement(root: WigiElement, element: WigiElement) -> [int];
+}
+
+commonPath(start : [int], end : [int]) -> [int] {
+	foldi(start, Pair(true, []), \i, acc : Pair<bool, [int]>, p -> {
+		if (acc.first) {
+			if (i < length(end) && p == end[i]) {
+				Pair(true, arrayPush(acc.second, p));
+			} else Pair(false, acc.second)
+		} else acc
+	}).second;
+}
+
+
+//
+// Starting positions
+//
+getStartPositionOfDocument(element : WigiElement) -> [int] {
+	recurse = \child -> {
+		concat([0], getStartPositionOfDocument(child));
+	}
+	recurseFirstChild = \ -> recurse(indexWigiChildren(element, 0, dummyWigiElement));
+	switch (element : WigiElement) {
+		WigiDocument(root, style): {
+			recurse(root);
+		}
+		WigiStory(elements, views, style): recurseFirstChild();
+		WigiParagraph(elements, style): recurseFirstChild();
+		WigiText(text, mstyleid) : [0];
+		WigiEmpty(): [0];
+		WigiRecursive(elements, type, style): recurseFirstChild();
+		WigiBlock(type, style): [0];
+	}
+}
+
+//
+// Ending positions
+//
+
+getEndPositionOfDocument(element : WigiElement, visibleOnly : bool) -> [int] {
+	recurse = \n, child -> {
+		concat([n], getEndPositionOfDocument(child, visibleOnly));
+	}
+	childRecurse = \children : [WigiElement] -> {
+		n = length(children) - 1;
+		recurse(n, indexWigiChildren(element, n, dummyWigiElement));
+	}
+
+	switch (element : WigiElement) {
+		WigiDocument(root, style): concat([0], getEndPositionOfDocument(root, visibleOnly));
+		WigiStory(stories, views, style): childRecurse(^stories);
+		WigiParagraph(elements, style): childRecurse(elements);
+		WigiText(text, mstyleid) : [strlen(text)];
+		WigiEmpty(): [0];
+		WigiBlock(type, style): [1];
+		WigiRecursive(elements, type, style): {
+			// Important to use this method, since if recursive parts are collapsed away, we do not have as many children
+			children = getWigiElementChildren(element, visibleOnly);
+			childRecurse(children);
+		}
+	}
+}
+
+//
+// Comparison
+//
+
+compareDocumentPosition(p1 : [int], p2 : [int]) -> int {
+	genericCompare(p1, p2);
+}
+
+isPositionParent(parent : [int], child : [int]) -> bool {
+	lp = length(parent);
+	if (lp != length(child) - 1) false
+	else {
+		shared = subrange(child, 0, lp);
+		shared == parent
+	}
+}
+
+isPositionParentGeneral(parent: [int], child: [int]) -> bool {
+	lp = length(parent);
+	if (length(child) < lp) {
+		false
+	} else {
+		subrange(child, 0, lp) == parent
+	}
+}
+
+// Retrieval
+getElementAtPosition(root : WigiElement, path : [int]) -> WigiElement {
+	if (path == []) root
+	else {
+		first = path[0];
+		rest = tail(path);
+		step = indexWigiChildren(root, first, root);
+		getElementAtPosition(step, rest);
+	}
+}
+
+getElementAtPositionDef(root : WigiElement, path : [int], def : WigiElement) -> WigiElement {
+	if (path == []) root
+	else {
+		first = path[0];
+		rest = tail(path);
+		step = indexWigiChildren(root, first, def);
+		getElementAtPositionDef(step, rest, def);
+	}
+}
+
+isCorrectPosition(root : WigiElement, path : [int]) -> bool {
+	if (path == []) true
+	else {
+		first = path[0];
+		rest = tail(path);
+
+		// We need to treat blocks differently :(
+		switch (root) {
+			WigiBlock(t, s): rest == [0] || rest == [1] || rest == [];
+			WigiText(text, style): 0 <= first && first <= strlen(text) && rest == [];
+			default: {
+				step = indexWigiChildren(root, first, WigiEmpty());
+				if (step == WigiEmpty()) {
+					false
+				} else {
+					isCorrectPosition(step, rest);
+				}
+			}
+		}
+	}
+}
+
+isWigiCellCustom(element : WigiElement, pageBreakFlag : bool) -> bool {
+	switch (element) {
+		WigiDocument(r, s): true;
+		WigiStory(p, v, s): true;
+		WigiParagraph(p, s): true;
+		WigiText(t, s): false;
+		WigiEmpty(): false;
+		WigiRecursive(e, t, style): true;
+		WigiBlock(type, style): {
+			switch (type) {
+				WigiPageBreak(__, __): pageBreakFlag;
+				default: false
+			}
+		}
+	}
+}
+
+isWigiCell(element : WigiElement) -> bool {
+	isWigiCellCustom(element, false)
+}
+
+// Delta navigation
+doPositionDelta(root : WigiElement, path : [int], delta : int) -> [int] {
+	if (path == []) {
+		if (delta < 0) {
+			getStartPositionOfDocument(root)
+		} else {
+			getEndPositionOfDocument(root, true)
+		}
+	} else {
+		last = lastElement(path, 0);
+		ni = last + delta;
+		if (ni < 0) {
+			// OK, we need to roll over at some earlier point in the path
+			// Find a predecessor that is not 0
+			lastNonZero = findLastNonZero(path, length(path) - 1);
+			if (lastNonZero == -1) {
+				doPositionDelta(root, [], delta);
+			} else {
+				backtrack = subrange(path, 0, lastNonZero + 1);
+				backlast = lastElement(backtrack, 0);
+				prev = replace(backtrack, length(backtrack) - 1, backlast + delta);
+
+				element = getElementAtPosition(root, subrange(path, 0, length(path) - 1));
+
+				// Now, find the end of that element here
+				prevparent = getElementAtPosition(root, prev);
+				endParent = getEndPositionOfDocument(prevparent, true);
+
+				com = concat(prev, endParent);
+				if (isWigiCell(element)) {
+					// Cell level navigation should stay at cell level
+					wigiFindParentCell(root, com);
+				} else {
+					com;
+				}
+			}
+		} else {
+			element = getElementAtPosition(root, wigiParentPath(path));
+			// Should we have an extra position at the end of this element? We need this for no-cell elements like Text and Empty
+			isCell = isWigiCell(element);
+			childCount = getWigiChildCount(element, true);
+			maxIndex = if (isCell) childCount else childCount + 1;
+			if (ni >= maxIndex) {
+				lastInside = findLastInside(root, path, length(path) - 1);
+				if (lastInside == -1) {
+					doPositionDelta(root, [], delta);
+				} else {
+					// Go to the next element
+					backtrack = subrange(path, 0, lastInside + 1);
+					backlast = lastElement(backtrack, 0);
+					nextpath = replace(backtrack, length(backtrack) - 1, backlast + delta);
+					nextparent = getElementAtPosition(root, nextpath);
+					startParent = getStartPositionOfDocument(nextparent);
+					com = concat(nextpath, startParent);
+					if (isCell) {
+						// Cell level navigation should stay at cell level
+						wigiFindParentCell(root, com);
+					} else {
+						// When at leafs, we do deep
+						com;
+					}
+				}
+			} else {
+				// We are within ourselves, so just move
+				replace(path, length(path) - 1, ni);
+			}
+		}
+	}
+}
+
+findLastNonZero(path : [int], depth : int) -> int {
+	if (depth < 0) {
+		depth
+	} else if (path[depth] > 0) {
+		depth
+	} else {
+		findLastNonZero(path, depth - 1);
+	}
+}
+
+findLastInside(root : WigiElement, path : [int], depth : int) -> int {
+	if (depth < 0) {
+		depth
+	} else {
+		element = getElementAtPosition(root, subrange(path, 0, depth));
+		maxIndex = getWigiChildCount(element, true);
+		if (maxIndex > 1 && path[depth] + 1 < maxIndex) {
+			depth
+		} else {
+			findLastInside(root, path, depth - 1);
+		}
+	}
+}
+
+wigiFindParentCell(root : WigiElement, path : [int]) -> [int] {
+	if (path == []) path
+	else {
+		element = getElementAtPosition(root, path);
+		if (isWigiCellCustom(element, true)) {
+			path;
+		} else {
+			// Pop
+			wigiFindParentCell(root, wigiParentPath(path))
+		}
+	}
+}
+
+
+
+
+//
+// To string
+//
+
+elementPosition2string(d : WigiElement, path : [int]) -> string {
+	if (length(path) == 0) ""
+	else {
+		index = path[0];
+		rest = tail(path);
+		switch (d : WigiElement) {
+			WigiDocument(root, style): {
+				elementPosition2string(root, rest);
+			}
+			WigiStory(stories, views, style): {
+				if (0 <= index && index < length(^stories)) {
+					story = (^stories)[index];
+					"Story #" + i2s(index) + "," + elementPosition2string(story, rest);
+				} else {
+					"Story invalid #" + i2s(index) + " with " + toString(rest);
+				}
+			}
+			WigiParagraph(paragraphs, style): {
+				if (0 <= index && index < length(paragraphs)) {
+					p = paragraphs[index];
+					"Par #" + i2s(index) + "," + elementPosition2string(p, rest);
+				} else {
+					"Par invalid #" + i2s(index) + " with " + toString(rest);
+				}
+			}
+			WigiText(text, sstyle): {
+				"Text " + getCharAt(text, index);
+			}
+			WigiEmpty(): "<Empty>";
+			WigiRecursive(elements, type, style): {
+				if (0 <= index && index < length(elements)) {
+					p = elements[index];
+					"Rec #" + i2s(index) + "," + elementPosition2string(p, rest);
+				} else {
+					"Rec invalid #" + i2s(index) + " with " + toString(rest);
+				}
+			}
+			WigiBlock(type, style): wigiBlockToString(type);
+		}
+	}
+}
+
+findWigiElement(root: WigiElement, element: WigiElement) -> [int] {
+	children = getWigiElementChildren(root, false);
+	res = ref [];
+
+	iteriUntil(children, \i, child -> {
+		if (child == element) {
+			res := [i];
+			true
+		} else {
+			pathInChild = findWigiElement(child, element);
+			if (pathInChild != []) {
+				// Found
+				res := concat([i], pathInChild);
+				true
+			} else {
+				// Not found, continue searching
+				false
+			}
+		}
+	});
+
+	^res
+}

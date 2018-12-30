@@ -1,0 +1,235 @@
+import material/material_gui;
+
+export {
+	form2material(form : Form) -> Material;
+}
+
+form2material(form : Form) -> Material {
+	switch (form : Form) {
+		Empty(): TEmpty();
+		Border(l, t, r, b, child): MBorder(l, t, r, b, form2material(child));
+		Text(t, s): TText(t, s);
+		Graphics(p, s): TGraphics(p, s);
+		Picture(url, s): TPicture(url, s);
+		Camera(__, __, __, __) : TForm(form); // TODO:
+		Translate(x, y, child): MTranslate(fselect2(x, y, FLift2(\x0, y0 -> Point(x0, y0))), form2material(child));
+		Scale(x, y, child): MScale(fselect2(x, y, FLift2(\x0, y0 -> Factor(x0, y0))), form2material(child));
+		Rotate(d, child): MRotate(d, form2material(child));
+		Alpha(a, child): MAlpha(a, form2material(child));
+		Visible(v, child): MVisible(fselect(v, FLift(i2b)), form2material(child));
+		Mask2(main1, mask, stack): MMask(form2material(main1), form2material(mask));
+		Group(layers): MGroup(map(layers, form2material));
+		Grid(cells) : MGrid(map(cells, \c -> map(c, form2material)));
+		Available2(wh, child): MAvailable(form2material(child), TSized(wh));
+		Size2(wh, child): MFixSize(form2material(child), TSized(wh));
+		SetPending(p, child): MSetPending(p, form2material(child));
+		Baseline(baseline, child): MBaseline(baseline, form2material(child));
+		Interactive(l, child): MInteractive(l, form2material(child));
+		TextInput(__, __, __) : {
+			fTextInput = TextInput2FTextInput(form);
+			MConstructor(TFForm(fTextInput.first, wh2TFormMetrics((fTextInput.first).wh)), fTextInput.second);
+		}
+		Filter2(filters, child, stack): MFilter(filters, form2material(child));
+		Cursor(kind, child): MCursor(kind, form2material(child));
+		Inspect(inspectors, child) : MInspect(inspectors, form2material(child));
+		Mutable2(child, stack): MMutable(fselect(child, FLift(form2material)));
+		Switch(case, cases) : MMutable(fselect(case, FLift(\c -> form2material(cases[c]))));
+		Crop2(l, t, w, h, child, stack): MCrop(fselect2(l, t, FLift2(\l0, t0 -> Point(l0, t0))),
+			fselect2(w, h, FLift2(\w0, h0 -> WidthHeight(w0, h0))) , form2material(child));
+		Constructor(child, l): MConstruct([l], form2material(child));
+		Video(file, pars, listeners, controls): MVideo(file, make(zeroWH), []);
+		Access(props, child): MAccess(AccessProperties2FAccessProperties(props), form2material(child));
+		RealHTML2(url, wh, style): MRealHTML(url, wh, style);
+		ControlFocus(focus, child): MControlFocus(focus, form2material(child));
+		FullWindow(fs, child): MFullWindow(fs, form2material(child));
+		Create2(current, fn): MCreate2(ref form2material(^current), \ -> form2material(fn()));
+		NativeForm(init, __, __, __): cast(init : flow -> Material);
+		DynamicGroup2(stackChanges, combiner, currentStack, stack): {
+			groupChanges : DynamicBehaviour<[MGroupChange]> = make([]);
+			tCombiner =
+				switch (combiner : DynamicGroupCombiner) {
+					LinesCombiner() : TLinesCombiner();
+					ColsCombiner() : TColsCombiner();
+					GroupCombiner() : TGroupCombiner();
+				}
+
+			MConstructor(
+				MDynamicGroup2(groupChanges, ref map(getValue(currentStack), \cs -> form2material(cs)), tCombiner),
+				makeSubscribe(stackChanges, \changes -> {
+					recentChanges : [MGroupChange] =
+						fold(changes, [], \acc, change -> {
+							switch (change : GroupChange) {
+								GroupAdd(f, z) : arrayPush(acc, MGroupAdd(form2material(f), z));
+								GroupDelete(z) : arrayPush(acc, MGroupDelete(z));
+								GroupMove(f, t) : arrayPush(acc, MGroupMove(f, t));
+							}
+						});
+
+					nextDistinct(stackChanges, []);
+					next(groupChanges, recentChanges);
+				})
+			)
+		}
+	}
+}
+
+// This structures dublicate the tropic ones to prevent export
+// Do not export them in any case
+
+MInspect(inspectors : [Inspector], m : Material) -> Material {
+	MTransformTAcc(\t2a, pi, st, mo -> {
+		b = t2a(m, pi, st, mo);
+
+		disp =
+			fold(
+				inspectors,
+				b.disposers,
+				\acc, insp ->
+					switch (insp : Inspector) {
+						Width(width):
+							arrayPush(
+								acc,
+								fconnect(b.metrics.width, width)
+							);
+						Height(height):
+							arrayPush(
+								acc,
+								fconnect(b.metrics.height, height)
+							);
+						AvailableWidth(width):
+							arrayPush(
+								acc,
+								fconnect(pi.maxX, width)
+							);
+						AvailableWidth2(width):
+							arrayPush(
+								acc,
+								fconnect(pi.maxX, width)
+							);
+						AvailableHeight(height):
+							arrayPush(
+								acc,
+								fconnect(pi.maxY, height)
+							);
+						ISize(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(b.metrics.width, b.metrics.height), widthHeight)
+							);
+						IMetrics(metrics):
+							arrayPush(
+								acc,
+								fconnect(
+									fselect3(b.metrics.width, b.metrics.height, b.metrics.baseline,
+										\wd, hgt, bsln -> FormMetrics(wd, hgt, bsln, hgt)
+									),
+									metrics
+								)
+							);
+						IAvailable(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
+							);
+						IAvailable2(widthHeight):
+							arrayPush(
+								acc,
+								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
+							);
+						default: acc;
+						// IPending : (pending : DynamicBehaviour<int>);
+						// // This is useful for finding elements inside a form. findTaggedFormPosition in formtransforms.flow look them up for you.
+						// ITag(i : int);
+						// ITransformMatrix(setfn : ( fn : () -> TransformMatrix ) -> void );
+					}
+			);
+
+
+		TAcc(
+			b.form,
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			disp
+		)
+	})
+}
+
+MControlFocus(f : DynamicBehaviour<bool>, m : Material) -> Material {
+	MTransformTAcc2(\t2a -> {
+		b = m |> t2a;
+
+		TAcc(
+			FControlFocus(
+				f,
+				b.form
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
+MSetPending(p : Transform<int>, m : Material) -> Material {
+	MTransformTAcc2(\t2a -> {
+		b = m |> t2a;
+
+		TAcc(
+			FSetPending(
+				p,
+				b.form
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
+MConstructor(m : Material, constructor : () -> () -> void) -> Material {
+	MTransformTAcc2(\t2a -> {
+		b = m |> t2a;
+
+		TAcc(
+			FConstructor(
+				b.form,
+				constructor
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}

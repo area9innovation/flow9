@@ -1,0 +1,266 @@
+import tools/common/config;
+import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/common;
+
+export {
+	optimizeDupStrings(prog : FiProgram, file : string) -> FiProgram;
+}
+
+DupStrEnv : (
+	// Mapping which maps a string literal to a new variable, which will store it
+	strVars : Tree<string, FiGlobalVar>,
+
+	prog : FiProgram
+);
+
+// If some string occurs in two or more different places in AST, it can be 
+// replaced with a global variable, which value is this string.
+// Such global variables are stored is a separate 'virtual' module.
+optimizeDupStrings(prog : FiProgram, file : string) -> FiProgram {
+	dupEnv = createDupEnv(prog);
+	if (sizeTree(dupEnv.strVars) == 0) prog else {
+		dupstr_module = makeDupStringsModule(dupEnv, file);
+		dupstr_modname = dupstr_module.fileinfo.flowfile;
+		modules = setTree(
+			fold(
+				prog.traversal, 
+				makeTree(), 
+				\acc, flowfile ->
+					eitherMap(
+						lookupTree(prog.modules, flowfile), 
+						\module -> setTree(acc, flowfile, optimizeDupStrModule(module, dupEnv, flowfile)),
+						acc
+					)
+			),
+			dupstr_modname,
+			dupstr_module
+		);
+		FiProgram(
+			prog.config,
+			modules,
+			concat([dupstr_modname], prog.traversal),
+			FiGlobalNames(
+				prog.names.struct2module,
+				prog.names.union2module,
+				prog.names.function2module,
+				foldTree(
+					dupEnv.strVars,
+					prog.names.globalVar2module,
+					\__, gvar, a -> setTree(a, gvar.name, dupstr_modname)
+				),
+				prog.names.native2module,
+				prog.names.structs,
+				prog.names.unions,
+				foldTree(
+					dupEnv.strVars,
+					prog.names.toplevel,
+					\__, gvar, a -> setTree(a, gvar.name, gvar)
+				),
+			)
+		);
+	}
+}
+
+createDupEnv(prog : FiProgram) -> DupStrEnv {
+	program_data = gatherFromProgram(prog);
+	dup_strs = getTreeKeys(filterTree(program_data.first, \__, n -> (n > 1)));
+	DupStrEnv(createUniqueStrVarNames(dup_strs, program_data.second), prog)
+}
+
+createUniqueStrVarNames(strs : [string], used : Set<string>) -> Tree<string, FiGlobalVar> {
+	fold(strs, Pair(makeTree(), used), 
+		\acc, str -> {
+			new_var_name = createUniqueName("str_" + toAscii(str), used);
+			new_var = FiGlobalVar(new_var_name, FiString(str, -1), FiTypeString(), -1, -1);
+			Pair(setTree(acc.first, str, new_var), mergeSets(acc.second, makeSet1(new_var_name)))
+		}
+	).first
+}
+
+createUniqueName(str : string, used : Set<string>) -> string {
+	if (containsSet(used, str)) {
+		createUniqueNameWithInd(str, used, 0)
+	} else str
+}
+
+createUniqueNameWithInd(str : string, used : Set<string>, postfix : int) -> string {
+	new_n = str + "_" + i2s(postfix);
+	if (containsSet(used, new_n)) {
+		createUniqueNameWithInd(str, used, postfix + 1)
+	} else new_n
+}
+
+optimizeDupStrModule(module : FiModule, dupEnv : DupStrEnv, flowfile : string) -> FiModule {
+	opt_gvars = fold(
+		module.globalVars,
+		[],
+		\acc, gvar -> concat(acc, [FiGlobalVar(gvar.name, optimizeDupExp(gvar.value, dupEnv), FiTypeString(), gvar.declStart, gvar.defiStart)])
+	);
+	opt_gvars_funcs = fold(
+		module.functions,
+		Pair([], opt_gvars),
+		\acc, func -> {
+			optimized = optimizeDupExp(func.lambda, dupEnv);
+			switch (optimized) {
+				FiLambda(__, __, __, __): 
+					Pair(
+						concat(acc.first, [FiFunctionDec(func.name, optimized, func.type, func.declStart, func.defiStart)]),
+						acc.second
+					);
+				default:
+					Pair(
+						acc.first,
+						concat(acc.second, [FiGlobalVar(func.name, optimized, func.type, func.declStart, func.defiStart)])
+					);
+			}
+		}
+	);
+	FiModule(
+		module.fileinfo,
+		module.imports,
+		module.forbids,
+		module.exports,
+		module.structs,
+		module.unions,
+		opt_gvars_funcs.first,
+		opt_gvars_funcs.second,
+		module.natives,
+		module.initOrder,
+		module.stringIncludes,
+		module.start,
+		module.end
+	)
+}
+
+makeDupStringsModule(dupEnv : DupStrEnv, file : string) -> FiModule {
+	mod_name = createUniqueName(
+		"dupstr_" + strReplace(strReplace(strReplace(file, ".flow", ""), "/", "_"), "\\", "_"), 
+		foldTree(
+			dupEnv.prog.modules, 
+			makeSet(), 
+			\module, __, acc -> mergeSets(acc, makeSet1(module))
+		)
+	);
+	gvars = getTreeValues(dupEnv.strVars);
+	FiModule(
+		FiFileInfo(mod_name, 0., "", "", 0.),
+		[], [], 
+		map(gvars, \gvar -> gvar.name), 
+		[], [], [],
+		gvars,
+		[],
+		map(gvars, \gvar -> gvar.name),
+		[],
+		0, 0
+	)
+}
+
+// This function replaces a duplicate string with corresponding variables
+optimizeDupExp(expr : FiExp, dupEnv : DupStrEnv) -> FiExp {
+	mapFiExp(expr, 
+		\e -> {
+			switch (e) {
+				FiString(s, __): {
+					switch (lookupTree(dupEnv.strVars, s)){
+						Some(var): FiVar(var.name, FiTypeString(), e.start);
+						None(): e;
+					}
+				}
+				default: e;
+			}
+		}
+	)
+}
+
+// Gather information about all string literals, which occur in the program
+// and all identifiers from expressions in the program.
+// The resulting components of pair are:
+//    1) tree key - string literal, tree value - number of occurences of string literal in a given module.
+//    2) set of all names of variables, used in program.
+gatherFromProgram(prog : FiProgram) -> Pair<Tree<string, int>, Set<string>> {
+	fold(
+		prog.traversal, 
+		Pair(makeTree(), makeSet()), 
+		\pair : Pair<Tree<string, int>, Set<string>>, flowfile -> {
+			eitherMap(
+				lookupTree(prog.modules, flowfile),
+				\module -> {
+					from_module = gatherFromModule(module);
+					Pair(
+						mergeTreeCustom(pair.first, from_module.first, \__, n, m -> n + m),
+						mergeSets(pair.second, from_module.second)
+					)
+				},
+				pair
+			)
+		}
+	)
+}
+
+// This function gathers following information from module:
+//    1) counts, how many times a string literal occurs in a module - first component of a pair
+//    2) assembles all names, which may make collision with a new fresh variables.
+gatherFromModule(module : FiModule) -> Pair<Tree<string, int>, Set<string>> {
+	from_funcs = fold(
+		module.functions,
+		Pair(makeTree(), makeSet()),
+		\acc, func -> Pair(
+			gatherFromExp(acc.first, func.lambda),
+			insertSet(collectNames(acc.second, func.lambda), func.name)
+		)
+	);
+	fold(
+		module.globalVars,
+		from_funcs,
+		\acc, gvar -> Pair(
+			gatherFromExp(acc.first, gvar.value),
+			insertSet(collectNames(acc.second, gvar.value), gvar.name)
+		)
+	)
+}
+
+// Counts all occurences of a string in an expression.
+gatherFromExp(acc : Tree<string, int>, expr : FiExp) -> Tree<string, int> {
+	gatherEs = \a, es -> fold(es, a, gatherFromExp);
+	switch (expr) {
+		FiLambda(__, body, __, __):    gatherFromExp(acc, body);
+		FiCall(f, args, __, __):       gatherEs(gatherFromExp(acc, f), args);
+		FiVar(__, __, __):             acc;
+		FiLet(__, __, e1, e2, __, __): gatherFromExp(gatherFromExp(acc, e1), e2);
+		FiIf(e1, e2, e3, __, __):      gatherFromExp(gatherFromExp(gatherFromExp(acc, e1), e2), e3);
+		FiSwitch(e, __, cs, __, __):   gatherEs(gatherFromExp(acc, e), map(cs, \c -> c.body));
+		FiCast(e, __, __, __, __):     gatherFromExp(acc, e);
+		FiSeq(es, __, __):             gatherEs(acc, es);
+		FiCallPrim(__, es, __, __):    gatherEs(acc, es);
+		FiString(s, __):               if (strlen(s) > 5) setTree(acc, s, lookupTreeDef(acc, s, 0) + 1) else acc; // We consider only strings, which length exceeds 5.
+		FiBool(__, __):                acc;
+		FiDouble(__, __):              acc;
+		FiVoid(__):                    acc;
+		FiInt(__, __):                 acc;
+		FiRequire(__, e, __, __):      gatherFromExp(acc, e);
+		FiUnsafe(__, fb, __, __):      gatherFromExp(acc, fb);
+	}
+}
+
+// Collect all names, which occur in expression
+collectNames(acc : Set<string>, expr : FiExp) -> Set<string> {
+	collectEs = \a, es -> fold(es, a, collectNames);
+	switch (expr) {
+		FiLambda(args, body, __, __): mergeSets(collectNames(acc, body), buildSet(map(args, \a -> a.name)));
+		FiCall(f, args, __, __):      collectEs(collectNames(acc, f), args);
+		FiVar(x, __, __):             insertSet(acc, x);
+		FiLet(x, __, e1, e2, __, __): collectNames(collectNames(acc, e1), e2);
+		FiIf(e1, e2, e3, __, __):     collectNames(collectNames(collectNames(acc, e1), e2), e3);
+		FiSwitch(e, __, cs, __, __):  collectEs(collectNames(acc, e), map(cs, \c -> c.body));
+		FiCast(e, __, __, __, __):    collectNames(acc, e);
+		FiSeq(es, __, __):            collectEs(acc, es);
+		FiCallPrim(__, es, __, __):   collectEs(acc, es);
+		FiString(s, __):              acc;
+		FiBool(__, __):               acc;
+		FiDouble(__, __):             acc;
+		FiVoid(__):                   acc;
+		FiInt(__, __):                acc;
+		FiRequire(n, e, __, __):      insertSet(collectNames(acc, e), n);
+		FiUnsafe(n, fb, __, __):      insertSet(collectNames(acc, fb), n);
+	}
+}

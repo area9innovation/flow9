@@ -1,0 +1,81 @@
+import filesystem;
+
+export {
+	// Trims the filename to be a flow path, i.e. no .flow suffix, and no lib/ prefix or anything like that
+	trimFlowfile : (flowfile : string, imports : [string], workingDir : string)->string;
+
+	// Find the given flow-file, using imports. Returns a full filesystem path
+	findFlowPath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string) -> string;
+
+	// Find the given flow-file, using imports. Returns a relative filesystem path
+	findFlowRelativePath(flowfile : string, flowsuffix : bool, imports : [string], workingDir : string) -> string;
+}
+
+trimFlowfile(flowfile : string, imports : [string], workingDir : string) {
+	noflow0 = if (endsWith(flowfile, ".flow")) strsubsmart(flowfile, 0, -5) 
+	else flowfile;
+	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
+	pathShift = if (shift == "") shift else shift + "/";
+	noflow = strReplace(noflow0, "\\", "/");
+
+	processInculde = \acc, inc -> {
+		resolved0 = resolveRelativePath(inc);
+		resolved = strReplace(resolved0, "\\", "/");
+		if (startsWith(toLowerCase(acc), toLowerCase(resolved))) {
+			strRight(acc, strlen(resolved))
+		} else if (startsWith(toLowerCase(acc), toLowerCase(inc))) {
+			strRight(acc, strlen(inc))
+		} else acc
+	};
+
+	// Find the path-less path - the flowpath
+	trim2(fold(imports, noflow, \acc, inc -> {
+		acc1 = if (pathShift != "") {
+			processInculde(acc, pathShift + inc)
+		} else acc;
+		processInculde(acc1, inc)
+	}), "/")
+}
+
+findFlowPath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string) -> string {
+	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
+	shift = if (workingDir == "") "" else relatingPath(workingDir, resolveRelativePath("."));
+	pathShift = if (shift == "") shift else shift + "/";
+	if (fileExists(withFlow)) {
+		resolveRelativePath(withFlow);
+	} else {
+		doFindFlowPath(withFlow, imports, true, pathShift);
+	}
+}
+
+findFlowRelativePath(flowpath : string, flowsuffix : bool, imports : [string], workingDir : string) -> string {
+	withFlow = if (endsWith(flowpath, ".flow") || !flowsuffix) flowpath else flowpath + ".flow";
+	shift = if (workingDir == "") ""  else relatingPath(workingDir, resolveRelativePath("."));
+	pathShift = if (shift == "") shift else shift + "/";
+	if (fileExists(withFlow)) {
+		withFlow;
+	} else {
+		doFindFlowPath(withFlow, imports, false, pathShift);
+	}
+}
+
+doFindFlowPath(withFlow : string, imports : [string], doResolve : bool, pathShift : string) -> string {
+	if (imports == []) withFlow
+	else {
+		head = imports[0];
+		directPath = head + (if (endsWith(head, "/") || endsWith(head, "\\")) "" else "/") + withFlow;
+		if (fileExists(directPath)) {
+			if (!doResolve) directPath
+			else resolveRelativePath(directPath);
+		} else {
+			shiftedPath = pathShift + directPath;
+			if (fileExists(shiftedPath)) {
+				if (!doResolve) shiftedPath
+				else resolveRelativePath(shiftedPath);
+			} else {
+				rest = tail(imports);
+				doFindFlowPath(withFlow, rest, doResolve, pathShift);
+			}
+		}
+	}
+}

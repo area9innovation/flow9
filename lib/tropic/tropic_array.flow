@@ -1,0 +1,180 @@
+import transforms;
+import binarytree;
+import tropic/tropic;
+import array_diff;
+import algorithms;
+import set;
+
+export {
+	// This is meant to be opaque
+	TropicArray(
+		values : DynamicBehaviour<[?]>,
+		// Should tropic array be updated on values changes
+		update : DynamicBehaviour<bool>,
+		id2index : ref Tree<int, int>,
+		index2id : ref Tree<int, int>,
+		tropic : Tropic,
+		combiner : TCombiner
+	);
+
+	makeTropicArray(values : [?], makeTropicFn : (index :  Transform<int>, id : int, ?, array : TropicArray<?>) -> Tropic, combiner : TCombiner, update : DynamicBehaviour<bool>) -> TropicArray<?>;
+
+	lengthTropicArray(array : TropicArray<?>) -> int;
+	getTropicArrayId(array : TropicArray<?>, index : int) -> int;
+	getTropicArrayIndex(array : TropicArray<?>, id : int) -> int;
+
+	insertTropicArray(array : TropicArray<?>, index : int, value : ?) -> void;
+	replaceTropicArray(array : TropicArray<?>, index : int, value : ?) -> void;
+	removeTropicArray(array : TropicArray<?>, index : int) -> void;
+}
+
+makeTropicArray(initValues : [?], makeTropicFn : (index :  Transform<int>, id : int, ?, array : TropicArray<?>) -> Tropic, combiner : TCombiner, update : DynamicBehaviour<bool>) -> TropicArray<?> {
+	values = make(initValues);
+	stackChanges = make([]);
+	old = ref [];
+	indexes : ref [DynamicBehaviour<int>] = ref [];
+	ids : ref [int] = ref [];
+
+	getNextId = \ -> fold(sort(^ids), -1, \acc, id -> if (id == acc + 1) id else acc) + 1;
+
+	id2index : ref Tree<int, int> = ref makeTree();
+	index2id : ref Tree<int, int> = ref makeTree();
+
+	updateIndexingTrees = \ -> {
+		foldi(^ids, Pair(makeTree(), makeTree()), \i, acc, id -> {
+			Pair(
+				setTree(acc.first, id, getValue(^indexes[i])),
+				setTree(acc.second, getValue(^indexes[i]), id),
+			)
+		})
+		|> (\ii : Pair<Tree<int, int>, Tree<int, int>> -> {
+			id2index := ii.first;
+			index2id := ii.second;
+		});
+	}
+
+	updateTropicArray = ref nop1;
+
+	tropicArray =
+		TropicArray(
+			values,
+			update,
+			id2index,
+			index2id,
+			TConstruct(
+				[
+					makeSubscribe(ftransistor(update, values), \l -> ^updateTropicArray(l))
+				],
+				TDynamicGroup2(
+					stackChanges,
+					ref [],
+					combiner
+				)
+			),
+			combiner
+		);
+
+	updateTropicArray := \l -> {
+		// println("-----");
+		// println(map(^indexes, getValue));
+		// println(^ids);
+
+		iter(arrayDiff(^old, l, false), \op ->
+			switch (op : ArrayOperation) {
+				ArrayNop(x, y): {
+					// println("nop " + i2s(x) + " " + i2s(y));
+
+					index = ^indexes[x];
+					id = ^ids[x];
+
+					indexes := insertArray(removeIndex(^indexes, x), y, index);
+					ids := insertArray(removeIndex(^ids, x), y, id);
+
+					iter(enumFromTo(y, x), \i -> nextDistinct(^indexes[i], i));
+
+					updateIndexingTrees();
+
+					// println(map(^indexes, getValue));
+
+					next(stackChanges, arrayPush(getValue(stackChanges), TGroupMove(x, y)));
+				}
+				ArrayInsert(x, y, v): {
+					// println("insert " + i2s(x) + " " + i2s(y));
+
+					index = make(y);
+					id = getNextId();
+
+					mapi(subrange(^indexes, y, length(^indexes)), \i, t -> next(t, i + y + 1));
+
+					indexes := insertArray(^indexes, y, index);
+					ids := insertArray(^ids, y, id);
+
+					updateIndexingTrees();
+
+					// println(map(^indexes, getValue));
+
+					// fselect to block any changes to index
+					next(stackChanges, arrayPush(getValue(stackChanges), TGroupAdd(makeTropicFn(fselect(index, idfn |> FLift), id, v, tropicArray), y)));
+				}
+				ArrayReplace(x, y, v): {
+					// println("replace " + i2s(x) + " " + i2s(y));
+
+					index = ^indexes[y];
+					id = ^ids[y];
+
+					// println(map(^indexes, getValue));
+
+					// fselect to block any changes to index
+					next(stackChanges, arrayPush(getValue(stackChanges), TGroupReplace(makeTropicFn(fselect(index, idfn |> FLift), id, v, tropicArray), y)));
+				}
+				ArrayRemove(x, y): {
+					// println("remove " + i2s(x) + " " + i2s(y));
+
+					indexes := removeIndex(^indexes, y);
+					ids := removeIndex(^ids, y);
+
+					mapi(subrange(^indexes, y, length(^indexes) - y), \i, t -> next(t, i + y));
+
+					updateIndexingTrees();
+
+					// println(map(^indexes, getValue));
+
+					next(stackChanges, arrayPush(getValue(stackChanges), TGroupDelete(y)));
+				}
+			}
+		);
+
+		// println(map(^indexes, getValue));
+		// println(^ids);
+		// println(length(l));
+		// println("-----");
+
+		old := l;
+	}
+
+	tropicArray;
+}
+
+lengthTropicArray(array : TropicArray<?>) -> int {
+	length(getValue(array.values))
+}
+
+getTropicArrayId(array : TropicArray<?>, index : int) -> int {
+	either(lookupTree(^(array.index2id), index), -1)
+}
+
+getTropicArrayIndex(array : TropicArray<?>, id : int) -> int {
+	either(lookupTree(^(array.id2index), id), -1)
+}
+
+insertTropicArray(array : TropicArray<?>, index : int, value : ?) -> void {
+	next(array.values, insertArray(getValue(array.values), index, value))
+}
+
+replaceTropicArray(array : TropicArray<?>, index : int, value : ?) -> void {
+	next(array.values, replace(getValue(array.values), index, value))
+}
+
+removeTropicArray(array : TropicArray<?>, index : int) -> void {
+	next(array.values, removeIndex(getValue(array.values), index))
+}

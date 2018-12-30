@@ -1,0 +1,580 @@
+import wigi/controller;
+import wigi/block;
+
+export {
+	handleComapEvent(state : WigiEditorState, comap : WigiComap, e : WigiEvent) -> bool;
+	isInsideComap(root : WigiElement, path : [int]) -> bool;
+
+	// If mouse selecting comes to a comap, we might want to select the comap as a whole element
+	// for upward selection (anchor is "before" the comap) it returns path of the comap,
+	// for downward selection (anchor is "after" the comap) - position right after the comap,
+	// mouse selecting within one comap node is allowed so the same path returns
+	getComapSelectionPos(state : WigiEditorState, path : [int]) -> [int];
+}
+
+handleComapEvent(state : WigiEditorState, comap : WigiComap, event : WigiEvent) -> bool {
+	doc = getValue(state.document);
+	node = getWigiComapNode(doc, getValue(state.cursor));
+
+	switch (event : WigiEvent) {
+		WigiNone(): true;
+		WigiSpace(): {
+			next(comap.collapsed, !getValue(comap.collapsed));
+			wigiUpdateCursor(state);
+			true;
+		}
+		WigiCursorLeft(selecting): {
+			// Find our parent
+			parent = getComapParent(doc, node);
+			if (parent != dummyComapNode) {
+				setWigiComapCursor(state, parent, false);
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiCursorRight(selecting): {
+			if (getValue(comap.collapsed)) {
+				// Open
+				next(comap.collapsed, false);
+				wigiUpdateCursor(state);
+			}
+
+			children = getComapChildren(node);
+			if (children != []) {
+				// TODO: Here, we should keep a deepest comap path and navigate towards that
+				setWigiComapCursor(state, children[length(children) / 2], false);
+				true;
+			} else {
+				// Insert child!
+				addWigiComapChild(state, node, 1);
+				true;
+			}
+		}
+		WigiCursorDown(selecting): {
+			parent = getComapParent(doc, node);
+			children = getComapChildren(parent);
+			ourIndex = lastElement(node.path, 0) - 1;
+			if (ourIndex + 1 < length(children)) {
+				setWigiComapCursor(state, children[ourIndex + 1], true);
+				true;
+			} else {
+				// TODO: Search for the guy
+				println("Cursor down: Search for the guy");
+				false;
+			}
+		}
+		WigiCursorUp(selecting): {
+			parent = getComapParent(doc, node);
+			children = getComapChildren(parent);
+			ourIndex = lastElement(node.path, 0) - 1;
+			if (ourIndex > 0) {
+				setWigiComapCursor(state, children[ourIndex - 1], true);
+				true;
+			} else {
+				// TODO: Search for the guy
+				println("Cursor up: Search for the guy");
+				false;
+			}
+		}
+		WigiEnter(shift): {
+			if (!shift) {
+				if (isCellCursor(state)) {
+					parent = getComapParent(doc, node);
+					if (parent != dummyComapNode) {
+						// Insert a child here
+						childNo = lastElement(node.path, 0) + 1;
+						addWigiComapChild(state, parent, childNo);
+					} else {
+						// At the parent: Add a new child
+						childNo = length(getComapChildren(node)) + 1;
+						addWigiComapChild(state, node, childNo);
+					}
+				} else {
+					// Change to cell cursor!
+					setWigiComapCursor(state, node, false);
+				}
+				true;
+			} else false;
+		}
+		WigiCopy(formatting): {
+			if (isCellCursor(state)) {
+				// We grab the entire element including the children
+				copy = wigiForStorage(node.element, true);
+				copyToClipboards(state, Some(copy), if (formatting) PreserveFormatting() else PlainText());
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiCopySpecial(formatting): {
+			if (isCellCursor(state)) {
+				// At first we replace all formulas to their values
+				doc2 = applyFn2WigiElement(wigiForStorage(doc, false), [], getDefaultStateScope(^(state.engine.env)).names, true,
+					\path, element, ns ->
+					wigiFormula2value(
+						element,
+						path,
+						ns,
+						WigiSelection(getStartPositionOfDocument(doc), getEndPositionOfDocument(doc, false)),
+						state.engine
+					)
+				);
+				// then extract a node from the new doc
+				node2 = getWigiComapNode(doc2, getValue(state.cursor));
+				// We grab the entire element including the children
+				copy = wigiForStorage(node2.element, true);
+				copyToClipboards(state, Some(copy), if (formatting) PreserveFormatting() else PlainText());
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiPaste(): {
+			if (isCellCursor(state)) {
+				pasteFromClipboards(state, \c, __ -> wigiComapPaste(state, c, node));
+				true;
+			} else {
+				false
+			}
+		}
+		WigiCut(): {
+			if (isCellCursor(state)) {
+				// We grab the entire element including the children
+				copy = wigiForStorage(node.element, false);
+				copyToClipboards(state, Some(copy), PreserveFormatting());
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiDelete(): {
+			if (isCellCursor(state)) {
+				deleteWigiComapNode(state, node);
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiBackspace(): {
+			if (isCellCursor(state)) {
+				deleteWigiComapNode(state, node);
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiLeftWord(selecting): {
+			// Move this guy to be the parent's next sibling
+			if (isCellCursor(state)) {
+				parent = getComapParent(doc, node);
+				grandparent = getComapParent(doc, parent);
+				if (parent != dummyComapNode && grandparent != dummyComapNode) {
+					copy = wigiForStorage(node.element, false);
+					deleteWigiComapNode(state, node);
+					newGrandparent = getComapParent(doc, parent);
+					childNo = lastElement(parent.path, 0) + 1;
+					doWigiComapPaste(state, copy, newGrandparent, childNo);
+					true;
+				} else false;
+			} else false;
+		}
+		WigiRightWord(selecting): {
+			// Move this guy to our parent's previous siblings as the last child
+			if (isCellCursor(state)) {
+				parent = getComapParent(doc, node);
+				childNo = lastElement(node.path, 0) - 1;
+				if (parent != dummyComapNode && childNo > 0) {
+					copy = wigiForStorage(node.element, false);
+					deleteWigiComapNode(state, node);
+					// Find our previous siblin
+					sibling = getComapChildren(parent)[childNo - 1];
+					nextDistinct(sibling.node.collapsed, false);
+					lastSibling = length(getComapChildren(sibling)) + 1;
+					doWigiComapPaste(state, copy, sibling, lastSibling);
+					true;
+				} else {
+					// Insert an empty child as Comap does if there is no previous sibling
+					existing = node.element;
+					newElements = [WigiParagraph([WigiText("", [])], [TightWidth()]), existing];
+					newParent = WigiRecursive(newElements, WigiComap(make(false)), existing.style);
+					replaceElementInDocument(state, node.path, newParent);
+					wigiSetCursor(state, concat(node.path, [0, 0, 0]), false);
+					true;
+				}
+			} else false;
+		}
+		WigiUpWord(selecting): {
+			if (isCellCursor(state)) {
+				parent = getComapParent(doc, node);
+				childNo = lastElement(node.path, 0) - 1;
+				if (parent != dummyComapNode && childNo > 0) {
+					// Swap with our sibling above
+					copy = wigiForStorage(node.element, false);
+					deleteWigiComapNode(state, node);
+					newParent = getComapParent(doc, node);
+					doWigiComapPaste(state, copy, newParent, childNo);
+					true;
+				} else false;
+			} else false;
+		}
+		WigiDownWord(selecting): {
+			if (isCellCursor(state)) {
+				parent = getComapParent(doc, node);
+				childNo = lastElement(node.path, 0) - 1;
+				children = length(getComapChildren(parent));
+				if (parent != dummyComapNode && childNo + 1 < children) {
+					// Swap with our sibling above
+					copy = wigiForStorage(node.element, false);
+					deleteWigiComapNode(state, node);
+					newParent = getComapParent(doc, node);
+					doWigiComapPaste(state, copy, newParent, childNo + 2);
+					true;
+				} else false;
+			} else false;
+		}
+		WigiHome(selecting): {
+			if (isCellCursor(state)) {
+				wigiSetCursor(state, concat(node.path, getStartPositionOfDocument(node.element)), false);
+				true;
+			} else {
+				false;
+			}
+		}
+		WigiEnd(selecting): {
+			if (isCellCursor(state)) {
+				// The first topic is the text
+				topic = node.element.elements[0];
+				wigiSetCursor(state, concat3(node.path, [0], getEndPositionOfDocument(topic, false)), false);
+				true;
+			} else {
+				false;
+			}
+		}
+
+		// Intentionally not handled
+		WigiInsertText(s): false;
+
+		// TODO: Add more stuff here
+		WigiInsertElement(element): {
+			switch(element) {
+				WigiRecursive(es, type, st): {
+					switch(type) {
+						WigiComap(__): {
+							childNo = length(getComapChildren(node)) + 1;
+							addWigiComapChild(state, node, childNo);
+							true
+						}
+						default: if (isCellCursor(state)) wigiSendEvent(state, event) else false;
+					}
+				}
+				default: if (isCellCursor(state)) wigiSendEvent(state, event) else false;
+			}
+		}
+
+		WigiTab(shift): {
+			if (isCellCursor(state)) {
+				collapseSiblingsOfNodeAncestors(state, node);
+				openNodeDescendants(node);
+				setWigiComapCursor(state, node, false);
+				true;
+			} else {
+				false;
+			}
+		}
+
+		WigiDeleteWord(): {
+			if (isCellCursor(state)) {
+				parent = getComapParent(doc, node);
+				if (parent != dummyComapNode){
+					children = tail(node.element.elements);
+					childIndex = lastElement(node.path, 0);
+					newElements = concat3(subrange(parent.element.elements, 0, childIndex), children, tailFrom(parent.element.elements, childIndex + 1));
+					newParent = WigiRecursive(newElements, parent.element.type, parent.element.style);
+					replaceElementInDocument(state, parent.path, newParent);
+					if (length(children) == 0 && length(newElements) == 1) {
+						setWigiComapCursor(state, parent, false)
+					} else {
+						ind = if (childIndex == length(newElements)){
+							childIndex - 1;
+						} else {
+							childIndex;
+						}
+						wigiSetCursor(state, concat(parent.path, [ind, 0]), false);
+					}
+				}
+				true;
+			} else {
+				false;
+			}
+		}
+
+		WigiInsertFormula(name): {
+			isWigiFormula = \el: WigiElement -> {
+				switch (el) {
+					WigiBlock(type, style): {
+						switch (type) {
+							WigiFormula(f, st): true;
+							default: false;
+						}
+					}
+					default: false;
+				}
+			}
+
+			if (isCellCursor(state)) {
+				if (node != dummyComapNode) {
+					nodeElem = node.element.elements[0];
+					if (isWigiFormula(nodeElem)) {
+						block = cast(nodeElem : WigiElement -> WigiBlock);
+						handleBlockClickEvent(
+							state, 
+							\wigiBlock -> replaceElementInDocument(state, getValue(state.cursor), wigiBlock), 
+							block, 
+							true
+						) |> ignore;
+					} else {
+						textArr = extractTextContent(node.element.elements[0]);
+						formulaContent = concatStrings(textArr);
+						formula = WigiBlock(WigiFormula(formulaContent, []), [WigiName(name)]);
+						newNode = WigiRecursive(concat([formula], tail(node.element.elements)), node.element.type, node.element.style);
+						replaceElementInDocument(state, node.path, newNode);
+					}
+					// we need to update cursor after rendering
+					deferUntilRender(\ -> wigiUpdateCursor(state));
+				}
+				true;
+			} else {
+				false;
+			}
+		}
+
+		WigiSetCellCursor(): {
+			setWigiComapCursor(state, node, false);
+			true;
+		}
+
+		default: {
+			println("Consider to implement " + toString(event) +  " for Comap in comap_control.flow");
+			false;
+		}
+	}
+}
+
+addWigiComapChild(state : WigiEditorState, node : WigiComapNode, childNo : int) -> void {
+	nextDistinct(node.node.collapsed, false);
+	child = WigiRecursive([makeWigiStory([WigiParagraph([WigiText("", [])], [TightWidth()])], [])], WigiComap(make(false)), []);
+	existing = node.element;
+	newNode = WigiRecursive(insertArray(existing.elements, childNo, child), existing.type, existing.style);
+	replaceElementInDocument(state, node.path, newNode);
+	wigiSetCursor(state, concat(node.path, [childNo, 0, 0, 0, 0]), false);
+}
+
+deleteWigiComapNode(state : WigiEditorState, node : WigiComapNode) -> void {
+	parent = getComapParent(getValue(state.document), node);
+	if (parent != dummyComapNode) {
+		childNo = lastElement(node.path, -1);
+		children = length(getComapChildren(parent));
+		if (childNo >= 0) {
+			existing = parent.element;
+			newNode = WigiRecursive(removeIndex(existing.elements, childNo), existing.type, existing.style);
+			replaceElementInDocument(state, parent.path, newNode);
+			// If we are the last child, we should go to our previous sibling
+			newChild = min(childNo, children - 1);
+			if (newChild <= 0) {
+				// No more siblings, select the parent itself
+				wigiSetCursor(state, parent.path, false);
+			} else {
+				wigiSetCursor(state, concat(parent.path, [newChild, 0]), false);
+			}
+		}
+	} else {
+		println("TODO: Remove the entire comap?");
+	}
+}
+
+wigiComapPaste(state : WigiEditorState, clipboard : string, node : WigiComapNode) -> void {
+	nextDistinct(node.node.collapsed, false);
+
+	// Add it at the end of our child list
+	childNo = length(getComapChildren(node)) + 1;
+
+	child = getWigiClipboard(state, clipboard);
+	doWigiComapPaste(state, child, node, childNo);
+}
+
+getWigiClipboard(state : WigiEditorState, systemClipboard : string) -> WigiElement {
+	if (systemClipboard == ""){
+		clipboard = getValue(state.clipboard);
+		either(clipboard, WigiEmpty());
+	} else {
+		switch (maybeGetWigiElement(systemClipboard)) {
+			Some(p): {
+				if (p.second != []) {
+					warningBox(strGlue(p.second, "\n"));
+				}
+				p.first;
+			}
+			None(): {
+				WigiText(systemClipboard, []);
+			}
+		}
+	}
+}
+
+doWigiComapPaste(state, child : WigiElement, node : WigiComapNode, childNo : int) -> void {
+	comapChild = switch(child) {
+		WigiEmpty(): child; // Not going to happen
+		WigiDocument(r, s): {
+			WigiEmpty();
+		}
+		WigiStory(p, v, s): {
+			if (length(^p) == 1) {
+ 				doWigiComapPaste(state, ^p[0], node, childNo);
+ 				WigiEmpty();
+			} else {
+				// TODO: We should split this into separate children and add them all!
+				println("TODO: Here, we could insert each paragraph as a separate child");
+				WigiEmpty();
+			}
+		}
+		WigiText(t, s): {
+			WigiRecursive([WigiParagraph([child], [TightWidth()])], WigiComap(make(false)), []);
+		}
+		WigiBlock(t, s): {
+			WigiRecursive([WigiParagraph([child], [TightWidth()])], WigiComap(make(false)), []);
+		}
+		WigiRecursive(c, t, s): {
+			if (isSameStructType(t, dummyComapNode.node)) {
+				// It is already a comap node, so we are good
+				child;
+			} else {
+				// OK, do our best and just wrap it in a comap node!
+				WigiRecursive([WigiParagraph([child], [TightWidth()])], WigiComap(make(false)), []);
+			}
+		}
+		WigiParagraph(e, s): {
+			// Make sure tightWidth is there!
+			WigiRecursive([
+				if (contains(s, TightWidth())) child else WigiParagraph(e, arrayPush(s, TightWidth()))
+			], WigiComap(make(false)), []);
+		}
+	}
+	if (comapChild != WigiEmpty()) {
+		existing = node.element;
+		newNode = WigiRecursive(insertArray(existing.elements, childNo, comapChild), existing.type, existing.style);
+		replaceElementInDocument(state, node.path, newNode);
+		// And select this new element as a cell
+		wigiSetCursor(state, concat(node.path, [childNo, 0]), false);
+	}
+}
+
+getComapParent(root : WigiElement, node : WigiComapNode) -> WigiComapNode {
+	getWigiComapNode(root, wigiParentPath(node.path));
+}
+
+setWigiComapCursor(state : WigiEditorState, node : WigiComapNode, setDeepest : bool) {
+	// We set the cursor on the paragraph inside the node
+
+	// TODO: We should set a "deepest" comap path when setDeepest is true
+	wigiSetCursor(state, concat(node.path, [0, 0]), false);
+}
+
+
+comap2string(node : WigiComapNode, indent : string) -> string {
+	foldi(getComapChildren(node), indent + element2string(node.element) + "\n", \i, acc, e -> {
+		acc + i2s(i) + ": " + comap2string(e, indent + "  ");
+	});
+}
+
+collapseSiblingsOfNodeAncestors(state : WigiEditorState, node : WigiComapNode) -> void {
+	parent = getComapParent(getValue(state.document), node);
+	if (parent != dummyComapNode) {
+		iter(getComapChildren(parent), \ch -> {
+			if (ch != node)
+				nextDistinct(ch.node.collapsed, true)
+			else
+				collapseSiblingsOfNodeAncestors(state, parent)
+		})
+	}
+}
+
+openNodeDescendants(node : WigiComapNode) -> void {
+	if (node != dummyComapNode) {
+		next(node.node.collapsed, false);
+		iter(getComapChildren(node), \ch -> {
+			nextDistinct(ch.node.collapsed, false);
+			openNodeDescendants(ch);
+		});
+	}
+}
+
+extractTextContent(element : WigiElement) -> [string] {
+	extractTextContent2(element, []);
+}
+
+// extract text content from WigiText and WigiFormula
+extractTextContent2(element : WigiElement, initContent : [string])-> [string] {
+	switch (element) {
+		WigiDocument(root, st): extractTextContent2(root, initContent);
+		WigiStory(ps, vs, st): fold(^ps, initContent, \acc, e -> extractTextContent2(e, acc));
+		WigiParagraph(es, style): fold(es, initContent, \acc, e -> extractTextContent2(e, acc));
+		WigiRecursive(es, type, style):	fold(es, initContent, \acc, e -> extractTextContent2(e, acc));
+		WigiBlock(type, style): {
+			switch (type) {
+				WigiFormula(formula, st): if (formula == "") initContent else arrayPush(initContent, formula);
+				default : initContent;
+			}
+		}
+		WigiText(text, style): if (text == "") initContent else arrayPush(initContent, text);
+		WigiEmpty(): initContent;
+	}
+}
+
+getWigiComapRoot(root : WigiElement, node : WigiComapNode) -> WigiComapNode {
+	if (node != dummyComapNode) {
+		parent = getComapParent(root, node);
+		if (parent != dummyComapNode){
+			getWigiComapRoot(root, parent);
+		} else {
+			node;
+		}
+	} else {
+		dummyComapNode;
+	}
+}
+
+isInsideComap(root : WigiElement, path : [int]) -> bool {
+	getWigiComapNode(root, path) != dummyComapNode;
+}
+
+getComapSelectionPos(state : WigiEditorState, path : [int]) -> [int] {
+	doc = getValue(state.document);
+	node = getWigiComapNode(doc, path);
+
+	if (node != dummyComapNode){
+		switch (getValue(state.selectionAnchor)) {
+			None(): {
+				println("getComapSelectionPos - should not be no selection anchor");
+				path;
+			}
+			Some(anchor): {
+				anchorNode = getWigiComapNode(doc, anchor);
+				comapRoot = getWigiComapRoot(doc, node);
+				comapRootEndPos = doPositionDelta(doc, comapRoot.path, 1);
+				downwardSelection = compareDocumentPosition(path, anchor) > 0;
+				if (node != anchorNode) {
+					if (downwardSelection) {
+						comapRootEndPos;
+					} else {
+						comapRoot.path;
+					}
+				} else {
+					path
+				}
+			}
+		}
+	} else {
+		path
+	}
+}

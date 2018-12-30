@@ -1,0 +1,74 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import set;
+import translationsimplestrings;
+
+export {
+	// Extract all () strings from program
+	saveXliffData(program : FiProgram, filename : string) -> void;
+}
+
+prepareXLiffData(program : FiProgram) -> [string] {
+	res = foldTree(program.modules, makeSet(), \modname : string, mo : FiModule, acc -> {
+		nfns = fold(mo.functions, acc, \acc2, fun ->
+			fiextracttrstr0(fun.lambda, acc2, false)
+		);
+
+		fold(mo.globalVars, nfns, \acc2, gvar ->
+			fiextracttrstr0(gvar.value, acc2, false)
+		);
+	});
+	set2array(res)
+}
+
+saveXliffData(program, filename) {
+	if (program.config.verbose >= 1) {
+		fcPrintln("Extracting XLiff data...");
+	} 
+	setTranslationSimpleStringsApi();
+	data0 = prepareXLiffData(program);
+	data = mapi(data0, \ix, e -> {ContentUnit(ix, "_", e)});
+	setFileContent(filename, texts2XliffContent(data, changeFileExt(filename, "")));
+	if (program.config.verbose >= 1) {
+		fcPrintln("XLiff file '" + filename + "' saved.");
+	} 
+	{}
+}
+
+fiextracttrstr0(expr : FiExp, acc : Set<string>, collect : bool) -> Set<string> {
+	switch (expr) {
+		FiLambda(__, body, __, __):     fiextracttrstr0(body, acc, collect);
+		FiCall(f, es, __, __): {
+			switch(f) {
+				FiVar(x, __, __) : {
+					if (x == "_") {
+						// es has exactly one element
+						switch(es[0]) {
+							FiString(a, __) : insertSet(acc, a);
+							default : fifoldextracttrstr0(es, fiextracttrstr0(f, acc, true), true);
+						}
+					} else fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect), collect);
+				}
+				default : fifoldextracttrstr0(es, fiextracttrstr0(f, acc, collect), collect);
+			}
+		}
+		FiVar(__, __, __): acc;
+		FiLet(__, __, e1, e2, __, __):  fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect), collect);
+		FiIf(e1, e2, e3, __, __):       fiextracttrstr0(e3, fiextracttrstr0(e2, fiextracttrstr0(e1, acc, collect), collect), collect);
+		FiSwitch(e, __, cs, __, __):    fold(cs, fiextracttrstr0(e, acc, collect), \acc0, c -> fiextracttrstr0(c.body, acc0, collect));
+		FiCast(e, __, __, __, __):      fiextracttrstr0(e, acc, collect);
+		FiSeq(es, __, __):              fifoldextracttrstr0(es, acc, collect);
+		FiCallPrim(__, es, __, __):     fifoldextracttrstr0(es, acc, collect);
+		FiString(s, __):                if (collect) insertSet(acc, s) else acc;
+		FiBool(__, __):                 acc;
+		FiDouble(__, __):               acc;
+		FiVoid(__):                     acc;
+		FiInt(__, __):                  acc;
+		FiRequire(__, e, __, __):       fiextracttrstr0(e, acc, collect);
+		FiUnsafe(__, fallback, __, __): fiextracttrstr0(fallback, acc, collect);
+	}
+}
+
+fifoldextracttrstr0(es : [FiExp], acc : Set<string>, collect : bool) -> Set<string> {
+	fold(es, acc, \acc1, e -> fiextracttrstr0(e, acc1, collect));
+}

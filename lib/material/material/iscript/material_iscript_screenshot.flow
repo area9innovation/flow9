@@ -1,0 +1,204 @@
+import material/internal/material_iscript_internal;
+import material/iscript/material_iscript_form;
+
+export {
+	getIScriptScreenshot(manager : MaterialManager, check : bool) -> IScriptScreenshot;
+	applyIScriptScreenshot(manager : MaterialManager, screenshot : IScriptScreenshot) -> void;
+	addIScriptScreenshot(manager : MaterialManager, check : bool) -> void;
+	addIScriptStageWidthHeight(manager : MaterialManager) -> void;
+	filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot;
+	diffIScriptScreenshot(screenshot1 : IScriptScreenshot, screenshot2 : IScriptScreenshot) -> Tree<Pair<[int], string>, Tree<string, Pair<Maybe<flow>, Maybe<flow>>>>;
+
+	addIScriptShallowLogicalScreenshot(manager : MaterialManager, delay : double, form : FForm, size : WidthHeight) -> void;
+
+	takeLogicalScreenshot(manager : MaterialManager) -> string;
+	getIScriptLogicalScreenshot(manager : MaterialManager, size : WidthHeight) -> IScriptLogicalScreenshot;
+	addIScriptLogicalScreenshot(manager : MaterialManager, size : WidthHeight) -> void;
+	extractLastLogicalScreenshot(manager : MaterialManager) -> Maybe<IScriptLogicalScreenshot>;
+
+	takeIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> string;
+	getIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> IScriptVisualScreenshot;
+	addIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> void;
+	extractLastVisualScreenshot(manager : MaterialManager) -> Maybe<IScriptVisualScreenshot>;
+}
+
+behaviours2Stamp(behaviours : Tree<string, Pair<DynamicBehaviour<?>, IScriptRecordType>>) -> Tree<string, ?> {
+	mapTree(behaviours, \mb -> getValue(mb.first))
+}
+
+applyStamps2Behaviours(screenshot : Tree<string, flow>, behaviours : Tree<string, Pair<DynamicBehaviour<?>, IScriptRecordType>>) -> void {
+	traverseInOrder(screenshot, \k : string, v : flow -> maybeApply(lookupTree(behaviours, k), \beh -> nextDistinct(beh.first, v)));
+}
+
+getIScriptScreenshot(manager : MaterialManager, check : bool) -> IScriptScreenshot {
+	parent = manager.focus;
+
+	IScriptScreenshot(
+		getIScriptScreenshot2(
+			parent,
+			[],
+			makeTree1(
+				Pair([], parent.name),
+				behaviours2Stamp(parent.behaviours)
+			)
+		),
+		check
+	)
+}
+
+getIScriptScreenshot2(parent : MFocusGroup, id : [int], tree : Tree<Pair<[int], string>, Tree<string, flow>>) -> Tree<Pair<[int], string>, Tree<string, flow>> {
+	foldTree(getValue(parent.focusIds), tree, \k, v, acc ->
+		switchMaterialFocus(
+			v,
+			\f ->
+				if (fgetValue(f.recordingEnabled))
+					setTree(
+						acc,
+						Pair(arrayPush(id, fgetValue(f.id)), f.name),
+						behaviours2Stamp(f.behaviours)
+					)
+				else
+					acc,
+			\f ->
+				if (fgetValue(f.recordingEnabled))
+					mergeTree(
+						acc,
+						getIScriptScreenshot2(
+						 	f,
+						 	arrayPush(id, fgetValue(f.id)),
+							makeTree1(
+								Pair(arrayPush(id, fgetValue(f.id)), f.name),
+								behaviours2Stamp(f.behaviours),
+							)
+						)
+					)
+				else
+					acc
+		)
+	)
+}
+
+applyIScriptScreenshot(manager : MaterialManager, screenshot : IScriptScreenshot) -> void {
+	traverseInOrder(
+		screenshot.behaviours,
+		\k, v -> {
+			maybeApply(getMaterialFocusById(manager.focus, k.first), \f -> applyStamps2Behaviours(v, f.behaviours))
+		}
+	)
+}
+
+addIScriptScreenshot(manager : MaterialManager, check : bool) -> void {
+	addIScriptRecord(manager, getIScriptScreenshot(manager, check));
+}
+
+addIScriptStageWidthHeight(manager : MaterialManager) -> void {
+	addIScriptRecord(manager, IScriptStageWidthHeight(WidthHeight(getStageWidth(), getStageHeight())));
+}
+
+filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot {
+	IScriptScreenshot(
+		mapTree(
+			screenshot.behaviours,
+			\b -> filterTree(b, \k, v -> !checkIsFn(serialize(v)))
+		),
+		screenshot.check
+	)
+}
+
+diffIScriptScreenshot(screenshot1 : IScriptScreenshot, screenshot2 : IScriptScreenshot) ->
+	Tree<
+		Pair<[int], string>,
+		Tree<string, Pair<Maybe<flow>, Maybe<flow>>>
+	> {
+	foldTree(
+		screenshot1.behaviours,
+		makeTree(),
+		\id, b, acc -> {
+			eitherFn(
+				lookupTree(screenshot2.behaviours, id),
+				\b2 -> {
+					if (b != b2) {
+						d = foldTree(b, makeTree(), \k, v, acc2 ->
+								if (k != "hover" && k != "point")
+									eitherFn(
+										lookupTree(b2, k),
+										\v2 ->
+											if (v != v2)
+												setTree(acc2, k, Pair(Some(v), Some(v2)))
+											else
+												acc2,
+										\ ->
+											acc2
+											// setTree(acc2, k, Pair(Some(v), None()))
+									)
+								else
+									acc2
+							);
+
+						if (sizeTree(d) > 0)
+							setTree(acc, id, d)
+						else
+							acc
+					} else {
+						acc
+					}
+				},
+				\ -> {
+					// if (sizeTree(b) > 0)
+					// 	setTree(acc, id, mapTree(b, \v -> Pair(None(), Some(v))))
+					// else
+						acc
+				}
+			)
+		}
+	)
+}
+
+addIScriptShallowLogicalScreenshot(manager : MaterialManager, delay : double, form : FForm, size : WidthHeight) -> void {
+	addIScriptRecordWithDelay(manager, delay, IScriptLogicalScreenshot(form |> takeLogicalSnapshot |> serialize, size))
+}
+
+takeLogicalScreenshot(manager : MaterialManager) -> string {
+	ISGroup(
+		map(sort(getTreeKeys(^(manager.iscript.contentForms))),
+			\k -> {
+				r = lookupTreeDef(^(manager.iscript.contentForms), k, FEmpty());
+				r |> takeLogicalSnapshot
+			}
+		),
+		false)
+	|> serialize
+}
+
+getIScriptLogicalScreenshot(manager : MaterialManager, size : WidthHeight) -> IScriptLogicalScreenshot {
+	IScriptLogicalScreenshot(takeLogicalScreenshot(manager), size)
+}
+
+addIScriptLogicalScreenshot(manager : MaterialManager, size : WidthHeight) -> void {
+	addIScriptRecord(manager, getIScriptLogicalScreenshot(manager, size))
+}
+
+extractLastLogicalScreenshot(manager : MaterialManager) -> Maybe<IScriptLogicalScreenshot> {
+	extractIScriptLastRecord(getValue(manager.iscript.iScriptB).stack, IScriptLogicalScreenshot("", WidthHeight(0., 0.)))
+}
+
+takeIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> string {
+	if (hidePanel)
+		nextDistinct(manager.iscript.iscriptPanelVisibleB, false);
+	visualScreenshot = getSnapshot();
+	if (hidePanel)
+		nextDistinct(manager.iscript.iscriptPanelVisibleB, true);
+	visualScreenshot
+}
+
+getIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> IScriptVisualScreenshot {
+	IScriptVisualScreenshot(takeIScriptVisualScreenshot(manager, hidePanel))
+}
+
+addIScriptVisualScreenshot(manager : MaterialManager, hidePanel : bool) -> void {
+	addIScriptRecord(manager, getIScriptVisualScreenshot(manager, hidePanel));
+}
+
+extractLastVisualScreenshot(manager : MaterialManager) -> Maybe<IScriptVisualScreenshot> {
+	extractIScriptLastRecord(getValue(manager.iscript.iScriptB).stack, IScriptVisualScreenshot(""))
+}

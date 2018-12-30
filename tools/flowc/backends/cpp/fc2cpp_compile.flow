@@ -1,0 +1,1070 @@
+import tools/flowc/backends/common;
+import tools/flowc/fcmodule;
+import binarytree;
+import tools/flowc/backends/cpp/fc2cpp_defines;
+import tools/flowc/backends/cpp/fc2cpp_utils;
+import tools/flowc/type_helpers;
+import tools/flowc/manipulation/find_last_varrefs;
+import tools/flowc/manipulation/common;
+import tools/flowc/manipulation/freevars;
+import tools/flowc/incremental/fiprogram;
+import set;
+
+export {
+	fiCppCompileToplevel(
+		cfg : FcCppConfig,
+		program : FiProgram,
+		decl: FiDeclaration,
+		strings : Tree<string, int>,
+		indent : string) -> string;
+
+	fiCppCompileToHeader(
+		cfg : FcCppConfig,
+		program : FiProgram,
+		decl: FiDeclaration) -> string;
+		
+	// fiCppPrintNativesSignatures(cfg : FcCppConfig, program : FiProgram) -> void;
+}
+
+// should contain all implemented natives with fallback
+implementedNatives = buildSet([
+	"strRangeIndexOf", "elemIndex", "exists", "md5", "bitShl", "bitUshr", "concurrent",
+	"lookupTree",
+]);
+
+FiCppCompileContext(
+	cfg : FcCppConfig, 
+	program : FiProgram, 
+	strings : Tree<string, int>,
+	currentFunction : string,
+	lastVarRefs: Set<FiVar>
+);
+
+fiCppCompileToplevel(cfg : FcCppConfig, program : FiProgram, decl : FiDeclaration, strings : Tree<string, int>, indent : string) -> string {
+	nm = decl.name;
+
+	fcVerbose(cfg, 1, "Generating Cpp code for " + nm + "...");
+
+	subindent = indent;
+	toplevel = switch (decl : FiDeclaration) {
+		FiNativeDec(name, io, type, nativeName, flowfallback, declStart, defiStart) : {
+			na = strSplit(nativeName, ".");
+
+			nname = if (length(na) > 1) {
+					na[1] + na[0];
+				} else {
+					name + "Native";
+				}
+			s = if (containsSet(implementedNatives, name)) "" else switch (flowfallback) {
+				default: {
+					"// " + fiCppRenameKeyword(cfg, name, false) + " " + nname + "\n";
+				}
+				FiLambda(__, __, __, __): {
+					// an attempt to fix missing type for fallbacks problem
+					type2 = switch (type) {
+						FiTypeFunction(args, returnType): {
+							FiTypeFunction(map(args, \a -> FiFunArg(a.name, a.type)), returnType)
+						}
+						// TODO: is it correct to make a type FiTypeVoid? In Fc* implementation there was None()
+						default: FiTypeFunction([], FiTypeVoid());
+					}
+					fd = FiFunctionDec(
+						name,
+						flowfallback,
+						type2,
+						declStart, defiStart
+					);
+					fiCppCompileToplevel(cfg, program, fd, strings, fiCppIndent + subindent) + "\n\n"
+				}
+			}
+			s;
+		}
+		FiFunctionDec(name, lambda, type, __, __): {
+			fparams = fiCppCompileGetFParams(cfg, program, type, lambda.args);
+			rettype = fiCppCompileGetRetType(cfg, program, name, type);
+			lastVarRefs = fiCppFindLastVarRefsInExpr([], lambda.body);
+			
+			body = lambda.body;
+
+			bodyOrSeq = switch (body) {
+		 		FiSeq(__, __, __) : body;
+		 		// TODO: here maybe type 'None()' is replaced with FiTypeVoid - is it correct?
+		 		default : FiSeq([body], FiTypeVoid(), -1);
+			}
+			
+			ctx = FiCppCompileContext(cfg, program, strings, name, lastVarRefs);
+			bodyTxt1 = fiCppCompileToExpr(ctx, bodyOrSeq, subindent, (rettype != "\nvoid") && (name != "main"), false);
+			
+			// hack for safeToString() from fusion.flow. TODO: fix it
+			bodyTxt = if (name == "safeToString" || name == "instantiateFn" || name == "instantiateFn2") "FLOW_ABORT" 
+					  else bodyTxt1;
+			
+			semicolon = if (endsWith(bodyTxt, "}\n")) "" else ";\n";
+
+			code = rettype + " " + fiCppRenameKeyword(cfg, name, false) + "(" + strGlue(fparams, ", ") + ") {\n" +
+			indent + bodyTxt + semicolon
+			+ "}\n";
+			
+			if (name == "fcPrintln") "" else code;
+		}
+
+		FiGlobalVar(name, value, type0, __, __): {
+			valueCode = {
+				lastRefs = fiCppFindLastVarRefsInExpr([], value);
+				ctx = FiCppCompileContext(cfg, program, strings, name, lastRefs);
+				code = fiCppCompileToExpr(ctx, value, indent, false, false);
+				if (startsWith(code, "{")) {
+					code2 = fiCppCompileToExpr(ctx, value, indent, true, false);
+					code3 = if (endsWith(code2, "\n")) strsubsmart(code2, 0, -1) else code2;
+					braces = if (!fiIsFreeLambda(program, value)) "[&]" else "[]";
+					braces + " () " + code3 + " ()"
+				} else code;
+			}
+			type = fiType2CppType3(cfg, program, type0);
+			type + " " + name + " = " + valueCode + ";\n";
+			// if (!containsSet(fiCppSkippedGlobals, name)) {
+				// if (fiIsPolymorphicType(type0)) fcPrintln("WARNING! Incomplete type " + type + " for global " + name);
+				// type + " " + name + " = " + valueCode + ";\n" ;
+			// } else "";
+		}
+	}
+	toplevel
+}
+
+fiIsVoidExpr(expr : FiExp, program : FiProgram) {
+	fiExpType(expr) == FiTypeVoid();
+}
+
+fiMakeFlowString(s : string, indent : string) -> string {
+	maxLength = 1024;
+	if (strlen(s) < maxLength) "flow::string(L" + fiEscapeStringCpp(s) + ")"
+	else {
+		s1 = strLeft(s, maxLength);
+		s2 = strRight(s, maxLength);
+		"flow::string(L" + fiEscapeStringCpp(s1) + ")\n"
+		+ indent + " + " + fiMakeFlowString(s2, indent);
+	}
+}
+
+fiIsMutableStructField(tp : FiType, name : string, program : FiProgram) {
+	switch (tp) {
+		FiTypeName(n, __): {
+			eitherMap(lookupTree(program.names.structs, n), \struct -> {
+				exists(struct.args, \sa -> sa.name == name && sa.ismutable);
+			}, false)
+		}
+		default: false;
+	}
+}
+
+fiCppFindVarsInExpr2(acc: Set<string>, expr: FiExp) -> Set<string> {
+	s = ref acc;
+	fiCppTravelExpr(expr, \e : FiExp -> {
+		switch (e : FiExp) {
+			FiLet(x, __, __, __, __, __): s := insertSet(^s, x);
+			default: {}
+		}
+	});
+	^s
+}
+
+fiCppFindLastVarRefsInExpr(externalVars: [string], expr: FiExp) -> Set<FiVar> {
+	vars = set2array(fiCppFindVarsInExpr2(buildSet(externalVars), expr));
+	mergeSetsA(map(vars, \v -> findLastVarRefs(v, expr)));
+}
+
+fiCppCompileToExpr(
+	ctx : FiCppCompileContext,
+	expr0 : FiExp, 
+	indent : string, 
+	useReturn : bool, 
+	isPartOfExpression : bool
+) -> string {
+	cfg = ctx.cfg;
+	program = ctx.program;
+	subindent = indent + fiCppIndent;
+	subindent2 = subindent + fiCppIndent;
+	subindent3 = subindent2 + fiCppIndent;
+	isVoidExpr = \e : FiExp -> fiIsVoidExpr(e, program);
+	isMutable = \tp : FiType, name -> fiIsMutableStructField(tp, name, program);
+	returnIfNeeded = if (useReturn && !isVoidExpr(expr0)) "return " else "";
+
+	expr : FiExp = fcCppPrepareExp(ctx, expr0);
+	
+	switch (expr : FiExp) {
+		FiVoid(__): "";
+		FiBool(b, __): 
+			returnIfNeeded +
+			if (b) "true" else "false";
+
+		FiInt(v, __): {
+			/*
+			// Simple heuristic:
+			// Hex numbers 0..9 are the same as decimals
+			returnIfNeeded +
+			if (v >= 0 && v <= 9) {
+				i2s(v)
+			} else {
+				// For larger numbers detect hex numbers first
+
+				// Check file content availability
+				fcCheckAvailableContent(cfg.fileinfo);
+				intval = substring(cfg.fileinfo.content, i.start, i.end-i.start);
+				// Check if value is hexadecimal
+				if (startsWith(intval, "0x")) {
+					intval;
+				} else
+					i2s(v);
+				// In Flow negative numbers are not part of a grammar,
+				// this check is not required at all.
+				// if (v < 0) "("+i2s(v)+")" else i2s(v);
+			}*/
+			returnIfNeeded +
+			i2s(v)
+		}
+
+		FiDouble(d, __): {
+			s = d2s(d);
+			returnIfNeeded +
+			(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s+".0" else s);
+		}
+
+		FiString(s, __): {
+			returnIfNeeded +
+			eitherFn(lookupTree(ctx.strings, s), 
+				\strId -> "flow::strs::s" + i2s(strId),
+				\ -> fiMakeFlowString(s, indent)
+			)
+		}
+		
+		FiVar(x, type, __): {
+			returnIfNeeded + switch (type) {
+				FiTypeFunction(__, __): fiCppFunctionCallSignature(cfg, program, expr);
+				default: fiCppRenameKeyword(cfg, x, false);
+			}
+			// (if (containsSet(lastVarRefs, expr)) "std::move(" + varRef + ")" else varRef);
+		}
+
+		FiLet(x, tp, e1, e2, __, __): {
+			letVal = fiCppCompileToExpr(ctx, e1, indent, false, false);
+			vn = fiCppRenameKeyword(cfg, x, false);
+			tt = fiType2CppType3(cfg, program, tp);
+			// fcPrintln(letVal);
+			// fcPrintln(x);
+			// fcPrintln(tt);
+			castExpr = if (fiExpType(e1) == FiTypeFlow() && tt != "flow_t") "(" + tt + ")"
+					   else if (fiExpType(e1) != FiTypeFlow() && tt == "flow_t") "(flow_t)"
+					   else "";
+			if (x == "__") {
+				indent + fiCppCompileToExpr(ctx, e2, indent, false, false)
+			} else {
+				inner = \indent0, useRet -> {
+					tt + " " + vn + " = " + castExpr + letVal + ";\n"
+					+ indent0 + fiCppCompileToExpr(ctx, e2, indent0, useRet, false);
+				}
+				if (useReturn || isVoidExpr(e2)) inner(indent, useReturn)
+				else {
+					braces = if (!fiIsFreeLambda(program, expr)) "[&]" else "[]";
+					braces + " () -> " + fiCppLambdaRetType(cfg, program, fiExpType(expr)) + " {\n" 
+					+ subindent + inner(subindent, true) + ";\n"
+					+ indent + "}()"
+				}
+			}
+		}
+
+		FiLambda(xs, e0, type, __): {
+			body = e0;
+			bodyOrSeq = switch (body) {
+				FiSeq(__, __, __) : body;
+				// TODO: here maybe type 'None()' is replaced with FiTypeVoid - is it correct?
+				default : FiSeq([body], FiTypeVoid(), -1);
+			}
+
+			rettype = {
+					switch (type) {
+						FiTypeFunction(__, rettype): fiCppLambdaRetType(cfg, program, rettype);
+						default: "TODO";
+					}
+			}
+			
+			args2 = strGlue(map(xs, \a -> {
+					tt = fiType2CppTypeFParam(cfg, program, a.type);
+					nn = if (a.name == "__") "" else fiCppRenameKeyword(cfg, a.name, false);
+					tt + " " + nn;
+				}), ", ");
+			
+			inner = fiCppCompileToExpr(ctx, bodyOrSeq, subindent, true, false);
+			lineBreak = if (endsWith(inner, "}\n")) "" else ";\n";
+			braces = if (!fiIsFreeLambda(program, expr)) "[=]" else "[]";
+			returnIfNeeded +
+			braces + " (" + args2 + ") -> " + rettype + " {\n"
+			+ subindent + inner + lineBreak
+			+ indent + "}"
+		}
+		
+		FiCall(call, es, type, __): {
+			name = switch (call) {
+				FiVar(__, __, __) : 
+					fiCppFunctionCallSignature(cfg, program, call);
+				default :
+					fiCppCompileToExpr(ctx, call, indent, false, true);
+			}
+			argTypes0 = switch (fiExpType(call)) {
+				FiTypeFunction(tfargs, __): 
+					map(tfargs, \fa -> fa.type);
+				default: [];
+			}
+			argTypes = map(argTypes0, \tt -> {
+				fiType2CppType3(cfg, program, tt)
+			});
+			
+			argsA = mapi(es, \ii, e -> {
+				ee = fiCppCompileToExpr(ctx, e, subindent, false, false);
+				if (ii < length(argTypes)) {
+					tt = argTypes[ii];
+					expType = fiExpType(e);
+					dontCast = (name == "toString" && tt == "flow_t")
+								|| startsWith(ee, "[=]");
+					if (!dontCast && fiType2CppType3(cfg, program, expType) != tt)
+						fcCppCastType(ctx, false, argTypes0[ii], expType, ee)
+					else ee;
+				} else {
+					fcPrintln("TODO: Support call with " + i2s(ii) + " arguments to");
+					fcPrintln(toString(call));
+					ee;
+				}
+			});
+			
+			args = strGlue(argsA, ", ");
+			
+			code0 = name + "(" + args + ")";
+			
+			code1 = if (name == "isSameStructType" && argTypes0[0] == FiTypeFlow()) {
+				switch (fiGetStructName(program, argTypes0[1])) {
+					Some(n): "flow::get_struct_type(" + argsA[0] + ") == flow::types::" + n;
+					None(): ""
+				}
+			} else "";
+			
+			code = if (code1 != "") code1 else code0;
+			
+			returnIfNeeded + code;
+		}
+
+		FiSeq(es, __, __): {
+			l = length(es)-1;
+			if (length(es) == 1) {
+				fiCppCompileToExpr(ctx, es[0], indent, useReturn, false);
+			} else {
+				inner =
+					if (l >= 0)
+						list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+							code = subindent + fiCppCompileToExpr(ctx, e, subindent, useReturn && (idx == l), false);
+							lineBreak = if (endsWith(code, "}\n")) "" else ";\n";
+							Cons(lineBreak, Cons(code, acc));
+						}))
+					else
+						"";
+				if (inner != "") {
+					br = if (endsWith(inner, "\n")) "" else "\n";
+					"{\n" + inner + br + indent + "}\n";
+				} else ""
+			}
+		}
+		
+		FiIf(e1, e2, e3, __, __): {
+			cond = fiCppCompileToExpr(ctx, e1, indent, false, false);
+			retType = fiCppLambdaRetType(cfg, program, fiExpType(expr));
+
+			compileExpr = \e, useRet -> fiCppCompileToExpr(ctx, e, subindent, useRet, false);
+			
+			if (isVoidExpr(expr)) {
+				trueBranch  = compileExpr(e2, false);
+				falseBranch = compileExpr(e3, false);
+				if (falseBranch != "") {
+					"if (" + cond + ") {\n"
+					+ subindent + trueBranch + ";\n"
+					+ indent + "} else {\n"
+					+ subindent + falseBranch + ";\n"
+					+ indent + "}"
+				} else {
+					"if (" + cond + ") {\n"
+					+ subindent + trueBranch + ";\n"
+					+ indent + "}"
+				}
+			} else if (useReturn) {
+				trueBranch  = compileExpr(e2, true);
+				falseBranch = compileExpr(e3, true);
+				enc = \s -> if (endsWith(s, "\n")) s else s + ";\n";
+				"if (" + cond + ") {\n"
+				+ subindent + enc(trueBranch)
+				+ indent + "} else {\n"
+				+ subindent + enc(falseBranch)
+				+ indent + "}"
+			} else {
+				trueBranch1  = compileExpr(e2, false);
+				falseBranch1 = compileExpr(e3, false);
+				isRetFunc = startsWith(trueBranch1, "[=]") || startsWith(trueBranch1, "[]");
+				
+				enc1 = \code, e -> {
+					if (!isRetFunc && retType == fiCppLambdaRetType(cfg, program, fiExpType(e))) code
+					else if (startsWith(code, "{")) code
+					else "static_cast<" + retType + ">( " + code + " )";
+				}
+				
+				trueBranch	= enc1(trueBranch1, e2);
+				falseBranch = enc1(falseBranch1, e3);
+				
+				singleLine = !strContains(trueBranch, "\n") && !strContains(falseBranch, "\n")
+							 && strlen(cond) + strlen(trueBranch) + strlen(falseBranch) < 60;			
+							 
+				result = if (singleLine) {
+					"(" + cond + ") ? (" + trueBranch + ") : (" + falseBranch + ")"
+				} else {
+					enc = \code, e -> {
+						if (startsWith(code, "{")) {
+							code2 = compileExpr(e, true);
+							code3 = if (endsWith(code2, "\n")) strsubsmart(code2, 0, -1) else code2;
+							"[&] () -> " + retType + " " + code3 + " ()"
+						} else code
+					}
+					"(" + cond + ") ? (\n"
+					+ subindent + enc(trueBranch, e2) + "\n"
+					+ indent + ") : (\n"
+					+ subindent + enc(falseBranch, e3) + "\n"
+					+ indent + ")"
+				}
+				if (isPartOfExpression) "(" + result + ")"
+				else result
+			}
+		}
+		
+		FiCallPrim(op, es, tp, __): {
+			ctx2 = FiCppCompileContext(cfg, program, ctx.strings, ctx.currentFunction, makeSet());
+			args = map(es, \arg -> Pair(fiCppCompileToExpr(ctx2, arg, indent, false, true), fiExpType(arg)));
+			isEmptyArray = \e -> {
+				switch (e) {
+					FiCallPrim(op2, v, __, __): 
+						op2 == FcArrayPrim() && v == [];
+					default:
+						false;
+				}
+			}
+			getArrayType = \e -> {
+				switch (e) {
+					FiCallPrim(__, __, t, __): {
+						switch (t) {
+							FiTypeArray(tt): fiType2CppType(cfg, program, tt);
+							default: "";
+						}
+					}
+					default: "";
+				}
+			}
+			opt = switch (op : FcPrim) {
+				FcOrPrim():    "(" + args[0].first + " || " + args[1].first + ")";
+				FcAndPrim():   "(" + args[0].first + " && " + args[1].first + ")";
+				FcNotPrim():   "(!" + args[0].first + ")";
+				FcEqPrim(): {
+					switch (es[1]) {
+						FiString(s, __): 
+							// special case for comparing to const string
+							formatString("flow::equal(%1, %2, %3)", [args[0].first, args[1].first, i2s(strlen(s))]);
+						default: {
+							if (isEmptyArray(es[1])) formatString("length<%1>(%2) == 0", [getArrayType(es[1]), args[0].first])
+							else fiCppCompileCompare(ctx, args[0], "==", args[1]);
+						}
+					}
+				}
+				FcNePrim(): {
+					if (isEmptyArray(es[1])) formatString("length<%1>(%2) != 0", [getArrayType(es[1]), args[0].first])
+					else fiCppCompileCompare(ctx, args[0], "!=", args[1]);
+				}
+				FcLePrim():    fiCppCompileCompare(ctx, args[0], "<=", args[1]);
+				FcGePrim():    fiCppCompileCompare(ctx, args[0], ">=", args[1]);
+				FcLtPrim():    fiCppCompileCompare(ctx, args[0], "<", args[1]);
+				FcGtPrim():    fiCppCompileCompare(ctx, args[0], ">", args[1]);
+				FcPlusPrim():  "(" + args[0].first + " + " + args[1].first + ")";
+				FcMinusPrim(): "(" + args[0].first + " - " + args[1].first + ")";
+				FcMulPrim():   "(" + args[0].first + " * " + args[1].first + ")";
+				FcDivPrim():   "(" + args[0].first + " / " + args[1].first + ")";
+				FcModPrim(): {
+					switch (tp) {
+						FiTypeDouble(): 
+							formatString("flow::mod_double(%1, %2)", [args[0].first, args[1].first]);
+						default: 
+							"(" + args[0].first + " % " + args[1].first + ")";
+					}
+				}
+				FcNegPrim():   "-" + args[0].first;
+				FcArrayPrim(): {
+					type = fiType2CppType(cfg, program, tp);
+					if (args == []) type + "()"
+					else 
+						type + "({" + strGlue(map(args, \e->e.first), ", ") + "})"
+				}
+				FcIndexPrim(): {
+					e0 = args[1].first;
+					e = if (args[1].second == FiTypeFlow()) "int(" + e0 + ")"
+						else e0;
+					"(" + args[0].first + "[" + e + "])";
+				}
+				FcDerefPrim(): {
+					if (!isPartOfExpression) "*(" + args[0].first + ")"
+					else "(*" + args[0].first + ")";
+				}
+				FcAssignPrim(): {
+					tFrom = args[1].second;
+					tTo = switch (args[0].second) {
+						FiTypeRef(tt): tt;
+						default: {
+							fcPrintln("Something went wrong. Cannot deduce type!");
+							tFrom
+						}
+					};
+					"*" + args[0].first + " = " + fcCppCastType(ctx, true, tTo, tFrom, args[1].first);
+				}
+				FcRefPrim(): {
+					tt = args[0].second;
+					param = switch (tt) {
+						FiTypeFunction(__, __): "<" + fiType2CppType(cfg, program, tt) + ">";
+						default: "";
+					}
+					"flow::make_ref" + param + "(" + args[0].first + ")";
+				}
+				// This is struct runtime constructor, the only place, where structrure
+				// created at runtime.
+				//
+				// After typechecking we definitely know structure exists, so skip sanity checks.
+				FcStructPrim(structname): {
+					templateParams = fiCppGetStructTemplateParams(program, structname);
+					structWithTypes =
+						if (templateParams == []) fiCppRenameKeyword(cfg, structname, false) 
+						else fiType2CppType(cfg, program, expr.type);
+					structArgTypes = eitherMap(lookupTree(program.names.structs, structname), \st : FiTypeStruct -> {
+									map(st.args, \a : FiStructArg -> a.type)
+								}, []);
+					structArgs = mapi(args, \i, a -> {
+						if (structArgTypes[i] == FiTypeFlow()) "flow_t(" + a.first + ")"
+						else a.first
+					});
+					if (args == []) "flow::g" + structname 
+					else "flow::create_struct_ptr<" + structWithTypes + ">(" + strGlue(structArgs, ", ") + ")";
+				}
+				FcFieldPrim(name): {
+					parentExp : FiExp = es[0];
+					vr = switch (parentExp) {
+						FiVar(n, __, __) : fiCppRenameKeyword(cfg, n, false);
+						default : fiCppCompileToExpr(ctx, parentExp, indent, false, true);
+					}
+					isUnion = fiIsUnionExp(program, parentExp);
+					// fcPrintln(vr + " -- " + name);
+					// fcPrintln(fiType2CppType(cfg, program, tp1));
+					// fcPrintln(a);
+					if (name == "structname") {
+						"flow::structname(" + vr + ")"
+					} else {
+						dot = if (isUnion) "." else "->";
+						braces = if (isUnion) "()" else "";
+						vr + dot + fiCppRenameKeyword(cfg, name, true) + braces;
+					}
+				}
+				FcSetMutablePrim(name): {
+					tp1 = fiExpType(es[0]);
+					dot = if (fiIsStruct(program, tp1)) "->" else ".";
+					dst = args[0].first + dot + name;
+					dst + " = " + args[1].first
+				}
+				FcCreateClosurePrim(__, __): ""; // should not happen - C++ does not use lambda lifting
+			};
+			returnIfNeeded +
+			opt
+		}
+
+		FiCast(e, tFrom, tTo, __, start): {
+			ex = fiCppCompileToExpr(ctx, e, indent, false, false);
+			rtFrom = tFrom;
+			rtTo   = tTo;
+			tt = fiType2CppType(cfg, program, rtTo);
+			ttFull = fiType2CppType3(cfg, program, rtTo);
+			tf = fiType2CppType(cfg, program, rtFrom);
+			(if (useReturn) "return " else "") +
+			if (start < 0) {	// this is generated cast
+				"flow::cast<" + ttFull + ">(" + ex + ")"
+			} else if (tt == "flow::string" && (tf == "int" || tf == "double")) {
+				"std::to_wstring(" + ex + ")"
+			} else if (tt == "double") {
+				"double(" + ex + ")"
+			} else if (tt == "int") {
+				"int(" + ex + ")"
+			} else if (fiIsUnion(program, rtFrom)) {
+				switch (rtTo) {
+					FiTypeName(n, __):			ex + ".to" + n + "()";
+					default:						ex;
+				}
+			} else if (tf == "flow_t") {
+				"static_cast<" + ttFull + ">(" + ex + ")"
+			} else {
+				ex
+			}
+		}
+
+		FiSwitch(e0, e0type, cs, __, __): {
+			aVar = fiCppCompileToExpr(ctx, e0, indent, false, false);
+
+			isUnion = fiIsUnion(program, fiExpType(e0));
+			isFlow = fiExpType(e0) == FiTypeFlow();
+			// fcPrintln(aVar + if (!fiIsUnion(program, fiExpType(e0))) " ++++++++++++++++++++" else "");
+			// fcPrintln(fiType2CppType3(cfg, program, fiExpType(e0)));
+			// fcPrintln(fiType2CppType3(cfg, program, e0type));
+
+			hasDefault = exists(cs, \item -> item.struct == "default");
+			removeUnused = isConfigParameterTrue(program.config.config, "cpp-remove-unused-vars");
+			
+			cases0 = if (isUnion) EmptyList() else {
+				// fcPrintln(e0type);
+				structType = switch (fiExpType(e0)) {
+					FiTypeName(n, __): n;
+					default: "???";
+				}
+				fold(cs, EmptyList(), \acc, item -> {
+					if (item.struct == structType) {
+						Cons(
+							"{\n"
+							+ fiCppCompileSwitchCase(ctx, item, removeUnused, subindent2) 
+							+ ";\n" 
+							+ subindent + "}\n",
+							acc
+						)
+					} else acc;
+				});
+			}
+			
+			cases1 = fold(cs, Cons("", EmptyList()), \acc, item -> {
+				stDef = lookupTree(program.names.structs, item.struct);
+				sname = fiCppRenameKeyword(cfg, item.struct, false);
+				tmp_vars = if (removeUnused && !fiVarIsUsed(e0.name, item.body)) {
+					""
+				} else {
+					if (item.struct == "default") "" 
+					else {
+						castExpr = if (isFlow) "auto __tmp__ = " + aVar + ".get_struct_ptr<" + sname + ">()"
+								   else "auto& __tmp__ = " + aVar + ".to" + sname + "()";
+						subindent3 + castExpr + ";\n"
+						+ subindent3 + "auto& " + aVar + " = __tmp__;\n"
+					}
+				};
+				Cons(subindent2 + (if (item.struct == "default") "default" else "case flow::types::" + sname) + ": {\n"
+					+ tmp_vars
+					+ fiCppCompileSwitchCase(ctx, item, removeUnused, subindent3) 
+					+ ";\n" 
+					+ subindent2 + "}\n" , acc);
+			});
+
+			
+			isUnionOrFlow = isUnion || isFlow;
+			
+			cases = if (isUnionOrFlow) cases1 else {
+				if (!isEmptyList(cases0)) cases0 else {
+					// fcPrintln(fiType2CppType3(cfg, program, fiExpType(e0)));
+					// fcPrintln(fiType2CppType3(cfg, program, e0type));
+					Cons("???\n", EmptyList());
+				}
+			}
+
+			inner = \indent2 -> {
+				if (isUnionOrFlow)
+					"switch (" + aVar + ".id_()) {\n"
+					+ list2string(cases)
+					+ (if (hasDefault) "" else subindent2 + "default: FLOW_UNREACHABLE();\n")
+					+ indent2 + "}\n"
+				else list2string(cases);
+			}
+			
+			if (useReturn) fiCppIndent + inner(subindent)
+			else 
+				"[&] () -> " + fiCppLambdaRetType(cfg, program, fiExpType(expr)) + " {\n" 
+				+ subindent + inner(subindent)
+				+ indent + "}()"
+		}
+
+		default: "#!cte other!\n"; // + toString(expr);
+	}
+}
+
+fcCppPrepareExp(ctx : FiCppCompileContext, expr : FiExp) -> FiExp {
+	switch (expr) {
+		FiCallPrim(op, es, tp, info): {
+			isFunc = \e -> fcIsFuncType(fiExpType(e));
+			isNopFunc = \e -> switch (e) {
+				FiVar(n, __, __): (n == "nop") || (n == "nop1");
+				default: false;
+			}
+			switch (op) {
+				FcStructPrim(structname): {
+					eitherMap(lookupTree(ctx.program.names.structs, structname), \st : FiTypeStruct -> {
+						es2 = mapi(es, \i, e -> fcCppPrepareExpCast(e, st.args[i].type));
+						FiCallPrim(op, es2, tp, info)
+					}, expr)
+				}
+				FcFieldPrim(name): {
+					if (name == "structname") {
+						expr
+					} else expr;
+				}
+				FcNePrim(): {
+					if (isFunc(es[0]) || isFunc(es[1])) {
+						if (isNopFunc(es[1])) {
+							fcPrintln("Warning! " + ctx.currentFunction + ": comparasion with nop replaced with true");
+							FiBool(true, info)
+						} else {
+							fcPrintln("Warning! " + ctx.currentFunction + ": unsupported functions comparison");
+							expr
+						}
+					} else expr
+				}
+				FcEqPrim(): {
+					if (isFunc(es[0]) || isFunc(es[1])) {
+						if (isNopFunc(es[1])) {
+							fcPrintln("Warning! " + ctx.currentFunction + ": comparasion with nop replaced with false");
+							FiBool(false, info)
+						} else {
+							fcPrintln("Warning! " + ctx.currentFunction + ": unsupported functions comparison");
+							expr
+						}
+					} else expr
+				}
+				default:
+					expr;
+			}
+		}
+		FiLet(name, type, e1, e2, type2, start): {
+			ee1 = fcCppPrepareExpCast(e1, type);
+			if (e1 != ee1) FiLet(name, type, ee1, e2, type2, start)
+			else expr
+		}
+		FiCall(call, es, type, info): {
+			// name = switch (call) {
+				// FiVar(n, __, __) : n;
+				// default: "";
+			// }
+			expr
+		}
+		default: expr;
+	}
+}
+
+fcIsFuncType(t : FiType) {
+	switch (t) {
+		FiTypeFunction(__, __): true;
+		default: false;
+	}
+}
+
+fcCppCastType(ctx : FiCppCompileContext, short : bool, typeTo : FiType, typeFrom : FiType, expr : string) {
+	type2str = \t -> if (short) fiType2CppType(ctx.cfg, ctx.program, t)
+			  else fiType2CppType3(ctx.cfg, ctx.program, t);
+	t1 = type2str(typeTo);
+	t2 = type2str(typeFrom);
+	if (t1 == t2) expr
+	else {
+		stdCast = "static_cast<" + t1 + "> ( " + expr + " )";
+		if (fcIsFuncType(typeTo) || fcIsFuncType(typeFrom)) {
+			funcArgTypes = \f : FiType -> switch (f) {
+				FiTypeFunction(args, rt): concat([rt], map(args, \a -> a.type));
+				default: [];
+			}
+			
+			fa1 = funcArgTypes(typeTo);
+			fa2 = funcArgTypes(typeFrom);
+			
+			ok1 = tail(fa1) == tail(fa2);	// only return type differs. TODO: check if it is convertible
+			
+			ok2 = foldi(fa1, true, \i, acc, __ -> {
+				if (i == 0) fa1[i] == fa2[i]	// rettype is the same
+				else {
+					(fa1[i] == fa2[i]) || (fa2[i] == FiTypeFlow())	// and parameters are either the same or coverted to flow_t
+				}
+			});
+			
+			ok3 = (length(fa1) == 2) && (fa1[0] == fa2[0]) && (fa1[1] == FiTypeFlow()) && (fa2[1] != FiTypeFlow());
+		
+			ok = ok1 || ok2 || ok3;
+		
+			if (!ok) {
+			
+				fcPrintln("Warning! " + ctx.currentFunction + ": unsupported function type cast:");
+				fcPrintln(t1);
+				// fcPrintln(typeTo);
+				fcPrintln(t2);
+				// fcPrintln(typeFrom);
+				fcPrintln(expr);
+			}
+			
+			if (ok3) "flow::func_cast<" + type2str(fa1[0]) + ", " + type2str(fa2[1]) + ">( " + expr + " )"
+			else stdCast
+		} else stdCast
+	}
+}
+
+fcCppPrepareExpCast(expr : FiExp, type : FiType) -> FiExp {
+	type1 = fiExpType(expr);
+	getTypename = \t : FiType -> {
+		switch (t) {
+			FiTypeName(tn, __): Some(tn);
+			default: None();
+		}
+	}
+	if (type1 != type) {
+		switch (type1) {
+			FiTypeFlow(): {
+				ok = switch (type) {
+					FiTypeInt(): true;
+					FiTypeBool(): true;
+					FiTypeDouble(): true;
+					FiTypeString(): true;
+					default: false;
+				}
+				if (ok) FiCast(expr, type1, type, type, expr.start)
+				else expr
+			}
+			default: {
+				tn1 = getTypename(type1);
+				tn2 = getTypename(type);
+				if (isSome(tn1) && tn1 == tn2) {
+					typars = fiMatchTypars(type, type1, makeTree());
+					type2 = fiSubstituteTypars(type, typars);
+					if (type1 != type2) FiCast(expr, type1, type2, type2, -1)
+					else expr
+				}
+				else expr
+			}
+		}
+	} else expr
+}
+
+fiCppCompileSwitchCase(ctx, item : FiCase, removeUnused : bool, indent : string) -> string {
+	itemBody : FiExp = item.body;
+	expr : FiSeq = switch (itemBody) {
+		FiSeq(__, __, __): itemBody;
+		default: FiSeq([itemBody], fiExpType(itemBody), itemBody.start);
+	}
+
+	doTheRest = \expr2 -> {
+		inner = fiCppCompileToExpr(ctx, expr2, indent, true, false);
+		indent + inner
+		+ if (fiIsVoidExpr(expr2, ctx.program)) {
+			(if (inner != "") ";\n" + indent else "")
+			+ "return" 
+		} else ""
+	}
+
+	es = expr.es;
+	if (length(es) == 1) {
+		fiCppCompileSwitchCase0(ctx, es[0], buildSet(item.argNames), removeUnused, indent, doTheRest)
+	} else {
+		if (es != [] && switch (es[0]) {
+			FiLet(__, __, __, __, __, __): true;
+			default: false;
+			}) {
+			fcPrintln("TODO: We should do the lets separately in switch");
+		}
+		doTheRest(expr);
+	}
+}
+
+fiCppCompileSwitchCase0(
+	ctx : FiCppCompileContext,
+	expr : FiExp, 
+	argNames : Set<string>, 
+	removeUnused : bool, 
+	indent : string,
+	doTheRest : (FiExp) -> string
+) -> string {
+	switch (expr) {
+		FiLet(x, type, e1, e2, __, __): {
+			if (containsSet(argNames, x)) {
+				assign = if (!removeUnused || fiVarIsUsed(x, e2)) {
+					letVal = fiCppCompileToExpr(ctx, e1, indent, false, false);
+					vn = fiCppRenameKeyword(ctx.cfg, x, false);
+					// tt = fiType2CppType3(ctx.cfg, ctx.program, type);
+					// tt2 = if (tt == "int") tt else "const " + tt + "&";
+					tt = fiType2CppTypeFParam(ctx.cfg, ctx.program, type);
+					if (x != "__") indent + tt + " " + vn + " = " + letVal + ";\n" else ""
+				} else "";
+				assign + fiCppCompileSwitchCase0(ctx, e2, argNames, removeUnused, indent, doTheRest)
+			} else {
+				doTheRest(expr);
+			}
+		}
+		default: {
+			doTheRest(expr);
+		}
+	}
+}
+
+fiCppCompileCompare(ctx : FiCppCompileContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
+	a1 = arg1.first;
+	a2 = arg2.first;
+	t1 = arg1.second;
+	// Type checker ensures math types are equal, so we only need one type.
+	//t2 = ^(arg2.second.type);
+	
+	tt : FiType = t1;
+
+	isSimplyComparable = switch(tt) {
+		FiTypeString() : true;
+		FiTypeInt() : true;
+		FiTypeBool() : true;
+		FiTypeDouble() : true;
+		FiTypeArray(__) : true;
+		FiTypeParameter(__) : true;
+		FiTypeName(__, __) : true; // for comparing structs (e.g. Pair)
+		FiTypeFlow(): true;
+		default : false;
+	}
+
+	//if (isString && (op == "+")) a1 + "~" + a2 else a1 + op + a2;
+	
+	if (isSimplyComparable) {
+		"(" + a1 + " " + op + " " + a2 + ")"		
+	} else {
+		fcPrintln("Warning! " + ctx.currentFunction + ": unsupported compare " + op + " " + a1 + " " + a2);
+		"(F" + op + " " + a1 + " " + a2 + ")"
+	}
+}
+
+fiCppCompileToHeader(cfg : FcCppConfig, program : FiProgram, decl: FiDeclaration) {
+	switch (decl : FiDeclaration) {
+		FiNativeDec(name, io, type, nativeName, flowfallback, __, __) : "";
+		FiFunctionDec(name, lambda, type, __, __): {
+			if (name == "fcPrintln") "" else
+			fiCppFunctionSignature(cfg, program, name, type, lambda.args);
+		}
+		FiGlobalVar(name, value, __, __, __): "";
+	}
+}
+
+fiCppFunctionSignature(cfg, program, name : string, type : FiTypeFunction, args : [FiFunArg]) {
+	fparams = fiCppCompileGetFParams(cfg, program, type, args);
+	rettype = fiCppCompileGetRetType(cfg, program, name, type);
+	rettype + " " + fiCppRenameKeyword(cfg, name, false) + "(" + strGlue(fparams, ", ") + ");"
+}
+
+fiCppCompileGetFParams(cfg : FcCppConfig, program : FiProgram, ft : FiTypeFunction, lmbdArgs : [FiFunArg]) -> [string] {
+	fargs = if (ft.args == []) {
+			map(lmbdArgs, \e -> {
+				FiFunArg(e.name, e.type)
+			});
+		} else ft.args;
+
+	fparams = mapi(fargs, \idx, e -> {
+		tt = fiType2CppTypeFParam(cfg, program, e.type);
+		tt + " " + fiCppRenameKeyword(cfg, lmbdArgs[idx].name, false);
+	});
+	
+	fparams
+}
+
+fiCppCompileGetRetType(cfg : FcCppConfig, program : FiProgram, name : string, type : FiType) -> string {
+	rettype0 = {
+		rt = type;
+		typars = fiCollectTypars(program, rt, makeSet());
+
+		(if (isEmptySet(typars)) {
+			""
+		} else {
+			"template <" + strGlue(set2array(mapSet(typars, \tp -> {
+				"typename T" + i2s(strlen(tp))
+			})), ", ") + "> ";
+		}) + "\n" + switch (rt) {
+			FiTypeFunction(args, returnType): fiType2CppType3(cfg, program, returnType);
+			default: "auto";
+		}
+	}
+
+	if (name == "main") "void" else rettype0
+}
+
+fiFunctionDeclType(program : FiProgram, name : string) -> Maybe<FiTypeFunction> {
+	eitherMap(lookupTree(program.names.toplevel, name), \decl : FiDeclaration -> {
+		switch (decl) {
+			FiFunctionDec(__, __, declType, __, __):
+				Some(declType);
+			FiNativeDec(__, __, nativeType, __, __, __, __):
+				switch (nativeType) {
+					FiTypeFunction(__, __): 
+						Some(nativeType);
+					default: 
+						None();
+				}
+			default: 
+				None();
+		}
+	}, None())
+}
+
+fiCppFunctionCallSignature(cfg, program : FiProgram, call : FiVar) {
+	params = switch (fiFunctionDeclType(program, call.name)) {
+		Some(declType): {
+			types = getTreeValues(fiMatchTypars(declType, call.type, makeTree()));
+			map(types, \t -> fiType2CppType(cfg, program, t))
+		}
+		None(): []
+	}
+	templ = if (params == []) "" 
+			else "<" + strGlue(params, ", ") + ">";
+	name = fiCppRenameKeyword(cfg, call.name, false);
+	if (call.name == "toString") name else name + templ;
+}
+
+fiCppLambdaRetType(cfg, program, rettype : FiType) {
+	t = fiType2CppType3(cfg, program, rettype);
+	if (t == "void" || t == "string" || t == "int" || t == "bool") t 
+	else "const " + t;
+}
+
+fiIsUnionExp(program, e : FiExp) {
+	tp = fiExpType(e);
+	// special case for x.y.z expression where x.y is union while being deduced as struct
+	fiIsUnion(program, tp) || fiIsStruct(program, tp) && 
+		switch (e) {
+			FiCallPrim(op, es, __, __): {
+				switch (op) {
+					FcFieldPrim(name): {
+						tp2 = fiExpType(es[0]);
+						switch (tp2) {
+							FiTypeName(tn, __): {
+								eitherMap(lookupTree(program.names.structs, tn), \st : FiTypeStruct -> {
+									exists(st.args, \a : FiStructArg -> a.name == name && fiIsUnion(program, a.type))
+								}, false)
+							}
+							default: false;
+						}
+					}
+					default: false;
+				}
+			}
+			default: false;
+		}
+}
+
+fiIsFreeLambda(program : FiProgram, lambda : FiExp) {
+	foldSet(fifreevars(lambda), true, \acc, var -> {
+		acc && containsKeyTree(program.names.toplevel, var)
+	})
+}
+
+fiCppPrintNativesSignatures(cfg, program) {
+	s = "makeHttpRequest httpCustomRequestNative random";
+	iter(strSplit(s, " "), \name -> {
+		eitherFn(fiFunctionDeclType(program, name),
+			\ftype : FiTypeFunction -> {
+				fcPrintln(fiCppFunctionSignature(cfg, program, name, ftype, ftype.args));
+			},
+			\ -> {
+				fcPrintln("Native " + name + " not found!");
+			}
+		);
+	});
+}

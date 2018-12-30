@@ -1,0 +1,165 @@
+// testing TYPECHECKER
+
+forbid serialize;
+// forbid tools/flowc/flowc_module;
+forbid behaviour;
+// forbid formats/json/json;
+
+import tools/common/compilerconfig;
+import tools/flowc/flow_parser;
+import tools/flowc/preload_modules;
+import tools/flowc/flowc_helpers;
+import tools/flowc/desugar;
+import tools/flowc/typechecker/typechecker;
+
+import tools/flowc/tests/cpp/test_utils;
+
+makeTenv(config) -> FcTypeEnv {
+	acc = prepareInitialFlowcAcc(config);
+	errors = ref 0;
+	FcTypeEnv(
+		FcTypeEnvGlobal(
+			acc,
+			makeTree(),
+			makeSet(),
+			\e -> {
+				println(e.message);
+				fail0("Stopping.");
+			},
+			ref 0
+		),
+		initFcTypeEnvLocal()
+	);
+}
+
+getOrder(tree : Tree<string, FcParsed>, nnn) -> [[string]] {
+	println("...");
+	o = getOrder2(tree, makeSet(), []);
+	concatA(map(o, \oo -> splitByNumber(oo, nnn)))
+}
+
+getOrder2(tree, processed : Set<string>, res : [[string]]) -> [[string]] {
+	s = findReadyForProcessing(tree, processed);
+	if (isEmptySet(s)) res else {
+		// println(toString(set2array(s)));
+		getOrder2(tree, mergeSets(processed, s), arrayPush(res, set2array(s)))
+	}
+}
+
+findReadyForProcessing(tree : Tree<string, FcParsed>, processed : Set<string>) -> Set<string> {
+	foldTree(tree, makeSet(), \file, parsed : FcParsed, acc -> {
+		if (containsSet(processed, file)) acc else
+		switch (parsed) {
+			FcParsed(fileinfo, __, imports, __, __): {
+				if (all(map(imports, \im -> containsSet(processed, im.flowfile)))) insertSet(acc, fileinfo.flowfile)
+				else acc
+			}
+			default: fail0("error!");
+		}
+	})
+}
+
+SSS(
+	first : Tree<string, FcType>, 
+	second : FiModule, 
+	third : FcModule
+);
+
+desugarAndTypecheck1(tenv0 : FcTypeEnvGlobal, parsed : FcParsed, verbose : bool) -> SSS {
+	localEnv = initFcTypeEnvLocal();
+	module = desugarFcModule(tenv0.acc, localEnv, parsed.fileinfo, parsed.syntaxtree);
+	tenv66 = addDesugaredModuleToGlobal(tenv0, module);
+	checked: Pair<Tree<string, FcType>, FiModule> = typecheckFcModule(FcTypeEnv(tenv66, localEnv), module);
+	SSS(checked.first, checked.second, module)
+}
+
+time1 = ref 0.0;
+time2 = ref 0.0;
+
+desugarAndTypecheck(tenv0 : FcTypeEnvGlobal, parsedA : [FcParsed], verbose : bool) -> FcTypeEnvGlobal {
+	tasks = map(parsedA, \parsed : FcParsed -> \ -> {
+		desugarAndTypecheck1(tenv0, parsed, verbose)
+	});
+	
+	t1 = timestamp();
+	triples : [SSS] = concurrent(true, tasks);
+	t2 = timestamp();
+
+	res = fold(triples, tenv0, \tenvCur2, ttt -> {
+		tenvCur3 = addDesugaredModuleToGlobal(tenvCur2, ttt.third);
+		mergeTypingToFcTypeEnv(ttt.first, ttt.second, tenvCur3)
+	})
+	t3 = timestamp();
+	
+	time1 := ^time1 + (t2-t1);
+	time2 := ^time2 + (t3-t2);
+	
+	res
+}
+
+test2(config : CompilerConfig, file) {
+	println("Loading " + file + "...");
+	t01 = timestamp();
+	tr0 = preloadModules(config, file, \err -> fail(toString(err)));
+	t02 = timestamp();
+	
+	tr : Tree<string, FcParsed> = foldTree(tr0, makeTree(), \fn, preloaded, acc -> {
+		switch (preloaded) {
+			FcParsed(__, __, __, __, __): setTree(acc, fn, preloaded);
+			default: fail0("FAIL!!!");
+		}
+	});
+	
+	println("Parsed " + i2s(sizeTree(tr)) + " files");
+	print_time(t01, t02);
+	
+	if (!isUrlParameterTrue("parse_only")) {
+		nnn = s2i(getUrlParameterDef("nnn", "100"));
+		verbose = isUrlParameterTrue("verb");
+
+		order = getOrder(tr, nnn);
+		
+		println("nthreads = " + i2s(nnn));
+		
+		t1 = timestamp();
+		tenvFinal = fold(order, makeTenv(config).global, \tenvAcc, files : [string] -> {
+			parsedA = filtermap(files, \fn -> lookupTree(tr, fn));
+			if (verbose) println(files);
+			desugarAndTypecheck(tenvAcc, parsedA, verbose)
+		});
+		t2 = timestamp();
+		
+		print_time(t1, t2);
+		print_time2("desugar+typecheck", ^time1);
+		print_time2("addToGlobal", ^time2);
+	}
+	
+	// dumpTenv(tenvFinal);
+	
+	println("DONE");
+}
+
+dumpTree(tag : string, t : Tree<string, ?>) -> void {
+	println(tag + " = " + i2s(sizeTree(t)));
+}
+
+dumpTenv(tenv : FcTypeEnvGlobal) {
+	dumpTree("types", tenv.types);
+	dumpTree("structs", tenv.acc.names.structs);
+	dumpTree("unions", tenv.acc.names.unions);
+	dumpTree("struct2unions", tenv.acc.names.struct2unions);
+	dumpTree("field2structs", tenv.acc.names.field2structs);
+	dumpTree("toplevel", tenv.acc.names.toplevel);
+	dumpTree("structTypars", tenv.acc.names.structTypars);
+}
+
+main() {
+	// file0 = "tools/flowc/incremental";
+	// file0 = "tools/flowc/flowc";
+	file0 = "array";
+	file = getUrlParameterDef("file", file0);
+	switch (getCompilerConfig()) {
+		Some(config): test2(config, file);
+		default: println("ERROR getting config!");
+	}
+}

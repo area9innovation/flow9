@@ -1,0 +1,1956 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+import form;
+import filters;
+import formats/xml;
+import binarytree;
+import paragraph;
+import textstyles;
+import timeline;
+import mathdrawing;
+import mathsymbolsdrawing;
+
+export {
+
+	// Parse and render write document
+	write2form : (xml : string, baseStyle : [CharacterStyle]) -> Form;
+
+	// Render write document with default style
+	write2formEx : (xml : string) -> Form;
+
+	// FillIn probes support
+	parseWrite : (xml : string, baseStyle : [CharacterStyle]) -> WriteDocument;
+	renderWriteDocument : (doc : WriteDocument) -> Form;
+	replaceWriteText(doc : WriteDocument, blanksExtractor : (string) -> [string], formCreator : (int) -> Form, answersCount : int) -> WriteDocument;
+
+	// Creates plain text.
+	// It uses the function provided to represent tags because Text("<tag>", []) does not produce visible result
+	// and, thus,  "<" + tag + ">" cannot be considered as common approach
+	write2plaintext : (xml : string, markTag : (string) -> string) -> string;
+
+
+	// Access the styles
+	getParagraphStyle(styles : WriteStyleManager, id : WriteParagraphStyleId) -> WriteParagraphStyle;
+	getCharacterStyle(styles : WriteStyleManager, id : WriteCharacterStyleId) -> WriteCharacterStyle;
+	defaultStyleManager(baseStyle : [CharacterStyle]) -> WriteStyleManager;
+
+	/*******************/
+	/* Data structures */
+
+	WriteDocument : ( stories : [WriteStory], styles : WriteStyleManager );
+
+	WriteStory : (paragraphs : [WriteParagraph]);
+
+	/* list of elements splitted by linebreaks */
+	WriteParagraph : (elements : [WriteElement], style : WriteParagraphStyleId);
+
+	WriteElement ::=
+			WriteTextFragment,
+			WriteLineBreak,
+			WriteNonBreakingSpace,
+			WriteOverlay,
+			WriteFraction,
+			WriteTable,
+
+			/* Non breakable element */
+			WriteCustom,
+
+			/* Math stuff */
+			WriteDefiniteSignedControl,
+			WriteEvaluatingIntegral,
+			WriteDottedElement,
+			WriteBrackets,
+			WriteRoot,
+			CustomSymbol,
+
+			WriteUnderscript,
+			WriteOverscript,
+			WriteSubscript,
+			WriteSupscript,
+
+			/* Chemical formulas */
+			WriteChemicalFormula,
+
+			/* other */
+			//PageRef(book : String, page : String);
+			WritePicture,
+
+			WriteStoryWithTopModificator,
+
+			WriteLongDivision,
+
+			WriteDoubleUnderlined,
+
+			WriteCursor, //blinking line
+
+			/* dummy should never be used in real documents */
+			WriteDummyElement
+		;
+
+	WriteStyleManager : (css : Tree<int, WriteCharacterStyle>, pss : Tree<int, WriteParagraphStyle>);
+	WriteCharacterStyle : ( render : (string) -> ParagraphElement, baselineShift : double, underline: bool, style : [CharacterStyle]);
+	WriteParagraphStyle : ( defCharStyle : WriteCharacterStyleId );
+	WriteCharacterStyleId : ( id : int);
+	WriteParagraphStyleId : ( id : int );
+
+	WriteTextFragment : (text : string, styleid : Maybe<WriteCharacterStyleId>); // style could be inherited form paragraph
+	WriteLineBreak : ();
+	WriteNonBreakingSpace : (style : Maybe<WriteCharacterStyleId>);
+	WriteOverlay : (stories : [WriteStory]);
+	WriteFraction : (stories : [WriteStory]);
+	WriteTable : (stories : [WriteStory], style : TableStyle, cellStyles : [TableCellStyle]);
+		TableStyle : (rows : int, cols : int, showGrid : bool);
+		// logical cell style. One story - one cell
+		TableCellStyle : (
+			rowSpan : int, colSpan : int, topBorder : double, rightBorder : double, bottomBorder : double, leftBorder : double,
+			leftPadding : double, topPadding : double, rightPadding : double, bottomPadding : double
+		);
+		// physical cell style. One story - possibly group of cells
+		CellStyle : (storyId : int, processed : bool, left : bool, top: bool, right : bool, bottom : bool);
+
+	/* Non breakable element */
+	WriteCustom : (form : Form);
+
+	/* Math stuff */
+	WriteDefiniteSignedControl : (signType : DefiniteControlSignType, stories : [WriteStory]);
+	WriteSum : (stories : [WriteStory]);
+	WriteProduct : (stories : [WriteStory]);
+	WriteEvaluatingIntegral : (stories : [WriteStory]);
+
+	WriteDottedElement : (left : int, right: int, top : int, bottom : int,
+						  leftSign : bool, rightSign : bool, stories : [WriteStory]
+	);
+
+
+	WriteStoryWithTopModificator : (stories : [WriteStory], modificator : WriteTopModificator, size : WriteTopModificatorSize);
+
+	WriteLongDivision : (stories : [WriteStory]);
+
+	WriteBrackets : (leftBracketType : WriteBracketType, rightBracketType : WriteBracketType, stories : [WriteStory]);
+
+	WriteRoot : (stories : [WriteStory]); //element: RootElement);
+
+	WriteUnderscript : (stories : [WriteStory]);
+	WriteOverscript : (stories : [WriteStory]);
+	WriteSubscript : (stories : [WriteStory]);
+	WriteSupscript : (stories : [WriteStory]);
+
+	/* Chemical formulas */
+	WriteChemicalAtom : (id : string, x : double, y : double, stories : [WriteStory]);
+		WriteChemicalAtomsArragementInfo :  (minX : double, minY : double, maxX : double, maxY : double, bottomAtomIndex : int);
+	WriteChemicalBond : (atom1 : int, atom2 : int, type : WriteChemicalBondType);
+		WriteChemicalBondType ::= 	WriteChemicalBondSingle, WriteChemicalBondDotted, WriteChemicalBondDoubleCentered, WriteChemicalBondTripleCentered,	WriteChemicalBondDoubleLeftOffset,
+									WriteChemicalBondDoubleRightOffset,	WriteChemicalBondTriangleRightOffset, WriteChemicalBondTriangleLeftOffset,	WriteChemicalBondLinedRightOffset,
+									WriteChemicalBondLinedLeftOffset, WriteChemicalBondUnknown;
+			WriteChemicalBondSingle : ();
+			WriteChemicalBondDotted : ();
+			WriteChemicalBondDoubleCentered : ();
+			WriteChemicalBondTripleCentered : ();
+			WriteChemicalBondDoubleLeftOffset : ();
+			WriteChemicalBondDoubleRightOffset : ();
+			WriteChemicalBondTriangleRightOffset : ();
+			WriteChemicalBondTriangleLeftOffset : ();
+			WriteChemicalBondLinedRightOffset : ();
+			WriteChemicalBondLinedLeftOffset : ();
+			WriteChemicalBondUnknown : ();
+	WriteChemicalFormula : (atoms : [WriteChemicalAtom], bonds : [WriteChemicalBond]);
+
+	/* other */
+	//PageRef : (book : String, page : String);
+	WritePicture : (url : string);
+
+	WriteDoubleUnderlined : (stories : [WriteStory]);
+
+	WriteCursor : (userName : string, userNameStyle : [CharacterStyle]);
+
+	/* dummy should never be used in real documents */
+	WriteDummyElement : ();
+
+	getElementText : ((string) -> string, WriteElement) -> string;
+
+	makeUnderline(text : ParagraphElement) -> ParagraphElement;
+
+	makeWriteCharacterStyle(baselineShift: double, withUnderline: bool, style :[CharacterStyle]) -> WriteCharacterStyle;
+
+}
+
+// known issues:
+// - see TODO's
+// - internal stories are rendered with "infinite" width, and it seems to be different from LS
+// - support external base font size modifier for render
+// - seems, that there is a bug with spaces between complex elements. May be Text(" ") is empty?
+
+
+/********************/
+/* Useful functions */
+
+// Assume, that this XmlNode is XmlText, otherwise print error
+XmlNodeAsText(node : XmlNode) -> string {
+	switch (node : XmlNode) {
+		XmlElement(tag, attrs, children): {
+			printCallstack();
+			println("Error: expected CTEXT");
+			""
+		}
+		XmlText(t): {
+			t
+		}
+	}
+}
+
+// Assume, that this XmlNode is XmlElement, otherwise print error
+XmlNodeAsElement(node : XmlNode, fn : (tag : string, attributes : [XmlAttribute], children : [XmlNode]) -> ?) -> ? {
+	switch (node : XmlNode) {
+		XmlElement(tag, attrs, children): {
+			fn(tag, attrs, children)
+		}
+		XmlText(t): {
+			println("Error: expected xml tag but got CTEXT ('" + t + "').");
+			fn("error", [], [])
+		}
+	}
+}
+
+// Assume, that this XmlNode is specific XmlElement, otherwise print error
+XmlNodeExpectTag(node : XmlNode, tag : string, fn : (attributes : [XmlAttribute], children : [XmlNode]) -> ?) -> ? {
+	switch (node : XmlNode) {
+		XmlElement(t, attrs, children): {
+			if (tag == t) {
+				fn(attrs, children)
+			} else {
+				println("Error: expected xml tag '" + tag + "' but got '" + t + "'.");
+				fn(attrs, children)
+			}
+		}
+		XmlText(t): {
+			println("Error: expected xml tag '" + tag + "' but got CTEXT ('" + t + "').");
+			fn([], [])
+		}
+	}
+}
+
+XmlElementNamed(node : XmlNode, name : string) -> Maybe<XmlElement> {
+	XmlNodeAsElement(node, \t0, attrs0, children0 -> {
+		find(children0, \n -> switch (n : XmlNode) {
+			XmlElement(t1, attrs1, children1): { t1 == name }
+			XmlText(t): { false }
+		}) |> (\n -> cast(n : Maybe<XmlNode> -> Maybe<XmlElement>))
+	})
+}
+
+XmlElementsNamed(node : XmlNode, name : string) -> [XmlNode] {
+	XmlNodeAsElement(node, \t0, attrs0, children0 -> {
+		filter(children0, \n -> switch (n : XmlNode) {
+			XmlElement(t1, attrs1, children1): { t1 == name }
+			XmlText(t): { false }
+		})
+	})
+}
+
+// removes top level text nodes containing strings of spaces
+XmlFilterWS(nodes : [XmlNode]) -> [XmlNode] {
+	filter(nodes, \node -> {
+		switch (node : XmlNode) {
+			XmlElement(t1, attrs1, children1): { true }
+			XmlText(t): { isNotSpace(t) }
+		}
+	})
+}
+
+// right align this form horizontally over other form
+RightH(myWidth : Behaviour<double>, otherWidth : Behaviour<double>, form) {
+	hOffset = select2(myWidth, otherWidth, \w1 : double, w2 : double -> max(w2-w1, 0.0));
+
+	Translate(hOffset, zero, form)
+}
+
+/**************/
+/* Main entry */
+
+write2formEx(xml : string) -> Form {
+	write2form(xml, NormalText)
+}
+
+write2form(xml : string, baseStyle : [CharacterStyle]) -> Form {
+	parseWrite(xml, baseStyle) |> renderWriteDocument;
+}
+
+/**************/
+/* Processing */
+
+
+emptyDocument() { WriteDocument([], WriteStyleManager(TreeEmpty(), TreeEmpty())) }
+
+
+mapWriteDocument(doc : WriteDocument, fn : (WriteElement) -> [WriteElement]) -> WriteDocument {
+	WriteDocument(map(doc.stories, \s -> mapWriteStory(s, fn)), doc.styles)
+}
+
+mapWriteStory(story : WriteStory, fn : (WriteElement) -> [WriteElement]) -> WriteStory {
+	WriteStory(map(story.paragraphs, \s -> mapWriteParagraph(s, fn)))
+}
+
+mapWriteParagraph(paragraph : WriteParagraph, fn : (WriteElement) -> [WriteElement]) -> WriteParagraph {
+	WriteParagraph(mapConcat(paragraph.elements, \e -> mapWriteElement(e, fn)), paragraph.style)
+}
+
+mapWriteElement(elem : WriteElement, fn : (WriteElement) -> [WriteElement]) -> [WriteElement] {
+	switch (elem : WriteElement) {
+		WriteTextFragment(text, mstyleid): {
+			fn(elem)
+		}
+		WriteLineBreak(): {
+			fn(elem)
+		}
+		WriteNonBreakingSpace(styleid): {
+			fn(elem)
+		}
+		WriteFraction(stories): {
+			WriteFraction(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteOverlay(stories): {
+			WriteOverlay(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteOverscript(stories): {
+			WriteOverscript(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteUnderscript(stories): {
+			WriteUnderscript(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteSubscript(stories): {
+			WriteSubscript(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteSupscript(stories): {
+			WriteSupscript(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteDefiniteSignedControl(signType, stories): {
+			WriteDefiniteSignedControl(signType, map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteEvaluatingIntegral(stories): {
+			WriteEvaluatingIntegral(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteRoot(stories): {
+			WriteRoot(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteBrackets(lb, rb, stories): {
+			WriteBrackets(lb, rb, map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteDottedElement(left, right, top, bottom, leftSign, rightSign, stories): {
+			WriteDottedElement(left, right, top, bottom, leftSign, rightSign, map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		WriteCustom(form): {
+			fn(elem)
+		}
+		WritePicture(url): {
+			fn(elem)
+		}
+		WriteDoubleUnderlined(stories): {
+			fn(elem)
+		}
+		WriteTable(stories, style, cellStyles): {
+			WriteTable(map(stories, \s -> mapWriteStory(s, fn)), style, cellStyles) |> v2a
+		}
+		WriteChemicalFormula(atoms, bonds): {
+			WriteChemicalFormula(
+				map(
+					atoms,
+					\atom -> WriteChemicalAtom(atom.id, atom.x, atom.y, map(atom.stories, \s -> mapWriteStory(s, fn)))
+				),
+				bonds
+			) |> v2a
+		}
+		WriteStoryWithTopModificator(stories, modificator, size): {
+			WriteStoryWithTopModificator(map(stories, \s -> mapWriteStory(s, fn)), modificator, size) |> v2a
+		}
+		WriteLongDivision(stories): {
+			WriteLongDivision(map(stories, \s -> mapWriteStory(s, fn))) |> v2a
+		}
+		CustomSymbol(symbol): {
+			[elem]
+		}
+		WriteCursor(name, style): {
+			[elem]
+		}
+		WriteDummyElement(): {
+			[elem]
+		}
+	}
+}
+
+// blanksExtractor returns an array of substrings where blanks are replaced with empty string.
+// See: extractBlanks
+replaceWriteText(doc : WriteDocument, blanksExtractor : (string) -> [string], formCreator : (int) -> Form, answersCount : int) -> WriteDocument {
+	blankCount = ref 0;
+	last : ref WriteElement = ref WriteDummyElement();
+	newDoc = ref mapWriteDocument(doc, \elem -> switch (elem : WriteElement) {
+		WriteTextFragment(text, mstyleid): {
+			parts = blanksExtractor(text);
+			nextI = { i = ref -1; \ -> { i := ^i + 1; ^i } };
+			map(parts, \s -> {
+				if (s == "") {
+					blankCount := ^blankCount + 1;
+					last := WriteCustom(formCreator(nextI()));
+					^last
+				} else if (s == "____") {
+					//TODO: restrict breaks between previous and following elements
+					last := WriteCustom(Empty());
+					^last
+				} else {
+					last := WriteTextFragment(s, mstyleid);
+					^last
+				}
+			})
+		}
+		default : {
+			last := elem;
+			[elem]
+		}
+	});
+	if (^blankCount < answersCount) {
+		newDoc := mapWriteDocument(doc, \elem : WriteElement ->
+			if (elem == ^last) {
+				concat([elem], map(enumFromTo(^blankCount, answersCount - 1), \i -> WriteCustom(formCreator(i))))
+			}
+			else {
+				[elem]
+			}
+		)
+	}
+	^newDoc
+}
+
+
+/***********/
+/* Parsing */
+
+makeWriteCharacterStyle(baselineShift: double, withUnderline: bool, style :[CharacterStyle]) -> WriteCharacterStyle {
+	size = sizeOfText(style);
+	WriteCharacterStyle(
+		\text -> {
+			if (baselineShift == 0.0) {
+				tf = TextFragment(text, style);
+				if (withUnderline) {
+					makeUnderline(tf)
+				} else {
+					tf
+				}
+			} else {
+				textForm = {
+					form = Text(text, style);
+					if (withUnderline) {
+						makeTextUnderline(form)
+					} else {
+						form
+					}
+				}
+				shiftBaseline(-size*baselineShift, textForm)
+			}
+		},
+		baselineShift,
+		withUnderline,
+		style
+	);
+}
+
+// example: "font-family:Franklin_Gothic_Book;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto"
+parseCharacterStyle(st : string, baseStyle : [CharacterStyle]) -> WriteCharacterStyle {
+
+	// TODO: Rewrite this to do strIndexOf(st, ":"), dispatch of what it found, and so on, instead
+	// of producing a huge amount of garbage by splitting things up by semicolons. This uses about 8% of LearnSmart time
+
+	keyvalue = map(strSplit(st, ";"), \s -> strSplit(s, ":"));
+	f = \e -> maybeMap(find(keyvalue, \a -> a[0] == e), \a -> a[1]);
+
+	baseSize = sizeOfText(baseStyle);
+	baseColor = colorOfText(baseStyle);
+	baseFamily = fontFamilyOfText(baseStyle);
+
+	sizeMultiplier = baseSize / 11.0;
+
+	fontstyle = f("font-style");
+
+	italic = eitherMap(fontstyle, eq("Italic"), false);
+
+	face = {
+		family = either(f("font-family"), "Book");
+
+		if (startsWith(baseFamily, "Proxima") && !startsWith(family, "DejaVu")) {
+			if (family == "ProximaSemiBold") { if (italic) "ProximaSemiItalic" else "ProximaSemiBold" }
+			else if (family == "ProximaExtraBold") { if (italic) "ProximaExtraItalic" else "ProximaExtraBold" }
+			else if (family == "ProximaSemiItalic") "ProximaSemiItalic"
+			else if (family == "ProximaExtraItalic") "ProximaExtraItalic"
+			else if (family == "Franklin_Gothic_Book" || family == "Franklin Gothic Book") { if (italic) "ProximaSemiItalic" else "ProximaSemiBold" }
+			else if (family == "Franklin_Gothic_Medium" || family == "Franklin Gothic Medium") { if (italic) "ProximaExtraItalic" else "ProximaExtraBold" }
+			else "ProximaSemiBold"
+		} //dirty hack for support proxima fonts, probably we need to add a hook, to support more fonts in wiki
+
+		else if (family == "Book") family
+		else if (family == "Medium") family
+		else if (family == "Italic") family
+		else if (family == "DejaVuSans") family
+		else if (family == "DejaVuSansOblique") family
+		else if (family == "DejaVuSerif") family
+
+		else if (family == "Franklin_Gothic_Book" || family == "Franklin Gothic Book") { if (italic) "Italic" else "Book" }
+		else if (family == "Franklin_Gothic_Medium" || family == "Franklin Gothic Medium") { if (italic) "MediumItalic" else "Medium" }
+
+		else if (family == "DejaVu_Sans") { if (italic) "DejaVuSansOblique" else "DejaVuSans" }
+		else if (family == "DejaVu_Serif") { if (italic) "MinionItalics" else "DejaVuSerif" }
+		else if (family == "DejaVu Sans") { if (italic) "DejaVuSansOblique" else "DejaVuSans" }
+		else if (family == "DejaVu Serif") { if (italic) "MinionItalics" else "DejaVuSerif" }
+
+		else if (family == "Times New Roman") { if (italic) "Italic" else "Book" }
+		else if (family == "Times_New_Roman") { if (italic) "Italic" else "Book" }
+
+		else "Book"
+	}
+
+	sizePx = eitherMap(f("font-size"), s2d, 11.0);
+	size = sizePx * sizeMultiplier; ///72.0 * 96.0;
+
+	withUnderline = eitherMap(f("underline"), s2b, false);
+
+	baselineShift = eitherMap(f("baseline-alignment"), s2d, 0.0);
+
+	parseColor = \s -> if (s =="Auto") baseColor else parseHex(substring(s, 1, strlen(s)-1));
+	color = eitherMap(f("color"), parseColor, baseColor);
+
+	style = [FontFamily(face), FontSize(size), Fill(color)];
+	makeWriteCharacterStyle(baselineShift, withUnderline, style );
+}
+
+
+// example: "self:Default;def-char-style:0;first-line-indent:0;left-indent:0;alignment:Left;next:"
+parseParagraphStyle(st : string) -> WriteParagraphStyle {
+	keyvalue = map(strSplit(st, ";"), \s -> strSplit(s, ":"));
+	f = \e -> maybeMap(find(keyvalue, \a -> a[0] == e), \a -> a[1]);
+
+	defCharStyle = WriteCharacterStyleId(eitherMap(f("def-char-style"), s2i, 0));
+
+	WriteParagraphStyle(defCharStyle)
+}
+
+//TODO: add default color
+parseStyleManager(styles : XmlNode, baseStyle : [CharacterStyle]) -> WriteStyleManager {
+	css : ref Tree<int, WriteCharacterStyle> = ref makeTree();
+	pss : ref Tree<int, WriteParagraphStyle> = ref makeTree();
+
+	XmlNodeExpectTag(styles, "styles", \sattrs, schildren -> {
+		iter(schildren, \node -> switch (node : XmlNode) {
+			XmlElement(tag, attrs, children): {
+				if (tag == "cs") {
+					id = getXmlAttribute(attrs, "id", "") |> s2i;
+					cs = parseCharacterStyle(getXmlAttribute(attrs, "p", ""), baseStyle);
+					css := setTree(^css, id, cs);
+				} else if (tag == "ps") {
+					id = getXmlAttribute(attrs, "id", "") |> s2i;
+					ps = parseParagraphStyle(getXmlAttribute(attrs, "p", ""));
+					pss := setTree(^pss, id, ps);
+				} else {
+					println("Error: expected xml tag 'cs' or 'ps' but got '" + tag + "'.");
+				}
+			}
+			XmlText(t): {
+				if (isNotSpace(t)) println("Error: expected xml tag but got CTEXT ('" + t + "').");
+				//else ignore CTEXT
+				{}
+			}
+		})
+	});
+
+	WriteStyleManager(^css, ^pss)
+}
+
+getCharacterStyle(styles : WriteStyleManager, id : WriteCharacterStyleId) -> WriteCharacterStyle {
+	switch (lookupTree(styles.css, id.id) : Maybe) {
+		None(): {
+			println("WriteCharacterStyleId " + i2s(id.id) + " not found!");
+			WriteCharacterStyle(\x -> Empty(), 0.0, false, [FontSize(0.0)]);
+		}
+		Some(v): v;
+	}
+}
+
+getParagraphStyle(styles : WriteStyleManager, id : WriteParagraphStyleId) -> WriteParagraphStyle {
+	switch (lookupTree(styles.pss, id.id) : Maybe) {
+		None(): {
+			println("WriteParagraphStyleId " + i2s(id.id) + " not found!");
+			WriteParagraphStyle(WriteCharacterStyleId(0));
+		}
+		Some(v): v;
+	}
+}
+
+// TODO: cache computed value
+defaultStyleManager(baseStyle : [CharacterStyle]) -> WriteStyleManager {
+	   xml = "<styles>
+				<cs id=\"0\" p=\"font-family:Franklin_Gothic_Book;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"1\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:0.6;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"2\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:-0.7;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"3\" p=\"font-family:Franklin_Gothic_Medium;font-size:11;baseline-alignment:0;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"4\" p=\"font-family:Franklin_Gothic_Medium;font-size:6.6;baseline-alignment:0.6;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"5\" p=\"font-family:Franklin_Gothic_Medium;font-size:6.6;baseline-alignment:-0.7;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"6\" p=\"font-family:DejaVu_Sans;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"7\" p=\"font-family:DejaVu_Sans;font-size:6.6;baseline-alignment:0.6;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"8\" p=\"font-family:DejaVu_Sans;font-size:6.6;baseline-alignment:-0.7;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"9\" p=\"font-family:Franklin_Gothic_Book;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"10\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:0.6;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"11\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:-0.7;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"12\" p=\"font-family:Franklin_Gothic_Book;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"13\" p=\"font-family:DejaVu_Sans;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"14\" p=\"font-family:DejaVu_Sans;font-size:6.6;baseline-alignment:0.6;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"15\" p=\"font-family:DejaVu_Sans;font-size:6.6;baseline-alignment:-0.7;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"16\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:0.6;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"17\" p=\"font-family:Franklin_Gothic_Book;font-size:6.6;baseline-alignment:-0.7;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"18\" p=\"font-family:DejaVu_Serif;font-size:11;baseline-alignment:0;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+
+				<cs id=\"19\" p=\"font-family:Franklin_Gothic_Book;font-size:8;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"20\" p=\"font-family:Franklin_Gothic_Book;font-size:5;baseline-alignment:0.6;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"21\" p=\"font-family:Franklin_Gothic_Book;font-size:5;baseline-alignment:-0.7;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"22\" p=\"font-family:Franklin_Gothic_Book;font-size:8;baseline-alignment:0;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"23\" p=\"font-family:Franklin_Gothic_Book;font-size:5;baseline-alignment:0.6;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"24\" p=\"font-family:Franklin_Gothic_Book;font-size:5;baseline-alignment:-0.7;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"25\" p=\"font-family:Franklin_Gothic_Medium;font-size:8;baseline-alignment:0;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"26\" p=\"font-family:Franklin_Gothic_Medium;font-size:5;baseline-alignment:0.6;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"27\" p=\"font-family:Franklin_Gothic_Medium;font-size:5;baseline-alignment:-0.7;font-weight:Bold;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"28\" p=\"font-family:DejaVu_Sans;font-size:8;baseline-alignment:0;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"29\" p=\"font-family:DejaVu_Sans;font-size:5;baseline-alignment:0.6;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"30\" p=\"font-family:DejaVu_Sans;font-size:5;baseline-alignment:-0.7;font-weight:Normal;font-style:Normal;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"31\" p=\"font-family:DejaVu_Sans;font-size:8;baseline-alignment:0;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"32\" p=\"font-family:DejaVu_Sans;font-size:5;baseline-alignment:0.6;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+				<cs id=\"33\" p=\"font-family:DejaVu_Sans;font-size:5;baseline-alignment:-0.7;font-weight:Normal;font-style:Italic;underline:False;color:Auto;self:Default;background-color:Auto\" />
+
+				<ps id=\"0\" p=\"self:Default;def-char-style:0;first-line-indent:0;left-indent:0;alignment:Left;next:\" />
+				<ps id=\"1\" p=\"self:Default;def-char-style:1;first-line-indent:0;left-indent:0;alignment:Right;next:\" />
+				<ps id=\"2\" p=\"self:Default;def-char-style:2;first-line-indent:0;left-indent:0;alignment:Right;next:\" />
+				<ps id=\"3\" p=\"self:Default;def-char-style:12;first-line-indent:0;left-indent:0;alignment:Left;next:\" />
+				<ps id=\"4\" p=\"self:Default;def-char-style:0;first-line-indent:0;left-indent:0;alignment:Center;next:\" />
+				<ps id=\"5\" p=\"self:Default;def-char-style:19;first-line-indent:0;left-indent:0;alignment:Left;next:\" />
+				<ps id=\"6\" p=\"self:Default;def-char-style:0;first-line-indent:0;left-indent:0;alignment:Right;next:\" />
+				<ps id=\"7\" p=\"self:Default;def-char-style:1;first-line-indent:0;left-indent:0;alignment:Center;next:\" />
+				<ps id=\"8\" p=\"self:Default;def-char-style:1;first-line-indent:0;left-indent:0;alignment:Left;next:\" />
+				<ps id=\"9\" p=\"self:Default;def-char-style:2;first-line-indent:0;left-indent:0;alignment:Center;next:\" />
+				<ps id=\"10\" p=\"self:Default;def-char-style:2;first-line-indent:0;left-indent:0;alignment:Left;next:\" />
+				<ps id=\"11\" p=\"self:Default;def-char-style:12;first-line-indent:0;left-indent:0;alignment:Center;next:\" />
+				<ps id=\"12\" p=\"self:Default;def-char-style:12;first-line-indent:0;left-indent:0;alignment:Right;next:\" />
+				<ps id=\"13\" p=\"self:Default;def-char-style:19;first-line-indent:0;left-indent:0;alignment:Center;next:\" />
+				<ps id=\"14\" p=\"self:Default;def-char-style:19;first-line-indent:0;left-indent:0;alignment:Right;next:\" />
+			  </styles>";
+
+	parseStyleManager(parseXml2(xml), baseStyle)
+}
+
+checkVersion(attributes : [XmlAttribute]) -> void {
+	if (getXmlAttribute(attributes, "v", "") != "1") {
+		println("Error: unsupported story version, expected 'v=\"1\"' in " + toString(attributes));
+	}
+}
+
+parseWriteEx(xml : string) -> WriteDocument {
+	parseWrite(xml, [])
+}
+
+parseWrite(xml : string, baseStyle : [CharacterStyle]) -> WriteDocument {
+//println("parse " + substring(xml,0,50) + "...");
+	node = parseXml2WithStrategy(xml, [XmlParseLeadingSpaces(true, true)]);
+
+	doc = switch (node : XmlNode) {
+		XmlElement(tag, attrs, children):
+			if (tag == "doc") {
+				checkVersion(attrs);
+				stories = XmlElementsNamed(node, "s");
+				mstyles = XmlElementNamed(node, "styles");
+				//if (isNone(mstyles)) println("Error: can't find 'styles' tag, falling back to default styles (most likely it is wrong!)");
+
+				WriteDocument(
+					map(stories, parseStory),
+					eitherMap(mstyles, \s -> parseStyleManager(s, baseStyle), defaultStyleManager(baseStyle))
+				)
+			} else if (tag == "s") {
+				checkVersion(attrs);
+				WriteDocument([parseStory(node)], defaultStyleManager(baseStyle))
+			}
+			else { emptyDocument() };
+		XmlText(t): emptyDocument();
+	}
+	doc
+}
+
+parseStory(node : XmlNode) -> WriteStory {
+	XmlNodeExpectTag(node, "s", \attrs, children -> WriteStory(map(children |> XmlFilterWS, parseParagraph)))
+}
+
+writeEmptyParaElements = [WriteLineBreak()];
+
+isEmptyWritePara(p : WriteParagraph) {
+	p.elements == [] || p.elements == writeEmptyParaElements
+}
+
+isEmptyWriteStory(s : WriteStory) {
+	all(map(s.paragraphs, isEmptyWritePara))
+}
+
+parseParagraph(node : XmlNode) -> WriteParagraph {
+	XmlNodeExpectTag(node, "p", \attrs, children -> {
+		//35959 - <p /> does not generate empty line in Flow
+		emptyParaFix = \elements -> {
+			emptyLine = [WriteLineBreak()];
+			if (length(elements) == 0) {
+				writeEmptyParaElements
+			} else if (length(elements) == 1) {
+				switch (elements[0] : WriteElement) {
+					WriteTextFragment(text, styleid): {
+						if (isNotSpace(text)) {
+							elements
+						} else {
+							writeEmptyParaElements
+						}
+					}
+					default : elements;
+				}
+			} else {
+				elements
+			}
+		}
+		elements = map(children |> XmlFilterWS, parseElement) |> emptyParaFix;
+		styleid = getXmlAttribute(attrs, "s", "0") |> s2i;
+
+		WriteParagraph(elements, WriteParagraphStyleId(styleid))
+	})
+}
+
+/*attributes contains something like "rows:1,cols:1,show-grid:1"*/
+parseTableStyle(styleString : string) -> TableStyle {
+	propertyStrings = strSplit(styleString, ";");
+	properties = map(
+		propertyStrings,
+		\ps -> {
+			separatorPosition = strIndexOf(ps, ":");
+			if (separatorPosition == -1) {
+				Pair(ps, "");
+			} else {
+				Pair(strLeft(ps, separatorPosition), substring(ps, separatorPosition + 1, strlen(ps) - separatorPosition - 1));
+			}
+		}
+	);
+
+	rows = eitherMap(find(properties, \p -> p.first == "rows"), \p -> s2i(p.second), 0);
+	cols = eitherMap(find(properties, \p -> p.first == "cols"), \p -> s2i(p.second), 0);
+	showGrid = eitherMap(find(properties, \p -> p.first == "show-grid"), \p -> s2b(p.second), false);
+
+	TableStyle(rows, cols, showGrid);
+}
+
+parseTableCellStyle(styleString : string) -> TableCellStyle {
+
+
+	vals = map(strSplit(styleString + ",,,,,,,,,,", ","), \s -> if (s == "") "1" else s);
+
+
+	rowSpan = s2i(vals[0]);
+	colSpan = s2i(vals[1]);
+	topBorder = s2d(vals[2]);
+	rightBorder = s2d(vals[3]);
+	bottomBorder = s2d(vals[4]);
+	leftBorder = s2d(vals[5]);
+
+	topPadding = s2d(vals[6]);
+	rightPadding = s2d(vals[7]);
+	bottomPadding = s2d(vals[8]);
+	leftPadding = s2d(vals[9]);
+
+
+	TableCellStyle (
+			rowSpan, colSpan, topBorder, rightBorder, bottomBorder, leftBorder,
+			leftPadding, topPadding, rightPadding, bottomPadding
+	)
+}
+
+parseBondOrder(order : string) -> WriteChemicalBondType {
+	if (order == "S") {
+		WriteChemicalBondSingle()
+	} else if (order == "DOT") {
+		WriteChemicalBondDotted()
+	} else if (order == "DC") {
+		WriteChemicalBondDoubleCentered()
+	} else if (order == "TC") {
+		WriteChemicalBondTripleCentered()
+	} else if (order == "DLO") {
+		WriteChemicalBondDoubleLeftOffset()
+	} else if (order == "DRO") {
+		WriteChemicalBondDoubleRightOffset()
+	} else if (order == "TRO") {
+		WriteChemicalBondTriangleRightOffset()
+	} else if (order == "TLO") {
+		WriteChemicalBondTriangleLeftOffset()
+	} else if (order == "LRO") {
+		WriteChemicalBondLinedRightOffset()
+	} else if (order == "LLO") {
+		WriteChemicalBondLinedLeftOffset()
+	} else {
+		println("Unknown bond order:\"" + order + "\"");
+		WriteChemicalBondUnknown()
+	}
+}
+
+parseModificator(modificator : string) -> Pair<WriteTopModificator, WriteTopModificatorSize> {
+	if (modificator == "hat") {
+		Pair(WriteModificatorHat(), WriteModificatorStretch())
+	} else if (modificator == "hatf" || modificator == "hatFixed") {
+		Pair(WriteModificatorHat(), WriteModificatorFixed())
+	} else if (modificator == "bar") {
+		Pair(WriteModificatorBar(), WriteModificatorStretch())
+	} else if (modificator == "barf" || modificator == "barFixed") {
+		Pair(WriteModificatorBar(), WriteModificatorFixed())
+	} else if (modificator == "dbar" || modificator == "doubleBar") {
+		Pair(WriteModificatorDoubleBar(), WriteModificatorStretch())
+	} else if (modificator == "vec") {
+		Pair(WriteModificatorArrow(), WriteModificatorStretch())
+	} else if (modificator == "vecf" || modificator == "vecFixed") {
+		Pair(WriteModificatorArrow(), WriteModificatorFixed())
+	} else if (modificator == "none") {
+		Pair(WriteModificatorNone(), WriteModificatorFixed())
+	} else {
+		println("Unknown top modificator:\"" + modificator + "\"");
+		Pair(WriteModificatorNone(), WriteModificatorFixed())
+	}
+}
+
+
+parseElement(node : XmlNode) -> WriteElement {
+	switch (node : XmlNode) {
+		XmlElement(tag, attrs, children): {
+			// I wish there is switch(string) ...
+			if (tag == "t") {
+				text = if (children != []) XmlNodeAsText(children[0]) else "";
+				styleid = maybeMap(getXmlAttributeM(attrs, "s"), \s -> WriteCharacterStyleId(s2i(s)));
+				WriteTextFragment(text, styleid)
+			} else if (tag == "lineBreak") {
+				WriteLineBreak()
+			} else if (tag == "nbsp") {
+				styleid = maybeMap(getXmlAttributeM(attrs, "s"), \s -> WriteCharacterStyleId(s2i(s)));
+				WriteNonBreakingSpace(styleid)
+			} else if (tag == "fr") {
+				WriteFraction(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "integral") {
+				WriteDefiniteSignedControl(IntegralSign(), map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "integral2" || tag == "definitecontrol2") {
+				signText = either(getXmlAttributeM(attrs, "sign"), "");
+				pairs:[Pair<string, OneCharSignType>] = [
+					Pair("Ordinal", OrdinalInt()),
+					Pair("Double", DoubleInt()),
+					Pair("Triple", TripleInt()),
+					Pair("Contour", ContourInt()),
+					Pair("Surface", SurfaceInt()),
+					Pair("Volume", VolumeInt()),
+					Pair("Union", UnionSign()),
+					Pair("Intersection", IntersectionSign())
+				];
+				eitherFn(find(pairs, \p -> p.first == signText), \p -> {
+					signType = p.second;
+					WriteDefiniteSignedControl(OneCharSign(signType), map(children |> XmlFilterWS, parseStory))
+				},
+				\ -> {
+					println("Error: unknown sign type in integral2: \"" + signText + "\"");
+					//WriteDummyElement()
+					WriteCustom(Text(tag, [Fill(red)]))
+				});
+			} else if (tag == "msum") {
+				WriteDefiniteSignedControl(SigmaSign(), map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "mproduct") {
+				WriteDefiniteSignedControl(ProductSign(), map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "evalint") {
+				WriteEvaluatingIntegral(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "root") {
+				WriteRoot(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "brackets" || tag == "brakets") {
+				getBracketType2 = \bracket -> {
+					if (bracket == "AbsSign") {
+						WriteAbsSign()
+					} else if (bracket == "LeftBrace") {
+						WriteLeftBrace()
+					} else if (bracket == "RightBrace") {
+						WriteRightBrace()
+					} else if (bracket == "LeftBracket") {
+						WriteLeftBracket()
+					} else if (bracket == "RightBracket") {
+						WriteRightBracket()
+					} else if (bracket == "LeftSquareBracket") {
+						WriteLeftSquareBracket()
+					} else if (bracket == "RightSquareBracket") {
+						WriteRightSquareBracket()
+					} else if (bracket == "LeftFloorBracket") {
+						WriteLeftFloorBracket()
+					} else if (bracket == "RightFloorBracket") {
+						WriteRightFloorBracket()
+					} else if (bracket == "LeftCeilBracket") {
+						WriteLeftCeilBracket()
+					} else if (bracket == "RightCeilBracket") {
+						WriteRightCeilBracket()
+					}else {
+						WriteNoBracket()
+					}
+				}
+
+				lb = getBracketType2(eitherMap(find(attrs, \a -> a.key == "left"), \a -> a.value, ""));
+				rb = getBracketType2(eitherMap(find(attrs, \a -> a.key == "right"), \a -> a.value, ""));
+				WriteBrackets(lb, rb, map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "ovr") {
+				WriteOverlay(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "mover") {
+				WriteOverscript(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "munder") {
+				WriteUnderscript(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "msub") {
+				WriteSubscript(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "msup") {
+				WriteSupscript(map(children |> XmlFilterWS, parseStory))
+			} else if (tag == "dottedElement") {
+				left = eitherMap(find(attrs, \a -> a.key == "left"), \a -> s2i(a.value), 0);
+				right = eitherMap(find(attrs, \a -> a.key == "right"), \a -> s2i(a.value), 0);
+				top = eitherMap(find(attrs, \a -> a.key == "top"), \a -> s2i(a.value), 0);
+				bottom = eitherMap(find(attrs, \a -> a.key == "bottom"), \a -> s2i(a.value), 0);
+
+				leftSign = eitherMap(find(attrs, \a -> a.key == "leftsign"), \a -> s2b(a.value), false);
+				rightSign = eitherMap(find(attrs, \a -> a.key == "rightsign"), \a -> s2b(a.value), false);
+
+
+				WriteDottedElement(left, right, top, bottom, leftSign, rightSign, map(children |> XmlFilterWS, parseStory));
+			} else if (tag == "symbolModified") {
+				modificatorSource = eitherMap(find(attrs, \a -> a.key == "modificator"), \a -> a.value, "");
+				modificatorPair = parseModificator(modificatorSource);
+				WriteStoryWithTopModificator(
+					map(children |> XmlFilterWS, parseStory),
+					modificatorPair.first,
+					modificatorPair.second
+				);
+			} else if (tag == "esymbol") {
+				symbolText = eitherMap(find(attrs, \a -> a.key == "symbol"), \a -> a.value, "");
+				pairs:[Pair<string, CustomSymbolType>] = [
+					Pair("inductor", CustomSymbolInductor()),
+					Pair("capacitor", CustomSymbolCapacitor()),
+					Pair("diode", CustomSymbolDiode()),
+					Pair("resistor", CustomSymbolResistor()),
+					Pair("acsupply", CustomSymbolAcSupply()),
+					Pair("dcsupply", CustomSymbolDcSupply())
+				];
+
+				eitherFn(find(pairs, \p -> p.first == symbolText), \p -> {
+					symbol = p.second;
+					CustomSymbol(symbol)
+				},
+				\ -> {
+					println("Error: unknown symbol type in  esymbol: \"" + symbolText + "\"");
+					//WriteDummyElement()
+					WriteCustom(Text(tag, [Fill(red)]))
+				});
+			} else if (tag == "longdivision") {
+				WriteLongDivision(map(children |> XmlFilterWS, parseStory));
+			} else if (tag == "picture") {
+				url = eitherMap(find(attrs, \a -> a.key == "uri"), \a -> a.value, "");
+				WritePicture(url);
+			} else if (tag == "tbl") {
+
+				tableStyle = parseTableStyle(eitherMap(find(attrs, \a -> a.key == "p"), \a -> a.value, ""));
+				childrenWithoutWS = children |> XmlFilterWS;
+
+				cellStyles = fold(childrenWithoutWS, [], \acc, node_ -> {
+					switch(node_ : XmlNode) {
+						XmlElement(tag_, attrs_, children_): {
+							currentCellStyle = parseTableCellStyle(eitherMap(find(attrs_, \a -> a.key == "tbl"), \a -> a.value, ""));
+							concat(acc, [currentCellStyle])
+						}
+						default : acc
+					}
+				});
+
+				if (tableStyle.rows == 1 && tableStyle.cols == 1 && length(cellStyles) > 0) {
+					cellstyle = cellStyles[0];
+					if (cellstyle.topBorder == 0.0 && cellstyle.leftBorder == 0.0 && cellstyle.rightBorder == 0.0 &&
+						cellstyle.bottomBorder == 2.0 && cellstyle.bottomPadding == -1.0) {
+							WriteDoubleUnderlined(map(childrenWithoutWS, parseStory));
+					} else {
+							WriteTable(map(childrenWithoutWS, parseStory), tableStyle, cellStyles)
+					}
+				} else {
+					WriteTable(map(childrenWithoutWS, parseStory), tableStyle, cellStyles)
+				}
+
+			} else if (tag == "chemicalFormula") {
+				getSubnodes = \tagToFind -> find(
+					children,
+					\child -> {
+						switch(child : XmlNode) {
+							XmlElement(tag_, attrs_, children_): tag_ == tagToFind;
+							default : false;
+						}
+					}
+				);
+				parseAtom = \atom -> XmlNodeExpectTag(atom, "atom", \attrs_, children_ -> {
+					id_ : Maybe<XmlAttribute> = find(attrs_, \a -> a.key == "id");
+					x_ : Maybe<XmlAttribute> = find(attrs_, \a -> a.key == "x");
+					y_ : Maybe<XmlAttribute> = find(attrs_, \a -> a.key == "y");
+					if (!any(map([id_, x_, y_], isNone))) {
+						// All attributes are found. Some branch must be taken
+						x = eitherMap(x_, \a -> s2d(a.value), 0.0);
+						y = eitherMap(y_, \a -> s2d(a.value), 0.0);
+						id = eitherMap(id_, \a -> a.value, "");
+						[WriteChemicalAtom(id, x, y, filter(map(children_ |> XmlFilterWS, parseStory), \s -> !isEmptyWriteStory(s)))] //#37004 - Atom without char mark is given as <p/>. <p/> has been recently changed to produce empty line in Flow.
+					} else {
+						println("Error: Not all necessary attributes are specified for atom. Atom will be ignored.");
+						[]
+					}
+				});
+				getBondParser = \atoms : [WriteChemicalAtom] -> \bond -> XmlNodeExpectTag(bond, "bond", \attrs_, children_ -> {
+					ids = eitherMap(find(attrs_, \a -> a.key == "atomRefs2"), \a -> a.value, "") |> \s -> strSplit(s, " ");
+					if (length(ids) != 2) {
+						println("Error: atom ids are specified incorrectly or not specified for bond");
+					}
+
+					bondType = eitherMap(find(attrs_, \a -> a.key == "order"), \a -> a.value, "") |> parseBondOrder;
+
+					id2offset = \id -> findi(atoms, \atom -> atom.id == id);
+
+					wrongOffset = -1;
+
+					offset1 = either(ids[0] |> id2offset, wrongOffset);
+					offset2 = either(ids[1] |> id2offset, wrongOffset);
+
+
+					if (offset1 != offset2 && offset1 != wrongOffset &&	offset2 != wrongOffset && bondType != WriteChemicalBondUnknown()) {
+						[WriteChemicalBond(offset1, offset2, bondType)]
+					} else {
+						println("Error: Not all necessary attributes are specified for bond. Bond will be ignored.");
+						[]
+					}
+				});
+
+				atomsSrc = getSubnodes("atomArray");
+				bondsSrc = getSubnodes("bondArray");
+				eitherMap(
+					atomsSrc,
+					\atomsXmlElement -> {
+						atoms = mapConcat((cast(atomsXmlElement : XmlNode -> XmlElement)).children |> XmlFilterWS, parseAtom);
+						// bonds are impossible when atoms count is less than 2
+						bonds = if (length(atoms) > 1) {
+							eitherMap(
+								bondsSrc,
+								\bondsXmlElement -> {
+									parseBond = getBondParser(atoms);
+									mapConcat((cast(bondsXmlElement : XmlNode -> XmlElement)).children |> XmlFilterWS, parseBond);
+								},
+								[]
+							)
+						} else {
+							[]
+						}
+						WriteChemicalFormula(atoms, bonds);
+					},
+					WriteChemicalFormula([], [])
+				)
+			} else {
+				println("Error: unknown write element tag \"" + tag + "\"");
+				//WriteDummyElement()
+				WriteCustom(Text(tag, [Fill(red)]))
+			}
+		}
+		XmlText(t): {
+			println("Error: expected write element tag, not text \"" + t + "\"");
+			//WriteDummyElement()
+			WriteCustom(Text(t, [Fill(red)]))
+		};
+	}
+}
+
+/*************/
+/* Rendering */
+
+renderWriteDocument(doc : WriteDocument) -> Form {
+//println("render " + substring(toString(doc),0,100) + "...");
+	stories = map(doc.stories, \s -> renderWriteStory(s, doc.styles));
+	WideLines(stories)
+}
+
+renderWriteStory(story : WriteStory, styles : WriteStyleManager) -> Form {
+	paragraphs = map(story.paragraphs, \s -> renderWriteParagraph(s, styles));
+	WideLines(paragraphs)
+}
+
+// renders story with infinite width - applicable for some embedded stories
+renderWriteStoryI(story : WriteStory, styles : WriteStyleManager) -> Form {
+	renderWriteStory(story, styles)	|>  InfiniteWidth
+}
+
+renderWriteStoryGetTopLineBaseline(story : WriteStory, styles : WriteStyleManager) -> Pair<Form, Behaviour<double>> {
+	paragraphs = map(story.paragraphs, \s -> renderWriteParagraphGetTopLineBaseline(s, styles));
+	if (length(paragraphs) == 1) {
+		paragraphs[0]
+	} else {
+		paragraphsForms = map(paragraphs, \p -> p.first);
+		Pair(WideLines(paragraphsForms), (paragraphs[0]).second)
+	}
+}
+
+// renders story with infinite width - applicable for some embedded stories
+renderWriteStoryGetTopLineBaselineI(story : WriteStory, styles : WriteStyleManager) -> Pair<Form, Behaviour<double>> {
+	renderWriteStoryGetTopLineBaseline(story, styles) |> \p -> Pair(p.first |> InfiniteWidth, p.second)
+}
+
+renderWriteParagraph(paragraph : WriteParagraph, styles : WriteStyleManager) -> Form {
+	parastyle = getParagraphStyle(styles, paragraph.style);
+
+	def = parastyle.defCharStyle;
+	elems = map(paragraph.elements, \e -> renderWriteElement(e, styles, def));
+	Paragraph(concatA(elems), [InterlineSpacing(3.0), TightWidth()])
+}
+
+
+/* Calculates TopLineBaseline as sum of lines height - last line height + last line baseline */
+renderWriteParagraphGetTopLineBaseline(paragraph : WriteParagraph, styles : WriteStyleManager) -> Pair<Form, Behaviour<double>> {
+
+	paraWithMetrics = getDynamicFormSize(renderWriteParagraph(paragraph, styles));
+	Pair(paraWithMetrics.first, select(paraWithMetrics.second, \m -> m.baseline));
+}
+
+
+renderDefiniteControlElement(signType, signColor, styles, stories) {
+	children = map(stories, \s -> renderWriteStoryI(s, styles));
+	showTo = length(children) > 2;
+	to = if (showTo) children[0] else Empty();
+	from = if (showTo) children[1] else children[0];
+	body = if (showTo) children[2] else children[1];
+
+
+	definiteControl2formWithColor(signType, to, from, body, signColor)
+}
+
+// Workaround for current Paragraph implementation (October 16, 2013).
+// The next one should break lines only on spaces.
+previousElemIsNonSpaceEndedText = ref false;
+
+renderWriteElement(elem : WriteElement, styles : WriteStyleManager, defaultStyleId : WriteCharacterStyleId) -> [ParagraphElement] {
+	immediatellyAfterNonSpaceChar = ^previousElemIsNonSpaceEndedText;
+	previousElemIsNonSpaceEndedText := false;
+	switch (elem : WriteElement) {
+		WriteTextFragment(text, mstyleid): {
+			if (text == "") [] else {
+				style = getCharacterStyle(styles, either(mstyleid, defaultStyleId));
+				firstChar = getCharAt(text, 0);
+				previousElemIsNonSpaceEndedText := isNotSpace(getCharAt(text, strlen(text) - 1));
+				res = style.render(text);
+				// Workaround for current Paragraph implementation (October 16, 2013).
+				// The next one should break lines only on spaces.
+				if (immediatellyAfterNonSpaceChar && isNotSpace(firstChar)) {
+					[GlueFragments(), res]
+				} else {
+					[res]
+				}
+			}
+		}
+		WriteLineBreak(): {
+			TextFragment(" &nbsp;\n ", NormalText) |> v2a
+		}
+		WriteNonBreakingSpace(styleid): {
+			[GlueFragments(), TextFragment(" ", NormalText), GlueFragments()]
+		}
+		WriteFraction(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			num = children[0];
+			denum = children[1];
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			fraction2formWithColor(Border(0.0, 0.0, 0.0, 1.0, num), denum, color) |> v2a
+		}
+		WriteDefiniteSignedControl(signType, stories): {
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			renderDefiniteControlElement(signType, color, styles, stories) |> v2a;
+		}
+		CustomSymbol(symbol): {
+			fs = getCharacterStyle(styles, defaultStyleId).style;
+			color =  fs |> colorOfText;
+			size = fs |> sizeOfText;
+
+			drawCustomSymbolWithColor(CustomSymbol(symbol), size, color) |> v2a
+		}
+		WriteEvaluatingIntegral(stories): {
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			body = children[0];
+			to = children[1];
+			from = children[2];
+			evaluatingIntegral2formWithColor(body, to, from, color) |> v2a
+		}
+		WriteRoot(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			degree = MinWidth(const(10.0), children[0]); // root renderer has been divoided of minimal width check for some reason
+			body = children[1];
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+            root2formWithColor(degree, body, color) |> v2a
+		}
+		WriteBrackets(lb, rb, stories): {
+			children = map(stories, \s -> renderWriteStoryGetTopLineBaselineI(s, styles));
+			body = (children[0]).first;
+			topLineBaseline = (children[0]).second;
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			unpair(getDynamicFormSize(body), \bodyM : Form, bmB : Behaviour<FormMetrics> -> {
+				fixBaselineB(
+					select2(bmB, topLineBaseline, \bm, bl -> (bm.baseline + bl) * 0.5),
+					Select(bmB, \bm -> Border(1.0, 0.0, 1.0, 0.0, Cols([createBracketWithColor(lb, bm.height, color), bodyM, createBracketWithColor(rb, bm.height, color)])))
+				)
+			}) |> v2a
+
+		}
+		WriteDottedElement(left, right, top, bottom, leftSign, rightSign, stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			body = children[0];
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			dotted2formWithColor(body, left, top, right, bottom, leftSign, rightSign, color) |> v2a
+		}
+		WriteLongDivision(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			body = children[0];
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+            longDivision2formWithColor(body, color) |> v2a
+		}
+		WriteStoryWithTopModificator(stories, modificator, size): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			body = children[0];
+
+			style = getCharacterStyle(styles, defaultStyleId);
+			fontSize = sizeOfText(style.style);
+			color = colorOfText(style.style);
+			topModificator2formWithColor(body, modificator, size, WriteTopModificatorCorrections(0.0, 0.0, 0.0), color) |> v2a;
+
+
+		}
+		WriteOverlay(stories): {
+			// Implemented to give correct results for sources from 27631
+			// Several combination of baseline and height (b > h, b < 0) are
+			// not considered but they should not be here as WriteOverlay is generated
+			// for both sub- and supscripted elelemnt:
+			// <text><overlay(supscript, subscript)>
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+
+			upper = children[0];
+			lower = children[1];
+
+			unpair(getDynamicFormSize(lower), \lowerM : Form, lmB : Behaviour<FormMetrics> -> {
+				unpair(getDynamicFormSize(upper), \upperM : Form, umB : Behaviour<FormMetrics> -> {
+					newBaseline = select(umB, \um -> max(um.baseline, um.height));
+					newTop = Size2(
+						select(umB, \um -> WidthHeight(um.width, max(um.baseline, um.height))),
+						upperM
+					);
+					newBottom = Size2(
+						select(lmB, \lm -> WidthHeight(lm.width, lm.height - lm.baseline)),
+						Translate(
+							zero,
+							select(lmB, \lm -> -lm.baseline),
+							lowerM
+						)
+					);
+					Baseline(newBaseline, Lines([newTop, newBottom]))
+				})
+			}) |> v2a
+
+		}
+		WriteOverscript(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			maintext = children[0];
+			overscript = children[1];
+
+			overscript2form(maintext, overscript) |> v2a
+		}
+		WriteUnderscript(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			maintext = children[0];
+			underscript = children[1];
+
+			underscript2form(maintext, underscript) |> v2a;
+		}
+		WriteSubscript(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			maintext = children[0];
+			subscript = children[1];
+
+			subscript2form(maintext, subscript) |> v2a;
+		}
+		WriteSupscript(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			maintext = children[0];
+			supscript = children[1];
+
+			superscript2formWrap3(maintext, supscript, DummyMathFormWrappers(), false) |> v2a
+		}
+		WritePicture(url): {
+			Picture(url, []) |> v2a
+		}
+		WriteTable(stories, tableStyle, cellStyles): {
+			spacing = 2.0;
+
+
+			triggerUpdate = make(false);
+
+
+			addBorderSpaceUnconditional = \form -> {
+					Border(spacing, spacing, spacing, spacing, form);
+			}
+
+
+			addBorderSpaceSmart = \emptyB, cellReady -> \form_ -> {
+				whB : DynamicBehaviour<WidthHeight> = makeWH();
+				form = form_ |> MaxSize;
+				updatedStatus = ref false;
+				Constructor(
+					Select(whB, \wh -> {
+						w = wh.width;
+						h = wh.height;
+						if (w > 0.5 && h > 0.5) {
+							if (!^updatedStatus) {
+								updatedStatus := true;
+								nextDistinct(emptyB, false);
+								deferUntilRender(\ -> next(triggerUpdate, true));
+							}
+							form |> addBorderSpaceUnconditional;
+						} else {
+							Inspect([ISize(whB)], form);
+						}
+					}),
+					\ -> {
+						nextDistinct(cellReady, true);
+						\ -> {}
+					}
+				)
+			}
+
+			addBorderLines = \form, cellBorder -> {
+				cellStyle = cellStyles[cellBorder.storyId];
+				left = cellBorder.left && cellStyle.leftBorder != 0.0;
+				top = cellBorder.top && cellStyle.topBorder != 0.0;
+				right = cellBorder.right && cellStyle.rightBorder != 0.0;
+				bottom = cellBorder.bottom && cellStyle.bottomBorder != 0.0;
+
+				color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+				awhB : DynamicBehaviour<WidthHeight> = makeWH();
+				Group([
+					Select(whenSizeChanged(awhB), \awh -> {
+						w = awh.width;
+						h = awh.height;
+						leftLine = Graphics([MoveTo(0.0, 0.0), LineTo(0.0, h)], [Stroke(color), StrokeWidth(cellStyle.leftBorder)]);
+						rightLine = Graphics([MoveTo(w, 0.0), LineTo(w, h)], [Stroke(color), StrokeWidth(cellStyle.rightBorder)]);
+						topLine = Graphics([MoveTo(0.0, 0.0), LineTo(w, 0.0)], [Stroke(color), StrokeWidth(cellStyle.topBorder)]);
+						bottomLine = Graphics([MoveTo(0.0, h), LineTo(w, h)], [Stroke(color), StrokeWidth(cellStyle.bottomBorder)]);
+						Group([
+							if (left) leftLine else Empty(),
+							if (right) rightLine else Empty(),
+							if (top) topLine else Empty(),
+							if (bottom) bottomLine else Empty()
+						])
+					}),
+					Inspect([IAvailable2(awhB)], form)
+				])
+			}
+
+			cellsCount = tableStyle.cols * tableStyle.rows;
+
+			emptyCells = generate(0, cellsCount, \i -> make(true));
+			cellsStatus = generate(0, cellsCount, \i -> make(false));
+
+			mergedEmptyCells = merge(emptyCells);
+			mergedCellStatus = merge(cellsStatus);
+
+			cellsToShow = generate(0, cellsCount, \i -> ref Empty());
+
+			borders = generate(0, cellsCount, \i -> ref CellStyle(-1, false, true, true, true, true));
+
+			firstNotProcessedCell = ref 0;
+
+			findFirstNotProcessedCell = \ -> {
+				firstNotProcessedCell := countUntil(^firstNotProcessedCell, cellsCount, \i -> !^(borders[i]).processed);
+				^firstNotProcessedCell
+			}
+
+
+			iteri(stories, \storyId, s -> {
+				topLeftCellId = findFirstNotProcessedCell(); // single cell or top left cell of block corresponding to the story
+				if (topLeftCellId == cellsCount) {println("Incorrect WriteTable source");}
+
+				rs = cellStyles[storyId].rowSpan;
+				cs = cellStyles[storyId].colSpan;
+				if (rs == 1 && cs == 1) {
+					borders[topLeftCellId] := CellStyle(storyId, true, true, true, true, true);
+					cellsToShow[topLeftCellId] := renderWriteStoryI(s, styles);
+				} else {
+					availableWidths = generate(0, cs, \i -> {make(0.0)});
+					mergedWidths = availableWidths |> merge;
+					aw = select(mergedWidths, dsum);
+					availableHeights = generate(0, rs, \i -> {make(0.0)});
+					mergedHeights = availableHeights |> merge;
+					ah = select(mergedWidths, dsum);
+					awh = select2(aw, ah, \w, h -> WidthHeight(w, h)) |> whenSizeChanged;
+
+					//Add inspectors to left column
+					fori(1, rs - 1, \ri -> {
+						cellId = topLeftCellId + ri * tableStyle.cols;
+						borders[cellId] := CellStyle(storyId, true, true, false, cs == 1, ri == rs - 1);
+						cellsToShow[cellId] := Inspect([AvailableHeight(availableHeights[ri])], Empty());
+					});
+
+					//Add inspectors to top row
+					fori(1, cs - 1, \ci -> {
+						cellId = topLeftCellId + ci;
+						borders[cellId] := CellStyle(storyId, true, false, true, ci == cs - 1, rs == 1);
+						cellsToShow[cellId] := Inspect([AvailableWidth(availableWidths[ci])], Empty());
+					});
+
+					//two cycles to process all the cells corresponding to the story except left column and top row
+					fori(1, rs - 1, \ri -> {
+						fori(1, cs - 1, \ci -> {
+							cellId = topLeftCellId + ri * tableStyle.cols + ci;
+							borders[cellId] := CellStyle(storyId, true, false, false, ci == cs - 1, ri == rs - 1);
+						})
+					});
+
+					//Available width for the whole story is sum of available widths of cells of any row
+					//Available height for the whole story is sum of available heights of cells of any column
+					borders[topLeftCellId] := CellStyle(storyId, true, true, true, cs == 1, rs == 1);
+					cellsToShow[topLeftCellId] := Inspect(
+						[AvailableWidth(availableWidths[0]), AvailableHeight(availableHeights[0])],
+						Available2(awh, renderWriteStoryI(s, styles))
+					);
+
+				}
+			});
+
+
+			children =  mapi(
+				cellsToShow,
+				\i, s -> ^s |> addBorderSpaceSmart(emptyCells[i], cellsStatus[i])
+							|> \f -> if (tableStyle.showGrid) {
+								addBorderLines(f, ^(borders[i]))
+							} else {
+								f
+							}
+			);
+
+			initialAndEmptyView = Alpha(make(0.0), Lines(children));
+
+			makeNormalView = \lastNotEmptyCellIndex -> {
+				if (lastNotEmptyCellIndex == -1) {
+					Empty()
+				} else {
+					mec = getValue(mergedEmptyCells);
+					lastNotEmptyCellRow = lastNotEmptyCellIndex / tableStyle.cols;
+					emptyRowsAboveLastNotEmptyCell = (for(
+							Pair(0, 0),
+							\p -> p.first < lastNotEmptyCellRow,
+							\p -> Pair(p.first + 1, if (all(subrange(mec, p.first * tableStyle.cols, tableStyle.cols))) p.second + 1 else p.second)
+					)).second;
+
+					unpair(getDynamicFormSize(MaxSize(children[lastNotEmptyCellIndex])), \childM, cmB -> {
+						finalCells = splitByNumber(
+							replace(
+								children,
+								lastNotEmptyCellIndex,
+								childM
+							),
+							tableStyle.cols
+						);
+						gridCells = if (length(finalCells) == 1) {
+							// Workaround
+							// Grid([[form]]) does not give available of form size to the form.
+							// So borders are not rendered.
+							arrayPush(finalCells, [Empty()])
+						} else {
+							finalCells
+						}
+						Grid(gridCells) |> MaxSize
+					})
+				}
+			};
+
+			resForm = make(Size2(zeroSize, initialAndEmptyView));
+
+			uns = ref \ -> {};
+			uns := subscribe2(throttle(mergedCellStatus, 10.0), \__ -> next(triggerUpdate, true));
+			doUpdateIfDataReady = \ -> {
+				sg = getValue(mergedCellStatus);
+				if (all(sg)) {
+					mec = getValue(mergedEmptyCells);
+					lastNotEmptyCellIndex = ref -1;
+
+					iteri(mec, \i, ec -> {
+						if (^lastNotEmptyCellIndex < i && !ec) {
+							lastNotEmptyCellIndex := i;
+						}
+					});
+					if (^lastNotEmptyCellIndex != -1) {
+						^uns();
+						next(resForm, makeNormalView(^lastNotEmptyCellIndex));
+					}
+				}
+			}
+
+			Constructor(
+				Select(resForm, idfn),
+				\ -> {
+					subscribe2(triggerUpdate, \__ -> doUpdateIfDataReady())
+				}
+			) |> v2a
+		}
+		WriteDoubleUnderlined(stories): {
+			children = map(stories, \s -> renderWriteStoryI(s, styles));
+			body = children[0];
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			unpair(getDynamicFormSize(body), \bodyM : Form, bmB : Behaviour<FormMetrics> -> {
+				Select(bmB, \bm -> {
+					line = Graphics([MoveTo(0.0, 0.0), LineTo(bm.width, 0.0), ClosePath()], [Stroke(color), StrokeWidth(1.0)]);
+					linesToAdd = Lines([line, Fixed(0.0, 1.0), line]);
+					fixBaseline(bm.baseline, WideLines([bodyM, linesToAdd]))
+				})
+			}) |> v2a
+		}
+		WriteCustom(form): {
+			println("WriteCustom");
+			form |> v2a
+		}
+		WriteChemicalFormula(atoms, bonds): {
+			//length of line with ends (0, 0) and (x, y)
+			distance = \x, y -> sqrt(x*x + y*y);
+			color = getCharacterStyle(styles, defaultStyleId).style |> colorOfText;
+			makeBond = \x1, y1, x2, y2, kx, ky, type -> {
+				bondStyle = [Stroke(color)];
+				makeChemicalSingleBond = \x1_, y1_, x2_, y2_ -> {
+					Graphics([MoveTo(x1_, y1_), LineTo(x2_, y2_), ClosePath()], bondStyle)
+				}
+				makeChemicalTriangleLeftOffsetBond = \x1_, y1_, x2_, y2_ -> {
+					d = 3.0;
+					angle = PI / 180.0 * 5.0;
+					nx = x1_ - x2_;
+					ny = y1_ - y2_;
+					rx = cos(angle) * nx - sin(angle) * ny;
+					ry = sin(angle) * nx + cos(angle) * ny;
+					angle2 = PI / 180.0 * 355.0;
+					lx = cos(angle2) * nx - sin(angle2) * ny;
+					ly = sin(angle2) * nx + cos(angle2) * ny;
+					x3 = rx + x2_;
+					y3 = ry + y2_;
+					x4 = lx + x2_;
+					y4 = ly + y2_;
+					Graphics(
+						[
+ 		 		 			MoveTo(x3, y3),
+							LineTo(x2_, y2_),
+							MoveTo(x4, y4),
+							LineTo(x2_, y2_),
+							LineTo(x3, y3),
+							ClosePath()
+						],
+						bondStyle
+					)
+				}
+				makeChemicalLinedLeftOffsetBond = \x1_, y1_, x2_, y2_ -> {
+					d = 3.0;
+					angle1 = PI / 180.0 * 5.0;
+					angle2 = PI / 180.0 * 355.0;
+					segLen = 3.0;
+					deltax = x2_ - x1_;
+					deltay = y2_ - y1_;
+					len = distance(deltax, deltay);
+					segs = floor(abs(len / segLen));
+					radians = atan2(deltay, deltax);
+					commands = generate(0, segs, \i -> {
+						n = i |> i2d;
+						nx = n * segLen * cos(radians) + x1_ - x2_;
+						ny = n * segLen * sin(radians) + y1_ - y2_;
+						rx = cos(angle1) * nx - sin(angle1) * ny;
+						ry = sin(angle1) * nx + cos(angle1) * ny;
+						lx = cos(angle2) * nx - sin(angle2) * ny;
+						ly = sin(angle2) * nx + cos(angle2) * ny;
+						x3 = rx + x2_;
+						y3 = ry + y2_;
+						x4 = lx + x2_;
+						y4 = ly + y2_;
+						[
+							MoveTo(x3, y3),
+							LineTo(x4, y4)
+						]
+					}) |> concatA |> \a -> arrayPush(a, ClosePath());
+					Graphics(commands, bondStyle)
+				}
+				switch(type : WriteChemicalBondType) {
+					WriteChemicalBondSingle(): {
+						makeChemicalSingleBond(x1, y1, x2, y2)
+					}
+					WriteChemicalBondDotted(): {
+						len = 3.0;
+						gap = 3.0;
+						seglength = len + gap;
+						deltax = x2 - x1;
+						deltay = y2 - y1;
+						delta = distance(deltax, deltay);
+						segs = floor(abs(delta / seglength));
+						radians = atan2(deltay, deltax);
+						dx = cos(radians) * seglength;
+						dy = sin(radians) * seglength;
+						dx1 = cos(radians) * len;
+						dy1 = sin(radians) * len;
+						commands = [
+							generate(0, segs, \i -> {
+								d = i |> i2d;
+								x = x1 + d * dx;
+								y = y1 + d * dy;
+								[
+									MoveTo(x, y),
+									LineTo(x + dx1, y + dy1)
+
+								]
+							}) |> concatA,
+							{
+								lastX = x1 + i2d(segs) * dx;
+								lastY = y1 + i2d(segs) * dy;
+								pixelsToFinishPoint = distance(x2 - lastX, y2 - lastY);
+								if (pixelsToFinishPoint >= len) {
+									[
+										MoveTo(lastX, lastY),
+										LineTo(lastX + dx1, lastY + dy1)
+									]
+								} else if (pixelsToFinishPoint > 0.0) {
+									[
+										MoveTo(lastX, lastY),
+										LineTo(lastX + pixelsToFinishPoint * cos(radians), lastY + pixelsToFinishPoint * sin(radians))
+									]
+								} else {
+									[]
+								}
+							},
+							[ClosePath()]
+						] |> concatA;
+
+						Graphics(commands, bondStyle)
+					}
+					WriteChemicalBondDoubleCentered(): {
+						d = 2.0;
+						k = ( x2 - x1 ) / ( y2 - y1 );
+						k2 = k * k;
+						ax = d * sqrt( 1.0 / ( 1.0 + 1.0/k2 ) );
+						ay = d * sqrt( 1.0 / ( 1.0 + k2 ) );
+
+						Group([
+							makeChemicalSingleBond(x1 + ky*ay, y1 - kx*ax, x2 + ky*ay, y2 - kx*ax),
+							makeChemicalSingleBond(x1 - ky*ay, y1 + kx*ax, x2 - ky*ay, y2 + kx*ax)
+						])
+					}
+					WriteChemicalBondTripleCentered(): {
+						d = 3.0;
+						k = ( x2 - x1 ) / ( y2 - y1 );
+						k2 = k * k;
+						ax = d * sqrt( 1.0 / ( 1.0 + 1.0/k2 ) );
+						ay = d * sqrt( 1.0 / ( 1.0 + k2 ) );
+
+						Group([
+							makeChemicalSingleBond(x1 + ky*ay, y1 - kx*ax, x2 + ky*ay, y2 - kx*ax),
+							makeChemicalSingleBond(x1, y1, x2, y2),
+							makeChemicalSingleBond(x1 - ky*ay, y1 + kx*ax, x2 - ky*ay, y2 + kx*ax)
+						])
+					}
+
+					WriteChemicalBondDoubleLeftOffset(): {
+						d = 3.0;
+						k = ( x2 - x1 ) / ( y2 - y1 );
+						k2 = k * k;
+						ax = d * sqrt( 1.0 / ( 1.0 + 1.0/k2 ) );
+						ay = d * sqrt( 1.0 / ( 1.0 + k2 ) );
+						Group([
+							makeChemicalSingleBond(x1 + kx*ax + ky*ay, y1 + ky*ay - kx*ax, x2 - kx*ax + ky*ay, y2 - ky*ay - kx*ax),
+							makeChemicalSingleBond(x1, y1, x2, y2)
+						])
+
+					}
+					WriteChemicalBondDoubleRightOffset(): {
+						d = 3.0;
+						k = ( x2 - x1 ) / ( y2 - y1 );
+						k2 = k * k;
+						ax = d * sqrt( 1.0 / ( 1.0 + 1.0/k2 ) );
+						ay = d * sqrt( 1.0 / ( 1.0 + k2 ) );
+						Group([
+
+							makeChemicalSingleBond(x1 + kx*ax - ky*ay, y1 + ky*ay + kx*ax, x2 - kx*ax - ky*ay, y2 - ky*ay + kx*ax),
+							makeChemicalSingleBond(x1, y1, x2, y2)
+						])
+					}
+					WriteChemicalBondTriangleLeftOffset(): {
+						makeChemicalTriangleLeftOffsetBond(x1, y1, x2, y2)
+					}
+					WriteChemicalBondTriangleRightOffset(): {
+						makeChemicalTriangleLeftOffsetBond(x2, y2, x1, y1)
+					}
+					WriteChemicalBondLinedLeftOffset(): {
+						makeChemicalLinedLeftOffsetBond(x1, y1, x2, y2)
+					}
+					WriteChemicalBondLinedRightOffset(): {
+						makeChemicalLinedLeftOffsetBond(x2, y2, x1, y1)
+					}
+
+					default : Graphics([MoveTo(x1, y1), LineTo(x2, y2), ClosePath()], bondStyle)
+				}
+			}
+			if (length(atoms) == 0) {
+				[Empty()]
+			} else {
+				atomsInspected = map(atoms, \atom -> getDynamicFormSize(Group(map(atom.stories, \s -> renderWriteStoryI(s, styles)))));
+				mergedSizes = stall(merge(map(atomsInspected, \aws -> aws.second)), 300);
+				atomsForms = map(atomsInspected, \aws -> aws.first);
+
+				Select(mergedSizes, \atomSizes -> {
+					arragementInfo = foldi(
+						atomSizes,
+						WriteChemicalAtomsArragementInfo(atoms[0].x, atoms[0].y, atoms[0].x, atoms[0].y, 0),
+						\i, info, size -> {
+							WriteChemicalAtomsArragementInfo(
+								min(atoms[i].x - size.width * 0.5, info.minX),
+								min(atoms[i].y - size.height * 0.5, info.minY),
+								max(atoms[i].x + size.width * 0.5, info.maxX),
+								max(atoms[i].y + size.height * 0.5, info.maxY),
+								if (atoms[i].y + size.height * 0.5 > info.maxY) i else info.bottomAtomIndex
+							)
+						}
+					);
+					border = max(arragementInfo.maxX - arragementInfo.minX, arragementInfo.maxY - arragementInfo.minY) * 0.1;
+					atomsRendered = mapi(
+						atomsForms,
+						\i, atomForm -> Offset(
+							atoms[i].x - atomSizes[i].width * 0.5 - arragementInfo.minX,
+							atoms[i].y - atomSizes[i].height * 0.5 - arragementInfo.minY,
+							atomForm
+						)
+					) |> Group;
+					bondsRendered = mapi(bonds, \i, bond -> {
+						a1x = atoms[bond.atom1].x - arragementInfo.minX;
+						a1y = atoms[bond.atom1].y - arragementInfo.minY;
+						a2x = atoms[bond.atom2].x - arragementInfo.minX;
+						a2y = atoms[bond.atom2].y - arragementInfo.minY;
+						atomBorder = 1.0;
+						addVirtualBorder = \size -> if (size > 0.0) size + atomBorder else 0.0;
+						w1 = (atomSizes[bond.atom1].width * 0.5) |> addVirtualBorder;
+						h1 = (atomSizes[bond.atom1].height * 0.5) |> addVirtualBorder;
+						w2 = (atomSizes[bond.atom2].width * 0.5) |> addVirtualBorder;
+						h2 = (atomSizes[bond.atom2].height * 0.5) |> addVirtualBorder;
+						getSign = \a, b ->  {
+							eps = 0.0001;
+							if (a - b > eps) {
+								-1.0
+							} else {
+								if (b - a > eps) {
+									1.0
+								} else {
+									0.0
+								}
+							}
+						}
+						kx = getSign(a1x, a2x);
+						ky = getSign(a1y, a2y);
+						bondCoordinates = if (0.0 == kx || 0.0 == ky) {
+							// vertical or horizontal line
+							x1 = a1x + kx * w1;
+							y1 = a1y + ky * h1;
+							x2 = a2x - kx * w2;
+							y2 = a2y - ky * h2;
+							Pair(Pair(x1, y1), Pair(x2, y2))
+						} else {
+							// get line between A1 and A2: y = k * x + b
+							k = (a2y - a1y) / (a2x - a1x);
+							b = a1y - k * a1x;
+							getIntersection = \x, y, kx_, ky_, h, w -> {
+								// intersection with line which contains horizontal border
+								hy = y + ky_ * h;
+								hx = (hy - b) / k;
+								if ((hx >= x - w) && (hx <= x + w)) { // check if this point belongs to given rectangle
+									Pair(hx, hy)
+								} else {
+									// intersection with line which contains vertical border
+									vx = x + kx_ * w;
+									vy = k * vx + b;
+									if ((vy >= y - h) && (vy <= y + h)) { // check if this point belongs to given rectangle
+										Pair(vx, vy)
+									} else {
+										// something strange, let's take the nearest one
+										hd = distance(hx - x, hy - y);
+										vd = distance(vx - x, vy - y);
+										if (hd < vd) {
+											Pair(hx, hy);
+										} else {
+											Pair(vx, vy);
+										}
+									}
+								}
+							}
+							// find intersection of A1A2 line and A1 text block
+							i1 = getIntersection(a1x, a1y, kx, ky, h1, w1);
+							x1 = i1.first;
+							y1 = i1.second;
+
+							// find intersection of A1A2 line and A2 text block
+							i2 = getIntersection(a2x, a2y, -kx, -ky, h2, w2);
+							x2 = i2.first;
+							y2 = i2.second;
+
+							Pair(Pair(x1, y1), Pair(x2, y2))
+						}
+						x1 = bondCoordinates.first.first;
+						y1 = bondCoordinates.first.second;
+						x2 = bondCoordinates.second.first;
+						y2 = bondCoordinates.second.second;
+						makeBond(x1, y1, x2, y2, kx, ky, bond.type)
+					}) |> Group;
+
+					formRendered = Group([atomsRendered, bondsRendered]);
+
+					bottomAtomHeight = atomSizes[arragementInfo.bottomAtomIndex].height;
+					bottomAtomBaseline = atomSizes[arragementInfo.bottomAtomIndex].baseline;
+					zoomLevel = 0.5;
+
+					bigResult = Border(border, border, border, border,
+						Size2(
+							const(WidthHeight(arragementInfo.maxX - arragementInfo.minX, arragementInfo.maxY - arragementInfo.minY)),
+							formRendered
+						)
+					);
+
+					zoomIcon = Picture("images/zoom_in_icon.png", []);
+
+
+					smallResult = fixBaseline(
+						(arragementInfo.maxY - arragementInfo.minY + border + bottomAtomBaseline - bottomAtomHeight) * 0.5,
+						Cols([
+						 	Scale(const(zoomLevel), const(zoomLevel), bigResult),
+						 	Size2(
+								const(WidthHeight(16.0, 16.0)),
+								zoomIcon
+							)
+						])
+					);
+
+					CustomCursor2(
+						Background([Fill(if (color == white) 0x555555 else white)], Scale(const(2.0), const(2.0), bigResult)) |> ShadowFilter,
+						false,
+						Background([Fill(white), FillOpacity(0.0)], smallResult)
+					)
+				})  |> v2a
+			}
+		}
+		WriteCursor(user, cs): {
+			userName = if (user != "") Text(user, cs) else Empty();
+			//TODO: show user name as hint or something like this
+			style = getCharacterStyle(styles, defaultStyleId).style;
+			blinking = make(true);
+			cursor = Text("|", style);
+			form = Visibleb(blinking, Size2(zeroSize, Offset(0.0, -getFormHeight(cursor), cursor)));
+			blinkingTimeline = getTimeline(2);
+			doBlinking = \ -> {
+				subscribe(blinkingTimeline.ticker, \__ -> next(blinking, !getValue(blinking)))
+			}
+			Constructor(form, doBlinking) |> v2a
+		}
+		WriteDummyElement(): {
+			[Empty()]
+		}
+	}
+
+}
+
+
+getParagraphTextAcc(markTag : (string) -> string, acc : string, elements : [WriteElement]) -> string {
+	l = length(elements);
+	if (l == 0) {
+		acc
+	} else {
+		getParagraphTextAcc(markTag, acc + getElementText(markTag, elements[0]), subrange(elements, 1, l - 1))
+	}
+}
+
+
+getParagraphText (markTag : (string) -> string, paragraph : WriteParagraph) {
+	getParagraphTextAcc(markTag, "", paragraph.elements)
+}
+
+
+getStoryTextAcc(markTag : (string) -> string, acc : string, para : [WriteParagraph]) {
+	l = length(para);
+	if (l == 0) {
+		acc
+	} else {
+		getStoryTextAcc(markTag, acc + getParagraphText(markTag, para[0]), subrange(para, 1, l - 1))
+	}
+}
+
+
+getStoryText(markTag : (string) -> string, story : WriteStory) {
+	getStoryTextAcc(markTag, "", story.paragraphs)
+}
+
+getStoriesTextsAcc(markTag : (string) -> string, acc : string, stories : [WriteStory]) {
+	l = length(stories);
+	if (l == 0) {
+		acc
+	} else {
+		getStoriesTextsAcc(markTag, acc + getStoryText(markTag, stories[0]), subrange(stories, 1, l - 1))
+	}
+}
+
+getStoriesText(markTag : (string) -> string, stories : [WriteStory]) {
+	getStoriesTextsAcc(markTag, "", stories)
+}
+
+getSymbolModificatorText(modificator : WriteTopModificator) {
+	switch(modificator) {
+		WriteModificatorNone(): "";
+		WriteModificatorHat(): "-hat";
+		WriteModificatorBar(): "-bar";
+		WriteModificatorDoubleBar(): "-dbar";
+		WriteModificatorArrow(): "-vec";
+		WriteModificatorArc(): "-arc";
+		WriteModificatorLeftRightArrow(): "-lrvec";
+	}
+}
+
+getElementText(markTag : (string) -> string, element : WriteElement) {
+	switch (element : WriteElement) {
+		WriteTextFragment(text, mstyleid): text;
+		WriteOverscript(stories): getStoriesText(markTag, stories);
+		WriteUnderscript(stories): getStoriesText(markTag, stories);
+		WriteSubscript(stories): getStoriesText(markTag, stories);
+		WriteSupscript(stories): getStoriesText(markTag, stories);
+		WriteDoubleUnderlined(stories): getStoriesText(markTag, stories);
+		WriteRoot(stories): "Root" |> markTag;
+		WriteLongDivision(stories): "LongDivision" |> markTag;
+		WritePicture(url): "Picture" |> markTag;
+		WriteEvaluatingIntegral(stories): "EvaluatingIntegral" |> markTag;
+		WriteFraction(stories): "Fraction"	|> markTag;
+		CustomSymbol(symbol): toString(symbol) |> markTag;
+		WriteDefiniteSignedControl(signType, stories): "DefiniteSignedControl" |> markTag;
+		WriteBrackets(lb, rb, stories): "Brackets" |> markTag;
+		WriteTable(stories, tableStyle, cellStyles): "Table" |> markTag;
+		WriteChemicalFormula(atoms, bonds): "Chemical diagram" |> markTag;
+		WriteStoryWithTopModificator(stories, modificator, size): getSymbolModificatorText(modificator) |> markTag;
+		WriteLineBreak(): " ";
+		WriteCustom(form): " ";
+		WriteCursor(name, style): " ";
+		WriteDummyElement(): " ";
+		WriteOverlay(stories): " ";
+		WriteNonBreakingSpace(styleid): " ";
+		WriteDottedElement(left, right, top, bottom, leftSign, rightSign, stories): " ";
+	}
+}
+
+write2plaintext(xml, markTag) {
+	doc = parseWrite(xml, NormalText);
+	getStoriesText(markTag, doc.stories)
+}
+
+makeUnderline(tf) {
+	transformParagraphElement(tf, makeTextUnderline)
+}
+
+makeTextUnderline(f : Form) -> Form {
+	transformText(f, \t -> Text("<u>" + t.text + "</u>", t.style))
+}

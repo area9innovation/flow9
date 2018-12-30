@@ -1,0 +1,58 @@
+import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fi_helpers;
+import array;
+
+export {
+    expandFlowCasts(expr : FiExp) -> FiExp;
+}
+
+injectFlowCast(leftType : FiType, expr : FiExp) -> FiExp {
+    rightType = fiExpType(expr);
+    expanded = expandFlowCasts(expr);
+    if (leftType == FiTypeFlow() && rightType != FiTypeFlow()) {
+        FiCast(expanded, rightType, FiTypeFlow(), FiTypeFlow(), expr.start);
+    } else if (leftType != FiTypeFlow() && rightType == FiTypeFlow()) {
+        FiCast(expanded, FiTypeFlow(), leftType, leftType, expr.start);
+    } else 
+        expanded;
+}   
+
+expandFlowCasts(expr : FiExp) {
+    switch (expr) {
+	    FiLambda(args, body, type, start): {
+            functionType = cast(type : FiType -> FiTypeFunction);
+            FiLambda(args, injectFlowCast(functionType.returnType, body), type, start);
+        }
+		FiCall(f, args, type, start): {
+            functionType = cast(fiExpType(f) : FiType -> FiTypeFunction);
+            FiCall(expandFlowCasts(f), 
+                zipWith(functionType.args, args, \fa, a -> injectFlowCast(fa.type, a)), 
+                type, start);
+        }
+		FiVar(__, __, __): expr;
+		FiLet(x, t, e1, e2, t2, start): 
+            FiLet(x, t, injectFlowCast(t, e1), injectFlowCast(t2, e2), t2, start);
+		FiIf(e1, e2, e3, type, start): 
+            FiIf(injectFlowCast(type, e1), expandFlowCasts(e2), expandFlowCasts(e3), type, start);
+		FiSwitch(e0, typ, cs, type, start): 
+            FiSwitch(e0, typ, 
+                map(cs, \c -> FiCase(c.struct, c.argNames, injectFlowCast(type, c.body), c.start)),
+                type, start);
+		FiCast(e0, tFrom, tTo, type, start): FiCast(injectFlowCast(tFrom, e0), tFrom, tTo, type, start);
+		FiSeq(es, type, start): 
+            // injecting cast to last statement if needed
+            // for others, just proceed recursively
+            FiSeq(mapi(es, 
+                \i, e -> if (i != length(es) - 1) expandFlowCasts(e) else injectFlowCast(type, e)
+            ), type, start);
+		FiCallPrim(op, es, type, start): // TODO: might be incorrect for some prims
+            FiCallPrim(op, map(es, expandFlowCasts), type, start);
+		FiString(__, __): expr;
+		FiBool(__, __): expr;
+		FiDouble(__, __): expr;
+		FiVoid(__): expr;
+		FiInt(__, __): expr;
+		FiRequire(flowfile2, e2, type, start): FiRequire(flowfile2, injectFlowCast(type, e2), type, start);
+		FiUnsafe(name, fallback, type, start): FiUnsafe(name, injectFlowCast(type, fallback), type, start);
+	};
+}

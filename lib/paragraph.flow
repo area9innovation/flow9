@@ -1,0 +1,915 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import array;
+import algorithms; // sortCustom
+import form;
+import gui;
+import formmetrics;
+import formtransforms;
+import string;
+import list;
+import baseline;
+
+import line;
+import paragraphtypes;
+
+import paragraph3;
+import localization;
+
+export {
+	// A function that breaks the texts into lines. It monitors the available width and reflows accordingly
+	// Paragraph honors multiple \n. for text like "line\n\n" will have 3 lines
+	Paragraph(elements : [ParagraphElement], style : [ParagraphStyle]) -> Form;
+
+	// Low-level paragraph wrapper which is useful for the columnizer
+	Paragraph2(elements : [ParagraphElement], style : [ParagraphStyle], availableWidth : Behaviour<double>) -> DynamicBehaviour<[Form]>;
+
+	/*
+	This breaks a piece of text into words, spaces and newlines wrapped in a TextFragments structure.
+
+		TextFragment("deconstruct this") = TextFragments([
+			Text("deconstruct")
+			LinePart("", " ", "") // Notice we disappear as the first element as well as the last
+			Text("this") // short form of LinePart("this", "this", "this")
+		])
+
+	If we had hyphenation enabled, we could produce
+
+		LinePart("de", "de", "de-"), LinePart("con", "con", "con-"), LinePart("struct", "struct", "struct")
+
+	instead of the Text("deconstruct") value.
+	*/
+	TextFragment(text : string, charStyle : [CharacterStyle]) -> ParagraphElement;
+	TextFragmentExt(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle]) -> ParagraphElement;
+		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild;
+			TextFragmentMoreLineBreaks();
+			TextFragmentLastChild();
+
+	replaceDoubleNL(s : string) -> string {
+		if (strIndexOf(s, "\n\n") >= 0)
+			replaceDoubleNL(strReplace(s, "\n\n", "\n   \n"))
+		else s;
+	}
+
+	//Transforms paragraph element
+	transformParagraphElement : (element : ParagraphElement, fn : (Form) -> Form) -> ParagraphElement;
+
+	// Transforms an array of paragraph elements
+	paramap : (elements : [ParagraphElement], fn : (Form) -> Form) -> [ParagraphElement];
+
+	// If indexing is >= 0, we produce the indexes into the string of each wrap element. If not, send -100000
+	// moreLineBreaks allows line breaks after hyphen in number-number
+	breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool, indexingInit : int, init : List<WrapElement>, isLastChild : bool) -> List<WrapElement>;
+	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
+	// also we have to add such element after the last \n in the last child text element of the paragraph
+	// makeEmptyLineInspectElement take index and style of the text and returns InspectElement with form with width=0., height={height of the Text with passed style}
+	// index must be the position of the new InspectElement in the text (starting with 0).
+	makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement;
+	// it is used for the same purpose in wigify (i.e. preview mode)
+	makeZeroSpaceElement(style : [CharacterStyle]) -> Form;
+
+	// Service routine for special cases like:
+	// "**formatted text**,"
+	// Creates one list of Wrap elements from two
+	// Merges tf1.last and tf2.first elements if they are Texts i.e. there
+	// is no spaces between them in source string.
+	mergeTextFragments(tf1 : TextFragments, tf2 : TextFragments) -> TextFragments;
+
+	mergeAllTextFragments(elements : [ParagraphElement]) -> [ParagraphElement];
+
+	glueElements(elements : [ParagraphElement]) -> [ParagraphElement];
+
+	toOneForm(elements : [ParagraphElement]) -> Form;
+
+	//returns text line with cutting the tail (store it in rest ref)
+	FormTextLine(textString : string, style : [CharacterStyle], width : double, rest : ref string) -> Form;
+
+	//return TightWidth paragraphed form, that works faster then Paragraph
+	staticWidthFormParagraph(elements : [Form], staticFormWidth : double, availableWidth : Behaviour<double>) -> Form;
+	staticWidthFormParagraph2(elements : [Pair<Form, double>], maxFormWidth: double, availableWidth : Behaviour<double>) -> Form;
+	inheritedAvailableParagraph(elements : [ParagraphElement], style : [ParagraphStyle]) -> Form;
+	inheritedAvailableParagraph2(pe2form : ([ParagraphElement], [ParagraphStyle]) -> Form, elements : [ParagraphElement], style : [ParagraphStyle]) -> Form;
+
+	setParagraphFormAvailable(awh : Behaviour<WidthHeight>, el : ParagraphElement) -> ParagraphElement;
+
+	// Substitutes strings from array instead of parameters given in main string. Example:
+	//     formatParagraph("You have %1 minutes left", normalStyle, [TextFragment("5", redStyle)])
+	// turns into
+	//     [[TextFragment("You have ", normalStyle)], [TextFragment("5", redStyle)], [TextFragment(" minutes left", normalStyle)]]
+	//
+	formatParagraph(s : string, defaultStyle : [CharacterStyle], p : [ParagraphElement]) -> [ParagraphElement];
+
+}
+
+// Paragraph transformations
+
+transformParagraphElement(e : ParagraphElement, fn : (Form) -> Form) -> ParagraphElement {
+	switch (e : ParagraphElement) {
+		TextFragments(parts): TextFragments(mapList(parts, \p ->
+			switch(p : WrapElement) {
+			NewLine() : p;
+			LinePart(f, in, l): {
+				LinePart(fn(f), fn(in), fn(l))
+			}
+			Space(s): {
+				Space(fn(s))
+			}
+			default: {
+				fn(cast(p : WrapElement -> Form))
+			}
+		}));
+		GlueFragments() : GlueFragments();
+		default: fn(cast(e : ParagraphElement -> Form));
+	}
+}
+
+paramap(elements : [ParagraphElement], fn : (Form) -> Form) -> [ParagraphElement] {
+	map(elements, \e -> transformParagraphElement(e, fn))
+}
+
+
+Paragraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
+	renderParagraph(p, s);
+}
+
+
+// A low-level function which is more useful for columnizer usage
+Paragraph2(elements : [ParagraphElement], style : [ParagraphStyle], availableWidth : Behaviour<double>) -> DynamicBehaviour<[Form]> {
+	// First, inline all TextFragments
+	elementList = fold(elements, makeList(), \acc, element -> {
+		switch(element : ParagraphElement) {
+		TextFragments(parts): concatList(parts, acc);
+		GlueFragments() : Cons(GlueFragments(), acc);
+		default: Cons(cast(element : ParagraphElement -> Form), acc);
+		}
+	});
+
+	paragraphBorder = extractStruct(style, ParagraphBorder(0.0, 0.0));
+	makeParagraphBorder = \size -> if (size > 0.0) [Fixed(0.0, size)] else [];
+	expanded = concat3(makeParagraphBorder(paragraphBorder.top), list2array(elementList), makeParagraphBorder(paragraphBorder.bottom));
+
+	// Next, extract the style
+	alignment = ref StartAlign();
+	interlineSpacing = ref 0.0;
+	fill = ref 0xffffff;
+	fillset = ref 0.0;
+
+	iter(style, \s -> {
+		switch (s : ParagraphStyle) {
+		InterlineSpacing(d): interlineSpacing := d;
+		Fill(color) : fill := color;
+		FillOpacity(opacity) : fillset := opacity;
+		default: alignment := cast(s : ParagraphStyle -> ParagraphAlignment);
+		}
+	});
+
+	Wrap(availableWidth, expanded, ^alignment, ^interlineSpacing, ^fill, ^fillset);
+}
+
+staticWidthFormParagraph(elements : [Form], staticFormWidth : double, availableWidth : Behaviour<double>) -> Form {
+	lastSize = ref 0.0;
+	linesAr = ref [Empty()];
+	Select(availableWidth, \aWidth -> {
+		if (abs(aWidth - 10.0 - ^lastSize) > staticFormWidth + 5.0) {
+			cursize = ref max(aWidth - 10.0, staticFormWidth);
+			linesAr := [];
+			colsAr = ref [Empty()];
+			iter(elements, \par -> {
+				if (^cursize < staticFormWidth) {
+					linesAr := arrayPush(^linesAr, Cols(^colsAr));
+					colsAr := [par];
+					cursize := max(aWidth - 10.0, staticFormWidth) - staticFormWidth;
+				} else {
+					colsAr := arrayPush(^colsAr, par);
+					cursize := ^cursize - staticFormWidth;
+				}
+			});
+			linesAr := arrayPush(^linesAr, Cols(^colsAr));
+			lastSize := aWidth - 10.0;
+		}
+		Lines(^linesAr);
+	});
+}
+
+staticWidthFormParagraph2(elements : [Pair<Form, double>], maxFormWidth: double, availableWidth : Behaviour<double>) -> Form {
+	lastSize = ref 0.0;
+	linesAr = ref [Empty()];
+	Select(availableWidth, \aWidth -> {
+		if (abs(aWidth - 10.0 - ^lastSize) > maxFormWidth + 5.0) {
+			cursize = ref max(aWidth - 10.0, maxFormWidth);
+			linesAr := [];
+			colsAr = ref [Empty()];
+			iter(elements, \par -> {
+				staticFormWidth = par.second;
+				if (^cursize < staticFormWidth) {
+					linesAr := arrayPush(^linesAr, Cols(^colsAr));
+					colsAr := [par.first];
+					cursize := max(aWidth - 10.0, staticFormWidth) - staticFormWidth;
+				} else {
+					colsAr := arrayPush(^colsAr, par.first);
+					cursize := ^cursize - staticFormWidth;
+				}
+			});
+			linesAr := arrayPush(^linesAr, Cols(^colsAr));
+			lastSize := aWidth - 10.0;
+		}
+		Lines(^linesAr);
+	});
+}
+
+// Try to collect ticks on first frame until condition,
+// then forbid 2 sequential ticks on the same frame
+stallNext(behaviour : Behaviour<?>, f : (?) -> bool, ms : int) -> Behaviour<?> {
+	provider = make(getValue(behaviour));
+
+	counter = ref 0; // counter for the first frame
+	firstFrame = ref true;
+
+	frameReady = ref true;
+	timerPending = ref false;
+
+	tick = \ -> {
+			timerPending := false;
+			frameReady := false;
+			timer(ms, \ -> frameReady := true);
+			nextDistinct(provider, getValue(behaviour));
+		};
+
+	subscribe2(behaviour, \v -> {
+		if (^firstFrame) {
+			counter := ^counter + 1;
+			if (f(v)) {
+				firstFrame := false;
+				tick();
+			} else if (! ^timerPending) {
+				timerPending := true;
+				timer(ms, \ -> {
+					timerPending := false;
+					if (^firstFrame) { // not ticked on first frame
+						firstFrame := false;
+						tick()
+					}
+				});
+			}
+		} else if (^frameReady) {
+			//println("tick on other frame");
+			tick();
+		} else if (! ^timerPending) {
+			timer(ms, tick);
+			timerPending := true;
+		}
+	});
+	provider;
+}
+
+TextFragment(text, charStyle) {
+	TextFragmentExt(text, charStyle, [])
+}
+
+TextFragmentExt(text, charStyle, style) {
+	TextFragments(
+		breakTextFragment(
+			text,
+			charStyle,
+			containsStruct(style, TextFragmentMoreLineBreaks()),
+			-100000,
+			makeList(),
+			containsStruct(style, TextFragmentLastChild())
+		)
+	)
+}
+
+DynamicWrapElement(index : int, form : WrapElement, width : Behaviour<double>);
+
+// This makes sure that the given elements are word wrapped with the given alignment.
+// It will monitor the available width, and reflow as necessary (also when dynamic
+// forms change size).
+// The result is a behaviour that produces an array of lines (each expressed as a Form)
+Wrap(availableWidth : Behaviour<double>, elements : [WrapElement],
+     alignment : ParagraphAlignment, interlineSpacing : double,
+     background : int, opacity : double)
+    -> DynamicBehaviour<[Form]> {
+    dynamicElementsList = ref makeList();
+
+	widths = mapi(elements, \i, e -> {
+		switch(e : WrapElement) {
+			NewLine() : 0.0;
+			LinePart(f, in, l): {
+				if (!isStaticForm(f) || !isStaticForm(in) || !isStaticForm(l)) {
+					bf = make(0.0);
+					bin = make(0.0);
+					bl = make(0.0);
+					wrappedForms = LinePart(
+						Inspect([Width(bf)], f),
+						Inspect([Width(bin)], in),
+						Inspect([Width(bl)], l),
+					);
+					width = select3(bf, bin, bl, max3);
+					dyn = DynamicWrapElement(i, wrappedForms, width);
+					dynamicElementsList := Cons(dyn, ^dynamicElementsList);
+				}
+				getFormWidth(in);
+			}
+			Space(s): {
+				getFormWidth(s);
+			}
+			GlueFragments() : 0.0;
+			default: {
+				form : Form = cast(e : WrapElement -> Form);
+				if (!isStaticForm(form)) {
+					unpair(getDynamicFormSize(form), \f, wh -> {
+						width = select(wh, \s -> s.width);
+						dyn = DynamicWrapElement(i, f, width);
+						dynamicElementsList := Cons(dyn, ^dynamicElementsList);
+					})
+				}
+				getFormWidth(form);
+			}
+		}
+	});
+
+	dynamicElements = list2array(^dynamicElementsList);
+
+	wrappedElements = if (length(dynamicElements) == 0) elements else {
+		mapi(elements, \i, e -> {
+			dynamic = find(dynamicElements, \d -> d.index == i);
+			eitherMap(dynamic, \dw -> dw.form, e);
+		});
+	}
+
+	linesResult = make([]);
+
+	// And now greedy and imperative algorithm
+	c = ref 1;
+	relocate = \width -> {
+ 		if(^c == 1) {
+			c:=0;
+			lines = doWordWrap(width, wrappedElements, widths, dynamicElements, alignment, interlineSpacing, background, opacity);
+			next(linesResult, lines);
+			c:=1;
+		};
+	};
+
+	if (length(dynamicElements) == 0) {
+		// We only listen to the available width
+		subscribe(availableWidth, relocate) |> ignore
+	} else {
+		// We listen to all dynamic elements, but throttle it a bit
+		changed = merge(concat([availableWidth], map(dynamicElements, \d -> d.width)));
+
+		// We throttle 0 ms to collect all updates in this frame into one frame,
+		// if there are multiple dynamic elements
+		// Also forbid several updates in one frame.
+		// "\v -> v[0] > 0.0" stands for: if AW > 0 on the first frame, then relocate immediately
+		stalled = stallNext(changed, \v -> v[0] > 0.0, 0);
+
+		// If you want to debug how dynamic elements change and affect reflow, this is useful
+		subscribe2(stalled, \ch -> relocate(getValue(availableWidth))) |> ignore
+	}
+
+	linesResult;
+}
+
+GluedFragmentsData : (count : int, width : double, processNext : bool);
+
+doWordWrap(
+	width : double, elements : [WrapElement], widths : [double], dynamicElements : [DynamicWrapElement],
+	alignment : ParagraphAlignment, interlineSpacing : double,
+	background : int, opacity : double
+) -> [Form] {
+	if (width == 0.0) {
+		[];
+	} else {
+		rslt = ref [];
+		remainingWidth = ref width;
+		remainingWidths = ref [];
+		breakPointsRef = ref [];
+		l = length(elements);
+
+		for(0, \i -> i < l, \i -> {
+			element = elements[i];
+			isNewLine = switch(element : WrapElement) {
+				NewLine(): true;
+				default: false
+			};
+
+			isGlue = \elementPos -> {
+				assert(0 <= elementPos && elementPos < l, "Incorrect elements array offset in doWordWrap");
+				elements[elementPos] == GlueFragments()
+			}
+
+			isFollowedByGlue = \elementPos -> {
+				assert(0 <= elementPos && elementPos < l, "Incorrect elements array offset in doWordWrap");
+				elementPos < l - 1 && isGlue(elementPos + 1)
+			}
+
+			gluedSequenceData = for(
+				GluedFragmentsData(0, 0.0, true),
+				\fd -> i + fd.count < l && fd.processNext,
+				\fd -> {
+					elementPos = i + fd.count;
+					dynamicWidth = find(dynamicElements, \d -> d.index == elementPos);
+					w = eitherMap(dynamicWidth, \dw -> getValue(dw.width), widths[elementPos]);
+					GluedFragmentsData(fd.count + 1, fd.width + w, isGlue(elementPos) || isFollowedByGlue(elementPos))
+				}
+			);
+
+			elementsProcessed = gluedSequenceData.count;
+			w = gluedSequenceData.width;
+
+
+			if (isNewLine || w > ^remainingWidth) {
+				remainingWidths := arrayPush(^remainingWidths, ^remainingWidth);
+				remainingWidth := width - w;
+				breakPointsRef := arrayPush(^breakPointsRef, i);
+			} else {
+				remainingWidth := ^remainingWidth - w;
+			};
+			i + elementsProcessed
+		});
+
+		breakPoints = ^breakPointsRef;
+		remainingWidths := arrayPush(^remainingWidths, ^remainingWidth);
+		breakLast = length(breakPoints) - 1;
+		rslt := if (breakLast == -1) [elements] else
+			mapi(breakPoints, \i, v -> {
+				start = if (i == 0) 0 else breakPoints[i -1];
+				subrange(elements, start, v - start);
+			});
+		// last line was not applied
+		if (breakLast >= 0) {
+			lastLine = subrange(elements, breakPoints[breakLast], length(elements) - breakPoints[breakLast]);
+			remainingWidths := arrayPush(^remainingWidths, ^remainingWidth);
+			rslt := arrayPush(^rslt, lastLine);
+		}
+		// and now apply the changes
+		lastline = length(^rslt) - 1;
+
+		mapi(^rslt, \i, line -> {
+			w = (^remainingWidths)[i];
+
+			// First, change Space and LineParts to whatever is real
+			resolved = resolveWrapElement(line);
+			// If it is not Justify mode, we can join consequtive texts of the same style together
+			align = if (i == lastline && alignment == Justify()) StartAlign() else alignment;
+			optimized = if (align != Justify()) {
+				optimizeCols(resolved)
+			} else {
+				resolved;
+			}
+			// Next, we need to apply the baseline
+			baselined = alignBaseline(optimized);
+			// And then the alignment
+			r = applyAlignment(baselined.first, align, width, w, baselined.second);
+
+			// On all lines, except the last, add interline spacing
+			r2 = if (interlineSpacing != 0.0 && i != lastline) {
+				Border(0.0, 0.0, 0.0, interlineSpacing, r)
+			} else {
+				r;
+			}
+
+			r3 = if (i == lastline) fixBaselineB(baselined.third, r2) else r2;
+
+			spacing = if (i != lastline) interlineSpacing else 0.0;
+			if (opacity != 0.0) {
+				Group([Rectangle(width, getValue(baselined.second)+spacing, [Fill(background), FillOpacity(opacity)]), r3])
+			} else
+				r3;
+		});
+	}
+}
+
+// Instantiate which element to use at this position in a line.
+resolveWrapElement(line : [WrapElement]) -> [Form] {
+	l = length(line);
+	realFirst = ref 0;
+	realLast = ref (l - 1);
+	mapi(line, \i, element -> {
+		switch(element: WrapElement) {
+			NewLine(): {
+				// adjust first and last line position in order to make LinePart working.
+				if ( i == 0 ) realFirst := 1
+				else if (i == l-1) realLast := l-2;
+
+				Empty()
+			}
+			LinePart(f, in, last): if (i == ^realFirst) f else if (i == ^realLast) last else in;
+			Space(space): if (i == ^realFirst) Empty() else if (i == ^realLast) Empty() else space;
+			GlueFragments() : Empty();
+			// We know this is a Form, so to satisfy the type checker, we cast it
+			default: cast(element : WrapElement -> Form);
+		};
+	});
+}
+
+// Implements alignment by inserting spaces at the start, end or inbetween
+applyAlignment(line : [Form], alignment : ParagraphAlignment, width : double,
+		remainingWidth : double, height : Behaviour<double>) -> Form {
+	applyLeft = \arLine -> concat(arLine, [Fixed(remainingWidth, 0.0)]);
+	applyRight = \arLine -> concat([Fixed(remainingWidth, 0.0)], arLine);
+	resultLine =
+		if (remainingWidth <= 0.0) line
+		else { switch(alignment : ParagraphAlignment) {
+			LeftAlign(): applyLeft(line);
+			RightAlign(): applyRight(line);
+			CenterAlign(): concat3([Fixed(remainingWidth / 2.0, 0.0)], line, [Fixed(remainingWidth / 2.0, 0.0)]);
+			StartAlign(): (if (getDefaultRtl()) applyRight else applyLeft)(line);
+			EndAlign(): (if (getDefaultRtl()) applyLeft else applyRight)(line);
+			Justify(): {
+				if (length(line) <= 1) line
+				else interleave(line, Fixed(min(remainingWidth / i2d(length(line) - 1), 10.0), 0.0))
+			}
+			TightWidth() : (if (getDefaultRtl()) applyRight else applyLeft)(line);
+		}};
+	w = if (remainingWidth <= 0.0 || alignment == TightWidth()) width - remainingWidth else	width;
+	SelectSize(const(w), height, Cols(resultLine));
+}
+
+
+SymbolAtPositionType ::= PositionSpace, PositionLineBreak, PositionAllowBreakAfter, PositionCharCat;
+	PositionSpace : ();
+	PositionLineBreak : ();
+	PositionAllowBreakAfter : ();
+
+	// When splitting occurs based on complex conditions, such as (but not only):
+	//    • punctuation,
+	//    • number boundary.
+	PositionCharCat : ();
+
+allowBreaksAfterHyphen = !isUrlParameterTrue("fix40612");
+
+makeZeroSpaceElement(style : [CharacterStyle]) -> Form {
+	spaceMetrics = getStaticFormSize(Text(" ", style));
+	fixBaseline(spaceMetrics.baseline, Fixed(0.0, spaceMetrics.height))
+}
+
+makeEmptyLineInspectElement(indexing : int, style : [CharacterStyle]) -> WrapElement {
+	InspectElement(indexing, make(0.0), make(0.0), makeWH(), make(0.0), makeZeroSpaceElement(style))
+}
+
+// Analogue of likely named function in tparagraph.flow
+applyRelativeScale(tx: Text) -> Text {
+	Text(tx.text, map(tx.style, \s -> {
+		switch (s) {
+			FontSize(v): {
+				// println(formatHex(getCharCodeAt(tx.text, 0))+" "+d2s(getCharRelativeScale(getCharCodeAt(tx.text, 0))));
+				FontSize(v * getCharRelativeScale(getCharCodeAt(tx.text, strlen(tx.text)-1)));
+			}
+			default: s;
+		}
+	}))
+}
+
+breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool, indexingInit : int, init : List<WrapElement>, isLastChild : bool) -> List<WrapElement> {
+
+	toInspectingElementIfNecessary : (int, int, InspectableElement) -> WrapElement = \indexing, offset, f -> {
+		if (0 <= indexing) {
+			InspectElement(offset, make(0.0), make(0.0), makeWH(), make(0.0), f)
+		} else {
+			f
+		}
+	};
+
+	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
+	// If paragraph has several successive WigiText fragments with letterspacing, then the space between them will be lost
+	// so we make a trick - add zerro-width space to the end of text in Text to force it to add last letterspacing space
+	makeLetterSpacing = !isLastChild && containsStruct(style, LetterSpacing(0.0));
+
+	makeTextFn = \indexing, t -> {
+		toInspectingElementIfNecessary(indexing, indexing, applyRelativeScale(Text(if (makeLetterSpacing) t + "\u200b" else t, style)))
+	};
+
+	textLen = strlen(text);
+
+	space1Pos = ref -1;                                        // next pos of space char
+	space2Pos = ref -1;                                        // next pos of zero-width space char
+	newLinePos = ref -1;                                       // next pos of newline symbol
+	hyphenPos = ref -1;                                        // next pos of hyphen
+	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
+
+	remapMinusOne = \p -> if (p >= 0) p else textLen;
+	loop1 = ref \i, indexing, acc -> EmptyList();
+	loop1 := \i, indexing, acc -> {
+		if (i >= textLen) {
+			acc
+		} else {
+
+			// update key positions
+
+			if (isBiDiEnabled()) {
+				if (i >= ^chrCatPos) chrCatPos := remapMinusOne(getCharCatSplitPos(text, i+1, textLen)-1);
+			} else chrCatPos := i;
+			if (^chrCatPos > ^space1Pos) space1Pos := remapMinusOne(strRangeIndexOf(text, " ", ^chrCatPos, textLen));
+			if (^chrCatPos > ^space2Pos) space2Pos := remapMinusOne(strRangeIndexOf(text, "\u200b", ^chrCatPos, textLen));  // \u200b is zero-width space
+			if (^chrCatPos > ^newLinePos) newLinePos := remapMinusOne(strRangeIndexOf(text, "\n", ^chrCatPos, textLen));
+
+			if (^chrCatPos >= ^hyphenPos) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
+				hyphenPos := {
+					if (!allowBreaksAfterHyphen)
+						textLen
+					else
+						remapMinusOne(findBreakAfterAllowPos2(text, ^chrCatPos, moreLineBreaks));
+				};
+			}
+
+			// TODO try to get rid of array hence malloc optimisation needed.
+			noBiDiPositions : [Pair<int, SymbolAtPositionType>] = [
+				Pair(^space1Pos, PositionSpace()),
+				Pair(^space2Pos, PositionSpace()),
+				Pair(^newLinePos, PositionLineBreak()),
+				Pair(^hyphenPos, PositionAllowBreakAfter()),
+			];
+			positions = if (isBiDiEnabled())
+				arrayPush(noBiDiPositions, Pair(^chrCatPos, PositionCharCat()))
+			else
+				noBiDiPositions;
+
+			keyPosM = fold(positions, None(), \pos : Maybe<Pair<int, SymbolAtPositionType>>, currPos : Pair<int, SymbolAtPositionType> -> {
+				if (currPos.first >= textLen) {
+					pos
+				} else {
+					switch(pos) {
+						None(): Some(currPos);
+						Some(p): {
+							if (p.first <= currPos.first) {
+								Some(p)
+							} else {
+								Some(currPos)
+							}
+						}
+					}
+				}
+			});
+
+			//Do not replace with eitherFn - tail recursion optimization will not happen
+			switch(keyPosM : Maybe<Pair<int, SymbolAtPositionType>>) {
+				Some(keyPosPair) : {
+					keyPos = keyPosPair.first;
+					keyPosRelative = keyPos - i;
+					posType = keyPosPair.second;
+					keyFragment = switch(posType : SymbolAtPositionType) {
+						PositionLineBreak() : {
+							NewLine();
+						}
+						PositionSpace() : {
+							// To get constant time concatenation of paragraph strings to work, we send
+							// the space from the original string to this guy.
+							space = makeSpace(getCharAt(text, keyPos), style);
+							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
+						}
+						PositionAllowBreakAfter() : {
+							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, Space(Empty()))
+						}
+						PositionCharCat(): {
+							// Used only for case break happens immediately after current position
+							// not to remake current implementation.
+							makeTextFn(indexing, getCharAt(text, keyPos));
+						}
+					};
+
+					if (keyPos == i) {
+						//Cannot happen for hyphen
+						// if we have only NewLine, we have to add empty space form to be able to position on this line
+						// we can't treat "\n" as two lines because in SmartBuilder a lot of content think different (treats it as one line)
+						newAcc = if (text == "\n") {
+							Cons(keyFragment, acc)
+						} else {
+							switch (keyFragment) {
+								NewLine(): {
+									// we should insert special element that forms empty line in rendering time.
+									// in edit mode (indexing >= 0) it should be InspectElement in order to be able to position in the line
+									// in preview mode (indexing < 0) it should be fixBaseline with appropriate height
+									newLineElement = if (0 <= indexing) makeEmptyLineInspectElement(indexing, style) else makeZeroSpaceElement(style);
+									Cons(keyFragment, Cons(newLineElement, acc))
+								}
+
+								default: Cons(keyFragment, acc);
+							}
+						}
+						^loop1(i + 1, indexing + 1, newAcc);
+					} else if (keyPos == textLen - 1) {
+						word = substring(text, i, keyPos - i); //println("word:" + word);
+						//Cannot happen for hyphen
+						//We have found following pattern: <more than zero non-special symbols><special symbol><end>
+						//So, recursive call will return Cons(makeTextFn(word), acc) in
+						//Cons(keyFragment, breakTextFragment(word, style, moreLineBreaks, indexing, acc));
+						//So, refactored as
+						Cons(keyFragment, Cons(makeTextFn(indexing, word), acc));
+						//to make the function tail recursive
+					} else {
+						//In hyphen case we do not cut off the symbol at position.
+						//keyFragment is Space(Empty()) that only allows breaking after the hyphen.
+						doNotSkipSymbolDelta = if (posType == PositionAllowBreakAfter() || posType == PositionCharCat()) 1 else 0;
+						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta); //println("word:" + word);
+						^loop1(
+							keyPos + 1, indexing + keyPosRelative + 1,
+							if (posType == PositionCharCat())
+								Cons(makeTextFn(indexing, word), acc)
+							else
+								Cons(keyFragment, Cons(makeTextFn(indexing, word), acc))
+						)
+					}
+				}
+				None() : {
+					Cons(makeTextFn(indexing, strRight(text, i)), acc)
+				}
+			}
+		}
+	}; // loop1
+
+	^loop1(0, indexingInit, init);
+}
+
+makeSpace(space : string, style : [CharacterStyle]) -> Space {
+	Space(Text(space, style));
+}
+
+mergeTextFragments(tf1, tf2) {
+	if (tf1.parts == EmptyList()) {
+		tf2
+	} else if (tf2.parts == EmptyList()) {
+		tf1
+	} else {
+		a1 = tf1.parts |> list2array;
+		a2 = tf2.parts |> list2array;
+		l1 = length(a1);
+		l2 = length(a2);
+		mergeLastAndFirst = \last, first -> {
+			isText = \el -> {
+				switch(el:WrapElement) {
+					Text(text, style) : true;
+					default : false;
+				}
+			}
+			if (isText(last) && isText(first)) {
+				// If both elements are Text, there is not a space between them in source text
+				// only formatting symbols.
+				optimizeCols([cast(last:WrapElement -> Text), cast(first:WrapElement -> Text)])//current implementation gives one form
+
+			} else {
+				[last, first]
+			}
+		}
+		concatA([subrange(a1, 0, l1 - 1), mergeLastAndFirst(a1[l1-1], a2[0]), subrange(a2, 1, l2 - 1)]) |> array2list |> TextFragments
+	}
+}
+
+mergeAllTextFragments(elements) {
+	isTextFragments = \pe -> {
+		switch (pe : ParagraphElement) {
+			TextFragments(__): true;
+			default: false
+		}
+	}
+	resWithMergedTextFragments = fold(
+		elements,
+		Pair([], TextFragments(makeList())),
+		\acc:Pair<[ParagraphElement], TextFragments>, el:ParagraphElement -> {
+			if (isTextFragments(el)) {
+				Pair(acc.first, mergeTextFragments(acc.second, cast(el : ParagraphElement -> TextFragments)))
+			} else {
+				if (acc.second.parts == EmptyList()) {
+					Pair(arrayPush(acc.first, el), acc.second)
+				} else {
+					Pair(concatA([acc.first, [acc.second], [el]]), TextFragments(makeList()))
+				}
+			}
+		}
+	);
+	if (resWithMergedTextFragments.second.parts == EmptyList()) {
+		resWithMergedTextFragments.first
+	} else {
+		arrayPush(resWithMergedTextFragments.first, resWithMergedTextFragments.second)
+	}
+}
+
+glueElements(pElements) {
+	glueList = \list -> {
+		array = list |> list2array;
+		interleave(array, GlueFragments()) |> array2list
+	}
+	map(pElements, \pe -> {
+		switch(pe : ParagraphElement) {
+			TextFragments(parts) : TextFragments(glueList(parts));
+			default : pe;
+		}
+	}) |> \elements -> interleave(elements, GlueFragments())
+}
+
+toOneForm(elements) {
+	ec = length(elements);
+	if (ec == 0) {
+		Empty()
+	} else if (ec == 1 && peIsForm(elements[0])) {
+		cast(elements[0] : ParagraphElement -> Form)
+	} else {
+		Available2(InfiniteWidthAWH, Paragraph(glueElements(elements), [TightWidth()]));
+	}
+}
+
+//returns text line with cutting the tail (store it in rest ref) (if Empty and rest != "" try wraps with "-" then by length)
+FormTextLine(textString : string, style : [CharacterStyle], width : double, rest : ref string) -> Form {
+	text2array = \str -> {
+		cutFirstSpaces(strSplitLeave(str, " "));
+	};
+	stringArray = text2array(concatStrings([textString, " "]));
+	if ( stringArray != [] ) {
+		mark = countUntil(1, length(stringArray), \i -> {getFormWidth(Text(concatStrings(subrange(stringArray, 0, i)), style)) > width}) - 1;
+		if ( mark > 0 ) {
+			rest := concatStrings(cutFirstSpaces(subrange(stringArray, mark, length(stringArray) - mark)));
+			Text(concatStrings(subrange(stringArray, 0, mark)), style)
+		} else {
+			splittedLongWord = strSplit(stringArray[0], "-");
+			mark2 = countUntil(
+				1,
+				length(splittedLongWord),
+				\i -> {getFormWidth(Text(
+					concatStrings(arrayPush(interleave(subrange(splittedLongWord, 0, i), "-"),"-")),
+					style
+				)) > width}
+			) - 1;
+			if ( mark2 > 0 ) {
+				rest := concatStrings(concat(
+					interleave(subrange(splittedLongWord, mark2, length(splittedLongWord) - mark2), "-"),
+					subrange(stringArray, 1, length(stringArray) -1)
+				));
+				Text(concatStrings(arrayPush(interleave(subrange(splittedLongWord, 0, mark2), "-"),"-")), style);
+			} else {
+				longWord = stringArray[0];
+				mark3 = countUntil(1, strlen(longWord), \i -> {getFormWidth(Text(strLeft(longWord, i), style)) > width}) - 1;
+				rest := concatStrings(concat(
+					[substring(longWord, mark3, strlen(longWord) - mark3)],
+					subrange(stringArray, 1, length(stringArray) - 1)
+				));
+				Text(strLeft(longWord, mark3), style);
+			}
+			/* // old style (non-wrap words)
+			rest := textString;
+			Empty()
+			*/
+		}
+	} else {
+		Empty();
+	}
+}
+
+cutFirstSpaces(stringArray : [string]) -> [string] {
+	if ( stringArray == [] ) []
+	else if ( stringArray[0] != " " ) stringArray
+	else cutFirstSpaces(subrange(stringArray, 1, length(stringArray) - 1))
+}
+
+inheritedAvailableParagraph(elements, style) {
+	inheritedAvailableParagraph2(Paragraph, elements, style)
+}
+
+inheritedAvailableParagraph2(pe2form, elements, style) {
+	awh = makeWH();
+	Inspect(
+		[IAvailable2(awh)],
+		pe2form(
+			map(elements, \el -> setParagraphFormAvailable(awh, el)),
+			style
+		)
+	)
+}
+
+setParagraphFormAvailable(awh, el) {
+	switch (el : ParagraphElement) {
+		TextFragments(__): el;
+		GlueFragments(): el;
+		default: Available2(whenSizeChanged(awh), cast(el: ParagraphElement -> Form));
+	}
+}
+
+formatParagraph(s : string, defaultStyle : [CharacterStyle], p : [ParagraphElement]) -> [ParagraphElement] {
+	substs =
+		mapi(reverseA(p), \i, part -> {
+			placeholder = "%" + i2s(length(p) - i);
+			map(multipleStrIndexOf(s, placeholder), \pos ->
+				Triple(
+					length(p) - i - 1,          // placeholder index
+					pos,                        // placeholder start pos
+					pos + strlen(placeholder)   // placeholder end pos
+				)
+			)
+		})
+		|> concatA
+		|> \a2 -> sortCustom(a2, secondOfTriple, true)   // sort by position
+		|> \a3 -> arrayPush(a3, Triple(2147483647/*intMax*/, strlen(s), strlen(s)));  // fictitious element in the end
+
+	elements = concatA(
+		mapi(substs, \i, part -> {
+			lastPos = (if (i==0) 0 else substs[i-1].third);
+			curPos = part.second;
+			concatA([
+				if (curPos - lastPos > 0) [TextFragment(substring(s, lastPos, curPos - lastPos), defaultStyle)] else [],
+				if (part.first < length(p)) [p[part.first]] else []
+			])
+		})
+	);
+
+	elements
+}
+

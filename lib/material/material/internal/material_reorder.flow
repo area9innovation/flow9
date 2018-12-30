@@ -1,0 +1,119 @@
+import material/material_gui;
+import material/make_subscribe;
+
+export {
+	MReorderTemplate(
+		items : DynamicBehaviour<[?]>,
+		materialize : (?) -> Material,
+		style : [MReorderStyle],
+		vertical : bool) -> Material;
+
+	MReorderStyle ::= MReorderGridStyle, MReorderOrder, MNoScroll;
+		MReorderOrder : (order : DynamicBehaviour<[int]>);
+}
+
+MReorderTemplate(
+	items : DynamicBehaviour<[?]>,
+	materialize : (?) -> Material,
+	style : [MReorderStyle],
+	vertical : bool) -> Material {
+
+	order = extractStruct(style, MReorderOrder(make([]))).order;
+	draggingItem = extractStruct(style, MDraggingItem(make(-1))).item;
+	noScroll = contains(style, MNoScroll());
+
+	// Changes only when items are changed from outside
+	initItems : DynamicBehaviour<[?]> = cloneBehaviour(items);
+
+	// Changes on dragging ends
+	itemsInner = cloneBehaviour(items);
+
+	gridStyle : [MReorderGridStyle] =
+		reorder2gridStyle(style)
+		|> (\st -> replaceStruct(st, MDraggingItem(draggingItem)))
+		|> (\st -> ifArrayPush(st, !vertical, MGridVertical()));
+
+	cursor = fif(feq(draggingItem, -1), const(GrabCursor()), const(GrabbingCursor()));
+
+	MSelect(initItems, \itms : [?] ->
+		map(itms, \item ->
+			MReorderItem(
+				materialize(item)
+				|> (\m -> MCursor(DynamicCursor(cursor), m)),
+				[])
+			)
+		|> (\arr -> MReorderGrid(arr, order, gridStyle))
+	)
+	|> (\m -> (if (vertical) MAvailableWidth else MAvailableHeight)(m, const(0.)))
+	|> (\m -> if (noScroll) m else MScroll(m, TFillXY(), [MScrollCropByContent()]))
+	|> (\m : Material -> MConstruct([
+			makeSubscribe2(draggingItem, \drIt ->
+				if (drIt == -1)
+					nextDistinct(itemsInner, reorderArray(getValue(initItems), getValue(order)))
+			),
+			\ -> bidirectionalLink(
+				items,
+				itemsInner,
+				\itms -> {
+					nextDistinct(order, enumFromTo(0, length(itms) - 1));
+					nextDistinct(initItems, getValue(items));
+					itms
+				},
+				idfn
+			)
+		], m))
+}
+
+checkForScrolling(
+	p : Point,
+	scrollPosition : DynamicBehaviour<Point>,
+	contentWH : Transform<WidthHeight>,
+	boxWH : Transform<WidthHeight>,
+	vertical : bool) -> () -> void {
+
+	uns = initUnsM();
+
+	sideZone = 10.;
+	scrollingStep = 10.;
+
+	coordinate = if (vertical) p.y else p.x;
+	stageSize = if (vertical) fgetValue(boxWH).height else fgetValue(boxWH).width;
+
+	forwardStep = \coor -> {
+		contentSize = if (vertical) fgetValue(contentWH).height else fgetValue(contentWH).width;
+		min(contentSize - stageSize, coor + scrollingStep)
+	};
+	backwardStep = \coor -> max(0., coor - scrollingStep);
+
+	setNewScrollPosition = \stepFn -> {
+		prevPos = getValue(scrollPosition);
+		nextDistinct(scrollPosition,
+			if (vertical)
+				Point(prevPos.x, stepFn(prevPos.y))
+			else
+				Point(stepFn(prevPos.x), prevPos.y)
+		);
+
+		setUnsM(
+			uns,
+			interruptibleTimer(50, \ -> setUnsM(uns, checkForScrolling(p, scrollPosition, contentWH, boxWH, vertical)))
+		);
+
+		\ -> dispUnsM(uns)
+	}
+
+	if (coordinate > stageSize - sideZone)
+		setNewScrollPosition(forwardStep)
+	else if (coordinate < sideZone)
+		setNewScrollPosition(backwardStep)
+	else
+		nop
+}
+
+reorder2gridStyle(style : [MReorderStyle]) -> [MReorderGridStyle] {
+	filtermap(style, \st ->
+		switch (st) {
+			MReorderGridStyle() : {r : Maybe<MReorderGridStyle> = Some(st); r};
+			default : None()
+	})
+}

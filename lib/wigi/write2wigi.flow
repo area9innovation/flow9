@@ -1,0 +1,271 @@
+import formats/write;
+import wigi/types;
+import wigi/normalize;
+
+export {
+	// Convert this write document to Wigi. Returns a log of conversion errors
+	write2wigi(w : WriteDocument) -> Pair<WigiElement, [string]>;
+	write2wigi2(w : WriteDocument, info : Write2WigiInfo) -> Pair<WigiElement, [string]>;
+	obeyRecursiveChildCount(recursive : WigiRecursiveType, es : [WigiElement]) -> [WigiElement];
+
+	// Some information to send down during the conversion process
+	Write2WigiInfo : (paragraphStyle : [WigiParagraphStyle]);
+}
+
+write2wigi(w : WriteDocument) -> Pair<WigiElement, [string]> {
+	write2wigi2(w, Write2WigiInfo([]));
+}
+
+write2wigi2(w : WriteDocument, info : Write2WigiInfo) -> Pair<WigiElement, [string]> {
+	stories : [Pair<WigiStory, [string]>] = map(w.stories, \s -> writeStory2wigi(s, w.styles, info));
+	Pair(
+		makeWigiStory(map(stories, \s -> s.first), []) |> normalizeWigiDocument,
+		fold(stories, [], \acc, s -> concat(acc, s.second))
+	);
+}
+
+writeStory2wigi(w : WriteStory, styles : WriteStyleManager, info : Write2WigiInfo) -> Pair<WigiStory, [string]> {
+	paragraphs = map(w.paragraphs, \p -> writeParagraph2wigi(p, styles, info));
+	Pair(makeWigiStory(map(paragraphs, \p -> p.first), []), fold(paragraphs, [], \acc, p -> concat(acc, p.second)));
+}
+
+writeParagraph2wigi(w : WriteParagraph, styles : WriteStyleManager, info : Write2WigiInfo) -> Pair<WigiParagraph, [string]> {
+	// Consider the paragraph style here
+	parastyle = getParagraphStyle(styles, w.style);
+	def = parastyle.defCharStyle;
+	elements = map(w.elements, \e -> writeElement2wigi(e, styles, def));
+	Pair(WigiParagraph(map(elements, \e -> e.first), info.paragraphStyle), fold(elements, [], \acc, e -> concat(acc, e.second)));
+}
+
+writeStories2Recursive(recursive : WigiRecursiveType, stories : [WriteStory], styles : WriteStyleManager) -> Pair<WigiElement, [string]> {
+	errors = ref [];
+	es = map(stories, \s -> {
+		wigi = writeStory2wigi(s, styles, Write2WigiInfo([TightWidth()]));
+		iter(wigi.second, \error -> refArrayPush(errors, error));
+		paragraphs = ^(wigi.first.paragraphs);
+		if (length(paragraphs) == 1) {
+			switch(paragraphs[0]) {
+				WigiParagraph(elements, style): {
+					newParagraphs = if (length(elements) == 0) [WigiParagraph([WigiText("",[])], style)] else paragraphs;
+					WigiRecursive([makeWigiStory(newParagraphs, [])], WigiFrame(1000.0, 1000.0, [TightWidth(), TightHeight()]), []);
+				}
+				default: wigi.first;
+			}
+		} else {
+			wigi.first;
+		}
+	});
+	childs = obeyRecursiveChildCount(recursive, es);
+
+	Pair(WigiRecursive(childs, recursive, []), ^errors);
+}
+
+obeyRecursiveChildCount(recursive : WigiRecursiveType, es : [WigiElement]) -> [WigiElement] {
+	children = wigiRecursiveChildCount(recursive);
+	n = length(es);
+	if (children == -1 || n == children) es
+	else {
+		if (n < children) {
+			obeyRecursiveChildCount(recursive, arrayPush(es, WigiParagraph([WigiText("",[])],[TightWidth()])));
+		} else {
+			subrange(es, 0, children);
+		}
+	}
+}
+
+writeElement2wigi(w : WriteElement, styles : WriteStyleManager, defaultStyleId : WriteCharacterStyleId) -> Pair<WigiElement, [string]> {
+	switch (w) {
+		WriteTextFragment(text, styleid): {
+			style = getCharacterStyle(styles, either(styleid, defaultStyleId));
+
+			errors = ref [];
+
+			charStyle1 = fold(style.style, [], \acc, s -> switch (s : CharacterStyle) {
+				FontFamily(f): arrayPush(acc, s);
+				FontSize(sz): arrayPush(acc, s);
+				Fill(f): arrayPush(acc, s);
+				default: {
+					refArrayPush(errors, "Unsupported character style: " + toString(s) + " for '" + text + "'");
+					acc;
+				}
+			});
+
+			charStyle2 = if (style.underline) arrayPush(charStyle1, Underline()) else charStyle1;
+			charStyle3 = if (style.baselineShift != 0.0){
+					isSubSuperScript = style.baselineShift == 0.6 || style.baselineShift == -0.7;
+					shift = if (isSubSuperScript) 0.5 * sign(style.baselineShift) else style.baselineShift;
+					shiftedStyle = arrayPush(charStyle2, BaselineShift(shift));
+					fs : FontSize = extractStruct(shiftedStyle, FontSize(0.0));
+					if (isSubSuperScript && fs.size > 0.0) {
+						arrayPush(filter(shiftedStyle, neq(fs)), FontSize(fs.size / 0.6));
+					} else {
+						shiftedStyle
+					}
+				} else charStyle2;
+			// Change &#escape; characters to single glyphs
+			escaped = xmlEscaping(text, errors);
+			Pair(cast(WigiText(escaped, charStyle3) : WigiText -> WigiElement), ^errors);
+		}
+		WriteLineBreak(): {
+			Pair(WigiText("", []), []);
+		}
+		WriteNonBreakingSpace(style): {
+			Pair(WigiText("\u00a0", []), []);
+		}
+		WriteFraction(stories): {
+			writeStories2Recursive(WigiFraction(), stories, styles);
+		}
+		WriteBrackets(leftBracketType, rightBracketType, stories): {
+			writeStories2Recursive(WigiBrackets(leftBracketType, rightBracketType), stories, styles);
+		}
+		WriteRoot(stories): {
+			writeStories2Recursive(WigiRoot(), stories, styles);
+		}
+		WriteDottedElement(left, right, top, bottom, leftSign, rightSign, stories): {
+			writeStories2Recursive(WigiDottedElement(left, right, top, bottom, leftSign, rightSign), stories, styles);
+		}
+		WriteEvaluatingIntegral(stories) : {
+			writeStories2Recursive(WigiEvaluatingIntegral(), stories, styles);
+		}
+		WriteLongDivision(stories): {
+			writeStories2Recursive(WigiLongDivision(), stories, styles);
+		}
+		CustomSymbol(symbol): {
+			style = getCharacterStyle(styles, defaultStyleId);
+
+			symbolStyle1 = if (style.underline) [Underline()] else [];
+			symbolStyle2 = if (style.baselineShift != 0.0) arrayPush(symbolStyle1, BaselineShift(style.baselineShift)) else symbolStyle1;
+
+			size = extract(style.style, 0.0, \_style -> switch(_style) { FontSize(size): Some(size); default: None() });
+
+			Pair(WigiBlock(WigiCustomSymbol(symbol, size), symbolStyle2), []);
+		}
+		WriteDefiniteSignedControl(signType, stories): {
+			wg = switch(signType : DefiniteControlSignType) {
+				IntegralSign() : WigiIntegral();
+				SigmaSign() : WigiSum();
+				ProductSign() : WigiProduct();
+				OneCharSign(charSign) : WigiIntegral2(charSign);
+			}
+			writeStories2Recursive(wg, stories, styles);
+		}
+		WriteStoryWithTopModificator(stories, modificator, size): {
+			writeStories2Recursive(WigiTopModificator(modificator, size), stories, styles);
+		}
+
+		WriteSupscript(stories): {
+			writeStories2Recursive(WigiSupscript(), stories, styles);
+		}
+		WriteSubscript(stories): {
+			writeStories2Recursive(WigiSubscript(), stories, styles);
+		}
+		WriteOverscript(stories): {
+			writeStories2Recursive(WigiOverscript(), stories, styles);
+		}
+		WriteUnderscript(stories): {
+			writeStories2Recursive(WigiUnderscript(), stories, styles);
+		}
+		WriteOverlay(stories): {
+			writeStories2Recursive(WigiOverlay(), stories, styles);
+		}
+		WriteDoubleUnderlined(stories): {
+			if (length(stories) == 1) {
+				wigi = writeStory2wigi(stories[0], styles, Write2WigiInfo([]));
+				wigiParagraphs = ^(wigi.first.paragraphs);
+				if (length(wigiParagraphs) == 1) {
+					wigiElements = cast(wigiParagraphs[0]: WigiElement -> WigiParagraph).elements;
+					if (length(wigiElements) == 1) {
+						wigiElement = switch (wigiElements[0]) {
+							WigiText(t, s): WigiText(t, arrayPush(s, DoubleUnderline()));
+							WigiRecursive(e, t, s): WigiRecursive(e, t, arrayPush(s, DoubleUnderline()));
+							WigiBlock(t, s): WigiBlock(t, arrayPush(s, DoubleUnderline()));
+							default: wigiElements[0];
+						};
+
+						Pair(cast(WigiParagraph([wigiElement], []): WigiParagraph -> WigiElement), wigi.second);
+					} else Pair(WigiEmpty(), ["Can't convert " + i2s(length(wigiElements)) + " elements in WriteDoubleUnderlined."]);
+				} else Pair(WigiEmpty(), ["Can't convert " + i2s(length(wigiParagraphs)) + " paragraphs in WriteDoubleUnderlined."]);
+			} else Pair(WigiEmpty(), ["Can't convert " + i2s(length(stories)) + " stories in WriteDoubleUnderlined."]);
+		}
+		WriteTable(stories, style, cellStyles): {
+			errors = ref [];
+			cellSpans = ref [];
+			es = mapi(stories, \i, s -> {
+				wigi = writeStory2wigi(s, styles, Write2WigiInfo([TightWidth()]));
+				iter(wigi.second, \error -> refArrayPush(errors, error));
+
+				refArrayPush(cellSpans, WigiCellSpan(cellStyles[i].rowSpan, cellStyles[i].colSpan));
+
+				cellStyle = [
+					WigiCellBorder(cellStyles[i].topBorder, cellStyles[i].rightBorder, cellStyles[i].bottomBorder, cellStyles[i].leftBorder),
+					WigiCellPadding(cellStyles[i].leftPadding, cellStyles[i].topPadding, cellStyles[i].rightPadding, cellStyles[i].bottomPadding)
+				];
+
+				WigiRecursive([wigi.first], WigiTableCell(makeWH(), cellStyle), []);
+			});
+
+			recursive = WigiTable(style.rows, style.cols, ^cellSpans, if (style.showGrid) [WigiShowGrid()] else []);
+
+			Pair(WigiRecursive(es, recursive, []), ^errors);
+		}
+		default: {
+			//	WigiText("Not supported: " + w.structname, [Fill(0xff0000)]);
+			Pair(WigiEmpty(), [w.structname + " not supported: " + toString(w)]);
+		}
+	}
+}
+
+
+xmlEscaping(s : string, errors : ref [string]) -> string {
+	amp = strIndexOf(s, "&");
+	if (amp == -1) s
+	else {
+		before = strLeft(s, amp);
+		if (getCharAt(s, amp + 1) == "#") {
+			// Numerical escapes;
+			mid = strRight(s, amp + 2);
+
+			semi = strIndexOf(mid, ";");
+			if (semi == -1) s
+			else {
+				digi = strLeft(mid, semi);
+				code = if (getCharAt(digi, 0) == "x") {
+					// We have hex
+					parseHex(strRight(digi, 1));
+				} else {
+					// We have digital
+					s2i(digi);
+				};
+				if (code != 0) {
+					char = fromCharCode(code);
+					after = strRight(mid, semi + 1);				
+					before + char + xmlEscaping(after, errors);
+				} else {
+					refArrayPush(errors, "Unsupported XML escape: &" + digi + ";");
+					"&" + digi + ";";
+				}
+			}
+		} else {
+			mid = strRight(s, amp + 1);
+			semi = strIndexOf(mid, ";");
+			if (semi == -1) s
+			else {
+				after = strRight(mid, semi + 1);
+
+				code = strLeft(mid, semi);
+
+				c = if (code == "amp") "&"
+					else if (code == "lt") "<"
+					else if (code == "gt") ">"
+					else if (code == "quot") "\""
+					else if (code == "nbsp") "\u00a0"
+					else {
+						refArrayPush(errors, "Unsupported XML escape: &" + code + ";");
+						"&" + code + ";";
+					}
+				before + c + xmlEscaping(after, errors);
+			}
+		}
+	}
+}
+

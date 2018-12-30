@@ -1,0 +1,156 @@
+import lingo/peg;
+
+export {
+	// Expands nested choices into separate productions,
+	// as well as converts "(r+|)" to "r*"
+	// and "(seq|)"" to "seq?"
+	processNestedChoices(g : Grammar) -> Grammar;
+
+	// Removes actions, bindings and indexes, epsilons and empty terms
+	stripActionsBindings(g : Grammar) -> Grammar;
+}
+
+processNestedChoices(g : Grammar) -> Grammar {
+	nextFree = ref length(g.productions);
+	extraProductions : ref [Production] = ref [];
+
+	productions = map(g.productions, \p : Production -> {
+		Production(p.name, p.caching, p.type, map(p.choices, \c : Seq -> {
+			Seq(map(c.seq, \par -> {
+				convertNestedChoice(p, par, nextFree, extraProductions);
+			}));
+		}))
+	});
+
+	Grammar(concat(productions, ^extraProductions));
+}
+
+convertNestedChoice(prod : Production, par : Parsing, nextFree, extraProductions) -> Parsing {
+	switch (par : Parsing) {
+		Rule(name): par;
+		Star(p): Star(convertNestedChoice(prod, p, nextFree, extraProductions));
+		Plus(p): Plus(convertNestedChoice(prod, p, nextFree, extraProductions));
+		Opt(p): Opt(convertNestedChoice(prod, p, nextFree, extraProductions));
+		Negation(p): Negation(convertNestedChoice(prod, p, nextFree, extraProductions));
+		BindResult(name, p): BindResult(name, convertNestedChoice(prod, p, nextFree, extraProductions));
+		BindMatched(name, p): BindMatched(name, convertNestedChoice(prod, p, nextFree, extraProductions));
+		iRule(i): par;
+		Term(t): par;
+		CharRange(first, last): par;
+		LingoValue(v): par;
+		Epsilon(): par;
+		Action(fn): par;
+		Action2(e): par;
+		ActionIndex(): par;
+		Choices(s): {
+			choices = map(s, \pars -> {
+				convertNestedChoice(prod, pars, nextFree, extraProductions);
+			});
+
+			nc = length(choices);
+
+			if (nc == 1) {
+				// OK, inline it directly
+				choices[0];
+			} else {
+				doExtract = \ -> {
+					// Carve out a new production for it
+					n = ^nextFree;
+					name = prod.name + "$choice" + i2s(n);
+					production = Production(name, false, PegUnknown(),
+						map(choices, \c -> {
+							switch (c) {
+								Seq(__): c;
+								default: Seq([c]);
+							}
+						})
+					);
+					extraProductions := arrayPush(^extraProductions, production);
+					nextFree := n + 1;
+					Rule(name);
+				}
+				if (nc == 2 && choices[1] == Seq([])) {
+					// We have something of the form "(p |)"
+
+					p0 = choices[0];
+					switch (p0) {
+						Seq(s0): {
+							// We have (seq|) and can convert it to seq?
+							Opt(p0);
+						}
+						Plus(pr): {
+							// We have "(r+|)" and can convert it to "r*"
+							Star(pr)
+						}
+						default: doExtract();
+					}
+				} else doExtract();
+
+			}
+		}
+		Seq(s): {
+			sequence = map(s, \pars -> {
+				convertNestedChoice(prod, pars, nextFree, extraProductions);
+			});
+			if (length(sequence) == 1) sequence[0]
+			else Seq(sequence);
+		}
+		CutUp(p): CutUp(convertNestedChoice(prod, p, nextFree, extraProductions));
+		CutDown(p): CutDown(convertNestedChoice(prod, p, nextFree, extraProductions));
+	}
+}
+
+stripActionsBindings(g : Grammar) -> Grammar {
+	productions = map(g.productions, \p : Production -> {
+		Production(p.name, p.caching, p.type, map(p.choices, \c : Seq -> {
+			stripActionsBindingsSeq(c);
+		}))
+	});
+	Grammar(productions);
+}
+
+stripActionsBindingsSeq(s : Seq) -> Seq {
+	Seq(fold(s.seq, [], \acc, p -> {
+		rp = stripActionsBindingsParsing(p);
+		switch (rp) {
+			None(): acc;
+			Some(tp): arrayPush(acc, tp);
+		}
+	}));
+}
+
+stripActionsBindingsParsing(par : Parsing) -> Maybe<Parsing> {
+	rec = \p : Parsing, fn : (Parsing) -> Parsing -> {
+		rc = stripActionsBindingsParsing(p);
+		r : Maybe<Parsing> = switch (rc) {
+			None(): None();
+			Some(rs): Some(fn(rs));
+		}
+		r;
+	}
+
+	switch (par : Parsing) {
+		Star(p): rec(p, \rp -> Star(rp));
+		Plus(p): rec(p, \rp -> Plus(rp));
+		Opt(p): rec(p, \rp -> Opt(rp));
+		Negation(p): rec(p, \rp -> Negation(rp));
+		BindResult(name, p): stripActionsBindingsParsing(p);
+		BindMatched(name, p): stripActionsBindingsParsing(p);
+		Rule(name): Some(par);
+		iRule(i): Some(par);
+		Term(t): if (t != "") Some(par) else None();
+		CharRange(first, last): Some(par);
+		LingoValue(v): None();
+		Epsilon(): None();
+		Action(fn): None();
+		Action2(e): None();
+		ActionIndex(): None();
+		Choices(s): Some(par); // TODO: This is wrong, but probably ok
+		/*Some(Choices(map(s, \c -> {
+			stripActionsBindingsParsing
+		})));*/
+		Seq(s): Some(stripActionsBindingsSeq(par));
+		CutUp(p): stripActionsBindingsParsing(p);
+		CutDown(p): stripActionsBindingsParsing(p);
+	}
+}

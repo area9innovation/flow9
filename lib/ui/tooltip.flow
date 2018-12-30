@@ -1,0 +1,480 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import virtual_screen_types;
+import gui;
+
+export {
+	// Prepare a tooltip with a string-based message
+	MakeHint(form : Form, hint : string, style : [FormStyle]) -> Form;
+		FormStyle ::= FormWidth, FormFontSize;
+
+		FormWidth : (w : double); // Width. If width is not set then it will be calculated.
+		FormFontSize : (fs : double); 
+
+	MakeHint2(form : Form, hint : Form, style : [FormStyle]) -> Form;
+
+	MakeHint3(form : Form, hint : Form, style : [FormStyle], modifyHintForm : (Form) -> Form, useLock : bool) -> Form; 
+
+	// position:
+	// 1 - left, 2 - top, 3 - right, 4 - bottom
+	MakeHintForImage(form : Form, hint : Form, style : [FormStyle], useLock : bool, time : int, position: int) -> Form; 
+	// One more parameter which allows to disable RollOver handling
+	MakeHintForImage2(form : Form, hint : Form, style : [FormStyle], useLock : bool, useRollOver : bool, time : int, position: int) -> Form; 
+
+	// Makes a tooltip on top of form which follows mouse moves. The popup is rendered
+	// using the entire screen as available area.
+	// Popup is rendered as a completely separate form because of two reasons:
+	// 1. This way it doesn't change any metrics (this can be enforced with Size(zero, zero, form) though)
+	// 2. It needs to be on top of everything, like a cursor
+	makePopup(form : Form, popup : Form) -> Form;
+	makePopupWithLockAndWheel(
+		form : Form,
+		popup : Form,
+		useLock: bool,
+		useWheel : bool,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>
+	) -> Form;
+
+	hideImgHint = make(0); //change it to hide popup image (on read button/productScreenSwitcher, etc)
+
+	Tooltip(f : Form, text : string, style : [CharacterStyle]) -> Form;
+}
+
+global_tooltip_forms = make([]);
+global_tooltip_container_disposer = ref nop;
+Tooltip(f : Form, text : string, style : [CharacterStyle]) {
+	disposeTooltipContainer = \ -> {
+		nextDistinct(global_tooltip_forms, []);
+		^global_tooltip_container_disposer();
+		global_tooltip_container_disposer := nop;
+	};
+
+	constructTooltipContainer = \ -> {
+		dx = getMouseX(getStage()) |> make;
+		dy = getMouseY(getStage()) |> make;
+
+		disposed = ref false;
+		timer(3000, \ -> if (!^disposed) { disposeTooltipContainer(); }  );
+
+		tooltips_container = Disposer(
+			Interactive([
+					MouseMove2(\h, gim -> { next(dx, getMouseX(getStage())); next(dy, getMouseY(getStage())); h}),
+					MouseDown2(\h, gim -> { disposeTooltipContainer(); h } ),
+					KeyDown2(\h, e -> { disposeTooltipContainer(); h } )
+				],
+				Translate(dx, dy,
+					Offset(10.0, 10.0, Select(global_tooltip_forms, \forms -> Lines(forms)))
+				), 
+			),
+			\ -> { disposed := true; }
+		);
+
+		global_tooltip_container_disposer := render(tooltips_container);
+	};
+
+	tooltip_form = 
+		if (isLiteEditStyle()) {
+			Behind(\w, h -> {
+				Group([
+					Group(
+						map([45.0, -45.0, 135.0, -135.0], \dir -> {
+							Filter([DropShadow([Color(0x595959, 0.05), Radius(5.0), Placement(dir, 5.0)])],
+								Graphics(roundedRect(w, h, 5.0), [Fill(0xffffff)])
+							)
+						})
+					),
+					Graphics(roundedRect(w, h, 5.0), [Fill(0xfff7bc)])
+				])},
+				Border(5.0, 5.0, 5.0, 5.0, Text(text, style))
+			);
+		} else {
+			Rounded(5.0, [Fill(0xFFFFFF), Stroke(0x000000)], Border(5.0, 5.0, 5.0, 5.0, Text(text, style)));
+		};
+
+	removeTooltipForm = \ -> {
+		next(global_tooltip_forms, removeFirst(getValue(global_tooltip_forms), tooltip_form));
+		if (length(getValue(global_tooltip_forms)) == 0) {
+			disposeTooltipContainer()
+		}
+	};
+
+	addTooltipForm = \ -> {
+		if (length(getValue(global_tooltip_forms)) == 0) {
+			constructTooltipContainer();
+		}
+		next(global_tooltip_forms, arrayPush(getValue(global_tooltip_forms), tooltip_form));
+	};
+
+	Disposer(
+		Interactive([
+			RollOver(\gim -> { addTooltipForm(); }),
+			RollOut(\gim -> { removeTooltipForm(); })
+		], f),
+		removeTooltipForm
+	)
+}
+MakeHint(form : Form, hint : string, style : [FormStyle]) -> Form {
+	fontSize = extractStruct(style, FormFontSize(10.0)).fs;
+	hintForm = if (hint == "") Empty() else Text(hint, [FontSize(fontSize)]);
+	MakeHint2(form, hintForm, style)
+}
+ 
+MakeHint2(form : Form, hint : Form, style : [FormStyle]) -> Form {
+	MakeHint3(form, hint, style, \f -> Rounded(4.0, [Fill(0xffffff), FillOpacity(0.8)], Border(4.0, 4.0, 4.0, 4.0, f)), false)
+}
+
+unsHideOnReadAboutThis = ref \-> {};
+MakeHintForImage(form : Form, hint : Form, style : [FormStyle], useLock : bool, time : int, position: int) -> Form {
+	MakeHintForImage2(form, hint, style, useLock, true, time, position); 
+}
+
+MakeHintForImage2(form : Form, hint : Form, style : [FormStyle], useLock : bool, useRollOver : bool, time : int, position: int) -> Form {
+	if (hint != Empty() && (useRollOver || useLock)) {
+		//if useLock is true we can lock hint on the screen by clicking on form which calls it. Next click on the form release lock.		
+		width = extract(style, 0.0, \s -> switch(s) { FormWidth(w): Some(w); default: None() });
+		lock = ref false;
+		position2 = if (position > 3) 2 else position; //default position is right
+
+		disposeHint = ref nop;
+
+		disposeFn = \ -> {
+			(^disposeHint)();
+			disposeHint := nop;
+		}
+		size = makeWH();
+		rollOut = ref false;
+
+		touchscreen = mobile;
+
+		makeForm = \miX, miY -> {
+			offsetX = getMouseX(getStage()) - miX;
+			offsetY = getMouseY(getStage()) - miY;
+			hintSize = makeWH();
+			Group([
+				Interactive([
+						MouseDown(\gm2 -> {
+							if (touchscreen) {								
+								if (gm2.inside() && useLock) {									
+									lock := !(^lock || touchscreen);
+									disposeFn();
+									true
+								} else {
+									false
+								}									
+							} else {
+								false
+							}
+						})
+					],
+					{
+						Translate(
+							select2(hintSize, size, \hs, s -> {
+								if (position2 == 0)
+									max(offsetX - hs.width - 5.0, 10.0)
+								else if (position2 == 1)
+										min(offsetX - hs.width / 2.0 + s.width / 2.0, getStageWidth() - hs.width)
+									else if (position2 == 2)
+											min(offsetX + s.width, getStageWidth() - hs.width)
+										else if (position2 == 3)
+												min(offsetX - hs.width / 2.0 + s.width / 2.0, getStageWidth() - hs.width)
+											else
+												0.0
+							}),
+							select2(hintSize, size, \hs, s -> {
+								if (position2 == 0)
+									min(offsetY, getStageHeight() - hs.height)
+								else if (position2 == 1)
+										max(offsetY - hs.height - 5.0, 10.0)
+									else if (position2 == 2)
+											min(offsetY, getStageHeight() - hs.height)
+										else if (position2 == 3)
+												min(offsetY + s.height, getStageHeight() - hs.height)
+											else
+												0.0
+							}),
+							Inspect([ISize(hintSize)], hint)
+						)
+					}
+				),
+				// It looks like Translate does not affect events handling, so we show invisible click handler above the small form				
+				Interactive([
+					RollOut(\gm1 -> if (!(^lock || touchscreen)) disposeFn()),
+					MouseDown2(\handled, gm1 -> {						
+						if (gm1.inside() && useLock) {							
+							lock := !(^lock || touchscreen);
+							if (!^lock && !useRollOver) {
+								//#39451 - new zoom behaviour
+								disposeFn()
+							}
+							true
+						} else {
+							false
+						}
+					}),	
+				],
+					Translate(
+						const(offsetX - 2.0), 
+						const(offsetY - 2.0), 
+						//strange bug when roll over from bottom
+						Select(size, \s -> ClickableFixed(s.width + 4.0, s.height + 4.0))
+					)
+				)
+			]);
+		}
+
+		rollOverHandler = \gm -> {
+			rollOut := false;
+			mouseInfo = gm();			
+			// hint != Empty
+			disposeFn();
+			
+			hintForm = makeForm(mouseInfo.x, mouseInfo.y);
+			timer(time, \ -> if (!^rollOut) { disposeFn(); disposeHint := render(hintForm) });
+			
+		};
+
+		rollOutHandler = \gm1 -> {
+			if (!(^lock)) rollOut := true
+		};
+
+		//#39451 - new zoom behaviour
+		scaledPicMouseDownHandler = \handled, mi : MouseDownInfo -> {
+			// When popup is visible it will handle mouse down itself.
+			if (!handled && !useRollOver && mi.inside()) {
+				hintForm = makeForm(mi.x, mi.y);
+				lock := true;
+				disposeFn();
+				disposeHint := render(hintForm);
+				true;
+			} else {
+				handled
+			}
+		}
+
+		^unsHideOnReadAboutThis();
+		unsHideOnReadAboutThis := subscribe2(hideImgHint, \v -> { lock := false; disposeFn(); });
+		eventHandlers = if (useRollOver) [
+			RollOver(rollOverHandler),
+			RollOut(rollOutHandler)
+		] else [
+			MouseDown2(scaledPicMouseDownHandler)
+		];		
+		Inspect([ISize(size)],
+			Interactive(eventHandlers, Disposer(form, disposeFn))
+		)
+	} else {
+		form
+	}
+}
+
+MakeHint3(form : Form, hint : Form, style : [FormStyle], modifyHintForm : (Form) -> Form, useLock : bool) -> Form {
+	//if useLock is true we can lock hint on the screen by clicking on form which calls it. Next click on the form release lock.
+	width = extract(style, 0.0, \s -> switch(s) { FormWidth(w): Some(w); default: None() });
+	lock = ref false;
+
+	fs = getStaticFormSize(form);
+	bg_size = WidthHeight(if (width > 0.0) width else fs.width, fs.height);
+	
+	disposeHint = ref nop;
+
+	disposeFn = \ -> {
+		(^disposeHint)();
+		disposeHint := nop;
+	}
+
+	Interactive([
+			MouseDown2(\handled, gm -> {
+				if (gm.inside() && useLock) {
+					lock := !(^lock);
+					true
+				} else {
+					false
+				}
+			}),	
+			RollOver(\gm -> {
+				mouseInfo = gm();
+				offsetX = getMouseX(getStage()) - mouseInfo.x;
+				offsetY = getMouseY(getStage()) - mouseInfo.y;
+				if (hint != Empty()) {
+					disposeFn();
+					
+					hintSize = makeWH();
+					hintForm = 
+						Interactive([MouseDown2(\handled, gm2 -> {
+							if (gm2.inside() && useLock) {
+								lock := !(^lock);
+								disposeFn();
+								true
+							} else {
+								false
+							}
+						})],
+							Translate(
+								select(hintSize, \wh0 -> (bg_size.width - wh0.width) * 0.5 + offsetX), 
+								// We make sure we do not overlap to avoid removing the hint when the cursor goes into the hint itself
+								select(hintSize, \wh0 -> -10.0 + offsetY - wh0.height), 
+								Inspect([ISize(hintSize)], 
+									modifyHintForm(hint)
+							)
+						)
+					);
+					disposeFn();
+					disposeHint := render(hintForm);
+				};
+			}),
+			RollOut(\gm -> if (!(^lock)) disposeFn()),
+			MouseMove2(\handled, gm -> {
+				if (!handled) {
+					if (!(^lock)) {
+						mouseInfo = gm();
+						if (!mouseInfo.inside) {
+							disposeFn();
+							false;
+						} else {
+							false;
+						}
+					} else {
+						false;
+					}
+				} else {				
+					true;
+				}
+			})
+		],
+		Disposer(form, disposeFn)
+	)
+}
+
+makePopup(form: Form, popup: Form) {
+	makePopupWithLockAndWheel(form, popup, false, false, None());
+}
+
+makePopupWithLockAndWheel(
+	form : Form,
+	popup : Form,
+	useLock: bool,
+	useWheel : bool,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>
+) -> Form {
+	// Cursor position
+	xPos = make(0.0);
+	yPos = make(0.0);
+
+	hover = make(0);
+	popupSize = makeWH();
+	formW = make(0.0);
+	formH = make(0.0);
+
+	lock = ref(false);
+
+	cursorForm =
+	Translate(
+		xPos, yPos,
+		Inspect(
+			[ISize(popupSize)],
+			Interactive([
+					MouseDown2(\handled, gm -> {
+						if (gm.inside() && useLock) {
+							lock := !(^lock);
+							true
+						} else {
+							false
+						}
+					})
+				],
+				popup
+			)
+		)
+	);
+
+	unsub = ref nop;
+	subscribe2(hover, \h -> {
+		(^unsub)();
+		if (h == 0) {
+			unsub := nop;
+		} else {
+			unsub := render(
+				eitherMap(
+					virtualScreenInfoM,
+					\info -> CropPopupByVirtualScreenBox(info, cursorForm, popupSize, false),
+					cursorForm
+				)
+			);
+		}
+	});
+
+	dx = ref 0.0;
+	dy = ref 0.0;
+
+	Disposer(
+		Interactive([
+				RollOver(\gm -> {
+					nextDistinct(hover, 1);
+				}),
+				RollOut(\gm -> {
+					mouseInfo = gm();
+					if (!mouseInfo.inside && !(^lock)) {
+						nextDistinct(hover, 0);
+						dx := 0.0;
+						dy := 0.0;
+					}
+				}),
+				FineGrainMouseWheel2(\handled, gm -> {
+					if (!handled && useWheel) {
+						mi = gm();
+						if (mi.inside && (mi.dx != 0.0 || mi.dy != 0.0)) {
+							dx := ^dx + mi.dx;
+							dy := ^dy + mi.dy;
+							next(xPos, getValue(xPos) + mi.dx);
+							next(yPos, getValue(yPos) + mi.dy);
+							true
+						} else {
+							false
+						}
+					} else {
+						true
+					}
+				}),
+				MouseMove2(\handled, gm -> {
+					if (!handled) {
+						mouseInfo = gm();
+						if (!(^lock)) {
+							if (mouseInfo.inside) {
+								// The relative point in the original picture
+								rx = mouseInfo.x / getValue(formW);
+								ry = mouseInfo.y / getValue(formH);
+
+								// The corresponding point in the popup
+								tx = rx * getValue(popupSize).width;
+								ty = ry * getValue(popupSize).height;
+
+								// And what do we have to do to make that point on the cursor
+								sx = getMouseX(getStage()) - tx;
+								sy = getMouseY(getStage()) - ty;
+
+								next(xPos, sx + ^dx);
+								next(yPos, sy + ^dy);
+								true;
+							} else {
+								nextDistinct(hover, 0);
+								false;
+							}
+						} else {
+							false;
+						}
+					} else {
+						true;
+					}
+				})
+			],
+			Inspect(
+				[Width(formW), Height(formH)],
+				form
+			)
+		), \ -> {
+			dx := 0.0;
+			dy := 0.0;
+			nextDistinct(hover, 0);
+		}
+	)
+}

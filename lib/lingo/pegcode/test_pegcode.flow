@@ -1,0 +1,221 @@
+import target;
+import lingo/pegcode/driver;
+import lingo/pegcode/test_types;
+
+pegTestCases = [
+	// 0 :String
+	Triple("a = '' { Hello() };", "", Hello()),
+	Triple("a = 'a' { Hello() };", "a", Hello()),
+	Triple("a = 'abc' { Hello() };", "abc", Hello()),
+
+	// 3: String +
+	Triple("a = 'a'+ { Hello() };", "a", Hello()),
+	Triple("a = 'a'+ { Hello() };", "aa", Hello()),
+	Triple("a = 'a'+ { Hello() };", "aaaaaaa", Hello()),
+
+	// 6: String *
+	Triple("a = 'a'* { Hello() };", "", Hello()),
+	Triple("a = 'a'* { Hello() };", "a", Hello()),
+	Triple("a = 'a'* { Hello() };", "aa", Hello()),
+	Triple("a = 'a'* { Hello() };", "aaaaa", Hello()),
+
+	// 10: String ?
+	Triple("a = 'a'? { Hello() };", "", Hello()),
+	Triple("a = 'a'? { Hello() };", "a", Hello()),
+
+	// 12: String sequence
+	Triple("a = 'a' 'b' { Hello() };", "ab", Hello()),
+
+	// 13: String choice
+	Triple("a = 'a' { Hello() } | 'b' { World() };", "a", Hello()),
+	Triple("a = 'a' { Hello() } | 'b' { World() };", "b", World()),
+
+	// 15: String range
+	Triple("a = 'a'-'z' { Hello() };", "a", Hello()),
+	Triple("a = 'a'-'z' { Hello() };", "c", Hello()),
+	Triple("a = 'a'-'z' { Hello() };", "z", Hello()),
+
+	// 18: Epsilon
+	Triple("a = { Hello() };", "", Hello()),
+
+	// 19: Ambigious strings
+	Triple("a = 'a'? 'a' 'a'+ { Hello() };", "aaa", Hello()),
+	Triple("a = 'a'? 'a' 'a'+ { Hello() };", "aaaaaaaa", Hello()),
+	Triple("a = 'a'? 'a'+ 'a'* { Hello() };", "aa", Hello()),
+
+	// 22: Multiple results
+	Triple("a = 'a' {Hello()} {World()};", "a", World()),
+	Triple("a = 'a' {Hello()} 'a' {World()};", "aa", World()),
+	Triple("a = b 'a' {Hello()}; b = 'b' { World() };", "ba", Hello()),
+
+	// 25: Syntax error
+	Triple("a = 'a';", "", flow("PARSING FAILED")),
+	Triple("a = 'a';", "aa", flow("PARSING FAILED")),
+
+	// 27: Negation
+	Triple("a = !'a' 'b' { Hello() };", "b", Hello()),
+	Triple("a = !'aa' 'a'+ { Hello() } | 'aa' { World() };", "a", Hello()),
+	Triple("a = !'aa' 'a'+ { Hello() } | 'aa' { World() };", "aa", World()),
+
+	// 30: Rules
+	Triple("a = b; b = 'a' { Hello() };", "a", Hello()),
+	Triple("a = b { Hello() }; b = 'a';", "a", Hello()),
+
+	Triple("a = b*; b = 'a' { Hello() };", "", flow([])),
+	// 33: This disagrees in PEG and interpreted: It seems interpreted is bad...
+	Triple("a = b*; b = 'a' { Hello() };", "a", flow([Hello()])),
+	Triple("a = b*; b = 'a' { Hello() };", "aa", flow([Hello(), Hello()])),
+
+	// 35: This agrees
+	Triple("a = b*:d {:d}; b = 'a' { Hello() };", "", flow([])),
+	Triple("a = b*:d {:d}; b = 'a' { Hello() };", "a", flow([Hello()])),
+	Triple("a = b*:d {:d}; b = 'a' { Hello() };", "aa", flow([Hello(), Hello()])),
+
+	Triple("a = b+:d {:d}; b = 'a' { Hello() };", "a", flow([Hello()])),
+	Triple("a = b+:d {:d}; b = 'a' { Hello() };", "aa", flow([Hello(), Hello()])),
+
+	Triple("a = d+:e {:e}; b = 'a' { Hello() }; c = 'b' { World() };d = b | c;", "a", flow([Hello()])),
+	Triple("a = d+:e {:e}; b = 'a' { Hello() }; c = 'b' { World() };d = b | c;", "ab", flow([Hello(), World()])),
+
+	// 42: Complicated
+	Triple("production = name:n action:a { Production(:n, false(), PegUnknown(), array(Seq(array(Action2(:a) ))) ) };
+			action = ':' name:n {ActionVar(:n)} | name:n '(' actions?:a ')' ws {ActionCall(:n, unarray(:a))};
+			actions = action:h (',' ws action)*:t { consArray(:h, :t) };
+			name = letter$n ws {$n};
+			letter = 'a'-'z';
+			ws = ' '*;
+			", "a a(:n, n(), :n)", Production("a", false, PegUnknown(), [Seq([Action2(ActionCall("a", [ActionVar("n"), ActionCall("n", []), ActionVar("n")]))])])),
+	Triple("a = (',' d)*:t { :t }; d = 'd' { World()};", ",d,d,d", flow([World(), World(), World()])),
+	Triple("a = 'a'$n { Production($n, true(), PegUnknown(), array(Seq(array(Term($n))))) };", "a", Production("a", true, PegUnknown(), [Seq([Term("a")])])),
+	Triple("a = ('a' {World()})*:t { :t };", "aa", flow([World(), World()])),
+	Triple("a = b*:t { :t }; b = ('a' {World()});", "aa", flow([World(), World()])),
+
+	// 47: Actions
+	Triple("a = b+:d {unarray(:d)}; b = 'a' { Hello() };", "a", flow(Hello())),
+	Triple("a = 'a':a;", "a", flow("PARSING FAILED")),
+
+	// 49: Recursion
+	Triple("a = 'a' {Hello()} | b:c {:c}; b = a { World() };", "a", Hello()),
+	Triple("a = 'a' {Hello()} | b:c {:c}; b = 'b' a { World() };", "ba", World()),
+
+	Triple("action = '$' name:n {ActionVar(:n)} | name:n '(' name?:a ')' {ActionCall(:n, unarray(:a))};
+		  name = 'a'$d {$d};", "a()", ActionCall("a", [])),	
+
+	Triple("action = '$' name:n {ActionVar(:n)} | name:n '(' name?:a ')' {ActionCall(:n, unarray(:a))};
+		  name = 'a'$d {$d};", "$a", ActionVar("a")),
+
+	/* This syntax error is not caught, but instead, we get a stack overflow:
+	Triple("action = '$' name:n {ActionVar(:n)} | name:n '(' actions?:a ')' {ActionCall(:n, unarray(:a))};
+		  actions = action:h (',' action)*:t { consArray(:h, :t) };
+		  name = 'a'$d {$d}; ", "a(a)", ActionCall("a", [ActionVar("a")])),
+*/
+	Triple("action = '$' name:n {ActionVar(:n)} | name:n '(' actions?:a ')' {ActionCall(:n, unarray(:a))};
+		  actions = action:h (',' action)*:t { consArray(:h, :t) };
+		  name = 'a'$d {$d}; ", "a($a)", ActionCall("a", [ActionVar("a")])),
+
+
+	// 54: Real grammars
+	Triple("#include lingo/lingo.lingo", "production = name:n choices:c { Production(:n, true(), PegUnknown():c) };", Grammar([Production("production", false, PegUnknown(), [Seq([BindResult("n", Rule("name")), BindResult("c", Rule("choices")), Action2(ActionCall("Production", [ActionVar("n"), ActionCall("true", []), ActionVar("c")]))])])])),
+	Triple("#include lingo/flow.lingo", "main() {}", FaProgram([], [FaFunction("main", [], [], [FaVoid(7, 9)], 0, 9)], 0)),
+	Triple("#include lingo/flow.lingo", "#include sandbox/helloworld.flow", FaProgram([FaImport("runtime", 0, 15)], [FaFunction("main", [], [], [FaSequence([FaPostOp(FaVarRef("println", 27, 34), [FaCallArgs([FaString(["Hello world"],35,48)],34,49)],27,49)],24,53)], 17, 53)], 0)),
+
+	// Real grammars, big inputs, but ignore the result
+	Triple("#include lingo/lingo.lingo", "#include lingo/lingo.lingo", flow(-1)),
+	Triple("#include lingo/lingo.lingo", "#include lingo/flow.lingo", flow(-1)),
+	Triple("#include lingo/flow.lingo", "#include formdesigner/formdesigner.flow", flow(-1)),
+
+	Triple("#include lingo/pegcode/test_formula.lingo", "a:=2", flow(-1)),
+
+	Triple("a = 'a'+ { Some(#) };", "a", Some(1)),
+	Triple("a = 'a'+ { Some(#) };", "aaaa", Some(4)),
+	Triple("a = {#}:v 'a'+ { Some(:v) };", "aaaa", Some(0)),
+	Triple("a = 'a' {#}:v 'b'+ { Some(:v) };", "abbb", Some(1)),
+];
+
+pegTestCase(n : int, grammar : string, text : string, expected : ?) -> () -> void {
+	g = compilePegGrammar(grammar);
+
+	\ -> {
+		rc = parsic(g, text, defaultPegActions);
+
+		if (expected != flow(-1)) {
+			if (rc != expected)  {
+				println(i2s(n) + ": Expected " + toString(expected) + " but got " + toString(rc));
+			} else {
+				println(i2s(n) + ": '" + text + "' parsed correctly");
+			}
+		} else {
+			println(i2s(n) + ": '" + strLeft(text, 40) + "...' parsed correctly");
+		}
+	}
+}
+
+
+main() {
+	from = 0;
+	to = 100;
+	count1 = 1;
+	count2 = 1;
+
+	t = timestamp();
+	prepared = mapi(subrange(pegTestCases, from, to), \i,p -> {
+		//println("Preparing "+i2s(from+i)+": "+p.second);
+		fori(2,count1,\x -> { pegTestCase(i+from, p.first, p.second, p.third); {} });
+		pegTestCase(i+from, p.first, p.second, p.third);
+	});
+	println("Done preparing "+ d2s(timestamp() - t) + " ms");
+
+	t2 = timestamp();
+	iteri(prepared, \i,p -> {
+		//println("Running "+i2s(from+i));
+		fori(2,count2,\x -> { p(); {} });
+		p();
+	});
+	println("Done "+ d2s(timestamp() - t2) + " ms");
+
+	// Generate a unified testing program
+	imports = foldi(subrange(pegTestCases, from, to), "" , \i, acc, p -> {
+		acc + "import lingo/pegcode/tests/test" + i2s(i + from) + ";\n";
+	});
+	prelude = imports + 
+"import lingo/pegaction;
+
+testPegCode(n : int, f : (string, SemanticActions) -> ParseResult, text : string, expected : flow) -> void {
+	result = f(text, defaultPegActions);
+
+	if (result.pos < 0) {
+		println(i2s(n) + \": SYNTAX ERROR <0: \\\"\" + substring(text, 0, 130) + \"...\\\"\");
+		printParseError(text, result);
+	} else if (result.pos < strlen(text)) {
+		printParseError(text, result);
+	}
+	r = either(result.result, \"PARSING FAILED\");
+
+	if (expected != flow(-1) && r != expected) {
+		println(i2s(n) + \": Expected \" + toString(expected) + \", but got \" + toString(r));
+	} else {
+		println(i2s(n) + \": \" + strLeft(text, 40) + \" parsed correctly\");
+	}
+}
+
+main() {
+	t = timestamp();
+	fori(1,"+i2s(count2)+",\\loopidx -> {
+";
+	tests = foldi(subrange(pegTestCases, from, to), "" , \i, acc, p -> {
+		acc + "	testPegCode(" + i2s(i + from) + ", parsetest" + i2s(i + from) + ", " + toString(p.second) + ", " + toString(p.third) + ");\n";
+	});
+	postlude = 
+"	});
+	println(\"Done \"+ d2s(timestamp() - t) + \" ms\");
+}
+";
+
+	if (cpp) {
+		foo = setFileContent("lingo/pegcode/tests/main.flow", prelude + tests + postlude);
+	}
+
+	//dumpParseCacheStats(renamed);
+}
+
+

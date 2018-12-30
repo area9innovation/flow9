@@ -1,0 +1,103 @@
+import string;
+
+export {
+	// Simple version of Excel wildcards (originaly implemented for Wigi)
+	// Supported ? and * in pattern
+	matchesWithExcelPattern(s : string, pattern : string) -> bool;
+
+	// Check if str matches glob pattern (originaly implemented for Shift)
+	// ? - match exactly one unknown character
+	// * - match any number of unknown characters
+	// [characters] - match a character as part of a group of characters
+	// [!characters] - match any character but specified
+	// [a-b] - match a character as part of a character range
+	isGlobPattern(str : string) -> bool;
+
+	matchesWithGlobPattern(str : string, glob : string) -> bool;
+}
+
+// Wildcard match. ? and * are supported
+matchesWithExcelPattern(s : string, pattern : string) -> bool {
+	isArrayPattern = startsWith(pattern, "[") && endsWith(pattern, "]");
+	patterns = if (isArrayPattern) {
+		map(
+			strSplit2WithoutLeave(strsubsmart(pattern, 1, strlen(pattern) - 2), [",", ";"]),
+			trim
+		)
+	} else [pattern];
+
+	exists(patterns, \p -> matchesWithExcelPattern2(s2a(s), 0, s2a(p), 0))
+}
+
+matchesWithExcelPattern2(s : [int], si : int, pattern : [int], pi : int) -> bool {
+	if (pi >= length(pattern)) {
+		si >= length(s)
+	} else {
+		p = pattern[pi];
+
+		if (p == 63) { // ? - matches any character except empty string
+			if (si >= length(s)) {
+				false
+			} else {
+				matchesWithExcelPattern2(s, si + 1, pattern, pi + 1)
+			}
+		} else if (p == 42) { // * - any string inclusive an empty string
+			if (matchesWithExcelPattern2(s, si, pattern, pi + 1)) {
+				// Can match * to empty string
+				true;
+			} else if (si < length(s) && matchesWithExcelPattern2(s, si + 1, pattern, pi)) {
+				// Can match * to current char
+				true
+			} else {
+				// Can't match anything
+				false
+			}
+		} else {
+			if (si < length(s) && s[si] == p) {
+				matchesWithExcelPattern2(s, si + 1, pattern, pi + 1)
+			} else {
+				false
+			}
+		}
+	}
+}
+
+isGlobPattern(str : string) -> bool {
+	isSome(strFindFirstOfStrings(str, ["*", "?", "["]));
+}
+
+matchesWithGlobPattern(str : string, glob : string) -> bool {
+	f = strLeft(glob, 1);
+	if (strlen(str) == 0) {
+		if (f == "*") matchesWithGlobPattern(str, strRight(glob, 1))
+		else if (f == "[") _isInRange(strLeft(str, 1), strRight(glob, 1)) && matchesWithGlobPattern(strRight(str, 1), strRight(glob, strFindFirstOf(glob, "]") + 1))
+		else strlen(glob) == 0
+	} else {
+		if (strlen(f) == 0) false
+		else if (f == "*") matchesWithGlobPattern(str, strRight(glob, 1)) || matchesWithGlobPattern(strRight(str, 1), glob)
+		else if (f == "?") matchesWithGlobPattern(strRight(str, 1), strRight(glob, 1))
+		else if (f == "[") _isInRange(strLeft(str, 1), strRight(glob, 1)) && matchesWithGlobPattern(strRight(str, 1), strRight(glob, strFindFirstOf(glob, "]") + 1))
+		else (strLeft(str, 1) == f && matchesWithGlobPattern(strRight(str, 1), strRight(glob, 1)))
+	}
+}
+
+_isInRange(c : string, glob : string) -> bool {
+	s = firstElement(strSplit(glob, "]"), "");
+
+	w = ref \i -> false;
+	w := \i -> {
+		ch = getCharAt(glob, i);
+
+		if (ch == "-") {
+			l = getCharCodeAt(glob, i - 1);
+			r = getCharCodeAt(glob, i + 1);
+			f = firstElement(s2a(c), 0);
+			(l < f && f < r) || ^w(i + 1);
+		} else if (ch != "]") {
+			c == ch || ^w(i + 1)
+		} else i == 0 && strlen(c) == 0;
+	}
+
+	result = ^w(0);
+	if (getCharAt(s, 0) == "!") !result else result;
+}

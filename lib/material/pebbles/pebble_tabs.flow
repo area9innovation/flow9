@@ -1,0 +1,132 @@
+import pebbles/pebble_parameters;
+
+export {
+	// Tab name is reflected in the pebble parameter "t",
+	// i.e URL parameter will be changed every time user switches a tab
+	// and vice versa changing URL parameter "t=<tab-name>" will switch tab in the UI
+	//
+	// NOTE: it will clean last pebble parameters except "t" on every tab switch and 
+	// restore them from history once user opens the same tab again (RecordURLRestoreOrChange).
+	// If you want to preserve parameters across different tabs call `buildCustomPebbledTabs` with `RecordURLChange`
+	buildPebbledTabs(
+		controller : PebbleController,
+		tabs : [Pair<string, Material>],
+		style : [MTabsStyle]
+	) -> Material;
+
+	// By default use RecordURLRestoreOrChange() as `action`, this will make last path part parameters of the pebble to
+	// - be reflected in the URL
+	// - be cleaned up when user switches the tab
+	// - be restored from the history if user switches to the previously visited tab
+	// 	 if you need to spread some parameters from tab to tab use RecordURLRestoreOrChangeParameters(shared)
+	// 	 where `shared` - list of parameter's keys which won't be cleaned during switching tabs
+	// Also you can simply switch tabs by changing tabIndexB
+	buildCustomPebbledTabs(
+		controller : PebbleController,
+		paramaterName : string,
+		tabIndexB : DynamicBehaviour<int>,
+		action : PebbleAction,
+		tabs : [PebbleTab],
+		style : [MTabsStyle]
+	) -> Material;
+
+	PebbleTab : (uid : string, name : string, content : Material, style : [MTabStyle]);
+
+	makePebbleTabName(s : string) -> string;
+	tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTab];
+}
+
+buildPebbledTabs(
+	controller : PebbleController,
+	tabs : [Pair<string, Material>],
+	style : [MTabsStyle]
+) -> Material {
+
+	buildCustomPebbledTabs(
+		controller, 
+		"t",
+		make(0),
+		RecordURLRestoreOrChange(),
+		tabs2PebbleTabs(tabs),
+		style
+	)
+}
+
+makeDummyPebbleTab() -> PebbleTab {
+	PebbleTab("", "", MEmpty(), [])
+}
+
+buildCustomPebbledTabs(
+	controller : PebbleController,
+	paramaterName : string,
+	tabIndexB : DynamicBehaviour<int>,
+	action : PebbleAction,
+	tabs : [PebbleTab],
+	style : [MTabsStyle]
+) -> Material {
+	if (tabs == []) {
+		MEmpty()
+	} else {
+		findTabIndexByUid = \uid -> findiDef(tabs, \tab -> tab.uid == uid, 0);
+		findTabUidByIndex = \index -> elementAt(tabs, index, makeDummyPebbleTab()).uid;
+
+		zeroTabUid = findTabUidByIndex(getValue(tabIndexB));
+		tabUidB = make(zeroTabUid);
+
+		MLinkPebbleParameters(controller,
+			[
+				PebbleStringLink(paramaterName, tabUidB, nop1, action)
+			],
+			MConstruct([
+					\-> bidirectionalLink(tabUidB, tabIndexB, findTabIndexByUid, findTabUidByIndex)
+				], MTabs(
+					mapi(tabs, \index, tab -> {
+						switch (tryExtractStruct(tab.style, MTabConfirmSwitch(nop1))) {
+							Some(confirmStyle): {
+								MTab(
+									MConfirmPebbleParameterSwitch(
+										controller,
+										paramaterName,
+										findTabUidByIndex(index),
+										\callback -> {
+											if (getValue(tabIndexB) == index) {
+												// Tab switch is triggered by pebble changes (UP/BACK buttons, URL modification, etc)
+												confirmStyle.confirm(callback);
+											} else {
+												// Tab switch is triggered by UI and already confirmed by MTab itslef
+												callback(true)
+											}
+										},
+										tab.content
+									),
+									const(tab.name),
+									tab.style
+								)
+							}
+							None(): {
+								MTab(tab.content, const(tab.name), tab.style)
+							}
+						}
+					}),
+					tabIndexB,
+					style
+				)
+			)
+		)
+	}
+}
+
+makePebbleTabName(s : string) -> string {
+	humanizeName(s)
+}
+
+tabs2PebbleTabs(tabs : [Pair<string, Material>]) -> [PebbleTab] {
+	map(tabs, \tab -> {
+		PebbleTab(
+			makePebbleTabUid(tab.first),
+			makePebbleTabName(tab.first),
+			tab.second,
+			[MTabIcon(MIcon("view_list", []))]
+		)
+	})
+}

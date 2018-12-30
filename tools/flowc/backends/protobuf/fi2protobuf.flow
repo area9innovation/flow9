@@ -1,0 +1,68 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/backends/protobuf/fitype2proto;
+
+export {
+	fi2protobuf(program : FiProgram, cfg : FcProtobufConfig, callback : () -> void) -> void;
+}
+
+fi2protobuf(program : FiProgram, cfg : FcProtobufConfig, callback : () -> void) -> void {
+	types0 : Set<string> = fold(cfg.types, makeSet(), \acc, typename -> {
+		insertSet(acc, typename);
+	});
+
+	// Extend the types set with all recursively referenced types
+	types = expandWithTypes(program, types0);
+
+	output = foldSet(types, "", \acc, typename -> {
+		tn = FiTypeName(typename, []);
+		acc + fitype2proto(tn);
+	});
+
+	fcPrintln("Saving " + cfg.outputfile);
+	saveFileContent(cfg.outputfile, output);
+
+	callback();
+}
+
+expandWithTypes(program : FiProgram, acc : Set<string>) -> Set<string> {
+	ft = foldSet(acc, acc, \acc2, typename -> {
+		collectNamedTypes(program, FiTypeName(typename, []), acc2);
+	});
+	if (ft == acc) ft
+	else expandWithTypes(program, ft);
+}
+
+
+collectNamedTypes(env : FiProgram, type : FiType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FiTypeVoid(): acc;
+		FiTypeBool(): acc;
+		FiTypeInt(): acc;
+		FiTypeDouble(): acc;
+		FiTypeString(): acc;
+		FiTypeFlow(): acc;
+		FiTypeNative(): acc;
+		FiTypeParameter(n): acc;
+		FiTypeRef(rt): collectNamedTypes(env, rt, acc);
+		FiTypeArray(at): collectNamedTypes(env, at, acc);
+		FiTypeName(id, tp): {
+			rtype = resolveFiTypeName(env.names, type);
+			switch (rtype) {
+				FiTypeUnion(uname, typars, names, __): {
+					acc3 = fold(typars, insertSet(acc, uname), \acc2, ttp -> collectNamedTypes(env, ttp, acc2));
+					fold(names, acc3, \acc2, name -> collectNamedTypes(env, name, acc2));
+				}
+				FiTypeStruct(sname, typars, args, __): {
+					acc3 = fold(typars, insertSet(acc, sname), \acc2, ttp -> collectNamedTypes(env, ttp, acc2));
+					fold(args, acc3, \acc2, arg -> collectNamedTypes(env, arg.type, acc2));
+				}
+			}
+		}
+		FiTypeFunction(args, rt): {
+			acc3 = fold(args, acc, \acc2, arg -> collectNamedTypes(env, arg.type, acc2));
+			collectNamedTypes(env, rt, acc3);
+		}
+	}
+}

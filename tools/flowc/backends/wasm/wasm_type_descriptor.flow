@@ -1,0 +1,397 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/backends/wasm/wasm_types;
+import array;
+import string;
+import algorithms;
+
+export {
+	// Convert a type to the wasm type.
+	fitype2wasmtype(names : FiGlobalNames, f : FiType) -> WasmTypeDescriptor;
+	fitype2wasmtypeEx(names : FiGlobalNames, f : FiType, isnative : bool) -> WasmTypeDescriptor;
+
+	// Collects all type declarations including inline (lambdas, vars) and explicit (structs, unions)
+	// to build the type descriptor table
+	fiWasmBuildTypeTable(names : FiGlobalNames, decls : [Pair<string, [FiDeclaration]>], startAddress : int) -> FiWasmTypeTable;
+
+	/* 
+	Generate the (data) section for type table. This data segment comes right after constant strings.
+	The format is byte based:
+	00: void
+	01: bool
+	02: int
+	03: double
+	04: string
+	05: flow
+	06: native
+	07 nn: type parameter, nn is 1 for ?, 2 for ??, 3 for ???
+	08 <t>: ref, <t> is the descriptor bytes for type we reference
+	09 <t>: array, <t> is the descriptor bytes for type in the array
+	10 <namelen> <name> <nfields> <fields>: 
+		struct. <name> is ascii encoded.
+		<fields> are encoded as: <fieldid> <t>
+		where <fieldid> is a unique id for string and <t> is the descriptor bytes for the type of the field
+	11 <nstructs> <structs>:
+		union. structs is the address of the type descriptor for that struct
+	12 <nargs> <args> <rt>:
+		function with <nargs> arguments. <args> is the descriptor bytes for the argument ype.
+		<rt> is the descriptor bytes for the return type
+	*/
+	fiWasmSerializeTypeTable(cfg : FiWasmConfig, types : FiWasmTypeTable, initialOffset : int) -> string;
+
+	// Helper to get a type descriptor by type
+	fiWasmGetTypeDescriptor(context : WasmContext, type : WasmTypeDescriptor) -> int;
+
+	// helper to convert FiStructType to FiWasmStruct
+	fistruct2wasmstruct(names : FiGlobalNames, struct : FiTypeStruct) -> WasmTypeStruct;
+
+	// Construct the memory representation of a type.
+	// allowMissingIndices does not require all types to be present in the type table -
+	//  useful when building type table to support recursive types
+	//  at this step, we only need length of type descriptor, not its value, so placeholders OK
+	wasmTypeDescriptor2bytes(table : FiWasmTypeTable, t : WasmTypeDescriptor, allowMissingIndices : bool) -> [int];
+
+	// Construct the JSON version of type table - used to write to listing file
+	wasmTypeDescriptor2Json(table : FiWasmTypeTable) -> Json;
+}
+
+
+dofitype2wasmtype(names : FiGlobalNames, f : FiType, level : int, isnative : bool) -> WasmTypeDescriptor {
+	do_type = \t, l -> dofitype2wasmtype(names, t, l, isnative);
+
+	switch (f) {
+		FiTypeArray(t): WasmTypeArray(do_type(t, level));
+		FiTypeFunction(args, returnType): {
+			newArgs = \lvl -> {
+				map(args, \a -> WasmFunArg(a.name, do_type(a.type, lvl)));
+			};
+
+			newType = do_type(returnType, level + 1);
+
+			if (!isnative || level == 0) {
+				// first level
+				WasmTypeFunction(newArgs(level + 2), newType);
+			} else if (level % 2 == 0) {
+				// this is callback from WASM
+				WasmTypeFunction(newArgs(level + 1), newType);
+			} else {
+				// odd - this is callback from JS
+				WasmTypeJSCallback(newArgs(level + 1), newType);
+			}
+		}
+		FiTypeRef(t): WasmTypeRef(do_type(t, level));
+		FiTypeParameter(n): {
+			println("INTERNAL ERROR: type parameters are passed to Wasm backend"); 
+			WasmTypeVoid();
+		}
+		FiTypeBool(): WasmTypeBool();
+		FiTypeInt(): WasmTypeInt();
+		FiTypeDouble(): WasmTypeDouble();
+		FiTypeString(): WasmTypeString();
+		FiTypeFlow(): WasmTypeFlow();
+		FiTypeVoid(): WasmTypeVoid();
+		FiTypeNative(): WasmTypeNative();
+		FiTypeName(name, typeparameters): {
+			type = resolveFiTypeName(names, f);
+			switch (type) {
+				FiTypeStruct(sname, typars, sargs, __): {
+					WasmTypeStruct(sname, map(sargs, \sa -> {
+						WasmStructField(sa.name, do_type(sa.type, level))
+					}));
+				}
+				FiTypeUnion(uname, typars, structs, __): {
+					WasmTypeUnion(uname, map(structs, \s -> s.name));
+				}
+			}
+		}
+	}
+}
+
+fitype2wasmtype(names : FiGlobalNames, f : FiType) -> WasmTypeDescriptor {
+	fitype2wasmtypeEx(names, f, false);
+}
+
+fitype2wasmtypeEx(names : FiGlobalNames, f : FiType, isnative : bool) -> WasmTypeDescriptor {
+	dofitype2wasmtype(names, f, 0, isnative);
+}
+
+fiWasmBuildTypeTable(names : FiGlobalNames, decls : [Pair<string, [FiDeclaration]>], startAddress : int) -> FiWasmTypeTable {
+
+	// First, name field names to ids
+	fieldIds : Tree<string, int> = foldTree(names.structs, Pair(0, makeTree()), \name, s : FiTypeStruct, acc : Pair<int, Tree<string, int>> -> {
+		fold(s.args, acc, \acc1 : Pair<int, Tree<string, int>>, arg -> {
+			mid = lookupTree(acc1.second, arg.name);
+			switch (mid) {
+				None(): {
+					// New field
+					Pair(
+						acc1.first + 1,
+						setTree(acc1.second, arg.name, acc1.first)
+					)
+				}
+				Some(id): acc1;
+			}
+		});
+	}).second;
+
+	structTypes : [WasmTypeStruct] = map(getTreeValues(names.structs), 
+		\s -> fistruct2wasmstruct(names, s)
+	);
+	structMap : Tree<string, WasmTypeStruct> = fold(structTypes, makeTree(), \acc, st -> {
+		setTree(acc, st.name, st);
+	});
+	unionTypes = map(getTreeValues(names.unions), 
+			\u -> WasmTypeUnion(u.name, map(u.typenames, \t -> t.name)
+		)
+	);
+	unionMap : Tree<string, WasmTypeUnion> = fold(unionTypes, makeTree(), 
+		\acc, u -> setTree(acc, u.name, u));
+
+	primitives = [
+		WasmTypeVoid(), WasmTypeBool(), WasmTypeInt(), WasmTypeDouble(), 
+		WasmTypeString(), WasmTypeFlow(), WasmTypeNative()
+	];
+	// Now build the table - seeding with structs first, and then primitives
+	table0 = FiWasmTypeTable(makeTree(), startAddress, structMap, unionMap, fieldIds);
+	table1 = fold(concat3(structTypes, primitives, unionTypes), table0, fiWasmUpdateTypeTable);
+
+	inlineTypes = fiWasmCollectTypeDecls(names, decls);
+	table = foldSet(inlineTypes, table1, \acc : FiWasmTypeTable, t : WasmTypeDescriptor -> 
+		if (containsKeyTree(acc.typesMap, t)) acc else fiWasmUpdateTypeTable(acc, t));
+
+
+	FiWasmTypeTable(table.typesMap, (table.nextOffset+4-1)/4*4, table.structTypes, 
+		table.unionTypes, table.fieldIds);
+}
+
+
+fiWasmCollectTypeDecls(names : FiGlobalNames, decls: [Pair<string, [FiDeclaration]>]) -> Set<WasmTypeDescriptor> {
+	fold(decls, makeSet(), \macc, mdecl -> 
+		fold(mdecl.second, macc, \acc, decl -> {
+			switch (decl) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): 
+					fiWasmCollectFiExpTypeDecls(names, lambda, insertSet(acc, fitype2wasmtype(names, type)));
+				FiGlobalVar(name, value, type, declStart, defiStart):
+					fiWasmCollectFiExpTypeDecls(names, value, insertSet(acc, fitype2wasmtype(names, type)));
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart):
+					acc;
+			}
+		})
+	);
+}
+
+fiWasmCollectFiExpTypeDecls(names : FiGlobalNames, expr : FiExp, acc : Set<WasmTypeDescriptor>) -> Set<WasmTypeDescriptor> {
+	rec = \es, acc0 -> {
+		fold(es, acc0, \acc1 : Set<WasmTypeDescriptor>, e -> {
+			fiWasmCollectFiExpTypeDecls(names, e, acc1)
+		});
+	}
+	switch (expr) {
+		FiVoid(start): acc;
+		FiBool(b, start): acc;
+		FiDouble(d, start): acc;
+		FiInt(i, start): acc;
+		FiVar(name, type, start): insertSet(acc, fitype2wasmtype(names, type));
+
+		FiCall(f, args, type, start): rec(concat([f], args), acc);
+
+		FiString(s, start): acc;
+		FiLambda(args, body, type, start): 
+			// look everywhere: function type, arg types, body
+			fold(args, rec([body], insertSet(acc, fitype2wasmtype(names, type))),
+				\acc1 : Set<WasmTypeDescriptor>, e -> insertSet(acc1, fitype2wasmtype(names, e.type)));
+
+		FiSeq(es, type, start): rec(es, acc);
+
+		FiLet(name, type, e1, e2, type2, start): 
+			rec([e1, e2], insertSet(acc, fitype2wasmtype(names, type)));
+		FiIf(e1, e2, e3, type, start): rec([e1, e2, e3], acc);
+		FiCallPrim(op, es, type, start): rec(es, insertSet(acc, fitype2wasmtype(names, type)));
+
+		FiSwitch(x, switchType, cases, type, start): 
+			rec(map(cases, \c -> c.body), insertSet(acc, fitype2wasmtype(names, type)));
+		FiCast(e, tFrom, tTo, type, start): 
+			rec([e], mergeSets(acc, buildSet(map([tFrom, tTo, type], \t -> fitype2wasmtype(names, t)))));
+
+		FiRequire(flowfile, e, type, start): rec([e], insertSet(acc, fitype2wasmtype(names, type)));
+		FiUnsafe(name, fallback, type, start): rec([fallback], insertSet(acc, fitype2wasmtype(names, type)));
+	}
+}
+
+fiWasmUpdateTypeTable(acc : FiWasmTypeTable, t : WasmTypeDescriptor) -> FiWasmTypeTable {
+	bytes = wasmTypeDescriptor2bytes(acc, t, true);
+
+	debugPrintTypeTable = false;
+	if (debugPrintTypeTable) {
+		txt = switch (t) {
+			WasmTypeStruct(name, __): "struct " + name;
+			default: "?";
+		}
+		fcPrintln("@" + i2s(acc.nextOffset) + " " + txt);
+	}
+	
+	FiWasmTypeTable(
+		// TODO: Here, it used to align to 4 bytes in the offset, but if that is required,
+		// the better way is to pad the bytes array until it is a multiple of 4.
+		setTree(acc.typesMap, t, acc.nextOffset), acc.nextOffset + length(bytes),
+		acc.structTypes, acc.unionTypes, acc.fieldIds
+	);
+}
+
+fiWasmUpdateTypeTableStruct(acc : FiWasmTypeTable, t : WasmTypeStruct) -> FiWasmTypeTable {
+	bytes = wasmTypeDescriptor2bytes(acc, t, true);
+	FiWasmTypeTable(
+		// TODO: Here, it used to align to 4 bytes in the offset, but if that is required,
+		// the better way is to pad the bytes array until it is a multiple of 4.
+		setTree(acc.typesMap, t, acc.nextOffset), acc.nextOffset + length(bytes),
+		setTree(acc.structTypes, t.name, t), acc.unionTypes, acc.fieldIds
+	);
+}
+
+fistruct2wasmstruct(names : FiGlobalNames, s: FiTypeStruct) {
+	WasmTypeStruct(s.name, 
+		map(s.args, \a -> WasmStructField(a.name, fitype2wasmtype(names, a.type)))
+	)
+}
+
+// expands nested unions:
+// U1 ::= A,B; U2 ::= U1, C; -> U2 ::= A, B, C;
+expandUnionMembers(structs : [string], table : FiWasmTypeTable) -> [string] {
+	concatA(map(structs, \s -> {
+		if (containsKeyTree(table.structTypes, s)) [s] 
+		else {
+			switch (lookupTree(table.unionTypes, s)) {
+				None(): {
+					fcPrintln("Unknown struct " + s);
+					[];
+				}
+				Some(u): expandUnionMembers(u.structs, table);
+			}
+		}
+	}));
+}
+
+// Construct the memory representation of a type.
+wasmTypeDescriptor2bytes(table : FiWasmTypeTable, t : WasmTypeDescriptor, allowMissingIndices : bool) -> [int] {
+	rec = \type -> wasmTypeDescriptor2bytes(table, type, allowMissingIndices);
+	switch (t) {
+		WasmTypeVoid(): [0];
+		WasmTypeBool(): [1];
+		WasmTypeInt(): [2];
+		WasmTypeDouble(): [3];
+		WasmTypeString(): [4];
+		WasmTypeFlow(): [5];
+		WasmTypeNative(): [6];
+		// WasmTypeParameter(id): [7, strlen(id)]; - we no longer have it
+		WasmTypeRef(type): concat([8], rec(type));
+		WasmTypeArray(type): concat([9], rec(type));
+		WasmTypeStruct(name, fields): concatA([
+			// Notice the name is always ascii, so s2a is sufficient
+			[10, strlen(name)], s2a(name), [length(fields)],
+			concatA(map(fields, \f : WasmStructField -> {
+				fieldId = lookupTreeDef(table.fieldIds, f.name, -1);
+				if (fieldId == -1) {
+					fcPrintln("Unknown field " + f.name);
+				}
+				concat([
+						bitAnd(fieldId, 0xff),
+						bitAnd(bitUshr(fieldId, 8), 0xff)
+					], rec(f.type)
+				)
+			}))
+		]);
+		WasmTypeUnion(id, structs): {
+			// expanding nested union references
+			expandedStructs = expandUnionMembers(structs, table);
+			concat(
+			[11, length(expandedStructs)], 
+			// Resolve the structs to type descriptor addresses instead
+			concatA(map(expandedStructs, \s -> {
+				mstructType = lookupTree(table.structTypes, s);
+				switch (mstructType) {
+					None(): {
+						fcPrintln("Unknown struct " + s);
+						[]
+					}
+					Some(st): {
+						mstructAddress = lookupTree(table.typesMap, st);
+						switch (mstructAddress) {
+							None(): {
+								if (allowMissingIndices) {
+									[0, 0]
+								} else {
+									fcPrintln("Unknown struct - cannot find address " + s + " for " + st.name);
+									[]
+								}
+							}
+							Some(sa): [
+								bitAnd(sa, 0xff),
+								bitAnd(bitUshr(sa, 8), 0xff)
+							]
+						}
+					}
+				}
+			}))
+			);
+		}
+		WasmTypeFunction(args, returnType): concat3(
+			[12, length(args)],
+			concatA(map(args, \a -> rec(a.type))),
+			rec(returnType)
+		);
+		WasmTypeJSCallback(args, returnType): concat3(
+			[12, length(args)],
+			concatA(map(args, \a -> rec(a.type))),
+			rec(returnType)
+		);
+	}
+}
+
+
+fiWasmSerializeTypeTable(cfg : FiWasmConfig, types : FiWasmTypeTable, initialOffset : int) {
+	hex8 = \h -> "\\" + lpad(formatHex(bitAnd(h, 0xff)), "0", 2);
+	//hex16 = \h -> hex8(h) + hex8(bitUshr(h, 8));
+	typesAndIndices = sortCustom(tree2pairs(types.typesMap), \p -> p.second, true);
+	data = map(typesAndIndices, \p -> concatStrings(map(wasmTypeDescriptor2bytes(types, p.first, false), 
+		hex8)));
+	//data = mapList(types.table, \s -> concatStrings(map(s, hex8)));
+
+	"(data (i32.const " + i2s(initialOffset) + ") " 
+	+ "\""
+	+ concatStrings(data) // data
+	+ "\""
+	+ ")\n"
+}
+
+fiWasmGetTypeDescriptor(context : WasmContext, type : WasmTypeDescriptor) {
+	lookupTreeDef(context.typeTable.typesMap, type, 0);
+}
+
+wasmTypeToString(type : WasmTypeDescriptor) -> string {
+	switch (type) {
+		WasmTypeVoid(): "void";
+		WasmTypeBool(): "bool";
+		WasmTypeInt(): "int";
+		WasmTypeDouble(): "double";
+		WasmTypeString(): "string";
+		WasmTypeArray(t): "[" + wasmTypeToString(t) + "]";
+		WasmTypeFlow(): "flow";
+		WasmTypeStruct(name, fields): "struct " + name;
+		WasmTypeUnion(id, structs): "union " + strGlue(structs, ",");
+		//WasmTypeParameter(id): "typar " + id;
+		WasmTypeRef(t): "ref " + wasmTypeToString(t);
+		WasmTypeNative(): "native";
+		WasmTypeFunction(args, returnType):
+			"function : (" + superglue(args, \a -> a.name + ": " + wasmTypeToString(a.type), ",") + ") -> " + wasmTypeToString(returnType);
+		WasmTypeJSCallback(args, returnType):
+			"function : (" + superglue(args, \a -> a.name + ": " + wasmTypeToString(a.type), ",") + ") -> " + wasmTypeToString(returnType);
+	}
+}
+
+wasmTypeDescriptor2Json(table : FiWasmTypeTable) -> Json {
+	JsonObject(
+		list2array(foldTree(table.typesMap, makeList(), \desc, index, lst ->
+			Cons(Pair(i2s(index), JsonString(wasmTypeToString(desc))), lst)))
+	);
+}

@@ -1,0 +1,201 @@
+import material/internal/material_ellipsis;
+import material/internal/material_button;
+// Internal to material
+
+export {
+	MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	tryExtractMToolbarItemsMColor(parent : MFocusGroup, bgStyle : [TGraphicsStyle], style : [flow]) -> Maybe<MColor>;
+}
+
+MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(parent.theme.primaryColor)])).style;
+	itemsColor = tryExtractMToolbarItemsMColor(parent, bgStyle, m.style);
+	width = extractStruct(m.style, MWidth(-1.)).width;
+	height = extractStruct(m.style, MHeight(if (true || mobile) 56. else 64.)).height;
+	elevation  = extractStruct(m.style, MElevation(const(6.))).elevation;
+	toolbarContent = tryExtractStruct(m.style, MToolbarContent(TEmpty(), false));
+	toolbarFAB = tryExtractStruct(m.style, MFloatingButton("", [], []));
+	showExpander = extractStruct(m.style, MShowExpander(const(true))).show;
+	backButton = tryExtractStruct(m.style, MToolbarBackButton(TEmpty()));
+
+	right = \p ->
+		map(m.right, \r -> {
+			switch (r) {
+				MCenterY(__): {
+					m2t(r, p)
+				}
+				default: TCenterY(m2t(r, p));
+			}
+		})
+		|> TColsA;
+	
+	(\p ->
+		MIfLazy2T(
+			manager,
+			p,
+			showExpander,
+			\se, p2 ->
+				if (se) {
+					customExpander =
+						extractStruct(
+							m.style,
+							MCustomExpander(MIconToggle("arrow_back", [MToggleFalseIcon("menu", [])], []))
+						).expander;
+
+					toggleIcon =
+						switch (customExpander : Material) {
+							MIconToggle(icon, style, state):
+								MIconToggle(
+									icon,
+									style,
+									arrayPush(extractMButtonState(m.style), MToggleValue(m.expander))
+								);
+							MIconButton(name, onClick, style, state):
+								MIconButton(
+									name,
+									\ -> {
+										reverseBehaviour(m.expander);
+										onClick();
+									},
+									style,
+									extractMButtonState(m.style)
+								);
+							default: customExpander;
+						};
+
+					TCols2A(
+						m2t(toggleIcon, p2)
+						|> (\f -> TBorder(if (true || mobile) 4. else 12., 0., if (isSome(backButton)) 4. else 12., 0., f))
+						|> TCenterY,
+						MToolbarTitle2T(manager, p2, m.title, \mat -> m2t(mat, p2), backButton)
+					)
+				} else
+					MToolbarTitle2T(manager, p2, m.title, \mat -> m2t(mat, p2), backButton)
+					|> TBorderLeft(if (true || mobile) 24. else 32.),
+			false
+		)
+		|> alignRightForRTL
+		|> (\t -> TGroup2(t, TFillX()))
+		|> (\t -> TCols2A(t, right(p) |> TBorderRight(if (true || mobile) 4. else 12.)))
+		|> (\f ->
+			eitherFn(
+				toolbarContent,
+				\tc ->
+					TGroup([
+						TFillXY(),
+						m2t(tc.content, p)
+						|> (\f2 ->
+							if (tc.addBorders)
+								TBorder(32., 88., 32., 32., f2)
+							else
+								f2
+						),
+						f
+					]),
+				\ ->
+					TGroup2(TFillXY(), f)
+			)
+		)
+		|> (\f -> TFrame(0., 0., bgStyle, f))
+		|> (\t -> TAvailable(t, 
+			if (width > 0.0)
+				TFixed(width, height)
+			else
+				TFillXH(height)
+		))
+	)
+	|> (\f ->
+		eitherFn(
+			itemsColor,
+			\ic ->
+				MActivate2T(
+					manager,
+					parent,
+					"MToolbar",
+					[
+						MaterialTheme(
+							parent.theme.lightBackground,
+							ic,
+							parent.theme.accentColor,
+							ic,
+							ic,
+							ic,
+							parent.theme.fontStyle,
+							ic,
+							parent.theme.enableAnimations,
+							parent.theme.enableRipple,
+						)
+					],
+					f
+				),
+			\ ->
+				f(parent)
+		)
+	)
+	|> (\t -> TShadowShape(elevation, parent.theme.lightBackground, t, BottomRectangleShape()))
+	|> (\f ->
+		eitherFn(
+			toolbarFAB,
+			\tf ->
+				TCopySize2(f, \tr, f2 -> TFixSize(TLines2(f2, m2t(tf, parent)), tr)),
+			\ ->
+				f
+		)
+	)
+	// |> makeTropicConstant2(width, height)
+}
+
+MToolbarTitle2T(manager : MaterialManager, parent : MFocusGroup, title : Material, m2t : (Material) -> Tropic,
+	backButton : Maybe<MToolbarBackButton>) -> Tropic {
+
+	addBackButton = 
+		\toolbarTitle ->
+			TCenterY(toolbarTitle)
+			|> (\t -> TGroup2(TFixed(24., 0.), t))
+			|> (\t -> eitherMap(
+					backButton,
+					\bb -> TCols2A(m2t(bb.button) |> TCenterY, t),
+					t
+				))
+			|> TBorderRight(8.);
+
+	m2ellipsis = \text, textStyle : [MEllipsisTextStyle] ->
+		MEllipsisText2T(
+			manager,
+			parent,
+			MEllipsisText(
+				text,
+				if (textStyle == [])
+					[MTitle(), MShowTooltip(const(true))]
+				else
+					replaceStructMany(textStyle, [extractStruct(textStyle, MShowTooltip(const(true)))])
+			)
+		)
+		|> addBackButton;
+
+	switch (title : Material) {
+		MEllipsisText(text, textStyle): 	m2ellipsis(text, textStyle);
+		MText(text, textStyle): 			m2ellipsis(text, textStyle);
+		MCenterY(c):						MToolbarTitle2T(manager, parent, c, m2t, backButton);
+		default: 							title |> m2t |> addBackButton;
+	}
+}
+
+tryExtractMToolbarItemsMColor(parent : MFocusGroup, bgStyle : [TGraphicsStyle], style : [flow]) -> Maybe<MColor> {
+	if (extractStruct(bgStyle, FillOpacity(1.)).opacity == 1.)
+		eitherFn(
+			tryExtractStruct(bgStyle, Fill(black)),
+			\fl ->
+				Some(extractStruct(style, MItemsColor(
+					if (fl.color == MColor2int(parent.theme.primaryColor))
+						parent.theme.toolbarItemsColor
+					else
+						MToolbarItemsMColor(MCustomColor(fl.color))
+				)).color),
+			\ ->
+				maybeMap(tryExtractStruct(style, MItemsColor(MWhite())), \ic -> ic.color)
+		)
+	else
+		maybeMap(tryExtractStruct(style, MItemsColor(MWhite())), \ic -> ic.color)
+}

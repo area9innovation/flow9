@@ -1,0 +1,178 @@
+import tropic/tropic_manager;
+import tropic/tropic_metrics;
+
+/*
+TODO:
+- Add ability to restrict the draggable area using some Tropic rect.
+- When dragging, make drop zones light up even when not on top!
+*/
+export {
+	// Make a draggable tropic identified with the given id. Stationary is the tropic for what you pick up.
+	// If dragShape is TEmpty, the original is moved when dragging
+	TDraggable(manager : TManager, id : int, stationary : Tropic, style : [TDragStyle]) -> Tropic;
+		TDragStyle ::= TDragShape, TOnHover, TClick, TDraggingEnabled, TCursorShape, TOnClickFn;
+			TDragShape(tropic : Tropic);
+			TOnHover(tropic : Tropic);
+			TClick(click : DynamicBehaviour<bool>);
+			TOnClickFn(click : () -> void);
+			TDraggingEnabled(enabled : Transform<bool>);
+			TCursorShape(cursor : CursorShape2);
+			// TODO: Add some way to restrict where the thing can be dragged
+			// TDragRestriction(zone : Tropic);
+
+	// Prepare a site where draggables can be dropped. 
+	// When something is dragged on top, onHover is notified with the draggable id.
+	// When something is dropped, onDrop is notified with the draggable id.
+	TDropSpot(manager : TManager, onHover : DynamicBehaviour<int>, onDrop : DynamicBehaviour<int>, dropTropic : Tropic) -> Tropic;
+
+	TDropSpot2(manager : TManager, onHover : DynamicBehaviour<int>, onDrop : DynamicBehaviour<int>, dropTropic : Tropic, handle : bool) -> Tropic;
+}
+
+TDraggable(manager : TManager, id : int, stationary : Tropic, style : [TDragStyle]) -> Tropic {
+	dragShape : TDragShape = extractStruct(style, TDragShape(TEmpty()));
+	dragHover : TOnHover = extractStruct(style, TOnHover(stationary));
+	click : TClick = extractStruct(style, TClick(make(false)));
+	onClick : TOnClickFn = extractStruct(style, TOnClickFn(nop));
+	draggingEnabled : TDraggingEnabled = extractStruct(style, TDraggingEnabled(const(true)));
+	cursor : TCursorShape = extractStruct(style, TCursorShape(MoveCursor()));
+	//dragRestriction : TDragRestriction = extractStruct(style, TDragRestriction(TEmpty()));
+	//enabled : TEnabled = extractStruct(style, TEnabled(const(true)));
+
+	getPointFn : ref () -> Point = ref \ -> Point(0., 0.); 
+
+	hovering = make(false);
+	down = make(false);
+	wasdown = make(false);
+
+	pos = make(Point(0.0, 0.0));
+	start = make(getValue(pos));
+
+	moving = make(Point(0.0, 0.0));
+	metrics = getTropicMetrics(stationary);
+
+	uns = ref nop;
+
+	station = TIf(fselect2(hovering, down, FLift2(\h, d -> h && !d)), dragHover.tropic, stationary);
+
+	fingered = TCursor(cursor.cursor, station);
+
+	TConstruct([
+		\ -> subscribe2(down, \d -> {
+			if (d) {
+				if (fgetValue(draggingEnabled.enabled)) {
+					nextDistinct(manager.dragging, id);
+
+					p1 = manager.xy();
+					p2 = ^getPointFn();
+
+
+					next(pos, p2);
+
+					nextDistinct(start, Point(p1.x - p2.x, p1.y - p2.y));
+
+					uns := trender(
+						TTranslate(pos, 
+							if (dragShape.tropic == TEmpty()) stationary else dragShape.tropic
+						),
+						manager.renderStyle
+					);
+				}
+				next(wasdown, true)
+			} else {
+				manager.onDrop(id);
+				
+				nextDistinct(pos, Point(0.0, 0.0));
+
+				if (^uns != nop) {
+					^uns();
+					uns := nop;
+				}
+
+				if (getValue(wasdown)) {
+					p1 = manager.xy();
+					p2 = ^getPointFn();
+
+					// Not the best solution but it works in any case.
+					if (getValue(hovering) || (p1.x > p2.x && p1.y > p2.y && p1.x < p2.x + metrics.width && p1.y < p2.y + metrics.height)) {
+						onClick.click();
+						nextDistinct(click.click, true);
+						nextDistinct(click.click, false);
+					}
+					next(wasdown, false);
+				}
+			}
+		}), 
+		\ -> subscribe2(moving, \d -> {
+			if (getValue(down)) {
+				p = manager.xy();
+				s = getValue(start);
+//				println("Moving to " + toString(p) + " from " + toString(s) + " gives " + toString(Point(p.x - s.x, p.y - s.y)));
+				next(pos, Point(p.x - s.x, p.y - s.y));
+			}
+		})],
+		TInteractive([
+			TMouseInside(hovering, false),
+			TMouseXY(moving),
+			TMouseDown(down),
+			], TTag2(\tm -> getPointFn := \ -> getTransformPosition(tm()), 
+				if (dragShape.tropic == TEmpty()) {
+					TIf(
+						down, TLet("s", station, TGroup2(TVisible(const(false), TDisplay("s")), TGhost("s"))), fingered
+					)
+				} else fingered
+			)
+		)
+	)
+	|> (\f -> TDispose([\ -> {
+			if (^uns != nop) {
+				manager.onDrop(id);
+				^uns();
+				uns := nop;
+			}
+		}], f))
+}
+
+TDropSpot(manager : TManager, onHover : DynamicBehaviour<int>, onDrop : DynamicBehaviour<int>, dropTropic : Tropic) -> Tropic {
+	TDropSpot2(manager, onHover, onDrop, dropTropic, true)
+}
+
+TDropSpot2(manager : TManager, onHover : DynamicBehaviour<int>, onDrop : DynamicBehaviour<int>, dropTropic : Tropic, handle : bool) -> Tropic {
+	inside = make(false);
+
+	tag = ^(manager.nextTagId);
+	manager.nextTagId := tag + 1;
+
+	TConstruct([
+			\ -> select2u(inside, manager.dragging, \in, di -> {
+				if (in) {
+					nextDistinct(onHover, di);
+					nextDistinct(manager.hovering, tag);
+				} else {
+					nextDistinct(onHover, manager.none);
+					if (getValue(manager.hovering) == tag) {
+						nextDistinct(manager.hovering, -1);
+					}
+				}
+				0;
+			}).second, 
+			\ -> select2u(inside, manager.drop, \in, di -> {
+				if (di != manager.none) {
+					// Publish the drop if we are inside
+					nextDistinct(onDrop, if (in) di else manager.none);
+					// And clear it straight away!
+					nextDistinct(onDrop, manager.none);
+				}
+				0
+			}).second, 
+			\ -> subscribe(manager.hovering, \i -> {
+				if (i != tag) {
+					nextDistinct(inside, false)
+				}
+			})
+		],
+		TInteractive([
+				TMouseInside(inside, handle),
+			], dropTropic
+		)
+	);
+}

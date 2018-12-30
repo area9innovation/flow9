@@ -1,0 +1,762 @@
+import translation;
+import ui/tab;
+import ui/focus;
+import tropic/tropic_gui;
+import tropic/tropic2form;
+import tropic/tropic_colors;
+import tropic/trender;
+import tropic/tropic_manager;
+import tropic/ttextinput;
+import tropic/trawbutton;
+import tropic/tscroll;
+import ui/combobox_structs;
+
+export {
+	// Decorate a tropic, so that we can display another tropic on top of this as required
+	TOnTop(manager : TManager, t : Tropic) -> Pair<Tropic, (Tropic) -> () -> void>;
+
+	// A simple button that looks nice. Use OnClick or TOnClick helpers for the state.
+	TTextButton(text : string, shortcut : string, style : [TTextButtonStyle], state : [TButtonState]) -> Tropic;
+		TTextButtonStyle ::= TColor, CharacterStyle, TForeground, TStyle, StrokeWidth, TTextOnly;
+			// A foreground, and then the text is centered in this
+			TForeground(tropic : Tropic);
+			// No frame, just a pure text button
+			TTextOnly();
+
+	// Simple checkbox with default black box
+	TCheckBox(caption : Tropic, value: DynamicBehaviour<bool>, style : [TCheckBoxStyle]) -> Tropic;
+		// Fill is for the mark color. BoxStyle is for the frame
+		TCheckBoxStyle ::= TBoxStyle, Fill, TStyle;
+			TBoxStyle(style : [GraphicsStyle], radius: double);
+		// TODO:
+		// 	- partialvalue : Behaviour<bool>
+		//  - Control the look of the check box in the various states exactly
+		//  - If we have a text as the Caption, make sure the baseline of the result is correct
+
+
+	KeyPressEvent ::= KeyUpEvent, KeyDownEvent, NoKeyEvent;
+		NoKeyEvent();
+		KeyUpEvent : (ke : KeyEvent);
+		KeyDownEvent : (ke : KeyEvent, text : string);
+
+	// A helper to get translated keyboard events so it can be used with international keyboards
+	KeyPressEventHandler(focusB : DynamicBehaviour<bool>, eventB : DynamicBehaviour<KeyPressEvent>, visibleCursor : bool, style : [CharacterStyle]) -> Tropic;
+
+	// Renders a movable dialog
+	ShowTDialog(t : Tropic, style : [TDialogStyle]) -> void;
+		TDialogStyle ::= TModalOverlay, TNotModal, TNoCenter, TCloseWhen, Stylesheet, TManager; //, TDialogTitle;
+
+			// Redefines default dark screen overlay to cover the background. Ignored when TNotModal is present.
+			TModalOverlay(t : Tropic);
+
+			// The dialog is not modal
+			TNotModal();
+
+			TNoCenter();
+
+			// A behavior which will close the dialog when set
+			TCloseWhen(when : Transform<bool>);
+
+			// We need a header with a title
+			// TDialogTitle(t : string);
+
+	// Old-style look
+	TTab(
+		tab : DynamicBehaviour<int>,
+		radius : double,
+		tabHeight : double,
+		captions : [string],
+		captionHints : [string],
+		content : [Tropic],
+		enable : Behaviour<bool>,
+		sheet : Stylesheet,
+		box : Tropic
+	) -> Tropic;
+
+	// Make a tooltip and place it at the position from manager.xy
+	TTooltip(manager : TManager, tip : Tropic, box : Tropic) -> Tropic;
+
+	// Tropic combobox
+	TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>, style : [TComboboxStyle]) -> Tropic;
+		TComboboxStyle ::= TNoAutoCollapse, TComboBoxStatic, TColor, TStroke, TStyle, TListDecorator, TExpandUp, ComboBoxEnabled,
+						   ComboBoxExpanded, ComboBoxWidth, ComboBoxMaxHeaderWidth, ComboBoxBorder, TComboBoxArrow, TRadius, TUseAllWidth, TButtonGhosted;
+			TStroke(color : int);
+			TRadius(radius : double);
+			TListDecorator(decoratorFn : (Tropic) -> Tropic);
+			TExpandUp();
+			TExpandMinHeight(value : double);
+			TComboBoxStatic(tropic : Tropic);
+			TComboBoxArrow(tropic : Tropic);
+			//Use all available width for combo box, layout depends on items
+			TUseAllWidth();
+
+			// Don't collapse on item click or on click outside the combobox
+			TNoAutoCollapse();
+
+
+	TFixedWH(wh : WidthHeight) -> Tropic;
+}
+
+TOnTop(manager : TManager, t : Tropic) -> Pair<Tropic, (Tropic) -> () -> void> {
+	tag = ^(manager.nextTagId);
+	manager.nextTagId := tag + 1;
+
+	Pair(
+		TTag(tag, t),
+		\tr -> {
+			p = ^(manager.findPositionScaleFn)(tag);
+
+			trender(TPad(p.pos.x / p.scale.x, p.pos.y / p.scale.y, tr), [manager.sheet])
+		}
+	);
+}
+
+
+TTab(
+	tab : DynamicBehaviour<int>,
+	radius : double,
+	tabHeight : double,
+	captions : [string],
+	captionHints : [string],
+	content : [Tropic],
+	enable : Behaviour<bool>,
+	sheet : Stylesheet,
+	box : Tropic
+) -> Tropic {
+	awh = makeWH();
+	TFormIn(
+		Inspect([IAvailable2(awh)],
+			customTabControlWH(tab, awh,
+				radius, tabHeight, captions, captionHints,
+				map(content, \contentItem -> tropic2form(contentItem, sheet)),
+				enable, true
+			)
+		), box
+	);
+}
+
+
+// Doesn't work with IME (Chinese and other compositional alphabets):
+// - visible cursor have to be whole textinput
+// - no good way to hide cursor in js, because of the toolbar
+// - content should be cleared only after IME toolbar is closed
+KeyPressEventHandler(focusB : DynamicBehaviour<bool>, eventB : DynamicBehaviour<KeyPressEvent>, visibleCursor : bool, style : [CharacterStyle]) -> Tropic {
+	contentB = make("");
+
+	textSize = getTextSize("", style);
+
+	latestEventB = make(None());
+
+	textinput =
+		Interactive(
+			[
+				KeyDown2(\handled, ke -> {
+					if (getValue(focusB)) {
+						deferred(\-> {
+							// in Flash content is updated after key event
+							content = getValue(contentB);
+
+							next(eventB, KeyDownEvent(ke, content));
+							next(contentB, "");
+						})
+					}
+					handled
+				}),
+				KeyUp2(\handled, ke -> {
+					if (getValue(focusB)) {
+						nextDistinct(eventB, KeyUpEvent(ke));
+					}
+					handled
+				})
+			],
+			tropic2form(
+				TTextInput(
+					contentB,
+					[
+						getUniversalFont(), // workaround to support non-latin synbols, e.g. cyrillic
+						FrameStyle(0.0, 0.0, [])
+					],
+					[TTextInputFocus(focusB)],
+					if (visibleCursor) TFixed(2.0, textSize.height) else TEmpty(),
+				),
+				emptyStylesheet
+			)
+		);
+
+	TFormIn(
+		if (visibleCursor) {
+			textinput
+		} else {
+			if (js) {
+				Translate(const(10000.0), const(10000.0),
+					FixSize(0.0, 0.0, textinput)
+				)
+			} else if (cpp) {
+				FixSize(0.0, 0.0, textinput)
+			} else {
+				Alpha(
+					make(0.0),
+					FixSize(0.0, 0.0, textinput)
+				)
+			}
+		},
+		if (visibleCursor) TFixed(2.0, textSize.height) else TEmpty()
+	)
+}
+
+// A simple button that looks nice
+TTextButton(text : string, shortcut : string, style : [TTextButtonStyle], state : [TButtonState]) -> Tropic {
+	textonly = contains(style, TTextOnly());
+	color = fold(style, TGreen(), \acc : TColor, s : TTextButtonStyle -> {
+		switch (s) {
+			Fill(__): acc;
+			FontSize(__): acc;
+			BackgroundFill(__): acc;
+			BackgroundFillOpacity(__): acc;
+			LetterSpacing(__): acc;
+			FillOpacity(__): acc;
+			Sharpness(__, __, __): acc;
+			FontFamily(__): acc;
+			Underlined(__): acc;
+			TForeground(__): acc;
+			TStyle(__): acc;
+			StrokeWidth(__): acc;
+			TTextOnly(): acc;
+			EscapeHTML(__): acc;
+
+			TWhite(): s;
+			TBlack(): s;
+			TRed(): s;
+			TYellow(): s;
+			TBlue(): s;
+			TGreen(): s;
+			TGrey(): s;
+			TLightGrey(): s;
+			TDarkGrey(): s;
+			TCustomColor(__, __, __, __, __): s;
+		}
+	});
+
+	defStyle = if (textonly) [] else [ FontFamily("Demi"), Fill(tcolorText(color)), FontSize(20.0) ];
+	charStyle : [TCharacterStyle] = fold(style, defStyle, \acc, s : TTextButtonStyle -> {
+		switch (s) {
+			Fill(__): arrayPush(acc, s);
+			FontSize(__): arrayPush(acc, s);
+			BackgroundFill(__): arrayPush(acc, s);
+			BackgroundFillOpacity(__): arrayPush(acc, s);
+			LetterSpacing(__): arrayPush(acc, s);
+			FillOpacity(__): arrayPush(acc, s);
+			Sharpness(__, __, __): arrayPush(acc, s);
+			FontFamily(__): arrayPush(acc, s);
+			Underlined(__): arrayPush(acc, s);
+			EscapeHTML(__): arrayPush(acc, s);
+
+			StrokeWidth(__): acc;
+			TWhite(): acc;
+			TBlack(): acc;
+			TRed(): acc;
+			TYellow(): acc;
+			TBlue(): acc;
+			TGreen(): acc;
+			TGrey(): acc;
+			TLightGrey(): acc;
+			TDarkGrey(): acc;
+			TCustomColor(__, __, __, __, __) : acc;
+			TForeground(__): acc;
+			TStyle(__): acc;
+			TTextOnly(): acc;
+		}
+	});
+
+	foreground : TForeground = extractStruct(style, TForeground(TEmpty()));
+	tStyle : TStyle = extractStruct(style, TStyle(""));
+
+	addForeground = \t -> if (foreground.tropic != TEmpty()) TCenterIn(t, foreground.tropic) else t;
+
+	if (contains(style, TTextOnly())) {
+		label = addForeground(TText(text, arrayPush(charStyle, tStyle)));
+		labelHover = addForeground(TText(text, concat(charStyle, [Fill(tcolor(TBlue())), TStyleWithSelector(tStyle.name, "hover")])));
+		labelPressed = addForeground(TText(text, concat(charStyle, [Fill(tcolorPressed(TBlue())), TStyleWithSelector(tStyle.name, "pressed")])));
+		labelDisabled = addForeground(TText(text, arrayPush(arrayPush(charStyle, Fill(0x808080)), TStyleWithSelector(tStyle.name, "disabled"))));
+		TRawButton(
+			label, labelHover, labelPressed, labelDisabled, shortcut, [], state
+		)
+	} else {
+		stroke = color == TWhite() || color == TLightGrey() || tcolor(color) == white;
+		fontSize : FontSize = extractStruct(charStyle, FontSize(24.0));
+
+		upDown = fontSize.size / 5.0;
+		sizeBorder = fontSize.size * 1.5;
+		radius = fontSize.size / 5.0;
+
+		label = addForeground(TBorder(sizeBorder, upDown, sizeBorder, upDown, TText(text, arrayPush(charStyle, tStyle))));
+		labelHover = addForeground(TBorder(sizeBorder, upDown, sizeBorder, upDown, TText(text, arrayPush(charStyle, TStyleWithSelector(tStyle.name, "hover")))));
+		labelPressed = addForeground(TBorder(sizeBorder, upDown, sizeBorder, upDown, TText(text, arrayPush(charStyle, TStyleWithSelector(tStyle.name, "pressed")))));
+		labelDisabled = addForeground(TBorder(sizeBorder, upDown, sizeBorder, upDown, TText(text, arrayPush(arrayPush(charStyle, Fill(0x808080)), TStyleWithSelector(tStyle.name, "disabled")))));
+
+		addStroke = \f : [TGraphicsStyle] -> {
+			strokeWidth : StrokeWidth = extractStruct(style, StrokeWidth(1.0));
+			if (stroke && strokeWidth.width != 0.0) concat(f, [Stroke(0xbdc0bf), strokeWidth]) else f;
+		}
+
+		normal = TFrame(0.0, radius, addStroke([Fill(tcolor(color)), tStyle]), label);
+		hover = TFrame(0.0, radius, addStroke([Fill(tcolorHover(color)), TStyleWithSelector(tStyle.name, "hover")]), labelHover);
+		pressed = TFrame(0.0, radius, addStroke([Fill(tcolorPressed(color)), TStyleWithSelector(tStyle.name, "pressed")]), labelPressed);
+		disabled = TFrame(0.0, radius, addStroke([Fill(tcolorDisabled(color)), TStyleWithSelector(tStyle.name, "disabled")]), labelDisabled);
+
+		TRawButton(
+			normal, hover, pressed, disabled, shortcut, [], state
+		)
+	}
+}
+
+
+
+
+TCheckBox(caption : Tropic, value: DynamicBehaviour<bool>, style : [TCheckBoxStyle]) -> Tropic {
+	boxStyleStruct = extractStruct(style, TBoxStyle([Stroke(darkGray), Fill(white)], 0.0));
+	boxStyle = boxStyleStruct.style;
+	boxRadius = boxStyleStruct.radius;
+	markColor = extractStruct(style, Fill(darkGray));
+	tStyle = extractStruct(style, TStyle(""));
+	shortcut = ""; // TODO: Consider a style for this
+	c =\st : TCssStyle, stChecked : TCssStyle -> TLet("a", caption,
+		TLet("s",
+			TScale(const(Factor(0.0, 1.0)), TGhost("a")),
+			TCols([
+				TZoom(
+					TBorder(0.0, 3.0, 0.0, 0.0,
+						TLet("defaultView",
+							TLet("c",
+								TCenterIn(
+									TRounded(
+										boxRadius, boxRadius, boxRadius, boxRadius,
+										arrayPush(boxStyle, st), TFixed(20.0, 20.0)),
+									TGroup2(
+										TDisplay("s"),
+										TRotate90(TGhost("s"))
+									)
+								),
+								TGroup2(
+									TDisplay("c"),
+									TCenterIn(
+										TIf(value,
+											TText("✔", [markColor, FontSize(18.0), FontFamily("DejaVuSans"), st]),
+											TText(" ", [FontSize(18.0), FontFamily("DejaVuSans"), st])
+										),
+										TGhost("c")
+									)
+								)
+							),
+							// TODO: There is a double TCenter, if TCssBlock is failed.
+							// May be we should add a third argument: "centeringBox: Tropic"?
+							TCenterIn(
+								TIf(value,
+									TCssBlock(
+										[stChecked],
+										TDisplay("defaultView")
+									),
+									TCssBlock(
+										[st],
+										TDisplay("defaultView")
+									),
+								),
+								TGroup2(
+									TDisplay("s"),
+									TRotate90(TGhost("s"))
+								)
+							)
+						)
+					),
+					TGroup2(
+						TDisplay("s"),
+						TRotate90(TGhost("s"))
+					),
+					true
+				),
+				TScale(const(Factor(0.2, 0.0)), TRotate90(TGhost("s"))),
+				TDisplay("a")
+			])
+		)
+	);
+
+	accessState = make(if (getValue(value)) "checked" else "unchecked");
+
+	TConstruct(
+		[\ -> subscribe(value, \v -> nextDistinct(accessState, if (v) "checked" else "unchecked"))],
+		TAccess([AccessRole("checkbox"), FAccessAttribute("aria-checked", accessState)],
+			TRawButton(
+				c(tStyle, TStyleWithSelector(tStyle.name, "checked")),
+				c(TStyleWithSelector(tStyle.name, "hover"), TStyleWithSelector(tStyle.name, "checked")),
+				c(TStyleWithSelector(tStyle.name, "pressed"), TStyleWithSelector(tStyle.name, "checked")),
+				c(TStyleWithSelector(tStyle.name, "disabled"), TStyleWithSelector(tStyle.name, "checked_disabled")),
+					shortcut, [], OnClick(\ -> {
+						next(value, !getValue(value)
+					)
+				})
+			)
+		)
+	);
+}
+
+ShowTDialog(content : Tropic, style : [TDialogStyle]) -> void {
+	modal = !contains(style, TNotModal());
+	closeWhen : TCloseWhen = extractStruct(style, TCloseWhen(const(false)));
+	sheet = extractStruct(style, emptyStylesheet);
+	f = fuse(closeWhen.when);
+	manager = extractStruct(style, makeTManager(0, [sheet]));
+
+	t = if (contains(style, TNoCenter())) content else TCenter(content);
+
+	us1 = trenderManager(manager,
+		TAccess([AccessRole("dialog")],
+			if (modal) {
+				overlay = TInteractive(
+					[
+						TMouseDown(make(false)),
+						TMouseInside(make(false), true),
+						TRollOver(make(false)),
+						makeTKey(\k -> true),	// We eat all key events
+						TMouseWheel(make(0.0)),
+						TMouseXY(make(Point(0.0, 0.0)))
+					],
+					extractStruct(style, TModalOverlay(TRectangle([Fill(0x000000), FillOpacity(0.1)], TFillXY()))).t
+				);
+
+				TGroup2(overlay, t)
+			} else t
+		)
+	);
+	us = ref arrayPush(f.second, us1);
+
+	u1 = subscribe2(f.first, \v -> {
+		applyall(^us)
+	});
+	refArrayPush(us, u1);
+}
+
+TTooltip(manager : TManager, tip : Tropic, box : Tropic) -> Tropic {
+	disposer = ref nop;
+	mouseInside = make(false);
+	mouseXY = make(Point(0.0, 0.0));
+
+	screenMouseXYPair = selectDistinctu(mouseXY, \__ -> manager.xy());
+	screenMouseXY = screenMouseXYPair.first;
+	screenMouseXYDisposer = screenMouseXYPair.second;
+	//will shift the tooltip down the cursor by default to make it fully visible
+	addTBorder = \t -> TBorder(12.0, 12.0, 0.0, 0.0, t);
+
+	tooltipDestructed = make(true);
+	TConstruct(
+		[
+			\ -> subscribe(mouseInside, \inside -> {
+				if (inside && getValue(tooltipDestructed)) {
+					next(tooltipDestructed, false);
+					disposeFn = trender(TTranslate(screenMouseXY, tip |> addTBorder), [manager.sheet]);
+					disposer := \ -> {
+						disposeFn();
+						next(tooltipDestructed, true);
+					};
+				} else if (!inside && !getValue(tooltipDestructed)){
+					^disposer();
+					disposer := nop;
+				}
+			}),
+			\ -> {
+				\ -> {
+					^disposer();
+					disposer := nop
+				}
+			},
+			\ -> screenMouseXYDisposer
+		],
+		TAccess([AccessRole("tooltip")],
+			TInteractive([TMouseInside(mouseInside, false), TMouseXY(mouseXY)], box)
+		)
+	);
+}
+
+TCombobox(manager : TManager, items : [Tropic], selected : DynamicBehaviour<int>, style : [TComboboxStyle]) -> Tropic {
+	radius = extractStruct(style, TRadius(4.0)).radius;
+
+	useExpandingUp = contains(style, TExpandUp());
+	expandUp = make(useExpandingUp);
+	useAllWidth = contains(style, TUseAllWidth());
+	ghostedItems = contains(style, TButtonGhosted());
+
+	noAutoCollapse = contains(style, TNoAutoCollapse());
+
+	color = fold(style, TWhite(), \acc, st ->
+		switch (st) {
+			TWhite(): st;
+			TBlack(): st;
+			TRed(): st;
+			TGreen(): st;
+			TBlue(): st;
+			TYellow(): st;
+			TGrey(): st;
+			TLightGrey(): st;
+			TDarkGrey(): st;
+			TCustomColor(__, __, __, __, __): st;
+			default: acc;
+		});
+
+	tstyle  : TStyle  = extractStruct(style, TStyle(""));
+	tstroke : TStroke = extractStruct(style, TStroke(0xbdc0bf));
+	listDecoratorFn = extractStruct(style, TListDecorator(idfn)).decoratorFn;
+
+	width = extractStruct(style, ComboBoxWidth(100.0)).width;
+
+	maxHeaderWidth = extractStruct(style, ComboBoxMaxHeaderWidth(1000.0)).width;
+
+	minExpandHeight = extractStruct(style, TExpandMinHeight(100.0)).value;
+
+	enabled = extractStruct(style, ComboBoxEnabled(const(true))).enabled;
+	expanded = extractStruct(style, ComboBoxExpanded(make(false))).expanded;
+
+	border = extractStruct(style, ComboBoxBorder(5.0, 0.0));
+
+	addBorder = \t -> TBorder(border.horizontal, border.vertical, border.horizontal, border.vertical, t);
+
+	static = extractStruct(style, TComboBoxStatic(TEmpty())).tropic;
+	isStatic = static != TEmpty();
+	staticWithBorder = addBorder(static);
+
+	itemsWithBorder = map(items, addBorder);
+
+	getButton = \item, r, state, comboStyle -> {
+		addBtnFrame = \btnStyle -> \t -> TFrame(0.0, r, btnStyle, t);
+
+		normalStyle = [Fill(tcolor(color)), tstyle];
+		hoveredStyle = [Fill(tcolorHover(color)), TStyleWithSelector(tstyle.name, "hover")];
+		pressedStyle = [Fill(tcolorPressed(color)), TStyleWithSelector(tstyle.name, "pressed")];
+		disabledStyle = [Fill(tcolorDisabled(color)), TStyleWithSelector(tstyle.name, "disabled")];
+
+		TLet("item", item,
+			TRawButton(
+				TDisplay("item") |> addBtnFrame(normalStyle),
+				TDisplay("item") |> addBtnFrame(hoveredStyle),
+				TDisplay("item") |> addBtnFrame(pressedStyle),
+				TDisplay("item") |> addBtnFrame(disabledStyle),
+				"", comboStyle, state
+			)
+		)
+	};
+
+	frameSize = 1.0;
+	getItemList = \ -> {
+		TLines(mapi(itemsWithBorder, \i, item -> {
+			getButton(
+				TIf(
+					const(useAllWidth),
+					item,
+					TAvailable(
+						TCols2(item, TFillX()),
+						TGroup2(TGroup(itemsWithBorder), TFixed(width - 2.0 * frameSize, 0.0))
+					)
+				),
+				0.0, OnClick(\ -> {
+					if (!noAutoCollapse) next(expanded, false);
+					next(selected, i);
+				}),
+				if (ghostedItems) [TButtonGhosted()] else []
+			)
+		}))
+	};
+
+	backgroundClick = make(false);
+	addMouseDown = if (noAutoCollapse) idfn else {
+		\tropic ->
+			TGroup2(
+				TInteractive([TMouseDown(backgroundClick)], TRectangle([FillOpacity(0.0), Fill(0)], TFillXY())),
+				tropic
+			)
+	};
+
+	getItem = \i -> if (i < 0 || i >= length(itemsWithBorder)) TEmpty() else itemsWithBorder[i];
+
+	arrowDefault =
+		TSelect(expandUp, \up -> {
+			TGraphics(
+				[
+					MoveTo(5.0,  8.0 * b2d(up)),
+					LineTo(13.0, 8.0 * b2d(up)),
+					LineTo(9.0,  8.0 * b2d(!up)),
+					LineTo(5.0,  8.0 * b2d(up))
+				],
+				[Fill(black)]
+			)
+		});
+
+	arrowWidth = make(0.0);
+	arrowBase = extractStruct(style, TComboBoxArrow(arrowDefault)).tropic;
+	arrow = TCopySize(arrowBase, \t -> TAttachWidth(t, arrowWidth), false);
+	crop =
+		if (useAllWidth)
+			idfn
+		else
+			\t -> TLet("t", t,
+				TCropSize(
+					TMinimumGroup2(
+						TSelect(arrowWidth, \arrWidth ->
+							TFixed(maxHeaderWidth - arrWidth, 1000.0)
+						),
+						TGhost("t")
+					),
+					TDisplay("t")
+				)
+			);
+
+	item = TColsYCenter([
+		if (isStatic) crop(staticWithBorder) else TSelect(selected, \s -> crop(getItem(s))),
+		TIf(const(useAllWidth), TEmpty(), TFillX()),
+		arrow,
+		TFixed(5.0, 0.0),
+	]);
+
+	gapHeight = 7.0;
+	comboWidth = make(0.0);
+	comboHeight = make(0.0);
+
+	getComboSize = \tropic -> {
+		TGroup2(
+			TAttachWidth(tropic, comboWidth),
+			TAttachHeight(tropic, comboHeight)
+		)
+	};
+
+	addAvailable = if (useAllWidth) \t -> TAvailable(t, TSelect(comboWidth, \w -> TFixed(w, 0.0))) else idfn;
+	addFrame = \t -> TFrame(frameSize, radius, [Stroke(tstroke.color), Fill(tcolor(color)), tstyle], t);
+
+	posScale = make(PositionScale(Point(0.0, 0.0), Point(1.0, 1.0)));
+	stageHeight = make(0.0);
+	croppedListHeight = make(0.0);
+	freeHeightAbove = fselect(posScale, FLift(\ps : PositionScale -> ps.pos.y - gapHeight - 2.0 * frameSize));
+	freeHeightBelow = fselect3(posScale, comboHeight, stageHeight,
+		\ps : PositionScale, comboH, stageH ->
+			stageH - ps.pos.y - comboH - gapHeight - 2.0 * frameSize
+	);
+
+	freeHeight = fif(expandUp, freeHeightAbove, freeHeightBelow);
+
+	connectExpandUp = \ -> {
+		if (useExpandingUp) {
+			fconnect(
+				fselect2(freeHeightBelow, freeHeightAbove,
+					FLift2(\belowH, aboveH -> leqDoubles(belowH, minExpandHeight) && geqDoubles(aboveH, minExpandHeight))
+				),
+				expandUp
+			)
+		} else {
+			nop
+		}
+	};
+
+	addScrollable = \fullList : Tropic -> {
+		croppedListSize =
+			TGroup2(
+				TWidth(TGhost("fullList")),
+				TMinimumGroup2(
+					THeight(TGhost("fullList")),
+					TSelect(freeHeight, \fh -> TSizedWidth(comboWidth, fh))
+				)
+			);
+
+		fullListHeight = make(0.0);
+		pushScrollbarsToRight = \t -> {
+			TCols2(
+				t,
+				TSelect(
+					fpair(croppedListHeight, fullListHeight),
+					\p -> {
+						addedWidth =
+							if (p.first < p.second && !useAllWidth) 10.0 /* value near scrollbar width */ else 0.0;
+						TFixed(addedWidth, 0.0)
+					}
+				)
+			)
+		};
+
+		TLetMany([
+			Pair("fullList", fullList),
+			Pair("croppedListSize", croppedListSize)
+		],
+			TScroll(
+				manager,
+				TAttachHeight2(TGhost("fullList"), fullListHeight, TDisplay("fullList")),
+				TAttachHeight2(TGhost("croppedListSize"), croppedListHeight, TDisplay("croppedListSize"))
+					|> pushScrollbarsToRight
+				,
+				[TShowScrollbars(true), TScrollBarsStyle(invisibleScrollBar, minimalScrollBarLight)]
+			)
+		)
+	};
+
+	addTranslate = \tropic -> {
+		TTranslate(
+			fselect4(posScale, croppedListHeight, comboHeight, expandUp,
+				\ps : PositionScale, listH, comboH, expandUpState -> {
+					shiftY = if(expandUpState) -(listH + gapHeight + 2.0 * frameSize) else (comboH + gapHeight);
+					Point(ps.pos.x, ps.pos.y + shiftY)
+				}
+			),
+			tropic
+		)
+	};
+
+	addScale = \t -> TScale(fselect(posScale, FLift(\ps : PositionScale -> Factor(ps.scale.x, ps.scale.y))), t);
+
+	getComboBoxHeader = \ -> {
+		twidth = if (useAllWidth) TFillX() else TFixed(width - 2.0, 0.0);
+		getButton(
+			TAvailable(item, twidth),
+			radius,
+			[TOnClicked(\ -> next(expanded, !getValue(expanded))), TEnabled(enabled)],
+			[]
+		)
+	}
+
+	unrender = ref nop;
+
+	connectToStageHeight = \beh -> {
+		trender(TAttachHeight(TFillY(), beh), [])
+	};
+
+	TConstruct(
+		[
+			\ -> \ -> nextDistinct(expanded, false),
+			connectExpandUp,
+			\ -> connectToStageHeight(stageHeight),
+			\ -> subscribe(backgroundClick, \md -> next(expanded, false)),
+			\ -> subscribe(expanded, \e -> {
+				if (e) {
+					unrender := trender(
+						getItemList()
+							|> listDecoratorFn
+							|> addAvailable
+							|> addScrollable
+							|> addFrame
+							|> addScale
+							|> addTranslate
+							|> addMouseDown,
+						[manager.sheet]
+					)
+				} else {
+					^unrender();
+					unrender := nop;
+				}
+			})
+		],
+		TPositionScale(posScale,
+			TAlpha(
+				fselect(enabled, FLift(\e -> if (e) 1.0 else 0.5)),
+				TCopySize(getComboBoxHeader() |> addFrame, getComboSize, false)
+			)
+		)
+	);
+}
+
+TFixedWH(wh : WidthHeight) -> Tropic {
+	TFixed(wh.width, wh.height);
+}
+

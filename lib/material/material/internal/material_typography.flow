@@ -1,0 +1,321 @@
+import material/material;
+import material/internal/material_util;
+import tropic/tparagraph;
+import material/attach_select;
+import material/mstring;
+
+export {
+	// Will take care of font size, color opacity, interline spacing based on guidelines. Give it
+	// pure white or black as color
+	MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic;
+
+	// Will take care of font size, color opacity, interline spacing based on guidelines. Give it
+	// pure white or black as color
+	MParagraph2T(parent : MFocusGroup, text : string, style : [MParagraphStyle]) -> Tropic;
+
+	extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> Triple<MColor, MFontStyle, bool>;
+
+	MTextStyle2CharacterStyle(style : [MParagraphStyle], lightBackground : bool) -> [CharacterStyle];
+	MTextStyle2CharacterStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle];
+
+	MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle];
+	MFontStyle2MCustomFont(style : MFontStyle, pto: double, sto: double) -> MCustomFont;
+
+	style2MTextStyle(style : [?]) -> [MTextStyle];
+
+	setMLang(lang : string) -> void;
+	addMLangFontFamily(text : string, style : [TCharacterStyle]) -> [TCharacterStyle];
+
+	// Not recommended for using because fill opacity is affected by text color but not material theme.
+	// Use MTextStyle2CharacterStyle or MTextStyle2CharacterStyleDef instead.
+	MFontStyle2CharacterStyle(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
+	primaryTextOpacityDark = 0.87;
+	primaryTextOpacity = 1.0;
+}
+
+secondaryTextOpacity = 0.7;
+disabledTextOpacity = 0.5;
+
+secondaryTextOpacityDark = 0.54;
+disabledTextOpacityDark = 0.38;
+
+currentMLang = ref "";
+currentMLangFont = ref "";
+
+MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
+	TText(text, addMLangFontFamily(text, MTextStyle2CharacterStyleDef(style, Triple(parent.theme.textColor, parent.theme.fontStyle, true))))
+}
+
+MParagraph2T(parent : MFocusGroup, text : string, style : [MParagraphStyle]) -> Tropic {
+	mTextStyle = style2MTextStyle(style);
+	fontStyle = extractMTextStyleDef(mTextStyle, Triple(parent.theme.textColor, parent.theme.fontStyle, true));
+	characterStyle = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(style, Triple(parent.theme.textColor, parent.theme.fontStyle, true)));
+	mWidth = extractStruct(style, MWidth(-1.)).width;
+
+	tMetrics = getTWordMetrics(TText(text, characterStyle), makeTree());
+
+	interlineSpacing =
+		eitherFn(
+			tryExtractStruct(style, InterlineSpacing(0.)),
+			idfn,
+			\ ->
+				InterlineSpacing(switch (fontStyle.second) {
+					MDisplay2(): -5.;
+					MDisplay1(): -2.;
+					MDisplay1Medium(): -2.;
+					MHeadline(): 4.;
+					MSubheading(): 4.;
+					MTitle(): 4.;
+					MBody(): 2.;
+					MListBody(): 2.;
+					MBodyBold(): 2.;
+					MCaption(): 0.;
+					MButtonStyle(): 2.;
+					MSecondaryButtonStyle(): 2.;
+					MCaptionSolid(): 0.;
+					MCaptionColumn(): 0.;
+					MCaptionColumnSelected(): 0.;
+					MDataRow(): 2.;
+					MTooltipDesktop(): 0.;
+					MCustomFont(fs, __, __): if (fs <= 12.) 0. else if (fs < 16.) 2. else if (fs < 34.) 4. else if (fs < 45.) -2. else -5.;
+				})
+		);
+
+	paragraphMargin =
+		eitherFn(
+			tryExtractStruct(style, ParagraphMargin(0., 0.)),
+			idfn,
+			\ ->
+				switch (fontStyle.second) {
+					MDisplay2(): ParagraphMargin(0., 26.);
+					MDisplay1(): ParagraphMargin(0., 18.);
+					MDisplay1Medium(): ParagraphMargin(0., 18.);
+					MHeadline(): ParagraphMargin(0., 8.);
+					MSubheading(): ParagraphMargin(0., 8.);
+					MTitle(): ParagraphMargin(0., 4.);
+					MBody(): ParagraphMargin(0., 4.);
+					MListBody(): ParagraphMargin(0., 4.);
+					MBodyBold(): ParagraphMargin(0., 4.);
+					MCaption(): ParagraphMargin(0., 4.);
+					MButtonStyle(): ParagraphMargin(0., 4.);
+					MSecondaryButtonStyle(): ParagraphMargin(0., 4.);
+					MCaptionSolid(): ParagraphMargin(0., 4.);
+					MCaptionColumn(): ParagraphMargin(0., 4.);
+					MCaptionColumnSelected(): ParagraphMargin(0., 4.);
+					MDataRow(): ParagraphMargin(0., 4.);
+					MTooltipDesktop(): ParagraphMargin(0., 0.);
+					MCustomFont(fs, __, __): ParagraphMargin(0., if (fs <= 20.) 4. else if (fs < 34.) 8. else if (fs < 45.) 18. else 26.);
+				}
+		);
+
+	cropLongWords = extractStructMany(style, CropWords(true));
+
+	concat3(characterStyle, [ParagraphWidth(const(mWidth)), paragraphMargin, interlineSpacing], cropLongWords)
+	|> (\parStyle -> {
+		arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromMParagraphStyles(style)))
+	})
+	|> (\parStyle -> TParagraph(text, parStyle))
+}
+
+extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> Triple<MColor, MFontStyle, bool> {
+	r : Triple<MColor, MFontStyle, bool> = fold(style, def, \acc : Triple<MColor, MFontStyle, bool>, st : MParagraphStyle ->
+		switch (st : MParagraphStyle) {
+			MColor(__, __, __): Triple(st, secondOfTriple(acc), thirdOfTriple(acc));
+			MBody(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MListBody(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MHeadline(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MTitle(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MDisplay2(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MSubheading(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MBodyBold(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MButtonStyle(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MSecondaryButtonStyle(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MCaption(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MDisplay1(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MDisplay1Medium(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MCaptionSolid(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MCaptionColumn(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MCaptionColumnSelected(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MDataRow(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MTooltipDesktop(): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MCustomFont(__, __, __): Triple(firstOfTriple(acc), st, thirdOfTriple(acc));
+			MTextDisabled(): Triple(firstOfTriple(acc), secondOfTriple(acc), false);
+			Underlined(__): acc;
+			ParagraphMargin(__, __): acc;
+			RightAlign(): acc;
+			CropWords(__): acc;
+			LeftAlign(): acc;
+			CenterAlign(): acc;
+			StartAlign(): acc;
+			EndAlign(): acc;
+			MWidth(__): acc;
+			InterlineSpacing(__): acc;
+			EscapeHTML(__): acc;
+			LetterSpacing(__): acc;
+		}
+	);
+
+	r;
+}
+
+MTextStyle2CharacterStyle(style : [MParagraphStyle], lightBackground : bool) -> [CharacterStyle] {
+	MTextStyle2CharacterStyleDef(style, Triple(if (lightBackground) MBlack() else MWhite(), MBody(), true))
+}
+
+MTextStyle2CharacterStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle] {
+	extractMTextStyleDef(style, def)
+	|> (\fontStyle -> Triple(MColor2int(firstOfTriple(fontStyle)), secondOfTriple(fontStyle), thirdOfTriple(fontStyle)))
+	|> (\fontStyle : Triple<int, MFontStyle, bool> ->
+		arrayPush(
+			MFontStyle2CharacterStyle(secondOfTriple(fontStyle), firstOfTriple(fontStyle) == black)
+			|> (\characterStyle ->
+				if (thirdOfTriple(fontStyle))
+					characterStyle
+				else
+					replaceStruct(characterStyle, FillOpacity(if (firstOfTriple(fontStyle) == black) disabledTextOpacityDark else disabledTextOpacity))
+			),
+			Fill(
+				if (thirdOfTriple(fontStyle))
+					firstOfTriple(fontStyle)
+				else if (rgb2cielab(int2rgb(firstOfTriple(fontStyle))).l < 50.)
+					black
+				else
+					white
+			)
+		)
+	)
+	|> (\characterStyle ->
+		eitherMap(
+			tryExtractStruct(style, Underlined([])),
+			\un ->
+				arrayPush(
+					characterStyle,
+					Underlined(
+						replaceStructMany(un.style,
+							[
+								extractStruct(un.style, Stroke(extractStruct(characterStyle, Fill(black)).color)),
+								extractStruct(un.style, StrokeOpacity(extractStruct(characterStyle, FillOpacity(1.)).opacity)),
+								extractStruct(un.style, StrokeWidth(max(1., extractStruct(characterStyle, FontSize(1.)).size / 10.)))
+							]
+						)
+					)
+				),
+			characterStyle
+		)
+	)
+	|> (\characterStyle -> arrayPush(characterStyle, extractStruct(style, EscapeHTML(true))))
+	|> (\characterStyle -> arrayPushMaybe(characterStyle, tryExtractStruct(style, LetterSpacing(0.))))
+}
+
+MCustomFont2CharacterStyle(mcf: MCustomFont) -> [BasicCharacterStyle] {
+	[
+		FontSize(mcf.size),
+		FontFamily(mcf.family),
+		FillOpacity(mcf.opacity)
+	];
+}
+
+// https://material.io/guidelines/style/color.html#color-text-background-colors
+MFontStyle2CharacterStyle(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle] {
+	pto = if (darkText) primaryTextOpacityDark else primaryTextOpacity;
+	sto = if (darkText) secondaryTextOpacityDark else secondaryTextOpacity;
+	MCustomFont2CharacterStyle(MFontStyle2MCustomFont(style, pto, sto));
+}
+
+// Reverse function for special cases
+MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
+	fontFamily = ref "Roboto";
+	fontSize = ref 14.;
+	fill = ref black;
+	fillOpacity = ref primaryTextOpacityDark;
+
+	iter(style, \s ->
+		switch (s) {
+			FontFamily(name) : fontFamily := name;
+			FontSize(size) : fontSize := size;
+			Fill(col) : fill := col;
+			FillOpacity(op) : fillOpacity := op;
+			default : {}
+		}
+	);
+
+	[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)]
+}
+
+MFontStyle2MCustomFont(style : MFontStyle, pto: double, sto: double) -> MCustomFont {
+	switch (style) {
+		MDisplay2(): MCustomFont(45.0, "Roboto", sto);
+		MDisplay1(): MCustomFont(34.0, "Roboto", sto);
+		MDisplay1Medium(): MCustomFont(34.0, "RobotoMedium", sto);
+		MHeadline(): MCustomFont(24.0, "Roboto", pto);
+		MSubheading(): MCustomFont(16.0, "Roboto", pto);
+		MTitle(): MCustomFont(20.0, "Roboto", pto);
+		MBody(): MCustomFont(14.0, "Roboto", pto);
+		MListBody(): MCustomFont(14.0, "Roboto", sto);
+		MBodyBold(): MCustomFont(14.0, "RobotoMedium", pto);
+		MCaption(): MCustomFont(12.0, "Roboto", sto);
+		MButtonStyle(): MCustomFont(14.0, "RobotoMedium", pto);
+		MSecondaryButtonStyle(): MCustomFont(14.0, "RobotoMedium", sto);
+		MCaptionSolid(): MCustomFont(12.0, "Roboto", pto);
+		MCaptionColumn(): MCustomFont(12.0, "RobotoMedium", sto);
+		MCaptionColumnSelected(): MCustomFont(12.0, "RobotoMedium", pto);
+		MDataRow(): MCustomFont(13.0, "Roboto", pto);
+		MTooltipDesktop(): MCustomFont(12.0, "RobotoMedium", pto);
+		MCustomFont(size, family, opacity): MCustomFont(size, family, opacity);
+	}
+}
+
+style2MTextStyle(style : [?]) -> [MTextStyle] {
+	concatA([
+		extractStructMany(style, MWhite()),
+		extractStructMany(style, MBody()),
+		extractStructMany(style, MListBody()),
+		extractStructMany(style, MHeadline()),
+		extractStructMany(style, MTitle()),
+		extractStructMany(style, MDisplay2()),
+		extractStructMany(style, MSubheading()),
+		extractStructMany(style, MBodyBold()),
+		extractStructMany(style, MButtonStyle()),
+		extractStructMany(style, MCaption()),
+		extractStructMany(style, MDisplay1()),
+		extractStructMany(style, MDisplay1Medium()),
+		extractStructMany(style, MCaptionSolid()),
+		extractStructMany(style, MCaptionColumn()),
+		extractStructMany(style, MCaptionColumnSelected()),
+		extractStructMany(style, MDataRow()),
+		extractStructMany(style, MTooltipDesktop()),
+		extractStructMany(style, MCustomFont(0., "", 0.)),
+		extractStructMany(style, MTextDisabled()),
+		extractStructMany(style, Underlined([])),
+		[extractStruct(style, EscapeHTML(true))]
+	])
+	|> (\mTextStyle -> arrayPushMaybe(mTextStyle, tryExtractStruct(style, LetterSpacing(0.))))
+}
+
+setMLang(lang : string) -> void {
+	currentMLang := lang;
+
+	currentMLangFont :=
+		if (lang == "ja") {
+			getJapaneseFont().name
+		} else if (lang == "ko") {
+			getKoreanFont().name
+		} else if (isChinese(lang)) {
+			fontFamily = getChineseFont().name;
+
+			if (fontFamily == "NotoSans")
+				"Tahoma"
+			else
+				fontFamily
+		} else {
+			""
+		}
+}
+
+addMLangFontFamily(text : string, style : [TCharacterStyle]) -> [TCharacterStyle] {
+	if (^currentMLangFont != "" && containsHanScript(text)) {
+		replaceStruct(style, FontFamily(^currentMLangFont))
+	} else {
+		style
+	}
+}

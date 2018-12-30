@@ -1,0 +1,622 @@
+import tools/flowc/backends/common;
+import tools/flowc/fcmodule;
+import binarytree;
+import tools/flowc/backends/lisp/fi2lisp_defines;
+import tools/flowc/backends/lisp/fi2lisp_utils;
+import tools/flowc/backends/lisp/fi2lisp_assemble;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fimodule;
+import tools/flowc/type_helpers;
+
+export {
+	fiLispCompileToplevel(
+		cfg : FcLISPConfig,
+		program : FiProgram,
+		decl: FiDeclaration,
+		indent : string) -> string;
+
+	fiLispCompileToExpr(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		expr : FiExp,
+		indent : string) -> string;
+
+	fiLispCompileToReturn(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		expr : FiExp,
+		indent : string) -> string;
+
+	fiLispCompileMath(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		arg1 : FiExp,
+		op   : string,
+		arg2 : FiExp) -> string;
+
+	fiLispCompileCompare(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		arg1 : FiExp,
+		op   : string,
+		arg2 : FiExp) -> string;
+
+	fiLispCompileDiv(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		arg1 : FiExp,
+		op   : string,
+		arg2 : FiExp) -> string;
+
+	fiLispCompileNeg(
+		cfg  : FcLISPConfig,
+		program : FiProgram,
+		arg1 : FiExp) -> string;
+}
+
+fiLispCompileToplevel(cfg, program, decl, indent) {
+	nm = decl.name;
+
+	fcVerbose(cfg, 1, "Generating Lisp code for " + nm + "...");
+
+	subindent = indent;
+	toplevel = switch (decl : FiDeclaration) {
+		FiNativeDec(name, io, type, nativeName, flowfallback, __, __) : {
+			if (containsSet(LispForbiddenFunctions, name)) {
+				"; " + name + " forbidden with LispForbiddenFunctions\n"
+			} else {
+				na = strSplit(nativeName, ".");
+
+				nname = if (length(na) > 1) {
+						na[1] + na[0];
+					} else {
+						name + "Native";
+					}
+				s = switch (flowfallback) {
+					FiVoid(st): {
+						"(defalias " + fiLispRenameKeyword(cfg, name, false) + " " + nname + ")\n";
+					}
+					FiLambda(args, body, tp, st): {
+						fd = FiFunctionDec(
+							name,
+							flowfallback,
+							FiTypeFunction(args, tp),
+							st, st
+						);
+						"(if (fboundp '" + nname + ")\n" +
+						fiLispIndent + "(defalias " + fiLispRenameKeyword(cfg, name, false) + " " + nname + ")\n" +
+						fiLispIndent + "(progn\n" +
+						fiLispIndent + fiLispIndent + fiLispCompileToplevel(cfg, program, fd, fiLispIndent + fiLispIndent + subindent) +
+						"))\n\n"
+					}
+					default : "FiLambda ERROR";
+				}
+				s;
+			}
+		}
+		FiFunctionDec(name, lambda, ft, __, __): {
+			
+			if (name == "concatA") {
+				//fcPrintln("HIA: decl == " + toString(decl));
+			}
+			if (containsSet(LispForbiddenFunctions, name))
+				"; " + name + " forbidden with LispForbiddenFunctions\n"
+			else if (containsSet(LispSubstitutedFunctions, name)) {
+				fiGetLispSubstitute(cfg, name);
+			} else {
+				fparams = mapi(lambda.args, \idx, e -> {
+					fiLispRenameKeyword(cfg, e.name, false);
+				});
+
+				lambdaBody : FiExp = lambda.body;
+				bodyOrSeq = switch (lambdaBody) {
+				 	FiSeq(__, __, __) : lambda.body;
+				 	default : FiSeq([lambdaBody], lambda.type, lambdaBody.start);
+				}
+				
+				initVars = (if (name == "main") cfg.initVars else "");
+				bodyTxt = if (name == "main") {
+						structInits = foldTree(cfg.structNames, EmptyList(), \k, v, acc -> {
+							flds = either(lookupTree(cfg.structFields, k), "<???>");
+							Cons(fiLispIndent + "(setf (gethash " + i2s(v) + " flow-struct-names) " + flds + ")\n", acc);
+						});
+						list2string(structInits) +
+						fiLispCompileToExpr(cfg, program, bodyOrSeq, subindent)
+					} else {
+						fiLispCompileToReturn(cfg, program, bodyOrSeq, subindent);
+					}
+
+				fdeclares = strGlue(mapi(lambda.args, \idx, e -> {
+					vn = fiLispRenameKeyword(cfg, e.name, false);
+					tt = fiType2LispCoerce(cfg, program, e.type);
+					if (tt == "INT" || tt == "FLOAT" || tt == "STRING" || tt == "FUNCTION" || tt == "ARRAY") {
+						tr = fiType2LispType(cfg, program, e.type);
+						fiLispIndent + "(declare (type " + tr + " " + vn + "))\n";
+					} else {
+						""
+					}
+				}), "");
+
+				"(defun " + fiLispRenameKeyword(cfg, name, false) + "(" +
+				strGlue(fparams, " ") +
+				")\n" +
+				fdeclares +
+				fiLispIndent + "(declare (optimize (speed 3)))\n"+
+				(if (name == "main") fiLispIndent + "(setf sb-impl::*default-external-format* :utf-8)\n" else "") +
+				initVars +
+				indent + bodyTxt +
+				")\n";
+			}
+		}
+
+		FiGlobalVar(name, value, type, __, __): {
+			if (containsSet(LispForbiddenVars, name)) {
+				"; " + name + " forbidden with LispForbiddenVars\n"
+			} else {
+				eVal = fiLispCompileToExpr(cfg, program, value, indent);
+				code = switch(value) {
+					FiLambda(__, __, __, __): "(setf (symbol-function '" + name + ") #'" + eVal + ")";
+					default: "(setf " + name + " " + eVal + ")";
+				}
+				cfg.initVars ::= cfg.initVars + fiLispIndent +
+				//"; " + toString(v) + "\n" +
+				code + "\n";
+				
+				"(defvar " + name + ")"
+			}
+		}
+	}
+	toplevel
+}
+
+fiLispCompileToExpr(cfg, program, expr, indent) {
+	subindent = indent+fiLispIndent;
+	switch (expr : FiExp) {
+		FiVoid(start): "NIL";
+		FiBool(b, start): if (b) "T" else "NIL";
+
+		FiInt(v, start): {
+			/*
+			// Simple heuristic:
+			// Hex numbers 0..9 are the same as decimals
+			if (v >= 0 && v <= 9) {
+			i2s(v)
+			} else {
+				// For larger numbers detect hex numbers first
+
+				// Check file content availability
+				fcCheckAvailableContent(cfg.fileinfo);
+				intval = substring(cfg.fileinfo.content, i.start, i.end-i.start);
+				// Check if value is hexadecimal
+				if (startsWith(intval, "0x")) {
+					if (intval == "0x80000000") 
+						"#x80000000"
+					else
+						"#" +substring(intval, 1, strlen(intval)-1);
+				} else
+					i2s(v);
+				// In Flow negative numbers are not part of a grammar,
+				// this check is not required at all.
+				// if (v < 0) "("+i2s(v)+")" else i2s(v);
+			}
+			*/
+			i2s(v);
+		}
+
+		FiDouble(d, start): {
+			s = d2s(d);
+			(if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s+".0" else s) + "d0";
+		}
+
+		FiString(s, start): fiEscapeStringLisp(s);
+		FiVar(x, tp, start): {
+			toplevelName = lookupTree(program.names.toplevel, x);
+			var = fiLispRenameKeyword(cfg, x, false);
+			prefix = switch(toplevelName) {
+				Some(tn): {
+					switch(tn) {
+						FiFunctionDec(__, __, __, __, __): "#'";
+						FiNativeDec(__, __, __, __, __, __, __): "#'";
+						FiGlobalVar(__, __, __, __, __): "";
+					}
+				}
+				None() : ""
+			}
+			// (if (toplevelName == None()) "" else "#'")
+			prefix + var // + "#|" + toString(toplevelName) + "|#"
+		}
+
+		FiLet(x, tp, e1, e2, tp2, start): {
+			
+			letVal = fiLispCompileToExpr(cfg, program, e1, indent);
+			vn = fiLispRenameKeyword(cfg, x, false);
+			tt = fiType2LispCoerce(cfg, program, tp);
+			declare = if (tt == "INT" || tt == "FLOAT" || tt == "STRING" || tt == "FUNCTION" || tt == "ARRAY") {
+				tr = fiType2LispType(cfg, program, tp);
+					"(declare (type " + tr + " " + vn + "))\n";
+				} else {
+					""
+				}
+
+			if (x == "__") {
+				indent + fiLispCompileToExpr(cfg, program, e2, indent)
+			} else {
+				"(let ((" + vn + " " + letVal + "))\n" +
+				(if (declare != "") subindent + declare else "") +
+				subindent + fiLispCompileToExpr(cfg, program, e2, subindent) +
+				")"
+			}
+		}
+		
+		FiLambda(xs, e0, tp, start): {
+			body = e0;
+			bodyOrSeq = switch (body) {
+				FiSeq(__, __, __) : body;
+				default : FiSeq([body], tp, start);
+			}
+			fdeclares = strGlue(mapi(xs, \idx, e -> {
+				vn = fiLispRenameKeyword(cfg, e.name, false);
+
+				tt = fiType2LispCoerce(cfg, program, e.type);
+				if (tt == "INT" || tt == "FLOAT" || tt == "STRING" || tt == "FUNCTION" || tt == "ARRAY") {
+					tr = fiType2LispType(cfg, program, e.type);
+					fiLispIndent + subindent + "(declare (type " + tr + " " + vn + "))\n";
+				} else {
+					""
+				}
+			}), "");
+
+			"\n" + subindent + "(lambda (" + strGlue(map(xs, \a -> {fiLispRenameKeyword(cfg, a.name, false);}), " ") + ")\n" +
+			fdeclares +
+			fiLispIndent + subindent +
+			fiLispCompileToReturn(cfg, program, bodyOrSeq, subindent) + 
+			")"
+		}
+		FiCall(call, es, tp, start): {
+			needApostrophe = switch(call) {
+				FiVar(x, tp1, start2) : lookupTree(program.names.toplevel, x) != None();
+				default: false;
+			}
+
+			name = switch (call) {
+				FiVar(x, tp2, start2) : {
+					fiLispRenameKeyword(cfg, x, false);
+				}
+				default : {
+					fiLispCompileToExpr(cfg, program, call, indent);
+				}
+			}
+			args = (if (es == []) "" else " ") + strGlue(map(es, \e -> {fiLispCompileToExpr(cfg, program, e, subindent)}), " ");
+			"(funcall " + (if (needApostrophe) "'" else "") + name + args + ")"
+		}
+
+		FiSeq(es, tp, start): {
+			l = length(es)-1;
+			if (length(es) == 1) {
+				fiLispCompileToExpr(cfg, program, es[0], indent);
+			} else {
+				inner =
+					if (l >= 0)
+						list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+							code = fiLispCompileToExpr(cfg, program, e, subindent);
+							Cons((if (idx == length(es)-1) "" else ("\n" + subindent)), Cons(code, acc));
+						}))
+					else
+						"";
+				"(progn\n" + subindent + inner + ")";
+			}
+		}
+		FiIf(e1, e2, e3, tp, start): {
+			
+			cond = fiLispCompileToExpr(cfg, program, e1, indent);
+			trueBranch = fiLispCompileToExpr(cfg, program, e2, subindent);
+			falseBranch = fiLispCompileToExpr(cfg, program, e3, subindent);
+			if (trueBranch == "")
+				""
+			else 
+				"(if " + cond + "\n" + subindent + trueBranch + "\n" + subindent + falseBranch + ")";
+		}
+		FiCallPrim(op, es, tp, start): {
+			
+			opt = switch (op : FcPrim) {
+				FcOrPrim():    "(or "  + fiLispCompileToExpr(cfg, program, es[0], indent) + " " + fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcAndPrim():   "(and " + fiLispCompileToExpr(cfg, program, es[0], indent) + " " + fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcNotPrim():   "(not " + fiLispCompileToExpr(cfg, program, es[0], indent) + ")";
+				FcEqPrim():    fiLispCompileCompare(cfg, program, es[0], "=", es[1]);
+				FcNePrim():    "(not " + fiLispCompileCompare(cfg, program, es[0], "=", es[1]) + ")";
+				FcLePrim():    fiLispCompileCompare(cfg, program, es[0], "<=", es[1]);
+				FcGePrim():    fiLispCompileCompare(cfg, program, es[0], ">=", es[1]);
+				FcLtPrim():    fiLispCompileCompare(cfg, program, es[0], "<", es[1]);
+				FcGtPrim():    fiLispCompileCompare(cfg, program, es[0], ">", es[1]);
+				FcPlusPrim():  fiLispCompileMath(cfg, program, es[0], "+", es[1]);
+				FcMinusPrim(): fiLispCompileMath(cfg, program, es[0], "-", es[1]);
+				FcMulPrim():   fiLispCompileMath(cfg, program, es[0], "*", es[1]);
+				FcDivPrim():   fiLispCompileDiv(cfg, program, es[0], "/", es[1]);
+				FcModPrim():   "(rem " + fiLispCompileToExpr(cfg, program, es[0], indent) + " " + fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcNegPrim():   fiLispCompileNeg(cfg, program, es[0]);
+				FcArrayPrim(): {
+					//"; " + toString(i) +
+					"(mk-array (list" + (if (es == []) "" else " ") + strGlue(map(es, \e->fiLispCompileToExpr(cfg, program, e, indent)), " ") + "))";
+				}
+				FcIndexPrim(): "(svref " + fiLispCompileToExpr(cfg, program, es[0], indent) + " " + fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcDerefPrim(): "(reference-value " + fiLispCompileToExpr(cfg, program, es[0], indent) + ")";
+				FcAssignPrim(): "(setf (reference-value " + fiLispCompileToExpr(cfg, program, es[0], indent) + ") " + fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcRefPrim():   "(make-reference :id 1 :value " + fiLispCompileToExpr(cfg, program, es[0], indent) + ")";
+				// This is struct runtime constructor, the only place, where structrure
+				// created at runtime.
+				//
+				// After typechecking we definitely know structure exists, so skip sanity checks.
+				FcStructPrim(structname): {
+					str = lookupTree(program.names.structs, structname);
+
+					fields = switch(str) {
+						Some(v): map(v.args, \e -> fiLispRenameKeyword(cfg, e.name, true));
+						None():  ["STRUCT ERROR"]; // Normally should never happen
+					}
+					id = either(lookupTree(cfg.structNames, structname), -1);
+
+					"(make-" + fiLispRenameKeyword(cfg, structname, false) + " " +
+					//":name \"" + structname + "\" " +
+					":id " + i2s(id) +   
+					(if (es == []) "" else " ") +
+					strGlue(mapi(es, \ix, e -> {
+						":" + fields[ix] + " " + fiLispCompileToExpr(cfg, program, es[ix], indent)
+					}), " ") + ")";
+				}
+				FcFieldPrim(name): {
+					vr = switch (es[0]) {
+						FiVar(n, __, __) : fiLispRenameKeyword(cfg, n, false);
+						default : fiLispCompileToExpr(cfg, program, es[0], indent);
+					}
+
+					fp = "(slot-value " + vr + " '" + fiLispRenameKeyword(cfg, name, true) + ")";
+
+					rt = fiExpType(es[0]);
+					tt = fiType2LispCoerce(cfg, program, rt);
+					tr0 = fiType2LispType(cfg, program, rt);
+					
+					tr = if (tt == "NAME") {
+							switch(rt) {
+								FiTypeName(tname, __): tname;
+								default: tr0;
+							}
+						} else {
+							tr0;
+						}
+					id = either(lookupTree(cfg.structNames, tr), -1);
+					if (id == -1) {
+						fp
+					} else {
+						"(" + fiLispRenameKeyword(cfg, tr, false) + "-" + fiLispRenameKeyword(cfg, name, true) + " " + vr + ")"
+					}
+					
+				}
+				
+				FcSetMutablePrim(name):
+				// "; 0 " + toString(args[0].second) + "\n" +
+				// "; 1 " + toString(args[1].second) + "\n" +
+				"(setf (slot-value " +
+				fiLispCompileToExpr(cfg, program, es[0], indent) + " '" + fiLispRenameKeyword(cfg, name, true) + ") " +
+				fiLispCompileToExpr(cfg, program, es[1], indent) + ")";
+				FcCreateClosurePrim(sName, fName): ""; // should not happen - lisp does not use lambda lifting
+			};
+			opt
+		}
+		
+		FiCast(e, tFrom, tTo, tp, start): {
+			ex = fiLispCompileToExpr(cfg, program, e, indent);
+			tt = fiType2LispCoerce(cfg, program, tTo);
+			tf = fiType2LispCoerce(cfg, program, tFrom);
+			if (tf == "INT" && tt == "STRING") {
+				"(coerce (write-to-string " + ex + ") '(simple-array character (*)))"
+			} else if (tf == "DOUBLE" && tt == "STRING") {
+				"(coerce (format nil \"~F\" " + ex + ") '(simple-array character (*)))"
+			} else if (tf == "INT" && tt == "DOUBLE") {
+				"(coerce " + ex + " 'DOUBLE-FLOAT)"
+			} else if (tf == "DOUBLE" && tt == "INT") {
+				"(coerce (truncate " + ex + ") 'fixnum)"
+			} else if (tf == "UNION" && tt == "STRUCT") {
+				ex
+			} else if (tf == "STRUCT" && tt == "UNION") {
+				ex
+			} else {
+				"(coerce " + ex + " '" + tf + "->" + tt + ")"
+			}
+		}
+
+		FiSwitch(e0, e0type, cs, tp, start): {
+
+			aVar = fiLispCompileToExpr(cfg, program, e0, indent);
+
+			cases = foldi(cs, Cons("", EmptyList()), \ix, acc, item -> {
+				stDef = lookupTree(program.names.structs, item.struct);
+
+				if (item.struct == "default") {
+					acc
+				} else {
+					itemBody : FiExp = item.body;
+					ex = switch(itemBody) {
+						FiSeq(__, __, __): itemBody;
+						default: FiSeq([itemBody], tp, start);
+					}
+					id = either(lookupTree(cfg.structNames, item.struct), -1);
+					// fiLispRenameKeyword(cfg, item.struct, false)
+					Cons("(" + i2s(id) + " #|" + item.struct + "|# " + fiLispCompileToReturn(cfg, program, ex, subindent) + ")" +
+						(if (ix == length(cs) - 1) "" else ("\n" + subindent)), acc);
+				}
+
+			});
+
+			defCase0 = fold(cs, "", \acc1, item1 -> {
+				if (item1.struct == "default") {
+					itemBody : FiExp = item1.body;
+					ex = switch(itemBody) {
+						FiSeq(__, __, __): itemBody;
+						default: FiSeq([itemBody], tp, start);
+					}
+					"(otherwise " + fiLispCompileToExpr(cfg, program, ex, subindent) + ")";
+				} else {
+					acc1;
+				}
+			});
+
+			defCase = if (defCase0 == "") "(t (progn (assert nil nil \"Default clause failed\") ""))" else defCase0;
+
+			"(case (flow-id " + aVar + ")\n" +
+			subindent +
+			list2string(Cons("\n" + subindent + defCase, cases)) +
+			")"
+		}
+		
+		default: "#!cte other!\n" + toString(expr);
+	}
+
+}
+
+fiLispCompileToReturn(cfg, program, expr, indent) {
+	subindent = indent+fiLispIndent;
+	switch (expr : FiExp) {
+		FiCallPrim(op, es, type, start): {
+			"R#FcCallPrim"
+		}
+		FiCall(f, es, type, start): {
+			 "return /*R#Call*/" + fiLispCompileToExpr(cfg, program, expr, indent) + ";";
+		}
+
+		FiLet(x, tp, e1, e2, type, start): {
+			"R#FcLet";
+		}
+		FiSeq(es, type, start): {
+			l = length(es)-1;
+			if (length(es) == 1) {
+				fiLispCompileToExpr(cfg, program, es[0], indent)
+			} else {
+				inner =
+					if (l >= 0)
+						list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+							code = fiLispCompileToExpr(cfg, program, e, subindent);
+							Cons((if (idx == length(es)-1) "" else ("\n" + subindent)), Cons(code, acc));
+						}))
+					else
+						"";
+				"(progn\n" + subindent + inner + ")";
+			}
+		}
+		FiIf(e1, e2, e3, type, start): {
+			cond = fiLispCompileToExpr(cfg, program, e1, indent);
+			trueBranch = fiLispCompileToExpr(cfg, program, e2, subindent);
+			falseBranch = fiLispCompileToExpr(cfg, program, e3, subindent);
+
+			"(if " + cond + "\n" + subindent + trueBranch + "\n" + subindent + falseBranch + ")";
+		}
+
+		FiSwitch(e0, e0type, cs, type, start): {
+			"R#FcSwitch"
+		}
+		//"/*fb*/" + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiDouble(e0, start): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiString(e0, start): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiInt(e0, start): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiBool(e0, start): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiVoid(start): "return ;";
+		FiLambda(__, __, __, __): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiVar(__, __, __): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiCast(__, __, __, __, __): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiRequire(__, __, __, __): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiUnsafe(__, __, __, __): "return " + fiLispCompileToExpr(cfg, program, expr, subindent) + ";";
+	}
+}
+
+fiLispCompileCompare(cfg, program, arg1, op, arg2) {
+	a1 = fiLispCompileToExpr(cfg, program, arg1, fiLispIndent);
+	a2 = fiLispCompileToExpr(cfg, program, arg2, fiLispIndent);
+
+	isString = switch(fiExpType(arg1)) {
+		FiTypeString(): true;
+		default : false;
+	}
+
+	isInt = switch(fiExpType(arg1)) {
+		FiTypeInt(): true;
+		default : false;
+	}
+
+	isDbl = switch(fiExpType(arg1)) {
+		FiTypeDouble(): true;
+		default : false;
+	}
+	
+	if (isString && (op == "=")) {
+		"(equalp " + a1 + " " + a2 + ")"		
+	} else if (isString) {
+		"(string" + op + " " + a1 + " " + a2 + ")"
+	} else if (isInt) {
+		"(" + op + " (the fixnum " + a1 + ") (the fixnum " + a2 + "))"
+	} else if (isDbl) {
+		"(" + op + " (the double-float " + a1 + ") (the double-float " + a2 + "))"
+	} else {
+		"(F" + op + " " + a1 + " " + a2 + ")"
+	}
+}
+
+fiLispCompileMath(cfg, program, arg1, op, arg2) {
+	a1 = fiLispCompileToExpr(cfg, program, arg1, fiLispIndent);
+	a2 = fiLispCompileToExpr(cfg, program, arg2, fiLispIndent);
+
+	isString = switch(fiExpType(arg1)) {
+		FiTypeString(): true;
+		default : false;
+	}
+
+	isInt = switch(fiExpType(arg1)) {
+		FiTypeInt(): true;
+		default : false;
+	}
+
+	isDbl = switch(fiExpType(arg1)) {
+		FiTypeDouble(): true;
+		default : false;
+	}
+	
+	if (isString && (op == "+")) {
+		"(~ " + " " + a1 + " " + a2 + ")"
+	} else if (isInt) {
+		"(the fixnum (" + op + " (the fixnum " + a1 + ") (the fixnum " + a2 + ")))"
+	} else if (isDbl) {
+		"(the double-float (" + op + " (the double-float " + a1 + ") (the double-float " + a2 + ")))"
+	} else {
+		"(" + op + " " + a1 + " " + a2 + ")"
+	}
+}
+
+fiLispCompileDiv(cfg, program, arg1, op, arg2) {
+	a1 = fiLispCompileToExpr(cfg, program, arg1, fiLispIndent);
+	a2 = fiLispCompileToExpr(cfg, program, arg2, fiLispIndent);
+
+	isInt = switch(fiExpType(arg1)) {
+		FiTypeInt(): true;
+		default : false;
+	}
+
+	if (isInt && (op == "/")) {
+		"(truncate (/ (the fixnum " + a1 + ") (the fixnum " + a2 + ")))"
+	} else {
+		"(/ (the double-float " + a1 + ") (the double-float " + a2 + "))"
+	}
+
+}
+
+fiLispCompileNeg(cfg, program, arg1) {
+	a1 = fiLispCompileToExpr(cfg, program, arg1, fiLispIndent);
+
+	isInt = switch(fiExpType(arg1)) {
+		FiTypeInt(): true;
+		default : false;
+	}
+
+	if (isInt) {
+		"(the fixnum (- (the fixnum " + a1 + ")))"
+	} else {
+		"(the double-float (- (the double-float " + a1 + ")))"		
+	}
+}

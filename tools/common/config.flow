@@ -1,0 +1,243 @@
+import filesystem;
+import binarytree;
+import lingo/flow/javascript_cli_params;
+
+// Use compilerconfig.flow to get a useful, easy-to-use configuration,
+// and then functions here to work with it
+export {
+	// Reads any local flow.config file for options
+	parseFlowConfig() -> Tree<string, string>;
+
+	// Read config parameter.
+	// Priority (increasing):
+	// 1) Take default value
+	// 2) Read from flow.config
+	// 3) Get from command line/url
+	getConfigParameterDef(config : Tree<string, string>, paramName : string, defValue : string) -> string;
+	getConfigParameter(config : Tree<string, string>, paramName : string) -> string;
+
+    isConfigParameterTrue : (config : Tree<string, string>, param : string)->bool;
+    isConfigParameterFalse : (config : Tree<string, string>, param : string)->bool;
+    isConfigParameterSet : (config : Tree<string, string>, param : string)->bool;
+
+    // Sets (overrides) the given config.
+    setConfigParameter : (conf : CompilerConfig, key : string, value : string)->CompilerConfig;
+    // Sets the given config if it is not already set.
+    underrideConfigParameter : (conf : CompilerConfig, key : string, value : string)->CompilerConfig;
+
+    getConstConfig : (config : [Pair<string, string>])->Tree<string, string>;
+
+    // Gets config from select url parameters
+    getUrlConfig : (params : [string])->Tree<string, string>;
+
+    // Gets config from all url parameters
+    getAllUrlConfig() -> Tree<string, string>;
+
+    // Gets config from select url parameters given by first of params and 
+    // stores them under second of params.
+    getUrlConfigMapNames : (params : [Pair<string, string>])->Tree<string, string>;
+
+    // Combines two configs. Settings in over overrides settings in under.
+    combineConfigsOverride : (
+        over : Tree<string, string>, 
+        under : Tree<string, string>
+    )->Tree<string, string>;
+    combineConfigs : (
+        left : Tree<string, string>, 
+        right : Tree<string, string>,
+        combine : (param : string, fromLeft : string, fromRight : string)->string
+    )->Tree<string, string>;
+
+    // The structure to contain the configuration for a compiler invocation
+    CompilerConfig(
+        flowfile : string, 
+        includes : [string],
+        objectFolders : [string],
+        verbose : int,
+        jsParams : JSCliParams,
+
+        config : Tree<string, string>
+    );
+    compilerConfigFromConfig : (config : Tree<string, string>)->CompilerConfig;
+
+    // Finds the directory of flow itself. Is not very clever
+	getFlowDir() -> string;
+
+	setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig;
+}
+
+getFlowDir() {
+	// Use the path of the executabe
+	appPath = strReplace(getApplicationPath(), "\\", "/");
+	flowDefDir = if (strContains(appPath, "/QtByteRunner")) {
+		takeBefore(appPath, "/QtByteRunner", appPath) + "/"
+	} else if (strContains(appPath, "flow/src/java")) {
+		takeBefore(appPath, "src/java", appPath)
+	} else if (strContains(appPath, "tools/flowcompiler/")) {
+		takeBefore(appPath, "tools/flowcompiler/", appPath)
+	} else if (strContains(appPath, "tools/flowc/")) {
+		takeBefore(appPath, "tools/flowc/", appPath)
+	} else {
+		println("WARNING: Could not determine the flow directory.");
+		println("Defaults to ../flow/. Use bin-dir=<path> to specify where the flow folder is");
+	    "../flow/";
+	}
+	binDir = getUrlParameter("bin-dir");
+    if (binDir == "") {
+        flowDefDir
+    } else {
+		if (endsWith(binDir, "bin/") || endsWith(binDir, "bin\\"))
+			substring(binDir, 0, strlen(binDir)-4)
+		else
+			substring(binDir, 0, strlen(binDir)-3);
+    }
+}
+
+parseFlowConfig() -> Tree<string, string> {
+	if (fileExists("flow.config")) {
+		config = getFileContent("flow.config");
+		lines = strSplit(config, "\n");
+		fold(lines, makeTree(), \acc, l -> {
+			// Skip comment lines in flow.config
+			if (!startsWith(ltrim2(l, " \t"), "#")) {
+				opts = strSplit(l, "=");
+				if (length(opts) == 2) {
+					opt = trim2(opts[0], " \t\u000d");
+					val = trim2(opts[1], " \t\u000d");
+					val1 = if (opt == "resource-file") {
+							val2 = if (endsWith(val, ".swf")) val
+								else val + ".swf";
+							if (strFindFirstOf(val2, "/\\") != -1) val2
+							else "resources/" + val2
+						} else val;
+					setTree(acc, opt, val1)
+				} else acc;
+			} else acc;
+		});
+	} else makeTree();
+}
+
+getConfigParameterDef(config : Tree<string, string>, paramName : string, defValue : string) -> string {
+	getUrlParameterDef(paramName, lookupTreeDef(config, paramName, defValue))
+}
+
+getConfigParameter(config : Tree<string, string>, paramName : string) -> string {
+	getConfigParameterDef(config, paramName, "");
+}
+
+isConfigParameterSet(config, param)
+    getConfigParameter(config, param) != "";
+
+isConfigParameterTrue(config, param) 
+    isParameterTrue(getConfigParameter(config, param));
+
+isConfigParameterFalse(config, param) 
+    isParameterFalse(getConfigParameter(config, param));
+
+
+setConfigParameter(conf, key, value)
+    compilerConfigFromConfig(setTree(conf.config, key, value));
+
+underrideConfigParameter(conf, key, value)
+    if (containsKeyTree(conf.config, key)) conf
+    else setConfigParameter(conf, key, value);
+
+getConstConfig(params) 
+    fold(params, makeTree(), \t, pair->
+        if (pair.second != "") setTree(t, pair.first, pair.second)
+        else t
+    );
+
+getUrlConfig(params)
+    getUrlConfigMapNames(map(params, \param->Pair(param, param)));
+
+getUrlConfigMapNames(params)
+    fold(params, makeTree(), \config, param->
+        eitherGetUrlParameter(param.first,
+            \value->setTree(config, param.second, value),
+            config
+        )
+    );
+
+getAllUrlConfig() -> Tree<string, string> {
+	fold(getAllUrlParametersArray(), makeTree(), \acc, param -> setTree(acc, param[0], param[1]))
+}
+
+combineConfigsOverride(over, under) 
+    mergeTreeCustom(over, under, \__, upper, __ -> upper);
+
+combineConfigs(left, right, combine)
+    mergeTreeCustom(left, right, combine);
+
+compilerConfigFromConfig(config) {
+	v = getConfigParameterDef(config, "verbose", "0");
+	verboseLevel = if (isDigits(v)) s2i(v) else 0;
+
+	dpn = getConfigParameterDef(config, "dce-preserved-names", "");
+	dcePreservedNames = fold(strSplit(dpn, ","), makeSet(), \a, i -> {
+		if (i != "") insertSet(a, i) else a
+	});
+	CompilerConfig(
+		getConfigParameter(config, "flowfile"),
+		//includes : [string]
+		strSplit(getConfigParameter(config, "include"), ","),
+		//objectFolders : [string]
+		strSplit(getConfigParameter(config, "obj"), ","),
+		//verbose : int
+		verboseLevel,
+		//jsParam
+		JSCliParams(
+			//jsfile : string,
+			getConfigParameter(config, "js"),
+			//esfile : string,
+			getConfigParameter(config, "es6"),
+			//typescriptFile : string,
+			getConfigParameter(config, "ts"),
+			//debug : bool,
+			isConfigParameterTrue(config, "debug"),
+			//code : bool,
+			isConfigParameterTrue(config, "jscode"),
+			//mutable modules : string,
+			getConfigParameter(config, "jsmodules"),
+			//comments : bool,
+			isConfigParameterTrue(config, "jscomments"),
+			//node : bool,
+			isConfigParameterTrue(config, "nodejs"),
+			// webmodule : bool,
+			isConfigParameterTrue(config, "webmodule"),
+			//isES6 : bool,
+			false,
+			//isTypeScript : bool,
+			false,
+			//tsProcess : TypeScriptProcessing,
+			tsProcessing_dummy,
+			//readable : bool,
+			isConfigParameterTrue(config, "readable"),
+			//beautify : bool,
+			isConfigParameterTrue(config, "readable"),
+			//verbose : int,
+			verboseLevel,
+			//nwjs : bool
+			isConfigParameterTrue(config, "nwjsmode"),
+			// fontconfig : string
+			getConfigParameter(config, "fontconfig"),
+			// dcePreservedNames : Set<string>,
+			dcePreservedNames,
+			isConfigParameterTrue(config, "dce-remove-main"),
+			isConfigParameterTrue(config, "call-main")
+		),
+		//config : Tree<string, string>
+		config
+	);
+}
+
+setConfigFlowfile(config : CompilerConfig, flowfile : string) -> CompilerConfig {
+	CompilerConfig(
+		flowfile, 
+		config.includes,
+		config.objectFolders,
+		config.verbose,
+		config.jsParams,
+		config.config
+	)
+}

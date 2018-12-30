@@ -1,0 +1,256 @@
+import tuples;
+import flowstructs;
+import tools/flowc/fcexp;
+import tools/flowc/incremental/fiexp;
+
+export {
+	mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp;
+	mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp;
+	fiVarIsUsed(var : string, expr : FiExp) -> bool;
+	fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string];
+}
+
+mapFcExp(expr : FcExp, fn : (FcExp) -> FcExp) -> FcExp {
+	switch (expr) {
+		FcLambda(args, body, i): {
+			mapped_body = fn(mapFcExp(body, fn));
+			if (isSameObj(body, mapped_body)) {
+				expr 
+			} else {
+				FcLambda(args, mapped_body, i)
+			}
+		}
+		FcCall(f, args, i): {
+			mapped_f = fn(mapFcExp(f, fn));
+			mapped_args = map(args, \arg -> fn(mapFcExp(arg, fn)));
+			if (isSameObj(f, mapped_f) && forall(zipWith(args, mapped_args, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FcCall(mapped_f, mapped_args, i);
+			}
+		}
+		FcVar(x, i): fn(expr);
+		FcLet(x, t, e1, e2, i): {
+			mapped_e1 = fn(mapFcExp(e1, fn));
+			mapped_e2 = fn(mapFcExp(e2, fn));
+			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2)) {
+				expr
+			} else {
+				FcLet(x, t, mapped_e1, mapped_e2, i);
+			}
+		}
+		FcIf(e1, e2, e3, i): {
+			mapped_e1 = fn(mapFcExp(e1, fn));
+			mapped_e2 = fn(mapFcExp(e2, fn));
+			mapped_e3 = fn(mapFcExp(e3, fn));
+			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2) && isSameObj(e3, mapped_e3)) {
+				expr
+			} else {
+				FcIf(mapped_e1, mapped_e2, mapped_e3, i);
+			}
+		}
+		FcSwitch(v, typ, cs, i): {
+			mapped_cs = map(cs, \c -> FcCase(c.struct, c.argNames, fn(mapFcExp(c.body, fn)), c.info));
+			if (forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FcSwitch(v, typ, mapped_cs, i)
+			}
+		}
+		FcCast(e, tFrom, tTo, i): {
+			mapped_e = fn(mapFcExp(e, fn));
+			if (isSameObj(e, mapped_e)) {
+				expr
+			} else {
+				FcCast(mapped_e, tFrom, tTo, i);
+			}
+		}
+		FcSeq(es, i): {
+			mapped_es = map(es, \e -> fn(mapFcExp(e, fn)));
+			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FcSeq(mapped_es, i);
+			}
+		}
+		FcCallPrim(op, es, i):{
+			mapped_es = map(es, \e -> fn(mapFcExp(e, fn)));
+			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FcCallPrim(op, mapped_es, i);
+			}
+		}
+		FcString(s, i): fn(expr);
+		FcBool(b, i):   fn(expr);
+		FcDouble(d, i): fn(expr);
+		FcVoid(i):      fn(expr);
+		FcInt(i, inf):  fn(expr);
+		FcRequire(flowfile, e, i): {
+			mapped_e = fn(mapFcExp(e, fn));
+			if (isSameObj(e, mapped_e)) {
+				expr
+			} else {
+				FcRequire(flowfile, mapped_e, i);
+			}
+		}
+		FcUnsafe(name, fb, i): {
+			mapped_fb = fn(mapFcExp(fb, fn));
+			if (isSameObj(fb, mapped_fb)) {
+				expr
+			} else {
+				FcUnsafe(name, mapped_fb, i);
+			}	
+		}
+	}
+}
+
+mapFiExp(expr : FiExp, fn : (FiExp) -> FiExp) -> FiExp {
+	switch (expr) {
+		FiLambda(args, body, type, start): {
+			mapped_body = fn(mapFiExp(body, fn));
+			if (isSameObj(body, mapped_body)) {
+				expr 
+			} else {
+				FiLambda(args, mapped_body, type, start)
+			}
+		}
+		FiCall(f, args, type, start): {
+			mapped_f = fn(mapFiExp(f, fn));
+			mapped_args = map(args, \arg -> fn(mapFiExp(arg, fn)));
+			if (isSameObj(f, mapped_f) && forall(zipWith(args, mapped_args, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiCall(mapped_f, mapped_args, type, start);
+			}
+		}
+		FiVar(x, type, start): fn(expr);
+		FiLet(x, t, e1, e2, type, start): {
+			mapped_e1 = fn(mapFiExp(e1, fn));
+			mapped_e2 = fn(mapFiExp(e2, fn));
+			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2)) {
+				expr
+			} else {
+				FiLet(x, t, mapped_e1, mapped_e2, type, start);
+			}
+		}
+		FiIf(e1, e2, e3, type, start): {
+			mapped_e1 = fn(mapFiExp(e1, fn));
+			mapped_e2 = fn(mapFiExp(e2, fn));
+			mapped_e3 = fn(mapFiExp(e3, fn));
+			if (isSameObj(e1, mapped_e1) && isSameObj(e2, mapped_e2) && isSameObj(e3, mapped_e3)) {
+				expr
+			} else {
+				FiIf(mapped_e1, mapped_e2, mapped_e3, type, start);
+			}
+		}
+		FiSwitch(v, typ, cs, type, start): {
+			mapped_cs = map(cs, \c -> FiCase(c.struct, c.argNames, fn(mapFiExp(c.body, fn)), c.start));
+			if (forall(zipWith(cs, mapped_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiSwitch(v, typ, mapped_cs, type, start)
+			}
+		}
+		FiCast(e, tFrom, tTo, type, start): {
+			mapped_e = fn(mapFiExp(e, fn));
+			if (isSameObj(e, mapped_e)) {
+				expr
+			} else {
+				FiCast(mapped_e, tFrom, tTo, type, start);
+			}
+		}
+		FiSeq(es, type, start): {
+			mapped_es = map(es, \e -> fn(mapFiExp(e, fn)));
+			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiSeq(mapped_es, type, start);
+			}
+		}
+		FiCallPrim(op, es, type, start):{
+			mapped_es = map(es, \e -> fn(mapFiExp(e, fn)));
+			if (forall(zipWith(es, mapped_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiCallPrim(op, mapped_es, type, start);
+			}
+		}
+		FiString(__, __): fn(expr);
+		FiBool(__, __):   fn(expr);
+		FiDouble(__, __): fn(expr);
+		FiVoid(__):       fn(expr);
+		FiInt(__, __):  fn(expr);
+		FiRequire(flowfile, e, type, start): {
+			mapped_e = fn(mapFiExp(e, fn));
+			if (isSameObj(e, mapped_e)) {
+				expr
+			} else {
+				FiRequire(flowfile, mapped_e, type, start);
+			}
+		}
+		FiUnsafe(name, fb, type, start): {
+			mapped_fb = fn(mapFiExp(fb, fn));
+			if (isSameObj(fb, mapped_fb)) {
+				expr
+			} else {
+				FiUnsafe(name, mapped_fb, type, start);
+			}	
+		}
+	}
+}
+
+fiVarIsUsed(var : string, expr : FiExp) -> bool {
+	switch (expr) {
+		FiLambda(__, body, __, __):    fiVarIsUsed(var, body);
+		FiCall(f, args, __, __):       fiVarIsUsed(var, f) || exists(args, \a -> fiVarIsUsed(var, a));
+		FiVar(x, __, __):              x == var;
+		FiLet(__, __, e1, e2, __, __): fiVarIsUsed(var, e1) || fiVarIsUsed(var, e2);
+		FiIf(e1, e2, e3, __, __):      fiVarIsUsed(var, e1) || fiVarIsUsed(var, e2) || fiVarIsUsed(var, e3);
+		FiSwitch(e, __, cs, __, __):   fiVarIsUsed(var, e) || exists(cs, \c -> fiVarIsUsed(var, c.body));
+		FiCast(e, __, __, __, __):     fiVarIsUsed(var, e);
+		FiSeq(es, __, __):             exists(es, \e -> fiVarIsUsed(var, e));
+		FiCallPrim(__, es, __, __):    exists(es, \e -> fiVarIsUsed(var, e));
+		FiString(__, __):              false;
+		FiBool(__, __):                false;
+		FiDouble(__, __):              false;
+		FiVoid(__):                    false;
+		FiInt(__, __):                 false;
+		FiRequire(__, e, __, __):      fiVarIsUsed(var, e);
+		FiUnsafe(__, fallback, __, __):fiVarIsUsed(var, fallback);
+	}
+}
+
+fiCollectUsedNames(expr : FiExp, acc : [string]) -> [string] {
+	switch (expr) {
+		FiLambda(__, body, __, __):    fiCollectUsedNames(body, acc);
+		FiCall(f, args, __, __):       {
+			a1 = fiCollectUsedNames(f, acc);
+			fold(args, a1, \acc0, a -> fiCollectUsedNames(a, acc0))
+		}
+		FiVar(x, __, __):              arrayPush(acc, x);
+		FiLet(__, __, e1, e2, __, __): {
+			a1 = fiCollectUsedNames(e1, acc);
+			fiCollectUsedNames(e2, a1);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			fiCollectUsedNames(e3,
+				fiCollectUsedNames(e2,
+					fiCollectUsedNames(e1, acc)));
+		}
+		FiSwitch(e, __, cs, __, __):   {
+			a1 = fiCollectUsedNames(e, acc);
+			fold(cs, a1, \acc0, c -> fiCollectUsedNames(c.body, acc0));
+		}
+		FiCast(e, __, __, __, __):     fiCollectUsedNames(e, acc);
+		FiSeq(es, __, __):             fold(es, acc, \acc0, e -> fiCollectUsedNames(e, acc0));
+		FiCallPrim(__, es, __, __):    fold(es, acc, \acc0, e -> fiCollectUsedNames(e, acc0));
+		FiString(__, __):              acc;
+		FiBool(__, __):                acc;
+		FiDouble(__, __):              acc;
+		FiVoid(__):                    acc;
+		FiInt(__, __):                 acc;
+		FiRequire(__, e, __, __):      fiCollectUsedNames(e, acc);
+		FiUnsafe(__, fallback, __, __):fiCollectUsedNames(fallback, acc);
+	}
+}

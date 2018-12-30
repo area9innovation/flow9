@@ -1,0 +1,575 @@
+import material/internal/material_toolbar;
+import material/internal/material_grid;
+import material/selectmarray;
+import material/tropic_size_util;
+
+// Internal to material
+
+export {
+	MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+tabsPanelHeight = 48.;
+tabsPanelHeightWithIcons = 72.;
+bordersGap = 24.;
+
+MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	mColor = extractStruct(m.style, parent.theme.primaryColor);
+	fillOpacity = extractStruct(m.style, FillOpacity(1.));
+	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(mColor), fillOpacity])).style;
+	tabsBgStyle = extractStruct(m.style, MTabsBackgroundStyle(bgStyle)).style;
+	itemsColor = tryExtractMToolbarItemsMColor(parent, mergeTGraphicsStyles(bgStyle, tabsBgStyle), m.style);
+	indicatorColor : MColor = extractStruct(m.style, MTabsIndicatorColor(parent.theme.accentColor)).color;
+	indicatorAbove = contains(m.style, MTabIndicatorOnTop());
+	addAction = tryExtractStruct(m.style, MTabsAddAction(\__ -> TEmpty()));
+	elevation = extractStruct(m.style, MElevation(const(if (js) 0. else 2.))).elevation;
+	order = tryExtractStruct(m.style, MListReorder(make([]), const(false)));
+	maxHeight = tryExtractStruct(m.style, MMaxHeight(tabsPanelHeight));
+	tabsHeight = make(eitherMap(maxHeight, \mh -> mh.height, tabsPanelHeight));
+	noDispose = contains(m.style, MNoDispose());
+	noDimming = contains(m.style, MTabsNoDimming());
+	preRender = contains(m.style, MPreRender());
+	tabWidth0 = extractStruct(m.style, MCustomWidth(128., if (contains(m.style, MLargeView())) 320. else 256.));
+	showTooltip : MShowTooltip = extractStruct(m.style, MShowTooltip(const(true)));
+	plusButton = extractStruct(m.style, MTabsPanelButton(TEmpty())).button;
+	noScroll = contains(m.style, MNoScroll());
+	horizontalSeparators = tryExtractStruct(m.style, MTabsHorizontalSeparator(0., MWhite(), MWhite()));
+	verticalSeparators = tryExtractStruct(m.style, MTabsVerticalSeparators(0., MWhite()));
+	leftAlignIcon = contains(m.style, MTabsIconLeftAlign());
+	grabDelay = extractStructMany(m.style, MGrabDelay(0));
+
+	tabsFontStyle = fold(m.style, MButtonStyle(), \res, st -> switch(st) {
+		MDisplay2() : st;
+		MDisplay1() : st;
+		MDisplay1Medium() : st;
+		MHeadline() : st;
+		MSubheading() : st;
+		MTitle() : st;
+		MBody() : st;
+		MListBody() : st;
+		MBodyBold() : st;
+		MCaption() : st;
+		MButtonStyle() : st;
+		MSecondaryButtonStyle() : st;
+		MCaptionSolid() : st;
+		MCaptionColumn() : st;
+		MCaptionColumnSelected() : st;
+		MDataRow() : st;
+		MTooltipDesktop() : st;
+		MCustomFont(__,__,__) : st;
+		default : res;
+	});
+
+	isAnyIcon = fselect(m.tabs, FLift(\tabs -> fold(tabs, false, \acc, t -> acc || isSome(tryExtractStruct(t.style, MTabIcon(TEmpty()))))));
+
+	extractMinWidth = \st -> extractStruct(st, tabWidth0).minWidth;
+	addBordersGap = \mw : double -> floor(mw + bordersGap);
+
+	tabsMinWidth = make(map(fgetValue(m.tabs), \tb -> addBordersGap(extractMinWidth(tb.style))));
+
+	inspectScroll = makeTScrollInspectVisible();
+	scrollPosition = make(zeroPoint);
+	stageWidth = make(0.);
+	tabWidth = tryExtractStruct(m.style, MWidth(0.0));
+	tabsWidths : DynamicBehaviour<[int]> = make(generate(0, length(fgetValue(m.tabs)), \i -> getValue(tabsMinWidth)[i]));
+
+	oldTabs : ref [MTab] = ref fgetValue(m.tabs);
+
+	(\p0 ->
+		(\p ->
+			MSelect2T(manager, p, "MTabsHeader", [AccessRole("tablist"), MFocusId(const(0))], m.tabs, \tbs : [MTab], p2 -> {
+				protocol : [ArrayOperation<MTab>] = arrayDiff(^oldTabs, tbs, false);
+				tbsLength = length(tbs);
+
+				sel = ref getValue(m.selected);
+				tbsMinWidth : ref [int] = ref getValue(tabsMinWidth);
+				replaced = ref [];
+
+	 			iter(protocol, \op -> switch (op : ArrayOperation<MTab>) {
+					ArrayNop(__, __): {}
+					ArrayInsert(__, y, v): {
+						if (y <= ^sel)
+							sel := min(^sel + 1, tbsLength - 1);
+
+						tbsMinWidth := insertArray(^tbsMinWidth, y, addBordersGap(extractMinWidth(v.style)));
+					}
+					ArrayReplace(__, y, v): {
+						if (y == ^sel && !contains(^replaced, ^sel))
+							eitherFn(
+								findi(^oldTabs, \tb -> tb == v),
+								\id -> {
+									tbsMinWidth := swapIndexes(^tbsMinWidth, y, id);
+									refArrayPush(replaced, id);
+									sel := id;
+								},
+								\ -> {
+									tbsMinWidth := replace(^tbsMinWidth, y, addBordersGap(extractMinWidth(v.style)));
+								}
+							);
+					}
+					ArrayRemove(__, y): {
+						if (y <= ^sel)
+							sel := forceRange(^sel - 1, 0, tbsLength - 1);
+
+						tbsMinWidth := removeIndex(^tbsMinWidth, y);
+					}
+				});
+
+	 			nextDistinct(m.selected, ^sel);
+	 			nextDistinct(tabsWidths, ^tbsMinWidth);
+	 			nextDistinct(tabsMinWidth, []);
+	 			nextDistinct(tabsMinWidth, ^tbsMinWidth);
+
+				oldTabs := tbs;
+
+				mapi(tbs, \i, tb -> {
+					tabMinWidth = extractMinWidth(tb.style);
+
+					onClick =
+						extractStruct(tb.style, MOnClick(nop)).click
+						|> (\onClk -> MOnClick(\ -> {
+							onClk();
+							selectedIndex = getValue(m.selected);
+							confirm = if (selectedIndex >=0 && selectedIndex < length(tbs) && selectedIndex != i) {
+								extractStruct(tbs[selectedIndex].style, MTabConfirmSwitch(\cb -> cb(true))).confirm;
+							} else {
+								\cb -> cb(true)
+							};		
+
+							confirm(\isApproved -> {										
+								if (isApproved) { nextDistinct(m.selected, i); }
+							})									
+						}));
+					focusState = replaceStructMany(tb.style, [onClick, AccessRole("tab"), MRippleType(const(MRippleFill()))]);
+					tabIcon = tryExtractStruct(tb.style, MTabIcon(TEmpty()));
+
+					TSelect(tb.text, \txt ->
+						if (txt != "")
+							MTabsText(manager, p2, txt, tabMinWidth, showTooltip, tabsFontStyle, itemsColor)
+							|> (\t -> TBorder(0., 2., 0., 2., t))
+						else
+							TEmpty()
+					)
+					|> TSetMinWidth2(const(tabMinWidth))
+					|> (\t -> eitherMap(tabIcon, \ti -> 
+						TLines2(
+							m2t(ti.icon, p2)
+							|> (\t2 -> if (leftAlignIcon) t2 else TCenterX(t2))
+							|> (\t2 -> TBorder(0., 2., 0., 2., t2)),
+							t
+						), t
+					))
+					|> (\t -> TBorder(bordersGap / 2., 0., bordersGap / 2., 0., t))
+					|> (\t -> if (leftAlignIcon) t else TCenter(t))
+					|> (\t ->
+						MFocusClickable2T(manager, p2, "MTabsButton", focusState, \focus ->
+							TCopySize(
+								{
+									if (noDimming) t
+									else TAlpha(
+										fselect(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false),
+											FLift(\s -> if (s) 1. else 0.6)),
+										t
+									)
+								}
+								|> (\t2 -> eitherMap(addAction, \addAct -> TCols2A(t2, m2t(addAct.action(i), p2)), t2)),
+								\tr -> TShowLazy(fOr(focus.focused, focus.down), \ -> TRectangle([MFill(MGrey(500)), FillOpacity(0.3)], tr)),
+								true
+							)
+						)
+					)
+					|> (\t -> eitherMap(horizontalSeparators, \separator -> {
+							color = fif(feq(m.selected, i), const(separator.selectedColor), const(separator.notSelectedColor));
+							TLines2(t, TSelect(color, \col -> TRectangle([MFill(col)], TFillXH(separator.height))))
+						}, t))
+					|> (\t -> eitherMap(verticalSeparators, \separator ->
+						TCols2(t, TRectangle([MFill(separator.color)], TFillWY(separator.width))), t))
+					|> (\t ->
+						TransformTAcc2(\t2a -> {
+							bf = t |> t2a;
+
+							uns1 = makeSubscribe(bf.minWidth, \mwi : double -> {
+								tabsMinWidth0 = getValue(tabsMinWidth);
+								tabs0 = fgetValue(m.tabs);
+
+								if (i < length(tabs0)) {
+									lenTabsMinWidth = length(tabsMinWidth0);
+									nextDistinct(tabsMinWidth,
+										if (i < lenTabsMinWidth)
+											replace(tabsMinWidth0, i, floor(mwi))
+										else
+											concat3(
+												tabsMinWidth0,
+												generate(0, i - lenTabsMinWidth, \i2 ->
+													addBordersGap(extractMinWidth(tabs0[i2 + lenTabsMinWidth].style))
+												),
+												[floor(mwi)]
+											)
+										);
+								}
+							})();
+
+							uns2 = makeSubscribe(bf.metrics.height, \h ->
+								nextDistinct(tabsHeight, max(getValue(tabsHeight), h))
+							)();
+
+							TAcc(
+								bf.form,
+								bf.metrics,
+								bf.minWidth,
+								bf.minHeight,
+								bf.maxWidth,
+								bf.maxHeight,
+								bf.xFillers,
+								bf.yFillers,
+								bf.addFillers,
+								bf.xConstant,
+								bf.yConstant,
+								concat(bf.disposers, [uns1, uns2])
+							)
+						})
+						|> (\t2 -> TAvailableWidth(t2, fselect(tabsWidths, FLift(\tw ->
+									if (i < length(tw))
+										i2d(tw[i])
+									else if (i < length(fgetValue(m.tabs)))
+										extractMinWidth(fgetValue(m.tabs)[i].style) + bordersGap
+									else
+										tabWidth0.minWidth + bordersGap
+								))))
+						|> (\t2 -> TAvailableHeight(t2, tabsHeight))
+					)
+				})
+				// TODO : Maybe MReorderTemplate here
+				|> (\t ->
+					eitherFn(
+						order,
+						\or ->
+							MReorderGrid2T(
+								manager,
+								p2,
+								map(t, \tb -> MReorderItem(tb, [])),
+								or.order,
+								concat([MEnabled(or.enabled), MGridVertical()], grabDelay),
+								m2t
+							)
+							|> (\t2 -> TAvailableHeight(t2, const(0.))),
+						\ ->
+							TColsA(t)
+					)
+				)
+			})
+			|> makeTropicConstantHeight(None())
+			|> (\t -> TGroup2(
+					t,
+					MTabsBottomLine(manager, p, tabsWidths, m.selected, order, scrollPosition, inspectScroll, tabsHeight, indicatorColor, indicatorAbove)
+				)
+			)
+			|> (\t -> TAttachBoxCopyAvailableWidth(t, stageWidth))
+			|> (\t -> if (plusButton != TEmpty()) TCols2A(t, m2t(plusButton, p) |> TCenterY) else t)
+			|> (\t -> TFrame(0., 0., tabsBgStyle, t))
+			|> alignRightForRTL
+			|> (\t ->
+				TConstruct(
+					[
+						make2Subscribe(stageWidth, tabsMinWidth, \sw : double, minWidths : [int] -> {
+							lt = length(fgetValue(m.tabs));
+							lenMW = length(minWidths);
+							tabsWidths0 = getValue(tabsWidths);
+							lenW = length(tabsWidths0);
+
+							widths : [Triple<int, int, DynamicBehaviour<int>>] = generate(0, lt, \i -> {
+								tabWidthStyle = extractStruct(fgetValue(m.tabs)[i].style, tabWidth0);
+								Triple(
+									if (i < lenMW)
+										minWidths[i]
+									else
+										addBordersGap(tabWidthStyle.minWidth),
+
+									addBordersGap(tabWidthStyle.maxWidth),
+
+									make(if (i < lenW) tabsWidths0[i] else addBordersGap(tabWidth0.minWidth))
+								)
+							});
+
+							tabsWidthsD = map(widths, thirdOfTriple);
+
+							distributeSizesEvenly(
+								map(widths, firstOfTriple),
+								map(widths, secondOfTriple),
+								tabsWidthsD,
+								floor(sw)
+							);
+
+							next(tabsWidths, map(tabsWidthsD, getValue));
+						}),
+
+						\ -> fconnectSelect(isAnyIcon, tabsHeight, \b -> max(getValue(tabsHeight), if (b) tabsPanelHeightWithIcons else tabsPanelHeight))
+					],
+					t
+				)
+			)
+			|> (\t ->
+				MScroll2T(
+					manager,
+					p,
+					MScroll(
+						t,
+						TFillXHT(tabsHeight),
+						[TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar), inspectScroll, MScrollPosition(scrollPosition)]
+					),
+					m2t
+				)
+			)
+			|> (\t -> TFrame(0., 0., bgStyle, t))
+			|> (\t -> TShadowShape(elevation, p.theme.lightBackground, t, BottomRectangleShape()))
+		)
+		|> (\makeTabsHeader ->
+			eitherFn(
+				itemsColor,
+				\ic ->
+					MActivate2T(
+						manager,
+						p0,
+						"MTabs",
+						[
+							MaterialTheme(
+								p0.theme.lightBackground,
+								ic,
+								p0.theme.accentColor,
+								ic,
+								ic,
+								ic,
+								p0.theme.fontStyle,
+								ic,
+								p0.theme.enableAnimations,
+								p0.theme.enableRipple,
+							)
+						],
+						makeTabsHeader
+					),
+				\ ->
+					makeTabsHeader(p0)
+			)
+		)
+		|> (\t -> TLines2(
+				t,
+				SelectMGroup2T(manager, p0, m.tabs, \i, id, tab, p2 -> {
+					tabEn = fselect2(m.selected, i, FLift2(\s, i0 -> s == i0));
+
+					(\ -> MActivate2T(manager, p2, "MTabsContent", [MEnabled(tabEn), MFocusEnabled(tabEn), MFocusId(const(id))], \p3 ->
+						alignRightForRTL(m2t(tab.content, p3))
+					))
+					|> (\makeTabContent ->
+						if (preRender)
+							TIfPreRender(tabEn, makeTabContent(), TEmpty(), false)
+						else if (noDispose)
+							TRenderOnce(tabEn, makeTabContent)
+						else
+							TShowLazy(tabEn, makeTabContent)
+					)
+				})
+				|> (\t2 -> if (noScroll) t2 else MScroll2T(manager, p0, MScroll(t2, TFillXY(), []), m2t))
+			)
+			|> (\tabsContent -> eitherMap(tabWidth, \w -> TAvailableWidth(tabsContent, const(w.width)), tabsContent))
+		)
+	)
+	|> (\t ->
+		MActivate2T(
+			manager,
+			parent,
+			"MDynamicTabs",
+			[
+				IScriptBehaviour("selected", m.selected, ISInputValue(map(fgetValue(m.tabs), \tab -> tab.text), "index", true)),
+				AccessRole("composite")
+			],
+			t
+		)
+	)
+}
+
+MTabsText(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	text : string,
+	minWidth : double,
+	showTooltip : MShowTooltip,
+	tabsFontStyle : MFontStyle,
+	itemsColor : Maybe<MColor>) -> Tropic {
+
+	leng = strlen(text);
+	style0 : [MTextStyle] = [tabsFontStyle];
+	style1 = eitherMap(itemsColor, \ic -> arrayPush(style0, ic), style0);
+
+	(if (leng < floor(minWidth / 14.)) {
+		TCenterX(MText2T(parent, toUpperCase(text), style1))
+	} else {
+		newText = splitText(toUpperCase(text));
+
+		if (newText.second != "") {
+			style2 : [MTextStyle] = [MCaptionColumnSelected()];
+			style3 = eitherMap(itemsColor, \ic -> arrayPush(style2, ic), style2);
+			TLines2(
+				TCenterX(MText2T(parent, newText.first, style3)),
+				(if (leng < floor(minWidth / 7.)) {
+					MText2T(parent, newText.second, style3)
+				} else {
+					style4 : [MEllipsisTextStyle] = style3;
+					MEllipsisText2T(
+						manager,
+						parent,
+						MEllipsisText(toUpperCase(newText.second), arrayPush(style4, showTooltip))
+					)
+				}) |> TCenterX
+			)
+		} else {
+			style5 : [MEllipsisTextStyle] = style1;
+			TCenterX(MEllipsisText2T(manager, parent, MEllipsisText(toUpperCase(text), arrayPush(style5, showTooltip))))
+		}
+	})
+}
+
+splitText(text : string) -> Pair<string, string> {
+	splitText2(text, strLeft(text, 18), strRight(text, 18))
+}
+
+splitText2(text : string, text1 : string, text2 : string) -> Pair<string, string> {
+	if (endsWith(text1, " ")) {
+		Pair(strLeft(text, strlen(text1) - 1), strRight(text, strlen(text1)))
+	} else if (startsWith(text2, " ")) {
+		Pair(strLeft(text, strlen(text2)), strRight(text, strlen(text2)))
+	} else {
+		if (strlen(text1) == 0 || strlen(text2) == 0)
+			Pair(text, "")
+		else
+			splitText2(
+				text,
+				strLeft(text, strlen(text1) - 1),
+				strRight(text, strlen(text1) - 1)
+			)
+	}
+}
+
+MTabAnimation(
+	trans : Point,
+	trop : double,
+	scroll : double);
+
+MTabsBottomLineInfo(
+	width : double,
+	tabsWidths : [int],
+	selected : int,
+	order : [int]);
+
+MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[int]>, selected : Transform<int>, order : Maybe<MListReorder>,
+	scrollPosition : DynamicBehaviour<Point>, inspectScroll : TScrollInspectVisible, tabsHeight : DynamicBehaviour<double>,
+	indicatorColor : MColor, indicatorAbove : bool) -> Tropic {
+
+	prevTrans = ref 0.;
+	prevTropW = ref 0.;
+	prevScroll = ref 0.;
+	prevS = ref fgetValue(selected);
+	trans = make(zeroPoint);
+	tropW = make(0.);
+	lineHeight = 2.0;
+
+	trigger =
+		fselect4(
+			fwidth(inspectScroll.widthHeight),
+			tabsWidths,
+			eitherFn(
+				order,
+				\__ -> selected,
+				\ -> if (getDefaultRtl())
+						fsubtracti(fsubtracti(fselect(tabsWidths, FLift(length)), selected), const(1))
+					else
+						selected
+			),
+			eitherFn(order, \or -> if (getDefaultRtl()) fselect(or.order, FLift(reverseA)) else or.order, \ -> const([])),
+			\wd, twds, sel, ord -> MTabsBottomLineInfo(wd, twds, sel, ord)
+		);	
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(mTransitionDuration),
+		const(mStandartCurve),
+		trigger,
+		\info : MTabsBottomLineInfo -> {
+			wds = info.tabsWidths;
+			sel = info.selected;
+			ord = findiDef(info.order, eq(sel), sel);
+
+			if (length(wds) == 0)
+				nextDistinct(tropW, 0.);
+
+			if (sel >= 0 && sel < length(wds)) {
+				prevTrans := getValue(trans).x;
+				prevTropW := getValue(tropW);
+				prevScroll := getValue(scrollPosition).x;
+
+				fullW = sum(wds) |> i2d;
+				nTransWidth = generate(0, ord, \i ->
+					wds[elementAt(info.order, i, i)]
+				)
+				|> sum
+				|> i2d;
+				nTrop = wds[ord] |> i2d;
+
+				tAnim = MTabAnimation(
+					Point(nTransWidth, 0.),
+					nTrop,
+					forceRange(0., nTransWidth - info.width / 2. + nTrop / 2., fullW - info.width)
+				);
+
+				if (^prevS == sel || !parent.theme.enableAnimations) {
+					nextDistinct(trans, tAnim.trans);
+					nextDistinct(tropW, tAnim.trop);
+					nextDistinct(scrollPosition, Point(tAnim.scroll, 0.));
+
+					None()
+				} else {
+					prevS := sel;
+
+					Some(tAnim);
+				}
+			} else {
+				None()
+			}
+		},
+		\tAnim, p -> {
+			nextDistinct(trans, Point(lerp(^prevTrans, tAnim.trans.x, p), 0.));
+			nextDistinct(tropW, lerp(^prevTropW, tAnim.trop, p));
+			nextDistinct(scrollPosition, Point(lerp(^prevScroll, tAnim.scroll, p), 0.));
+		},
+		[MAutoStart()],
+		TSizedWidth(tropW, lineHeight)
+		|> addTBackground(indicatorColor)
+		|> (\t -> TTranslate(trans, t))
+	)
+	|> makeTropicConstantHeight(Some(lineHeight))
+	|> (\t -> if (indicatorAbove) t else TTranslate(fselect(tabsHeight, FLift(\th -> Point(0., th - lineHeight))), t))
+}
+
+// b styles override sty
+mergeTGraphicsStyles(a : [TGraphicsStyle], b : [TGraphicsStyle]) -> [TGraphicsStyle] {
+	bFillOpacity = extractStruct(b, FillOpacity(1.)).opacity;
+	bStrokeOpacity = extractStruct(b, StrokeOpacity(1.)).opacity;
+
+	fold(b, a, \acc, st ->
+		switch (st : TGraphicsStyle) {
+			RadialGradient() : if (bFillOpacity > 0.) replaceStruct(acc, st) else acc;
+			Fill(__) : if (bFillOpacity > 0.) replaceStruct(acc, st) else acc;
+			GradientFill(__, __) : if (bFillOpacity > 0.) replaceStruct(acc, st) else acc;
+
+			Stroke(__) : if (bStrokeOpacity > 0.) replaceStruct(acc, st) else acc;
+			StrokeLineGradient(__, __) : if (bStrokeOpacity > 0.) replaceStruct(acc, st) else acc;
+			StrokeWidth(__) : if (bStrokeOpacity > 0.) replaceStruct(acc, st) else acc;
+
+			TStyleWithSelector(__, __) : replaceStruct(acc, st);
+			TStyle(__) : replaceStruct(acc, st);
+
+			FillOpacity(opacity) : if (opacity > 0.) replaceStruct(acc, st) else acc;
+			StrokeOpacity(opacity) : if (opacity > 0.) replaceStruct(acc, st) else acc;
+		}
+	)
+}

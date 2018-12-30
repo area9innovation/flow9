@@ -1,0 +1,161 @@
+import material/internal/material_popup;
+
+export {
+	MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MTooltip2T(manager : MaterialManager, parent : MFocusGroup, m : MTooltip, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	zorder = getValue(manager.currentZorder);
+	disableOnDragging = contains(m.style, MDisableOnDragging());
+
+	hover = make(false);
+	enabled =
+		extractStruct(m.style, MEnabled(const(true))).enabled
+		|> (\en -> if (disableOnDragging) fand(en, feq(manager.manager.dragging, -1)) else en);
+
+	openMenu = MOpenMenu(make(false));
+
+	positionScale = make(zeroPositionScale);
+
+	buttonWH = makeWH();
+	lightBackground = extractStruct(m.style, MLightBackground(parent.theme.lightBackground)).light;
+	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(MGrey(if (lightBackground) 600 else 200))]));
+
+	tooltipAlign =
+		concatA([
+			extractStructMany(m.style, MBottom()),
+			extractStructMany(m.style, MTop()),
+			extractStructMany(m.style, MLeft()),
+			extractStructMany(m.style, MRight())
+		])
+		|> (\f -> if (length(f) > 0) f[0] else MBottom());
+	translatePosition = extractStruct(m.style, MTranslatePosition(const(zeroPoint))).point;
+
+	TConstruct(
+		[
+			makeSubscribe2Uns(fand(enabled, openMenu.opened), \op -> {
+				if (op) {
+					[
+						interruptibleDeferUntilNextFrameRendered(\ -> {
+							tooltip = tooltip2T(parent, m.tooltip, lightBackground, m2t);
+
+							if (tooltip != TEmpty() && tooltip != TMutable(ConstBehaviour(TEmpty())))
+								tooltip
+								|> (\f -> TBorder(8.0, 4.0, 8.0, 4.0, f))
+								|> (\f -> {
+									bwh = getValue(buttonWH);
+									cwh = makeWH();
+
+									RenderMPopup(
+										manager,
+										parent,
+										MPopup(
+											[[TAttachBoxCopy(f, cwh)]],
+											fselect2(positionScale, translatePosition, FLift2(\ps : PositionScale, tr : Point ->
+												PositionScale(Point(ps.pos.x + tr.x, ps.pos.y + tr.y), ps.scale))
+											),
+											[
+												RMAlphaAnimation(),
+												openMenu,
+												MSameZorder(true),
+												RMBorders(0.),
+												bgStyle,
+												RMDontHandle(),
+												RMNoSnapSize(),
+												MElevation(zero),
+												RMOffset(
+													fselect(
+														cwh,
+														FLift(
+															\wh -> {
+																WH = switch (tooltipAlign) {
+																	MBottom() :
+																		WidthHeight((bwh.width - wh.width) / 2., bwh.height + 8.);
+																	MTop() :
+																		WidthHeight((bwh.width - wh.width) / 2., -wh.height - 8.);
+																	MLeft() :
+																		WidthHeight(-wh.width - 8., (bwh.height - wh.height) / 2.);
+																	default :
+																		WidthHeight(bwh.width + 8., (bwh.height - wh.height) / 2.);
+																};
+
+																Pair(WH, 0.)
+															}
+														)
+													)
+												)
+											]
+										),
+										m2t
+									)
+								})
+						})
+					]
+				} else {
+					[]
+				}
+			}),
+			\ -> fconnect(
+				fand(enabled, fand(hover, fselect(manager.currentZorder, FLift(\cz -> cz <= zorder)))),
+				openMenu.opened
+			),
+			\ -> \ -> next(openMenu.opened, false)
+		],
+		(if (!mobile)
+			TInteractive([TMouseInside(hover, false)], m2t(m.box, parent))
+		else
+			TCopySize(
+				m2t(m.box, parent),
+				\tr ->
+					TInteractive([TMouseDownGhost(hover)], tr),
+				true
+			))
+		|> (\f -> MPositionScaleAttachBox(positionScale, buttonWH, f, fand(enabled, openMenu.opened)))
+	)
+}
+
+tooltip2T(parent : MFocusGroup, tooltip : Material, lightBackground : bool, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	textColor = MDefaultTextColor(!lightBackground);
+
+	switch (tooltip) {
+		MText(text, style): {
+			if (text == "") TEmpty() else
+				MText2T(
+					parent,
+					text,
+					[textColor, MTooltipDesktop()]
+				)
+		}
+		TText(text, style): {
+			if (text == "") TEmpty() else
+				TText(
+					text,
+					replaceStructMany(
+						style,
+						MTextStyle2CharacterStyle(
+							[textColor, MTooltipDesktop()],
+							lightBackground
+						)
+					)
+				)
+		}
+		MParagraph(text, style): {
+			if (text == "") TEmpty() else
+				MParagraph2T(
+					parent,
+					text,
+					concatA([
+						[textColor, MTooltipDesktop()],
+						extractStructMany(style, MWidth(-1.)),
+						extractStructMany(style, CenterAlign()),
+						extractStructMany(style, RightAlign())
+					])
+				)
+				|> (\f -> TBorder(0., 0., 0., -4., f))
+		};
+		MBorder(l, t, r, b, m) : TBorder(l, t, r, b, tooltip2T(parent, m, lightBackground, m2t));
+		MMutable(mT) : TMutable(fselect(mT, FLift(\m -> tooltip2T(parent, m, lightBackground, m2t))));
+		TMutable(tT) : TMutable(fselect(tT, FLift(\t -> tooltip2T(parent, t, lightBackground, m2t))));
+		default: m2t(tooltip, parent);
+	};
+}

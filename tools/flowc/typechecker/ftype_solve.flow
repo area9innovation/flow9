@@ -1,0 +1,748 @@
+import tools/flowc/typechecker/type_expect_helpers;
+import tools/flowc/typechecker/ftype;
+import tools/flowc/typechecker/ftype_basic;
+import tools/flowc/typechecker/funify_cases;
+import tools/flowc/typechecker/ftype_bound;
+import tools/flowc/fcexp_description;
+
+/*
+tools/flowc/tests/out/digraphpath.flow can not be typed
+
+
+113: Gives error
+
+Test 24, 90: Can not infer type
+
+Test 46, 52, 59: Figure out how the refs can grow to Maybe, without compromising other
+tests like wikitranslationhelper.flow: removeLanguageFromWigiText_rec.
+
+
+
+47 lines:
+c:\material\mwigi\mwigi\mw_fixup.flow:170:21: fixupUniqWigiNameThroughWigiExternalElements: struct arg #2: WigiBlock(): We expect WigiRecursiveStyle to be fully contained in WigiBlockStyle
+
+51 lines:
+C:\material\mwigi\mwigi\mw_toolbar_preview.flow:129:93: previewDialogSize: arg #1: call of getValue(): We expect Behaviour<α860657> to fully contain <union> ::= (DynamicBehaviour<string>, TAccess<>, TAlpha<>, TAttach<>, TAvailable<>, TBaselineCols2<>, TBaselineOffset<>, TBorder<>, TCase<>, TCols2<>, TConstruct<>, TControlFocus<>, TCrop<>, TCropSize<>, TCssBlock<>, TCursor<>, TDebug<>, TDisplay<>, TDispose<>, TEmpty<>, TFillX<>, TFillY<>, TFilter<>, TForm<>, TFormAvailable<>, TFormIn<>, TFullWindow<>, TGhost<>, TGhostMin<>, TGraphics<>, TGroup2<>, TIf<>, TInteractive<>, TLet<>, TLetAvailable<>, TLines2<>, TMask<>, TMinimumGroup2<>, TMutable<>, TNamespace<>, TNative<>, TPicture<>, TPositionScale<>, TRealHTML<>, TRotate<>, TRounded<>, TScale<>, TScrollable<>, TShift<>, TSize<>, TSizeOf<>, TSubtractGroup2<>, TTag<>, TTag2<>, TText<>, TTranslate<>, TTweak<>, TVisible<>, TZoomFill<>, TransformTAcc<>)
+
+71 lines:
+c:\material\mwigi\mwigi\external_blocks\text_input_formats\text_input_date.flow:195:5: buildDateContent: definition of (minDate): Expected just DynamicBehaviour here, got union Transform. Not allowed: ConstBehaviour, FSelect, FSelect2, FSubSelect. The conflict is with the following:
+
+10 relevant lines:
+c:\material\mwigi\mwigi\external_blocks\diagrams\register_diagram.flow:487:48: replaceMChartDataReportTable: arg #1: call of removeValueType(): Expected ChartSeriesFirstValue, got ChartSeriesLastValue
+
+3 relevant lines:
+c:\material\mwigi\mwigi\external_blocks\diagrams\register_diagram.flow:307:20: updateChartContent: arg #1: call of isTypeData(): Expected ExternalDiagramDataTable, got ExternalDiagramDataReport
+
+
+~50 relevant lines:
+c:\material\mwigi\mwigi\external_blocks\diagrams\register_diagram.flow:1080:13: MPropertiesEditor: arg #1 (call of fold()): Expected .(.color : {<union> ::= (CAmber<>, CBlack<>, CBlue<>, CBlueGrey<>, CBrown<>, CCustom<>, CCyan<>, CDeepOrange<>, CDeepPurple<>, CGreen<>, CGrey<>, CIndigo<>, CLightBlue<>, CLightGreen<>, CLime<>, COrange<>, CPink<>, CPurple<>, CRed<>, CTeal<>, CWhite<>, CYellow<>, MColor<>) .. *}) in MBarChart<>, MLineChart<>, ChartSeriesName<>. The conflict is with the following:
+
+
+
+wigi/test_wigi:
+c:\flow\lib\formats\wiki\wikiui.flow:177:9: makeWikiBlank: cases in switch against WikiBlankScoring: switch: Expected just WikiBlankLegacyScoring here, got union WikiBlankScoring.
+c:\flow\lib\formats\wiki\wikiui.flow:203:13: makeWikiBlank: switch body var: vGeneralCorrectness: Expected WikiBlankLegacyScoring, got WikiBlank2Scoring
+c:\flow\lib\formats\wiki\wikiui.flow:177:9: makeWikiBlank: Superfluous cases: WikiBlankLegacyScoring
+
+
+
+material/tests/material_test.flow: 125 lines.
+
+
+Speedups:
+
+Fix FcLessOrEqual to have a function returning the description instead of the expression
+builtin.
+
+Improve algorithm and reduce the cache use in unifyType.
+
+Consider to put the explanations on the edges of graphviz instead of the nodes.
+
+86: We iterate to propagate too few times. We could attempt smarter propagation, or we could
+    attempt to just resolve before propagating fully
+
+54: Seems wrong to instantiate the var, or more precisely, we should complain about
+    'a' being polymorphic
+
+
+Improvements
+------------
+
+51: We should arguably have a ambigious resolution phase in FType land, rather than defer to
+   FType2FcType to handle this. Maybe enumerate, and bias towards those mentioned somewhere
+   in the file?
+
+69: Not able to resolve "unused" type var
+
+57: Recursive types are expanded arbitrarily
+
+Module-wide finalization?
+
+20: Find a way to stop iterating when nothing good comes out of it
+
+*/
+
+export {
+	// This resolves the constraints
+	ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> FEnv;
+
+	unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onError : (string) -> void) -> FEnvType;
+}
+
+
+ftypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> FEnv {
+	expects = reverseList(^(env.local.expects));
+
+	// Build a map from tyvar to typar
+	typars : Tree<int, FType> = foldTree(^(env.local.typars), makeTree(), \typar, tyvar, acc : Tree<int, FType> -> {
+		setTree(acc, tyvar.id, FTypePar(typar));
+	});
+
+	be = FEnv(
+		env, 
+		tyvarIdGroup, 
+		if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
+		typars, makeTree(), makeTree()
+	);
+
+	if (be.verbose >= 2)  {
+		fcPrintln("\nType " + name);
+	}
+
+	onError = \m, info, description -> {
+		poss = FcPosition(pos.file, info.start, info.end);
+		addFcTypeError(env.program, FcError(name + ": " + (if (description != "") description + ": " else "") + m, [poss]));
+	};
+
+
+	funify = \benv : FEnv, output : FcType, input : FcType, info : FcInfo2, kind, description : () -> string -> {
+		ot = fctype2ftype(benv.env, tyvarIdGroup, output);
+		it = fctype2ftype(benv.env, tyvarIdGroup, input);
+		et = unifyType(benv, ot, it, kind, \m -> onError(m, info, description()));
+		et.env;
+	}
+
+	be2 = foldList(expects, be, \acc, e -> {
+		// If verbose is on, we keep track of what expects to debug
+		solveDebug = (be.verbose >= 1 && containsSet(^(env.local.debugExpects), e)) || be.verbose >= 3;
+		if (solveDebug) {
+			env.local.debugTyping := 1;
+		};
+		if (solveDebug || be.verbose >= 2) {
+			fcPrintln("\n// " + strReplace(fcExpect2string(acc.env, e), "\n", " "));
+		}
+
+		re = switch (e : FcTypeExpect) {
+			FcLessOrEqual(e1, e2, d, info, ex): {
+				re1 = getResolvedFcType(env, e1);
+				re2 = getResolvedFcType(env, e2);
+				funify(acc, re1, re2, info, FUnifyLeft(), \ -> d + ": " + fcexpDescription(ex));
+			}
+			FcVerifyType(e1, e2, info): {
+				re1 = getResolvedFcType(env, e1);
+				re2 = getResolvedFcType(env, e2);
+				et1 = funify(acc, re1, re2, info, FUnifyLeft(), \ -> "");
+				if (true) funify(et1, re2, re1, info, FUnifyLeft(), \ -> "") else et1;
+			}
+			FcExpectField(field, ftype, t, info, ex): {
+				struct = getResolvedFcType(env, t);
+				// Some unnamed struct or union
+				fields = FFields([
+					FField(field, fctype2ftype(env, tyvarIdGroup, ftype), FGetField())
+				], makeSet(), makeSet());
+				oe = \m -> onError(m, info, "." + field);
+
+				st = fctype2ftype(env, tyvarIdGroup, struct);
+
+				restricted = restrictFFields(acc, fields, false, unifyType, oe);
+				et = unifyType(restricted.env, restricted.type, st, FGrowRight(), oe);
+				et.env;
+			}
+			FcSetMutableField(stype, field, ftype, info): {
+				st = fctype2ftype(acc.env, tyvarIdGroup, stype);
+				ft = fctype2ftype(acc.env, tyvarIdGroup, ftype);
+
+				rt = FFields([FField(field, ft, FSetField())], makeSet(), makeSet());
+
+				et = unifyType(acc, st, rt, FUnifyLeft(), \ m -> onError(m, info, "set mutable"));
+				et.env;
+			}
+		}
+		if (solveDebug) {
+			env.local.debugTyping := 0;
+		}
+		re;
+	});
+	be2;
+}
+
+unifyType(env : FEnv, output : FType, input : FType, kind : FUnification, onError : (string) -> void) -> FEnvType {
+	if (output == input) {
+		FEnvType(env, output);
+	} else {
+		tr = Triple(output, kind, input);
+		prev = lookupTree(env.seen, tr);
+		switch (prev) {
+			Some(prevt): {
+				pt = \t -> ftype2string(env, t);
+				if (env.verbose >= 3)  {
+					printStay(env.env, "Cached " + pt(output) + fkind2string(kind) + pt(input) + "  =  " + pt(prevt));
+				}
+				FEnvType(env, prevt);
+			}
+			None(): {
+				// We preliminarily set an entry in the cache
+				seen = setTree(env.seen, tr, output);
+				if (env.verbose >= 3)  {
+					pt = \t -> ftype2string(env, t);
+					printIndent(env.env, "Unify " + pt(output) + fkind2string(kind) + pt(input));
+				}
+				// debugTydeps(env);
+
+				env2 = FEnv(env.env, env.tyvarIdGroup, env.verbose, env.tyvars, seen, env.tyvarDeps);
+
+				rt : FEnvType = if (output == input) FEnvType(env2, output) else unifyAndRecurse(env2, output, input, kind, onError);
+
+				// Now, set the real type in the cache
+				seen2 = setTree(rt.env.seen, tr, rt.type);
+				env3 = FEnv(rt.env.env, rt.env.tyvarIdGroup, rt.env.verbose, rt.env.tyvars, seen2, rt.env.tyvarDeps);
+
+				if (env.verbose >= 3)  {
+					printDedent(env.env, "Gave " + ftype2string(env3, rt.type));
+				}
+				// debugTydeps(env3);
+
+				FEnvType(env3, rt.type);
+			}
+		}
+	}
+}
+
+// Alright, these ftypes meet. We have to recursively spiral down on these guys
+unifyAndRecurse(env : FEnv, left : FType, right : FType, kind : FUnification, onError : (string) -> void) -> FEnvType {
+	if (env.verbose >= 4)  {
+		// printStay(env.env, "Unify  " + ftype2string(env, resolveFVar(env, left, makeSet())) + fkind2string(kind) + ftype2string(env, resolveFVar(env, right, makeSet())));
+		printIndent(env.env, "Unify  " + ftype2string(env, left) + fkind2string(kind) + ftype2string(env, right));
+	}
+
+	rest = \ -> {
+		switch (right) {
+			FTypeVar(rid): unifyTyvar(env, rid, left, false, true, kind, onError);
+			FFlow(): {
+				explicit_flow = isConfigParameterTrue(env.env.program.acc.config.config, "explicit-flow");
+				switch (left) {
+					FFlow(): {
+						FEnvType(env, left);
+					}
+					FBasicType(bt): {
+						if (explicit_flow) {
+							switch (bt) {
+								FcTypeNative(__): {}
+								default: {
+									// We require explicit casts to/from flow
+									onError(ftype2string(env, left) + " != " + ftype2string(env, right));
+								}
+							}
+						}
+						FEnvType(env, if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right);
+					}
+					FTypeVar(rid): {
+						unifyTyvar(env, rid, right, true, true, kind, onError);
+					}
+					default: {
+						if (false) {
+							// We will require explicit casts to/from flow at some point,
+							// but we are not ready for that yet.
+							onError(ftype2string(env, left) + " != " + ftype2string(env, right));
+						}
+						tyvars = extractFTypeVars(env, left, makeSet());
+							acc2 = foldSet(tyvars, env, \acc, tv -> {
+							if (containsKeyTree(acc.tyvars, tv)) acc
+							else setFTypeVar(acc, tv, right);
+						});
+						FEnvType(acc2, 
+							if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right
+						); // This is just what we think might make sense...
+					}
+				}
+			}
+			FTopBottom(): {
+				// This is top
+				FEnvType(env, switch (kind) {
+					FUnifyLeft(): left;
+					FUnifyRight(): right;
+					FGrowRight(): right;  // It can not be bigger. We could consider adopting the left as a lower bound?
+					FReduceLeft(): left;  // There is nothing to propagate down.
+				})
+			}
+			default: {
+				if (left == FFlow()) {
+					// OK, we find all unbound tyvars and bind them to flow!
+					tyvars = extractFTypeVars(env, right, makeSet());
+					acc2 = foldSet(tyvars, env, \acc, tv -> {
+						if (containsKeyTree(acc.tyvars, tv)) acc
+						else setFTypeVar(acc, tv, left);
+					});
+					FEnvType(acc2, 
+						if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right
+					);
+				} else {
+					onError(ftype2string(env, left) + "   and   " + ftype2string(env, right) + " are incompatible");
+						// we do not support toString(FType) at the moment
+						// + (if (env.verbose > 1) "\n   " + toString(left) + "\nvs " + toString(right) else ""));
+					simplest = switch (left) {
+						FBasicType(__): left;
+						default: right;
+					}
+					FEnvType(env, simplest);
+				}
+			}
+		}
+	}
+	r = switch (left) {
+		FTypeVar(lid): {
+			switch (right) {
+				FTypeVar(rid): {
+					unifyTyvars(env, lid, kind, rid, onError);
+				}
+				default: {
+					unifyTyvar(env, lid, right, true, true, kind, onError);
+				}
+			}
+		}
+		FTypePar(lid): {
+			switch (right) {
+				FTypePar(rid): {
+					if (lid == rid) {
+						FEnvType(env, if (kind == FUnifyLeft()) left else right);
+					} else {
+						strict = getConfigParameter(env.env.program.acc.config.config, "strict");
+						if (strict == "1") {
+							onError(lid + " and " + rid + " are distinct");
+						}
+						FEnvType(env, if (kind == FUnifyLeft()) left else right);
+					}
+				}
+				FBounded(lower, upper): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					funifyBounded(env, right, left, false, fns);
+				}
+				default: {
+					rest();
+				}
+			}
+		}
+		FBasicType(ltype): {
+			switch (right) {
+				FBasicType(rtype): {
+					if (isSameFcType(env.env, ltype, rtype, false)) {
+						FEnvType(env, left);
+					} else {
+						pt = \tt -> prettyFcType(FcPretty(false, true, ^(env.env.local.tyvars), ^(env.env.local.typars)), tt, makeSet());
+						onError(pt(ltype) + " != " + pt(rtype));
+						FEnvType(env, left);
+					}
+				}
+				FBounded(lower, upper): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					funifyBounded(env, right, left, false, fns);
+				}
+				default: rest();
+			}
+		}
+		FFunction(largs, lrt): {
+			switch (right) {
+				FFunction(rargs, rrt): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					et1 = unifyTypes(env, "function arguments", rargs, largs, fns);
+					et2 = unifyType(et1.env, lrt, rrt, kind, onError);
+					FEnvType(
+						et2.env,
+						FFunction(et1.types, et2.type)
+					);
+				}
+				FBounded(lower, upper): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					funifyBounded(env, right, left, false, fns);
+				}
+				default: rest();
+			}
+		}
+		FUnion(lname, ltps): {
+			fns = FunifyFns(unifyType, kind, onError, rest);
+			funifyUnion(env, left, right, fns);
+		}
+		FStruct(lname, ltps): {
+			fns = FunifyFns(unifyType, kind, onError, rest);
+			funifyStruct(env, left, right, fns);
+		}
+		FFields(lfields, lseen, lexclud): {
+			fns = FunifyFns(unifyType, kind, onError, rest);
+			funifyFields(env, left, right, true, fns);
+		}
+		FFlow(): {
+			rt = if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right;
+			explicit_flow = isConfigParameterTrue(env.env.program.acc.config.config, "explicit-flow");
+			switch (right) {
+				FFlow(): {
+					FEnvType(env, rt);
+				}
+				FBasicType(bt): {
+					switch (bt) {
+						FcTypeNative(__): FEnvType(env, rt);
+						default: {
+							if (explicit_flow) {
+								// We require explicit casts to/from flow
+								onError(ftype2string(env, left) + " != " + ftype2string(env, right));
+							}
+							FEnvType(env, rt);
+						}
+					}
+				}
+				FTypeVar(rid): {
+					unifyTyvar(env, rid, left, false, true, kind, onError);
+				}
+				default: {
+					if (explicit_flow) {
+						// We require explicit casts to/from flow
+						onError(ftype2string(env, left) + " != " + ftype2string(env, right));
+					}
+					FEnvType(env, rt);
+				}
+			}
+		}
+		FUnnamedUnion(ltypes): {
+			fns = FunifyFns(unifyType, kind, onError, rest);
+			funifyUnnamedUnion(env, left, right, true, fns);
+		}
+		FArray(ltype): {
+			switch (right) {
+				FArray(rtype): {
+					et1 = unifyType(env, ltype, rtype, kind, onError);
+					FEnvType(
+						et1.env,
+						FArray(
+							et1.type,
+						)
+					);
+				}
+				FBounded(lower, upper): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					funifyBounded(env, right, left, false, fns);
+				}
+				FFlow(): {
+					if (!isFDetermined(env, ltype, makeSet())) {
+						// OK, deconstruct and go down with the flow
+						et = unifyType(env, ltype, right, kind, onError);
+						FEnvType(
+							et.env,
+							if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right
+						)
+					} else rest();
+				}
+				default: rest();
+			}
+		}
+		FRef(lrtype, lwtype): {
+			switch (right) {
+				FRef(rrtype, rwtype): {
+					et1 = unifyType(env, lrtype, rrtype, kind, onError);
+					et2 = unifyType(et1.env, lwtype, rwtype, kind, onError);
+					FEnvType(
+						et2.env,
+						FRef(
+							et1.type,
+							et2.type,
+						)
+					);
+				}
+				FBounded(lower, upper): {
+					fns = FunifyFns(unifyType, kind, onError, rest);
+					funifyBounded(env, right, left, false, fns);
+				}
+				default: rest();
+			}
+		}
+		FBounded(llower, lupper): {
+			fns = FunifyFns(unifyType, kind, onError, rest);
+			funifyBounded(env, left, right, true, fns);
+		}
+		FTopBottom(): {
+			// On the left, we are also bottom.
+			FEnvType(env, switch (kind) {
+				FUnifyLeft(): left;
+				FUnifyRight(): right;
+				FGrowRight(): right;
+				FReduceLeft(): left;
+			});
+		}
+	}
+
+	if (env.verbose >= 4)  {
+		printDedent(env.env, "Results " + ftype2string(r.env, r.type) + "    from   " + ftype2string(r.env, left) + fkind2string(kind) + ftype2string(r.env, right));
+		// printStay(env.env, "Results " + ftype2string(r.env, resolveFVar(r.env, r.type, makeSet())));
+	}
+
+	r;
+}
+
+// id is the id of our tyvar. We assume that type is NOT a tyvar.
+// left is true if the alpha is on the left hand side
+// recordDep is to track whether we should record dependencies or not
+unifyTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool, kind : FUnification, onError : (string) -> void) -> FEnvType {
+	leftt = if (left) FTypeVar(id) else type;
+	rightt = if (left) type else FTypeVar(id);
+	if (leftt == rightt) {
+		FEnvType(env, type)
+	} else {
+		if (env.verbose >= 3) {
+			if (left) {
+				printIndent(env.env, "Unify tyvar " + ftype2string(env, FTypeVar(id)) + fkind2string(kind) + ftype2string(env, type));
+			} else {
+				printIndent(env.env, "Unify " + ftype2string(env, type) + fkind2string(kind) + "tyvar " + ftype2string(env, FTypeVar(id)));
+			}
+		}
+		unify = \ -> {
+			mftype = lookupTree(env.tyvars, id);
+			switch (mftype) {
+				None(): {
+					unifyUnboundTyvar(env, id, type, left, recordDep, kind, onError);
+				}
+				Some(ftype): {
+					nkind = if (kind == FUnifyLeft() && !left) FUnifyRight() 
+							else if (kind == FUnifyRight() && left) FUnifyLeft()
+							else kind;
+					// OK, this dude is bound. Unify with the bound value. Be sure to extract the right hand side!
+					et = unifyType(env, if (left) ftype else type, if (left) type else ftype, nkind, onError);
+					// Alright, we should update this tyvar to the new type!
+					nenv0 = setFTypeVar(et.env, id, et.type);
+					nenv = if (recordDep) addTyvarDependency(nenv0, leftt, nkind, rightt) else nenv0;
+					FEnvType(nenv, FTypeVar(id)); // Important to keep this as a tyvar. See test 35.
+				}
+			}
+		}
+		rt : FEnvType = switch (kind) {
+			FUnifyLeft(): {
+				unify();
+			}
+			FUnifyRight(): {
+				unify();
+			}
+			FGrowRight(): {
+				growRightTyvar(env, id, type, left, recordDep, kind, onError);
+			}
+			FReduceLeft(): {
+				reduceLeftTyvar(env, id, type, left, recordDep, kind, onError);
+			}
+		}
+
+		if (env.verbose >= 3) {
+			if (left) {
+				printDedent(env.env, "Unify tyvar α" + i2s(id) + fkind2string(kind) + ftype2string(env, type) + " gave " + ftype2string(rt.env, FTypeVar(id)));
+			} else {
+				printDedent(env.env, "Unify " + ftype2string(env, type) + fkind2string(kind) + "tyvar α" + i2s(id) + " gave " + ftype2string(rt.env, FTypeVar(id)));
+			}
+		}
+		rt;
+	}
+}
+
+// left is true if the tyvar is on the left hand side
+unifyUnboundTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool, kind : FUnification, onError  : (string) -> void) -> FEnvType {
+	leftt = if (left) FTypeVar(id) else type;
+	rightt = if (left) type else FTypeVar(id);
+
+	def = \ -> {
+		if (left) makeFBoundedEnv(env, FTopBottom(), type, kind, unifyType, onError) 
+		else makeFBoundedEnv(env, type, FTopBottom(), kind, unifyType, onError)
+	}
+
+	// Unbound, so just bind it as an upper or lower bound
+	et = switch (type) {
+		FBounded(lower, upper): if (left) {
+			// a <= l...u   -> a = ... u
+			makeFBoundedEnv(env, FTopBottom(), upper, kind, unifyType, onError) 
+		} else {
+			// l...u <= a   ->  a= l ... 
+			makeFBoundedEnv(env, lower, FTopBottom(), kind, unifyType, onError);
+		};
+		FArray(at): {
+			// OK, we have a tyvar against an array of unknown type. We construct a new
+			// tyvar for the array type, and bind ourselves to this guy
+			atyvar = makeFTyvar(env);
+			aenv = setFTypeVar(env, id, FArray(atyvar));
+			aet = unifyType(aenv, if (left) atyvar else at, if (left) at else atyvar, kind, onError);
+			FEnvType(aet.env, FBounded(FTopBottom(), FTopBottom()));
+		}
+		FRef(rt, wt): {
+			// OK, we have a tyvar against a ref of unknown type. We construct a new
+			// tyvar for the ref type, and bind ourselves to this guy. This is required to
+			// allow the interval to change
+			rtyvar = makeFTyvar(env);
+			wtyvar = makeFTyvar(env);
+			aenv = setFTypeVar(env, id, FRef(rtyvar, wtyvar));
+			ret = unifyType(aenv, if (left) rtyvar else rt, if (left) rt else rtyvar, kind, onError);
+			wet = unifyType(ret.env, if (left) wtyvar else wt, if (left) wt else wtyvar, kind, onError);
+			FEnvType(wet.env, FBounded(FTopBottom(), FTopBottom()));
+		}
+		FFlow(): FEnvType(env, type);
+		FBasicType(__): FEnvType(env, type);
+		FTypePar(__): FEnvType(env, type);
+		FTopBottom(): def();
+		FTypeVar(__): {
+			fcPrintln("This is not supposed to happen with tyvar against tyvar");
+			def();
+		}
+		FFunction(args, rt): {
+			// Alright, we have to structurally construct the type
+			rtyvar = makeFTyvar(env);
+			atyvars = map(args, \__ -> makeFTyvar(env));
+			ftype = FFunction(atyvars, rtyvar);
+			fenv = setFTypeVar(env, id, ftype);
+			// OK, we have to side-step the cache, so call the recurse directly! See unify test 12.
+			ret = unifyAndRecurse(fenv, if (left) leftt else type, if (left) type else rightt, kind, onError);
+			FEnvType(
+				ret.env,
+				FBounded(FTopBottom(), FTopBottom())
+			);
+		}
+		FUnion(__, __): def();
+		FStruct(__, __): def();
+		FUnnamedUnion(__): def();
+		FFields(__, __, __): def();
+	}
+
+	nenv0 = if (et.type != FBounded(FTopBottom(), FTopBottom())) setFTypeVar(et.env, id, et.type) else et.env;
+	nenv = if (recordDep) addTyvarDependency(nenv0, leftt, kind, rightt) else nenv0;
+	FEnvType(
+		nenv,
+		if (true || left) {
+			FTypeVar(id) // Important to keep this as a tyvar. See test 35.
+		} else type // Unify 21 & 22 are improved by this, but a lot of code breaks.
+	);
+}
+
+
+
+
+// Left defines whether the tyvar is on the left hand side or not
+growRightTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool, kind : FUnification, onError : (string) -> void) -> FEnvType {
+	mftype = lookupTree(env.tyvars, id);
+	switch (mftype) {
+		None(): {
+			unifyUnboundTyvar(env, id, type, left, recordDep, kind, onError);
+		}
+		Some(ftype): {
+			// OK, this dude is bound. Unify with the bound value
+			// a=ftype   grow_right   T     -> a = ftype grow_right T
+			// T   grow_right   a=ftype     -> a = T grow_right ftype
+			et : FEnvType = unifyType(env, if (left) ftype else type, if (left) type else ftype, kind, onError);
+
+			resenv = et.env;
+			restype = et.type;
+
+			// Alright, we should update this tyvar to the new type!
+			if (env.verbose >= 3)  {
+				printStay(resenv.env, "Setting α" + i2s(id) + " to " + ftype2string(resenv, restype));
+			}
+
+			lefty = if (left) FTypeVar(id) else type;
+			righty = if (left) type else FTypeVar(id);
+
+			nenv0 = setFTypeVar(resenv, id, restype);
+			nenv = if (recordDep) addTyvarDependency(nenv0, lefty, kind, righty) else nenv0;
+			FEnvType(
+				nenv,
+				righty
+			);
+		}
+	}
+}
+
+
+
+// Left defines whether the tyvar is on the left hand side or not
+reduceLeftTyvar(env : FEnv, id : int, type : FType, left : bool, recordDep : bool, kind : FUnification, onError : (string) -> void) -> FEnvType {
+	mftype = lookupTree(env.tyvars, id);
+	switch (mftype) {
+		None(): {
+			unifyUnboundTyvar(env, id, type, left, recordDep, kind, onError);
+		}
+		Some(ftype): {
+			// OK, this dude is bound. Unify with the bound value
+			// a=ftype  reduce_left   T    ->   a = ftype reduce_left T
+			// T   reduce_left  a=ftype     ->   a = T reduce_left ftype
+			et : FEnvType = unifyType(env, if (left) ftype else type, if (left) type else ftype, kind, onError);
+
+			resenv = et.env;
+			restype = et.type;
+
+			// Alright, we should update this tyvar to the new type!
+			if (env.verbose >= 3)  {
+				printStay(resenv.env, "Setting α" + i2s(id) + " to " + ftype2string(resenv, restype));
+			}
+
+			lefty = if (left) FTypeVar(id) else type;
+			righty = if (left) type else FTypeVar(id);
+			nenv0 = setFTypeVar(resenv, id, restype);
+			nenv = if (recordDep) addTyvarDependency(nenv0, lefty, kind, righty) else nenv0;
+			FEnvType(
+				nenv,
+				lefty
+			);
+		}
+	}
+}
+
+
+// a < b, both tyvars. id1 is always left
+unifyTyvars(env0 : FEnv, id1 : int, kind : FUnification, id2 : int, onError : (string) -> void) -> FEnvType {
+	if (id1 == id2) {
+		// OK, they are identical
+		FEnvType(env0, FTypeVar(id1))
+	} else {
+		// OK, just do criss-cross
+		lt = lookupTree(env0.tyvars, id1);
+		envt1 = switch (lt) {
+			None(): FEnvType(env0, FTypeVar(id1));
+			Some(ltype): {
+				// Go ahead and send this kind up to the right hand side
+				unifyTyvar(env0, id2, ltype, false, false, kind, onError)
+			}
+		}
+		rt = lookupTree(envt1.env.tyvars, id2);
+		envt2 = switch (rt) {
+			None(): {
+				FEnvType(envt1.env, FTypeVar(id2));
+			}
+			Some(rtype): {
+				unifyTyvar(envt1.env, id1, rtype, true, false, kind, onError)
+			}
+		}
+		env2 = envt2.env;
+		FEnvType(
+			addTyvarDependency(env2, FTypeVar(id1), kind, FTypeVar(id2)),
+			if (kind == FUnifyLeft() || kind == FReduceLeft()) FTypeVar(id1)
+			else FTypeVar(id2)
+		);
+	}
+}
+
+addTyvarDependency(env : FEnv, left : FType, kind : FUnification, right : FType) -> FEnv {
+	deps = getTreeArrayValue(env.tyvarDeps, left);
+	ut = FUnifyType(kind, right);
+	if (contains(deps, ut)) env
+	else {
+		if (env.verbose >= 3) {
+			printStay(env.env, "Adding dependency: " + ftype2string(env, left) + fkind2string(kind) + ftype2string(env, right));
+		}
+		FEnv(
+			env.env,
+			env.tyvarIdGroup, 
+			env.verbose,
+			env.tyvars,
+			env.seen,
+			setTree(env.tyvarDeps, left, arrayPush(deps, ut))
+		);
+	}
+}

@@ -1,0 +1,162 @@
+import fform/fform;
+import graphics;
+
+export {
+	FRectangle(width : double, height : double, style : [GraphicsStyle]) -> FGraphics;
+	FOffset(x : double, y : double, form : FForm) -> FTranslate;
+	FCircle(r : double, style : [GraphicsStyle]) -> FForm;
+	FOval(wd : double, hgt : double, style : [GraphicsStyle]) -> FForm;
+	FOval2(x : double, y : double, wd : double, hgt : double, style : [GraphicsStyle]) -> FForm;
+	FSectorPath(x : double, y : double, radius1 : double, radius2 : double, angle1 : double, angle2 : double, showInitialLine : bool,
+		showParallelEndLine : bool, useQuadraticBezier : bool) -> [StaticGraphicOp];
+	customFRoundedRect(width : double, height : double, topLeftR : double, topRightR : double, bottomRightR : double, bottomLeftR : double,
+		style : [GraphicsStyle]) -> FForm;
+
+	FShow(show : Transform<bool>, content : FForm) -> FForm;
+}
+
+FRectangle(width : double, height : double, style : [GraphicsStyle]) -> FGraphics {
+	correction = strokeCorrection(style);
+
+	r = if (correction == 0.0) {
+		rectangle(0.0, 0.0, width, height);
+	} else [
+		MoveTo(width, height),
+		MoveTo(0.0, 0.0),
+		LineTo(max(0.0, width - correction), 0.0),
+		LineTo(max(0.0, width - correction), max(0.0, height - correction)),
+		LineTo(0.0, max(0.0, height - correction)),
+		LineTo(0.0, 0.0)
+	];
+
+	FGraphics(r, style)
+}
+
+FOffset(x : double, y : double, form : FForm) -> FTranslate {
+	cx = if (x == 0.0) zero else const(x);
+	cy = if (y == 0.0) zero else const(y);
+	// Do not use Border here, because that changes size!
+	FTranslate(cx, cy, form);
+}
+
+FCircle(r : double, style : [GraphicsStyle]) -> FForm {
+	FOval(r * 2., r * 2., style)
+}
+
+FOval(wd : double, hgt : double, style : [GraphicsStyle]) -> FForm {
+	FOval2(wd, hgt, wd, hgt, style)
+}
+
+FOval2(x : double, y : double, wd : double, hgt : double, style : [GraphicsStyle]) -> FForm {
+	FGraphics(
+		FSectorPath(x, y, wd / 2., hgt / 2., 0., 360., false, false, false),
+		style
+	)
+}
+
+FSectorPath(x : double, y : double, radius1 : double, radius2 : double, angle1 : double, angle2 : double, showInitialLine : bool,
+	showParallelEndLine : bool, useQuadraticBezier : bool) -> [StaticGraphicOp] {
+	realAngle1 = max(0.0, min(360.0, angle1));
+	realAngle2 = max(0.0, min(360.0, angle2));
+
+	// Flash uses 8 segments per circle, to match that, we draw in a maximum
+	// of 45 degree segments. First we calculate how many segments are needed
+	// for our angle.
+	segs = ceil((realAngle2 - realAngle1) / 45.0);
+	angleStep = (realAngle2 - realAngle1) / i2d(segs);
+	angleStepR = angleStep / 180.0 * PI;
+
+	currAngleR = ref realAngle1 * PI / 180.0;
+	angleMidR = ref 0.0;
+
+	xAngle1 = cos((90.0 - realAngle1) * PI / 180.0) * radius1 + x;
+	yAngle1 = y - sin((90.0 - realAngle1) * PI / 180.0) * radius2;
+
+	graphicsPathInit =
+		if (angle2 >= 360.0 && angle1 <= 0.0 || !showInitialLine) {
+			[
+				MoveTo(xAngle1, yAngle1)
+			]
+		} else {
+			[
+				MoveTo(x, y),
+				LineTo(xAngle1, yAngle1)
+			]
+		};
+
+	lastX = ref 0.0;
+	lastY = ref 0.0;
+
+	graphicsPath : [StaticGraphicOp] = for (graphicsPathInit, \gp -> (length(gp) < segs + length(graphicsPathInit)), \gp -> {
+		currAngleR := min(^currAngleR + angleStepR, 2.0* PI);
+		angleMidR := ^currAngleR - angleStepR * 0.5;
+		lastY := y - cos(^currAngleR) * radius1;
+		lastX := x + sin(^currAngleR) * radius2;
+		arrayPush(
+			gp,
+			if (useQuadraticBezier)
+				QuadraticBezierTo(
+					^lastX,
+					^lastY,
+					x + sin(^angleMidR) * radius1 / cos(angleStepR * 0.5),
+					y - cos(^angleMidR) * radius2 / cos(angleStepR * 0.5)
+				)
+			else
+				CubicBezierTo(
+					^lastX,
+					^lastY,
+					x + sin(^angleMidR) * radius1 / cos(angleStepR * 0.5),
+					y - cos(^angleMidR) * radius2 / cos(angleStepR * 0.5)
+				)
+		)
+	});
+	if (showParallelEndLine) arrayPush(graphicsPath, LineTo(x - (xAngle1 - ^lastX), y - (yAngle1 - ^lastY))) else graphicsPath;
+}
+
+customFRoundedRect(width : double, height : double, topLeftR : double, topRightR : double, bottomRightR : double, bottomLeftR : double,
+	style : [GraphicsStyle]) -> FForm {
+	if (width == 0.0 || height == 0.0) { // special case (without this check we get two small dots)
+		FEmpty() // Fixed(width, height)
+	} else {
+		// We need to normalize rounding when rounding size of neighboгr angles is more then width/height by division on the common factor.
+		normalizeLocal = \tl, tr, br, bl, w1, h1 -> {
+			normalizeRounds = \f, s, len -> {
+				if (f + s <= len)
+					1.0
+				else {
+					len / (f + s);
+				}
+			}
+			min(normalizeRounds(tl, tr, w1),
+				min(normalizeRounds(tr, br, h1),
+					min(normalizeRounds(br, bl, w1),
+						normalizeRounds(bl, tl, h1))));
+		}
+
+		factor = normalizeLocal(topLeftR, topRightR, bottomRightR, bottomLeftR, width, height);
+		w = width; h = height;
+		r1 = topLeftR * factor;
+		r2 = topRightR * factor;
+		r3 = bottomRightR * factor;
+		r4 = bottomLeftR * factor;
+
+		FGraphics(
+			[
+				MoveTo(r1, 0.0),
+				LineTo(w - r2, 0.0),
+				CubicBezierTo(w, r2, w, 0.0),
+				LineTo(w, h - r3),
+				CubicBezierTo(w - r3, h, w, h),
+				LineTo(r4, h),
+				CubicBezierTo(0.0, h - r4, 0.0, h),
+				LineTo(0.0, r1),
+				CubicBezierTo(r1, 0.0, 0.0, 0.0)
+			],
+			style
+		)
+	}
+}
+
+FShow(show : Transform<bool>, content : FForm) -> FForm {
+	FMutable(fif(show, const(content), const(FEmpty())));
+}

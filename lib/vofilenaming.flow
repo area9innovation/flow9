@@ -1,0 +1,121 @@
+import sound;
+
+export {
+	// When true, vofilename of "Cat" and "cat" produce different hashes(default). false used in K4 product at least
+	vofilecasesensitive = ref true;	
+	// Calculate a filename from a string
+	vofilename(text : string) -> string;
+	// i formatted in base 32, i.e., using the digits 0-9a-z (except for "L" & "O" as
+	// they are easy to mix up with 1 & 0). Only works for signed numbers
+	base32(i : int) -> string;
+	// A 30 bit hash function from a string
+	// with "new" flag it doesn't skip characters that have code points above 128
+	t30(i : int) -> int;
+}
+
+soundDebug = s2i(getUrlParameter("sounddebug"));
+
+vofilename(text) {
+	trimmed = strReplace(
+		trim2(text, "\n "),
+		"===",
+		""
+	);
+	cased = if (^vofilecasesensitive) trimmed else toLowerCase(trimmed);
+
+	getHash = \ -> lpad(base32(joaat_hash_30bits(cased, true)), "0", 6);
+
+	newRes = getHash();
+
+	if (soundDebug > 0) {
+		oldRes = {
+			oldTrimmed = strReplace(
+				trim(text),
+				"===",
+				""
+			);
+
+			oldCased = if (^vofilecasesensitive) oldTrimmed else toLowerCase(oldTrimmed);
+			lpad(base32(joaat_hash_30bits(oldCased, true)), "0", 6)
+		}
+
+		if (oldRes != newRes && oldRes != "000000") {
+			println("Sound rename: " + oldRes + ".mp3 to " + newRes + ".mp3");
+			println("For text: " + text);
+		}
+
+		if (soundDebug > 1)
+			println(newRes + ".mp3: " + text);
+	}
+
+	if (newRes == "000000") {
+		println("The line resulted in 000000.mp3 is '" + text + "'");
+	}
+
+	newRes
+}
+
+base32(d) {
+	if (d < 32) {
+		if (d < 10) {
+			i2s(d);
+		} else {
+			["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "z", 
+			 "m", "n", "y", "p", "q", "r", "s", "t", "u", "v", "w", "x"] [d - 10];
+		}
+	} else {
+		base32(d / 32) + base32(d % 32);
+	}
+}
+
+// voices:
+
+joaat_hash_30bits(key : string, new: bool) -> int {
+	codepoints = s2a(key);
+
+	// umlauts were mapped to code differently in conceive (neko) and client
+	// (swf), so skip anything above 128.  Also skip some punctuation, so we can
+	// add or remove a final full stop or fix a comma error or change from single
+	// to double quotes without causing a re-recording because the hash changes.
+	// Note this means the hash is no longer the same as SpeakSamples.joaat_hash_30bits
+
+	ignoredCodes = [33, 34, 39, 44, 46, 58, 59];
+	ignoreHighCode = \c -> if (new) {
+		// New algorithm ignores range [128, 0x2E80]
+		if (soundDebug > 0) {
+			if (c > 0x2E80) {
+				println("Symbol that changes hash: " + fromCharCode(c) + " (" + i2s(c) + ")");
+			}
+		};
+
+		(c >= 128) && (c <= 0x2E80)
+	} else {
+		// Old algorithm ignores everything from 128 and on
+		c >= 128
+	}
+
+	hash1 = 
+		fold(codepoints, 0, \acc, code -> {
+			if (32 <= code && !ignoreHighCode(code) && !contains(ignoredCodes, code)) {
+				t = t30((acc + code) * (1024 + 1));
+				bitXor(t, (t / 64));
+			} else
+				acc
+		});
+
+	hash2 = t30(hash1 * 9);
+	hash3 = bitXor(hash2, hash2 / 2048);
+	hash4 = t30(hash3 * (32768 + 1));
+	hash4
+}
+
+// Truncate an int to 30 bits (pretending it is unsigned)
+t30(i) {
+	// if (i < 0) {
+	// 	// Some subtlety in this, but we exploit 2-complement addition is the same for signed and unsigned arithmetic
+	// 	(0x80000000 + i) % 0x40000000
+	// } else {
+	// 	i % 0x40000000
+	// };
+	bitAnd(i, 0x3fffffff)
+};

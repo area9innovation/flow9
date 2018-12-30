@@ -1,0 +1,131 @@
+import wigi/write2wigi;
+import wigi/wigi2text;
+import wigi/wiki2wigi;
+import wigi/wigi2string;
+import formats/wiki/wikistyle;
+
+import wigi/fixup;
+
+export {
+	string2wigi(text: string, defaultWigiStyles: Maybe<[WigiStyles]>) -> Maybe<WigiElement>;
+	string2wigiWithErrors(text: string, defaultWigiStyles: Maybe<[WigiStyles]>) -> Pair<Maybe<WigiElement>, [string]>;
+	
+	makeWigiDocument(text : string) -> WigiStory;
+
+	// Convert wiki to readable text representation for probe list, etc. (based on wigi2text function)
+	wiki2text(text: string) -> string;
+	// Convert wiki to readable text representation for probe list, etc. (based on wigi2string function)
+	wiki2string(text: string) -> string;
+
+	isEmptyWigiSource(src : string) -> bool;
+
+	wigi2wigiInWiki(wigi : WigiElement) -> string;
+
+	isWikiWigiContent(text: string) -> bool;
+
+	wigiStyles2WikiStyle(wstyle : [WigiStyles]) -> [WikiStyle];
+
+	getWigiParser(wikiText : string) -> WikiContentType;
+	wigiOpenTag = "<wigi>";
+	wigiCloseTag = "</wigi>";
+}
+
+
+getWigiParser(wikiText : string) -> WikiContentType {
+	if (wikiText != "") ChooseWikiParser(wikiText) else WikiStd();
+}
+
+isWikiWigiContent(text: string) -> bool{
+	getWigiParser(text) == WikiWigi();
+}
+
+string2wigiWithErrors(text: string, defaultWigiStyles: Maybe<[WigiStyles]>) -> Pair<Maybe<WigiElement>, [string]> {
+	format = getWigiParser(text);
+	switch (format : WikiContentType) {
+		WikiWigi(): {
+			source = substring(text, strlen(wigiOpenTag), strlen(text) - strlen(wigiOpenTag) - strlen(wigiCloseTag));
+			d = deserialize2(source, wigiFixup(), IllegalStruct());
+			if (d == IllegalStruct()) {
+				Pair(None(), ["Couldn't deserialize wigi content"])
+			} else {
+				Pair(Some(d), [])
+			}
+		}
+		WikiWrite(): {
+			charStyle = eitherMap(defaultWigiStyles, \ws -> getCharacterStyleFromWigiTextStyle(getDefaultDocumentStyle(ws).textStyle), []);
+			write = parseWrite(text, charStyle);
+
+			if (write.stories != []) { // write content should exist
+				wigi = write2wigi(write);
+				Pair(Some(wigi.first), wigi.second)
+			} else Pair(None(), ["Write content is empty"]);
+		}
+		WikiHtml(): {
+			// TODO: Would be nice
+			Pair(None(), ["Html to wigi conversion isn't implemented yet"]);
+		}
+		WikiStd(): {
+			wigi = wiki2wigi(text, defaultWigiStyles);
+			if ((getUrlParameter("wigiwikidebug") == "1") && (wigi.second != [])) {
+				println("Wiki to wigi conversion errors:");
+				println(strGlue(wigi.second, ", "));
+			}
+			Pair(Some(wigi.first), wigi.second)
+		}
+	}
+}
+
+string2wigi(text: string, defaultWigiStyles: Maybe<[WigiStyles]>) -> Maybe<WigiElement> {
+	result = string2wigiWithErrors(text, defaultWigiStyles);
+	if (result.second == []) result.first else None()
+}
+
+makeWigiDocument(text : string) -> WigiStory {
+	makeWigiStory([WigiParagraph([WigiText(text, [])], [dwis])], [dwps])
+}
+
+wigi2wigiInWiki(wigi : WigiElement) -> string {
+	wigiOpenTag + wigi2string(wigi) + wigiCloseTag
+}
+
+wiki2textCustom(text: string, wigiFn : (WigiElement) -> string) -> string {
+	element = string2wigi(text, None());
+	switch (element: Maybe<WigiElement>) {
+		Some(el): {
+			wigiFn(el);
+		}
+
+		None(): {
+			// This is not wigi
+			if (isWriteContent(text)) {
+				write2plaintext(text, \tag -> "[" + tag + "]")
+			} else {
+				text
+			}
+		}
+	}
+}
+
+wiki2text(text: string) -> string {
+	wiki2textCustom(text, wigi2text)
+}
+
+wiki2string(text: string) -> string {
+	wiki2textCustom(text, wigi2string)
+}
+
+isEmptyWigiSource(src) {
+	switch(string2wigi(src, None())){
+		Some(wigi): isEmptyElement(wigi);
+		None(): false;
+	}
+}
+
+// it works with text style only
+wigiStyles2WikiStyle(wstyle : [WigiStyles]) -> [WikiStyle]{
+	wikiFonts = getDefaultDocumentStyle(wstyle).textStyle
+	|> getCharacterStyleFromWigiTextStyle
+	|> characterStyle2WikiFonts;
+	[wikiFonts]
+}
+

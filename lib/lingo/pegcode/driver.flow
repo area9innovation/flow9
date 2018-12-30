@@ -1,0 +1,80 @@
+import lingo/pegaction;
+import lingo/pegcode/grammar2code;
+import lingo/pegcode/rename_bindings;
+import lingo/pegcode/optimize_grammar;
+import lingo/pegcode/pegcode;
+import lingo/pegcode/lingocode;
+import lingo/linecolumn;
+// import lingo/pegcode/pegcode2flow;
+
+export {
+	compilePegGrammar(s : string) -> [PegOp];
+	compilePegGrammar2(s : string) -> Pair<[PegOp], Tree<int, string>>;
+
+	// Best version: A version which can be used for error reporting. In case of error, def is used and you get a nice error message
+	// in the string. The second int is how far we managed to parse.
+	parsic3(op : [PegOp], text : string, actions : SemanticActions, def : ?) -> Triple<?, int, string>;
+
+	// Returns "PARSING FAILED" when we were not successful
+	parsic(op : [PegOp], s : string, actions : SemanticActions) -> flow;
+
+	// A version that does not spam the console, and happily ignores if there are leftover input when toplevel construct is done
+	parsic2(op : [PegOp], s : string, actions : SemanticActions) -> flow;
+}
+
+compilePegGrammar(gr : string) -> [PegOp] {
+	compilePegGrammar2(gr).first;
+}
+
+compilePegGrammar2(gr : string) -> Pair<[PegOp], Tree<int, string>> {
+	// println("Parsing lingo grammar 2");
+	r : flow = parsic(pegOps4Lingo, gr, defaultPegActions);
+
+	g = cast(r : flow -> Grammar);
+
+//	printGrammar(r);
+	renamed = optimizeGrammar(renameBindings(inlineProductions(processNestedSequences(g))));
+
+	// printGrammar(renamed);
+
+	code = grammar2code(renamed);
+
+	// setFileContent("lingo/pegcode/out.flow", pegcode2flow("Lingo", code.first, code.second));
+
+	// printPegcode(code.first, code.second);
+	code;
+}
+
+parsic(op : [PegOp], text : string, actions : SemanticActions) -> flow {
+	result = runPeg(text, op, makeTree(), actions);
+	if (result.pos < 0) {
+		println("SYNTAX ERROR <0: \"" + strLeft(text, 130)+ "...\"");
+	} else if (result.pos < strlen(text)) {
+		println("SYNTAX ERROR AT : \"" + substring(text, result.pos, 130) + "...\"");	
+	}
+	flow(either(result.result, flow("PARSING FAILED")));
+}
+
+// The version that does not spam the console, and happily ignores if there are leftover input when toplevel construct is done
+parsic2(op : [PegOp], text : string, actions : SemanticActions) -> flow {
+	result : ParseResult = runPeg(text, op, makeTree(), actions);
+	either(result.result, flow("PARSING FAILED"));
+}
+
+parsic3(op : [PegOp], code : string, actions : SemanticActions, def : ?) -> Triple<?, int, string> {
+	result = runPeg(code, op, makeTree(), actions);
+	typed = cast(result.result : Maybe<flow> -> Maybe<?>);
+	error = if (result.pos < 0) {
+		"SYNTAX ERROR";
+	} else if (result.pos < strlen(code) || isNone(typed)) {
+		resolver = makeLineResolver(code);
+		line = findLine(resolver, result.pos);
+
+		i2s(line.lineno) + ":" + i2s(line.column) 
+		+ ": SYNTAX ERROR\n" + strLeft(line.line, 80) + "\n"
+		+ (if (line.lineIndex < 80) {
+			strLeft("                                                                                ", line.lineIndex) + "^";
+		} else "");
+	} else "";
+	Triple(either(typed, def), result.pos, error)
+}

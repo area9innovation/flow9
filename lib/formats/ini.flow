@@ -1,0 +1,116 @@
+import runtime;
+import string;
+
+export {
+	// An .ini file. Uses "" for quoting " in value. Without " in values, whitespace is trimmed
+	// Use ; for comments at the start of lines
+	parseIniFile(v : string) -> IniFile;
+
+	iniFile2string(v : IniFile) -> string;
+		IniFile(sections : [IniSection]);
+		IniSection(name : string, keys : [KeyValue]);
+}
+
+parseIniFile(v : string) -> IniFile {
+	IniFile(doParseIniFile(v, []));
+}
+
+doParseIniFile(v : string, acc : [IniSection]) -> [IniSection] {
+	sb = takeAfter(v, "[", "");
+	if (sb == "") {
+		acc
+	} else {
+		section = strSplitNext(sb, "]");
+		sectionName = section.first;
+		rest = takeAfter(section.second, "\n", section.second);
+		keys = doParseInitKeys(rest, []);
+		sect = IniSection(sectionName, keys.first);
+		nacc = arrayPush(acc, sect);
+		doParseIniFile(keys.second, nacc);
+	}
+}
+
+doParseInitKeys(v : string, acc : [KeyValue]) -> Pair<[KeyValue], string> {
+	se = strIndexOf(v, "=");
+	sb = strIndexOf(v, "[");
+	ss = strIndexOf(v, ";");
+
+	if (ss != -1 && (ss < se || se == -1) && (ss < sb || sb == -1)) {
+		semi = strRight(v, ss + 1);
+		nl = strIndexOf(semi, "\n");
+		el = strRight(semi, nl +1);
+		doParseInitKeys(el, acc);
+	} else if (se != -1 && (se < sb || sb == -1)) {
+		key = strLeft(v, se);
+		rest = strRight(v, se + 1);
+
+		le = strIndexOf(rest, "\n");
+		qu = strIndexOf(rest, "\"");
+		value : Pair<string, string> = if (qu != -1 && (qu < le || le == -1)) {
+			// A quoted value
+			grabIniQuoted(strRight(rest, qu + 1),"");
+		} else {
+			if (le == -1) {
+				Pair(trim(rest), "")
+			} else {
+				Pair(trim2(strLeft(rest, le), " \u000d"), strRight(rest, le + 1))
+			}
+		}
+		kv = KeyValue(trim2(key, "\n \u000d\t"), value.first);
+		nacc = arrayPush(acc, kv);
+		doParseInitKeys(value.second, nacc);
+	} else Pair(acc, v);
+}
+
+// Parse a quoted string after the first quote
+grabIniQuoted(s : string, acc : string) -> Pair<string, string> {
+	nq = strSplitNext(s, "\"");
+	if (nq.second == "") {
+		Pair(acc + nq.first, nq.second)
+	} else {
+		if (getCharAt(nq.second, 0) == "\"") {
+			// Double quote
+			grabIniQuoted(strRight(nq.second, 1), acc + nq.first + "\"")
+		} else {
+			Pair(acc + nq.first, nq.second)
+		}
+	}
+}
+
+iniFile2string(v : IniFile) {
+	fold(v.sections, "", \acc, s -> {
+		acc + "[" + escapeIni(s.name) + "]\n" +
+			fold(s.keys, "", \acc2, kv -> {
+				acc2 + kv.key + "=" + escapeIni(kv.value) + "\n"
+			}) + "\n"
+	});
+}
+
+escapeIni(s : string) -> string {	
+	if (strIndexOf(s, "\"") != -1 || trim(s) != s)  {
+		"\"" + strReplace(s, "\"", "\"\"") + "\"";
+	} else s;
+}
+
+/*
+main() {
+	ini = "; last modified 1 April 2001 by John Doe
+[owner]
+name=John Doe
+organization=Acme Widgets Inc.
+
+[database]
+; use IP address in case network name resolution is not working
+server=192.0.2.62     
+port=143
+file=\"payroll.dat\"
+
+withNewline = \"Some stuff
+to the next \"\"line\"\" for the hell of it\"
+";
+
+	iniv = parseIniFile(ini);
+	println(iniv);
+	println(iniFile2string(iniv));
+}
+*/

@@ -1,0 +1,72 @@
+import api_filebrowser;
+import material/material;
+import material/extra/filesystem/filesystem_extended_api;
+import material/internal/filebrowser/material_filebrowser_internal_types;
+
+export{
+	// Filebrowser API
+	SetMFileBrowser(type : FileBrowserDialogType, fileBrowser : (ext : [string], style : [FbMStyle], onDone : ([FbObject]) -> void, onCancel : () -> void) -> void) -> void;
+	CallMFileBrowser(type : FileBrowserDialogType, ext : [string], style : [FbMStyle], onDone : ([FbObject]) -> void, onCancel : () -> void) -> void;
+	isMFileBrowserInitialized(type : FileBrowserDialogType) -> bool;
+
+	// Resolve content of file API, can be used in implementation of FilebrowserAPI
+	// register new resolve content handler for specified ext
+	registerMResolveContentAPI(ext : [string], getForm : (filename : string) -> Material, options : [ResolveContentStyle]) -> void;
+	// get preview Material for specified file
+	resolveContent2Material(filename : string) -> Maybe<Material>;
+
+	ResolveContentStyle ::= ResolveContentThumbnail;
+		// path to a thumbnail instead of real blob
+		ResolveContentThumbnail();
+}
+
+// Filebrowser API
+fileBrowsersM : ref Tree<FileBrowserDialogType, (ext : [string], style : [FbMStyle], onDone : ([FbObject]) -> void, onCancel : () -> void) -> void> = ref makeTree();
+
+SetMFileBrowser(type : FileBrowserDialogType, fileBrowser : (ext : [string], style : [FbMStyle], onDone : ([FbObject]) -> void, onCancel : () -> void) -> void) -> void {
+	maybeApply(lookupTree(^fileBrowsersM, type), \searchResult->{
+		fileBrowsersM := removeFromTree(^fileBrowsersM, type)
+	});
+	fileBrowsersM := setTree(^fileBrowsersM, type, fileBrowser)
+}
+
+CallMFileBrowser(type : FileBrowserDialogType, ext : [string], style : [FbMStyle], onDone : ([FbObject]) -> void, onCancel : () -> void) -> void {
+	switch(lookupTree(^fileBrowsersM, type)) {
+		Some(fileBrowser): {
+			fileBrowser(ext, style, onDone, onCancel)
+		}
+		None(): {
+			println("MFileBrowser API for type=" + toString(type) + ", isn't set.")
+		}
+	}
+}
+
+isMFileBrowserInitialized(type : FileBrowserDialogType) -> bool {
+	isSome(lookupTree(^fileBrowsersM, type));
+}
+
+// Resolve content of file API
+MResolveContentAPI : (
+	ext : [string],
+	getMaretial : (filename : string) -> Material,
+	options : [ResolveContentStyle],
+);
+
+rcMAPI : ref [MResolveContentAPI] = ref [];
+
+registerMResolveContentAPI(ext : [string], getMaretial : (filename : string) -> Material, options : [ResolveContentStyle]) -> void {
+	refArrayPush(rcMAPI, MResolveContentAPI(map(ext, toLowerCase), getMaretial, options))
+}
+
+resolveContent2Material(filename : string) -> Maybe<Material> {
+	ext = toLowerCase("." + getUrlExtension(filename));
+	maybeMap(
+		find(^rcMAPI, \api -> contains(api.ext, ext)),
+		\api -> {
+			thumbnail = contains(api.options, ResolveContentThumbnail());
+			convertFn = if (thumbnail) getFilesystemExtAPI().convert2thumbnailPath else getFilesystemExtAPI().convert2realPath;
+			api.getMaretial(filename |> convertFn);
+		}
+	)
+}
+

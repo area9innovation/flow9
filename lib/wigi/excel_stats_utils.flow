@@ -1,0 +1,723 @@
+// https://github.com/LibreOffice/core/blob/d0484bcdcbffd42d242647a2fdc1a203d176b775/sc/source/core/tool/interpr3.cxx
+// https://github.com/LibreOffice/core/blob/104a1e641554be2e789758ae67c0e24620df8035/sc/source/core/tool/interpr3.cxx
+import math;
+
+export {
+	getBetaDist(fXin : double, fAlpha : double, fBeta : double) -> Maybe<double>;
+	getBetaDist2(x : double, alpha : double, beta : double) -> double;
+	getBeta(fAlpha : double, fBeta : double) -> Maybe<double>;
+	getCorrelCoef(arr : [[double]]) -> double;
+	getChiSqDistPDF(fX : double, fDF : double) -> double;
+	getChiSqDistCDF(fX : double, fDF : double) -> double;
+	getChiSqInv(fP : double, fDF : double) -> double;
+}
+
+expm1(x : double) -> double {
+	exp(x) - 1.0
+}
+
+log1p(x : double) -> double {
+	log(x + 1.0)
+}
+
+getBetaDist(fXin : double, fAlpha : double, fBeta : double) -> Maybe<double> {
+	// special cases
+	if (fXin <= 0.0)  {
+		// values are valid, see spec
+		0.0 |> Some
+	} else if (fXin >= 1.0) {
+		// values are valid, see spec
+		1.0 |> Some
+	} else if (fBeta == 1.0) {
+		dpow(fXin, fAlpha) |> Some
+	} else if (fAlpha == 1.0) {
+		// 1.0 - pow(1.0-fX,fBeta) is not accurate enough
+		-expm1(fBeta * log1p(-fXin)) |> Some
+	} else {
+		// I use always continued fraction, power series are neither
+		// faster nor more accurate.
+		bReflect = fXin > fAlpha/(fAlpha+fBeta);
+
+		fA = if (bReflect) fBeta else fAlpha;
+		fB = if (bReflect) fAlpha else fBeta;
+		fX = if (bReflect) (0.5-fXin)+0.5 else fXin;
+		fY = if (bReflect) fXin else (0.5-fXin)+0.5;
+		flnX = if (bReflect) log1p(-fXin) else log(fXin);
+		flnY = if (bReflect) log(fXin) else log1p(-fXin);
+
+		fResult = lcl_GetBetaHelperContFrac(fX, fA, fB);
+
+		fResult2 = fResult/fA;
+
+		fP = fA/(fA+fB);
+		fQ = fB/(fA+fB);
+
+		fTempM = 
+			if (fA > 1.0 && fB > 1.0 && fP < 0.97 && fQ < 0.97) {
+				//found experimental
+				rM = getBetaDistPDF(fX,fA,fB);
+
+				switch(rM) {
+					Some(r): r*fX*fY |> Some;
+					None(): None();
+				}
+			} else {
+				exp(fA*flnX + fB*flnY - getLogBeta(fA,fB)) |> Some
+			};
+
+		switch(fTempM) {
+			Some(fTemp): {
+				fResult3 = fResult2 * fTemp;
+
+				r = 
+					if (bReflect) {
+						0.5 - fResult3 + 0.5;
+					} else if (fResult3 > 1.0) {
+						// ensure valid range
+						1.0;
+					} else if (fResult3 < 0.0) {
+						0.0;
+					} else {
+						fResult3
+					};
+
+				Some(r)
+			}
+			None(): None();
+		}
+	}
+}
+
+// beta distribution probability density function
+getBetaDistPDF(fX : double, fA : double, fB : double) -> Maybe<double> {
+	// special cases
+	if (fA == 1.0) {
+		// result b*(1-x)^(b-1)
+		if (fB == 1.0) {
+			1.0 |> Some
+		} else if (fB == 2.0) {
+			-2.0*fX + 2.0 |> Some
+		} else if (fX == 1.0 && fB < 1.0) {
+			None()
+		} else if (fX <= 0.01) {
+			fB + fB * expm1((fB-1.0) * log1p(-fX)) |> Some
+		} else {
+			fB * dpow(0.5-fX+0.5,fB-1.0) |> Some
+		}
+	} else if (fB == 1.0) {
+		// result a*x^(a-1)
+		if (fA == 2.0) {
+			fA * fX  |> Some
+		} else if (fX == 0.0 && fA < 1.0) {
+			None()
+		} else {
+			fA * dpow(fX,fA-1.0) |> Some
+		}
+	} else if (fX <= 0.0) {
+			if (fA < 1.0 && fX == 0.0) {
+			None()
+		} else {
+			0.0 |> Some
+		}
+	} else if (fX >= 1.0) {
+		if (fB < 1.0 && fX == 1.0) {
+			None()
+		} else {
+			0.0 |> Some
+		}
+	} else {
+		// normal cases; result x^(a-1)*(1-x)^(b-1)/Beta(a,b)
+		fLogDblMax = log(doubleMax);
+		fLogDblMin = log(doubleMin);
+
+		fLogY = if (fX < 0.1) log1p(-fX) else log(0.5-fX+0.5);
+		fLogX = log(fX);
+		fAm1LogX = (fA-1.0) * fLogX;
+		fBm1LogY = (fB-1.0) * fLogY;
+		fLogBeta = getLogBeta(fA,fB);
+
+		// check whether parts over- or underflow
+		if (   fAm1LogX < fLogDblMax  && fAm1LogX > fLogDblMin
+			&& fBm1LogY < fLogDblMax  && fBm1LogY > fLogDblMin
+			&& fLogBeta < fLogDblMax  && fLogBeta > fLogDblMin
+			&& fAm1LogX + fBm1LogY < fLogDblMax && fAm1LogX + fBm1LogY > fLogDblMin) 
+		{
+			betaM = getBeta(fA,fB);
+
+			switch(betaM) {
+				Some(beta): {
+					dpow(fX,fA-1.0) * dpow(0.5-fX+0.5,fB-1.0) / beta |> Some
+				}
+				None(): None();
+			}
+		} else {
+			// need logarithm;
+			// might overflow as a whole, but seldom, not worth to pre-detect it
+			exp( fAm1LogX + fBm1LogY - fLogBeta) |> Some
+		}
+	}
+}
+
+getLogBeta(fAlpha : double, fBeta : double) -> double {
+	fA = max(fAlpha, fBeta);
+	fB = min(fAlpha, fBeta);
+
+	fg = 6.024680040776729583740234375; //see GetGamma
+	fgm = fg - 0.5;
+	fLanczos = lcl_getLanczosSum(fA) /  lcl_getLanczosSum(fA+fB) * lcl_getLanczosSum(fB);
+
+	fLogLanczos = log(fLanczos);
+
+	fABgm = fA+fB+fgm;
+
+	fLogLanczos2 = fLogLanczos + 0.5*(log(fABgm)-log(fA+fgm)-log(fB+fgm));
+	fTempA = fB/(fA+fgm); // (fA+fgm)/fABgm = 1 / ( 1 + fB/(fA+fgm))
+	fTempB = fA/(fB+fgm);
+	fResult = -fA * log1p(fTempA) -fB * log1p(fTempB)-fgm;
+	fResult + fLogLanczos2;
+}
+
+fMachEps = 0.0000000000000000000001;
+
+lcl_GetBetaHelperContFrac(fX : double, fA : double, fB : double) -> double {
+	// like old version
+	a1 = 1.0; 
+	b1 = 1.0;
+	b2 = 1.0 - (fA+fB)/(fA+1.0)*fX;
+
+	a2 = if (b2 == 0.0) 0.0 else 1.0;
+	fnorm = if (b2 == 0.0) 1.0 else 1.0/b2;
+	cf = if (b2 == 0.0) 1.0 else a2*fnorm;
+
+	cfnew = 1.0;
+	rm = 1.0;
+
+	fMaxIter = 50000.0;
+	// loop security, normal cases converge in less than 100 iterations.
+	// FIXME: You will get so much iteratons for fX near mean,
+	// I do not know a better algorithm.
+	bfinished = false;
+
+	lcl_GetBetaHelperContFrac2(fX, fA, fB, a1, b1, a2, b2, cf, rm, fMaxIter, bfinished, fnorm) 
+}
+
+lcl_GetBetaHelperContFrac2(fX : double, fA : double, fB : double, a1 : double, b1 : double, a2 : double, b2 : double, cf : double, rm : double, fMaxIter : double, bfinished: bool, fnorm : double) -> double {
+	if (rm < fMaxIter || bfinished) {
+		cf 
+	} else {
+		apl2m = fA + 2.0*rm;
+		d2m = rm*(fB-rm)*fX/((apl2m-1.0)*apl2m);
+		d2m1 = -(fA+rm)*(fA+fB+rm)*fX/(apl2m*(apl2m+1.0));
+
+		newA1 = (a2+d2m*a1)*fnorm;
+		newB1 = (b2+d2m*b1)*fnorm;
+		newA2 = a1 + d2m1*a2*fnorm;
+		newB2 = b1 + d2m1*b2*fnorm;
+
+		newFnorm = if (b2 != 0.0) 1.0/b2 else fnorm;
+
+		cfnew = if (b2 != 0.0) a2*newFnorm else cf;
+
+		newBfinished = if (b2 != 0.0) abs(cf-cfnew) < abs(cf)*fMachEps else bfinished;
+
+		lcl_GetBetaHelperContFrac2(fX, fA, fB, newA1, newB1, newA2, newB2, cfnew, rm + 1.0, fMaxIter, newBfinished, newFnorm)
+	}
+}
+
+fMaxGammaArgument : double = 171.624376956302;  
+
+getBeta(fAlpha : double, fBeta : double) -> Maybe<double> {
+	fA = max(fAlpha, fBeta);
+	fB = min(fAlpha, fBeta);
+
+	if (fA+fB < fMaxGammaArgument) {
+		// simple case
+		gaM = getGamma(fA);
+		gbM = getGamma(fB);
+		gabM = getGamma(fA+fB);
+
+		if (isSome(gaM) && isSome(gbM) && isSome(gabM)) {
+			ga = either(gaM, 0.0);
+			gb = either(gbM, 0.0);
+			gab = either(gabM, 0.0);
+
+			ga/gab*gb |> Some
+		} else {
+			None()
+		}
+	} else {
+		fg = 6.024680040776729583740234375; 
+		fgm = fg - 0.5;
+		fLanczos = lcl_getLanczosSum(fA) / lcl_getLanczosSum(fA+fB) * lcl_getLanczosSum(fB);
+		fABgm = fA+fB+fgm;
+
+		fLanczos2 = fLanczos * sqrt((fABgm/(fA+fgm))/(fB+fgm));
+
+		fTempA = fB/(fA+fgm); 
+		fTempB = fA/(fB+fgm);
+		fResult = exp(-fA * log1p(fTempA) - fB * log1p(fTempB) - fgm);
+		
+		fResult * fLanczos2 |> Some
+	}
+}
+
+getGamma(fZ : double) -> Maybe<double> {
+	fLogPi = log(PI);
+	fLogDblMax = log(doubleMax);
+
+	if (fZ > fMaxGammaArgument) {
+		None()
+	} else {
+		if (fZ >= 1.0) {
+			lcl_GetGammaHelper(fZ) |> Some
+		} else if (fZ >= 0.5) {
+			// shift to x>=1 using Gamma(x)=Gamma(x+1)/x
+			lcl_GetGammaHelper(fZ+1.0) / fZ |> Some
+		} else if (fZ >= -0.5) {
+			// shift to x>=1, might overflow
+			fLogTest = lcl_GetLogGammaHelper(fZ+2.0) - log1p(fZ) - log(abs(fZ));
+
+			if (fLogTest >= fLogDblMax) {
+				None()
+			} else {
+				lcl_GetGammaHelper(fZ+2.0) / (fZ+1.0) / fZ |> Some
+			}
+		} else {
+			// fZ<-0.5
+			// Use Euler's reflection formula: gamma(x)= pi/ ( gamma(1-x)*sin(pi*x) )
+			fLogDivisor = lcl_GetLogGammaHelper(1.0 - fZ) + log( abs( sin( PI*fZ)));
+
+			if (fLogDivisor - fLogPi >= fLogDblMax) {
+				// underflow
+				0.0 |> Some
+			} else if (fLogDivisor < 0.0 && fLogPi - fLogDivisor > fLogDblMax) {
+				// overflow
+				None()
+			} else {
+				s = if (sin(PI*fZ) < 0.0) -1.0 else 1.0;
+
+				exp(fLogPi - fLogDivisor) * s |> Some
+			}
+		}
+	}
+}
+
+// The algorithm is based on tgamma in gamma.hpp
+// in math library from http://www.boost.org
+/** You must ensure fZ>0; fZ>171.624376956302 will overflow. */
+lcl_GetGammaHelper(fZ : double) -> double {
+	fGamma = lcl_getLanczosSum(fZ);
+	fg = 6.024680040776729583740234375;
+	fZgHelp = fZ + fg - 0.5;
+	// avoid intermediate overflow
+	fHalfpower = dpow( fZgHelp, fZ / 2.0 - 0.25);
+	fGamma2 = fGamma * fHalfpower / exp(fZgHelp) * fHalfpower;
+
+	if (fZ <= 20.0 && fZ == dfloor(fZ)) {
+		dround(fGamma2);
+	} else {
+		fGamma2
+	}
+}
+
+lcl_GetLogGammaHelper(fZ : double) -> double {
+	fg = 6.024680040776729583740234375;
+	fZgHelp = fZ + fg - 0.5;
+	log( lcl_getLanczosSum(fZ)) + (fZ-0.5) * log(fZgHelp) - fZgHelp;
+}
+
+lcl_getLanczosSum(fZ : double) -> double {
+	fNum : [double] = [
+		23531376880.41075968857200767445163675473,
+		42919803642.64909876895789904700198885093,
+		35711959237.35566804944018545154716670596,
+		17921034426.03720969991975575445893111267,
+		6039542586.35202800506429164430729792107,
+		1439720407.311721673663223072794912393972,
+		248874557.8620541565114603864132294232163,
+		31426415.58540019438061423162831820536287,
+		2876370.628935372441225409051620849613599,
+		186056.2653952234950402949897160456992822,
+		8071.672002365816210638002902272250613822,
+		210.8242777515793458725097339207133627117,
+		2.506628274631000270164908177133837338626
+	];
+
+	fDenom : [double] = [
+		0.0,
+		39916800.0,
+		120543840.0,
+		150917976.0,
+		105258076.0,
+		45995730.0,
+		13339535.0,
+		2637558.0,
+		357423.0,
+		32670.0,
+		1925.0,
+		66.0,
+		1.0
+	];
+	// Horner scheme
+	fSumNum = ref 0.0;
+	fSumDenom = ref 0.0;
+
+	if (fZ<=1.0) {
+		fSumNum := fNum[12];
+		fSumDenom := fDenom[12];
+
+		iter(enumFromTo(0, 11), \i -> {
+			nI = 11 - i;
+
+			fSumNum := ^fSumNum * fZ + fNum[nI];
+			fSumDenom := ^fSumDenom *fZ + fDenom[nI];
+		})
+	} else {
+		// Cancel down with fZ^12; Horner scheme with reverse coefficients
+		fZInv = 1.0/fZ;
+		fSumNum := fNum[0];
+		fSumDenom := fDenom[0];
+
+		iter(enumFromTo(1, 12), \nI -> {
+			fSumNum := ^fSumNum * fZInv + fNum[nI];
+			fSumDenom := ^fSumDenom * fZInv + fDenom[nI];
+		})
+	}
+
+	^fSumNum/^fSumDenom;
+}
+
+getCorrelCoef(arr : [[double]]) -> double {
+	n = i2d(length(arr[0]));
+	sumX = fold(arr[0], 0.0, \a, b -> a + b);
+	sumY = fold(arr[1], 0.0, \a, b -> a + b);
+	sumXY = foldi(arr[0], 0.0, \index, a, b -> a + b*arr[1][index]);
+	sumX2 = fold(arr[0], 0.0, \a, b -> a + dpow(b, 2.0));
+	sumY2 = fold(arr[1], 0.0, \a, b -> a + dpow(b, 2.0));
+	(n*sumXY-sumX*sumY)/sqrt(abs(n*sumX2-dpow(sumX, 2.0))*abs(n*sumY2-dpow(sumY, 2.0)));
+}
+
+fEpsilon = 0.000000000000000222045;
+fHalfMachEps = 0.5 * fEpsilon;
+
+_getGammaContFraction(fPk : double, fQk : double, fY : double, fDenom : double, fNum : double, 
+						fPkm1 : double, fPkm2 : double, fQkm1 : double, fQkm2 : double, fApprox : double, 
+						fCount : double, bFinished : bool, fBigInv : double, fBig : double) -> double {
+	fCount_ = fCount+1.0;
+	fY_ = fY+1.0;
+	fNum_ = fY_*fCount_;
+	fDenom_ = fDenom+2.0;
+	fPk_ = fPkm1 * fDenom_ - fPkm2 * fNum_;
+	fQk_ = fQkm1 * fDenom_ - fQkm2 * fNum_;
+
+	bFinished_ = if(fQk != 0.0) {
+					fR = fPk/fQk;
+					abs((fApprox - fR)/fR) <= fHalfMachEps
+				}
+				else bFinished;
+	fApprox_ = if(fQk_ != 0.0) fPk/fQk else fApprox;
+
+	fPkm2_ = if(abs(fPk_) > fBig) fPkm1*fBigInv else fPkm1; 
+	fPkm1_ = if(abs(fPk_) > fBig) fPk_*fBigInv else fPk_;
+	fQkm2_ = if(abs(fPk_) > fBig) fQkm1*fBigInv else fQkm1;
+	fQkm1_ = if(abs(fPk_) > fBig) fQk_*fBigInv else fQk_;
+
+	if(!bFinished_ && fCount_<10000.0) _getGammaContFraction(fPk_, fQk_, fY_, fDenom_, fNum_, fPkm1_, fPkm2_, 
+											fQkm1_, fQkm2_, fApprox_, fCount_, bFinished_, fBigInv, fBig)
+	else fApprox_
+}
+
+getGammaContFraction(fA : double, fX : double) -> double {
+	fY = 1.0 - fA;
+	fDenom = fX + 2.0-fA;
+	fPkm1 = fX + 1.0;
+	fQkm1 = fDenom * fX;
+	fApprox = fPkm1/fQkm1;
+	fBig = 1.0/fEpsilon;
+	_getGammaContFraction(0.0, 1.0, fY, fDenom, 0.0, fPkm1, 1.0, fQkm1, fX, fApprox, 0.0, false, fEpsilon, fBig)
+}
+
+getGammaSeries_(fDenomfactor : double, fSummand : double, fSum : double, nCount : int, fX : double) -> double {
+	fDenomfactor_ = fDenomfactor + 1.0;
+	fSummand_ = fSummand * fX/fDenomfactor_;
+	fSum_ = fSum + fSummand_;
+	nCount_ =  nCount+1;
+	if((fSummand_/fSum_ > fHalfMachEps) && (nCount_<=10000)) getGammaSeries_(fDenomfactor_, fSummand_, fSum_, nCount_, fX)
+	else fSum
+}
+
+getGammaSeries(fA : double, fX : double) -> double {
+	fDenomfactor = fA;
+	fSummand = 1.0/fA;
+	fSum = fSummand;
+	getGammaSeries_(fDenomfactor, fSummand, fSum, 1, fX)
+}
+
+getLogGamma(x : double) -> double {
+	gh = gammaHelp(x);
+	g_ = gh.first;
+	x_ = gh.second;
+	bReflect = gh.third;
+
+	g = (x_+0.5)*log(x_+5.5)+log(g_)-(x_+5.5);
+	if (bReflect) log(PI*x_)-g-log(sin(PI*x_))
+	else g
+}
+
+getLowRegIGamma(fA : double, fX : double) -> double {
+	fLnFactor = fA*log(fX)-fX-getLogGamma(fA);
+	fFactor = exp(fLnFactor);
+	if (fX>fA+1.0) 1.0-fFactor*getGammaContFraction(fA,fX)
+	else fFactor * getGammaSeries(fA,fX)
+}
+
+getUpRegIGamma(fA : double, fX : double) -> double {
+	fLnFactor= fA*log(fX)-fX-getLogGamma(fA);
+	fFactor = exp(fLnFactor);
+	if (fX>fA+1.0) fFactor*getGammaContFraction(fA,fX)
+	else 1.0-fFactor*getGammaSeries(fA,fX)
+}
+
+gammaHelp(x : double) -> Triple<double, double, bool> {
+
+	c : [double] = [
+		76.18009173, 
+		-86.50532033, 
+		24.01409822,
+		-1.231739516, 
+		0.00120858003, 
+		-0.00000536382
+	];
+
+	bReflect = (x < 1.0);
+	x_ = if(x >= 1.0) x - 1.0 else 1.0 - x;
+	s = foldi(c, 1.0, \idx, a, b -> {
+		anum = x_ + i2d(idx) + 1.0;
+		a + b/anum;
+	});
+
+	Triple(s*2.506628275, x_, bReflect)
+}
+
+getGamma2(x : double) -> double {
+	gh = gammaHelp(x);
+	g = gh.first;
+	x_ = gh.second;
+	bReflect = gh.third;
+
+	if(bReflect) PI*x_/(g*sin(PI*x_))
+	else g
+}
+
+getGammaDistPDF(fX : double, fAlpha : double, fLambda : double) -> double {
+	if (fX <= 0.0) 0.0
+	else {
+		fXr = fX / fLambda;
+		if (fXr > 1.0) {
+			if (log(fXr) * (fAlpha-1.0) < doubleMax && fAlpha < fMaxGammaArgument) {
+				dpow(fXr, fAlpha-1.0) * exp(-fXr) / fLambda / getGamma2(fAlpha)
+			}
+			else {
+				exp((fAlpha-1.0) * log(fXr) - fXr - log(fLambda) - getLogGamma(fAlpha))
+			}
+		}
+		else {
+			if (fAlpha < fMaxGammaArgument) {
+				dpow(fXr, fAlpha-1.0) * exp(-fXr) / fLambda / getGamma2(fAlpha)
+			}
+			else {
+				dpow(fXr, fAlpha-1.0) * exp(-fXr) / fLambda / exp(getLogGamma(fAlpha))
+			}
+		}
+	}
+}
+
+getGammaDist(fX : double, fAlpha : double, fLambda : double) -> double {
+	if (fX <= 0.0) 0.0
+	else getLowRegIGamma(fAlpha, fX/fLambda)
+}
+
+getChiSqDistCDF(fX : double, fDF : double) -> double {
+	if (fX <= 0.0) 0.0
+	else getLowRegIGamma(fDF/2.0, fX/2.0)
+}
+
+getChiSqDistPDF_(fX : double, fDF : double, fValue : double, fCount : double) -> double {
+	if(fCount < fDF) getChiSqDistPDF_(fX, fDF, fValue*fX/fCount, fCount + 2.0)
+	else fValue
+}
+
+getChiSqDistPDF(fX : double, fDF : double) -> double {
+	if (fX <= 0.0) 0.0
+	else {
+		mXDF = fDF*fX;
+
+		g = getLogGamma(0.5*fDF);
+
+		fValue = if(mXDF > 1391000.0) exp((0.5*fDF - 1.0) * log(fX*0.5) - 0.5 * fX - log(2.0) - g)
+				else if(dmod(fDF,2.0)<0.5) 0.5
+				else 1.0/sqrt(fX*2.0*PI);
+
+		fCount = if(mXDF > 1391000.0) 0.0
+				else if(dmod(fDF,2.0)<0.5) 2.0 
+				else 1.0;
+
+		fValue_ = getChiSqDistPDF_(fX, fDF, fValue, fCount);
+
+		if (fX>=1425.0) exp(log(fValue_)-fX/2.0)
+		else fValue_ * exp(-fX/2.0)
+	}
+}
+
+lcl_IterateInverseDistFunction(funNum : int, fX : double, fP : double, fDF : double) -> double {
+	if(funNum == 1) fP - getChiSqDistCDF(fX, fDF)
+	else 0.0;
+}
+
+lcl_HasChangeOfSign(u : double, w : double) -> bool {
+	(u < 0.0 && w > 0.0) || (u > 0.0 && w < 0.0)
+}
+
+find_enclosing_interval(fAy : double, fBy : double, fAx : double, fBx : double, fP : double, fDF : double, funNum : int, nCount : int) -> Quadruple<double, double, double, double> {
+	if(nCount < 1000 && !lcl_HasChangeOfSign(fAy,fBy)) {
+		if (abs(fAy) <= abs(fBy)) {
+			fAx_ = fAx + 2.0 * (fAx - fBx);
+			fAx1 = if(fAx_ < 0.0) 0.0 else fAx_;
+			fAy_ = lcl_IterateInverseDistFunction(funNum, fAx1, fP, fDF);
+			find_enclosing_interval(fAy_, fAy, fAx1, fAx, fP, fDF, funNum, nCount+1)
+		}
+		else {
+			fBx_ = fBx + 2.0 * (fBx - fAx);
+			fBy_ = lcl_IterateInverseDistFunction(funNum, fBx_, fP, fDF);
+			find_enclosing_interval(fBy, fBy_, fBx, fBx_, fP, fDF, funNum, nCount+1)
+		}
+	}
+	else Quadruple(fAy, fBy, fAx, fBx)
+}
+
+inverse_quadric_interpolation(fPx : double, fPy : double, fQx : double, fQy : double, fRx : double, fRy : double, 
+							fAx : double, fAy : double, fBx : double, fBy : double, fSx : double, 
+							fP : double, fDF : double, funNum : int, bHasToInterpolate : bool, nCount : int) -> double {
+	fYEps = 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001;
+	fXEps = 0.000000000000000222045;
+	bHasToInterpolate_ = ref bHasToInterpolate;
+	fSx_ = ref fSx;
+	fQx_ = ref fQx;
+	fQy_ = ref fQy;
+
+	if(nCount < 500 && abs(fRy) > fYEps && (fBx-fAx)>max(abs(fAx), abs(fBx))*fXEps) {
+		if(^bHasToInterpolate_) {
+			if(fPy!=fQy && fQy!=fRy && fRy!=fPy) {
+				fSx_ := fPx * fRy * fQy / (fRy-fPy) / (fQy-fPy)
+				+ fRx * fQy * fPy / (fQy-fRy) / (fPy-fRy)
+				+ fQx * fPy * fRy / (fPy-fQy) / (fRy-fQy);
+				bHasToInterpolate_ := (fAx < ^fSx_) && (^fSx_ < fBx); // inside the brackets?
+			}
+			else bHasToInterpolate_ := false;
+		}
+
+		if(!^bHasToInterpolate_) {
+			fSx_ := 0.5 * (fAx + fBx);
+			fQx_ := fBx; 
+			fQy_ := fBy;
+			bHasToInterpolate_ := true;
+		}
+
+		fRy_ = lcl_IterateInverseDistFunction(funNum, ^fSx_, fP, fDF);
+
+		inverse_quadric_interpolation(^fQx_, ^fQy_, fRx, fRy, ^fSx_, fRy_, 
+							if(lcl_HasChangeOfSign(fAy, fRy_)) fAx else ^fSx_, 
+							if(lcl_HasChangeOfSign(fAy, fRy_)) fAy else fRy_, 
+							if(lcl_HasChangeOfSign(fAy, fRy_)) ^fSx_ else fBx, 
+							if(lcl_HasChangeOfSign(fAy, fRy_)) fRy_ else fBy, 
+							^fSx_, fP, fDF, funNum, 
+							^bHasToInterpolate_ && (abs(fRy_) * 2.0 <= abs(fRy)),
+							nCount+1
+							);
+	}
+	else fRx;
+}
+
+lcl_IterateInverse(funNum : int, fP : double, fDF : double, fAx : double, fBx : double) -> double {
+
+	fei = find_enclosing_interval(lcl_IterateInverseDistFunction(funNum, fAx, fP, fDF),
+								lcl_IterateInverseDistFunction(funNum, fBx, fP, fDF),
+								fAx, fBx, fP, fDF, funNum, 0);
+
+	fAy_ = fei.first;
+	fBy_ = fei.second;
+	fAx_ = fei.third;
+	fBx_ = fei.fourth;
+
+	if(fAy_ == 0.0) fAx_
+	else if (fBy_ == 0.0) fBx_
+	else if (!lcl_HasChangeOfSign(fAy_, fBy_)) 0.0 
+	else {
+		fPx = fAx_;
+		fPy = fAy_;
+		fQx = fBx_;
+		fQy = fBy_;
+		fRx = fAx_;
+		fRy = fAy_;
+		fSx_ = 0.5 * (fAx_ + fBx_);
+
+		inverse_quadric_interpolation(fPx, fPy, fQx , fQy, fRx, fRy, 
+							fAx_, fAy_, fBx_, fBy_, fSx_, 
+							fP, fDF, funNum, true, 0);
+	}
+}
+
+getChiSqInv(fP : double, fDF : double) -> double {
+	lcl_IterateInverse(1, fP, fDF, fDF*0.5, fDF)
+}
+
+getBetaDist2(fx : double, alpha : double, beta : double) -> double {
+	if (beta == 1.0) dpow(fx, alpha)
+	else if (alpha == 1.0) 1.0 - dpow(1.0-fx,beta)
+	else {
+		fEps = 0.00000001;
+		fEps_ = 0.000000000000000000000000000001;
+		bReflect = !(fx < ((alpha+1.0)/(alpha+beta+1.0)));
+		fA = if(bReflect) beta else alpha;
+		fB = if(bReflect) alpha else beta;
+		x = if(bReflect) 1.0 - fx else fx;
+
+		cf = if (x < fEps) 0.0
+			else {
+				a1 = 1.0; 
+				b1 = 1.0;
+				b2 = 1.0 - (fA+fB)*x/(fA+1.0);
+				a2 = if(b2 == 0.0) b2 else 1.0;
+				fnorm = if(b2 == 0.0) 1.0 else 1.0/b2;
+				cf_ = if(b2 == 0.0) 1.0 else a2*fnorm;
+				cfnew = 1.0;
+				res = getBetaDist2_(x, fA, fB, a1, a2, b1, b2, fnorm, cfnew, cf_, 1);
+				b1_ = if (fB < fEps) fEps_
+					else exp(getLogGamma(fA)+getLogGamma(fB)-getLogGamma(fA+fB));
+				res * dpow(x, fA)*dpow(1.0-x,fB)/(fA*b1_);
+			}
+
+		if (bReflect) 1.0-cf else cf
+	}
+}
+
+getBetaDist2_(x : double, fA : double, fB : double, a1 : double, a2 : double, b1 : double, b2 : double, fnorm : double, cfnew : double, cf : double, j : int) -> double {
+	fEps = 0.00000001;
+	if (j > 100) cf 
+	else {
+		rm = i2d(j);
+		apl2m = fA + 2.0*rm;
+		d2m = rm*(fB-rm)*x/((apl2m-1.0)*apl2m);
+		d2m1 = -(fA+rm)*(fA+fB+rm)*x/(apl2m*(apl2m+1.0));
+		a1_ = (a2+d2m*a1)*fnorm;
+		b1_ = (b2+d2m*b1)*fnorm;
+		a2_ = a1_ + d2m1*a2*fnorm;
+		b2_ = b1_ + d2m1*b2*fnorm;
+		if(b2_ != 0.0) {
+			fnorm_ = 1.0/b2_;
+			cfnew_ = a2_*fnorm_;
+			if (abs(cf-cfnew_)/cf < fEps) cf else getBetaDist2_(x, fA, fB, a1_, a2_, b1_, b2_, fnorm_, cfnew_, cfnew_, j+1)
+		}
+		else getBetaDist2_(x, fA, fB, a1_, a2_, b1_, b2_, fnorm, cfnew, cf, j+1)
+	}
+}

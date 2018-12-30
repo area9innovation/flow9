@@ -1,0 +1,200 @@
+# Flow: getting started (on Windows)
+
+## Setup & compile the flow compiler
+
+First, download and install haXe and neko:
+
+	http://haxe.org/download/
+
+Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work, but you'll
+have to manually roll back neko version to 2.0.0 (see section below). The simplest
+way is to get haxe 3.2.1.
+
+Now install the "format" and "pixijs" haxe libraries:
+
+	haxelib install format
+	haxelib set pixijs 4.5.4
+	(a newer version might be not supported yet)
+
+Now check that you can compile the compiler:
+
+	cd c:\flow\src
+	haxe FlowNeko.hxml
+
+Also to go to `C:\flow\resources\neko\1.8.2-2.0.0`. Move the patched gc.dll
+to your Neko installation (there is a readme.txt in that folder with a little more detail).
+This will increase the amount of available memory to Neko, to avoid errors when
+compiling larger Flow programs.
+
+# Using haxe 3.4.x or later
+
+It is possible to use later Haxe versions, but you have to revert back to neko 2.0.0 to
+make this work.
+
+First, install Haxe with the neko 2.1. Then, go to `...\HaxeToolkit\` folder
+where you installed Haxe and neko. You need to extract the
+`flow\resources\neko\neko-2.0.0-win.zip` file in this folder. Then you should copy the
+`flow\resources\neko\1.8.2-2.0.0\unlimited\gc.dll` on top of the one in the
+neko-2.0.0 folder.
+Now, rename the "neko" folder to "neko-2.1.0", and rename "neko-2.0.0" to "neko".
+Restart any command prompts, and you should be able to use the latest haxe with
+neko 2.0, with the unlimited heap.
+
+At the end, you will have
+
+   ...\HaxeToolkit\haxe
+   ...\HaxeToolkit\neko-2.1        (unused)
+   ...\HaxeToolkit\neko            (with neko 2.0)
+   ...\HaxeToolkit\neko\gc.dll     (taken from `flow\resources\neko\1.8.2-2.0.0\unlimited\gc.dll`)
+
+Verify that you can compile and run programs, and you are all set.
+
+# Install VC runtime
+
+Run
+	C:\flow\QtByteRunner\bin\windows\vcredist_x64.exe
+
+to install the Visual Studio runtime needed for our flow bytecode runner.
+
+## Add flow to your PATH
+
+Now you are ready to start use flow. First add `c:\flow\bin` to your PATH.
+
+Now test that everything works by compiling & running the first program using
+the c++ runner in a command line at `c:/flow`:
+
+	flowcpp sandbox/hello.flow
+
+If it prints "Hello console" in your console and "Hello window" on the screen, *flow* is alive.
+
+## Compile flow to JS and serve it from a web server
+
+You can also run flow code in JavaScript, served by a web server. First set up a web-server such
+that `http://localhost/flow/` points to the `/flow/www` directory.
+
+If you want to develop on Windows, you can do that using WampServer (preferred) or EasyPHP
+
+	http://www.wampserver.com/
+	http://www.easyphp.org/
+
+When installing WampServer or EasyPHP on Windows 8 or later, run the installer as administrator.
+
+Make sure you configure your Skype to not use port 80 in Settings, Advanced, Connection
+and uncheck the check box for using port 80 and 443. In Wamp, next "Start all services".
+Now add an alias by selecting Apache, Alias directories, Add an alias, and make "flow"
+point to `c:/flow/www`.
+
+For EasyPHP, go to the administration, under LOCAL FILES click "add an
+alias" to make "flow" point to `c:/flow/www`. Notice, however, recent versinos of EasyPHP
+like to put an "edsa-" prefix to all alias, which is very annoying. To work around that,
+you have to hack the http.conf setup manually.
+
+        Alias /flow/ "C:/flow/www/"
+
+        <Directory "C:/flow/www/">
+                Options Indexes FollowSymLinks MultiViews
+                AllowOverride all
+                Order allow,deny
+                Allow from all
+                Require all granted
+        </Directory>
+
+There is another way to fix "edsa-" prefix
+(https://stackoverflow.com/questions/39339513/how-to-prevent-easyphp-devserver-16-to-add-prefix-edsa-for-alias).
+Go to the eds-dashboard subdirectory and edit the index.php file.
+Change:
+	$new_alias[0]['alias_name'] = 'edsa-' . $_POST['alias_name'];
+	<?php echo wordwrap(substr($alias['alias_name'],5), 20, "<br />", true); ?>
+
+For:
+	$new_alias[0]['alias_name'] = $_POST['alias_name'];
+	<?php echo wordwrap(substr($alias['alias_name'],0), 20, "<br />", true); ?>
+
+Because of this mess, we recommend Wamp instead.
+
+Now you can compile your code to JavaScript like
+
+	flow --js www/hello.js sandbox/hello.flow
+
+Then open this in your web browser:
+
+	http://localhost/flow/flowjs.html?name=hello
+
+To see the output from this program, open the JavaScript console in your
+browser. That is ctrl+shift+J in Chrome in the address line.
+
+Details on mysql setup issues can be found in `flow/doc/mysql.markdown`
+
+## What is really happening when compiling flow code
+
+When you run
+
+	flowcpp sandbox/hello.flow
+
+the program will be compiled to flow bytecode and then interpreted.
+You can also do this manually like this. First compile to bytecode
+with a command line like this:
+
+	flow -c hello.bytecode sandbox/hello.flow
+
+Next, you can interpret that by our C++ runner by typing
+
+	flowcpp www/hello.bytecode
+
+in a command prompt in `c:\flow`. This will use the Qt-based C++ flow runner.
+See `QtBytecodeRunner/readme.txt` to learn more about this runner.
+
+As you saw above, you can also compile directly to JavaScript by using
+
+	flow --js hello.js sandbox/hello.flow
+
+and run it as
+
+	http://localhost/flow/flowjs.html?name=hello
+Currently, we use [PixiJs](https://pixijs.io) rendering library to draw our js-compiled applications.
+
+Please note that js target won't run any code unless you render something.
+
+## Why use PixiJs instead of DOM?
+We tried to use DOM for rendering but as a result we got huge DOM trees and browsers were unable to handle them and just kept crushing.
+With PixiJs we just render everything in one canvas and it can handle and reflect comlicated UI trees quite well compared to DOM implementation.
+
+Even though on smaller projects PixiJs driven apps are relatively fast but on bigger apps they can express quite significant slowdowns.
+As a remedy for this we are considering using [WebAssembly](https://webassembly.org) but it is only just in plans at the moment.
+
+## Sending emails
+
+To be able to send email from your local machine, you should install the SSL certificate.
+Though on Windows they are usually installed into the registry, in PHP this is done
+by editing the file `php.ini`.
+
+Download the following file: http://curl.haxx.se/ca/cacert.pem to any folder on your
+hard drive. In the file `php.ini`, find a line
+
+	openssl.cafile=
+
+If it is commented, uncomment it and append the full path of the downloaded file `cacert.pem`.
+
+## Compiling and running flow bytecode as CGI scripts in apache
+
+Information on this topic can be found in QtByteRunner/readme.md
+in section "Enabling fast-cgi in apache"
+
+## Running in a virtual environment?
+
+### Running Windows guest under VMWare
+VMWare with Windows guest seems to be fully functional, including C++ Runner, thanks to 3D support from VMWare.
+
+### Running Windows guest under VirtualBox
+
+VirtualBox with Windows guest support is limited to non-gui mode of C++ runner. All other stuff works fine though.
+
+Running GUI programs with the C++ runner may fail with the error *"OpenGL ARB_framebuffer_object extension is not available"*.
+In that case, you can still use the runner for command-line programs by running it with `flowcpp --batch`.
+For testing GUI code, use JavaScript instead.
+
+If Sublime Text is used for editing/running code, add --batch into the flowcpp.bat
+for example:
+`@%~dp0..\QtByteRunner\bin\windows\QtByteRunner.exe --batch %*`
+
+But it leads to inability to debug gui-based application under VirtualBox with Windows guest.

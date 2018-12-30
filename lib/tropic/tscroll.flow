@@ -1,0 +1,845 @@
+import tropic/tropic_gui;
+import tropic/tropic_manager;
+import ui/animate/spring;
+
+export {
+	// Reserves the box for an area of the screen to display the content.
+	// Provides scrollbars to make sure the content fits. This size of this
+	// element is always the box..
+	// Since a TScroll allows dragging to move the current view, we also support
+	// a style to tell the outside world if something was clicked
+	TScroll(manager : TManager, content : Tropic, box : Tropic, style :[TScrollStyle]) -> Tropic;
+
+	TScrollStyle ::= TTopLeft, TScrollClick, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollBarsStyle, TShowScrollbars, 
+		TScrollDisableMouseWheel, TTopLeftAnimation;
+
+		// Provides ability to move to a specific place. (Does not reflect where it is placed)
+		TTopLeft(left : DynamicBehaviour<double>, top : DynamicBehaviour<double>);
+		TTopLeftAnimation(enabled : Transform<bool>);
+
+		// To negotiate whether drags and clicks inside a scroll is for panning or for clicking
+		// buttons, we provide this interface to let the scrollable resolve this ambiguity.
+		// Notice that pressed can change from active to inactive without that signifying a click.
+		// You have to use the click behaviour to discern that.
+		// The point2place function should map x,y coordinates in the content to logical distinct
+		// places. In particular, it also has to map -1.0, -1.0 to a "None"-value.
+		// Notice also that this function should be efficient, since it is called on all mouse moves.
+		// The hovering will also tell what the current item is for the mouse "outside" of the scroll 
+		// box. This is probably not very useful, so it should be fixed at some point.
+		TScrollClick(point2place : (Point) -> int, hovering : DynamicBehaviour<int>, pressed : DynamicBehaviour<int>, click : DynamicBehaviour<int>);
+
+		// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
+		TScrollBound(xbound : bool, ybound : bool);
+
+		// Provide insight into what is currently visible.
+  		TScrollInspectVisible(topleft : DynamicBehaviour<Point>, widthHeight : DynamicBehaviour<WidthHeight>);
+
+  		TScrollEnabled(enabled : Transform<bool>);
+
+  		// Do not handle the mouse events, so they are also sent to stuff below
+  		TScrollDontHandle();
+
+  		// Disables Mouse Wheel
+  		TScrollDisableMouseWheel();
+
+  		// true - show scrolls everywhere, false - hide srolls on mobile;
+  		TShowScrollbars(showOnMobile : bool);
+
+  		// Visual style for scrollbars
+  		TScrollBarsStyle(horz : TScrollBarStyle, vert : TScrollBarStyle);
+  			// If visible is const, scrollbar always visible or invisible.
+  			// For showing scrollbars automatically on scroll use DynamicBehaviour as visible.
+  			TScrollBarStyle(visible : Behaviour<bool>, thickness : double, fg : [TGraphicsStyle], bg : [TGraphicsStyle]);
+				standardScrollBar = TScrollBarStyle(const(true), if (mobile) 8. else 16., [Fill(0xeeeeee)], [Fill(0x888888)]);
+				invisibleScrollBar = TScrollBarStyle(const(false), 0.0, [], []);
+				minimalScrollBarLight = TScrollBarStyle(const(true), if (mobile) 4. else 8., [Fill(0xeeeeee)], []);
+				minimalScrollBarDark = TScrollBarStyle(const(true), if (mobile) 4. else 8., [Fill(0x101010)], []);
+
+}
+
+TScrollAcc(
+	manager : TManager,
+	// Where is the mouse in local coordinates?
+	xy : DynamicBehaviour<Point>,
+	// Where it is current top-left?
+	topleft : Transform<Point>,
+	// Is the mouse down?
+	down : Behaviour<bool>,
+	// Is the Xscrollbar grabbed?
+	scrollbarXDown : DynamicBehaviour<bool>,
+	// How much Xscrollbar click is over bounds
+	scrollbarXOverBounds : DynamicBehaviour<double>,
+	// Is the Yscrollbar grabbed?
+	scrollbarYDown : DynamicBehaviour<bool>,
+	// How much Yscrollbar click is over bounds
+	scrollbarYOverBounds : DynamicBehaviour<double>,
+	// Where was the mouse on click in screen coordinates?
+	startxy : DynamicBehaviour<Point>,
+	// When was the mouse click?
+	startTime : DynamicBehaviour<double>,
+	// Where was the mouse last in screen coordinates? nopoint when mouse is not down
+	lastxy : DynamicBehaviour<Point>,
+	// What was the top-left coordinate when we clicked?
+	clicklefttop : DynamicBehaviour<Point>,
+	// Any function to inform of clicks
+	scrollClick : TScrollClick,
+	// Are we bound on the x and y axis?
+	bound : TScrollBound,
+	// Where do we want the top-left to animate towards?
+	xgoal : DynamicBehaviour<double>,
+	ygoal : DynamicBehaviour<double>,
+	// The springs controlling the animations
+	xspring : Spring,
+	yspring : Spring,
+	// Are we moving in this direction?
+	xmoving : DynamicBehaviour<bool>,
+	ymoving : DynamicBehaviour<bool>,
+	// The value for no point inside our view
+	nopoint : Point,
+	// The dummy value for no place
+	dummyPlace : int
+);
+// tag of currently active TScroll for mouseWheel
+activeWheelTag = ref -1;
+
+timedown = make(0.0);
+DynMetrics(width : DynamicBehaviour<double>, height : DynamicBehaviour<double>);
+
+TScroll(manager : TManager, t : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic {
+	// Are we enabled or not?
+	enabled = extractStruct(style, TScrollEnabled(const(true)));
+
+	donthandle = contains(style, TScrollDontHandle());
+
+	// Are we moving in this direction?
+	xmoving = make(false);
+	ymoving = make(false);
+
+	// Outside control of our top-left
+	externalTopLeft = extractStruct(style, TTopLeft(make(0.0), make(0.0)));
+	externalTopLeftAnimation = extractStruct(style, TTopLeftAnimation(const(true))).enabled;
+
+	// we need to know our tag.
+	tag = ^(manager.nextTagId);
+	manager.nextTagId := tag + 1;
+
+	// Notification for hovering, pressed, clicks
+	scrollClick = extractStruct(style, TScrollClick(\p -> 0, make(0), make(0), make(0)));
+
+	// Restrict scrolling outside of our bounds?
+	bound = extractStruct(style, TScrollBound(true, true));
+
+	// When outside the scrollarea, what place to use
+	dummyPlace = scrollClick.point2place(Point(-1.0, -1.0));
+
+	showScrolls = extractStructMany(style, TShowScrollbars(false));
+
+	// What is our left side?
+	xgoal = make(0.0);
+	xspring = makeSpring(15.0, if (mobile) 20.0 else 10.0, xgoal, manager.deltaTimer, \ -> nextDistinct(xmoving, false));
+
+	// What is our top?
+	ygoal = make(0.0);
+	yspring = makeSpring(30.0, if (mobile) 20.0 else 10.0, ygoal, manager.deltaTimer, \ -> nextDistinct(ymoving, false));
+
+	// The top left
+	topleft = fselect2(xspring.position, yspring.position, FLift2(\f, s -> Point(f, s)));
+
+	// If we have the inspection style, wrap stuff with a subscription to what we listen to
+	dummyScrollInspect = TScrollInspectVisible(make(Point(0.0, 0.0)), makeWH());
+	inspect : TScrollInspectVisible = extractStruct(style, dummyScrollInspect);
+	// The mouse position in the local coordinate system
+	xy = make(Point(0.0, 0.0));
+
+	// The mouse down state
+	down = make(false);
+	scrollbarXDown = make(false);
+	scrollbarYDown = make(false);
+
+	barstyles = extractStruct(style, TScrollBarsStyle(standardScrollBar, standardScrollBar));
+
+	nopoint = Point(-1.0, -1.0);
+	acc = TScrollAcc(manager, xy, topleft, down, scrollbarXDown, make(0.), scrollbarYDown, make(0.), make(nopoint), make(0.0), make(nopoint), 
+		make(fgetValue(topleft)), scrollClick, bound, xgoal, ygoal, xspring, yspring, 
+		xmoving, ymoving, nopoint, dummyPlace
+	);
+
+	scrollarea = DynMetrics(make(0.), make(0.));
+	bodyarea = DynMetrics(make(0.), make(0.));
+	subWidth = fsubtract(bodyarea.width, scrollarea.width);
+	subHeight = fsubtract(bodyarea.height, scrollarea.height);
+
+	rangex = \x -> rangeit(x, 0.0, subWidth);
+	rangey = \y -> rangeit(y, 0.0, subHeight);
+
+	widthHeight = makeWH();
+
+	// As long as the mouse is down, or one of the scrollbars is moving, we are visible
+	xscrollvisible : Transform<bool> = 
+		if (length(showScrolls) > 0 && (showScrolls[0].showOnMobile || !mobile)) 
+			fselect2(subWidth, barstyles.horz.visible , FLift2(\sw, hv -> sw > 0. && hv)) 
+		else 
+			fmin3(enabled.enabled, xmoving, fselect2(subWidth, barstyles.horz.visible , FLift2(\sw, hv -> sw > 0. && hv)));
+			
+	yscrollvisible : Transform<bool> = 
+		if (length(showScrolls) > 0 && (showScrolls[0].showOnMobile || !mobile))
+			fselect2(subHeight, barstyles.vert.visible, FLift2(\sh, vv -> sh > 0. && vv)) 
+		else 
+			fmin3(enabled.enabled, ymoving, fselect2(subHeight, barstyles.vert.visible, FLift2(\sh, vv -> sh > 0. && vv)));
+
+	// As the mouse is moved, move the viewport for any inspectors
+	mousePlace = fselect2(xy, topleft, FLift2(\point0 : Point, point1 : Point -> {
+		abs(fgetValue(acc.xspring.velocity)) 
+		|> (\f -> 
+			if (f > 0. && f < 1. && abs(getValue(acc.xgoal) - getValue(acc.xspring.position)) < 1.) 
+				cleanMovingX(acc));
+
+		abs(fgetValue(acc.yspring.velocity)) 
+		|> (\f -> 
+			if (f > 0. && f < 1. && abs(getValue(acc.ygoal) - getValue(acc.yspring.position)) < 1.) 
+				cleanMovingY(acc));
+
+		if (0.0 <= point0.x && point0.x < fgetValue(scrollarea.width)
+			&& 0.0 <= point0.y && point0.y < fgetValue(scrollarea.height)) {
+			point = Point(point0.x + point1.x, point0.y + point1.y);
+			scrollClick.point2place(point);
+		} else {
+			dummyPlace
+		}
+	}));
+
+	delta = make(0.0);
+
+	TLet("body", t,
+		TConstruct([
+				\ -> { 
+					u1 = tscrollMouseDown(acc, rangex, rangey);
+
+					u2 = tscrollMouseMove(acc, rangex, rangey, fdivide(bodyarea.width, scrollarea.width), fdivide(bodyarea.height, scrollarea.height));
+
+					u2a = fuse(mousePlace);
+					u2b = connectDistinct(u2a.first, scrollClick.hovering);
+			
+					// If requests come from the outside, we respect them
+					u3 = subscribe(externalTopLeft.left, \x -> {
+						rx = rangex(x);
+						if (getValue(xgoal) != rx) {
+							if (fgetValue(externalTopLeftAnimation)) {
+								nextDistinct(xmoving, true);
+								nextDistinct(xgoal, rx);
+							} else {
+								nextDistinct(acc.xspring.position, rx);
+								nextDistinct(acc.xmoving, getValue(acc.xgoal) != rx);
+								nextDistinct(acc.xgoal, rx);
+							}
+							
+						}
+					});
+					u4 = subscribe(externalTopLeft.top, \y -> {
+						ry = rangey(y);
+						if (getValue(ygoal) != ry) {
+							if (fgetValue(externalTopLeftAnimation)) {
+								nextDistinct(ymoving, true);
+								nextDistinct(ygoal, ry);
+							} else {
+								nextDistinct(acc.yspring.position, ry);
+								nextDistinct(acc.ymoving, getValue(acc.ygoal) != ry);
+								nextDistinct(acc.ygoal, ry);
+							}
+						}
+					});
+
+					// Keep an eye on the mouse wheel
+					u5 = subscribe2(delta, \d -> {
+						cleanMovingY(acc);
+
+						yg0 = getValue(acc.ygoal) - d * 160.0;
+						yg1 = rangey(yg0);
+
+						nextDistinct(acc.yspring.velocity, acc.yspring.friction * (yg1 - getValue(acc.ygoal)));
+						nextDistinct(acc.ymoving, getValue(acc.ygoal) != yg1);
+						nextDistinct(acc.ygoal, yg1);
+					});
+
+					d = concat(u2a.second, [u1, u2, u3, u4, u5, u2b]);
+					\ -> applyall(d)
+				},
+				\ -> {
+					// If the outside world wants to know where we are, we provide that service
+					if (inspect != dummyScrollInspect) {
+						ftl = fuse(topleft);
+						iu1 = connectDistinct(ftl.first, inspect.topleft);
+						fwh = fuse(widthHeight);
+						iu2 = connectDistinct(fwh.first, inspect.widthHeight);
+						\ -> {
+							applyall(ftl.second);
+							applyall(fwh.second);
+							iu1();
+							iu2();
+						}
+					} else nop;
+				}
+			],
+			TGroup([
+				TAttach(TGroup2(box, TFixed(16.0, 16.0)), \scrollarea0 -> {
+					TSelect(fselect2(scrollarea0.width, scrollarea0.height, FLift2(\w, h -> WidthHeight(w, h))), \scrollWH -> {
+						next(widthHeight, scrollWH);
+						next(scrollarea.width, scrollWH.width);
+						next(scrollarea.height, scrollWH.height);
+
+						checkXBounds(acc, rangex);
+						checkYBounds(acc, rangey);
+
+						TEmpty();
+					})
+				}),
+				TAttach(TGhost("body"), \bodyarea0 -> {
+					TSelect(fselect2(bodyarea0.width, bodyarea0.height, FLift2(\w, h -> WidthHeight(w, h))), \bodyWH -> {
+						next(bodyarea.width, bodyWH.width);
+						next(bodyarea.height, bodyWH.height);
+
+						checkXBounds(acc, rangex);
+						checkYBounds(acc, rangey);
+
+						TEmpty();
+					})
+				}),
+				// The mouse wheel in a layer by itself
+				TVisible(enabled.enabled,
+					TInteractive(if (!contains(style, TScrollDisableMouseWheel())) [
+							FineGrainMouseWheel2(\handled, mi -> {
+								if (^activeWheelTag == -1) {
+									mwi = mi();
+
+									// block wheel for other TScrolls
+									if (mwi.inside && fgetValue(subHeight) > 0. && (mwi.dx != 0.0 || mwi.dy != 0.0)) {
+										activeWheelTag := tag;
+										deferred(\ -> activeWheelTag := -1);
+
+										next(delta, mwi.dy);
+										true
+									} else {
+										handled
+									}
+								} else {
+									handled
+								}
+							})
+						] else [], 
+						TRectangle([FillOpacity(0.0), Fill(0xffffff)],
+							box
+						)
+					)
+				),
+				// Add mouse handler to allow drag
+				TVisible(enabled.enabled, TInteractive([
+						if (donthandle) 
+							TMouseDownGhost(down) 
+						else 
+							TMouseDown(down),
+						if (mobile)
+							MouseMove(\mi0 -> {
+								mi = mi0();
+								nextDistinct(xy, Point(mi.x, mi.y));
+								if (getValue(acc.down) || getValue(acc.scrollbarXDown) || getValue(acc.scrollbarYDown)) {
+									!donthandle
+								} else
+									false
+							})
+						else
+							MouseMove(\mi0 -> {
+								if (getValue(acc.down) || getValue(acc.scrollbarXDown) || getValue(acc.scrollbarYDown)) {
+									mi = mi0();
+									nextDistinct(xy, Point(mi.x, mi.y));
+									!donthandle
+								} else
+									false
+							})
+					],
+					// Fill with nothing to get events
+					TRectangle([FillOpacity(0.0), Fill(0xffffff)],
+						box
+					)
+				)),
+				// The content
+				TCrop(
+					topleft, 
+					if (length(showScrolls) > 0 && (showScrolls[0].showOnMobile || !mobile))
+						fselect2(yscrollvisible, widthHeight, FLift2(\v, wh -> if (v) WidthHeight(wh.width - barstyles.vert.thickness, wh.height) else wh))
+						|> (\f -> fselect2(xscrollvisible, f, FLift2(\v, wh -> if (v) WidthHeight(wh.width, wh.height - barstyles.horz.thickness) else wh)))
+					else
+						widthHeight,
+					TDisplay("body")
+				),
+				// The up/down scrollbar
+				TTranslate(fselect(scrollarea.width, FLift(\w -> Point(w - barstyles.vert.thickness, 0.0))),
+					TCrop(const(Point(0.0, 0.0)), widthHeight,
+						tscrollbar(acc, true, fselect(topleft, FLift(\y -> Point(0.0, y.y))), scrollarea.height, bodyarea.height, barstyles.vert, rangey)
+					)
+				)
+				|> (\f -> if (flash) TIf(yscrollvisible, f, TEmpty()) else TVisible(yscrollvisible, f)),
+				// The sideways scrollbar
+				TTranslate(fselect(scrollarea.height, FLift(\h -> Point(0.0, h - barstyles.horz.thickness))),
+					TCrop(const(Point(0.0, 0.0)), widthHeight,
+						tscrollbar(acc, false, fselect(topleft, FLift(\x -> Point(x.x, 0.0))), scrollarea.width, bodyarea.width, barstyles.horz, rangex)
+					)
+				)
+				|> (\f -> if (flash) TIf(xscrollvisible, f, TEmpty()) else TVisible(xscrollvisible, f))
+			])
+			|> (\f -> TSize(box, f))
+		)
+	)
+}
+
+checkYBounds(acc : TScrollAcc, rangey : (double) -> double) -> void {
+	yg = fgetValue(acc.ygoal);
+	ryg = rangey(yg);
+	if (yg != ryg) {
+		nextDistinct(acc.yspring.position, ryg);
+		nextDistinct(acc.ymoving, true);
+		nextDistinct(acc.ygoal, ryg);
+	}
+}
+
+checkXBounds(acc : TScrollAcc, rangex : (double) -> double) -> void {
+	xg = fgetValue(acc.xgoal);
+	rxg = rangex(xg);
+	if (xg != rxg) {
+		nextDistinct(acc.xspring.position, rxg);
+		nextDistinct(acc.xmoving, true);
+		nextDistinct(acc.xgoal, rxg);
+	}
+}
+
+cleanMovingX(acc : TScrollAcc) -> void {
+	if (getValue(acc.xmoving)) {
+		px = getValue(acc.xspring.position);
+		resetSpring(acc.xspring);
+
+		nextDistinct(acc.xspring.position, px);
+		nextDistinct(acc.xmoving, false);
+		nextDistinct(acc.xgoal, px);
+	}
+}
+
+cleanMovingY(acc : TScrollAcc) -> void {
+	if (getValue(acc.ymoving)) {
+		py = getValue(acc.yspring.position);
+		resetSpring(acc.yspring);
+
+		nextDistinct(acc.yspring.position, py);
+		nextDistinct(acc.ymoving, false);
+		nextDistinct(acc.ygoal, py);
+	}
+}
+
+tscrollMouseDown(acc : TScrollAcc, rangex : (double) -> double, rangey : (double) -> double) -> () -> void {
+	// When the mouse is pressed or released, keep track
+	lastPoint = ref Point(0.0, 0.0);
+	curPoint = ref Point(0.0, 0.0);
+	attachToTimer = \ -> {
+		curPoint := getValue(acc.xy);
+		uns = subscribe(acc.manager.deltaTimer.timer, \dt -> {
+			lastPoint := ^curPoint;
+			curPoint := getValue(acc.xy);
+		});
+		acc.manager.deltaTimer.attach();
+		\ -> {
+			acc.manager.deltaTimer.detach();
+			uns();
+		}
+	}
+	uns = ref nop;
+	uns2 = ref nop;
+	uns3 = ref nop;
+
+	// Some clicks are not real clicks - they just serve to stop motion
+	stopMove = ref false;
+
+	mouseDown = \ -> {
+		pointd : Point = getValue(acc.xy);
+		point0 : Point = acc.manager.xy();
+		point1 : Point = fgetValue(acc.topleft);
+		point = Point(pointd.x + point1.x, pointd.y + point1.y);
+		nextDistinct(acc.startxy, point0);
+		nextDistinct(acc.startTime, timestamp());
+		nextDistinct(acc.lastxy, point0);
+
+		stopMove := springMoving(acc.xspring) || springMoving(acc.yspring);
+
+		// Stop any pending movement
+		cleanMovingX(acc);
+		cleanMovingY(acc);
+
+		next(acc.clicklefttop, point1);
+		nextDistinct(acc.scrollClick.pressed, acc.scrollClick.point2place(point));
+		nextDistinct(acc.scrollClick.hovering, acc.dummyPlace);
+	}
+
+	mouseUp = \ -> {
+		nextDistinct(acc.startxy, acc.nopoint);
+		nextDistinct(acc.lastxy, acc.nopoint);
+
+		if (!^stopMove) {
+			clickPlace = getValue(acc.scrollClick.pressed);
+			// Send any click
+			nextDistinct(acc.scrollClick.click, clickPlace);
+			nextDistinct(acc.scrollClick.click, acc.dummyPlace);
+			stopMove := false;
+		}
+
+		// Reset any pressed flag
+		nextDistinct(acc.scrollClick.pressed, acc.dummyPlace);
+	}
+
+	subscribe2(acc.down, \d -> {
+		if (d) {
+			if (^uns == nop)
+				uns := attachToTimer();
+			^uns2();
+			uns2 := nop;
+			^uns3();
+			uns3 := nop;
+
+			mouseDown();
+		} else {
+			^uns();
+			uns := nop;
+
+			timespent = if (getValue(acc.startTime) == 0.0) 0.0 else (timestamp() - getValue(acc.startTime));
+			startXY = getValue(acc.startxy);
+			manXY = acc.manager.xy();
+
+			// Velocity of mouse movements
+			xs = 
+				if (getValue(acc.xmoving)) {
+					if (timespent > 200.)
+						(^lastPoint.x - ^curPoint.x) / 33. 
+					else 
+						(startXY.x - manXY.x) / timespent;
+				} else 0.0;
+
+			ys = 
+				if (getValue(acc.ymoving)) {
+					if (timespent > 200.) 
+						(^lastPoint.y - ^curPoint.y) / 33. 
+					else 
+						(startXY.y - manXY.y) / timespent;
+				} else 0.0;
+
+			// Positions in 1 sec
+			xg = getValue(acc.xgoal) + xs * (if (mobile) 500. else 100.);
+			yg = getValue(acc.ygoal) + ys * (if (mobile) 500. else 100.);
+
+			if (abs(xs) > 0.1) {
+				nextDistinct(acc.xmoving, xg != getValue(acc.xspring.position));
+				next(acc.xgoal, xg);
+				if (!mobile) next(acc.yspring.velocity, acc.xspring.friction * xs * 50.);
+			} else {
+				cleanMovingX(acc);
+			}
+
+			if (abs(ys) > 0.1) {
+				nextDistinct(acc.ymoving, yg != getValue(acc.yspring.position));
+				next(acc.ygoal, yg);
+				if (!mobile) next(acc.yspring.velocity, acc.yspring.friction * ys * 50.);
+			} else {
+				cleanMovingY(acc);
+			}
+
+			if (xg != rangex(xg)) {
+				p = getValue(acc.xspring.position);
+				rp = rangex(p);
+				if (p != rp) {
+					nextDistinct(acc.xmoving, getValue(acc.xgoal) != rp);
+					next(acc.xgoal, rp);
+					next(acc.xspring.velocity, acc.xspring.friction * (rp - p));
+				} else {
+					uns2 := subscribe2(acc.xspring.position, \p2 -> {
+						rp2 = rangex(p2);
+						if (p2 != rp2) {
+							^uns2();
+							nextDistinct(acc.xmoving, getValue(acc.xgoal) != rp2);
+							next(acc.xspring.position, rp2);
+							next(acc.xspring.velocity, 100.);
+							next(acc.xgoal, rp2);
+						}
+					});	
+				}
+			}
+
+			if (yg != rangey(yg)) {
+				p = getValue(acc.yspring.position);
+				rp = rangey(p);
+				if (p != rp) {
+					nextDistinct(acc.ymoving, getValue(acc.ygoal) != rp);
+					next(acc.ygoal, rp);
+					next(acc.yspring.velocity, acc.yspring.friction * (rp - p));
+				} else {
+					uns3 := subscribe2(acc.yspring.position, \p2 -> {
+						rp2 = rangey(p2);
+						if (p2 != rp2) {
+							^uns3();
+							next(acc.yspring.position, rp2);
+							next(acc.yspring.velocity, 100.);
+							nextDistinct(acc.ymoving, getValue(acc.ygoal) != rp2);
+							next(acc.ygoal, rp2);
+						}
+					});	
+				}
+			}
+				
+			mouseUp();
+		}
+	})
+	|> (\f -> 
+		if (mobile)
+			\ -> {
+				f(); 
+				^uns(); 
+				^uns3();
+			}
+		else {
+			scrollDown = fsubscribe2(fmax(acc.scrollbarYDown, acc.scrollbarXDown), \d -> 
+				if (d) {
+					mouseDown();
+				} else {
+					mouseUp();
+					nextDistinct(acc.scrollbarYOverBounds, 0.);
+					nextDistinct(acc.scrollbarXOverBounds, 0.);
+				});
+			\ -> {
+				f(); 
+				applyList(scrollDown, \l -> l()); 
+				^uns(); 
+				^uns3();
+			}
+		})
+}
+
+springMoving(x : Spring) -> bool {
+	abs(getValue(x.velocity)) > 4.0;
+}
+
+
+tscrollMouseMove(acc : TScrollAcc, rangex : (double) -> double, rangey : (double) -> double, xMultiplier : Transform<double>, yMultiplier : Transform<double>) -> () -> void {
+	subscribe2(acc.xy, \xyp -> {
+		if (getValue(acc.down)) {
+			place = acc.scrollClick.point2place(xyp);
+			if (place != getValue(acc.scrollClick.pressed)) {
+				// We moved out!
+				nextDistinct(acc.scrollClick.pressed, acc.dummyPlace);
+			}
+
+			lastp = getValue(acc.lastxy);
+			if (lastp != acc.nopoint) {
+				gxy = acc.manager.xy();
+				nextDistinct(acc.lastxy, gxy);
+
+				delta = Point(lastp.x - gxy.x, lastp.y - gxy.y);
+
+				xg = getValue(acc.xgoal) + delta.x;
+
+				xg1 = if (acc.bound.xbound) {
+						if (xg != rangex(xg) && rangex(64.0) == 64.0) 
+							getValue(acc.xgoal) + delta.x / sqrt(max(abs(xg - rangey(xg)), 1.))
+						else 
+							rangex(xg)
+					} else xg;
+
+				nextDistinct(acc.xspring.position, xg1);
+				nextDistinct(acc.xmoving, getValue(acc.xgoal) != xg1);
+				nextDistinct(acc.xgoal, xg1);
+
+				yg = getValue(acc.ygoal) + delta.y;
+
+				yg1 = if (acc.bound.ybound) {
+						if (yg != rangey(yg) && rangey(64.0) == 64.0)
+							getValue(acc.ygoal) + delta.y / sqrt(max(abs(yg - rangey(yg)), 1.))
+						else 
+							rangey(yg)
+					} else yg;
+
+				nextDistinct(acc.yspring.position, yg1);
+				nextDistinct(acc.ymoving, getValue(acc.ygoal) != yg1);
+				nextDistinct(acc.ygoal, yg1);
+			}
+		} else if (getValue(acc.scrollbarXDown)) {
+			place = acc.scrollClick.point2place(xyp);
+			if (place != getValue(acc.scrollClick.pressed)) {
+				// We moved out!
+				nextDistinct(acc.scrollClick.pressed, acc.dummyPlace);
+			}
+
+			lastp = getValue(acc.lastxy);
+			if (lastp != acc.nopoint) {
+				gxy = acc.manager.xy();
+				nextDistinct(acc.lastxy, gxy);
+
+				delta = (-lastp.x + gxy.x) * fgetValue(xMultiplier);
+
+				xg0 = getValue(acc.xgoal) + delta;
+
+				scrollX = getValue(acc.scrollbarXOverBounds);
+
+				next(acc.scrollbarXOverBounds,
+					rangex(xg0) - xg0 
+					|> (\f -> 
+						if (f == 0. && scrollX != 0.) {
+							if (sign(scrollX) == 1.) 
+								max(scrollX - delta, 0.) 
+							else 
+								min(scrollX - delta, 0.)
+						} else scrollX + f));
+
+				xg = xg0 - getValue(acc.scrollbarXOverBounds);
+
+				xg1 = if (acc.bound.xbound) rangex(xg) else xg;
+
+				nextDistinct(acc.xspring.position, xg1);
+				nextDistinct(acc.xmoving, getValue(acc.xgoal) != xg1);
+				nextDistinct(acc.xgoal, xg1);
+
+			}
+		} else if (getValue(acc.scrollbarYDown)) {
+			place = acc.scrollClick.point2place(xyp);
+			if (place != getValue(acc.scrollClick.pressed)) {
+				// We moved out!
+				nextDistinct(acc.scrollClick.pressed, acc.dummyPlace);
+			}
+
+			lastp = getValue(acc.lastxy);
+
+			if (lastp != acc.nopoint) {
+				gxy = acc.manager.xy();
+				nextDistinct(acc.lastxy, gxy);
+
+				delta = (-lastp.y + gxy.y) * fgetValue(yMultiplier);
+
+				yg0 = getValue(acc.ygoal) + delta;
+
+				scrollY = getValue(acc.scrollbarYOverBounds);
+
+				next(acc.scrollbarYOverBounds,
+					rangey(yg0) - yg0 
+					|> (\f -> 
+						if (f == 0. && scrollY != 0.) {
+							if (sign(scrollY) == 1.) 
+								max(scrollY - delta, 0.) 
+							else 
+								min(scrollY - delta, 0.)
+						} else scrollY + f));
+
+				yg = yg0 - getValue(acc.scrollbarYOverBounds);
+
+				yg1 = if (acc.bound.ybound) rangey(yg) else yg;
+
+				nextDistinct(acc.yspring.position, yg1);
+				nextDistinct(acc.ymoving, getValue(acc.ygoal) != yg1);
+				nextDistinct(acc.ygoal, yg1);
+			}
+		}
+	});
+}
+
+tscrollbar(acc : TScrollAcc, horz : bool, pos : Transform<Point>, scrollsize : Transform<double>, bodysize : Transform<double>, style : TScrollBarStyle, 
+	range_ : (double) -> double) -> Tropic {
+	borderGaps = i2d(floor(style.thickness / 4.));
+	r = if (horz) \v -> TFixed(style.thickness, v)
+		else \v -> TFixed(v, style.thickness);
+	r2 = if (horz) \v -> TFixed(style.thickness - borderGaps, v)
+		else \v -> TFixed(v, style.thickness - borderGaps);
+	innerDown = make(false);
+	innerXY = make(Point(0., 0.));
+
+	TScale(fselect2(scrollsize, bodysize, FLift2(\s : double, b : double -> {
+			f = min(1.0, (s - borderGaps) / b);
+			if (horz)
+				Factor(1.0, f)
+			else 
+				Factor(f, 1.0)
+		})),
+		TGroup2(
+			TRounded(2.0, 2.0, 2.0, 2.0,
+				[Fill(black), FillOpacity(0.)],
+				TSelect(bodysize, r)
+			)
+			|> (\f -> 
+				if (!mobile) 
+					TInteractive([TMouseDown(innerDown), TMouseXY(innerXY)], f)
+					|> (\f2 -> TCursor(FingerCursor(), f2))	
+				else 
+					f),
+			TTranslate(pos,
+				TRounded(2.0, 2.0, 2.0, 2.0,
+					style.fg,
+					TSelect(scrollsize, r2)
+				)
+				|> (\f -> TGroup2(TRectangle([Fill(black), FillOpacity(0.)], TSelect(scrollsize, r)), TCenterIn(f, TSelect(scrollsize, r))))
+				|> (\f -> if (!mobile) TInteractive([TMouseDown(if (horz) acc.scrollbarYDown else acc.scrollbarXDown)], f) else f)
+			)
+		)
+	)
+	|> (\f -> if (horz) TBorder(0., borderGaps / 2., 0., borderGaps / 2., f) else TBorder(borderGaps / 2., 0., borderGaps / 2., 0., f))
+	|> (\f ->
+		TGroup2(
+			TRectangle(
+				style.bg,
+				TSelect(scrollsize, r)
+			),
+			f
+		)
+	)
+	|> (\f -> 
+		if (!mobile) {
+			deltaTimer = makeDeltaTimer(20);
+
+			attachToTimer = \ -> {
+				uns = subscribe(deltaTimer.timer, \dt -> {
+					if (horz) {
+						yg = getValue(acc.ygoal);
+						yg1 = range_(getValue(innerXY).y - fgetValue(scrollsize) / 2.) - yg;
+						yg2 = yg + sign(yg1) * min(abs(yg1), fgetValue(bodysize) / 10.);
+						nextDistinct(acc.ymoving, getValue(acc.ygoal) != yg2);
+						nextDistinct(acc.ygoal, yg2);
+					} else {
+						xg = getValue(acc.xgoal);
+						xg1 = range_(getValue(innerXY).x - fgetValue(scrollsize) / 2.) - xg;
+						xg2 = xg + sign(xg1) * min(abs(xg1), fgetValue(bodysize) / 10.);
+						nextDistinct(acc.xmoving, getValue(acc.xgoal) != xg2);
+						nextDistinct(acc.xgoal, xg2);
+					}
+				});
+				deltaTimer.attach();
+				\ -> {
+					deltaTimer.detach();
+					uns();
+				}
+			}
+
+			uns = ref nop;
+
+			TConstruct([
+					\ -> subscribe2(innerDown, 
+						\d -> {
+							if (d) {
+								uns := attachToTimer();
+							} else {
+								^uns();
+							}
+						}
+					)
+					|> (\f2 -> \ -> {f2(); ^uns();})
+				], 
+				f
+			)
+		}
+		else
+			f
+	)
+}
+
+rangeit(v : double, minimum : double, maximum : Transform<double>) -> double {
+	max_ = fgetValue(maximum);
+	max(minimum, min(max_, v));
+}

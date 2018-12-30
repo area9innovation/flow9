@@ -1,0 +1,975 @@
+import material/measing;
+import material/internal/material_dragdrop;
+import material/selectmarray;
+
+export {
+	MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MReorderGrids2T(manager : MaterialManager, parent : MFocusGroup, m : MReorderGrids, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReorderItem],
+		order : DynamicBehaviour<[int]>, style : [MReorderGridStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+FlexibleGridItem(m : Material, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
+
+MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	verticalGrid = contains(m.style, MGridVertical());
+	groupByCols = extractStruct(m.style, MGridGroupByCols(false)).cols;
+	en = extractStruct(m.style, MEnabled(const(true))).enabled;
+	keepOrder = contains(m.style, MGridKeepOrder());
+	cropSize = contains(m.style, MGridCropByContent());
+	enableAnimation = contains(m.style, MEnableAnimation());
+	maxRows = if (!verticalGrid && keepOrder) -1 else extractStruct(m.style, MMaxRows(-1)).rows;
+	contentSize = makeWH();
+	contentBaseline = make(0.);
+
+	stageSize = make(0.);
+	items = ffuseinit(fmapi(m.items, \__, it -> FlexibleGridItem(it, make(zeroPoint), make(None()))), make([]));
+
+	selectSizes = fpair(fsubmap(items.first, \it -> it.wh), ftransistor(en, stageSize));
+	prevSize : ref double = ref getValue(stageSize);
+	prevSizes : ref [Maybe<WidthHeight>] = ref [];
+	prevTranslates : ref [Pair<Point, Point>] = ref [];
+
+	sizes2translates = \pair : Pair<[Maybe<WidthHeight>], double> -> {
+		newSizesMaybe = pair.first;
+		stageSize0 = pair.second;
+
+		if (!contains(newSizesMaybe, None())) {
+			itemsLength = length(newSizesMaybe);
+			sizes0 = map(newSizesMaybe, \v -> either(v, zeroWH));
+
+			newSizes = generate(0, itemsLength, \i -> sizes0[i]);
+			newTranslates =
+				generate(0, itemsLength, \i ->
+					if (length(^prevTranslates) > i)
+						make(^prevTranslates[i].second)
+					else
+						cloneBehaviour(getValue(items.first)[i].tr)
+				);
+
+			getTranslatePoint = \i -> newTranslates[i];
+
+			freePoints : ref [Point] = ref [zeroPoint];
+			contentWH = ref WidthHeight(0., 0.);
+
+			updateFreePoints(
+				freePoints,
+				keepOrder,
+				verticalGrid,
+				groupByCols,
+				maxRows,
+				newSizes,
+				stageSize0,
+				getTranslatePoint,
+				\fp, sz -> {
+					contentWH := WidthHeight(max(^contentWH.width, fp.x + sz.width), max(^contentWH.height, fp.y + sz.height));
+				}
+			);
+
+			nextDistinct(contentSize, ^contentWH);
+			prevTranslates := mapi(getValue(items.first), \i, tr : FlexibleGridItem -> {
+				reversePointForRtl = \p ->
+					if (getDefaultRtl() && !verticalGrid)
+						Point(^contentWH.width - newSizes[i].width - p.x, p.y)
+					else p;
+				Pair(getValue(tr.tr), reversePointForRtl(getValue(newTranslates[i])))
+			});
+		} else
+			prevTranslates := mapi(getValue(items.first), \i, tr : FlexibleGridItem ->
+				Pair(getValue(tr.tr), if (i < length(^prevTranslates)) ^prevTranslates[i].second else getValue(tr.tr))
+			);
+
+		^prevTranslates;
+	};
+
+	SelectMGroup2T(manager, parent, items.first, \idx, __, item, p -> {
+		TransformTAcc2(\t2a -> {
+				b1 = TTranslate(item.tr, m2t(item.m, p)) |> t2a;
+
+				TAcc(
+					b1.form,
+					TFormMetrics(
+						zero,
+						zero,
+						zero
+					),
+					zero,
+					zero,
+					zero,
+					zero,
+					zero,
+					zero,
+					const(false),
+					false,
+					false,
+					concat(
+						b1.disposers,
+						[
+							make2Subscribe(b1.metrics.width, b1.metrics.height, \_wd, _hgt ->
+								nextDistinct(item.wh, Some(WidthHeight(_wd, _hgt)))
+							)(),
+							makeSubscribeUns(feq(idx, 0), \b -> {
+								if (b)
+									[fconnect(b1.metrics.baseline, contentBaseline)]
+								else
+									[]
+							})()
+						]
+					)
+				)
+			}
+		)
+	})
+	|> (\f ->
+		TransformTAcc2(\t2a -> {
+				b1 = f |> t2a;
+
+				wd = fwidth(contentSize);
+				hgt = fheight(contentSize);
+
+				TAcc(
+					b1.form,
+					TFormMetrics(
+						wd,
+						hgt,
+						contentBaseline
+					),
+					if (verticalGrid) wd else zero,
+					if (verticalGrid) zero else hgt,
+					if (verticalGrid) wd else zero,
+					if (verticalGrid) zero else hgt,
+					zero,
+					zero,
+					b1.addFillers,
+					false,
+					false,
+					b1.disposers
+				)
+			}
+		)
+	)
+	|> (\f -> {
+			if (contains(m.style, CenterAlign())) {
+				if (verticalGrid)
+					TTweak([TAlign(const(b2d(getDefaultRtl())), const(0.5))], f, TFillXY())
+				else
+					TTweak([TAlign(const(0.5), zero)], f, TFillX())
+			} else if (contains(m.style, EndAlign())) {
+				if (verticalGrid)
+					TTweak([TAlign(const(b2d(getDefaultRtl())), const(1.))], f, TFillXY())
+				else if (getDefaultRtl())
+					f
+				else
+					TTweak([TAlign(const(1.), zero)], f, TFillX())
+			} else {
+				if (getDefaultRtl())
+					TTweak([TAlign(const(1.), zero)], f, TFillX())
+				else
+					f
+			}
+	})
+	|> (\f ->
+		if (parent.theme.enableAnimations && enableAnimation) {
+			MEasingAnimation(
+				manager,
+				parent,
+				const(mTransitionDuration),
+				const(mStandartCurve),
+				selectSizes,
+				\pair -> {
+					translates = sizes2translates(pair);
+
+					if (pair.first != ^prevSizes) {
+						prevSize := pair.second;
+						prevSizes :=  pair.first;
+
+						iteri(translates, \i, fp0 -> nextDistinct(getValue(items.first)[i].tr, fp0.second));
+
+						None()
+					} else {
+						Some(translates)
+					}
+				},
+				\fp, p  -> {
+					iteri(fp, \i, fp0 ->
+						nextDistinct(
+							getValue(items.first)[i].tr,
+							Point(lerp(fp0.first.x, fp0.second.x, p), lerp(fp0.first.y, fp0.second.y, p))
+						)
+					);
+				},
+				[],
+				f
+			)
+			|> (\f3 ->
+				TConstruct(
+					[
+						\ -> {
+							selSizes = fgetValue(selectSizes);
+							sizes2translates(selSizes)
+							|> (\translates -> iteri(translates, \i, tr -> nextDistinct(getValue(items.first)[i].tr, tr.second)));
+							prevSize := getValue(stageSize);
+							prevSizes := selSizes.first;
+
+							nop;
+						},
+					],
+					f3
+				)
+			)
+		} else {
+			TConstruct(
+				[
+					makeSubscribe(selectSizes, \pair -> {
+						sizes2translates(pair)
+						|> (\translates -> iteri(translates, \i, tr -> nextDistinct(getValue(items.first)[i].tr, tr.second)))
+					})
+				],
+				f
+			)
+		}
+	)
+	|> (\f ->
+		TConstruct(
+			[
+				items.second
+			],
+			f
+		)
+	)
+	|> (\f -> if (verticalGrid) {
+			if (cropSize) TAttachBoxCopyAvailableHeight(f, stageSize) else TAttachHeight2(TFillY(), stageSize, f)
+		} else {
+			if (cropSize) TAttachBoxCopyAvailableWidth(f, stageSize) else TAttachWidth2(TFillX(), stageSize, f)
+		}
+	)
+}
+
+MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReorderItem],
+	order : DynamicBehaviour<[int]>, style : [MReorderGridStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	stageSize = make(0.);
+	itemsLength = length(items0) + 1;
+	verticalGrid = contains(style, MGridVertical());
+	en = extractStruct(style, MEnabled(const(true))).enabled;
+	fixSize = contains(style, MGridFixSize()) || true;
+	grabDelay = extractStructMany(style, MGrabDelay(0));
+	borders = extractStruct(style, MBorders(0.)).borders;
+
+	uniqueIds = ref makeTree();
+	getUniqueIdByIndex = \index -> lookupTreeSet(uniqueIds, index, \__ -> makeTropicTag(manager));
+	getIndexByUniqueId = \uniqueId -> either(findInOrder(^uniqueIds, \k, v -> if (v == uniqueId) Some(k) else None()), -1);
+
+	onHover = generate(0, itemsLength, \__ -> make(-1));
+
+	(\par -> {
+		items =
+			mapi(items0, \i, it -> \ -> {
+				extractStruct(it.style, MReorderItemId(ref -1)).id := getUniqueIdByIndex(i);
+				itEn = extractStruct(it.style, MEnabled(const(true))).enabled;
+				isDragging = extractStruct(it.style, MDragging(make(false)));
+
+				it.content
+				|> (\f -> (if (verticalGrid) MAvailableHeight else MAvailableWidth)(f, stageSize))
+				|> (\f ->
+					MDragDrop2T(
+						manager,
+						par,
+						MDragDrop(
+							const(getUniqueIdByIndex(i)),
+							f,
+							concat([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
+						),
+						m2t
+					)
+				)
+				|> (\f -> TBorder4(borders, f))
+			})
+			|> (\f -> arrayPush(f, \ ->
+					TRectangle(interactiveRectangleStyle, TFillXH(48.))
+					|> (\f2 -> TAvailable(f2, if (verticalGrid) TSizedHeight(0., stageSize) else TSizedWidth(stageSize, 0.)))
+					|> (\f2 ->
+						MDragDrop2T(
+							manager,
+							par,
+							MDragDrop(
+								const(getUniqueIdByIndex(itemsLength - 1)),
+								f2,
+								concat([MHoveringId(onHover[itemsLength - 1]), MDraggingEnabled(const(false))], grabDelay)
+							),
+							m2t
+						)
+					)
+				)
+			);
+
+		sizes = generate(0, itemsLength, \__ -> make(zeroWH));
+		onDrop = generate(0, itemsLength, \__ -> make(-1));
+		translates : [DynamicBehaviour<Point>] = generate(0, itemsLength, \__ -> make(zeroPoint));
+		orderIn = make(concat([itemsLength - 1], generate(0, itemsLength - 1, \i ->
+			if (length(getValue(order)) > i) getValue(order)[i] else i)));
+		selectSizes = fpair(orderIn, fpair(fmerge(sizes), stageSize));
+		prevSize : ref double = ref getValue(stageSize);
+		prevSizes : ref [WidthHeight] = ref [];
+		animating = make(false);
+
+		itemVisible0 = map(items0, \it -> extractStruct(it.style, MReorderItemVisible(make(true))).visible);
+		itemVisibleB = fmerge(itemVisible0);
+		itemVisible = arrayPush(itemVisible0, fselect(itemVisibleB, FLift(\itV -> !contains(itV, true))));
+
+		draggingItem = extractStruct(style, MDraggingItem(make(-1))).item;
+		hovering = extractStruct(style, MHoveringItem(make(-1))).item;
+
+		sizes2translates = \pair : Pair<[int], Pair<[WidthHeight], double>> ->  {
+			sizes0 = pair.second;
+			order0 = pair.first;
+
+			nextDistinct(order, tail(order0));
+
+			newSizes = generate(0, itemsLength, \i -> sizes0.first[order0[i]]);
+			newTranslates = map(translates, \tr -> cloneBehaviour(tr));
+
+			getTranslatePoint = \i -> newTranslates[order0[i]];
+
+			stageSize0 = sizes0.second;
+			freePoints : ref [Point] = ref [zeroPoint];
+			contentWH = ref WidthHeight(0., 0.);
+
+			updateFreePoints(
+				freePoints,
+				false,
+				verticalGrid,
+				false,
+				-1,
+				newSizes,
+				stageSize0,
+				getTranslatePoint,
+				\fp, sz -> {
+					contentWH := WidthHeight(max(^contentWH.width, fp.x + sz.width), max(^contentWH.height, fp.y + sz.height));
+				}
+			);
+
+			reversePointForRtl = \p, i ->
+				if (!verticalGrid) {
+					orderIndex = findiDef(order0, \idx -> idx == i, 0);
+					Point(^contentWH.width - newSizes[orderIndex].width - p.x, p.y)
+				} else p;
+
+			mapi(translates, \i, tr : DynamicBehaviour<Point> ->
+				Pair(
+					getValue(tr),
+					getValue(newTranslates[i])
+					|> (\p -> if (getDefaultRtl()) reversePointForRtl(p, i) else p)
+				)
+			);
+		}
+
+		generate(0, itemsLength, \i ->
+			TAttachBoxCopy(
+				if (i == itemsLength - 1)
+					TShowLazy(itemVisible[i], items[i])
+				else
+					TVisible(itemVisible[i], items[i]()),
+				sizes[i]
+			)
+			|> (\f ->
+				TransformTAcc2(\t2a -> {
+						singleItem = itemsLength == 1;
+
+						b1 = (if (singleItem) f else TTranslate(translates[i], f)) |> t2a;
+
+						wd = if (singleItem) zero else fselect(translates[i], FLift(\trns -> trns.x));
+						hgt = if (singleItem) zero else fselect(translates[i], FLift(\trns -> trns.y));
+
+						TAcc(
+							b1.form,
+							TFormMetrics(
+								faddition(b1.metrics.width, wd),
+								faddition(b1.metrics.height, hgt),
+								faddition(b1.metrics.baseline, hgt)
+							),
+							zero,
+							zero,
+							zero,
+							zero,
+							zero,
+							zero,
+							const(false),
+							if (singleItem) b1.xConstant else false,
+							if (singleItem) b1.yConstant else false,
+							b1.disposers
+						)
+					}
+				)
+			)
+			|> (\f ->
+				TConstruct(
+					[
+						makeSubscribe2(onHover[i], \hov0 -> {
+							hov = getIndexByUniqueId(hov0);
+
+							if (hov != -1 && hov != i && hov >= 0 && hov < itemsLength && !getValue(animating)) {
+								order0 = getValue(orderIn);
+
+								nextDistinct(
+									orderIn,
+									insertArray(
+										removeIndex(order0, elemIndex(order0, hov, 0)),
+										if (i == itemsLength - 1)
+											1
+										else
+											elemIndex(order0, i, 0),
+										hov
+									)
+								);
+							}
+						})
+					],
+					f
+				)
+			)
+		)
+		|> TGroup
+		|> (\f -> {
+			if (contains(style, CenterAlign())) {
+				if (verticalGrid)
+					TTweak([TAlign(const(b2d(getDefaultRtl())), const(0.5))], f, TFillXY())
+				else
+					TTweak([TAlign(const(0.5), zero)], f, TFillX())
+			} else if (contains(style, EndAlign())) {
+				if (verticalGrid)
+					TTweak([TAlign(const(b2d(getDefaultRtl())), const(1.))], f, TFillXY())
+				else if (getDefaultRtl())
+					f
+				else
+					TTweak([TAlign(const(1.), zero)], f, TFillX())
+			} else {
+				if (getDefaultRtl())
+					TTweak([TAlign(const(1.), zero)], f, TFillX())
+				else
+					f
+			}
+		})
+		|> (\f ->
+			if (parent.theme.enableAnimations)
+				MEasingAnimation(
+					manager,
+					parent,
+					const(mTransitionDuration),
+					const(mStandartCurve),
+					selectSizes,
+					\pair -> {
+						if (pair.second.second != ^prevSize || pair.second.first != ^prevSizes) {
+							prevSize := pair.second.second;
+							prevSizes :=  pair.second.first;
+
+							sizes2translates(pair)
+							|> (\f3 -> iteri(f3, \i, fp0 -> nextDistinct(translates[i], fp0.second)));
+
+							None()
+						} else {
+							next(animating, true);
+							Some(sizes2translates(pair))
+						}
+					},
+					\fp, p  -> {
+						iteri(fp, \i, fp0 ->
+							nextDistinct(
+								translates[i],
+								Point(lerp(fp0.first.x, fp0.second.x, p), lerp(fp0.first.y, fp0.second.y, p))
+							)
+						);
+					},
+					[MLoop(\__ -> {next(animating, false); None()})],
+					f
+				)
+				|> (\f3 ->
+					TConstruct(
+						[
+							\ -> {
+								selSizes = fgetValue(selectSizes);
+								sizes2translates(selSizes)
+								|> (\f4 -> iteri(f4, \i, fp0 -> nextDistinct(translates[i], fp0.second)));
+								prevSize := getValue(stageSize);
+								prevSizes := selSizes.second.first;
+
+								nop;
+							},
+						],
+						f3
+					)
+				)
+			else
+				TConstruct(
+					[
+						makeSubscribe(selectSizes, \pair ->
+							sizes2translates(pair)
+							|> (\f3 -> iteri(f3, \i, fp0 -> nextDistinct(translates[i], fp0.second)))
+						)
+					],
+					f
+				)
+		)
+		|> (\f ->
+			TConstruct(
+				[
+					makeSubscribe(order, \or ->
+						if (length(or) == itemsLength - 1)
+							nextDistinct(orderIn, concat([itemsLength - 1], or))
+					),
+					makeSubscribe(manager.manager.dragging, \dr0 -> {
+
+						dr = getIndexByUniqueId(dr0);
+						nextDistinct(
+							draggingItem,
+							if (dr >= 0 && dr < itemsLength - 1)
+								dr
+							else
+								-1
+						);
+					}),
+					makeSubscribe(manager.manager.hovering, \hov0 -> {
+
+						hov = getIndexByUniqueId(hov0);
+						nextDistinct(
+							hovering,
+							if (hov >= 0 && hov < itemsLength && getValue(manager.manager.dragging) != -1)
+								hov
+							else
+								-1
+						);
+					}),
+				],
+				f
+			)
+		)
+		|> (\f ->
+			TransformTAcc2(\t2a -> {
+					b1 = f |> t2a;
+					applyFixSize =
+						if (fixSize)
+							\tr -> ftransistor(fnot(animating), tr)
+						else
+							idfn;
+
+					if (itemsLength > 1)
+						TAcc(
+							b1.form,
+							TFormMetrics(
+								b1.metrics.width |> applyFixSize,
+								b1.metrics.height |> applyFixSize,
+								b1.metrics.baseline |> applyFixSize
+							),
+							if (verticalGrid) b1.metrics.width |> applyFixSize else zero,
+							if (verticalGrid) zero else b1.metrics.height |> applyFixSize,
+							if (verticalGrid) b1.metrics.width |> applyFixSize else zero,
+							if (verticalGrid) zero else b1.metrics.height |> applyFixSize,
+							zero,
+							zero,
+							b1.addFillers,
+							false,
+							false,
+							b1.disposers
+						)
+					else
+						b1
+				}
+			)
+		)
+		|> (\f -> (if (verticalGrid) TAttachBoxCopyAvailableHeight else TAttachBoxCopyAvailableWidth)(f, stageSize))
+	})
+	|> (\f ->
+		MActivate2T(
+			manager,
+			parent,
+			"MReorderGrid",
+			[IScriptBehaviour("order", order, ISInputValue([], "[int]", true))],
+			f
+		)
+	)
+}
+
+MReorderGrids2T(manager : MaterialManager, parent : MFocusGroup, m : MReorderGrids, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	itemsLength : [int] = map(m.items, length);
+
+	itemVisible : [[MReorderItemVisible]] =
+		generate(0, length(m.items), \i -> {
+			start = sum(subrange(itemsLength, 0, i));
+			end = start + itemsLength[i];
+
+			generate(0, sum(itemsLength), \j -> MReorderItemVisible(make(j >= start && j < end)))
+		});
+
+	reorderId : [[MReorderItemId]]=
+		generate(0, length(m.items), \__ ->
+			generate(0, sum(itemsLength), \__ -> MReorderItemId(ref -1))
+		);
+
+	items =
+		mapi(m.items, \i, it -> {
+			start = sum(subrange(itemsLength, 0, i));
+			end = start + itemsLength[i];
+
+			mapi(concatA(m.items), \j, it0 -> MReorderItem(it0.content, replaceStructMany(it0.style, [itemVisible[i][j], reorderId[i][j]])))
+		});
+
+	order = generate(0, length(m.items), \i -> make(
+			if (length(getValue(m.order)) > i)
+				getValue(m.order)[i]
+			else {
+				start = sum(subrange(itemsLength, 0, i));
+				end = start + itemsLength[i];
+
+				fold(generate(0, sum(itemsLength), \k -> k), Pair([], []), \acc, j ->
+					if (j >= start && j < end)
+						Pair(arrayPush(acc.first, j), acc.second)
+					else
+						Pair(acc.first, arrayPush(acc.second, j))
+				)
+				|> (\f -> concat(f.first, f.second))
+			}
+		));
+
+	style = generate(0, length(m.items), \i -> if (length(m.style) > i) m.style[i] else []);
+
+	dragging0 = generate(0, length(m.items), \i -> extractStruct(style[i], MDraggingItem(make(-1))).item);
+	hovering0 = generate(0, length(m.items), \i -> extractStruct(style[i], MHoveringItem(make(-1))).item);
+
+	draggingB = fmerge(dragging0);
+	hoveringB = fmerge(hovering0);
+	orderB = fmerge(order);
+
+	mapi(items, \i, it ->
+		MReorderGrid2T(
+			manager,
+			parent,
+			it,
+			order[i],
+			replaceStruct(replaceStruct(style[i], MDraggingItem(dragging0[i])), MHoveringItem(hovering0[i])),
+			m2t
+		)
+	)
+	|> m.fn
+	|> (\f -> m2t(f, parent))
+	|> (\f ->
+		TConstruct([
+			make2Subscribe2(draggingB, hoveringB, \dr, hv -> {
+				drId = foldi(dr, -1, \i, acc, dr0 -> if (dr0 != -1) i else acc);
+				hvId = foldi(hv, -1, \i, acc, hv0 -> if (hv0 != -1 && i != drId) i else acc);
+
+				if (drId != -1 && hvId != -1 && dr[drId] != -1 && hv[hvId] != -1) {
+					next(manager.manager.dragging, ^(reorderId[hvId][dr[drId]].id));
+
+					nextDistinct(itemVisible[drId][dr[drId]].visible, false);
+					nextDistinct(itemVisible[hvId][dr[drId]].visible, true);
+
+					newOrder = removeFirst(getValue(order[hvId]), dr[drId]);
+					nextDistinct(order[hvId], insertArray(newOrder, elemIndex(newOrder, hv[hvId], 0), dr[drId]));
+				}
+			}),
+			makeSubscribe(orderB, \or ->
+				nextDistinct(m.order, mapi(or, \i, or0 -> foldi(or0, [], \j, acc, or1 ->
+					if (i < length(itemsLength) && or1 < itemsLength[i] && getValue(itemVisible[i][or1].visible)) arrayPush(acc, or1) else acc)))
+			),
+			makeSubscribe2(m.order, \or ->
+				iteri(or, \i, or0 -> {
+					start = sum(subrange(itemsLength, 0, i));
+					end = start + itemsLength[i];
+
+					fold(generate(0, sum(itemsLength), \k -> k), [], \acc, j ->
+						if (contains(or[i], j)) {
+							nextDistinct(itemVisible[i][j].visible, true);
+							acc
+						} else {
+							nextDistinct(itemVisible[i][j].visible, false);
+							arrayPush(acc, j)
+						}
+					)
+					|> (\f2 -> nextDistinct(order[i], concat(or0, f2)))
+				})
+			),
+		], f)
+	)
+}
+
+MDynamicGridContainer(id : DynamicBehaviour<int>, tr : DynamicBehaviour<Point>);
+
+MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	items = ffuseinit(m.items, make([]));
+	itemsLength = fselect(items.first, length |> FLift);
+
+	boxSize = extractStruct(m.style, MBoxSize(make(zeroWH))).wh;
+	contentSize = make(zeroWH);
+	position = make(zeroPoint);
+	containers = make([]);
+	itemSize = extractStruct(m.style, MItemSize(fselect(contentSize, FLift(\cs -> WidthHeight(cs.width / 5., cs.width / 5.))))).wh;
+
+	SelectMGroup2T(manager, parent, containers, \__, __, c, p -> {
+		TransformTAcc2(\t2a -> {
+				b1 =
+					TTranslate(
+						c.tr,
+						TAvailable(
+							TCenter(TMutable(fselect2(c.id, items.first, FLift2(\i, it -> m2t(if (i >= 0 && i < length(it)) it[i] else TEmpty(), p))))),
+							TSized(itemSize)
+						)
+					)
+					|> t2a;
+
+				TAcc(
+					b1.form,
+					TFormMetrics(
+						zero,
+						zero,
+						zero
+					),
+					zero,
+					zero,
+					zero,
+					zero,
+					zero,
+					zero,
+					const(false),
+					false,
+					false,
+					b1.disposers
+				)
+			}
+		)
+	})
+	|> (\f -> TFixSize(f, TSized(contentSize)))
+	|> (\f ->
+		MScroll2T(
+			manager,
+			parent,
+			MScroll(
+				f,
+				TFillXY(),
+				[MScrollPosition(position), MScrollWidthHeight(make(zeroWH), boxSize)]
+			),
+			m2t
+		)
+	)
+	|> (\f ->
+		TConstruct(
+			[
+				items.second,
+				make4Subscribe(boxSize, itemSize, position, itemsLength, \wh, sz, p, il -> {
+					rowCount = max(floor(wh.width / sz.width), 1);
+					itemCount = min((ceil(wh.height / sz.height) + 1) * rowCount, il);
+					topItem = min(max(floor(p.y / sz.height) * rowCount, 0), (il - itemCount) / rowCount * rowCount);
+
+					if (itemCount > 0) {
+						if (length(getValue(containers)) > itemCount) {
+							nextDistinct(
+								containers,
+								subrange(getValue(containers), 0, itemCount)
+							);
+						} else if (length(getValue(containers)) < itemCount) {
+							nextDistinct(
+								containers,
+								concat(
+									getValue(containers),
+									generate(length(getValue(containers)), itemCount, \i -> MDynamicGridContainer(make(-1), make(zeroPoint)))
+								)
+							);
+						}
+
+						topId = max(getValue(getValue(containers)[0].id), 0);
+
+						iteri(getValue(containers), \i, c -> {
+							idMod = (topId + i - topItem) % itemCount;
+							id = (if (idMod >= 0) idMod else itemCount + idMod) + topItem;
+
+							nextDistinct(c.id, id);
+							nextDistinct(c.tr, Point(i2d(id % rowCount) * sz.width, i2d(id / rowCount) * sz.height));
+						});
+					} else {
+						nextDistinct(containers, []);
+					}
+
+					nextDistinct(contentSize, WidthHeight(i2d(rowCount) * sz.width, dceil(i2d(il) / i2d(rowCount)) * sz.height));
+				})
+			],
+			f
+		)
+	)
+}
+
+updateFreePoints(
+	freePoints : ref [Point],
+	keepOrder : bool,
+	verticalGrid : bool,
+	groupByCols : bool,
+	maxRows : int,
+	newSizes : [WidthHeight],
+	stageSize0 : double,
+	getTranslatePoint : (int) -> DynamicBehaviour<Point>,
+	onEnd : (freePoint : Point, sz : WidthHeight) -> void) -> void {
+
+	maxSize =
+		if (groupByCols) {
+			maxSize = either(maxA(map(newSizes, \sz2 -> if (verticalGrid) sz2.height else sz2.width)), 0.);
+			sumSize = dsum(map(newSizes, \sz2 -> if (verticalGrid) sz2.width else sz2.height));
+			cols = i2d(floor(stageSize0 / maxSize));
+			sumSize / cols;
+		} else {
+			doubleMax
+		};
+
+	emptyPoint = Point(doubleMax, doubleMax);
+
+	iteri(newSizes, \i, sz -> {
+		freePoint0 : Point =
+			fold(^freePoints, emptyPoint, \acc, p -> {
+				isSuitableSize =
+					if (verticalGrid)
+						((p.y + sz.height <= stageSize0 || p.y == 0. || maxRows > 0) && p.x < maxSize)
+					else
+						((p.x + sz.width <= stageSize0 || p.x == 0.) && p.y < maxSize);
+
+				countLeftTop = \ ->
+					if (if (groupByCols) !verticalGrid else verticalGrid)
+						((p.x < acc.x) || (p.x == acc.x && p.y < acc.y))
+					else
+						((p.y < acc.y) || (p.y == acc.y && p.x < acc.x));
+
+				filterCrossings = \ ->
+					foldi(subrange(newSizes, 0, i), true, \j, acc2, sz2 ->
+						if (acc2) {
+							tr = getValue(getTranslatePoint(j));
+
+							!((p.x + sz.width > tr.x) && (p.y + sz.height > tr.y) &&
+								(p.x < tr.x + sz2.width) && (p.y < tr.y + sz2.height));
+						} else {
+							false
+						}
+					);
+
+				if (isSuitableSize && countLeftTop() && filterCrossings())
+					p
+				else
+					acc
+			});
+
+		freePoint =  if (maxRows > 0) {
+			nextDistinct(getTranslatePoint(i), freePoint0);
+
+			if (getOverlapingRectanglesCount(Quadruple(freePoint0.x, 0., freePoint0.x + sz.width, freePoint0.y + sz.height), newSizes, getTranslatePoint) > maxRows) {
+				fold(^freePoints, emptyPoint, \acc, p -> {
+					isSuitableSize = getOverlapingRectanglesCount(Quadruple(p.x, 0., p.x + sz.width, p.y + sz.height), newSizes, getTranslatePoint) < maxRows;
+
+					countLeftTop = \ -> ((p.x < acc.x) || (p.x == acc.x && p.y < acc.y));
+
+					filterCrossings = \ ->
+						foldi(subrange(newSizes, 0, i), true, \j, acc2, sz2 ->
+							if (acc2) {
+								tr = getValue(getTranslatePoint(j));
+
+								!((p.x + sz.width > tr.x) && (p.y + sz.height > tr.y) &&
+									(p.x < tr.x + sz2.width) && (p.y < tr.y + sz2.height));
+							} else {
+								false
+							}
+						);
+
+					if (isSuitableSize && countLeftTop() && filterCrossings())
+						p
+					else
+						acc
+				});
+			} else {
+				freePoint0;
+			}
+		} else {
+			freePoint0;
+		};
+
+		freePoints :=
+			if (keepOrder) {
+				if (if (groupByCols) !verticalGrid else verticalGrid) {
+					[
+						Point(freePoint.x, freePoint.y + sz.height),
+						Point(either(maxA(arrayPush(map(^freePoints, \fp -> fp.x), freePoint.x + sz.width)), freePoint.x + sz.width), 0.)
+					]
+				} else {
+					[
+						Point(freePoint.x + sz.width, freePoint.y),
+						Point(0., either(maxA(arrayPush(map(^freePoints, \fp -> fp.y), freePoint.y + sz.height)), freePoint.y + sz.height))
+					]
+				}
+			} else {
+				newPoints =
+					concat3(
+						^freePoints,
+						[
+							Point(freePoint.x + sz.width, freePoint.y),
+							Point(freePoint.x + sz.width, freePoint.y + sz.height),
+							Point(freePoint.x, freePoint.y + sz.height)
+						],
+						if (if (groupByCols) !verticalGrid else verticalGrid) {
+							if (freePoint.y != 0.)
+								[Point(freePoint.x + sz.width, 0.)]
+							else
+								[]
+						} else {
+							if (freePoint.x != 0.)
+								[Point(0., freePoint.y + sz.height)]
+							else
+								[]
+						}
+					);
+
+				currentSizes = subrange(newSizes, 0, i);
+
+				fold(newPoints, [], \acc2, p -> {
+					validPoint =
+						foldi(currentSizes, true, \j, acc3, sz2 ->
+							if (acc3) {
+								tr = getValue(getTranslatePoint(j));
+
+								if (groupByCols) {
+									if (verticalGrid)
+										!(p.y >= tr.y && p.y < tr.y + sz2.height && (p.x < tr.x + sz2.width || p.y != tr.y))
+									else
+										!(p.x >= tr.x && p.x < tr.x + sz2.width && (p.y < tr.y + sz2.height || p.x != tr.x));
+								} else {
+									!(p.x >= tr.x && p.y >= tr.y && p.x < tr.x + sz2.width && p.y < tr.y + sz2.height);
+								}
+							} else {
+								false
+							}
+						);
+
+					if (validPoint)
+						arrayPush(acc2, p)
+					else
+						acc2
+				});
+			}
+
+		nextDistinct(getTranslatePoint(i), freePoint);
+		onEnd(freePoint, sz);
+	})
+}
+
+// TODO: optimize
+getOverlapingRectanglesCount(
+	rect : Quadruple<double, double, double, double>,
+	sizes : [WidthHeight],
+	getTranslatePoint : (int) -> DynamicBehaviour<Point>
+) -> int {
+	foldi(sizes, Pair(makeSet(), 0), \i, acc, sz -> {
+		tr = getValue(getTranslatePoint(i));
+
+		if (!containsSet(acc.first, tr.y)) {
+			if (tr.x + sz.width > rect.first && tr.x < rect.third && tr.y + sz.height > rect.second && tr.y < rect.fourth)
+				Pair(insertSet(acc.first, tr.y), acc.second + 1)
+			else
+				acc;
+		} else {
+			acc;
+		}
+	}).second
+}

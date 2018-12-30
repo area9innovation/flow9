@@ -1,0 +1,482 @@
+import tools/flowc/fctypeenv;
+import tools/flowc/type_helpers;
+import tools/flowc/prettyprint;
+
+export {
+	// For anonymous unions. Give us all the possible results. Error is only called if there is no solution
+	combineTypenames(env : FcTypeEnv, named : [FcType], onError : (string) -> void) -> [FcType];
+
+	combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, onError : (string) -> void) -> [FcType];
+
+	setTyvar(env : FcTypeEnv, tyvarid : int, type : FcType) -> void;
+}
+
+
+// Given a bunch of named types (with potential empty names), find out what named type
+// can cover them.
+combineTypenames(env : FcTypeEnv, names : [FcType], onError : (string) -> void) -> [FcType] {
+	// Now, expand all into the individual struct names
+	expanded = fold(names, makeSet(), \acc, name -> {
+		structs = expandTypename2structs(env, name);
+		fold(structs, acc, insertSet)
+	});
+	expandedNames = set2array(expanded);
+
+	n = length(expandedNames);
+	if (n == 0) {
+		// OK, we have no idea
+		[];
+	} else if (n == 1) {
+		// Just a single struct found, so the dude must be a struct
+		st = expandedNames[0];
+
+		// See if we can grab the typars for this guy
+		[buildTypeNameWithTypars(env, st, names, onError)];
+	} else {
+		// More than one struct in the list of names, so it has to be a union
+
+		// Find out which unions might work
+		unionCandidates = names2unions(env, expandedNames, true);
+
+		nf = length(unionCandidates);
+		if (nf == 0) {
+			onError("No type can meet all requirements for " + names2string(env, names));
+			[];
+		} else {
+			uc = map(unionCandidates, \uc -> {
+				buildTypeNameWithTypars(env, uc, names, onError);
+			});
+			// Order them by decreasing size of the expanded union, so we pick the smallest
+			mergeSort(uc, \u1, u2 -> {
+				genericCompare(length(expandTypename2structs(env, u1)), length(expandTypename2structs(env, u2)))
+			});
+		}
+	}
+}
+
+buildTypeNameWithTypars(env : FcTypeEnv, name : string, named : [FcType], onError : (string) -> void) -> FcType {
+	// Do we have the name directly there, so we can get the type parameter directly?
+	typars1 = fold(named, [], \acc, n -> {
+		switch (n) {
+			FcTypeUnion(u, tps, __, __): if (u == name) tps else acc;
+			FcTypeName(nn, tps, __): if (nn == name) tps else acc;
+			FcTypeStruct(nn, tps, __, __): if (nn == name) tps else acc;
+			default: acc;
+		}
+	});
+
+	typars2 = if (typars1 != []) {
+		// Yep, just go with that
+		typars1;
+	} else {
+		// OK, is this a union result?
+		munion = lookupTree(env.program.acc.names.unions, name);
+		switch (munion) {
+			None(): {
+				// It is not a union, so try our luck and see if one of the candidate
+				// types come with any type parameters we can steal
+				fold(named, [], \acc, n -> {
+					switch (n) {
+						FcTypeStruct(__, tps, __, __): tps;
+						FcTypeUnion(__, tps, __, __): tps;
+						FcTypeName(__, tps, __): tps;
+						default: acc;
+					}
+				});
+			}
+			Some(union): {
+				structs = union2typenames(env, name);
+
+				// We need a reverse map from union typars to struct typars
+				// If we have
+				// Union<?, ??> ::= Foo<?>, Bar<??, ?>;
+				// and a value is Bar<int, string>, we need to 
+				// get Union<string, int>.
+
+				// So from all our input names, we see if we can find them in the union
+				tpmap = fold(named, makeTree(), \acc, t -> {
+					fold(structs, acc, \acc2, s : FcTypeName -> {
+						if (s.name == getFcTypeName(env, t)) {
+							// So s.typenames for Bar is <??, ?> here
+							// while the typenames for t are <int, string>
+							// Map ?? to int, and map ? to string then
+							tps = getFcTypePars(t);
+							foldi(tps, acc2, \i, acc3, ttp -> {
+								if (i < length(s.typeparameters)) {
+									stp = s.typeparameters[i];
+									setTree(acc3, stp, ttp);
+								} else {
+									acc3
+								}
+							});
+						} else {
+							acc2;
+						}
+					});
+				});
+
+				// Alright, we assume they come in order without any holes!
+				typars3 = uniq(getTreeValues(tpmap));
+
+				ntp = length(union.typeparameters);
+				if (length(typars3) != ntp) {
+					onError("Expected " + i2s(ntp) + " type parameters for " + union.name + ", got " 
+						+ i2s(length(typars3))
+						+ " (from " + names2string(env, named) + ")"
+					);
+					keep = subrange(typars3, 0, ntp);
+					generate(0, ntp, \i -> {
+						if (i < length(keep)) keep[i]
+						else makeFcTyVar2(env.program.acc.tyvarIdGroup, named[0].info)
+					});
+				} else {
+					typars3;
+				}
+			}
+		}
+	}
+
+	FcTypeName(name, typars2, named[0].info);
+}
+
+// Expand the named type to the constituent structs
+expandTypename2structs(env : FcTypeEnv, name : FcType) -> [string] {
+	switch (name) {
+		FcTypeUnion(n, __, tn, __): {
+			if (n != "") {
+				map(union2typenames(env, n), \u -> u.name)
+			} else {
+				// Un-named union. 
+				map(tn, \t -> t.name);
+			}
+		}
+		FcTypeName(n, __, __): {
+			mstruct = lookupTree(env.program.acc.names.structs, n);
+			switch (mstruct) {
+				None(): {
+					munion = lookupTree(env.program.acc.names.unions, n);
+					switch (munion) {
+						None(): {
+							fcPrintln("Not supposed to happend...");
+							[];
+						}
+						Some(union): expandTypename2structs(env, union);
+					}
+				}
+				Some(s): expandTypename2structs(env, s);
+			}
+		}
+		FcTypeStruct(s, __, sargs, __): {
+			if (s != "") {
+				[s];
+			} else {
+				// We do not support this dude here
+				fcPrintln("Not supposed to happend..");
+				[];
+			}
+		}
+		default: [];
+	}
+}
+
+names2string(env : FcTypeEnv, named : [FcType]) -> string {
+	strGlue(map(named, \n -> {
+		prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), n, makeSet());
+	}), " | ")
+}
+
+getFcTypePars(t : FcType) -> [FcType] {
+	switch (t) {
+		FcTypeStruct(__, tps, __, __): tps;
+		FcTypeUnion(__, tps, __, __): tps;
+		FcTypeName(__, tps, __): tps;
+		default: [];
+	}
+}
+
+
+
+combinePositiveAndNegative(env : FcTypeEnv, positive : FcType, negative : FcType, onError : (string) -> void) -> [FcType] {
+	if (isSameFcType(env, positive, negative, false)) [positive]
+	else {
+		error = \ -> {
+			pt = \t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+			onError("Types are incompatible: " + pt(positive) + " != " + pt(negative));
+			[];
+		}
+
+		def = \ -> {
+			switch (negative) {
+				FcTypeFlow(__): [negative];
+				FcTypeVar(tid2, __): {
+					// We should set this tyvar!
+					setTyvar(env, tid2, positive);
+					[positive];
+				}
+				default: error();
+			}
+		}
+
+		switch (positive) {
+			FcTypeArray(a1, __): {
+				switch (negative) {
+					FcTypeArray(a2, i2): {
+						ats = combinePositiveAndNegative(env, a1, a2, onError);
+						map(ats, \at -> FcTypeArray(at, i2));
+					}
+					FcTypeVar(tid2, __): {
+						// We should set this tyvar!
+						setTyvar(env, tid2, positive);
+						[positive];
+					}
+					FcTypeFlow(__): [negative];
+					default: error();
+				}
+			}
+			FcTypeFunction(a1, r1, i1): {
+				switch (negative) {
+					FcTypeFunction(a2, r2, __): {
+						rts = combinePositiveAndNegative(env, r1, r2, onError);
+						map(rts, \rt -> {
+							// Combine the arguments and so on
+							FcTypeFunction(
+								mapi(a1, \i, arg -> {
+									FcFunArg(
+										arg.name,
+										combinePositiveAndNegative(env, a2[i].type, arg.type, onError)[0],
+									)
+								}),
+								rt,
+								i1
+							)
+						})
+					}
+					FcTypeFlow(__): [negative];
+					FcTypeVar(tid2, __): {
+						// We should set this tyvar!
+						setTyvar(env, tid2, positive);
+						[positive];
+					}
+					default: error();
+				}
+			}
+			FcTypeFlow(__): [positive];
+			FcTypeRef(r1, __): {
+				switch (negative) {
+					FcTypeRef(r2, i2): {
+						rts = combinePositiveAndNegative(env, r1, r2, onError);
+						map(rts, \rt -> FcTypeRef(rt, i2));
+					}
+					FcTypeFlow(__): [negative];
+					FcTypeVar(tid2, __): {
+						// We should set this tyvar!
+						setTyvar(env, tid2, positive);
+						[positive];
+					}
+					default: error();
+				}
+			}
+			FcTypeVar(tid1, __): {
+				switch (negative) {
+					FcTypeVar(tid2, __): {
+						// TODO: We should maybe check this?
+						[positive];
+					}
+					default: {
+						setTyvar(env, tid1, negative);
+						[negative];
+					}
+				}
+			}
+			FcTypeStruct(ps, ptp, pargs, pi): {
+				switch (negative) {
+					FcTypeStruct(ns, stp, sargs, si): {
+						if (ps == ns && length(ptp) == length(stp)) {
+							[FcTypeStruct(
+								ns,
+								mapi(ptp, \i, pt -> {
+									if (i < length(stp)) {
+										ct = combinePositiveAndNegative(env, pt, stp[i], onError);
+										if (ct != []) ct[0] else pt
+									} else pt
+								}),
+								mapi(pargs, \i, parg -> {
+									FcStructArg(
+										parg.name,
+										combinePositiveAndNegative(env, parg.type, sargs[i].type, onError)[0],
+										parg.ismutable
+									)
+								}),
+								si
+							)]
+						} else {
+							pt = \t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+							onError("Can not use " + pt(positive) + " as " + pt(negative));
+							[positive];
+						}
+					}
+					FcTypeVar(tid2, __): {
+						// We should set this tyvar!
+						setTyvar(env, tid2, positive);
+						[positive];
+					}
+					FcTypeUnion(nu, ntp, ntn, ni): {
+						// OK, check that the struct is there
+						instantiated = union2instantiatedStructs(env, negative);
+						str = find(instantiated, \s : FcTypeStruct -> {
+							s.name == ps
+						});
+						switch (str) {
+							None(): {
+								error();
+							}
+							Some(st): {
+								// OK, we found it. Check these dudes
+								t = combinePositiveAndNegative(env, positive, st, onError);
+								// Both the struct and union work
+								arrayPush(t, negative);
+							}
+						}
+					}
+					FcTypeName(nn, ntp, ni): {
+						i = getFcNamedType(env, env.program.acc.tyvarIdGroup, negative);
+						switch (i) {
+							FcTypeName(__, __, __): def();
+							default: combinePositiveAndNegative(env, positive, i, onError);
+						}
+					}
+					FcTypeFlow(__): [negative];
+					default: {
+						pt = \t -> prettyFcType(FcPretty(false, true, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+						onError("Can not merge " + pt(positive) + " and " + pt(negative));
+						[];
+					}
+				}
+			}
+			FcTypeUnion(pun, ptp, ptn, pi): {
+				switch (negative) {
+					FcTypeStruct(ns, ntp, nsa, ni): {
+						if (pun == "") {
+							def();
+						} else {
+							instantiated = union2instantiatedStructs(env, positive);
+							if (false && length(instantiated) != 1) {
+								fcPrintln("Too many?");
+								error();
+							} else {
+								str = find(instantiated, \s : FcTypeStruct -> {
+									s.name == ns
+								});
+								switch (str) {
+									None(): {
+										error();
+									}
+									Some(st): {
+										// OK, we found it. Check these dudes
+										t = combinePositiveAndNegative(env, st, negative, onError);
+										// TODO: Should we just ignore the result, or do more with it?
+										arrayPush(t, positive);
+									}
+								}
+
+							}
+						}
+					}
+					FcTypeName(nn, ntp, ni): {
+						i = getFcNamedType(env, env.program.acc.tyvarIdGroup, negative);
+						switch (i) {
+							FcTypeName(__, __, __): def();
+							default: combinePositiveAndNegative(env, positive, i, onError);
+						}
+					}
+					FcTypeUnion(nun, ntp, ntn, ni): {
+						if (pun == nun && pun != "") {
+							tps = mapi(ntp, \i, tp -> {
+								if (i < length(ptp)) {
+									combinePositiveAndNegative(env, ptp[i], tp, onError)[0]
+								} else tp
+							});
+							[FcTypeUnion(nun, tps, ntn, pi)];
+						} else if (pun == "") {
+							// OK, we have an un-named union. Figure out if we contain what is required
+
+							fcPrintln("TODO: Check that " + nun + " has");
+
+							[negative];
+						} else {
+							// OK, two different unions against each others.
+							// Check if one of them is contained in the other
+							ptns = buildSet(map(union2typenames(env, pun), \tn -> tn.name));
+							ntns = buildSet(map(union2typenames(env, nun), \tn -> tn.name));
+
+							if (! isEmptySet(differenceSets(ptns, ntns)) && !isEmptySet(differenceSets(ptns, ntns)) ) {
+								// Something is not overlapping!
+								error();
+								{}
+							};
+
+							[if (length(ntn) < length(ptn)) positive else negative]
+						}
+					}
+					default: {
+						// TODO: If we have another union here, we have work to do
+						def();
+					}
+				}
+			}
+			FcTypeName(pn, ptp, pi): {
+				i = getFcNamedType(env, env.program.acc.tyvarIdGroup, positive);
+				switch (i) {
+					FcTypeName(__, __, __): def();
+					default: combinePositiveAndNegative(env, i, negative, onError);
+				}
+			}
+			FcTypeVoid(__): {
+				def();
+			}
+			FcTypeBool(__): {
+				def();
+			}
+			FcTypeInt(__): {
+				def();
+			}
+			FcTypeDouble(__): {
+				def();
+			}
+			FcTypeString(__): {
+				def();
+			}
+			FcTypeNative(__): {
+				def();
+			}
+			FcTypeParameter(ptp, __): {
+				switch (negative) {
+					FcTypeParameter(ntp, __): {
+						if (ptp != ntp) {
+							strict = getConfigParameter(env.program.acc.config.config, "strict");
+							if (strict == "1") {
+								error();
+							} else [negative];
+						} else [positive];
+					}
+					default: def();
+				}
+			}
+		}
+	}
+}
+
+setTyvar(env : FcTypeEnv, tyvarid : int, type : FcType) -> void {
+	rec = switch (type) {
+		FcTypeVar(id, __): id == tyvarid;
+		default: false;
+	}
+	if (!rec) {
+		if (^(env.local.debugTyping) > 1)  {
+			pt = \t -> prettyFcType(FcPretty(false, false, ^(env.local.tyvars), ^(env.local.typars)), t, makeSet());
+			fcPrintln("α" + i2s(tyvarid) + " = " + pt(type));
+		}
+		env.local.tyvars := setTree(^(env.local.tyvars), tyvarid, type);
+	}
+}
+

@@ -1,0 +1,612 @@
+import tools/common/pathutil;
+import md5;
+import lingo/linecolumn;
+import tools/flowc/fctypeenv;
+import tools/flowc/type_helpers;
+import tools/flowc/incremental/fi2fc;
+import tools/flowc/flowc_println;
+
+export {
+	// Register this desugared module into the environment, before it is type checked.
+	// Sets up structures, checks for duplicates, and track dependencies.
+	// Returns the updated FcTypeEnvGlobal and set of files ready to be processed next
+	addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram;
+
+	addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram;
+	printFcError(acc : FlowcAcc, error : FcError) -> void;
+	prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc;
+	getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo;
+
+	// Add the types we got from the typechecker to the environment
+	mergeTypingToFcTypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram;
+
+	// Adds the typed module to the tree of modules, checking that we have consistent imports of the module
+	addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimodule : FiModule) -> FcTypeEnvProgram;
+
+	// Run a set of tasks in parallel or sequential mode, depdending on the compiler config
+	runTasks(config : CompilerConfig, tasks : [() -> ?]) -> [?];
+
+	// Checks, that a type has a given field.
+	ensureFieldExists(
+		globalNames : FcGlobalNames,
+		moduleNames : Tree<string, FiStructOrUnion>,
+		field_name : string,
+		type_name : string,
+		onError : (FcError) -> void,
+		moduleName : string,
+		start : int
+	) -> bool;
+
+	// Returns the name of the module, where 'name' is defined
+	moduleWhereNameIsDefined(globalNames : FcGlobalNames, name : string) -> string;
+
+	// Returns a callback for deferred check of dependencies.
+	fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool;
+
+	printLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> void;
+	makeLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> string;
+
+	name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule;
+
+	name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> FiModule;
+}
+
+addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcTypeEnvProgram {
+	config = tenv.acc.config; 
+	acc = tenv.acc;
+	f = module.fileinfo.flowfile;
+	names = acc.names;
+
+	// OK, print errors from parsing and desugaring first
+	addErrorsToTypeEnv(tenv, module.errors);
+
+	errors : ref [FcError] = ref [];
+
+	field2structs = foldTree(module.structs, names.field2structs, \name : string, st : FcTypeStruct, acc2 : Tree<string, [string]> -> {
+		fold(st.args, acc2, \acc3 : Tree<string, [string]>, field : FcStructArg -> {
+			treePushToArrayUnique(acc3, field.name, st.name)
+		});
+	});
+
+	unions = foldTree(module.unions, names.unions, \name, st, acc2 -> {
+		setTree(acc2, name, st)
+	});
+
+	barestructs = foldTree(module.structs, names.structs, \name, st, acc2 -> {
+		setTree(acc2, name, st)
+	});
+
+	// Build a map from struct to what unions it is in
+	struct2unions = foldTree(module.unions, names.struct2unions, \name, un : FcTypeUnion, acc2 -> {
+		onError = \m -> refArrayPush(errors, FcError(m, [
+					FcPosition(f, un.info.start, un.info.end),
+				]));
+		structsInUnion = getStructsInUnion(barestructs, unions, un, onError);
+		fold(structsInUnion, acc2, \acc3, sn -> {
+			treePushToArrayUnique(acc3, sn, un.name)
+		});
+	});
+
+	structTypars = foldTree(module.structs, names.structTypars, \name, st, acc2 -> {
+		ntp = sizeSet(collectTyparsGlobal(tenv, st, makeSet()));
+		// fcPrintln(name + " has " + i2s(ntp));
+		setTree(acc2, name, ntp);
+	});
+
+	structs = foldTree(module.structs, names.structs, \name, st, acc2 -> {
+		// OK, because of polymorphism in unions, we have to see if this struct
+		// is part of any unions.
+		unionNames = getTreeArrayValue(struct2unions, name);
+		st2 = if (unionNames == []) {
+			// No, just keep it as is
+			st;
+		} else {
+			// OK, it is part of union(s). Do those have any type parameters?
+			// If they do, we need to have at least as many here. See test 23.
+			// Stephen Dolan confirmed that in this situation, we need to
+			// make sure the constituent structs have as many type parameters
+			// as the union itself.
+			unionTypars = map(unionNames, \un -> {
+				mu : Maybe<FcTypeUnion> = lookupTree(unions, un);
+				switch (mu) {
+					None(): 0;
+					Some(ud): {
+						// Grab the ?, instead of checking the number of type pars, since they can be instantiated
+						tps = collectTyparsGlobal(tenv, ud, makeSet());
+						sizeSet(tps);
+					}
+				}
+			});
+			maxUnionTypars = fold(unionTypars, 0, max);
+
+			strict = getConfigParameter(acc.config.config, "strict");
+			if (strict == "1") {
+				// Do a check that we have a fixed number of typars
+				iter(unionTypars, \ntp -> {
+					if (ntp != maxUnionTypars) {
+						refArrayPush(errors, FcError("Unions for " + name + " have different number of type parameters: " + strGlue(unionNames, ", "), [
+							FcPosition(f, st.info.start, st.info.end),
+						]));
+					}
+				});
+			}
+
+			// Extend the type parameters
+			tps = st.typars;
+			utps = generate(0, maxUnionTypars, \i -> {
+				if (i < length(tps)) tps[i]
+				else {
+					typar = strLeft("????????????????????", i + 1);
+					// fcPrintln("Adding " + typar + " to " + name);
+					FcTypeParameter(typar, st.info);
+				}
+			});
+			FcTypeStruct(name, utps, st.args, st.info);
+		}
+
+		setTree(acc2, name, st2)
+	});
+
+	checkDuplicate = \acc2 : Tree<string, string>, name : string -> {
+		exist = lookupTree(acc2, name);
+		switch (exist) {
+			None(): {}
+			Some(file): {
+				switch (lookupTree(acc.modules, file)) {
+					Some(prevmodule): {
+						nextinfo = findModuleNameInfo(module, name);
+						if (f != file || prevmodule.start != nextinfo.start) {
+							refArrayPush(errors, FcError("Duplicate name '" + name + "'", [
+								FcPosition(f, nextinfo.start, nextinfo.end),
+								FcPosition(file, prevmodule.start, prevmodule.end),
+							]));
+						}
+					}
+					None(): {
+						//fcPrintln("module " + file + " not found");
+						nextinfo = findModuleNameInfo(module, name);
+						if (f != file) {
+							refArrayPush(errors, FcError("Duplicate name '" + name + "'", [
+								FcPosition(f, nextinfo.start, nextinfo.end)
+							]));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	set = \acc2 : Tree<string, string>, name : string -> {
+		// Check for collisions!
+		checkDuplicate(names.struct2module, name);
+		checkDuplicate(names.union2module, name);
+		checkDuplicate(names.function2module, name);
+		checkDuplicate(names.globalVar2module, name);
+		checkDuplicate(names.native2module, name);
+
+		setTree(acc2, name, f);
+	}
+
+	newnames = FcGlobalNames(
+		foldTree(module.structs, names.struct2module, \name, __, acc2 -> {
+			set(acc2, name);
+		}),
+		foldTree(module.unions, names.union2module, \name, __, acc2 -> {
+			set(acc2, name);
+		}),
+		foldTree(module.functions, names.function2module, \name, __, acc2 -> {
+			set(acc2, name);
+		}),
+		foldTree(module.globalVars, names.globalVar2module, \name, __, acc2 -> {
+			set(acc2, name);
+		}),
+		foldTree(module.natives, names.native2module, \name, __, acc2 -> {
+			set(acc2, name);
+		}),
+		structs,
+		unions,
+		struct2unions,
+		field2structs,
+		{
+			top1 = foldTree(module.functions, names.toplevel, \name, fn, acc2 -> {
+				setTree(acc2, name, fn)
+			});
+			top2 = foldTree(module.globalVars, top1, \name, v, acc2 -> {
+				setTree(acc2, name, v)
+			});
+			foldTree(module.natives, top2, \name, n, acc2 -> {
+				setTree(acc2, name, n)
+			});
+		},
+		structTypars,
+		setTree(
+			names.moduleImports, 
+			module.fileinfo.flowfile,
+			fold(module.imports, makeSet1(module.fileinfo.flowfile), \acc2, imp -> {
+					mergeSets(
+						mergeSets(acc2, 
+							lookupTreeDef(names.moduleImports, imp.flowfile, makeSet())
+						),
+						makeSet1(imp.flowfile)
+					)
+				}
+			)
+		)
+	);
+
+	// Print the errors immediately
+	tenv2 = addErrorsToTypeEnv(tenv, ^errors);
+
+	// OK, now mark that we are done with the dependency
+	flowfile = module.fileinfo.flowfile;
+	ndep = resolveDependency(acc.dependency, flowfile);
+
+	ndep2 = extractNonDependent(ndep);
+	nacc = FlowcAcc(
+		ndep2.first,
+		removeFromTree(acc.preloaded, flowfile),
+		acc.modules,
+		acc.file2flowfile,
+		arrayPush(acc.traversal, flowfile),
+		newnames,
+		acc.config,
+		acc.tyvarIdFactory,
+		acc.tyvarIdGroup,
+		acc.tracer
+	);
+
+	// OK, now this dude is ready for type checking
+	FcTypeEnvProgram(
+		nacc,
+		tenv2.types,
+		mergeSets(tenv2.exported, module.exports),
+		tenv2.printError,
+		tenv2.errors,
+		tenv2.union2typenamesCache
+	)
+}
+
+getStructsInUnion(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, union : FcTypeUnion, onError : (string) -> void) -> [string] {
+	fold(union.typenames, [], \acc, tn -> {
+		concat(acc, getStructsInName(structs, unions, tn.name, onError))
+	});
+}
+
+getStructsInName(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, name : string, onError : (string) -> void) -> [string] {
+	if (containsKeyTree(structs, name)) {
+		[name]
+	} else {
+		un = lookupTree(unions, name);
+		switch (un) {
+			None(): {
+				onError("Unknown struct/union name " + name);
+				[];
+			}
+			Some(ut): {
+				getStructsInUnion(structs, unions, ut, onError);
+			}
+		}
+	}
+}
+
+findModuleNameInfo(module : FcModule, name : string) -> FcInfo2 {
+	eitherMap(lookupTree(module.structs, name), \st -> st.info,
+		eitherMap(lookupTree(module.unions, name), \un -> un.info,
+		eitherMap(lookupTree(module.functions, name), \fn -> copyFcInfo2(fn.declInfo),
+		eitherMap(lookupTree(module.globalVars, name), \gv -> copyFcInfo2(gv.declInfo),
+		eitherMap(lookupTree(module.natives, name), \nt -> copyFcInfo2(nt.info), FcInfo2(0, 0)
+	)))));
+}
+
+
+addErrorsToTypeEnv(tenv : FcTypeEnvProgram, errors : [FcError]) -> FcTypeEnvProgram {
+	iter(errors, \e -> 
+		addFcTypeError(tenv, e)
+	);
+	tenv
+}
+
+printFcError(acc : FlowcAcc, error : FcError) -> void {
+	un = uniq(error.positions);
+
+	if (length(error.positions) == 0) {
+		fcPrintln(error.message);
+	}
+
+	iteri(un, \i : int, p : FcPosition -> {
+		module = lookupTree(acc.modules, p.file);
+		err =  (if (i == 0) ": " + error.message else ": and here");
+		switch (module) {
+			None(): {
+				fileinfo = getFcFileInfo(p.file, acc.config);
+				code = if (fileinfo.content == "") getFileContent(fileinfo.fullpath) else fileinfo.content;
+				sline = findLineOneTime(code, p.start);
+
+				if (fileinfo.flowfile == "") {
+					fcPrintln(error.message);
+				} else {
+					fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
+				}
+			}
+			Some(m): {
+				code = getFileContent(m.fileinfo.fullpath);
+				sline = findLineOneTime(code, p.start);
+
+				fcPrintln(m.fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
+			}
+		}
+	});
+}
+
+prepareInitialFlowcAcc(config : CompilerConfig) -> FlowcAcc {
+	// Our global id tracker with buckets
+	idfactory = makeIdFactory(0, 10000);
+	// A global one without buckets
+	globalid = makeIdFactory(10000000, 0);	// With bucket zero, it becomes atomic
+
+	FlowcAcc(
+		makeDependencyTracker(),
+		makeTree(),
+		makeTree(), 
+		makeTree(),
+		[],
+		dummyFcGlobalNames, 
+		config, 
+		idfactory,
+		makeIdGroup(globalid),
+		makeTracer()
+	)
+}
+
+getFcFileInfo(file : string, config : CompilerConfig) -> FcFileInfo {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	realfile = findFlowPath(file, true, config.includes, workingDir);
+	content = getFileContent(realfile);
+
+	FcFileInfo(
+		trimFlowfile(file, config.includes, workingDir),
+		fileModified(realfile),
+		realfile,
+		md5(content),
+		content,
+		0,
+		fileSize(realfile)
+	);
+}
+
+mergeTypingToFcTypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv0 : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal) -> FcTypeEnvProgram {
+	tenv = addFiModuleToFcTypeEnv(tenv0, globEnv, fimodule);
+
+	acc = tenv.acc;
+	names = acc.names;
+
+	FcTypeEnvProgram(
+		FlowcAcc(
+			acc.dependency, 
+			acc.preloaded, 
+			acc.modules,
+			acc.file2flowfile,
+			acc.traversal, 
+			FcGlobalNames(
+				names.struct2module,
+				names.union2module,
+				names.function2module,
+				names.globalVar2module,
+				names.native2module,
+				names.structs,
+				names.unions,
+				names.struct2unions,
+				names.field2structs,
+				updateToplevel(names.toplevel, fimodule),
+				names.structTypars,
+				names.moduleImports
+			), 
+			acc.config, 
+			acc.tyvarIdFactory,
+			acc.tyvarIdGroup,
+			acc.tracer
+		),
+		foldTree(typing, tenv.types, \name, type, a -> 
+			setTree(a, name, type)
+		),
+		tenv.exported,
+		tenv.printError, 
+		tenv.errors,
+		tenv.union2typenamesCache
+	)
+}
+
+// The functions tree is used to resolve fallback natives
+updateToplevel(toplevel : Tree<string, FcDeclaration>, fimodule : FiModule) -> Tree<string, FcDeclaration> {
+	funcs = fold(fimodule.functions, makeTree(), \acc, fn -> setTree(acc, fn.name, fifunctiondec2fc(fn, true)));
+	toplevel1 = foldTree(funcs, toplevel, \name, fn, acc -> setTree(acc, name, fn));
+	toplevel2 = fold(fimodule.globalVars, toplevel1, \acc, gv -> setTree(acc, gv.name, figlobalvar2fc(gv)));
+	fold(fimodule.natives, toplevel2, \acc, nt -> setTree(acc, nt.name, finative2fc(funcs, nt)))
+}
+
+addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimodule : FiModule) -> FcTypeEnvProgram {
+
+	switch (fcLoadFromCache(globEnv, fimodule.fileinfo.flowfile)) {
+		None(): {
+			fcAddToCache(globEnv, fimodule.fileinfo.flowfile, FcLoaded(fimodule, \-> true));
+		}
+		Some(loaded): {
+			// Creation of this callback automatically adds appropriate FcLoaded to cache.
+			fcDependencyChangedCallback(tenv.acc.config, globEnv, fimodule);
+			{ }
+		}
+	}
+
+	acc = tenv.acc;
+	exist = lookupTreeDef(acc.file2flowfile, fimodule.fileinfo.fullpath, "");
+	if (exist != "" && exist != fimodule.fileinfo.flowfile) {
+		// TODO: Make this an error instead
+		fcPrintln(fimodule.fileinfo.fullpath + " imported both as " + fimodule.fileinfo.flowfile + " and " + exist);
+	}
+
+	FcTypeEnvProgram(
+		FlowcAcc(
+			acc.dependency, 
+			acc.preloaded, 
+			setTree(acc.modules, fimodule.fileinfo.flowfile, fimodule), 
+			setTree(acc.file2flowfile, fimodule.fileinfo.fullpath, fimodule.fileinfo.flowfile),
+			acc.traversal, 
+			acc.names,
+			acc.config, 
+			acc.tyvarIdFactory,
+			acc.tyvarIdGroup,
+			acc.tracer
+		),
+		tenv.types,
+		tenv.exported,
+		tenv.printError, 
+		tenv.errors,
+		tenv.union2typenamesCache
+	);
+}
+
+runTasks(config : CompilerConfig, tasks : [() -> ?]) -> [?] {
+	// Note that concurrent() might not work for some targets
+	if (isConfigParameterFalse(config.config, "parallel")) sequential(true, tasks)
+	else concurrent(true, tasks)
+}
+
+ensureFieldExists(
+	globalNames : FcGlobalNames,
+	moduleNames : Tree<string, FiStructOrUnion>,
+	field_name : string,
+	type_name : string,
+	onError : (FcError) -> void,
+	moduleName : string,
+	start : int
+	) -> bool {
+	if (field_name == "structname") true  else {
+		switch (lookupTree(globalNames.structs, type_name)) {
+			Some(struct): {
+				ret = exists(struct.args, \arg -> arg.name == field_name);
+				if (!ret) {
+					onError(FcError(
+						"there's no field '" + field_name + "' in struct '" + type_name + "'",
+						[
+							FcPosition(moduleWhereNameIsDefined(globalNames, type_name), struct.info.start, struct.info.end),
+							FcPosition(moduleName, start, start)
+						]
+					));
+				}
+				ret
+			}
+			None(): {
+				switch (lookupTree(globalNames.unions, type_name)) {
+					Some(union):
+						forall(union.typenames, \tp -> ensureFieldExists(globalNames, moduleNames, field_name, tp.name, onError, moduleName, start));
+					None(): {
+						switch (lookupTree(moduleNames, type_name)) {
+							Some(struct): {
+								switch (struct) {
+									FiTypeStruct(__,__,__,__): {
+										ret = exists(struct.args, \arg -> arg.name == field_name);
+										if (!ret) {
+											onError(FcError(
+												"there's no field '" + field_name + "' in struct '" + type_name + "'", 
+												[
+													FcPosition(moduleName, struct.start, struct.start),
+													FcPosition(moduleName, start, start)
+												]
+											));
+										}
+										ret
+									}
+									FiTypeUnion(__, __, typenames, __):
+										forall(typenames, \tp -> ensureFieldExists(globalNames, moduleNames, field_name, tp.name, onError, moduleName, start));
+								}
+							}
+							None(): {
+								// This branch must be impossible
+								false;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+moduleWhereNameIsDefined(globalNames : FcGlobalNames, name : string) -> string {
+	lookupTreeDef(globalNames.function2module, name,
+		lookupTreeDef(globalNames.globalVar2module, name,
+			lookupTreeDef(globalNames.struct2module, name,
+				lookupTreeDef(globalNames.union2module, name,
+					lookupTreeDef(globalNames.native2module, name, "")
+				)
+			)
+		)
+	)
+}
+
+fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool {
+	checkMd5 = isConfigParameterTrue(config.config, "use-md5");
+	changed = \ -> {
+		check_imports = exists(module.imports, \imp ->
+			switch (fcLoadFromCache(globEnv, imp.flowfile)) {
+				Some(cachedInc): cachedInc.dependencyChanged();
+				None(): {
+					fcPrintln("ERROR: a module " + imp.flowfile + " must be already in cache, but is not there"); true; 
+				}
+			}
+		);
+		check_string_includes = exists(module.stringIncludes, \inc ->fiFileInfoFileChanged(inc, checkMd5));
+		ret = check_imports || check_string_includes;
+		fcAddToCache(globEnv, module.fileinfo.flowfile, FcLoaded(module, \ -> ret));
+		ret
+	}
+	fcAddToCache(globEnv, module.fileinfo.flowfile, FcLoaded(module, changed));
+	changed
+}
+
+printLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> void {
+	fcPrintln(makeLocation(config, m, start, message))
+}
+
+makeLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> string {
+	code = getFileContent(m.fileinfo.fullpath);
+	resolver = makeLineResolver(code);
+	sline = findLine(resolver, start);
+	// eline = findLine(resolver, p.end);
+
+	line_string = i2s(sline.lineno - if (sline.column == 0) 1 else 0);
+	column_string = i2s(sline.column);
+
+	if (isConfigParameterTrue(config.config, "legacy-format"))
+		m.fileinfo.fullpath + ":" + line_string + " (" + m.fileinfo.fullpath + ":" + line_string + ") " + message
+	else
+		m.fileinfo.fullpath + ":" + line_string + ":" + column_string + ":" + message
+}
+
+name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule {
+	globals = prog.names;
+	modname = lookupTreeDef(globals.struct2module, name,
+		lookupTreeDef(globals.union2module, name,
+			lookupTreeDef(globals.function2module, name,
+				lookupTreeDef(globals.globalVar2module, name,
+					lookupTreeDef(globals.native2module, name, flowfile)
+				)
+			)
+		)
+	);
+	lookupTreeDef(prog.modules, modname, dummyFiModule)
+}
+
+name2FimoduleInFlowcAcc(prog : FlowcAcc, flowfile : string, name : string) -> FiModule {
+	globals = prog.names;
+	modname = lookupTreeDef(globals.struct2module, name,
+		lookupTreeDef(globals.union2module, name,
+			lookupTreeDef(globals.function2module, name,
+				lookupTreeDef(globals.globalVar2module, name,
+					lookupTreeDef(globals.native2module, name, flowfile)
+				)
+			)
+		)
+	);
+	lookupTreeDef(prog.modules, modname, dummyFiModule)
+}

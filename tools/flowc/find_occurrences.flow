@@ -1,0 +1,446 @@
+import tools/flowc/symbol_nature;
+
+export {
+	// Finds all positions, where 'name' occurs in all program modules. 
+	findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>>;
+
+	// Finds all positions, where 'name' occurs in a given module. 
+	findOccurencesInFiModule(prog : FiProgram, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int>;
+
+	// Finds all sources, containing 'str'. 
+	findAllSourcesContainingStr(dir : string, str : string, acc : [string]) -> [string];
+
+	// Leave only those modules, which transitevely include a 'defModulePath'. 
+	filterSourcesWhichImportDefinitionModule(config : CompilerConfig, all_sources : [string], defModulePath : string) -> [string];
+
+	// Finds all positions, where 'name' from a given line-column occurs in a given module, taking into accout a local scope. 
+	fcFindLocalOccurrences(prog : FiProgram, file : string, line : int, col : int, name : string, kind : FcSymbolKind) -> Maybe<Set<int>>;
+
+	// Returns all var names, whcih occur in a given entity.
+	fiall2varNames(e : FiAll, acc : Set<string>) -> Set<string>;
+
+	// Returns all field names, whcih occur in a given entity.
+	fiall2fieldNames(e : FiAll, struct : string, acc : Set<string>) -> Set<string>;
+
+	// Returns all type names, whcih occur in a given entity.
+	fiall2typeNames(e : FiAll, acc : Set<string>) -> Set<string>;
+
+	// Filters out all positions of a 'name' from a 'starts2names' tree, taking into account an 'upper_boundary'.
+	computeOccurencesFromTree(code : string, name : string, starts2names : Tree<int, Set<string>>, upper_boundary : int) -> Set<int>;
+}
+
+findOccurencesInFiProgram(prog : FiProgram, name : string, kind : FcSymbolKind, processed : Set<string>) -> Tree<FiModule, Set<int>> {
+	foldTree(prog.modules, makeTree(), 
+		\__, module, acc -> {
+			fullpath = module.fileinfo.fullpath;
+			if (containsSet(processed, fullpath)) acc else {
+				setTree(acc, module, findOccurencesInFiModule(prog, module, name, kind))
+			}
+		}
+	)
+}
+
+findOccurencesInFiModule(prog : FiProgram, module : FiModule, name : string, kind : FcSymbolKind) -> Set<int> {
+	mod_starts2fiall = fimoduleStarts2fiall(module);
+
+	name_resolver = \handler -> mapTree(mod_starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, a)));
+	field_resolver = \handler, struct -> mapTree(mod_starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, struct, a)));
+
+	mod_starts2names = switch (kind) {
+		FcNameSymbol():        name_resolver(fiall2varNames);
+		FcTypeSymbol():        name_resolver(fiall2typeNames);
+		FcFieldSymbol(struct): field_resolver(fiall2fieldNames, struct);
+	}
+	mod_code = getFileContent(module.fileinfo.fullpath);
+	computeOccurencesFromTree(mod_code, name, mod_starts2names, strlen(mod_code))
+}
+
+
+findAllSourcesContainingStr(dir : string, str : string, acc : [string]) -> [string] {
+	fold(readDirectory(resolveRelativePath(dir)), acc, 
+		\ac, name -> {
+			full_name = dir + "/" + name;
+			if (isDirectory(full_name)) {
+				findAllSourcesContainingStr(full_name, str, ac)
+			} else if (endsWith(full_name, ".flow")) {
+				code = getFileContent(resolveRelativePath(full_name));
+				if (strContains(code, str)) {
+					concat(ac, [full_name]) 
+				} else ac
+			} else {
+				ac
+			}
+		}
+	)
+}
+
+filterSourcesWhichImportDefinitionModule(config : CompilerConfig, all_sources : [string], defModulePath : string) -> [string] {
+	sourcesWhichImportDefModule = fold(all_sources, makeSet(), \acc, src -> {
+			allDependencies = getAllSourceDependencies(src, config, makeSet(), true);
+			if (containsSet(allDependencies, defModulePath)) {
+				insertSet(acc, src);
+			} else {
+				acc;
+			}
+		}
+	);
+	allImports = foldSet(sourcesWhichImportDefModule, makeSet(), \acc, src ->
+		getAllSourceDependencies(src, config, acc, false)
+	);
+	set2array(differenceSets(sourcesWhichImportDefModule, allImports))
+}
+
+// Collects all source dependencies.
+// If 'includeFileItself' parameter is true, source file itself is included.
+getAllSourceDependencies(file : string, config : CompilerConfig, acc : Set<string>, includeFileItself : bool) -> Set<string> {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	realfile = findFlowPath(file, true, config.includes, workingDir);
+	if (containsSet(acc, realfile) || !fileExists(realfile)) acc else {
+		ac = if (includeFileItself) {
+			insertSet(acc, realfile);
+		} else {
+			acc;
+		};
+		content = getFileContent(realfile);
+		eof = strlen(content);
+		fold(
+			multipleStrIndexOf(content, "import"),
+			ac,
+			\a, ind -> {
+				beg = ind + 6; // strlen("import");
+				end = strRangeIndexOf(content, ";", beg + 6, eof);
+				path = trim(substring(content, beg, end - beg));
+				getAllSourceDependencies(path, config, a, true)
+			}
+		)
+	} 
+}
+
+fcFindLocalOccurrences(prog : FiProgram, file : string, line : int, col : int, name : string, kind : FcSymbolKind) -> Maybe<Set<int>> {
+	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
+	relative = trimFlowfile(file, prog.config.includes, workingDir);
+	switch (lookupTree(prog.modules, relative)) {
+		Some(module): {
+			code = getFileContent(module.fileinfo.fullpath);
+			resolver = makeLineResolver(code);
+			maps = fcStart2ExprOrDecl(module, name);
+			index = findLineIndex(resolver, line, col);
+			switch (treeIntervalSearch(maps.start2expr, index)) {
+				Some(ex): {
+					switch (treeIntervalSearch(maps.start2decl, index)) {
+						Some(decl): {
+							declStarts = getTreeKeys(maps.start2decl);
+							occurrences = addStartsForNameInInterval(
+								name, 
+								Pair(decl.defiStart, upperBoundary(decl.defiStart, declStarts, strlen(code))),
+								code, 
+								addStartsForNameInInterval(
+									name, 
+									Pair(decl.declStart, upperBoundary(decl.declStart, declStarts, strlen(code))),
+									code, 
+									findLocalOccurrences(ex, name, kind, code, declStarts)
+								)
+							);
+							Some(occurrences);
+						}
+						None(): {
+							fcPrintln("couldn't declaration for expression at index: " + i2s(index));
+							None();
+						}
+					}
+				}
+				None(): {
+					fcPrintln("couldn't find expression at index: " + i2s(index));
+					None();
+				}
+			}
+		}
+		None(): {
+			fcPrintln("module = " + relative + " not found");
+			None();
+		}
+	}
+}
+
+// Auxiliary struct which stores a map from a start position to a program entity like expression or declaration.
+// Is used to search for occurrences of expressions/declaration inside a module.
+FcStart2ExpOrDecl(
+	start2expr : Tree<int, FiExpOrCase>,
+	start2decl : Tree<int, FiDeclaration>
+);
+
+fcStart2ExprOrDecl(module : FiModule, name : string) -> FcStart2ExpOrDecl {
+	fold(
+		module.globalVars,
+		fold(
+			module.natives,
+			fold(
+				module.functions, 
+				FcStart2ExpOrDecl(makeTree(), makeTree()),
+				\acc : FcStart2ExpOrDecl, fun : FiFunctionDec ->
+					FcStart2ExpOrDecl(
+						start2vardecl(fun.lambda, name, 
+							setTree(setTree(acc.start2expr, fun.declStart, fun.lambda), fun.defiStart, fun.lambda)
+						), 
+						setTree(setTree(setTree(acc.start2decl, fun.defiStart, fun), fun.declStart, fun), fun.lambda.body.start, fun)
+					)
+			),
+			\acc : FcStart2ExpOrDecl, nat : FiNativeDec ->
+				FcStart2ExpOrDecl(
+					start2vardecl(nat.fallbackLambda, name, 
+						setTree(setTree(acc.start2expr, nat.declStart, nat.fallbackLambda), nat.defiStart, nat.fallbackLambda)
+					), 
+					setTree(setTree(setTree(acc.start2decl, nat.defiStart, nat), nat.declStart, nat), nat.fallbackLambda.start, nat)
+				)
+		),
+		\acc : FcStart2ExpOrDecl, gv : FiGlobalVar ->
+			FcStart2ExpOrDecl(
+				start2vardecl(gv.value, name, 
+					setTree(setTree(acc.start2expr, gv.declStart, gv.value), gv.defiStart, gv.value)
+				), 
+				setTree(setTree(setTree(acc.start2decl, gv.defiStart, gv), gv.declStart, gv), gv.value.start, gv)
+			)
+	)
+}
+
+start2vardecl(e : FiExp, name : string, acc : Tree<int, FiExpOrCase>) -> Tree<int, FiExpOrCase> {
+	switch (e) {
+		FiLambda(args, body, __, s): {
+			rec = start2vardecl(body, name, acc);
+			if (exists(args, \arg -> arg.name == name)) setTree(rec, s, e) else rec
+		}
+		FiCall(f, args, __, s):
+			start2vardecl(f, name, fold(args, acc, \a, arg -> start2vardecl(arg, name, a)));
+		FiLet(n, __, e1, e2, __, s):  {
+			rec = start2vardecl(e1, name, start2vardecl(e2, name, acc));
+			if (n == name) setTree(rec, s, e) else rec
+		}
+		FiIf(e1, e2, e3, __, s): 
+			start2vardecl(e1, name, start2vardecl(e2, name, start2vardecl(e3, name, acc)));
+		FiSwitch(v, __, cs, __, s):
+			fold(cs, acc, \a, c : FiCase -> {
+					rec = start2vardecl(c.body, name, a);
+					if (exists(c.argNames, \an -> an == name)) setTree(rec, c.start, c) else rec
+				}
+			);
+		FiCast(e0, __, __, __, s): start2vardecl(e0, name, acc);
+		FiSeq(es, __, s):          fold(es, acc, \a, ex -> start2vardecl(ex, name, a));
+		FiCallPrim(__, es, __, s): fold(es, acc, \a, ex -> start2vardecl(ex, name, a));
+		FiRequire(__, ex, __, s):  start2vardecl(ex, name, acc);
+		FiUnsafe(__, fb, __, s):   start2vardecl(fb, name, acc);
+		FiVar(__, __, s): acc;
+		FiString(__, s):  acc;
+		FiBool(__, s):    acc;
+		FiDouble(__, s):  acc;
+		FiVoid(s):        acc;
+		FiInt(__, s):     acc;
+	}
+}
+
+findLocalOccurrences(ex : FiExpOrCase, from : string, kind : FcSymbolKind, code : string, all_starts : [int]) -> Set<int> {
+	starts2fiall = start2fiall(ex, makeTree());
+
+	name_resolver = \handler -> mapTree(starts2fiall, \entities -> foldSet(entities, makeSet(), \a, fiall -> handler(fiall, a)));
+
+	starts2names = switch (kind) {
+		FcNameSymbol():        name_resolver(fiall2varNames);
+		FcTypeSymbol():        name_resolver(fiall2typeNames);
+		FcFieldSymbol(__): {
+			fcPrintln("makes no sense to do a local renaming of struct field");
+			makeTree();
+		}
+	}
+	if (sizeTree(starts2names) > 0) {
+		starts = getTreeKeys(starts2fiall);
+		max_start = starts[length(starts) - 1];
+		upper_boundary = upperBoundary(max_start, all_starts, strlen(code));
+		computeOccurencesFromTree(code, from, starts2names, upper_boundary)
+	} else makeSet()
+}
+
+upperBoundary(k : int, starts : [int], max_start : int) -> int {
+	fold(starts, max_start, \a, i -> if (k < i && i < a) i else a);
+}
+
+computeOccurencesFromTree(code : string, name : string, starts2names : Tree<int, Set<string>>, upper_boundary : int) -> Set<int> {
+
+	resolver = makeLineResolver(code);
+
+	starts = getTreeKeys(starts2names);
+	starts_interval = foldi(
+		starts,
+		makeTree(),
+		\i, ac, start -> setTree(ac, start, 
+			Pair(
+				starts[i],
+				if (i + 1 == length(starts)) upper_boundary else starts[i + 1]
+			)
+		)
+	);
+	names2starts : Tree<string, Set<int>> = foldTree(
+		starts2names,
+		makeTree(),
+		\start, name_set, ac -> foldSet(
+			name_set,
+			ac,
+			\a, nm -> switch (lookupTree(a, nm)) {
+				Some(nm_starts): setTree(a, nm, insertSet(nm_starts, start));
+				None(): setTree(a, nm, makeSet1(start));
+			}
+		)
+	);
+	switch (lookupTree(names2starts, name)) {
+		Some(nm_starts):
+			foldSet(nm_starts, makeSet(),
+				\a, start -> {
+					interval = lookupTreeDef(starts_interval, start, Pair(-1, -1));
+					addStartsForNameInInterval(name, interval, code, a);
+				}
+			);
+		None(): makeSet();
+	}
+}
+
+addStartsForNameInInterval(name : string, interval : Pair<int, int>, code : string, acc : Set<int>) -> Set<int> {
+	begin = interval.first;
+	end = interval.second;
+	string_interval = strSubRange(code, begin, end);
+	name_starts = multipleStrIndexOf(string_interval, name);
+	alphanum = \char -> isDigit(char) || isLetter(char) || char == "_";
+	name_len = strlen(name);
+	fold(
+		name_starts,
+		acc,
+		\a, s -> {
+			prev_char = if (s == 0) "" else getCharAt(string_interval, s - 1);
+			next_char = if (s + 1 == strlen(string_interval)) "" else getCharAt(string_interval, s + name_len);
+			if (!alphanum(prev_char) && !alphanum(next_char)) insertSet(a, s + begin) else a
+		}
+	)
+}
+
+fiall2varNames(e : FiAll, acc : Set<string>) -> Set<string> {
+	switch (e) {
+		FiLambda(args, __, __, __):   fold(args, acc, \a, arg -> insertSet(a, arg.name));
+		FiCall(__, __, __, __):       acc;
+		FiLet(x, __, __, __, __, __):  insertSet(acc, x);
+		FiIf(__, __, __, __, __):     acc;
+		FiSwitch(__, __, __, __, __): acc;
+		FiCase(__, args, __, __):     fold(args, acc, \ac, an -> insertSet(ac, an));
+		FiCast(__, __, __, __, __):   acc;
+		FiSeq(es, __, __):            acc;
+		FiCallPrim(op, es, __, __):   acc;
+		FiRequire(n, __, __, __):     insertSet(acc, n);
+		FiUnsafe(n, __, __, __):      insertSet(acc, n);
+		FiVar(n, __, __):             insertSet(acc, n);
+		FiString(__, __):  acc;
+		FiBool(__, __):    acc;
+		FiDouble(__, __):  acc;
+		FiVoid(__):        acc;
+		FiInt(__, __):     acc;
+		FiFunctionDec(n, __, __, __, __):       insertSet(acc, n);
+		FiGlobalVar(n, __, __, __, __):         insertSet(acc, n);
+		FiNativeDec(n, __, __, __, __, __, __): insertSet(acc, n);
+		FiTypeStruct(n, __, __, __):            insertSet(acc, n);
+		FiTypeUnion(n, __, __, __):             insertSet(acc, n);
+	}
+}
+
+fiall2fieldNames(e : FiAll, struct : string, acc : Set<string>) -> Set<string> {
+	switch (e) {
+		FiLambda(args, __, __, __):   acc;
+		FiCall(__, __, __, __):       acc;
+		FiLet(__, __, __, __, __, __): acc;
+		FiIf(__, __, __, __, __):     acc;
+		FiSwitch(__, __, __, __, __): acc;
+		FiCase(__, __, __, __):       acc;
+		FiCast(__, __, __, __, __):   acc;
+		FiSeq(es, __, __):            acc;
+		FiCallPrim(op, es, __, __):
+			if (length(es) == 0 || unrollTypeToTypeName(fiExpType(es[0])) != struct) acc else {
+				switch (op) {
+					FcFieldPrim(n):      insertSet(acc, n);
+					FcSetMutablePrim(n): insertSet(acc, n);
+					default:             acc;
+				}
+			}
+		FiRequire(n, __, __, __):     acc;
+		FiUnsafe(n, __, __, __):      acc;
+		FiVar(n, __, __):             acc;
+		FiString(__, __):  acc;
+		FiBool(__, __):    acc;
+		FiDouble(__, __):  acc;
+		FiVoid(__):        acc;
+		FiInt(__, __):     acc;
+		FiFunctionDec(__, __, __, __, __):       acc;
+		FiGlobalVar(__, __, __, __, __):         acc;
+		FiNativeDec(__, __, __, __, __, __, __): acc;
+		FiTypeStruct(n, __, args, __): 
+			if (n != struct) acc else {
+				fold(args, acc, \a, arg -> insertSet(a, arg.name))
+			}
+		FiTypeUnion(__, __, __, __):             acc;
+	}
+}
+
+fiall2typeNames(e : FiAll, acc : Set<string>) -> Set<string> {
+	switch (e) {
+		FiLambda(__, __, t, __):       fitype2names(t, acc);
+		FiCall(__, __, t, __):         fitype2names(t, acc);
+		FiLet(__, t1, __, __, t2, __): fitype2names(t1, fitype2names(t2, acc));
+		FiIf(__, __, __, t, __):       fitype2names(t, acc);
+		FiSwitch(__, t1, __, t2, __):  fitype2names(t1, fitype2names(t2, acc));
+		FiCase(__, __, __, __):        acc;
+		FiCast(__, t1, t2, t3, __):    fitype2names(t1, fitype2names(t2, fitype2names(t3, acc)));
+		FiSeq(__, t, __):              fitype2names(t, acc);
+		FiCallPrim(op, __, t, __):
+			switch (op) {
+				FcStructPrim(n):       insertSet(fitype2names(t, acc), n);
+				default:               fitype2names(t, acc);
+			}
+		FiRequire(__, __, t, __):      fitype2names(t, acc);
+		FiUnsafe(__, __, t, __):       fitype2names(t, acc);
+		FiVar(__, t, __):              fitype2names(t, acc);
+		FiString(__, __):  acc;
+		FiBool(__, __):    acc;
+		FiDouble(__, __):  acc;
+		FiVoid(__):        acc;
+		FiInt(__, __):     acc;
+		FiFunctionDec(__, __, t, __, __):       fitype2names(t, acc);
+		FiGlobalVar(__, __, t, __, __):         fitype2names(t, acc);
+		FiNativeDec(__, __, t, __, __, __, __): fitype2names(t, acc);
+		FiTypeStruct(n, typars, args, __):     
+			insertSet(
+				fold(typars, 
+					fold(args, acc, \a, arg -> insertSet(fitype2names(arg.type, a), arg.name)), 
+					\a, t -> fitype2names(t, a)
+				), 
+			n);
+		FiTypeUnion(n, typars, types, __): 
+			insertSet(
+				fold(typars, 
+					fold(types, acc, \a, t -> fitype2names(t, a)), 
+					\a, t -> fitype2names(t, a)
+				), n
+			);
+	}
+}
+
+fitype2names(type : FiType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): acc;
+		FiTypeRef(rt):      fitype2names(rt, acc);
+		FiTypeArray(at):    fitype2names(at, acc);
+		FiTypeName(n, tps): 
+			insertSet(fold(tps, acc, \ac, tp -> fitype2names(tp, ac)), n);
+		FiTypeFunction(args, rt):
+			fitype2names(rt, fold(args, acc, \a, arg -> fitype2names(arg.type, a)));
+	}
+}

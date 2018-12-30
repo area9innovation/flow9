@@ -1,0 +1,215 @@
+import wigi/styles;
+import stringmath;
+import wigi/editor_types;
+
+import ui/easycombobox;
+
+export {
+	getFontSizeComboBox(runtime: FontSizeRuntime, state : WigiEditorState) -> Form;
+	increaseFontSize(runtime: FontSizeRuntime, state : WigiEditorState, fontSizesDefault : [double]) -> Maybe<WigiModifyFontSize>;
+	decreaseFontSize(runtime: FontSizeRuntime, state : WigiEditorState, fontSizesDefault : [double]) -> Maybe<WigiModifyFontSize>;
+	getWigiParagraphFontSize(state : WigiEditorState, paragraphPath : [int]) -> double;
+
+	fontComboSkin = ComboBoxColorScheme([16382457],16382457,[2143799238],2139391108,6136288,2143799238,2139391108, 0xF3F3F3, 0xF3F3F3, Some(2133864496), None(), false);
+
+	FontSizeRuntime: (
+		fontSizes: ref [double],
+		fontSizeIndex: DynamicBehaviour<int>,
+		extraFontSize: DynamicBehaviour<double>
+	);
+
+	makeFontSizeRuntime() {
+		FontSizeRuntime(ref defaultFontSizes, make(0), make(0.0));
+	}
+
+	setFontSize(runtime : FontSizeRuntime, fs : double, fontSizes : [double]) -> void;
+	defaultFontSizes = [8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0];
+}
+
+minFontSize = 2.0;
+maxFontSize = 1000.0;
+
+smallFontSizeStep = 1.0; // increase/decrease values for sizes smaller than the smallest default size
+bigFontSizeStep = 5.0; // increase/decrease values for sizes bigger than the biggest default size
+
+setFontSize(runtime : FontSizeRuntime, fs : double, fontSizes : [double]) -> void {
+	newSize = if (fs < minFontSize) minFontSize else if (fs > maxFontSize) maxFontSize else fs;
+	index = elemIndex(fontSizes, newSize, -1);
+	if (index == -1) {
+		runtime.fontSizes := concat(fontSizes, [0.0, newSize]);
+		nextDistinct(runtime.extraFontSize, newSize);
+		next(runtime.fontSizeIndex, length(^(runtime.fontSizes)) - 1);
+	} else {
+		runtime.fontSizes := fontSizes;
+		nextDistinct(runtime.extraFontSize, 0.0);
+		nextDistinct(runtime.fontSizeIndex, index);
+	}
+}
+
+getFontSizeStep(fs, fontSizesDefault) {
+	if (fs > fontSizesDefault[length(fontSizesDefault) - 1]) bigFontSizeStep  else smallFontSizeStep
+}
+
+getNextFontSize(curSize, fontSizesDefault) {
+	getNextSizeOutsideDefault = \fs, step -> step * i2d(floor(fs / step) + 1);
+
+	curIndex = elemIndex(fontSizesDefault, curSize, -1);
+	step = getFontSizeStep(curSize, fontSizesDefault);
+	maxIndex = length(fontSizesDefault) - 1;
+	if (curSize < fontSizesDefault[0] - step) {
+		getNextSizeOutsideDefault(curSize, smallFontSizeStep);
+	} else if (curSize < fontSizesDefault[0]) {
+		fontSizesDefault[0]
+	} else if (curSize >= fontSizesDefault[maxIndex]) {
+		getNextSizeOutsideDefault(curSize, bigFontSizeStep);
+	} else {
+		if (curIndex != -1) {
+			if (curIndex < maxIndex) {
+				fontSizesDefault[curIndex + 1]
+			} else {
+				// we should not be here. Just in case
+				getNextSizeOutsideDefault(curSize, bigFontSizeStep);
+			}
+		} else {
+			nextIndex = foldi(fontSizesDefault, 0, \i, acc, fs -> {
+				if ( acc == 0 && i > 0 && fontSizesDefault [i - 1] < curSize && fontSizesDefault [i] >= curSize) i
+				else acc;
+			});
+			fontSizesDefault[nextIndex]
+		}
+	}
+}
+
+getPrevFontSize(curSize, fontSizesDefault) {
+	getPrevSizeOutsideDefault = \fs, step -> step * i2d(ceil(fs / step) - 1);
+
+	curIndex = elemIndex(fontSizesDefault, curSize, -1);
+	step = getFontSizeStep(curSize, fontSizesDefault);
+	maxIndex = length(fontSizesDefault) - 1;
+	if (curSize > fontSizesDefault[maxIndex] + step) {
+		getPrevSizeOutsideDefault(curSize, bigFontSizeStep);
+	} else if (curSize > fontSizesDefault[maxIndex]) {
+		fontSizesDefault[maxIndex];
+	} else if (curSize <= fontSizesDefault[0]) {
+		getPrevSizeOutsideDefault(curSize, smallFontSizeStep);
+	} else {
+		if (curIndex != -1) {
+			if (curIndex > 0) {
+				fontSizesDefault[curIndex - 1]
+			} else {
+				// we should not be here. Just in case
+				getPrevSizeOutsideDefault(curSize, smallFontSizeStep);
+			}
+		} else {
+			nextIndex = foldi(fontSizesDefault, 0, \i, acc, fs -> {
+				if ( acc == 0 && i < maxIndex && fontSizesDefault [i] <= curSize && fontSizesDefault [i + 1] > curSize) i
+				else acc;
+			});
+			fontSizesDefault[nextIndex]
+		}
+	}
+}
+
+getFontSizeComboBox(runtime: FontSizeRuntime, state : WigiEditorState) -> Form {
+	Constructor(
+		EasyComboBox(
+			concat3(
+				map(defaultFontSizes, \fs -> Text(d2st(fs, 2) + " px", [])),
+		 		[NotSelectable(Select(runtime.extraFontSize, \es -> if (es > 0.0) Text("....", [FontSize(6.0)]) else Empty()))],
+		 		[Select(runtime.extraFontSize, \es -> if (es > 0.0) Text(d2st(es, 2) + " px", []) else Empty())]
+		 	),
+		 	runtime.fontSizeIndex,
+		 	[liteSkinComboScheme, ComboBoxBevel(0.0), ComboBoxWidth(36.0),ComboBoxBorder(5.0, 3.0), ComboBoxMaxHeaderWidth(36.0), ComboBoxEnabled(state.editMode)]
+		),
+		\ -> bidirectionalLinkNonDistinct(state.fontSize, runtime.fontSizeIndex,
+			\fs -> {
+				setFontSize(runtime, fs, defaultFontSizes);
+				getValue(runtime.fontSizeIndex);
+			},
+			\fs -> {
+				if (fs < length(defaultFontSizes)) {
+					nextDistinct(runtime.extraFontSize, 0.0);
+				}
+				^(runtime.fontSizes)[fs]
+			}
+		)
+	)
+}
+
+makeModifyingFontSizeEvent(runtime: FontSizeRuntime, state : WigiEditorState, fontSizesDefault : [double], getNewSize : (double, [double]) -> double) -> Maybe<WigiModifyFontSize> {
+	fsa = getSelectionFontSizes(state);
+	if (length(fsa) > 1) {
+		baseSize = either(minA(fsa), -1.0);
+		if (baseSize != -1.0) {
+			delta = getNewSize(baseSize, fontSizesDefault) - baseSize;
+			Some(WigiModifyFontSize(baseSize, delta))
+		}
+		else None ();
+	} else {
+		curSize = ^(runtime.fontSizes)[getValue(runtime.fontSizeIndex)];
+		newSize = getNewSize(curSize, fontSizesDefault);
+		setFontSize(runtime, newSize, fontSizesDefault);
+		None ();
+	}
+}
+
+increaseFontSize(runtime: FontSizeRuntime, state : WigiEditorState, fontSizesDefault : [double]) -> Maybe<WigiModifyFontSize>  {
+	makeModifyingFontSizeEvent(runtime, state, fontSizesDefault, getNextFontSize);
+}
+
+decreaseFontSize(runtime: FontSizeRuntime, state : WigiEditorState, fontSizesDefault : [double]) -> Maybe<WigiModifyFontSize>  {
+	makeModifyingFontSizeEvent(runtime, state, fontSizesDefault, getPrevFontSize);
+}
+
+//TODO Maybe size should be extracted not only from Text
+extractFontSizes(el : WigiElement, res : ref [double]) -> void {
+	switch (el) {
+		WigiDocument(root, st): extractFontSizes(root, res);
+		WigiStory(ps, vs, st): iter(^ps, \ p -> extractFontSizes(p, res));
+		WigiParagraph(es, style): iter(es, \ e -> extractFontSizes(e, res));
+		WigiRecursive(es, type, style):	iter(es, \ e -> extractFontSizes(e, res));
+		WigiBlock(type, style): {}; // TODO CustomSymbol size should probably be used as well
+		WigiText(text, style): {
+			fs : FontSize = extractStruct(style, dwfs); //default text size is 16.0
+			if (!contains(^res, fs.size))
+				refArrayPush(res, fs.size);
+		}
+		WigiEmpty(): {};
+	}
+}
+
+getSelectionFontSizes(state : WigiEditorState) -> [double] {
+	selection = getValue(state.selection);
+	sizes = mapWigiStylesFromRange(state.defaultStyles, getValue(state.document), selection.start, selection.end, \e, path, style -> {
+		switch(e){
+			WigiText(__, __): {
+				fontsize : FontSize = extractStruct(style, dwfs);
+				fontsize.size;
+			}
+			default: -1.0;
+		}
+	});
+	fold(sizes, [], \acc, sz -> if (sz > 0.0 && !contains(acc, sz)) arrayPush(acc, sz) else acc);
+}
+
+getWigiParagraphFontSize(state : WigiEditorState, paragraphPath : [int]) -> double {
+	root = getValue(state.document);
+	defSize = getDefaultDocumentFontSize(state.defaultStyles);
+	nextElementPath = doPositionDelta(root, paragraphPath, 1);
+	switch (getElementAtPosition(root, paragraphPath)){
+		WigiParagraph(__, __) : {
+			sizes = mapWigiStylesFromRange(state.defaultStyles, root, paragraphPath, nextElementPath, \e, path, style -> {
+				switch(e){
+					WigiText(__, __): {
+						fontsize : FontSize = extractStruct(style, FontSize(defSize));
+						fontsize.size;
+					}
+					default: -1.0;
+				}
+			});
+			sizeArr = fold(sizes, [], \acc, sz -> if (sz > 0.0 && !contains(acc, sz)) arrayPush(acc, sz) else acc);
+			if (length(sizeArr) == 1) sizeArr[0] else either(minA(sizeArr), defSize);
+		}
+		default: defSize;
+	}
+}

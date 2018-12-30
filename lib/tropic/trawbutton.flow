@@ -1,0 +1,131 @@
+import tropic/tropic;
+import translation;
+import gui;
+
+export {
+	// Fully configurable button. Use OnClick or TOnClick helpers for the state.
+	TRawButton(normal : Tropic, hover : Tropic, pressed : Tropic, disabled : Tropic, shortcut : string, style : [TButtonStyle], state : [TButtonState]) -> Tropic;
+		TButtonStyle ::= NoneButtonStyle, TButtonGhosted, TDeltaGhosted; // TButtonTooltip, TButtonTabIndex, TButtonDescription;
+			NoneButtonStyle();
+			TButtonGhosted(); //Pass click down through z-order, useful in scrolls
+			TDeltaGhosted(delta : double); //Cancel button pressing after move dmouse more then delta after mouse down elta (useful in scrolls)
+			// TButtonTooltip(tooltip : string); // Also serves as description if not given
+			// TButtonTabIndex(index : int);
+			// TButtonDescription(d : string); // For 508 compliance
+
+		TButtonState ::= TPressed, TEnabled, THovering, TOnClicked;
+			TEnabled(enabled : Transform<bool>);
+
+			// Prefer to use the OnClick helper below
+			TPressed(pressed : DynamicBehaviour<bool>);
+
+			THovering(hovering : DynamicBehaviour<bool>);
+
+			TOnClicked(clicked : () -> void);
+
+		// Helpers to construct callbacks when a button is clicked
+		TOnClick(click : DynamicBehaviour<bool>) -> [TButtonState];
+		OnClick(fn : () -> void) -> [TButtonState];
+
+}
+
+TRawButton(normal : Tropic, hover : Tropic, pressedTropic : Tropic, disabledTropic : Tropic, shortcut : string, style : [TButtonStyle], state : [TButtonState]) -> Tropic {
+	pressed : TPressed = extractStruct(state, TPressed(make(false)));
+	enabled : TEnabled = extractStruct(state, TEnabled(const(true)));
+	hovering : THovering = extractStruct(state, THovering(make(false)));
+	clicked : TOnClicked = extractStruct(state, TOnClicked(nop));
+	ghosted = contains(style, TButtonGhosted());
+	deltaGhosted = extractStruct(state, TDeltaGhosted(5.0)).delta;
+	point = make(Point(0.0, 0.0));
+	startPoint = ref Point(0.0, 0.0);
+
+	shortcutKey = if (strlen(shortcut) == 0) noKey else parseShortcut(shortcut);
+	keypress = makeTKey(\k -> fgetValue(enabled.enabled) && matchShortcut(shortcutKey, k));
+
+	events = [
+		TMouseInside(hovering.hovering, false),
+		if (ghosted)
+			TMouseDownGhost(pressed.pressed)
+		else
+			TMouseDown(pressed.pressed),
+		keypress
+	];
+ 	moveListener = if (ghosted) [TMouseXY(point)] else [];
+	pressedInside = make(false);
+
+	// If the mouse is not down, and we are inside, hover.
+	// Or if the mouse is down, then only if it was pressed when inside, and inside
+	showhover = fmin(fmax(fnot(pressed.pressed), pressedInside), hovering.hovering);
+
+	but1 = TInteractive(concat(events, moveListener), 
+		TIf(fmin(pressed.pressed, pressedInside), 	// pressed and inside
+			pressedTropic,
+			TIf(showhover, hover, normal)
+		)
+	);
+
+	TConstruct(
+		concat(
+			[
+				\ -> subscribe2(keypress.pressed, \key -> 
+					if (key != noKey) {
+						h = getValue(hovering.hovering);
+						p = getValue(pressed.pressed);
+						nextDistinct(hovering.hovering, true);
+						nextDistinct(pressed.pressed, true);
+						nextDistinct(pressed.pressed, p);
+						deferUntilRender(\ -> nextDistinct(hovering.hovering, h));
+					}
+				),
+				\ -> subscribe2(pressed.pressed, \p -> {
+					if (p) {
+						startPoint := getValue(point);
+						nextDistinct(pressedInside, fgetValue(hovering.hovering));
+					} else {
+						if (getValue(pressedInside) && fgetValue(hovering.hovering)) {
+							clicked.clicked()
+						}
+						nextDistinct(pressedInside, false);
+					}
+				}),
+				\ -> \ -> {
+					// When we die, clear any of this state
+					next(hovering.hovering, false);
+					next(pressed.pressed, false);
+				}
+			],
+			if (ghosted) 
+				[\ -> subscribe(point, \p -> {
+					delta = abs(p.y - ^startPoint.y);
+					if (getValue(pressedInside) && delta >= deltaGhosted) {
+						next(pressedInside, false);	//we start move/scroll, do not trigger click then
+					} 
+				})]
+			else
+				[]			
+		),
+		TAccess(
+			concat([
+					AccessRole("button"),
+					//AccessDescription(if (^description != "") ^description else getFormText(form)),
+				],
+				if (shortcut != "") [AccessKbdShortcutString(_("Keyboard shortcut: ") + shortcut)] else [],	// This fixes case http://process.area9.dk/cases/default.asp?17882
+				// [AccessTabindex(^tabindex)]
+			),
+			TIf(enabled.enabled, TCursor(FingerCursor(), but1), disabledTropic)
+		)
+	);
+}
+
+TOnClick(click : DynamicBehaviour<bool>) -> [TButtonState] {
+	[
+		TOnClicked(\ -> {
+			nextDistinct(click, true);
+			nextDistinct(click, false);
+		})
+	]
+}
+
+OnClick(fn : () -> void) -> [TButtonState] {
+	[TOnClicked(fn)]
+}

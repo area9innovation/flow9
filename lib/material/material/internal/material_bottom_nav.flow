@@ -1,0 +1,182 @@
+import material/internal/material_ripple;
+import material/internal/material_icons;
+
+export {
+
+	MBottomNav2T(manager: MaterialManager, parent : MFocusGroup, m : MBottomNav) -> Tropic;
+}
+
+MBottomNav2T(manager: MaterialManager, parent : MFocusGroup, m : MBottomNav) -> Tropic {
+	style = m.style;
+	expander = m.expander;
+	actions = m.actions;
+	selected = m.selected;
+
+	// Constants of sizes
+	height = 56.0;
+	maxWFixed = 168.0;
+	minWFixed = 104.0;
+	maxWShiftAct = 168.0;
+	maxWShiftInact = 96.0;
+	minWShiftAct = 96.0;
+	minWShiftInact = 64.0;
+	// Panding
+	underLabel = 10.0;
+	leftRightLabel = 12.0;
+	aroundIconAct = 6.0;
+	aboveIconFixedInact = 8.0;
+
+	// Animation
+	point = make(Point(0.0, if (getValue(expander)) 0.0 else height));
+	startShift = ref if (getValue(expander)) 0.0 else height;
+	shiftHeight = ref if (getValue(expander)) -height else height;
+
+	scrollPoint = extractStructMany(style, makeTScrollInspectVisible())
+		|> (\f -> if (length(f) > 0) f[0].topleft else make(zeroPoint));
+	scrollUp = make(getValue(expander));
+	scrollShift = ref 0.0;
+
+	// Style and actions sizes
+	numActions = i2d(length(actions));
+	// fixed = if (numActions <= 3.0) true else false;
+	fixed = if (contains(style, MIsFixed())) true else if (numActions <= 3.0) true else false;
+
+	colorIconLabelAct = extractStruct(style, contrastingMColor(parent)); // icons and labels color (active action)
+	colorIconLabelInact = if (colorIconLabelAct == MBlack() || colorIconLabelAct == MWhite()) colorIconLabelAct else MGrey(500); // icons and labels color (inactive action)
+	fill = make(extractStruct(style, MFill(sameLightMColor(parent))));
+	opacity = extractStruct(style, FillOpacity(1.0));
+
+	widthBN = extractStruct(style, MBottomNavWidth(if (fixed) minWFixed*numActions else minWShiftInact * (numActions - 1.0) + minWShiftAct)).width;
+
+	widthAction = \active -> {
+		widthInactive =
+			if (fixed) (widthBN / numActions)
+				|> (\w -> {if (w > maxWFixed) maxWFixed else w;
+					if (w < minWFixed) minWFixed else w
+				})
+			else (widthBN / (minWShiftAct/minWShiftInact + numActions - 1.0))
+				|> (\w -> {if (w > maxWShiftInact) maxWShiftInact else w;
+					if (w < minWShiftInact) minWShiftInact else w
+				});
+		widthActive =
+			if (fixed) widthInactive
+			else (widthBN - widthInactive * (numActions - 1.0))
+				|> (\w -> {if (w > maxWShiftAct) maxWShiftAct else w;
+					if (w < minWShiftAct) minWShiftAct else w
+				});
+		if (active) widthActive else widthInactive
+	}
+
+	// Actions
+	BNAction = \action, active -> {
+		aboveIcon = if (fixed) (if (active) aroundIconAct else aboveIconFixedInact) else aroundIconAct;
+		// BN is fixed or shifting but an action is active
+		(if (fixed || (!fixed && active))
+			TLines2(
+				TCenterIn(
+					TBorder(leftRightLabel, aboveIcon, leftRightLabel, aroundIconAct,
+						MIcon2T(parent, action.iconName, if (active) [colorIconLabelAct, FillOpacity(0.87)] else [colorIconLabelInact, FillOpacity(0.54)])
+					),
+					TFixed(widthAction(active), 0.0)
+				),
+				TCenterIn(
+					TBorder(leftRightLabel, -4.0, leftRightLabel, underLabel,
+						MText2T(parent, action.label, [if (active) MBody() else MCaption(), colorIconLabelAct])
+					),
+					TFixed(widthAction(active), 0.0)
+				)
+			)
+			|> (\f -> TCenterIn(f, TFixed(widthAction(active), 0.0)))
+		// BN is shifting and an action is inactive
+		else TCenterIn(MIcon2T(parent, action.iconName, [colorIconLabelInact, FillOpacity(0.54)]), TFixed(widthAction(active), height)))
+		|> (\f -> TGroup2(f, TRectangle(interactiveRectangleStyle, TFillMax(widthAction(active), height))))
+		|> (\f -> TFixSize(f, TFixed(widthAction(active), height)))
+	}
+
+	downColor =
+		fgetValue(selected)
+		|> (\sel ->
+			if (sel >= 0 && sel < length(actions))
+				actions[sel]
+				|> (\act -> if (length(act.colorBackground) > 0) act.colorBackground[0] else MGrey(500))
+			else
+				MGrey(500)
+		)
+		|> make;
+
+	// Drawing of Bottom navigation
+	TCenterX(TColsA(mapi(actions, \id, act ->
+		TSelect(feq(selected, id), \active -> {
+			down = make(false);
+			if (active && length(act.colorBackground) > 0) {
+				next(fill, MFill(act.colorBackground[0]));
+			}
+			BNAction(act, active)
+			|> (\f -> TInteractive([TMouseDownGhost(down)], f))
+			|> (\f -> TCursor(FingerCursor(), f))
+			|> (\f -> TConstruct([makeSubscribe2(down, \d ->
+				if (!d) {
+					act.onClick();
+					nextDistinct(selected, id)
+				} else {
+					next(downColor, if (length(act.colorBackground) > 0) act.colorBackground[0] else MGrey(500));
+				})], f))
+		})
+	)))
+	|> (\f ->
+		TGroup([
+			TSelectConstantMetrics(fill, \fl -> TRectangle([fl, opacity], TFillXH(height))),
+			TCopySize(f, \tr -> MRippleOnDown2T(manager, parent, tr, downColor, const(1.), const(MRippleFill()), const(false), false), false)
+		])
+	)
+	|> (\f -> TInteractive([TMouseDown(make(false)), TMouseInside(make(false), true)], f))
+	|> (\f -> TTranslate(point, f))
+	|> (\f -> TConstruct([
+		makeSubscribe2(scrollPoint, \sp -> {
+			su = getValue(scrollUp);
+			if (sp.y < ^scrollShift - 160. && !su) {
+				startShift := getValue(point).y;
+				scrollShift := sp.y;
+				nextDistinct(scrollUp, true);
+			} else if (sp.y > ^scrollShift + 160. && su) {
+				startShift := getValue(point).y;
+				scrollShift := sp.y;
+				nextDistinct(scrollUp, false);
+			} else if (sp.y < ^scrollShift && su || sp.y > ^scrollShift && !su) {
+				scrollShift := sp.y;
+			}
+		}),
+		makeSubscribe2(scrollUp, \up -> next(expander, up))
+	],
+		MEasingAnimation(
+			manager,
+			parent,
+			fif(expander, const(mEnteringDuration), const(mLeavingDuration)),
+			fif(expander, const(mDecelerationCurve), const(mAccelerationCurve)),
+			expander,
+			\e -> {
+				shiftHeight := if (e) -^startShift else ^startShift + height;
+				Some(e);
+			},
+			\e, py -> {
+				next(point, Point(0.0, ^startShift + ^shiftHeight * py));
+				if (py == 1.) startShift := getValue(point).y;
+			},
+			[],
+			f
+		)
+	))
+	|> makeTropicConstantHeight(height |> Some)
+	|> (\f ->
+		MActivate2T(
+			manager,
+			parent,
+			"MBottonNav",
+			[
+				IScriptBehaviour("selected", selected, ISInputValue(map(m.actions, \action -> action.label), "index", true)),
+				IScriptBehaviour("expander", expander, ISInputValue([], "bool", false))
+			],
+			\__ -> f
+		)
+	)
+}

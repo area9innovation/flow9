@@ -1,0 +1,409 @@
+import binarytree;
+import algorithms;
+
+/*
+	Blueprint
+	---------
+
+	Blueprint allows to substitute parts of the string marked with %...% with values described 
+	in a dictionary that is passed a second parameter in a format [key0, value0, key1, value1, ...].
+	It also unindent lines based on the indentation of the first line. 
+
+	In general using blueprint makes code a bit longer, however it's much easier to read and maintain.
+
+	Example
+	-------
+
+		blueprint("
+				%item%Count = 4;
+
+				if (%var% > 5) {
+					foo(%item%Count + %value%)
+				}
+			", [
+				"item", myItem,
+				"var", "myVar",
+				"value", myValue
+			]
+		)
+
+	is equivalent to:
+
+		myItem + "Count = 4;\n\n" +
+		"if (" + myVar + " > 5) {\n" + 
+		"\tfoo(" + myItem + "Count + " + myVar + ")\n"
+		"}\n"
+
+	I.e. every key marked with % is replaced by it's value (`item` is replaced by `myItem`) and
+	indentation of the line matches the very first one.
+
+	Multiline values
+	----------------
+
+	Note, all substituted multiline values will be indented to match indentation of it's first line. I.e.
+		
+		blueprint("
+				this
+					is %value%
+				we have here
+			", [
+				"value", "a\nvery\n\tbig\nsurprise"
+			]
+		)
+
+	will generate:
+
+		this
+			is a
+			very
+				big
+			surprise
+		we have here
+
+	Conditional statements
+	----------------------
+
+	You can also use special syntax for conditional statements:
+
+		% if flag %
+			...
+		% else %
+			...
+		% endif %
+
+	Unfortunately you have to convert flag to string when passing as part of key-value array:
+
+		"flag", b2s(myFlag) 
+
+	Further development
+	-------------------
+	
+	In future it could be replaced by new multiline string Flow type similar to one in PHP and Haxe.
+		
+		"""
+		multiline text
+		"""
+	
+	Grammar draft for it:
+
+		string0 = nl '"""' (nl line)* nl '"""';
+		string1 = nl '\t"""' (nl "\t" line)* nl '\t"""';
+		...
+
+		line = ("$" atom | !'\n' onechar)*;
+*/
+
+export {
+	blueprint(s : string, parameters : [string]) -> string;
+
+	buildTabs(n : int) -> string;
+	indentLines(s : string, indent : int) -> string;
+	indentLinesA(lines : [string], indent : int) -> string;
+
+	// count number of tabs (ignoring spaces) in the beggining of the line
+	countLineIndentation(line : string) -> int;
+
+	// Maps each element, ignores the result if the result is the empty string, and then glues everything together
+	// map |> filter |> strGlue
+	superglue(xs : [?], fn : (?) -> string, delimiter : string) -> string;
+	supergluei(xs : [?], fn : (int, ?) -> string, delimiter : string) -> string;
+}
+
+blueprint(s : string, parameters : [string]) -> string { 
+	// Step 1. Unindent lines
+	unindented = unindentLines(s);
+
+	// Process parameters
+	key2value = 
+		foldi(parameters, makeTree(), \i, acc, param -> {
+			if (odd(i)) {
+				setTree(acc, parameters[i-1], param)
+			} else {
+				acc
+			}
+		});
+
+	// Step 2. Substitute conditional statements
+	unconditional = substituteConditions(unindented, key2value);
+
+	// Step 3. Substitute keys 
+	substituteKeys(unconditional, key2value); 
+}
+
+substituteConditions(s : string, key2value : Tree<string, string>) -> string {
+	lines = strSplit(s, "\n");
+
+	// find first IF
+	IF_PREFIX = "% if";
+	IF_POSTFIX = " %";
+	ifLineNumberM = findi(lines, \line -> strContains(line, IF_PREFIX));
+
+	switch (ifLineNumberM) {
+		Some(ifLineNumber): {
+			beforeIfLines = take(lines, ifLineNumber);
+			ifLine = lines[ifLineNumber];
+
+			//println("IF LINE:" + ifLine);
+
+			// find position of IF inside of the line
+			ifPrefixIndex = strIndexOf(ifLine, IF_PREFIX);
+			ifPostixIndex = strRangeIndexOf(ifLine, IF_POSTFIX, ifPrefixIndex, strlen(ifLine));
+			if (ifPrefixIndex == -1 || ifPostixIndex == -1) {
+				println("Blueprint error: unbalanced IF statement");
+			}
+
+			//println("ifPrefixIndex=" + i2s(ifPrefixIndex));
+			//println("ifPostixIndex=" + i2s(ifPostixIndex));
+			
+			// find IF condition
+			condition = substring(ifLine, ifPrefixIndex + strlen(IF_PREFIX), ifPostixIndex - ifPrefixIndex - strlen(IF_PREFIX));
+			condition2 = trim(condition);
+			negateCondition = startsWith(condition2, "!");
+			condition3 = ltrim2(condition2, "!");
+			//println("condition2=" + condition);
+
+			// calculate condition based one key-value map
+			valueM = lookupTree(key2value, condition3);
+			switch (valueM) {
+				Some(value): {
+					// convert string value to boolean
+					boolValue = s2b(value);
+					boolValue2 = if (negateCondition) !boolValue else boolValue; 
+
+					// run recursively 
+					afterIfLines = tailFrom(lines, ifLineNumber + 1);
+					afterIf = strGlue(afterIfLines, "\n");
+					afterIf2 = substituteConditions(afterIf, key2value);
+					afterIfLines2 = strSplit(afterIf2, "\n");
+
+					// find ENDIF 
+					ENDIF_TAG = "% endif %";
+					endifLineNumberM = findi(afterIfLines2, \line -> strContains(line, ENDIF_TAG));
+
+					switch (endifLineNumberM) {
+						Some(endifLineNumber): {
+							afterEndIfLines = tailFrom(afterIfLines2, endifLineNumber + 1);
+							bodyLines = take(afterIfLines2, endifLineNumber);
+
+							// find ELSE if exists
+							ELSE_TAG = "% else %";
+							elseLineNumberM = findi(bodyLines, \line -> strContains(line, ELSE_TAG));
+
+							branchLines = 
+								switch (elseLineNumberM) {
+									Some(elseLineNumber): {
+										beforeElseLines = take(bodyLines, elseLineNumber);
+										afterElseLines = tailFrom(bodyLines, elseLineNumber + 1);
+
+										if (boolValue2) {
+											beforeElseLines
+										} else {
+											afterElseLines
+										}
+									}
+									None(): {
+										// no ELSE found, use all body if condition is true
+										if (boolValue2) {
+											bodyLines
+										} else {
+											[]
+										}
+									}
+								};
+
+							// first, unindent branch lines based one the first one
+							// second, indent to match IF tag indentation
+							branchLines2 = indentLines2(unindentLines2(branchLines), ifPrefixIndex);
+				
+							// put all lines back together except one with tags
+							lines2 = concat3(beforeIfLines, branchLines2, afterEndIfLines);
+							strGlue(lines2, "\n");
+						}
+						None(): {
+							// no ENDIF found, something wrong
+							println("Blueprint error: % endif % is not found");
+							s
+						}
+					}
+				}
+				None(): {	
+					// variable not found, can't resolve
+					println("Blueprint error: condition `" + condition2 + "` can't be resolved");
+					s
+				}
+			}
+		}
+		None(): {
+			// no IF found, nothing we can do here
+			s
+		}
+	}
+}
+
+BlueReplacement : (start : int, end : int, value : string);
+
+substituteKeys(s : string, key2value : Tree<string, string>) -> string {
+	replacements = 
+		foldTree(key2value, [], \key, value, acc -> {
+			indecies = multipleStrIndexOf(s, "%" + key + "%");
+
+			fold(indecies, acc, \acc2, index -> {
+				// Indent multi-line values to match indentation of it's first line
+				valueLines = strSplit(value, "\n");
+				value2 =
+					if (length(valueLines) > 1) {
+						lastLineIndent = lineIndetationByIndex(s, index);
+						strGlue(mapi(valueLines, \i, valueLine -> {
+							if (i == 0) {
+								valueLine
+							} else {
+								buildTabs(lastLineIndent) + valueLine;
+							}
+						}), "\n")
+					} else {
+						value
+					};
+
+				arrayPush(acc2, BlueReplacement(index, index + strlen(key) + 2, value2))
+			})
+		});
+
+	reversed = 
+		mergeSort(replacements, \l, r -> {
+			genericCompareDesc(l.start, r.start)
+		});
+
+	resultDraft = fold(reversed, s, \acc, r : BlueReplacement -> {
+		before = strLeft(acc, r.start);
+		after = strRight(acc, r.end);
+		before + r.value + after
+	});
+
+	strGlue(map(strSplit(resultDraft, "\n"), \line -> if (isEmptyLine(line)) "" else line), "\n");
+}
+
+lineIndetationByIndex(s : string, index : int) -> int {
+	prefix = strLeft(s, index);
+	lastNewlineIndex = strLastIndexOf(prefix, "\n");
+	line = if (lastNewlineIndex == -1)
+		prefix
+	else substring(prefix, lastNewlineIndex + 1, index - lastNewlineIndex - 1);
+	countLineIndentation(line);
+}
+
+buildTabs(n : int) -> string {
+	strRepeat("\t", n);
+}
+
+/*
+From: 
+	alkdsjflkjdsa
+		fjsajf
+			dajhkjfhdsa
+		dsalkhj
+To: 
+alkdsjflkjdsa
+	fjsajf
+		dajhkjfhdsa
+	dsalkhj
+*/
+unindentLines(s : string) -> string {
+	if (s == "") {
+		""
+	} else {
+		lines = strSplit(s, "\n");
+
+		if (lines == []) {
+			""
+		} else {
+			lines2 = 
+				if (trim2(lines[0], "\t ") == "") {
+					tail(lines)
+				} else {
+					lines
+				};
+
+			lines3 = unindentLines2(lines2);
+
+			strGlue(lines3, "\n")
+		}
+	}
+}
+
+unindentLines2(lines : [string]) -> [string] {
+	if (lines == []) {
+		[]
+	} else {
+		firstNotEmptyLine = findDef(lines, \line -> line != "", "");
+		lineindentation = countLineIndentation(firstNotEmptyLine);
+
+		map(lines, \line -> unindentLine(line, lineindentation));
+	}
+}
+
+// count number of tabs (ignoring spaces) in the beggining of the line
+countLineIndentation(line : string) -> int {
+	line2 = ltrim2(line, " \t");
+	tabsAndSpaces = strLeft(line, strlen(line) - strlen(line2));
+	strlen(strReplace(tabsAndSpaces, " ", ""));
+}
+
+// unindent line at num tabs if possible
+unindentLine(line : string, num : int) -> string {
+	if (isEmptyLine(line)) {
+		""
+	} else if (num <= 0) {
+		line
+	} else {
+		c = getCharAt(line, 0);
+
+		if (c == " ") {
+			unindentLine(strRight(line, 1), num)
+		} else if (c == "\t") {
+			unindentLine(strRight(line, 1), num - 1)
+		} else {
+			line
+		}
+	}
+}
+
+indentLinesA(lines : [string], indent : int) -> string {
+	lines2 = indentLines2(lines, indent);
+	strGlue(lines2, "\n");
+}
+
+indentLines(s : string, indent : int) -> string {
+	indentLinesA(strSplit(s, "\n"), indent);
+}
+
+indentLines2(lines : [string], indent : int) -> [string] {
+	map(lines, \line -> indentLine(line, indent));
+}
+
+indentLine(line : string, indent : int) -> string {
+	if (isEmptyLine(line))
+		""
+	else if (indent < 0 && startsWith(line, "\t"))
+		indentLine(substring(line, 1, strlen(line) - 1), indent + 1)
+	else
+		buildTabs(indent) + line;
+}
+
+superglue(xs : [?], fn : (?) -> string, delimiter : string) -> string {
+	supergluei(xs, \__, x -> fn(x), delimiter)
+}
+
+supergluei(xs : [?], fn : (int, ?) -> string, delimiter : string) -> string {
+	strGlue(
+		foldi(xs, [], \i, acc, x -> {
+			s = fn(i, x);
+
+			if (s == "") acc else arrayPush(acc, s)
+		}),
+		delimiter
+	)
+}
+
+isEmptyLine(line : string) -> bool {
+	ltrim2(line, " \t") == "";
+}

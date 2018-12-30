@@ -1,0 +1,296 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/backends/common;
+import blueprint;
+import formats/html/html;
+import tools/flowc/flow_parser;
+import tools/flowc/flow_ast;
+import tools/flowc/backends/doc/fiexport2doc;
+import tools/flowc/flow_ast_mnemonics;
+
+/*
+TODO:
+- Produce a doc file per flow file
+  - Imports, importees
+  - Link to source file?
+  - For each function or native, including callers, callees
+  - Use js graphviz to visualize callgraph, import graph, union hierarchy?
+*/
+export {
+	fi2doc(program : FiProgram, cfg : FiDocConfig, callback : () -> void) -> void;
+}
+
+fi2doc(program : FiProgram, cfg : FiDocConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making Doc '" + cfg.outputfolder + "'...");
+
+	heading = Cons("<h1>Files</h1>", makeList());
+	files = foldTree(program.modules, heading, \m, mod_, acc -> {
+		Cons("<p><a href=\"#file_" + m + "\">" + m + "</a></p>\n", acc)
+	});
+
+	doc = foldTree(program.modules, files, \m, mod_, acc -> {
+
+		file = fiModule2doc(mod_);
+		comments = file.comments;
+		filename = cfg.outputfolder + "/" + mod_.fileinfo.flowfile + ".html";
+		dirname = dirName(filename);
+		ensureDirectoryExists(dirname);
+		setFileContent(filename, file.doc);
+
+		exports = buildSet(mod_.exports);
+		acc0 = Cons("<h1><a style=\"text-decoration: none;\" href=\"" + mod_.fileinfo.flowfile + ".html\">&#9432;</a> <a name=\"file_" + m + "\">" + m + "</a></h1>\n", acc);
+
+		exportedUnions = filter(mod_.unions, \u -> containsSet(exports, u.name));
+		acc1 = if (exportedUnions != []) {
+			fold(exportedUnions, Cons("<h2>Unions</h2>\n", acc0), \acc_, un : FiTypeUnion -> {
+				s = fiUnion2doc(un);
+				Cons(
+					formatFiTopLevel(un.name, s, lookupTreeDef(comments, un.name, "")), 
+					acc_
+				)
+			});
+		} else acc0;
+
+		exportedStructs = filter(mod_.structs, \s -> containsSet(exports, s.name));
+		acc2 = if (exportedStructs != []) {
+			fold(exportedStructs, Cons("<h2>Structs</h2>\n", acc1), \acc_, un : FiTypeStruct -> {
+				s = fiStruct2doc(un);
+				Cons(
+					formatFiTopLevel(un.name, s, lookupTreeDef(comments, un.name, "")), 
+					acc_
+				)
+			});
+		} else acc1;
+
+		exportFunctions = filter(mod_.functions, \f -> containsSet(exports, f.name));
+		acc3 = if (exportFunctions != []) {
+			fold(exportFunctions, Cons("<h2>Functions</h2>\n", acc2), \acc_, fn : FiFunctionDec -> {
+				s = "<b>" + fn.name + "</b>" + fiType2doc(fn.type);
+				Cons(
+					formatFiTopLevel(fn.name, s, lookupTreeDef(comments, fn.name, "")), 
+					acc_
+				)
+			});
+		} else acc2;
+
+		exportNatives = filter(mod_.natives, \n -> containsSet(exports, n.name));
+		acc4 = if (exportNatives != []) {
+			fold(exportNatives, Cons("<h2>Natives</h2>\n", acc3), \acc_, fn : FiNativeDec -> {
+				s = "<b>" + fn.name + "</b>" 
+					+ fiType2doc(fn.type)
+					+ (if (fn.io) " io" else "");
+				Cons(
+					formatFiTopLevel(fn.name, s, lookupTreeDef(comments, fn.name, "")), 
+					acc_
+				)
+			});
+		} else acc3;
+
+		exportedGlobals = filter(mod_.globalVars, \v -> containsSet(exports, v.name));
+		acc5 = if (exportedGlobals != []) {
+			fold(exportedGlobals, Cons("<h2>Global variables</h2>\n", acc4), \acc_, v : FiGlobalVar -> {
+				s = "<b>" + v.name + "</b> : "
+					+ fiType2doc(v.type);
+				Cons(
+					formatFiTopLevel(v.name, s, lookupTreeDef(comments, v.name, "")), 
+					acc_
+				)
+			});
+		} else acc4;
+		acc5;
+	});
+
+	exports = foldTree(program.modules, makeSet(), \name, m, acc -> {
+		mergeSets(acc, buildSet(m.exports));
+	});
+
+	options = foldSet(exports, makeList(), \acc, e -> {
+		Cons("<option value=\"" + e +"\">", acc)
+	});
+
+	setFileContent(cfg.outputfolder +"/index.html", blueprint("
+		<html>
+		<head>
+		<style>
+		body {
+		    font-family: \"Lucida Console\", Monaco, monospace;
+			padding: 0px;
+		}
+		p, dl {
+			margin: 2px 0px 2px 48px;
+		}
+
+		dd {
+		    font-family: Sans-serif;
+		}
+
+		dl {
+			margin: 2px 0px 16px 48px;
+		}
+
+
+		h1 {
+		    color: maroon;
+		    margin-left: 16px;
+		} 
+		h2 {
+		    color: blue;
+		    margin-left: 32px;
+			font-size: 14px;
+		} 
+		</style>
+		<script>
+
+		window.onload = function () {
+		    document.getElementById(\"myForm\").onsubmit = function onSubmit(form) {
+		    	var anchor = document.getElementById(\"anchor\").value;
+		        window.location.href = window.location.href.split('#')[0] + '#' + anchor;
+		        return false;
+		    }
+		}
+		</script>
+		</head>
+		<body>
+
+		<form align=right style=\"position:sticky;top:6;\" id='myForm'>
+			<datalist id=\"names\">
+				%options%
+			</datalist>
+		    <input type=\"text\" id=\"anchor\" list=\"names\"/>
+		    <input type=\"submit\" value=\"Find\"/>
+		</form>
+
+		%mods%
+		</body>
+		</html>", [
+			"mods", list2string(doc),
+			"options", list2string(options)
+		]));
+
+	fcVerbose(cfg, 0, "Making Doc '" + cfg.outputfolder + "' finished.");
+
+	callback();
+}
+
+formatFiTopLevel(name : string, type : string, comment : string) -> string {
+	blueprint("
+			<dl><dt><a name=\"%name%\">%type%</a></dt>%comment%</dl>
+		", [
+			"name", escapeHtml(name),
+			"type", type,
+			"comment", if (comment == "") comment else {
+				"<dd>" + escapeHtml(comment) + "</dd>"
+			}
+		]
+	);
+}
+
+fiModule2doc(m : FiModule) -> ModuleDocs {
+	file = getFileContent(m.fileinfo.fullpath);
+	parsed = parse_flow(file);
+
+	importExport : [SyntaxTree] = get_flow_importExport_s(parsed.first);
+
+	comments : ref Tree<string, string> = ref makeTree();
+
+	exportSection = fold(importExport, "", \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_export) {
+			c = fiExport2doc(file, parsed.first, ts);
+			comments := mergeTree(^comments, c.comments);
+			acc + c.doc;
+		} else acc;
+	});
+
+	exportEnd = fold(importExport, 0, \acc, ts : SyntaxTree -> {
+		if (ts.rule == st_export) ts.end else acc
+	});
+
+	docs = blueprint("
+		<html>
+		<head>
+		<style>
+		body {
+		    font-family: \"Open Sans\", sans-serif;
+			padding: 0px;
+		}
+		p {
+			margin: 2px 16px 2px 2px;
+			font-size: 10px;
+		}
+
+		h1 {
+		    color: maroon;
+		    margin-left: 16px;
+		} 
+		h2 {
+		    color: blue;
+		    margin-left: 32px;
+			font-size: 14px;
+		} 
+		th, td {
+		    border-bottom: 1px solid #ddd;
+		}
+		</style>
+		<script src=\"https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js\"></script>
+		</head>
+		<body>
+		<h1>%name%</h1>
+		<p>%exports%</p>
+		<p><pre class=\"prettyprint lang-java\">%code%</pre></p>
+		</body>
+		</html>
+	", [
+		"name", m.fileinfo.flowfile,
+		"exports", exportSection,
+		"code", strReplace(substring(file, 0, exportEnd), "\t", "    ")
+	]);
+	ModuleDocs(docs, ^comments);
+}
+
+fiUnion2doc(u : FiTypeUnion) -> string {
+	"<b>" + u.name + "</b>"
+	+ (if (u.typeparameters == []) "" else {
+		"&lt;" + superglue(u.typeparameters, fiType2doc, ", ") + "&gt;"
+	})
+	+ " ::= "
+	+ superglue(u.typenames, fiType2doc, ", ")
+}
+
+fiStruct2doc(s : FiTypeStruct) -> string {
+	"<b>" + s.name + "</b>"
+/*	+ (if (s.typars == []) "" else {
+		"&lt;" + superglue(s.typars, fiType2doc, ", ") + "&gt;"
+	})*/
+	+ "(" + superglue(s.args, \a -> {
+		(if (a.ismutable) "mutable " else "")
+		+ a.name + " : " + fiType2doc(a.type)
+	}, ", ") + ")"
+}
+
+
+fiType2doc(type : FiType) -> string {
+	switch (type) {
+		FiTypeArray(t): "[" + fiType2doc(t) + "]"; 
+		FiTypeFunction(args, returnType): "(" 
+			+ superglue(args, \a -> {
+					(if (a.name != "") a.name + " : " else "") + fiType2doc(a.type)
+				}, ", ") + ") -> " 
+			+ fiType2doc(returnType);
+		FiTypeRef(t): "ref " + fiType2doc(t);
+		FiTypeParameter(n): n;
+		FiTypeBool(): "bool";
+		FiTypeInt(): "int";
+		FiTypeDouble(): "double";
+		FiTypeString(): "string";
+		FiTypeFlow(): "flow";
+		FiTypeVoid(): "void";
+		FiTypeNative(): "native";
+		FiTypeName(name, typeparameters): {
+			"<a href=#" + escapeHtml(name) + ">" + name + "</a>"
+			+ (
+				if (typeparameters == []) "" else {
+					"&lt;" + superglue(typeparameters, fiType2doc, ", ") + "&gt;"
+				}
+			);
+		}
+	}
+}

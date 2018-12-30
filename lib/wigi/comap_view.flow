@@ -1,0 +1,159 @@
+import ui/buttons;
+
+export {
+	comap2form(views : [Form], collapsed : DynamicBehaviour<bool>, updateCursorFn : () -> void) -> Form;
+}
+
+comap2form(views : [Form], collapsed : DynamicBehaviour<bool>, updateCursorFn : () -> void) -> Form {
+
+	lineWidth = 1.0;
+	lineStyle = [Stroke(black), StrokeWidth(lineWidth)];
+	rIcon = ref 0.0;
+	lineYOffset = 2.0; // underline vertical offset
+	nodeVerticalGap = 2.0; // vertical gap between two nodes
+
+	wh = makeWH();
+	f = Inspect([ISize(wh)], Available2(const(WidthHeight(200.0, 0.0)), views[0]));
+
+	node = \isParent -> {
+		delta = if (isParent) 10.0 else 0.0; // how far '+/-' button is from node's content
+		Lines([
+		 	f, 
+		 	Fixed(0.0, lineYOffset),
+			Select(wh, \mwh -> Graphics([MoveTo(0.0, 0.0), LineTo(mwh.width + delta, 0.0)], lineStyle))
+		])
+	} 
+
+	if (length(views) == 1) {
+		// No children, then no collapser
+		Baseline(select(wh, \s -> s.height + lineYOffset), node(false));
+	} else {
+		mkIcon = \color, ch -> {
+			t = Text(ch, [FontFamily("Demi"), Fill(color), FontSize(10.0)]);
+			metrics = getStaticFormSizeCached(t);
+			rIcon := metrics.height / 2.0;
+			correction = if (flash) 0.0 else 1.0;
+			Group([
+				Circle(^rIcon, ^rIcon, ^rIcon, [Stroke(color), StrokeWidth(1.5)]),
+				Offset(correction, if (ch == "+") 0.0 else -1.0 + correction, Align2(0.5, 0.0, t))
+			])
+		};
+
+		mkButton = \c -> SimpleButton(
+			mkIcon(0x333333, c),
+			mkIcon(0x0066d9, c),
+			"",
+			\ -> {
+				next(collapsed, !getValue(collapsed));
+				updateCursorFn();
+			}
+		);
+
+		parent = \text -> {
+			Cols([
+				node(true),
+				Select(wh, \mwh -> {
+					Lines([
+						Fixed(0.0, mwh.height + lineYOffset - ^rIcon),
+						mkButton(text)
+					])
+				})
+			])
+		}
+
+		makeLinks = \parBase, parOff : double, chOff, chMatrArr : [FormMetrics] -> {
+			xOffset = 10.0;
+
+			goodArr = chMatrArr != [] && !exists(chMatrArr, \m -> m.height <= lineYOffset + 1.0);			
+
+			if (parBase > 0.0 && goodArr) {
+				yf = ref 0.0; // first Y-point to link
+				yl = ref 0.0; // last Y-point to link
+				h0 = ref 0.0; // common height
+				// make horizontal lines for children
+				gp = foldi(chMatrArr, [], \i, acc, m -> {
+					h = m.height;
+					dh = m.baseline;
+					if (i == 0)	yf := dh;
+					y = ^h0 + dh;
+					if (i == (length(chMatrArr) - 1)) yl := y;
+					h0 := ^h0 + h + nodeVerticalGap;
+					concat(acc, [MoveTo(xOffset, y), LineTo(0.0, y)]);
+				});
+ 				// add a vertical line. Also additionally link parent's link point if necessary 
+				graphPath = if (^yl + chOff < parBase) {
+					 concat(gp, [MoveTo(0.0, parBase - chOff), LineTo(0.0, ^yf)]);
+				} else	if (parBase < ^yf + chOff) {
+					concat(gp, [LineTo(0.0, parBase - chOff)]);
+				} else {
+					concat(gp, [LineTo(0.0, ^yf)]);
+				}
+				Graphics(graphPath, lineStyle);
+			} else {
+				Fixed(xOffset, 0.0);
+			}
+		}
+
+		chMetricsArray = make(generate(0, length(views) - 1, \i -> zeroMetrics));
+		disposer = ref [];
+
+		drawChidren = \v : [Form] -> {
+			applyall(^disposer);
+			disposer := [];
+			newForms = mapi(v, \i, ff ->{
+				unpair(getDynamicFormSize(ff), \cf : Form, mB : Behaviour<FormMetrics> -> {
+					d = selectu(mB, \m -> nextDistinct(chMetricsArray, replace(getValue(chMetricsArray), i, m))).second;
+					refArrayPush(disposer, d);
+					cf
+				})
+			});
+			forms = if (nodeVerticalGap == 0.0) newForms 
+				else interleave(newForms, Fixed(0.0, nodeVerticalGap));
+			WideLines(forms)
+		}
+
+		hChildBlock = make(0.0); // height of the whole block of children
+		hCollapsed = make(0.0); // height of collapsed parent
+		hParent = make(0.0); // height of non-collapsed parent
+		childYOffset = make(0.0); // Y offset of children block
+		parentYOffset = make(0.0); // Y offset of parent
+
+		select2(hChildBlock, hParent, \ch, ph -> {
+			offset = (ch - ph) / 2.0;
+			if (offset < 0.0) {
+				nextDistinct(childYOffset, - offset);
+				nextDistinct(parentYOffset, 0.0);
+			} else {
+				nextDistinct(childYOffset, 0.0);
+				nextDistinct(parentYOffset, offset);
+			}
+		});
+
+		baseline = select2(parentYOffset, hParent, \off, ph -> off + ph - ^rIcon);
+
+		Select(collapsed, \c -> {
+			if (c) {
+				Baseline(select(hCollapsed, \h -> h - ^rIcon), Inspect([Height(hCollapsed)], parent("+")))
+			} else {
+				Baseline(baseline,
+				Cols([
+					// parent side
+					Lines([
+						Select(parentYOffset, \off -> if (off != 0.0) Fixed(0.0, off) else Empty()),
+						Inspect([Height(hParent)], parent("\u2013"))
+					]),
+					// links and children side
+					Lines([
+						Select(childYOffset, \off -> if (off != 0.0) Fixed(0.0, off) else Empty()),
+						Cols([
+							Select(select4(baseline, parentYOffset, childYOffset, chMetricsArray, \pb, dp, dc, ca -> Quadruple(pb, dp, dc, ca)), 
+								\q -> makeLinks(q.first, q.second, q.third, q.fourth)),
+							Inspect([Height(hChildBlock)], Available2(const(WidthHeight(200.0, 0.0)), drawChidren(tail(views))))
+						])
+					]),
+				])
+				)
+			}
+		});
+	}
+}

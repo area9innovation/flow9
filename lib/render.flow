@@ -1,0 +1,283 @@
+import ui/fontmapping; // getMappedFont
+import picutil;
+
+export {
+	ClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
+
+	DefinedTextStyle(
+		fontFamily : string,
+		fontSize : double,
+		fontWeight : int,
+		fontSlope : string,
+		fillColor : int,
+		fillOpacity : double,
+		letterSpacing : double,
+		backgroundColor : int,
+		backgroundOpacity : double,
+		advancedSharpness : int,
+		antiAlias : int,
+		gridFit : int
+	);
+
+	RenderResult(
+		clips : [native],
+		widthHeight : Behaviour<WidthHeight>,
+		baseline : Behaviour<double>,
+		pending : Behaviour<int>,
+		disposers :[() -> void],
+		capabilities : ClipCapabilities
+	);
+
+	deferUntilNextFrameRendered(cb : () -> void) -> void;
+
+	getFontFamily(style : [CharacterStyle]) -> string;
+	calculateDefaultTextBackgroundColorOpacity(style : [CharacterStyle]) -> double;
+	getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle;
+	defineTextStyle : (textfield : native, text : string, style : [CharacterStyle]) -> void;
+
+	getCachedPictureSize(url : string) -> Maybe<WidthHeight>;
+	// key is url processed with applyMediaPathMapping
+	CachedPicturesSizes : ref Tree<string, WidthHeight> = ref makeTree();
+
+	renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle]) -> WidthHeight;
+}
+
+native deferUntilNextFrameRendered : (cb : () -> void) -> void = RenderSupport.deferUntilRender;
+deferUntilNextFrameRendered(cb : () -> void) {
+	// nop fallback
+}
+
+//In case of change update getCharacterStyleFromWigiTextStyle
+defaultFontFamily_ = "Book";
+
+getFontFamily(style : [CharacterStyle]) -> string {
+	family = fold(style, defaultFontFamily_, \acc, s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name): name;
+			default: acc;
+		}
+	});
+	getMappedFont(family, 11.0).first
+}
+
+getCachedPictureSize(url : string) -> Maybe<WidthHeight> {
+	lookupTree(^CachedPicturesSizes, applyMediaPathMapping(url))
+}
+
+calculateDefaultTextBackgroundColorOpacity(style : [CharacterStyle]) -> double {
+	b2d(containsStruct(style, BackgroundFill(0)));
+}
+
+getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
+	// Set up the style
+	fontfamily = ref defaultFontFamily_;
+	fontweight = ref 400;
+	fontslope = ref "";
+	fontsize = ref 11.0;
+	fillcolour = ref 0x000000;
+	fillopacity = ref 1.0;
+	backgroundcolour = ref 0xffffff;
+	backgroundopacity = ref calculateDefaultTextBackgroundColorOpacity(style);
+	letterspacing = ref 0.0;
+	advancedSharpness = ref -400;
+	advancedAntiAliasType = ref FontAntiAliasAdvanced();
+	advancedGridFitType = ref FontGridFitNone();
+	specifiedSharpness = ref false;
+	iter(style, \s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name) : {
+				if (isUrlParameterTrue("fontweight")) {
+					htmlFont = font2htmlFont(name);
+					fontfamily := htmlFont2familiesString(htmlFont);
+					fontweight := htmlFont2weight(htmlFont);
+					fontslope := htmlFont2slope(htmlFont);
+				} else {
+					fontfamily := name;
+				}
+			}
+			FontSize(size) : fontsize := size;
+			Fill(col): fillcolour := col;
+			FillOpacity(op): fillopacity := op;
+			LetterSpacing(op) : letterspacing := op;
+			Sharpness(sharpness, antiAliasType, gridFitType) : {
+				advancedSharpness := sharpness;
+				advancedAntiAliasType := antiAliasType;
+				advancedGridFitType := gridFitType;
+				specifiedSharpness := true;
+			}
+			BackgroundFill(col): backgroundcolour := col;
+			BackgroundFillOpacity(opacity): backgroundopacity := opacity;
+			default : {}
+		}
+	});
+	mappedFonts = map(strSplit(^fontfamily, ","), \family -> getMappedFont(family, ^fontsize));
+	fontfamily := strGlue(map(mappedFonts, firstOfPair), ",");
+	fontsize := mappedFonts[0].second;
+
+	// 21273
+	if (!^specifiedSharpness && flash && (^fontsize > 20.0)) {
+		advancedSharpness :=
+			if (^fontsize < 40.0) {
+				delta : double = 1.0-dpow(1.0-((^fontsize-20.0) / 20.0), 2.0);
+				round(-400.0 + 300.0 * delta);
+			}
+			else
+				-100;
+	}
+
+	antialiasint = switch(^advancedAntiAliasType : FontAntiAliasType) {
+		FontAntiAliasNormal() : 0;
+		FontAntiAliasAdvanced() : 1;
+	};
+	gridfitint = switch(^advancedGridFitType : FontGridFitType) {
+		FontGridFitNone() : 0;
+		FontGridFitPixel() : 1;
+		FontGridFitSubpixel() : 2;
+	};
+
+	DefinedTextStyle(
+		^fontfamily,
+		^fontsize,
+		^fontweight,
+		^fontslope,
+		^fillcolour,
+		^fillopacity,
+		^letterspacing,
+		^backgroundcolour,
+		^backgroundopacity,
+		^advancedSharpness,
+		antialiasint,
+		gridfitint
+	);
+}
+
+defineTextStyle(textfield, text, style) {
+	definedTextStyle = getDefinedTextStyle(style);
+
+	setTextAndStyle(
+		textfield,
+		text,
+		definedTextStyle.fontFamily,
+		definedTextStyle.fontSize,
+		definedTextStyle.fontWeight,
+		definedTextStyle.fontSlope,
+		definedTextStyle.fillColor,
+		definedTextStyle.fillOpacity,
+		definedTextStyle.letterSpacing,
+		definedTextStyle.backgroundColor,
+		definedTextStyle.backgroundOpacity
+	);
+
+	setAdvancedText(textfield, definedTextStyle.advancedSharpness, definedTextStyle.antiAlias, definedTextStyle.gridFit);
+}
+
+renderGraphics(clip : native, path : [StaticGraphicOp], style : [GraphicsStyle]) -> WidthHeight {
+	g = getGraphics(clip);
+
+	// Set up the style
+	fillcolour = ref 0xdeaddead; // A hack
+	fillopacity = ref 1.0;
+	gradientFill : ref Maybe<GradientFill> = ref None();
+	gradientType = ref "linear";
+	strokecolour = ref 0xdeaddead;
+	strokeopacity = ref 1.0;
+	strokewidth = ref 1.0;
+	strokeLineGradient : ref Maybe<StrokeLineGradient> = ref None();
+	iter(style, \s -> {
+		switch (s : GraphicsStyle) {
+			Fill(col): fillcolour := col;
+			FillOpacity(op): fillopacity := op;
+			GradientFill(c, rotation): gradientFill := Some(s);
+			RadialGradient(): gradientType := "radial";
+			Stroke(colour): strokecolour := colour;
+			StrokeOpacity(opacity): strokeopacity := opacity;
+			StrokeWidth(width): strokewidth := width;
+			StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+		}
+	});
+	if (0xdeaddead != (^fillcolour)) {
+		beginFill(g, ^fillcolour, ^fillopacity);
+	}
+	if (0xdeaddead != (^strokecolour) || isSome(^strokeLineGradient)) {
+		colour = if (0xdeaddead == (^strokecolour)) 0xffffff else ^strokecolour;
+		setLineStyle(g, ^strokewidth, colour, ^strokeopacity);
+	}
+	// Determine dimensions
+	minX = ref 99999.0;
+	maxX = ref -99999.0;
+	minY = ref 99999.0;
+	maxY = ref -99999.0;
+
+	updateRange = \x, y -> {
+		minX := min(x, ^minX);
+		maxX := max(x, ^maxX);
+		minY := min(y, ^minY);
+		maxY := max(y, ^maxY);
+	}
+
+	iter(path, \op ->
+		switch (op : StaticGraphicOp) {
+			MoveTo(x, y) : updateRange(x,y);
+			LineTo(x, y) : updateRange(x,y);
+			CubicBezierTo(x, y, cx, cy): updateRange(x,y);
+			QuadraticBezierTo(x, y, cx, cy): updateRange(x,y);
+			ClosePath(): {}
+		});
+
+	w = abs(^maxX - ^minX);
+	h = abs(^maxY - ^minY);
+
+	switch (^gradientFill : Maybe<GradientFill>) {
+		Some(gf): {
+			colors = map(gf.points, \c -> c.color);
+			alphas = map(gf.points, \c -> c.alpha);
+			offsets = map(gf.points, \c -> c.offset);
+			matrix = makeMatrix(w, h, gf.rotation, ^minX, ^minY);
+			beginGradientFill(g, colors, alphas, offsets, matrix, ^gradientType);
+		}
+		None(): {}
+	}
+
+	switch (^strokeLineGradient : Maybe) {
+		Some(sg): {
+			colors = map(sg.points, \c -> c.color);
+			alphas = map(sg.points, \c -> c.alpha);
+			offsets = map(sg.points, \c -> c.offset);
+			matrix = makeMatrix(w, h, sg.rotation, ^minX, ^minY);
+			setLineGradientStroke(g, colors, alphas, offsets, matrix);
+		}
+		None() : {}
+	}
+
+	// Render the path
+	needClose = ref false;
+	moveTo(g, 0.0, 0.0); // Make sure we start from (0.0, 0.0). JS works incorrectly without this
+	iter(path, \op ->
+		switch (op : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			moveTo(g, x, y);
+		}
+		LineTo(x, y) : {
+			needClose := true;
+			lineTo(g, x, y);
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			needClose := true;
+			curveTo(g, cx, cy, x, y);
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			needClose := true;
+			curveTo(g, cx, cy, x, y);
+		}
+		ClosePath(): {
+			needClose := false;
+			endFill(g);
+		}
+		}
+	);
+	if (^needClose) {
+		endFill(g);
+	}
+
+	WidthHeight(^maxX, ^maxY);
+}

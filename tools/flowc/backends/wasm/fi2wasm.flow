@@ -1,0 +1,678 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/backends/common;
+import tools/flowc/backends/wasm/fi2wasm_compile;
+import tools/flowc/backends/wasm/wasm_type_descriptor;
+import tools/flowc/backends/wasm/wasm_function_table;
+import tools/flowc/manipulation/lambda_lifting;
+import tools/flowc/manipulation/specialization;
+import tools/flowc/backends/wasm/wasm_js_wrapper;
+import tools/flowc/backends/wasm/wasm_native_linkage;
+import tools/flowc/backends/wasm/wasm_native_wrapper;
+import blueprint;
+import system;
+
+import tools/flowc/flowc_typecheck;
+
+export {
+	fi2wasm(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void;
+}
+
+fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "'...");
+
+	// Extend with the Wasm runtime
+	program1 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
+	program2 = lift_lambdas(program1);
+
+	program3 = specializeProgram(cfg, program2);
+
+	fcVerbose(cfg, 1, "Collecting declarations..");
+	decls1: [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program3);
+
+	fcVerbose(cfg, 1, "Collecting natives..");
+	natives1 : Tree<string, FiNativeDec> = fiWasmCollectNativeNames(cfg, program3);
+	natives2 = mapTree(natives1, \n -> wasmLinkNative(cfg, program3, n));
+
+	fcVerbose(cfg, 1, "Collecting string constants..");
+	stringAcc = fiWasmCollectStrings(cfg, decls1);
+
+	fcVerbose(cfg, 1, "Building type table..");
+	types0 : FiWasmTypeTable = fiWasmBuildTypeTable(program3.names, decls1, stringAcc.offset);
+	
+	fcVerbose(cfg, 1, "Creating JS wrappers..");
+	wrapped = fiWasmCreateNativeWrappers(natives2, types0, program3.names);
+	natives : Tree<string, FiWasmNativeDec> = wrapped.natives;
+	callbacks : Tree<string, FiDeclaration> = wrapped.callbacks;
+	
+	fcVerbose(cfg, 1, "Creating WASM-side wrappers..");
+	program = wrap_natives(cfg, program3, program3.names, types0, natives);
+	decls2: [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+	types : FiWasmTypeTable = fiWasmBuildTypeTable(program.names, decls2, stringAcc.offset);
+
+	fcVerbose(cfg, 1, "Building function table..");
+
+	// add JS callbacks to main module's declarations
+	mainmodulename = cfg.flowfile;
+	decls : [Pair<string, [FiDeclaration]>] = map(decls2, \d : Pair<string, [FiDeclaration]> -> {
+		if (cfg.flowfile == d.first) {
+			dd = foldTree(callbacks, d.second, \type, cb, acc -> arrayPush(acc, cb));
+			Pair(d.first, dd);
+		} else d;
+	});
+	
+	allDecls : [FiDeclaration] = concatA(map(decls, \p -> p.second));
+	// collect all FiFunctionDec
+	funcDecls : Tree<string, FiFunctionDec> = fold(allDecls, makeTree(), \acc, decl : FiDeclaration -> {
+		switch (decl) {
+			FiFunctionDec(__, __, __, __, __): setTree(acc, decl.name, decl);
+			default: acc;
+		}
+	});
+	
+	// register fallbacks for non-existing natives
+	functions = fold(allDecls, fiWasmBuildFunctionTable(cfg, decls), \acc, decl -> {
+		doAdd = switch (decl) {
+			FiNativeDec(__, __, __, __, fallbackLambda, __, __):
+				!containsKeyTree(funcDecls, decl.name) && fallbackLambda != FiVoid(0);
+			default: false;
+		}
+		if (doAdd) fiWasmAddFunctionToTable(acc, decl.name) else acc
+	});
+
+	names = FiGlobalNames(program.names.struct2module, program.names.union2module, program.names.function2module, 
+		program.names.globalVar2module, program.names.native2module, program.names.structs, program.names.unions, 
+		mergeTree(program.names.toplevel, callbacks)
+	);
+
+	moduleCount = i2s(length(decls));
+
+	wasmContext = WasmContext(
+		natives, 
+		stringAcc, 
+		makeSet(), 
+		makeTree(), 
+		types, 
+		functions, 
+		names, 
+		makeTree(), 
+		ref makeList()
+	);
+	moduleHeader = fiWasmCreateModuleHeader(wasmContext, wrapped.import_string);
+	
+	fcVerbose(cfg, 0, "Generating Wasm code for declarations...");
+
+	fiWriteASTFile(cfg, wasmContext, decls);
+
+	modulesCode1 = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Wasm code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				r = fold(p.second, acc, \l, decl : FiDeclaration -> {
+					// skip fallbacks if we have native
+					declFixup : Maybe<FiDeclaration> = fiWasmBuildFallbackFixup(decl, natives2, funcDecls);
+					tl = fiWasmCompileToplevel(cfg, program, wasmContext, either(declFixup, decl));
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				
+				// only generate exports for the last module
+				if (i == length(decls) - 1) fiWasmCompileModuleExports(module, r) else r;
+			}
+		}
+	});
+
+	modulesCode2 : List<string> = concatList(modulesCode1,  moduleHeader);
+	
+	modulesCode = Cons(fiWasmBuildInitGlobalVars(wasmContext), modulesCode2);
+
+	// Now build the data segment for all strings and types
+	strings = foldTree((wasmContext.stringAcc).address, makeList(), 
+		\s, a, acc -> Cons(fiWasmMakeStringData(s, a), acc));
+	typestring = fiWasmSerializeTypeTable(cfg, types, wasmContext.stringAcc.offset);
+
+	contents = list2string(Cons("\n)", 
+		Cons(fiWasmEmitFunctionTable(wasmContext.functions), 
+			Cons(typestring, concatList(strings, modulesCode))))
+	);
+	wasmfile = changeFileExt(cfg.outputfile, ".wasm");
+	fiInvokeWat2Wasm(cfg, contents, wasmfile, \result -> { 
+		if (result) {
+			fiGenerateNativeJSFile(cfg, \result1 -> {
+				if (result1) {
+					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode);
+					fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
+					fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
+				}
+				fiWriteListingFile(cfg, wasmContext);
+				callback();
+			});			
+		} else {
+			callback();
+		}
+	});
+
+	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "' finished.");
+}
+
+fiWasmBuildFallbackFixup(
+	decl : FiDeclaration, 
+	natives : Tree<string, FiNativeDec>,
+	funcDecls : Tree<string, FiFunctionDec>
+) -> Maybe<FiDeclaration> {
+	switch (decl) {
+		FiFunctionDec(n, lambda, __, declStart, defiStart): {
+			switch (lookupTree(natives, n)) {
+				Some(nat): {
+					lambda2 : FiExp = nat.fallbackLambda;
+					switch (lambda2) {
+						FiLambda(__, __, __, __): {
+							if (lambda2 != lambda) {
+								type2 = cast(lambda2.type : FiType -> FiTypeFunction);
+								Some(FiFunctionDec(n, lambda2, type2, declStart, defiStart));
+							} else None();
+						}
+						default: None();
+					}
+				}
+				None(): None();
+			}
+		}
+		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+			if (containsKeyTree(funcDecls, name)) {
+				// OK, we have a fallback for this native, so skip it here
+				None();
+			} else {
+				switch (fallbackLambda) {
+					FiLambda(__, __, __, __): {
+						// we have no fallback yet, but native has a body
+						type2 = cast(fallbackLambda.type : FiType -> FiTypeFunction);
+						Some(FiFunctionDec(name, fallbackLambda, type2, declStart, defiStart))
+					}
+					default: None();
+				}
+			}
+		}
+		default: None();
+	}
+}
+
+fiWasmBuildInitGlobalVars(context : WasmContext) -> string {
+	gvi = ^(context.globalVarsInitializers);
+	"(func $wasm_init_global_vars\n" 
+		+ strGlue(map(concatA(map(list2array(gvi), \nameExprLocals -> nameExprLocals.third)), \nameType ->
+				"\t(local $" + nameType.first + " i32)\n"
+			), "")
+		+ list2string(mapList(gvi, \nameExprLocals -> 
+			nameExprLocals.second
+		)
+	) + ")\n(export \"wasm_init_global_vars\" (func $wasm_init_global_vars))\n"
+}
+
+
+fiWasmExtendWithRuntime(program : FiProgram, globEnv : FcTypeEnvGlobal) -> FiProgram {
+	// TODO: We should collect the natives that are referenced, and make sure to
+	// also parse those files. alternatively, just import all Wasm natives always...
+	runtimeFile = getFlowDir() + "/tools/flowc/backends/wasm/wasm_runtime.flow";
+	nativesFile = getFlowDir() + "/tools/flowc/backends/wasm/wasm_natives_native.flow";
+	runtimeMConfig = failEither(getCompilerConfig(), program.config);
+	runtimeConfig = setConfigFlowfile(runtimeMConfig, runtimeFile);
+	parsedWasmRuntime = parseAndTypecheckFlowFile(runtimeConfig, globEnv, nativesFile);
+	if (parsedWasmRuntime.second != 0) {
+		fcPrintln("Could not compile Wasm runtime in " + runtimeFile);
+	}
+	wasmRuntime = parsedWasmRuntime.first;
+
+	overridden = overrideNatives(program.modules, wasmRuntime.names.toplevel);
+
+	FiProgram(
+		program.config,
+		mergeTree(wasmRuntime.modules, overridden),
+		concat(wasmRuntime.traversal, program.traversal),
+		FiGlobalNames(
+			mergeTree(wasmRuntime.names.struct2module, program.names.struct2module),
+			mergeTree(wasmRuntime.names.union2module, program.names.union2module),
+			mergeTree(wasmRuntime.names.function2module, program.names.function2module),
+			mergeTree(wasmRuntime.names.globalVar2module, program.names.globalVar2module),
+			mergeTree(wasmRuntime.names.native2module, program.names.native2module),
+			mergeTree(wasmRuntime.names.structs, program.names.structs),
+			mergeTree(wasmRuntime.names.unions, program.names.unions),
+			mergeTree(program.names.toplevel, wasmRuntime.names.toplevel),
+		)
+	);
+}
+
+fiWriteListingFile(cfg : FiWasmConfig, context : WasmContext) {
+	if (strlen(cfg.listingFile) > 0) {
+		contents = JsonObject([
+			Pair("types", wasmTypeDescriptor2Json(context.typeTable)),
+			Pair("functions", fiWasmFunctionTableToJson(context.functions))
+		]);
+		setFileContent(cfg.listingFile, json2stringFormatted(contents));
+	} else true;
+}
+
+// for now it will output functions only
+fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, [FiDeclaration]>]) {
+	if (strlen(cfg.wasmast) > 0) {
+		contents = strGlue(fold(decls, [], \acc, p -> {
+			m = map(p.second, \decl ->{
+				switch (decl) {
+					FiFunctionDec(name, lambda, type, declStart, defiStart): {
+						"FUNCTION: " + decl.name + fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, lambda), "");
+					}
+					FiGlobalVar(name, value, type, declStart, defiStart): {
+						"GLOBAL VAR: " + name
+					}
+					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+						"NATIVE: " + name
+					}
+				}
+			});
+			concat(acc, m);
+		}), "\n");
+
+		setFileContent(cfg.wasmast, contents);
+	} else true;
+}
+
+// This grabs flow-based implementations of natives to run in the Wasm side, and uses that as the implementation
+overrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDeclaration>) -> Tree<string, FiModule> {
+	mapTree(modules, \module -> {
+		natives2 = map(module.natives, \nat -> {
+			eitherMap(lookupTree(toplevels, nat.name), \fb -> {
+				switch (fb) {
+					FiFunctionDec(n, lambda, __, __, __): {
+						FiNativeDec(nat with fallbackLambda = lambda)
+					}
+					FiGlobalVar(name, value, type, declStart, defiStart): nat;
+					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): nat;
+				}
+			}, nat)
+		});
+		FiModule(module with natives = natives2)
+	});
+}
+
+
+fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback : (bool) -> void) {
+	watfile = changeFileExt(cfg.outputfile, ".wat");
+	if (!setFileContent(watfile, contents)) {
+		fcPrintln("Could not save " + watfile);
+		callback(false);
+	} else {
+		startProcess("wat2wasm", [watfile, "--debug-names", "-o", wasmfile], ".", "",
+			\c, o, e -> {
+				fcVerbose(cfg, 1, "Wasm succeeded");
+				if (c != 0) {
+					fcPrintln("Wasm failed");
+					fcPrintln(e);
+					fcPrintln(o);
+					fcPrintln(i2s(c));
+					fcPrintln("wat2wasm " + watfile + " -o " + wasmfile);
+					callback(false);
+				} else {
+					fcPrintln("Saved '" + wasmfile + "'");
+					// deleteFile(watfile);
+					callback(true);
+				}
+			}
+		);
+	}
+}
+
+fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code : [string], jswrappers_code : string) {
+	if (cfg.hostfile != "") {
+		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
+		htmlprefix = if (cfg.nodejs) "" else "<html><head></head><body>\n";
+		scriptstart = if (cfg.nodejs) "" else "<script>";
+		htmlsuffix = if (cfg.nodejs) "" else "</script></body></html>";
+		includeScript = \name -> if (cfg.nodejs) "require(\"./" + name + "\");\n" else 
+			"<script type=\"text/javascript\" src=\"" + name + "\"></script>\n";
+
+		IDHandler = "#include tools/flowc/backends/wasm/idhandler.js";
+		TestJS = "#include tools/flowc/backends/wasm/tests.js";
+
+		JSWrap = if (cfg.nodejs) jswrappers_code else "";
+		JSCallbacks = if (cfg.nodejs) "var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" else "";
+
+		result = htmlprefix + 
+			includeScript(fiNativeJSFileName(fileNameOnly(cfg.hostfile))) + 
+			(if (cfg.nodejs) JSWrap + "\n" else includeScript(fiNativeJSWrapperFileName(fileNameOnly(cfg.hostfile)))) + // import natives 
+			(if (cfg.nodejs) JSCallbacks + "\n" else includeScript(fiNativeJSCallbackFileName(fileNameOnly(cfg.hostfile)))) + // import callbacks 
+			(if (cfg.nodejs) "const fs = require(\"fs\");" else "") + // fs for node.js
+			(if (cfg.nodejs) "const util = require(\"util\");" else "") + // util for node.js
+			scriptstart + "
+			var WASMInstance;
+			var HEAP8, HEAPU8, HEAP16, HEAP32, HEAPF64;
+			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : 
+				new util.TextDecoder('utf-16le');
+			var _malloc;
+			var _table;
+			var MisalignedDoubleF64, MisalignedDoubleI32;\n" +
+
+			TestJS + "
+
+			function stringToUTF16(str, outPtr, maxBytesToWrite) {
+				if (maxBytesToWrite < 2) return 0;
+				var startPtr = outPtr;
+				var numCharsToWrite = (maxBytesToWrite < str.length * 2) ? (maxBytesToWrite / 2) : str.length;
+				for (var i = 0; i < numCharsToWrite; ++i) {
+					// charCodeAt returns a UTF-16 encoded code unit, so it can be directly written to the HEAP.
+					var codeUnit = str.charCodeAt(i);
+					HEAP16[((outPtr)>>1)]=codeUnit;
+					outPtr += 2;
+				}
+			}
+
+			function expandTypeTagByTypedesc(desc_address) {
+				tag = HEAP8[desc_address];
+				switch (tag) {
+					case 9: // array
+						return [tag].concat(expandTypeTagByTypedesc(desc_address + 1));
+				
+					default:
+						return [tag];
+				}
+			}
+
+			function pushDoubleToHeap(address, value) {
+				MisalignedDoubleF64[0] = value;
+				HEAP32[(address >> 2)] = MisalignedDoubleI32[0];
+				HEAP32[(address >> 2) + 1] = MisalignedDoubleI32[1];
+			}
+
+			function alignBytes(bytes, base) {
+				return Math.ceil(bytes / base) * base;
+			}
+
+			// address - pointer to struct definition (closures described by this)
+			function getFunctionFromTable(address) {
+				var index = HEAP32[(address + 8) >> 2];
+				return _table.get(index);
+			}\n\n" + 
+			IDHandler + "
+
+			// will return a [decoded value, current ptr (i.e. address + length of decoded value)]
+			function decode_data(base, address, tag, stack) {
+				switch (tag[0]) {
+					case 1: // bool
+						return HEAP32[address >> 2] != 0;
+					
+					case 2 : // int
+						return HEAP32[address >> 2];
+					
+					case 3: { // double
+						// easy if aligned to 8
+						if ((address & 7) == 0)
+							return HEAPF64[address >> 3];
+
+						MisalignedDoubleI32[0] = HEAP32[(address >> 2)];
+						MisalignedDoubleI32[1] = HEAP32[(address >> 2) + 1];
+						return MisalignedDoubleF64[0];
+					}
+					
+					case 4 : { // string (ref cnt; len in bytes; data)
+						if (stack) address = HEAP32[address >> 2];
+						var len;
+						if (address % 4 == 0) {
+							len = HEAP32[(address + 4) >> 2];
+						} else {
+							len = ((HEAPU8[address + 7] * 256 + 
+								  HEAPU8[address + 6]) * 256 + 
+								  HEAPU8[address + 5]) * 256 + 
+								  HEAPU8[address + 4];
+						}
+						var ptr = address + 8;
+						if (len == 0)
+							return ["", address];
+						return UTF16Decoder.decode(HEAPU8.subarray(ptr, ptr + len));
+					}
+					
+					case 5 : { // flow 
+						if (stack) address = HEAP32[address >> 2];
+
+						var ptr = address + 8;
+						var typeAddr = HEAP32[(address + 4) >> 2];
+						var tags = expandTypeTagByTypedesc(typeAddr);
+
+						return decode_data(base, ptr, tags, true);
+					}
+
+					case 6 : // native
+							return HEAP32[address >> 2]; // just a pointer to js heap
+
+					case 9: { // array 
+						if (stack) address = HEAP32[address >> 2];
+
+						var ptr = address + 8;
+						var len = HEAP32[(address + 4) >> 2];
+						var arr = [];
+						var elementTag = tag.slice(1);
+						var elmsize = 4;
+						if (tag[1] == 3 /*double*/) elmsize = 8;
+						for (var i = 0; i < len; i++) {
+							arr[i] = decode_data(base, ptr + elmsize * i, elementTag, true);
+						}
+
+						return arr;
+					}
+
+					default: {
+						console.error('Unsupported data type: ' + tag);
+						return "";
+					}
+				}
+			}
+
+			function encode_data(value, tag) {
+				switch (tag[0]) {
+					case 1: // bool
+						return value;
+					
+					case 2 : // int
+						return value;
+					
+					case 3: // double
+						return value;
+
+					case 4 : // string (ref cnt; len in bytes; data)
+						var bufLen = value.length * 2;
+						var strPtr = _malloc(4 + 4 + alignBytes(bufLen, 4));
+						HEAP32[(strPtr>>2) + 0] = 0;
+						HEAP32[(strPtr>>2) + 1] = bufLen;
+						stringToUTF16(value, strPtr + 8, bufLen);
+						return strPtr;
+
+					case 9: // array 
+						var elementTag = tag.slice(1);
+						var bufLen = value.length * (elementTag[0] == 3 ? 2 : 1) * 4;
+						var strPtr = _malloc(alignBytes(4 + 4 + bufLen, 4));
+						HEAP32[(strPtr>>2) + 0] = 0;
+						HEAP32[(strPtr>>2) + 1] = value.length;
+						var offset = 0;
+						value.forEach(function(entry) {
+							if (elementTag[0] == 3 /*double*/) {
+								pushDoubleToHeap(strPtr + 8 + offset, entry);
+								offset += 8;
+							} else {
+								HEAP32[(strPtr + 8 + offset) >> 2] = encode_data(entry, elementTag);
+								offset += 4;
+							}						
+						});
+
+						return strPtr;
+
+					default:
+						console.error('Unsupported data type: ' + tag);
+				}
+			}\n" + 
+			(if (cfg.nodejs) 
+				"var bytes = fs.readFileSync('" + fileNameOnly(wasmfile) + "');\n"
+			else "
+				fetch('" + fileNameOnly(wasmfile) + "').then(response =>
+				  response.arrayBuffer()
+				).then(bytes => {
+			") + "
+				var imports = {
+					native,
+					callbacks,
+					'runtime': { 
+						'init_heap_js': function () {
+							let exports = WASMInstance.exports;
+							let buffer = exports.memory.buffer;
+							HEAP8 = new Int8Array(buffer);
+							HEAP16 = new Int16Array(buffer);
+							HEAP32 = new Int32Array(buffer);
+							HEAPU8 = new Uint8Array(buffer);
+							HEAPF64 = new Float64Array(buffer);
+
+							var buf = new ArrayBuffer(8);
+							MisalignedDoubleF64 = new Float64Array(buf);
+							MisalignedDoubleI32 = new Int32Array(buf);
+						},
+						'timestamp' : function (s) {
+							var t = new Date().getTime();
+							return t;
+						},
+						'prints' : function (s) {
+							var ss = decode_data(0, s, [4], false);
+							console.log(ss);
+						},
+						'printi' : function (i) { console.log(i); },
+						'printd' : function (d) { console.log(d); },
+						'wasm_dmod' : function(a,b) { return a % b; },
+						'wasm_store_string' : function(s) { return encode_data(s, [4]); },
+						'wasm_int_to_string' : function(i) {
+							var s = i.toString();
+							return encode_data(s, [4]);
+						},
+						'wasm_double_to_string' : function(d) {
+							var s = d.toString();
+							return encode_data(s, [4]);
+						},
+						'wasm_bool_to_string' : function(b) {
+							var s = b > 0 ? 'true' : 'false';
+							return encode_data(s, [4]);
+						},
+						'printa' : function(a, t) {
+							var aa = decode_data(0, a, [9, t], false);
+							console.log(aa.toString());
+						},
+						'wasm_array_to_string' : function(a, t) {
+							var arr = decode_data(0, a, [9, t], false);
+							var s = arr.toString();
+							return encode_data(s, [4]);
+						}				  		
+					}
+				};" + 
+		(if (cfg.nodejs)  // nodejs has to fetch API that supports local urls - workaround
+			"  WebAssembly.instantiate(bytes, imports)"
+			else 
+				 "return WebAssembly.instantiate(bytes, imports);
+				})") + 
+					".then(m => {
+					WASMInstance = m.instance;
+					_malloc = WASMInstance.exports.wasm_alloc;
+					WASMInstance.exports.wasm_init_runtime();
+					WASMInstance.exports.wasm_init_global_vars();
+					_table = WASMInstance.exports.table;
+					WASMInstance.exports.main();
+				});" + htmlsuffix;
+		if (!setFileContent(cfg.hostfile, result)) {
+			fcPrintln("Problem saving template file");
+		} else {
+			fcVerbose(cfg, 1, "Creating Wasm host template finished");
+		}
+	}
+}
+
+// creates module import section by generating import declaration for import functions
+// obeys 2-level wasm namespace, defaults to "runtime" module is missing
+fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
+	imports = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
+		if (fiWasmIsHostNative(nativeDec.decl.nativeName)) {
+			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
+			module = if (length(nameComponents) > 2) nameComponents[1] else "runtime";
+			function = if (length(nameComponents) > 2) nameComponents[2] else nameComponents[1];
+			switch (nativeDec.decl.type) {
+				FiTypeFunction(args, returnType): {
+					Cons("(import \"" + module + "\" \"" + function + "\"" + 
+						fiWasmBuildFunctionDecl(name, fitype2wasmtype(wasmContext.globalNames, nativeDec.decl.type), 
+							false, true) 
+						+ "))\n", acc)
+				}
+				default: acc;
+			}
+		} else if (fiWasmIsPureNative(nativeDec.decl.nativeName) || fiWasmIsHostWNative(nativeDec.decl.nativeName)) {
+			// create an js wrapper here
+			module = "native";
+		
+			if (nativeDec.wrap.name != "") {
+				switch (nativeDec.decl.type) {
+					FiTypeFunction(args, returnType): {
+						Cons("(import \"" + module + "\" \"" + nativeDec.wrap.name + "\"" + nativeDec.wrap.decl + "))\n", acc)
+					}
+					default: acc;
+				}
+			} else acc;
+
+		} else acc;
+	});
+
+	invokers = fold(callbacks, imports, \acc, cb -> {
+		Cons(cb, acc)
+	});
+
+	Cons("(memory $memory (export \"memory\") 1)\n", invokers);
+}
+
+fiNativeJSFileName(hostfile: string) {
+	hostfile + ".native.js";
+}
+
+// Temporary solution.
+// TODO: fix that
+fiGenerateNativeJSFile(cfg : FiWasmConfig, callback : (bool) -> void) -> void {	
+	tmp_name = "__temp_js_source.flow";
+	// import math covers string & array as well
+	if (setFileContent(tmp_name, "import math;\nmain() {}")) {
+		fcPrintln("Compiling natives ...");
+		nativeJsFn = fiNativeJSFileName(cfg.hostfile);
+		// call compilation routine
+		startProcess(
+			if (windows()) "flowc.bat" else "flowc",
+			["server=0", "file=" + tmp_name, 
+				(if (cfg.nodejs) "es6=" else "js=" )+ nativeJsFn, 
+				if (cfg.nodejs) "nodejs=1" else "", 
+				"dce=0",
+				"use_haxe_runtime=1"
+			], 
+			".", "",
+			\ec, so, se -> { 
+				if (ec != 0 || strContains(so, "Error")) {
+					fcPrintln("Error while compiling native js.\nCode: "+i2s(ec)+"\nOutput: "+so+"\nError: "+se);
+				}
+
+				if (ec == 0) fiSuppressNodeJsWarning(nativeJsFn);
+
+				deleteFile(tmp_name);
+				callback(ec == 0);
+			}
+		);
+	}
+}
+
+fiSuppressNodeJsWarning(fn : string) {
+	s = "if (process.version < \"v4.0.0\")";
+	ss = strReplace(s, "4", "10");
+	content = getFileContent(fn);
+	if (strContains(content, s)) {
+		setFileContent(fn, strReplace(content, s, ss)) |> ignore;
+	}
+}
+

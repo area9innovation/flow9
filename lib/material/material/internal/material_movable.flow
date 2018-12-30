@@ -1,0 +1,211 @@
+import material/material;
+import material/internal/types;
+import material/internal/material_util;
+import material/internal/material_mutable;
+
+export {
+	MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MMovable2T(manager : MaterialManager, parent : MFocusGroup, m : MMovable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	movableId = makeTropicTag(manager);
+	position = extractStruct(m.style, MMovablePosition(make(zeroPoint))).position;
+	donthandle = contains(m.style, MMovableDontHandle());
+	expand = contains(m.style, MMovableExpandArea());
+
+	isDragging = make(false);
+	mouseXY = make(zeroPoint);
+	mouseXYLocal = make(zeroPoint);
+	cursorPosition = ref zeroPoint;
+
+	movableAreaWH = makeWH();
+	paddingWH = makeWH();
+	targetWH = makeWH();
+	safetySpace = 36.0;
+	uns = initUnsM();
+
+	grabArea = extractStruct(m.style, MMovableGrabArea(TEmpty(), TSized(targetWH)));
+
+	updatePosition = \movWH, tarWH, mxy, dxy -> {
+		expandGapWidth = if (expand) tarWH.width - safetySpace else 0.;
+		expandGapHeight = if (expand) tarWH.height - safetySpace else 0.;
+
+		nextDistinct(
+			position,
+			Point(
+				max(-expandGapWidth, min(mxy.x - dxy.x, movWH.width - tarWH.width + expandGapWidth)),
+				max(-expandGapHeight, min(mxy.y - dxy.y, movWH.height - tarWH.height + expandGapHeight))
+			)
+
+		)
+	};
+
+	cursor = fif(isDragging, const(GrabbingCursor()), const(GrabCursor()));
+
+	target = \p ->
+		m2t(m.target, p)
+		|> (\t -> TAttachBoxCopy(t, targetWH));
+
+	grabAreaM = \p ->
+		m2t(grabArea.area, p)
+			|> TSizeOf
+			|> (\t -> TFrame(0., 0., interactiveRectangleStyle, t))
+			|> (\t ->
+				TInteractive(
+					[
+						TMouseDownGhost(isDragging),
+						TMouseXY(mouseXYLocal)
+					], t)
+				)
+			|> (\t -> TCursor(DynamicCursor(cursor), t))
+			|> (\t -> TBorderT(fwidth(paddingWH), fheight(paddingWH), zero, zero, t))
+			|> (\t -> TAttachBox2(m2t(grabArea.padding, p), paddingWH, t))
+			|> (\t -> TAvailable(t, TSized(targetWH)));
+
+	(\p ->
+		TAttachBox(m2t(m.movableArea, p), movableAreaWH)
+		|> (\t -> TFrame(0., 0., interactiveRectangleStyle, t))
+		|> (\t -> TInteractive([TMouseXY(mouseXY)], t))
+		|> (\t ->
+			TGroup2(
+				target(p)
+				|> (\tar ->	if (donthandle) tar else TInteractive([TMouseDown(make(false))], tar)),
+				grabAreaM(p)
+			)
+			|> (\t2 -> TTranslate(position, t2))
+			|> (\t2 -> TFixSize(t2, TEmpty()))
+			|> (\t2 -> TGroup2(t, t2))
+		)
+		|> (\t ->
+			TConstruct(
+				[
+					make3Subscribe(movableAreaWH, targetWH, position, \movWH, tarWH, pos -> {
+						dispUnsM(uns);
+						setUnsM(
+							uns,
+							interruptibleTimer(1, \ -> updatePosition(movWH, tarWH, pos, zeroPoint))
+						);
+					}),
+					makeSubscribe2(isDragging, \dr -> if (dr) {
+						addInteractionItemId(manager, movableId);
+						local = getValue(mouseXYLocal);
+						curPad = getValue(paddingWH);
+						cursorPosition :=
+							Point(local.x + curPad.width, local.y + curPad.height);
+					}),
+					makeSubscribe2(mouseXY, \mxy ->
+						if (isCurrentInteractionItemId(manager, movableId) && getValue(isDragging)) {
+							blockOtherInteractionItemIds(manager, movableId);
+							updatePosition(getValue(movableAreaWH), getValue(targetWH), mxy, ^cursorPosition)
+						}
+					),
+					\ -> \ -> dispUnsM(uns)
+				],
+				t
+			)
+		)
+	)
+	|> (\t -> MActivate2T(manager, parent, "MMovable",
+		[IScriptBehaviour("position", position, ISInputValue([], serialize(getValue(position)), true))], t))
+}
+
+MResizable2T(manager : MaterialManager, parent : MFocusGroup, m : MResizable, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	resizableId = makeTropicTag(manager);
+	style = m.style;
+	minMax : MResizableMinMax = extractStruct(style, MResizableMinMax(TFixed(20., 20.), TFillXY()));
+	onCreate = extractStruct(style, MResizableOnCreate(minMax.max)).size;
+	availableWH : DynamicBehaviour<WidthHeight> = make(WidthHeight(100., 100.));
+
+	mouseDown = make(false);
+	mouseXY = make(zeroPoint);
+	startPoint = ref zeroPoint;
+	minWH = makeWH();
+	maxWH = makeWH();
+	createWH = makeWH();
+
+	updateWidthHeight = \mWH, maWH, aWH ->
+		nextDistinct(
+			availableWH,
+			WidthHeight(
+				max(min(mWH.width, maWH.width), if (getDefaultRtl()) max(mWH.width, maWH.width) - aWH.width else min(aWH.width, max(mWH.width, maWH.width))),
+				max(min(mWH.height, maWH.height), min(aWH.height, max(mWH.height, maWH.height)))
+			)
+		);
+
+	(\p ->
+		TDisplay("MResizableContent")
+		|> (\f ->
+			TGroup2(
+				f,
+				TRectangle(interactiveRectangleStyle, TFixed(10., 10.))
+				|> (\f2 ->
+					TGroup2(
+						f2,
+						TGraphics(
+							if (getDefaultRtl())
+								[
+									LineTo(9., 9.),
+									MoveTo(0., 4.),
+									LineTo(5., 9.)
+								]
+							else
+								[
+									MoveTo(0., 9.),
+									LineTo(9., 0.),
+									MoveTo(4., 9.),
+									LineTo(9., 4.)
+								],
+							[
+								StrokeOpacity(1.),
+								Stroke(black),
+								FillOpacity(0.)
+							]
+						)
+					)
+				)
+				|> (\f2 ->
+					TInteractive(
+						[
+							TMouseDown(mouseDown)
+						],
+						f2
+					)
+				)
+				// |> (\f2 -> TCursor(MoveCursor, f2))
+				|> (\f2 -> TCols2A(TFillX(), f2))
+				|> (\f2 -> TLines2(TFillY(), f2))
+				|> (\f2 -> TAvailable(f2, TGhost("MResizableContent")))
+			)
+		)
+		|> (\f -> TAvailable(f, TSized(availableWH)))
+		|> (\f -> TInteractive([TMouseXY(mouseXY)], f))
+		|> (\f -> TGroup2(TAttachBox(m2t(minMax.min, p), minWH), f))
+		|> (\f -> TGroup2(TAttachBox(m2t(minMax.max, p), maxWH), f))
+		|> (\f -> TGroup2(TAttachBox(m2t(onCreate, p), createWH), f))
+		|> (\f -> TFixSize(f, TGhost("MResizableContent")))
+		|> (\f -> TLet("MResizableContent", m2t(m.content, p), f))
+		|> (\f ->
+			TConstruct(
+				[
+					makeSubscribe(mouseDown, \md -> if (md) addInteractionItemId(manager, resizableId)),
+					makeSubscribe2(mouseXY, \xy ->
+						if (isCurrentInteractionItemId(manager, resizableId) && getValue(mouseDown)) {
+							blockOtherInteractionItemIds(manager, resizableId);
+							// nextDistinct(manager.currentInteractionItemID, resizableId);
+							updateWidthHeight(getValue(minWH), getValue(maxWH), WidthHeight(xy.x, xy.y))
+						}
+					),
+					\ -> {
+						updateWidthHeight(getValue(minWH), getValue(maxWH), getValue(createWH) |> (\wh -> if (getDefaultRtl()) WidthHeight(0.0, wh.height) else wh));
+						make3Subscribe(minWH, maxWH, availableWH, \mWH, maWH, aWH ->
+							if (!getDefaultRtl()) updateWidthHeight(mWH, maWH, aWH)
+						)()
+					}
+				],
+				f
+			)
+		)
+	)
+	|> (\f -> MActivate2T(manager, parent, "MMovable", [IScriptBehaviour("available", availableWH, ISInputValue([], serialize(getValue(availableWH)), true))], f))
+}

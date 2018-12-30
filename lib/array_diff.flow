@@ -1,0 +1,360 @@
+// © Copyright 2014 Area9 Innovation. All rights reserved
+
+import binarytree;
+import math;
+
+export {
+	// Compares two arrays, and returns a list of operations to apply to change the old to the new
+	arrayDiff(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>];
+	arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>];
+
+	ArrayOperation<?> ::= ArrayNop, ArrayInsert<?>, ArrayReplace<?>, ArrayRemove;
+		ArrayNop(oldindex : int, newindex : int);
+		ArrayInsert(oldindex : int, newindex : int, value : ?);
+		ArrayReplace(oldindex : int, newindex : int, value : ?);
+		ArrayRemove(oldindex : int, newindex : int);
+}
+
+// Constructs a protocol "script" which changes one array to another.
+// fullProtocol leaves ArrayNop operations in the result (false by default)
+// Basically, this is Levenshtein
+arrayDiff(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperation<?>] {
+	m = length(s);
+	n = length(t);
+
+	// Initialize the matrix of costs and operations
+	d : [[ref Pair<int, ArrayOperation>]] = generate(0, m + 1, \i -> {
+			generate(0, n + 1, \j -> {
+				p : Pair<int, ArrayOperation> = if (i == 0 && j != 0) {
+					Pair(j, ArrayInsert(0, j - 1, t[j - 1]));
+				} else {
+					if (j == 0 && i != 0) {
+						Pair(i, ArrayRemove(i - 1, 0));
+					} else {
+						Pair(0, ArrayNop(-1, -1));
+					}
+				};
+				ref p
+			});
+		});
+
+	dij = \ii, jj -> {
+		^((d[ii])[jj]).first;
+	}
+
+	fori(1, m, \i -> { // s
+		si = s[i - 1];
+		fori(1, n, \j -> { // t
+			tj = t[j - 1];
+			if (si == tj) {
+				// Equal as is. No change
+				d[i][j] := Pair(dij(i - 1, j - 1), ArrayNop(i-1, j-1));
+			} else {
+				delcost = dij(i - 1, j) + 1;
+				inscost = dij(i, j - 1) + 1;
+				repcost = dij(i - 1, j - 1) + 1;
+
+				cost = min3(
+					delcost,  // Deletion
+					inscost, // Insertion
+					repcost // Replacement
+				);
+
+				d[i][j] := Pair(cost,
+					if (cost == repcost) {
+						ArrayReplace(i - 1, j - 1, tj)
+					} else if (cost == inscost) {
+						ArrayInsert(i, j - 1, tj);
+					} else if (cost == delcost) {
+						ArrayRemove(i - 1, j)
+					} else {
+						ArrayNop(i-1, j-1)
+					}
+				);
+			}
+		});
+	});
+
+	/*iteri(d, \y, row : [ref Pair<int, ArrayOperation>] -> {
+		println(i2s(y) + "(" +  (if (y > 0) toString(s[y - 1])  else "") + "): " + fold(row, "", \acc, r : ref Pair<int, ArrayOperation> -> {
+			p = ^r;
+			acc + i2s(p.first) + " (" + toString(p.second) + "), "
+		}));
+	});*/
+
+	reverseA(makeArrayDiffOps(d, m, n, [], fullProtocol));
+}
+
+makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc : [ArrayOperation<?>], fullProtocol : bool) -> [ArrayOperation<?>] {
+	c = ^(d[y][x]);
+	// println(i2s(y) + "," + i2s(x) + ": " + toString(c));
+	if (c.second.oldindex == -1 || c.second.newindex == -1) acc
+	else {
+		nacc = if (!fullProtocol && isSameStructType(c.second, ArrayNop(0, 0))) {
+			// Skip the NOPs
+			acc;
+		} else {
+			arrayPush(acc, c.second);
+		};
+		makeArrayDiffOps(d, c.second.oldindex, c.second.newindex, nacc, fullProtocol)
+	}
+}
+
+/*
+main() {
+	assertEquals(arrayDiff([], []), []);
+	assertEquals(arrayDiff([0], [0]), []);
+	assertEquals(arrayDiff([0,1], [0,1]), []);
+
+	assertEquals(arrayDiff([], [0]), [ArrayInsert(0,0,0)]);
+	assertEquals(arrayDiff([], [0,1]), [ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
+	assertEquals(arrayDiff([], [0,1,2]), [ArrayInsert(0,2,2), ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
+
+	assertEquals(arrayDiff([0], [0,1,2]), [ArrayInsert(1,2,2), ArrayInsert(1,1,1)]);
+	assertEquals(arrayDiff([1], [0,1,2]), [ArrayInsert(1,2,2), ArrayInsert(0,0,0)]);
+
+	assertEquals(arrayDiff([0], []), [ArrayRemove(0,0)]);
+	assertEquals(arrayDiff([0,1], [0]), [ArrayRemove(1,1)]);
+	assertEquals(arrayDiff([0,1], [1]), [ArrayRemove(0,0)]);
+
+	assertEquals(arrayDiff([0], [1]), [ArrayReplace(0,0,1)]);
+	assertEquals(arrayDiff([0,1,2], [2,1,0]), [ArrayReplace(2,2,0), ArrayReplace(0,0,2)]);
+	assertEquals(arrayDiff([0,1,2], [2,2,2]), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
+	assertEquals(arrayDiff([0,1,2], [2,2,2]), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
+
+	assertEquals(arrayDiff([0,1,2,3], [0,2,4]), [ArrayReplace(3,2,4), ArrayRemove(1,1)]);
+	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5]), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
+	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5]), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
+	assertEquals(arrayDiff([0,1,2,3,4], [1,2,3,5,6]), [ArrayReplace(4,4,6), ArrayInsert(4,3,5), ArrayRemove(0,0)]);
+}
+*/
+
+// main() {
+// 	// assertEquals(arrayDiffFast([], []), []);
+// 	// assertEquals(arrayDiffFast([0], [0]), []);
+// 	// assertEquals(arrayDiffFast([0,1], [0,1]), []);
+
+// 	// assertEquals(arrayDiffFast([], [0]), [ArrayInsert(0,0,0)]);
+// 	// assertEquals(arrayDiffFast([], [0,1]), [ArrayInsert(0,0,0), ArrayInsert(1,1,1)]);
+// 	// assertEquals(arrayDiffFast([], [0,1,2]), [ArrayInsert(0,0,0), ArrayInsert(1,1,1), ArrayInsert(2,2,2)]);
+
+// 	// assertEquals(arrayDiffFast([0], [0,1,2]), [ArrayInsert(1,1,1), ArrayInsert(2,2,2)]);
+// 	// assertEquals(arrayDiffFast([1], [0,1,2]), [ArrayInsert(0,0,0), ArrayInsert(2,2,2)]);
+
+// 	// assertEquals(arrayDiffFast([0], []), [ArrayRemove(0,0)]);
+// 	// assertEquals(arrayDiffFast([0,1], [0]), [ArrayRemove(1,1)]);
+// 	// assertEquals(arrayDiffFast([0,1,2], [0]), [ArrayRemove(1,1), ArrayRemove(1,1)]);
+// 	// assertEquals(arrayDiffFast([0,1,1], [0]), [ArrayRemove(1,1), ArrayRemove(1,1)]);
+// 	// assertEquals(arrayDiffFast([0,1], [1]), [ArrayRemove(0,0)]);
+
+// 	// assertEquals(arrayDiffFast([0], [1]), [ArrayReplace(0,0,1)]);
+// 	// assertEquals(arrayDiffFast([0,1,2], [2,1,0]), [ArrayNop(2,0)]);
+// 	// assertEquals(arrayDiffFast([0,1,2], [2,2,2]), [ArrayReplace(0,0,2), ArrayReplace(1,1,2)]);
+
+// 	// assertEquals(arrayDiffFast([0,1,2,3], [0,2,4]), [ArrayRemove(1,1), ArrayReplace(2,2,4)]);
+// 	// assertEquals(arrayDiffFast([0,1,2,3], [0,2,2,3,5]), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
+// 	// assertEquals(arrayDiffFast([0,1,2,3,4], [1,2,3,5,6]), [ArrayRemove(0,0), ArrayInsert(4,4,6), ArrayReplace(3,3,5)]);
+
+// 	// assertEquals(arrayDiffFast([0,1,2,3], [2,4]), [ArrayRemove(0,0), ArrayRemove(0,0), ArrayReplace(1, 1, 4)]);
+// 	// assertEquals(arrayDiffFast([0,1,2,3,4,8], [9,8,2,4]), [ArrayRemove(1,1), ArrayRemove(2,2), ArrayReplace(0, 0, 9), ArrayNop(3, 1)]);
+
+// 	// t = ref timestamp();
+
+// 	// generate(0, 100, \__ -> {
+// 	// 	randomArrayTest(false);
+// 	// });
+
+// 	// println(timestamp() - ^t);
+
+// 	// t := timestamp();
+
+// 	generate(0, 100, \__ -> {
+// 		randomArrayTest(true);
+// 	});
+
+// 	// println(timestamp() - ^t);
+
+// 	// arrayTest(
+// 	// 	[14, 12, 14, 5, 20, 11, 4, 1, 7],
+// 	// 	[8, 3, 4, 18, 11, 2, 1, 19, 9, 19, 11, 6, 19]
+// 	// );
+
+// 	// arrayTest(
+// 	// 	[3, 14, 16, 10, 16, 18, 19, 8, 6, 17, 7],
+// 	// 	[14, 12, 14, 14, 7, 19, 12, 15]
+// 	// );
+
+// 	// arrayTest(
+// 	// 	[18, 2, 18, 6, 2, 5, 1, 2, 6, 8, 10, 10],
+// 	// 	[10, 5, 20, 8, 13, 13, 20, 16, 1, 11, 16, 16, 5, 16, 18, 8, 10, 11, 20, 6]
+// 	// );
+// }
+
+// randomInt(a : int, b : int) -> int {
+// 	a + ceil(random() * i2d(b - a));
+// }
+
+// MyStruct ::= MyInt, MyString, MyFloat;
+// MyInt : (myInt : int);
+// MyString : (myString : string);
+// MyFloat : (myFloat : double);
+
+// randomMyStruct() -> MyStruct {
+// 	randI = randomInt(0, 300);
+// 	if (randI < 100) MyInt(randI)
+// 	else if (randI < 200) MyString(i2s(randI))
+// 	else MyFloat(i2d(randI));
+// }
+
+// randomArrayTest(df : bool) -> void {
+// 	l1 = randomInt(5, 2000);
+// 	l2 = randomInt(5, 2000);
+
+// 	a1 = generate(0, l1, \__ -> randomMyStruct());
+// 	a2 = generate(0, l2, \__ -> randomMyStruct());
+
+// 	arrayTest(a1, a2, df);
+// }
+
+// arrayTest(a1, a2, df : bool) -> void {
+// 	d = if (df) arrayDiff(a1, a2, false) else arrayDiffFast(a1, a2);
+
+// 	// println("<<<<<<");
+
+// 	// println(a1);
+// 	// println(d);
+
+// 	a3 = fold(d, a1, \acc, op -> {
+// 		switch (op : ArrayOperation) {
+// 			ArrayNop(oldindex, newindex) : {
+// 				moveElement(acc, oldindex, newindex);
+// 			}
+// 			ArrayInsert(oldindex, newindex, value) : {
+// 				insertArray(acc, newindex, value);
+// 			}
+// 			ArrayReplace(oldindex, newindex, value) : {
+// 				replace(acc, newindex, value);
+// 			}
+// 			ArrayRemove(oldindex, newindex) : {
+// 				removeIndex(acc, newindex);
+// 			}
+// 		}
+// 	});
+
+// 	// println(sort(a2) == sort(a3));
+// 	// println("----");
+// 	// println(sort(a2));
+// 	// println(sort(a3));
+
+// 	// println(a2 == a3);
+// 	// println("----");
+// 	// println(a2);
+// 	// println(a3);
+
+// 	assertEquals(a2, a3);
+// }
+
+// ArrayNop is used as ArrayMove
+// Isn't replaceable with arrayDiff since has a bit different logic
+arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>] {
+	// println("arrayDiffFast");
+	// println(old);
+	// println(new);
+
+	// t = timestamp();
+
+	removeOp : ref Tree<int, ArrayOperation> = ref makeTree();
+	insertOp : ref Tree<int, ArrayInsert> = ref makeTree();
+	moveOp : ref Tree<int, ArrayOperation> = ref makeTree();
+	replaceOp : ref Tree<int, ArrayOperation> = ref makeTree();
+
+	newTree = foldi(new, makeTree(), \i, acc, n -> eitherFn(lookupTree(acc, n), \v -> setTree(acc, n, arrayPush(v, i)), \ -> setTree(acc, n, [i])));
+
+	removeCounter = ref 0;
+
+	newFilteredTree = foldi(old, newTree, \k, acc, o -> {
+		eitherFn(
+			lookupTree(acc, o),
+			\a -> {
+				n = fold(tail(a), a[0], \n, v -> if (iabs(v - k) < iabs(n - k)) v else n);
+				moveOp := setTree(^moveOp, k, ArrayNop(k, n));
+
+				if (length(a) > 1) {
+					setTree(acc, o, removeFirst(a, n));
+				} else {
+					removeFromTree(acc, o);
+				}
+			},
+			\ -> {
+				i = k - ^removeCounter;
+				removeCounter := ^removeCounter + 1;
+
+				removeOp := setTree(^removeOp, k, ArrayRemove(i, i));
+
+				acc
+			}
+		)
+	});
+
+	traverseInOrder(newFilteredTree, \k, v -> {
+		iter(v, \i -> {
+			insertOp := setTree(^insertOp, i, ArrayInsert(i, i, k));
+		});
+	});
+
+	i = ref -1;
+
+	newMoveOp = ref makeTree();
+
+	traverseInOrder(^moveOp, \k, v -> {
+		i := ^i + 1;
+		newMoveOp := setTree(^newMoveOp, v.newindex, ArrayNop(^i, v.newindex));
+	});
+
+	i := -1;
+
+	moveOp := makeTree();
+
+	traverseInOrder(^newMoveOp, \k, v -> {
+		i := ^i + 1;
+		moveOp := setTree(^moveOp, ^i, ArrayNop(v.oldindex, ^i));
+	});
+
+	map(getTreeKeys(^moveOp), \k -> {
+		maybeApply(lookupTree(^moveOp, k), \m -> {
+			if (m.newindex > m.oldindex) {
+				moveOp := mapTree(^moveOp, \m2 -> {
+					if (m2.newindex > m.newindex && m2.oldindex > m.oldindex && m2.oldindex <= m.newindex)
+						ArrayNop(m2.oldindex - 1, m2.newindex)
+					else
+						m2
+				});
+			} else if (m.newindex < m.oldindex) {
+				moveOp := mapTree(^moveOp, \m2 -> {
+					if (m2.newindex > m.newindex && m2.oldindex >= m.newindex && m2.oldindex < m.oldindex)
+						ArrayNop(m2.oldindex + 1, m2.newindex)
+					else
+						m2
+				});
+			}
+		});
+	});
+
+	concat3(
+		concat(
+			getTreeValues(^removeOp),
+			getTreeValues(^replaceOp)
+		),
+		filter(getTreeValues(^moveOp), \m -> m.oldindex != m.newindex),
+		getTreeValues(^insertOp)
+	);
+
+	// println(timestamp() - t);
+
+	// println(length(old));
+	// println(length(new));
+	// println(sizeTree(^removeOp));
+	// println(sizeTree(^insertOp));
+
+	// r;
+}

@@ -1,0 +1,229 @@
+import tools/flowc/typechecker/ftype_basic;
+import tools/flowc/typechecker/combine_types;
+
+export {
+	// Set the given FcType in our environment to the type given by the ftype. Returns true if we get something
+	setFTyvar(env : FEnv, tyvar : int, type : FType, onError : (string) -> void) -> bool;
+}
+
+setFTyvar(env : FEnv, tyvar : int, type : FType, onError : (string) -> void) -> bool {
+	set = \t -> {
+		if (env.verbose >= 2)  {
+			pt = \tt -> prettyFcType(FcPretty(false, false, ^(env.env.local.tyvars), ^(env.env.local.typars)), tt, makeSet());
+			fcPrintln("  α" + i2s(tyvar) + ": " + pt(t) + "     from " + ftype2string(env, type));
+		}
+		switch (t) {
+			FcTypeVar(tv, __): { if (tyvar > tv) setTyvar(env.env, tyvar, t)}
+			default: setTyvar(env.env, tyvar, t);
+		}
+	}
+
+	recursive = containsSet(extractFTypeVars(env, type, makeSet()), tyvar);
+	if (recursive) {
+		onError("Recursive type not allowed: " + ftype2string(env, type));
+		false;
+	} else {
+		// fcPrintln("  set α" + i2s(tyvar) + " from " + ftype2string(env, type));
+		tts = ftype2fctype(env, type, makeSet1(tyvar), onError);
+		n = length(tts);
+		if (n >= 1) {
+			if (false && n > 1) {
+				pt = \tt -> prettyFcType(FcPretty(false, false, ^(env.env.local.tyvars), ^(env.env.local.typars)), tt, makeSet());
+				onError("Ambiguous type: " + superglue(tts, pt, ", "));
+			}
+			set(tts[0]);
+			true;
+		} else {
+			if (env.verbose >= 2)  {
+				fcPrintln("  α" + i2s(tyvar) + ": UNKNOWN     from " + ftype2string(env, type));
+			}
+			false;
+		}
+	}
+}
+
+ftype2fctype(env : FEnv, type : FType, seen : Set<int>, onError : (string) -> void) -> [FcType] {
+	// fcPrintln("  ... " + ftype2string(env, type));
+	in = FcInfo2(0, 0);
+	switch (type : FType) {
+		FBasicType(t): {
+			[t]
+		}
+		FFlow(): [FcTypeFlow(in)];
+		FTypePar(id): {
+			[FcTypeParameter(id, in)];
+		}
+		FTypeVar(id): {
+			if (containsSet(seen, id)) {
+				[FcTypeVar(id, in)]
+			} else {
+				motype = lookupTree(env.tyvars, id);
+				switch (motype) {
+					None(): [FcTypeVar(id, in)];
+					Some(ot): {
+						ftype2fctype(env, ot, insertSet(seen, id), onError);
+					}
+				}
+			}
+		}
+		FFields(fields, seenNames, excluded): {
+			potentials : [[string]] = map(fields, \f : FField -> {
+				getTreeArrayValue(env.env.program.acc.names.field2structs, f.name);
+			});
+			intersect = if (potentials == []) makeSet()
+				else fold(tail(potentials), buildSet(potentials[0]), \acc, p -> {
+					intersectSets(acc, buildSet(p))
+				});
+			candidates = differenceSets(intersect, excluded);
+
+			n = sizeSet(candidates);
+			if (n == 0) {
+				onError("No type supports " + ftype2string(env, type));
+				[]
+			} else {
+				names = set2array(candidates);
+				map(names, \name -> {
+					tn = FcTypeName(name, [], in);
+					hasTyvar = switch (getFcNamedTypeError(env.env, env.tyvarIdGroup, tn, onError) : FcType) {
+						FcTypeStruct(__, tps, __, __): tps != [];
+						FcTypeUnion(__, tps, __, __): tps != [];
+						FcTypeName(__, tps, __): tps != [];
+						default: false;
+					};
+					if (hasTyvar) {
+						// TODO: We should extract typars from the fields
+
+						// OK, we have a number of fields with types.
+						// We also have a struct/typename.
+						// Our job is to infer what the type parameters for the typename are.
+						// We should be able to do this by funifying with the typename
+
+						onError("Add type annotation. I suspect " + name + " from " + ftype2string(env, type) + " but am not sure");
+					}
+					tn;
+				});
+			}
+		}
+		FFunction(args, rt): {
+			tt = ftype2fctype(env, rt, seen, onError);
+			if (tt == []) {
+				onError("Could not extract a function return type from " + ftype2string(env, type));
+				[]
+			} else {
+				[FcTypeFunction(
+					map(ftypes2fctypes(env, args, seen, onError), \t -> FcFunArg("", t)),
+					tt[0],
+					in
+				)];
+			}
+		}
+		FUnion(name, args): {
+			[FcTypeName(name, ftypes2fctypes(env, args, seen, onError), in)];
+		}
+		FStruct(name, args): {
+			[FcTypeName(name, ftypes2fctypes(env, args, seen, onError), in)];
+		}
+		FArray(at): {
+			a = ftype2fctype(env, at, seen, onError);
+			if (a == []) {
+				onError("Could not extract an array type from " + ftype2string(env, type));
+			}
+			map(a, \aat -> {
+				FcTypeArray(aat, in)
+			})
+		}
+		FRef(rtype, wtype): {
+			rt = ftype2fctype(env, rtype, seen, onError);
+			// wt = ftype2fctype(env, wtype, seen, onError);
+			// TODO: Combine
+			if (rt == []) {
+				onError("Could not extract a ref type from " + ftype2string(env, type));
+			}
+			map(rt, \aat -> {
+				FcTypeRef(aat, in)
+			})
+		}
+		FUnnamedUnion(structs): {
+			types = ftypes2fctypes(env, structs, seen, onError);
+
+			// TODO: We should roll our own, which can also consolidate the typars
+			ct = combineTypenames(env.env, types, onError);
+			if (ct == []) {
+				onError("Could not extract a union type from " + ftype2string(env, type));
+			}
+			ct
+		}
+		FBounded(lower, upper): {
+			if (upper == FTopBottom()) ftype2fctype(env, lower, seen, onError)
+			else if (lower == FTopBottom()) ftype2fctype(env, upper, seen, onError)
+			else frange2fctype(env, lower, upper, seen, onError);
+		}
+		FTopBottom(): {
+			onError("Did not expect top or bottom here");
+			[]
+		}
+	}
+}
+
+ftypes2fctypes(env: FEnv, args : [FType], seen : Set<int>, onError : (string) -> void) -> [FcType] {
+	fold(args, [], \acc, arg -> {
+		t = ftype2fctype(env, arg, seen, onError);
+		if (t == []) {
+			onError("Could not get type for " + ftype2string(env, arg));
+			acc;
+		} else {
+			// It seems we need the "grab smallest type" for our type system to work in case of amfguity
+			if (false && length(t) > 1) {
+				pt = \tt -> prettyFcType(FcPretty(false, true, ^(env.env.local.tyvars), ^(env.env.local.typars)), tt, makeSet());
+				onError("Not clear which of " + superglue(t, pt, ", ") + " from " + ftype2string(env, arg));
+			}
+			arrayPush(acc, t[0]);
+		}
+	});
+}
+
+
+frange2fctype(env : FEnv, output : FType, input : FType, seen : Set<int>, 
+		onError : (string) -> void) -> [FcType] {
+	lowererror = ref "";
+	lower = ftype2fctype(env, output, seen, \e -> lowererror := e);
+	uppererror = ref "";
+	upper = ftype2fctype(env, input, seen, \e -> uppererror := e);
+	if (lower == []) {
+		if (^uppererror == "") upper
+		else {
+			onError("Expected output type for range");
+			[]
+		}
+	} else {
+		if (upper == []) {
+			if (^lowererror == "") {
+				lower
+			} else {
+				onError("Expected input type for range");
+				[]
+			}
+		} else {
+			if (^lowererror != "") {
+				upper
+			} else if (^uppererror != "") {
+				lower
+			} else {
+				combinations = cartesian([lower, upper]);
+				err2 = ref [];
+				rr = fold(combinations, [], \acc, com : [FcType] -> {
+					err = ref "";
+					ct = combinePositiveAndNegative(env.env, com[0], com[1], \e -> err := e);
+					if (^err != "") {
+						err2 := arrayPush(^err2, ^err);
+						acc
+					} else concat(acc, ct)
+				});
+				if (rr == []) {
+					iter(^err2, onError)
+				}
+				rr;
+			}
+		}
+	}
+}

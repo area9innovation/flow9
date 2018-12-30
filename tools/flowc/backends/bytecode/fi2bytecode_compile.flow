@@ -1,0 +1,788 @@
+import tools/flowc/backends/bytecode/fi2bytecode_defines;
+import tools/flowc/backends/bytecode/fi2bytecode_utils;
+import tools/flowc/incremental/fi_helpers;
+import lingo/flow/bytecode;
+import algorithms;
+import tools/flowc/backends/common;
+
+export {
+	fiBcMakeFunctionContext(cfg : FcBytecodeConfig, gctx : FiBcGlobalContext, shadow : Set<string>, args : [FiFunArg], pc : int) -> FiBcScopeContext;
+	fiBcWrapFunctionBody(cfg : FcBytecodeConfig, ctx : FiBcFunctionContext, code : BytecodeChunks, start : int, curfunc : string, pc : int) -> BytecodeChunks;
+	fiBcCompileToplevel(cfg : FcBytecodeConfig, gctx : FiBcGlobalContext, decl : FiDeclaration, pc : int) -> BytecodeChunks;
+}
+
+fiSizeofCClosurePointer = fiBytecodeLength(fiMakeBytecode([CClosurePointer(0,0)]));
+fiSizeofCCodePointer = fiBytecodeLength(fiMakeBytecode([CCodePointer(0)]));
+fiSizeofCGoto = fiBytecodeLength(fiMakeBytecode([CGoto(0)]));
+fiSizeofCPop = fiBytecodeLength(fiMakeBytecode([CPop()]));
+fiSizeofCNot = fiBytecodeLength(fiMakeBytecode([CNot()]));
+fiSizeofCIfFalse = fiBytecodeLength(fiMakeBytecode([CIfFalse(0)]));
+fiSizeofCBool = fiBytecodeLength(fiMakeBytecode([CBool(false)]));
+fiSizeofCReturn = fiBytecodeLength(fiMakeBytecode([CReturn()]));
+fiSizeofCReserveLocals = fiBytecodeLength(fiMakeBytecode([(CReserveLocals(0,0))]));
+
+fiCalcFunctionPreludeLength(ctx : FiBcFunctionContext) {
+	prelude = fiMakeBytecode([
+		if (ctx.nlocals > 0) {
+			CReserveLocals(ctx.nlocals-ctx.nargs, ctx.nargs);
+		} else {
+			fiEmptyBytecode();
+		}]);
+
+	// We need length of prelude in FiLambda, that's why we return separated numbers.
+	Pair(fiSizeofCGoto + 5 * length(ctx.free_vars), fiBytecodeLength(prelude)); // 5 is length of CGetLocal
+}
+
+
+fiBcMakeFunctionContext(cfg, gctx, shadow, args, pc)  {
+	// assign debug name
+	idx = gctx.next_closure_id;
+	if (cfg.debug)
+		gctx.next_closure_id ::= idx+1;
+	name = gctx.cur_toplevel + (if (idx > 0) "$" + i2s(idx) else "");
+
+	// Register arguments as locals
+	argmap = foldi(args, makeTree(), \i, t, arg -> setTree(t, arg.name, i));
+
+	fitx = FiBcFunctionContext(
+		gctx, name,
+		shadow,
+		length(args), length(args), mapTree(argmap, \i -> [i]),
+		[], makeTree()
+	);
+	FiBcScopeContext(fitx, argmap);
+}
+
+fiBcWrapFunctionBody(cfg, ctx, code, start, curfunc, pc) {
+	local_names = map(
+		sort(foldArrayTree(ctx.all_locals, [], \name,id,acc -> arrayPush(acc, Pair(id, name)))),
+		\p -> p.second
+	);
+
+	offset = pc;
+
+	is_closure = length(ctx.free_vars) > 0;
+
+	iteri(local_names, \i, e -> {
+		fiBcDebugAddLocal(cfg, pc, if (i >= ctx.nargs) BC_LOCAL_VAR else BC_LOCAL_ARG, i, e);
+	});
+
+	iteri(ctx.free_vars, \i, e -> {
+		fiBcDebugAddLocal(cfg, pc, BC_LOCAL_UPVAR, i, e);
+	});
+
+	prelude0 = if (ctx.nlocals > 0) {
+			CReserveLocals(ctx.nlocals-ctx.nargs, ctx.nargs)
+		} else
+			fiEmptyBytecode();
+
+	prelude = fiMakeBytecode([prelude0]);
+
+	body = fiMakeBytecode([
+		prelude,
+		code,
+		if (is_closure)
+			CClosureReturn()
+		else
+			CReturn()
+	]);
+	
+	codeSize = fiBytecodeLength(body);
+
+	fiMakeBytecode([
+		CGoto(codeSize),
+		body,
+		fiMakeBytecode([
+			if (is_closure)
+				CClosurePointer(length(ctx.free_vars), -codeSize - fiSizeofCClosurePointer)
+			else
+				CCodePointer(-codeSize - fiSizeofCCodePointer)
+		])
+	]);
+}
+
+// trivial wrapper to force correct upcast of arr
+fiPushToChunks(arr : [BytecodeOrChunks], cmd : Bytecode) {
+	arrayPush(arr, cmd)
+}
+
+fiBcEncode(cfg : FcBytecodeConfig, ctx, expr, tailcall, pc) {
+	savedPc = pc;
+	if (cfg.debug) {
+		fiBcDebugAddPosition(cfg, ctx.func.toplevel, pc, expr.start, false, ""/*"Add Position in Encode " + substring(toString(expr), 0, 40)*/);
+	}
+	switch (expr : FiExp) {
+		FiString(s, start): {
+			fiMakeLineBytecode("FiString", cfg, ctx, start, [
+				if (strlen(s) < 40)
+					CWString(s)
+				else
+					CString(s)
+			], pc);
+		}
+
+		FiBool(b, i): {
+			fiMakeLineBytecode("FiBool", cfg, ctx, i, [CBool(b)], pc);
+		}
+		FiDouble(d, i):{
+			fiMakeLineBytecode("FiDouble", cfg, ctx, i, [CDouble(d)], pc);
+		}
+		FiVoid(i): {
+			fiMakeLineBytecode("FiVoid", cfg, ctx, i, [CVoid()], pc);
+		}
+		FiInt(i, inf): {
+			fiMakeLineBytecode("FiInt", cfg, ctx, inf, [CInt(i)], pc);
+		}
+		FiVar(x, __, i): {
+			// TODO: check correctness of conversion
+			tmp =
+				switch (fiBcResolveName(ctx, x) : FiBcNameResolution) {
+					FiBcStruct(id, struct): {
+						if (length(struct.args) > 0)
+							fail0("complex struct reference without args")
+						else
+							CStruct(id);
+					}
+					FiBcGlobal(slot):  CGetGlobal(slot);
+					FiBcLocal(slot):   CGetLocal(slot);
+					FiBcClosure(slot): CGetFreeVar(slot);
+				}
+			fiMakeLineBytecode("FiVar", cfg, ctx, i, [tmp], pc);
+		}
+
+		FiLambda(xs, e0, type, i): {
+			shadowed = foldTree(ctx.locals, ctx.func.shadowed, \n,id,s -> insertSet(s,n));
+			subctx = fiBcMakeFunctionContext(cfg, ctx.func.toplevel, shadowed, xs, pc);
+
+			p = if (cfg.debug) {
+					cfg0 = 	FcBytecodeConfig(
+						cfg.flowfile,
+						cfg.outputfile,
+						cfg.upload,
+						cfg.includes,
+						false,
+						cfg.verbose,
+						cfg.debugInfoFunctions,
+						cfg.debugInfoLocals,
+						cfg.debugInfoPositions,
+						cfg.nargs,
+						cfg.debugVerbose
+					);
+
+					ctx0 = fiBcMakeFunctionContext(cfg0, ctx.func.toplevel, shadowed, xs, pc);
+
+					code0 = fiBcEncode(cfg0, ctx0, e0, true, pc);
+					fiCalcFunctionPreludeLength(ctx0.func);
+				} else {
+					Pair(0, 0);
+				}
+
+
+			fiBcDebugAddFunction(cfg, pc + p.first, subctx.func.name);
+
+			code = fiBcEncode(cfg, subctx, e0, false, pc + p.first + p.second);
+
+			pc2 : ref int = ref pc;
+			fvars = map(subctx.func.free_vars, \n -> {
+				vx = FiVar(n, FiTypeFlow(), i);
+				r = fiBcEncode(cfg, ctx, vx, false, ^pc2);
+				pc2 := ^pc2 + fiBytecodeLength(r);
+				r;
+			});
+
+
+			fb = fiBcWrapFunctionBody(cfg, subctx.func, code, i, ctx.func.name, ^pc2 + fiSizeofCGoto);
+
+			ap = arrayPush(fvars, fb);
+			r = fiMakeLineBytecode("FiLambdaX", cfg, ctx, i, ap, pc);
+			fiBcDebugAddFunction(cfg,
+				^pc2 + fiBytecodeLength(fiMakeBytecode([fb])) - (if (length(subctx.func.free_vars) > 0) fiSizeofCClosurePointer else fiSizeofCCodePointer),
+				ctx.func.name/* + " pc2 = 0x" + formatHex(^pc2) + " pc = 0x" + formatHex(pc)*/);
+
+			r;
+		}
+		FiCall(f, es, type, i): {
+			pc1 : ref int = ref pc;
+			args = map(es, \arg -> {
+				r = fiBcEncode(cfg, ctx, arg, false, ^pc1);
+				pc1 := ^pc1 + fiBytecodeLength(r);
+				r;
+			});
+			bcstruct : Maybe<FiBcStruct> = switch (f : FiExp) {
+				FiVar(x, vtype, i2): {
+					resv = fiBcResolveName(ctx, x);
+					switch (resv : FiBcNameResolution) {
+						FiBcStruct(__, __): Some(resv);
+						default: None();
+					}
+				}
+				default: None()
+			};
+			call = switch (bcstruct : Maybe<FiBcStruct>) {
+				Some(sinfo): {
+					if (length(sinfo.struct.args) != length(es))
+						fail("wrong argument count for " + sinfo.struct.name);
+					[fiMakeBytecode([CStruct(sinfo.id)])]
+				}
+				None(): {
+					fiBcDebugAddPosition(cfg, ctx.func.toplevel, pc, i, false, "FiCall");
+					[
+						fiBcEncode(cfg, ctx, f, false, ^pc1),
+						fiMakeLineBytecode("FiCall7", cfg, ctx, i, [
+							if (tailcall && length(ctx.func.free_vars) == 0)
+								CTailCall(length(args))
+							else
+								if (cfg.nargs) CCallN(length(args)) else CCall()
+						], pc)
+					]
+				}
+			}
+
+			fiMakeLineBytecode("FiCall", cfg, ctx, i, concat(args, call), pc);
+		}
+		FiLet(x, t, e1, e2, t2, i): {
+			e1code = fiBcEncode(cfg, ctx, e1, false, pc);
+			local = fiBcPushLocal(ctx, x);
+			e2code = fiBcEncode(cfg, local.first, e2, tailcall, pc + fiBytecodeLength(e1code) + fiBytecodeLength(fiMakeBytecode([CSetLocal(0)])));
+
+			fiMakeLineBytecode("FiLet", cfg, ctx, i, [
+				e1code,
+				CSetLocal(local.second),
+				e2code
+			], pc);
+		}
+		FiIf(e1, e2, e3, type, i): {
+			condcode = fiBcEncode(cfg, ctx, e1, false, pc);
+			pccond = pc + fiBytecodeLength(condcode) + fiBytecodeLength(fiMakeBytecode([CIfFalse(0)]));
+
+			trueNode : BytecodeChunks = fiBcEncode(cfg, ctx,e2, tailcall, pccond);
+
+			pcTrueNode = pccond + fiBytecodeLength(trueNode)+ fiSizeofCGoto; // ifFalseNode appends CGoto
+
+			elsecode : BytecodeChunks = fiBcEncode(cfg, ctx,e3, tailcall, pcTrueNode);
+
+			fiMakeLineBytecode("FiIf", cfg, ctx, i, [
+				condcode,
+				CIfFalse( fiBytecodeLength(trueNode) + fiSizeofCGoto ),
+				trueNode,
+				CGoto( fiBytecodeLength(elsecode) ),
+				elsecode
+			], pc);
+		}
+		FiSwitch(e0, switchType, cs, type, i): {
+
+			arg = fiBcEncode(cfg, ctx, e0, false, pc);
+
+			// sort cases by id
+			structs = ctx.func.toplevel.structs;
+			allCases : [Pair<int, FiCase>] = sort(map(cs, \ccase -> {
+				if (ccase.struct == "default")
+					Pair(-100, ccase)
+				else
+					switch (lookupTree(structs, ccase.struct) : Maybe<FiBcStruct>) {
+						Some(sinfo):
+							Pair(sinfo.id, ccase);
+						default:
+							fail0("unknown struct in switch: " + ccase.struct);
+					}
+			}));
+			casesStub = map(filter(allCases, \e -> e.first >= 0), \__ -> Pair(0, 0));
+			switchHeaderStub : [BytecodeOrChunks] = concat([CSimpleSwitch(0, casesStub)], if (length(allCases) > 0 && allCases[0].first == -100) [] else [CUncaughtSwitch()]);
+
+			// We do not want result, just increase pc in fiMakeLineBytecode.
+			fiMakeLineBytecode("FiSwitch skip\n" + toString(switchHeaderStub), cfg, ctx, i, switchHeaderStub, pc);
+
+			// generate code
+			pc1 : ref int = ref (pc + fiBytecodeLength(arg) + fiBytecodeLength(fiMakeBytecode(switchHeaderStub)));
+
+			casecode : [Pair<int, BytecodeChunks>] = mapi(allCases, \ix, ccase -> {
+				r = Pair(ccase.first, fiBcEncode(cfg, ctx, ccase.second.body, tailcall, ^pc1));
+				pc1 := ^pc1 + fiBytecodeLength(r.second);
+				if (cfg.debug) {
+					if (ix != length(allCases) - 1) {
+						pc1 := ^pc1 + fiSizeofCGoto;
+					}
+				}
+				r;
+			});
+			casecode2 : [Pair<int,BytecodeChunks>] = fold(
+				reverseA(casecode), Pair([], 0),
+				\prev, ccase -> {
+
+					newcode = if (prev.second == 0) {
+							ccase.second
+						} else {
+							fiMakeLineBytecode("FiSwitch case2", cfg, ctx, i, [ ccase.second, CGoto(prev.second) ]/*, []*/, pc);
+						}
+
+					Pair(
+						concat([Pair(ccase.first, newcode)], prev.first),
+						prev.second + fiBytecodeLength(newcode)
+					);
+				}
+			).first;
+			// find or create the default case
+			casecode3 = if (length(casecode2) > 0 && casecode2[0].first == -100) {
+					Pair(casecode2[0].second, tail(casecode2))
+				} else {
+					Pair(fiMakeBytecode([ CUncaughtSwitch() ]/*, []*/), casecode2);
+				}
+			// generate switch
+			caselist = fold(
+				casecode3.second,
+				Pair([], fiBytecodeLength(casecode3.first)),
+				\prev, ccase -> {
+					Pair(
+						arrayPush(prev.first, Pair(ccase.first, prev.second)),
+						prev.second + fiBytecodeLength(ccase.second)
+					)
+				}
+			);
+			fiMakeLineBytecode("FiSwitch end", cfg,
+				ctx, i,
+				concat(
+					[
+						arg,
+						CSimpleSwitch(caselist.second, caselist.first),
+						casecode3.first
+					],
+					map(casecode3.second, \x -> x.second)
+				), pc
+			);
+		}
+		FiCast(e0, tFrom, tTo, type, i): {
+			arg = fiBcEncode(cfg, ctx, e0, false, pc);
+			rarg = [arg];
+			code = switch(tFrom : FiType) {
+				FiTypeInt(): {
+					switch(tTo : FiType) {
+						FiTypeString(): [arg, CInt2String()];
+						FiTypeInt(): rarg;
+						FiTypeDouble(): [arg, CInt2Double()];
+						default: rarg;
+					}
+				}
+				FiTypeDouble(): {
+					switch(tTo : FiType) {
+						FiTypeString(): [arg, CDouble2String()];
+						FiTypeInt(): [arg, CDouble2Int()];
+						FiTypeDouble(): rarg;
+						default: rarg;
+					}
+				}
+				default: rarg;
+			}
+			fiMakeLineBytecode("FiCast", cfg, ctx, i, code, pc);
+		}
+		FiSeq(es, type, i): {
+			l = length(es)-1;
+			pc1 : ref int = ref pc;
+			code = if (l >= 0)
+				mapi(es, \idx, e -> {
+					r = if (idx < l)
+						fiMakeBytecode([fiBcEncode(cfg, ctx, e, false, ^pc1), CPop()]/*, []*/)
+					else
+						fiBcEncode(cfg, ctx, e, tailcall, ^pc1);
+					pc1 := ^pc1 + fiBytecodeLength(r);
+					r;
+				})
+			else
+				[fiMakeBytecode([ CVoid() ])];
+			fiMakeLineBytecode("FiSeq", cfg, ctx, i, code, pc);
+		}
+		FiCallPrim(op, es, type, i): {
+			pc1 : ref int = ref pc;
+
+			args : [BytecodeChunks] = switch(op : FcPrim) {
+				FcAndPrim(): [];
+				FcOrPrim(): [];
+				default: {
+					map(es, \arg -> {
+						r = fiBcEncode(cfg, ctx, arg, false, ^pc1);
+						pc1 := ^pc1 + fiBytecodeLength(r);
+						r;
+					});
+				}
+			}
+
+			intPrim = \itype : FiType, bcint : Bytecode, bc : Bytecode -> {
+				switch(itype) {
+					FiTypeInt(): bcint;
+					default: bc;
+				}
+			}
+			code = switch (op : FcPrim) {
+				FcOrPrim(): {
+					arg0 = fiBcEncode(cfg, ctx, es[0], false, pc + fiSizeofCBool);
+					arg1 = fiBcEncode(cfg, ctx, es[1], false,
+						pc +
+						fiSizeofCBool +
+						fiBytecodeLength(arg0) +
+						fiSizeofCNot +
+						fiSizeofCIfFalse +
+						fiSizeofCPop);
+					orcode : [BytecodeOrChunks] = [
+						CBool(true),
+						arg0,
+						CNot(),
+						CIfFalse( fiBytecodeLength(arg1) + fiSizeofCPop ),
+						CPop(),
+						arg1
+					];
+					orcode
+				}
+				FcAndPrim(): {
+					arg0 = fiBcEncode(cfg, ctx, es[0], false, pc + fiSizeofCBool);
+					arg1 = fiBcEncode(cfg, ctx, es[1], false,
+						pc +
+						fiSizeofCBool +
+						fiBytecodeLength(arg0) +
+						fiSizeofCIfFalse +
+						fiSizeofCPop);
+					andcode : [BytecodeOrChunks] = [
+						CBool(false),
+						arg0,
+						CIfFalse( fiBytecodeLength(arg1) + fiSizeofCPop ),
+						CPop(),
+						arg1
+					];
+					andcode
+				}
+				FcNotPrim(): [ args[0], CNot() ];
+				FcEqPrim():  [ args[0], args[1], CEqual() ];
+				FcNePrim():  [ args[0], args[1], CEqual(), CNot() ];
+				FcLePrim():  [ args[0], args[1], CLessEqual() ];
+				FcGePrim():  [ args[0], args[1], CLessThan(), CNot() ];
+				FcLtPrim():  [ args[0], args[1], CLessThan() ];
+				FcGtPrim():  [ args[0], args[1], CLessEqual(), CNot() ];
+				FcPlusPrim(): {
+					opcode = switch(type) {
+						FiTypeInt(): CPlusInt();
+						FiTypeString(): CPlusString();
+						default: CPlus();
+					};
+
+					[ args[0], args[1], opcode ];
+				}
+				FcMinusPrim(): {
+					opcode = intPrim(type, CMinusInt(), CMinus());
+					[ args[0], args[1], opcode ];
+				}
+				FcMulPrim(): {
+					opcode = intPrim(type, CMultiplyInt(), CMultiply());
+					[ args[0], args[1], opcode ];
+				}
+				FcDivPrim(): {
+					opcode = intPrim(type, CDivideInt(), CDivide());
+					[ args[0], args[1], opcode ];
+				}
+				FcModPrim(): {
+					opcode = intPrim(type, CModuloInt(), CModulo());
+					[ args[0], args[1], opcode ];
+				}
+				FcNegPrim(): {
+					opcode = intPrim(type, CNegateInt(), CNegate());
+					[ args[0], opcode ];
+				}
+				FcArrayPrim():  fiPushToChunks(args, CArray(length(args)));
+				FcIndexPrim():  [ args[0], args[1], CArrayGet() ];
+				FcDerefPrim():  [ args[0], CDeref() ];
+				FcAssignPrim(): [ args[0], args[1], CSetRef() ];
+				FcRefPrim():    [ args[0], CRefTo() ];
+				FcStructPrim(structname):
+
+					switch (lookupTree(ctx.func.toplevel.structs, structname) : Maybe<FiBcStruct>) {
+						Some(struct):
+							if (length(struct.struct.args) != length(args))
+								fail0("struct arg count mismatch for " + structname)
+							else
+								fiPushToChunks(args, CStruct(struct.id));
+						None():
+							fail0("unknown struct " + structname);
+					}
+				FcFieldPrim(name): {
+					fieldNamed = CFieldName(name);
+					ftmp = switch(es[0]) {
+							FiVar(__, vtype, info) : {
+								fieldtype = resolveFiTypeName(ctx.func.toplevel.program.names, vtype);
+								switch (fieldtype) {
+									FiTypeStruct(__, __, _args, __) : {
+										idx = fiFieldNumber(fieldtype, name);
+										if (idx == -1)
+											fieldNamed
+										else {
+											CField(idx);
+										}
+									}
+									FiTypeUnion(tn, __, tns, __): {
+										structs = fiUnion2structs(ctx.func.toplevel.program, fieldtype);
+										// OK, maybe we can be smarter
+										fieldindex = fiUnionFieldNumber(structs, 0, -2, name);
+										if (fieldindex != -1) {
+											// All have the same index.
+											CField(fieldindex);
+										} else {
+											fieldNamed;
+										}
+
+									}
+								}
+							}
+							default : fieldNamed;
+						};
+					[args[0], ftmp];
+				}
+				FcSetMutablePrim(name):
+					// TODO: Exploit types to use fixed index
+					[ args[0], args[1], CSetMutableName(name) ];
+				FcCreateClosurePrim(sName, fName): []; // Should not happen - bytecode does not use lambda lifting
+			};
+			fiMakeLineBytecode("FiCallPrim end", cfg, ctx, i, code, pc);
+		}
+		FiRequire(flowfile, e2, type, info): fail0("todo");
+		FiUnsafe(name, fallback, type, info): fail0("todo");
+	}
+}
+
+// What field index is this field in this struct? -1 if it does not exist
+fiFieldNumber(s : FiTypeStruct, fieldname : string) -> int {
+	foldi(s.args, -1, \ix, acc, arg -> {
+		if (arg.name == fieldname) ix else acc;
+	});
+}
+
+// Check if we have a common field number for all these structs. -2 at first, -1 if none
+fiUnionFieldNumber(structs : [FiTypeStruct], i : int, fieldindex : int, fieldname : string) -> int {
+	if (i < length(structs)) {
+		fi = fiFieldNumber(structs[i], fieldname);
+		if (fieldindex == -2 || fi == fieldindex) {
+			fiUnionFieldNumber(structs, i + 1, fi, fieldname);
+		} else -1;
+	} else {
+		fieldindex;
+	}
+}
+
+fiBcCompileToplevel(cfg, gctx : FiBcGlobalContext, decl, pc) {
+	saved_pc = pc;
+	switch (decl : FiDeclaration) {
+		FiFunctionDec(name, lambda, __, __, defiStart): {
+			// We have to know, how many locals do we have in function.
+			// Simplest way to detect it - evaluate function in a sandbox
+			// and drop result.
+			dbgInfo = fiMakeBytecode([CDebugInfo(name)]);
+			dbgInfoLen = fiBytecodeLength(dbgInfo);
+
+			pl = if (cfg.debug) {
+					cfg0 = 	FcBytecodeConfig(
+						cfg.flowfile,
+						cfg.outputfile,
+						cfg.upload,
+						cfg.includes,
+						false,
+						cfg.verbose,
+						cfg.debugInfoFunctions,
+						cfg.debugInfoLocals,
+						cfg.debugInfoPositions,
+						cfg.nargs,
+						cfg.debugVerbose
+					);
+					gctx0 = FiBcGlobalContext(
+						gctx.file,
+						gctx.program,
+						gctx.structs,
+						gctx.globals,
+						gctx.cur_toplevel,
+						gctx.next_closure_id,
+						gctx.resolvers
+					);
+					ctx0 = fiBcMakeFunctionContext(cfg0, gctx0, makeSet(), lambda.args, pc);
+					code0 = fiBcEncode(cfg0, ctx0, lambda.body, true, pc);
+
+					p = fiCalcFunctionPreludeLength(ctx0.func);
+					p.first + p.second
+				} else {
+					0
+				}
+
+			ctx = fiBcMakeFunctionContext(cfg, gctx, makeSet(), lambda.args, pc);
+			pc1 = saved_pc + dbgInfoLen + pl; // CGoto is included in prelude
+			code = fiBcEncode(cfg, ctx, lambda.body, true, pc1);
+
+			// Detect functions and variables for which there are no records
+			// neither in global functions tree nor in global variables tree.
+			// This is sanity check for compiler itself.
+			// If this condition violated then it means that
+			// some part of compiler broken: DCE, typechecker, ordering of functions/variables etc.
+			if (length(ctx.func.free_vars) > 0) {
+				fail("Free vars in global function " + name + ": " + toString(ctx.func.free_vars));
+			}
+
+			pc2 = saved_pc + dbgInfoLen + fiSizeofCGoto;
+
+			reserveLocalsPos = saved_pc + dbgInfoLen + fiSizeofCGoto;
+			func = fiBcWrapFunctionBody(cfg, ctx.func, code, lambda.start, name + "$init", reserveLocalsPos);
+
+			// start of function's DebugInfo
+			fiBcDebugAddFunction(cfg, saved_pc, name + "$init");
+
+			// Position of ReserveLocals
+			fiBcDebugAddFunction(cfg, reserveLocalsPos, name);
+			// End of the function
+			fiBcDebugAddFunction(cfg, saved_pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCGoto, name + "$init");
+
+			// Position of DebugInfo
+			fiBcDebugAddPosition(cfg, gctx, saved_pc, defiStart, true, "FiFunction " + name);
+
+			// Position of ReserveLocals (actual start of code)
+			fiBcDebugAddPosition(cfg, gctx, reserveLocalsPos, lambda.body.start, false, "FiFunction ReserveLocals");
+
+			// End of function position: the line after a last position in function body.
+			switch(lookupTree(gctx.resolvers, gctx.file)) {
+				Some(resolver) : {
+					maxPos = fiMaxPosition(lambda.body) + 1;
+					maxLine = findLineRaw(resolver, maxPos).lineno;
+					endFuncPos = findLineIndex(resolver, maxLine, 0);
+					endPc = saved_pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCCodePointer - fiSizeofCReturn;
+					fiBcDebugAddPosition(cfg, gctx, endPc, endFuncPos, false, "FiFunction EndPosition");
+				}
+				None(): {}
+			}
+
+			fiMakeBytecode([dbgInfo, func]);
+		}
+		FiGlobalVar(name, value, type, __, __): {
+			ctx = fiBcMakeFunctionContext(cfg, gctx, makeSet(), [], pc);
+			dbgInfo = fiMakeBytecode([CDebugInfo(name)]);
+			dbgInfoLen = fiBytecodeLength(dbgInfo);
+			code = fiBcEncode(cfg, ctx, value, false, pc + dbgInfoLen);
+
+			if (length(ctx.func.free_vars) > 0)
+				fail("free vars in global variable " + name + " init: " + toString(ctx.func.free_vars));
+			func = if (ctx.func.nlocals > 0) {
+					fiMakeBytecode([
+						fiBcWrapFunctionBody(cfg, ctx.func, code, value.start, name + "$init", pc),
+						if (cfg.nargs) CCallN(ctx.func.nargs) else CCall()
+					])
+				} else code;
+
+			// start of function's DebugInfo
+			fiBcDebugAddFunction(cfg, saved_pc, name + "$init");
+
+			r = fiMakeBytecode([dbgInfo, func]);
+			pc1 = saved_pc + fiBytecodeLength(r);
+			r;
+		}
+		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+			switch (fallbackLambda) {
+				default: {
+					switch (type) {
+						FiTypeFunction(args, rt) : {
+							fiBcDebugAddFunction(cfg, saved_pc, name + "$init");
+							fiBcDebugAddPosition(cfg, gctx, pc, declStart, true, "FiNative " + name + " without fallback");
+							fiMakeBytecode([CDebugInfo(name), CNativeFn(nativeName, length(args))]);
+						}
+						default : {
+							fail("ERROR: Non-function type found in native declaration.");
+							fiEmptyBytecode();
+						}
+					}
+				}
+				FiLambda(__, body, __, lambdaStart): {
+					pl = if (cfg.debug) {
+							cfg0 = 	FcBytecodeConfig(
+								cfg.flowfile,
+								cfg.outputfile,
+								cfg.upload,
+								cfg.includes,
+								false,
+								cfg.verbose,
+								cfg.debugInfoFunctions,
+								cfg.debugInfoLocals,
+								cfg.debugInfoPositions,
+								cfg.nargs,
+								cfg.debugVerbose
+							);
+							gctx0 = FiBcGlobalContext(
+								gctx.file,
+								gctx.program,
+								gctx.structs,
+								gctx.globals,
+								gctx.cur_toplevel,
+								gctx.next_closure_id,
+								gctx.resolvers
+							);
+							ctx0 = fiBcMakeFunctionContext(cfg0, gctx0, makeSet(), fallbackLambda.args, pc);
+
+							code0 = fiBcEncode(cfg0, ctx0, fallbackLambda.body, true, pc);
+							p = fiCalcFunctionPreludeLength(ctx0.func);
+							p.first + p.second
+						} else {
+							0
+						}
+
+					ctx = fiBcMakeFunctionContext(cfg, gctx, makeSet(), fallbackLambda.args, pc);
+					dbgInfo = fiMakeBytecode([CDebugInfo(name)]);
+					dbgInfoLen = fiBytecodeLength(dbgInfo);
+					reserveLocalsPos = saved_pc + dbgInfoLen + fiSizeofCGoto;
+
+					pc1 = saved_pc + dbgInfoLen + pl; // CGoto is included in prelude
+
+
+					// Position of DebugInfo
+					fiBcDebugAddFunction(cfg, saved_pc, name + "$init");
+
+					// Position of ReserveLocals
+					fiBcDebugAddFunction(cfg, reserveLocalsPos, name);
+
+					// Position of DebugInfo
+					fiBcDebugAddPosition(cfg, gctx, pc, declStart, true, "FiNative " + name + " debug info");
+
+					// Position of Goto
+					fiBcDebugAddPosition(cfg, gctx, pc + dbgInfoLen, defiStart, false, "FiNative " + name + " goto");
+
+					// Position of ReserveLocals
+					fiBcDebugAddPosition(cfg, gctx, reserveLocalsPos, fallbackLambda.body.start, false, "FiNative " + name + " ReserveLocals");
+
+					code = fiBcEncode(cfg, ctx, fallbackLambda.body, true, pc1);
+
+					// Sanity check for compiler.
+					// See comment at FiFunctionDec() above in this function.
+					if (length(ctx.func.free_vars) > 0) {
+						fail("Free vars in global function " + name + ": " + toString(ctx.func.free_vars));
+					}
+					func = fiBcWrapFunctionBody(cfg, ctx.func, code, defiStart, name, pc);
+
+					optionalFn = COptionalNativeFn(nativeName, length(fallbackLambda.args));
+//					optionalFnBCLen = fiBytecodeLength(fiMakeBytecode([optionalFn]));
+
+
+					// End of function position: the line after a last position in function body.
+					switch(lookupTree(gctx.resolvers, gctx.file)) {
+ 						Some(resolver) : {
+							maxPos = fiMaxPosition(body) + 1;
+							maxLine = findLineRaw(resolver, maxPos).lineno;
+							endFuncPos = findLineIndex(resolver, maxLine, 0);
+							endPc = pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCCodePointer;
+							fiBcDebugAddPosition(cfg, gctx, endPc, endFuncPos, false, "FiNative EndPosition");
+						}
+						None(): {}
+					}
+
+					r = fiMakeBytecode([
+						dbgInfo,
+						func,
+						optionalFn
+					]);
+
+					pc2 = saved_pc + fiBytecodeLength(r);
+
+					// Position of CodePointer
+					fiBcDebugAddFunction(cfg, pc + dbgInfoLen + fiBytecodeLength(func) - fiSizeofCCodePointer, name + "$init");
+
+					r;
+				}
+			}
+		}
+	}
+}

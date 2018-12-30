@@ -1,0 +1,1683 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import array;
+import gui;
+import formats/html/html2form;
+import paragraph;
+import sound;
+import formats/xml;
+import http;
+import movable; // SimpleMovable
+import styleform;
+import translation;
+import ui/videotimeline;
+import ui/scrollable; // Scrollable
+import ui/playeroptions;
+import flowutils; // isTest
+import ui/activityindicator;
+import binarytreeutils;
+
+
+export {
+	makeVideoPlayer : (path:string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (success: bool) -> void) -> Form;
+	makeVideoPlayer3 : (path:string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (success: bool) -> void, scale : double) -> Form;
+	//player for newskin. returns separate VideoPlayer form and Controls (play/pause, stop, etc.) form
+	makeVideoPlayerNewSkin : (path:string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (success: bool) -> void) -> Pair<Form, Form>;
+	makeSoundPlayer : (path:string, options: [PlayerOption]) -> Form;
+
+	// loads picture, shows "loading..." and "not found" messages when appropriate
+	LoadingPicture : (path: string, onComplete: () -> void) -> Form;
+	ClosedCaption : (begin : int, end : int, text : string); // begin and end are in milliseconds
+	// parsing ex.: <p begin="00:00:00.10" dur="00:00:01.08">Author's Tone</p>
+	// parsing ex.: <p begin="00:00:00.10" end="00:00:01.18">Author's Tone</p>
+	getXmlNodeBeginEndAttributes(node : XmlNode) -> Maybe<Pair<int, int>>;
+
+	makeTranscriptionsForm(transcriptionsPath : Behaviour<string>, position : Behaviour<double>, tw : double, th : double) -> Form;
+	stopAllSoundVideoPlayback : () -> void;
+
+	loadCaptionsFile(captionsFile:string, captionsAvailable: DynamicBehaviour<bool>, curPlayedTime: Behaviour<double>, loadingError : DynamicBehaviour<bool>) -> Behaviour<VideoSubtitle>;
+}
+
+globalPlaybackTrigger = make(false); //All soundPlayer forms stop playback when value is changed
+
+stopAllSoundVideoPlayback() -> void {
+	next(globalPlaybackTrigger, !getValue(globalPlaybackTrigger))
+}
+
+makeVideoPlayerStub() {
+	GroupWithSizeFixed(
+		320.0, 240.0,
+		[
+			HVFill([Fill(white), Stroke(black)]),
+			Text("Video", NormalText) |> Center2
+		]
+	)
+}
+
+dummyCC = ClosedCaption(0, 0, "");
+
+getXmlNodeBeginEndAttributes(node : XmlNode) -> Maybe<Pair<int, int>> {
+	switch (node : XmlNode) {
+		XmlElement(tag, attributes, children) : {
+			beg = getXmlAttribute(attributes, "begin", "");
+			dur = getXmlAttribute(attributes, "dur", "");
+			end = getXmlAttribute(attributes, "end", "");
+			if(beg != "" && (dur != "" || end != "")) {
+				s2ms = \arr -> if (length(arr) == 3) (s2i(arr[0]) * 3600 + s2i(arr[1]) * 60) * 1000 + trunc(s2d(arr[2]) * 1000.0) else 0;
+				bta = strSplit(beg, ":");
+				dta = strSplit(dur, ":");
+				eta = strSplit(end, ":");
+				if (length(bta) == 3 && (length(dta) == 3 || length(eta) == 3) && length(children) >= 1) {
+					btt = s2ms(bta);
+					dtt = s2ms(dta);
+					ett = s2ms(eta);
+					et = if (dur != "") btt + dtt else ett;
+					Some(Pair(btt, et))
+				} else {
+					None()
+				}
+			} else {
+				None()
+			}
+		}
+		XmlText(__): None()
+	}
+}
+
+parseXmlCC(n, ccsref, fontSize) {
+	switch(n : XmlNode) {
+		XmlElement(tag, __, __) : {
+			_tag = toLowerCase(tag);
+			if (_tag == "tt") {
+				parseTTML1(n, ccsref, fontSize);
+			} else if (_tag == "transcript") {
+				parseTRANSCRIPT(n, ccsref);
+			}
+		}
+		XmlText(__): {}
+	}
+}
+
+
+// This is "Timed Text Markup Language 1 (TTML1)"
+// Reference: http://www.w3.org/TR/ttml1/
+// parse Xml file with Close Captions (subtitles). parsing ex.: <p begin="00:00:00.10" dur="00:00:01.08">Author's Tone</p>
+parseTTML1(xn, ccsref : ref [ClosedCaption], fontSize : ref double) {
+	switch (xn : XmlNode) {
+		XmlElement(tag, attributes, children) : {
+			tagNormalized = toLowerCase(tag);
+			if (tagNormalized == "p") {
+				maybeApply(getXmlNodeBeginEndAttributes(xn), \p -> {
+					bt = p.first;
+					et = p.second;
+					doFold = ref \items -> "";
+					doFold := \items -> {
+						fold(items, "", \acc, c -> {
+							switch (c: XmlNode) {
+								XmlText(s): acc + s;
+								XmlElement(itag, attr, subchildren): {
+									// Ad-hoc fix for #34067
+									// Some refactoring and re-use of html2form may be needed if complex content will be given in subtitles files.
+									if (toLowerCase(itag) == "br") {
+										acc + "&nbsp;\n"
+									} else {
+										acc + "<" + itag + ">" + ^doFold(subchildren) + "</" + itag + ">";
+									}
+								}
+							}
+						});
+					}
+
+					text = ^doFold(children);
+
+					if (text != "") {
+						refArrayPush(ccsref, ClosedCaption(bt, et, text));
+					}
+				})
+			} else if (tagNormalized == "style") {
+				// #41620
+				fs = getXmlAttribute(attributes, "tts:fontSize", "");
+				if (fs != "") {
+					fontSize := min(40.0, max(6.0, s2d(fs))); //some protection from incorrect values
+				}
+
+			}
+			iter(children, \cxn -> parseTTML1(cxn, ccsref, fontSize) );
+		}
+		XmlText(__):{}
+	}
+}
+
+makeVideoPlayerButton(img_path, fn, mobileUI) {
+	scale = playerIconSize/52.0;
+	size = const(
+		if (mobileUI)
+			WidthHeight(36.0, 30.0)
+		else
+			WidthHeight(53.0 * scale, 52.0 * scale)
+	);
+	Size2(size,
+		if (mobileUI)
+			playerButtonMobile(img_path[0], fn)
+		else
+			playerButtonEx(img_path[0], img_path[1], img_path[2], img_path[3], true, fn)
+	)
+}
+
+makeCaptionsButton(captionsAvailable: Behaviour<bool>, showSubs : DynamicBehaviour<int>, loadingError : Behaviour<bool>, mobileUI : bool) {
+	cc_on_pic =
+		if (mobileUI)
+			["images/lrmobile/caption.png"]
+		else
+			["images/coachspeak/cc_on_off/", "cc_on_normal.png", "cc_on_hover.png", "cc_on_push.png"];
+	cc_off_pic =
+		if (mobileUI)
+			["images/lrmobile/caption_off.png"]
+		else
+			["images/coachspeak/cc_on_off/", "cc_off_normal.png", "cc_off_hover.png", "cc_off_push.png"];
+
+	ccButtonFunc = \ -> {
+		next(showSubs, 1 - getValue(showSubs));
+	};
+
+	ccButton = \isShown -> CachedSwitch(showSubs, [
+		makeVideoPlayerButton(cc_off_pic, ccButtonFunc, mobileUI),
+		makeVideoPlayerButton(cc_on_pic, ccButtonFunc, mobileUI)
+	]);
+
+	Select2(showSubs, captionsAvailable,
+		\isShown, isAvailable -> {
+			if (isAvailable) {
+				ccButton(isShown)
+			} else {
+				Empty()
+			}
+		}
+	);
+}
+
+loadCaptionsFile(captionsFile:string,
+				captionsAvailable: DynamicBehaviour<bool>, curPlayedTime: Behaviour<double>,
+				loadingError : DynamicBehaviour<bool>) -> Behaviour<VideoSubtitle>
+{
+	closedCaptions = ref [];
+	fontSize = ref 24.0;
+	currentCC : DynamicBehaviour<ClosedCaption> = make(dummyCC);
+	isSupportedFormat = make(true);
+
+	findCurrentCC = \cpt -> {
+		ret = ref dummyCC;
+		index = for(0, \i -> {
+			if(i >= length(^closedCaptions) || ^closedCaptions[i].begin > cpt)
+				false
+			else if (^closedCaptions[i].begin <= cpt && ^closedCaptions[i].end > cpt) {
+				ret := ^closedCaptions[i];
+				false;
+			} else
+				true;
+		}, \i -> i+1);
+		^ret;
+	}
+
+	startSubs = \ -> subscribe2(curPlayedTime, \cpt -> {
+		total = trunc(cpt*1000.0);
+		if (getValue(currentCC) == dummyCC) {
+			if (length(^closedCaptions) > 0)
+				nextDistinct(currentCC, findCurrentCC(total));
+		} else {
+			if (total > (getValue(currentCC)).end || total < (getValue(currentCC)).begin) // next one or first one(after stop)
+				nextDistinct(currentCC, findCurrentCC(total));
+		}
+	});
+
+	if (captionsFile != "") {
+		httpRequest(addServerPathIfRelative(captionsFile), false, [], [],
+			\c -> {
+				parsed = parseXml2(c);
+				switch(parsed) {
+					XmlElement(tag, __, __) : {
+						_tag = toLowerCase(tag);
+						if (_tag == "tt" || _tag == "transcript") {
+							parseXmlCC(parsed, closedCaptions, fontSize);
+							startSubs();
+							nextDistinct(currentCC, findCurrentCC(trunc(getValue(curPlayedTime)*1000.0)));
+							next(loadingError, false);
+						}
+						else {
+							next(isSupportedFormat, false);
+							next(loadingError, true);
+						}
+					}
+					XmlText(__): {
+						next(isSupportedFormat, false);
+						next(loadingError, true);
+					}
+				}
+			},
+			\e -> {
+				next(loadingError, true);
+				println("Error loading subtitles: " + e);
+			},
+			\s -> {}
+		);
+		next(captionsAvailable, true);
+
+		select2(loadingError, currentCC, \hasError, ccc : ClosedCaption -> {
+			if (hasError) {
+				if (getValue(isSupportedFormat))
+					VideoSubtitle("Couldn't open captions file.", [FontSize(15.), Fill(0xee0000), BackgroundFill(black)])
+				else
+					VideoSubtitle("Unsupported file format.", [FontSize(15.), Fill(0xee0000), BackgroundFill(black)])
+			} else {
+				VideoSubtitle(ccc.text, [FontSize(^fontSize), Fill(0xFFFFFF), BackgroundFill(black)])
+			}
+		})
+	} else {
+		const(VideoSubtitle("", []))
+	};
+}
+
+makeCaptionsForm(width: Behaviour<double>, height: Behaviour<double>,
+				 curPlayedTime: Behaviour<double>,
+				 subtitles : Behaviour<VideoSubtitle>, showSubs : Behaviour<int>,
+				 subtlTextSizeB : DynamicBehaviour<int>
+) -> Form
+{
+	// set to true for debugging timer
+	// may be useful for something else later on
+	enabledTime = ref false;
+	timeOverlay = if (^enabledTime)
+			Select(curPlayedTime, \cpt : double -> {
+				ts = formatTimeHMS(cpt);
+
+				Border(0.0, 3.0, 5.0, 0.0,
+					Text(ts, [FontSize(15.0), Fill(0xFFFFFF)])
+				);
+			})
+		else Empty();
+
+	Select3(showSubs, subtitles, subtlTextSizeB, \isShown, info, incSubtlSize -> {
+		infoFontsize = extractStruct(info.style, FontSize(15.)).size;
+		infoColor = extractStruct(info.style, Fill(white));
+
+		fntSz = infoFontsize * (i2d(incSubtlSize) + 1.0);
+		text = info.text;
+		bgStyle = [Fill(0x000000), FillOpacity(0.75)];
+		if (i2b(isShown) && (^enabledTime || text != ""))
+			Align(0.5, 1.0, Background(
+				bgStyle,
+				Border(
+					3.0, 0.0, 3.0, 3.0,
+					 	Paragraph([timeOverlay, TextFragment(text, [infoColor, FontSize(fntSz)])], [CenterAlign()])
+				)
+			))
+		else
+			Empty()
+	}) |> (\captions -> {
+		Available(width, height, captions) |> SimpleMovable;
+	})
+}
+
+makeVolumeControl(currentVolume : DynamicBehaviour<double>) -> Form {
+	volumeVisible = make(false);
+
+	ypos = make(0.0);
+	ysize = 70.0;
+	yrange = ysize - scrubberHandleSize;
+
+	in_volume = ref false;
+	update = \_x -> {
+		in_volume := true;
+		volume = getValue(currentVolume);
+		nextDistinct(ypos, yrange*min(1.0,max(0.0,1.0-volume)));
+		in_volume := false;
+	}
+	subscribe(currentVolume, update);
+
+	subscribe2(ypos, \pos -> {
+		if (!^in_volume && yrange != 0.0) {
+			nextDistinct(currentVolume, 1.0 - pos/yrange);
+		}
+	});
+
+	barSize = 3.0;
+	barGap = (scrubberHandleSize - barSize)/2.0;
+	handleHalf = scrubberHandleSize/2.0;
+
+	volumeControl = Behind(
+		\w,h -> {
+			rt = w*0.5;
+			rb = w*0.3;
+			Graphics(
+				[
+					MoveTo(rt, -0.2),
+					CubicBezierTo(w+0.2, rt+0.2, w+0.2, 0.4),
+					LineTo(w+0.2, h-rb),
+					LineTo(rt,h),
+					LineTo(-0.2, h-rb),
+					LineTo(-0.2, rt+0.2),
+					CubicBezierTo(rt, -0.2, -0.2, 0.4)
+				],
+				[Stroke(0xD54E28),Fill(0xFFFFFF),FillOpacity(0.7)]
+			)
+		},
+		Border(
+			3.0,4.0,3.0,7.0,
+			Group([
+				Border(
+					barGap,0.0,barGap,0.0,
+					Select(ypos, \y -> {
+						Lines([
+							Graphics(
+								roundedRect(barSize,y+handleHalf,barSize),
+								[Stroke(0xD54E28),Fill(0xFFFFFF)]
+							),
+							Graphics(
+								roundedRect(barSize,ysize-y-handleHalf,barSize),
+								[Stroke(0xD54E28),Fill(0xE07040)]
+							),
+						])
+					})
+				),
+				Slider(
+					make(0.0), ypos, const(0.0), const(yrange),
+					scrubberHandle,
+					[SnapOnClick(false), StartDragOnClick()]
+				)
+			])
+		)
+	);
+
+	volume_pic = "images/orange_mute.swf";
+
+	Cols([
+		Size2(zeroSize,
+			Offset(3.0, -82.0,
+				Visibleb(volumeVisible,
+					volumeControl
+				)
+			)
+		),
+		playerButton(volume_pic, const(true), \ -> {
+			next(volumeVisible, !getValue(volumeVisible))
+		}),
+	]);
+}
+
+VideoPlayer : (form: Form, fullScreenState: DynamicBehaviour<bool>);
+
+
+
+makeVideoPlayer(path, options, controls, onVideoLoaded) {
+	makeVideoPlayer3(path, options, controls, onVideoLoaded, 1.0)
+}
+
+makeVideoPlayer3(path, options, controls, onVideoLoaded, scale) {
+	if (isTest()) {
+		makeVideoPlayerStub()
+	} else if (targetVideoControls()) {
+		makeNativeVideo(path, options, controls, onVideoLoaded);
+	} else {
+		startOffset = either(
+			findmap(options, \opt -> switch (opt: PlayerOption) { StreamStartOffset(offset): Some(offset); default: None(); }),
+			0.0
+		);
+		_options = arrayPush(options, RememberPositionAfterSwitching(make(startOffset)));
+		_controls = arrayPush(controls, PlayerControlsAlwaysVisible());
+		vp = makeVideoPlayer2(path, _options, _controls, onVideoLoaded, scale);
+		vcW = make(0.0);
+		frameAround2(
+			Border(3.0, 3.0, 3.0, 3.0,
+				Lines([
+					Inspect(
+						[Width(vcW)],
+						vp.first
+					),
+					Select(
+						vcW,
+						\_vcW -> Available(const(_vcW), const(26.0), Align2(0.5, 0.5, vp.second))
+					)
+				])
+			),
+			2.0,
+			3.0,
+			veryLightGray,
+			[Fill(white)]
+		)
+	}
+}
+
+makeVideoPlayerNewSkin(path:string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (success: bool) -> void) -> Pair<Form, Form> {
+	if (isTest()) {
+		Pair(makeVideoPlayerStub(), Empty())
+	} else if (targetVideoControls()) {
+		Pair(makeNativeVideo(path, options, controls, onVideoLoaded), Empty())
+	} else {
+		startOffset = either(
+			findmap(options, \opt -> switch (opt: PlayerOption) { StreamStartOffset(offset): Some(offset); default: None(); }),
+			0.0
+		);
+
+		// TODO: move start/end offest handling to the makeVideoPlayer2 function
+		options2 = ref options;
+		startPos = ref 0.0;
+		eitherFn(
+			find(options, \o -> o.structname == "StreamStartOffset"),
+			\o1 -> {
+				startTime = (cast(o1: PlayerOption -> StreamStartOffset)).offset;
+				startPos := startTime;
+				refArrayPush(options2, RememberPositionAfterSwitching(make(startTime)));
+
+				isPausedB = eitherFn(
+					find(options, \o -> o.structname == "PlayerPause"),
+					\o -> {
+						cast(o: PlayerOption -> PlayerPause).pause
+					},
+					\ -> {
+						pB = make(true);
+						refArrayPush(options2, PlayerPause(pB));
+						pB
+					});
+				positionB = eitherFn(
+					find(options, \o -> o.structname == "PositionSetter"),
+					\o -> {
+						cast(o: PlayerOption -> PositionSetter).position
+					},
+					\ -> {
+						pB = make(0.0);
+						refArrayPush(options2, PositionSetter(pB));
+						pB
+					});
+				timer(500, \ -> {	// Doesn't work without this delay?!?
+					next(isPausedB, false);
+					next(positionB, startTime);
+				});
+			},
+			\-> {
+				refArrayPush(options2, RememberPositionAfterSwitching(make(0.0)));
+			});
+		maybeApply(
+			find(options, \o -> o.structname == "StreamEndOffset"),
+			\o1 -> {
+				endTime = (cast(o1: PlayerOption -> StreamEndOffset)).offset;
+
+				isPausedB = eitherFn(
+					find(options, \o -> o.structname == "PlayerPause"),
+					\o -> {
+						cast(o: PlayerOption -> PlayerPause).pause
+					},
+					\ -> {
+						pB = make(true);
+						refArrayPush(options2, PlayerPause(pB));
+						pB
+					});
+				positionSetB = eitherFn(
+					find(options, \o -> o.structname == "PositionSetter"),
+					\o -> {
+						cast(o: PlayerOption -> PositionSetter).position
+					},
+					\ -> {
+						pB = make(0.0);
+						refArrayPush(options2, PositionSetter(pB));
+						pB
+					});
+				positionB = eitherFn(
+					find(options, \o -> o.structname == "PlayerPosition"),
+					\o -> {
+						cast(o: PlayerOption -> PlayerPosition).position
+					},
+					\ -> {
+						pB = make(0.0);
+						refArrayPush(options2, PlayerPosition(pB, 100));
+						pB
+					});
+			});
+
+		makeVideoPlayer2(path, ^options2, controls, onVideoLoaded, 1.0)
+	}
+}
+
+// onVideoLoaded parameter is ignored here!
+makeNativeVideo(path : string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (bool) -> void) -> Form {
+	/*
+	  In the OpenGL renderer video always hovers above any flow forms,
+	  so all these fancy controls can only be implemented in native code.
+	*/
+
+	params : ref [VideoParameter] = ref [];
+	events : ref [VideoStreamEvent] = ref [];
+	ctls : ref [VideoControl] = ref [];
+	hasPlayPauseControl = ref false;
+	playPauseB = ref make(false);
+	iter(options, \opt -> {
+		switch(opt:PlayerOption) {
+			LoopPlayback(): refArrayPush(params, opt);
+			SynchroCalls(onStart, onStop): refArrayPush(events, opt);
+			PlayerPosition(bvr, delay): refArrayPush(events, opt);
+			PlayerPosition2(bvr, tmr): refArrayPush(events, opt);
+			PlayerIsPlaying(bvr): refArrayPush(events, opt);
+			PlayerSize(w, h): refArrayPush(params, VideoSize(round(w), round(h)));
+			PlayerAvailableSize(__): {};
+			SmallVideoSizeDuringLoad(): {};
+			NoAutoPlay(): refArrayPush(params, opt);
+			NoControls(): {};
+			PlayerPause(pause): {
+				hasPlayPauseControl := true;
+				playPauseB := pause;
+				refArrayPush(ctls, opt)
+			};
+			PlayerVolume(vol): refArrayPush(ctls, opt);
+			ClosedCaptions(file): {
+				if (file != "") {
+					curPlayedTime = make(0.0);
+					refArrayPush(events, PlayerPosition(curPlayedTime, 100));
+					subtitles = loadCaptionsFile(file, make(false), curPlayedTime, make(false));
+					refArrayPush(ctls, VideoPlayerSubtitles(subtitles));
+				}
+			}
+			RememberPositionAfterSwitching(__) : {}
+			PositionSetter(pos): {}
+			StreamStartOffset(offset) : refArrayPush(params, opt);
+			StreamEndOffset(offset) : refArrayPush(params, opt);
+			Transcriptions(__) : {} //Implemented inside VideoLR (lrimpl.flow)
+			ShowProgressWhenStopped() : {} //For audio player
+			NoMuteButton() : {} //For audio player
+			RewindVideo(__) : {} //Implemented inside makeVideoPlayer2
+			FullScreenVideo(__) : {}
+			MobileStyleVideoPLayer() : {}
+		}
+	});
+
+	if (controls != []) {
+		refArrayPush(ctls, VideoPlayerControls(controls));
+	}
+
+	if (!^hasPlayPauseControl) {
+		refArrayPush(ctls, PlayerPause(^playPauseB));
+	}
+	Constructor(
+		Video(path, ^params, ^events, ^ctls),
+		\ -> {
+			subscribe2(globalPlaybackTrigger, \__ -> next(^playPauseB, true))
+		}
+	)
+}
+
+makeVideoPlayer2(path:string, options: [PlayerOption], controls: [PlayerControl], onVideoLoaded: (bool) -> void, scale : double) -> Pair<Form, Form> {
+	mobileUI = contains(options, MobileStyleVideoPLayer());
+	onFullIn = ref false;
+
+	vw = make(0.0);
+	vh = make(0.0);
+	loopPlayback = ref false;
+	isRewind = ref true;
+	onStartSignal = ref \ -> {};
+	onStopSignal = ref \ -> {};
+
+	rememberedPosition = findmap(options, \option -> { switch (option: PlayerOption) {
+		RememberPositionAfterSwitching(value) : Some(value);
+		default: None();
+	}});
+
+	seekPosition = either(findmap(options, \opt ->
+		switch (opt: PlayerOption) {
+			PositionSetter(pos): Some(pos);
+			default: None();
+		}),
+		either(rememberedPosition, make(0.0))
+	);
+
+	needToRememberPosition = !isNone(rememberedPosition);
+	needToAdjust = ref true;
+	isPaused = if (mobile && js)
+			make(true)
+		else
+			either(findmap(options, \opt -> switch (opt: PlayerOption) {PlayerPause(pause): Some(pause); default: None();}), make(false));
+	isDragging = make(false);
+	isStopped = make(getValue(isPaused));
+
+	params = ref [];
+	events : ref [VideoStreamEvent] = ref [];
+	supportFullScreen = ref false;
+	fullScreenOn = make(0);
+	videoDuration = make(0.0); // total video duration, seconds
+	curPlayedTime = make(0.0); //time played since last start/unpause, seconds
+
+	isSubs = make(0);
+	isSubsLoadingError = make(false);
+	isSubsAvailable = make(false);
+
+	controlsVisibility = make(0.0);
+	controlsEnabled = make(true);
+	controlsShown = make(false);
+	captionsForm = ref Empty();
+
+	PausePlayback = \ -> {
+		nextDistinct(isPaused, true);
+	}
+	ResumePlayback = \ -> {
+		nextDistinct(isPaused, false);
+	}
+	StopPlayback = \rewind : bool -> {
+		^onStopSignal();
+		if (rewind) next(seekPosition, 0.0);
+		nextDistinct(isPaused, true);
+		nextDistinct(isStopped, true);
+	};
+
+	currentVolume = make(1.0);
+	enableVideoSound = \ -> {
+		next(currentVolume, 1.0)
+	};
+	disableVideoSound = \ -> {
+		next(currentVolume, 0.0)
+	};
+	removeBigPlayer = ref \ -> {};
+	detachOnFullScreen = ref \ -> {};
+	fullscreenPaused = make(false);
+	isFullScreenVideoLocal = fold(options, make(false), \acc, option ->
+		switch (option: PlayerOption) {
+			FullScreenVideo(isFullScreenVideo) : isFullScreenVideo;
+			default: acc;
+		}
+	);
+
+	// sizes for warning text
+	initialWidth = 600.0;
+	initialHeight = 400.0;
+
+	tw = make(initialWidth);
+	th = make(initialHeight);
+	frameWidth = make(initialWidth);
+	frameHeight = make(initialHeight);
+
+	movieLoaded = make(false);
+	loadingError = make(false);
+
+
+	textWarning = \ -> 	Paragraph(
+		[TextFragment("Couldn't load the video", [Fill(0x000000), FontFamily("Book"), FontSize(20.0)])],
+		[CenterAlign()]
+	);
+
+	fanForm = \ -> SpinnerActivityIndicator(50.0, 0xAAAAAA);
+
+	warning = make(Empty());
+
+	refArrayPush(params, OnVideoLoadingError(\ -> {
+		next(loadingError, true);
+		onVideoLoaded(false);
+	}));
+
+	subtlTextSizeB = make(0);
+	unsValChanger = ref nop;
+
+	setNoAutoPlayInitState = \ -> {
+		next(isPaused, true);
+		next(isStopped, true);
+		next(controlsShown, true);
+		next(controlsVisibility, 1.0);
+	}
+
+	controlsHeightB = make(0.0);
+	playerAvailableSizeM : ref Maybe<Pair<Behaviour<WidthHeight>, () -> void>> = ref None();
+
+	iter(options, \opt -> {
+		switch(opt:PlayerOption) {
+			LoopPlayback(): {
+				refArrayPush(params, LoopPlayback());
+				loopPlayback := true;
+			}
+			SynchroCalls(onStart, onStop): {
+				onStartSignal := onStart;
+				onStopSignal := onStop;
+			}
+			PlayerPosition(bvr, delay): refArrayPush(events, opt);
+			PlayerPosition2(bvr, tmr): refArrayPush(events, opt);
+			PlayerIsPlaying(bvr): refArrayPush(events, opt);
+			PlayerSize(w, h): {
+				next(tw, w);
+				next(th, h);
+				refArrayPush(params, VideoSize(round(w), round(h)));
+			}
+			PlayerAvailableSize(awhB): {
+				playerAvailableSizeM := Some(select2u(awhB, controlsHeightB, \awh, controlsHeight -> WidthHeight(
+					// we do -30.0 because of player borders. Otherwise we might have horizontal scroll
+					if (awh.width - 30.0 <= 320.0) 250.0 else awh.width - 30.0,
+					max(awh.height - controlsHeight, 100.0)
+				)));
+			}
+			SmallVideoSizeDuringLoad(): {
+				next(tw, 100.0);
+				next(th, 100.0);
+			}
+			NoAutoPlay(): {
+				setNoAutoPlayInitState()	// See case http://process.area9.dk/cases/default.asp?17609
+			}
+			NoControls(): {
+				next(controlsEnabled, false)
+			}
+			PlayerPause(pause) : {
+				// Nothing to do here, we've handled it already when we were creating isPaused behaviour
+			}
+			PlayerVolume(vol): {
+				connect(vol, currentVolume) |> ignore;
+			}
+			ClosedCaptions(file): {
+				if (file != "") {
+					subtitles = loadCaptionsFile(file, isSubsAvailable, curPlayedTime, isSubsLoadingError);
+					captionsForm := makeCaptionsForm(vw, vh, curPlayedTime, subtitles, isSubs, subtlTextSizeB);
+				}
+			}
+			RememberPositionAfterSwitching(__) : {}
+			PositionSetter(pos): {}
+			StreamStartOffset(offset) : { refArrayPush(params, opt); }
+			StreamEndOffset(offset) : { refArrayPush(params, opt); }
+			Transcriptions(__) : {}
+			ShowProgressWhenStopped() : {}; //For audio player
+			NoMuteButton() : {} //For audio player
+			RewindVideo(r) : { isRewind := r };
+			FullScreenVideo(isFullscreen) : {}
+			MobileStyleVideoPLayer() : {}
+		}
+	});
+
+	play_pic =
+		if (mobileUI) ["images/lrmobile/play.png"]
+		else ["images/coachspeak/play_pause/", "play_normal.png", "play_hover.png", "play_push.png"];
+	pause_pic =
+		if (mobileUI) ["images/lrmobile/pause.png"]
+		else ["images/coachspeak/play_pause/", "pause_normal.png", "pause_hover.png", "pause_push.png"];
+	fullscreen_pic =
+		if (mobileUI) ["images/lrmobile/fullscreen.png"]
+		else ["images/full_screen_video_player/", "full_on_off_normal.png", "full_on_off_hover.png", "full_on_off_push.png"];
+	exit_fullscreen_pic =
+		if (mobileUI) ["images/lrmobile/fullscreen_close.png"]
+		else ["images/full_screen_video_player/", "full_pic_off_normal.png", "full_pic_off_hover.png", "full_pic_off_push.png"];
+	mute_off_pic =
+		if (mobileUI) ["images/lrmobile/mute.png"]
+		else ["images/coachspeak/mute_on_off/", "mute_off_normal.png", "mute_off_hover.png", "mute_off_push.png"];
+	mute_pic =
+		if (mobileUI) ["images/lrmobile/sound_on.png"]
+		else ["images/coachspeak/mute_on_off/", "mute_normal.png", "mute_hover.png", "mute_push.png"];
+
+	controlsForm = \ -> if (controls == [] || !getValue(controlsEnabled)) {
+		// If there are no controls, enable subtitles
+		next(isSubs, 1);
+		Empty();
+	} else {
+		scrubberIdx = elemIndex(controls, Scrubber(), length(controls));
+		preScrubber = subrange(controls, 0, scrubberIdx);
+		postScrubber = subrange(controls, scrubberIdx, length(controls));
+
+		isPausedI = make(0);
+		makeControl = \cont -> {
+			switch(cont:PlayerControl){
+				PauseResume(): {
+					Constructor(
+						CachedSwitch(
+							isPausedI,
+							[
+								makeVideoPlayerButton(pause_pic, PausePlayback, mobileUI),
+								makeVideoPlayerButton(play_pic, ResumePlayback, mobileUI),
+							]
+						),
+						\ -> connectSelectu(isPaused, isPausedI, b2i)
+					);
+				}
+				FullScreenPlayer(): {
+					supportFullScreen := true;
+					Select(isFullScreenVideoLocal, \fs ->
+						makeVideoPlayerButton(
+							if (fs) exit_fullscreen_pic else fullscreen_pic,
+							\-> nextDistinct(isFullScreenVideoLocal, !getValue(isFullScreenVideoLocal)),
+							mobileUI
+						)
+					)
+				}
+				default : Empty();
+			}
+		};
+
+		full_width = make(0.0);
+		left_width = make(0.0);
+		right_width = make(0.0);
+
+		volumeEnabled = make(0);
+		muteSoundButton = Constructor(
+			CachedSwitch(volumeEnabled, [
+				makeVideoPlayerButton(mute_off_pic, enableVideoSound, mobileUI),
+				makeVideoPlayerButton(mute_pic, disableVideoSound, mobileUI)
+			]),
+			\ -> connectSelectu(currentVolume, volumeEnabled, round)
+		);
+
+		scrubberWidth = make(0.0);
+		controlsList = Inspect(
+			[AvailableWidth(full_width)],
+			Constructor(
+				Cols([
+					Inspect([Width(left_width)],
+						Cols(
+							concat(
+								[muteSoundButton],
+								map(preScrubber, makeControl)
+							)
+						)
+					),
+					makeScrubber(
+						videoDuration, curPlayedTime, isDragging,
+						scrubberWidth,
+						\pos -> {
+							if (!^onFullIn)
+								next(seekPosition, pos)
+							else
+								onFullIn := false;
+
+						},
+						mobileUI
+					),
+					Inspect([Width(right_width)], Cols(
+						concat(
+							if (^captionsForm != Empty())
+								[makeCaptionsButton(isSubsAvailable, isSubs, isSubsLoadingError, mobileUI)]
+							else
+								[Empty()],
+							map(postScrubber, makeControl),
+						)
+					)),
+				]),
+				// Sutiation when full_width < left_width + right_width is possible. Scrubber looks extremely ugly in this case
+				\ -> connectSelect3Distinctu(full_width, left_width, right_width, scrubberWidth, \a, b, c -> max(a - b - c, 150.0))
+			)
+		);
+
+		controlBorderSize = 5.5;
+		Inspect(
+			[Height(controlsHeightB)],
+			Alpha(
+				if (contains(controls, PlayerControlsAlwaysVisible())) const(1.0) else controlsVisibility,
+				if (mobileUI) controlsList
+				else frameAround2(
+					Border(5.0, 5.0, 5.0, 5.0, controlsList),
+					2.0,
+					3.0,
+					veryLightGray,
+					[Fill(white)]
+				)
+			)
+		);
+	};
+
+	stop_animate = ref \->{};
+	tmr = repeatable(3000);
+
+	addConstructors = \f -> Constructors(
+		[
+			\ -> connectSelect3Distinctu(
+				movieLoaded, loadingError, vw,
+				warning,
+				\mL, lE, w -> {
+					if (lE) textWarning()
+					else if (mL || w == 0.0) Empty()
+					else fanForm()
+				}
+			),
+			\ -> connectSelect2Distinctu(tw, vw, frameWidth, \t, v -> if (v == 0.0) t else v),
+			\ -> connectSelect2Distinctu(th, vh, frameHeight, \t, v -> if (v == 0.0) t else v),
+			\ -> subscribe2(globalPlaybackTrigger, \__ -> setNoAutoPlayInitState()),
+			\ -> subscribe2(controlsShown, \showme -> {
+				^stop_animate();
+				if (showme) {
+					time = (1.0 - getValue(controlsVisibility)) * 300.0;
+					stop_animate := interruptibleAnimate([DoubleAnimation(controlsVisibility, 1.0, time)]);
+				} else {
+					time = getValue(controlsVisibility) * 300.0;
+					stop_animate := interruptibleAnimate([DoubleAnimation(controlsVisibility, 0.0, time)]);
+				}
+			}),
+			\ -> subscribe2(tmr.value, \x-> {
+				nextDistinct(controlsShown, false);
+			}),
+			\ -> \ -> ^unsValChanger(),
+			\ -> eitherMap(
+				find(options, \o -> o.structname == "StreamEndOffset"),
+				\o1 -> {
+					endTime = (cast(o1: PlayerOption -> StreamEndOffset)).offset;
+					eitherMap(
+						find(options, \o -> o.structname == "PlayerPosition"),
+						\o -> {
+							positionB = cast(o: PlayerOption -> PlayerPosition).position;
+							subscribe2(positionB, \pos -> {
+								if (pos >= endTime) {
+									next(isPaused, true);
+								}
+							})
+						},
+						nop
+					)
+				},
+				nop
+			),
+			\ -> subscribe2(isPaused, \pause -> {
+				if (!pause) {
+					nextDistinct(isStopped, false);
+				}
+			}),
+			\-> eitherMap(^playerAvailableSizeM, \x -> x.second, nop)
+		],
+		f
+	);
+
+	onMouseMove = \getMouseInfo -> {
+		if (getMouseInfo().inside) {
+			nextDistinct(controlsShown, true);
+			tmr.stop();
+			tmr.start();
+			true;
+		} else false;
+	};
+
+	listeners =
+		[MouseMove(onMouseMove),
+		 RollOver(\mi -> nextDistinct(controlsShown, true)),
+		 RollOut(\mi -> nextDistinct(controlsShown, false))];
+
+	_warn = Available(frameWidth, frameHeight, Center(Mutable(warning)));
+	_vid = Inspect(
+		[Width(vw), Height(vh)],
+		Scale(const(scale), const(scale), Video(
+			path,
+			^params,
+			concat(^events, [
+				StreamStatus(\code -> {
+					if (code == "NetStream.Play.Start") {
+						next(movieLoaded, true);
+						onVideoLoaded(true);
+						// because seek doesn't work until rendering:
+						if (needToRememberPosition && ^needToAdjust) {
+							needToAdjust:= false;
+							//Workaround. Video length is updated when video position is 0.0;
+							deferUntilRender(\ -> {
+								duration = getValue(videoDuration);
+								seek = getValue(seekPosition);
+								newPosition = if (duration > 0.0) {
+									min(seek, duration);
+								} else {
+									seek
+								}
+								next(seekPosition, newPosition);
+							})
+						}
+					}
+				}),
+				SynchroCalls(
+					\ -> { ^onStartSignal(); },
+					\ -> { StopPlayback(^isRewind); }
+				),
+				PlayerLength(videoDuration),
+				PlayerPosition(curPlayedTime, 100),
+			]),
+			[
+				PlayerSeek(seekPosition),
+				PlayerPause(isPaused),
+				PlayerVolume(currentVolume),
+			]
+		))
+	);
+
+	videoForm2 = Interactive(listeners, Group([_vid, _warn, ^captionsForm]));
+	videoForm = eitherMap(^playerAvailableSizeM, \x -> shrinkToFitB(x.first, videoForm2), videoForm2);
+	videoFormControls = \ -> VisiblebLazy(movieLoaded, controlsForm);
+
+	videoSize = makeWH();
+	videoScale = make(1.0);
+	availableWidth = make(0.0);
+	availableHeight = make(0.0);
+	controlsFSWidth = make(0.0);
+
+	controlsVis = make(1);
+	stop = ref if (mobileUI) interruptibleTimer(2000, \ -> next(controlsVis, 0)) else nop;
+	addInteractiveControls = \f -> Interactive(
+		[
+			MouseMove2(\handled, info -> {
+				^stop();
+				next(controlsVis, 1);
+				stop := interruptibleTimer(2000, \ -> next(controlsVis, 0));
+				false
+			}),
+			MouseDown(\info -> {
+				^stop();
+				next(controlsVis, 1);
+				false
+			}),
+			MouseUp(\info -> {
+				stop := interruptibleTimer(2000, \ -> next(controlsVis, 0));
+				false
+			})
+		],
+		f
+	);
+	showFScontrols = make(false);
+	addVideoFullScale = \f -> Constructors(
+		[
+			\-> connectSelect4Distinctu(
+				isFullScreenVideoLocal, availableWidth, availableHeight, videoSize, videoScale,
+				\fs, aW, aH, s -> if (fs && s.width > 0.0 && s.height > 0.0) min(aW/s.width, aH/s.height) else 1.0
+			),
+			\-> connectSelect2Distinctu(
+				videoScale, videoSize, controlsFSWidth,
+				\s, vSize, -> s*vSize.width
+			),
+			\ -> connectSelect2Distinctu(isFullScreenVideoLocal, controlsVis, showFScontrols, \fs, vis -> fs && vis == 1),
+		],
+		Scale(videoScale, videoScale, f)
+	);
+	addFullScreen = \f -> FullScreen(isFullScreenVideoLocal,
+		Inspect([AvailableWidth(availableWidth), AvailableHeight(availableHeight)],
+			Behind(
+				\w, h -> Select(isFullScreenVideoLocal, \fs -> Rectangle(w, h, if (fs) [Fill(0xf9f6f6)] else [])),
+				Group([
+					Inspect([ISize(videoSize)], f) |> addVideoFullScale |> addInteractiveControls,
+					VisiblebLazy(showFScontrols,
+						\ -> Iffe(mobileUI,
+							\ -> Align(0.0, 1.0, Border(0.0, 20.0, 0.0, 20.0,
+								Scale(const(2.0), const(2.0),
+									Select(availableWidth, \av ->
+										Available(const(av/2.0), const(45.0), Border(10.0, 0.0, 10.0, 0.0, videoFormControls())))
+									)
+							)),
+							\ -> Align(0.5, 1.0, Available(controlsFSWidth, const(43.0), videoFormControls()))
+						)
+					)
+				])
+			)
+		)
+	);
+
+	Pair(
+		videoForm |> addFullScreen |> addConstructors,
+		Invisibleb(showFScontrols, videoFormControls())
+	)
+
+}
+
+makeSoundPlayer(url : string, options : [PlayerOption]) {
+	looper = ref \ -> {};
+	play = ref \ -> {};
+	stop = ref \ -> {};
+	isStopped = make(0);
+	isPaused = make(true);
+	wasPlayed = ref false;
+	muteVisible = !contains(options, NoMuteButton());
+	volumeVisible = make(false);
+	currentVolume = make(1.0);
+	soundPosition = make(0.0);
+	captionsSoundPosition = make(0.0);
+	soundLength = make(0.0);
+	fileIsLoaded = make(false);
+	loadingError = make(false);
+
+	isSubs = make(0);
+	isSubsLoadingError = make(false);
+	isSubsAvailable = make(false);
+
+	totalWidth = findmap(options, \o -> {
+			switch(o) {
+				PlayerSize(width, height) : Some(width);
+				default : None();
+			}
+	})
+	|> \tw -> either(tw, 150.0);
+	sliderHeight = playerIconSize- 4.0;
+
+	finalWidth = make(0.0);
+
+	startPosition = ref 0.0;
+
+	startUns : ref () -> void = ref nop;
+	maybeApply(
+		find(options, \o -> o.structname == "StreamStartOffset"),
+		\o1 -> {
+			startTime = (cast(o1: PlayerOption -> StreamStartOffset)).offset * 1000.0; // soundPosition - ms, player option - s
+			startPosition := startTime;
+			startUns := subscribe2(fileIsLoaded, \__ -> deferred(\-> {
+				nextDistinct(soundPosition, startTime);
+			}));
+		});
+
+	endUns : ref () -> void = ref nop;
+	maybeApply(
+		find(options, \o -> o.structname == "StreamEndOffset"),
+		\o1 -> {
+			endTime = (cast(o1: PlayerOption -> StreamEndOffset)).offset * 1000.0; // soundPosition - ms, player option - s
+
+			whenB = selectu(soundPosition, \pos -> pos >= endTime);
+			whenUns = when(whenB.first, \-> {
+				nextDistinct(isPaused, true);
+				nextDistinct(isStopped, 1);
+				nextDistinct(soundPosition, ^startPosition);
+			});
+
+			endUns := \ -> {
+				whenUns();
+				whenB.second();
+			}
+		});
+
+	loopPlayback = contains(options, LoopPlayback());
+	autoPlay = !contains(options, NoAutoPlay());
+	captionsForm = findmap(options, \o -> {
+			switch(o) {
+				ClosedCaptions(file): {
+					if (file != "") {
+							subtitles = loadCaptionsFile(file, isSubsAvailable, captionsSoundPosition, isSubsLoadingError);
+						 	Some(makeCaptionsForm(finalWidth, zero, captionsSoundPosition, subtitles, isSubs, make(0)))
+					} else {
+						None()
+					}
+				}
+				default : None()
+			}
+	}) |> \cf -> either(cf, Empty());
+
+	transcriptionForm = findmap(options, \o -> {
+			switch(o) {
+				Transcriptions(file): {
+					Some(makeTranscriptionsForm(file, captionsSoundPosition, totalWidth + 70.0, 250.0))
+				}
+				default : None()
+			}
+	}) |> \cf -> either(cf, Empty());
+
+	onSoundComplete = \ -> {
+		if (loopPlayback && !i2b(getValue(isStopped))) {
+			^play()
+		} else {
+			nextDistinct(isStopped, 1);
+			nextDistinct(isSubs, 1);
+			stop := \ -> {};
+		}
+	};
+
+	playEx = loadSoundExt(
+		url,
+		\err -> {
+			nextDistinct(loadingError, true)
+		},
+		\l -> {
+			nextDistinct(soundLength, l / 1000.0);
+			nextDistinct(fileIsLoaded, true);
+			//next(soundLength, l)
+		}
+	);
+	play := \ -> {
+		if (getValue(soundLength) > 0.0) {
+			if (i2b(getValue(isStopped))) {
+				nextDistinct(soundPosition, 0.0);
+			}
+			nextDistinct(isStopped, 0);
+			nextDistinct(isPaused, false);
+			wasPlayed := true;
+			s = playEx([SoundVolume(currentVolume), SoundComplete(onSoundComplete), PauseSound(isPaused), SoundPosition(soundPosition)]);
+			stop := \ -> {
+				stop := nop;
+				nextDistinct(isStopped, 1);
+				s()
+			}
+		}
+	}
+	pause = \ -> nextDistinct(isPaused, true);
+	resume = \ -> nextDistinct(isPaused, false);
+
+	play_pic = "images/play.swf";
+	pause_pic = "images/pause.swf";
+	stop_pic = "images/stop.swf";
+
+	soundControlFn = \-> {
+		if (!i2b(getValue(isStopped))) {
+		 	^stop();
+		 	if (!(^wasPlayed)){//stop() - does nothing in that case
+		 		nextDistinct(isStopped, 1);
+		 	}
+		 } else {
+		 	^play()
+		 }
+	};
+
+	setControlButtonSize = \f -> {
+		size = const(WidthHeight(playerIconSize, playerIconSize));
+		Size2(size, f)
+	}
+
+	soundControlButton = Iff(muteVisible, \ ->
+		CachedSwitch(isStopped, [
+			playerButtonEx("images/coachspeak/mute_on_off/", "mute_normal.png", "mute_hover.png", "mute_push.png", true, soundControlFn),
+			playerButtonEx("images/coachspeak/mute_on_off/", "mute_off_normal.png", "mute_off_hover.png", "mute_off_push.png", true, soundControlFn)
+		]) |> setControlButtonSize
+	);
+
+	pausePlayFn = \-> {
+		if (!i2b(getValue(isStopped))) {
+			nextDistinct(isPaused, !getValue(isPaused));
+			if(!getValue(isPaused) && !(^wasPlayed))
+				^play();
+		} else {
+			nextDistinct(soundPosition, 0.0);
+			^play()
+		}
+	};
+
+	stoppedRelatedVisibility = make(true);
+
+	isPausedI = make(0);
+	pausePlayButton = Visibleb(
+		stoppedRelatedVisibility,
+		Constructor(
+			CachedSwitch(isPausedI, [
+				playerButtonEx("images/coachspeak/play_pause/", "pause_normal.png", "pause_hover.png", "pause_push.png", true, pausePlayFn),
+				playerButtonEx("images/coachspeak/play_pause/", "play_normal.png", "play_hover.png", "play_push.png", true, pausePlayFn)
+			]) |> setControlButtonSize,
+			\ -> connectSelect2Distinctu(isPaused, isStopped, isPausedI, \p, s -> b2i(p || i2b(s)))
+		)
+	);
+
+	nestedUpdate = ref false;
+	oldSoundPosition2 = ref 0.0;
+	soundPosition2 = make(0.0);
+	positionOptionM = find(options, \o -> o.structname == "PlayerPosition");
+
+	soundProgressForm_generic = \-> Constructors(
+		[
+			\ -> connectSelect2Distinctu(soundPosition, soundLength, soundPosition2, \pos, len -> {
+				if (^nestedUpdate && !(getValue(isPaused) || i2b(getValue(isStopped))))
+					min(^oldSoundPosition2, len)
+				else {
+					pos2 = pos / 1000.0;
+					oldSoundPosition2 := pos2;
+					min(pos2, len)
+				}
+			}),
+			\ -> eitherMap(positionOptionM, \o -> connectDistinct(soundPosition2, (cast(o: PlayerOption -> PlayerPosition)).position), nop),
+			\ -> if (contains(options, ShowProgressWhenStopped())) {
+					nop
+				} else {
+					connectSelectDistinctu(isStopped, stoppedRelatedVisibility, \stopped -> !i2b(stopped))
+				}
+		],
+		makeScrubber(
+			soundLength, soundPosition2, make(false),
+			const(totalWidth),
+			\pos -> {
+				nestedUpdate := true;
+				nextDistinct(isStopped, 0);
+				nextDistinct(soundPosition, pos * 1000.0);
+				nestedUpdate := false;
+			},
+			false
+		)
+	);
+
+	soundProgressForm = \-> {
+		Visibleb(
+			stoppedRelatedVisibility,
+			soundProgressForm_generic()
+		);
+	};
+
+	inspectFinalWidth = \f -> Inspect([Width(finalWidth)], f);
+
+	controlsForm = Cols(
+		[
+			soundControlButton,
+			pausePlayButton,
+			Align2(0.0, 0.5, soundProgressForm()),
+			makeCaptionsButton(isSubsAvailable, isSubs, isSubsLoadingError, false)
+		]
+	) |> inspectFinalWidth;
+
+
+	addLoadingIndication = \f -> {
+		minSize = WidthHeight(totalWidth + 51.0, playerIconSize + 16.0);
+		alignLoadingText = \f1 -> Available2(const(minSize), Center(f1));
+		ts = [];
+
+		Select2(fileIsLoaded, loadingError, \l, e -> {
+			if (l) {
+				enabled = make(true);
+				deferred(\ -> nextDistinct(enabled, false));
+				OverrideSize2(\__ -> minSize, enabled, f)
+			} else if (e) {
+				Text(_s("Cannot load sound file"), ts) |> alignLoadingText
+			} else {
+				Text(_s("Loading sound file"), ts) |> alignLoadingText
+			}
+		})
+	}
+
+	makeRounded = \f -> Rounded(3.0, [Fill(0xaaaaaa)],
+		Border(1.0, 1.0, 1.0, 1.0,
+			Rounded(3.0, [Fill(0xffffff)], f)
+		)
+	);
+
+	Constructors(
+		[
+			\-> connectSelectDistinctu(soundPosition, captionsSoundPosition, \p -> p * 0.001),
+			\ -> {
+				uss = ref nop;
+				if (autoPlay) {
+					uss := subscribe(fileIsLoaded, \l -> {
+						if (l) {
+							^play()
+						}
+					});
+				};
+				globalStopUns = subscribe2(globalPlaybackTrigger, \__ -> ^stop());
+				\ -> {
+					globalStopUns();
+					^uss();
+					^stop();
+				}
+			},
+			\ -> subscribe2(isStopped, \s -> {
+				if (i2b(s))
+					(^stop)();
+			}),
+			\ -> {
+				\ -> {
+					^startUns();
+					^endUns();
+				}
+			}
+		],
+		Border(3.0, 3.0, 3.0, 3.0, Lines([controlsForm, captionsForm, transcriptionForm])) |> addLoadingIndication |> makeRounded
+	)
+}
+
+// TODO: accept SmallPicture/BigPicture parameter and adjust text/initial size accordingly
+// TODO: combine with WhileLoading (apply picture transformations)
+LoadingPicture(path: string, onComplete: () -> void) -> Form {
+	wh = makeWH();
+	maxwh = makeWH();
+	textform = make(Empty());
+
+	setText = \txt -> {
+		nextDistinct(textform, Text(txt, [FontSize(10.0)]));
+	}
+	//17810
+	//setText("Loading,\nplease\nwait...");
+	nextDistinct(textform, resizeToFit(8.0, 8.0, Picture("images/loading_icon.swf", [])));
+
+	pic = Picture(path, [OnLoadingError(\s -> { setText("Cannot\nload\nimage"); })]);
+
+	Constructor(
+		Group([
+			Mutable(textform),
+			Size2(maxwh, Inspect([ISize(wh)], pic))
+		]),
+		\ -> {
+			subscribe(wh,
+				\wehi -> {
+					mwh = getValue(maxwh);
+					if (wehi.width > mwh.width || wehi.height > mwh.height) {
+						next(maxwh, WidthHeight(
+							max(wehi.width, mwh.width),
+							max(wehi.height, mwh.height)
+						));
+					//	println("Loaded " + path + ":" + d2s(wehi.width) + "x" + d2s(wehi.height));
+						nextDistinct(textform, Empty());
+						onComplete();
+					}
+				}
+			)
+		}
+	);
+}
+
+
+makeTranscriptionsForm(transcriptionsPath, position, tw, th) {
+	setText = \t -> Paragraph(
+		[TextFragment(t, [Fill(0x000000), FontFamily("Book"), FontSize(14.0)])],
+		[CenterAlign()]
+	);
+	transcription = make(Available(make(tw - 10.0), make(0.0), Border(10.0, 10.0, 10.0, 10.0, setText("Opening transcriptions file.\nPlease wait..."))));
+    addSubscribe = \-> subscribe(transcriptionsPath, \tp -> {
+		if (tp != "") {
+				httpRequest(addServerPathIfRelative(tp), false, [], [],
+					\c -> {
+						// The stylesheet for transcription files
+						spacing = 6.0;
+						stylesheet = pairs2tree([
+							Pair("p", HTMLStyle([FontSize(15.0)], [InterlineSpacing(spacing)])),
+						]);
+
+						heights : ref [Behaviour<double>] = ref [];
+						currentHeightOffset = ref 0;
+						incorrectITag = -1;
+						currentITag = make(incorrectITag);
+						currentDuration = ref 0.0;
+
+						makeTimeBasedTagHandler = \tag, fn -> HTMLTagHandler(tag, \t, n, f -> {
+							baseForm = f(false);
+							itag = ^currentHeightOffset;
+							currentHeightOffset := ^currentHeightOffset + 1;
+							visible = eitherMap(
+								getXmlNodeBeginEndAttributes(n),
+								\p -> {
+									beginTime = i2d(p.first) * 0.001;
+									endTime = i2d(p.second) * 0.001;
+									select(position, \ct -> {
+										v = beginTime <= ct && ct <= endTime;
+										if (v) {
+											currentDuration := endTime - beginTime;
+											nextDistinct(currentITag, itag);
+										}
+										v
+									})
+								},
+								const(true)
+							);
+							height = make(0.0);
+							refArrayPush(heights, height);
+							Inspect([ITag(itag), Height(height)], fn(visible, baseForm))
+						});
+
+						timeBasedVisibility = makeTimeBasedTagHandler("tbv", Visibleb);
+
+						addHighlight = \visible, form -> Behind(
+							\w,h -> Visibleb(visible, Rectangle(w, h, [Fill(yellow)])),
+							Border(2.0, 0.0, 2.0, 0.0, form)
+						);
+						timeBasedHighlight = makeTimeBasedTagHandler("tbh", addHighlight);
+
+						preprocessHtml = ref \nodes : [XmlNode] -> nodes;
+						//We have to drop out meanless XmlTexts between <tbv> to avoid additional spaces when tbv content is hid.
+						// Pair<element after <tbv>, acc>
+						preprocessHtml := \nodes : [XmlNode] -> {
+							r : Pair<bool, [XmlNode]> = fold(nodes, Pair(false, []), \acc : Pair<bool, [XmlNode]>, node -> {
+								switch(node : XmlNode) {
+									XmlElement(tag, attrs, children) : {
+										Pair(toLowerCase(tag) == "tbv", arrayPush(acc.second, XmlElement(tag, attrs, ^preprocessHtml(children))))
+									}
+									XmlText(t) : {
+										if (!acc.first || isNotSpace(t)) {
+											Pair(false, arrayPush(acc.second, node))
+										} else {
+											Pair(false, acc.second)
+										}
+									}
+								}
+							});
+							r.second
+						}
+
+						transcriptForm = Border(10.0, 10.0, 10.0, 10.0, html2form(c, stylesheet, [timeBasedVisibility, timeBasedHighlight, HTMLPreprocess(^preprocessHtml)]));
+						scrollingOffset = make(0.0);
+						scrollingHeight = th + 15.0;
+						stopCurrentAnimation = ref nop;
+						subscribe2(currentITag, \itag -> {
+							//itag is expected to be correct as initial -1 cannot be assigned again
+							^stopCurrentAnimation();
+							stopCurrentAnimation := nop;
+							relativePos = findTaggedFormPosition(transcriptForm, itag);
+							height = getValue(^heights[itag]);
+							duration = ^currentDuration * 1000.0;
+							currentOffset = getValue(scrollingOffset);
+							offset = relativePos.y;
+							insideScrollingWindow = currentOffset <= offset && offset + height <= currentOffset + scrollingHeight;
+							if (!insideScrollingWindow) {
+								border = 10.0;
+								animateToBottom = if (scrollingHeight < height && 0.0 < duration) {
+									\ -> {
+										stopCurrentAnimation := DoubleAnimation(scrollingOffset, offset + height - scrollingHeight + border, duration * 0.8) |> v2a |> interruptibleAnimate
+									}
+								} else {
+									nop
+								}
+								stopCurrentAnimation := DoubleAnimationFn(scrollingOffset, offset - border, 500.0, animateToBottom) |> v2a |> interruptibleAnimate
+							}
+						});
+
+						next(transcription,
+								Cols([
+									Fixed(10.0, 0.0),
+									Group([
+										frameAround2(
+											Fixed(tw - 10.0 - 6.0, th + 12.0),
+											2.0,
+											3.0,
+											veryLightGray,
+											[Fill(white)]
+										),
+										Scrollable(make(0.0), scrollingOffset, make(tw), make(scrollingHeight),
+											Available(make(tw - 10.0 - 6.0), make(0.0), transcriptForm)
+										)
+									])
+								])
+						);
+					},
+					\e -> {
+						next(transcription, Cols([
+								Fixed(20.0, 0.0),
+								Available(make(tw - 10.0), make(0.0), setText(_("Couldn't open transcription file")))
+						]));
+					},
+					\s -> {}
+				);
+		} else {
+			next(transcription, Empty());
+		}
+	});
+	Constructor(
+		Mutable(transcription),
+		addSubscribe
+	)
+}
+
+// TRANSCRIPT CC format
+// FogBugs #38764.
+/*
+<TRANSCRIPT>
+<LINE><WORD SYNC="00:00:01:19"><![CDATA[>> Acid strength or acidity is described in terms]]></WORD></LINE>
+<LINE><WORD SYNC="00:00:05:22"><![CDATA[of the degree of ionization for an acid.]]></WORD></LINE>
+<LINE><WORD SYNC="00:00:10:00"><![CDATA[All acids are covalently bonded substances]]></WORD></LINE>
+<LINE><WORD SYNC="00:00:13:07"><![CDATA[in which you have an ionizable proton,]]></WORD></LINE>
+<LINE><WORD SYNC="00:00:17:09"><![CDATA[one or more, covalently bonded]]></WORD></LINE>
+</TRANSCRIPT>
+*/
+parseTRANSCRIPT(xn, ccsref : ref [ClosedCaption]) {
+	switch(xn : XmlNode) {
+		XmlElement(tag, attr, children) : {
+			if (toLowerCase(tag) == "transcript") {
+				parseLINEs(children, ccsref);
+			}
+		}
+		XmlText(__) : {}
+	}
+}
+
+
+lastlineTag = "@lastline@";
+
+parseLINEs(nodes : [XmlNode], ccsref : ref [ClosedCaption]) {
+	// each LINE element has the start time only. To complete the ClosedCaption structure
+	// we have to hold the previous incomplete result on each iteration. Once it get filled it goes to acc.
+	// So fold acc is a pair of a real acc and a previous result. Additional final element of also required in array.
+	ccsref := fold(arrayPush(nodes, XmlElement(lastlineTag, [], [])),
+		Pair(^ccsref, None()),   /* pair of acc array and previous CC */
+		\pr : Pair<[ClosedCaption], Maybe<ClosedCaption>>, cn : XmlNode -> {
+			acc = pr.first;
+			switch (cn : XmlNode) {
+				XmlElement(tag, attr, children) : {
+					_tag = toLowerCase(tag);
+					if (_tag == "line") {
+						eitherMap(parseWORD(children),
+							\newCC -> Pair(
+								eitherMap(pr.second, \prevCC -> arrayPush(acc, ClosedCaption(prevCC.begin, newCC.begin - 100, prevCC.text)), acc), // hide text chunk 100ms before the next one appear
+								Some(newCC)
+							),
+							pr
+						)
+					} else if (_tag == lastlineTag) {
+						Pair(
+							eitherMap(pr.second, \prevCC -> arrayPush(acc, ClosedCaption(prevCC.begin, prevCC.begin + 2000, prevCC.text)), acc), // show the last text chunk for 2s.
+							None()
+						)
+
+					} else {
+						pr
+					}
+				}
+				XmlText(__) : pr;  // skip current node
+			}
+		}
+	).first;
+
+}
+
+parseWORD(nodes) {
+	findmap(nodes, \n -> switch(n : XmlNode) {
+		XmlElement(tag, attr, children) : {
+			if (toLowerCase(tag) == "word") {
+				eitherMap(parseTEXT(children),
+					\txt -> {
+						eitherMap(parseSYNC(attr),
+							\tmst -> Some(ClosedCaption(tmst, tmst, txt)),
+							None()
+						)
+					},
+					None()
+				)
+			} else {
+				None();
+			}
+		}
+		XmlText(__) : None();
+
+	})
+}
+
+parseTEXT(nodes) {
+	findmap(nodes,
+		\n -> switch(n : XmlNode) {
+			XmlText(txt) : Some(txt);
+			XmlElement(__, __, __) : None();
+		}
+	)
+}
+
+parseSYNC(attr : [XmlAttribute]) findmap(attr, \a -> if (toLowerCase(a.key) == "sync") parseTMST(a.value) else None());
+parseTMST(s) {
+	parts = strSplit(s, ":");
+	if (length(parts) != 4) None()
+	else {
+		Some(  1000 * (60 * (60 * s2i(parts[0]) + s2i(parts[1])) +  s2i(parts[2])) + 10 * s2i(parts[3])  )
+	}
+}
+
+//TO DO: Rempve this after adding support FullScreen in SWF or full transition to js
+VideoPlayerFullScreenParams(
+	position: DynamicBehaviour<double>,
+	volume: DynamicBehaviour<double>
+);

@@ -1,0 +1,977 @@
+import wigi/recursive;
+import wigi/block;
+import wigi/modify;
+import wigi/wigi_expr;
+import wigi/storage;
+import wigi/paragraph_preparation;
+import paragraph;
+import formats/html/html;
+import wigi/blanks;
+import wigi/fixup;
+import translation;
+import wigi/engine_debugger;
+import wigi/wigify_types;
+import wigi/fontcolor;
+import wigi/wigi_namespace;
+
+// forbid wigi/editor_types;
+
+export {
+	// For each page of the document becomes WigifiedPage
+	// that has form, coach texts and a page name
+	// Use joinWigiPages to get combined form
+	Wigify(doc : WigiElement, defaultStyles : [WigiStyles], style : [WigifyStyle]) -> [WigifiedPage];
+	setDefaultWigify() -> void;
+
+	// Processes serialized source (for one page)
+	// Returns wigified page
+	// By default editorMode has to be = false, if it is true - interactives look like in editor and doesn't work,
+	// for example WigiFeedbackBlock is visible always in spite of visibilityCondition value
+	WikiWigify(src : string, editorMode: bool, style : [WikiStyle]) -> [WigifiedPage];
+
+	splitWigi(doc : WigiElement, defaultStyles : [WigiStyles], isSeparator : (WigiElement) -> bool) -> [WigiElement];
+	splitWigi2(doc : WigiElement, defaultStyles : [WigiStyles], isSeparator : (WigiElement) -> bool) -> [WigiElement];
+	wikiStyleToWigiStyles(style: [WikiStyle]) -> [WigiStyles];
+	wikiStyleToWigiStyles2(style: [WikiStyle], addParagraphStyle: [WigiParagraphStyle], addTextStyle : [WigiTextStyle]) -> [WigiStyles];
+
+	ifNeedAvailable(wigiElement : WigiElement) -> bool;
+
+	dummyWigiAnnotationManager = WigiAnnotationsManager(makeTree(), make([]), \__ -> Empty(), nop1, 0.0);
+
+}
+
+DoWigifyData(
+	doc : WigiElement, scroll: bool, autoScroll: bool, engine : WigiEngine, templatePreview : bool,
+	registerToEngine : bool, editorPreview : bool, parent : WigiElement, namespace : WigiScope,
+	wikistyles : [WikiStyle], fontMap : Tree<string, string>,
+	annotationsManagerM : Maybe<WigiAnnotationsManager>,
+	// Must be true only for main story,
+	// Other wigi elements just collect all annotations and their positions.
+	composeMarginContent : bool
+);
+
+DoWigifyRecursiveData(
+	type: WigiRecursiveType, style: [WigiRecursiveStyle], els: [WigiElement], getPageName : ([WigifiedPage]) -> string,
+	getPageDisableCondition : ([WigifiedPage]) -> string, addStyle : (Form, [WigiStyle]) -> Form
+);
+
+// Returns array of forms for each page
+Wigify(doc : WigiElement, defaultStyles : [WigiStyles], style : [WigifyStyle]) -> [WigifiedPage] {
+	templatePreview = contains(style, WigiTemplatePreview());
+	registerToEngine = !contains(style, WigifySkipRegisterToEngine());
+	engine : WigiEngine = extractStruct(style, WigifyEngine(dummyWigiEngine())).engine;
+	setDebuggedEngine(engine);
+
+	if (containsStruct(style, WigifyNamespace(globalWigiNamespace, globalWigiNamespace))) {
+		scopes = extractStruct(style, WigifyNamespace(globalWigiNamespace, globalWigiNamespace));
+		setDefaultStateScope(^(engine.env), scopes.stateScope);
+		setDefaultServiceScope(^(engine.env), scopes.serviceScope);
+	}
+	// here we get real state scope
+	stateScope = getDefaultStateScope(^(engine.env));
+
+	editorPreview = contains(style, WigiEditorPreview());
+	fontMap = extractStruct(style, WigiHtmlFontMapping(makeTree())).map;
+	WigifyWithExternalForms(
+		doc,
+		defaultStyles,
+		templatePreview,
+		registerToEngine,
+		editorPreview,
+		None(),
+		engine,
+		stateScope,
+		[],
+		fontMap,
+		tryExtractStruct(style, dummyWigiAnnotationManager)
+	);
+}
+
+setDefaultWigify() -> void {
+	setWigify(\element, style -> Wigify(element, style, []));
+}
+
+removeWigiCoach(doc : WigiElement) -> WigiElement {
+	removeCoach = \elements -> filter(elements, \element -> !isWigiCoach(element));
+	switch (doc) {
+		WigiStory(paragraphs, views, style): {
+			newParagraphs = map(^paragraphs, removeWigiCoach);
+			makeWigiStory(newParagraphs, style)
+		}
+		WigiParagraph(elements, style): {
+			WigiParagraph(elements |> removeCoach, style)
+		}
+		default: doc;
+	}
+}
+
+// wikistyles : [WikiStyle] is used to pass wiki styles from environment to some objects (now it's only SmartArtParser),
+// for example: SmartArtParser uses WikiScoringStatsCollector to set number of correct answers.
+WigifyWithExternalForms(
+	doc : WigiElement,
+	defaultStyles : [WigiStyles],
+	templatePreview : bool,
+	registerToEngine : bool,
+	editorPreview : bool,
+	externalFormTree: Maybe<Tree<string, Form>>,
+	externalEngine : WigiEngine,
+	namespace : WigiScope,
+	wikistyles : [WikiStyle],
+	fontMap : Tree<string, string>,
+	annotationsManagerM : Maybe<WigiAnnotationsManager>
+) -> [WigifiedPage] {
+
+	engine = WigiEngine(
+		externalEngine.env,
+		externalEngine.dependencies,
+		concat(externalEngine.defaultStyles, defaultStyles),
+		eitherMap(externalFormTree, \ex -> mergeTree(externalEngine.externalFormTree, ex), externalEngine.externalFormTree),
+		externalEngine.externalFunctions,
+		externalEngine.externalPreprocessingFunctions,
+		externalEngine.callbacks,
+		externalEngine.visitedCells,
+		externalEngine.wigiVersionsClicks
+	);
+	// split to independent pages
+	pages = splitWigi(doc, defaultStyles, isWigiPageBreak2(false));
+	// try to split each pages to dependent blocks
+	pages2 = mapConcat(pages, \page -> {
+		subpages = splitWigi(page, defaultStyles, isWigiPageBreak2(true));
+		lastSubpage = ref makeWigiStory([], []);
+		map(subpages, \subpage -> {
+			newSubpage = concatWigi(removeWigiCoach(^lastSubpage), subpage);
+			lastSubpage := newSubpage;
+			newSubpage;
+		})
+	});
+	flags = getWigiPageBreaks(doc);
+	mapi(pages2, \i, page -> {
+		scroll = flags.first[i];
+		autoScroll = flags.second[i];
+		doWigify(DoWigifyData(
+			page,
+			scroll,
+			autoScroll,
+			engine,
+			templatePreview,
+			registerToEngine,
+			editorPreview,
+			WigiEmpty(),
+			namespace,
+			wikistyles,
+			fontMap,
+			annotationsManagerM,
+			true
+		))
+	});
+}
+
+getWigiPageBreaks(doc : WigiElement) -> Pair<[bool], [bool]> {
+	filterPageBreak = \element -> switch(element : WigiElement) {
+		WigiBlock(type, __): {
+			switch(type) {
+				WigiPageBreak(append, autoScroll) : Some(Pair(append, autoScroll));
+				default: None();
+			}
+		}
+		default : None()
+	}
+
+	switch (doc: WigiElement) {
+		WigiStory(paragraphs, views, style): {
+			properties = filtermap(^paragraphs, filterPageBreak);
+			p1 = concat([false], map(properties, firstOfPair));
+			p2 = arrayPush(map(properties, secondOfPair), false);
+			Pair(p1, p2)
+		}
+		default: Pair([false], [false]);
+	}
+}
+
+splitWigi(doc : WigiElement, defaultStyles : [WigiStyles], isSeparator : (WigiElement) -> bool) -> [WigiElement] {
+	fullStyleDoc = wigiForPreviewFullStyles(doc, false, defaultStyles);
+
+	// Let's split into pages
+	switch (fullStyleDoc: WigiElement) {
+		WigiStory(paragraphs, views, style): {
+			pageParagraphs = split(^paragraphs, isSeparator);
+			map(pageParagraphs, \paras -> makeWigiStory(paras, style))
+		}
+		default: [fullStyleDoc];
+	}
+}
+
+splitWigi2(doc : WigiElement, defaultStyles : [WigiStyles], isSeparator : (WigiElement) -> bool) -> [WigiElement] {
+	fullStyleDoc = wigiForPreviewFullStyles(doc, false, defaultStyles);
+	defResult = [fullStyleDoc];
+
+	// Let's split into two partspages
+	switch (fullStyleDoc: WigiElement) {
+		WigiStory(paragraphs, views, style): {
+			eitherMap(
+				findi(^paragraphs, isSeparator),
+				\i -> {
+					println(i);
+					if (i < (length(^paragraphs) - 1)) {
+						[makeWigiStory(subrange(^paragraphs, 0, i), style), makeWigiStory(subrange(^paragraphs, i+1, length(^paragraphs) - (i +1)), style)]
+					} else defResult
+				},
+				defResult
+			)
+		}
+		default: defResult;
+	}
+}
+
+// For now only takes normalText style and some paragraph styles
+// and applies them to the whole WigiDocument
+// by default text style is based on Wiki's NormalText
+wikiStyleToWigiStyles(style: [WikiStyle]) -> [WigiStyles] {
+	wikiStyleToWigiStyles2(style, [], [])
+}
+
+wikiStyleToWigiStyles2(style: [WikiStyle], addParagraphStyle: [WigiParagraphStyle], addTextStyle : [WigiTextStyle]) -> [WigiStyles] {
+ 	textStyle = ref NormalText |> getWigiTextStyleFromCharacterStyle;
+	paragraphStyle = ref [];
+	// we use reverseA because Wiki uses first occurrence not the last one (http://process.area9.dk/cases/default.asp?35575)
+	iter(reverseA(style), \s -> {
+		switch (s: WikiStyle) {
+			WikiFonts(__, __, normalText, __, __, __, __, __): {
+				textStyle := normalText |> getWigiTextStyleFromCharacterStyle;
+			};
+			WikiAlign(align): {
+				refArrayPush(paragraphStyle, align);
+			};
+			WigiEngine(__, __, __, __, __, __, __, __, __): {
+			};
+			default: {
+				println("Wiki style was not converted to Wigi style: " + s.structname);
+			}
+		}
+	});
+	makeWigiDocumentStylesExtended(concat(^paragraphStyle, addParagraphStyle), concat(^textStyle, addTextStyle));
+}
+
+WikiWigify(src_ : string, editorMode: bool, style : [WikiStyle]) -> [WigifiedPage] {
+
+	src = getContentTranslation(src_); // [-Revise-] take AlreadyTranslated style into account
+
+	def = makeWigiStory([WigiParagraph([WigiText("Cannot deserialize Wigi code: ", [Fill(0xFF0000), FontSize(18.0)]), WigiText(src, [FontSize(14.0)])], [])], []);
+	doc = deserialize2(src, wigiFixup(), def);
+
+	engine = extractStruct(style, dummyWigiEngine());
+	uns = registerToWigiEngineStub(doc, engine, WigiScope([]), ref makeTree());
+
+	// TODO: figure out style dictionary
+	pages = WigifyWithExternalForms(doc, wikiStyleToWigiStyles(style), editorMode, false, false, getExternalFormTree(style),
+		engine, globalWigiNamespace, style, makeTree(), None());
+
+	if (length(pages) == 0) pages
+	else replace(pages, 0, WigifiedPage(
+		\ -> Disposer(pages[0].form(), \ -> applyall(uns)),
+		pages[0].coachTexts,
+		pages[0].name,
+		pages[0].disableCondition,
+		pages[0].scroll,
+		pages[0].autoScroll,
+		EmptyMarginContent()
+	))
+}
+
+// There is a terrible amount of parameters, just to be able to separate it into stand-alone function
+doWigifyInteractiveTable(data : DoWigifyData, recData : DoWigifyRecursiveData,
+	formulaStr: string, r: DynamicBehaviour<[WigiRecord]>, s: [InteractiveTableStyle]
+) -> WigifiedPage {
+
+	// Let's see if our table should actually be a read-only view of some formula
+	// See case http://process.area9.dk/cases/default.asp?37031
+	expr = parseWigiExpr(formulaStr);
+
+	baseNamespace = refineWigiNamespace(data.namespace, recData.style);
+	rowNamespace = \i -> interactiveTableRowNamespace(i, baseNamespace);
+
+	// We don't always want updates
+	update = make(true);
+	rTransistor = transistoru(update, r);
+
+	uns = ref [rTransistor.dispose];
+	rowsUns = ref [];
+
+	sp = selectu(rTransistor.value, \rows -> {
+//		println("Changed rows count, re-creating forms...");
+		applyall(^rowsUns);
+		rowsUns := [];
+
+		mapi(rows, \i, row -> {
+			disposableElem = makeInteractiveTableRow(recData.els[0], row, data.engine, rowNamespace(i));
+			refArrayPush(rowsUns, disposableElem.dispose);
+
+			disposableElem.value
+		})
+	});
+
+	elements = sp.first;
+	refArrayPush(uns, sp.second);
+
+	registerToEngine = false;
+
+	pagesB = selectu(elements, \elems -> mapi(elems, \i, e ->
+		doWigify(DoWigifyData(
+			e, false, false, data.engine, data.templatePreview,
+			data.registerToEngine, data.editorPreview, data.doc,
+			rowNamespace(i), data.wikistyles, data.fontMap,
+			data.annotationsManagerM, false
+		))
+	));
+	pages = getValue(pagesB.first);
+	refArrayPush(uns, pagesB.second);
+
+	formsB = selectu(pagesB.first, \pgs -> map(pgs, \p -> p.form));
+	refArrayPush(uns, formsB.second);
+
+	texts = concatA(map(pages, \p -> p.coachTexts));
+	name = recData.getPageName(pages);
+	disableCondition = recData.getPageDisableCondition(pages);
+
+	formulaInitialized = ref false;
+
+	form = \ -> {
+		form1 = Select2(elements, formsB.first, \elems, forms -> {
+			form0 = wigiRecursiveLayout(recData.type, baseNamespace, elems, recData.style, forms, nop, data.engine, !data.templatePreview, false, const(false), None(), []);
+			Constructor(form0, \ -> {
+				// Let's subscribe to all the values in our elements and update records accordingly
+				uns2 = ref mapi(elems, \i, __ -> {
+					scope = rowNamespace(i);
+					record = getValue(r)[i];
+
+					// Traverse the namespace
+					allValues = collectValuesInNamespace(^(data.engine.env), scope);
+
+					// When values change, we update our records ("r"), but without causing form re-creation
+					arraySubscribe2(map(allValues, secondOfPair), \__, old, new -> {
+						// Something was changed, let's update our records
+						changedRowRecord = WigiRecord(map(allValues, \av -> Pair(av.first, getValue(av.second))));
+
+						records = replace(getValue(r), i, changedRowRecord);
+
+						// println("Replacing record #" + i2s(i) + " with " + toString(changedRowRecord));
+
+						// We don't want to re-create forms
+						next(update, false);
+						next(r, records);
+						next(update, true);
+					})
+				});
+
+				// We should also provide the value of the table itself
+				wigiName = extractStruct(recData.style, WigiName("")).name;
+
+				if (wigiName != "") {
+					tableValue = selectu(r, \records -> WigiArray(records));
+					refArrayPush(uns2, tableValue.second);
+
+					refArrayPush(uns2, addValueToEngine(data.engine, baseNamespace, wigiName, tableValue.first, true));
+				}
+
+				\ -> {
+					applyall(^uns2);
+				}
+			})
+		});
+
+		form2 = Constructor(form1, \ -> {
+			if (!^formulaInitialized && !isSameStructType(expr, WigiError(""))) {
+				formulaInitialized := true;
+
+				// We have a formula, so we need to register it in the engine and listen carefully to it
+				// Namespace extended because of wigiCellName behaviour
+				nsExtended = WigiScope(concat([""], data.namespace.names));
+				formulaPair = addAutonameFormulaToEngine(data.engine, nsExtended, "__FORMULA_ITABLE", nsExtended, expr,
+					[RegisterToEngine(true), LinkToWiki(true)]
+				);
+
+				formula = formulaPair.first;
+				refConcat(uns, formulaPair.second);
+
+				// Now we need to set up a link to our formula
+				refArrayPush(uns, subscribe(formula, \fValue -> {
+					// We need to update our record (r) here
+					// We expect fValue to be a WigiArray
+					// But first, we need to transpose things, because they are columns, not rows
+					fValueTransposed = wigiTranspose([fValue]);
+
+					switch (fValueTransposed: WigiValue) {
+						WigiArray(values): {
+							// We need to map elements in each of values (assuming they're WigiArrays)
+							newRecords = map(values, \v -> {
+								switch (v: WigiValue) {
+									WigiArray(subvalues): {
+										// Special case here, if subvalues is an array of exactly one WigiRecord, then we can use it
+										// For example, if formula is [{a: 1, b: 2, c: 3}]
+										if (length(subvalues) == 1 && isSameStructType(subvalues[0], WigiRecord([]))) {
+											cast(subvalues[0]: WigiValue -> WigiRecord)
+										} else {
+											// Value names will be "A", "B", "C", etc.
+											WigiRecord(mapi(subvalues, \i, sv -> Pair(fromCharCode(getCharCodeAt("A", 0) + i), sv)))
+										}
+									}
+									default: WigiRecord([Pair("auto", v)]);
+								}
+							});
+							next(r, newRecords);
+						}
+
+						default: {
+							println("Interactive table expected WigiArray, but received " + toString(fValue));
+						}
+					}
+				}));
+			}
+			\ -> { applyall(^uns); uns := []; applyall(^rowsUns); rowsUns := []; }
+		});
+
+		recData.addStyle(form2, recData.style)
+	}
+
+
+	WigifiedPage(
+		form,
+		texts,
+		name,
+		disableCondition,
+		data.scroll,
+		data.autoScroll,
+		MarginContentAcc(mapConcat(
+			getValue(pagesB.first),
+			\page -> getMarginContentComposers(page.marginContent)
+		))
+	)
+}
+
+doWigifyRecursive(data : DoWigifyData, recData : DoWigifyRecursiveData) -> WigifiedPage {
+	switch (recData.type: WigiRecursiveType) {
+		WigiInteractiveTable(f, r, s): {	// Dynamic content of interactive table
+			doWigifyInteractiveTable(data, recData, f, r, s)
+		}
+
+		default: {	// Usual static content
+			localNamespace = refineWigiNamespace(data.namespace, recData.style);
+
+			pages = map(recData.els, \e -> doWigify(DoWigifyData(
+				e, false, false, data.engine, data.templatePreview, data.registerToEngine,
+				data.editorPreview, data.doc, localNamespace, data.wikistyles, data.fontMap,
+				data.annotationsManagerM, false
+			)));
+			forms = map(pages, \p -> p.form);
+
+			texts = concatA(map(pages, \p -> p.coachTexts));
+			name = recData.getPageName(pages);
+			disableCondition = recData.getPageDisableCondition(pages);
+			style2 = ifArrayPush(arrayPush(recData.style, WigiEnabled(getInteractivenessSwitch(data.wikistyles))), data.editorPreview, WigiEditorPreview());
+
+			form = \ -> {
+				form0 = wigiRecursiveLayout(recData.type, localNamespace, recData.els, style2, forms, nop, data.engine, !data.templatePreview, data.registerToEngine, const(false), None(), []);
+				recData.addStyle(form0, recData.style)
+			}
+
+			WigifiedPage(
+				form,
+				texts,
+				name,
+				disableCondition,
+				data.scroll,
+				data.autoScroll,
+				MarginContentAcc(mapConcat(pages,
+					\page -> getMarginContentComposers(page.marginContent)
+				))
+			);
+		}
+	}
+}
+
+ifNeedAvailable(wigiElement : WigiElement) -> bool {
+	getArrayElement = \elements : [WigiElement] -> fold(elements, false, \acc, e -> acc || ifNeedAvailable(e));
+
+	switch (wigiElement) {
+		WigiParagraph(elements, s): getArrayElement(elements);
+		WigiDocument(root, style): ifNeedAvailable(root);
+		WigiStory(paragraphs, views, style): getArrayElement(^paragraphs);
+		WigiText(text, style): false;
+		WigiEmpty(): false;
+		WigiRecursive(elements, type, style): {
+			switch (type : WigiRecursiveType) {
+				WigiExternalRecursive(exType, __): {
+					eitherFn(
+						getExternalRecursiveAPI(exType),
+						\api : ExternalRecursiveAPI -> containsStruct(api.style, WigifyNeedAvailableHeight()),
+						\ -> false
+					)
+				}
+				default: false;
+			} || fold(elements, false, \acc, element : WigiElement-> acc || ifNeedAvailable(element))
+		}
+		WigiBlock(type, style): {
+			switch (type : WigiBlockType) {
+				WigiExternalBlock(exType, content): {
+					eitherFn(
+						getExternalBlockAPI(exType),
+						\api : ExternalBlockAPI -> containsStruct(api.style, WigifyNeedAvailableHeight()),
+						\ -> false
+					);
+				}
+				default: false;
+			}
+		}
+	}
+}
+
+doWigify(data : DoWigifyData) -> WigifiedPage {
+	addStyle = \form: Form, style : [WigiStyle] -> addBaselineShiftToForm(addUnderlineToForm(addDoubleUnderlineToForm(form, style), style), style);
+
+	getPageName = \pages -> fold(map(pages, \p -> p.name), "", \acc, c -> if (c != "") c else acc);
+	getPageDisableCondition = \pages -> fold(map(pages, \p -> p.disableCondition), "", \acc, c -> if (c != "") c else acc);
+	doc = data.doc;
+	isAnnotationSupport = isSome(data.annotationsManagerM);
+	am = either(
+		data.annotationsManagerM,
+		dummyWigiAnnotationManager
+	);
+
+	switch (doc : WigiElement) {
+		WigiEmpty(): WigifiedPage(\ -> Empty(), [], "", "", data.scroll, data.autoScroll, EmptyMarginContent());
+		WigiStory(pars, views, style): {
+			il = extractStruct(style, dwps).d;
+			paragraphs = updateNumberedParagraphs(^pars, data.engine);
+			localNamespace = refineWigiNamespace(data.namespace, style);
+			pagesWithHeights = map(paragraphs, \p -> Pair(
+				doWigify(DoWigifyData(
+					p,
+					false,
+					false,
+					data.engine,
+					data.templatePreview,
+					data.registerToEngine,
+					data.editorPreview,
+					data.doc,
+					localNamespace,
+					data.wikistyles,
+					data.fontMap,
+					data.annotationsManagerM,
+					false
+				)),
+				make(0.0)
+			));
+			pages = map(pagesWithHeights, firstOfPair);
+
+			useAlignment = \p -> {
+				switch (p) {
+					WigiParagraph(__, s): (contains(s, TightWidth()) && (contains(s, RightAlign()) || contains(s, CenterAlign())));
+					default: false;
+				}
+			}
+
+			size = switch (data.parent) {
+				WigiRecursive(__, type, __): {
+					switch (type) {
+						WigiTableCell(wh, __): Pair(wh, true);
+						WigiSpreadsheetCell(wh, __, __): Pair(wh, true);
+						default: Pair(makeWH(), false);
+					}
+				}
+				default: Pair(makeWH(), false);
+			}
+
+			aw = make(1000.0);
+			awh = make(WidthHeight(1000.0, 1000.0));
+			needAvailable : [bool] = map(^pars, ifNeedAvailable);
+
+			form = \ -> {
+				ipages = mapi(pagesWithHeights, \i, p -> Inspect(
+					[IAvailable(awh), Height(p.second)],
+					if (size.second && useAlignment(paragraphs[i]))
+						Available(aw, const(1000.0), p.first.form())
+					else p.first.form()
+				));
+
+				spP = if (il > 0.0) Pair(
+					interleave(ipages, Fixed(0.0, il)),
+					interleave(needAvailable, false)
+				) else Pair(ipages, needAvailable);
+
+				Constructor(
+					if (any(needAvailable)) WideLinesWH(spP.first, spP.second) else WideLines(spP.first),
+					\ -> {
+						rendered = make(false);
+						deferUntilRender(\ -> next(rendered, true));
+						select2u(rendered, loadingContentFilesCount, \r, lpc -> {
+							mw = getValue(size.first);
+							_awh = getValue(awh);
+							if (r && lpc <= 0 && mw.width > 0.0 && getValue(aw) == 1000.0) {
+								nextDistinct(aw, min(mw.width, _awh.width) + 1.0);
+							}
+						}).second
+					}
+				)
+			}
+
+			marginContentAcc = if (isAnnotationSupport) MarginContentAcc(
+				fold(pagesWithHeights, Pair(\ -> 0.0, []), \acc, p -> {
+					updateComposerCoordCalc = \c : SingleAnnotationComposer -> {
+						SingleAnnotationComposer(\ -> c.yCoordCalc() + acc.first(), c.annotationId);
+					};
+					Pair(
+						\ -> acc.first() + getValue(p.second) + il,
+						concat(
+							acc.second,
+							map(getMarginContentComposers(p.first.marginContent), updateComposerCoordCalc)
+						)
+					)
+				}).second
+			) else EmptyMarginContent();
+
+			WigifiedPage(
+				form,
+				concatA(map(pages, \p -> p.coachTexts)),
+				getPageName(pages),
+				getPageDisableCondition(pages),
+				data.scroll,
+				data.autoScroll,
+				if (data.composeMarginContent) makeComposedMarginContent(marginContentAcc, am.marginContent) else marginContentAcc
+			);
+		}
+
+		WigiRecursive(els, type, style): {
+			doWigifyRecursive(data, DoWigifyRecursiveData(type, style, els, getPageName, getPageDisableCondition, addStyle));
+		}
+
+		WigiParagraph(elements, style): {
+			updatedElements = updateParagraphElements(elements);
+			texts = ref [];
+			name = ref "";
+			disableCondition = ref "";
+			elementsCount = length(updatedElements);
+			nElements = length(updatedElements);
+
+			paraElements : Pair<[() -> ParagraphElement], [SingleAnnotationComposer]> = foldi(
+				updatedElements,
+				Pair([], []),
+				\index, acc : Pair<[() -> ParagraphElement], [SingleAnnotationComposer]>, e : WigiElement -> {
+					switch (e) {
+						WigiText(ot, s): {
+							annotationId = extractStruct(s, WigiAnnotation(-1)).id;
+							yCoordB = make(0.0);
+							t = escapeHtml(ot);
+							pe : () -> ParagraphElement = \ -> if (t == "") {
+								// Special case: We have to get the line height right
+								makeZeroSpaceElement(getCharacterStyleFromWigiTextStyleExt(s, data.fontMap))
+							} else {
+								if (useExternalForm(t, data.engine.externalFormTree)) {
+									getExternalForm(t, data.engine.externalFormTree);
+								} else {
+									textStyle = getCharacterStyleFromWigiTextStyleExt(adjustFontSizeToBaselineShift(s), data.fontMap);
+									fragment = TextFragmentExt(t, textStyle, ifArrayPush([], index == nElements - 1, TextFragmentLastChild()));
+									switch (fragment) {
+										TextFragments(parts): {
+
+											withAnnotationInspection = if (annotationId != -1) Cons(
+												InspectElement(
+													annotationId,
+													make(0.0),
+													yCoordB,
+													makeWH(),
+													make(0.0),
+													makeZeroSpaceElement(textStyle),
+												),
+												parts
+											) else parts;
+
+											// if the last line of the last child ends with \n, we have to add extra empty line
+											// text "\n" is special case because SmartBuilder treats it as single line
+											withLastLine = if (index == elementsCount - 1 && t != "\n" && endsWith(t, "\n"))
+												Cons(makeZeroSpaceElement(textStyle), withAnnotationInspection)
+											else withAnnotationInspection;
+
+											doAnnotateText = \txt : string, st : [CharacterStyle] -> Interactive(
+												[MouseUp(\mi -> {
+													if(mi().inside)
+														am.onTextClick(if(annotationId != -1) Some(annotationId) else None());
+													false
+												})],
+												Select(
+													lookupTreeDef(am.annotationsTree, annotationId, am.dimmingStyle),
+													\hlStyle -> Text(txt, replaceStructMany(st, hlStyle))
+												)
+											);
+
+											TextFragments(
+												mapList(withLastLine, \part -> {
+													annotationHighlighted = switch (part : WrapElement) {
+														Text(txt, st) : if (isAnnotationSupport) doAnnotateText(txt, st) else part;
+														Space(spaceForm) : switch (spaceForm : Form ) {
+															Text(txt, st) : if (isAnnotationSupport) Space(doAnnotateText(txt, st)) else part;
+															default : part;
+														}
+														default : part;
+													};
+													// annotationHighlighted = part;
+													doubleUnderlined = addModifierToWrapElement(annotationHighlighted, s, addDoubleUnderlineToForm);
+													underlined = addModifierToWrapElement(doubleUnderlined, s, addUnderlineToForm);
+													addModifierToWrapElement(underlined, adjustStyleForBaselineModifier(s), addBaselineShiftToForm);
+												})
+											);
+										}
+										default: fragment;
+									}
+								}
+							};
+							punctuations = [".", ",", "?", "!", "-", ";"];
+							Pair(
+								if (any(map(punctuations, \p -> startsWith(t, p))) && isUrlParameterTrue("fix38484"))
+									concat(acc.first, [\ -> GlueFragments(), pe])
+								else arrayPush(acc.first, pe),
+								ifArrayPush(
+									acc.second,
+									isAnnotationSupport && annotationId != -1,
+									SingleAnnotationComposer(\ -> getValue(yCoordB), annotationId),
+								)
+							);
+						}
+						default: {
+							localNamespace = refineWigiNamespace(data.namespace, style);
+							els = doWigify(DoWigifyData(
+								e, false, false, data.engine, data.templatePreview, data.registerToEngine,
+								data.editorPreview, data.doc, localNamespace, data.wikistyles, data.fontMap,
+								data.annotationsManagerM, false
+							));
+							refConcat(texts, els.coachTexts);
+							name := els.name;
+							disableCondition := els.disableCondition;
+							Pair(
+								arrayPush(acc.first, els.form),
+								concat(acc.second, getMarginContentComposers(els.marginContent))
+							);
+						}
+					};
+			});
+
+			// for listed or generally indented paragraphs we need to make some preparations before rendering
+			info = Some(ListedParagraphInfo(1, 0.0, getDefaultDocumentFontSize(data.engine.defaultStyles), -1));
+			form = \ -> prepareParagraphForRendering(map(paraElements.first, apply0), style, 1.0, info, \f,n -> f);
+
+			WigifiedPage(form, ^texts, ^name, ^disableCondition, data.scroll, data.autoScroll, MarginContentAcc(paraElements.second))
+		}
+		WigiText(text, style): {
+			annotationId = extractStruct(style, WigiAnnotation(-1)).id;
+			form = \ -> {
+				form0 = Text(escapeHtml(text), getCharacterStyleFromWigiTextStyleExt(style, data.fontMap));
+				addStyle(form0, style)
+			}
+			WigifiedPage(
+				form,
+				[],
+				"",
+				"",
+				data.scroll,
+				data.autoScroll,
+				if (isAnnotationSupport && annotationId != -1)
+					MarginContentAcc([SingleAnnotationComposer(\ -> 0.0, annotationId)])
+				else EmptyMarginContent()
+			);
+		}
+		WigiDocument(root, style): {
+			localNamespace = refineWigiNamespace(data.namespace, style);
+			doWigify(DoWigifyData(
+				root, data.scroll, data.autoScroll, data.engine, data.templatePreview, data.registerToEngine,
+				data.editorPreview, data.doc, localNamespace, data.wikistyles, data.fontMap,
+				data.annotationsManagerM, false
+			));
+		}
+		WigiBlock(type, style): {
+			annotationId = extractStruct(style, WigiAnnotation(-1)).id;
+			localNamespace = refineWigiNamespace(data.namespace, style);
+			form = \ -> {
+				doc2 = if (data.editorPreview) WigiBlock(type, arrayPush(style, WigiEditorPreview())) else doc;
+				form0 = wigiBlock2form(doc2, data.engine, localNamespace, None(), None(), !data.templatePreview, data.registerToEngine, data.wikistyles);
+				addStyle(form0, style)
+			}
+			collectTexts = \t -> filter(strSplit(t, "\n"), \text -> trim(text) != "");
+			texts = switch (type: WigiBlockType) {
+				WigiCoach(t): {
+					// See case http://process.area9.dk/cases/default.asp?37525
+					// And case http://process.area9.dk/cases/default.asp?39065
+					collectTexts(t)
+				}
+				WigiExternalBlock(exType, content): {
+					eitherMap(
+						getExternalBlockAPI(exType),
+						\api -> {
+							eitherMap(
+								tryExtractStruct(api.style, ExtractCoachTexts(\__ -> "")),
+								\extractCoach -> extractCoach.fn(content) |> collectTexts,
+								[]
+							)
+						},
+						[]
+					)
+				}
+				default: [];
+			}
+			nameConditionP = switch (type: WigiBlockType) {
+				WigiPageName(n, c): Pair(n, c);
+				default: Pair("", "");
+			}
+
+			WigifiedPage(
+				form,
+				texts,
+				nameConditionP.first,
+				nameConditionP.second,
+				data.scroll,
+				data.autoScroll,
+				if (isAnnotationSupport && annotationId != -1)
+					MarginContentAcc([SingleAnnotationComposer(\ -> 0.0, annotationId)])
+				else EmptyMarginContent()
+			)
+		}
+	}
+}
+
+updateNumberedParagraphs(paragraphs : [WigiElement], engine : WigiEngine) -> [WigiElement] {
+	listNumber = ref 0;
+	fold(paragraphs, [], \acc, p -> switch(p) {
+		WigiParagraph(elements, style):{
+			listed: Listed = extractStruct(style, dummyListed);
+			newPar = if (listed != dummyListed) {
+				fontSize = getWigiElementFontSize(p, engine);
+				fontColor = either(getWigiElementFontColor(p), getDefaultDocumentFontColor(engine.defaultStyles));
+
+				// set font size accordingly to paragraph's one
+				markStyle = appendListStyles(listed.style, fontSize, fontColor);
+
+				// get actual number or stop list if it is a non-numbered paragraph
+				newListedType = switch(listed.type){
+					Numbered(number, type): {
+						if (number == -1) listNumber := ^listNumber + 1 else listNumber := number;
+						Numbered(^listNumber, type);
+					}
+					Bulleted(__): {
+						listNumber := 0;
+						listed.type;
+					}
+				}
+				newListed = Listed(newListedType, markStyle);
+
+				// change Listed option in paragraph's style
+				newStyle = fold(concat([newListed], style), [], \acc2, st -> switch(st) {
+					Listed(__, __): if (findi(acc2, \ac -> isSameStructType(ac, st)) == None())  arrayPush(acc2, st) else acc2;
+					default: arrayPush(acc2, st);
+				});
+				WigiParagraph(elements, newStyle);
+			} else {
+				// stop list if it is a  non-listed paragraph
+				listNumber := 0;
+				p
+			}
+			arrayPush(acc, newPar);
+		}
+		default: arrayPush(acc, p);
+	})
+}
+
+// be sure element has full styles for itself and its children
+// return a certain size if all the texts inside have this certain size and default size otherwise
+getWigiElementFontSize(element : WigiElement, engine : WigiEngine) -> double {
+	sizes = ref [];
+	defSize = getDefaultDocumentFontSize(engine.defaultStyles);
+	getWigiElementFontSize2(element, sizes, defSize);
+	sizeArr = fold(^sizes, [], \acc, sz -> if (!contains(acc, sz)) arrayPush(acc, sz) else acc);
+	if (length(sizeArr) == 1) sizeArr[0] else either(minA(sizeArr), defSize);
+}
+
+getWigiElementFontSize2(element : WigiElement, sizes : ref [double], defSize : double) -> void {
+	extractSize = \style -> {
+		fontsize : FontSize = extractStruct(style, FontSize(defSize));
+		refArrayPush(sizes, fontsize.size);
+	}
+	switch(element) {
+		WigiEmpty(): {};
+		WigiStory(pars, views, style): iter(^pars, \p -> getWigiElementFontSize2(p, sizes, defSize));
+		WigiRecursive(elements, type, style): iter(elements, \p -> getWigiElementFontSize2(p, sizes, defSize));
+		WigiParagraph(elements, style): iter(elements, \p -> getWigiElementFontSize2(p, sizes, defSize));
+		WigiText(text, style): extractSize(style);
+		WigiDocument(root, style): getWigiElementFontSize2(root, sizes, defSize);
+		WigiBlock(type, style): extractSize(style);
+	};
+}
+
+// in case of WigiCheckBox it sets WigiBlock's font style the same as font size of the following text for them to be vertically aligned
+// if a paragraph contains only WigiTexts with spaces, each one is changed to an empty WigiText because Paragraph drops leading spaces and visually empty line might disappear in preview
+updateParagraphElements(elements : [WigiElement]) -> [WigiElement] {
+	updateCheckBoxes = \es : [WigiElement] -> {
+		nextFontSize = ref 0.0; // for a CheckBox to know next Text's font size
+		if (length(es) > 1 ) {
+			map(reverseA(es), \e ->{
+				element = ref e;
+				nextFontSize := switch(e){
+					WigiText(__, s): extractStruct(s, FontSize(0.0)).size;
+					WigiBlock(type, bStyle): {
+						switch (type){
+							WigiCheckBox(__, __): element := if (^nextFontSize > 0.0) WigiBlock(type, arrayPush(bStyle, FontSize(^nextFontSize))) else e;
+							default: {}
+						}
+						0.0;
+					}
+					default: 0.0;
+				}
+				^element;
+			}) |> reverseA;
+		} else {
+			es;
+		}
+	}
+
+	updateLinesOfSpaces = \es : [WigiElement] -> {
+		emptyLine = fold(es, Pair(true, []), \acc : Pair<bool, [WigiElement]>, e -> {
+			if (acc.first)  {
+				switch(e) {
+					WigiText(t, s): if (trim(t) == "") Pair(true, arrayPush(acc.second, WigiText("", s)))
+						else Pair(false, acc.second);
+					default: Pair(false, acc.second);
+				}
+			} else acc;
+		});
+		if (emptyLine.first) emptyLine.second else es;
+	}
+
+	elements |> updateCheckBoxes |> updateLinesOfSpaces;
+}
+
+getMarginContentComposers(marginContent : AnnotationsMarginContent) -> [SingleAnnotationComposer] {
+	switch (marginContent) {
+		EmptyMarginContent() : [];
+		ComposedMarginContent(__) : [];
+		MarginContentAcc(composers) : composers;
+	}
+}
+
+makeComposedMarginContent(
+	marginContentAcc : AnnotationsMarginContent,
+	annotationsFormFn : ([int]) -> Form
+) -> AnnotationsMarginContent {
+	switch (marginContentAcc) {
+		EmptyMarginContent() : marginContentAcc;
+		ComposedMarginContent(__) : marginContentAcc;
+		MarginContentAcc(composers) : ComposedMarginContent(
+			\ -> {
+				marginContentTree = fold(composers, makeTree(), \acc : Tree<double, Set<int>>, composer : SingleAnnotationComposer -> {
+					yCoord = composer.yCoordCalc();
+					setTree(acc, yCoord, insertSet(lookupTreeDef(acc, yCoord, makeSet()), composer.annotationId))
+				});
+				Group(convertTreeToArray(
+					marginContentTree,
+					\y, setOfId -> Translate(const(0.0), const(y), annotationsFormFn(set2array(setOfId)))
+				))
+			}
+		)
+	}
+}

@@ -1,0 +1,270 @@
+// © Copyright 2013 Area9 Innovation. All rights reserved
+
+import form;
+import maybe;
+import target;
+import gui;
+
+// Handling long tapping and swipes
+// Mostly for handhelds
+
+/*
+You can emulate events in the c++ runner by adding 
+	--touch
+	  Emulate touch device events. 
+	  Press F12 to turn device orientation
+	  Press Ctrl-Shift-F11 to toggle Pan Gesture on/off. 
+	    Use Mouse to click and drag to emulate Pan Gesture when On.
+	  Press Ctrl-Shift-Arrow Key-Left Mouse to simulate Swipe gestures
+	  This also sets: target::mobile = true
+*/
+
+export {
+	// A helper to handle long tap
+	// Gives a list to use as or concatenate with Interactive handlers list
+	LongTouchTap : (durationMsec : int, fn : (MouseDownInfo) -> void, returnOverride : Maybe<bool>) -> [EventHandler];
+
+	// Swipe's on iOS is not very working to well, so this implements swipe's using Pan events
+	// returns -1 and +1 for the direction of the swipe. It does not reset back to 0.
+	SwipeMonitor(form : Form, xSwipe : DynamicBehaviour<int>, ySwipe : DynamicBehaviour<int>) -> Form;
+
+	DoubleTap(fn : () -> void) -> [EventHandler];
+	DoubleTapTimed(maxtime: double, fn : () -> void) -> [EventHandler];
+
+	pinchZoomDebugUI() -> Form;
+	pinchDebugHandleUpdate(state: GestureState, scale: double, dx: double, dy: double) -> void;
+	pinchZoomDebug: bool;
+	pinchZoomDebugText = make("");
+}
+
+pinchDebugX = make(0.0);
+pinchDebugY = make(0.0);
+pinchDebugScale = make(1.0);
+
+pinchZoomDebug = getUrlParameter("pzdebug") == "1";
+
+pinchZoomDebugUI() {
+	ava = makeWH();
+
+	circRad = 50.0;
+
+	circleParm = select4(ava, pinchDebugX, pinchDebugY, pinchDebugScale, \ av, pdx, pdy, pds -> {
+		r = circRad * pds;
+		x = av.width  / 2.0 + pdx;
+		y = av.height / 2.0 + pdy;
+		Triple(x, y, r)
+	});
+
+	Inspect([IAvailable(ava)],
+		Select2(circleParm, pinchZoomDebugText, \ cpm, pzt -> {
+			cx = cpm.first;
+			cy = cpm.second;
+			cr = cpm.third;
+			Group([
+				HVFill([]),
+				Circle(cx, cy, cr, [Fill(0xff00ff), FillOpacity(0.25)]),
+				Offset(cx, cy, Align(0.5, 0.5, Text(pzt, [])))
+			])
+		})
+		
+	)
+}
+
+pinchDebugHandleUpdate(state, scale, dx, dy) {
+	switch(state) {
+		GestureStateBegin(): {
+			next(pinchDebugScale, scale);
+			next(pinchDebugX, getValue(pinchDebugX) + dx);
+			next(pinchDebugY, getValue(pinchDebugY) + dy);
+		};
+		GestureStateProgress(): {
+			next(pinchDebugScale, scale);
+			next(pinchDebugX, getValue(pinchDebugX) + dx);
+			next(pinchDebugY, getValue(pinchDebugY) + dy);
+		};
+		GestureStateEnd(): {
+		}
+	}
+}
+
+LongTouchTap(durationMsec, fn, returnOverride) {
+	pressed = ref false;
+	tapped = ref false;
+	steady = ref true;
+	mdowni = ref MouseDownInfo(0.0, 0.0, 0.0, 0.0, \ -> false);
+	
+	downhandler = MouseDown2(\handled, mdi -> {
+		tapped := false;
+		pressed := true;
+		steady := true;
+		mdowni := mdi;
+		timer(durationMsec, \ -> {
+			if(^steady){
+				tapped := true;
+				fn(mdi); // TAP!
+			}
+		});
+		either(returnOverride, handled) // let it fall through
+	});
+
+	movehandler = MouseMove2(\handled, mmi -> {
+		mi = mmi();
+		mmovedx = mi.x - (^mdowni).x;
+		mmovedy = mi.y - (^mdowni).y;
+
+		sqdelta = mmovedx * mmovedx + mmovedy * mmovedy;
+		if(^pressed && (!mi.inside || sqdelta > 200.0)){
+			steady := false
+		}			
+		handled // let it fall through
+	});
+
+	rollouthandler = RollOut(\ roi -> {
+		steady := false;
+		pressed := false;
+	});
+
+	uphandler = MouseUp2(\ handled, mui -> {
+		pressed := false;
+		steady := false;
+		^tapped || handled // let it fall through
+	});
+
+	[downhandler, movehandler, rollouthandler, uphandler]
+}
+
+SwipeMonitor(form : Form, xSwipe : DynamicBehaviour<int>, ySwipe : DynamicBehaviour<int>) -> Form {
+	panStartX = ref false;
+	panStartY = ref false;
+	maxXV = ref 0.0;
+	sumX = ref 0.0;
+	maxYV = ref 0.0;
+	sumY = ref 0.0;
+	
+	// Arbitrary values set by testing on random iPad
+	dpi = i2d(screenDPI);
+	buffer = 5.0 / 264.0 * dpi; 
+	velocityThreshold = 22.0 / 264.0 * dpi; 
+	distanceThreshold = 200.0 / 264.0 * dpi;
+
+	Interactive([
+		PanGesture(\state, dx, dy -> {
+			if (state == GestureStateBegin() || state == GestureStateProgress()) {
+				// Don't restart before a break if wriggling has been detected
+				if (^maxXV == 0.0 && ^maxYV == 0.0) {
+					panStartX := true;
+					panStartY := true;
+				}
+
+				sumX := ^sumX + dx;
+				sumY := ^sumY + dy;
+
+				if (abs(dx) > buffer) {
+					// Wriggling is not a swipe (x or y will cancel swipe)
+					if (dx * ^maxXV < 0.0 ) {
+						panStartX := false;
+					} 
+					
+					// Record top speed
+					if (abs(dx) > abs(^maxXV)) {
+						maxXV := dx;
+					}
+				}
+
+				if (abs(dy) > buffer) {
+					// Wriggling is not a swipe (x or y will cancel swipe)
+					if (dy * ^maxYV < 0.0 ) {
+						panStartY := false;
+					} 
+
+					// Record top speed
+					if (abs(dy) > abs(^maxYV)) {
+						maxYV := dy;
+					}
+				}
+				true
+			} else { //GestureStateEnd
+				ret = if (abs(^sumX) > abs(^sumY)) {
+					if (^panStartX ) {
+						if (abs(^maxXV) > velocityThreshold && abs(^sumX) > distanceThreshold) {
+							if (^maxXV > 0.0) next(xSwipe, 1) else next(xSwipe, -1);
+						} 
+						true;
+					} else {
+						false;
+					}
+				} else {
+					if(^panStartY) {
+					 	if( abs(^maxYV) > velocityThreshold && abs(^sumY) > distanceThreshold) {
+							if (^maxYV > 0.0) next(ySwipe, 1) else next(ySwipe, -1);	
+						}
+						true;
+					} else {
+						false;
+					}
+				} 
+			
+				panStartX := false;
+				panStartY := false;
+				sumX := 0.0;
+				maxXV := 0.0;
+				sumY := 0.0;
+				maxYV := 0.0;
+
+				ret;
+			}})
+		],
+		form
+	)
+}
+
+DoubleTapTimed(maxtime: double, fn : () -> void) {
+	zerro = [0.0, 0.0, 0.0]; // x, y, timestamp
+	down_first = ref zerro;
+	down_second = ref zerro;
+	last_was_down = ref false;
+
+	downhandler = MouseDown(\mi -> {
+		if (!^last_was_down && mi.inside()) {
+			down_first := ^down_second;
+			down_second := [mi.x, mi.y, timestamp()];
+			last_was_down := true;
+		}
+		false;
+	});
+
+	reset = \ -> {
+		down_first := zerro; down_second := zerro;
+		last_was_down := false;
+	};
+
+	uphandler = MouseUp(\mifn -> {
+		ts = timestamp();
+		mi = mifn();
+		if (mi.inside && ^last_was_down) {
+			if (abs(^down_first[0] - mi.x) < 100.0 && 
+				abs(^down_first[1] - mi.y) < 100.0 )
+			{
+				if (ts - ^down_first[2] < maxtime) {
+					reset();
+					fn();
+					true
+				} else {
+					reset();
+					false
+				}
+			} else {
+				last_was_down := false;
+				false
+			}
+		} else {
+			false
+		}
+	});
+
+	[downhandler, uphandler];
+}
+
+DoubleTap(fn : () -> void) {
+	DoubleTapTimed(1500.0, fn)
+}

@@ -1,0 +1,100 @@
+export {
+	BuildFullWikiTree(src : string) -> [WikiParsedToken];
+	ExtractWikiConstructions(lexeme : WikiParsedToken) -> [WikiConstruction];
+	token2parsedToken(lexeme : WikiToken) -> WikiParsedToken;
+	WikiParsedToken ::= WParsedHeading1, WParsedHeading2, WParsedBullet1, WParsedBullet2, WParsedBullet3, WParsedNumbered1, WParsedText, WParsedIndentedText, WParsedIndentedFirstLine,
+			WNewLine, WNewPage, WPageSeparator, WSmall, WParsedCenter, WParsedTable, WParsedCoach, WParsedRightNumbered, WEOL, WPageName, WComment;
+		WParsedHeading1 : (constructions : [WikiConstruction]);
+		WParsedHeading2 : (constructions : [WikiConstruction]);
+		WParsedBullet1 : (constructions : [WikiConstruction]);
+		WParsedBullet2 : (constructions : [WikiConstruction]);
+		WParsedBullet3 : (constructions : [WikiConstruction]);
+		WParsedNumbered1 : (n : int, pretty : bool, dotted : bool, constructions : [WikiConstruction]);
+		WParsedText : (constructions : [WikiConstruction]);
+		WParsedIndentedFirstLine : (constructions : [WikiConstruction]);
+		WParsedIndentedText : (constructions : [WikiConstruction]);
+		WParsedCenter : (token : WikiParsedToken);
+		WParsedTable : (cells : [[[WikiConstruction]]]);
+		WParsedCoach : (coachConstructions : [WikiConstruction]);
+		WParsedRightNumbered : (n : int, token : WikiParsedToken);
+}
+
+import formats/wiki/wiki2wikiconstruction;
+import formats/wiki/wikimediaextractorshelper;
+
+forbid gui;
+forbid renderform;
+
+
+BuildFullWikiTree(src) {
+	lexer = tokenize(src, false);
+	for([],
+		\r -> lexer.nextlexem() != WEOL(),
+		\r -> {
+			node = lexer.current() |> token2parsedToken;
+			arrayPush(r, node)
+		}
+	)
+}
+
+token2parsedTokenEx(lexeme : WikiToken, insideCenter : bool) -> WikiParsedToken {
+	preprocessText = \text -> if (insideCenter) rtrim2(text, " \n\t\u000d") else text;
+	makeConstructions = \text -> wiki2wikiConstruction(preprocessText(text), false, [], wikiTableDefaultStyle);
+	makeConstructionsStyled = \text, style -> wiki2wikiConstruction(preprocessText(text), false, style, wikiTableDefaultStyle);
+	switch (lexeme : WikiToken) {
+		// Do not add "default" branch to this switch for easier further search
+		WHeading1(text) : text |> makeConstructions |> WParsedHeading1;
+		WHeading2(text) : text |> makeConstructions |> WParsedHeading2;
+		WBullet1(text) : text |> makeConstructions |> WParsedBullet1;
+		WBullet2(text) : text |> makeConstructions |> WParsedBullet2;
+		WBullet3(text) : text |> makeConstructions |> WParsedBullet3;
+		WNumbered1(n, pretty, dotted, text) : text |> makeConstructions |> \c -> WParsedNumbered1(n, pretty, dotted, c);
+		WText(text, multiline) : {
+		 	style = if (multiline) [AllowSpacesBeetweenBracketedArgs()] else [];
+		 	WParsedText(makeConstructionsStyled(text, style));
+		};
+		WIndentedFirstLine(text) : text |> makeConstructions |> WParsedIndentedFirstLine;
+		WIndentedText(text) : text |> makeConstructions |> WParsedIndentedText;
+		WCenter(token) : token2parsedTokenEx(token, true) |> WParsedCenter;
+		WTable(cells) : map(cells, \row -> map(row, makeConstructions)) |> WParsedTable;
+		WRightNumbered(n, token) : token |> token2parsedToken |> \c -> WParsedRightNumbered(n, c);
+		WCoach(coachText) : coachText |> makeConstructions |> WParsedCoach;
+		WNewLine() : WNewLine();
+		WNewPage(s) : WNewPage(s);
+		WPageSeparator(s) : WPageSeparator(s);
+		WSmall() : WSmall();
+		WPageName(name, condition) : WPageName(name, condition);
+		WEOL() : WEOL();
+		WComment(text) : WComment(text);
+	}
+}
+
+token2parsedToken(lexeme : WikiToken) -> WikiParsedToken {
+	token2parsedTokenEx(lexeme, false)
+}
+
+ExtractWikiConstructions(lexeme) {
+	switch(lexeme : WikiParsedToken) {
+		// Do not add "default" branch to this switch for easier further search
+		WParsedHeading1(constructions) : constructions;
+		WParsedHeading2(constructions) : constructions;
+		WParsedBullet1(constructions) : constructions;
+		WParsedBullet2(constructions) : constructions;
+		WParsedBullet3(constructions) : constructions;
+		WParsedNumbered1(__, __, __, constructions) : constructions;
+		WParsedText(constructions) : constructions;
+		WParsedIndentedFirstLine(constructions) : constructions;
+		WParsedIndentedText(constructions) : constructions;
+		WParsedCenter(token) : ExtractWikiConstructions(token);
+		WParsedTable(cells) : mapConcat(cells, concatA);
+		WParsedCoach(constructions) : constructions;
+		WParsedRightNumbered(__, token) : ExtractWikiConstructions(token);
+		WPageName(name, __) : WikiSimpleConstructions([WikiBaseTextEx(name)], name) |> v2a;
+		WEOL() : [];
+		WNewLine() : [];
+		WPageSeparator(__) : [];
+		WNewPage(__) : [];
+		WSmall() : [];
+		WComment(text) : []; //we have to process WikiUnknownMath construction as WComment, but real WComment is not unknown math construction
+	}
+}

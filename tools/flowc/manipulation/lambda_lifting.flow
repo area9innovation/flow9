@@ -1,0 +1,270 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+    /* Performs Lambda Lifting - promotes lambdas to global functions and creates explicit closures
+     * closures are represented by structs with auto-generated names
+     * first member of each struct is function pointer with type identical to type of original lambda
+     * Each FiLambda is replaced with 
+     * FiCallPrim(FcCreateClosure(struct_name, function_name), array of FiVar's referencing free variables)
+    */ 
+    lift_lambdas(program : FiProgram) -> FiProgram;
+    lift_lambdas_module(program : FiProgram, moduleName : string) -> FiProgram;
+}
+
+lift_lambdas(program : FiProgram) {
+    fold(program.traversal, program, lift_lambdas_module);
+}
+
+FiLiftedLambda(
+    functionDec : FiFunctionDec,
+    closureType : FiTypeStruct
+);
+
+LLContext(
+    program : FiProgram,
+    module : FiModule,
+    moduleName : string,
+    lambdas : ref Tree<string, FiLiftedLambda>
+);
+
+// Represents a lexical scope - variables being provided by immediate outside block
+// nested lexical scopes are supported - if a variable is not local or global or found 
+// in the current lexical block, look into parent
+// the access for nested variable is iterative anyway (_closure._closure.a)
+LexicalScope(
+    parent : Maybe<LexicalScope>,
+    closure : FiTypeStruct,
+    vars : Set<string>, // vars captured in this scope
+    all_vars : Set<string> // all vars captured in this and parent scopes
+);
+
+lift_lambdas_module(program : FiProgram, moduleName : string) -> FiProgram {
+    switch (lookupTree(program.modules, moduleName)) {
+        None(): program;
+        Some(m): {
+            context = LLContext(program, m, moduleName, ref makeTree());
+
+            // lifting lambdas in functions
+            functions = map(m.functions, \f ->
+                FiFunctionDec(f.name, 
+                    FiLambda(f.lambda.args, lift_lambdas_exp(context, None(), f.lambda.body), f.lambda.type, f.lambda.start),
+                    f.type, f.declStart, f.defiStart));
+
+            // lifting lambdas in global vars
+            globalVars = map(m.globalVars, \v ->
+                FiGlobalVar(v.name, lift_lambdas_exp(context, None(), v.value), v.type, v.declStart, v.defiStart));
+				
+			// lifting natives with fallbacks
+			natives = map(m.natives, \n -> {
+				switch (n.fallbackLambda) {
+					FiLambda(args, body, type, start): {
+						lifted = lift_lambdas_exp(context, None(), body);
+						if (lifted != body) {
+							newLambda = FiLambda(args, lifted, type, start);
+							FiNativeDec(n.name, n.io, n.type, n.nativeName, newLambda, n.declStart, n.defiStart)
+						} else n;
+					}
+					default: n;
+				}
+			});
+
+			lambdasA = getTreeValues(^(context.lambdas));
+            closures = map(lambdasA, \l -> l.closureType);
+            liftedDecls = map(lambdasA, \l -> l.functionDec);
+
+            module = FiModule(
+                m.fileinfo,
+                m.imports,
+                m.forbids,
+                m.exports,
+                concat(m.structs, closures),
+                m.unions,
+                concat(functions, liftedDecls),
+                globalVars,
+                natives,
+                // TODO: inject lambda init before corresponging function
+                concat(m.initOrder, map(liftedDecls, \l -> l.name)), 
+                m.stringIncludes,
+                m.start, m.end
+            );
+
+            FiProgram(
+                program.config,
+                setTree(program.modules, moduleName, module),
+                program.traversal,
+                FiGlobalNames(
+                    fold(closures, program.names.struct2module, \s2m, s -> setTree(s2m, s.name, moduleName)),
+                    program.names.union2module,
+                    program.names.function2module, // NOT publishing lambda names to global namespace
+                    program.names.globalVar2module,
+                    program.names.native2module,
+                    fold(closures, program.names.structs, \structs, s -> setTree(structs, s.name, s)),
+                    program.names.unions,
+                    fold(module.functions, program.names.toplevel, \tls, s -> setTree(tls, s.name, s))
+                )
+            );
+        }
+    }
+}
+
+closureFunctionIndexName = "__lambda_index__"; // closure.__lambda_index__ will give function address
+closureArgumentName = "__closure__"; // argument name that contains closure
+
+// this generates variable reference the correct scope - i.e. closure.a, closure.closure.a, etc
+// the arguments are scope to start with, FiExp that is reference to corresponding closure
+// name of the variable to search, its type (used to generate final FieldPrim), and start position to create FiExp's correctly
+resolve_variable(scope : LexicalScope, closureRef : FiExp, name : string, type : FiType, start : int) -> FiExp {
+    if (containsSet(scope.vars, name))
+        FiCallPrim(FcFieldPrim(name), [closureRef], type, start)
+    else switch (scope.parent) {
+        None(): {
+            fcPrintln("Error - cannot find scope for a variable " + name); 
+            closureRef; 
+        }
+        Some(parentScope):
+            resolve_variable(parentScope, 
+                FiCallPrim(FcFieldPrim(closureArgumentName), 
+                    [closureRef], 
+                    FiTypeName(parentScope.closure.name, parentScope.closure.typars), start),
+                name, type, start);
+    }
+} 
+
+lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp) -> FiExp {
+    process = \exp0 -> lift_lambdas_exp(context, sc, exp0);
+
+    switch (ex) {
+		FiBool(b, start): ex;
+		FiInt(i, start): ex;
+		FiVar(name, type, start): switch (sc) {
+            None(): ex;
+            Some(scope): 
+                if (containsSet(scope.all_vars, name)) // resolve closure reference
+                    resolve_variable(scope, FiVar(closureArgumentName, 
+                        FiTypeName(scope.closure.name, scope.closure.typars), start), name, type, start)
+                else ex;
+        }
+		FiString(s, start): ex;
+		FiDouble(d, start): ex;
+		FiVoid(start): ex;
+
+		FiCall(f, args, type, start):
+			FiCall(process(f), map(args, process), type, start);
+		
+		FiSwitch(x, switchType, cases, type, start): 
+            FiSwitch(x, switchType,  
+                map(cases, \c -> FiCase(c.struct, c.argNames, process(c.body), c.start)),
+                type, start);
+
+		FiLambda(args, body, type, start): 
+            lift_lambda(context, sc, ex);
+		FiLet(name, type, e1, e2, type2, start): 
+			FiLet(name, type, process(e1), process(e2), type2, start);
+		FiIf(e1, e2, e3, type, start): 
+            FiIf(process(e1), process(e2), process(e3), type, start);
+		FiCallPrim(op, es, type, start): FiCallPrim(op, map(es, process), type, start);
+		FiRequire(flowfile, e, type, start): FiRequire(flowfile, process(e), type, start);
+		FiUnsafe(name, fallback, type, start): FiUnsafe(name, process(fallback), type, start);
+		FiSeq(es, type, start): FiSeq(map(es, process), type, start);
+		FiCast(e, tFrom, tTo, type, start): FiCast(process(e), tFrom, tTo, type, start);
+	}
+}
+
+lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) -> FiExp {
+	lambdaName = strReplace(context.moduleName, "/", "_") + "__lambda__" + i2s(lambda.start);
+
+    // vars from outer scope are already bound - we do not need to store those in a closure
+    parentScopeVars = switch (sc) {
+        None(): makeSet();
+        Some(scope): scope.all_vars;
+    }
+
+    // collecting free variables
+	lambdaAllVars = tree2pairs(find_free_vars_with_types(
+        lambda.body, buildSet(map(lambda.args, \x -> x.name)), makeTree()
+    )); 
+
+    // leaving only own variables, not references to parent scope
+    lambdaOwnVars : [Pair<string, FiType>] = filter(lambdaAllVars, \p -> !containsSet(parentScopeVars, p.first));
+
+    // add a field to closure that is a reference to parent scope if needed
+    // this means - if lambda does reference outer variables, we need a reference to parent closure
+    parentScopeField = switch (sc) {
+        None(): [];
+        Some(scope): if (lambdaAllVars == lambdaOwnVars) []
+            else [Pair(closureArgumentName, FiTypeName(scope.closure.name, scope.closure.typars))];
+    }
+
+    // gathering closure type parameters - needed to capture generic variables
+    closureTyparNames = sort(set2array(fold(lambdaOwnVars, makeSet(), 
+        \acc, v -> fiCollectTypars(context.program, v.second, acc))));
+    closureTypars = map(closureTyparNames, \n -> FiTypeParameter(n));
+
+	// closure represented by struct
+    // add a field for referencing the function itself
+	closureType = FiTypeStruct(lambdaName + "__closure__", closureTypars, 
+		map(concat3(
+                [Pair(closureFunctionIndexName, lambda.type)], 
+                parentScopeField,
+                lambdaOwnVars
+            ), 
+            \p -> FiStructArg(p.first, p.second, false)), lambda.start);
+	closureTypeName = FiTypeName(closureType.name, closureTypars);
+
+    scopeVars = buildSet(map(lambdaOwnVars, \v -> v.first));
+    
+    // creating a new scope
+    nestedScope = LexicalScope(
+        sc,
+        closureType,
+        scopeVars,
+        mergeSets(scopeVars, parentScopeVars)
+    );
+
+    // generating new function type - adding closure
+    originalLambdaType = cast(lambda.type : FiType -> FiTypeFunction);
+    lambdaType = FiTypeFunction(arrayPush(originalLambdaType.args, 
+        FiFunArg(closureArgumentName, closureTypeName)), originalLambdaType.returnType);
+
+	// generating lifted function declaration
+    lambdaDecl = FiFunctionDec(lambdaName, 
+        FiLambda(lambda.args, lift_lambdas_exp(context, Some(nestedScope), lambda.body), 
+            lambdaType, lambda.start),
+        lambdaType, lambda.start, lambda.start + 1);
+
+    // updating context
+	if (!containsKeyTree(^(context.lambdas), lambdaName)) {
+		context.lambdas := setTree(^(context.lambdas), lambdaName, FiLiftedLambda(lambdaDecl, closureType));
+	}
+
+	// generating closure initializer. Reference parent closure by name if needed
+    FiCallPrim(FcCreateClosurePrim(closureType.name, lambdaName), 
+        map(concat(parentScopeField, lambdaOwnVars), \v -> FiVar(v.first, v.second, lambda.start)),
+        lambdaType, lambda.start);
+}
+
+find_free_vars_with_types(expr : FiExp, bound : Set<string>, free : Tree<string, FiType>) -> Tree<string, FiType> {
+	fold_freevars = \es, b, f -> fold(es, f, \acc, e -> find_free_vars_with_types(e, b, acc));
+	switch (expr) {
+        // for lambda, dig into body but mark parameters as bound
+		FiLambda(args, e, __, __):    find_free_vars_with_types(e, 
+            fold(args, bound, \b, a -> insertSet(b, a.name)), free);
+		FiCall(f, es, __, __):        fold_freevars(es, bound, find_free_vars_with_types(f, bound, free));
+		FiVar(x, xtype, __):          if (containsSet(bound, x)) free else setTree(free, x, xtype);
+		FiLet(x, __, e1, e2, __, __): find_free_vars_with_types(e2, insertSet(bound, x), find_free_vars_with_types(e1, bound, free));
+		FiIf(e1, e2, e3, __, __):     fold_freevars([e1, e2, e3], bound, free);
+		FiSwitch(e, __, cs, __, __):  fold(cs, find_free_vars_with_types(e, bound, free), \acc, c -> find_free_vars_with_types(c.body, bound, acc));
+		FiCast(e, __, __, __, __):    find_free_vars_with_types(e, bound, free);
+		FiSeq(es, __, __):            fold_freevars(es, bound, free);
+		FiCallPrim(__, es, __, __):   fold_freevars(es, bound, free);
+		FiString(__, __):             free;
+		FiBool(__, __):               free;
+		FiDouble(__, __):             free;
+		FiVoid(__):                   free;
+		FiInt(__, __):                free;
+        FiRequire(__, e, __, __):     find_free_vars_with_types(e, bound, free);
+        FiUnsafe(__, fb, __, __):     find_free_vars_with_types(fb, bound, free);
+	}
+}

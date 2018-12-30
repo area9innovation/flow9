@@ -1,0 +1,437 @@
+import material/material;
+import material/internal/material_util;
+import material/material_gui;
+
+export {
+	// This is an editor primitive for a 2D-point that can be moved in the "movableArea"
+	// As it is being moved, it updates "movablePointB" parameter
+	movingPointMaterial(isActive : DynamicBehaviour<bool>, movablePointB : DynamicBehaviour<Point>, movableArea : Material, restrictor : (Point) -> Point) -> Material;
+	// The frame with a movable corners and central points, allos to set some size in the "movableArea"
+	movingRectMaterial(
+		pointTLB : DynamicBehaviour<Point>,
+		pointBRB : DynamicBehaviour<Point>,
+		movableArea : Material,
+		aspectRatio : Maybe<double>,
+		moveByIcon : bool
+	) -> Material;
+	defaultRestictorM(point : Point) -> Point {
+		point;
+	}
+}
+
+movingPointMaterial(isActive : DynamicBehaviour<bool>, movablePointB : DynamicBehaviour<Point>, movableArea : Material, restrictor : (Point) -> Point) -> Material {
+	iconSize = 16.0;
+	iconSizeHalf = iconSize / 2.0;
+
+	// expanding of movable area on half of icon size in all directions
+	// to move point center in full movableArea
+	addArea = TRectangle(interactiveRectangleStyle, TFixed(iconSize, iconSize));
+	movableArea2 = MCols2(MLines2(movableArea, addArea), addArea)
+	|> (\m -> MPad(-iconSizeHalf, -iconSizeHalf, m));
+
+	// point to draw an icon,
+	pointIconB = {
+		point = movablePointB |> getValue;
+		Point(point.x - iconSizeHalf, point.y - iconSizeHalf) |> make;
+	};
+
+	movingMIcon("gps_fixed", iconSize, MDeepOrangeA, isActive)
+	|> (\m -> MMovable(m, movableArea2, [MMovablePosition(pointIconB)]))
+	|> (\m -> MConstruct(
+		[
+			makeSubscribe(pointIconB, \pointIcon -> {
+				point = restrictor(pointIcon);
+				nextDistinct(pointIconB, point);
+				nextDistinct(movablePointB, Point(point.x + iconSizeHalf, point.y + iconSizeHalf));
+			}),
+			makeSubscribe(movablePointB, \movablePoint -> {
+				nextDistinct(pointIconB, Point(movablePoint.x - iconSizeHalf, movablePoint.y - iconSizeHalf));
+			})
+		], m
+	));
+}
+
+movableSubRectMaterial(
+	movablePoint : DynamicBehaviour<Point>,
+	movableArea : Material,
+	topLeftB : DynamicBehaviour<Point>,
+	rightBottomB : DynamicBehaviour<Point>
+) -> Material {
+	movePointB = make(getValue(topLeftB));
+	widthT = fselect2(topLeftB, rightBottomB, FLift2(\tl : Point, rb : Point -> rb.x - tl.x));
+	heightT = fselect2(topLeftB, rightBottomB, FLift2(\tl : Point, rb : Point -> rb.y - tl.y));
+
+	MConstruct(
+		[
+			make3Subscribe(movePointB, widthT, heightT, \movePoint, w, h -> {
+				nextDistinct(movablePoint, Point(movePoint.x + w / 2., movePoint.y + h / 2.))
+			}),
+			\ -> fconnect(topLeftB, movePointB)
+		],
+		MMovable(
+			MCursor(
+				FingerCursor(),
+				MSelect2(widthT, heightT, \w, h -> TFixed(w, h))
+			),
+			movableArea,
+			[MMovablePosition(movePointB)]
+		)
+	);
+}
+
+movingRPointMaterial(isActive : DynamicBehaviour<bool>, movPointB : DynamicBehaviour<Point>, size : double, movableArea : Material, restrictor : (Point) -> Point) -> Material {
+	movingMIcon("casino", size, MYellowA, isActive)
+	|> (\m -> MMovable(m, movableArea, [MMovablePosition(movPointB)]))
+	|> (\m -> MConstruct(
+		[
+			makeSubscribe(movPointB, \point -> {
+				nextDistinct(movPointB, restrictor(point))
+			})
+		], m
+	));
+}
+
+movingMIcon(icon : string, iconSize : double, colorFn : (int) -> MColor, isActive : DynamicBehaviour<bool>) -> Material {
+	downB = make(false);
+	overB = make(false);
+
+	MSelect2(downB, overB, \down, over -> {
+		color = if (down && over) {
+			nextDistinct(isActive, true);
+			colorFn(400)
+		} else if (over) {
+			nextDistinct(isActive, false);
+			colorFn(200)
+		} else if (down) {
+			colorFn(500)
+		} else {
+			nextDistinct(isActive, false);
+			colorFn(500)
+		};
+
+		MIcon(icon, [color, MIconSize(iconSize), FillOpacity(0.9)])
+	})
+	|> (\m -> MInteractive([TMouseDownGhost(downB), TMouseInside(overB, false)], m))
+}
+
+movingRectMaterial(
+	pointTLB : DynamicBehaviour<Point>,
+	pointBRB : DynamicBehaviour<Point>,
+	movableArea : Material,
+	aspectRatio : Maybe<double>,
+	moveByIcon : bool
+) -> Material {
+	curCen = make(false);
+	curTLB = make(false);
+	curTRB = make(false);
+	curBLB = make(false);
+	curBRB = make(false);
+
+	iconSize = 24.0;
+	point1 = pointTLB |> getValue;
+	point2 = pointBRB |> getValue;
+
+	movePointB = Point((point1.x + point2.x) / 2.0, (point1.y + point2.y) / 2.0) |> make;
+	rectPointTLB = pointTLB;
+	rectPointTRB : DynamicBehaviour<Point> = Point(point2.x - iconSize, point1.y) |> make;
+	rectPointBLB : DynamicBehaviour<Point> = Point(point1.x, point2.y - iconSize) |> make;
+	rectPointBRB = Point(point2.x - iconSize, point2.y - iconSize) |> make;
+
+	// movable area for the center point
+	movableAreaCenterB = movableArea |> make;
+
+	// recalculating of center point position on rectangle resizing
+	updateCenterPoint = \pointLT, pointRB -> {
+		x = ((pointLT.x + pointRB.x + iconSize) / 2.0);
+		y = ((pointLT.y + pointRB.y + iconSize) / 2.0);
+		rx = x - pointLT.x;
+		ry = y - pointLT.y;
+
+		nextDistinct(movePointB, Point(x, y));
+		nextDistinct(movableAreaCenterB, MSubtractGroup2(movableArea, TFixed(rx, ry)));
+	}
+
+	// restricting of moving center point to the TopLeft corner
+	rectCenterRestictorM = \point -> {
+		rectPointTL = rectPointTLB |> getValue;
+		rectPointBR = rectPointBRB |> getValue;
+
+		x = max(point.x, (rectPointBR.x - rectPointTL.x) / 2.0);
+		y = max(point.y, (rectPointBR.y - rectPointTL.y) / 2.0);
+
+		Point(x, y);
+	};
+
+	overB = make(false);
+	showRectB = make(false);
+	showRectBu = mergeu([curCen, overB, curTLB, curTRB, curBLB, curBRB]);
+
+	dataU = mergeu([rectPointTLB, rectPointBRB]);
+	style = [Stroke(0x000000), StrokeWidth(0.5)];
+
+	MSelect(dataU.first, \data -> {
+		w = data[1].x + iconSize - data[0].x;
+		h = data[1].y + iconSize - data[0].y;
+
+		TRectangle(interactiveRectangleStyle, TFixed(w, h))
+		|> (\m -> MInteractive([TMouseInside(overB, false)], m))
+		|> (\m -> MTranslate(rectPointTLB, m))
+	})
+	|> (\m ->
+		MGroup2(
+			m,
+			MVisible(
+				showRectB,
+				MGroup([
+					MFrame(0.0, 1.0, style, m) |> (\m2 -> MTranslate(rectPointTLB, m2)),
+					if (moveByIcon)
+						movingPointMaterial(curCen, movePointB, movableAreaCenterB |> MMutable, rectCenterRestictorM)
+					else
+						movableSubRectMaterial(movePointB, movableArea, rectPointTLB, pointBRB),
+					movingRPointMaterial(curTLB, rectPointTLB, iconSize, movableArea, defaultRestictorM),
+					movingRPointMaterial(curTRB, rectPointTRB, iconSize, movableArea, defaultRestictorM),
+					movingRPointMaterial(curBLB, rectPointBLB, iconSize, movableArea, defaultRestictorM),
+					movingRPointMaterial(curBRB, rectPointBRB, iconSize, movableArea, defaultRestictorM),
+				])
+			)
+		)
+	)
+	|> (\m -> MConstruct(
+		[
+			\-> dataU.second,
+			\-> showRectBu.second,
+			// Top Left corner
+			makeSubscribe(rectPointTLB, \rectPointTL -> {
+				if (curTLB |> getValue) {
+					limitX = getValue(rectPointBRB).x + iconSize;
+					limitY = getValue(rectPointBRB).y + iconSize;
+
+					x = min(limitX - iconSize, rectPointTL.x);
+					y = min(limitY - iconSize, rectPointTL.y);
+
+					newPoint = eitherFn(
+						aspectRatio,
+						\ar -> {
+							xShift = max(limitX - rectPointTL.x, iconSize * max(1.0, ar));
+
+							d = if (xShift / ar > limitY) {
+								limitY;
+							} else {
+								xShift / ar;
+							}
+
+							newX = limitX - d * ar;
+							newY = limitY - d;
+
+							nextDistinct(rectPointTRB, Point(limitX - iconSize, newY));
+							nextDistinct(rectPointBLB, Point(newX, limitY - iconSize));
+							Point(newX, newY);
+						},
+						\ -> {
+							nextDistinct(rectPointTRB, Point(limitX - iconSize, y));
+							nextDistinct(rectPointBLB, Point(x, limitY - iconSize));
+							Point(x, y);
+						}
+					);
+
+					if (newPoint != rectPointTL) {
+						nextDistinct(rectPointTLB, newPoint);
+					}
+					updateCenterPoint(newPoint, rectPointBRB |> getValue);
+				}
+			}),
+			// Top Right corner
+			makeSubscribe(rectPointTRB, \rectPointTR -> {
+				if (curTRB |> getValue) {
+					limitX = getValue(rectPointBLB).x;
+					limitY = getValue(rectPointBLB).y + iconSize;
+
+					x = max(limitX + iconSize, rectPointTR.x + iconSize);
+					y = min(limitY - iconSize, rectPointTR.y);
+
+					newPoint = eitherFn(
+						aspectRatio,
+						\ar -> {
+							xShift = max(rectPointTR.x - limitX + iconSize, iconSize * max(1.0, ar));
+
+							d = if (xShift / ar > limitY) {
+								limitY;
+							} else {
+								xShift / ar;
+							}
+
+							newX = limitX + d * ar;
+							newY = limitY - d;
+
+							nextDistinct(rectPointTLB, Point(limitX, newY));
+							nextDistinct(rectPointBRB, Point(newX - iconSize, limitY - iconSize));
+							Point(newX - iconSize, newY);
+						},
+						\ -> {
+							nextDistinct(rectPointTLB, Point(limitX, y));
+							nextDistinct(rectPointBRB, Point(x - iconSize, limitY - iconSize));
+							Point(x - iconSize, y);
+						}
+					);
+
+					if (newPoint != rectPointTR) {
+						nextDistinct(rectPointTRB, newPoint);
+					}
+					updateCenterPoint(rectPointTLB |> getValue, rectPointBRB |> getValue);
+				}
+			}),
+			// Bottom Left corner
+			makeSubscribe(rectPointBLB, \rectPointBL -> {
+				if (curBLB |> getValue) {
+					limitX = getValue(rectPointTRB).x + iconSize;
+					limitY = getValue(rectPointTRB).y;
+
+					x = min(limitX - iconSize, rectPointBL.x);
+					y = max(limitY + iconSize, rectPointBL.y + iconSize);
+
+					newPoint = eitherFn(
+						aspectRatio,
+						\ar -> {
+							xShift = max(limitX - rectPointBL.x, iconSize * max(1.0, ar));
+
+							d = xShift / ar;
+
+							newX = limitX - d * ar;
+							newY = limitY + d;
+
+							nextDistinct(rectPointTLB, Point(newX, limitY));
+							nextDistinct(rectPointBRB, Point(limitX - iconSize, newY - iconSize));
+							Point(newX, newY - iconSize);
+						},
+						\ -> {
+							nextDistinct(rectPointTLB, Point(x, limitY));
+							nextDistinct(rectPointBRB, Point(limitX - iconSize, y - iconSize));
+							Point(x, y - iconSize);
+						}
+					);
+
+					if (newPoint != rectPointBL) {
+						nextDistinct(rectPointBLB, newPoint);
+					}
+					updateCenterPoint(rectPointTLB |> getValue, rectPointBRB |> getValue);
+				}
+			}),
+			// Bottom Right corner
+			// ToDo: to find a way to restrict moving a point down and right
+			makeSubscribe(rectPointBRB, \rectPointBR -> {
+				if (curBRB |> getValue) {
+					limitX = getValue(rectPointTLB).x;
+					limitY = getValue(rectPointTLB).y;
+
+					x = max(limitX + iconSize, rectPointBR.x + iconSize);
+					y = max(limitY + iconSize, rectPointBR.y + iconSize);
+
+					newPoint = eitherFn(
+						aspectRatio,
+						\ar -> {
+							xShift = max(rectPointBR.x + iconSize - limitX, iconSize * max(1.0, ar));
+
+							d = xShift / ar;
+
+							newX = limitX + d * ar;
+							newY = limitY + d;
+
+							nextDistinct(rectPointTRB, Point(newX - iconSize, limitY));
+							nextDistinct(rectPointBLB, Point(limitX, newY - iconSize));
+							Point(newX - iconSize, newY - iconSize);
+						},
+						\ -> {
+							nextDistinct(rectPointTRB, Point(x - iconSize, limitY));
+							nextDistinct(rectPointBLB, Point(limitX, y - iconSize));
+							Point(x - iconSize, y - iconSize);
+						}
+					);
+
+					if (newPoint != rectPointBR) {
+						nextDistinct(rectPointBRB, newPoint);
+					}
+					nextDistinct(pointBRB, Point(newPoint.x + iconSize, newPoint.y + iconSize));
+					updateCenterPoint(rectPointTLB |> getValue, newPoint);
+				} else {
+					nextDistinct(pointBRB, Point(rectPointBR.x + iconSize, rectPointBR.y + iconSize));
+				}
+			}),
+			// Updating corner points positions when the center point is moved
+			makeSubscribe(movePointB, \movePoint -> {
+				if (!getValue(curTLB) && !getValue(curTRB) && !getValue(curBLB) && !getValue(curBRB)) {
+					rectPointTL = rectPointTLB |> getValue;
+					rectPointTR = rectPointTRB |> getValue;
+					rectPointBL = rectPointBLB |> getValue;
+					rectPointBR = rectPointBRB |> getValue;
+
+					dx = movePoint.x - ((rectPointTL.x + rectPointTR.x + iconSize) / 2.0);
+					dy = movePoint.y - ((rectPointTL.y + rectPointBL.y + iconSize) / 2.0);
+
+					nextDistinct(rectPointTLB, Point(rectPointTL.x + dx, rectPointTL.y + dy));
+					nextDistinct(rectPointTRB, Point(rectPointTR.x + dx, rectPointTR.y + dy));
+					nextDistinct(rectPointBLB, Point(rectPointBL.x + dx, rectPointBL.y + dy));
+					nextDistinct(rectPointBRB, Point(rectPointBR.x + dx, rectPointBR.y + dy));
+				}
+			}),
+			makeSubscribe(showRectBu.first, \flags -> nextDistinct(showRectB, contains(flags, true))),
+			// Updating corner points when the function is loaded
+			\ -> {
+				maybeApply(aspectRatio, \ar -> {
+					centerPointValue = getValue(movePointB);
+					pointTLValue = getValue(rectPointTLB);
+					pointTRValue = getValue(rectPointTRB);
+					pointBLValue = getValue(rectPointBLB);
+					pointBRValue = getValue(rectPointBRB);
+
+					currentWidth = pointTRValue.x - pointTLValue.x + iconSize;
+					currentHeight = pointBLValue.y - pointTLValue.y + iconSize;
+
+					currentArea = currentWidth * currentHeight;
+					newHieght = sqrt(currentArea / ar);
+					newWidth = currentArea / newHieght;
+
+					topY = centerPointValue.y - (newHieght / 2.0);
+					bottomY = centerPointValue.y + (newHieght / 2.0) - iconSize;
+					leftX = centerPointValue.x - (newWidth / 2.0) ;
+					rightX = centerPointValue.x + (newWidth / 2.0) - iconSize;
+
+					// check if the area is too large to save the same
+					pointsM = if (leftX > 0.0 && topY > 0.0 && (rightX - leftX > 10.0) && (bottomY - topY > 10.0)) {
+						Some(Quadruple(leftX, rightX, topY, bottomY));
+					} else {
+						// choose the variant with the smallest of posible area
+						if (ar > 1.0) {
+							updatedTopY = centerPointValue.y - (currentWidth / ar / 2.0);
+							updatedBottomY = centerPointValue.y + (currentWidth / ar / 2.0) - iconSize;
+							updatedLeftX = centerPointValue.x - (currentWidth / 2.0) ;
+							updatedRightX = centerPointValue.x + (currentWidth / 2.0) - iconSize;
+							if ((updatedRightX - updatedLeftX > 10.0) && (updatedBottomY - updatedTopY > 10.0)) {
+								Some(Quadruple(updatedLeftX, updatedRightX, updatedTopY, updatedBottomY));
+							} else {
+								None();
+							}
+						} else {
+							updatedTopY = centerPointValue.y - (currentHeight / 2.0);
+							updatedBottomY = centerPointValue.y + (currentHeight / 2.0) - iconSize;
+							updatedLeftX = centerPointValue.x - (currentHeight * ar / 2.0);
+							updatedRightX = centerPointValue.x + (currentHeight * ar / 2.0) - iconSize;
+							if ((updatedRightX - updatedLeftX > 10.0) && (updatedBottomY - updatedTopY > 10.0)) {
+								Some(Quadruple(updatedLeftX, updatedRightX, updatedTopY, updatedBottomY));
+							} else {
+								None();
+							}
+						}
+					}
+					maybeApply(pointsM, \p -> {
+						nextDistinct(rectPointTLB, Point(p.first, p.third));
+						nextDistinct(rectPointTRB, Point(p.second, p.third));
+						nextDistinct(rectPointBLB, Point(p.first, p.fourth));
+						nextDistinct(rectPointBRB, Point(p.second, p.fourth));
+					});
+				});
+				nop;
+			}
+		],
+		m
+	));
+}

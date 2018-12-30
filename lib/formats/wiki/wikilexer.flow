@@ -1,0 +1,450 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+import binarytree;
+import behaviour;
+forbid form;
+import math;
+
+export {
+
+	WikiParsingStyle ::= NumberedParagraph, TZebraTable, Wordlist, IgnoreUnknowPicsTypes, WriteSource, RestrictAutoLineBreaks,
+				InteractiveSwitch, MediaCollector, AllowSpacesBeetweenBracketedArgs,  WikiScoringStatsCollector,
+				WikiOverrideCondition, WikiMessages, AlreadyTranslated, WikiAltText, SmallContentFillersDuringLoad, WikiNoAutoplay,
+				WikiZoomBackgroundColor, WikiKaleidoscopeTileButtonStyle;
+		NumberedParagraph : ();
+		
+		TZebraTable : ();
+		// Dictionary for tooltips
+		Wordlist : (definitions : Tree<string, string>);
+
+		IgnoreUnknowPicsTypes : ();
+		WriteSource : ();
+		// Similar to giving very big available width to prevent line breaks, but
+		// available dependent content like \center will be based on width of widest line
+		// instead of taking whole available.
+		RestrictAutoLineBreaks : ();
+		// Controls clickable elements that can change state of Wiki variables:
+		// Button, PicButton, Slider, ComboBox.
+		// LR links, clickable icons with tooltips, Video resources and Timeline are not blocked.
+		InteractiveSwitch : (enable : Behaviour<bool>);
+		MediaCollector : (media : ref [string]);
+		AllowSpacesBeetweenBracketedArgs : ();
+				
+		WikiScoringStatsCollector : (stats : WikiScoringStats);
+		WikiScoringStats : (correct : DynamicBehaviour<int>, almostcorrect : DynamicBehaviour<int>, incorrect : DynamicBehaviour<int>, missing : DynamicBehaviour<int>);
+		WikiOverrideCondition : (override : Behaviour<bool>, varName : string); //Name of wiki var to get score from
+		WikiMessages : (messages : DynamicBehaviour<[Pair<string, string>]>);
+		AlreadyTranslated();
+		WikiAltText : (altTextArr : DynamicBehaviour<[string]>);
+		SmallContentFillersDuringLoad();
+		WikiNoAutoplay();
+		WikiZoomBackgroundColor(color : int);
+		WikiKaleidoscopeTileButtonStyle(pressCaptionColor : int, btnDefaultColor : int);	
+
+	WikiLexer : (current : () -> WikiToken, nextlexem : () -> WikiToken);
+
+	WikiToken ::= WHeading1, WHeading2, WBullet1, WBullet2, WBullet3, WNumbered1, WText, WIndentedText, WIndentedFirstLine,
+			WNewLine, WNewPage, WPageSeparator, WSmall, WCenter, WTable, WCoach, WRightNumbered, WEOL, WPageName, WComment;
+		WHeading1 : (text : string);
+		WHeading2 : (text : string);
+		WBullet1 : (text : string);
+		WBullet2 : (text : string);
+		WBullet3 : (text : string);
+		WNumbered1 : (n : int, pretty : bool, dotted : bool, text : string);
+		WText : (text : string, multiline : bool);
+		WIndentedFirstLine : (text : string);
+		WIndentedText : (text : string);
+		WNewLine : ();
+		WNewPage : (autoScroll : bool);
+		WPageSeparator : (autoscroll : bool);
+		WSmall : ();
+		WCenter : (token : WikiToken);
+		WTable : (cells : [[string]]);
+		WCoach : (coachText : string);
+		WPageName : (name : string, disableCondition : string);
+		WRightNumbered : (n : int, token : WikiToken);
+		WEOL : ();
+		WComment : (text : string);
+
+	tokenize(s : string, numberedParagraphStyle : bool) -> WikiLexer;
+
+	lexems(lexer : WikiLexer) -> [WikiToken];
+	pager(lexbuf : [WikiToken]) -> [Triple<[WikiToken], int, bool>]; //[Page, page number, autoscroll]. Appending (---+ and ---+n - WPageSeparator) generates new page. #24777
+
+	SkipLeadingSpaces = \text -> ltrim2(text, " \n\t");
+
+	ChooseWikiParser (text : string) -> WikiContentType;
+	WikiContentType ::= WikiHtml, WikiWrite, WikiStd, WikiWigi;
+		WikiHtml : ();
+		WikiWrite : ();
+		WikiStd : ();
+		WikiWigi : ();
+		
+}
+
+/****************/
+/* Wiki parsing */
+
+ChooseWikiParser(text : string) {
+	trimmedText = SkipLeadingSpaces(text);
+	if (startsWith(trimmedText, "<html") || startsWith(trimmedText, "<h") || startsWith(trimmedText, "<p")) {
+		WikiHtml()
+	} else if (startsWith(trimmedText, "<doc") || startsWith(trimmedText, "<s>") || startsWith(trimmedText, "<s v")) {
+		WikiWrite()
+	} else if (startsWith(trimmedText, "<wigi>") && endsWith(trimmedText, "</wigi>")) {
+		WikiWigi()
+	} else {
+		WikiStd()
+	}
+}
+
+tokenize(s, numberedParagraphStyle) {
+	i = ref 0;
+	l = strlen(s);
+	lex = ref WEOL();
+	stopOnEOL = ref false; // separate token for \center
+	ignoreStops = ref false;
+	center2 = ref false;
+
+	testPrefix = \prefix -> {
+		actualPrefix = substring(s, ^i, strlen(prefix));
+		res = actualPrefix == prefix;
+		if (res) i := ^i + strlen(prefix) else {};
+		res
+	};
+	eolIndex = \ -> for(^i, \j -> j < l && !(getCharAt(s, j) == "\n"), \ei -> ei + 1);
+
+	cutSuffix = \suf -> \s1 -> if (endsWith(s1, suf)) strLeft(s1, strlen(s1)-strlen(suf)) else s1;
+	trimAndCutSuffix = \suf -> \s1 -> rtrim(s1) |> cutSuffix(suf);
+
+	// check if next symbol is start of special markup
+	baseTextEnd = \j -> {
+		if (getCharAt(s,j) == "`") {
+			ignoreStops := !^ignoreStops;
+			false
+		} else if ((!^ignoreStops || ^stopOnEOL) && getCharAt(s,j) == "\n") {
+			s1 = getCharAt(s, j+1);
+			s2 = substring(s, j+1, 2);
+			s3 = substring(s, j+1, 3);
+
+			   s2 == "* " || s3 == " * " || s3 == "** " || s3 == " **" || s3 == "***" // bullets
+			|| s2 == "- " || s3 == " - " || s3 == "-- " || s3 == " --" || s3 == "---"
+			|| s2 == "==" // heading
+			|| s1 == "\n" // newline
+			|| s1 == "|" // table
+			|| s2 == "# " || s3 == " # " || s3 == "#. " || s3 == " #." && getCharAt(s, j+4) == " " || s3 == "#, " || s3 == " #," && getCharAt(s, j+4) == " "// numbering lists
+			|| (s3 == "---" && getCharAt(s, j+4) == "-") //newpage
+			|| (s3 == "---" && getCharAt(s, j+4) == "+" && getCharAt(s, j+5) == "n") //addition to page
+			|| (s3 == "---" && getCharAt(s, j+4) == "+") //addition to page
+			|| (s3 == "---" && getCharAt(s, j+4) == "n") //new page with autoscroll
+			|| (isDigit(getCharAt(s2,0)) && getCharAt(s2,1) == ".")
+			|| (isDigit(getCharAt(s3,0)) && isDigit(getCharAt(s3,1)) && getCharAt(s3,2) == ".")
+			|| (s1 == " " && isDigit(getCharAt(s,j+2)) && getCharAt(s,j+3) == ".")
+			|| (s3 == "\\ce" && (substring(s, j+1, 8) == "\\center " || substring(s, j+1, 9) == "\\center2 "))
+			|| (s3 == "Coa" && substring(s, j+1, 7) == "Coach: ")
+			|| (s3 == "Pag" && substring(s, j+1, 10) == "PageName: ")
+			|| s2 == "//"
+			|| (s3 == "\\be" && substring(s, j+1, 6) == "\\begin")
+			|| ^center2 && getCharAt(s,j) == "\n" // end for \center2
+
+		} else {
+			false
+		}
+	}
+	textEnd = \j -> {
+		baseTextEnd(j)
+		|| (!^ignoreStops && (substring(s,j,2) == "\n ")) // indentation
+	}
+	indentedTextEnd = \j -> {
+		baseTextEnd(j)
+		|| (getCharAt(s,j) == "\n" && isLetter(getCharAt(s,j+1))) // end of indentation
+		|| (substring(s,j,6) == "\n     ") // first line indent
+		|| (substring(s,j,2) == "\n*")// Italic, bold or italic bold text starting new line
+		|| (substring(s,j,2) == "\n\"")// quoted text starting new line
+		|| (substring(s,j,2) == "\n{")// script starting new line
+		|| (substring(s,j,11) == "\n<smartart>")// <smartart>...
+		|| (substring(s,j,17) == "\n<decoratedimage>")// <decoratedimage>...
+	}
+	coachTextEnd = \j -> {
+		indentedTextEnd(j)
+		|| (substring(s,j,6) == "\n<span")
+		|| (substring(s,j,2) == "\n\\")		
+	}
+	bulletTextEnd = \j -> indentedTextEnd(j) || substring(s,j,2) == "\n\\";// some math construction starting new line
+
+	getText = \isTextEnd -> {
+		start = ^i;
+		nextj = \j -> {
+			ss = substring(s, j, l-j);
+			newj = strFindFirstOf(ss, "\n`");
+			if (newj != -1) j + max(1, newj) else l
+		}
+		end = for(^i, \j -> j < l && !isTextEnd(j), nextj);
+		i := end+1; //skip newline
+		//println("getText (" + i2s(^i) + ") - ('" + getCharAt(s, start) + "', '" + getCharAt(s,end) + "')");
+		//println("getText (" + i2s(start) + "," + i2s(end) + ") = '" + substring(s, start, end-start) + "'");
+		substring(s, start, end-start)
+	}
+
+	nextNumber = ref 0;
+	nextNumberAsSimpleText = ref false;
+	nextNumberWithoutDot = ref false;
+	isNumberingPrefix = \ ->
+		if (testPrefix("# ") || testPrefix(" # ")) {
+			nextNumber := ^nextNumber + 1;
+			nextNumberAsSimpleText := false;
+			nextNumberWithoutDot := false;
+			true
+		} else if (testPrefix("#. ") || testPrefix(" #. ")) {
+			nextNumber := ^nextNumber + 1;
+			nextNumberAsSimpleText := true;
+			nextNumberWithoutDot := false;
+			true
+		} else if (testPrefix("#, ") || testPrefix(" #, ")) {
+			nextNumber := ^nextNumber + 1;
+			nextNumberAsSimpleText := true;
+			nextNumberWithoutDot := true;
+			true
+		} else {
+			j = if (getCharAt(s, ^i)== " ") ^i+1 else ^i;
+			if (isDigit(getCharAt(s, j)) && getCharAt(s, j+1) == "." && (!isDigit(getCharAt(s, j+2)) || getCharAt(s, j+2) == "." || getCharAt(s, j+2) == ",")) {
+				nextNumber := fromDigit(getCharAt(s, j));
+				nextNumberWithoutDot := getCharAt(s, j+2) == ",";
+				nextNumberAsSimpleText := ^nextNumberWithoutDot || getCharAt(s, j+2) == ".";
+				i := j + 3 + b2i(^nextNumberAsSimpleText);
+				true
+			} else if (isDigit(getCharAt(s, j)) && isDigit(getCharAt(s, j+1)) && getCharAt(s, j+2) == "." && (!isDigit(getCharAt(s, j+3)) || getCharAt(s, j+3) == "." || getCharAt(s, j+3) == ",")) {
+				nextNumber := fromDigit(getCharAt(s, j))*10 + fromDigit(getCharAt(s, j+1));
+				nextNumberWithoutDot := getCharAt(s, j+3) == ",";
+				nextNumberAsSimpleText := ^nextNumberWithoutDot || getCharAt(s, j+3) == ".";
+				i := j + 4 + b2i(^nextNumberAsSimpleText);
+				true
+			} else {
+				false
+			}
+		};
+
+	unindent = \s1 -> {
+		s2 = if (startsWith(s1, " ")) substring(s1, 1, strlen(s1)-1) else s1;
+		strReplace(s2, "\n ", "\n")
+	};
+
+	nextRightNumber = ref 0;
+	rightNumberIfRequired = if (numberedParagraphStyle) {
+			\token -> { nextRightNumber := ^nextRightNumber + 1; WRightNumbered(^nextRightNumber, token)}
+		} else {
+			idfn
+		};
+
+	noFormattingCase = \ -> WText(getText(textEnd), false) |> rightNumberIfRequired;
+
+	nextlexem = ref \ -> { WEOL() }; // recursion
+	nextlexem := \ -> {
+		//println("nextlexem " + i2s(^i) + " ('" + getCharAt(s,^i) + "')");
+		lex :=
+		if (^i >= l) {
+			WEOL()
+
+		} else if (testPrefix("===")) {
+			start = ^i;
+			end = eolIndex();
+			i := end+1; // skip eol
+			WHeading2(substring(s, start, end - start) |> trimAndCutSuffix("===") |> trim)
+
+		} else if (testPrefix("==")) {
+			start = ^i;
+			end = eolIndex();
+			i := end+1; // skip eol
+			WCenter(WHeading1(substring(s, start, end - start) |> trimAndCutSuffix("==") |> trim))
+
+		} else if (testPrefix("*** ") || testPrefix(" *** ") || testPrefix("--- ") || testPrefix(" --- ")) {
+			WBullet3(unindent(getText(bulletTextEnd)))
+
+		} else if (testPrefix("** ") || testPrefix(" ** ") || testPrefix("-- ") || testPrefix(" -- ")) {
+			WBullet2(unindent(getText(bulletTextEnd)))
+
+		} else if (testPrefix("* ") || testPrefix(" * ") || testPrefix("- ") || testPrefix(" - ")) {
+			WBullet1(unindent(getText(bulletTextEnd)))
+
+		} else if (isNumberingPrefix()) {
+			WNumbered1(^nextNumber, !^nextNumberAsSimpleText, !^nextNumberWithoutDot, unindent(getText(bulletTextEnd)))
+		} else if (testPrefix("\n")) {
+			WNewLine()
+
+		} else if (testPrefix("|")) {
+			i := ^i - 1; // push back "|"
+
+			parseRow = \ -> {
+					testPrefix("|"); // cut off prefix "|"
+				start = ^i;
+				end = eolIndex();
+				i := end+1; // skip eol
+				outsideNaturalMath = ref true;
+				updateContext = \c -> {
+					if (c == "`") {
+						outsideNaturalMath := !^outsideNaturalMath;
+					}
+					^outsideNaturalMath
+				}
+				substring(s, start, end - start) |> trim |> cutSuffix("|")
+				|> (\r -> strSplitContextFilter(r, "|", true, updateContext))
+			};
+
+			WTable(for([], \rows -> getCharAt(s,^i) == "|", \row -> arrayPush(row, parseRow())))
+
+		} else if (testPrefix("----")) {
+			nextRightNumber := 0;
+			i := eolIndex()+1; // skip eol, TODO: add check for several dashes "[-]*\n"
+			WNewPage(false)
+		} else if (testPrefix("---n")) {
+			nextRightNumber := 0;
+			i := eolIndex()+1; // skip eol, TODO: add check for several dashes "[-]*\n"
+			WNewPage(true)
+		} else if (testPrefix("---+n")) {
+			nextRightNumber := 0;
+			i := eolIndex()+1; // skip eol, TODO: add check for several dashes "[-]*\n"
+			WPageSeparator(true)
+		} else if (testPrefix("---+")) {
+			nextRightNumber := 0;
+			i := eolIndex()+1; // skip eol, TODO: add check for several dashes "[-]*\n"
+			WPageSeparator(false)
+		} else if (testPrefix("//")) {
+			getText(bulletTextEnd) |> trim |> WComment;
+		} else if (testPrefix("\\small\n")) {
+			WSmall()
+
+		} else if (testPrefix("\\center ")) {
+			stopOnEOL := true;
+			token = ^nextlexem();
+			stopOnEOL := false;
+			WCenter(token)
+		} else if (testPrefix("\\center2 ")) {
+			stopOnEOL := true;
+			center2 := true;
+			token = ^nextlexem();
+			center2 := false;
+			stopOnEOL := false;
+			WCenter(token)
+		} else if (testPrefix("     ")) {
+			WIndentedFirstLine(unindent(getText(indentedTextEnd)))
+			|> rightNumberIfRequired
+
+		} else if (testPrefix("Coach: ")) {			
+			WCoach(unindent(getText(coachTextEnd)))
+		} else if (testPrefix("PageName: ")) {
+			start = ^i;
+			end = eolIndex();
+			i := end + 1; // skip eol
+			nameLine = trim(substring(s, start, end - start));
+			pieces = strSplitLeave(nameLine, "#"); // name#condition -> ["name", "#", "condition"]
+			piecesCount = length(pieces);
+			if (piecesCount > 2) {
+				name = concatStrings(subrange(pieces, 0, piecesCount - 2));
+				condition = "{" + pieces[piecesCount - 1] + "}";
+				WPageName(name, condition)
+			} else {
+				WPageName(nameLine, "")
+			}
+		} else if (testPrefix(" ")) {
+			WIndentedText(unindent(getText(indentedTextEnd)))
+			|> rightNumberIfRequired
+
+		} else if (testPrefix("\\begin")) {
+			oldI = ^i;
+			i := eolIndex() + 1;
+			optionalMark = substring(s, oldI, ^i - oldI) |> ltrim; //text after \\begin. Can be used to choose type of  multiline block.
+			rest = substring(s, ^i, l - ^i);
+			start = ^i;
+			end = strIndexOfM(rest, "\n\\end");
+			asSimpleText = \ -> {
+				i := oldI - 6;
+				noFormattingCase()
+			}
+			eitherFn(
+				end,
+				\e -> {
+					nextCharOffset = e + 5;
+					i := start + nextCharOffset;
+					nextChar = getCharAt(rest, nextCharOffset);
+					if (nextChar == "\n" || nextChar == "") {
+						if (nextChar == "\n") i := ^i + 1;
+						enclosedText = strLeft(rest, e); // the text of the multiline block
+						if (startsWith(optionalMark, "Coach:")) {
+							WCoach(enclosedText)
+						} else {
+							WText(enclosedText, true)
+						}
+					} else {
+						asSimpleText()
+					}
+				},
+				asSimpleText
+			)
+		} else {
+			noFormattingCase()
+
+		};
+		^lex
+	};
+	WikiLexer(\ -> ^lex, ^nextlexem);
+}
+
+lexems(lexer) {
+	for([],
+		\l -> lexer.nextlexem() != WEOL(),
+		\l -> arrayPush(l, lexer.current())
+	)
+}
+
+pager(lexbuf) {
+	removePreviousCoach = \line -> {
+		fold(line, [], \acc, l -> switch (l: WikiToken) {
+			WCoach(ctext) : acc;
+			default : concat(acc, [l])
+		})
+	};
+	isNewPage = \wt -> switch (wt : WikiToken) {
+		WNewPage(__): true;
+		default: false;
+	}
+	filterNewPage = \wt -> switch(wt : WikiToken) {
+			WNewPage(scroll) : Some(scroll);
+			default: None()
+	}
+	isPageSeparator = \wt -> switch (wt : WikiToken) {
+		WPageSeparator(__): true;
+		default: false;
+	}
+	filterPageSeparator : (WikiToken) -> Maybe<bool> = \wt -> switch(wt : WikiToken) {
+			WPageSeparator(scroll) : Some(scroll);
+			default: None()
+	};
+	rawPages = split(lexbuf, isNewPage);
+	// We have n pages and n-1 separators
+	autoScrollFlags = arrayPush(filtermap(
+		lexbuf,
+		filterNewPage
+	), false);
+
+
+	foldi(rawPages, [], \j, acc, p -> {
+		pageLine = split(p, isPageSeparator);
+		internalAutoscrollFlags = arrayPush(filtermap(
+			p,
+			filterPageSeparator
+		), autoScrollFlags[j]);
+		result = foldi(pageLine, Pair([],[]), \i, store : Pair<[Triple<[WikiToken], int, bool>], [WikiToken]>, pp -> {
+			if ( pp != [] ) {
+				flag = internalAutoscrollFlags[i];
+				newEl = concat(store.second |> removePreviousCoach, if ( i == 0 ) pp else concat([WPageSeparator(flag)], pp));
+				Pair(
+					arrayPush(store.first, Triple(newEl, j, flag)),
+					newEl
+				)
+			} else {
+				store
+			}
+		});
+		concat(acc, result.first)
+	});
+}

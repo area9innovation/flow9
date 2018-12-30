@@ -1,0 +1,121 @@
+import material/internal/material_focus;
+
+export {
+	MDragDrop2T(manager : MaterialManager, parent : MFocusGroup, m : MDragDrop, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MDragDrop2T(manager : MaterialManager, parent0 : MFocusGroup, m : MDragDrop, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	draggingEnabled = extractStruct(m.style, MDraggingEnabled(const(true))).enabled;
+	hoveringEnabled = extractStruct(m.style, MHoveringEnabled(const(true))).enabled;
+	droppingEnabled = extractStruct(m.style, MDroppingEnabled(const(true))).enabled;
+
+	isDragging = extractStruct(m.style, MDragging(make(false))).dragging;
+	hoveringId = extractStruct(m.style, MHoveringId(make(-1))).hovering;
+	droppingId = extractStruct(m.style, MDroppingId(make(-1))).dropping;
+
+	down = extractStruct(m.style, TPressed(make(false))).pressed;
+	hover = extractStruct(m.style, THovering(make(false))).hovering;
+	mouseXY = extractStruct(m.style, MMousePosition(make(zeroPoint))).point;
+	grabXY = extractStruct(m.style, MGrabPosition(make(zeroPoint))).point;
+	mousePosition = extractStruct(m.style, MLocalMousePosition(make(zeroPoint))).point;
+	draggingContent = extractStruct(m.style, MDraggingContent(m.content)).content;
+	contentVisibleOnDrag = extractStruct(m.style, MContentVisibleOnDrag(const(false))).visible;
+	grabDelay = extractStruct(m.style, MGrabDelay(300)).delay;
+	disablePassingClicks = containsStruct(m.style, MDisablePassingClicks());
+
+	(\parent ->
+		TCopySize(
+			MActivate2T(manager, parent, "MDragDropContent", [], \p -> m2t(m.content, p))
+			|> (\t -> TVisible(fOr(fnot(isDragging), contentVisibleOnDrag), t)),
+			\tr ->
+				TConstruct(
+					[
+						make2Subscribe2(isDragging, m.id, \dr, id ->
+							if (dr)
+								nextDistinct(manager.manager.dragging, id)
+							else if (id == getValue(manager.manager.dragging))
+								nextDistinct(manager.manager.dragging, -1)
+						),
+						makeSubscribe2Uns(isDragging, \dr ->
+							if (dr)
+								[
+									MMonitorMousePosition(
+										manager,
+										mouseXY,
+										TTranslate(
+											fselect2(mouseXY, grabXY, FLift2(\mXY, gXY -> Point(mXY.x - gXY.x, mXY.y - gXY.y))),
+											MActivate2T(
+												manager,
+												parent,
+												"MDragDropDraggable",
+												[MClickEnabled(const(false)), MFocusEnabled(const(false))],
+												\par -> MGrabAnimation(manager, par, TAvailable(m2t(draggingContent, par), TSizeOf(tr)))
+											)
+										)
+									)()
+								]
+							else
+								[]
+						),
+						make3Subscribe2(fmin(hover, hoveringEnabled), manager.manager.dragging, m.id, \h, dr, id ->
+							if (h && dr != id) {
+								if (fgetValue(droppingEnabled) && getValue(hoveringId) >= 0 && dr == -1 && getValue(droppingId) != getValue(hoveringId)) {
+									next(droppingId, getValue(hoveringId));
+									deferred(\ -> next(droppingId, -1));
+								}
+
+								nextDistinct(hoveringId, dr);
+								nextDistinct(manager.manager.hovering, id);
+							} else {
+								if (getValue(manager.manager.hovering) == id)
+									nextDistinct(manager.manager.hovering, -1);
+								nextDistinct(hoveringId, -1);
+							}
+						),
+						makeSubscribe2(fmin(down, draggingEnabled), \d ->
+							if (!d)
+								nextDistinct(isDragging, false)
+						)
+					],
+					MFocusClickable2T(
+						manager,
+						parent,
+						"MDragDropHandle",
+						ifArrayPush(
+							[
+								MFocusEnabled(const(false)),
+								THovering(hover),
+								TPressed(down),
+								MMousePosition(mousePosition),
+								MOnTouch(grabDelay, \ -> if (fgetValue(draggingEnabled)) {
+									nextDistinct(grabXY, getValue(mousePosition));
+									nextDistinct(isDragging, true);
+								}),
+								// MCursorShape(fif(draggingEnabled, const(MoveCursor()), const(DefaultCursor()))),
+								MCursorShape(const(DefaultCursor())),
+								// MRippleType(fif(isDragging, const(MRippleFill()), const(MNoRipple()))),
+								MMobileForceHover()
+							],
+							!disablePassingClicks,
+							MPassClicks()
+						),
+						\__ -> tr
+					)
+				),
+			true
+		)
+	)
+	|> (\f ->
+		MActivate2T(
+			manager,
+			parent0,
+			"MDragDrop",
+			[
+				IScriptBehaviour("dragging", isDragging, ISInteractionEvent()),
+				IScriptBehaviour("point", mouseXY, ISInteractionEvent()),
+				IScriptBehaviour("grab_xy", grabXY, ISSelectionEvent()),
+			],
+			f
+		)
+	)
+}

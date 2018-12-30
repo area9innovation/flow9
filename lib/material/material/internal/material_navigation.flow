@@ -1,0 +1,226 @@
+import material/internal/material_clickable;
+import material/measing;
+
+// Internal to material
+
+export {
+	MNavigation2T(manager : MaterialManager, parent : MFocusGroup, m : MNavigation, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MNavigationState : (
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	onSelect : DynamicBehaviour<bool>,
+	inCard : bool,
+	dynamicBackground : bool,
+	getColor : (int) -> int,
+	itemCounter : ref int,
+	collapse : bool,
+	getTextStyle : (level : int) -> [MTextStyle]
+);
+
+MNavigation2T(manager : MaterialManager, parent : MFocusGroup, m : MNavigation, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	style = m.style;
+
+	fillColor = extractStruct(style, MFill(MBackgroundColor(parent.theme.lightBackground)));
+	fillOpacity = extractStruct(style, FillOpacity(1.0));
+	onSelect = extractStruct(style, MNavigationOnSelect(make(true))).c;
+	inCard = contains(style, MInCard());
+	dynamicBackgroundM = tryExtractStruct(style, MNavigationDynamicBackgroundColor(idfn));
+	getColor = eitherMap(dynamicBackgroundM, \db -> db.f, idfn);
+	dynamicBackground = isSome(dynamicBackgroundM);
+	collapse = contains(style, MNavigationCollapseUnactive());
+
+	getTextStyle = \level -> {
+		defActionMenuStyle = 
+			if (level == 1)
+				MNavigationMenuStyle([MHeadline()])
+			else if (level == 2)
+				MNavigationSubmenuStyle([MSubheading()])
+			else if (level == 3)
+				MNavigationLevelThreeStyle([MBody()])
+			else
+				MNavigationLevelFourStyle([MCaptionSolid()]);
+
+		switch (extractStruct(style, defActionMenuStyle)) {
+			MNavigationMenuStyle(s):       s;
+			MNavigationSubmenuStyle(s):    s;
+			MNavigationLevelThreeStyle(s): s;
+			MNavigationLevelFourStyle(s):  s;
+			default:
+				if (level == 1)
+					[MHeadline()]
+				else if (level == 2)
+					[MSubheading()]
+				else if (level == 3)
+					[MBody()]
+				else
+					[MCaptionSolid()];
+		};
+	}
+
+	state =
+		MNavigationState(
+			manager,
+			parent,
+			m2t,
+			onSelect,
+			inCard,
+			dynamicBackground,
+			getColor,
+			ref -1,
+			collapse,
+			getTextStyle
+		);
+
+	TGroup2(
+		TRectangle([fillColor, fillOpacity], TFillXY()),
+		mapi(m.list, \i, action -> MNavigationMenuAction2T(action, i, 1, state))
+		|> TLines
+	)
+}
+
+MNavigationMenuAction2T(action : MNavigationMenuAction, i : int, level : int, state : MNavigationState) -> Tropic {
+	showsubmenu = make(-1);
+	makeTitle = \t -> MText2T(state.parent, t, state.getTextStyle(level));
+	
+	switch (action: MNavigationMenuAction) {
+		MNavigationMenu(t, actions): 
+			MNavigationMenu2T(
+				makeTitle(t),
+				actions,
+				level,
+				showsubmenu,
+				i,
+				state
+			);
+		MNavigationMenuCustom(m, actions): 
+			MNavigationMenu2T(
+				m,
+				actions,
+				level,
+				showsubmenu,
+				i,
+				state
+			);
+		
+		MNavigationSubmenu(t, c): {
+			MNavigationButton2T(
+				makeTitle(t),
+				\ -> {next(state.onSelect, true); c()},
+				level,
+				true,
+				state
+			)
+		}
+		MNavigationSubmenuCustom(m, c): {
+			MNavigationButton2T(
+				state.m2t(m, state.parent),
+				\ -> {next(state.onSelect, true); c()},
+				level,
+				false,
+				state
+			)
+		}
+		MNavigationAction(c): TEmpty();
+	}
+}
+
+MNavigationMenu2T(
+	m : Material,
+	actions : [MNavigationMenuAction],
+	level : int,
+	showsubmenu : DynamicBehaviour<int>,
+	i : int,
+	state : MNavigationState) -> Tropic {
+
+	visibleFactor = make(Factor(0., 0.));
+
+	(\p ->
+		MNavigationButton2T(
+			state.m2t(m, p),
+			\ ->
+				if (length(actions) == 0)
+					next(state.onSelect, true)
+				else
+					switch (actions[0]: MNavigationMenuAction) {
+						MNavigationAction(c): {next(state.onSelect, true); c()};
+						default : next(showsubmenu, if (getValue(showsubmenu) == i) -1 else i);
+					},
+			level,
+			true,
+			state
+		)
+		|> (\t -> TLines2(t,
+			TLet(
+				"submenu",
+				mapi(actions, \i2, s2 ->
+					MNavigationMenuAction2T(
+						s2,
+						i2,
+						level + 1,
+						state
+					)
+				)
+				|> TLines,
+				MEasingAnimation(
+					state.manager,
+					p,
+					const(mTransitionDuration),
+					const(mStandartCurve),
+					feq(showsubmenu, i),
+					\v -> Some(v),
+					\v, px -> next(visibleFactor, Factor(1., if (v) px else 1. - px)),
+					[],
+					TVisible(
+						fselect(visibleFactor, FLift(\vf -> vf.y > 0.)),
+						TCropSize(
+							TScale(visibleFactor, TGhost("submenu")),
+							TDisplay("submenu")
+						)
+					)
+				)
+			)
+		))
+	)
+	|> (\f -> MActivate2T(state.manager, state.parent, "MNavigationMenu", [IScriptBehaviour("show", showsubmenu, ISInputValue([], "int", true)),
+		IScriptBehaviour("visible_factor", visibleFactor, ISInputValue([], serialize(getValue(visibleFactor)), true))], f))
+}
+
+MNavigationButton2T(
+	button : Tropic,
+	onClick : () -> void,
+	level : int,
+	addBorders : bool,
+	state : MNavigationState) -> Tropic {
+
+	button
+	|> (\f -> TCols2(f, TFillX()))
+	|> (\f ->
+		if (addBorders)
+			TBorder(8.0 * i2d(level + 1), 8.0, 8.0, 8.0, f)
+		else
+			f
+	)
+	|> (\f -> TFrame(0., 0., interactiveRectangleStyle, f))
+	|> (\f -> TCursor(FingerCursor(), f))
+	|> (\f -> clickable(state.manager, state.parent, f, onClick))
+	|> (\f ->
+		if (state.inCard)
+			TLines2(f, MSeparator2T(state.manager, state.parent, true))
+		else
+			f
+	)
+	|> getBackgroundTFrame(state)
+}
+
+getBackgroundTFrame(state : MNavigationState) -> (Tropic) -> Tropic {
+	\f ->
+		if (state.dynamicBackground) {
+			state.itemCounter := ^(state.itemCounter) + 1;
+			color = state.getColor(^(state.itemCounter));
+			TFrame(0., 0., [Fill(color)], f)
+		} else
+			f
+}

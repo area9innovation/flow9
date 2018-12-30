@@ -1,0 +1,104 @@
+import wigi/wigi_environment;
+import form;
+import formats/wiki/wikiparser;
+
+export {
+	setDebuggedEngine(engine: WigiEngine) -> void;
+	engineDebugger() -> Form;
+	// Useful for debugging specified engine
+	engineDebugger2(engine : WigiEngine) -> Form;
+	// Useful for attaching debugger windows as tooltip to any GUI elements
+	withEngineDebuggerTooltip(engine : WigiEngine) -> (Form) -> (Form);
+}
+
+_engine = ref dummyWigiEngine();
+
+setDebuggedEngine(engine: WigiEngine) -> void {
+	_engine := engine;
+
+	// We don't call update here, because we don't want any updates if debugger form is not displayed
+}
+
+engineDebugger() -> Form {
+	engineDebuggerHelper(None())
+}
+
+engineDebugger2(engine : WigiEngine) -> Form {
+	engineDebuggerHelper(Some(engine))
+}
+
+engineDebuggerHelper(engine1 : Maybe<WigiEngine>) -> Form {
+	form = make(Text("Engine", []));
+
+	update = ref nop;
+	update := \ -> {
+		engine = either(engine1, ^_engine);
+		env = ^(engine.env);
+
+		vars = foldTree(env.cellnames, [Text("Variables:", asBold([]))], \k, v, acc -> {
+			// Which formulas depend on our variable k?
+			deps = either(lookupTree(^(engine.dependencies), k), []);
+
+			arrayPush(acc, Select(v, \value -> {
+				Lines([
+					Cols([
+						Text(cellName2string(k), []),
+						Fixed(4.0, 0.0),
+						Text(toString(value), [Fill(blue)])
+					]),
+					Border(20.0, 0.0, 0.0, 0.0, Lines(map(deps, \dep -> {
+						Text("-> " + cellName2string(dep), [Fill(0x013220)])
+					})))
+				])
+			}))
+		});
+
+		formulae = foldTree(env.cellformulas, [Text("Formulae:", asBold([]))], \k, v, acc -> {
+			arrayPush(acc, Select(v.value, \value -> {
+				// Let's find out which variables affect our formula (k)
+				deps = foldTree(^(engine.dependencies), [], \kd, vd, accd -> {
+					if (contains(vd, k))
+						arrayPush(accd, kd)
+					else
+						accd
+				});
+
+				Lines([
+					Cols([
+						Text(cellName2string(k), []),
+						Fixed(4.0, 0.0),
+						Text(toString(value), [Fill(blue)])
+					]),
+					Border(20.0, 0.0, 0.0, 0.0, Lines(map(deps, \dep -> {
+						Text("<- " + cellName2string(dep), [Fill(0x013220)])
+					})))
+				])
+			}))
+		});
+
+		wikienv = getGlobalWVEnvironment();
+		wikis = foldTree(^(wikienv.doubles), [Text("Wiki:", asBold([]))], \k, v, acc -> {
+			arrayPush(acc, {
+				Cols([
+					Text(k, []),
+					Fixed(4.0, 0.0),
+					Select(v, \value -> Text(d2s(value), [Fill(blue)]))
+				])
+			})
+		});
+
+		next(form, Lines(concat3(vars, formulae, wikis)));
+		timer(2000, \ -> ^update());
+	}
+
+	^update();
+
+	Constructor(Mutable(form), \ -> {
+		^update();
+		\ -> update := nop;
+	})
+}
+
+withEngineDebuggerTooltip(engine : WigiEngine) -> (Form) -> (Form) {
+	\form -> withWikiTooltip2(form, LazyForm(\-> makeOrangeWindow("Engine", engineDebugger2(engine))))
+}

@@ -1,0 +1,71 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+import behaviour;
+import transforms;
+import target;
+
+export {
+	Timeline(
+		ticker : DynamicBehaviour<double>,
+		factor : DynamicBehaviour<int>,
+		start : () -> void,
+		stop : () -> void,
+		reset : () -> void
+	);
+
+	// How many ticks per second do you want?
+	getTimeline : (int) -> Timeline;
+
+	// This ticks every second and is not constructed until is used first time
+	timeline : () -> Timeline;
+}
+
+getTimeline(f) {
+	uns = ref nop;
+	start = ref nop;
+	stop = ref nop;
+
+	factor = make(1);
+	elapsed = make(0.0);
+
+	prev = ref 0.0;
+	if (!neko) {
+		// timelines won't work in neko...or work horribly wrong
+		uns2 = subscribe(factor |> distinctUntilChanged, \ff -> {
+			(^stop)();
+			(^uns)();
+
+			speed = ff * f;
+
+			ticker = repeatable(1000 / speed);
+			start := \ -> { prev := timestamp(); ticker.start(); };
+			stop := ticker.stop;
+
+			prev := timestamp();
+
+			uns := subscribe(ticker.value, \t -> {
+				nextDistinct(elapsed, (t - ^prev) * i2d(ff) + getValue(elapsed));
+				prev := t;
+			});
+
+			(^start)();
+		});
+	}
+
+	reset = \ -> next(elapsed, 0.0);
+	Timeline(
+		elapsed,
+		factor,
+		// start
+		\ -> (^start)(),
+		// stop
+		\ -> (^stop)(),
+		// reset
+		reset
+	)
+};
+
+timelineInited : ref Maybe<Timeline> = ref None();
+timeline() {
+	onlyOnce(timelineInited, \ -> getTimeline(1));
+}

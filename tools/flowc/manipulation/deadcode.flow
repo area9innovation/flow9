@@ -1,0 +1,107 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/freevars;
+
+export {
+	deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram;
+}
+
+deadFiCode(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool, verbose : int) -> FiProgram {
+	used = deadFiCodeAlive(prog, effects, preserveNames, eliminateNames, removeMain, removeGlobals);
+	dead = ref makeList();
+	reportdead = \n -> dead := Cons(n, ^dead);
+	modules = foldTree(
+		prog.modules, 
+		makeTree(), 
+		\modname : string, mo : FiModule, acc -> {
+			nfns = fold(mo.functions, [], \a, fn -> if (containsSet(used, fn.name)) concat(a, [fn]) else { reportdead(fn.name); a });
+			nglobals = fold(mo.globalVars, [], \a, gv -> if (containsSet(used, gv.name)) concat(a, [gv]) else { reportdead(gv.name); a });
+			nnatives = fold(mo.natives, [], \a, nat -> if (containsSet(used, nat.name)) concat(a, [nat]) else { reportdead(nat.name); a });
+			ninitorder = filter(mo.initOrder, \n : string -> containsSet(used, n));
+			nexports = set2array(intersectSets(buildSet(mo.exports), used));
+			nmo = FiModule(
+				mo.fileinfo, 
+				mo.imports, mo.forbids,
+				nexports,
+				mo.structs, mo.unions, 
+				nfns, nglobals, nnatives,
+				ninitorder,
+				mo.stringIncludes,
+				mo.start,
+				mo.end
+			);
+			setTree(acc, modname, nmo)
+		}
+	);
+	// Show list of dead items only on verbose=2
+	if (verbose > 1) {
+		fcPrintln("Dead: " + strGlue(list2array(^dead), ", "));
+	}
+	FiProgram(
+		prog.config,
+		modules,
+		prog.traversal,
+		prog.names,	// TODO: We should probably filter this dude as well
+	);
+}
+
+DeadCodeAcc(effects : FiEffects, modules : Tree<string, FiModule>, queue : Set<string>, used : Set<string>);
+
+deadFiCodeAlive(prog : FiProgram, effects : FiEffects, preserveNames : Set<string>, eliminateNames : Set<string>, removeMain : bool, removeGlobals : bool) -> Set<string> {
+	queue = foldTree(
+		prog.modules,
+		differenceSets(
+			mergeSets(if (removeMain) makeSet() else insertSet(makeSet(), "main"), preserveNames),
+			eliminateNames
+		),
+		\modname, mo, acc -> {
+			fold(
+				mo.globalVars, 
+				acc, 
+				\a, gv -> if (!removeGlobals && hasFiSideEffects(effects, gv.value)) insertSet(a, gv.name) else a
+			)
+		}
+	);
+	visitDead(DeadCodeAcc(effects, prog.modules, queue, makeSet()), eliminateNames).used
+}
+
+visitDead(acc : DeadCodeAcc, eliminateNames : Set<string>) -> DeadCodeAcc {
+	switch (popMinSet(acc.queue)) {
+		None(): acc;
+		Some(pop): {
+			name = pop.value;
+			visitDead(
+				deadFiName(DeadCodeAcc(acc.effects, acc.modules, pop.rest, acc.used),name, eliminateNames),
+				eliminateNames
+			)
+		}
+	}
+}
+
+deadFiName(acc : DeadCodeAcc, name : string, eliminateNames : Set<string>) -> DeadCodeAcc {
+	mdec = lookupTree(acc.effects.names.toplevel, name);
+	switch (mdec) {
+		None(): {
+			if (name != "main") {
+				fcPrintln("WARNING: Something is wrong with DCE: Could not find '" + name + "'");
+			}
+			acc
+		}
+		Some(dec): {
+			nused = insertSet(acc.used, name);
+			referenced = switch (dec : FiDeclaration) {
+				FiFunctionDec(f, lambda, __, __, __):          fifreevars(lambda);
+				FiGlobalVar(x, value, __, __, __): fifreevars(value);
+				FiNativeDec(n, isio, type, nativeName, flowfallback, __, __):
+					switch (flowfallback) {
+						FiLambda(__, __, __, __): fifreevars(flowfallback);
+						default: makeSet();
+					}
+			}
+			newnames = differenceSets(differenceSets(referenced, nused), eliminateNames);
+			nqueue = mergeSets(acc.queue, newnames);
+			nused2 = mergeSets(nused, newnames);
+			DeadCodeAcc(acc.effects, acc.modules, nqueue, nused2)
+		}
+	}
+}

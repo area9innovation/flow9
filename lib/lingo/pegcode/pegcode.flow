@@ -1,0 +1,460 @@
+import lingo/pegcode/pegcode_lib;
+import stringmath;
+import devmode;
+
+// TODO:
+// - Introduce PegCommitAndReturn, which is common in the hot path of lexer-like rules.
+//   Will probably not help much, since PegCommit is cheap, but will not cost much.
+
+// - Introduce code generation for lexer-like subset
+
+// - Distinguish between rules that produce output and those that do not.
+//   For those that do not, have a new PegChoiceNoCapture and use that.
+//   Avoid the PegDrop
+
+// - Have an array of PegRuleResult with mutable fields for the capture stack. This is hard since the capture stack is shared
+
+// - Have an array of mutable PegStackEntries for the call stack
+
+// - Have special opcode for PegChoice, PegCall, PegCommit sequence
+
+
+export {
+	// We interpret the grammar using a small virtual machine using these opcodes
+	PegOp ::= PegString, PegRange, PegJump, PegChoice, PegCall, PegCacheCall, PegReturn, PegCommit, PegStartString,
+				PegBindString, PegBindValue, PegBindIndex, PegAction, PegAction2, PegActionIndex, PegFail, PegEnd, 
+				PegStartCaptureList, PegCaptureList, PegDrop, PegStringChoice, PegRangeChoice, PegClearCache;
+		// Try to match the given string
+		PegString(x : string);
+		// Match a character in the range
+		PegRange(l : string, u : string);
+		// Unconditional jump to specific address
+		PegJump(l : int);
+		// Record a fall-back point in case a following opcode fails. It is an offset to the current pc
+		PegChoice(l : int);
+		// Call the code at a given address, remembering the return address. Sets up a new environment
+		PegCall(l : int);
+		// Call the code at a given address, remembering the return address. Caches the parsing result
+		PegCacheCall(l : int, cacheEntry : int);
+		// Return from a call
+		PegReturn();
+		// Accept the choice we have made, and move delta l instructions further
+		PegCommit(l : int);
+
+		// For use in sequences, drop a value
+		PegDrop();
+
+		// Matching fails. Unwind and jump to next choice point.
+		PegFail();
+
+		// The program is complete
+		PegEnd();
+
+		// Remember the current character position, for binding matching strings
+		PegStartString();
+		// Using the start string position, capture the character position
+		PegBindString(n : string);
+
+		// Names the last value on the capture stack
+		PegBindValue(n : string);
+
+		// Call a semantic action, and push the result to the capture stack
+		PegAction(fn : (PegEnv) -> flow);
+
+		// Push the result of this action to the capture stack
+		PegAction2(e : ActionExp);
+
+		// Push the current index into the string to the capture stack
+		PegActionIndex();
+
+		// We are about to collect a list of entries for +, *, ?
+		PegStartCaptureList();
+
+		// Collect what is on the capture stack to a list. Used for +, *, ?
+		PegCaptureList();
+
+		// Bind the character position to this name - same as [PegAction2(PegActionIndex), PegBindValue]
+		PegBindIndex(n : string);
+
+		// Match the string x, and if successful, commit and go to pc + commit.
+		// Same as PegChoice(3), PegString(x), PegCommit(commit)
+		PegStringChoice(x : string, commit : int);
+
+		// Match a character in the range, and if successful, commit and go to pc + commit.
+		// Same as PegChoice(3), PegRange(l, u), PegCommit(commit)
+		PegRangeChoice(l : string, u : string, commit : int);
+
+		// Clear peg cache: Optimization when we know no backtracking is required
+		PegClearCache();
+
+	// Match the given string using the given program
+	runPeg(input : string, op : [PegOp], debug : Tree<int, string>, functions : SemanticActions) -> ParseResult;
+
+	printPegcode(op : [PegOp], debug : Tree<int, string>) -> void;
+}
+
+// http://code.google.com/p/pego/source/browse/match.go
+// http://www.inf.puc-rio.br/~roberto/docs/peg.pdf
+// http://www.inf.puc-rio.br/~roberto/docs/ry08-4.pdf
+
+
+// Count of how many times each opcode in the pegcode is visited
+profilePcs : ref Tree<int, int> = ref makeTree();
+
+runPeg(input : string, program : [PegOp], debug : Tree<int, string>, functions : SemanticActions) -> ParseResult {
+	t = setTree(functions.t, "callstack", \args : [flow] -> {
+		pc : int = flow2i(args[0]);
+		flow(foldTree(debug, "", \k : int, v : string, acc : string -> {
+			if (pc >= k) v else acc
+		}));
+	});
+
+	cacheSize = fold(program, 0, \acc, op -> switch (op) { PegCacheCall(l, c): max(acc, c); default: acc });
+	cache = PegVmCache(generate(0, cacheSize + 1, \i -> makeIntTree()));
+
+	parseCacheHits := ^(makeIntTree());
+	parseCacheMisses := ^(makeIntTree());
+
+	drv = RuleResult(flow(input), 0, 0, None());
+	pca = PegCodeConst(input, program, t, cache, drv);
+	r = whilePeg(pca, 0, 0, makeList(), makeList(), Cons(makeTree(), EmptyList()));
+
+	// Enable rule profiling here
+	if (false && debug != makeTree())
+		printPegcode(program, debug);
+
+	if (r.pos < strlen(input)) {
+		// We did not parse all. Let's look for the last place where we parsed something in the cache
+		// and use that as the error position
+		lastPos = fold(pca.cache.caches, r.pos, \acc, theCache -> {
+			pos = ref acc;
+			iterIntTree(theCache, \p : int, s : PegVmCacheItem -> {
+				if(s != peg_fail_cache_item) pos := max(p, ^pos)
+			});
+			^pos;
+		});
+		ParseResult(lastPos, r.result)
+	} else {
+		r;
+	}
+}
+
+/*
+ * Do the interpretation of our program.
+ * pc is the instruction address, i is the position in the string we are matching.
+ * The stack is the number of open choice points we have.
+ * Capture is a stack for captures values.
+ * The env is a mapping from named values to values, for use with semantic actions
+ */
+whilePeg(pca : PegCodeConst, pc : int, i : int, stack : List<PegStackEntry>, capture : List<PegCaptureEntry>, env : List<Tree<string, RuleResult>>) -> ParseResult {
+
+	// Enable rule profiling here:
+	// profilePcs := setTree(^profilePcs, pc, lookupTreeDef(^profilePcs, pc, 0) + 1);
+
+	if (pc < 0) {
+		// Parse fail: Rewind
+		switch (stack) {
+			EmptyList(): {
+				// println(formatPegErrorPlace("SYNTAX ERROR: ", pca.input, i));
+				pegAddress2rule(pca.fns, pc);
+				ParseResult(i, None());
+			}
+			Cons(h, t): {
+				switch (h : PegStackEntry) {
+					PegStackPc(pc0, cl): whilePeg(pca, pc, i, t, cl, tailList(env));
+					PegStackPcCache(pc0, ce, si, cl): {
+						// Mark as non-match
+						// println("Non-match for " + i2s(ce) + " at " + i2s(i));
+						it = pca.cache.caches[ce];
+						it := addOrUpdateIntTree(it, si, peg_fail_cache_item);
+						whilePeg(pca, pc, i, t, cl, tailList(env));
+					}
+					PegStackChoice(pc0, i0, c0): whilePeg(pca, pc0, i0, t, c0, env);
+				}
+			}
+		}
+	} else {
+	//	println(i2s(pc) + ":" + pegcode2string(pc, pca.program[pc], \__ -> ""));
+	//	println(i2s(pc) + " " + pegAddress2rule(pca.fns, pc) + ":" + toString(pca.program[pc]));
+		/*println(i2s(i) + " " + i2s(pc) + " " + pegAddress2rule(pca.fns, pc) + ":" + toString(pca.program[pc]) 
+			+ "   Captures: " + captureStack2String(capture) 
+			+ "   Choices:" + choiceStack2String(stack, \pci -> pegAddress2rule(pca.fns, pci))
+			+ "   Env: " + env2string(env)
+		);*/
+		switch (pca.program[pc] : PegOp) {
+			PegString(x): {
+				if (strContainsAt(pca.input, i, x)) {
+					whilePeg(pca, pc + 1, i + strlen(x), stack, capture, env);
+				} else {
+					whilePeg(pca, -1, i, stack, capture, env);
+				}
+			}
+			PegRange(low, up): {
+				s = substring(pca.input, i, 1);
+				if (low <= s && s <= up) {
+					whilePeg(pca, pc + 1, i + 1, stack, capture, env);
+				} else {
+					whilePeg(pca, -1, i, stack, capture, env);
+				}
+			}
+			PegJump(l): {
+				whilePeg(pca, pc + l, i, stack, capture, env);
+			}
+			PegChoice(l): {
+				whilePeg(pca, pc + 1, i, Cons(PegStackChoice(pc + l, i, capture), stack), capture, env);
+			}
+			PegStringChoice(x, l): {
+				if (strContainsAt(pca.input, i, x)) {
+					whilePeg(pca, pc + l, i + strlen(x), stack, capture, env);
+				} else {
+					whilePeg(pca, pc + 1, i, stack, capture, env);
+				}
+			}
+			PegRangeChoice(low, up, l): {
+				s = substring(pca.input, i, 1);
+				if (low <= s && s <= up) {
+					whilePeg(pca, pc + l, i + 1, stack, capture, env);
+				} else {
+					whilePeg(pca, pc + 1, i, stack, capture, env);
+				}
+			}
+			PegCall(l): {
+				whilePeg(pca, l, i, Cons(PegStackPc(pc + 1, capture), stack), makeList(), Cons(makeTree(), env));
+			}
+			PegCacheCall(l, ce): {
+				// Check if we have this cached
+				c : Maybe<PegVmCacheItem> = lookupIntTree(pca.cache.caches[ce], i);
+				switch (c) {
+					None(): {
+						// Enable cache analysis here:
+						//misses = either(lookupIntTree(parseCacheMisses, ce), 0);
+						//parseCacheMisses := addOrUpdateIntTree(parseCacheMisses, ce, misses + 1);
+
+						whilePeg(pca, l, i, Cons(PegStackPcCache(pc + 1, ce, i, capture), stack), makeList(), Cons(makeTree(), env));
+					}
+					Some(r): {
+						// Enable cache analysis here:
+						//hits = either(lookupIntTree(parseCacheHits, ce), 0);
+						//parseCacheHits := addOrUpdateIntTree(parseCacheHits, ce, hits + 1);
+
+						if (r.pos == -1) {
+							// Recorded fail
+							whilePeg(pca, -1, i, stack, capture, env);
+						} else {
+							whilePeg(pca, pc + 1, r.pos, stack, Cons(r.capture, capture), env);
+						}
+					}
+				}
+			}
+			PegReturn(): {
+				switch (stack) {
+					EmptyList(): {
+						// println("The stack is empty in " + pegAddress2rule(pca.fns, pc));
+						ParseResult(-1, None());
+					}
+					Cons(h, t): {
+						switch (h : PegStackEntry) {
+							PegStackPc(pc0, tl):
+								whilePeg(pca, pc0, i, t, Cons(headList(capture, pca.capture), tl), tailList(env));
+
+							PegStackPcCache(pc0, ce, si, tl): {
+								res = headList(capture, pca.capture);
+								switch (res) {
+									RuleResult(__, __, __, r): {
+										// Cache
+										// println("Cache " + i2s(ce) + " at " + i2s(si) + "-" + i2s(i) + ": " + captureEntry2String(res));
+										it = pca.cache.caches[ce];
+										it := addOrUpdateIntTree(it, si, PegVmCacheItem(i, res));
+									}
+									default: {}
+								}
+
+								whilePeg(pca, pc0, i, t, Cons(res, tl), tailList(env));
+							}
+
+							PegStackChoice(pc0, i0, c): {
+								// println("Wrong stack entry. Error at " + i2s(i)  + " address " + i2s(pc) + " in " + pegAddress2rule(pca.fns, pc));
+								whilePeg(pca, pc, i, t, capture, env);
+							}
+						}
+					}
+				}
+			}
+			PegDrop(): {
+				whilePeg(pca, pc + 1, i, stack, tailList(capture), env);
+			}
+			PegCommit(l): {
+				whilePeg(pca, pc + l, i, tailList(stack), capture, env);
+			}
+			PegStartString(): {
+				whilePeg(pca, pc + 1, i, stack, Cons(PegCaptureStringStart(i), capture), env);
+			}
+			PegBindString(v): {
+				switch (capture) {
+					EmptyList(): {
+						// println("Expected string start marker!");
+						whilePeg(pca, pc + 1, i, stack, capture, env);
+					}
+					Cons(h, t): {
+						switch (h) {
+							PegCaptureStringStart(start): {
+								s = h.start;
+								// println("Grab " + substring(input, s, i-s) + " for " + v + " " + i2s(h.start));
+								rr = RuleResult(flow(pca.input), s, i - s, Some(flow(substring(pca.input, s, i-s) )));
+								tenv = headList(env, makeTree());
+								nenv = Cons(setTree(tenv, v, rr), tailList(env));
+								whilePeg(pca, pc + 1, i, stack, t, nenv);
+							}
+							default: {
+								// Unwind the stack until we find out string maker
+								whilePeg(pca, pc, i, stack, t, env);
+							}
+						}
+					}
+				}
+			}
+			PegStartCaptureList(): {
+				whilePeg(pca, pc + 1, i, stack, Cons(PegCaptureStartList(), capture), env);
+			}
+			PegBindValue(v): {
+				result = switch(capture) {
+					EmptyList(): None();
+					Cons(h, t): {
+						switch (h) {
+							RuleResult(__, __, __, result): result;
+							default: None();
+						}
+					}
+				}
+				rr = RuleResult(flow(pca.input), i, strlen(pca.input), result);
+				tenv : Tree<string, RuleResult> = headList(env, makeTree());
+				nenv = Cons(setTree(tenv, v, rr), tailList(env));
+				whilePeg(pca, pc + 1, i, stack, capture, nenv);
+			}
+			PegBindIndex(v): {
+				rr = RuleResult(flow(pca.input), i, 0, Some(flow(i)));
+				tenv : Tree<string, RuleResult> = headList(env, makeTree());
+				nenv = Cons(setTree(tenv, v, rr), tailList(env));
+				whilePeg(pca, pc + 1, i, stack, capture, nenv);
+			}
+			PegAction(fn): {
+				v = fn(PegEnv(headList(env, makeTree()), pca.fns));
+				rr = RuleResult(flow(pca.input), i, 0, Some(v));
+				whilePeg(pca, pc + 1, i, stack,
+					Cons(rr, capture), env
+				);
+			}
+			PegAction2(e): {
+				v = evalActionExp(e, i, headList(env, makeTree()), pca.fns);
+				// println(toString(e) + ":" + toString(v));
+				rr = RuleResult(flow(pca.input), i, 0, Some(v));
+				whilePeg(pca, pc + 1, i, stack,
+					Cons(rr, capture), env
+				);
+			}
+			PegActionIndex(): {
+				rr = RuleResult(flow(pca.input), i, 0, Some(flow(i)));
+				whilePeg(pca, pc + 1, i, stack,
+					Cons(rr, capture), env
+				);
+			}
+			PegFail(): {
+				whilePeg(pca, -1, i, stack, capture, env);
+			}
+			PegEnd(): {
+				ParseResult(i, pegResultFromCapture(capture));
+			}
+			PegCaptureList(): {
+				listAndRest = grabUntilMarker(makeList(), capture);
+				results0 = foldList(listAndRest.first, makeList(), \acc, p : PegCaptureEntry -> {
+					switch (p) {
+						RuleResult(__, __, __, result): {
+							switch (result) {
+								None(): acc;
+								Some(va): Cons(va, acc);
+							}
+						}
+						default: acc;
+					}
+				});
+				results = list2array(results0);
+				rr = RuleResult(flow(pca.input), i, strlen(pca.input), Some(results));
+				whilePeg(pca, pc + 1, i, stack, Cons(rr, listAndRest.second), env);
+			}
+			PegClearCache(): {
+				// The Mizushima paper says we can only nuke the cache if the backtrack stack is empty,
+				// but on the other hand, it will not give the wrong result if we do, so why not go the all way?
+				iter(pca.cache.caches, \c : ref IntTree<PegVmCacheItem> -> {
+					c := ^(makeIntTree());
+				});
+				whilePeg(pca, pc + 1, i, stack, capture, env);
+			}
+		}
+	}
+}
+
+printPegcode(op : [PegOp], debug : Tree<int, string>) -> void {
+	fn = \pc -> {
+		foldTree(debug, "", \k : int, v : string, acc : string -> {
+			if (pc >= k) v else acc
+		});
+	};
+
+	perFn = foldi(op, makeTree(), \i, acc, c -> {
+		fun = fn(i);
+		prof = lookupTreeDef(^profilePcs, i, 0);
+		setTree(acc, fun, lookupTreeDef(acc, fun, 0) + prof);
+	});
+
+	total = sum(getTreeValues(^profilePcs));
+
+	if (total != 0) {
+		// Dump number of instructions spent on each rule
+		println("Instructions per rule");
+		traverseInOrder(perFn, \k, v -> if (v > 0) println(k + ": " + i2s(v) + " " + d2st(100.0 * i2d(v) / i2d(total), 1) + "%"));
+
+		perOpcode = foldi(op, makeTree(), \i, acc, c -> {
+			prof = lookupTreeDef(^profilePcs, i, 0);
+			setTree(acc, c.structname, lookupTreeDef(acc, c.structname, 0) + prof);
+
+		});
+
+		// Dump number of instructions spent per opcode
+		println("\nInstructions per opcode. Total: " + i2s(total));
+		traverseInOrder(perOpcode, \k, v -> if (v > 0) println(k + ": " + i2s(v) + " " + d2st(100.0 * i2d(v) / i2d(total), 1) + "%"));
+	}
+
+	println(foldi(op, "", \i, acc, c -> {
+		prof = lookupTreeDef(^profilePcs, i, 0);
+		acc + i2s(i) + " " + fn(i) + ":" + pegcode2string(i, c, fn) + (if (total != 0) " " + i2s(prof) + " visits\n" else "\n")
+	}));
+}
+
+pegcode2string(pc : int, c : PegOp, fn : (int) -> string) -> string {
+	switch (c) {
+		PegStringChoice(x, d): "PegStringChoice(" + toString(x) + ", " + i2s(d) + " -> " + i2s(pc + d) + ")";
+		PegRangeChoice(low, up, d): "PegRangeChoice(" + toString(low) + ", " + toString(up) + ", " + i2s(d) + " -> " + i2s(pc + d) + ")";
+		PegChoice(d): "PegChoice(+" + i2s(d) + " -> " + i2s(pc + d) + ")";
+		PegCommit(d): "PegCommit(+" + i2s(d) + " -> " + i2s(pc + d) + ")";
+		PegCall(d): "PegCall(" + i2s(d) + " : " + fn(d) + ")";
+		PegCacheCall(d, ce): "PegCacheCall(" + i2s(d) + " : " + fn(d) + "," + i2s(ce) + ")";
+		default: toString(c);
+	}
+}
+
+choiceStack2String(s : List<PegStackEntry>, fn : (int) -> string) -> string {
+	foldList(s, "", \acc, p : PegStackEntry -> {
+		acc + " " + switch (p : PegStackEntry) {
+			PegStackPc(pc, capture): fn(pc);
+			PegStackPcCache(pc, ce, si, capture): fn(pc) + "!";
+			PegStackChoice(pc, i, capture): ""; //?->" + i2s(pc);
+		}
+	});
+}
+
+env2string(env : List<Tree<string, RuleResult>>) -> string {
+	foldList(env, "", \ac2, e -> {
+			ac2 + "." + foldTree(e, "", \k, v, acc -> acc + " " + k + "=" + toString(v))
+	});
+}
+

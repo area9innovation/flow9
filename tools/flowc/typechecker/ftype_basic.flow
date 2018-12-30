@@ -1,0 +1,734 @@
+import tools/flowc/prettyprint;
+import tools/flowc/debug;
+import tools/flowc/typechecker/ftype;
+import tools/flowc/type_helpers;
+
+export {
+	fctype2ftype(env : FcTypeEnv, tyvarIdGroup : IdGroup, t : FcType) -> FType;
+
+	ftype2string(env : FEnv, type : FType) -> string;
+
+	fcstructname2ftype(env : FEnv, structname : string, typars : Tree<string, FType>) -> FType;
+
+	instantiateFTyPars(env : FEnv, typars : Tree<string, FType>, type : FType) -> FType;
+
+	getFTypeName(type : FType) -> string;
+
+	makeFTyvar(env : FEnv) -> FTypeVar;
+	setFTypeVar(env : FEnv, id : int, type : FType) -> FEnv;
+
+	extractFTypeVars(env : FEnv, type : FType, acc : Set<int>) -> Set<int>;
+
+	isFTypeVar(t : FType) -> bool;
+
+	extractFTypePars(env : FEnv, type : FType, acc : Set<string>) -> Set<string>;
+
+	// Is this type fully determìned?
+	isFDetermined(env : FEnv, type : FType, seen : Set<int>) -> bool;
+
+	resolveFVar(env : FEnv, type : FType, seen : Set<int>, onError : (string) -> void) -> FType;
+
+	makeFBounded(env : FEnv, lower : FType, upper : FType, onError : (string) -> void) -> FType;
+	upperBound(f : FEnv, type : FType) -> FType;
+	lowerBound(f : FEnv, type : FType) -> FType;
+
+	makeFUnnamedUnion(types : [FType]) -> FType;
+
+	fkind2string(k : FUnification) -> string;
+}
+
+
+fctype2ftype(env : FcTypeEnv, tyvarIdGroup : IdGroup, type : FcType) -> FType {
+	ni = FcInfo2(0, 0);
+	todo = \ -> {
+		pt = \t -> prettyFcType(FcPretty(false, false, makeTree(), makeTree()), t, makeSet());
+		fcPrintln("TODO: convert to Ftype: " + pt(type));
+		FFlow();
+	}
+	switch (type) {
+		FcTypeVoid(i): FBasicType(FcTypeVoid(ni));
+		FcTypeBool(i): FBasicType(FcTypeBool(ni));
+		FcTypeInt(i): FBasicType(FcTypeInt(ni));
+		FcTypeDouble(i): FBasicType(FcTypeDouble(ni));
+		FcTypeString(i): FBasicType(FcTypeString(ni));
+		FcTypeNative(i): FBasicType(FcTypeNative(ni));
+		FcTypeFlow(i): FFlow();
+		FcTypeArray(t, __): FArray(fctype2ftype(env, tyvarIdGroup, t));
+		FcTypeRef(t, __): {
+			rt = fctype2ftype(env, tyvarIdGroup, t);
+			FRef(rt, rt);
+		}
+		FcTypeParameter(n, i): FTypePar(n);
+		FcTypeVar(id, i): FTypeVar(id);
+		FcTypeName(id, tp, __): {
+			name = getFcNamedType(env, tyvarIdGroup, type);
+			switch (name) {
+				FcTypeName(__, __, __): todo();
+				default: fctype2ftype(env, tyvarIdGroup, name);
+			}
+		}
+		FcTypeStruct(name, tps, args, info): {
+			if (name == "") {
+				FFields(
+					map(args, \arg -> {
+						FField(arg.name, fctype2ftype(env, tyvarIdGroup, arg.type), FGetField())
+					}),
+					makeSet(),
+					makeSet()
+				);
+			} else {
+				mstructdef = lookupTree(env.program.acc.names.structs, name);
+				typars = switch (mstructdef) {
+					None(): tps;
+					Some(sd): {
+						if (length(tps) < length(sd.typars)) {
+							// OK, we backfill
+							generate(0, length(sd.typars), \i -> {
+								if (i < length(tps)) tps[i]
+								else {
+									typar = strLeft("????????????????????", i + 1);
+									FcTypeParameter(typar, info);
+								}
+							});
+						} else tps;
+					}
+				}
+				FStruct(
+					name,
+					fctypes2ftypes(env, tyvarIdGroup, typars),
+				);
+			}
+		}
+		FcTypeUnion(n, tps, names, __): {
+			if (n == "") {
+				types = fctypes2ftypes(env, tyvarIdGroup, names);
+				makeFUnnamedUnion(types);
+			} else {
+				FUnion(
+					n,
+					fctypes2ftypes(env, tyvarIdGroup, tps),
+				);
+			}
+		}
+		FcTypeFunction(args, rt, __): {
+			FFunction(map(args, \a -> fctype2ftype(env, tyvarIdGroup, a.type)), fctype2ftype(env, tyvarIdGroup, rt));
+		}
+	}
+}
+
+fctypes2ftypes(env : FcTypeEnv, tyvarIdGroup : IdGroup, types : [FcType]) -> [FType] {
+	map(types, \t -> fctype2ftype(env, tyvarIdGroup, t));
+}
+
+ftype2string(env : FEnv, type : FType) -> string {
+	doFtype2string(env, type, makeSet());
+}
+
+doFtype2string(env : FEnv, type : FType, seen : Set<int>) -> string {
+	pt = \t -> prettyFcType(FcPretty(false, false, ^(env.env.local.tyvars), ^(env.env.local.typars)), t, makeSet());
+	switch (type) {
+		FFlow(): "flow";
+		FTypeVar(id): {
+			alpha = "α" + i2s(id);
+			if (containsSet(seen, id)) alpha
+			else {
+				switch (lookupTree(env.tyvars, id)) {
+					None(): alpha;
+					Some(rt): if (env.verbose > 1) alpha + " (=" + doFtype2string(env, rt, insertSet(seen, id)) + ")" else doFtype2string(env, rt, insertSet(seen, id));
+				}
+			};
+		}
+		FTypePar(id): id;
+		FFunction(args, rt): {
+			"(" + superglue(args, \a -> doFtype2string(env, a, seen), ", ") + ") -> " + doFtype2string(env, rt, seen);
+		}
+		FUnion(name, tps): {
+			name + "<" + superglue(tps, \a -> doFtype2string(env, a, seen), ", ") + ">";
+		}
+		FStruct(name, tps): {
+			name + "<" + superglue(tps, \a -> doFtype2string(env, a, seen), ", ") + ">";
+		}
+		FFields(fields, seenNames, excluded): {
+			".(" + superglue(fields, \f  -> {
+				if (f.access == FGetField()) "." + f.name + " : " + doFtype2string(env, f.type, seen)
+				else"." + f.name + " ::= " + doFtype2string(env, f.type, seen);
+			}, ", ") + ")" 
+			+ (if (isEmptySet(seenNames)) "" else " seen " + strGlue(set2array(seenNames), ", "))
+			+ (if (isEmptySet(excluded)) "" else " not " + strGlue(set2array(excluded), ", "));
+		}
+		FUnnamedUnion(structs): {
+			"<union> ::= (" + superglue(structs, \a -> doFtype2string(env, a, seen), ", ") + ")";
+		}
+		FArray(at): {
+			 "[" + doFtype2string(env, at, seen) + "]";
+		}
+		FRef(read, write): {
+			 "ref " + doFtype2string(env, read, seen) /*+ ":=" + doFtype2string(env, write, seen)*/;
+		}
+		FBasicType(tt): {
+			 pt(tt);
+		}
+		FBounded(lower, upper): {
+			// [l..y]
+			"{" + doFtype2string(env, lower, seen) + " .. " + doFtype2string(env, upper, seen) + "}"
+		}
+		FTopBottom(): "*";
+	}
+}
+
+instantiateFTyPars(env : FEnv, typars : Tree<string, FType>, type : FType) -> FType {
+	switch (type) {
+		FFlow(): type;
+		FBasicType(__): type;
+		FTypeVar(id): type;
+		FTypePar(id): {
+			tp = lookupTree(typars, id);
+			switch (tp) {
+				None(): {
+					// fcPrintln("unknown typar! " + id);
+					type;
+				}
+				Some(tt): {
+					// This causes an infinite loop, which we do not like
+					// instantiateFTyPars(env, typars, tt);
+					tt;
+				}
+			}
+		}
+		FUnion(name, tps): FUnion(name, instantiateFTypars2(env, typars, tps));
+		FStruct(name, tps): FStruct(name, instantiateFTypars2(env, typars, tps));
+		FFields(fs, seen, exc): FFields(map(fs, \f : FField -> {
+			FField(f.name, instantiateFTyPars(env, typars, f.type), f.access);
+		}), seen, exc);
+		FArray(a): FArray(instantiateFTyPars(env, typars, a));
+		FRef(r, w): FRef(instantiateFTyPars(env, typars, r), instantiateFTyPars(env, typars, w));
+		FFunction(args, r): FFunction(instantiateFTypars2(env, typars, args), instantiateFTyPars(env, typars, r));
+		FUnnamedUnion(structs): FUnnamedUnion(instantiateFTypars2(env, typars, structs));
+		FBounded(lower, upper): FBounded(instantiateFTyPars(env, typars, lower), instantiateFTyPars(env, typars, upper));
+		FTopBottom(): type;
+	}
+}
+
+instantiateFTypars2(env : FEnv, typars : Tree<string, FType>, types : [FType]) -> [FType] {
+	map(types, \t -> {
+		instantiateFTyPars(env, typars, t)
+	});
+}
+
+
+fcstructname2ftype(env : FEnv, name : string, typars : Tree<string, FType>) -> FType {
+	mstruct = lookupTree(env.env.program.acc.names.structs, name);
+	switch (mstruct) {
+		None(): {
+			fcPrintln("Unknown struct " + name);
+			FFlow();
+		}
+		Some(structdef): {
+			FStruct(
+				name,
+				mapi(structdef.typars, \i, typar -> {
+					switch (typar) {
+						FcTypeParameter(tp, __): {
+							ttp = lookupTree(typars, tp);
+							switch (ttp) {
+								None(): makeFTyvar(env);	// If we don't find it, we make a tyvar
+								Some(tttp): tttp;
+							}
+						}
+						default: {
+							fcPrintln("Expected type parameter");
+							FFlow();
+						}
+					}
+				})
+			);
+		}
+	}
+}
+
+
+getFTypeName(type : FType) -> string {
+	switch (type) {
+		FStruct(lt, ltp): lt;
+		FUnion(n, __): n;
+		default: {
+			"";
+		}
+	}
+}
+
+
+makeFTyvar(env : FEnv) -> FTypeVar {
+	FTypeVar(nextUniqueId(env.tyvarIdGroup));
+}
+
+isFTypeVar(t : FType) -> bool {
+	switch (t) {
+		FTypeVar(__): true;
+		default: false;
+	}
+}
+
+setFTypeVar(env : FEnv, id : int, type : FType) -> FEnv {
+	if (lookupTree(env.tyvars, id) == Some(type)) env
+	else {
+		if (env.verbose >= 3)  {
+			printStay(env.env, "Setting α" + i2s(id) + " to " + ftype2string(env, type));
+		}
+		FEnv(
+			env.env,
+			env.tyvarIdGroup,
+			env.verbose,
+			setTree(env.tyvars, id, type),
+			env.seen,
+			env.tyvarDeps
+		);	
+	}
+}
+
+extractFTypeVars(env : FEnv, type : FType, acc : Set<int>) -> Set<int> {
+	switch (type) {
+		FFlow(): acc;
+		FBasicType(__): acc;
+		FTypeVar(id): {
+			if (containsSet(acc, id)) acc
+			else {
+				acc1 = insertSet(acc, id);
+				switch (lookupTree(env.tyvars, id)) {
+					None(): acc1;
+					Some(o): {
+						extractFTypeVars(env, o, acc1);
+					}
+				}
+			}
+		}
+		FTypePar(id): acc;
+		FUnion(name, tps): extractFTypeVars2(env, tps, acc);
+		FStruct(name, tps): extractFTypeVars2(env, tps, acc);
+		FFields(fs, seen, exc): fold(fs, acc, \acc2, f : FField -> {
+			extractFTypeVars(env, f.type, acc2);
+		});
+		FArray(a): extractFTypeVars(env, a, acc);
+		FRef(r, w): extractFTypeVars(env, w, extractFTypeVars(env, r, acc));
+		FFunction(args, r): extractFTypeVars2(env, args, extractFTypeVars(env, r, acc));
+		FUnnamedUnion(structs): extractFTypeVars2(env, structs, acc);
+		FBounded(lower, upper): extractFTypeVars(env, upper, extractFTypeVars(env, lower, acc));
+		FTopBottom(): acc;
+	}
+}
+
+extractFTypeVars2(env : FEnv, types : [FType], acc : Set<int>) -> Set<int> {
+	fold(types, acc, \acc2, t -> extractFTypeVars(env, t, acc2))
+}
+
+extractFTypePars(env : FEnv, type : FType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FFlow(): acc;
+		FBasicType(__): acc;
+		FTypeVar(id): acc;
+		FTypePar(id): insertSet(acc, id);
+		FUnion(name, tps): extractFTypePars2(env, tps, acc);
+		FStruct(name, tps): extractFTypePars2(env, tps, acc);
+		FFields(fs, seen, exc): fold(fs, acc, \acc2, f : FField -> {
+			extractFTypePars(env, f.type, acc2);
+		});
+		FArray(a): extractFTypePars(env, a, acc);
+		FRef(r, w): extractFTypePars(env, w, extractFTypePars(env, r, acc));
+		FFunction(args, r): extractFTypePars2(env, args, extractFTypePars(env, r, acc));
+		FUnnamedUnion(structs): extractFTypePars2(env, structs, acc);
+		FBounded(lower, upper): extractFTypePars(env, upper, extractFTypePars(env, lower, acc));
+		FTopBottom(): acc;
+	}
+}
+
+extractFTypePars2(env : FEnv, types : [FType], acc : Set<string>) -> Set<string> {
+	fold(types, acc, \acc2, t -> extractFTypePars(env, t, acc2))
+}
+
+
+
+isFDetermined(env : FEnv, type : FType, seen : Set<int>) -> bool {
+	switch (type) {
+		FFields(fields, seenNames, exc): false;
+		FUnnamedUnion(types): false;
+		FUnion(name, typars): {
+			forall(typars, \tp -> isFDetermined(env, tp, seen));
+		}
+		FStruct(name, typars): {
+			forall(typars, \tp -> isFDetermined(env, tp, seen));
+		}
+		FFunction(args, rt): {
+			isFDetermined(env, rt, seen)
+			&& forall(args, \tp -> isFDetermined(env, tp, seen));
+		}
+		FArray(at): {
+			isFDetermined(env, at, seen)
+		}
+		FRef(rt, wt): {
+			isFDetermined(env, rt, seen) && isFDetermined(env, wt, seen)
+		}
+		FFlow(): true;
+		FBasicType(__): true;
+		FTypePar(__): true;
+		FTypeVar(id): {
+			if (containsSet(seen, id)) false
+			else {
+				mt = lookupTree(env.tyvars, id);
+				switch (mt) {
+					None(): false;
+					Some(t): isFDetermined(env, t, insertSet(seen, id))
+				}
+			}
+		}
+		FBounded(lower, upper): false;
+		FTopBottom(): false;
+	 }
+}
+
+resolveFVar(env : FEnv, type : FType, seen : Set<int>, onError : (string) -> void) -> FType {
+	switch (type) {
+		FFields(fields, seenNames, exc): {
+			FFields(
+				map(fields, \f -> {
+					FField(f.name, resolveFVar(env, f.type, seen, onError), f.access)
+				}), seenNames, exc
+			);
+		}
+		FUnnamedUnion(types): {
+			FUnnamedUnion(resolveFVars(env, types, seen, onError));
+		}
+		FUnion(name, typars): {
+			FUnion(name, resolveFVars(env, typars, seen, onError));
+		}
+		FStruct(name, typars): {
+			FStruct(name, resolveFVars(env, typars, seen, onError));
+		}
+		FFunction(args, rt): {
+			FFunction(resolveFVars(env, args, seen, onError), resolveFVar(env, rt, seen, onError));
+		}
+		FArray(at): {
+			FArray(resolveFVar(env, at, seen, onError));
+		}
+		FRef(rt, wt): {
+			FRef(resolveFVar(env, rt, seen, onError), resolveFVar(env, wt, seen, onError));
+		}
+		FFlow(): type;
+		FBasicType(__): type;
+		FTypePar(__): type;
+		FTypeVar(id): {
+			if (containsSet(seen, id)) type
+			else {
+				mt = lookupTree(env.tyvars, id);
+				switch (mt) {
+					None(): type;
+					Some(t): if (t != type) resolveFVar(env, t, insertSet(seen, id), onError) else type;
+				}
+			}
+		}
+		FBounded(lower, upper): {
+			// if (lower == upper) {
+			// 	fcPrintln(ftype2string(env, lower) + " < " + ftype2string(env, lower));
+			// }
+			makeFBounded(env, resolveFVar(env, lower, seen, onError), resolveFVar(env, upper, seen, onError), onError);
+		}
+		FTopBottom(): type;
+	 }
+}
+
+resolveFVars(env : FEnv, types : [FType], seen : Set<int>, onError : (string) -> void) -> [FType] {
+	map(types, \t -> resolveFVar(env, t, seen, onError))
+}
+
+
+makeFBounded(env : FEnv, lower : FType, upper : FType, onError : (string) -> void) -> FType {
+	def = \ -> {
+		switch (upper) {
+			FBasicType(ubt): {
+				if (lower == FTopBottom()) upper else {
+					onError("Expected lower bound " + ftype2string(env, lower) + " to match upper bound " + ftype2string(env, upper));
+					FBounded(lower, upper);
+				}
+			}
+			FFlow(): upper;
+			FTypePar(utp): {
+				if (lower == FTopBottom()) upper else {
+					onError("Expected lower bound " + ftype2string(env, lower) + " to match upper bound " + ftype2string(env, upper));
+					FBounded(lower, upper);
+				}
+			}
+			FFields(ufields, seenNames, exc): {
+				if (lower == FTopBottom()) {
+					// This is already an upper bounds, so we can just keep the field
+					upper
+				} else {
+					FBounded(lower, upper);
+				}
+			}
+			FBounded(ulow, uupp): {
+				// We know lower is not a bound
+				llow = lower;
+				lupp = lower;
+				// { llow .. lupp} .. upper
+
+				low = if (llow == FTopBottom() || llow == ulow) ulow 
+					else if (ulow == FTopBottom()) llow
+					else {
+						fcPrintln("Different lower bounds not supposed to happen!");
+						llow;
+					};
+				high = if (lupp == FTopBottom() || lupp == uupp) uupp
+					else if (uupp == FTopBottom()) lupp
+					else {
+						fcPrintln("Different upper bounds not supposed to happen!");
+						uupp;
+					};
+				makeFBounded(env, low, high, onError);
+			}
+			FTopBottom(): {
+				if (isUniqueLowerBound(env, lower)) {
+					lower
+				} else {
+					FBounded(lower, upper);
+				}
+			}
+			FRef(ur, uw): {
+				if (isBoundable(ur) && isBoundable(uw) && lower == FTopBottom()) {
+					FRef(makeFBounded(env, lower, ur, onError), makeFBounded(env, lower, uw, onError))
+				} else if (lower == FTopBottom() && isUniqueUpperBound(env, upper)) {
+					upper
+				} else {
+					FBounded(lower, upper);
+				}
+			}
+			FArray(ut): {
+				if (isBoundable(ut) && lower == FTopBottom()) {
+					FArray(makeFBounded(env, lower, ut, onError))
+				} else if (lower == FTopBottom() && isUniqueUpperBound(env, upper)) {
+					upper
+				} else {
+					FBounded(lower, upper);
+				}
+			}
+			default: {
+				if (lower == FTopBottom() && isUniqueUpperBound(env, upper)) {
+					upper
+				} else {
+					FBounded(lower, upper);
+				}
+			}
+		}
+	}
+
+	if (lower == upper && lower != FTopBottom()) lower
+	else switch (lower) {
+		FBounded(llow, lupp): {
+			ulow = lowerBound(env, upper);
+			uupp = upperBound(env, upper);
+			// { llow .. lupp} .. upper
+			low = if (llow == FTopBottom() || llow == ulow) ulow 
+				else if (ulow == FTopBottom()) llow
+				else {
+					fcPrintln("Different lower bounds not supposed to happen!");
+					llow;
+				};
+			high = if (lupp == FTopBottom() || lupp == uupp) uupp
+				else if (uupp == FTopBottom()) lupp
+				else {
+					fcPrintln("Different upper bounds not supposed to happen!");
+					uupp;
+				};
+			makeFBounded(env, low, high, onError);
+		}
+		FBasicType(lbt): {
+			switch (upper) {
+				FBasicType(ubt): {
+					onError("Expected lower bound " + ftype2string(env, lower) + " to match upper bound " + ftype2string(env, upper));
+					FBounded(lower, upper);
+				}
+				FFlow(): upper;
+				default: {
+					if (upper == FTopBottom()) lower else {
+						onError("Expected lower bound " + ftype2string(env, lower) + " to match upper bound " + ftype2string(env, upper));
+						FBounded(lower, upper);
+					}
+				}
+			}
+		}
+		FTypePar(ltp): {
+			switch (upper) {
+				FTypePar(utp): {
+					strict = getConfigParameter(env.env.program.acc.config.config, "strict");
+					if (strict == "1") {
+						onError(ltp + " != " + utp);
+					}
+					if (strlen(ltp) < strlen(utp)) lower else upper;
+				}
+				FFlow(): upper;
+				default: {
+					if (upper == FTopBottom()) lower else {
+						onError("Expected lower bound " + ftype2string(env, lower) + " to match upper bound " + ftype2string(env, upper));
+						FBounded(lower, upper);
+					}
+				}
+			}
+		}
+		FFields(ufields, seenNames, exc): {
+			if (upper == FTopBottom()) {
+				// This is already a lower bounds, so we can just keep the field
+				lower
+			} else {
+				FBounded(lower, upper);
+			}
+		}
+		FRef(lr, lw): {
+			if (isBoundable(lr) && isBoundable(lw)) {
+				switch (upper) {
+					FRef(ur, uw): {
+						if (isBoundable(ur) && isBoundable(uw)) {
+							FRef(makeFBounded(env, lr, ur, onError), makeFBounded(env, lw, uw, onError))
+						} else def();
+					}
+					FTopBottom(): {
+						FRef(makeFBounded(env, lr, upper, onError), makeFBounded(env, lw, upper, onError))
+					}
+					default: def();
+				}
+			} else def();
+		}
+		FArray(lt): {
+			if (isBoundable(lt)) {
+				switch (upper) {
+					FArray(ut): {
+						if (isBoundable(ut)) {
+							FArray(makeFBounded(env, lt, ut, onError))
+						} else def();
+					}
+					FTopBottom(): {
+						FArray(makeFBounded(env, lt, upper, onError))
+					}
+					default: def();
+				}
+			} else def();
+		}
+		FFlow(): lower;
+		default: {
+			def();
+		}
+	}
+}
+
+isBoundable(t : FType) -> bool {
+	switch (t) {
+		FStruct(name, typars): true;
+		FUnion(name, typars): true;
+		FUnnamedUnion(__): true;
+		FFields(__, seenNames, exc): true;
+		FTypeVar(tv): false;
+		FTopBottom(): true;
+		FBounded(__, __): false;
+
+		FFlow(): true;
+		FBasicType(__): true;
+		FTypePar(__): true;
+		FArray(at): true;
+		FRef(rt, __): true;
+		FFunction(args, rt): true;
+	}
+}
+
+isUniqueUpperBound(env : FEnv, upper : FType) -> bool {
+	switch (upper) {
+		FStruct(name, typars): {
+			// If the typars are organized, the struct is also a know upper bound
+			forall(typars, \tp -> isUniqueUpperBound(env, tp))
+		}
+		FUnion(name, typars): {
+			// We can just fall back to individual structs, so this is not unique
+			false;
+		}
+		FUnnamedUnion(__): false;
+		FFields(__, seenNames, exc): false;
+		FTypeVar(tv): false;
+		FTopBottom(): false;
+		FBounded(__, __): false;
+
+		FFlow(): true;
+		FBasicType(__): true;
+		FTypePar(__): true;
+		FArray(at): isUniqueUpperBound(env, at);
+		FRef(rt, __): isUniqueUpperBound(env, rt) && isUniqueLowerBound(env, rt); // These go both ways, so it is tricky.
+		FFunction(args, rt): {
+			isUniqueUpperBound(env, rt)
+			&& forall(args, \a -> isUniqueUpperBound(env, a) && isUniqueLowerBound(env, a))
+		}
+	}
+}
+
+
+isUniqueLowerBound(env : FEnv, lower : FType) -> bool {
+	switch (lower) {
+		FStruct(name, typars): {
+			unions = getTreeArrayValue(env.env.program.acc.names.struct2unions, name);
+			if (unions == []) {
+				// This struct is not in any unions, so we can resolve it immediately
+				// if the typars are also done
+				forall(typars, \tp -> isUniqueLowerBound(env, tp))
+			} else {
+				false
+			}
+		}
+		FUnion(name, typars): false; // It can always be reduced to individual structs
+		FUnnamedUnion(__): false;
+		FFields(__, seenNames, exc): false;
+		FTypeVar(tv): false;
+		FTopBottom(): false;
+		FBounded(__, __): false;
+
+		FFlow(): true;
+		FBasicType(__): true;
+		FTypePar(__): true;
+		FArray(at): isUniqueLowerBound(env, at);
+		FRef(rt, __): isUniqueUpperBound(env, rt) && isUniqueLowerBound(env, rt); // These go both ways, so it is tricky
+		FFunction(args, rt): {
+			isUniqueLowerBound(env, rt)
+			&& forall(args, \a -> isUniqueUpperBound(env, a) && isUniqueLowerBound(env, a))
+		}
+	}
+}
+
+upperBound(f : FEnv, type : FType) -> FType {
+	switch (type) {
+		FBounded(lower, upper): upper;
+		default: type;
+	}
+}
+
+lowerBound(f : FEnv, type : FType) -> FType {
+	switch (type) {
+		FBounded(lower, upper): lower;
+		default: type;
+	}
+}
+
+makeFUnnamedUnion(types : [FType]) -> FType {
+	if (length(types) == 1) types[0]
+	else {
+		sorted = fold(types, makeSet(), \acc, type -> {
+			switch (type) {
+				FUnnamedUnion(nt): fold(nt, acc, insertSet);
+				default: insertSet(acc, type);
+			}
+		});
+		FUnnamedUnion(set2array(sorted));
+	}
+}
+
+fkind2string(k : FUnification) -> string {
+	switch (k) {
+		FUnifyLeft(): "  c=  ";
+		FUnifyRight(): "  c= . ";
+		FGrowRight(): "  grow right  ";
+		FReduceLeft(): "  reduce left  ";
+	}
+}
+

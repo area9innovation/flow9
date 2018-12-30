@@ -1,0 +1,670 @@
+import binarytreeutils;
+import bits;
+import formats/csv;
+import formats/json/json;
+import formats/base64;
+import serialize;
+
+// See http://en.wikipedia.org/wiki/Internet_media_type
+export {
+	// Given a value in a given MIME type, give a useful flow struct value
+	mimeString2value(mimeType : string, value : string) -> MimeValue;
+	// What is the mime-type string for this value?
+	mimeValue2mimeType(value : MimeValue) -> string;
+	// Convert a value back to a string representation
+	mimeValue2string(value : MimeValue) -> string;
+
+	MimeValue ::= MimeTextPlain, MimeTextHtml, MimeTextCsv, MimeApplicationJson, MimeTextFlow, MimeImageGif, MimeMessageRfc822;
+		MimeTextPlain(text : string);
+		MimeTextHtml(text : string);
+		MimeTextCsv(cells : [[string]]);
+		MimeApplicationJson(json : Json);
+		MimeTextFlow(v : flow);
+		// The image in a string, encoded as lower bytes of the string
+		MimeImageGif(bytes : string);
+		MimeMessageRfc822(values : [MimeValue]);
+
+	extension2mimeString(ext : string) -> string;
+}
+
+// A handler to convert to and from a value in a given MIME format
+MimeTypeApi : (name : string, defValue : MimeValue, toStruct : (string) -> MimeValue, fromStruct : (MimeValue) -> string);
+
+
+mimeHandlers : ref Tree<string, MimeTypeApi> = ref makeTree();
+mimeValue2Handler : ref Tree<string, MimeTypeApi> = ref makeTree();
+
+registerMimeTypeApi(s : MimeTypeApi) -> bool;
+
+registerMimeTypeApi(api : MimeTypeApi) -> bool {
+	mimeHandlers := setTree(^mimeHandlers, api.name, api);
+	mimeValue2Handler := setTree(^mimeValue2Handler, api.defValue.structname, api);
+	true;
+}
+
+mimeTextPlainApi = MimeTypeApi("text/plain", MimeTextPlain(""), \s -> MimeTextPlain(s), \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeTextPlain(t): t;
+		default: "";
+	}
+});
+
+mimeTextPlain = registerMimeTypeApi(mimeTextPlainApi);
+
+mimeTextHtmlApi = registerMimeTypeApi(MimeTypeApi("text/html", MimeTextHtml(""), \s -> MimeTextHtml(s), \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeTextHtml(t): t;
+		default: "";
+	}
+}));
+
+// Our parser is arguably too nice here, since it supports ; and other delimiters. RFC 4180 is more strict
+mimeTextCsvApi = registerMimeTypeApi(MimeTypeApi("text/csv", MimeTextCsv([]), \s -> MimeTextCsv(parseCsvFile(s, false)), \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeTextCsv(rows): {
+			fold(rows, "", \acc, r -> {
+				acc + strGlue(map(r, \c -> {
+					if (strIndexOf(c, ",") != -1) {
+						"\"" + strReplace(c, "\"", "\"\"") + "\""
+					} else c
+				}), ",") + "\n";
+			});
+		}
+		default: "";
+	}
+}));
+
+mimeApplicationJsonApi = registerMimeTypeApi(MimeTypeApi("application/json", MimeApplicationJson(JsonNull()), \s -> {
+		MimeApplicationJson(parseJson(s))
+	}, \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeApplicationJson(j): json2string(j);
+		default: "";
+	}
+}));
+
+mimeTextFlowApi = registerMimeTypeApi(MimeTypeApi("text/vnd.flow", MimeTextFlow(IllegalStruct()), \s -> {
+		MimeTextFlow(deserialize(s, s))
+	}, \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeTextFlow(v): serialize(v);
+		default: "";
+	}
+}));
+
+mimeImageGifApi = registerMimeTypeApi(MimeTypeApi("image/gif", MimeImageGif(""), \s -> {
+		MimeImageGif(s)
+	}, \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeImageGif(v): {
+			v;
+		}
+		default: "";
+	}
+}));
+
+
+// -----
+
+mimeMessageRfc822Api = registerMimeTypeApi(MimeTypeApi("message/rfc822", MimeMessageRfc822([]), \s -> {
+		MimeMessageRfc822(parseMime(s));
+	}, \m : MimeValue -> {
+	switch (m : MimeValue) {
+		MimeMessageRfc822(v): {
+			println("Not supported yet: Encoding in RFC822");
+			toString(v);
+		}
+		default: "";
+	}
+}));
+
+
+MimeHeader(contentType : string, documentType : string, contentEncoding : string, value : string);
+
+parseMime(file : string) -> [MimeValue] {
+	[if (strIndexOf(file, "MIME-Version:") != -1) {
+		head = parseMimeHeader(file, MimeHeader("", "", "", file));
+		encoding = toLowerCase(head.contentEncoding);
+		if (encoding == "quoted-printable") {
+			decoded = doDecodeQuotedPrintable(head.value, 0, strlen(head.value), "");
+			mimeString2value(head.contentType, decoded);
+		} else if (encoding == "base64") {
+			decoded = decodeBase64(head.value);
+			mimeString2value(head.contentType, decoded);
+		} else if (head.contentEncoding != "") {
+			println("Unsupported content encoding: '" + head.contentEncoding + "'");
+			mimeString2value(head.contentType, head.value);
+		} else {
+			mimeString2value(head.contentType, head.value);
+		}
+	} else {
+		mimeString2value("text/plain", file);
+	}]
+}
+
+parseMimeHeader(file : string, acc : MimeHeader) -> MimeHeader {
+	linepos = strIndexOf(file, "\n");
+	if (linepos == -1) {
+		acc;
+	} else {
+		line = strReplace(strLeft(file, linepos), "\u000d", "");
+		rest = strRight(file, linepos + 1);
+		if (line == "") {
+			// Empty line separates the header from the content
+			MimeHeader(acc.contentType, acc.documentType, acc.contentEncoding, rest);
+		} else if (startsWith(line, "X-Document-Type:")) {
+			docType = trim(strRight(line, strlen("X-Document-Type:")));
+			parseMimeHeader(rest, MimeHeader(acc.contentType, docType, acc.contentEncoding, rest));
+		} else if (startsWith(line, "Content-Transfer-Encoding:")) {
+			encoding = trim(strRight(line, strlen("Content-Transfer-Encoding:")));
+			parseMimeHeader(rest, MimeHeader(acc.contentType, acc.documentType, encoding, rest));
+		} else if (startsWith(line, "Content-Type:")) {
+			type = trim(strRight(line, strlen("Content-Type:")));
+			fields = strSplit(type, ";");
+			mimeType = fields[0];
+			parseMimeHeader(rest, MimeHeader(mimeType, acc.documentType, acc.contentEncoding, rest));
+		} else {
+			// Any other field is just ignored
+			parseMimeHeader(rest, MimeHeader(acc.contentType, acc.documentType, acc.contentEncoding, rest));
+		};
+	}
+}
+
+doDecodeQuotedPrintable(s : string, i : int, n : int, acc : string) -> string {
+	if (i < n) {
+		c = getCharAt(s, i);
+		if (c == "=") {
+			c1 = getCharAt(s, i + 1);
+			c2 = getCharAt(s, i + 2);
+			if (c1 == "\u000d" && c2 == "\n") {
+				doDecodeQuotedPrintable(s, i + 3, n, acc);
+			} else {
+				ch = parseHex(c1 + c2);
+				doDecodeQuotedPrintable(s, i + 3, n, acc + fromCharCode(ch));
+			}
+		}	else {
+			doDecodeQuotedPrintable(s, i + 1, n, acc + c);
+		}
+	} else {
+		acc
+	}
+}
+
+
+// -----
+
+mimeString2value(mimeType : string, value : string) -> MimeValue {
+	api = lookupTree(^mimeHandlers, mimeType);
+	if (mimeType != "" && api == None()) {
+		println("Unknown MIME type: " + mimeType);
+	}
+	api2 = either(api, mimeTextPlainApi);
+	api2.toStruct(value)
+}
+
+mimeValue2mimeType(value : MimeValue) -> string {
+	lookupTreeDef(^mimeValue2Handler, value.structname, mimeTextPlainApi).name;
+}
+
+mimeValue2string(value : MimeValue) -> string {
+	mimeType = lookupTreeDef(^mimeValue2Handler, value.structname, mimeTextPlainApi);
+	mimeType.fromStruct(value)
+}
+
+extMimeTree : ref Maybe<Tree<string, string>> = ref None();
+
+extension2mimeString(ext : string) -> string {
+	extMimes = onlyOnce(extMimeTree, \ -> { pairs2tree([
+		Pair(".3dm", "x-world/x-3dmf"),
+		Pair(".3dmf", "x-world/x-3dmf"),
+		Pair(".a", "application/octet-stream"),
+		Pair(".aab", "application/x-authorware-bin"),
+		Pair(".aam", "application/x-authorware-map"),
+		Pair(".aas", "application/x-authorware-seg"),
+		Pair(".abc", "text/vnd.abc"),
+		Pair(".acgi", "text/html"),
+		Pair(".afl", "video/animaflex"),
+		Pair(".ai", "application/postscript"),
+		Pair(".aif", "audio/aiff"),
+		Pair(".aifc", "audio/aiff"),
+		Pair(".aiff", "audio/aiff"),
+		Pair(".aim", "application/x-aim"),
+		Pair(".aip", "text/x-audiosoft-intra"),
+		Pair(".ani", "application/x-navi-animation"),
+		Pair(".aos", "application/x-nokia-9000-communicator-add-on-software"),
+		Pair(".aps", "application/mime"),
+		Pair(".arc", "application/octet-stream"),
+		Pair(".arj", "application/arj"),
+		Pair(".art", "image/x-jg"),
+		Pair(".asf", "video/x-ms-asf"),
+		Pair(".asm", "text/x-asm"),
+		Pair(".asp", "text/asp"),
+		Pair(".asx", "video/x-ms-asf"),
+		Pair(".au", "audio/basic"),
+		Pair(".avi", "video/avi"),
+		Pair(".avs", "video/avs-video"),
+		Pair(".bcpio", "application/x-bcpio"),
+		Pair(".bin", "application/octet-stream"),
+		Pair(".bm", "image/bmp"),
+		Pair(".bmp", "image/bmp"),
+		Pair(".boo", "application/book"),
+		Pair(".book", "application/book"),
+		Pair(".boz", "application/x-bzip2"),
+		Pair(".bsh", "application/x-bsh"),
+		Pair(".bz", "application/x-bzip"),
+		Pair(".bz2", "application/x-bzip2"),
+		Pair(".c", "text/plain"),
+		Pair(".c++", "text/plain"),
+		Pair(".cat", "application/vnd.ms-pki.seccat"),
+		Pair(".cc", "text/plain"),
+		Pair(".ccad", "application/clariscad"),
+		Pair(".cco", "application/x-cocoa"),
+		Pair(".cdf", "application/cdf"),
+		Pair(".cer", "application/pkix-cert"),
+		Pair(".cha", "application/x-chat"),
+		Pair(".chat", "application/x-chat"),
+		Pair(".class", "application/java"),
+		Pair(".com", "text/plain"),
+		Pair(".conf", "text/plain"),
+		Pair(".cpio", "application/x-cpio"),
+		Pair(".cpp", "text/x-c"),
+		Pair(".cpt", "application/mac-compactpro"),
+		Pair(".crl", "application/pkcs-crl"),
+		Pair(".crt", "application/pkix-cert"),
+		Pair(".csh", "application/x-csh"),
+		Pair(".css", "text/css"),
+		Pair(".cxx", "text/plain"),
+		Pair(".dcr", "application/x-director"),
+		Pair(".deepv", "application/x-deepv"),
+		Pair(".def", "text/plain"),
+		Pair(".der", "application/x-x509-ca-cert"),
+		Pair(".dif", "video/x-dv"),
+		Pair(".dir", "application/x-director"),
+		Pair(".dl", "video/dl"),
+		Pair(".doc", "application/msword"),
+		Pair(".dot", "application/msword"),
+		Pair(".dp", "application/commonground"),
+		Pair(".drw", "application/drafting"),
+		Pair(".dump", "application/octet-stream"),
+		Pair(".dv", "video/x-dv"),
+		Pair(".dvi", "application/x-dvi"),
+		Pair(".dwf", "model/vnd.dwf"),
+		Pair(".dwg", "image/vnd.dwg"),
+		Pair(".dxf", "image/vnd.dwg"),
+		Pair(".dxr", "application/x-director"),
+		Pair(".el", "text/x-script.elisp"),
+		Pair(".elc", "application/x-elc"),
+		Pair(".env", "application/x-envoy"),
+		Pair(".eps", "application/postscript"),
+		Pair(".es", "application/x-esrehber"),
+		Pair(".etx", "text/x-setext"),
+		Pair(".evy", "application/envoy"),
+		Pair(".exe", "application/octet-stream"),
+		Pair(".f", "text/plain"),
+		Pair(".f77", "text/x-fortran"),
+		Pair(".f90", "text/plain"),
+		Pair(".fdf", "application/vnd.fdf"),
+		Pair(".fif", "image/fif"),
+		Pair(".fli", "video/fli"),
+		Pair(".flo", "image/florian"),
+		Pair(".flx", "text/vnd.fmi.flexstor"),
+		Pair(".fmf", "video/x-atomic3d-feature"),
+		Pair(".for", "text/plain"),
+		Pair(".fpx", "image/vnd.fpx"),
+		Pair(".frl", "application/freeloader"),
+		Pair(".funk", "audio/make"),
+		Pair(".g", "text/plain"),
+		Pair(".g3", "image/g3fax"),
+		Pair(".gif", "image/gif"),
+		Pair(".gl", "video/gl"),
+		Pair(".gsd", "audio/x-gsm"),
+		Pair(".gsm", "audio/x-gsm"),
+		Pair(".gsp", "application/x-gsp"),
+		Pair(".gss", "application/x-gss"),
+		Pair(".gtar", "application/x-gtar"),
+		Pair(".gz", "application/x-gzip"),
+		Pair(".gzip", "application/x-gzip"),
+		Pair(".h", "text/plain"),
+		Pair(".hdf", "application/x-hdf"),
+		Pair(".help", "application/x-helpfile"),
+		Pair(".hgl", "application/vnd.hp-hpgl"),
+		Pair(".hh", "text/plain"),
+		Pair(".hlb", "text/x-script"),
+		Pair(".hlp", "application/hlp"),
+		Pair(".hpg", "application/vnd.hp-hpgl"),
+		Pair(".hpgl", "application/vnd.hp-hpgl"),
+		Pair(".hqx", "application/binhex"),
+		Pair(".hta", "application/hta"),
+		Pair(".htc", "text/x-component"),
+		Pair(".htm", "text/html"),
+		Pair(".html", "text/html"),
+		Pair(".htmls", "text/html"),
+		Pair(".htt", "text/webviewhtml"),
+		Pair(".htx", "text/html"),
+		Pair(".ice", "x-conference/x-cooltalk"),
+		Pair(".ico", "image/x-icon"),
+		Pair(".idc", "text/plain"),
+		Pair(".ief", "image/ief"),
+		Pair(".iefs", "image/ief"),
+		Pair(".iges", "application/iges"),
+		Pair(".igs", "application/iges"),
+		Pair(".ima", "application/x-ima"),
+		Pair(".imap", "application/x-httpd-imap"),
+		Pair(".inf", "application/inf"),
+		Pair(".ins", "application/x-internett-signup"),
+		Pair(".ip", "application/x-ip2"),
+		Pair(".isu", "video/x-isvideo"),
+		Pair(".it", "audio/it"),
+		Pair(".iv", "application/x-inventor"),
+		Pair(".ivr", "i-world/i-vrml"),
+		Pair(".ivy", "application/x-livescreen"),
+		Pair(".jam", "audio/x-jam"),
+		Pair(".jav", "text/plain"),
+		Pair(".java", "text/plain"),
+		Pair(".jcm", "application/x-java-commerce"),
+		Pair(".jfif", "image/jpeg"),
+		Pair(".jfif-tbnl", "image/jpeg"),
+		Pair(".jpe", "image/jpeg"),
+		Pair(".jpeg", "image/jpeg"),
+		Pair(".jpg", "image/jpeg"),
+		Pair(".jps", "image/x-jps"),
+		Pair(".js", "text/javascript"),
+		Pair(".jut", "image/jutvision"),
+		Pair(".kar", "audio/midi"),
+		Pair(".ksh", "application/x-ksh"),
+		Pair(".la", "audio/nspaudio"),
+		Pair(".lam", "audio/x-liveaudio"),
+		Pair(".latex", "application/x-latex"),
+		Pair(".lha", "application/lha"),
+		Pair(".lhx", "application/octet-stream"),
+		Pair(".list", "text/plain"),
+		Pair(".lma", "audio/nspaudio"),
+		Pair(".log", "text/plain"),
+		Pair(".lsp", "application/x-lisp"),
+		Pair(".lst", "text/plain"),
+		Pair(".lsx", "text/x-la-asf"),
+		Pair(".ltx", "application/x-latex"),
+		Pair(".lzh", "application/octet-stream"),
+		Pair(".lzx", "application/lzx"),
+		Pair(".m", "text/plain"),
+		Pair(".m1v", "video/mpeg"),
+		Pair(".m2a", "audio/mpeg"),
+		Pair(".m2v", "video/mpeg"),
+		Pair(".m3u", "audio/x-mpequrl"),
+		Pair(".man", "application/x-troff-man"),
+		Pair(".map", "application/x-navimap"),
+		Pair(".mar", "text/plain"),
+		Pair(".mbd", "application/mbedlet"),
+		Pair(".mc$", "application/x-magic-cap-package-1.0"),
+		Pair(".mcd", "application/mcad"),
+		Pair(".mcf", "text/mcf"),
+		Pair(".mcp", "application/netmc"),
+		Pair(".me", "application/x-troff-me"),
+		Pair(".mht", "message/rfc822"),
+		Pair(".mhtml", "message/rfc822"),
+		Pair(".mid", "audio/midi"),
+		Pair(".midi", "audio/midi"),
+		Pair(".mif", "application/x-mif"),
+		Pair(".mime", "www/mime"),
+		Pair(".mjf", "audio/x-vnd.audioexplosion.mjuicemediafile"),
+		Pair(".mjpg", "video/x-motion-jpeg"),
+		Pair(".mm", "application/base64"),
+		Pair(".mme", "application/base64"),
+		Pair(".mod", "audio/mod"),
+		Pair(".moov", "video/quicktime"),
+		Pair(".mov", "video/quicktime"),
+		Pair(".movie", "video/x-sgi-movie"),
+		Pair(".mp2", "audio/mpeg"),
+		Pair(".mp3", "audio/mpeg3"),
+		Pair(".mp4", "video/mp4"),
+		Pair(".mpa", "audio/mpeg"),
+		Pair(".mpc", "application/x-project"),
+		Pair(".mpe", "video/mpeg"),
+		Pair(".mpeg", "video/mpeg"),
+		Pair(".mpg", "audio/mpeg"),
+		Pair(".mpga", "audio/mpeg"),
+		Pair(".mpp", "application/vnd.ms-project"),
+		Pair(".mpt", "application/x-project"),
+		Pair(".mpv", "application/x-project"),
+		Pair(".mpx", "application/x-project"),
+		Pair(".mrc", "application/marc"),
+		Pair(".ms", "application/x-troff-ms"),
+		Pair(".mv", "video/x-sgi-movie"),
+		Pair(".my", "audio/make"),
+		Pair(".mzz", "application/x-vnd.audioexplosion.mzz"),
+		Pair(".nap", "image/naplps"),
+		Pair(".naplps", "image/naplps"),
+		Pair(".nc", "application/x-netcdf"),
+		Pair(".ncm", "application/vnd.nokia.configuration-message"),
+		Pair(".ncx", "application/x-dtbncx+xml"),
+		Pair(".nif", "image/x-niff"),
+		Pair(".niff", "image/x-niff"),
+		Pair(".nix", "application/x-mix-transfer"),
+		Pair(".nsc", "application/x-conference"),
+		Pair(".nvd", "application/x-navidoc"),
+		Pair(".o", "application/octet-stream"),
+		Pair(".oda", "application/oda"),
+		Pair(".omc", "application/x-omc"),
+		Pair(".omcd", "application/x-omcdatamaker"),
+		Pair(".omcr", "application/x-omcregerator"),
+		Pair(".p", "text/x-pascal"),
+		Pair(".p10", "application/pkcs10"),
+		Pair(".p12", "application/pkcs-12"),
+		Pair(".p7a", "application/x-pkcs7-signature"),
+		Pair(".p7c", "application/pkcs7-mime"),
+		Pair(".p7m", "application/pkcs7-mime"),
+		Pair(".p7r", "application/x-pkcs7-certreqresp"),
+		Pair(".p7s", "application/pkcs7-signature"),
+		Pair(".part", "application/pro_eng"),
+		Pair(".pas", "text/pascal"),
+		Pair(".pbm", "image/x-portable-bitmap"),
+		Pair(".pcl", "application/x-pcl"),
+		Pair(".pct", "image/x-pict"),
+		Pair(".pcx", "image/x-pcx"),
+		Pair(".pdb", "chemical/x-pdb"),
+		Pair(".pdf", "application/pdf"),
+		Pair(".pfunk", "audio/make"),
+		Pair(".pgm", "image/x-portable-graymap"),
+		Pair(".pic", "image/pict"),
+		Pair(".pict", "image/pict"),
+		Pair(".pkg", "application/x-newton-compatible-pkg"),
+		Pair(".pko", "application/vnd.ms-pki.pko"),
+		Pair(".pl", "text/plain"),
+		Pair(".plx", "application/x-pixclscript"),
+		Pair(".pm", "image/x-xpixmap"),
+		Pair(".pm4", "application/x-pagemaker"),
+		Pair(".pm5", "application/x-pagemaker"),
+		Pair(".png", "image/png"),
+		Pair(".pnm", "image/x-portable-anymap"),
+		Pair(".pot", "application/mspowerpoint"),
+		Pair(".pov", "model/x-pov"),
+		Pair(".ppa", "application/vnd.ms-powerpoint"),
+		Pair(".ppm", "image/x-portable-pixmap"),
+		Pair(".pps", "application/mspowerpoint"),
+		Pair(".ppt", "application/powerpoint"),
+		Pair(".ppz", "application/mspowerpoint"),
+		Pair(".pre", "application/x-freelance"),
+		Pair(".prt", "application/pro_eng"),
+		Pair(".ps", "application/postscript"),
+		Pair(".psd", "application/octet-stream"),
+		Pair(".pvu", "paleovu/x-pv"),
+		Pair(".pwz", "application/vnd.ms-powerpoint"),
+		Pair(".py", "text/x-script.phyton"),
+		Pair(".pyc", "application/x-bytecode.python"),
+		Pair(".qcp", "audio/vnd.qcelp"),
+		Pair(".qd3", "x-world/x-3dmf"),
+		Pair(".qd3d", "x-world/x-3dmf"),
+		Pair(".qif", "image/x-quicktime"),
+		Pair(".qt", "video/quicktime"),
+		Pair(".qtc", "video/x-qtc"),
+		Pair(".qti", "image/x-quicktime"),
+		Pair(".qtif", "image/x-quicktime"),
+		Pair(".ra", "audio/x-realaudio"),
+		Pair(".ram", "audio/x-pn-realaudio"),
+		Pair(".ras", "image/cmu-raster"),
+		Pair(".rast", "image/cmu-raster"),
+		Pair(".rexx", "text/x-script.rexx"),
+		Pair(".rf", "image/vnd.rn-realflash"),
+		Pair(".rgb", "image/x-rgb"),
+		Pair(".rm", "application/vnd.rn-realmedia"),
+		Pair(".rmi", "audio/mid"),
+		Pair(".rmm", "audio/x-pn-realaudio"),
+		Pair(".rmp", "audio/x-pn-realaudio"),
+		Pair(".rng", "application/ringing-tones"),
+		Pair(".rnx", "application/vnd.rn-realplayer"),
+		Pair(".roff", "application/x-troff"),
+		Pair(".rp", "image/vnd.rn-realpix"),
+		Pair(".rpm", "audio/x-pn-realaudio-plugin"),
+		Pair(".rt", "text/richtext"),
+		Pair(".rtf", "application/rtf"),
+		Pair(".rtx", "text/richtext"),
+		Pair(".rv", "video/vnd.rn-realvideo"),
+		Pair(".s", "text/x-asm"),
+		Pair(".s3m", "audio/s3m"),
+		Pair(".saveme", "application/octet-stream"),
+		Pair(".sbk", "application/x-tbook"),
+		Pair(".scm", "video/x-scm"),
+		Pair(".sdml", "text/plain"),
+		Pair(".sdp", "application/sdp"),
+		Pair(".sdr", "application/sounder"),
+		Pair(".sea", "application/sea"),
+		Pair(".set", "application/set"),
+		Pair(".sgm", "text/sgml"),
+		Pair(".sgml", "text/sgml"),
+		Pair(".sh", "text/x-script.sh"),
+		Pair(".shar", "application/x-shar"),
+		Pair(".shtml", "text/html"),
+		Pair(".sid", "audio/x-psid"),
+		Pair(".sit", "application/x-sit"),
+		Pair(".skd", "application/x-koan"),
+		Pair(".skm", "application/x-koan"),
+		Pair(".skp", "application/x-koan"),
+		Pair(".skt", "application/x-koan"),
+		Pair(".sl", "application/x-seelogo"),
+		Pair(".smi", "application/smil"),
+		Pair(".smil", "application/smil"),
+		Pair(".snd", "audio/basic"),
+		Pair(".sol", "application/solids"),
+		Pair(".spc", "text/x-speech"),
+		Pair(".spl", "application/futuresplash"),
+		Pair(".spr", "application/x-sprite"),
+		Pair(".sprite", "application/x-sprite"),
+		Pair(".src", "application/x-wais-source"),
+		Pair(".ssi", "text/x-server-parsed-html"),
+		Pair(".ssm", "application/streamingmedia"),
+		Pair(".sst", "application/vnd.ms-pki.certstore"),
+		Pair(".step", "application/step"),
+		Pair(".stl", "application/sla"),
+		Pair(".stp", "application/step"),
+		Pair(".sv4cpio", "application/x-sv4cpio"),
+		Pair(".sv4crc", "application/x-sv4crc"),
+		Pair(".svf", "image/vnd.dwg"),
+		Pair(".svr", "application/x-world"),
+		Pair(".swf", "application/x-shockwave-flash"),
+		Pair(".t", "application/x-troff"),
+		Pair(".talk", "text/x-speech"),
+		Pair(".tar", "application/x-tar"),
+		Pair(".tbk", "application/toolbook"),
+		Pair(".tcl", "application/x-tcl"),
+		Pair(".tcsh", "text/x-script.tcsh"),
+		Pair(".tex", "application/x-tex"),
+		Pair(".texi", "application/x-texinfo"),
+		Pair(".texinfo", "application/x-texinfo"),
+		Pair(".text", "text/plain"),
+		Pair(".tgz", "application/gnutar"),
+		Pair(".tif", "image/tiff"),
+		Pair(".tiff", "image/tiff"),
+		Pair(".tr", "application/x-troff"),
+		Pair(".tsi", "audio/tsp-audio"),
+		Pair(".tsp", "audio/tsplayer"),
+		Pair(".tsv", "text/tab-separated-values"),
+		Pair(".turbot", "image/florian"),
+		Pair(".txt", "text/plain"),
+		Pair(".uil", "text/x-uil"),
+		Pair(".uni", "text/uri-list"),
+		Pair(".unis", "text/uri-list"),
+		Pair(".unv", "application/i-deas"),
+		Pair(".uri", "text/uri-list"),
+		Pair(".uris", "text/uri-list"),
+		Pair(".ustar", "multipart/x-ustar"),
+		Pair(".uu", "application/octet-stream"),
+		Pair(".uue", "text/x-uuencode"),
+		Pair(".vcd", "application/x-cdlink"),
+		Pair(".vcs", "text/x-vcalendar"),
+		Pair(".vda", "application/vda"),
+		Pair(".vdo", "video/vdo"),
+		Pair(".vew", "application/groupwise"),
+		Pair(".viv", "video/vivo"),
+		Pair(".vivo", "video/vivo"),
+		Pair(".vmd", "application/vocaltec-media-desc"),
+		Pair(".vmf", "application/vocaltec-media-file"),
+		Pair(".voc", "audio/voc"),
+		Pair(".vos", "video/vosaic"),
+		Pair(".vox", "audio/voxware"),
+		Pair(".vqe", "audio/x-twinvq-plugin"),
+		Pair(".vqf", "audio/x-twinvq"),
+		Pair(".vql", "audio/x-twinvq-plugin"),
+		Pair(".vrml", "model/vrml"),
+		Pair(".vrt", "x-world/x-vrt"),
+		Pair(".vsd", "application/x-visio"),
+		Pair(".vst", "application/x-visio"),
+		Pair(".vsw", "application/x-visio"),
+		Pair(".w60", "application/wordperfect6.0"),
+		Pair(".w61", "application/wordperfect6.1"),
+		Pair(".w6w", "application/msword"),
+		Pair(".wav", "audio/wav"),
+		Pair(".wb1", "application/x-qpro"),
+		Pair(".wbmp", "image/vnd.wap.wbmp"),
+		Pair(".web", "application/vnd.xara"),
+		Pair(".wiz", "application/msword"),
+		Pair(".wk1", "application/x-123"),
+		Pair(".wmf", "windows/metafile"),
+		Pair(".wml", "text/vnd.wap.wml"),
+		Pair(".wmlc", "application/vnd.wap.wmlc"),
+		Pair(".wmls", "text/vnd.wap.wmlscript"),
+		Pair(".wmlsc", "application/vnd.wap.wmlscriptc"),
+		Pair(".word", "application/msword"),
+		Pair(".wp", "application/wordperfect"),
+		Pair(".wp5", "application/wordperfect"),
+		Pair(".wp6", "application/wordperfect"),
+		Pair(".wpd", "application/wordperfect"),
+		Pair(".wq1", "application/x-lotus"),
+		Pair(".wri", "application/mswrite"),
+		Pair(".wrl", "model/vrml"),
+		Pair(".wrz", "model/vrml"),
+		Pair(".wsc", "text/scriplet"),
+		Pair(".wsrc", "application/x-wais-source"),
+		Pair(".wtk", "application/x-wintalk"),
+		Pair(".xbm", "image/xbm"),
+		Pair(".xdr", "video/x-amt-demorun"),
+		Pair(".xgz", "xgl/drawing"),
+		Pair(".xif", "image/vnd.xiff"),
+		Pair(".xhtml", "application/xhtml+xml"),
+		Pair(".xl", "application/excel"),
+		Pair(".xla", "application/excel"),
+		Pair(".xlb", "application/excel"),
+		Pair(".xlc", "application/excel"),
+		Pair(".xld", "application/excel"),
+		Pair(".xlk", "application/excel"),
+		Pair(".xll", "application/excel"),
+		Pair(".xlm", "application/excel"),
+		Pair(".xls", "application/excel"),
+		Pair(".xlt", "application/excel"),
+		Pair(".xlv", "application/excel"),
+		Pair(".xlw", "application/excel"),
+		Pair(".xm", "audio/xm"),
+		Pair(".xml", "text/xml"),
+		Pair(".xmz", "xgl/movie"),
+		Pair(".xpix", "application/x-vnd.ls-xpix"),
+		Pair(".xpm", "image/xpm"),
+		Pair(".x-png", "image/png"),
+		Pair(".xsr", "video/x-amt-showrun"),
+		Pair(".xwd", "image/x-xwd"),
+		Pair(".xyz", "chemical/x-pdb"),
+		Pair(".z", "application/x-compress"),
+		Pair(".zip", "application/zip"),
+		Pair(".zoo", "application/octet-stream"),
+		Pair(".zsh", "text/x-script.zsh"),
+	])});
+	lookupTreeDef(extMimes, ext, "")
+}

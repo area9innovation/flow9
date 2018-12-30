@@ -1,0 +1,258 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/bytecode/fi2bytecode_defines;
+import tools/flowc/backends/bytecode/fi2bytecode_bytecode;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import lingo/flow/bytecode;
+
+export {
+	fiBcResolveName(ctx : FiBcScopeContext, name : string) -> FiBcNameResolution;
+	fiBcPushLocal(ctx : FiBcScopeContext, name : string) -> Pair<FiBcScopeContext, int>;
+	fiBcCollectBcStructs(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, program : FiProgram, extStructTypes : bool, pc : ref int) -> FiBcStructs;
+	fiMakeLineBytecode(place : string, cfg : FcBytecodeConfig, sctx : FiBcScopeContext, start : int, code : [BytecodeOrChunks], pc : int)  -> BytecodeChunks;
+	fiBcGetGlobals(decls : [Pair<string, [FiDeclaration]>]) -> Tree<string, int>;
+	fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : string) -> void;
+	fiBcDebugAddFunction(cfg : FcBytecodeConfig, pc : int, name : string) -> void;
+	fiBcDebugAddLocal(cfg : FcBytecodeConfig, pc : int, type : int, id : int, name : string) -> void;
+
+	fiBcString2Hex(s : string) -> string;
+	fiMaxPosition(e : FiExp) -> int;
+}
+
+fiBcResolveGlobalName(ctx, name) {
+	switch (lookupTree(ctx.globals, name) : Maybe<int>) {
+		Some(v): Some(FiBcGlobal(v));
+		None(): maybeMap(lookupTree(ctx.structs, name), \v : FiBcNameResolution->v);
+	}
+}
+
+fiBcResolveName(ctx, name) {
+	// Local variable?
+	switch (lookupTree(ctx.locals, name) : Maybe<int>) {
+		Some(v): FiBcLocal(v);
+		None(): {
+			// Closure variable?
+			func = ctx.func;
+			switch (lookupTree(func.upvals, name) : Maybe<int>) {
+				Some(v): FiBcClosure(v);
+				None(): {
+					// Unshadowed global object?
+					topvar =
+						if (containsSet(func.shadowed, name))
+							None()
+						else
+							fiBcResolveGlobalName(func.toplevel, name);
+					switch (topvar : Maybe<FiBcNameResolution>) {
+						Some(r): r;
+						None(): {
+							// Free variable - register new closure var
+							id = length(func.free_vars);
+							func.free_vars ::= arrayPush(func.free_vars, name);
+							func.upvals ::= setTree(func.upvals, name, id);
+							FiBcClosure(id);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+fiBcPushLocal(ctx, name) {
+	// Find if a local slot with this name is unused. Slots of a certain
+	// name act as a stack, so those later than the current one are free.
+	func = ctx.func;
+	cur_id = lookupTreeDef(ctx.locals, name, -1);
+	free_list = lookupTreeDef(func.all_locals, name, []);
+	new_id = switch (find(free_list, \x -> x > cur_id) : Maybe<int>) {
+		Some(id): id;
+		None(): {
+			// Allocate a new slot
+			id = func.nlocals;
+			func.nlocals ::= id+1;
+			func.all_locals ::= setTree(func.all_locals, name, arrayPush(free_list, id));
+			id
+		}
+	};
+	Pair(FiBcScopeContext(func, setTree(ctx.locals, name, new_id)), new_id);
+}
+
+fiType2BcType(names : FiGlobalNames, type : FiType, extStructTypes : bool) -> BytecodeTypeCode {
+	switch (type) {
+		FiTypeVoid()				: TCVoid();
+		FiTypeInt()				: TCInt();
+		FiTypeBool()				: TCBool();
+		FiTypeDouble()				: TCDouble();
+		FiTypeString()				: TCString();
+		FiTypeFlow()				: TCFlow();
+		FiTypeNative()				: TCFlow();
+		FiTypeRef(t)				: if (extStructTypes) TCTypedRefTo(fiType2BcType(names, t, extStructTypes)) else TCRefTo();
+		FiTypeArray(t)			: if (extStructTypes) TCTypedArray(fiType2BcType(names, t, extStructTypes)) else TCArray();
+
+		FiTypeName(name, __) : {
+			rtype = resolveFiTypeName(names, type);
+			switch (rtype) {
+				FiTypeStruct(__, __, __, __) : TCStruct();
+				FiTypeUnion(__, __, __, __): TCFlow();
+			}
+		}
+		FiTypeFunction(__, __): TCFlow();
+		FiTypeParameter(__): TCFlow();
+	}
+}
+
+fiBcCollectBcStructs(
+	cfg : FcBytecodeConfig,
+	ctx : FiBcGlobalContext,
+	program : FiProgram,
+	extStructTypes : bool,
+	pc : ref int) {
+
+		init = FiBcStructs(0, [], makeTree());
+		fold(program.traversal, init, \acc, moduleName-> {
+			fb = lookupTree(program.modules, moduleName);
+			switch (fb) {
+				None(): {
+					fail("Could not find " + moduleName);
+					acc;
+				}
+				Some(module): {
+					mctx = FiBcGlobalContext(
+						module.fileinfo.flowfile,
+						ctx.program,
+						ctx.structs,
+						ctx.globals,
+						ctx.cur_toplevel,
+						ctx.next_closure_id,
+						ctx.resolvers
+					);
+					fiFlowc2StructDefs(cfg, mctx, program.names, acc, module, extStructTypes, pc)
+				}
+			}
+		});
+	}
+
+fiFlowc2StructDefs(
+	cfg : FcBytecodeConfig,
+	ctx : FiBcGlobalContext,
+	names : FiGlobalNames,
+	init : FiBcStructs,
+	m : FiModule,
+	extStructTypes : bool,
+	pc : ref int) -> FiBcStructs {
+
+		fold(m.structs, init, \acc : FiBcStructs, struct : FiTypeStruct -> {
+			id = acc.id;
+			sname = struct.name;
+			sargs = map(struct.args, \field : FiStructArg -> {
+				tc = fiType2BcType(names, field.type, extStructTypes);
+				mtc = if (field.ismutable) TCSetMutable(tc) else tc;
+				Pair(field.name, mtc);
+			});
+
+			fiBcDebugAddPosition(cfg, ctx, ^pc, struct.start, false, "FiStruct");
+
+			structCode = fiMakeBytecode([CStructDef(id, sname, sargs)]);
+			code = arrayPush(acc.bytecode, structCode);
+
+			if (cfg.debug)
+				pc := ^pc + fiBytecodeLength(structCode);
+
+			// TODO: change to mutable to avoid FiBcStructs recreation.
+			FiBcStructs(id + 1, code, setTree(acc.structs, sname, FiBcStruct(id, struct)))
+		});
+	}
+
+fiMakeLineBytecode(place, cfg, sctx, start, code, pc) {
+	r = fiMakeBytecode(code);
+	//if (cfg.debug) {
+	//	pc := ^pc + fiBytecodeLength(r);
+	//	am("fiMakeLineBytecode: " + place, pc);
+	//}
+	r;
+}
+
+fiBcGetGlobals(decls) {
+	fold(decls, Pair(0, makeTree()), \t : Pair<int, Tree<string, int>>, p : Pair<string, [FiDeclaration]> -> {
+		fold(p.second, t, \acc : Pair<int, Tree<string, int>>, v -> {
+			name = v.name;
+			id = acc.first;
+			tr = setTree(acc.second, name, id);
+			Pair(id + 1, tr);
+		})
+	}).second;
+}
+
+fiBcMakeDebugInfoPositionKey(ctx : FiBcGlobalContext, file : string, pos : int, isStart : bool, comment : string) -> string {
+	if (comment != "end") {
+		line = switch(lookupTree(ctx.resolvers, file)) {
+			Some(r) : findLineRaw(r, iabs(pos)).lineno;
+			None() : {
+				fcPrintln("cannot find resolver for file: " + file);
+				pos;
+			}
+		}
+		file + ":" + i2s(line) + (if (isStart) "S" else "")
+	} else {
+		file + ":" + i2s(pos)
+	}
+}
+fiBcDebugAddPosition(cfg : FcBytecodeConfig, ctx : FiBcGlobalContext, pc : int, pos : int, isStart : bool, comment : string) -> void {
+	if (cfg.debug) {
+		file = ctx.file;
+		key = fiBcMakeDebugInfoPositionKey(ctx, file, pos, isStart, comment);
+		switch (lookupTree(cfg.debugInfoPositions, key)) {
+			None(): {
+				p = BCDPosition(pc, if (comment == "end") file + "--end--" else file, pos, comment);
+				cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
+			}
+			Some(infoPos): {
+				if (infoPos.pc > pc) {
+					p = BCDPosition(pc, if (comment == "end") file + "--end--" else file, pos, comment);
+					cfg.debugInfoPositions ::= setTree(cfg.debugInfoPositions, key, p);
+				}
+			}
+		}
+	}
+}
+
+fiBcDebugAddFunction(cfg, pc, name) {
+	if (cfg.debug) {
+		pushDList(cfg.debugInfoFunctions, BCDFunction(pc, name));
+		{}
+	}
+}
+
+fiBcDebugAddLocal(cfg, pc, type, id, name) {
+	if (cfg.debug) {
+		pushDList(cfg.debugInfoLocals, BCDLocal(pc, type, id, name));
+		{}
+	}
+
+}
+
+fiBcString2Hex(s) {
+	strGlue(map(s2a(s), \e -> "0x" + formatHex(e)), " ");
+}
+
+fiMaxPosition(e : FiExp) -> int {
+	switch (e) {
+		FiLambda(__, body, __,__):    fiMaxPosition(body);
+		FiCall(f, args, __, s):       fiMaxPosition(lastElement(args, f));
+		FiLet(__, __, e1, e2, __,__): fiMaxPosition(e2);
+		FiIf(e1, e2, e3, __,__):      fiMaxPosition(e3);
+		FiSwitch(v, __, cs, __,__):   fiMaxPosition(lastElement(map(cs, \c -> c.body), v));
+		FiCast(e0, __,__,__,__):      fiMaxPosition(e0);
+		FiSeq(es, __,s):              fiMaxPosition(lastElement(es, FiVoid(s)));
+		FiCallPrim(__, es, __,s):     fiMaxPosition(lastElement(es, FiVoid(s)));
+		FiRequire(__, ex, __,__):     fiMaxPosition(ex);
+		FiUnsafe(__, fb, __,__):      fiMaxPosition(fb);
+		FiVar(__, __, s):             s;
+		FiString(__, s):              s;
+		FiBool(__, s):                s;
+		FiDouble(__, s):              s;
+		FiVoid(s):                    s;
+		FiInt(__, s):                 s;
+	}
+}
+

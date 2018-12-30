@@ -1,0 +1,587 @@
+import tools/flowc/backends/d/fi2d_utils;
+import tools/flowc/backends/d/fi2d_utils2;
+import tools/flowc/backends/d/fi2d_assemble;
+
+export {
+	fiDCompileToplevel(
+		cfg : FiDConfig,
+		program : FiProgram,
+		decl: FiDeclaration,
+		indent : string) -> string;
+
+	fiDCompileToExpr(
+		cfg  : FiDConfig,
+		program : FiProgram,
+		expr : FiExp,
+		indent : string,
+		isVoid : bool) -> string;
+
+	fiDCompileToReturn(
+		cfg  : FiDConfig,
+		program : FiProgram,
+		expr : FiExp,
+		indent : string,
+		isVoid : bool,
+		atype : string) -> string;
+
+	fiDCompilePlus(
+		cfg  : FiDConfig,
+		program : FiProgram,
+		arg1 : Pair<string, FiType>,
+		op   : string,
+		arg2 : Pair<string, FiType>) -> string;
+}
+
+fiDCompileToplevel(cfg : FiDConfig, program : FiProgram, decl : FiDeclaration, indent : string) -> string {
+	nm = decl.name;
+	fcVerbose(cfg, 1, "Generating D code for " + nm + "...");
+	subindent = indent + fiDIndent;
+	switch (decl : FiDeclaration) {
+		FiNativeDec(name, io, type, nativeName, flowfallback, declStart, defiStart) : {
+			na = strSplit(nativeName, ".");
+			nname = if (length(na) > 1) na[1] + na[0] else name + "Native";
+			switch (flowfallback) {
+				FiLambda(__, __, __, __): {
+					ft = fiExpType(flowfallback);
+					fd = FiFunctionDec(name, flowfallback,
+						switch (ft) {
+							FiTypeFunction(__, __): ft;
+							default: {
+								fcPrintln("lambda type must be FiTypeFunction, but is: " + prettyFiType(dummyPretty, ft, makeSet()));
+								// This is a stub
+								FiTypeFunction([], FiTypeVoid());
+							}
+						},
+						declStart, defiStart
+					);
+					"static if (!__traits(compiles, " + nname + ")) {\n" +
+					fiDCompileToplevel(cfg, program, fd, subindent) +
+					"} else {\n" + 
+					fiDIndent + "alias " + name + " = " + nname + ";\n" +
+					"}\n";
+				}
+				FiVoid(__): {
+					"alias " + name + " = " + nname + ";\n"
+				}
+				default: {
+					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, flowfallback));
+					"alias " + name + " = " + nname + ";\n"
+				}
+			}
+		}
+		FiFunctionDec(name, lambda, ft, __, __): {
+			if (name == "do_parse_flow") {
+				fcPrintln("HIA: decl == " + toString(decl));
+			}
+			if (containsSet(DForbiddenFunctions, name))
+				"// " + name + " forbidden with DForbiddenFunctions\n"
+			else if (containsSet(DSubstitutedFunctions, name)) {
+				fiGetDSubstitute(cfg, name);
+			} else {
+				type = fiType2DTypeDecl(cfg, program, ft.returnType);
+				// fcPrintln("HIA: type (" + name + ") = " + type);
+				fargs = if (ft.args == []) lambda.args else ft.args;
+				fparams = strGlue(mapi(fargs, \idx, arg -> fiType2DTypeDecl(cfg, program, arg.type)), ", ");				
+				tp = fiDTypeParamsListFn(program, decl);
+				header = indent + (if (name == "main") "void" else type) + " " + fiDRenameKeyword(cfg, name) + "(" + fparams + ") {\n";
+				body = lambda.body;
+				bodyOrSeq = switch (body) {
+			 		FiSeq(__, __, __) : body;
+			 		// TODO: Is it ok to pass FiTypeVoid here?
+			 		default : FiSeq([body], FiTypeVoid(), -1);
+				}
+				isVoid = type == "FlowVoid";
+				voidRet = (if (isVoid) subindent + "return new FlowVoid();\n" else "");
+				bodyTxt =
+					if (name == "main")
+						fiDCompileToExpr(cfg, program, bodyOrSeq, fiDIndent, isVoid)
+					else
+						fiDCompileToReturn(cfg, program, bodyOrSeq, fiDIndent, isVoid, "");
+				initVars = if (name == "main") cfg.initVars else "";
+				header + initVars + bodyTxt + voidRet + "}\n"
+			}
+		}
+		FiGlobalVar(name, value, type, __, __): {
+ 			if (containsSet(DForbiddenVars, name)) {
+				"// " + name + " forbidden with DForbiddenVars\n"
+			} else {
+				if (name != "") {
+					varType = fiType2DTypeDecl(cfg, program, type);
+					isVoid = false;
+					aVal = fiDCompileToExpr(cfg, program, value, indent, isVoid);
+					eVal = switch (value) {
+						//FiCall(__, __, __) : { "{" + aVal + ";}"};
+						FiLet(__, __, __, __, __, __) : { "{" + aVal + ";}"};
+						default : aVal;
+					}
+					cfg.initVars ::= cfg.initVars + fiDIndent + name + " = " + eVal + ";\n";
+					varType + " " + name + ";"; // + " = " + eVal + ";";
+				} else {
+					"// FiGlobalVar = " + toString(decl);
+				}
+			}
+		}
+	}
+}
+
+fiDCompileToExpr(cfg : FiDConfig, program : FiProgram, expr : FiExp, indent : string, isVoid : bool) -> string {
+	subindent = indent + fiDIndent;
+	switch (expr : FiExp) {
+		FiVoid(__): "new FlowVoid()";
+		FiBool(b, __): "new FlowBool(" + (if (b) "true" else "false") + ")";
+		FiInt(v, __): {
+			val = i2s(v);
+			/*
+			// Simple heuristic:
+			// Hex numbers 0..9 are the same as decimals 
+			if (v >= 0 && v <= 9) {
+				i2s(v)
+			} else {
+				// For larger numbers detect hex numbers first
+
+				// Check file content availability
+				fcCheckAvailableContent(cfg.fileinfo);
+				intval = substring(cfg.fileinfo.content, i.start, i.end-i.start);
+				// Check if value is hexadecimal
+				if (startsWith(intval, "0x")) {
+					//"cast[int](0x80000000)"
+					if (intval == "0x80000000") 
+						"0x80000000"
+					else
+						intval
+				} else
+					i2s(v);
+				// In Flow negative numbers are not part of a grammar,
+				// this check is not required at all.
+				// if (v < 0) "("+i2s(v)+")" else i2s(v);
+			}*/
+			"new FlowInteger(" + val + ")";
+		}
+		FiDouble(d, __): {
+			s = d2s(d);
+			val = if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s+".0" else s;
+			"new FlowDouble(" + val + ")"
+		}
+		FiString(s, __): "new FlowString(" + fcEscapeString(s) + ")";
+		FiVar(x, type, __): {
+			var = fiDRenameKeyword(cfg, x);
+			toplevelName = lookupTree(program.names.toplevel, x);
+
+			pc = switch (toplevelName) {
+				Some(v): 
+					switch(v) {
+						FiFunctionDec(__, __, funtp, __, __): {
+							"new FlowFunction" + i2s(length(funtp.args)) + "(cast(FlowObject delegate(" +
+							strGlue(mapi(funtp.args, \idx, __ -> "FlowObject p" + i2s(idx + 1)), ", ") + "))toDelegate(&" + var + "))";
+						}
+						FiNativeDec(__, __, ntp, __, __, __, __): {
+							switch (ntp) {
+								FiTypeFunction(args, __): {
+									"new FlowFunction" + i2s(length(args)) + "(cast(FlowObject delegate(" +
+									strGlue(mapi(args, \idx, __ -> "FlowObject p" + i2s(idx + 1)), ", ") +"))toDelegate(&" + var + "))";
+								}
+								default: var;
+							}
+						}
+						default: var;
+					}
+				None(): var;
+			}
+			at = switch (type) {
+				FiTypeFunction(__, __): {
+					typarams = switch (toplevelName) {
+						Some (nnn) : {
+							switch (nnn) {
+								FiFunctionDec(__, __, fntp, __, __) : {
+									t = fiMatchTypars(fntp, type, makeTree());
+									strGlue(foldTree(t, [], \k, v, a ->
+										arrayPush(a, fiType2DType(cfg, program, v))
+									), ",");
+								}
+								FiNativeDec(__,__,ntype, __,__,__,__): {
+									t = fiMatchTypars(ntype, type, makeTree());
+									strGlue(foldTree(t, [], \k, v, a ->
+										arrayPush(a, fiType2DType(cfg, program, v))
+									), ",");
+								}
+								default: ""
+							}
+						}
+						None() : ""
+					}
+					tp2 = if (typarams != "") var + "!(" + typarams + ")" else var;
+					"toDelegate(&" + tp2 + ")";
+				}
+				default: var
+			}
+
+			//if (toplevelName == None()) var else at;
+			pc;
+		}
+		FiLet(x, tp, e1, e2, __, __): {
+			letVal = fiDCompileToExpr(cfg, program, e1, indent, isVoid) + ";\n";
+			nb = fiDNeedBrace(e1);
+			nb1 = switch(e1) {
+				FiIf(__, __, __, __, __): false;
+				default: nb;
+			}
+			lv = if (nb1) "{" + fiDCompileToReturn(cfg, program, e1, indent, isVoid, "") + ";}();" else letVal;
+
+			subindent +
+
+			(if (x == "__") "/* __ ignored */\n" else (fiType2DTypeDecl(cfg, program, tp) + " " + fiDRenameKeyword(cfg, x) + " = " + lv)) +
+
+			indent + fiDCompileToExpr(cfg, program, e2, indent, isVoid)
+		}
+		FiLambda(xs, body, type, __): {
+			lt = switch(type) {
+				FiTypeFunction(__, rettype): fiType2DType(cfg, program, rettype);
+				default: "";
+			}
+			bodyOrSeq = switch (body) {
+				FiSeq(__, __, __) : body;
+				// TODO: Is it ok here to use FiTypeVoid?
+				default : FiSeq([body], FiTypeVoid(), -1);
+			}
+			voidRet = (if (lt == "void") subindent + "return new FlowVoid();\n" else "");
+			"new FlowFunction" + i2s(length(xs)) + "(cast(FlowObject delegate(" +
+				strGlue(mapi(xs, \idx, e -> "FlowObject p" + i2s(idx + 1)), ", ") + "))delegate (" + 
+				strGlue(map(xs, \a -> {
+					ats = fiType2DTypeDecl(cfg, program, a.type);
+					atr = switch (a.type) {
+						FiTypeFunction(__, __) : ats;
+						default : ats;
+					}
+					atr + " " + fiDRenameKeyword(cfg, a.name);
+				}), ", ") + 
+				") {\n" + subindent + 
+				fiDCompileToReturn(cfg, program, bodyOrSeq, subindent, lt == "void", "") + 
+				";\n" + voidRet + indent + "})"
+		}
+		FiCall(call, es, type, __): {
+			maybe_sinfo = switch (call) {
+				FiVar(x, __, __): lookupTree(program.names.structs, x);
+				default: None();
+			}
+			switch (maybe_sinfo) {
+				Some(sinfo): {
+					"# FiCall:\n" + indent + "struct ()";
+				}
+				None(): {
+					name = switch (call) {
+						FiVar(x, __, __) : fiDRenameKeyword(cfg, x);
+						default : fiDCompileToExpr(cfg, program, call, indent, isVoid);
+					}
+					args = strGlue(map(es, \e -> {fiDCompileToExpr(cfg, program, e, subindent, isVoid)}), ", ");
+					// fcPrintln("HIA: name = " + name);
+					at = fiType2DTypeDecl(cfg, program, type);
+					if (name == "extractStruct") {
+						a1 = fiDCompileToExpr(cfg, program, es[0], subindent, isVoid);
+						a2 = fiDCompileToExpr(cfg, program, es[1], subindent, isVoid);
+						tp = fiType2DTypeDecl(cfg, program, fiExpType(es[1]));
+
+						"(cast(" + tp + ")" + name + "(" + a1 + ", " + a2 + "))";
+					} else if (name == "getFiNamedType" || name == "instantiateDesugarTypename" || name == "typename2structs") {
+						a1 = fiDCompileToExpr(cfg, program, es[0], subindent, isVoid);
+						a2 = fiDCompileToExpr(cfg, program, es[1], subindent, isVoid);
+						"(cast(" + at + ")" + name + "(" + a1 + "," + "(cast(FiTypeName)" + a2 + ")))"
+					} else if (name == "union2instantiatedStructs") {
+						a1 = fiDCompileToExpr(cfg, program, es[0], subindent, isVoid);
+						a2 = fiDCompileToExpr(cfg, program, es[1], subindent, isVoid);
+						"(cast(" + at + ")" + name + "(" + a1 + "," + "(cast(FiTypeUnion)" + a2 + ")))"
+					} else {
+						prefix = if (at != "") "cast(" + at + ")" else "";
+						acall = name + "(" + args + ")";
+						if (prefix != "" && name != "hostCall")
+							"(" + prefix + acall + ")"
+						else
+							acall;
+					};
+				}
+			}
+		}
+		FiSeq(es, __, __): {
+			l = length(es)-1;
+			if (l >= 0)
+				list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+					code = fiDCompileToExpr(cfg, program, e, indent, isVoid) + ";\n";
+					Cons(indent, Cons(code, acc));
+				}))
+			else
+				"return /*1*/ null;";
+		}
+		FiIf(e1, e2, e3, type, __): {
+			at = fiType2DTypeDecl(cfg, program, type);
+			cond = fiDCompileToExpr(cfg, program, e1, indent, isVoid);
+			trueBranch = fiDCompileToExpr(cfg, program, e2, subindent, isVoid);
+			falseBranch = fiDCompileToExpr(cfg, program, e3, subindent, isVoid);
+
+			sCond = if (fiDNeedBrace(e1)) "{" + fiDCompileToReturn(cfg, program, e1, indent, isVoid, "") + ";}()" else cond;
+			sTrueBranch = if (fiDNeedBrace(e2)) "{" + fiDCompileToReturn(cfg, program, e2, indent, isVoid, at) + ";}()" else trueBranch;
+			sFalseBranch = if (fiDNeedBrace(e3)) "{" + fiDCompileToReturn(cfg, program, e3, indent, isVoid, at) + ";}()" else falseBranch;
+
+			"((" + sCond + ").value?" + sTrueBranch + ":" + sFalseBranch + ")";
+		}
+		FiCallPrim(op, es, type, __): {			
+			args = map(es, \arg -> Pair(fiDCompileToExpr(cfg, program, arg, indent, isVoid), fiExpType(arg)));
+			switch (op : FcPrim) {
+				FcOrPrim():    "new FlowBool(" + args[0].first + "||" + args[1].first + ")";
+				FcAndPrim():   "new FlowBool(" + args[0].first + "&&" + args[1].first + ")";
+				FcNotPrim():   "new FlowBool(!(" + args[0].first + ").value)";
+				FcEqPrim():    "new FlowBool(" + args[0].first + "==" + args[1].first + ")";
+				FcNePrim():    "new FlowBool(" + args[0].first + "!=" + args[1].first + ")";
+				FcLePrim():    "new FlowBool(" + args[0].first + "<=" + args[1].first + ")";
+				FcGePrim():    "new FlowBool(" + args[0].first + ">=" + args[1].first + ")";
+				FcLtPrim():    "new FlowBool(" + args[0].first + "<"  + args[1].first + ")";
+				FcGtPrim():    "new FlowBool(" + args[0].first + ">"  + args[1].first + ")";
+				FcPlusPrim():  fiDCompilePlus(cfg, program, args[0], "+", args[1]);
+				FcMinusPrim(): args[0].first + "-"  + args[1].first;
+				FcMulPrim():   args[0].first + "*"  + args[1].first;
+				FcDivPrim():   args[0].first + "/"  + args[1].first;
+				FcModPrim():   args[0].first + "%"  + args[1].first;
+				FcNegPrim():   "-" + args[0].first;
+				FcArrayPrim(): {
+					at = switch (type) {
+						FiTypeArray(t): fiType2DTypeDecl(cfg, program, t);
+						default: "";
+					}
+					if (es == []) {
+						"new FlowArray([])";
+					} else {
+						"new FlowArray([" + strGlue(map(args, \e->e.first), ",") + "])";
+					}
+				}
+				FcIndexPrim(): {
+					at = fiType2DTypeDecl(cfg, program, type);
+					//prefix = (if (at == "FlowArray") "cast(FlowArray)" else "");
+					prefix = (if (at != "") "cast(" + at + ")" else "");
+					"(" + prefix + args[0].first + "[" + args[1].first + "])";
+				}
+				FcDerefPrim(): {
+					lv = args[0].first + ".value";
+					switch (args[0].second) {
+						FiTypeRef(t): "(cast(" + fiType2DTypeDecl(cfg, program, t) + ")" + lv + ")";
+						default: lv + "/*1*/";
+					}
+				}
+				FcAssignPrim():{
+					lv = args[0].first;
+					lv1 = switch (args[0].second) {
+						FiTypeRef(t): "/*8*/" + lv + ".value";
+						default: lv;
+						// lv + "/*3*/" + toString(v);
+					}
+					"(" + lv1 + "=" + args[1].first + ")";
+				}
+				FcRefPrim(): "new FlowReference(" + args[0].first + ")";
+				// This is struct runtime constructor, the only place, where structrure
+				// created at runtime.
+				//
+				// After typechecking we definitely know structure exists, so skip sanity checks.
+				FcStructPrim(structname): {
+					str = lookupTree(program.names.structs, structname);
+					struct = fiType2DType(cfg, program, type);
+					types = switch (str) {
+						Some(v): map(v.args, \e -> fiType2DTypeDecl(cfg, program, e.type));
+						None():  []
+					}
+					//fcPrintln("HIA: types = " + toString(types));
+					"new " + struct + "(" + strGlue(mapi(es, \ix, e ->
+						switch (e) {
+							FiLet(__, __, __, __, __, __): "{" + args[ix].first + "}()";
+							default: args[ix].first;
+						}
+					), ", ") + ")";
+				}
+				FcFieldPrim(name): {
+					a = es[0];
+					vr = switch (a) {
+						FiVar(n, __, __) : fiDRenameKeyword(cfg, n);
+						default : fiDCompileToExpr(cfg, program, a, indent, isVoid);
+					}
+					// (cast[Some](m)).value
+					tpm = fiType2DType(cfg, program, type);
+					at = fiType2DTypeDecl(cfg, program, type);
+					if (endsWith(tpm, "FiExp")) {
+						"getFiExpInfo(" + vr + ")"
+					} else {
+						"(cast(" + at + ")(cast(" + tpm + ")" + vr + ")" +  "." + fiDRenameKeyword(cfg, name) + ")";
+					}
+				}
+				FcSetMutablePrim(name):
+					"// FcSetMutablePrim\n" + 
+					"(" + args[0].first + ("." + fiDRenameKeyword(cfg, name) + "=") + args[1].first + ")";
+				FcCreateClosurePrim(__, __): ""; // should not happen - D does not use lambda lifting
+			}
+		}
+		FiCast(e, tFrom, tTo, __, __): {
+			ex = fiDCompileToExpr(cfg, program, e, indent, isVoid);
+			tf = fiType2DType(cfg, program, tFrom);
+			tt = fiType2DType(cfg, program, tTo);
+			tt1 = fiType2DTypeDecl(cfg, program, tTo);
+			prefix = switch (resolveFiTypeName(program.names, tFrom)) {
+				FiTypeUnion(__, __, __, __): "";
+				FiTypeStruct(__, __, __, __): "";
+			}
+			p1 = (if (prefix != "") "new " + prefix else "");
+			"/*CAST!"+toString(tFrom)+"*/" + p1 + "(cast(" + tt + ")" + ex + ")";
+		}
+		FiSwitch(e0, e0type, cs, __, __): {
+			aVar = fiDCompileToExpr(cfg, program, e0, indent, isVoid);
+			defCase = filter(cs, \e -> e.struct == "default");
+			dc = if (defCase == []) " else {assert(false, \"" +aVar + "\");}" else {
+				" else {" + fiDCompileToReturn(cfg, program, defCase[0].body, indent, isVoid, "") + ";}"
+			}
+			cases = foldi(cs, Cons("", EmptyList()), \ix, acc, item -> {
+				elseClause = if (ix == 0) "" else " else ";
+				stDef = lookupTree(program.names.structs, item.struct);
+				structTypes = switch (stDef) {
+					Some(st) : {
+						fiDExtractSwitchTypes(cfg, program, item.body, st, 0, length(st.args));
+					}
+					None(): "STRUCT ERROR";
+				}
+				if (item.struct == "default") {
+					acc
+				} else {
+					itemBody : FiExp = item.body;
+					ex = switch (itemBody) {
+						FiSeq(__, __, __): itemBody;
+						default: FiSeq([itemBody], fiExpType(itemBody), itemBody.start);
+					}
+					Cons(indent + elseClause + "if (cast("+ item.struct + ")" + aVar + ") {\n" +
+						subindent + fiDCompileToReturn(cfg, program, ex, indent, isVoid, "") + ";" +
+						"\n" + indent + "}", acc);
+				}
+			});
+			list2string(Cons(dc, cases));
+		}
+		default: "#!cte other!\n" + toString(expr);
+	}
+
+}
+
+fiDCompileToReturn(cfg : FiDConfig, program : FiProgram, expr : FiExp, indent : string, isVoid : bool, atype : string) -> string {
+	subindent = indent + fiDIndent;
+	switch (expr : FiExp) {
+		FiCallPrim(op, es, tp, __): {
+			type = fiType2DTypeDecl(cfg, program, tp);
+			ret = switch (op) {
+				FcAssignPrim(): "";
+				FcSetMutablePrim(__): "";
+				default: "return ";
+			}
+			e = fiDCompileToExpr(cfg, program, expr, indent, isVoid);
+			if (atype != "") {
+				"return (cast(" + atype + ")" + e + ")";
+			} else {
+				ret + e;
+			}
+		}
+		FiCall(f, es, tp, __): {
+			type = fiType2DTypeDecl(cfg, program, tp);
+			// fcPrintln("HIA: type (call) = " + type);
+			callValue = fiDCompileToExpr(cfg, program, expr, indent, isVoid);
+			wrapValue = "(cast(" + type + ")" + callValue + ")";
+			"return /*Call */" + wrapValue + ";";
+		}
+		FiLet(x, tp, e1, e2, t, __): {
+			letVal = fiDCompileToExpr(cfg, program, e1, subindent, isVoid) + ";\n";
+			nb = fiDNeedBrace(e1);
+			nb1 = switch(e1) {
+				FiIf(__, __, __, __, __) : false;
+				default : nb;
+			}
+			lv = if (nb1) "{" + fiDCompileToReturn(cfg, program, e1, indent, isVoid, atype) + ";}();" else letVal;
+
+			letExp = switch (e2) {
+				FiSeq(__, __, __): e2;
+				default : FiSeq([e2], fiExpType(e2), -1);
+			}
+			letExpStr = fiDCompileToReturn(cfg, program, letExp, indent, isVoid, atype);
+
+			subindent +
+			(if (x == "__") "/* __ ignored */\n" else (fiType2DTypeDecl(cfg, program, tp) + " " + fiDRenameKeyword(cfg, x) + " = " + lv)) +
+			subindent + letExpStr;
+		}
+		FiSeq(es, __, __): {
+			l = length(es) - 1;
+			if (l >= 0)
+				list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+					code = "/*seq*/" + if (idx < l || isVoid) {
+							fiDCompileToExpr(cfg, program, e, indent, isVoid) + ";"
+						} else {
+							fiDCompileToReturn(cfg, program, e, indent, isVoid, atype) + ";";
+						}
+					Cons("\n"+indent, Cons(code, acc));
+				}))
+			else "return /*3*/ null;";
+		}
+		FiIf(conditionE, trueBranchE, falseBranchE, __, __): {
+			cond = fiDCompileToExpr(cfg, program, conditionE, indent, isVoid);
+			condExp = if (fiDNeedBrace(conditionE)) "{" + fiDCompileToReturn(cfg, program, conditionE, indent, isVoid, atype) + ";}()" else cond;
+			"if ((cast(FlowBool)" + condExp + ").value) {\n"+
+			subindent + fiDCompileToReturn(cfg, program, trueBranchE, subindent, isVoid, atype) + ";\n"
+			+ indent + "} else {\n" +
+			subindent + fiDCompileToReturn(cfg, program, falseBranchE, subindent, isVoid, atype) + ";\n"
+			+ indent + "}";
+		}
+		FiSwitch(e0, e0type, cs, __, __): {
+			aVar = fiDCompileToExpr(cfg, program, e0, indent, isVoid);
+			defCase = filter(cs, \e -> e.struct == "default");
+			dc = if (defCase == []) " else {assert(false, \"" +aVar + "\");}" else {
+				" else {" + fiDCompileToReturn(cfg, program, defCase[0].body, indent, isVoid, atype) + ";}"
+			}
+			cases = foldi(cs, Cons("", EmptyList()), \ix, acc, item -> {
+				elseClause = if (ix == 0) "" else " else ";
+				stDef = lookupTree(program.names.structs, item.struct);
+				structTypes = switch (stDef) {
+					Some(st) : {
+						fiDExtractSwitchTypes(cfg, program, item.body, st, 0, length(st.args));
+					}
+					None(): "STRUCT ERROR";
+				}
+				if (item.struct == "default")
+					acc
+				else {
+					itemBody : FiExp = item.body;
+					ex = switch (itemBody) {
+						FiSeq(__, __, __) : itemBody;
+						// TODO: is it ok to pass a FiTypeVoid here ?
+						default: FiSeq([itemBody], FiTypeVoid(), -1);
+					}
+
+					Cons(indent + elseClause + "if (cast(" + item.struct + ")" + aVar +") {\n" +
+						subindent + fiDCompileToReturn(cfg, program, ex, indent, isVoid, atype) + ";" +
+						"\n" + indent + "}", acc);
+				}
+			});
+			list2string(Cons(dc, cases));
+		}
+		//"/*fb*/" + fiDCompileToExpr(cfg, program, expr, subindent) + ";";
+		FiDouble(e0, __) : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiString(e0, __) : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiInt(e0, __)    : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiBool(e0, __)   : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiVoid(i)        : "return new FlowVoid();";
+		FiLambda(__, __, __, __): "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiVar(__, tp, __): {
+			at = fiType2DTypeDecl(cfg, program, tp);
+			"return cast(" + at + ")" + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		}
+		FiCast(__, __, __, __, __) : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiRequire(__, __, __, __)  : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+		FiUnsafe(__, __, __, __)   : "return " + fiDCompileToExpr(cfg, program, expr, subindent, isVoid) + ";";
+	}
+}
+
+fiDCompilePlus(cfg : FiDConfig, program : FiProgram, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
+	a1 = arg1.first;
+	a2 = arg2.first;
+	// Type checker ensures math types are equal, so we only need one type.
+	isString = switch (arg1.second) {
+		FiTypeString() : true;
+		default : false;
+	}
+	if (isString && (op == "+")) a1 + "~" + a2 else a1 + op + a2
+}

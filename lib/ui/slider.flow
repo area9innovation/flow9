@@ -1,0 +1,418 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import behaviour;
+import transforms;
+import form;
+
+import aspects;
+import colors;
+import filters;
+import baseline;
+import ui/buttons;
+
+export {
+	SliderStyle ::= SnapOnClick, StartDragOnClick, SliderIsDragging, RoundPosition, SliderEnabled;
+		// Move to the place where the mouse is on click
+		SnapOnClick : (precise : bool);
+		// Capture the drag piece on click (and release)
+		StartDragOnClick : ();
+		// On click chooses nearest allowed position
+		RoundPosition : (xFn : (double) -> double, yFn : (double) -> double);
+		// Inspection: Are we currently dragging?
+		SliderIsDragging : (status : DynamicBehaviour<bool>);
+		// Setting : will slider handle mouse actions or not
+		SliderEnabled : (enabled : Behaviour<bool>);
+
+	// A facility to make sliders, which is constrained to be within a given
+	// rectangle from 0.0 to the max values given. If you only want a slider in
+	// one direction, set the max to 0.0 in the other one.
+	// This is a low-level building block. See below for a version with a pre-fabricated GUI
+	Slider(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>,
+		   handle : Form, style : [SliderStyle]) -> Form;
+
+	// Allow to use slider with hittest.
+	// For example Slider smartbook/pageslider.flow make pageslider hard to use (case 28311)
+	Slider2(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>,
+		   handle : Form, style : [SliderStyle], ignoreHitTest : bool) -> Form;
+
+	// Same as above, but can keep update within itself until mouse/finger up. Useful for mobile dividers,
+	// as resizing is expensive on computation => UI lags and battery drain.
+	Slider3(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>,
+		   handle : Form, style : [SliderStyle], ignoreHitTest : bool, realtimeUpdate : bool) -> Form;
+
+	// Example:
+	// Slider(make(0.0), make(0.0), make(100.0), make(100.0), Text("Hello world!", [FontSize(20.0)]), [])
+
+	// A single slider that controls either an Aspect or a numeric variable. For plumbing reasons, this guy
+	// returns an array of Forms. Use Cols to join to one, if you need it formatted like that, or combine a
+	// bunch of them in a Grid, like MultiSlider in picturecomposer.flow does.
+	makeSliderBar(s : SliderItem, color : int) -> [Form];
+		SliderItem ::= AspectSlider, NumericSlider;
+			AspectSlider(aspect : Aspect, units : string);
+			NumericSlider(title : string, val : DynamicBehaviour<double>, digits : int, minValue : double, maxValue : double, units : string);
+
+	// Gradient Slider in gradient bar. If isBlocked then slider non-active and set in x value
+	makeGradientSlider(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>, isBlocked : bool) -> Form;
+
+	// Make a simple numeric slider. See also ui/trackbar.flow
+	makeNumericSlider(x : DynamicBehaviour<double>, minimum : double, maximum : double, precision : double, width : double) -> Form;
+	makeNumericSlider2(x : DynamicBehaviour<double>, minimum : double, maximum : double, precision : double, width : double, style : [SliderStyle]) -> Form;
+
+}
+
+Slider(x, y, maxX, maxY, handle, style) {
+	ISlider(x, y, maxX, maxY, handle, style, true, true)
+}
+
+Slider2(x, y, maxX, maxY, handle, style, ignoreHitTest) {
+	ISlider(x, y, maxX, maxY, handle, style, ignoreHitTest, true)
+}
+
+Slider3(x, y, maxX, maxY, handle, style, ignoreHitTest, realtimeUpdate) {
+	ISlider(x, y, maxX, maxY, handle, style, ignoreHitTest, realtimeUpdate)
+}
+
+ISlider(outx : DynamicBehaviour<double>, outy : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>, handle : Form, style, ignoreHitTest, realtimeUpdate) {
+	// Track whether we are currently dragging or not
+
+	realtimeMove = true; // always move splitter with mouse/finger
+	// realtimeUpdate = !mobile; // realtime update is expensive for mobiles
+
+	isDragging = make(false);
+	snap = ref false;
+	startDrag = ref false;
+	isEnabled = ref make(true);
+	preciseSnap = ref false;
+	roundPositionX = ref idfn;
+	roundPositionY = ref idfn;
+
+	x = if(realtimeUpdate) outx
+		else {
+			xx = make(getValue(outx));
+			connectDistinct(outx, xx);
+			xx
+		};
+
+	y = if(realtimeUpdate) outy
+		else {
+			yy = make(getValue(outy));
+			connectDistinct(outy, yy);
+			yy
+		};
+
+
+	handleFixed = Group([
+		handle,
+		Rectangle(0.0, 0.0, [Fill(black), FillOpacity(0.0)])
+	]);
+
+	// init styles
+	iter(style, \s ->
+		switch(s : SliderStyle) {
+			SnapOnClick(precise) : {
+				snap := true;
+				preciseSnap := precise;
+			}
+			StartDragOnClick() : startDrag := true;
+			SliderIsDragging(status): { connect(isDragging, status); {}; }
+			RoundPosition(xFn, yFn) : {
+				roundPositionX := xFn;
+				roundPositionY := yFn;
+			}
+			SliderEnabled(enabled) : isEnabled := enabled;
+		}
+	);
+
+
+	// Drag offset
+	xc = ref 0.0;
+	yc = ref 0.0;
+
+
+	// The proposed offset, unconstrained
+	ox = make(getValue(x));
+	oy = make(getValue(y));
+
+	// Dimensions of the handle
+	hwidthHeight = makeWH();
+
+	// The active area for dragging and clicking
+	activeWidth = \ -> getValue(hwidthHeight).width + getValue(maxX);
+	activeHeight = \ -> getValue(hwidthHeight).height + getValue(maxY);
+
+	isInActiveZone = \mInfo : MouseInfo -> {
+		-5.0 <= mInfo.x && mInfo.x <= activeWidth()
+		&& 0.0 <= mInfo.y && mInfo.y <= activeHeight()
+	}
+
+	Constructor(
+		Interactive([
+			MouseDown(\mouseInfo -> {
+				if (!getValue(isDragging) && getValue(^isEnabled) 
+						&& isInActiveZone(MouseInfo(mouseInfo.x, mouseInfo.y, 0.0, 0.0, false))) {
+					if (mouseInfo.inside()) {
+						// This is inside the drag handler
+						next(isDragging, true);
+						xc :=  mouseInfo.x - getValue(x);
+						yc :=  mouseInfo.y - getValue(y);
+						true;
+					} else if (^snap) {
+						if (^preciseSnap) {
+							nextDistinct(ox, ^roundPositionX(mouseInfo.x));
+							nextDistinct(oy, ^roundPositionY(mouseInfo.y));
+						} else {
+							ofx = max(0.0, min(getValue(ox), getValue(maxX)));
+							nextDistinct(ox, 
+								if (mouseInfo.x < getValue(ox))
+									ofx - (activeWidth() / 2.23)
+								else {
+									ofx + (activeWidth() / 2.23)
+								});
+							nextDistinct(oy, mouseInfo.y);
+						}
+
+						if (^startDrag) {
+							next(isDragging, true);
+							xc :=  mouseInfo.x - getValue(x);
+							yc :=  mouseInfo.y - getValue(y);
+						}
+						true;
+					} else {
+						false;
+					}
+				} else {
+					false;
+				}
+			}),
+			MouseUp(\gm -> {
+				if (getValue(isDragging) && getValue(^isEnabled)) {
+					next(isDragging, false);
+					if(!realtimeMove || !realtimeUpdate) {
+						mouseInfo = gm();
+						nextDistinct(ox, ^roundPositionX(mouseInfo.x - ^xc));
+						nextDistinct(oy, ^roundPositionY(mouseInfo.y - ^yc));
+					}
+					if(!realtimeUpdate) {
+						nextDistinct(outx, x |> getValue);
+						nextDistinct(outy, y |> getValue);
+					}
+					xc := 0.0;
+					yc := 0.0;
+					true;
+				} else {
+					false;
+				}
+			}),
+			if (ignoreHitTest) {
+				// We do not need the hittest here. It is enough with the mouse position
+				IgnoreHitTest(MouseMove(\gm -> {
+					if (getValue(isDragging) && getValue(^isEnabled)) {
+						mouseInfo = gm();
+						if (realtimeMove) {
+							nextDistinct(ox, ^roundPositionX(mouseInfo.x - ^xc));
+							nextDistinct(oy, ^roundPositionY(mouseInfo.y - ^yc));
+						}
+						true
+					} else false
+				}))
+			} else {
+				MouseMove(\gm -> {
+					if (getValue(isDragging) && getValue(^isEnabled)) {
+						if (realtimeMove) {
+							mouseInfo = gm();
+							nextDistinct(ox, ^roundPositionX(mouseInfo.x - ^xc));
+							nextDistinct(oy, ^roundPositionY(mouseInfo.y - ^yc));
+						}
+						true
+					} else false
+				})
+			}
+			],
+			Translate(x, y, Inspect([ISize(hwidthHeight)], handleFixed))
+		),
+		\ -> {
+			// x or y could be updated from outside - update internal information in this case
+			internalUpdate = ref false;
+			shieldconnect = \b1, b2 ->
+				subscribe(b1, \v -> {
+					internalUpdate := true;
+					nextDistinct(b2, v);
+					internalUpdate := false;
+				});
+	
+
+			nextDistinct(ox, getValue(x));
+			nextDistinct(oy, getValue(y));
+
+
+			// The trimmed offset within bounds
+			offx = select2u(ox, maxX, \x1, m -> max(0.0, min(m, x1)));
+			offy = select2u(oy, maxY, \y1, m -> max(0.0, min(m, y1)));
+
+			u1 = shieldconnect(offx.first, x);
+			u2 = shieldconnect(offy.first, y);
+			u3 = subscribe(x, \v -> {if (!^internalUpdate && getValue(maxX) > 0.0) nextDistinct(ox, v)});
+			u4 = subscribe(y, \v -> {if (!^internalUpdate && getValue(maxY) > 0.0) nextDistinct(oy, v)});
+			\ -> {
+				offx.second();
+				offy.second();
+				u1();
+				u2();
+				u3();
+				u4();
+			}
+		}
+	)
+}
+
+makeSliderBar(s : SliderItem, color : int) -> [Form] {
+	W = 180.0;
+	getBar = \steps, stepW -> {
+		h = 16.0;
+		lw = 3.0;
+		Vline = Rectangle(W, lw, [Fill(color)]);
+		Hline = Rectangle(lw, h, [Fill(color)]);
+
+		Border(0.0, 4.0, 0.0, 4.0, Available(const(W), const(h), Group([
+			Align(0.5, 0.5, Vline), Cols(generate(0, steps, \i -> Offset(stepW * i2d(i) - i2d(i) * lw, 0.0, Hline)))])));
+	}
+
+	getText = \t : string -> if (t == "") Empty() else Border(5.0, 0.0, 5.0, 0.0, Text(t, [FontSize(15.0), Fill(color)]));
+
+	blur = 	\f -> Filter([Blur([Radius(5.0), Spread(5.0)])], f);
+
+	handle = Group({
+		x = 0.0; y = 12.0;//x = 10.0; y = 23.0;
+		[Circle(x, y, 12.0, [Fill(0), FillOpacity(0.4)]) |> blur,
+		Circle(x, y, 11.0, [Fill(color)]),
+		Circle(x, y, 9.0, orangeGradientBrush),
+		Circle(x, y, 6.0, [Fill(white)])]});
+
+	getAspectSlider = \aspect -> {
+	    steps = length(aspect.values);
+		stepW = W / i2d(steps - 1);
+		bar = getBar(steps, stepW);
+		bx = make(0.0);
+		slider = Slider(bx, make(0.0), const(W), const(0.0), handle, [SnapOnClick(false)]);
+		Constructor(
+			Border(15.0, 0.0, 15.0, 0.0, Group([bar, slider])),
+			\ -> {
+				uns1 = subscribe(bx, \x -> {
+					want = x / stepW;
+					v = round(x / stepW);
+					// timer - to avoid internal update in slider
+					if (v != getValue(aspect.value)) timer(500, \ -> setAspect(aspect, v))
+					else if (abs(want - i2d(v)) > 0.3)  timer(500, \ -> nextDistinct(bx, i2d(v) * stepW));
+				});
+				uns2 = subscribeAspect(aspect, \v -> nextDistinct(bx, i2d(v) * stepW));
+				\ -> {uns1(); uns2()}
+			}
+		)
+	}
+
+	getNumericSlider = \var, minV, maxV -> {
+		range = abs(maxV - minV);
+		one = range / W;
+		bx = make(0.0);
+		steps = 5;
+		stepW = W / i2d(steps - 1);
+		bar = getBar(steps, stepW);
+		slider = Slider(bx, make(0.0), const(W), const(0.0), handle, [SnapOnClick(false)]);
+		Constructor(
+			Border(15.0, 0.0, 15.0, 0.0, Group([bar, slider])),
+			\ -> {
+				uns1 = subscribe(bx, \x -> nextDistinct(var, max(min(minV + one * x, maxV), minV)));
+				uns2 = subscribe(var, \v -> nextDistinct(bx, max(min( (v - minV) / one, W), 0.0)));
+				\ -> {uns1(); uns2();}
+			}
+		)
+	}
+
+	droundfn = \d : double, numOfDigits : int -> {
+		first = trunc(d) |> i2d;
+		if (numOfDigits == 0)
+			first
+		else {
+			k = fold(enumFromTo(1, numOfDigits), 1, \r, v -> r * 10) |> i2d;
+			second = (d - first) |> \v -> v * k |> round |> i2d |> \vv -> vv / k;
+			first + second
+		}
+	}
+
+	switch(s : SliderItem) {
+		AspectSlider(aspect, unit): {
+			[Align(1.0, 0.5, getText(aspect.name)),
+			getAspectSlider(aspect),
+			Align(0.0, 0.5, Select(aspect.value, \i -> getText(getAspectStringValue(aspect) + if (strlen(unit) > 0) " " + unit else "")))]
+		}
+		NumericSlider(title, var, dig, minV, maxV, unit): {
+			[Align(1.0, 0.5, getText(title)),
+			getNumericSlider(var, minV, maxV),
+			Align(0.0, 0.5, Select(var, \v -> getText(d2s(droundfn(v, dig)) + " " + unit)))]
+		}
+	}
+}
+
+makeGradientSlider(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, maxX : Behaviour<double>, maxY : Behaviour<double>, isBlocked : bool) -> Form {
+	sl = Background([linearGradient(270.0, [0x929292, 0xffffff])],
+		Rounded(5.0,[Stroke(0x000000)],Border(3.5, 10.0, 3.5, 10.0, Empty()))
+	);
+	Background([linearGradient(0.0, [0xeeeeee, 0xc4c4c4])],
+		Border(0.0, 0.0, getValue(maxX), 0.0,
+			if (isBlocked) {
+				Offset(getValue(x), 0.0, sl)
+			} else {
+				Slider(x, y, maxX, maxY, sl,[SnapOnClick(false)])
+			}
+		)
+	);
+}
+
+makeNumericSlider(x : DynamicBehaviour<double>, minimum : double, maximum : double, precision : double, width : double) -> Form {
+	makeNumericSlider2(x, minimum, maximum, precision, width, [SnapOnClick(false)])
+}
+
+makeNumericSlider2(x : DynamicBehaviour<double>, minimum : double, maximum : double, precision : double, width : double, style : [SliderStyle]) -> Form {
+	// Pixels: 0 - width, map that to value: minimum-maximum
+	perPixel = (maximum - minimum) / width;
+	precisionFn = \p -> floorTo(p, precision);
+	pixel2val = \p -> {
+		precisionFn((p * perPixel) + minimum);
+	}
+	val2pixel = \v -> {
+		max(0.0, min(width, (v - minimum) / perPixel));
+	}
+	pixel = make(val2pixel(getValue(x)));
+
+	sl = fixBaseline(15.0,
+		Border(1.0, 1.0, 1.0, 1.0, BevelFilter(2.0, Rounded(50.0, lightGrayButtonBrush /*linearGradient(90.0, [0x737373, 0x575757])*/ ,
+			Fixed(18.0, 18.0)
+/*			Border(s + 4.0, s + 3.0, s + 4.0, s + 3.0,
+				Cols([
+					Rounded(1.0, [Fill(0x737373)], Fixed(3.0, 9.0)),
+					Fixed(2.0, 0.0),
+					Rounded(1.0, [Fill(0x737373)], Fixed(3.0, 9.0)),
+				])
+			)*/
+	))));
+
+	roundPosition = if (equalDoubles(precision, 0.0)) {
+		idfn
+	} else {
+		\px -> px |> pixel2val |> val2pixel
+	}
+
+	Constructor(
+		Rounded(50.0, [Fill(0xeeeeee), Stroke(0xd0d0d0) /*linearGradient(90.0, [0xdedede, 0xfdfdfd]), Stroke(0xffffff)*/],
+			Border(0.0, 0.0, width, 0.0,
+				Slider(pixel, make(0.0), make(width), make(0.0), sl, arrayPush(style, RoundPosition(roundPosition, idfn)))
+			)
+		),
+		\ -> {
+			// The value might be changed when we were hidden, so reinitialize
+			nextDistinct(pixel, val2pixel(getValue(x)));
+			bidirectionalLink(x, pixel, val2pixel, pixel2val);
+		}
+	);
+}
+

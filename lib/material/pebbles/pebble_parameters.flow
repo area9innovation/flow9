@@ -1,0 +1,414 @@
+import pebbles/pebble_controller;
+
+export {
+	// Wrap the part of the screen which dependent on the current pebble parameters with this Material block. 
+	// You can set up a separate handler for each parameter you want to track:
+	// - update parameter by changing corresponding behaviour (valueB)
+	// - receive updates of the parameter value from outside using onChange callback
+
+	// NOTE: This mechanism is only to track parameters of the last path part while the pebble path itself stays the same 
+	// (i.e. pebble mask). Pebble path changes are handled by PebbleController (see pebble_controller.flow).
+	MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameterLink], m : Material) -> Material;
+
+		PebbleParameterLink ::= PebbleIntLink, PebbleStringLink, PebbleBoolLink;
+
+			// NOTE: Initial valueB will be rewritten by corresponding value from the current pebble
+			PebbleStringLink : (
+				parameter : string,
+				valueB : DynamicBehaviour<string>,
+				onChange : (string) -> void,
+				action : PebbleAction
+			);
+
+			// NOTE: as for now we consider negative values and zero as neutral and remove from pebble on update
+			// In other words it works only with positive numbers! Use `PebbleStringLink` if you need more
+			PebbleIntLink : (
+				parameter : string,
+				valueB : DynamicBehaviour<int>,
+				onChange : (int) -> void,
+				action : PebbleAction
+			);
+
+			PebbleBoolLink : (
+				parameter : string,
+				valueB : DynamicBehaviour<bool>,
+				onChange : (bool) -> void,
+				action : PebbleAction
+			);
+
+		// How do we want to handle pebble parameter update?
+		PebbleAction ::= RecordURLChange, RecordURLRestoreOrChangeParameters, DoNotRecord;
+			// change URL that will be stored in browser history
+			RecordURLChange : ();
+			// will try to restore last pebble from stack with the same parameter and value
+			// or make new one with only that parameter and value
+			// shared parameters will be passed from tabs to tabs it's useful in case of some parameters
+			// have to be chosen for all tabs on current pebble level
+			RecordURLRestoreOrChangeParameters(shared : [string]);	
+			// don't handle this event using pebbles
+			DoNotRecord : ();
+
+		RecordURLRestoreOrChange() -> RecordURLRestoreOrChangeParameters {RecordURLRestoreOrChangeParameters([])};
+
+	makeDummyPebbleParameterLink() -> PebbleParameterLink;
+
+	// Bunch of helpers to simplify PebbleParameterLink creation in case they are used as triggers of some event.
+	// Event is triggered when value is non-empty, disposer sets value back to empty.
+	/* 
+
+	Useful for showing dialogs, for example:
+	
+		showDialogB = make(false);
+
+		MLinkPebbleParameters(state.pebbleController, 
+			[ 	
+				makePebbleBoolTrigger(
+					"show_dialog", 
+					showDialogB, 
+					\isRunningB, disposer -> {
+						ShowMDialog(
+							state.manager, 
+							fnot(isRunningB),
+							[
+						        MDialogActions([
+						            MTextButton(_("OK"), disposer, [], []),
+						        ])
+
+							],
+							MText("Hello world", [])
+						)
+					},
+					RecordURLChange()
+				) 
+			],
+			... // body of the view
+		)
+
+	*/
+	// 
+	// NOTE: in case you need to show dialog for editing content items, there is a nice helper 
+	// 	`makePebbleStringEditDialogTrigger` in pebble_utils.flow 
+	// 	that will also provide an error message if content item is not found
+	makePebbleStringTrigger(
+		parameter : string,
+		valueB : DynamicBehaviour<string>,
+		onValue : (value : string, isRunningB : Transform<bool>, disposer : () -> void) -> void,
+		action : PebbleAction
+	) -> PebbleStringLink;
+
+	makePebbleIntTrigger(
+		parameter : string,
+		valueB : DynamicBehaviour<int>,
+		onValue : (value : int, isRunningB : Transform<bool>, disposer : () -> void) -> void,
+		action : PebbleAction
+	) -> PebbleIntLink;
+
+	makePebbleBoolTrigger(
+		parameter : string,
+		valueB : DynamicBehaviour<bool>,
+		onTrue : (isRunningB : Transform<bool>, disposer : () -> void) -> void,
+		action : PebbleAction
+	) -> PebbleBoolLink;
+
+	// Wrap part of the screen that depend on given pebble parameter in order to show confirmation dialog when this parameter is about to be changed.
+	// Given async function will be called every time the parameter changes it's value from the expected one.
+	//
+	// NOTE: use MTabConfirmSwitch style instead if you want to add confirmation dialog for one of the pebbled tabs (buildCustomPebbledTabs)
+	MConfirmPebbleParameterSwitch(
+		controller : PebbleController, 
+		parameter : string, 
+		value : string, 
+		confirm : (callback : (/* approve or cancel */ bool) -> void) -> void, 
+		m : Material
+	) -> Material;
+
+	/*
+
+	This mechanism can be used to show save changes dialog when user is about to change screen. Example:
+
+		MConfirmPebbleParameterSwitch(
+			pebbleController, 
+			"screen",
+			"myscreen",
+			\confirm -> {
+				closeB = make(false);
+				onClose = \x -> {
+					next(closeB, true);
+					confirm(x);
+				}
+				ShowMDialog(
+					state.manager, 
+					closeB,
+					[
+				        MDialogUseFrame(),
+				        MDialogActions([
+				            MTextButton(_("SAVE"), \ -> {
+				                saveMyChanges(\-> onClose(true));
+				            }, [], []),
+				            MTextButton(_("DON'T SAVE"), \ -> onClose(true), [], []),
+				            MTextButton(_("CANCEL"), \ -> onClose(false), [], []),
+				        ])
+
+					],
+					MText("Do you want to save changes?", [])
+				)
+			}
+		)
+
+	*/
+
+	// TODO: rename to `makePebbleParameterName` 
+	makePebbleTabUid(s : string) -> string;
+}
+
+MLinkPebbleParameters(controller : PebbleController, handlers : [PebbleParameterLink], m : Material) -> Material {
+	callstack = if (debugPebbles()) captureStringCallstack() else "";
+
+	MSelectPebbleParameters(
+		controller,
+		map(handlers, \handler -> handler.parameter),
+		\parameters : [Pair<string, Transform<string>>] -> {
+			MConstruct(concatA(
+				map(handlers, \handler -> {
+					if (handler.action == DoNotRecord() || controller.dummy) {
+						[
+							// call onChange on every valueB update if user don't care about pebbles
+							callOnChangeOnParameterChange(controller, handler, callstack)
+						]
+					} else {
+						[
+							makeSubscribe(getDynamicPebbleParameter(parameters, handler.parameter), \value -> {
+								changeParameterValue(handler, value, callstack)
+							}),
+							setViewOnParameterChange(controller, handler)
+						]
+					}
+				})),
+				m
+			)
+		}
+	)
+}
+
+MSelectPebbleParameters(
+	controller : PebbleController,
+	parametersNames : [string],
+	display : (parameters : [Pair<string, Transform<string>>]) -> Material
+) -> Material {
+
+	parameters = map(parametersNames, \key -> Pair(key, make("")));
+
+	MConstruct(
+		map(parametersNames, \key -> {
+			makeCurrentPebbleParameterSubscribe(controller, key, \value -> {
+				switch(find(parameters, \x -> x.first == key)) {
+					Some(parameter): nextDistinct(parameter.second, value);
+					None(): {}
+				}
+			})
+		}),
+		MActivate(
+			display(parameters),
+			[]
+		)
+	)
+}
+
+makeDummyPebbleParameterLink() -> PebbleParameterLink {
+	PebbleStringLink("", make(""), nop1, DoNotRecord())
+}
+
+getDynamicPebbleParameter(parameters : [Pair<string, Transform<string>>], key : string) -> Transform<string> {
+	findDef(parameters, \a -> a.first == key, Pair(key, const(""))).second;
+}
+
+// Process new value from current pebble parameter
+changeParameterValue(handler : PebbleParameterLink, value : string, callstack : string) -> void {
+	switch (handler) {
+		PebbleStringLink(parameter, valueB, onChange, __): {
+			urlDecodedValue = urlDecode(value);
+			printPebbleCallStackInfo(parameter, urlDecodedValue, callstack);
+			nextDistinct(valueB, urlDecodedValue); 
+			onChange(urlDecodedValue);
+		};
+		PebbleIntLink(parameter, valueB, onChange, __): {
+			printPebbleCallStackInfo(parameter, value, callstack);
+			nextDistinct(valueB, s2i(value)); 
+			onChange(s2i(value));
+		};
+		PebbleBoolLink(parameter, valueB, onChange, __): {
+			printPebbleCallStackInfo(parameter, value, callstack);
+			nextDistinct(valueB, s2b(value)); 
+			onChange(s2b(value));
+		};
+	}
+}
+
+// Process new value from dynamic behavior (UI event)
+setViewOnParameterChange(controller : PebbleController, handler : PebbleParameterLink) -> () -> () -> void {
+	switch (handler) {
+		PebbleStringLink(parameter, valueB, __, record): {
+			setViewOnParameterChange2(controller, parameter, valueB, idfn, record)
+		}
+		PebbleIntLink(parameter, valueB, __, record): {
+			setViewOnParameterChange2(controller, parameter, valueB, \value -> if (value <= 0) "" else i2s(value) , record)
+		}
+		PebbleBoolLink(parameter, valueB, __, record): {
+			setViewOnParameterChange2(controller, parameter, valueB, \v -> if (v) b2s(v) else "", record)
+		}
+	}
+}
+
+setViewOnParameterChange2(
+	controller : PebbleController,
+	parameter : string,
+	valueB : DynamicBehaviour<?>,
+	converValueToString : (?) -> string,
+	action : PebbleAction
+) -> () -> () -> void {
+
+	extendPebble = \val -> extendCurrentPebbleWithParameter(controller, parameter, converValueToString(val));
+	tryToRestorePebble = \val, shared -> restoreLastPebbleWithParameter(controller, parameter, converValueToString(val), shared);
+
+	makeSubscribe(valueB, \value -> {
+		setViewFromPebble(
+			controller,
+			switch (action : PebbleAction) {
+				RecordURLChange(): extendPebble(value);
+				RecordURLRestoreOrChangeParameters(shared): tryToRestorePebble(value, shared);
+				DoNotRecord(): extendPebble(value);
+			}
+		)
+	})
+}
+
+// It will try to find last pebble in stack which is same type with current pebble but contains these parameter and value in last pathPart
+// otherwise it will replace last pathpart of current pebble with only one passed parameter
+restoreLastPebbleWithParameter(controller : PebbleController, parameter : string, value : string, shared : [string]) -> Pebble {
+	// there is no sence to find pebble with empty parameter in stack
+	if (value == "") {
+		extendCurrentPebbleWithParameter(controller, parameter, value)
+	} else {
+		currentPebble = getCurrentPebble(controller);
+		currentPPName = getLastPathPart(currentPebble, makeEmptyPathPart()).name;
+		pp = PathPart(currentPPName, [KeyValue(parameter, value)]);
+		defPebble = replacePebbleLastPathPart(currentPebble, pp);
+		setLastPathPartParameters(
+			findLastPebbleInStack(controller, pp, defPebble),
+			getLastPathPartParameters(currentPebble, shared)
+		);
+	}
+}
+
+// Dummy process new value from dynamic behavior (UI event)
+callOnChangeOnParameterChange(controller : PebbleController, handler : PebbleParameterLink, callstack : string) -> () -> () -> void {
+	switch (handler) {
+		PebbleStringLink(parameter, valueB, onChange, __): {
+			makeSubscribe(valueB, \value -> {
+				printPebbleCallStackInfo(parameter, value, callstack);
+				onChange(value)
+			});
+		}
+		PebbleIntLink(parameter, valueB, onChange, __): {
+			makeSubscribe(valueB, \value -> {
+				printPebbleCallStackInfo(parameter, i2s(value), callstack);
+				onChange(value)
+			});
+		}
+		PebbleBoolLink(parameter, valueB, onChange, __): {
+			makeSubscribe(valueB, \value -> {
+				printPebbleCallStackInfo(parameter, b2s(value), callstack);
+				onChange(value)
+			});
+		}
+	}
+}
+
+printPebbleCallStackInfo(parameter : string, value : string, callstack : string) -> void {
+	if (debugPebbles()) {
+		println("Pebble parameter `" + parameter + "` changed it's value to `" + value + "`");
+		if (callstack != "") println(callstack);
+	}
+}
+
+makePebbleStringTrigger(
+	parameter : string,
+	valueB : DynamicBehaviour<string>,
+	onValue : (value : string, isRunningB : Transform<bool>, disposer : () -> void) -> void,
+	action : PebbleAction
+) -> PebbleStringLink {
+	PebbleStringLink(
+		parameter,
+		valueB, 
+		\value -> if (value != "") {
+			disposer = \-> deferred(\ -> next(valueB, ""));
+			onValue(value, fnot(feq(valueB, "")), disposer)
+		},
+		action
+	)
+}
+
+makePebbleIntTrigger(
+	parameter : string,
+	valueB : DynamicBehaviour<int>,
+	onValue : (value : int, isRunningB : Transform<bool>, disposer : () -> void) -> void,
+	action : PebbleAction
+) -> PebbleIntLink {
+	PebbleIntLink(
+		parameter,
+		valueB, 
+		\value -> if (value != 0) {
+			disposer = \-> deferred(\ -> next(valueB, 0));
+			onValue(value, fnot(feq(valueB, 0)), disposer)
+		},
+		action
+	)
+}
+
+makePebbleBoolTrigger(
+	parameter : string,
+	valueB : DynamicBehaviour<bool>,
+	onTrue : (isRunningB : Transform<bool>, disposer : () -> void) -> void,
+	action : PebbleAction
+) -> PebbleBoolLink {
+	PebbleBoolLink(
+		parameter,
+		valueB, 
+		\value -> if (value) {
+			disposer = \-> deferred(\ -> next(valueB, false));
+			onTrue(fnot(feq(valueB, false)), disposer)
+		},
+		action
+	)
+}
+
+MConfirmPebbleParameterSwitch(
+	controller : PebbleController, 
+	parameter : string, 
+	value : string, 
+	confirm : ((bool) -> void) -> void, 
+	m : Material
+) -> Material {
+	confirmation = \oldPebble : Pebble, newPebble : Pebble, callback : (bool) -> void -> {
+		oldValue = getLastPathPartParameter(oldPebble, parameter, "");
+		newValue = getLastPathPartParameter(newPebble, parameter, "");
+		if (oldValue == value && newValue != value) {
+			confirm(callback)	
+		} else {
+			callback(true)
+		}		
+	};
+
+	MConstruct([
+		\-> {
+			dynArrayPush(controller.confirmations, confirmation);
+			\-> {
+				next(controller.confirmations, removeFirst(getValue(controller.confirmations), confirmation));
+			}
+		}
+	], m)
+}
+
+makePebbleTabUid(s : string) -> string {
+	strReplace(toLowerCase(s), " ", "_")
+}

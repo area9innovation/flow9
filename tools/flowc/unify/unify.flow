@@ -1,0 +1,186 @@
+import tools/common/compilerconfig;
+import tools/flowc/unify/unify_parse;
+import tools/flowc/typechecker/ftype_solve;
+import tools/flowc/typechecker/ftype_finalize;
+import tools/flowc/flowc_module;
+
+/*
+Status:
+1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 16: ok
+
+7: Arguably wrong!
+
+20: Too aggressive. Should keep the type open, and not close it down to documentstyle
+
+*/
+
+main() {
+	config1 = getCompilerConfig();
+	switch (config1) {
+		Failed(m): {
+			fcPrintln(m);
+			quit(1);
+		}
+		Some(config): {
+			file0 = getConfigParameter(config.config, "file");
+			file1 = if (fileExists(file0)) file0 else "tools/flowc/unify/tests/" + file0;
+			file = if (fileExists(file1)) file1 else "tools/flowc/unify/tests/test" + file0 + ".unify";
+
+			if (file != "" && fileExists(file)) {
+				outcome = runUnify(config, file);
+				fcPrintln(outcome);
+			}
+
+			test = getConfigParameter(config.config, "test");
+			if (file == "" || test != "") {
+				runUnifyTests(config);
+			}
+
+			quit(0);
+		}
+	}
+}
+
+runUnifyTests(config : CompilerConfig) -> void {
+	folder = "tools/flowc/unify/tests/";
+	ensureDirectoryExists(folder + "out");
+	tests = readDirectory(folder);
+	iter(tests, \test -> {
+		file = folder + "/" + test;
+		if (isDirectory(file) && fileExists(file)) {
+		} else {
+			file1 = folder + (if (endsWith(folder, "/")) "" else "/") + test;
+			if (endsWith(file1, ".unify") && fileExists(file1)) {
+				fcPrintln("Testing " + file1);
+				result = runUnify(config, file1);
+				setFileContent(folder + "out/" + test + ".out", result);
+				{}
+			}
+		}
+	});
+}
+
+runUnify(config : CompilerConfig, file : string) -> string {
+	program = getFileContent(file);
+	unifyParse = parseUnify(program, Unify([], [], [], []));
+
+	if (unifyParse.third != "") {
+		fcPrintln(file + ": " + unifyParse.third + "\n" + strLeft(program, unifyParse.second));
+		fcPrintln(unifyParse.first);
+	}
+	unify = unifyParse.first;
+
+	typeenv = fold(unify.flowfile, makeEmptyFcTypeEnv(config), \acc, flowfile -> {
+		path = if (fileExists(flowfile)) flowfile
+			else "tools/flowc/unify/tests/" + flowfile;
+		addFlowFileToEnv(acc, config, path);
+	});
+
+	tyvars : Tree<int, FType> = fold(unify.bindings, makeTree(), \acc, binding -> {
+		setTree(acc, binding.tyvar.id, binding.type)
+	});
+
+	fenv = FEnv(typeenv, typeenv.global.acc.tyvarIdGroup, typeenv.global.acc.config.verbose, tyvars, makeTree(), makeTree());
+
+	// OK, run the constraints
+	errors = ref "";
+
+	onError = \e -> {
+			fcPrintln(e);
+			errors := ^errors + e + "\n";
+		};
+	env : FEnv = fold(unify.constraints, fenv, \acc, constraint -> {
+		et0 = unifyType(acc, constraint.from, constraint.to, constraint.kind, onError);
+		et0.env;
+	});
+
+	// Now, dump the result before finalization
+	outcome1 = foldTree(env.tyvars, "", \tv, type, acc -> {
+		acc + "α" + i2s(tv) + "=" + ftype2string(env, type) + "\n";
+	});
+
+	// OK, now finalize
+	outcome2 = if (unify.final != []) {
+		ftypeFinalize(file, FcPosition(file, 0, 0), 0, env.env, env, unifyType);
+
+		pt = \tt -> prettyFcType(FcPretty(false, false, ^(env.env.local.tyvars), ^(env.env.local.typars)), tt, makeSet());
+		foldTree(^(env.env.local.tyvars), "\nFinal:\n", \tv, type, acc -> {
+			acc + "α" + i2s(tv) + "=" + pt(type) + "\n";
+		});
+	} else "";
+
+	outcome1 
+	+ outcome2
+	+ ^errors;
+}
+
+makeEmptyFcTypeEnv(
+		config : CompilerConfig, 
+	) -> FcTypeEnv {
+
+	names =
+		FcGlobalNames(
+			makeTree(), // struct2module : Tree<string, string>,
+			makeTree(), // union2module : Tree<string, string>,
+			makeTree(), // function2module : Tree<string, string>,
+			makeTree(), // globalVar2module : Tree<string, string>,
+			makeTree(), // native2module : Tree<string, string>,
+			makeTree(),
+			makeTree(),
+			makeTree(),
+			makeTree(),
+			makeTree(), // toplevel : Tree<string, FcDeclaration>
+			makeTree(),
+		);
+
+	factory = makeIdFactory(100, 0);
+	acc = FlowcAcc(
+			makeDependencyTracker(), makeTree(), makeTree(), makeTree(),
+			[], names, config, factory, makeIdGroup(factory),
+		);
+
+	FcTypeEnv(
+		FcTypeEnvGlobal(acc, makeTree(), \error : FcError -> printFcError(acc, error), ref 0),
+		FcTypeEnvLocal(
+			// Requirements for types.
+			ref makeList(),
+			// Final checks after type checking
+			ref makeList(),
+			// The resolved type of tyvars
+			ref makeTree(),
+			// The current type of type parameters
+			ref makeTree(),
+			// varinfo
+			makeTree(),
+			// Which expectations are collected during debug?
+			ref makeSet(),
+			// Are we debug typing?
+			ref 0,
+			// Indentation for debug
+			ref "",
+		)
+	);
+}
+
+// Parses the given flow file, and adds it to the environment without type checking
+addFlowFileToEnv(env : FcTypeEnv, config : CompilerConfig, file : string) -> FcTypeEnv {
+	preloadedErrorPair : Pair<FcPreloadedModule, FcError> = doParseFlowFileOrLoadCached(config, file, "unify", 0, 0);
+	if (preloadedErrorPair.second == dummyFcError) {
+		preloaded = preloadedErrorPair.first;
+		module : FcModule = switch (preloaded) {
+			FcParsed(__, __, __, __, __): {
+				parsed : FcParsed = preloaded;
+				desugarFcModule(env.global.acc, env.local, preloaded.fileinfo, parsed.syntaxtree);
+			}
+			FiModule(__, __, __, __, __, __, __, __, __, __, __, __, __): fimodule2fc(preloaded, false);
+		}
+
+		FcTypeEnv(
+			addModuleToGlobal(env.global, module).first,
+			env.local
+		)
+	} else {
+		printFcError(env.global.acc, preloadedErrorPair.second);
+		env
+	}
+}

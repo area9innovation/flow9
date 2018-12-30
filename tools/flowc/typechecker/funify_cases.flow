@@ -1,0 +1,1008 @@
+import tools/flowc/typechecker/ftype_basic;
+import tools/flowc/typechecker/ftype_bound;
+import tools/flowc/debug;
+
+export {
+	FunifyFns(
+		unifyType : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+		kind : FUnification,
+		onError : (string) -> void, 
+		rest : () -> FEnvType
+	);
+
+
+	funifyStruct(env : FEnv, left : FStruct, right : FType, fns : FunifyFns) -> FEnvType;
+	funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvType;
+
+	funifyUnnamedUnion(env : FEnv, uu : FUnnamedUnion, type : FType, unnamedLeft : bool, fns : FunifyFns) -> FEnvType;
+	funifyFields(env : FEnv, fields : FFields, type : FType, fieldsLeft : bool, fns : FunifyFns) -> FEnvType;
+
+	funifyBounded(env : FEnv, bounded : FBounded, type : FType, boundedLeft : bool, fns : FunifyFns) -> FEnvType;
+
+	unifyTypes(env : FEnv, kind : string, outputs : [FType], inputs : [FType], fns : FunifyFns) -> FEnvTypes;
+}
+
+// The struct is always left here.
+funifyStruct(env : FEnv, left : FStruct, right : FType, fns : FunifyFns) -> FEnvType {
+	lname = left.name;
+	ltps = left.typars;
+	switch (right) {
+		FStruct(rname, rtps): {
+			if (lname == rname) {
+				et1 = unifyTypes(env, "struct type parameters to " + lname, ltps, rtps, fns);
+				FEnvType(
+					et1.env,
+					FStruct(lname, et1.types)
+				);
+			} else {
+				// OK, different structs.
+				if (fns.kind == FGrowRight()) {
+					// We could conceivably try to see if this combination is unique, and if so,
+					// construct a real union instead.
+					FEnvType(
+						env,
+						makeFUnnamedUnion([left, right])
+					);
+				} else {
+					// Reducing or unify with different names, not possible
+					fns.onError("Expected " + rname + ", got " + lname);
+					FEnvType(env, left);
+				}
+			}
+		}
+		FFields(rfs, __, excl): {
+			funifyFieldAgainstStruct(env, right, left, false, fns)
+		}
+		FUnion(ru, rtps): {
+			funifyUnionAndStruct(env, right, left, false, fns);
+		}
+		FUnnamedUnion(__): {
+			funifyUnnamedUnion(env, right, left, false, fns);
+		}
+		FBounded(rlower, rupper): {
+			funifyBounded(env, right, left, false, fns);
+		}
+		FFlow(): {
+			// OK, deconstruct and go down with the flow
+			mtps = fold(ltps, FEnvTypes(env, []), \acc, tp -> {
+				if (!isFDetermined(env, tp, makeSet())) {
+					et = fns.unifyType(acc.env, tp, right, fns.kind, fns.onError);
+					FEnvTypes(et.env, arrayPush(acc.types, et.type));
+				} else FEnvTypes(acc.env, arrayPush(acc.types, tp));
+			});
+			lt = FStruct(lname, mtps.types);
+			FEnvType(mtps.env, if (fns.kind == FUnifyLeft() || fns.kind == FReduceLeft()) lt else right);
+		}
+		default: fns.rest();
+	}
+}
+
+// The union is always left here
+funifyUnion(env : FEnv, left : FUnion, right : FType, fns : FunifyFns) -> FEnvType {
+	lname = left.name;
+	ltps = left.typars;
+	switch (right) {
+		FUnion(rname, rtps): {
+			if (lname == rname) {
+				fns2 = FunifyFns(fns.unifyType, fns.kind, fns.onError, fns.rest);
+				et1 = unifyTypes(env, "union type parameters", ltps, rtps, fns2);
+				FEnvType(
+					et1.env,
+					FUnion(lname, et1.types)
+				);
+			} else {
+				// OK, two different unions. We should look them up and match them
+				ltypars = foldi(ltps, makeTree(), \i, acc, tp -> {
+					setTree(acc, strLeft("????????????????", i + 1), tp)
+				});
+				ltypenames = union2typenames(env.env, lname);
+
+				rtypars = foldi(rtps, makeTree(), \i, acc, tp -> {
+					setTree(acc, strLeft("????????????????", i + 1), tp)
+				});
+				rtypenames = union2typenames(env.env, rname);
+
+				// OK, find which structs overlap both, and funify those
+				overlap = fold(ltypenames, Pair(env, []), \acc : Pair<FEnv, [FType]>, ltn : FcTypeName -> {
+					rstruct = find(rtypenames, \rtn : FcTypeName -> {
+						rtn.name == ltn.name
+					});
+					switch (rstruct) {
+						None(): acc;
+						Some(rst): {
+							eenv = acc.first;
+							// The same struct in both unions.
+							linst = fcstructname2ftype(eenv, ltn.name, ltypars);
+							rinst = fcstructname2ftype(eenv, ltn.name, rtypars);
+							et = fns.unifyType(eenv, linst, rinst, fns.kind, fns.onError);
+							Pair(
+								et.env,
+								arrayPush(acc.second, et.type)
+							)
+						}
+					}
+				});
+
+				/*
+				fcPrintln("Union of " + lname + " and " + rname);
+				iter(overlap.second, \ol -> {
+					fcPrintln(ftype2string(overlap.first, ol));
+				});
+				*/
+
+				useoverlap = \ -> {
+					FEnvType(
+						overlap.first,
+						if (length(overlap.second) == length(ltypenames)) {
+							// Left ::= S1, S2
+							// Right ::= S1, S2, S3
+							// left has all
+							left
+						} else if (length(overlap.second) == length(rtypenames)) {
+							// Left ::= S1, S2, S3
+							// Right ::= S1, S2
+							// Right has all
+							right
+						} else {
+							if (length(overlap.second) == 0) {
+								fns.onError("No overlap between " + rname + " and " + lname);
+								right;
+							} else {
+								makeFUnnamedUnion(overlap.second);
+							}
+						}
+					);
+				}
+
+				if (fns.kind == FGrowRight()) {
+					// join the overlap with the extras
+					eenv = overlap.first;
+					missingl = fold(ltypenames, [], \acc, ltn : FcTypeName -> {
+						if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc 
+						else {
+							linst = fcstructname2ftype(env, ltn.name, ltypars);
+							arrayPush(acc, linst)
+						}
+					});
+
+					missingr = fold(rtypenames, [], \acc, rtn : FcTypeName -> {
+						if (exists(ltypenames, \ltn : FcTypeName -> rtn.name == ltn.name)) acc 
+						else {
+							rinst = fcstructname2ftype(eenv, rtn.name, rtypars);
+							arrayPush(acc, rinst)
+						}
+					});
+
+					FEnvType(
+						overlap.first, 
+						if (missingl == []) {
+							// Left ::= S1, S2
+							// Right ::= S1, S2, S3.
+							// The overlap = S1, S2, missingl = [].
+
+							// OK, right has all of them
+							right;
+						} else if (missingr == []) {
+							// Left ::= S1, S2, S3
+							// Right ::= S1, S2
+							// The overlap = S1, S2, missingr = [].
+							// So left has all of them
+							left;
+						} else {
+							// OK, explicitly join these guys
+							makeFUnnamedUnion(concat3(overlap.second, missingl, missingr))
+						}
+					);
+				} else if (fns.kind == FReduceLeft()) {
+					// Just the overlap is kept
+					useoverlap();
+				} else {
+					// Opposite.
+
+					// union+ <= union-
+
+					// fcPrintln(ftype2string(overlap.first, left) + " vs "+ (if (fns.kind == FUnifyLeft()) " ." else "")  + ftype2string(overlap.first, right) + " gives overlap " + ftype2string(overlap.first, FUnnamedUnion(overlap.second)));
+
+					// The left can never have any, which the right does not have already.
+					// So we require overlap == left.
+
+					if (length(ltypenames) != length(overlap.second)) {
+						// Mistakes:
+						// Left ::= S1, S2, S3   <=   Right ::= S1, S2
+						// Left ::= S1           <=   Right ::= S2, S3, S4, S5
+
+						fns.onError("We expect " + lname + " to be fully contained in " + rname);
+					}
+
+					if (fns.kind == FUnifyLeft()) {
+						// The goal is to change the left hand side. It is acceptable to increase it.
+
+						// OK cases:
+						// Left ::= S1, S2       <=   Right ::= S1, S2, S3    -> Left ::= S1, S2, S3
+						// Left ::= S1           <=   Right ::= S1            -> Left ::= S1
+
+						// OK, we expand to all that the right side has to offer
+						if (true) {
+							FEnvType(overlap.first, right);
+						} else {
+							// I think this would also be correct, and slightly more conservative, but hey
+							useoverlap();
+						}
+					} else {
+						missingl = fold(ltypenames, [], \acc, ltn : FcTypeName -> {
+							if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == ltn.name)) acc 
+							else {
+								linst = fcstructname2ftype(env, ltn.name, ltypars);
+								arrayPush(acc, linst)
+							}
+						});
+
+						if (missingl == []) {
+							FEnvType(
+								overlap.first,
+								right
+							);
+						} else {
+							// We have to update the right to match the left. It is acceptable to decrease the right.
+							// So the safe choice is to go with the overlap.
+							// Left ::= S1, S2   <=   .   Right ::= S1, S2, S3    -> Right ::= S1, S2
+							useoverlap()
+						}
+					}
+				}
+			}
+		}
+		FStruct(rname, rtps): {
+			funifyUnionAndStruct(env, left, right, true, fns);
+		}
+		FFields(rfs, __, excl): {
+			funifyFields(env, right, left, false, fns);
+		}
+		FUnnamedUnion(__): {
+			funifyUnnamedUnion(env, right, left, false, fns);
+		}
+		FBounded(rlower, rupper): {
+			funifyBounded(env, right, left, false, fns);
+		}
+		default: fns.rest();
+	}
+}
+
+funifyUnionAndStruct(env : FEnv, union : FUnion, struct : FStruct, unionIsLeft : bool, fns : FunifyFns) -> FEnvType {
+	uname = union.name;
+	sname = struct.name;
+	// OK, we should look up the union, and match against the struct
+	mudef = lookupTree(env.env.program.acc.names.unions, uname);
+	switch (mudef) {
+		None(): fns.rest();
+		Some(udef): {
+			typenames = union2typenames(env.env, uname);
+			typename = find(typenames, \tn : FcTypeName -> {
+				tn.name == sname;
+			});
+			switch (typename) {
+				None(): {
+					// OK, it was not found in the union.
+					// If we are positive, we "just" have to extend to cover both
+					if (fns.kind == FGrowRight()) {
+						// output vs output: add the new one
+						ltypars = foldi(union.typars, makeTree(), \i, acc, tp -> {
+							setTree(acc, strLeft("????????????????", i + 1), tp)
+						});
+
+						// fcPrintln("Expanding " + uname + " with " + superglue(typenames, \tn -> tn.name, ", "));
+						members = arrayPush(
+								map(
+									typenames,
+									\tn -> {
+										fcstructname2ftype(env, tn.name, ltypars);
+									}
+								),
+								struct
+							);
+
+						unnamed = makeFUnnamedUnion(members);
+						FEnvType(env, unnamed);
+					} else {
+						// All unification, this is an error, but not in interesection
+						if (fns.kind != FReduceLeft()) {
+							fns.onError("Expected " + sname + " in union " + uname);
+						}
+						FEnvType(env, union);
+					}
+				}
+				Some(st): {
+					// OK, the struct is found in the union
+					typars = foldi(union.typars, makeTree(), \i, acc, tp -> {
+						setTree(acc, strLeft("????????????????", i + 1), tp)
+					});
+					// Instantiate the struct from the union
+					inst = fcstructname2ftype(env, sname, typars);
+
+					leftt = if (unionIsLeft) inst else struct;
+					rightt = if (unionIsLeft) struct else inst;
+
+					if (fns.kind == FGrowRight()) {
+						// Any type parameter matches should have happened
+						et = fns.unifyType(env, leftt, rightt, FGrowRight(), fns.onError);
+						FEnvType(
+							et.env,
+							union
+						);
+					} else if (fns.kind == FReduceLeft()) {
+						// Intersection: We take the struct
+						et = fns.unifyType(env, leftt, rightt, FReduceLeft(), fns.onError);
+
+						et;
+					} else if (unionIsLeft) {
+						// union+ <= struct-
+
+						// Unify the struct in the union to capture info
+						et = fns.unifyType(env, inst, struct, fns.kind, fns.onError);
+
+						// The union can only contain l, otherwise we have a problem.
+						if (length(typenames) > 1) {
+							// OK, too many in the union. Something is not right here
+							super = set2array(removeSet(buildSet(map(typenames, \tn -> tn.name)), sname));
+							fns.onError("Expected just " + sname + " here, got union " + uname + ".");
+						}
+						// We are good with the struct, which has been determined
+						et;
+					} else {
+						// struct+ <= union-
+
+						et = fns.unifyType(env, struct, inst, fns.kind, fns.onError);
+						// The struct is in the union. We have to keep the range, to avoid loosing information
+						FEnvType(
+							et.env,
+							if (fns.kind == FUnifyRight()) {
+								// We are allowed to restrict the right hand side towards the left.
+								// In this case, we know the struct is contained, so we are already good.
+							  	// This fixes 16
+								union
+							} else {
+								// We are allowed to increase the left hand side towards the right.
+								// but we do not have to. Let us just go with the struct. This fixes 96.
+								//  makeFBounded(et.env, et.type, union, fns.onError)
+								et.type;
+							}
+						);
+					}
+				}
+			}
+		}
+	}
+}
+
+funifyFields(env : FEnv, fields : FFields, type : FType, fieldsLeft : bool, fns : FunifyFns) -> FEnvType {
+	switch (type) {
+		FFields(rfields, rseen, rexcluded): {
+			// In this case, fieldsLeft is always true
+
+			// In practice, when we have .field against .field, it is probably not
+			// unreasonable to assume it is one type that can do all fields.
+
+			// When unifying the left, we are allowed to increase it towards the right.
+			// When unifying the right, we are allowed to decrease towards the left.
+			//   .first    <=   .second
+			//   .field1 : T1    intersect  .field2 : T2
+			//   .field1 : T1      union    .field2 : T2
+
+
+			// Alright, all we have to do is to join them together
+			shared1 = fold(fields.fields, Pair([], env), \acc : Pair<[FField], FEnv>, lf : FField -> {
+				mrf = find(rfields, \rf -> rf.name == lf.name);
+				switch (mrf) {
+					None(): {
+						// We have something on the left, which is not on the right.
+						// Just keep it as is
+						Pair(
+							arrayPush(acc.first, lf),
+							acc.second
+						);
+					}
+					Some(rf): {
+						// The field matches, so we unify that
+						et = fns.unifyType(acc.second, if (fieldsLeft) lf.type else rf.type, if (fieldsLeft) rf.type else lf.type, fns.kind, fns.onError);
+						uf1 = arrayPush(acc.first, FField(lf.name, et.type, lf.access));
+						uf2 = if (lf.access != rf.access) {
+							// OK, we also need it with the opposite access
+							arrayPush(uf1, FField(lf.name, et.type, rf.access));
+						} else uf1;
+						Pair(uf2, et.env);
+					}
+				}
+			});
+
+			// And now add all those from the right hand side we do not know about
+			fields2 = fold(rfields, shared1.first, \acc : [FField], rf : FField -> {
+					if (exists(fields.fields, \lf -> lf.name == rf.name)) acc
+					else arrayPush(acc, rf);
+				});
+			// TODO: Figure out the excluded part here better
+			FEnvType(
+				shared1.second,
+				FFields(fields2, rseen, rexcluded)
+			);
+		}
+		FStruct(rname, rtp): {
+			funifyFieldAgainstStruct(env, fields, type, fieldsLeft, fns);
+		}
+		FUnion(rname, rtps): {
+			// OK, the field should exist in all or one of the union's struct
+			// We look up the union, and match against all structs
+			mudef = lookupTree(env.env.program.acc.names.unions, rname);
+			switch (mudef) {
+				None(): fns.rest();
+				Some(udef): {
+					// .field  <=  union
+					// If we are going for the left hand side, we are able
+					// to extend to grab all of the union, although we are not
+					// required to.
+
+					// union   <=  .field
+					// All members of the union need to have the .field
+
+					typenames1 = union2typenames(env.env, rname);
+
+					typenames = if (fns.kind == FReduceLeft()) {
+						// We can filter out the structs that do not work in advance.
+						filter(typenames1, \tn -> {
+							hasStructFields(env, tn.name, fields)
+						});
+					} else {
+						typenames1;
+					}
+
+					typars = foldi(rtps, makeTree(), \i, acc, tp -> {
+						setTree(acc, strLeft("????????????????", i + 1), tp)
+					});
+					// Instantiate all structs
+					structs = map(typenames, \tn -> {
+						fcstructname2ftype(env, tn.name, typars)
+					});
+
+					funifyFieldsAgainstStructs(env, fields, type, rname, fieldsLeft, structs, fns);
+				}
+			}
+		}
+		FUnnamedUnion(structs): {
+			funifyFieldsAgainstStructs(env, fields, type, "", fieldsLeft, structs, fns)
+		}
+		FBounded(rlower, rupper): {
+			lname = getFTypeName(rlower);
+			rname = getFTypeName(rupper);
+
+			et = funifyBounded(env, type, fields, !fieldsLeft, fns);
+			rt = switch (et.type) {
+				FFields(nf, nn, ne): {
+					// OK, we can add any seen names here!
+					seen1 = if (lname != "") insertSet(nn, lname) else nn;
+					seen2 = if (rname != "") insertSet(seen1, rname) else seen1;
+					FFields(nf, seen2, ne);
+				}
+				default: et.type;
+			}
+			FEnvType(et.env, rt);
+		}
+		default: fns.rest();
+	}
+}
+
+funifyFieldAgainstStruct(env : FEnv, fields : FFields, struct_ : FStruct, fieldsLeft : bool, fns : FunifyFns) -> FEnvType {
+	sname = struct_.name;
+	// Alright, we need to check that this struct has those fields
+	msdef = lookupTree(env.env.program.acc.names.structs, sname);
+	switch (msdef) {
+		None(): {
+			fns.rest();
+		}
+		Some(sdef): {
+			typars = foldi(struct_.typars, makeTree(), \i, acc, tp -> {
+				setTree(acc, strLeft("????????????????", i + 1), tp)
+			});
+
+			sargs = sdef.args;
+
+			fulloverlap = ref true;
+
+			env2 = fold(fields.fields, env, \acc, lf : FField -> {
+				// Does the struct have this field?
+				sarg = find(sargs, \sarg -> sarg.name == lf.name);
+				switch (sarg) {
+					None(): {
+						fulloverlap := false;
+						fns.onError("Expected ." + lf.name + " in " + sname);
+						acc;
+					}
+					Some(sa): {
+						// Check the type of the field
+						st = fctype2ftype(acc.env, env.tyvarIdGroup, sa.type);
+						// We have to instantiate typars first
+						si = instantiateFTyPars(acc, typars, st);
+
+						failmatch = ref false;
+
+						et = fns.unifyType(acc, if (fieldsLeft) lf.type else si, if (fieldsLeft) si else lf.type, fns.kind, \e -> {
+							failmatch := true;
+							fns.onError(e)
+						});
+						// Any changes in the resulting type should be captured through
+						// type parameters, so we just throw away the result
+						if (^failmatch) {
+							fulloverlap := false;
+							acc
+						} else {
+							et.env;
+						}
+					}
+				}
+			});
+
+			r = if (fns.kind == FGrowRight()) {
+				// .fields grow_right struct
+				// struct grow_right .fields
+
+				// We have an assumption that if a union has a .field requirement
+				// it has to be unique.
+				if (! ^fulloverlap && !fieldsLeft) {
+					// We do matching on the overlap only and give an unnamed union for cases like test 58
+					// where there is no overlap.
+					FUnnamedUnion([fields, struct_]);
+				} else {
+					struct_;
+				}
+			} else if (fns.kind == FReduceLeft()) {
+				// .fields intersect struct. The most restrictive is the struct
+				struct_
+			} else if (fieldsLeft) {
+				//	.fields+ <= struct
+
+				// If .fields is bigger than struct, we have a problem
+				if (! ^fulloverlap) {
+					fns.onError("Expected " + ftype2string(env2, struct_) + " to have " + ftype2string(env2, fields));
+				}
+				struct_;
+			} else {
+				// struct+ <= .fields
+
+				// If .fields is bigger than struct, that is fine
+
+				// FUnifyLeft: We are allowed to increase the left towards the right, although we do not have to
+				// FUnifyRight: We are allowed to decrease the right towards the left
+				struct_;
+			}
+
+			FEnvType(env2, r)
+		}
+	}
+}
+
+
+funifyFieldsAgainstStructs(env : FEnv, fields : FFields, right : FType, rname : string, fieldsLeft : bool, structs : [FType], fns : FunifyFns) -> FEnvType {
+
+	// .field  <=  structs
+	// If we are going for the left hand side, we are able
+	// to extend to grab all of the names, although we are not
+	// required to.
+
+	// structs   <=  .field
+	// All structs need to have the .fields
+	// If we are going for the right, we are allowed to restrict the
+	// to the structs with the .fields.
+	// If we are going for the left, we are allowed to restrict to
+	// the structs with the .fields
+
+
+	// Find out what structs work against the fields
+	envworks : Pair<FEnv, [Pair<FType, bool>]> = foldi(structs, Pair(env, []), \i, acc : Pair<FEnv, [Pair<FType, bool>]>, struct -> {
+		errors = ref 0;
+
+		// We just go against each in succession, ignoring errors
+		et = fns.unifyType(acc.first, if (fieldsLeft) fields else struct, if (fieldsLeft) struct else fields, fns.kind, \m -> {
+			errors := 1 + ^errors;
+		});
+		if (^errors == 0) {
+			// It worked, so keep the match up.
+			Pair(et.env, arrayPush(acc.second, Pair(et.type, true)))
+		} else {
+			// It did not work - do not take the new environment
+			Pair(acc.first, arrayPush(acc.second, Pair(struct, false)))
+		}
+	});
+
+	// We could skip the environment when the fields are left, and just check if they work instead.
+	// See unify23
+	env0 = if (false && fieldsLeft) env else envworks.first;
+
+	matches : [FType] = filtermap(envworks.second, \p : Pair -> if (p.second) Some(p.first) else None());
+	superfluous : [FType] = filtermap(envworks.second, \p : Pair -> if (p.second) None() else Some(p.first));
+
+	types = if (fns.kind == FGrowRight()) {
+		concat(matches, superfluous);
+	} else if (fns.kind == FReduceLeft()) {
+		matches;
+	} else if (fieldsLeft) {
+		// .fields <= structs
+		// If we are going for the left hand side, we are able
+		// to extend to grab all of the names, although we are not
+		// required to.
+		matches;
+	} else {
+		// structs+ <= .fields-
+		if (superfluous != []) {
+			fns.onError("Expected " + ftype2string(env0, fields) + " in " + superglue(superfluous, \t -> ftype2string(env, t), ", "));
+		}
+
+		matches
+	}
+
+	FEnvType(env0, makeFUnnamedUnion(types));
+}
+
+hasStructFields(env : FEnv, struct : string, fields : FFields) -> bool {
+	msdef = lookupTree(env.env.program.acc.names.structs, struct);
+	switch (msdef) {
+		None(): false;
+		Some(sdef): {
+			forall(fields.fields, \field -> {
+				exists(sdef.args, \sa : FcStructArg -> sa.name == field.name)
+			});
+		}
+	}
+}
+
+// Right is not necessarily on the right hand side
+funifyUnnamedUnion(env : FEnv, unnamed : FUnnamedUnion, right : FType, unnamedLeft : bool, fns : FunifyFns) -> FEnvType {
+	utypes = unnamed.types;
+
+	rec = \ -> {
+		et = fold(utypes, FEnvTypes(env, []), \acc, ut -> {
+			sst = fns.unifyType(acc.env, if (unnamedLeft) ut else right, if (unnamedLeft) right else ut, fns.kind, fns.onError);
+			FEnvTypes(sst.env, arrayPush(acc.types, sst.type));
+		});
+		FEnvType(et.env, makeFUnnamedUnion(et.types));
+	}
+
+	nonstructs = filter(utypes, \tn : FType -> {
+		getFTypeName(tn) == "";
+	});
+
+	switch (right) {
+		FStruct(rname, rtps): {
+			structi = findi(utypes, \tn : FType -> {
+				switch (tn) {
+					FStruct(lt, ltp): lt == rname;
+					default: false;
+				}
+			});
+
+			switch (structi) {
+				None(): {
+					// No obvious overlap
+					if (fns.kind == FGrowRight()) {
+						// anon union+ vs. struct+, both output: join
+						FEnvType(
+							env,
+							makeFUnnamedUnion(arrayPush(utypes, right))
+						);
+					} else {
+						if (nonstructs != []) {
+							// We have some field stuff going on. Maybe that works
+							rec();
+						} else {
+							// In all other cases, we need the overlap to be there
+							fns.onError("Expected " + rname + " in union " + ftype2string(env, unnamed));
+							FEnvType(env, unnamed);
+						}
+					}
+				}
+				Some(si): {
+					// There is an overlap
+					struct = utypes[si];
+
+					// Funify the overlap
+
+					sst = fns.unifyType(env, if (unnamedLeft) struct else right, if (unnamedLeft) right else struct, fns.kind, fns.onError);
+					if (fns.kind == FGrowRight()) {
+						// anon union+ vs struct+, both output
+
+						// The union is the result with the funified replacement
+						FEnvType(
+							sst.env,
+							FUnnamedUnion(replace(utypes, si, sst.type))
+						)
+					} else if (fns.kind == FReduceLeft()) {
+						// anon union- vs struct-, both input:
+						// The struct is the result
+						sst
+					} else if (unnamedLeft) {
+						// anon union+ vs struct-, the determined struct is the result
+						sst;
+					} else {
+						// struct+ <= anon union-. We should do a range
+						FEnvType(
+							sst.env,
+							if (fns.kind == FUnifyLeft()) {
+								// We can restrict to the 
+								makeFBounded(sst.env, sst.type, unnamed, fns.onError)
+							} else {
+								unnamed;
+							}
+						);
+					}
+				}
+			}
+		}
+		FUnion(rname, rtps): {
+			rtypars = foldi(rtps, makeTree(), \i, acc, tp -> {
+				setTree(acc, strLeft("????????????????", i + 1), tp)
+			});
+			rtypenames = union2typenames(env.env, rname);
+
+			// Find the named overlaps
+			namedOverlap : FEnvTypes = fold(utypes, FEnvTypes(env, []), \acc : FEnvTypes, utn : FType -> {
+				rstruct = find(rtypenames, \rtn : FcTypeName -> {
+					getFTypeName(utn) == rtn.name;
+				});
+				switch (rstruct) {
+					None(): acc;
+					Some(rst): {
+						eenv = acc.env;
+						// The same struct in both unions.
+						rinst = fcstructname2ftype(eenv, rst.name, rtypars);
+						et = fns.unifyType(eenv, utn, rinst, fns.kind, fns.onError);
+						FEnvTypes(
+							et.env,
+							arrayPush(acc.types, et.type)
+						)
+					}
+				}
+			});
+
+			rt = if (fns.kind == FGrowRight()) {
+				// output, output: join the overlap with the extras
+				eenv = namedOverlap.env;
+				missingl = fold(utypes, [], \acc, ltn : FType -> {
+					if (exists(rtypenames, \rtn : FcTypeName -> rtn.name == getFTypeName(ltn))) acc 
+					else {
+						arrayPush(acc, ltn)
+					}
+				});
+
+				missingr = fold(rtypenames, [], \acc, rtn : FcTypeName -> {
+					if (exists(utypes, \ltn : FType -> rtn.name == getFTypeName(ltn))) acc 
+					else {
+						rinst = fcstructname2ftype(eenv, rtn.name, rtypars);
+						arrayPush(acc, rinst)
+					}
+				});
+
+				if (missingl == [] && missingr == []) {
+					// We have all of both sides in the overlap. We can keep the union
+					right;
+				} else if (unnamedLeft && missingl == []) {
+					// <unnamed>  c= union, but all of the union is there, we are good
+					// to keep it as a union
+					right;
+				} else {
+					makeFUnnamedUnion(concat3(namedOverlap.types, missingl, missingr))
+				}
+			} else if (fns.kind == FReduceLeft()) {
+				// input, input: Just the overlap is kept
+				if (length(namedOverlap.types) == length(rtypenames)) {
+					// Everything is in the union. Keep it as such
+					right
+				} else {
+					makeFUnnamedUnion(namedOverlap.types);
+				}
+			} else if (unnamedLeft) {
+				// un+ <= right-
+
+				// OK, check if at least we cover all of the left hand side dudes. We are allowed to drop right hand guys
+				if (length(namedOverlap.types) != length(utypes) && nonstructs == []) {
+					fns.onError("We expect " + ftype2string(env, right)+ " to fully contain " + ftype2string(env, unnamed));
+				}
+				if (length(namedOverlap.types) == length(rtypenames)) {
+					// OK, we cover the entire union, so we can keep it as a union
+					if (fns.kind == FUnifyLeft()) {
+						unnamed
+					} else {
+						makeFBounded(namedOverlap.env, unnamed, right, fns.onError)
+					}
+				} else {
+					if (fns.kind == FUnifyLeft()) {
+						unnamed;
+					} else {
+						makeFBounded(namedOverlap.env, unnamed, right, fns.onError)
+					}
+					// FRange(unnamed, FUnnamedUnion(overlap.second, false))
+				}
+			} else {
+				// right+ <= un-
+
+				// OK, check if at least we cover all of the right hand side dudes. We are allowed to drop unnamed members
+				if (length(namedOverlap.types) != length(rtypenames) && nonstructs== []) {
+					fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+				}
+
+				if (length(namedOverlap.types) == length(rtypenames)) {
+					// OK, we know the right hand is also the union
+					// FRange(right, FUnion(rname, false, rtps))
+					right
+				} else {
+					// FRange(right, FUnnamedUnion(overlap.second))
+					makeFUnnamedUnion(namedOverlap.types)
+				}
+			}
+			FEnvType(namedOverlap.env, rt);
+		}
+		FUnnamedUnion(rtypes): {
+			overlap = fold(utypes, Pair(env, []), \acc : Pair<FEnv, [FType]>, ltn : FType -> {
+				rstruct = find(rtypes, \rtn : FType -> {
+					getFTypeName(ltn) == getFTypeName(rtn);
+				});
+				switch (rstruct) {
+					None(): acc;
+					Some(rst): {
+						eenv = acc.first;
+						// The same struct in both unions.
+						et = fns.unifyType(eenv, ltn, rst, fns.kind, fns.onError);
+						Pair(
+							et.env,
+							arrayPush(acc.second, et.type)
+						)
+					}
+				}
+			});
+
+			rt = if (fns.kind == FGrowRight()) {
+				// output, output: join the overlap with the extras
+				missingl = fold(utypes, [], \acc, ltn : FType -> {
+					if (exists(rtypes, \rtn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc 
+					else {
+						arrayPush(acc, ltn)
+					}
+				});
+
+				missingr = fold(rtypes, [], \acc, rtn : FType -> {
+					if (exists(utypes, \ltn : FType -> getFTypeName(rtn) == getFTypeName(ltn))) acc 
+					else {
+						arrayPush(acc, rtn)
+					}
+				});
+
+				makeFUnnamedUnion(concat3(overlap.second, missingl, missingr));
+			} else if (fns.kind == FReduceLeft()) {
+				// input, input: Just the overlap is kept
+				makeFUnnamedUnion(overlap.second);
+			} else if (unnamedLeft) {
+				// un+ <= right-
+
+				// OK, check if at least we cover all of the left hand side dudes. We are allowed to drop right hand guys
+				if (length(overlap.second) != length(utypes)) {
+					fns.onError("We expect " + ftype2string(env, unnamed) + " to be fully contained in " + ftype2string(env, right));
+				}
+				// FRange(unnamed, FUnnamedUnion(overlap.second, false));
+				unnamed;
+			} else {
+				// right+ <= un-
+
+				// OK, check if at least we cover all of the right hand side dudes. We are allowed to drop unnamed members
+				if (length(overlap.second) != length(rtypes)) {
+					fns.onError("We expect " + ftype2string(env, right) + " to be fully contained in " + ftype2string(env, unnamed));
+				}
+
+				// FRange(right, FUnnamedUnion(overlap.second, false))
+				right
+			}
+			FEnvType(overlap.first, rt);
+		}
+		FFields(__, __, __): {
+			fields = right;
+			funifyFieldsAgainstStructs(env, fields, unnamed, "", !unnamedLeft, utypes, fns)
+		}
+		FBounded(rlower, rupper): {
+			funifyBounded(env, right, unnamed, !unnamedLeft, fns);
+		}
+		default: fns.rest();
+	}
+}
+
+funifyBounded(env : FEnv, range : FBounded, type : FType, boundedLeft : bool, fns : FunifyFns) -> FEnvType {
+	// fcPrintln(ftype2string(env, range) + "   vs   " + ftype2string(env, type) + "   " + toString(fns.kind));
+	l1 = range.lower;
+	u1 = range.upper;
+	l2 = lowerBound(env, type);
+	u2 = upperBound(env, type);
+	unify = \e, t1, t2, k -> {
+		if (t1 == FTopBottom()) FEnvType(e, t2)
+		else if (t2 == FTopBottom()) FEnvType(e, t1)
+		else fns.unifyType(e, t1, t2, k, fns.onError)
+	}
+	if (fns.kind == FReduceLeft()) {
+		switch (type) {
+			FTypeVar(rid): fns.rest();
+			default: {
+				if (boundedLeft) {
+					et0 = unify(env, l1, u2, FReduceLeft());
+					et1 = unify(et0.env, u1, u2, FReduceLeft());
+					makeFBoundedEnv(et1.env, et0.type, et1.type, FUnifyLeft(), fns.unifyType, fns.onError);
+				} else {
+					et0 = unify(env, l2, u1, FReduceLeft());
+					et1 = unify(et0.env, u2, u1, FReduceLeft());
+					makeFBoundedEnv(et1.env, et0.type, et1.type, FUnifyLeft(), fns.unifyType, fns.onError);
+				}
+			}
+		}
+	} else if (fns.kind == FGrowRight()) {
+		switch (type) {
+			FTypeVar(rid): fns.rest();
+			default: {
+				if (boundedLeft) {
+					et0 = unify(env, l1, l2, FGrowRight());
+					et1 = unify(et0.env, u1, u2, FGrowRight());
+
+					// Examples like  {Maybe<> .. *}  union  None<>
+					// show that we have to make sure the upper bound respects the lower bound
+					et2 = fns.unifyType(et1.env, et0.type, et1.type, FGrowRight(), fns.onError);
+
+					makeFBoundedEnv(et2.env, et0.type, et2.type, FUnifyLeft(), fns.unifyType, fns.onError);
+				} else {
+					et0 = unify(env, l2, l1, FGrowRight());
+					et1 = unify(et0.env, u2, u1, FGrowRight());
+					// Examples like  {Maybe<> .. *}  union  None<>
+					// show that we have to make sure the upper bound respects the lower bound
+					et2 = fns.unifyType(et1.env, et0.type, et1.type, FGrowRight(), fns.onError);
+
+					makeFBoundedEnv(et2.env, et0.type, et2.type, FUnifyLeft(), fns.unifyType, fns.onError);
+				}
+			}
+		}
+	} else {
+		switch (type) {
+			FTypeVar(rid): fns.rest();
+			default: {
+				if (boundedLeft) {
+					// l1 ... u1  <= l2 ... u2
+					etr = unify(env, l1, l2, FGrowRight());
+					etl = unify(etr.env, u1, u2, FReduceLeft());
+
+					if (fns.kind == FUnifyLeft()) {
+						// l1 ... u1  <= l2 ... u2   ->    l1 ... (u1 . reduce_left u2)
+						makeFBoundedEnv(etl.env, l1, etl.type, fns.kind, fns.unifyType, fns.onError);
+					} else {
+						// l1 ... u1  <= l2 ... u2   ->    (l1  grow_right . l2)  .. u2
+						makeFBoundedEnv(etl.env, etr.type, u2, fns.kind, fns.unifyType, fns.onError);
+					}
+				} else {
+					// l2 ... u2  <= l1 ... u1
+					etl = unify(env, u2, u1, FReduceLeft());
+					etr = unify(etl.env, l2, l1, FGrowRight());
+					if (fns.kind == FUnifyLeft()) {
+						// l2 ... u2  <= l1 ... u1   ->    l2 ... (u2 . reduce_left u1)
+						makeFBoundedEnv(etr.env, l2, etl.type, fns.kind, fns.unifyType, fns.onError);
+					} else {
+						// l2 ... u2  <= l1 ... u1   ->    (l2  grow_right . l1)  .. u1
+						makeFBoundedEnv(etr.env, etr.type, u1, fns.kind, fns.unifyType, fns.onError);
+					}
+				}
+			}
+		}
+	}
+}
+
+unifyTypes(env : FEnv, kind : string, outputs : [FType], inputs : [FType], fns : FunifyFns) -> FEnvTypes {
+	no = length(outputs);
+	ni = length(inputs);
+	if (no != ni) {
+		fns.onError("Expected " + i2s(no) + " " + kind + ", got " + i2s(ni));
+	}
+	foldi(outputs, FEnvTypes(env, []), \i, acc : FEnvTypes, output -> {
+		if (i < ni) {
+			envtype = fns.unifyType(acc.env, output, inputs[i], fns.kind, fns.onError);
+			FEnvTypes(envtype.env, arrayPush(acc.types, envtype.type))
+		} else acc;
+	});
+}
+

@@ -1,0 +1,982 @@
+import formats/writeparser;
+import levenshtein;
+import doublemetaphone;
+import stemmer;
+import formats/wiki/wikivariables;
+import formats/write;
+import crashdebuginfo; // http://process.area9.dk/cases/default.asp?39031
+
+export {
+	findMatch(input : string, answers : [string], levensteinOnly : bool, exactMatch : bool, caseSensitive : bool, ignoreSpaces : bool, signForTolerance : string, decimalTolerance : int) -> Match;
+
+	Match : (index : int, answer : string, similarity : double, fullSimilarity : double);
+
+	MatchScore : (answer : string, remediation : Form, remediationtext : string, score : double, correctForm : bool);
+
+	normalizeString(str : string, exactMatch : bool, caseSensitive : bool, ignoreSpaces : bool) -> string;
+
+	parseFloat(input : string) -> Maybe<double>;
+
+	isNumberAsWord(s: string) -> bool;
+
+	hasDigit(str : string) -> bool;
+
+	parseFloatRange(txt : string) -> Maybe<FloatRange>;
+	FloatRange : (from : double, to : double, inPercents : bool);
+	parseOrdinal: (s : string) -> Maybe<Pair<double, double>>;
+	isOrdinal(s : string) -> bool;
+
+	checkAnswerDecimalTolerance(inputVal : string, decimalTolerance : int) -> bool;
+	checkSignTolerance(inputVal : string, signForTolerance : string) -> double;
+}
+
+PercentType : (is : bool, value : string);
+Dictionary : (word : string, value : int);
+
+dictionary = [
+	Dictionary("zero", 0),
+	Dictionary("one", 1),
+	Dictionary("two", 2),
+	Dictionary("three", 3),
+	Dictionary("four", 4),
+	Dictionary("five", 5),
+	Dictionary("six", 6),
+	Dictionary("seven", 7),
+	Dictionary("eight", 8),
+	Dictionary("nine", 9),
+	Dictionary("ten", 10),
+	Dictionary("eleven", 11),
+	Dictionary("twelve", 12),
+	Dictionary("thirteen", 13),
+	Dictionary("fourteen", 14),
+	Dictionary("fifteen", 15),
+	Dictionary("sixteen", 16),
+	Dictionary("seventeen", 17),
+	Dictionary("eighteen", 18),
+	Dictionary("nineteen", 19),
+	Dictionary("twenty", 20),
+	Dictionary("thirty", 30),
+	Dictionary("forty", 40),
+	Dictionary("fifty", 50),
+	Dictionary("sixty", 60),
+	Dictionary("seventy", 70),
+	Dictionary("eighty", 80),
+	Dictionary("ninety", 90),
+	Dictionary("hundred", 100),
+	Dictionary("thousand", 1000),
+	Dictionary("million", 1000000),
+	// next are not supported because of Int restrictions
+	// Dictionary("billion", 1000000000),
+	// Dictionary("trillion", 1000000000000)
+];
+
+ordinalsDict = [
+	Dictionary("first", 1),
+	Dictionary("second", 2),
+	Dictionary("third", 3),
+	Dictionary("fourth", 4),
+	Dictionary("fifth", 5),
+	Dictionary("sixth", 6),
+	Dictionary("seventh", 7),
+	Dictionary("eighth", 8),
+	Dictionary("ninth", 9),
+	Dictionary("tenth", 10),
+	Dictionary("eleventh", 11),
+	Dictionary("twelfth", 12),
+	Dictionary("thirteenth", 13),
+	Dictionary("fourteenth", 14),
+	Dictionary("fifteenth", 15),
+	Dictionary("sixteenth", 16),
+	Dictionary("seventeenth", 17),
+	Dictionary("eighteenth", 18),
+	Dictionary("nineteenth", 19),
+	Dictionary("twentieth", 20),
+	Dictionary("thirtieth", 30),
+	Dictionary("fortieth", 40),
+	Dictionary("fiftieth", 50),
+	Dictionary("sixtieth", 60),
+	Dictionary("seventieth", 70),
+	Dictionary("eightieth", 80),
+	Dictionary("ninetieth", 90),
+	Dictionary("hundredth", 100),
+	Dictionary("thousandth", 1000),
+	Dictionary("millionth", 1000000),
+];
+ordinalsEnds = ["1st", "2nd", "2d", "3rd", "3d", "4th", "5th", "6th", "7th", "8th", "9th", "0th"];
+dictionaryExt = concat(dictionary, ordinalsDict);
+
+dictWords = map(dictionary, \d -> d.word);
+dictWordsExt = map(dictionaryExt, \d -> d.word);
+
+isNumberAsWord(s: string) -> bool {
+	contains(dictWords, s)
+}
+
+signs = [" ", "$", "€", "%"];
+normalizeFloat(s : string) -> string {
+	// remove all leading / trailing dollar and euro symbols and spaces
+	trim2(s, strGlue(signs, ""));
+}
+
+toFloatNumber(s: string) -> Maybe {
+	if (startsWith(s, "-")) {
+		number = toPositiveFloatNumber(substring(s, 1, strlen(s)-1));
+		eitherMap(
+			number,
+			\v:double -> Some(-v),
+			None()
+		)
+	}
+	else
+		toPositiveFloatNumber(s)
+}
+
+isOrdinal(s : string) -> bool {
+	switch (parseOrdinal(s) : Maybe) {
+		None() : false;
+		Some(v) : v.second == 1.0;
+	}
+}
+
+
+parseOrdinal(s : string) -> Maybe<Pair<double, double>> {
+	fromEnglish(s, true);
+}
+
+toPositiveFloatNumber(s: string) -> Maybe {
+	number = "0123456789";
+	numberWithE = "0123456789+-eE";
+	isFloat = ref true;
+	output = ref 0.0;
+
+	posPoint = ref strIndexOf(s, ".");
+
+	if (^posPoint != strLastIndexOf(s, ".")) {
+		// more than one points
+		isFloat := false
+	} else {
+		// s before point
+		str1 = ref "";
+		// s after point
+		str2 = ref "";
+
+		if (^posPoint == -1) {
+			str1 := s
+		} else {
+			str1 := strLeft(s, ^posPoint);
+			str2 := strRight(s, ^posPoint + 1);
+		}
+
+		str1 := strReplace(^str1, ",", "");
+
+		if ((strFindFirstOf(^str1, "eE") > -1 && strlen(^str2) > 0) || rtrim2(^str2, numberWithE) != "" || rtrim2(^str1, numberWithE) != "") {
+			isFloat := false
+		} else {
+			if (^str2 != "") {
+				if (ltrim2(^str2, number) == "") {
+					if (rtrim2(^str1, number) == "") {
+						output := s2d(^str1 + "." + ^str2)
+					} else {
+						isFloat := false
+					}
+				} else {
+					ePos = if (strIndexOf(^str2, "e") < 0) strIndexOf(^str2, "E") else strIndexOf(^str2, "e");
+					if (ePos > -1) {
+						str2Left = strLeft(^str2, ePos);
+						str2Right = ref strRight(^str2, ePos + 1);
+						str2SignIsMinus = startsWith(^str2Right, "-");
+						if (startsWith(^str2Right, "+") || startsWith(^str2Right, "-")) {
+							str2Right := substring(^str2Right, 1, strlen(^str2Right) - 1)
+						}
+						if (rtrim2(str2Left, number) == "" && rtrim2(^str2Right, number) == "" && rtrim2(^str1, number) == "") {
+							power = if (str2SignIsMinus) 1.0/i2d(pow(10, s2i( ^str2Right))) else i2d(pow(10, s2i( ^str2Right)));
+							output := s2d(^str1 + "." + str2Left) * power;
+						} else {
+							isFloat := false
+						}
+					} else {
+						isFloat := false
+					}
+				}
+			} else if (^isFloat) {
+				if (strlen(^str1) > 0) {
+					if(rtrim2(^str1, number) == "") {
+						output := s2d(^str1);
+					} else {
+						ePos = if (strIndexOf(^str1, "e") < 0) strIndexOf(^str1, "E") else strIndexOf(^str1, "e");
+						if (ePos > -1) {
+							str1Left = strLeft(^str1, ePos);
+							str1Right = ref strRight(^str1, ePos+1);
+							str2SignIsMinus = startsWith(^str1Right, "-");
+							if (startsWith(^str1Right, "+") || startsWith(^str1Right, "-")) {
+								str1Right := substring(^str1Right, 1, strlen(^str1Right) - 1)
+							}
+							if (rtrim2(str1Left, number) == "" && rtrim2(^str1Right, number) == "") {
+								power = if (str2SignIsMinus) 1.0 / i2d(pow(10, s2i(^str1Right))) else i2d(pow(10, s2i(^str1Right)));
+								output := s2d(str1Left) * power;
+							} else {
+								isFloat := false
+							}
+						} else {
+							isFloat := false
+						}
+					}
+				} else {
+					isFloat := false;
+				}
+			}
+		}
+	}
+
+	if (^isFloat) Some(^output) else None();
+}
+
+numberWeight(i : int) -> int {
+	strlen(i2s(i));
+}
+
+// parse input phrase as an integer, returns null if w is not a number
+fromEnglish(w : string, addOrdinals : bool) -> Maybe<Pair<double,double>> {
+	isFloat = ref true;
+	number = "0123456789";
+	isNegative = ref false;
+	result = ref 0;
+	//used for cases with ordinals only (we use similarity for penaltize integer instead of ordinals)
+	similarity = ref 1.0;
+
+	str = ref normalizeString(w, false, false, false);
+
+	if (^str == "") {
+		isFloat := false;
+	} else {
+		// replacing all "-" (except leading one) with spaces to support "twenty-six"
+		str := (if (startsWith(^str, "-")) "-" else "") + strReplace(^str, "-", " ");
+
+		words = ref strSplit(^str, " ");
+
+		if ((^words)[0] == "-" || (^words)[0] == "minus") {
+			words := subrange(^words, 1, length(^words) - 1);
+			isNegative := true;
+		} else if (startsWith((^words)[0], "-")) {
+			words := mapi(^words, \i,s -> if (i == 0) substring(s, 1, strlen(s)-1) else s);
+			isNegative := true;
+		}
+
+		// if w is "minus", words are empty, so let's return None
+		if (^str == "" || ^words == []) {
+			isFloat := false;
+		} else {
+			nums = ref [];
+			if (addOrdinals) {
+				iteri(^words, \idx, s -> if (^isFloat) {
+					match = findMatch(s, dictWordsExt, true, false, false, false, "", -1);
+					if (match.similarity >= 0.8) {
+						d = dictionaryExt[match.index];
+						nums := concat(^nums, [d.value]);
+						//check, if we have integer on last position, or ordinal on non-last, this is spelling error for us
+						if ((idx == length(^words) - 1 && match.index < length(dictionary)) || (idx < length(^words) - 1 && match.index > length(dictionary))) similarity := 0.8;
+					} else if (rtrim2(s, number) == "") {
+						// word wasn't found in dictionary, so let's check if is an integer
+						// so we can support something like "5 hundred"
+						// if last word is number without letters that mean that we have float instead of ordinal, so count that like spelling error
+						if (idx == length(^words) - 1) similarity := 0.8;
+						nums := concat(^nums, [s2i(s)]);
+					} else if (strlen(ltrim2(s, number)) < 3 && strlen(ltrim2(s, number)) < strlen(s)) {
+						// we assume that we on last position, check ordinals endings
+						if (!exists(ordinalsEnds, \oe -> endsWith(s, oe))) similarity := 0.8;
+						nums := concat(^nums, [s2i(strLeft(s, strlen(s)-strlen(ltrim2(s, number))))]);
+					} else {
+						// this is not a correct word/integer/ordinal, so input is wrong
+						isFloat := false;
+					}
+				});
+			} else {
+				iter(^words, \s -> if (^isFloat) {
+					match = findMatch(s, dictWords, true, false, false, false, "", -1);
+					if (match.similarity >= 0.8) {
+						d = dictionary[match.index];
+						nums := concat(^nums, [d.value]);
+					} else if (rtrim2(s, number) == "") {
+						// word wasn't found in dictionary, so let's check if is an integer
+						// so we can support something like "5 hundred"
+						nums := concat(^nums, [s2i(s)]);
+					} else {
+						// this is not a correct word or integer, so input is wrong
+						isFloat := false;
+					}
+				});
+			}
+
+
+			if (^isFloat) {
+				// here we should have array of integer like this:
+				// [1, 100, 20, 3] for "one hundred twenty three" which is 123
+				// [2, 1000000, 1, 100, 1000, 17] for "two million one hundred thousand seventeen" which is 2100017
+
+				prevPartWeight = ref -1; // -1 = null
+				curPart = ref (^nums)[0];
+				lastWeight = ref numberWeight(^curPart);
+
+				iteri(^nums, \i, curNum -> if (i > 0 && ^isFloat) {
+					curWeight = numberWeight(curNum);
+
+					newPart = ref false;
+					// further in all examples current number is the last mentioned
+					if (curWeight == 1) {
+						if (^lastWeight == 1 || (^lastWeight == 2 && ^curPart < 20)) {
+							// 3, 3
+							isFloat := false;
+						} else if (^lastWeight == 2 || ^lastWeight == 3) {
+							// 20, 3
+							curPart := ^curPart + curNum;
+						} else {
+							// 1000, 2
+							newPart := true;
+						}
+					} else if (curWeight == 2) {
+						if (^lastWeight < 3) {
+							// 20, 20  or  3, 20
+							isFloat := false;
+						} else if (^lastWeight == 3) {
+							// 100, 20
+							curPart := ^curPart + curNum;
+						} else {
+							// 1000, 20
+							newPart := true;
+						}
+					} else if (curWeight == 3) {
+						if (^curPart < 10) {
+							// 1, 100
+							curPart := ^curPart * curNum;
+						} else {
+							// 20, 100
+							isFloat := false;
+						}
+					} else {
+						if (^curPart < 1000) {
+							// 100, 20, 3, 1000
+							curPart := ^curPart * curNum;
+						} else if (^curPart / curNum > 1000) {
+							// 3, 1000000, 1000 which will be 30001000
+							newPart := true;
+						} else {
+							// 1000, 1000
+							isFloat := false;
+						}
+					}
+
+					if(^isFloat) {
+						if (!(^newPart)) {
+							lastWeight := curWeight;
+						} else {
+							if (^prevPartWeight != -1 && curWeight >= ^prevPartWeight) {
+								// 3, 1000, 20, 3, 1000
+								isFloat := false;
+							} else {
+								prevPartWeight := numberWeight(^curPart);
+								result := ^result + ^curPart;
+								curPart := curNum;
+								lastWeight := curWeight;
+							}
+						}
+					}
+				});
+
+
+				if (^prevPartWeight != -1 && ^lastWeight >= ^prevPartWeight) {
+					isFloat := false;
+				} else {
+					result := ^result + ^curPart;
+				}
+			}
+		}
+	}
+
+	if (^isFloat) Some(Pair(i2d(if (^isNegative) - ^result else ^result), ^similarity)) else None();
+}
+
+parseFloat(input : string) -> Maybe<double> {
+	/* #if (flash && einstein && write)
+	if (Write.canHandle(input)) {
+		input = new Write(input).toPlainText();
+	}
+	#end */
+
+	outputSuccess = ref true;
+	output = ref input;
+	outputFloat = ref 0.0;
+
+	output := normalizeFloat(^output);
+
+	isNegative = ref false;
+	if (startsWith(^output, "(") && endsWith(^output, ")")) {
+		isNegative := true;
+		output := normalizeFloat(substring(^output, 1, strlen(^output) - 2));
+	}
+
+	powPos = strIndexOf(^output, "^");
+	if (powPos != -1) { // special case for 10^n
+		if (normalizeFloat(strLeft(^output, powPos)) != "10") {
+			outputSuccess := false;
+		} else {
+			power = parseFloat(normalizeFloat(substring(^output, powPos+1, strlen(^output) - powPos - 1)));
+			switch (power : Maybe) {
+				None() : outputSuccess := false;
+				Some(v) : if (^isNegative) outputFloat := - i2d(pow(10, trunc(v))) else outputFloat := i2d(pow(10, trunc(v)));
+			}
+		}
+	} else {
+		toFloat = toFloatNumber(^output);
+		if (isSome(toFloat)) {
+			outputFloat := either(toFloat, 0.0);
+		} else {
+			fromText = fromEnglish(^output, false);
+			// TODO: is check for negative needed here?
+			switch (fromText : Maybe) {
+				None() : outputSuccess := false;
+				Some(v) : if (^isNegative) outputFloat := - v.first else outputFloat := v.first;
+			}
+		}
+	}
+
+	if (^outputSuccess) Some(^outputFloat) else None();
+}
+
+parsePercent(s : string) -> PercentType {
+	if (endsWith(s, "%"))
+		PercentType(true, rtrim(strLeft(s, strlen(s)-1)))
+	else
+		PercentType(false, s);
+}
+
+parseFloatRange(txt) {
+	outputSuccess = ref true;
+	input = ref [];
+	mode = ref 0; // 1: float; 2: float ± float; 3: float..float
+	firstNumber = ref 0.0;
+	secondNumber = ref 0.0;
+	inPercents = ref false;
+
+	/* #if (flash && einstein && write)
+		if (Write.canHandle(s)) {
+			s = new Write(s).toPlainText();
+		}
+	#end */
+
+	if (strIndexOf(txt, "..") != -1) {
+		input := strSplit(txt, "..");
+		mode := 3;
+	} else if (strIndexOf(txt, "±") != -1) {
+		input := strSplit(txt, "±");
+		mode := 2;
+	} else {
+		input := [txt];
+		mode := 1;
+	}
+
+	if (length(^input) > 2) {
+		// we have more than one ± or .. symbol in the answer
+		outputSuccess := false;
+	} else {
+
+		firstN = parseFloat((^input)[0]);
+		switch(firstN : Maybe) {
+			None() : outputSuccess := false;
+			Some(v) : firstNumber := v;
+		};
+
+		if (^mode != 1 && ^outputSuccess) {
+			// check if we have "%" in the end of second number
+			p = parsePercent((^input)[1]);
+			inPercents := p.is;
+			input := [(^input)[0], p.value];
+
+			secondN = parseFloat((^input)[1]);
+
+			switch(secondN : Maybe) {
+				None() : outputSuccess := false;
+				Some(v) : secondNumber := v;
+			}
+		} else if (^mode == 1 && ^outputSuccess) {
+			p = parsePercent((^input)[0]);
+			inPercents := p.is;
+		}
+	}
+
+	if (^outputSuccess) {
+		if (^mode == 1) {
+			Some(FloatRange(^firstNumber, ^firstNumber, ^inPercents));
+		} else if (^mode == 2) {
+			secondNumber := if (^inPercents) ^firstNumber * ^secondNumber / 100.0 else ^secondNumber;
+			Some(FloatRange(^firstNumber - ^secondNumber, ^firstNumber + ^secondNumber, false));
+		} else {
+			Some(FloatRange(^firstNumber, ^secondNumber, ^inPercents));
+		}
+	} else {
+		None();
+	}
+}
+
+
+normalizeString(str, exactMatch, caseSensitive, ignoreSpaces) {
+
+	asteriskReplace = \q -> strReplace(q, "&#x002A;", "*");
+	apostropheReplace = \q -> strReplaces(q, ["&#39;", "'", "&#0039;", "'"]);
+
+	prepostr = str
+	|> asteriskReplace
+	|> apostropheReplace;
+
+	excludeDashes = !hasDigit(prepostr); //it cause problems with negative floats, so disable it for sting with digits (remove all html character which can confuse before check)
+
+	removeArt = \s, art_ -> {
+		art = art_ + " ";
+		artLen = strlen(art);
+		if (toLowerCase(strLeft(s, artLen)) == art) substring(s, artLen, strlen(s) - artLen) else s
+	};
+
+
+	articleCleaner = \q -> if (!exactMatch) removeArt(q, "the") |> \q1 -> removeArt(q1, "a") |> \q2 -> removeArt(q2, "an")  else q;
+
+	multipleSpaceRemove = \q -> trim(fold(strSplit(q, " "), "", \acc, c -> if (c!="") acc+" "+c else acc));
+	dashesRemove = \q -> if (excludeDashes && !exactMatch) strReplace(q, "-", " ") else q;
+	spacesRemove = \q -> if (ignoreSpaces) strReplace(q, " ", "") else q;
+	dashesSpaceRemove = \q -> if (!excludeDashes && !exactMatch) strReplace(strReplace(q, " -", "-"), "- ", "-") else q;
+	writeToPlain = \q -> if (isWriteContent(q)) write2plaintext(q, \tag -> "[" + tag + "]") else q;
+	caseSensApply = \q -> if (caseSensitive) q else toLowerCase(q);
+
+	prepostr
+	|> writeToPlain
+	|> caseSensApply
+	|> \q -> trim2(q," \n\t")
+	|> dashesRemove
+	|> spacesRemove
+	|> multipleSpaceRemove
+	|> articleCleaner
+	|> dashesSpaceRemove
+	|> \w -> rtrim2(w,".")
+}
+
+// Extracted as named function to help compiler to optimize tail recursion
+// Do not combine conditions with && and || - tail recursion optimization will be lost
+hasDigitEx(str : string, i : int, len : int) -> bool {
+	if (i < len) {
+		if (isDigit(getCharAt(str, i))) {
+			true
+		} else {
+			hasDigitEx(str, i + 1, len)
+		}
+	} else {
+		false
+	}
+}
+
+hasDigit(str : string) -> bool {
+	len = strlen(str);
+	hasDigitEx(str, 0, len)
+}
+
+findEqualAnswer(input : string, answers : [string], exactMatch) {
+	either(findi(answers, \answer -> contains(correctOptions(answer, exactMatch), input)), -1);
+}
+
+findOptions(s : string, start : string, end : string) {
+	cur = ref "";
+	subs = ref [];
+	chars = ["a", "e", "i", "o"];
+	for(0, \i -> i < strlen(s), \i -> {
+		char = getCharAt(s, i);
+		if (char == start) {
+			if (strlen(^cur) > 1 && end == "") subs := arrayPush(^subs, ^cur);
+			cur := start
+		} else if (contains(chars, char)) {
+			if (^cur != "") {
+				cur := ^cur + char;
+				if (strlen(^cur) > 1 && end == "" && i == strlen(s) - 1) subs := arrayPush(^subs, ^cur);
+			}
+			else {
+				cur := ""
+			}
+		} else if (char == end) {
+			if (strlen(^cur) > 1) {
+				subs := arrayPush(^subs, ^cur + end);
+				cur := ""
+			}
+			else {
+				cur := ""
+			}
+		} else if (end == "" && strlen(^cur) > 1) {
+			subs := arrayPush(^subs, ^cur + end);
+			cur := ""
+		} else {
+			cur := ""
+		}
+		i + 1;
+	});
+	^subs
+}
+
+correctOptions(orig : string, exactMatch : bool) {
+	re = [orig];
+
+	// Equivalent conventions: "gastr/o" means accept "gastr/o", "gastr" and "gastro".
+	re1 = fold(findOptions(orig, "/", ""), [], \acc, s -> {
+		concat3(acc,
+			[
+				strReplace(orig, s, ""),
+				strReplace(orig, s, substring(s, 1, strlen(s) - 1))
+			],
+			concatA(
+				map(acc, \a ->
+					[
+						strReplace(a, s, ""),
+						strReplace(a, s, substring(s, 1, strlen(s) - 1))
+					]
+				)
+			)
+		)
+	});
+	// Equivalent conventions: "gastr(o)" means accept "gastr(o)", "gastr", "gastro" and "gastr/o".
+	re2 = concat3([orig],
+		fold(findOptions(orig, "(", ")"), [], \acc, s -> {
+			concat3(acc,
+				[
+					strReplace(orig, s, ""),
+					strReplace(orig, s, substring(s, 1, strlen(s) - 2)),
+					strReplace(orig, s, "/" + substring(s, 1, strlen(s) - 2))
+				],
+				concatA(
+					map(acc, \a ->
+						[
+							strReplace(a, s, ""),
+							strReplace(a, s, substring(s, 1, strlen(s) - 2)),
+							strReplace(a, s, "/" + substring(s, 1, strlen(s) - 2))
+						]
+					)
+				)
+			)
+		}),
+		concatA(
+			map(re1, \r1 ->
+				concat([r1],
+					fold(findOptions(r1, "(", ")"), [], \acc, s -> {
+						concat3(acc,
+							[
+								strReplace(r1, s, ""),
+								strReplace(r1, s, substring(s, 1, strlen(s) - 2)),
+								strReplace(r1, s, "/" + substring(s, 1, strlen(s) - 2))
+							],
+							concatA(
+								map(acc, \a ->
+									[
+										strReplace(a, s, ""),
+										strReplace(a, s, substring(s, 1, strlen(s) - 2)),
+										strReplace(a, s, "/" + substring(s, 1, strlen(s) - 2))
+									]
+								)
+							)
+						)
+					})
+				)
+			)
+		)
+	);
+
+	if (exactMatch) {
+		re2
+	} else {
+		// Equivalent conventions: "shays's" means accept "shays's", "shayss" and "shays"
+		concatA(
+			map(re2, \r2 -> {
+				if (endsWith(r2, "'s")) {
+					w = strLeft(r2, strlen(r2)-2);
+					[r2, w + "s", w + "'", w]
+				} else {
+					[r2];
+				}
+			})
+		)
+	}
+}
+
+/// Do fuzzy matching with all our heuristics - finds the best answer along with the similarity score
+/// it will be better if correctList is sorted by score as in the findMatchScore()
+findMatch(input, answers, levensteinOnly, exactMatch_, caseSensitive, ignoreSpaces, signForTolerance, decimalTolerance) {
+	//If case sensitivity is enabled, DNa should be "wrong" answer for DNA, not "almost correct"
+	//So don't use similarity rules for case sensitivity check
+	//Note that Hunde will not match Hund any longer, that's something to be dealed with later
+
+	exactMatch = caseSensitive || exactMatch_;
+
+	//! for proper work of function, answers must be sorted descending in respect with its score, because we don't track score inside function
+	normalizedInput = normalizeString(input, exactMatch, caseSensitive, ignoreSpaces);
+	normalizedAnswers = map(answers, \a -> normalizeString(processWikiVarsInWholeString(a), exactMatch, caseSensitive, ignoreSpaces));
+
+	equalIndex = if (!exactMatch && (isNotSpace(signForTolerance) || decimalTolerance > -1)) {
+		-1
+	} else {
+		findEqualAnswer(normalizedInput, normalizedAnswers, exactMatch_);
+	}
+
+	if (equalIndex != -1) {
+		Match(equalIndex, answers[equalIndex], 1.0, 1.0);
+	} else {
+		// Float Answer
+		isFloatAnswer = if (!levensteinOnly) {
+
+			inputPercent = parsePercent(normalizedInput);
+			inputVal = inputPercent.value;
+
+			inputFloatMaybe = parseFloat(inputVal); // = Some(123.011)
+			bestDifference = ref -1.0;
+
+			if (isSome(inputFloatMaybe)) { // it is a float
+				inputFloat = either(inputFloatMaybe, 0.0); // = 123.011
+				res : ref Pair<Match, [bool]> = ref Pair(Match(-1, "", 0.0, 0.0), []);
+				iteriUntil(normalizedAnswers, \idx, answer ->
+					{
+						correctFloatRange = maybeMap(
+							parseFloatRange(answer),
+							\r -> {
+								if (r.inPercents || getFloatRepresentationDecimalPlaces(answer) <= decimalTolerance) {
+									//number of decimal places in correct answer matches to required
+									r
+								} else {
+									//#39204
+									// Let's give user more space if answer is calculated by formula with incorrect rounding
+									maxPossibleDecimalTolerance = 10;
+									delta = if (0 <= decimalTolerance && decimalTolerance <= maxPossibleDecimalTolerance) {										
+										[
+											0.5, 
+											0.05, 
+											0.005, 
+											0.0005, 
+											0.00005, 
+											0.000005,
+											0.0000005,
+											0.00000005,
+											0.000000005,
+											0.0000000005,
+											0.00000000005
+										][decimalTolerance]										
+									} else {
+										0.0
+									}
+									FloatRange(
+										r.from - delta,
+										r.to   + delta,
+										r.inPercents
+									)
+								}
+							}
+						);
+
+						res := switch (correctFloatRange : Maybe) {
+							None() : Pair(^res.first, arrayPush(^res.second, false));
+							Some(c) : { // it is a float
+								flooredFrom = dfloor(c.from);
+								flooredTo = dfloor(c.to);
+								flooredInput = dfloor(inputFloat);
+								rpInput = inputFloat - flooredInput;
+								correctDecTol = checkAnswerDecimalTolerance(normalizedInput, decimalTolerance);
+								if (
+										(c.from < inputFloat || ((flooredFrom == flooredInput) && equalDoubles(c.from - flooredFrom, rpInput))) && // c.from <= inputFloat
+										(c.to > inputFloat || ((flooredTo == flooredInput) && equalDoubles(c.to - flooredTo, rpInput))) && // c.to >= inputFloat
+										correctDecTol
+									)
+								{
+									// we've found matched float answer, we do not need any further processing
+									bestDifference := 0.0;
+									addSignTolerance = \ss -> if (ss == 1.0) ss + checkSignTolerance(normalizedInput, signForTolerance) else ss;
+									similarityScore = (if (exactMatch) 0.0 else 1.0) |> addSignTolerance;
+									Pair(Match(idx, answer, similarityScore, similarityScore), arrayPush(^res.second, true));
+								} else {
+									// find answer which has less difference with input; it is used for search of closest correct answer
+									diff = if (c.from > inputFloat)
+										c.from - inputFloat
+									else
+										inputFloat - c.to;
+
+									if ((^res.first).index == -1 || ^bestDifference > diff) {
+										bestDifference := diff;
+										Pair(Match(idx, answer, 0.0, 0.0), arrayPush(^res.second, true));
+									} else {
+										Pair(^res.first, arrayPush(^res.second, true));
+									}
+								}
+							}
+						};
+						^res.first.similarity >= 0.9;
+					}
+				);
+				^res;
+			} else {
+				Pair(Match(-1, "", 0.0, 0.0), map(answers, \m -> false))
+			}
+		} else {
+			Pair(Match(-1, "", 0.0, 0.0), map(answers, \m -> false))
+		};
+		// check for ordinals
+		// do not call it if we already have found match during float processing
+		// (here isFloatAnswer.first.similarity can be either 1.0 or 0.0)
+		isOrdinalAnswer = if (!levensteinOnly && (isFloatAnswer.first).similarity < 1.0) {
+			inputOrdinalMaybe = parseOrdinal(input);
+			if (isSome(inputOrdinalMaybe)) {
+				inputOrdinal = either(inputOrdinalMaybe, Pair(0.0, 0.0));
+				res = ref Match(-1, "", 0.0, 0.0);
+				iteriUntil(normalizedAnswers, \idx, answer ->
+					{
+						maybeOrdinalAnswer = parseOrdinal(answer);
+						res := switch (maybeOrdinalAnswer : Maybe) {
+							None() : ^res;
+							Some(c) : { // it is ordinal
+								if (c.second < 1.0) {
+									^res
+								} else {
+									if (c.first == inputOrdinal.first) Match(idx, answer, inputOrdinal.second, if (exactMatch) b2d(inputOrdinal.second == 1.0) else inputOrdinal.second) else ^res
+								}
+							}
+						};
+						^res.similarity >= 0.8
+					}
+				);
+				^res;
+			} else Match(-1, "", 0.0, 0.0)
+		} else {
+			isFloatAnswer.first
+		};
+
+		// Damerau-Levenstein
+		inputStem = stemWord(normalizedInput);
+		// do not call it if we already have found match during float or ordinal processing
+		// (isOrdinalAnswer.similarity can be 0, 0.8 for float instead of ordinal, 1.0 for correct)
+		levenshteinMatch = if (isOrdinalAnswer.similarity < 0.8) {
+			fold(
+				enumFromTo(0, length(answers) - 1),
+				isFloatAnswer.first,
+				\bestMatch, idx -> if (!(isFloatAnswer.second)[idx]) { // skip answers that were processed as floats
+					answer = answers[idx];
+					normalizedAnswer = normalizeString(answer, exactMatch, caseSensitive, ignoreSpaces);
+
+					correct = correctOptions(normalizedAnswer, exactMatch);
+					correctStem = map(correct, \s -> stemWord(s));
+
+					matchFull = levenshteinClosestMatch(normalizedInput, correct);
+					matchStem = levenshteinClosestMatch(inputStem, correctStem);
+					maxSimilarity = max(matchStem.first, matchFull.first);
+
+					if (// choose best match (full match or match by stem)
+						maxSimilarity > bestMatch.similarity
+						// in case if current max match is match by stem and it is equal to current best match
+						// then choose the new one if its full similarity greater than current full similarity
+					 || (maxSimilarity == bestMatch.similarity && matchFull.first > bestMatch.fullSimilarity)
+						// not initialized
+					 ||  bestMatch.index == -1
+					) {
+						Match(idx, answer, maxSimilarity, matchFull.first)
+					} else {
+						bestMatch
+					}
+				} else {
+					bestMatch
+				}
+			)
+		} else {
+			isOrdinalAnswer
+		};
+
+		// Double Metaphone
+		// if we haven't found any answer with good Levenstein similarity, then try to find any match with Double Metaphone algorithm
+		// and give it minimum of acceptable similarity
+		dmMatch = if (levenshteinMatch.similarity < 0.8 && !levensteinOnly) {
+			inputDM = buildDoubleMetaphoneKeys(normalizedInput);
+			if (!isEmptyDoubleMetaphone(inputDM)) {
+				fold(
+					enumFromTo(0, length(answers) - 1),
+					Pair(levenshteinMatch, 0.0),
+					\bestMatch : Pair<Match, double>, idx -> {
+						answer = answers[idx];
+						// skip answers that were processed as floats or have digit
+						if ((isFloatAnswer.second)[idx] || hasDigit(answer)) {
+							bestMatch;
+						} else {
+							normalizedAnswer = normalizeString(answer, exactMatch, caseSensitive, ignoreSpaces);
+							correct = correctOptions(normalizedAnswer, exactMatch);
+							match = levenshteinClosestMatch(normalizedInput, correct);
+
+							if (match.first > 0.5) {
+								correctDM = buildDoubleMetaphoneKeys(match.second);
+								if (equalDoubleMetaphones(inputDM, correctDM) && bestMatch.second < match.first) {
+									Pair(Match(idx, answer, 0.8, 0.8), match.first)
+								} else {
+									bestMatch
+								}
+							} else {
+								bestMatch
+							}
+						}
+					}
+				).first
+			} else {
+				levenshteinMatch
+			}
+		} else {
+			levenshteinMatch
+		};
+
+		// exact match is checked in findEqualAnswer, so here we definitely do not have an exact match
+		// and so we should mark match with a wrong similarity
+		if (exactMatch) {
+			Match(dmMatch.index, dmMatch.answer, 0.0, 0.0)
+		} else {
+			dmMatch
+		};
+	}
+}
+
+
+getFloatRepresentationDecimalPlaces(inputVal) {
+	seps = [",", "."];
+	normalAnswer = normalizeFloat(inputVal);
+	sepIndex = fold(seps, -1, \acc, oneSep -> if (acc < 0) strIndexOf(normalAnswer, oneSep) else acc);
+	if (sepIndex > -1) {
+		lengthOfRightPart = strlen(normalAnswer) - sepIndex - 1;
+		lengthOfRightPart;
+	} else {
+		0
+	}	
+}
+
+checkAnswerDecimalTolerance(inputVal, decimalTolerance) {
+	if (decimalTolerance < 0) {
+		true
+	} else {
+		getFloatRepresentationDecimalPlaces(inputVal) == decimalTolerance
+	}	
+}
+
+checkSignTolerance(inputVal, signForTolerance) {
+	isInputPercent = parsePercent(inputVal).is;
+	tolSigns = [signs[1], signs[3]];
+	isOneOfTheTolSignsInAnswer = \ans -> fold(tolSigns, false, \acc, oneSign -> {
+		acc || strContains(ans, oneSign);
+	});
+
+	isTolSignInUserAnswer = isOneOfTheTolSignsInAnswer(inputVal);
+	signDollarTolerance = signForTolerance == tolSigns[0];
+	signPercentTolerance = signForTolerance == tolSigns[1];
+	areSignsCorrectOrEmpty = (signDollarTolerance && strContains(inputVal, tolSigns[0])) || (signPercentTolerance && strContains(inputVal, tolSigns[1])) || !isTolSignInUserAnswer;
+	signTolerance = signDollarTolerance || signPercentTolerance;
+
+	if (signTolerance) {
+		if (areSignsCorrectOrEmpty) {
+			if (!isTolSignInUserAnswer && isNotSpace(inputVal)) -0.1 else 0.0;
+		} else {
+			-1.0
+		}
+	} else if (isInputPercent) {
+		-1.0
+	} else {
+		0.0
+	}
+}

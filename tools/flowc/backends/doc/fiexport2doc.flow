@@ -1,0 +1,155 @@
+import tools/flowc/flow_ast;
+import lingo/compiler/syntaxtree_util;
+import lingo/linecolumn;
+import string;
+import formats/html/html;
+
+export {
+	fiExport2doc(source : string, ast : SyntaxTree, exportSection : SyntaxTree) -> ModuleDocs;
+
+	ModuleDocs(
+		doc : string, 
+		// Map from name to documentation
+		comments : Tree<string, string>
+	);
+}
+
+fiExport2doc(source : string, ast : SyntaxTree, exportSection : SyntaxTree) -> ModuleDocs {
+	decls = get_flow_toplevelDeclaration_s(exportSection);
+	text = strLeft(source, exportSection.end);
+	resolver = makeLineResolver(text);
+
+	// Extract comments
+	comments0 : [Comment] = list2array(grabComments(text, ast, exportSection.end, makeList()));
+	comments = map(comments0, \c -> {
+		Comment(
+			c.comment, findLineOnly(resolver, c.start), c.start, c.end
+		)
+	});
+
+	// Extract top-levels without comments
+	grab = \t -> grabSTText(t, text);
+	exports = Cons(
+		TopLevelDecl("", "", findLineOnly(resolver, exportSection.start), exportSection.start, exportSection.start),
+		makeList()
+	);
+
+	topLevels : [TopLevelDecl] = list2array(fold(decls, exports, \acc, decl -> {
+		name = grab(get_flow_id(decl));
+		Cons(TopLevelDecl(name, "", findLineOnly(resolver, decl.start), decl.start, decl.end), acc);
+	}));
+
+	// Distribute comments amongst the top levels
+	tops = distributeComments(topLevels, comments, makeList(), makeList(), 0, 0);
+
+	doc = "<table>"
+	+ strGlue(list2array(mapList(tops, toplevel2string)), "")
+	+ "</table>";
+
+	ModuleDocs(doc, foldList(tops, makeTree(), \acc, tl -> {
+		setTree(acc, tl.name, tl.comment)
+	}));
+}
+
+// We have two lists with different starting indexes. Merge them
+distributeComments(exports : [TopLevelDecl], comments : [Comment], 
+	acc : List<TopLevelDecl>, collectedComments : List<Comment>, ie : int, ic : int) -> List<TopLevelDecl> {
+	if (ie < length(exports)) {
+		ourExport = exports[ie];
+
+		flush = \ -> {
+			clines = list2array(mapList(collectedComments, \c -> c.comment));
+			comment = strGlue(clines, "\n");
+			ex2 = TopLevelDecl(
+				ourExport.name, comment, ourExport.line, ourExport.start, ourExport.end
+			);
+			// fcPrintln(ourExport.name + " " + comment);
+			acc2 = Cons(ex2, acc);
+			distributeComments(exports, comments, acc2, makeList(), ie + 1, ic);
+
+		}
+
+		if (ic < length(comments)) {
+			// There is a comment
+			ourComment = comments[ic];
+
+			if (ourComment.start < ourExport.start) {
+				// The comment should be collected
+				cc2 = Cons(ourComment, collectedComments);
+				distributeComments(exports, comments, acc, cc2, ie, ic + 1);
+			} else {
+				flush();
+			}
+		} else {
+			// OK, we ran out of comments
+			flush();
+		}
+	} else {
+		// OK, all exports have been processed
+		acc;
+	}
+}
+
+
+TopLevelDecl(name : string, comment : string, line : int, start : int, end : int);
+
+Comment(comment : string, line : int, start : int, end : int);
+
+grabComments(source : string, ast : SyntaxTree, end : int, acc : List<Comment>) -> List<Comment> {
+	acc0 = if (ast.rule == st_ws) {
+		comments = extractComments(source, ast.start, ast.end);
+		fold(comments, acc, \acc2, c -> {
+			Cons(c, acc2);
+		});
+	} else {
+		acc;
+	}
+	fold(ast.children, acc0, \acc1, cs -> {
+		fold(cs, acc1, \acc2, ch -> {
+			grabComments(source, ch, end, acc2)
+		});
+	});
+}
+
+extractComments(source : string, start : int, end : int) -> [Comment] {
+	comment = substring(source, start, end - start);
+	trimmed = trim2(comment, " \t\n\u000d");
+	if (trimmed != "") {
+		// What kind of comment?
+		if (startsWith(trimmed, "//")) {
+			endline = strIndexOf(trimmed, "\n");
+			if (endline == -1) {
+				bare = ltrim2(trimmed, "/ \t");
+				if (bare != "") {
+					[Comment(bare, 0, start, end)]
+				} else []
+			} else {
+				// OK, where do we start?
+				off = strIndexOf(comment, trimmed);
+				bare = ltrim2(strLeft(trimmed, endline), "/ \t");
+				concat(
+					if (bare != "") {
+						[Comment(bare, 0, start + off, start + off + endline)]
+					} else [],
+					extractComments(source, start + off + endline + 1, end)
+				)
+			}
+		} else {
+			// /* style */
+			// TODO: Get rid of the /* and stuff
+			[Comment(trimmed, 0, start, end)]
+		}
+	} else {
+		[];
+	}
+}
+
+toplevel2string(t : TopLevelDecl) -> string {
+	"<tr><td valign=top>"  
+	+ (if (t.name != "") {
+		"<code>" + t.name + "</code>"
+	} else "") 
+	+ "<td><td>"
+	+ (if (t.comment != "") "<span>" + escapeHtml2(t.comment)  + "</span>" else "")
+	+ "</td></tr>"
+}

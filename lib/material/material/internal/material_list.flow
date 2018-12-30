@@ -1,0 +1,586 @@
+import material/internal/material_grid;
+import material/selectmarray;
+import material/internal/material_list_util;
+import material/internal/material_dragdrop;
+
+// Internal to material
+
+export {
+	MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
+
+	down = make(false);
+	MActivate2T(
+		manager,
+		parent,
+		"MList",
+		[
+			IScriptBehaviour("selected", state.selection.selected, ISInputValue([], "[int]", true)),
+			extractStruct(m.state, IScriptRecordingEnabled(const(true))),
+			AccessRole("list"),
+			MFocusVertical(true)
+		],
+		\p ->
+			MGetFocusGroup(\p2 -> eitherFn(
+				state.reorder,
+				\rdr -> {
+					grabDelay = extractStructMany(m.state, MGrabDelay(0));
+
+					MReorderGrid2T(
+						manager,
+						p2,
+						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state, down)), [])),
+						rdr.order,
+						concat([MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false)), MGridFixSize()], grabDelay),
+						m2t
+					)
+				},
+				\ ->
+					TLines(mapi(m.lines, \i, line -> MListLine2T(p2, const(i), const(line), state, down)))
+			))
+			|> (\f : Material ->
+				eitherMap(
+					tryExtractStruct(m.style, MAddScroll(None())),
+					\addScroll -> {
+						scrl = either(addScroll.scrollInpect, TScrollInspectVisible(make(zeroPoint), make(WidthHeight(-1., -1.))));
+						wh = getValue(scrl.widthHeight);
+						scrollBox =	wh2Tropic(wh);
+						MScroll2T(manager, p, MScroll(f, scrollBox, [scrl]), m2t)
+					},
+					m2t(f, p)
+				)
+			)
+			|> (\f -> TConstruct(state.subs, f))
+			|> (\t -> if (m.lines == []) eitherMap(state.emptyMessage, \em -> TCenter(m2t(em, p)), t) else t)
+	)
+	|> MListAddAvailable(state)
+}
+
+MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	scrollPosition : MScrollPosition = extractStruct(m.state, MScrollPosition(make(zeroPoint)));
+
+	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
+	hasItems = fselect(m.items, FLift(\itms -> length(itms) > 0));
+	itemsLoadQuota = 1000;
+	boxWH = makeWH();
+	addScroll = !contains(m.state, MNoScroll());
+	hgt = make(0.);
+	translates : DynamicBehaviour<[DynamicBehaviour<Pair<Point, int>>]> = make([]);
+	loadQuota = make(itemsLoadQuota);
+	sameHeight =
+		if (isNone(tryExtractStruct(m.state, MItemsHeights(\__ -> zero))))
+			fselect(m.items, FLift(\i -> isNone(tryExtractStruct(i, MSubmenuLine(MSingleLine("", []), const([]), [], make(false))))))
+		else
+			const(false);
+	changingSize = ref false;
+	heightsTree : ref Tree<int, Transform<Maybe<double>>> = ref makeTree();
+	itemsHeights : (bool, int) -> Transform<Maybe<double>> = \sh, i ->
+		if (sh)
+			fsubmaybeMap(fselect(m.items, FLift(\it -> if (length(it) > 0) Some(it[0]) else None())), \it : MListLine -> MListLine2Height(const(it), state))
+		else
+			lookupTreeSet(heightsTree, i, \__ ->
+				extractStruct(m.state, MItemsHeights(\j -> MListLine2Height(const(fgetValue(m.items)[j]), state))).height(i)
+				|> (\hg : Transform<double> -> if (fgetValue(hg) > 0.) make(Some(fgetValue(hg))) else make(None()))
+			);
+	metricsLock = ref false;
+
+	itemsLength : Transform<int> =
+		fsubselect(sameHeight, FLift(\sh -> {
+			if (sh)
+				fselect(m.items, FLift(length))
+			else
+				fmin(fselect(m.items, FLift(length)), loadQuota);
+		}));
+
+	lineHeights : Transform<Pair<[Maybe<double>], int>> =
+		fsubselect(sameHeight, FLift(\sh -> {
+			if (sh)
+				fselect2(itemsHeights(true, 0), itemsLength, FLift2(\ih, il -> {
+					nextDistinct(hgt, i2d(il) * either(ih, 0.));
+					Pair([ih], il)
+				}))
+			else
+				fsubselect(itemsLength, FLift(\il -> fselect(fmerge(generate(0, il, \i -> itemsHeights(false, i))), FLift(\lh -> {
+					nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
+					Pair(lh, il)
+				}))));
+		}));
+
+	prevBottomItem : ref Pair<int, double> = ref Pair(0, 0.);
+	prevItemsCount : ref Pair<int, double> = ref Pair(0, 0.);
+	prevLineHeights : ref Pair<[Maybe<double>], int> = ref Pair([], 0);
+
+	draggingItem = make(-1);
+	draggingXY = make(zeroPoint);
+	availableWH = makeWH();
+	down = make(false);
+
+	(\par ->
+		MGetFocusGroup(\par2 -> SelectMGroup2T(
+			manager,
+			par2,
+			translates,
+			\__, __, tr : DynamicBehaviour<Pair<Point, int>>, p -> {
+				materialLog("Rerender container " + i2s(getValue(tr).second), MaterialInfo());
+				lineHeight = make(0.);
+				hgtUns = initUnsM();
+
+				lineId =
+					eitherFn(
+						state.reorder,
+						\rdr ->
+							fselect2(tr, rdr.order, FLift2(\trn, sl ->
+								if (trn.second >= 0 && length(sl) > trn.second)
+									sl[trn.second]
+								else
+									trn.second
+							)),
+						\ ->
+							fselect(tr, secondOfPair |> FLift)
+					);
+				lineContent =
+					fselect2(m.items, lineId, FLift2(\itms, i ->
+						if (i >= 0 && length(itms) > i)
+							itms[i]
+						else
+							MSingleLine("", [])
+					));
+
+				TTranslate(
+					fselect(tr, FLift(\trn : Pair<Point, int> -> trn.first)),
+					MListLine2T(p, lineId, lineContent, state, down)
+					|> (\listLine ->
+						TCopySize(
+							listLine,
+							\trp ->
+								TShow(
+									fnot(sameHeight),
+									TConstruct(
+										[
+											make2Subscribe(lineHeight, lineId, \hg, i -> {
+												dispUnsM(hgtUns);
+												hgts = itemsHeights(false, i);
+
+												switch (hgts) {
+													DynamicBehaviour(__, __): {
+														if (^metricsLock) {
+															setUnsM(
+																hgtUns,
+																interruptibleTimer(0, \ -> nextDistinct(hgts, Some(hg)))
+															);
+														} else {
+															nextDistinct(hgts, Some(hg));
+														}
+													}
+													default: {}
+												}
+											}),
+											\ -> \ -> dispUnsM(hgtUns)
+										],
+										TAttachHeight(trp, lineHeight)
+									)
+								),
+							false
+						)
+					)
+					|> (\listLine ->
+						eitherMap(
+							state.reorder,
+							\rdr ->
+								if (isFConst(rdr.enabled) && !fgetValue(rdr.enabled)) {
+									listLine
+								} else {
+									rdrdown = make(false);
+									point = make(Point(-1., -1.));
+									hover = make(false);
+									grabDelay = extractStruct(m.state, MGrabDelay(300)).delay;
+
+									TVisible(fselect2(draggingItem, lineId, FLift2(\dr, ln -> dr != ln)), listLine)
+									|> (\listLineVisible ->
+										TCopySize(
+											listLineVisible,
+											\trop ->
+												MFocusClickable2T(
+													manager,
+													p,
+													"MDynamicListDragDropHandle",
+													[
+														MFocusEnabled(const(false)),
+														MClickEnabled(rdr.enabled),
+														THovering(hover),
+														TPressed(rdrdown),
+														MMousePosition(point),
+														MOnTouch(grabDelay, \ -> {
+															if (!getValue(down)) {
+																nextDistinct(draggingXY, getValue(point));
+																nextDistinct(draggingItem, fgetValue(lineId));
+															}
+														}),
+														MCursorShape(const(DefaultCursor())),
+														MPassClicks(),
+														MMobileForceHover()
+													],
+													\__ -> trop
+												),
+											true
+										)
+									)
+									|> (\listLineVisible ->
+										TConstruct(
+											[
+												make2Subscribe(hover, fif(rdr.enabled, draggingItem, const(-1)), \h, hId -> if (h && hId >= 0) {
+													id = fgetValue(lineId);
+													ordr = fgetValue(rdr.order);
+
+													nextDistinct(
+														rdr.order,
+														insertArray(removeIndex(ordr, findiDef(ordr, eq(hId), -1)), findiDef(ordr, eq(id), -1), hId)
+													);
+												}),
+												makeSubscribe2(fand(rdr.enabled, rdrdown), \d ->
+													if (!d)
+														nextDistinct(draggingItem, -1)
+												)
+											],
+											listLineVisible
+										)
+									)
+								},
+							listLine
+						)
+					)
+					|> makeTropicConstantHeight(Some(0.))
+				)
+			}
+		)
+		|> (\f ->
+			TransformTAcc2(\t2a -> {
+				bf = f |> t2a;
+
+				TAcc(
+					bf.form,
+					TFormMetrics(
+						bf.metrics.width,
+						hgt,
+						hgt
+					),
+					bf.minWidth,
+					hgt,
+					bf.maxWidth,
+					hgt,
+					zero,
+					bf.yFillers,
+					bf.addFillers,
+					bf.xConstant,
+					bf.yConstant,
+					bf.disposers
+				)
+			})
+		)
+		|> MListAddAvailable(state)
+		)
+		|> (\f ->
+			if (addScroll)
+				MScroll2T(
+					manager,
+					par,
+					MScroll(
+						f,
+						TAttachBox(TFillXY(), boxWH),
+						replaceStructMany(extractMScrollStyle(m.state), [scrollPosition, MScrollToFocusEnabled(const(false))])
+					),
+					m2t
+				)
+			else
+				m2t(f, par)
+		)
+		|> (\f ->
+			TConstruct(
+				[
+					make5Subscribe(m.items, scrollPosition.position, fheight(boxWH), lineHeights, sameHeight, \itms, sPosition, boxHeight, lhgts, sh -> {
+						if (!contains(lhgts.first, None())) {
+							metricsLock := true;
+
+							lineHeight = map(lhgts.first, \v -> either(v, 0.));
+							il = lhgts.second;
+
+							lineHeight2translate = \idStart, idEnd ->
+								if (sh)
+									lineHeight[0] * i2d(idEnd - idStart)
+								else
+									dsum(subrange(lineHeight, idStart, max(0, idEnd - idStart)));
+
+							bottomItem : Pair<int, double> =
+								updateWhile(
+									if (^prevLineHeights == lhgts)
+										^prevBottomItem
+									else
+										Pair(
+											^prevBottomItem.first,
+											lineHeight2translate(0, ^prevBottomItem.first)
+										),
+									\i -> {
+										id = i.first;
+
+										if (id < il && id >= 0) {
+											if (sPosition.y <= i.second + lineHeight[if (sh) 0 else id]) {
+												if (id == 0 || sPosition.y >= i.second) {
+													None()
+												} else {
+													Some(Pair(id - 1, i.second - lineHeight[if (sh) 0 else id - 1]))
+												}
+											} else {
+												if (id == il - 1)
+													None()
+												else
+													Some(Pair(id + 1, i.second + lineHeight[if (sh) 0 else id]))
+											}
+										} else {
+											Some(Pair(0, 0.))
+										}
+									}
+								);
+
+							itemsCount : Pair<int, double> =
+								updateWhile(
+									if (sh || (^prevBottomItem == bottomItem && ^prevLineHeights == lhgts))
+										^prevItemsCount
+									else
+										Pair(
+											^prevItemsCount.first,
+											lineHeight2translate(bottomItem.first, bottomItem.first + ^prevItemsCount.first)
+										),
+									\i : Pair<int, double> -> {
+										id = bottomItem.first + i.first;
+										heightWithoutBottomItem = i.second - lineHeight[if (sh) 0 else bottomItem.first];
+
+										if (id <= il && id >= 0) {
+											if (boxHeight <= heightWithoutBottomItem && addScroll) {
+												if (id == 0 || boxHeight >= heightWithoutBottomItem - lineHeight[if (sh) 0 else id - 1])
+													None()
+												else
+													Some(Pair(i.first - 1, i.second - lineHeight[if (sh) 0 else id - 1]))
+											} else {
+												if (id == il) {
+													None()
+												} else {
+													Some(Pair(i.first + 1, i.second + lineHeight[if (sh) 0 else id]))
+												}
+											}
+										} else {
+											Some(Pair(0, 0.))
+										}
+									}
+								);
+
+							if (itemsCount.first > 0) {
+								topItem = Pair(bottomItem.first + itemsCount.first, bottomItem.second + itemsCount.second);
+
+								if (^prevLineHeights != lhgts) {
+									nextDistinct(
+										translates,
+										firstOfTriple(foldi(enumFromTo(bottomItem.first, topItem.first - 1), Triple([], 0., 0), \i, acc, id -> {
+											itemTranslate = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
+
+											tr =
+												if (length(getValue(translates)) > i) {
+													nextDistinct(getValue(translates)[i], Pair(Point(0., itemTranslate), id));
+													getValue(translates)[i]
+												} else {
+													make(Pair(Point(0., itemTranslate), id));
+												};
+
+											Triple(arrayPush(firstOfTriple(acc), tr), itemTranslate, id)
+										}))
+									);
+								} else if (^prevBottomItem != bottomItem || ^prevItemsCount != itemsCount) {
+									getValue(translates)
+									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] ->
+										if (itemsCount.first < length(translatesPrev)) {
+											filter(translatesPrev, \tr : DynamicBehaviour<Pair<Point, int>> ->
+												getValue(tr).second < topItem.first && getValue(tr).second >= bottomItem.first
+											)
+											|> uniq;
+										} else {
+											translatesPrev;
+										}
+									)
+									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] ->
+										if (itemsCount.first > length(translatesPrev)) {
+											maxId = either(maxA(map(translatesPrev, \tr -> getValue(tr).second)), -1);
+
+											concat(translatesPrev, generate(0, itemsCount.first - length(translatesPrev), \i -> {
+												id0 = maxId + i + 1;
+												id = if (id0 > length(itms) - 1) id0 - itemsCount.first else id0;
+
+												make(Pair(Point(0., bottomItem.second + lineHeight2translate(bottomItem.first, id)), id))
+											}));
+										} else {
+											translatesPrev;
+										}
+									)
+									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] -> {
+										bottomLine = bottomItem.first - bottomItem.first % itemsCount.first + itemsCount.first;
+
+										iteri(translatesPrev, \i, trB -> {
+											tr = getValue(trB);
+
+											if (tr.second < bottomItem.first || tr.second >= topItem.first) {
+												newId =
+													(bottomLine + tr.second % itemsCount.first)
+													|> (\f2 -> if (f2 >= topItem.first) f2 - itemsCount.first else f2);
+
+												nextDistinct(
+													trB,
+													Pair(
+														Point(
+															0.,
+															bottomItem.second + lineHeight2translate(bottomItem.first, newId)
+														),
+														newId
+													)
+												)
+											}
+										});
+
+										nextDistinct(translates, translatesPrev);
+									})
+								}
+
+								prevBottomItem := bottomItem;
+								prevItemsCount := itemsCount;
+								prevLineHeights := lhgts;
+
+								materialLogFn(
+									\ ->
+										map(getValue(translates), \tr -> getValue(tr).second)
+										|> (\f2 ->
+											if (length(f2) != length(uniq(f2)) || either(minA(f2), bottomItem.first) < bottomItem.first ||
+												either(maxA(f2), topItem.first - 1) >= topItem.first) {
+
+												println("MDynamicList error");
+												println(bottomItem);
+												println(topItem);
+												println(itemsCount);
+												println(f2);
+											}
+										),
+									MaterialInfo(),
+									nop
+								);
+
+								if (addScroll && !^changingSize && !sh && il != length(itms) && sPosition.y > (fgetValue(hgt) - boxHeight) *
+									i2d(il - itemsLoadQuota / 5) / i2d(il)) {
+									changingSize := true;
+									newItemsLength = fgetValue(itemsLength) + itemsLoadQuota;
+
+									deferred(\ -> {
+										nextDistinct(loadQuota, min(newItemsLength, length(itms)));
+										changingSize := false;
+									})
+								}
+							} else {
+								nextDistinct(translates, []);
+								prevBottomItem := bottomItem;
+								prevItemsCount := itemsCount;
+								prevLineHeights := lhgts;
+							}
+
+							metricsLock := false;
+						}
+					})
+				]
+				|> (\subs ->
+					eitherMap(
+						state.reorder,
+						\rdr ->
+							arrayPush(
+								subs,
+								makeSubscribe(itemsLength, \il -> {
+									sl = getValue(rdr.order);
+									if (length(sl) < il) {
+										nextDistinct(rdr.order, concat(sl, enumFromTo(length(sl), il - 1)))
+									} else if (length(sl) > il) {
+										nextDistinct(rdr.order, filter(sl, \s -> s < il))
+									}
+								})
+							),
+						subs
+					)
+				),
+				f
+			)
+		)
+		|> (\f2 -> TIf(hasItems, f2, eitherMap(state.emptyMessage, \em -> TCenter(m2t(em, par)), TFillX())))
+	)
+	|> (\f ->
+		MActivate2T(
+			manager,
+			parent,
+			"MDynamicList",
+			concat(
+				[
+					IScriptBehaviour("selected", state.selection.selected, ISInputValue([], "[int]", true)),
+					AccessRole("list"),
+					MFocusVertical(true)
+				],
+				// |> (\st ->
+				// 	eitherMap(
+				// 		state.reorder,
+				// 		\rdr -> {
+				// 			arrayPush(st, IScriptBehaviour("order", rdr.order, ISInputValue([], "[int]", true)));
+				// 		},
+				// 		st
+				// 	)
+				// ),
+				extractStructMany(m.state, IScriptRecordingEnabled(const(true)))
+			),
+			f
+		)
+	)
+	|> (\f ->
+		eitherMap(
+			state.reorder,
+			\rdr ->
+				TConstruct(
+					[
+						makeSubscribe2Uns(fif(rdr.enabled, draggingItem, const(-1)), \dr ->
+							if (dr >= 0) {
+								mouseXY = make(zeroPoint);
+
+								[
+									MMonitorMousePosition(
+										manager,
+										mouseXY,
+										TTranslate(
+											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(draggingXY).x, xy0.y - getValue(draggingXY).y))),
+											MActivate2T(manager, parent, "MDynamicListDraggable", [], \par ->
+												MGrabAnimation(
+													state.manager,
+													par,
+													TAvailable(
+														MListLine2T(par, const(dr), const(fgetValue(m.items)[dr]), state, down),
+														TWidth(TSized(availableWH))
+													)
+												)
+											)
+										)
+									)()
+								]
+							} else {
+								[]
+							}
+						)
+					],
+					f
+				),
+			f
+		)
+	)
+	|> (\f -> TAttachBoxCopy(f, availableWH))
+	|> MListAddAvailable(state)
+}

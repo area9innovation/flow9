@@ -1,0 +1,171 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/type_helpers;
+
+export {
+	// Converts this module to an fcmodule.
+	// When full is false, function bodies are not converted
+	fimodule2fc(m : FiModule, full : bool) -> FcModule;
+
+	// Converts FiExp to FcExp. Is usefull, when we need to prettyprint a FiExp
+	fiexp2fc(e : FiExp) -> FcExp;
+
+	// Converts FiType to FcType. Is usefull, when we need to prettyprint a FiType
+	fitype2fc(t : FiType) -> FcType;
+
+	fitypestruct2fc(f : FiTypeStruct) -> FcTypeStruct;
+
+	fitypeunion2fc(f : FiTypeUnion) -> FcTypeUnion;
+
+	fiimport2fc(f : FiImport) -> FcImport;
+	fiforbid2fc(f : FiForbid) -> FcForbid;
+
+	fifunctiondec2fc(f : FiFunctionDec, full : bool) -> FcFunctionDec;
+	figlobalvar2fc(v : FiGlobalVar) -> FcGlobalVar;
+	finative2fc(functions : Tree<string, FcFunctionDec>, n : FiNativeDec) -> FcNativeDec;
+}
+
+fimodule2fc(m : FiModule, full : bool) -> FcModule {
+	fns = fold(m.functions, makeTree(), \acc, f -> setTree(acc, f.name, fifunctiondec2fc(f, full)));
+	FcModule(
+		fifileinfo2fc(m.fileinfo),
+		map(m.imports, fiimport2fc),
+		map(m.forbids, fiforbid2fc),
+		buildSet(m.exports),
+		fold(m.structs, makeTree(), \acc, s -> setTree(acc, s.name, fitypestruct2fc(s))),
+		fold(m.unions, makeTree(), \acc, u -> setTree(acc, u.name, fitypeunion2fc(u))),
+		fns,
+		fold(m.globalVars, makeTree(), \acc, v -> setTree(acc, v.name, figlobalvar2fc(v))),
+		fold(m.natives, makeTree(), \acc, n -> setTree(acc, n.name, finative2fc(fns, n))),
+		m.initOrder,
+		m.stringIncludes,
+		[], // errors
+		0, // typevarid
+		true, // iscached
+		m.start,
+		m.end
+	);
+}
+
+fifileinfo2fc(f : FiFileInfo) -> FcFileInfo {
+	FcFileInfo(f.flowfile, f.trampstamp, f.fullpath, f.md5sum, "", 0, f.filesize);
+}
+
+fiimport2fc(f : FiImport) -> FcImport {
+	FcImport(f.flowfile, f.dynamic, f.start, f.start + strlen(f.flowfile) + 7);
+}
+
+fiforbid2fc(f : FiForbid) -> FcForbid {
+	FcForbid(f.flowfile, f.start, f.start + strlen(f.flowfile) + 7);
+}
+
+fideclaration2fc(funcs : Tree<string, FcFunctionDec>, d : FiDeclaration, full : bool) -> FcDeclaration {
+	switch (d) {
+		FiFunctionDec(__, __, __, __, __): fifunctiondec2fc(d, full);
+		FiGlobalVar(__, __, __, __, __): figlobalvar2fc(d);
+		FiNativeDec(__, __, __, __, __, __, __): finative2fc(funcs, d);
+	}
+}
+
+fifunctiondec2fc(f : FiFunctionDec, full : bool) -> FcFunctionDec {
+	t = fitypefunction2fc(f.type);
+	if (full)
+		FcFunctionDec(f.name, Some(filambda2fc(f.lambda)), fcTypeFunction2(t), fi2fcinfo(f.type, f.declStart), fi2fcinfo(f.type, f.defiStart))
+	else
+		FcFunctionDec(f.name, None(), fcTypeFunction2(t), fi2fcinfo(f.type, f.declStart), fi2fcinfo(f.type, f.defiStart))
+}
+
+fi2fcinfo(t : FiType, start : int) -> FcInfo {
+	FcInfo(ref Some(fitype2fc(t)), start, start);
+}
+
+figlobalvar2fc(v : FiGlobalVar) -> FcGlobalVar {
+
+	FcGlobalVar(v.name, Some(fiexp2fc(v.value)), fi2fcinfo(v.type, v.declStart), fi2fcinfo(v.type, v.defiStart));
+}
+
+finative2fc(functions : Tree<string, FcFunctionDec>, n : FiNativeDec) -> FcNativeDec {
+	FcNativeDec(n.name, n.io, fitype2fc(n.type), n.nativeName, lookupTree(functions, n.name), fi2fcinfo(n.type, n.declStart));
+}
+
+fiexps2fc(es : [FiExp]) -> [FcExp] {
+	map(es, \e -> fiexp2fc(e));
+}
+
+fiexp2fc(e : FiExp) -> FcExp {
+	switch (e) {
+		FiVoid(start): FcVoid(fi2fcinfo(FiTypeVoid(), start));
+		FiBool(b, start): FcBool(b, fi2fcinfo(FiTypeBool(), start));
+		FiInt(i, start): FcInt(i, fi2fcinfo(FiTypeInt(), start));
+		FiDouble(d, start): FcDouble(d, fi2fcinfo(FiTypeDouble(), start));
+		FiString(s, start): FcString(s, fi2fcinfo(FiTypeString(), start));
+		FiSeq(s, type, start): FcSeq(fiexps2fc(s), fi2fcinfo(type, start));
+		FiCast(ex, tFrom, tTo, info, start): FcCast(fiexp2fc(ex), fitype2fc(tFrom), fitype2fc(tTo), fi2fcinfo(tTo, start));
+		FiCall(f, args, type, start): FcCall(fiexp2fc(f), fiexps2fc(args), fi2fcinfo(type, start));
+		FiSwitch(x, switchType, cases, type, start): FcSwitch(fivar2fc(x), fitype2fc(switchType), map(cases, \c -> {
+				FcCase(c.struct, c.argNames, fiexp2fc(c.body), fi2fcinfo(type, c.start))
+			}), fi2fcinfo(type, start));
+		FiLambda(args, body, type, start): filambda2fc(e);
+		FiLet(name, stype, e1, e2, type, start): FcLet(name, fitype2fc(stype), fiexp2fc(e1), fiexp2fc(e2), fi2fcinfo(type, start));
+		FiIf(e1, e2, e3, type, start): FcIf(fiexp2fc(e1), fiexp2fc(e2), fiexp2fc(e3), fi2fcinfo(type, start));
+		FiCallPrim(op, es, type, start): FcCallPrim(op, fiexps2fc(es), fi2fcinfo(type, start));
+		FiVar(__, __, start): fivar2fc(e);
+		FiRequire(flowfile, ex, type, start): FcRequire(flowfile, fiexp2fc(ex), fi2fcinfo(type, start));
+		FiUnsafe(name, fallback, type, start): FcUnsafe(name, fiexp2fc(fallback), fi2fcinfo(type, start));
+	}
+}
+
+fivar2fc(v : FiVar) -> FcVar {
+	FcVar(v.name, fi2fcinfo(v.type, v.start));
+}
+
+filambda2fc(lambda : FiLambda) -> FcLambda {
+	FcLambda(map(lambda.args, \a -> FcFunArg(a.name, fitype2fc(a.type))), fiexp2fc(lambda.body), fi2fcinfo(lambda.type, lambda.start));
+}
+
+fitypes2fc(types : [FiType]) -> [FcType] {
+	map(types, \t -> fitype2fc(t));
+}
+
+fitype2fc(t : FiType) -> FcType {
+	i = FcInfo2(0, 0);
+	switch (t) {
+		FiTypeVoid(): FcTypeVoid(i);
+		FiTypeBool(): FcTypeBool(i);
+		FiTypeInt(): FcTypeInt(i);
+		FiTypeDouble(): FcTypeDouble(i);
+		FiTypeString(): FcTypeString(i);
+		FiTypeFlow(): FcTypeFlow(i);
+		FiTypeNative(): FcTypeNative(i);
+		FiTypeParameter(tp): FcTypeParameter(tp, i);
+		FiTypeFunction(__, __): fitypefunction2fc(t);
+		FiTypeName(n, tps): fitypename2fc(t);
+		FiTypeArray(at): FcTypeArray(fitype2fc(at), i);
+		FiTypeRef(at): FcTypeRef(fitype2fc(at), i);
+	}
+}
+
+fitypestruct2fc(f : FiTypeStruct) -> FcTypeStruct {
+	FcTypeStruct(
+		f.name,
+		fitypes2fc(f.typars),
+		map(f.args, \a -> FcStructArg(a.name, fitype2fc(a.type), a.ismutable)),
+		FcInfo2(f.start, f.start)
+	);
+}
+
+fitypeunion2fc(u : FiTypeUnion) -> FcTypeUnion {
+	FcTypeUnion(
+		u.name,
+		fitypes2fc(u.typeparameters),
+		map(u.typenames, \t -> fitypename2fc(t)),
+		FcInfo2(u.start, u.start)
+	);
+}
+
+fitypename2fc(t : FiTypeName) -> FcTypeName {
+	FcTypeName(t.name, fitypes2fc(t.typeparameters), FcInfo2(0, 0))
+}
+
+fitypefunction2fc(f : FiTypeFunction) -> FcTypeFunction {
+	FcTypeFunction(map(f.args, \a -> FcFunArg(a.name, fitype2fc(a.type))), fitype2fc(f.returnType), FcInfo2(0, 0));
+}

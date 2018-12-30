@@ -1,0 +1,126 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fitype;
+import binarytree;
+import lingo/flow/javascript_keywords;
+import tools/flowc/fcmodule;
+
+export {
+	fiJsNoOtcParamName = "js-no-otc";
+	fiJsA9Prefix = "A9__";
+
+	FiJsOverlayGroup(
+		keywords : Set<string>,
+		mutable nglobals : int,
+		mutable renamings : Tree<string, string>,
+		mutable nativeClasses : Set<string>,
+		mutable exports : Tree<string, string>,
+		mutable nfields : int,
+		mutable fieldRenamings : Tree<string, string>,
+		mutable nstructs : int,
+		mutable nMainStructs : int,
+		mutable structs : Tree<string, FiJsStruct>,
+		mutable currentModule : string,
+		mutable importedModules : [string],
+		mutable mangledNames : Tree<string, string>,
+		mutable mainFn : string,
+
+		mutable requireList : [string],
+		mutable requireListStatic : [string],
+
+		mutable beautifyList : [string],
+		mutable requireModulesList : List<string>,
+
+		mutable haxeRuntimeModuleItem : string,
+		mutable rModuleItem : string,
+
+		mutable singletons : Set<string>
+	);
+
+	FiJsStruct(id : int, struct : FiTypeStruct);
+
+	FiJsToplevelContext(
+		ovl : FiJsOverlayGroup,
+		renamings : Tree<string, string>,
+		natives : Tree<string, string>,
+		toplevel_name : string,
+		toplevel_args : [string],
+		mutable nlocals : int,
+		mutable localRenamings : Tree<string, string>,
+		mutable has_tail : bool,
+		mutable has_nontail : bool,
+		indent1 : string,
+		indent2 : string,
+		indent4 : string,
+
+		/*
+		Counter for __ variables.
+
+		If we do not mangle '__' names then JS Lint gives error on it
+		'cause there are several vars with this name.
+
+		So we change '__' to '_$' + formatId(ignorables).
+
+		There is a general TODO to completely remove full expression
+		with __ in it.
+		*/
+		mutable ignorables : int,
+		mutable fileinfo : FiFileInfo,
+		mutable program : FiProgram
+	);
+
+	fiJavascriptMode(cfg : FiJsConfig) -> string;
+	fiMakeOverlayGroup(cfg : FiJsConfig, prog : FiProgram) -> FiJsOverlayGroup;
+	fiJsImportList(prog : FiProgram, condition : int) -> [string];
+}
+
+fiJavascriptMode(cfg : FiJsConfig) {
+	if (cfg.jsmode == STANDARD_JS) STANDARD_JS_TXT
+	else if (cfg.jsmode == STANDARD_ES6) STANDARD_ES6_TXT
+	else if (cfg.jsmode == NODEJS_MODE) NODEJS_MODE_TXT
+	else if (cfg.jsmode == NWJS_MODE) NWJS_MODE_TXT
+	else if (cfg.jsmode == TS_MODE) TS_MODE_TXT
+	else "Unknown JS mode";
+}
+
+fiMakeOverlayGroup(cfg : FiJsConfig, prog : FiProgram) {
+	FiJsOverlayGroup(
+		if (cfg.debug)                  // keywords : Set<string>
+			js_debug_keywords
+		else
+			js_keyword_set,
+		0,                              // mutable nglobals : int,
+		makeTree(),                     // mutable renamings : Tree<string,string>,
+		makeSet(),                      // mutable nativeClasses : Set<string>,
+		makeTree(),                     // mutable exports : Tree<string, string>,
+		js_release_renamings.first,     // mutable nfields : int,
+		if (cfg.debug)                  // mutable fieldRenamings : Tree<string,string>,
+			js_debug_renamings
+		else
+			js_release_renamings.second,
+		0,                              // mutable nstructs : int,
+		0,                              // mutable nMainStructs : int,
+		makeTree(),                     // mutable structs : Tree<string,FiJsStruct>,
+		"",                             // mutable currentModule : string,
+		[],                             // mutable importedModules : [string],
+		makeTree(),                     // mutable mangledNames : Tree<string, string>,
+		"",                             // mutable mainFn : string
+		fiJsImportList(prog, 0),    // mutable requireList : [string]
+		fiJsImportList(prog, 1),    // mutable requireListStatic : [string]
+		[],                             // mutable beautifyList : [string],
+		makeList(),                     // mutable requireModulesList : List<string>,
+		"",
+		"",
+		makeSet()
+	);
+}
+
+fiJsImportList(prog : FiProgram, condition : int) -> [string] {
+	uniq(fold(prog.traversal, [], \acc, name -> {
+		concat(acc, eitherFn(lookupTree(prog.modules, name), \m -> {
+			fold(m.imports, [], \acc1, imp: FiImport -> {
+				if ((condition == 0 && imp.dynamic) || (condition == 1 && !imp.dynamic) || (condition != 0 && condition != 1))
+					arrayPush(acc1, imp.flowfile) else acc1
+			})
+		}, \ -> []));
+	}));
+}

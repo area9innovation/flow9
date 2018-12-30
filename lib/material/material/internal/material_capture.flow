@@ -1,0 +1,157 @@
+import material/internal/material_util;
+import material/internal/material_mutable;
+import material/iscript/material_iscript_util;
+
+export {
+	captureKeysMaterial(
+			manager : MaterialManager,
+			closedDialogue : DynamicBehaviour<bool>,
+			saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+			showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
+		) -> Tropic;
+
+	captureMouseMaterial(manager : MaterialManager) -> Tropic;
+
+	captureLongTouch(
+			manager : MaterialManager, closedDialogue : DynamicBehaviour<bool>,
+			saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void
+		) -> Tropic;
+
+	MFocusGroup2s(focus : MFocusGroup) -> string;
+}
+
+// Material needs to have state for whether we are doing white or black background
+// and these constructs should obey that setting
+emptyKeyEvent = KeyEvent("", false, false, false, false, -1, nop);
+
+captureKeysMaterial(
+	manager : MaterialManager, closedDialogue : DynamicBehaviour<bool>,
+	saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+	showFeedbackFn : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void
+) -> Tropic {
+	focusEnabled = extractStruct(manager.style, MFocusEnabled(const(true))).enabled;
+	themeChangerEnabled = extractStruct(manager.style, MThemeChangerEnabled(const(true))).enabled;
+	feedbackSnapshotEnabled = extractStruct(manager.style, MFeedbackSnapshotEnabled(const(true))).enabled;
+	downKey = ref emptyKeyEvent;
+
+	TInteractive(
+		[
+			KeyDown2(\h, k -> {
+				downKey := if (!h) k else emptyKeyEvent;
+
+				captureIScriptKeyEvent(manager, h, k, "canvas", "keydown");
+			}),
+			KeyUp2(\handled, k ->
+				if (!handled && ^downKey.keycode == k.keycode && ^downKey.utf == k.utf && ^downKey.ctrl == k.ctrl &&
+					^downKey.shift == k.shift && ^downKey.alt == k.alt && ^downKey.meta == k.meta) {
+
+					captureIScriptKeyEvent(manager, handled, k, "canvas", "keyup");
+
+					if (!^fAccessibilityEnabled && !js && (k.keycode == 9 || k.keycode == 16777218) && !k.alt && !k.ctrl && fgetValue(focusEnabled)) {
+						yieldFocus(manager, !k.shift);
+						true
+					// } else if ((k.keycode == 37 || k.keycode == 39 || k.keycode == 38 || k.keycode == 40) &&
+					// 	eitherMap(getCurrentFocusedItem(manager), \fi -> switch (fi) {MFocus(__, __, parent, __, __, __, __, __, __):
+					//	parent.grid; default: false}, false)) {
+					// 	true
+					} else if ((k.utf == "i" || k.utf == "I") && k.ctrl && !k.shift && fgetValue(themeChangerEnabled)) {
+						nextDistinct(manager.white, !getValue(manager.white));
+						true
+					} else if ((k.keycode == 37 || k.keycode == 39) && !k.ctrl && !k.shift &&
+						eitherMap(getCurrentFocusedItem(manager), \fc -> isSome(fc.parent.horizontal), false)) {
+						yieldFocusVH(manager, k.keycode == 39, false);
+
+						handled
+					} else if ((k.keycode == 38 || k.keycode == 40) && !k.ctrl && !k.shift &&
+						eitherMap(getCurrentFocusedItem(manager), \fc -> isSome(fc.parent.vertical), false)) {
+						yieldFocusVH(manager, k.keycode == 40, true);
+
+						handled
+					} else if (k.keycode == 51 && k.ctrl && !k.shift) {
+						materialLog(MFocusGroup2s(manager.focus), MaterialError());
+
+						handled
+					} else if (k.keycode == 50 && k.ctrl && !k.shift) {
+						materialLogFn(\ -> nextDistinct(manager.debugMetrics, !getValue(manager.debugMetrics)), MaterialWarning(), nop);
+
+						handled
+					} else if (k.keycode == 49 && k.ctrl && !k.shift) {
+						materialLog(i2s(getCurrentSubscribersCount()), MaterialError());
+
+						handled
+					} else if (k.ctrl && k.shift && (k.utf == "s" || k.utf == "S") && (closedDialogue |> getValue) &&
+						fgetValue(feedbackSnapshotEnabled)) { //grab snapshot
+						saveFeedbackFn(manager, manager.grabSnapshot(), closedDialogue);
+						true
+					} else if (k.ctrl && k.shift && (k.utf == "d" || k.utf == "D") && (closedDialogue |> getValue) &&
+						fgetValue(feedbackSnapshotEnabled)) { //show snapshots
+						showFeedbackFn(manager, closedDialogue);
+						true
+					} else
+						handled
+				} else
+					handled
+			)
+		],
+		TSelect(manager.forceRender, \__ -> TRectangle([MFill(MBackgroundColor(manager.theme.lightBackground))], TFillXY()))
+	)
+}
+
+captureMouseMaterial(manager : MaterialManager) -> Tropic {
+
+	mouseDownFn = \h, m -> {
+		// Clicks "outside" any focused item reset focus.
+		if (isNone(manager.downInsideFocus)) resetMFocus(manager);
+		h
+	};
+
+	TInteractive(
+		[
+			MouseDown2(mouseDownFn)
+		],
+		TRectangle(interactiveRectangleStyle, TFillXY())
+	);
+}
+
+captureLongTouch(
+	manager : MaterialManager, closedDialogue : DynamicBehaviour<bool>,
+	saveFeedbackFn : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+) -> Tropic {
+	TLines([
+		TFillY(),
+		TCols([
+			TLongTouch(
+				1500,
+				\-> if (closedDialogue |> getValue) {
+					saveFeedbackFn(manager, manager.grabSnapshot(), closedDialogue);
+				},
+				false,
+				TRectangle(interactiveRectangleStyle, TFixed(100.0, 100.0))
+			),
+			TFillX(),
+		]),
+	])
+}
+
+MFocusGroup2s(focus : MFocusGroup) -> string {
+	MFocusGroup2s2(focus, 0);
+}
+
+MFocusGroup2s2(focus : MFocusGroup, level : int) -> string {
+	fold(generate(0, level, \__ -> "	"), "", \acc2, s -> acc2 + s) + focus.name + " Group " + i2s(fgetValue(focus.id)) +
+		" " + toString(fgetValue(focus.tabOrder)) + " " +
+		eitherMap(focus.iScriptId, \id -> " [" + id + "] ", " ") + b2s(fgetValue(focus.enabled)) +
+		" " + b2s(fgetValue(focus.focusEnabled)) + " " + b2s(fgetValue(focus.zorderEnabled)) + " " +
+		i2s(fgetValue(focus.focusedId)) + "\n" +
+		foldTree(getValue(focus.focusIds), "", \k, v, acc -> {
+			switchMaterialFocus(
+				v,
+				\f ->
+					fold(generate(0, level + 1, \__ -> "	"), acc, \acc2, s -> acc2 + s) + f.name + " " + i2s(k) + " " +
+						toString(fgetValue(f.tabOrder)) + " " +
+						eitherMap(f.iScriptId, \id -> " [" + id + "] ", " ") + b2s(fgetValue(f.enabled)) + "\n",
+				\f ->
+					acc + MFocusGroup2s2(f, level + 1)
+			)
+		})
+}

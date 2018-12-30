@@ -1,0 +1,209 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+import math;
+
+export {
+	RGB : (r : int, g : int, b : int);
+	RGBA : (r : int, g : int, b : int, a : double);
+	HSB : (h : int, s : int, b : int);
+	XYZ : (x : double, y : double, z : double);
+	CIELab : (l : double, a : double, b : double);
+
+	rgb2hsb(rgb : RGB) -> HSB;
+	hsb2rgb(hsb : HSB) -> RGB;
+	int2rgb(color : int) -> RGB;
+	rgb2int(rgb : RGB) -> int;
+	rgb2xyz(rgb : RGB) -> XYZ;
+	xyz2cielab(xyz : XYZ) -> CIELab;
+	rgb2cielab(rgb : RGB) -> CIELab;
+	hsva2rgba(hsva : int) -> RGBA; //used for transform wigi colors
+
+	// returns distinctive colors in a cycle to be used in graphs and the like
+	// i is color number
+	index2color(i: int) -> int;
+
+	multiplyColor(color : int, m : double) -> int;
+	subtractColor(minuend : int, subtrahend : int) -> int;
+	addColor(c1 : int, c2 : int) -> int;
+	mixColors(c1 : int, c2 : int, amount1 : double, amount2 : double) -> int;
+	color2gray(color : int) -> int;
+
+	getOpacity(color : int) -> double;
+	getRGB(color : int) -> int;
+	combineIntColor(alpha : double, color : int) -> int; //combine color with opacity from Color
+}
+
+hsva2rgba(hsva : int) {
+	hexString = lpad(formatHex(hsva), "0", 8);
+	rgbPart = int2rgb(parseHex(substring(hexString, 2, 6)));
+	alpha = i2d(parseHex(substring(hexString, 0, 2)))/127.0;
+	RGBA(rgbPart.r, rgbPart.g, rgbPart.b, alpha)
+}
+
+rgb2hsb(rgb : RGB) {
+	r = i2d(rgb.r) / 255.0; g = i2d(rgb.g) / 255.0; b = i2d(rgb.b) / 255.0;
+    minRGB = min(r, min(g, b));
+	maxRGB = max(r, max(g, b));
+
+	// Black-gray-white
+	if (minRGB == maxRGB) {
+		HSB(0, 0, floor(minRGB * 100.0));
+	} else {
+		// Colors other than black-gray-white:
+		d = if (r == minRGB) (g - b) else if (b == minRGB) (r-g) else (b-r);
+		h = if (r == minRGB) 3.0 else if (b == minRGB) 1.0 else 5.0;
+		computedH = 60.0 * (h - d / (maxRGB - minRGB));
+		computedS = (maxRGB - minRGB) / maxRGB;
+		computedV = maxRGB;
+		HSB(floor(computedH), floor(computedS * 100.0), floor(computedV * 100.0));
+	}
+}
+
+hsb2rgb(hsb : HSB) {
+	S = i2d(hsb.s) / 100.0;
+	V = i2d(hsb.b) / 100.0;
+	lH = floor(i2d(hsb.h) / 60.0);
+	f = i2d(hsb.h) / 60.0 - i2d(lH);
+	p = V * (1.0 - S);
+	q = V * (1.0 - S * f);
+	t = V * (1.0 - (1.0 - f) * S);
+	if (lH == 0)      makeRGB(V, t, p, 255.0)
+	else if (lH == 1) makeRGB(q, V, p, 255.0)
+	else if (lH == 2) makeRGB(p, V, t, 255.0)
+	else if (lH == 3) makeRGB(p, q, V, 255.0)
+	else if (lH == 4) makeRGB(t, p, V, 255.0)
+	else              makeRGB(V, p, q, 255.0)
+}
+
+int2rgb(color : int) {
+	RGB(color / 65536, bitAnd(color, 0xFF00) / 256, bitAnd(color, 0xFF))
+}
+
+rgb2int(rgb : RGB) {
+	rgb.r * 65536 + rgb.g * 256 + rgb.b
+}
+
+
+rgb2xyz(rgb) {
+	R = i2d(rgb.r);
+	G = i2d(rgb.g);
+	B = i2d(rgb.b);
+
+	// http://www.easyrgb.com/index.php?X=MATH&H=02#text2
+	//R from 0 to 255
+	r1 = (R / 255.0);
+	//G from 0 to 255
+	g1 = (G / 255.0);
+	//B from 0 to 255
+	b1 = (B / 255.0);
+
+	r2 = if ( r1 > 0.04045 ) dpow( ( r1 + 0.055 ) / 1.055, 2.4) else r1 / 12.92;
+	g2 = if ( g1 > 0.04045 ) dpow( ( g1 + 0.055 ) / 1.055, 2.4) else g1 / 12.92;
+	b2 = if ( b1 > 0.04045 ) dpow( ( b1 + 0.055 ) / 1.055, 2.4) else b1 / 12.92;
+
+	r3 = r2 * 100.0;
+	g3 = g2 * 100.0;
+	b3 = b2 * 100.0;
+
+	//Observer. = 2°, Illuminant = D65
+	X = r3 * 0.4124 + g3 * 0.3576 + b3 * 0.1805;
+	Y = r3 * 0.2126 + g3 * 0.7152 + b3 * 0.0722;
+	Z = r3 * 0.0193 + g3 * 0.1192 + b3 * 0.9505;
+
+	XYZ(X, Y, Z);
+}
+
+xyz2cielab(xyz : XYZ) -> CIELab {
+	x = xyz.x / 95.047;
+	y = xyz.y / 100.0;
+	z = xyz.z / 108.883;
+
+	x2 = if (x > 0.008856) dpow(x, 1.0/3.0) else (7.787 * x) + (16.0 / 116.0);
+	y2 = if (y > 0.008856) dpow(y, 1.0/3.0) else (7.787 * y) + (16.0 / 116.0);
+	z2 = if (z > 0.008856) dpow(z, 1.0/3.0) else (7.787 * z) + (16.0 / 116.0);
+
+	l = (116.0 * y2) - 16.0;
+	a = 500.0 * (x2 - y2);
+	b = 200.0 * (y2 - z2);
+	CIELab(l, a, b);
+}
+
+rgb2cielab(rgb : RGB) -> CIELab {
+	xyz2cielab(rgb2xyz(rgb));
+}
+
+index2color(i: int){
+	// cycle brightness a little
+	brightnessStep = (i / 10) % 4;
+	brightness = if (brightnessStep == 0) {
+		95
+	} else if (brightnessStep == 1) {
+		80 
+	} else if (brightnessStep == 2) {
+		90
+	} else {
+		85;
+	}
+	// step
+	gr = 11;
+	s = 60;
+	h = mod(5 + i * 20 * gr, 360);
+	rgb2int(hsb2rgb(HSB(h, s, brightness)));
+}
+
+makeRGB(r : double, g : double, b : double, scale : double) -> RGB {
+	RGB(
+		max(0, min(255, round(r * scale))),
+		max(0, min(255, round(g * scale))),
+		max(0, min(255, round(b * scale)))
+	)
+}
+
+multiplyColor(color : int, m : double) -> int {
+	rgb = int2rgb(color);
+	rgb2int(makeRGB(i2d(rgb.r), i2d(rgb.g), i2d(rgb.b), m))
+}
+
+mixColors(c1 : int, c2 : int, amount1 : double, amount2 : double) -> int {
+	rgb1 = int2rgb(c1);
+	rgb2 = int2rgb(c2);
+	rgb2int(makeRGB(
+		i2d(rgb1.r) * amount1 + i2d(rgb2.r) * amount2,
+		i2d(rgb1.g) * amount1 + i2d(rgb2.g) * amount2,
+		i2d(rgb1.b) * amount1 + i2d(rgb2.b) * amount2,
+		amount1 + amount2
+	))
+}
+
+color2gray(color : int) -> int {
+	rgb = int2rgb(color);
+	luminosity = 2126 * rgb.r + 7152 * rgb.g + 0722 * rgb.b;
+	c = (luminosity + 5000) / 10000;
+	c * 0x010101
+}
+
+addColor(c1 : int, c2 : int) -> int {
+	a = int2rgb(c1);
+	b = int2rgb(c2);
+	fixRange = \x -> max(0, min(255, x));
+	rgb2int(RGB(fixRange(a.r + b.r), fixRange(a.g + b.g), fixRange(a.b + b.b)))
+}
+
+subtractColor(minuend : int, subtrahend : int) -> int {
+	a = int2rgb(minuend);
+	b = int2rgb(subtrahend);
+	fixRange = \x -> max(0, min(255, x));
+	rgb2int(RGB(fixRange(a.r - b.r), fixRange(a.g - b.g), fixRange(a.b - b.b)))
+}
+
+getOpacity(color : int) -> double {
+	i2d(color/0x01000000)/127.0
+}
+
+getRGB(color : int) -> int {
+	color-(color/0x01000000)*0x01000000
+}
+
+combineIntColor(alpha : double, color : int) -> int {
+	round(alpha * 127.0) * 0x01000000 + color
+}

@@ -1,0 +1,282 @@
+import lingo/compiler/syntaxtree;
+import lingo/peg;
+import blueprint;
+import filesystem;
+
+/*
+TODO: We have a problem when we inline, and the inline becomes
+"multiple". Example:
+
+typenames in flow.lingo. The recursive typenames is really optional after transformations
+of the grammar, and thus, we need a "_s" version, but this is not captured by the current
+checks.
+*/
+
+export {
+	// Constructs a bunch of functions which can access results in the SyntaxTree
+	// AST constructed by the compiled parsers.
+	compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string;
+	compileAstMnemonics(g : Grammar) -> string;
+	// Convert a name of a rule to something that works. Basically replaces $ with __
+	syntaxRuleName(s : string) -> string;
+}
+
+RuleUse(
+	// A use in this rule...
+	from : string, 
+	// ... of this rule
+	to : string, 
+	// occurring as choice #
+	choice : int, 
+	// appearing in position # in the sequence
+	position : int, 
+	// giving a single or multiple values
+	single : bool, 
+	// True if in a sequence with a single rule, where we do not construct a separate AST node
+	omitted : bool
+);
+
+compileAstMnemonics(g : Grammar) -> string {
+	mnemonics = foldi(g.productions, "", \ix, acc, p -> {
+		name = syntaxRuleName(p.name);
+		acc + "\t" + blueprint("st_%name% = %ix0%;\n\tst_Expected_%name% = %ix1%;\n\tst_DidNotExpectflow_%name% = %ix2%;\n",
+			[
+				"name", name,
+				"ix0", i2s(ix*3+0),
+				"ix1", i2s(ix*3+1),
+				"ix2", i2s(ix*3+2)
+			]
+		);
+	});
+	blueprint("export {\n%mnemonics%\n}\n", [
+		"mnemonics", mnemonics
+	]);
+}
+
+compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
+	rulemap = buildGrammarRuleUseMap(g);
+	if (false) {
+		traverseInOrder(rulemap, \k, v -> {
+			println(k);
+			iter(v, println);
+		});
+	}
+
+	gname = syntaxRuleName(g.productions[0].name);
+
+	decls = fold(g.productions, "", \acc, p -> {
+		uses = getTreeArrayValue(rulemap, p.name);
+		pname = syntaxRuleName(p.name);
+		auto = strContains(pname, "__");
+		single = auto || exists(uses, \u -> u.single);
+		multi = exists(uses, \u -> !u.single);
+
+		singledef = if (single) {
+			blueprint("
+				get_%gname%_%pname%(st : SyntaxTree) -> SyntaxTree;
+				", 
+				[
+				"gname", gname,
+				"pname", pname
+			])
+		} else "";
+		multidef = if (multi) {
+			blueprint("
+				get_%gname%_%pname%_s(st : SyntaxTree) -> [SyntaxTree];
+				", [
+				"gname", gname,
+				"pname", syntaxRuleName(p.name)
+			])
+		} else "";
+		acc + singledef + multidef
+	});
+
+	singledefs = fold(g.productions, "", \acc, p -> {
+		uses = getTreeArrayValue(rulemap, p.name);
+		pname = syntaxRuleName(p.name);
+		auto = strContains(pname, "__");
+		single = auto || exists(uses, \u -> u.single);
+		acc + if (single) {
+			blueprint("
+				get_%gname%_%pname%(st : SyntaxTree) -> SyntaxTree {
+					%cases%failSyntaxTree
+				}
+				", 
+				[
+				"gname", gname,
+				"pname", pname,
+				"cases", fold(uses, "", \acc2, u -> {
+					acc2 + if (u.single) {
+						rulename = syntaxRuleName(u.from);
+						if (strContains(rulename, "__")) {
+							// An auto-rule
+							if (u.omitted) {
+								blueprint("
+										if (get_%gname%_%rulename%(st) != failSyntaxTree) {
+											get_%gname%_%rulename%(st);
+										} else ", [
+										"gname", gname,
+										//"srulename", "st_" + rulename,
+										"rulename", rulename,
+									]
+								);
+							} else {
+								blueprint("
+										if (get_%gname%_%rulename%(st).choice == %choice%) {
+											get_%gname%_%rulename%(st).children[%pos%][0];
+										} else ", [
+										"gname", gname,
+										"srulename", toString(rulename),
+										"rulename", rulename,
+										"choice", i2s(u.choice),
+										"pos", i2s(u.position),
+									]
+								);
+							}
+						} else {
+							blueprint("
+									if (st.choice == %choice% && st.rule == %rulename%) {
+										st.children[%pos%][0];
+									} else ", [
+									"rulename", "st_"+rulename,
+									"choice", i2s(u.choice),
+									"pos", i2s(u.position),
+								]
+							);
+						}
+					} else ""
+				})
+			])
+		} else "";
+	});
+
+	multidefs = fold(g.productions, "", \acc, p -> {
+		uses = getTreeArrayValue(rulemap, p.name);
+		pname = syntaxRuleName(p.name);
+		multi = exists(uses, \u -> !u.single);
+		acc + if (multi) {
+			blueprint("
+				get_%gname%_%pname%_s(st : SyntaxTree) -> [SyntaxTree] {
+					%cases%[]
+				}
+				", 
+				[
+				"gname", gname,
+				"pname", pname,
+				"cases", fold(uses, "", \acc2, u -> {
+					rulename = syntaxRuleName(u.from);
+					acc2 + if (strContains(rulename, "__")) {
+						// An auto-rule
+						blueprint("
+								if (get_%gname%_%rulename%(st).choice == %choice%) {
+									get_%gname%_%rulename%(st).children[%pos%];
+								} else ", [
+								"gname", gname,
+								"srulename", toString(rulename),
+								"rulename", rulename,
+								"choice", i2s(u.choice),
+								"pos", i2s(u.position),
+							]
+						);
+					} else {
+						blueprint("
+								if (st.choice == %choice% && st.rule == %rulename%) {
+									st.children[%pos%];
+								} else ", [
+								"rulename", "st_" + rulename,
+								"choice", i2s(u.choice),
+								"pos", i2s(u.position),
+							]
+						);
+					}
+				})
+			])
+		} else "";
+	});
+
+	blueprint("
+		import lingo/compiler/syntaxtree_types;
+        import %mnemo%;
+
+		export {
+			%decls%
+		}
+
+		%sdefs%
+		%mdefs%
+		", [
+		"decls", decls,
+		"sdefs", singledefs,
+		"mdefs", multidefs,
+		"mnemo", changeFileExt(mnemonicsFile, "")
+	]);
+}
+
+
+buildGrammarRuleUseMap(g : Grammar) -> Tree<string, [RuleUse]> {
+	fold(g.productions, makeTree(), \acc, p -> {
+		foldi(p.choices, acc, \i, acc2, seq -> {
+			buildParsingRuleUseMap(g, acc2, p.name, i, 0, true, seq);
+		});
+	});
+}
+
+buildParsingRuleUseMap(g : Grammar, rulemap : Tree<string, [RuleUse]>, from : string, choice : int, position : int, single : bool, par : Parsing) -> Tree<string, [RuleUse]> {
+	rec = \p, s -> {
+		buildParsingRuleUseMap(g, rulemap, from, choice, position, single && s, p)
+	}
+	switch (par) {
+		Star(p): rec(p, false);
+		Plus(p): rec(p, false);
+		Opt(p): rec(p, false);
+		Negation(p): rulemap; // Does not produce a result
+		BindResult(name, p): rec(p, true);
+		BindMatched(name, p): rec(p, true);
+		Rule(name): {
+			use = RuleUse(from, name, choice, position, single, false);
+			treePushToArrayValue(rulemap, name, use);
+		}
+		iRule(i): {
+			rule = Rule(g.productions[i].name);
+			buildParsingRuleUseMap(g, rulemap, from, choice, position, single, rule);
+		}
+		Term(t): rulemap;
+		CharRange(first, last): rulemap;
+		LingoValue(v): rulemap;
+		Epsilon(): rulemap;
+		Action(fn): rulemap;
+		Action2(e): rulemap;
+		ActionIndex(): rulemap;
+		Choices(s): {
+			// TODO
+			rulemap;
+		}
+		Seq(s): {
+			// Mark that sequences with just a single rule should be bypassed
+			special = if (length(s) == 1 && isSameStructType(s[0], Rule(""))) {
+				p0 = s[0];
+				switch (p0) {
+					Rule(to): {
+						use = RuleUse(from, to, choice, position, single, true);
+						treePushToArrayValue(rulemap, to, use);
+					}
+					default: rulemap;
+				}
+			} else rulemap;
+			if (special == rulemap) {
+				fold(s, Pair(0, rulemap), \acc : Pair<int, Tree<string, [RuleUse]>>, p -> {
+					newmap = buildParsingRuleUseMap(g, acc.second, from, choice, acc.first, single, p);
+					if (newmap == acc.second) acc
+					else Pair(acc.first + 1, newmap)
+				}).second;
+			} else special;
+
+		}
+		CutUp(p): rec(p, true);
+		CutDown(p): rec(p, true);
+	}
+}
+
+syntaxRuleName(s : string) -> string {
+	strReplace(s, "$", "__");
+}

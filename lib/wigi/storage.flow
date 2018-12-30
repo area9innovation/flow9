@@ -1,0 +1,172 @@
+import wigi/types;
+import wigi/styles;
+
+export {
+	// Clear any view related info and make a clean copy. If rename is set, then all names should be renamed to avoid duplicates
+	// Creates a copy of all behaviours in elements
+	wigiForStorage(s : WigiElement, rename : bool) -> WigiElement;
+	wigiForStorageFullStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement;
+	wigiForStorageShortStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement;
+
+	// Doesn't recreate behaviours in elements
+	wigiForPreviewFullStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement;
+}
+
+wigiForStorage(element : WigiElement, rename : bool) -> WigiElement {
+	wigiForStorageFullStyles(element, rename, []);
+}
+
+wigiForStorageFullStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement {
+	styleFn = \defStyle, elemStyle -> concatWigiParentStyles(defStyle, elemStyle);
+	wigiForStorageWithStyleProcessing(element, rename, true, getDefaultDocumentStyle(defaultStyles), defaultStyles, styleFn);
+}
+
+wigiForPreviewFullStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement {
+	styleFn = \defStyle, elemStyle -> concatWigiParentStyles(defStyle, elemStyle);
+	wigiForStorageWithStyleProcessing(element, rename, false, getDefaultDocumentStyle(defaultStyles), defaultStyles, styleFn);
+}
+
+wigiForStorageShortStyles(element : WigiElement, rename : bool, defaultStyles : [WigiStyles]) -> WigiElement {
+	styleFn = \defStyle, elemStyle -> getWigiParentStyleShort(defStyle, elemStyle);
+	wigiForStorageWithStyleProcessing(element, rename, true, getDefaultDocumentStyle(defaultStyles), defaultStyles, styleFn);
+}
+
+wigiForStorageWithStyleProcessing(element : WigiElement, rename : bool, recreateBehaviours : bool, parentStyle : WigiParentStyle, defaultStyles : [WigiStyles], styleFn : (parStyle : WigiParentStyle, elemStyle : WigiParentStyle) -> WigiParentStyle) -> WigiElement {
+	defStyle = concatWigiParentStyles(parentStyle, getDefaultElementStyle(defaultStyles, element));
+	recProcessing = \e -> wigiForStorageWithStyleProcessing(e, rename, recreateBehaviours, defStyle, defaultStyles, styleFn);
+	// TODO: Implement renaming
+	switch (element : WigiElement) {
+		WigiDocument(r, style): {
+			WigiDocument(recProcessing(r), style);
+		}
+		WigiStory(stories, views, style): {
+			// We clear the views
+			children = map(^stories, recProcessing);
+			// And remove all empty paragraphs i.e. WigiParagraph([], []), case 41075
+			isNotEmptyParagraph = \e -> switch(e) {
+				WigiParagraph(el, __): el != [];
+				default: true;
+			}
+			childrenFiltered = filter(children, isNotEmptyParagraph);
+			if (childrenFiltered != []) WigiStory(ref childrenFiltered, ref [], style) else makeWigiStory([WigiParagraph([WigiText("", [])], [])], style)
+		}
+		WigiParagraph(elements, style): {
+			newStyle = styleFn(defStyle, WigiParentStyle(style, [], 0.0)).paragraphStyle;
+			WigiParagraph(map(elements, recProcessing), newStyle);
+		}
+		WigiText(text, style): {
+			newStyle = styleFn(defStyle, WigiParentStyle([], style, 0.0)).textStyle;
+			WigiText(text, newStyle);
+		}
+		WigiEmpty(): element;
+		WigiRecursive(elements, type, style): {
+			nt = switch (type : WigiRecursiveType) {
+				WigiBrackets(leftBracketType, rightBracketType): type;
+				WigiComap(collapsed): WigiComap(if (recreateBehaviours) make(getValue(collapsed)) else collapsed);
+				WigiDottedElement(left, right, top, bottom, leftSign, rightSign): type;
+				WigiFraction(): type;
+				WigiProduct(): type;
+				WigiEvaluatingIntegral(): type;
+				WigiRoot(): type;
+				WigiLongDivision(): type;
+				WigiIntegral(): type;
+				WigiIntegral2(signType): type;
+				WigiTopModificator(t, s): type;
+				WigiSum(): type;
+				WigiSupscript(): type;
+				WigiSubscript(): type;
+				WigiSupSubscript() : type;
+				WigiOverscript(): type;
+				WigiUnderscript(): type;
+				WigiOverlay(): type;
+				WigiAltText(): type;
+				WigiTable(r, c, cs, s): type;
+				WigiInteractiveTable(f, r, s): WigiInteractiveTable(f, if (recreateBehaviours) make(getValue(r)) else r, s);
+				WigiTableCell(wh, cs): WigiTableCell(if (recreateBehaviours) make(getValue(wh)) else wh, cs);
+				WigiSpreadsheetCell(wh, em, cs): WigiSpreadsheetCell(if (recreateBehaviours) make(getValue(wh)) else wh, if (recreateBehaviours) make(getValue(em)) else em, cs);
+				WigiFrame(w, h, s): type;
+				WigiRadioOption(id, value): type;
+				WigiVisible(__): type;
+				WigiCode(sc, sr): WigiCode(if (recreateBehaviours) make(getValue(sc)) else sc, if (recreateBehaviours) make(getValue(sr)) else sr);
+				WigiTyped(typ): type;
+				WigiButton(w, s): type;
+				WigiHyperlink(u): type;
+				WigiVersions(__): type;
+				WigiExternalRecursive(__, __): type;
+			};
+
+			collectBasicCharacterStyle = \style1 : [WigiTextStyle] -> fold(style1, [], \acc, st -> {
+				concat(acc, switch (st) {
+					BasicCharacterStyle(): [st];
+					default: [];
+				});
+			});
+			textStyle : [WigiTextStyle] = extractStruct(style, WigiRecursiveFontStyle([])).style;
+			newTextStyle = styleFn(defStyle, WigiParentStyle([], textStyle, 0.0)).textStyle;
+			recursiveFontStyle = WigiRecursiveFontStyle(collectBasicCharacterStyle(newTextStyle));
+			newStyle : [WigiRecursiveStyle] = if (recursiveFontStyle.style != []) {
+				replaceStruct(style, recursiveFontStyle)
+			} else style;
+
+			WigiRecursive(map(elements, recProcessing), nt, newStyle);
+		}
+		WigiBlock(type, style): {
+			nt = switch (type : WigiBlockType) {
+				WigiPicture(s, st): type;
+				WigiVideo(s, st): type;
+				WigiAudio(s, st): type;
+				WigiSlider(v, mn, mx, st, w, sty): WigiSlider(if (recreateBehaviours) make(getValue(v)) else v, mn, mx, st, w, sty);
+				WigiCheckBox(v, s): WigiCheckBox(if (recreateBehaviours) make(getValue(v)) else v, s);
+				WigiRadioButton(v, s): WigiRadioButton(if (recreateBehaviours) make(getValue(v)) else v, s);
+				WigiInputBox(v, w, h, s): WigiInputBox(if (recreateBehaviours) make(getValue(v)) else v, w, h, s);
+				WigiPositionTag(id): type;
+				WigiCustomSymbol(t, s): type;
+				WigiFormdesigner(d, s): type;
+				WigiSmartArt(c, s): type;
+				WigiFormula(formula, s): type;
+				WigiPageBreak(a, s): type;
+				WigiCoach(t): type;
+				WigiPageName(n, c): type;
+				WigiNaturalMath(f): type;
+				WigiComboBox(s, v, r, w): WigiComboBox(if (recreateBehaviours) make(getValue(s)) else s, v, r, w);
+				WigiNativeWiki(w): type;
+				WigiDotplot(r, s): type;
+				WigiHistogram(r, s): type;
+				WigiHistogramClasses(r, s): type;
+				WigiBoxplot(r, s): type;
+				WigiScatterplot(r, s): type;
+				WigiStackedBar(r, s): type;
+				WigiDatepicker(d, s): WigiDatepicker(if (recreateBehaviours) make(getValue(d)) else d, s);
+				WigiCalculator(): type;
+				WigiHTML(url, w, h, s): type;
+				WigiReferenceDocument(t, d): WigiReferenceDocument(t, recProcessing(d));
+				WigiSetClipboardButton(__, __): type;
+				WigiChoiceBlock(formula, choices): WigiChoiceBlock(formula, map(choices, \choice -> WigiChoice(choice.operator, choice.value, recProcessing(choice.result))));
+				WigiExternalBlock(t, c): type;
+				WigiFeedback(c, d): type;
+				WigiFeedbackBlock(formula, visibilityCondition, interactiveType, choices): WigiFeedbackBlock(formula, visibilityCondition, interactiveType, map(choices, \choice -> WigiFeedbackChoice(choice.type, choice.operator, choice.value, recProcessing(choice.result))));
+				WigiFillBlankBlock(width, caseSensitive, exactMatch, mathFeatures, answers, otherAnswer): {
+					WigiFillBlankBlock(
+						width,
+						caseSensitive,
+						exactMatch,
+						mathFeatures,
+						map(answers, \answer -> {
+							switch(answer) {
+								WFCorrectAnswer(text, remediation): WFCorrectAnswer(text, recProcessing(remediation));
+								WFAlmostCorrectAnswer(text, remediation): WFAlmostCorrectAnswer(text, recProcessing(remediation));
+								WFWrongAnswer(text, remediation): WFWrongAnswer(text, recProcessing(remediation));
+							}
+						}),
+						WFOtherAnswer(recProcessing(otherAnswer.remediation)))
+				}
+			}
+			newTextStyle = styleFn(defStyle, WigiParentStyle([], extractWigiTextStyleFromBlockStyle(style), 0.0)).textStyle;
+			newBlockStyle = replaceTextStyleInBlockStyle(style, newTextStyle);
+			switch(nt) {
+				WigiPageBreak(__, __): WigiBlock(nt, []);
+				default: WigiBlock(nt, newBlockStyle);
+			}
+		}
+	}
+}

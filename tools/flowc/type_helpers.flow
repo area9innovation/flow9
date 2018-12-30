@@ -1,0 +1,1161 @@
+import tools/flowc/fctypeenv;
+import tools/flowc/prettyprint;
+import tools/flowc/flowc_println;
+
+export {
+	addFcTypeError(acc : FcTypeEnvProgram, err : FcError) -> void;
+	makeFcTyVar(tyvarIdGroup : IdGroup, info : FcInfo) -> FcTypeVar;
+	makeFcTyVar2(tyvarIdGroup : IdGroup, info : FcInfo2) -> FcTypeVar;
+	copyFcInfo(c : FcInfo) -> FcInfo;
+	copyFcInfo2(c : FcInfo) -> FcInfo2;
+
+	// Are these types the same? Strict requirement. If unboundOk is false, unbound tyvars give no.
+	isSameFcType(env : FcTypeEnv, t1 : FcType, t2 : FcType, unboundOk : bool) -> bool;
+
+
+	setFcType(acc : FcTypeEnv, name : string, t : Maybe<FcType>) -> FcTypeEnv;
+
+	mergeFcVarInfo(acc : FcTypeEnv, tree : Tree<string, FcInfo>) -> FcTypeEnv;
+
+	isFcTypeVar(t : FcType) -> bool;
+
+	// Extract the name of a struct or union. Empty is neither, or tyvar
+	getFcTypeName(acc : FcTypeEnv, ct : FcType) -> string;
+
+	// What type is this typename? Finds a struct or union if possible, otherwise, returns the FcTypeName.
+	// Instantiates typars.
+	getFcNamedType(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName) -> FcType;
+	getFcNamedTypeError(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, onError : (string) -> void) -> FcType;
+
+	// Fill a function type with details from another function type. In case of conflict, report errors
+	fillFcTypeFunction(acc : FcTypeEnv, fn : FcTypeFunction2, filler : FcTypeFunction2, error : (string, FcType, FcType) -> void) -> FcTypeFunction2;
+
+	fillTypes(acc : FcTypeEnv, t1 : Maybe<FcType>, t2 : Maybe<FcType>, error : (string, type1 : FcType, type2 : FcType) -> void) -> Maybe<FcType>;
+
+	// Instantiate all typars to tyvars
+	instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType;
+
+	// Find the typars in this type
+	collectTypars(acc : FcTypeEnv, t : FcType, typars : Set<string>) -> Set<string>;
+
+	// Find typars using global typing environment
+	collectTyparsGlobal(env : FcTypeEnvProgram, type : FcType, acc : Set<string>) -> Set<string>;
+
+	// Follow tyvar and typars to find the underlying type
+	getResolvedFcType(acc : FcTypeEnv, type : FcType) -> FcType;
+
+	// What tyvars does this type contain?
+	collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int>;
+
+	// Given a typename, and the type (struct/union) it corresponds to, instantiate any typeparameters in it
+	instantiateTypename(env : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType;
+
+	// Checks that all typename references have the correct number of type parameters
+	checkSufficientPolymorphism(env : FcTypeEnv, type : FcType, onError : (string) -> void) -> void;
+
+	// Expand to structs, instantiated
+	typename2structs(env : FcTypeEnv, typename : FcTypeName) -> [FcTypeStruct];
+	union2structs(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeStruct];
+	union2instantiatedStructs(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeStruct];
+
+	// Extract sub-unions 
+	union2unions(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeUnion];
+
+	// From the name of a union to the structs, uninstantiated
+	union2typenames(env : FcTypeEnv, name : string) -> [FcTypeName];
+
+	// Find one of more unions that match these names
+	names2unions(env : FcTypeEnv, names : [string], open : bool) -> [string];
+
+	// Lifts to FcTypeFunction2 type
+	fcTypeFunction2(t : FcTypeFunction) -> FcTypeFunction2;
+
+	// Converts a FcTypeFunction2 to a FcTypeFunction, using a template for fallback
+	fcTypeFunction(t : FcTypeFunction2, fb : FcTypeFunction) -> FcTypeFunction;
+
+	// Replaces FcTypeStruct/FcTypeUnion occurrences in type with appropriate FcTypeName entity.
+	fcType2fcTypeWithoutStructUnion(type : FcType) -> FcType;
+
+	// Checks consistency of two function types: arity and types of arguments and return value.
+	fcTypeFunctionsAreConsistent(dec_1 : FcTypeFunction2, dec_2 : FcTypeFunction2) -> bool;
+}
+
+addFcTypeError(acc : FcTypeEnvProgram, err : FcError) -> void {
+	acc.printError(err);
+	acc.errors := ^(acc.errors) + 1;
+}
+
+makeFcTyVar(tyvarIdGroup : IdGroup, info : FcInfo) -> FcTypeVar {
+	// fcPrintln("alpha " + i2s(^(acc.typevarid)));
+	FcTypeVar(nextUniqueId(tyvarIdGroup), copyFcInfo2(info));
+}
+
+makeFcTyVar2(tyvarIdGroup : IdGroup, info : FcInfo2) -> FcTypeVar {
+	// fcPrintln("alpha " + i2s(^(acc.typevarid)));
+	FcTypeVar(nextUniqueId(tyvarIdGroup), info);
+}
+
+// Copy an info, but drop the type
+copyFcInfo(c : FcInfo) -> FcInfo {
+	FcInfo(ref None(), c.start, c.end);
+}
+
+copyFcInfo2(c : FcInfo) -> FcInfo2 {
+	FcInfo2(c.start, c.end);
+}
+
+isSameFcType(env : FcTypeEnv, t1 : FcType, t2 : FcType, unboundOK : bool) -> bool {
+	if (t1 == t2) true
+	else {
+		switch (t2) {
+			FcTypeVar(id2, i2): {
+				// If the second is a tyvar, try to resolve it
+				mtv = lookupTree(^(env.local.tyvars), id2);
+				switch (mtv) {
+					None(): {
+						tmp = switch (t1) {
+							FcTypeVar(id1, i1): id1 == id2;
+/*							FcTypeParameter(p1, pi1): {
+								mtv1 = lookupTree(^(env.typars), p1);
+								switch (mtv1) {
+									None(): false;
+									Some(tv1): {
+										isSameFcType(env, tv1, t2);
+									}
+								}
+							}*/
+							default: false;
+						}
+						unboundOK || tmp
+					}
+					Some(tv): {
+						isSameFcType(env, t1, tv, unboundOK);
+					}
+				}
+			}
+			FcTypeParameter(p2, pi2): {
+				if (true) {
+					switch (t1) {
+						FcTypeParameter(p1, pi1): p1 == p2;
+						default: false;
+					}
+				} else {
+					mtv2 = lookupTree(^(env.local.typars), p2);
+					switch (mtv2) {
+						None(): {
+							switch (t1) {
+								FcTypeParameter(p1, pi1): p1 == p2;
+								default: false;
+							}
+						}
+						Some(tv2): {
+							isSameFcType(env, t1, tv2, unboundOK);
+						}
+					}
+
+				}
+			}
+			default: {
+				// We know t2 is not a tyvar or typar here
+				switch (t1) {
+					FcTypeVoid(i1): {
+						switch (t2) {
+							FcTypeVoid(i2): true;
+							default: false;
+						}
+					}
+					FcTypeBool(i1): {
+						switch (t2) {
+							FcTypeBool(i2): true;
+							default: false;
+						}
+					}
+					FcTypeInt(i1): {
+						switch (t2) {
+							FcTypeInt(i2): true;
+							default: false;
+						}
+					}
+					FcTypeDouble(i1): {
+						switch (t2) {
+							FcTypeDouble(i2): true;
+							default: false;
+						}
+					}
+					FcTypeString(i1): {
+						switch (t2) {
+							FcTypeString(i2): true;
+							default: false;
+						}
+					}
+					FcTypeNative(i1): {
+						switch (t2) {
+							FcTypeNative(i2): true;
+							default: false;
+						}
+					}
+					FcTypeFlow(i1): {
+						// TODO: Depending on the mode, this might always be true
+						switch (t2) {
+							FcTypeFlow(i2): true;
+							default: false;
+						}
+					}
+					FcTypeArray(a1, i1): {
+						switch (t2) {
+							FcTypeArray(a2, i2): {
+								isSameFcType(env, a1, a2, unboundOK);
+							}
+							default: false;
+						}
+					}
+					FcTypeRef(r1, i1): {
+						switch (t2) {
+							FcTypeRef(r2, i2): {
+								isSameFcType(env, r1, r2, unboundOK);
+							}
+							default: false;
+						}
+					}
+					FcTypeParameter(tv1, i1): {
+						if (true) {
+							switch (t2) {
+								FcTypeParameter(tv2, i2): {
+									tv1 == tv2;
+								}
+								default: false;
+							}
+
+						} else {
+							tvar = lookupTree(^(env.local.typars), tv1);
+							switch (tvar) {
+								None(): {
+									true;
+								}
+								Some(tv): {
+									isSameFcType(env, tv, t2, unboundOK);
+								}
+							}
+						}
+					}
+					FcTypeVar(id1, i1): {
+						mtv = lookupTree(^(env.local.tyvars), id1);
+						switch (mtv) {
+							None(): {
+								unboundOK;
+							}
+							Some(tv): {
+								isSameFcType(env, tv, t2, unboundOK);
+							}
+						}
+					}
+					FcTypeName(n1, p1, i1): {
+						itn = getFcNamedType(env, env.program.acc.tyvarIdGroup, t1);
+						if (itn == t1) {
+							switch (t2) {
+								FcTypeName(n2, p2, i2): {
+									if (n1 != n2) {
+										false;
+									} else {
+										areSameFcTypes(env, p1, p2, unboundOK)
+									}
+								}
+								FcTypeUnion(u1, __, __, __): {
+									// Can't be, because otherwise we would find the union
+									false;
+								}
+								FcTypeStruct(s1, tp, __, __): {
+									// Can't be, because otherwise we would find the struct
+									false;
+								}
+								default: false;
+							}
+						} else {
+							isSameFcType(env, itn, t2, unboundOK);
+						}
+					}
+					FcTypeFunction(args1, rt1, i1): {
+						switch (t2) {
+							FcTypeFunction(args2, rt2, i2): {
+								isSameFcType(env, rt1, rt2, unboundOK)
+								&& length(args1) == length(args2)
+								&& forall(mapi(args1, \i, arg : FcFunArg -> {
+									isSameFcType(env, arg.type, args2[i].type, unboundOK)
+								}), idfn)
+
+							}
+							default: false;
+						}
+					}
+					FcTypeStruct(n1, tp1, args1, i1): {
+						switch (t2) {
+							FcTypeStruct(n2, tp2, args2, i2): {
+								n1 == n2 && areSameFcTypes(env, tp1, tp2, unboundOK);
+							}
+							FcTypeName(__, __, __): {
+								// OK, maybe
+								rtn2 = getFcNamedType(env, env.program.acc.tyvarIdGroup, t2);
+								if (rtn2 == t2) false
+								else isSameFcType(env, t1, rtn2, unboundOK)
+							}
+							default: false;
+						}
+					}
+					FcTypeUnion(n1, pars1, types1, i1): {
+						switch (t2) {
+							FcTypeUnion(n2, pars2, types2, i2): {
+								n1 == n2  && areSameFcTypes(env, pars1, pars2, unboundOK);
+							}
+							FcTypeName(__, __, __): {
+								// OK, maybe
+								rtn2 = getFcNamedType(env, env.program.acc.tyvarIdGroup, t2);
+								if (rtn2 == t2) false
+								else isSameFcType(env, t1, rtn2, unboundOK)
+							}
+							default: false;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+areSameFcTypes(env : FcTypeEnv, ts1 : [FcType], ts2 : [FcType], unboundOK : bool) -> bool {
+	length(ts1) == length(ts2)
+	&& forall(mapi(ts1, \i, tp -> {
+		isSameFcType(env, tp, ts2[i], unboundOK)
+	}), idfn)
+}
+
+isFcTypeVar(t : FcType) -> bool {
+	switch (t) {
+		FcTypeVar(__, __): true;
+		FcTypeParameter(__, __): true;
+		default: false;
+	}
+}
+
+
+
+// If this type is a union in some name or shape, give the name of it
+getFcTypeName(acc : FcTypeEnv, ct : FcType) -> string {
+	 switch (ct) {
+		FcTypeName(name, pars, si): {
+			name;
+		}
+		FcTypeVar(id, i): {
+			tv = lookupTree(^(acc.local.tyvars), id);
+			switch (tv) {
+				None(): {
+					"";
+				}
+				Some(tt): {
+					getFcTypeName(acc, tt);
+				}
+			}
+		}
+		FcTypeStruct(sn, tp, args, si): sn;
+		FcTypeUnion(un, up, una, ui): un;
+		default: {
+			"";
+		}
+	}
+}
+
+fillFcTypeFunction(acc : FcTypeEnv, fn : FcTypeFunction2, filler : FcTypeFunction2, error : (string, type1 : FcType, type2 : FcType) -> void) -> FcTypeFunction2 {
+	if (fn == filler) fn
+	else {
+		// Fill and check the return type
+		rt = fillTypes(acc, fn.returnType, filler.returnType, error);
+		// Fill the arguments
+		args = mapi(fn.args, \i, a : FcFunArg2 -> {
+			if (i < length(filler.args)) {
+				at1 = a.type;
+				at2 = filler.args[i].type;
+				at = fillTypes(acc, at1, at2, error);
+				FcFunArg2(a.name, at);
+			} else {
+				a;
+			}
+		});
+		FcTypeFunction2(args, rt, fn.info);
+	}
+}
+
+fillTypes(acc : FcTypeEnv, t1 : Maybe<FcType>, t2 : Maybe<FcType>, error : (string, type1 : FcType, type2 : FcType) -> void) -> Maybe<FcType> {
+	switch (t1) {
+		None(): t2;
+		Some(rt1): {
+			switch (t2) {
+				None(): t1;
+				Some(rt2): {
+					if (!isSameFcType(acc, rt1, rt2, true)) {
+
+						// fcPrintln("TODO: Fix this error about incompatible types in declarations");
+						error("Incompatible types in declarations", rt1, rt2);
+					}
+					t1;
+				}
+			}
+		}
+	}
+}
+
+getResolvedFcType(acc : FcTypeEnv, type : FcType) -> FcType {
+	doGetResolvedFcType(acc, type, makeTree())
+}
+
+doGetResolvedFcType(acc : FcTypeEnv, type : FcType, seen : Tree<int, FcType>) -> FcType {
+	switch (type) {
+		FcTypeVar(vid, vi):
+			switch (lookupTree(seen, vid)) {
+				Some(t): t;
+				None(): {
+					tv = lookupTree(^(acc.local.tyvars), vid);
+					switch (tv) {
+						None(): type;
+						Some(ttv): doGetResolvedFcType(acc, ttv, setTree(seen, vid, ttv));
+					}
+				}
+			};
+		FcTypeParameter(pid, pi): {
+			pv = lookupTree(^(acc.local.typars), pid);
+			switch (pv) {
+				None(): type;
+				Some(ptv): doGetResolvedFcType(acc, ptv, seen);
+			}
+		}
+		FcTypeVoid(__): type;
+		FcTypeBool(__): type;
+		FcTypeInt(__): type;
+		FcTypeDouble(__): type;
+		FcTypeString(__): type;
+		FcTypeFlow(__): type;
+		FcTypeNative(__): type;
+		FcTypeName(tn, pars, ti): {
+			FcTypeName(tn, map(pars, \p -> {
+				doGetResolvedFcType(acc, p, seen);
+			}), ti);
+		}
+		FcTypeStruct(n, tp, args, ti): {
+			ip = map(tp, \p -> {
+				doGetResolvedFcType(acc, p, seen);
+			});
+			FcTypeStruct(n, ip, map(args, \a -> {
+				FcStructArg(a.name, doGetResolvedFcType(acc, a.type, seen), a.ismutable);
+			}), ti);
+		}
+
+		FcTypeUnion(un, pars, names, ti): {
+			ip = map(pars, \p -> {
+				doGetResolvedFcType(acc, p, seen);
+			});
+			ia = map(names, \p : FcTypeName -> {
+				in = doGetResolvedFcType(acc, p, seen);
+				switch (in) {
+					FcTypeName(__, __, __): in;
+					default: p; // Will never happen
+				}
+			});
+			FcTypeUnion(un, ip, ia, ti);
+		}
+		FcTypeArray(at, ti): FcTypeArray(doGetResolvedFcType(acc, at, seen), ti);
+		FcTypeRef(at, ti): FcTypeRef(doGetResolvedFcType(acc, at, seen), ti);
+
+		FcTypeFunction(args, rt, fi): {
+			ia = map(args, \a -> {
+				FcFunArg(a.name, doGetResolvedFcType(acc, a.type, seen));
+			});
+			irt = doGetResolvedFcType(acc, rt, seen);
+			FcTypeFunction(ia, irt, fi);
+		}
+	}
+}
+
+instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType {
+	switch (t) {
+		FcTypeVoid(__): t;
+		FcTypeBool(__): t;
+		FcTypeInt(__): t;
+		FcTypeDouble(__): t;
+		FcTypeString(__): t;
+		FcTypeFlow(__): t;
+		FcTypeNative(__): t;
+		FcTypeVar(tid, __): {
+			tv = lookupTree(^(acc.local.tyvars), tid);
+			switch (tv) {
+				None(): t;
+				Some(ttv): instantiateTypeTyPars(acc, tyvarIdGroup, typars, ttv);
+			}
+		};
+		FcTypeName(tn, pars, ti): {
+			FcTypeName(tn, map(pars, \p -> {
+				instantiateTypeTyPars(acc, tyvarIdGroup, typars, p);
+			}), ti);
+		}
+		FcTypeStruct(n, tp, args, ti): {
+			ip = map(tp, \p -> {
+				instantiateTypeTyPars(acc, tyvarIdGroup, typars, p);
+			});
+			FcTypeStruct(n, ip, map(args, \a -> {
+				FcStructArg(a.name, instantiateTypeTyPars(acc, tyvarIdGroup, typars, a.type), a.ismutable);
+			}), ti);
+		}
+		FcTypeUnion(un, pars, names, ti): {
+			ip = map(pars, \p -> {
+				instantiateTypeTyPars(acc, tyvarIdGroup, typars, p);
+			});
+			ia = map(names, \p : FcTypeName -> {
+				in = instantiateTypeTyPars(acc, tyvarIdGroup, typars, p);
+				switch (in) {
+					FcTypeName(__, __, __): in;
+					default: p; // Will never happen
+				}
+			});
+			FcTypeUnion(un, ip, ia, ti);
+		}
+		FcTypeArray(at, ti): FcTypeArray(instantiateTypeTyPars(acc, tyvarIdGroup, typars, at), ti);
+		FcTypeRef(at, ti): FcTypeRef(instantiateTypeTyPars(acc, tyvarIdGroup, typars, at), ti);
+		FcTypeParameter(n, ti): {
+			// We reuse the same tyvars for the same type pars
+			existing = lookupTree(^typars, n);
+			switch (existing) {
+				None(): {
+					tv = makeFcTyVar2(tyvarIdGroup, ti);
+					typars := setTree(^typars, n, tv);
+					tv;
+				}
+				Some(tv): tv;
+			}
+		}
+		FcTypeFunction(args, rt, fi): {
+			ia = map(args, \a -> {
+				FcFunArg(a.name, instantiateTypeTyPars(acc, tyvarIdGroup, typars, a.type));
+			});
+			irt = instantiateTypeTyPars(acc, tyvarIdGroup, typars, rt);
+			FcTypeFunction(ia, irt, fi);
+		}
+	}
+}
+
+collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int> { 
+	switch (type) {
+		FcTypeVoid(__): acc;
+		FcTypeBool(__): acc;
+		FcTypeInt(__): acc;
+		FcTypeDouble(__): acc;
+		FcTypeString(__): acc;
+		FcTypeFlow(__): acc;
+		FcTypeNative(__): acc;
+		FcTypeVar(tid, __): insertSet(acc, tid);
+		FcTypeParameter(n, __): {
+			tv = lookupTree(^(env.local.typars), n);
+			switch (tv) {
+				None(): acc;
+				Some(ttv): collectFcTyvars(env, ttv, acc);
+			}
+		}
+		FcTypeRef(rt, __): collectFcTyvars(env, rt, acc);
+		FcTypeArray(at, __): collectFcTyvars(env, at, acc);
+		FcTypeName(id, tp, __): fold(tp, acc, \acc2, ttp -> collectFcTyvars(env, ttp, acc2));
+		FcTypeFunction(args, rt, __): {
+			acc3 = fold(args, acc, \acc2, arg -> collectFcTyvars(env, arg.type, acc2));
+			collectFcTyvars(env, rt, acc3);
+		}
+		FcTypeUnion(__, typars, names, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectFcTyvars(env, ttp, acc2));
+			fold(names, acc3, \acc2, name -> collectFcTyvars(env, name, acc2));
+		}
+		FcTypeStruct(sname, typars, args, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectFcTyvars(env, ttp, acc2));
+			fold(args, acc3, \acc2, arg -> collectFcTyvars(env, arg.type, acc2));
+		}
+	}
+}
+
+collectTypars(env : FcTypeEnv, type : FcType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FcTypeVoid(__): acc;
+		FcTypeBool(__): acc;
+		FcTypeInt(__): acc;
+		FcTypeDouble(__): acc;
+		FcTypeString(__): acc;
+		FcTypeFlow(__): acc;
+		FcTypeNative(__): acc;
+		FcTypeVar(tid, __): {
+			tv = lookupTree(^(env.local.tyvars), tid);
+			switch (tv) {
+				None(): acc;
+				Some(ttv): collectTypars(env, ttv, acc);
+			}
+		}
+		FcTypeParameter(n, __): {
+			insertSet(acc, n);
+		}
+		FcTypeRef(rt, __): collectTypars(env, rt, acc);
+		FcTypeArray(at, __): collectTypars(env, at, acc);
+		FcTypeName(id, tp, __): fold(tp, acc, \acc2, ttp -> collectTypars(env, ttp, acc2));
+		FcTypeFunction(args, rt, __): {
+			acc3 = fold(args, acc, \acc2, arg -> collectTypars(env, arg.type, acc2));
+			collectTypars(env, rt, acc3);
+		}
+		FcTypeUnion(__, typars, names, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectTypars(env, ttp, acc2));
+			fold(names, acc3, \acc2, name -> collectTypars(env, name, acc2));
+		}
+		FcTypeStruct(sname, typars, args, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectTypars(env, ttp, acc2));
+			fold(args, acc3, \acc2, arg -> collectTypars(env, arg.type, acc2));
+		}
+	}
+}
+
+collectTyparsGlobal(env : FcTypeEnvProgram, type : FcType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FcTypeVoid(__):    acc;
+		FcTypeBool(__):    acc;
+		FcTypeInt(__):     acc;
+		FcTypeDouble(__):  acc;
+		FcTypeString(__):  acc;
+		FcTypeFlow(__):    acc;
+		FcTypeNative(__):  acc;
+		FcTypeVar(__, __): acc;
+		FcTypeParameter(n, __): insertSet(acc, n);
+		FcTypeRef(rt, __):      collectTyparsGlobal(env, rt, acc);
+		FcTypeArray(at, __):    collectTyparsGlobal(env, at, acc);
+		FcTypeName(id, tp, __): fold(tp, acc, \acc2, ttp -> collectTyparsGlobal(env, ttp, acc2));
+		FcTypeFunction(args, rt, __): {
+			acc3 = fold(args, acc, \acc2, arg -> collectTyparsGlobal(env, arg.type, acc2));
+			collectTyparsGlobal(env, rt, acc3);
+		}
+		FcTypeUnion(__, typars, names, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectTyparsGlobal(env, ttp, acc2));
+			fold(names, acc3, \acc2, name -> collectTyparsGlobal(env, name, acc2));
+		}
+		FcTypeStruct(sname, typars, args, __): {
+			acc3 = fold(typars, acc, \acc2, ttp -> collectTyparsGlobal(env, ttp, acc2));
+			fold(args, acc3, \acc2, arg -> collectTyparsGlobal(env, arg.type, acc2));
+		}
+	}
+}
+
+getFcNamedType(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName) -> FcType {
+	getFcNamedTypeError(acc, tyvarIdGroup, typename, \e -> {
+		acc.program.printError(FcError("Instantiating " + typename.name + ": " + e, []))
+	});
+}
+
+getFcNamedTypeError(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, onError : (string) -> void) -> FcType {
+	name = typename.name;
+	mstruct = lookupTree(acc.program.acc.names.structs, name);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(acc.program.acc.names.unions, name);
+			switch (munion) {
+				None(): {
+					// Not found.
+					typename
+				}
+				Some(union): {
+					instantiateTypename(acc, tyvarIdGroup, typename, union, onError);
+				}
+			}
+		}
+		Some(structdef): {
+			instantiateTypename(acc, tyvarIdGroup, typename, structdef, onError);
+		}
+	}
+}
+
+
+instantiateTypename(env : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType {
+	mkpars = \n, firstTypar : int -> {
+		tn = length(typename.typeparameters);
+		parsRightLength = if (tn < n) {
+			concat(typename.typeparameters, generate(0, n - tn, \i -> {
+				t : FcType = makeFcTyVar2(tyvarIdGroup, typename.info);
+				t
+			}));
+		} else subrange(typename.typeparameters, 0, n);
+
+		foldi(parsRightLength, makeTree(), \i, acc, tp -> {
+			name = strLeft("??????????", i + 1 + firstTypar);
+			// TODO: Check that tp does not contain any type parameters
+			setTree(acc, name, tp);
+		});
+	}
+
+	switch (type) {
+		FcTypeStruct(sn, tps, sargs, si): {
+			// How many type parameters does this struct have? Notice it can be extended from being in a union
+			tp = collectTypars(env, type, makeSet());
+			sp = sizeSet(tp);
+
+			np = length(typename.typeparameters); 
+			if (np != sp && np != 0) {
+				// Until we can build a map from union typars to struct typars, we turn this off
+			//	error("Expected " + i2s(length(tps)) + " type parameters, not " + i2s(np) + " for struct " + sn + " lifted to have "  + i2s(sp) + " from a union")
+			}
+			// For structs, we allow the first typar to be something else than ?
+			// So find out what the first one is
+			firstTypar = if (sp == 0) 0 else strlen(set2array(tp)[0]) - 1;
+			// and be sure to build them in that order
+			pars = mkpars(sp, firstTypar);
+			// OK, now instantiate all typars in the type
+			instantiateTyParsToTypes(env, pars, type, \m -> error("Check the definition of " + sn + ": " + m));
+		}
+		FcTypeUnion(un, upars, unames, ui): {
+			iteri(upars, \i, up -> {
+				ok = 
+					switch (up) {
+						FcTypeParameter(tp, __): {
+							tp == strLeft("??????????", i + 1)
+						}
+						default: false;
+					};
+				if (!ok) {
+					error("Type parameters to a union have to be a <?, ??, ...> sequence")
+				}
+			});
+
+			np = length(typename.typeparameters); 
+			if (np != length(upars) && np != 0) {
+				error("Expected " + i2s(length(upars)) + " type parameters, not " + i2s(np) + " for union " + un)
+			}
+
+			pars = mkpars(length(upars), 0);
+			uiname = map(unames, \utn : FcTypeName -> {
+				cast(instantiateTyParsToTypes(env, pars, utn, \m -> error("Check definition of " + utn.name + ": " + m)) : FcType -> FcTypeName);
+			});
+			FcTypeUnion(
+				un,
+				map(upars, \utn -> {
+					instantiateTyParsToTypes(env, pars, utn, \m -> error("Check definition of " + un + ": " + m))
+				}),
+				uiname,
+				ui
+			);
+		}
+		default: type; // Something went wrong, but we already complained
+	}
+}
+
+
+instantiateTyParsToTypes(acc : FcTypeEnv, typars : Tree<string, FcType>, t : FcType, onError : (string) -> void) -> FcType {
+	switch (t) {
+		FcTypeVoid(__): t;
+		FcTypeBool(__): t;
+		FcTypeInt(__): t;
+		FcTypeDouble(__): t;
+		FcTypeString(__): t;
+		FcTypeFlow(__): t;
+		FcTypeNative(__): t;
+		FcTypeVar(tid, __): {
+			tv = lookupTree(^(acc.local.tyvars), tid);
+			switch (tv) {
+				None(): t;
+				Some(ttv): instantiateTyParsToTypes(acc, typars, ttv, onError);
+			}
+		};
+		FcTypeName(tn, pars, ti): {
+			FcTypeName(tn, map(pars, \p -> {
+				instantiateTyParsToTypes(acc, typars, p, onError);
+			}), ti);
+		}
+		FcTypeStruct(n, tp, args, ti): {
+			FcTypeStruct(n, 
+				map(tp, \a -> {
+					instantiateTyParsToTypes(acc, typars, a, onError);
+				}), 
+				map(args, \a -> {
+					FcStructArg(a.name, instantiateTyParsToTypes(acc, typars, a.type, onError), a.ismutable);
+				}), 
+				ti
+			);
+		}
+		FcTypeUnion(un, pars, names, ti): {
+			ip = map(pars, \p -> {
+				instantiateTyParsToTypes(acc, typars, p, onError);
+			});
+			ia = map(names, \p : FcTypeName -> {
+				in = instantiateTyParsToTypes(acc, typars, p, onError);
+				switch (in) {
+					FcTypeName(__, __, __): in;
+					default: p; // Will never happen
+				}
+			});
+			FcTypeUnion(un, ip, ia, ti);
+		}
+		FcTypeArray(at, ti): FcTypeArray(instantiateTyParsToTypes(acc, typars, at, onError), ti);
+		FcTypeRef(at, ti): FcTypeRef(instantiateTyParsToTypes(acc, typars, at, onError), ti);
+		FcTypeParameter(n, ti): {
+			existing = lookupTree(typars, n);
+			switch (existing) {
+				None(): {
+					onError("Unbound typar " + n);
+					t;
+				}
+				Some(tv): tv;
+			}
+		}
+		FcTypeFunction(args, rt, fi): {
+			ia = map(args, \a -> {
+				FcFunArg(a.name, instantiateTyParsToTypes(acc, typars, a.type, onError));
+			});
+			irt = instantiateTyParsToTypes(acc, typars, rt, onError);
+			FcTypeFunction(ia, irt, fi);
+		}
+	}
+}
+
+checkSufficientPolymorphism(env : FcTypeEnv, type : FcType, onError : (string) -> void) -> void {
+	switch (type) {
+		FcTypeVoid(__): {};
+		FcTypeBool(__): {};
+		FcTypeInt(__): {};
+		FcTypeDouble(__): {};
+		FcTypeString(__): {};
+		FcTypeFlow(__): {};
+		FcTypeNative(__): {};
+		FcTypeVar(tid, __): {};
+		FcTypeName(name, pars, ti): {
+			npars = length(pars);
+			mstruct = lookupTree(env.program.acc.names.structs, name);
+			switch (mstruct) {
+				None(): {
+					munion = lookupTree(env.program.acc.names.unions, name);
+					switch (munion) {
+						None(): {
+							// Not found.
+							onError("Unknown type name '" + name + "'");
+						}
+						Some(union): {
+							upars = length(union.typeparameters);
+							if (upars != npars) {
+								onError("Expected " + i2s(upars) + " type parameters to " + name + ", but got " + i2s(npars));
+							}
+						}
+					}
+				}
+				Some(structdef): {
+					spars = length(structdef.typars);
+					ospars = lookupTreeDef(env.program.acc.names.structTypars, name, spars);
+					if (ospars != npars && ospars != npars) {
+						onError("Expected " + i2s(spars) + " type parameters to " + name + ", but got " + i2s(npars));
+					}
+				}
+			}
+			iter(pars, \p -> {
+				checkSufficientPolymorphism(env, p, onError);
+			});
+		}
+		FcTypeStruct(n, tp, args, ti): {
+			iter(tp, \a -> {
+				checkSufficientPolymorphism(env, a, onError);
+			});
+			iter(args, \a -> {
+				checkSufficientPolymorphism(env, a.type, onError);
+			});
+		}
+		FcTypeUnion(un, pars, names, ti): {
+			iter(pars, \p -> {
+				checkSufficientPolymorphism(env, p, onError);
+			});
+			iter(names, \p : FcTypeName -> {
+				checkSufficientPolymorphism(env, p, onError);
+			});
+		}
+		FcTypeArray(at, ti): checkSufficientPolymorphism(env, at, onError);
+		FcTypeRef(at, ti): checkSufficientPolymorphism(env, at, onError);
+		FcTypeParameter(n, ti): {}
+		FcTypeFunction(args, rt, fi): {
+			iter(args, \a -> {
+				checkSufficientPolymorphism(env, a.type, onError);
+			});
+			checkSufficientPolymorphism(env, rt, onError);
+		}
+	}
+}
+
+typename2structs(env : FcTypeEnv, typename : FcTypeName) -> [FcTypeStruct] {
+	rt = getFcNamedType(env, env.program.acc.tyvarIdGroup, typename);
+	switch (rt) {
+		FcTypeStruct(__, __, __, __): [rt];
+		FcTypeUnion(__, __, __, __): union2structs(env, rt);
+		default: {
+			[FcTypeStruct(typename.name, [], [], typename.info)]
+		}
+	}
+}
+
+union2structs(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeStruct] {
+	concatA(map(union.typenames, \n -> typename2structs(env, n)))
+}
+
+union2unions(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeUnion] {
+	concatA(map(union.typenames, \typename : FcTypeName -> {
+		rt = getFcNamedType(env, env.program.acc.tyvarIdGroup, typename);
+		switch (rt) {
+			FcTypeUnion(__, __, __, __): arrayPush(union2unions(env, rt), rt);
+			default: []
+		}
+	}))
+}
+
+union2instantiatedStructs(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeStruct] {
+	typenames = union2typenames(env, union.name);
+
+	map(typenames, \t -> {
+		mstruct = lookupTree(env.program.acc.names.structs, t.name);
+		switch (mstruct) {
+			None(): {
+				fcPrintln("Something is wrong");
+				FcTypeStruct(t.name, [], [], union.info)
+			}
+			Some(struct): {
+				cast(
+					instantiateTypename(env, 
+						env.program.acc.tyvarIdGroup,
+						FcTypeName(union.name, union.typeparameters, union.info), 
+						struct, \e -> {
+							fcPrintln("Not sure what this is: " + e);
+						}
+					) : FcType -> FcTypeStruct
+				);
+			}
+		}
+	});
+}
+
+union2typenames(env : FcTypeEnv, name : string) -> [FcTypeName] {
+	union2typenamesWithGuards(env, name, makeSet())
+}
+
+union2typenamesWithGuards(env : FcTypeEnv, name : string, visited : Set<string>) -> [FcTypeName] {
+	if (containsSet(visited, name)) {
+		env.program.printError(FcError("cyclic type definition: " + name, []));
+		[]
+	} else {
+		newVisited = insertSet(visited, name);
+		switch(lookupTree(^(env.program.union2typenamesCache), name)) {
+			None(): {
+				r = switch (lookupTree(env.program.acc.names.unions, name)) {
+					None(): [];
+					Some(union): {
+						list2array(fold(union.typenames, Pair(makeList(), makeSet()), \acc : Pair<List<FcTypeName>, Set<string>>, n -> {
+							batch = if (containsKeyTree(env.program.acc.names.unions, n.name)) {
+									union2typenamesWithGuards(env, n.name, newVisited)
+								} else {
+									[n]
+								}
+							fold(batch, acc, \acc2, tn -> {
+								if (containsSet(acc2.second, tn.name)) acc2
+								else Pair(Cons(tn, acc2.first), insertSet(acc2.second, tn.name))
+							})
+						}).first)
+					}
+				}
+				env.program.union2typenamesCache := setTree(^(env.program.union2typenamesCache), name, r);
+				r;
+
+			}
+			Some(rr) : rr;
+		}
+	}
+}
+
+
+names2unions(env : FcTypeEnv, names : [string], open : bool) -> [string] {
+	if (names == []) {
+		[];
+	} else {
+		unions : [Set<string>] = map(names, \n -> {
+			buildSet(getTreeArrayValue(env.program.acc.names.struct2unions, n));
+		});
+		shared = fold(tail(unions), unions[0], \acc : Set<string>, c -> {
+			intersectSets(acc, c)
+		});
+		candidates = set2array(shared);
+		if (open) {
+			candidates;
+		} else {
+			filter(candidates, \c -> {
+				structs = union2typenames(env, c);
+				length(structs) == length(names)
+			});
+		}
+	}
+}
+
+fcTypeFunction2(t : FcTypeFunction) -> FcTypeFunction2 {
+	FcTypeFunction2(
+		map(t.args, \a -> {
+			FcFunArg2(a.name, Some(a.type))
+		}),
+		Some(t.returnType),
+		t.info
+	)
+}
+
+
+fcTypeFunction(t : FcTypeFunction2, fb : FcTypeFunction) -> FcTypeFunction {
+	FcTypeFunction(
+		mapi(t.args, \i, a : FcFunArg2 -> {
+			FcFunArg(a.name, either(a.type, if (i < length(fb.args)) fb.args[i].type else {
+				fcPrintln("Expected " + i2s(length(t.args)) + ", got " + i2s(length(fb.args)) + " arguments in function type");
+				FcTypeVoid(t.info)
+			}))
+		}),
+		either(t.returnType, fb.returnType),
+		t.info
+	);
+}
+
+setFcType(acc : FcTypeEnv, name : string, t : Maybe<FcType>) -> FcTypeEnv {
+	global = acc.program;
+	switch (t) {
+		None(): acc;
+		Some(ty): {
+			FcTypeEnv(
+				acc.global,
+				FcTypeEnvProgram(
+					global.acc, 
+					setTree(global.types, name, ty),
+					global.exported,
+					global.printError,
+					global.errors,
+					global.union2typenamesCache
+				),
+				acc.local
+			);
+		}
+	}
+}
+
+mergeFcVarInfo(acc : FcTypeEnv, tree : Tree<string, FcInfo>) -> FcTypeEnv {
+	local = acc.local;
+	FcTypeEnv(
+		acc.global,
+		acc.program,
+		FcTypeEnvLocal(
+			local.expects,
+			local.checks,
+			local.tyvars,
+			local.typars,
+			mergeTree(local.varinfo, tree),
+			local.debugExpects,
+			local.debugTyping,
+			local.debugIndentation,
+		)
+	)
+}
+
+fcType2fcTypeWithoutStructUnion(type : FcType) -> FcType {
+	switch (type) {
+		FcTypeVoid(__):    type;
+		FcTypeBool(__):    type;
+		FcTypeInt(__):     type;
+		FcTypeDouble(__):  type;
+		FcTypeString(__):  type;
+		FcTypeFlow(__):    type;
+		FcTypeNative(__):  type;
+		FcTypeVar(__, __): type;
+		FcTypeParameter(__, __): type;
+		FcTypeRef(rt, i):
+			FcTypeRef(fcType2fcTypeWithoutStructUnion(rt), i);
+		FcTypeArray(at, i):
+			FcTypeArray(fcType2fcTypeWithoutStructUnion(at), i);
+		FcTypeName(n, tp, i):
+			FcTypeName(n, map(tp, fcType2fcTypeWithoutStructUnion), i);
+		FcTypeFunction(args, rt, i):
+			FcTypeFunction(
+				map(args, \a -> FcFunArg(a.name, fcType2fcTypeWithoutStructUnion(a.type))),
+				fcType2fcTypeWithoutStructUnion(rt),i
+			);
+		FcTypeUnion(n, tp, __, i):
+			FcTypeName(n, map(tp, fcType2fcTypeWithoutStructUnion), i);
+		FcTypeStruct(n, tp, __, i):
+			FcTypeName(n, map(tp, fcType2fcTypeWithoutStructUnion), i);
+	}
+}
+
+fcTypeFunctionsAreConsistent(dec_1 : FcTypeFunction2, dec_2 : FcTypeFunction2) -> bool {
+	typesAreConsistent = \mt1, mt2 ->
+		eitherMap(mt1, \t1 -> eitherMap(mt2, \t2 -> fcTypesAreEqual(t1, t2), true), true);
+	length(dec_1.args) == length(dec_2.args) &&
+	typesAreConsistent(dec_1.returnType, dec_2.returnType) &&
+	forall(
+		zipWith(dec_1.args, dec_2.args, \arg_1, arg_2 -> Pair(arg_1, arg_2)),
+		\p -> typesAreConsistent(p.first.type, p.second.type)
+	)
+}
+
+// FcTypes may be different because of different FcInfo2 fields, but essentialy the same.
+// This function is used to define semantic equality of types.
+fcTypesAreEqual(t1 : FcType, t2 : FcType) -> bool {
+	switch (t1) {
+		FcTypeVoid(__):   switch(t2) { FcTypeVoid(__):   true; default: false; }
+		FcTypeBool(__):   switch(t2) { FcTypeBool(__):   true; default: false; }
+		FcTypeInt(__):    switch(t2) { FcTypeInt(__):    true; default: false; }
+		FcTypeDouble(__): switch(t2) { FcTypeDouble(__): true; default: false; }
+		FcTypeString(__): switch(t2) { FcTypeString(__): true; default: false; }
+		FcTypeNative(__): switch(t2) { FcTypeNative(__): true; default: false; }
+		FcTypeFlow(__):   switch(t2) { FcTypeFlow(__):   true; default: false; }
+		FcTypeArray(a1,__):  switch(t2) { FcTypeArray(a2,__): fcTypesAreEqual(a1, a2); default: false; }
+		FcTypeRef(r1,__):    switch(t2) { FcTypeRef(r2,__):   fcTypesAreEqual(r1, r2); default: false; }
+		FcTypeVar(v1,__):    switch(t2) { FcTypeVar(v2,__): true; default: false; }
+		FcTypeParameter(n1,__): switch(t2) { FcTypeParameter(n2,__): n1 == n2; default: false; }
+		FcTypeName(n1, typars1,__):
+			switch(t2) {
+				FcTypeName(n2, typars2,__):
+					n1 == n2 &&
+					forall(
+						zipWith(typars1, typars2, \tp1, tp2 -> Pair(tp1, tp2)),
+						\p -> fcTypesAreEqual(p.first, p.second)
+					);
+				default: false;
+			}
+		FcTypeFunction(args1, rtype1,__):
+			switch(t2) {
+				FcTypeFunction(args2, rtype2,__):
+					fcTypesAreEqual(rtype1, rtype2) &&
+					forall(
+						zipWith(args1, args2, \a1, a2 -> Pair(a1.type, a2.type)),
+						\p -> fcTypesAreEqual(p.first, p.second)
+					);
+				default: false;
+			}
+		FcTypeStruct(n1, tps1, args1,__):
+			switch(t2) {
+				FcTypeStruct(n2, tps2, args2,__):
+					n1 == n2 &&
+					forall(
+						zipWith(tps1, tps2, \tp1, tp2 -> Pair(tp1, tp2)),
+						\p -> fcTypesAreEqual(p.first, p.second)
+					) &&
+					forall(
+						zipWith(args1, args2, \a1, a2 -> Pair(a1, a2)),
+						\p ->
+							fcTypesAreEqual(p.first.type, p.second.type) &&
+							(p.first.ismutable == p.second.ismutable)
+					);
+				default: false;
+			}
+		FcTypeUnion(n1, tps1, tns1,__):
+			switch(t2) {
+				FcTypeUnion(n2, tps2, tns2,__):
+					n1 == n2 &&
+					forall(
+						zipWith(tps1, tps2, \tp1, tp2 -> Pair(tp1, tp2)),
+						\p -> fcTypesAreEqual(p.first, p.second)
+					) &&
+					forall(
+						zipWith(tns1, tns2, \tn1, tn2 -> Pair(tn1, tn2)),
+						\p -> fcTypesAreEqual(p.first, p.second)
+					);
+				default: false;
+			}
+	}
+}
+

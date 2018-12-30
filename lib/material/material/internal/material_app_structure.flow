@@ -1,0 +1,520 @@
+import material/internal/material_clickable;
+import material/internal/material_popup;
+import material/internal/material_toolbar;
+// Internal to material
+
+export {
+	MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MAppState(
+	interactionId : int,
+	content : Pair<Material, Transform<bool>>,
+	floatingContent : Pair<Material, Transform<bool>>,
+	appBar : Maybe<Pair<Material, Transform<bool>>>,
+	leftNav : Maybe<MAppNav>,
+	rightNav : Maybe<MAppNav>,
+	flexible : Maybe<MAppFlexibleState>,
+	point : DynamicBehaviour<Point>,
+	down : DynamicBehaviour<bool>,
+	wh : DynamicBehaviour<WidthHeight>,
+	state : [MActivateState]
+);
+
+MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, persistent : Transform<bool>, width : double, miniWidth : double,
+	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>);
+
+MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
+
+MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+		state = makeMAppState(manager, m);
+
+		TCols([
+			if (isSome(state.leftNav))
+				[TDisplay("MAppLeftPanelSize")]
+			else
+				[],
+			[TGroup2(TDisplay("MAppContent"), TDisplay("MAppFloatingContent"))],
+			if (isSome(state.rightNav))
+				[TDisplay("MAppRightPanelSize")]
+			else
+				[]
+		] |> concatA)
+		|> (\f ->
+			if (isSome(state.appBar))
+				TGroup2SameMetrics(TLines2(TGhost("MAppBar"), f), TDisplay("MAppBar"))
+			else
+				f
+		)
+		|> (\f ->
+			TGroup2SameMetrics(
+				f,
+				(if (isSome(state.leftNav))
+					TDisplay("MAppLeftPanel")
+				else
+					TEmpty())
+				|> (\f2 ->
+					eitherMap(state.rightNav,
+						\rn ->
+							TIf(
+								rn.persistent,
+								TGroup2WithoutMetrics(TDisplay("MAppRightPanel"), f2),
+								TGroup2WithoutMetrics(f2, TDisplay("MAppRightPanel"))
+							),
+						f2
+					)
+				)
+			)
+		)
+		|> (\f -> letAppBar(manager, parent, f, state, m2t))
+		|> (\f -> letContentAndSize(manager, parent, f, m.style, state, m2t))
+		|> (\f -> letExpander(manager, parent, f, state, m2t, false))
+		|> (\f -> letExpander(manager, parent, f, state, m2t, true))
+		|> (\f -> letFloatingContent(manager, parent, f, state, m2t))
+		|> (\f -> letFlextibleApp(f, state))
+}
+
+makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
+	appWH = extractStruct(m.style, MAppWH(makeWH())).wh;
+	flexible =
+		eitherMap(
+			tryExtractStruct(m.style, MAppStructureFlexible([])),
+			\asf -> {
+				enabled = extractStruct(asf.style, MEnabled(const(true))).enabled;
+				showExpander = extractStruct(asf.style, MShowExpander(const(false))).show;
+				showToolbar = extractStruct(asf.style, MShowToolbar(const(true))).show;
+				mWidth = extractStruct(asf.style, MWidth(1296.)).width;
+				persistentB = extractStruct(asf.style, MPersistent(make(false))).persistent;
+				persistent = fif(enabled, fselect(appWH, FLift(\wh -> wh.width > mWidth)), const(false));
+
+				Some(MAppFlexibleState(
+					persistent,
+					persistentB,
+					fmax(fnot(persistent), showExpander),
+					fmax(fnot(persistent), showToolbar)
+				));
+			},
+			None()
+		);
+
+	tryExtractNav = \left : bool ->
+		eitherMap(
+			tryExtractStruct(m.parts, if (changeBoolIfRTL(left)) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
+			\nav : MNav -> {
+				navMini = contains(nav.style, MSideNavMini());
+				navMiniWidth = extractStruct(nav.style, MListMinimizedWidth(72.)).width;
+				navSwipe : MSwipeLeftOrRight =
+					extractStruct(
+						nav.style,
+						if (changeBoolIfRTL(left))
+							MSwipeLeft(const(if (navMini) navMiniWidth else 16.), const(mobile))
+						else
+							MSwipeRight(const(if (navMini) navMiniWidth else 16.), const(mobile))
+					);
+
+				Some(
+					MAppNav(
+						nav.content,
+						nav.expander,
+						navMini,
+						eitherFn(
+							flexible,
+							\flx -> fmax(extractStruct(nav.style, MSideNavPersistent(const(false))).persistent, flx.persistent),
+							\ -> extractStruct(nav.style, MSideNavPersistent(const(false))).persistent
+						),
+						extractStruct(nav.style, MSideNavWidth(if (getStageWidth() > 360. || cpp) 320. else getStageWidth() / 9. * 8.)).width,
+						navMiniWidth,
+						navSwipe.gapLength,
+						navSwipe.enabled,
+						if (navMini) const(true) else nav.expander
+					)
+				)
+			},
+			None()
+		);
+
+	leftNav = tryExtractNav(true);
+	rightNav = tryExtractNav(false);
+	content =
+		Pair(
+			extractStruct(m.parts, MContent(TEmpty())).content,
+			fmin(
+				eitherMap(leftNav, \ln -> fmax(ln.persistent, fnot(ln.expander)), const(true)),
+				eitherMap(rightNav, \rn -> fmax(rn.persistent, fnot(rn.expander)), const(true))
+			)
+		);
+	floatingContent = Pair(extractStruct(m.parts, MFloatingContent(TEmpty())).content, content.second);
+	appBar =
+		eitherMap(
+			tryExtractStruct(m.parts, MAppBar(TEmpty())),
+			\fc ->
+				Some(Pair(
+					fc.content,
+					fmin(
+						eitherMap(leftNav, \ln -> if (ln.mini) const(true) else fmax(ln.persistent, fnot(ln.expander)), const(true)),
+						eitherMap(rightNav, \rn -> if (rn.mini) const(true) else fmax(rn.persistent, fnot(rn.expander)), const(true))
+					)
+				)),
+			None()
+		);
+
+	MAppState(
+		makeTropicTag(manager),
+		content,
+		floatingContent,
+		appBar,
+		leftNav,
+		rightNav,
+		flexible,
+		make(zeroPoint),
+		make(false),
+		appWH,
+		extractMActivateState(m.style)
+	);
+}
+
+letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MAppStyle], state : MAppState,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TLet(
+		"MAppContent",
+		MActivate2T(
+			manager,
+			parent,
+			"MAppContent",
+			concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
+			\p -> {
+				(\p2 -> state.content.first
+				|> (\m -> m2t(m, p2))
+				|> alignRightForRTL
+				|> (\t ->
+					if (contains(style, MNoContentBorder()))
+						t
+					else
+						TBorder(8., 8., 8., 8., t)))
+				|> (\t ->
+					if (contains(style, MNoScroll()))
+						TCenterXIn(t(p), TFillXY())
+					else
+						MScroll2T(
+							manager,
+							p,
+							MScroll(
+								MGetFocusGroup(t),
+								TFillXY(),
+								[extractStruct(style, makeTScrollInspectVisible())]
+							),
+							m2t
+						)
+				)
+			}
+		),
+		TLet(
+			"MAppSize",
+			content,
+			TGroup2(
+				TAttachBoxCopyThrottle(TDisplay("MAppSize"), state.wh, 33),
+				TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
+			)
+		)
+	)
+}
+
+letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherMap(
+		state.appBar,
+		\ab ->
+			TLet(
+				"MAppBar",
+				eitherFn(
+					state.flexible,
+					\flx ->
+						MShow2(
+							manager,
+							parent,
+							flx.showToolbar,
+							\p ->
+								MActivate2T(
+									manager,
+									p,
+									"MAppBar",
+									[
+										MFocusEnabled(ab.second),
+										MFocusId(const(0)),
+										AccessRole("toolbar")
+									],
+									\p2 ->
+										switch (ab.first : Material) {
+											MToolbar(expander, title, right, style):
+												MToolbar2T(
+													manager,
+													p2,
+													MToolbar(
+														expander,
+														title,
+														right,
+														replaceStruct(style, MShowExpander(fmin(flx.showExpander, extractStruct(style, MShowExpander(const(true))).show)))
+													),
+													m2t
+												);
+											default: m2t(ab.first, p2);
+										}
+								)
+						),
+					\ ->
+						MActivate2T(
+							manager,
+							parent,
+							"MAppBar",
+							[
+								MFocusEnabled(ab.second),
+								MFocusId(const(0)),
+								AccessRole("toolbar")
+							],
+							\p -> m2t(ab.first, p)
+						)
+				),
+				content
+			),
+		content
+	)
+}
+
+letFloatingContent(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TLet(
+		"MAppFloatingContent",
+		MActivate2T(
+			manager,
+			parent,
+			"MAppFloatingContent",
+			[
+				MFocusEnabled(state.floatingContent.second),
+				MFocusId(const(4)),
+				AccessRole("presentation")
+			],
+			\p ->
+				m2t(
+					MLines2(
+						state.floatingContent.first,
+						MSelect(manager.floatingActions, \fac : [flow] -> MLinesA(
+							map(fac, \l : flow -> cast(l : flow -> Material))
+						))
+					),
+					p
+				)
+		),
+		content
+	)
+}
+
+letFlextibleApp(content : Tropic, state : MAppState) -> Tropic {
+	eitherMap(
+		state.flexible,
+		\flx ->
+			TConstruct(
+				[
+					make2Subscribe(flx.persistent, flx.showExpander, \p, se -> {
+						maybeApply(state.leftNav, \ln -> deferred(\ -> nextDistinct(ln.expander, p && !se)));
+						nextDistinct(flx.persistentB, p);
+					})
+				],
+				content
+			),
+		content
+	)
+}
+
+letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState,
+	m2t : (Material, MFocusGroup) -> Tropic, left : bool) -> Tropic {
+	eitherFn(
+		if (left) state.leftNav else state.rightNav,
+		\nav -> {
+			allowMovement = fmax(nav.persistent, fnot(nav.expander));
+
+			eContent =
+				switch (nav.content) {
+					MSideNav(h, l, ex, st): {
+						MSideNav(
+							h,
+							l,
+							ex,
+							replaceStructMany(
+								st,
+								if (nav.mini)
+									[MSideNavMini(), MListMinimizedWidth(nav.miniWidth), MSideNavWidth(nav.width)]
+								else
+									[MSideNavWidth(nav.width)]
+							)
+						)
+					}
+					default: nav.content;
+				}
+
+			expander2Point = if (left) {\e -> if (e) 0. else -nav.width} else {\e -> if (e) 0. else nav.width};
+			ePoint = make(Point(expander2Point(getValue(nav.expander)), 0.));
+			delta2Point =
+				if (left)
+					{\d -> min(max(-nav.width, expander2Point(getValue(nav.expander)) + d), 0.)}
+				else
+					{\d -> min(max(0., expander2Point(getValue(nav.expander)) + d), nav.width)};
+			bgMouseDown = make(false);
+			mouseDown = ref false;
+			startingPoint = ref Point(-1., -1.);
+			trigger = make(Pair(fgetValue(ePoint).x, fgetValue(ePoint).x));
+			showPanel = fneq(ePoint, Point(expander2Point(false), 0.));
+			panelName = if (left) "MAppLeftPanel" else "MAppRightPanel";
+			bgAlpha =
+				if (nav.width != 0.)
+					fselect(ePoint, FLift(\p -> lerp(0., 0.6, (expander2Point(false) - p.x) / expander2Point(false))))
+				else
+					const(0.6);
+
+			TGroup2(
+				(\ -> TRectangle([Fill(black)], TGhost("MAppSize"))
+				|> (\f -> TAlpha(bgAlpha, f))
+				|> (\f -> mouseDownAround(manager, None(), bgMouseDown, make(false), nop, f))
+				|> disableInteractivesBelow
+				|> disableMouseWheelBelow
+				|> (\f -> TCursor(FingerCursor(), f)))
+				|> (\f -> TShowLazy(fmin(fnot(nav.persistent), showPanel), f)),
+				(if (!nav.mini)
+					(\ -> TTranslate(
+						ePoint,
+						TDisplay(panelName + "Inner")
+						|> (\f -> TShadow(const(2.), parent.theme.lightBackground, f))
+					))
+					|> (\f -> TRenderOnce(showPanel, f))
+				else
+					TCropSize(
+						TScale(fselect(ePoint, FLift(\ep -> Factor(max(nav.width - abs(ep.x), nav.miniWidth) / nav.width, 1.))), TFillWY(nav.width)),
+						TDisplay(panelName + "Inner")
+					)
+					|> (\f -> TShadow(const(2.), parent.theme.lightBackground, f)))
+				|> (\f -> if (left) f else TCols2(TFillX(), f))
+			)
+			|> (\f ->
+				MEasingAnimation(
+					manager,
+					parent,
+					fif(nav.expander, const(mEnteringDuration), const(mLeavingDuration)),
+					fif(nav.expander, const(mDecelerationCurve), const(mAccelerationCurve)),
+					trigger,
+					\tr -> {
+						if (tr.first != tr.second)
+							Some(tr)
+						else
+							None()
+					},
+					\tr, px -> next(ePoint, Point(lerp(tr.first, tr.second, px), 0.)),
+					[],
+					f
+				)
+			)
+			|> (\f ->
+				if (nav.mini)
+					TLines2(THeight(TGhost("MAppBar")), f)
+				else
+					TIf(nav.persistent, TLines2(THeight(TGhost("MAppBar")), f), f)
+			)
+			|> (\f -> TCropSize(TGhost("MAppSize"), f))
+			|> (\f ->
+				TConstruct(
+					[
+						// Close expander on bg click, check if finger movement has begun
+						makeSubscribe2(bgMouseDown, \d ->
+							if (!d && (!^mouseDown || ^startingPoint == fgetValue(state.point)) && fgetValue(nav.expander))
+								next(nav.expander, false)
+						),
+						makeSubscribe2(state.point, \pt ->
+							if (^mouseDown && fgetValue(state.down) && isCurrentInteractionItemId(manager, state.interactionId)) {
+								// Block other interaction items if panel is being moved
+								if (abs(pt.x - ^startingPoint.x) >= 3.)
+									blockOtherInteractionItemIds(manager, state.interactionId);
+
+								// Update panel point
+								next(ePoint, Point(delta2Point(pt.x - ^startingPoint.x), 0.));
+							}
+						),
+						makeSubscribe2(state.down, \d ->
+							if (d) {
+								if (fgetValue(nav.swipeEnabled) && !fgetValue(nav.persistent) && fgetValue(allowMovement) && !^mouseDown) {
+									pt = fgetValue(state.point);
+
+									// Start panel movement
+									if (pt.x < (if (left) fgetValue(nav.gap) else getRealStageWidthHeight(manager).width - fgetValue(nav.gap)) ||
+										fgetValue(nav.expander) == true) {
+										nextDistinct(trigger, Pair(fgetValue(ePoint).x, fgetValue(ePoint).x));
+
+										mouseDown := true;
+										startingPoint := Point(pt.x, pt.y);
+
+										addInteractionItemId(manager, state.interactionId);
+									}
+								}
+							} else if (^mouseDown) {
+								// Finish panel movement
+								next(
+									nav.expander,
+									if (left)
+										fgetValue(ePoint).x > expander2Point(false) / 3.0
+									else
+										fgetValue(ePoint).x < expander2Point(false) / 3.0
+								);
+								mouseDown := false;
+							}
+						),
+						\ -> subscribe(nav.expander, \e -> nextDistinct(trigger, Pair(fgetValue(ePoint).x, expander2Point(e))))
+					],
+					f
+				)
+			)
+			|> (\f ->
+				TLet(
+					panelName,
+					f,
+					content
+				)
+			)
+			|> (\f ->
+				TLet(
+					panelName + "Size",
+					TIf(
+						nav.persistent,
+						TScale(
+							fif(
+								nav.expander,
+								const(Factor(1., 1.)),
+								const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.))
+							),
+							TGhost(panelName + "Inner")
+						),
+						if (nav.mini)
+							TScale(const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.)), TGhost(panelName + "Inner"))
+						else
+							TEmpty()
+					),
+					f
+				)
+			)
+			|> (\f ->
+				TLet(
+					panelName + "Inner",
+					MActivate2T(
+						manager,
+						parent,
+						panelName,
+						[
+							MFocusEnabled(nav.focusEnabled),
+							MFocusId(const(if (left) 1 else 3)),
+							AccessRole("list"),
+							IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false))
+						],
+						\p -> m2t(eContent, p)
+					),
+					f
+				)
+			)
+		},
+		\ ->
+			content
+	)
+}

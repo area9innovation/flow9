@@ -1,0 +1,88 @@
+import blueprint;
+import tools/flowc/backends/wasm/f2wasm_utils;
+import tools/flowc/backends/wasm/wasm_types;
+import bits;
+
+export {
+	// Extracts all constant strings, and builds a map from the string to their memory address
+	fiWasmCollectStrings(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) -> WasmStringAcc;
+
+	// Produce the WASM for this constant string
+	fiWasmMakeStringData(s : string, address: int) -> string;
+}
+
+makeWasmStringAcc() -> WasmStringAcc {
+	WasmStringAcc(makeTree(), 0);
+}
+
+fiWasmCollectStrings(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) -> WasmStringAcc {
+	fold(decls, makeWasmStringAcc(), \macc, mdecl -> 
+		fold(mdecl.second, macc, \acc, decl -> {
+			switch (decl) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): 
+					fiWasmCollectFiExpStrings(lambda, acc);
+				FiGlobalVar(name, value, type, declStart, defiStart):
+					fiWasmCollectFiExpStrings(value, acc);
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart):
+					acc;
+			}
+		}));
+}
+
+fiWasmCollectFiExpStrings(expr : FiExp, acc : WasmStringAcc) -> WasmStringAcc {
+	rec = \es -> {
+		fold(es, acc, \acc1 : WasmStringAcc, e -> {
+			fiWasmCollectFiExpStrings(e, acc1)
+		});
+	}
+	switch (expr) {
+		FiVoid(start): acc;
+		FiBool(b, start): acc;
+		FiDouble(d, start): acc;
+		FiInt(i, start): acc;
+		FiVar(name, type, start): acc;
+
+		FiCall(f, args, type, start): rec(concat([f], args));
+
+		FiString(s, start): {
+			if (containsKeyTree(acc.address, s)) {
+				acc;
+			} else {
+				// Ref count, then i32 length and then the string in UTF-16
+				len = (8 + 2 * strlen(s)+4-1)/4*4; // align to 4
+				WasmStringAcc(
+					setTree(acc.address, s, acc.offset),
+					acc.offset + len
+				);
+			}
+		}
+		FiLambda(args, body, type, start): {
+			rec([body])
+		}
+		FiSeq(es, type, start): rec(es);
+
+		FiLet(name, type, e1, e2, type2, start): rec([e1, e2]);
+		FiIf(e1, e2, e3, type, start): rec([e1, e2, e3]);
+		FiCallPrim(op, es, type, start): rec(es);
+
+		FiSwitch(x, switchType, cases, type, start): rec(map(cases, \c -> c.body));
+		FiCast(e, tFrom, tTo, type, start): rec([e]);
+
+		FiRequire(flowfile, e, type, start): rec([e]);
+		FiUnsafe(name, fallback, type, start): rec([fallback]);
+	}
+}
+
+fiWasmMakeStringData(s : string, address: int) -> string {
+	hex8 = \h -> "\\" + lpad(formatHex(bitAnd(h, 0xff)), "0", 2);
+	hex16 = \h -> hex8(h) + hex8(bitUshr(h, 8));
+	hex32 = \h -> hex16(h) + hex16(bitUshr(h, 16));
+
+	"(data (i32.const " + i2s(address) + ") " 
+	+ "\""
+	+ hex32(1)	// Ref. count
+	+ hex32(2 * strlen(s))	// strlen
+	+ concatStrings(map(s2a(s), hex16)) // data
+	+ "\""
+	+ ")\n"
+}

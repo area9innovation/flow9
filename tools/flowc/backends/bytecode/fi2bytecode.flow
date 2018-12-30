@@ -1,0 +1,86 @@
+import tools/flowc/backends/bytecode/fi2bytecode_defines;
+import tools/flowc/backends/bytecode/fi2bytecode_utils;
+import tools/flowc/backends/bytecode/fi2bytecode_compile;
+import tools/flowc/backends/bytecode/fi2bytecode_assemble;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fi2bytecode(program : FiProgram, cfg : FcBytecodeConfig, callback : () -> void) -> void;
+}
+
+fi2bytecode(program: FiProgram, cfg : FcBytecodeConfig, callback: () -> void) -> void {
+	fcVerbose(cfg, 0, "Making bytecode '" + cfg.outputfile + "'...");
+
+	haveMain = isSome(lookupTree(program.names.toplevel, "main"));
+	if (!haveMain)
+		fcPrintln("WARNING: Program does not have 'main()' function, its resulting bytecode will not run.");
+
+	fcVerbose(cfg, 1, "Loading resolvers...");
+	resolvers : Tree<string, LineResolver> = if (cfg.debug) {
+			foldTree(program.modules, makeTree(), \name, module, acc -> {
+				input = getFileContent(module.fileinfo.fullpath);
+				lineResolver = makeLineResolver(input);
+				setTree(acc, name, lineResolver);
+			})
+		} else {
+			makeTree();
+		}
+
+	gctx0 = FiBcGlobalContext("", program, makeTree(), makeTree(), "", 0, resolvers);
+
+	gpc : ref int = ref 0;
+
+	fcVerbose(cfg, 1, "Collecting structs...");
+	struct_code = fiBcCollectBcStructs(cfg, gctx0, program, false, gpc);
+
+	fcVerbose(cfg, 1, "Collecting common declarations...");
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+	fcVerbose(cfg, 1, "Collecting globals...");
+	globals = fiBcGetGlobals(decls);
+
+	gctx1 = FiBcGlobalContext(gctx0.file, gctx0.program, struct_code.structs, globals, gctx0.cur_toplevel, gctx0.next_closure_id, resolvers);
+
+	moduleCount = i2s(length(decls));
+	code = list2array(foldi(decls, makeList(), \i, acc1 : List<BytecodeChunks>, p : Pair<string, [FiDeclaration]> -> {
+		fcVerbose(cfg, 1, "[" + i2s(i + 1) + "/" + moduleCount + "] Retrieve code for module " + p.first);
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				acc1;
+			}
+			Some(m): {
+				fold(p.second, acc1, \acc, v -> {
+					gctx2 = FiBcGlobalContext(m.fileinfo.flowfile, gctx1.program, gctx1.structs, gctx1.globals, v.name, gctx1.next_closure_id, resolvers);
+					toplevelCode = fiBcCompileToplevel(cfg, gctx2, v, ^gpc);
+					gpc := ^gpc + fiBytecodeLength(toplevelCode);
+					Cons(toplevelCode, acc)
+				});
+			}
+		}
+	}));
+
+	// Depending on whether we have main or not, do the right thing
+	mainCode = switch (lookupTree(globals, "main") : Maybe<int>) {
+		Some(id): {
+
+			r = fiMakeBytecode([
+				CDebugInfo("--end--"),
+				fiMakeBytecode([ CGetGlobal(id), if (cfg.nargs) CCallN(0) else CCall() ]/*, []*/),
+				CLast(),
+				fiMakeBytecode([])
+			]);
+			fiBcDebugAddPosition(cfg, gctx1, ^gpc + fiBytecodeLength(r), 0, false, "end");
+
+			r;
+
+		}
+		None(): {
+			fiEmptyBytecode();
+		}
+	}
+
+	result = fiMakeBytecode(concat(struct_code.bytecode, arrayPush(code, mainCode))/*, []*/);
+
+	fcBcSaveBytecode(cfg, gctx1, result, callback);
+}

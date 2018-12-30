@@ -1,0 +1,437 @@
+import target;
+import form;
+import math; // dround
+import rendersupport; // makeTextfield, setTextAndStyle, getTextFieldHeight
+import runtime; // urlParameter funcs
+import binarytreeutils;
+import formats/html/font2html;
+import fusion;
+import unicodecharacters;
+
+export {
+	getUniversalFont() -> FontFamily;
+	getChineseFont() -> FontFamily;
+	getJapaneseFont() -> FontFamily;
+	getKoreanFont() -> FontFamily;
+
+	// This should be used for "select language" form
+	getChineseFontMinimal() -> FontFamily;
+
+	setLang(lang : string) -> void;
+
+	// WARNING! On first call also SETS language according to url flags.
+	getLang() -> string;
+	getLangB() -> Behaviour<string>;
+
+	// Returns if current language is RTL
+	getDefaultRtl() -> bool;
+	getDefaultRtlB() -> Transform<bool>;
+
+	// Returns if BiDi support is enabled
+	isBiDiEnabled() -> bool;
+
+	// Helpers to make Form in specific language environment
+	// At moment of implementation are used to render Chinese transcript for VideoResource in English product
+	renderWithLang(lang : string) -> ((Form) -> Form);
+	createWithLang(lang : string, fn : () -> ?) -> ?;
+
+	isCJKLang() -> bool; // is current lang chinese/japanese/korean?
+	isChinese(lang : string) -> bool;  // returns true for "zh", "zz" langs
+
+	// Main function for font names mapping. Used by renderForm.
+	// Returns special fonts for Chinese, Japanese, Korean;
+	// for any other calls function set with setDefaultFontMappingFn.
+	getMappedFont(desiredFamily : string, desiredSize : double) -> Pair<string, double>;
+
+	getReverseMappedFontFamily(family : string) -> string;
+
+	// Set font family mapping for languages processed in standard manner (that is not CJK langs).
+	setDefaultFontMappingFn(familyMapping : [Pair<string, string>]) -> void;
+
+	// Set mapping function for languages processed in standard manner (that is not CJK langs).
+	// The function accepts font family and size and must return family and size.
+	// Note that function may be called by renderForm very often, so it must be fast.
+	setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void;
+
+	getNativeLangFromBCP(bcpLang : string) -> string;
+
+	// Hence arabic letters look smaller, we need adjust relative scale for readability.
+	getCharRelativeScale(c: int) -> double;
+}
+
+
+debugFontMapping = isUrlParameterTrue("debugfontmapping");
+
+
+isChinese(lang) {
+	lang == "zh" || lang == "zz"
+}
+
+cjkLang = ref false;
+bidiSupport: ref Maybe<bool> = ref None();
+
+isCJKLang() -> bool {
+	^cjkLang
+}
+
+
+getUniversalFont() -> FontFamily {
+	// [-Revise-] Maybe this can be improved
+	getChineseFont()
+}
+
+
+chineseFontParams : Triple<string, string, double> = {
+	if (windows()) {
+		if (opengl) { 											// QtByteRunner
+			Triple("Tahoma", "Tahoma", 0.95)
+		} else if ((cpp || js) && getUrlParameter("lang") != "ch") {
+			Triple("NotoSans", "NotoSansMinimal", 1.0)
+		} else if (windowsxp()) {								// flash, winxp
+			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+		} else {												// flash, win7
+			Triple("Tahoma", "Tahoma", 1.0)
+		}
+	} else if (android() || linux()) {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)	// TODO: Check that this is correct. It seems it is the default font already
+	} else if (ios() || macosx()) {
+		Triple("Tahoma", "NotoSansMinimal", 0.95)				// [-Revise-] officialy, Tahoma is not available on iOS
+	} else {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	}
+}
+
+japaneseFontParams : Triple<string, string, double> = {
+	if (windows()) {
+		if (opengl) {                                           // QtByteRunner
+			Triple("Tahoma", "Tahoma", 0.95)
+		} else if (cpp || js) {
+			Triple("Meiryo", "NotoSansMinimal", 1.0)            // Trackman asked Meiryo for Japanese on Windows/javascript
+		} else if (windowsxp()) {                               // flash, winxp
+			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+		} else {                                                // flash, win7
+			Triple("Tahoma", "Tahoma", 1.0)
+		}
+	} else if (android() || linux()) {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	} else if (ios()) {
+		if (js)
+			Triple("HiraKakuProN-W3", "Verdana", 0.95)
+		else // cpp
+			Triple("HiraKakuProN-W3", "Verdana", 1.0)
+	} else if (macosx()) {
+		Triple("Meiryo", "Tahoma", 1.0)                         // Trackman asked Meiryo for Japanese on Mac desktop
+	} else {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	}
+}
+
+koreanFontParams : Triple<string, string, double> = {
+	if (windows()) {
+		if (opengl) {                                           // QtByteRunner
+			Triple("Tahoma", "Tahoma", 0.95)
+		} else if (cpp || js) {
+			Triple("MS Gothic", "NotoSansMinimal", 1.05)        // Trackman wanted MS Gothic for Korean on Windows/javascript
+		} else if (windowsxp()) {                               // flash, winxp
+			Triple("Microsoft YaHei", "Microsoft YaHei", 1.0)
+		} else {                                                // flash, win7
+			Triple("Tahoma", "Tahoma", 1.0)
+		}
+	} else if (android() || linux()) {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	} else if (ios()) {
+		if (js)
+			Triple("HiraKakuProN-W3", "Verdana", 0.95)
+		else // cpp
+			Triple("HiraKakuProN-W3", "Verdana", 1.0)
+	} else if (macosx()) {
+		Triple("Verdana", "Tahoma", 0.95)                       // Trackman asked Verdana for Korean on Mac desktop
+	} else {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	}
+}
+
+arabicFontParams : Triple<string, string, double> = {
+	if (windows()) {
+		if (opengl) {
+			Triple("Tahoma", "Tahoma", 0.95)
+		} else if (windowsxp()) {
+			Triple("Andalus", "Andalus", 1.0)
+		} else {
+			Triple("Tahoma", "Tahoma", 1.0)
+		}
+	} else if (android()) {
+		Triple("Roboto", "Roboto", 1.0)
+	} else if (linux()) {
+		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
+	} else if (ios()) {
+		Triple("GeezaPro", "GeezaPro", if (js) 0.95 else 1.0)
+	} else if (macosx()) {
+		Triple("Geeza Pro", "Geeza Pro", 0.95)
+	} else {
+		Triple("DroidSansFallback", "DroidSansFallback", 1.0)
+	}
+}
+
+getChineseFont() -> FontFamily {
+	FontFamily(chineseFontParams.first)
+}
+
+getJapaneseFont() -> FontFamily {
+	FontFamily(japaneseFontParams.first)
+}
+
+getKoreanFont() -> FontFamily {
+	FontFamily(koreanFontParams.first)
+}
+
+getArabicFont() -> FontFamily {
+	FontFamily(arabicFontParams.first)
+}
+
+getChineseFontMinimal() -> FontFamily {
+	FontFamily(chineseFontParams.second)
+}
+
+
+getMappedFontFn : ref (string, double) -> Pair<string, double> =
+	ref \family, size -> Pair(family, size);
+
+// single-entry cache for getMappedFont. Hit rate is 80% (smartbuilder).
+getMappedFont_cache_key = ref Pair("", -1.0);
+getMappedFont_cache_value = ref Pair("", -1.0);
+
+getMappedFont(family : string, size : double) {
+	if (family != ^getMappedFont_cache_key.first || size != ^getMappedFont_cache_key.second) {
+		mappedFont =
+			if (family == "MaterialIcons")
+				Pair(family, size)
+			else
+		 		(^getMappedFontFn)(family, size);
+		getMappedFont_cache_key := Pair(family, size);
+		getMappedFont_cache_value := mappedFont;
+	}
+
+	if (debugFontMapping) {
+		println("zz mapped font=" + toString(^getMappedFont_cache_value));
+	}
+
+	^getMappedFont_cache_value
+}
+
+// This var must be set through setLangCore() function only, because this function sets some other related vars as well.
+currentLang = make("");
+
+getLang() {
+	if (getValue(currentLang) == "") {
+		l = getUrlParameter("forceLang");
+		urlLang = if (l == "") getNativeLangFromBCP(getUrlParameter("lang")) else l;
+		if (urlLang != "") {
+			// next(currentLang, toLowerCase(urlLang));	 // do not assign this var directly, it must be done through setLangCore() only...
+			setLangCore(urlLang);                        // [-Revise-] ... however, I'm not sure this function actually must do lang initialization
+		}
+	}
+	getValue(currentLang)
+}
+
+getLangB() {
+	currentLang;
+}
+
+setLang(lang) {
+	if (getUrlParameter("forceLang") == "")
+		setLangCore(lang);
+}
+
+setLangCore(lang0 : string) -> void{
+	lang = toLowerCase(lang0);
+	if (lang != getValue(currentLang)) {
+		if (!cgi) {
+			println("setting language to " + toString(lang));
+		}
+		next(currentLang, lang);
+		cjkLang := isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi";
+		updateFontMappingFunction();
+	}
+}
+
+getDefaultRtl() -> bool {
+	fgetValue(getDefaultRtlB());
+}
+
+getDefaultRtlB() -> Transform<bool> {
+	fcontains(const(["ar", "he", "yi"]), currentLang);
+}
+
+isBiDiEnabled() -> bool {
+	onlyOnce(bidiSupport, \-> getDefaultRtl() || getUrlParameter("bidi") == "1");
+}
+
+
+// function defining font mapping for non-CJK languages
+defaultFontMappingFn : ref (string, double) -> Pair<string, double> = ref \family, size -> Pair(family, size);
+reverseFontFamilyMappingTree : ref Tree<string, string> = ref makeTree();
+
+getReverseMappedFontFamily(family : string) -> string {
+	lookupTreeDef(^reverseFontFamilyMappingTree, family, family)
+}
+
+setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void {
+	defaultFontMappingFn := mappingFn;
+	updateFontMappingFunction();
+}
+
+setDefaultFontMappingFn(mapping : [Pair<string, string>]) -> void {
+	directTree = pairs2tree(mapping);
+	reverseFontFamilyMappingTree := pairs2tree(map(mapping, \p -> Pair(p.second, p.first)));
+
+	mapper = if (mapping == []) {
+		\family, size -> Pair(family, size)
+	} else {
+		\family, size -> Pair(
+			lookupTreeDef(directTree, family, family),
+			size
+		)
+	}
+
+	setDefaultFontMappingFn2(mapper);
+}
+
+
+cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
+	lang = getValue(currentLang);
+	fontParams = {
+		if (lang == "ja")
+			japaneseFontParams
+		else if (lang == "ko")
+			koreanFontParams
+		else if (lang == "ar")
+			arabicFontParams
+		else if (isChinese(lang))
+			chineseFontParams
+		else
+			^defaultFontMappingFn(family, size) |> (\fm -> Triple(fm.first, fm.first, fm.second / size));
+	};
+	Pair(fontParams.first, roundFontSize(size * fontParams.third))
+}
+
+// This allows setting font and size multiplier in url flag.
+// Example: setting font family: overridefont=Meyrio
+// Example: setting font family and size multiplier: overridefont=Meyrio;1.2
+applyFontOverriding = {
+	t = getUrlParameter("overridefont");
+	if (t == "") {
+		idfn
+	} else {
+		tt = strSplit(t, ";");
+		overridden_family = tt[0];
+		size_multiplier = {
+			m = if (length(tt) > 1) s2d(tt[1]) else 1.0;
+			if (m < 0.01 || m > 100.0) 1.0 else m
+		};
+		\fontMappingFn -> {
+			\family : string, size : double -> {
+				mapped_FamilySize : Pair<string, double> = fontMappingFn(family, size);
+				Pair(
+					if (overridden_family != "") overridden_family else mapped_FamilySize.first,
+					mapped_FamilySize.second * size_multiplier
+				)
+			}
+		}
+	}
+}
+
+
+renderWithLang(lang : string) -> ((Form) -> Form) {
+	\f -> {
+		savedLang = ref getLang();
+		Constructor2(
+			f,
+			\ -> {
+				savedLang := getLang();
+				setLang(lang);
+				nop
+			},
+			\ -> {
+				setLang(^savedLang)
+			}
+		)
+	}
+}
+
+createWithLang(lang : string, fn : () -> ?) -> ? {
+	savedLang = getLang();
+	setLang(lang);
+	r : ? = fn();
+	setLang(savedLang);
+	r
+}
+
+
+roundFontSize(size : double) -> double {
+	dround(size * 10.0) / 10.0
+}
+
+fm_calculateTextMetrics(text, family, size) {
+	htmlFont = font2htmlFont(family);
+	families = htmlFont2familiesString(htmlFont);
+	textField = makeTextfield(families);
+	setTextAndStyle(textField, text, families, size, htmlFont2weight(htmlFont), htmlFont2slope(htmlFont), 0x000000, 1.0, 0.0, 0x000000, 0.0);
+	fieldH = getTextFieldHeight(textField);
+	deleteNative(textField);
+	fieldH
+}
+
+// Calculate relative difference of height for two font families.
+// May be useful for font size mapping.
+calcFontSizeMultiplier(referenceFontFamily : string, targetFontFamily : string) -> double {
+	referenceFontSize = 72.0;
+	referenceText = "Tg";
+
+	referenceFontHeight = fm_calculateTextMetrics(referenceText, referenceFontFamily, referenceFontSize);
+	targetFontHeight = fm_calculateTextMetrics(referenceText, targetFontFamily, referenceFontSize);
+
+	if (referenceFontHeight < 8.0 || targetFontHeight < 8.0) {
+		// suspicious results, probably one of the heights evaluated incorrectly
+		1.0
+	} else {
+		referenceFontHeight / targetFontHeight
+	}
+}
+
+//transfer lang code from BCP format to internal flow format
+getNativeLangFromBCP(bcpLang : string) -> string {
+	bcpLanguageList = [
+		Pair("es-mx", "la"),
+		Pair("es-es", "es"),
+		Pair("en-uk", "en"),
+		Pair("en-us", "en")
+	];
+
+	if (strContains(bcpLang,"-")) {
+		eitherFn(find(bcpLanguageList, \l  -> l.first == toLowerCase(bcpLang)), \p->p.second, \->"en")
+	} else {
+		toLowerCase(bcpLang)
+	}
+}
+
+
+updateFontMappingFunction() {
+	getMappedFontFn := {
+		if (isCJKLang())
+			cjkFontMappingFn
+		else
+			^defaultFontMappingFn
+	} |> applyFontOverriding;
+	getMappedFont_cache_key := Pair("", -1.0); // flush getMappedFont cache
+}
+
+
+_fontmapping_boot_ = {
+	updateFontMappingFunction();
+	0;
+};
+
+getCharRelativeScale(c: int) -> double {
+	if (getUnicodeAlphabet(c) == "arb") 1.4 else 1.;
+}

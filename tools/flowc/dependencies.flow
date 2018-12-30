@@ -1,0 +1,119 @@
+import set;
+
+export {
+	/*
+	This can help produce a topological order when you have a DAG of dependencies.
+
+	Use like this:
+	dt0 = makeDependencyTracker();
+	// Register some dependencies
+	dt1 = addDependencies(dt0, "party", ["beer", "music"]);
+	dt2 = addDependencies(dt1, "music", ["stereo", "cds"]);
+
+	// Now, let us see what items do not depent on anything
+	p0 = extractNonDependent(dt2);
+	fcPrintln(set2array(p0.second));  // Gives ["beer", "stereo", "cds"];
+
+	// We register that we resolve some of the types
+	dt3 = resolveDependency(p0.first, "stereo");
+	dt4 = resolveDependency(dt3, "cds");
+
+	// ...which will free up other items
+	p1 = extractNonDependent(dt4);
+	fcPrintln(set2array(p0.second));  // Gives ["music"];
+
+	// Keep going until the set returned by extractNonDependent is empty.
+	*/
+	DependencyTracker(
+		// What files depend on this file?
+		dependsUpon : Tree<?, Set<?>>,
+
+		// What files does this file depend on?
+		fileRequires : Tree<?, Set<?>>,
+
+		// What files have all dependencies fulfilled?
+		nonDependent : Set<?>,
+	);
+
+	makeDependencyTracker() -> DependencyTracker<?>;
+
+	// Mark that this file depends on this set of files
+	addDependencies(tracker : DependencyTracker<?>, file : ?, requires : [?]) -> DependencyTracker<?>;
+
+	// Mark that this file is handled, so any dependents on that are ready
+	resolveDependency(tracker : DependencyTracker<?>, file : ?) -> DependencyTracker<?>; 
+
+	// Extract the current set of non-dependents, and clears them out
+	extractNonDependent(tracker : DependencyTracker<?>) -> Pair<DependencyTracker<?>, Set<?>>;
+}
+
+makeDependencyTracker() -> DependencyTracker<?> {
+	DependencyTracker(
+		makeTree(),
+		makeTree(),
+		makeSet()
+	);
+}
+
+addDependencies(tracker : DependencyTracker<?>, file : ?, requires : [?]) -> DependencyTracker<?> {
+	if (requires == []) {
+		DependencyTracker(
+			tracker.dependsUpon,
+			tracker.fileRequires,
+			if (isEmptySet(lookupTreeDef(tracker.fileRequires, file, makeSet()))) {
+				insertSet(tracker.nonDependent, file)
+			} else tracker.nonDependent
+		);
+	} else {
+		DependencyTracker(
+			fold(requires, tracker.dependsUpon, \acc, req -> {
+				others = lookupTreeDef(acc, req, makeSet());
+				setTree(acc, req, insertSet(others, file))
+			}),
+			setTree(tracker.fileRequires, file, 
+				mergeSets(
+					lookupTreeDef(tracker.fileRequires, file, makeSet()), 
+					buildSet(requires)
+				)
+			),
+			removeSet(
+				tracker.nonDependent,
+				file
+			)
+		);
+	}
+}
+
+resolveDependency(tracker : DependencyTracker<?>, file : ?) -> DependencyTracker<?> {
+	requirees = lookupTreeDef(tracker.dependsUpon, file, makeSet());
+	// OK, we have found a bunch of files, which depend on this, so let us remove the dependency
+	// and keep track if we resolved all dependencies for one of those guys
+	foldSet(requirees, tracker, \acc, requiree -> {
+		depends = lookupTreeDef(acc.fileRequires, requiree, makeSet());
+		newRequires = removeSet(depends, file);
+		if (isEmptySet(newRequires)) {
+			DependencyTracker(
+				acc.dependsUpon,
+				removeFromTree(acc.fileRequires, requiree),
+				insertSet(acc.nonDependent, requiree)
+			);
+		} else {
+			DependencyTracker(
+				acc.dependsUpon,
+				setTree(acc.fileRequires, requiree, newRequires),
+				acc.nonDependent
+			);
+		}
+	});
+}
+
+extractNonDependent(tracker : DependencyTracker<?>) -> Pair<DependencyTracker<?>, Set<?>> {
+	Pair(
+		DependencyTracker(
+			tracker.dependsUpon,
+			tracker.fileRequires,
+			makeSet()
+		),
+		tracker.nonDependent
+	);
+}

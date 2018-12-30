@@ -1,0 +1,298 @@
+import material/material;
+import material/internal/material_icons;
+import material/material_dialog;
+import material/extra/icon_picker/material_icon_groups;
+import material/iconic_font;
+import realhtmlworkaround;
+
+export {
+	MIconPicker(icon : DynamicBehaviour<string>, style : [MIconPickerStyle]) -> Material;
+	MIconPickerStyle ::= MTimePickerStyle, MIconPickerGroup, MDialogButtons, MIconPickerDontShowNumbers, FontFamily;
+
+	// Open with a starting group
+	MIconPickerGroup(id : int);
+	//Don't show icon numeration
+	MIconPickerDontShowNumbers();
+
+	showMIconDialog(manager : MaterialManager, iconName : DynamicBehaviour<string>) -> void;
+}
+
+MIconPicker(icon : DynamicBehaviour<string>, style : [MIconPickerStyle]) -> Material {
+	color = extractStruct(style, MBlue(700));
+	dialogButtons = extractStruct(style, MDialogButtons([])).buttons;
+	hasOk = length(extractStructMany(dialogButtons, MButtonOk("", nop))) > 0;
+	hasCancel = length(extractStructMany(dialogButtons, MButtonCancel("", nop))) > 0;
+	hasButtons = hasOk || hasCancel;
+
+	fontFamilyStyle = extractStruct(style, FontFamily(materialIcons.family));
+	isMaterialIcons = fontFamilyStyle.name == materialIcons.family;
+
+	iconsAndGroups = if (isMaterialIcons) {
+		Pair(MIconNames(), iconGroups)
+	} else {
+		iconicFont = getIconicFontByFamily(fontFamilyStyle.name);
+		Pair(getIconicFontIconNames(iconicFont), getIconicFontIconGroups(iconicFont));
+	}
+
+	pickerIconNames = iconsAndGroups.first;
+	pickerIconGroups = iconsAndGroups.second;
+	iconsInGroupsNum = fold(pickerIconGroups, 0, \acc, p -> acc + length(p.second));
+
+	group = extractStruct(style, MIconPickerGroup(-1)).id;
+	labelIcon = make("");
+	iconSearch = make("");
+	groupCounter = make(group);
+
+	iconsPerRow = 8;
+	iconCellSize = 40.0;
+	sideNaveWidth = 184.0;
+
+	boxSize = make(zeroWH);
+	iconSize = iconCellSize * 0.85;
+	pickerWidth = (i2d(iconsPerRow) * (iconCellSize * 2.0)) + 32.0;
+	pickerHeight = 480.0;
+	footerBtnHeight = 35.0;
+	sideBtnHeight = 40.0;
+	headerHeight = 80.0;
+	searchHeight = 50.0;
+	iconPickerHeight = pickerHeight + (if (hasButtons) footerBtnHeight else 0.0) + 14.0;
+
+	headerSize = TFixed(pickerWidth, searchHeight);
+	sideNavSize = TFixed(sideNaveWidth, iconPickerHeight);
+	sideBtnSize = TFixed(sideNaveWidth - 4.0, sideBtnHeight);
+	footerSize = TFixed(pickerWidth, footerBtnHeight);
+	bodySize = TFixed(pickerWidth, pickerHeight - 52.0);
+	iconBtnSize = TFixed(iconCellSize * 2.0, iconCellSize * 2.0);
+	mainSectionSize = TFixed(pickerWidth, iconPickerHeight);
+
+	iconColor = MGrey(700);
+	fillColor = MGrey(200);
+	stroke_color = MGrey(50);
+	selectedColor = MOrange(300);
+
+	addTooltip = \label : string, m : Material -> MTooltip(m , MText(label, [MTooltipDesktop()]), [MBackgroundStyle([MFill(color)])]);
+	next(labelIcon, getValue(icon));
+
+	makeIconButton = \name : string, id : int -> {
+		pressed = make(false);
+		hovering = make(false);
+		MAvailable(
+			MGroup([
+				MSelect(icon, \ic -> {
+					if (ic == name){
+						TRectangle([MFill(if (ic == name) selectedColor else fillColor), StrokeWidth(1.0), MStroke(stroke_color)], iconBtnSize)
+					} else {
+						MInteractive([TMouseInside(hovering, false)],
+							MIf(hovering,
+								TRectangle([MFill(stroke_color), StrokeWidth(1.0), MStroke(stroke_color)], iconBtnSize),
+								TRectangle([MFill(fillColor), StrokeWidth(1.0), MStroke(stroke_color)], iconBtnSize)
+							)
+						)
+					}
+				}),
+				MIcon(name, [MIconSize(iconSize), FillOpacity(1.0), iconColor, fontFamilyStyle]) |> MCenter,
+				MConstruct([
+						makeSubscribe(pressed, \p -> if (p) {
+							next(labelIcon, name);
+							next(icon, name);
+						}),
+					],
+					MInteractive([TMouseDown(pressed)],
+						MCursor(FingerCursor(),
+							TRectangle([MFill(fillColor), StrokeWidth(1.0), MStroke(stroke_color), FillOpacity(0.0)], iconBtnSize)
+						)
+					)
+				)
+			]) |> (\f -> addTooltip(name, f)),
+			iconBtnSize
+		);
+	 };
+
+	makeSideButton = \sideItemName : string, iconName : string, numIcon : int, id : int -> {
+		pressed = make(false);
+		hovering = make(false);
+
+		MAvailable(
+			MGroup2(
+				MCols([
+					MSelect(fselect2(groupCounter, hovering, FLift2(\c, h -> Pair(c, h))), \p -> {
+						cnt = p.first;
+						h = p.second;
+						st = if (cnt == id) {
+							[MFill(selectedColor)]
+						} else {
+							if (h) [MFill(selectedColor), FillOpacity(0.8)] else [MFill(color), FillOpacity(0.0)]
+						};
+						TRectangle(st, TFixed(4.0, sideBtnHeight));
+
+					}) |> MCenterY,
+
+					TFixed(16.0, 0.0),
+					MIcon(iconName, [MIconSize(16.0), MWhite(), fontFamilyStyle])|> MCenterY,
+					TFixed(8.0, 0.0),
+					MText(sideItemName + " (" + i2s(numIcon) + ")", [MBody(), MWhite()])|> MCenterY
+					]) |> MCenterY,
+
+				MConstruct([
+					makeSubscribe(pressed, \p -> if (p) {
+						next(groupCounter, id)
+					}),
+				],
+				MInteractive([TMouseDown(pressed), TMouseInside(hovering, true)],
+					MCursor(FingerCursor(),
+						TRectangle([MFill(selectedColor), FillOpacity(0.0)], TFillXY())
+					)
+				))
+			),
+			sideBtnSize
+		);
+	};
+
+	sideNav = MAvailable(
+		MGroup2(
+			TRectangle([MFill(color)], TFillXY()),
+			MBorder(0.0, 4.0 ,0.0, 0.0,
+				MLines2(
+					MLines([
+							TFixed(0.0, 8.0),
+							makeSideButton("All", "list", iconsInGroupsNum, -1),
+							MBorder(16.0, 0.0 ,0.0, 0.0, TRectangle([MFill(MWhite())], TFixed(sideNaveWidth - 32.0, 0.5))),
+					]),
+					MScroll(
+						MLines(
+							mapi(pickerIconGroups, \j, p -> {
+								MLines2(
+									makeSideButton(firstOfPair(p), secondOfPair(p)[0], length(secondOfPair(p)), j),
+									TFixed(0.0, 4.0),
+								)
+							})
+						),
+						TFillXY(), []
+					)
+				)
+			)
+
+		),
+		sideNavSize
+	);
+
+	searchInput =
+		MCenterY(
+			MTextInput(iconSearch, [
+				MLabel("search by name"),
+				MWidth(-1.),
+				color,
+				MCustomTextStyle([MGrey(800)]),
+				MShowUnderline(false),
+				MShowClearIcon(true, false),
+				MLeftCustomButton(
+					MIcon("search", [MIconSize(18.0)]),
+					MIcon("search", [MIconSize(18.0), color]),
+					 16.0
+				)
+				], []
+			)
+		);
+
+	headerSection =
+		MAvailable(
+			MGroup([
+				TRectangle([MFill(MGrey(200))], TFixed(pickerWidth, searchHeight)),
+				MBorder(32.0, 0.0 ,32.0, 0.0,
+					MCols([
+						searchInput,
+						MSelect(labelIcon, \i -> {
+							MCols([
+								MIcon(i, [MIconSize(28.0), color, FillOpacity(1.0), fontFamilyStyle]) |> MCenterY,
+								TFixed(8.0, 0.0),
+								MText(i, [MTitle()]) |> MCenterY
+							])
+						}),
+					])
+				)
+			]),
+			headerSize
+		);
+
+
+	bodySection =
+		MAvailable(
+			MLines2(
+				TFixed(0.0, 8.0),
+				MCols2(
+					TFixed(16.0, 0.0),
+					MDynamicGrid(
+						fselect2(groupCounter, iconSearch, FLift2(\cnt, i -> {
+							iconCnt = make(0);
+
+							mapi(pickerIconGroups, \j, pg -> {
+								iconButtonsA = {
+									icons = secondOfPair(pg);
+									groupName = firstOfPair(pg);
+									availableIcons = filter(icons, \ic -> strContains(ic, i));
+									map(availableIcons, \ai -> {
+										next(iconCnt, getValue(iconCnt) + 1);
+										makeIconButton(ai, getValue(iconCnt));
+									});
+									// mapi(availableIcons, \k, ai -> makeIconButton(ai, j + k + 1));
+								}
+
+								if (cnt != -1) {if (j == cnt) iconButtonsA else []} else iconButtonsA;
+							})
+							|> concatA
+						})),
+						[MBoxSize(boxSize), MItemSize(fselect(boxSize, FLift(\bs -> WidthHeight(bs.width / i2d(iconsPerRow), bs.width / i2d(iconsPerRow)))))]
+					)
+				)
+			),
+			bodySize
+		);
+
+
+	footerSection =
+		MAvailable(
+			MBorder(16.0, 8.0 ,16.0, 8.0,
+				MCols([
+					MTextButton(_("CLEAR"), \-> {next(icon, ""); next(labelIcon, "");}, [], []),
+					TFillX(),
+					if (hasCancel) {
+						buttonCn = extractStruct(dialogButtons, MButtonCancel("", nop));
+						MTextButton(_("CANCEL"), buttonCn.fn, [color], [MShortcut(buttonCn.shortcut)]);
+					} else TEmpty(),
+					TFixed(16.0, 0.0),
+					if (hasOk) {
+						buttonOk = extractStruct(dialogButtons, MButtonOk("", nop));
+						MTextButton(_("OK"), buttonOk.fn, [color, MButtonRaised()], [MShortcut(buttonOk.shortcut)]);
+					} else TEmpty(),
+				])
+			),
+			footerSize
+		);
+
+
+	MCols([
+		sideNav,
+		MGroup2(
+			TRectangle([MFill(MBackgroundColor(true))], mainSectionSize),
+			MLines([
+				headerSection,
+				bodySection,
+				footerSection
+			])
+		)
+ 	]);
+}
+
+showMIconDialog(manager : MaterialManager, iconName : DynamicBehaviour<string>) -> void {
+	lastName = getValue(iconName);
+	close = make(false);
+
+	picker = MIconPicker(iconName, [
+		MDialogButtons([
+			MButtonOk("", \ -> {next(close, true); showAllRealHTML();}),
+			MButtonCancel("esc", \ -> {next(iconName, lastName); next(close, true); showAllRealHTML();})
+		])
+	]);
+ 	hideAllRealHTML();
+	ShowMDialog(manager, close, [MDialogClickOutToCancel(iconName)], picker);
+}

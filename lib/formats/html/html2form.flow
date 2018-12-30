@@ -1,0 +1,1701 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+import arrows;
+import formats/xml;
+import gui;
+import mathdrawing;
+import paragraph;
+import binarytree;
+import textstyles;
+import styleform;
+import formats/html/form2html;
+import movable;
+import adaptivescale;
+import translation;
+//import formmetrics;
+import ui/scrollable; // ScrollAvailable
+import ui/messagebox; // showModal
+
+export {
+	// Special styles
+	HTMLSpecial ::= HTMLNumberedParagraph, HTMLDefaultFont, HTMLTagHandler, HTMLMathMlRow, HTMLMathMlSmall, HTMLPreprocess, HTMLMediaCollector, HTMLZoomBackground, HTMLAllowMoreLineBreaks;
+	HTMLNumberedParagraph : (); // Numbered Paragraphs (for LiveInk Readings)
+	HTMLMathMlRow : ();
+	HTMLMathMlSmall : ();
+	HTMLDefaultFont : (style : [CharacterStyle]);
+	HTMLPreprocess : (preprocessHtml : ([XmlNode]) -> [XmlNode]);
+	// Ability to handle unknown prefixes by custom code
+	// unhandledTagForm generates Lines(children2form) and then
+	HTMLTagHandler : (tagPrefix : string, fn : (string, XmlNode, unhandledTagForm : (inline : bool) -> Form) -> Form);
+
+	//Data structures to collect information about <table>.
+	HTMLRow(spanExists: bool, colspansSum : int, cells : [HTMLCell]);
+	HTMLCell(xAlign : double, yAlign : double, colspan : int, rowspan : int, makeContent : (Behaviour<double>) -> Form);
+	HTMLMediaCollector : (acc : ref [string]);
+	HTMLZoomBackground : (color : Maybe<int>);
+	HTMLAllowMoreLineBreaks : ();
+
+
+	HTMLStyle(characterStyle : [CharacterStyle], paragraphStyle : [ParagraphStyle]);
+	html2form(s : string, stylesheet : Tree<string, HTMLStyle>, special : [HTMLSpecial]) -> Form;
+	html2formGetWordCount(s : string) -> int;
+	getHtmlPictureMagnify(fullForm : Form, scaledForm : Form, p_caption : string, stylesheet : Tree<string, HTMLStyle>, maxw : Maybe<double>, scale : Maybe<double>, extraZoom : bool, backgroundColor : Maybe<int>) -> Form;
+	// Returns additional transrom to be applied after crop (for example, to add fixed position button)
+	getHtmlPictureMagnify2(fullForm : Form, scaledForm : Form, p_caption : string, stylesheet : Tree<string, HTMLStyle>, maxw : Maybe<double>, scale : Maybe<double>, extraZoom : bool, backgroundColor : Maybe<int>) -> Pair<Form, (Form) -> Form>;
+
+	getHtmlPictureMagnifyWithCloseButton(
+		fullForm : Form,
+		scaledForm : Form,
+		p_caption : string,
+		stylesheet : Tree<string, HTMLStyle>,
+		maxw : Maybe<double>,
+		scale : Maybe<double>,
+		extraZoom : bool,
+		backgroundColor : Maybe<Color>,
+		closeButtonAlign : int,
+		closeButtonFormFn : (() -> void) -> Form,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>
+	) -> Pair<Form, (Form) -> Form>;
+
+	parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle;
+}
+
+HTMLRightNumberingText = [FontFamily("Book"), FontSize(16.0), Fill(0x797979)];
+
+html2formGetWordCount(s : string) -> int {
+	fold(parseXml3(s), 0, \i, elem -> {
+		i + html2formParseXmlNode(elem);
+	});
+}
+
+html2formParseXmlNode(xml : XmlNode) -> int {
+	curWordCount = ref 0;
+
+	switch(xml : XmlNode) {
+		XmlElement(tagcs, attrs, children): {
+			tag = toLowerCase(tagcs);
+			if (tag == "html" || tag == "body" || tag == "td"
+				|| tag == "p" || tag == "h1" || tag == "h2" || tag == "h3"
+				|| tag == "div" || tag == "pre" || tag == "blockquote"
+				|| tag == "ol" || tag == "ul" || tag == "li"
+				|| tag == "a" || tag == "em" || tag == "i"
+				|| tag == "b" || tag == "strong" || tag == "code"
+				|| tag == "table" || tag == "thead" || tag == "tbody" || tag == "td" || tag == "tr" || tag == "th"
+				|| tag == "span" || tag == "u" || tag == "sup" || tag == "sub"
+				|| tag == "br" || tag == "hr" || tag == "img" ) {
+				curWordCount := ^curWordCount + html2formParseXmlChildren(children);
+				{}
+			} else {
+			}
+		}
+		XmlText(t): {
+			s = ref strReplace(t, "\n\t", "");
+			s := strReplace(^s, "\n", "");
+			s := unescapeHtmlEntities(^s);
+			if (^s != "") {
+				fragments = cast(TextFragment(^s, []) : ParagraphElement -> TextFragments);
+
+				c = list2array(fragments.parts);
+
+				map(c, \k -> {
+					switch(k : WrapElement) {
+						Text(z, __) : curWordCount := ^curWordCount + 1;
+						default: {}
+					}
+				});
+				{}
+			}
+		}
+	}
+	^curWordCount;
+}
+
+html2formParseXmlChildren(children : [XmlNode]) -> int {
+	curWordCount = ref 0;
+	map(children, \x -> curWordCount := ^curWordCount + html2formParseXmlNode(x));
+	^curWordCount;
+}
+
+html2form(s : string, stylesheet : Tree<string, HTMLStyle>, special : [HTMLSpecial]) -> Form {
+	aw = make(0.0);
+
+	preprocessHtml = either(
+		findmap(
+			special, \sp -> switch(sp) {
+				HTMLPreprocess(fn): Some(fn);
+				default: None();
+			}
+		),
+		idfn
+	);
+
+	nodes = parseXml3WithStrategy(s, [XmlParseLeadingSpaces(true, true)]) |> stripXmlComments |> preprocessHtml;
+
+	// Checks if top node contains attribute xml:lang=zh
+	specialLanguage = if (length(nodes) > 0) {
+		isSpecial = eq("zh"); //TODO replace with call to helper from translation related code
+		attributes = getXmlAttributes(nodes[0]);
+		givenLang = findmap(
+			attributes, \a -> {
+				if (a.key == "xml:lang" || a.key == "lang" || a.key == "language") {
+					Some(a.value)
+				} else {
+					None()
+				}
+			}
+		);
+		maybeBind(givenLang, \l -> if (getLang() != l && isSpecial(l)) Some(l) else None())
+	} else {
+		None()
+	}
+
+	makeForm : ()->Form = \ -> {
+		addInspect = \f ->{
+            f2 : Form = Inspect([AvailableWidth2(aw)], f);
+            f2;
+        };
+		fold(
+			nodes,
+			[],
+			\acc, elem -> {
+				arrayPush(acc, renderHtmlXml(elem, aw, stylesheet, [/* InterlineSpacing(2.0) */], special));
+			}
+		) |> Lines |> addInspect
+	}
+
+	eitherFn(
+		specialLanguage,
+		\lang -> createWithLang(lang, makeForm) |> renderWithLang(lang),
+		makeForm
+	)
+}
+
+spaceAfterParagraph = 8.0;
+
+addSpaceAfterParagraph(paragraph : List<ParagraphElement>) {
+	nl = Cons(NewLine(), EmptyList()) |> TextFragments;
+	Cons(Fixed(0.0, spaceAfterParagraph), Cons(nl, paragraph));
+}
+
+spaceAfterParagraphElements = [TextFragments(Cons(NewLine(), EmptyList())), Fixed(0.0, spaceAfterParagraph)];
+spaceAfterElementsCount = length(spaceAfterParagraphElements);
+
+getHtmlPictureMagnifyPDA(form : Form, popup : Form, fullscreen : bool)->Pair<Form, (Form)->Form> {
+	zoomButtonSize = 50.0;
+	makeButtonForm = \purl -> {
+		Border(10.0, 10.0, 10.0, 10.0, Alpha(make(1.0), resizeTo(zoomButtonSize, zoomButtonSize, Picture(purl, []))))
+	}
+
+	zoomInIcon = makeButtonForm("images/magnifier_cursor_plus.png");
+	zoomOutIcon = makeButtonForm("images/magnifier_cursor_minus.png");
+
+	zoomLevel1 = resizeToUseWidthHeight(popup);
+	zoomLevel2 = ScrollAvailable(popup);
+
+	zoomButton = make(Empty());
+
+	fullScreenView = make(zoomLevel1);
+
+	zoomOutAction = \ -> {
+		next(fullScreenView, zoomLevel1);
+	}
+
+	closeFullscreen = ref nop;
+
+	zobuttonWH = makeWH();
+
+	attachZoomButton = \xAlign, yAlign, btn, f -> {
+		formSize = makeWH();
+		Group([
+			Inspect([ISize(formSize)], f),
+			Available2(
+				formSize,
+				Align2(xAlign, yAlign, btn)
+			)
+		])
+	}
+
+	fullscreenSize = makeWH();
+
+	zoomedView = if (fullscreen) {
+		frm = Group([
+			HVFill([Stroke(black), Fill(white), FillOpacity(1.0)]),
+			Inspect([ISize(fullscreenSize)], Mutable(fullScreenView))
+		]);
+		onAction =  \-> {
+			zoomOutAction();
+			^closeFullscreen()
+		}
+		SimpleButton(frm, frm, "", onAction)
+	} else {
+		Cols([
+			Available2(
+				select(zobuttonWH, \ wh ->
+					WidthHeight(getStageWidth() - wh.width, getStageHeight())
+				),
+				zoomLevel1
+			),
+			Inspect([ISize(zobuttonWH)],
+				SimpleButton(
+					zoomOutIcon |> AdaptiveScale,
+					zoomOutIcon |> AdaptiveScale,
+					"",
+					\-> {
+						zoomOutAction();
+						^closeFullscreen()
+					}
+				)
+			)
+		]) |> Center
+	}
+
+	postCropTransfrom = if (!fullscreen) \f -> attachZoomButton(1.0, 0.0, zoomInIcon, f) else idfn;
+	resultForm = Disposer(
+		AbstractButton(
+			form,
+			\ -> closeFullscreen := showModal(zoomedView),
+			if (mobile) [ButtonGhosted()] else []
+		),
+		^closeFullscreen
+	);
+
+	Pair(resultForm, postCropTransfrom)
+}
+
+getHtmlPictureMagnify(
+	fullForm : Form,
+	scaledForm : Form,
+	p_caption : string,
+	stylesheet : Tree<string, HTMLStyle>,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	extraZoom : bool,
+	backgroundColor : Maybe<int>
+) -> Form {
+	unpair(
+		getHtmlPictureMagnify2(fullForm, scaledForm, p_caption, stylesheet, maxw, scale, extraZoom, backgroundColor),
+		\form, transform -> form |> transform
+	)
+}
+
+getHtmlPictureMagnify2(
+	fullForm : Form,
+	scaledForm : Form,
+	p_caption : string,
+	stylesheet : Tree<string, HTMLStyle>,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	extraZoom : bool,
+	backgroundColor : Maybe<int>
+) -> Pair<Form, (Form) -> Form> {
+	getHtmlPictureMagnifyWithCloseButton(fullForm, scaledForm, p_caption, stylesheet, maxw, scale, extraZoom, eitherMap(backgroundColor, \color -> Some(Color(color, 0.5)), None()), -1, \__ -> Empty(), None());
+}
+
+getHtmlPictureMagnifyWithCloseButton(
+	fullForm : Form,
+	scaledForm : Form,
+	p_caption : string,
+	stylesheet : Tree<string, HTMLStyle>,
+	maxw : Maybe<double>,
+	scale : Maybe<double>,
+	extraZoom : bool,
+	backgroundColor : Maybe<Color>,
+	closeButtonAlign : int,
+	closeButtonFormFn : (() -> void) -> Form,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>
+) -> Pair<Form, (Form) -> Form> {
+
+	if (mobile)
+	{
+		// small mobiles will better display fullscreen zoomed images
+		getHtmlPictureMagnifyPDA(scaledForm, fullForm, isPhoneScreen())
+	} else if (extraZoom) {
+		popup = ShadowFilter(
+			Background(
+				[Fill(0xffffff)],
+				scaledForm
+			)
+		);
+		Pair(makePopupWithLockAndWheel(scaledForm, fullForm, false, true, virtualScreenInfoM), idfn)
+	} else {
+		plusCursorVisible = make(false);
+		plusBubbleVisible = make(false);
+		curPosPlusX = make(0.0);
+		curPosPlusY = make(0.0);
+
+		getHintWindow = \st, bubbleVisible -> {
+			txt = Text(st, [FontSize(12.0)]);
+			border = 10.0;
+			w = getFormWidth(txt) + border * 2.0;
+			h = getFormHeight(txt) + border * 2.0;
+			triangle = 3.0;
+			roundness = 3.0;
+			form = Offset(
+				- w - triangle - 3.0, - 3.0,
+				ShadowAround(
+					Group([
+						Graphics(
+							[
+								MoveTo(w + triangle, h / 2.0),
+								LineTo(w, h / 2.0 - triangle),
+								LineTo(w, roundness),
+								CubicBezierTo(w - roundness, 0.0, w, 0.0),
+								LineTo(roundness, 0.0),
+								CubicBezierTo(0.0, roundness, 0.0, 0.0),
+								LineTo(0.0, h - roundness),
+								CubicBezierTo(roundness, h, 0.0, h),
+								LineTo(w - roundness, h),
+								CubicBezierTo(w, h - roundness, w, h),
+								LineTo(w, h / 2.0 + triangle),
+								LineTo(w + triangle, h / 2.0)
+							],
+							[Fill(white)]
+						),
+						Offset(border, border, txt)
+					])
+				)
+			);
+			Pair(Visibleb(bubbleVisible, form), w)
+		};
+
+		iconScale = const(0.263);
+
+		plusHintWindow = getHintWindow(_("Click to zoom"), plusBubbleVisible); //Pair of bubble with icon and buble's width
+		plusBubbleWidth = plusHintWindow.second;
+
+		cursorPicturePlus = Group([plusHintWindow.first, Scale(iconScale, iconScale, Picture("images/magnifier_cursor_plus.png", []))]);
+
+		awh = makeWH();
+		whP = makeWH();
+		whSP = makeWH();
+		whC = makeWH();
+		windowSize = makeWH();
+		borderWidth = 5.0;
+		minCaptionHeight = 20.0;
+		minScale = 1.33;
+		maxArea = 0.8;
+
+		closeMagnifyWindow = ref nop;
+		magnifyWindowVisible = make(false);
+		closeMagnify = \ -> {
+			next(magnifyWindowVisible, false);
+			next(plusCursorVisible, false);
+			^closeMagnifyWindow();
+			closeMagnifyWindow := nop;
+		}
+
+		popupWithCloseButtonVariants = [
+			\f -> Lines([f, Align2(1., 0., closeButtonFormFn(closeMagnify))]),
+			\f -> Lines([Align2(1., 0., closeButtonFormFn(closeMagnify)), f]),
+			\f -> Lines([closeButtonFormFn(closeMagnify), f]),
+			\f -> Lines([f, closeButtonFormFn(closeMagnify)]),
+		];
+
+		magnifySize = \wh_, whP_, whC_ -> {
+			maxHeight = (wh_.height * maxArea) - max(minCaptionHeight, whC_.height) - borderWidth * 3.0;
+			maxWidth = (wh_.width * maxArea) - borderWidth * 2.0;
+
+			if (maxHeight < 0.0 || maxWidth < 0.0) {
+				WidthHeight(0.0, 0.0)
+			} else if ( isSome(maxw) || isSome(scale) ) {
+				sd = (if (isSome(maxw) && whP_.width > 0.0 && either(maxw, 0.0) / whP_.width > 1.0) either(maxw, 0.0) / whP_.width else 1.0) * either(scale, 1.0);
+				sc = if (1.0 / sd < minScale) minScale else 1.0 / sd;
+				WidthHeight(min(maxWidth, whP_.width * sd * sc), min(maxHeight, whP_.height * sd * sc))
+			} else {
+				WidthHeight(maxWidth, maxHeight)
+			}
+		};
+
+		getMagnifyWindow = \ -> {
+			wh = makeWH();
+			background = Select(wh, \wh_ -> Rectangle(wh_.width, wh_.height, [Fill(white)]));
+
+			captionAWH = makeWH();
+			textW = make(0.0);
+			caption = Constructor(
+				Offset(
+					borderWidth, borderWidth,
+					Available2(
+						captionAWH,
+						Align(
+							0.0, 0.5,
+							Inspect(
+								[ISize(whC)],
+								renderHtmlXml(XmlText(p_caption), textW, stylesheet, [StartAlign()], [HTMLDefaultFont([FontSize(16.0)])])
+							)
+						)
+					)
+				),
+				\ -> {
+					uns0 = connectSelect2Distinctu(wh, whC, captionAWH, \wh_, whC_ -> {
+						WidthHeight(
+							wh_.width - minCaptionHeight - borderWidth * 3.0,
+							max(minCaptionHeight, whC_.height)
+						);
+					});
+					uns1 = connectSelectDistinctu(wh, textW, \wh_ -> wh_.width - minCaptionHeight - borderWidth * 3.0);
+					\ -> {
+						uns0();
+						uns1();
+					}
+				}
+			);
+
+			crossX = make(0.0);
+			crossAWH = makeWH();
+			cross = Constructor(
+				Translate(
+					crossX, const(borderWidth),
+					Available2(
+						crossAWH,
+						SimpleButton2(
+							shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/X_normal.png", [])),
+							"",
+							\ -> closeMagnify(),
+							[
+								BtnHoveredForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/X_hover.png", []))),
+								BtnPressedForm(shrinkToFit(minCaptionHeight, minCaptionHeight, Picture("images/X_push.png", [])))
+							]
+						) |> Center
+					)
+				),
+				\ -> {
+					uns0 = connectSelectDistinctu(wh, crossX, \wh_ -> wh_.width - borderWidth * 2.0 - minCaptionHeight);
+					uns1 = connectSelectDistinctu(whC, crossAWH, \size -> WidthHeight(minCaptionHeight, max(minCaptionHeight, size.height)));
+					\ -> {
+						uns0();
+						uns1();
+					}
+				}
+			);
+
+			contentAWH = makeWH();
+			contentY = make(0.0);
+			toFitWH = makeWH();
+			content = Constructor(
+				Translate(
+					const(borderWidth), contentY,
+					Background([Fill(0xffffff), Stroke(0xdedddb), StrokeWidth(1.0)],
+						Available2(
+							contentAWH,
+							Inspect(
+								[ISize(whSP)],
+								resizeToFitWHB2(
+									toFitWH,
+									const(true),
+									Inspect(
+										[ISize(whP)],
+										fullForm
+									),
+									1.0
+								)
+							) |> Center
+						)
+					)
+				),
+				\ -> {
+					uns0 = connectSelect2Distinctu(wh, whC, contentAWH, \wh_, whC_ -> {
+						WidthHeight(
+							wh_.width - borderWidth * 2.0,
+							wh_.height - max(minCaptionHeight, whC_.height) - borderWidth * 3.0
+						)
+					});
+					uns1 = connectSelectDistinctu(whC, contentY, \whC_ -> max(minCaptionHeight, whC_.height) + borderWidth * 2.0);
+					uns2 = connectSelect3Distinctu(awh, whP, whC, toFitWH, magnifySize);
+					\ -> {
+						uns0();
+						uns1();
+						uns2();
+					}
+				}
+			);
+
+			addClosing = \f -> {
+				Interactive(
+					[
+						MouseUp2(\handled, mi -> {
+							closeMagnify();
+							true
+						})
+					],
+					f
+				)
+			}
+
+			Constructor(
+				Group([
+					background,
+					cross,
+					caption,
+					content
+				])
+				|> addClosing //Close on any click outside the whole form
+				|> ShadowAround
+				|> elementAt(popupWithCloseButtonVariants, closeButtonAlign, idfn)
+				|> (\f -> Cursor(FingerCursor(), f))
+				|> (\f -> Inspect([ISize(windowSize), IAvailable(awh)], f)),
+				\ -> {
+					connectSelect2Distinctu(whSP, whC, wh, \whSP_, whC_ -> {
+						WidthHeight(
+							max(whSP_.width + borderWidth * 2.0, 200.0),
+							max(whSP_.height + max(minCaptionHeight, whC_.height) + borderWidth * 3.0, 200.0)
+						)
+					});
+				}
+			);
+		}
+		inspectedAvailB = makeWH();
+
+		backgroundFrm = \ -> {
+			bawh = eitherMap(virtualScreenInfoM, \vsi-> cloneBehaviour(vsi.size), makeWH());
+			eitherFn(backgroundColor, \colwithop -> {
+				Interactive(
+					[
+						RollOver(\gmi -> {})
+					],
+					Inspect([IAvailable(bawh)], Select(bawh, \avl -> Rectangle(avl.width, avl.height, [Fill(colwithop.color), FillOpacity(colwithop.alpha)])))
+				)
+			}, \ -> Empty());
+		} 
+
+		cursorB = make(DefaultCursor());
+		form =
+			Interactive(
+				[
+					MouseClick(nop1),
+					MouseUp(\mi -> {
+						if (mi().inside) {
+							next(magnifyWindowVisible, true);
+							next(plusCursorVisible, false);
+							next(plusBubbleVisible, false);
+							magnifyWindow = Group([
+								MouseUD2Catcher(Empty()),
+								SimpleMovable(
+									if (isNone(virtualScreenInfoM)) Center(getMagnifyWindow()) else getMagnifyWindow()
+								)
+							]);
+							windowInsideVirtualScreen = eitherMap(
+								virtualScreenInfoM,
+								\info -> CropPopupByVirtualScreenBox(info, magnifyWindow, windowSize, true),
+								magnifyWindow
+								
+							);
+							windowInsideVirtualScreen2 = Group([backgroundFrm(), windowInsideVirtualScreen]);
+							closeMagnifyWindow :=  render(windowInsideVirtualScreen2);
+							true
+						} else {
+							false
+						}
+					}),
+					MouseMove(\mi -> {
+						info = mi();
+						nextDistinct(plusCursorVisible, info.inside);
+						nextDistinct(plusBubbleVisible, info.x >= plusBubbleWidth);
+						false
+					})
+				],
+				Constructor(
+					Cursor(
+						DynamicCursor(cursorB),
+						scaledForm
+					),
+					\ -> {
+						uns0 = connectSelectDistinctu(magnifyWindowVisible, cursorB, \v -> if (v) DefaultCursor() else NoCursor());
+						uns1 : ref () -> void = ref nop;
+						uns2 = subscribe(plusCursorVisible, \cV -> {
+							^uns1();
+							uns1 := nop;
+							if (cV) {
+								uns1 := render(
+									Interactive(
+										[
+											MouseMove(\mi -> {
+												info = mi();
+												next(curPosPlusX, info.x + 5.0);
+												next(curPosPlusY, info.y + 5.0);
+												false;
+											})
+										],
+										Translate(
+											curPosPlusX, curPosPlusY,
+											cursorPicturePlus
+										)
+									)
+								);
+							}
+						});
+						\ -> {
+							uns0();
+							^uns1();
+							uns2();
+							closeMagnify();
+						}
+					}
+				)
+			);
+
+		Pair(form, idfn)
+	} // else
+}
+
+getDefaultFontStyle(special : [HTMLSpecial]) {
+	fold(special, [FontFamily("Book"), FontSize(18.0)], \acc, s -> {
+		switch (s : HTMLSpecial) {
+			HTMLDefaultFont(st): st;
+			default: acc;
+		}
+	});
+}
+
+htmlAcc2Form(_acc : HtmlAcc, availableWidth : Behaviour<double>, paragraphStyle : [ParagraphStyle]) -> Form {
+	acc = flushHtmlStory(_acc);
+
+	linesStory = list2array(acc.storyStyle);
+
+	lines = list2array(acc.story);
+
+	l = length(lines);
+
+	//Not very good decision, but pass one more parameter across all the recursive calls is too big work.
+	dropLastAdditionalSpace = \ -> {
+		lastLine = lines[l - 1];
+		ll = length(lastLine);
+		probablySpace = if (ll >= spaceAfterElementsCount) {
+			subrange(lastLine, ll - spaceAfterElementsCount, spaceAfterElementsCount)
+		} else {
+			[]
+		};
+		if (probablySpace == spaceAfterParagraphElements) {
+			otherLines = removeIndex(lines, l - 1);
+			if (ll == spaceAfterElementsCount) {
+				otherLines
+			} else {
+				arrayPush(otherLines, subrange(lastLine, 0, ll - spaceAfterElementsCount))
+			}
+		} else {
+			lines
+		}
+	}
+
+	if (l > 0) {
+		Lines(mapi(dropLastAdditionalSpace(), \i, par ->
+			Available(availableWidth, const(0.0),
+				{ style = if (length(linesStory) > i ) concat(linesStory[i], paragraphStyle) else paragraphStyle;
+					Paragraph(par, style)
+				}
+			)
+		));
+	} else {
+		Empty();
+	}
+}
+
+
+renderHtmlXml(xml : XmlNode, availableWidth : Behaviour<double>,
+		stylesheet : Tree<string, HTMLStyle>, paragraphStyle : [ParagraphStyle], special : [HTMLSpecial]) -> Form {
+
+	defaultFontstyle = getDefaultFontStyle(special);
+	acc = renderHtmlAcc(xml, availableWidth, stylesheet, HtmlAcc(HTMLStyle(defaultFontstyle, []), makeList(), makeList(), makeList(), 0, 0), special);
+	htmlAcc2Form(acc, availableWidth, paragraphStyle)
+}
+
+
+extractChildrenTextIgnoringTags(nodes : [XmlNode]) -> string {
+	fold(nodes, "", \acc, tr -> {
+		elemText = switch (tr : XmlNode) {
+	 		XmlElement(trt, at, c): extractChildrenTextIgnoringTags(c);
+			XmlText(t): t;
+		}
+		acc + elemText;
+	})
+}
+
+// We accummulate a running story with its paragraph styles, as well as the current paragraph, with the current styles
+// TODO: Add margins as well to the style here
+HtmlAcc : (htmlStyle : HTMLStyle, story : List<[ParagraphElement]>, storyStyle : List<[ParagraphStyle]>, paragraph : List<ParagraphElement>, listNumber : int, paragraphNumber : int);
+
+renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : Tree<string, HTMLStyle>, acc : HtmlAcc, special : [HTMLSpecial]) -> HtmlAcc {
+	emptyStyle = HTMLStyle([], []);
+
+	result = switch(node : XmlNode) {
+		XmlElement(tagcs, attrs, children): {
+			tag = toLowerCase(tagcs);
+			classAttr = getXmlAttribute(attrs, "class", "");
+
+			curStyle = ref HTMLStyle([], []);
+
+			curStyle := if (classAttr != "") {
+				lookupTreeDef(stylesheet, "." + classAttr, emptyStyle);
+			} else {
+				emptyStyle;
+			};
+
+			tagStyle = lookupTreeDef(stylesheet, tag, emptyStyle);
+			curStyle := HTMLStyle(concat(tagStyle.characterStyle, ^curStyle.characterStyle), concat(tagStyle.paragraphStyle, ^curStyle.paragraphStyle));
+
+			cs2 = concat(acc.htmlStyle.characterStyle, ^curStyle.characterStyle);
+			ps = concat(acc.htmlStyle.paragraphStyle, ^curStyle.paragraphStyle);
+
+			// Tag styles
+			styleAttr = getXmlAttribute(attrs, "style", "");
+			htmls = parseCssStyles(HTMLStyle(cs2, []), styleAttr);
+
+			mathModificators = \mm -> \s -> {
+				if (contains(special, HTMLMathMlSmall())) {
+					s |> mm |> mutiplyFontSizeBy(0.6)
+				} else {
+					s |> mm
+				}
+			}
+
+			cs = htmls.characterStyle;
+			if (tag == "html" || tag == "body" || tag == "td"
+				|| tag == "p" || tag == "h1" || tag == "h2" || tag == "h3"
+				|| tag == "h4" || tag == "h5" || tag == "h6"
+				|| tag == "div" || tag == "pre" || tag == "blockquote") {
+				flush = flushHtmlStory(acc);
+				style = if (tag == "h1") {
+					[FontSize(24.0), FontFamily("Medium")]
+				} else if (tag == "h2") {
+					[FontSize(18.0), FontFamily("Medium")]
+				} else if (tag == "h3") {
+					[FontSize(18.0), FontFamily("Medium")]
+				} else if (tag == "h4") {
+					[FontSize(14.0), FontFamily("Medium")]
+				} else if (tag == "h5") {
+					[FontSize(13.0), FontFamily("Medium")]
+				} else if (tag == "h6") {
+					[FontSize(12.0), FontFamily("Medium")]
+				} else {
+					[]
+				};
+
+				styled = ref HtmlAcc(HTMLStyle(concat(cs, style), ps), flush.story, flush.storyStyle, flush.paragraph, acc.listNumber, acc.paragraphNumber);
+
+				if (tag == "p" && contains(special, HTMLNumberedParagraph())) {
+					lineWidth = select(availableWidth, \aw2 -> aw2 - 20.0);
+					inners = fold(children, [], \ac, elem -> {
+						arrayPush(ac, renderHtmlXml(elem, lineWidth, stylesheet, [TightWidth()], special));
+					});
+
+					numberedParagraph = Available(availableWidth, const(0.0),
+						Group([
+							Cols([Available(lineWidth, const(0.0), Lines(inners)), Fixed(20.0, 0.0)]),
+							Align(1.0, 0.0, Cols([
+								Text(i2s(acc.paragraphNumber + 1), HTMLRightNumberingText),
+								Fixed(5.0, 0.0)]))]));
+					styled := HtmlAcc(^styled.htmlStyle, ^styled.story, ^styled.storyStyle, Cons(numberedParagraph, ^styled.paragraph), acc.listNumber, acc.paragraphNumber + 1);
+				// fix for <p/> tag
+				} else if (tag == "p" && length(children) == 0) {
+					styled := renderHtmlChildren([XmlText(" ")], availableWidth, stylesheet, acc, ^styled, special);
+				} else {
+					styled := renderHtmlChildren(children, availableWidth, stylesheet, acc, ^styled, special);
+				}
+
+				if (tag == "p" || tag == "blockquote") {
+					paragraphWithSpaceAfter = addSpaceAfterParagraph(^styled.paragraph);
+					styled := HtmlAcc(^styled.htmlStyle, ^styled.story, ^styled.storyStyle, paragraphWithSpaceAfter, acc.listNumber, ^styled.paragraphNumber)
+				}
+
+				^styled;
+			} else if (tag == "ol" || tag == "ul") {
+				flush = flushHtmlStory(acc);
+
+				startAttr = getXmlAttribute(attrs, "start", "");
+				olStart = if (startAttr != "") s2i(startAttr) else 1;
+
+				listNumber = if (tag == "ol") olStart else if (tag == "ul") 0 else acc.listNumber;
+
+				styled = ref HtmlAcc(HTMLStyle(cs, ps), flush.story, flush.storyStyle, flush.paragraph, listNumber, acc.paragraphNumber);
+
+				styled := renderHtmlChildren(children, availableWidth, stylesheet, acc, ^styled, special);
+
+				styled := HtmlAcc(^styled.htmlStyle, ^styled.story, ^styled.storyStyle, ^styled.paragraph, acc.listNumber, acc.paragraphNumber);
+
+				^styled;
+			} else if (tag == "li") {
+				listChar = if (acc.listNumber == 0) "&#x2022; " else i2s(acc.listNumber) + ". ";
+				listNumberNew = if (acc.listNumber > 0) acc.listNumber + 1 else 0;
+
+				styled = ref HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(TextFragment(listChar, acc.htmlStyle.characterStyle), acc.paragraph), listNumberNew, acc.paragraphNumber);
+
+				styled := renderHtmlChildren(children, availableWidth, stylesheet, acc, ^styled, special);
+
+				styled := HtmlAcc(^styled.htmlStyle, ^styled.story, ^styled.storyStyle, Cons(TextFragment("\n", ^styled.htmlStyle.characterStyle), ^styled.paragraph), ^styled.listNumber, acc.paragraphNumber);
+
+				^styled;
+			} else if (tag == "a") {
+				styled = HtmlAcc(HTMLStyle(concat([Fill(0x0000ff)], cs), ps), acc.story, acc.storyStyle, makeList(), acc.listNumber, acc.paragraphNumber);
+				link = renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
+
+				href = getXmlAttribute(attrs, "href", "");
+				target = getXmlAttribute(attrs, "target", "new");
+
+				underlineStyle = Stroke(cs |> colorOfText);
+				buttonify = \f -> MaxSize(SimpleButton(underline([underlineStyle], f), underline([underlineStyle], f), "", \ -> getUrl(href, target)));
+
+				buttonified = mapList(link.paragraph, \pe -> {
+					switch (pe) {
+						TextFragments(f): {
+							TextFragments(mapList(f, \ tf -> {
+								switch (tf : WrapElement) {
+									LinePart(__, __, __): tf;
+									NewLine(): tf;
+									Space(sf): Space(buttonify(sf));
+									GlueFragments(): tf;
+									InspectElement(__, __, __, __, __, __): tf;
+									default: {
+										fm = cast(tf : WrapElement -> Form);
+										buttonify(fm);
+									}
+								}
+							}));
+						}
+						GlueFragments(): {
+							pe;
+						}
+						default: {
+							// A form
+							f = cast(pe : ParagraphElement -> Form);
+							buttonify(f);
+						}
+					}
+				});
+				HtmlAcc(link.htmlStyle, link.story, link.storyStyle, concatList(buttonified, acc.paragraph), link.listNumber, link.paragraphNumber);
+			} else if (tag == "em" || tag == "i") {
+				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("Italic")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
+			} else if (tag == "b" || tag == "strong") {
+				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("Medium")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
+			} else if (tag == "font") {
+				family = getXmlAttribute(attrs, "family", "");
+				color = getXmlAttribute(attrs, "color", "");
+				size = getXmlAttribute(attrs, "size", "");
+				fv = if (family != "") {
+					[FontFamily(family)]
+				} else {
+					[]
+				}
+				cv = if (color != "") {
+					parseColor = if (startsWith(color, "0x")) \s -> substring(s, 2, strlen(s) - 2) |> parseHex else s2i;
+					[Fill(parseColor(color))]
+				} else {
+					[]
+				}
+				sv = if (size != "") {
+					[FontSize(s2d(size))]
+				} else {
+					[]
+				}
+				styled = HtmlAcc(HTMLStyle(concatA([cs, fv, cv, sv]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);}
+			else if (tag == "code") {
+				styled = HtmlAcc(HTMLStyle(concat(cs, [/*FontFamily("Courier")*/]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
+			} else if (tag == "table") {
+				initRows = fold(children, [], \ac, tr -> {
+					switch (tr : XmlNode) {
+						XmlElement(trt, at, c): {
+							if (trt == "thead" || trt == "tbody")
+								concat(ac, c)
+							else
+								concat(ac, [tr]);
+						}
+						XmlText(t) : ac;
+					}
+				});
+
+				align2double = \align -> {
+					lowerAlign = align |> toLowerCase;
+					pairs = [
+						Pair("left", 0.0),
+						Pair("top", 0.0),
+						Pair("center", 0.5),
+						Pair("right", 1.0),
+						Pair("bottom", 1.0),
+					];
+					eitherMap(find(pairs, \p -> p.first == lowerAlign), secondOfPair, 0.0)
+				}
+
+				rowsCount = length(initRows);
+				additionalCells = generate(0, rowsCount, \__ -> ref 0);
+				rows : [HTMLRow] = mapi(initRows, \i, tr -> {
+					switch (tr : XmlNode) {
+						XmlElement(trt, at, c): {
+							fold(c, HTMLRow(false, 0, []), \ac : HTMLRow, td -> {
+								switch (td : XmlNode) {
+									XmlElement(td2, tdatt, tdc): {
+										xAlign = getXmlAttribute(tdatt, "align", "") |> align2double;
+										yAlign = getXmlAttribute(tdatt, "valign", "") |> align2double;
+										rowspan = min(getXmlAttribute(tdatt, "rowspan", "1") |> s2i, rowsCount - i);
+										if (rowspan > 1) {
+											fori(i + 1, i + rowspan - 1, \curRow -> additionalCells[curRow] := ^(additionalCells[curRow]) + 1);
+										}
+										colspan = getXmlAttribute(tdatt, "colspan", "1") |> s2i;
+										tdf = \aw -> renderHtmlXml(td, aw, stylesheet, [TightWidth()], special);
+										res = HTMLCell(xAlign, yAlign, colspan, rowspan, tdf);
+										HTMLRow(
+											ac.spanExists || rowspan > 1 || colspan > 1,
+											ac.colspansSum + colspan,
+											arrayPush(ac.cells, res)
+										)
+									}
+									XmlText(t): ac;
+								}
+							});
+						}
+						XmlText(t): HTMLRow(false, 0, []);
+					}
+				});
+				// Distribute the available width to the columns evenly
+				colsCount = foldi(rows, 0, \i, macc, r : HTMLRow -> max(macc, r.colspansSum + ^(additionalCells[i])));
+				newAWSrc = getXmlAttribute(attrs, "width", "");
+				hasBorder = getXmlAttribute(attrs, "border", "") != "";
+				newAW = if (newAWSrc != "") const(newAWSrc |> s2d) else availableWidth;
+
+				cellSizes = generate(0, rowsCount * colsCount, \__ -> makeWH());
+
+				pair2index = \i, j -> i * colsCount + j;
+
+				rowHeights = generate(0, rowsCount, \__ -> 0.0) |> make;
+				colWidths = generate(0, colsCount, \__ -> 0.0) |> make;
+
+				colWidth2 = make(0.0);
+
+				freeCells = generate(0, rowsCount, \__ -> generate(0, colsCount, \__ -> ref 0));
+				findNextFreeCellRec = ref \i1, i2 -> Pair(0, 0);
+				findNextFreeCell = \startRow, startCol -> {
+					if (startRow < rowsCount) {
+						thisRowFreeCol = countUntil(startCol, colsCount, \col -> ^(freeCells[startRow][col]) == 0);
+						if (thisRowFreeCol < colsCount) {
+							Pair(startRow, thisRowFreeCol)
+						} else {
+							^findNextFreeCellRec(startRow + 1, 0)
+						}
+					} else {
+						Pair(-1, -1)
+					}
+				}
+
+				findNextFreeCellRec := findNextFreeCell;
+
+				markCellAsUsed = \row, col, id -> freeCells[row][col] := id;
+
+				cellId = ref 1;
+
+				cellsSrc = generate(0, rowsCount, \__ -> generate(0, colsCount, \__ -> ref Empty()));
+
+				allOK = ref true;
+
+				iteri(rows, \baseRow, r : HTMLRow -> {
+					iteri(r.cells, \baseCol, c : HTMLCell -> {
+						freeCell = findNextFreeCell(baseRow, baseCol);
+						row = freeCell.first;
+						col = freeCell.second;
+						allOK := ^allOK && 0 <= row && row < rowsCount && 0 <= col && col < colsCount;
+						if (^allOK) {
+							colspan = c.colspan;
+							rowspan = c.rowspan;
+							if (colspan == 1 && rowspan == 1) {
+								cellsSrc[row][col] := Align2(
+									c.xAlign, c.yAlign, Border(2.0, 2.0, 5.0, 2.0, c.makeContent(colWidth2))
+								);
+								markCellAsUsed(row, col, ^cellId)
+							} else {
+								awh = makeWH();
+								spannedWidth = make(0.0);
+
+								cellsSrc[row][col] :=
+									Constructor(
+										Available2(
+											awh,
+											Align2(c.xAlign, c.yAlign, Border(2.0, 2.0, 5.0, 2.0, c.makeContent(spannedWidth)))
+										),
+										\ -> {
+											connectSelect2Distinctu(rowHeights, colWidths, awh, \rh, cw -> {
+												w = dsumPatched(subrange(rh, row, rowspan));
+												h = dsumPatched(subrange(cw, col, colspan));
+												nextDistinct(spannedWidth, w);
+												WidthHeight(w, h);
+											})
+										}
+									);
+
+								fori(row, row + rowspan - 1, \curRow -> {
+									fori(col, col + colspan - 1, \curCol -> {
+										markCellAsUsed(curRow, curCol, ^cellId)
+									})
+								})
+							}
+						}
+						cellId := ^cellId + 1;
+					})
+				});
+
+				getGridBorders = \rowHeights_ : [double], colWidths_ : [double] -> {
+					getCellId = \row : int, col : int -> {
+						if (row < 0 || col < 0 || row >= rowsCount || col >= colsCount)
+							0
+						else
+							^(freeCells[row][col])
+					};
+					Grid(mapi(rowHeights_, \i, rh -> {
+						mapi(colWidths_, \j, cw -> {
+							Group([
+								Fixed(cw, rh),
+								if (getCellId(i,j) == 0)
+									Empty()
+								else
+									Graphics(
+										[
+											MoveTo(0.0, rh),
+											//left border
+										 	if (getCellId(i, j - 1) == 0) LineTo(0.0, 0.0) else MoveTo(0.0, 0.0),
+										 	//upper border
+										 	if (getCellId(i - 1, j) == 0) LineTo(cw, 0.0) else MoveTo(cw, 0.0),
+										 	// right border
+										 	if (getCellId(i, j + 1) != getCellId(i, j)) LineTo(cw, rh) else MoveTo(cw, rh),
+										 	// lower border
+										 	if (getCellId(i + 1, j) != getCellId(i, j)) LineTo(0.0, rh) else MoveTo(0.0, rh),
+										 	ClosePath()
+										],
+										[Stroke(0x666666)]
+									)
+							])
+						})
+					}))
+				}
+
+				tableWidth = make(0.0);
+				fitted : ref bool = ref true;
+				gridSizes : DynamicBehaviour<Pair<[double], [double]>> = make(Pair([],[]));
+
+				table = if (^allOK) {
+					cells = mapi(cellsSrc, \row, r ->
+						mapi(r, \col, cell -> Inspect([ISize(cellSizes[pair2index(row, col)])], ^cell))
+					);
+					Constructor(
+						Inspect(
+							[Width(tableWidth)],
+							Group([
+								Grid(cells),
+								Iff(hasBorder, \ -> Select(gridSizes, \gs -> getGridBorders(gs.second, gs.first)))
+							])
+						),
+						\ -> {
+							cellSizesB = mergeu(cellSizes);
+
+							/*[-Rewise-]
+							this throttle fixes render of table borders grid.
+							*/
+							tableWidthFixed = if (isUrlParameterTrue("test44771"))
+									throttle2u(tableWidth, s2i(getUrlParameterDef("case44771", "100")))
+								else
+									stallu(tableWidth, s2i(getUrlParameterDef("case44771", "100")));
+
+							fitted := true;
+							subscriptions = [
+								\ -> connectSelect2Distinctu(newAW, tableWidthFixed.first, colWidth2, \aw, cws -> {
+									if (!^fitted) {
+										aw / i2d(colsCount)
+									} else if (cws > aw && aw > 0.0) {
+										fitted := false;
+										aw / i2d(colsCount)
+									} else
+										aw;
+								}),
+								\ -> subscribe(cellSizesB.first, \cSizes -> {
+									nextDistinct(gridSizes,
+										Pair(
+											generate(0, colsCount, \j -> {
+												either(
+													maxA(generate(0, rowsCount, \i -> cSizes[pair2index(i, j)].width)),
+													0.0
+												)
+											}),
+											generate(0, rowsCount, \i -> {
+												either(
+													maxA(map(subrange(cSizes, pair2index(i, 0), colsCount), \v -> v.height)),
+													0.0
+												)
+											})
+										)
+									);
+								}),
+							];
+
+							uns = map(subscriptions, apply0);
+							\ -> {
+								cellSizesB.second();
+								tableWidthFixed.second();
+								applyall(uns);
+							}
+						}
+					);
+				} else {
+					Text("Array out of bounds error during processing of 'table' tag", [Fill(red)])
+				}
+
+				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(table, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "link" || tag == "head" || tag == "title" || tag == "meta" || tag == "script") {
+				// Tags we ignore
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special);
+				acc;
+			} else if (tag == "span") {
+				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "img") {
+				pictureLoadBeh = make(-1);
+				s = getXmlAttribute(attrs, "scale", "");
+				pictureUrl = getXmlAttribute(attrs, "src", "");
+				mediaCollector = extractStruct(special, HTMLMediaCollector(ref [])).acc;
+				mediaCollector := arrayPush(^mediaCollector, pictureUrl);
+				p2 = Picture(pictureUrl, [OnLoaded(\-> {nextDistinct(pictureLoadBeh, 1)})]);
+
+				maxw = getXmlAttribute(attrs, "max-width", "");
+				p1 = if (strlen(maxw) > 0) shrinkToFit(s2d(maxw), 2000.0, p2) else p2;
+
+				p3 = Select(availableWidth, \aw_ -> shrinkToFit(aw_, 2000.0,
+						if (s != "") {
+							sd = s2d(s);
+							Scale(const(sd), const(sd), p1)} else p1
+				));
+
+				p_zoomed_size = makeWH();
+
+				zoomNeeded = getXmlAttribute(attrs, "zoom", "") == "1";
+
+				p_caption = getXmlAttribute(attrs, "caption", "");
+
+				//p_zoomed = Inspect([ISize(p_zoomed_size)], if (zoomNeeded) /*makePopup(p3, p2)*/Cursor(NoCursor, getMagnifyCursor(p3, p_zoomed_size)) else p3);
+
+				p_background = extractStruct(special, HTMLZoomBackground(None())).color;
+
+				p_zoomed = Inspect(
+					[ISize(p_zoomed_size)],
+					if (zoomNeeded) {
+						getHtmlPictureMagnify(p2, p3, p_caption, stylesheet, if (strlen(maxw) > 0) Some(s2d(maxw)) else None(), if (strlen(s) > 0) Some(s2d(s)) else None(), false, p_background)
+					} else {
+						p3
+					}
+				);
+
+				p_fixed = Select(pictureLoadBeh, \flag -> if (flag != 0) p_zoomed else {
+					recW = 40.0;
+					recH = 40.0;
+					Group([
+						Graphics(
+							concat(rectangle(0.0, 0.0, recW, recH), [LineTo(recW, recH), MoveTo(0.0, recH), LineTo(recW, 0.0)]),
+							[Stroke(red)]
+						),
+						Available2(const(WidthHeight(recW, recH)), Align2(0.5, 0.5, resizeToWidth(recW, Paragraph([TextFragment("Image\nloading...", [])], [CenterAlign()]))))
+					])
+				});
+
+				p = if (strlen(p_caption) == 0)
+						p_fixed
+					else
+						WideLines([
+							Fixed(0.0, 30.0),
+							p_fixed,
+							renderHtmlXml(XmlText(p_caption), select2(p_zoomed_size, pictureLoadBeh, \size, flg -> if (flg != 0) size.width else 20.0), stylesheet, [CenterAlign()], [HTMLDefaultFont(asItalic([FontSize(12.0)]))]),
+							Fixed(0.0, 30.0)
+							]);
+
+				centered = if (getXmlAttribute(attrs, "align", "") == "middle") Align(0.5, 0.5, p) else p;
+				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(centered, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				deferred(\-> if (getValue(pictureLoadBeh) < 0) next(pictureLoadBeh, 0));
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "br") {
+				f = TextFragment("&nbsp;\n", acc.htmlStyle.characterStyle);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "hr") {
+				z = Select(availableWidth, \aw2 -> Graphics([MoveTo(0.0, 0.0), LineTo(aw2, 0.0), ClosePath()], [Stroke(0x000000), StrokeWidth(1.0)]));
+				f = TextFragment("\n", acc.htmlStyle.characterStyle);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, Cons(z, acc.paragraph)), acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "u") {
+				f = TextFragment("<u>", acc.htmlStyle.characterStyle);
+				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+				styled = renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+				f2 = TextFragment("</u>", acc.htmlStyle.characterStyle);
+				HtmlAcc(styled.htmlStyle, styled.story, styled.storyStyle, Cons(f2, styled.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "sub") {
+				childrenText = extractChildrenTextIgnoringTags(children);
+				f = Subscript(childrenText, acc.htmlStyle.characterStyle);
+				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "sup") {
+				childrenText = extractChildrenTextIgnoringTags(children);
+				f = Superscript(childrenText, acc.htmlStyle.characterStyle);
+				HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mn") {
+				// MathMl number
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asMath), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "mi") {
+				// MathMl identifier
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(\s -> s |> asMath |> asItalic), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+			} else if (tag == "mo") {
+				// MathMl operator
+				inRow = contains(special, HTMLMathMlRow());
+				isInvisibleTimes = {
+					if (length(children) == 1) {
+						switch (children[0] : XmlNode) {
+							XmlText(t) : {
+								tt = trim(t);
+								tt == "&#x2062;" || tt == "&InvisibleTimes;"
+							}
+							XmlElement(__, __, __) : false
+						}
+					} else {
+						false
+					}
+				}
+				newAWSrc = getXmlAttribute(attrs, "width", "");
+				newAW = if (newAWSrc != "") const(newAWSrc |> s2d) else availableWidth;
+
+				addNbsp = \p -> if (inRow && !isInvisibleTimes) Cons(TextFragment("\u00a0", acc.htmlStyle.characterStyle), p) else p;
+				ac2 = HtmlAcc(HTMLStyle(cs |> mathModificators(asDejaVuSans), ps), acc.story, acc.storyStyle, acc.paragraph |> addNbsp, acc.listNumber, acc.paragraphNumber);
+				newAcc = renderHtmlChildren(children, newAW, stylesheet, acc, ac2, special);
+				HtmlAcc(newAcc.htmlStyle, newAcc.story, acc.storyStyle, newAcc.paragraph |> addNbsp, newAcc.listNumber, newAcc.paragraphNumber)
+			} else if (tag == "vbar") {
+				h = getXmlAttribute(attrs, "height", "14.0") |> s2d;
+				f = Graphics([MoveTo(0.0, 0.0), LineTo(0.0, h), ClosePath()], [Stroke(cs |> colorOfText)]);
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "fixed") {
+				w = getXmlAttribute(attrs, "width", "0.0") |> s2d;
+				h = getXmlAttribute(attrs, "height", "0.0") |> s2d;
+				f = Border(w, h, 0.0, 0.0, Empty());
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "strike") {
+				form = if (length(children) != 1) {
+					Text("\\strike", [Fill(red)])
+				} else {
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special);
+					strikeOutWithColor(body, cs |> colorOfText, 0.0, 0.0)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(form, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mrow") {
+				// MathMl row
+				newSpecial = arrayPush(special, HTMLMathMlRow());
+				inners = fold(children, [], \ac, elem -> {
+						arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], newSpecial) );
+				});
+				row = inners |> array2list;
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, concatList(row, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mfrac") {
+				// MathMl frac
+				fracForm = if (length(children) != 2) {
+					Text("\\mfrac", [Fill(red)])
+				} else {
+					inners = fold(children, [], \ac, elem -> {
+						arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], special) );
+					});
+					fraction2formWithColor(inners[0], inners[1], acc.htmlStyle.characterStyle |> colorOfText)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(fracForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			 } else if (tag == "msqrt") {
+				// MathMl sqrt
+				l = length(children);
+
+				inners = fold(children, [], \ac, elem -> {
+					arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], special) );
+				});
+				sizeForm = Text(" ",acc.htmlStyle.characterStyle);
+				sqrtForm = root2formWithColor(sizeForm, if (l >= 1) inners |> toOneForm else sizeForm, acc.htmlStyle.characterStyle |> colorOfText);
+
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(sqrtForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "msub") {
+				// MathMl subscript
+				subForm = if (length(children) != 2) {
+					Text("\\msub", [Fill(red)])
+				} else {
+					newSpecial = arrayPush(special, HTMLMathMlSmall());
+
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special) ;
+					degree = renderHtmlXml(children[1], availableWidth, stylesheet, [TightWidth()], newSpecial) ;
+
+					subscript2form(body, degree)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(subForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "msup") {
+				// MathMl superscript
+				supForm = if (length(children) != 2) {
+					Text("\\msup", [Fill(red)])
+				} else {
+					newSpecial = arrayPush(special, HTMLMathMlSmall());
+
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special) ;
+					degree = renderHtmlXml(children[1], availableWidth, stylesheet, [TightWidth()], newSpecial) ;
+
+					superscript2form(body, degree)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mroot") {
+				// MathMl superscript
+				supForm = if (length(children) != 2) {
+					Text("\\mroot", [Fill(red)])
+				} else {
+					newSpecial = arrayPush(special, HTMLMathMlSmall());
+
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special) ;
+					degree = renderHtmlXml(children[1], availableWidth, stylesheet, [TightWidth()], newSpecial) ;
+
+					root2formWithColor(body, degree, acc.htmlStyle.characterStyle |> colorOfText)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mover") {
+				// MathMl overscript
+				supForm = if (length(children) != 2) {
+					Text("\\mover", [Fill(red)])
+				} else {
+					//Script available is overriden by bodyW. That is not correct for all cases, but OK for our.
+					bodyW = make(0.0);
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special) ;
+					script = renderHtmlXml(children[1], bodyW, stylesheet, [TightWidth()], special) ;
+					overscript2form(Inspect([Width(bodyW)], body), script)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "munderover") {
+				// MathMl over and under script
+				supForm = if (length(children) != 3) {
+					Text("\\munderover", [Fill(red)])
+				} else {
+					bodyW = make(0.0);
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special);
+					bottom = renderHtmlXml(children[1], bodyW, stylesheet, [TightWidth()], special);
+					up = renderHtmlXml(children[2], bodyW, stylesheet, [TightWidth()], special);
+
+					underscript2form(overscript2form(Inspect([Width(bodyW)], body), up), bottom)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "munder") {
+				// MathMl underscript
+				supForm = if (length(children) != 2) {
+					Text("\\munder", [Fill(red)])
+				} else {
+					bodyW = make(0.0);
+					body = renderHtmlXml(children[0], availableWidth, stylesheet, [TightWidth()], special);
+					script = renderHtmlXml(children[1], bodyW, stylesheet, [TightWidth()], special);
+
+					underscript2form(Inspect([Width(bodyW)], body), script)
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(supForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mfenced") {
+				// MathMl brackets
+				l = length(children);
+
+				inners = fold(children, [], \ac, elem -> {
+					arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [TightWidth()], special));
+				});
+
+				ob = getXmlAttribute(attrs, "open", "(") |> getBracketType;
+				cb = getXmlAttribute(attrs, "close", ")") |> getBracketType;
+
+				bracketsForm = brackets2formWithColor(ob, cb, inners |> toOneForm,  acc.htmlStyle.characterStyle |> colorOfText);
+
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(bracketsForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "mtext" || tag == "math") {
+				//Just parse children
+				renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special);
+			} else if (tag == "eqp") {
+				inners = fold(children, [], \ac, elem -> {
+					arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [], special));
+				});
+
+				spacingWidth = switch (lookupTree(stylesheet, "eqp")) {
+					Some(s): fold(s.paragraphStyle, 5.0, \accst, st -> switch(st) {
+						InterlineSpacing(sp) : sp;
+						default: accst;
+					});
+					None(): 5.0;
+				};
+
+				// make some nice outer form with border, padding and background.
+				// feel free to change.
+				outerForm = Border(
+					0.0, spacingWidth, 0.0, 0.0,
+					Lines(inners));
+				// return our form into list
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(outerForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "citation") {
+				// parse children
+
+				inners = fold(children, [], \ac, elem -> {
+					arrayPush(ac, renderHtmlXml(elem, availableWidth, stylesheet, [], special));
+				});
+
+				cStyleDefault = Triple([], 0x000000, 1.0);
+
+				cStyle = switch (lookupTree(stylesheet, "citation")) {
+					Some(s): fold(s.paragraphStyle, cStyleDefault, \accst : Triple, st -> switch(st) {
+						Fill(gs): Triple(concat(accst.first, [st]), accst.second, accst.third);
+						Stroke(gs): Triple(accst.first, gs, accst.third);
+						StrokeWidth(gs): Triple(accst.first, accst.second, gs);
+						default: accst;
+					});
+					None(): cStyleDefault;
+				};
+
+				// make some nice outer form with border, padding and background.
+				// feel free to change.
+				frm =
+				frameAround2(
+					Border(5.0, 5.0, 5.0, 5.0,
+						Lines(inners)),
+					cStyle.third,
+					10.0,
+					cStyle.second,
+					cStyle.first);
+
+				pubmedid = getXmlAttribute(attrs, "pubmedid", "");
+				doi = getXmlAttribute(attrs, "doi", "");
+
+				outerLink = if (strlen(pubmedid) > 0) "http://www.ncbi.nlm.nih.gov/pubmed/?term=" + pubmedid else
+								if (strlen(doi) > 0) "http://dx.doi.org/" + doi else
+									"";
+
+				outerForm = if (strlen(outerLink) > 0)
+					Cursor(FingerCursor(),
+						Interactive(
+							[
+								MouseClick(\gm -> getUrl(outerLink, "_blank"))
+							],
+								frm
+							)) else frm;
+
+				// return our form into list
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(outerForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else if (tag == "newa") {
+				// new anchor reference tag
+				// mandatory attributes: href, title.
+				hb = getXmlAttribute(attrs, "href", "");
+				tb = getXmlAttribute(attrs, "title", "");
+				// don't forget to add blue color for text!
+				linkForm = TextFragment(makeHtmlLink(hb, tb), acc.htmlStyle.characterStyle);
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(linkForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else {
+				inline = ref true;
+				f : Form = fold(special, Empty(), \res : Form, s : HTMLSpecial -> {
+					switch (s) {
+						HTMLTagHandler(t, fn): {
+							if (startsWith(tag, t)) {
+								defaultFontStyle = getDefaultFontStyle(special);
+								fn(
+									tag,
+									node,
+									\inlineTag -> {
+										inline := inlineTag;
+										// We have to provide caller with one form based on children.
+										// Not an ideal decision but that is much harder to process time based visibility or highlight related style.
+										htmlAcc2Form(
+											renderHtmlChildren(children, availableWidth, stylesheet, acc, HtmlAcc(HTMLStyle(defaultFontStyle, []), makeList(), makeList(), makeList(), 0, 0), special),
+											availableWidth,
+											[TightWidth()]
+										)
+									}
+								)
+							} else {
+								res
+							}
+						}
+						default: res;
+					}
+				});
+				if (f == Empty()) {
+					// println("Unhandled tag: " + tag + ". Consider to add support for this in html2form");
+					renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special)
+				} else {
+					if (^inline) {
+						HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(f, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+					} else {
+						flush = flushHtmlStory(acc);
+						HtmlAcc(HTMLStyle(cs, ps), flush.story, flush.storyStyle, Cons(f, flush.paragraph), acc.listNumber, acc.paragraphNumber);
+					}
+					//renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
+				}
+			}
+		}
+		XmlText(t): {
+			s = ref strReplace(t, "\n\t", "");
+			s := strReplace(^s, "\n", " "); //30613: Replaced "\n" with " ". We do not want to glue sequental words.
+			s := unescapeHtmlEntities(^s);
+
+			r = if (^s != "") {
+				normalizedS = ^s |> toLowerCase |> trim;
+				cs = acc.htmlStyle.characterStyle;
+				textColor = cs |> colorOfText;
+				newElement = if (normalizedS == "&hat;") {
+					Border(
+						0.0, 1.0, 0.0, 1.0,
+						Select(availableWidth, \w -> Graphics([MoveTo(0.0, 0.0), LineTo(w, 0.0), ClosePath()], [Stroke(textColor)]))
+					)
+				} else if (normalizedS == "&overbrace;") {
+					Border(
+						0.0, 1.0, 0.0, 1.0,
+						Select(
+							availableWidth,
+							\w ->
+								Offset(
+									w, 0.0,
+									FixSize(
+										w, 5.0,
+										Rotate(
+											const(90.0),
+											createBracketWithColor(WriteLeftBrace(), w, textColor)
+										)
+									)
+								)
+						)
+					)
+				} else if (normalizedS == "&underbrace;") {
+					Border(
+						0.0, 1.0, 0.0, 1.0,
+						Select(
+							availableWidth,
+							\w ->
+								Offset(
+									w, -3.0,
+									FixSize(
+										w, 5.0,
+										Rotate(
+											const(90.0),
+											createBracketWithColor(WriteRightBrace(), w, textColor)
+										)
+									)
+								)
+						)
+					)
+				} else if (normalizedS == "&leftarrow;") {
+					Select(availableWidth, \l -> {
+						makeLeftArrow(l, 5.0, 1.0, 0.0, [Fill(cs |> colorOfText)])
+					})
+				} else if (normalizedS == "&rightarrow;") {
+					Select(availableWidth, \l -> {
+						makeRightArrow(l, 5.0, 1.0, 0.0, [Fill(cs |> colorOfText)])
+					})
+				} else {
+					TextFragmentExt(^s, acc.htmlStyle.characterStyle, ifArrayPush([], contains(special, HTMLAllowMoreLineBreaks()), TextFragmentMoreLineBreaks()))
+				}
+				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(newElement, acc.paragraph), acc.listNumber, acc.paragraphNumber);
+			} else {
+				acc;
+			}
+			r;
+		}
+	}
+	result;
+}
+
+unescapeHtmlEntities(s : string) -> string {
+	if (strIndexOf(s, "&") != -1) {
+		s1 = strReplace(s, "&nbsp;", "\u00a0");
+		s2 = strReplace(s1, "&amp;", "&#x0026;");
+		s3 = strReplace(s2, "&div;", "&#x00f7;");
+		s4 = strReplace(s3, "&rsquo;", "&#x2019;");
+		s5 = strReplace(s4, "&ldquo;", "&#x201C;");
+		s6 = strReplace(s5, "&rdquo;", "&#x201D;");
+		s7 = strReplace(s6, "&lsquo;", "&#x2018;");
+		s8 = strReplace(s7, "&eacute;", "&#x00E9;");
+		s9 = strReplace(s8, "&quot;", "&#x0022;");
+		s10 = strReplace(s9, "&mdash;", "&#x2014;");
+		s11 = strReplace(s10, "&ndash;", "&#x2013;");
+		s12 = strReplace(s11, "&frac14;", "&#x00BC;");
+		s13 = strReplace(s12, "&cent;", "&#x00A2;");
+		s14 = strReplace(s13, "&not;", "&#x00AC;");
+		s15 = strReplace(s14, "&hellip;", "...");
+		s16 = strReplace(s15, "&sup2;", "&#x00B2;");
+		s17 = strReplace(s16, "&sup3;", "&#x00B3;");
+		s18 = strReplace(s17, "&bull;", "&#x2022;");
+		s19 = strReplace(s18, "&approx;", "&#x2248;");
+		s20 = strReplace(s19, "&shy;", "&#000AD;");
+		s21 = strReplace(s20, "&neq;", "&#2260;");
+
+		sr = s21;
+
+		/*l = strIndexOf(sr, "&");
+		if (l >= 0 && getCharAt(sr, l + 1) != "#") {
+			println(substring(sr, l, 20) + " not supported");
+		}*/
+		sr;
+	} else s;
+}
+
+useGlueInHtml2Form = getUrlParameter("fix30517") == "1";
+
+renderHtmlChildren(children : [XmlNode], availableWidth : Behaviour<double>, stylesheet : Tree<string, HTMLStyle>, orgacc : HtmlAcc, childacc : HtmlAcc, special : [HTMLSpecial]) -> HtmlAcc {
+	r = fold(children, Pair(childacc, false), \acPair : Pair<HtmlAcc, bool>, x -> {
+		ac = acPair.first;
+		prevEndsWithSpace = acPair.second;
+		meStartsWithSpace = nodeSourceStartsWithSpace(x);
+		insertGlue = !prevEndsWithSpace && !meStartsWithSpace; //The same workaround as in Wiki engine.
+		//Paragraph make line breaks after any element except GlueFragments for historical reasons.
+		newAcc = renderHtmlAcc(x, availableWidth, stylesheet, ac, special);
+		if (insertGlue && useGlueInHtml2Form) {
+			accWithGlue = HtmlAcc(newAcc.htmlStyle, newAcc.story, newAcc.storyStyle, Cons(GlueFragments(), newAcc.paragraph), newAcc.listNumber, newAcc.paragraphNumber);
+			Pair(accWithGlue, nodeSourceEndsWithSpace(x))
+		} else {
+			Pair(newAcc, false)
+		}
+	}) |> firstOfPair;
+	HtmlAcc(HTMLStyle(orgacc.htmlStyle.characterStyle, r.htmlStyle.paragraphStyle), r.story, r.storyStyle, r.paragraph, r.listNumber, r.paragraphNumber);
+}
+
+flushHtmlStory(acc : HtmlAcc) -> HtmlAcc {
+	flush = list2array(acc.paragraph);
+	newStory = if (length(flush) == 0) acc.story else Cons(flush, acc.story);
+
+	newStoryStyle = if (length(flush) == 0) acc.storyStyle else Cons(acc.htmlStyle.paragraphStyle, acc.storyStyle);
+
+	HtmlAcc(acc.htmlStyle, newStory, newStoryStyle, makeList(), acc.listNumber, acc.paragraphNumber);
+}
+
+parseCssStyles(cs : HTMLStyle, cssStyles : string) -> HTMLStyle {
+	if (cssStyles != "") {
+		arrStyles = strSplit(cssStyles, ";");
+
+		fold(arrStyles, cs, \s : HTMLStyle, z : string -> {
+			curStyle = map(strSplit(z, ":"), trim);
+			if (curStyle[0] == "font-weight") {
+				tempStyle = filter(s.characterStyle, \elem -> if (elem == FontFamily("Medium")) false else true);
+				if (curStyle[1] == "bold") {
+					HTMLStyle(concat(tempStyle, [FontFamily("Medium")]), s.paragraphStyle)
+				} else {
+					HTMLStyle(tempStyle, s.paragraphStyle)
+				}
+			} else if (curStyle[0] == "font-style") {
+				tempStyle = filter(s.characterStyle, \elem -> if (elem == FontFamily("Italic") || elem == FontFamily("DejaVuSans")) false else true);
+				if (curStyle[1] == "italic") {
+					HTMLStyle(concat(tempStyle, [FontFamily("Italic")]), s.paragraphStyle)
+				} else if (curStyle[1] == "serif") {
+					HTMLStyle(concat(tempStyle, [FontFamily("DejaVuSans")]), s.paragraphStyle)
+				} else {
+					HTMLStyle(tempStyle, s.paragraphStyle);
+				}
+			} else if (curStyle[0] == "background" || curStyle[0] == "background-color") {
+				tempStyle = fold(s.characterStyle, [], \i, elem ->
+					switch(elem : CharacterStyle) {
+						BackgroundFill(__) : i;
+						default: concat(i, [elem]);
+					}
+				);
+				if (startsWith(curStyle[1], "#")) {
+					bgColor = parseHex(substring(curStyle[1], 1, 6));
+					HTMLStyle(concat(tempStyle, [BackgroundFill(bgColor)]), s.paragraphStyle)
+				} else if (startsWith(curStyle[1], "rgb(")) {
+					temp = map(strSplit(substring(curStyle[1], 4, strlen(curStyle[1])-4), ","), trim);
+					bgColor = s2i(temp[0])*65536 + s2i(temp[1])*256 + s2i(temp[2]);
+					HTMLStyle(concat(tempStyle, [BackgroundFill(bgColor)]), s.paragraphStyle)
+				} else
+					HTMLStyle(tempStyle, s.paragraphStyle)
+			} else {
+				// if (curStyle[0] != "")
+					// println("Unsupported CSS style: " + curStyle[0] + ". Consider to add support in html2form");
+				s;
+			}
+		});
+	} else
+		cs;
+}

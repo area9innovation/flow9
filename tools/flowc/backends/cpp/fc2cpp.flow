@@ -1,0 +1,64 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/cpp/fc2cpp_compile;
+import tools/flowc/backends/cpp/fc2cpp_assemble;
+import tools/flowc/fctype;
+import tools/flowc/incremental/fiprogram;
+
+export {
+	fc2cpp(program : FiProgram, cfg : FcCppConfig, callback : () -> void) -> void;
+}
+
+fc2cpp(program : FiProgram, cfg : FcCppConfig, callback : () -> void) -> void {
+	fcVerbose(cfg, 0, "Making C++ '" + cfg.outputfile + "'...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	moduleCount = i2s(length(decls));
+	
+	strings = fiCppCollectStrings(decls);
+
+	header = fiGetCppHeader(cfg, program);
+	forwards = fiCollectCppForwards(cfg, program, header);
+	structs = fiCollectCppStructs(cfg, program, forwards);
+	constructors = fiCollectCppConstructors(cfg, program, structs);
+	strings2 = 
+		fiAddCppRuntime2(cfg, program, constructors)
+		|> \prev1 -> fiAddCppRegisterStructCreators(cfg, program, prev1)
+		|> \prev2 -> fiCppAddStrings(strings, prev2);
+
+	modulesCode = foldi(decls, strings2, \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 0, "[" + i2s(i+1) + "/" + moduleCount + "] Generating C++ code for module " + p.first);
+		
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				headers = Cons("\n", fold(p.second, acc, \l, v -> {
+					tl = fiCppCompileToHeader(cfg, program, v);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				}));
+				
+				r = fold(p.second, headers, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiCppCompileToplevel(cfg, program, v, strings, "\t");
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	fiAssembleCppFile(cfg, modulesCode);
+
+	// fiCppPrintNativesSignatures(cfg, program);
+	
+	fcVerbose(cfg, 0, "Making C++ '" + cfg.outputfile + "' finished.");
+
+	callback();
+}

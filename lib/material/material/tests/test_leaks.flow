@@ -1,0 +1,202 @@
+import material/material;
+import material/material_dialog;
+import material/internal/material_icons;
+import material/material2tropic;
+import material/material_manager;
+
+// Run with
+// 	flowcpp --debug material/tests/test_leaks.flow
+// type c in the debugger, and behaviour leaks are printed.
+
+Painting(name : string, artist : string, imageurl : string);
+
+
+main() {
+	if (isUrlParameterTrue("split")) {
+		out = getFileContent("out.txt");
+		leakstacks = strSplit(out, "\"Leak #");
+
+		iteri(leakstacks, \i, stack -> {
+			lines = strSplit(stack, "\n");
+			setFileContent("out-" + i2s(i) + ".txt", stack);
+			{}
+		});
+		quit(0);
+	} else {
+		manager = makeMaterialManager([]);
+
+		noleaks = [
+			// OK: Does not leak
+			// 0
+			MCenterY(MParagraph("Try to stretch this long long text that goes on forever", [MTitle(), MWidth(400.)])),
+			// 1
+			MTextInput(make("search"), [MWidth(200.), MLabel("Search?")], []),
+			// 2
+			MIconButton("search", nop, [], []),
+			// 3
+			MTextButton("Hello", nop, [], []),
+			// 4
+			TCase([TFixed(100.0, 100.0), TFixed(0.0, 0.0)], [TText("Hello", []), TText("Hello world", [])]),
+			// 5
+			MSlider(make(0.0), []),
+			// 6
+			MEllipsis(MParagraph("Try to stretch this long long text that goes on forever", [MTitle(), MWidth(400.)]), TFixed(40.0, 40.0), [MCaption(), MShowTooltip(const(true))]), // 27 leaks!
+			// 7
+			MEllipsis(MText("Hello", []), TFixed(40.0, 40.0), [MCaption(), MShowTooltip(const(true))]),
+			// 8
+			MTextButton("BUTTON", nop, [MButtonRaised()], []),
+			// 9
+			MGridCenterX(TText("Text", [])),
+			// 10
+			MEllipsis(MCenter(MText("Hello this is a very asdfjkha slkdfh aslkjdfh alkjshdfljka hsdfljkhaljksfdasdflong text", [])), TFillMax(520.0, 25.0), [MCaption(), MShowTooltip(const(true))]),
+			// 11
+			{
+				painting = Painting(
+					"The Piano Lesson",
+					"Henri Matisse",
+					"http://www.henrimatisse.org/images/gallery/the-piano-lesson.jpg"
+				);
+				content = if (painting.imageurl == "") MIcon("person", [MIconSize(36.0)]) else TPicture(painting.imageurl, []);
+				cellstyle = [MGridListHeader()];
+				MGridList([
+					MGridListCell(content, if (painting.artist != "") [painting.name, painting.artist] else [painting.name], cellstyle)
+				] |> const, []);
+			},
+		];
+
+		doesleak = [
+			// 0
+			TEmpty(),
+		];
+
+		leaks = if (true) noleaks else doesleak;
+
+		test = getUrlParameterDef("test", "");
+
+		show = getUrlParameterDef("show", "11");
+
+		if (test == "" && show != "") {
+			tm  = leaks[s2i(show)];
+			mrender(manager, true, tm);
+
+			tr = optimizeTropic(material2tropic(manager, tm));
+			println(tropic2string(tr));
+
+			{}
+		} else {
+			start = if (test == "") 0 else s2i(test);
+			end = if (test == "") length(leaks) else s2i(test) + 1;
+
+			incTest(manager, leaks, start, end);
+		}
+	}
+}
+
+incTest(manager : MaterialManager, tests : [Material], start : int, n : int) -> void {
+	debugBehaviours("Test", "All", \-> {
+		doIncTest(manager, tests, start, n);
+	});
+}
+
+doIncTest(manager : MaterialManager, tests : [Material], cnt : int, n : int) -> void {
+	if (cnt < n) {
+		us = ref nop;
+		tag = "Testing";
+		debugBehaviours(tag, "Leak #" + i2s(cnt), \ -> {
+			us := mrender(manager, true, tests[cnt]);
+		});
+
+		timer(100, \-> {
+			// Now, clear it out
+			(^us)();
+			timer(10, gc);
+			timer(50, \ -> {
+				cs = getSuspectCallStacks(tag);
+				if (cs == []) {
+					println(tag + " has no leaks");
+					doIncTest(manager, tests, cnt + 1, n)
+				} else {
+					println(tag + " has " + i2s(length(cs)) + " leaks. Reducing");
+					tr = optimizeTropic(material2tropic(manager, tests[cnt]));
+					// println(tropic2string(tr));
+
+					reduceTropicLeak(manager, tr, \ -> {
+						doIncTest(manager, tests, cnt + 1, n)
+					});
+				}
+			})
+		});
+	} else {
+		examineSuspects("Test");
+		quit(0);
+	}
+}
+
+reduceTropicLeak(manager: MaterialManager, t : Tropic, onDone : () -> void) -> void {
+	us = ref nop;
+
+	tag = "reduce";
+
+	clearSuspects(tag);
+	debugBehaviours(tag, "", \ -> {
+		us := mrender(manager, true, t);
+	});
+
+	timer(100, \ -> {
+		(^us)();
+		timer(10, gc);
+		timer(50, \ -> {
+			cs = getSuspectCallStacks(tag);
+			if (cs == []) onDone()
+			else {
+				println("Leaks: " + i2s(length(cs)));
+				println(tropic2string(t));
+				reduced = minimizeTropic(t);
+
+				if (reduced == []) {
+					println("Could not reduce further at " + i2s(length(cs)) + " leaks for:");
+					println(tropic2string(t));
+					onDone();
+				} else {
+					applyAllSync(map(reduced, \r -> {
+						\ok -> reduceTropicLeak(manager, r, ok)
+					}), onDone);
+				}
+			}
+		})
+	});
+}
+
+minimizeTropic(tr : Tropic) -> [Tropic] {
+	switch (tr : Tropic) {
+		TIf(b, t, e): [t, e];
+		TDispose(d, t): [t];
+		TConstruct(c, t): [t];
+		TInteractive(i, t): [t];
+		TScale(s, t): [t];
+		TRotate(r, t): [t];
+		TTranslate(o, t): [t];
+		TAlpha(a, t): [t];
+		TTag(tag, t): [t];
+		TAccess(acc, t): [t];
+		TCols2(t1, t2): [t1, t2];
+		TLines2(t1, t2): [t1, t2];
+		TGroup2(t1, t2): [t1, t2];
+		TMinimumGroup2(t1, t2): [t1, t2];
+		TSubtractGroup2(t1, t2): [t1, t2];
+		TAvailable(b, m): [b, m];
+		TBorder(l, to, b, r, t): [t];
+		TCase(sz, ts): concat(sz, ts);
+		TCropSize(sz, ts): [sz, ts];
+		TEmpty(): [];
+		TText(t, s): [];
+		TGraphics(t, s): [];
+		TPicture(u, s): [];
+		TFillX(): [];
+		TFillY(): [];
+		default: {
+			println("TODO: Not handled in minimize " + tr.structname);
+			[];
+		}
+	}
+}

@@ -1,0 +1,270 @@
+import lingo/peg;
+import set;
+import lingo/compiler/syntaxtree_types;
+
+export {
+	// Changes a grammar to record rule activation as ASTs only for syntax highlighting
+	transformGrammar(g : Grammar, printTemplate : bool) -> Grammar;
+
+}
+
+transformGrammar(g : Grammar, printTemplate : bool) -> Grammar {
+	Grammar(map(g.productions, \ p -> transformBindingsInProduction(p, printTemplate)));
+}
+
+transformBindingsInProduction(p : Production, printTemplate : bool) -> Production {
+	seqs = map(p.choices, transformSeq);
+	nonTrivial = filter(seqs, \s -> {
+		// How many are trivial?
+		!(length(s.seq) == 1 && isRuleParsing(s.seq[0]))
+	});
+	single = length(nonTrivial) == 1;
+	Production(p.name, p.caching, p.type, mapi(seqs, \i, c -> {
+		transformBindingsInChoice(p.name, c, i, printTemplate, single)
+	}));
+}
+
+transformBindingsInChoice(rulename : string, c : Seq, choice : int, printTemplate : bool, single : bool) -> Seq {
+	// First, recursively strip away bindings and actions
+	r = c.seq;
+
+	// Is this a trivial sequence with just a single rule? Then we do not need actions
+	trivialChoice = length(r) == 1 && isRuleParsing(r[0]);
+
+	// Wrap top-level constructs with new bindings
+	wb = fold(r, Pair([], 0), \acc, par : Parsing -> {
+		if (producesResult(par)) {
+			p2 = BindResult("n" + i2s(acc.second), par);
+			Pair(arrayPush(acc.first, p2), acc.second + 1);
+		} else {
+			Pair(arrayPush(acc.first, par), acc.second);
+		}
+	});
+
+	if (trivialChoice) {
+		// Notice even if this is a trivial rule, we still tag the rule with an
+		// id, so that later Lingo optimizations can transform
+		//   foo =   a:n b
+		//         | a:n
+		// into
+		//   foo = a:n (b |)
+		// giving an exponential speedup
+		Seq(concat3([BindResult("s", ActionIndex())], wb.first, [Action2(ActionVar("n0"))]));
+//		Seq(wb.first)
+	} else {
+		bindingsToArrayify : Set<string> = fold(wb.first, makeSet(), \acc, par : Parsing -> {
+			switch (par) {
+				BindResult(nam, pa): {
+					// We might have a value. Should we wrap it with array?
+					if (producesSingle(pa)) insertSet(acc, nam) else acc;
+				}
+				default: acc;
+			}
+		});
+
+		// println(rulename + ":");
+		// println(set2array(bindingsToArrayify));
+		args = generate(0, wb.second, \i -> {
+			name = "n" + i2s(i);
+			a = ActionVar(name);
+			if (containsSet(bindingsToArrayify, name)) {
+				ActionCall("array", [a])
+			} else {
+				a;
+			}
+		});
+
+		if (printTemplate) {
+			pattern1 = if (single) rulename else rulename + "." + i2s(choice);
+
+			pattern2 = strGlue(generate(0, wb.second, \i -> {
+				name = "n" + i2s(i);
+				if (containsSet(bindingsToArrayify, name)) {
+					"n" + i2s(i);
+				} else {
+					"a" + i2s(i);
+				}
+			}), " ");
+
+
+			pattern4 = strGlue(fold(wb.first, [], \acc, par : Parsing -> {
+				switch (par) {
+					BindResult(nam, pa): {
+						arrayPush(acc, parsingName(pa));
+					}
+					default: acc;
+				}
+			}), " ");
+
+			pattern3 = pattern1 + "(" + pattern4 + ")";
+			println( pattern3 + " -> " + pattern2 + ";");
+		}
+
+		// Construct an action that captures all of the stuff
+		action =
+			Action2(ActionCall("SyntaxTree", 
+				[
+					ActionConstantString(rulename),
+					ActionConstantInt(choice),
+					ActionVar("s"),
+					ActionVar("e"),
+					ActionCall("array", args)
+				],
+			));
+		Seq(
+			concat3([BindResult("s", ActionIndex())], wb.first, [BindResult("e", ActionIndex()), action])
+		);
+	}
+}
+
+transformSeq(s : Seq) -> Seq {
+	Seq(fold(s.seq, [], \acc : [Parsing], p -> {
+		r = transformBindingsInParsing(p);
+		if (r != Epsilon()) {
+			arrayPush(acc, r);
+		} else acc;
+	}));
+}
+
+// Strips away all actions and bindings
+transformBindingsInParsing(par : Parsing) -> Parsing {
+	switch (par : Parsing) {
+		LingoValue(v): cast(par : LingoValue -> Parsing);
+		Star(p): { Star(transformBindingsInParsing(p)) }
+		Plus(p): { Plus(transformBindingsInParsing(p)); }
+		Opt(p): { Opt(transformBindingsInParsing(p)); }
+		Negation(p): { Negation(transformBindingsInParsing(p)); }
+		CutUp(p): { CutUp(transformBindingsInParsing(p)); }
+		CutDown(p): { CutDown(transformBindingsInParsing(p)); }
+
+		Rule(n): par;
+		iRule(n): par;
+		Term(s): par;
+		CharRange(l, h): par;
+		Epsilon(): par;
+		Action(fn): Epsilon();
+		Action2(e): Epsilon();
+		ActionIndex(): Epsilon();
+
+		BindResult(n, p): transformBindingsInParsing(p);
+		BindMatched(n, p): transformBindingsInParsing(p);
+		Seq(s): {
+			Seq(map(s, \ss -> {
+				transformBindingsInParsing(ss)
+			}));
+		}
+		Choices(s): {
+			Choices(map(s, \ss -> {
+				transformBindingsInParsing(ss)
+			}));
+		}
+	}
+}
+
+// Does this parsing construct return a value?
+producesResult(par : Parsing) -> bool {
+	switch (par) {
+		Star(p): producesResult(p);
+		Plus(p): producesResult(p);
+		Opt(p): producesResult(p);
+		CutUp(p): producesResult(p);
+		CutDown(p): producesResult(p);
+		Negation(p): false;
+
+		Rule(n): true;
+		iRule(n): true;
+
+		Seq(s): producesResult(lastElement(s, Epsilon()));
+		Choices(s): exists(s, producesResult);
+
+		LingoValue(v): false;
+		Term(s): false;
+		CharRange(l, h): false;
+		Epsilon(): false;
+		Action(fn): false;
+		Action2(e): false;
+		ActionIndex(): false;
+		BindResult(n, p): false;
+		BindMatched(n, p): false;
+	}
+}
+
+// Does this produce a single value, rather than 0 or an array of values?
+producesSingle(par : Parsing) -> bool {
+	switch (par) {
+		Rule(n): true;
+		iRule(n): true;
+		Seq(s): true;
+		Choices(s): true;
+
+		CutUp(p): producesSingle(p);
+		CutDown(p): producesSingle(p);
+
+		Star(p): false;
+		Plus(p): false;
+		Opt(p): false;
+		Negation(p): false;
+
+		LingoValue(v): false;
+		Term(s): false;
+		CharRange(l, h): false;
+		Epsilon(): false;
+		Action(fn): false;
+		Action2(e): false;
+		ActionIndex(): false;
+		BindResult(n, p): false;
+		BindMatched(n, p): false;
+	}
+}
+
+isRuleParsing(par : Parsing) -> bool {
+	switch (par) {
+		Rule(n): true;
+		iRule(n): true;
+		CutUp(p): isRuleParsing(p);
+		CutDown(p): isRuleParsing(p);
+
+		Seq(s): false;
+		Choices(s): false;
+		Star(p): false;
+		Plus(p): false;
+		Opt(p): false;
+		Negation(p): false;
+		LingoValue(v): false;
+		Term(s): false;
+		CharRange(l, h): false;
+		Epsilon(): false;
+		Action(fn): false;
+		Action2(e): false;
+		ActionIndex(): false;
+		BindResult(n, p): false;
+		BindMatched(n, p): false;
+	}
+}
+
+parsingName(par : Parsing) -> string {
+	switch (par) {
+		Star(p): parsingName(p);
+		Plus(p): parsingName(p);
+		Opt(p): parsingName(p);
+		CutUp(p): parsingName(p);
+		CutDown(p): parsingName(p);
+		Negation(p): "";
+
+		Rule(n): n;
+		iRule(n): "r" + i2s(n);
+
+		Seq(s): parsingName(lastElement(s, Epsilon()));
+		Choices(s): parsingName(lastElement(s, Epsilon()));
+
+		LingoValue(v): "";
+		Term(s): "";
+		CharRange(l, h): "";
+		Epsilon(): "";
+		Action(fn): "";
+		Action2(e): "";
+		ActionIndex(): "";
+		BindResult(n, p): "";
+		BindMatched(n, p): "";
+	}
+}

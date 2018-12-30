@@ -1,0 +1,515 @@
+import utctime;
+import lingo/linecolumn;
+import tools/common/pathutil;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fiprettyprint;
+import array;
+
+export {
+	// If t is a typename, we resolve it to FiStruct or FiUnion
+	resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion;
+
+	// Get type of the FiExp
+	fiExpType(expr : FiExp) -> FiType;
+
+	// Analog of union2structs from type_helpers
+	fiUnion2structs(prog : FiProgram, union : FiTypeUnion) -> [FiTypeStruct];
+
+	// Analog of typename2structs from type_helpers
+	fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct];
+
+	// Analog of union2unions from type_helpers
+	fiUnion2unions(prog : FiProgram, union : FiTypeUnion) -> [FiTypeUnion];
+
+	fiNames2unions(prog : FiProgram, struct2unions : Tree<string, [string]>, names : [string], open : bool) -> [string];
+
+	fiStruct2unions(prog : FiProgram) -> Tree<string, [string]>;
+
+	fiUnion2typenames(prog : FiProgram, name : string) -> [FiTypeName];
+
+	// Analog of collectTypars
+	fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<string>;
+
+	// Analog of fcNativeHasFallback
+	fiNativeHasFallback(nat : FiNativeDec) -> bool;
+
+	isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool;
+	getFiTypeName(t : FiType) -> string;
+
+	// This function compares two types structurally, and in places, where
+	// there is a FiTypeParameter(name), it matches name with the 
+	// corresponding type in the second type (pattern) 
+	fiMatchTypars(type : FiType, pattern : FiType, acc : Tree<string, FiType>) -> Tree<string, FiType>;
+
+	// The same as fiMatchTypars, but matching goes through the array of FiTypes
+	fiMatchTyparsArr(tps : [FiType], ptns : [FiType], acc : Tree<string, FiType>) -> Tree<string, FiType>;
+
+	// Analog of printFcError
+	printFiError(prog : FiProgram, error : FcError) -> void;
+
+	fiDeclarationArgNames(decl : FiDeclaration) -> [string];
+
+	// whether type has no parameters
+	fiTypeFullyDefined(type: FiType) -> bool;
+
+	// Gets all unbound parameters from type 
+	fiTypeGetUnboundParameters(type : FiType) -> Set<string>;
+
+	// Gets all unbound type parameters from exp 
+	fiTypeGetUnboundParametersExp(ex : FiExp) -> Set<string>;
+}
+
+fiDeclarationArgNames(decl) {
+	switch (decl) {
+		FiGlobalVar(__, __, __, __, __) : [];
+		FiNativeDec(__, __, type, __, fallback, __, __) : {
+			switch(fallback) {
+				FiLambda(args, __, __, __): map(args, \argt -> argt.name);
+				FiVoid(__) : [];
+				default : [];
+			}
+		}
+		FiFunctionDec(__, lambda, __, __, __) : map(lambda.args, \argt -> argt.name);
+	}
+}
+
+fiExpType(expr) {
+	switch(expr) {
+		FiLambda(__, __, type, __) : type;
+		FiCall(__, __, type, __) : type;
+		FiVar(__, type, __) : type;
+		FiLet(__, __, __, __, type2, __) : type2;
+		FiIf(__, __, __, type, __) : type;
+		FiSwitch(__, __, __, type, __) : type;
+		FiCast(__, __, __, type, __) : type;
+		FiSeq(__, type, __) : type;
+		FiCallPrim(__, __, type, __) : type;
+		FiRequire(__, __, type, __) : type;
+		FiUnsafe(__, __, type, __) : type;
+		FiVoid(__) : FiTypeVoid();
+		FiDouble(__, __) : FiTypeDouble();
+		FiInt(__, __) : FiTypeInt();
+		FiString(__, __) : FiTypeString();
+		FiBool(__, __) : FiTypeBool();
+	}
+}
+
+resolveFiTypeName(names : FiGlobalNames, t : FiType) -> FiStructOrUnion {
+	switch (t) {
+		FiTypeName(n, tps): {
+			ms = lookupTree(names.structs, n);
+			switch (ms) {
+				None(): {
+					mu = lookupTree(names.unions, n);
+					switch (mu) {
+						None(): {
+							fcPrintln("Unknown type name " + n);
+							dummyFiTypeStruct;
+						}
+						Some(u): {
+							FiTypeUnion(n, tps, u.typenames, u.start);
+						}
+					}
+				}
+				Some(s): {
+					FiTypeStruct(n, tps, s.args, s.start);
+				}
+			}
+		}
+		default: dummyFiTypeStruct;
+	}
+}
+
+fiUnion2structs(prog : FiProgram, union : FiTypeUnion) -> [FiTypeStruct] {
+	uniq(concatA(map(union.typenames, \n -> fiTypename2structs(prog, n))))
+}
+
+fiTypename2structs(prog : FiProgram, typename : FiTypeName) -> [FiTypeStruct] {
+	rt = resolveFiTypeName(prog.names, typename);
+	switch (rt) {
+		FiTypeStruct(__, __, __, __): [rt];
+		FiTypeUnion(__, __, __, __): fiUnion2structs(prog, rt);
+	}
+}
+
+fiUnion2unions(prog : FiProgram, union : FiTypeUnion) -> [FiTypeUnion] {
+	concatA(map(union.typenames, \typename : FiTypeName -> {
+		rt = resolveFiTypeName(prog.names, typename);
+		switch (rt) {
+			FiTypeUnion(__, __, __, __): arrayPush(fiUnion2unions(prog, rt), rt);
+			default: []
+		}
+	}))
+}
+
+fiUnion2typenames(prog : FiProgram, name : string) -> [FiTypeName] {
+	munion = lookupTree(prog.names.unions, name);
+	switch (munion) {
+		None(): [];
+		Some(union): {
+			list2array(fold(union.typenames, Pair(makeList(), makeSet()), \acc : Pair<List<FiTypeName>, Set<string>>, n -> {
+				batch = if (containsKeyTree(prog.names.unions, n.name)) {
+					fiUnion2typenames(prog, n.name)
+				} else {
+					[n]
+				}
+				fold(batch, acc, \acc2, tn -> {
+					if (containsSet(acc2.second, tn.name)) acc2
+					else Pair(Cons(tn, acc2.first), insertSet(acc2.second, tn.name))
+				})
+			}).first)
+		}
+	}
+}
+
+fiNames2unions(prog : FiProgram, struct2unions : Tree<string, [string]>, names : [string], open : bool) -> [string] {
+	if (names == []) [] else {
+		unions : [Set<string>] = map(names, \n -> buildSet(getTreeArrayValue(struct2unions, n)));
+		shared = fold(tail(unions), unions[0], \acc : Set<string>, c -> intersectSets(acc, c));
+		candidates = set2array(shared);
+		if (open) {
+			candidates
+		} else {
+			filter(candidates, 
+				\c -> {
+					structs = fiUnion2typenames(prog, c);
+					length(structs) == length(names)
+				}
+			)
+		}
+	}
+}
+
+fiStruct2unions(prog : FiProgram) -> Tree<string, [string]> {
+	foldTree(
+		prog.names.unions,
+		makeTree(),
+		\uname, union, acc -> {
+			fold(
+				union.typenames,
+				acc,
+				\a, typename -> {
+					switch (resolveFiTypeName(prog.names, typename)) {
+						FiTypeStruct(sname, __, __, __) : {
+							switch (lookupTree(a, sname)) {
+								Some(arr) : setTree(a, sname, concat(arr, [uname]));
+								None()    : setTree(a, sname, [uname]);
+							} 
+						}
+						default : a;
+					}
+				}
+			)
+		}
+	)
+}
+
+fiCollectTypars(prog : FiProgram, type : FiType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		FiTypeVoid():       acc;
+		FiTypeBool():       acc;
+		FiTypeInt():        acc;
+		FiTypeDouble():     acc;
+		FiTypeString():     acc;
+		FiTypeFlow():       acc;
+		FiTypeNative():     acc;
+		FiTypeParameter(n): insertSet(acc, n);
+		FiTypeRef(rt):      fiCollectTypars(prog, rt, acc);
+		FiTypeArray(at):    fiCollectTypars(prog, at, acc);
+		FiTypeName(id, tp): fold(tp, acc, \acc2, ttp -> fiCollectTypars(prog, ttp, acc2));
+		FiTypeFunction(args, rt): {
+			acc3 = fold(args, acc, \acc2, arg -> fiCollectTypars(prog, arg.type, acc2));
+			fiCollectTypars(prog, rt, acc3);
+		}
+	}
+}
+
+fiNativeHasFallback(nat : FiNativeDec) -> bool {
+	switch (nat.fallbackLambda) {
+		FiLambda(__, __, __, __) : true;
+		FiVoid(__) : false;
+		default : {
+			fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, nat.fallbackLambda));
+			false
+		}
+	}
+}
+
+isSameFiExp(e1 : FiExp, e2 : FiExp) -> bool {
+	switch (e1) {
+		FiVoid(__):       switch (e2) { FiVoid(__): true; default: false; }
+		FiBool(b1, __):   switch (e2) { FiBool(b2, __): b1 == b2; default: false; }
+		FiInt(i1, __):    switch (e2) { FiInt(i2, __): i1 == i2; default: false; }
+		FiDouble(d1, __): switch (e2) { FiDouble(d2, __): d1 == d2; default: false; }
+		FiString(s1, __): switch (e2) { FiString(s2, __): s1 == s2; default: false; }
+		FiVar(n1, __, __):    switch (e2) { FiVar(n2, __, __): n1 == n2; default: false; }
+
+		FiCast(ce1, f1, t1, __, __): 
+			switch (e2) { 
+				FiCast(ce2, f2, t2, __, __): isSameFiExp(ce1, ce2) && f1 == f2 && t1 == t2;
+				default: false
+			}
+		FiIf(c1, t1, el1, __, __): 
+			switch (e2) {
+				FiIf(c2, t2, el2, __, __): isSameFiExps([c1, t1, el1], [c2, t2, el2]);
+				default: false;
+			}
+		FiCall(f1, a1, __, __): 
+			switch (e2) {
+				FiCall(f2, a2, __, __): isSameFiExp(f1, f2) && isSameFiExps(a1, a2);
+				default: false;
+			}
+		FiLet(n1, t1, ee1, b1, __, __): 
+			switch (e2) {
+				FiLet(n2, t2, ee2, b2, __, __): n1 == n2 && isSameFiExps([ee1, b1], [ee2, b2]);
+				default: false;
+			}
+		FiCallPrim(o1, es1, __, __): 
+			switch (e2) {
+				FiCallPrim(o2, es2, __, __): o1 == o2 && isSameFiExps(es1, es2);
+				default: false;
+			}
+		FiSeq(es1, __, __): 
+			switch (e2) {
+				FiSeq(es2, __, __): isSameFiExps(es1, es2);
+				default: false;
+			}
+		FiLambda(as1, b1, __, __): 
+			switch (e2) {
+				FiLambda(as2, b2, __, __): isSameFiExp(b1, b2)
+					&& length(as1) == length(as2) 
+					&& foldi(as1, true,
+						\i, acc, a1 -> 
+							acc && a1.name == as2[i].name && a1.type == as2[i].type
+					);
+				default: false;
+			}
+		FiSwitch(x1, t1, cs1, __, __): 
+			switch (e2) {
+				FiSwitch(x2, t2, cs2, __, __): {
+					isSameFiExp(x1, x2)
+					&& t1 == t2
+					&& length(cs1) == length(cs2)
+					&& foldi(cs1, true, 
+						\i, acc, c1 -> 
+							acc && c1.struct == cs2[i].struct
+							&& c1.argNames == cs2[i].argNames
+							&& isSameFiExp(c1.body, cs2[i].body)
+					)
+				}
+				default: false;
+			}
+		FiRequire(f1, ex1, __, __): 
+			switch (e2) {
+				FiRequire(f2, ex2, __, __): f1 == f2 && isSameFiExp(ex1, ex2);
+				default: false;
+			}
+		FiUnsafe(n1, ex1, __, __): 
+			switch (e2) {
+				FiUnsafe(n2, ex2, __, __): n1 == n2 && isSameFiExp(ex1, ex2);
+				default: false;
+			}
+	}
+}
+
+isSameFiExps(es1 : [FiExp], es2 : [FiExp]) -> bool {
+	length(es1) == length(es2) && forall(mapi(es1, \i, e1 -> isSameFiExp(e1, es2[i])), idfn)
+}
+
+// If this type is a union in some name or shape, give the name of it
+getFiTypeName(t : FiType) -> string {
+	 switch (t) {
+		FiTypeName(name, __): name;
+		default: "";
+	}
+}
+
+fiMatchTypars(type : FiType, pattern : FiType, acc : Tree<string, FiType>) -> Tree<string, FiType> {
+	switch (type) {
+		FiTypeArray(t):
+			switch (pattern) {
+				FiTypeArray(tp): fiMatchTypars(t, tp, acc);
+				default: acc;
+			}
+		FiTypeFunction(at, rt):
+			switch (pattern) {
+				FiTypeFunction(atp, rtp): 
+					fiMatchTypars(rt, rtp, 
+						fiMatchTyparsArr(
+							map(at, \a -> a.type), 
+							map(atp, \a -> a.type), 
+							acc)
+					);
+				default: acc;
+			}
+		FiTypeRef(t): 
+			switch (pattern) {
+				FiTypeArray(tp): fiMatchTypars(t, tp, acc);
+				default: acc;
+			}
+		FiTypeParameter(s): setTree(acc, s, pattern);
+		FiTypeBool():    acc; 
+		FiTypeInt():     acc;
+		FiTypeDouble():  acc; 
+		FiTypeString():  acc; 
+		FiTypeFlow():    acc;
+		FiTypeVoid():    acc;
+		FiTypeNative():  acc;
+		FiTypeName(__, ts): 
+			switch (pattern) {
+				FiTypeName(__, tps): fiMatchTyparsArr(ts, tps, acc);
+				default: acc;
+			}
+	}
+}
+
+fiMatchTyparsArr(tps : [FiType], ptns : [FiType], acc : Tree<string, FiType>) -> Tree<string, FiType> {
+	fold(
+		zipWith(tps, ptns, \t, p -> Pair(t, p)), 
+		acc,
+		\a, p -> fiMatchTypars(p.first, p.second, a)
+	)
+}
+
+lineResolvers : ref Tree<string, LineResolver> = ref makeTree();
+
+printFiError(prog : FiProgram, error : FcError) -> void {
+	un = uniq(error.positions);
+
+	iteri(un, \i : int, p : FcPosition -> {
+		fileinfo = getFiFileInfo(p.file, prog.config);
+
+		mresolver = lookupTree(^lineResolvers, p.file);
+		resolver = switch (mresolver) {
+			None(): {
+				module = lookupTree(prog.modules, p.file);
+				res = switch (module) {
+					None(): {
+						code = getFileContent(fileinfo.fullpath);
+						makeLineResolver(code);
+					}
+					Some(m): {
+						code = getFileContent(m.fileinfo.fullpath);
+						makeLineResolver(code);
+					}
+				}
+				setTree(^lineResolvers, p.file, res);
+				res;
+			}
+			Some(r): r;
+		}
+
+		sline = findLine(resolver, p.start);
+
+		err = (if (i == 0) ": " + error.message else ": and here");
+
+		if (fileinfo.flowfile == "") {
+			fcPrintln(error.message);
+		} else {
+			fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
+		}
+
+	});
+}
+
+getFiFileInfo(file : string, config : CompilerConfig) -> FiFileInfo {
+	workingDir = getConfigParameterDef(config.config, "working-dir", "");
+	realfile = findFlowPath(file, true, config.includes, workingDir);
+	content = getFileContent(realfile);
+
+	FiFileInfo(
+		trimFlowfile(file, config.includes, workingDir),
+		fileModified(realfile),
+		realfile,
+		md5(content),
+		fileSize(realfile)
+	);
+}
+
+fiTypeFullyDefined(type: FiType) -> bool {
+    switch (type) {
+        FiTypeArray(t): fiTypeFullyDefined(t);
+		FiTypeFunction(args, returnType): 
+            fiTypeFullyDefined(returnType) && 
+                forall(args, \a -> fiTypeFullyDefined(a.type));
+		FiTypeRef(t): fiTypeFullyDefined(t);
+		FiTypeParameter(n): false;
+		FiTypeBool(): true;
+		FiTypeInt(): true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+		FiTypeFlow(): true;
+		FiTypeVoid(): true;
+		FiTypeNative(): true;
+		FiTypeName(name, typeparameters): 
+            forall(typeparameters, fiTypeFullyDefined);
+    }
+}
+
+fiTypeGetUnboundParameters(type : FiType) -> Set<string> {
+	switch (type) {
+        FiTypeArray(t): fiTypeGetUnboundParameters(t);
+		FiTypeFunction(args, returnType): 
+            mergeSetsA(arrayPush( 
+				map(args, \a -> fiTypeGetUnboundParameters(a.type)),
+				fiTypeGetUnboundParameters(returnType)
+			));
+		FiTypeRef(t): fiTypeGetUnboundParameters(t);
+		FiTypeParameter(n): makeSet1(n);
+		FiTypeBool(): makeSet();
+		FiTypeInt(): makeSet();
+		FiTypeDouble(): makeSet();
+		FiTypeString(): makeSet();
+		FiTypeFlow(): makeSet();
+		FiTypeVoid(): makeSet();
+		FiTypeNative(): makeSet();
+		FiTypeName(name, typeparameters): 
+            mergeSetsA(map(typeparameters, fiTypeGetUnboundParameters));
+	}
+}
+
+fiTypeGetUnboundParametersExp(ex : FiExp) -> Set<string> {
+	switch (ex) {
+		FiVoid(__):       makeSet();
+		FiBool(b1, __):   makeSet();
+		FiInt(i1, __):    makeSet();
+		FiDouble(d1, __): makeSet();
+		FiString(s1, __): makeSet();
+		FiVar(__, type, __): fiTypeGetUnboundParameters(type);
+		FiCast(e, tFrom, tTo, type, __):
+			mergeSetsA([fiTypeGetUnboundParametersExp(e), fiTypeGetUnboundParameters(tFrom),
+				fiTypeGetUnboundParameters(tTo), fiTypeGetUnboundParameters(type)]);
+		FiIf(e1, e2, e3, type, __): 
+			mergeSetsA([fiTypeGetUnboundParametersExp(e1), fiTypeGetUnboundParametersExp(e2),
+				fiTypeGetUnboundParametersExp(e3), fiTypeGetUnboundParameters(type)]);			
+		FiCall(f, args, type, __): 
+			mergeSetsA(arrayPush(map(args, fiTypeGetUnboundParametersExp),
+				fiTypeGetUnboundParameters(type)));
+		FiLet(__, type, e1, e2, type2, __): 
+			mergeSetsA([fiTypeGetUnboundParameters(type), fiTypeGetUnboundParametersExp(e1),
+				fiTypeGetUnboundParametersExp(e2), fiTypeGetUnboundParameters(type2)]);
+		FiCallPrim(__, exps, type, __): 
+			mergeSetsA(arrayPush(map(exps, fiTypeGetUnboundParametersExp),
+				fiTypeGetUnboundParameters(type)));
+		FiSeq(es, type, __): 
+			mergeSetsA(arrayPush(map(es, fiTypeGetUnboundParametersExp),
+				fiTypeGetUnboundParameters(type)));
+		FiLambda(args, body, type, __): 
+			mergeSetsA(concat(map(args, \a -> fiTypeGetUnboundParameters(a.type)),
+				[fiTypeGetUnboundParametersExp(body), fiTypeGetUnboundParameters(type)]));
+		FiSwitch(v, switchType, cases, type, __): 
+			mergeSetsA(concat(
+				map(cases, \c -> fiTypeGetUnboundParametersExp(c.body)),
+				[
+					fiTypeGetUnboundParametersExp(v),
+					fiTypeGetUnboundParameters(type),
+					fiTypeGetUnboundParameters(switchType)
+				]
+			));
+		FiRequire(__, e, type, __): 
+			mergeSets(fiTypeGetUnboundParametersExp(e), fiTypeGetUnboundParameters(type));
+		FiUnsafe(__, fb, type, __): 
+			mergeSets(fiTypeGetUnboundParameters(type), fiTypeGetUnboundParametersExp(fb));
+	}
+}

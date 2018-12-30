@@ -1,0 +1,1368 @@
+import tools/flowc/type_helpers;
+import tools/flowc/typechecker/solve_expectations;
+import tools/flowc/typechecker/ftype_solve;
+import tools/flowc/typechecker/ftype_finalize;
+import tools/flowc/typechecker/check_exports;
+import tools/flowc/debug;
+import tools/flowc/typechecker/initorder;
+import tools/flowc/incremental/fc2fi;
+import tools/flowc/flowc_typeverify;
+import binarytreeutils;
+
+export {
+	typecheckFcModule(env : FcTypeEnv, module : FcModule) -> FcTypecheckResult;
+
+	FcTypecheckResult(
+		// Types, assigned to the toplevel entities
+		typing : Tree<string, FcType>,
+		// Typechecked module
+		module : FiModule,
+		// Is true iff there were any errors while typechecking
+		errors : bool
+	);
+}
+
+/*
+The type checker works by defining expectations for each expression
+from the top-down, and then checking recursively that these expectations
+are maintained. This way, we can track the difference between passing
+values, as well as joining values in if- and switch-statements.
+
+Typechecker returns a part of a global environment type mapping, gathered from a 
+currently processed module.
+*/
+
+typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
+	if (env0.program.acc.config.verbose >= 1) {
+		fcPrintln("Typechecking '" + module.fileinfo.flowfile + "'");
+	}
+
+	// Any type errors in this module?
+	moduleErrors = ref false;
+	onModuleError = \e : FcError -> {
+		moduleErrors := true;
+		addFcTypeError(env0.program, e);
+	}
+
+	// Use updated onModuleError callback in typing environment
+	env = FcTypeEnv(
+		env0.global,
+		FcTypeEnvProgram(
+			env0.program.acc,
+			env0.program.types,
+			env0.program.exported,
+			onModuleError,
+			env0.program.errors,
+			env0.program.union2typenamesCache
+		),
+		env0.local,
+	);
+
+	// Check that polymorphic unions are sufficiently marked as such
+	traverseInOrder(module.unions, \un, union : FcTypeUnion -> {
+		// TODO: We have to build a map from the union typars to the struct typars, and
+		// when extending the structs to have more typars, we have to respect that map
+		// Check out FIf.
+		onError = \e -> {
+			onModuleError(FcError("Union " + un + ": " + e, [
+					FcPosition(module.fileinfo.flowfile, union.info.start, union.info.end)
+				])
+			);
+		}
+
+		checkReservedIds(un, onError);
+
+		structs = union2typenames(env, un);
+		maxPars : Pair<int, string> = fold(structs, Pair(0, ""), \acc : Pair<int, string>, tn : FcTypeName -> {
+			// OK, we instantiate the struct using the typars
+			st = getFcNamedTypeError(env, env.program.acc.tyvarIdGroup, tn, onError);
+			// And count the number of typars
+			npars = sizeSet(collectTypars(env, st, makeSet()));
+			if (npars > acc.first) {
+				Pair(npars, tn.name);
+			} else acc;
+		});
+
+		unionTypars = sizeSet(collectTypars(env, union, makeSet()));
+		// fcPrintln(un + " "  + i2s(maxPars.first) + " and " + i2s(unionTypars));
+		if (length(union.typeparameters) < maxPars.first) {
+			onError("has " + i2s(length(union.typeparameters)) + " type parameters, but member " + maxPars.second + " has " + i2s(maxPars.first) + " type parameters. Add type parameters to union");
+		}
+	});
+
+	// Check that struct defs are sufficiently polymorphic
+	traverseInOrder(module.structs, \sn, struct -> {
+		onError = \m -> {
+			onModuleError(
+				FcError("Struct " + sn + ": " + m, [
+					FcPosition(module.fileinfo.flowfile, struct.info.start, struct.info.end)
+				])
+			);
+		}
+
+		checkReservedIds(sn, onError);
+
+		checkSufficientPolymorphism(env, struct, onError);
+	});
+
+	// We need to type the names in an order that respects dependencies the best
+	// See test 43, 44.
+	initOrder0 = makeInitOrder(env, module, module.initOrder);
+	initOrder = concatA(initOrder0);
+
+	// First, record a preliminary type for all local functions since
+	// they can call each others "out of order"
+	nenv = fold(initOrder, env, \acc, o -> {
+		gfn = lookupTree(module.functions, o);
+		switch (gfn) {
+			None(): acc;
+			Some(fn): {
+				switch (fn.lambda) {
+					None(): acc;
+					Some(fnlam): {
+						t = ^(fn.declInfo.type);
+						setFcType(acc, o, t);
+					}
+				}
+			}
+		}
+	});
+
+	// We should also record all natives in the environment
+	// The second component of a pair is a mapping from a native names
+	// to their types, which come from a current module
+	envTyping = foldTree(module.natives, Pair(nenv, makeTree()), \nat, fcnat, acc -> {
+		nattype = if (nat == "isSameStructType") {
+			// OK, this one is special so we set up some type vars for it
+			i : FcInfo2 = fcnat.type.info;
+			FcTypeFunction([
+				FcFunArg("value1", FcTypeParameter("?", i)),
+				FcFunArg("value2", FcTypeParameter("??", i))],
+				FcTypeBool(i),
+			i);
+		} else if (nat == "number2double") {
+			// OK, this one is special so we set up some type vars for it
+			i : FcInfo2 = fcnat.type.info;
+			FcTypeFunction([
+				FcFunArg("value", FcTypeParameter("?", i))],
+				FcTypeDouble(i),
+			i);
+		} else if (nat == "toString") {
+			// OK, this one is special so we set up some type vars for it
+			i : FcInfo2 = fcnat.type.info;
+			FcTypeFunction([
+				FcFunArg("value", FcTypeParameter("?", i))],
+				FcTypeString(i),
+			i);
+		} else {
+			fcnat.type
+		}
+		// This goes into the global environment
+		Pair(
+			setFcType(acc.first, nat, Some(nattype)),
+			setTree(acc.second, nat, nattype),
+		)
+	});
+
+
+	// If we are running a test, or unittests, we might produce the expected outputs
+	test = getConfigParameter(env.program.acc.config.config, "test");
+	unittests = getConfigParameter(env.program.acc.config.config, "unittests");
+	outfolder = if (test != "" || unittests != "") getConfigParameter(env.program.acc.config.config, "outfolder") else "";
+	programtyped = ref if (outfolder != "") getFileContent(module.fileinfo.fullpath) + "\n----------\n" else "";
+
+	// Typecheck vars and functions in the init order from the original file
+	ret = fold(initOrder0, envTyping, \acc, os -> {
+		tasks = map(os, \o -> {
+			tyvarIdGroup = makeIdGroup(env.program.acc.tyvarIdFactory);
+			\ -> typecheckToplevel(acc.first, module, tyvarIdGroup, outfolder, o, onModuleError);
+		});
+		results = sequential(false, tasks);
+		// OK, append the outputs in the correct order
+		programtyped := fold(os, ^programtyped, \acc2, o -> {
+			result = findDef(results, \r : TypecheckResult -> r.name == o, TypecheckResult(o, None(), ""));
+			acc2 + result.output
+		});
+		// And register the types found
+		fold(results, acc, \acc2 : Pair<FcTypeEnv, Tree<string, FcType>>, tr -> {
+				Pair(
+					setFcType(acc2.first, tr.name, tr.type),
+					// This goes into the global environment
+					switch (tr.type : Maybe<FcType>) {
+						Some(tp): setTree(acc2.second, tr.name, tp);
+						None(): acc2.second;
+					}
+				)
+			}
+		)
+	});
+
+	if (outfolder != "") {
+		of = if (outfolder == "1") "tools/flowc/tests/out" else outfolder;
+		outfile = of + "/" + strReplace(module.fileinfo.flowfile, "/", "_") + ".flow";
+		fcPrintln(outfile);
+		setFileContent(outfile, ^programtyped);
+		{}
+	}
+
+
+	fi = fcmodule2fiWithErrorHandler(ret.first, module,
+		\err, info ->
+			onModuleError(FcError(err, [FcPosition(module.fileinfo.flowfile, info.start, info.end)]))
+	);
+
+	// Check for exports
+	checkExports(ret.first, fi, \e, s -> {
+			addFcTypeError(env.program, FcError(e, [
+					FcPosition(module.fileinfo.flowfile, s, s)
+				])
+			);
+		}
+	);
+
+	if (getConfigParameterDef(env.program.acc.config.config, "verify-types", "") != "") {
+		typeverifyFiModule(ret.first.program, fi, onModuleError);
+		{}
+	}
+
+	FcTypecheckResult(
+		mapTree(ret.second, \type -> fcType2fcTypeWithoutStructUnion(getResolvedFcType(ret.first, type))),
+		fi,
+		^moduleErrors
+	)
+}
+
+TypecheckResult(name : string, type : Maybe<FcType>, output : string);
+
+typecheckToplevel(env : FcTypeEnv, module : FcModule, tyvarIdGroup : IdGroup, outfolder : string, o : string, onModuleError : (FcError) -> void) -> TypecheckResult {
+	if (env.program.acc.config.verbose >= 2 || ^(env.local.debugTyping) > 0)  {
+		fcPrintln("\nType checking " + o + " from " + i2s(getGroupId(tyvarIdGroup)));
+		{}
+	}
+
+	gvar = lookupTree(module.globalVars, o);
+	switch (gvar) {
+		None(): {
+			gfn = lookupTree(module.functions, o);
+			switch (gfn) {
+				None(): {
+					onModuleError(
+						FcError("Unknown name " + o + " in module " + module.fileinfo.flowfile, [
+							FcPosition(module.fileinfo.flowfile, 0, 0)
+						])
+					);
+					TypecheckResult(o, None(), "");
+				}
+				Some(fn): {
+					onError = \m -> {
+						onModuleError(
+							FcError(m, [
+								FcPosition(module.fileinfo.flowfile, fn.declInfo.start, fn.declInfo.end),
+							])
+						);
+					}
+
+					checkReservedIds(o, onError);
+
+					switch (fn.lambda : Maybe<FcLambda>) {
+						None(): {
+							onError("Missing implementation of " + o + " in module " + module.fileinfo.flowfile);
+							TypecheckResult(o, None(), "");
+						}
+						Some(fnlam): {
+							// Lookup the type of this dude in the type environment
+							mfntype = lookupTree(env.program.types, o);
+							envfntype : FcTypeFunction = switch (mfntype) {
+								None(): {
+									fcPrintln("Error: expected function type");
+									ci = copyFcInfo2(fnlam.info);
+									FcTypeFunction([], FcTypeVoid(ci), ci);
+								}
+								Some(fnt): {
+									switch (fnt) {
+										FcTypeFunction(__, __, __): fnt;
+										default: {
+											fcPrintln("Error: expected function type");
+											ci = copyFcInfo2(fnlam.info);
+											FcTypeFunction([], FcTypeVoid(ci), ci);
+										}
+									}
+								}
+							}
+
+							env.local.typars := makeTree();
+
+							// Now, we have a function type. Bind type parameters to tyvars,
+							// as a side-effect, and return the instantiated type
+							envfn = instantiateTypeTyPars(env, tyvarIdGroup, env.local.typars, envfntype);
+
+							// fcPrintln("\n" + o + " = " + prettyFcExp(FcPretty(false, ^(acc.tyvars), ^(acc.typars)), fnlam) + ";\n");
+							//fcPrintln("\n" + o + " = " + prettyFcType(FcPretty(false, false, ^(acc.tyvars), ^(acc.typars)), envfn, makeSet()) + ";\n");
+
+							// Type check the body, and record expectations for all types
+							ft = typecheckFcExp(env, tyvarIdGroup, module.fileinfo.flowfile, fnlam);
+
+							if (env.program.acc.config.verbose >= 2 || getConfigParameter(env.program.acc.config.config, "verbose") == o) {
+								fcPrintln("\n" + o + " = " + prettyFcExp(FcPretty(true, false, ^(env.local.tyvars), ^(env.local.typars)), fnlam) + ";\n");
+							}
+
+							// Verify that our type matches the inferred type
+							checkOrRecordTypeExpect(env, FcLessOrEqual(ft, envfn, "top level function", copyFcInfo2(fnlam.info), fnlam));
+
+							pos = FcPosition(module.fileinfo.flowfile, fnlam.info.start, fnlam.info.end);
+
+							fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
+							ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+
+							env.local.typars := makeTree();
+
+							if (env.program.acc.config.verbose >= 3) {
+								fcPrintln("\n" + o + " = " + prettyFcExp(FcPretty(true, false, makeTree(), ^(env.local.typars)), fnlam) + ";\n");
+							}
+
+							if (env.program.acc.config.verbose >= 2 || getConfigParameter(env.program.acc.config.config, "verbose") == o) {
+								fcPrintln("\n" + o + " = " + prettyFcExp(FcPretty(true, env.program.acc.config.verbose <= 1, ^(env.local.tyvars), ^(env.local.typars)), fnlam) + ";\n");
+							}
+
+							output = if (outfolder != "") {
+								"\n" + o + " = " + prettyFcExp(FcPretty(true, true, ^(env.local.tyvars), ^(env.local.typars)), fnlam) + ";\n";
+							} else "";
+
+							rft = getResolvedFcType(env, ft);
+
+							// Exported names should not be implicitly polymorphic
+							if (!isEmptySet(collectFcTyvars(env, rft, makeSet()))) {
+								tt = prettyFcType(FcPretty(true, true, ^(env.local.tyvars), ^(env.local.typars)), rft, makeSet());
+								onError("Add type. Implicit polymorphism for " + o + ". Change ! to be explicit in this type: " + strReplace(tt, "α", "!"));
+							}
+
+							// Cheat for internal fold's lambda parameter.
+							// We force lambda has type \acc: ??, el: ? -> ??
+							if (o == "extractStruct") {
+								switch (fnlam.body) {
+									FcCall(e, params, in): {
+										i = params[2].info;
+										ii = FcInfo2(i.start, i.end);
+										type =
+											FcTypeFunction([
+												FcFunArg("acc", FcTypeParameter("??", ii)),
+												FcFunArg("el", FcTypeParameter("?", ii))],
+												FcTypeParameter("??", ii),
+												ii
+											);
+										i.type := Some(type);
+									}
+									default: {}
+								}
+							}
+							TypecheckResult(o, Some(getResolvedFcType(env, envfntype)), output);
+						}
+					}
+				}
+			}
+		}
+		Some(gv): {
+			onError = \m -> {
+				onModuleError(
+					FcError(m, [
+						FcPosition(module.fileinfo.flowfile, gv.declInfo.start, gv.declInfo.end),
+					])
+				);
+			}
+
+			gvv : Maybe<FcExp> = gv.value;
+			switch (gvv) {
+				None(): {
+					onError("Missing implementation of " + o + " in module " + module.fileinfo.flowfile);
+					TypecheckResult(o, None(), "");
+				}
+				Some(val1): {
+
+					checkReservedIds(o, onError);
+
+					val : FcExp = val1;
+					/*
+						Consider to use another environment without "future" functions so we get an error in cases like this:
+						a = foo();
+						b = 1;
+						foo() {
+							b;
+						}
+					*/
+					vt = typecheckFcExp(env, tyvarIdGroup, module.fileinfo.flowfile, val);
+
+					ci = copyFcInfo2(val.info);
+					recordTypeCheck(env, FcNotVoid(vt, ci));
+
+					mdt : Maybe<FcType> = ^(gv.bodyInfo.type);
+					switch (mdt) {
+						None(): {}
+						Some(dt): {
+							// Verify that our declared type matches the inferred type
+							checkOrRecordTypeExpect(env, FcLessOrEqual(vt, dt, "global var", ci, val));
+						}
+					}
+					pos = FcPosition(module.fileinfo.flowfile, gv.declInfo.start, gv.declInfo.end);
+
+					// Solve all the collected constraints
+					fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
+					ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+
+					rvt = getResolvedFcType(env, vt);
+
+					if (!isEmptySet(collectFcTyvars(env, rvt, makeSet()))) {
+						tt = prettyFcType(FcPretty(true, true, ^(env.local.tyvars), ^(env.local.typars)), rvt, makeSet());
+						onError("Add type. Implicit polymorphism for " + o + ". Change ! to be explicit in this type: " + strReplace(tt, "α", "!"));
+					}
+
+					if (env.program.acc.config.verbose >= 2) {
+						fcPrintln(o + " = " + prettyFcExp(FcPretty(true, env.program.acc.config.verbose <= 1, ^(env.local.tyvars), ^(env.local.typars)), val));
+					}
+					output = if (outfolder != "") {
+						"\n" + o + " = " + prettyFcExp(FcPretty(true, true, ^(env.local.tyvars), ^(env.local.typars)), val) + ";\n";
+					} else "";
+
+					// If there is a type declaration, we prefer that!
+					toptype = switch (mdt) {
+						None(): rvt;
+						Some(dt): dt;
+					}
+
+
+					gv.bodyInfo.type := Some(toptype);
+
+					TypecheckResult(o, Some(getResolvedFcType(env, toptype)), output);
+				}
+			}
+		}
+	}
+}
+
+/*
+Determine the type of the given expression. Type expectations for tyvars are recorded
+mutably in the FcTypeEnv.
+*/
+typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : FcExp) -> FcType {
+	if (^(acc.local.debugTyping) > 1) {
+		printIndent(acc, "Typecheck of " +
+			strReplace(prettyFcExp(FcPretty(false, false, ^(acc.local.tyvars), ^(acc.local.typars)), e), "\n", " ")
+		);
+	}
+
+	error = \m -> {
+		addFcTypeError(
+			acc.program, FcError(m, [
+				FcPosition(flowfile, e.info.start, e.info.end),
+			])
+		);
+	}
+	error1 = \m : string, t : FcType -> {
+		addFcTypeError(
+			acc.program, FcError(m + prettyFcType(FcPretty(false, true, ^(acc.local.tyvars), ^(acc.local.typars)), t, makeSet()), [
+				FcPosition(flowfile, e.info.start, e.info.end),
+			])
+		);
+	}
+	set = \t : FcType -> {
+		// Update the type
+		info : FcInfo = e.info;
+		if (false) {
+			switch (^(info.type)) {
+				None(): {}
+				Some(et): {
+					fcPrintln("Overwriting existing type " 
+						+ prettyFcType(FcPretty(true, false, ^(acc.local.tyvars), ^(acc.local.typars)), et, makeSet())
+						+ " with "
+						+ prettyFcType(FcPretty(true, false, ^(acc.local.tyvars), ^(acc.local.typars)), t, makeSet())
+					);
+				}
+			}
+		}
+		info.type := Some(t);
+
+		if (^(acc.local.debugTyping) > 1) {
+			printDedent(acc, "Type of " +
+				strReplace(prettyFcExp(FcPretty(false, false, ^(acc.local.tyvars), ^(acc.local.typars)), e), "\n", " ")
+				+ " is " + prettyFcType(FcPretty(true, false, ^(acc.local.tyvars), ^(acc.local.typars)), t, makeSet())
+			);
+		}
+		t;
+	}
+
+	switch (e) {
+		FcVoid(i): set(FcTypeVoid(copyFcInfo2(i)));
+		FcBool(__, i): set(FcTypeBool(copyFcInfo2(i)));
+		FcInt(__, i): set(FcTypeInt(copyFcInfo2(i)));
+		FcDouble(__, i): set(FcTypeDouble(copyFcInfo2(i)));
+		FcString(__, i): set(FcTypeString(copyFcInfo2(i)));
+
+		FcCast(ce, tFrom, tTo, i): {
+			// Check that e is tFrom
+			ct = typecheckFcExp(acc, tyvarIdGroup, flowfile, ce);
+			ci = copyFcInfo2(i);
+
+			// The declared type has to be bigger than the type of the expressed
+			checkOrRecordTypeExpect(acc, FcVerifyType(ct, tFrom, ci));
+
+			isconvertible = \t -> {
+				switch (t : FcType) {
+					// FcTypeBool(__): true;
+					FcTypeInt(__): true;
+					FcTypeDouble(__): true;
+					FcTypeString(__): true;
+					default: false;
+				}
+			};
+
+			isflow = \t -> {
+				switch (t : FcType) {
+					FcTypeFlow(__): true;
+					default: false;
+				}
+			}
+
+			if (isConfigParameterTrue(acc.program.acc.config.config, "strict") && isSameFcType(acc, ct, tTo, false)) {
+				error1("Unnecessary cast to the type it already is: ", tTo);
+			}
+
+			if (isconvertible(tFrom) && isconvertible(tTo)) {
+				// i2s or one of the built-in conversions are excepted and fine
+			} else if (isflow(tFrom) || isflow(tTo)) {
+				// Cast to/from flow is always allowed
+			} else {
+				if (false) {
+					// Check that we only down-cast
+					// This is the conservative semantics, which can ensure
+					// that we do not get crashes
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tTo, tFrom, "", ci, e));
+				} else {
+					// Check that some common supertype exists
+					supertype = makeFcTyVar2(tyvarIdGroup, ci);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tFrom, supertype, "from-type in cast", ci, e));
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tTo, supertype, "to-type in cast", ci, e));
+				}
+			}
+
+			set(tTo);
+		}
+		FcCall(f, args, in): {
+			ci = copyFcInfo2(in);
+
+			// Check that the arguments to the function call match the argument of the function
+			checkargs = \eas : [FcType] -> {
+				if (length(args) != length(eas)) {
+					pt = \t -> prettyFcType(FcPretty(false, true, ^(acc.local.tyvars), ^(acc.local.typars)), t, makeSet());
+					pe = \ppe : FcExp -> prettyFcExp(FcPretty(false, true, ^(acc.local.tyvars), ^(acc.local.typars)), ppe);
+
+					teargs = strGlue(map(eas, pt), ", ");
+					error("The call to " + pe(f) + " expects " + i2s(length(eas)) + " arguments (" + teargs + "), got " + i2s(length(args)));
+				}
+
+				// Check the type of each argument
+				mapi(args, \i, a -> {
+					at = typecheckFcExp(acc, tyvarIdGroup, flowfile, a);
+					recordTypeCheck(acc, FcNotVoid(at, ci));
+
+					if (i < length(eas)) {
+						// Also check against type definition
+						checkOrRecordTypeExpect(acc, FcLessOrEqual(at, eas[i], "arg #" + i2s(i + 1), ci, e));
+					}
+					at;
+				});
+			}
+
+			unknown = \ -> {
+				// OK, check the arguments first
+				argtypes = map(args, \a -> makeFcTyVar2(tyvarIdGroup, ci));
+				checkargs(argtypes);
+
+				rt = typecheckFcExp(acc, tyvarIdGroup, flowfile, f);
+				ft = FcTypeFunction(map(argtypes, \a -> FcFunArg("", a)), makeFcTyVar2(tyvarIdGroup, ci), ci);
+				checkOrRecordTypeExpect(acc, 
+					FcLessOrEqual(rt, ft, "call on function type", ci, e)
+				);
+				ft;
+			}
+
+			fntype : FcType = switch (f) {
+				FcVar(fn, fi): {
+					// For the common case of a direct call, find the type of the function
+					// directly first
+					ty = getInstantiatedTypeOfName(acc, tyvarIdGroup, error, ci, fn);
+
+					switch (ty.first) {
+						FcTypeFunction(fargs, rt, i): {
+							// We know the type, so this is good. No need to type check the function,
+							// we can just mark it immediately
+							fi.type := Some(ty.first);
+
+							// And now check the arguments
+							fa = checkargs(map(fargs, \a -> a.type));
+
+							calltype0 = FcTypeFunction(map(fa, \farg -> FcFunArg("", farg)), rt, i);
+							calltype = getResolvedFcType(acc, calltype0);
+
+							// The type is given by our function
+							ty.first;
+						}
+						default: {
+							// Some lambda name, probably. We have to type check it to ensure the function
+							// expectation
+							unknown();
+						}
+					}
+				}
+				default: {
+					// TODO: We probably aught to check the polymorphic constraints here as well
+
+					// Otherwise, we have to type check the call
+					unknown();
+				}
+			}
+
+			// What is the return type of this function? That is our type
+			rt : FcType = switch (getResolvedFcType(acc, fntype)) {
+				FcTypeFunction(__, returnType, i2): returnType;
+				default: {
+					error1("Can only call functions, not ", fntype);
+					FcTypeVoid(copyFcInfo2(in));
+				}
+			}
+
+			set(rt);
+		}
+		FcSwitch(x, xtype, cases, i): {
+			ci = copyFcInfo2(i);
+
+			iter(cases, \case -> {
+				checkNamesForDuplicates(case.argNames, i, acc, flowfile, error)
+			});
+
+			// Now check that the x type we get matches the cases we have
+			unionCases = fold(cases, [], \acc2, case -> 
+				if (case.struct == "default") acc2 
+				else arrayPush(acc2, case.struct)
+			);
+			if (length(unionCases) != length(uniq(unionCases))) {
+				// TODO: We could find out which one it is?
+				error("Duplicate cases in switch");
+			}
+			// How many default cases do we have?
+			defCount = countA(cases, \c -> c.struct == "default");
+			if (defCount >= 2) {
+				error("At most one default allowed in switch");
+			}
+			open = defCount >= 1;
+			unionCheck = FcCheckStructs(unionCases, open, xtype, ci);
+			recordTypeCheck(acc, unionCheck);
+
+			unionType = xtype;
+
+			// printStay(acc, "union switch type after check " + prettyFcType(FcPretty(false, ^(acc.tyvars), ^(acc.typars)), unionType));
+
+			// Also tie this type back to the variable we switch on
+			t = lookupTree(acc.program.types, x.name);
+			varType = switch (t) {
+				None(): {
+					error("Unknown variable in switch");
+					unionType;
+				}
+				Some(tt): {
+					// The type of the variable needs to request any declared type, implicitly or explicitly
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, xtype, "switch var", ci, e));
+					tt;
+				}
+			}
+
+			// Be sure to set the type of the variable
+			x.info.type := Some(varType);
+
+			// Collect the struct types in our union, and check the match between the cases and the annotation
+			unionStructs : [FcTypeName] = switch (unionType) {
+				FcTypeUnion(un, __, tns, __): {
+					// TODO: Could we have a union in here, and then this is wrong?
+					tns;
+				}
+				default: {
+					switch (varType) {
+						FcTypeUnion(__, __, tns, __): {
+							// TODO: Could we have a union in here, and then this is wrong?
+							tns;
+						}
+						default: {
+							names = filtermap(cases, \c -> if (c.struct == "default") None() else Some(c.struct));
+							unionCandidates = names2unions(acc, names, open);
+
+							undef = if (length(unionCandidates) == 1) {
+								unname = unionCandidates[0];
+								lookupTree(acc.program.acc.names.unions, unname)
+							} else None();
+
+							switch (undef) {
+								None(): {
+									// OK, there is no unique type, so construct an unnamed union from our cases and constrain against that
+
+									tns = fold(cases, [], \acc2, case -> {
+										if (case.struct != "default") {
+											mstruct = lookupTree(acc.program.acc.names.structs, case.struct);
+											switch (mstruct) {
+												None(): {
+													acc2;
+												}
+												Some(struct): {
+													// TODO: We might be able to do this a bit smarter, since we
+													// do not need these type parameters for anything.
+													// We just need to keep track that the union type has those structs.
+
+													// Construct type parameters for each type parameter
+													arrayPush(acc2, FcTypeName(case.struct, generate(0, length(struct.typars), \__ -> {
+														makeFcTyVar2(tyvarIdGroup, ci)
+													}), ci));
+												}
+											}
+										} else acc2;
+									});
+
+									// Keep the union distinct by making tyvars for the parameters
+									ntv = fold(tns, 0, \acc2, tn -> max(acc2, length(tn.typeparameters)));
+									un = FcTypeUnion("", generate(0, ntv, \__ -> makeFcTyVar2(tyvarIdGroup, ci)), tns, ci);
+									expect = FcLessOrEqual(un, unionType, "cases in switch", ci, e);
+									checkOrRecordTypeExpect(acc, expect);
+
+									[];
+								}
+								Some(uniondef): {
+									// From the cases, we have identified a single union
+									ntv = length(uniondef.typeparameters);
+									// Instantiate the unknown type parameters with tyvars
+									un = FcTypeName(uniondef.name, generate(0, ntv, \__ -> makeFcTyVar2(tyvarIdGroup, ci)), ci);
+									expect = FcLessOrEqual(un, unionType, "cases in switch against " + uniondef.name, ci, e);
+									checkOrRecordTypeExpect(acc, expect);
+									rs = getFcNamedTypeError(acc, tyvarIdGroup, un, error);
+									switch (rs) {
+										FcTypeUnion(__, __, tns, __): tns;
+										default: [];
+									}
+								}
+							};
+						}
+					}
+				}
+			}
+
+			// Find the resulting types of all bodies
+			aat = map(cases, \case : FcCase -> {
+				// Be sure to override the type of the case variable to this type of this particular case
+				// As best we can, grab it from the concrete union type we have
+				beststruct : Maybe<FcTypeName> = find(unionStructs, \us -> us.name == case.struct);
+				structdef = switch (beststruct) {
+					None(): {
+						body : FcExp = case.body;
+						FcTypeName(case.struct, [], copyFcInfo2(body.info));
+					}
+					Some(tn): getFcNamedTypeError(acc, tyvarIdGroup, tn, error);
+				}
+				acc3 = if (case.struct == "default") acc
+				else {
+					// Record that our struct is less than the switch var type!
+					// This causes problems for some reasons.
+					// checkOrRecordTypeExpect(acc, FcLessOrEqual(structdef, varType, "special switch", copyFcInfo2(case.info), case.body));
+					setFcType(acc, x.name, Some(structdef));
+				}
+
+				switch (structdef) {
+					FcTypeStruct(__, __, sargs, __): {
+						if (length(case.argNames) != length(structdef.args)) {
+							pt = prettyFcType(FcPretty(false, true, ^(acc3.local.tyvars), ^(acc3.local.typars)), structdef, makeSet());
+							error("Expected " + i2s(length(structdef.args)) + " arguments to " + pt + " in case, got " + i2s(length(case.argNames)));
+						}
+					}
+					default: {}
+				}
+
+				// Here we pass varinfo because case variables would be added later at 'let' construction
+				ct = typecheckFcExp(acc3, tyvarIdGroup, flowfile, case.body);
+				// Check if the body has "let" bodies with the name of the switch-var,
+				// and then mark that this var is less than the struct case!
+				if (case.struct != "default") {
+					checkSwitchBodyVars(acc3, x, xtype, structdef, case.body);
+				}
+				ct;
+			});
+
+			if (aat == []) {
+				set(FcTypeVoid(ci));
+			} else {
+				ft = makeFcTyVar(tyvarIdGroup, i);
+
+				iter(aat, \tt -> {
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, ft, "returns from switch", ci, e));
+				});
+
+				set(ft);
+			}
+		}
+		FcLambda(args, body, in): {
+			ci = copyFcInfo2(in);
+
+			checkNamesForDuplicates(map(args, \a -> a.name), in, acc, flowfile, error);
+
+			// Be sure to instantiate argument types
+			iargs = map(args, \a -> {
+				FcFunArg(
+					a.name, 
+					instantiateTypeTyPars(acc, tyvarIdGroup, acc.local.typars, a.type)
+				);
+			});
+
+			// Bind the names of the arguments in a new type environment
+			acc3 = foldi(iargs, acc, \i, acc2, arg -> {
+				setFcType(acc2, arg.name, Some(arg.type));
+			});
+
+			// Type check the body with this environment
+			bodytype = typecheckFcExp(
+				mergeFcVarInfo(acc3, pairs2tree(map(args, \arg -> Pair(arg.name, in)))), 
+				tyvarIdGroup, flowfile, body);
+
+			// Now, we construct the function type
+			fntype = FcTypeFunction(iargs, bodytype, ci);
+			set(fntype);
+		}
+		FcLet(name, type, e1, e2, i): {
+			checkReservedIds(name, error);
+			checkLocalVarsForDuplicates(name, i, acc, flowfile);
+			itype = instantiateTypeTyPars(acc, tyvarIdGroup, acc.local.typars, type);
+			acc1 = mergeFcVarInfo(acc, makeTree1(name, i));
+			et = typecheckFcExp(acc1, tyvarIdGroup, flowfile, e1);
+			ci = copyFcInfo2(i);
+			recordTypeCheck(acc1, FcNotVoid(et, ci));
+
+			if (isFcTypeVar(itype)) {
+				// There were no type declaration, so we go full on
+				checkOrRecordTypeExpect(acc, FcVerifyType(et, itype, ci));
+			} else {
+				checkOrRecordTypeExpect(acc1, FcLessOrEqual(et, itype, "definition of", ci, e));
+			}
+
+			// Record this in the type environment when we check the body
+			// acc2 = setFcType(acc, name, Some(et));
+			acc2 = setFcType(acc1, name, Some(itype));
+
+			set(typecheckFcExp(acc2, tyvarIdGroup, flowfile, e2));
+		}
+		FcIf(e1, e2, e3, i): {
+			// Special case: Recognize "if (isSameStructType(a, b)) { ... } else { ... }"
+			isSameStructCall = switch (e1) {
+				FcCall(sv, sargs, __): {
+					switch (sv) {
+						FcVar(sid, __): if (sid == "isSameStructType") {
+							fold(sargs, [], \sacc, sa -> switch (sa) { 
+								FcVar(vi,__): {
+									mt = lookupTree(acc.program.types, vi);
+									switch (mt) {
+										None(): sacc;
+										Some(ttt): arrayPush(sacc, Pair(vi, ttt)); 
+									}
+								}
+								// TODO: We could catch struct construction here as well?
+								default: sacc
+							})
+						} else [];
+						default: [];
+					}
+				}
+				default: [];
+			}
+			ct = typecheckFcExp(acc, tyvarIdGroup, flowfile, e1);
+
+			ci = copyFcInfo2(i);
+
+			checkOrRecordTypeExpect(acc, FcLessOrEqual(ct, FcTypeBool(ci), "condition", ci, e));
+
+			// If it is the isSameStructType, we specialize the variables in the if-branch!
+			tacc = if (length(isSameStructCall) != 2) acc else {
+				v0 = isSameStructCall[0].first;
+				t0 = isSameStructCall[0].second;
+				v1 = isSameStructCall[1].first;
+				t1 = isSameStructCall[1].second;
+				type0 = switch (t0: FcType) {
+					FcTypeStruct(__, __, __, __): t0;
+					FcTypeName(tn0, __, __): t0; // We just assume it is a struct
+					FcTypeUnion(__, __, __, __): t1;
+					FcTypeParameter(__, __): t1;
+					default: t0;
+				}
+				type1 = switch (t1 : FcType) {
+					FcTypeStruct(__, __, __, __): t1;
+					FcTypeName(tn0, __, __): t1; // We just assume it is a struct
+					FcTypeUnion(__, __, __, __): t0;
+					FcTypeParameter(__, __): t0;
+					default: t0;
+				}
+
+				// pt = \t -> prettyFcType(FcPretty(false, ^(acc.tyvars), ^(acc.typars)), t, makeSet());
+				// fcPrintln(v0 + " replaced with " + pt(type0));
+				// fcPrintln(v1 + " replaced with " + pt(type1));
+				acc1 = setFcType(acc, v0, Some(type0));
+				setFcType(acc1, v1, Some(type1));
+			}
+
+			// The then-branch can be anything
+			tt = typecheckFcExp(tacc, tyvarIdGroup, flowfile, e2);
+			// The else-branch has to be joinable with this
+			et = typecheckFcExp(acc, tyvarIdGroup, flowfile, e3);
+
+			ft = makeFcTyVar(tyvarIdGroup, i);
+			checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, ft, "then", ci, e));
+			checkOrRecordTypeExpect(acc, FcLessOrEqual(et, ft, "else", ci, e));
+
+			set(ft);
+		}
+		FcCallPrim(op, es, i): {
+			ci = copyFcInfo2(i);
+
+			joinable = \ -> {
+				t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+				t2 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+				tv = makeFcTyVar2(tyvarIdGroup, ci);
+				// There has to exist a type which unifies, but we do not care about that type
+				checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, tv, "left side of comparison", ci, e));
+				checkOrRecordTypeExpect(acc, FcLessOrEqual(t2, tv, "right side of comparison", ci, e));
+
+				if (isConfigParameterTrue(acc.program.acc.config.config, "no-fn-comparison")) {
+					recordTypeCheck(acc, FcNotFunction(t1, ci));
+					recordTypeCheck(acc, FcNotFunction(t2, ci));
+				}
+			}
+
+			binis = \types -> {
+				t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+				t2 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+
+				recordTypeCheck(acc, FcExpectOneOf(types, t1, ci));
+				// When we deal with basic types, like here, this effectively is "=="
+				checkOrRecordTypeExpect(acc, FcLessOrEqual(t2, t1, "arithmetic sides", ci, e));
+				t1
+			}
+
+			is = \type -> {
+				t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+				t2 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+				checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, type, "left side", ci, e));
+				checkOrRecordTypeExpect(acc, FcLessOrEqual(t2, type, "right side", ci, e));
+				t2
+			}
+
+			rettype = switch (op) {
+				FcEqPrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcNePrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcGePrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcLePrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcGtPrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcLtPrim(): {
+					joinable();
+					FcTypeBool(ci);
+				}
+				FcPlusPrim(): {
+					binis([FcTypeInt(ci), FcTypeDouble(ci), FcTypeString(ci)]);
+				}
+				FcMinusPrim(): {
+					binis([FcTypeInt(ci), FcTypeDouble(ci)]);
+				}
+				FcMulPrim(): {
+					binis([FcTypeInt(ci), FcTypeDouble(ci)]);
+				}
+				FcDivPrim(): {
+					binis([FcTypeInt(ci), FcTypeDouble(ci)]);
+				}
+				FcModPrim(): {
+					binis([FcTypeInt(ci), FcTypeDouble(ci)]);
+				}
+				FcNegPrim(): {
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					recordTypeCheck(acc, FcExpectOneOf([FcTypeInt(ci), FcTypeDouble(ci)], t1, ci));
+					t1;
+				}
+
+				FcAndPrim(): is(FcTypeBool(ci));
+				FcOrPrim(): is(FcTypeBool(ci));
+				FcNotPrim(): {
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, FcTypeBool(ci), "not", ci, e));
+					t1;
+				}
+
+				FcDerefPrim(): {
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+
+					// Requires expectation that says we are looking at the read type of the ref.
+					rv = makeFcTyVar2(tyvarIdGroup, ci);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, FcTypeRef(rv, ci), "deref is on a ref", ci, e));
+					rv
+				}
+				FcAssignPrim(): {
+					t0 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+
+					// Requires expectation that says we are looking at the write type of the ref.
+					rv = makeFcTyVar2(tyvarIdGroup, ci);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(FcTypeRef(rv, ci), t0, "assign is on a ref", ci, e));
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, rv, "assign value to type in ref", ci, e));
+
+					FcTypeVoid(ci);
+				}
+
+				FcRefPrim(): {
+					// Check the argument
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					recordTypeCheck(acc, FcNotVoid(t1, ci));
+					FcTypeRef(t1, ci);
+				}
+
+				FcFieldPrim(n): {
+					if (n == "structname") {
+						t0 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+
+						// We just require a struct
+						recordTypeCheck(acc, FcCheckStructs([], true, t0, ci));
+						FcTypeString(ci);
+					} else {
+						t0 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+						field = switch (^(i.type)) {
+							None(): makeFcTyVar2(tyvarIdGroup, ci);
+							Some(ft): ft;
+						}
+						checkOrRecordTypeExpect(acc, FcExpectField(n, field, t0, ci, e));
+						field
+					}
+				}
+				FcIndexPrim(): {
+					// Check the array argument
+					t0 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					at = makeFcTyVar2(tyvarIdGroup, ci);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(t0, FcTypeArray(at, ci), "indexing on array", ci, e));
+
+					// And the index
+					t1 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(t1, FcTypeInt(ci), "index is int", ci, e));
+
+					at;
+				}
+				FcArrayPrim(): {
+					aat = map(es, \ees -> {
+						typecheckFcExp(acc, tyvarIdGroup, flowfile, ees);
+					});
+
+					ft = makeFcTyVar(tyvarIdGroup, i);
+					iter(aat, \tt -> {
+						checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, ft, "array construction", ci, e));
+					});
+					FcTypeArray(ft, ci);
+				}
+				FcStructPrim(n): {
+					mstructdef : Maybe<FcTypeStruct> = lookupTree(acc.program.acc.names.structs, n);
+					switch (mstructdef) {
+						None(): {
+							error("Unknown struct " + n);
+							// Invent a struct out of the blue to keep going
+		 					FcTypeStruct(n, [],
+								mapi(es, \in : int, ae : FcExp -> {
+									at = typecheckFcExp(acc, tyvarIdGroup, flowfile, e);
+									FcStructArg("", at, false);
+								})
+		 					, ci);
+						}
+						Some(structdef): {
+							// Check the arguments
+							if (length(structdef.args) != length(es)) {
+								filedef = lookupTreeDef(acc.program.acc.names.struct2module, n, flowfile);
+
+								pt = prettyFcType(FcPretty(false, true, ^(acc.local.tyvars), ^(acc.local.typars)), structdef, makeSet());
+
+								addFcTypeError(
+									// TODO: Add the types of what we expect here
+									acc.program, FcError("Expected " + i2s(length(structdef.args)) + " arguments to struct " + pt + ", got " + i2s(length(es)), [
+										FcPosition(flowfile, i.start, i.end),
+										FcPosition(filedef, structdef.info.start, structdef.info.end),
+									])
+								);
+								structdef;
+							} else {
+								// Instantiate the typars in the type
+								itype = instantiateTypeTyPars(acc, tyvarIdGroup, ref makeTree(), structdef);
+								istructdef = cast(itype : FcType -> FcTypeStruct);
+								argtypes = mapi(es, \in : int, ae : FcExp -> {
+									sa = istructdef.args[in];
+									at = typecheckFcExp(acc, tyvarIdGroup, flowfile, ae);
+
+									checkOrRecordTypeExpect(acc, FcLessOrEqual(at, sa.type, "struct arg #" + i2s(in + 1), ci, e));
+
+									FcStructArg(sa.name, at, sa.ismutable);
+								});
+			 					FcTypeStruct(n, istructdef.typars, argtypes, ci);
+							}
+						}
+					}
+				}
+				FcSetMutablePrim(n):{
+
+					// s.field ::= bar;
+
+					// bar+ <= a-;
+					// <struct>(mutable .field : a)+ <= s-
+
+					t0 = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+					field = makeFcTyVar2(tyvarIdGroup, ci);
+					checkOrRecordTypeExpect(acc, FcSetMutableField(t0, n, field, ci));
+					checkOrRecordTypeExpect(acc, FcExpectField(n, field, t0, ci, e));
+
+					recordTypeCheck(acc, FcCheckMutable(n, t0, ci));
+
+					rt = typecheckFcExp(acc, tyvarIdGroup, flowfile, es[1]);
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(rt, field, "set mutable to correct type", ci, e));
+
+					FcTypeVoid(ci);
+				}
+				FcCreateClosurePrim(sName, fName): 
+					typecheckFcExp(acc, tyvarIdGroup, flowfile, // same as corresponding struct 
+						FcCallPrim(FcStructPrim(sName), es, i));
+			}
+			set(rettype);
+		}
+		FcVar(name, i): {
+			ci = copyFcInfo2(i);
+			// These names trigger debugging info about the type checker
+			if (name == "debugtyping") {
+				acc.local.debugTyping := 1;
+				FcTypeInt(ci);
+			} else if (name == "debugtyping1") {
+				acc.local.debugTyping := 2;
+				FcTypeInt(ci);
+			} else if (name == "debugtyping2") {
+				acc.local.debugTyping := 3;
+				FcTypeInt(ci);
+			} else if (name == "debugtyping3") {
+				acc.local.debugTyping := 4;
+				FcTypeInt(ci);
+			} else if (name == "enddebugtyping") {
+				acc.local.debugTyping := 0;
+				FcTypeInt(ci);
+			} else {
+
+				if (name == "__") {
+					addFcTypeError(
+						acc.program, FcError("Not allowed to reference special name __", [
+							FcPosition(flowfile, i.start, i.end),
+						])
+					);
+				}
+
+				it = getInstantiatedTypeOfName(acc, tyvarIdGroup, error, ci, name);
+				set(it.first);
+			}
+		}
+		FcRequire(flowfile_, ex, i): {
+			fcPrintln("TODO: Require");
+			FcTypeVoid(copyFcInfo2(i));
+		}
+		FcUnsafe(name, fallback, i): {
+			fcPrintln("TODO: Unsafe");
+			FcTypeVoid(copyFcInfo2(i));
+		}
+		FcSeq(es, in): {
+			li = length(es) - 1;
+			ci = copyFcInfo2(in);
+			t = fold(es, FcTypeVoid(ci), \acc2, ees -> {
+				typecheckFcExp(acc, tyvarIdGroup, flowfile, ees);
+			});
+			set(t);
+		}
+	}
+}
+
+checkNamesForDuplicates(names : [string], info : FcInfo, acc : FcTypeEnv, flowfile : string, onError : (string) -> void) -> void {
+	iter(names, \name -> {
+		checkReservedIds(name, onError);
+		checkLocalVarsForDuplicates(name, info, acc, flowfile)
+	});
+
+	fold(names, makeSet(), \acc2, n -> {
+		if (n != "__" && containsSet(acc2, n)) {
+			onError("Duplicate argument " + n);
+		}
+		insertSet(acc2, n)
+	});
+
+	{}
+}
+
+checkLocalVarsForDuplicates(name : string, info : FcInfo, acc : FcTypeEnv, flowfile : string) -> void {
+	if (name != "__") {
+		prev_loc_var = lookupTree(acc.program.types, name);
+		switch (prev_loc_var) {
+			Some(t0): {
+				t : FcType = t0;
+				si = lookupTree(acc.local.varinfo, name);
+				switch (si) {
+					Some(i) :
+						addFcTypeError(
+							acc.program, FcError("Do not redefine " + name, [
+								FcPosition(flowfile, info.start, info.end),
+								FcPosition(flowfile, i.start, i.end)
+							])
+						);
+					None():
+						addFcTypeError(
+							acc.program, FcError("Do not redefine " + name, [
+								FcPosition(flowfile, info.start, info.end),
+								FcPosition(flowfile, t.info.start, t.info.end)
+							])
+						);
+				}
+			}
+			None(): {}
+		}
+		prev_decl = lookupTree(acc.program.acc.names.toplevel, name);
+		switch (prev_decl) {
+			Some(decl0): {
+				decl : FcDeclaration = decl0;
+				i = fcDeclarationInfo(decl);
+				addFcTypeError(
+					acc.program, FcError("Do not redefine " + name, [
+						FcPosition(flowfile, info.start, info.end),
+						FcPosition(name2module(decl.name, acc.program.acc.names), i.start, i.end)
+					])
+				);
+			}
+			None(): {}
+		}
+		prev_struct = lookupTree(acc.program.acc.names.structs, name);
+		switch (prev_struct) {
+			Some(struct): {
+				addFcTypeError(
+					acc.program, FcError("Do not redefine " + name, [
+						FcPosition(flowfile, info.start, info.end),
+						FcPosition(name2module(struct.name, acc.program.acc.names), struct.info.start, struct.info.end)
+					])
+				);
+			}
+			None(): {}
+		}
+		prev_union = lookupTree(acc.program.acc.names.unions, name);
+		switch (prev_union) {
+			Some(union): {
+				addFcTypeError(
+					acc.program, FcError("Do not redefine " + name, [
+						FcPosition(flowfile, info.start, info.end),
+						FcPosition(name2module(union.name, acc.program.acc.names), union.info.start, union.info.end)
+					])
+				);
+			}
+			None(): {}
+		}
+	} else {}
+}
+
+name2module(name : string, globals : FcGlobalNames) -> string {
+	lookupTreeDef(globals.struct2module, name,
+		lookupTreeDef(globals.union2module, name,
+			lookupTreeDef(globals.function2module, name,
+				lookupTreeDef(globals.globalVar2module, name,
+					lookupTreeDef(globals.native2module, name, "")
+				)
+			)
+		)
+	)
+}
+
+firstTimeApplyStruct = ref true;
+
+getInstantiatedTypeOfName(env : FcTypeEnv, tyvarIdGroup : IdGroup, error : (string) -> void, i : FcInfo2, name : string) -> Pair<FcType, Tree<string, FcTypeVar>> {
+	t = lookupTree(env.program.types, name);
+	switch (t) {
+		None(): {
+			mst = lookupTree(env.program.acc.names.structs, name);
+			Pair(switch (mst) {
+				None(): {
+					error("Unknown name " + name);
+					makeFcTyVar2(env.program.acc.tyvarIdGroup, i);
+				}
+				Some(st): {
+					if (^firstTimeApplyStruct) {
+						error("Add () after " + name + " to construct the struct.\n\n****\n\nPipe this output to '>out.flow', and then run 'fixstructs' to automatically fix these errors\n\n****\n");
+						firstTimeApplyStruct := false;
+					} else {
+						error("Add () after " + name + " to construct the struct");
+					}
+					st;
+				}
+			}, makeTree());
+		}
+		Some(vt): {
+			// Instantiate tyvars here
+			typars = ref makeTree();
+			r = instantiateTypeTyPars(env, tyvarIdGroup, typars, vt);
+			Pair(r, ^typars);
+		}
+	}
+}
+
+checkSwitchBodyVars(env : FcTypeEnv, var : FcVar, varType : FcType, case : FcType, body : FcExp) -> void {
+	switch (body) {
+		FcLet(name, typ, e1, e2, info): {
+			switch (e1) {
+				FcCallPrim(op, args, i2): {
+					switch (op) {
+						FcFieldPrim(__): {
+							if (length(args) == 1) {
+								switch (args[0]) {
+									FcVar(vn, vi): {
+										if (vn == var.name) {
+											switch (^(vi.type)) {
+												None(): {}
+												Some(cvt): {
+													ci = copyFcInfo2(info);
+													// OK, we have a type for the local var
+													checkOrRecordTypeExpect(env, FcVerifyType(cvt, case, ci));
+													checkOrRecordTypeExpect(env, FcLessOrEqual(case, varType, "switch body var", ci, body));
+													checkSwitchBodyVars(env, var, varType, case, e2);
+												}
+											}
+										}
+									}
+									default: {};
+								}
+							};
+						}
+						default: {};
+					}
+				}
+				default: {};
+			}
+		}
+		default: {};
+	}
+}
+
+checkReservedIds(id : string, onError : (string) -> void) -> void {
+	reserved = ["bool", "int", "double", "void", "string", "false", "true"];
+	if (contains(reserved, id)) {
+		onError("Can not use reserved name " + id);
+	}
+}

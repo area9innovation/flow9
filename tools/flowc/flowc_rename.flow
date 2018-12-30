@@ -1,0 +1,291 @@
+import tools/flowc/symbol_nature;
+import tools/flowc/find_occurrences;
+
+export {
+	fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string, showStopper : (int) -> void) -> void;
+
+	// Performs a renaming refactoring: change all occurences of a selected AST entity with some new name
+	fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, showStopper : (int) -> void) -> void;
+}
+
+fcRenamingUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : string, showStopper : (int) -> void) -> void {
+	tests = readDirectory(folder);
+	skipp = getConfigParameter(config.config, "skip");
+	skips = if (skipp == "") [] else map(strSplit(skipp, ","), \t -> "test" + t);
+	iter(tests, \test ->
+		if (skips != [] && exists(skips, \skip -> startsWith(test, skip))) {
+			fcPrintln("Skipping " + test);
+		} else if (endsWith(test, ".flow")) {
+			file = folder + (if (endsWith(folder, "/")) "" else "/") + test;
+			if (isDirectory(folder) && fileExists(file)) {
+				fcPrintln("Testing " + file);
+				starttime = timestamp();
+				prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, file), globEnv, file);
+				prog = prog_error.first;
+				if (prog_error.second == 0) testRenameGlobalSymbols(prog, file);
+				fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n");
+			}
+		}
+	);
+	fcPrintln("Test complete");
+	showStopper(0);
+}
+
+fcRename(config: CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, showStopper : (int) -> void) -> void {
+	switch (symbolNature(config, globEnv, renameSymbol)) {
+		Some(symbolnature):
+			switch (symbolnature.scope) {
+				FcGlobalScope(defModule):
+					// Symbol is global: a toplevel and is exported
+					fcGlobalRename(config, globEnv, renameSymbol, defModule, symbolnature.kind);
+				FcModuleScope():
+					// Symbol is toplevel, but not exported, i.e. module-scope
+					fcModuleRename(config, globEnv, renameSymbol, symbolnature.kind);
+				FcLocalScope():
+					// Symbol is local: not a toplevel
+					fcLocalRename(config, globEnv, renameSymbol, symbolnature.kind);
+			}
+		None(): {
+			fcPrintln(renameSymbol + " is not found");
+		}
+	}
+	showStopper(0);
+}
+
+fcGlobalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, renameSymbol : string, defModulePath : string, kind : FcSymbolKind) -> void {
+	ensureIncrementalDirectoryExists(config);
+
+	compute_reacheable = \ -> {
+		// Skip all error messages at parsing/typechecking, because 
+		// occasionaly we can process old/broken/erraneous files.
+		fcSkipPrinting := true;
+
+		// Find all sources, containing symbol
+		workingDir = getConfigParameterDef(config.config, "working-dir", "");
+		all_sources = findAllSourcesContainingStr(workingDir, renameSymbol, []);
+
+		// Extract those sources, who have a definition module inside inclusions.
+		filterSourcesWhichImportDefinitionModule(config, all_sources, defModulePath)
+	}
+
+	reacheable_sources = if (isConfigParameterSet(config.config, "project")) {
+		project = getConfigParameter(config.config, "project");
+		if (project == "0") {
+			compute_reacheable()
+		} else {
+			strSplit(project, ",")
+		}
+	} else {
+		compute_reacheable()
+	}
+
+	// Produce programs for sources, which contain renameSymbol
+	programs = fold(reacheable_sources, Pair(makeTree(), makeSet()), 
+		\ac, src ->
+			if (containsSet(ac.second, src)) {
+				// Already inside of typechecked programs
+				ac 
+			} else {
+				prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, src), globEnv, src);
+				prog = prog_error.first;
+				error = prog_error.second;
+				if (error == 0)
+					Pair(
+						setTree(ac.first, src, prog),
+						foldTree(
+							prog.modules,
+							ac.second,
+							\__, module, a -> insertSet(a, module.fileinfo.fullpath)
+						)
+					)
+				else ac
+			}
+	).first;
+
+	// Return the normal output mode.
+	fcSkipPrinting := false;
+
+	renameTo = getConfigParameter(config.config, "to");
+	if (renameTo == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+	} else {
+		foldTree(programs, makeSet(), \file, prog, ac -> 
+			renameGlobalSymbolTo(prog, renameSymbol, kind, renameTo, ac)
+		);
+		{}
+	};
+}
+
+fcLocalRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind) -> void {
+	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
+	to = getConfigParameter(config.config, "to");
+	if (to == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+	} else {
+		line_str = getConfigParameter(config.config, "exp-line");
+		column_str = getConfigParameter(config.config, "exp-column");
+		if (line_str != "" && column_str != "") {
+			line = s2i(line_str) - 1;
+			column = s2i(column_str) - 1;
+			prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, file), globEnv, file);
+			prog = prog_error.first;
+			error = prog_error.second;
+			if (error == 0) {
+				renameLocalSymbolTo(prog, file, line, column, from, kind, to);
+			}
+		} else {
+			fcPrintln("local remaning requires passing varible line and column");
+		}
+	};
+}
+
+fcModuleRename(config : CompilerConfig, globEnv : FcTypeEnvGlobal, from : string, kind : FcSymbolKind) -> void {
+	file = resolveRelativePath(getCompilationFile(config.config, config.verbose));
+	to = getConfigParameter(config.config, "to");
+	if (to == "") {
+		fcPrintln("Provide rename=<symbol> with to=<renamed>");
+	} else {
+		prog_error = parseAndTypecheckFlowFile(setConfigFlowfile(config, file), globEnv, file);
+		prog = prog_error.first;
+		error = prog_error.second;
+		if (error == 0) {
+			renameModuleSymbolTo(prog, file, from, kind, to);
+		}
+	};
+}
+
+renameGlobalSymbolTo(prog : FiProgram, from : string, kind : FcSymbolKind, to : string, processed : Set<string>) -> Set<string> {
+	if (containsSet(processed, prog.config.flowfile)) processed else {
+		config = prog.config;
+		occurences = findOccurencesInFiProgram(prog, from, kind, processed);
+		renamed = renameOccurencesInProgram(occurences, from, to);
+		insertSet(
+			foldTree(renamed, 
+				processed,
+				\module, pair, acc -> {
+					if (getConfigParameter(config.config, "unittests") != "rename") {
+						path = module.fileinfo.fullpath;
+						if (!setFileContent(path, pair.second)) {
+							fcPrintln("can't save renamed source file: " + path)
+						}
+						insertSet(acc, path)
+					} else {
+						outputRenamedModule(module.fileinfo.flowfile, pair.second, config);
+						acc
+					}
+				}
+			),
+			prog.config.flowfile
+		)
+	}
+}
+
+renameLocalSymbolTo(prog : FiProgram, file : string, line : int, col : int, from : string, kind : FcSymbolKind, to : string) -> void {
+	switch (fcFindLocalOccurrences(prog, file, line, col, from, kind)) {
+		Some(occurrences): {
+			workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
+			module = lookupTreeDef(prog.modules, trimFlowfile(file, prog.config.includes, workingDir), dummyFiModule);
+			code = getFileContent(module.fileinfo.fullpath);
+			renamed = completeRenaming(code, from, to, occurrences);
+			if (!setFileContent(module.fileinfo.fullpath, renamed)) {
+				fcPrintln("can't save renamed source file: " + module.fileinfo.fullpath)
+			}
+		}
+		None(): { }
+	}
+}
+
+renameModuleSymbolTo(prog : FiProgram, file : string, from : string, kind : FcSymbolKind, to : string) -> void {
+	workingDir = getConfigParameterDef(prog.config.config, "working-dir", "");
+	relative = trimFlowfile(file, prog.config.includes, workingDir);
+	switch (lookupTree(prog.modules, relative)) {
+		Some(module): {
+			code = getFileContent(module.fileinfo.fullpath);
+			resolver = makeLineResolver(code);
+			occurences = findOccurencesInFiModule(prog, module, from, kind);
+			renamed = completeRenaming(code, from, to, occurences);
+			path = module.fileinfo.fullpath;
+			if (!setFileContent(path, renamed)) {
+				fcPrintln("can't save renamed source file: " + path)
+			}
+		}
+		None(): {
+			fcPrintln("module = " + relative + " not found");
+		}
+	}
+}
+
+
+testRenameGlobalSymbols(prog : FiProgram, flowfile : string) -> void {
+	config = prog.config;
+	test = strReplace(strRight(flowfile, strLastIndexOf(flowfile, "/") + 1), ".flow", "");
+	switch (parseTestNames(getConfigParameter(config.config, "test-rename-froms"), test)) {
+		Some(from): {
+			switch (parseTestNames(getConfigParameter(config.config, "test-rename-tos"), test)) {
+				Some(to): {
+					renameGlobalSymbolTo(prog, from, FcNameSymbol(), to, makeSet()); {}
+				}
+				None(): fcPrintln("Config parameter 'test-rename-tos' should include an entry for file: " + test);
+			}
+		}
+		None(): fcPrintln("Config parameter 'test-rename-froms' should include an entry for file: " + test);
+	}
+}
+
+parseTestNames(names : string, flowfile : string) -> Maybe<string> {
+	mapping = pairs2tree(
+		map(
+			strSplit(names, ","),
+			\str_pair -> {
+				pair = strSplit(str_pair, "-");
+				assert(length(pair) == 2, "pair must be of form: 'file'-'name', given string is: " + names);
+				Pair(pair[0], pair[1])
+			}
+		)
+	);
+	lookupTree(mapping, strRight(flowfile, strLastIndexOf(flowfile, "/") + 1))
+}
+
+outputRenamedModule(path : string, code : string, config : CompilerConfig) -> void {
+	of = getConfigParameter(config.config, "outfolder");
+	if (of != "") {
+		outfolder = if (of == "1") "tools/flowc/tests/rename/out" else of;
+		ensureDirectoryExists(outfolder);
+		outfile = outfolder + "/" + strReplace(path, "/", "_") + ".flow";
+		if (!setFileContent(outfile, code)) {
+			fcPrintln("can't save renamed source file: " + outfile)
+		}
+	}
+}
+
+renameOccurencesInProgram(occurences : Tree<FiModule, Set<int>>, from : string, to : string) -> Tree<FiModule, Pair<string, string>> {
+	foldTree(
+		occurences,
+		makeTree(),
+		\module, occ, acc -> {
+			if (isEmptySet(occ)) acc else {
+				code = getFileContent(module.fileinfo.fullpath);
+				renamed = completeRenaming(code, from, to, occ);
+				setTree(acc, module, Pair(code, renamed))
+			}
+		}
+	)
+}
+
+completeRenaming(code : string, from : string, to : string, occurences : Set<int>) -> string {
+	from_length = strlen(from);
+	pair = foldSet(occurences, Pair("", 0), 
+		\acc, curr_occurence -> {
+			prev_occurence = acc.second;
+			substr_before = strSubRange(code, prev_occurence, curr_occurence);
+			to_replace = strSubRange(code, curr_occurence, curr_occurence + from_length);
+			if (to_replace == from) {
+				Pair(acc.first + substr_before + to, curr_occurence + from_length)
+			} else {
+				// Don't change anything in this case
+				Pair(acc.first + substr_before + to_replace, curr_occurence + from_length)
+			}
+		}
+	);
+	pair.first + strSubRange(code, pair.second, strlen(code))
+}

@@ -1,0 +1,722 @@
+import material/internal/material_manager_internal;
+import material/material_gui;
+import material/measing;
+import loop;
+
+// Internal to material
+
+export {
+	// Increases the size of this tropic to be a 8x8 multiple
+	MGridSize(t : Tropic) -> Tropic;
+
+	// Increases the size of this tropic to be a 8x8 multiple, and centers it
+	MGridCenterX(t : Tropic) -> Tropic;
+
+	TKeyListener(keys : [string], fnPressed : () -> void, fnReleased : () -> void, box : Tropic) -> Tropic;
+
+	enterOrSpace = [" ", "enter"];
+
+	// Temporary replacement of MGrid. Builds table with fixed size cells. Aligns data to the left and centers vertically
+	FixedTableAlignLeft(lines : [[Material]], widths : [double], height : double) -> Material;
+	FixedTableAlignBaselineLeft(lines : [[Material]], widths : [double], height : double) -> Material;
+
+	getRealStageWidthHeight(manager : MaterialManager) -> WidthHeight;
+
+	getMaterialScrollBar() -> TScrollBarsStyle;
+
+	getMaterialScrollBarWithShade(shade : int) -> TScrollBarsStyle;
+
+	concatStyles(a : [?], b : [?]) -> [?];
+	addStyleIfAbsent(a : [?], st : ?) -> [?];
+
+	mDisabledStyle(lightBackground : bool) -> [GraphicsStyle] {
+		[Fill(if (lightBackground) 0x000000 else 0xffffff), FillOpacity(if (lightBackground) 0.26 else 0.3)]
+	};
+
+	distributeSizesEvenly(minWidths : [int], maxWidths : [int], columnWidths : [DynamicBehaviour<int>], availableWidth : int) -> void;
+
+	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void>;
+		MDirection ::= MRight, MLeft, MUp, MDown;
+			MUp();
+			MDown();
+
+	makeTropicWidthHeightStatic(t : Tropic) -> Tropic;
+	makeTropicWidthStatic(t : Tropic) -> Tropic;
+	makeTropicHeightStatic(t : Tropic) -> Tropic;
+
+	// Use only when you 100% sure it's tropic
+	dummyM2t = \t : Material, p : MFocusGroup -> cast(t : Material -> Tropic);
+
+	MSeparator2T(manager : MaterialManager, parent : MFocusGroup, horizontal : bool) -> Tropic;
+	MZoomMaterial(mat : Material, scale : Transform<double>, scrollStyle : [MScrollStyle]) -> Material;
+
+	fn2IScriptBehaviourDisposable(fn : () -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposable;
+	fn2IScriptBehaviourDisposableAsync(fn : (() -> void) -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposableAsync;
+	fn2IScriptBehaviourDisposable1(fn : (flow) -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposable1;
+
+		IScriptBehaviourDisposable(fn : () -> void, monitorBehaviour : IScriptBehaviour, subscribers : () -> () -> void);
+		IScriptBehaviourDisposableAsync(fn : (() -> void) -> void, monitorBehaviour : IScriptBehaviour, subscribers : () -> () -> void);
+		IScriptBehaviourDisposable1(fn : (flow) -> void, monitorBehaviour : IScriptBehaviour, subscribers : () -> () -> void);
+
+	interruptibleTimerChain(chain : List<Pair<double, ((bool) -> void) -> void>>, onFinished : (bool) -> void) -> () -> void;
+
+	TFillXYDrawGrid(primaryLineDelta : double, secondaryLineDelta : double) -> Tropic;
+
+	getTypeString(value : flow) -> string;
+
+	MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Point>, content : Tropic) -> () -> () -> void;
+
+	screenDPI2pixelDensity(dpi : int) -> double;
+	applyIfDynamic(beh : Transform<?>, fn : () -> ?) -> void;
+
+	updateMaterialTheme(manager : MaterialManager, theme : MaterialTheme) -> void;
+
+	// Use it if TSelect doesn`t affect metrics
+	TSelectConstantMetrics(value : Transform<?>, fn : (?) -> Tropic) -> Tropic;
+
+	// Helper for background drawing
+	addTBackground(color : MColor) -> (Tropic) -> Tropic;
+	addMBackground(color : MColor) -> (Material) -> Material;
+
+	alignRightForRTL(t : Tropic) -> Tropic;
+	alignMRightForRTL(m : Material) -> Material;
+	changeBoolIfRTL(b : bool) -> bool;
+
+	getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TGraphicsStyle];
+
+	// Show text and progressbar below
+	MLoading(text : string) -> Material;
+
+	TAnimatedExpander(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		content : Tropic,
+		expanded : Transform<bool>,
+		vertical : bool) -> Tropic;
+}
+
+MGridSize(t : Tropic) -> Tropic {
+	TTweak([TSnapSize(8.0, 8.0, true), TAlign(const(0.5), const(0.5))], t, TEmpty())
+}
+
+MGridCenterX(t : Tropic) -> Tropic {
+	TTweak([TSnapSize(8.0, 0.0, true), TAlign(const(0.5), zero)], t, TEmpty())
+}
+
+TKeyListener(keys : [string], fnPressed : () -> void, fnReleased : () -> void, box : Tropic) -> Tropic{
+	tKeys = makeTKey(\k -> contains(keys, k.utf));
+
+	TConstruct([makeSubscribe2(tKeys.pressed, \k -> if (k != noKey) fnPressed() else fnReleased())],
+		TInteractive([tKeys], box)
+	);
+}
+
+FixedTableAlignLeft(lines : [[Material]], widths : [double], height : double) -> Material {
+	MLines(
+		map(lines, \columns -> {
+			MCols(
+				mapi(columns, \i, cell -> {
+					MAvailable(
+						MGroup2(
+							TFillX(),
+							MCenterYIn(cell, MFixedY(height))
+						),
+						TFixed(widths[i], height)
+					)
+				})
+			)
+		})
+	)
+}
+
+FixedTableAlignBaselineLeft(lines : [[Material]], widths : [double], height : double) -> Material {
+	MLines(
+		map(lines, \columns -> {
+			MBaselineCols(
+				mapi(columns, \i, cell -> {
+					MAvailable(
+						MCols2(
+							cell,
+							TFillX()
+						),
+						TFixed(widths[i], height)
+					)
+				})
+			)
+		})
+	)
+}
+
+getRealStageWidthHeight(manager : MaterialManager) -> WidthHeight {
+	density = extractStruct(manager.manager.renderStyle, TDpif(screenDPI2pixelDensity(screenDPI))).dpif;
+	WidthHeight(getStageWidth() / density, getStageHeight() / density);
+}
+
+getMaterialScrollBarWithShade(shade : int) -> TScrollBarsStyle {
+	TScrollBarStyle(const(true), if (mobile) 4. else 6., [MFill(MGrey(shade)), FillOpacity(0.9)], [])
+	|> (\f -> TScrollBarsStyle(f, f))
+}
+
+getMaterialScrollBar() -> TScrollBarsStyle {
+	getMaterialScrollBarWithShade(500);
+}
+
+concatStyles(a : [?], b : [?]) -> [?] {
+	map(b, \v -> extractStruct(a, v))
+	|> (\f -> replaceStructMany(a, f))
+}
+
+addStyleIfAbsent(a : [?], st : ?) -> [?] {
+	eitherMap(
+		tryExtractStruct(a, st),
+		\__ -> a,
+		arrayPush(a, st)
+	)
+}
+
+distributeSizesEvenly(minWidths : [int], maxWidths : [int], columnWidths0 : [DynamicBehaviour<int>], availableWidth : int) -> void {
+	columnsCount = either(minA([length(minWidths), length(maxWidths), length(columnWidths0)]), 0);
+
+	additionThreshold = 0;
+
+	if (columnsCount > 0) {
+		columnWidths = generate(0, columnsCount, \i -> max(columnWidths0[i] |> getValue, minWidths[i]));
+		sumWidth = sum(columnWidths);
+
+		if (sumWidth < availableWidth - additionThreshold || sumWidth > availableWidth + additionThreshold) {
+			available = availableWidth - sumWidth;
+			addition = available / columnsCount;
+
+			availableForAddition =
+				mapi(subrange(maxWidths, 0, columnsCount), \i, mw -> ref
+					(if (sumWidth < availableWidth)
+						(mw > minWidths[i] && columnWidths[i] < mw) || (mw < minWidths[i])
+					else
+						columnWidths[i] > minWidths[i])
+				);
+
+			newWidths =
+				mapi(subrange(columnWidths, 0, columnsCount), \i, cw -> ref
+					if (^(availableForAddition[i])) {
+						nw = cw + addition;
+
+						if (nw < minWidths[i]) {
+							availableForAddition[i] := false;
+							minWidths[i];
+						} else if (maxWidths[i] >= minWidths[i] && nw > maxWidths[i]) {
+							availableForAddition[i] := false;
+							maxWidths[i];
+						} else {
+							nw
+						}
+					} else {
+						if (minWidths[i] > 0) {
+							if (minWidths[i] <= maxWidths[i])
+								min(max(cw, minWidths[i]), maxWidths[i])
+							else
+								max(cw, minWidths[i])
+						} else
+							cw
+					}
+				);
+
+			newAddition =
+				updateWhile(
+					countA(availableForAddition, \afa -> ^afa)
+					|> (\afa ->
+						if (afa > 0)
+							floor(i2d(availableWidth - columnsCount - fold(newWidths, 0, \acc, nw -> acc + ^nw)) / i2d(afa))
+						else
+							0
+					),
+					\newAddition ->
+						if ((newAddition > additionThreshold || newAddition < additionThreshold) &&
+							foldi(availableForAddition, false, \i, acc, afa -> {
+								if (^afa) {
+									nw =
+										max(minWidths[i], ^(newWidths[i]) + newAddition)
+										|> (\f -> if (minWidths[i] < maxWidths[i]) min(f, maxWidths[i]) else f);
+									b = ^(newWidths[i]) != nw;
+									newWidths[i] := nw;
+									acc || b
+								} else {
+									acc
+								}
+							}))
+							Some((availableWidth - fold(newWidths, 0, \acc, nw -> acc + ^nw)) / countA(availableForAddition, \afa -> ^afa))
+						else
+							None()
+				);
+
+			iteri(newWidths, \i, nw -> nextDistinct(columnWidths0[i], ^nw))
+		} else {
+			fori(0, columnsCount - 1, \i -> nextDistinct(columnWidths0[i], columnWidths[i]))
+		}
+	}
+}
+
+selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void> {
+	x = ref -1;
+	y = ref -1;
+
+	fn0 = \dir : MDirection, cls : [[?]] -> {
+		switch (dir) {
+			MLeft(): {
+				x := ^x - 1;
+			}
+			MRight(): {
+				x := ^x + 1;
+			}
+			MUp(): {
+				y := ^y - 1;
+			}
+			MDown(): {
+				y := ^y + 1;
+			}
+		}
+
+		if (^x < 0) {
+			x := length(cls) - 1;
+		} else if (^x > length(cls) - 1) {
+			x := 0;
+		}
+
+		if (^y < 0) {
+			y := either(maxA(map(cls, \c -> length(c) - 1)), 0);
+		} else if (^y > either(maxA(map(cls, \c -> length(c) - 1)), 0)) {
+			y := 0;
+		}
+	};
+
+	fn = \dir : MDirection -> {
+		cls = fgetValue(cells);
+
+		if (length(cls) > 0 && length(cls[0]) > 0) {
+			fn0(dir, cls);
+
+			while(\ -> !existsIndex(cls, ^x) || !existsIndex(cls[^x], ^y), \ -> fn0(dir, cls));
+
+			nextDistinct(currentCell, cls[^x][^y]);
+		}
+	}
+
+	uns =
+		makeSubscribe(fpair(cells, currentCell), \cls : Pair<[[?]], ?>-> {
+			x := either(findi(cls.first, \c -> contains(c, cls.second)), -1);
+			y := if (^x >= 0) either(findi(cls.first[^x], \c -> c == cls.second), 0) else -1;
+		})();
+
+	Pair(fn, uns)
+}
+
+makeTropicWidthHeightStatic(t : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		bf = t |> t2a;
+
+		TAcc(
+			bf.form,
+			TFormMetrics(
+				bf.metrics.width,
+				bf.metrics.height,
+				bf.metrics.height
+			),
+			bf.metrics.width,
+			bf.metrics.height,
+			bf.metrics.width,
+			bf.metrics.height,
+			zero,
+			zero,
+			const(true),
+			bf.xConstant,
+			bf.yConstant,
+			bf.disposers
+		)
+	})
+}
+
+makeTropicWidthStatic(t : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		bf = t |> t2a;
+
+		TAcc(
+			bf.form,
+			TFormMetrics(
+				bf.metrics.width,
+				bf.metrics.height,
+				bf.metrics.height
+			),
+			bf.metrics.width,
+			bf.minHeight,
+			bf.metrics.width,
+			bf.maxHeight,
+			zero,
+			bf.yFillers,
+			const(true),
+			bf.xConstant,
+			bf.yConstant,
+			bf.disposers
+		)
+	})
+}
+
+makeTropicHeightStatic(t : Tropic) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		bf = t |> t2a;
+
+		TAcc(
+			bf.form,
+			TFormMetrics(
+				bf.metrics.width,
+				bf.metrics.height,
+				bf.metrics.height
+			),
+			bf.minWidth,
+			bf.metrics.height,
+			bf.maxWidth,
+			bf.metrics.height,
+			bf.xFillers,
+			zero,
+			const(true),
+			bf.xConstant,
+			bf.yConstant,
+			bf.disposers
+		)
+	})
+}
+
+MSeparator2T(manager : MaterialManager, parent : MFocusGroup, horizontal : bool) -> Tropic {
+	(if (horizontal) TFillXH(1.) else TFillWY(1.))
+	|> (\f -> TRectangle([MFill(parent.theme.separatorColor), FillOpacity(0.12)], f))
+}
+
+MZoomMaterial(mat : Material, scale : Transform<double>, scrollStyle : [MScrollStyle]) -> Material {
+	box : MScrollWidthHeight = extractStruct(scrollStyle, MScrollWidthHeight(makeWH(), makeWH()));
+	scrollPosition : MScrollPosition = extractStruct(scrollStyle, MScrollPosition(make(zeroPoint)));
+	prevSc = ref fgetValue(scale);
+
+	MScroll(
+		MZoom(mat, TScale(fselect(scale, FLift(\sc -> Factor(sc, sc))), TSized(box.box)), true)
+		|> MCenter,
+		TFillXY(),
+		replaceStructMany(scrollStyle, [box, scrollPosition])
+	)
+	|> (\f ->
+		MConstruct(
+			[
+				make2Subscribe(scale, box.box, \sc, bx -> {
+					if (sc > 1.) {
+						sp = getValue(scrollPosition.position);
+
+						nextDistinct(
+							scrollPosition.position,
+							Point(
+								max((sp.x + bx.width / 2.) * sc / ^prevSc - bx.width / 2., 0.),
+								max((sp.y + bx.height / 2.) * sc / ^prevSc - bx.height / 2., 0.)
+							)
+						);
+					}
+
+					prevSc := sc;
+				})
+			],
+			f
+		)
+	)
+}
+
+fn2IScriptBehaviourDisposable(fn : () -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposable {
+	beh = make(false);
+	runFn = ref true;
+
+	IScriptBehaviourDisposable(
+		\ -> {
+			runFn := false;
+			next(beh, true);
+			fn();
+			next(beh, false);
+			runFn := true;
+		},
+		IScriptBehaviour(name, beh, type),
+		\ -> subscribe2(beh, \b -> if (b && ^runFn) fn())
+	)
+}
+
+fn2IScriptBehaviourDisposableAsync(fn : (() -> void) -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposableAsync {
+	beh = make(false);
+	runFn = ref true;
+
+	IScriptBehaviourDisposableAsync(
+		\asyncFn -> {
+			runFn := false;
+			next(beh, true);
+			fn(asyncFn);
+			next(beh, false);
+			runFn := true;
+		},
+		IScriptBehaviour(name, beh, type),
+		\ -> subscribe2(beh, \b -> if (b && ^runFn) fn(nop))
+	)
+}
+
+fn2IScriptBehaviourDisposable1(fn : (flow) -> void, name : string, type : IScriptRecordType) -> IScriptBehaviourDisposable1 {
+	beh : DynamicBehaviour<Maybe<flow>> = make(None());
+	runFn = ref true;
+
+	IScriptBehaviourDisposable1(
+		\v -> {
+			runFn := false;
+			next(beh, Some(v));
+			fn(v);
+			runFn := true;
+		},
+		IScriptBehaviour(name, beh, type),
+		\ -> subscribe2(beh, \b -> if (^runFn) maybeApply(b, fn))
+	)
+}
+
+interruptibleTimerChain(chain : List<Pair<double, ((bool) -> void) -> void>>, onFinished : (bool) -> void) -> () -> void {
+	interruptibleTimerChain2(0., chain, onFinished);
+}
+
+interruptibleTimerChain2(prevDelay : double, chain : List<Pair<double, ((bool) -> void) -> void>>, onFinished : (bool) -> void) -> () -> void {
+	uns = initUnsM();
+
+	if (countList(chain) > 0) {
+		c = headList(chain, Pair(0., nop1));
+
+		setUnsM(
+			uns,
+			interruptibleTimer(ceil(c.first - prevDelay), \ -> c.second(\b -> {
+				if (b) {
+					setUnsM(
+						uns,
+						interruptibleTimerChain2(c.first, tailList(chain), onFinished)
+					);
+				} else {
+					onFinished(false);
+				}
+			}))
+		);
+	} else {
+		onFinished(true);
+	}
+
+	\ -> dispUnsM(uns);
+}
+
+TFillXYDrawGrid(primaryLineDelta : double, secondaryLineDelta : double) -> Tropic {
+	TAttachSelect(
+		TFillXY(),
+		\wh -> {
+			TGroup2WithoutMetrics(
+				TGraphics(
+					concat(
+						generate(0, floor(wh.width / 8.), \i ->
+							[
+								MoveTo(i2d(i) * 8., 0.),
+								LineTo(i2d(i) * 8., wh.height)
+							]
+						),
+						generate(0, floor(wh.height / 8.), \i ->
+							[
+								MoveTo(0., i2d(i) * 8.),
+								LineTo(wh.width, i2d(i) * 8.)
+							]
+						)
+					)
+					|> concatA,
+					[FillOpacity(0.), StrokeOpacity(0.1), Stroke(black)]
+				),
+				TGraphics(
+					concat(
+						generate(0, floor(wh.width / 64.), \i ->
+							[
+								MoveTo(i2d(i) * 64., 0.),
+								LineTo(i2d(i) * 64., wh.height)
+							]
+						),
+						generate(0, floor(wh.height / 64.), \i ->
+							[
+								MoveTo(0., i2d(i) * 64.),
+								LineTo(wh.width, i2d(i) * 64.)
+							]
+						)
+					)
+					|> concatA,
+					[FillOpacity(0.), StrokeOpacity(0.2), Stroke(black)]
+				),
+			)
+		}
+	)
+}
+
+getTypeString(value : flow) -> string {
+	sv : string = serialize(value);
+	ts : string = toStringNoExtraQuotes(value);
+
+	if (sv != ts)
+		"string"
+	else if ((startsWith(sv, "-") && isDigits(substring(sv, 1, strlen(sv)))) || isDigits(sv))
+		"int"
+	else if (isDouble(sv) || sv == "-nan(ind).0" || sv == "nan.0" ||
+		sv == "-inf.0" || sv == "inf.0" || value != value)
+		"double"
+	else if (sv == "false" || sv == "true")
+		"bool"
+	else if (isArray(value))
+		"array"
+	else
+		value.structname
+}
+
+MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Point>, content : Tropic) -> () -> () -> void {
+	\ -> {
+		density = extractStruct(manager.manager.renderStyle, TDpif(screenDPI2pixelDensity(screenDPI))).dpif;
+		stage = getStage();
+		nextDistinct(position, Point(getMouseX(stage) / density, getMouseY(stage) / density));
+
+		trender(
+			TInteractive(
+				[
+					MouseMove2(\h, mi0 -> {
+						mi = mi0();
+						nextDistinct(position, Point(mi.x, mi.y));
+						h;
+					})
+				],
+				TRectangle(interactiveRectangleStyle, TFillXY())
+			)
+			|> (\tr ->
+				if (content == TEmpty())
+					tr
+				else
+					TGroup2WithoutMetrics(tr, content)
+			),
+			manager.manager.renderStyle
+		)
+	}
+}
+
+screenDPI2pixelDensity(dpi : int) -> double {
+	if (js || dpi <= 200)
+		1.
+	else if (dpi <= 220)
+		1.3
+	else if (dpi <= 260)
+		1.5
+	else if (dpi <= 380)
+		2.
+	else if (dpi <= 500)
+		3.
+	else
+		4.
+}
+
+applyIfDynamic(beh : Transform<?>, fn : () -> ?) -> void {
+	switch (beh : Transform<?>) {
+		DynamicBehaviour(val, __): next(beh, fn());
+		default: {};
+	}
+}
+
+updateMaterialTheme(manager : MaterialManager, theme : MaterialTheme) -> void {
+	if (manager.theme != theme) {
+		manager.theme ::= theme;
+		(manager.focus).theme ::= theme;
+		nextDistinct(manager.white, theme.lightBackground);
+		reverseBehaviour(manager.forceRender);
+	}
+}
+
+TSelectConstantMetrics(value : Transform<?>, fn : (?) -> Tropic) -> Tropic {
+	TFSelect(value, FLift(fn))
+	|> makeTropicConstant(None(), None())
+}
+
+addTBackground(color : MColor) -> (Tropic) -> Tropic {
+	\t -> TFrame(0.0, 0.0, [MFill(color)], t)
+}
+
+addMBackground(color : MColor) -> (Material) -> Material {
+	\m -> MFrame(0.0, 0.0, [MFill(color)], m)
+}
+
+alignRightForRTL(t : Tropic) -> Tropic {
+	if (getDefaultRtl())
+		TTweak(
+			[TAlign(const(1.0), const(0.0))],
+			t,
+			TFillX()
+		)
+	else
+		t
+}
+
+alignMRightForRTL(m : Material) -> Material {
+	if (getDefaultRtl())
+		MTweak(
+			[TAlign(const(1.0), const(0.0))],
+			m,
+			TFillX()
+		)
+	else
+		m
+}
+
+changeBoolIfRTL(b : bool) -> bool {
+	b != getDefaultRtl()
+}
+
+getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TGraphicsStyle] {
+	if (!equalDoubles(width, 0.0)) [MStroke(stroke), StrokeOpacity(opacity), StrokeWidth(width)] else [];
+};
+
+MLoading(text : string) -> Material {
+	MLet(
+		"Label",
+		MCols([TFixed(8.0, 0.0), MCenterX(MText(text, [])), TFixed(8.0, 0.0)]),
+		MAvailable(
+			MGroup2(
+				MZoomToFill(MProgressBar([MBlue(200), MProgressBackgroundColor(MWhite()), WidthHeight(100.0, 10.0)]), TFillXY(), false) |> MCenterX,
+				TDisplay("Label") |> MCenterX
+			),
+			TGhost("Label")
+		)
+	)
+}
+
+TAnimatedExpander(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	content : Tropic,
+	expanded : Transform<bool>,
+	vertical : bool) -> Tropic {
+
+	startFactor = b2d(fgetValue(expanded));
+	makeFactor = \f -> if (vertical) Factor(1.0, f) else Factor(f, 1.0);
+	alpha = make(startFactor);
+	factor = make(makeFactor(startFactor));
+	box = TScale(factor, content);
+	offset = TSubtractGroup2(content, box);
+
+	content
+	|> (\m -> TAlpha(alpha, m))
+	|> (\m -> TShift(m, offset))
+	|> (\m -> TFixSize(m, box))
+	|> (\m ->
+			MEasingAnimation(
+				manager,
+				parent,
+				const(0.3),
+				const(easingFastOutSlowIn),
+				expanded,
+				\e -> Some(e),
+				\e, prc -> {
+					f = if (e) prc else 1.0 - prc;
+					next(alpha, f);
+					next(factor, makeFactor(f));
+				},
+				[],
+				m
+			))
+}

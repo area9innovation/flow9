@@ -1,0 +1,125 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+
+import filters;
+import paragraph;
+import serialize;
+import formats/wiki/wikilexer;
+import formats/wiki/wikiast;
+import formats/wiki/wikiparsershelper;
+import formats/wiki/wikitools2;
+import ui/tooltip;
+import ui/imagedecorated;
+import ui/videoplayer;
+
+export {
+	parseMedia : (content : string, style : [CharacterStyle], wikistyle : [WikiStyle], titlerfn : (string, [CharacterStyle], [WikiStyle]) -> [ParagraphElement], mayReturnNotContent : bool) -> Form;
+	
+	mediaContent2Form : (content : MediaContent, style : [CharacterStyle], wikistyle : [WikiStyle], titlerfn : (string, [CharacterStyle], [WikiStyle]) -> [ParagraphElement]) -> Form;
+
+	// Empty is returned after unsuccesful deserialization
+	parseImageDecorated(imageData : string, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement]) -> Form;
+
+	imageDecorated2FormWithZoom(imageDecorated : ImageDecorated, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement]) -> Form;
+	imageDecorated2FormWithZoom2(imageDecorated : ImageDecorated, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement], zoomFn : ((Form) -> Pair<Form, Behaviour<WidthHeight>>) -> ((Form) -> Pair<Form, (Form) -> Form>)) -> Form;
+}
+
+// centered title under form
+setTitle(form : Form, title : [ParagraphElement]) -> Form {
+	w = make(0.0);
+
+	Lines([
+		Inspect([Width(w)], form),
+		Available(w, const(0.0),
+			Align(0.5, 0.0,
+				Paragraph(title, [InterlineSpacing(3.0), CenterAlign()])
+			)
+		)
+	])
+}
+
+// url is just substring from [...]
+// size:320x200
+// partial size (x100 or 320x) is broken by some reason :(
+// size:90%
+// size:90%;zoom
+// video options: LoopPlayback, NoAutoPlay
+// sound is .mp3
+// todo: correctly handle illegal syntax. E.g. check numbers syntax.
+// titlerfn - could be either wikifyText or TextFragment functions
+parseMedia(content : string, style : [CharacterStyle], wikistyle : [WikiStyle], titlerfn : (string, [CharacterStyle], [WikiStyle]) -> [ParagraphElement], mayReturnNotContent : bool) -> Form {
+	mediaContent2Form(parseMedia2(content, mayReturnNotContent), style, wikistyle, titlerfn);
+}
+
+mediaContent2Form(content, style, wikistyle, titlerfn) {
+	urlSuffix = getDontCacheSuffix();
+	switch(content : MediaContent) {
+		VideoContent(url, options, controls, zoom) : {  //Do not need addServerPathIfRelative. Added in renderform.flow
+			scale = either(zoom, 1.0);
+			optionsAdv = if (contains(wikistyle, WikiNoAutoplay())) arrayPush(options, NoAutoPlay()) else	options;
+			makeVideoPlayer3(url + urlSuffix, optionsAdv, controls, \loaded -> {}, scale) |> NonZeroSize;
+		}
+		SoundContent(url, options) : {
+			makeSoundPlayer(addServerPathIfRelative(url) + urlSuffix, arrayPush(options, ShowProgressWhenStopped())) //#35596
+		}
+		ExternalLink(url, caption) : {
+			captionText = either(caption, url);
+			Text("<a href=\"" + url + "\" target=\"_blank\"><u>" + captionText + "</u></a>", concat(style,[Fill(0x0000FF)]))
+		}
+		PictureContent(url, title, zoom) : { //Do not need addServerPathIfRelative. Added in renderform.flow
+			titlefn = eitherMap(
+				title,
+				\o -> \form -> setTitle(form, titlerfn(o, style, wikistyle)),
+				idfn
+			);
+
+			LoadingPicture(url + urlSuffix, nop)
+			|> makeZoomAdder(zoom)(\f -> Pair(f, zeroSize))
+			|> NonZeroSize
+			|> titlefn
+		}
+		ExpressContent(url, title, zoom) : { //Do not need addServerPathIfRelative. Added in the parser's code
+			titlefn = eitherMap(
+				title,
+				\o -> \form -> setTitle(form, titlerfn(o, style, wikistyle)),
+				idfn
+			);
+
+			CallExpressParser(url, SourceIsFilename(), wikistyle)
+			//unlike many other constructions ExpressParser respects AvailableHeight. Fix for #32275
+			|> \f -> OverrideAvailable(\wh -> WidthHeight(wh.width, max(wh.width, wh.height)), f)
+			|> makeZoomAdder(zoom)(\f1 -> Pair(f1, zeroSize))
+			// removing MaxSize helped to fix #41333
+			|> titlefn
+		}
+		NotContent() : {
+			Empty()
+		}
+	}
+}
+
+parseImageDecorated(imageData : string, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement]) -> Form {
+	eitherMap(
+		parseImageDecorated2(imageData),
+		\image -> imageDecorated2FormWithZoom(image, makeParagraphElements),
+		Empty()
+	)
+}
+
+imageDecorated2FormWithZoom(imageDecorated : ImageDecorated, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement]) {
+	zoomfn = imageDecorated.targetSize |> parsePictureZoom |> (\zDesc -> makeZoomAdder3(zDesc, None()));
+	imageDecorated2FormWithZoom2(imageDecorated, makeParagraphElements, zoomfn)
+}
+
+imageDecorated2FormWithZoom2(imageDecorated : ImageDecorated, makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement], zoomFn : ((Form) -> Pair<Form, Behaviour<WidthHeight>>) -> ((Form) -> Pair<Form, (Form) -> Form>)) -> Form {
+	makeImageDecorated2(
+		imageDecorated.filename + getDontCacheSuffix(),
+		imageDecorated.width, imageDecorated.height,
+		Some(zoomFn),
+		true,
+		imageDecorated.decorations,
+		makeParagraphElements,
+		false,
+		false
+	)
+}

@@ -1,0 +1,1 @@
+call flowc %1.flow bytecode=../out/%1.bytecode

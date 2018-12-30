@@ -1,0 +1,97 @@
+import material/material;
+import material/material2tropic;
+
+export {
+	//https://www.google.com/design/spec/components/snackbars-toasts.html#
+	//Creation of new snackbar destroys previous one;
+	showMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle]) -> void;
+	//MTextVisible is for snackbar action, should not be raised (restricted to one action only);
+	MSnackbarStyle ::= MTextButton, MSnackbarVisible, MWidth, MColor, MSnackbarTextColor, MSnackbarAutoDisappear,
+			MSnackbarAutoDisappearTime, MSnackbarNoButton, MSnackbarAlignLeft, MSnackBarOffset;
+		//MSnackbarVisible can be used for getting of current snackbar state and for its closing, but not for showing of snackbar;
+		MSnackbarVisible(visible : DynamicBehaviour<bool>);
+		MSnackbarTextColor(color : MColor);
+		MSnackbarAutoDisappear(enabled : bool);
+		MSnackbarAutoDisappearTime(ms : int);
+		MSnackbarNoButton();
+		MSnackbarAlignLeft(left : bool);
+		MSnackBarOffset(offset : Point);
+}
+
+snackbarDisp = ref nop;
+
+showMSnackbar(manager : MaterialManager, text : string, style : [MSnackbarStyle]) -> void {
+	lightBackground = manager.theme.lightBackground;
+	visible = extractStruct(style, MSnackbarVisible(make(false)));
+	closeSnackbar = \ -> {
+		if (^snackbarDisp != nop) {
+			^snackbarDisp();
+		}
+	};
+	closeSnackbar();
+	snackbarShow = make(0.0);
+	width = extractStruct(style, MWidth(240.0)).width;
+	deferUntilRender(\ -> animate([DoubleAnimation(snackbarShow, 90.0, 200.0)]));
+
+	customColor = extractStructMany(style, MBlack());
+	customTextColor = extractStructMany(style, MSnackbarTextColor(MBlack()));
+	customButton = extractStructMany(style, MTextButton("", nop, [], []));
+	autoDisappear0 = extractStruct(style, MSnackbarAutoDisappear(true)).enabled;
+	autoDisappearTime = extractStruct(style, MSnackbarAutoDisappearTime(6000)).ms;
+	autoDisappear = autoDisappear0 || autoDisappearTime != 6000;
+	bgColor = if (length(customColor) > 0) MColor2int(customColor[0]) else MColor2int(MBackgroundColor(!lightBackground));
+	textColor : MColor = if (length(customTextColor) > 0) customTextColor[0].color else MDefaultTextColor(!lightBackground);
+	button = if (length(customButton) > 0) customButton[0] else if (!contains(style, MSnackbarNoButton())) MIconButton("clear", closeSnackbar, [textColor], []) else TEmpty();
+	textForm : Tropic = material2tropic(manager, MText(if (text != "") text else " ", [textColor, MBody()]));
+	alignLeft = extractStruct(style, MSnackbarAlignLeft(true)).left;
+	offset = extractStruct(style, MSnackBarOffset(zeroPoint)).offset;
+
+	hght = getTWordMetrics(textForm, makeTree()).height;
+
+	snackText =
+		MEllipsis(textForm, TFixed(568.0 - 24.0 - 24.0 - 48.0, hght), [textColor, MBody()])
+		|> (\f -> MFixSize(f, TMinimumGroup2(textForm, TFixed(568.0 - 24.0 - 24.0 - 48.0, hght))))
+		|> (\f -> MBorderA(0.0, 16.0, 24.0 + 48.0, 24.0, f))
+		|> (\f -> MGroup([f, TFixed(width, 0.0)]))
+		|> (\f -> MGroup([f,
+			MColsA([
+				TFillX(),
+				button
+				|> MCenterY
+				|> (\f2 -> MBorderA(0., 0., 8., 0., f2))
+			])
+		]))
+		|> (\f -> material2tropic(manager, f));
+	next(visible.visible, true);
+	renderDisp = ref
+		TCenterY(TDisplay("snack"))
+		|> (\f -> TAvailable(f, TGroup2(TFixed(0.0, hght + 34.), TWidth(TGhost("snack")))))
+		|> (\f -> TFixSize(f, TGroup2(TFixed(0.0, hght + 34.), TWidth(TGhost("snack")))))
+		|> (\f -> TBorderA(24.0, 0.0, 0.0, 0.0, f))
+		|> (\f -> TFrame(0.0, 2.0, [Fill(bgColor)], f))
+		|> (\f -> TShadow(const(6.0), lightBackground, f))
+		|> (\f -> TBorderA(24.0, 24.0, 24.0, 24.0, f))
+		|> (\f -> TLines2A(TFillY(), f))
+		|> (\f -> TTranslate(fselect(snackbarShow, FLift(\s -> Point(offset.x, offset.y +(1.0 - sinus(s)) * 48.0))), f))
+		|> (\f -> TLet("snack", snackText, f))
+		|> (\f -> if (alignLeft) TCols2A(f, TFillX()) else TCols2A(TFillX(), f))
+		|> (\f -> TConstruct([\ -> subscribe2(visible.visible, \v -> if (!v) closeSnackbar())], f))
+		|> (\f -> trender(f, manager.manager.renderStyle));
+
+	timerDisp = ref if (autoDisappear) interruptibleTimer(autoDisappearTime, closeSnackbar) else nop;
+
+	snackbarDisp := \ -> {
+		snackbarDisp := nop;
+		if (^timerDisp != nop) {
+			^timerDisp();
+			timerDisp := nop;
+		}
+		if (^renderDisp != nop) {
+			^renderDisp();
+			renderDisp := nop;
+		}
+		if (fgetValue(visible.visible))
+			next(visible.visible, false);
+	};
+
+}

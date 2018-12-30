@@ -1,0 +1,14 @@
+convert index.markdown index.html
+convert flow.markdown flow.html
+convert form.markdown form.html
+convert runtimes.markdown runtimes.html
+convert development.markdown development.html
+convert lingo.markdown lingo.html
+convert windows.markdown windows.html
+convert mac.markdown mac.html
+convert linux.markdown linux.html
+convert tropic.markdown tropic.html
+convert datawarp.markdown datawarp.html
+convert linux-ubuntu16x64.markdown linux-ubuntu16x64.html
+convert faq.markdown faq.html
+convert mysql.markdown mysql.html

@@ -1,0 +1,161 @@
+import formats/css/stylesheet;
+import tropic/tropic_gui;
+import tropic/tropic;
+import textstyles2;
+
+export {
+    convertTStyle(sheet : Stylesheet, style : TStyle, converter : (CssStyle) -> ?, acc : ?) -> ?;
+    convertTStyle2(sheet : Stylesheet, style : TStyle, converter : ([TGraphicsStyle], CssStyle) -> ?, acc : ?) -> ?;
+
+    convertTStyleWithSelector(sheet : Stylesheet, style : TStyleWithSelector, converter : (CssStyle) -> ?, acc : ?) -> ?;
+    convertTStyleWithSelector2(sheet : Stylesheet, style : TStyleWithSelector, converter : ([TGraphicsStyle], CssStyle) -> ?, acc : ?) -> ?;
+
+    getCharacterStyleFromCss(style : CssStyle) -> [CharacterStyle];
+    getGraphicStyleFromCss(style : CssStyle) -> [GraphicsStyle];
+
+    getSizeFromCss(sheet : Stylesheet, style : [TGraphicsStyle], defSize : Tropic) -> Tropic;
+    getTropicsFromStyle(gs : [TGraphicsStyle], style : CssStyle) -> [Tropic];
+}
+
+convertTStyle(sheet : Stylesheet, style : TStyle, converter : (CssStyle) -> ?, acc : ?) -> ? {
+    convertTStyle2(sheet, style, \s, p -> converter(p), acc);
+}
+
+convertTStyle2(sheet : Stylesheet, style : TStyle, converter : ([TGraphicsStyle], CssStyle) -> ?, acc : ?) -> ? {
+    eitherMap(lookupTree(sheet.styles, style.name), \p -> converter([style], p.style), acc);
+}
+
+convertTStyleWithSelector(sheet : Stylesheet, style : TStyleWithSelector, converter : (CssStyle) -> ?, acc : ?) -> ? {
+    convertTStyleWithSelector2(sheet, style, \s, p -> converter(p), acc);
+}
+
+convertTStyleWithSelector2(sheet : Stylesheet, style : TStyleWithSelector, converter : ([TGraphicsStyle], CssStyle) -> ?, acc : ?) -> ? {
+    eitherMap(
+        lookupTree(sheet.styles, style.name), 
+        \p1 -> eitherMap(lookupTree(p1.selectors, style.selector), \p2 -> converter([style], p2), acc),
+        acc
+    )
+}
+
+getCharacterStyleFromCss(style : CssStyle) -> [CharacterStyle] {
+    appendItalic = \cs ->
+        if (!style.bold && style.italic) asItalicOnce(cs)
+        else cs;
+
+    appendBold = \cs ->
+        if (style.bold && !style.italic) asBoldOnce(cs)
+        else cs;
+
+    appendBoldItalic = \cs ->
+        if (style.bold && style.italic) asBoldItalicOnce(cs)
+        else cs;
+
+    addFontFamily = \cs ->
+        if (length(style.family) > 0) arrayPush(cs, FontFamily(style.family[length(style.family) - 1]))
+        else cs;
+
+    addFontSize = \cs ->
+        if (style.fontSize != defCssStyle.fontSize) arrayPush(cs, FontSize(style.fontSize))
+        else cs;
+
+    addCssColor = \cs ->
+        if (style.color != defCssStyle.color) arrayPush(cs, Fill(style.color))
+        else cs;
+
+    addFill = \cs ->
+        if (style.fill != defCssStyle.fill) arrayPush(cs, Fill(style.fill))
+        else cs;
+
+    addBackgroundFill = \cs -> 
+        if (style.fontBackgroundFill != defCssStyle.fontBackgroundFill) arrayPush(cs, BackgroundFill(style.fontBackgroundFill))
+        else cs;
+
+    addLetterSpacing = \cs ->
+        if (style.letterSpacing != defCssStyle.letterSpacing) arrayPush(cs, LetterSpacing(style.letterSpacing))
+        else cs;
+
+    addOpacity = \cs ->
+        if (style.opacity != defCssStyle.opacity && style.opacity != 1.0) arrayPush(cs, FillOpacity(style.opacity))
+        else cs;
+
+    [ ] |> addBackgroundFill
+    |> addFontSize
+    |> addCssColor
+    |> addFill
+    |> addOpacity
+    |> addFontFamily
+    |> appendBoldItalic
+    |> appendBold
+    |> appendItalic
+    |> addLetterSpacing;
+}
+
+getGraphicStyleFromCss(style : CssStyle) -> [GraphicsStyle] {
+    addBackgroundFill = \cs -> 
+        if (style.backgroundFill != defCssStyle.backgroundFill) arrayPush(cs, Fill(style.backgroundFill))
+        else cs;
+
+    addStroke = \cs ->
+        if (style.stroke != defCssStyle.stroke) arrayPush(cs, Stroke(style.stroke))
+        else cs;
+
+    addStrokeWidth = \cs ->
+        if (style.strokeWidth != defCssStyle.strokeWidth) arrayPush(cs, StrokeWidth(style.strokeWidth))
+        else cs;
+
+    addOpacity = \cs ->
+        if (style.opacity != defCssStyle.opacity && style.opacity != 1.0) concat(cs, [FillOpacity(style.opacity), StrokeOpacity(style.opacity)])
+        else cs;
+
+    // SVG CSS fill
+    addFill = \cs ->
+        if (style.fill != defCssStyle.fill) arrayPush(cs, Fill(style.fill))
+        else cs;
+
+    concat(style.border, style.background) |> addOpacity
+    |> addBackgroundFill |> addStroke |> addStrokeWidth 
+    |> addFill
+    ; 
+}
+
+getSizeFromCss(sheet : Stylesheet, style : [TGraphicsStyle], defSize : Tropic) -> Tropic {
+    cssStyleToTropicSize = \acc, cssStyle -> {
+        if (cssStyle.width != defCssStyle.width && cssStyle.height != defCssStyle.height) {
+            TFixed(cssStyle.width, cssStyle.height);
+        } else {
+            acc;
+        }
+    }
+    fold(style, defSize, \acc, st : TGraphicsStyle -> {
+        switch (st) {
+            TStyle(styleName): convertTStyle(sheet, st, \cssStyle -> cssStyleToTropicSize(acc, cssStyle), acc);
+            TStyleWithSelector(styleName, selectorName) : convertTStyleWithSelector(sheet, st, \cssStyle -> cssStyleToTropicSize(acc, cssStyle), acc);
+            default : acc;
+        }
+    });
+}
+
+// TODO: gs always should be [TCssStyle], find some way to not duplicate code and
+// keep it typesafe
+getTropicsFromStyle(gs : [TGraphicsStyle], style : CssStyle) -> [Tropic] {
+    addRectangle = \cs -> {
+        gsChecker = getGraphicStyleFromCss(style);
+        if (length(gsChecker) != 0 && style.width != defCssStyle.width && style.height != defCssStyle.height) {
+            arrayPush(cs, TRounded(0.0, 0.0, 0.0, 0.0, gs, TFixed(style.width, style.height)));
+        } else {
+            cs;
+        }
+    };
+    addPicture = \cs -> {
+        fold(style.backgroundImage, cs, \acc, pictureUrl -> {
+            pic = TPicture(pictureUrl.value, []);
+            arrayPush(acc, if (style.width != defCssStyle.width && style.height != defCssStyle.height) {
+                    TZoom(pic, TFixed(style.width, style.height), true)
+                } else {
+                    TFrame(0.0, 0.0, /*getGraphicStyleFromCss(style)*/gs, pic);
+                }
+            );
+        });
+    };
+    [] |> addRectangle |> addPicture;
+}

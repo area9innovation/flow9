@@ -1,0 +1,515 @@
+import material/internal/material_ellipsis;
+import material/internal/material_movable;
+import material/iscript/material_iscript_cursors;
+
+export {
+	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogCloseButton,
+		MDialogNoAnimation, MDialogFullScreen, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
+		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent,
+		MActivateState, MButtonTitles, MDialogNonModal, MDialogOnClose;
+
+		// These are very commonly recommended
+		MDialogTitle(title : string);
+		MDialogCustomTitle(title : Material);
+		MDialogUseFrame();
+		MDialogScroll();
+		MDialogKeyEventBlock();
+		MDialogActions(actions : [Material]);
+
+		MDialogCustomFrame(start : double, top : double, end : double, bottom : double, frame : Material);
+		MDialogNoCenter();
+		MDialogCloseButton(close : Material); // it looks like not too "Material"
+		MDialogNoAnimation();
+		MDialogFullScreen();
+		MDialogClickOutToClose();
+		// e.g. useful for MTimePicker and similar, close dialog and act as a "cancel" button
+		MDialogClickOutToCancel(pickerValue : DynamicBehaviour<flow>);
+		// See MMovableGrabArea for info on padding and grabArea
+		MDialogDraggable(padding : Material, grabArea : Material);
+		// Set the Resizable mode. The dialog size depends on its content.
+		MDialogResizable();
+		// Set the Resizable mode. Set the initial size of the dialog.
+		MDialogResizableWithInitialSize(size : Material);
+		// Hides dialog without disposing it but changing zorder
+		MDialogHide(hide : Transform<bool>);
+		MDialogFocusOnPrevious();
+		MButtonTitles(titles : Tree<string, string>);
+		MDialogNonModal();
+		// Allow to run callback every time the dialog is getting closed
+		MDialogOnClose(onClose : () -> void);
+
+		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupFullScreen;
+			MDialogPopupCanClose(canCloseCheck : () -> bool);
+			MDialogPopupSaveEnabled(enabled : Transform<bool>);
+			MDialogPopupNotResize();
+			MDialogPopupFullScreen();
+			MDialogPopupOnClose(onClose : () -> void);
+
+	renderMDialog(manager : MaterialManager, closeWhen : Transform<bool>, style : [MDialogStyle], content : Material,
+		m2t : (Material, MFocusGroup) -> Tropic) -> void {
+		renderMDialog2(manager, closeWhen, style, content, m2t, \t -> trender(t, manager.manager.renderStyle))
+	};
+
+	renderMDialog2(manager : MaterialManager, closeWhen : Transform<bool>, style : [MDialogStyle], content : Material,
+		m2t : (Material, MFocusGroup) -> Tropic, renderFn : (Tropic) -> () -> void) -> void;
+}
+
+renderMDialog2(
+	manager : MaterialManager,
+	closeWhen : Transform<bool>,
+	style : [MDialogStyle],
+	content : Material,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	renderFn : (Tropic) -> () -> void) -> void {
+
+	us = ref [];
+	disp = \ -> dispUnsA(us);
+
+	focusOnPrevious = contains(style, MDialogFocusOnPrevious());
+	focusedBeforeDialog = if (focusOnPrevious) getCurrentFocusedItem(manager) else None();
+
+	u1 =
+		switch (closeWhen : Transform<bool>) {
+			DynamicBehaviour(__, __): {
+				subscribe2(closeWhen, \__ -> disp());
+			}
+			default: makeSubscribe2(closeWhen, \__ -> disp())();
+		};
+
+	title = tryExtractStruct(style, MDialogTitle(""));
+	customTitle = tryExtractStruct(style, MDialogCustomTitle(TEmpty()));
+	actions = tryExtractStruct(style, MDialogActions([]));
+	closeButton = tryExtractStruct(style, MDialogCloseButton(TEmpty()));
+
+	scrolls = contains(style, MDialogScroll());
+	fullScreen = contains(style, MDialogFullScreen());
+	blockKeyboardEvents = contains(style, MDialogKeyEventBlock());
+	clickOutToClose = contains(style, MDialogClickOutToClose());
+	clickOutToCancel = tryExtractStruct(style, MDialogClickOutToCancel(make(false)));
+
+	createSize = maybeMap(tryExtractStruct(style, MDialogResizableWithInitialSize(MEmpty())), \st -> MResizableOnCreate(st.size));
+	resizable = contains(style, MDialogResizable()) || isSome(createSize);
+	draggable = tryExtractStruct(style, MDialogDraggable(TEmpty(), TEmpty()));
+	hideDialog0 = tryExtractStruct(style, MDialogHide(const(false)));
+	hideDialog = eitherMap(hideDialog0, \hd -> hd.hide, const(false));
+	noCenter = contains(style, MDialogNoCenter());
+	floatingContent = tryExtractStruct(style, MFloatingContent(TEmpty()));
+	nonModal = contains(style, MDialogNonModal());
+	zUns = if (nonModal) nop else pushZorder(manager);
+
+	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
+
+	customFrame =
+		if (contains(style, MDialogUseFrame()))
+			MDialogCustomFrame(24., 24., 24., 24., MBackground(6, TFillXY())) |> Some
+		else
+			tryExtractStruct(style, MDialogCustomFrame(0., 0., 0., 0., TEmpty()));
+
+	sideBorder = if (fullScreen) 0. else if (mobile) 12. else 24.;
+	down = make(false);
+	point = make(zeroPoint);
+	insideDialogB = make(false);
+	pressedOutsideB = fand(down, fnot(insideDialogB));
+	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
+	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, mStandartCurve, managerTimer(manager), nop);
+	disableBelow = \f : Tropic -> if (nonModal) f else f |> disableInteractivesBelow |> disableMouseWheelBelow;
+
+	clearIScriptReplayCursorEvents(manager);
+
+	dialogResizableMinSize = 24.;
+	actionsW = make(0.);
+	contentW = make(0.);
+	titleW = make(0.);
+	headerW = make(0.);
+
+	boxW = make(0.);
+	boxH = make(0.);
+
+	availW = make(0.);
+
+	(\p -> {
+		dialogTitle =
+			eitherFn(
+				customTitle,
+				\t ->
+					TCopySize2(
+						m2t(t.title, p),
+						\sz, tr ->
+							TBorder(0., 0., 0., -8., TMask(tr, TRounded(2., 2., 2., 2., [Fill(white)], TBorder(0., 0., 0., 8., tr))))
+					),
+				\ ->
+					eitherMap(
+						title,
+						\ttl ->
+							MEllipsisText2T(manager, p,
+								MEllipsisText(ttl.title, [MTitle(), MShowTooltip(const(true))])
+							)
+							|> (\t ->
+								eitherMap(
+									customFrame,
+									\cf ->
+										TBorderA(0., 0., 0., cf.top, t),
+									t
+								)
+							),
+						TEmpty()
+					)
+			)
+			|> (\t ->
+				eitherMap(
+					closeButton,
+					\cb ->
+						TGroup2(
+							TAttachWidthCopy(t, titleW),
+							TCols2(TFillX(), TBorder(8., 8., 8., 8., m2t(cb.close, p)))
+							|> (\t2 -> TAvailableWidth(t2, fmaxA([titleW, contentW, actionsW], 0.)))
+						),
+					t
+				)
+			)
+			|> (\t -> TAttachWidthCopy(t, headerW));
+
+		contentM =
+			if (content != TEmpty() && content != MEmpty())
+				content
+				|> (\m -> if (fullScreen) MGroup2(TFillXY(), m) else m)
+				|> (\m ->
+					if (scrolls)
+						MScroll2T(
+							manager,
+							p,
+							MScroll(m, TFillXY(), [MScrollCropByContent()]),
+							m2t
+						)
+					else
+						m2t(m, p)
+				)
+				|> (\t ->
+					eitherMap(
+						floatingContent,
+						\fc ->
+							TCopySize(
+								t,
+								\tr ->
+									TAvailable(m2t(fc.content, p), tr),
+								true
+							),
+						t
+					)
+				)
+				|> (\t -> TAttachWidthCopy(t, contentW))
+			else
+				TEmpty();
+
+		actionsM =
+			eitherMap(
+				actions,
+				\act ->
+					concat(
+						if (contains(act.actions, TFillX())) [TFixed(16.0, 0.0)] else [TFillX()],
+						map(act.actions, \ac -> TBorderA(0., 0., 8., 0., m2t(ac, p)))
+					)
+					|> TBaselineColsA
+					|> (\t -> TBorderA(8., 8., 0., 8., t))
+					|> (\t -> TAvailableWidth(t, fmin(availW, fmax(contentW, headerW))))
+					|> (\t -> TAttachWidthCopy(t, actionsW))
+					|> (\t -> eitherMap(customFrame, \cf -> TBorderA(cf.start, 0., cf.end, 0., t), t)),
+				TEmpty()
+			);
+
+
+		TLines2A(
+			dialogTitle,
+			contentM
+		)
+		|> (\t ->
+			eitherMap(
+				customFrame,
+				\cf ->
+					TBorderA(
+						cf.start,
+						cf.top,
+						cf.end,
+						if (isSome(actions)) 24. else cf.bottom,
+						t
+					),
+				t
+			)
+		)
+		|> (\t -> TLines2A(t, actionsM))
+		|> (\t -> TAttachWidthHeight(t, boxW, boxH))
+		|> (\t ->
+			if (clickOutToClose || isSome(clickOutToCancel))
+				TFrame(0., 0., interactiveRectangleStyle, t)
+				// We use a global handler for unhandled mouse events. This is necessary to get the global coordinates of the mouse.
+				// So here we just check if the mouse is inside
+				|> (\t2 -> TInteractive(
+					[
+						MouseDown2(\h, mi -> {
+							next(insideDialogB, mi.inside());
+							h
+						}),
+					],
+					t2))
+			else
+				t
+		)
+		|> (\t ->
+			eitherMap(customFrame,
+				\cf ->
+					m2t(cf.frame, p)
+					|> (\t2 -> TAvailableWidthHeight(t2, boxW, boxH))
+					|> (\t2 -> TGroup2(t2, t)),
+				t
+			)
+		)
+		|> (\t ->
+			if (resizable)
+				MResizable2T(
+					manager,
+					p,
+					MResizable(
+						t,
+						[
+							MResizableMinMax(
+								TFixed(dialogResizableMinSize, dialogResizableMinSize),
+								TFillXY()
+							)
+						]
+						|> (\st -> maybeArrayPush(st, createSize))
+					),
+					m2t
+				)
+			else
+				t
+		)
+		|> (\t ->
+			if (noCenter || isSome(draggable))
+				t
+			else
+				TCenter(
+					if (noAnimation)
+						t
+					else {
+						availH = make(0.);
+
+						TAvailableWidthHeight(t, availW, availH)
+						|> (\t2 -> TAlpha(easing.percent, t2))
+						|> (\t2 -> TScale(ffactor2(easing.percent), t2))
+						|> (\t2 -> TAttachBoxCopyAvailableHeight(t2, availH))
+				}))
+		|> (\t ->
+			eitherMap(
+				draggable,
+				\dr ->
+					MMovable(
+						t,
+						TFillXY(),
+						[
+							MMovableGrabArea(
+								dr.padding
+								|> (\m -> MAvailableWidthHeight(m, boxW, boxH)),
+								dr.grabArea
+								|> (\m -> MAvailableWidthHeight(m, boxW, boxH))
+							)
+						]
+					)
+					|> (\m : MMovable ->
+						if (noCenter)
+							MMovable2T(manager, p, m, m2t)
+						else {
+							sPos = make(zeroPoint);
+							avH = make(0.);
+
+							TConstruct(
+								[
+									\ -> { // center dialog
+										nextDistinct(
+											sPos,
+											Point(
+												(getValue(availW) - getValue(boxW)) / 2. - sideBorder,
+												(getValue(avH) - getValue(boxH)) / 2. - sideBorder
+											)
+										);
+										nop
+									}
+								],
+								MMovable2T(manager, p, MMovable(m.target, m.movableArea, arrayPush(m.style, MMovablePosition(sPos))), m2t)
+								|> (\t2 -> TAttachBoxCopyAvailableHeight(t2, avH))
+							)
+						}
+					),
+				t
+			))
+		|> (\t -> TAttachBoxCopyAvailableWidth(t, availW))
+		|> (\t -> TBorder(sideBorder, sideBorder, sideBorder, sideBorder, t))
+		|> (\t ->
+			TGroup2( // click events shall not pass
+				TInteractive(
+					[
+						TMouseDown(down),
+						TMouseXY(point)
+					]
+					|> (\inter -> ifArrayPush(inter, blockKeyboardEvents, makeTKey(\k -> {materialLog(toString(k), MaterialInfo()); k != noKey}))),
+
+					TFillXY()
+					|> (\t2 -> if (nonModal) t2 else TRectangle([Fill(black), FillOpacity(0.5)], t2))
+					|> (\t2 ->
+						if (clickOutToClose)
+							TConstruct(
+								[makeSubscribe2(pressedOutsideB, \__ -> disp())],
+								t2
+							)
+						else
+							eitherMap(
+								clickOutToCancel,
+								\cotc -> {
+									lastValue = getValue(cotc.pickerValue);
+									TConstruct(
+										[
+											makeSubscribe2(pressedOutsideB, \__ -> {
+												next(cotc.pickerValue, lastValue);
+												disp();
+											})
+										],
+										t2
+									)
+								},
+								t2
+							)
+					)
+					|> (\t2 ->
+						if (blockKeyboardEvents)
+							TGroup2SameMetrics(t2, TAlpha(make(0.), extractStruct(manager.style, MCaptureKeys(\__ -> TEmpty())).capture(manager)))
+						else
+							t2
+					)
+				)
+				|> disableBelow, // Disable all other mouse events except handled
+
+				t
+			)
+		)
+		|> (\t ->
+			if (isSome(hideDialog0)) {
+				unsZord = initUnsM();
+
+				TConstruct(
+					[
+						makeSubscribe(hideDialog, \hd -> if (hd && !nonModal) setUnsM(unsZord, popZorder(manager)) else dispUnsM(unsZord)),
+						\ -> \ -> dispUnsM(unsZord)
+					],
+					TVisible(fnot(hideDialog), t)
+				)
+			} else {
+				t
+			}
+		)
+		|> (\t ->
+			if (contains(manager.style, MIScriptPanel())) {
+				TransformTAcc2(\t2a -> {
+					b = t |> t2a;
+
+					contentFormKey = ^(manager.iscript.contentFormIdx);
+					manager.iscript.contentFormIdx := ^(manager.iscript.contentFormIdx) + 1;
+					manager.iscript.contentForms := setTree(^(manager.iscript.contentForms), contentFormKey, b.form);
+
+					TAcc(
+						b.form,
+						b.metrics,
+						b.minWidth,
+						b.minHeight,
+						b.maxWidth,
+						b.maxHeight,
+						b.xFillers,
+						b.yFillers,
+						b.addFillers,
+						b.xConstant,
+						b.yConstant,
+						arrayPush(b.disposers, \ -> manager.iscript.contentForms := removeFromTree(^(manager.iscript.contentForms), contentFormKey))
+					);
+				})
+			} else {
+				t
+			}
+		)
+	})
+	|> (\t ->
+		MActivate2T(
+			manager,
+			manager.focus,
+			"MDialog",
+			[
+				IScriptBehaviour("point", point, ISInteractionEvent()),
+				IScriptBehaviour("down", down, ISInteractionEvent()),
+				IScriptBehaviour("inside", insideDialogB, ISInteractionEvent()),
+			],
+			t
+		)
+	)
+	|> (\t ->
+		if (contains(manager.style, MIScriptPanel())) {
+			TGroup2(
+				t,
+				TVisible(
+					manager.iscript.replayCursorVisibleB,
+					TTranslate(
+						fselect2(
+							manager.iscript.replayCursorPositionB,
+							manager.iscript.topPanelWidthHeightB,
+							FLift2(\cp, pwh -> Point(cp.x, cp.y - pwh.height))
+						),
+						TSelect(manager.iscript.replayCursorShapeB, idfn)
+					)
+				)
+			)
+		} else t
+	)
+	|> (\t ->
+		if (noAnimation || nonModal)
+			t
+		else
+			TGroup2(t, TVisible(fneq(easing.percent, 1.), TFillXY() |> disableBelow))) // blocks clicks while animation
+	|> (\t ->
+		if (true || !fullScreen || resizable)
+			t
+		else if (noAnimation && isFConst(hideDialog)) // Disabled due to nested fullscreen dialogs bug
+			TFullWindow(make(true), t)
+		else {
+			fw = make(false);
+
+			TConstruct(
+				[\ -> fconnect(fand(feq(easing.percent, 1.), fnot(hideDialog)), fw)],
+				TFullWindow(fw, t)
+			)
+		})
+	|> (\t ->
+		us :=
+			[
+				subscribe2(manager.forceRender, \__ -> {
+					disp();
+					renderMDialog2(manager, closeWhen, style, content, m2t, renderFn)
+				}),
+				u1,
+				zUns,
+				renderFn(t),
+				\ -> maybeApply(
+						focusedBeforeDialog,
+						\fbd -> deferred(\ -> if (fgetValue(fbd.focusEnabled)) nextDistinct(fbd.focused, true))
+					),
+				\ -> clearIScriptReplayCursorEvents(manager),
+				onClose
+			]
+	);
+
+	if (!noAnimation)
+		easing.start();
+
+	// Temporary disabled pre-dialog screenshots
+	// if (contains(manager.style, MIScriptPanel())) {
+	// 	switch (getValue(manager.iscript.iScriptStateB)) {
+	// 		IScriptRecording(__, __): deferred(\ -> addIScriptScreenshot(manager, true));
+	// 		default: {}
+	// 	}
+	// }
+}

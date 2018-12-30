@@ -1,0 +1,351 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+
+import runtime;
+import string;
+
+
+/*
+  Stemmer, implementing the Porter Stemming Algorithm.
+ 
+  The Stemmer class transforms a word into its root form.
+  
+  Based on http://tartarus.org/~martin/PorterStemmer/csharp.txt,
+  but contains several improvements taken from the more recent Potter2 algorithm
+  http://snowball.tartarus.org/algorithms/english/stemmer.html
+*/
+export {
+	stemWord(word : string) -> string;
+}
+
+
+/* cons(i) is true <=> s[i] is a consonant. 
+A \consonant\ in a word is a letter other than A, E, I, O or U, and other
+than Y preceded by a consonant. (The fact that the term `consonant' is
+defined to some extent in terms of itself does not make it ambiguous.) So in
+TOY the consonants are T and Y, and in SYZYGY they are S, Z and G. If a
+letter is not a consonant it is a \vowel\.
+*/
+consonant(s : string, i : int) -> bool {
+	
+	ch = getCharAt(s, i);
+	
+	if(strIndexOf("aeiou", ch) != -1)
+		false
+	else if(ch == "y") {
+		if( i == 0)
+			true
+		else
+			!consonant(s, i -1 )
+	}
+	else
+		true;
+		
+}
+
+vowel(s : string, i : int) -> bool {
+	!consonant(s,i);
+}
+
+//Skips all characters that satisfy a condition, starting with index "from" and up to index "to"
+//Returns index of the first char that does not satisfy "condition".
+skipCondition(s : string, from : int, to : int, condition : (string, int) -> bool) -> int {
+	if(from >= to)
+		to
+	else if(!condition(s,from))
+		from
+	else
+		skipCondition(s,from+1,to,condition)
+}
+
+/* stemmer_m() Measures the number of consonant sequences between 0 and "to". 
+
+A consonant will be denoted by c, a vowel by v. A list ccc... of length
+greater than 0 will be denoted by C, and a list vvv... of length greater
+than 0 will be denoted by V. Any word, or part of a word, therefore has one
+of the four forms:
+
+    CVCV ... C
+    CVCV ... V
+    VCVC ... C
+    VCVC ... V
+
+These may all be represented by the single form
+
+    [C]VCVC ... [V]
+
+where the square brackets denote arbitrary presence of their contents.
+Using (VC){m} to denote VC repeated m times, this may again be written as
+
+    [C](VC){m}[V].
+
+m will be called the \measure\ of any word or word part when represented in
+this form. The case m = 0 covers the null word. Here are some examples:
+
+    m=0    TR,  EE,  TREE,  Y,  BY.
+    m=1    TROUBLE,  OATS,  TREES,  IVY.
+    m=2    TROUBLES,  PRIVATE,  OATEN,  ORRERY.
+
+*/
+
+count_VCs(s : string, i : int, to : int, current_count : int) -> int {
+	i1 = skipCondition(s, i, to, vowel);
+	if(i1 == to) 
+		current_count //no consonants after the vowel, break
+	else
+		//skip consonants, increment counter and continue
+		count_VCs(s, skipCondition(s, i1, to, consonant), to, current_count + 1);
+}
+
+stemmer_m(s : string) -> int {
+	to = strlen(s);
+	if(to == 0)
+		0
+	else {
+		//skip consonants at the beginning of the word
+		i = skipCondition(s, 0, to, consonant);
+		if( i == to)
+			0
+		else 
+			count_VCs(s, i, to, 0)
+	}
+}
+
+hasVowel(s : string) -> bool {
+	len = strlen(s);
+	skipCondition(s, 0, len, consonant) != len
+}
+
+/* doublec(j) is true <=> j,(j-1) contain a double consonant. */
+doubleConsonant(s: string, i : int) -> bool {
+	i >= 1 && getCharAt(s,i) == getCharAt(s,i-1) && consonant(s,i);
+}
+
+/* cvc(i) is true <=> i-2,i-1,i has the form consonant - vowel - consonant
+   and also if the second c is not w,x or y. this is used when trying to
+   restore an e at the end of a short word. e.g.
+
+      cav(e), lov(e), hop(e), crim(e), but
+      snow, box, tray.
+*/
+
+cvc(s : string, i : int) -> bool {
+	if (i < 2 || !consonant(s,i) || consonant(s,i-1) || !consonant(s,i-2))
+		false
+	else {
+		ch = getCharAt(s,i);
+		ch != "w" && ch != "x" && ch != "y";
+	}
+}
+
+lastChar(s : string) -> string {
+	len = strlen(s);
+	assert(len > 0, "lastChar(string) failed - string is empty");
+	getCharAt(s, len-1)
+}
+
+/* step1() gets rid of plurals and -ed or -ing. e.g.*/
+findEndingResult : ( stem : string, found : bool);
+
+//detects ending and splits word in two parts: stem + ending
+findEnding(s : string, ending : string) -> findEndingResult {
+	if(endsWith(s, ending))
+		findEndingResult(strLeft(s, strlen(s)-strlen(ending)), true)
+	else
+		findEndingResult("", false)
+}
+
+//replaces the ending if condition on the remaining stem is true
+//returns true if word ends with "ending", independent of the condition
+ends(s : ref string, ending : string, replacement : string, condition : (stem : string) -> bool) -> bool {
+	f = findEnding(^s, ending);
+	if (f.found) {
+		if(condition(f.stem))
+			s := f.stem + replacement;
+		true
+	}
+	else
+		false
+}
+
+//replaces the ending if condition on the remaining stem is true
+//returns true if word ends with "ending" AND condition holds
+ends1(s : ref string, ending : string, replacement : string, condition : (stem : string) -> bool) -> bool {
+	f = findEnding(^s, ending);
+	if (f.found && condition(f.stem)) {
+		s := f.stem + replacement;
+		true
+	}
+	else
+		false
+}
+
+//Search for the longest among the suffixes, ' 's 's' and remove if found. 
+step0(s : ref string) {
+	always = \stem -> true;
+	ends(s, "'s'", "", always) ||
+	ends(s, "'s", "", always) ||
+	ends(s, "'", "", always);
+}
+
+/* step1() gets rid of plurals and -ed or -ing. e.g. */
+step1(s : ref string) {
+	always = \stem -> true;
+	preceded_by_more_than_one_letter = \stem -> strlen(stem) > 1;
+	firstVowelPosition = \stem -> skipCondition(stem, 0, strlen(stem), consonant);
+
+	ends(s, "sses", "ss", always) ||
+	ends1(s, "ies", "i", preceded_by_more_than_one_letter) ||
+	ends1(s, "ied", "i", preceded_by_more_than_one_letter) ||
+	endsWith(^s, "us") ||
+	endsWith(^s, "ss") ||
+	//delete if the preceding word part contains a vowel not immediately before the s
+	ends(s, "s", "", \stem -> strlen(stem) > 0 && hasVowel(stem) && firstVowelPosition(stem) < strlen(stem)-1); 
+	
+	if(	!ends(s, "eed", "ee", \stem -> stemmer_m(stem) > 0) &&
+		!ends(s, "eedly", "ee", \stem -> stemmer_m(stem) > 0)
+	) {
+		if(	ends1(s, "ed", "", hasVowel) || 
+			ends1(s, "edly", "", hasVowel) ||
+			ends1(s, "ing", "", hasVowel) ||
+			ends1(s, "ingly", "", hasVowel)
+		) {
+			if(!ends(s, "at", "ate", always))
+			if(!ends(s, "bl", "ble", always))
+			if(!ends(s, "iz", "ize", always)) {
+				len = strlen(^s);
+				if(len >= 2 && doubleConsonant(^s, len-1)) {
+					ch = lastChar(^s);
+					ignore(ends(s, ch, "", \stem -> ch != "l" && ch != "s" && ch != "z"));
+				}
+				else if(len == 2 || (stemmer_m(^s) == 1 && cvc(^s, len-1)))
+					s := ^s + "e";
+			}
+		}
+	}
+}
+
+//replace suffix y by i if preceded by a non-vowel which is not the first letter of the word
+step2(s : ref string) {
+	ends(s, "y", "i", \stem -> { l = strlen(stem); l >= 2 && consonant(stem, l-1); });
+}
+
+/* step3() maps double suffices to single ones. so -ization ( = -ize plus
+   -ation) maps to -ize etc. note that the string before the suffix must give
+   m() > 0. */
+step3(s : ref string) {
+	condition = \stem -> stemmer_m(stem) > 0;
+
+	ends(s, "ational", "ate", condition) ||
+	ends(s, "tional", "tion", condition) ||
+	ends(s, "enci", "ence", condition) ||
+	ends(s, "anci", "ance", condition) ||
+	ends(s, "izer", "ize", condition) ||
+	ends(s, "bli", "ble", condition) ||
+	ends(s, "alli", "al", condition) ||
+	ends(s, "entli", "ent", condition) ||
+	ends(s, "eli", "e", condition) ||
+	ends(s, "ousli", "ous", condition) ||
+	ends(s, "ization", "ize", condition) ||
+	ends(s, "ation", "ate", condition) ||
+	ends(s, "ator", "ate", condition) ||
+	ends(s, "alism", "al", condition) ||
+	ends(s, "iveness", "ive", condition) ||
+	ends(s, "fulness", "ful", condition) ||
+	ends(s, "ousness", "ous", condition) ||
+	ends(s, "aliti", "al", condition) ||
+	ends(s, "iviti", "ive", condition) ||
+	ends(s, "biliti", "ble", condition) ||
+	ends(s, "fulli", "ful", condition) ||
+	ends(s, "lessli", "less", condition) ||
+	ends(s, "logi", "log", condition) ||
+	ends(s, "li", "", \stem -> strlen(stem) > 0 && strIndexOf("cdeghkmnrt", lastChar(stem)) != -1 )
+	;
+}
+
+/* step4() deals with -ic-, -full, -ness etc. similar strategy to step3. */
+step4(s : ref string) {
+	condition = \stem -> stemmer_m(stem) > 0;
+	ends(s, "ational", "ate", condition) ||
+	ends(s, "tional", "tion", condition) ||
+	ends(s, "ative", "", condition) ||
+	ends(s, "alize", "al", condition) ||
+	ends(s, "iciti", "ic", condition) ||
+	ends(s, "ical", "ic", condition) ||
+	ends(s, "ful", "", condition) ||
+	ends(s, "ness", "", condition)
+	;
+}
+
+/* step5() takes off -ant, -ence etc., in context <c>vcvc<v>. */
+step5(s : ref string) {
+	condition = \stem -> stemmer_m(stem) > 1;
+	ends(s, "al", "", condition) ||
+	ends(s, "ance", "", condition) ||
+	ends(s, "ence", "", condition) ||
+	ends(s, "er", "", condition) ||
+	ends(s, "ic", "", condition) ||
+	ends(s, "able", "", condition) ||
+	ends(s, "ible", "", condition) ||
+	ends(s, "ant", "", condition) ||
+	ends(s, "ement", "", condition) ||
+	ends(s, "ment", "", condition) ||
+	ends(s, "ent", "", condition) ||
+	ends(s, "ion", "", \stem -> strlen(stem) > 0 && (lastChar(stem) == "s" || lastChar(stem) == "t") && condition(stem)) ||
+	ends(s, "ou", "", condition) ||
+	ends(s, "ism", "", condition) ||
+	ends(s, "ate", "", condition) ||
+	ends(s, "iti", "", condition) ||
+	ends(s, "ous", "", condition) ||
+	ends(s, "ive", "", condition) ||
+	ends(s, "ize", "", condition)
+	;
+}
+
+/* step6() removes a final -e if m() > 1. */
+step6(s : ref string) {
+	ends(s, "e", "", \stem -> strlen(^s) > 3 && { m = stemmer_m(^s); m > 1 || (m == 1 && !cvc(^s, strlen(^s)-2)) });
+	ends(s, "l", "", \stem -> doubleConsonant(^s, strlen(^s)-1) && stemmer_m(^s) > 1)
+}
+
+stemWord(word : string) -> string {
+	special_cases = [
+		["skis", "ski"],
+        ["skies", "sky"],
+        ["dying", "die"],
+        ["lying", "lie"],
+        ["tying", "tie"],
+        ["idly", "idl"],
+        ["gently", "gentl"],
+        ["ugly", "ugli"],
+        ["early", "earli"],
+        ["only", "onli"],
+        ["singly", "singl"],
+        ["sky", "sky"],
+        ["news", "news"],
+        ["howe", "howe"],
+        ["atlas", "atlas"],
+		["cosmos", "cosmos"],
+		["bias", "bias"],
+		["andes", "andes"]
+	];
+	
+	if (strlen(word) < 3)
+		word
+	else {
+		switch (find(special_cases, \cas -> word==cas[0]) : Maybe) {
+			Some(v): v[1];
+			None(): {
+				result = ref word;
+				step0(result);
+				step1(result);
+				step2(result);
+				step3(result);
+				step4(result);
+				step5(result);
+				step6(result);
+				^result;
+			}
+		}
+	}
+}
+

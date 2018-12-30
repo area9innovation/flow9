@@ -1,0 +1,240 @@
+// © Copyright 2013 Area9 Innovation. All rights reserved
+
+import ui/slider;
+import ui/buttons;
+import formutils;
+
+
+export {
+
+	makeScrubber(videoDuration : Behaviour<double>, curPlayedTime : Behaviour<double>, isDragging : DynamicBehaviour<bool>, width_limit : Behaviour<double>, seek_cb : (double) -> void, mobileUI : bool) -> Form;
+	scrubberHandleSize = 15.0;
+	scrubberHandle = {
+		Translate(const(-1.0),const(-1.0),
+			resizeTo(scrubberHandleSize, scrubberHandleSize,
+				Picture("images/slider_button.swf", [])
+			)
+		);
+	};
+
+	formatTimeHMS(time : double) -> string;
+	playerIconSize = 33.0;
+
+	playerButton (img_path: string, enabled : Behaviour<bool>, fn : () -> void) -> Form;
+
+	//To use only with video player's controls (images' height 52px - play, pause, fullscreen, mute, captions)
+	playerButtonEx (img_path: string, img_normal : string, img_hover : string, img_push : string, enabled : bool, fn : () -> void) -> Form;
+
+	playerButtonEx2 (iconSize : double, img_path: string, img_normal : string, img_hover : string, img_push : string, enabled : bool, fn : () -> void) -> Form;
+	playerButtonMobile(img_path: string, fn : () -> void) -> Form;
+}
+
+playerButton (img_path: string, enabled : Behaviour<bool>, fn : () -> void) -> Form {
+	iconWidth = playerIconSize;
+	//normalShadow = [Placement(45.0, 2.0), Color(0x000000, 0.7), Radius(4.0), Spread(0.8)];
+
+	pic = resizeToHeight(iconWidth,
+		Picture(img_path, [])
+	);
+
+	Border(2.0,0.0,2.0,0.0,
+		Translate(const(-3.0),const(-4.0),
+			Switch(select(enabled, b2i), [
+				pic,
+				AnimatedButtonAdjustable(pic, const(true), "", fn, false, 0, "")
+			])
+		)
+	);
+}
+
+playerButtonEx(img_path: string, img_normal : string, img_hover : string, img_push : string, enabled : bool, fn : () -> void) -> Form {
+	scale = playerIconSize/52.0; //image's height
+	Scale(const(scale), const(scale), ImageNewButton(img_path, img_normal, "", img_hover, img_push, fn, "", enabled))
+}
+
+playerButtonEx2(iconSize : double, img_path: string, img_normal : string, img_hover : string, img_push : string, enabled : bool, fn : () -> void) -> Form {
+	resizeToHeight(
+		iconSize,
+		ImageNewButton(img_path, img_normal, "", img_hover, img_push, fn, "", enabled)
+	)
+}
+
+playerButtonMobile(img_path: string, fn : () -> void) -> Form {
+	ui = Scale(const(0.5), const(0.5), maskImage(Picture(img_path, []), 0x757470));
+	Border(3.0, 0.0, 3.0, 0.0, SimpleButton(ui, ui, "", fn))
+}
+
+formatTimeHMS(time : double) -> string {
+	total = ref trunc(time);
+
+	modChange = \summ : ref int, divider : int -> {
+		ret = ^summ % divider;
+		summ := (^summ - ret)/divider;
+		ret;
+	}
+
+	s = modChange(total, 60);
+	m = modChange(total, 60);
+	h = modChange(total, 24); //now total contains Days
+
+	i2s2 = \i -> (if (i < 10) "0" else "") + i2s(i);
+	ts = i2s2(m) + ":" + i2s2(s);
+	if (h != 0) {
+		i2s2(h) + ":" + ts;
+	} else {
+		ts;
+	}
+}
+
+
+
+
+makeScrubber(videoDuration : Behaviour<double>, curPlayedTime : Behaviour<double>, isDragging : DynamicBehaviour<bool>, width_limit : Behaviour<double>, seek_cb : (double) -> void, mobileUI : bool) -> Form {
+	cur_time_str = make("");
+	duration_str = make("");
+	circleColor = 0x5fa5df;
+	textColor = 0x757470;
+	
+	margin = 10.0;
+	mid_gap = 10.0;
+	rwidth = make(0.0);
+	lwidth = make(0.0);
+	swidth = make(0.0);
+
+	xpos = make(0.0);
+	ypos = make(0.0);
+
+	handleWidth = scrubberHandleSize;
+	xrange = make(0.0);
+
+	in_timer = ref false;
+	update = \__ -> {
+		in_timer := true;
+		duration = getValue(videoDuration);
+		pos = if (duration == 0.0) {
+			0.0
+		} else {
+			coeff = getValue(curPlayedTime)/duration;
+			getValue(xrange)*min(1.0,max(0.0,coeff));
+		}
+		nextDistinct(xpos, pos);
+		in_timer := false;
+	}
+
+	handleGap = (playerIconSize-scrubberHandleSize)/2.0;
+	handleHalf = scrubberHandleSize/2.0;
+	barSize = if (mobileUI) 1.0 else 3.0;
+	barGap = (playerIconSize-barSize)/2.0;
+	timeGap = (playerIconSize-12.0/*FontSize*/) / 2.0;
+	fStyle = if (mobileUI) [FontFamily("ProximaSemiBold"), FontSize(12.0), Fill(textColor)] else [FontFamily("Condensed"), FontSize(12.0), Fill(0x444444)];
+	progressSlider = 
+		Iffe(mobileUI,
+			\ -> Circle(10.0, 10.0, 10.0, [Fill(circleColor)]),
+			\ -> resizeTo(scrubberHandleSize, scrubberHandleSize,
+				Picture("images/coachspeak/slider_handle.png", [])
+			)
+		);
+
+	addConstructor = \f -> {
+		Constructors(
+			[
+				\ -> connectSelectDistinctu(curPlayedTime, cur_time_str, formatTimeHMS),
+				\ -> connectSelectDistinctu(videoDuration, duration_str, formatTimeHMS),
+				\ -> connectSelect3Distinctu(width_limit, lwidth, rwidth, swidth, \w, l, r -> w - r - l - margin*2.0 - mid_gap * 2.0),
+				\ -> connectSelectDistinctu(swidth, xrange, \v -> v - if (mobileUI) 20.0 else handleWidth),
+				\ -> subscribe(videoDuration, update),
+				\ -> subscribe2(curPlayedTime, update),
+				\ -> subscribe2(xrange, update),
+				\ -> subscribe2(xpos, \pos -> {
+					width = getValue(xrange);
+					if (!^in_timer && width > 0.0) {
+						seek_cb(getValue(videoDuration)*pos/width);
+					}
+				})
+			],
+			f
+		)
+	}
+
+	Iffe(mobileUI,
+		\ -> Border(margin, 5.0, margin, 5.0, Cols([
+			Offset(0.0, 2.0, Inspect(
+				[Width(lwidth)],
+				Select(cur_time_str, \str -> {
+					Text(str, fStyle)
+				})
+			)),
+			Fixed(margin,0.0),
+			Group([
+				Offset(0.0, 9.5, Select2(swidth,xpos, \w,x -> {
+					Cols([
+						Rectangle(
+							x, barSize,
+							[Fill(circleColor)]
+						),
+						Rectangle(
+							w-x,barSize,
+							[Fill(0xe0e0e0)]
+						),
+					])
+				})),
+				Slider(
+					xpos,ypos,xrange,const(0.0),
+					progressSlider,
+					[SnapOnClick(true), StartDragOnClick(), SliderIsDragging(isDragging)]
+				)
+			]),
+			Fixed(margin,0.0),
+			Offset(0.0, 2.0, Inspect(
+				[Width(rwidth)],
+				Select(duration_str, \str -> {
+					Text(str, fStyle)
+				})
+			))
+		])),
+		\ -> Cols([
+			FixSize(margin,0.0,Empty()),
+			Inspect(
+				[Width(lwidth)],
+				Offset(0.0, timeGap,
+					Select(cur_time_str, \str -> {
+						Text(str, fStyle)
+					})
+				)
+			),
+			FixSize(mid_gap,0.0,Empty()),	
+			Group([
+				Border(
+					0.0,barGap,0.0,barGap,
+					Select2(swidth,xpos, \w,x -> {
+						Cols([
+							Graphics(
+								roundedRect(x+handleHalf,barSize,barSize),
+								[Fill(0x444444)]
+							),
+							Graphics(
+								roundedRect(w-x-handleHalf,barSize,barSize),
+								[Fill(0xaaaaaa)]
+							),
+						])
+					})
+				),
+				Slider(
+					xpos,ypos,xrange,const(0.0),
+					Border(0.0,handleGap,0.0,handleGap,progressSlider),
+					[SnapOnClick(true), StartDragOnClick(), SliderIsDragging(isDragging)]
+				)
+			]),
+			FixSize(mid_gap,0.0,Empty()),
+			Inspect(
+				[Width(rwidth)],
+				Offset(0.0, timeGap,
+					Select(duration_str, \str -> {
+						Text(str, fStyle)
+					})
+				)
+			),
+			FixSize(margin,0.0,Empty()),
+		])
+	) |> addConstructor;
+}

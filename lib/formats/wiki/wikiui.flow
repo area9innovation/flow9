@@ -1,0 +1,350 @@
+import styleform;
+import stringmatching;
+import ui/easycombobox;
+import ui/texteditors;
+import formats/wiki/wikiast;
+import formats/wiki/wikilexer;
+import formats/wiki/wikistyle;
+import translation;
+
+export {
+	// Wiki UI functions
+	makeWikiComboBox(
+		items : [string],
+		selected : DynamicBehaviour<int>,
+		suggestedWidth : double,
+		style : [CharacterStyle],
+		wikiStyle : [WikiStyle],
+		makeWiki : (string, [WikiStyle]) -> Form,
+		constructorFn : ()-> (() -> void)
+	) -> Form;
+
+	makeWikiBlank(
+		width : double,
+		matching : WikiBlankMatchingOptions,
+		answersData : WikiBlankAnswersData,
+		style : [CharacterStyle],
+		wikiStyle : [WikiStyle]
+	) -> Form;
+
+	//some wiki blank related constants
+	wikiBlankIndexOfEmptyAnswer = -1;
+	wikiBlankIndexOfIncorrectAnswer = -2;
+	wikiBlankIndexOfAlmostCorrectAnswer = -3;
+
+	// Like enum. Do not reorder
+	wikiBlankCorrectAnswerTypeIndex = 0.0;
+	wikiBlankAlmostCorrectAnswerTypeIndex = 1.0;
+	wikiBlankIncorrectAnswerTypeIndex = 2.0;
+	wikiBlankEmptyAnswerTypeIndex = 3.0;
+	wikiBlankNoanymatchAnswerTypeIndex = 4.0;
+
+	setNumberedListNewSkinUI(newSkin : bool) -> void;
+	isNumberedListNewSkinUI() -> bool;
+	prettyNumber(n : int, pretty : bool, dotted : bool, fonts : WikiFonts) -> Form;
+	makePrettyNumberPicture(n : int, circleColor : int) -> Form;
+	prettyNumberIconSize = 45.0;
+}
+
+makeWikiComboBox(
+	items : [string],
+	selected : DynamicBehaviour<int>,
+	suggestedWidth : double,
+	style : [CharacterStyle],
+	wikiStyle : [WikiStyle],
+	makeWiki : (string, [WikiStyle]) -> Form,
+	constructorFn : ()-> (() -> void)
+	) -> Form
+{
+	wBorder = 3.0;
+	hBorder = 3.0;
+	minInitWidth = 50.0;
+
+	allowLineBreaks = suggestedWidth > minInitWidth;
+
+	wikiFonts = [characterStyle2WikiFonts(style)];
+	itemStyle = if (allowLineBreaks) wikiFonts else arrayPush(wikiFonts, RestrictAutoLineBreaks());
+
+	forms = map(items, \item -> {
+		Group([
+			Size2(zeroSize, HVFill([Fill(white), FillOpacity(0.0)])),
+			makeWiki(item, itemStyle)
+		])
+	});
+
+	width = if (allowLineBreaks) { //#36752
+		suggestedWidth
+	} else {
+		formWidths = map(items, \item -> getTextSize(item, style).width);
+		max(minInitWidth, eitherMap(maxA(formWidths), \w -> w + 6.0, 0.0));
+	}
+
+	cropHeight = getTextSize("", style).height;
+	addHeader = \styles -> {
+		item = Select(selected, \currItem -> {
+			if (0 <= currItem && currItem < length(items))
+				forms[currItem]
+			else
+				Empty()
+		});
+
+		header = Border(3.0, 0.0, 2.0, 0.0,
+			Align2(0.0, 0.5,
+				Crop(zero, zero, const(width), const(cropHeight),
+					item
+		)));
+
+		arrayPush(styles, ComboBoxStatic(header));
+	}
+
+	styles = [
+		ComboBoxWidth(width),
+		ComboBoxMaxDropHeight(200.0),
+		ComboBoxBorder(hBorder, wBorder),
+		if (isNewPaamComboboxSkin()) newPaamSkinComboScheme else graySkin,
+		ComboBoxExpanded(make(true)),
+		ComboBoxEnabled(getInteractivenessSwitch(wikiStyle)),
+		ComboBoxMaxHeaderWidth(b2d(!allowLineBreaks) * 400.0),
+		ComboBoxBevel(1.0),
+		ComboBoxDesign(EasyBoxLearning(), cropHeight)
+	]
+	|> addHeader
+	;
+
+	addBorder = \f -> {
+		//#36994, add top gap to vertical align the text,
+		Border(2.0, 1.0, 2.0, 1.0, shiftBaseline(-5.0, f))
+	}
+
+	box = EasyComboBox(forms, selected, styles);
+
+	Constructor(
+		box
+		|> addBorder,
+		constructorFn
+	)
+}
+// Created during refactoring needed for #39087.
+makeWikiBlank(
+	width : double,
+	matching : WikiBlankMatchingOptions,
+	answersData : WikiBlankAnswersData,
+	style : [CharacterStyle],
+	wikiStyle : [WikiStyle]
+	) -> Form
+{
+	// check if there are values for blanks to set - from Custom Quiz Answers
+	setBlanks = extractStruct(wikiStyle, WikiSetBlanks([])).values;
+	answerIdx = findiDef(setBlanks, \blanks -> blanks.second == getBlankFirstCorrectAnswer(answersData), -1);
+
+	answerB = make(if (answerIdx > -1) setBlanks[answerIdx].first else "");
+	enabled = getInteractivenessSwitch(wikiStyle);
+	collector = extractStruct(wikiStyle, WikiBlanksCollector(nop2, nop1));
+	registerBlank : (DynamicBehaviour<string>, string) -> void = collector.registerBlank;
+	unregisterBlank : (DynamicBehaviour<string>) -> void = collector.unregisterBlank;
+
+	makeEditorForm = \additionalStyle -> {
+		height = sizeOfText(style);
+		TextEditor(answerB, width, height, style, concat([Focus(false), Multiline(false)], additionalStyle))
+	}
+
+	correctAnswerAsId = getBlankFirstCorrectAnswer(answersData);
+
+	form = Constructor(
+		Switch(
+			select(enabled, b2i),
+			[
+				makeEditorForm([ReadOnly(true)]),
+				makeEditorForm(if (mobile) [FocusOutOnEnter()] else [])
+			]
+		),
+		\ -> {
+			registerBlank(answerB, correctAnswerAsId);
+			\ -> unregisterBlank(answerB)
+		}
+	);
+
+	stylize = \frm -> {
+		(if (!isBlanksComboboxNewSkin()) {
+			frm
+			|> (\f -> Border(2.0, 2.0, 2.0, 2.0, f))
+			|> (\f -> Background(veryLightGrayButtonBrush, f))
+			|> ConcaveBevelFilter
+			|> (\f -> Border(0.0, 1.0, 0.0, 1.0, f))
+			|> (\f -> shiftBaseline(-2.0, f));
+		} else {
+			cs = new2SkinComboScheme;
+			pad = 1.0;
+			border = 2.0;
+			shift = -1.0; // shift baseline & background down
+			b = pad + border;
+			Behind(\w, h -> {
+				Size2(zeroSize, Offset(
+					-b, -b -shift,
+					Rectangle2(w + pad*2.0, h + pad*2.0, [linearGradient(90.0, cs.boxBackground)])
+					|> (\f -> solidFrame([StrokeWidth(border), Fill(cs.comboboxRounded)], f))
+				))
+			}, frm)
+			|> (\f -> Border(b, b + shift, b, b - shift, f))
+			|> (\f -> shiftBaseline(shift, f))
+		})
+	}
+
+	calculateScore = {
+
+		answerType2Double = \answerType -> switch (answerType : WikiBlankAnswerType) {
+			WikiScoringCorrect() : wikiBlankCorrectAnswerTypeIndex;
+			WikiScoringAlmostCorrect() : wikiBlankAlmostCorrectAnswerTypeIndex;
+			WikiScoringIncorrect() : wikiBlankIncorrectAnswerTypeIndex;
+		}
+
+		answersTypes = map(answersData.answers, \a -> a.type |> answerType2Double);
+		answersStrings = map(answersData.answers, \a -> a.answer |> getTranslation);
+
+		getAnswerTypeIndex = \answerIsEmpty : bool, isAnswerPresent : bool, answerIndex : int -> {
+			if (isAnswerPresent) {
+				answersTypes[answerIndex]
+			} else if (answerIsEmpty) {
+				wikiBlankEmptyAnswerTypeIndex
+			} else {
+				wikiBlankNoanymatchAnswerTypeIndex
+			}
+		}
+
+		getMatch = \answer -> {
+			findMatch(
+				answer, answersStrings,
+				false, matching.exactMatch, matching.caseSensitive,
+				false, matching.signTolerance, matching.decimalTolerance
+			)
+		}
+		getVarBehaviour = \varName -> getDoubleVarBehaviour(getGlobalWVEnvironment(), varName);
+
+		switch (answersData.scoring : WikiBlankScoring) {
+			WikiBlankLegacyScoring(varScore, varNAnswer, varNumVal)	: {
+				score = eitherMap(varScore, getVarBehaviour, make(0.0));
+				nAnswer = eitherMap(varNAnswer, getVarBehaviour, make(i2d(wikiBlankIndexOfEmptyAnswer))); //We starts with empty answer
+				numVal = eitherMap(varNumVal, getVarBehaviour, make(0.0));
+				\answer : string -> {
+					res = getMatch(answer);
+					index = if (equalDoubles(res.similarity, 1.0)) {
+						//correct answer
+						res.index
+					} else if (res.similarity >= 0.75) {
+						wikiBlankIndexOfAlmostCorrectAnswer
+					} else if (isNotSpace(answer)) {
+						wikiBlankIndexOfIncorrectAnswer
+					} else {
+						wikiBlankIndexOfEmptyAnswer
+					}
+
+					val = s2d(answer); //Do we need support of "thousand" -> 1000 here?
+					scoreRes = if (res.similarity <= 0.0) i2d(index) else res.similarity; //Mistype? if(index < 0)
+					next(score, scoreRes);
+					next(nAnswer, i2d(index));
+					next(numVal, val);
+				}
+			}
+			WikiBlank2Scoring(vGeneralCorrectness, vAnswerIndexMB, vIsMisstypedMB, vAnswerTypeMB, vAnswerValueMB) : { // 4 vars: index, isMisstyped, type(also NothingEntered, No match at all), value
+				//answer number in a list (count from 0) or -1 if no such answer
+				varAnswerIndex = eitherMap(vAnswerIndexMB, getVarBehaviour, make(i2d(wikiBlankIndexOfEmptyAnswer))); //We starts with empty answer
+
+				//values: 0.0(False), 1.0(True)
+				varIsMisstyped = eitherMap(vIsMisstypedMB, getVarBehaviour, make(0.0));
+
+				//values: 0.0(correct), 1.0(almost), 2.0(incorrect), 3.0(Nothing entered), 4.0(No any match)
+				varAnswerType  = eitherMap(vAnswerTypeMB,  getVarBehaviour, make(0.0));
+
+				//values: s2d(answer)
+				varAnswerValue = eitherMap(vAnswerValueMB, getVarBehaviour, make(0.0));
+
+				//values: s2d(answer)
+				varGeneralCorrectness = eitherMap(vGeneralCorrectness, getVarBehaviour, make(0.0));
+
+				\answer : string -> {
+					res = getMatch(answer);
+
+					answerIndex = i2d(if (res.similarity >= 0.75) res.index else -1);
+					answerIsMisstyped = b2d((res.similarity >= 0.75) && (res.similarity < 1.0));
+					answerType = getAnswerTypeIndex(!isNotSpace(answer), res.similarity >= 0.75, trunc(answerIndex));
+					answerValue = s2d(answer);
+					generalCorrectness = b2d(contains([wikiBlankCorrectAnswerTypeIndex, wikiBlankAlmostCorrectAnswerTypeIndex], answerType));
+
+					next(varAnswerIndex, answerIndex);
+					next(varIsMisstyped, answerIsMisstyped);
+					next(varAnswerType, answerType);
+					next(varAnswerValue, answerValue);
+					next(varGeneralCorrectness, generalCorrectness);
+				}
+			}
+		}
+
+	}
+	Constructor(stylize(form), \ -> subscribe(answerB, calculateScore))
+}
+
+getBlankFirstCorrectAnswer(answersData : WikiBlankAnswersData) -> string {
+	eitherMap(
+		find(answersData.answers, \a -> a.type == WikiScoringCorrect()),
+		\a -> a.answer,
+		"No correct answer"
+	)
+}
+
+
+newSkinPrettyNumbers = ref false;
+setNumberedListNewSkinUI(newSkin : bool) -> void {
+	newSkinPrettyNumbers := newSkin;
+}
+isNumberedListNewSkinUI() {
+	^newSkinPrettyNumbers
+}
+
+// Should give the same result as Picture("images/numbers/[newskin/]<n>.png", [])
+makePrettyNumberPicture(n : int, circleColor : int) {
+	isPrettyNumbers = isNumberedListNewSkinUI();
+	size = prettyNumberIconSize; // To match size of previously used pictures
+	r = size * 0.5;
+	color = {
+		if (circleColor >= 0) circleColor
+		else if (isPrettyNumbers) 0x848585
+		else orange;
+	}
+	fontStyle = if (isPrettyNumbers) {
+		[Fill(white), FontFamily("ProximaExtraBold"), FontSize(size * 8.0 / 10.0)]
+	} else {
+		[Fill(white), FontFamily("Medium"), FontSize(2.0 * size / 3.0)]
+	}
+	additionalShift = if (isPrettyNumbers) {
+		\f -> Offset(-1.0, 1.0, f)
+	} else {
+		idfn
+	}
+	GroupWithSizeFixed(size, size, [
+		Circle(r, r, r, [Fill(color)]),
+		Text(i2s(n), fontStyle) |> Center2 |> additionalShift
+	])
+}
+
+scalePrettyNumberPicture(pic : Form, fonts : WikiFonts) -> Form {
+ 	// cast 44 pixels (provided pictures height) to 18pt font
+ 	requiredHeight = 18.0 * (72.0 / 96.0);
+	scale = const((requiredHeight/prettyNumberIconSize) * (fonts.baseFontSize / 16.0));
+ 	Scale(scale, scale,
+ 		FixSize(requiredHeight * 3.0, requiredHeight, // get rid of jumping on picture load
+			pic
+ 		)
+ 	)
+}
+
+prettyNumber(n : int, pretty : bool, dotted : bool, fonts : WikiFonts) -> Form {
+	//&#2460; - circled 1
+	if (!pretty) {
+		optDot = if (dotted) "." else "";
+		Text(i2s(n) + optDot, fonts.normalText)
+	} else if (n >= 1 && n <= 99) {
+		scalePrettyNumberPicture(makePrettyNumberPicture(n, -1), fonts)
+ 	} else {
+		Text(i2s(n) + ".", fonts.numberingText)
+	}
+}

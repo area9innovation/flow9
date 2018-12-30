@@ -1,0 +1,85 @@
+import wigi/types;
+import formats/wiki/wikivariables;
+
+export {
+	// Return valid name, according to prefix and checkFn
+	// Use wrapper getProperName from controller.flow instead of this
+	getRandomName(prefix : string, checkFn : (string) -> bool) -> string;
+	isProperName(name : string, document : WigiElement) -> bool;
+	isProperNameA(name : string, elements : [WigiElement]) -> bool;
+	findWigiElementByName(element : WigiElement, name : string) -> Maybe<WigiElement>;
+
+	// Return valid (i.e. free) name according to prefix
+	getProperName(prefix: string, document: WigiElement) -> string;
+	// The same but allows to disable check in wiki env and checks already used names
+	getProperNameExtended(prefix : string, document : WigiElement, wiki : bool, used : [string]) -> string;
+	
+	// Simple handler to get "wigiName" from "wigiName123" format  which is used for wigiNames
+	getWigiNameWithoutNumber(name : string) -> string;
+
+	updateWigiName(style : [?], wigiName : string) -> [?];
+}
+
+getRandomName(prefix : string, checkFn : (string) -> bool) -> string {
+	i = ref 1;
+	generateName = \p -> p + i2s(^i);
+	for(generateName(prefix), \name -> !checkFn(name), \__ -> { i := ^i + 1; generateName(prefix); });
+}
+
+isProperName(name : string, document : WigiElement) -> bool {
+	isProperNameA(name, [document]);
+}
+
+isProperNameA(name : string, elements : [WigiElement]) -> bool {
+	goodName = all(mapi(s2a(name), \i, cc -> {
+		c = fromCharCode(cc);
+		if (i == 0) (isLetter(c) || c == "_")
+		else (isDigit(c) || isLetter(c) || c == "_");
+	}));
+
+	strlen(name) > 0 && goodName && all(map(elements, \e -> isNone(findWigiElementByName(e, name))));
+}
+
+findWigiElementByName(element : WigiElement, name : string) -> Maybe<WigiElement> {
+	checkNameAndFindElement = \s, f -> {
+		wigiName : WigiName = extractStruct(s, WigiName(""));
+		if (wigiName.name == name) Some(element) else f();
+	}
+
+	switch(element) {
+		WigiBlock(type, style): checkNameAndFindElement(style, \ -> None());
+		WigiDocument(root, style): checkNameAndFindElement(style, \ -> findWigiElementByName(root, name));
+		WigiStory(paragraphs, views, style): checkNameAndFindElement(style, \ -> findmap(^paragraphs, \p -> findWigiElementByName(p, name)));
+		WigiRecursive(elements, type, style): checkNameAndFindElement(style, \ -> findmap(elements, \el -> findWigiElementByName(el, name)));
+		WigiParagraph(elements, style): findmap(elements, \el -> findWigiElementByName(el, name));
+		WigiText(text, style): None();
+		WigiEmpty(): None();
+	}
+}
+
+getProperName(prefix: string, document: WigiElement) -> string {
+	getProperNameExtended(prefix, document, true, [])
+}
+
+getProperNameExtended(prefix : string, document : WigiElement, wiki : bool, used : [string]) -> string {
+	getRandomName(prefix, \name -> {
+		isProperName(name, document) && 
+		(!wiki || isNone(lookupTree(^(getGlobalWVEnvironment().doubles), "$" + toLowerCase(name)))) &&
+		!contains(used, name)
+	})
+}
+
+getWigiNameWithoutNumber(name : string) -> string {
+	len = strlen(name);
+	if (len == 0) 
+		name
+	else if (isDigit(getCharAt(name, len-1))) 
+		getWigiNameWithoutNumber(strLeft(name, len-1)) 
+	else 
+		name
+}
+
+updateWigiName(style : [?], wigiName : string) -> [?] {
+	if (strlen(wigiName) == 0) style
+	else replaceStruct(style, WigiName(wigiName))
+}

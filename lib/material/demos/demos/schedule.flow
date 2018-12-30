@@ -1,0 +1,127 @@
+import material/material;
+import material/material_dialog;
+import array;
+
+export {
+	demoMakeSchedule(mgr : MaterialManager, onClose : () -> void) -> Material;
+}
+DemoScheduleItem(id : int, start : Time, stop : Time, title : string, desc : string, color: MColor);
+demoMakeSchedule(mgr : MaterialManager, onClose : () -> void) -> Material {
+	sortItems = \items -> sortCustom(items, \item -> item.start, true);
+	items : DynamicBehaviour<[DemoScheduleItem]> = make([]);
+	view = make(MEmpty());
+	history = ref [];
+	navigate = \mat -> {
+		history := concat([getValue(view)], ^history);
+		next(view, mat);
+	}
+	back = \-> {
+		if (length(^history) == 0) onClose()
+		else {
+			mat = ^history[0];
+			history := tail(^history);
+			next(view, mat);
+		}
+	}
+	iconBtn = \icon, fn -> MIconButton(icon, fn, [], []);
+	backBtn = iconBtn("arrow_back", back);
+	header = \title, isChild, btns -> {
+		bk = make(isChild);
+		MConstruct([
+			makeSubscribe2(bk, \b -> back())
+		], MToolbar(bk, MText(title, []), btns, [])) |> MAppBar;
+	}
+	content = \content -> content |> MContent;
+	i22 = \i -> (if (i > 9) "" else "0") + i2s(i);
+	visualizeDate = \d : Date -> {
+		now = getCurrentTime();
+		today = now |> time2date;
+		tomorrow = time2stamp2(now) + i2d(1000 * 60 * 60 * 24) |> stamp2time2 |> time2date;
+		r = if (d == today) "Today"
+		else if (d == tomorrow) "Tomorrow"
+		else i2s(d.day) + "." + i2s(d.month) + "." + i2s(d.year);
+		r + " ";
+	}
+	visualizeTime = \t : Time -> i22(t.hour) + ":" + i22(t.min);
+	simpleContentView = \title, form -> MAppStructure([header(title, true, []), content(MZoom(form, TFillXY(), true))], []);
+	datePickerView = \title, d: DynamicBehaviour<Date> -> simpleContentView(title, MConstruct([makeSubscribe2(d, \__ -> timer(250, back))], MDatePicker(d, [])));
+	timePickerView = \title, t: DynamicBehaviour<Time> -> simpleContentView(title, MConstruct([makeSubscribe2(t, \__ -> timer(250, back))], MTimePicker(t, [])));
+	colorPickerView = \title, c : DynamicBehaviour<MColor> -> simpleContentView(title, MConstruct([makeSubscribe2(c, \__ -> timer(250, back))], MColorPicker(c, [MaterialColorPicker()])));
+	lastId = ref 0;
+	addView = \-> {
+		color = make(MBlack());
+		title = make("");
+		desc = make("");
+		now = getCurrentTime();
+		today = now |> time2date;
+		d1 : DynamicBehaviour<Date> = make(today);
+		d2 : DynamicBehaviour<Date> = make(today);
+		t1 = make(now);
+		t2 = make(now);
+		combineDT = \d, t -> {
+			dv = getValue(d);
+			tv = getValue(t);
+			Time(dv.year, dv.month, dv.day, tv.hour, tv.min, tv.sec);
+		}
+		colorButton = \h, c: DynamicBehaviour<MColor> -> MSelect(c, \cv -> {
+			fg = if (cv.shade > 500 || cv == MBlack()) MWhite() else MBlack();
+			MIconButton("colorize", \-> navigate(colorPickerView(h, c)), [fg, MCircleBackground(cv, 40.0), MIconSize(30.0)], []);
+			}
+		);
+		timeButton = \h, t: DynamicBehaviour<Time> -> MSelect(t, \tv -> MTextButton(visualizeTime(tv), \-> navigate(timePickerView(h, t)), [], []));
+		dateButton = \h, d: DynamicBehaviour<Date> -> MSelect(d, \dv -> MTextButton(visualizeDate(dv), \-> navigate(datePickerView(h, d)), [], []));
+		add = \-> {
+			id = ^lastId + 1;
+			lastId := id;
+			dt1 = combineDT(d1,t1);
+			dt2 = combineDT(d2,t2);
+			t = getValue(title);
+			dsc = getValue(desc);
+			c = getValue(color);
+			err = \s -> ShowMConfirmation(mgr, "Oops...", "Got it", "" , MText(s, []));
+			if (t == "") err("Need title")
+			else if (time2stamp2(dt1) > time2stamp2(dt2)) err("End date/time should be later than start")
+			else {
+				new = DemoScheduleItem(id, dt1, dt2, t, dsc, c);
+				next(items, sortItems(arrayPush(getValue(items), new)));
+				timer(200, back);
+			}
+		}
+		MAppStructure([header("Add task", true, [iconBtn("done", add)]), content(
+			MLines([
+				MCols([MLines2(
+					MTextInput(title, [MFloatingLabel(), MLabel("Task title"), MCustomTextStyle([MTitle()])],[]),
+					MTextInput(desc, [MFloatingLabel(), MLabel("Task description"), MCustomTextStyle([MBody()])],[]),
+				), MFixedX(10.0), colorButton("Color", color)]),
+				MConstruct([
+					make2Subscribe(d1, t1, \d1v, t1v -> {
+						d2v = getValue(d2);
+						t2v = getValue(t2);
+						if (d2v < d1v) next(d2, d1v);
+						if (d2v <= d1v && t2v < t1v) next(t2, t1v);
+					})
+				],MCols([dateButton("Start date", d1), MFixedX(5.0), timeButton("Start time", t1), MFixedX(10.0), MText("-", []), MFixedX(10.0), dateButton("End date", d2), MFixedX(5.0), timeButton("End time", t2)]))
+				//MZoom(MCols([MDatePicker(d1, []), MFixedX(5.0), MTimePicker(t1, []), MFixedX(10.0), MText("-", []), MFixedX(10.0), MDatePicker(d2, []), MFixedX(5.0), MTimePicker(t2, [])]), TFillXY(), true)
+			])
+		), MFloatingContent(MFloatingButton("done", [MRight(), MBottom()], [MOnClick(add)]))], []);
+	}
+
+	mainView = {
+		delItem = \id -> timer(300, \-> next(items, filter(getValue(items), \itm -> id != itm.id)));
+		visualizePeriod = \item : DemoScheduleItem -> {
+			t1 = item.start; t2 = item.stop;
+			d1 = time2date(t1); d2 = time2date(t2);
+			ds1 = visualizeDate(d1);
+			ds2 = if (d1 == d2) "" else visualizeDate(d2);
+			ds1 + visualizeTime(t1) + " - " + ds2 + visualizeTime(t2);
+		}
+		visualizeItem = \item : DemoScheduleItem -> MTripleLine(item.title, visualizePeriod(item) + "\n" + item.desc, [MCustomTextStyle([item.color]), MCustomSecondaryTextStyle([item.color]), MSecondaryAction(iconBtn("delete", \-> delItem(item.id)))]);
+		visualizeItems = \itms : [DemoScheduleItem] -> map(itms, visualizeItem);
+		MAppStructure([header("Schedule", false, [iconBtn("add", \-> navigate(addView()))]), content(MDynamicList(fselect(items, FLift(visualizeItems)), [
+			MEmptyMessage(MText("Use Add button to add task",[])),
+			MAddSeparators()
+		], [])), MFloatingContent(MFloatingButton("add", [MRight(), MBottom()], [MOnClick(\-> navigate(addView()))]))],[]);
+	}
+	next(view, mainView);
+	MMutable(view);
+}

@@ -1,0 +1,536 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+import form;
+import formtransforms;
+import formmetrics;
+import formats/html/html;
+import formats/html/font2html;
+import string;
+import formats/xml;
+import graphics2html;
+
+export {
+	// Converts a form to HTML (where texts are not HTML escaped)
+	staticForm2html(form : Form) -> string;
+	// Converts a form to HTML where texts already are escaped
+	staticForm2htmlUnsafe(form : Form) -> string;
+
+	makeHtml(headers : string, body : string) -> string;
+
+	makeHtml2(basePath : string, headers : string, body : string) -> string;
+	makeHtmlLink (url : string, caption : string) -> string;
+	makeHtmlBasePath(url : string, target : string) -> string;
+	makeShowPrintOnLoaded() -> string;
+	makeShowSaveAsPdfOnLoaded() -> string;
+	pdfConvertorUrl() -> string;
+	makeFixedSizedDiv (width : double, height : double, startWrap : bool) -> ((string) -> string);
+	includeStyleSheet(url : string) -> string;
+	text2html : (text : Text) -> string;
+	text2htmlUnsafe : (text : Text) -> string;
+	picture2html : (picture : Picture) -> string;
+	htmlOffset(left : double, top : double) -> ((string) -> string);
+
+	// Disables all user controls
+	makeFormReadonly(form: Form) -> Form;
+}
+
+
+makeHtml(headers, body) {
+	makeHtml2("", headers, body)
+}
+
+makeHtml2(basePath, headers, body) {
+
+	basePathHeader = makeHtmlBasePath(basePath, "");
+	"<html><head>"
+    "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>"
+    "<script language=\"JavaScript\" type=\"text/javascript\" src=\"" + basePath + "js/tableHover.js\"></script>"
+	"<script language=\"JavaScript\" type=\"text/javascript\">
+	function expandCollapse(id) {
+		var element = document.getElementById(\"b\" + id);
+		if ( element.style.display == \"none\" ) {
+			document.getElementById(\"d\" + id).innerHTML = \"-\";
+			element.style.display = \"block\";
+		} else {
+			document.getElementById(\"d\" + id).innerHTML = \"+\";
+			element.style.display = \"none\";
+		}
+	}
+	function togglePieChart() {
+		var element = document.getElementById(\"pieChart\");
+		var element2 = document.getElementById(\"progressList\");
+		if ( element.style.display == \"none\" ) {
+			element.style.display = \"block\";
+			element2.style.display = \"none\";
+		} else {
+			element.style.display = \"none\";
+			element2.style.display = \"block\";
+		}
+	}
+	</script>"
+	+ basePathHeader
+	+ headers
+	+ "</head><body>"
+	+ body
+	+ "</body></html>";
+}
+
+makeHtmlBasePath(url, frame) {
+	if (url != "" || frame != "") {
+		href = if (url != "") " href=\"" + url + "\"" else "";
+		target = if (frame != "") " target=\"" + frame + "\"" else "";
+		"<base" + href + target + "/>"
+	} else {
+		""
+	}
+}
+
+executeOnLoad(s) {
+	"<script type=\"text/javascript\" language=\"JavaScript\"> window.onload = function () {" + s + "}</script>"
+}
+
+makeShowPrintOnLoaded() {
+	executeOnLoad("window.print();")
+}
+
+makeShowSaveAsPdfOnLoaded() {
+	executeOnLoad("window.location='" + pdfConvertorUrl() + "'")
+}
+
+
+
+includeStyleSheet(url) {
+	"<link href=\"" + url + "\" rel=\"stylesheet\" type=\"text/css\">"
+}
+
+text2htmlEx(textForm : Text, safe : bool) -> string {
+	escape = if (safe) escapeHtml2 else idfn;
+	text = textForm.text;
+	style : [CharacterStyle]= textForm.style;
+
+	// Default style
+	defFamily = "Book";
+	defSize = 11.0;
+	defFillColor = 0x000000;
+	defOpacity = 1.0;
+	defBackgroundColor = 0x000000;
+	defBackgroundOpacity = calculateDefaultTextBackgroundColorOpacity(style);
+	defLetterSpacing = 0.;
+
+	makeFontTag = \fontfamily_, fontsize_, fillopacity_, fillcolour_, backgroundopacity_, backgroundcolour_, letterspacing_ -> \text_ -> {
+		actualFont = getMappedFont(fontfamily_, fontsize_);
+		"<span " + font2html(actualFont.first)
+			+ "font-size:" + d2s(actualFont.second) + "px;"
+			+ (if (fillopacity_ != defOpacity) {
+				" opacity:" + d2s(fillopacity_) + ";"
+				} else { "" })
+			+ (if (backgroundcolour_ != defBackgroundColor) {
+				" background-color:#" + lpad(formatHex(backgroundcolour_),"0", 6) + ";"
+				} else { "" })
+			+ (if (letterspacing_ != defLetterSpacing) {
+				" letter-spacing: " + d2s(letterspacing_) + "px;"
+				} else { "" })
+			+ (if (fillcolour_ != defFillColor) {
+				" color:#" + lpad(formatHex(fillcolour_),"0", 6) + ";"
+				} else { "" })
+			+ "\">"
+			+ text_
+		+ "</span>";
+	}
+
+	// Set up the first style
+	fontfamily = ref defFamily;
+	fontweight = ref FONT_WEIGHT_BOOK;
+	fontslope = ref FONT_SLOPE_NORMAL;
+	fontsize = ref defSize;
+	fillcolour = ref defFillColor;
+	fillopacity = ref defOpacity;
+	backgroundcolour = ref defBackgroundColor;
+	backgroundopacity = ref defBackgroundOpacity;
+	letterspacing = ref defLetterSpacing;
+
+	iter(style, \s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name) : {
+				htmlFont = font2htmlFont(name);
+				// fontfamily := htmlFont2familiesString(htmlFont);
+				fontfamily := name;
+				fontweight := htmlFont2weight(htmlFont);
+				fontslope := htmlFont2slope(htmlFont);
+			}
+		FontSize(size) : fontsize := size;
+		Fill(col): fillcolour := col;
+		Sharpness(sh, a, g): {}
+		FillOpacity(op): fillopacity := op;
+		LetterSpacing(n): letterspacing := n;
+		BackgroundFill(col): backgroundcolour := col;
+		BackgroundFillOpacity(opacity):	backgroundopacity := opacity;
+		Underlined(st): {}
+		EscapeHTML(__): {}
+		}
+	});
+
+	fixFontTags = \xml -> {
+		xmlNode2string = ref \node -> "";
+		xmlNode2string := \node -> switch (node : XmlNode) {
+			XmlElement(tag, attributes, children): {
+				if (tag == "font") {
+					map(children, ^xmlNode2string) |> concatStrings |>
+					makeFontTag(
+						getXmlAttribute(attributes, "face", defFamily),
+						eitherMap(
+							find(map(["style", "size"], \attribute -> getXmlAttribute(attributes, attribute, "")), \s -> s!= ""),
+							\sizeDescription -> {
+								fsLiteral = "font-size:";
+								fsLiteralLength = strlen(fsLiteral);
+								(if (startsWith(sizeDescription, fsLiteral)) {
+									substring(sizeDescription, fsLiteralLength, strlen(sizeDescription) - 3 - fsLiteralLength)
+								} else {
+									sizeDescription
+								}) |> s2d
+							},
+							defSize
+						),
+						defOpacity,
+						eitherMap(
+							getXmlAttributeM(attributes, "color"),
+							\colorDescription -> {
+								if (startsWith(colorDescription, "#")) {
+									substring(colorDescription, 1, strlen(colorDescription) - 1) |> parseHex
+								} else {
+									defFillColor
+								}
+							},
+							defFillColor
+						),
+						defBackgroundOpacity,
+						defBackgroundColor,
+						defLetterSpacing
+					)
+				} else {
+					if (getUrlParameter("debug") == "1") {
+						println("XML node:");
+						println(node);
+
+						println("Not handled>>");
+						println(text);
+						println("<<end of not handled tag");
+					}
+					map(children, ^xmlNode2string) |> concatStrings
+				}
+			}
+			XmlText(xmlText) : xmlText |> escape;
+		}
+		map(xml, ^xmlNode2string) |> concatStrings
+	}
+
+	// Text contains nested tags for formatting, for example, "<font...>" which is added by optimizeform::formatText
+	parseXml3WithStrategy(text, [XmlParseLeadingSpaces(true, false), XmlValidateNames()]) |> stripXmlComments |> fixFontTags |>
+	// TODO promote weight and slope to this native.
+	makeFontTag(^fontfamily, ^fontsize, ^fillopacity, ^fillcolour, ^backgroundopacity, ^backgroundcolour, ^letterspacing)
+}
+
+text2html(textform) {
+	text2htmlEx(textform, true)
+}
+
+text2htmlUnsafe(textform) {
+	text2htmlEx(textform, false)
+}
+
+picture2html(picture) {
+	// TODO: Do something about the style
+	"<img src=\"" + picture.url + "\"/>";
+}
+
+makeHtmlLeftTopStyle(left, top) {
+	if (left != 0.0 || top != 0.0) {
+		"position:relative; left:" + d2s(left) + "px; top:" + d2s(top) + "px;"
+	} else {
+		""
+	}
+}
+
+htmlOffset(left, top) {
+	makeHtmlDiv(makeHtmlLeftTopStyle(left, top))
+}
+
+htmlGroup(texts) {
+	foldi(texts, "", \i, acc, val -> {
+		acc
+		+ "<div style=\"" + "z-index:" + i2s(i + 1) + ";\">"
+		+ val
+		+ "</div>"
+	})
+}
+
+makeHtmlWidthHeightStyle(width, height) {
+	w = if (width != 0.0) {
+		"width:" + d2s(width) + "px;"
+	} else {
+		""
+	}
+	h = if (height != 0.0) {
+		"height:" + d2s(height) + "px;"
+	} else {
+		""
+	}
+	w + h
+}
+
+makeHtmlDiv(style) {
+	\text -> {
+		if (text != "") {
+			(if (style != "") "<div style=\"" + style + "\">" else "<div>")
+			+ text
+			+ "</div>"
+		} else {
+			""
+		}
+	}
+}
+
+makeHtmlMarginStyle(left, top, right, bottom) {
+	"margin-top:" + d2s(top) + "px;"
+	+ "margin-bottom:" + d2s(bottom) + "px;"
+	+ "margin-right:" + d2s(right) + "px;"
+	+ "margin-left:" + d2s(left) + "px;"
+}
+
+makeHtmlMargin(left, top, right, bottom) {
+	makeHtmlDiv(makeHtmlMarginStyle(left, top, right, bottom));
+}
+
+makeAllBrowsersTransform(transform) {
+	"transform:" + transform +
+	"-ms-transform:" + transform +
+	"-webkit-transform:" + transform +
+	"-o-transform:" + transform +
+	"-moz-transform:" + transform
+}
+
+makeHtmlScaleStyle(xs, ys) {
+	if (xs != 1.0 || ys != 1.0) {
+		scale = "scale("+d2s(xs) + "," + d2s(ys) + ");";
+		"transform-origin:0; " + makeAllBrowsersTransform(scale)
+	} else {
+		""
+	}
+}
+
+makeHtmlScale(xs, ys) {
+	makeHtmlDiv(makeHtmlScaleStyle(xs, ys))
+}
+
+makeHtmlTranslateStyle(x, y) {
+	mov = "translate("+d2s(x) + "px," + d2s(y) + "px);";
+	makeAllBrowsersTransform(mov)
+}
+makeHtmlTranslate(x, y) {
+	makeHtmlDiv(makeHtmlTranslateStyle(x, y))
+}
+
+makeHtmlRotationStyle(angle) {
+	if (angle != 0.0) {
+		rotation = "rotate(" + d2s(angle) + "deg);";
+		makeAllBrowsersTransform(rotation)
+	} else {
+		""
+	}
+}
+
+makeHtmlRotation(angle) {
+	makeHtmlDiv(makeHtmlRotationStyle(angle))
+}
+
+makeHtmlAlpha(alpha) {
+	style = "opacity:" + d2s(alpha) + ";";
+	makeHtmlDiv(style)
+}
+
+makeHtmlNormalWrapStyle(startWrap : bool) -> string {
+	if (startWrap) {
+		"white-space:normal;"
+	}
+	else {
+		"white-space:nowrap;"
+	}
+}
+
+makeFixedSizedDiv(width, height, startWrap) {
+	style = makeHtmlWidthHeightStyle(width, height) + makeHtmlNormalWrapStyle(startWrap);
+	makeHtmlDiv(style)
+}
+
+staticForm2htmlEx(xOffset : double, yOffset : double, safe : bool) -> ((Form) -> string) {
+	\f : Form -> switch (f : Form) {
+		Empty() : "";
+		Border(left, top, right, bottom, form): form |> staticForm2htmlEx(xOffset + left, yOffset + top, safe);
+		Constructor(form, fn): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Create2(current, fn): (if (^current != Empty()) ^current else fn()) |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Text(t,s) : htmlOffset(xOffset, yOffset)(text2htmlEx(Text(t, s), safe));
+		Graphics(p, s) : graphics2html(p, s) |> htmlOffset(xOffset, yOffset);
+		Picture(url, s) : if (!endsWith(url, ".swf")) {
+			Picture(url, s) |> picture2html |> htmlOffset(xOffset, yOffset);
+		} else if (startsWith(url, "images/numbers/")) {
+			pathLen = strlen("images/numbers/");
+			extLen = strlen(".swf");
+			number = substring(url, pathLen, strlen(url) - pathLen - extLen);
+			if (isDigits(number)) {
+				//Magic number based on NormalText size and Scale applied to the numbering icon
+				htmlOffset(xOffset, yOffset)(text2htmlEx(Text(number + ". ", [FontFamily("Book"), FontSize(52.148)]), false));
+			} else {
+				""
+			}
+		} else if (startsWith(url, "images/")) {
+			Picture(strReplace(url, ".swf", ".png"), s) |> picture2html |> htmlOffset(xOffset, yOffset);
+		} else {
+			""
+		}
+		Camera(file, pars, listeners, controls) : "";
+		Translate(x, y, form): {
+			xVal = getValue(x);
+			yVal = getValue(y);
+			form |> staticForm2htmlEx(xOffset + getValue(x), yOffset + getValue(y), safe);
+		}
+		Scale(x, y, form): {
+			xs = getValue(x);
+			ys = getValue(y);
+			metrics = getStaticFormSize(form);
+			form |> staticForm2htmlEx(xOffset, yOffset, safe) |> makeHtmlScale(xs, ys);
+		}
+		Rotate(degree, form): form |> staticForm2htmlEx(0.0, 0.0, safe) |> makeHtmlRotation(getValue(degree)) |> htmlOffset(xOffset, yOffset);
+		Alpha(alpha, form): {
+			opacity = getValue(alpha);
+			if (opacity > 0.0) {
+				form |> staticForm2htmlEx(xOffset, yOffset, safe) |> makeHtmlAlpha(opacity);
+			} else {
+				""
+			}
+		}
+		Visible(visible, form): {
+			if (getValue(visible) != 0) {
+				form |> staticForm2htmlEx(xOffset, yOffset, safe);
+			} else {
+				""
+			}
+		}
+		Mask2(main1, mask, stack): main1 |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Group(layers): htmlGroup(map(layers, staticForm2htmlEx(0.0, 0.0, safe))) |> htmlOffset(xOffset, yOffset);
+		Grid(cells): {
+			colsCount = ref 0;
+			rowsCount = ref 0;
+			colsWidths = ref [];
+			rowsHeights = ref [];
+			iteri(cells, \i, row -> iteri(row, \j, cell -> {
+				metrics = cell |> getStaticFormSize;
+				width = metrics.width;
+				height = metrics.height;
+
+				updateSize = \a : ref [double], offset : int, aSize : ref int, size : double -> {
+					if (offset >= ^aSize) {
+						aSize := ^aSize + 1;
+						a := arrayPush(^a, size);
+					} else {
+						if ((^a)[offset] < size) {
+							a := replace(^a, offset, size)
+						}
+					}
+				}
+				updateSize(colsWidths, j, colsCount, width);
+				updateSize(rowsHeights, i, rowsCount, height);
+			}));
+
+			colsOffsets = fold(^colsWidths, [0.0], \acc, val -> arrayPush(acc, acc[length(acc) - 1] + val));
+			rowOffsets = fold(^rowsHeights, [0.0], \acc, val -> arrayPush(acc, acc[length(acc) - 1] + val));
+			gridData = mapi(cells, \j, row -> mapi(row, \i, cell -> cell |> staticForm2htmlEx(colsOffsets[i], rowOffsets[j], safe)) |> concatStrings);
+			gridData |> concatStrings |> htmlOffset(xOffset, yOffset);
+		}
+		Available2(widthHeight, form): form |> staticForm2htmlEx (xOffset, yOffset, safe);
+		Size2(widthHeight, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		SetPending(pending, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Baseline(baseline, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Interactive(listeners, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		TextInput(state, listeners, stateaccess): {
+			text = getFormText(f);// An attempt to extract based on StateQuery2 in stateaccess
+			if (isNotSpace(text)) text else "Text input";
+		}
+		Filter2(filters, form, stack): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Cursor(kind, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Inspect(inspectors, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Mutable2(form, stack): form |> getValue |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Switch(case, cases): cases[getValue(case)] |> staticForm2htmlEx(xOffset, yOffset, safe);
+		Crop2(left, top, width, height, form, stack): {
+			style = makeHtmlMarginStyle(-getValue(left), -getValue(top), 0.0, 0.0);
+			enclosingStyle = "overflow: hidden;" + makeHtmlWidthHeightStyle(getValue(width), getValue(height));
+			form |> staticForm2htmlEx(0.0, 0.0, safe) |> makeHtmlDiv(style) |> makeHtmlDiv(enclosingStyle) |> htmlOffset(xOffset, yOffset)
+		}
+		Video(file, pars, listeners, controls): makeHtmlLink(file, "Video player") |> htmlOffset(xOffset, yOffset);
+		Access(props, fo): fo |> staticForm2htmlEx(xOffset, yOffset, safe);
+		RealHTML2(url, wh, style): "";
+		ControlFocus(focus, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		FullWindow(fw, form): form |> staticForm2htmlEx(xOffset, yOffset, safe);
+		NativeForm(__, __, __, fn): "";
+		DynamicGroup2(__, __, __, __) : ""; // Placeholder
+	}
+}
+
+makeFormReadonly(form : Form) {
+	switch(form: Form) {
+		Empty() : Empty();
+		Border(left, top, right, bottom, f): Border(left, top, right, bottom, makeFormReadonly(f));
+		Constructor(f, fn): Constructor(makeFormReadonly(f), fn);
+		Create2(current, fn): Create2(ref makeFormReadonly(^current), \ -> makeFormReadonly(fn()));
+		Text(__, __) : form;
+		Graphics(__, __) : form;
+		Picture(__, __) : form;
+		Camera(__, __, __, __) : form;
+		Translate(x, y, f) : Translate(x, y, makeFormReadonly(f));
+		Scale(x, y, f) : Scale(x, y, makeFormReadonly(f));
+		Rotate(degree, f) : Rotate(degree, makeFormReadonly(f));
+		Alpha(alpha, f) : Alpha(alpha, makeFormReadonly(f));
+		Visible(visible, f) : Visible(visible, f);
+		Mask2(main1, mask, stack) : Mask2(makeFormReadonly(main1), makeFormReadonly(mask), stack);
+		Group(layers) : Group(map(layers, makeFormReadonly));
+		Grid(cells) : Grid(map(cells, \row -> map(row, \c -> makeFormReadonly(c))));
+		Available2(widthHeight, f) : Available2(widthHeight, makeFormReadonly(f));
+		Size2(widthHeight, f) : Size2(widthHeight, makeFormReadonly(f));
+		SetPending(pending, f) : SetPending(pending, makeFormReadonly(f));
+		Baseline(baseline, f) : Baseline(baseline, makeFormReadonly(f));
+		Interactive(listeners, f): f;
+		TextInput(state, listeners, stateaccess): {
+			text = getFormText(form);// An attempt to extract based on StateQuery2 in stateaccess
+			Text(text, [])
+		};
+		Filter2(filters, f, stack) : Filter2(filters, makeFormReadonly(f), stack);
+		Cursor(kind, f) : makeFormReadonly(f);
+		Inspect(inspectors, f) : Inspect(inspectors, makeFormReadonly(f));
+		Mutable2(f, stack) : Mutable2(select(f, \fv -> makeFormReadonly(fv)), stack);
+		Switch(case, cases) : Switch(case, map(cases, \c -> makeFormReadonly(c)));
+		Crop2(left, top, width, height, f, stack) : Crop2(left, top, width, height, makeFormReadonly(f), stack);
+		Video(__, __, __, __) : form;
+		Access(__, __) : form;
+		RealHTML2(__, __, __) : form;
+		ControlFocus(focus, f) : ControlFocus(focus, makeFormReadonly(f));
+		FullWindow(fw, f) : FullWindow(fw, makeFormReadonly(f));
+		NativeForm(__, __, __, __) : form;
+		DynamicGroup2(__, __, __, __) : form; // Placeholder
+	}
+}
+
+staticForm2html(form : Form) -> string {
+	form |> takeSnapshot |> staticForm2htmlEx(0.0, 0.0, true);
+}
+
+staticForm2htmlUnsafe(form : Form) -> string {
+	form |> takeSnapshot |> staticForm2htmlEx(0.0, 0.0, false);
+}
+
+makeHtmlLink(url, caption) {
+	"<a href=\"" + (url |> escapeHtml2) + "\" target=\"blank\">" + (caption |> escapeHtml2) + "</a>"
+}
+
+pdfConvertorUrl() {
+	"http://pdfcrowd.com/url_to_pdf/?height=-1"
+}
+
+

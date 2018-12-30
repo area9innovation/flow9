@@ -1,0 +1,103 @@
+import wigi/wigi_expr;
+import wildcards;
+
+export {
+	// Travel values (vs), applies condition (ex) and runs one of two callbacks (fn_then, fn_else) depending on the callback
+	// Works for doubles only
+	wigiIfExp(vs : [WigiValue], ex : string, fn_then : (double, double) -> double, fn_else : (double, double) -> double) -> WigiValue;
+	// Same as wigiIfExp, but works for different types
+	wigiIfExp2(vs : [WigiValue], ex : string, init : WigiValue, fn_then : (/* acc */ WigiValue, /* val */ WigiValue) -> WigiValue, fn_else : (/* acc */ WigiValue, /* val */ WigiValue) -> WigiValue) -> WigiValue;
+}
+
+wigiIfExp(l : [WigiValue], ex : string, fn_then : (double, double) -> double, fn_else : (double, double) -> double) -> WigiValue {
+	if (fold(["<=",">=","<>","=","<",">"], false, \a, b -> a || strContains(ex, b))) {
+		w = strSplit2(ex, ["<=",">=","<>"]);
+		sw = if (length(w) == 1) strSplit2(ex, ["<",">","="]) else w;
+		if (length(sw) != 2) WigiString("Invalid expression")
+		else {
+			if (sw[0] == "<") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) < s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else if (sw[0] == ">") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) > s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else if (sw[0] == "<=") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) <= s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else if (sw[0] == ">=") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) >= s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else if (sw[0] == "=") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) == s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else if (sw[0] == "<>") WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) != s2d(sw[1])) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+			else WigiString("Invalid expression");
+		}
+	}
+	else if (isDigits(ex)) WigiDouble(fold(l, 0.0, \a, b -> if (wigiValue2Double(b) == s2d(ex)) fn_then(a,wigiValue2Double(b)) else fn_else(a,wigiValue2Double(b))))
+	else WigiString("Invalid expression");
+}
+
+
+wigiIfExp2(vs : [WigiValue], ex : string, init : WigiValue, fn_then : (/* acc */ WigiValue, /* val */ WigiValue) -> WigiValue, fn_else : (/* acc */ WigiValue, /* val */ WigiValue) -> WigiValue) -> WigiValue {
+	getWigiRecordValue = \wigiValue, key -> {
+		switch (wigiValue : WigiValue) {
+			WigiRecord(fields): {
+				index = iteriUntil(fields, \__, pair -> pair.first == key);
+				if (existsIndex(fields, index)) fields[index].second else WigiDefaultValue()
+			}
+			default: WigiError("WigiValue should be a WigiRecord to address to its key-value pair.");
+		}
+	}
+
+	ex2 = parseSimpleCondition(ex);
+
+	switch(ex2) {
+		SimpleCond(exOp, exVal): {
+			fold(vs, init, \acc, v -> {
+				if (interpretSimpleCond2(v, exOp, exVal)) fn_then(acc, v) else fn_else(acc, v)
+			})
+		}
+		SimpleRecordCondition(key, sc): {
+			fold(vs, init, \acc, v -> {
+				value = getWigiRecordValue(v, key);
+				if (interpretSimpleCond2(value, sc.operator, sc.value)) fn_then(acc, v) else fn_else(acc, v)
+			})
+		}
+		SimpleCondError(error): WigiString(error);
+	}
+}
+
+// Simple conditions. Maybe used in *IF functions, like COUNTIF.
+// Supported syntax: [=|>|<>|...]+value
+SimpleCondParseResult ::= SimpleCond, SimpleCondError, SimpleRecordCondition;
+
+	SimpleCond : (operator : string, value : string);
+	SimpleCondError : (error : string);
+	SimpleRecordCondition(key : string, simpleCondition : SimpleCond);
+
+parseSimpleCondition(ex : string) -> SimpleCondParseResult {
+	if (fold(["<=",">=","<>","=","<",">"], false, \a, b -> a || strContains(ex, b))) {
+		w = strSplit2(ex, ["<=",">=","<>"]);
+		sw0 = if (length(w) == 1) strSplit2(ex, ["<",">","="]) else w;
+		sw = map(sw0, trim);
+
+		if (length(sw) == 2) SimpleCond(sw[0], sw[1])
+		else if (length(sw) == 3) SimpleRecordCondition(sw[0], SimpleCond(sw[1], sw[2]))
+		else SimpleCondError("Invalid expression")
+	} else {
+		SimpleCond("=", ex)
+	}
+}
+
+interpretSimpleCond2(l : WigiValue, operator : string, r : string) -> bool {
+	if (isDigits(r) || isDouble(r)) {
+		interpretSimpleCond(wigiValue2Double(l), operator, s2d(r))
+	} else {
+		if (operator == "=") {
+			matchesWithExcelPattern(wigiValue2String(l), r)
+		} else {
+			interpretSimpleCond(wigiValue2String(l), operator, r)
+		}
+	}
+}
+
+interpretSimpleCond(l : ?, operator : string, r : ?) -> bool {
+	if (operator == "<") l < r
+	else if (operator == ">") l > r
+	else if (operator == "<=") l <= r
+	else if (operator == ">=") l >= r
+	else if (operator == "=") l == r
+	else if (operator == "<>") l != r
+	else false; // should never happen
+}

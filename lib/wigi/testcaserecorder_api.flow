@@ -1,0 +1,101 @@
+import runtime;
+import maybe;
+import wigi/wigi_environment_types;
+import wigi/events;
+import wigi/editor_types;
+
+export {
+	SystemClipboardData: (text : string, html : string);
+
+	// We don't have such things as UI events. Most closest things to them are changing value behaviour that is used in material element such MCheckBox
+	// but we can't distinuish between changing of value because of clicking the element from chaning of value because some subscription's depeendencies from
+	// engine's variable, WigiValue, etc
+	// if we were record all such events, the test would be useles because it would contains a lot of artifitial events besides of the real ones.
+	// so we have to suspend recording of events in order to do not record all induced events
+	// it can't be just boolean-based check because of the nature of subsriptions - it is possible that the same block of code reached multiple times in the stack
+	// so we have to record how many times it happens, see addInteractiveElementToEngine in material/material/extra/wigi/mw_utils.flow
+	testCaseRecorderSuspend() -> void;
+	testCaseRecorderResume() -> void;
+	isTestCaseRecorderSuspended() -> bool;
+
+	setTestCaseRecorderPlaybackMode(playbackMode : bool) -> void;
+	isTestCaseRecorderPlaybackMode() -> bool;
+
+	TestPlaybackSupport(
+		clipboardHtml : ref string,
+		// For material test recording functionalyty we need a way to change element's state while replaying the test
+		// The WigiRuntime represents all interactive element in engine with its value-based behaviour
+		// It differs from WigiEnvironment in different Behaviour - it records _value_ (not WigiValue) behaviour Behaviour<?>
+		// all (or most) interactive elements creates material elements based on value behaviour, so in order to manipulate them in runtime
+		// we have to use the same behaviour. If we were use WigiValue instead we would be farther from reality - in reality, event first strike
+		// value behaviour and then through subsriptions reaches WigiValue
+		runtime : ref WigiRuntime
+	);
+	getTestPlaybackSupport() -> TestPlaybackSupport;
+
+	getTestAwareSystemClipboard() -> SystemClipboardData;
+	wigiRuntimeLookup(cell : WigiCellName) -> Maybe<(flow) -> void>;
+	wigiRuntimeSet(cell : WigiCellName, fn : (flow) -> void) -> void;
+	wigiRuntimeRemove(cell : WigiCellName) -> void;
+
+	// This will be set by test case recorder
+	maybeRecordWigiEvent = ref \event: WigiRecorderEvent -> {};
+
+	setWigiEditorSelection(state : WigiEditorState, selection : WigiSelection, dontRecordEvent : bool) -> void;
+}
+
+testPlaybackSupport : ref Maybe<TestPlaybackSupport> = ref None();
+
+getTestPlaybackSupport() -> TestPlaybackSupport {
+	onlyOnce(testPlaybackSupport, \ -> TestPlaybackSupport(ref "", ref makeWigiRuntime()))
+}
+
+testCaseRecorder_suspendCount = ref 0;
+
+testCaseRecorderSuspend() -> void {
+	testCaseRecorder_suspendCount := ^testCaseRecorder_suspendCount + 1;
+}
+
+testCaseRecorderResume() -> void {
+	testCaseRecorder_suspendCount := ^testCaseRecorder_suspendCount - 1;
+}
+
+isTestCaseRecorderSuspended() -> bool {
+	^testCaseRecorder_suspendCount > 0
+}
+
+testCaseRecorder_playbackMode = ref false;
+
+setTestCaseRecorderPlaybackMode(playbackMode : bool) -> void {
+	testCaseRecorder_playbackMode := playbackMode;
+}
+
+isTestCaseRecorderPlaybackMode() -> bool {
+	^testCaseRecorder_playbackMode
+}
+
+getTestAwareSystemClipboard() -> SystemClipboardData {
+	SystemClipboardData(
+		getGlobalClipboard(),
+		if (isTestCaseRecorderPlaybackMode()) ^(getTestPlaybackSupport().clipboardHtml) else getGlobalClipboardFormat("html")
+	)
+}
+
+wigiRuntimeLookup(cell : WigiCellName) -> Maybe<(flow) -> void> {
+	lookupTree(^(getTestPlaybackSupport().runtime).cellnames, cell);
+}
+
+wigiRuntimeSet(cell : WigiCellName, fn : (flow) -> void) -> void {
+	runtime = getTestPlaybackSupport().runtime;
+	runtime := WigiRuntime(setTree(^runtime.cellnames, cell, fn));
+}
+
+wigiRuntimeRemove(cell : WigiCellName) -> void {
+	runtime = getTestPlaybackSupport().runtime;
+	runtime := WigiRuntime(removeFromTree(^runtime.cellnames, cell));
+}
+
+setWigiEditorSelection(state : WigiEditorState, selection : WigiSelection, dontRecordEvent : bool) -> void {
+	if (!dontRecordEvent) ^maybeRecordWigiEvent(WigiSetSelection(selection));
+	next(state.selection, selection);
+}

@@ -1,0 +1,164 @@
+import math;
+import form;
+import keyboard;
+import gui;
+import gui2;
+import ui/scrollable;
+
+export {
+	// Single selecting ListBox. Uses -1 if nothing is selected
+	ListBox(items : [Form], boxStyles : [ListBoxStyle], selected : DynamicBehaviour<int>) -> Form;
+	
+	// Multi selecting ListBox
+	ListBox2(items : [ListBoxItem], boxStyles : [ListBoxStyle]) -> Form;
+		ListBoxItem  : (selected : DynamicBehaviour<bool>, itemForm : Form);
+
+	ListBoxStyle ::= WidthHeight, UseAvailable, SelectedBackground, NotSelectedBackground, ResetChoice;
+		// WidthHeight										// ListBox uses constant area
+		UseAvailable : (); 									// ListBox dynamically uses all available area
+		SelectedBackground(st : [GraphicsStyle]);			// This background style used for selected items
+		NotSelectedBackground(st : [GraphicsStyle]);		// This background style used for non-selected items
+		ResetChoice(reset : bool);							// To reset selected item immediately after click
+}
+
+ListBox(items : [Form], boxStyles : [ListBoxStyle], selected : DynamicBehaviour<int>) -> Form {
+	unsArry = ref [];
+	listBoxItems = 
+		mapi(items, \idx, itemForm -> {
+			itemFlag = make(getValue(selected) == idx); 
+			ListBoxItem(itemFlag, itemForm);
+		});
+	reset = extractStruct(boxStyles, ResetChoice(false)).reset;
+
+	Constructor(
+		ListBoxMain(listBoxItems, boxStyles, false),
+		\ -> {
+			iteri(listBoxItems, \idx, item ->
+				refArrayPush(unsArry, subscribe(item.selected, \flag -> if (flag) {
+					nextDistinct(selected, idx);
+					if (reset) nextDistinct(selected, -1);
+				}))
+			);
+			refArrayPush(unsArry, subscribe(selected, \selIdx -> 
+				iteri(listBoxItems, \itemIdx, item -> nextDistinct(item.selected, itemIdx == selIdx))
+			));
+			\ -> {
+				applyall(^unsArry);
+				unsArry := [];
+			}
+		}
+	) 
+}
+
+ListBox2(items : [ListBoxItem], boxStyles : [ListBoxStyle]) -> Form {
+	ListBoxMain(items, boxStyles, true);
+}
+
+ListBoxMain(items : [ListBoxItem], boxStyles : [ListBoxStyle], multiselect : bool) -> Form {
+	clientRect    = makeWH();
+	scrollPointer = make(0.0);
+	prevSelected  = ref -1;
+	ctrlState	  = ref false;
+	shiftState	  = ref false;
+
+	selBackStyle = extractStruct(boxStyles, SelectedBackground([Fill(0xaaaaaa)])).st;
+	itemBackStyle = extractStruct(boxStyles, NotSelectedBackground([Fill(white)])).st;		
+
+	setSingleSelect = \ itemIdx -> {
+		iteri(items, \idx, item -> nextDistinct(item.selected, itemIdx == idx));
+		prevSelected := itemIdx;
+	}
+	
+	listItemForm = \wh, itemIdx -> {
+		onItemClick = \-> {
+			if (!multiselect) 
+				setSingleSelect(itemIdx) 
+			else {
+				if (^ctrlState) {
+					nextDistinct(items[itemIdx].selected, !getValue(items[itemIdx].selected));
+					prevSelected := itemIdx;
+				} else if (^shiftState && ^prevSelected >= 0) {
+					begIdx = if (^prevSelected > itemIdx) itemIdx else ^prevSelected;
+					endIdx = if (^prevSelected > itemIdx) ^prevSelected else itemIdx;
+					iteri(items, \idx, item -> nextDistinct(item.selected, begIdx <= idx && idx <= endIdx));
+				} else 
+					setSingleSelect(itemIdx);
+			}
+		}
+
+		makeVisible = \ -> {
+			itemY = foldi(items, 0.0, \idx, acc, item -> {
+				if (idx < itemIdx) 
+					acc + getStaticFormSize(item.itemForm).height
+				else
+					acc;
+			});	
+			topY = getValue(scrollPointer);
+			bottomY = topY + wh.height;
+			if (itemY < topY || itemY > bottomY) {
+				newY = itemY - wh.height / 2.0; 
+				deferred(\-> next(scrollPointer, if (newY < 0.0) 0.0 else newY));
+			}
+			if (^prevSelected < 0) prevSelected := itemIdx;
+		}
+
+		Select(items[itemIdx].selected, \ isSelected -> {
+			itemBackForm = {
+				fm = getStaticFormSize(items[itemIdx].itemForm);
+				if (isSelected && !multiselect) makeVisible();
+				Rectangle(wh.width, fm.height, if (isSelected) selBackStyle else itemBackStyle); 
+			}	
+
+			if (multiselect || !isSelected)  
+				Cursor(FingerCursor(), Button(Group([itemBackForm, items[itemIdx].itemForm]), onItemClick))
+			else 
+				Group([itemBackForm, items[itemIdx].itemForm]);
+		})
+	}
+
+	itemsForm = {
+		Select(clientRect, \wh -> {
+			if (wh.width == 0.0) 
+				Empty()
+			else	
+				Lines(mapi(items, \idx, item -> listItemForm(wh, idx)));
+		})	
+	}
+
+	findWrapArea = \ form -> {
+		wrapForm = \ wh -> {
+			VerticalScrollable(make(0.0), scrollPointer, const(wh.width), const(wh.height), 
+				Group([Rectangle(wh.width, wh.height, itemBackStyle), form]));
+		};
+		fold(boxStyles, form, \acc, s -> {
+			switch (s : ListBoxStyle) {
+				WidthHeight(w, h): { 
+					next(clientRect, WidthHeight(w, h)); 
+					wrapForm(WidthHeight(w, h));
+				}	
+				UseAvailable(): Inspect([IAvailable(clientRect)], Select(clientRect, wrapForm));
+				default: acc;
+			}
+		});
+	}
+	
+	if (multiselect)
+		Interactive([
+					KeyDown2(\handled, key -> {
+						ctrlState := isCtrlAlone(key);
+						shiftState := isShiftAlone(key);
+						if (!handled && !hasKeyboardFocus() &&  toLowerCase(key.utf) == "a" && key.ctrl) {
+							iter(items, \item -> nextDistinct(item.selected, true));
+							true;
+						} else 
+							false;
+					}),
+					KeyUp2(\handled, key -> {
+						if (isCtrlIn(key)) ctrlState := false;
+						if (isShiftIn(key)) shiftState := false;
+						false;
+					}),
+				], findWrapArea(itemsForm))
+	else
+		findWrapArea(itemsForm);	
+}

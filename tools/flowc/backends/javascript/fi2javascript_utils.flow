@@ -1,0 +1,424 @@
+
+import tools/flowc/backends/common;
+import tools/flowc/backends/javascript/fi2javascript_defines;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	/*
+	fiPrepareNativeNames() collects relations between native names and
+	(possibly mangled) names in classes, for example:
+
+	Declaration
+	   native fcPrintln2 : io (flow) -> void = Native.fcPrintln;
+
+	will produce leaf ("fcPrintln2" -> "NativeHx.fcPrintln") in debug mode
+	and ("fcPrintln2" -> "Native.fcPrintln") in non-debug mode.
+	*/
+	fiPrepareNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> Tree<string, string>;
+
+	// Function simply collect all natives in a program.
+	// It is required for calling Haxe DCE.
+	fiCollectAllNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> Tree<string, string>;
+	fiPrepareRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, decls : [Pair<string, [FiDeclaration]>]) -> Tree<string, string>;
+
+	fiGetHeaderCode(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, hasConcurrencyCalls : bool) -> string;
+
+	fiGetAuxCode(cfg : FiJsConfig, program : FiProgram, hasConcurrencyCalls : bool) -> string; 
+	fiGetFcStructDefs(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) -> string;
+
+	fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string) -> string;
+	fiJsExportedName(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string, id : string) -> string;
+	fiJsMangleModuleName(ovl : FiJsOverlayGroup, module : string) -> string;
+	fiJsRename(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string) -> string;
+	fiJsPrefixedName(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string) -> string;
+
+	fiType2JsType(cfg : FiJsConfig, program : FiProgram, type : FiType) -> string;
+	fiJsES6FunctionPrefix(cfg : FiJsConfig, ctx : FiJsToplevelContext, nativeName : string) -> string;
+	finl(cfg : FiJsConfig) -> string;
+
+	// List of functions, which should survive with DCE of Haxe.
+	fiHaxeDCESurvivors = [
+		"RenderSupportJSPixi","HaxeRuntime.compareByValue","HaxeRuntime.mul_32",
+		"HaxeRuntime.initStruct","HaxeRuntime._structnames_","FlowJsProgram.globals__"
+	];
+}
+
+fiJsPrefixedName(cfg, ctx, name) {
+	// Special case
+	if (name == "length__" && cfg.debug) {
+		"A9__length"
+	} else {
+		(if (!startsWith(name, fiJsA9Prefix) &&
+			// If for some reason one want remove prefixes, uncomment next line
+			// isConfigParameterTrue(ctx.program.config.config, "js-prefix") &&
+			cfg.debug &&
+			(name != "main") &&
+			// names exposed with jslibrary switch should not be prefixed
+			!containsSet(cfg.jslibrary, name)) fiJsA9Prefix else "") + name
+	}
+}
+
+finl(cfg) {
+	// To keep parameters list short we do not use config here, directly use Url parameters.
+	if (cfg.debug || cfg.keepDebugNewlines) "\n" else "";
+}
+
+fiPrepareNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) {
+	fold(program.traversal, makeTree(), \macc, file -> {
+		m = lookupTree(program.modules, file);
+		switch (m) {
+			None(): {
+				fail("Could not find " + file);
+				macc;
+			}
+			Some(module): {
+				natives = fold(module.natives, makeTree(), \acc, native -> {
+					mangled = fiJsMangleNativeName(ovl, native.nativeName);
+					if (cfg.debug && !fiNativeHasFallback(native))
+						setTree(acc, native.name, mangled)
+					else
+						acc
+				});
+				mergeTree(macc, natives);
+			}
+		}
+	});
+}
+
+fiCollectAllNativeNames(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) {
+	fold(program.traversal, makeTree(), \macc, file -> {
+		m = lookupTree(program.modules, file);
+		switch (m) {
+			None(): {
+				fail("Could not find " + file);
+				macc;
+			}
+			Some(module): {
+				natives = fold(module.natives, makeTree(), \acc, native -> {
+					setTree(acc, native.name, fiJsMangleNativeName(ovl, native.nativeName))
+				});
+				mergeTree(macc, natives);
+			}
+		}
+	});
+}
+
+fiPrepareFieldRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) {
+	renamings = fold(program.traversal, makeTree(), \macc, file -> {
+		m = lookupTree(program.modules, file);
+		switch (m) {
+			None(): {
+				fail("Could not find " + file);
+				macc;
+			}
+			Some(module): {
+				fold(module.structs, macc, \acc : Tree<string, string>, struct -> {
+					fold(struct.args, acc, \acc1 : Tree<string, string>, e -> {
+						if (lookupTree(acc1, e.name) == None()) {
+							id = ovl.nfields;
+							ovl.nfields ::= id + 1;
+							name = formatIdSmall(id);
+							setTree(acc1, e.name, name);
+						} else {
+							acc1;
+						}
+					});
+				});
+			}
+		}
+	});
+	// Cons requred to have 'head' and 'tail' fields untouched
+	// in both debug and non-debug modes, since natives list2string()
+	// and list2array() do not depend on debug.
+	setTree(setTree(renamings, "head", "head"), "tail", "tail");
+}
+
+fiPrepareRenamings(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, decls : [Pair<string, [FiDeclaration]>]) {
+	if (!cfg.debug)
+		ovl.fieldRenamings ::= fiPrepareFieldRenamings(cfg, program, ovl);
+	// This function converts names to short ones in debug mode
+	// (for example "main" -> "$o2") or changes "keyword" to
+	// "keyword__" in non-debug mode.
+	renameGlobalFn =
+		if (cfg.debug) {
+			\name -> if (containsSet(ovl.keywords, name)) name+"__" else name;
+		} else {
+			\name -> {
+				id = ovl.nglobals;
+				ovl.nglobals ::= id + 1;
+				r = "$" + formatId(id);
+				ovl.mangledNames ::= setTree(ovl.mangledNames, name, r);
+				r;
+			}
+		}
+
+	renamings = fold(decls, makeTree(), \acc, p: Pair<string, [FiDeclaration]> -> {
+		fold(p.second, acc, \t, v -> {
+			name = v.name;
+
+			if (lookupTree(t, name) == None())
+				setTree(t, name, renameGlobalFn(name))
+			else
+				t;
+		});
+	});
+
+	ovl.renamings ::= removeFromTree(renamings, "main");
+	ovl.mainFn ::= lookupTreeDef(renamings, "main", "main");
+	renamings;
+}
+
+fiGetHeaderCode(cfg : FiJsConfig, prog : FiProgram, ovl : FiJsOverlayGroup, hasConcurrencyCalls : bool) {
+
+	auxcode = fiGetAuxCode(cfg, prog, hasConcurrencyCalls);
+	aStructDefs = fiGetFcStructDefs(cfg, prog, ovl);
+
+	(if (cfg.jsmode == TS_MODE)
+		(if (cfg.modules == "") "var exports = {};\n" else "export ") + "interface ref<T> {__v : T};\n"
+	else
+		"") + aStructDefs + auxcode;
+}
+
+fiGetAuxCode(cfg : FiJsConfig, program : FiProgram, hasConcurrencyCalls : bool) {
+	isNoOtc = isConfigParameterTrue(program.config.config, "js-no-otc");
+
+	auxcodeFilename =
+		(
+			if (!isNoOtc) {
+				if (cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "fb2javascript.node.js"
+				else if (cfg.jsmode == STANDARD_ES6) "fb2javascript.es6.js"
+				else if (cfg.jsmode == TS_MODE) "fb2typescript.ts"
+				else "fb2javascript.prefix.js"
+			} else "fb2javascript.nootc.js"
+		);
+
+	auxcodePath = getFlowDir() + "/lib/lingo/flow/" + auxcodeFilename;
+
+	// TODO: Collect errors here?
+	if (!fileExists(auxcodePath))
+		fail(auxcodeFilename + " file not found at " + auxcodePath + ".\nThis is fatal, my friend");
+
+	auxcode0 =
+		if (!cfg.haxeRuntime)
+			"\n/* TODO: Flowc JS runtime goes here */\n\n"
+		else
+			getFileContent(getFlowDir() + "/lib/lingo/flow/" + auxcodeFilename);
+
+	// TODO. ConcurrentAsync may require another approach in TypeScript.
+	if (hasConcurrencyCalls) {
+			if (cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) {
+				"\nvar async = require(\"async\");\n" + auxcode0
+			} else {
+				asyncName = getFlowDir() + "/lib/lingo/flow/async.js";
+				if (!fileExists(asyncName))
+					fail("async.js file not found at " + asyncName + ".\nThis is fatal, my friend");
+				async = getFileContent(asyncName);
+				auxcode0 + "\n" + async + "\n";
+			}
+		} else auxcode0;
+}
+
+fiGetFcStructDefs(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup) {
+	iter(program.traversal, \file -> {
+		m = lookupTree(program.modules, file);
+		switch (m) {
+			None(): {
+				fail("Could not find " + file);
+			}
+			Some(module): {
+				iter(module.exports, \i -> {
+					ovl.exports ::= setTree(ovl.exports, i, module.fileinfo.flowfile);
+				});
+
+				mstructs = fold(
+					module.structs,
+					makeTree(), 
+					\acc, v -> {
+						id = ovl.nstructs;
+						ovl.nstructs ::= id + 1;
+						setTree(acc, v.name, FiJsStruct(id, v))
+					}
+				);
+				ovl.structs ::= mergeTree(ovl.structs, mstructs);
+			}
+		}
+	});
+
+	if (cfg.haxeRuntime) {
+		structs = ovl.structs;
+		prefix = "(function() {\n" + (if (cfg.debug) "  " else "") + "var S = HaxeRuntime.initStruct;\n";
+		suffix = "}());\n";
+
+		// Sort structures by id
+		st = mergeSort(foldTree(ovl.structs, [], \k, v, a -> {
+			arrayPush(a, v)
+		}), \v1, v2 -> if (v1.id > v2.id) 1 else if (v1.id < v2.id) -1 else 0);
+
+		// Create substitutions var a = RuntimeType.RTUnknown;
+		typeCounter : ref int = ref 0;
+		structTypes = fold(st, makeTree(), \acc, v -> {
+			fold(v.struct.args, acc, \acc1, e -> {
+				type = fiType2JsType(cfg, program, e.type);
+				if (lookupTree(acc1, type) == None()) {
+					r = setTree(acc1, type, ^typeCounter);
+					typeCounter := ^typeCounter + 1;
+					r;
+				} else {
+					acc1;
+				}
+			});
+		});
+
+		// Push structure type substitutions to output
+		structTypesStr = list2string(foldTree(structTypes, makeList(), \k, v, acc -> {
+			Cons((if (cfg.debug) "  " else "") + "var " + formatIdSmall(v) + "=" + k + ";" + finl(cfg), acc)
+		}));
+
+		prefix + structTypesStr + list2string(fold(st, makeList(), \acc, v -> {
+			a = strGlue(map(v.struct.args, \e -> "\"" + lookupTreeDef(ovl.fieldRenamings, e.name, e.name) + "\""), ",");
+			b = strGlue(map(v.struct.args, \e -> {
+				type = fiType2JsType(cfg, program, e.type);
+				switch(lookupTree(structTypes, type)) {
+					None() : type;
+					Some(t) : {
+						formatIdSmall(t);
+					}
+				}
+			}), ",");
+
+			// Output to structures
+
+			// S(0,"T1",["J","D"],[t0,t0]);
+			// TODO: TypeScript struct definitions differs and
+			// possibly should have field names in capital
+			// Also have no clue of field renamings, it is not used
+			// in flowcompiler now.
+
+			isSingleton = length(v.struct.args) == 0;
+
+			if (isSingleton) {
+				ovl.singletons ::= insertSet(ovl.singletons, v.struct.name);
+			}
+			structId = i2s(v.id);
+			structText = (if (cfg.debug) "  " else "") + "S(" + structId + ",\"" + v.struct.name + "\",[" + a + "],[" + b + "]);" + finl(cfg)
+			+ (if (isSingleton)
+				(if (cfg.debug) "  " else "") + (if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "$global.st_" else "st_") +
+				(if (cfg.readable)
+					v.struct.name + "={_name:'" + v.struct.name + "'}"
+				else
+					structId + "={_id:" + structId + "}") + ";" + finl(cfg) else "");
+
+			Cons(structText, acc)
+		})) + suffix;
+	} else {
+		"/* TODO: JS Structures goes here */"
+	}
+}
+
+fiJsMangleNativeName(ovl : FiJsOverlayGroup, name : string) {
+	parts = strSplit(name, ".");
+	// Some names, like Native and RenderSupport need a gentle extra renaming to avoid colliding
+	// with other implementations of these natives
+	cl = parts[0];
+	cla = cl + if (cl == "Native" || cl == "RenderSupport"
+		|| cl == "SoundSupport"
+		|| cl == "HttpSupport"
+		|| cl == "NotificationsSupport"
+		|| cl == "GeolocationSupport"
+		|| cl == "Database"
+		|| cl == "FlowFileSystem"
+		|| cl == "ServiceWorkerCache"
+		|| cl == "Thread"
+		|| cl == "WebSocketSupport") "Hx" else "";
+
+	ovl.nativeClasses ::= insertSet(ovl.nativeClasses, cla);
+
+	renamed = cla + "." + parts[1];
+
+	if (renamed == "NativeHx.length") "NativeHx.length__" else renamed;
+}
+
+fiJsES6FunctionPrefix(cfg : FiJsConfig, ctx : FiJsToplevelContext, nativeName : string) {
+	fname = (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName);
+	if (cfg.jsmode != STANDARD_JS && cfg.jsmode != TS_MODE) {
+		"(" + fname + " !== undefined)?" + fname + ":"
+	} else {
+		fname+"||"
+	}
+}
+
+fiJsMangleModuleName(ovl : FiJsOverlayGroup, module : string) -> string {
+	if (!contains(ovl.importedModules, module)) {
+		ovl.importedModules ::= concat([module], ovl.importedModules);
+	}
+	strReplace(module, "/", "_") + "$";
+}
+
+fiJsExportedName(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string, id : string) -> string {
+	if (cfg.modules != "") {
+		nm = either(lookupTree(ctx.ovl.exports, name), "");
+		// Converting array.length to array.length__ for all occurences.
+		substituted = if (nm == "array" && id == "length") "length__" else id;
+		if (nm == "" || ctx.ovl.currentModule == nm)
+			substituted
+		else
+			fiJsMangleModuleName(ctx.ovl, nm) + "." + substituted;
+	} else {
+		tl = lookupTree(ctx.program.names.toplevel, name);
+		if (isSome(tl)) fiJsPrefixedName(cfg, ctx, id) else id;
+	}
+}
+
+fiJsRename(cfg : FiJsConfig, ctx : FiJsToplevelContext, name : string) -> string {
+	if (name == "__") {
+		idx = ctx.ignorables;
+		ctx.ignorables ::= idx + 1;
+		"_$" + formatId(idx);
+	} else {
+		switch (lookupTree(ctx.localRenamings, name)) {
+			Some(id): fiJsExportedName(cfg, ctx, name, id);
+			None():
+			switch (lookupTree(ctx.renamings, name)) {
+				Some(id): fiJsExportedName(cfg, ctx, name, id);
+				None(): {
+					id = if (cfg.debug) {
+							if (containsSet(ctx.ovl.keywords, name)) name+"__" else name;
+						} else {
+							idx = ctx.nlocals;
+							ctx.nlocals ::= idx+1;
+							"_" + formatId(idx);
+						};
+					ctx.localRenamings ::= setTree(ctx.localRenamings, name, id);
+					fiJsExportedName(cfg, ctx, name, id)
+				}
+			}
+		}
+	}
+}
+
+fiType2JsType(cfg : FiJsConfig, program : FiProgram, type : FiType) {
+	if (cfg.haxeRuntime) {
+		switch (type) {
+			FiTypeArray(t) :           "RuntimeType.RTArray(" + fiType2JsType(cfg, program, t) + ")";
+			FiTypeFunction(args, rt) : "RuntimeType.RTUnknown";
+			FiTypeRef(t) :             "RuntimeType.RTRefTo(" + fiType2JsType(cfg, program, t) + ")";
+			FiTypeParameter(n) :       "RuntimeType.RTUnknown";
+			FiTypeBool() :             "RuntimeType.RTBool";
+			FiTypeInt() :              "RuntimeType.RTInt";
+			FiTypeDouble() :           "RuntimeType.RTDouble";
+			FiTypeString() :           "RuntimeType.RTString";
+			FiTypeFlow() :             "RuntimeType.RTUnknown";
+			FiTypeVoid() :             "RuntimeType.RTVoid";
+			FiTypeNative() :           "RuntimeType.RTUnknown";
+			FiTypeName(n, __) :        "RuntimeType.RTUnknown";
+				/*
+				switch (lookupTree(program.names.structs, n)) {
+					Some(__) : "RuntimeType.RTStruct";
+					None() :   "RuntimeType.RTUnknown";
+				}
+				*/
+		}
+	} else {
+		"/* TODO: Non-HaxeRuntime type */"
+	}
+}

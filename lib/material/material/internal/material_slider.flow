@@ -1,0 +1,412 @@
+import fusion_utils;
+import material/internal/material_textinput;
+
+// Internal to material
+
+export {
+	MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MSlider2T(manager : MaterialManager, parent : MFocusGroup, m : MSlider, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	sliderId = makeTropicTag(manager);
+	color : MColor = extractStruct(m.style, parent.theme.accentColor);
+	iconLeft = extractStruct(m.style, MSliderIconLeft("")).name;
+	iconRight = extractStruct(m.style, MSliderIconRight("")).name;
+	sliderRange = extractStruct(m.style, MSliderRange(0., 1.));
+	sliderStep = extractStruct(m.style, MSliderStep(-1.)).value;
+	showValue = extractStruct(m.style, MSliderDisplayValue(false)).display;
+	isDiscrete = contains(m.style, MSliderDiscrete());
+	showDiscreteValues = tryExtractStruct(m.style, MSliderShowDiscreteValues(const(false)));
+	mWidth = extractStruct(m.style, MWidth(-1.)).width;
+	innerEnabled = make(fgetValue(extractStruct(m.style, MEnabled(const(true))).enabled));
+	sliderUndefinedM : Maybe<MSliderUndefined> = tryExtractStruct(m.style, MSliderUndefined(make(true)));
+	outlineOnMinimum = extractStruct(m.style, MOutlineOnMinimum(true)).outline;
+	maximizeOnHover = extractStruct(m.style, MMaximizeOnHover(true)).maximize;
+	condensed = extractStruct(m.style, MCondensed(false)).condensed;
+	downAnywhere = extractStruct(m.style, MMouseDown(make(false))).down;
+	sliderTooltip = tryExtractStruct(m.style, MSliderTooltip(\__ -> ""));
+	mousePosition : MMousePosition = extractStruct(m.style, MMousePosition(make(zeroPoint)));
+	point = mousePosition.point;
+
+	minMax = sliderRange.max - sliderRange.min;
+	sliderWidth = make(mWidth);
+	percent = make(0.);
+	editString = make("");
+	drag = ref false;
+	tooltipText = make("");
+
+	percent2value = \p -> sliderRange.min + p * minMax;
+	value2percent = if (minMax != 0.) \v -> (v - sliderRange.min) / minMax else \v -> 0.;
+
+	preparePercent = \p ->
+		if (sliderStep > 0.)
+			roundTo(forceRange(p, 0.0, 1.0) * minMax, sliderStep) + sliderRange.min
+			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
+			|> value2percent
+			|> mirrorIfRTL
+		else
+			forceRange(p, 0.0, 1.0)
+				|> mirrorIfRTL;
+
+	prepareValue = \v ->
+		if (sliderStep > 0.)
+			(roundTo(max(sliderRange.min, min(sliderRange.max, v)) - sliderRange.min, sliderStep) + sliderRange.min)
+			|> (\f -> if (f > sliderRange.max) f - sliderStep else if (f < sliderRange.min) f + sliderStep else f)
+		else
+			max(sliderRange.min, min(sliderRange.max, v));
+
+	updateValue = \pt : Point -> {
+		w = getValue(sliderWidth);
+
+		if (w != 0.0) {
+			p = preparePercent((pt.x - (if (condensed) 7. else 15.) / 2.0) / w);
+			nextDistinct(percent, p);
+
+			if (eitherMap(sliderUndefinedM, \su -> !fgetValue(su.undefined), true))
+				nextDistinct(m.value, percent2value(p));
+		}
+	}
+
+	onValueUpdated = \v, undef -> {
+		val = prepareValue(v);
+		nextDistinct(editString, if (undef) "" else d2st(val, 2));
+		nextDistinct(percent, value2percent(val));
+	}
+
+	discreteValues =
+		if (sliderStep > 0. && minMax != 0. && minMax / sliderStep < 2000.) {
+			mValue = sliderRange.min;
+			generate(
+				0,
+				floor(minMax / sliderStep) |> (\f -> if ((mValue + sliderStep * i2d(f)) <= sliderRange.max) f + 1 else f),
+				\i -> (sliderStep * i2d(i)) / minMax
+			);
+		} else
+			[];
+
+	focusState =
+		concat(
+			concatStyles(m.style, [AccessRole("slider"), MRippleType(const(MNoRipple())), mousePosition, MPassClicks()]),
+			[
+				IScriptBehaviour("downAnywhere", downAnywhere, ISInteractionEvent()),
+				IScriptBehaviour("value", m.value, ISInputValue([], "double", true)),
+			]
+			|> (\f : [IScriptBehaviour] ->
+				eitherMap(
+					sliderUndefinedM,
+					\su : MSliderUndefined ->
+						arrayPush(f, IScriptBehaviour("undefined", su.undefined, ISInputValue([], "bool", false))),
+					f
+				)
+			)
+		);
+
+	addIcon = \title, left -> \t -> 
+		if (title != "") {
+			icon = MIfLazy2T(manager, parent, innerEnabled, \en, p -> MIcon2T(p, title, if (en) [] else [MIconDisabled()]), true);
+			if (left) TBaselineCols2A(icon, t) else TBaselineCols2A(t, icon)
+		}
+		else
+			t;
+
+	sliderUndefined = eitherMap(sliderUndefinedM, \su -> su.undefined, const(false));
+
+	customThumb : Maybe<MCustomThumb> = tryExtractStruct(m.style, MCustomThumb(\__, __ -> TEmpty()));
+
+	mkCustomThumb : Maybe<(Transform<bool>, Transform<bool>) -> Tropic> =
+		maybeMap(customThumb, \thumb -> \down, focused ->
+			TLet(
+				"thumb",
+				m2t(thumb.mkThumb(down, focused), parent),
+				TShift(TDisplay("thumb"), TScale(const(Factor(0.5, 1.0)), TGhost("thumb")))
+			)
+		);
+
+	MFocusClickable2T(manager, parent, "MSlider", focusState, \focus ->
+		makeMSlider(focus, percent, sliderWidth, fmin(focus.enabled, downAnywhere), color,
+			parent.theme.lightBackground, discreteValues, fselect(percent, FLift(\p -> d2st(percent2value(p), 2))),
+			isDiscrete, sliderUndefined, outlineOnMinimum, maximizeOnHover, condensed, mkCustomThumb, showDiscreteValues
+		)
+		|> (\t -> if (mWidth >= 0.) t else TAttachBoxCopyAvailableWidth(TGroup2(t, TFillX()), sliderWidth))
+		|> (\t -> if (condensed) TBorder(4., 7., 4., 7., t) else TBorder(4., 15., 4., 15., t))
+		|> (\t ->
+			TConstruct(
+				[
+					\ -> fconnect(focus.enabled, innerEnabled),
+					makeSubscribe(
+						eitherMap(
+							sliderUndefinedM,
+							\su ->
+								fif(su.undefined,
+									fOr(
+										fselect(focus.down, FLift(\d -> {
+											if (d && fgetValue(su.undefined)) {
+												next(su.undefined, false);
+												updateValue(fgetValue(point));
+											}
+											d
+										})),
+										focus.hover
+									),
+									focus.down
+								),
+							focus.down
+						), \d -> if (d) {
+						addInteractionItemId(manager, sliderId);
+						updateValue(fgetValue(point));
+						drag := true;
+					}),
+					make2Subscribe(focus.enabled, point, \en, p -> {
+						maybeApply(
+							sliderTooltip,
+							\tooltip -> {
+								if (en) {
+									v = preparePercent((p.x - (if (condensed) 7. else 15.) / 2.0) / getValue(sliderWidth));
+									nextDistinct(tooltipText, tooltip.textFn(percent2value(v)));
+								} else {
+									nextDistinct(tooltipText, "");
+								}
+							}
+						);
+						if (^drag) {
+							if (isCurrentInteractionItemId(manager, sliderId))
+								blockOtherInteractionItemIds(manager, sliderId);
+							updateValue(p)
+						}
+					}),
+					makeSubscribe(downAnywhere, \d -> if (!d) drag := false),
+					eitherFn(
+						sliderUndefinedM,
+						\su -> {
+							prevVal = ref fgetValue(m.value);
+
+							make2Subscribe(
+								fselect(m.value, FLift(\v -> {if (^prevVal != v) nextDistinct(su.undefined, false); prevVal := v; v})),
+								su.undefined,
+								onValueUpdated
+							)
+						},
+						\ ->
+							makeSubscribe(m.value, \v -> onValueUpdated(v, false))
+					)
+				],
+				t
+			))
+	)
+	|> (\t -> TInteractive([TMouseDownGhost(downAnywhere)], t))
+	|> (\t -> if (isNone(sliderTooltip)) t else {
+			tooltipWH = makeWH();
+			MTooltip2T(
+				manager,
+				parent,
+				MTooltip(
+					TAttachBoxCopy(t, tooltipWH),
+					MDynamicText(tooltipText, []),
+					[
+						MTop(),
+						MLightBackground(!parent.theme.lightBackground),
+						MTranslatePosition(fselect2(point, tooltipWH, FLift2(\p, tWH -> Point(p.x - tWH.width / 2., 0.)))),
+						MEnabled(fneq(tooltipText, ""))
+					]
+				),
+				dummyM2t
+			)
+		})
+	|> (\t -> if (condensed) TBorder(0., -7., 0., -7., t) else t)
+	|> (\t -> TBorder(11.,  if (!condensed) 0. else if (isDiscrete) 28. else 0., 11., 0., t))
+	|> (\t -> TBaselineOffset(const(6.), t))
+	|> addIcon(iconLeft, true)
+	|> (\f ->
+		if (showValue) {
+			extraTextInputWidth = if (sliderStep > 0.) i2d(strlen(d2s(sliderStep)) - 1) else 2.0;
+			width = (i2d(max(strlen(i2s(floor(sliderRange.min))), strlen(i2s(floor(sliderRange.max))))) + extraTextInputWidth) * 10.;
+
+			TBaselineCols2A(
+				f,
+				MTextInput2T(
+					manager,
+					parent,
+					MTextInput(
+						editString,
+						[TextInputType(NumericType()), color, MWidth(width)],
+						[MEnabled(innerEnabled), MInputFilter(\es, foc -> {
+							if (es != "") maybeApply(sliderUndefinedM, \su -> nextDistinct(su.undefined, false));
+
+							value = s2d(es);
+							if (d2s(value) == es)
+								nextDistinct(m.value, prepareValue(value));
+
+							if (foc)
+								es
+							else
+								d2s(getValue(m.value));
+						})]
+					),
+					dummyM2t
+				)
+			)
+		} else
+			f
+	)
+	|> addIcon(iconRight, false)
+	|> makeTropicConstant(Some(mWidth), None())
+}
+
+IconBasedCircle(parent : MFocusGroup, radius : double, style : [TGraphicsStyle]) -> Tropic {
+	color = extractStruct(style, Fill(black)).color;
+	opacity = extractStruct(style, FillOpacity(1.0)).opacity;
+
+	stroke = extractStruct(style, Stroke(black)).colour;
+	strokeWidth = extractStruct(style, StrokeWidth(0.0)).width;
+	strokeOpacity = extractStruct(style, StrokeOpacity(1.0)).opacity;
+
+	makeCircle = \r, col, op ->
+		MIcon2T(parent, "lens", [MIconSize(2.4 * r), MCustomColor(col), FillOpacity(op)])
+		|> (\m -> TCrop(const(Point(0.2 * r, 0.2 * r)), const(WidthHeight(2. * r, 2. * r)), m));
+
+	if (strokeWidth == 0.0)
+		makeCircle(radius, color, opacity)
+	else
+		TGroup2SameMetrics(
+			makeCircle(radius + strokeWidth / 2.0, stroke, strokeOpacity),
+			makeCircle(radius - strokeWidth / 2.0, color, opacity) |> (\m -> TTranslate(const(Point(strokeWidth, strokeWidth)), m))
+		);
+}
+
+makeBlobHandle(parent : MFocusGroup, text : string, radius : double, st : [TGraphicsStyle]) -> Tropic {
+	sqrt2 = sqrt(2.0);
+	dsqrt2 = 1.0 / sqrt2;
+
+	TGroupSameMetrics([
+		IconBasedCircle(parent, radius, st),
+		TGraphics(
+			[
+				MoveTo(radius, 0.0),
+				LineTo(radius * (1.0 + dsqrt2), radius * (1.0 + dsqrt2)),
+				LineTo(radius, radius * (1.0 + sqrt2)),
+				LineTo(radius * (1.0 - dsqrt2), radius * (1.0 + dsqrt2)),
+				ClosePath()
+			],
+			st
+		),
+		TText(text, [FontSize(radius), FontFamily("Roboto"), Fill(white)]) |> (\t -> TCenterIn(t, TFixed(2.0 * radius, 2.0 * radius)))
+	])
+	|> (\t -> TTranslate(const(Point(-radius, -radius * (2. + sqrt2))), t))
+}
+
+MSliderState(enabled : bool, strokeCircle : bool, radius : double, left : double, center : double, right : double, circlePosition : double,
+	width : double, blob : bool);
+
+makeMSlider(focus : MFocus, value0 : Transform<double>, width : Transform<double>, down : Transform<bool>, color : MColor, lightBackground: bool,
+	discreteValues : [double], editString : Transform<string>, isDiscrete : bool, sliderUndefined : Transform<bool>, outlineOnMinimum : bool, maximizeOnHover : bool,
+	condensed : bool, customThumb : Maybe<(Transform<bool>, Transform<bool>) -> Tropic>, showDiscreteValues : Maybe<MSliderShowDiscreteValues>) -> Tropic {
+
+	radius =
+		if (isSome(customThumb))
+			const(0.0)
+		else if (condensed)
+			fselect(fmax3(focus.hover, focus.focused, down), FLift(\h -> if (!h) 0. else 6.))
+		else if (!maximizeOnHover)
+			fselect2(focus.hover, sliderUndefined, FLift2(\h, su -> if (su && !h) 0. else 6.))
+		else if (isDiscrete)
+			fselect3(focus.hover, fOr(down, focus.focused), sliderUndefined, \h, d, su -> if (su || d) 0. else if (h) 7. else 6.)
+		else
+			fselect3(focus.hover, down, sliderUndefined, \h, d, su -> if (su && !h) 0. else if (d) 9. else if (h) 7. else 6.);
+
+	value = fif(fand(sliderUndefined, fnot(focus.hover)), zero, value0);
+
+	sliderState = 
+		fselect4(focus.enabled, radius, value, width, \en, r0, val, wd -> {
+			undef = fgetValue(sliderUndefined);
+			strokeCircle = val == 0. && !undef && outlineOnMinimum;
+			r = if (strokeCircle) r0 + 1. else r0;
+
+			a = val * wd - r;
+			b = (1. - val) * wd - r;
+			c = r * 2. + min(a, 0.) + min(b, 0.);
+
+			MSliderState(en, strokeCircle, r0, max(a, 0.), c, max(b, 0.), mirrorIfRTL(val) * wd, wd, r0 == 0. && isDiscrete &&
+				(!undef || fgetValue(focus.hover)))
+		});
+
+	makeBlob = \r, style, sc, blob ->
+		if (blob)
+			makeBlobHandle(focus.parent, fgetValue(editString), 14., if (sc) [MFill(MGrey(500))] else style)
+		else if (sc)
+			TTranslate(
+				const(Point(-r - 1., -r - 1.)),
+				TGroup2SameMetrics(
+					TCircle(r + 1., replaceStruct(mDisabledStyle(lightBackground), FillOpacity(if (lightBackground) 0.38 else 0.3))),
+					TTranslate(const(Point(2., 2.)), TCircle(r - 1., [MFill(MBackgroundColor(lightBackground))]))
+				)
+			)
+		else
+			TTranslate(const(Point(-r, -r)), TCircle(r, style));
+
+	slider = \st ->
+		TColsA([
+			TRectangle(if (st.enabled) [MFill(color)] else mDisabledStyle(lightBackground), TFixed(st.left, 3.)),
+			TFixed(st.center, 3.),
+			TRectangle(mDisabledStyle(lightBackground), TFixed(st.right, 3.))
+		])
+		|> (\f2 ->
+			if (i2d(length(discreteValues)) < st.width / 4.)
+				TGroup2(
+					f2,
+					(\ ->
+						TGroup(
+							map(discreteValues, \v ->
+								TTranslate(
+									if (getDefaultRtl())
+										fselect(width, FLift(\w -> Point(w - (v * st.width - 1.5), 0.)))
+									else
+										const(Point(v * st.width - 1.5, 0.)),
+									TRectangle([MFill(MDialogColor(!lightBackground))], TFixed(3., 3.))
+								)
+							)
+						)
+					)
+					|> (\f3 -> TShowLazy(eitherMap(showDiscreteValues,
+							\sdv -> sdv.show,
+							fif(sliderUndefined, focus.hover, down)
+						), f3))
+				)
+			else
+				f2
+		);
+
+	blob = \st ->
+		if (st.radius == 0. && !st.blob)
+			TEmpty()
+		else if (st.enabled) {
+			makeBlob(st.radius, [MFill(color)], st.strokeCircle, st.blob)
+			|> (\blob -> if (st.blob) blob else
+					TGroup2WithoutMetrics(
+						TShowLazy(focus.focused, \ -> makeBlob(
+							16.,
+							[MFill(if (st.strokeCircle) MGrey(500) else color), FillOpacity(0.2)],
+							false,
+							false
+						)),
+						blob
+					))
+		} else {
+			makeBlob(4., mDisabledStyle(lightBackground), st.strokeCircle, false)
+		};
+	
+	TSelectConstantMetrics(sliderState, \st  ->
+		TGroup2SameMetrics(
+			slider(st),
+			eitherFn(
+				customThumb,
+				\thumb -> thumb(down, focus.focused),
+				\ -> blob(st)
+			)
+				|> (\f2 -> TTranslate(const(Point(st.circlePosition, 1.5)), f2))
+		)
+	)
+}
+
+mirrorIfRTL(value : double) -> double {
+	if (getDefaultRtl()) 1.0 - value else value
+}

@@ -1,0 +1,410 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/cse_values;
+import tools/flowc/manipulation/dump;
+
+export {
+	// Performs global scope common subexpression elimination of constant values
+	csegFiProgram(program : FiProgram) -> FiProgram;
+}
+
+csegFiProgram(prog : FiProgram) -> FiProgram {
+	csegCounters = csegCountOccurrencesInFiProgram(prog);
+	worthit = csegWorthIt(csegCounters);
+	csegAcc = processCSEGAcc(prog, worthit, csegCounters);
+	mmod = foldTree(prog.modules, Pair(makeTree(), prog.names.toplevel), \modname, module, acc -> {
+			pair = csegFiModule(csegAcc, acc.second, module);
+			Pair(setTree(acc.first, modname, pair.first), pair.second)
+		}
+	);
+	globals_pair = csegCreateGlobalsModule(csegAcc, mmod.second);
+	mmod1 = Pair(
+		setTree(mmod.first, globals_pair.first.fileinfo.flowfile, globals_pair.first), 
+		globals_pair.second
+	);
+	
+	gan = csegAcc.globalNames;
+	optimized = FiProgram(
+		prog.config,
+		mmod1.first,
+		concat([globals_pair.first.fileinfo.flowfile], prog.traversal),
+		FiGlobalNames(
+			gan.struct2module,
+			gan.union2module,
+			gan.function2module,
+			gan.globalVar2module,
+			gan.native2module,
+			gan.structs,
+			gan.unions,
+			mmod1.second
+		),
+	);
+	unittests = getConfigParameter(optimized.config.config, "unittests");
+	if (unittests == "cse-global" || unittests == "cse") {
+		dumpFiProgram(optimized, "tools/flowc/tests/cse/out");
+	}
+	optimized
+}
+
+CSEGCounter : (
+	value : FvValue,
+	num : int
+);
+
+CSEGCounters : (
+	// What constants have we found?
+	constants : Tree<FiExp, FvValue>,
+	// How many times have we found this constant?
+	// Here we use a string representation of a constant as a key.
+	counts : Tree<string, CSEGCounter>,
+);
+
+csegCountOccurrencesInFiProgram(p : FiProgram) -> CSEGCounters {
+	foldTree(p.modules, CSEGCounters(makeTree(), makeTree()), 
+		\__, module, acc : CSEGCounters -> 
+		// Collect the common expressions across the module
+		fold(module.functions, 
+			fold(module.globalVars, acc, 
+				\acc1 : CSEGCounters, init : FiGlobalVar ->
+					countOccurencesInFiExp(acc1, init.value)
+			), 
+			\acc1 : CSEGCounters, fn : FiFunctionDec ->
+				countOccurencesInFiExp(acc1, fn.lambda)
+		)
+	)
+}
+
+csegWorthIt(counters : CSEGCounters) -> Tree<int, [FvValue]> {
+	// Filter those out which are not worth it, and order by size
+	foldTree(counters.counts, makeTree(), 
+		\__, counter, acc1 -> {
+			c = counter.value;
+			cnt = counter.num;
+			if (cnt > 1) {
+				// We have a cost model for the expresison, and calculate the specific saving
+				// First check in bytecode
+				codeSizeBytecode = fvValueCodeSize(c, true);
+				origSizeBytecode = cnt * codeSizeBytecode;
+				csegSizeByteCode = codeSizeBytecode + 5 * cnt;
+				bytecodeSaving = origSizeBytecode - csegSizeByteCode;
+
+				if (bytecodeSaving > 0) {
+					// OK, bytecode is smaller. Let us check JS as well
+					codeSizeJS = fvValueCodeSize(c, false);
+					origSizeJS = cnt * codeSizeJS;
+					// We use an overhead of 4 bytes for the name ref, and fixed 10 bytes for defining 
+					// the global itself "var $nam=;"
+					csegSizeJS = codeSizeJS + 4 * cnt + 10;
+					jsSaving = origSizeJS - csegSizeJS;
+
+					if (jsSaving > 0) {
+						// fcPrintln(fvValue2string(c) + " at "  + i2s(cnt) + " gives " + i2s(jsSaving) + " for JS and " + i2s(bytecodeSaving) + " for bytecode");
+						treePushToArrayValue(acc1, codeSizeJS, c)
+					} else {
+						acc1
+					}
+				} else acc1;
+			} else acc1;
+		}
+	)
+}
+
+CSEGAcc : (
+	// As we generate new temps, as well as update globals, we have to update this
+	globalNames : FiGlobalNames,
+	// What constants have we found?
+	constants : Tree<FiExp, FvValue>,
+	// When we rename, what name do we use for this constant?
+	names : Tree<FvValue, string>,
+	// We collect the new vars here
+	newInits : List<string>,
+	// We collect the new constants here
+	globals : List<FiGlobalVar>,
+	// The counter for the new names
+	varCount : int,
+);
+
+processCSEGAcc(prog : FiProgram, worthIt : Tree<int, [FvValue]>, counters : CSEGCounters) -> CSEGAcc {
+	// Make new constants for those that are worth it, in order of smallest size
+	// When done in order of size, we make sure intra-constant reuse is awesome
+	foldTree(worthIt, CSEGAcc(prog.names, counters.constants, makeTree(), makeList(), makeList(), 0), 
+		\size, constants, acc -> {
+			fold(constants, acc, \acc1, c ->
+				csegMakeFiGlobalConstant(acc1, c)
+			)
+		}
+	)
+}
+
+csegFiModule(acc : CSEGAcc, toplevel : Tree<string, FiDeclaration>, mo : FiModule) -> Pair<FiModule, Tree<string, FiDeclaration>> {
+	module = FiModule(
+		mo.fileinfo, 
+		mo.imports, mo.forbids,
+		mo.exports,
+		mo.structs, mo.unions,
+		map(mo.functions, \fn -> {
+				nexp = csegReplaceFiExps(acc, fn.lambda);
+				nl = switch (nexp) {
+					FiLambda(__, __, __, __): nexp;
+					default: fn.lambda
+				}
+				FiFunctionDec(fn.name, nl, fn.type, fn.declStart, fn.defiStart)
+			}
+		), 
+		map(mo.globalVars, \gv -> {
+				nexp = csegReplaceFiExps(acc, gv.value);
+				FiGlobalVar(gv.name, nexp, gv.type, gv.declStart, gv.defiStart);
+			}
+		),
+		mo.natives,
+		mo.initOrder,
+		mo.stringIncludes,
+		mo.start,
+		mo.end
+	);
+	// Update the top-level decs with latest functions and globals with the CSE applied
+	new_toplevel = 
+	fold(module.functions, 
+		fold(module.globalVars, toplevel, 
+			\acc1, v : FiGlobalVar ->
+				setTree(acc1, v.name, v)
+		), 
+		\acc1, f : FiFunctionDec ->
+			setTree(acc1, f.name, f)
+	);
+	Pair(module, new_toplevel)
+}
+
+csegCreateGlobalsModule(acc : CSEGAcc, toplevel : Tree<string, FiDeclaration>) -> Pair<FiModule, Tree<string, FiDeclaration>> {
+	globals = list2array(acc.globals);
+	Pair(
+		FiModule(
+			FiFileInfo("__cse_global_constants_module", 0.0, "", "", 0.0), 
+			[], [],
+			fold(globals, [], \a, gvar -> concat(a, [gvar.name])),
+			[], [], [], 
+			globals, 
+			[],
+			list2array(acc.newInits),
+			[], 0,  0
+		),
+		fold(globals, toplevel, \acc1, gvar -> 
+			setTree(acc1, gvar.name, gvar)
+		)
+	)
+}
+
+// Build a data structure to count how often common sub-expressions occur
+countOccurencesInFiExp(acc : CSEGCounters, ex : FiExp) -> CSEGCounters {
+	add = \v : FvValue -> {
+		key = fvValue2string(v);
+		CSEGCounters(
+			setTree(acc.constants, ex, v),
+			setTree(
+				acc.counts, 
+				key,
+				CSEGCounter(v, lookupTreeDef(acc.counts, key, CSEGCounter(v, 0)).num + 1)
+			)
+		);
+	}
+	switch (ex) {
+		FiVoid(__): acc;
+		FiBool(b, __): acc;
+		FiInt(i, __): {
+			if (i <= -1000 || i >= 1000) {
+				add(FvInt(i));
+			} else acc
+		}
+		FiDouble(d, __): {
+			if (d != 0.0 && strlen(d2s(d)) > 4) {
+				add(FvDouble(d));
+			} else acc;
+		}
+		FiString(s, __): {
+			add(FvString(s));
+		}
+		FiVar(n1, __, __): acc;
+
+		FiCast(ce, __, __, __, __): countOccurencesInFiExp(acc, ce);
+		FiIf(c, t, el, __, __): {
+			acc0 = countOccurencesInFiExp(acc, c);
+			acc1 = countOccurencesInFiExp(acc0, t);
+			countOccurencesInFiExp(acc1, el);
+		}
+		FiCall(f, es, __, __): {
+			acc0 = countOccurencesInFiExp(acc, f);
+			fold(es, acc0, countOccurencesInFiExp)
+		}
+		FiLet(__, __, e1, e2, __, __): {
+			acc0 = countOccurencesInFiExp(acc, e1);
+			countOccurencesInFiExp(acc0, e2);
+		}
+		FiCallPrim(o, es, type, __): {
+			acc0 = switch (o)  {
+				FcStructPrim(n): {
+					vargs = getFvValues(es);
+					if (length(es) == length(vargs)) {
+						s = FvStruct(n, vargs, type);
+						add(s);
+					} else acc;
+				}
+				FcArrayPrim(): {
+					vargs = getFvValues(es);
+					if (length(vargs) == length(es) && es != []) {
+						add(FvArray(vargs, type));
+					} else acc;
+				}
+				default: acc;
+			}
+			// We do this after, since "add" above relies on acc
+			fold(es, acc0, countOccurencesInFiExp)
+		}
+		FiSeq(es, __, __): fold(es, acc, countOccurencesInFiExp); //csegCountOccurencesInFiExps(acc, es);
+		FiLambda(__, b, __, __):  countOccurencesInFiExp(acc, b);
+		FiSwitch(x, __, cs, __, __):  {
+			acc0 = countOccurencesInFiExp(acc, x);
+			fold(cs, acc0, \acc1, c -> {
+				countOccurencesInFiExp(acc1, c.body)
+			})
+		}
+		FiRequire(__, e, __, __): countOccurencesInFiExp(acc, e);
+		FiUnsafe(__, e, __, __): countOccurencesInFiExp(acc, e);
+	}
+}
+
+// Construct a global variable for this constant, reusing other constants
+// Only works when done in topological (size) order
+csegMakeFiGlobalConstant(acc : CSEGAcc, f : FvValue) -> CSEGAcc {
+	name = "cseg_" + i2s(acc.varCount);
+
+	ex = fvValue2FiExp(f);
+
+	// OK, be sure to update this one using the constants we know of so far
+	nexp = csegReplaceFiExps(acc, ex);
+	
+	var = FiGlobalVar(name, nexp, fiValue2FiType(f), 0, 0);
+	gacc = acc.globalNames;
+	ngacc = FiGlobalNames(
+		gacc.struct2module,
+		gacc.union2module,
+		gacc.function2module,
+		gacc.globalVar2module, // TODO! Should we populate this with the new globals?
+		gacc.native2module,
+		gacc.structs,
+		gacc.unions,
+		// global vars, functions, natives
+		setTree(gacc.toplevel, name, var)
+	);
+
+	CSEGAcc(
+		ngacc,
+		// Be sure to record this new constant, so it can be used by other constants down the line
+		setTree(acc.constants, ex, f),
+		setTree(acc.names, f, name),
+		Cons(name, acc.newInits),
+		Cons(var, acc.globals),
+		acc.varCount + 1,
+	);
+}
+
+csegReplaceFiExps(acc : CSEGAcc, e : FiExp) -> FiExp {
+	def = \ -> {
+		switch (e) {
+			FiVoid(__): e;
+			FiBool(b, __): e;
+			FiInt(i, __): e;
+			FiDouble(d, __): e;
+			FiString(s, __): e;
+
+			FiVar(n1, __, __): e;
+			FiCast(ce, ft, tt, ty, s): {
+				rce = csegReplaceFiExps(acc, ce);
+				if (rce != ce) {
+					FiCast(rce, ft, tt, ty, s)
+				} else e;
+			}
+			FiIf(c, t, el, ty, s): {
+				rc = csegReplaceFiExps(acc, c);
+				rt = csegReplaceFiExps(acc, t);
+				re = csegReplaceFiExps(acc, el);
+				if (rc != c || rt != t || re != e) {
+					FiIf(rc, rt, re, ty, s);
+				} else e;
+			}
+			FiCall(f, as, ty, s): {
+				rf = csegReplaceFiExps(acc, f);
+				ras = map(as, \ce -> {
+					csegReplaceFiExps(acc, ce)
+				});
+				if (rf != f || ras != as) {
+					FiCall(rf, ras, ty, s);
+				} else e;
+			}
+			FiLet(name, ty, e1, e2, ty2, s): {
+				re1 = csegReplaceFiExps(acc, e1);
+				re2 = csegReplaceFiExps(acc, e2);
+				if (re1 != e1 || re2 != e2) {
+					FiLet(name, ty, re1, re2, ty2, s);
+				} else e;
+			}
+			FiCallPrim(o, es, ty, s): {
+				res = map(es, \ce -> {
+					csegReplaceFiExps(acc, ce)
+				});
+				if (res != es) {
+					FiCallPrim(o, res, ty, s);
+				} else e;
+			}
+			FiSeq(es, ty, s): {
+				res = map(es, \ce -> {
+					csegReplaceFiExps(acc, ce)
+				});
+				if (res != es) {
+					FiSeq(res, ty, s)
+				} else e;
+			}
+			FiLambda(args, b, ty, s): {
+				rb = csegReplaceFiExps(acc, b);
+				if (rb != b) {
+					FiLambda(args, rb, ty, s)
+				} else e;
+			}
+			FiSwitch(x, st, cs, ty, s):  {
+				rcs = map(cs, \c -> {
+					rc = csegReplaceFiExps(acc, c.body);
+					if (rc != c.body) {
+						FiCase(c.struct, c.argNames, rc, c.start)
+					} else c;
+				});
+				if (rcs != cs) {
+					FiSwitch(x, st, rcs, ty, s)
+				} else e;
+			}
+			FiRequire(ff, ex, ty, s): {
+				re = csegReplaceFiExps(acc, ex);
+				if (re != ex) {
+					FiRequire(ff, re, ty, s);
+				} else e;
+			}
+			FiUnsafe(na, ex, ty, s): { 
+				re = csegReplaceFiExps(acc, ex);
+				if (re != ex) {
+					FiUnsafe(na, re, ty, s);
+				} else e;
+			}
+		}
+	}
+
+	match = lookupTree(acc.constants, e);
+	switch (match) {
+		None(): def();
+		Some(v): {
+			name = lookupTreeDef(acc.names, v, "");
+			if (name != "") {
+				FiVar(name, fiExpType(e), e.start);
+			} else {
+				def();
+			}
+		}
+	}
+}

@@ -1,0 +1,68 @@
+import realhtml;
+import tropic/tropic;
+
+export {
+	makeTRealHTML(key : string, html : TRealHTML) -> Tropic;
+	// see realhtml.flow for comments
+	TRealHTMLCrossDomain(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>, 
+		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, zoomEnabled : Transform<bool>) -> Tropic;
+
+	TRealHTMLCrossDomain2(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>,
+		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void,
+		zoomEnabled : Transform<bool>) -> Tropic;
+}
+
+makeTRealHTML(key : string, html : TRealHTML) -> Tropic {
+	visValue = make(getValue(isAllRealHTMLDisplayed));
+
+	TConstruct(
+		[
+			\ -> {
+				controlTree := setTree(^controlTree, key, RealHTMLControl(visValue));
+				\ -> controlTree := removeFromTree(^controlTree, key);
+			}
+		],
+		TVisible(fmin(isAllRealHTMLDisplayed, visValue), html)
+	)
+}
+
+TRealHTMLCrossDomain(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>, 
+	receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, zoomEnabled : Transform<bool>) -> Tropic {
+	TRealHTMLCrossDomain2(url, domain, wh, sendChannel, receiveChannel, targetOrigin, key, onLoaded, ignore, zoomEnabled);
+}
+
+TRealHTMLCrossDomain2(url : string, domain : string, wh : Transform<WidthHeight>, sendChannel : DynamicBehaviour<string>,
+	receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void, 
+	zoomEnabled : Transform<bool>) -> Tropic {
+	sendToJS = ref nop1;
+	getHostCall = \hc -> sendToJS := \msg -> hc("postMessage", [msg, targetOrigin]) |> ignore;
+	flowCallBack = \args -> {
+		if (length(args) == 2 && args[0] == "postMessage") 
+			next(receiveChannel, args[1]);
+		""
+	};
+	zoomEnabledB = make(fgetValue(zoomEnabled));
+
+	TConstruct(
+		[
+			\ -> subscribe(sendChannel, \m -> ^sendToJS(m)),
+			\ -> fconnect(zoomEnabled, zoomEnabledB)
+		],
+		makeTRealHTML(
+			key,
+			TRealHTML(
+				url, 
+				wh, 
+				[
+					FlowCallback(flowCallBack),
+					PageHostcallSetter(getHostCall),
+					OverridePageDomain(domain),
+					UpdateCachedContent(true),
+					OnPageLoaded(onLoaded),
+					OnError(onError),
+					ZoomEnabled(zoomEnabledB)
+				]
+			)
+		)
+	)
+}

@@ -1,0 +1,114 @@
+import formats/xml;
+import formats/html/html;
+import form;
+import devmode;
+
+// TODO:
+// - Support <span>
+
+// - Support <b>, <i>, <em>, <strong>:
+//			} else if (tag == "em" || tag == "i") {
+//				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("Italic")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+//			} else if (tag == "b" || tag == "strong") {
+//				styled = HtmlAcc(HTMLStyle(concat(cs, [FontFamily("Medium")]), ps), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
+
+// - Support <u>
+
+export {
+	// A simple HTML parser which only handles font tags and entities
+	html2text(html : string, style : [CharacterStyle]) -> [Text];
+}
+
+extractFontFamily(style : [CharacterStyle]) -> string {
+	defaultFontFamily = "Book"; // from renderForm.flow
+	fold(style, defaultFontFamily, \acc, s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name): name;
+			default: acc;
+		}
+	})
+}
+
+getBoldFont(family : string) -> string {
+	if (family == "Book") "Medium"
+	else if (family == "Italic") "MediumItalic"
+	else if (family == "ProximaSemiBold") "ProximaExtraBold"
+	else if (family == "ProximaSemiItalic") "ProximaExtraItalic"
+	else "Medium" // or family?
+}
+
+getItalicFont(family : string) -> string {
+	if (family == "Book") "Italic"
+	else if (family == "Medium") "MediumItalic"
+	else if (family == "ProximaSemiBold") "ProximaSemiItalic"
+	else if (family == "ProximaExtraBold") "ProximaExtraItalic"
+	else if (family == "Minion") "MinionItalics"
+	else if (family == "DejaVuSerif") "MinionItalics"
+	else if (family == "DejaVuSans") "DejaVuSansOblique"
+	else "Italic" // or family?
+}
+
+html2text(html : string, style : [CharacterStyle]) -> [Text] {
+	// wrapping with font since parseXml3WithStrategy can't correctly parse something like "asd<u>qwe</u>"
+	// i.e. it removes all text without tags (unless it is the end of line)
+	nodes = parseXml3WithStrategy("<font>" + html + "</font>", [XmlParseLeadingSpaces(true, true)]) |> stripXmlComments;
+	fold(nodes, [], \acc, node -> {
+		concat(acc, htmlNode2text(node, style));
+	});
+}
+
+htmlNode2text(xml : XmlNode, style : [CharacterStyle]) -> [Text] {
+	switch (xml) {
+		XmlElement(tag, attrs, children): {
+			tagcs = toLowerCase(tag);
+			st = if (tagcs == "font") {
+				family = getXmlAttribute(attrs, "face", "");
+				fv = if (family != "") {
+					replaceStruct(style, FontFamily(family))
+				} else {
+					style
+				}
+
+				color = getXmlAttribute(attrs, "color", "");
+				cv = if (color != "") {
+					parseColor = if (startsWith(color, "0x")) \s -> substring(s, 2, strlen(s) - 2) |> parseHex else 
+						if (startsWith(color, "#")) \s -> strRight(s, 1) |> parseHex else s2i;
+					replaceStruct(fv, Fill(parseColor(color)));
+				} else {
+					fv
+				}
+
+				size = getXmlAttribute(attrs, "size", "");
+				sv = if (size != "") {
+					replaceStruct(cv, FontSize(s2d(size)));
+				} else {
+					cv
+				}
+				sv;
+			} else if (tagcs == "u") {
+				arrayPush(style, Underlined([]));
+			} else if (tagcs == "em" || tagcs == "i") {
+				replaceStruct(style, FontFamily(getItalicFont(extractFontFamily(style))));
+			} else if (tagcs == "b" || tagcs == "strong") {
+				replaceStruct(style, FontFamily(getBoldFont(extractFontFamily(style))));
+			} else {
+				devtrace("Does not handle this tag yet: " + tagcs);
+				style;
+			}
+			fold(children, [], \acc, node -> {
+				concat(acc, htmlNode2text(node, st));
+			});
+		}
+		XmlText(t): {
+			s = unescapeHtml2(t);
+			[Text(s, style)]
+		}
+	}
+}
+
+/*
+main() {
+	t = html2text("<font face=\"Book\" size=\"36\" color=\"#52AE07\"><font face=\"Book\" size=\"36\" color=\"#000000\">This question  </font>100</font> students");
+	println(t);
+}
+*/

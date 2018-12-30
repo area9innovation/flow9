@@ -1,0 +1,228 @@
+import gui;
+import lingo/pegcode/driver;
+import formats/svg/svg_pegop;
+
+export {
+	svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) -> Form;
+	svgSimplePath2GraphicsOps(path : string) -> [StaticGraphicOp];
+}
+
+EllipseArc(c : V2, rx : double, ry : double, ang0 : double, ang1 : double);
+
+//https://mortoray.com/2017/02/16/rendering-an-svg-elliptical-arc-as-bezier-curves/
+endpointToCenterArcParams(p1 : V2, p2 : V2, r : V2, xAngle : double, flagA : bool, flagS : bool) -> EllipseArc {
+	_rX = abs(r.x);
+	_rY = abs(r.y);
+
+	dx2 = (p1.x - p2.x) / 2.0;
+	dy2 = (p1.y - p2.y) / 2.0;
+	x1p = cos(xAngle) * dx2 + sin(xAngle) * dy2;
+	y1p = -sin(xAngle) * dx2 + cos(xAngle) * dy2;
+
+	_rxs = _rX * _rX;
+	_rys = _rY * _rY;
+	x1ps = x1p * x1p;
+	y1ps = y1p * y1p;
+	// check if the radius is too small `pq < 0`, when `dq > rxs * rys` (see below)
+	// cr is the ratio (dq : rxs * rys) 
+	cr = x1ps / _rxs + y1ps / _rys;
+	
+	//scale up rX,rY equally so cr == 1
+	s = sqrt(cr);
+
+	rX = if (cr > 1.0) s * _rX else _rX;
+	rY = if (cr > 1.0) s * _rY else _rY;
+	rxs = rX * rX;
+	rys = rY * rY;
+   
+	dq = (rxs * y1ps + rys * x1ps);
+	pq = (rxs * rys - dq) / dq;
+	_q = sqrt( max(0.0, pq) );
+	q = if (flagA == flagS) -_q else _q;
+
+	cxp = q * rX * y1p / rY;
+	cyp = - q * rY * x1p / rX;
+
+	cx = cos(xAngle) * cxp - sin(xAngle) * cyp + (p1.x + p2.x) / 2.0;
+	cy = sin(xAngle) * cxp + cos(xAngle) * cyp + (p1.y + p2.y) / 2.0;
+
+	svgAngle = \ux, uy, vx, vy -> {
+		u = V2(ux, uy);
+		v = V2(vx, vy);
+		dot = v2ScalarMul(u,v);
+		len = v2Len(u) * v2Len(v);
+		clamp = \x, a, b -> if (x < a) a else if (x > b) b else x; 
+		ang = acos( clamp(dot / len, -1.0, 1.0) );
+		if ( (u.x * v.y - u.y * v.x) < 0.0) -ang else ang;
+	}
+
+	theta = svgAngle( 1.0, 0.0, (x1p - cxp) / rX, (y1p - cyp) / rY );
+	__delta = svgAngle( (x1p - cxp) / rX, (y1p - cyp) / rY, (-x1p - cxp) / rX, (-y1p - cyp) / rY );
+	_delta = i2d( mod(round(__delta / PI * 180.0), 180) ) / 180.0 * PI;
+	delta = if (!flagS) _delta - 2.0 * PI else _delta;
+
+	EllipseArc(V2(cx, cy), rX, rY, theta, delta);
+}
+
+ellipseArcToBezierCurves(arc : EllipseArc, endP : V2) {
+	ang_delta = arc.ang1 - arc.ang0;
+	seg = (PI / 8.0) * sign(ang_delta);
+	num_curves = trunc(abs(ang_delta / seg));
+	arr = map( enumFromTo(0, num_curves), \e ->{
+		x = arc.c.x + arc.rx * cos(arc.ang0 + seg * i2d(e));
+		y = arc.c.y + arc.ry * sin(arc.ang1 + seg * i2d(e));
+		// TO DO : better control points 
+		cpx = arc.c.x + arc.rx * 1.01 * cos(arc.ang0 + seg * (i2d(e) - 0.5) );
+		cpy = arc.c.y + arc.ry * 1.01 * sin(arc.ang1 + seg * (i2d(e) - 0.5) );
+		QuadraticBezierTo(x, y, cpx, cpy);
+	});
+	arrayPush(arr, LineTo(endP.x, endP.y));
+}
+
+
+// Fixed MidPoint approximation of cubic curve: 
+quadraticBezierApproximation(p0, p1, p2, p3) {
+	innerPoint = \P0, P1, ratio -> v2Add(P0, v2Mul(v2Sub(P1, P0), ratio));
+
+	//  The useful base points:
+	pA = innerPoint(p0, p1, 3.0/4.0);
+	pB = innerPoint(p3, p2, 3.0/4.0);
+	d =  v2Mul(v2Sub(p3, p0), 1.0 / 16.0);
+
+	// Control points:
+	pc_1 = innerPoint(p0, p1, 3.0/8.0);
+	pc_2 =  v2Sub(innerPoint(pA, pB, 3.0/8.0), d);
+	pc_3 = v2Add(innerPoint(pB, pA, 3.0/8.0), d);
+	pc_4 = innerPoint(p3, p2, 3.0/8.0);
+	
+	// Anchors:
+	pa_1 = innerPoint(pc_1, pc_2, 0.5);
+	pa_2 = innerPoint(pA, pB, 0.5);
+	pa_3 = innerPoint(pc_3, pc_4, 0.5);
+
+	[ QuadraticBezierTo(pa_1.x, pa_1.y, pc_1.x, pc_1.y), 
+		QuadraticBezierTo(pa_2.x, pa_2.y, pc_2.x, pc_2.y),
+		QuadraticBezierTo(pa_3.x, pa_3.y, pc_3.x, pc_3.y),
+		QuadraticBezierTo(p3.x, p3.y, pc_4.x, pc_4.y) ]
+}
+
+specialPegActions() {
+	pen = ref V2(0.0, 0.0);
+	last_cp = ref V2(0.0, 0.0);
+
+	readPt = \a : [double], rel : bool -> { pen := if (rel) v2Add(^pen, V2(a[0], a[1])) else V2(a[0], a[1]); };
+
+	move = \a, rel -> { readPt(a, rel); MoveTo(^pen.x, ^pen.y) };
+	line = \a, rel -> { readPt(a, rel); LineTo(^pen.x, ^pen.y) };
+	h = \a, rel -> { pen := if (rel) V2(^pen.x + a[0], ^pen.y) else V2(a[0], ^pen.y); LineTo(^pen.x, ^pen.y) };
+	v = \a, rel -> { pen := if (rel) V2(^pen.x, ^pen.y + a[0]) else V2(^pen.x, a[0]); LineTo(^pen.x, ^pen.y) };
+
+	readCurvePts = \a : [double], rel : bool -> {
+		pts = map(enumFromTo(0, length(a) / 2 - 1), if (rel) \i -> V2(a[i * 2] + ^pen.x, a[i * 2 + 1] + ^pen.y) else \i -> V2(a[i * 2], a[i * 2 + 1]) );
+		last_cp := lastElement(pts, ^last_cp);
+		pen := pts[0];
+		pts
+	};
+
+	cubicBezier = \a, rel -> {
+		p0 = ^pen;
+		pts  = readCurvePts(a, rel);
+		quadraticBezierApproximation(p0, pts[1], pts[2], pts[0])
+	};
+
+	smoothBezier = \a, rel -> {
+		p0 = ^pen;
+		p1 = if (^last_cp.x > 0.0) Some(v2Add(p0, v2Sub(p0, ^last_cp))) else None();
+		pts = readCurvePts(a, rel);
+		quadraticBezierApproximation(p0, either(p1, pts[1]), pts[1], pts[0])
+	}
+
+	quadBezier = \a, rel -> {
+		readCurvePts(a, rel);
+		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
+	}
+
+	smoothQuadBezier = \args, rel -> {
+		last_cp := v2Add(^pen, v2Sub(^pen, ^last_cp));
+		pen := if (rel) v2Add(^pen, V2(args[0], args[1])) else V2(args[0], args[1]); 
+		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
+	}
+
+	arc = \args, rel -> {
+		r = V2(args[0], args[1]);
+		xrot = args[2];
+		flagA = args[3] == 1.0;
+		flagS = args[4] == 1.0;
+		eP = if (rel) v2Add(^pen, V2(args[5], args[6])) else V2(args[5], args[6]);
+		res = ellipseArcToBezierCurves( endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP );
+		pen := eP;
+		res
+	}
+
+	t = ref defaultPegActions.t;
+
+	t := setTree(^t,"concatA", \a  -> { concatA(a[0]); } );
+
+	add = \n : string, fn : ([double], rel : bool) -> flow, rel : bool-> t := setTree( ^t, n, \args -> fn( map(args, s2d), rel ) );
+	
+	add("cubicBezier", cubicBezier, false);
+	add("cubicBezierRel", cubicBezier, true);
+	add("smoothBezier", smoothBezier, false);
+	add("smoothBezierRel", smoothBezier, true);
+	add("quadBezier", quadBezier, false);
+	add("quadBezierRel", quadBezier, true);
+	add("smoothQuadBezier", smoothQuadBezier, false);
+	add("smoothQuadBezierRel", smoothQuadBezier, true);
+	add("move", move, false);
+	add("moveRel", move, true);
+	add("line", line, false);
+	add("lineRel", line, true);
+	add("v", v, false);
+	add("vRel", v, true);
+	add("h", h, false);
+	add("hRel", h, true);
+	add("arc", arc, false);
+	add("arcRel", arc, true);
+
+	SemanticActions(^t);
+}
+
+getGraphicsRegion(path : [StaticGraphicOp]) {
+	fold(path, Quadruple(doubleMax, doubleMax, doubleMin, doubleMin), \q, op -> {
+			p = switch(op : StaticGraphicOp) {
+				MoveTo(x, y) : V2(x, y);
+				LineTo(x, y) : V2(x, y);
+				CubicBezierTo(x, y, cx, cy): V2(x, y);
+				QuadraticBezierTo(x, y, cx, cy): V2(x, y);
+				ClosePath(): V2(q.first, q.second);
+			};
+			Quadruple(min(q.first, p.x), min(q.second, p.y), max(q.third, p.x), max(q.fourth, p.y));
+		}
+	);
+}
+
+regionContains(r : Quadruple, r1 : Quadruple) {
+	r.first < r1.first && r.second < r1.second && r.third > r1.third && r.fourth > r1.fourth
+}
+
+// Topological sort with layers:
+getLayers(group : [[StaticGraphicOp]]) -> [[[StaticGraphicOp]]] {
+	if (group == []) {
+		[]
+	} else {
+		layer = filter( group, \graphics -> forall(group, \g -> !regionContains(getGraphicsRegion(g), getGraphicsRegion(graphics)) ) );
+		arrayPush( getLayers(subtractA(group, layer)), layer);
+	}
+}
+
+svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) {
+	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
+	layers = reverseA(getLayers(result));
+	Group( mapi(layers, \i, l -> Group(map(l, \gops -> Graphics(gops, if (even(i)) style else [Fill(bgcolor)] ) ) ) ) );
+}
+
+// For svg2tropic. Only one shape per path is supposed.
+svgSimplePath2GraphicsOps(path : string) -> [StaticGraphicOp] {
+	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
+	result[0]
+}

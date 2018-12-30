@@ -1,0 +1,105 @@
+import array;
+import maybe;
+import runtime;
+
+
+export {
+	// Similar to Maybe, only with an error message in the None case.
+	Fail<?> ::= Some<?>, Failed;
+		Failed(msg : string);
+
+	// Monadic unit over Fail
+	failUnit : (v : ?)->Fail<?>;
+	// Monadic bind over Fail.
+	failBind : (fv : Fail<?>, f : (v : ?)->Fail<??>)->Fail<??>;
+	failBindFI : (fv : Fail<?>, f : (v : ?)->??)->Fail<??>;
+
+	// Monadic action that fails with the given message.
+	failFail : (msg : string)->Fail<?>;
+	// Runs f1 and if it fails, runs f2. 
+	failOrelse : (f1 : Fail<?>, f2 : (msg : string)->Fail<?>)->Fail<?>;
+
+	// Pipes a value through a list of functions where each may fail. 
+	failSeq : (v : ?, fs : [(?)->Fail<?>])->Fail<?>;
+	// Applies a function to the value in Some(v)
+	failApply : (f : (?)->??, fv : Fail<?>)->Fail<??>;
+	// Folds a partial function over a list.
+	failFold : (bs : [?], a0 : ??, f : (a : ??, b : ?)->Fail<??>)->Fail<??>;
+	//failSeqFold : (xs : SeqFold<Fail<?>, ??>, a0 : ?, onCons : (??, ?)->Fail<?>)->Fail<?>;
+	// Applies a partial function to a list of elements.
+	failMap : (as : [?], f : (?)->Fail<??>)->Fail<[??]>;
+
+	// Case split for Fail.
+	failSplit : (fv : Fail<?>, fSome : (?)->??, fFailed : (string)->??)->??;
+	failForce : (fv : Fail<?>)->?;
+	failEither : (fv : Fail<?>, fallback : ?)->?;
+
+	failPromoteMaybe : (m : Maybe<?>, errorMessage : string)->Fail<?>;
+	failPromoteMaybe0 : (m : Maybe<?>)->Fail<?>;
+}
+
+failUnit(v) Some(v);
+failBind(fv, f) switch (fv) {
+	Some(v): f(v);
+	Failed(msg): fv;
+}
+failBindFI(fv, f) switch (fv) {
+	Some(v): Some(f(v));
+	Failed(msg): fv;
+}
+
+failFail(msg) Failed(msg);
+failOrelse(f1, f2) switch (f1) {
+	Some(v): f1;
+	Failed(msg): f2(msg);
+};
+
+failSeq(v, fs) fold(fs, failUnit(v), failBind);
+
+failApply(f, fv) switch (fv) {
+	Some(v): Some(f(v));
+	Failed(msg): fv;
+};
+
+failFold(bs, a0, f) failFoldWorker(bs, 0, f, a0);
+
+failFoldWorker : ([?], int, (??, ?)->Fail<??>, ??)->Fail<??>;
+failFoldWorker(bs, i, f, a)
+	if (i < length(bs)) {
+		fA1 = f(a, bs[i]);
+		switch (fA1) {
+			Some(a1): failFoldWorker(bs, i + 1, f, a1);
+			Failed(__): fA1;
+		}
+	} else 
+		Some(a);
+
+/*
+failSeqFold(s, nil, onCons)
+	s.f(
+		\->Some(nil),
+		\x, fa->failBind(fa, \a->onCons(x, a))
+	);
+*/
+failMap(as, f) failFold(as, [], \bs, a->failBind(f(a), \b->failUnit(arrayPush(bs, b))));
+failSplit(fv, fSome, fFailed) switch (fv) {
+	Some(v): fSome(v);
+	Failed(msg): fFailed(msg);
+};
+
+failForce(fv) failSplit(fv,
+	\v->v,
+	\msg->fail0(msg)
+);
+
+failEither(fv, fallback) failSplit(fv,
+	\v->v,
+	\__->fallback
+);
+
+
+failPromoteMaybe(m, errorMessage) switch (m) {
+	Some(v): m;
+	None(): Failed(errorMessage);
+}
+failPromoteMaybe0(m) failPromoteMaybe(m, "unexpected None");

@@ -1,0 +1,140 @@
+import lingo/linecolumn;
+import lingo/pegcode/grammar2code;
+import lingo/pegcode/optimize_grammar;
+import lingo/pegcode/lingocode;
+import lingo/pegcode/rename_bindings;
+
+import lingo/pegaction;
+
+import lingo/compiler/transform_grammar;
+import lingo/compiler/nested_choices;
+
+import set;
+
+export {
+	// Given the name of a lingofile and the content of that grammar,
+	// parse the string 's' to a value with ranges of what rules matched where.
+	// The second string is an error string, the third is how far we managed to parse.
+	parseSyntaxWithGrammar(lingofilename : string, lingo : string, s : string, printTemplate : bool) -> Triple<SyntaxTree, string, int>;
+
+	// Given the name of a lingofile we have previously parsed,
+	// the name of a rule to start with, the parse the string 's' like above.
+	parseSyntaxFromRule(lingofilename : string, rule : string, s : string) -> Triple<SyntaxTree, string, int>;
+
+	FileTree(file : string, tree : SyntaxTree);
+
+	parseLingoError(s : string, rs : ParseResult) -> string;
+
+	simplifySyntaxTree(s : SyntaxTree) -> SyntaxTree;
+}
+
+// We cache the grammars for good fun
+syntaxGrammars : ref Tree<string, Pair<[PegOp], Tree<int, string>> > = ref makeTree();
+
+parseSyntaxWithGrammar(lingofilename : string, lingo : string, s : string, printTemplate : bool) -> Triple<SyntaxTree, string, int> {
+	mcode = lookupTree(^syntaxGrammars, lingofilename);
+	switch (mcode) {
+		None(): {
+			// Parse the grammar using lingo
+			r = runPeg(lingo, pegOps4Lingo, makeTree(), defaultPegActions);
+			switch (r.result) {
+				None(): {
+					Triple(dummySyntaxTree, "Could not parse grammar file `" + lingofilename + "`", 0);
+				}
+				Some(gr): {
+					grammarError = parseLingoError(lingo, r);
+					if (grammarError != "") {
+						Triple(dummySyntaxTree, lingofilename + ":" + grammarError, 0);
+					} else {
+						grammar1 = processNestedSequences(gr);
+						grammar2 = processNestedChoices(grammar1);
+						grammar3 = transformGrammar(grammar2, printTemplate);
+						grammar = optimizeGrammar(renameBindings(inlineProductions(grammar3)));
+						// printGrammar(grammar);
+						code = grammar2code(grammar);
+
+						code2 = code;
+
+						syntaxGrammars := setTree(^syntaxGrammars, lingofilename, code2);
+						rs : ParseResult = runPeg(s, code2.first, code2.second, defaultPegActions);
+						res : SyntaxTree = either(rs.result, dummySyntaxTree);
+						error = parseLingoError(s, rs);
+						Triple(simplifySyntaxTree(res), error, rs.pos);
+					}
+				}
+			}
+		}
+		Some(code): {
+			r = runPeg(s, code.first, code.second, defaultPegActions);
+			res : SyntaxTree = either(r.result, dummySyntaxTree);
+			error = parseLingoError(s, r);
+			Triple(res, error, r.pos);
+		}
+	}
+}
+
+parseSyntaxFromRule(lingofilename : string, rule : string, s : string) -> Triple<SyntaxTree, string, int> {
+	mcode = lookupTree(^syntaxGrammars, lingofilename);
+	switch (mcode) {
+		None(): Triple(dummySyntaxTree, "Unknown grammar file `" + lingofilename + "`", 0);
+		Some(code): {
+			pc = foldTree(code.second, -1, \k : int, v : string, acc : int -> {
+				if (v == rule) k else acc
+			});
+			if (pc == -1) {
+				Triple(dummySyntaxTree, "Unknown rule '" + rule + "' in grammar file `" + lingofilename + "`", 0);
+			} else {
+				// We hack the start of the code to go to the rule we mention
+				// This relies deeply on how grammar2code works.
+				modcode = replace(code.first, 0, PegCall(pc));
+
+				r = runPeg(s, modcode, code.second, defaultPegActions);
+				res : SyntaxTree = either(r.result, dummySyntaxTree);
+				error = parseLingoError(s, r);
+				Triple(res, error, r.pos);
+			}
+		}
+	}
+}
+
+parseLingoError(s : string, rs : ParseResult) -> string {
+	if (rs.pos < 0 || rs.result == None()) {
+		"SYNTAX ERROR";
+	} else if (rs.pos < strlen(s)) {
+		resolver = makeLineResolver(s);
+		line = findLine(resolver, rs.pos);
+
+		i2s(line.lineno) + ":" + i2s(line.column) 
+		+ ": SYNTAX ERROR\n" + strLeft(line.line, 80) + "\n"
+		+ (if (line.lineIndex < 80) {
+			"\n" + strLeft("                                                                                ", line.lineIndex)+ "^";
+		} else "");
+	} else "";
+}
+
+// Get rid of "empty" productions that did not eat any characters
+simplifySyntaxTree(s : SyntaxTree) -> SyntaxTree {
+	SyntaxTree(
+		s.rule, s.choice, s.start, s.end,
+		map(s.children, \cs -> {
+			alive = filter(cs, \c -> {
+				c.start != c.end
+			});
+			map(alive, simplifySyntaxTree);
+		})
+	);
+}
+
+/*
+main() {
+	// First, do a simple parse of this program
+	p = parseSyntaxWithGrammar("twist/tests/flow.lingo", getFileContent("twist/tests/flow.lingo"), "a=1;", false);
+
+	ex = "1+3+5";
+
+	e = parseSyntaxFromRule("twist/tests/flow.lingo", "exp", ex);
+	println(e.second);
+	printSyntaxTree(e.first, ex);
+	quit(0),
+}
+*/

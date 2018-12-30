@@ -1,0 +1,878 @@
+import material/internal/material_util;
+import material/internal/material_mutable;
+import material/internal/material_typography;
+import material/material_gui;
+
+export {
+	clickable(manager : MaterialManager, parent : MFocusGroup, t : Tropic, onClick : () -> void) -> Tropic;
+	clickableDownHover(manager : MaterialManager, parent : MFocusGroup, t : Tropic, point : Maybe<DynamicBehaviour<Point>>,
+		down : DynamicBehaviour<bool>, hover : DynamicBehaviour<bool>, onClick : () -> void) -> Tropic;
+	downMask(manager : MaterialManager, box : Tropic, onDown : (point : Point, inside : bool) -> void) -> Tropic;
+	mouseDownAround(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>, hover : DynamicBehaviour<bool>,
+		onClick : () -> void, t : Tropic) -> Tropic;
+	mouseDownAroundPassClicks(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>,
+		hover : DynamicBehaviour<bool>, onClick : () -> void, t : Tropic) -> Tropic;
+
+	mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t : Tropic) -> Tropic;
+
+	materialMouseWheel(manager : MaterialManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic;
+
+	disableMouseWheelBelow(content : Tropic) -> Tropic;
+	disableMMouseWheelBelow(content : Material) -> Material;
+	disableInteractivesBelow(content : Tropic) -> Tropic;
+	disableMInteractivesBelow(content : Material) -> Material;
+	disableScrollInside(manager : MaterialManager, content : Tropic) -> Tropic;
+	disableScrollInsideEnabled(manager : MaterialManager, content : Tropic, enabled : Transform<bool>) -> Tropic;
+	disableMScrollInside(manager : MaterialManager, content : Material) -> Material;
+
+	materialDoubleClickDelay = ref 500;
+
+	MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	debugMaterialClicks = isUrlParameterTrue("debugMaterialClicks");
+
+	// temporary solution instead MClickable structure until it will fixed
+	// https://trello.com/c/M0loaq5M/470-bug-with-mclickable-for-sector-in-js
+	MClickable2(m : Material, onClick : () -> void) -> Material;
+}
+
+mouseDownAround(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>, hover : DynamicBehaviour<bool>,
+	onClick : () -> void, t : Tropic) -> Tropic {
+	zorder = ref getValue(manager.currentZorder);
+	state =
+		concat(
+			if (isSome(point)) [MMousePosition(either(point, make(zeroPoint)))] else [],
+			[
+				MOnClick(onClick),
+				TPressed(down),
+				THovering(hover),
+				MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
+			]
+		);
+
+	TConstruct(
+		[
+			\ -> {
+				zorder := getValue(manager.currentZorder);
+				nop
+			}
+		],
+		mouseOnDownAround(manager, state,  t)
+	)
+}
+
+mouseDownAroundPassClicks(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>,
+	hover : DynamicBehaviour<bool>, onClick : () -> void, t : Tropic) -> Tropic {
+	zorder = ref getValue(manager.currentZorder);
+	state =
+		concat(
+			if (isSome(point)) [MMousePosition(either(point, make(zeroPoint)))] else [],
+			[
+				MPassClicks(),
+				MOnClick(onClick),
+				TPressed(down),
+				THovering(hover),
+				MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
+			]
+		);
+
+	TConstruct(
+		[
+			\ -> {
+				zorder := getValue(manager.currentZorder);
+				nop
+			}
+		],
+		mouseOnDownAround(manager, state,  t)
+	)
+}
+
+mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t : Tropic) -> Tropic {
+	interactionId = extractStruct(state, MInteractionId(makeTropicTag(manager))).id;
+	uns = initUnsM();
+	longUns = initUnsM();
+	doubleClickUns = initUnsM();
+	wasDown = ref false;
+	rightWasDown = ref false;
+	middleWasDown = ref false;
+	doubleClickWasDown = ref false;
+	tripleClickWasDown = ref false;
+	longClickWasDown = ref false;
+
+	down = extractStruct(state, TPressed(make(false))).pressed;
+	hover = extractStruct(state, THovering(make(false))).hovering;
+	onClick =
+		[extractStruct(state, MOnClick(nop)).click, extractStruct(state, TOnClicked(nop)).clicked]
+		|> (\f -> \ -> applyall(f));
+	onClickAsync = tryExtractStruct(state, MOnClickAsync(nop1));
+	middleClick = tryExtractStruct(state, MOnMiddleClick(nop));
+	rightClick = tryExtractStruct(state, MOnRightClick(nop));
+	doubleClick = tryExtractStruct(state, MOnDoubleClick(nop));
+	tripleClick = tryExtractStruct(state, MOnTripleClick(nop));
+	longClick = tryExtractStruct(state, MOnLongClick(nop));
+	longTouch =
+		tryExtractStruct(state, MOnLongTouch(nop))
+		|> (\longTouch ->
+			eitherMap(
+				longClick,
+				\lc ->
+					eitherFn(
+						longTouch,
+						\lt -> Some(MOnLongTouch(\ -> {longClickWasDown := true; lt.touch();})),
+						\ -> Some(MOnLongTouch(\ -> longClickWasDown := true))
+					),
+				longTouch
+			)
+		);
+	onTouch = tryExtractStruct(state, MOnTouch(500, nop));
+	point = tryExtractStruct(state, MMousePosition(make(zeroPoint)));
+	disableHover = contains(state, MDisableHover());
+	blockClicks = !contains(state, MPassClicks());
+	additionalRollOutCheck = contains(state, MAdditionalRollOutCheck());
+	mobileForceHover = contains(state, MMobileForceHover());
+	clickEnabled = make(true);
+	enabled =
+		fmin(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled)
+		|> (\enabled -> if (isSome(onClickAsync)) fmin(enabled, clickEnabled) else enabled);
+	onDown = tryExtractStruct(state, MOnMouseDown(nop2));
+	onUp = tryExtractStruct(state, MOnMouseUp(nop2));
+
+	onClickFn =
+		eitherMap(
+			longClick,
+			\lc -> \ ->
+				if (^longClickWasDown) {
+					longClickWasDown := false;
+					lc.click();
+				} else {
+					onClick();
+				},
+			onClick
+		);
+
+	onDownFn =
+		eitherMap(
+			point,
+			\curPoint ->
+				Some(MOnMouseDown(\p, inside -> {
+					if (inside)
+						nextDistinct(curPoint.point, p);
+					maybeApply(onDown, \fn -> fn.down(p, inside));
+				})),
+			onDown
+		);
+
+	release = \ -> {
+		if (debugMaterialClicks)
+			println("release " + i2s(interactionId));
+		dispUnsM(uns);
+		nextDistinct(down, false);
+	};
+
+	hold = \ -> {
+		if (debugMaterialClicks)
+			println("hold " + i2s(interactionId));
+		dispUnsM(uns);
+		addInteractionItemId(manager, interactionId);
+		if (!mobile || mobileForceHover) nextDistinct(hover, true);
+		nextDistinct(down, true);
+		wasDown := true;
+
+		setUnsM(
+			uns,
+			[
+				makeSubscribe(manager.currentInteractionItemID, \ii -> if (!contains(ii, interactionId)) deferred(release))(),
+			]
+			|> (\f ->
+				// TODO: Dispose on hover false
+				eitherFn(
+					longTouch,
+					\lt -> {
+						setUnsM(
+							longUns,
+							interruptibleTimer(500, \ -> { blockOtherInteractionItemIds(manager, interactionId); lt.touch(); })
+						);
+						arrayPush(f, \ -> dispUnsM(longUns));
+					},
+					\ ->
+						if (blockClicks)
+							arrayPush(f, interruptibleTimer(510, \ -> blockOtherInteractionItemIds(manager, interactionId)))
+						else
+							f
+				)
+			)
+			|> (\f ->
+				eitherMap(
+					onTouch,
+					\ot -> {
+						longUns1 = either(^longUns, nop);
+						longUns2 = interruptibleTimer(ot.delay, \ -> {blockOtherInteractionItemIds(manager, interactionId); ot.touch();});
+						setUnsM(
+							longUns,
+							\ -> {
+								longUns1();
+								longUns2();
+							}
+						);
+
+						arrayPush(f, \ -> dispUnsM(longUns));
+					},
+					f
+				)
+			)
+			|> (\f -> \ -> applyall(f))
+		);
+	};
+
+	TInteractive(
+		[
+			MouseDown(\mi ->
+				if (fgetValue(enabled)) {
+					if (mi.inside()) {
+						if (debugMaterialClicks)
+							println("down " + i2s(interactionId));
+						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), true));
+						hold();
+
+						eitherFn(
+							tripleClick,
+							\tc ->
+								if (^tripleClickWasDown) {
+									dispUnsM(uns);
+									dispUnsM(doubleClickUns);
+									tripleClickWasDown := false;
+
+									tc.click();
+								},
+							\ ->
+								maybeApply(
+									doubleClick,
+									\dc ->
+										if (^doubleClickWasDown) {
+											dispUnsM(uns);
+											dispUnsM(doubleClickUns);
+											doubleClickWasDown := false;
+
+											dc.click();
+										}
+								)
+						);
+
+						blockClicks
+					} else {
+						maybeApply(onDownFn, \fn -> fn.down(Point(mi.x, mi.y), false));
+						false
+					}
+				} else {
+					false
+				}
+			),
+			MouseUp2(\h, mi -> {
+				wasDown := false;
+
+				if (getValue(down)) {
+					if (debugMaterialClicks)
+						println("up " + i2s(interactionId));
+
+					mouseInfo = mi();
+					if (fgetValue(enabled))
+						maybeApply(onUp, \fn -> fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside));
+					next(down, false);
+
+					if (!h && isSome(^uns) && fgetValue(enabled) && mouseInfo.inside) {
+						dispUnsM(uns);
+
+						(\ -> {
+							if (isSome(doubleClick) || isSome(tripleClick)) {
+								if (!^doubleClickWasDown) {
+									doubleClickWasDown := true;
+
+									dispUnsM(doubleClickUns);
+									setUnsM(
+										doubleClickUns,
+										interruptibleTimer(^materialDoubleClickDelay, \ -> {
+											doubleClickWasDown := false;
+											onClickFn();
+										})
+									);
+								}
+							} else {
+								onClickFn()
+							}
+						})
+						|> (\f ->
+							eitherMap(
+								onClickAsync,
+								\clickAsync : MOnClickAsync -> \ -> {
+									next(clickEnabled, false);
+									f();
+									timerDisp = interruptibleTimer(10000, \ -> nextDistinct(clickEnabled, true));
+
+									clickAsync.click(\ -> { timerDisp(); nextDistinct(clickEnabled, true); });
+								},
+								f
+							)
+						)
+						|> (\f ->
+							eitherFn(
+								tripleClick,
+								\tc ->
+									if (^doubleClickWasDown && !^tripleClickWasDown) {
+										doubleClickWasDown := false;
+										tripleClickWasDown := true;
+
+										dispUnsM(doubleClickUns);
+										setUnsM(
+											doubleClickUns,
+											interruptibleTimer(^materialDoubleClickDelay, \ -> {
+												tripleClickWasDown := false;
+
+												eitherFn(
+													doubleClick,
+													\dc ->
+														dc.click(),
+													onClickFn
+												)
+											})
+										);
+									} else
+										f(),
+								f
+							)
+						);
+
+						blockClicks
+					} else {
+						h
+					}
+				} else {
+					if (fgetValue(enabled))
+						maybeApply(onUp, \fn -> {mouseInfo = mi(); fn.up(Point(mouseInfo.x, mouseInfo.y), mouseInfo.inside);});
+					h
+				}
+			})
+		]
+		|> (\f ->
+			if (disableHover)
+				f
+			else if (!mobile && isNone(point) && blockClicks)
+				concat(
+					f,
+					[
+						RollOver(\__ -> {
+							if (debugMaterialClicks)
+								println("handled roll over " + i2s(interactionId));
+
+							nextDistinct(hover, true)
+						}),
+						RollOut(\__ -> {
+							if (^wasDown || getValue(hover)) {
+								if (debugMaterialClicks)
+									println("handled roll out " + i2s(interactionId));
+
+								dispUnsM(longUns);
+								nextDistinct(hover, false);
+								if (!fgetValue(enabled)) release();
+							}
+
+							if (^rightWasDown) rightWasDown := false
+							else if (^middleWasDown) middleWasDown := false;
+						})
+					]
+					|> (\rollInteractives ->
+						if (additionalRollOutCheck)
+							arrayPush(
+								rollInteractives,
+								MouseMove2(\h, mi -> {
+									if (!mi().inside) {
+										dispUnsM(longUns);
+										nextDistinct(hover, false);
+									} else if (!h) {
+										nextDistinct(hover, true);
+									}
+
+									h
+								})
+							)
+						else
+							rollInteractives
+					)
+				)
+			else
+				arrayPush(
+					f,
+					MouseMove2(\h, mi0 ->
+						if (fgetValue(enabled) && !h) {
+							mi = mi0();
+
+							if (mi.inside) {
+								if (debugMaterialClicks)
+									println("handled inside " + i2s(interactionId));
+
+								maybeApply(point, \p -> nextDistinct(p.point, Point(mi.x, mi.y)));
+								if (!mobile || mobileForceHover) nextDistinct(hover, true);
+								blockClicks && getValue(manager.manager.dragging) == -1
+							} else {
+								if (^wasDown || getValue(hover)) {
+									if (debugMaterialClicks)
+										println("handled not inside " + i2s(interactionId));
+
+									maybeApply(point, \p -> nextDistinct(p.point, Point(mi.x, mi.y)));
+									dispUnsM(longUns);
+									if (!mobile || mobileForceHover) nextDistinct(hover, false);
+								}
+
+								if (^rightWasDown) rightWasDown := false
+								else if (^middleWasDown) middleWasDown := false;
+
+								false
+							}
+						} else {
+							if ((^wasDown || getValue(hover)) && !mi0().inside) {
+								if (debugMaterialClicks)
+									println("not handled not inside " + i2s(interactionId));
+
+								dispUnsM(longUns);
+								if (!mobile || mobileForceHover) nextDistinct(hover, false);
+								if (!fgetValue(enabled)) release();
+							}
+							h
+						}
+					)
+				)
+		)
+		|> (\f ->
+			if (!mobile)
+				eitherFn(
+					rightClick,
+					\rc ->
+						concat(
+							f,
+							[
+								MouseRightDown(\mi ->
+									if (fgetValue(enabled) && mi.inside()) {
+										rightWasDown := true;
+										true
+									} else
+										false
+								),
+								MouseRightUp2(\h, mi -> {
+									if (^rightWasDown) {
+										if (fgetValue(enabled) && mi().inside)
+											rc.click();
+										rightWasDown := false;
+
+										true
+									} else
+										h
+								})
+							]
+						),
+					\ ->
+						f
+				)
+			else
+				f
+		)
+		|> (\f ->
+			if (!mobile)
+				eitherFn(
+					middleClick,
+					\mc ->
+						concat(
+							f,
+							[
+								MouseMiddleDown(\mi ->
+									if (fgetValue(enabled) && mi.inside()) {
+										middleWasDown := true;
+										true
+									} else
+										false
+								),
+								MouseMiddleUp2(\h, mi -> {
+									if (^middleWasDown) {
+										if (fgetValue(enabled) && mi().inside)
+											mc.click();
+										middleWasDown := false;
+
+										true
+									} else
+										h
+								})
+							]
+						),
+					\ ->
+						f
+				)
+			else
+				f
+		),
+		if (isSameStructType(t, TRectangle([], TEmpty())))
+			t
+		else
+			TFrame(0.0, 0.0, interactiveRectangleStyle, t)
+	)
+	|> (\f ->
+		TDispose(
+			[
+				\ -> {
+					release();
+					nextDistinct(hover, false);
+				}
+			],
+			f
+		)
+	)
+	|> (\f ->
+		materialLogFn(
+			\ ->
+				TCopySize(
+					f,
+					\tr -> TShow(manager.debugMetrics, TRectangle([FillOpacity(0.), Stroke(green)], tr)),
+					true
+				),
+			MaterialInfo(),
+			\ -> f
+		)
+	)
+}
+
+clickable(manager : MaterialManager, parent : MFocusGroup, t : Tropic, onClick : () -> void) -> Tropic {
+	clickableDownHover(manager, parent, t, None(), make(false), make(false), onClick)
+}
+
+clickableDownHover(manager : MaterialManager, parent : MFocusGroup, t : Tropic, point : Maybe<DynamicBehaviour<Point>>,
+	down : DynamicBehaviour<bool>, hover : DynamicBehaviour<bool>, onClick : () -> void) -> Tropic {
+	click = fn2IScriptBehaviourDisposable(onClick, "click", ISClickEvent());
+
+	MActivate2T(
+		manager,
+		parent,
+		"MClickable",
+		[
+			IScriptBehaviour("down", down, ISInteractionEvent()),
+			IScriptBehaviour("hover", hover, ISInteractionEvent()),
+			click.monitorBehaviour
+		]
+		|> (\f2 ->
+			eitherMap(
+				point,
+				\p -> arrayPush(f2, IScriptBehaviour("point", p, ISInteractionEvent())),
+				f2
+			)
+		),
+		\__ ->
+			TCursor(FingerCursor(), mouseDownAround(manager, point, down, hover, click.fn, t))
+			|> (\f ->
+				TConstruct(
+					[click.subscribers],
+					f
+				)
+			)
+	)
+}
+
+downMask(manager : MaterialManager, box : Tropic, onDown : (point : Point, inside : bool) -> void) -> Tropic {
+	zorder = ref getValue(manager.currentZorder);
+	state =
+		[
+			MPassClicks(),
+			MOnMouseDown(onDown),
+			MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
+		];
+
+	TConstruct(
+		[
+			\ -> {
+				zorder := getValue(manager.currentZorder);
+				nop
+			}
+		],
+		mouseOnDownAround(manager, state, box)
+	)
+}
+
+materialMouseWheel(manager : MaterialManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic {
+	// Qt target on OSX returns the scroll in pixels, so we scale it by 80.
+	scrollScale = if (qt && macosx()) 80. else 1.;
+
+	if (mobile)
+		content
+	else {
+		zorder = ref getValue(manager.currentZorder);
+
+		TConstruct(
+			[
+				\ -> {
+					zorder := getValue(manager.currentZorder);
+					nop
+				}
+			],
+			TInteractive(
+				[
+					FineGrainMouseWheel2(\h, mi ->
+						if (!h && ^zorder >= getValue(manager.currentZorder)) {
+							m = mi();
+
+							if (m.inside && (m.dx != 0. || m.dy != 0.)) {
+								dx = deltaX(m.dx / scrollScale);
+								dy = deltaY(m.dy / scrollScale);
+
+								dx || dy
+							} else {
+								h
+							}
+						} else
+							h
+					)
+				],
+				content
+			)
+		)
+	}
+}
+
+disableMouseWheelBelow(content : Tropic) -> Tropic {
+	if (mobile)
+		content
+	else {
+		TInteractive(
+			[
+				FineGrainMouseWheel2(\__, mi -> mi().inside)
+			],
+			content
+		)
+	}
+}
+
+disableMMouseWheelBelow(content : Material) -> Material {
+	if (mobile)
+		content
+	else {
+		MInteractive(
+			[
+				FineGrainMouseWheel2(\__, mi -> mi().inside)
+			],
+			content
+		)
+	}
+}
+
+disableInteractivesBelow(content : Tropic) -> Tropic {
+	TCopySize(
+		content,
+		\tr ->
+			TInteractive(
+				[
+					MouseDown(\mi -> mi.inside()),
+					MouseUp(\mi -> mi().inside),
+					MouseMove(\mi -> mi().inside),
+					RollOver(nop1),
+					RollOut(nop1)
+				],
+				TRectangle(interactiveRectangleStyle, tr)
+			),
+		false
+	)
+}
+
+disableMInteractivesBelow(content : Material) -> Material {
+	MCopySize(
+		content,
+		\tr ->
+			MInteractive(
+				[
+					MouseDown(\mi -> mi.inside()),
+					MouseUp(\mi -> mi().inside),
+					MouseMove(\mi -> mi().inside),
+					RollOver(nop1),
+					RollOut(nop1)
+				],
+				TRectangle(interactiveRectangleStyle, tr)
+			),
+		false
+	)
+}
+
+disableScrollInside(manager : MaterialManager, content : Tropic) -> Tropic {
+	interactiveId = makeTropicTag(manager);
+	down = make(false);
+
+	TCopySize(content, \t -> TInteractive([TMouseDownGhost(down)], t), true)
+	|> (\f -> TConstruct([makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))], f))
+}
+
+disableScrollInsideEnabled(manager : MaterialManager, content : Tropic, enabled : Transform<bool>) -> Tropic {
+	interactiveId = makeTropicTag(manager);
+
+	TDecorator(
+		content,
+		[
+			Pair(
+				enabled,
+				\wh -> {
+					down = make(false);
+
+					TConstruct(
+						[
+							makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))
+						],
+						TInteractive([TMouseDownGhost(down)], TRectangle([Fill(black), FillOpacity(0.)], TSized(wh)))
+					)
+				}
+			)
+		],
+		true
+	);
+}
+
+disableMScrollInside(manager : MaterialManager, content : Material) -> Material {
+	interactiveId = makeTropicTag(manager);
+	down = make(false);
+
+	MCopySize(content, \t -> MInteractive([TMouseDownGhost(down)], t), true)
+	|> (\f -> MConstruct([makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))], f))
+}
+
+MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	swipeId = makeTropicTag(manager);
+	currentInteractive = extractStruct(m.state, MCurrentInteractive(make(None()))).current;
+	down = extractStruct(m.state, TPressed(make(false))).pressed;
+	onSwipeDown = extractStruct(m.state, MOnSwipeDown(\__, __ -> false)).onSwipe;
+	onSwipeUp = extractStruct(m.state, MOnSwipeUp(\__, __ -> false)).onSwipe;
+	onSwipeLeft = extractStruct(m.state, MOnSwipeLeft(\__, __ -> false)).onSwipe;
+	onSwipeRight = extractStruct(m.state, MOnSwipeRight(\__, __ -> false)).onSwipe;
+	enabled = extractStruct(m.state, MEnabled(const(true))).enabled;
+	swipeGap = extractStruct(m.state, MSwipeGap(3.)).gap;
+
+	lastMouseXY = ref Point(-1., -1.);
+	swipeAction = ref -1;
+
+	onSwipe = \p : Point -> {
+		if (^lastMouseXY != Point(-1., -1.)) {
+			if (^swipeAction >= 0) {
+				delta = Point(p.x - (^lastMouseXY.x), p.y - (^lastMouseXY).y);
+				lastMouseXY := p;
+
+				if (^swipeAction == 0)
+					onSwipeDown(p, delta)
+				else if (^swipeAction == 1)
+					onSwipeUp(p, delta)
+				else if (^swipeAction == 2)
+					onSwipeLeft(p, delta)
+				else
+					onSwipeRight(p, delta);
+			} else if (p.x - ^lastMouseXY.x >= swipeGap && onSwipeDown(p, zeroPoint)) {
+				swipeAction := 0;
+				true
+			} else if (p.x - ^lastMouseXY.x <= -swipeGap && onSwipeUp(p, zeroPoint)) {
+				swipeAction := 1;
+				true
+			} else if (p.x - ^lastMouseXY.x <= -swipeGap && onSwipeLeft(p, zeroPoint)) {
+				swipeAction := 2;
+				true
+			} else if (p.x - ^lastMouseXY.x >= swipeGap && onSwipeRight(p, zeroPoint)) {
+				swipeAction := 3;
+				true
+			} else {
+				false
+			}
+		} else {
+			lastMouseXY := p;
+			false
+		}
+	}
+
+	releaseFn = \ -> {
+		lastMouseXY := Point(-1., -1.);
+		swipeAction := -1;
+		nextDistinct(down, false);
+		removeInteractionItemId(manager, swipeId);
+	}
+
+	TCopySize(
+		m2t(m.content, parent),
+		\tr ->
+			TShow(
+				enabled,
+				TInteractive(
+					[
+						MouseMove(\mi0 -> {
+							if (getValue(down) && isCurrentInteractionItemId(manager, swipeId)) {
+								mi = mi0();
+
+								if (mi.inside) {
+									h = onSwipe(Point(mi.x, mi.y));
+
+									if (h)
+										nextDistinct(currentInteractive, Some(true));
+
+									h
+								} else
+									false
+							} else {
+								nextDistinct(currentInteractive, None());
+
+								false
+							}
+						}),
+						TMouseDownGhost(down)
+					],
+					TConstruct(
+						[
+							makeSubscribe2(down, \d ->
+								if (d) {
+									if (isNone(getValue(currentInteractive)))
+										nextDistinct(currentInteractive, Some(false))
+								} else {
+									nextDistinct(currentInteractive, None())
+								}
+							),
+							makeSubscribe(currentInteractive, \ci ->
+								eitherFn(
+									ci,
+									\bl -> {
+										if (!bl) {
+											nextDistinct(down, true);
+											addInteractionItemId(manager, swipeId);
+										} else {
+											nextDistinct(down, true);
+											blockOtherInteractionItemIds(manager, swipeId);
+										}
+									},
+									releaseFn
+								)
+							),
+							\ -> \ -> {
+								nextDistinct(currentInteractive, None());
+								releaseFn();
+							}
+						],
+						tr
+					)
+				)
+			),
+		true
+	)
+}
+
+MClickable2(m : Material, onClick : () -> void) -> Material {
+	insideB = make(false);
+	downB = make(false);
+	downInsideB = make(false);
+	MCursor(FingerCursor(),
+		MConstruct(
+			[
+				\-> connectSelectDistinctu(downB, downInsideB, \down -> {
+					if (down) {
+						getValue(insideB)
+					} else {
+						if (getValue(downInsideB) && getValue(insideB))
+							onClick();
+						false
+					}
+				})
+			],
+			MInteractive([TMouseInside(insideB, true), TMouseDown(downB)], m)
+		)
+	)
+}

@@ -1,0 +1,1290 @@
+import api_imagedecoratededitor;
+import ui/checkbox; // showVideoDecorator
+import formats/wiki/wikiparser;
+import wigi/wigi_value2form; // WigiFormula
+import api_filebrowser;
+import wigi/external_block;
+import wigi/wigi_smartart;
+import wigi/wigi2wiki;
+import wigi/pure_editor;
+import wigi/wigi_button_api;
+import wigi/paragraph_control;
+import wigi/legacy_blocks/legacy_block_api;
+
+export {
+	wigiBlock2form(
+		block : WigiBlock, 
+		engine : WigiEngine, 
+		namespace : WigiScope, 
+		showStructures: Maybe<ShowStructures>,
+		ignoreLock : Maybe<Behaviour<bool>>, 
+		preview: bool, 
+		registerToEngine : bool, 
+		wikistyles : [WikiStyle]
+	) -> Form;
+
+	handleBlockClickEvent(
+		state : WigiEditorState, 
+		replaceCurrentBlockFn : (WigiBlock) -> void, 
+		block : WigiBlock, 
+		isBlockAlreadySelected : bool
+	) -> bool;
+
+	wigiPicture2form(url : string, style : [WigiPictureStyle], preview : bool, wikistyles : [WikiStyle]) -> Form;
+	wigiAudio2form(url : string, style : [WigiAudioStyle]) -> Form;
+	wigiVideo2form(url : string, style : [WigiVideoStyle]) -> Form;
+
+	showPictureDecorator(url : string, style : [WigiPictureStyle], onOK : ([WigiPictureStyle]) -> void, onClose : () -> void) -> void;
+	showVideoDecorator(url : string, style : [WigiVideoStyle], onOK : ([WigiVideoStyle]) -> void) -> void;
+	showAudioDecorator(url : string, style : [WigiAudioStyle], onOK : ([WigiAudioStyle]) -> void) -> void;
+	showTextEditor(caption : string, text : string, style : [TextInputState], onOK : (string) -> void) -> void;
+	showTextEditor2(caption : string, text : string, width : double, height : double, style : [TextInputState], onOK : (string) -> void) -> void;
+	showHTMLBlockEditor(caption : string, html : WigiHTML, onOk : (WigiHTML) -> void) -> void;
+	VariableInitializationEditor(wiki: string, engine : WigiEngine, multiProbeStyle: bool, onOK : (string) -> void) -> void;
+
+	showFeedbackEditor(feedback : WigiFeedback, onOK : (WigiBlockType) -> void) -> void;
+	showReferenceDocumentEditor(document : WigiElement, styles : [WigiStyles], onOK : (WigiElement)-> void) -> void;
+	showCoachEditor(text: string, defaultStyles : [WigiStyles], onOK : (string) -> void) -> void;
+}
+
+wigiPicture2form(url : string, style : [WigiPictureStyle], preview : bool, wikistyles : [WikiStyle]) -> Form {
+	previewWidth = 660.0;
+	previewHeight = if (mobile) {
+		max(240.0, getStageHeight() * 0.3)
+	} else 325.0;
+
+	getPreviewHeight = extractStruct(wikistyles, WigiAdjustPreviewHeight(\w -> previewHeight)).adjustFn;
+
+	resizingToFit = ref false;
+	scale = ref 100.0;
+	width = ref 0.0;
+	height = ref 0.0;
+	decorations = ref [];
+	mouseZoom = ref false;
+	extraZoom = ref false;
+	toWidth = ref None();
+	toHeight = ref None();
+	pictureScaleBefore = ref false;
+	closeButtonM = ref None();
+	closeButtonAlign = ref -1;
+	buttonFormFn = ref (\__  -> Empty());
+	preScaleCrop = ref false;
+	// if this parameter is true we ignore preview width and height
+	pictureUnlimitedPreview = ref false;
+	backcolor = ref None();
+
+	iter(style, \_style -> {
+		switch(_style : WigiPictureStyle) {
+			PictureWidthHeight(w, h): {
+				width := w;
+				height := h;
+			}
+			PictureScale(s): {
+				scale := s;
+			}
+			PictureAllowZoom(): {
+				mouseZoom := preview; // allow mouseZoom only in preview mode case: 34331
+			}
+			PictureExtraZoom(): {
+				extraZoom := true;
+			}
+			PictureDecorations(ds): {
+				decorations := ds;
+			}
+			PictureAutomaticResizingToFit(): {
+				resizingToFit := true;
+				preScaleCrop := ^preScaleCrop || isUrlParameterTrue("case48015");
+			}
+			PictureScaleToWidth(w): {
+				toWidth := Some(w);
+			}
+			PictureScaleToHeight(h): {
+				toHeight := Some(h);
+			}
+			PictureScaleBeforeDecorations(): {
+				pictureScaleBefore := true;
+			}
+			PictureCustomZoomCloseButton(align, fn): {
+				closeButtonAlign := align;
+				buttonFormFn := fn
+			}
+			PictureApplyCropBeforeScale(): {
+				preScaleCrop := true;
+			}
+			PictureUnlimitedPreview() : {
+				pictureUnlimitedPreview := true;
+			}
+			VirtualScreenInfo(__, __) : {}
+			PictureZoomBackgroundColor(c) : {
+				backcolor := Some(c);
+			}
+		}
+	});
+	virtualScreenInfoM = tryExtractStruct(
+		style,
+		VirtualScreenInfo(const(WidthHeight(0., 0.)), const(zeroPositionScale))
+	);
+
+	urlWithSuffix = url + getDontCacheSuffix();
+
+	minSize = 64.0;
+	enableZoom = geqDoubles(^width, minSize) && geqDoubles(^height, minSize);
+	getMaybeZoomFn = \fn -> if(enableZoom) Some(fn) else None();
+	// i.e. small pictures (icons, symbols) do not scale
+
+	awhB = makeWH();
+	defaultAdaptiveCrop = ImageAdaptiveCrop(0.0, 0.0, 0.0, 0.0, awhB);
+	useAdaptiveCrop = containsStruct(^decorations, defaultAdaptiveCrop);
+	crop = extractStruct(^decorations, defaultAdaptiveCrop);
+
+	// When we use adaptive cropping we should use all available size, so we should break preview limits (660x325)
+	showAsPreview =  preview && !(useAdaptiveCrop || ^pictureUnlimitedPreview);
+
+	Constructor(
+		if (^resizingToFit) {
+			awhBase = make(WidthHeight(previewWidth, getPreviewHeight(previewWidth)));
+			sizeB = make(WidthHeight(^width, ^height));
+			zoomDesc = ZoomDescription(
+				None(),
+				WidthHeight(^width, ^height),
+				^toWidth,
+				^toHeight,
+				^mouseZoom,
+				false,
+				^closeButtonAlign,
+				^buttonFormFn
+			);
+			zoomfn = makeZoomAdder2(
+				zoomDesc,
+				\awhDelta, form -> {
+				scaleB = make(1.0);
+					Constructor(
+						Scale(
+							scaleB, scaleB,
+							Inspect([ISize(sizeB)], form)
+						),
+						\-> {
+							connectSelect3Distinctu(awhBase, awhDelta, sizeB, scaleB, \awh, dawh, size -> {
+								// width in dawh is not calculated right now. We assume that decorations do not add anything on the left and right.
+								wh = WidthHeight(awh.width, max(awh.height - dawh.height, 0.0));
+								awhs = if (showAsPreview) {
+									WidthHeight(
+										if (wh.width > 0.0) {
+											min(wh.width, previewWidth)
+										} else {
+											previewWidth
+										},
+										if (wh.height > 0.0) {
+											min(wh.height, getPreviewHeight(wh.width) - dawh.height)
+										} else {
+											max(getPreviewHeight(wh.width) - dawh.height, 0.0)
+										}
+									)
+								} else {
+									wh
+								}
+								nextDistinct(awhB, awh);
+
+								if (awhs.width == 0.0 && awhs.height == 0.0)
+									0.0
+								else
+									min3(
+										1.0,	// We don't want to upscale our picture
+										if (size.width > 0.0 && awhs.width > 0.0) awhs.width/size.width else 1.0,
+										if (size.height > 0.0 && awhs.height > 0.0) awhs.height/size.height else 1.0
+									);
+							});
+						}
+					)
+				},
+				virtualScreenInfoM,
+				^backcolor
+			);
+			form = makeImageDecorated2(urlWithSuffix, ^width, ^height, zoomfn |> getMaybeZoomFn, true, ^decorations, wikifyText, ^preScaleCrop, false);
+			//In case if there are caption or copyright, scale is calculated wrong
+			//(we use only image's size, so resulted scaled image+copyright or caption will be higher then available height)
+			//So, we use shrink to fit one more time to resize all to fit (scaling of added decorations will be insignificant)
+			Inspect([IAvailable2(awhBase)], form |> shrinkToFitAvailableWH)
+		} else {
+			// if there is no real scaling (scale = 100.0%), toWidth and toHeight are used, otherwise they are ignored.
+			zoomfn = makeZoomAdder3(
+				if (^scale == 100.0) {
+					ZoomDescription(None(), zeroWH, ^toWidth, ^toHeight, ^mouseZoom, ^extraZoom, ^closeButtonAlign, ^buttonFormFn);
+				} else {
+					ZoomDescription(Some(^scale / 100.0), zeroWH, None(), None(), ^mouseZoom, ^extraZoom, ^closeButtonAlign, ^buttonFormFn);
+				},
+				virtualScreenInfoM
+			);
+			makeImageDecorated2(urlWithSuffix , ^width, ^height, zoomfn |> getMaybeZoomFn, true, ^decorations, wikifyText, ^preScaleCrop, ^pictureScaleBefore)
+		},
+		makeSubscribe(awhB, \awh -> {
+			if (useAdaptiveCrop) nextDistinct(crop.availableWHB, awh);
+		})
+	)
+}
+
+wigiBlock2form(block : WigiBlock, engine : WigiEngine, namespace : WigiScope, showStructures: Maybe<ShowStructures>,
+				ignoreLock : Maybe<Behaviour<bool>>, preview: bool, registerToEngine : bool, wikistyles : [WikiStyle]) -> Form {
+
+	previewWidth = 660.0;
+	previewHeight = if (mobile) {
+		max(240.0, getStageHeight() * 0.3)
+	} else 325.0;
+
+	getPreviewHeight = extractStruct(wikistyles, WigiAdjustPreviewHeight(\w -> previewHeight)).adjustFn;
+
+	wigiName: WigiName = extractStruct(block.style, WigiName(""));
+	blockType = block.type;
+
+	callLegacyBlockAPI = \ -> {
+		eitherMap(
+			getLegacyBlockAPI(blockType.structname),
+			\api -> api.block2form(
+				block,
+				[
+					IsWigiPreviewMode(preview),
+					WikiStyles(wikistyles),
+					engine,
+					namespace,
+					ShowStructuresM(showStructures),
+					RegisterToEngine(registerToEngine)
+				]
+			),
+			Empty()
+		)
+	}
+
+	switch (blockType : WigiBlockType) {
+		WigiPicture(url, style): {
+			wigiPicture2form(url, style, preview, wikistyles)
+		}
+		WigiVideo(url, style): {
+			wigiVideo2form(url, style |> addVideoWikiStyle(wikistyles))
+		}
+		WigiAudio(url, style): {
+			wigiAudio2form(url, style)
+		}
+		WigiCoach(__): callLegacyBlockAPI();
+		WigiPageName(__, __): callLegacyBlockAPI();
+		WigiSlider(__, __, __, __, __, __): callLegacyBlockAPI();
+		WigiCheckBox(__, __): callLegacyBlockAPI();
+		WigiRadioButton(__, __): callLegacyBlockAPI();
+		WigiInputBox(__, __, __, __): callLegacyBlockAPI();
+		WigiPositionTag(id): {
+			Empty()
+			// Text("Position tag: " + i2s(id), [Fill(0xff0000)]);
+		}
+		WigiCustomSymbol(__, __): callLegacyBlockAPI();
+		WigiFormdesigner(__, __): callLegacyBlockAPI();
+		WigiSmartArt(__, __): callLegacyBlockAPI();
+		WigiFormula(formula, style): { // CHECK: Legacy?
+			name = if (wigiName.name != "") wigiName.name else "random" + d2s(random());
+
+			parsed = parseWigiExpr(formula);
+			formattingStyle = extractStruct(style, DefaultCellFormatting);
+
+			// Depending on whether it is a value or a formula, we have two versions
+			// First for values, i.e. constants:
+			valFn = \value : WigiValue -> {
+				Constructor(
+					wigiValue2FormCustom(value, extractWigiTextStyleFromBlockStyle(block.style), engine.defaultStyles, formattingStyle),
+					\ -> {
+						addValueToEngine(engine, namespace, name, const(value), registerToEngine);
+					}
+				);
+			}
+
+			// Then for formulas:
+			dyn = \ -> {
+				form = make(Empty());
+				Constructor(
+					Mutable(form),
+					\ -> {
+						val = addFormulaToEngine(engine, namespace, name, namespace, parsed, registerToEngine, true);
+						us = subscribe(val.first, \v -> {
+							next(form, wigiValue2FormCustom(v, extractWigiTextStyleFromBlockStyle(block.style), engine.defaultStyles, formattingStyle));
+						});
+						\-> {
+							applyall(val.second);
+							us();
+						}
+					}
+				)
+			}
+
+			formulaForm = if (isWigiValue(parsed)) valFn(cast(parsed : WigiExpr -> WigiValue)) else dyn();
+			eitherMap( // Maybe<state> is used as flag of non preview mode
+				showStructures,
+				\showStruct -> {
+					wh = makeWH();
+					form = Group([
+						Inspect([ISize(wh)], formulaForm),
+						Select(wh, \_wh -> If(_wh.width <= 2.0 && _wh.height <= 2.0, Text("CalculatedCell", [Fill(lightGray)])))
+					]);
+					Select(showStruct.formula, \f -> if (f) shiftBaseline(0.0, frameAround(Border(1.0, 1.0, 1.0, 1.0, form), 1.0, pink)) else formulaForm)
+				},
+				formulaForm
+			)
+		}
+		WigiPageBreak(append, autoScroll): {
+			aw = make(0.0);
+
+			Inspect([AvailableWidth(aw)],
+				Border(0.0, 6.0, 0.0, 6.0, Select(aw, \w -> {
+					color = if (autoScroll) blue else red;
+					if (append) {
+						Graphics([MoveTo(0.0, 0.0), LineTo(w, 0.0)], [Stroke(color), StrokeWidth(1.0)])
+					} else {
+						DottedLine(0.0, 0.0, w, 0.0, 4.0, 0.6, [Stroke(color), StrokeWidth(1.0)])
+					}
+				}))
+			)
+		}
+		WigiNaturalMath(__): callLegacyBlockAPI();
+		WigiDatepicker(__, __): callLegacyBlockAPI();
+		WigiComboBox(__, __, __, __): callLegacyBlockAPI();
+		WigiNativeWiki(__): callLegacyBlockAPI();
+		WigiDotplot(__, __): callLegacyBlockAPI();
+		WigiHistogram(__, __): callLegacyBlockAPI();
+		WigiHistogramClasses(__, __): callLegacyBlockAPI();
+		WigiBoxplot(__, __): callLegacyBlockAPI();
+		WigiScatterplot(__, __): callLegacyBlockAPI();
+		WigiStackedBar(__, __): callLegacyBlockAPI();
+		WigiCalculator(): callLegacyBlockAPI();
+		WigiHTML(url, width, height, st): {
+			hiddenContentForm =	\text -> {
+				Behind(
+					\w, h -> Rectangle(w, h, [Stroke(lightGray), StrokeWidth(1.0), Fill(white)]),
+					Size2(const(WidthHeight(width + 4.0, height + 24.0)), Text(text, []))
+				)
+			}
+
+			if (contains(st, HideContentWhenEditing()) && !preview) {
+				hiddenContentForm(url);
+			} else {
+				wh = make(WidthHeight(width, height));
+
+				updateCachedContent = extractStruct(st, UpdateCachedContent(false));
+				reloadBlock = extractStruct(st, ReloadBlock(true));
+				realHtmlStyles = fold(st, [updateCachedContent, reloadBlock], \acc, s -> {
+					switch(s) {
+						PageEvalJS(__): arrayPush(acc, s);
+						SandBoxJS(__): arrayPush(acc, s);
+						MouseDisabled(__): arrayPush(acc, s);
+						OnError(__): arrayPush(acc, s);
+						OnPageLoaded(__): arrayPush(acc, s);
+						RealHtmlShrink2Fit(): arrayPush(acc, s);
+						default: acc;
+					}
+				});
+
+				htmlForm =	makeRealHTML(
+					wigiName.name + if (preview) previewSuffix else "",
+					RealHTML2(url, wh, realHtmlStyles)
+				);
+
+				Border(2.0, 2.0, 2.0, 2.0,
+					Behind(
+						\w, h -> Rectangle(w, h, [Fill(white)]),
+						htmlForm
+					)
+				)
+			}
+		}
+		WigiReferenceDocument(__, __): callLegacyBlockAPI();
+		WigiSetClipboardButton(__, __): callLegacyBlockAPI();
+		WigiChoiceBlock(__, __): callLegacyBlockAPI();
+		WigiExternalBlock(exType, content): {
+			eitherFn(
+				getExternalBlockAPI(exType),
+				\api -> api.block2form(setTree(content, "preview", preview |> b2s), engine, block.style),
+				\ -> {
+					println("wigiBlock2form: Unsupported external block type: " + exType);
+					Empty()
+				}
+			)
+		}
+		WigiFeedback(__, __): callLegacyBlockAPI();
+		WigiFeedbackBlock(__, __, __, __): callLegacyBlockAPI();
+		WigiFillBlankBlock(__, __, __, __, __, __): callLegacyBlockAPI();
+	} |> (\f -> addStyleToBlockForm(block.style, f, ignoreLock));
+}
+
+handleBlockClickEvent(
+	state : WigiEditorState, 
+	replaceCurrentBlockFn : (WigiBlock) -> void, 
+	block : WigiBlock, 
+	isBlockAlreadySelected : bool
+) -> bool {
+	if (isBlockAlreadySelected || isSameStructType(block.type, dummyWigiExternalBlock)) { // second click
+		type = block.type;
+		switch (type : WigiBlockType) {
+			WigiPicture(url, style):{
+				//we force current editor to lose focus, because image editor has own copy-paste event
+				//see case48340 & case48375
+				oldFocusValue = getValue(state.hasKeyboardFocus);
+				nextDistinct(state.hasKeyboardFocus, false);
+				refocus = \ -> nextDistinct(state.hasKeyboardFocus, oldFocusValue);
+
+				showPictureEditor(
+					url,
+					\s -> {
+						showPictureDecorator(s, style, \wigiPictureStyle -> {
+							replaceCurrentBlockFn(WigiBlock(WigiPicture(s, wigiPictureStyle), block.style));
+						}, refocus);
+					},
+					refocus
+				);
+				true
+			}
+			WigiVideo(url, style):{
+				showVideoDecorator(url, style, \wigiVideoStyle -> {
+					replaceCurrentBlockFn(WigiBlock(WigiVideo(url, wigiVideoStyle), block.style))
+				});
+				true
+			}
+			WigiAudio(url, style):{
+				showAudioDecorator(url, style, \wigiAudioStyle -> {
+					replaceCurrentBlockFn(WigiBlock(WigiAudio(url, wigiAudioStyle), block.style))
+				});
+				true;
+			}
+			WigiFormdesigner(drawing, style): {
+				//we force current editor to lose focus, because active art editor has own copy-paste event
+				//see case48340
+				oldFocusValue = getValue(state.hasKeyboardFocus);
+				nextDistinct(state.hasKeyboardFocus, false);
+				refocus = \ -> nextDistinct(state.hasKeyboardFocus, oldFocusValue);
+
+				CallFormdesignerEditor(
+					[KeyValue("drawing", drawing)],
+					\filename, content -> {
+						replaceCurrentBlockFn(WigiBlock(WigiFormdesigner(content, style), block.style));
+						refocus();
+					},
+					refocus
+				);
+				true;
+			}
+			WigiSmartArt(content, style): {
+				CallWigiSmartArtEditor(
+					WigiSmartArt(content, style),
+					state.engine,
+					\sa -> {
+						replaceCurrentBlockFn(WigiBlock(sa, block.style))
+					},
+					nop
+				);
+				true;
+			}
+			WigiSlider(value, minValue, maxValue, step, width, style): {
+				replaceCurrentBlockFn(block);
+				true;
+			}
+			WigiCoach(text): {
+				showCoachEditor(text, state.engine.defaultStyles, \t -> {
+					replaceCurrentBlockFn(WigiBlock(WigiCoach(t), block.style))
+				});
+				true;
+			}
+			WigiPageName(name, disableCondition): {
+				askStringInPopup("Edit page name", 300.0, 50.0, name, \s -> true, \t -> {
+					replaceCurrentBlockFn(WigiBlock(WigiPageName(t, disableCondition), block.style))
+				});
+				true;
+			}
+			WigiNaturalMath(formula): {
+				showNaturalMathEditor("Edit natural math", formula, \text -> {
+					replaceCurrentBlockFn(WigiBlock(WigiNaturalMath(text), block.style));
+				});
+				true;
+			}
+			WigiComboBox(selected, values, reorderElements, width): true;
+			WigiDatepicker(__, __): true;
+			WigiNativeWiki(wiki): {
+				onOK = \result -> replaceCurrentBlockFn(WigiBlock(WigiNativeWiki(result), block.style));
+				multiProbeStyle = contains(^(state.toolbarStyle), MultiProbeStyle());
+				if (strLeft(wiki, 5) == "//VIE") VariableInitializationEditor(wiki, state.engine, multiProbeStyle, onOK)
+				else CallWikiEditor(wiki, WidthHeight(500.0, 200.0), None(), onOK, nop);
+				true;
+			}
+			WigiReferenceDocument(title, refDoc): {
+				showReferenceDocumentEditor(refDoc, state.engine.defaultStyles,
+						\d -> replaceCurrentBlockFn(WigiBlock(WigiReferenceDocument(title, d), block.style))
+				);
+				true;
+			}
+			WigiExternalBlock(exType, content): {
+				eitherFn(
+					getExternalBlockAPI(exType),
+					\api : ExternalBlockAPI -> {
+						handler = extractStruct(api.style, ElementSpecificClickHandler(idfn, false));
+
+						if (containsStruct(api.style, SelectExternalBlockOnClick())) {
+							document = getValue(state.document);
+							wigiSendEvent(state, WigiRightWord(true)) |> ignore;
+							selection = getValue(state.selection);
+							selectedElement = extractWigiRange(document, selection.start, selection.end);
+
+							if (selectedElement != block) {
+								wigiSendEvent(state, WigiLeftWord(true)) |> ignore;
+								wigiSendEvent(state, WigiLeftWord(true)) |> ignore;
+							}
+
+							true
+						} else if (!^wigiExtBlockIsClickedAndHandling && (isBlockAlreadySelected || handler.positionAndHandleAtOnce)) {
+							switch (getCurrentWigiParagraph(state) : Maybe<WigiParagraph>) {
+								Some(p): {
+									newStyle = handler.paragraphStyleUpdater(p.style);
+									// we try to modify paragraph styles. If they stay the same, call default editProperties.
+									if (stylesEqual(p.style, newStyle)) {
+										onOK = \result -> {
+											replaceCurrentBlockFn(WigiBlock(WigiExternalBlock(exType, result), block.style));
+											wigiExtBlockIsClickedAndHandling := false;
+										}
+										wigiExtBlockIsClickedAndHandling := true;
+										api.editProperties(content, onOK, state.engine, getValue(state.document));
+									} else {
+										wigiSendEvent(state, WigiSetParagraphStyle(p.style, newStyle)) |> ignore;
+									}
+								}
+								None(): {}
+							}
+
+							true
+						} else {
+							false
+						}
+					},
+					\ -> {
+						if (isBlockAlreadySelected) {
+							println("Unsupported external block type: " + exType);
+							true
+						} else {
+							false
+						}
+					}
+				);
+			}
+			WigiFeedback(condition, description): {
+				showFeedbackEditor(type, \result -> {
+					replaceCurrentBlockFn(WigiBlock(result, block.style))
+				});
+				true
+			}
+			default: false;
+		}
+	} else {
+		false
+	}
+}
+
+showPictureEditor(url : string, editDecorations : (string) -> void, onCancel : () -> void) -> void  {
+	closeFn = ref nop;
+	closeFn := textBox2("What do you want to do?", 350.0, [
+		MBButton("Change image", "", \ -> {
+			^closeFn();
+			CallFileBrowserWithCancel(
+				MediaFileDialog(),
+				[".jpg", ".jpeg", ".png", ".swf"],
+				editDecorations,
+				onCancel
+			)
+		}),
+		MBButton("Format image", "", \ -> {
+			^closeFn();
+			editDecorations(url);
+		}),
+		Cancel(\ -> {
+			^closeFn();
+			onCancel();
+		})
+	]);
+}
+
+showPictureDecorator(url : string, style : [WigiPictureStyle], onOK : ([WigiPictureStyle]) -> void, onClose : () -> void) -> void {
+	focusId = currentKeyboardFocusId();
+
+	widthHeightB = makeWH();
+
+	mode = make(FixedSizeControlType(100.0));
+	scaleBeforeDecorations = make(false);
+	zoom = make(false);
+	extraZoom = make(false);
+	decorations = ref [];
+
+	iter(style, \_style -> {
+		switch(_style : WigiPictureStyle) {
+			PictureAutomaticResizingToFit(): {
+				next(mode, AutomaticResizingToFitControlType())
+			}
+			PictureWidthHeight(w, h): {
+				next(widthHeightB, WidthHeight(w, h));
+			}
+			PictureScaleToHeight(h): {
+				next(mode, FixedHeightControlType(h))
+			}
+			PictureScale(scale): {
+				next(mode, FixedSizeControlType(scale))
+			}
+			PictureScaleBeforeDecorations(): {
+				next(scaleBeforeDecorations, true)
+			}
+			PictureAllowZoom(): {
+				next(zoom, true);
+			}
+			PictureExtraZoom(): {
+				next(extraZoom, true);
+			}
+			PictureDecorations(ds): {
+				decorations := ds;
+			}
+			default: {}
+		}
+	});
+
+	pictureLoaded = make(false);
+	sizeTextB = make("%");
+	heightTextB = make("x");
+
+	thePicture =
+		Inspect([ISize(widthHeightB)],
+			Picture(url + getDontCacheSuffix(), [OnLoaded(\ -> next(pictureLoaded, true))])
+		);
+
+	onNewDecorations = \newdecorations -> {
+		wigiPictureStyle = ref [PictureWidthHeight(getValue(widthHeightB).width, getValue(widthHeightB).height), PictureDecorations(newdecorations)];
+		if (getValue(zoom)) refArrayPush(wigiPictureStyle, PictureAllowZoom());
+		if (getValue(extraZoom)) refArrayPush(wigiPictureStyle, PictureExtraZoom());
+		switch (getValue(mode) : ImageSizeControlType) {
+			FixedSizeControlType(size): {
+				if (size > 0.0 && size != 100.0) {
+					refArrayPush(wigiPictureStyle, PictureScale(size));
+					if (getValue(scaleBeforeDecorations)) refArrayPush(wigiPictureStyle, PictureScaleBeforeDecorations());
+				}
+			}
+			FixedHeightControlType(height): {
+				if (height > 0.0) {
+					refArrayPush(wigiPictureStyle, PictureScaleToHeight(height));
+					if (getValue(scaleBeforeDecorations)) refArrayPush(wigiPictureStyle, PictureScaleBeforeDecorations());
+				}
+			}
+			AutomaticResizingToFitControlType(): refArrayPush(wigiPictureStyle, PictureAutomaticResizingToFit());
+		}
+		onOK(^wigiPictureStyle);
+	}
+
+	CallImageDecoratedEditor(
+		FormOrTropic(Some(thePicture), None()),
+		Some(ImageSizeControl(mode, scaleBeforeDecorations, zoom, extraZoom)),
+		^decorations,
+		onNewDecorations,
+		\ -> {
+			updateKeyboardFocus(focusId);
+			onClose();
+		}
+	)
+}
+
+getFilenameFromUrl(url : string) -> string {
+	lastElement(strSplit(url, "/"), "")
+}
+
+extractPlayerOption(style : [WigiVideoStyle]) -> [PlayerOption] {
+	fold(style, [], \acc, s ->
+		switch(s) {
+			LoopPlayback(): arrayPush(acc, s);
+			PlayerSize(__, __): arrayPush(acc, s);
+			NoAutoPlay(): arrayPush(acc, s);
+			NoControls(): arrayPush(acc, s);
+			ClosedCaptions(__): arrayPush(acc, s);
+			PlayerAvailableSize(__): arrayPush(acc, s);
+			default: acc;
+		}
+	);
+}
+
+wigiVideo2form(url : string, style : [WigiVideoStyle]) -> Form {
+	scale = extractStruct(style, WigiVideoScale(100.0)).scale / 100.0;
+	controls = [PauseResume(), VolumeControl(), FullScreenPlayer(), Scrubber()];
+	form = makeVideoPlayer3(url + getDontCacheSuffix(), extractPlayerOption(style), controls, ignore, scale); // Check for cpp eliminated as video should work in Qt5 runner
+	Border(2.0, 2.0, 2.0, 2.0, form)
+}
+
+wigiAudio2form(url : string, style : [WigiAudioStyle]) -> Form {
+	form = {
+		if (cpp && !mobile) Text("Audio object isn't supported in c++ version", defaultTextStyle) //#39644 - let's try on mobiles. Sometime it works
+		else makeSoundPlayer(addServerPathIfRelative(url + getDontCacheSuffix()), arrayPush(style, ShowProgressWhenStopped())) //#35596
+	}
+	Border(2.0, 2.0, 2.0, 2.0, form)
+}
+
+showVideoDecorator(url : string, style : [WigiVideoStyle], onOK : ([WigiVideoStyle]) -> void) -> void {
+	closeEditDialog = ref nop;
+
+	sWidth = ref 0.0;
+	sHeight = ref 0.0;
+	loopPlayback = make(false);
+	noAutoPlay = make(false);
+	noControls = make(false);
+	closedCaptions = make("");
+	iter(style, \_style -> {
+		switch(_style) {
+			PlayerSize(w, h): {
+				sWidth := w;
+				sHeight := h;
+			}
+			LoopPlayback(): {
+				next(loopPlayback, true)
+			}
+			NoAutoPlay(): {
+				next(noAutoPlay, true)
+			}
+			NoControls(): {
+				next(noControls, true)
+			}
+			ClosedCaptions(filename): {
+				next(closedCaptions, filename)
+			}
+			// TODO: Add support of this option in editor
+			PlayerAvailableSize(awh): {}
+			// In Form wigi this option implemented via PlayerSize
+			WigiVideoScale(scale): {}
+			WigiVideoFormat(__) : {}
+		}
+	});
+
+	videoWidth = make(0.0);
+	videoHeight = make(0.0);
+
+	size = make("100");
+
+	uns = select2u(videoWidth, videoHeight, \_videoWidth, _videoHeight -> {
+		if ((_videoWidth != 0.0) && (_videoHeight != 0.0) && (^sWidth != 0.0) && (^sHeight != 0.0)) {
+			scaleX = ^sWidth / _videoWidth;
+			scaleY = ^sHeight / _videoHeight;
+			next(size, d2s(min(scaleX, scaleY) * 100.0))
+		}
+	});
+
+	getVideoStyles = \-> {
+		videoStyle = ref [];
+		if (getValue(loopPlayback)) refArrayPush(videoStyle, LoopPlayback());
+		if (getValue(noAutoPlay)) refArrayPush(videoStyle, NoAutoPlay());
+		if (getValue(noControls)) refArrayPush(videoStyle, NoControls());
+		dsize = s2d(getValue(size));
+		if ((0.0 < dsize) && (dsize < 100.0)) refArrayPush(videoStyle, PlayerSize(getValue(videoWidth) * dsize / 100.0, getValue(videoHeight) * dsize / 100.0));
+		if (getValue(closedCaptions) != "") refArrayPush(videoStyle, ClosedCaptions(getValue(closedCaptions)));
+		^videoStyle
+	}
+
+	okButton = callWigiButton("OK", const(true), "", \ -> {
+		onOK(getVideoStyles());
+		^closeEditDialog();
+		uns.second();
+	});
+
+	closeMe = \ -> {
+		^closeEditDialog();
+		closeEditDialog := nop;
+		uns.second();
+	}
+
+	cancelButton = callWigiButton("Cancel", const(true), "", closeMe);
+
+	theVideo = Inspect([Width(videoWidth), Height(videoHeight)], wigiVideo2form(url, [NoAutoPlay()]));
+	editor = WideLines([
+		theVideo,
+		Fixed(0.0, 6.0),
+		Cols([Text("Video size (%) ", NormalText), OneLineNumericEditor(size, 50.0, 25.0, NormalText) |> editorBackground]),
+		SimpleCheckBox(Text("Loop playback", NormalText), loopPlayback),
+		SimpleCheckBox(Text("Hide controls", NormalText), noControls),
+		SimpleCheckBox(Text("No auto play", NormalText), noAutoPlay),
+		Cols([
+			Text("Subtitles URL: ", NormalText),
+			OneLineEditor(closedCaptions, 250.0, 20.0, NormalText) |> editorBackground,
+			callWigiButtonWithWidth(20.0, "...", const(true), "Choose subtitles file", \ -> {
+				CallFileBrowser(MediaFileDialog(), [".xml"], \filename -> next(closedCaptions, filename))
+			})
+		]),
+		Fixed(0.0, 6.0),
+		MinWidth(const(300.0),
+			Group([
+				Align(1.0 / 6.0, 0.0, okButton),
+				Align(5.0 / 6.0, 0.0, cancelButton)
+			])
+		),
+		Fixed(0.0, 6.0)
+	]);
+
+	result = Center(makeNiceWindow2("Choose video parameters", editor, [NiceOnClose(closeMe)]));
+
+	closeEditDialog := showModalFit(result);
+}
+
+showAudioDecorator(url : string, style : [WigiAudioStyle], onOK : ([WigiAudioStyle]) -> void) -> void {
+	closeEditDialog = ref nop;
+
+	loopPlayback = make(false);
+	noAutoPlay = make(false);
+	closedCaptions = make("");
+	iter(style, \_style -> {
+		switch(_style) {
+			LoopPlayback(): {
+				next(loopPlayback, true)
+			}
+			NoAutoPlay(): {
+				next(noAutoPlay, true)
+			}
+			ClosedCaptions(filename): {
+				next(closedCaptions, filename)
+			}
+		}
+	});
+
+	getAudioStyles = \-> {
+		audioStyle = ref [];
+		if (getValue(loopPlayback)) refArrayPush(audioStyle, LoopPlayback());
+		if (getValue(noAutoPlay)) refArrayPush(audioStyle, NoAutoPlay());
+		if (getValue(closedCaptions) != "") refArrayPush(audioStyle, ClosedCaptions(getValue(closedCaptions)));
+		^audioStyle
+	}
+
+	okButton = callWigiButton("OK", const(true), "", \ -> {
+		onOK(getAudioStyles());
+		^closeEditDialog();
+	});
+
+	closeMe = \ -> {
+		^closeEditDialog();
+		closeEditDialog := nop;
+	}
+
+	cancelButton = callWigiButton("Cancel", const(true), "", closeMe);
+
+	theAudio = wigiAudio2form(url, [NoAutoPlay()]);
+	editor = WideLines([
+		theAudio,
+		Fixed(0.0, 6.0),
+		SimpleCheckBox(Text("Loop playback", NormalText), loopPlayback),
+		SimpleCheckBox(Text("No auto play", NormalText), noAutoPlay),
+		Cols([
+			Text("Subtitles URL: ", NormalText),
+			OneLineEditor(closedCaptions, 250.0, 20.0, NormalText) |> editorBackground,
+			callWigiButtonWithWidth(20.0, "...", const(true), "Choose subtitles file", \ -> {
+				CallFileBrowser(MediaFileDialog(), [".xml"], \filename -> next(closedCaptions, filename))
+			})
+		]),
+		Fixed(0.0, 6.0),
+		MinWidth(const(300.0),
+			Group([
+				Align(1.0 / 6.0, 0.0, okButton),
+				Align(5.0 / 6.0, 0.0, cancelButton)
+			])
+		),
+		Fixed(0.0, 6.0)
+	]);
+
+	result = Center(makeNiceWindow2("Choose audio parameters", editor, [NiceOnClose(closeMe)]));
+
+	closeEditDialog := showModalFit(result);
+}
+
+editorBackground(f: Form) -> Form {
+	Rounded(2.0, [Stroke(0), Fill(0xE4E4E4)], f)
+}
+
+showTextEditor2(caption : string, text : string, width : double, height : double, style : [TextInputState], onOK : (string) -> void) -> void {
+	focusId = currentKeyboardFocusId();
+	tis = concat3([Focus(true), Multiline(true)], style, [Content(text, []), Selection(strlen(text), strlen(text)), TabIndex(0)]);
+	editor = \t -> TextEditorWithScrollbar(t, width, height, [], make(tis), ignore, nop, nop, false, nop);
+	askStringInPopup2(caption, text, neq(""),
+		\f -> {
+			updateKeyboardFocus(focusId);
+			onOK(f);
+		},
+		\ -> {
+			updateKeyboardFocus(focusId);
+		},
+		editor
+	)
+}
+
+showTextEditor(caption : string, text : string, style : [TextInputState], onOK : (string) -> void) -> void {
+	showTextEditor2(caption, text, 400.0, 100.0, style, onOK)
+}
+
+addStyleToBlockForm(style : [WigiBlockStyle], blockForm : Form, ignoreLock : Maybe<Behaviour<bool>>) -> Form {
+	fold(style, blockForm, \f, s -> switch(s){
+		BackgroundFill(c): Behind(\w, h -> Size2(zeroSize, Rectangle(w, h, [Fill(c)])), f);
+		WigiLock(lock): if (lock == WigiReadOnly() || lock == WigiAddOnly()) lockForm(f, lock, either(ignoreLock, const(false))) else f;
+		default: f;
+	})
+};
+
+showHTMLBlockEditor(caption: string, html : WigiHTML, onOk : (WigiHTML) -> void) -> void {
+	closeWindow = ref nop;
+	closeMe = \ -> (^closeWindow)();
+
+	checkHTML = \h ->{
+		errors = ref [];
+		if (h.url == "") refArrayPush(errors, "URL string can not be empty");
+		if (h.width <= 0.0) refArrayPush(errors, "Width of HTML block can not be zero or negative");
+		if (h.height <= 0.0) refArrayPush(errors, "Height of HTML block can not be zero or negative");
+		^errors
+	}
+
+	form = {
+		width = make(html.width);
+		height = make(html.height);
+		url = make(html.url);
+		hideContent = make(contains(html.style, HideContentWhenEditing()));
+
+		okButton = callWigiButtonWithWidth(50.0, "OK", const(true), "Ctrl+Enter", \ -> {
+				style = if (getValue(hideContent)) [HideContentWhenEditing()] else [];
+				newHTML = WigiHTML(getValue(url), getValue(width), getValue(height), style);
+				errors = checkHTML(newHTML);
+				if (length(errors) == 0) {
+					onOk(newHTML);
+					closeMe();
+				} else {
+					warningBox(strGlue(errors, "\n"));
+				}
+			}
+		);
+
+		cancelButton = callWigiButtonWithWidth(50.0, "Cancel", const(true), "esc", closeMe);
+
+		properties = LinesWithInterval(4.0, [
+			Lines([Text("URL:", [FontSize(14.0)]), Fixed(0.0, 4.0), Background([Fill(white)], TextEditor(url, 250.0, 100.0, [FontSize(12.0)], []))]),
+			Cols([Text("Width: ", [FontSize(13.0)]), Fixed(5.0, 0.0), Background([Fill(white)], OneLineNumFormat(width, 50.0, 20.0, [FontSize(13.0)], [], d2s))]),
+			Cols([Text("Height: ", [FontSize(13.0)]), Fixed(2.0, 0.0), Background([Fill(white)], OneLineNumFormat(height, 50.0, 20.0, [FontSize(13.0)], [], d2s))]),
+			Cols([Text("Hide content when editing:", [FontSize(13.0)]), Fixed(2.0, 0.0), SimpleCheckBox(Text("", []), hideContent)]),
+		]);
+
+		content = Lines([
+			Fixed(0.0, 4.0),
+			properties,
+			Fixed(0.0, 4.0),
+			Align(0.5, 0.0, Cols([okButton, Fixed(5.0, 0.0), cancelButton])),
+			Fixed(0.0, 4.0)
+		]);
+
+		window = makeOrangeWindow(caption, content);
+		Center(window)
+	};
+
+	closeWindow := showModal(form);
+}
+
+VariableInitializationState : (
+	variableB : DynamicBehaviour<string>,
+	valueB : DynamicBehaviour<string>,
+	descriptionB : DynamicBehaviour<string>
+);
+
+VariableInitializationEditor(wiki : string, engine : WigiEngine, multiProbeStyle: bool, onOK : (string) -> void) -> void {
+	closeWindow = ref nop;
+
+	makeState = \var, val, desc -> VariableInitializationState(make(var), make(val), make(desc));
+
+	variablesB = if (wiki != "") {
+		// split to lines
+		lines = strSplit(wiki, "\n");
+		description = ref "";
+		make(fold(lines, [], \acc, line -> {
+			if (startsWith(line, "//VIE")) acc
+			else if (startsWith(line, "// ")) {
+				description := strRight(line, 3);
+				acc
+			}
+			else if (startsWith(line, "//{")) {
+				// take string between //{$ and ;}
+				formula = substring(line, 4, strlen(line)-6);
+				varval = strSplit(formula, "=");
+				res = arrayPush(acc, makeState(varval[0], varval[1], ^description));
+				description := "";
+				res
+			}
+			else if (startsWith(line, "{")) {
+				// take string between {$ and ;}
+				formula = substring(line, 2, strlen(line)-4);
+				varval = strSplit(formula, "=");
+				res = arrayPush(acc, makeState(varval[0], varval[1], ^description));
+				description := "";
+				res
+			}
+			else if (startsWith(line, "\\if2")) {
+				// take string between {$ and ;}
+				formula = substring(line, 29, strlen(line)-31);
+				varval = strSplit(formula, "=");
+				res = arrayPush(acc, makeState(varval[0], varval[1], ^description));
+				description := "";
+				res
+			}
+			else acc
+		}));
+	} else {
+		// get list of variables from engine
+		env = ^(engine.env);
+		variables = map(getTreeKeys(env.cellnames), \cell -> {
+			toLowerCase(strGlue(reverseA(namespaceOfCellName(cell).names), "_"))
+		});
+		make(map(variables, \variable -> makeState(variable, "", "")))
+	}
+
+	getResult = \-> {
+		variables = map(getValue(variablesB), \variable -> {
+			var = getValue(variable.variableB);
+			desc = getValue(variable.descriptionB);
+			comment = if (desc != "") "// " + desc+ "\n" else "";
+			initialization = if (var != "") {
+				value = getValue(variable.valueB);
+				prefix = if (multiProbeStyle) "\\if2{$new_multiprobe_serie}" else "";
+				expression = prefix + "{$" + var + "=" + value + ";}\n";
+				if (value != "") expression else "//" + expression
+			} else "";
+			comment + initialization
+		});
+		"//VIE\n" + strGlue(variables, "")
+	}
+
+	okButton = callWigiButtonWithWidth(50.0, "OK", const(true), "Ctrl+Enter", \ -> {
+		onOK(getResult());
+		^closeWindow()
+	});
+	cancelButton = callWigiButtonWithWidth(50.0, "Cancel", const(true), "esc", \ -> {
+		^closeWindow()
+	});
+
+	space = Fixed(5.0, 5.0);
+
+	addRow = graySkinButton("Add variable", const(true), "", \-> {
+		next(variablesB, arrayPush(getValue(variablesB), makeState("", "", "")))
+	});
+
+	panel = Lines([
+		Cols([
+			Fixed(15.0, 0.0),
+			Text("Variable", NormalText),
+			Fixed(55.0, 0.0),
+			Text("Initial value", NormalText),
+			Fixed(130.0, 0.0),
+			Text("Description", NormalText),
+		]),
+		(Select(variablesB, \variables -> {
+			Lines(mapi(variables, \idx, variable -> {
+				Cols([
+					Border(5.0, 5.0, 5.0, 5.0, Background([Fill(0xFFFFFF)], OneLineEditor(variable.variableB, 100.0, 20.0, []))),
+					Border(5.0, 5.0, 5.0, 5.0, Background([Fill(0xFFFFFF)], OneLineEditor(variable.valueB, 200.0, 20.0, []))),
+					Border(5.0, 5.0, 5.0, 5.0, Background([Fill(0xFFFFFF)], OneLineEditor(variable.descriptionB, 250.0, 20.0, []))),
+					Border(5.0, 5.0, 5.0, 5.0, graySkinButtonWithWidth(30.0, "[X]", const(true), "", \-> {
+						next(variablesB, removeIndex(getValue(variablesB), idx))
+					}))
+				]) |> \form ->  Border(2.5, 2.5, 2.5, 2.5, frameAround(form, 1.0, black))
+			}))
+		}) |> \form -> VerticalScrollable(make(0.0), make(0.0), make(540.0), make(250.0), form)) |> \form -> Border(5.0, 5.0, 5.0, 5.0, frameAround(form, 1.0, black)),
+		space,
+		addRow,
+	]);
+
+	content = Lines([
+		panel,
+		space,
+		Align(0.5, 0.0, Cols([okButton, space, cancelButton]))
+	]);
+
+	window = makeOrangeWindow("Variable Initialization Editor", content);
+	closeWindow := showModalFit(window);
+}
+
+addVideoWikiStyle(wikistyles : [WikiStyle]) -> ([WigiVideoStyle]) -> [WigiVideoStyle] {
+	\style : [WigiVideoStyle] -> if (contains(wikistyles, WikiNoAutoplay())) arrayPush(style, NoAutoPlay()) else style;
+}
+
+showFeedbackEditor(feedback : WigiFeedback, onOK : (WigiBlockType) -> void) -> void {
+	closeWindow = ref nop;
+	closeMe = \ -> (^closeWindow)();
+
+	conditionB = make(feedback.condition);
+	verticalB = make(feedback.description.vertical);
+
+	conditionEditor = Align(0.0, 0.5,
+		Lines([
+			Text("Condition: ", [FontSize(13.0)]),
+			Background([Fill(0xFFFFFF)], SimpleEditor(conditionB, 300.0, 40.0, [FontSize(13.0)]))
+		])
+	);
+
+	verticalEditor = SimpleCheckBox(Text("Vertical", [FontSize(13.0)]), verticalB);
+
+	header = Lines([
+		conditionEditor,
+		Fixed(0.0, 4.0),
+		verticalEditor,
+	]);
+
+	getFeedbackType = ref \-> WigiBasicFeedback("", "", "");
+	body = switch (feedback.description.type) {
+		WigiBasicFeedback(correct, incorrect, general): {
+			correctTextB = make(correct);
+			incorrectTextB = make(incorrect);
+			generalTextB = make(general);
+			getFeedbackType := \-> WigiBasicFeedback(getValue(correctTextB), getValue(incorrectTextB), getValue(generalTextB));
+
+			correctTextEditor = Align(0.0, 0.5,
+				Lines([
+					Text("Correct: ", [FontSize(13.0)]),
+					Background([Fill(0xFFFFFF)], SimpleEditor(correctTextB, 300.0, 80.0, [FontSize(13.0)]))
+				])
+			);
+			incorrectTextEditor = Align(0.0, 0.5,
+				Lines([
+					Text("Incorrect: ", [FontSize(13.0)]),
+					Background([Fill(0xFFFFFF)], SimpleEditor(incorrectTextB, 300.0, 80.0, [FontSize(13.0)]))
+				])
+			);
+			generalTextEditor = Align(0.0, 0.5,
+				Lines([
+					Text("General: ", [FontSize(13.0)]),
+					Background([Fill(0xFFFFFF)], SimpleEditor(generalTextB, 300.0, 80.0, [FontSize(13.0)]))
+				])
+			);
+			LinesWithInterval(4.0, [correctTextEditor, incorrectTextEditor, generalTextEditor])
+		}
+	}
+
+	okButton = callWigiButtonWithWidth(50.0, "OK", const(true), "Ctrl+Enter", \ -> {
+		newFeedback = WigiFeedback(getValue(conditionB), WigiFeedbackDescription(getValue(verticalB), ^getFeedbackType()));
+		onOK(newFeedback);
+		closeMe();
+	});
+
+	cancelButton = callWigiButtonWithWidth(50.0, "Cancel", const(true), "esc", closeMe);
+
+	bottom = Align(0.5, 0.0, Cols([okButton, Fixed(5.0, 0.0), cancelButton]));
+
+	content = Lines([
+		Fixed(0.0, 4.0),
+		header,
+		Fixed(0.0, 4.0),
+		body,
+		Fixed(0.0, 4.0),
+		bottom,
+		Fixed(0.0, 4.0)
+	]);
+
+	window = makeOrangeWindow("Edit feedback", content);
+	form = Center(window);
+
+	closeWindow := showModal(form);
+}
+
+showPureWigiEditor(
+	caption: string, width: double, height: double, document: WigiElement,
+	wigiToolbarStyle: [WigiToolbarStyle], wigiDocumentStyle: [WigiStyles],
+	onOK: (WigiElement, () -> void) -> void
+) -> void {
+	closeWindow = ref nop;
+	windowCloser = \ -> ^closeWindow();
+
+	wigiEditor = makePureWigiEditor(document, wigiToolbarStyle, wigiDocumentStyle, false);
+
+	buttonFn = if (isLiteEditStyle()) liteSkinRedButtonWithWidth else callWigiButtonWithWidth;
+	saveDocumentFn = \ -> saveWithWordsCountCheck(caption, 100, getValue(wigiEditor.doc), wigiDocumentStyle, wigiToolbarStyle, windowCloser, onOK);
+	okButton = buttonFn(100.0, if (isLiteEditStyle()) "OK" else "Save", make(true), "", saveDocumentFn);
+	cancelButton = buttonFn(100.0, "Cancel", make(true), "", windowCloser);
+
+	bottomBar = Align(0.5, 0.0, ColsWithInterval(20.0, if (isLiteEditStyle()) [cancelButton, okButton] else [okButton, cancelButton]));
+
+	form = Border(10.0, 10.0, 10.0, 10.0, Lines([wigiEditor.toolbar, wigiEditor.getEditorForm(width, height), Fixed(5.0, 5.0), bottomBar]));
+
+	window = if (isLiteEditStyle()) {
+		makeLiteSkinWindow(caption, form)
+	} else {
+		addShadow = \f -> CustomShadowAround2(black, 0.15, 5.0, 5.0, flash, f);
+		makeWindow(Background([Fill(0xF0F0F0)], form), caption) |> addShadow;
+	}
+
+	closeWindow := showModalFit(window);
+}
+
+saveWithWordsCountCheck(
+	caption: string, limit: int, document: WigiElement,
+	documentStyle: [WigiStyles], toolbarStyle: [WigiToolbarStyle],
+	closer: () -> void, onOk: (WigiElement, () -> void) -> void
+) -> void {
+	documentToSave = wigiForStorageShortStyles(document, true, documentStyle);
+	cont = \ -> onOk(documentToSave, closer);
+
+	needToCheckWordsCount = contains(toolbarStyle, CoachMenuStyle()) && isLiteEditStyle() && isUrlParameterTrue("case48546");
+
+	wordsCount = if (needToCheckWordsCount) {
+		wikified = wigi2wiki(documentToSave, Some(documentStyle));
+		splitted = strSplit2WithoutLeave(wikified, [" ", "\t", "\n", "\\newline"]);
+		filtered = filter(splitted, \s -> !strContains("+=***-/", s));
+		length(filtered);
+	} else 0;
+
+	if (needToCheckWordsCount && wordsCount > 100) {
+		closeWarning = ref nop;
+
+		cancelButton = liteSkinRedButtonWithWidth(150.0, "Return to editor", make(true), "", \ -> ^closeWarning());
+		okButton = liteSkinRedButtonWithWidth(150.0, "Save anyway", make(true), "", \ -> { cont(); ^closeWarning() });
+
+		addBorder = \f -> Border(10.0, 10.0, 10.0, 10.0, f);
+
+		warningForm = Lines([
+			Text("The text is too long. Try to use up to 100 words.", [FontSize(16.0), FontFamily("ProximaSemiBold")]),
+			Fixed(0.0, 15.0),
+			Align(0.5, 0.0, Cols([okButton, Fixed(20.0, 0.0), cancelButton]))
+		]) |> addBorder;
+
+		warningWindow = makeLiteSkinWindow(caption, warningForm);
+
+		closeWarning := showModalFit(warningWindow);
+	} else {
+		cont();
+	}
+}
+
+showReferenceDocumentEditor(document: WigiElement, styles: [WigiStyles], onOK: (WigiElement) -> void) -> void {
+	showPureWigiEditor(
+		"Reference Document Editor",
+		1050.0, 600.0, document,
+		[ReferenceDocument()],
+		styles,
+		\result, closeFn -> {
+			closeFn();
+			onOK(result);
+		}
+	)
+}
+
+showCoachEditor(wiki: string, defaultStyles: [WigiStyles], onOK: (string) -> void) -> void {
+	unpair(
+		string2wigiWithErrors(wiki, None()),
+		\wigiM, errors -> {
+			eitherFn(
+				wigiM,
+				\wigi -> showPureWigiEditor(
+					"Edit coach text",
+					600.0, 350.0, wigi,
+					concat(
+						[DisableProof(), HideParagraphAlignment(), HideParagraphControl(), HideFontSizeControl(), CoachMenuStyle()],
+						if (isLiteEditStyle()) [LiteEditSkinStyle(white, 0xe3e2e2, 1.0)] else []
+					),
+					defaultStyles,
+					\result, closeFn -> {
+						closeFn();
+						onOK(wigi2wiki(result, Some(defaultStyles)));
+					}
+				),
+				\ -> withInformation(
+					"Coach text can't be openned in Wigi editor.",
+					\ -> askStringInPopup("Edit coach text", 600.0, 150.0, wiki, \s -> true, onOK)
+				)
+			)
+		}
+	)
+}

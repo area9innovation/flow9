@@ -1,0 +1,86 @@
+import lingo/peg;
+
+export {
+	// Changes names to unique names based on integers
+	renameBindings(g : Grammar) -> Grammar;
+}
+
+renameBindings(g : Grammar) -> Grammar {
+	Grammar(map(g.productions, renameBindingsInProduction));
+}
+
+renameBindingsInProduction(p : Production) -> Production {
+	Production(p.name, p.caching, p.type, map(p.choices, renameBindingsInChoice));
+}
+
+renameBindingsInChoice(c : Seq) -> Seq {
+	r = fold(c.seq, Pair([], makeTree()), \acc : Pair<[Parsing], Tree<string, string>>, p -> {
+		r = renameBindingsInParsing(p, acc.second);
+		Pair(arrayPush(acc.first, r.first), r.second);
+	});
+	Seq(r.first);
+}
+
+renameBindingsInParsing(par : Parsing, renamings : Tree<string, string>) -> Pair<Parsing, Tree<string, string>> {
+	switch (par : Parsing) {
+		LingoValue(v): cast(Pair(par, renamings) : Pair<LingoValue, Tree<string, string>> -> Pair<Parsing, Tree<string, string>>);
+		Star(p): { r = renameBindingsInParsing(p, renamings); Pair(Star(r.first), r.second); }
+		Plus(p): { r = renameBindingsInParsing(p, renamings); Pair(Plus(r.first), r.second); }
+		Opt(p): { r = renameBindingsInParsing(p, renamings); Pair(Opt(r.first), r.second); }
+		Negation(p): { r = renameBindingsInParsing(p, renamings); Pair(Negation(r.first), r.second); }
+		CutUp(p): { r = renameBindingsInParsing(p, renamings); Pair(CutUp(r.first), r.second); }
+		CutDown(p): { r = renameBindingsInParsing(p, renamings); Pair(CutDown(r.first), r.second); }
+		Rule(n): Pair(par, renamings);
+		iRule(n): Pair(par, renamings);
+		Term(s): Pair(par, renamings);
+		CharRange(l, h): Pair(par, renamings);
+		Epsilon(): Pair(par, renamings);
+		Action(fn): Pair(par, renamings);
+		Action2(e): {
+			Pair(Action2(renameBindingsInActionExp(e, renamings)), renamings);
+		}
+		ActionIndex(): Pair(par, renamings);
+		BindResult(n, p): {
+			newId = "v" + i2s(sizeTree(renamings));
+			rena = setTree(renamings, n, newId);
+			r = renameBindingsInParsing(p, rena);
+			Pair(BindResult(newId, r.first), r.second);
+		};
+		BindMatched(n, p): {
+			newId = "v" + i2s(sizeTree(renamings));
+			rena = setTree(renamings, n, newId);
+			r = renameBindingsInParsing(p, rena);
+			Pair(BindMatched(newId, r.first), r.second);
+		};
+		Seq(s): { 
+			r = fold(s, Pair([], renamings), \acc : Pair<[Parsing], Tree<string, string>>, p -> {
+				r = renameBindingsInParsing(p, acc.second);
+				Pair(arrayPush(acc.first, r.first), r.second);
+			});
+			Pair(Seq(r.first), r.second);
+		}
+		Choices(s): {
+			r = fold(s, Pair([], renamings), \acc : Pair<[Parsing], Tree<string, string>>, p -> {
+				r = renameBindingsInParsing(p, acc.second);
+				Pair(arrayPush(acc.first, r.first), r.second);
+			});
+			Pair(Choices(r.first), r.second);
+		}
+	}
+}
+
+
+renameBindingsInActionExp(e : ActionExp, renamings : Tree<string, string>) -> ActionExp {
+	switch (e : ActionExp) {
+		ActionVar(v): ActionVar(lookupTreeDef(renamings, v, v));
+		ActionCall(id, args): {
+			ActionCall(id, map(args, \a -> renameBindingsInActionExp(a, renamings)));
+		}
+		ActionCallDebug(id, args): {
+			ActionCallDebug(id, map(args, \a -> renameBindingsInActionExp(a, renamings)));
+		}
+		ActionIndex(): e;
+		ActionConstantString(s): e;
+		ActionConstantInt(i): e;
+	}
+}

@@ -1,0 +1,117 @@
+export {
+	CallWigiSmartArtEditor(sa : WigiSmartArt, engine : WigiEngine, onOK : (WigiSmartArt) -> void, onCancel : () -> void) -> void;
+	MakeWigiSmartArtForm(sa : WigiSmartArt, engine : WigiEngine, namespace : WigiScope, wikistyles : [WikiStyle], showSaStruct : Maybe<Behaviour<bool>>) -> Form;
+}
+
+import formats/wiki/wikistyle_types;
+import editorshelper;
+import wigi/types;
+import wigi/wigipreprocessor;
+import formats/wiki/wikiparsershelper;
+import paragraph;
+import styleform;
+import formutils;
+
+CallWigiSmartArtEditor(sa : WigiSmartArt, engine : WigiEngine, onOK : (WigiSmartArt) -> void, onCancel : () -> void) {
+	isNotWikiSmartArtVariableList = \s -> switch (s : WigiSmartArtStyle) {
+		WigiSmartArtVariablesList(__) : false;
+	};
+	replaceVarsList = \stl, vl -> {
+		filteredStyle = filter(stl, isNotWikiSmartArtVariableList);
+		if (length(vl) > 0) {
+			arrayPush(filteredStyle, WigiSmartArtVariablesList(vl));
+		} else {
+			filteredStyle
+		}
+	}
+	varsSet : ref Set<string> = ref makeSet();
+	logVarUsage = \varName -> {
+		//println("Logging usage of " + varName);
+		varsSet := insertSet(^varsSet, varName)
+	};
+	CallSmartArtEditor(
+		sa.content,
+		\value -> {
+			onOK(WigiSmartArt(value, replaceVarsList(sa.style, set2array(^varsSet))))
+		},
+		onCancel,
+		[ShapeIuPreprocessor(makeIuWigiPreprocessor(engine, logVarUsage))]
+	);
+}
+
+MakeWigiSmartArtForm(sa : WigiSmartArt, engine : WigiEngine, namespace : WigiScope, wikistyles : [WikiStyle], showSaStruct : Maybe<Behaviour<bool>>) {
+	IuWigiPreprocessor = makeIuWigiPreprocessor(engine, nop1);
+	//#38860 Should be in sync with Wiki. Extract and use function if something is added.
+	//#39145 We don't pass engine into SmartArt, because engine's state can be changed - we don't want this.
+	// It happens because this style (WigiEngine) can be used inside SmartArt to show WigiElements, for example formulas,
+	// and these elements will use and later remove all hooked up wiki variable from wigi engine when they are destroyed.
+	effectiveStyle = filter(wikistyles, \style -> (style != WikiAlign(CenterAlign())) && (!isSameStructType(style, engine)));
+	saForm = makeEmpty();
+
+	updateForm = \__ -> {
+		CallSmartArtParser(sa.content, IuWigiPreprocessor, effectiveStyle)
+		|> (\pe -> if (isUrlParameterTrue("fix35713")) map(pe, \e -> OverrideAvailableHeight(400.0, e)) else pe)
+		|> (\pe -> map(pe, \e -> Border(1.0, 1.0, 1.0, 1.0, e)))
+		|> (\pe -> Paragraph(pe, [InterlineSpacing(3.0), TightWidth()]))
+		|> \f -> next(saForm, f)
+	}
+
+	varsNames = extractStruct(sa.style, WigiSmartArtVariablesList([])).varsList;
+
+	if (varsNames == []) {
+		updateForm([])
+	}	
+
+	smartartForm = Constructor(
+		Mutable(saForm),
+		\ -> {			
+			unsList = ref makeList();
+			vars = map(
+				varsNames,
+				\varName -> {
+					wigiVal = getValueFromEngine(engine, namespace, WigiVarRef(varName), WigiDouble(0.0));
+					wigiValIsFound = !isConst(wigiVal); //Based on knowledge of internal structure - not very good approach
+					if (wigiValIsFound) {
+						/* TODO: Change to selectu */
+						unpair(
+							selectu(wigiVal, wigiValue2Double),
+							\val, uns -> {
+								rlistPush(unsList, uns);
+								val
+							}
+						)
+					} else if (isCorrectWVVarName(varName)) {
+						getDoubleVarBehaviour(getGlobalWVEnvironment(), varName);
+					} else {
+						const(0.0)
+					}
+				}
+			);
+			if (vars != []) {
+				trigger = unpair(
+					mergeu(vars),
+					\val, uns -> {
+						rlistPush(unsList, uns);
+						val
+					}
+				);
+				rlistPush(unsList, subscribe(trigger, updateForm));
+			}
+			\ -> {				
+				callList(^unsList)
+			}
+		}
+	);
+	eitherMap( // Maybe<state> is used as flag of non preview mode
+		showSaStruct,
+		\showStruct -> {
+			wh = makeWH();
+			form = Group([
+				Inspect([ISize(wh)], smartartForm),
+				Select(wh, \_wh -> If(_wh.width <= 2.0 && _wh.height <= 2.0, Text("SmartArt", [Fill(lightGray)])))
+			]);
+			Select(showStruct, \ss -> if (ss) frameAround(Border(1.0, 1.0, 1.0, 1.0, form), 1.0, green) else smartartForm)
+		},
+		smartartForm
+	)
+}

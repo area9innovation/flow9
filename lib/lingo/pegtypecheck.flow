@@ -1,0 +1,343 @@
+import lingo/peg;
+import set;
+
+export {
+	typePegGrammar(g : Grammar) -> Tree<string, PegType>;
+}
+
+typePegGrammar(g : Grammar) -> Tree<string, PegType> {
+	t = fold(g.productions, makeTree(), \acc, p -> typePegProduction(acc, g, p));
+
+	doResolveTypes(t);
+}
+
+doResolveTypes(t : Tree<string, PegType>) -> Tree<string, PegType> {
+	r = foldTree(t, Pair(false, makeTree()), \k : string, v : PegType, acc : Pair<bool, Tree<string, PegType>> -> {
+		rt = resolveRuleTypes(t, k, v);
+		Pair(acc.first || rt != v, setTree(acc.second, k, rt))
+	});
+	if (r.first) {
+		doResolveTypes(r.second);
+	} else {
+		r.second;
+	}
+}
+
+typePegProduction(types : Tree<string, PegType>, g : Grammar, p : Production) -> Tree<string, PegType> {
+	r = typePegChoices(types, g, map(p.choices, \c -> Seq(c.seq)));
+
+	// Check with the declared type. Special case: If declared void, we ignore whatever might be there
+	r2 = if (p.type == PegVoid()) p.type else mergePegTypes(p.type, r.second);
+
+	setTree(types, p.name, r2)
+}
+
+typePegChoices(types : Tree<string, PegType>, g : Grammar, choices : [Parsing]) -> Pair<Tree<string, PegType>, PegType> {
+	fold(choices, Pair(types, PegUnknown()), \acc, p -> {
+		tt = typePegParsing(types, g, p);
+		Pair(tt.first, mergePegTypes(acc.second, tt.second))
+	})
+}
+
+typePegParsing(types : Tree<string, PegType>, g : Grammar, p : Parsing) -> Pair<Tree<string, PegType>, PegType> {
+	switch (p) {
+		CutDown(rp): typePegParsing(types, g, rp);
+		CharRange(f, l): Pair(types, PegStringType());
+		Term(t): Pair(types, PegStringType());
+		Opt(rp): {
+			r = typePegParsing(types, g, rp);
+			Pair(r.first, PegArray(r.second))
+		}
+		Star(rp): {
+			r = typePegParsing(types, g, rp);
+			Pair(r.first, PegArray(r.second))
+		}
+		Plus(rp): {
+			r = typePegParsing(types, g, rp);
+			Pair(r.first, PegArray(r.second))
+		}
+		CutUp(rp): typePegParsing(types, g, rp);
+		ActionIndex(): Pair(types, PegInt());
+		Seq(s): {
+			fold(s, Pair(types, PegUnknown()), \acc : Pair<Tree<string, PegType>, PegType>, c : Parsing -> {
+				typePegParsing(acc.first, g, c)
+			});
+		}
+		Negation(n): {
+			Pair(types,  PegUnknown());
+		}
+		Rule(n): {
+			t = lookupTreeDef(types, n, PegRuleType(n));
+			Pair(types, t);
+		}
+		BindResult(l, rp): {
+			r = typePegParsing(types, g, rp);
+			Pair(setTree(types, l, r.second), r.second);
+		}
+		BindMatched(l, rp): {
+			Pair(setTree(types, l, PegStringType()), PegStringType());
+		}
+		Action2(e): {
+			Pair(types, typePegAction(types, e));
+		}
+		Choices(c): {
+			typePegChoices(types, g, c);
+		}
+		default: {
+			println(p);
+			Pair(types, PegUnknown());
+		}
+	}
+}
+
+mergePegTypes(t1 : PegType, t2 : PegType) -> PegType {
+	err = \ -> {
+		err1 = switch (t1) {
+			PegError(e1): e1;
+			default: "";
+		}
+		err2 = switch (t2) {
+			PegError(e2): e2;
+			default: "";
+		}
+		PegError(pegType2string(t1) + " != " + pegType2string(t2));
+	}
+	if (t1 == t2) t1
+	else if (t1 == PegUnknown()) t2
+	else if (t2 == PegUnknown()) t1
+	else if (isSameStructType(t1, PegRuleType(""))) t2
+	else if (isSameStructType(t2, PegRuleType(""))) t1
+	else {
+		switch (t1) {
+			PegStruct(s1, a1): {
+				switch (t2) {
+					PegStruct(s2, a2): {
+						if (s1 != s2) {
+							PegUnion([t1, t2]);
+						} else {
+							if (length(a1) != length(a2)) {
+								PegError("'" + s1 + "' has different number of arguments");
+							} else {
+								args = mapi(a1, \i, arg1 -> {
+									mergePegTypes(arg1, a2[i]);
+								});
+								PegStruct(s1, args);
+							}
+						}
+					}
+					PegUnion(u2): {
+						addStructToPegUnion(t1, u2);
+					}
+					default: err();
+				}
+			}
+			PegArray(a1): {
+				switch (t2) {
+					PegArray(a2): {
+						PegArray(mergePegTypes(a1, a2));
+					}
+					default: err();
+				}
+			}
+			PegUnion(u1): {
+				switch (t2) {
+					PegStruct(s2, a2): {
+						addStructToPegUnion(t2, u1);
+					}
+					PegUnion(u2): {
+						PegUnion(fold(u2, u1, \acc, s -> {
+							addStructToPegUnion(s, acc).structs
+						}));
+					}
+					default: err();
+				}
+			}
+			PegDouble(): {
+				err();
+			}
+			PegVoid(): err();
+			PegBool(): err();
+			PegInt(): err();
+			PegStringType(): err();
+			PegUnknown(): err();
+			PegError(e): PegError(e + " != " + pegType2string(t2));
+			PegRuleType(r): {
+				println(t2);
+				t2;
+			}
+		}
+	}
+}
+
+
+addStructToPegUnion(s : PegStruct, structs : [PegStruct]) -> PegUnion {
+	// TODO: Fix this to merge if the name is the same
+	PegUnion(arrayPush(structs, s));
+}
+
+typePegAction(types : Tree<string, PegType>, a : ActionExp) -> PegType {
+	switch (a) {
+		ActionIndex(): PegInt();
+		ActionCallDebug(id, args): {
+			typePegCall(types, id, args);
+		}	
+		ActionCall(id, args): {
+			typePegCall(types, id, args);
+		}
+		ActionVar(v): {
+			lookupTreeDef(types, v, PegError("Unknown variable " + v));
+		}
+		ActionConstantString(s): PegStringType();
+		ActionConstantInt(i): PegInt();
+	}
+}
+
+typePegCall(types : Tree<string, PegType>, id : string, args : [ActionExp]) -> PegType {
+	at = map(args, \a -> typePegAction(types, a));
+
+	if (id == "unarray") {
+		if (length(at) != 1) PegError("unarray expected one argument")
+		else {
+			switch (at[0]) {
+				PegArray(t): t;
+				default: PegError("unarray expected array");
+			}
+		}
+	} else if (id == "consArray") {
+		if (length(at) != 2) PegError("consArray expected two arguments")
+		else {
+			switch (at[1]) {
+				PegArray(t): {
+					PegArray(mergePegTypes(at[0], t));
+				}
+				PegRuleType(t): {
+					PegArray(at[0]);
+				}
+				default: PegError("consArray expected array as second argument, not " + pegType2string(at[1]));
+			}
+		}
+	} else if (id == "strUnescape") {
+		if (length(at) != 2) PegError("strUnescape expected two arguments")
+		else {
+			if (mergePegTypes(mergePegTypes(at[0], at[1]), PegStringType()) != PegStringType()) {
+				PegError("strUnescape expected two string arguments");
+			} else {
+				PegStringType();
+			}	
+		} 
+	} else if (id == "trim") {
+		if (length(at) != 1) PegError("trim expected one argument")
+		else {
+			if (mergePegTypes(at[0], PegStringType()) != PegStringType()) {
+				PegError("trim expected a string argument");
+			} else {
+				PegStringType();
+			}	
+		} 
+	} else if (id == "s2i") {
+		if (length(at) != 1) PegError("s2i expected one argument")
+		else {
+			if (mergePegTypes(at[0], PegStringType()) != PegStringType()) {
+				PegError("s2i expected a string argument");
+			} else {
+				PegInt();
+			}	
+		} 
+	} else if (id == "s2d") {
+		if (length(at) != 1) PegError("s2d expected one argument")
+		else {
+			if (mergePegTypes(at[0], PegStringType()) != PegStringType()) {
+				PegError("s2d expected a string argument");
+			} else {
+				PegDouble();
+			}	
+		} 
+	} else if (id == "array") {
+		if (length(at) == 0) PegArray(PegUnknown())
+		else PegArray(at[0]);
+	} else if (id == "concat") {
+		if (length(at) != 2) PegError("concat expected two arguments")
+		else {
+			a1 = switch (at[0]) {
+				PegArray(t): {
+					t;
+				}
+				PegRuleType(t): {
+					PegUnknown();
+				}
+				default: PegError("concat expected array as first argument, not " + pegType2string(at[0]));
+			}
+			a2 = switch (at[1]) {
+				PegArray(t): {
+					t;
+				}
+				PegRuleType(t): {
+					PegUnknown();
+				}
+				default: PegError("concat expected array as second argument, not " + pegType2string(at[1]));
+			}
+			PegArray(mergePegTypes(a1, a2));
+		}
+	} else if (id == "debug") {
+		if (length(at) == 0) PegUnknown()
+		else at[0]
+	} else if (id == "minus") {
+		if (length(at) != 1) PegError("minus expected one argument")
+		else {
+			if (mergePegTypes(at[0], PegInt()) != PegInt()) {
+				PegError("minus expected an int argument");
+			} else {
+				PegInt();
+			}	
+		} 
+	} else if (id == "true" || id == "false") PegBool()
+	else if (id == "zero" || id == "one" || id == "two" || id == "three") PegInt()
+	else {
+		PegStruct(id, at);
+	}
+}
+
+
+resolveRuleTypes(types : Tree<string, PegType>, rec : string, t : PegType) -> PegType {
+	switch (t) {
+		PegVoid(): t;
+		PegBool(): t;
+		PegInt(): t;
+		PegDouble(): t;
+		PegStringType(): t;
+		PegUnknown(): t;
+		PegError(e): t;
+		PegStruct(n, args): PegStruct(n, map(args, \a -> resolveRuleTypes(types, rec, a)));
+		PegUnion(s): {
+			PegUnion(map(s, \as -> {
+				rt = resolveRuleTypes(types, rec, as);
+				cast(rt : PegType -> PegStruct);
+			}));
+		}
+		PegRuleType(r): {
+			if (rec == r) t
+			else {
+				s = lookupTreeDef(types, r, PegError("Could not find " + r));
+
+				// Check if the type is fully resolved by instantiating all
+				res = resolveRuleTypes(makeTree(), "", s);
+				if (s == res) {
+					switch (s) {
+						PegUnion(us): t; // No need to expand unions
+						PegArray(at): {
+							switch (at) {
+								PegUnion(au): t; // No need to expand arrays of unions
+								default: s;
+							}
+						}
+						default: s;
+					}
+				} else {
+					// Something is not resolved, so just keep it
+					t;
+				}
+			}
+		}
+		PegArray(r): PegArray(resolveRuleTypes(types, rec, r));
+	}
+}

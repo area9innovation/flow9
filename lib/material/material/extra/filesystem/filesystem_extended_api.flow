@@ -1,0 +1,111 @@
+import runtime;
+import filesystem;
+import behaviour;
+import formats/json/json;
+import material/extra/filesystem/filesystem_extended_types;
+
+export {
+
+	// FileSystem extended API
+	FilesystemExtAPI : (
+		readDirectory : (string /* directory path */, onDone : ([string] /* rolders*/, [string] /* files*/) -> void, onError : (string) -> void) -> void,
+		isDirectory : (string /* directory path */, onDone : (bool) -> void) -> void,
+		fileExists : (string /* file path */, onDone : (bool) -> void) -> void,
+		resolveRelativePath : (string) -> string,
+		createFolder : (string /* folder path */, onDone : () -> void, onError : (string) -> void) -> void,
+		deleteElement : (string /* element path */, onDone : () -> void, onError : (string) -> void) -> void,
+		copyElement : (string /* element full path */, string /* copy to directory */, onDone : () -> void, onError : (string) -> void) -> void,
+		moveElement : (string /* element full path */, string /* move to directory */, onDone : () -> void, onError : (string) -> void) -> void,
+		renameElement : (string /* element full path */, string /* new name, without path */, onDone : () -> void, onError : (string) -> void) -> void,
+		// Used to read text content only
+		getFileContent : (string /* text */, onDone : (string) -> void, onError : (string) -> void) -> void,
+		// Used to read text content only
+		getFileContentMulti : ([string /* file path */], onDone : ([string /* text */]) -> void, onError : (string) -> void) -> void,
+		// Used to write text content only
+		setFileContent : (string /* file path */, string /* text */, onDone : () -> void, onError : (string) -> void) -> void,
+		// converting from api path to the common (like DB path to the url)
+		convert2realPath : (string) -> string,
+		convert2thumbnailPath : (string) -> string,
+		getDefaultPath : () -> string,
+		setDefaultPath : (string /* path */, onDone : () -> void, onError : (string) -> void) -> void,
+		getAccessRight : (string /* path */) -> PathAccessRight,
+		getExtraInfo : (string /* path */, string /* type */) -> Maybe<Json>
+	);
+
+	setFilesystemExtAPI(api : FilesystemExtAPI) -> void;
+	getFilesystemExtAPI() -> FilesystemExtAPI;
+	getAllFilePaths(startDir : string, extensions : [string]) -> DynamicBehaviour<[string]>;
+	isFilesystemExtAPIinitialized() -> bool;
+}
+
+isInitialized = ref false;
+
+// Filesystem extended API
+filesystemExtAPIError(onError : (string) -> void) {
+	onError("ERROR: filesystemExtAPI is not set");
+}
+
+// callbacks in the implementation of the stub,
+// needed to prevent the application from getting stuck
+filesystemExtAPI = ref FilesystemExtAPI(
+	\__, onDone, onError -> { filesystemExtAPIError(println); onError("filesystemExtAPI is not set"); },
+	\__, onDone -> { filesystemExtAPIError(println); onDone(false) },
+	\__, onDone -> { filesystemExtAPIError(println); onDone(false) },
+	\__ -> { filesystemExtAPIError(println); "" },
+	\__, __, onError -> filesystemExtAPIError(onError),
+	\__, __, onError -> filesystemExtAPIError(onError),
+	\__, __, __, onError -> filesystemExtAPIError(onError),
+	\__, __, __, onError -> filesystemExtAPIError(onError),
+	\__, __, __, onError -> filesystemExtAPIError(onError),
+	\__, __, onError -> filesystemExtAPIError(onError),
+	\__, __, onError -> filesystemExtAPIError(onError),
+	\__, __, __, onError -> filesystemExtAPIError(onError),
+	\__ -> { filesystemExtAPIError(println); ""; },
+	\__ -> { filesystemExtAPIError(println); ""; },
+	\-> { filesystemExtAPIError(println); ""; },
+	\__, __, onError -> filesystemExtAPIError(onError),
+	\__ -> { filesystemExtAPIError(println); makePathAccessRight(); },
+	\__, __ -> { filesystemExtAPIError(println); None(); }
+);
+
+setFilesystemExtAPI(api : FilesystemExtAPI) -> void {
+	isInitialized := true;
+	filesystemExtAPI := api;
+}
+
+getFilesystemExtAPI() -> FilesystemExtAPI {
+	^filesystemExtAPI;
+}
+
+isFilesystemExtAPIinitialized() -> bool {
+	^isInitialized;
+}
+
+writeFilePathsInBehaviour(startDir : string, extensions : [string], paths : DynamicBehaviour<[string]>) -> void {
+	getFilesystemExtAPI().readDirectory(
+		startDir,
+		\folders, files -> {
+			nextDistinct(paths, concat(getValue(paths), filtermap(files, \f -> if (contains(extensions, getUrlExtension(f))) Some(startDir + f) else None())));
+			iterAsync(
+				filterOnlyChildrenFolders(folders), 
+				\dir, fulfill, reject -> { 
+					writeFilePathsInBehaviour(startDir + dir + "/", extensions, paths); 
+					fulfill()
+				},
+				nop,
+				println
+			);
+		},
+		println
+	)
+}
+
+getAllFilePaths(startDir : string, extensions : [string]) -> DynamicBehaviour<[string]> {
+	paths = make([]);
+	writeFilePathsInBehaviour(startDir, extensions, paths);
+	paths;
+}
+
+filterOnlyChildrenFolders(folders : [string]) -> [string] {
+	filter(folders, \f -> f != "." && f != "..")
+}

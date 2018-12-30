@@ -1,0 +1,157 @@
+/*
+*	This example demonstrates how to use MTreeView component to display a dynamic filesystem tree view.
+*	Starting from the current path it displays all nested files and folders
+*
+*/
+
+import material/material;
+import material/material_manager;
+import material/material_dialog;
+
+import material/extra/tree_view/tree_view;
+
+
+_adjustItems(path : string, items : () -> [MTreeViewItem], get : (int, int) -> [MTreeViewItem], template : [string], remove : (int, int) -> [MTreeViewItem], insert : (string, int) -> [MTreeViewItem]) {
+	index = ref 0;
+
+	// remove items from tree which are not presented in template list
+	iter(items(), \i -> {
+		if (!contains(template, getValue(i.title))) {
+			remove(^index, 1);
+			{}
+		} else {
+			index := ^index + 1;
+		}
+	});
+
+	// add item that are in template but not in items() collection
+	iteri(template, \i, fn -> {
+		ii = get(i, 1)[0];
+		title = getValue(ii.title);
+		if (title != fn) {
+			added = insert(fn, i);
+			if (isDirectory(path + "/" + fn)) {
+				added[0].addTitles(["..."]) |> nop1;
+			}
+		}
+	});
+}
+
+
+main() {
+	manager = makeMaterialManager([]);
+	root = resolveRelativePath(".");
+	getPath = \item -> strReplace(item.path("/"), "\\", "/");
+
+	// this is because we need to access treeView, which is unaccessible here
+	// so we`ll assign function body below treeView initialization
+	selectItemFn = ref nop1;
+	selectItem = \item -> ^selectItemFn(item );
+
+	updateFolderFn = ref nop1;
+	updateFolder = \item -> ^updateFolderFn(item);
+
+	updateFolderFn := \item -> {
+		pth = getPath(item);
+		isFolder = isDirectory(pth);
+
+		if (!isFolder || !getValue(item.expanded)) {
+			// no need to update. will be updated on expand
+		} else {
+			sorted = {
+				filtered = readDirectory(pth);//filter(readDirectory(pth), filterFunc);
+				sorted = fold(filtered |> sort, Pair([],[]), \res, d -> {
+					if (isDirectory(pth + "/" + d)) Pair(arrayPush(res.first, d), res.second)
+					else Pair(res.first, arrayPush(res.second, d));
+				});
+				concat(sorted.first, sorted.second);
+			}
+
+			_adjustItems(pth, item.items, item.get, sorted, item.remove, item.insertTitle);
+		}
+	}
+
+	updateTV = \mgr, folders -> {
+		if (length(mgr.items()) <= 0) {
+			r = mgr.addTitles(folders)[0];
+			r.addTitles(["..."]);
+			next(r.expanded, true);
+		} else {
+			iter(mgr.items(), \i -> updateFolder(i));
+		}
+	}
+
+	// making treeview core
+	treeView = makeMTreeViewManager([
+
+			// override default behaviour for empty/non empty nodes
+			MTreeViewOptionItemIsFolderOverride(\item -> isDirectory(getPath(item))),
+			// override default item height
+			MTreeViewOptionItemHeight(18.0),
+			// override default state icons
+			MTreeViewOptionItemStateIcons("folder", "folder_open", "insert_drive_file"),
+			MTreeViewOptionItemStateIconStyles([], [], [FillOpacity(0.1)]),
+			// override default captions styles
+			MTreeViewOptionCaptionStyles([MCaptionSolid()], [MCaptionColumn()]),
+
+			// allow to catch item click
+			MTreeViewOptionItemClick(\item, button, pos -> {
+				itemClick = \-> {
+					println("item clicked : " + getPath(item));
+					// if we want item to expand when click over title
+					// we should do it manually
+					// by default only click on icon will expand/collapse the node
+					/*
+					if (item.length() > 0 ) {
+						next(item.expanded, !getValue(item.expanded));
+					}
+					*/
+					selectItem(item);
+				}
+				switch(button){
+					MTreeViewOptionItemClickMouseButtonLeft(): itemClick();
+					MTreeViewOptionItemClickMouseButtonRight(): {}
+					MTreeViewOptionItemClickMouseButtonMiddle(): {}
+				}
+			}),
+
+			// allow to catch expanding. load subfolders during first expand
+			MTreeViewOptionExpandedChanged(\item, ex -> if (ex) {
+				pth = getPath(item);
+				isFile = fileExists(pth);
+				isFolder = isDirectory(pth);
+				if (isFolder && ex && item.length() == 1 && getValue(item.get(0,1)[0].title) == "..." ) {
+					item.clear();
+					sorted = {
+						sorted = fold(readDirectory(pth) |> sort, Pair([],[]), \res, d -> {
+							if (isDirectory(pth + "/" + d)) Pair(arrayPush(res.first, d), res.second)
+							else Pair(res.first, arrayPush(res.second, d));
+						});
+						concat(sorted.first, sorted.second);
+					}
+					iter(sorted, \fn -> if (fn != "." && fn != ".."){
+						isDir = isDirectory(pth + "/" + fn);
+						t = item.add(1)[0];
+						next(t.title, fn);
+						// making a dummy placeholder for real existing folders
+						if (isDir) next(t.add(1)[0].title, "...");
+					});
+				}
+			}),
+		]);
+
+	selectItemFn := \item -> {
+		next(treeView.selected, [item]);
+		updateTV(treeView, [root]);
+		// parent = item.parents()[0];
+		// index = findiDef(parent.items(), \i -> i == item, -1);
+		// if (index >= 0) parent.insertTitle(getValue(item.title) + " EEE", index + 1) |> nop1;
+	}
+
+	mrender(manager, true, MDispose([\-> treeView.dispose()], MTreeView(treeView)));
+
+	updateTV(treeView, [root]);
+	// r = treeView.addTitles([root])[0];
+	// r.addTitles(["..."]);
+//	next(r.expanded, true);
+}

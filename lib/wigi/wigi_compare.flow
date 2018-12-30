@@ -1,0 +1,399 @@
+import arrayutils;
+import wigi/normalize;
+
+
+export {
+	// Are these two elements the same? It ignores negible differences in styles, orders and such
+	compareWigi(wigi1 : WigiElement, wigi2 : WigiElement) -> bool;
+
+	// The same as compareWigi and additionally returns the first pair of non-equal elements
+	// if mildCompare is true, we ignore differences which have no visual consequences (paragraph style for empty line)
+	compareWigi2(wigi1 : WigiElement, wigi2 : WigiElement, mildCompare : bool, compareText : (string) -> (string) -> bool) -> Pair<bool, Pair<WigiElement, WigiElement>>;
+}
+
+// true if the elements are equal
+compareWigi(wigi1 : WigiElement, wigi2 : WigiElement) -> bool {
+	compareWigi2(wigi1, wigi2, false, eq).first;
+}
+
+compareWigi2(wigi1 : WigiElement, wigi2 : WigiElement, mildCompare : bool,
+		compareText : (string) ->  (string) -> bool) -> Pair<bool, Pair<WigiElement, WigiElement>> {
+	dummyPair = Pair(WigiEmpty(), WigiEmpty());
+	faultPair = ref dummyPair;
+	res = doCompareWigi(wigi1, wigi2, faultPair, mildCompare, compareText);
+	Pair(res, ^faultPair);
+}
+
+doCompareWigi(wigi1 : WigiElement, wigi2 : WigiElement, lastPair : ref Pair<WigiElement, WigiElement>,
+	mildCompare : bool, compareText : (string) -> (string) -> bool) -> bool {
+	lastPair := Pair(wigi1, wigi2);
+	compareElementArrays = \arr1 : [WigiElement], arr2 : [WigiElement] -> {
+		if (length(arr1) != length(arr2)) {
+			false;
+		} else {
+			foldi(arr1, true, \i, acc, e1 -> {
+				acc && doCompareWigi(e1, arr2[i], lastPair, mildCompare, compareText);
+			});
+		}
+	}
+
+	checkStylesEqual = \st1 : [WigiStyle], st2 : [WigiStyle] -> {
+		stylesEqual(standardizeStyles(st1), standardizeStyles(st2));
+	}
+
+	// we do not take into account StartAlign and FixedWidth when compare two WigiParagraphs
+	paragraphStyleDefaults = [StartAlign(), FixedWidth()];
+
+	if (!isSameStructType(wigi1, wigi2)) {
+		false;
+	} else {
+		switch (wigi1 : WigiElement) {
+			WigiDocument(r, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiDocument);
+				checkStylesEqual(style, e2.style)
+				&& doCompareWigi(r, e2.root, lastPair, mildCompare, compareText);
+			}
+
+			WigiStory(par, views, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiStory);
+				checkStylesEqual(style, e2.style)
+				&& compareElementArrays(^par, ^(e2.paragraphs));
+			}
+
+			WigiParagraph(elements, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiParagraph);
+				s1 = subtractA(normalizeWigiParagraphStyle(style), paragraphStyleDefaults);
+				s2 = subtractA(normalizeWigiParagraphStyle(e2.style), paragraphStyleDefaults);
+				(mildCompare && isWigiEmptyLine(wigi1) && isWigiEmptyLine(e2) || checkStylesEqual(s1, s2))
+				&& compareElementArrays(elements, e2.elements);
+			}
+
+			WigiText(text, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiText);
+				//we do not compare styles of empty texts in 'mild' compare mode
+				(e2.text |> compareText(text)) && ((mildCompare && text == "") || checkStylesEqual(style, e2.style));
+			}
+
+			WigiEmpty(): true;
+
+			WigiRecursive(elements, type, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiRecursive);
+				if (!isSameStructType(type, e2.type)) {
+					false
+				} else {
+					typesEqual = switch(type : WigiRecursiveType) {
+						WigiBrackets(lbt, rbt) : {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiBrackets);
+							t2.leftBracketType == lbt && t2.rightBracketType == rbt;
+						}
+						WigiComap(collapsed): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiComap);
+							getValue(t2.collapsed) == getValue(collapsed);
+						}
+						WigiDottedElement(left, right, top, bottom, leftSign, rightSign) : {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiDottedElement);
+							t2.left == left && t2.right == right && t2.top == top
+							&& t2.bottom == bottom && t2.leftSign == leftSign
+							&& t2.rightSign == rightSign;
+						}
+						WigiFraction() : type == e2.type;
+						WigiProduct(): type == e2.type;
+						WigiEvaluatingIntegral(): type == e2.type;
+						WigiRoot(): type == e2.type;
+						WigiLongDivision(): type == e2.type;
+						WigiIntegral(): type == e2.type;
+						WigiIntegral2(signType):{
+							t2 = cast(e2.type : WigiRecursiveType -> WigiIntegral2);
+							signType == t2.signType;
+						}
+						WigiTopModificator(t, size):{
+							t2 = cast(e2.type : WigiRecursiveType -> WigiTopModificator);
+							t == t2.type && size == t2.size;
+						}
+						WigiSum(): type == e2.type;
+						WigiSupscript(): type == e2.type;
+						WigiSubscript(): type == e2.type;
+						WigiSupSubscript() : type == e2.type;
+						WigiOverscript(): type == e2.type;
+						WigiUnderscript(): type == e2.type;
+						WigiOverlay(): type == e2.type;
+						WigiAltText(): type == e2.type;
+						WigiTable(r, c, cs, s) : {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiTable);
+							r == t2.rows && c == t2.cols && cs == t2.cellSpans && s == t2.style;
+						}
+						WigiInteractiveTable(f, r, s): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiInteractiveTable);
+							stylesEqual(s, t2.style)
+						}
+						WigiTableCell(widthHeight, cellStyle): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiTableCell);
+							cellStyle == t2.cellStyle //#41250
+						}
+						WigiSpreadsheetCell(widthHeight, editMode, cellStyle): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiSpreadsheetCell);
+							cellStyle == t2.cellStyle //#41250
+						}
+						WigiFrame(width, height, st) : {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiFrame);
+							width == t2.width && height == t2.height
+							&& stylesEqual(st, t2.style);
+						}
+						WigiRadioOption(id, value): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiRadioOption);
+							id == t2.id && value == t2.value;
+						}
+						WigiVisible(st): {
+							stylesEqual(st, cast(e2.type : WigiRecursiveType -> WigiVisible).style)
+						}
+						WigiCode(sc, sr): type == e2.type;
+						WigiTyped(typ): type == e2.type;
+						WigiButton(width, s): type == e2.type;
+						WigiHyperlink(url): type == e2.type;
+						WigiVersions(versions): switch (e2.type : WigiRecursiveType) {
+							WigiVersions(versions2): length(versions) == length(versions2) &&
+								foldi(versions, true, \i, acc, wv -> {
+									wv2 = versions2[i];
+									acc && wv.id == wv2.id && compareWigi(wv.changed, wv2.changed)
+								});
+							default: false;
+						}
+						WigiExternalRecursive(exType, content): {
+							t2 = cast(e2.type : WigiRecursiveType -> WigiExternalRecursive);
+							exType == t2.exType && equalTrees(content, t2.content)
+						}
+					};
+					checkStylesEqual(style, e2.style)
+					&& compareElementArrays(elements, e2.elements)
+					&& typesEqual;
+				}
+			}
+
+			WigiBlock(type, style): {
+				e2 = cast(wigi2 : WigiElement -> WigiBlock);
+				if (!isSameStructType(type, e2.type)) {
+					false;
+				} else {
+					typesEqual = switch (type : WigiBlockType) {
+						WigiPicture(url, s):{
+							t2 = cast(e2.type: WigiBlockType -> WigiPicture);
+							(url == t2.url) &&  stylesEqual(s, t2.style);
+						}
+						WigiVideo(url, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiVideo);
+							(url == t2.url) &&  stylesEqual(s, t2.style);
+						}
+						WigiAudio(url, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiAudio);
+							(url == t2.url) &&  stylesEqual(s, t2.style);
+						}
+						WigiCoach(text): {
+							t2 = cast(e2.type: WigiBlockType -> WigiCoach);
+							text == t2.text
+						}
+						WigiSlider(v, mn, mx, st, w, sty): {
+							t2 = cast(e2.type: WigiBlockType -> WigiSlider);
+							getValue(v) == getValue(t2.value)
+							&& mn == t2.minValue && mx == t2.maxValue && st == t2.step
+							&& w  == t2.width && stylesEqual(sty, t2.style);
+						}
+						WigiCheckBox(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiCheckBox);
+							getValue(v) == getValue(t2.value)
+							&& stylesEqual(s, t2.style);
+						}
+						WigiRadioButton(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiRadioButton);
+							getValue(v) == getValue(t2.value)
+							&& stylesEqual(s, t2.style);
+						}
+						WigiPositionTag(id): {
+							t2 = cast(e2.type: WigiBlockType -> WigiPositionTag);
+							id == t2.id;
+						}
+						WigiCustomSymbol(t, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiCustomSymbol);
+							s == t2.size && t == t2.type;
+						}
+						WigiFormdesigner(d, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiFormdesigner);
+							d == t2.drawing && stylesEqual(s, t2.style);
+						}
+						WigiSmartArt(c, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiSmartArt);
+							c == t2.content && stylesEqual(s, t2.style);
+						}
+						WigiFormula(f, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiFormula);
+							f == t2.formula && stylesEqual(s, t2.style);
+						}
+						WigiPageBreak(a, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiPageBreak);
+							a == t2.append && s == t2.autoScroll;
+						}
+						WigiPageName(n, c): {
+							t2 = cast(e2.type: WigiBlockType -> WigiPageName);
+							(n == t2.name) && (c == t2.disableCondition)
+						}
+						WigiNaturalMath(f): {
+							t2 = cast(e2.type: WigiBlockType -> WigiNaturalMath);
+							f == t2.formula
+						}
+						WigiDatepicker(d, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiDatepicker);
+							getValue(d) == getValue(t2.date) && stylesEqual(s, t2.style);
+						}
+						WigiComboBox(s, v, r, w): {
+							t2 = cast(e2.type: WigiBlockType -> WigiComboBox);
+							getValue(s) == getValue(t2.selected) && v == t2.values && r == t2.reorderElements && w == t2.width;
+						}
+						WigiInputBox(v, w, h, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiInputBox);
+							getValue(v) == getValue(t2.text) && w == t2.width && h == t2.height && stylesEqual(s, t2.style)
+						}
+						WigiNativeWiki(w): {
+							t2 = cast(e2.type: WigiBlockType -> WigiNativeWiki);
+							w == t2.wiki
+						}
+						WigiDotplot(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiDotplot);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiHistogram(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiHistogram);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiHistogramClasses(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiHistogramClasses);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiBoxplot(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiBoxplot);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiScatterplot(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiScatterplot);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiStackedBar(v, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiStackedBar);
+							v == t2.range && stylesEqual(s, t2.style);
+						}
+						WigiCalculator(): {
+							true
+						}
+						WigiHTML(url, w, h, s): {
+							t2 = cast(e2.type: WigiBlockType -> WigiHTML);
+							url == t2.url && stylesEqual(s, t2.style);
+						}
+						WigiReferenceDocument(title, doc): {
+							t2 = cast(e2.type: WigiBlockType -> WigiReferenceDocument);
+							t2.title == title && doCompareWigi(doc, t2.document, lastPair, mildCompare, compareText);
+						}
+						WigiSetClipboardButton(title, text): {
+							t2 = cast(e2.type: WigiBlockType -> WigiSetClipboardButton);
+							(title == t2.title) && (text == t2.text);
+						}
+						WigiChoiceBlock(formula, choices): {
+							t2 = cast(e2.type: WigiBlockType -> WigiChoiceBlock);
+							(formula == t2.formula) && (choices == t2.choices);
+						}
+						WigiExternalBlock(exType, content): {
+							t2 = cast(e2.type: WigiBlockType -> WigiExternalBlock);
+							equalsContent = if (mildCompare)
+								equalTreesStructure(content, t2.content)
+							else
+								equalTrees(content, t2.content);
+							(exType == t2.exType) && equalsContent;
+						}
+						WigiFeedback(condition, description): {
+							t2 = cast(e2.type: WigiBlockType -> WigiFeedback);
+							(condition == t2.condition) && (description == t2.description);
+						}
+						WigiFeedbackBlock(formula, visibilityCondition, interactiveType, choices): {
+							t2 = cast(e2.type: WigiBlockType -> WigiFeedbackBlock);
+							(formula == t2.formula) && (visibilityCondition == t2.visibilityCondition) && (interactiveType == t2.interactiveType) && (choices == t2.choices);
+						}
+						WigiFillBlankBlock(width, caseSensitive, exactMatch, mathFeatures, answers, otherAnswer): {
+							t2 = cast(e2.type: WigiBlockType -> WigiFillBlankBlock);
+							(width == t2.width) && (caseSensitive == t2.caseSensitive) && (exactMatch == t2.exactMatch) && (mathFeatures == t2.mathFeatures) && (answers == t2.answers) && (otherAnswer == t2.otherAnswer);
+						}
+					}
+					// does not matter what the style of a page break is
+					typesEqual
+					&& (isWigiPageBreak(wigi1) || checkStylesEqual(style, e2.style));
+				}
+			}
+		}
+	}
+}
+
+// we want to avoid getting 'false' when compare styles that might differ by 1*e-15 or so
+// so we round the style values to 6 digits after decimal point
+
+standardizeStyles(style : [WigiStyle]) -> [WigiStyle] {
+	map(style, standardizeStyle)
+}
+
+standardizeStyle(style : WigiStyle) -> WigiStyle {
+	// rounds a double to 6 digits after the decimal point
+	roundDouble = \number -> {
+		base = 1000000.0;
+		i2d(round(base * number)) / base;
+	}
+	// removes a position in a document from WigiName
+	removePosition = \name -> {
+		idx = strFindFirstOf(name, "0123456789");
+		if (idx == -1) {
+			name
+		} else {
+			strLeft(name, idx);
+		}
+	}
+	switch (style) {
+		WigiName(wn): WigiName(removePosition(wn));
+		ParagraphSpacing(ps): ParagraphSpacing(roundDouble(ps));
+		WigiReference(wr): style;
+		WigiConvertToRelativeSize(): style;
+		RemoveAllListSpacing(): style;
+		StartAlign(): style;
+		EndAlign(): style;
+		LeftAlign(): style;
+		RightAlign(): style;
+		CenterAlign(): style;
+		Justify(): style;
+		TightWidth(): style;
+		InterlineSpacing(is): InterlineSpacing(roundDouble(is));
+		GeneralIndent(gi): GeneralIndent(roundDouble(gi));
+		FirstLineIndent(fi): FirstLineIndent(roundDouble(fi));
+		FixedWidth(): style;
+		DynamicBlockDelay(n): style;
+		ParagraphBorder(top, bottom): ParagraphBorder(roundDouble(top), roundDouble(bottom));
+		Listed(t, s): Listed(t, map(s, \s1 -> cast(standardizeStyle(s1) : WigiStyle -> WigiTextStyle)));
+		ReplaceTightWidthWithAlign(): style;
+		ReplaceAlignWithTightWidth(): style;
+		WigiStylesName(n): style;
+		WigiAspect(t, c): style;
+		WigiParagraphExternalStyle(d): style;
+		FontFamily(n): style;
+		FontSize(s): FontSize(roundDouble(s));
+		Fill(c): style;
+		FillOpacity(o): FillOpacity(roundDouble(o));
+		LetterSpacing(s): LetterSpacing(roundDouble(s));
+		BackgroundFill(c): style;
+		BackgroundFillOpacity(o): BackgroundFillOpacity(roundDouble(o));
+		WigiEnabled(e): style;
+		WigiEditorPreview(): style;
+		ExternalDeleteElement(f): style;
+		BaselineShift(bs): BaselineShift(roundDouble(bs));
+		DoubleUnderline(): style;
+		Language(n): style;
+		Underline(): style;
+		WigiHtmlResponsiveFontSize(ratio, vw, vh): WigiHtmlResponsiveFontSize(roundDouble(ratio), roundDouble(vw), roundDouble(vh));
+		WigiHtmlRelativeFontSizeWithEm(em): WigiHtmlRelativeFontSizeWithEm(roundDouble(em));
+		WigiRelativeFontSize(d): style;
+		WigiLock(t): style;
+		WigiAnnotation(__) : style;
+		WigiRecursiveFontStyle(__) : style;
+	}
+}

@@ -1,0 +1,65 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/common;
+import tools/flowc/backends/wasm/wasm_types;
+import tools/flowc/backends/wasm/f2wasm_utils;
+import array;
+import string;
+
+export {
+    // gathers functions from the source tree and builds functions table
+    fiWasmBuildFunctionTable(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) 
+        -> FiWasmFunctionTable;    
+
+	// generates (table) of all functions
+	fiWasmEmitFunctionTable(functions: FiWasmFunctionTable) -> string;
+
+	// add an individual function to the table
+	fiWasmAddFunctionToTable(functions : FiWasmFunctionTable, name : string) -> FiWasmFunctionTable;
+
+	// dump function table to json
+	fiWasmFunctionTableToJson(functions : FiWasmFunctionTable) -> Json;
+}
+
+fiWasmEmitFunctionTable(functions: FiWasmFunctionTable) {
+    reversed : Tree<int, string> = foldTree(functions.functionIndices, makeTree(), 
+        \k, v, acc -> setTree(acc, v, k));
+    names : [string] = map(enumFromTo(0, functions.nextIndex - 1), 
+        \i -> " $" + lookupTreeDef(reversed, i, "NOT_FOUND: " + i2s(i)));
+	"(table (export \"table\") anyfunc\n \t(elem " + concatStrings(names) + ")\n)\n";
+}
+
+fiWasmAddFunctionToTable(functions : FiWasmFunctionTable, name : string) {
+	if (containsKeyTree(functions.functionIndices, name))
+		functions
+	else
+		FiWasmFunctionTable(
+			setTree(functions.functionIndices, name, functions.nextIndex), 
+			functions.nextIndex + 1
+		);
+}
+
+fiWasmBuildFunctionTable(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>])  {
+	fold(decls, FiWasmFunctionTable(makeTree(), 0), \macc, mdecl -> 
+		fold(mdecl.second, macc, \acc, decl -> {
+			switch (decl) {
+				FiFunctionDec(name, lambda, type, declStart, defiStart): 
+					// we ignore lambdas here
+					fiWasmAddFunctionToTable(acc, name);
+				FiGlobalVar(name, value, type, declStart, defiStart):
+					acc;
+				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart):
+					if (fiWasmIsHostNative(nativeName)) {
+						fiWasmAddFunctionToTable(acc, name)
+					}
+					else
+						acc;
+			}
+		}));
+}
+
+fiWasmFunctionTableToJson(functions : FiWasmFunctionTable) {
+	JsonObject(
+		convertTreeToArray(functions.functionIndices, 
+			\n, i -> Pair(i2s(i), JsonString(n)))
+	);
+}

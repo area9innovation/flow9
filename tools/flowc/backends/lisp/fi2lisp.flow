@@ -1,0 +1,63 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/lisp/fi2lisp_utils;
+import tools/flowc/backends/lisp/fi2lisp_compile;
+import tools/flowc/backends/lisp/fi2lisp_assemble;
+import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fiprogram;
+
+export {
+	fi2lisp(program : FiProgram, cfg : FcLISPConfig, callback : () -> void) -> void;
+}
+
+fi2lisp(program, cfg, callback) {
+	fcVerbose(cfg, 0, "Making Lisp '" + cfg.outputfile + "'...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	runtimeContentBefore = fiGetLispRuntimeBefore(cfg);
+	runtimeContentAfter = fiGetLispRuntimeAfter(cfg);
+	structsCode = fiCollectLispStructs(cfg, program);
+	moduleCount = i2s(length(decls));
+
+	packagePrefix = fiGetLispPackagePrefix(cfg);
+
+	fcVerbose(cfg, 0, "Generating Lisp code for declarations...");
+	modulesCode = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Lisp code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiLispCompileToplevel(cfg, program, v, fiLispIndent);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	contents =
+			Cons(list2string(modulesCode),
+				Cons("\n",
+					Cons(runtimeContentAfter,
+						Cons(fiLispIndicesSomeTypes(cfg),
+							Cons(structsCode,
+								Cons(runtimeContentBefore, 
+									Cons(packagePrefix, makeList())))))));
+
+	fiAssembleLispFile(cfg, contents);
+	
+	fcVerbose(cfg, 0, "Making Lisp '" + cfg.outputfile + "' finished.");
+
+	callback();
+}
+

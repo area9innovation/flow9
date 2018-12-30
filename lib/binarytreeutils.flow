@@ -1,0 +1,189 @@
+import maybe;
+import tuples;
+import runtime;
+import list;
+import binarytree;
+import set;
+
+export {
+	values2multimapTree : (xs : [?], getKey : (?) -> ??) -> Tree<??, Set<?>>;
+
+	// Inserts value in the domain set association of key.
+	insertMultimap : (tree : Tree<?, Set<??>>, key : ?, value : ??) -> Tree<?, Set<??>>;
+	insertMultipleMultimap : (tree : Tree<?, Set<??>>, key : ?, values : Set<??>) -> Tree<?, Set<??>>;
+
+	// Gets the domain set association of the key.
+	lookupMultimap : (tree : Tree<?, Set<??>>, key : ?) -> Set<??>;
+
+	// True if the multimap given by tree contains the given key, value
+	// association.
+	containsMultimap : (tree : Tree<?, Set<??>>, key : ?, value : ??) -> bool;
+
+	updateMultimap : (tree : Tree<?, Set<??>>, key : ?, f : (Set<??>) -> Set<??>) -> Tree<?, Set<??>>;
+
+	// Compares the domains of left and right and returns a triple of sets
+	// (common, inLeft, inRight) where common contains the common keys, inLeft
+	// contains the keys only in left, and inRight the keys only in right.
+	compareTreeDomains : (left : Tree<?, ??>, right : Tree<?, ???>) -> Triple<Set<?>, Set<?>, Set<?>>;
+
+	// Combines two dictionaries s.t. only keys present in both are kept.
+	// Values are combined using combine.
+	intersectTrees : (left : Tree<?, ??>, right : Tree<?, ???>, combine : (??, ???) -> ????) -> Tree<?, ????>;
+
+	// Folds over keys and values of t1 and t2 when the domains are the same.
+	// Returns aDiferent when the domains are diferent.
+	pointwiseTreeFold(
+		t1 : Tree<?, ??>,
+		t2 : Tree<?, ???>,
+		a0 : ????,
+		aDiferent : ????,
+		f : (a : ????, key : ?, v1 : ??, v2 : ???) -> ????
+	) -> ????;
+
+	// True if the two trees are pointwise equal according to eqFn.
+	pointwiseTreeEquals(left : Tree<?, ??>, right : Tree<?, ???>, eqFn : (??, ???) -> bool) -> bool;
+
+	pointwiseSplitAndMergeTrees : (
+		tLeft : Tree<?, ??>,
+		tRight : Tree<?, ???>,
+		merge : (key : ?, left : ??, right : ???)->????
+	) -> Triple<Tree<?, ????>, Tree<?, ??>, Tree<?, ???>>;
+
+	// Folds over the pairwise merge of two trees. onLeft and onRight are
+	// called for entries with keys exclusive to the left resp. right trees.
+	// onMerge is called for entries with shared keys. E.g. given
+	//   tLeft = {0->"a", 1->"b"}
+	//   tRight = {1->"c", 2->"d"}
+	// the result will be:
+	//   onRight(onMerge(onLeft(a0, 0, "a"), 1, "b", "c"), 2, "d")
+	pointwiseFoldMergeTree : (
+		tLeft : Tree<?, ??>,
+		tRight : Tree<?, ???>,
+		a0 : ????,
+		onLeft : (a : ????, key : ?, vLeft : ??) -> ????,
+		onRight : (a : ????, key : ?, vRight : ???) -> ????,
+		onMerge : (a : ????, key : ?, vLeft : ??, vRight : ???) -> ????
+	) -> ????;
+
+	treePushToListValue(tree : Tree<?, List<??>>, key : ?, value : ??) -> Tree<?, List<??>>;
+
+	treeRemoveFromArrayValueStable(tree : Tree<?, [??]>, key : ?, value : ??) -> Tree<?, [??]>;
+
+	mergeTrees(trees : [Tree<?, ??>]) -> Tree<?, ??>;
+}
+
+values2multimapTree(xs : [?], getKey : (?) -> ??) -> Tree<??, Set<?>> {
+	values2treeMerge(xs, getKey, makeSet(), insertSet);
+}
+
+insertMultimap(tree : Tree<?, Set<??>>, key : ?, value : ??) -> Tree<?, Set<??>> {
+	setTree(tree, key, insertSet(lookupMultimap(tree, key), value));
+}
+
+insertMultipleMultimap(tree : Tree<?, Set<??>>, key : ?, values : Set<??>) -> Tree<?, Set<??>> {
+	updateMultimap(tree, key, \values0 -> mergeSets(values0, values));
+}
+
+lookupMultimap(tree : Tree<?, Set<??>>, key : ?) -> Set<??> {
+	lookupTreeDef(tree, key, makeSet());
+}
+
+containsMultimap(tree : Tree<?, Set<??>>, key : ?, value : ??) -> bool {
+	eitherMap(lookupTree(tree, key),
+		\values->containsSet(values, value),
+		false
+	);
+}
+
+updateMultimap(tree : Tree<?, Set<??>>, key : ?, f : (Set<??>) -> Set<??>) -> Tree<?, Set<??>> {
+	set = lookupTreeDef(tree, key, makeSet());
+	setTree(tree, key, f(set));
+};
+
+compareTreeDomains(left : Tree<?, ??>, right : Tree<?, ???>) -> Triple<Set<?>, Set<?>, Set<?>> {
+	pointwiseFoldMergeTree(left, right, Triple(makeSet(), makeSet(), makeSet()),
+		\triple, key, vLeft->Triple(triple.first, insertSet(triple.second, key), triple.third),
+		\triple, key, vRight->Triple(triple.first, triple.second, insertSet(triple.third, key)),
+		\triple, key, vLeft, vRight->Triple(insertSet(triple.first, key), triple.second, triple.third)
+	);
+}
+
+intersectTrees(left : Tree<?, ??>, right : Tree<?, ???>, combine : (??, ???) -> ????) -> Tree<?, ????> {
+	pointwiseFoldMergeTree(left, right, makeTree(),
+		\t, __, __->t,
+		\t, __, __->t,
+		\t, key, vLeft, vRight->setTree(t, key, combine(vLeft, vRight))
+	);
+}
+
+pointwiseTreeFold(t1 : Tree<?, ??>, t2 : Tree<?, ???>, a0 : ????, aDiferent : ????, f : (a : ????, key : ?, v1 : ??, v2 : ???) -> ????) -> ???? {
+	triple = compareTreeDomains(t1, t2);
+	if (isEmptySet(triple.second) && isEmptySet(triple.third))
+		fold(set2array(triple.first), a0, \a, key->
+			eitherFn(
+				maybeBind(
+					lookupTree(t1, key), \v1->maybeBind(
+					lookupTree(t2, key), \v2->Some(
+					f(a, key, v1, v2)
+				))),
+				\a1->a1,
+				\->fail0("Surprisingly the domains are not equal")
+			)
+		)
+	else aDiferent;
+}
+
+pointwiseTreeEquals(left : Tree<?, ??>, right : Tree<?, ???>, eqFn : (??, ???) -> bool) -> bool {
+	pointwiseTreeFold(left, right, true, false, \a, k, v1, v2 -> a && eqFn(v1, v2));
+}
+
+pointwiseSplitAndMergeTrees(tLeft : Tree<?, ??>, tRight : Tree<?, ???>, mergefn : (key : ?, left : ??, right : ???) -> ????) -> Triple<Tree<?, ????>, Tree<?, ??>, Tree<?, ???>> {
+	pointwiseFoldMergeTree(tLeft, tRight, Triple(makeTree(), makeTree(), makeTree()),
+		\triple, key, left->Triple(triple.first, setTree(triple.second, key, left), triple.third),
+		\triple, key, right->Triple(triple.first, triple.second, setTree(triple.third, key, right)),
+		\triple, key, left, right->Triple(setTree(triple.first, key, mergefn(key, left, right)), triple.second, triple.third)
+	);
+}
+
+pointwiseFoldMergeTree(
+	tLeft : Tree<?, ??>,
+	tRight : Tree<?, ???>,
+	a0 : ????,
+	onLeft : (a : ????, key : ?, vLeft : ??) -> ????,
+	onRight : (a : ????, key : ?, vRight : ???) -> ????,
+	onMerge : (a : ????, key : ?, vLeft : ??, vRight : ???) -> ????
+) -> ???? {
+	pair = foldTree(tLeft, Pair(makeSet(), a0), \key, vLeft, pair : Pair<Set<?>, ????> ->
+		eitherFn(lookupTree(tRight, key),
+			\vRight->Pair(
+				insertSet(pair.first, key),
+				onMerge(pair.second, key, vLeft, vRight)
+			),
+			\->Pair(
+				pair.first,
+				onLeft(pair.second, key, vLeft)
+			)
+		)
+	);
+	foldTree(tRight, pair.second, \key, vRight, a->
+		if (containsSet(pair.first, key)) a
+		else onRight(a, key, vRight)
+	);
+};
+
+treePushToListValue(tree : Tree<?, List<??>>, key : ?, value : ??) -> Tree<?, List<??>> {
+	c = lookupTreeDef(tree, key, EmptyList());
+	setTree(tree, key, Cons(value, c))
+}
+
+treeRemoveFromArrayValueStable(tree : Tree<?, [??]>, key : ?, value : ??) -> Tree<?, [??]> {
+	c = lookupTree(tree, key);
+	switch (c : Maybe) {
+		None(): tree;
+		Some(v): setTree(tree, key, removeFirst(v, value));
+	}
+}
+
+mergeTrees(trees : [Tree<?, ??>]) -> Tree<?, ??> {
+	fold(trees, makeTree(), mergeTree)
+}

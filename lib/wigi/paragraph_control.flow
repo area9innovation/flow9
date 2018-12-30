@@ -1,0 +1,696 @@
+import wigi/editor_types;
+import wigi/controller;
+import formmetrics;
+import wigi/fontsize;
+import wigi/escaping;
+
+export {
+	// Tracking structure for whether a position is inside this paragraph, and if so, find the coordinate and height.
+	// This is the "output" of the position monitors.
+	PositionInside: (
+		// Where is the position?
+		x : DynamicBehaviour<double>,
+		y : DynamicBehaviour<double>,
+		// How high is the structure?
+		height : DynamicBehaviour<double>,
+		// How high is the line at this point? (Can be higher than the structure itself)
+		lineHeight : DynamicBehaviour<double>,
+		// Is the path inside recursively?
+		inside : DynamicBehaviour<int>,
+		// Is the path directly inside?
+		directlyInside : DynamicBehaviour<int>
+	);
+
+	dummyInspect : InspectElement;
+
+	// This function monitors a path into text elements, and if we are directly inside that, then the PositionInside object is kept up to date
+	// of where it is, including the height.
+	positionMonitor(getElementPath : () -> [int], words : List<WrapElement>, path : Behaviour<[int]>, position : PositionInside, topBorder : double) -> () -> void;
+
+	// Monitors a path into a non-text element and if we directly inside that, then the PositionInside object is kept up to date
+	positionViewMonitor(getElementPath : () -> [int], inspectElement : InspectElement,
+			path : Behaviour<[int]>, position : PositionInside, selectionStart : bool, topBorder : double) -> () -> void;
+
+	// Event dispatcher for paragraph level events
+	handleParagraphEvent(state : WigiEditorState, parentView : ParentView, cursorInside : PositionInside, wh : Behaviour<WidthHeight>, setCursorFn : (Point, bool, bool, bool) -> bool, e : WigiEvent) -> bool;
+
+	getListInfo(state : WigiEditorState, paragraph : WigiParagraph, path : [int], parentStyle: [WigiParagraphStyle]) -> Maybe<ListedParagraphInfo>;
+	isNumbered(fullStyle : [WigiParagraphStyle]) -> bool;
+	getNumberedParagraphStyles(state : WigiEditorState) -> [Listed];
+
+	changeListedParagraph(state : WigiEditorState, listIndex : ListIndexType) -> void;
+
+	changeInterlineSpacing(styles : [WigiParagraphStyle], shift : double) -> [WigiParagraphStyle];
+	setInterlineSpacing(styles : [WigiParagraphStyle], spacing : double) -> [WigiParagraphStyle];
+	changeNumberedTypeParagraphStyle(state : WigiEditorState, maybeType : Maybe<NumberType>) -> void;
+	changeNumberedIntParagraphStyle(state : WigiEditorState, newNum: int) -> void;
+
+	moveCursorToEndOfLine(state: WigiEditorState, wh: Behaviour<WidthHeight>, cursorInside: PositionInside, selecting: bool) -> void;
+	moveCursorToStartOfLine(state: WigiEditorState, cursorInside: PositionInside, selecting: bool) -> void;
+
+	getCurrentWigiParagraph(state : WigiEditorState) -> Maybe<WigiParagraph>;
+}
+
+dummyInspect = InspectElement(0, make(0.0), make(0.0), makeWH(), make(0.0), Text("",[]));
+
+
+positionMonitor(getElementPath : () -> [int], words : List<WrapElement>, path : Behaviour<[int]>, position : PositionInside, topBorder : double) -> () -> void {
+	unconnect = ref nop;
+
+	uns = subscribe(path, \cursor -> {
+		currentPath = getElementPath();
+		parent = isPositionParentGeneral(currentPath, cursor);
+		if (parent) {
+			next(position.inside, 1);
+			next(position.directlyInside, b2i(isPositionParent(currentPath, cursor)));
+
+			// The cursor is here: Find the corresponding inspect element
+			index = lastElement(cursor, 0);
+
+			inspectElement = foldList(reverseList(words), dummyInspect, \acc : InspectElement, ie -> {
+				switch (ie) {
+					InspectElement(in, xc, yc, wh, lh, f): {
+						if (in <= index) ie else acc;
+					}
+					NewLine(): {
+						acc;
+					}
+					default: {
+						// Not really supposed to happen
+						println("Missing inspections!");
+						acc
+					}
+				}
+			});
+			if (inspectElement != dummyInspect) {
+				dx = findWigiTextXOffset(inspectElement, index - inspectElement.index);
+
+				// println("Looking for " + i2s(index) + ", found " + i2s(inspectElement.index) + " with delta " + i2s(index - inspectElement.index) + ": " + d2s(dx) + " " + toString(inspectElement));
+
+				// Now, we set up live monitoring of the placement of this element
+				(^unconnect)();
+				uns1 = subscribe(inspectElement.x, \xc -> next(position.x, xc + dx));
+				uns2 = connectSelectDistinctu(inspectElement.y, position.y, \yc -> yc + topBorder);
+				uns3 = subscribe(inspectElement.size, \wh -> next(position.height, wh.height));
+				uns4 = connect(inspectElement.lineHeight, position.lineHeight);
+				unconnect := \ -> { uns1(); uns2(); uns3(); uns4(); };
+			}
+		} else {
+			(^unconnect)();
+			unconnect := nop;
+		}
+	});
+
+	\ -> { (^unconnect)(); unconnect := nop; uns(); }
+}
+
+
+positionViewMonitor(getElementPath : () -> [int], inspectElement : InspectElement,
+			path : Behaviour<[int]>, position : PositionInside, selectionStart : bool, topBorder : double) -> () -> void {
+	unconnect = ref nop;
+
+	uns = subscribe(path, \cursor -> {
+		currentPath = getElementPath();
+		parent = isPositionParentGeneral(currentPath, cursor);
+		if (parent) {
+			next(position.inside, 1);
+			next(position.directlyInside, b2i(isPositionParent(currentPath, cursor)));
+
+			// Now, we set up live monitoring of the placement of this element
+			uns1 = {
+				if (!selectionStart && (!isPositionParent(currentPath, cursor) || lastElement(cursor, 0) == 0)) {
+					connect(inspectElement.x, position.x);
+				} else {
+					connectSelect2u(inspectElement.x, inspectElement.size, position.x, \xc, wh -> xc + wh.width);
+				}
+			}
+			uns2 = connectSelectDistinctu(inspectElement.y, position.y, \yc -> yc + topBorder);
+			uns3 = subscribe(inspectElement.size, \wh -> nextDistinct(position.height, wh.height));
+			uns4 = connect(inspectElement.lineHeight, position.lineHeight);
+
+			(^unconnect)();
+			unconnect := \ -> { uns1(); uns2(); uns3(); uns4(); };
+		} else {
+			(^unconnect)();
+			unconnect := nop;
+		}
+	});
+
+	\ -> { (^unconnect)(); unconnect := nop; uns(); }
+}
+
+
+findWigiTextXOffset(i : InspectElement, index : int) -> double {
+	switch (i.element : InspectableElement) {
+		Text(txt, style):  {
+			// in JS we use both DFonts (Roboto, ...) PixiFonts (all other include WebFonts, online fonts, etc).
+			// DFont reports width of text "" as 0.0 but PixiFont reports some positive number, i.e 18.
+			// it lead to misplaced cursor in the paragraphs, see https://trello.com/c/qQfYttiF/3120-wrong-cursor-positioning
+			// anyway, expected width of '' is 0, so we just wont ask if the text is ''
+			leftString = strLeft(txt, index);
+			if (leftString == "") 0.0 else getStaticFormSize(Text(escapeXmlChars(leftString), style)).width;
+		}
+		Space(f): {
+			if (index == 0) 0.0
+			else getStaticFormSize(f).width;
+		}
+		default: {
+			f = cast(i.element : InspectableElement -> Form);
+			if (index == 0) 0.0
+			else getStaticFormSize(f).width;
+		}
+	}
+}
+
+doExtraCursorRightShift(state : WigiEditorState, selecting : bool, shiftFn : (selecting : bool) -> void) -> void {
+	root = getValue(state.document);
+	path = getValue(state.cursor);
+
+	if (path != []) {
+		parentPath = wigiParentPath(path);
+
+		if (path == concat(parentPath, getEndPositionOfDocument(getElementAtPosition(root, parentPath), false))) {
+			nextPos = doPositionDelta(root, path, 1);
+			if (nextPos != path) {
+				nextElement = getElementAtPosition(root, nextPos);
+
+				if (findParentParagraph(root, path) == findParentParagraph(root, nextPos) &&
+					(isWigiText(nextElement) || isWigiText(getElementAtPosition(root, path)))) {
+
+					shiftFn(selecting);
+					if (isWigiEmptyText(nextElement)) doExtraCursorRightShift(state, selecting, shiftFn);
+				}
+			}
+		}
+	}
+}
+
+doExtraCursorLeftShift(state : WigiEditorState, selecting : bool, shiftFn : (selecting : bool) -> void) -> void {
+	root = getValue(state.document);
+	path = getValue(state.cursor);
+
+	if (path != []) {
+		parentPath = wigiParentPath(path);
+
+		if (path == concat(parentPath, getStartPositionOfDocument(getElementAtPosition(root, parentPath)))) {
+			prevPos = doPositionDelta(root, path, -1);
+			if (prevPos != path) {
+				prevElement = getElementAtPosition(root, prevPos);
+
+				if (findParentParagraph(root, parentPath) == findParentParagraph(root, wigiParentPath(prevPos)) &&
+					(isWigiText(getElementAtPosition(root, path)) || isWigiText(prevElement))) {
+
+					shiftFn(selecting);
+					if (isWigiEmptyText(prevElement)) doExtraCursorLeftShift(state, selecting, shiftFn);
+				}
+			}
+		}
+	}
+}
+
+handleParagraphEvent(state : WigiEditorState, parentView : ParentView, cursorInside : PositionInside, wh : Behaviour<WidthHeight>, setCursorFn : (Point, bool, bool, bool) -> bool, e : WigiEvent) -> bool {
+	getCursorX = \ -> {
+		v = getValue(state.cursorWantThisX);
+		if (v != -1.0) {
+			// Convert to local coordinates:
+			offset = parentView.local2globalCoordinate(Point(0.0, 0.0));
+			// println("Local want: " + d2s(v - offset.x));
+			v - offset.x;
+		} else getValue(cursorInside.x);
+	}
+
+	isSpreadsheetCell = \path -> isWigiRecursive(path, [WigiSpreadsheetCell(makeWH(), make(false), [])]);
+
+	skipPageBreakIfOnIt = \delta : int, selecting -> {
+		document = getValue(state.document);
+		cursor = getValue(state.cursor);
+		if (isWigiPageBreak(getElementAtPosition(document, cursor))) {
+			nextParagraphPath = doPositionDelta(
+				document,
+				wigiParentPath(cursor),
+				delta
+			);
+
+			newPath = concat(
+				nextParagraphPath,
+				[0, 0]
+			);
+
+			wigiSetCursor(state, newPath, selecting);
+			if (delta < 0){
+				moveCursorToEndOfLine(state, wh, cursorInside, selecting)
+			}
+		}
+	}
+
+	if (getValue(cursorInside.inside) == 1) {
+
+		doLeftShift = \selecting : bool -> {
+			document = getValue(state.document);
+			cursor = getValue(state.cursor);
+			cell = getElementAtPosition(document, wigiFindParentRecursive(document, [], cursor));
+			newPosition = doPositionDelta(document, cursor, -1);
+			newCell = getElementAtPosition(document, wigiFindParentRecursive(document, [], newPosition));
+			if (!((isSpreadsheetCell(cell) || isSpreadsheetCell(newCell)) && cell != newCell && !selecting)) {
+				next(state.cursorWantThisX, -1.0);
+				wigiSetCursor(state, newPosition, selecting);
+			}
+			skipPageBreakIfOnIt(-1, selecting);
+		}
+
+		doRightShift = \selecting : bool -> {
+			document = getValue(state.document);
+			cursor = getValue(state.cursor);
+			cell = getElementAtPosition(document, wigiFindParentRecursive(document, [], cursor));
+			newPosition = doPositionDelta(document, cursor, 1);
+			newCell = getElementAtPosition(document, wigiFindParentRecursive(document, [], newPosition));
+			if (!((isSpreadsheetCell(cell) || isSpreadsheetCell(newCell)) && cell != newCell && !selecting)) {
+				next(state.cursorWantThisX, -1.0);
+				wigiSetCursor(state, newPosition, selecting);
+			}
+			skipPageBreakIfOnIt(1, selecting);
+		}
+
+		switch (e : WigiEvent) {
+			WigiNone(): true;
+			WigiCursorLeft(selecting): {
+				doExtraCursorLeftShift(state, selecting, doLeftShift);
+				doLeftShift(selecting);
+				doExtraCursorLeftShift(state, selecting, doLeftShift);
+				true;
+			}
+			WigiCursorRight(selecting): {
+				doExtraCursorRightShift(state, selecting, doRightShift);
+				doRightShift(selecting);
+				true;
+			}
+			WigiCursorUp(selecting): {
+				y = getValue(cursorInside.y);
+				h = getValue(cursorInside.height);
+				l = getValue(cursorInside.lineHeight);
+				spacing = getValue(state.interlineSpacing);
+				offset = 6.0; //offset to make sure we will get to previous line
+				p = 					
+					if (isUrlParameterTrue("oldarrowup")) Point(getCursorX(), y - l / 2.0)
+					else Point(getCursorX(), y - l + h - spacing - offset);
+				// Clear the event to mark we handled it
+				//next(state.event, WigiNone());
+				result = setCursorFn(p, true, selecting, false);
+				skipPageBreakIfOnIt(-1, selecting);
+				result;
+
+			}
+			WigiCursorDown(selecting): {
+				y = getValue(cursorInside.y);
+				h = getValue(cursorInside.height);
+				spacing = getValue(state.interlineSpacing);
+				l = getValue(cursorInside.lineHeight);
+				offset = 6.0; //offset to make sure we will get to next line
+				// We move one pixel and overshoot a bit more
+				p = 
+					if (isUrlParameterTrue("oldarrowup")) Point(getCursorX(), y + l + getValue(state.interlineSpacing) + 1.0)
+					else Point(getCursorX(), y + h + spacing + offset);
+				// Clear the event to mark we handled it
+				//next(state.event, WigiNone());
+				result = setCursorFn(p, true, selecting, false);
+				skipPageBreakIfOnIt(1, selecting);
+				result
+			}
+			WigiPageUp(selecting): {
+				// This should attempt to preserve the screen coordinate of the cursor
+				cp = getValue(state.cursor);
+				y = getValue(cursorInside.y);
+				h = getValue(state.viewSize).height;
+				next(state.viewY, getValue(state.viewY) - h);
+				p = Point(getCursorX(), y - h);
+				// Clear the event to mark we handled it
+				//next(state.event, WigiNone());
+				setCursorFn(p, true, selecting, false);
+				if (getValue(state.cursor) == cp) {
+					// We did not move. Let's go to the start of the document instead
+					wigiSetCursor(state, getStartPositionOfDocument(getValue(state.document)), selecting);
+				}
+				true;
+			}
+			WigiPageDown(selecting): {
+				// This should attempt to preserve the screen coordinate of the cursor
+				cp = getValue(state.cursor);
+				y = getValue(cursorInside.y);
+				h = getValue(state.viewSize).height;
+				next(state.viewY, getValue(state.viewY) + h);
+				p = Point(getCursorX(), y + h);
+
+				// Clear the event to mark we handled it
+				// next(state.event, WigiNone());
+				setCursorFn(p, true, selecting, false);
+				if (getValue(state.cursor) == cp) {
+					// We did not move. Let's go to the end of the document instead
+					wigiSetCursor(state, getEndPositionOfDocument(getValue(state.document), true), selecting);
+				}
+				true;
+			}
+			WigiHome(selecting): {
+				executeWigiEditorChange(state, \ -> moveCursorToStartOfLine(state, cursorInside, selecting), nop, false);
+				true;
+			}
+			WigiEnd(selecting): {
+				executeWigiEditorChange(state, \ -> moveCursorToEndOfLine(state, wh, cursorInside, selecting), nop, false);
+				true;
+			}
+			WigiSpace(): false;
+			WigiInsertText(__): false;
+			WigiInsertElement(__): false;
+			WigiSelectAll(): false;
+			WigiSelectWord(): false;
+			WigiSelectSentence(): false;
+			WigiCut(): false;
+			WigiPaste(): false;
+			WigiCopy(__): false;
+			WigiCopySpecial(__): false;
+			WigiDelete(): {
+				if (isEmptySelection(getValue(state.selection))) doExtraCursorRightShift(state, false, doRightShift);
+				false;
+			}
+			WigiDeleteElement(__): false;
+			WigiBackspace(): {
+				if (isEmptySelection(getValue(state.selection))) doExtraCursorLeftShift(state, false, doLeftShift);
+				false;
+			}
+			WigiEnter(__): false;
+			WigiSetColor(__): false;
+			WigiSetBackgroundColor(__): false;
+			WigiSetFontSize(__): false;
+			WigiModifyFontSize(__, __): false;
+			WigiSetFontFamily(__): false;
+			WigiSetLetterSpacing(__) : false;
+			WigiSwitchFontFamily(__, __): false;
+			WigiSetUnderline(__): false;
+			WigiSetDoubleUnderline(__): false;
+			WigiClearTextFormatting(): false;
+			WigiSetBaselineShift(__): false;
+			WigiSetName(__): false;
+			WigiSetLanguage(__): false;
+			WigiSetTableHighlight(__, __): false;
+			WigiSetShowGrid(__): false;
+			WigiSetDontFitToAvailableWidth(__): false;
+			WigiSetSameRowHeight(__): false;
+			WigiSetShowHeaders(__): false;
+			WigiSetShowFormulaBar(__): false;
+			WigiSetTableBorder(__): false;
+			WigiSetTableSize(__, __): false;
+			WigiSetCellsTightWidth(__): false;
+			WigiSetVisibleFormula(__): false;
+			WigiSetAnnotation(__): false;
+			WigiSetParagraphStyle(__, __): false;
+			WigiModifyParagraphStyle(__): false;
+			WigiReplaceParagraphStyle(__): false;
+			WigiClearParagraphFormatting(): false;
+			WigiSetStoryStyle(__, __): false;
+			WigiModifyStoryStyle(__): false;
+			WigiUndo(): false;
+			WigiRedo(): false;
+			WigiLeftWord(selecting):{
+				wigiMoveCursorByWord(state, false, selecting, true);
+				skipPageBreakIfOnIt(-1, selecting);
+				true;
+			}
+			WigiRightWord(selecting):{
+				wigiMoveCursorByWord(state, true, selecting, false);
+				skipPageBreakIfOnIt(1, selecting);
+				true;
+			}
+			WigiUpWord(__): false;
+			WigiDownWord(__): false;
+			WigiDeleteWord(): false;
+			WigiBackspaceWord(): false;
+			WigiTab(__): false;
+			WigiInsertFormula(__): false;
+			WigiZoomIn(): false;
+			WigiZoomOut(): false;
+			WigiResetZoom(): false;
+			WigiSetCellCursor(): false;
+			WigiSetCursor(__, __): false;
+			WigiChangeBlock(__): false;
+			WigiChangeRecursive(__): false;
+
+			WigiInsertColumn(__, __): false;
+			WigiDeleteColumn(): false;
+			WigiInsertRow(__, __): false;
+			WigiDeleteRow(): false;
+			WigiMergeCellsRight(): false;
+			WigiMergeCellsDown(): false;
+			WigiSplitCellsHorizontal(): false;
+			WigiSplitCellsVertical(): false;
+			WigiSetColumnWidth(__): false;
+			WigiSetRowHeight(__): false;
+			WigiSetTableCellStyle(__): false;
+			WigiApplyTableCellTemplate(__): false;
+			WigiDeleteTable(): false;
+			WigiSetColumnsRigid(__) : false;
+
+			WigiInsertPageBreak(): false;
+			WigiInsertNaturalMath(): false;
+			WigiInsertNativeWiki(__): false;
+			WigiInsertHTML(__): false;
+			WigiSetLock(__): false;
+			WigiRenameRadioGroup(__): false;
+			WigiDeleteRadioGroup(): false;
+			WigiChangeRadioOptionValue(__): false;
+			WigiDeleteRadioOption(): false;
+			WigiSetRadioGroupLayout(__): false;
+			WigiSetRadioGroupWidth(__): false;
+			WigiSwapParagraph(__): false;
+			WigiCleanUpParagrapshIndents(__): false;
+		}
+	} else false
+}
+
+moveCursorToEndOfLine(state: WigiEditorState, wh: Behaviour<WidthHeight>, cursorInside: PositionInside, selecting: bool) {
+	currentX = getValue(cursorInside.x);
+	currentY = getValue(cursorInside.y);
+	// currentDI = getValue(cursorInside.directlyInside);
+
+	currentCursor = getValue(state.cursor);
+	parentParagraph = findParentParagraph(getValue(state.document), currentCursor);
+
+	if (currentX <= getValue(wh).width) {
+		wigiMoveCursor(state, 1, selecting);
+		// wigiMoveCursorByWord(state, true, selecting, false);
+
+		if (getValue(cursorInside.y) >= currentY + getValue(cursorInside.lineHeight) || getValue(cursorInside.x) < currentX || !isPositionParentGeneral(parentParagraph, getValue(state.cursor))) {
+			// This is next line already, go back
+			// wigiMoveCursorByWord(state, false, selecting, false)
+			wigiMoveCursor(state, -1, selecting);
+		}
+		else if (getValue(state.cursor) != currentCursor) {
+			// Try to go more to the end of the line
+			moveCursorToEndOfLine(state, wh, cursorInside, selecting);
+		} else {
+			// println("moveCursorToEndOfLine ended because cursor didn't change");
+		}
+	} else {
+		// println("moveCursorToEndOfLine ended because currentX is too big");
+	}
+}
+
+moveCursorToStartOfLine(state: WigiEditorState, cursorInside: PositionInside, selecting: bool) {
+	currentX = getValue(cursorInside.x);
+	currentY = getValue(cursorInside.y);
+
+	currentCursor = getValue(state.cursor);
+	parentParagraph = findParentParagraph(getValue(state.document), currentCursor);
+
+	if (currentX > 0.) {
+		wigiMoveCursor(state, -1, selecting);
+		newX = getValue(cursorInside.x);
+		newY = getValue(cursorInside.y);
+
+		if (newY < currentY - getValue(cursorInside.lineHeight) / 2.0 ||
+			newX > currentX ||
+			!isPositionParentGeneral(parentParagraph, getValue(state.cursor))) {
+			// This is previous line already, go back
+			wigiMoveCursor(state, 1, selecting);
+		}
+		else if (getValue(state.cursor) != currentCursor) {
+			// Try to go more to the end of the line
+			moveCursorToStartOfLine(state, cursorInside, selecting);
+		} else {
+			// println("moveCursorToStartOfLine ended because cursor didn't change");
+		}
+	} else {
+		// println("moveCursorToStartOfLine ended because currentX is too small");
+	}
+}
+
+isNumbered(fullStyle : [WigiParagraphStyle]) -> bool {
+	listed : Listed = extractStruct(fullStyle, dummyListed);
+	listed != dummyListed && isSameStructType(listed.type, Numbered(-1, SimpleNumber()));
+}
+
+getListInfo(state : WigiEditorState, paragraph : WigiParagraph, path : [int], parentStyle: [WigiParagraphStyle]) -> Maybe<ListedParagraphInfo> {
+	paraStyle = concatWigiParagraphStyles(parentStyle, paragraph.style);
+	listed : Listed = extractStruct(paraStyle, dummyListed);
+	if (listed == dummyListed){
+		None();
+	} else {
+		fs = getWigiParagraphFontSize(state, path);
+		color = either(getWigiElementFontColor(paragraph), getDefaultDocumentFontColor(state.defaultStyles));
+		defSize = getDefaultDocumentFontSize(state.defaultStyles);
+		switch (listed.type){
+			Bulleted(__): {
+				Some(ListedParagraphInfo(0, fs, defSize, color));
+			}
+			Numbered(number, type):{
+				realNumber = if (number != -1){
+					number;
+				} else {
+					//number inherited from the previous sibling-paragraph
+					parentPath = wigiParentPath(path);
+					root = getValue(state.document);
+					parent = getElementAtPosition(root, parentPath);
+					siblings = getWigiElementChildren(parent, false);
+					if (path == []) -1
+					else getListNumber(parentStyle, siblings, path[length(path) - 1], 1);
+				}
+				if (realNumber == -1) None()
+				else Some(ListedParagraphInfo(realNumber, fs, defSize, color));
+			}
+		}
+	}
+}
+
+getListNumber(parentStyle: [WigiParagraphStyle], siblings : [WigiElement], index : int, acc : int) -> int {
+	if (index == 0){
+		acc
+	} else {
+		el = siblings[index - 1];
+		switch(el){
+			WigiParagraph(__, style): {
+				fullStyle = concatWigiParagraphStyles(parentStyle, style);
+				listed : Listed = extractStruct(fullStyle, dummyListed);
+				if (listed == dummyListed){
+					acc
+				} else {
+					switch(listed.type){
+						Bulleted(__): acc;
+						Numbered(number, type):{
+							if (number != -1){
+								acc + number;
+							} else {
+								getListNumber(parentStyle, siblings, index - 1, acc + 1);
+							}
+						}
+					}
+				}
+			}
+			default: acc;
+		}
+	}
+}
+
+changeListedParagraph(state : WigiEditorState, listIndex : ListIndexType) -> void {
+	root = getValue(state.document);
+	path = getValue(state.cursor);
+	maybeParagraph = maybeGetParentWigiParagraph(root, path);
+	switch(maybeParagraph){
+		None(): {};
+		Some(pair):{
+			paragraph = pair.first;
+			parPath = pair.second;
+			fullParaStyle = getWigiParagraphStyleFull(state.defaultStyles, root, path, paragraph.style);
+			size = getWigiParagraphFontSize(state, parPath);
+			newListed = [Listed(listIndex, [])];
+			listed : Listed = extractStruct(fullParaStyle, dummyListed);
+			fli : FirstLineIndent = extractStruct(fullParaStyle, FirstLineIndent(0.0));
+			stylesToRemove = if (listed == dummyListed) [fli] else [listed];
+			stylesToAdd = if (listed == dummyListed || (listed != dummyListed && !isSameStructType(listed.type, listIndex))){
+					newListed;
+				} else [];
+			wigiSendEvent(state, WigiSetParagraphStyle(stylesToRemove, stylesToAdd));
+			next(state.document, getValue(state.document));
+		}
+	}
+}
+
+getCurrentWigiParagraph(state : WigiEditorState) -> Maybe<WigiParagraph> {
+	maybeMap(
+		maybeGetParentWigiParagraph(getValue(state.document), getValue(state.cursor)),
+		firstOfPair
+	)
+}
+
+changeInterlineSpacing(styles : [WigiParagraphStyle], delta : double) -> [WigiParagraphStyle] {
+	oldSpacing = extractStruct(styles, InterlineSpacing(0.0)).d;
+	replaceStruct(styles, InterlineSpacing(oldSpacing + delta));
+}
+
+setInterlineSpacing(styles : [WigiParagraphStyle], spacing : double) -> [WigiParagraphStyle] {
+	replaceStruct(styles, InterlineSpacing(spacing));
+}
+
+// if maybeType is None, next NumberType will be applied to paragraph
+changeNumberedTypeParagraphStyle(state : WigiEditorState, maybeType : Maybe<NumberType>) -> void {
+	types = [SimpleNumber(), DottedNumber(), PrettyNumber()];
+
+	removeDummy = \styles -> fold(styles, [], \acc, s -> if (s == dummyListed) acc else arrayPush(acc, s));
+	styleToRemove = getNumberedParagraphStyles(state) |> removeDummy;
+	if (styleToRemove != []){
+		listed = styleToRemove[0];
+		switch(listed.type){
+			Bulleted(__): {};
+			Numbered(num, type):{
+				newType = either(maybeType, types[(either(findi(types, eq(type)), -1) + 1) % 3]);
+				wigiSendEvent(state, WigiSetParagraphStyle(styleToRemove, [Listed(Numbered(num, newType), listed.style)]));
+				{}
+			}
+		}
+	}
+}
+
+changeNumberedIntParagraphStyle(state : WigiEditorState, newNum: int) -> void {
+	removeDummy = \styles -> fold(styles, [], \acc, s -> if (s == dummyListed) acc else arrayPush(acc, s));
+	styleToRemove = getNumberedParagraphStyles(state) |> removeDummy;
+	if (styleToRemove != []){
+		listed = styleToRemove[0];
+		switch(listed.type){
+			Bulleted(__): {};
+			Numbered(num, type):{
+				wigiSendEvent(state, WigiSetParagraphStyle(styleToRemove, [Listed(Numbered(newNum, type), listed.style)]));
+				{}
+			}
+		}
+	}
+}
+
+getNumberedParagraphStyles(state : WigiEditorState) -> [Listed] {
+	doc = getValue(state.document);
+	selection = getValue(state.selection);
+	curParaPath = ref [];
+	getNumberedStyles = \elementPath ->
+		switch (maybeGetParentWigiParagraph(doc, elementPath)){
+			Some(pair): {
+				unpair(pair, \paragraph, path -> {
+					if (^curParaPath != path){
+						curParaPath := path;
+						fullStyle = getWigiParagraphStyleFull(state.defaultStyles, doc, path, paragraph.style);
+						listed : Listed = extractStruct(fullStyle, dummyListed);
+						if (listed != dummyListed){
+							switch(listed.type){
+								Bulleted(__): [dummyListed];
+								Numbered(num, type): [listed];
+							}
+						} else [dummyListed];
+					} else [];
+				});
+			}
+			None(): [];
+		}
+
+	if (isEmptySelection(selection)){
+		getNumberedStyles(getValue(state.cursor));
+	} else {
+		concatA(mapWigiStylesFromRange(state.defaultStyles, doc, selection.start, selection.end,
+			\e, path, style -> getNumberedStyles(path)));
+	}
+}
+

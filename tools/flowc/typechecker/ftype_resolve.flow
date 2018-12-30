@@ -1,0 +1,362 @@
+import tools/flowc/typechecker/ftype_bound;
+
+export {
+	// heuristic defines what goes on:
+	// 0: Unify bounds, should be exact
+	// 1: Resolve ..u to u, 1..u
+	// 2: Resolve l.. to l
+	mergeFRange(env : FEnv, type : FType,
+		heuristic : int,
+		funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType,
+		onError : (string) -> void
+	) -> FEnvType;
+
+	resolveFType(env : FEnv, type : FType, 
+		funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType,
+		onError : (string) -> void
+	) -> FEnvType;
+}
+
+mergeFRange(env : FEnv, type : FType, 
+		heuristic : int,
+		funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType,
+		onError : (string) -> void
+	) -> FEnvType {
+
+	// OK, we have the types.
+	switch (type) {
+		FFields(fields, seen, excluded): {
+			fet = fold(fields, Pair(env, []), \acc, f -> {
+				ft = mergeFRange(acc.first, f.type, heuristic, funify, onError);
+				field = FField(f.name, ft.type, f.access);
+				Pair(ft.env, arrayPush(acc.second, field));
+			});
+			// OK, attempt to convert to a bound with an unnamed union
+			restrictFFields(fet.first, FFields(fet.second, seen, excluded), heuristic >= 1, funify, onError);
+		}
+		FUnnamedUnion(types): {
+			fet = mergeFRanges(env, types, heuristic, funify, onError);
+			FEnvType(fet.env, makeFUnnamedUnion(fet.types));
+		}
+		FUnion(name, typars): {
+			fet = mergeFRanges(env, typars, heuristic, funify, onError);
+			FEnvType(fet.env, FUnion(name, fet.types));
+		}
+		FStruct(name, typars): {
+			fet = mergeFRanges(env, typars, heuristic, funify, onError);
+			FEnvType(fet.env, FStruct(name, fet.types));
+		}
+		FFunction(args, rt): {
+			aet = mergeFRanges(env, args, heuristic, funify, onError);
+			ret = mergeFRange(aet.env, rt, heuristic, funify, onError);
+			FEnvType(ret.env, FFunction(aet.types, ret.type));
+		}
+		FArray(at): {
+			aet = mergeFRange(env, at, heuristic, funify, onError);
+			FEnvType(aet.env, FArray(aet.type));
+		}
+		FRef(rt, wt): {
+			ret1 = mergeFRange(env, rt, heuristic, funify, onError);
+			ret2 = mergeFRange(ret1.env, wt, heuristic, funify, onError);
+			FEnvType(ret2.env, FRef(ret1.type, ret2.type));
+		}
+		FBounded(lower, upper): {
+			lm = mergeFRange(env, lower, heuristic, funify, onError);
+			um = mergeFRange(lm.env, upper, heuristic, funify, onError);
+
+			if (heuristic == 0) {
+				// When exact, we just unify
+				et = funify(um.env, lm.type, um.type, FUnifyLeft(), onError);
+				FEnvType(et.env, FBounded(lm.type, um.type));
+			} else if (heuristic >= 1 && lm.type == FTopBottom()) {
+				um;
+			} else if (heuristic >= 0 && um.type == FTopBottom()) {
+				// l .. *
+				// If l is a struct without typars, we can in fact resolve it to an upper bound of the unions it is part of
+				switch (lm.type) {
+					FStruct(lstruct, typars): {
+						unions = getTreeArrayValue(env.env.program.acc.names.struct2unions, lstruct);
+						if (typars == [] && length(unions) <= 1) {
+							if (unions == []) {
+								// It can not become bigger, so just lift it
+								FEnvType(um.env, lm.type);
+							} else {
+								if (true) {
+									// To be conservative, we do not introduce new unions into the mix which can confuse.
+									// Check out test 88.
+									FEnvType(um.env, FBounded(lm.type, um.type));
+								} else {
+									// OK, we have a unique union which can serve as an upper bound
+									// Construct this union, inheriting our type pars
+									uniondef = lookupTree(env.env.program.acc.names.unions, unions[0]);
+									switch (uniondef) {
+										None(): FEnvType(um.env, lm.type);
+										Some(ud): {
+											unt : FEnvType = extractTyparsToFUnion(um.env, [lm.type], ud, onError);
+											lifted = FBounded(lm.type, unt.type);
+											// fcPrintln("We lift " + ftype2string(env, lm.type) + " to " + ftype2string(unt.env, lifted));
+											FEnvType(unt.env, lifted);
+										}
+									}
+								}
+							}
+						} else {
+							FEnvType(um.env, FBounded(lm.type, um.type));
+						}
+					}
+					default: FEnvType(um.env, FBounded(lm.type, um.type));
+				}
+
+			} else if (heuristic >= 2 && um.type == FTopBottom()) {
+				FEnvType(um.env, lm.type)
+			} else if (false && heuristic >= 1 && um.type != FTopBottom()) {
+				if (false) {
+					// This breaks in wikitranslationhelper.flow: removeLanguageFromWigiText_rec
+					um;
+				} else {
+					// The bigger may not be smaller
+					et = funify(um.env, lm.type, um.type, FReduceLeft(), onError);
+
+					// OK, let us go for the nice union of the minimum with the lower bound
+					// to recover a nice, useful type
+					funify(et.env, lm.type, et.type, FGrowRight(), onError);
+				}
+			} else {
+				// Keep it as is
+				FEnvType(um.env, FBounded(lm.type, um.type));
+			}
+		}
+
+		FBasicType(__): FEnvType(env, type);
+		FFlow(): FEnvType(env, type);
+		FTypePar(__): FEnvType(env, type);
+		FTypeVar(__): FEnvType(env, type);
+		FTopBottom(): FEnvType(env, type);
+	}
+}
+
+mergeFRanges(env : FEnv, types : [FType], heuristic : int, 
+		funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType,
+		onError : (string) -> void
+	) -> FEnvTypes {
+	fold(types, FEnvTypes(env, []), \acc, t -> {
+		et = mergeFRange(acc.env, t, heuristic, funify, onError);
+		FEnvTypes(et.env, arrayPush(acc.types, et.type))
+	})
+}
+
+
+resolveFType(env : FEnv, type : FType, funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError : (string) -> void) -> FEnvType {
+	def = FEnvType(env, type);
+	if (env.verbose >= 4)  {
+		printIndent(env.env, "Resolving " + ftype2string(env, type));
+	}
+	result = switch (type) {
+		FFields(fields, seen, excluded): {
+			potentials : [[string]] = map(fields, \f : FField -> {
+				getTreeArrayValue(env.env.program.acc.names.field2structs, f.name);
+			});
+			intersect = if (potentials == []) makeSet()
+				else fold(tail(potentials), buildSet(potentials[0]), \acc, p -> {
+					intersectSets(acc, buildSet(p))
+				});
+			candidates = differenceSets(intersect, excluded);
+			n = sizeSet(candidates);
+			if (n == 1) {
+				// Alright, we have something going here
+				name = set2array(candidates)[0];
+
+				mstruct = lookupTree(env.env.program.acc.names.structs, name);
+				switch (mstruct) {
+					None(): {
+						fcPrintln("Unknown struct " + name);
+						FEnvType(env, type);
+					}
+					Some(structdef): {
+						s = FStruct(name, map(structdef.typars, \tp -> {
+							makeFTyvar(env)
+						}));
+						funify(env, type, s, FUnifyLeft(), onError);
+					}
+				}
+			} else def;
+		}
+		FUnnamedUnion(types): {
+			et = resolveFTypes(env, types, funify, onError);
+
+			if (length(et.types) == 1) {
+				// A single type, we know it is that struct then
+				FEnvType(et.env, et.types[0]);
+			} else {
+				defu = FEnvType(et.env, FUnnamedUnion(et.types));
+				names = filtermap(et.types, \t -> {
+					n = getFTypeName(t);
+					if (n == "") None()
+					else Some(n);
+				});
+				if (length(names) == length(et.types)) {
+
+					unames = uniq(names);
+					if (length(unames) == 1) {
+						// OK, there is just one name. That is our guy. Join the bunch
+						fold(tail(types), FEnvType(et.env, types[0]), \acc, t -> {
+							funify(acc.env, acc.type, t, FUnifyLeft(), onError)
+						});
+					} else {
+						// OK, all have names. We might have a shot
+						unionCandidates = names2unions(env.env, names, true);
+						if (length(unionCandidates) == 1) {
+							unionname = unionCandidates[0];
+							uniondef = lookupTree(env.env.program.acc.names.unions, unionname);
+							switch (uniondef) {
+								None(): defu;
+								Some(ud): {
+									unt : FEnvType = extractTyparsToFUnion(et.env, et.types, ud, onError);
+									// OK, finally, unify the structs with the union
+									// to cross-bind any typars
+									fold(et.types, unt, \acc : FEnvType, t -> {
+										et0 = funify(acc.env, t, unt.type, FUnifyLeft(), onError);
+										FEnvType(
+											et0.env,
+											unt.type
+										)
+									});
+								}
+							}
+						} else {
+							defu;
+						}
+					}
+				} else {
+					defu;
+				}
+			}
+		}
+		FUnion(name, typars): {
+			et = resolveFTypes(env, typars, funify, onError);
+			FEnvType(et.env, FUnion(name, et.types));
+		}
+		FStruct(name, typars): {
+			et = resolveFTypes(env, typars, funify, onError);
+			FEnvType(et.env, FStruct(name, et.types));
+		}
+		FFunction(args, rt): {
+			et = resolveFTypes(env, args, funify, onError);
+			et2 = resolveFType(et.env, rt, funify, onError);
+			FEnvType(et2.env, FFunction(et.types, et2.type));
+		}
+		FArray(at): {
+			et = resolveFType(env, at, funify, onError);
+			FEnvType(et.env, FArray(et.type));
+		}
+		FRef(rt, wt): {
+			et1 = resolveFType(env, rt, funify, onError);
+			et2 = resolveFType(et1.env, wt, funify, onError);
+			FEnvType(et2.env, FRef(et1.type, et2.type));
+		}
+		FBounded(lower, upper): {
+			lt = resolveFType(env, lower, funify, onError);
+			ut = resolveFType(lt.env, upper, funify, onError);
+			makeFBoundedEnv(env, lt.type, ut.type, FUnifyLeft(), funify, onError);
+		}
+		FFlow(): def;
+		FBasicType(__): def;
+		FTypePar(__): def;
+		FTypeVar(__): def;
+		FTopBottom(): def;
+	}
+	if (env.verbose >= 4)  {
+		printDedent(env.env, "Resolved " + ftype2string(result.env, result.type));
+	}
+	// debugTydeps(result.env);
+	result;
+}
+
+resolveFTypes(env : FEnv, types : [FType], funify : (FEnv, FType, FType, FUnification, (string) -> void) -> FEnvType, onError) -> FEnvTypes {
+	fold(types, FEnvTypes(env, []), \acc, t -> {
+		et = resolveFType(acc.env, t, funify, onError);
+		FEnvTypes(et.env, arrayPush(acc.types, et.type))
+	});
+}
+
+
+extractTyparsToFUnion(env : FEnv, types : [FType], uniondef : FcTypeUnion, onError : (string) -> void) -> FEnvType {
+
+	// OK, we have a bunch of types, as well as a union definition.
+	// We need to reverse map the typars from the structs back to the typars of the union
+
+	// U<?, ??> ::= S<?>, S<??>...
+
+	//	FcTypeName(name : string, typeparameters : [FcType], info : FcInfo2);
+
+	//	FcTypeUnion(name : string, typeparameters : [FcType], typenames : [FcTypeName], info : FcInfo2);
+
+	typenames = union2typenames(env.env, uniondef.name);
+
+	typars = fold(types, makeTree(), \acc : Tree<string, [FType]>, type -> {
+		// OK, we have some struct with type parameters. Let us find it in the union, 
+		// so we can figure out how to map the typars back to the union typars
+		bname = getFTypeName(type);
+		mtn = find(typenames, \tn -> tn.name == bname);
+		switch (mtn) {
+			None(): acc;
+			Some(tn): {
+				typars = switch (type) {
+					FUnion(__, tp): tp;
+					FStruct(__, tp): tp;
+					default: [];
+				};
+				// To handle implicit polymorphism, we extend any definition of the struct
+				// parameters with implicit polymorphism
+				typarnames = generate(0, max(length(typars), length(tn.typeparameters)), \i -> {
+					if (i < length(tn.typeparameters)) {
+						getFTypeParameterName(tn.typeparameters[i])
+					} else {
+						strRepeat("?", i + 1)
+					}
+				});
+				// OK, we have some typename definition in the union.
+				foldi(typarnames, acc, \i, acc2, name -> {
+					tp = getFTypeParameter(type, i);
+					if (tp != []) {
+						treePushToArrayValue(acc2, name, tp[0]);
+					} else acc2;
+				})
+			}
+		}
+	});
+
+	if (false) {
+		traverseInOrder(typars, \tp, tptypes -> {
+			fcPrintln(tp + " " + superglue(tptypes, \t -> ftype2string(env, t), ", "));
+		});
+	}
+
+	FEnvType(env, FUnion(uniondef.name, map(uniondef.typeparameters, \tp -> {
+		name = getFTypeParameterName(tp);
+		tptypes = getTreeArrayValue(typars, name);
+		if (tptypes == []) {
+			onError("Expected type parameter for " + uniondef.name + " for " + name);
+			FTopBottom();
+		} else {
+			tptypes[0];
+		}
+	})));
+}
+
+getFTypeParameter(t : FType, i : int) -> [FType] {
+	switch (t) {
+		FUnion(__, tp): if (i < length(tp)) [tp[i]] else [];
+		FStruct(__, tp): if (i < length(tp)) [tp[i]] else [];
+		default: [];
+	}
+}
+
+getFTypeParameterName(f : FcType) -> string {
+	switch (f) {
+		FcTypeParameter(name, __): name;
+		default: "";
+	}
+}
+
+

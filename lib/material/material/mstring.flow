@@ -1,0 +1,472 @@
+import tropic/tropic_metrics;
+import material/material;
+import material/mlog;
+
+export {
+	getSplittedByWidthString(s : string, wd : double, style : [TCharacterStyle], splitStyle : [MSplitStyle]) -> [[string]];
+		MSplitStyle ::= CropWords, ShiftLongWords, MMaxLines;
+			ShiftLongWords();
+	getTruncatedByWidthString(s : string, wd : double, style : [TCharacterStyle], addDots : bool) -> string;
+	getSplittedAndTruncatedByWidthString(s : string, wd : double, style : [TCharacterStyle], lines : int) -> string;
+	containsHanScript(s : string) -> bool;
+	filterEmojis(s : string) -> string;
+}
+
+strSplitLimit_(s: string, sep: string, acc: List<string>, limit : int) -> List<string> {
+	i = strIndexOf(s, sep);
+	if (i < 0) {
+		Cons(s, acc);
+	} else {
+		l = strlen(s);
+		if (i < l) {
+			part = substring(s, 0, i);
+			sepLen = strlen(sep);
+			newS = substring(s, i + sepLen, l - i - sepLen);
+
+			if (limit > 2)
+				strSplitLimit_(newS, sep, Cons(part, acc), limit - 1)
+			else
+				Cons(newS, Cons(part, acc));
+		} else {
+			Cons(s, acc);
+		}
+	}
+}
+
+strSplitLimit(s : string, sep : string, limit : int) -> [string]  {
+	if (sep == "" || limit <= 0) [s]
+	else list2array(strSplitLimit_(s, sep, makeList(), limit));
+}
+
+mstrSplit_(s: string, sep: [string], acc: List<string>) -> List<string> {
+	isep = fold(sep, Pair([], intMax), \acc2, sp -> {
+		si = strIndexOf(s, sp);
+
+		if (si > -1 && si < secondOfPair(acc2))
+			Pair(arrayPush(firstOfPair(acc2), sp), si)
+		else
+			acc2
+	});
+	i = secondOfPair(isep);
+
+	if (i < 0) {
+		Cons(s, acc);
+	} else {
+		l = strlen(s);
+		if (i < l) {
+			if (i == 0) {
+				sepLen = 1;
+				part = substring(s, 0, i + sepLen);
+				mstrSplit_(substring(s, i + sepLen, l - i - sepLen), firstOfPair(isep), Cons(headList(acc, "") + part, tailList(acc)));
+			} else {
+				sepLen = 1;
+				part = substring(s, 0, i + sepLen);
+				mstrSplit_(substring(s, i + sepLen, l - i - sepLen), firstOfPair(isep), Cons(part, acc));
+			}
+		} else {
+			Cons(s, acc);
+		}
+	}
+}
+
+mstrSplit(s : string, sep : [string]) {
+	list2array(mstrSplit_(s, sep, EmptyList()));
+}
+
+stringSplitters = [" ", "\t", "\u200b"];
+
+getSplittedByWidthString(s : string, wd : double, style : [TCharacterStyle], splitStyle : [MSplitStyle]) -> [[string]] {
+	cropLongWords = extractStruct(splitStyle, CropWords(false)).crop;
+	shiftLongWords = contains(splitStyle, ShiftLongWords());
+	maxLines = ref extractStruct(splitStyle, MMaxLines(-1)).lines;
+	wid = max(wd, getTWordMetrics(TText(".", style), makeTree()).width);
+
+	reduceMaxLines = if (^maxLines > 0) \i -> maxLines := max(^maxLines - i, 0) else nop1;
+	checkMaxLines = if (^maxLines >= 0) \ -> ^maxLines > 0 else \ -> true;
+
+	if (strlen(s) > 1) {
+		lines = strSplit(s, "\n") |> (\f -> if (^maxLines >= 0) subrange(f, 0, ^maxLines) else f);
+
+		map(lines, \l -> if (strlen(l) > 0 && checkMaxLines()) {
+			textWd = getTWordMetrics(TText(l, style), makeTree()).width;
+
+			if (textWd <= wid) {
+				reduceMaxLines(1);
+
+				[l]
+			} else if (!shiftLongWords && cropLongWords) {
+				w0 = ref l;
+
+				updateWhile(
+					[],
+					\acc -> {
+						if (strlen(^w0) > 0 && checkMaxLines()) {
+							newW = getTruncatedByWidthString(^w0, wid, style, false);
+
+							newWLength = strlen(newW);
+							newW0 = substring(newW, 0, newWLength);
+
+							materialLogFn(
+								\ ->
+									if (wid < getTWordMetrics(TText(newW0, style), makeTree()).width) {
+										println("getSplittedByWidthString bug");
+										println(^w0);
+										println(newW0);
+										println(wid);
+										println(getTWordMetrics(TText(newW0, style), makeTree()).width);
+									},
+								MaterialError(),
+								nop
+							);
+
+
+							w0 := substring(^w0, newWLength, strlen(^w0) - newWLength);
+
+							if (newWLength == 0)
+								None()
+							else {
+								reduceMaxLines(1);
+								Some(arrayPush(acc, newW0))
+							}
+						} else
+							None()
+					}
+				)
+			} else {
+				if (cropLongWords) {
+					words = map(mstrSplit(l, stringSplitters), \w -> {
+						wordWd = ceil(getTWordMetrics(TText(w, style), makeTree()).width);
+						if (wordWd > 0) {
+							w0 = ref w;
+
+							updateWhile(
+								[],
+								\acc -> {
+									if (strlen(^w0) > 0) {
+										newW = getTruncatedByWidthString(^w0, wid, style, false);
+
+										newWLength = strlen(newW);
+										newW0 = substring(newW, 0, newWLength);
+										w0 := substring(^w0, newWLength, strlen(^w0) - newWLength);
+
+										if (newWLength == 0)
+											None()
+										else
+											Some(arrayPush(acc, newW0))
+									} else
+										None()
+								}
+							)
+							|> (\f -> map(f, \f0 -> Pair(f0, ceil(getTWordMetrics(TText(f0, style), makeTree()).width))))
+						} else
+							[Pair(w, wordWd)]
+					}) |> concatA;
+					wordsWidths = map(words, secondOfPair);
+
+					end = length(words);
+					newEnd = max(min(floor(i2d(end) / textWd * wid), end - 1), 1);
+
+					cWord = ref 0;
+					widths = getSplittedByWidthString2(ref wordsWidths, floor(wid),
+						style, 0, newEnd, sum(subrange(wordsWidths, 0, newEnd)), EmptyList(), ^maxLines);
+
+					map(widths |> list2array, \wd0 -> {
+						newS = map(subrange(words, ^cWord, wd0), firstOfPair);
+						cWord := ^cWord + wd0;
+
+						concatStrings(newS);
+					})
+				} else {
+					words = mstrSplit(l, stringSplitters);
+					wordsWidths = map(words, \w -> ceil(getTWordMetrics(TText(w, style), makeTree()).width));
+
+					end = length(words);
+					newEnd = max(min(floor(i2d(end) / textWd * wid), end - 1), 1);
+
+					cWord = ref 0;
+					widths = getSplittedByWidthString2(ref wordsWidths, floor(wid),
+						style, 0, newEnd, sum(subrange(wordsWidths, 0, newEnd)), EmptyList(), ^maxLines);
+
+					map(widths |> list2array, \wd0 -> {
+						newS = subrange(words, ^cWord, wd0);
+						cWord := ^cWord + wd0;
+
+						concatStrings(newS);
+					})
+				}
+			}
+		} else
+			[l]
+		)
+	} else
+		[[s]]
+}
+
+getSplittedByWidthString2(words : ref [int], wd : int, style : [TCharacterStyle], start : int, end : int, textWd : int,
+	acc : List<int>, lines : int) -> List<int> {
+	// println(start);
+	// println(end);
+	// println(textWd);
+	// println(wd);
+	// println("");
+
+	if (start == 0) {
+		if (end > 1) {
+			if (textWd <= wd)
+				getSplittedByWidthString2(words, wd, style, end, length(^words), textWd, acc, lines)
+			else {
+				newEnd = max(min(ceil(i2d(end) / i2d(textWd) * i2d(wd)), end - 1), start + 1);
+				newWd = textWd - sum(subrange(^words, newEnd, end - newEnd));
+
+				getSplittedByWidthString2(words, wd, style, start, newEnd, newWd, acc, lines)
+			}
+		} else {
+			if (end < length(^words) && lines != 0) {
+				words := subrange(^words, end, length(^words) - end);
+				newEnd = min(max(end, 2), length(^words));
+				newWd = sum(subrange(^words, 0, newEnd));
+
+				getSplittedByWidthString2(
+					words,
+					wd,
+					style,
+					0,
+					newEnd,
+					newWd,
+					Cons(end, acc),
+					lines - 1
+				)
+			} else {
+				Cons(end, acc)
+			}
+		}
+
+	} else {
+		if (start < end) {
+			if (textWd <= wd) {
+				newStart = max(min(floor(i2d(start) / i2d(textWd) * i2d(wd)), end - 1), start + 1);
+				newWd = textWd + sum(subrange(^words, start, newStart - start));
+
+				getSplittedByWidthString2(words, wd, style, newStart, end, newWd, acc, lines)
+			} else {
+				newStart = max(min(ceil(i2d(start) / i2d(textWd) * i2d(wd)), start - 1), 1);
+				newWd = textWd - sum(subrange(^words, newStart, start - newStart));
+
+				getSplittedByWidthString2(words, wd, style, newStart, start, newWd, acc, lines)
+			}
+		} else {
+			tooWide = textWd > wd;
+			newStart = if (tooWide) start - 1 else start;
+
+			if (newStart < length(^words) && lines != 0) {
+				words := subrange(^words, newStart, length(^words) - newStart);
+				newEnd = min(max(newStart, 2), length(^words));
+				newWd = sum(subrange(^words, 0, newEnd));
+
+				getSplittedByWidthString2(
+					words,
+					wd,
+					style,
+					0,
+					newEnd,
+					newWd,
+					Cons(newStart, acc),
+					lines - 1
+				)
+			} else {
+				Cons(newStart, acc)
+			}
+		}
+	}
+}
+
+getTruncatedByWidthString(s : string, wd : double, style : [TCharacterStyle], addDots : bool) -> string {
+	wid = max(wd, getTWordMetrics(TText(".", style), makeTree()).width);
+
+	if (strlen(s) > 1) {
+		dotsWd = if (addDots) getTWordMetrics(TText("…", style), makeTree()).width else 0.;
+
+		if (wid <= dotsWd)
+			substring(s, 0, 1) + if (addDots) "…" else ""
+		else {
+			textWd = getTWordMetrics(TText(s, style), makeTree()).width;
+
+			if (textWd <= wid)
+				s
+			else {
+				end = strlen(s);
+
+				getSplittedByWidthString(" " + s, max(wid - dotsWd, 0.), style, [ShiftLongWords(), MMaxLines(1)])[0][0]
+				|> (\splitted0 : string -> {
+					splitted = substring(splitted0, 1, strlen(splitted0) - 1);
+					splittedWd = getTWordMetrics(TText(splitted, style), makeTree()).width;
+					textWd2 = textWd - splittedWd;
+					newWd = wid - splittedWd;
+
+					materialLogFn(
+						\ ->
+							if (max(wid - dotsWd, 0.) < splittedWd) {
+								println("getTruncatedByWidthString bug");
+								println(max(wid - dotsWd, 0.));
+								println(splittedWd);
+								println(" " + s);
+								println(splitted);
+							},
+						MaterialError(),
+						nop
+					);
+
+					truncated = getTruncatedByWidthString2(substring(s, strlen(splitted), strlen(s) - strlen(splitted)),
+						wid - splittedWd, dotsWd, style, 0, max(min(floor(i2d(end) / (textWd2 + dotsWd) * wid), end - 1), 1), addDots);
+
+					truncatedWd = getTWordMetrics(TText(truncated, style), makeTree()).width;
+
+					splitted + if (truncatedWd <= newWd) truncated else if (addDots) "…" else ""
+				})
+			}
+		}
+	} else
+		s
+}
+
+getTruncatedByWidthString2(s : string, wd : double, dotsWd : double, style : [TCharacterStyle], start : int, end : int, addDots : bool) -> string {
+	if (start == 0) {
+		newS = substring(s, 0, end);
+
+		if (end > 1) {
+			textWd = getTWordMetrics(TText(newS, style), makeTree()).width + dotsWd;
+
+			if (textWd <= wd)
+				getTruncatedByWidthString2(s, wd, dotsWd, style, end, strlen(s), addDots)
+			else
+				getTruncatedByWidthString2(s, wd, dotsWd, style, start, max(min(ceil(i2d(end) / textWd * wd), end - 1), start + 1), addDots)
+		} else
+			newS + if (addDots) "…" else ""
+	} else {
+		newS = substring(s, 0, start);
+
+		if (start < end) {
+			textWd = getTWordMetrics(TText(newS, style), makeTree()).width + dotsWd;
+
+			if (textWd <= wd)
+				getTruncatedByWidthString2(s, wd, dotsWd, style, min(max(floor(i2d(start) / textWd * wd), start + 1), end), end, addDots)
+			else
+				getTruncatedByWidthString2(s, wd, dotsWd, style, max(min(ceil(i2d(start) / textWd * wd), start - 1), 1), start, addDots)
+		} else if (getTWordMetrics(TText(newS + if (addDots) "…" else "", style), makeTree()).width > wd) {
+			substring(newS, 0, strlen(newS) - 1) + if (addDots) "…" else ""
+		} else
+			newS + if (addDots) "…" else ""
+	}
+}
+
+getSplittedAndTruncatedByWidthString(s : string, wd : double, style : [TCharacterStyle], lines : int) -> string {
+	if (lines == 0 || strlen(s) == 0) {
+		""
+	} else if (lines == 1) {
+		nPosition = strIndexOf(s, "\n");
+		if (nPosition >= 0 && nPosition < strlen(s) - 1) {
+			newS = getTruncatedByWidthString(substring(s, 0, nPosition), wd, style, true);
+			if (endsWith(newS, "…")) newS else newS + "…";
+		} else {
+			getTruncatedByWidthString(s, wd, style, true)
+		}
+	} else {
+		newStr = getSplittedByWidthString(s, wd, style, [CropWords(true), ShiftLongWords(), MMaxLines(lines + 1)]);
+		newStrConc = newStr |> concatA;
+
+		if (lines > 0) {
+			if (length(newStrConc) > lines) {
+				maxLines = ref lines;
+				dotsWd = getTWordMetrics(TText("…", style), makeTree()).width;
+
+				foldWhile(newStr, "", \acc, l -> {
+					if (^maxLines > 0) {
+						nl = subrange(l, 0, ^maxLines);
+						maxLines := ^maxLines - length(nl);
+						Some(
+							acc +
+							(if (acc == "") "" else "\n") +
+							strGlue(
+								if (^maxLines > 0)
+									nl
+								else
+									arrayPush(subrange(nl, 0, length(nl) - 1), getTruncatedByWidthString(concatStrings(subrange(l, length(nl) - 1, length(l))), wd - dotsWd, style, false)),
+								"\n"
+							)
+						)
+					} else
+						None()
+				})
+				|> (\f -> if (strlen(f) > 0) f + "…" else f)
+			} else
+				newStrConc
+				|> (\f -> strGlue(f, "\n"))
+		} else
+			newStrConc
+			|> (\f -> strGlue(f, "\n"))
+	}
+}
+
+containsHanScript(s : string) -> bool {
+	len = strlen(s);
+
+	if (len > 0) {
+		c = getCharCodeAt(s, 0);
+		(c >= 11904 && c <= 40959) || containsHanScript(substring(s, 1, len - 1))
+	} else {
+		false
+	}
+}
+
+filterEmojis(s : string) -> string {
+	filterEmojis2(s, 0);
+}
+
+filterEmojis2(s : string, i : int) -> string {
+	len = strlen(s);
+
+	if (i < strlen(s)) {
+		c = getCharCodeAt(s, i);
+
+		if (c >= 0xD800 && c <= 0xDBFF) {
+			// surrogate pair
+			c2 = getCharCodeAt(s, i + 1);
+			c3 = 0x10000 + bitOr(bitShl((c - 0xD800), 10), c2 - 0xDC00);
+
+			if ((c3 >= 0x1F600 && c3 < 0x1F64F) || // Emoticons
+				(c3 >= 0x1F300 && c3 < 0x1F5FF) || // Misc Symbols and Pictographs
+				(c3 >= 0x1F680 && c3 < 0x1F6FF) || // Transport and Map
+			   	(c3 >= 0x1F1E6 && c3 < 0x1F1FF) || // Regional country flags
+				(c3 >= 0x1F900 && c3 < 0x1F9FF))  // Supplemental Symbols and Pictographs
+				filterEmojis2(strRemove(s, i, 2), i)
+			else
+				filterEmojis2(s, i + 2);
+		} else {
+			if ((c >= 0x2600 && c < 0x26FF) ||   // Misc symbols
+				(c >= 0x2700 && c < 0x27BF) ||   // Dingbats
+				(c >= 0xFE00 && c < 0xFE0F) ||   // Variation Selectors
+				(c >= 65024 && c < 65039) || // Variation selector
+				(c >= 8400 && c < 8447) ||
+				c == 0x200D ||
+				c == 0xFE0F ||
+				c == 0x26F9 ||
+				c == 0x261D ||
+				c == 0x270C ||
+				c == 0x2695 ||
+				c == 0x2696 ||
+				c == 0x2708 ||
+				c == 0x2642 ||
+				c == 0x2640 ||
+				c == 0x2764 ||
+				c == 0x270B ||
+				c == 0x270A ||
+				c == 0x270D ||
+				c == 13)
+				filterEmojis2(strRemove(s, i, 1), i)
+			else
+				filterEmojis2(s, i + 1);
+		}
+	} else {
+		s
+	}
+}

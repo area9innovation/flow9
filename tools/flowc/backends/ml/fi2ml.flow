@@ -1,0 +1,61 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/ml/fi2ml_utils;
+import tools/flowc/backends/ml/fi2ml_compile;
+import tools/flowc/backends/ml/fi2ml_assemble;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fi2ml(program : FiProgram, cfg : FcMLConfig, callback : () -> void) -> void;
+}
+
+fi2ml(program, cfg, callback) {
+	fcVerbose(cfg, 0, "Making ML '" + cfg.outputfile + "'...");
+
+	// Store all declarations of a program into one large array.
+	// Declarations stored in init order (order of their appearance in files).
+	decls : [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program);
+
+	fiMLCombineUnions(cfg, program);
+
+	runtimeBefore = fiGetMLRuntimeBefore(cfg);
+	runtimeAfter = fiGetMLRuntimeAfter(cfg);
+	structsCode = fiCollectMLStructs(cfg, program);
+	moduleCount = i2s(length(decls));
+
+	fcVerbose(cfg, 0, "Generating ML code for declarations...");
+	modulesCode = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
+
+		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating ML code for module " + p.first);
+
+		mdl = lookupTree(program.modules, p.first);
+		switch (mdl) {
+			None(): {
+				fail("Could not retrieve module " + p.first);
+				Cons("", makeList());
+			}
+			Some(module): {
+				r = fold(p.second, acc, \l, v -> {
+					cfg.fileinfo ::= module.fileinfo;
+					tl = fiMLCompileToplevel(cfg, program, v, fiMLIndent);
+					Cons(if (tl == "") "" else "\n", Cons(tl, l));
+				});
+				Cons("\n", r);
+			}
+		}
+	});
+
+	contents = 
+		Cons(list2string(modulesCode),
+			Cons("\n",
+				Cons(runtimeAfter,
+					Cons(structsCode, 
+						Cons(runtimeBefore, makeList())))));
+
+	// Save resulting file
+	saveFileContent(cfg.outputfile, list2string(contents));
+	
+	fcVerbose(cfg, 0, "Making ML '" + cfg.outputfile + "' finished.");
+
+	callback();
+}
+

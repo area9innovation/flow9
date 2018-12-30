@@ -1,0 +1,677 @@
+import arrayutils;
+import formarray;
+import tuples;
+import behaviour;
+import form;
+import paragraphtypes;
+
+export {
+	// The model of a document for editing. Notice that there are side effects when a story is changed.
+	// So this is not a functional thing for efficiency reasons.
+
+	WigiElement ::= WigiDocument, WigiStory, WigiParagraph, WigiText, WigiEmpty, WigiRecursive, WigiBlock;
+		// Invariant: the root is a WigiStory. The type checking is just simpler with the general type.
+		WigiDocument(root : WigiElement, style : [WigiDocumentStyle]);
+			WigiDocumentStyle ::= WigiName;
+
+		// This is not functional, but based on side effects!
+		// The paragraphs are always WigiParagraph's, but the type checking is just simpler with the general type
+		WigiStory(paragraphs : ref [WigiElement], views : ref [FormArray<WigiElement>], style : [WigiStoryStyle]);
+			WigiStoryStyle ::= WigiName, ParagraphSpacing;
+				ParagraphSpacing(d : double);
+
+		// The elements are never WigiDocument or WigiStory
+		WigiParagraph(elements : [WigiElement], style : [WigiParagraphStyle]);
+			WigiParagraphStyle ::= ParagraphAlignment, InterlineSpacing, FirstLineIndent, FixedWidth, ReplaceTightWidthWithAlign, Listed,
+					GeneralIndent;
+				// opposite to TightWidth to be able to discard TightWidth by concatenation of paragraph styles
+				FixedWidth();
+				// replaces TightWidth with CenterAlign, Justify or RightAlign if present
+				ReplaceTightWidthWithAlign();
+				// for bulleted or numbered lists
+				Listed(type : ListIndexType, style : [WigiTextStyle]);
+					ListIndexType ::= Bulleted, Numbered;
+						Bulleted(bullet : string);
+						Numbered(number : int, type : NumberType);
+							NumberType ::= SimpleNumber, DottedNumber, PrettyNumber;
+								SimpleNumber();
+								DottedNumber();
+								PrettyNumber();
+				GeneralIndent(indent : double);
+
+				dummyListed = Listed(Bulleted(""), []);
+
+		// Text that will wrap. Notice this can not contain any escaped things like &#123; or &lt;. Only single glyphs work
+		WigiText(text : string, style : [WigiTextStyle]);
+			WigiTextStyle ::= FontFamily, FontSize, Fill, FillOpacity, LetterSpacing, BackgroundFill, Underline, BaselineShift, WigiRelativeFontSize, DoubleUnderline, WigiLock, Language, WigiHtmlResponsiveFontSize;
+				Underline();
+				DoubleUnderline();
+				BaselineShift(shift : double);
+				WigiRelativeFontSize(delta : int);
+				// The language parameter is the language code which consists of the two letter ISO 639 language code and an optional two letter ISO 3166 country code after a dash or underscore
+				// Example: "en" - english, "none" - skip spellcheck
+				Language(name : string);
+				// Style to have responsive font sizes in the exported html. 
+				// When the height or width of the viewport is changed, they are scaled accordingly, based on this calculation:
+ 				// calc(base-font-size px + vw * (viewport-width/100) px + vh * (viewport-height/100) px), where base-font-size = font-size * ratio
+ 				// For example: Default 16 px font-size in a 1280 px width viewport.
+ 				// 				Parameters to set: ratio = 0.25, vw = 0.90, vh = 0.00
+ 				// 				base-font-size = 16 px * 0.25 = 4 px.
+ 				//				At 640 px width viewport, font-size become:
+ 				// 				4 px + 0.90 * (640/100) px ~= 10 px 
+				
+				WigiHtmlResponsiveFontSize(ratio : double, vw : double, vh : double);
+
+		// font size scaling value for superscript/subscript WigiText
+		SuperSubscriptScalingCoeff = 0.7;
+
+		WigiEmpty();
+
+		// An element composed of other elements, where the layout is done by some function
+		WigiRecursive(elements : [WigiElement], type : WigiRecursiveType, style : [WigiRecursiveStyle]);
+			// The different recursive types we support
+			WigiRecursiveType ::= WigiComap, WigiDottedElement, WigiFraction, WigiProduct, WigiEvaluatingIntegral, WigiRoot, WigiLongDivision, WigiIntegral, 
+									WigiSum, WigiSupscript, WigiSubscript, WigiOverscript, WigiUnderscript, WigiOverlay, WigiTable, WigiInteractiveTable, WigiTableCell, 
+									WigiSpreadsheetCell, WigiFrame, WigiCode, WigiTyped, WigiButton, WigiHyperlink, WigiAltText, WigiRadioOption, WigiVisible, WigiVersion, WigiExternalRecursive;
+				// A comapping, mindmap element with a parent, and then N children to the right
+				WigiComap(collapsed : DynamicBehaviour<bool>);
+				// Dotted element
+				WigiDottedElement(left : int, right: int, top : int, bottom : int, leftSign : bool, rightSign : bool);
+				// A fraction
+				WigiFraction();
+				// A product
+				WigiProduct();
+				// A evaluating integral
+				WigiEvaluatingIntegral();
+				// A root
+				WigiRoot();
+				// Long division
+				WigiLongDivision();
+				// Integral
+				WigiIntegral();
+				// Top modificators
+				// Sum
+				WigiSum();
+				// Supscript
+				WigiSupscript();
+				// Subscript
+				WigiSubscript();
+				// Overscript
+				WigiOverscript();
+				// Underscript
+				WigiUnderscript();
+				// Overlay
+				WigiOverlay();
+				// Alt text
+				WigiAltText();
+				// Table parameters : rows : int, cols : int,
+				// array of cell spans - has information about merged cells,
+				// table style :
+				// 		WigiShowGrid - show table grid,
+				// 		WigiSameRowHeight - all rows in a table are as high as the tallest row
+				//		WigiTableColumnWidths - array of column widths
+				//		WigiTableShowHeaders - show headers in spreadsheet
+				//		WigiTableBorder - width of border and corner radius
+				//		WigiTableHighlight - column and row to highlight
+				//		WigiTableSize - visible size of table
+				WigiTable(rows : int, cols : int, cellSpans : [WigiCellSpan], style : [WigiTableStyle]);
+					WigiCellSpan : (row : int, col : int);
+					WigiTableStyle ::= WigiShowGrid, WigiSameRowHeight, WigiTableColumnWidths, WigiTableRowHeights, WigiTableShowHeaders, WigiTableShowFormulaBar, 
+						WigiTableBorder, WigiFirstTabColumn, WigiTableHighlight, WigiTableSize, WigiTableVisibleFormula, WigiTableTightWidth;
+
+						WigiShowGrid();
+						WigiSameRowHeight();
+						WigiTableColumnWidths(widths : [double]);
+						WigiTableRowHeights(heights : [double]);
+						WigiTableShowHeaders();
+						WigiTableShowFormulaBar();
+						WigiTableBorder(width : double, radius : double, color : int);
+						WigiFirstTabColumn(index : int);
+						WigiTableHighlight(column : string, row : string);
+						nullWigiTableHighlight = WigiTableHighlight("", "");
+						WigiTableSize(columns : int, rows : int);
+						WigiTableVisibleFormula(formula : string);
+						WigiTableTightWidth();
+
+				WigiTableCell(widthHeight : DynamicBehaviour<WidthHeight>, cellStyle : [WigiTableCellStyle]);
+					WigiTableCellStyle ::=	WigiCellBorder, WigiCellPadding, WigiCellColors, WigiCellTightWidth,
+											PlaceholderText, WigiCellInnerBorder, WigiCellFormatting, WigiCellVerticalAlign, WigiSuppressTableBorder;
+						WigiCellBorder(topBorder : double, rightBorder : double, bottomBorder : double, leftBorder : double);
+						WigiCellPadding(leftPadding : double, topPadding : double, rightPadding : double, bottomPadding : double);
+						WigiCellColors(border : int, background : int);
+						WigiCellTightWidth();
+						PlaceholderText(text : string);
+						WigiCellInnerBorder(thickness : double, radius : double, color : int, padding : double);
+						WigiCellFormatting(style : WigiCellFormattingStyle);
+							WigiCellFormattingStyle ::= WigiCellFormattingGeneral, WigiCellFormattingNumber, WigiCellFormattingCurrency,
+														WigiCellFormattingDate, WigiCellFormattingTime, WigiCellFormattingPercentage, WigiCellFormattingSignificant;
+								WigiCellFormattingGeneral();
+								WigiCellFormattingNumber(decimal: int, useSeparator: bool, negativeFormat: NegativeNumberStyle, scientific: bool);
+									NegativeNumberStyle ::= nnNormal, nnRed, nnBrackets, nnBracketsAndRed;
+										nnNormal();
+										nnRed();
+										nnBrackets();
+										nnBracketsAndRed();
+
+								WigiCellFormattingCurrency(decimal: int, currencyCode: Maybe<CurrencyCodeStyle>, negativeFormat: NegativeNumberStyle);
+									CurrencyCodeStyle ::= ccUSD, ccEUR, ccGBP, ccYEN;
+										ccUSD();
+										ccEUR();
+										ccGBP();
+										ccYEN();
+								WigiCellFormattingDate(dateFormat: int);
+								WigiCellFormattingTime(timeFormat: int);
+								WigiCellFormattingPercentage(decimal: int);
+								WigiCellFormattingSignificant(digits: int, scientific: bool);
+						WigiCellVerticalAlign(align: WigiCellAlign);
+							WigiCellAlign ::= CellAlignTop, CellAlignCenter, CellAlignBottom;
+								CellAlignTop();
+								CellAlignCenter();
+								CellAlignBottom();
+
+						WigiSuppressTableBorder();
+
+						DefaultCellPadding = WigiCellPadding(5.0, 5.0, 5.0, 5.0);
+						DefaultCellBorder = WigiCellBorder(1.0, 1.0, 1.0, 1.0);
+						DefaultCellColors = WigiCellColors(0x7F808285, 0xffffff);
+						DefaultCellInnerBorder = WigiCellInnerBorder(2.0, 2.0, 2143733446, 5.0);
+						DummyCellInnerBorder = WigiCellInnerBorder(0.0, 0.0, -1, 0.0);
+						DefaultCellFormatting : WigiCellFormatting = WigiCellFormatting(WigiCellFormattingGeneral());
+						DefaultCellVerticalAlign = WigiCellVerticalAlign(CellAlignTop());
+
+				WigiSpreadsheetCell(widthHeight : DynamicBehaviour<WidthHeight>, editMode : DynamicBehaviour<bool>, cellStyle : [WigiTableCellStyle]);
+
+				// See case http://process.area9.dk/cases/default.asp?36702
+				// And case http://process.area9.dk/cases/default.asp?37031
+				WigiInteractiveTable: (formula: string, value: DynamicBehaviour<[WigiRecord]>, style: [InteractiveTableStyle]);
+					InteractiveTableStyle ::= AddButtonCaption, DisableUpDownButtons;
+						AddButtonCaption: (caption: string);
+						DisableUpDownButtons: ();
+
+				WigiFrame(width : double, height : double, style : [WigiFrameStyle]);
+					WigiFrameStyle ::= TightWidth, TightHeight, Scrollbars;
+						TightHeight();
+						Scrollbars(horizontal : bool, vertical : bool);
+				// Code for the evaluation engine
+				WigiCode(showCode : DynamicBehaviour<bool>, showResult : DynamicBehaviour<bool>);
+
+				// A special construct which can prepare specific editors for values of the listed type
+				WigiTyped(type : string);
+
+				// A simple button
+				WigiButton(width : double, style : [WigiButtonStyle]);
+					WigiButtonStyle ::= BackgroundFill, OptionalFormula;
+						OptionalFormula(formula : string);
+
+				WigiHyperlink(url : string);
+
+				WigiRadioOption: (
+					id: string,		// Id of the variable that will 
+					value: int 		// receive this value when the choice is made
+				);
+				// is used in order to edit WigiRadioOption
+				WigiRadioOptionAlign ::= WigiLeft, WigiRight, WigiAbove, WigiBelow;
+					WigiLeft();
+					WigiRight();
+					WigiAbove();
+					WigiBelow();
+
+				WigiRadioOptionProperties : (
+					align : WigiRadioOptionAlign,
+					frame : Maybe<WigiFrame>,
+					buttonElements : [WigiElement],
+					otherElements : [WigiElement],
+					paragraphStyle : [WigiParagraphStyle]
+				);
+
+				WigiVisible(style : [WigiVisibleStyle]);
+					WigiVisibleStyle ::= OptionalFormula;
+
+				// Shows correct version of wigi element
+				WigiVersion(original : WigiElement);
+
+				// Structure to support external recursive in Wigi
+				// exType - uniq identifier of recursive type
+				// content - all recursive element's properties stored as string
+				WigiExternalRecursive(exType : string, content : Tree<string, string>);
+
+
+			// For future use - styles that are general for all elements. The specific style for each type should go in the specific type
+			WigiRecursiveStyle ::= WigiName, Underline, BaselineShift, DoubleUnderline, WigiEnabled, WigiEditorPreview;
+				WigiEnabled(enabled : Behaviour<bool>);
+
+		// A rectangular element without internal structure
+		WigiBlock(type : WigiBlockType, style : [WigiBlockStyle]);
+
+			WigiBlockType ::= WigiPicture, WigiCheckBox, WigiPositionTag, WigiCustomSymbol, WigiFormdesigner, WigiSmartArt, WigiFormula, WigiPageBreak, WigiPageName,
+								WigiAudio, WigiCoach, WigiNaturalMath, WigiComboBox, WigiNativeWiki, WigiDotplot, WigiHistogram, WigiHistogramClasses, WigiCalculator,
+								WigiReferenceDocument, WigiBoxplot, WigiScatterplot, WigiSetClipboardButton, WigiInputBox, WigiChoiceBlock, WigiRadioButton, WigiExternalBlock,
+								WigiFeedback, WigiFeedbackBlock, WigiStackedBar, WigiFillBlankBlock;
+				// A picture
+				WigiPicture(url : string, style : [WigiPictureStyle]);
+					WigiPictureStyle ::= PictureAutomaticResizingToFit, PictureWidthHeight, PictureScale, PictureAllowZoom, PictureExtraZoom, PictureScaleToWidth, PictureScaleToHeight;
+					PictureAutomaticResizingToFit();
+					PictureWidthHeight(width : double, height : double);
+					PictureScale(scale : double);
+					PictureAllowZoom();
+					PictureExtraZoom();
+					PictureScaleToWidth(toWidth : double);
+					PictureScaleToHeight(toHeight : double);
+
+				// An audio
+				WigiAudio: (url : string);
+
+				// Coach text
+				WigiCoach: (text: string);
+
+				// A numeric slider
+				// A checkbox
+				WigiCheckBox(value : DynamicBehaviour<bool>, style : [WigiCheckBoxStyle]);
+					WigiCheckBoxStyle ::= NoStyle;
+						NoStyle();
+
+				// Radio button itself, makes sense inside WigiRadioOption recursive
+				WigiRadioButton(value: DynamicBehaviour<bool>, style: [WigiRadioButtonStyle]);
+					WigiRadioButtonStyle ::= NoStyle;
+
+				// This is a tag that is used during editing processing to be able to find specific points
+				WigiPositionTag(id : int);
+				// Custom symbol
+				WigiCustomSymbol(type : WigiCustomSymbolType, size : double);
+					WigiCustomSymbolType ::= NonUnicodeSymbolType;
+						NonUnicodeSymbolType ::= OOmacronSymbol;
+							OOmacronSymbol();
+
+				// A formdesigner object
+				WigiFormdesigner(drawing : string, style : [WigiFormdesignerStyle]);
+					WigiFormdesignerStyle ::= WigiFormdesignerResizeMode, WigiFormdesignerBackground;
+						WigiFormdesignerResizeMode(mode: FormdesignerResizeMode);
+							FormdesignerResizeMode ::= FormdesignerResizeAuto, FormdesignerResizeScale;
+								FormdesignerResizeAuto();
+								FormdesignerResizeScale(scale: double); // in % of the actual ActiveArt size or the available cell width, whichever is smaller
+						WigiFormdesignerBackground(style : [GraphicsStyle]);
+
+				// A SmartArt object
+				WigiSmartArt(content : string, style : [WigiSmartArtStyle]);
+					WigiSmartArtStyle ::= WigiSmartArtVariablesList;
+						WigiSmartArtVariablesList(varsList : [string]);
+
+				WigiFormula(formula : string, style : [WigiFormulaStyle]);
+					WigiFormulaStyle ::= WigiCellFormatting;
+
+				WigiPageBreak: (append: bool, autoScroll: bool);
+
+				WigiPageName: (name: string, disableCondition: string); // disableCondition format: "" or "{condition}"
+
+				WigiNaturalMath(formula : string);
+
+				WigiComboBox(selected : DynamicBehaviour<int>, values : string, reorderElements : bool, width : double); // width == 0.0 - autosize
+
+
+				WigiInputBox(text : DynamicBehaviour<string>, width : double, height : double, style : [WigiInputBoxStyle]);
+					WigiInputBoxStyle ::= WigiInputMultiline;
+						WigiInputMultiline();
+					//	WigiInputLength(minimumChars : int, maximumChars : int);
+					//	WigiInputNumber(integer : bool, minimum : double, maximum : double);
+
+				WigiNativeWiki(wiki : string);
+
+				WigiDotplot(range : string, style : [WigiDotplotStyle]);
+					WigiDotplotStyle ::= WigiDotplotFormat, WigiDotplotSize, WigiDotStyle, WigiDotplotValueList, WigiDotplotLabels, WigiDotplotNamespace;
+						WigiDotplotFormat(min : double, max : double, step : double, csvList : string);
+						WigiDotplotSize(height : double, width : double);
+						WigiDotStyle(color : int, radius : int, fill : bool, showData : bool, showBorder : bool);
+						WigiDotplotValueList(valList : [[string]]);
+						WigiDotplotLabels(title : string, axisX : string);
+						WigiDotplotNamespace(name : string);
+
+				WigiHistogram(range : string, style : [WigiHistogramStyle]);
+					WigiHistogramStyle ::= WigiHistogramFormat, WigiHistogramSize, WigiBarStyle, WigiHistogramGrid, WigiHistogramLabels, WigiHistogramValueList, WigiHistogramNamespace;
+						WigiHistogramFormat(minX : double, maxX : double, stepX : double, maxY : double, stepY : double, csvList : string);
+						WigiHistogramSize(height : double, width : double);
+						WigiBarStyle(color : int, fill : bool, showData : bool, showBorder : bool);
+						WigiHistogramGrid(showLines : bool);
+						WigiHistogramLabels(title : string, axisX : string, axisY : string);
+						WigiHistogramValueList(valList : [[string]]);
+						WigiHistogramNamespace(name : string);
+
+				WigiHistogramClasses(range : string, style : [WigiHistogramClassesStyle]);
+					WigiHistogramClassesStyle ::= WigiHistogramClassesFormat, WigiHistogramClassesSize, WigiHistogramClassesBarStyle, WigiHistogramClassesGrid, 
+							WigiHistogramClassesLabels, WigiHistogramClassesValueList, WigiHistogramClassesNamespace;
+						WigiHistogramClassesFormat(minX : double, maxX : double, stepY : double, maxY : double,
+													lowerBoundary : double, classWide : double, csvList : string);
+						WigiHistogramClassesSize(height : double, width : double);
+						WigiHistogramClassesBarStyle(color : int, showData : bool, showBorder : bool);
+						WigiHistogramClassesGrid(showLines : bool);
+						WigiHistogramClassesLabels(title : string, axisX : string, axisY : string);
+						WigiHistogramClassesValueList(valList : [[string]]);
+						WigiHistogramClassesNamespace(name : string);
+
+				WigiBoxplot(range : string, style : [WigiBoxplotStyle]);
+					WigiBoxplotStyle ::= WigiBoxplotFormat, WigiBoxplotSize, WigiBoxplotBoxStyle, WigiBoxplotLabels, WigiBoxplotValueList, WigiBoxplotNamespace;
+						WigiBoxplotFormat(minX : double, maxX : double, stepX : double, plotMode : int, csvList : string);
+						WigiBoxplotSize(height : double, width : double);
+						WigiBoxplotBoxStyle(boxColor : int, pointColor : int, showData : bool, showBorder : bool);
+						WigiBoxplotLabels(title : string, axisX : string);
+						WigiBoxplotValueList(valList : [[string]]);
+						WigiBoxplotNamespace(name : string);
+
+				WigiScatterplot(range : string, style : [WigiScatterplotStyle]);
+					WigiScatterplotStyle ::= WigiScatterplotFormat, WigiScatterplotSize, WigiScatterplotDotStyle, WigiScatterplotValueList, WigiScatterplotLabels,
+											WigiScatterplotCorrelCoeff,WigiScatterplotDot2Style, WigiScatterplotNamespace,WigiScatterplotDot3Style, 
+											WigiScatterplotMarkerStyle, WigiScatterplotLegend;
+						WigiScatterplotFormat(minX : double, maxX : double, stepX : double, minY : double, maxY : double, stepY : double, csvList : string);
+						WigiScatterplotSize(height : double, width : double);
+						WigiScatterplotDotStyle(color : int, size : int, fill : bool, showData : bool, showBorder : bool, showCorrel : bool);
+						WigiScatterplotDot2Style(color : int, size : int, fill : bool);
+						WigiScatterplotDot3Style(color : int, size : int, fill : bool);
+						WigiScatterplotMarkerStyle(graph1 : int, graph2 : int, graph3 : int);
+						WigiScatterplotLegend(graph1 : string, graph2 : string, graph3 : string);
+						WigiScatterplotCorrelCoeff(varName : string, decimal : int);
+						WigiScatterplotLabels(title : string, axisX : string, axisY : string);
+						WigiScatterplotValueList(valList : [[string]]);
+						WigiScatterplotNamespace(name : string);
+
+				WigiStackedBar(range : string, style : [WigiStackedBarStyle]);
+					WigiStackedBarStyle ::= WigiStackedBarFormat, WigiStackedBarSize, WigiStackedBarGraphStyle, WigiStackedBarLabels, WigiStackedBarValueList, 
+											WigiStackedBarNamespace;
+						WigiStackedBarFormat(minX : double, maxX : double, stepX : double, maxY : double, stepY : double, csvList : string);
+						WigiStackedBarSize(height : double, width : double);
+						WigiStackedBarGraphStyle(showGroups : bool, showHorizBar : bool, showValues : bool, showVertLabels : bool, showGridLines : bool, 
+												showBorder : bool, graph : [StackedBarGraphStyle]);
+							StackedBarGraphStyle(color : int, strokeColor : int, legend : string);
+						WigiStackedBarLabels(title : string, axisX : string, axisY : string);
+						WigiStackedBarValueList(valList : [[string]]);
+						WigiStackedBarNamespace(name : string);
+
+				WigiCalculator();
+
+				WigiReferenceDocument(title : string, document : WigiElement);
+
+				WigiSetClipboardButton(title : string, text : string);
+
+				WigiChoiceBlock(formula : string, choices: [WigiChoice]);
+					WigiChoice(operator : ChoiceOperator, value : WigiValue, result : WigiElement);
+						ChoiceOperator ::= WEquals, WNotEquals, WLessThan, WLessThanOrEqual, WGreaterThan, WGreaterThanOrEqual, 
+								WInside, WOtherwise, WCustomCondition;
+							
+							WEquals();
+							WNotEquals();
+							WLessThan();
+							WLessThanOrEqual();
+							WGreaterThan();
+							WGreaterThanOrEqual();
+							WInside();
+							WOtherwise();
+							WCustomCondition();
+
+				// Structure to support external blocks in Wigi
+				// exType - uniq identifier of block type
+				// content - all blocks properties stored as string
+				WigiExternalBlock(exType: string, content: Tree<string, string>);
+
+				// Deprecated, please use WigiFeedbackBlock
+				// Implemented based on wiki-code, similar to SmartArt --> Interactive Wiki --> Wiki Feedback --> Basic Feedback
+				WigiFeedback(condition : string, description : WigiFeedbackDescription);
+					WigiFeedbackDescription(vertical : bool, type : WigiFeedbackType);
+						WigiFeedbackType ::= WigiBasicFeedback;
+							WigiBasicFeedback(correct : string, incorrect : string, general : string);
+
+				// Wigi own implementation of Feedback
+				// formula format: "=combobox1"
+				// visibilityCondition format: "combobox1 > 1"
+				WigiFeedbackBlock(formula : string, visibilityCondition : string, interactiveType: WigiFeedbackInteractiveType, choices: [WigiFeedbackChoice]);
+					WigiFeedbackInteractiveType ::= ComboboxOther, HotspotCheckbox;
+						ComboboxOther();
+						HotspotCheckbox();
+					WigiFeedbackChoice(type : WigiFeedbackChoiceType, operator : ChoiceOperator, value : WigiValue, result : WigiElement);
+						WigiFeedbackChoiceType ::= WigiFeedbackCorrect, WigiFeedbackIncorrect, WigiFeedbackMissing;
+							WigiFeedbackCorrect();
+							WigiFeedbackIncorrect();
+							WigiFeedbackMissing();
+
+				// Wigi own implementation of fill-blank
+				WigiFillBlankBlock(width: double, caseSensitive: bool, exactMatch: bool, mathFeatures : [WFMathFeatures], answers : [WFFillBlankAnswerType], otherAnswer : WFOtherAnswer);
+					WFMathFeatures ::= WFRequiredSymbols, WFRequiredDecimalPlaces;
+						WFRequiredSymbols(requiredSymbol : WFRequiredSymbolsType);
+							WFRequiredSymbolsType ::= WFRequireDollarSymbolInAnswers, WFRequirePercentSymbolInAnswers;
+								WFRequireDollarSymbolInAnswers();
+								WFRequirePercentSymbolInAnswers();
+						WFRequiredDecimalPlaces(decPlaces : double);
+					WFFillBlankAnswerType ::= WFCorrectAnswer, WFAlmostCorrectAnswer, WFWrongAnswer;
+						WFCorrectAnswer : (answer : string, remediation : WigiElement);
+						WFAlmostCorrectAnswer : (answer : string, remediation : WigiElement);
+						WFWrongAnswer : (answer : string, remediation : WigiElement);
+					WFOtherAnswer : (remediation : WigiElement);
+					WFFillBlankAnswerTypeExtended ::= WFFillBlankAnswerType, WFOtherAnswer;
+
+			// For future use - styles that are general for all elements. The specific style for each type should go in the specific type
+			WigiBlockStyle ::= WigiName, WigiTextStyle, ExternalDeleteElement, WigiEditorPreview;
+				// style to set callback for deleting certain wigi element (block or recursive)
+				ExternalDeleteElement(fn : () -> void);
+				// used for preview in wigi editor (preview button in toolbar)
+				WigiEditorPreview();
+
+	// It used to be in wigi_expr.flow
+	WigiValue ::= WigiBool, WigiInt, WigiDouble, WigiString, WigiError, WigiLambda, WigiDefaultValue, 
+				WigiElementValue, WigiArray, WigiBuiltInName, WigiDate, WigiTime, WigiRecord;
+		WigiBool(v : bool);
+		WigiInt(v : int);
+		WigiDouble(v : double);
+		WigiString(v : string);
+		WigiDate(year: int, month : int, day: int);
+		WigiTime(hour: int, minute: int, sec: int);
+		WigiError(message : string);
+		WigiDefaultValue(); // Neutral element
+		WigiElementValue(element : WigiElement); // A wigi document!
+		WigiBuiltInName(name : string);
+
+		WigiLambda(args : [string], body : WigiExpr);
+		WigiArray(values : [WigiValue]);
+		WigiRecord(fields : [Pair<string, WigiValue>]);
+
+	WigiExpr ::= /*WigiLet, */ WigiVarRef, WigiCellRefRC, WigiCellRefA1, WigiCall, WigiIf, WigiSequence, WigiMatch, WigiRangeA1, 
+				WigiRangeRC, WigiValue, WigiField, WigiNamespace, WigiMultiplicative, WigiMult, WigiMakeArray, WigiMakeRecord;
+		// It's a name of variable, used for all interactive elements, calculated cells and spreadsheet cells
+		// Possible values: "formula1", "slider2", "abc1"
+		WigiVarRef(x : string);
+		// It's a reference to spreadsheet cells in RC notation
+		// Possible values:
+		// R1C1		=> WigiCellRefRC(AbsRef(1), AbsRef(1))
+		// R[-2]C 	=> WigiCellRefRC(RelRef(-2), RelRef(0))
+		// R1C[-1]	=> WigiCellRefRC(AbsRef(1), RelRef(-1))
+		WigiCellRefRC(r: CellRef, c: CellRef);
+			CellRef ::= RelRef, AbsRef;
+				RelRef(dx: int);	// relative reference
+				AbsRef(x: int);		// absolute reference
+
+
+		// This can also be a var: x1, y1
+		WigiCellRefA1(x : string);
+
+		WigiCall(fn : WigiExpr, args : [WigiExpr]);
+
+		WigiIf(condition : WigiExpr, then : WigiExpr, else_ : WigiExpr);
+
+		WigiSequence(exprs : [WigiExpr]);
+
+		WigiMatch(expr : WigiExpr, cases : [WigiMatchCase]);
+			WigiMatchCase(pattern : WigiExpr, body : WigiExpr);
+
+		// Range of cells based on A1 notation, used in spreadsheet
+		WigiRangeA1(start : WigiCellRefA1, end : WigiCellRefA1);
+		// Range of cells based on RC notation, used in spreadsheet
+		WigiRangeRC(start : WigiCellRefRC, end : WigiCellRefRC);
+
+		// Indexing into records
+		WigiField(left : WigiExpr, right : [WigiExpr]);
+
+		// Namespace resolving
+		WigiNamespace(namespace : [string], right : WigiExpr);
+
+		WigiMultiplicative(exprs : [WigiExpr]);
+		WigiMult(op : string, expr : WigiExpr);
+
+		// We need WigiMakeArray and WigiMakeRecord to use expressions inside. Actually, this is a workaround
+		// of moving WigiArray and WigiRecord to WigiExpr union (it would require to rework tones of code)
+		WigiMakeArray(values : [WigiExpr]);
+		WigiMakeRecord(fields : [Pair<string, WigiExpr>]);
+
+	// After wigifying each page becomes this
+	WigifiedPage: (
+		form: () -> Form,
+		coachTexts: [string],
+		name: string,
+		disableCondition: string,
+		scroll : bool,
+		autoScroll : bool
+	);
+
+	ShowStructures: (
+		naturalMath: DynamicBehaviour<bool>,
+		nativeWiki: DynamicBehaviour<bool>,
+		smartArt: DynamicBehaviour<bool>,
+		formula: DynamicBehaviour<bool>,
+		choice: DynamicBehaviour<bool>,
+		feedback: DynamicBehaviour<bool>
+	);
+
+	WigiLock(type : WigiLockType);
+		WigiLockType ::= WigiReadOnly, WigiSelectOnly, WigiAddOnly, WigiNoLock;
+			WigiReadOnly();
+			WigiSelectOnly();
+			WigiAddOnly();
+			WigiNoLock();
+
+
+	WigiParentStyle : (paragraphStyle: [WigiParagraphStyle], textStyle : [WigiTextStyle], accRelativeFontSizeChange : double);
+
+	// A unifying type for all WigiElement styles
+	WigiStyle ::= WigiDocumentStyle, WigiStoryStyle, WigiParagraphStyle, WigiTextStyle,
+					WigiRecursiveStyle, WigiBlockStyle;
+
+		WigiName(name : string);
+
+	// Define text and paragraph styles for children of a specific parent.
+	// "type" is a structname of the parent.
+	// Usually used in an array [WigiStyles] as default styles for Wigi editor or Wigify
+	// It is supposed that there is only one WigiStyles of a particular type in the array.
+	// Any duplications are ignored and have no effect.
+	// Examples:
+	// 1) [WigiStyles("WigiDocument", ps, ts)]
+	// 		All the paragraphs and texts in the document have styles "ps" and "ts" respectively
+	// 2) [WigiStyles("WigiDocument", ps, ts), WigiStyles("WigiFraction", ps1, ts1)]
+	// 		All the paragraphs and texts in the document have styles "ps" and "ts",	except for
+	//		the paragraphs and texts that are children of WigiFraction. They have styles "ps1" and "ts1".
+	// 3) [WigiStyles("WigiDocument", ps, []), WigiStyles("WigiDocument", [], ts)]
+	// 		The first WigiStyles works, the second one is ignored,
+	//		so all the paragraphs have "ps" style and all the texts have [] (not "ts").
+	WigiStyles : (type : string, paragraphStyle : [WigiParagraphStyle], textStyle : [WigiTextStyle]);
+}
+
+doCompareWigi(wigi1 : WigiElement, wigi2 : WigiElement, lastPair : ref Pair<WigiElement, WigiElement>, 
+	mildCompare : bool, compareText : (string) -> (string) -> bool) -> bool {
+	lastPair := Pair(wigi1, wigi2);
+
+	checkStylesEqual = \st1 : [WigiStyle], st2 : [WigiStyle] ->{
+		false;
+	}
+
+	// we do not take into account LeftAlign and FixedWidth when compare two WigiParagraphs
+	paragraphStyleDefaults = [LeftAlign(), FixedWidth()];
+
+	switch (wigi1 : WigiElement) {
+		WigiDocument(r, style): {
+			e2 = cast(wigi2 : WigiElement -> WigiDocument);
+			checkStylesEqual(style, e2.style)
+			&& doCompareWigi(r, e2.root, lastPair, mildCompare, compareText);
+		}
+		WigiParagraph(elements, style): {
+			e2 = cast(wigi2 : WigiElement -> WigiParagraph);
+			s1 = subtractA(normalizeWigiParagraphStyle(style), paragraphStyleDefaults);
+			s2 = subtractA(normalizeWigiParagraphStyle(e2.style), paragraphStyleDefaults);
+			(mildCompare || checkStylesEqual(s1, s2))
+			;
+		}
+
+		default: true;
+	}
+}
+
+normalizeWigiParagraphStyle(paraStyle : [WigiParagraphStyle]) -> [WigiParagraphStyle] {
+	[];
+}
+
+----------
+
+DefaultCellBorder = (WigiCellBorder((1.0 : double), (1.0 : double), (1.0 : double), (1.0 : double)) : WigiCellBorder);
+
+DefaultCellColors = (WigiCellColors((2139128453 : int), (16777215 : int)) : WigiCellColors);
+
+DefaultCellFormatting = (WigiCellFormatting((WigiCellFormattingGeneral() : WigiCellFormattingGeneral)) : WigiCellFormatting);
+
+DefaultCellInnerBorder = (WigiCellInnerBorder((2.0 : double), (2.0 : double), (2143733446 : int), (5.0 : double)) : WigiCellInnerBorder);
+
+DefaultCellPadding = (WigiCellPadding((5.0 : double), (5.0 : double), (5.0 : double), (5.0 : double)) : WigiCellPadding);
+
+DefaultCellVerticalAlign = (WigiCellVerticalAlign((CellAlignTop() : CellAlignTop)) : WigiCellVerticalAlign);
+
+DummyCellInnerBorder = (WigiCellInnerBorder((0.0 : double), (0.0 : double), (-1 : int), (0.0 : double)) : WigiCellInnerBorder);
+
+SuperSubscriptScalingCoeff = (0.7 : double);
+
+dummyListed = (Listed((Bulleted(("" : string)) : Bulleted), ([] : [WigiTextStyle])) : Listed);
+
+normalizeWigiParagraphStyle = (\paraStyle:[WigiParagraphStyle] ->
+	([] : [WigiParagraphStyle])
+ : (paraStyle : [WigiParagraphStyle]) -> [WigiParagraphStyle]);
+
+nullWigiTableHighlight = (WigiTableHighlight(("" : string), ("" : string)) : WigiTableHighlight);
+
+doCompareWigi = (\wigi1:WigiElement, wigi2:WigiElement, lastPair:ref Pair<WigiElement, WigiElement>, mildCompare:bool, compareText:(string) -> (string) -> bool ->
+	({
+		(((lastPair : ref Pair<WigiElement, WigiElement>)  :=  (Pair((wigi1 : WigiElement), (wigi2 : WigiElement)) : Pair<WigiElement, WigiElement>)) : void);
+		(checkStylesEqual : ([WigiStyle], [WigiStyle]) -> bool = (\st1:[WigiStyle], st2:[WigiStyle] ->
+			(false : bool)
+		 : (st1 : [WigiStyle], st2 : [WigiStyle]) -> bool);
+		({
+			(paragraphStyleDefaults : [WigiParagraphStyle] = ([(LeftAlign() : LeftAlign), (FixedWidth() : FixedWidth)] : [WigiParagraphStyle]);
+			({
+				(switch (wigi1 : WigiElement) {
+					WigiDocument(r,style): {
+						(r : WigiElement = ((wigi1 : WigiDocument).root : WigiElement);
+						(style : [WigiDocumentStyle] = ((wigi1 : WigiDocument).style : [WigiDocumentStyle]);
+						(e2 : WigiDocument = (cast((wigi2 : WigiElement) : WigiElement -> WigiDocument) : WigiDocument);
+						({
+							((((checkStylesEqual : ([WigiStyle], [WigiStyle]) -> bool)((style : [WigiDocumentStyle]), ((e2 : WigiDocument).style : [WigiDocumentStyle])) : bool) && ((doCompareWigi : (wigi1 : WigiElement, wigi2 : WigiElement, lastPair : ref Pair<WigiElement, WigiElement>, mildCompare : bool, compareText : (string) -> (string) -> bool) -> bool)((r : WigiElement), ((e2 : WigiDocument).root : WigiElement), (lastPair : ref Pair<WigiElement, WigiElement>), (mildCompare : bool), (compareText : (string) -> (string) -> bool)) : bool)) : bool)
+						}
+						 : bool) : bool) : bool) : bool)
+					}
+					WigiParagraph(elements,style): {
+						(elements : [WigiElement] = ((wigi1 : WigiParagraph).elements : [WigiElement]);
+						(style : [WigiParagraphStyle] = ((wigi1 : WigiParagraph).style : [WigiParagraphStyle]);
+						(e2 : WigiParagraph = (cast((wigi2 : WigiElement) : WigiElement -> WigiParagraph) : WigiParagraph);
+						({
+							(s1 : [WigiParagraphStyle] = ((subtractA : (a : [WigiParagraphStyle], b : [WigiParagraphStyle]) -> [WigiParagraphStyle])(((normalizeWigiParagraphStyle : (paraStyle : [WigiParagraphStyle]) -> [WigiParagraphStyle])((style : [WigiParagraphStyle])) : [WigiParagraphStyle]), (paragraphStyleDefaults : [WigiParagraphStyle])) : [WigiParagraphStyle]);
+							({
+								(s2 : [WigiParagraphStyle] = ((subtractA : (a : [WigiParagraphStyle], b : [WigiParagraphStyle]) -> [WigiParagraphStyle])(((normalizeWigiParagraphStyle : (paraStyle : [WigiParagraphStyle]) -> [WigiParagraphStyle])(((e2 : WigiParagraph).style : [WigiParagraphStyle])) : [WigiParagraphStyle]), (paragraphStyleDefaults : [WigiParagraphStyle])) : [WigiParagraphStyle]);
+								({
+									(((mildCompare : bool) || ((checkStylesEqual : ([WigiStyle], [WigiStyle]) -> bool)((s1 : [WigiParagraphStyle]), (s2 : [WigiParagraphStyle])) : bool)) : bool)
+								}
+								 : bool) : bool)
+							}
+							 : bool) : bool)
+						}
+						 : bool) : bool) : bool) : bool)
+					}
+					default(): {
+						(true : bool)
+					}
+				} : bool)
+			}
+			 : bool) : bool)
+		}
+		 : bool) : bool)
+	}
+	 : bool)
+ : (wigi1 : WigiElement, wigi2 : WigiElement, lastPair : ref Pair<WigiElement, WigiElement>, mildCompare : bool, compareText : (string) -> (string) -> bool) -> bool);

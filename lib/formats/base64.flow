@@ -1,0 +1,160 @@
+import string;
+import binarytree;
+import bits;
+import list;
+
+export {
+	// Convert base-64 encoded string to binary (using only the lower 8 bits of each character)
+	decodeBase64(s : string) -> string;
+
+	// Convert binary (using lower 8 bits of each character) to base-64 encoded string
+	encodeBase64(b : string) -> string;
+}
+
+
+base64codes ="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+base64Tree : ref Tree<string, int> = ref makeTree();
+
+decodeBase64(s : string) -> string {
+	if (^base64Tree == makeTree()) {
+		
+		codes = generate(0, strlen(base64codes), \in -> {
+			getCharAt(base64codes, in)
+		});
+		base64Tree := foldi(codes, makeTree(), \in, acc2, c -> {
+			setTree(acc2, c, in);
+		});
+	}
+	r = doDecodeBase64(s, ^base64Tree, 0, strlen(s), [], "");
+
+	missing = 4 - length(r.first);
+	excess = [0, 1, 2, 2, 3][missing];
+	b = flushBase64(r);
+	strLeft(b, strlen(b)-excess);
+}
+
+doDecodeBase64(s : string, codes : Tree<string, int>, i : int, n : int, curCodes : [int], acc : string) -> Pair<[int], string> {
+	if (i < n) {
+		c = getCharAt(s, i);
+		code = lookupTreeDef(codes, c, -1);
+		if (code == -1) {
+			doDecodeBase64(s, codes, i + 1, n, curCodes, acc);
+		} else {
+			ncodes = arrayPush(curCodes, code);
+			if (length(ncodes) == 4) {
+				nacc = flushBase64(Pair(ncodes, acc));
+				doDecodeBase64(s, codes, i + 1, n, [], nacc);
+			} else {
+				doDecodeBase64(s, codes, i + 1, n, ncodes, acc);
+			}
+		}
+	} else {
+		Pair(curCodes, acc);
+	}
+}
+
+flushBase64(p : Pair<[int], string>) -> string {
+	if (length(p.first) < 4) {
+		flushBase64(Pair(arrayPush(p.first, 0), p.second));
+	} else {
+		b = p.first;
+		b0 = b[0];
+		b1 = b[1];
+		b2 = b[2];
+		b3 = b[3];
+
+		// by0 = b0 << 2 | b1 >> 4
+		by0 = bitOr(bitShl(b0, 2), bitUshr(b1, 4));
+
+		// by1 = ((b1 << 4) | b2 >> 4) & 0xff
+		by1 = bitAnd(bitOr(bitShl(b1, 4), bitUshr(b2, 2)), 0xff);
+
+		// by2 = (b2 << 6) | b3
+		by2 = bitAnd(bitOr(bitShl(b2, 6), b3), 0xff);
+
+		p.second + fromCharCode(by0) + fromCharCode(by1) + fromCharCode(by2)
+	}
+}
+
+
+encodeBase64(binary : string) -> string {
+	linefeed = "\u000d\n";
+	lineLength = 72;
+
+	l = strlen(binary);
+	words = (l + 2) / 3; // Rounded up
+	padding = (3 - (l % 3)) % 3; // 0->0, 1->2, 2->1
+
+	getCh = \i -> if (i < l) bitAnd(getCharCodeAt(binary, i), 0xff) else 0;
+
+	en = \i -> getCharAt(base64codes, i);
+
+	result = ref makeList();
+	linesPerChunk = 8;  // group multiple lines in one list item, to reduce list structure memory overhead 
+	chunk = ref makeList();
+	chunkLen = ref 0;
+	fori(0, words-1, \i -> {
+		x = getCh(3*i + 0);
+		y = getCh(3*i + 1);
+		z = getCh(3*i + 2);
+
+		n = bitOr(bitOr(bitShl(x, 16), bitShl(y, 8)), z);
+		a = bitAnd(bitUshr(n, 18), 0x3f);
+		b = bitAnd(bitUshr(n, 12), 0x3f);
+		c = bitAnd(bitUshr(n, 6), 0x3f);
+		d = bitAnd(n, 0x3f);
+
+		t = en(a) + en(b) + en(c) + en(d);
+
+		chunk := Cons(t, ^chunk);
+		chunkLen := ^chunkLen + 4;
+		if (^chunkLen % lineLength == 0) {
+			chunk := Cons(linefeed, ^chunk);
+			if (^chunkLen >= lineLength * linesPerChunk) {
+				result := Cons(list2string(^chunk), ^result);
+				chunk := makeList();
+				chunkLen := 0;
+			}
+		}
+	});
+
+	// don't forget last chunk
+	if (^chunkLen > 0) {
+		if (^chunkLen % lineLength != 0) {
+			chunk := Cons(linefeed, ^chunk);
+		}
+		result := Cons(list2string(^chunk), ^result);
+	}
+	
+	// append padding to last chunk
+	entirety = {
+		switch (^result : List) {
+			EmptyList(): ^result;
+			Cons(r, _tail): Cons(
+				strLeft(r, strlen(r) - strlen(linefeed) - padding) + strLeft("===", padding) + linefeed,
+				_tail
+			);
+		}
+	};
+
+	list2string(entirety)
+}
+
+
+/*
+main() {
+	tests = ["", "a", "ab", "abc", "abcd", "sure.", "asure.", "easure.", "leasure.", "pleasure.", "any carnal pleasure.", "\u0000", "\u0000\u00ff"];
+	iter(tests, \t -> {
+		println(t);
+		b64 = encodeBase64(t);
+		println(b64);
+		o = decodeBase64(b64);
+		if (o != t) {
+			println("Error!");
+			println(s2a(t));
+			println(s2a(o));
+		}
+	})
+}
+*/

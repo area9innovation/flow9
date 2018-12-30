@@ -1,0 +1,50 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+
+export {
+	fiGetCppHeader(cfg: FcCppConfig, program : FiProgram) -> List<string>;
+	fiAssembleCppFile(cfg: FcCppConfig, content: List<string>) -> void;
+}
+
+fiNativesToDefines = [
+	Pair("MD5", ["md5"]),
+	Pair("LIST2ARRAY", ["list2array", "list2string"]),
+	Pair("BINARY", ["fromBinary"]),
+	Pair("FILESYSTEM", [
+		"isDirectory",
+		"createDirectory",
+		"deleteDirectory",
+		"fileModified",
+		"getApplicationPath",
+		"resolveRelativePath",
+		"readDirectory",
+		"fileSize"
+	]),
+	Pair("BINARYTREE", ["lookupTree"]),
+	Pair("URLPARAMETER", ["getAllUrlParametersArray"]),
+];
+
+fiGetCppHeader(cfg, program) {
+	isNativeAlive = \fn -> {
+		eitherMap(lookupTree(program.names.native2module, fn), \mname -> {
+			// ensure that function was not removed by DCE
+			switch (lookupTree(program.modules, mname)) {
+				Some(m): containsSet(buildSet(map(m.natives, \n -> n.name)), fn);
+				None(): false;
+			}
+		}, false)
+	}
+	usedDefines : Set<string> = fold(fiNativesToDefines, makeSet(), \acc, pr -> {
+		if (exists(pr.second, \f : string -> isNativeAlive(f))) insertSet(acc, pr.first)
+		else acc;
+	});
+	defines = foldSet(usedDefines, makeList(), \list, define -> {
+		Cons("#define FLOWC_RUNTIME_INCLUDE_" + define + "\n", list)
+	});
+	fn = "#inc" + "lude \"tools/flowc/backends/cpp/runtime.cpp\"\n";
+	Cons(fn, defines);
+}
+
+fiAssembleCppFile(cfg, content) {
+	saveFileContent(cfg.outputfile, list2string(content));
+}

@@ -1,0 +1,149 @@
+import tools/flowc/incremental/fiexp;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	FiStatementPullContext(
+		isStatement : (FiExp)->bool,
+		gensym : () -> string
+	);
+
+	pullFiStatements(ctx : FiStatementPullContext, code : FiExp) -> Maybe<FiExp>;
+}
+
+FiStmtBindingInfo(name : string, value : FiExp, type : FiType);
+
+isAtomicFiExp(code : FiExp) -> bool {
+	switch (code) {
+		FiVar(__,__,__): true;
+		FiVoid(__):      true;
+		FiDouble(__,__): true;
+		FiInt(__,__):    true;
+		FiString(__,__): true;
+		FiBool(__,__):   true;
+		default:         false;
+	}
+}
+
+rebindFiStmt(ctx : FiStatementPullContext, code : FiExp) -> Pair<FiExp, [FiStmtBindingInfo]> {
+	name = ctx.gensym();
+	type = fiExpType(code);
+	Pair(FiVar(name, type, -1), [FiStmtBindingInfo(name, code, type)]);
+}
+
+rebindFiStmt2(ctx : FiStatementPullContext, code : FiExp, prebinds : [FiStmtBindingInfo]) -> Pair<FiExp, [FiStmtBindingInfo]> {
+	bind = rebindFiStmt(ctx, code);
+	Pair(bind.first, concat(prebinds, bind.second));
+}
+
+rebindFiArg(ctx : FiStatementPullContext, code : FiExp, def : FiExp, cb : (FiExp)->FiExp) -> Pair<FiExp,[FiStmtBindingInfo]> {
+	rec = pullFiStatementsRec(ctx, code);
+	if (length(rec.second) > 0)
+		Pair(cb(rec.first), rec.second)
+	else
+		Pair(def, []);
+}
+
+rebindFiArgList(ctx : FiStatementPullContext, code : [FiExp], def : FiExp, cb : ([FiExp])->FiExp) -> Pair<FiExp,[FiStmtBindingInfo]> {
+	// Recursively search for statements
+	rec_args = map(code, \arg -> pullFiStatementsRec(ctx, arg));
+	switch (lastfindi(rec_args, \p -> length(p.second) > 0)) {
+		Some(last_bound): {
+			// Flush nodes preceeding last bound item to preserve evaluation order
+			args_atomic = mapi(rec_args, \i,p -> {
+				if (i >= last_bound || isAtomicFiExp(p.first))
+					p
+				else {
+					p2 = rebindFiStmt(ctx, p.first);
+					Pair(p2.first, concat(p.second, p2.second));
+				}
+			});
+
+			Pair(
+				cb(map(args_atomic, \a -> a.first)),
+				mapConcat(args_atomic, \a -> a.second)
+			);
+		}
+		None(): Pair(def, []);
+	}
+}
+
+pullFiStatementsRec(ctx : FiStatementPullContext, code : FiExp) -> Pair<FiExp,[FiStmtBindingInfo]> {
+	if (ctx.isStatement(code))
+		rebindFiStmt(ctx, code)
+	else {
+		defr = Pair(code, []);
+		switch (code : FiExp) {
+			FiLambda(__,__,__,__):    defr;
+			FiVar(__,__,__):          defr;
+			FiLet(__,__,__,__,__,__): defr;
+			FiSwitch(__,__,__,__,__): defr;
+			FiCall(f, es, type, s):
+				rebindFiArgList(ctx, arrayPush(es,f), code, \a -> FiCall(a[length(es)], subrange(a, 0, length(es)), type, s));
+			FiIf(e1, e2, e3, type, s): {
+				e1r = pullFiStatementsRec(ctx, e1);
+				e2r = pullFiStatementsRec(ctx, e2);
+				e3r = pullFiStatementsRec(ctx, e3);
+				if (length(e2r.second) > 0 || length(e3r.second) > 0) {
+					rebindFiStmt2(ctx, FiIf(e1r.first, e2, e3, type, s), e1r.second);
+				} else if (length(e1r.second) > 0) {
+					Pair(FiIf(e1r.first, e2, e3, type, s), e1r.second)
+				} else {
+					defr
+				}
+			}
+			FiCast(e, from, to, type, s):
+				rebindFiArg(ctx, e, code, \e2 -> FiCast(e2, from, to, type, s));
+			FiSeq(es, type, s):
+				rebindFiArgList(ctx, es, code, \es2 -> FiSeq(es2, type, s));
+			FiCallPrim(op, es, type, s):
+				switch (op) {
+					FcAndPrim(): {
+						e1r = pullFiStatementsRec(ctx, es[0]);
+						e2r = pullFiStatementsRec(ctx, es[1]);
+						if (length(e2r.second) > 0) {
+							rebindFiStmt2(ctx, FiIf(e1r.first, es[1], FiBool(false, -1), type, s), e1r.second);
+						} else if (length(e1r.second) > 0) {
+							Pair(FiCallPrim(FcAndPrim(), [e1r.first, es[1]], type, s), e1r.second)
+						} else {
+							defr
+						}
+					}
+					FcOrPrim(): {
+						e1r = pullFiStatementsRec(ctx, es[0]);
+						e2r = pullFiStatementsRec(ctx, es[1]);
+						if (length(e2r.second) > 0) {
+							rebindFiStmt2(ctx, FiIf(e1r.first, FiBool(true, -1), es[1], type, s), e1r.second);
+						} else if (length(e1r.second) > 0) {
+							Pair(FiCallPrim(FcOrPrim(), [e1r.first, es[1]], type, s), e1r.second)
+						} else {
+							defr
+						}
+					}
+					default:
+						rebindFiArgList(ctx, es, code, \es2 -> FiCallPrim(op, es2, type, s));
+				}
+			FiVoid(__):       defr;
+			FiDouble(__, __): defr;
+			FiInt(__, __):    defr;
+			FiString(__, __): defr;
+			FiBool(__, __):   defr;
+			FiRequire(f, e, type, s):
+				rebindFiArg(ctx, e, code, \e2 -> FiRequire(f, e2, type, s));
+			FiUnsafe(n, e, type, s):
+				rebindFiArg(ctx, e, code, \e2 -> FiUnsafe(n, e2, type, s));
+		}
+	}
+}
+
+pullFiStatements(ctx : FiStatementPullContext, code : FiExp) -> Maybe<FiExp> {
+	rv = pullFiStatementsRec(ctx, code);
+
+	if (length(rv.second) == 0)
+		None()
+	else {
+		rv2 = fold(reverseA(rv.second), rv.first, \inner, bind ->
+			FiLet(bind.name, bind.type, bind.value, inner, fiExpType(inner), -1)
+		);
+		Some(rv2);
+	}
+}

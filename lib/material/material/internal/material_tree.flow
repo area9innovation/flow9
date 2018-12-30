@@ -1,0 +1,374 @@
+import material/selectmarray;
+import material/internal/material_button;
+
+export {
+	MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MTreeState(
+	items : Behaviour<[[int]]>,
+	selected : DynamicBehaviour<Set<[int]>>,
+	expanded : DynamicBehaviour<Set<[int]>>,
+	color : MColor,
+	multiSelection : bool,
+	showSeparators : bool
+);
+
+fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
+	fsubmapi(children, \i, c -> fSelectionIndexes2(const([i]), c.children)) |> fconcatA
+}
+
+fSelectionIndexes2(index : Transform<[int]>, children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
+	fconcat(
+		farray(index),
+		fsubmapi(children, \i, c ->
+			fSelectionIndexes2(fselect(index, FLift(\id -> arrayPush(id, i))), c.children)
+		)
+		|> fconcatA
+	)
+}
+
+fItemsLength(children : Transform<[MTreeNode<?>]>) -> Transform<int> {
+	fselect(fsubmap(children, \c -> fItemsLength2(c.children)), sum |> FLift)
+}
+
+fItemsLength2(children : Transform<[MTreeNode<?>]>) -> Transform<int> {
+	fadditioni(fselect(fsubmap(children, \c -> fItemsLength2(c.children)), sum |> FLift), const(1))
+}
+
+MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	children = ffuseinit(m.children, make([]));
+	selIndexes = ffuseinit(fSelectionIndexes(children.first), make([[]]));
+
+	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
+	multiSelection = tryExtractStruct(m.style, MMultiSelection(make(makeSet())));
+	itemsLength = tryExtractStruct(m.style, MItemsLength(make(0)));
+
+	state =
+		MTreeState(
+			selIndexes.first,
+			extractStruct(m.style, MTreeSelection(make(makeSet()))).selected,
+			extractStruct(m.style, MTreeExpanded(make(makeSet()))).expanded,
+			extractStruct(m.style, parent.theme.primaryColor),
+			isSome(multiSelection),
+			!containsStruct(m.style, MTreeHideSeparators())
+		);
+
+	TBorderA(0., 0., 0., 1.,
+		SelectMLines2T(
+			manager,
+			parent,
+			fmap(children.first, \c -> c.content),
+			\index, id, __, p -> {
+				MTreeNode2T(manager, p, state, getValue(children.first)[fgetValue(index)], farray(index), m2t, const(true));
+			}
+		)
+	)
+	|> (\mtree ->
+		TConstruct(
+			[
+				makeSubscribe(state.selected, \selSet -> {
+					iterSet(selSet, \sel -> {
+						loop(
+							subrange(sel, 0, length(sel) - 1),
+							\s -> subrange(s, 0, length(s) - 1),
+							\s -> length(s) > 0,
+							\s -> nextDistinct(state.expanded, insertSet(getValue(state.expanded), s))
+						);
+					})
+				})
+			],
+			mtree
+		)
+	)
+	|> (\mtree ->
+		eitherMap(
+			singleSelection,
+			\ss ->
+				TConstruct(
+					[
+						\ -> fBidirectionalLink(
+							fselect2(state.items, state.selected, FLift2(\ids, s ->
+								if (sizeSet(s) > 0) findiDef(ids, \i -> containsSet(s, i), -1) else -1)),
+							fselect2(state.items, ss.selected, FLift2(\ids, s ->
+								if (s >= 0 && length(ids) > s) makeSet1(ids[s]) else makeSet())),
+							\s -> nextDistinct(ss.selected, s),
+							\s -> nextDistinct(state.selected, s)
+						)
+					],
+					mtree
+				),
+			mtree
+		)
+	)
+	|> (\mtree ->
+		eitherMap(
+			multiSelection,
+			\ms ->
+				TConstruct(
+					[
+						\ -> fBidirectionalLink(
+							fselect2(state.items, state.selected, FLift2(\ids : [[int]], s : Set<[int]> ->
+								foldSet(s, makeSet(), \acc : Set<int>, sel : [int] -> {
+									id = findiDef(ids, \i -> i == sel, -1);
+
+									if (id >= 0) {
+										insertSet(acc, id);
+									} else {
+										acc;
+									}
+								})
+							)),
+							fselect2(state.items, ms.selected, FLift2(\ids : [[int]], s : Set<int> ->
+								foldSet(s, makeSet(), \acc : Set<[int]>, sel : int -> {
+									if (sel >= 0 && sel < length(ids)) {
+										insertSet(acc, ids[sel]);
+									} else {
+										acc;
+									}
+								})
+							)),
+							\s : Set<int> -> nextDistinct(ms.selected, s),
+							\s : Set<[int]> -> nextDistinct(state.selected, s)
+						)
+					],
+					mtree
+				),
+			mtree
+		)
+	)
+	|> (\mtree ->
+		TConstruct([children.second, selIndexes.second], mtree)
+	)
+	|> (\mtree ->
+		eitherMap(
+			itemsLength,
+			\il ->
+				TConstruct(
+					[ \ -> fconnect(fItemsLength(children.first), il.length) ],
+					mtree
+				),
+			mtree
+		)
+	)
+}
+
+MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState, m : MTreeNode<?>, treeIndex : Transform<[int]>,
+	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
+	children = ffuseinit(m.children, make([]));
+	childrenLength = fselect(children.first, length |> FLift);
+	expanded = extractStruct(m.style, MExpanded(make(false))).expanded;
+	selected = extractStruct(m.style, MSelected(make(false))).selected;
+	focused = extractStruct(m.style, MFocused(make(false))).focused;
+	childSelected = tryExtractStruct(m.style, MChildSelected(make(false)));
+	shortHighlighter = contains(m.style, MShortHighlighter());
+
+	focusState =
+		replaceStructMany(
+			m.style,
+			[
+				MOnClick(\ -> {
+					nextDistinct(selected, if (state.multiSelection) !getValue(selected) else true);
+					maybeApply(tryExtractStruct(m.style, MOnClick(nop)), \oc -> oc.click())
+				}),
+				MFocused(focused),
+				MDefaultShortcutEnabled(const(false))
+			]
+		);
+
+	contentBoxB = makeWH();
+	TBorderA(if (length(fgetValue(treeIndex)) > 1) 24. else 0., 0., 0., 0.,
+		TLinesA([
+			MFocusClickable2T(manager, parent, "MTreeNode", focusState, \focus ->
+				TDecorator(
+					TAvailable(
+						TColsYCenterA([
+							TVisible(
+								fneq(childrenLength, 0),
+								MIconToggle2T(
+									manager,
+									focus.parent,
+									MIconToggle(
+										"remove_circle",
+										[MIconSize(16.), FillOpacity(1.), state.color, MToggleFalseIcon("add_circle", [MIconSize(16.), FillOpacity(1.), state.color])],
+										[MToggleValue(expanded)]
+									)
+								)
+							),
+							TAttachBoxCopy(m2t(m.content2material(m.content), focus.parent), contentBoxB)
+						]),
+						TFillX()
+					),
+					[
+						Pair(
+							selected,
+							\wh ->
+								if (shortHighlighter)
+									TPadA(16.0, 0.0,
+										TRectangle([MFill(MGrey(200))], TSizedWidthHeight(fsubtract(fwidth(wh), const(32.)), fheight(wh)))
+									)
+								else
+									TRectangle([MFill(MGrey(200))], TSizedWidthHeight(fwidth(wh), faddition(fheight(wh), const(1.5))))
+						)
+					],
+					false
+				)
+			),
+			TShowLazy(
+				fand(fneq(childrenLength, 0), expanded),
+				\ ->
+					TAvailable(
+						TCopySize(
+							SelectMLines2T(
+								manager,
+								parent,
+								fmap(children.first, \c -> c.content),
+								\index, id, __, p -> {
+									nextDistinct(expanded, true);
+
+									MTreeNode2T(
+										manager,
+										p,
+										state,
+										getValue(children.first)[fgetValue(index)],
+										farrayPush(treeIndex, index),
+										m2t,
+										if (state.showSeparators)
+											flessi(index, fadditioni(childrenLength, const(-1)))
+										else
+											const(false)
+									);
+								}
+							),
+							\tr ->
+								TAvailable(
+									TTranslate(
+										fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))),
+										TBaseAlignA(
+											TPadA(16., 0.,
+												TAttach(TFillY(), \fm ->
+													TSelect(fm.height, \hgt ->
+														TGraphics(
+															[LineTo(0., hgt - 6.)],
+															[MStroke(state.color), StrokeWidth(2.)]
+														)
+													)
+												)
+											)
+										)
+									),
+									tr
+								),
+							true
+						),
+						TFillX()
+					)
+			),
+			TBaseAlignA(
+				TShow(addVerticalSeparator,
+					TBorder(16., 0., 16., 0., MSeparator2T(manager, parent, true))
+				)
+			)
+		])
+	)
+	|> (\treeNode ->
+		TConstruct(
+			[
+				children.second,
+				makeSubscribeUns(selected, \s -> if (s) [interruptibleDeferUntilNextFrameRendered(\ -> nextDistinct(focused, true))] else []),
+				\ -> fBidirectionalLink(
+					fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+					fselect2(state.selected, treeIndex, containsSet |> FLift2),
+					\s -> {
+						if (length(s.first) > 0 || length(s.second) > 0) {
+							nextDistinct(
+								state.selected,
+								getValue(state.selected)
+								|> (\sel ->
+									if (length(s.first) > 0 && (!contains(getValue(state.items), s.first) || length(s.second) == 0))
+										removeSet(sel, s.first)
+									else
+										sel
+								)
+								|> (\sel ->
+									if (length(s.second) > 0) {
+										if (state.multiSelection) {
+											insertSet(sel, s.second)
+										} else {
+											makeSet1(s.second)
+										}
+									} else {
+										sel
+									}
+								)
+							)
+						}
+					},
+					\s -> {
+						nextDistinct(selected, s);
+					}
+				),
+				\ -> fBidirectionalLink(
+					fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
+					fselect2(state.expanded, treeIndex, containsSet |> FLift2),
+					\e -> {
+						if (length(e.first) > 0 || length(e.second) > 0) {
+							nextDistinct(
+								state.expanded,
+								getValue(state.expanded)
+								|> (\ex ->
+									if (length(e.first) > 0 && (!contains(getValue(state.items), e.first) || length(e.second) == 0))
+										removeSet(getValue(state.expanded), e.first)
+									else
+										ex
+								)
+								|> (\ex ->
+									if (length(e.second) > 0)
+										insertSet(ex, e.second)
+									else
+										ex
+								)
+							)
+						}
+					},
+					\e -> {
+						nextDistinct(expanded, e);
+					}
+				),
+				\ -> {
+					if (containsSet(getValue(state.selected), fgetValue(treeIndex))) {
+						nextDistinct(selected, true);
+					}
+					if (containsSet(getValue(state.expanded), fgetValue(treeIndex))) {
+						nextDistinct(expanded, true);
+					}
+
+					\ -> {
+						if (!contains(getValue(state.items), fgetValue(treeIndex))) {
+							nextDistinct(state.expanded, removeSet(getValue(state.expanded), fgetValue(treeIndex)));
+							nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndex)));
+						}
+					}
+				}
+			],
+			treeNode
+		)
+	)
+	|> (\treeNode ->
+		eitherMap(
+			childSelected,
+			\cs ->
+				TConstruct(
+					[
+						\ -> fconnect(
+							fselect2(state.selected, treeIndex, FLift2(\s, i ->
+								foldSet(s, false, \acc, si -> acc || (length(si) > length(i) && subrange(si, 0, length(i)) == i)))),
+							cs.selected
+						)
+					],
+					treeNode
+				),
+			treeNode
+		)
+	)
+}

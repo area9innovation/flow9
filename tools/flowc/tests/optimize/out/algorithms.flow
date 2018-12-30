@@ -1,0 +1,354 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import runtime;
+import math;
+import set;
+
+export {
+	// Sorts an array using merge sort
+	sort : (a : [?]) -> [?];
+
+	// Sort on product of element or custom field (when productFn like \lo -> lo.id)
+	sortCustom : (a : [?], productFn : (?) -> ??, ascending : bool) -> [?];
+
+	// Sort and removes duplicates. A version based on binaryTree. Fast on big arrays (10k and larger).
+	sortUnique(a : [?]) -> [?];
+
+	// Returns array which only contains unique elements of the array given
+	// O(n log n)
+	uniq : (a : [?]) -> [?];
+
+	// Generic merge sort.
+	// comparisonFn(x,y) must be positive if x > y, negative if y < x and zero if x == y
+	mergeSort(a : [?], comparisonFn : (?, ?) -> int) -> [?];
+
+	// Helper that uses "x < y" and "x == y" to make a suitable comparison function for mergeSort
+	genericCompare(x : ?, y : ?) -> int;
+	genericCompareDesc(x : ?, y : ?) -> int;
+
+	// Helper that uses comparison on the product of the elements for mergeSort
+	genericCompareKey(keyFn : (?) -> ??) -> ((?, ?) -> int);
+	genericCompareKeyDesc(keyFn : (?) -> ??) -> ((?, ?) -> int);
+
+	// Assuming left and right are sorted, merge to sorted array using the given comparison function
+	mergeArrays(left : [?], right : [?], comparisonFn : (?, ?) -> int) -> [?];
+
+	// Calculates the total cartisian product of an array of arrays
+	cartesian(as : [[?]]) -> [[?]];
+
+	// Choose 1 random element. Crashes on empty array.
+	pickOne(a : [?]) -> ?;
+
+	// Choose n random elements from this array. Notice, this is not statistically correct, but it is relatively fast
+	pickn(a : [?], n : int) -> [?];
+
+	// This produces a shuffled array
+	shuffleArray(array : [?]) -> [?];
+
+	// This will shuffle the elements of an array using the provided swap function
+	shuffle(elements : [?], swap : (int, int) -> void) -> void;
+
+	// If the bool is true, we get a shuffle function. Otherwise, the id function
+	makeShuffleArrayFn(doShuffle : bool) -> (([?]) -> [?]);
+
+	// There are n! permutations on n elements. Key is the number of the permutation we want,
+	// i.e. a number in [0, n! - 1].
+	// This encoding of permutations garanties that different permutations have different keys
+	// and different keys give different permutations.
+	shuffleWithKey(elements : [?], key : int) -> [?];
+
+	// Pick num elements, in random order, from the array
+	takeRandomSubset(array : [?], num : int) -> [?];
+
+	isEmptyIntersection(a : [?], b : [?]) -> bool;
+
+	// Add an element to an array, and keep it sorted. Will make sure we do not have more than
+	// 'limit' elements in the array. If limit is 0, there is no limit. Linear time.
+	arrayPushSortedWithLimit(elements : [?], toAdd : ?, comparisonFn: (?, ?) -> int, limit : int) -> [?];
+
+	// Split array into two based on specified criteria: Pair(yes, no) where
+    // yes contains all elements of a where fn is true, and no where fn is false.
+	partition(a : [?], fn : (?) -> bool) -> Pair<[?], [?]>;
+
+	// Expects sorted (ascending) array.
+	// Quick implementation for experiment. Not tested thoroughly.
+	binarySearchEx(a : [?], e : ?, from : int, to : int, illegalVal : int) -> int;
+	binarySearch(a : [?], e : ?, illegalVal : int) -> int;
+    // Returns the index of the specified value in the array, if value is found; otherwise,
+    // a negative number.
+    // If value is not found the negative number returned is the bitwise complement of the index
+    // of the insertion of the searched value into the array to keep it sorted
+	binarySearch2(a : [?], e : ?, comparisonFn : (?, ?) -> int) -> int;
+}
+
+cartesian(as) {
+	l = length(as);
+	if (l == 0) {
+		[];
+	} else if (l == 1) {
+		map(as[0], \a -> [a]);
+	} else {
+		r = cartesian(subrange(as, 1, l - 1));
+		fold(as[0], [], \ac, val -> {
+			va = [val];
+			concat(ac, map(r, \v -> {
+				concat(va, v);
+			}));
+		});
+	}
+}
+
+genericCompare(x, y) if (x < y) -1 else if (x == y) 0 else 1;
+genericCompareDesc(x, y) if (x > y) -1 else if (x == y) 0 else 1;
+
+genericCompareKey(keyFn) { \x, y -> genericCompare(keyFn(x), keyFn(y)) };
+genericCompareKeyDesc(keyFn) { \x, y -> genericCompareDesc(keyFn(x), keyFn(y)) };
+
+sort(a : [?]) {
+	mergeSort(a, genericCompare);
+}
+
+sortCustom(a : [?], productFn : (?) -> ??, ascending : bool) {
+	cmpfn = if (ascending) genericCompareKey else genericCompareKeyDesc;
+	mergeSort(a, cmpfn(productFn));
+}
+
+uniq(a : [?]) -> [?] {
+	if (length(a) < 50) {
+		fold(a, [], \u, e -> if (contains(u, e)) u else concat(u, [e]))
+	} else {
+		p : Pair<Set<?>, List<?>> = fold(a, Pair(makeSet(), makeList()), \p : Pair<Set<?>, List<?>>, e : ? -> {
+			seen = p.first;
+			acc = p.second;
+			if (containsSet(seen, e)) {
+				Pair(seen, acc)
+			} else {
+				Pair(insertSet(seen, e), Cons(e, acc))
+			}
+		});
+		result : List<?> = p.second;
+		list2array(result)
+	}
+}
+
+mergeArrays(left : [?], right : [?], comparisonFn : (?, ?) -> int) -> [?] {
+	if (left == []) {
+		right
+	} else if(right == []) {
+		left
+	} else {
+		mergeRec(left, right, comparisonFn, 0, 0, EmptyList())
+	}
+}
+
+
+mergeSort(a : [?], comparisonFn : (?, ?) -> int) -> [?] {
+	l = length(a);
+	if (l <= 1) {
+		a;
+	} else if (l == 2) {
+		// We just special case this for efficiency
+		if (comparisonFn(a[0], a[1]) <= 0) {
+			a;
+		} else {
+			[ a[1], a[0] ];
+		}
+	} else {
+		m = l / 2;
+		left = subrange(a, 0, m);
+		right = subrange(a, m, l - m);
+		mergeRec(
+			mergeSort(left, comparisonFn),
+			mergeSort(right, comparisonFn),
+			comparisonFn,
+			0, 0,
+			EmptyList()
+		)
+	}
+}
+
+// Usage: mergeRec(a, b, comparisonFn, 0, 0, EmptyList)
+mergeRec(a : [?], b : [?], comparisonFn : (?, ?) -> int, i : int, j : int, result : List<?>) -> [?] {
+	alen = length(a);
+	blen = length(b);
+	if (i >= alen) {
+		if (j >= blen) {
+			list2array(result) // list2array makes array in reverse order, right as needed here
+		} else {
+			mergeRec(a, b, comparisonFn, i, j+1, Cons(b[j], result))
+		}
+	} else {
+		if (j >= blen || comparisonFn(a[i], b[j]) <= 0)
+			mergeRec(a, b, comparisonFn, i+1, j, Cons(a[i], result))
+		else
+			mergeRec(a, b, comparisonFn, i, j+1, Cons(b[j], result))
+	}
+}
+
+
+pickOne(a : [?]) -> ? {
+	i = floor(random() * i2d(length(a)));
+	a[i]
+}
+
+pickn(a : [?], n : int) -> [?] {
+	l = length(a);
+	r = if (l <= n) a
+	else if (n == 0) []
+	else if (n == 1) {
+		[ a[floor(random() * i2d(l))] ];
+	} else {
+		nh = n / 2;
+		splitDecision = if (n != nh * 2 && random() < 0.5) 1 else 0;
+		n1 = nh + splitDecision;
+		n2 = n - n1;
+		h = l / 2;
+		concat(pickn(subrange(a, 0, h), n1), pickn(subrange(a, h, l - h), n2));
+	}
+	r;
+}
+
+// The algorith should be correct, if random is correct:
+// http://en.wikipedia.org/wiki/Fisher-Yates_shuffle
+shuffle(sites, swap) {
+	n = length(sites);
+	iteri(sites, \i, v -> {
+		// Goes from n to 1
+		ri = n - i;
+		// j is from 0 to (ri - 1)
+		j = floor(random() * i2d(ri));
+		if (j != ri - 1) {
+			swap(ri - 1, j);
+		}
+	});
+}
+
+shuffleArray(array : [?]) -> [?] {
+	nr = map(array, \no -> ref no);
+	shuffle(array, \i, j -> {
+		t = ^(nr[i]);
+		nr[i] := ^(nr[j]);
+		nr[j] := t;
+	});
+	map(nr, \r -> ^r);
+}
+
+makeShuffleArrayFn(doShuffle) {
+	if (doShuffle) {
+		shuffleArray
+	} else {
+		idfn
+	}
+}
+
+sortUnique(a : [?]) -> [?] {
+	fold(a, makeTree(), \acc, v -> setTree(acc, v, 0)) |> getTreeKeys;
+}
+
+shuffleWithKey(elements : [?], key : int) -> [?] {
+	l = length(elements);
+	if (l < 2) {
+		elements
+	} else {
+		index = mod(key, l);
+		newKey = key / l;
+		concat(
+			[elements[index]],
+			shuffleWithKey(removeIndex(elements, index), newKey)
+		)
+	}
+}
+
+takeRandomSubset(array : [?], num : int) -> [?] {
+	if (num < 1 || array == []) {
+		[]
+	} else {
+		index = trunc(random() * i2d(length(array)));
+		concat(
+			[array[index]],
+			takeRandomSubset(removeIndex(array, index), num - 1)
+		)
+	}
+}
+
+isEmptyIntersection(a : [?], b : [?]) -> bool {
+	if ((a == []) || (b == []))
+		true
+	else {
+		countUntil(0, length(a), \i -> contains(b, a[i])) == length(a)
+	}
+}
+
+// WARNING: limit = 0 means no limit!
+arrayPushSortedWithLimit(start : [?], forAdd : ?, comparisonFn: (?, ?) -> int, limit : int) -> [?] {
+	ar = mergeArrays(start, [forAdd], comparisonFn);
+	if (limit > 0 && length(ar) > limit) subrange(ar, 0, limit) else ar;
+}
+
+partition(a : [?], fn : (?) -> bool) -> Pair<[?], [?]> {
+	doPartition(a, fn, [], []);
+}
+
+doPartition(a : [?], fn : (?) -> bool, l : [?], r : [?]) -> Pair<[?], [?]> {
+	if (a == []) {
+		Pair(l, r)
+	} else {
+		x = a[0];
+
+		check = fn(x);
+
+		doPartition(
+			tail(a),
+			fn,
+			if (check) arrayPush(l, x) else l,
+			if (check) r else arrayPush(r, x)
+		)
+	}
+}
+
+binarySearchInternal(a : [?], e : ?, from : int, to : int, comparisonFn : (?, ?) -> int, illegalVal : int, returnInsertion : bool) -> int {
+	if (from >= length(a)) {
+		if (returnInsertion) bitNot(from) else illegalVal;
+	} else if (from >= to) {
+		if (comparisonFn(a[from], e) == 0) {
+			from
+		} else {
+			if (returnInsertion) bitNot(from) else illegalVal;
+		}
+	} else {
+		middle = (from + ((to - from) / 2));
+		cmp : int = comparisonFn(a[middle], e);
+		if (cmp == 0) {
+			middle
+		} else if (cmp < 0) {
+			binarySearchInternal(a, e, middle + 1, to, comparisonFn, illegalVal, returnInsertion)
+		} else {
+			binarySearchInternal(a, e, from, middle - 1, comparisonFn, illegalVal, returnInsertion)
+		}
+	}
+}
+
+binarySearchEx(a : [?], e : ?, from : int, to : int, illegalVal : int) -> int {
+	binarySearchInternal(a, e, from, to, genericCompare, illegalVal, false);
+}
+
+binarySearch(a : [?], e : ?, illegalVal : int) -> int {
+	l = length(a);
+	if (l == 0) {
+		illegalVal
+	} else {
+		binarySearchInternal(a, e, 0, l - 1, genericCompare, illegalVal, false)
+	}
+}
+
+// returns positive index if found, or negative insertion position otherwise
+binarySearch2(a : [?], e : ?, comparisonFn : (?, ?) -> int) -> int {
+	l = length(a);
+	if (l == 0) {
+		-1
+	} else {
+		binarySearchInternal(a, e, 0, l - 1, comparisonFn, -1, true)
+	}
+}
+
+----------

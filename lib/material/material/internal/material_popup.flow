@@ -1,0 +1,562 @@
+import material/internal/material_scroll;
+import material/internal/material_shadow;
+
+export {
+	MPopup(items : [[Material]], positionScale : Transform<PositionScale>, style : [MPopupStyle]);
+
+	MPopupStyle ::= RMWidth, RMOffset, MElevation, RMSelected, RMBorders, MOpenMenu,
+		RMLeftAnimation, RMHeight, RMClickOutToClose, RMTranslateAnimation, RMScaleAnimation,
+		RMAlphaAnimation, MSameZorder, RMSameFocus, RMScrollArea, MFixPosition,
+		MBackgroundStyle, // Transparency only works in combination with RMNoShadow
+		RMNoScrollbars, MScrollPosition, RMCurrentHeight, RMCurrentWidth, RMDontHandle, RMNoSnapSize,
+		RMNoShadow, MScrollWidthHeight, MCustomScale, MActivateState, MFocusOnPrevious, MBlockClicks;
+
+		RMWidth(width : Transform<double>);
+		RMOffset(offset : Transform<Pair<WidthHeight, double>>);
+		RMSelected(selected : int);
+		RMBorders(borders : double);
+		RMLeftAnimation(leftAnimation : bool);
+		RMClickOutToClose();
+		RMTranslateAnimation();
+		RMScaleAnimation();
+		RMAlphaAnimation();
+		RMSameFocus(focus : MaterialFocus);
+		RMScrollArea(from : int, to : int);
+		RMNoScrollbars();
+		RMCurrentHeight(height : DynamicBehaviour<double>);
+		RMCurrentWidth(width : DynamicBehaviour<double>);
+		RMDontHandle();
+		RMNoSnapSize();
+		RMHeight(min : double, max : double);
+
+		// Shadow always applies background to your popup, color of
+		// background depends on color scheme of your manager. If you need to
+		// remove background completely or not satisfied with the shadow,
+		// use this one. You can also apply your custom shadow of kind you want
+		// to the content itself.
+		RMNoShadow();
+
+	RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+}
+
+popupDownFnUns = initUnsM();
+
+RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	items = if (getDefaultRtl()) map(m.items, reverseA) else m.items;
+	style = m.style;
+	positionScale0 = m.positionScale;
+
+	dpiScale = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
+	elevation = extractStruct(style, MElevation(const(8.))).elevation;
+	customScale = tryExtractStruct(style, MCustomScale(const(Factor(1., 1.))));
+	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale0, cus.factor, FLift2(\ps, cs ->
+		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale0);
+
+	stageWH = makeWH();
+	itemsWH = makeWH();
+	contentWH = makeWH();
+	maxWH = makeWH();
+
+	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
+	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
+	fixPosition = contains(style, MFixPosition());
+	scrollArea = extractStruct(style, RMScrollArea(0, 0));
+	borders = extractStruct(style, RMBorders(16.)).borders;
+	mHeight = extractStruct(style, RMHeight(-1., -1.)) |> (\f -> RMHeight(f.min - borders * 2., f.max - borders * 2.));
+	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale ->
+		(wh.height / ps.scale.y - borders * 2. - if (fixPosition) (ps.pos.y / ps.scale.y + offs.y) else 0.)
+		|> (\h ->
+			if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
+				min(mHeight.max, max(max(mHeight.min, 0.), h))
+			else if (mHeight.min > 0.)
+				max(mHeight.min, h)
+			else
+				h
+		);
+	selected = extractStruct(style, RMSelected(-1)).selected;
+	inspectVisible = extractStruct(style, makeTScrollInspectVisible());
+	scrollPosition : MScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
+	menuOpened = extractStruct(style, MOpenMenu(make(false))).opened;
+	leftAnimation = extractStruct(style, RMLeftAnimation(true)).leftAnimation;
+	sameZorder = extractStruct(style, MSameZorder(false)).same;
+	sameFocus = tryExtractStruct(style, RMSameFocus(manager.focus));
+	currentHeight = extractStruct(style, RMCurrentHeight(make(0.))).height;
+	currentWidth = extractStruct(style, RMCurrentWidth(make(0.))).width;
+	dontHandle = contains(style, RMDontHandle());
+	scrollWH = extractStruct(style, MScrollWidthHeight(makeWH(), makeWH()));
+	blockClicks = contains(style, MBlockClicks());
+
+	zorder = getValue(manager.currentZorder);
+	newZorder = zorder + 1;
+	previousFocus =
+		if (contains(style, MFocusOnPrevious())) {
+			getCurrentFocusedItem(manager)
+		} else {
+			None();
+		};
+	if (!sameZorder) nextDistinct(manager.currentZorder, newZorder);
+
+	uns = initUnsM();
+	down = make(false);
+	downInside = make(false);
+	beginAnimation = make(false);
+	nextDistinct(menuOpened, true);
+
+	sizes : [[DynamicBehaviour<WidthHeight>]] = generate(0, length(items), \i -> generate(0, length(items[i]), \__ -> makeWH()));
+
+	sizesB = fmerge(map(sizes, \s -> fold(s, const(WidthHeight(0., 0.)), \acc : Transform<WidthHeight>, s2 : Transform<WidthHeight> ->
+		fselect2(acc, s2, FLift2(\wh1, wh2 -> WidthHeight(wh1.width + wh2.width, max(wh1.height, wh2.height)))))));
+	positionDpiScale = fselect2(positionScale, dpiScale, FLift2(\psc : PositionScale, dsc : Factor ->
+		PositionScale(Point(psc.pos.x / dsc.x, psc.pos.y / dsc.y), Point(psc.scale.x / dsc.x, psc.scale.y / dsc.y))));
+
+	startingOffset = make(zeroPoint);
+	startingPosition =
+		if (fixPosition)
+			fselect2(
+				startingOffset,
+				positionDpiScale,
+				FLift2(\so : Point, ps : PositionScale -> Point(ps.pos.x + so.x, ps.pos.y + so.y))
+			)
+		else
+			fselect4(
+				startingOffset,
+				positionDpiScale,
+				stageWH,
+				contentWH,
+				\so : Point, ps : PositionScale, sWH : WidthHeight, cWH : WidthHeight ->
+					Point(
+						min(
+							if (ps.pos.x + so.x < 0.) {
+								if (ps.pos.x > 0.)
+									0.
+								else
+									ps.pos.x
+							} else
+								ps.pos.x + so.x,
+							max(
+								sWH.width - cWH.width * ps.scale.x,
+								ps.pos.x - cWH.width * ps.scale.x
+							)
+						),
+						min(
+							if (ps.pos.y + so.y < 0.) {
+								if (ps.pos.y > 0.)
+									0.
+								else
+									ps.pos.y
+							} else
+								ps.pos.y + so.y,
+							max(
+								sWH.height - (cWH.height + borders * 2.) * ps.scale.y,
+								ps.pos.y - (cWH.height + borders * 2.) * ps.scale.y
+							)
+						),
+					)
+			);
+
+	availableForm = make(TEmpty());
+
+	popupDownFn = \h, mi : MouseDownInfo -> {
+			if (mi.inside()) {
+				dispUnsM(popupDownFnUns);
+
+				manager.downInsideFocus ::= Some(either(sameFocus, RMSameFocus(manager.focus)).focus);
+				// Timeout to keep focus inside autocomplete popup
+				setUnsM(
+					popupDownFnUns,
+					interruptibleTimer(120, \ -> manager.downInsideFocus ::= None())
+				);
+			}
+
+			h
+		};
+
+	popupClickOutDownFn = \h, mi : MouseDownInfo -> {
+			if (!h && mi.inside()) {
+				next(menuOpened, false);
+			}
+
+			h || blockClicks
+		};
+	(\p ->
+		(\p2 ->
+			TLines(
+				[
+					if (scrollArea.from > 0)
+						[
+							TEvenGrid(generate(0, min(scrollArea.from, length(items)), \i -> mapi(items[i], \j, it ->
+								TAttachBoxCopy(m2t(it, p2), sizes[i][j]))))
+							|> (\f -> TGroup2(f, TFillX()))
+							// |> (\f -> TAvailable(f, TFillX()))
+						]
+					else
+						[],
+					if (scrollArea.from < scrollArea.to)
+						[
+							MGetFocusGroup(\p3 ->
+								TEvenGrid(
+									generate(max(scrollArea.from, 0), min(scrollArea.to, length(items)),
+										\i ->
+											mapi(items[i], \j, it -> TAttachBoxCopy(m2t(it, p3), sizes[i][j]))
+									)
+								)
+								|> (\f -> TGroup2(f, TFillX()))
+							)
+							// |> (\f -> TAvailable(f, TFillX()))
+							|> (\f ->
+								MScroll2T(
+									manager,
+									p2,
+									MScroll(
+										f,
+										TFillXY(),
+										[scrollPosition, inspectVisible, scrollWH]
+										|> (\f2 ->
+											if (contains(style, RMNoScrollbars()))
+												concat(f2, [TScrollEnabled(const(false)), TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)])
+											else
+												f2
+										)
+									),
+									m2t
+								)
+							)
+						]
+					else
+						[],
+					if (scrollArea.to < length(items))
+						[
+							TEvenGrid(generate(max(scrollArea.to, 0), length(items), \i -> mapi(items[i], \j, it ->
+								TAttachBoxCopy(m2t(it, p2), sizes[i][j]))))
+							|> (\f -> TGroup2(f, TFillX()))
+							// |> (\f -> TAvailable(f, TFillX()))
+						]
+					else
+						[]
+				]
+				|> concatA
+			)
+			|> (\f -> TAvailable(f, TMutable(availableForm)))
+			|> (\f ->
+				TConstruct(
+					[
+						make4Subscribe(
+							fselect2(
+								sizesB,
+								mWidth,
+								FLift2(\szs, w ->
+									fold(szs, WidthHeight(0., 0.), \acc, sz ->
+										WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height))
+									|> (\wh ->
+										WidthHeight(
+											if (contains(style, RMNoSnapSize()) || w > 0.)
+												wh.width
+											else
+												(if (mobile) 56. else 64.)
+												|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
+											wh.height
+										)
+									)
+								)
+							),
+							stageWH,
+							offset,
+							positionDpiScale,
+							\realSize, wh, offs, ps -> {
+								maxSize =
+									WidthHeight(
+										max(wh.width / ps.scale.x, 0.),
+										max(
+											maxHeight(
+												wh,
+												Point(offs.first.width, offs.second + if (selected < 0) offs.first.height else 0.),
+												ps
+											),
+											0.
+										)
+									);
+
+								wd = min(realSize.width, maxSize.width);
+								hgt = min(realSize.height, maxSize.height);
+
+								nextDistinct(currentHeight, hgt);
+								nextDistinct(currentWidth, wd);
+								nextDistinct(itemsWH, realSize);
+								nextDistinct(maxWH, maxSize);
+								nextDistinct(contentWH, WidthHeight(wd, hgt));
+								nextDistinct(
+									startingOffset,
+									Point(
+										(if (!leftAnimation)
+											offs.first.width - wd
+										else
+											offs.first.width) * ps.scale.x,
+										(if (selected >= 0) {
+											szs = fgetValue(sizesB);
+											offsY = dsum(map(subrange(szs, 0, selected), \sz -> sz.height));
+
+											if (scrollArea.from < scrollArea.to)
+												nextDistinct(
+													scrollPosition.position,
+													Point(
+														0.,
+														if (realSize.height > maxSize.height && maxSize.height > 0.)
+															max(
+																0.,
+																min(
+																	offsY - (hgt - szs[selected].height) / 2.,
+																	realSize.height - maxSize.height
+																)
+															)
+														else
+															0.
+													)
+												);
+
+											offs.second - offsY - borders + getValue(scrollPosition.position).y
+										} else
+											offs.first.height + offs.second) * ps.scale.y
+									)
+								);
+
+								nextDistinct(availableForm, TFixed(wd, hgt))
+							}
+						)
+					],
+					f
+				)
+			)
+			|> TBorderTopBottom(borders)
+			|> (\f -> MPopupAlphaAnimation(manager, p2, f, style, beginAnimation, alphaContentDelay, alphaContentDuration))
+			|> (\f -> TFrame(0.0, 2.0, extractStruct(style, MBackgroundStyle([MFill(MDialogColor(p.theme.lightBackground))])).style, f))
+			|> (\f -> MPopupScaleAnimation(manager, p2, f, style, beginAnimation, elevation))
+			|> (\f -> MPopupAlphaAnimation(manager, p2, f, style, beginAnimation, alphaDelay, alphaDuration))
+			|> (\f -> if (dontHandle) f else TInteractive([TMouseDown(make(false))], f))
+			|> (\f ->
+				if (isSome(sameFocus))
+					TCopySize(
+						f,
+						\tr ->
+							TInteractive(
+								[
+									MouseDown2(popupDownFn),
+									MouseRightDown2(popupDownFn),
+									MouseMiddleDown2(popupDownFn)
+								],
+								tr
+							),
+						true
+					)
+				else
+					f
+			)
+			|> (\f -> TScale(fselect(positionDpiScale, FLift(\psc -> Factor(psc.scale.x, psc.scale.y))), f))
+		)
+		|> (\f -> MActivate2T(manager, p, "MPopup", [IScriptBehaviour("opened", menuOpened, ISInputValue([], "bool", false))], f))
+		|> (\f -> if (dontHandle) f else disableInteractivesBelow(f))
+		|> (\f -> MPopupTranslateAnimation(manager, p, f, style, beginAnimation, startingPosition))
+		|> (\f ->
+			if (contains(style, RMClickOutToClose()))
+				TGroup2(
+					TInteractive(
+						[
+							MouseDown2(popupClickOutDownFn),
+							MouseRightDown2(popupClickOutDownFn),
+							MouseMiddleDown2(popupClickOutDownFn)
+						],
+						TRectangle(interactiveRectangleStyle, TFillXY())
+					),
+					f
+				)
+			else
+				f
+		)
+		|> (\f ->
+			TConstruct(
+				[
+					makeSubscribe(menuOpened, \op -> if (op) deferUntilRender(\ -> next(beginAnimation, true)) else dispUnsM(uns))
+				],
+				f
+			)
+		)
+		|> (\f -> TGroup2SameMetrics(f, TAttachBoxCopy(TFillXY(), stageWH)))
+	)
+	|> (\f ->
+		MActivate2T(
+			manager,
+			parent,
+			"MPopup",
+			extractMActivateState(style)
+			|> (\f2 -> if (sameZorder) f2 else concatStyles(f2, [MZorder(const(newZorder))])),
+			f
+		)
+	)
+	|> (\f -> {
+		tUns = ref Some(trender(f, manager.manager.renderStyle));
+
+		fwUns = onFullWindow(\fw -> if (fw) {
+			dispUnsM(tUns);
+			setUnsM(tUns, trender(f, manager.manager.renderStyle));
+		});
+
+		setUnsM(
+			uns,
+			\ -> {
+				fwUns();
+				dispUnsM(tUns);
+				if (!sameZorder) {
+					nextDistinct(manager.currentZorder, zorder);
+				};
+				maybeApply(previousFocus, \pf -> nextDistinct(pf.focused, true));
+			}
+		);
+	})
+}
+
+alphaDuration = mStepOf5TransitionDuration(2);
+alphaDelay = 0.;
+alphaContentDuration = mStepOf5TransitionDuration(3) - mStepOf5TransitionDuration(1);
+alphaContentDelay = mStepOf5TransitionDuration(1);
+alphaStart = 0.0;
+alphaFinish = 1.0;
+
+MPopupAlphaAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MPopupStyle], beginAnimation : DynamicBehaviour<bool>, delay : double,
+	duration : double) -> Tropic {
+	if (parent.theme.enableAnimations && contains(style, RMAlphaAnimation())) {
+		alphaAnimation = make(alphaStart);
+
+		MEasingAnimation(
+			manager,
+			parent,
+			const(duration),
+			const(mStandartCurve),
+			beginAnimation,
+			\v -> {
+				if (v)
+					Some(Pair(alphaStart, alphaFinish))
+				else
+					None()
+			},
+			\v, px -> next(alphaAnimation, lerp(v.first, v.second, px)),
+			[MDelay(delay)],
+			TAlpha(alphaAnimation, content)
+		)
+	} else
+		content
+}
+
+heightDuration = mStepOf5TransitionDuration(3);
+heightStart = 0.25;
+heightFinish = 1.0;
+
+widthDuration = mStepOf5TransitionDuration(2);
+widthStart = 0.5;
+widthFinish = 1.0;
+
+MPopupScaleAnimation(manager : MaterialManager, parent : MFocusGroup,
+	content : Tropic, style : [MPopupStyle],
+	beginAnimation : DynamicBehaviour<bool>, elevation : Transform<double>) -> Tropic {
+	leftAnimation = extractStruct(style, RMLeftAnimation(true)).leftAnimation;
+	maybeShadow =
+		\f -> if ( contains(style, RMNoShadow()) ) {
+			f;
+		} else {
+			TShadow(elevation, parent.theme.lightBackground, f);
+		};
+
+	if (parent.theme.enableAnimations && contains(style, RMScaleAnimation())) {
+		scaleAnimation = make(Factor(widthStart, heightStart));
+
+		(\tr, mi ->
+			MEasingAnimation(
+				manager,
+				parent,
+				const(widthDuration),
+				const(mStandartCurve),
+				beginAnimation,
+				\v -> {
+					if (v)
+						Some(Pair(widthStart, widthFinish))
+					else
+						None()
+				},
+				\v, px -> next(scaleAnimation, Factor(lerp(v.first, v.second, px), getValue(scaleAnimation).y)),
+				[],
+				TCropSize(TScale(scaleAnimation, tr), mi)
+			)
+			|> (\f2 ->
+				MEasingAnimation(
+					manager,
+					parent,
+					const(heightDuration),
+					const(mStandartCurve),
+					beginAnimation,
+					\v -> {
+						if (v)
+							Some(Pair(heightStart, heightFinish))
+						else
+							None()
+					},
+					\v, px -> next(scaleAnimation, Factor(getValue(scaleAnimation).x, lerp(v.first, v.second, px))),
+					[],
+					f2
+				)
+			)
+			|> maybeShadow
+			|> (\f3 ->
+				if (leftAnimation)
+					f3
+				else
+					TCols2(
+						TSubtractGroup2(tr, TScale(scaleAnimation, tr)),
+						f3
+					)
+			)
+			|> (\f2 -> TFixSize(f2, tr))
+		)
+		|> (\f -> TCopySize2(content, f))
+	} else {
+		maybeShadow(content);
+	}
+}
+
+translateDuration = mTransitionDuration;
+translateStart = -48.0;
+translateFinish = 0.;
+
+MPopupTranslateAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MPopupStyle], beginAnimation : DynamicBehaviour<bool>,
+	startingB : Transform<Point>) -> Tropic {
+	if (parent.theme.enableAnimations && contains(style, RMTranslateAnimation())) {
+		translateAnimation = make(Point(0., if (contains(style, RMTranslateAnimation())) translateStart else translateFinish));
+		xyB = fselect2(startingB, translateAnimation, FLift2(\st, ta -> Point(st.x + ta.x, st.y + ta.y)));
+
+		MEasingAnimation(
+			manager,
+			parent,
+			const(translateDuration),
+			const(mStandartCurve),
+			beginAnimation,
+			\v -> {
+				if (v)
+					Some(Pair(translateStart, translateFinish))
+				else
+					None()
+			},
+			\v, px -> next(translateAnimation, Point(0., lerp(v.first, v.second, px))),
+			[],
+			TTranslate(
+				xyB,
+				TCopySize(
+					content,
+					\tr ->
+						TShow(
+							fneq(translateAnimation, Point(0., translateFinish)),
+							TInteractive([RollOver(nop1), RollOut(nop1)], tr)
+						),
+					true
+				)
+			)
+		)
+	} else
+		TTranslate(startingB, content)
+}

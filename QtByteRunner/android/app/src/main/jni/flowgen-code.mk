@@ -1,0 +1,13 @@
+include $(CLEAR_VARS)
+
+LOCAL_MODULE    := libflowgen
+LOCAL_CFLAGS    := -DFLOW_EMBEDDED -DFLOW_COMPACT_STRUCTS $(MY_PROF_FLAGS)
+LOCAL_LDLIBS    := -lstdc++ -llog
+
+GENERATED_FILES := $(wildcard $(LOCAL_PATH)/flowgen/*.cpp)
+LOCAL_SRC_FILES := $(addprefix flowgen/,$(notdir $(GENERATED_FILES)))
+
+include $(BUILD_STATIC_LIBRARY)
+
+MY_GEN_LIB += libflowgen
+MY_GEN_FLAGS += -DANDROID_FLOWGEN -DFLOW_COMPACT_STRUCTS

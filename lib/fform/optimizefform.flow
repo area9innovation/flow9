@@ -1,0 +1,409 @@
+import fform/fform;
+import optimizeform;
+
+export {
+	// This method will optimize a form based on high-level semantics of the forms. In particular,
+	// it will attempt to join adjacent texts, and reduce some special grid forms
+	optimizeFForm(fform : FForm) -> FForm;
+}
+
+optimizeFForm(form) {
+	switch (form : FForm) {
+		FConstructor(f, fn): {
+			of = optimizeFForm(f);
+
+			switch (of) {
+				FConstructor(f2, fn2):
+					FConstructor(f2, \ -> [fn(), fn2()] |> (\un -> \ -> applyall(reverseA(un))));
+				default:
+					if (of == f)
+						form
+					else
+						FConstructor(of, fn);
+			}
+		}
+		FCreate2(__, __): form;
+		FText(t, style): {
+			if (strlen(t) == 0)
+				FEmpty()
+			else
+				form;
+		}
+		FParagraph(t, style): {
+			if (strlen(t) == 0)
+				FEmpty()
+			else
+				form;
+		}
+		FGraphics(p, style): {
+			if (length(p) == 0)
+				FEmpty()
+			else
+				form;
+		}
+		FTranslate(x, y, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (isFConst(x) && isFConst(y)) {
+				xV = fgetValue(x);
+				yV = fgetValue(y);
+
+				if (xV == 0. && yV == 0.)
+					of
+				else
+					optimizeFForm(FBorder(xV, yV, -xV, -yV, of))
+			} else switch (of) {
+				FEmpty():
+					FEmpty();
+				FTranslate(x2, y2, f2):
+					FTranslate(faddition(x, x2), faddition(y, y2), f2);
+				FBorder(l, t, r, b, f2):
+					if (r == 0. && b == 0.)
+						FTranslate(faddition(x, const(l)), faddition(y, const(t)), f2)
+					else if (of == f)
+						form
+					else
+						FTranslate(x, y, of);
+				default:
+					if (of == f)
+						form
+					else
+						FTranslate(x, y, of);
+			}
+		}
+		FScale(x, y, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (isFConst(x) && isFConst(y) && fgetValue(x) == 1. && fgetValue(y) == 1.)
+				of
+			else switch (of) {
+				FEmpty():
+					FEmpty();
+				FScale(x2, y2, f2):
+					FScale(fmultiply(x, x2), fmultiply(y, y2), f2);
+				default:
+					if (of == f)
+						form
+					else
+						FScale(x, y, of);
+			}
+		}
+		FRotate(r, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (isFConst(r) && fgetValue(r) % 360. == 0.)
+				of
+			else switch (of) {
+				FEmpty():
+					FEmpty();
+				FRotate(r2, f2):
+					FRotate(faddition(r, r2), f2);
+				default:
+					if (of == f)
+						form
+					else
+						FRotate(r, of);
+			}
+		}
+		FAlpha(a, f): {
+			aC = isFConst(a);
+			aV = fgetValue(a);
+
+			if (aC && aV <= 0.)
+				FEmpty()
+			else {
+				of = optimizeFForm(f);
+
+				if (of == FEmpty())
+					FEmpty()
+				else if (aC && aV >= 1.)
+					of
+				else switch (of) {
+					FEmpty():
+						FEmpty();
+					FAlpha(a2, f2):
+						FAlpha(fmultiply(a, a2), f2);
+					default:
+						if (of == f)
+							form
+						else
+							FAlpha(a, of);
+				}
+			}
+		}
+		FGroup(g, z): {
+			optimizeFGroup(form, g, z)
+		}
+		FGroup2(g1, g2, z): {
+			optimizeFGroup(form, [g1, g2], z)
+		}
+		FDecorator2(g1, d, above, stack): {
+			FDecorator2(optimizeFForm(g1), d, above, stack); // TODO:
+		}
+		FBorder(l, t, r, b, f): {
+			of = optimizeFForm(f);
+
+			switch (of) {
+				FEmpty():
+					FEmpty();
+				FBorder(l2, t2, r2, b2, f2):
+					FBorder(l + l2, t + t2, r + r2, b + b2, f2);
+				FTranslate(x, y, f2):
+					if (r == 0. && b == 0.)
+						FTranslate(faddition(x, const(l)), faddition(y, const(t)), f2)
+					else if (of == f)
+						form
+					else
+						FBorder(l, t, r, b, of);
+				default:
+					if (of == f)
+						form
+					else
+						FBorder(l, t, r, b, of);
+			}
+		}
+		FEmpty(): form;
+		FPicture(url, size, style): form;
+		FFilter2(filters, f, stack): form;
+		FMutable2(f, stack): {
+			form;
+		}
+		FMask2(f, mask, stack): {
+			of = optimizeFForm(f);
+			mf = optimizeFForm(mask);
+
+			if (mf == FEmpty())
+				FEmpty()
+			else if (of == f && mf == mask)
+				form
+			else
+				FMask2(of, mf, stack);
+		}
+		FVisible(v, f): {
+			if (isFConst(v)) {
+				if (fgetValue(v) != false)
+					optimizeFForm(f)
+				else
+					FEmpty();
+			} else {
+				of = optimizeFForm(f);
+
+				switch (of) {
+					FEmpty():
+						FEmpty();
+					FVisible(v2, f2):
+						FVisible(fmin(v, v2), f2);
+					default:
+						if (of == f)
+							form
+						else
+							FVisible(v, of);
+				}
+			}
+		}
+		FRenderable(renderable, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FRenderable(renderable, of);
+		}
+		FInspect(inspectors, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FInspect(inspectors, of);
+		}
+		FInteractive(listeners, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FInteractive(listeners, of);
+		}
+		FCrop2(left, top, width, height, f, stack): {
+			of = optimizeFForm(f);
+
+			switch (of) {
+				FEmpty():
+					FEmpty();
+				default:
+					if (of == f)
+						form
+					else
+						FCrop2(left, top, width, height, of, stack);
+			}
+		}
+		FControlFocus(focus, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FControlFocus(focus, of);
+		}
+		FCursor(kind, f): {
+			of = optimizeFForm(f);
+
+			switch (of) {
+				FEmpty():
+					FEmpty();
+				FCursor(__, f2):
+					FCursor(kind, f2);
+				default:
+					if (of == f)
+						form
+					else
+						FCursor(kind, of);
+			}
+		}
+		FFullWindow(fs, aw, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FFullWindow(fs, aw, of);
+		}
+		FMForm(f): {
+			of = optimizeForm(f);
+
+			if (of == Empty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FMForm(of);
+		}
+		FBaseline(b, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FBaseline(b, of);
+		}
+		FSize2(s, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FSize2(s, of);
+		}
+		FAvailable2(a, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FAvailable2(a, of);
+		}
+		FAccess(prop, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FAccess(prop, of);
+		}
+		FRealHTML(__, __, __): form;
+		FSetPending(prop, f): {
+			of = optimizeFForm(f);
+
+			if (of == FEmpty())
+				FEmpty()
+			else if (of == f)
+				form
+			else
+				FSetPending(prop, of);
+		}
+		FVideo(__, __, __): form;
+		FTextInput(__, __, __): form;
+		FDynamicGroup2(__, __, __) : form;
+		FNativeForm(__, __, __, __) : form;
+	}
+}
+
+optimizeFGroup(form : FForm, g0 : [FForm], z0 : bool) -> FForm {
+	z = ref z0;
+
+	g =
+		fold(g0, [], \acc, g -> {
+			og = optimizeFForm(g);
+
+			switch (og) {
+				FEmpty(): {
+					acc;
+				}
+				FGroup(g2, z2): {
+					z := ^z || z2;
+
+					concat(acc, g2);
+				}
+				FGroup2(g1, g2, z2): {
+					z := ^z || z2;
+					concat(acc, [g1, g2]);
+				}
+				default: {
+					arrayPush(acc, og)
+				}
+			}
+		});
+
+	l = length(g);
+
+	if (l == 0)
+		FEmpty()
+	else if (l == 1)
+		g[0]
+	else if (g == g0)
+		form
+	else if (l == 2) {
+		// if (isSameStructType(g[0], g[1])) {
+		// 	switch (g[0]) {
+		// 		FConstructor(f, fn): {
+		// 			f2 = cast(g[1] : FForm -> FConstructor);
+		// 			fn2 = f2.fn;
+
+		// 			FConstructor(FGroup2(f, f2.form, ^z), \ -> [fn(), fn2()] |> (\un -> \ -> applyall(un)));
+		// 		}
+		// 		default: {
+		// 			FGroup2(g[0], g[1], ^z)
+		// 		}
+		// 	}
+		// } else {
+		// 	FGroup2(g[0], g[1], ^z)
+		// }
+		FGroup2(g[0], g[1], ^z)
+	} else
+		FGroup(g, ^z);
+}

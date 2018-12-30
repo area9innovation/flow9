@@ -1,0 +1,132 @@
+import blueprint;
+
+export {
+	/*
+	This is very simple AST for PHP that is used only for converting wigi to php (see flow/wigi/wigi2php.flow)
+	*/
+	PhpElement ::= PhpFunction, PhpBlock, PhpVar, PhpConst, PhpArray, PhpStatement;
+
+	PhpFunction(name : string, body : PhpBlock);
+		PhpBlock(externalVars : [PhpVar], declaredVars : [PhpVar], statements : [PhpStatement], returnVars : [PhpVar]);
+		PhpVar(name : string);
+		PhpArray(elements : [PhpArrayElement]);
+			PhpArrayElement ::= PhpVar, PhpVarVal;
+				PhpVarVal(name : string, value : PhpConst);
+
+		PhpStatement ::= PhpAssign, PhpOperation;
+			PhpAssign(left : PhpVar, right : PhpOperation);
+			PhpOperation ::= PhpFunctionCall, PhpLangOperation, PhpFunctionCallStub;
+				PhpFunctionCall(name : string, args : [PhpFuncArg]);
+					PhpFuncArg ::= PhpVar, PhpArray, PhpConst;
+				PhpFunctionCallStub(formula : string);
+				PhpLangOperation ::= PhpIf;
+					PhpIf ::= PhpIf_If, PhpIf_ElseIf, PhpIf_Else;
+						PhpIf_If(condition : string, block : PhpBlock);
+						PhpIf_ElseIf(condition : string, block : PhpBlock);
+						PhpIf_Else(block : PhpBlock);
+
+		PhpConst ::= PhpConstString, PhpConstInt;
+			PhpConstString(value : string);
+			PhpConstInt(value : int);
+
+	phpElement2string(e : PhpElement) -> string;
+	emptyPhpBlock = PhpBlock([], [], [], []);
+}
+
+phpElement2string(e : PhpElement) -> string {
+	switch (e) {
+		PhpFunction(__, __): phpFunction2string(e);
+		PhpBlock(__, __, __, __): phpBlock2string(e);
+		PhpVar(__): phpVar2string(e);
+		PhpConstString(__): phpConst2string(e);
+		PhpConstInt(__): phpConst2string(e);
+		PhpArray(__): phpArray2string(e);
+		PhpFunctionCallStub(__): phpStatement2string(e);
+		PhpAssign(__, __): phpStatement2string(e);
+		PhpFunctionCall(__, __): phpStatement2string(e);
+		PhpIf_If(__, __): phpOperation2string(e);
+		PhpIf_ElseIf(__, __): phpOperation2string(e);
+		PhpIf_Else(__): phpOperation2string(e);
+	}
+}
+
+phpFunction2string(f : PhpFunction) -> string {
+	blueprint(
+"function %func%(%args%) {
+	%body%
+	%return%;
+}
+",
+	[
+		"func", f.name,
+		"args", superglue(f.body.externalVars, phpVar2string, ", "),
+		"body", phpBlock2string(f.body),
+		"return", "return " + phpArray2string(PhpArray(f.body.returnVars))
+	]
+	);
+}
+
+phpBlock2string(b : PhpBlock) -> string {
+	superglue(b.statements, \s -> phpStatement2string(s), "\n");
+}
+
+phpConst2string(c : PhpConst) -> string {
+	switch (c) {
+		PhpConstString(value): "'" + value + "'";
+		PhpConstInt(value): i2s(value);
+	}
+}
+
+phpOperation2string(o : PhpOperation) -> string {
+	phpFuncArg2string = \a : PhpFuncArg -> switch (a) {
+		PhpVar(__): phpVar2string(a);
+		PhpArray(__): phpArray2string(a);
+		PhpConstString(value): phpConst2string(a);
+		PhpConstInt(value): phpConst2string(a);
+	};
+
+	switch (o)  {
+		PhpFunctionCallStub(formula): formula;
+		PhpFunctionCall(name, args): blueprint("%func%(%args%)", [
+			"func", name,
+			"args", superglue(args, phpFuncArg2string, ", ")
+		]);
+
+		PhpIf_If(condition, block): blueprint("if (%cond%) {\n\t%block%\n}", ["cond", condition, "block", phpBlock2string(block)]);
+		PhpIf_ElseIf(condition, block): blueprint("else if (%cond%) {\n\t%block%\n}", ["cond", condition, "block", phpBlock2string(block)]);
+		PhpIf_Else(block): blueprint("else {\n\t%block%\n}", ["block", phpBlock2string(block)])
+	};
+}
+
+phpStatement2string(s : PhpStatement) -> string {
+	res = switch (s) {
+		PhpAssign(left, right): 
+			Pair(blueprint("%left% = %right%", 
+				["left", phpVar2string(left),
+				"right", phpOperation2string(right)
+				]), false);
+		PhpFunctionCallStub(__): Pair(phpOperation2string(s), false);
+		PhpFunctionCall(__, __): Pair(phpOperation2string(s), false);
+		PhpIf_If(__, __): Pair(phpOperation2string(s), false);
+		PhpIf_ElseIf(__, __): Pair(phpOperation2string(s), true); // we don't want ; after IfElse block because it is not final block in statements
+		PhpIf_Else(__): Pair(phpOperation2string(s), false);
+	}
+
+	if (endsWith(res.first, ";") || endsWith(res.first, "}") || res.second) res.first else res.first + ";"
+}
+
+phpArray2string(a : PhpArray) -> string {
+	phpArrayElement2string = \k : string, v : string -> formatString("'%1' => %2", [k, v]);
+
+	blueprint("array(%elements%)", 
+		["elements", superglue(a.elements, 
+			\e -> switch(e) {
+				PhpVar(name): phpArrayElement2string(name, phpVar2string(e));
+				PhpVarVal(name, value): phpArrayElement2string(name, phpConst2string(value));
+			}, ",\n")
+		]
+	);
+}
+
+phpVar2string(v : PhpVar) -> string { "$" + v.name; }
+phpVarVal2string(v : PhpVarVal) -> string { "$" + v.name; }

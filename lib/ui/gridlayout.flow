@@ -1,0 +1,765 @@
+// © Copyright 2013 Area9 Innovation. All rights reserved
+
+import basecolors;
+import form;
+import gui;
+import transforms;
+import ui/conditions;
+
+/*
+ * This is code that can help construct tables that resize in particular ways.
+ * For each table, row and cell, we can define how much available space should be allocated
+ * to that element.
+
+Example:
+
+
+                    2 pixel
+                   gutter
+                       |
+           +---------+--+--------------+
+           |  0,0    |  |     1,0      |
+           |         |  |              |
+           +---------+--+--------------+
+           |         |  |              | - 1 pixel gutter
+           +---------+--+--------------+
+           |  0,1    |  |     1,1      |
+           |         |  |              |
+           |         |  |              |
+           |         |  |              |
+           +---------+--+--------------+
+
+This is a 2x2 table, which might be defined like this:
+
+table = GridLayout(
+	LayoutSpec(2.0, [1.0, 2.0]),
+	LayoutSpec(1.0, [0.0, 1.0]),
+	[  cell00, cell10, cell01, cell11 ]
+)
+
+The growth-arrays specify the resizing behaviour: The [1.0, 2.0]
+in the columns definition means that column 0 grows with 1/3
+of the extra available space, while column 1 grows with 2/3
+of the extra available space.
+
+Similar, the [0.0, 1.0] in the rows growth definition means that
+row 0 is fixed size in the height, while row 1 grows to fill all
+available space.
+ */
+
+export {
+	GridLayout(columns : LayoutSpec, rows : LayoutSpec, cells : [LayoutCell]);
+
+	// The gutter, as well as numbers that defines how much each column/row should grow with available space
+	LayoutSpec(gutter : double, growth : [double]);
+
+	LayoutCell(column : int, row : int, widthInCells : int, heightInCells : int, content : SForm);
+
+	SForm ::= BaseSForm, ControlSForm, NamedForm, NamedFormModificator;
+		BaseSForm ::= Text, Graphics, Picture, FixedSForm;
+			FixedSForm : (width : double, height : double);
+
+		ControlSForm ::= ResizeCell, OverlapCell, ConditionalForm;
+
+			// Resize the content to the available space, as well as optional alignment
+			ResizeCell : (resizeToWidth : bool, resizeToHeight : bool, preserveAspectRatio : bool, alignX : double, alignY : double, content : BaseSForm);
+
+			// Extend the cell outwards the given number of pixels
+			OverlapCell(left : double, top : double, right : double, bottom : double, sform : SForm);
+
+			ConditionalForm : (condition : SkinCondition, form : SForm);
+
+		// z-order of NamedForms depends of its names, but not from declaration order — it will be sort in alphabetical order (NamedForm("b") will overlap NamedForm("a") in any cases)
+		NamedForm : (name : string);
+		NamedFormModificator : (modificators : [NamedFormModifier], namedForm : NamedForm);
+			NamedFormModifier ::= NamedFormScale, NamedFormAlign;
+				NamedFormScale : (xScale : Behaviour<double>, yScale : Behaviour<double>);
+				NamedFormAlign : (xAlign : Behaviour<double>, yAlign : Behaviour<double>);
+
+
+	// A complete API for rendering a grid that can be updated in different ways.
+	// if respectFatCells is true multicolumn (multirow) cells are taken into account during calculation of columns (rows) widths(heights).
+	grid2form0(grid : GridLayout, namedForms : Tree<string, NamedFormDescription>, environment : SkinEnvironment, alpha : DynamicBehaviour<double>, respectFatCells : bool) -> Pair<Form, [Coordinates]>;
+	grid2form(grid : GridLayout, namedForms : Tree<string, NamedFormDescription>, environment : SkinEnvironment, alpha : DynamicBehaviour<double>, respectFatCells : bool) -> Form;
+		NamedFormDescription : (
+			form : Form,
+			visible : Behaviour<bool>, stayVisible : ref bool, resetModifiers : ref bool,
+			x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, awh : DynamicBehaviour<WidthHeight>,
+			xAlign : DynamicBehaviour<double>, yAlign : DynamicBehaviour<double>,
+			xScale : DynamicBehaviour<double>, yScale : DynamicBehaviour<double>,
+			size : DynamicBehaviour<WidthHeight>);
+		Coordinates(x : Behaviour<double>, y : Behaviour<double>, awh : Behaviour<WidthHeight>);
+
+	// A simplified API for rendering a grid layout with a set of named forms
+	grid2form2(grid : GridLayout, namedForms : Tree<string, Form>) -> Form;
+
+	// A simplified API for rendering a grid layout with a set of named forms
+	// with respectFatCells parameter
+	grid2form3(grid : GridLayout, namedForms : Tree<string, Form>, respectFatCells : bool) -> Form;
+	grid2form3d(grid : GridLayout, namedForms : Tree<string, Form>, respectFatCells : bool) -> Pair<Form, [Pair<Behaviour<double>, Behaviour<double>>]>;
+
+	makeNamedFormDescription(recalculateVisibility : Behaviour<bool>) -> ((Form) -> NamedFormDescription);
+	makeNamedFormLayer(namedFormsDescriptions : Tree<string, NamedFormDescription>) -> Form;
+
+}
+
+gl_eps = 0.001;
+
+sform2form(namedForms : Tree<string, NamedFormDescription>, coordinates : Coordinates, environment : SkinEnvironment, sform : SForm, outSize : DynamicBehaviour<WidthHeight>) -> Form {
+	addInspector = \form -> Inspect([ISize(outSize)], form);
+	passSizeOutAndReturn = \width, height -> \form -> {
+		next(outSize, WidthHeight(width, height));
+		form
+	};
+
+	makeConstructorForNamedForm = \stubForm : Form, n : string, createConstructorFn : (NamedFormDescription) -> () -> () -> void -> {
+		switch (lookupTree(namedForms, n)) {
+			None(): {
+				assert(false, "Assert: NamedForm '" + n + "'' descriptor is not found");
+				Empty()
+			}
+			Some(nfd): {
+				Constructor(stubForm, createConstructorFn(nfd));
+			}
+		}
+	}
+
+	connectBehavioursArray = \connects -> {
+		\ -> {
+			uns = map(connects, executefn);
+			\ -> applyall(uns)
+		}
+	}
+
+	switch (sform : SForm) {
+		ResizeCell(toW, toH, preserveAspect, alignX, alignY, content) : {
+			awh = coordinates.awh;
+			size = makeWH();
+			form = sform2form(namedForms, coordinates, environment, content, size);
+			wResize = toW;
+			hResize = toH;
+			innerForm = if (wResize || hResize) {
+				scaleX = if (wResize) select2(awh, size, \wh, sz -> if (sz.width > gl_eps) wh.width / sz.width else 1.0) else const(1.0);
+				scaleY = if (hResize) select2(awh, size, \wh, sz -> if (sz.height > gl_eps) wh.height / sz.height else 1.0) else const(1.0);
+				if (wResize && hResize && preserveAspect) {
+					scale = select2(scaleX, scaleY, min);
+					Scale(scale, scale, form)
+				} else {
+					Scale(scaleX, scaleY, form)
+				}
+			} else {
+				form
+			}
+			// If row/column of constant size contains only resize to width/height items resulting width/hight is 0.0.
+			resultSize = select(size, \sz -> WidthHeight(if (wResize) 0.0 else sz.width, if (hResize) 0.0 else sz.height));
+			result = if (alignX != 0.0 || alignY != 0.0) {
+				Align2(alignX, alignY, innerForm)
+			} else {
+				innerForm
+			};
+			Constructor(result, \ -> connect(resultSize, outSize))
+		}
+		OverlapCell(left, top, right, bottom, content) : {
+			awh = coordinates.awh;
+			realSize = makeWH();
+			size = makeWH();
+			newAWH = select(awh, \wh -> WidthHeight(wh.width + left + right, wh.height + top + bottom));
+			result = Size2(
+				realSize,
+				Offset(
+					-left, -top,
+					Available2(
+						newAWH,
+						Inspect(
+							[ISize(realSize)],
+							sform2form(
+								namedForms,
+								Coordinates(
+									select(coordinates.x, \x -> x - left),
+									select(coordinates.y, \y -> y - top),
+									newAWH
+								),
+								environment,
+								content,
+								size
+							)
+						)
+					)
+				)
+			);
+			resultSize = select2(
+				awh, size,
+				\wh1, wh2 -> WidthHeight(
+					min(wh1.width, wh2.width),
+					min(wh1.height, wh2.height)
+				)
+			);
+			Constructor(result, \ -> connect(resultSize, outSize))
+		}
+		ConditionalForm(conditions, content) : {
+			if (CheckSkinConditions(conditions, environment)) {
+				sform2form(namedForms, coordinates, environment, content, outSize)
+			} else {
+				Empty() |> passSizeOutAndReturn(0.0, 0.0)
+			}
+		}
+		FixedSForm(width, height) : Fixed(width, height) |> passSizeOutAndReturn(width, height);
+		Text(text, style) : Text(text, style) |> addInspector;
+		Graphics(path, style) : Graphics(path, style) |> addInspector;
+		Picture(path, style) : Picture(path, style) |> addInspector;
+		NamedForm(n): {
+			makeConstructorForNamedForm(
+				Empty(),
+				n,
+				\nfd -> {
+					nfd.stayVisible := true;
+					connectBehavioursArray([
+						\ -> connect(coordinates.x, nfd.x),
+						\ -> connect(coordinates.y, nfd.y),
+						\ -> connect(coordinates.awh, nfd.awh),
+						\ -> connect(nfd.size, outSize)
+					])
+				}
+			)
+		}
+		NamedFormModificator(m, f) : {
+			makeConstructorForNamedForm(
+				sform2form(namedForms, coordinates, environment, f, outSize),
+				f.name,
+				\nfd -> {
+					nfd.resetModifiers := false;
+					fold(m, [], \acc, modifier -> {
+						addToAcc = \newPairs -> concat(acc, newPairs);
+						switch(modifier:NamedFormModifier) {
+							NamedFormAlign(xAlign, yAlign) : {
+								[
+									\ -> connect(xAlign, nfd.xAlign),
+									\ -> connect(yAlign, nfd.yAlign)
+								] |> addToAcc
+							}
+							NamedFormScale(xScale, yScale)  : {
+								[
+									\ -> connect(xScale, nfd.xScale),
+									\ -> connect(yScale, nfd.yScale)
+								] |> addToAcc
+							}
+						}
+					}) |> connectBehavioursArray
+				}
+			)
+		}
+	}
+}
+
+GridLayoutSizesData : (size : WidthHeight, xOffsets : [double], yOffsets : [double], availables : [WidthHeight]);
+
+AvailableReset ::= ARBoth, ARDynamic, ARNo;
+	ARBoth : (); ARDynamic : (); ARNo : ();
+
+
+gridId = ref 0;
+
+grid2form(grid, namedForms, environment, alpha, respectFatCells) {
+	grid2form0(grid, namedForms, environment, alpha, respectFatCells).first
+}
+
+grid2form0(grid, namedForms, environment, alpha, respectFatCells) {
+	myId = ^gridId + 1;
+	gridId := myId;
+
+	awh = environment.awh;
+	currentAWH = ref zeroWH;
+	currentSizes : ref [WidthHeight] = ref [];
+	wrongSource = ref false;
+	assertWithSideEffects = \cond, msg -> {
+		if (!cond) {
+		 	wrongSource := true;
+		 	println(msg);
+		}
+	}
+
+	getGrowthSum = \growth -> fold(growth, 0.0, \acc, val -> {
+		assertWithSideEffects(val >= 0.0, "Negative growth value could not be processed");
+		acc + val
+	});
+
+	sformsCount : int = length(grid.cells);
+
+	colsCount : int = length(grid.columns.growth);
+	rowsCount : int = length(grid.rows.growth);
+
+
+	columnsGrowthSum = getGrowthSum(grid.columns.growth);
+	rowsGrowthSum = getGrowthSum(grid.rows.growth);
+
+	getGrowthPart = \growthSum : double, growth : [double] -> map(growth, \g -> if (growthSum > gl_eps) g / growthSum else 0.0);
+
+	columnsGrowthParts = getGrowthPart(columnsGrowthSum, grid.columns.growth);
+	rowsGrowthParts = getGrowthPart(rowsGrowthSum, grid.rows.growth);
+
+	colsIds = enumFromTo(0, colsCount - 1);
+	rowsIds = enumFromTo(0, rowsCount - 1);
+	cellsIds = enumFromTo(0, sformsCount - 1);
+
+	sizesSrc = generate(0, sformsCount, \i -> makeWH());
+
+	constantWidthsIds = filter(colsIds, \i -> columnsGrowthParts[i] == 0.0);
+	columnWidthsCalculationRelatedData = map(
+		colsIds,
+		\i -> {
+			ids = filter(cellsIds, \id -> {
+				cell = (grid.cells)[id];
+				cell.column == i && cell.widthInCells == 1
+
+			});
+			assertWithSideEffects(length(ids) > 0 || columnsGrowthParts[i] > 0.0, "There is no one column width form in column " + i2s(i) + ". Column width will be 0.0");
+			map(ids, \id -> {
+				cell = (grid.cells)[id];
+				resetType = if (hasAvailableDependentNamedForm(cell.content, namedForms)) {
+					if (contains(constantWidthsIds, i)) {
+						ARBoth()
+					} else {
+						ARDynamic()
+					}
+				} else {
+					ARNo()
+				}
+				Pair(resetType, id)
+			})
+		}
+	);
+
+	fatWidthCells = if (respectFatCells) {
+		mapi(grid.cells, \id, cell -> {
+			if (cell.widthInCells > 1) {
+				resetType = if (hasAvailableDependentNamedForm(cell.content, namedForms)) {
+					if (exists(constantWidthsIds, \i -> cell.column <= i && i < cell.column + cell.widthInCells)) {
+						ARBoth()
+					} else {
+						ARDynamic()
+					}
+				} else {
+					ARNo()
+				};
+				[Pair(resetType, id)]
+			} else {
+				[]
+			}
+		}) |> concatA
+	} else {
+		[]
+	};
+
+	hGutters = i2d(colsCount - 1) * grid.columns.gutter;
+
+	constantHeightsIds = filter(rowsIds, \i -> rowsGrowthParts[i] == 0.0);
+
+	rowsHeightsCalculationRelatedData = map(
+		rowsIds,
+		\i -> {
+			ids = filter(cellsIds, \id -> {
+				cell = (grid.cells)[id];
+				cell.row == i && cell.heightInCells == 1
+			});
+			assertWithSideEffects(length(ids) > 0 || rowsGrowthParts[i] > 0.0, "There is no one row height form in row " + i2s(i) + ". Row height will be 0.0");
+			map(ids, \id -> {
+				cell = (grid.cells)[id];
+				resetType = if (hasAvailableDependentNamedForm(cell.content, namedForms)) {
+					if (contains(constantHeightsIds, i)) {
+						ARBoth()
+					} else {
+						ARDynamic()
+					}
+				} else {
+					ARNo()
+				}
+				Pair(resetType, id)
+			})
+		}
+	);
+
+	fatHeightCells = if (respectFatCells) {
+		mapi(grid.cells, \id, cell -> {
+			if (cell.heightInCells > 1) {
+				resetType = if (hasAvailableDependentNamedForm(cell.content, namedForms)) {
+					if (exists(constantHeightsIds, \i -> cell.row <= i && i < cell.row + cell.heightInCells)) {
+						ARBoth()
+					} else {
+						ARDynamic()
+					}
+				} else {
+					ARNo()
+				};
+				[Pair(resetType, id)]
+			} else {
+				[]
+			}
+		}) |> concatA
+	} else {
+		[]
+	};
+
+
+
+	vGutters = i2d(rowsCount - 1) * grid.rows.gutter;
+
+	iteri(grid.cells,  \i, cell -> {
+		assertWithSideEffects(
+			0 <= cell.column && cell.column < colsCount,
+			"Incorrect column number: " + i2s(cell.column) + " in grid cell id = " + i2s(i)
+		);
+		assertWithSideEffects(
+			0 <= cell.row && cell.row < rowsCount,
+			"Incorrect row number: " + i2s(cell.row) + " in grid cell id = " + i2s(i)
+		);
+		assertWithSideEffects(
+			0 <= cell.column && cell.column < colsCount && 0 < cell.widthInCells && cell.column + cell.widthInCells <= colsCount,
+			"Incorrect column number: " + i2s(cell.column) + " in grid cell id = " + i2s(i)
+		);
+		assertWithSideEffects(
+			0 <= cell.row && cell.row < rowsCount && 0 < cell.heightInCells && cell.row + cell.heightInCells <= rowsCount,
+			"Incorrect row number: " + i2s(cell.row) + " in grid cell id = " + i2s(i)
+		);
+	});
+
+	sizeRelatedBehaviours = map(sizesSrc, whenSizeChanged) |> merge;
+
+	internalUpdate = ref false;
+
+	data = make(GridLayoutSizesData(
+		zeroWH,
+		generate(0, sformsCount, \i -> 0.0),
+		generate(0, sformsCount, \i -> 0.0),
+		generate(0, sformsCount, \i -> zeroWH)
+	));
+
+	isToReset = \cellResetType, resetType -> {
+		switch (cellResetType : AvailableReset) {
+			ARNo() : false;
+			ARDynamic() : resetType != ARNo();
+			ARBoth() : resetType == ARBoth();
+		}
+	}
+
+	calculateNewCoordinates = \resetAvailableDependentSizes : AvailableReset, updateWholeSize  -> {
+		nextDistinct(alpha, b2d(resetAvailableDependentSizes == ARNo()));
+		currentSizes := getValue(sizeRelatedBehaviours);
+		currentAWH := getValue(awh);
+		wh = (if (resetAvailableDependentSizes != ARNo()) zeroWH else ^currentAWH);
+
+		sizes = ^currentSizes;
+
+		maxWidths = {
+			fatlessWidths = map(
+				columnWidthsCalculationRelatedData,
+				\widthsData -> {
+					map(widthsData, \dt -> {
+							unpair(dt, \sizeToReset, id -> if (isToReset(sizeToReset, resetAvailableDependentSizes)) 0.0 else sizes[id].width)
+					}) |> \sz -> either(maxA(sz), 0.0)
+				}
+			);
+			fold(fatWidthCells, fatlessWidths, \widths, cellTriple -> unpair(cellTriple, \sizeToReset, id -> {
+				if (isToReset(sizeToReset, resetAvailableDependentSizes)) {
+					widths
+				} else {
+					cell = grid.cells[id];
+					width = sizes[id].width;
+					cols = subrange(fatlessWidths, cell.column, cell.widthInCells);
+					columnsWidthsSum = cols |> dsum;
+					delta = width - columnsWidthsSum;
+					if (columnsWidthsSum > 0.0 && delta > 0.0) {
+						updateWidth = \w -> {
+							w + w / columnsWidthsSum * delta
+						};
+						concatA([
+							subrange(widths, 0, cell.column),
+							map(cols, updateWidth),
+							subrange(widths, cell.column + cell.widthInCells, colsCount - cell.column - cell.widthInCells)
+						])
+					} else {
+						widths
+					}
+				}
+			}))
+		}
+
+		constantWidths = map(constantWidthsIds, \id -> maxWidths[id]);
+		additionalWidth : double = max(wh.width - dsum(constantWidths) - hGutters, 0.0);
+
+		colsWidths = foldi(columnsGrowthParts, [], \i, acc : [double], growth -> {
+				if  (growth == 0.0) {
+					arrayPush(acc, maxWidths[i])
+				} else {
+					arrayPush(acc, max(additionalWidth * growth, maxWidths[i]))
+				}
+		});
+
+		maxHeights = {
+			fatlessHeights = map(
+				rowsHeightsCalculationRelatedData,
+				\heightsData -> {
+					map(heightsData, \dt -> {
+							unpair(dt, \sizeToReset, id -> if (isToReset(sizeToReset, resetAvailableDependentSizes)) 0.0 else sizes[id].height)
+					}) |> \sz -> either(maxA(sz), 0.0)
+				}
+			);
+			fold(fatHeightCells, fatlessHeights, \heights, cellTriple -> unpair(cellTriple, \sizeToReset, id -> {
+				if (isToReset(sizeToReset, resetAvailableDependentSizes)) {
+					heights
+				} else {
+					cell = grid.cells[id];
+					height = sizes[id].height;
+					cols = subrange(fatlessHeights, cell.row, cell.heightInCells);
+					rowsHeightsSum = cols |> dsum;
+					delta = height - rowsHeightsSum;
+					if (rowsHeightsSum > 0.0 && delta > 0.0) {
+						updateHeight = \h -> {
+							h + h / rowsHeightsSum * delta
+						};
+						concatA([
+							subrange(heights, 0, cell.row),
+							map(cols, updateHeight),
+							subrange(heights, cell.row + cell.heightInCells, colsCount - cell.row - cell.heightInCells)
+						])
+					} else {
+						heights
+					}
+				}
+			}))
+		}
+
+		constantHeights = map(constantHeightsIds, \id -> {
+			if (id >= length(maxHeights)) 0.0 else maxHeights[id]
+		});
+		additionalHeight : double = max(wh.height - dsum(constantHeights) - vGutters, 0.0);
+
+		rowsHeights = foldi(rowsGrowthParts, [], \i, acc : [double], growth -> {
+			maxHeight = if (i >= length(maxHeights)) 0.0 else maxHeights[i];
+
+			if  (growth == 0.0) {
+				arrayPush(acc, maxHeight)
+			} else {
+				arrayPush(acc, max(additionalHeight * growth, maxHeight))
+			}
+		});
+
+		xOffsets = mapi(grid.cells,  \i, cell -> {
+			dsum(subrange(colsWidths, 0, cell.column)) + i2d(cell.column) * grid.columns.gutter
+		});
+
+		yOffsets = mapi(grid.cells,  \i, cell -> {
+			dsum(subrange(rowsHeights, 0, cell.row)) + i2d(cell.row) * grid.rows.gutter
+		});
+
+		availables = mapi(grid.cells, \i, cell -> {
+			WidthHeight(
+				dsum(subrange(colsWidths, cell.column, cell.widthInCells)) + i2d(cell.widthInCells - 1) * grid.columns.gutter,
+				dsum(subrange(rowsHeights, cell.row, cell.heightInCells)) + i2d(cell.heightInCells - 1) * grid.rows.gutter
+			)
+		});
+
+		wholeWidth = colsWidths |> dsum |> floor |> i2d;
+		wholeHeight = rowsHeights |> dsum |> floor |> i2d;
+		addGutters = \gutters -> \base -> {
+			if (base > 0.0) {
+				base + gutters
+			} else {
+				0.0
+			}
+		}
+		wholeSize = WidthHeight(wholeWidth |> addGutters(hGutters), wholeHeight |> addGutters(vGutters));
+		newWholeSize = (if (updateWholeSize) wholeSize else getValue(data).size);
+		nextDistinct(data, GridLayoutSizesData(newWholeSize, xOffsets, yOffsets, availables))
+	}
+
+	stopUpdate = ref \ -> {};
+	protectedApply = \fn -> {
+		^stopUpdate();
+		if (!^internalUpdate) {
+			internalUpdate := true;
+			stopUpdate := interruptibleTimer(5, fn);
+		} else {
+			stopUpdate := interruptibleTimer(5, fn);
+		}
+	}
+
+	stableSizes = {
+		provider = make(getValue(sizeRelatedBehaviours));
+		stopTimer = ref \ -> {};
+		subscribe2(sizeRelatedBehaviours, \v -> {
+			^stopTimer();
+			stopTimer := interruptibleTimer(
+				5,
+				\ -> {
+					stopTimer := \ ->  {};
+					nextDistinct(provider, getValue(sizeRelatedBehaviours));
+				}
+			);
+		});
+		provider;
+	}
+	currentSizes := getValue(sizeRelatedBehaviours);
+	infiniteLoop = \ -> {
+		uns0 = subscribe2(awh |> whenSizeChanged, \wh -> {
+				protectedApply(\ -> {
+					calculateNewCoordinates(ARBoth(), false);
+					calculateNewCoordinates(ARDynamic(), false);
+					calculateNewCoordinates(ARNo(), false);
+					calculateNewCoordinates(ARNo(), true);
+					internalUpdate := false;
+				});
+		});
+
+		uns1 = subscribe2(stableSizes, \sizes -> protectedApply(\ -> {
+			calculateNewCoordinates(ARDynamic(), true);
+			calculateNewCoordinates(ARNo(), true);
+			calculateNewCoordinates(ARNo(), true);
+			internalUpdate := false;
+		}));
+
+		\ -> {
+			uns1();
+			uns0();
+		}
+	};
+
+
+	if (^wrongSource) {
+		Pair(Text("Incorrect source", [Fill(red)]), [])
+	} else {
+		coordinatesArray = mapi(grid.cells, \i, __ -> Coordinates(
+			select(data, \dt -> dt.xOffsets[i]),
+			select(data, \dt -> dt.yOffsets[i]),
+			select(data, \dt -> dt.availables[i])
+		));
+		Pair(
+			Size2(
+				select(data, \dt -> dt.size) |> whenSizeChanged,
+				Constructor(
+					Group(mapi(
+						grid.cells,
+						\i,cell -> {
+							coordinates = coordinatesArray[i];
+							form = sform2form(namedForms, coordinates, environment, cell.content, sizesSrc[i]);
+							RenderAtCoordinates(coordinates, form)
+						}
+					)),
+					infiniteLoop
+				)
+			),
+			coordinatesArray
+		)
+	}
+}
+
+grid2form2(grid, namedForms) {
+	grid2form3(grid, namedForms, false)
+}
+
+grid2form3(grid, namedForms, respectFatCells) {
+	grid2form3d(grid, namedForms, respectFatCells).first
+}
+
+grid2form3d(grid : GridLayout, namedForms : Tree<string, Form>, respectFatCells : bool) -> Pair<Form, [Pair<Behaviour<double>, Behaviour<double>>]> {
+	awh = makeWH();
+	environment = SkinEnvironment(awh, screenDPI);
+	alpha = make(0.0);
+	recalculateVisibility = make(false);
+	namedFormsDescriptions = mapTree(namedForms, makeNamedFormDescription(recalculateVisibility));
+	namedFormsLayer = namedFormsDescriptions |> makeNamedFormLayer;
+	tmp = grid2form0(grid, namedFormsDescriptions, environment, alpha, respectFatCells);
+	result = Group([
+		tmp.first,
+		namedFormsLayer
+	]);
+	next(recalculateVisibility, true);
+
+	// We use alpha to prevent the size from changing, which Visible does.
+	Pair(
+		Alpha(alpha, Inspect([IAvailable(awh)], result)),
+		map(tmp.second, \c -> Pair(c.x, c.y))
+	)
+}
+
+
+makeNamedFormDescription(recalculateVisibility) {
+	\form -> {
+		stayVisible = ref true;
+		resetModifiers = ref false;
+		defAlignValue = 0.0;
+		defScaleValue = 1.0;
+		xAlign = make(defAlignValue);
+		yAlign = make(defAlignValue);
+		xScale = make(defScaleValue);
+		yScale = make(defScaleValue);
+		visible = select(recalculateVisibility, \dummy -> {
+			if (^resetModifiers) {
+				nextDistinct(xScale, defScaleValue);
+				nextDistinct(yScale, defScaleValue);
+				nextDistinct(xAlign, defAlignValue);
+				nextDistinct(yAlign, defAlignValue);
+			}
+			resetModifiers := true;
+			res = ^stayVisible;
+			stayVisible := false;
+			res
+		}) |> distinctUntilChanged;
+		NamedFormDescription(
+			form, visible, stayVisible, resetModifiers,
+			make(0.0), make(0.0),
+			makeWH(),
+			xAlign, yAlign,
+			xScale, yScale,
+			makeWH()
+		)
+	}
+}
+
+makeNamedFormLayer(namedFormsDescriptions) {
+	foldTree(
+		namedFormsDescriptions,
+		[],
+		\name, nfd:NamedFormDescription, acc -> {
+			form = RenderAtCoordinates(
+				Coordinates(nfd.x, nfd.y, nfd.awh),
+				Inspect(
+					[ISize(nfd.size)],
+					Align2d(
+						nfd.xAlign, nfd.yAlign,
+						Scale(
+							nfd.xScale, nfd.yScale,
+							nfd.form
+						)
+					)
+				)
+			);
+			arrayPush(acc, Visibleb(nfd.visible, form))
+		}
+	) |> Group;
+}
+
+RenderAtCoordinates(coordinates : Coordinates, form : Form) {
+	x = coordinates.x;
+	y = coordinates.y;
+	awh = coordinates.awh;
+
+	Grid([
+		[SelectSize(x, y, Empty())],
+		[Empty(), Available2(awh, form)]
+	]);
+}
+
+hasAvailableDependentNamedForm(sform, namedForms : Tree<string, NamedFormDescription>) {
+	switch (sform : SForm) {
+		ResizeCell(toW, toH, preserveAspect, alignX, alignY, content) : hasAvailableDependentNamedForm(content, namedForms);
+		OverlapCell(left, top, right, bottom, content) : hasAvailableDependentNamedForm(content, namedForms);
+		ConditionalForm(conditions, content) : hasAvailableDependentNamedForm(content, namedForms);
+		FixedSForm(width, height) : false;
+		Text(text, style) : false;
+		Graphics(path, style) : false;
+		Picture(path, style) : false;
+		NamedForm(n): eitherMap(lookupTree(namedForms, n), \nfd -> nfd.form |> availableDependent, false);
+		NamedFormModificator(m, content) : hasAvailableDependentNamedForm(content, namedForms);
+	}
+}
+

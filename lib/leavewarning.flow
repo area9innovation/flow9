@@ -1,0 +1,81 @@
+// © Copyright 2015 Area9 Innovation. All rights reserved
+import maybe;
+import target;
+
+export {
+	// Callback should return None when it is safe to close windo and Some("warning") when it is not.
+	// "set" replace all existing callbacks
+	setUILeaveHandler(warner: () -> Maybe<string>) -> void;
+	setUILeaveHandler2(warner: () -> Maybe<string>) -> int;
+
+	addUILeaveHandlerTop(callback: () -> Maybe<string>) -> int;
+	addUILeaveHandlerBottom(callback: () -> Maybe<string>) -> int;
+	removeUILeaveHandler(id: int ) -> void;
+	removeAllUILeaveHandlers() -> void;
+}
+
+leaveWarnings : ref [Pair<int, () -> Maybe<string>>] = ref [];
+
+addUILeaveHandlerTop(callback: () -> Maybe<string>) -> int {
+	new = generateNewHandlerId();
+	leaveWarnings := concat([Pair(new, callback)], ^leaveWarnings);
+	updateStandartUILeaveHandler();
+	new
+}
+
+addUILeaveHandlerBottom(callback: () -> Maybe<string>) -> int {
+	new = generateNewHandlerId();
+	refArrayPush(leaveWarnings,Pair(new, callback));
+	updateStandartUILeaveHandler();
+	new	
+}
+
+removeUILeaveHandler(id: int ) -> void {
+	leaveWarnings := filter(^leaveWarnings, \p -> p.first != id)
+}
+
+removeAllUILeaveHandlers() -> void {
+	leaveWarnings := [];
+	updateStandartUILeaveHandler();
+}
+
+setUILeaveHandler(callback: () -> Maybe<string>) -> void {
+	setUILeaveHandler2(callback) |> ignore;
+}
+
+setUILeaveHandler2(callback: () -> Maybe<string>) -> int {
+	newId = generateNewHandlerId();
+	leaveWarnings := [Pair(newId, callback)];
+	updateStandartUILeaveHandler();
+	newId
+}
+
+generateNewHandlerId() -> int {
+	base = 1000000.0;
+	generatorFn = \ -> floor(1000.0 * random()) * floor(base) + floor(frac(timestamp() / base) * base);
+	for(generatorFn(), \id -> exists(^leaveWarnings, \p -> p.first == id), \__ -> generatorFn());
+}
+
+updateStandartUILeaveHandler() -> void {
+	js_and_flash_wrapper = \ -> {
+		eitherFn(
+			// run all, but use only first non-empty result 
+			fold(^leaveWarnings, None(), \acc, p -> {cur = p.second(); if (isSome(acc)) acc else cur}),
+			// JS onbeforeunload chacks if string is empty and decides it is safe to cloase in this case,
+			// so we replace empty string wit hspace which looks similar but causes beforeunload dialog to appear.
+			\ m -> if(m == "") " " else m,
+			\ -> ""
+		);
+	};
+
+	if(js || flash) {
+		// this will happen each time, only last callback will be active
+		hostAddCallback(
+			if(js) "flow_onbeforeunload" else /* flash */ "onbeforeunload",
+			js_and_flash_wrapper
+		)
+	} else if (!cgi) {
+		println("WARNING! setUILeaveHandler(...) on platform on which it is not implemented [yet].");
+		// printCallstack();
+	}	
+}

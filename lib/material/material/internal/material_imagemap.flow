@@ -1,0 +1,68 @@
+import material/material_manager;
+
+export {
+	MImageMap2T(manager : MaterialManager, parent : MFocusGroup, m : MImageMap) -> Tropic;
+}
+
+// HTML map analog where area shape is poly. You can create active areas on images.
+// Example for areas: [MArea([Point(55.0, 426.0), Point(54.0, 2.0), Point(115.0, 3.0), Point(198.0, 425.0)])],
+// current - contain index of selected area or -1
+// You can use MIMSelectedColor to show selected element, MIMHoverColor to show area under mouse
+
+getAreaUnderMouse(areas : [MArea], p : Point) -> int {
+	foldi(areas, -1, \k, a, b ->	{
+			if ( foldi(b.points, false, \i, t, m -> {
+					c = b.points[if (i==0) length(b.points) - 1 else i - 1];
+					if ((m.y > p.y) != (c.y > p.y) && (p.x < (c.x - m.x) * (p.y - m.y) / (c.y - m.y) + m.x)) !t else t
+				})) k
+			else a
+		})
+}
+
+MImageMap2T(manager : MaterialManager, parent : MFocusGroup, m : MImageMap) -> Tropic {
+	picture = m.picture;
+	areas = m.areas;
+	currentSelected = m.current;
+	style = m.style;
+	point = make(Point(-1.0, -1.0));
+	pressed = make(false);
+	disableClickFill = contains(style, MIMDisableClickFill());
+	disableHoverBorder = contains(style, MIMDisableHoverBorder());
+	selectedColor = extractStruct(style, MIMSelectedColor(parent.theme.primaryColor)).c;
+	hoverColor = extractStruct(style, MIMHoverColor(parent.theme.accentColor)).c;
+
+	makeTGraphics = \c, gstyle -> 
+		if (c > -1) {
+			first = areas[c].points[0];
+			TGraphics(
+				concat3([MoveTo(first.x, first.y)], map(tail(areas[c].points), \a -> LineTo(a.x, a.y)), [LineTo(first.x, first.y)]),
+				gstyle
+			)
+		} else
+			TEmpty();
+
+	currentHover = fselect(point, FLift(\p -> getAreaUnderMouse(areas, p)));
+
+	selectedArea = 
+		TSelect(currentSelected, \__ ->
+			makeTGraphics(fgetValue(currentHover), [MFill(selectedColor), FillOpacity(0.5)])
+		);
+
+	hoveredArea =
+		TSelect(currentHover, \c ->
+			makeTGraphics(c, [MStroke(hoverColor)])
+		);
+
+	[
+		TInteractive(
+			[TMouseXY(point), TMouseDownGhost(pressed)], //We need it to have ability to use MScroll when ImageMap is zoomed.
+			// You can use TInteractive with TMouseDown on lower levels to block it if you need it.
+			picture
+		)
+	]
+	|> (\arr -> ifArrayPush(arr, !disableClickFill, selectedArea))
+	|> (\arr -> ifArrayPush(arr, !disableHoverBorder, hoveredArea))
+	|> TGroup
+	|> (\t -> TConstruct([makeSubscribe2(pressed, \__ -> nextDistinct(currentSelected, fgetValue(currentHover)))], t))
+	|> (\t -> TCursor(DynamicCursor(fif(feq(currentHover, -1), const(ArrowCursor()), const(FingerCursor()))), t))
+}

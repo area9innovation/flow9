@@ -1,0 +1,1452 @@
+import material/iscript/material_iscript_util;
+import material/internal/material_edit_grid;
+
+import arrayutils;
+
+export {
+	showCombinationsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+}
+
+InputRecord(
+	behaviourDescriptor : IScriptBehaviourDescriptor,
+	name : string,
+	alias : string,
+	possibleValues : [flow],
+	initial : flow,
+	timestamp : double,
+	typeHint : string
+);
+
+RuleCondition(
+	inputIndex : int,
+	conditionType : RuleConditionType
+);
+
+TestRule(
+	ruleCondition : Maybe<RuleCondition>,
+	actions : [RuleAction]
+);
+
+RuleAction(
+	inputIndex : int,
+	actionType : RuleActionType
+);
+
+RuleConditionType ::= ConditionGT, ConditionLT, ConditionGE, ConditionLE, ConditionEQ, ConditionNE, ConditionBetween;
+	ConditionEQ(value : flow);
+	ConditionNE(value : flow);
+	ConditionGT(value : string);
+	ConditionLT(value : string);
+	ConditionGE(value : string);
+	ConditionLE(value : string);
+	ConditionBetween(valueMin : string, valueMax : string);
+
+RuleActionType ::= ActionIgnoreCompletely, ActionIgnoreValue, ActionUseFixed, ActionIgnoreInterval, ActionFixedInterval;
+	ActionIgnoreCompletely();
+	ActionIgnoreValue(value : flow);
+	ActionUseFixed(value : flow);
+	ActionIgnoreInterval(valueFrom : string, valueTo : string);
+	ActionFixedInterval(valueFrom : string, valueTo : string, step : string);
+
+// Auxiliary structure
+TemporaryRuleAction(
+	input : InputRecord,
+	actionType : RuleActionType,
+	actionIndex : int,
+	maybeConflict : Maybe<bool>
+);
+
+conditionType2string(condition : RuleConditionType, input : InputRecord) -> string {
+	switch (condition) {
+		ConditionEQ(v) : {
+			valueString =
+				if (input.possibleValues != [])
+					toString(input.possibleValues[flow2i(v)])
+				else
+					toString(v);
+
+			"is equal to " + valueString;
+		}
+		ConditionNE(v) : {
+			valueString =
+				if (input.possibleValues != [])
+					toString(input.possibleValues[flow2i(v)])
+				else
+					toString(v);
+
+			"is not equal to " + valueString;
+		}
+		ConditionGT(v) : "is greater than " + v;
+		ConditionLT(v) : "is less than " + v;
+		ConditionGE(v) : "is greater than or equal " + v;
+		ConditionLE(v) : "is less than or equal " + v;
+		ConditionBetween(vmin, vmax) : "is between " + vmin + " and " + vmax;
+	}
+}
+
+ruleCondition2string(input : InputRecord, ruleCondition : RuleCondition) -> string {
+	"\"" + getInputName(input) + "\" " + conditionType2string(ruleCondition.conditionType, input)
+}
+
+getAvailableInputs(manager : MaterialManager) -> [InputRecord] {
+	foldIScriptStack(
+		getValue(manager.iscript.iScriptB).stack,
+		[],
+		\acc, delay, record -> {
+			switch (record) {
+				IScriptBehaviourRecord(descriptor, value, type, __) : {
+					switch (type) {
+						ISInputValue(pv, typeHint, canBeInput) : {
+							if (canBeInput) {
+								globalAlias = lookupTreeDef(getValue(manager.iscript.aliasesB), IScriptComponentDescriptor(descriptor.component.name, descriptor.component.id), "");
+								arrayPush(acc, InputRecord(descriptor, globalAlias, "", pv, value, delay, typeHint))
+							}
+							else
+								acc;
+						}
+						default : acc;
+					}
+				}
+				// IScriptInputRecord(descriptor, name, pv, typeHint) : {
+				// 	defaultValue = getDefaultValueByTypeHint(typeHint);
+				// 	initialValue = eitherMap(
+				// 		find(getValue(manager.iscript.inputValuesB), \inputValue -> inputValue.name == name),
+				// 		\iv -> either(iv.value, defaultValue),
+				// 		defaultValue
+				// 	);
+
+				// 	arrayPush(acc, InputRecord(descriptor, name, "", pv, initialValue, pair.first, typeHint));
+				// }
+				default : acc;
+			}
+		}
+	);
+}
+
+getInputRawName(input : InputRecord) -> string {
+	componentName =
+		if (input.name != "")
+			input.name
+		else
+			IScriptId2s(input.behaviourDescriptor.component.id) + " " + input.behaviourDescriptor.component.name;
+
+	 componentName + "_" + input.behaviourDescriptor.name + " at (" + d2s(input.timestamp) + ") ";
+}
+
+getInputName(input : InputRecord) -> string {
+	if (input.alias != "")
+		input.alias
+	else
+		getInputRawName(input);
+}
+
+showCombinationsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeWhenB = make(false);
+	rulesB = make([]);
+	availableInputsB = make(getAvailableInputs(manager));
+
+	aliasesMaterial = MLines([
+		MBaselineCols([
+			MFixed(16.0, 0.0),
+			MText("Names for elements", [MSubheading()]),
+			MFixed(32.0, 0.0),
+			MIconButton("add", \ -> {
+					availableInputs = getValue(availableInputsB);
+
+					addAliasDialog(manager,
+						filter(availableInputs, \input -> input.alias == ""),
+						\newInput -> {
+							index = findiDef(availableInputs, \input -> IScriptId2s(input.behaviourDescriptor.component.id) == IScriptId2s(newInput.behaviourDescriptor.component.id), -1);
+							next(availableInputsB, replace(availableInputs, index, newInput));
+						},
+						m2t
+					);
+				},
+				[], []
+			)
+		]),
+		MSelect(availableInputsB, \availableInputs -> {
+			inputs = filter(availableInputs, \input -> input.alias != "");
+
+			if (length(inputs) == 0)
+				MEmpty()
+			else {
+				MDataTable([
+						MColumn("Element", "", 256, []),
+						MColumn("Name", "", 256, []),
+						MColumn("", "", 64, [])
+					],
+					map(inputs,	\input -> [
+						MText(getInputRawName(input), []),
+						MText(input.alias, []),
+						MIconButton("delete", \ -> {
+								newInput = InputRecord(
+									input.behaviourDescriptor,
+									input.name,
+									"",
+									input.possibleValues,
+									input.initial,
+									input.timestamp,
+									input.typeHint
+								);
+								index = findiDef(availableInputs, \ai -> IScriptId2s(ai.behaviourDescriptor.component.id) == IScriptId2s(newInput.behaviourDescriptor.component.id), -1);
+
+								next(availableInputsB, replace(availableInputs, index, newInput));
+							},
+							[], []
+						)
+					]),
+					[]
+				)
+			}
+		})
+	]);
+
+	initialHiddenRule = TestRule(None(), mapi(getValue(availableInputsB), \i, ai -> RuleAction(i, ActionUseFixed(ai.initial)))); // used for various rule checks
+
+	rulesMaterial = MLines([
+		MBaselineCols([
+			MFixed(16.0, 0.0),
+			MText("Test rules", [MSubheading()]),
+			MFixed(16.0, 0.0),
+			MIconButton("add", \ -> {
+					rules = getValue(rulesB);
+
+					showAddEditRulesDialog(
+						manager,
+						getValue(availableInputsB),
+						arrayPush(
+							rules,
+							initialHiddenRule
+						),
+						None(),
+						\newRule -> next(rulesB, arrayPush(rules, newRule)),
+						m2t
+					);
+				},
+				[], []
+			)
+		]),
+		MFixed(0.0, 8.0),
+		MSelect(fpair(rulesB, availableInputsB), \rai -> {
+			rules = firstOfPair(rai);
+			inputs = secondOfPair(rai);
+
+			action2text = \index, action : RuleActionType -> {
+				switch (action) {
+					ActionUseFixed(v) : {
+						valueString =
+							if (inputs[index].possibleValues != [])
+								toString(inputs[index].possibleValues[flow2i(v)])
+							else
+								toString(v);
+
+						"For input \"" + getInputName(inputs[index]) + "\" use value " + valueString;
+					}
+					ActionFixedInterval(v1, v2, step) : "For input \"" + getInputName(inputs[index]) + "\" use values' interval from " + v1 + " to " + v2 + " with step " + step;
+					ActionIgnoreCompletely() : "Ignore \"" + getInputName(inputs[index]) + "\" values. Leave default from script.";
+					ActionIgnoreValue(v) : {
+						valueString =
+							if (inputs[index].possibleValues != [])
+								toString(inputs[index].possibleValues[flow2i(v)])
+							else
+								toString(v);
+
+						"Ignore value" + valueString + " of \"" + getInputName(inputs[index]) + "\"";
+					}
+					ActionIgnoreInterval(vf, vt) : "Ignore values from " + vf + " to " + vt + " of \"" + getInputName(inputs[index]) + "\"";
+				}
+			}
+
+			conditionWidth = 384;
+			actionsWidth = 768;
+
+			MDataTable([
+					MColumn("Condition", "", conditionWidth, []),
+					MColumn("Actions", "", actionsWidth, []),
+					MColumn("", "", 64, []),
+					MColumn("", "", 64, [])
+				],
+				concat([
+						[
+							MParagraph("Unconditional initial values", [MWidth(i2d(conditionWidth))]),
+							MLines(map(initialHiddenRule.actions, \action -> MParagraph(action2text(action.inputIndex, action.actionType), [MWidth(i2d(actionsWidth))]))),
+							MEmpty(),
+							MEmpty()
+						]
+					],
+					mapi(rules, \i, rule -> {
+						conditionString = eitherMap(rule.ruleCondition,
+							\ruleCond -> ruleCondition2string(inputs[ruleCond.inputIndex], ruleCond),
+							"Unconditional"
+						);
+
+						[
+							MParagraph(conditionString, [MWidth(i2d(conditionWidth))]),
+							MLines(map(rule.actions, \action -> MParagraph(action2text(action.inputIndex, action.actionType), [MWidth(i2d(actionsWidth))]))),
+							MIconButton("edit", \ -> {
+								showAddEditRulesDialog(
+									manager,
+									getValue(availableInputsB),
+									arrayPush(
+										rules,
+										initialHiddenRule
+									),
+									Some(rule),
+									\changedRule -> next(rulesB, replace(rules, i, changedRule)),
+									m2t
+								);
+							}, [], []),
+							MIconButton("delete", \ -> next(rulesB, removeIndex(rules, i)), [], [])
+						]
+					})
+				),
+				[MRowHeight(96.0)]
+			);
+		})
+	]);
+
+	instructionsMaterial = MText(
+		"Here you can define several rules, which will be used to build combinations of values as input data to existing script elements. " +
+		"Also you can define temporary names for available elements to simpify this process.",
+		[]
+	);
+
+	dialogStyle = [
+		MDialogTitle("Run script with several test rules"),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("CANCEL", \ -> next(closeWhenB, true), [], [MShortcut("esc")]),
+			MTextButton("RUN SCRIPT", \ -> {
+					rules = getValue(rulesB);
+					availableInputs = getValue(availableInputsB);
+					rulesWithInitial = arrayPush(rules, initialHiddenRule);
+
+					runTests = \ -> {
+						next(closeWhenB, true);
+						testCombinations = generateTestCombinations(manager, availableInputs, rulesWithInitial);
+
+						iteri(testCombinations, \i, comb -> {
+							iScriptInfo(manager, "Combination " + i2s(i), None());
+
+							iter(comb, \value -> println("\t" + serialize(value)));
+						});
+
+						iScriptBackup = getValue(manager.iscript.iScriptB);
+						iter(testCombinations, \testCombination -> executeAfter(
+							\ -> {
+								switch (getValue(manager.iscript.iScriptStateB)) {
+									IScriptDisabled(): true;
+									default: false;
+								}
+							},
+							\ -> runTestCombination(manager, testCombination)
+						));
+						executeAfter(
+							\ -> {
+								switch (getValue(manager.iscript.iScriptStateB)) {
+									IScriptDisabled(): true;
+									default: false;
+								}
+							},
+							\ -> next(manager.iscript.iScriptB, iScriptBackup)
+						);
+					}
+
+					unreachableRules = fold(rules, [], \acc, rule -> {
+						conditionReachable = eitherMap(rule.ruleCondition, \ruleCondition -> isConditionReachable(rulesWithInitial, rule), true);
+
+						if (conditionReachable)
+							acc
+						else {
+							ruleCondition = either(rule.ruleCondition, RuleCondition(-1, ConditionEQ(-1)));
+							arrayPush(acc, ruleCondition2string(availableInputs[ruleCondition.inputIndex], ruleCondition));
+						}
+					});
+
+					if (length(unreachableRules) != 0) {
+						showRulesUnreachableWarningDialog(manager, unreachableRules, runTests, m2t);
+					} else
+						runTests();
+				},
+				[], [MShortcut("enter")]
+			)
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	content = MGetFocusGroup(\p -> {
+		MLines(map([
+				instructionsMaterial,
+				MFixed(0.0, 16.0),
+				aliasesMaterial,
+				MFixed(0.0, 16.0),
+				rulesMaterial,
+			],
+			\it -> MEGItem2T(p, it, [MWidth(400.)], m2t)
+		))
+	});
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		content,
+		m2t
+	);
+}
+
+generateFixedInterval(value1 : string, value2 : string, step : string) -> [double] {
+	v1 = s2d(value1);
+	v2 = s2d(value2);
+	s = s2d(step);
+
+	arrayPush(
+		generateWhile2(v1, \v -> v < v2, \v -> v + s, \v -> v),
+		v2
+	);
+}
+
+generateTestCombinations(manager : MaterialManager, inputs : [InputRecord], rules : [TestRule]) -> [[Pair<InputRecord, flow>]] {
+	unconditional = filter(rules, \rule -> isNone(rule.ruleCondition));
+	conditional = subtractA(rules, unconditional);
+
+	valuesTree = fold(unconditional, makeTree(), \acc, urule -> {
+		fold(urule.actions, acc, \acc2, action -> {
+			valuesSet = switch (action.actionType) {
+				ActionUseFixed(v) : makeSet1(v);
+				ActionFixedInterval(vf, vt, s) : {
+					values = generateFixedInterval(vf, vt, s);
+					buildSet(map(values, d2s));
+				}
+				default : { // should not be reachable
+					iScriptInfo(manager, "Wrong action type in unconditional rule!", None());
+					makeSet();
+				}
+			}
+
+			existingSet = lookupTreeDef(acc, action.inputIndex, makeSet());
+			setTree(acc2, action.inputIndex, mergeSets(existingSet, valuesSet));
+		})
+	});
+
+	pairsArrays = generateTestCombinationsRec(foldTree(valuesTree, [], \k, v, acc -> arrayPush(acc, Pair(k, v))));
+
+	combinations = map(pairsArrays, \combination : [Pair<int, flow>] -> {
+		matchedRules : [TestRule] = fold(conditional, [], \acc, crule -> {
+			eitherFn(
+				crule.ruleCondition,
+				\ruleCondition -> {
+					eitherMap(
+						findi(combination, \pair -> firstOfPair(pair) == ruleCondition.inputIndex),
+						\index -> {
+							isMatched = isFixedValueFitsInCondition(ruleCondition.conditionType, secondOfPair(combination[index]));
+
+							if (isMatched) arrayPush(acc, crule) else acc;
+						},
+						acc
+					)
+				},
+				\ -> acc
+			);
+		});
+
+		// applying matched rules
+		fold(matchedRules, combination, \acc, rule -> {
+			fold(rule.actions, acc, \acc2 : [Pair<int, flow>], action -> {
+				index = findiDef(acc2, \pair : Pair<int, flow> -> firstOfPair(pair) == action.inputIndex, -1);
+
+				if (index != -1) {
+					switch (action.actionType) {
+						ActionIgnoreCompletely() : removeIndex(acc2, index);
+						ActionIgnoreValue(v) : if (secondOfPair(acc2[index]) == v) removeIndex(acc2, index) else acc2;
+						ActionUseFixed(v) : replace(acc2, index, Pair(action.inputIndex, v));
+						ActionIgnoreInterval(vf, vt) : {
+							sp = flow2s(secondOfPair(acc2[index]));
+							if (isDouble(sp)) {
+								value = s2d(sp);
+								valueFrom = s2d(vf);
+								valueTo = s2d(vt);
+
+								if (value >= valueFrom && value <= valueTo)
+									removeIndex(acc2, index)
+								else
+									acc2;
+							} else
+								acc2;
+						};
+						ActionFixedInterval(vf, vt, __) : {
+							sp = flow2s(secondOfPair(acc2[index]));
+							if (isDouble(sp)) {
+								value = s2d(sp);
+								valueFrom = s2d(vf);
+								valueTo = s2d(vt);
+
+								if (value < valueFrom || value > valueTo)
+									removeIndex(acc2, index)
+								else
+									acc2;
+							} else
+								acc2;
+						}
+					}
+				} else
+					acc2;
+			});
+		});
+	});
+
+	map(uniq(combinations), \arr -> map(arr, \pair -> Pair(inputs[firstOfPair(pair)], secondOfPair(pair))));
+}
+
+generateTestCombinationsRec(values : [Pair<int, Set<flow>>]) -> [[Pair<int, flow>]] {
+	if (values == [])
+		[]
+	else {
+		foldSet(secondOfPair(values[0]), [], \acc, value -> {
+			if (length(values) == 1)
+				arrayPush(acc, [Pair(firstOfPair(values[0]), value)])
+			else
+				concat(acc, map(generateTestCombinationsRec(tail(values)), \arr -> arrayPush(arr, Pair(firstOfPair(values[0]), value))));
+		})
+	}
+}
+
+runTestCombination(manager : MaterialManager, combination : [Pair<InputRecord, flow>]) -> void {
+	iScript = getValue(manager.iscript.iScriptB);
+
+	newStack = mapIScriptStackTree(iScript.stack, \delay, record -> {
+		index = findiDef(combination, \inputValuePair -> firstOfPair(inputValuePair).timestamp == delay, -1);
+
+		if (index != -1) {
+			inputRecord = firstOfPair(combination[index]);
+			value = secondOfPair(combination[index]);
+
+			switch (record : IScriptRecord) {
+				IScriptBehaviourRecord(__, __, __, callstack): {
+					IScriptBehaviourRecord(
+						inputRecord.behaviourDescriptor,
+						value,
+						ISInputValue(inputRecord.possibleValues, inputRecord.typeHint, true),
+						callstack
+					)
+				}
+				default: record;
+			}
+		} else {
+			record;
+		}
+	});
+
+	next(manager.iscript.iScriptB, IScript(iScript.recordingStarted, newStack));
+	next(manager.iscript.iScriptStateB, IScriptReplaying());
+}
+
+checkRuleConflicts(existingRules : [TestRule], rule : TestRule) -> [bool] {
+	eitherMap(
+		rule.ruleCondition,
+		\ruleCondition -> {
+			existingRulesWithSimilarCondition = filter(existingRules, \erule -> {
+				eitherMap(
+					erule.ruleCondition,
+					\eruleCondition -> conditionsIntersectionExists(eruleCondition, ruleCondition),
+					false
+				);
+			});
+
+			map(rule.actions, \action -> {
+				lastIndex = iteriUntil(existingRulesWithSimilarCondition, \i, erule -> {
+					eitherMap(
+						erule.ruleCondition,
+						\__ -> exists(erule.actions, \eaction -> eaction.inputIndex == action.inputIndex && eaction.actionType != action.actionType), // rule conflicts, similar conditions give different actions to do
+						false
+					)
+				});
+
+				lastIndex != length(existingRulesWithSimilarCondition)
+			});
+		},
+		map(rule.actions, \__ -> false)
+	);
+}
+
+conditionsIntersectionExists(condition1 : RuleCondition, condition2 : RuleCondition) -> bool {
+	if (condition1.inputIndex == condition2.inputIndex) {
+		switch (condition1.conditionType) {
+			ConditionEQ(value) : isFixedValueFitsInCondition(condition2.conditionType, value);
+			ConditionNE(value) : !isSameStructType(condition2.conditionType, ConditionEQ(""));
+			ConditionGT(value) : {
+				switch (condition2.conditionType) {
+					ConditionEQ(value2) : value < flow2s(value2);
+					ConditionLT(value2) : value < value2;
+					ConditionLE(value2) : value < value2;
+					ConditionBetween(vmin2, vmax2) : value < vmax2;
+					default : true;
+				}
+			}
+			ConditionLT(value) : {
+				switch (condition2.conditionType) {
+					ConditionEQ(value2) : value > flow2s(value2);
+					ConditionGT(value2) : value > value2;
+					ConditionGE(value2) : value > value2;
+					ConditionBetween(vmin2, vmax2) : value > vmin2;
+					default : true;
+				}
+			}
+			ConditionGE(value) : {
+				switch (condition2.conditionType) {
+					ConditionEQ(value2) : value <= flow2s(value2);
+					ConditionLT(value2) : value < value2;
+					ConditionLE(value2) : value <= value2;
+					ConditionBetween(vmin2, vmax2) : value <= vmax2;
+					default : true;
+				}
+			}
+			ConditionLE(value) : {
+				switch (condition2.conditionType) {
+					ConditionEQ(value2) : value >= flow2s(value2);
+					ConditionGT(value2) : value > value2;
+					ConditionGE(value2) : value >= value2;
+					ConditionBetween(vmin2, vmax2) : value >= vmin2;
+					default : true;
+				}
+			}
+			ConditionBetween(vmin, vmax) : {
+				switch (condition2.conditionType) {
+					ConditionEQ(value2) : value2 >= vmin && value2 <= vmax;
+					ConditionNE(value2) : true;
+					ConditionGT(value2) : value2 < vmax;
+					ConditionGE(value2) : value2 <= vmax;
+					ConditionLT(value2) : value2 > vmin;
+					ConditionLE(value2) : value2 >= vmax;
+					ConditionBetween(vmin2, vmax2) : vmax2 < vmin || vmax < vmin2;
+				}
+			}
+		}
+	} else
+		false;
+}
+
+isConditionReachable(existingRules : [TestRule], rule : TestRule) -> bool {
+	eitherMap(
+		rule.ruleCondition,
+		\ruleCondition -> {
+			lastIndex = iteriUntil(existingRules, \i, existingRule -> {
+				suitableActionExists = fold(existingRule.actions, false, \acc, action -> {
+					isSuitableAction =
+						if (action.inputIndex == ruleCondition.inputIndex) {
+							switch (action.actionType) {
+								ActionUseFixed(value) : isFixedValueFitsInCondition(ruleCondition.conditionType, value);
+								ActionFixedInterval(valueFrom, valueTo, step) : isValueIntervalFitsInCondition(ruleCondition.conditionType, valueFrom, valueTo, step);
+								default : false;
+							}
+						} else
+							false;
+
+					acc || isSuitableAction;
+				});
+
+				suitableActionExists && eitherMap(existingRule.ruleCondition, \__ -> isConditionReachable(existingRules, existingRule), true);
+			});
+
+			lastIndex < length(existingRules)
+		},
+		true
+	)
+}
+
+isFixedValueFitsInCondition(condition : RuleConditionType, value : flow) -> bool {
+	switch (condition) {
+		ConditionEQ(cvalue) : cvalue == value;
+		ConditionNE(cvalue) : cvalue != value;
+		ConditionGT(cvalue) : {
+			v = s2d(flow2s(value));
+			cv = s2d(cvalue);
+			cv > v
+		}
+		ConditionLT(cvalue) : {
+			v = s2d(flow2s(value));
+			cv = s2d(cvalue);
+			cv < v
+		}
+		ConditionGE(cvalue) : {
+			v = s2d(flow2s(value));
+			cv = s2d(cvalue);
+			cv >= v
+		}
+		ConditionLE(cvalue) : {
+			v = s2d(flow2s(value));
+			cv = s2d(cvalue);
+			cv <= v
+		}
+		ConditionBetween(cvalueMin, cvalueMax) : {
+			v = s2d(flow2s(value));
+			cvMin = s2d(cvalueMin);
+			cvMax = s2d(cvalueMax);
+
+			v <= cvMax && v >= cvMin
+		}
+	}
+}
+
+isValueIntervalFitsInCondition(condition : RuleConditionType, valueFrom : string, valueTo : string, step : string) -> bool {
+	interval = generateFixedInterval(valueFrom, valueTo, step);
+
+	switch (condition) {
+		ConditionEQ(cvalue) : contains(interval, s2d(flow2s(cvalue)));
+		ConditionNE(cvalue) : true;
+		ConditionGT(cvalue) : {
+			cv = s2d(cvalue);
+			exists(interval, \v -> cv > v);
+		}
+		ConditionLT(cvalue) : {
+			cv = s2d(cvalue);
+			exists(interval, \v -> cv < v);
+		}
+		ConditionGE(cvalue) : {
+			cv = s2d(cvalue);
+			exists(interval, \v -> cv >= v);
+		}
+		ConditionLE(cvalue) : {
+			cv = s2d(cvalue);
+			exists(interval, \v -> cv <= v);
+		}
+		ConditionBetween(cvalueMin, cvalueMax) : {
+			cvMin = s2d(cvalueMin);
+			cvMax = s2d(cvalueMax);
+
+			exists(interval, \v -> v <= cvMax && v >= cvMin);
+		}
+	}
+}
+
+showRulesUnreachableWarningDialog(manager : MaterialManager, unreachableRules : [string], onOk : () -> void, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeWhenB = make(false);
+
+	dialogStyle = [
+		MDialogTitle("Warning!"),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("CANCEL", \ -> next(closeWhenB, true), [], [MShortcut("esc")]),
+			MTextButton("PROCEED ANYWAY", \ -> {
+					next(closeWhenB, true);
+					onOk();
+				},
+				[],
+				[MShortcut("enter")]
+			)
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	rulesMaterial = MLines(interleave(
+		map(unreachableRules, \ruleString -> MText(ruleString, [])),
+		MFixed(0.0, 8.0)
+	));
+
+	material = MLines([
+		MText("The next conditions are unreachable:", [MSubheading()]),
+		MFixed(0.0, 8.0),
+		rulesMaterial,
+		MFixed(0.0, 24.0),
+		MText("You can solve this by adding corresponding values in unconditional rules' set", [MSubheading()])
+	]);
+
+	content = MGetFocusGroup(\p -> MEGItem2T(p, material, [MWidth(400.)], m2t));
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		content,
+		m2t
+	);
+}
+
+showConflictingRulesErrorDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeWhenB = make(false);
+
+	dialogStyle = [
+		MDialogTitle("Error"),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("OK", \ -> next(closeWhenB, true), [], [MShortcut("enter")])
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	content = MGetFocusGroup(\p -> MEGItem2T(
+		p,
+		MText("Some rules are conflicting with existing ones. You should correct them before proceed.", [MSubheading()]),
+		[MWidth(400.)],
+		m2t
+	));
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		content,
+		m2t
+	);
+}
+
+addAliasDialog(manager : MaterialManager, inputs : [InputRecord], onOk : (InputRecord) -> void, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeWhenB = make(false);
+	inputIndexB = make(-1);
+	aliasB = make("");
+
+	dialogStyle = [
+		MDialogTitle("Make name for element"),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("CANCEL", \ -> next(closeWhenB, true), [], [MShortcut("esc")]),
+			MTextButton("ADD", \ -> {
+					index = getValue(inputIndexB);
+					onOk(InputRecord(
+						inputs[index].behaviourDescriptor,
+						inputs[index].name,
+						getValue(aliasB),
+						inputs[index].possibleValues,
+						inputs[index].initial,
+						inputs[index].timestamp,
+						inputs[index].typeHint
+					));
+
+					next(closeWhenB, true);
+				},
+				[], [MShortcut("enter"), MEnabled(fneq(aliasB, ""))]
+			)
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	content = MGetFocusGroup(\p -> {
+		MLines(map([
+				MBaselineCols([
+					MDropDown(inputIndexB, "Choose element", map(inputs, getInputName), []),
+					MFixed(8.0, 0.0),
+					MTextInput(aliasB, [MWidth(192.0), MFloatingLabel(), MLabel("Write new name")], []),
+				])
+			],
+			\it -> MEGItem2T(p, it, [MWidth(400.)], m2t)
+		))
+	});
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		content,
+		m2t
+	);
+}
+
+index2RuleActionType(index : int, isConditional : bool, values : [flow], step : string) -> RuleActionType {
+	safeValues : [flow] =
+		if (length(values) == 0)
+			[flow(""), flow("")]
+		else if (length(values) == 1)
+			[values[0], values[0]]
+		else
+			values;
+
+	if (index == 0)
+		ActionUseFixed(safeValues[0])
+	else if (index == 1) {
+		if (isConditional)
+			ActionIgnoreCompletely()
+		else
+			ActionFixedInterval(flow2s(safeValues[0]), flow2s(safeValues[1]), step);
+	} else if (index == 2)
+		ActionIgnoreValue(safeValues[0])
+	else if (index == 3)
+		ActionFixedInterval(flow2s(safeValues[0]), flow2s(safeValues[1]), step)
+	else
+		ActionIgnoreInterval(flow2s(safeValues[0]), flow2s(safeValues[1]));
+}
+
+ruleActionType2Index(actionType : RuleActionType, isConditional : bool) -> int {
+	switch (actionType) {
+		ActionUseFixed(__) : 0;
+		ActionIgnoreValue(__) : 2;
+		ActionIgnoreInterval(__, __) : 4;
+		ActionIgnoreCompletely() : 1;
+		ActionFixedInterval(__, __, __) : if (isConditional) 3 else 1;
+	}
+}
+
+showAddEditRulesDialog(manager : MaterialManager, inputs : [InputRecord], existingRules : [TestRule], maybeRuleToEdit : Maybe<TestRule>,
+	onOk : (TestRule) -> void, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+
+	closeWhenB = make(false);
+	conditionIndexB = make(-1);
+	inputIndexB = make(-1);
+	conditionalValuesB = [make(flow("")), make(flow(""))];
+	isConditionalB = make(false);
+	actionIndexB = make(-1);
+	actionInputIndexB = make(-1);
+	actionValuesB = [ make(flow("")), make(flow("")) ];
+	stepValueB = make("");
+	temporaryRuleActionsB : DynamicBehaviour<[TemporaryRuleAction]> = make([]);
+
+	isPossibleInputRestricted = \typeHint -> {
+		if (typeHint == "int" || typeHint == "double" || typeHint == "string" || typeHint == "")
+			false
+		else
+			true;
+	}
+
+	conditionSignsShorten = [
+		"==",
+		"!=",
+	];
+
+	conditionSigns = concat(conditionSignsShorten, [
+		">",
+		"<",
+		">=",
+		"<=",
+		"BETWEEN"
+	]);
+
+	actionsShorten = [
+		"Use value",
+	];
+
+	actions = concat(actionsShorten, [
+		"Use values interval",
+	]);
+
+	conditionalActionsShorten = [
+		"Use fixed value",
+		"Ignore completely",
+		"Ignore value",
+	];
+
+	conditionalActions = concat(conditionalActionsShorten, [
+		"Allow values interval",
+		"Ignore values interval",
+	]);
+
+	assembleConditionType = \index, value1 : flow, value2 : flow -> {
+		if (index == 0)
+			ConditionEQ(value1)
+		else if (index == 1)
+			ConditionNE(value1)
+		else if (index == 2)
+			ConditionGT(flow2s(value1))
+		else if (index == 3)
+			ConditionLT(flow2s(value1))
+		else if (index == 4)
+			ConditionGE(flow2s(value1))
+		else if (index == 5)
+			ConditionLE(flow2s(value1))
+		else
+			ConditionBetween(flow2s(value1), flow2s(value2));
+	}
+
+	disassembleConditionType = \type -> {
+		switch (type : RuleConditionType) {
+			ConditionEQ(v) : Triple(0, v, v);
+			ConditionNE(v) : Triple(1, v, v);
+			ConditionGT(v) : Triple(2, v, v);
+			ConditionLT(v) : Triple(3, v, v);
+			ConditionGE(v) : Triple(4, v, v);
+			ConditionLE(v) : Triple(5, v, v);
+			ConditionBetween(v1, v2) : Triple(6, v1, v2);
+		}
+	}
+
+	maybeApply(maybeRuleToEdit, \ruleToEdit -> {
+		maybeApply(ruleToEdit.ruleCondition, \ruleCondition -> {
+			triple = disassembleConditionType(ruleCondition.conditionType);
+
+			nextDistinct(isConditionalB, true);
+			next(inputIndexB, ruleCondition.inputIndex);
+			next(conditionIndexB, triple.first);
+			next(conditionalValuesB[0], triple.second);
+			next(conditionalValuesB[1], triple.third);
+		});
+
+		actionsToEdit = map(ruleToEdit.actions, \action -> TemporaryRuleAction(
+			inputs[action.inputIndex],
+			action.actionType,
+			ruleActionType2Index(action.actionType, isSome(ruleToEdit.ruleCondition)),
+			None()
+		));
+		next(temporaryRuleActionsB, actionsToEdit);
+	});
+
+	conditionAndInputMaterial = MSelect(inputIndexB, \inputIndex -> {
+		if (inputIndex != -1) {
+			isInputRestricted = isPossibleInputRestricted(inputs[inputIndex].typeHint);
+			conditionsArray = if (isInputRestricted) conditionSignsShorten else conditionSigns;
+
+			MBaselineCols([
+				MText("is", []),
+				MFixed(8.0, 0.0),
+				MDropDown(conditionIndexB, "Choose condition", conditionsArray, []),
+				MFixed(8.0, 0.0),
+				MSelect(conditionIndexB, \conditionIndex -> {
+					if (conditionIndex != -1) {
+						pair = makeValueInputByTypeHint(inputs[inputIndex].possibleValues, inputs[inputIndex].typeHint, Some(getValue(conditionalValuesB[0])), const(true));
+						valueInputMaterial = MConstruct([
+								\ -> fconnect(pair.first, conditionalValuesB[0])
+							],
+							MGetFocusGroup(\p -> MEGItem2T(p, pair.second, [MWidth(160.0)], m2t))
+						);
+
+						condition = assembleConditionType(conditionIndex, "", "");
+						cols =
+							if (isSameStructType(condition, ConditionBetween("", ""))) {
+								pair2 = makeValueInputByTypeHint(inputs[inputIndex].possibleValues, inputs[inputIndex].typeHint, Some(getValue(conditionalValuesB[1])), const(true));
+								additionalInputMaterial = MConstruct([
+										\ -> fconnect(pair2.first, conditionalValuesB[1])
+									],
+									MGetFocusGroup(\p -> MEGItem2T(p, pair2.second, [MWidth(160.0)], m2t))
+								);
+
+								concat([valueInputMaterial], [
+									MFixed(8.0, 0.0),
+									MText("and", []),
+									MFixed(8.0, 0.0),
+									additionalInputMaterial
+								])
+							} else
+								[valueInputMaterial];
+
+						MBaselineCols(cols)
+					} else
+						MEmpty();
+				})
+			])
+		} else
+			MEmpty();
+	});
+
+	conditionMaterial = MConstruct([
+			makeSubscribe2(isConditionalB, \useCondition -> {
+					next(inputIndexB, -1);
+					next(conditionIndexB, -1);
+			})
+		],
+		MExpander(
+			MCheckBox(MText("Conditional rule", []), isConditionalB, []),
+			\ -> MFrame(1.0, 1.0, [], MLines([
+				MText("Condition", [MSubheading()]),
+				MFixed(0.0, 16.0),
+				MBaselineCols([
+					MDropDown(inputIndexB, "Choose input", map(inputs, getInputName), []),
+					MFixed(8.0, 0.0),
+					conditionAndInputMaterial
+				])
+			])),
+			isConditionalB,
+			[MExpanderHideSeparator(), FillOpacity(0.0)]
+	));
+
+	actionsMaterial = MConstruct([
+			makeSubscribe2(inputIndexB, \__ -> {
+					next(actionInputIndexB, -1);
+					next(temporaryRuleActionsB, []);
+					next(conditionIndexB, -1);
+					next(conditionalValuesB[0], flow(""));
+					next(conditionalValuesB[1], flow(""));
+			})
+		],
+		MSelect(inputIndexB, \inputIndex -> {
+			inputsWithoutSelected = removeIndex(inputs, inputIndex);
+
+			isEnum = \index -> (inputsWithoutSelected[index].possibleValues != []);
+
+			temporaryRuleActionsMaterial = MSelect(temporaryRuleActionsB, \temporaryRuleActions -> {
+				MLines(mapi(temporaryRuleActions, \i, temporaryRuleAction -> {
+					index = findiDef(inputsWithoutSelected, \input -> input == temporaryRuleAction.input, -1);
+
+					if (index != -1) {
+						isConditional = getValue(isConditionalB);
+						currentAction = temporaryRuleAction.actionType;
+
+						valueTextMaterial = MText(
+							switch (currentAction) {
+								ActionIgnoreCompletely() : "";
+								ActionIgnoreValue(v) : flow2s(if (isEnum(index)) temporaryRuleAction.input.possibleValues[flow2i(v)] else v);
+								ActionUseFixed(v) : flow2s(if (isEnum(index)) temporaryRuleAction.input.possibleValues[flow2i(v)] else v);
+								ActionIgnoreInterval(v1, v2) : v1 + " - "	 + v2;
+								ActionFixedInterval(v1, v2, step) : v1 + " - " + v2 + " : " + step;
+							},
+							[]
+						);
+
+						actionTextMaterial = MText(
+							if (isConditional)
+								conditionalActions[temporaryRuleAction.actionIndex]
+							else
+								actions[temporaryRuleAction.actionIndex],
+							[]
+						);
+
+						checkedMaterial = eitherMap(
+							temporaryRuleAction.maybeConflict,
+							\conflict -> {
+								if (conflict)
+									MTooltip(MIcon("clear", [MRedA(500)]), MText("Rule conflicts with the existing one", []), [])
+								else
+									MIcon("check", [MGreenA(500)]);
+							},
+							MEmpty()
+						);
+
+						editButton = MIconButton("edit", \ -> {
+								next(actionInputIndexB, index);
+								next(actionIndexB, temporaryRuleAction.actionIndex);
+
+								switch (currentAction) {
+									ActionIgnoreCompletely() : {};
+									ActionIgnoreValue(v) : next(actionValuesB[0], v);
+									ActionUseFixed(v) : next(actionValuesB[0], v);
+									ActionIgnoreInterval(v1, v2) : {
+										next(actionValuesB[0], v1);
+										next(actionValuesB[1], v2);
+									}
+									ActionFixedInterval(v1, v2, step) : {
+										next(actionValuesB[0], v1);
+										next(actionValuesB[1], v2);
+										next(stepValueB, step);
+									}
+								}
+
+								next(temporaryRuleActionsB, removeIndex(temporaryRuleActions, i));
+							},
+							[], []
+						);
+
+						MBaselineCols([
+							checkedMaterial,
+							MText(getInputName(temporaryRuleAction.input), []),
+							MFixed(8.0, 0.0),
+							actionTextMaterial,
+							MFixed(8.0, 0.0),
+							valueTextMaterial,
+							MFixed(8.0, 0.0),
+							editButton,
+							MIconButton("delete", \ -> next(temporaryRuleActionsB, removeIndex(temporaryRuleActions, i)), [], [])
+						])
+					} else
+						MEmpty();
+				}))
+			});
+
+			addTemporaryRuleButton = MIconButton("add", \ -> {
+					actionIndex = getValue(actionIndexB);
+					actionInputIndex = getValue(actionInputIndexB);
+					actionValues = [getValue(actionValuesB[0]), getValue(actionValuesB[1])];
+					stepValue = getValue(stepValueB);
+					isConditional = getValue(isConditionalB);
+					isValid = validateInputs(isConditional, actionInputIndex, actionIndex, flow2s(actionValues[0]), flow2s(actionValues[1]), stepValue);
+
+					if (isValid) {
+						temporaryRuleActions = getValue(temporaryRuleActionsB);
+						index = findiDef(temporaryRuleActions, \temporaryRuleAction -> temporaryRuleAction.input == inputsWithoutSelected[actionInputIndex], -1);
+
+						actionToAdd = index2RuleActionType(actionIndex, isConditional, [
+								actionValues[0],
+								actionValues[1]
+							],
+							if (stepValue == "") "1.0" else stepValue
+						);
+
+						addSelectedActionToTemporary = \ -> {
+							next(temporaryRuleActionsB, arrayPush(temporaryRuleActions, TemporaryRuleAction(
+								inputsWithoutSelected[actionInputIndex],
+								actionToAdd,
+								actionIndex,
+								None()
+							)));
+						}
+
+						if (index != -1 && isConditional) {
+							storedAction = temporaryRuleActions[index].actionType;
+
+							switch (actionToAdd) {
+								ActionIgnoreCompletely() : {
+									if (!isSameStructType(storedAction, ActionIgnoreCompletely())) { // we don't need to filter again if it's already ignores all values
+										filteredActions = filter(temporaryRuleActions, \temporaryRuleAction -> temporaryRuleAction.input != inputsWithoutSelected[actionInputIndex]);
+
+										next(temporaryRuleActionsB, arrayPush(filteredActions, TemporaryRuleAction(
+											inputsWithoutSelected[actionInputIndex],
+											actionToAdd,
+											actionIndex,
+											None()
+										)));
+									}
+								}
+								ActionIgnoreValue(__) : {
+									if (isSameStructType(storedAction, ActionIgnoreValue([])) || isSameStructType(storedAction, ActionIgnoreInterval("", "")))
+										addSelectedActionToTemporary();
+								}
+								ActionUseFixed(__) : {}
+								ActionIgnoreInterval(__, __) : {
+									if (isSameStructType(storedAction, ActionIgnoreValue([])) || isSameStructType(storedAction, ActionIgnoreInterval("", "")))
+										addSelectedActionToTemporary();
+								}
+								ActionFixedInterval(__, __, __) : {}
+							}
+						} else
+							addSelectedActionToTemporary();
+					} else {
+						errorText =
+							if (actionInputIndex == -1)
+								"Input isn't selected!"
+							else if (actionIndex == -1)
+								"Action isn't selected!"
+							else
+								"Values are not correct!";
+
+						showErrorTextDialog(manager, errorText, m2t);
+					}
+				},
+				[], []
+			);
+
+			newActionMaterial = MBaselineCols([
+				MDropDown(actionInputIndexB, "Choose input", map(inputsWithoutSelected, getInputName), []),
+				MFixed(8.0, 0.0),
+				MSelect(actionInputIndexB, \actionInputIndex -> {
+					next(actionIndexB, -1);
+
+					if (actionInputIndex != -1) {
+						isInputRestricted = isPossibleInputRestricted(inputsWithoutSelected[actionInputIndex].typeHint);
+						isConditional = getValue(isConditionalB);
+						actionsList =
+							if (isConditional) {
+								if (isInputRestricted)
+									conditionalActionsShorten
+								else
+									conditionalActions;
+							} else {
+								if (isInputRestricted)
+									actionsShorten
+								else
+									actions;
+							}
+
+						valuesMaterial = MSelect(actionIndexB, \actionIndex -> {
+							if (actionIndex != -1) {
+								next(actionValuesB[0], "");
+								next(actionValuesB[1], "");
+								next(stepValueB, "");
+
+								actionSelected = index2RuleActionType(actionIndex, isConditional, [], "");
+								isInterval = isSameStructType(actionSelected, ActionIgnoreInterval("", "")) || isSameStructType(actionSelected, ActionFixedInterval("", "", ""));
+
+								pair = makeValueInputByTypeHint(inputsWithoutSelected[actionInputIndex].possibleValues, inputsWithoutSelected[actionInputIndex].typeHint, None(), const(true));
+								valueInputMaterial = MConstruct([
+										\ -> fconnect(pair.first, actionValuesB[0])
+									],
+									MGetFocusGroup(\p -> MEGItem2T(p, pair.second, [MWidth(160.0)], m2t))
+								);
+
+								additionalInputMaterial =
+									if (isInterval) {
+										pair2 = makeValueInputByTypeHint(inputsWithoutSelected[actionInputIndex].possibleValues, inputsWithoutSelected[actionInputIndex].typeHint, None(), const(true));
+										additionalInput = MConstruct([
+												\ -> fconnect(pair2.first, actionValuesB[1])
+											],
+											MGetFocusGroup(\p -> MEGItem2T(p, pair2.second, [MWidth(160.0)], m2t))
+										);
+
+										MBaselineCols([
+											MFixed(8.0, 0.0),
+											MText("to", []),
+											MFixed(8.0, 0.0),
+											additionalInput
+										])
+									} else
+										MEmpty();
+
+								stepInputMaterial =
+									if (isSameStructType(actionSelected, ActionFixedInterval("", "", "")) && !isConditional)
+										MBaselineCols([
+											MFixed(8.0, 0.0),
+											MText("with step", []),
+											MFixed(8.0, 0.0),
+											MTextInput(stepValueB, [TextInputType(NumericType()), MWidth(128.0)], [])
+										])
+									else
+										MEmpty();
+
+								MBaselineCols([
+									valueInputMaterial,
+									additionalInputMaterial,
+									stepInputMaterial
+								])
+							} else
+								MEmpty();
+						});
+
+						MBaselineCols([
+							MDropDown(actionIndexB, "Choose action", actionsList, []),
+							MFixed(8.0, 0.0),
+							valuesMaterial
+						]);
+					} else
+						MEmpty();
+				}),
+				MFixed(8.0, 0.0),
+				addTemporaryRuleButton
+			]);
+
+			MLines([
+				MText("Actions", [MSubheading()]),
+				MFixed(0.0, 16.0),
+				temporaryRuleActionsMaterial,
+				MFixed(0.0, 8.0),
+				newActionMaterial
+			])
+		})
+	);
+
+
+	tryProcessNewRule = \ -> {
+		isConditional = getValue(isConditionalB);
+		temporaryRuleActions = getValue(temporaryRuleActionsB);
+		ruleActions = map(temporaryRuleActions, \temporaryRuleAction -> {
+			RuleAction(
+				findiDef(inputs, \input -> input == temporaryRuleAction.input, -1),
+				temporaryRuleAction.actionType
+			)
+		});
+
+		isConditionValid =
+			if (isConditional)
+				validateCondition(assembleConditionType(getValue(conditionIndexB), getValue(conditionalValuesB[0]), getValue(conditionalValuesB[1])))
+			else
+				true;
+
+		if (isConditionValid) {
+			maybeCondition =
+				if (isConditional)
+					Some(RuleCondition(
+						getValue(inputIndexB),
+						assembleConditionType(getValue(conditionIndexB), getValue(conditionalValuesB[0]), getValue(conditionalValuesB[1])),
+					))
+				else
+					None();
+
+			resultRule = TestRule(
+				maybeCondition,
+				ruleActions
+			);
+
+			checkResults = checkRuleConflicts(existingRules, resultRule);
+			isCheckPassed = fold(checkResults, true, \acc, result -> acc && !result);
+
+			if (isCheckPassed) {
+				next(closeWhenB, true);
+				onOk(resultRule);
+			} else {
+				showConflictingRulesErrorDialog(manager, m2t);
+
+				next(temporaryRuleActionsB, mapi(temporaryRuleActions, \i, temporaryRuleAction -> TemporaryRuleAction(temporaryRuleAction.input, temporaryRuleAction.actionType, temporaryRuleAction.actionIndex, Some(checkResults[i]))));
+			}
+		} else
+			showErrorTextDialog(manager, "Values in condition are not correct!", m2t);
+	}
+
+	material = MLines([
+		conditionMaterial,
+		MFixed(0.0, 24.0),
+		actionsMaterial
+	]);
+
+	content = MGetFocusGroup(\p -> MEGItem2T(p, material, [MWidth(400.)], m2t));
+	dialogTitleString = eitherMap(maybeRuleToEdit, \__ -> "Edit rule", "Add rule");
+	buttonTitleString = eitherMap(maybeRuleToEdit, \__ -> "SAVE", "ADD");
+
+	dialogStyle = [
+		MDialogTitle(dialogTitleString),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("CANCEL", \ -> next(closeWhenB, true), [], [MShortcut("esc")]),
+			MTextButton(buttonTitleString, tryProcessNewRule, [], [MShortcut("enter"), MEnabled(fneq(temporaryRuleActionsB, []))])
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		content,
+		m2t
+	);
+}
+
+showErrorTextDialog(manager : MaterialManager, errorText : string, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+	closeB = make(false);
+
+	renderMDialog(
+		manager,
+		closeB,
+		[
+			MDialogUseFrame(),
+			MDialogActions([
+				MTextButton("OK", \ -> next(closeB, true), [], [MShortcut("enter")])
+			]),
+			IScriptRecordingEnabled(const(false))
+		],
+		MText(errorText, []),
+		m2t
+	)
+}
+
+validateCondition(condition : RuleConditionType) -> bool {
+	switch (condition) {
+		ConditionBetween(v1, v2) : isDouble(v1) && isDouble(v2) && s2d(v1) < s2d(v2);
+		ConditionGT(v) : isDouble(v);
+		ConditionGE(v) : isDouble(v);
+		ConditionLT(v) : isDouble(v);
+		ConditionLE(v) : isDouble(v);
+		default : true;
+	}
+}
+
+validateInputs(isConditional : bool, inputIndex : int, actionIndex : int, value1 : string, value2 : string, step : string) -> bool {
+	if (inputIndex != -1 && actionIndex != -1) {
+		action = index2RuleActionType(actionIndex, isConditional, [], "");
+
+		switch (action) {
+			ActionIgnoreCompletely() : true;
+			ActionIgnoreValue(__) : if (value1 != "") true else false;
+			ActionUseFixed(__) : if (value1 != "") true else false;
+			ActionIgnoreInterval(__, __) : {
+				if (value1 != "" && value2 != "") {
+					value1f = s2d(value1);
+					value2f = s2d(value2);
+
+					if (value1f < value2f) true else false;
+				} else
+					false;
+			}
+			ActionFixedInterval(__, __, __) : {
+				if (value1 != "" && value2 != "") {
+					stepValue = if (step == "") 1.0 else s2d(step);
+					value1f = s2d(value1);
+					value2f = s2d(value2);
+					diff = value2f - value1f;
+
+					if (diff > 0.0 && stepValue > 0.0 && stepValue <= diff) true else false;
+				} else
+					false;
+			}
+		}
+	} else
+		false;
+}

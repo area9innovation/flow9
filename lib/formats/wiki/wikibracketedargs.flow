@@ -1,0 +1,250 @@
+import array;
+import maybe;
+import string;
+
+export {
+	getArgsList(source : string, expectedArgs : WikiArgsDescription, allowSpaces : bool) -> Maybe<WikiArgsList>;
+		WikiArgsDescription : (args : [BracketedArgType]);
+			BracketedArgType ::= OptionalArgFn, RequiredArgFn, OptionalArgsListFn;
+		WikiArgsList : (args : [WikiArgValue], end : int);
+			WikiArgValue ::= SingleArgValue, ListArgValue;
+				SingleArgValue : (text : string);
+				ListArgValue : (texts : [string]);
+
+		RequiredArgFn(fn : Maybe<(string) -> Maybe<ArgData>>);
+		OptionalArgFn(fn : Maybe<(string) -> Maybe<ArgData>>, def : string);
+		OptionalArgsListFn(fn : Maybe<(string) -> Maybe<ArgData>>);
+			ArgData(text : string, end : int);
+
+		RequiredArg() -> RequiredArgFn;
+		OptionalArg(def : string) -> OptionalArgFn;
+		OptionalArgsList() -> OptionalArgsListFn;
+
+		RequiredArgDigit() -> RequiredArgFn;
+		OptionalArgBracket() -> OptionalArgFn;
+
+
+
+	verifyExpectedArgs(expectedArgs : WikiArgsDescription) -> bool;
+}
+
+RequiredArg() {
+	RequiredArgFn(None())
+}
+OptionalArg(def) {
+	OptionalArgFn(None(), def)
+}
+OptionalArgsList() {
+	OptionalArgsListFn(None())
+}
+
+RequiredArgDigit() {
+	getDigit = \text -> {
+		char = getCharAt(text, 0);
+		if (isDigit(char)) {
+			Some(ArgData(char, 1))
+		} else {
+			None()
+		}
+	}
+	RequiredArgFn(Some(getDigit))
+}
+
+OptionalArgBracket() {
+	getBracket = \text -> {
+		char = getCharAt(text, 0);
+		if (char == "\\") {
+			br = getCharAt(text, 1);
+			if (br != "" && strIndexOf("|{}()[]", br) != -1) {
+				Some(ArgData(br, 2))
+			} else {
+				Some(ArgData("", 1))
+			}
+		} else {
+			None()
+		}
+	}
+	OptionalArgFn(Some(getBracket), "")
+}
+
+verifyExpectedArgs(expectedArgs) {
+	verifyExpectedArgsEx(expectedArgs.args, RequiredArg())
+}
+
+verifyExpectedArgsEx(expectedArgs : [BracketedArgType], previousArg : BracketedArgType) {
+	len = length(expectedArgs);
+	if (len == 0) {
+		true
+	} else {
+		currentArg = expectedArgs[0];
+		switch (previousArg) {
+		 	RequiredArgFn(__) : verifyExpectedArgsEx(removeIndex(expectedArgs, 0), currentArg);
+		 	OptionalArgFn(__, __) : {
+		 		switch (currentArg) {
+		 			RequiredArgFn(__) : verifyExpectedArgsEx(removeIndex(expectedArgs, 0), currentArg);
+		 			OptionalArgFn(__, __) : verifyExpectedArgsEx(removeIndex(expectedArgs, 0), currentArg);
+		 			OptionalArgsListFn(__) : {
+		 				println("OptionalArg is followed by OptionalArgsList");
+		 				false
+		 			}
+		 		}
+		 	}
+		 	OptionalArgsListFn(__) : {
+		 		switch (currentArg) {
+		 			RequiredArgFn(__) : verifyExpectedArgsEx(removeIndex(expectedArgs, 0), currentArg);
+		 			OptionalArgFn(__, __) : {
+		 				println("OptionalArgsList is followed by OptionalArg");
+		 				false
+		 			}
+		 			OptionalArgsListFn(__) : {
+		 				println("OptionalArgsList is followed by OptionalArgsList");
+		 				false
+		 			}
+		 		}
+		 	}
+		}
+	}
+}
+
+getArgsListEx(source : string, expectedArgs : [BracketedArgType], argsList : WikiArgsList, allowSpaces : bool) {
+	spacesCount = if (allowSpaces) countUntil(0, strlen(source), \i -> isNotSpace(getCharAt(source, i))) else 0;
+
+	checkForFollowingBrackets = \ob, cb -> {
+		if (getCharAt(source, spacesCount) == ob)  {
+			findMatchingBracketM2(source, ob, cb, "`"); //35807 Support of natural math with brackets inside arguments
+		} else {
+			None()
+		}
+	}
+
+	getTextInsideBrackets = \makeDef -> \brackets -> {
+		eitherMap(
+			brackets,
+			\br : Pair<int, int> -> {
+				text = substring(source, br.first + 1, br.second - br.first - 2);
+				if (isNotSpace(text)) {
+					Some(ArgData(text, br.second));
+				} else {
+					maybeMap(makeDef, \md -> md(br.second))
+				}
+			},
+			None()
+		)
+	}
+
+	getOptionalParameter = \def -> \__ -> checkForFollowingBrackets("[", "]") |> getTextInsideBrackets(def);
+	getRequiredParameter = \__ -> checkForFollowingBrackets("{", "}") |> getTextInsideBrackets(None());
+
+
+	argsLen = length(expectedArgs);
+
+	if (argsLen == 0) {
+		argsList
+	} else {
+		currentArg = expectedArgs[0];
+		switch (currentArg) {
+			RequiredArgFn(fn) : {
+				eitherMap(
+					either(fn, getRequiredParameter)(source),
+					\argData -> {
+						getArgsListEx(
+							strRight(source, argData.end),
+							removeIndex(expectedArgs, 0),
+							WikiArgsList(
+								arrayPush(argsList.args, SingleArgValue(argData.text)),
+								argsList.end + argData.end
+							),
+							allowSpaces
+						)
+					},
+					argsList
+				)
+			}
+			OptionalArgFn(fn, std) : {
+				eitherFn(
+					either(fn, getOptionalParameter(Some(\end -> ArgData(std, end))))(source),
+					\argData -> {
+						getArgsListEx(
+							strRight(source, argData.end),
+							removeIndex(expectedArgs, 0),
+							WikiArgsList(
+								arrayPush(argsList.args, SingleArgValue(argData.text)),
+								argsList.end + argData.end
+							),
+							allowSpaces
+						)
+					},
+					\ -> {
+						getArgsListEx(
+							source,
+							removeIndex(expectedArgs, 0),
+							WikiArgsList(
+								arrayPush(argsList.args, SingleArgValue(std)),
+								argsList.end
+							),
+							allowSpaces
+						)
+					}
+				)
+			}
+			OptionalArgsListFn(fn) : {
+				eitherFn(
+					either(fn, getOptionalParameter(None()))(source),
+					\argData -> {
+						newArgs = {
+							args = argsList.args;
+							len = length(args);
+							if (len > 0) {
+								switch (args[len - 1]) {
+									SingleArgValue(__) : {
+										arrayPush(args, ListArgValue([argData.text]))
+									}
+									ListArgValue(texts) : {
+										replace(args, len - 1, ListArgValue(arrayPush(texts, argData.text)))
+									}
+								}
+							} else {
+								[ListArgValue([argData.text])]
+							}
+						};
+						getArgsListEx(
+							strRight(source, argData.end),
+							expectedArgs,
+							WikiArgsList(
+								newArgs,
+								argsList.end + argData.end
+							),
+							allowSpaces
+						)
+					},
+					\ -> getArgsListEx(source, removeIndex(expectedArgs, 0), argsList, allowSpaces)
+				)
+			}
+		}
+	}
+
+}
+
+getArgsList(source, expectedArgs, allowSpaces) {
+	if (verifyExpectedArgs(expectedArgs)) {
+		argsList = getArgsListEx(source, expectedArgs.args, WikiArgsList([], 0), allowSpaces);
+		if (length(expectedArgs.args) == length(argsList.args)) {
+			Some(argsList)
+		} else {
+			None()
+		}
+	} else {
+		None()
+	}
+}
+
+/*
+main() {
+	source = "[a][b][c]{d}[e][f][g]";
+	expectedArgs = WikiArgsDescription([OptionalArg("defA"), OptionalArg("defB"), OptionalArg("defC"), OptionalArg("defExpected"), RequiredArg(), OptionalArgsList()]);
+	getArgsList(source, expectedArgs) |> println
+}
+
+*/
+
+

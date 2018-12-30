@@ -1,0 +1,290 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/backends/wasm/wasm_types;
+import tools/flowc/backends/wasm/wasm_exp;
+import tools/flowc/backends/wasm/wasm_type_descriptor;
+import tools/flowc/backends/wasm/wasm_print;
+export {
+	// builds a hash of natives to native declarations
+    fiWasmCollectNativeNames(cfg : FiWasmConfig, program : FiProgram) -> Tree<string, FiNativeDec>;
+
+    // What type is used on the stack for this type? 
+    // If ref suffix is true, we put an suffix for ref. counted types
+    // "" - stack only
+    // "ref" - wasm heap ref. counted
+    // "jsref" - JS heap ref. counted
+    compileWasmType(type : WasmTypeDescriptor, refSuffix : bool) -> string;
+
+	// How many ints does this type require on the stack?
+    fiWasmTypeStackSize(type : WasmTypeDescriptor) -> int;
+
+	// Does this type require a WASM memory allocation?
+	// If there is a heap allocation, it is always the lowest 32-bit int of the value
+    wasmTypeUsesWasmHeap(type : WasmTypeDescriptor) -> bool;
+
+	// builds the function name to be used in calls - $func
+	fiWasmBuildFunctionName(func: string) -> string;
+
+	// builds the function declaration for a specified function - i.e. (func ... ) S-expression
+	// signatureOnly means build only type, no param or function names
+	// typeReference means to add type reference (to the same name) to function decl
+	// skipClosure means NOT to add extra function parameter for closure
+	fiWasmBuildFunctionDecl(name : string, type : WasmTypeDescriptor, signatureOnly : bool, skipClosure : bool) -> string;
+
+	// collects all potential tail calls in a function body
+	fiWasmCollectTailCalls(selfName: string, body : WasmExp, acc : Set<WasmExp>) -> Set<WasmExp>;
+
+	// collects names of all global variables
+	fiWasmCollectGlobalVars(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) -> Set<string>;
+
+	// collect the names of all local variables defined in a given expression
+	// basically, finds all FiLet's but not go inside lambdas
+	getWasmLocals(wacc : WasmAcc, ex : WasmExp, acc : Tree<string, WasmTypeDescriptor>) -> Tree<string, WasmTypeDescriptor>;
+	
+	// fixup local var name to resolve an issue with vars of different type with the same name
+	getWasmLocalVarName(name : string, type : WasmTypeDescriptor) -> string;
+
+	// recursive AST tree traversal - useful to extract something
+	foldWasmExp(root : WasmExp, acc : ?, f : (?, WasmExp) -> ?) -> ?;
+
+	// whether function has an extra closure parameter appended to its decl
+	fiWasmFunctionNeedsClosureParam(name : string) -> bool;
+
+	// whether native is host-defined
+	fiWasmIsHostNative(nativeName : string) -> bool;
+	fiWasmIsHostWNative(nativeName : string) -> bool;
+	fiWasmIsPureNative(nativeName : string) -> bool;
+	fiInvokeName(typeFn : WasmTypeDescriptor, typeTable : FiWasmTypeTable) -> string;
+}
+
+fiWasmBuildFunctionName(func: string) -> string {
+	"$" + func;
+}
+
+fiWasmFunctionNeedsClosureParam(name : string) {
+	!startsWith(name, "wasm_") && !strContains(name, "__lambda__");
+}
+
+fiWasmIsHostNative(nativeName : string) {
+	startsWith(nativeName, "host.")
+}
+
+fiWasmIsHostWNative(nativeName : string) {
+	startsWith(nativeName, "host_w.")
+}
+
+fiWasmIsPureNative(nativeName : string) {
+	startsWith(nativeName, "Native.")
+}
+
+fiWasmBuildFunctionDecl(name : string, type : WasmTypeDescriptor, signatureOnly : bool, skipClosure : bool) {
+	switch (type) {
+		WasmTypeFunction(args, returnType): {
+					hasClosure = exists(args, \a -> a.name == "__closure__");
+					(if (signatureOnly) "" else "(func " + fiWasmBuildFunctionName(name) + " ")  
+					+ superglue(type.args, \a : WasmFunArg -> {
+						"(param" + 
+						(if (!signatureOnly && a.name != "") " $" + a.name else "") + 
+						" " + compileWasmType(a.type, false) + ")"
+						}, " ") 
+					// adding extra parameter that contains closure
+					+ (if (!skipClosure && fiWasmFunctionNeedsClosureParam(name) && !hasClosure) 
+						if (signatureOnly) " (param i32)" else " (param $__closure__ i32)"
+					  else "")
+					+ (if (type.returnType != WasmTypeVoid()) {
+						" (result " + compileWasmType(type.returnType, false) + ") "
+						} else " ")
+		}
+		default: {
+			fcPrintln("Non-function type passed to FiTypeFunction");
+			//fcPrintln(prettyFiType(dummyPretty, type, makeSet()));
+			"";
+		}
+	}
+}
+
+fiWasmCollectNativeNames(cfg : FiWasmConfig, program : FiProgram) {
+	fold(program.traversal, makeTree(), \macc, file -> {
+		m = lookupTree(program.modules, file);
+		switch (m) {
+			None(): {
+				fail("Could not find " + file);
+				macc;
+			}
+			Some(module): {
+				fold(module.natives, macc, \acc, native -> {
+					setTree(acc, native.name, native)
+				});
+			}
+		}
+	});
+}
+
+compileWasmType(type : WasmTypeDescriptor, refSuffix : bool) -> string {
+	refsuf = if (refSuffix) "_ref" else "";
+	switch (type) {
+		WasmTypeVoid(): "i32";
+		WasmTypeBool(): "i32";
+		WasmTypeInt(): "i32";
+		WasmTypeDouble(): "f64";
+		WasmTypeString(): "i32" + refsuf;
+		WasmTypeFlow(): "i32" + refsuf;
+		WasmTypeArray(t): "i32" + refsuf;
+		WasmTypeRef(t): "i32"  + refsuf;
+		WasmTypeNative(): "i32" + (if (refSuffix) "_ref" else ""); // TODO: handle jsrefs correctly - 
+		WasmTypeStruct(name, fields): "i32"  + refsuf;
+		WasmTypeUnion(name, structs): "i32"  + refsuf;
+		WasmTypeFunction(args, returnType): "i32" + refsuf; // is actually a closure - i.e. struct
+		WasmTypeJSCallback(args, returnType): "i32" + refsuf; // is actually a closure - i.e. struct
+	}
+}
+
+
+
+fiWasmTypeStackSize(type : WasmTypeDescriptor) -> int {
+	switch (type) {
+		WasmTypeBool(): 1;
+		WasmTypeInt(): 1;
+		WasmTypeDouble(): 2;
+		WasmTypeString(): 1;
+		WasmTypeArray(t): 1;
+		WasmTypeRef(t): 1;
+		WasmTypeFlow(): 1;
+		WasmTypeVoid(): 1;	// This could be 0
+		WasmTypeNative(): 1;
+		WasmTypeStruct(name, fields): 1;
+		WasmTypeUnion(name, structs): 1;
+		WasmTypeFunction(args, returnType): 1;
+		WasmTypeJSCallback(args, returnType): 1;
+	}
+}
+
+wasmTypeUsesWasmHeap(type : WasmTypeDescriptor) -> bool {
+	switch (type) {
+		WasmTypeBool(): false;
+		WasmTypeInt(): false;
+		WasmTypeDouble(): false;
+		WasmTypeString(): true;
+		WasmTypeArray(t): true;
+		WasmTypeRef(t): true;
+		WasmTypeFlow(): true;
+		WasmTypeVoid(): false;
+		WasmTypeNative(): false;
+		WasmTypeStruct(name, fields): true;
+		WasmTypeUnion(id, structs): true;
+		WasmTypeFunction(args, returnType): true;
+		WasmTypeJSCallback(args, returnType): true;
+	}
+}
+
+// Call is considered tail iff it is the last in a sequence. For if and switch, there
+// can be multiple tail calls - one at each final branch (i.e. for nested statements, the number of
+// tail calls can be exponentially high)
+fiWasmCollectTailCalls(selfName: string, body: WasmExp, acc : Set<WasmExp>) {
+	checkCall = \f -> {
+		switch (f) { // tail call if calling itself
+			WasmVar(fname, ftype): if (selfName == fname) insertSet(acc, body) else acc;
+			default: acc;
+		}	
+	}
+
+	switch (body) {
+		WasmLambda(args, b, type): acc;
+		WasmCall(f, args, type): checkCall(f);
+		WasmCallNative(f, args, type): checkCall(f);
+		WasmCallHost(f, args, type): checkCall(f);
+		WasmVar(name, type): acc;
+		WasmLet(name, type, e1, e2, type2): fiWasmCollectTailCalls(selfName, e2, acc);
+		WasmIf(e1, e2, e3, type): // consider both if and else branches
+			fiWasmCollectTailCalls(selfName, e2, fiWasmCollectTailCalls(selfName, e3, acc));
+		WasmSwitch(x, switchType, cases, type): 
+			fold(cases, acc, \acc0, c -> fiWasmCollectTailCalls(selfName, c.body, acc0));
+		WasmCast(e, tFrom, tTo, type): fiWasmCollectTailCalls(selfName, e, acc);
+		WasmSeq(es, type): // only consider last element of a sequence
+			fiWasmCollectTailCalls(selfName, lastElement(es, WasmVoid()), acc);
+		// if there are calls inside es, CallPrim would be performed after it - 
+		//   therefore, those calls aren't tail
+		WasmCallPrim(op, es, type): acc; 
+		WasmVoid(): acc;
+		WasmDouble(d): acc;
+		WasmInt(i): acc;
+		WasmString(s): acc;
+		WasmBool(b): acc;
+		WasmRequire(flowfile, e, type): acc; 
+		WasmUnsafe(name, fallback, type): fiWasmCollectTailCalls(selfName, fallback, acc);
+	}
+}
+
+fiWasmCollectGlobalVars(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) {
+	fold(decls, makeSet(), \macc, m -> 
+		fold(m.second, macc, \acc, d -> switch (d) {
+			FiFunctionDec(__, __, __, __, __): acc;
+			FiGlobalVar(name, value, type, declStart, defiStart): 
+				insertSet(acc, name);
+			FiNativeDec(__, __, __, __, __, __, __): acc;
+		})
+	);
+}
+
+getWasmLocals(wacc : WasmAcc, root : WasmExp, acc : Tree<string, WasmTypeDescriptor>) -> 
+	Tree<string, WasmTypeDescriptor> {
+	foldWasmExp(root, acc, \acc0, ex -> switch (ex) {
+		WasmLet(name, type, e1, e2, type2): {
+			setTree(acc0, getWasmLocalVarName(name, type), type);
+		}
+		default : acc0;
+	});
+}
+
+getWasmLocalVarName(name : string, type : WasmTypeDescriptor) -> string {
+	if (type == WasmTypeDouble()) name + "_f64"
+	else name
+}
+
+foldWasmExp(root : WasmExp, acc0 : ?, fun : (?, WasmExp) -> ?) -> ? {
+	acc = fun(acc0, root);
+	rec = \acc1, ex -> foldWasmExp(ex, acc1, fun);
+	switch (root) {
+		WasmBool(b): acc;
+		WasmInt(i): acc;
+		WasmVar(name, type): acc;
+		WasmString(s): acc;
+		WasmDouble(d): acc;
+		WasmVoid(): acc;
+
+		WasmCall(f, args, type): {
+			fold(args, foldWasmExp(f, acc, fun), rec);
+		}
+		WasmCallNative(f, args, type): {
+			fold(args, foldWasmExp(f, acc, fun), rec);
+		}
+		WasmCallHost(f, args, type): {
+			fold(args, foldWasmExp(f, acc, fun), rec);
+		}
+		WasmSwitch(x, switchType, cases, type): {
+			fold(cases, foldWasmExp(x, acc, fun), \acc2, c -> foldWasmExp(c.body, acc2, fun));
+		}
+		WasmLambda(args, body, type): 
+			// do not recurse into arguments - they are names, not expressions
+			foldWasmExp(body, acc, fun);
+		WasmLet(name, type, e1, e2, type2): 
+			fold([e1, e2], acc, rec);
+		WasmIf(e1, e2, e3, type): fold([e1,e2,e3], acc, rec);
+		WasmCallPrim(op, es, type): fold(es, acc, rec);
+		WasmRequire(flowfile, e, type): foldWasmExp(e, acc, fun);
+		WasmUnsafe(name, fallback, type): foldWasmExp(fallback, acc, fun);
+		WasmSeq(es, type): fold(es, acc, rec);
+		WasmCast(e, tFrom, tTo, type): foldWasmExp(e, acc, fun);
+	}
+}
+
+fiInvokeName(typeFn : WasmTypeDescriptor, typeTable : FiWasmTypeTable) {
+	type = cast(typeFn : WasmTypeDescriptor -> WasmTypeFunction);
+
+	args = fold(type.args, [], \acc, a : WasmFunArg -> concat(acc, wasmTypeDescriptor2bytes(typeTable, a.type, false)));
+	ret = wasmTypeDescriptor2bytes(typeTable, type.returnType, false);
+	
+	"__invoke_" + strGlue(map(args, \v -> i2s(v)), "_") + "__" + strGlue(map(ret, \v -> i2s(v)), "_");
+}

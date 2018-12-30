@@ -1,0 +1,251 @@
+import textstyles;
+import runtime;
+import styleform;
+import http;
+import formats/json/json;
+import ui/buttons;
+import ui/messagebox;
+
+export {
+	checkWord(word: string, lang: string, form: Form, replaceFn: (string) -> void) -> Form;
+	isSupportedLanguage(language: string) -> bool;
+	getWordDelimeters(language: string) -> string;
+	getWordForbiddenSymbols(language: string) -> string;
+
+	// we don't want to check these words
+	spellCheckExceptions = ["i.e."];
+}
+
+allowedLanguages_ = ["en", "es"];
+
+isSupportedLanguage(language: string) -> bool {
+	contains(allowedLanguages_, language)
+}
+
+getWordDelimeters(language: string) -> string {
+	commonDelimeters = ".,:;!?()[]+-*{}#\"%$'—«» ";
+	if (language == "es") commonDelimeters + "¿¡" else commonDelimeters
+}
+
+getWordForbiddenSymbols(language: string) -> string {
+	strReplace(getWordDelimeters(language), "'", "") + "_"
+}
+
+// use this path after release
+spellCheckScript = "php/spellcheck.php";
+
+WordObject: (
+	word: string,
+	language : string
+);
+SpellCheckRequestItem: (
+	requested: ref bool,
+	suggested: DynamicBehaviour<Maybe<[string]>>
+);
+spellCheckRequestBuffer: ref Tree<WordObject, SpellCheckRequestItem> = ref makeTree();
+
+// answer from spellcheck script
+SpellCheckResponseItem: (
+	word: string,
+	language: string,
+	correct: bool,
+	suggested: [string]
+);
+
+SpellCheckCacheItem: (
+	// Possible values:
+	// None() - word is correct
+	// Some([]) - word isn't correct, but there aren't any suggestions
+	// Some([...]) - word isn't correct and there are some suggestions
+	suggested: Maybe<[string]>
+);
+spellCheckCache: ref Tree<WordObject, SpellCheckCacheItem> = ref makeTree();
+
+
+// remove this counter after release
+requestCounter = ref 0;
+
+needRequestB = make(true);
+
+dummyValue = {
+	subscribe2(throttle2(needRequestB, 1000), \i -> doSpellCheckRequest());
+}
+
+markSpellErrorFn(form: Form) -> Form {
+	baseline = getFormBaseline(form);
+	markedForm = Behind(\w,h -> DottedLine(0.0, h, w, h, 5.0, 0.5, [StrokeWidth(1.0), Stroke(red)]), form);
+	fixBaseline(baseline, markedForm)
+}
+
+attachSpellCheckSuggestionDialog(suggestions : [string], pickFn : (string) -> void) -> (Form) -> Form {
+	localDialogDisposer = ref nop;
+	dispose = \ -> {
+		^localDialogDisposer();
+		localDialogDisposer := nop;
+	}
+	makeBtn = \caption : string, onClick : () -> void -> {
+		SimpleButton(Text(caption, NormalText), Text(caption, NormalText |> withFillColor(black)), "", onClick)
+	}
+	items = map(suggestions, \suggestion -> makeBtn(suggestion, \ -> {pickFn(suggestion); dispose()}));
+
+	suggested = ifArrayPush(items, items == [], makeBtn("No suggestions", dispose));
+
+	suggestedDialog = \ -> {
+		makeNiceWindow("Spell Check", Lines(suggested));
+	}
+
+	heightB = make(0.0);
+	clickInside = ref false;
+
+	\form -> Interactive(
+		[
+			MouseDown(\mouseInfo -> {
+				if (mouseInfo.inside()) {
+					clickInside := true
+				} else {
+					clickInside := false
+				}
+				false
+			}),
+			MouseUp2(\handled, mi -> {
+				dispose();
+				mouseInfo = mi();
+				if (mouseInfo.inside && !handled && ^clickInside) {
+					offsetX = getMouseX(getStage()) - mouseInfo.x;
+					offsetY = getMouseY(getStage()) - mouseInfo.y;
+					localDialogDisposer := render(Translate(const(offsetX), const(offsetY + getValue(heightB)), suggestedDialog()));
+				}
+				false
+			})
+		],
+		Inspect([Height(heightB)], form)
+	) |> \f -> Disposer(f, dispose)
+} 
+
+attachSpellCheckHandler(form: Form, suggestedM: Maybe<[string]>, pickFn: (string) -> void) -> Form {
+	eitherMap(
+		suggestedM,
+		\suggested -> {
+			markSpellErrorFn(form) |> attachSpellCheckSuggestionDialog(suggested, pickFn)
+		},
+		form
+	)
+}
+
+checkWord(word: string, language: string, form: Form, replaceFn: (string) -> void) -> Form {
+	if (isSupportedLanguage(language)) {
+		wordObject = WordObject(word, language);
+		eitherFn(
+			lookupTree(^spellCheckCache, wordObject),
+			\cacheItem -> {
+				attachSpellCheckHandler(form, cacheItem.suggested, replaceFn)
+			},
+			\-> {
+				// check if wordObject is in spellCheckRequestBuffer already
+				eitherFn(
+					lookupTree(^spellCheckRequestBuffer, wordObject),
+					\bufferItem -> {
+						// wordObject exists in RequestBuffer
+						Select(bufferItem.suggested, \suggested -> {
+							attachSpellCheckHandler(form, suggested, replaceFn)
+						})
+					},
+					\-> {
+						// wordObject doesn't exist and has to be added to RequestBuffer
+						suggestedB = make(None());
+						spellCheckRequestBuffer := setTree(^spellCheckRequestBuffer, wordObject, SpellCheckRequestItem(ref false, suggestedB));
+
+						Constructor(
+							Select(suggestedB, \suggested -> {
+								attachSpellCheckHandler(form, suggested, replaceFn)
+							}),
+							\-> {
+								// fire our behaviour
+								next(needRequestB, !getValue(needRequestB));
+								\-> {
+									spellCheckRequestBuffer := removeFromTree(^spellCheckRequestBuffer, wordObject)
+								}
+							}
+						)
+					}
+				)
+			}
+		)
+	} else form
+}
+
+jsonResponse2Data(response: string) -> [SpellCheckResponseItem] {
+	jsonArray = getJsonArrayValue(parseJson(response), []);
+	map(jsonArray, \jsonArrayItem -> {
+		word = getJsonStringField(jsonArrayItem, "word", "");
+		lang = getJsonStringField(jsonArrayItem, "lang", "");
+		correct = getJsonBoolField(jsonArrayItem, "correct", true);
+		suggestJsonArray = getJsonArrayField(jsonArrayItem, "suggest");
+		suggested = filter(map(suggestJsonArray, \jsonItem -> getJsonStringValue(jsonItem, "")), neq(""));
+		SpellCheckResponseItem(word, lang, correct, suggested)
+	})
+}
+
+data2JsonRequest(words: [WordObject]) -> Json {
+	JsonArray(map(words, \word -> JsonObject([Pair("word", JsonString(word.word)), Pair("lang", JsonString(word.language))])))
+}
+
+doSpellCheckRequest() -> void {
+	// make JSON string
+	words : [WordObject] = foldTree(^spellCheckRequestBuffer, [], \key, value, acc -> {
+		if (!^(value.requested)) {
+			value.requested := true;
+			arrayPush(acc, key)
+		} else acc
+	});
+	if (words != []) {
+		jsonRequest = data2JsonRequest(words);
+		// make asynchronous request to spellchecker
+		requestCounter := ^requestCounter + 1;
+		currentCounter = ^requestCounter;
+		//println("SpellChecker request[" + i2s(currentCounter) + "]=" + json2string(jsonRequest));
+		httpRequest(
+			spellCheckScript,
+			true,
+			[],
+			[KeyValue("action", "spellcheck"), KeyValue("words", json2string(jsonRequest))],
+			\result -> {
+				response = strSplit(result, "\n");
+				if (length(response) == 2) {
+					if (response[0] == "OK") {
+						//println("SpellChecker response[" + i2s(currentCounter) + "] [OK]=" + response[1]);
+						iter(jsonResponse2Data(response[1]), \responseItem -> {
+							wordObject = WordObject(responseItem.word, responseItem.language);
+							// add to cache word with suggested list
+							suggestedM = if (responseItem.correct) None() else Some(responseItem.suggested);
+							spellCheckCache := setTree(^spellCheckCache, wordObject, SpellCheckCacheItem(suggestedM));
+							// add to cache all suggested words as correct words
+							iter(responseItem.suggested, \suggested -> {
+								spellCheckCache := setTree(^spellCheckCache, WordObject(suggested, responseItem.language), SpellCheckCacheItem(None()));
+							});
+							// try to update view through behaviour
+							maybeApply(
+								lookupTree(^spellCheckRequestBuffer, wordObject),
+								\requestItem -> {
+									nextDistinct(requestItem.suggested, suggestedM); // in case of correct word this line does nothing
+									// remove from spellCheckRequestBuffer
+									spellCheckRequestBuffer := removeFromTree(^spellCheckRequestBuffer, wordObject);
+								}
+							)
+						})
+					} else if (response[0] == "Error") {
+						println("SpellChecker response[" + i2s(currentCounter) + "] [Error]=" + response[1])
+					} else {
+						println("SpellChecker response[" + i2s(currentCounter) + "] [Bad Format]=" + result)
+					}
+				} else {
+					println("SpellChecker response[" + i2s(currentCounter) + "] [Bad Format]=" + result)
+				}
+			},
+			\error -> {
+				println("SpellChecker unavailable: " + error)
+			},
+			\status -> {}
+		)
+	}
+}

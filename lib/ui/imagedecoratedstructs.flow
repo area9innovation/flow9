@@ -1,0 +1,263 @@
+import stylestructs;
+import maybe;
+import form;
+import devmode;
+import paragraphtypes;
+import colorspace;
+
+export {
+	ImageDecorated(filename : string, targetSize : string, width : double, height : double, decorations : [ImageDecoration]);
+
+	ImageDecoration ::= PreZoomDecoration, ImageCrop, ImageAdaptiveCrop, PostZoomDecoration, SizeIndependentDecoration;
+		PreZoomDecoration ::= ImageArrow, ImageCircle, ImageLabel, ImageRectangle, ImageTextBox; //Are grouped with full size image and then zoomed
+			ImageArrow   : (x : double, y : double, rotate : double, length : double, color : int, thickness : double, label : Form);
+			ImageCircle  : (x : double, y : double, radius : double, style : [GraphicsStyle], inverted : bool);
+			ImageLabel   : (x : double, y : double, label : Form); //Text is replaced with Form  as "Empty" can be found in serialized data
+			ImageRectangle : (x : double, y : double, width : double, height : double, style : [GraphicsStyle], inverted : bool);
+			ImageTextBox : (label : Text, alignment : CommonAlignment, rectangle : ImageRectangle);
+		PostZoomDecoration ::= ImageArrow, ImageCircle, ImageLabel, ImageLabel2, ImageRectangle, ImageTextBox; //Are rendered above zoomed image. Coordinates are recalculated.
+			//This decoration has been saved in old content, so we will support it too
+			ImageCrop    : (x : double, y : double, width : double, height : double);
+			ImageAdaptiveCrop : (x : double, y : double, width : double, height : double, availableWHB : DynamicBehaviour<WidthHeight>);
+			ImageLabel2 : (x : double, y : double, hAligng : double, yAlign : double, style : [CharacterStyle], label : string, rotation : double, stable : bool);
+		SizeIndependentDecoration ::= ImageBorder, ImageAltText, ImageHeader, ImageFooter, ImageCopyright, ImageCaption, ImagePadding, ImageShadow; // Do not have coordinates.
+			ImageBorder  : (radius : double, color : int, thickness : double);
+			ImageAltText : (label : string, style : [CharacterStyle]);
+			ImageHeader  : (label : string, fontsize : double, color : int);
+			ImageFooter  : (label : string, fontsize : double, color : int);
+			ImageCopyright : (copyright : string, style : [CharacterStyle]);
+			ImageCaption : (text : string, fontsize : double, color : int, characterStyle : [CharacterStyle], paragraphStyle : [ParagraphStyle]);
+			ImagePadding : (l : double, t : double, r : double, b : double);
+			ImageShadow  : ();
+	ZoomDescription(
+		percent:Maybe<double>,
+		realSize : WidthHeight,
+		toWidth : Maybe<double>,
+		toHeight : Maybe<double>,
+		mouseZoom : bool,
+		extraZoom : bool,
+		closeButtonAlign : int,
+		closeButtonFn : (() -> void) -> Form
+	);
+
+	ImageSizeControlType ::= FixedSizeControlType, FixedHeightControlType, AutomaticResizingToFitControlType;
+		FixedSizeControlType(size : double);
+		FixedHeightControlType(height : double);
+		AutomaticResizingToFitControlType();
+	ImageSizeControl : (
+		mode                   : DynamicBehaviour<ImageSizeControlType>,
+		scaleBeforeDecorations : DynamicBehaviour<bool>,
+		zoom                   : DynamicBehaviour<bool>,
+		extraZoom              : DynamicBehaviour<bool>
+	);
+
+	imageDecoratedFixups() -> Tree<string, ([flow]) -> flow>;
+	deserializeImageDecorated(src : string) -> ImageDecorated;
+	dummyImageDecorated : ImageDecorated;
+	parsePictureZoom(size : string) -> ZoomDescription;
+
+	getImageDecoratedStrings(image : ImageDecorated) -> [string];
+	getImageCopyrightPair(copyright : string) -> Pair; // first: text, second: filename
+	reportImageLabelError(label : ImageDecoration) -> void;
+
+	makeImageShapeGraphicsStyle(bColor : int, fColor : int) -> [GraphicsStyle];
+}
+
+import binarytree;
+import serialize;
+
+imageDecoratedFixupsRef : ref Maybe<Tree<string, ([flow])->flow>> = ref None();
+
+makeImageShapeGraphicsStyle(bColor : int, fColor : int) -> [GraphicsStyle] {
+	[Stroke(getRGB(bColor)), StrokeOpacity(getOpacity(bColor)), Fill(getRGB(fColor)), FillOpacity(getOpacity(fColor))]
+}
+
+imageDecoratedFixups() -> Tree<string, ([flow]) -> flow> {
+	onlyOnce(imageDecoratedFixupsRef, \ -> {
+		fixups = ref makeTree();
+		fixups := setTree(^fixups, "ImageAltText", \initArgs -> {
+			dropCoords = \args : [flow] -> if (length(args) == 3) {
+				[args[2]]
+			} else {
+				args
+			}
+			addCharacterStyle = \args : [flow] -> if (length(args) == 1) {
+				[args[0], []]
+			} else {
+				args
+			}
+			finalArgs = initArgs |> dropCoords |> addCharacterStyle;
+			makeStructValue("ImageAltText", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageHeader", \initArgs -> {
+			dropCoords = \args -> if (length(args) == 5) {
+				[args[2], args[3], args[4]]
+			} else {
+				args
+			}
+			finalArgs = initArgs |> dropCoords;
+			makeStructValue("ImageHeader", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageFooter", \initArgs -> {
+			dropCoords = \args -> if (length(args) == 5) {
+				[args[2], args[3], args[4]]
+			} else {
+				args
+			}
+			finalArgs = initArgs |> dropCoords;
+			makeStructValue("ImageFooter", finalArgs, IllegalStruct())
+		});
+
+		//int values could be found in serialized ImageLabel, known js problem.
+		fixups := setTree(^fixups, "ImageLabel", \initArgs -> {
+			finalArgs : [flow] = [
+				flow(number2double(initArgs[0])),
+				flow(number2double(initArgs[1])),
+				initArgs[2]
+			];
+			makeStructValue("ImageLabel", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageLabel2", \initArgs -> {
+			addRotation = \args : [flow]-> if (length(args) == 6) {
+				arrayPush(args, 0.0)
+			} else {
+				args
+			}
+			addStableSize = \args : [flow] -> if (length(args) == 7) {
+				arrayPush(args, false)
+			} else {
+				args
+			}
+			finalArgs = initArgs |> addRotation |> addStableSize;
+			makeStructValue("ImageLabel2", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageCaption", \initArgs -> {
+			addCharacterStyle = \args : [flow] -> if (length(args) == 3) {
+				concat(args, [[], []])
+			} else if (length(args) == 4) {
+				arrayPush(args, [])
+			} else {
+				args
+			}
+			finalArgs = initArgs |> addCharacterStyle;
+			makeStructValue("ImageCaption", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageCopyright", \initArgs -> {
+			addCharacterStyle = \args : [flow] -> if (length(args) == 1) {
+				arrayPush(args, [])
+			} else {
+				args
+			}
+			finalArgs = initArgs |> addCharacterStyle;
+			makeStructValue("ImageCopyright", finalArgs, IllegalStruct())
+		});
+
+		fixups := setTree(^fixups, "ImageCircle", \initArgs -> {
+			addGraphicsStyle = \args -> if (length(args) == 4) {
+				if(!isArray(args[3])) {
+					newArgs : [flow] = [args[0], args[1], args[2], flow([Stroke(args[3])]), flow(false)];
+					newArgs
+				} else {
+					[args[0], args[1], args[2], args[3], flow(false)]
+				}
+			} else {
+				args
+			}
+			finalArgs = initArgs |> addGraphicsStyle;
+			makeStructValue("ImageCircle", finalArgs, IllegalStruct())
+		});
+
+		^fixups
+	})
+}
+
+dummyImageDecorated = ImageDecorated("", "", 0.0, 0.0, []);
+
+deserializeImageDecorated(src) {
+	image = cast(deserialize2(src, imageDecoratedFixups(), dummyImageDecorated) : flow -> ImageDecorated);
+	if (exists(image.decorations, \d : ImageDecoration -> flow(d) == flow(IllegalStruct()) || flow(d) == flow(None()))) {
+		//[-Replace-] with fix of deserialize after discussion
+		// #32207
+		// Our deserialize is too honey and can return Struct([IllegalStruct]) instead of IllegalStruct and, thus, fallback to default does not happen.
+		dummyImageDecorated
+	} else {
+		image
+	}
+}
+
+parsePictureZoom(size) {
+	options = strSplit(size, ";");
+	sz = options[0];
+	mouseZoom = if (length(options) > 1) {
+		options[1] == "zoom" || options[1] == "extrazoom"
+	} else {
+		false
+	}
+	extraZoom = if (length(options) > 1) {
+		options[1] == "extrazoom"
+	} else {
+		false
+	}
+	if (endsWith(sz, "%")) {
+		ZoomDescription(Some(i2d(s2i(strLeft(sz, strlen(sz)-1))) * 0.01), zeroWH, None(), None(), mouseZoom, extraZoom, -1, \__ -> Empty())
+	} else if (startsWith(sz, "x")) {
+		ZoomDescription(None(), zeroWH, None(), Some(i2d(s2i(substring(sz, 1, strlen(sz)-1)))), mouseZoom, extraZoom, -1, \__ -> Empty())
+	} else if (endsWith(sz, "x")) {
+		ZoomDescription(None(), zeroWH, Some(i2d(s2i(strLeft(sz, strlen(sz)-1)))), None(), mouseZoom, extraZoom, -1, \__ -> Empty())
+	} else if (strIndexOf(sz, "x") >= 0) {
+		sizes = map(strSplit(sz, "x"), \x -> i2d(s2i(x)));
+		ZoomDescription(None(), zeroWH, Some(sizes[0]), Some(sizes[1]), mouseZoom, extraZoom, -1, \__ -> Empty())
+	} else {
+		ZoomDescription(None(), zeroWH, None(), None(), false, false, -1, \__ -> Empty())
+	}
+}
+
+reportImageLabelError(label : ImageDecoration) -> void {
+	if (isDevMode()) {
+		label |> pprint("ERROR: ImageLabel with incorrect data is found = ") |> ignore
+	}
+}
+
+getImageDecoratedStrings(image) {
+	extractTextFromImageLabel = \label : Form, decoration -> switch (label) {
+		Text(text, style) : Some(text);
+		default : {
+			reportImageLabelError(decoration);
+			None()
+		}
+	};
+
+	filtermap(image.decorations, \decoration : ImageDecoration -> {
+		if (flow(None()) == flow(decoration)) None() else // to avoid crash on some strange items after deserialization
+		switch (decoration : ImageDecoration) {
+			ImageAltText(label, __) : Some(label);
+			ImageHeader(label, __, __) : Some(label);
+			ImageFooter(label, __, __) : Some(label);
+			ImageCopyright(copyright, __) : Some(getImageCopyrightPair(copyright).first);
+			ImageCaption(text, __, __, __, __) : Some(text);
+			ImageLabel(__, __, txt) : extractTextFromImageLabel(txt, decoration);
+			ImageTextBox(label, __, rec) : extractTextFromImageLabel(label, decoration);
+			ImageLabel2(__, __, __, __, __, label, __, __) : Some(label);
+			ImageArrow(__, __, __, __, __, __, __) : None();
+			ImageCircle(__, __, __, __, __) : None();
+			ImageCrop(__, __, __, __) : None();
+			ImageAdaptiveCrop(__, __, __, __, __) : None();
+			ImageBorder(__, __, __) : None();
+			ImagePadding(__, __, __, __) : None();
+			ImageRectangle(__, __, __, __, __, __) : None();
+			ImageShadow() : None();
+		}
+	})
+}
+
+getImageCopyrightPair(copyright : string) -> Pair {
+	values = strSplit(copyright, "\u001f");  // unit separator
+	text = firstElement(values, "");
+	filename = firstElement(subrange(values, 1, 1), "");
+	Pair(text, filename);
+}

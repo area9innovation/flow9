@@ -1,0 +1,268 @@
+import runtime;
+import array;
+import lingo/pegcode/driver;
+import tropic/tropictransforms;
+import serialize;
+
+export {
+	TropicOrForm ::= Form, Tropic;
+
+	serializeSnapshot(form : TropicOrForm) -> string;
+	serializeFSnapshot(form : Form) -> string;
+	serializeTSnapshot(tropic : Tropic) -> string;
+
+	deserializeSnapshot(serialized : string) -> Tropic;
+	deserializeFSnapshot(serializeForm : string) -> Maybe<Form>;
+	deserializeTSnapshot(serializeTropic : string) -> Maybe<Tropic>;
+
+	PForm ::= Form, PTranslate, PScale, PRotate, PAlpha, PAvailable2, PSize2, PSetPending, PBaseline, PGroup,
+		PGrid, PBorder, PMask2, PFilter2, PCrop2, PFullWindow, PVisible;
+
+		PTranslate : (x : Behaviour<double>, y : Behaviour<double>, form : PForm);
+		PScale : (x : Behaviour<double>, y : Behaviour<double>, form : PForm);
+		PRotate : (degree : Behaviour<double>, form : PForm);
+		PAlpha : (alpha : Behaviour<double>, form : PForm);
+		PAvailable2 : (widthHeight : Behaviour<WidthHeight>, form : PForm);
+		PSize2 : (widthHeight : Behaviour<WidthHeight>, form : PForm);
+		PSetPending : (pending : Behaviour<int>, form : PForm);
+		PBaseline : (baseline : Behaviour<double>, form : PForm);
+		PGroup : (layers : [PForm]);
+		PGrid : (cells: [[PForm]]);
+		PBorder(left : double, top : double, right : double, bottom : double, form : PForm);
+		PMask2 : (main : PForm, mask : PForm);
+		PFilter2(filters : [Filters], form : PForm);
+		PSize2 : (widthHeight : Behaviour<WidthHeight>, form : PForm);
+		PCrop2 : (left : Behaviour<double>, top : Behaviour<double>, width : Behaviour<double>, height : Behaviour<double>, form : PForm);
+		PFullWindow : (fullwindow : bool, form : PForm);
+		PVisible : (visible : int, form : PForm);
+
+	widthHeight2const(widthHeight : Behaviour<WidthHeight>) -> Behaviour<WidthHeight>;
+	dNumber2doubleConst(n : Behaviour<?>) -> Behaviour<double>;
+	checkFilters(filters : [Filters]) -> [Filters];
+	form2PForm(f : Form) -> PForm;
+	pForm2Form(f : PForm) -> Form;
+}
+
+isTropic(form : flow) -> bool {
+	startsWith(form.structname, "T") && !startsWith(form.structname, "Text") 
+	&& !startsWith(form.structname, "Translate") && !startsWith(form.structname, "TextInput")
+}
+
+serializeSnapshot(form : TropicOrForm) -> string {
+	if (isTropic(form))
+		serializeTSnapshot(cast(form : TropicOrForm -> Tropic))
+	else
+		serializeFSnapshot(cast(form : TropicOrForm -> Form));
+}
+
+serializeFSnapshot(form : Form) -> string {
+	serialize(form2PForm(form));
+}
+
+serializeTSnapshot(tropic : Tropic) -> string {
+	serialize(takeTSnapshot(tropic))
+}
+
+deserializeSnapshot(serialized : string) -> Tropic {
+	eitherFn(
+		deserializeTSnapshot(serialized),
+		\tr ->
+			tr,
+		\ ->
+			eitherFn(
+				deserializeFSnapshot(serialized),
+				\f ->
+					TForm(f),
+				\ ->
+					TEmpty()
+			)
+	)
+}
+
+deserializeFSnapshot(serializeForm : string) -> Maybe<Form> {
+	d = deserialize(serializeForm, Empty());
+
+	if (isTropic(d))
+		None()
+	else
+		Some(pForm2Form(cast(d : flow -> PForm)));
+}
+
+deserializeTSnapshot(serializeTropic : string) -> Maybe<Tropic> {
+	d = deserialize(serializeTropic, TEmpty());
+
+	if (isTropic(d))
+		Some(cast(d : flow -> Tropic))
+	else
+		None();
+}
+
+//shoud take a static form
+//see takeSnapshot method
+form2PForm(f : Form) -> PForm {
+	switch (f) {
+		Border(left, top, right, bottom, form): PBorder(left, top, right, bottom, form2PForm(form));
+		Translate(x, y, form): PTranslate(x, y, form2PForm(form));
+		Scale(x, y, form): PScale(x, y, form2PForm(form));
+		Rotate(degree, form): PRotate(degree, form2PForm(form));
+		Alpha(alpha, form): PAlpha(alpha, form2PForm(form));
+		Group(layers): PGroup(map(layers, form2PForm));
+		Grid(cells): PGrid(map(cells, \line -> map(line, form2PForm)));
+		Available2(widthHeight, form): PAvailable2(widthHeight, form2PForm(form));
+		Size2(widthHeight, form): PSize2(widthHeight, form2PForm(form));
+		SetPending(pending, form): PSetPending(pending, form2PForm(form));
+		Baseline(baseline, form): PBaseline(baseline, form2PForm(form));
+		//immutable structures
+		Video(file, pars, listeners, controls): Empty();
+		NativeForm(__, __, form, __): form2PForm(form());
+		Empty() : f;
+		Text(__, __) : f;
+		Graphics(__, __) : f;
+		Picture(__, __) : takeSnapshot(f);
+		Camera(__, __, __, __) : takeSnapshot(f);
+		TextInput(__, __, __): takeSnapshot(f);
+		RealHTML2(url, wh, style): takeSnapshot(f);
+		//Structures with native functions in parameters
+		Crop2(left, top, width, height, form, __): PCrop2(left, top, width, height, form2PForm(form));
+		Filter2(filters, form, __): PFilter2(filters, form2PForm(form));
+		Mask2(main1, mask, __): PMask2(form2PForm(main1), form2PForm(mask));
+		//should not be given
+		ControlFocus(__, form): form2PForm(form);
+		Access(__, form): form2PForm(form);
+		Switch(i, forms): form2PForm(forms[getValue(i)]);
+		Mutable2(form, __): form2PForm(getValue(form));
+		Inspect(__, form): form2PForm(form);
+		Cursor(__, form): form2PForm(form);
+		Interactive(__, form): form2PForm(form);
+		Visible(v, form): PVisible(getValue(v), form2PForm(form));
+		Constructor(form, __): form2PForm(form);
+		Create2(current, fn): form2PForm(if (^current != Empty()) ^current else fn());
+		FullWindow(fw, form): PFullWindow(getValue(fw), form2PForm(form));
+		DynamicGroup2(__, __, currentStack, __): form2PForm(Group(getValue(currentStack)));
+	}
+}
+
+
+pForm2Form(f : PForm) -> Form {
+	switch(f : PForm) {
+		Empty() : f;
+		PBorder(left, top, right, bottom, form): Border(number2double(left), number2double(top), number2double(right), number2double(bottom), pForm2Form(form));
+		PTranslate(x, y, form): Translate(dNumber2doubleConst(x), dNumber2doubleConst(y), pForm2Form(form));
+		PScale(x, y, form): Scale(dNumber2doubleConst(x), dNumber2doubleConst(y), pForm2Form(form));
+		PRotate(degree, form): Rotate(dNumber2doubleConst(degree), pForm2Form(form));
+		PAlpha(alpha, form): Alpha(dNumber2doubleConst(alpha), pForm2Form(form));
+		PMask2(main1, mask): Mask(pForm2Form(main1), pForm2Form(mask));
+		PGroup(layers): Group(map(layers, pForm2Form));
+		PGrid(cells): Grid(map(cells, \line -> map(line, pForm2Form)));
+		PAvailable2(widthHeight, form): Available2(widthHeight2const(widthHeight), pForm2Form(form));
+		PSize2(widthHeight, form): Size2(widthHeight2const(widthHeight), pForm2Form(form));
+		PSetPending(pending, form): SetPending(pending, pForm2Form(form));
+		PBaseline(baseline, form): Baseline(dNumber2doubleConst(baseline), pForm2Form(form));
+		PFilter2(filters, form): Filter2(checkFilters(filters), pForm2Form(form), captureCallstack());
+		RealHTML2(url, wh, style): RealHTML2(url, widthHeight2const(wh), style);
+		PCrop2(left, top, width, height, form): Crop(dNumber2doubleConst(left), dNumber2doubleConst(top), dNumber2doubleConst(width), dNumber2doubleConst(height), pForm2Form(form));
+		PFullWindow(fw, form): FullWindow(make(fw), pForm2Form(form));
+		PVisible(v, form): Visible(make(v), pForm2Form(form));
+		Video(file, pars, listeners, controls): Video(file, pars, [], controls);
+		Text(__, __) : f;
+		Picture(__, __) : f;
+		Graphics(__, __) : f;
+		Available2(__, __): f;
+		Camera(__, __, __, __) : f;
+		TextInput(__, __, __): f;
+		Rotate(__, __): f;
+		Interactive(__, __): f;
+		Visible(__, __): f;
+		Alpha(__, __): f;
+		Mask2(__, __, __) : f;
+		Group(__): f;
+		Grid(__): f;
+		Size2(__, __): f;
+		SetPending(__, __): f;
+		NativeForm(__, __, __, __): f;
+		Baseline(__, __): f;
+		Access(__, __): f;
+		Cursor(__, __): f;
+		Filter2(__, __, __): f;
+		Inspect(__, __): f;
+		Mutable2(__, __): f;
+		Constructor(__, __): f;
+		Create2(__, __): f;
+		ControlFocus(__, __): f;
+		Switch(__, __): f;
+		Crop2(__, __, __, __, __, __): f;
+		Translate(__, __, __): f;
+		Border(__, __, __, __, __): f;
+		Scale(__, __, __): f;
+		FullWindow(__, __): f;
+		DynamicGroup2(__, __, __, __): f;
+	}
+}
+
+widthHeight2const(widthHeight : Behaviour<WidthHeight>) -> Behaviour<WidthHeight> {
+	wh = getValue(widthHeight);
+	const(WidthHeight(number2double(wh.width), number2double(wh.height)))
+}
+
+dNumber2doubleConst(n : Behaviour<?>) -> Behaviour<double> {
+	const(number2double(getValue(n)));
+}
+
+checkFilters(filters : [Filters]) -> [Filters] {
+	map(filters, \f : Filters -> {
+		switch (f) {
+			Bevel(bevelparams): checkBevelParams(bevelparams);
+			DropShadow(dropShadowParameter): checkDropShadowParams(dropShadowParameter);
+			Blur(blurParams): checkBlurParams(blurParams);
+			Glow(params): checkGlowParams(params);
+		}
+	})
+}
+
+checkBevelParams(params : [BevelParameter]) -> Bevel {
+	map(params, \p -> {
+		switch (p) {
+			Placement(angle, distance): Placement(number2double(angle), number2double(distance));
+			Color(color, alpha): Color(color, number2double(alpha));
+			ShadowColor(color, a): ShadowColor(color, number2double(a));
+			Radius(r): Radius(number2double(r));
+			Spread(r): Spread(number2double(r));
+			Inner(__) : p;
+		}
+	})
+	|> Bevel;
+}
+
+checkDropShadowParams(params : [DropShadowParameter]) -> DropShadow {
+	DropShadow(map(params, \p -> {
+		switch (p) {
+			Placement(angle, distance): Placement(number2double(angle), number2double(distance));
+			Color(color, alpha): Color(color, number2double(alpha));
+			Radius(r): Radius(number2double(r));
+			Spread(r): Spread(number2double(r));
+			default: p;
+		}
+	}));
+}
+
+checkBlurParams(params : [BlurParameter]) -> Blur {
+	map(params, \p -> {
+		switch (p) {
+			Radius(r): Radius(number2double(r));
+			Spread(r): Spread(number2double(r));
+		}
+	})
+	|> Blur;
+}
+
+checkGlowParams(params : [GlowParameter]) -> Glow {
+	map(params, \p -> {
+		switch (p) {
+			Radius(r): Radius(number2double(r));
+			Spread(r): Spread(number2double(r));
+			Color(color, alpha): Color(color, number2double(alpha));
+			Inner(__): p;
+		}
+	})
+	|> Glow;
+}

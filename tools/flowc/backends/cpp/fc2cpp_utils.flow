@@ -1,0 +1,892 @@
+import tools/flowc/backends/common;
+import tools/flowc/backends/cpp/fc2cpp_defines;
+import tools/flowc/type_helpers;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fi_helpers;
+import list;
+import string;
+
+export {
+	fiCollectCppForwards(cfg: FcCppConfig, program: FiProgram, header: List<string>) -> List<string>;
+	fiCppCollectStrings(decls : [Pair<string, [FiDeclaration]>]) -> Tree<string, int>;
+	fiCollectCppStructs(cfg: FcCppConfig, program: FiProgram, init: List<string>) -> List<string>;
+	fiCollectCppConstructors(cfg: FcCppConfig, program: FiProgram, init: List<string>) -> List<string>;
+	fiAddCppRuntime2(cfg: FcCppConfig, program: FiProgram, init: List<string>) -> List<string>;
+	fiAddCppRegisterStructCreators(cfg: FcCppConfig, program: FiProgram, init: List<string>) -> List<string>;
+	
+	fiType2CppType(cfg: FcCppConfig, program: FiProgram, type: FiType) -> string;
+	fiType2CppType2(cfg: FcCppConfig, program: FiProgram, type: FiStructOrUnion) -> string;
+	fiType2CppType3(cfg: FcCppConfig, program: FiProgram, type: FiType) -> string;
+	fiType2CppTypeFParam(cfg: FcCppConfig, program: FiProgram, type: FiType) -> string;
+	fiIsStruct(program : FiProgram, tp : FiType) -> bool;
+	fiGetStructName(program : FiProgram, tp : FiType) -> Maybe<string>;
+	fiIsUnion(program : FiProgram, tp : FiType) -> bool;
+	fiCppGetStructTemplateParams(program : FiProgram, structname : string) -> [string];
+	fiCppAddStrings(strings : Tree<string, int>, init: List<string>) -> List<string>;
+	fiEscapeStringCpp(s : string) -> string;
+	fiTypePar2Cpp(cfg: FcCppConfig, program : FiProgram, typars : [FiType]) -> string;
+	fiIsPolymorphicType(type: FiType) -> bool;
+	fiCppTravelExpr(expr : FiExp, fn : (FiExp) -> void) -> void;
+	fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) -> FiType;
+}
+
+fiType2CppType(cfg, program, type) {
+	fiType2CppType0(cfg, program, type, true);
+}
+
+fiType2CppType0(cfg : FcCppConfig, program : FiProgram, type : FiType, short : bool) {
+	rec = \t -> fiType2CppType0(cfg, program, t, false);
+	switch (type) {
+		FiTypeFunction(args, rt): {
+			rettype = rec(rt);
+			params = strGlue(map(args, \a -> rec(a.type)), ", ");
+			"std::function<" + rettype + "(" + params + ")>";
+		} 
+		FiTypeParameter(n): {
+			tt = "T" + i2s(strlen(n));
+			if (short) tt else "flow::ptr_type_t<" + tt + ">"
+		}
+		FiTypeName(name, params)     : {
+			params2 = fcCppFixStructParams(program, type);
+			tt = name + fiTypePar2Cpp(cfg, program, params2);
+			if (!short && fiIsStruct(program, type)) "flow::ptr<" + tt + ">"
+			else tt
+		}
+		FiTypeArray(t) 				 : "flow::array<" + rec(t) + ">";
+		FiTypeRef(t)                 : "flow::ref<" + rec(t) + ">";
+		FiTypeBool()                 : "bool";
+		FiTypeInt()                  : "int";
+		FiTypeDouble()               : "double";
+		FiTypeString()               : "flow::string";
+		FiTypeFlow()                 : "flow_t";
+		FiTypeVoid()                 : "void";
+		FiTypeNative()               : "native";
+	}
+}
+
+fcCppFixStructParams(program : FiProgram, tn : FiTypeName) {
+	params = tn.typeparameters;
+	eitherMap(lookupTree(program.names.structs, tn.name), \s -> {
+		tr = foldi(params, makeTree(), \i, acc, t : FiType -> {
+			setTree(acc, strLeft("????????", i+1), t);
+		});
+		map(s.typars, \t -> fiSubstituteTypars(t, tr))
+	}, params)
+}
+
+fiType2CppType2(cfg, program, type) {
+	switch (type) {
+		FiTypeStruct(name, params, args, __) : {
+			tparams = fiCppGetStructTemplateParams(program, name);
+			paramsFixed = if (params == [] && args != []) // fix for FMaxConst
+					map(
+						set2array(mergeSetsA(map(args, \sa -> fiCollectTypars(program, sa.type, makeSet())))), 
+						\paramName -> FiTypeParameter(paramName)
+					)
+				else params;
+			args2 = if (args != [] && tparams != []) fiTypePar2Cpp(cfg, program, paramsFixed) else "";
+			args3 = if (args2 == "<auto>") "" else args2; // hack. TODO: fix it!
+			name + args3
+		}
+		FiTypeUnion(name, params, __, __)   : name + fiTypePar2Cpp(cfg, program, params);
+	}
+}
+
+fiType2CppType3(cfg, program, type : FiType) {
+	fiType2CppType0(cfg, program, type, false)
+}
+
+fiType2CppTypeFParam(cfg: FcCppConfig, program: FiProgram, type: FiType) {
+	if (fiIsTypeParam(type)) "flow::fparam<" + fiType2CppType(cfg, program, type) + ">"
+	else {
+		t = fiType2CppType3(cfg, program, type);
+		if (t == "int" || t == "bool" || t == "double") "const " + t
+		else "const " + t + "&";	
+	}
+}
+
+fiTypes2CppTypes(cfg : FcCppConfig, program : FiProgram, types : [FiType]) -> string {
+	strGlue(map(types, \t -> fiType2CppType(cfg, program, t)), ", ")
+}
+
+fiTypePar2Cpp(cfg : FcCppConfig, program : FiProgram, typars : [FiType]) -> string {
+	if (typars != []) "<" + fiTypes2CppTypes(cfg, program, typars) + ">" else ""
+}
+
+fiCppStructTemplateLine(cfg : FcCppConfig, program : FiProgram, struct : FiTypeStruct) -> string {
+	params = fiCppGetStructTemplateParams(program, struct.name);
+	if (params != [] && struct.typars != [] && struct.args != []) {
+		"\ntemplate <" + fold(struct.typars, "", \acc, tp -> {
+			acc + (if (acc != "") ", " else "") + "typename " 
+			+ fiType2CppType(cfg, program, tp)
+		}) + ">"
+	} else ""
+}
+
+fiCppGetStructTemplateParams(program : FiProgram, structname : string) -> [string] {
+	switch (lookupTree(program.names.structs, structname)) {
+		Some(str): {
+			filtermap(str.args, \a : FiStructArg -> {
+				if (fiIsPolymorphicType(a.type)) Some(a.name) else None();
+			})
+		}
+		None(): []
+	}
+}
+
+fiCppUnionTemplateLine(cfg : FcCppConfig, program : FiProgram, union : FiTypeUnion) -> string {
+	if (union.typeparameters != []) {
+		"\ntemplate <" + fold(union.typeparameters, "", \acc, tp -> {
+			acc + (if (acc != "") ", " else "") + "typename " 
+			+ fiType2CppType(cfg, program, tp)
+		}) + ">"
+	} else ""
+}
+
+fiIsStructName(program : FiProgram, n : string) {
+	containsKeyTree(program.names.structs, n);
+}
+
+fiIsUnionName(program : FiProgram, n : string) {
+	containsKeyTree(program.names.unions, n);
+}
+
+fiCppStructEqualityOperator(cfg : FcCppConfig, program : FiProgram, sname: string, struct: FiTypeStruct) {
+	args = filtermap(struct.args, \sarg -> {
+		isComparable = switch (sarg.type) {
+			FiTypeString()  : true;
+			FiTypeInt()     : true;
+			FiTypeBool()    : true;
+			FiTypeDouble()  : true;
+			FiTypeArray(__) : true;
+			FiTypeFlow()	: true;
+			FiTypeParameter(n)	: true;
+			FiTypeName(n, __) : true; //fiIsStructName(program, n);
+			FiTypeFunction(args, returnType): false;
+			FiTypeRef(t)		: false;
+			FiTypeVoid()		: false;
+			FiTypeNative()		: false;
+		}
+		if (isComparable) Some(sarg) else None()
+	});
+	comp = \sarg, op -> {
+		fname = fiCppRenameKeyword(cfg, sarg.name, true);
+		fname + " " + op + " " + "other." + fname;
+	}
+	notComparable = exists(struct.args, \sarg -> fiTypeContainsFunction(sarg.type));
+	"\tinline bool operator == (const " + sname + "& other) const {\n" +
+	(
+		if (notComparable) "\t\tFLOW_ABORT" else
+		if (length(struct.args) == 0) "\t\treturn true" else
+	    foldi(struct.args, "\t\treturn ", \i, acc_args, sarg: FiStructArg -> {
+			acc_args + (if (i != 0) " && " else "") + comp(sarg, "==")
+	    })
+	) + ";\n\t}\n"
+	+ "\tinline bool operator < (const " + sname + "& other) const {\n" +
+	(
+		if (notComparable) "\t\tFLOW_ABORT" else
+		if (length(args) == 0) "\t\treturn false" 
+		else "\t\treturn " + fiCppStructLessOperator(0, args, comp)
+	) + ";\n\t}\n"
+}
+
+fiCppStructLessOperator(i : int, args : [FiStructArg], comp : (FiStructArg, string) -> string) {
+	rest = if (i+1 < length(args)) " || (" + comp(args[i], "==") + ") && " + fiCppStructLessOperator(i+1, args, comp)
+		   else "";
+	"((" + comp(args[i], "<") + ")" + rest + ")"
+}
+
+fiProcessCppStruct(cfg : FcCppConfig, program : FiProgram, name : string, struct : FiTypeStruct) {
+	sname = fiCppRenameKeyword(cfg, name, false);
+	structId = lookupTreeDef(cfg.structIndexes, name, -1);
+	
+	sargType = \sarg : FiStructArg -> {
+		fiType2CppType3(cfg, program, sarg.type);
+	}
+	
+	fiCppStructTemplateLine(cfg, program, struct)
+	+ formatString("\nstruct %1 : flow::object {\n", [sname])
+	+ formatString("\tstatic const int struct_id_ = flow::types::%1;\n", [sname])
+	+ fiCppStructConstructors(cfg, program, sname, struct, sargType)
+	+ fold(struct.args, "", \acc_args, sarg : FiStructArg -> {
+		fname = fiCppRenameKeyword(cfg, sarg.name, true);
+		acc_args + "\t" 
+			+ (if (sarg.ismutable) "mutable " else "")
+			+ sargType(sarg) + " " + fname + ";\n"
+	})
+	+ fiCppStructEqualityOperator(cfg, program, sname, struct)
+	+ fiCppStructToStringMethod(cfg, sname, struct)
+	+ fiCppStructToBinaryMethod(cfg, program, sname, struct)
+	+ "\tstatic flow::ptr<" + sname + "> create(const flow::array<flow::flow_t>& params);\n"
+	+ "\tflow::ref_counter_ptr<object> deep_copy() const override {\n"
+		+ "\t\treturn flow::create_struct_ptr<" + sname + ">("
+			+ strGlue(map(struct.args, \sarg -> "flow::deep_copy(" + fiCppRenameKeyword(cfg, sarg.name, true) + ")"), ", ")
+			+ ").ref_.ptr_;\n\t}\n"
+	+ "};\n"
+}
+
+fiCppSingletonsSection(program : FiProgram) {
+	s = foldTree(program.names.structs, "", \sname, struct, acc -> {
+		if (struct.args == []) acc + "\tconst auto g" + sname + " = flow::create_struct_ptr<" + sname + ">();\n"
+		else acc
+	});
+	if (s != "") "\nnamespace flow {\n" + s + "}\n\n"
+	else ""
+}
+
+fiCppStructToStringMethod(cfg, sname, struct) {
+	str = \s -> "flow::string(L" + fiEscapeStringCpp(s) + ")";
+	"\tflow::string toString() const override {\n"
+	+ "\t\treturn " + str(sname + "(")
+		+ fold(struct.args, "", \acc, sarg : FiStructArg -> {
+			(if (acc == "") "" else acc + " + " + str(", "))
+			+ " + ::toString(" + fiCppRenameKeyword(cfg, sarg.name, true) + ")"
+		})
+		+ " + " + str(")") + ";\n"
+	+ "\t}\n"
+}
+
+fiCppStructToBinaryMethod(cfg, program : FiProgram, sname : string, struct : FiTypeStruct) {
+	good = forall(struct.args, \sarg : FiStructArg -> {
+		!fiIsPolymorphicType(sarg.type) && switch (sarg.type) {
+			FiTypeInt(): true;
+			FiTypeBool(): true;
+			FiTypeDouble(): true;
+			FiTypeString(): true;
+			FiTypeFunction(__, __): false;
+			FiTypeArray(t): fiIsUnion(program, t) || fiIsStruct(program, t) || t == FiTypeString();
+			// default: false;
+			default: true;
+		}	
+	});
+	if (good) {
+		"\tvoid toBinary(std::function<void(const flow_t&)> callback) const override {\n"
+		+ strGlue(map(struct.args, \sarg : FiStructArg -> {
+			"\t\tcallback(flow_t(" + fiCppRenameKeyword(cfg, sarg.name, true) + "));\n"
+		}), "")
+		+ "\t}\n"
+	} else "";
+}
+
+fiCppStructCreator(program, sname, struct : FiTypeStruct) {
+	if (fiCppIsStructCreatorAvailable(struct)) {
+		fiCppStructCreator1(program, sname, struct)
+	} else "";
+}
+
+fiCppIsStructCreatorAvailable(struct : FiTypeStruct) {
+	forall(struct.args, \sarg -> !fiIsInstanceOfPolymorphicType(sarg.type))
+}
+
+fiCppStructCreator1(program, sname, struct : FiTypeStruct) {
+
+	sargToGetter = \sarg : FiStructArg -> {
+		if (fiIsInstanceOfPolymorphicType(sarg.type)) None()
+		else switch (sarg.type) {
+			FiTypeBool(): Some("get_bool");
+			FiTypeInt(): Some("get_int");
+			FiTypeDouble(): Some("get_double");
+			FiTypeString(): Some("get_string");
+			FiTypeName(n, __): {
+				if (fiIsStructName(program, n)) Some("get_struct_ptr<" + n + ">")
+				else if (fiIsUnionName(program, n)) Some("get_union<" + n + ">")
+				else None();
+			}
+			FiTypeArray(type): {
+				if (fiIsInstanceOfPolymorphicType(type)) None()
+				else switch (type) {
+					FiTypeName(n, __): 
+						if (fiIsStructName(program, n)) Some("get_struct_array<" + n + ">")
+						else if (fiIsUnionName(program, n)) Some("get_union_array<" + n + ">")
+						else None();
+					FiTypeString(): 
+						Some("get_string_array");
+					default:
+						None();
+				}
+			}
+			default: None();
+		}
+	}
+
+	args1 : [Maybe<string>] = map(struct.args, sargToGetter);
+	
+	code = if (forall(args1, isSome)) {
+		"\t\treturn flow::create_struct_ptr<" + sname + ">("
+		+ if (args1 == []) ");\n" else {
+			"\n\t\t\t" + strGlue(mapi(args1, \i, m -> {
+				"params[" + i2s(i) + "]." + either(m, "") + "()"
+			}), ", ") + (if (length(args1) > 0) "\n" else "")
+			+ "\t\t);\n"
+		}
+	} else "\t\tFLOW_ABORT;\n";
+
+	"flow::ptr<" + sname + "> " + sname + "::create(const flow::array<flow::flow_t>& params) {\n"
+	+ "\t\tFLOW_ASSERT(params.size() == " + i2s(length(struct.args)) + ");\n"
+	+ code
+	+ "}\n"
+}
+
+fiCppStructConstructors(cfg, program, sname : string, struct : FiTypeStruct, sargType : (FiStructArg) -> string) -> string {
+	templateParams = fiCppGetStructTemplateParams(program, struct.name);
+	optionalComma = \i -> if (i > 0) ", " else "";
+	objConstr = "flow::object(flow::types::" + sname + ", sizeof(" + fiType2CppType2(cfg, program, struct) + "))";
+	"\t" + sname + "("
+	+ foldi(struct.args, "", \i, acc_args, sarg : FiStructArg -> {
+		acc_args + optionalComma(i) + "const " + sargType(sarg) + "& a" + i2s(i);
+	})
+	+ ") : "
+	+ objConstr
+	+ foldi(struct.args, "", \i, acc_args, sarg : FiStructArg -> {
+		fname = fiCppRenameKeyword(cfg, sarg.name, true);
+		acc_args + formatString(", %1(a%2)", [fname, i2s(i)]);
+	})
+	+ " {}\n"
+	+ (if (struct.typars != [] && struct.args != [] && templateParams != []) {
+		"\t"
+		+ foldi(struct.typars, "template <", \i, acc_args, __ -> { 
+			acc_args + optionalComma(i) + "typename TT" + i2s(i+1);
+		})
+		+ ",\n" 
+		+ foldi(struct.typars, "", \i, acc_args, __ -> { 
+			acc_args 
+			+ "\t\ttypename = std::enable_if_t<std::is_convertible_v<TT" + i2s(i+1) + ", T" + i2s(i+1) + ">>" 
+			+ (if (i+1 == length(struct.typars)) ">\n" else ",\n")
+		})
+		+ "\t" + sname + "(const " + sname + "<"
+		+ foldi(struct.typars, "", \i, acc_args, __ -> {
+			acc_args + optionalComma(i) + "TT" + i2s(i+1)
+		})
+		+ ">& oth) : "
+		+ objConstr
+		+ fold(struct.args, "", \acc_args, sarg : FiStructArg -> {
+			fname = fiCppRenameKeyword(cfg, sarg.name, true);
+			acc_args + ", " + fname + "(oth." + fname + ")" 
+		})
+		+ " {}\n"
+	} else "")
+}
+
+// fiCppUnionConstructorDeclarations(uname: string, sname : string, structType: string) {
+	// formatString("\t%1 (const flow::ptr<%2> & v);\n",	[uname, structType])
+	// + formatString("\t%1 (flow::ptr<%2> && v);\n",		[uname, structType])
+// }
+
+fiCppUnionConstructorDeclarations2(uname: string, union2 : FiTypeUnion) {
+	formatString("\t%1 (const %2 & v);\n",	[uname, union2.name])
+}
+
+fiCppUnionMethodDefinitions(uname: string, structType: string, sname : string, typars : string, typars1 : [FiType], templateLine : string) {
+	// templateLine
+	// + formatString("inline %1%4::%1 (const flow::ptr<%2> & v) : flow::union_base(flow::types::%3, v.ref_) {}\n",
+		// [uname, structType, sname, typars])
+	// + templateLine
+	// + formatString("inline %1%4::%1 (flow::ptr<%2> && v) : flow::union_base(flow::types::%3, v.ref_) {}\n",
+		// [uname, structType, sname, typars])
+	tt = "const flow::ptr<" + structType + ">&";
+	templateLine
+	+ formatString("inline %2 %1%3::to%4() const {\n\treturn reinterpret_cast<%2>(ptr_);\n}\n",
+		[uname, tt, typars, sname])
+}
+
+fiCppUnionMethodDefinitions2(uname: string, union2 : FiTypeUnion, union2type : string) {
+	typars = "";
+	formatString("inline %1::%1 (const %2 & v) : flow::union_base(v.id_(), v.ptr_) {}\n",
+		[uname, union2.name])
+	+ formatString("inline %2 %1%3::to%4() const {\n\treturn ptr_;\n}\n",
+		[uname, union2type, typars, union2.name])
+}
+
+fiProcessCppUnion(cfg, program, name, union) {
+	uname = fiCppRenameKeyword(cfg, name, false);
+	structs = fiUnion2structs(program, union);
+	unions = uniq(fiUnion2unions(program, union));
+	
+	fiCppUnionTemplateLine(cfg, program, union)
+	+ "\nstruct " + uname + " : flow::union_base {\n"
+	// + fold(structs, "", \acc2, struct : FiTypeStruct -> {
+		// structType = fiType2CppType2(cfg, program, struct);
+		// acc2 + fiCppUnionConstructorDeclarations(uname, struct.name, structType)
+	// })
+	+ "\ttemplate <typename TT>\n"
+	+ "\t" + uname + "(const flow::ptr<TT>& v) : " + uname + "(v.ref_) {}\n"
+	+ "\ttemplate <typename TT>\n"
+	+ "\t" + uname + "(flow::ptr<TT>&& v) : flow::union_base(std::move(v.ref_)) {\n"
+		+ "\t\tFLOW_ASSERT(is_acceptable_type_id(ptr_.obj_id()));\n"
+	+ "\t}\n"
+	+ fold(unions, "", \acc2, u : FiTypeUnion -> {
+		acc2 + fiCppUnionConstructorDeclarations2(uname, u)
+	})
+	+ "\ttemplate <typename TT, typename = flow::is_union_type_t<TT>>\n"
+	+ "\t" + uname + "(const TT& v) : " + uname + "(v.ptr_) {}\n"
+	+ (if (true || union.typeparameters == []) 
+		"\t" + uname + " (const flow::object_ref& ref) : flow::union_base(ref) {\n"
+		+ "\t\tFLOW_ASSERT(is_acceptable_type_id(ref.obj_id()));\n"
+		+ "\t}\n"
+	else "")
+	+ fold(structs, "", \acc2, struct : FiTypeStruct -> {
+		structType = fiType2CppType2(cfg, program, struct);
+		acc2 + "\tinline const flow::ptr<" + structType + ">& to" + struct.name + "() const;\n"
+	})
+	+ fold(unions, "", \acc2, u : FiTypeUnion -> {
+		unionType = fiType2CppType2(cfg, program, u);
+		acc2 + "\tinline " + unionType + " to" + u.name + "() const;\n"
+	})
+	+ fiCppUnionFieldGetters(cfg, program, uname, union, true, "")
+	+ "\tinline bool operator == (const " + uname + "& oth) const;\n"
+	+ "\tflow::string toString() const;\n"
+	+ "\tinline bool operator < (const " + uname + "& oth) const;\n"
+	+ "\ttemplate <typename TT>\n"
+	+ "\tinline void operator= (const TT& oth) {\n"
+	+ "\t\t*this = static_cast<" + uname + "> (oth);\n"
+	+ "\t}\n"
+	+ "\tFLOW_INLINE static bool is_acceptable_type_id(int id) {\n"
+	+ "\t\tswitch (id) {\n"
+	+ fold(structs, "", \acc2, struct : FiTypeStruct -> {
+		acc2 + "\t\t\tcase flow::types::" + struct.name + ":\n"
+	})
+	+ "\t\t\t\treturn true;\n"
+	+ "\t\t\tdefault:\n"
+	+ "\t\t\t\treturn false;\n"
+	+ "\t\t}\n"
+	+ "\t}\n"
+	+ "};\n";
+}
+
+fiCppUnionFieldGetters(cfg, program, utype : string, union : FiTypeUnion, declarationOnly : bool, templateLine : string) {
+
+	structs = fiUnion2structs(program, union);
+	
+	commonStructArgNames = filtermap(structs[0].args, \sa0 : FiStructArg -> {
+		if (forall(structs, \st : FiTypeStruct -> {
+			exists(st.args, \sa : FiStructArg -> sa.name == sa0.name && sa.type == sa0.type)
+		})) Some(sa0.name)
+		else None();
+	});
+	
+	types : Tree<string, string> = fold(structs[0].args, makeTree(), \acc, sa -> {
+		if (contains(commonStructArgNames, sa.name)) setTree(acc, sa.name, fiType2CppType3(cfg, program, sa.type))
+		else acc;
+	});
+	
+	fold(commonStructArgNames, "", \acc, field -> {
+		type = lookupTreeDef(types, field, "");
+		name = fiCppRenameKeyword(cfg, field, false);
+		if (declarationOnly) acc + "\tinline const " + type + "& " + name + "() const;\n"
+		else
+		acc + templateLine
+		+ "inline const " + type + "& " + utype + "::" + name + "() const {\n"
+		+ "\tswitch (id_()) {\n"
+		+ fold(fiUnion2structs(program, union), "", \acc3, struct : FiTypeStruct -> {
+			acc3 + "\t\tcase flow::types::" + struct.name
+				 + ": return to" + struct.name + "()->" + field + ";\n"
+		})
+		+ "\t\tdefault: FLOW_UNREACHABLE();\n"
+		+ "\t}\n"
+		+ "}\n"
+	})	
+}
+
+fiCollectCppForwards(cfg, program, header) {
+	n : ref int = ref 0;
+	
+	foldTree(program.names.structs, 0, \sname, struct, acc -> {
+		// We store "clean", i.e. not yet mangled names 
+		// since we can have them further if we want.
+		cfg.structIndexes ::= setTree(cfg.structIndexes, sname, ^n);
+		n := ^n + 1;
+		0
+	});
+
+	typeIds0 = Cons("\nnamespace flow {\n\tnamespace types {\n",  header);
+	typeIds1 = foldTree(program.names.structs, typeIds0, \sn, struct : FiTypeStruct, acc -> {
+		sname = fiCppRenameKeyword(cfg, sn, false);
+		structId = lookupTreeDef(cfg.structIndexes, sn, -1);
+		Cons(
+			"\t\tconst int " + sname + " = " + i2s(structId) + ";\n",
+			acc
+		)
+	});
+	typeIds2 = Cons("\t}\n\tconst struct_desc struct_descs[] = {\n", typeIds1);
+	typeDescs = foldTree(program.names.structs, typeIds2, \sn, struct : FiTypeStruct, acc -> {
+		Cons(
+			"\t\t{flow::string(L\"" + sn + "\"), " + i2s(length(struct.args)) + "},\n",
+			acc
+		)
+	});
+	typeDescs2 = Cons("\t};\n}\n", typeDescs);
+	
+	fold(program.traversal, typeDescs2, \acc, mname -> {
+		md = lookupTree(program.modules, mname);
+		eitherFn(md, \module -> {
+			forwards_structs = fold(module.structs, acc, \acc_structs, struct : FiTypeStruct -> {
+				sname = fiCppRenameKeyword(cfg, struct.name, false);
+				Cons(fiCppStructTemplateLine(cfg, program, struct) + "\nstruct " + sname + ";\n", acc_structs)
+			});
+			
+			forwards_unions = fold(module.unions, forwards_structs, \acc_unions, union : FiTypeUnion -> {
+				uname = fiCppRenameKeyword(cfg, union.name, false);
+				Cons(fiCppUnionTemplateLine(cfg, program, union) + "\nstruct " + uname + ";\n", acc_unions)
+			});
+			
+			forwards_globals = fold(module.globalVars, forwards_unions, \acc_globals, gvar : FiGlobalVar -> {
+				gname = fiCppRenameKeyword(cfg, gvar.name, false);
+				type = fiType2CppType3(cfg, program, gvar.type);
+				// if (type != "" && !containsSet(fiCppSkippedGlobals, gname)) Cons("extern " + type + " " + gname + ";\n", acc_globals)
+				if (type != "") Cons("extern " + type + " " + gname + ";\n", acc_globals)
+				else acc_globals;
+			});
+			
+			forwards_globals;
+		}, \ -> acc);
+	});
+}
+
+fiCollectCppStructs(cfg, program, init) {
+
+	structsAndUnions = if (program.names.unions == TreeEmpty() && program.names.structs == TreeEmpty())
+		init
+	else {
+		res = fold(program.traversal, init, \acc_modules, mname -> {
+			md = lookupTree(program.modules, mname);
+			eitherFn(md, \module : FiModule -> {
+
+				unions = fold(module.unions, acc_modules, \acc_unions, union : FiTypeUnion ->
+					Cons(fiProcessCppUnion(cfg, program, union.name, union), acc_unions)
+				);
+				
+				fold(fiGetStructsOrder(program, module), unions, \acc_structs, sn -> {
+					eitherFn(lookupTree(program.names.structs, sn),
+						\struct : FiTypeStruct -> {
+							Cons(fiProcessCppStruct(cfg, program, sn, struct), acc_structs)
+						},
+						\ -> {
+							fcPrintln("Something went wrong! Cannot find struct " + sn);
+							acc_structs
+						}
+					)
+				});
+
+			}, \ -> acc_modules);
+		});
+		
+		Cons(fiCppSingletonsSection(program), res)
+	}
+	
+	structsAndUnions;
+}
+
+fiGetStructsOrder(program : FiProgram, module : FiModule) {
+	moduleStructNames = buildSet(map(module.structs, \str -> str.name));
+	getDependencies = \s -> {
+		eitherMap(lookupTree(program.names.structs, s), \struct -> {
+			structs1 = fold(struct.args, makeSet(), \acc, arg : FiStructArg -> {
+				fiGetTypeUsedStructs(program, arg.type, acc)
+			});
+			structs2 = filterSet(structs1, \sn -> containsSet(moduleStructNames, sn));
+			set2array(structs2)
+		}, [])
+	}
+	init : Pair<Set<string>, List<string>> = Pair(makeSet(), makeList());
+	order = fold(module.structs, init, \acc, struct -> {
+		fiGetStructsOrderAdd(struct.name, acc.first, acc.second, getDependencies)
+	}).second;
+	list2array(order)
+}
+
+fiGetTypeUsedStructs(program : FiProgram, type : FiType, s0 : Set<string>) -> Set<string> {
+	// TODO: partial implementation. It might need to be extended
+	switch (type) {
+		FiTypeName(n, params): {
+			s1 = if (fiIsStructName(program, n)) insertSet(s0, n) else s0;
+			fold(params, s1, \acc, param -> {
+				fiGetTypeUsedStructs(program, param, acc)
+			})
+		}
+		FiTypeArray(t) : fiGetTypeUsedStructs(program, t, s0);
+		default: s0;
+	}
+}
+
+fiGetStructsOrderAdd(
+	struct : string, 
+	visited : Set<string>, 
+	order : List<string>, 
+	getDependencies : (string) -> [string]
+) -> Pair<Set<string>, List<string>> {
+	if (containsSet(visited, struct)) Pair(visited, order)
+	else {
+		p = fold(getDependencies(struct), Pair(insertSet(visited, struct), order), \acc, s -> {
+			fiGetStructsOrderAdd(s, acc.first, acc.second, getDependencies)
+		});
+		Pair(p.first, Cons(struct, p.second))
+	}
+}
+
+fiCollectCppConstructors(cfg, program, init) {
+	fold(program.traversal, Cons("\n", init), \acc, mname -> {
+		eitherMap(lookupTree(program.modules, mname), \module -> {
+			fold(module.unions, acc, \acc2, union : FiTypeUnion -> {
+				uname = fiCppRenameKeyword(cfg, union.name, false);
+				utype = fiType2CppType2(cfg, program, union);
+				tl = fiCppUnionTemplateLine(cfg, program, union);
+				tl2 = if (tl != "") strReplace(tl, "\n", "") + "\n" else "";
+				methods1 = fold(fiUnion2structs(program, union), acc2, \acc3, struct : FiTypeStruct -> {
+					structType = fiType2CppType2(cfg, program, struct);
+					typars = fiTypePar2Cpp(cfg, program, union.typeparameters);
+					Cons(
+						fiCppUnionMethodDefinitions(uname, structType, struct.name, typars, struct.typars, tl2)
+						+ "\n",
+					acc3)
+				});
+				
+				methods2 = fold(uniq(fiUnion2unions(program, union)), methods1, \acc3, u -> {
+					uType = fiType2CppType2(cfg, program, u);
+					Cons(fiCppUnionMethodDefinitions2(uname, u, uType), acc3)
+				});
+				
+				eqOperator = fiCppUnionEqualityOperator(cfg, program, utype, union, tl2);
+				
+				getters = fiCppUnionFieldGetters(cfg, program, utype, union, false, tl2);
+				
+				Cons(getters + eqOperator, methods2)
+			})
+		}, acc)
+	});
+	
+}
+
+fiCppUnionEqualityOperator(cfg : FcCppConfig, program : FiProgram, utype : string, union : FiTypeUnion, tl2 : string) {
+	structs = fiUnion2structs(program, union);
+	if (structs == []) "" else 
+	tl2 
+	+ formatString("inline bool %1::operator == (const %1& oth) const {\n", [utype])
+		+ "\tif (id_() != oth.id_()) return false;\n"
+		+ "\tswitch (id_()) {\n"
+		+ fold(structs, "", \acc3, struct : FiTypeStruct -> {
+			acc3 + formatString(
+				"\t\tcase flow::types::%1:\n"
+				+ "\t\t\treturn to%1() == oth.to%1();\n", 
+			[struct.name])
+		})
+		+ "\t\tdefault:\n\t\t\tFLOW_UNREACHABLE();\n\t}\n}\n\n"
+	// + tl2 
+	// + formatString("flow::string %1::toString() const {\n", [utype])
+		// + "\tswitch (id_()) {\n"
+		// + fold(structs, "", \acc3, struct : FiTypeStruct -> {
+			// acc3 + formatString(
+				// "\t\tcase flow::types::%1:\n"
+				// + "\t\t\treturn ::toString(to%1());\n", 
+			// [struct.name])
+		// })
+		// + "\t\tdefault:\n\t\t\tFLOW_UNREACHABLE();\n\t}\n}\n\n"
+	+ tl2
+	+ formatString("inline bool %1::operator < (const %1& oth) const {\n", [utype])
+	+ "\tif (id_() != oth.id_()) return id_() < oth.id_(); else {\n"
+	+ "\t\tswitch (id_()) {\n"
+	+ strGlue(map(structs, \struct : FiTypeStruct -> {
+		formatString("\t\t\tcase flow::types::%1:\treturn *to%1() < *oth.to%1();\n", [struct.name]) 
+	}), "")
+	+ "\t\t\tdefault: FLOW_UNREACHABLE();\n"
+	+ "\t\t}\n"
+	+ "\t}\n"
+	+ "}\n"
+}
+
+fiEscapeStringCpp(s) {
+	// We use Cons() concatenation instead of string concatenation,
+	// because structures creation and list2string() call is
+	// much cheaper than usual string concatenation.
+	f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+		Cons(if (code == 0x22) "\\\""
+			else if (code == 0x0a) "\\n"
+			else if (code == 0x0d) "\\r"
+			else if (code == 0x5c) "\\\\"
+			else fromCharCode(code), acc)
+	});
+	list2string(Cons("\"", f));
+}
+
+fiAddCppRuntime2(cfg: FcCppConfig, program: FiProgram, init: List<string>) {
+	Cons(
+		"\n#inc" + "lude \"tools/flowc/backends/cpp/runtime2.hpp\"\n\n", 
+	init);
+}
+
+fiAddCppRegisterStructCreators(cfg: FcCppConfig, program: FiProgram, init: List<string>) {
+	f = \sname -> {
+		"\t\tstruct_creators[flow::string(L\"" + sname + "\")] = [] (const flow::array<flow::flow_t>& params) {\n"
+		+ "\t\t\treturn " + sname + "::create(params).ref_;\n"
+		"\t\t};\n"
+	}
+	l0 = foldTree(program.names.structs, init, \sname, struct, acc -> {
+		Cons(fiCppStructCreator(program, sname, struct), acc)
+	});
+	l1 = Cons(
+		"namespace flow {\n\n"
+		+ "\tvoid register_struct_creators() {\n",
+		l0
+	);
+	l2 = foldTree(program.names.structs, l1, \sname, struct, acc -> {
+		if (struct.typars == [] && fiCppIsStructCreatorAvailable(struct)) Cons(f(sname), acc)
+		else acc
+	});
+	l3 = Cons(
+		"\t}\n\n} // namespace flow\n",
+		l2
+	);
+	l3
+}
+
+fiCppAddStrings(strings : Tree<string, int>, init: List<string>) {
+	init2 = Cons("namespace flow { namespace strs {\n", init);
+	Cons("} }\n", foldTree(strings, init2, \s, id, acc -> {
+		Cons("\tconst flow::string s" + i2s(id) + "(L" + fiEscapeStringCpp(s) + ", " + i2s(strlen(s)) + ");\n", acc)
+	}))
+}
+
+fiIsPolymorphicType(type: FiType) {
+	rec = \t -> fiIsPolymorphicType(t);
+	switch (type) {
+		FiTypeArray(t)               : rec(t);
+		FiTypeFunction(args, rt)     : rec(rt) || exists(args, \a -> rec(a.type));
+		FiTypeRef(t)                 : rec(t);
+		FiTypeParameter(n)           : true;
+		FiTypeBool()                 : false;
+		FiTypeInt()                  : false;
+		FiTypeDouble()               : false;
+		FiTypeString()               : false;
+		FiTypeFlow()                 : false;
+		FiTypeVoid()                 : false;
+		FiTypeNative()               : false;
+		FiTypeName(__, params)       : exists(params, \p -> rec(p));
+	}
+}
+
+fiTypeContainsFunction(type: FiType) {
+	rec = \t -> fiTypeContainsFunction(t);
+	switch (type) {
+		FiTypeArray(t)               : rec(t);
+		FiTypeFunction(args, rt)     : true;
+		FiTypeRef(t)                 : rec(t);
+		FiTypeParameter(n)           : false;
+		FiTypeBool()                 : false;
+		FiTypeInt()                  : false;
+		FiTypeDouble()               : false;
+		FiTypeString()               : false;
+		FiTypeFlow()                 : false;
+		FiTypeVoid()                 : false;
+		FiTypeNative()               : false;
+		FiTypeName(__, params)       : exists(params, \p -> rec(p));
+	}
+}
+
+fiIsInstanceOfPolymorphicType(type: FiType) {
+	rec = \t -> fiIsInstanceOfPolymorphicType(t);
+	switch (type) {
+		FiTypeArray(t)               : rec(t);
+		FiTypeFunction(args, rt)     : rec(rt) || exists(args, \a -> rec(a.type));
+		FiTypeRef(t)                 : rec(t);
+		FiTypeParameter(n)           : true;
+		FiTypeBool()                 : false;
+		FiTypeInt()                  : false;
+		FiTypeDouble()               : false;
+		FiTypeString()               : false;
+		FiTypeFlow()                 : false;
+		FiTypeVoid()                 : false;
+		FiTypeNative()               : false;
+		FiTypeName(__, params)       : length(params) > 0;
+	}
+}
+
+fiCppCollectStrings(decls : [Pair<string, [FiDeclaration]>]) {
+	strings : Set<string> = fold(decls, makeSet(), \acc, pair -> {
+		fold(pair.second, acc, \acc2, d : FiDeclaration -> {
+			switch (d) {
+				FiFunctionDec(__, lambda, __, __, __): {
+					acc3 = ref acc2;
+					fiCppTravelExpr(lambda, \e -> {
+						switch (e) {
+							FiString(s, __): {
+								if (strlen(s) < 100) acc3 := insertSet(^acc3, s);
+							}
+							default: {}
+						}
+					});
+					^acc3;
+				}
+				default: acc2;
+			}
+		})
+	});
+	id = ref 0;
+	foldSet(strings, makeTree(), \acc, s -> {
+		id2 = ^id; 
+		id := ^id + 1;
+		setTree(acc, s, id2)
+	})
+}
+
+fiCppTravelExpr(expr : FiExp, fn : (FiExp) -> void) {
+	rec = \e -> fiCppTravelExpr(e, fn);
+	fn(expr);
+	switch (expr) {
+		FiLambda(__, body, __, __):    { rec(body); }
+		FiCall(f, args, __, __):       { rec(f); iter(args, \a -> rec(a)); }
+		FiVar(x, __, __):              {}
+		FiLet(__, __, e1, e2, __, __): { rec(e1); rec(e2); }
+		FiIf(e1, e2, e3, __, __):      { rec(e1); rec(e2); rec(e3); }
+		FiSwitch(e, __, cs, __, __):   { rec(e); iter(cs, \c -> rec(c.body)); }
+		FiCast(e, __, __, __, __):     { rec(e); }
+		FiSeq(es, __, __):             { iter(es, \e -> rec(e)); }
+		FiCallPrim(__, es, __, __):    { iter(es, \e -> rec(e)); }
+		FiString(__, __):              {}
+		FiBool(__, __):                {}
+		FiDouble(__, __):              {}
+		FiVoid(__):                    {}
+		FiInt(__, __):                 {}
+		FiRequire(__, e, __, __):      { rec(e); }
+		FiUnsafe(__, fallback, __, __): { rec(fallback); }
+	}
+}
+
+fiIsUnion(program : FiProgram, tp : FiType) {
+	switch (tp) {
+		FiTypeName(n, __): containsKeyTree(program.names.unions, n);
+		default: false;
+	}
+}
+
+fiIsStruct(program : FiProgram, tp : FiType) {
+	isSome(fiGetStructName(program, tp));
+}
+
+fiGetStructName(program : FiProgram, tp : FiType) -> Maybe<string> {
+	switch (tp) {
+		FiTypeName(n, __): if (fiIsStructName(program, n)) Some(n) else None();
+		default: None();
+	}
+}
+
+fiIsTypeParam(tp : FiType) {
+	switch (tp) {
+		FiTypeParameter(__): true;
+		default: false;
+	}
+}
+
+fiSubstituteTypars(type : FiType, typars : Tree<string, FiType>) {
+	rec = \t -> fiSubstituteTypars(t, typars);
+	if (typars == TreeEmpty()) type 
+	else {
+		switch (type) {
+			FiTypeArray(t)               : FiTypeArray(rec(t));
+			FiTypeFunction(args, rt)     : FiTypeFunction(map(args, \a -> FiFunArg(a.name, rec(a.type))), rec(rt));
+			FiTypeRef(t)                 : FiTypeRef(rec(t));
+			FiTypeName(n, params)        : FiTypeName(n, map(params, \t -> rec(t)));
+			FiTypeParameter(n)           : either(lookupTree(typars, n), type);
+			default						 : type;
+		}
+	}
+}

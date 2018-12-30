@@ -1,0 +1,469 @@
+import ui/messagebox;
+import wigi/lock;
+import wigi/selection;
+import wigi/events;
+import wigi/wigi_expr;
+import geometry;
+import wigi/wigify_types;
+import wigi/toolbar_types;
+
+export {
+	// The state of an editor
+	WigiEditorState : (
+		// The document. Notice that stories can change without this behaviour changing
+		document : DynamicBehaviour<WigiElement>,
+		// Where is the cursor?
+		cursor : DynamicBehaviour<[int]>,
+		// Current selection
+		selection : DynamicBehaviour<WigiSelection>,
+		// Where did the selection start?
+		selectionAnchor : DynamicBehaviour<Maybe<[int]>>,
+
+		// A list of documents so we can implement undo and redo. TODO: We should probably have a position and a document here instead
+		// to make this more efficient
+		undoStack : DynamicBehaviour<List<WigiUndoType>>,
+		redoStack : DynamicBehaviour<List<WigiUndoType>>,
+		prevEvent : ref WigiEvent, // we also should track the previous event in the state  because there are could be several active editors
+
+		// Whatever we have on the clipboard is placed here
+		clipboard : DynamicBehaviour<Maybe<WigiElement>>,
+
+		// How big is the view?
+		viewSize : DynamicBehaviour<WidthHeight>,
+
+		// What are the coordinates of the visible view? I.e. position within a scrollable
+		viewX : DynamicBehaviour<double>,
+		viewY : DynamicBehaviour<double>,
+
+		// When we are moving from line to line, we often change the x coordinate slightly, and those errors accumulate when
+		// moving up/down a lot. Therefore, we remember what x coordinate we ideally would like to have, so that we can avoid this
+		// and in particular move correctly past the last lines in paragraphs, which are often very short.
+		cursorWantThisX : DynamicBehaviour<double>,
+
+		// Global coordinates of cursor, updated by paragraph view
+		cursorCoord : DynamicBehaviour<Point>,
+
+		// How high is the cursor currently? When we do cell navigation, this is -1.0
+		cursorHeight : DynamicBehaviour<double>,
+
+		// Is shift held on the keyboard?
+		shiftHeld : DynamicBehaviour<bool>,
+		// Are we currently selecting with the mouse?
+		mouseSelecting : DynamicBehaviour<bool>,
+
+		// The view of the top element
+		editorView : DynamicBehaviour<WigiView>,
+
+		// The current font metrics
+		fontSize : DynamicBehaviour<double>,
+		fontColor : DynamicBehaviour<int>,
+		fontFamily : DynamicBehaviour<string>,
+		fillOpacity : DynamicBehaviour<double>,
+		backgroundColor : DynamicBehaviour<int>,
+		baselineShift : DynamicBehaviour<double>,
+		interlineSpacing : DynamicBehaviour<double>,
+		paragraphSpacing : DynamicBehaviour<double>,
+		underlining : DynamicBehaviour<bool>,
+		doubleUnderlining : DynamicBehaviour<bool>,
+		language : DynamicBehaviour<string>,
+		letterSpacing : DynamicBehaviour<double>,
+
+		// The current Wigi Paragraph Style name
+		wpsName : DynamicBehaviour<WigiStylesName>,
+
+		// TODO: Not sure if these are worthy to keep
+		bold : DynamicBehaviour<bool>,
+		italics : DynamicBehaviour<bool>,
+
+		// Used for naming elements
+		wigiName : DynamicBehaviour<string>,
+
+		engine : WigiEngine,
+		// Last opened or saved filename
+		lastFilename : ref string,
+		// Modified flag
+		modified : ref bool,
+		hasKeyboardFocus: DynamicBehaviour<bool>,
+		focusId: ref int,
+		zorder: Behaviour<int>,
+		// zoom factor for font sizes and blocks
+		zoom: DynamicBehaviour<double>,
+		//default styles
+		defaultStyles : [WigiStyles],
+		// clipboard buffer
+		clipboardBuffer : ClipboardBuffer,
+
+		// If you need a live view of the document, this can be used to get that. Assign a Some(make(doc)) and it will be updated
+		liveSerializedDocument : ref Maybe<DynamicBehaviour<string>>,
+
+		showStructures: ShowStructures,
+
+		editMode: DynamicBehaviour<bool>,	// Whether the editor is in a usual mode (==true) or rectangular selection mode. Used for editing formulas in cells.
+		formulaEditor: DynamicBehaviour<Maybe<FormulaEditor>>,	// Information for inline editing of formula cells, see case
+		lock : LockControl,
+		noAutoPlay : ref bool,
+		disposeDocument : ref [() -> void],
+		toolbarStyle : ref [WigiToolbarStyle],
+
+		// To turn off/on paragraph redrawing at the "heaviest" places
+		// should be used like following:
+		// updateTropicArray := false;
+		// ...do something heavy...
+		// updateTropicArray := true;
+		// updateDirtyFormArrays(getValue(state.document));
+		updateTropicArray : DynamicBehaviour<bool>,
+		blockAlignControls : DynamicBehaviour<bool>, //
+
+		wigiEditorStyle : [WigiEditorStyle],
+		previewSize : DynamicBehaviour<WidthHeight>,
+		// used for make text typing buffered to reduce time lag
+		insertTextBuffer : ref string,
+		// used to disable UI updates for long operations. if true then UI updates
+		shouldUpdateUI : DynamicBehaviour<bool>,
+		grabFocus : bool,
+		highlightUnfocusedSelection : bool
+	);
+
+	FormulaEditor: (
+		path: [int],	// Path of the element that contains the formula (WigiText)
+		handleEvent: (event: WigiEvent) -> bool
+	);
+
+	// This structure allows children to learn about their parents
+	ParentView(
+		// What is the path to the child?
+		getPath : () -> [int],
+		// Translate this local coordinate to a parent coordinate
+		getParentCoordinate : (p : Point) -> Point,
+		// Translate this local coordinate to a global coordinate
+		local2globalCoordinate : (p : Point) -> Point,
+		// Place the cursor at this point in the parent coordinate system
+		setParentCursor : (p : Point, selecting : bool, isMouseEvent : bool) -> bool,
+		// get parent's paragraph & text styles
+		getStyle : () -> WigiParentStyle,
+		// get TransformMatrix to calculate relative TM for a child
+		getTM : ref () -> TransformMatrix
+	);
+
+	// This structure allows parents to learn about their children
+	WigiView(
+		// The view of the element
+		form : () -> Form,
+		// How big is the element view?
+		getSize : () -> WidthHeight,
+		// Place the cursor at this local coordinate
+		setCursor : (p : Point, selecting : bool, isMouseEvent : bool) -> bool,
+		// Get the global coordinate for this *relative* path
+		getGlobalCoordinate : (p : [int]) -> Point,
+		// Get the view of this *relative* path
+		getWigiView : (p : [int], def : WigiView) -> WigiView,
+		// Handle this event
+		handleEvent : (event : WigiEvent) -> bool,
+	);
+
+	// here might also be WigiEvent if we need to replay events on undo
+	WigiUndoType ::= WigiStateSnapshot;
+
+		WigiStateSnapshot(
+			document : WigiElement,
+			cursor : [int],
+			selection : WigiSelection,
+			selectionAnchor : [int]
+		);
+
+	ClipboardBuffer : (content : DynamicBehaviour<string>, mode : ref BufferMode, state : DynamicBehaviour<[TextInputState]>);
+		BufferMode ::= Pasting, Copying, Waiting;
+			Pasting ();
+			Copying ();
+			Waiting ();
+
+	LockControl:(
+		status : LockStatus,
+		current : DynamicBehaviour<WigiLockType>, // lock type of the element under the cursor
+		highlight : DynamicBehaviour<bool>, // highlight locked elements
+		preview : DynamicBehaviour<bool>, //
+	);
+
+	LockStatus ::= LockIgnored, LockEditable, LockedContent;
+		LockIgnored();
+		LockEditable();
+		LockedContent();
+
+
+	// To construct an editor, first make a state.
+	makeWigiEditorState(document : WigiElement, defaultStyles: Maybe<[WigiStyles]>, style : [WigiEditorStyle]) -> WigiEditorState;
+
+		WigiEditorStyle ::= SetLockStatus, SetNamespace, WigifyEngine, CustomKeyHandler, WigiEditorNoScroll,
+							WigiEditorEnableFileDrop, WigiEditorCustomDialogs, WigiEditorSetCursorDeffered,
+							WigiEditorPinyin, WigiEditorZorder, WigiEngineIsShared, WigiEditorGrabFocus, WigiHighlightUnfocusedSelection,
+							WigiEditorCustomPaste, WigiEditorCustomCopy, WigiEditorFilePastingHandler,
+							WigiEditorAnnotationHover, WigiEditorAnnotationModeTrigger;
+
+			// This one if you need to work with locked content. LockStatus meaning:
+			// None - ignore any lockings in document, Some(true) - create/edit locked content,
+			// Some(false) - lock some features if the content is locked
+			SetLockStatus(status : Maybe<bool>);
+
+			// Define what scope names should be defined in
+			SetNamespace(scope : WigiScope);
+
+			// Use this style if you want to be able implement your own keys handling routine. Return "true" if key was processed
+			// this function used to handle keys from outside of editor itself. By default (if CustomKeyHandler style is not set) it does nothing
+			CustomKeyHandler(handler : (KeyEvent, WigiEditorState) -> bool);
+
+			// Create editor without Scrollable inside
+			WigiEditorNoScroll();
+
+			// if presented, then FileDrop listener enabled for wigiView
+			WigiEditorEnableFileDrop();
+
+			// if presented, will be used to show all support dialogs. Add new functions here if needed
+			WigiEditorCustomDialogs(
+				askStringInPopup : (caption: string, w: double, h: double, initialValue: string, checkValid: (string) -> bool, onOK: (string) -> void) -> void
+			);
+
+			// Add delay for setCursor to prevent scroll jumps
+			WigiEditorSetCursorDeffered();
+
+			// add TextInput field for targets that does not support Pinyin input natively (CPP, IE, FireFox,...)
+			WigiEditorPinyin(style : [WigiEditorPinyinStyle]);
+
+			// zorder of the editor
+			WigiEditorZorder(zorder : Behaviour<int>);
+
+			// grab keyboard focus when created
+			WigiEditorGrabFocus(grab : bool);
+
+			// in case wigi editor has no keyboard focus
+			// should current selection be highlighted in light grey color or not
+			WigiHighlightUnfocusedSelection(highlight : bool);
+
+		WigiEditorPinyinStyle ::= WigiEditorPinyinTitle;
+			WigiEditorPinyinTitle(title : string);
+
+			WigiEditorCustomPaste(
+				customPasteFn : (
+					wigiM : Maybe<WigiElement>,
+					wigiStr : string,
+					commonPasteFn : (Maybe<WigiElement>) -> void
+				) -> void
+			);
+
+			WigiEditorCustomCopy(
+				customCopyFn : (
+					element : WigiElement,
+					clipboardContent : string,
+					commonCopyFn : (WigiElement) -> void
+				) -> void
+			);
+
+			WigiEditorFilePastingHandler(
+				fn : (state : WigiEditorState, files : [native], onDone : () -> void) -> void
+			);
+
+			// Style to define what to do on hovering annotated text.
+			WigiEditorAnnotationHover(makeHoverFn : (annotationId : int, posFn : () -> Point) -> (() -> MouseInfo) -> bool);
+
+			// Possibility to on/off annotation mode (user can only move cursor, annotate, copy and select text) in editor
+			WigiEditorAnnotationModeTrigger(isAnnotationModeB : Behaviour<bool>);
+
+	// This resets the document, for use when opening a new document
+	setWigiEditorDocument(state : WigiEditorState, document : WigiElement) -> void;
+
+	state2string(state : WigiEditorState) -> string;
+
+	getDefaultWigiStyles() -> [WigiStyles];
+
+	isLockEditAllowed(state : WigiEditorState) -> bool;
+	checkLocksInWigiElement(lockStatus : LockStatus, e : WigiElement) -> WigiElement;
+
+	// extracts passed WigiEditorCustomDialogs or provide one with flow-level defaults
+	getWigiEditorCustomDialogs(style : [WigiEditorStyle]) -> WigiEditorCustomDialogs;
+
+	// sometimes, change in the document cosists of several steps and it is not feasible to move cursor and scrolls in the middle
+	// for example, see flow/lib/wigi/controller.flow, wigiNewParagraph function, case WigiParagraph
+	executeWigiEditorChange(state : WigiEditorState, change : () -> ?, onDone : () -> void, deferredEnd : bool) -> ?;
+	// Almost the same as previous but for async actions during change
+	executeWigiEditorAsyncChange(state : WigiEditorState, change : (fulfill : () -> void) -> ?) -> ?;
+
+	defaultWigiStylesName  = WigiStylesName("WPS-Default");
+
+	updateLiveSerializedDocument(state : WigiEditorState, newDoc: WigiElement) -> void;
+
+}
+
+makeWigiEditorState(doc : WigiElement, defaultWigiStyles: Maybe<[WigiStyles]>, style : [WigiEditorStyle]) -> WigiEditorState {
+	lockStatus = extractStruct(style, SetLockStatus(None())).status;
+
+	defaultStyles = either(defaultWigiStyles, getDefaultWigiStyles());
+	defaultSpellCheckLanguage = extractStruct(getDefaultDocumentStyle(defaultStyles).textStyle, Language("none")).name;
+	defaultFontFamily = extractStruct(
+		getDefaultDocumentStyle(defaultStyles).textStyle,
+		globalSystemDefaultFontFamily
+	).name;
+	defaultFillOpacity = extractStruct(
+		getDefaultDocumentStyle(defaultStyles).textStyle,
+		globalSystemDefaultFillOpacity
+	).opacity;
+	defaultParagraphSpacing = switch (doc : WigiElement) {
+		WigiStory(__, __, wigiStoryStyle): {
+			extractStruct(wigiStoryStyle, dwps).d;
+		}
+		default: dwps.d;
+	}
+
+	lockControl = LockControl(
+		eitherMap(lockStatus, \allow -> if (allow) LockEditable() else LockedContent(), LockIgnored()),//status
+		make(WigiNoLock()), //current lock
+		make(true), // highlighting
+		make(false), // preview
+	);
+
+	engine = extractStruct(style, WigifyEngine(makeEvaluationEngine(Some(defaultStyles), None(), None()))).engine;
+	zorder = extractStruct(style, WigiEditorZorder(const(-1))).zorder;
+	grabFocus = extractStruct(style, WigiEditorGrabFocus(true)).grab;
+	highlightUnfocusedSelection = extractStruct(style, WigiHighlightUnfocusedSelection(false)).highlight;
+
+	document = checkLocksInWigiElement(lockControl.status, doc);
+
+	WigiEditorState(
+		make(document), // normalize moved to wigi_wiki directly
+		make(getStartPositionOfDocument(document)),
+		make(wigiClearSelection(document)),
+		make(None()),
+		make(makeList()),
+		make(makeList()),
+		ref WigiNone(),
+		make(None()),
+		makeWH(),
+		make(0.0),
+		make(0.0),
+
+		make(-1.0),
+		make(Point(0.0, 0.0)),	// cursor coords
+		make(0.0),
+		make(false),
+		make(false),
+
+		make(WigiView(\ -> Empty(), \ -> zeroWH, \p, s, m -> false, \p -> Point(0.0, 0.0), \path, p -> p, \e -> false)),
+
+		make(14.0), // font size
+		make(0), // font color
+		make(defaultFontFamily), // font family
+		make(defaultFillOpacity), // fill opacity
+		make(0), // background color
+		make(0.0), // baseline shift
+		make(dwis.d), // interline spacing "1.5"
+		make(defaultParagraphSpacing),
+		make(false),
+		make(false),
+		make(defaultSpellCheckLanguage),
+		make(0.0), // letter spacing
+
+		make(defaultWigiStylesName), // wpsName
+
+		make(false), // bold
+		make(false), // italics
+
+		make(""), // wigiName
+
+		engine,
+		ref "", // lastFilename
+		ref false, // modified
+		make(false),	// has keyboard focus
+		ref -1,
+		zorder,
+		make(1.0), // zoom
+		// maybe extra styles should completely substitute basic default styles
+		defaultStyles,
+		ClipboardBuffer(make(""), ref Waiting(), make ([])),
+		ref None(),
+		ShowStructures(make(false), make(true), make(true), make(true), make(true), make(true)),
+		make(true),	// edit mode
+		make(None()),
+		lockControl,
+		ref false,
+		ref [],
+		ref [],
+		make(true),
+		make(false),
+		style,
+		make(WidthHeight(1024.0, 768.0)),
+		ref "",
+		make(true),
+		grabFocus,
+		highlightUnfocusedSelection
+	);
+}
+
+setWigiEditorDocument(state : WigiEditorState, document : WigiElement) -> void {
+	next(state.selectionAnchor, None());
+	next(state.undoStack, makeList());
+	next(state.redoStack, makeList());
+	next(state.cursor, []);
+	next(state.selection, WigiSelection([], []));
+
+	next(state.document, checkLocksInWigiElement(state.lock.status, document));
+	state.modified := false;
+	next(state.cursor, getStartPositionOfDocument(document));
+	next(state.selection, wigiClearSelection(document));
+}
+
+state2string(state : WigiEditorState) -> string {
+	"Cursor: " + elementPosition2string(getValue(state.document), getValue(state.cursor))
+	+ ". Selection: " + selection2string(getValue(state.document), getValue(state.selection))
+	+ ". Anchor: " + eitherMap(getValue(state.selectionAnchor), \sa -> elementPosition2string(getValue(state.document), sa), "None")
+	;
+}
+
+checkLocksInWigiElement(lockStatus : LockStatus, e : WigiElement) -> WigiElement {
+	if (lockStatus == LockIgnored() && !isUnlockedWigiElement(e)) unlockWigiElement(e) else e;
+}
+
+isLockEditAllowed(state : WigiEditorState) -> bool{
+	state.lock.status == LockIgnored()
+	|| state.lock.status == LockEditable() && !getValue(state.lock.preview)
+}
+
+// default style dictionary for WigiDocument
+getDefaultWigiStyles() -> [WigiStyles] {
+	[
+		WigiStyles("WigiDocument", [], [Language("en")]),
+		WigiStyles("WigiFraction", [CenterAlign(), TightWidth()], []),
+		WigiStyles("WigiComap", [TightWidth()], []),
+	]
+}
+
+getWigiEditorCustomDialogs(style : [WigiEditorStyle]) -> WigiEditorCustomDialogs {
+	extractStruct(style, WigiEditorCustomDialogs(askStringInPopup))
+}
+
+executeWigiEditorChange(state : WigiEditorState, change : () -> ?, onDone : () -> void, deferredEnd : bool) -> ? {
+	nextDistinct(state.shouldUpdateUI, false);
+
+	next(state.updateTropicArray, false);
+	changeResult = change();
+	next(state.updateTropicArray, true);
+
+	nextDistinct(state.shouldUpdateUI, true);
+
+	if (deferredEnd) deferUntilNextFrameRendered(onDone) else onDone();
+
+	changeResult
+}
+
+executeWigiEditorAsyncChange(state : WigiEditorState, change : (fulfill : () -> void) -> ?) -> ? {
+	nextDistinct(state.shouldUpdateUI, false);
+	next(state.updateTropicArray, false);
+	change(\ -> {
+		nextDistinct(state.shouldUpdateUI, true);
+		nextDistinct(state.updateTropicArray, true);
+	});
+}
+
+updateLiveSerializedDocument(state : WigiEditorState, newDoc: WigiElement) -> void {
+	maybeApply(
+				^(state.liveSerializedDocument),
+				\editorLiveTextB -> nextDistinct(editorLiveTextB, wigi2string(newDoc))
+	);
+}

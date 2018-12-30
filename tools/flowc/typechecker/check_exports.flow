@@ -1,0 +1,162 @@
+import tools/flowc/manipulation/freevars;
+import tools/flowc/fctypeenv;
+import tools/flowc/flowc_helpers;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	checkExports(env : FcTypeEnv, module : FiModule, onError : (string, int) -> void) -> void;
+}
+
+checkExports(env : FcTypeEnv, module : FiModule, onError : (string, int) -> void) -> void {
+	locals0 = buildSet(module.initOrder);
+	locals = fold(module.natives, locals0, \acc, n -> insertSet(acc, n.name));
+	localTypenames0 = fold(module.structs, makeSet(), \acc, s -> insertSet(acc, s.name));
+	localTypenames = fold(module.unions, localTypenames0, \acc, u -> insertSet(acc, u.name));
+	acc = ExportAcc(
+		env,
+		env.program.exported,
+		localTypenames,
+		fold(module.structs,
+			fold(module.unions,
+				makeTree(),
+				\acc : Tree<string, FiStructOrUnion>, union -> setTree(acc, union.name, union)
+			),
+			\acc, struct -> setTree(acc, struct.name, struct)
+		),
+		onError,
+		module.fileinfo.flowfile
+	);
+	iter(module.functions, \f -> fiExpCheckExports(acc, locals, f.lambda));
+	iter(module.globalVars, \g -> fiExpCheckExports(acc, locals, g.value));
+}
+
+ExportAcc(
+	env : FcTypeEnv,
+	exports : Set<string>,
+	localTypeNames : Set<string>,
+	moduleStructsUnions : Tree<string, FiStructOrUnion>,
+	onError : (string, int) -> void,
+	moduleName : string
+);
+
+fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
+	// fiExpCheckType(eacc, fiExpType(expr), expr.start);
+	fold_exports = \es -> iter(es, \e -> fiExpCheckExports(eacc, bound, e));
+	switch (expr) {
+		FiLambda(args, e, __, __):    fiExpCheckExports(eacc, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), e);
+		FiCall(f, es, __, __): {
+			fiExpCheckExports(eacc, bound, f);
+        	fold_exports(es);
+		}
+		FiVar(x, t, i): {
+			if (containsSet(bound, x) || containsSet(eacc.exports, x)) {
+			} else {
+				eacc.onError(x + " : " + prettyFiType(dummyPretty, t, makeSet()) + "; is not exported", i);
+			}
+		}
+		FiLet(x, __, e1, e2, __, __): {
+			fiExpCheckExports(eacc, bound, e1);
+			fiExpCheckExports(eacc, insertSet(bound, x), e2);
+		}
+		FiIf(e1, e2, e3, __, __):     fold_exports([e1, e2, e3]);
+		FiSwitch(e, __, cs, __, __):{
+			fiExpCheckExports(eacc, bound, e);
+			iter(cs, \c -> {
+				if (c.struct == "default" || containsSet(eacc.localTypeNames, c.struct) || containsSet(eacc.exports, c.struct)) {}
+				else {
+					eacc.onError("Can not deconstruct " + c.struct + " since that struct is not exported", expr.start);
+				}
+				fiExpCheckExports(eacc, bound, c.body)
+			});
+		}
+		FiCast(e, __, __, __, __):    fiExpCheckExports(eacc, bound, e);
+		FiSeq(es, __, __):            fold_exports(es);
+		FiCallPrim(o, es, ty, start): {
+			switch (o) {
+				FcStructPrim(name): {
+					if (containsSet(eacc.localTypeNames, name) || containsSet(eacc.exports, name)) {}
+					else {
+						eacc.onError("Can not construct " + name + " : " + prettyFiType(dummyPretty, fiExpType(expr), makeSet()) + " since it is not exported", expr.start);
+					}
+				}
+				FcFieldPrim(fn): {
+					switch (ty) {
+						FiTypeName(tn, __): {
+							if (containsSet(eacc.localTypeNames, tn) || containsSet(eacc.exports, tn)) {
+								// Check, that the given field name exists
+								switch (fiExpType(es[0])) {
+									FiTypeName(type_name, __): {
+										fieldExists = ensureFieldExists(
+											eacc.env.program.acc.names,
+											eacc.moduleStructsUnions,
+											fn, type_name, \__ -> {},
+											eacc.moduleName, start
+										);
+										if (!fieldExists) {
+											eacc.onError("Type name " + type_name + " don't have field " + fn, expr.start);
+										} else { }
+									}
+									FiTypeFlow(): {}  // We can't do better, if type is flow
+									default: {}       // This branch must never occur
+								}
+							}
+							else {
+								eacc.onError("Can not do " + "." + fn + " since struct " + tn + " is not exported", expr.start);
+							}
+						}
+						default: {}
+					}
+				}
+				FcSetMutablePrim(fn): {
+					switch (ty) {
+						FiTypeName(n, __): {
+							if (containsSet(eacc.localTypeNames, n) || containsSet(eacc.exports, n)) {}
+							else {
+								eacc.onError("Can not set " + "." + fn + " since struct " + n + " is not exported", expr.start);
+							}
+						}
+						default: {}
+					}
+				}
+				default: {};
+			}
+			fold_exports(es);
+		} 
+		FiString(__, __):             {}; // here I would want to match simply on union FcConst
+		FiBool(__, __):               {};
+		FiDouble(__, __):             {};
+		FiVoid(__):                   {};
+		FiInt(__, __):                {};
+        FiRequire(__, e, __, __):     fiExpCheckExports(eacc, bound, e);
+        FiUnsafe(__, fb, __, __):     fiExpCheckExports(eacc, bound, fb);
+	}
+}
+
+fiExpCheckType(eacc : ExportAcc, type : FiType, start : int) -> void {
+	switch (type) {
+		FiTypeName(name, typeparameters): {
+			iter(typeparameters, \a -> fiExpCheckType(eacc, a, start));
+			if (containsSet(eacc.localTypeNames, name) || containsSet(eacc.exports, name)) {}
+			else {
+				// TODO: We have to refine this and have a list of mentioned names in exports
+				// which are OK to have as types, just not constructions
+				// eacc.onError(prettyFiType(dummyPretty, type, makeSet()) + " is not exported", start);
+			}
+		}
+		FiTypeVoid(): {}
+		FiTypeBool(): {}
+		FiTypeInt(): {}
+		FiTypeDouble(): {}
+		FiTypeString(): {}
+		FiTypeFlow(): {}
+		FiTypeNative(): {}
+		FiTypeFunction(args, returnType): {
+			iter(args, \a -> fiExpCheckType(eacc, a.type, start));
+			fiExpCheckType(eacc, returnType, start);
+		}
+		FiTypeArray(t): fiExpCheckType(eacc, t, start);
+		FiTypeRef(t): fiExpCheckType(eacc, t, start);
+		FiTypeParameter(n): {}
+	}
+}

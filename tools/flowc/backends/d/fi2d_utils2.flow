@@ -1,0 +1,113 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fitype;
+import tools/flowc/backends/d/fi2d_defines;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fiCollectDStructs2(cfg : FiDConfig, program : FiProgram) -> string;
+	fiType2DType2(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+	fiType2DTypeDecl(cfg : FiDConfig, program : FiProgram, type : FiType) -> string;
+}
+
+fiType2DType2(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+	switch (type) {
+		FiTypeArray(t) :           "RuntimeType.rtARRAY";
+		FiTypeFunction(args, rt) : "RuntimeType.rtPARAMETER";
+		FiTypeRef(t) :             "RuntimeType.rtPARAMETER";
+		FiTypeParameter(n) :       "RuntimeType.rtPARAMETER";
+		FiTypeBool() :             "RuntimeType.rtBOOL";
+		FiTypeInt() :              "RuntimeType.rtINT";
+		FiTypeDouble() :           "RuntimeType.rtDOUBLE";
+		FiTypeString() :           "RuntimeType.rtSTRING";
+		FiTypeFlow() :             "RuntimeType.rtPARAMETER";
+		FiTypeVoid() :             "RuntimeType.rtVOID";
+		FiTypeNative() :           "RuntimeType.rtPARAMETER";
+		FiTypeName(name, params) : "RuntimeType.rtPARAMETER";
+	}
+}
+
+fiType2DTypeDecl(cfg : FiDConfig, program : FiProgram, type : FiType) -> string {
+	switch (type) {
+		/*
+		FiTypeFunction(args, rt, i) : {
+			fparams = strGlue(mapi(args, \ix, arg -> {
+				resolvedType = getResolvedFiType(program, arg.type);
+				varType = fiType2DTypeDecl(cfg, program, resolvedType);
+				varType + " " + (if (arg.name == "") "t" + i2s(ix) else fiDRenameKeyword(cfg, arg.name))
+			}), ", ");
+			fiType2DTypeDecl(cfg, program, rt) + " delegate(" + fparams + ")"
+		}
+		*/
+		FiTypeArray(t) :          "FlowArray";
+		FiTypeFunction(args, __): "FlowFunction" + i2s(length(args));
+		FiTypeRef(t) :            "FlowReference"; //fiType2DTypeDecl(cfg, program, t);
+		FiTypeParameter(n) :      "FlowObject /*typaram*/";
+		FiTypeBool() :            "FlowBool";
+		FiTypeInt() :             "FlowInteger";
+		FiTypeDouble() :          "FlowDouble";
+		FiTypeString() :          "FlowString";
+		FiTypeFlow() :            "FlowObject /*flow*/";
+		FiTypeVoid() :            "FlowVoid";
+		FiTypeNative() :          "FlowObject /*tynative*/";
+		FiTypeName(name, params) : name;
+	}
+}
+
+fiProcessDStruct2(cfg : FiDConfig, program : FiProgram, name : string, struct : FiTypeStruct, structId : int, init : string) -> string {
+
+	fieldNames = toString(map(struct.args, \e -> e.name));
+	fieldTypes = strGlue(map(struct.args, \e -> fiType2DType2(cfg, program, e.type)), ", ");
+	fieldDecls = strGlue(map(struct.args, \e -> fiDIndent + fiDIndent + fiType2DTypeDecl(cfg, program, e.type) + " " + fiDRenameKeyword(cfg, e.name) + ";\n"), "") +
+	(if (struct.args != []) "\n" else "");
+	fieldList =
+		if (struct.args == [])
+			"[]"
+		else
+			("[" + strGlue(map(struct.args, \e -> fiDRenameKeyword(cfg, e.name)), ", ") + "]");
+	fieldInits = (if (struct.args == []) "" else "\n") +
+	strGlue(mapi(struct.args, \i, e -> fiDIndent + fiDIndent + fiDIndent + fiDRenameKeyword(cfg, e.name) + " = val[" + i2s(i) + "];"), "\n") +
+	(if (struct.args != []) "\n" + fiDIndent + fiDIndent else "");
+	fieldListCtor = strGlue(map(struct.args, \e -> {fiType2DTypeDecl(cfg, program, e.type) + " a_" + fiDRenameKeyword(cfg, e.name)}), ", ");
+	fieldListInitsCtor = strGlue(map(struct.args, \e -> {fiDIndent + fiDIndent + fiDIndent + fiDRenameKeyword(cfg, e.name) + " = a_" + fiDRenameKeyword(cfg, e.name) + ";\n"}), "");
+	init + 
+	fiDIndent + "class " + name + " : Struct.FlowStruct {\n"+
+	fieldDecls +
+	fiDIndent + fiDIndent + "override public int getTypeId() {return " + i2s(structId) + ";};\n" + 
+	fiDIndent + fiDIndent + "override public string[] getFieldNames() {return " + fieldNames + ";};\n" + 
+	fiDIndent + fiDIndent + "override public RuntimeType[] getFieldTypes() {return [" + fieldTypes + "];};\n" + 
+	fiDIndent + fiDIndent + "override public string getTypeName() {return \"" + name + "\";};\n" +
+	fiDIndent + fiDIndent + "override public FlowObject[] getFields(){return " + fieldList + ";};\n" +
+	//fiDIndent + fiDIndent + "override public void setFields(FlowObject[] val){" + fieldInits + "};\n"+
+	fiDIndent + fiDIndent + "public this(){};\n" +
+	(if (struct.args == [])
+		""
+	else 
+		fiDIndent + fiDIndent + "public this(" + fieldListCtor + ") {\n"+
+		fieldListInitsCtor +
+		fiDIndent + fiDIndent + "};\n"
+	) +
+	fiDIndent +
+	"}\n\n"
+}
+
+fiCollectDStructs2(cfg : FiDConfig, program : FiProgram) -> string {
+	unions = if (program.names.unions == makeTree()) ""
+	else {
+		structId : ref int = ref 0;
+		uns = fold(program.traversal, "", \acc, mname -> {
+			md = lookupTree(program.modules, mname);
+			eitherFn(md, \module -> {
+				unions1  = fold(module.unions, acc, \acc1, union ->
+					acc1 + fiDIndent + "alias " + union.name + " = FlowObject;\n\n"
+				);
+				structs1 = fold(module.structs, unions1, \acc1, struct ->
+					fiProcessDStruct2(cfg, program, struct.name, struct, ^structId, acc1)
+				);
+				structId := ^structId + 1;
+				structs1;
+			}, \ -> acc);
+		});
+		uns;
+	}
+	"import Struct;\n" + unions
+}

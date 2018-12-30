@@ -1,0 +1,112 @@
+import material/material2tropic;
+import material/material_ui;
+import material/selectmarray;
+
+// An abstract tree rendering optimization structure
+TreeRenderer(
+	// Give a node, what are the children?
+	getChildren : (?) -> [?],
+	// Give a node, extract the data required to render the parent itself (without children)
+	node2Data : (?) -> ??, 
+	// Give the data extract, render a node (without children)
+	renderData : (??) -> Material,
+	// Given a set of children changing, render them
+	renderChildren : (DynamicBehaviour<[?]>, rec : (?) -> Material) -> Material,
+	// Given a rendering of a node, and the children, combine them
+	combine : (node : Material, children : Material) -> Material,
+);
+
+abstractRenderTree(tr : TreeRenderer, value : Behaviour<?>) -> Material {
+	children = make(tr.getChildren(getValue(value)));
+	MConstruct([
+			\ -> connectSelectDistinctu(value, children, tr.getChildren)
+		],
+		tr.combine(
+			// We only render the node itself when the direct data involved changes
+			MSelect(fselect(value, FLift(tr.node2Data)), tr.renderData),
+			// We render the children based on changes amongst themselves.
+			tr.renderChildren(children, \c -> {
+				abstractRenderTree(tr, const(c))
+			})
+		)
+	);
+}
+
+// A simpler, direct implementatino of the same
+renderTree(value : Behaviour<Node>) -> Material {
+	children = make(getValue(value).children);
+	MConstruct([
+			\ -> connectSelectDistinctu(value, children, \v -> v.children)
+		],
+		MLines([
+			MSelect(fselect(value, FLift(\v : Node -> v.name)), \n -> {
+				println("Rendering " + n);
+				MText(n, [])
+			}),
+			MBorder(8.0, 0.0, 0.0, 0.0, SelectMLines(children, \__, __, n -> {
+				renderTree(const(n))
+			}))
+		])
+	);
+}
+
+// An example tree structure
+Node(name : string, children : [Node]);
+
+// Randomly mutate the tree
+changeTree(n : Node) -> Node {
+	if (random() < 0.3) {
+		Node(
+			n.name + "1",
+			n.children
+		)
+	} else if (random() < 0.5 || n.children == []) {
+		Node(n.name,
+			arrayPush(n.children, Node("New" + i2s(length(n.children)), []))
+		);
+	} else if (random() < 0.2) {
+		c = round(random() * i2d(length(n.children) - 1));
+		Node(
+			n.name,
+			removeIndex(n.children, c)
+		);
+	} else {
+		c = round(random() * i2d(length(n.children) - 1));
+		Node(
+			n.name,
+			replace(
+				n.children,
+				c,
+				changeTree(n.children[c])
+			)
+		)
+	}
+}
+
+main() {
+	man = makeMaterialManager([]);
+
+	tree = make(Node("first", []));
+
+	// The abstract tree rendering
+	tr = TreeRenderer(
+		\n : Node -> n.children,
+		\n : Node -> n.name,
+		\n : string -> TText(n, [FontFamily("Roboto")]),
+		\c, rec -> SelectMLines(c, \__, __, v -> rec(v)),
+		\n, c -> MLines2(n, MPad(8.0, 0.0, c))
+	);
+
+	mrender(man, true, 
+		MLines([
+			MTextButton("CLICK", \ -> {
+				t = getValue(tree);
+				next(tree, changeTree(t));
+			}, [], []), 
+			MCols([
+				renderTree(tree),
+				abstractRenderTree(tr, tree)
+			])
+		])
+	);
+}

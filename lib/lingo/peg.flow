@@ -1,0 +1,384 @@
+// An implementation of PEG grammars with support for direct left recursion.
+
+// See http://rwmj.wordpress.com/2010/12/29/packrat-parser-with-left-recursion/
+// and http://www.vpri.org/pdf/tr2008003_experimenting.pdf
+
+// TODO: Warn if a grammar contains two productions with the same name
+
+import runtime;
+import string;
+import binarytree;
+import inttree;
+import lingo/pegtype;
+
+export {
+	Grammar(productions : [Production]);
+	Production(name : string, caching : bool, type : PegType, choices : [Seq]);
+	ParseConstants : (input : flow, inputlen : int, grammar : Grammar, semantics : SemanticActions); // exported for generated parsers
+	nilParseResult = ParseResult(-1, None()); // exported for generated parsers
+
+	Parsing ::= Choices, Seq, Star, Plus, Opt, Negation, Rule, iRule, Term, CharRange, Epsilon, Action, Action2, ActionIndex, BindResult, BindMatched,
+			LingoValue, CutUp, CutDown;
+		// Committed choice operator
+		Choices(p : [Parsing]);
+		// A sequence of things
+		Seq(seq : [Parsing]);
+		// 0 or more repetitions
+		Star(p : Parsing);
+		// 1 or more repetitions
+		Plus(p : Parsing);
+		// 0 or 1 occurrence
+		Opt(p : Parsing);
+		// Must not match this to succeed
+		Negation(p : Parsing);
+		// Rule
+		Rule(name : string);
+		// Rule number (=index in productions array) instead of name - for speed
+		iRule(i : int);
+		// Atom, string
+		Term(name : string);
+		// Character range
+		CharRange(first : string, last : string);
+		// Flow value
+		LingoValue(value : flow);
+		// Nothing
+		Epsilon();
+		// Bind the parsing result from v to a named key
+		BindResult(name : string, v : Parsing);
+		// Bind the string matched by v to a named key
+		BindMatched(name : string, v : Parsing);
+		// Semantic action called with position in input, as well as all bindings
+		Action(fn : (PegEnv) -> flow);
+		Action2(e : ActionExp);
+		ActionIndex();
+		// If parsing fails inside this body, there is no need to try following choices.
+		CutUp(p : Parsing);
+		CutDown(p : Parsing);
+
+	ActionExp ::= ActionCall, ActionVar, ActionIndex, ActionCallDebug, ActionConstantString,
+					ActionConstantInt;
+		ActionCall(id : string, args : [ActionExp]);
+		ActionCallDebug(id : string, args : [ActionExp]);
+		ActionVar(id : string);
+		ActionConstantString(s : string);
+		ActionConstantInt(i : int);
+
+		// Used for binding a result from the parsing to a lingo variable in the
+		// "bindings" environment.  result: None means there was no action that returned a
+		// value from that parsing (probably there is not Action() in (one of) the choices
+		// for the relevant nonterminal.  In that case, the RuleResult can still be
+		// relevant because you can use pos to extract the string that was matched.
+		RuleResult : (input: flow, pos: int, len: int, result: Maybe<flow>);
+
+		// Map names to functions, so that semantic actions can call flow functions.  The
+		// set of functions can be different from parsing to parsing, but within one
+		// parsing they remain the same, so sem : SemanticActions is just passed unchanged
+		// around in all parsing code.
+		SemanticActions(t : Tree<string, ([flow]) -> flow>);
+
+		// Combined environment passed to semantic actions in order to let them access
+		// variables bound while parsing (PegEnv.bindings) & access named flow functions
+		// (PegEnv.functions).  BindResults & BindMatched are only defined within one
+		// choice within a production.
+		PegEnv(bindings : Tree<string, RuleResult>,
+			   functions : Tree<string, ([flow]) -> flow>);
+
+
+
+	inlineProductions(g : Grammar) -> Grammar;
+	processNestedSequences(g : Grammar) -> Grammar;
+
+
+
+	// For debugging
+	printGrammar(g : Grammar) -> void;
+	sequence2string(g : Grammar, s : [Parsing]) -> string;
+	parsing2string(g : Grammar, p : Parsing) -> string;
+	
+	dumpParseCacheStats(rules : [string]) -> void;
+	action2string(a : ActionExp) -> string;
+		
+
+	// Parse results. Use lingo/driver instead, which is better
+	getParseError(text : string, result : ParseResult) -> string;
+
+	printParseError(text : string, result : ParseResult) -> void;
+
+	
+	// For giving better error messages with the interpreter parser
+	lastParsing : ref int = ref -1;
+	
+	ParseResult : (pos : int, result : Maybe<flow>);
+
+	parseCacheHits : ref IntTree<int> = makeIntTree();
+	parseCacheMisses : ref IntTree<int> = makeIntTree();
+}
+
+
+
+processNestedSequences(g : Grammar) -> Grammar {
+	nextFree = ref length(g.productions);
+	extraProductions : ref [Production] = ref [];
+
+	productions = map(g.productions, \p : Production -> {
+		Production(p.name, p.caching, p.type, map(p.choices, \c : Seq -> {
+			Seq(map(c.seq, \par -> {
+				convertNestedSequence(p, par, nextFree, extraProductions);
+			}));
+		}))
+	});
+	
+	Grammar(concat(productions, ^extraProductions));
+}
+
+convertNestedSequence(prod : Production, par : Parsing, nextFree, extraProductions) -> Parsing {
+	switch (par : Parsing) {
+		Rule(name): par;
+		Star(p): Star(convertNestedSequence(prod, p, nextFree, extraProductions));
+		Plus(p): Plus(convertNestedSequence(prod, p, nextFree, extraProductions));
+		Opt(p): Opt(convertNestedSequence(prod, p, nextFree, extraProductions));
+		Negation(p): Negation(convertNestedSequence(prod, p, nextFree, extraProductions));
+		BindResult(name, p): BindResult(name, convertNestedSequence(prod, p, nextFree, extraProductions));
+		BindMatched(name, p): BindMatched(name, convertNestedSequence(prod, p, nextFree, extraProductions));
+		iRule(i): par;
+		Term(name): par;
+		CharRange(first, last): par;
+		LingoValue(v): par;
+		Epsilon(): par;
+		Action(fn): par;
+		Action2(e): par;
+		ActionIndex(): par;
+		Choices(s): Choices(map(s, \p -> convertNestedSequence(prod, p, nextFree, extraProductions)));
+		Seq(s): {
+			sequence = map(s, \pars -> {
+				convertNestedSequence(prod, pars, nextFree, extraProductions);
+			});
+			if (length(sequence) == 1) {
+				// OK, inline it directly
+				sequence[0];
+			} else {
+				// Carve out a new production for it
+				n = ^nextFree;
+				production = Production(prod.name + "$auto" + i2s(n), false, PegUnknown(),
+					[Seq(sequence)]
+				);
+				extraProductions := arrayPush(^extraProductions, production);
+				nextFree := n + 1;
+				iRule(n);
+			}
+		}
+		CutUp(p): CutUp(convertNestedSequence(prod, p, nextFree, extraProductions));
+		CutDown(p): CutDown(convertNestedSequence(prod, p, nextFree, extraProductions));
+	}
+}
+
+inlineProductions(g : Grammar) -> Grammar {
+	if (false) {
+		g;
+	} else {
+		Grammar(map(g.productions, \p : Production -> {
+			Production(p.name, p.caching, p.type, map(p.choices, \c : Seq -> {
+				Seq(
+					inlineParsingSequence(g, c.seq)
+				);
+			}))
+		}));
+	}
+}
+
+inlineParsingSequence(g : Grammar, s : [Parsing]) -> [Parsing] {
+	fold(s, [], \acc, par -> {
+		concat(acc, inlineParsingProductions(g, par));
+	})
+}
+
+inlineParsingProductions(g : Grammar, p : Parsing) -> [Parsing] {
+	switch (p) {
+		iRule(i): {
+			pr = g.productions[i];
+			if (canInlineProduction(pr)) {
+				// println("Inlining!");
+				// iter(pr.choices[0].sequence, \pa -> println(parsing2string(g, pa)));
+				inlineParsingSequence(g, pr.choices[0].seq);
+			} else {
+				[p];
+			}
+		}
+		default: [p];
+	}
+}
+
+canInlineProduction(p : Production) -> bool {
+	!p.caching && length(p.choices) == 1 && !exists(p.choices[0].seq, \pa -> switch (pa : Parsing) {
+		Action(fn): true; 
+		Action2(e): true; 
+		ActionIndex(): true;
+		default: false 
+	});
+}
+
+
+
+printGrammar(g) {
+	iter(g.productions, \p -> {
+		head = p.name + (if (p.caching) "!" else "") 
+			+ (if (p.type != PegUnknown()) " : " + pegType2string(p.type) else "")
+			+ " =";
+		nc = length(p.choices);
+		foldi(p.choices, head, \i, ac2, c -> {
+			last = i == nc - 1;
+			println(ac2 + sequence2string(g, c.seq) + if (last) ";" else "");
+			"\t|";
+		});
+		{}
+	});
+}
+
+sequence2string(g : Grammar, s : [Parsing]) -> string {
+	fold(s, "", \acc, pa -> acc + " " + parsing2string(g, pa));
+}
+
+parsing2string(g : Grammar, p : Parsing) -> string {
+	switch (p : Parsing) {
+		Epsilon(): "<epsilon>";
+		iRule(n): {
+			if (n < length(g.productions)) {
+				g.productions[n].name;
+			} else {
+				i2s(n);
+			}
+		}
+		Rule(n): {
+			n;
+		}
+		Term(str): {
+			if (strlen(str) == 1)  {
+				printLingoChar(str)
+			} else toString(str);
+		}
+		LingoValue(value): {
+			"'" + toString(value) + "'"
+		}
+		CharRange(c1, c2): {
+			printLingoChar(c1) + "-" + printLingoChar(c2);
+		}
+		Star(subr): {
+			parenthesizeParsing(g, subr, "", "*");
+		}
+		Plus(subr): {
+			parenthesizeParsing(g, subr, "", "+");
+		}
+		Opt(subr): {
+			parenthesizeParsing(g, subr, "", "?");
+		}
+		Negation(subr): {
+			parenthesizeParsing(g, subr, "!", "");
+		}
+		BindResult(n, subr): {
+			parenthesizeParsing(g, subr, "", ":" + n);
+		}
+		BindMatched(n, subr): {
+			parenthesizeParsing(g, subr, "", "$" + n);
+		}
+		CutUp(subr):{
+			parenthesizeParsing(g, subr, "", "^");
+		}
+		CutDown(subr):{
+			parenthesizeParsing(g, subr, "_", "");
+		}
+		Action(fn): {
+			"<action>";
+		}
+		Action2(a): {
+			"{ " + action2string(a) + " }";
+		}
+		ActionIndex(): "#";
+		Choices(s): {
+			"(" + fold(s, "", \ac2, c -> {
+				ac2 + (if (ac2 != "") " |" else "") + parsing2string(g, c);
+			}) + ")";
+		}
+		Seq(s): {
+			sequence2string(g, s);
+		}
+	}
+}
+
+printLingoChar(c : string) -> string {
+	if (" " <= c && c <= "~" && c != "'" && c != "\\") "'" + c + "'" 
+	else {
+		if (c == "\n") "'\\n'"
+		else if (c == "\t") "'\\t'"
+		else if (c == "\\") "'\\\\'"
+		else "'\\u" + lpad(formatHex(getCharCodeAt(c, 0)), "0", 4) + "'"
+	}
+}
+
+parenthesizeParsing(g : Grammar, sub : Parsing, prefix : string, postfix : string) -> string {
+	isSimple = switch (sub) {
+		Epsilon(): false;
+		iRule(n): true;
+		Rule(n): true;
+		Term(str): true;
+		LingoValue(value): true;
+		CharRange(c1, c2): false;
+		Star(subr): false;
+		Plus(subr): false;
+		Opt(subr): false;
+		Negation(subr): false;
+		BindResult(n, subr): true;
+		BindMatched(n, subr): true;
+		Action(fn): true;
+		Action2(a): true;
+		ActionIndex(): true;
+		Choices(s): false;
+		Seq(s): false;
+		CutUp(s): true;
+		CutDown(s): true;
+	}
+
+	child = parsing2string(g, sub);
+	if (isSimple) {
+		prefix + child + postfix
+	} else {
+		prefix + "(" + child + ")" + postfix;
+	}
+}
+
+action2string(a : ActionExp) -> string {
+	switch (a : ActionExp) {
+		ActionVar(i): ":" + i; // TODO: It could be either $ or : here
+		ActionCall(id, args): id + "(" + strGlue(map(args, action2string), ", ") + ")";
+		ActionCallDebug(id, args): id + "(" + strGlue(map(args, action2string), ", ") + ")";
+		ActionIndex(): "#";
+		ActionConstantString(s): toString(s);
+		ActionConstantInt(i): i2s(i);
+	}
+}
+
+dumpParseCacheStats(rules : [string]) {
+	n = length(rules);
+	fori(0, n - 1, \i -> {
+		hits = either(lookupIntTree(parseCacheHits, i), 0);
+		misses = either(lookupIntTree(parseCacheMisses, i), 0);
+		
+		hitrate = if (hits + misses == 0) 0.0 else (i2d(hits) / i2d(hits + misses));
+		if (hitrate > 0.20) {
+			println(rules[i] + " " + i2s(round(hitrate * 100.0)) + "% hit rate" + " - " + i2s(hits) + " hits " + i2s(misses) + " misses");
+		} else if (misses > 10) {
+			println("Don't cache " + rules[i] + " " + i2s(round(hitrate * 100.0)) + "% hit rate" + " - " + i2s(hits) + " hits " + i2s(misses) + " misses");
+		}
+	});
+}
+
+
+getParseError(text, result) {
+	ep = ^lastParsing;
+	if (ep >= 0) substring(text, ep, 130)
+	else substring(text, result.pos, 130)
+}
+
+printParseError(text, result) {
+	println("SYNTAX ERROR AT : \"" + getParseError(text, result) + "...\"");	
+}
+

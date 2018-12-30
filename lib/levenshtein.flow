@@ -1,0 +1,179 @@
+// © Copyright 2012 Area9 Innovation. All rights reserved
+import runtime;
+import math;
+
+export {
+	// Implements the Damerau-Levenshtein distance between two strings
+	// This is the number of swaps, inserts, deletes and replacements required to change one to the other
+	levenshteinDistance(s : string, t : string) -> int;
+	
+	// A measure of how similar these strings are. 1 is perfectly the same, 0 is absolutely different
+	levenshteinSimilarity(input : string, t : string) -> double;
+	
+	/// Finds the closest string and its similarity
+	levenshteinClosestMatch(s : string, ts : [string]) -> Pair<double, string>; // first: similarity, second: string
+
+    /// Searches for the best matches of pattern in text. Returns a list of 
+    /// scores at every endpoint.
+    /// levenshteinSearch("foobarbaz", "bzar") 
+    /// ---> [4, 4, 4, 4, 3, 2, 1, 2, 2, 2]
+    levenshteinSearch : (pattern : string, text : string)->[int];
+
+    /// Searches for the best matches of pattern in text. Returns a pair 
+    /// (score, ps) where score is the best score found and ps is a list 
+    /// of pairs (start, length) of matching sequences in text.
+    /// levenshteinBestMatches("foobarbaz", "bzar") 
+    /// ---> Pair(1, [Pair(3, 3)])
+    levenshteinBestMatches : (pattern : string, text : string)
+                           ->Pair<int, [Pair<int, int>]>;
+}
+
+levenshteinDistance(s, t) {
+	m = strlen(s);
+	n = strlen(t);
+	// Initialize the matrix
+	d = generate(0, m + 1, \i -> {
+			generate(0, n + 1, \j ->
+				if (i == 0) {
+					ref j;
+				} else {
+					if (j == 0) {
+						ref i;
+					} else {
+						ref 0;
+					}
+				});
+		});
+	
+	fori(1, m, \i -> {
+		si = getCharAt(s, i - 1);
+		fori(1, n, \j -> {
+			tj = getCharAt(t, j - 1);
+			d[i][j] := if (si == tj) {
+				// Equal as is. No change
+				^(d[i - 1][j - 1]);
+			} else {
+				dir = min(
+					^(d[i - 1][j]) + 1,  // Deletion
+					min(
+						^(d[i][j - 1]) + 1, // Insertion
+						^(d[i - 1][j - 1]) + 1 // Replacement
+					)
+				);
+				if (i > 1 && j > 1 && si == getCharAt(t, j - 2) && getCharAt(s, i - 2) == tj) {
+					// The Damerau extension: Also support swaps of adjacent
+					min(dir, ^(d[i - 2][j - 2]) + 1);
+				} else {
+					dir;
+				}
+			}
+		});
+	});
+	^(d[m][n]);
+}
+
+levenshteinSimilarity(s, t) {
+	if (s == t) {
+		1.0;
+	} else {
+		l = levenshteinDistance(s, t);
+		m = max(strlen(s), strlen(t));
+		if (l > m) {
+			0.0;
+		} else {
+			i2d(m-l) / i2d(m);
+		}
+	}
+}
+
+levenshteinClosestMatch(s, ts) {
+	fold(
+		ts,
+		Pair(-1000.0, ""),
+		\best : Pair, cur -> {
+			l = levenshteinSimilarity(s, cur);
+			if (best.first < l) {
+				Pair(l, cur);
+			} else {
+				best;
+			}
+		}
+	)
+}
+
+
+levenshteinColumnWorker : (pattern : string, i : int, tc : string, 
+                           column0 : [int], column1 : [int])->[int];
+levenshteinColumnWorker(pattern, i, tc, column0, column1)
+    if (i < strlen(pattern)) {
+        cell = 
+            if (getCharAt(pattern, i) == tc) column0[i]
+            else min(min(
+                column1[i],
+                column0[i + 1]),
+                column0[i]) + 1;
+        levenshteinColumnWorker(pattern, i + 1, tc, column0, arrayPush(column1, cell));
+    } else column1;
+
+/// Generate the next matrix column for the text charcter tc.
+levenshteinColumn : (pattern : string, tc : string, column0 : [int])->[int];
+levenshteinColumn(pattern, tc, column0)
+    levenshteinColumnWorker(pattern, 0, tc, column0, [0]);
+
+levenshteinSearchWorker : (pattern : string, text : string, i : int, 
+                           column : [int], row : [int])->[int];
+levenshteinSearchWorker(pattern, text, i, column, row) 
+    if (i < strlen(text)) {
+        column1 = levenshteinColumn(pattern, getCharAt(text, i), column);
+        levenshteinSearchWorker(pattern, text, i + 1, column1, 
+                                arrayPush(row, column1[length(column1) - 1]));
+    } else row;
+
+levenshteinSearch(pattern, text) {
+    column0 = enumFromTo(0, strlen(pattern));
+    levenshteinSearchWorker(pattern, text, 0, column0, [strlen(pattern)]);
+}
+
+/// Returns the indices in xs of the elements that satisfy pred. 
+indicesOf : (xs : [?], pred : (?)->bool)->[int];
+indicesOf(xs, pred) 
+    foldi(xs, [], \i, is, x->if (pred(x)) arrayPush(is, i) else is);
+
+levenshteinRanges : (i : int, j : int, 
+                     beginIndices : [int], endIndices : [int], build : [Pair<int, int>])
+                  ->[Pair<int, int>];
+levenshteinRanges(i, j, beginIndices, endIndices, build) 
+    if (i < length(beginIndices) && j < length(endIndices)) {
+        // Move current end to after current begin.
+        if (endIndices[j] < beginIndices[i]) 
+            levenshteinRanges(i, j + 1, beginIndices, endIndices, build)
+        // Move current begin up to the closest position before current end.
+        else if (i + 1 < length(beginIndices) && beginIndices[i + 1] < endIndices[j])
+            levenshteinRanges(i + 1, j, beginIndices, endIndices, build)
+        else 
+            levenshteinRanges(i + 1, j + 1, beginIndices, endIndices, 
+                              arrayPush(build, Pair(beginIndices[i], endIndices[j] - beginIndices[i])))
+    } else build;
+
+levenshteinBestMatches(pattern, text) {
+    endIndices = levenshteinSearch(pattern, text);
+    best = either(minA(endIndices), strlen(text));
+    worst = either(maxA(endIndices), strlen(text));
+    if (best < worst) {
+        beginIndices = reverseA(levenshteinSearch(reverse(pattern), reverse(text)));
+        bestEnds = indicesOf(endIndices, \score->score == best);
+        bestBegins = indicesOf(beginIndices, \score->score == best);
+        Pair(best, levenshteinRanges(0, 0, bestBegins, bestEnds, []));
+    } else {
+        Pair(best, []);
+    }
+}
+
+
+//main() {
+//    text = "123est7890123tes7890123tst789";
+//    pattern = "test";
+//    result = levenshteinBestMatches(pattern, text);
+//    iter(result.second, \pair->
+//        println(substring(text, pair.first, pair.second)));
+//}

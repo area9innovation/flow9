@@ -1,0 +1,279 @@
+import timeline;
+import transforms;
+import rendersupport;
+// import ui/easybutton;
+
+// Loosely based on:
+// http://facebook.github.io/rebound/rebound-js/docs/rebound.html
+
+// See springify for an easy-to-use wrapper for Forms
+export {
+	// Construct a spring on the given behaviour with the given parameters and callback that will be called when the goal is reached
+	// Give a timer which gives the delta in ms as time changes.
+	// To get the value controlled by the spring:
+	//   goal = make(0.0);
+	//   spring = makeSpring(40.0, 7.0, goal, makeDeltaTimer(33), nop);
+	//   pos = spring.position; // This is a behaviour which moves towards the goal as it changes
+	makeSpring(tension : double, friction : double, goal : DynamicBehaviour<double>, deltaTimer : LazyDeltaTimer, goalReachedFn : () -> void) -> Spring;
+
+	// Construct a delta-timer useful for the springs aiming to update every ms milliseconds
+	// We support frame rates up to about 30, which is every 33 ms.
+	makeDeltaTimer(freq : int) -> LazyDeltaTimer;
+
+	// Delta-timer which stops when nobody is subscribed(attached)
+	LazyDeltaTimer(timer : Behaviour<double>, attach : () -> void, detach : () -> void);
+
+	// Instantly moves the spring to the goal
+	resetSpring(s : Spring) -> void;
+
+	// The structure to keep the information for the spring.
+	Spring(
+		// How tense is the spring?
+		tension : double,
+		// How much friction dampens the guy?
+		friction : double,
+		// The goal which the spring is moving towards - you can update this as you want
+		goal : DynamicBehaviour<double>,
+
+		// The current placement of the spring - you can update this as you want
+		position : DynamicBehaviour<double>,
+		// The current velocity - you can update this as you want
+		velocity : DynamicBehaviour<double>,
+
+		// Internal: Accumulation of time fractions for more accurate integration over time
+		timeAccumulated : DynamicBehaviour<double>,
+
+		// Use this to stop & clean up
+		dispose : ref () -> void,
+
+		// Internal only
+		timerUnsubscribe : ref () -> void,
+
+		// Finish callback
+		goalReachedFn : () -> void
+	);
+
+	makeDrawFrameEventListener() -> LazyDeltaTimer;
+}
+
+SpringIterationData(
+	position : double,
+	velocity : double
+);
+
+// Construct a spring at 0.0 with the given parameters
+makeSpring(tension : double, friction : double, goal : DynamicBehaviour<double>, deltaTimer : LazyDeltaTimer, goalReachedFn : () -> void) -> Spring {
+	spring = Spring(tension, friction, goal, make(getValue(goal)), make(0.0), make(0.0), ref nop, ref nop, goalReachedFn);
+
+	us = subscribe(goal, \g -> {
+		if (!isSpringAtRest(spring) && ^(spring.timerUnsubscribe) == nop) {
+			// A new goal has been defined, so we have to subscribe to the time again
+			unsubscribe = subscribe(deltaTimer.timer, \dt -> advanceSpring(dt, spring));
+			deltaTimer.attach();
+			spring.timerUnsubscribe := \ -> {
+				deltaTimer.detach();
+				unsubscribe();
+				spring.goalReachedFn()
+			};
+		}
+	});
+
+	spring.dispose := \ -> {
+		^(spring.timerUnsubscribe)();
+		spring.timerUnsubscribe := nop;
+		us();
+		spring.dispose := nop;
+	}
+
+	spring;
+}
+
+makeDeltaTimer(freq : int) -> LazyDeltaTimer {
+	time = getTimeline(freq);
+	time.stop();
+
+	listeners = ref 0;
+	attach = \ -> {
+		listeners := ^listeners + 1;
+		if (^listeners == 1) {
+			time.start();
+		}
+	}
+	detach = \ -> {
+		listeners := ^listeners - 1;
+		if (^listeners == 0) {
+			time.stop();
+		}
+	}
+
+	LazyDeltaTimer(
+		selectWithLast(time.ticker, \ot, nt -> (nt - ot) / 1000.0),
+		attach,
+		detach
+	)
+}
+
+// Tick the given spring
+advanceSpring(elapsedTimeInSeconds : double, spring : Spring) -> void {
+	if (!isSpringAtRest(spring)) {
+		adjustedDeltaTime = min(elapsedTimeInSeconds, 0.064); // compensate for sleeping or poor frame rates to avoid infinite integrations
+		if (adjustedDeltaTime > 0.0) {
+			next(spring.timeAccumulated, getValue(spring.timeAccumulated) + adjustedDeltaTime);
+
+			pos = getValue(spring.position);
+			vl = getValue(spring.velocity);
+
+	        sd = doAdvanceSpring(spring, SpringIterationData(pos, vl));
+
+	       	next(spring.position, sd.position);
+
+	        if (vl == getValue(spring.velocity))
+	        	next(spring.velocity, sd.velocity);
+		}
+    }
+}
+
+isSpringAtRest(s : Spring) -> bool {
+	abs(getValue(s.position) - getValue(s.goal)) < 0.1 && abs(getValue(s.velocity)) < 0.01;
+}
+
+isSpringAtRest2(s : Spring, sd : SpringIterationData) -> bool {
+	abs(sd.position - getValue(s.goal)) < 0.1 && abs(sd.velocity) < 0.01;
+}
+
+// The runge-kutta integration of the spring force
+doAdvanceSpring(spring : Spring, data : SpringIterationData) -> SpringIterationData {
+	SOLVER_TIMESTEP_SEC = 0.001;
+
+	accumulated = getValue(spring.timeAccumulated);
+	if (accumulated >= SOLVER_TIMESTEP_SEC) {
+		next(spring.timeAccumulated, accumulated - SOLVER_TIMESTEP_SEC);
+
+		goal = getValue(spring.goal);
+		position = data.position;
+		velocity = data.velocity;
+
+		// Runge-Kutta 4
+		velocityA = velocity;
+		accelerationA = spring.tension * (goal - position) - spring.friction * velocityA;
+        tempPositionA = position + velocityA * SOLVER_TIMESTEP_SEC * 0.5;
+        tempVelocityA = velocity + accelerationA * SOLVER_TIMESTEP_SEC * 0.5;
+
+        velocityB = tempVelocityA;
+        accelerationB = (spring.tension * (goal - tempPositionA)) - spring.friction * tempVelocityA;
+        tempPositionB = position + velocityB * SOLVER_TIMESTEP_SEC * 0.5;
+        tempVelocityB = velocity + accelerationB * SOLVER_TIMESTEP_SEC * 0.5;
+
+        velocityC = tempVelocityB;
+        accelerationC = (spring.tension * (goal - tempPositionB)) - spring.friction * tempVelocityB;
+        tempPositionC = position + velocityC * SOLVER_TIMESTEP_SEC * 0.5;
+        tempVelocityC = velocity + accelerationC * SOLVER_TIMESTEP_SEC * 0.5;
+
+        velocityD = tempVelocityC;
+        accelerationD = (spring.tension * (goal - tempPositionC)) - spring.friction * tempVelocityC;
+
+        dxdt = 1.0/6.0 * (velocityA + 2.0 * (velocityB + velocityC) + velocityD);
+        dvdt = 1.0/6.0 * (accelerationA + 2.0 * (accelerationA + accelerationC) + accelerationD);
+
+        np = position + dxdt * SOLVER_TIMESTEP_SEC;
+        nv = velocity + dvdt * SOLVER_TIMESTEP_SEC;
+
+		if (accumulated - SOLVER_TIMESTEP_SEC >= SOLVER_TIMESTEP_SEC) {
+	        // We recurse until we have done enough increments
+	        doAdvanceSpring(spring, SpringIterationData(np, nv));
+		} else {
+			// We only take a fractional part of the newly found parameters for the last piece in the time step
+			alpha = (accumulated - SOLVER_TIMESTEP_SEC) / SOLVER_TIMESTEP_SEC;
+			fp = np * alpha + position * (1.0 - alpha);
+			fv = nv * alpha + velocity * (1.0 - alpha);
+
+			isAtRest = isSpringAtRest2(spring, SpringIterationData(fp, fv));
+
+			if (isAtRest) {
+				// OK, we are at rest and can unsubscribe from the timer
+				^(spring.timerUnsubscribe)();
+				spring.timerUnsubscribe := nop;
+			}
+
+			SpringIterationData(fp, if (isAtRest) 0.0 else fv);
+		}
+	} else {
+		data;
+	}
+}
+
+resetSpring(s : Spring) -> void {
+	next(s.position, getValue(s.goal));
+	next(s.velocity, 0.0);
+}
+
+makeDrawFrameEventListener() -> LazyDeltaTimer {
+	if ((js || cpp) && !isUrlParameterTrue("deltatimer")) {
+		uns = ref nop;
+		deltaB = make(0.);
+		listeners = ref 0;
+
+		attach = \ -> {
+			listeners := ^listeners + 1;
+			if (^listeners == 1) {
+				prevD = ref -1.;
+
+				uns := addDrawFrameEventListener(\d -> {
+					if (^prevD > 0.) {
+						newDelta = (d - ^prevD) / 1000.;
+						prevD := d;
+						next(deltaB, newDelta);
+					} else {
+						prevD := d;
+					}
+				});
+			}
+		}
+
+		detach = \ -> {
+			listeners := ^listeners - 1;
+			if (^listeners == 0) {
+				^uns();
+				uns := nop;
+			}
+		}
+
+		LazyDeltaTimer(
+			deltaB,
+			attach,
+			detach
+		)
+	} else
+		makeDeltaTimer(33)
+}
+
+/*
+main() {
+	// 20 ticks per second
+	deltaTime = makeDeltaTimer(30);
+
+	subscribe(deltaTime.lazyDeltaTimer, println);
+
+	// Our spring
+	spring1 = makeSpring(40.0, 7.0, make(0.0), deltaTime, nop);
+
+	spring2 = makeSpring(40.0, 7.0, make(0.0), deltaTime, nop);
+
+	// Use the spring to move something
+	gui = Lines([
+		EasyButton("Flip 1", "", orange, \ -> {
+			next(spring1.goal, 500.0 - getValue(spring1.goal));
+		}, []),
+		EasyButton("Flip 2", "", orange, \ -> {
+			next(spring2.goal, 500.0 - getValue(spring2.goal));
+		}, []),
+		EasyButton("unsubscribe", "", orange, \ -> {
+			^(spring1.dispose)();
+		}, []),
+		Translate(spring1.position, spring1.position, Text("Pendulum 1", [])),
+		Translate(const(200.0), spring2.position, Text("Pendulum 2", [])),
+	]);
+
+	render(gui);
+}
+*/

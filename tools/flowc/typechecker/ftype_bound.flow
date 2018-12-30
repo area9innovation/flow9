@@ -1,0 +1,125 @@
+import tools/flowc/typechecker/ftype_basic;
+import tools/flowc/debug;
+
+export {
+	makeFBoundedEnv(env : FEnv, lower : FType, upper : FType, kind : FUnification,
+		funify : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+		onError : (string) -> void) -> FEnvType;
+
+	// If true is given as heuristic, it will use the "seen names" to exclude more candidates
+	restrictFFields(env : FEnv, fields : FFields, heuristic : bool,
+		funify : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+		onError : (string) -> void) -> FEnvType;
+}
+
+makeFBoundedEnv(env : FEnv, lower : FType, upper : FType, kind : FUnification,
+		funify : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+		onError : (string) -> void) -> FEnvType {
+
+	def =  \ -> FEnvType(env, makeFBounded(env, lower, upper, onError));
+	unify = \ -> funify(env, lower, upper, kind, onError);
+
+	// OK, catch some interesting special cases
+	switch (lower) {
+		FStruct(lstruct, ltypars): {
+			switch (upper) {
+				FStruct(ustruct, utypars): {
+					// OK, they have to be the same dude
+					if (lstruct != ustruct) {
+						onError("Can not be " + lstruct + " and " + ustruct);
+						FEnvType(env, lower);
+					} else {
+						unify();
+					}
+				}
+				FFields(fields, seenNames, exc): {
+					// OK, if this field is in the struct, and matches, we don't give a rat's ass
+					// to keep it as a range, but go directly for the struct
+					msdef = lookupTree(env.env.program.acc.names.structs, lstruct);
+					switch (msdef) {
+						None(): def();
+						Some(sdef): {
+							if (forall(fields, \f : FField -> {
+								exists(sdef.args, \sa : FcStructArg -> {
+									sa.name == f.name
+								})
+							})) {
+								// We can go direct here
+								unify();
+							} else {
+								def();
+							}
+						}
+					}
+				}
+				default: def();
+			}
+		}
+		FUnion(lunion, ltypars): {
+			switch (upper) {
+				FUnion(uunion, utypars): {
+					if (lunion != uunion) {
+						// fcPrintln("propagate conflict " + lunion + " vs " + uunion);
+						def();
+					} else {
+						// OK, the same union against itself, we can just go recursive
+						unify();
+					}
+				}
+				default: def();
+			}
+		}
+		default: {
+			def();
+		}
+	}
+}
+
+
+restrictFFields(env : FEnv, fields : FFields, heuristic : bool,
+	funify : (FEnv, FType, FType, kind : FUnification, (string) -> void) -> FEnvType, 
+	onError : (string) -> void) -> FEnvType {
+
+	if (env.verbose >= 3)  {
+		printIndent(env.env, "Restricting  " + ftype2string(env, fields));
+	}
+
+	potentials : [[string]] = map(fields.fields, \f : FField -> {
+		getTreeArrayValue(env.env.program.acc.names.field2structs, f.name);
+	});
+	intersect = if (potentials == []) makeSet()
+		else fold(tail(potentials), buildSet(potentials[0]), \acc, p -> {
+			intersectSets(acc, buildSet(p))
+		});
+
+	candidates = differenceSets(intersect, fields.excluded);
+
+	if (isEmptySet(candidates)) {
+		onError("No type has " + ftype2string(env, fields));
+	}
+
+	excluded0 = if (heuristic && !isEmptySet(fields.seenNames)) {
+		// candidates = a, b, c
+		// seen = a
+		// We add b, c to excluded.
+		mergeSets(fields.excluded, differenceSets(candidates, fields.seenNames));
+	} else fields.excluded;
+
+	broken = filterSet(candidates, \c -> {
+		s = fcstructname2ftype(env, c, makeTree());
+		// OK, we unify with the fields to see which works
+		errors = ref 0;
+		ignored = funify(env, fields, s, FUnifyRight(), \e -> errors := 1);
+		^errors != 0;
+	});
+
+	excluded = mergeSets(excluded0, broken);
+	// fcPrintln(ftype2string(env, type) + " became " + ftype2string(unified.env, unnamed));
+
+	result = FFields(fields.fields, fields.seenNames, excluded);
+
+	if (env.verbose >= 3)  {
+		printDedent(env.env, "Restricted  " + ftype2string(env, result));
+	}
+	FEnvType(env, result);
+}

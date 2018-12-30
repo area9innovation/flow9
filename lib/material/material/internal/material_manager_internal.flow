@@ -1,0 +1,1223 @@
+import tropic/tropic_manager;
+import material/internal/material_iscript_internal;
+import material/make_subscribe;
+import material/attach_select;
+import serialize;
+import binarytreeutils;
+import speechsynthesis;
+
+// Internal to material
+
+export {
+	// when a modal dialog comes, use this to increase the z-order
+	pushZorder(manager : MaterialManager) -> () -> void;
+	popZorder(manager : MaterialManager) -> () -> void;
+
+	// If you need a focus id, call this.
+	// Returns a focus id, and transforms defining whether this button is enabled or not,
+	// and wheter it has focus
+	addMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, name : string, title : Transform<string>, onClick : Maybe<() -> void>, down : DynamicBehaviour<bool>,
+		hover : DynamicBehaviour<bool>, focused : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>, keepFocus : bool,
+		behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>,
+		fn : (MFocus) -> Tropic) -> Tropic;
+	addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, vertical : Maybe<bool>,
+		horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>,
+		behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
+		tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, fn : (parent : MFocusGroup) -> Tropic) -> Tropic;
+
+	// yield focus to the next/previous focus id. 'gotonext' gives the direction.
+	yieldFocus(manager : MaterialManager, gotonext : bool) -> void;
+	yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void;
+	resetMFocus(manager : MaterialManager) -> void;
+	previousMFocus(manager : MaterialManager) -> void;
+
+	getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
+	getCurrentFocusedItemBehaviour(manager : MaterialManager) -> Transform<Maybe<MFocus>>;
+	getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus>;
+
+	managerTimer(manager : MaterialManager) -> LazyDeltaTimer;
+	renderTimer(rend : MaterialRender) -> LazyDeltaTimer;
+
+	makeTropicTag(manager : MaterialManager) -> int;
+
+	addInteractionItemId(manager : MaterialManager, itemId : int) -> void;
+	removeInteractionItemId(manager : MaterialManager, itemId : int) -> void;
+	blockOtherInteractionItemIds(manager : MaterialManager, itemId : int) -> void;
+	isCurrentInteractionItemId(manager : MaterialManager, itemId : int) -> bool;
+
+	filterIScriptIdentifierWithoutFormPosition(id : List<IScriptIdentifier>) -> List<IScriptIdentifier>;
+	filterIScriptIdentifierOnlyFormPosition(id : List<IScriptIdentifier>) -> List<IScriptFormPosition>;
+
+	MFocusClickable2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>,
+		accessRole : string, shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic;
+
+	mClickButton(manager : MaterialManager, name : string) -> void;
+
+	mSpeechAccessiblityEnabled = ref isUrlParameterTrue("speech");
+}
+
+pushZorder(manager : MaterialManager) -> () -> void {
+	v = getValue(manager.currentZorder);
+	next(manager.currentZorder, v + 1);
+	setForceZorder(v + 1);
+	\ -> {
+		vPrev = getValue(manager.currentZorder);
+		if (vPrev > v) {
+			nextDistinct(manager.currentZorder, v);
+			setForceZorder(v);
+		}
+	}
+}
+
+popZorder(manager : MaterialManager) -> () -> void {
+	v = getValue(manager.currentZorder);
+	next(manager.currentZorder, v - 1);
+	setForceZorder(v - 1);
+	\ -> {
+		vPrev = getValue(manager.currentZorder);
+		if (vPrev < v) {
+			nextDistinct(manager.currentZorder, v);
+			setForceZorder(v);
+		}
+	}
+}
+
+getNextFocusId(parent : MFocusGroup) -> int {
+	foldTree(getValue(parent.focusIds), 0, \k, __, acc -> if (k == acc) acc + 1 else acc)
+}
+
+getMFocusTabOrder(focus : MaterialFocus) -> [int] {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			arrayPush(getMFocusTabOrder(f.parent), fgetValue(f.id))
+		},
+		\f -> {
+			eitherFn(
+				f.parent,
+				\fc ->
+					arrayPush(getMFocusTabOrder(fc), fgetValue(f.id)),
+				\ ->
+					[fgetValue(f.id)]
+			)
+		}
+	)
+}
+
+tryNext(t : Transform<?>, v : ?) -> void {
+	switch (t) {
+		DynamicBehaviour(__, __): nextDistinct(t, v);
+		default: {}
+	};
+}
+
+changeMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, f : MaterialFocus, prevId : int, newId : int) -> void {
+	tryNext(f.id, newId);
+
+	if (prevId >= 0) {
+		maybeApply(
+			lookupTree(getValue(parent.focusIds), prevId),
+			\fid -> if (fid == f) {
+				next(parent.focusIds, removeFromTree(getValue(parent.focusIds), prevId));
+				maybeApply(f.iScriptId, \id -> {
+					iScriptIdParent = getIScriptUniqueIdParent(f);
+					next(iScriptIdParent.iScriptIds, removeFromTree(getValue(iScriptIdParent.iScriptIds), id));
+					traverseInOrder(getValue(iScriptIdParent.iScriptIds), \__, v -> fixIScriptUniqueId(v));
+				});
+
+				if (prevId >= 0 && getValue(parent.focusedId) == prevId) {
+					next(f.focused, false);
+					switchMaterialFocus(f, nop1, \foc -> next(foc.focusedId, -1));
+					next(parent.focusedId, -1);
+				}
+			}
+		)
+	}
+
+	if (newId >= 0) {
+		setIdFn = \ -> {
+		 	next(parent.focusIds, setTree(getValue(parent.focusIds), newId, f));
+		 	fixIScriptUniqueId(f);
+
+			if (prevId >= 0 && getValue(parent.focusedId) == prevId)
+				next(parent.focusedId, -1);
+		};
+
+		eitherFn(
+			lookupTree(getValue(parent.focusIds), newId),
+			\fid -> {
+				if (fid != f) {
+					setIdFn();
+					changeMaterialFocusId(manager, parent, fid, newId, getNextFocusId(parent))
+				}
+			},
+			setIdFn
+		);
+	}
+}
+
+setParentFocusValue(parent : MFocusGroup, id : int, value : bool) -> bool {
+	pValue = getValue(parent.focusedId) == id;
+
+	if (value && !pValue) {
+		if (setMFocus(parent, value)) {
+			next(parent.focusedId, id);
+
+			true
+		} else
+			false
+	} else if (!value && pValue) {
+		setMFocus(parent, value);
+		next(parent.focusedId, -1);
+
+		true
+	} else
+		true
+}
+
+setMFocus(focus : MaterialFocus, value : bool) -> bool {
+	fid = fgetValue(focus.id);
+	fen = fgetValue(focus.focusEnabled);
+
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			if (value && !fen) {
+				false
+			} else if (fgetValue(f.parent.id) == -2) {
+				next(focus.focused, value);
+				true
+			} else {
+				setParentFocusValue(f.parent, fid, value)
+			}
+		},
+		\f -> {
+			if (value && !fen) {
+				false
+			} else {
+				eitherFn(
+					f.parent,
+					\p ->
+						setParentFocusValue(p, fid, value),
+					\ -> {
+						nextDistinct(f.focused, value);
+						true
+					}
+				)
+			}
+		}
+	)
+}
+
+filterIScriptIdentifierWithoutFormPosition(id : List<IScriptIdentifier>) -> List<IScriptIdentifier> {
+	filterList(id, \id0 ->
+		switch (id0) {
+			IScriptFocusTreePosition(__): {
+				true
+			}
+			IScriptId(__): {
+				true
+			}
+			default:
+				false
+		}
+	)
+}
+
+filterIScriptIdentifierOnlyFormPosition(id : List<IScriptIdentifier>) -> List<IScriptFormPosition> {
+	filterList(id, \id0 ->
+		switch (id0) {
+			IScriptFormPosition(__): {
+				true
+			}
+			default:
+				false
+		}
+	)
+	|> (\f -> cast(f : List<IScriptIdentifier> -> List<IScriptFormPosition>))
+}
+
+initRootMFocusGroup(manager : MaterialManager, parent : MFocusGroup) -> void {
+	if (parent == manager.focus && sizeTree(getValue(parent.focusIds)) == 0) {
+		u = ref [];
+
+		u :=
+			[
+				makeSubscribe2(parent.focusIds, \fids -> if (sizeTree(fids) == 0) deferred(\ -> dispUnsA(u)))(),
+				makeSubscribe2(parent.focusEnabled, \fen -> if (!fen) {
+					nextDistinct(parent.focusedId, -1);
+					nextDistinct(parent.focused, false);
+				})(),
+				makeSubscribe2(parent.focusedId, \foc -> if (parent.previousFocusedId != foc) {
+					if (foc != -1) {
+						nextDistinct(parent.focused, true);
+						nextDistinct(parent.nextId, foc);
+					}
+
+					maybeApply(lookupTree(fgetValue(parent.focusIds), parent.previousFocusedId), \v -> switchMaterialFocus(
+						v,
+						\fc -> {
+							next(fc.focused, false);
+						},
+						\fc -> {
+							next(fc.focused, false);
+							if (foc != -1)
+								next(fc.nextId, -1);
+							next(fc.focusedId, -1);
+						}
+					));
+
+					maybeApply(lookupTree(fgetValue(parent.focusIds), foc), \v -> switchMaterialFocus(
+						v,
+						\fc -> {
+							if (fgetValue(fc.focusEnabled)) {
+								next(fc.focused, true);
+							} else {
+								nextDistinct(fc.focused, false);
+								deferred(\ -> next(parent.focusedId, -1));
+							}
+						},
+						\fc -> {
+							next(fc.focused, true);
+						}
+					));
+
+					parent.previousFocusedId ::= foc;
+				})()
+			];
+	};
+}
+
+updateNextId(parent : MFocusGroup, id : int) -> void {
+	maybeApply(parent.parent, \p -> {
+		nextDistinct(p.nextId, id);
+		updateNextId(p, fgetValue(parent.id));
+	});
+}
+
+addMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, name : string, title : Transform<string>, onClick : Maybe<() -> void>, down : DynamicBehaviour<bool>,
+	hover : DynamicBehaviour<bool>, focused : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>, keepFocus : bool,
+	behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, iScriptId : Maybe<string>, tabOrder : Maybe<Transform<int>>,
+	fn : (MFocus) -> Tropic) -> Tropic {
+	defaultFocusId = make(-1);
+	focusId = either(tabOrder, defaultFocusId);
+
+	en = fmin(parent.enabled, enabled);
+	focusEn = fmin3(en, parent.zorderEnabled, focusEnabled);
+	recEn = fmin(parent.recordingEnabled, recordingEnabled);
+
+	focusedB = fmin(focusEn, focused);
+	position = ref getDummyTransformMatrix;
+	box = ref \ -> WidthHeight(0., 0.);
+
+	behavioursWithFocusedId = fold(behaviours, makeTree(), \acc, mb -> setTree(acc, strReplace(mb.name, " ", "_"), Pair(mb.beh, mb.type)));
+
+	MFocus(
+		focusId,
+		FEmpty(),
+		fselect2(parent.tabOrder, focusId, FLift2(\to, fi -> arrayPush(to, fi))),
+		iScriptId,
+		strReplace(name, " ", "_"),
+		title,
+		parent,
+		onClick,
+		down,
+		hover,
+		en,
+		focusEn,
+		recEn,
+		focused,
+		\ -> {
+			pos = ^position();
+			PositionScale(Point(pos.tx, pos.ty), Point(pos.a, pos.d))
+		},
+		\ -> ^box(),
+		make(true),
+		behavioursWithFocusedId
+	)
+	|> (\f : MFocus -> {
+		updateParentFocusId = \foc -> {
+			fid = fgetValue(f.id);
+			pid = getValue(parent.focusedId);
+
+			if (foc && pid != fid) {
+				next(parent.focusedId, fid)
+			} else if (!foc && pid == fid) {
+				next(parent.focusedId, -1);
+			}
+
+			if (!foc) {
+				deferred(\ -> nextDistinct(manager.previousFocus, Some(f)));
+			}
+
+			if (keepFocus) {
+				if (foc)
+					manager.downInsideFocus ::= Some(f)
+				else
+					manager.downInsideFocus ::= None();
+			}
+		}
+
+		TConstruct(
+			[
+				\ -> {
+					if (isNone(tabOrder))
+						next(defaultFocusId, getNextFocusId(parent));
+
+					initRootMFocusGroup(manager, parent);
+
+					disps =
+						[
+							makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
+								changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
+							makeSubscribe2(focusedB, \foc -> updateParentFocusId(foc))(),
+							\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
+						]
+						|> (\disps ->
+							if (isIScriptRecording(manager))
+								arrayPush(disps, initIScriptRecording(manager, f, true))
+							else
+								disps
+						);
+
+					if (fgetValue(focusedB)) {
+						updateParentFocusId(true);
+					};
+
+					\ -> applyall(disps)
+				},
+
+				\ -> \ -> next(f.updateEnabled, false)
+			],
+			(if (contains(manager.style, MIScriptPanel()) && fgetValue(parent.id) != -2)
+				TCopySize(
+					fn(f),
+					\tr -> {
+						TShowLazy(fmin(fmax(manager.iscript.addingMFocus, manager.iscript.addingAlias), hover),
+							\ ->
+								TGroup2WithoutMetrics(
+									TRectangle([Fill(pink), FillOpacity(0.2)], tr),
+									TText(name, [Fill(contrastingColor(parent)), FontSize(12.), FontFamily("Roboto")])
+								)
+						)
+					},
+					true
+				)
+			else
+				fn(f))
+			|> (\f2 ->
+				TransformTAcc(\t2a, pi, s, mo -> {
+					b = t2a(f2, pi, s, mo);
+					position := \ -> fgetValue(pi.transformMatrix);
+					box := \ -> WidthHeight(fgetValue(b.metrics.width), fgetValue(b.metrics.height));
+
+					f.form ::= b.form;
+
+					b
+				})
+			)
+		)
+	})
+}
+
+addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : string, vertical : Maybe<bool>,
+	horizontal : Maybe<bool>, focused : DynamicBehaviour<bool>, enabled : Transform<bool>, focusEnabled : Transform<bool>,
+	behaviours : [IScriptBehaviour], recordingEnabled : Transform<bool>, clickEnabled : Transform<bool>, iScriptId : Maybe<string>,
+	tabOrder : Maybe<Transform<int>>, zorderB : Maybe<Transform<int>>, theme : MaterialTheme, fn : (parent : MFocusGroup) -> Tropic) -> Tropic {
+	defaultFocusId = make(-1);
+	focusId = either(tabOrder, defaultFocusId);
+	focusedId = make(-1);
+
+	zorderKeeper = parent == manager.focus || isSome(zorderB);
+
+	zorder =
+		if (zorderKeeper)
+			eitherMap(zorderB, idfn, const(getValue(manager.currentZorder)))
+		else
+			parent.zorder;
+	en =
+		if (zorderKeeper)
+			enabled
+		else
+			fmin(parent.enabled, enabled);
+	zorderEn =
+		if (zorderKeeper)
+			fmin(fselect2(manager.currentZorder, zorder, FLift2(\mz, z -> z >= mz)), clickEnabled)
+		else
+			fmin(parent.zorderEnabled, clickEnabled);
+
+	focusEn =
+		if (zorderKeeper)
+			fmin(en, focusEnabled)
+		else
+			fmin3(en, parent.focusEnabled, focusEnabled);
+	recEn =
+		if (zorderKeeper)
+			recordingEnabled
+		else
+			fmin(parent.recordingEnabled, recordingEnabled);
+
+	position = ref getDummyTransformMatrix;
+	box = ref \ -> WidthHeight(0., 0.);
+
+	behavioursWithFocusedId = fold(behaviours, makeTree(), \acc, mb -> setTree(acc, strReplace(mb.name, " ", "_"), Pair(mb.beh, mb.type)));
+
+	MFocusGroup(
+		parent.managerId,
+		focusId,
+		FEmpty(),
+		fselect2(parent.tabOrder, focusId, FLift2(\to, fi -> arrayPush(to, fi))),
+		zorder,
+		eitherMap(iScriptId, \ui -> Some(strReplaces(ui, [" ", "_", "[", "_", "]", "_", ",", "_"])), None()),
+		strReplace(name, " ", "_"),
+		Some(parent),
+		eitherMap(parent.vertical, \v -> Some(if (v == manager.focus) parent else v), None()),
+		eitherMap(parent.horizontal, \h -> Some(if (h == manager.focus) parent else h), None()),
+		focusedId,
+		make(-1),
+		getValue(focusedId),
+		make(makeTree()),
+		make(makeTree()),
+		en,
+		zorderEn,
+		focusEn,
+		recEn,
+		make(false),
+		focused,
+		\ -> {
+			pos = ^position();
+			PositionScale(Point(pos.tx, pos.ty), Point(pos.a, pos.d))
+		},
+		\ -> ^box(),
+		theme,
+		behavioursWithFocusedId,
+	)
+	|> (\f : MFocusGroup -> {
+		maybeApply(vertical, \v -> f.vertical ::= if (v) Some(f) else None());
+		maybeApply(horizontal, \v -> f.horizontal ::= if (v) Some(f) else None());
+
+		TConstruct(
+			[
+				\ -> {
+					if (isNone(tabOrder))
+						next(defaultFocusId, getNextFocusId(parent));
+
+					initRootMFocusGroup(manager, parent);
+
+					[
+						makeSubscribe(fselectWithLast(f.id, FIdentity2()), \id ->
+							changeMaterialFocusId(manager, parent, f, firstOfPair(id), secondOfPair(id)))(),
+						makeSubscribe2(fmin3(focusEnabled, enabled, if (zorderKeeper) zorderEn else clickEnabled), \fen -> if (!fen) {
+							nextDistinct(f.focusedId, -1);
+							nextDistinct(f.focused, false);
+						})(),
+						makeSubscribe2(f.nextId, \nid ->
+							traverseInOrder(getValue(f.focusIds), \k, v -> if (k != nid) switchMaterialFocus(v, nop1, \fg -> nextDistinct(fg.nextId, -1)))
+						)(),
+						makeSubscribe(f.focusedId, \foc -> {
+							if (foc != -1) {
+								nextDistinct(f.nextId, foc);
+							}
+
+							fid = fgetValue(f.id);
+							pid = getValue(parent.focusedId);
+
+							if (foc == -1 && pid == fid)
+								next(parent.focusedId, -1)
+							else if (foc != -1 && pid != fid)
+								next(parent.focusedId, fid);
+
+							if (foc != f.previousFocusedId) {
+								maybeApply(lookupTree(fgetValue(f.focusIds), f.previousFocusedId), \v -> switchMaterialFocus(
+									v,
+									\fc -> {
+										nextDistinct(fc.focused, false);
+									},
+									\fc -> {
+										nextDistinct(fc.focused, false);
+										if (foc != -1) {
+											next(fc.nextId, -1);
+										}
+										next(fc.focusedId, -1);
+									}
+								));
+
+								maybeApply(lookupTree(fgetValue(f.focusIds), foc), \v -> switchMaterialFocus(
+									v,
+									\fc -> {
+										if (fgetValue(fc.focusEnabled)) {
+											nextDistinct(fc.focused, true);
+										} else {
+											nextDistinct(fc.focused, false);
+											deferred(\ -> next(f.focusedId, -1));
+										}
+									},
+									\fc -> {
+										nextDistinct(fc.focused, true);
+									}
+								));
+
+								f.previousFocusedId ::= foc;
+							}
+						})(),
+						\ -> changeMaterialFocusId(manager, parent, f, fgetValue(f.id), -1)
+					]
+					|> (\disps ->
+						if (isIScriptRecording(manager))
+							arrayPush(disps, initIScriptRecording(manager, f, true))
+						else
+							disps
+					)
+					|> (\disps -> \ -> applyall(disps))
+				}
+			],
+			(if (contains(manager.style, MIScriptPanel()) && fgetValue(parent.id) != -2)
+				TCopySize(
+					fn(f),
+					\tr -> {
+						down = make(false);
+						hover = make(false);
+
+						TShowLazy(
+							fmax(manager.iscript.addingMFocusGroup, manager.iscript.addingGroupAlias),
+							\ ->
+								TGroup2WithoutMetrics(
+									TInteractive(
+										[TMouseDownGhost(down), TMouseInside(hover, false)],
+										tr
+									),
+									TShowLazy(
+										hover,
+										\ ->
+											TConstruct(
+												[
+													makeSubscribe2(down, \d ->
+														if (!d) {
+															if (fgetValue(manager.iscript.addingMFocusGroup)) {
+																next(
+																	manager.iscript.iScriptStateB,
+																	IScriptAddMFocusGroupRecord(Some(f))
+																)
+															} else {
+																next(
+																	manager.iscript.iScriptStateB,
+																	IScriptMakeGroupAlias(Some(f))
+																)
+															}
+														}
+													)
+												],
+												TGroup2WithoutMetrics(
+													TRectangle([Fill(green), FillOpacity(0.05)], tr),
+													TText(
+														name,
+														[Fill(contrastingColor(parent)), FontSize(12.), FontFamily("Roboto")]
+													)
+												)
+											)
+									)
+								)
+						)
+					},
+					true
+				)
+			else
+				fn(f))
+			|> (\f2 ->
+				TransformTAcc(\t2a, pi, s, mo -> {
+					b = t2a(f2, pi, s, mo);
+					position := \ -> fgetValue(pi.transformMatrix);
+					box := \ -> WidthHeight(fgetValue(b.metrics.width), fgetValue(b.metrics.height));
+
+					f.form ::= b.form;
+
+					b
+				})
+			)
+		)
+	})
+}
+
+managerTimer(manager : MaterialManager) -> LazyDeltaTimer {
+	manager.manager.deltaTimer
+}
+
+renderTimer(rend : MaterialRender) -> LazyDeltaTimer {
+	managerTimer(rend.manager)
+}
+
+makeTropicTag(manager : MaterialManager) -> int {
+	id = ^(manager.manager.nextTagId);
+	manager.manager.nextTagId := id + 1;
+	id;
+}
+
+yieldFocus(manager : MaterialManager, gotonext : bool) -> void {
+	// clears inner flash focus from text input fields before switching
+	resetFocus();
+
+	if (isNone(nextFocus(manager, manager.focus, gotonext))) {
+		resetMFocus(manager);
+		nextFocus(manager, manager.focus, gotonext) |> ignore;
+	}
+}
+
+nextFocus(manager : MaterialManager, parent : MFocusGroup, inOrder : bool) -> Maybe<MFocus> {
+	currentFocusedId = getValue(parent.focusedId);
+	nextFocusedId = getValue(parent.nextId);
+
+	checkFocusedId =
+		if (currentFocusedId != -1) {
+			if (inOrder)
+				\fid -> fid >= currentFocusedId
+			else
+				\fid -> fid <= currentFocusedId;
+		// } else if (nextFocusedId != -1) {
+		// 	\fid -> nextFocusedId == fid;
+		} else {
+			\__ -> true;
+		};
+
+	(\fid, focus -> {
+		if (checkFocusedId(fid)) {
+			switchMaterialFocus(
+				focus,
+				\f : MFocus -> {
+					if (fgetValue(f.focusEnabled) && fid != currentFocusedId && ((eitherMap(f.parent.vertical, \v -> getValue(v.focusedId) == -1, true) &&
+						eitherMap(f.parent.horizontal, \h -> getValue(h.focusedId) == -1, true)) ||
+						eitherMap(getCurrentFocusedItem(manager), \foc -> foc.name == "MSmallEditDialog" || foc.name == "MAutoComplete", false))) {
+						if (setMFocus(f, true))
+							Some(f)
+						else
+							None()
+					} else
+						None()
+				},
+				\f -> {
+					if (fgetValue(f.focusEnabled)) {
+						if (isNone(f.vertical) && isNone(f.horizontal)) {
+							nextFocus(manager, f, inOrder);
+						} else {
+							nextFocus(manager, f, true);
+						}
+					} else
+						None()
+				}
+			)
+		} else
+			None()
+	})
+	|> (\f -> if (inOrder) findInOrder(getValue(parent.focusIds), f) else findRInOrder(getValue(parent.focusIds), f));
+}
+
+yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void {
+	// clears inner flash focus from text input fields before switching
+	resetFocus();
+
+	maybeApply(getCurrentFocusedItem(manager), \fc ->
+		maybeApply(if (vertical) fc.parent.vertical else fc.parent.horizontal, \p ->
+			if (fc == nextFocusVH(manager, p, fc, gotonext, vertical))
+				updateWhile(fc, \f -> nextFocusVH(manager, p, f, !gotonext, vertical)
+					|> (\f2 -> if (f == f2) None() else Some(f2))) |> ignore
+		)
+	)
+}
+
+calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, vertical : bool) -> double {
+	if (currentFocus == newFocus) {
+		-doubleMax
+	} else {
+		currentFocusPosition = currentFocus.position().pos;
+		currentFocusWidthHeight = currentFocus.widthHeight();
+		currentFocusPoint =
+			Point(
+				currentFocusPosition.x + currentFocusWidthHeight.width / 2.,
+				currentFocusPosition.y + currentFocusWidthHeight.height / 2.
+			);
+
+		newFocusPosition = newFocus.position().pos;
+		newFocusWidthHeight = newFocus.widthHeight();
+		newFocusPoint =
+			Point(
+				newFocusPosition.x + newFocusWidthHeight.width / 2.,
+				newFocusPosition.y + newFocusWidthHeight.height / 2.
+			);
+
+		dx = newFocusPoint.x - currentFocusPoint.x;
+		dy = newFocusPoint.y - currentFocusPoint.y;
+
+		if (vertical) {
+			if (newFocusPosition.x + newFocusWidthHeight.width < currentFocusPosition.x ||
+				newFocusPosition.x > currentFocusPosition.x + currentFocusWidthHeight.width)
+				-doubleMax
+			else if (inOrder && dy >= 0.)
+				dy + abs(dx) * 10.
+			else if (!inOrder && dy <= 0.)
+				-dy + abs(dx) * 10.
+			else
+				-doubleMax
+		} else {
+			if (newFocusPosition.y + newFocusWidthHeight.height < currentFocusPosition.y ||
+				newFocusPosition.y > currentFocusPosition.y + currentFocusWidthHeight.height)
+				-doubleMax
+			else if (inOrder && dx >= 0.)
+				dx + abs(dy) * 10.
+			else if (!inOrder && dx <= 0.)
+				-dx + abs(dy) * 10.
+			else
+				-doubleMax
+		}
+	}
+}
+
+compareFocusWeights(currentFocus : MFocus, prevFocus : MFocus, newFocus : MFocus, inOrder : bool, vertical : bool) -> bool {
+	prevFocusWeight = calculateFocusWeight(currentFocus, prevFocus, inOrder, vertical);
+	newFocusWeight = calculateFocusWeight(currentFocus, newFocus, inOrder, vertical);
+
+	newFocusWeight > 0. && (prevFocusWeight < 0. || prevFocusWeight > newFocusWeight)
+}
+
+nextFocusVH(manager : MaterialManager, parent : MFocusGroup, currentFocus : MFocus, inOrder : bool, vertical : bool) -> MFocus {
+	eitherMap(
+		getCurrentFocusedItem(manager),
+		\cf -> {
+			currentFocusedId = getValue(parent.focusedId);
+
+			(\fid, focus, prevF -> {
+				if (currentFocusedId == -1 || (if (inOrder) (fid >= currentFocusedId) else (fid <= currentFocusedId))) {
+					switchMaterialFocus(
+						focus,
+						\f : MFocus -> {
+							if (fgetValue(f.focusEnabled) && fid != currentFocusedId &&
+								((vertical && isSome(f.parent.vertical)) || isSome(f.parent.horizontal)) &&
+								compareFocusWeights(currentFocus, prevF, f, inOrder, vertical) &&
+								setMFocus(f, true)) {
+								f
+							} else
+								prevF
+						},
+						\f -> {
+							if (fgetValue(f.focusEnabled))
+								eitherMap(f.parent, \p ->
+									if (vertical && isSome(p.vertical)) {
+										if (isSome(p.horizontal) && p.horizontal == currentFocus.parent.horizontal)
+											prevF
+										else
+											nextFocusVH(manager, f, currentFocus, inOrder, vertical)
+									} else if (isSome(p.horizontal)) {
+										nextFocusVH(manager, f, currentFocus, inOrder, vertical)
+									} else {
+										prevF
+									},
+									prevF
+								)
+							else
+								prevF
+						}
+					)
+				} else
+					prevF
+			})
+			|> (\f ->
+				if (inOrder)
+					foldTree(getValue(parent.focusIds), cf, f)
+				else
+					foldRTree(getValue(parent.focusIds), cf, f)
+			)
+		},
+		currentFocus
+	)
+}
+
+resetMFocus(manager : MaterialManager) -> void {
+	hasFocusedId = getValue(manager.focus.focusedId) != -1;
+	if (hasFocusedId) {
+		nextDistinct(manager.focus.focusedId, -1);
+		nextDistinct(manager.focus.focused, false);
+	} else {
+		deferred(\ -> nextDistinct(manager.previousFocus, None()));
+		nextDistinct(manager.focus.nextId, -1);
+	}
+
+	traverseInOrder(getValue(manager.focus.focusIds), \k, v ->
+		switchMaterialFocus(
+			v,
+			\f -> {
+				nextDistinct(f.focused, false);
+			},
+			\f -> {
+				if (hasFocusedId) {
+					nextDistinct(f.focused, false);
+					nextDistinct(f.focusedId, -1);
+				} else {
+					nextDistinct(f.nextId, -1);
+				}
+			}
+		)
+	)
+}
+
+previousMFocus(manager : MaterialManager) -> void {
+	maybeApply(getPreviousFocusedItem(manager), \f -> nextDistinct(f.focused, true));
+}
+
+getCurrentFocusedItem(manager : MaterialManager) -> Maybe<MFocus> {
+	fgetValue(getCurrentFocusedItemBehaviour(manager));
+}
+
+getCurrentFocusedItemBehaviour(manager : MaterialManager) -> Transform<Maybe<MFocus>> {
+	getCurrentFocusedItemBehaviour2(manager.focus)
+}
+
+getCurrentFocusedItemBehaviour2(parent : MFocusGroup) -> Transform<Maybe<MFocus>> {
+	fsubselect(parent.focusedId, FLift(\fid ->
+		eitherMap(
+			lookupTree(getValue(parent.focusIds), fid),
+			\foc ->
+				switchMaterialFocus(
+					foc,
+					\f -> {
+						if (fgetValue(f.focused))
+							const(Some(f))
+						else
+							const(None())
+					},
+					\f -> {
+						getCurrentFocusedItemBehaviour2(f)
+					}
+				),
+			const(None()),
+		)
+	))
+}
+
+getPreviousFocusedItem(manager : MaterialManager) -> Maybe<MFocus> {
+	getValue(manager.previousFocus);
+}
+
+addInteractionItemId(manager : MaterialManager, itemId : int) -> void {
+	interactionItemIds = getValue(manager.currentInteractionItemID);
+
+	if (!contains(interactionItemIds, itemId))
+		next(manager.currentInteractionItemID, arrayPush(interactionItemIds, itemId));
+}
+
+removeInteractionItemId(manager : MaterialManager, itemId : int) -> void {
+	interactionItemIds = getValue(manager.currentInteractionItemID);
+
+	if (contains(interactionItemIds, itemId))
+		next(manager.currentInteractionItemID, removeAll(interactionItemIds, itemId));
+}
+
+blockOtherInteractionItemIds(manager : MaterialManager, itemId : int) -> void {
+	nextDistinct(manager.currentInteractionItemID, [itemId]);
+}
+
+isCurrentInteractionItemId(manager : MaterialManager, itemId : int) -> bool {
+	contains(getValue(manager.currentInteractionItemID), itemId)
+}
+
+getFFormById(f : FForm, id : List<IScriptFormPosition>) -> Transform<Maybe<FForm>> {
+	switch (f : FForm) {
+		FMask2(main1, mask, callstack): {
+			fid = headList(id, IScriptFormPosition(-1)).id;
+
+			if (fid == 0)
+				getFFormById(main1, tailList(id))
+			else if (fid == 1)
+				getFFormById(mask, tailList(id))
+			else
+				const(None())
+		}
+		FGroup(layers, zorder): {
+			fid = headList(id, IScriptFormPosition(-1)).id;
+
+			if (fid >= 0 && fid < length(layers))
+				getFFormById(layers[fid], tailList(id))
+			else
+				const(None())
+		}
+		FGroup2(layer1, layer2, zorder): {
+			fid = headList(id, IScriptFormPosition(-1)).id;
+
+			if (fid == 0)
+				getFFormById(layer1, tailList(id))
+			else if (fid == 1)
+				getFFormById(layer2, tailList(id))
+			else
+				const(None())
+		}
+		FBorder(left, top, right, bottom, form): getFFormById(form, id);
+		FConstructor(form, fn): getFFormById(form, id);
+		FTranslate(x, y, form): getFFormById(form, id);
+		FScale(x, y, form): getFFormById(form, id);
+		FRotate(degree, form): getFFormById(form, id);
+		FAlpha(alpha, form): getFFormById(form, id);
+		FVisible(v, form): getFFormById(form, id);
+		FAvailable2(widthHeight, form): getFFormById(form, id);
+		FSize2(widthHeight, form): getFFormById(form, id);
+		FSetPending(pending, form): getFFormById(form, id);
+		FBaseline(baseline, form): getFFormById(form, id);
+		FInteractive(listeners, form): getFFormById(form, id);
+		FFilter2(filters, form, stack): getFFormById(form, id);
+		FCursor(kind, form): getFFormById(form, id);
+		FInspect(inspectors, form): getFFormById(form, id);
+		FMutable2(form, stack): fsubselect(form, FLift(\f2 -> getFFormById(f2, id)));
+		FCrop2(left, top, width, height, form, stack): getFFormById(form, id);
+		FAccess(props, form): getFFormById(form, id);
+		FControlFocus(focus, form): getFFormById(form, id);
+		FFullWindow(fullscreen, av, form): getFFormById(form, id);
+		default:
+			if (countList(id) == 0)
+				const(Some(f))
+			else
+				const(None())
+	}
+}
+
+MFocusClickable2TAccessibility(manager : MaterialManager, content : Tropic, focus : MaterialFocus, keyOnClick : Maybe<(bool) -> void>, accessRole : string,
+	shortcut : string, oneWayConnection : Maybe<bool>, accessAttributes : [FAccessAttribute]) -> Tropic {
+	if (focus.focusEnabled == const(false) || (!^fAccessibilityEnabled && !cpp) || (mobile && !js) ||
+		switchMaterialFocus(focus, \f -> fgetValue(f.parent.id) == -2, \f -> eitherMap(f.parent, \p -> fgetValue(p.id) == -2, false)))
+		content
+	else
+		switchMaterialFocus(
+			focus,
+			\f ->
+				eitherFn(
+					oneWayConnection,
+					\owc -> {
+						focused = make(false);
+						accessEnabled = if (owc) fmin(f.focusEnabled, fnot(f.focused)) else f.focusEnabled;
+
+						TConstruct(
+							[
+								makeSubscribe(focused, \foc -> if (foc) nextDistinct(f.focused, true) else if (!owc)
+									deferred(\ -> if (getValue(f.focused)) nextDistinct(focused, true))),
+								makeSubscribe(f.focused, \foc -> if (foc) nextDistinct(focused, true))
+							],
+							TAccess(
+								[
+									FAccessZorder(f.parent.zorder),
+									AccessRole(accessRole),
+									AccessFocused(focused),
+									FAccessEnabled(accessEnabled),
+									FAccessTabOrder(f.tabOrder)
+								]
+								|> (\f3 ->
+									eitherMap(
+										keyOnClick,
+										\koc ->
+											arrayPush(
+												f3,
+												AccessCallback(\ -> {
+													koc(true);
+													koc(false);
+												})
+											),
+										f3
+									)
+								)
+								|> (\f3 ->
+									if (isUrlParameterTrue("accessorder"))
+										concat(
+											f3,
+											[
+												FAccessAttribute("aria-roledescription", const(f.name)),
+												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+											]
+										)
+									else
+										f3
+								)
+								|> (\f3 -> MFocusClickable2TAccessibilityTabindex(manager, f, f3))
+								|> (\f3 -> concat(f3, accessAttributes))
+								|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
+								content
+							)
+						)
+					},
+					\ ->
+						TAccess(
+							(if (accessRole != "")
+								[
+									FAccessZorder(f.parent.zorder),
+									AccessRole(accessRole),
+									AccessFocused(f.focused),
+									FAccessEnabled(f.focusEnabled),
+									FAccessTabOrder(f.tabOrder)
+								]
+							else
+								[
+									FAccessZorder(f.parent.zorder),
+									AccessRole("group"),
+									FAccessTabOrder(f.tabOrder)
+								])
+							|> (\f3 ->
+								eitherMap(
+									keyOnClick,
+									\koc ->
+										arrayPush(
+											f3,
+											AccessCallback(\ -> {
+												koc(true);
+												koc(false);
+											})
+										),
+									f3
+								)
+							)
+							|> (\f3 ->
+								if (isUrlParameterTrue("accessorder"))
+									concat(
+											f3,
+											[
+												FAccessAttribute("aria-roledescription", const(f.name)),
+												FAccessAttribute("manager-id", const(i2s(f.parent.managerId)))
+											]
+										)
+								else
+									f3
+							)
+							|> (\f3 -> MFocusClickable2TAccessibilityTabindex(manager, f, f3))
+							|> (\f3 -> concat(f3, accessAttributes))
+							|> (\f3 -> if (shortcut != "") arrayPush(f3, AccessKbdShortcutString(shortcut)) else f3),
+							content
+						)
+				)
+				|> (\accessForm ->
+					if (^mSpeechAccessiblityEnabled) {
+						getSpeechName = \ -> {
+							controlName =
+								if (f.name == "MSwitchControl")
+									"switch"
+								else if (f.name == "MCheckBox")
+									"checkbox"
+								else if (f.name == "MRadio")
+									"radio"
+								else if (f.name == "MTextInput" || f.name == "MAutoComplete" || f.name == "MSmallEditDialog")
+									"input"
+								else
+									accessRole;
+							strReplace(fgetValue(f.title), "_", " ") + " " + controlName;
+						}
+
+						TConstruct(
+							[
+								makeSubscribeUns(f.focused, \foc ->
+									if (foc) {
+										[interruptibleTimer(100, \ -> speechSynthesis(getSpeechName(), [])), clearSpeechSynthesisQueue]
+									} else {
+										[]
+									}
+								)
+							],
+							accessForm
+						)
+					} else
+						accessForm
+				),
+			\f ->
+				TAccess(
+					(if (accessRole != "")
+						[
+							FAccessZorder(f.zorder),
+							AccessRole(accessRole),
+							FAccessEnabled(f.focusEnabled),
+							FAccessTabOrder(f.tabOrder)
+						]
+					else
+						[
+							FAccessZorder(f.zorder),
+							AccessRole("group"),
+							FAccessTabOrder(f.tabOrder)
+						])
+					|> (\f3 ->
+						eitherMap(
+							keyOnClick,
+							\koc ->
+								arrayPush(
+									f3,
+									AccessCallback(\ -> {
+										koc(true);
+										koc(false);
+									})
+								),
+							f3
+						)
+					)
+					|> (\f3 ->
+						if (isUrlParameterTrue("accessorder"))
+							concat(
+								f3,
+								[
+									FAccessAttribute("aria-roledescription", const(f.name)),
+									FAccessAttribute("manager-id", const(i2s(manager.id)))
+								]
+							)
+						else
+							f3
+					)
+					|> (\f3 -> concat(f3, accessAttributes)),
+					content
+				)
+		)
+}
+
+MFocusClickable2TAccessibilityTabindex(manager : MaterialManager, f : MFocus, accessProperties : [FAccessProperty]) -> [FAccessProperty] {
+	if (isSome(f.parent.vertical) || isSome(f.parent.horizontal))
+		arrayPush(
+			accessProperties,
+			FAccessTabindex(
+				fif(
+					fmax(
+						fmax(
+							f.focused,
+							fselect(getCurrentFocusedItemBehaviour(manager), FLift(\foc ->
+								eitherMap(foc, \fc -> fc.name == "MSmallEditDialog" || fc.name == "MAutoComplete", false)))
+						),
+						fmin(
+							eitherMap(
+								f.parent.horizontal,
+								\h ->
+									feq(h.focusedId, -1),
+								const(true)
+							),
+							eitherMap(
+								f.parent.vertical,
+								\v ->
+									feq(v.focusedId, -1),
+								const(true)
+							)
+						)
+					),
+					const(0),
+					const(-1)
+				)
+			)
+		)
+	else
+		accessProperties
+}
+
+mClickButton(manager : MaterialManager, name : string) -> void {
+	buttons = ref [];
+	mClickButton2(manager.focus, name, buttons);
+	if (length(^buttons) > 0) {
+		maybeApply(^buttons[0].onClick, apply0);
+	}
+}
+
+mClickButton2(focus : MaterialFocus, name : string, buttons : ref [MFocus]) -> void {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			if (fgetValue(f.enabled) && fgetValue(f.parent.zorderEnabled) &&
+				(strContains(toLowerCase(f.name), toLowerCase(name)) || strContains(toLowerCase(fgetValue(f.title)), toLowerCase(name))))
+				buttons := arrayPush(^buttons, f);
+		},
+		\fg -> {
+			traverseInOrder(getValue(fg.focusIds), \k, v -> mClickButton2(v, name, buttons));
+		}
+	);
+}

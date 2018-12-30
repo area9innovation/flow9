@@ -1,0 +1,104 @@
+import tropic/tropic_gui;
+import tropic/trender;
+import formats/css/stylesheet;
+
+
+export {
+	// Prepare a manager for dragging, tooltips 
+	// - with a default value for when nothing is being dragged or no tooltips rendered
+	makeTManager(none : int, style : [TRenderStyle]) -> TManager;
+
+	TManager(
+		// What id is dragging at this point?
+		dragging : DynamicBehaviour<int>, 
+
+		// Whenever we drop, this is updated
+		drop : DynamicBehaviour<int>,
+
+		// The neutral value
+		none : int,
+
+		// Gets a global coordinates of the mouse. Also used for tooltips positions
+		xy : () -> Point, 
+
+		// Internal: Which drop spot is being hovered?
+		hovering : DynamicBehaviour<int>,
+
+		// Internal: The draggables communicate drops with this function
+		onDrop : (int) -> bool, 
+
+		// Internal for numbering the dragabbles to be able to find their place on the screen
+		nextTagId : ref int,
+
+		// Internal function to find the position of the draggable with this tag
+		findPositionScaleFn : ref (int) -> PositionScale,
+
+		sheet : Stylesheet,
+
+		renderStyle : [TRenderStyle],
+
+		deltaTimer : LazyDeltaTimer
+	);
+
+	// Render the given tropic, setting up the drag/tooltips handling. Drag/tooltips support does not work unless you use this!
+	trenderManager(manager : TManager, t : Tropic) -> () -> void;	
+
+	dummyTFinder(i : int) -> PositionScale;
+}
+
+makeTManager(none : int, style : [TRenderStyle]) -> TManager {
+	sheet = extractStruct(style, emptyStylesheet);
+
+	draggingId = make(none);
+	dropId = make(none);
+	newStyle = 
+		if (length(extractStructMany(style, TInspectDpiFactor(make(Factor(1.0, 1.0))))) > 0)
+			style
+		else
+			arrayPush(style, TInspectDpiFactor(make(Factor(1.0, 1.0))));
+
+	dpiFactor = extractStruct(newStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
+
+	lazyDeltaTimer = makeDrawFrameEventListener();
+
+	TManager(
+		draggingId,
+		dropId,
+		none,
+		\ -> Point(getMouseX(getStage()) / fgetValue(dpiFactor).x, getMouseY(getStage()) / fgetValue(dpiFactor).y),
+		make(-1),
+		\id -> {
+			if (id == getValue(draggingId)) {
+				// Send the drop event
+				nextDistinct(dropId, id);
+				nextDistinct(draggingId, none);
+				// And clear it again
+				nextDistinct(dropId, none);
+				true;
+			} else {
+				false;
+			}
+		},
+		ref 0,
+		ref dummyTFinder,
+		sheet,
+		newStyle,
+		lazyDeltaTimer
+	);
+}
+
+
+dummyTFinder(i : int) -> PositionScale {
+	println("Use trenderManager to get positions/scales to work");
+	PositionScale(Point(0.0, 0.0), Point(1.0, 1.0));
+}
+
+trenderManager(manager : TManager, t : Tropic) -> () -> void {
+	r = trender2(t, manager.renderStyle);
+	if (^(manager.findPositionScaleFn) == dummyTFinder) {
+		manager.findPositionScaleFn := r.second;
+	} else {
+		println("Warning: New call of trenderManager would overwrite findPositionScaleFn");
+	}
+	r.first;
+}

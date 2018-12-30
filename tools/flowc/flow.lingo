@@ -1,0 +1,251 @@
+flow = '\uFEFF'? ws importExport* toplevelDeclaration* lastLineComment?;
+
+importExport = import
+	| dynamicImport
+	| export
+	| forbid;
+
+import = "import" s path ws ';' ws;
+dynamicImport = "require" s path ws ';' ws;
+export = "export" ws '{' ws toplevelDeclaration+ '}' ws;
+forbid = "forbid" s path ws ';' ws;
+
+toplevelDeclaration = native
+	| assign
+	| union
+	| function
+	| typedecl;
+
+native = "native" s id ws ':' ws native_io? type '=' ws name ws ';' ws;
+	native_io = "io" ws;
+
+name = id dot_name*;
+	dot_name = '.' id;
+
+assign = id ws '=' ws exp ';'? ws;
+
+union = id ws typelist? ws "::=" ws typenames ';' ws;
+
+function = id ws '(' ws function_args;
+	function_args = funargs2? ')' ws returnType? ';' ws
+		| funargs? ')' ws function_2;
+
+	function_2 = returnType brace_or_semi
+		| exp ';'? ws;
+
+typedecl = functiondecl
+	| structdecl
+	| vardecl;
+
+vardecl = id ws ':' ws type assignExp? ';'? ws;
+	assignExp = '=' ws exp;
+
+functiondecl = id ws ':' ws '(' ws argtypes? ws ')' ws returnType ';' ws;
+
+structdecl = id ws ':' ws '(' ws funargs? ')' ws ';' ws;
+
+returnType = "->" ws type;
+
+brace_or_semi = brace ';'? ws;
+
+// Arg names optional
+funargs2 = funarg2 funargs2_more* trailingComma?;
+	funargs2_more = ',' ws funarg2;
+
+funarg2 = funarg_mutable? funarg2_arg;
+	funarg2_arg = id ws colontype?
+		| type;
+
+funargs = funarg funargs_more* trailingComma?;
+		funargs_more = ',' ws funarg;
+
+funarg = funarg_mutable? id ws colontype?;
+
+funarg_mutable = "mutable" s;
+
+colontype = ':' ws type;
+typenames = typename typenames2*;
+	typenames2 = ',' ws typename;
+
+typename = id ws typelist?;
+typelist = '<' ws types '>' ws;
+types = type types2*;
+	types2 = ',' ws type;
+
+type = '[' ws type ws ']' ws
+	| '(' ws type_fn_par
+	| '^' ws type
+	| '?'+ ws
+	| "bool" !letterOrDigit_ ws
+	| "int" !letterOrDigit_ ws
+	| "double" !letterOrDigit_ ws
+	| "string" !letterOrDigit_ ws
+	| "flow" !letterOrDigit_ ws
+	| "void" !letterOrDigit_ ws
+	| "native" !letterOrDigit_ ws
+	| "ref" !letterOrDigit_ ws type
+	| typename ws;
+
+
+type_fn_par = argtypes? trailingComma? ')' ws type_rettype
+	| type ')' ws;
+	type_rettype = "->" ws type;
+
+argtypes = argtype argtypes2*;
+	argtypes2 = ',' ws argtype;
+
+argtype = id ws colontype
+	| type;
+
+exp = id ws colontype? '=' ws exp
+	| "if" !letterOrDigit_ ws '(' ws condexp ')' ws exp elseExp?
+	| atom '.' ws id ws "::=" ws exp
+	| exp1;
+
+// Just so we can extract it
+condexp = exp;
+
+exp1 = exp2 exp1_assign?;
+	exp1_assign = ":=" ws exp;
+
+elseExp = "else" ws exp;
+exp2 = exp3 pipeExp*;
+pipeExp = "|>" ws exp3;
+exp3 = exp4 orExp*;
+orExp = "||" ws exp4;
+exp4 = exp5 andExp*;
+andExp = "&&" ws exp5;
+exp5 = exp6 exp5_compare?;
+	exp5_compare = comparisonOp ws exp6;
+
+comparisonOp = "=="
+	| "!="
+	| "<="
+	| ">="
+	| '<'
+	| '>';
+exp6 = term additiveExp*;
+additiveExp = plusMinus ws term;
+plusMinus = '+'
+	| '-';
+term = factor multiExp*;
+multiExp = multiOp ws factor;
+multiOp = '*'
+	| '/'
+	| '%';
+factor = '!' ws factor
+	| '-' ws factor
+	| '\\' ws argNames? trailingComma? ws "->" ws exp
+	| call;
+argNames = argName argNames2*;
+	argNames2 = ',' ws argName;
+
+argName = id ws colontype?;
+
+call = atom postfix*;
+postfix = args
+	| '.' id ws
+	| '[' ws exp ']' ws
+	| '(' ws call "with" s fields ')' ws;
+args = '(' ws arglist? ws ')' ws;
+arglist = exp one_more_exp* trailingComma?;
+fields = assign fields_tail* (trailingComma ws)?;
+fields_tail = ',' ws assign;
+one_more_exp = ',' ws exp;
+trailingComma = ',' ws;
+atom! = keywords
+	| id ws
+	| number ws
+	| string
+	| '(' ws exp ')' ws
+	| "{}" ws
+	| brace ws
+	| '[' ws exps? trailingComma? ']' ws
+	| '^' ws atom;
+brace = '{' ws brace_exps? '}';
+	brace_exps = exp brace_exps_more* brace_semi?;
+	brace_exps_more = brace_semi? exp;
+	brace_semi = ';' ws;
+
+exps = exp exps2*;
+	exps2 = ',' ws exp;
+
+keywords = "true" !letterOrDigit_ ws
+	| "false" !letterOrDigit_ ws
+	| "if" !letterOrDigit_ ws '(' ws condexp ')' ws exp elseExp?
+	| "ref" !letterOrDigit_ ws exp
+	| switch
+	| "cast" !letterOrDigit_ ws '(' ws exp2 ':' ws type "->" ws totype ')' ws
+	| "require" !letterOrDigit_ ws '(' ws path ws ')' ws exp ws
+	| "unsafe" !letterOrDigit_ ws '(' ws id ws ',' ws exp ')' ws;
+
+// Just to be able to get it
+totype = type;
+
+switch = "switch" !letterOrDigit_ ws '(' ws exp2 switchType? ')' ws '{' ws defaultOrNamedCase* '}' ws;
+switchType = ':' ws type;
+defaultOrNamedCase = "default" !letterOrDigit_ ws ':' ws exp ';'? ws
+	| id ws '(' ws names? ')' ws ':' ws exp ';'? ws;
+names = id ws names_more*;
+	names_more = ',' ws id;
+
+number = "0x" hexdigit_+
+	| number_float1
+	| number_float2
+	| int;
+	number_float1 = '.' int;
+	number_float2 = int '.' int?;
+
+int! = digit_+;
+id! = letter_ letterOrDigit_*;
+
+letterOrDigit_ = 'a'-'z'
+	| 'A'-'Z'
+	| '_'
+	| '0'-'9';
+letter_ = 'a'-'z'
+	| 'A'-'Z'
+	| '_';
+digit_ = '0'-'9';
+hexdigit_ = digit_
+	| 'a'-'f'
+	| 'A'-'F';
+
+onechar_ = "\\u" hexdigit_ hexdigit_ hexdigit_ hexdigit_
+	| "\\X" hexdigit_ hexdigit_ hexdigit_ hexdigit_
+	| "\\x" hexdigit_ hexdigit_
+	| '\\' escapedchar_
+	| !'"' !'\\' char_;
+
+escapedchar_ = "\\" | '"' | "n" | "t" | "r";
+
+char_ = '\u0000'-'\uFFFF';
+
+
+string = '"' "#inc" "lude" s stringinclude '"' ws
+	| singlestring+;
+
+	stringinclude = nonspace_+;
+
+path = id path_more*;
+	path_more = '/' id;
+singlestring = '"' onechar_* '"' ws;
+ws = whitespace_*;
+s = whitespace_+;
+nonspace_ = !whitespace_ !'"' char_;
+whitespace_ = ' '
+	| '\t'
+	| '\n'
+	| comment
+	| '\u000D';
+comment = '/' restOfComment;
+restOfComment = '*' nonstarchar_* "*/" restOfComment2?
+	| "**/" restOfComment2?
+	| '/' nonlinebreakchar_* '\n'
+	| '/\n';
+	restOfComment2 = restOfComment1* '\n';
+		restOfComment1 = ' ' | '\t';
+
+nonstarchar_ = !"*/" char_;
+nonlinebreakchar_ = !'\n' char_;
+lastLineComment = "//" nonlinebreakchar_*;

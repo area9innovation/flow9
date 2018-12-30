@@ -1,0 +1,893 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fimodule;
+import binarytree;
+import lingo/flow/javascript_keywords;
+import tools/flowc/backends/javascript/fi2javascript_defines;
+import tools/flowc/backends/javascript/fi2javascript_utils;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/manipulation/freevars;
+
+export {
+	fiJsCompileToplevel(
+		cfg : FiJsConfig,
+		ctx : FiJsToplevelContext,
+		decl: FiDeclaration,
+		id  : string,
+		prefix : string,
+		moduleData: Maybe<Pair<Set<string>, Tree<string, string>>>) -> string;
+
+	fiJsCompileToExpr(
+		cfg  : FiJsConfig,
+		ctx  : FiJsToplevelContext,
+		expr : FiExp,
+		indent : string,
+		tailcall : bool,
+		needPars : bool) -> string;
+
+	fiJsCompileToReturn(
+		cfg : FiJsConfig,
+		ctx : FiJsToplevelContext,
+		expr : FiExp,
+		indent : string) -> string;
+
+	fiJsSubstituteJSNative(
+		cfg  : FiJsConfig,
+		ctx  : FiJsToplevelContext,
+		expr : FiExp,
+		es : [FiExp],
+		indent : string,
+		tailcall : bool,
+		callexpr : FiExp) -> string;
+
+	fiJsCompileMath(
+		cfg  : FiJsConfig,
+		ctx  : FiJsToplevelContext,
+		arg1 : Pair<string, FiType>,
+		op : string,
+		arg2 : Pair<string, FiType>) -> string;
+
+	fiJsCompileCompare(
+		cfg  : FiJsConfig,
+		ctx  : FiJsToplevelContext,
+		arg1 : Pair<string, FiType>,
+		op : string,
+		arg2 : Pair<string, FiType>) -> string;
+
+}
+
+fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclaration, id : string, prefix : string, moduleData : Maybe<Pair<Set<string>, Tree<string, string>>>) {
+	nm = decl.name;
+	
+	exports = eitherFn(moduleData, \m -> m.first, \ -> makeSet());
+	/* TODO: Comments processing
+	commentsBefore =
+		if (ctx.ovl.jscomments)
+			switch (module_data) {
+				Some(m): either(lookupTree(m.second, nm), "");
+				None(): ""
+			} else "";
+
+	commentsStr =
+		(if (commentsBefore == "") "" else "\n" + commentsBefore);
+	*/
+	strict = if (cfg.jsmode == STANDARD_JS) "" else "var ";
+	toplevel = switch (decl : FiDeclaration) {
+		FiNativeDec(name0, io, type, nativeName, fallback, declStart, defiStart) : {
+			no_fallback = \ -> {
+				if (cfg.debug) {
+					name = fiJsPrefixedName(cfg, ctx, name0);
+
+					if (!startsWith(nativeName, "RenderSupport")) {
+						"var " + (if (name == "length") "length__" else name) + "=" +
+						(if (cfg.modules != "") "R." else "") +
+						fiJsMangleNativeName(ctx.ovl, nativeName) + ";"
+					} else ""
+				} else {
+					(if (cfg.jsmode == STANDARD_JS) "" else "var ") + id + "=" + (if (cfg.modules != "") "R." else "") + fiJsMangleNativeName(ctx.ovl, nativeName)+";";
+				}
+			}
+			switch (fallback) {
+				FiVoid(__): no_fallback();
+				FiLambda(__, __, __, __): {
+					// fcPrintln("FcNative fallback: " + toString(e));
+					// TODO: TS processing
+					mn = fiJsMangleNativeName(ctx.ovl, nativeName);
+					fd =
+						FiFunctionDec(
+							name0,
+							fallback,
+							FiTypeFunction([], FiTypeVoid()), // TODO: is it ok to pass FiTypeVoid here?
+							declStart,
+							defiStart);
+					prfx = fiJsES6FunctionPrefix(cfg, ctx, mn);
+
+					(if (cfg.jsmode == TS_MODE) "var " else "") +
+					fiJsCompileToplevel(cfg, ctx, fd, fiJsRename(cfg, ctx, name0), prfx, None());
+				}
+				default: {
+					fcPrintln("fallbackLambda in FiNativeDec must be FiLambda or FiVoid, but is: " + prettyFiExp(dummyPretty, fallback));
+					no_fallback()
+				}
+			}
+		}
+
+		FiFunctionDec(name, lambda, type, __, __): {
+			ind = if (cfg.jsmode != STANDARD_JS) "" else ctx.indent2;
+			// if (!ctx.ovl.typescript || params.tsProcess.antiTS) {
+			if (cfg.jsmode != TS_MODE) {
+				id1 = fiJsPrefixedName(cfg, ctx, id);
+
+				fparams = strGlue(map(lambda.args, \argt -> fiJsRename(cfg, ctx, argt.name)), ",");
+				arrow = if (cfg.jsmode == STANDARD_JS) "" else "=>";
+				header = (if (cfg.jsmode == STANDARD_JS) "function" else "")+"(" + fparams + ")" + arrow + "{" + finl(cfg);
+				isNoOtc = isConfigParameterTrue(ctx.program.config.config, fiJsNoOtcParamName);
+				body = ind +
+				fiJsCompileToReturn(
+					// TODO: TS processing
+					// dummyTSProcessing(params), ns, tSubst,
+					cfg, ctx, lambda.body, (if (isNoOtc) ctx.indent4 else ctx.indent2))
+				+ finl(cfg) + "}";
+				if (ctx.has_tail) {
+					if (isNoOtc) {
+						"function " + id1 + "(" + fparams + "){" + finl(cfg) +
+						// TAIL_CALL: changed to T:
+						"T:" + ctx.indent2 + "while (true){" + finl(cfg) +
+						(if (cfg.jsmode != STANDARD_JS) ctx.indent2 else "") + body + "}" + finl(cfg);
+
+					} else {
+						if (cfg.jsmode != STANDARD_JS) {
+							(if (cfg.modules != "") "R." else "") + "OTC(" + header + body +", '" + id1 + "');"
+						} else
+							"OTC(" + header + body + ", '" + id1 + "');"
+					}
+				} else {
+					// 'function foo()' instead of 'var foo = function()'
+					(if (prefix != "")
+						strict + id1 + "=" + prefix + header+body+";"
+					else
+						"function " + id1 + "(" + fparams + "){" + finl(cfg) + (if (cfg.jsmode != STANDARD_JS) ctx.indent2 else "") + body) +
+					(if (!cfg.debug && containsSet(cfg.jslibrary, name)) {
+						finl(cfg) + "var " + name + " = " + id + ";"
+					} else "")
+
+				}
+			} else {
+				/* // TODO: TypeScript processing
+				fparams = strGlue(map(lambda.xs, \argt -> {
+					argname = jsRename(ctx : FiJsToplevelContext, argt.name);
+					argname +
+					resolveTSTypes(ctx.ovl.typescript && !params.tsProcess.antiTS, ns, tSubst, argt.derived, 0, argname != "", 0, ":%1")
+				}), ",");
+				// This is a uniq list of "??..?" types - generics
+				typeVariables = strGlue(uniq(strSplit2WithoutLeave(strGlue(map(lambda.xs, \argt ->
+					resolveTSTypes(ctx.ovl.typescript && !params.tsProcess.antiTS, ns, tSubst, argt.derived, 1, true, 0, "%1")
+				), ","), [",", " "])), ",");
+				maxTVIndex = length(strSplit2WithoutLeave(typeVariables,[",", " "])) + 2;
+				returnedType = resolveTSTypes(ctx.ovl.typescript && !params.tsProcess.antiTS, ns, tSubst, info.derived, maxTVIndex, false, 1, "%1");
+				body = ind +
+					jsCompileToReturn(
+						changeTSProcessing(params, TypeScriptProcessing(
+							"",
+							returnedType == "void",
+							params.tsProcess.antiTS)
+						),
+						ns, tSubst, ctx : FiJsToplevelContext, lambda.body, ctx.indent2, 
+					) +
+					"\n}";
+				(if (params.modules != "" && (!ctx.ovl.es6 && (containsSet(exports, name) || name == "main"))) "export "
+				else "") +
+				"function " + id +
+				(if (typeVariables == "") "" else "<" + typeVariables + ">") +
+				"(" + fparams + ")" +
+				":(" + returnedType + ")" +
+				"{\n" + body + ";\n";*/
+
+				"TypeScript function " + name;
+			}
+		}
+
+		FiGlobalVar(name, value, __, __, __): {
+			dec = if (cfg.jsmode == STANDARD_JS) "var " else "const ";
+			id1 = fiJsPrefixedName(cfg, ctx, id);
+
+			// TODO Dead code elimination broke this!
+			// Made stub, but require to fixup it correctly!
+			if (id != "" && name != "")
+				// TODO: TypeScript and modules processing
+				// (if (ctx.ovl.typescript && params.modules != "" && !ctx.ovl.es6 && containsSet(exports, name)) "export " else "") +
+				dec + id1 +
+				// TODO TypeScript processing
+				//resolveTSTypes(ctx.ovl.typescript, ns, tSubst, type.body, 2, true, -1, ":%1") + 
+				"=" + fiJsCompileToExpr(cfg, ctx, value, ctx.indent2, false, false) + ";"
+			else "";
+		}
+	};
+	/*
+	// Put comments in place.
+	//c.first +
+	lncmt = jsLnComment(ctx : FiJsToplevelContext, ci.end);
+	commentsStr + /*exported + */ toplevel// + jsConvertComment(lncmt);
+
+}
+
+fiJsLambdaLevel : ref int = ref 0;
+
+fiGetStructId(ctx : FiJsToplevelContext, item : FiCase) {
+	switch (lookupTree(ctx.ovl.structs, item.struct)) {
+		Some(info): info.id;
+		None(): fail0("invalid struct " + item.struct);
+	}
+}
+
+fiGetItemId(ctx : FiJsToplevelContext, item, readable) {
+	if (readable) "'" + item.struct + "'" else i2s(fiGetStructId(ctx, item));
+}
+
+fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string, tailcall : bool, needPars : bool) -> string {
+	pars = \s -> if (needPars) "(" + s + ")" else s;
+	// TODO: Comments processing
+	/*
+	ei = getFbExpInfo(expr);
+	commentsBefore = jsGetComments(ctx : FiJsToplevelContext, ei.pos);
+	exprstr =
+		(if (commentsBefore == "") "" else commentsBefore) +
+	*/
+	switch (expr : FiExp) {
+		// TODO: Not declared
+		// FcForeign(a,b,c): fail0("FbForeign not supported");
+		FiVoid(__): "null";
+		FiBool(b, __): if (b) "true" else "false";
+
+		FiInt(v, __): {
+			// TODO: restore hex numbers
+			i2s(v)
+
+			/*
+			// Simple heuristic:
+			// Hex numbers 0..9 is the same as decimal
+			if (v >= 0 && v <= 9) {
+				i2s(v)
+			} else {
+				// For larger numbers detect hex numbers first
+
+				// Check file content availability
+				fcCheckAvailableContent(ctx.fileinfo);
+				intval = substring(ctx.fileinfo.content, i.start, i.end-i.start);
+				// Check if value is hexadecimal
+				if (startsWith(intval, "0x") && v >= 0)
+					intval
+				else
+					if (v < 0) "("+i2s(v)+")" else i2s(v);
+			}*/
+		}
+
+		FiDouble(d, __):
+			//TODO: infinity
+			if (isNanOrInf(d))
+				"Math.NaN"
+			else {
+				s = d2s(d);
+				s1 = if (strIndexOf(s, ".") < 0 && strIndexOf(s, "e") < 0) s+".0" else s;
+				if (getCharAt(s1, 0) == "-") "("+s1+")" else s1;
+			}
+
+		FiString(s, __): {
+			// We use Cons() concatenation instead of string concatenation,
+			// because structures creation and list2string() call is
+			// much cheaper than usual string concatenation.
+			f = stringFold(s, Cons("\"", makeList()), \acc, code -> {
+				Cons(if (code < 0x20) {
+						if (code == 0x09) "\\t"
+						else if (code == 0x0a) "\\n"
+						else if (code == 0x0d) "\\r"
+						else "\\u"+lpad(formatHex(code), "0", 4);
+					} else if (code >= 0x80) {
+						"\\u"+lpad(formatHex(code), "0", 4)
+					} else {
+						if (code == 0x22) "\\\""
+						else if (code == 0x5c) "\\\\"
+						else fromCharCode(code);
+					}, acc)
+			});
+			list2string(Cons("\"", f));
+		}
+
+		FiVar(x, __, __): {
+			r = switch (lookupTree(ctx.natives, x)) {
+				Some(id): {
+					if (!cfg.debug)
+						id
+					else {
+						if (id == "NativeHx.length__" && cfg.modules == "")
+							fiJsPrefixedName(cfg, ctx, "length__")
+						else
+							if (startsWith(id, "RenderSupport")) id else fiJsPrefixedName(cfg, ctx, x);
+					}
+				}
+				None(): fiJsRename(cfg, ctx, x);
+			}
+			if (cfg.modules != "") fiJsExportedName(cfg, ctx, r, r) else r;
+		}
+
+		FiLet(x, tp, e1, e2, __, __): {
+			fiJsLambdaLevel := ^fiJsLambdaLevel + 1;
+			subindent = indent+ctx.indent2;
+			fnbraces = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "()=>" else "function()";
+			letPrefix = "(" + fnbraces + "{"+ finl(cfg)+subindent+"var "+fiJsRename(cfg, ctx, x)+"=";
+			a = fiJsCompileToExpr(cfg, ctx, e1, subindent, false, false)+(";"+ finl(cfg)+subindent);
+			b = fiJsCompileToReturn(
+				// TODO: TS processing
+				// dummyTSProcessing(params), ns, tSubst,
+				cfg, ctx, e2, subindent) + (if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "})()" else "}())");
+			fiJsLambdaLevel := ^fiJsLambdaLevel - 1;
+			letPrefix + a + b;
+		}
+
+		FiLambda(xs, e0, __, __): {
+			fiJsLambdaLevel := ^fiJsLambdaLevel + 1;
+			subindent = indent+ctx.indent2;
+			args = "("+strGlue(map(xs, \argt -> fiJsRename(cfg, ctx, argt.name)), ",")+")";
+			functionkey = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "" else "function";
+			arrowkey = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "=>" else "";
+			body = fiJsCompileToReturn(
+				// TODO: TS processing
+				// dummyTSProcessing(params), ns, tSubst,
+				cfg, ctx, e0, subindent);
+			fiJsLambdaLevel := ^fiJsLambdaLevel - 1;
+			("("+functionkey+args+arrowkey+"{"+finl(cfg)+subindent)+body+("})"
+				// Unpleasant behavior - space in params
+				//+indent
+			);
+		}
+
+		FiCall(f, es, __, __): {
+			maybe_sinfo = switch (f) {
+				FiVar(x, __, __):
+				switch (lookupTree(ctx.ovl.structs, x) : Maybe<FiJsStruct>) {
+					Some(sinfo): Some(sinfo);
+					None(): {
+
+						// Last || op require to eliminate influence of inner functions to 'has_tail' flag,
+						// ex. strSplit() {... substring() ...}, substring processing resets has_tail flag.
+						ctx.has_tail ::= (x == ctx.toplevel_name) && tailcall && (^fiJsLambdaLevel == 0) || ctx.has_tail;
+						None()
+					}
+				}
+				default:
+				None();
+			};
+			switch (maybe_sinfo) {
+				Some(sinfo): {
+					foldi(es, "({" + (if (cfg.readable) "_name:'" + sinfo.struct.name + "'" else "_id:"+i2s(sinfo.id)), \idx,acc,arg -> {
+						n = sinfo.struct.args[idx].name;
+						fld = lookupTreeDef(ctx.ovl.fieldRenamings, n, n);
+						acc+","+fld+":"+fiJsCompileToExpr(cfg, ctx, arg, "", false, false)
+					}) + "})";
+				}
+				None(): {
+					// Processing function call, like 'length(thing)'
+					// and changing it to 'thing.length'.
+					// Handling made on per function basis.
+					fiJsSubstituteJSNative(cfg, ctx, f, es, indent, tailcall, expr);
+				}
+			}
+		}
+
+		FiSeq(es, __, __): {
+			subindent = indent+ctx.indent2;
+			// , has lowest precedence, so we do not need pars
+			args = map(es, \item -> fiJsCompileToExpr(cfg, ctx, item, subindent, false, false));
+			"("+strGlue(args, ","+ finl(cfg) + indent)+")";
+		}
+
+		FiIf(e1, e2, e3, __, __): {
+			subindent = indent+ctx.indent2;
+			"("+fiJsCompileToExpr(cfg, ctx, e1, indent, false, true)+"?"+
+			fiJsCompileToExpr(cfg, ctx, e2, subindent, false, true) + ":" +
+			fiJsCompileToExpr(cfg, ctx, e3, subindent, false, true) + ")";
+		}
+
+		FiSwitch(e0, e0type, cs, __, __): {
+			isIf = length(cs) == 2;
+			rdbl = cfg.readable;
+			es6 = cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE;
+			aVar = "("+fiJsCompileToExpr(cfg, ctx, e0, indent, false, false)+")." + (if (rdbl) "_name" else "_id");
+
+			fnbraces = if (es6) "()=>" else "function()";
+			header = "(" + fnbraces + "{var $$ss;switch(" + aVar + "){" + finl(cfg) + indent;
+			subindent = indent+ctx.indent2;
+			ifText = if (isIf) {
+				// This variable intended for corner cases, when default branch of switch
+				// goes first. We can't get item id for default, because we have no struct
+				// data for default case. We invert meaning of condition and use second
+				// branch as condition source.
+				isFirstBranchDefault = cs[0].struct == "default";
+				ifSelector = fiGetItemId(ctx, cs[if (isFirstBranchDefault) 1 else 0], rdbl);
+				trueBody = "$$ss=" + fiJsCompileToExpr(cfg, ctx, cs[0].body, indent+ctx.indent4, false, false);
+				falseBody = "$$ss=" + fiJsCompileToExpr(cfg, ctx, cs[1].body, indent+ctx.indent4, false, false);
+				"(" + fnbraces + "{var $$ss;if(" + aVar + (if (isFirstBranchDefault) "!=" else "==") + ifSelector + "){" + trueBody + "}else{" + falseBody;
+			} else "";
+			innerIf = Cons(ifText, EmptyList());
+			inner = if (isIf)
+					innerIf
+				else
+					fold(cs, Cons(header, EmptyList()), \acc, item -> {
+						choice = if (item.struct == "default") {
+								"default"
+							} else {
+								if (rdbl) "case '" + item.struct + "'"  else "case "+i2s(fiGetStructId(ctx, item));
+							};
+						body = fiJsCompileToExpr(cfg, ctx, item.body, indent+ctx.indent4, false, false);
+						// TODO: If the body ends in a "return", we do not need this "break;" here
+						Cons(";break;}"+ finl(cfg)+indent, Cons(body, Cons(choice+":{$$ss=", acc)));
+					});
+
+			list2string(Cons("}return $$ss;}" + (if (es6) ")()" else "())"), inner));
+		}
+
+		FiCast(e0, tFrom, tTo, __, __): {
+			arg = fiJsCompileToExpr(cfg, ctx, e0, indent, false, needPars);
+			switch (tFrom : FiType) {
+				FiTypeInt(): {
+					switch (tTo : FiType) {
+						FiTypeInt(): arg;
+						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string(" + arg + ")";
+						FiTypeDouble(): arg; // All numbers are doubles in JS. "(1.0*" + arg + ")";
+						default: arg;
+					}
+				}
+				FiTypeDouble(): {
+					switch (tTo : FiType) {
+						FiTypeString(): (if (cfg.modules != "") "R." else "") + "Std.string("+arg+")";
+						FiTypeInt(): pars("(" + arg + ")|0");
+						FiTypeDouble(): arg;
+						default: arg;
+					}
+				}
+				default: arg;
+			}
+		}
+		FiCallPrim(op, es, type, __): {
+			subindent = switch (op : FcPrim) {
+				FcArrayPrim(): indent + ctx.indent1;
+				default: indent;
+			};
+
+			args = map(es, \arg -> Pair(fiJsCompileToExpr(cfg, ctx, arg, subindent, false, true), fiExpType(arg)));
+			switch (op : FcPrim) {
+				FcOrPrim():	   pars(args[0].first + "||" + args[1].first);
+				FcAndPrim():   pars(args[0].first + "&&" + args[1].first);
+				FcNotPrim():   pars("!" + args[0].first);
+				FcEqPrim():    fiJsCompileCompare(cfg, ctx, args[0], "==", args[1]);
+				FcNePrim():    fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1]);
+				FcLePrim():    fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1]);
+				FcGePrim():    fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1]);
+				FcLtPrim():    fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1]);
+				FcGtPrim():    fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1]);
+				FcPlusPrim():  fiJsCompileMath(cfg, ctx, args[0], "+", args[1]);
+				FcMinusPrim(): fiJsCompileMath(cfg, ctx, args[0], "-", args[1]);
+				FcMulPrim():   fiJsCompileMath(cfg, ctx, args[0], "*", args[1]);
+				FcDivPrim():   fiJsCompileMath(cfg, ctx, args[0], "/", args[1]);
+				FcModPrim():   fiJsCompileMath(cfg, ctx, args[0], "%", args[1]);
+				FcNegPrim(): {
+					def = \ -> "-" + args[0].first;
+					switch (type) {
+						FiTypeInt(): {
+							pars("-(" + args[0].first + ")|0");
+						}
+						default: def();
+					}
+				}
+				FcArrayPrim(): "[" + strGlue(map(args, \e->e.first), ",") + "]";
+				FcIndexPrim(): args[0].first + "[" + args[1].first + "]";
+				FcDerefPrim(): args[0].first + ".__v";
+				FcAssignPrim():	pars(args[0].first + ".__v=" + args[1].first);
+				FcRefPrim(): "{__v:" + args[0].first + "}";
+				FcStructPrim(structname):
+				switch (lookupTree(ctx.ovl.structs, structname) : Maybe<FiJsStruct>) {
+					Some(sinfo): {
+						if (length(sinfo.struct.args) == 0) {
+							"st_" + if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)
+						} else {
+						pars(foldi(map(args, \e->e.first), "{" + (if (cfg.readable) "_name:'" + sinfo.struct.name + "'" else "_id:"+i2s(sinfo.id)), \idx, acc, arg -> {
+							n = sinfo.struct.args[idx].name;
+							fld = lookupTreeDef(ctx.ovl.fieldRenamings, n, n);
+							acc + "," + fld + ":" + arg
+						}) + "}");}
+					}
+					None():
+					fail0("unknown struct " + structname);
+				}
+				FcFieldPrim(name):
+				if (name == "structname") {
+					if (cfg.readable)
+						args[0].first + "._name"
+					else
+						"(HaxeRuntime._structnames_.get(" + args[0].first + "._id))";
+				} else {
+					pars(
+						// TODO: TS processing
+						//(if (params.tsProcess.typeBuffer == "")
+							args[0].first
+						//	else "(<" + params.tsProcess.typeBuffer + ">" + args[0].first + ")")
+						+
+						"." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name)
+					);
+				}
+				FcSetMutablePrim(name):
+					pars(args[0].first + ("."+lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=") + args[1].first);
+				FcCreateClosurePrim(__, __): ""; // should not happen - JS does not use lambda lifting
+			};
+		}
+		/*
+		FbRequire(flowfile, e2, info): {
+			"requirejs(['" + flowfile +"'], function (" +
+			jsMangleModuleName(flowfile, ctx.ovl) + ") {\n" + indent + indent +
+			jsCompileToExpr(params, ns, tSubst, ctx : FiJsToplevelContext, e2, indent, false) +
+			"\n" + indent + "})";
+		}
+		FbUnsafe(name, e2, info): fail0("todo");
+		*/
+		default: "!other!";
+	}
+	// TODO: Comments processing
+	//	endComment = jsConvertComment(jsLnComment(ctx : FiJsToplevelContext, ei.end));
+	//	exprstr + (if (endComment == "") "" else " " + endComment);
+}
+
+fiJsCompileToReturn(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, indent : string) {
+
+	// TODO: Comments processing
+	// ei = getFbExpInfo(expr);
+	// commentsBefore = jsGetComments(ctx : FiJsToplevelContext, ei.pos);
+	// exprstr =
+	//   (if (commentsBefore == "") "" else commentsBefore) +
+
+	switch (expr : FiExp) {
+		FiCall(f, es, __, __): {
+			isNoOtc = isConfigParameterTrue(ctx.program.config.config, fiJsNoOtcParamName);
+			if (isNoOtc) {
+				operator = fiJsCompileToExpr(cfg, ctx, f, indent, false, true);
+				renamedOp = either(lookupTree(ctx.renamings, ctx.toplevel_name), "");
+				cleaned0 = if (cfg.debug) substring(operator, 4, 1000) else operator;
+				isKwd = endsWith(cleaned0, "__") && containsSet(js_keyword_set, substring(cleaned0, 0, strlen(cleaned0) - 2));
+				cleaned = if (isKwd) substring(cleaned0, 0, strlen(cleaned0) - 2) else cleaned0;
+
+				acall = fiJsCompileToExpr(cfg, ctx, expr, indent, true, true);
+				if ((cleaned == ctx.toplevel_name || cleaned == renamedOp) && ctx.has_tail && ^fiJsLambdaLevel == 0)
+					acall
+				else
+					"return " + acall + ";";
+			} else {
+				"return " + fiJsCompileToExpr(cfg, ctx, expr, indent, true, false) + ";";
+			}
+		}
+
+		FiLet(x, tp, e1, e2, __, __): {
+			dec = if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "let " else "var ";
+			(dec+fiJsRename(cfg, ctx, x)+"="+fiJsCompileToExpr(cfg, ctx, e1, indent+ctx.indent2, false, false)+";" + finl(cfg) +indent)+
+			fiJsCompileToReturn(cfg, ctx, e2, indent);
+		}
+
+		FiSeq(es, __, __): {
+			l = length(es)-1;
+			if (l >= 0)
+				list2string(foldi(es, makeList(), \idx, acc : List<string>, e -> {
+					code = if (idx < l) {
+							// There are standalone struct construtors,
+							// which in JS lead to non-working code.
+							// We have to wrap it to ().
+							ret = fiJsCompileToExpr(cfg, ctx, e, indent, false, false);
+							needPar = switch(e) {
+								FiCallPrim(v, __, __, __) : {
+									switch(v) {
+										FcStructPrim(x) : {
+											// We found callprim, check if this call is struct constructor
+											isSome(lookupTree(ctx.ovl.structs, x));
+										}
+										default : false;
+									}
+								}
+								default : false;
+							}
+							v = (if (needPar) "(" + ret + ")" else ret);
+							v + ";" + finl(cfg) + indent;
+						} else
+							fiJsCompileToReturn(cfg, ctx, e, indent);
+					Cons(code, acc);
+				}))
+			else
+				"return null;";
+		}
+
+		FiIf(e1, e2, e3, __, __): {
+			subindent = indent+ctx.indent2;
+			"if("+fiJsCompileToExpr(cfg, ctx, e1, indent, false, false)+"){"+
+			fiJsCompileToReturn(cfg, ctx, e2, subindent) + "}else{" +
+			fiJsCompileToReturn(cfg, ctx, e3, subindent) + "}";
+		}
+
+		FiSwitch(e0, e0type, cs, __, __): {
+			isIf = length(cs) == 2;
+
+			rdbl = cfg.readable;
+			aVar = "(" + fiJsCompileToExpr(cfg, ctx, e0, indent, false, false) + ")." + (if (rdbl) "_name" else "_id");
+
+			header = "switch(" + aVar + "){" + finl(cfg) + indent;
+			// TODO: TS processing
+			/*
+			getNextParams = \item -> {
+				changeTSProcessing(params, TypeScriptProcessing(
+					if (!ctx.ovl.typescript || item.tag == "default") ""
+					else resolveTSType(item.tag, ["", "?"][b2i(params.modules != "")]) +
+					if (lookupTreeDef(^genericTypes, item.tag, 0) == 0) ""
+					// Alternative: resolveTSTypes(ctx.ovl.typescript, ns, tSubst, e0.info.derived, 2, false, 0, "%1")
+					else "<" + strGlue(generate(0, lookupTreeDef(^genericTypes, item.tag, 0), \__ -> "any"), ",") + ">",
+					params.tsProcess.voidReturn,
+					params.tsProcess.antiTS
+				));
+			}
+			*/
+			ifText = if (isIf) {
+					// See comment above in jsCompileToExpr.
+					isFirstBranchDefault = cs[0].struct == "default";
+					ifSelector  = fiGetItemId(ctx, cs[if (isFirstBranchDefault) 1 else 0], rdbl);
+					// TODO: TS processing
+					// paramsTrue  = getNextParams(cs[0]);
+					trueBody    = fiJsCompileToReturn(cfg, ctx, cs[0].body, indent+ctx.indent4);
+					// TODO: TS processing
+					// paramsFalse = getNextParams(cs[1]);
+					falseBody   = fiJsCompileToReturn(cfg, ctx, cs[1].body, indent+ctx.indent4);
+					"if(" + aVar + (if (isFirstBranchDefault) "!=" else "==") + ifSelector + "){" + trueBody + "}else{" + falseBody;
+			} else "";
+
+			subindent = indent+ctx.indent2;
+			innerIf = Cons(ifText, EmptyList());
+			inner = if (isIf)
+					innerIf
+				else
+					fold(cs, Cons(header, EmptyList()), \acc, item -> {
+						choice = if (item.struct == "default") {
+								"default"
+							} else {
+								if (rdbl) "case '" + item.struct + "'" else "case "+i2s(fiGetStructId(ctx, item));
+							};
+						// TODO if this has a sense
+						// TODO: TS processing
+						// paramsNext = getNextParams(item);
+						body = fiJsCompileToReturn(cfg, ctx, item.body, subindent);
+						// Maybe TODO : remove "break;" if unreachable due to "return"
+						Cons("}" + finl(cfg) + subindent+"break;" + finl(cfg) + indent, Cons(body, Cons(choice+":{", acc)));
+					});
+			list2string(Cons("}", inner));
+		}
+		default:
+		// TODO: TS processing
+		// (if (params.tsProcess.voidReturn) "" else "return ") +
+		"return "+
+		fiJsCompileToExpr(cfg, ctx, expr, indent, false, false) + ";";
+	}
+	// TODO: Comments processing
+	// endComment = jsConvertComment(jsLnComment(ctx : FiJsToplevelContext, ei.end));
+	// exprstr + (if (endComment == "") "" else " " + endComment);
+}
+
+jsGenerateTailCall(
+	cfg : FiJsConfig,
+	ctx : FiJsToplevelContext,
+	indent : string,
+	callexpr : FiExp
+) -> string {
+/*
+	This function generates rest of tail call in JS (header of tail call generated in
+	fiJsCompileToplevel())
+	For tail call we generate two things:
+	1) List of function arguments substitution
+	2) `continue` operator.
+
+	For argument substitution we create new variable,
+	which accepts new value of argument for tail call
+	and then we pass control to the beginning of `while () {}`
+	cycle.
+	It works fine for non-lambda parameters.
+	For lambda parameters there is a problem, that we have two lexical
+	values for argument: one in function body and second inside
+	lambda body. During runtime they (should) have different value.
+	But if we pass value of argument to lambda, we'll get endless
+	recursion, because in fact we'll call the same parameter inside
+	lambda.
+	That's why we create additional variable for functional argument
+	and further modify context of lambda to substitute all calls
+	to function argument.
+
+	Please refer to tools/flowc/tests/test133.flow.
+*/
+
+	switch (callexpr) {
+		FiCall(f, es, __, __): {
+			switch (f) {
+				FiVar(x, __, __): {
+					toplevelArgs = buildSet(ctx.toplevel_args);
+					allFreeVars = fold(es, makeSet(), \acc, e -> {
+						switch(e) {
+							FiLambda(__, __, __, __) : mergeSets(fifreevars(e), acc);
+							default : acc;
+						}
+					});
+					usedFreeVars = set2array(intersectSets(toplevelArgs, allFreeVars));
+					freeRenamings = mapi(usedFreeVars, \ix, e -> "$_t" + formatIdSmall(ix));
+
+					// We modify context for fiJsCompileToExpr() can use tail-renamed functions
+					// inside. Later we revert things in a tree, because during its work
+					// fiJsCompileToExpr can modify context and we want preserve those changes.
+					savedRenamings = mapi(usedFreeVars, \ix, e -> {
+						r = lookupTree(ctx.localRenamings, e);
+						ctx.localRenamings ::= setTree(ctx.localRenamings, e, freeRenamings[ix]);
+						r;
+					});
+
+					fnparams = map(es, \arg -> {
+						fiJsCompileToExpr(cfg, ctx, arg, indent, false, true);
+					});
+
+					iteri(usedFreeVars, \ix, e -> {
+						switch(savedRenamings[ix]) {
+							Some(v) : ctx.localRenamings ::= setTree(ctx.localRenamings, e, v);
+							None() : ctx.localRenamings ::= removeFromTree(ctx.localRenamings, e);
+						}
+					});
+
+					tailVars = foldi(usedFreeVars, "", \ix, acc, e -> {
+						renameTo = lookupTreeDef(ctx.localRenamings, e, "");
+						acc + finl(cfg) +
+						indent + (if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "let " else "var ")
+						+ freeRenamings[ix] + "=" + renameTo + ";";
+					});
+
+					// TODO: we can skip unmodified variables
+					// var $a_ = n;
+					// n = $a_;
+					// but for this purpose we have to combine next two operations.
+					vars = foldi(fnparams, "", \in, acc, e -> {
+						acc + finl(cfg) +
+						indent + (if (cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE) "let " else "var ")
+						+ (if (cfg.debug) "$" else "") + formatIdSmall(in) + "_=" + e + ";";
+					});
+					nextStep = foldi(ctx.toplevel_args, "", \in, acc, e -> {
+						acc + finl(cfg) +
+						indent + fiJsRename(cfg, ctx, e) + "=" + (if (cfg.debug) "$" else "") + formatIdSmall(in) + "_;"
+					}) + finl(cfg);
+					// TAIL_CALL: changed to T:
+					tailVars + vars + nextStep + indent + "continue T";
+				}
+				default : ""
+			}
+		}
+		default : "";
+	}
+}
+
+fiJsSubstituteJSNative(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, es : [FiExp], indent : string, tailcall : bool, callexpr : FiExp) {
+	operator0 = fiJsCompileToExpr(cfg, ctx, expr, indent, false, true);
+	// Top-level name in its converted form: deserializeRestOfStringTail2 -> $M7
+	renamedOp = either(lookupTree(ctx.renamings, ctx.toplevel_name), "");
+
+	// Check if operator is already prefixed with A9__ and if not and required then prefix it.
+	// Prefixing only done for toplevels
+	tl = lookupTree(ctx.program.names.toplevel, operator0);
+	operator =
+		if (isSome(tl)) {
+			fiJsPrefixedName(cfg, ctx, operator0);
+		} else {
+			operator0;
+		}
+	args = map(es, \arg -> fiJsCompileToExpr(cfg, ctx, arg, indent, false, true));
+	isNoOtc = isConfigParameterTrue(ctx.program.config.config, fiJsNoOtcParamName);
+
+	// Remove prefix A9__, appended earlier
+	cleaned0 = if (cfg.debug) substring(operator0, 4, 1000) else operator;
+
+	// Check if given operator is JS keyword (remove last __ in this case)
+	isKwd = endsWith(cleaned0, "__") && containsSet(js_keyword_set, substring(cleaned0, 0, strlen(cleaned0) - 2));
+
+	// Final name for operator to compare with toplevel
+	cleaned = if (isKwd) substring(cleaned0, 0, strlen(cleaned0) - 2) else cleaned0;
+	optc = if (isNoOtc) {
+			operator + "(" + strGlue(args, ",") + ")";
+		} else {
+			(if ((cleaned == ctx.toplevel_name || cleaned == renamedOp) && tailcall && ^fiJsLambdaLevel == 0) "sc_" else "") + operator;
+		}
+	op = switch(expr) {
+		FiVar(x, __, __): x;
+		default: ""
+	}
+	closure = if (isNoOtc) {
+			if ((cleaned == ctx.toplevel_name || operator == renamedOp) && tailcall && ^fiJsLambdaLevel == 0)
+				jsGenerateTailCall(cfg, ctx, indent, callexpr) 
+			else
+				optc;
+		} else {
+			optc + "(" + strGlue(args, ",") + ")";
+		}
+	// After type checking we know that there are specific numbers of args exist.
+	// No checking for args[] length.
+	if ((cfg.readable || cfg.debug) && (op == "length" || op == "strlen"))
+		(args[0] + ".length")
+
+	else if ((cfg.readable || cfg.debug) && (op == "substring"))
+		(args[0] + ".substr(" + args[1] + ", " + args[2] + ")")
+
+	else if ((cfg.readable || cfg.debug) && (op == "isArray"))
+		("Array.isArray(" + args[0] + ")")
+
+	else if ((cfg.readable || cfg.debug) && (op == "strIndexOf"))
+		(args[0] + ".indexOf(" + args[1] + ",0)")
+
+	else if ((cfg.readable || cfg.debug) && (op == "sin" || op == "asin" || op == "cos" || op == "acos" || op == "tan" || op == "atan" || op == "exp" || op == "log"))
+		("Math." + op + "(" + args[0] + ")")
+
+	else if ((cfg.readable || cfg.debug) && (op == "toLowerCase" || op == "toUpperCase"))
+		(args[0] + "." + op + "()")
+
+	else if ((cfg.readable || cfg.debug) && (op == "random"))
+		"Math.random()"
+
+	else if ((cfg.readable || cfg.debug) && (op == "concat"))
+		(args[0] + ".concat(" + args[1] + ")")
+
+	else if (op == "bitXor")
+		"(" + (args[0] + "^" + args[1]) + ")"
+
+	else if (op == "bitAnd")
+		"(" + (args[0] + "&" + args[1]) + ")"
+
+	else if (op == "bitOr")
+		"(" + (args[0] + "|" + args[1]) + ")"
+
+	else if (op == "bitUshr")
+		"(" + (args[0] + ">>>" + args[1]) + ")"
+
+	else if (op == "bitShl")
+		"(" + (args[0] + "<<" + args[1]) + ")"
+
+	else if (op == "bitNot")
+		("~" + args[0])
+
+	else closure;
+}
+
+fiJsCompileMath(cfg : FiJsConfig, ctx : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
+	a1 = arg1.first;
+	a2 = arg2.first;
+
+	// Type checker ensures math types are equal, so we only need one type.
+	switch (arg1.second) {
+		FiTypeInt() : {
+			if (op == "*")
+				(if (cfg.modules != "") "R." else "") + "HaxeRuntime.mul_32(" + a1 + "," + a2 + ")"
+			else
+				"((" + a1 + op + a2 + ")|0)"
+		}
+		default : "(" + a1 + op + a2 + ")"
+	}
+}
+
+
+fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
+	a1 = arg1.first;
+	a2 = arg2.first;
+
+	// Type checker ensures math types are equal, so we only need one type.
+	isSimpleType = switch (arg1.second) {
+		FiTypeInt()    : true;
+		FiTypeBool()   : true;
+		FiTypeString() : true;
+		FiTypeDouble() : true;
+		default        : false;
+	}
+	if (isSimpleType) {
+		"(" + a1 + op + a2 + ")"
+	} else {
+		"(" + (if (cfg.modules != "") "R." else "") + "CMP(" + a1 + "," + a2 + ")" + op + "0)";
+	}
+}

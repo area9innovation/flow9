@@ -1,0 +1,85 @@
+import tools/flowc/incremental/fiprogram;
+import set;
+import binarytreeutils;
+import tools/flowc/flowc_println;
+
+export {
+	// Counts the number of times free vars are referenced
+	dumpProgramCounts(program : FiProgram) -> void;
+}
+
+dumpProgramCounts(program : FiProgram) -> void {
+	counts = countProgramVars(program);
+	dumpCounts("\nMost frequently used names:", counts);
+
+	// Files
+	fileCounts : Tree<string, int> = foldTree(counts, makeTree(), \name, count, acc -> {
+		file0 = lookupTreeDef(program.names.function2module, name, "");
+		file1 = lookupTreeDef(program.names.globalVar2module, name, file0);
+		file = lookupTreeDef(program.names.native2module, name, file1);
+		val = lookupTreeDef(acc, file, 0);
+		setTree(acc, file, val + count);
+	});
+	dumpCounts("\nNumber of names used from most used files:", fileCounts);
+}
+
+dumpCounts(title : string, counts : Tree<string, int>) -> void {
+	names = foldTree(counts, makeTree(), \name, count, acc ->
+		treePushToArrayValue(acc, count, name)
+	);
+
+	// The top 100 names
+	ordered = subrange(reverseA(concatA(getTreeValues(names))), 0, 100);
+	fcPrintln(title);
+	iter(ordered, \name -> {
+		count = lookupTreeDef(counts, name, 0);
+		if (count > 0) {
+			fcPrintln(name + ":" + i2s(count));
+		}
+	});
+}
+
+countProgramVars(program : FiProgram) -> Tree<string, int> {
+	foldTree(program.modules, makeTree(), \modname : string, mo : FiModule, acc -> {
+		v : FiExp = FiVoid(-1);
+
+		nfns = fold(mo.functions, acc, \acc2, fun -> 
+			fccountvars0(fun.lambda, makeSet(), acc)
+		);
+		nglobals = fold(mo.globalVars, nfns, \acc2, gvar ->
+			fccountvars0(gvar.value, makeSet(), acc2)
+		);
+
+		nglobals;
+	});
+}
+
+fccountvars(e : FiExp) -> Tree<string, int> {
+	fccountvars0(e, makeSet(), makeTree());
+}
+
+fccountvars0(expr : FiExp, bound : Set<string>, free : Tree<string, int>) -> Tree<string, int> {
+	switch (expr) {
+		FiLambda(xs, e, __, __):     fccountvars0(e, fold(xs, bound, \acc, x -> insertSet(acc, x.name)), free);
+		FiCall(f, es, __, __):       fcfoldcountvars0(es, bound, fccountvars0(f, bound, free));
+		FiVar(x, __, __):            if (containsSet(bound, x)) free else incTreeValue(free, x);
+		FiLet(x, t, e1, e2, __, __): fccountvars0(e2, insertSet(bound, x), fccountvars0(e1, bound, free));
+		FiIf(e1, e2, e3, __, __):    fcfoldcountvars0([e1, e2, e3], bound, free);
+		FiSwitch(e, __, cs, __, __): fold(cs, fccountvars0(e, bound, free), \acc, c -> fccountvars0(c.body, bound, acc));
+		FiCast(e0, __, __, __, __):  fccountvars0(e0, bound, free);
+		FiSeq(es, __, __):           fcfoldcountvars0(es, bound, free);
+		FiCallPrim(op, es, __, __):  fcfoldcountvars0(es, bound, free);
+		FiString(__, __):            free;
+		FiBool(__, __):              free;
+		FiDouble(__, __):            free;
+		FiVoid(__):                  free;
+		FiInt(__, __):               free;
+		FiRequire(__, e, __, __):    fccountvars0(e, bound, free);
+		FiUnsafe(__, fb, __, __):    fccountvars0(fb, bound, free);
+	}
+}
+
+fcfoldcountvars0(es : [FiExp], bound : Set<string>, free : Tree<string, int>) -> Tree<string, int> {
+	fold(es, free, \acc, e -> fccountvars0(e, bound, acc));
+}
+

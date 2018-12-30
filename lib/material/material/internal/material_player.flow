@@ -1,0 +1,432 @@
+import material/internal/material_menu;
+import material/internal/material_slider;
+import material/internal/material_progress;
+
+export {
+	MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MVideoPlayer2T(manager : MaterialManager, parent : MFocusGroup, m : MVideoPlayer, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	color : MColor = extractStruct(m.style, parent.theme.accentColor);
+	videoHasErrors = make(false);
+	enabled =
+		fands([
+			extractStruct(m.style, MEnabled(const(true))).enabled,
+			fnot(videoHasErrors),
+			parent.enabled
+		], true)
+		|> MEnabled;
+
+	controls = extractStruct(m.style, MPlayerControls([VolumeControl()])).controls;
+	volumeControl = contains(controls, VolumeControl());
+	fullScreenControl = contains(controls, FullScreenPlayer());
+	playbackRateControl = !android() && contains(controls, PlaybackRateControl());
+	streamStatus = extractStruct(m.style, StreamStatus(nop1)).fn;
+
+	playing = extractStruct(m.style, FVideoPlay(make(false))).play;
+	volume = extractStruct(m.style, FVideoVolume(make(1.))).volume;
+	fullscreen =
+		eitherFn(
+			tryExtractStruct(m.style, FVideoFullscreen(make(false))),
+			\fs -> Some(fs.fullscreen),
+			\ ->
+				if (fullScreenControl)
+				 	Some(make(false))
+				else
+					None()
+		);
+	position = extractStruct(m.style, FVideoPosition(make(0.))).position;
+	duration = extractStruct(m.style, FVideoLength(make(1.))).length;
+	playbackRate = extractStruct(m.style, FVideoPlaybackRate(make(1.))).rate;
+	autoHide = contains(m.style, MPlayerPanelAutoHide());
+	showPanel = extractStruct(m.style, MPlayerShowPanel(const(true))).show;
+	showPanelInner = make(true);
+
+	controlsWH = makeWH();
+	videoWH = makeWH();
+	availableH = make(0.);
+	sliderPosition = make(0.);
+	volumeSliderVisible = make(false);
+	volumeSliderDown = make(false);
+	playbackRateSelected = make(3);
+	showProgressCircle = make(true);
+
+	uns = initUnsM();
+
+	dpiFactor = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
+
+	videoStyle =
+		m.style
+		|> videoPlayerStyle2FVideoStyle
+		|> (\st -> removeAllStructs(st, FVideoControls([])))
+		|> (\st -> removeAllStructs(st, FVideoFullscreen(make(false))))
+		|> (\st ->
+			replaceStructMany(
+				st,
+				[
+					FVideoPlay(playing),
+					FVideoVolume(volume),
+					FVideoPosition(position),
+					FVideoLength(duration),
+					FVideoPlaybackRate(playbackRate),
+					OnVideoLoadingError(\ -> nextDistinct(videoHasErrors, true)),
+					StreamStatus(\s -> {nextDistinct(showProgressCircle, false); streamStatus(s)})
+				]
+			)
+		);
+
+	videoBox =
+		TVideo(m.filename, videoWH, videoStyle)
+		|> (\video ->
+			TCopySize(
+				video,
+				\videoSize ->
+					TGroupWithoutMetrics([
+						mouseOnDownAround(
+							manager,
+							[
+								MOnClick(\ -> reverseBehaviour(playing)),
+								MPassClicks(),
+								enabled
+							],
+							TSubtractGroup2(videoSize, TFixed(0., 10.)) // to avoid clicking while changing position
+						),
+						TZoomOnOverflow(
+							TSubscribe2(playing, \pl ->
+								TCopySize2(
+									MIcon2T(
+										parent,
+										if (pl)
+											"play_arrow"
+										else
+											"pause",
+										[MCircleBackground(MGrey(900), 56.), MIconSize(32.)]
+									),
+									\size, icon ->
+										TFixSize(
+											TCenter(MFadeOutAnimation(manager, parent, icon)),
+											TCenter(TScale(const(Factor(2., 2.)), size))
+										)
+								)
+							)
+							|> (\t -> TBorder4(16., t)),
+							videoSize,
+							true
+						),
+						TCenterIn(
+							MProgressCircle2T(manager, parent, MProgressCircle([MWhite()])),
+							videoSize
+						)
+						|> addTBackground(MBlack())
+						|> (\t2 -> TShow(showProgressCircle, t2))
+					]),
+				true
+			)
+		)
+		|> (\video -> TVisible(fselect(videoWH, FLift(\vwh -> vwh.width > 0. && vwh.height > 0.)), video))
+		|> (\video ->
+			TIf(videoHasErrors,
+				TGroup2(
+					TRectangle([Fill(black)], TFillXY()),
+					TCenter(MParagraph2T(parent, "An error occurred. Please try again later.", [MWhite(), CenterAlign()]))
+				),
+				video
+			)
+		);
+
+	slider = \p ->
+		MSlider2T(
+			manager,
+			p,
+			MSlider(
+				sliderPosition,
+				[
+					MMaximizeOnHover(false),
+					MOutlineOnMinimum(false),
+					MCondensed(true),
+					MSliderTooltip(\v -> d2timelineString(v * getValue(duration))),
+					color,
+					enabled
+				]
+			),
+			m2t
+		);
+
+	playPauseButton = \p ->
+		MIconToggle2T(
+			manager,
+			p,
+			MIconToggle(
+				"pause",
+				[
+					MToggleFalseIcon("play_arrow", [MIconSize(30.)]),
+					MIconButtonBorder(3.), MIconSize(30.)
+				],
+				[
+					MToggleValue(playing),
+					MShortcut(" "),
+					enabled
+				]
+			)
+		)
+		|> (\t -> TBorder(4., 0., 8., 0., t));
+
+	showVolumeSlider =
+		if (mobile)
+			enabled.enabled
+		else
+			fand(fOr(volumeSliderVisible, volumeSliderDown), enabled.enabled);
+
+	volumeControlButton = \p ->
+		if (volumeControl)
+			TBaselineCols2(
+				TSelect(
+					volume,
+					\v ->
+						MTooltip2T(
+							manager,
+							p,
+							MTooltip(
+								MIconButton(
+									if (v == 0.)
+										"volume_off"
+									else if (v < 0.5)
+										"volume_down"
+									else
+										"volume_up",
+									\ ->
+										next(volume, if (v == 0.) 1. else 0.),
+									[MIconButtonBorder(6.)],
+									[enabled]
+								),
+								MText(if (v == 0.) _("Unmute") else _("Mute"), []),
+								[
+									MTop(),
+									MLightBackground(!parent.theme.lightBackground),
+									enabled
+								]
+							),
+							m2t
+						)
+				)
+				|> TBorderRight(12.),
+
+				MSlider2T(
+					manager,
+					p,
+					MSlider(
+						volume,
+						[
+							MMaximizeOnHover(false),
+							MOutlineOnMinimum(false),
+							MWhite(),
+							MMouseDown(volumeSliderDown),
+							enabled
+						]
+					),
+					m2t
+				)
+				|> (\t -> TAvailableWidth(t, const(80.)))
+				|> (\t -> TBorder(-20., 0., -2., 0., t))
+				|> (\t -> TShow(showVolumeSlider, t))
+			)
+			|> (\volumeSlider -> TCopySize(volumeSlider, \volumeSliderSize -> TInteractive([TMouseInside(volumeSliderVisible, false)], volumeSliderSize), true))
+			|> v2a
+		else
+			[];
+
+	timeLabel = \p ->
+		TSelect3(position, duration, enabled.enabled, \pos, dur, en ->
+			MText2T(
+				p,
+				d2timelineString(pos) + " / " + d2timelineString(dur),
+				if (en)
+					[]
+				else
+					[MTextDisabled()]
+			)
+		);
+
+	playbackRateControlButton = \p ->
+		if (playbackRateControl)
+			MMenu2T(
+				manager,
+				p,
+				MMenu(
+					MIconButton("settings", nop,  [], []),
+					[
+						MMenuSingleLine("0.25", []),
+						MMenuSingleLine("0.5", []),
+						MMenuSingleLine("0.75", []),
+						MMenuSingleLine("Normal", []),
+						MMenuSingleLine("1.25", []),
+						MMenuSingleLine("1.5", []),
+						MMenuSingleLine("2", [])
+					],
+					[
+						MCondensed(true),
+						MSingleSelection(playbackRateSelected),
+						enabled,
+						MSelectedColor(color)
+					]
+				),
+				m2t
+			)
+			|> v2a
+		else
+			[];
+
+	fullScreenControlButton = \p ->
+		if (fullScreenControl)
+			MIconToggle2T(
+				manager,
+				p,
+				MIconToggle(
+					"fullscreen_exit",
+					[
+						MToggleFalseIcon("fullscreen", [MIconSize(28.)]),
+						MIconButtonBorder(4.), MIconSize(28.)
+					],
+					eitherMap(
+						fullscreen,
+						\fs -> [MToggleValue(fs), enabled],
+						[enabled]
+					)
+				)
+			)
+			|> v2a
+		else
+			[];
+
+	panel =
+		(\p ->
+			TLines2(
+				slider(p),
+
+				[
+					[playPauseButton(p)],
+					volumeControlButton(p),
+					[
+						timeLabel(p),
+						TFillX(),
+					],
+					playbackRateControlButton(p),
+					fullScreenControlButton(p)
+				]
+				|> concatA
+				|> TBaselineCols
+				|> (\videoButtons -> TBorder(12., 4., 12., 4., videoButtons))
+			)
+			|> addTBackground(MDialogColor(false))
+			|> (\t -> TAnimatedExpander(manager, p, t, if (autoHide) fand(showPanel, showPanelInner) else showPanel, true))
+		)
+		|> (\makePanel ->
+			MActivate2T(
+				manager,
+				parent,
+				"MVideoControls",
+				[
+					MLightBackground(false),
+				],
+				makePanel
+			)
+		)
+		|> (\t ->
+			eitherMap(
+				fullscreen,
+				\fs -> TScale(fif(fs, dpiFactor, const(Factor(1., 1.))), t),
+				t
+			)
+		)
+		|> (\t -> TAttachBoxCopy(t, controlsWH))
+		|> (\t -> TLines2(TFillY(), t));
+
+	TGroup2(videoBox, panel)
+	|> (\videoPlayer ->
+		eitherMap(
+			fullscreen,
+			\fs ->
+				TAttachBoxCopyAvailableHeight(videoPlayer, availableH)
+				|> (\videoPlayerFullscreen -> TAvailable(videoPlayerFullscreen, TIf(fs, TFillXY(), TSized(m.wh))))
+				|> (\videoPlayerFullscreen -> TFullScreen(fs, videoPlayerFullscreen)),
+			TAvailable(videoPlayer, TSized(m.wh))
+		)
+	)
+	|> (\t ->
+		TConstruct(
+			[
+				\ -> fconnect(fdivide(position, duration), sliderPosition),
+				\ -> fconnect(fmultiply(sliderPosition, duration), position),
+				\ -> fconnect2Select(
+					eitherMap(fullscreen, \fs -> fif(fs, availableH, fheight(m.wh)), fheight(m.wh)),
+					controlsWH,
+					videoWH,
+					\vh, cwh -> WidthHeight(cwh.width, max(0., vh - cwh.height))
+				),
+				\ -> bidirectionalLink(playbackRate, playbackRateSelected, playbackRate2selected, selected2playbackRate)
+			]
+			|> (\arr -> ifArrayPush(arr, autoHide, makeSubscribe(playing, \pl -> {
+					dispUnsM(uns);
+					nextDistinct(showPanelInner, true);
+
+					if (pl) {
+						setUnsM(
+							uns,
+							interruptibleTimer(1000, \ -> nextDistinct(showPanelInner, false))
+						)
+					}
+				}))),
+			t
+		)
+	)
+}
+
+d2timelineString(d : double) -> string {
+	mins = d2s(dfloor(d / 60.));
+	secs = d2s(dfloor(d % 60.));
+
+	mins + ":" + concatStrings(arrayPush(generate(0, max(0, 2 - strlen(secs)), \__ -> "0"), secs));
+}
+
+videoPlayerStyle2FVideoStyle(style : [MVideoPlayerStyle]) -> [FVideoStyle] {
+	filtermap(style, \st ->
+		switch (st) {
+			FVideoStyle() : {a : Maybe<FVideoStyle> = Some(st); a};
+			default : None()
+		}
+	)
+}
+
+playbackRate2selected(pr : double) -> int {
+	if (pr <= 0.25)
+		0
+	else if (pr <= 0.5)
+		1
+	else if (pr <= 0.75)
+		2
+	else if (pr <= 1.)
+		3
+	else if (pr <= 1.25)
+		4
+	else if (pr <= 1.5)
+		5
+	else
+		6
+}
+
+selected2playbackRate(rs : int) -> double {
+	if (rs == 0)
+		0.25
+	else if (rs == 1)
+		0.5
+	else if (rs == 2)
+		0.75
+	else if (rs == 3)
+		1.
+	else if (rs == 4)
+		1.25
+	else if (rs == 5)
+		1.5
+	else
+		2.
+}

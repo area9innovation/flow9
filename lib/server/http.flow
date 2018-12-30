@@ -1,0 +1,257 @@
+import tuples;
+import binarytree;
+import server/secure_context;
+
+/*
+	HTTP and HTTPS server implementation for flow
+	(currently supported on Java and NodeJS backends).
+
+	Module contains only server-side functionality and
+	should not be used in any way on client-side.
+
+	Brief instructions how to use it locally (compiling to Java) :
+
+		1. Write a flow program using server/http.flow, for a dumb example
+		   you can check up tests/http_server.flow
+
+		1*. If you're in need for SSL context (HTTPS server), please
+		    check out secure_context.flow for further information.
+
+		2. Run it in java like
+			flowjava your/file.flow
+
+	Alternatively, if you would like to compile into NodeJS, your steps
+	need to be as following:
+
+		1, 1*. Same as for Java.
+
+		2. Compile to nodejs using flowcompiler, e.g.
+		   flowcompiler1 file=your/file.flow es6=destination/folder/name.js nodejs=1
+
+		   Normally destination folder is flow/www/node
+
+		3. Install dependencies, e.g. npm run setup
+
+		4. Run nodejs file, e.g. npm run run
+*/
+
+export {
+
+	// HTTP server
+
+	createHttpServer(
+		port : int,
+		onOpen : () -> void,
+		onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+	) -> () -> void;
+
+	// HTTPS server
+
+	createHttpsServer(
+		port : int,
+		credentials : SecureContext,
+		onOpen : () -> void,
+		onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+	) -> () -> void;
+
+	// Struct
+
+	HttpRequest : (
+		url : string,
+		body : string,
+		headers : [KeyValue],
+		method : Maybe<HttpRequestMethod>
+	);
+
+	HttpRequestMethod ::=
+		Acl, Bind, Checkout, Connect, Copy, Delete, Get, Head, Link,
+		Lock, MSearch, Merge, Mkactivity, Mkcalendar, Mkcol, Move,
+		Notify, Options, Patch, Post, Propfind, Proppatch, Purge, Put, Rebind,
+		Report, Search, Subscribe, Trace, Unbind, Unlink, Unlock, Unsubscribe;
+
+		Acl();
+		Bind();
+		Checkout();
+		Connect();
+		Copy();
+		Delete();
+		Get();
+		Head();
+		Link();
+		Lock();
+		MSearch();
+		Merge();
+		Mkactivity();
+		Mkcalendar();
+		Mkcol();
+		Move();
+		Notify();
+		Options();
+		Patch();
+		Post();
+		Propfind();
+		Proppatch();
+		Purge();
+		Put();
+		Rebind();
+		Report();
+		Search();
+		Subscribe();
+		Trace();
+		Unbind();
+		Unlink();
+		Unlock();
+		Unsubscribe();
+
+	HttpResponse : (
+		status : int,
+		body : string,
+		headers : [KeyValue]
+	);
+}
+
+createHttpsServer(
+	port : int,
+	credentials : SecureContext,
+	onOpen : () -> void,
+	onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+) -> () -> void {
+	createHttpServerBase(port, Some(credentials), onOpen, onMessage);
+}
+
+createHttpServer(
+	port : int,
+	onOpen : () -> void,
+	onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+) -> () -> void {
+	createHttpServerBase(port, None(), onOpen, onMessage);
+}
+
+createHttpServerBase(
+	port : int,
+	credentials : Maybe<SecureContext>,
+	onOpen : () -> void,
+	onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+) -> () -> void {
+
+	onRequest =
+		\requestUrl : string,
+		requestBody : string,
+		requestMethod : string,
+		requestHeaders : [[string]],
+		endResponse : (string) -> void,
+		setResponseHeader : (string, [string]) -> void,
+		setResponseStatus : (int) -> void -> {
+
+			request : HttpRequest =
+				HttpRequest(
+					requestUrl,
+					requestBody,
+					headersToKeyValues(requestHeaders),
+					requestMethodFromString(requestMethod)
+				);
+
+			sendResponse : (HttpResponse) -> void =
+				\response -> {
+					setResponseStatus(response.status);
+					traversePreOrder(
+						collectHeaders(response.headers),
+						setResponseHeader
+					);
+					endResponse(response.body);
+				}
+
+			onMessage(request, sendResponse);			
+		}
+
+	server =
+		createHttpServerNative(
+			port,
+			isSome(credentials),
+			eitherMap(
+				credentials,
+				\cs -> cs.pfxPath,
+				""
+			),
+			eitherMap(
+				credentials,
+				\cs -> cs.pfxPassword,
+				""
+			),
+			onOpen,
+			onRequest
+		);
+
+	\ -> closeHttpServerNative(server);
+}
+
+headersToKeyValues(headers : [[string]]) -> [KeyValue] {
+	map(headers, \header -> KeyValue(header[0], header[1]));
+}
+
+collectHeaders(headers : [KeyValue]) -> Tree<string, [string]> {
+	fold(headers, TreeEmpty(), \acc, header ->
+		treePushToArrayValue(
+			acc,
+			header.key,
+			header.value
+		)
+	);
+}
+
+requestMethodFromString(s : string) -> Maybe<HttpRequestMethod> {
+	if (s == "ACL") Some(Acl())
+	else if (s == "BIND") Some(Bind())
+	else if (s == "CHECKOUT") Some(Checkout())
+	else if (s == "CONNECT") Some(Connect())
+	else if (s == "COPY") Some(Copy())
+	else if (s == "DELETE") Some(Delete())
+	else if (s == "GET") Some(Get())
+	else if (s == "HEAD") Some(Head())
+	else if (s == "LINK'") Some(Link())
+	else if (s == "LOCK'") Some(Lock())
+	else if (s == "M-SEARCH'") Some(MSearch())
+	else if (s == "MERGE'") Some(Merge())
+	else if (s == "MKACTIVITY'") Some(Mkactivity())
+	else if (s == "MKCALENDAR'") Some(Mkcalendar())
+	else if (s == "MKCOL'") Some(Mkcol())
+	else if (s == "MOVE'") Some(Move())
+	else if (s == "NOTIFY'") Some(Notify())
+	else if (s == "OPTIONS") Some(Options())
+	else if (s == "PATCH") Some(Patch())
+	else if (s == "POST") Some(Post())
+	else if (s == "PROPFIND") Some(Propfind())
+	else if (s == "PROPPATCH") Some(Proppatch())
+	else if (s == "PURGE") Some(Purge())
+	else if (s == "PUT") Some(Put())
+	else if (s == "REBIND") Some(Rebind())
+	else if (s == "REPORT") Some(Report())
+	else if (s == "SEARCH") Some(Search())
+	else if (s == "SUBSCRIBE") Some(Subscribe())
+	else if (s == "TRACE") Some(Trace())
+	else if (s == "UNBIND") Some(Unbind())
+	else if (s == "UNLINK") Some(Unlink())
+	else if (s == "UNLOCK") Some(Unlock())
+	else if (s == "UNSUBSCRIBE") Some(Unsubscribe())
+	else None();
+}
+
+native createHttpServerNative : (
+	port : int,
+	isHttps : bool,
+	pfxPath : string,
+	pfxPassword : string,
+	onOpen : () -> void,
+	onMessage : (
+		requestUrl : string,
+		requestBody : string,
+		requestMethod : string,
+		requestHeaders : [[string]],
+		endResponse : (string) -> void,
+		setResponseHeader : (string, [string]) -> void,
+		setResponseStatus : (int) -> void
+	) -> void
+) -> native = HttpServerSupport.createHttpServerNative;
+
+native closeHttpServerNative : (server : native) -> void =
+	HttpServerSupport.closeHttpServerNative;

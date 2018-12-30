@@ -1,0 +1,45 @@
+import stringmath;
+import tools/common/config;
+import tools/flowc/incremental/fiprettyprint;
+
+export {
+	dumpFiProgram(prog : FiProgram, default_folder : string) -> void;
+	dumpFiModule(module : FiModule, config : CompilerConfig, default_folder : string) -> void;
+}
+
+dumpFiProgram(prog : FiProgram, default_folder : string) -> void {
+	iter(prog.traversal, \flowfile ->
+		maybeApply(
+			lookupTree(prog.modules, flowfile),
+			\module -> dumpFiModule(module, prog.config, default_folder)
+		)
+	)
+}
+
+dumpFiModule(module : FiModule, config : CompilerConfig, default_folder : string) -> void {
+	of = getConfigParameter(config.config, "outfolder");
+	if (of != "") {
+		moduleFunctions = pairs2tree(map(module.functions, \fn -> Pair(fn.name, fn)));
+		moduleGlobalVars = pairs2tree(map(module.globalVars, \gv -> Pair(gv.name, gv)));
+		outfolder = if (of == "1") default_folder else of;
+		ensureDirectoryExists(outfolder);
+		outfile = outfolder + "/" + strReplace(module.fileinfo.flowfile, "/", "_") + ".flow";
+		out = fold(
+			module.initOrder,
+			getFileContent(module.fileinfo.fullpath) + "\n----------\n",
+			\str, name -> {
+				eitherFn(
+					lookupTree(moduleFunctions, name),
+					\fn -> str + "\n" + name + " = " + prettyFiExp(dummyPretty, fn.lambda) + "\n",
+					\ -> eitherFn(
+						lookupTree(moduleGlobalVars, name),
+						\gv -> str + "\n" + name + " = " + prettyFiExp(dummyPretty, gv.value) + "\n",
+						\-> str
+					)
+				)
+			}
+		);
+		setFileContent(outfile, out);
+		{}
+	}
+}

@@ -1,0 +1,78 @@
+import wigi/types;
+import paragraphtypes;
+import textstyles;
+
+export {
+	addUnderlineToForm(form : Form, style : [WigiStyle]) -> Form;
+	addDoubleUnderlineToForm(form : Form, style : [WigiStyle]) -> Form;
+	addBaselineShiftToForm(form : Form, style : [WigiStyle]) -> Form;
+
+	addModifierToWrapElement(element : WrapElement, style : [WigiStyle], modify : (f : Form, s : [WigiStyle]) -> Form) -> WrapElement;
+	// size of super/subscript should be 60% of font size
+	adjustFontSizeToBaselineShift (fullStyle : [WigiTextStyle]) -> [WigiTextStyle];
+	// change style for applying baseline modifier so that super/subscript looks nice (31979)
+	adjustStyleForBaselineModifier(fullStyle : [WigiTextStyle])-> [WigiTextStyle];
+}
+
+addUnderlineToForm(form : Form, style : [WigiStyle]) -> Form {
+	if (contains(style, Underline())) {
+		underlineColor = extractStruct(style, Fill(1)).color;
+		underline([Stroke(underlineColor), StrokeWidth(1.0)], form);
+	} else form;
+}
+
+addDoubleUnderlineToForm(form : Form, style : [WigiStyle]) -> Form {
+	if (contains(style, DoubleUnderline())) {
+		underlineColor = extractStruct(style, Fill(1)).color;
+		underline2([Stroke(underlineColor), StrokeWidth(1.0)], form);
+	} else form;
+}
+
+addBaselineShiftToForm(form : Form, style : [WigiStyle]) -> Form {
+	baselineShift : BaselineShift = extractStruct(style, BaselineShift(0.0));
+
+	if (baselineShift.shift != 0.0) {
+		fontSize : FontSize = extractStruct(style, FontSize(0.0));
+		size = if (fontSize.size != 0.0) fontSize.size else getStaticFormSize(form).height;
+
+		shiftBaseline(-size * baselineShift.shift, form);
+	} else form;
+}
+
+addModifierToWrapElement(element : WrapElement, style : [WigiStyle], modify : (Form, [WigiStyle]) -> Form) -> WrapElement {
+	switch(element) {
+		NewLine(): element;
+		GlueFragments(): element;
+		Space(space): Space(modify(space, style));
+		LinePart(first, inline, last): 
+			LinePart(
+				modify(first, style), 
+				modify(inline, style), 
+				modify(last, style)
+			);
+		InspectElement(index, x, y, size, lineHeight, e): {
+			underlined = switch(e) {
+				Text(t, s): modify(e, style);
+				Space(space): modify(space, style);
+				default: modify(cast(e : InspectableElement -> Form), style);
+			}
+			InspectElement(index, x, y, size, lineHeight, underlined);
+		}
+		default: modify(cast(element : WrapElement -> Form), style);
+	}
+}
+
+// size of super/subscript should be as much as font size multiplied by SuperSubscriptScalingKoeff
+adjustFontSizeToBaselineShift (fullStyle : [WigiTextStyle]) -> [WigiTextStyle] {
+	if (extractStruct(fullStyle, BaselineShift(0.0)).shift != 0.0) {
+		zoomFontSize(SuperSubscriptScalingCoeff, fullStyle);
+	} else {
+		fullStyle;
+	}
+}
+
+// modify font size so that it is a proper base for calculating sub/superscript's baseline for the sub/superscript to look nice (case 31979)
+adjustStyleForBaselineModifier(fullStyle : [WigiTextStyle])-> [WigiTextStyle] {
+	shift = extractStruct(fullStyle, BaselineShift(0.0)).shift;
+	if (shift == 0.5) adjustFontSizeToBaselineShift(fullStyle) else fullStyle;
+}

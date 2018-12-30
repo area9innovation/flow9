@@ -1,0 +1,350 @@
+import material/internal/material_manager_internal;
+
+export {
+	MSelect2T(manager : MaterialManager, parent : MFocusGroup, name : string, state : [MActivateState], value : Transform<?>,
+		fn : (?, MFocusGroup) -> Tropic) -> Tropic;
+	MIfLazy2T(manager : MaterialManager, parent : MFocusGroup, value : Transform<bool>, fn : (bool, MFocusGroup) -> Tropic, sameSize : bool) -> Tropic;
+	TIfLazy2(value : Transform<bool>, fn : (bool) -> Tropic, sameSize : bool) -> Tropic;
+
+	MExplicitTheme2T(manager : MaterialManager, parent : MFocusGroup, state : [MActivateState], light : Transform<bool>, fn : (MFocusGroup) -> Tropic) -> Tropic;
+
+	MActivate2T(manager : MaterialManager, parent : MFocusGroup, name : string, state : [MActivateState], content : (MFocusGroup) -> Tropic) -> Tropic;
+	extractDynamicBehaviours(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour];
+	extractDynamicBehavioursEx(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour];
+
+	TIfPreRender(condition : Transform<bool>, thenContent : Tropic, elseContent : Tropic, sameSize : bool) -> Tropic;
+	MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, thenContent : (MFocusGroup) -> Tropic,
+		elseContent : (MFocusGroup) -> Tropic, sameSize : bool) -> Tropic;
+
+	TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic;
+	TSubscribe2(v : Transform<?>, fn : (?) -> Tropic) -> Tropic;
+
+	// TShow which creates tropic only once and only when show is true
+	MShow2(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic;
+	MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic;
+
+	MDynamicGroup2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGroup2, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	// Shows TPositionScale only when enabled is true
+	MPositionScale2(positionScale : DynamicBehaviour<PositionScale>, content : Tropic, enabled : Transform<bool>) -> Tropic;
+	// Shows TPositionScale and attaches boxWH only when enabled is true
+	MPositionScaleAttachBox(positionScale : DynamicBehaviour<PositionScale>, boxWH : DynamicBehaviour<WidthHeight>,
+		content : Tropic, enabled : Transform<bool>) -> Tropic;
+
+	extractMActivateState(state : [flow]) -> [MActivateState];
+
+	dummyParent = \manager : MaterialManager -> MFocusGroup(-2, const(-2), FEmpty(), const([]), const(-1), None(), "Dummy", None(), None(), None(), make(-1), make(-1), -1,
+		make(makeTree()), make(makeTree()), const(false), const(false), const(false), const(false), const(false), make(false), \ -> zeroPositionScale, \ -> zeroWH, manager.focus.theme,
+		makeTree());
+	dummyEnabledParent = \manager : MaterialManager -> MFocusGroup(-2, const(-2), FEmpty(), const([]), const(-1), None(), "DummyEnabled", None(), None(), None(), make(-1),
+		make(-1), -1, make(makeTree()), make(makeTree()), const(true), const(true), const(true), const(false), make(false), make(false), \ -> zeroPositionScale, \ -> zeroWH,
+		manager.focus.theme, makeTree());
+	dummyEnabledParentWithTheme = \manager : MaterialManager, w : bool -> MFocusGroup(-2, const(-2), FEmpty(), const([]), const(-1), None(),
+		"DummyEnabled" + if (w) "Light" else "Dark", None(), None(), None(), make(-1), make(-1), -1, make(makeTree()), make(makeTree()), const(true), const(true), const(true),
+		const(false), const(false), make(false), \ -> zeroPositionScale, \ -> zeroWH, MLightTheme(manager.focus.theme, w), makeTree());
+}
+
+MIfLazy2T(manager : MaterialManager, parent : MFocusGroup, value : Transform<bool>, fn : (bool, MFocusGroup) -> Tropic, sameSize : bool) -> Tropic {
+	if (isFConst(value)) {
+		fn(fgetValue(value), parent)
+	} else {
+		tTrue : ref Maybe<TAcc> = ref None();
+		tFalse : ref Maybe<TAcc> = ref None();
+		uns = ref [];
+
+		(\p -> TransformTAcc2(\t2a -> {
+			ba =
+				fselect(value, FLift(\v ->
+					onlyOnce(
+						if (v)
+							tTrue
+						else
+							tFalse,
+						\ -> {
+							ba = t2a(fn(v, p));
+							uns := concat(^uns, ba.disposers);
+							ba;
+						}
+					)
+				));
+
+			TAcc(
+				FMutable(fselect(ba, FLift(\ba0 : TAcc -> ba0.form))),
+				TFormMetrics(
+					fsubselect(ba, FLift(\ba0 : TAcc -> ba0.metrics.width)),
+					fsubselect(ba, FLift(\ba0 : TAcc -> ba0.metrics.height)),
+					fsubselect(ba, FLift(\ba0 : TAcc -> ba0.metrics.baseline))
+				),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.minWidth)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.minHeight)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.maxWidth)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.maxHeight)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.xFillers)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.yFillers)),
+				fsubselect(ba, FLift(\ba0 : TAcc -> ba0.addFillers)),
+				false,
+				false,
+				[\ -> {tTrue := None(); tFalse := None(); applyall(^uns);}]
+			)
+		}))
+		|> (\f ->
+			MActivate2T(
+				manager,
+				parent,
+				"MIfLazy2",
+				[],
+				f
+			)
+		)
+		|> if (sameSize) makeTropicConstant(None(), None()) else idfn
+	}
+}
+
+TIfLazy2(value : Transform<bool>, fn : (bool) -> Tropic, sameSize : bool) -> Tropic {
+	TIfLazy(value, fn)
+	|> if (sameSize) makeTropicConstant(None(), None()) else idfn
+}
+
+MSelect2T(manager : MaterialManager, parent : MFocusGroup, name : string, state : [MActivateState], value : Transform<?>,
+	fn : (?, MFocusGroup) -> Tropic) -> Tropic {
+	if (isFConst(value))
+		MActivate2T(manager, parent, name, state, \p -> fn(fgetValue(value), p))
+	else
+		MActivate2T(
+			manager,
+			parent,
+			name,
+			/*concat(*/state/*, extractDynamicBehaviours(value, "value", MLowLevelChanges()))*/,
+			\p -> TSelect(value, \v -> fn(v, p))
+		)
+}
+
+MExplicitTheme2T(manager : MaterialManager, parent : MFocusGroup, state : [MActivateState], light : Transform<bool>,
+	fn : (MFocusGroup) -> Tropic) -> Tropic {
+	name = extractStruct(state, MFocusName("Theme")).name;
+
+	TSelect(light, \lght -> {
+		MActivate2T(manager, parent, (if (lght) "Light" else "Dark") + name, replaceStruct(state, MLightBackground(lght)), fn)
+	})
+}
+
+MActivate2T(manager : MaterialManager, parent : MFocusGroup, name : string, state : [MActivateState], content : (MFocusGroup) -> Tropic) -> Tropic {
+	if (fgetValue(parent.id) != -2) {
+		enabled = extractStruct(state, MEnabled(const(true))).enabled;
+		focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
+		clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
+		monitorBehaviours = extractStructMany(state, IScriptBehaviour("", make(flow(false)), ISMiscEvent()));
+		monitorEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
+		iScriptId = eitherMap(tryExtractStruct(state, IScriptId("")), \uid -> Some(uid.id), None());
+		tabOrder = eitherMap(tryExtractStruct(state, MFocusId(const(-1))), \fid -> Some(fid.id), None());
+		vertical = eitherMap(tryExtractStruct(state, MFocusVertical(false)), \v -> Some(v.vertical), None());
+		horizontal = eitherMap(tryExtractStruct(state, MFocusHorizontal(false)), \v -> Some(v.horizontal), None());
+		focused = extractStruct(state, MFocused(make(false))).focused;
+		accessRole = extractStruct(state, AccessRole("")).role;
+		zorder = eitherMap(tryExtractStruct(state, MZorder(const(0))), \zo -> Some(zo.zorder), None());
+		parentTheme = extractStruct(state, parent.theme);
+		lightBackground = extractStruct(state, MLightBackground(parentTheme.lightBackground)).light;
+		theme = MLightTheme(parentTheme, lightBackground);
+
+		addMaterialFocusGroupId(
+			manager, parent, name, vertical, horizontal, focused, enabled, focusEnabled,
+			monitorBehaviours, monitorEnabled, clickEnabled, iScriptId, tabOrder, zorder, theme,
+			\f ->
+				MFocusClickable2TAccessibility(manager, content(f), f, None(), accessRole, "",
+					eitherMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> Some(owc.focusedPopup), None()),
+					extractStructMany(state, FAccessAttribute("", const("")))
+					|> (\f2 ->
+						eitherMap(
+							f.iScriptId,
+							\id -> arrayPush(f2, FAccessAttribute("id", const(id))),
+							f2
+						)
+					)
+				)
+		)
+	} else
+		content(parent)
+}
+
+extractDynamicBehaviours(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour] {
+	mapi(fgetDynamicBehaviours(v), \i, v0 -> IScriptBehaviour(name + if (i > 0) i2s(i) else "", v0, type))
+}
+
+// We have a problem with the extraction of DynamicBehaviour from Transform.
+// If Transform contains FSelect2 it split into an array of independent DynamicBehaviours - as a result we get a wrong IScriptBehavior.
+extractDynamicBehavioursEx(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour] {
+	fgetDynamicBehavioursEx = \v0 : Transform<?> -> {
+		switch (v0 : Transform<?>) {
+			DynamicBehaviour(b, s): [v0];
+			default : []
+		}
+	};
+
+	mapi(fgetDynamicBehavioursEx(v), \i, v0 -> IScriptBehaviour(name + if (i > 0) i2s(i) else "", v0, type))
+}
+
+TIfPreRender(condition : Transform<bool>, thenContent : Tropic, elseContent : Tropic, sameSize : bool) -> Tropic {
+	if (isFConst(condition)) {
+		if (fgetValue(condition))
+			thenContent
+		else
+			elseContent
+	} else {
+		TCols2(
+			TScale(
+				fif(condition, const(Factor(1. , 1.)), const(Factor(0., 0.))),
+				thenContent
+			),
+			TScale(
+				fif(condition, const(Factor(0. , 0.)), const(Factor(1., 1.))),
+				elseContent
+			)
+		)
+		|> if (sameSize) makeTropicConstant(None(), None()) else idfn
+	}
+}
+
+MIfPreRender2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, thenContent : (MFocusGroup) -> Tropic,
+	elseContent : (MFocusGroup) -> Tropic, sameSize : bool) -> Tropic {
+	if (isFConst(condition)) {
+		if (fgetValue(condition))
+			thenContent(parent)
+		else
+			elseContent(parent)
+	} else {
+		TCols2(
+			TScale(
+				fif(condition, const(Factor(1. , 1.)), const(Factor(0., 0.))),
+				MActivate2T(manager, parent, "MIfPreRender true", [MEnabled(condition)], thenContent)
+			),
+			TScale(
+				fif(condition, const(Factor(0. , 0.)), const(Factor(1., 1.))),
+				MActivate2T(manager, parent, "MIfPreRender false", [MEnabled(fnot(condition))], elseContent)
+			)
+		)
+		|> if (sameSize) makeTropicConstant(None(), None()) else idfn
+	}
+}
+
+TRenderOnce(condition : Transform<bool>, content : () -> Tropic) -> Tropic {
+	contRendered = ref false;
+	scaleFactor = make(if (fgetValue(condition)) Factor(1., 1.) else Factor(0., 0.));
+
+	TShowLazy(
+		fselect(condition,
+			FLift(\c -> {
+				nextDistinct(scaleFactor, if (c) Factor(1., 1.) else Factor(0., 0.));
+
+				if (^contRendered) {
+					true
+				} else if (c) {
+					contRendered := true;
+					true
+				} else
+					false
+			})
+		),
+		content
+	)
+	|> (\f -> TScale(scaleFactor, f))
+}
+
+TSubscribe2(v : Transform<?>, fn : (?) -> Tropic) -> Tropic {
+	if (isFConst(v)) {
+		// If we are constant, let's avoid the mutable altogether
+		TEmpty()
+	} else {
+		tMutable = make(TEmpty());
+
+		TConstruct(
+			[
+				\ -> {
+					nextDistinct(tMutable, TEmpty());
+					makeSubscribe2(v, \v0 -> next(tMutable, fn(v0)))();
+				}
+			],
+			TMutable(tMutable)
+		);
+	}
+}
+
+MShow2(manager : MaterialManager, parent : MFocusGroup, show : Transform<bool>, tr : (MFocusGroup) -> Tropic) -> Tropic {
+	t : ref Maybe<Tropic> = ref None();
+
+	MSelect2T(manager, parent, "MShow2", [], show, \s, p -> {
+		if (s) onlyOnce(t, \ -> tr(p)) else TEmpty()
+	})
+}
+
+MPositionScale2(positionScale : DynamicBehaviour<PositionScale>, content : Tropic, enabled : Transform<bool>) -> Tropic {
+	TCopySize(content, \tr -> TShowLazy(enabled, \ -> TPositionScale(positionScale, tr)), true)
+}
+
+MPositionScaleAttachBox(positionScale : DynamicBehaviour<PositionScale>, boxWH : DynamicBehaviour<WidthHeight>, content : Tropic,
+	enabled : Transform<bool>) -> Tropic {
+	TCopySize(content, \tr -> TShowLazy(enabled, \ -> TPositionScale(positionScale, TAttachBox(tr, boxWH))), true)
+}
+
+MRenderOnce2T(manager : MaterialManager, parent : MFocusGroup, condition : Transform<bool>, content : (MFocusGroup) -> Tropic) -> Tropic {
+	contRendered = ref false;
+	scaleFactor = make(if (fgetValue(condition)) Factor(1., 1.) else Factor(0., 0.));
+
+	(\p -> MSelect2T(
+		manager,
+		p,
+		"MRenderOnceContent",
+		[],
+		fselect(
+			condition,
+			FLift(\c -> {
+				nextDistinct(scaleFactor, if (c) Factor(1., 1.) else Factor(0., 0.));
+
+				if (^contRendered) {
+					true
+				} else if (c) {
+					contRendered := true;
+					true
+				} else
+					false
+			})
+		),
+		\cond, p0 -> if (cond) content(p0) else TEmpty()
+	))
+	|> (\f -> MActivate2T(manager, parent, "MRenderOnceContentContainer", [MEnabled(condition), MFocusEnabled(condition)], f))
+	|> (\f -> TScale(scaleFactor, f))
+}
+
+MDynamicGroup2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGroup2, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	tStackChanges = make([]);
+
+	TConstruct(
+		[
+			makeSubscribe(m.stackChanges, \grc : [MGroupChange] ->
+				nextDistinct(
+					tStackChanges,
+					concat(
+						getValue(tStackChanges),
+						map(grc, \g ->
+							switch (g : MGroupChange) {
+								MGroupAdd(mat, z) : TGroupAdd(m2t(mat, parent), z);
+								MGroupDelete(z) : TGroupDelete(z);
+								MGroupMove(f, t) : TGroupMove(f, t);
+								MGroupReplace(mat, z) : TGroupReplace(m2t(mat, parent), z);
+							}
+						)
+					)
+				)
+			)
+		],
+		TDynamicGroup2(tStackChanges, ref map(^(m.currentStack), \mat -> m2t(mat, parent)), m.combiner)
+	)
+}
+
+extractMActivateState(state : [flow]) -> [MActivateState] {
+	fold(state, [], \acc : [MActivateState], st : flow ->
+		switch (st : flow) {
+			MActivateState(): arrayPush(acc, st);
+			default: acc;
+		}
+	)
+}

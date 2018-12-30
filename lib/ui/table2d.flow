@@ -1,0 +1,183 @@
+// © Copyright 2013 Area9 Innovation. All rights reserved
+
+import ui/gridlayout;
+
+// This is a very useful table which supports resizing in useful ways.
+export {
+	// A cell is either a form or a fat cell, meaning a form that covers multiple cells
+	Layout2dCell ::= Form, FatCell;
+		// Notice that a fat cell will NOT increase the size of columns or rows to fit the result, since
+		// it is not clear where to place the debt of extra space required. So the size of cells is
+		// defined only by cells of 1x1 size, i.e. normal Forms
+		FatCell : (form : Form, width : int, height : int);
+
+	// Constructs a simple 2d-table where you specify the resizing behaviour of each column and row
+	Table2d(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Form;
+	// Table2dd is same as Table2d, but offsets of cells added
+	Table2dd(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Pair<Form, [[Pair<Behaviour<double>, Behaviour<double>>]]>;
+
+		// For easy reference:
+		//
+		// 	LayoutSpec(gutter : double, growth : [double]);
+		//
+		// The growth defines how much this column/row should grow with available space, and is a number from 0.0 to 1.0,
+		// where 0.0 is not growing.
+
+	// One-row Table2d
+	Cols2d(spec : LayoutSpec, cells : [Form]) -> Form;
+	TallCols2d(spec : LayoutSpec, cells : [Form]) -> Form;
+	
+	// One-column Table2d
+	Lines2d(spec : LayoutSpec, cells : [Form]) -> Form;
+	WideLines2d(spec : LayoutSpec, cells : [Form]) -> Form;
+
+	// Lower level helpers
+
+	// Returns data structures based on array of forms and columns/rows specifications 
+	// that could be used to build a table with proper layout. However it also allows to 
+	// make changes before final layout. 
+	Layout2d(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Pair<GridLayout, Tree<string, Form>>;
+	addCell2Layout(lp : Pair<GridLayout, Tree<string, Form>>, name : string, column : int, row : int, widthInCells : int, heightInCells : int, content : Form) -> Pair<GridLayout, Tree<string, Form>>;
+
+	// Simple implementation of Table2d if you don't need different size for rows and cols.
+	Table2dSimple(cols : int, horizontalSpacing : double, rows : int, verticalSpacing : double, forms : [Form]) -> Form;
+}
+
+getLayout2dCellForm(cell : Layout2dCell) -> Form {
+	switch (cell : Layout2dCell) {
+		FatCell(form, w, h): form;
+		default: cast(cell : Layout2dCell -> Form);
+	}
+}
+
+getLayout2dCellWidth(cell : Layout2dCell) -> int {
+	switch (cell : Layout2dCell) {
+		FatCell(form, w, h): w;
+		default: 1;
+	}
+}
+
+getLayout2dCellHeight(cell : Layout2dCell) -> int {
+	switch (cell : Layout2dCell) {
+		FatCell(form, w, h): h;
+		default: 1;
+	}
+}
+
+Layout2d(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Pair<GridLayout, Tree<string, Form>> {
+	nameByIndex = \colIndex, rowIndex -> "c" + i2s(colIndex) + "x" + i2s(rowIndex);
+
+	layout = 
+		GridLayout(colSpec, rowSpec, {
+			foldi(cells, [], \rowIndex, acc, row -> {
+				concat(acc, 
+					foldi(row, [], \colIndex, acc2, cell -> {
+						arrayPush(acc2, LayoutCell(colIndex, rowIndex, getLayout2dCellWidth(cell), getLayout2dCellHeight(cell), NamedForm(nameByIndex(colIndex, rowIndex))))
+					})
+				)
+			})
+		});
+
+	names = 
+		foldi(cells, makeTree(), \rowIndex, acc, row -> {
+			foldi(row, acc, \colIndex, acc2, cell -> {
+				name = nameByIndex(colIndex, rowIndex);
+				setTree(acc2, name, getLayout2dCellForm(cell))
+			})
+		});
+
+	Pair(layout, names);
+}
+
+Table2d(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Form {
+	Table2dd(colSpec, rowSpec, cells).first
+}
+
+Table2dd(colSpec : LayoutSpec, rowSpec : LayoutSpec, cells : [[Layout2dCell]]) -> Pair<Form, [[Pair<Behaviour<double>, Behaviour<double>>]]> {
+	l = Layout2d(colSpec, rowSpec, cells);
+
+	tmp = grid2form3d(l.first, l.second, false); // Pair<Form, [Pair<Behaviour<double>, Behaviour<double>>]>
+
+	indx = ref 0;
+	Pair(
+		tmp.first,
+		// reverse Layout2d splitting
+		map(cells, \row ->
+			map(row, \cell -> {
+				res = tmp.second[^indx];
+				indx := ^indx + 1;
+				res
+			})
+		)
+	)
+}
+
+Cols2d(spec : LayoutSpec, cells : [Form]) -> Form {
+	Table2d(
+		spec, 
+		LayoutSpec(0.0, [0.0]), 
+		[cells]
+	)
+}
+
+TallCols2d(spec : LayoutSpec, cells : [Form]) -> Form {
+	Table2d(
+		spec, 
+		LayoutSpec(0.0, [1.0]), 
+		[cells]
+	)
+}
+
+Lines2d(spec : LayoutSpec, cells : [Form]) -> Form {
+	Table2d(
+		LayoutSpec(0.0, [0.0]), 
+		spec, 	
+		map(cells, v2a)
+	)
+}
+
+WideLines2d(spec : LayoutSpec, cells : [Form]) -> Form {
+	Table2d(
+		LayoutSpec(0.0, [1.0]), 
+		spec, 	
+		map(cells, v2a)
+	)
+}
+
+addCell2Layout(lp : Pair<GridLayout, Tree<string, Form>>, name : string, column : int, row : int, widthInCells : int, heightInCells : int, content : Form) -> Pair<GridLayout, Tree<string, Form>> {
+	cell = LayoutCell(column, row, widthInCells, heightInCells, NamedForm(name));
+	
+	Pair(
+		GridLayout(lp.first.columns, lp.first.rows, arrayPush(lp.first.cells, cell)),		
+		setTree(lp.second, name, content)
+	)
+}
+
+Table2dSimple(cols : int, hs : double, rows : int, vs : double, forms : [Form]) -> Form {
+	avail = makeWH();
+	cellWH = makeWH();
+
+	Constructor(
+		Inspect([IAvailable(avail)], {
+			LinesWithInterval(vs,
+				generate(0, rows, \r -> {
+					ColsWithInterval(hs,
+						generate(0, cols, \c -> {
+							idx = c + r * cols;
+							if (idx < length(forms))
+								Available2(cellWH, forms[idx])
+							else
+								Empty()
+						})
+					)
+				})
+			)
+		}),
+		\ -> connectSelectDistinctu(avail, cellWH, \_avail -> {
+			WidthHeight(
+				(_avail.width - hs * i2d(cols - 1)) / i2d(cols),
+				(_avail.height - vs * i2d(rows - 1)) / i2d(rows)
+			)
+		})
+	)
+}

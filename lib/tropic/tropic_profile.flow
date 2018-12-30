@@ -1,0 +1,366 @@
+import tropic/tropic_gui;
+import algorithms;
+import tropic/tropic2string;
+import system;
+
+import easygraph;
+import easygraph_utils;
+
+export {
+	// Analyzes the tropic and finds duplication patterns in it. Prints the analysis on the screen
+	profileTropic(t : Tropic) -> void;
+
+	// How big is this Tropic?
+	sizeTropic(t : Tropic) -> int;
+
+	// Check if there are parts that can be shared
+	commonTropic(t : Tropic, acc : Tree<Tropic, int>) -> Tree<Tropic, int>;
+}
+
+// Analyzes the tropic and finds duplication patterns in it. Prints the analysis on the screen
+profileTropic(t : Tropic) -> void {
+	println(i2s(sizeTropic(t)) + ", Tropics in UI in total.");
+	if (getUrlParameter("profile") >= "2") {
+ 		println("Here is a dump of Tropic values that are copied:");
+
+		// Collect a profile of the tropic to find duplication
+		tropicProfile = commonTropic(t, makeTree());
+		buckets = foldTree(tropicProfile, [], \tr, cnt, acc -> {
+			if (cnt > 6) arrayPush(acc, Pair(cnt, tr)) else acc
+		});
+		sorted = sort(buckets);
+		biggest = reverseA(sorted);
+		iteri(biggest, \i, b : Pair<int, Tropic> -> {
+			println(i2s(b.first) + ": #" + i2s(i) + " " + tropic2string(b.second))
+		});
+
+		if (targetHasSystem() && getUrlParameter("profile") >= "3") {
+			// Build a graph of nesting
+			graph = foldi(biggest, makeEasyGraph(), \i, acc0, p1 : Pair<int, Tropic> -> {
+				acc = addEGNode(acc0, GNode(i, p1));
+				foldi(biggest, acc, \j, acc2, p2 : Pair<int, Tropic> -> {
+					if (i != j && containsTropic(p1.second, p2.second)) {
+						edge = GEdge(j, i, Pair(p2.first, p1.first), 0);
+						addEGEdge(acc2, edge);
+					} else acc2;
+				})
+			});
+
+			graph0 = transitiveReduction(graph);
+
+			dot = easyGraph2dot(graph0, 0, [], \node : GNode<Pair<int, Tropic>> -> {
+				tr = tropic2string(node.data.second);
+				label = tr; // takeBefore(tr, "\n", tr);
+				label1 = strReplace(label, "\"", "'");
+				[
+					DotLabel(i2s(node.data.first) + " repeats of \\n #" + i2s(node.id) + "\\n" + label1)
+				]
+			}, \edge : GEdge<Pair<int, int>> -> {
+				// The width of the lines reflect duplication. Notice, however, the duplication might be due to other ancestors
+				width = i2d(edge.data.second) / i2d(edge.data.first);
+				width1 = sqrt(width);
+				[DotWidth(d2s( width1 ))]
+			});
+			println("Saving tropic_profile.dot");
+			setFileContent("tropic_profile.dot", dot);
+
+			startProcess("dot", ["-Tsvg", "tropic_profile.dot"], ".", "", \ec, so, se -> {
+				println(ec);
+				if (ec == 0 && se == "") {
+					setFileContent("tropic_profile.svg", so);
+					{}
+				} else {
+					println(se);
+				}
+			});
+			{}
+		}
+	}
+}
+
+sizeTropic(t : Tropic) -> int {
+	switch (t : Tropic) {
+		TEmpty(): 1;
+		TText(__, __): 1;
+		TParagraph(__, __): 1;
+		TGraphics(__, __): 1;
+		TPicture(__, __): 1;
+		TBorder(l, to, r, b, tr): 1 + sizeTropic(tr);
+		TTranslate(p, tr): 1 + sizeTropic(tr);
+		TScale(f, tr): 1 + sizeTropic(tr);
+		TRotate(r, tr): 1 + sizeTropic(tr);
+		TAlpha(a, tr): 1 + sizeTropic(tr);
+		TVisible(v, tr): 1 + sizeTropic(tr);
+		TMask(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TFilter(f, tr): 1 + sizeTropic(tr);
+		TCursor(c, tr): 1 + sizeTropic(tr);
+		TCrop(tl, wh, tr): 1 + sizeTropic(tr);
+		TInteractive(ia, tr): 1 + sizeTropic(tr);
+		TAccess(p, tr): 1 + sizeTropic(tr);
+
+		TForm(__): 1;
+		TFForm(__, __): 1;
+		TSFForm(__, __): 1;
+		TFormIn(f, tr): 1 + sizeTropic(tr);
+		TFormAvailable(f, tr): 1 + sizeTropic(tr);
+		TCase(sz, cs): sum(concat(map(sz, sizeTropic), map(cs, sizeTropic)));
+		TConstruct(cs, tr): 1 + sizeTropic(tr);
+		TCreate2(current, fn): 1 + sizeTropic(if (^current != TEmpty()) ^current else fn());
+		TDispose(ds, tr): 1 + sizeTropic(tr);
+		TMutable(tr): {
+			c = fgetValue(tr);
+			1 + sizeTropic(c);
+		}
+		TIf(b, th, el): sizeTropic(th) + sizeTropic(el);
+		TGroup2(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TCols2(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TBaselineCols2(t1, t2):  sizeTropic(t1) + sizeTropic(t2);
+		TBaselineLines2(t1, t2):  sizeTropic(t1) + sizeTropic(t2);
+		TLines2(t1, t2):  sizeTropic(t1) + sizeTropic(t2);
+		TAvailable(box, parent): sizeTropic(box) + sizeTropic(parent);
+		TTweak(style, content, size): sizeTropic(content) + sizeTropic(size);
+		TZoomFill(b):  sizeTropic(b);
+		TFillX(): 1;
+		TFillY(): 1;
+		TBaselineOffset(bas, tr): 1 + sizeTropic(tr);
+		TAttach(b, fn): 1 + sizeTropic(b);
+		TRounded(nw, ne, lw, le, style, size):  1 + sizeTropic(size);
+		TScrollable(content, maxbox, style, state): sizeTropic(content) + sizeTropic(maxbox);
+		TCropSize(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TShift(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TSize(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TMinimumGroup2(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TSubtractGroup2(t1, t2): sizeTropic(t1) + sizeTropic(t2);
+		TDebug(c, tr): 1 + sizeTropic(tr);
+		TLet(name, value, scope): sizeTropic(value) + sizeTropic(scope);
+		TLetAvailable(name, scope): sizeTropic(scope);
+		TNamespace(__): 1;
+		TDisplay(__): 1;
+		TGhost(__): 1;
+		TGhostMin(__): 1;
+		TTag(tag, tr): 1 + sizeTropic(tr);
+		TTag2(__, tr): 1 + sizeTropic(tr);
+		TCssBlock(st, tr): 1 + sizeTropic(tr);
+		TNative(fn): 1;
+		TransformTAcc(fn): {
+			trArray = ref [];
+
+			bf = fn(
+					\tr, p, s, mo -> {
+						refArrayPush(trArray, tr);
+
+						TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(false), false, false, [])
+					},
+					zeroTParentInfo,
+					emptyStylesheet,
+					false
+				);
+
+			applyall(bf.disposers);
+
+			1 + fold(^trArray, 0, \acc, tr -> acc + sizeTropic(tr));
+		}
+		TFullWindow(__, tr): 1 + sizeTropic(tr);
+		TSizeOf(tr): 1 + sizeTropic(tr);
+		TRealHTML(__, __, __): 1;
+		TVideo(__, __, __): 1;
+		TDynamicGroup2(__, cs, __): sizeTropic(TGroup(^cs));
+		TPositionScale(__, tr): 1 + sizeTropic(tr);
+	}
+}
+
+commonTropic(t : Tropic, acc : Tree<Tropic, int>) -> Tree<Tropic, int> {
+	acc2 = setTree(acc, t, lookupTreeDef(acc, t, 0) + 1);
+	switch (t : Tropic) {
+		TBorder(l, to, r, b, tr): commonTropic(tr, acc2);
+		TTranslate(p, tr): commonTropic(tr, acc2);
+		TScale(f, tr): commonTropic(tr, acc2);
+		TRotate(r, tr): commonTropic(tr, acc2);
+		TAlpha(a, tr): commonTropic(tr, acc2);
+		TVisible(v, tr): commonTropic(tr, acc2);
+		TFilter(f, tr): commonTropic(tr, acc2);
+		TCursor(c, tr): commonTropic(tr, acc2);
+		TCrop(tl, wh, tr): commonTropic(tr, acc2);
+		TInteractive(ia, tr): commonTropic(tr, acc2);
+		TBaselineOffset(__, tr): commonTropic(tr, acc2);
+		TAccess(p, tr): commonTropic(tr, acc2);
+		TConstruct(cs, tr): commonTropic(tr, acc2);
+		TCreate2(current, fn): commonTropic(if (^current != TEmpty()) ^current else fn(), acc2);
+
+		TDispose(ds, tr): commonTropic(tr, acc2);
+		TFormIn(f, tr): commonTropic(tr, acc2);
+		TFormAvailable(f, tr): commonTropic(tr, acc2);
+		TZoomFill(b):  commonTropic(b, acc2);
+		TAttach(b, fn): commonTropic(b, acc2);
+		TDebug(c, tr): commonTropic(tr, acc2);
+		TTag(tag, tr): commonTropic(tr, acc2);
+		TTag2(__, tr): commonTropic(tr, acc2);
+		TCssBlock(st, tr): commonTropic(tr, acc2);
+		TSizeOf(tr): commonTropic(tr, acc2);
+
+		TCase(sz, cs): {
+			acc4 = fold(sz, acc2, \acc3, tr -> commonTropic(tr, acc3));
+			fold(cs, acc4, \acc3, tr -> commonTropic(tr, acc3));
+		}
+
+		TMask(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TIf(b, th, el): commonTropic(el, commonTropic(th, acc2));
+		TGroup2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TCols2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TBaselineCols2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TBaselineLines2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TLines2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TAvailable(box, parent): commonTropic(parent, commonTropic(box, acc2));
+		TTweak(style, content, size): commonTropic(content, commonTropic(size, acc2));
+		TRounded(nw, ne, lw, le, style, size): commonTropic(size, acc2);
+		TScrollable(content, maxbox, style, state): commonTropic(maxbox, commonTropic(content, acc2));
+		TCropSize(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TShift(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TSize(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TMinimumGroup2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TSubtractGroup2(t1, t2): commonTropic(t2, commonTropic(t1, acc2));
+		TLet(name, value, scope): commonTropic(scope, commonTropic(value, acc2));
+		TLetAvailable(name, scope): commonTropic(scope, acc2);
+		TPositionScale(__, tr): commonTropic(tr, acc2);
+		TFullWindow(__, tr): commonTropic(tr, acc2);
+
+		TMutable(tr): {
+			c = fgetValue(tr);
+ 			commonTropic(c, acc2);
+		}
+		TNamespace(__): acc2;
+		TDisplay(__): acc2;
+		TGhost(__): acc2;
+		TGhostMin(__): acc2;
+		TNative(fn): acc2;
+		TransformTAcc(fn): {
+			acc3 = ref acc2;
+
+			bf = fn(
+					\tr, p, s, mo -> {
+						acc3 := commonTropic(tr, ^acc3);
+
+						zeroTAcc
+					},
+					zeroTParentInfo,
+					emptyStylesheet,
+					false
+				);
+
+			applyall(bf.disposers);
+
+			^acc3;
+		};
+		TEmpty(): acc2;
+		TText(__, __): acc2;
+		TParagraph(__, __): acc2;
+		TGraphics(__, __): acc2;
+		TPicture(__, __): acc2;
+		TRealHTML(__, __, __): acc2;
+		TVideo(__, __, __): acc2;
+		TForm(__): acc2;
+		TFForm(__, __): acc2;
+		TSFForm(__, __): acc2;
+		TFillX(): acc2;
+		TFillY(): acc2;
+		TDynamicGroup2(__, cs, __): fold(^cs, acc2, \acc3, c -> commonTropic(c, acc3));
+	}
+}
+
+containsTropic(small : Tropic, big : Tropic) -> bool {
+	if (big == small) true
+	else {
+		switch (big : Tropic) {
+			TBorder(l, to, r, b, tr): containsTropic(small, tr);
+			TTranslate(p, tr): containsTropic(small, tr);
+			TScale(f, tr): containsTropic(small, tr);
+			TRotate(r, tr): containsTropic(small, tr);
+			TAlpha(a, tr): containsTropic(small, tr);
+			TVisible(v, tr): containsTropic(small, tr);
+			TFilter(f, tr): containsTropic(small, tr);
+			TCursor(c, tr): containsTropic(small, tr);
+			TCrop(tl, wh, tr): containsTropic(small, tr);
+			TInteractive(ia, tr): containsTropic(small, tr);
+			TBaselineOffset(__, tr):containsTropic(small, tr);
+			TAccess(p, tr): containsTropic(small, tr);
+			TFormIn(f, tr): containsTropic(small, tr);
+			TFormAvailable(f, tr): containsTropic(small, tr);
+			TDebug(c, tr): containsTropic(small, tr);
+			TConstruct(cs, tr): containsTropic(small, tr);
+			TCreate2(current, fn): containsTropic(small, if (^current != TEmpty()) ^current else fn());
+			TDispose(ds, tr): containsTropic(small, tr);
+			TTag(tag, tr): containsTropic(small, tr);
+			TTag2(__, tr): containsTropic(small, tr);
+			TCssBlock(st, tr): containsTropic(small, tr);
+			TZoomFill( tr): containsTropic(small, tr);
+			TAttach(tr, fn): containsTropic(small, tr);
+			TRounded(nw, ne, lw, le, style, tr): containsTropic(small, tr);
+			TSizeOf(tr): containsTropic(small, tr);
+			TPositionScale(__, tr): containsTropic(small, tr);
+
+			TCase(sz, cs): {
+				acc4 = fold(sz, false, \acc3, tr -> containsTropic(small, tr));
+				fold(cs, acc4, \acc3, tr -> containsTropic(small, tr));
+			}
+
+			TMask(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TIf(b, t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TGroup2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TCols2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TBaselineCols2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TBaselineLines2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TLines2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TAvailable(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TTweak(style, t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TScrollable(t1, t2, style, state): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TCropSize(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TShift(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TSize(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TMinimumGroup2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TSubtractGroup2(t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TLet(name, t1, t2): containsTropic(small, t1) ||  containsTropic(small, t2);
+			TLetAvailable(name, t1): containsTropic(small, t1);
+			TFullWindow(__, tr): containsTropic(small, tr);
+			TMutable(t): {
+				c = fgetValue(t);
+				containsTropic(small, c);
+			}
+			TransformTAcc(fn): {
+				c = ref false;
+
+				bf = fn(
+						\tr, p, s, mo -> {
+							c := ^c || containsTropic(small, tr);
+
+							TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(false), false, false, [])
+						},
+						zeroTParentInfo,
+						emptyStylesheet,
+						false
+					);
+
+				applyall(bf.disposers);
+
+				^c;
+			};
+			TRealHTML(__, __, __): false;
+			TVideo(__, __, __): false;
+			TNamespace(__): false;
+			TDisplay(__): false;
+			TGhost(__): false;
+			TGhostMin(__): false;
+			TNative(fn): false;
+			TEmpty(): false;
+			TText(__, __): false;
+			TParagraph(__, __): false;
+			TGraphics(__, __): false;
+			TPicture(__, __): false;
+			TForm(__): false;
+			TFForm(__, __): false;
+			TSFForm(__, __): false;
+			TFillX(): false;
+			TFillY(): false;
+			TDynamicGroup2(__, cs, __): fold(^cs, false, \acc, c -> acc || containsTropic(small, c));
+		}
+	}
+}

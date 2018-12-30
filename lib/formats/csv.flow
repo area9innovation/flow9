@@ -1,0 +1,203 @@
+import string;
+import array;
+import math;
+import algorithms;
+import devmode;
+
+export {
+	makeCsvFile(rows : [[string]]) -> string;
+	// If onlyRectangular is set, we return [[]] when there is not the same
+	// number of columns in each line. If it is not set, we can return an
+	// uneven array
+	parseCsvFile(content : string, onlyRectangular : bool) -> [[string]];
+	
+	parseCsv(s : string, sep : string) -> [[string]];
+
+	parseCsvLine(s : string, sep : string) -> [string];
+
+	parseCsvField(s : string, index : int, sep : string) -> Pair<string, int>;
+}
+
+//separators in string with quotes are ignored
+strSplitCheckQuotes(s: string, sep: string, acc: [string]) {
+	l = strlen(s);
+	i = strIndexOfSepOutOfQuotes(s, sep);
+	if (i < 0) {
+		arrayPush(acc, s);
+	} else {
+		nextSubstr = strLeft(s, i);
+		
+		if (i < l) {
+			sepLen = strlen(sep);
+			strSplitCheckQuotes(substring(s, i + sepLen, l - i - sepLen), sep, concat(acc, [nextSubstr]));
+		} else {
+			concat(acc, [nextSubstr]);
+		}
+	}
+}
+
+strIndexOfSepOutOfQuotes(str : string, sep : string) -> int {
+	if (strIndexOf(str, sep) < strIndexOf(str, "\"")) {
+		strIndexOf(str, sep)
+	} else {
+		quotesIdx = multipleStrIndexOf(str, "\"");
+		qutes = foldi(quotesIdx, [], \idx, acc, quoteIdx -> {
+			if (even(idx)) acc
+			else concat(acc, [Pair(quotesIdx[idx - 1], quotesIdx[idx])])
+		});
+		sepIdxs = multipleStrIndexOf(str, sep);
+		l = strlen(str);
+		isIdxInRange = \i -> fold(qutes, false, \acc, pair -> ((i > pair.first && i < pair.second) || acc));
+		fold(sepIdxs, l, \acc, sepIdx -> {
+			if (acc < l || isIdxInRange(sepIdx)) acc
+			else sepIdx
+		});
+	}
+}
+
+makeCsvFile(rows : [[string]]) -> string {
+	rowsQuotesFixed = map(rows, \r -> map(r, \s -> "\"" + strReplace(s, "\"", "\"\"") + "\""));
+	rowsCommaSeparated = map(rowsQuotesFixed, \r -> strGlue(r, ","));
+	rowsEOLSeparated = strGlue(rowsCommaSeparated, "\n");
+	rowsEOLSeparated
+}
+
+parseCsvFile(file : string, onlyRectangular : bool) -> [[string]] {
+	file_part = strLeft(file, 2000);
+
+	cnt_sep = max3(Pair(if (strCountOf(file_part, ",") > 0) getBestRowCount(file_part, ",") else 0, ","),
+					Pair(if (strCountOf(file_part, ";") > 0) getBestRowCount(file_part, ";") else 0, ";"),
+					Pair(if (strCountOf(file_part, "\t") > 0) getBestRowCount(file_part, "\t") else 0, "\t"));
+
+	c10 = fromCharCode(10);
+	c13 = fromCharCode(13);
+
+	f = trim2(trim2(file, c10), c13);
+	tmp_arr = if (strContains(f, c10) || strContains(f, c13)) {
+					map(strSplit2WithoutLeave(f, [c10, c13]), \a -> strSplitCheckQuotes(a, cnt_sep.second, []))
+			
+				}
+				else map(strSplitCheckQuotes(f, cnt_sep.second, []), \v -> [v]);
+
+	arr = map(map(tmp_arr, \v -> if (length(v) != cnt_sep.first) tryToConcatStringsWithQuotes(v) else v), 
+				\v -> map(v, \s -> strReplace(trimQuotes(trim(s)), "\"\"", "\"")));
+
+	arr_cnt = map(arr, length);
+	arr_cnt_uniq = uniq(arr_cnt);
+	arr_stat = sort(map(arr_cnt_uniq, \v -> Pair(countA(arr_cnt, eq(v)), v)));
+	bestResult = arr_stat[length(arr_stat)-1].second;
+
+	devtrace("separator: " + if (cnt_sep.second == "\t") "tab" else cnt_sep.second);
+	iter(arr_stat, \i -> {
+		devtrace(i2s(i.first)+" rows have "+i2s(i.second)+" columns")
+	});
+
+	if (onlyRectangular && length(arr_stat) > 1) [[]]
+	else arr
+//	else filter(arr, \v -> length(v) == bestResult);
+}
+
+// How many rows with the given delimiter will have the same number of columns (the more, the more likely this is the delimiter)
+getBestRowCount(file : string, sep : string) -> int {
+	// Break the text into lines
+	lines = strSplit2WithoutLeave(file, [fromCharCode(10), fromCharCode(13)]);
+
+	// Calculate how many columns we'll have in each row
+	// Ignore rows with only one column in them, it means the delimiter is simply not there
+	arr_cnt = filter(map(map(lines, \a -> strSplitCheckQuotes(a, sep, [])), length), neq(1));
+
+	fold(map(uniq(arr_cnt), \v -> countA(arr_cnt, eq(v))), 0, max);
+}
+
+tryToConcatStringsWithQuotes(arr : [string]) -> [string] {
+	switch(findi(arr, \s -> startsWith(s, "\"") && !endsWith(s, "\""))) {
+		None() : arr;
+		Some(index) : {
+			startPos = index;
+			tmp_arr = subrange(arr, startPos, length(arr)-startPos);
+			switch(findi(tmp_arr, \s -> !startsWith(s, "\"") && (endsWith(s, "\"")))) {
+					None() : arr;
+					Some(idx) : {
+						endPos = idx;
+						concat_str = concatStrings(subrange(arr, startPos, startPos+endPos));
+						arr_length = length(arr);
+						concat3(subrange(arr, 1, startPos-1),
+								[concat_str],
+								if (arr_length-1 > endPos) tryToConcatStringsWithQuotes(subrange(arr, endPos, arr_length-1-endPos)) else []);
+					}
+			}				
+
+		}
+	}
+}
+
+trimQuotes(s : string) -> string {
+	if (startsWith(s, "\"") && endsWith(s, "\"")) {
+		substring(s, 1, strlen(s)-2)
+	}
+	else s;
+}
+
+// Extracts a piece of string from the "from" index until the limit occurs.
+// Returns the piece, as well as the index where it ends. If the limit does
+// not appear, the index is -1.
+takeUntil(s : string, from : int, limit : string) -> Pair<string, int> {
+	if (from == -1) {
+		// Protection
+		Pair("", -1);
+	} else {
+		piece = strRight(s, from);
+		index = strIndexOf(piece, limit);
+		if (index == -1) {
+			Pair(piece, -1);
+		} else {
+			Pair(substring(s, from, index), index + from + strlen(limit));
+		}
+	}
+}
+
+parseCsvLine(s : string, sep : string) -> [string] {
+	doParseCsvLine(s, 0, [], sep);
+}
+
+doParseCsvLine(s : string, index : int, acc : [string], sep : string) -> [string] {
+	f = parseCsvField(s, index, sep);
+	a = arrayPush(acc, rtrim2(f.first, "\u000d"));
+	if (f.second == -1) a
+	else doParseCsvLine(s, f.second, a, sep);
+}
+
+// Extract the next field in the CSV file. Returns -1 as index for the last field
+parseCsvField(s : string, index : int, sep : string) -> Pair<string, int> {
+	if (index <= -1) {
+		// Protection
+		Pair("", -1);
+	} else {
+		if (getCharAt(s, index) == "\"") {
+			str = parseRestOfString(s, index + 1);
+			comma = takeUntil(s, str.second, sep);
+			Pair(str.first, comma.second);
+		} else {
+			takeUntil(s, index, sep);
+		}
+	}
+}
+
+// Extract the remainder of a string. "" is escaping
+parseRestOfString(s : string, start : int) -> Pair<string, int> {
+	piece = strRight(s, start);
+	nextQuote = strIndexOf(piece, "\"");
+	quotedQuote = strIndexOf(piece, "\"\"");
+	if (quotedQuote != -1 && quotedQuote == nextQuote) {
+		// We have a quoted quote "", so skip this guy
+		rest = parseRestOfString(s, start + quotedQuote + 2);
+		Pair(substring(s, start, nextQuote - start + 2) + rest.first, rest.second);
+	} else {
+		Pair(strLeft(piece, nextQuote), start + nextQuote + 1);
+	}
+}
+
+parseCsv(s : string, sep : string) -> [[string]] {
+	lines = strSplit(s, "\n");
+	map(lines, \l -> parseCsvLine(l, sep));
+}

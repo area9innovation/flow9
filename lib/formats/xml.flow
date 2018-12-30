@@ -1,0 +1,770 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import string;
+import behaviour;
+import list;
+import math;
+
+// A SAX-style and a DOM-style XML parser.
+
+// It does the most important parts of the XML spec at http://www.w3.org/TR/xml/, but it might fail
+// spectacularly on your XML files.
+
+// At some point, we might provide some helper to resolve these guys:
+// Predefined entities: &amp; &lt; &gt; &apos; &quot;
+// (You can try unescapeHtmlEntities in html2form.)
+
+// The parser does not handle these guys:
+// <!ELEMENT ... >
+// <!ATTLIST ... >
+// <!DOCTYPE ... >
+// <!DOCTYPE ... "[" (stuff that can contain < and >) "]>"
+// <![IGNORE[ ... ]]>
+// <![INCLUDE[ ...]]>
+// <!ENTITY ... >
+// <!NOTATION >
+export {
+
+	// This is a primitive XML SAX-style parser that spits out a stream of XML tags and texts.
+	parseXml(xml : string, events : DynamicBehaviour<XmlEvent>) -> void;
+	parseXmlWithStrategy(xml : string, events : DynamicBehaviour<XmlEvent>, strategy : [XmlParsingOption]) -> void;
+
+	XmlParsingOption ::= XmlParseLeadingSpaces, XmlValidateNames, XmlKeepComments, XmlEscaping;
+		XmlParseLeadingSpaces : (preserve : bool, makeEventForSpaces : bool); // default (false, false);
+
+		// This will check that tag names and attribute names conform to the XML standard.
+		// This is a little slower, but can help disambiguate XML text where there are unescaped < characters,
+		// in which case they are not treated as tags, but as text
+		XmlValidateNames();
+
+		// Whether to keep comments in DOM style parsing - only works with parseXml3WithStrategy!
+		XmlKeepComments();
+
+	XmlEscaping ::= LegacyEscaping, StandardEscaping;
+		
+		// Do not escape/unescape text nodes. However, do escape/unescape attribute values.
+		// This was the initial behavior of xml.flow library, and a lot of content relies on it.
+		// This is the default.
+		LegacyEscaping();
+		
+		// Escape/unescape according to XML specs.
+		StandardEscaping();
+
+	// Escapes < > & ' " to &entities;
+	xmlEscape(s : string) -> string;
+	// Text node escaping: escapes < > &
+	xmlEscapeText(s : string) -> string;
+	// restore original string from string processed by xmlEscape or xmlEscapeText
+	xmlUnescape(s : string) -> string;
+
+	XmlEvent ::= XmlEmptyElement, XmlElementStart, XmlElementEnd, XmlTextEvent, XmlEndEvent, XmlCommentEvent, XmlProcessingEvent;
+
+		XmlTagEvent ::= XmlEmptyElement, XmlElementStart, XmlElementEnd, XmlProcessingEvent;
+
+		// Both start and end tag, with attributes "<something a=b ... />"
+		XmlEmptyElement(tag : string, attributes : [XmlAttribute]);
+		// XML attributes
+		XmlAttribute(key : string, value : string);
+		// Start tag with attributes "<something a=b ...>"
+		XmlElementStart(tag : string, attributes : [XmlAttribute]);
+		// The end tag "<something/>"
+		XmlElementEnd(tag : string);
+		// Text between tags (also "outside" elements)
+		XmlTextEvent(text : string);
+		// A <!-- comment -->
+		XmlCommentEvent(comment : string);
+		// <?xml attr=something ?>
+		XmlProcessingEvent(tag : string, attributes : [XmlAttribute]);
+		// The end of the parsing
+		XmlEndEvent();
+
+
+	// A DOM-style parser that builds a tree. Is somewhat robust against tag errors, but not much
+	parseXml2(xml : string) -> XmlNode;
+	parseXml2WithStrategy(xml : string, strategy : [XmlParsingOption]) -> XmlNode;
+
+	// If you do not have a single root, this is useful
+	parseXml3(xml : string) -> [XmlNode];
+	parseXml3WithStrategy(xml : string, strategy : [XmlParsingOption]) -> [XmlNode2];
+
+	stripXmlComments(xml : [XmlNode2]) -> [XmlNode];
+
+	XmlNode ::= XmlElement, XmlText;
+		XmlElement(tag : string, attributes : [XmlAttribute], children : [XmlNode]);
+		XmlText(text : string);
+
+	XmlNode2 ::= XmlElement2, XmlText, XmlComment;
+		XmlElement2(tag : string, attributes : [XmlAttribute], children : [XmlNode2]);
+		XmlComment(text : string);
+
+	getXmlChildren(xml : XmlNode) -> [XmlNode];
+	getXmlChildren2(xml : XmlNode2) -> [XmlNode2];
+	getXmlAttributes(xml : XmlNode) -> [XmlAttribute];
+	getXmlAttribute(attributes : [XmlAttribute], attribute : string, default_ : string) -> string;
+	getXmlAttributeM(attributes : [XmlAttribute], attribute : string) -> Maybe<string>;
+
+	// returns only XmlElements without XmlTexts. Useful for stripping spaces and newlines between XmlElements and
+	// to get rid of one 'switch' structure, to be able to access tag, attributes and children of every resulting element
+	// NOTE: tagFilter must be lowercase!
+	filterElements(children : [XmlNode], tagFilter : string) -> [XmlElement];
+	xmlElements(nodes) filterElements(nodes, "");
+
+	// searches for the first tag within xmlroots or their children.
+	// tag must be lowercase; comparison is case-insensitive!
+	getXmlElement(xmlroots: [XmlElement], tag: string) -> Maybe<XmlElement>;
+
+	// tag must be lowercase
+	getXmlTagElements(xmlroots: XmlNode, tag: string) -> [XmlElement];
+
+	// Recursive
+	getXmlElement2(xmlroots: [XmlNode2], tag: string) -> Maybe<XmlElement2>;
+
+	getFirstXmlTextContents(children : [XmlNode]) -> string;
+
+	xml2string(xml : XmlNode) -> string;
+
+	// Preserve attributes; omit text escaping, so might fuck up quoting
+	poorXml2text(xml : XmlNode) -> string;
+
+	// Extract just the text, no tags
+	xml2text(xml : XmlNode) -> string;
+
+	//Service functions to check is GlueFraments should be inserted on rendering
+	nodeSourceStartsWithSpace(xml : XmlNode) -> bool;
+	nodeSourceEndsWithSpace(xml : XmlNode) -> bool;
+}
+
+xmlEscape(s : string) -> string {
+	s0 = strReplace(s, "&", "&amp;");
+	s1 = strReplace(s0, "<", "&lt;");
+	s2 = strReplace(s1, ">", "&gt;");
+	s3 = strReplace(s2, "'", "&apos;");
+	s4 = strReplace(s3, "\"", "&quot;");
+	s4;
+}
+
+// Escaping quote and apostrophe in text node is optional. 
+// We don't escape it to make xml smaller and more readable.
+xmlEscapeText(s : string) -> string {
+	s0 = strReplace(s, "&", "&amp;");
+	s1 = strReplace(s0, "<", "&lt;");
+	s2 = strReplace(s1, ">", "&gt;");
+	s2;
+}
+
+xmlUnescape(s : string) -> string {
+	s0 = strReplace(s, "&quot;", "\"");
+	s1 = strReplace(s0, "&apos;", "'");
+	s2 = strReplace(s1, "&gt;", ">");
+	s3 = strReplace(s2, "&lt;", "<");
+	s4 = strReplace(s3, "&amp;", "&");
+	s4;
+}
+
+
+makeTextParser(parameters : [XmlParsingOption]) -> (string, DynamicBehaviour<XmlEvent>) -> void {
+	flags : XmlParseLeadingSpaces = fold(parameters, XmlParseLeadingSpaces(false, false), \acc, p -> {
+		switch (p : XmlParsingOption) {
+			XmlParseLeadingSpaces(preserve, makeEventForSpaces): p;
+			default: acc;
+		}
+	});
+
+	unescape = {
+		if (contains(parameters, StandardEscaping())) 
+			xmlUnescape
+		else
+			idfn
+	};
+
+	if (flags.preserve && flags.makeEventForSpaces) {
+		\s : string, events : DynamicBehaviour<XmlEvent> -> {
+			// Get rid of all CRs
+			s1 = strReplace(s, "\x0d", "");
+			next(events, XmlTextEvent(unescape(s1)));
+		}
+	} else {
+		\s, events -> {
+			// Get rid of all CRs
+			s1 = strReplace(s, "\x0d", "");
+			s2 = ltrim2(s1, " \n\t");
+			if (s2 != "") {
+				next(events, XmlTextEvent(unescape(if (flags.preserve) s1 else s2)));
+			} else {
+				if (flags.makeEventForSpaces) {
+					next(events, XmlTextEvent(unescape(s1)));
+				}
+			}
+		}	
+	}
+}
+
+
+doParseXml(s : string, events : DynamicBehaviour<XmlEvent>, parseText : (string, DynamicBehaviour<XmlEvent>) -> void, validateNames : bool) {
+	l = strlen(s);
+	tagStart = strIndexOf(s, "<");
+	if (tagStart == -1) {
+		// OK, the rest is just text
+		if (l != 0) {
+			parseText(s, events);
+		}
+		// Signal the end!
+		next(events, XmlEndEvent());
+	} else if (tagStart == 0) {
+		// We have a tag or comment!
+		if (startsWith(s, "<!--")) {
+			endComment = strIndexOf(substring(s, 4, l - 4), "-->");
+			next(events, XmlCommentEvent(substring(s, 4, endComment)));
+			doParseXml(strRight(s, endComment + 7), events, parseText, validateNames);
+		} else if (startsWith(s, "<![CDATA[")) {
+			endComment = strIndexOf(substring(s, 9, l - 9), "]]>");
+			next(events, XmlTextEvent(substring(s, 9, endComment)));
+			doParseXml(strRight(s, endComment + 12), events, parseText, validateNames);
+		} else {
+			// It's a tag
+			endTag = strIndexOf(substring(s, 1, l - 1), ">");
+			tag = strLeft(s, endTag+2);
+			event = parseTag(tag);
+
+			ok = if (validateNames) {
+				// Do a sanity check on the tag name and attribute names
+				tagValid = endTag != -1 && isValidXmlName(event.tag);
+				atts = switch (event : XmlEvent) {
+					XmlEmptyElement(t, attrs): attrs;
+					XmlElementStart(t, attrs): attrs;
+					XmlProcessingEvent(t, attrs): attrs;
+					default: [];
+				};
+				tagValid && forall(atts, \a : XmlAttribute -> isValidXmlName(a.key));
+			} else true;
+			if (ok) {
+				// Everything looks good, so parse and send that
+				next(events, event);
+				// And then do the rest...
+				doParseXml(substring(s, endTag + 2, l - endTag), events, parseText, validateNames);
+			} else {
+				// If it does not pass as a valid names, change our mind and treat this like text
+				parseText(strLeft(s, 1), events);
+				// Recursively handle the rest
+				doParseXml(substring(s, 1, l - 1), events, parseText, validateNames);
+			}
+		}
+	} else {
+		// Before the tag, there is some text
+		parseText(strLeft(s, tagStart), events);
+		// Recursively handle the rest
+		doParseXml(substring(s, tagStart, l - tagStart), events, parseText, validateNames);
+	}
+}
+
+
+// http://www.w3.org/TR/xml/#NT-NameStartChar
+// A tag has to start with one of these:
+// ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] | [#xF8-#x2FF]
+//   | [#x370-#x37D] | [#x37F-#x1FFF] | [#x200C-#x200D] | [#x2070-#x218F]
+//   | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
+// and the rest can also be be one of these:
+// "-" | "." | [0-9] | #xB7 | [#x0300-#x036F] | [#x203F-#x2040]
+
+// We approximate, and say anything above 0xc0 is valid.
+isValidXmlName(t : string) -> bool {
+	if (t == "") false
+	else {
+		f = getCharAt(t, 0);
+		(isLetter(f) || f == ":" || f == "_" || f >= "À")
+			&& isRestAValidName(t, 1);
+	}
+}
+
+isRestAValidName(t : string, i : int) -> bool {
+	if (i >= strlen(t)) true
+	else {
+		f = getCharAt(t, i);
+		(isLetter(f) || isDigit(f) || f == ":" || f == "_" || f == "-" || f == "." || f >= "À") && isRestAValidName(t, i + 1);
+	}
+}
+
+parseXmlWithStrategy(s, events, strategy) {
+	doParseXml(s, events, makeTextParser(strategy), contains(strategy, XmlValidateNames()))
+}
+
+
+parseXml(s, events) {
+	parseXmlWithStrategy(s, events, [])
+}
+
+parseTag(entiretag : string) -> XmlTagEvent {
+	// Take away the < >
+	unbracket = substring(entiretag, 1, strlen(entiretag) - 2);
+	if (unbracket == "") {
+		XmlElementStart("", []);
+	} else {
+		ul = strlen(unbracket);
+		firstchar = getCharAt(unbracket, 0);
+		lastchar = getCharAt(unbracket, ul - 1);
+
+		// "</" ... ">" ?
+		endTag = (firstchar == "/");
+
+		// "<" ... "/>"  ?
+		emptyElement = (lastchar == "/");
+
+		// "<?" ... "?>" ?
+		processing = (firstchar == "?" && lastchar == "?");
+
+		// The body
+		sbody = substring(unbracket, b2i(endTag || processing), ul - b2i(emptyElement || processing) - b2i(processing));
+
+		// The way the tag is made, it can never end with a space
+
+		// Separate tag from attributes
+		sep = strFindFirstOf(sbody, " \u000d\n\t");
+		tag = if (sep == -1) {
+			sbody;
+		} else {
+			body = trim(sbody);
+			strLeft(body, sep);
+		}
+
+		cleanTag = trim2(tag, " \u000d\n\t");
+
+		attrs = \ -> {
+			attributes = if (sep == -1) {
+				"";
+			} else {
+				strRight(sbody, sep + 1);
+			}
+
+			parseAttributes(attributes);
+		};
+
+		if (emptyElement) {
+			XmlEmptyElement(cleanTag, attrs());
+		} else if (endTag) {
+			XmlElementEnd(cleanTag);
+		} else if (processing) {
+			XmlProcessingEvent(cleanTag, attrs());
+		} else {
+			XmlElementStart(cleanTag, attrs());
+		}
+	}
+}
+
+// ignores single escaped quotes (qwe\"asd"). but will return wrong answer with multiple escapes (qwe\\"asd")
+getEndQuote(str : string, quote : string) -> int {
+	qi = strIndexOf(str, quote);
+	eqi = strIndexOf(str, "\\" + quote);
+	if (eqi == -1 || qi < eqi) {
+		// qweasd" or qweasd"zxc\"
+		qi
+	} else { // qwe\"asd"
+		neqi = getEndQuote(substring(str, eqi+2, strlen(str) - eqi - 2), quote);
+		if (neqi == -1) -1 else eqi + 2 + neqi
+	}
+}
+
+parseAttributes(attrs : string) -> [XmlAttribute] {
+	l = strlen(attrs);
+	if (l == 0) {
+		[];
+	} else {
+		equal = strIndexOf(attrs, "=");
+		space = strFindFirstOf(attrs, " \t\n\x0d");
+		if (space == 0) {
+			// Whitespace to be eaten first
+			parseAttributes(strRight(attrs, 1));
+		} else if (equal == -1 && space == -1) {
+			// "abc"
+			[XmlAttribute(attrs, "")];
+		} else if (space != -1 && (space < equal || equal == -1)) {
+			// "abcd rest=something"
+			rest = parseAttributes(strRight(attrs, space + 1));
+			concat([XmlAttribute(strLeft(attrs, space), "")], rest);
+		} else if (equal + 1 == space) {
+			// "abc= rest=something"
+			rest = parseAttributes(strRight(attrs, space + 1));
+			concat([XmlAttribute(strLeft(attrs, equal), "")], rest);
+		} else {
+			// "abc=def something"
+			name = strLeft(attrs, equal);
+			valueAndRest = strRight(attrs, equal + 1);
+			valueFirst = getCharAt(valueAndRest, 0);
+			quoted = valueFirst == "\"";
+			plinged = valueFirst == "'";
+			if (quoted || plinged) {
+				t = strRight(valueAndRest, 1);
+				endQuote = getEndQuote(t, valueFirst);
+				if (endQuote == -1) {
+					// Missing end quote, so we take the lot
+					[XmlAttribute(name, valueAndRest)];
+				} else {
+					value = strReplace(strLeft(t, endQuote), "\\"+ valueFirst, valueFirst) |> xmlUnescape;
+					rest = parseAttributes(strRight(valueAndRest, endQuote + 2));
+					concat([XmlAttribute(name, value)], rest);
+				}
+			} else {
+				// Unqouted
+				nextSpace = strFindFirstOf(valueAndRest, " \n\x0d");
+				if (nextSpace == -1) {
+					// No more stuff, so we take the lot
+					[XmlAttribute(name, valueAndRest)];
+				} else {
+					rest = parseAttributes(strRight(valueAndRest, nextSpace + 1));
+					atname = strLeft(valueAndRest, nextSpace);
+					concat([XmlAttribute(name, atname)], rest);
+				}
+			}
+		}
+	}
+}
+
+
+parseXml2WithStrategy(xml : string, strategy : [XmlParsingOption]) -> XmlNode {
+	// Collect all events
+	events : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
+	list = ref makeList();
+	us = subscribe2(events, \e -> {
+		if (e != XmlEndEvent()) {
+			list := Cons(e, ^list);
+		}
+	});
+	parseXmlWithStrategy(xml, events, strategy);
+	us();
+	tokens = list2array(^list);
+
+	keepComments = contains(strategy, XmlKeepComments());
+
+	result1 = buildXml(tokens, 0, keepComments);
+	result2 = stripXmlComments([result1.first]);
+	if (result1.second < length(tokens) - 1) {
+		// println("Did not convert all of it!" + i2s(result.second) + "/" + i2s(length(tokens)));
+	}
+	result2[0];
+}
+
+parseXml2(xml : string) -> XmlNode {
+	parseXml2WithStrategy(xml, [])
+}
+
+parseNextXmlGroup(i : int, tokens : [XmlEvent], result : ref [XmlNode2], keepComments : bool) {
+	if (length(tokens) > i) {
+		tempXml = buildXml(tokens, i, keepComments);
+		refArrayPush(result, tempXml.first);
+		parseNextXmlGroup(tempXml.second, tokens, result, keepComments);
+		{};
+	}
+}
+
+parseXml3WithStrategy(xml : string, strategy : [XmlParsingOption]) -> [XmlNode2] {
+	// Collect all events
+	events : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
+	list = ref makeList();
+	us = subscribe2(events, \e -> {
+		if (e != XmlEndEvent()) {
+			list := Cons(e, ^list);
+		}
+	});
+	parseXmlWithStrategy(xml, events, strategy);
+	us();
+	tokens = list2array(^list);
+
+	keepComments = contains(strategy, XmlKeepComments());
+	result = ref [];
+	parseNextXmlGroup(0, tokens, result, keepComments);
+	^result;
+}
+
+parseXml3(xml : string) -> [XmlNode] {
+	stripXmlComments(parseXml3WithStrategy(xml, []))
+}
+
+stripXmlComments(xml : [XmlNode2]) -> [XmlNode] {
+	fold(xml, makeList(), \acc : List<XmlNode>, c -> {
+		switch (c : XmlNode2) {
+			XmlElement2(tag, atts, children): {
+				Cons(XmlElement(tag, atts, stripXmlComments(children)), acc)
+			}
+			XmlText(t): Cons(c, acc);
+			XmlComment(t): acc;
+		}
+	}) |> list2array;
+}
+
+buildXml(tokens : [XmlEvent], index : int, keepComments : bool) -> Pair<XmlNode2, int> {
+	if (index >= length(tokens)) {
+		// Something is wrong
+		Pair(XmlText(""), index);
+	} else {
+		token = tokens[index];
+		switch (token : XmlEvent) {
+			XmlEmptyElement(tag, attributes): { 
+				xe : XmlNode2 = XmlElement2(tag, attributes, []); 
+				Pair(xe, index + 1);
+			}
+			XmlElementStart(tag, attributes): {
+				childrenList = ref makeList();
+				nextPos = buildUntilEndTag(tokens, index + 1, tag, keepComments, childrenList);
+				// Here, we could get rid of white-space only elements are the start and end of the children
+
+				Pair(XmlElement2(tag, attributes, list2array(^childrenList)), nextPos);
+			}
+			XmlElementEnd(tag): {
+				// Hm, not supposed to happen - skip ahead
+				buildXml(tokens, index + 1, keepComments);
+			}
+			XmlTextEvent(text):
+				if (index + 1 == length(tokens)) {
+					// This is all we have, so that is it
+					Pair(XmlText(text), index + 1);
+				} else {
+					// Skip ahead!
+					r = buildXml(tokens, index + 1, keepComments);
+					n = switch (r.first : XmlNode2) {
+						XmlText(t): XmlText(text + t);
+						XmlElement2(tag, attributes, children): {
+							nws = trim2(text, " \n");
+							if (nws != "") {
+								//println("Xml parsing failed: Ignoring text: '" + text + "'");
+							}
+							r.first;
+						}
+						XmlComment(t): r.first;
+					}
+					Pair(n, r.second);
+				}
+			XmlEndEvent(): // Not supposed to happen
+				Pair(XmlText(""), index + 1);
+			XmlCommentEvent(c): {
+				if (keepComments) {
+					Pair(XmlComment(c), index + 1);
+				} else {
+					// Skip ahead
+					buildXml(tokens, index + 1, keepComments);
+				}
+			}
+			XmlProcessingEvent(c, a):
+				buildXml(tokens, index + 1, keepComments);
+		}
+	}
+}
+
+// returns position to continue parsing from
+buildUntilEndTag(tokens : [XmlEvent], index : int, endtag : string, keepComments : bool, resultNodes : ref List<XmlNode2>) -> int {
+	if (index >= length(tokens)) {
+		index;
+	} else {
+		token = tokens[index];
+		switch (token : XmlEvent) {
+			XmlElementEnd(tag): {
+				if (tag == endtag) {
+					index + 1;
+				} else {
+					// Not supposed to happen.
+
+					// Let's see if it comes shortly
+					e = min(index + 200, length(tokens));
+					c = countUntil(index + 1, e, \i -> {
+						switch (tokens[i] : XmlEvent) {
+							XmlElementEnd(t): t == endtag;
+							// To make this more robust against things like
+							// <p> <br>  <br>   <br/>
+							// we should look for starts and empty elements
+							// here as well
+							//XmlElementStart(t, att): t == endtag;
+							//XmlEmptyElement(t, att): t == endtag;
+							default: false;
+						}
+					});
+					if (c == e) {
+						// The end tag never comes, so let's just pretend it was here
+						// println("Expected </" + endtag + "> but got <" + tag + ">");
+						index;
+					} else {
+						// OK, we judge it to be a stray element and just ignore it
+						// println("Ignoring <" + tag + ">");
+						buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
+					}
+				}
+			}
+			XmlEndEvent(): {
+				index + 1;
+			}
+			XmlCommentEvent(c): {
+				if (keepComments) {
+					head = XmlComment(c);
+					resultNodes := Cons(head, ^resultNodes);
+					buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
+				} else {
+					// Ignore this guy and proceed
+					buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
+				}
+			}
+			XmlProcessingEvent(c, a): // Ignore this guy and proceed
+				buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
+			XmlTextEvent(text): {
+				head = XmlText(text);
+				resultNodes := Cons(head, ^resultNodes);
+				buildUntilEndTag(tokens, index + 1, endtag, keepComments, resultNodes);
+			}
+			default: {
+				head = buildXml(tokens, index, keepComments);
+				resultNodes := Cons(head.first, ^resultNodes);
+				buildUntilEndTag(tokens, head.second, endtag, keepComments, resultNodes);
+			}
+		}
+	}
+}
+
+getXmlChildren(xml : XmlNode) -> [XmlNode] {
+	switch (xml : XmlNode) {
+		XmlElement(tag, attributes, children): children;
+		XmlText(t): [];
+	}
+}
+
+getXmlChildren2(xml : XmlNode2) -> [XmlNode2] {
+	switch (xml : XmlNode2) {
+		XmlElement2(tag, attributes, children): children;
+		XmlText(t): [];
+		XmlComment(t): [];
+	}
+}
+
+getXmlAttributes(xml : XmlNode) -> [XmlAttribute] {
+	switch (xml : XmlNode) {
+		XmlElement(tag, attributes, children): attributes;
+		XmlText(t): [];
+	}
+}
+
+getXmlAttribute(attrs, att, def) {
+	attLocase = toLowerCase(att);
+	switch (find(attrs, \xa -> toLowerCase(xa.key) == attLocase)) {
+		None(): def;
+		Some(attr): attr.value;
+	}
+}
+
+getXmlAttributeM(attrs, att) {
+	maybeMap(find(attrs, \xa -> xa.key == att), \a -> a.value)
+}
+
+filterElements(children : [XmlNode], filterstr : string) -> [XmlElement] {
+	wofilter = (filterstr == "");
+	onlyElems = filter(children, \c -> switch (c : XmlNode) {
+		XmlElement(tag,__,__): (wofilter || filterstr == toLowerCase(tag));
+		default: false;
+	});
+
+	map(onlyElems, \c -> cast(c : XmlNode -> XmlElement))
+}
+
+getXmlElement(xmlroots: [XmlElement], tag: string) -> Maybe<XmlElement> {
+	rl = length(xmlroots);
+	if (rl == 1) {
+		if (toLowerCase(xmlroots[0].tag) == tag)
+			Some(xmlroots[0])
+		else
+			getXmlElement(xmlElements(xmlroots[0].children), tag)
+	} else if (rl == 0) {
+		None()
+	} else {
+		r0 = getXmlElement([xmlroots[0]], tag);
+		if (r0 != None()) r0 else getXmlElement(subrange(xmlroots, 1, rl-1), tag);
+	}
+}
+
+getXmlTagElements(xml : XmlNode, tag : string) -> [XmlElement] {
+	filterElements(getXmlChildren(xml), tag);
+}
+
+getXmlElement2(xmlroots: [XmlNode2], tag: string) -> Maybe<XmlElement2> {
+	fold(xmlroots, None(), \acc, n -> {
+		if (acc == None()) {
+			switch (n : XmlNode2) {
+				XmlElement2(xtag, attr, ch): {
+					if (toLowerCase(xtag) == tag) {
+						Some(n)
+					} else {
+						rec = getXmlElement2(ch, tag);
+						switch (rec) {
+							None(): acc;
+							Some(v): rec;
+						}
+					}
+				}
+				XmlText(t): acc;
+				XmlComment(t): acc;
+			}
+		} else acc;
+	});
+}
+
+getFirstXmlTextContents(children : [XmlNode]) -> string {
+	if (length(children) > 0) {
+		switch (children[0] : XmlNode) {
+			XmlText(s): s;
+			XmlElement(tag, attributes, children2): {
+				getFirstXmlTextContents(children2);
+			}
+		}
+	} else ""
+}
+
+poorXml2text(xml : XmlNode) -> string {
+	switch (xml) {
+		XmlElement(tag, attributes, children): {
+			atts = fold(attributes, "", \acc, a -> 
+				acc + " " + a.key + "=\"" + a.value + "\""
+			);
+			// fold(children, "<" + tag + atts + ">", \acc, c -> acc + poorXml2text(c)) + "</" + tag + ">";
+			("<" + tag + atts + ">") + concatStrings(map(children, \c -> poorXml2text(c))) + ("</" + tag + ">");
+		}
+		XmlText(text): {
+			text;
+		}
+	}
+}
+
+xml2string(xml : XmlNode) -> string {
+	switch (xml) {
+		XmlElement(tag, attributes, children): {
+			atts = fold(attributes, "", \acc, a -> 
+				acc + " " + a.key + "=\"" + xmlEscape(a.value) + "\""
+			);
+			// fold(children, "<" + tag + atts + ">", \acc, c -> acc + poorXml2text(c)) + "</" + tag + ">";
+			("<" + tag + atts + ">") + concatStrings(map(children, \c -> xml2string(c))) + ("</" + tag + ">");
+		}
+		XmlText(text): {
+			xmlEscapeText(text);
+		}
+	}
+}
+
+xml2text(xml : XmlNode) -> string {
+	switch (xml) {
+		XmlElement(tag, attributes, children): {
+			concatStrings(map(children, \c -> xml2text(c)))
+		}
+		XmlText(text): {
+			text;
+		}
+	}
+}
+
+nodeSourceStartsWithSpace(xml : XmlNode) -> bool {
+	switch (xml) {
+		XmlElement(__, __, __) : false; //Source starts with "<""
+		XmlText(text) : {
+			strlen(text) > 0 && !isNotSpace(strLeft(text, 1));
+		}
+	}
+}
+nodeSourceEndsWithSpace(xml : XmlNode) -> bool {
+	switch (xml) {
+		XmlElement(__, __, __) : false; //Source starts with "<""
+		XmlText(text) : {
+			strlen(text) > 0 && !isNotSpace(strsubsmart(text, -1, 0));
+		}
+	}
+}

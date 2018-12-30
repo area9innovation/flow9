@@ -1,0 +1,1277 @@
+import array;
+import stringmath;
+import binarytreeutils;
+import tools/common/config;
+import tools/flowc/incremental/fc2fi;
+import tools/flowc/incremental/fi2fc;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/manipulation/common;
+import tools/flowc/manipulation/effects;
+import tools/flowc/manipulation/dupstrings;
+import tools/flowc/manipulation/livestructs;
+import tools/flowc/manipulation/dump;
+
+export {
+	optimizeCode(prog : FiProgram, file : string, overrides : Tree<string, FiExp>) -> FiProgram;
+
+	optimizeExp(expr : FiExp, envExp : OptEnvExp) -> FiExp;
+
+	OptEnv(
+		// These variables are hardcoded to give the respective value, despite
+		// what code otherwise might think
+		overrides : Tree<string, FiExp>,
+		// Should we optimize dead structs out of switches?
+		doLiveStructs : bool,
+		// Should we do eager evaluation, even if it increases code size?
+		eager : bool,
+		// Replace diplicate strings with variable, holding the common string
+		removeDupStr : bool,
+		// Parameters, which control inlining strategy
+		inlineMode : InlineMode
+	);
+
+	InlineMode(
+		// This is the set of function names, which are going to be inlined anyway.
+		force : Set<string>,
+		// When inlining recursive functions we should unroll a limited number of
+		// applications of these functions
+		maxDepth : int,
+		// The boundary for nesting level of primitive calls in functions to be inlined
+		maxNesting : int,
+		// Inline variables of limited nesting, which refer to constant structs
+		doConstStructs : bool
+	);
+
+	// TODO:
+	// Prepare an interpreter to allow evaluating this program.
+	// prepareInterpreter(env : FcTypeEnv, optEnv : OptEnv) -> Interpreter;
+
+	// Add a file to the interpreter state
+	// importToInterpreter(i : Interpreter, module : string) -> Interpreter;
+
+	// Replace the given top-level name with this new definition
+	// replaceTopLevel(i : Interpreter, name : string, toplevel : FcTopDeclaration)  -> Interpreter;
+
+	// Evaluate an expression in the given interpreter
+	// interpretExp(i : Interpreter, expr : FiExp) -> InterpreterExp;
+	// InterpreterExp(i : Interpreter, value : FiExp);
+
+OptEnvExp : (
+	env : OptEnv, 
+	prog : FiProgram,
+	// Functions which have side effects should be inlined with special care
+	effects : FiEffects,
+	// Tracks all viable local variables in current scope
+	liveEnv : Tree<string, FiExp>,
+	// Tracks the current number of inlined copies of a function
+	inliningCurDepth : Tree<string, int>,
+	// This is the set of structs that are alive and should survive.
+	livestructs : Set<string>
+);
+
+}
+
+
+optimizeCode(prog : FiProgram, file : string, overrides : Tree<string, FiExp>) -> FiProgram {
+	config = prog.config.config;
+	optEnv = makeOptEnv(config, overrides);
+	opt_prog_local = optimizeCodeLocal(prog, optEnv);
+	opt_prog_dupstr = if (optEnv.removeDupStr) optimizeDupStrings(opt_prog_local, file) else opt_prog_local;
+	if (getConfigParameter(config, "unittests") == "optimize") {
+		dumpFiProgram(opt_prog_dupstr, "tools/flowc/tests/optimize/out");
+	}
+	opt_prog_dupstr
+}
+
+makeOptEnv(config : Tree<string, string>, overrides : Tree<string, FiExp>) -> OptEnv {
+	proc_int_opt = \opt, def -> { if (opt == "") def else s2i(opt) };
+	proc_bool_opt = \opt, def -> { if (opt == "1") true else if (opt == "0") false else def };
+	OptEnv(
+		overrides,
+		proc_bool_opt(getConfigParameter(config, "do-live-structs"), true),
+		proc_bool_opt(getConfigParameter(config, "eager-manipulation"), false),
+		proc_bool_opt(getConfigParameter(config, "remove-dup-strings"), false),
+		InlineMode(
+			buildSet(strSplit(getConfigParameter(config, "force-inlining"), ",")),
+			proc_int_opt(getConfigParameter(config, "inline-rec-depth"), 1),
+			proc_int_opt(getConfigParameter(config, "inline-max-nesting"), 1),
+			proc_bool_opt(getConfigParameter(config, "do-const-structs"), false),
+		)
+	)
+}
+
+optimizeCodeLocal(prog : FiProgram, optEnv : OptEnv) -> FiProgram {
+	effects = collectFiEffects(prog);
+	modules = pairs2tree(
+		runTasks(prog.config, 
+			getTreeValues(
+				mapTree2(
+					prog.modules,
+					\name, module -> {
+						\-> {
+							Pair(name, optimizeModule(module, optEnv, prog, module.fileinfo.flowfile, effects))
+						}
+					}
+				)
+			)
+		)
+	);
+	toplevel = foldTree(
+		modules, 
+		prog.names.toplevel, 
+		\__, module, acc -> {
+			top1 = fold(module.functions, acc, \a, func -> setTree(a, func.name, func));
+			fold(module.globalVars, top1, \a, gvar -> setTree(a, gvar.name, gvar));
+		}
+	);
+	FiProgram(
+		prog.config,
+		modules,
+		prog.traversal,
+		FiGlobalNames(
+			prog.names.struct2module,
+			prog.names.union2module,
+			prog.names.function2module,
+			prog.names.globalVar2module,
+			prog.names.native2module,
+			prog.names.structs,
+			prog.names.unions,
+			toplevel
+		)
+	)
+}
+
+optimizeModule(module : FiModule, optEnv : OptEnv, prog : FiProgram, flowfile : string, effects : FiEffects) -> FiModule {
+	t0 = timestamp();
+	if (prog.config.verbose >= 2) {
+		fcPrintln("Optimizing module " + module.fileinfo.flowfile);
+	}
+	opt_gvars = fold(
+		module.globalVars,
+		[],
+		\acc, gvar -> {
+			t1 = timestamp();
+			if (prog.config.verbose >= 2) {
+				fcPrintln("\tOptimizing global variable " + gvar.name);
+			}
+			optimized = optimizeExp(
+				gvar.value, 
+				createInitialOptEnv(optEnv, prog, [], flowfile, effects)
+			);
+			dt = timestamp() - t1;
+			if (prog.config.verbose >= 2 && dt > 20.0) {
+				fcPrintln("\tGlobal variable " + gvar.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+			}
+			concat(
+				acc, [
+					FiGlobalVar(
+						gvar.name, 
+						optimized, 
+						gvar.type,
+						gvar.declStart,
+						gvar.defiStart
+					)
+				]
+			)
+		}
+	);
+	opt_gvars_funcs = fold(
+		module.functions,
+		Pair([], opt_gvars),
+		\acc, func : FiFunctionDec -> {
+			t1 = timestamp();
+			if (prog.config.verbose >= 2) {
+				fcPrintln("\tOptimizing function " + func.name);
+			}
+			optimized = optimizeExp(
+				func.lambda, 
+				createInitialOptEnv(optEnv, prog, func.lambda.args, flowfile, effects)
+			);
+			dt = timestamp() - t1;
+			if (prog.config.verbose >= 2 && dt > 20.0) {
+				fcPrintln("\tFunction " + func.name + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+			}
+			switch (optimized) {
+				FiLambda(__, __, __, __): 
+					Pair(
+						concat(acc.first, [FiFunctionDec(func.name, optimized, func.type, func.declStart, func.defiStart)]),
+						acc.second
+					);
+				default:
+					Pair(
+						acc.first,
+						concat(acc.second, [FiGlobalVar(func.name, optimized, func.type, func.declStart, func.defiStart)])
+					);
+			}
+		}
+	);
+	dt = timestamp() - t0;
+	if (prog.config.verbose >= 1) {
+		fcPrintln("Module " + module.fileinfo.flowfile + " is optimized in " + d2st(dt / 1000.0, 3) + " s.");
+	}
+	FiModule(
+		module.fileinfo, 
+		module.imports, 
+		module.forbids,
+		module.exports, 
+		module.structs, 
+		module.unions,
+		opt_gvars_funcs.first, 
+		opt_gvars_funcs.second,
+		module.natives, 
+		module.initOrder,
+		module.stringIncludes,
+		module.start, 
+		module.end
+	)
+}
+
+createInitialOptEnv(optEnv : OptEnv, prog : FiProgram, args : [FiFunArg], flowfile : string, effects : FiEffects) -> OptEnvExp {
+	OptEnvExp(
+		OptEnv(
+			optEnv.overrides,
+			optEnv.doLiveStructs,
+			optEnv.eager,
+			optEnv.removeDupStr,
+			InlineMode(
+				optEnv.inlineMode.force,
+				inliningMaxDepth(prog.config, flowfile, optEnv.inlineMode.maxDepth),
+				inliningMaxNesting(prog.config, flowfile, optEnv.inlineMode.maxNesting),
+				optEnv.inlineMode.doConstStructs
+			)
+		),
+		prog,
+		effects,
+		pairs2tree(map(args, \arg : FiFunArg -> {
+			e : FiExp = FiVar(arg.name, arg.type, -1);
+			Pair(arg.name, e)
+		})),
+		makeTree(),
+		livestructs(prog)
+	)
+}
+
+inliningMaxDepth(config : CompilerConfig, flowfile : string, def_val : int) -> int {
+	test_options = getConfigParameter(config.config, "test-inline-rec-depth");
+	if (test_options == "") def_val
+	else {
+		mapping = pairs2tree(
+			map(
+				strSplit(test_options, ","),
+				\str_pair -> {
+					pair = strSplit(str_pair, "-");
+					assert(length(pair) == 2, "pair must be of form: 'file'-'int', given string is: " + test_options);
+					Pair(pair[0], s2i(pair[1]))
+				}
+			)
+		);
+		lookupTreeDef(mapping, strRight(flowfile, strLastIndexOf(flowfile, "/") + 1), 1)
+	}
+}
+
+inliningMaxNesting(config : CompilerConfig, flowfile : string, def_val : int) -> int {
+	test_options = getConfigParameter(config.config, "test-inline-max-nesting");
+	if (test_options == "") def_val 
+	else {
+		mapping = pairs2tree(
+			map(
+				strSplit(test_options, ","),
+				\str_pair -> {
+					pair = strSplit(str_pair, "-");
+					assert(length(pair) == 2, "pair must be of form: 'file'-'int', given string is: " + test_options);
+					Pair(pair[0], s2i(pair[1]))
+				}
+			)
+		);
+		lookupTreeDef(mapping, strRight(flowfile, strLastIndexOf(flowfile, "/") + 1), 1)
+	}
+}
+
+optimizeExp(expr : FiExp, envExp : OptEnvExp) -> FiExp {
+	switch (expr) {
+		FiLambda(args, body, t, s):   optimizeLambda(args, body, t, s, envExp);
+		FiCall(f, args, t, s):        optimizeCall(f, args, t, s, envExp);
+		FiVar(x, __, __):             optimizeVar(x, envExp, expr);
+		FiLet(x, tp, e1, e2, t, s):   optimizeLet(x, tp, e1, e2, t, s, expr, envExp);
+		FiIf(e1, e2, e3, tp, s):      optimizeIf(e1, e2, e3, tp, s, envExp);
+		FiSwitch(v, tp, cs, t, s):    optimizeSwitch(v, tp, cs, t, s, envExp);
+		FiCast(e0, tFrom, tTo, t, s): optimizeCast(e0, tFrom, tTo, t, s, envExp);
+		FiSeq(es, t, s):              optimizeSeq(es, t, s, envExp);
+		FiCallPrim(__, __, __, __):   optimizeCallPrim(expr, envExp);
+		FiString(__, __): expr;
+		FiBool(__, __):   expr;
+		FiDouble(__, __): expr;
+		FiVoid(__):       expr;
+		FiInt(__, __):    expr;
+		FiRequire(flowfile, e, t, s):  FiRequire(flowfile, optimizeExp(e, envExp), t, s);
+		FiUnsafe(name, fallback, t, s): FiUnsafe(name, optimizeExp(fallback, envExp), t, s);
+	}
+}
+
+optimizeIf(e1 : FiExp, e2 : FiExp, e3 : FiExp, type : FiType, s : int, envExp : OptEnvExp) -> FiExp {
+	opt_e1 = optimizeExp(e1, envExp);
+	switch (opt_e1) {
+		FiBool(v, __): if (v) optimizeExp(e2, envExp) else optimizeExp(e3, envExp);
+		default: FiIf(opt_e1, optimizeExp(e2, envExp), optimizeExp(e3, envExp), type, s);
+	}
+}
+
+optimizeSwitch(v : FiVar, typ : FiType, cs : [FiCase], type : FiType, s : int, envExp : OptEnvExp) {
+	live_cs = if (envExp.env.doLiveStructs) filter(cs, \c -> {
+		containsSet(envExp.livestructs, c.struct) || c.struct == "default";
+	}) else cs;
+	// TODO: If the value of v is given in the environment, we could simplify this
+	FiSwitch(v, typ,
+		map(live_cs,
+			\c -> {
+				opt_body = optimizeExp(c.body,
+					addLocals(envExp,
+						pairs2tree(map(c.argNames,
+							\arg -> {
+								e : FiExp = FiVar(arg, FiTypeVoid(), -1);
+								Pair(arg, e)
+							})
+						)
+					)
+				);
+				opt_args = map(c.argNames, \var -> if (fiVarIsUsed(var, opt_body)) var else "__");
+				FiCase(c.struct, opt_args, opt_body, c.start)
+			}
+		),
+		type, s
+	);
+}
+
+optimizeVar(x : string, envExp : OptEnvExp, def_val : FiExp) -> FiExp {
+	switch (lookupTree(envExp.env.overrides, x)) {
+		Some(e): e; // TODO: In addition to the override environment, we could also have a normal environment
+		None(): {
+			switch (accessVar(x, envExp)) {
+				Some(val): {
+					val_env = OptEnvExp(envExp.env, envExp.prog, envExp.effects, makeTree(), makeTree(), envExp.livestructs);
+					opt_val = optimizeExp(val, val_env);
+					if (decideToInlineVar(opt_val, envExp.env.inlineMode, envExp.env.inlineMode.maxNesting)) {
+						opt_val
+					} else {
+						def_val
+					}
+				}
+				None(): def_val;
+			}
+		}
+	}
+}
+
+decideToInlineVar(expr : FiExp, mode : InlineMode, max_nesting : int) -> bool {
+	if (max_nesting <= 0) false else
+	switch (expr) {
+		FiVoid(__):       true;
+		FiDouble(__, __): true;
+		FiInt(__, __):    true;
+		FiString(s, __):  strlen(s) <= 5; // We shouldn't inline strings which length exceeds 5
+		FiBool(__, __):   true;
+		FiCallPrim(op, es, __, __): {
+			if (mode.doConstStructs) {
+				switch (op) {
+					FcStructPrim(__): forall(es, \e -> decideToInlineVar(e, mode, max_nesting - 1));
+					FcFieldPrim(__): decideToInlineVar(es[0], mode, max_nesting - 1);
+					default: false;
+				}
+			} else false
+		}
+		default:          false;
+	}
+}
+
+optimizeSeq(es : [FiExp], type : FiType, s : int, envExp : OptEnvExp) -> FiExp {
+	op_ess = map(es, \e -> optimizeExp(e, envExp));
+	// merge all nested FiSeq into the current one
+	op_merged = fold(op_ess, [],
+		\acc, e -> {
+			switch (e) {
+				FiSeq(ess, __, __): concat(acc, ess);
+				FiVoid(__): acc; // FiVoid are not included
+				default: concat(acc, [e]);
+			}
+		}
+	);
+	if (length(op_merged) == 0) FiVoid(s) else
+	if (length(op_merged) == 1) op_merged[0] else
+	FiSeq(op_merged, type, s)
+}
+
+optimizeLambda(args : [FiFunArg], body : FiExp, type : FiType, s : int, envExp : OptEnvExp) -> FiExp {
+	lamb_env = addLocals(envExp, pairs2tree(map(args, \arg -> {
+		e : FiExp = FiVar(arg.name, arg.type, 0);
+		Pair(arg.name, e)
+	})));
+	opt_body = optimizeExp(body, lamb_env);
+	def_val = FiLambda(args, opt_body, type, s);
+	switch (opt_body) {
+		FiCall(f, as, __, __): {
+			// If lambda function looks like:
+			// 		\x, y, z -> f(x, y, z)
+			// then it can be reduced to just f, because it has
+			// exactly the same meaning. To detect this, we need
+			// to check, that all args, passed to f are exactly
+			// variables from lambda args in the same order.
+			if (argListsCoincide(args, as)) f
+			else def_val
+		}
+		default: def_val;
+	}
+}
+
+argListsCoincide(args : [FiFunArg], as : [FiExp]) -> bool {
+	if (length(args) == length(as)) {
+		forall(
+			zipWith(args, as, \a1, a2 -> Pair(a1, a2)),
+			\p ->
+				switch (p.second) {
+					FiVar(name, __, __): p.first.name == name;
+					default: false;
+				}
+		)
+	} else false
+}
+
+optimizeLet(x : string, tp : FiType, e1 : FiExp, e2 : FiExp, type : FiType, s : int, def_val : FiExp, envExp : OptEnvExp) -> FiExp {
+	e1_opt = optimizeExp(e1, envExp);
+	if (isFcConst(e1_opt, envExp.env.inlineMode, envExp.env.inlineMode.maxNesting)) {
+		optimizeExp(
+			applySubstitution(e2, makeSubstitution([x], [e1_opt], makeTree())),
+			envExp
+		);
+	} else {
+		e2_opt = optimizeExp(e2, addLocals(envExp, makeTree1(x, e1_opt)));
+		if (fiVarIsUsed(x, e2_opt)) {
+			FiLet(x, tp, e1_opt, e2_opt, type, s)
+		} else {
+			if (hasFiSideEffects(envExp.effects, e1_opt))
+				FiSeq([e1_opt, e2_opt], type, s)
+			else
+				e2_opt
+		}
+	}
+}
+
+isFcConst(expr : FiExp, mode : InlineMode, max_nesting : int) -> bool {
+	if (max_nesting <= 0) false else
+	switch (expr) {
+		FiVoid(__):       true;
+		FiDouble(__, __): true;
+		FiInt(__, __):    true;
+		FiString(__, __): true;
+		FiBool(__, __):   true;
+		FiCallPrim(op, es, __, __): {
+			if (mode.doConstStructs) {
+				switch (op) {
+					FcStructPrim(__): forall(es, \e -> isFcConst(e, mode, max_nesting - 1));
+					FcFieldPrim(__): isFcConst(es[0], mode, max_nesting - 1);
+					default: false;
+				}
+			} else false
+		}
+		default:          false;
+	}
+}
+
+addLocals(envExp : OptEnvExp, locals : Tree<string, FiExp>) -> OptEnvExp {
+	OptEnvExp(
+		envExp.env, 
+		envExp.prog,
+		envExp.effects,
+		mergeTree(envExp.liveEnv, locals), 
+		envExp.inliningCurDepth,
+		envExp.livestructs
+	)
+}
+
+optimizeCallPrim(expr : FiCallPrim, envExp : OptEnvExp) -> FiExp {
+	es = map(expr.es, \e -> optimizeExp(e, envExp));
+	def_val = FiCallPrim(expr.op, es, expr.type, expr.start);
+	switch (expr.op) {
+		FcPlusPrim():   applyIntBinOp(es, \x, y, s -> FiInt(x + y, s),
+							applyDoubleBinOp(es, \x, y, s -> FiDouble(x + y, s),
+								applyStringBinOp(es, \x, y, s -> FiString(x + y, s), def_val)
+							)
+						);
+		FcMinusPrim():  applyIntBinOp(es, \x, y, i -> FiInt(x - y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiDouble(x - y, i), def_val)
+						);
+		FcMulPrim():    applyIntBinOp(es, \x, y, i -> FiInt(x * y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiDouble(x * y, i), def_val)
+						);
+		FcDivPrim():    applyIntBinOp(es, \x, y, i -> FiInt(x / y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiDouble(x / y, i), def_val)
+						);
+		FcModPrim():    applyIntBinOp(es, \x, y, i -> FiInt(x % y, i), def_val);
+		FcNegPrim():    applyIntUnOp(es, \x, i -> FiInt(-x, i),
+							applyDoubleUnOp(es, \x, i -> FiDouble(-x, i), def_val)
+						);
+		FcEqPrim():     applyIntBinOp(es, \x, y, i -> FiBool(x == y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x == y, i),
+								applyBoolBinOp(es, \x, y, i -> FiBool(x == y, i),
+									applyStringBinOp(es, \x, y, i -> FiBool(x == y, i), def_val)
+								)
+							)
+						);
+		FcNePrim():     applyIntBinOp(es, \x, y, i -> FiBool(x == y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x == y, i),
+								applyBoolBinOp(es, \x, y, i -> FiBool(x == y, i),
+									applyStringBinOp(es, \x, y, i -> FiBool(x == y, i), def_val)
+								)
+							)
+						);
+		FcLePrim():     applyIntBinOp(es, \x, y, i -> FiBool(x <= y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x <= y, i),
+								applyStringBinOp(es, \x, y, i -> FiBool(x <= y, i), def_val)
+							)
+						);
+		FcGePrim():     applyIntBinOp(es, \x, y, i -> FiBool(x >= y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x >= y, i),
+								applyStringBinOp(es, \x, y, i -> FiBool(x >= y, i), def_val)
+							)
+						);
+		FcLtPrim():     applyIntBinOp(es, \x, y, i -> FiBool(x < y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x < y, i),
+								applyStringBinOp(es, \x, y, i -> FiBool(x < y, i), def_val)
+							)
+						);
+		FcGtPrim():     applyIntBinOp(es, \x, y, i -> FiBool(x > y, i),
+							applyDoubleBinOp(es, \x, y, i -> FiBool(x > y, i),
+								applyStringBinOp(es, \x, y, i -> FiBool(x > y, i), def_val)
+							)
+						);
+		FcOrPrim():     applyBoolBinOp(es, \x, y, i -> FiBool(x || y, i), def_val);
+		FcAndPrim():    applyBoolBinOp(es, \x, y, i -> FiBool(x && y, i), def_val);
+		FcNotPrim():    applyBoolUnOp(es, \x, i -> FiBool(!x, i), def_val);
+		FcArrayPrim():  def_val;
+		FcIndexPrim():  applyArrayAccess(es, def_val);
+
+		FcDerefPrim():	 def_val;  // TODO
+		FcAssignPrim():	 def_val;  // TODO
+		FcRefPrim():	 def_val;  // TODO
+		FcStructPrim(n): def_val;  // TODO: Why not def_val?
+		FcFieldPrim(f):	 applyFieldAccess(f, es, expr, envExp);
+		FcSetMutablePrim(__): def_val; // TODO
+		FcCreateClosurePrim(sName, fName): def_val; // Should not happen - closure, but optimizer is run before lambda lifting
+	}
+}
+
+applyIntBinOp(es : [FiExp], fn : (int, int, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 2) {
+		switch (es[0]) {
+			FiInt(v0, __):
+				switch (es[1]) {
+					FiInt(v1, __) : fn(v0, v1, def_val.start);
+					default: def_val;
+				}
+			default: def_val;
+		}
+	} else def_val
+}
+
+applyIntUnOp(es : [FiExp], fn : (int, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 1) {
+		switch(es[0]) {
+			FiInt(v0, __) : fn(v0, def_val.start);
+			default : def_val;
+		}
+	} else def_val
+}
+
+applyDoubleBinOp(es : [FiExp], fn : (double, double, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 2) {
+		switch (es[0]) {
+			FiDouble(v0, __):
+				switch (es[1]) {
+					FiDouble(v1, __) : fn(v0, v1, def_val.start);
+					default: def_val;
+				}
+			default: def_val;
+		}
+	} else def_val
+}
+
+applyDoubleUnOp(es : [FiExp], fn : (double, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 1) {
+		switch(es[0]) {
+			FiDouble(v0, __) : fn(v0, def_val.start);
+			default : def_val;
+		}
+	} else def_val
+}
+
+applyBoolBinOp(es : [FiExp], fn : (bool, bool, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 2) {
+		switch (es[0]) {
+			FiBool(v0, __):
+				switch (es[1]) {
+					FiBool(v1, __) : fn(v0, v1, def_val.start);
+					default: def_val;
+				}
+			default: def_val;
+		}
+	} else def_val
+}
+
+applyBoolUnOp(es : [FiExp], fn : (bool, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 1) {
+		switch(es[0]) {
+			FiBool(v0, __) : fn(v0, def_val.start);
+			default : def_val;
+		}
+	} else def_val
+}
+
+applyStringBinOp(es : [FiExp], fn : (string, string, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 2) {
+		switch (es[0]) {
+			FiString(v0, __):
+				switch (es[1]) {
+					FiString(v1, __) : fn(v0, v1, def_val.start);
+					default: def_val;
+				}
+			default: def_val;
+		}
+	} else def_val
+}
+
+applyStringUnOp(es : [FiExp], fn : (string, int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 1) {
+		switch(es[0]) {
+			FiString(v0, __) : fn(v0, def_val.start);
+			default : def_val;
+		}
+	} else def_val
+}
+
+applyArrayAccess(es : [FiExp], def_val : FiExp) -> FiExp {
+	if (length(es) == 2) {
+		switch (es[0]) {
+			FiCallPrim(op, arr, __, __): {
+				switch (op) {
+					FcArrayPrim(): {
+						switch (es[1]) {
+							FiInt(i, __) :
+								if (0 <= i && i < length(arr)) arr[i]
+								else {
+									fcPrintln("array index " + i2s(i) + " is out of bounds: " + i2s(length(arr)));
+									def_val
+								}
+							default: def_val;
+						}
+					}
+					default: def_val;
+				}
+			}
+			default: def_val;
+		}
+	} else def_val
+}
+
+applyFieldAccess(field : string, es : [FiExp], def_val : FiExp, envExp : OptEnvExp) -> FiExp {
+	if (length(es) > 0) {
+		switch (es[0]) {
+			FiVar(v, __, __):
+				switch (accessVar(v, envExp)) {
+					Some(s):
+						switch (s) {
+							FiCallPrim(op, ess, type, __):
+								accessStructField(field, op, ess, type, def_val, envExp);
+							default:
+								def_val;
+						}
+					None(): def_val
+				}
+			FiCallPrim(op, ess, type, __): 
+				accessStructField(field, op, ess, type, def_val, envExp);
+			default: 
+				def_val
+		}
+	} else def_val
+}
+
+accessVar(var : string, envExp : OptEnvExp) -> Maybe<FiExp> {
+	switch (lookupTree(envExp.liveEnv, var)) {
+		Some(val): Some(val);
+		None(): {
+			switch (lookupTree(envExp.prog.names.toplevel, var)) {
+				Some(decl): {
+					switch (decl) {
+						FiGlobalVar(__, value, __, __, __): Some(value);
+						default: None();
+					}
+				};
+				None(): None();
+			}
+		}
+	}
+}
+
+accessStructField(field : string, op : FcPrim, ess : [FiExp], type : FiType, def_val : FiExp, envExp : OptEnvExp) -> FiExp {
+	switch (op) {
+		FcStructPrim(nm): {
+			i = switch (type) {
+				FiTypeName(name, __): {
+					// TODO: This can also be a union, in which case we have to go and find it
+					switch (lookupTree(envExp.prog.names.structs, name)) {
+						Some(struct): {
+							switch (struct) {
+								FiTypeStruct(__, __, args, __):
+									findiDef(args, \a -> (a.name == field) && !(typeIsRef(a.type)) && !a.ismutable, -1);
+								default: {
+									fcPrintln("accessing a field " + field + " of non-struct " + nm);
+									-1;
+								}
+							}
+						}
+						None(): {
+							fcPrintln("unknown field " + field + " in struct " + nm);
+							-1
+						}
+					}
+				}
+				default: {
+					fcPrintln("unknown field " + field + " in struct " + nm);
+					-1;
+				}
+			}
+			if (i == -1) def_val
+			else optimizeExp(ess[i], envExp);
+		}
+		default: def_val
+	}
+}
+
+typeIsRef(type : FiType) -> bool {
+	switch (type) {
+		FiTypeRef(__): true;
+		default: false;
+	}
+}
+
+optimizeCast(expr : FiExp, from : FiType, to : FiType, type : FiType, s : int, envExp : OptEnvExp) -> FiExp {
+	opt_expr = optimizeExp(expr, envExp);
+	def_val = FiCast(opt_expr, from, to, type, s);
+	switch (opt_expr) {
+		FiInt(i, __):
+			switch (to : FiType) {
+				FiTypeDouble(): FiDouble(cast(i : int -> double), s);
+				FiTypeString(): FiString(cast(i : int -> string), s);
+				default: def_val;
+			}
+		FiDouble(d, __):
+			switch (to : FiType) {
+				FiTypeInt(): FiInt(cast(d : double -> int), s);
+				FiTypeString(): FiString(cast(d : double -> string), s);
+				default: def_val;
+			}
+		default: def_val;
+	}
+}
+
+applyArrayUnOp(es : [FiExp], fn : ([FiExp], int) -> FiExp, def_val : FiExp) -> FiExp {
+	if (length(es) == 1) {
+		switch (es[0]) {
+			FiCallPrim(op, arr, __, __):
+			switch (op) {
+				FcArrayPrim(): fn(arr, def_val.start);
+				default: def_val;
+			}
+			default: def_val;
+		}
+	} else def_val
+}
+
+optimizeCall(fn : FiExp, args : [FiExp], type : FiType, start : int, envExp : OptEnvExp) -> FiExp {
+	def_val = FiCall(optimizeExp(fn, envExp), map(args, \arg -> optimizeExp(arg, envExp)), type, start);
+	switch (fn) {
+		FiVar(name, __, __) : {
+			if (name == "strlen") applyStringUnOp(args, \s, i -> FiInt(strlen(s), start), def_val)
+			else if (name == "length") applyArrayUnOp(args, \a, i -> FiInt(length(a), start), def_val)
+			else {
+				switch (lookupTree(envExp.prog.names.toplevel, name)) {
+					Some(decl): optimizeGlobalFuncInlining(decl, args, envExp, def_val);
+					None(): optimizeLocalFuncInlining(name, args, envExp, def_val);
+				}
+			}
+		}
+		FiLambda(a, body, __, __): optimizeLambdaInlining(fn, "lambda_call", args, envExp, def_val);
+		default: def_val;
+	}
+}
+
+optimizeGlobalFuncInlining(decl : FiDeclaration, args : [FiExp], envExp : OptEnvExp, def_val : FiExp) -> FiExp {
+	switch (decl) {
+		FiFunctionDec(name, lambda, __, __, __): {
+			optimizeLambdaInlining(lambda, name, args, envExp, def_val);
+		}
+		default: def_val;
+	}
+}
+
+optimizeLocalFuncInlining(name : string, args : [FiExp], envExp : OptEnvExp, def_val : FiExp) -> FiExp {
+	switch (lookupTree(envExp.liveEnv, name)) {
+		Some(lambda):
+			switch (lambda) {
+				FiLambda(__, __, __, __):
+					optimizeLambdaInlining(lambda, name, args, envExp, def_val);
+				default: 
+					def_val;
+			}
+		None(): def_val;
+	}
+}
+
+optimizeLambdaInlining(lambda : FiLambda, name : string, args : [FiExp], envExp : OptEnvExp, def_val : FiExp) -> FiExp {
+	if (decideToInlineLambda(name, lambda, envExp)) {
+		switch (detectSideEffectedArgs(args, lambda.args, envExp)) {
+			Triple(tmp_decls, call_args, effectedEnv): {
+				inlinedEnv = addInlining(effectedEnv, name);
+				collisionFix = makeTmpVars(buildSet(getTreeKeys(inlinedEnv.liveEnv)), findInnerVars(lambda));
+				switch_safe = makeSwitchVarsSafeForSubstitution(lambda.body, fold(lambda.args, makeSet(), \acc, a -> mergeSets(acc, makeSet1(a.name))));
+				substituted = applySubstitution(
+					applySubstitution(switch_safe, collisionFix),
+					makeSubstitution(map(lambda.args, \a -> a.name), call_args, collisionFix)
+				);
+				// Some of the type parameters may not be instantiated in lambda body.
+				// To instatiate types, we match uninstantiated type parameters inside types of lambda arguments
+				// with the corresponding types inside the types of call arguments. This
+				// gives us a type substitution, which is applied in turn to the 
+				// substituted lambda body.
+				tyParsInstantiated = instantiateTyPars2Exp(
+					substituted,
+					computeTypeSubstitution(lambda.args, args)
+				);
+				folded = fold(
+					reverseA(tmp_decls),
+					tyParsInstantiated,
+					\expr, mdecl -> {
+						switch(mdecl) {
+							Some(tmp_var): FiLet(tmp_var.name, tmp_var.type, tmp_var.expr, expr, fiExpType(expr), -1);
+							None(): expr;
+						}
+					}
+				);
+				optimizeExp(folded, inlinedEnv)
+			}
+		}
+	} else def_val
+}
+
+computeTypeSubstitution(lambArgs : [FiFunArg], callArgs : [FiExp]) -> Tree<string, FiType> {
+	fiMatchTyparsArr(
+		map(lambArgs, \a -> a.type),
+		map(callArgs, \a -> fiExpType(a)),
+		makeTree()
+	)
+}
+
+applyTypeSubstitution2Type(type : FiType, sub : Tree<string, FiType>) -> FiType {
+	switch (type) {
+		FiTypeArray(t): 
+			FiTypeArray(applyTypeSubstitution2Type(t, sub));
+		FiTypeFunction(at, rt): 
+			FiTypeFunction(
+				map(at, \a -> FiFunArg(a.name, applyTypeSubstitution2Type(a.type, sub))), 
+				applyTypeSubstitution2Type(rt, sub)
+			);
+		FiTypeRef(t): 
+			FiTypeRef(applyTypeSubstitution2Type(t, sub));
+		FiTypeParameter(s): lookupTreeDef(sub, s, type);
+		FiTypeBool():   type; 
+		FiTypeInt():    type;
+		FiTypeDouble(): type; 
+		FiTypeString(): type; 
+		FiTypeFlow():   type;
+		FiTypeVoid():   type;
+		FiTypeNative(): type;
+		FiTypeName(n, typars): 
+			FiTypeName(n, map(typars, \tp -> applyTypeSubstitution2Type(tp, sub)));
+	}
+}
+
+instantiateTyPars2Exp(expr : FiExp, sub : Tree<string, FiType>) -> FiExp {
+	switch (expr) {
+		FiLambda(as, b, t, s):
+			FiLambda(
+				map(as, \a -> FiFunArg(a.name, applyTypeSubstitution2Type(a.type, sub))),
+				instantiateTyPars2Exp(b, sub),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiCall(f, as, t, s):
+			FiCall(
+				instantiateTyPars2Exp(f, sub),
+				map(as, \a -> instantiateTyPars2Exp(a, sub)),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiVar(x, t, s):
+			FiVar(x, applyTypeSubstitution2Type(t, sub), s);
+		FiLet(x, t, e1, e2, t2, s):
+			FiLet(x, 
+				applyTypeSubstitution2Type(t, sub),
+				instantiateTyPars2Exp(e1, sub),
+				instantiateTyPars2Exp(e2, sub),
+				applyTypeSubstitution2Type(t2, sub), s
+			);
+		FiIf(e1, e2, e3, t, s):
+			FiIf(
+				instantiateTyPars2Exp(e1, sub),
+				instantiateTyPars2Exp(e2, sub),
+				instantiateTyPars2Exp(e3, sub),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiSwitch(e, st, cs, t, s):
+			FiSwitch(
+				FiVar(e.name, applyTypeSubstitution2Type(e.type, sub), e.start),
+				applyTypeSubstitution2Type(st, sub),
+				map(cs, \c -> 
+					FiCase(c.struct, c.argNames, instantiateTyPars2Exp(c.body, sub), c.start)
+				),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiCast(e, ft, tt, t, s):
+			FiCast(
+				instantiateTyPars2Exp(e, sub),
+				applyTypeSubstitution2Type(ft, sub),
+				applyTypeSubstitution2Type(tt, sub),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiSeq(es, t, s): 
+			FiSeq(
+				map(es, \e -> instantiateTyPars2Exp(e, sub)),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiCallPrim(op, es, t, s):
+			FiCallPrim(op,
+				map(es, \e -> instantiateTyPars2Exp(e, sub)),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiString(v, s):              expr;
+		FiBool(v, s):                expr;
+		FiDouble(v, s):              expr;
+		FiVoid(s):                   expr;
+		FiInt(v, s):                 expr;
+		FiRequire(n, e, t, s):
+			FiRequire(n,
+				instantiateTyPars2Exp(e, sub),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+		FiUnsafe(n, fallback, t, s):
+			FiUnsafe(n, 
+				instantiateTyPars2Exp(fallback, sub),
+				applyTypeSubstitution2Type(t, sub), s
+			);
+	}
+}
+
+// This function just applies a substitution to an expression. 
+// All renaming work is done beforehand.
+applySubstitution(expr : FiExp, sub : Tree<string, FiExp>) -> FiExp {
+	mapFiExp(expr, 
+		\e -> {
+			switch (e) {
+				FiVar(var, __, __): lookupTreeDef(sub, var, e);
+				default: e;
+			}
+		}
+	)
+}
+
+// This struct holds components of a newly created temporary
+// variable, which stores a value of expression. 
+TmpVar : (name : string, expr : FiExp, type : FiType);
+
+detectSideEffectedArgs(args : [FiExp], types : [FiFunArg], envExp : OptEnvExp) -> Triple<[Maybe<TmpVar>], [FiExp], OptEnvExp> {
+	fold(zipWith(args, types, \a, i -> Pair(a, i)),
+		Triple([], [], envExp),
+		\acc, p -> {
+			arg = p.first;
+			type = p.second;
+			triple = checkArgForSideEffects(arg, type, acc.third);
+			Triple(
+				concat(acc.first, [triple.first]), 
+				concat(acc.second, [triple.second]),
+				triple.third
+			)
+		}
+	)
+}
+
+// This function returns a triple: 
+// 1) First component is optional and stands for a struct with tmp variable components: 
+//      - name for a temporary variable, which will contain the value of argument, which may have a side effect inside.
+//      - the AST node for the argument expression
+//      - the type of this variable
+//
+// 2) Second component is an argument, which is substituted into an inlined function call:
+//      - if this argument have no side effects - the corresponding FiExp itself, 
+//      - otherwise it will be a temporary var wich holds the value of the potentially side-effected expression.
+//
+// 3) Third component: current environment, updated with a new temporary variable, in case it is created
+//
+checkArgForSideEffects(arg : FiExp, type : FiFunArg, envExp : OptEnvExp) -> Triple<Maybe<TmpVar>, FiExp, OptEnvExp> {
+	if (hasFiSideEffects(envExp.effects, arg)) {
+		tmp_var = TmpVar(makeTmpVarName(buildSet(getTreeKeys(envExp.liveEnv)), 0, "tmp_var_").second, arg, type.type);
+		Triple(
+			Some(tmp_var),
+			FiVar(tmp_var.name, tmp_var.type, 0),
+			OptEnvExp(
+				envExp.env, 
+				envExp.prog,
+				envExp.effects,
+				setTree(envExp.liveEnv, tmp_var.name, tmp_var.expr),
+				envExp.inliningCurDepth,
+				envExp.livestructs
+			)
+		)
+	}
+	else Triple(None(), arg, envExp)
+}
+
+addInlining(envExp : OptEnvExp, name : string) -> OptEnvExp {
+	OptEnvExp(
+		envExp.env, 
+		envExp.prog,
+		envExp.effects,
+		envExp.liveEnv,
+		setTree(envExp.inliningCurDepth, name, lookupTreeDef(envExp.inliningCurDepth, name, 0) + 1),
+		envExp.livestructs
+	)
+}
+
+decideToInlineLambda(name : string, lamb : FiLambda, envExp : OptEnvExp) -> bool {
+	if (lookupTreeDef(envExp.inliningCurDepth, name, 0) >= envExp.env.inlineMode.maxDepth) false else
+	if (containsSet(envExp.env.inlineMode.force, name)) true else
+	switch (lamb.body) {
+		FiCall(__, args, __, __):     allArgsAreSimple(args, envExp.env.inlineMode.maxNesting);
+		FiCallPrim(__, args, __, __): allArgsAreSimple(args, envExp.env.inlineMode.maxNesting);
+		default: false;
+	}
+}
+
+allArgsAreSimple(args : [FiExp],  max_nesting : int) -> bool {
+	if (max_nesting <= 0) false else
+	forall(args, \arg ->
+		switch(arg) {
+			FiCall(__, a, __, __):     allArgsAreSimple(a, max_nesting - 1);
+			FiCallPrim(__, a, __, __): allArgsAreSimple(a, max_nesting - 1);
+			FiVar(__, __, __): true;
+			FiVoid(__):        true;
+			FiDouble(__, __):  true;
+			FiInt(__, __):     true;
+			FiString(__, __):  true;
+			FiBool(__, __):    true;
+			default:           false;
+		}
+	)
+}
+
+makeTmpVars(used : Set<string>, vars: [Pair<string, FiType>]) -> Tree<string, FiExp> {
+	pairs2tree(
+		map(
+			filter(vars, \var -> containsSet(used, var.first)), 
+			\var -> {
+				e : FiExp = FiVar(makeTmpVarName(used, 0, var.first).first, var.second, 0);
+				Pair(var.first, e)
+			}
+	 	)
+	)
+}
+
+makeTmpVarName(used : Set<string>, postfix : int, name : string) -> Pair<string, string> {
+	new_n = name + i2s(postfix);
+	if (containsSet(used, new_n)) {
+		makeTmpVarName(used, postfix + 1, name)
+	} else Pair(name, new_n)
+}
+
+findInnerVars(expr : FiExp) -> [Pair<string, FiType>] {
+	switch (expr) {
+		FiLambda(args, body, __, __): concat(findInnerVars(body), map(args, \arg -> Pair(arg.name, arg.type)));
+		FiCall(f, args, __, __):      concat(findInnerVars(f), concatA(map(args, findInnerVars)));
+		FiVar(__, __, __):            [];
+		FiLet(x, __, e1, e2, t, __):  concat3([Pair(x, t)], findInnerVars(e1), findInnerVars(e2));
+		FiIf(e1, e2, e3, __, __):     concat3(findInnerVars(e1),findInnerVars(e2), findInnerVars(e3));
+		FiSwitch(e, typ, cs, __, __): concatA(map(cs, \c -> findInnerVars(c.body)));
+		FiCast(e, __, __, __, __):    findInnerVars(e);
+		FiSeq(es, __, __):            concatA(map(es, findInnerVars));
+		FiCallPrim(__, es, __, __):   concatA(map(es, findInnerVars));
+		FiString(__, __):             [];
+		FiBool(__, __):               [];
+		FiDouble(__, __):             [];
+		FiVoid(__):                   [];
+		FiInt(__, __):                [];
+		FiRequire(__, e, __, __):     findInnerVars(e);
+		FiUnsafe(__, fb, __, __):     findInnerVars(fb);
+	}
+}
+
+makeSubstitution(args : [string], arg_vals : [FiExp], ren : Tree<string, FiExp>) -> Tree<string, FiExp> {
+	pairs2tree(
+		zipWith(args, arg_vals, 
+			\arg, val -> 
+				Pair(
+					switch (lookupTree(ren, arg)) {
+						Some(e): {
+							switch (e) {
+								FiVar(var, __, __): var;
+								default: arg;
+							}
+						}
+						None(): arg;
+					}, 
+				val)
+		)
+	)
+}
+
+// When function like:
+//
+// fun(x : T) {
+//    switch(x) { ... } 
+// }
+//
+// is inlined in call fun(a), the substitution x |-> a is applied to the body of the function.
+// But the variable x in switch statement can't be replaced in AST.
+// To perform the substitution properly, we need to introduce an internal temporary wariable
+// x_tmp, which will be used in switch. So, the example above will be transformed to:
+//
+// fun(x : T) {
+//    x_tmp = x;
+//    switch(x_tmp) { ... <here x replaced with x_tmp> } 
+// }
+//
+makeSwitchVarsSafeForSubstitution(expr : FiExp, vars : Set<string>) -> FiExp {
+	switch (expr) {
+		FiLambda(args, body, type, start): {
+			safe_body = makeSwitchVarsSafeForSubstitution(body, mergeSets(vars, fold(args, makeSet(), \acc, a -> mergeSets(acc, makeSet1(a.name)))));
+			if (isSameObj(body, safe_body)) {
+				expr 
+			} else {
+				FiLambda(args, safe_body, type, start)
+			}
+		}
+		FiCall(f, args, type, start): {
+			safe_f = makeSwitchVarsSafeForSubstitution(f, vars);
+			safe_args = map(args, \arg -> makeSwitchVarsSafeForSubstitution(arg, vars));
+			if (isSameObj(f, safe_f) && forall(zipWith(args, safe_args, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiCall(safe_f, safe_args, type, start);
+			}
+		}
+		FiVar(__, __, __): expr;
+		FiLet(x, t, e1, e2, type, start): {
+			vars_with_x = mergeSets(vars, makeSet1(x));
+			safe_e1 = makeSwitchVarsSafeForSubstitution(e1, vars_with_x);
+			safe_e2 = makeSwitchVarsSafeForSubstitution(e2, vars_with_x);
+			if (isSameObj(e1, safe_e1) && isSameObj(e2, safe_e2)) {
+				expr
+			} else {
+				FiLet(x, t, safe_e1, safe_e2, type, start);
+			}
+		}
+		FiIf(e1, e2, e3, type, start): {
+			safe_e1 = makeSwitchVarsSafeForSubstitution(e1, vars);
+			safe_e2 = makeSwitchVarsSafeForSubstitution(e2, vars);
+			safe_e3 = makeSwitchVarsSafeForSubstitution(e3, vars);
+			if (isSameObj(e1, safe_e1) && isSameObj(e2, safe_e2) && isSameObj(e3, safe_e3)) {
+				expr
+			} else {
+				FiIf(safe_e1, safe_e2, safe_e3, type, start);
+			}
+		}
+		FiSwitch(v, typ, cs, type, start): {
+			vars_with_v = mergeSets(vars, makeSet1(v.name));
+			safe_cs = map(cs, 
+				\c -> {
+					vars_with_cs = mergeSets(vars_with_v, fold(c.argNames, makeSet(), \acc, a -> mergeSets(acc, makeSet1(a))));
+					safe_c_body = makeSwitchVarsSafeForSubstitution(c.body, vars_with_cs);
+					if (isSameObj(c.body, safe_c_body)) {
+						c
+					} else {
+						FiCase(c.struct, c.argNames, safe_c_body, c.start)
+					}
+				}
+			);
+			safe_switch : FiSwitch = if (forall(zipWith(cs, safe_cs, \c1, c2 -> Pair(c1.body, c2.body)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiSwitch(v, typ, safe_cs, type, start)
+			};
+			if (containsSet(vars, v.name)) {
+				tmp_var = makeTmpVarName(vars, 0, v.name).second;
+				FiLet(
+					tmp_var,
+					type,
+					FiVar(v.name, type, 0),
+					FiSwitch(
+						FiVar(tmp_var, type, 0), typ,
+						map(safe_switch.cases, 
+							\c -> FiCase(c.struct, c.argNames, mapFiExp(c.body, 
+								\e -> {
+									switch (e) {
+										FiVar(x, t, s): if (x == v.name) FiVar(tmp_var, t, s) else e;
+										default: e;
+									}
+								}
+							), c.start)
+						), 
+						type, start
+					), 
+					type, start
+				)
+			} else {
+				safe_switch
+			}
+		}
+		FiCast(e, tFrom, tTo, type, start): {
+			safe_e = makeSwitchVarsSafeForSubstitution(e, vars);
+			if (isSameObj(e, safe_e)) {
+				expr
+			} else {
+				FiCast(safe_e, tFrom, tTo, type, start);
+			}
+		}
+		FiSeq(es, type, start): {
+			safe_es = map(es, \e -> makeSwitchVarsSafeForSubstitution(e, vars));
+			if (forall(zipWith(es, safe_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiSeq(safe_es, type, start);
+			}
+		}
+		FiCallPrim(op, es, type, start):{
+			safe_es = map(es, \e -> makeSwitchVarsSafeForSubstitution(e, vars));
+			if (forall(zipWith(es, safe_es, \a1, a2 -> Pair(a1, a2)), \p -> isSameObj(p.first, p.second))) {
+				expr
+			} else {
+				FiCallPrim(op, safe_es, type, start);
+			}
+		}
+		FiString(__, __): expr;
+		FiBool(__, __):   expr;
+		FiDouble(__, __): expr;
+		FiVoid(__):       expr;
+		FiInt(__, __):    expr;
+		FiRequire(flowfile, e, type, start): {
+			safe_e = makeSwitchVarsSafeForSubstitution(e, vars);
+			if (isSameObj(e, safe_e)) {
+				expr
+			} else {
+				FiRequire(flowfile, safe_e, type, start);
+			}
+		}
+		FiUnsafe(name, fb, type, start): {
+			safe_fb = makeSwitchVarsSafeForSubstitution(fb, vars);
+			if (isSameObj(fb, safe_fb)) {
+				expr
+			} else {
+				FiUnsafe(name, safe_fb, type, start);
+			}
+		}
+	}
+}

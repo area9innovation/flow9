@@ -1,0 +1,203 @@
+import system;
+import material/extra/filesystem/filesystem_extended_api;
+
+export {
+	setLocalFilesystemExtAPI() -> void;
+}
+
+defaultPathR : ref string = ref "";
+
+localFilesystemExtAPI() -> FilesystemExtAPI {
+	defaultPathR := resolveRelativePath(".");
+
+	FilesystemExtAPI(
+		// readDirectory : (string, onDone : ([string], [string]) -> void, onError : (string) -> void) -> void
+		\path, onDone, onError -> {
+			readDirectoryLocal(path, onDone, onError);
+		},
+		// isDirectory : (string, onDone : (bool) -> void) -> void
+		\path, onDone -> {
+			onDone(isDirectory(path))
+		},
+		// fileExists : (string, onDone : (bool) -> void) -> void
+		\path, onDone -> {
+			onDone(fileExists(path))
+		},
+		// resolveRelativePath : (string) -> string
+		\path -> {
+			resolveRelativePath(path)
+		},
+		// createFolder : (string, onDone : () -> void, onError : (string) -> void) -> void
+		\path, onDone, onError -> {
+			createDirectory(path)
+			|> (\res -> if (res == "") onDone() else onError(res));
+		},
+		// deleteFile : (string, onDone : () -> void, onError : (string) -> void) -> void
+		\path, onDone, onError -> {
+			deleteElementsLocal(path, onDone, onError);
+		},
+		// copyElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
+		\pathFrom, pathTo, onDone, onError -> {
+			copyElementsLocal(pathFrom, pathTo, onDone, onError);
+		},
+		// moveElement : (string/*element full path*/, string /*move to directory*/, onDone : () -> void, onError : (string) -> void) -> void
+		\pathFrom, pathTo, onDone, onError -> {
+			copyElementsLocal(pathFrom, pathTo, \-> deleteElementsLocal(pathFrom, onDone, onError), onError);
+		},
+		// renameElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
+		\filenameFrom, onlyNameNew, onDone, onError -> {
+			renameFile(filenameFrom, dirName(filenameFrom) + onlyNameNew)
+			|> (\res -> if (res == "") onDone() else onError(res));
+		},
+		// getFileContent : (string, onDone : (string) -> void, onError : (string) -> void) -> void,
+		\filename, onDone, onError -> {
+			onDone(getFileContent(filename));
+		},
+		// getFileContentMulti : ([string], onDone : ([string]) -> void, onError : (string) -> void) -> void,
+		\filenames, onDone, onError -> {
+			// local filesystem doesn't support loading multiple files at once
+			onDone(map(filenames, getFileContent))
+		},
+		// setFileContent : (string, string, onDone : () -> void, onError : (string) -> void) -> void
+		\filename, content, onDone, onError -> {
+			setFileContent(filename, content)
+			|> (\res -> if (res) onDone() else onError("Can't save file '"+filename+"'"));
+		},
+		// convert2realPath : (string) -> string
+		\filename -> {
+			filename
+		},
+		// convert2thumbnailPath : (string) -> string
+		\filename -> {
+			filename
+		},
+		// getDefaultPath : () -> string
+		\-> {
+			^defaultPathR
+		},
+		// setDefaultPath : (string, onDone : () -> void, onError : (string) -> void) -> void
+		\defaultPath, onDone, onError -> {
+			createAllFolders(defaultPath, \-> { defaultPathR := strReplace(defaultPath, "\\", "/"); onDone(); }, onError);
+		},
+		// getAccessRight : (string /* path */) -> PathAccessRight
+		\filename -> {
+			PathAccessRight(true, true, true, true);
+		},
+		// getExtraInfo : (string /* path */) -> Maybe<Json>
+		\filename, type -> None()
+	)
+}
+
+readDirectoryLocal(path : string, onDone : ([string], [string]) -> void, onError : (string) -> void) -> void {
+	if (isDirectory(path)) {
+		content = readDirectory(path);
+		splitted = partition(content, \name -> isDirectory(path + "/" + name));
+		onDone(concat([".."], splitted.first), splitted.second);
+	} else {
+		onError("Is not a directory");
+	}
+}
+
+deleteElementsLocal(path : string, onDone : () -> void, onError : (string) -> void) -> void {
+	if (isDirectory(path)) {
+		readDirectoryLocal(path, \dirs, files -> {
+			dirs2 = filtermap(dirs, \d -> if (d == "..") None() else Some(path + d + "/"));
+			files2 = filtermap(files, \f -> if (f == "") None() else Some(path + f));
+			countSub = ref (length(dirs2) + length(files2) + 1);
+
+			onComplete = \-> {
+				countSub := ^countSub - 1;
+				if (^countSub == 0) 
+					deleteDirectory(path)
+					|> (\res -> if (res == "") onDone() else onError(res));
+			};
+
+			iter(files2, \f -> deleteFile(f) |> (\res -> if (res == "") onComplete() else onError(res)));
+			iter(dirs2, \d -> deleteElementsLocal(d, onComplete, onError));
+
+			onComplete();
+		}, onError);
+	} else if (fileExists(path)) {
+		deleteFile(path)
+		|> (\res -> if (res == "") onDone() else onError(res));
+	} else {
+		onError("File or folder '" + path + "' doesn't exists");
+	}
+}
+
+copyElementsLocal(pathFrom : string, pathTo : string, onDone : () -> void, onError : (string) -> void) -> void {
+	if (isDirectory(pathFrom)) {
+		readDirectoryLocal(pathFrom, \dirs, files -> {
+			dirs2 = filtermap(dirs, \d -> if (d == "..") None() else Some(pathFrom + d + "/"));
+			files2 = filtermap(files, \f -> if (f == "") None() else Some(pathFrom + f));
+			countSub = ref (length(dirs2) + length(files2) + 1);
+
+			pathTo2 = pathTo + ((if (endsWith(pathFrom, "/")) rtrim2(pathFrom, "/") else pathFrom) |> fileNameOnly) + "/";
+
+			onComplete = \-> {
+				countSub := ^countSub - 1;
+				if (^countSub == 0) onDone();
+			};
+
+			doCopying = \-> {
+				iter(files2, \f -> copyFileLocal(f, pathTo2, onComplete, onError));
+				iter(dirs2, \d -> copyElementsLocal(d, pathTo2, onComplete, onError));
+			};
+
+			createDirectory(pathTo2) |> (\res -> if (res == "") doCopying() else onError(res));
+			onComplete();
+		}, onError);
+	} else if (fileExists(pathFrom)) {
+		copyFileLocal(pathFrom, pathTo, onDone, onError);
+	} else {
+		onError("File or folder '" + pathFrom + "' doesn't exists");
+	}
+}
+
+copyFileLocal(fullFilenameFrom : string, pathTo : string, onDone : () -> void, onError : (string) -> void) -> void {
+	if (fileExists(fullFilenameFrom)) {
+		content = getFileContentBinary(fullFilenameFrom);
+		fullFilenameTo = pathTo + fileNameOnly(fullFilenameFrom);
+		
+		if (content == "") onError("Can't to copy the file '" + fullFilenameFrom + "'")
+		else if (setFileContentBinary(fullFilenameTo, content)) onDone()
+		else onError("Can't to create the file '" + fullFilenameTo + "'")
+	} else {
+		onError("File '" + fullFilenameFrom + "' doesn't exists");
+	}
+}
+
+createAllFolders(path : string, onDone : () -> void, onError : (string) -> void) -> void {
+	if (isDirectory(path)) onDone()
+	else {
+		strReplace(path, "\\", "/")
+		|> (\p -> if (endsWith(p, "/")) rtrim2(p, "/") else p)
+		|> (\p -> strSplit(p, "/"))
+		|> (\p -> 
+			if (length(p) > 0) {
+				traceFolders(p[0] + "/", tail(p), onDone, onError);
+			} else {
+				onError("An empty path given");
+			}
+		);
+		
+	}
+}
+
+traceFolders(startDir : string, paths : [string], onDone : () -> void, onError : (string) -> void) -> void {
+	nextDir = \-> startDir + paths[0] + "/";
+	nextStep = \-> traceFolders(nextDir(), tail(paths), onDone, onError);
+
+	if (paths == []) onDone()
+	else if (startDir == "") nextStep()
+	else if (isDirectory(nextDir())) nextStep()
+	else {
+		res = createDirectory(nextDir());
+		if (res == "") nextStep()
+		else onError(res);
+	}
+}
+
+setLocalFilesystemExtAPI() -> void {
+	setFilesystemExtAPI(localFilesystemExtAPI());
+}

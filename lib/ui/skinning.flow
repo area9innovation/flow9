@@ -1,0 +1,490 @@
+
+import form;
+import binarytree;
+import gui2;
+
+export {
+	// Methods returning Form can be used directly and will update themselves.
+	// Other methods had to be wrapped in some kind of Mutable that checks if skin was updated
+	// or in SkinnedForm.
+	// It's safe to put several 'skinnables' inside one SkinnedForm
+	getSkinnableText(id : string, defaultText : string) -> string;
+	getSkinnableTextStyle(id : string, defaultStyle : [CharacterStyle]) -> [CharacterStyle];
+	getSkinnableGraphicsStyle(id : string, defaultStyle : [GraphicsStyle]) -> [GraphicsStyle];
+	// type is just a sub id, like 'height' or 'verticalAlign'
+	getSkinnableSize(id : string, type : string, defaultSize : double) -> double;
+	getSkinnableRadiuses(id : string, default : Radiuses) -> Radiuses;
+	getSkinnablePicture(id : string, defaultPic : Form) -> Form;
+	getSkinnablePictureOrVideo(id : string, defaultPic : Form) -> Form;
+	isSkinnablePictureOrVideoExists(id : string) -> bool;
+	keepSkinnablePictureRatio(id : string, defKeep : bool) -> bool;
+
+	isCustomPictureExists(id : string, name : string) -> bool;
+	isCustomPictureOrOldPictureExists(id : string, name : string, oldPickExists : bool) -> bool;
+	getCustomPicturePadding(id : string, defPadding : double) -> double;
+	getCustomPictureUrl(id : string, defUrl : string) -> string;
+	getCustomPicture(id : string, defCustomPicture : CustomPicture) -> CustomPicture;
+	getSkinnableCustomNamedColor(id : string, name : string, defaultColor : Color) -> Color;
+	getSkinnableCustomNamedCheckerBool(id : string, name : string, defaultCheck : bool) -> bool;
+	getCustomSkinnablePicture(id : string, name : string, defaultPic : Form) -> Form;
+	getCustomSkinnablePictureWithOldStyle(id : string, name : string, defaultPic : Form, oldPic : Form) -> Form;
+	getCustomSkinnablePicturePadding(id : string, name : string, defPadding : double) -> double;
+	keepCustomSkinnablePictureRatio(id : string, name : string, defKeep : bool) -> bool;
+	getSkinnableCustomCheckBoxStyle(id : string, name : string, defaultCheck : bool) -> bool;
+	getSkinnableCustomNamedText(id : string, name : string, defaultText : string) -> string;
+	getSkinnableCustomNamedOpacity(id : string, name : string, defaultOpacity : double) -> double;
+	//Use only with text styles, that should use default if text is empty
+	getCustomTextOrOldText(oldId : string, id : string, name : string, defText : string) -> string;
+
+	// This resets the skin to the default skin
+	resetSkin() -> void;
+	
+	// This updates the skin
+	refreshSkinForms() -> void;
+
+	// Wraps a form with an updater so that the form is updated if the skin changes
+	SkinnedForm(getForm : () -> Form) -> Form;
+
+	BaseGraphicsStyle ::= CharacterStyle, GraphicsStyle, CustomPicture, NoPicture, CustomText, CustomSize, Radiuses, Color, Divider, StylesSwitcherBool, CheckBoxStyle;
+		Divider(); //Used in custom styles to divide base styles into logical groups
+		CustomPicture(url : string, xScale : double, yScale : double, keepAspectRatio : bool, padding : double);
+		NoPicture();
+		CustomText(text : string);
+		// type is just a sub id, like 'height' or 'verticalAlign'
+		// some of them are predefined in the editor but it can hold pretty much anything
+		CustomSize(type : string, size : double);
+		Radiuses(ltop : double, lbottom : double, rtop : double, rbottom : double);
+		StylesSwitcherBool(checked : bool); // can be used to switch between different styles
+		CheckBoxStyle(checked : bool); //just a checkbox
+
+	// for skin editor
+	SkinData ::= BaseGraphicsStyle, CustomableGraphicStyle;
+		CustomableGraphicStyle(styles : [NamedGraphicStyle]);
+			NamedGraphicStyle(id : string, style : BaseGraphicsStyle);
+
+	getSkinnableCustomStyle(id : string) -> Maybe<CustomableGraphicStyle>;
+		
+	// tree of SkinData id:string -> [SkinData]
+	// you can put all kinds of stuff into this tree, but your methods will have to be aware of what you're looking for
+	skinDatas : ref Tree<string, [SkinData]> = ref makeTree();
+	defaultSkinDatas : ref Tree<string, [SkinData]> = ref makeTree();
+}
+
+resetSkin() {
+	skinDatas := ^defaultSkinDatas
+}
+
+
+skinChanged = make(false);
+
+refreshSkinForms() {
+	// [-Explain-] do we need this print at all?
+	// println("refresh skin forms");
+	next(skinChanged, !getValue(skinChanged));
+}
+
+SkinnedForm(getForm) {
+	Select(skinChanged, 
+		\c -> {
+			getForm();
+		}
+	);
+}
+
+
+getSkinnableText(id, defaultText){
+	styles = getTreeArrayValue(^skinDatas, id);
+	txts = filter(styles, \st -> switch(st:SkinData) {
+		CustomText(text):
+			true;
+		default: false;
+	});
+	if (length(txts) > 0) {
+		// happily ignore the rest
+		txt = cast(txts[0]:SkinData -> CustomText);
+		txt.text
+	} else {
+		defaultText
+	}
+}
+
+getSkinnableTextStyle(id:string, defaultCharStyle:[CharacterStyle]) {
+	styles = getTreeArrayValue(^skinDatas, id);
+	charStyles = filter(styles, \st -> switch(st:SkinData) {
+		Fill(__):
+			true;
+		FillOpacity(__):
+			true;
+		FontSize(__):
+			true;
+		default: false;
+	});
+	if (length(charStyles) > 0 ) {
+		map(charStyles, \cs -> cast(cs:SkinData -> CharacterStyle));
+	} else {
+		defaultCharStyle;
+	}
+}
+
+getSkinnableGraphicsStyle(id: string, defaultGraphStyle: [GraphicsStyle]) {
+	styles = getTreeArrayValue(^skinDatas, id);
+	graphStyles = filter(styles, \st -> switch(st:SkinData) {
+		Fill(__):
+			true;
+		FillOpacity(__):
+			true;
+		GradientFill(__, __):
+			true;
+		Stroke(__):
+			true;
+		default: false;
+	});
+	if (length(graphStyles) > 0 ) {
+		map(graphStyles, \gs -> cast(gs:SkinData -> GraphicsStyle));
+	} else {
+		defaultGraphStyle;
+	}
+}
+
+getSkinnableRadiuses(id: string, defaultR: Radiuses) {
+	styles = getTreeArrayValue(^skinDatas, id);
+	graphStyles = filter(styles, \st -> switch(st:SkinData) {
+		Radiuses(r1, r2, r3, r4): true;
+		default: false;
+	});
+	if (length(graphStyles) > 0 ) {
+		cast(graphStyles[length(graphStyles) - 1] : SkinData -> Radiuses);
+	} else {
+		defaultR;
+	}
+}
+
+getSkinnableSize(id: string, type:string, defaultSize:double) -> double {
+	styles = getTreeArrayValue(^skinDatas, id);
+	sizeStyles = filter(styles, \st -> switch(st:SkinData) {
+		CustomSize(t, s): 
+			if(t == type) true else false;
+		default: false;
+	});
+	if (length(sizeStyles) > 0) {
+		size = cast(sizeStyles[0]:SkinData -> CustomSize);
+		size.size
+	} else {
+		defaultSize
+	}
+} 
+
+getSkinnablePicture(id, defaultPic) {
+	getSkinnablePictureOrVideoEx(id, false, defaultPic)
+}
+
+getSkinnablePictureOrVideo(id, defaultPic) {
+	getSkinnablePictureOrVideoEx(id, true, defaultPic)
+}
+
+isSkinnablePictureOrVideoExists(id : string) {
+	styles = getTreeArrayValue(^skinDatas, id);
+	fold(styles, false, \acc, st -> {
+		switch (st : SkinData) {
+			CustomPicture(url, __, __, __, __): {
+				if (url != "") {
+					true
+				} else {
+					acc
+				}
+			}
+			NoPicture(): acc;
+		default: acc;
+		}
+	});
+}
+
+getSkinnablePictureOrVideoEx(id, allowVideo, defaultPic : Form) -> Form {
+	maker = \ -> {
+		styles = getTreeArrayValue(^skinDatas, id);
+		fold(styles, defaultPic, \acc, st -> {
+			switch (st : SkinData) {
+				CustomPicture(url, xScale, yScale, __, __): {
+					if (url != "") {
+						form = if (endsWith(url, ".mp4")) {
+							if (allowVideo) {
+								Video(url, [LoopPlayback()], [], [])
+							} else {
+								defaultPic
+							}
+						} else {
+							Picture(url, [])
+						}
+						Scale(const(xScale), const(yScale), form);
+					} else {
+						Empty();
+					}
+				}
+				NoPicture(): Empty();
+			default: acc;
+			}
+		});
+	}
+	SkinnedForm(maker);
+}
+
+getCustomPictureUrl(id : string, defUrl : string) -> string {
+	styles = getTreeArrayValue(^skinDatas, id);
+	fold(styles, defUrl, \acc, st -> {
+		switch (st : SkinData) {
+			CustomPicture(url, __, __, __, __): url;
+			default: acc;
+		}
+	});
+}
+
+getCustomPicture(id : string, defCustomPicture : CustomPicture) -> CustomPicture {
+	styles = getTreeArrayValue(^skinDatas, id);
+	fold(styles, defCustomPicture, \acc, st -> {
+		switch (st : SkinData) {
+			CustomPicture(url, xScale, yScale, ratio, padding): CustomPicture(url, xScale, yScale, ratio, padding);
+			default: acc;
+		}
+	});
+}
+
+getCustomPicturePadding(id : string, defPadding : double) -> double {
+	styles = getTreeArrayValue(^skinDatas, id);
+	fold(styles, defPadding, \acc, st -> {
+		switch (st : SkinData) {
+			CustomPicture(__, __, __, __, padding): padding;
+			default: acc;
+		}
+	});
+}
+
+keepSkinnablePictureRatio(id, defKeep) {
+	styles = getTreeArrayValue(^skinDatas, id);
+	fold(styles, defKeep, \acc, st -> {
+		switch (st : SkinData) {
+			CustomPicture(__, __, __, keepAspectRatio, __) : keepAspectRatio;
+		default: acc;
+		}
+	});
+}
+
+getCustomSkinnablePicture(id, name, defaultPic) {
+	getCustomSkinnablePictureWithOldStyle(id, name, defaultPic, defaultPic)
+}
+
+getCustomSkinnablePictureWithOldStyle(id, name, defaultPic, oldPic) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> {
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name &&
+					switch(s.style) {
+						CustomPicture(__, __, __, __, __):
+							true;
+						default: false;
+					}
+				),
+				\s -> {
+					pic = cast(s.style : BaseGraphicsStyle -> CustomPicture);
+					if (pic.url == "")
+						defaultPic
+					else
+						Picture(pic.url, [])
+				},
+				defaultPic
+			)},		
+		oldPic
+	)
+}
+
+isCustomPictureOrOldPictureExists(id : string, name : string, oldPicExists : bool)-> bool {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 			
+			exists(customStyle.styles, \s -> 
+				s.id == name &&
+				switch(s.style) {
+					CustomPicture(url, __, __, __, __):
+						url != "";
+					default: false;
+				}
+			)
+		,
+		oldPicExists
+	)
+}
+
+isCustomPictureExists(id : string, name : string) -> bool {
+	isCustomPictureOrOldPictureExists(id, name, false)
+}
+
+getCustomSkinnablePicturePadding(id : string, name : string, defPadding : double) -> double {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name &&
+					switch(s.style) {
+						CustomPicture(__, __, __, __, __):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> CustomPicture).padding,
+				defPadding
+			)
+		,
+		defPadding
+	)
+}
+
+keepCustomSkinnablePictureRatio(id, name, defKeep) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name &&
+					switch(s.style) {
+						CustomPicture(__, __, __, __, __):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> CustomPicture).keepAspectRatio,
+				defKeep
+			)
+		,
+		defKeep
+	)
+}
+
+getSkinnableCustomStyle(id) {
+	eitherMap(
+		find(
+			getTreeArrayValue(^skinDatas, id),
+			\s -> switch (s) {
+				CustomableGraphicStyle(__) : true;
+				default : false
+			}
+		),
+		\st -> Some(cast(st : SkinData -> CustomableGraphicStyle)),
+		None()
+	)
+}
+
+getSkinnableCustomNamedColor(id, name, defaultColor) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						Color(__, __):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> Color),
+				defaultColor
+			),
+		defaultColor
+	)
+}
+
+getCustomTextOrOldText(oldId : string, id : string, name : string, defText : string) -> string {
+	oldText = getSkinnableText(oldId, defText);
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						CustomText(__):
+							true;
+						default: false;
+					}
+				),
+				\s -> {
+					text = (cast(s.style : BaseGraphicsStyle -> CustomText).text);
+					if (text == "") defText else text
+				},
+				defText
+			),
+		oldText
+	)
+}
+
+getSkinnableCustomNamedText(id, name, defaultText) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						CustomText(__):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> CustomText).text,
+				defaultText
+			),
+		defaultText
+	)
+}
+
+getSkinnableCustomNamedOpacity(id, name, defaultOpacity) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						FillOpacity(__):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> FillOpacity).opacity,
+				defaultOpacity
+			),
+		defaultOpacity
+	)
+}
+
+getSkinnableCustomCheckBoxStyle(id, name, defaultCheck) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						CheckBoxStyle(__):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> CheckBoxStyle).checked,
+				defaultCheck
+			),
+		defaultCheck
+	)
+}
+
+getSkinnableCustomNamedCheckerBool(id, name, defaultCheck) {
+	eitherMap(getSkinnableCustomStyle(id),
+		\customStyle -> 
+			eitherMap(
+				find(customStyle.styles, \s -> 
+					s.id == name && 
+					switch(s.style) {
+						StylesSwitcherBool(__):
+							true;
+						default: false;
+					}
+				),
+				\s -> cast(s.style : BaseGraphicsStyle -> StylesSwitcherBool).checked,
+				defaultCheck
+			),
+		defaultCheck
+	)
+}

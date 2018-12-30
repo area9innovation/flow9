@@ -1,0 +1,139 @@
+import formats/json/json;
+import binarytree;
+import maybe;
+
+export {
+	// primitive convert helpers
+	string2json(src : string) -> JsonString;
+	bool2json(src : bool) -> JsonBool;
+	int2json(src : int) -> JsonDouble;
+	double2json(src : double) -> JsonDouble;
+
+	json2bool(src : Json) -> bool;
+	json2int(src : Json) -> int;
+	json2double(src : Json) -> double;
+
+	json2stringM(src : Json) -> Maybe<string>;
+	json2boolM(src : Json) -> Maybe<bool>;
+	json2intM(src : Json) -> Maybe<int>;
+	json2doubleM(src : Json) -> Maybe<double>;
+
+	// converts Tree to JsonArray : [JsonObject : {key : Json, value : Json}]
+	tree2json(src : Tree<?, ??>, fnKey : (?) -> Json, fnValue : (??) -> Json) -> Json;
+	json2tree(src : Json, fnKey : (Json) -> Maybe<?>, fnValue : (Json) -> Maybe<??>) -> Maybe<Tree<?, ??>>;
+	// special case which allows to store tree as JsonObject where tree-key is a json-field-name
+	json2treeS(src : Json, fnValue : (Json) -> Maybe<??>) -> Maybe<Tree<string, ??>>;
+	// placeholder for json converter
+	json2treeFn(fnKey : (Json) -> Maybe<?>, fnValue : (Json) -> Maybe<??>) -> (Json) -> Maybe<Tree<?, ??>>;
+}
+
+// primitive convert helpers
+bool2json(src : bool) -> JsonBool { JsonBool(src) }
+int2json(src : int) -> JsonDouble { JsonDouble(i2d(src)) }
+double2json(src : double) -> JsonDouble { JsonDouble(src) }
+string2json(src : string) -> JsonString { JsonString(src) }
+
+json2stringM(src : Json) -> Maybe<string> {
+	switch(src) {
+		JsonBool(b) : Some(b2s(b));
+		JsonDouble(d) : Some(d2s(d));
+		JsonString(s) : Some(s);
+		default : None();
+	}
+}
+
+json2boolM(src : Json) -> Maybe<bool> {
+	switch(src) {
+		JsonBool(b) : Some(b);
+		JsonDouble(d) : Some(d > 0.0);
+		JsonString(s) : Some(s2b(s));
+		default : None();
+	}
+}
+json2intM(src : Json) -> Maybe<int> {
+	switch(src) {
+		JsonBool(b) : Some(if (b) 1 else 0);
+		JsonDouble(d) : Some(round(d));
+		JsonString(s) : if (isDouble(s)) Some(round(s2d(s))) else None();
+		default : None();
+	}
+}
+json2doubleM(src : Json) -> Maybe<double> {
+	switch(src) {
+		JsonBool(b) : Some(if (b) 1.0 else 0.0);
+		JsonDouble(d) : Some(d);
+		JsonString(s) : if (isDouble(s)) Some(s2d(s)) else None();
+		default : None();
+	}
+}
+
+json2bool(src : Json) -> bool {
+	either(json2boolM(src), false);
+}
+json2int(src : Json) -> int {
+	either(json2intM(src), 0);
+}
+json2double(src : Json) -> double {
+	either(json2doubleM(src), 0.0);
+}
+
+
+// converts Tree to JsonArray : [JsonObject : {key : Json, value : Json}]
+tree2json(src : Tree<?, ??>, fnKey : (?) -> Json, fnValue : (??) -> Json) -> Json {
+	JsonArray(foldTree(src, [], \k, v, acc : [JsonObject] -> arrayPush(acc, JsonObject([
+		Pair("key", fnKey(k)),
+		Pair("value", fnValue(v))
+	]))));
+}
+
+json2treeFn(fnKey : (Json) -> Maybe<?>, fnValue : (Json) -> Maybe<??>) -> (Json) -> Maybe<Tree<?, ??>> {
+	\json -> json2tree(json, fnKey, fnValue);
+}
+
+json2tree(src : Json, fnKey : (Json) -> Maybe<?>, fnValue : (Json) -> Maybe<??>) -> Maybe<Tree<?, ??>> {
+	err = Pair(false, []);
+	switch(src) {
+		JsonArray(arr) : {
+			trykv = \r, k,v -> switch(fnValue(v)) {
+				None() : err;
+				Some(v2) : switch(fnKey(k)) {
+					None() : err;
+					Some(k2) : Pair(true, arrayPush(r.second, Pair(k2, v2)));
+				}
+			}
+			r = fold(arr, Pair(true, []), \r, a -> if (!r.first) r else
+				switch(a) {
+					JsonArray(arr2) : if (length(arr2) < 2) err else trykv(r, arr2[0], arr2[1]);
+					JsonObject(arr2) : if (length(arr2) < 2) err else {
+						// try to collect json as {key: "...", value : "..."}
+						k = getJsonFieldValue(a, "key", JsonNull());
+						v = getJsonFieldValue(a, "value", JsonNull());
+						if (k != JsonNull() && v != JsonNull()) trykv(r, k, v)
+						else trykv(r, arr2[0].second, arr2[1].second); // ignore field names and just grab first 2 elements as key and value
+					}
+					default : err;
+				}
+			);
+			if (!r.first) None() else Some(pairs2tree(r.second));
+		}
+		// assume we store tree as array of key-value pairs
+		JsonObject(arr) : json2tree(JsonArray(map(arr, secondOfPair)), fnKey, fnValue);
+		default : None();
+	}
+}
+
+// special case which allows to store tree as JsonObject where tree-key is a json-field-name
+json2treeS(src : Json, fnValue : (Json) -> Maybe<??>) -> Maybe<Tree<string, ??>> {
+	switch(src) {
+		JsonObject(arr) : {
+			r = fold(arr, Pair(true, []), \r, a -> if (!r.first) r else {
+				switch(fnValue(a.second)) {
+					None() : Pair(false, []);
+					Some(v) : Pair(true, arrayPush(r.second, Pair(a.first, v)));
+				}
+			});
+			if (!r.first) None() else Some(pairs2tree(r.second));
+		}
+		default : json2tree(src, json2stringM, fnValue);
+	}
+}

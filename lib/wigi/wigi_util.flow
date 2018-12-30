@@ -1,0 +1,482 @@
+import wigi/controller;
+import wigi/wigi_wiki;
+import formdesigner/formdesigner_media_extractor;
+import formats/wiki/wikiparser;
+
+export {
+	concatWigi2(w1 : WigiElement, w2 : WigiElement) -> WigiElement;
+	concatWigiWikiSources(sources : [string]) -> string; //An array of sources of different types is converted into one long <wigi> ... </wigi> string. Each source takes separate line.
+	grid2wigiTable(rows : [[WigiElement]], style : [WigiTableStyle]) -> WigiRecursive;
+
+	// It's better to use wigi2text instead.
+	extractTextsFromWigiElement(w : WigiElement) -> [string];
+
+	extractMediaFromWigiSource(src : string) -> Maybe<[string]>;
+	extractMediaFromWigiElement(w : WigiElement) -> [string];
+	extractMediaBlocksFromWigiSource(src : string) -> Maybe<[WigiBlockType]>;
+	extractMediaBlocksFromWigiElement(w : WigiElement) -> [WigiBlockType];
+	extractWigiBlocksOfTypeFromWigiElement(w : WigiElement, targetBlockType : WigiBlockType) -> [WigiBlockType];
+	rtrimWigi(src : string) -> string; //If Wigi ends with block of text the block's content is rtrimmed. Wiki source is also trimmed, html and write - not.
+	extractWigiAlignment(we : WigiElement) -> [WigiParagraphStyle];
+	// Extract coach texts and split ones to separate lines
+	extractWigiCoachTexts(we : WigiElement) -> [string];
+
+	// Translate text in WigiElements
+	translateWigi(element : WigiElement) -> WigiElement;
+	// Extract text from WigiElement for translation
+	extractTextsFromWigiToTranslate(element : WigiElement) -> [string];
+
+	// select version in WigiVersion
+	selectVersion(state : WigiEditorState, ver : WigiElement, element : WigiElement) -> void;
+
+	// collect ids from WigiAnnotation
+	collectAnnotations(wigi : WigiElement) -> [int];
+}
+
+concatWigi2(w1 : WigiElement, w2 : WigiElement) -> WigiElement {
+	special = concatWigi(w1, w2);
+	if (special != WigiEmpty() || special == w1 || special == w2) {
+		special
+	} else {
+		println("Fucked up case");
+		//TODO figureout which style dictionary to use
+		state = makeWigiEditorState(w1, None(), []);
+		pasteWigi(state, getEndPositionOfDocument(w1, false), w2, false);
+		getValue(state.document);
+	}
+}
+
+
+grid2wigiTable(rows : [[WigiElement]], style : [WigiTableStyle]) -> WigiRecursive {
+	cols = fold(rows, 0, \acc, r -> max(acc, length(r)));
+
+	WigiRecursive(
+		fold(rows, [], \acc, row -> {
+			fold(row, acc, \acc2, c -> {
+				arrayPush(acc2,
+					WigiRecursive([simplifyElement(c)], WigiTableCell(makeWH(), []), [])
+				);
+			});
+		}),
+
+		WigiTable(length(rows), cols, generate(0, length(rows) * cols, \i -> WigiCellSpan(1, 1)), style),
+		[]
+	);
+}
+
+extractTextsFromWigiElement(w : WigiElement) -> [string]{
+	switch (w) {
+		WigiDocument(root, __): extractTextsFromWigiElement(root);
+		WigiStory(elements, __, __): concatA(map(^elements, extractTextsFromWigiElement));
+		WigiParagraph(elements, style): concatA(map(elements, extractTextsFromWigiElement));
+		WigiRecursive(elements, type, style): concatA(map(elements, extractTextsFromWigiElement));
+		WigiText(text, __) : [text];
+		WigiEmpty() : [];
+		WigiBlock(blockType, __) : {
+			switch(blockType : WigiBlockType) {
+				WigiPicture(url, style) : [];
+				WigiVideo(url, style) : [];
+				WigiAudio(url, style) : [];
+				WigiCoach(text) : [text];
+				WigiSlider(value, minValue, maxValue, step, width, style) : [];
+				WigiCheckBox(value, style) : [];
+				WigiInputBox(value, __, __, style) : [];
+				WigiPositionTag(id) : [];
+				WigiCustomSymbol(type, size) : [];
+				WigiFormdesigner(drawing, style) : []; //TODO?
+				WigiSmartArt(content, style) : ["<smartart>" + content + "</smartart>"];
+				WigiFormula(formula, style) : [];
+				WigiPageBreak(__, __) : [];
+				WigiPageName(name, __) : [name];
+				WigiNaturalMath(formula) : [];
+				WigiComboBox(__, __, __, __) : [];
+				WigiNativeWiki(wiki) : [wiki];
+				WigiDotplot(range, style) : [];
+				WigiHistogram(range, style) : [];
+				WigiHistogramClasses(range, style) : [];
+				WigiBoxplot(range, style) : [];
+				WigiScatterplot(range, style) : [];
+				WigiStackedBar(range, style) : [];
+				WigiDatepicker(__, __): [];
+				WigiCalculator() : [];
+				WigiHTML(__, __, __, __): [];
+				WigiReferenceDocument(title, d): concat([title], extractTextsFromWigiElement(d));
+				WigiSetClipboardButton(title, __): [title];
+				WigiChoiceBlock(formula, __): [formula];
+				WigiRadioButton(__, __): [];
+				WigiExternalBlock(__, __): [];
+				WigiFeedback(__, __): [];
+				WigiFeedbackBlock(formula, visibilityCondition, __, __): [formula, visibilityCondition];
+				WigiFillBlankBlock(__, __, __, __, __, __): [];
+			}
+		}
+	}
+}
+
+extractMediaFromWigiElement(w : WigiElement) -> [string] {
+	switch (w) {
+		WigiDocument(root, __): extractMediaFromWigiElement(root);
+		WigiStory(elements, __, __): concatA(map(^elements, extractMediaFromWigiElement));
+		WigiParagraph(elements, style): concatA(map(elements, extractMediaFromWigiElement));
+		WigiRecursive(elements, type, style): concatA(map(elements, extractMediaFromWigiElement));
+		WigiText(text, __) : [];
+		WigiEmpty() : [];
+		WigiBlock(blockType, __) : {
+			switch(blockType : WigiBlockType) {
+				WigiPicture(url, style) : [url];
+				WigiVideo(url, style) : [url];
+				WigiAudio(url, style) : [url];
+				WigiCoach(text) : [];
+				WigiSlider(value, minValue, maxValue, step, width, style) : [];
+				WigiCheckBox(value, style) : [];
+				WigiInputBox(value, __, __, style) : [];
+				WigiPositionTag(id) : [];
+				WigiCustomSymbol(type, size) : [];
+				WigiFormdesigner(drawing, style) : CallFormdesignerCollectMedia(drawing, extractMediaFromWigiSource);
+				WigiSmartArt(content, style) : CallSmartArtCollectMedia(content);
+				WigiFormula(formula, style) : [];
+				WigiPageBreak(__, __) : [];
+				WigiPageName(name, __) : [name];
+				WigiNaturalMath(formula) : [];
+				WigiComboBox(__, __, __, __) : [];
+				WigiNativeWiki(wiki) : collectWikiMedia(wiki);
+				WigiDotplot(range, style) : [];
+				WigiHistogram(range, style) : [];
+				WigiHistogramClasses(range, style) : [];
+				WigiBoxplot(range, style) : [];
+				WigiScatterplot(range, style) : [];
+				WigiStackedBar(range, style) : [];
+				WigiDatepicker(__, __): [];
+				WigiCalculator() : [];
+				WigiHTML(__, __, __, __): [];
+				WigiReferenceDocument(__, d): extractMediaFromWigiElement(d);
+				WigiSetClipboardButton(title, __): [title];
+				WigiChoiceBlock(formula, choices): [formula];
+				WigiRadioButton(__, __): [];
+				WigiExternalBlock(__, __): [];
+				WigiFeedback(__, __): [];
+				WigiFeedbackBlock(formula, visibilityCondition, interactiveType, choices): [formula, visibilityCondition];
+				WigiFillBlankBlock(__, __, __, __, __, __): [];
+			}
+		}
+	}
+}
+
+extractMediaFromWigiSource(src : string) {
+	maybeMap(string2wigi(src, None()), extractMediaFromWigiElement)
+}
+
+extractMediaBlocksFromWigiElement(w : WigiElement) -> [WigiBlockType] {
+	switch (w) {
+		WigiDocument(root, __): extractMediaBlocksFromWigiElement(root);
+		WigiStory(elements, __, __): concatA(map(^elements, extractMediaBlocksFromWigiElement));
+		WigiParagraph(elements, style): concatA(map(elements, extractMediaBlocksFromWigiElement));
+		WigiRecursive(elements, type, style): concatA(map(elements, extractMediaBlocksFromWigiElement));
+		WigiText(text, __) : [];
+		WigiEmpty() : [];
+		WigiBlock(blockType, __) : {
+			switch(blockType : WigiBlockType) {
+				WigiPicture(url, style) : [blockType];
+				WigiFormdesigner(drawing, style) : [blockType];
+				default : []
+			}
+		}
+	}
+}
+
+extractWigiBlocksOfTypeFromWigiElement(w : WigiElement, targetBlockType : WigiBlockType) -> [WigiBlockType] {
+	switch (w) {
+		WigiDocument(root, __): extractWigiBlocksOfTypeFromWigiElement(root, targetBlockType);
+		WigiStory(elements, __, __): concatA(map(^elements, \e -> extractWigiBlocksOfTypeFromWigiElement(e, targetBlockType)));
+		WigiParagraph(elements, style): concatA(map(elements, \e -> extractWigiBlocksOfTypeFromWigiElement(e, targetBlockType)));
+		WigiRecursive(elements, type, style): concatA(map(elements, \e -> extractWigiBlocksOfTypeFromWigiElement(e, targetBlockType)));
+		WigiText(text, __) : [];
+		WigiEmpty() : [];
+		WigiBlock(blockType, __) : {
+			if (isSameStructType(blockType, targetBlockType))
+				[blockType]
+			else
+				[];
+		}
+	}
+}
+
+extractMediaBlocksFromWigiSource(src : string) -> Maybe<[WigiBlockType]> {
+	maybeMap(string2wigi(src, None()), extractMediaBlocksFromWigiElement)
+}
+
+concatWigiWikiSources(sources : [string]) -> string {
+	fold(
+		map(sources, \src -> either(string2wigi(src, None()), WigiEmpty())),
+		WigiEmpty(),
+		concatWigi2
+	) |> wigi2wigiInWiki
+}
+
+updateLastWigiBlockIfText(we : WigiElement, action : (string) -> string) -> WigiElement {
+	recursiveCall = \el -> {
+		updateLastWigiBlockIfText(el, action)
+	}
+
+	updateLast = \elements : [WigiElement] -> {
+		elementsCount = length(elements);
+			if (0 < elementsCount) {
+				updatedLastElement = recursiveCall(elements[elementsCount - 1]);
+				replace(elements, elementsCount - 1, updatedLastElement)
+			} else {
+				elements
+			}
+	}
+
+	switch(we) {
+		WigiDocument(root, style) : WigiDocument(root |> recursiveCall, style);
+		WigiStory(paragraphs, views, style) : {
+			paragraphs := ^paragraphs |> updateLast;
+			we
+		}
+		WigiParagraph(elements, style) : WigiParagraph(updateLast(elements), style);
+		WigiRecursive(elements, type, style) : WigiRecursive(updateLast(elements), type, style);
+		WigiText(text, style) : WigiText(action(text), style);
+		WigiEmpty() : we;
+		WigiBlock(type, style) : {
+			switch(type) {
+				WigiNativeWiki(wiki) : WigiBlock(WigiNativeWiki(wiki |> action), style);
+				default : we;
+			}
+		}
+	}
+}
+
+rtrimWigi(src) {
+	format = getWigiParser(src);
+	switch (format : WikiContentType) {
+		WikiWigi(): {
+			eitherMap(
+				string2wigi(src, None()),
+				\we -> updateLastWigiBlockIfText(we, rtrim) |> wigi2wigiInWiki,
+				src
+			)
+		}
+		WikiStd(): src |> rtrim;
+		WikiWrite(): src;
+		WikiHtml(): src;
+	}
+}
+
+extractWigiAlignment(we) {
+	switch (we : WigiElement) {
+		WigiDocument(root, style): extractWigiAlignment(root);
+		WigiStory(paragraphs, views, style): concatA(map(^paragraphs, extractWigiAlignment));
+		WigiRecursive(elements, type, style): concatA(map(elements, extractWigiAlignment));
+		WigiParagraph(elements, style): extractWigiParagraphAlignment(style);
+		default: [];
+	}
+}
+
+extractWigiCoachTexts(we) {
+	switch (we : WigiElement) {
+		WigiStory(paragraphs, views, style): concatA(map(^paragraphs, extractWigiCoachTexts));
+		WigiRecursive(elements, type, style): concatA(map(elements, extractWigiCoachTexts));
+		WigiParagraph(elements, style): concatA(map(elements, extractWigiCoachTexts));
+		WigiDocument(root, style): extractWigiCoachTexts(root);
+		WigiBlock(blockType, __) : {
+			switch(blockType : WigiBlockType) {
+				WigiReferenceDocument(title, d): extractWigiCoachTexts(d);
+				WigiCoach(text) : filter(strSplit(text, "\n"), \t -> trim(t) != "");
+				default: []
+			};
+		};
+		default: [];
+	}
+}
+
+translateWigi(element : WigiElement) -> WigiElement {
+	switch (element) {
+		WigiDocument(root, style): WigiDocument(translateWigi(root), style);
+		WigiStory(paragraphs, views, style): WigiStory(ref map(^paragraphs, translateWigi), ref [], style);
+		WigiParagraph(elements, style): WigiParagraph(map(elements, translateWigi), style);
+		WigiRecursive(elements, type, style): WigiRecursive(map(elements, translateWigi), type, style);
+		WigiText(text, style): WigiText(getTranslationOnly(text), style);
+		WigiEmpty(): element;
+		WigiBlock(wb, blockStyle) : WigiBlock(switch (wb : WigiBlockType) {
+			WigiPicture(url, style): WigiPicture(url, map(style,
+				\st -> switch (st : WigiPictureStyle) {
+					PictureDecorations(decs) : PictureDecorations(
+						map(decs, \dec -> switch (dec : ImageDecoration) {
+							ImageCaption(caption, fontsize, color, characterStyle, paragraphStyle) : ImageCaption(
+								getTranslationOnly(caption),
+								fontsize, color, characterStyle, paragraphStyle
+							);
+							ImageAltText(label, s) :ImageAltText(
+								getTranslationOnly(label),
+								s
+							);
+							ImageHeader(label, fontsize, color) : ImageFooter(
+								getTranslationOnly(label),
+								fontsize, color
+							);
+							ImageFooter(label, fontsize, color) : ImageFooter(
+								getTranslationOnly(label),
+								fontsize, color
+							);
+							ImageCopyright(copyright, s) : ImageCopyright(
+								getTranslationOnly(copyright),
+								s
+							);
+							ImageLabel2(x, y, hAligng, yAlign, s, label, rotation, stable) : ImageLabel2(
+								x, y, hAligng, yAlign, s,
+								getTranslationOnly(label),
+								rotation, stable
+							);
+							ImageLabel(x, y, label) : ImageLabel(x, y, switch(label: Form) {
+								Text(t, s) : Text(getTranslationOnly(t), s);
+								default : label
+							});
+							default : dec
+						})
+					);
+					default : st
+				}
+			));
+			WigiComboBox(selected, values, reorderElements, width): WigiComboBox(
+				selected,
+				getTranslationOnly(values),
+				reorderElements, width
+			);
+			WigiChoiceBlock(formula, choices): WigiChoiceBlock(formula, map(choices, \ch -> WigiChoice(
+				ch.operator,
+				ch.value,
+				translateWigi(ch.result)
+			)));
+			WigiFeedbackBlock(formula, visibilityCondition, in, choices) : WigiFeedbackBlock(
+				formula,
+				visibilityCondition,
+				in,
+				map(choices, \ch -> WigiFeedbackChoice(
+					ch.type,
+					ch.operator,
+					ch.value,
+					translateWigi(ch.result)
+				))
+			);
+			WigiCoach(text): WigiCoach(getTranslationOnly(text));
+			WigiPageName(name, disableCondition): WigiPageName(getTranslationOnly(name), disableCondition);
+			WigiReferenceDocument(title, d): WigiReferenceDocument(getTranslationOnly(title), translateWigi(d));
+			WigiSetClipboardButton(title, text): WigiSetClipboardButton(getTranslationOnly(title), text);
+			default: wb;
+		}, blockStyle);
+	};
+}
+
+extractTextsFromWigiToTranslate(element : WigiElement) -> [string] {
+	switch (element) {
+		WigiDocument(root, __): extractTextsFromWigiToTranslate(root);
+		WigiStory(elements, __, __): concatA(map(^elements, extractTextsFromWigiToTranslate));
+		WigiParagraph(elements, __): concatA(map(elements, extractTextsFromWigiToTranslate));
+		WigiRecursive(elements, __, __): concatA(map(elements, extractTextsFromWigiToTranslate));
+		WigiText(text, __) : [text];
+		WigiEmpty() : [];
+		WigiBlock(blockType, __) : {
+			switch(blockType : WigiBlockType) {
+				WigiPicture(url, style):concatA(map(style, \st -> switch (st : WigiPictureStyle) {
+					PictureDecorations(decs) : concatA(map(
+						decs,
+						\dec -> switch (dec : ImageDecoration) {
+							ImageCaption(caption, __, __, __, __): [caption];
+							ImageAltText(label, __): [label];
+							ImageHeader(label, __, __): [label];
+							ImageFooter(label, __, __): [label];
+							ImageCopyright(copyright, __): [copyright];
+							ImageLabel2(__, __, __, __, __, label, __, __): [label];
+							ImageLabel(__, __, label): switch (label : Form) {
+								Text(t, __): [t];
+								default: [];
+							};
+							default: [];
+						}
+					));
+					default: []
+				}));
+				WigiComboBox(__, values, __, __): [values];
+				WigiChoiceBlock(__, choices): concatA(map(choices, \ch -> extractTextsFromWigiToTranslate(ch.result)));
+				WigiFeedbackBlock(__, __, __, choices): concatA(map(choices, \ch -> extractTextsFromWigiToTranslate(ch.result)));
+				WigiCoach(text) : [text];
+				WigiPageName(name, __) : [name];
+				WigiReferenceDocument(title, d): concat([title], extractTextsFromWigiToTranslate(d));
+				WigiSetClipboardButton(title, __): [title];
+				default: [];
+			};
+		};
+	};
+}
+
+selectVersion(state : WigiEditorState, ver : WigiElement, element : WigiElement) -> void {
+	currentDocument = getValue(state.document);
+	currentCursor = getValue(state.cursor);
+	elementPosition = wigiFindParentRecursive(currentDocument, [dummyWigiVersions], currentCursor);
+	elementToReplace = if (elementPosition != []) elementPosition else findWigiElement(currentDocument, element);
+
+	parentPath = wigiParentPath(elementToReplace);
+	parentElement = getElementAtPosition(currentDocument, parentPath);
+
+	//do not allow folded paragraphs, one should be removed
+	switch (parentElement) {
+		WigiParagraph(__, __): switch (ver) {
+			WigiParagraph(els, __): {
+				deleteElementSafely(state, elementPosition);
+				iter(reverseA(els), \el -> pasteWigi(state, elementToReplace, el, false));
+			}
+			default: replaceElementInDocument(state, elementToReplace, ver);
+		}
+		default: replaceElementInDocument(state, elementToReplace, ver);
+	}
+
+	next(state.cursor, elementToReplace);
+	updateLiveSerializedDocument(state, getValue(state.document));
+	wigiUpdateCursor(state);
+
+	//fix consequences of normalizeWigiElements(...) call
+	if (length(elementToReplace) > 1 && isSameStructType(parentElement, dummyWigiParagraph)) {
+		last = lastElement(elementToReplace, 0);
+		deleteFn = \recPos, textPos -> {
+			if (last == recPos && getElementAtPosition(currentDocument, arrayPush(parentPath, textPos)) == emptyWigiText) {
+				deleteElementSafely(state, arrayPush(parentPath, textPos));
+			}
+		};
+
+		childCount = getWigiChildCount(parentElement, true);
+		deleteFn(childCount - 2, childCount - 1);
+		deleteFn(1, 0);
+	}
+};
+
+collectAnnotations(wigi : WigiElement) -> [int] {
+	collectAnnotationsRec([wigi], [])
+}
+
+collectAnnotationsRec(
+	wigiArr : [WigiElement],
+	ids : [int]
+) -> [int] {
+	if (length(wigiArr) == 0) ids
+	else {
+		arrayRec = \elemArr -> collectAnnotationsRec(concat(elemArr, tail(wigiArr)), ids);
+		contRec = \newIds -> collectAnnotationsRec(tail(wigiArr), newIds);
+
+		switch(wigiArr[0] : WigiElement) {
+			WigiStory(paragraphs, views, style) : arrayRec(^paragraphs);
+			WigiParagraph(elements, style) : arrayRec(elements);
+			WigiRecursive(elements, type, style) : arrayRec(elements);
+
+			WigiDocument(root, style) : contRec(collectAnnotationsRec([root], ids));
+			WigiEmpty() : contRec(ids);
+			WigiBlock(type, style) : contRec(ids);
+
+			WigiText(text, style) : contRec(eitherMap(
+				tryExtractStruct(style, WigiAnnotation(-1)),
+				\annotationStyle -> arrayPush(ids, annotationStyle.id),
+				ids
+			));
+		}
+	}
+}

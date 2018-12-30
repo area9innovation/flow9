@@ -1,0 +1,203 @@
+import behaviour;
+import stylestructs;
+
+native currentClip : io () -> native = RenderSupport.currentClip;
+native addChild : io (parent : native, child : native) -> void = RenderSupport.addChild;
+native removeChild : io (parent : native, child : native) -> void = RenderSupport.removeChild;
+native makeTextfield : (fontFamily : string) -> native = RenderSupport.makeTextField;
+native getTextMetrics : io (text : native) -> [double] = RenderSupport.getTextMetrics;
+native getTextFieldWidth : io (clip : native) -> double = RenderSupport.getTextFieldWidth;
+native getTextFieldHeight : io (clip : native) -> double = RenderSupport.getTextFieldHeight;
+	native setTextAndStyle : io (
+		textfield : native, text : string, fontfamily : string, fontsize : double,
+		fontweight : int, fontslope : string,
+		fillcolour : int, fillopacity : double, letterspacing : double,
+		backgroundcolour : int, backgroundopacity : double
+	) -> void = RenderSupport.setTextAndStyle;
+native setAdvancedText : io (textfield : native, sharpness : int, antiAliasType : int, gridFitType : int) -> void = RenderSupport.setAdvancedText;
+	// click, mousedown, mouseup, rightclick, mouserightdown, mouserightup, mousemiddledown, mousemiddleup, mousemove, mouseenter, 
+	// mouseleave, change, focusin, focusout
+native addEventListener : io (clip : native, event : string, cb : () -> void) -> (() -> void) = RenderSupport.addEventListener;
+
+native addKeyEventListener : io (clip : native, event : string,
+		cb : (key : string, ctrl : bool, shift : bool, alt : bool, meta : bool, keyCode : int,
+		preventDefault : () -> void) -> void) -> (() -> void) = RenderSupport.addKeyEventListener;
+native getContent : io (native) -> string = RenderSupport.getContent;
+native addFilters : io (native, [native]) -> void = RenderSupport.addFilters;
+native makeBevel : io (angle : double, distance : double, radius : double, spread : double, color1 : int, alpha1 : double,
+					color2 : int, alpha2 : double, inner : bool) -> native = RenderSupport.makeBevel;
+native makeBlur: io (radius : double, spread : double) -> native = RenderSupport.makeBlur;
+native makeDropShadow : io (angle : double, distance : double, radius : double, spread : double, color : int,
+					alpha : double, inner : bool) -> native = RenderSupport.makeDropShadow;
+native makeGlow: io (radius : double, spread : double, color : int, alpha : double, inner : bool) -> native = RenderSupport.makeGlow;
+
+main() {
+	r = renderText("Hello, world! My string!", [FontSize(36.0), BackgroundFill(0xff00ff)], const(WidthHeight(400.0, 300.0)), [], []);
+	attachChildren(currentClip(), r.clips, r.widthHeight, r.baseline, r.pending, r.disposers, r.capabilities);
+
+	timer(5000, \-> { println("Timer on 5 sec"); });
+	timer(3000, \-> { println("Timer on 3 sec"); timer(4000, \-> { println("Timer on 4 sec after 3 sec"); }); });
+}
+
+RenderResult(
+	clips : [native],
+	widthHeight : Behaviour<WidthHeight>,
+	baseline : Behaviour<double>,
+	pending : Behaviour<int>,
+	disposers :[() -> void],
+	capabilities : ClipCapabilities
+);
+
+ClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
+
+// This dance concerns how to hook up any clips from a child to ourselves
+attachChildren(clip : native, children : [native], widthHeight : Behaviour<WidthHeight>, baseline : Behaviour<double>,
+			pending : Behaviour<int>, disposers : [() -> void], cap : ClipCapabilities) -> RenderResult {
+	iter(children, \c -> {
+		addChild(clip, c);
+	});
+	RenderResult([clip], widthHeight, baseline, pending, concat([\ -> {
+			iter(children, \c -> {
+				removeChild(clip, c);
+			})
+		}], disposers)
+	, cap);
+}
+
+renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthHeight>, zorder : [int], tabOrder: [int]) -> RenderResult {
+	textfield = makeTextfield("Book");
+	disp = addEventListener(textfield, "mousedown", \ -> { println("on addEventListener event"); });
+	disp3 = addKeyEventListener(textfield, "keydown", \key, ctrl, shift, alt, meta, keyCode, preventFn -> {
+		println("on addKeyEventListener event"); 
+
+		if (key == "t") {
+			str = getContent(textfield);
+			println("getContent " + str); 
+		}
+	});
+
+	disposed = ref false;
+	ddd = \ -> { if (!(^disposed)) { disp(); disp3(); disposed := true; } };
+	disp2 = addEventListener(textfield, "mouserightdown", \ -> { println("on addEventListener event 2;"); ddd(); });
+	defineTextStyle(textfield, text, style);
+
+	metrics = getTextMetrics(textfield);
+
+	disposer = \ -> {
+		ddd();
+		disp2();
+		deleteNative(textfield);
+	}
+
+	bevel = makeBevel(45.0, 3.0, 3.0, 10.0, 0xffffff, 1.0, 0x444444, 1.0, true);
+	blur = makeBlur(5.0, 10.0);
+//	dropshadow = makeDropShadow(45.0, 4.0, 4.0, 1.0, 0x000000, 1.0, false);
+	glow = makeGlow(4.0, 1.0, 0x000000, 1.0, false);
+	addFilters(textfield, [bevel, blur, glow]);
+
+	widthHeight = const(WidthHeight(getTextFieldWidth(textfield), getTextFieldHeight(textfield)));
+	caps = ClipCapabilities(true, true, true, false, true);
+
+	uStruct = fold(style, None(), \acc, s -> switch(s) { Underlined(v): Some(s); default: acc});
+	RenderResult([textfield], widthHeight, const(metrics[0]), const(0), [disposer], caps)
+}
+
+DefinedTextStyle(
+	fontFamily : string,
+	fontSize : double,
+	fontWeight : int,
+	fontSlope : string,
+	fillColor : int,
+	fillOpacity : double,
+	letterSpacing : double,
+	backgroundColor : int,
+	backgroundOpacity : double,
+	advancedSharpness : int,
+	antiAlias : int,
+	gridFit : int
+);
+
+defaultFontFamily_ = "Book";
+
+getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
+	// Set up the style
+	fontfamily = ref defaultFontFamily_;
+	fontweight = ref 0;
+	fontslope = ref "";
+	fontsize = ref 11.0;
+	fillcolour = ref 0x000000;
+	fillopacity = ref 1.0;
+	backgroundcolour = ref 0x000000;
+	backgroundopacity = ref 1.0;//calculateDefaultTextBackgroundColorOpacity(style);
+	letterspacing = ref 0.0;
+	advancedSharpness = ref -400;
+	advancedAntiAliasType = ref FontAntiAliasAdvanced();
+	advancedGridFitType = ref FontGridFitNone();
+	specifiedSharpness = ref false;
+	iter(style, \s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name) : fontfamily := name;
+			FontSize(size) : fontsize := size;
+			Fill(col): fillcolour := col;
+			FillOpacity(op): fillopacity := op;
+			LetterSpacing(op) : letterspacing := op;
+			Sharpness(sharpness, antiAliasType, gridFitType) : {
+				advancedSharpness := sharpness;
+				advancedAntiAliasType := antiAliasType;
+				advancedGridFitType := gridFitType;
+				specifiedSharpness := true;
+			}
+			BackgroundFill(col): backgroundcolour := col;
+			BackgroundFillOpacity(opacity): backgroundopacity := opacity;
+			default : {}
+		}
+	});
+	// mappedFonts = map(strSplit(^fontfamily, ","), \family -> getMappedFont(family, ^fontsize));
+	fontfamily := "Book";// strGlue(map(mappedFonts, firstOfPair), ",");
+	fontsize := 36.0;// mappedFonts[0].second;
+
+	antialiasint = switch(^advancedAntiAliasType : FontAntiAliasType) {
+		FontAntiAliasNormal() : 0;
+		FontAntiAliasAdvanced() : 1;
+	};
+	gridfitint = switch(^advancedGridFitType : FontGridFitType) {
+		FontGridFitNone() : 0;
+		FontGridFitPixel() : 1;
+		FontGridFitSubpixel() : 2;
+	};
+
+	DefinedTextStyle(
+		^fontfamily,
+		^fontsize,
+		^fontweight,
+		^fontslope,
+		^fillcolour,
+		^fillopacity,
+		^letterspacing,
+		^backgroundcolour,
+		^backgroundopacity,
+		^advancedSharpness,
+		antialiasint,
+		gridfitint
+	);
+}
+
+defineTextStyle(textfield, text, style) {
+	definedTextStyle = getDefinedTextStyle(style);
+
+	setTextAndStyle(
+		textfield,
+		text,
+		definedTextStyle.fontFamily,
+		definedTextStyle.fontSize,
+		definedTextStyle.fontWeight,
+		definedTextStyle.fontSlope,
+		definedTextStyle.fillColor,
+		definedTextStyle.fillOpacity,
+		definedTextStyle.letterSpacing,
+		definedTextStyle.backgroundColor,
+		definedTextStyle.backgroundOpacity
+	);
+
+	setAdvancedText(textfield, definedTextStyle.advancedSharpness, definedTextStyle.antiAlias, definedTextStyle.gridFit);
+}

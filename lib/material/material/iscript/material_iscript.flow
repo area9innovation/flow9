@@ -1,0 +1,1372 @@
+import material/iscript/material_iscript_dialog;
+import material/iscript/material_iscript_test_combinations;
+import material/iscript/material_iscript_filter;
+import material/iscript/material_iscript_cursors;
+import material/internal/material_splitter;
+import material/internal/material_textinput;
+import material/internal/material_tabs;
+import material/internal/material_datatable;
+import material/internal/material_dialog_internal;
+import material/tropic_size_util;
+import fusion_utils;
+
+export {
+	MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MIScriptStack2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MInputOutputValues2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MFocusTree2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MIScriptErrors2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+}
+
+MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	repUns = ref nop;
+	contentForm = ref FEmpty();
+	contentFormKey = ref 0;
+	batchTestResults : ref [IScriptReplayResult] = ref [];
+	formSize = makeWH();
+	av : DynamicBehaviour<WidthHeight> = makeWH();
+
+	(manager.focus).behaviours ::= setTree((manager.focus).behaviours, "screen_available", Pair(av, ISInputValue([], "WidthHeight", true)));
+
+	(\p -> content
+	|> (\f ->
+		TransformTAcc2(\t2a -> {
+			b = f |> t2a;
+			contentForm := b.form;
+			contentFormKey := ^(manager.iscript.contentFormIdx);
+			manager.iscript.contentFormIdx := ^(manager.iscript.contentFormIdx) + 1;
+			manager.iscript.contentForms := setTree(^(manager.iscript.contentForms), ^contentFormKey, ^contentForm);
+			b
+		})
+	)
+	|> (\f -> TAttachBoxCopy(f, formSize))
+	|> (\f -> TGroup2SameMetrics(f, TShowLazy(manager.iscript.panelsShowGrid, \ -> TFillXYDrawGrid(64., 8.))))
+	|> (\f -> TAvailable(f, TSized(fselect(av, FLift(\a -> WidthHeight(a.width, a.height - 48.))))))
+	|> (\f -> TBorder(0., 48., 0., 0., f))
+	|> (\f ->
+		TConstruct(
+			[
+				makeSubscribe2(fselectWithLast(manager.iscript.iScriptStateB, FIdentity2()), \s : Pair<IScriptState, IScriptState> -> {
+					dispUns(repUns);
+
+					switch (s.second : IScriptState) {
+						IScriptRecording(options, continueRec): {
+							onlyOnce(manager.iscript.panelsRecordingPad, \ -> {
+								repUns := subscribeToIScriptBehavioursFocus(manager, options.captureHttpRequests);
+
+								if (continueRec) {
+									iScript = getValue(manager.iscript.iScriptB);
+									lastRecordDelay =
+										switch (popmax(iScript.stack)) {
+											PopResult(k, __, __) : k;
+											EmptyPopResult() : 0.0;
+										};
+
+									next(
+										manager.iscript.iScriptB,
+										IScript(
+											// shifting recordingStarted to ignore paused time
+											iScript.recordingStarted + timestamp() - lastRecordDelay,
+											iScript.stack
+										)
+									);
+
+									addIScriptScreenshot(manager, false);
+								} else {
+									clearCurrentScript(manager);
+
+									addIScriptScreenshot(manager, false);
+								}
+							});
+						}
+						IScriptReplaying(): onlyOnce(manager.iscript.panelsReplayingPad, \ -> deferred(\ -> {
+							scriptIsEmpty = getValue(manager.iscript.iScriptB).stack == TreeEmpty();
+
+							if (!scriptIsEmpty) {
+								tempStageWidthHeight = getValue(stageWidthHeight);
+
+								nextDistinct(manager.iscript.outputValuesB, map(getValue(manager.iscript.outputValuesB), \ov -> IScriptOutputValue(ov.name, false, None())));
+								nextDistinct(manager.iscript.errors, makeList());
+
+								showIScriptReplayCursor(manager);
+
+								repUns :=
+									[
+										substituteHttpRequest(manager),
+										replayIScript(manager, m2t,
+											\b -> {
+												hideIScriptReplayCursor(manager);
+												if (!b) {
+													iScriptError(manager, "IScript finished with errors", None());
+												}
+
+												outputValues : [Pair<string, Maybe<flow>>]= map(getValue(manager.iscript.outputValuesB), \ov : IScriptOutputValue -> Pair(ov.name, ov.value));
+
+												if (length(outputValues) > 0) {
+													setFileContent("iscript_output.txt", serialize(outputValues)) |> ignore;
+												}
+
+												nextDistinct(manager.iscript.iScriptStateB, IScriptDisabled());
+
+												// If there was a run with the parameter "playiscript", then we exit with the result return.
+												if (getUrlParameter("playiscript") != "") quit(b2i(!b));
+											},
+											true
+										),
+										\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
+									]
+									|> (\f3 -> \ -> applyall(f3))
+							}
+						}));
+						IScriptBatchReplaying(): onlyOnce(manager.iscript.panelsBatchReplayingPad, \ -> deferred(\ -> {
+							if (!isBatchIScriptEmpty(manager)) {
+								storedIScript = manager.iscript;
+
+								batchTestsFolder = getValue(manager.iscript.currentBatchTestsDirectoryB);
+
+								errorsCount = ref 0;
+								batchTestResults := [];
+
+								iScriptInfo(manager, "=== Start Batch Tests ===", None());
+								iterDeferred2(
+									getValue(manager.iscript.batchTestFileNamesB),
+									\filename, onDoneChunk -> {
+										dispUns(repUns);
+
+										currentScriptFilename = batchTestsFolder + filename;
+										iScriptInfo(manager, "Replaying " + currentScriptFilename, None());
+
+										iterFunc = \ -> {
+											repUns := [
+												substituteHttpRequest(manager),
+												// replayIScript(manager, getValue(manager.iscript.iScriptB), m2t)
+												// |> (\f2 ->
+												// 	interruptibleTimerChain(
+												// 		f2,
+												// 		\isSuccessReplay : bool -> {
+												// 			if (!isSuccessReplay) {
+												// 				iScriptError(manager, filename + " finished with errors", None());
+												// 				errorsCount := ^errorsCount + 1;
+												// 			};
+
+												// 			iscriptLogicalScreenshotM = extractLastLogicalScreenshot(manager);
+												// 			iscriptVisualScreenshotM = extractLastVisualScreenshot(manager);
+
+												// 			afterReplayLogicalScreenshot = getIScriptLogicalScreenshot(manager, fgetValue(formSize));
+												// 			afterReplayVisualScreenshot = getIScriptVisualScreenshot(manager, true);
+
+												// 			refArrayPush(batchTestResults,
+												// 				IScriptReplayResult(
+												// 					filename,
+												// 					isSuccessReplay,
+												// 					iscriptLogicalScreenshotM,
+												// 					iscriptVisualScreenshotM,
+												// 					afterReplayLogicalScreenshot,
+												// 					afterReplayVisualScreenshot
+												// 				)
+												// 			);
+
+												// 			outputValues = map(getValue(manager.iscript.outputValuesB), \ov -> Pair(ov.name, ov.value));
+												// 			if (length(outputValues) > 0) {
+												// 				setFileContent("iscript_output.txt", serialize(outputValues)) |> ignore;
+												// 			}
+												// 			iScriptInfo(manager, "", None());
+												// 			onDoneChunk()
+												// 		}
+												// 	)
+												// )
+											]
+											|> (\f3 -> (\ -> applyall(f3)))
+										};
+
+										if (startsWith(currentScriptFilename, "DB:/")) {
+											storeCurrentAndSetIScriptDBPartition(manager);
+											iScriptFromDB2(manager, currentScriptFilename,
+												\v : StoredIScript -> {
+													restoreCurrentDBPartition(manager);
+													next(manager.iscript.iScriptB, v.script);
+													iterFunc();
+												},
+												\err_msg -> {
+													restoreCurrentDBPartition(manager);
+													iScriptInfo(manager, err_msg, None());
+													onDoneChunk()
+												}
+											)
+										}
+										else {
+											iScriptFromFile(manager, currentScriptFilename);
+											iterFunc()
+										}
+									},
+									\ -> { // onDone
+										nextDistinct(manager.iscript.iScriptStateB, IScriptDisabled());
+										iScriptInfo(manager, "=== End Batch Tests ===", None());
+
+										// If there was a run with the parameter "playbatchiscript", then we exit with the result return.
+										if (getUrlParameter("playbatchiscript") != "") quit(^errorsCount);
+
+										showLogicalScreenshotCompareDialog(manager, batchTestsFolder, batchTestResults, m2t);
+									},
+									nop2 // progress
+								);
+							}
+						}));
+						IScriptDisabled(): {
+							manager.iscript.panelsRecordingPad := None();
+							manager.iscript.panelsReplayingPad := None();
+							manager.iscript.panelsBatchReplayingPad := None();
+
+							if (!js)
+								switch (s.first : IScriptState) {
+									IScriptRecording(__, __): {
+										next(manager.iscript.scriptChangedB, true);
+									}
+									default : {}
+								}
+						}
+						IScriptAddMFocusRecord(mf): {
+							maybeApply(mf, \foc -> {
+								dispUns(manager.iscript.panelsFocusUns);
+
+								manager.iscript.panelsFocusUns :=
+									interruptibleTimer(10, \ -> {
+										next(manager.iscript.iScriptStateB, IScriptDisabled());
+
+										addIScriptEventDialog(
+											manager,
+											foc,
+											\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+											nop,
+											m2t
+										)
+									})
+							})
+						}
+						IScriptAddMFocusGroupRecord(mf): {
+							maybeApply(mf, \foc -> {
+								dispUns(manager.iscript.panelsFocusGroupUns);
+
+								manager.iscript.panelsFocusGroupUns :=
+									interruptibleTimer(10, \ -> {
+										next(manager.iscript.iScriptStateB, IScriptDisabled());
+
+										addIScriptEventDialog(
+											manager,
+											foc,
+											\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+											nop,
+											m2t
+										)
+									})
+							})
+						}
+						IScriptMakeAlias(mf): {
+							maybeApply(mf, \foc -> {
+								dispUns(manager.iscript.panelsFocusUns);
+
+								manager.iscript.panelsFocusUns :=
+									interruptibleTimer(10, \ -> {
+										next(manager.iscript.iScriptStateB, IScriptDisabled());
+
+										defineGlobalAliasOnFocusDialog(
+											manager,
+											foc,
+											\alias -> addGlobalAliasInIScript(manager, foc, alias),
+											m2t
+										)
+									})
+							})
+						}
+						IScriptMakeGroupAlias(mf): {
+							maybeApply(mf, \foc -> {
+								dispUns(manager.iscript.panelsFocusGroupUns);
+
+								manager.iscript.panelsFocusGroupUns :=
+									interruptibleTimer(10, \ -> {
+										next(manager.iscript.iScriptStateB, IScriptDisabled());
+
+										defineGlobalAliasOnFocusDialog(
+											manager,
+											foc,
+											\alias -> addGlobalAliasInIScript(manager, foc, alias),
+											m2t
+										)
+									})
+							})
+						}
+						default: {}
+					}
+				}),
+				\ -> bidirectionalLink(
+					manager.iscript.iScriptStateB,
+					manager.iscript.panelsRecordToggleValue,
+					\s -> {
+						switch (s) {
+							IScriptRecording(__, __): true;
+							default: false;
+						}
+					},
+					\v -> {
+						if (v) {
+							if (!isIScriptEmpty(manager)) {
+								showRecordingModeDialog(manager, m2t);
+								IScriptDisabled();
+							} else {
+								IScriptRecording(manager.iscript.getCaptureOptions(), false);
+							}
+						} else {
+							// The latest entries in the script should be screenshots.
+							// The order of the function call is important.
+							addIScriptScreenshot(manager, true);
+							addIScriptLogicalScreenshot(manager, fgetValue(formSize));
+							addIScriptVisualScreenshot(manager, true);
+							IScriptDisabled();
+						}
+					}
+				),
+				\ -> bidirectionalLink(
+					manager.iscript.iScriptStateB,
+					manager.iscript.panelsReplayToggleValue,
+					\s -> s == IScriptReplaying(),
+					\v -> if (v) IScriptReplaying() else IScriptDisabled()
+				),
+				\ -> bidirectionalLink(
+					manager.iscript.iScriptStateB,
+					manager.iscript.panelsBatchReplayToggleValue,
+					\s -> s == IScriptBatchReplaying(),
+					\v -> if (v) IScriptBatchReplaying() else IScriptDisabled()
+				)
+			],
+			f
+		)
+	))
+	|> MGetFocusGroup
+	|> (\f ->
+		\p -> MSplitter2T(
+			manager,
+			p,
+			MSplitter(
+				f,
+				MDynamicTabs2T(
+					manager,
+					p,
+					MDynamicTabs(
+						fselect(
+							manager.iscript.currentBatchTestsDirectoryB,
+							FLift(\v -> concat(
+								if (v != "") [MTab(MBatchTests2T(manager, p, m2t), const(_("Batch Tests")), [])] else [],
+								[
+									MTab(MIScriptStack2T(manager, p, m2t), const(_("Script")), []),
+									MTab(MInputOutputValues2T(manager, p, m2t), const(_("Input/Output")), []),
+									// MTab(MAliases2T(manager, p, m2t), const(_("Aliases")), []),
+									MTab(MFocusTree2T(manager, p, m2t), const(_("UI Tree")), []),
+									MTab(MIScriptErrors2T(manager, p, m2t), const(_("Errors")), [])
+								]
+							))
+						),
+						manager.iscript.panelsCurrentTab,
+						[]
+					),
+					m2t
+				)
+				|> (\f2 -> TFrame(0., 0., [MFill(MBackgroundColor(p.theme.lightBackground))], f2))
+				// Prevent capturing mouse events by IScript on Script Panel
+				|> disableInteractivesBelow,
+				TFillXY(),
+				[
+					MEnabled(manager.iscript.panelsShowSidebar),
+					MSplitterValue(manager.iscript.panelsSplitterValue),
+				]
+			),
+			m2t
+		)
+	)
+	|> (\f ->
+		\p -> TGroup2(
+			f(p),
+			MBaselineCols([
+				MSelect(
+					fselect(manager.iscript.filesystemDB, isSome |> FLift),
+					\v -> MMenu(
+						MIconButton("folder", nop, [], [MTooltipText(const(_("Save or load scripts")))]),
+						concatA([
+							[
+								MMenuSingleLine("New script",
+									[MOnClick(\ -> {
+										clearCurrentScript(manager);
+										next(manager.iscript.iScriptStateB, IScriptDisabled());
+									}), MTooltipText(const(_("Clear current script")))]),
+								MSeparatorLine(),
+							],
+							if (cpp)
+							[
+								MMenuSingleLine("Open script",
+									[MOnClick(\ -> loadIScriptDialog(manager, false, m2t)), MTooltipText(const(_("Replace current script with script from file")))]),
+								MMenuSingleLine("Save script",
+									[MOnClick(\ -> saveIScript(manager, getValue(manager.iscript.currentFileNameB), m2t)),
+										MEnabled(fselect(manager.iscript.scriptChangedB, FLift(\scriptChanged -> scriptChanged && getValue(manager.iscript.currentFileNameB) != "")))]),
+								MMenuSingleLine("Save script as ...",
+									[MOnClick(\ -> saveIScriptDialog(manager, m2t)), MEnabled(fselect(manager.iscript.iScriptB, FLift(\script -> !isIScriptEmpty(manager))))]),
+								MSeparatorLine(),
+								MMenuSingleLine("Open Batch Tests",
+									[MOnClick(\ -> loadBatchTestsDialog(manager, m2t))]),
+							] else [],
+							if (cpp && v) [MSeparatorLine()] else [],
+							if (v)
+							[
+								MMenuSingleLine("Open script from DB",
+									[MOnClick(\ -> loadDBIScriptDialog(manager, false, m2t)), MTooltipText(const(_("Replace current script with script from file")))]),
+								MMenuSingleLine("Save script to DB",
+									[MOnClick(\ -> saveDBIScript(manager, getValue(manager.iscript.currentFileNameB), m2t)),
+										MEnabled(fselect(manager.iscript.scriptChangedB, FLift(\scriptChanged -> scriptChanged && getValue(manager.iscript.currentFileNameB) != "")))]),
+								MMenuSingleLine("Save script to DB as ...",
+									[MOnClick(\ -> saveDBIScriptDialog(manager, m2t)), MEnabled(fselect(manager.iscript.iScriptB, FLift(\script -> !isIScriptEmpty(manager))))]),
+								MSeparatorLine(),
+								MMenuSingleLine("Open Batch Tests from DB",
+									[MOnClick(\ -> loadDBBatchTestsDialog(manager, m2t))]),
+							] else []
+							]),
+						[MOpenOnClick(), MEnabled(feq(manager.iscript.iScriptStateB, IScriptDisabled()))]
+					)
+				),
+				TFillX(),
+				MIconButton("settings", \ -> showRecordSettingsDialog(manager, m2t), [],
+					[
+						MTooltipText(const(_("Open record settings"))),
+						MEnabled(fselect(manager.iscript.iScriptStateB, FLift(\isrs ->
+							!isSameStructType(isrs, IScriptReplaying()) && !isSameStructType(isrs, IScriptBatchReplaying()))))
+					]
+				),
+				MIconToggle(
+					"grid_off",
+					[MToggleFalseIcon("grid_on", [])],
+					[
+						MToggleValue(manager.iscript.panelsShowGrid),
+						MTooltipText(const(_("Show Grid")))
+					]
+				),
+				MIconButton("note", \ -> showCombinationsDialog(manager, m2t), [], [
+					MEnabled(fselect(manager.iscript.iScriptB, FLift(\script -> !isIScriptEmpty(manager)))),
+					// MEnabled(const(true)),
+					MTooltipText(const(_("Open test combinations dialog")))
+				]),
+				MIf(
+					fselect(manager.iscript.iScriptStateB, FLift(\isrs -> {
+						switch (isrs : IScriptState) {
+							IScriptAddRecord(__): true;
+							IScriptAddMFocusRecord(__): true;
+							IScriptAddMFocusGroupRecord(__): true;
+							IScriptMakeAlias(__): true;
+							IScriptMakeGroupAlias(__): true;
+
+							IScriptRecording(__, __): false;
+							IScriptReplaying(): false;
+							IScriptBatchReplaying() : false;
+							IScriptDisabled(): false;
+						}
+					})),
+					MIconButton("close", \ -> nextDistinct(manager.iscript.iScriptStateB, IScriptDisabled()), [], []),
+					MMenu(
+						MIconButton("add", nop, [], [MTooltipText(const(_("Add behaviour record")))]),
+						[
+							MMenuSingleLine("Capture single interaction",
+								[MOnClick(\ -> nextDistinct(manager.iscript.iScriptStateB, IScriptAddMFocusRecord(None()))),
+									MEnabled(feq(manager.iscript.iScriptStateB, IScriptDisabled()))]),
+							MMenuSingleLine("Capture group of interaction elements",
+								[MOnClick(\ -> nextDistinct(manager.iscript.iScriptStateB, IScriptAddMFocusGroupRecord(None()))),
+									MEnabled(feq(manager.iscript.iScriptStateB, IScriptDisabled()))]),
+							MMenuSingleLine("Capture screenshot",
+								[MOnClick(\ -> addIScriptScreenshot(manager, false))]),
+							MMenuSingleLine(
+								"Capture snapshot of logical UI state",
+								[
+									MOnClick(\ ->
+										addIScriptShallowLogicalScreenshot(
+											manager,
+											switch (getValue(manager.iscript.iScriptStateB)) {
+												IScriptRecording(__, __): timestamp() - getValue(manager.iscript.iScriptB).recordingStarted;
+												default: 0.0;
+											},
+											^contentForm,
+											fgetValue(formSize)
+										)
+									)
+								]
+							),
+							MMenuSingleLine("Define alias for the element",
+								[MOnClick(\ -> nextDistinct(manager.iscript.iScriptStateB, IScriptMakeAlias(None()))),
+									MEnabled(feq(manager.iscript.iScriptStateB, IScriptDisabled()))]),
+							MMenuSingleLine("Define alias for the group of elements",
+								[MOnClick(\ -> nextDistinct(manager.iscript.iScriptStateB, IScriptMakeGroupAlias(None()))),
+									MEnabled(feq(manager.iscript.iScriptStateB, IScriptDisabled()))]),
+							MMenuSingleLine("Import script",
+								[MOnClick(\ -> loadIScriptDialog(manager, true, m2t)), MTooltipText(const(_("Add script from file to the current script")))])
+						],
+						[MOpenOnClick()]
+					)
+				),
+				MSelect(manager.iscript.iscriptPanelVisibleB,
+					\v -> MIconToggle(
+						"stop",
+						[MToggleFalseIcon("fiber_manual_record", [MRed(500)])],
+						concat(
+							[
+								MToggleValue(manager.iscript.panelsRecordToggleValue),
+								MEnabled(fselect(manager.iscript.iScriptStateB, FLift(\isrs -> isrs != IScriptReplaying() && isrs != IScriptBatchReplaying()))),
+							],
+							if (v) [
+								MTooltipText(fselect(manager.iscript.panelsRecordToggleValue, FLift(\rec -> if (rec) _("Stop recording") else _("Start recording"))))
+							] else [],
+						)
+					)),
+				MIconButton("settings_backup_restore", \ -> showReplaySettingsDialog(manager, m2t), [], [MTooltipText(const(_("Open replay settings")))]),
+				MIconToggle(
+					"stop",
+					[MToggleFalseIcon("play_arrow", [MGreen(500)])],
+					[
+						MToggleValue(manager.iscript.panelsReplayToggleValue),
+						MEnabled(fselect2(
+							manager.iscript.iScriptStateB,
+							manager.iscript.iScriptB,
+							FLift2(\isrs, iScript -> {
+								switch (isrs) {
+									IScriptRecording(__, __): false;
+									IScriptBatchReplaying(): false;
+									default: true;
+								} && sizeTree(iScript.stack) > 0
+							})
+						)),
+						MTooltipText(fselect(manager.iscript.panelsReplayToggleValue, FLift(\v -> if(v) _("Stop replaying") else _("Replay recording"))))
+					]
+				),
+				MIconToggle(
+					"stop",
+					[MToggleFalseIcon("playlist_play", [MGreen(500)])],
+					[
+						MToggleValue(manager.iscript.panelsBatchReplayToggleValue),
+						MEnabled(fselect2(
+							manager.iscript.currentBatchTestsDirectoryB,
+							manager.iscript.iScriptStateB,
+							FLift2(\dir, state -> {
+								switch(state) {
+									IScriptRecording(__, __): false;
+									IScriptReplaying(): false;
+									default: true;
+								} && (dir != "")
+							})
+						)),
+						MTooltipText(fselect(manager.iscript.panelsBatchReplayToggleValue, FLift(\v -> if(v) _("Stop batch tests") else _("Replay batch tests"))))
+					]
+				),
+				MIconToggle(
+					"arrow_forward",
+					[MToggleFalseIcon("menu", [])],
+					[
+						MToggleValue(manager.iscript.panelsShowSidebar),
+						MTooltipText(fselect(manager.iscript.panelsShowSidebar, FLift(\v -> if(v) _("Hide recording sidebar") else _("Show recording sidebar"))))
+					]
+				),
+			])
+			|> (\f2 -> MBorder(16., 0., 8., 0., f2))
+			|> (\f2 -> MFrame(0., 0., [MFill(MBackgroundColor(manager.theme.lightBackground))], f2))
+			|> (\f2 -> MScroll2T(manager, p, MScroll(f2, TFillXH(48.), []), m2t))
+			|> (\f2 ->
+				TAvailable(
+					f2,
+					TSized(
+						fselect2(av, fif(manager.iscript.panelsShowSidebar, manager.iscript.panelsSplitterValue, const(1.)), FLift2(\a, v ->
+							WidthHeight(a.width * v - if (v == 1.) 0. else 5., a.height))
+						)
+					)
+				)
+			)
+			|> (\f2 -> TAttachBoxCopy(f2, manager.iscript.topPanelWidthHeightB))
+			// Prevent capturing mouse events by IScript on Script Panel
+			|> disableInteractivesBelow
+			|> (\f2 -> TVisible(manager.iscript.iscriptPanelVisibleB, f2))
+		)
+	)
+	|> (\f ->
+		MActivate2T(
+			manager,
+			manager.focus,
+			"MIscriptTabs",
+			[IScriptRecordingEnabled(const(false)), MZorder(manager.currentZorder)],
+			f
+		)
+	)
+	|> (\f -> TGroup2(
+			f,
+			TVisible(manager.iscript.replayCursorVisibleB,
+				TTranslate(manager.iscript.replayCursorPositionB, TSelect(manager.iscript.replayCursorShapeB, idfn))
+			)
+		)
+	)
+	|> (\f -> TAttachBoxCopyAvailable(f, av))
+}
+
+clearCurrentScript(manager : MaterialManager) -> void {
+	nextDistinct(manager.iscript.outputValuesB, []);
+	nextDistinct(manager.iscript.inputValuesB, []);
+
+	next(
+		manager.iscript.iScriptB,
+		makeEmptyIScript()
+	);
+}
+
+compressScript(script : IScript) -> IScript {
+	newStack = filterIScriptStackTree(script.stack, \delay, record -> {
+		switch (record) {
+			IScriptBehaviourRecord(__, __, type, __) : {
+				switch (type) {
+					ISMouseEvent() : false;
+					ISMiscEvent() : false;
+					default : true;
+				}
+			}
+			default : true;
+		}
+	});
+
+	// TODO: Reimplement
+	// filteredInputs = foldIScriptStackTree(newStack, [], \acc : [IScriptRecord], delay, record -> {
+	// 	if (length(acc) > 0) {
+	// 		last = acc[length(acc) - 1];
+
+	// 		switch (last) {
+	// 			IScriptBehaviourRecord(lastDescriptor, __, lastType, __) : {
+	// 				switch (record) {
+	// 					IScriptBehaviourRecord(descriptor, __, type, __) : {
+	// 						if (isSameStructType(type, lastType) && isSameStructType(type, ISInputValue([], "", false)) && IScriptId2s(descriptor.component.id) == IScriptId2s(lastDescriptor.component.id))
+	// 							replace(acc, length(acc) - 1, record)
+	// 						else
+	// 							arrayPush(acc, record);
+	// 					}
+	// 					default : arrayPush(acc, record);
+	// 				}
+	// 			}
+	// 			default : arrayPush(acc, record);
+	// 		}
+	// 	} else {
+	// 		[record]
+	// 	}
+	// });
+
+	IScript(script.recordingStarted, newStack);
+}
+
+MBatchTests2T(manager : MaterialManager, p : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TSelect(
+		manager.iscript.batchTestFileNamesB,
+		\fs -> {
+			map(fs, \filename -> {
+			button = MIconButton(
+				"open_in_browser",
+				\ -> {
+					iScriptFromFile(manager, getValue(manager.iscript.currentBatchTestsDirectoryB) + filename);
+					next(manager.iscript.panelsCurrentTab, 1)
+				},
+				[MIconSize(20.)],
+				[MTooltipText(const(_("Open script in SCRIPT tab")))]
+			);
+			MSingleLine(filename, [MSecondaryAction(button)])
+		})
+		|> (\f -> MList(f, [], []))
+		|> (\f -> MList2T(manager, p, f, m2t))
+	})
+	|> (\f ->
+	TLines([
+		TBorder(16., 0., 16., 16.,
+			TBaselineCols([
+				MTooltip2T(manager, p,
+					MIconButton("update", \ -> updateBatchTestFilenames(manager, getValue(manager.iscript.currentBatchTestsDirectoryB)), [], [])
+					|> (\m -> MTooltip(m, MText("Reload", []), [])),
+					m2t
+				),
+				TFillX()
+			])
+		),
+		f
+	]))
+}
+
+MIScriptStack2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	searchB = make("");
+	filterTypesB = make([FTNoIScript()]);
+	filterPopupOpenedB = make(true);
+	caseSensitiveB = make(false);
+	posScaleB = make(zeroPositionScale);
+
+	inputEnabled = make(false);
+
+	visibleRecordsB = fselect4(
+		manager.iscript.iScriptB,
+		searchB,
+		filterTypesB,
+		caseSensitiveB,
+		\rs : IScript, sb, ft, cs -> {
+			iScriptStack = mapIScriptStack(rs.stack, \delay, record -> Pair(delay, record));
+
+			strFiltered = if (strlen(sb) > 0) {
+				aliases = getValue(manager.iscript.aliasesB);
+				filter(iScriptStack, \r0: Pair<double, IScriptRecord> -> {
+					caption = getIScriptRecordCaption(aliases, r0);
+					if (cs)
+						strContains(caption, sb)
+					else
+						strContains(toLowerCase(caption), toLowerCase(sb))
+				});
+			} else {
+				iScriptStack;
+			}
+
+			recordFiltered = if (containsStruct(ft, FTIScriptRecords([]))) {
+				recordFilter = extractStruct(ft, FTIScriptRecords([]));
+				filter(strFiltered, \r0: Pair<double, IScriptRecord> -> exists(recordFilter.records, \v -> isSameStructType(v, r0.second)))
+			} else strFiltered;
+
+			recordTypeFiltered = if (containsStruct(ft, FTIScriptRecordTypes([]))) {
+				recordTypeFilter = extractStruct(ft, FTIScriptRecordTypes([]));
+				filter(recordFiltered, \r0: Pair<double, IScriptRecord> -> {
+					var = r0.second;
+					switch(var) {
+						IScriptCheck(__, __, __) : exists(recordTypeFilter.types, \v -> isSameStructType(v, var.type));
+						IScriptBehaviourRecord(__, __, __, __) : exists(recordTypeFilter.types, \v -> isSameStructType(v, var.type));
+						default: false;
+					}
+				})
+			} else recordFiltered;
+
+			behaviourFiltered = if (containsStruct(ft, FTIScriptBehaviourDescriptors("", "", ""))) {
+				behaviourFilter = extractStruct(ft, FTIScriptBehaviourDescriptors("", "", ""));
+				filter(recordTypeFiltered, \r0: Pair<double, IScriptRecord> -> {
+					var = r0.second;
+					switch(var) {
+						IScriptCheck(__, __, __) : checkBehaviour(var.behaviourDescriptor, behaviourFilter, cs);
+						IScriptBehaviourRecord(__, __, __, __) : checkBehaviour(var.descriptor, behaviourFilter, cs);
+						IScriptInputRecord(__, __, __, __) : checkBehaviour(var.behaviourDescriptor, behaviourFilter, cs);
+						IScriptOutputRecord(__, __) : checkBehaviour(var.behaviourDescriptor, behaviourFilter, cs);
+						default: false;
+					}
+				})
+			} else recordTypeFiltered;
+
+			behaviourFiltered;
+		}
+	);
+
+	// fselect2(manager.iscript.aliasesB, visibleRecordsB, FLift2(\aliases, visibleRecords -> {
+		fmap(visibleRecordsB, \r0 : Pair<double, IScriptRecord> -> {
+			time = r0.first;
+			r = r0.second;
+
+			caption = getIScriptRecordCaption(getValue(manager.iscript.aliasesB), r0);
+
+			if (caption != "") {
+				hover = make(false);
+				buttons = getIScriptRecordButtons(
+					manager,
+					m2t,
+					r0,
+					true,
+					\nr -> addIScriptRecordWithDelay(manager, nr.first, nr.second),
+					\mr -> replaceRecordInIScript(manager, Pair(time, r), mr),
+					\ -> removeRecordFromIScript(manager, Pair(time, r))
+				);
+
+				MSingleLine(caption, [MSecondaryAction(MBaselineCols(buttons) |> addIScriptRecordHover(manager, r0, hover)), THovering(hover)])
+			} else {
+				MSeparatorLine()
+			}
+		})
+	// }))
+	|> (\f -> MDynamicList(f, [], []))
+	|> (\f -> MDynamicList2T(manager, parent, f, m2t))
+	|> (\f ->
+		TLines([
+			TBorder(16., 0., 16., 16.,
+				TBaselineCols([
+					TPositionScale(posScaleB,
+						MIconButton2T(
+							manager,
+							parent,
+							MIconButton("filter_list", \ -> {
+								renderFilterPopup(manager, parent, m2t, filterTypesB, searchB, filterPopupOpenedB, posScaleB, caseSensitiveB)
+							}, [], [MShortcut("ctrl+f")]))
+					),
+					TFillX(),
+					MTextButton2T(
+						manager,
+						parent,
+						MTextButton("COMPRESS SCRIPT", \ -> {
+								next(manager.iscript.iScriptB, compressScript(getValue(manager.iscript.iScriptB)));
+								next(manager.iscript.scriptChangedB, true);
+							},
+							[], [MEnabled(fselect(manager.iscript.iScriptB, FLift(\__ -> !isIScriptEmpty(manager))))]
+						)
+					)
+				])
+			),
+			renderSearchChip(manager, parent, searchB, caseSensitiveB),
+			renderFilterChips(manager, parent, filterTypesB),
+			f
+		])
+	)
+}
+
+MInputOutputValues2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	TProportionCols(
+		[
+			MSelect2T(
+				manager,
+				parent,
+				"MInputValueRecords",
+				[],
+				fmap(
+					fselect(manager.iscript.iScriptB, getMInputValueRecords |> FLift),
+					\r -> \p -> {
+						typeHelper = r.second.valueTypeHelper;
+						inputName = r.second.name;
+						inputValues = getValue(manager.iscript.inputValuesB);
+						inputIndex = findiDef(inputValues, \input -> input.name == inputName, -1);
+						askB = if (inputIndex == -1) make(false) else make(isNone(inputValues[inputIndex].value));
+
+						pair = makeValueInputByTypeHint(r.second.possibleValues, r.second.valueTypeHelper, None(), fnot(askB));
+						valueB = pair.first;
+						item = pair.second;
+						askSwitch = MEGSwitchControl("Ask for value during the replay", askB, []);
+
+						TConstruct([
+								makeSubscribe2(fpair(valueB, askB), \vaPair -> {
+									value = vaPair.first;
+									ask = vaPair.second;
+									iScript = getValue(manager.iscript.iScriptB);
+									inputValue = IScriptInputValue(
+										inputName,
+										typeHelper,
+										if (ask) None() else Some(value)
+									);
+
+									next(manager.iscript.inputValuesB, replace(inputValues, inputIndex, inputValue));
+								})
+							],
+							TBorder(0.0, 8.0, 0.0, 8.0, TFrame(1.0, 0.0, [Stroke(black)], TPad(8.0, 8.0, TLines([
+								MEGItem2T(p, MText("\"" + inputName + "\"", [MSubheading()]), [], m2t),
+								TFixed(0.0, 8.0),
+								MEGItem2T(p, askSwitch, [], m2t),
+								MEGItem2T(p, item, [], m2t)
+							]))))
+						)
+					}
+				),
+				\rs, p ->
+					map(rs, \r -> r(p))
+					|> (\f2 ->
+						concat(
+							[MEllipsisText2T(manager, parent, MEllipsisText("Input Values:", [MShowTooltip(const(true))]))],
+							f2
+						)
+					)
+					|> TLines
+			)
+			|> (\f2 -> TBorder(16., 16., 0., 0., f2))
+			|> (\f2 -> TGroup2(f2, TFillX()))
+			|> (\f2 -> Pair(const(0.5), f2)),
+			MSelect2T(
+				manager,
+				parent,
+				"MOutputValueRecords",
+				[],
+				fmap(
+					manager.iscript.outputValuesB,
+					\r -> \p -> {
+						if (r.visible) {
+							material = MLines2(
+								MText(r.name, []),
+								MText(eitherMap(r.value, toString, "No such behaviour"), [])
+							);
+
+							MEGItem2T(p, material, [], m2t)
+						} else
+							TEmpty();
+					}
+				),
+				\rs, p ->
+					map(rs, \r -> r(p))
+					|> (\f2 ->
+						concat(
+							[MEllipsisText2T(manager, parent, MEllipsisText("Output Values:", [MShowTooltip(const(true))]))],
+							f2
+						)
+					)
+					|> TLines
+			)
+			|> (\f2 -> TBorder(16., 16., 0., 0., f2))
+			|> (\f2 -> TGroup2(f2, TFillX()))
+			|> (\f2 -> Pair(const(0.5), f2))
+		]
+	)
+}
+
+getMInputValueRecords(iScript : IScript) -> [Pair<double, IScriptInputRecord>] {
+	filtermapIScriptStack(iScript.stack, \delay, record -> {
+		switch (record : IScriptRecord) {
+			IScriptInputRecord(__, __, __, __) : Some(Pair(delay, record));
+			default: None();
+		}
+	});
+}
+
+getMOutputValueRecords(iScript : IScript) -> [Pair<double, IScriptOutputRecord>] {
+	filtermapIScriptStack(iScript.stack, \delay, record -> {
+		switch (record : IScriptRecord) {
+			IScriptOutputRecord(__, __) : Some(Pair(delay, record));
+			default: None();
+		}
+	});
+}
+
+MAliases2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	elementNameWidth = 400;
+	aliasWidth = 360;
+	columns = [
+		MColumn("Element name", "", elementNameWidth, []),
+		MColumn("Alias", "", aliasWidth, []),
+		MColumn("", "", 48, []),
+		MColumn("", "", 48, [])
+	];
+
+	fselect(manager.iscript.aliasesB, FLift(\aliases -> {
+		foldTree(aliases, [], \descriptor, alias, acc -> {
+			elementTitle = descriptor.name + " [" + IScriptId2s(descriptor.id) + "]";
+
+			arrayPush(acc, [
+				MParagraph(elementTitle, [MWidth(i2d(elementNameWidth))]),
+				MParagraph(alias, [MWidth(i2d(aliasWidth))]),
+				MIconButton("edit", \ -> {
+						defineGlobalAliasDialog(
+							manager,
+							descriptor.name,
+							descriptor.id,
+							\newAlias -> next(manager.iscript.aliasesB, setTree(aliases, descriptor, newAlias)),
+							m2t
+						)
+					}, [], []
+				),
+				MIconButton("delete", \ -> next(manager.iscript.aliasesB, removeFromTree(aliases, descriptor)), [], [])
+			])
+		})
+	}))
+	|> (\m -> MDynamicDataTable(columns, m, []))
+	|> (\m -> MDynamicDataTable2T(manager, parent, m, m2t))
+
+	// fselect(manager.iscript.aliasesB, FLift(\aliases -> {
+	// 	foldTree(aliases, [], \descriptor, alias, acc -> {
+	// 		elementTitle = descriptor.componentName + " [" + IScriptId2s(descriptor.id) + "]";
+	// 		lineTitle = elementTitle + " = \"" + alias + "\"";
+
+	// 		arrayPush(acc, MSingleLine(lineTitle, []));
+	// 	})
+	// }))
+	// |> (\f -> MDynamicList(f, [], []))
+	// |> (\f -> MDynamicList2T(manager, parent, f, m2t))
+
+
+	// |> (\f ->
+	// 	TLines2(
+	// 		TBorder(16., 0., 16., 16.,
+	// 			TBaselineCols([
+	// 				MTextInput2T(
+	// 					manager,
+	// 					parent,
+	// 					MTextInput(manager.iscript.panelsSearchInputContent, [MLabel("Search"), MFilterAction(\c -> nextDistinct(searchB, c))],
+	// 						[
+	// 							MEnabled(fselect(manager.iscript.iScriptStateB, FLift(\iss -> {
+	// 								en = !isSameStructType(iss, IScriptRecording(makeCaptureOptions(), false));
+
+	// 								c = getValue(manager.iscript.panelsSearchInputContent);
+
+	// 								deferred(\ -> next(manager.iscript.panelsSearchInputContent, c));
+	// 								if (!en) nextDistinct(searchB, "");
+
+	// 								en
+	// 							})))
+	// 						]
+	// 					),
+	// 					m2t
+	// 				),
+	// 				TFixed(16.0, 0.0),
+	// 				MTextButton2T(
+	// 					manager,
+	// 					parent,
+	// 					MTextButton("COMPRESS SCRIPT", \ -> {
+	// 							next(manager.iscript.iScriptB, compressScript(getValue(manager.iscript.iScriptB)));
+	// 							next(manager.iscript.scriptChangedB, true);
+	// 						},
+	// 						[], [MEnabled(fselect(manager.iscript.iScriptB, FLift(\__ -> !isIScriptEmpty(manager))))]
+	// 					)
+	// 				)
+	// 			])
+	// 		),
+	// 		f
+	// 	)
+	// )
+
+	// |> (\f ->
+	// 	TConstruct(
+	// 		[
+	// 			makeSubscribe(manager.iscript.iScriptStateB, \iss -> {
+	// 				nextDistinct(inputEnabled, !isSameStructType(iss, IScriptRecording(makeCaptureOptions(), false)));
+	// 				c = getValue(manager.iscript.panelsSearchInputContent);
+	// 				deferred(\ -> next(manager.iscript.panelsSearchInputContent, c));
+	// 				if (!getValue(inputEnabled)) nextDistinct(searchB, "");
+	// 			})
+	// 		],
+	// 		f
+	// 	)
+	// )
+}
+
+MFocusTree2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MFocusTree2T2(manager, manager.focus, m2t, 0)
+	|> (\f -> MGetFocusGroup(\p -> MList2T(manager, p, MList([f], [], []), m2t)))
+	|> (\f -> MBorder(0., 8., 0., 8., f))
+	|> (\f -> MScroll2T(manager, parent, MScroll(f, TFillXY(), [IScriptRecordingEnabled(const(false))]), m2t))
+}
+
+MFocusTree2T2(manager : MaterialManager, focus : MaterialFocus, m2t : (Material, MFocusGroup) -> Tropic, tabLevel : int) -> MListLine {
+	emptyResult : [MListLine] = []; // Typechecker workaround
+	hover = make(false);
+
+	switchMaterialFocus(
+		focus,
+		\f ->
+			MCustomLine(
+				(\p -> TBaselineCols([
+					MText2T(p, i2s(fgetValue(f.id)), [MCaption()])
+					|> TSetMinWidth(TFixed(18., 0.))
+					|> (\f2 -> TBorder(32. + i2d(tabLevel) * 16., 0., 8., 0., f2)),
+					MEllipsisText2T(manager, p, MEllipsisText(f.name, [MCaptionSolid(), MShowTooltip(const(true))]))
+					|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
+					eitherMap(
+						f.iScriptId,
+						\id ->
+							MEllipsisText2T(manager, p, MEllipsisText(id, [MCaption(), MShowTooltip(const(true))]))
+							|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
+						TEmpty()
+					),
+					MIconButton2T(
+						manager,
+						p,
+						MIconButton(
+							"add",
+							\ ->
+								addIScriptEventDialog(
+									manager,
+									focus,
+									\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+									nop,
+									m2t
+								),
+							[MIconSize(16.), MIconButtonBorder(4.)],
+							[]
+						)
+					)
+					|> (\f2 -> TBorder(0., 0., 8., 0., f2))
+				])
+				|> (\f2 ->
+					TConstruct(
+						[
+							makeSubscribe2focusHovered(manager, \ -> Some(f), hover)
+						],
+						f2
+					)
+				)
+				|> TCenterY)
+				|> MGetFocusGroup,
+				[MClickEnabled(const(false)), MHeight(32.), THovering(hover)]
+			),
+		\f -> {
+			expanded = make(false);
+			hasItems = fselect(f.focusIds, FLift(\it -> sizeTree(it) > 0));
+
+			MSubmenuLine(
+				MCustomLine(
+					(\p -> TBaselineCols([
+						TIfLazy2(
+							hasItems,
+							\it ->
+								TIfLazy2(
+									expanded,
+									\ex ->
+										MIcon2T(
+											p,
+											if (ex)
+												"arrow_drop_up"
+											else
+												"arrow_drop_down",
+											if (it)
+												[MIconSize(18.)]
+											else
+												[MIconSize(18.), FillOpacity(0.2)]
+										),
+									true
+								),
+							true
+						)
+						|> (\f2 -> TBorder(8. + i2d(tabLevel) * 16., 0., 0., 0., f2)),
+						MText2T(p, i2s(fgetValue(f.id)), [MCaption()])
+						|> TSetMinWidth(TFixed(16., 0.))
+						|> (\f2 -> TBorder(8., 0., 8., 0., f2)),
+						MEllipsisText2T(manager, p, MEllipsisText(f.name, [MCaptionSolid(), MShowTooltip(const(true))]))
+						|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
+						eitherMap(
+							f.iScriptId,
+							\id ->
+								MEllipsisText2T(manager, p, MEllipsisText(id, [MCaption(), MShowTooltip(const(true))]))
+								|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
+							TEmpty()
+						),
+						MIconButton2T(
+							manager,
+							p,
+							MIconButton(
+								"add",
+								\ ->
+									addIScriptEventDialog(
+										manager,
+										focus,
+										\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+										nop,
+										m2t
+									),
+								[MIconSize(18.), MIconButtonBorder(4.)],
+								[]
+							)
+						)
+						|> (\f2 -> TBorder(0., 0., 8., 0., f2))
+					])
+					|> (\f2 ->
+						TConstruct(
+							[
+								makeSubscribe2focusHovered(manager, \ -> Some(f), hover)
+							],
+							f2
+						)
+					)
+					|> TCenterY)
+					|> MGetFocusGroup,
+					[MClickEnabled(hasItems), MHeight(32.), THovering(hover)]
+				),
+				fsubmap(
+					fselect(f.focusIds, getTreeValues |> FLift),
+					\f2 -> fif(f2.recordingEnabled, const(MFocusTree2T2(manager, f2, m2t, tabLevel + 1)), const(MCustomLine(MEmpty(), [])))
+				),
+				[],
+				expanded
+			)
+		}
+	)
+}
+
+MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	categoryTag = ref "material";
+	instanceTag = ref "material2tropic";
+	debuggingBehavioursNowB = make(false);
+	parent = dummyEnabledParentWithTheme(manager, !manager.theme.lightBackground);
+
+	subsInfo = make(true);
+	nextsInfo = make(false);
+	zorderInfo = make(true);
+	focusInfo = make(true);
+
+	content
+	|> (\f ->
+		TLines2(
+			MBaselineCols([
+				MGroup2(
+					MBaselineCols([
+						MShow(
+							subsInfo,
+							MConstruct(
+								[
+									\ -> {
+										setLeakingSubscribersHandler(100, 50, \subscribersCount, value -> {
+											if (subscribersCount != subscribersCountBelowThreshold) {
+												dumpValue = value |> getValue |> behaviourValueToString;
+												println("ERROR: Too many subscribers (" + toString(subscribersCount) + ") to " + dumpValue);
+												materialLogFn(
+													printCallstack,
+													MaterialWarning(),
+													nop
+												)
+											}
+										});
+
+										clearLeakingSubscribersHandler;
+									}
+								],
+								MCols2(
+									MText("Subscribers: ", []),
+									MSelect(getCurrentSubscribersCountBehaviour(), \t -> MText(i2s(t), []))
+								)
+							)
+						),
+						MShow(
+							nextsInfo,
+							MConstruct(
+								[
+									\ -> {
+										setCountNexts(true);
+
+										\ -> setCountNexts(false);
+									}
+								],
+								MCols2(
+									MText("  Nexts: ", []),
+									MSelect(getCurrentNextCountBehaviour(), \t -> MText(i2s(t), [])),
+								)
+							)
+						),
+						MShow(
+							zorderInfo,
+							MCols2(
+								MText("  Z-order: ", []),
+								MSelect(manager.currentZorder, \i -> MText(i2s(i), [])),
+							)
+						),
+						MShow(
+							focusInfo,
+							MCols2(
+								MText("  Focus: ", []),
+								MSelect(
+									getCurrentFocusedItemBehaviour(manager),
+									\focM ->
+										MEllipsisText(
+											eitherMap(
+												focM,
+												\foc -> {
+													pos : Point = foc.position().pos;
+													IScriptId2s(getFullMFocusId(foc)) + " " + toString(pos)
+												},
+												"-"
+											),
+											[MShowTooltip(const(true))]
+										)
+								)
+							)
+						),
+						MMenu(
+							MIconButton("more_vert", nop, [MIconSize(16.0)], []),
+							[
+								MMenuSingleLine(
+									"Subscribers",
+									[
+										MPrimaryAction(MMutable(fif(subsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(subsInfo, !getValue(subsInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Nexts",
+									[
+										MPrimaryAction(MMutable(fif(nextsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(nextsInfo, !getValue(nextsInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Z-order",
+									[
+										MPrimaryAction(MMutable(fif(zorderInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(zorderInfo, !getValue(zorderInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Focus",
+									[
+										MPrimaryAction(MMutable(fif(focusInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(focusInfo, !getValue(focusInfo)))
+									]
+								)
+							],
+							[]
+						)
+					]),
+					TFillX()
+				),
+				MIconToggle(
+					"stop",
+					[MIconSize(16.), MToggleFalseIcon("play_arrow", [MGreen(500)])],
+					[
+						MToggleValue(debuggingBehavioursNowB),
+						// MTooltipText("Start debugging behaviours (500 ms delay)"),
+						MRippleType(const(MNoRipple()))
+					]
+				),
+				MIconButton("camera_alt",
+					\ -> {
+						takeSubscribersSnapshot(manager, ^categoryTag, m2t, subsInfo);
+						next(debuggingBehavioursNowB, false);
+					},
+					[MIconSize(16.)],
+					[
+						// MTooltipText("Take a subscribers snapshot (500 ms delay)"),
+						MEnabled(debuggingBehavioursNowB),
+						MRippleType(const(MNoRipple()))
+					]
+				)
+			])
+			|> (\f2 -> MBorder(16., 0., 8., 0., f2))
+			|> MCenterY
+			|> (\f2 -> MFrame(0., 0., [MFill(MBackgroundColor(!manager.theme.lightBackground))], f2))
+			|> (\f2 -> MScroll2T(manager, parent, MScroll(f2, TFillXH(36.), []), m2t))
+			|> makeTropicConstantHeight(None()),
+			f
+		)
+	)
+	|> (\f ->
+		TConstruct(
+			[
+				makeSubscribe(debuggingBehavioursNowB, \v -> {
+					if (v)
+						startDebuggingBehavioursNow(^categoryTag, ^instanceTag)
+					else {
+						stopDebuggingBehavioursNow();
+						clearSuspects(^categoryTag);
+					}
+				})
+			],
+			f
+		)
+	)
+}
+
+MIScriptErrors2T(manager : MaterialManager, parent : MFocusGroup, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	SelectTLines(
+		fselect(manager.iscript.errors, list2array |> FLift),
+		\index, id, e -> {
+			MText2T(parent, e.error, [MCaption()])
+			|> (\f ->
+				eitherMap(
+					e.id,
+					\identifier -> {
+						hover = make(false);
+
+						TConstruct(
+							[
+								makeSubscribe2focusHovered(manager, \ -> getMaterialFocusByIScriptId(manager.focus, identifier), hover)
+							],
+							TInteractive(
+								[TMouseInside(hover, false)],
+								TFrame(0., 0., [Fill(black), FillOpacity(0.)], f)
+							)
+						)
+					},
+					f
+				)
+			)
+		}
+	)
+}

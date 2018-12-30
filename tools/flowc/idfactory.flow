@@ -1,0 +1,52 @@
+import bits;
+import concurrent;
+
+export {
+	// Construct a factory that can produce unique ids, also in a concurrent program
+	// The bucket size is the default number of ids each group gets. A good default is 0x1000.
+	// If the bucketsize is set to 0
+	makeIdFactory(startid : int, bucketsize : int) -> IdFactory;
+	makeIdGroup(factory : IdFactory) -> IdGroup;
+	nextUniqueId(g : IdGroup) -> int;
+	getGroupId(g : IdGroup) -> int;
+
+	// We keep the next available id here
+	IdFactory(id : ref int, bucketsize : int);
+	// We keep the next available id here
+	IdGroup(id : ref int, lastid : ref int, factory : IdFactory);
+}
+
+makeIdFactory(startid : int, bucketsize : int) -> IdFactory {
+	IdFactory(ref startid, bucketsize);
+}
+
+makeIdGroup(factory : IdFactory) -> IdGroup {
+	// Prepare the next group
+	v = atomicRefIntAddition(factory.id, factory.bucketsize);
+	IdGroup(ref v, ref v + factory.bucketsize, factory);
+}
+
+getGroupId(g : IdGroup) -> int {
+	^(g.id)
+}
+
+nextUniqueId(g : IdGroup) -> int {
+	if (g.factory.bucketsize == 0) {
+		// fcPrintln(^(g.id));
+		// printCallstack();
+		atomicRefIntAddition(g.id, 1);
+	} else {
+		v = ^(g.id);
+		g.id := v + 1;
+		if (v >= ^(g.lastid)) {
+			// OK, we have used our budget. Get a new budget
+			nid = atomicRefIntAddition(g.factory.id, g.factory.bucketsize);
+			g.id := nid;
+			g.lastid := nid + g.factory.bucketsize;
+			// fcPrintln("New bucket " + i2s(nid) + " to " +i2s(^(g.lastid)));
+			nextUniqueId(g);
+		} else {
+			v;
+		}
+	}
+}

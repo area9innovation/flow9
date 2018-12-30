@@ -1,0 +1,132 @@
+import target;
+import formats/css/stylesheet;
+
+import tropic/tropic2form;
+import tropic/tropictransforms;
+import fform/renderfform;
+import fform/fformmetrics;
+import serialize;
+
+export {
+	// Renders tropic, taking DPI and zooming for accessibility using hot-keys into account
+	// Returns a disposer. This is the recommended way to render a Tropic.
+	trender(t : Tropic, style : [TRenderStyle]) -> () -> void;
+
+	// Same as above, except that also returns a function which can tell where TTag items are
+	trender2(t : Tropic, style : [TRenderStyle]) -> Pair<() -> void, (int) -> PositionScale>;
+
+	TRenderStyle ::= Stylesheet, TDpif, TDpi, TStageWH, TInspectStageWH, TInspectDpiFactor, TGrabSnapshot;
+		TDpif(dpif : double);
+		TDpi(dpi : int);
+		TStageWH(width : double, height : double);
+		TInspectDpiFactor(factor : DynamicBehaviour<Factor>);
+		TInspectStageWH(wh : DynamicBehaviour<WidthHeight>);
+		//Call back with grab snapshot function. This can be used to get a snapshot of what is currently on the screen.
+		//Return a disposer. Call this when tropic is destroyed(when called disposer).
+		TGrabSnapshot(grabFn : (() -> Tropic) -> () -> void);
+}
+
+accessibilityZoom = make(1.0);
+
+trender(t : Tropic, style : [TRenderStyle]) -> () -> void {
+	trender2(t, style).first;
+}
+
+trender2(t : Tropic, style : [TRenderStyle]) -> Pair<() -> void, (int) -> PositionScale> {
+
+	// Scale to density-independend pixels (dp).
+	// See https://material.io/guidelines/layout/units-measurements.html
+	//
+	// In js, dp = px, since px refers to css pixels and it's the browser's job to make them
+	// correspond to the same physical dimensions.
+	// See https://www.w3.org/TR/css3-values/#reference-pixel
+
+	dpi = extractStruct(style, TDpi(screenDPI)).dpi;
+	dpif = if (js) 1.0 else extractStruct(style, TDpif(min(4.0, i2d(dpi) / 160.0))).dpif ;	// There is also getPixelsPerCm which might be a useful alternative
+
+	awh = extractStruct(style, TInspectStageWH(make(WidthHeight(getStageWidth(), getStageHeight()))));
+
+	stageWH = extractStruct(style, TStageWH(getStageWidth(), getStageHeight()));
+	sf = if (!js && dpif == 1.0) {
+		ws = max(1.0, stageWH.width / 1536.0);
+		hs = max(1.0, stageWH.height / 1536.0);
+
+		// Desktop where we do not have accurate DPI: Just use 1536 as the max useful resolution in each direction
+		min(ws, hs)
+	} else dpif;
+
+	scale = select2u(accessibilityZoom, awh.wh, \as, wh -> {
+		if (js) {
+			Factor(as, as)
+		} else {
+			ws = max(1.0, wh.width / 1536.0);
+			hs = max(1.0, wh.height / 1536.0);
+			s = as * max(sf, min(ws, hs));
+			Factor(s, s);
+		}
+	});
+
+	dpiFactor = extractStruct(style, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
+
+	u1 = connect(scale.first, dpiFactor);
+
+	sheet = extractStruct(style, emptyStylesheet);
+
+	form =
+		FDisposer(
+			tropic2fform(TScale(scale.first, t), sheet, awh.wh),
+			\ -> {
+				scale.second();
+				u1()
+			}
+		)
+		|> monitorZooming;
+
+	disp1 = extractStruct(style, TGrabSnapshot(\fn -> nop)).grabFn(\ -> {
+		TSFForm(fform2sfform(form, false), TFormMetrics(const(fgetValue(awh.wh).width), const(fgetValue(awh.wh).height), const(fgetValue(awh.wh).height)))
+	});
+
+	Pair(
+		{
+			disp2 = frender(form, awh.wh);
+
+			\ -> {
+				disp1();
+				disp2();
+			}
+		},
+		\id ->
+			eitherMap(
+				findTaggedFFormPositionScale(form, id),
+				\ps -> PositionScale(Point(ps.pos.x / fgetValue(dpiFactor).x, ps.pos.y / fgetValue(dpiFactor).y), ps.scale), // Convert to trender coordinates!
+				zeroPositionScale
+			)
+	);
+}
+
+monitorZooming(f : FForm) -> FForm {
+	if (!js)
+		FInteractive(
+			[
+				KeyDown2(\handled, ki ->
+					if (!handled && ki.ctrl) {
+						if (ki.keycode  == 187 || ki.utf == "=") {
+							v = getValue(accessibilityZoom);
+							next(accessibilityZoom, min(2.0, v * 1.1892));
+							true
+						} else if (ki.keycode  == 95 || ki.utf == "-") {
+							v = getValue(accessibilityZoom);
+							next(accessibilityZoom, max(0.5, v / 1.1892));
+							true
+						} else {
+							false
+						}
+					} else
+						handled
+				)
+			],
+			f
+		)
+	else
+		f
+}

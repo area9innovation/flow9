@@ -1,0 +1,186 @@
+import tools/flowc/fctypeenv;
+import tools/flowc/preload_modules;
+import tools/flowc/manipulation/simplegraph;
+import easygraph;
+import easygraph_utils;
+
+export {
+	checkForbids(modules : Tree<string, FcPreloadedModule>, mainFile : string, onError : (FcError) -> void, config : CompilerConfig) -> void;
+}
+
+checkForbids(modules : Tree<string, FcPreloadedModule>, mainFile : string, onError : (FcError) -> void, config : CompilerConfig) -> void {
+
+	importGraph = buildImportGraph(modules);
+
+	file = getConfigParameterDef(config.config, "importgraph", "");
+
+	if (file != "") {
+		dot = simpleGraph2dot(importGraph, mainFile, [], \f -> [DotLabel(f)], \e -> []);
+		setFileContent(file + ".dot", dot);
+		fcPrintln("Saved import graph to " + file + ".dot");
+		/*makeSvgOfDot(file, \ex -> {
+			fcPrintln("Done");
+		});*/
+		{}
+	}
+
+	// Use the import graph to check forbids so we can give better error messages
+	mainFileId = getSimpleNodeId(importGraph, mainFile);
+
+	// Find back-edges, i.e. loops
+	backEdges = collectBackEGEdges(importGraph.graph, [mainFileId]);
+	iter(backEdges, \edge : GEdge<int> -> {
+		fromFile = lookupSimpleNode(importGraph, edge.from, "");
+		toFile = lookupSimpleNode(importGraph, edge.to, "");
+
+		pos1 = FcPosition(fromFile, edge.data, edge.data);
+		onError(FcError("import " + toFile + " makes an import loop", [pos1]));
+	});
+	
+	/*
+	Forbidden modules check.
+
+	We collect all forbids (if D forbids F, then we collect <D, F>)
+	Then for all collected forbids we check if there is a path in
+	a graph between start and end, i.e. D and F, respecting directed edges.
+	If there is, then it is a situation to complain.
+	
+	Variable 'simplified' below holds subgraph we want, so we should report
+	any path from this subgraph (it is possible to have diamond subgraph).
+	*/
+	forbidStructs = foldTree(modules, [], \name, module, acc : [Triple<int, int, FcForbid>] -> {
+		forbids = preloadedFcForbids(module);
+		moduleId = getSimpleNodeId(importGraph, name);
+		forbiddenIds = map(forbids, \forbid : FcForbid -> {
+			getSimpleNodeId(importGraph, forbid.flowfile);
+		});
+
+		if (forbids != []) {
+			concat(acc, foldi(forbiddenIds, [], \ix, acc1, e -> {
+				arrayPush(acc1, Triple(moduleId, e, forbids[ix]));
+			}));
+		} else acc;
+	});
+
+	iter(forbidStructs, \e -> {
+		// There is a path from those who forbid to forbidden.
+		// This is an error and we have to complain.
+		hasPath = isConnectedToAnyEGNode(importGraph.graph, e.first, [e.second]);
+		if (hasPath) {
+
+			// This is the forbidden part
+			connected = buildConnectedEasySubGraph(importGraph.graph, e.first, [e.second]);
+
+			if (sizeTree(connected.nodes) > 0) {
+
+				// OK, there is something forbidden
+				simplified = transitiveReduction(connected);
+
+				// Dump simplified
+				// dot1 = easyGraph2dot(simplified, e.first, [],  \node -> [DotLabel(node.data + " (" + i2s(node.id) + ")")], \__ -> []);
+				// setFileContent("simplified.dot", dot1);
+
+				// We know that import path exist.
+				// Get import path
+				stopSearch = ref false;
+				path = reverseList(deepFirstSearchInEasyGraph(
+					simplified,
+					e.first,
+					makeList(),
+					\acc, node, edgeM, visited -> {
+						if (^stopSearch) {
+							Pair(acc, false)
+						} else if (node == e.second) {
+							stopSearch := true;
+							Pair(Cons(node, acc), false)
+						} else if (visited) {
+							Pair(acc, false)
+						} else {
+							Pair(Cons(node, acc), true)
+						}
+					}, \acc, __, __ -> acc));
+
+				// Report main error message
+				fromNode = lookupSimpleNode(importGraph, e.first, "");
+				pos1 = FcPosition(fromNode, e.third.start, e.third.end);
+				onError(FcError("Module '" + e.third.flowfile + "' is forbidden. Import chain shown below.", [pos1]));
+
+				// Report secondary error messages (import chain)
+				imp = list2array(reverseList(path));
+				mapi(imp, \ix, item -> {
+					if (ix != length(imp)-1) {
+						from = lookupSimpleNode(importGraph, imp[ix], "");
+						to = lookupSimpleNode(importGraph, imp[ix+1], "");
+						pos2 = FcPosition(from, 0, 0);
+						onError(FcError("  import " + to + ";", [pos2]));
+					}
+				});
+				{}
+			}
+		}
+	});
+
+	// OK, now check that we have the required imports for each module
+	// checkImportsAreCorrect(modules, onError)
+}
+
+
+// Node type is flowfile. Edge type is file position for the import
+buildImportGraph(modules : Tree<string, FcPreloadedModule>) -> SimpleGraph<string, int> {
+	foldTree(modules, makeSimpleGraph(), \flowfile, __, acc -> {
+		addFileToImportGraph(modules, acc, flowfile)
+	});
+}
+
+addFileToImportGraph(modules : Tree<string, FcPreloadedModule>, acc : SimpleGraph<string, int>, flowfile : string) -> SimpleGraph<string, int> {
+	if (hasSimpleNode(acc, flowfile)) {
+		acc
+	} else {
+		acc1 = addSimpleNode(acc, flowfile);
+		eitherMap(lookupTree(modules, flowfile), \module -> {
+			imports = preloadedFcImports(module);
+			fold(imports, acc1, \acc2 : SimpleGraph<string, int>, im : FcImport -> {
+				// OK, recursively add the chlidren's imports
+				acc3 = addFileToImportGraph(modules, acc2, im.flowfile);
+				// And an edge to his guy
+				addSimpleEdge(acc3, flowfile, im.flowfile, im.start, 1)
+			});
+		}, acc1)
+	}
+}
+
+
+ImportCheckAcc(
+	// All modules in the program
+	modules : Tree<string, FcPreloadedModule>,
+	// What names this flowfile exports (transitively)
+	exports : Tree<string, Set<string>>, 
+	onError : (FcError) -> void
+);
+
+checkImportsAreCorrect(modules : Tree<string, FcPreloadedModule>, onError : (FcError) -> void) -> void {
+	foldTree(modules, ImportCheckAcc(modules, makeTree(), onError), \flowfile, __, acc : ImportCheckAcc -> {
+		checkImportsAreCorrectForModule(acc, flowfile);
+	});
+	{}
+}
+
+checkImportsAreCorrectForModule(acc : ImportCheckAcc, flowfile : string) -> ImportCheckAcc {
+	if (containsKeyTree(acc.exports, flowfile)) {
+		acc
+	} else {
+		acc0 = ImportCheckAcc(acc.modules, setTree(acc.exports, flowfile, makeSet()), acc.onError);
+
+		acc2 = eitherMap(lookupTree(acc.modules, flowfile), \module -> {
+			imports = preloadedFcImports(module);
+			fold(imports, acc0, \acc1 : ImportCheckAcc, im : FcImport -> {
+				checkImportsAreCorrectForModule(acc1, im.flowfile);
+			})
+		}, acc0);
+
+		// TODO: Check that the freevars in this modules are imported.
+		// TODO: Maybe we should return a set of vars in the imports?
+
+		acc2;
+	}
+}

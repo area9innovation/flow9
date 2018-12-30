@@ -1,0 +1,158 @@
+import material/material;
+
+export {
+	// Flag that indicates that some material is being debugged now
+	debugMaterialSubs = ref false;
+
+	debugMaterialSubscribers(manager : MaterialManager, createTropic : () -> Tropic, sName : string, debugSubscribers : bool, level : int) -> Tropic;
+}
+
+debugMaterialSubscribers(manager : MaterialManager, createTropic : () -> Tropic, sName : string, debugSubscribers : bool, level : int) -> Tropic {
+	subCountPreConstruct = ref 0;
+	subCountConstruct = ref 0;
+	subCountDisposed = ref 0;
+	pref = generate(0, level, \__ -> "\t") |> concatStrings;
+
+	subCountPreConstruct := getCurrentSubscribersCount();
+	newTr = createTropic();
+	subCountPreConstruct := getCurrentSubscribersCount() - ^subCountPreConstruct;
+
+	if (^subCountPreConstruct != 0) {
+		println(pref + "Please avoid subscribers outside Construct");
+		println(pref + i2s(^subCountPreConstruct) + " subscribers created before Construct in " + sName);
+	}
+
+	tr =
+		if (debugSubscribers)
+			debugMaterialSubscribersTropic(manager, newTr, level + 1)
+		else
+			newTr;
+
+	TGroup([
+		TConstruct(
+			[
+				\ -> {
+					subCountConstruct := getCurrentSubscribersCount();
+					\ -> {
+						subCountDisposed := getCurrentSubscribersCount();
+					}
+				}
+			],
+			TEmpty()
+		),
+		tr,
+		TConstruct(
+			[
+				\ -> {
+					subCountConstruct := getCurrentSubscribersCount() - ^subCountConstruct;
+					// println(sName);
+					// println(^subCountConstruct);
+
+					\ -> {
+						subCountDisposed := ^subCountDisposed - getCurrentSubscribersCount();
+
+						if (^subCountPreConstruct + ^subCountConstruct > ^subCountDisposed) {
+							if (debugSubscribers) {
+								println(pref + sName + " " + i2s(^subCountPreConstruct + ^subCountConstruct - ^subCountDisposed));
+							} else {
+								println(pref + "Possible subscribers leak in " + sName);
+								println(pref + i2s(^subCountPreConstruct) + " subscribers created before Construct");
+								println(pref + i2s(^subCountConstruct) + " subscribers created in Construct");
+								println(pref + i2s(^subCountDisposed) + " subscribers destroyed in Dispose");
+
+								if (^subCountPreConstruct == 0) {
+									timer(
+										1000,
+										\ -> if (!^debugMaterialSubs) {
+											debugMaterialSubs := true;
+											println("Debugging " + sName);
+
+											trender(
+												TVisible(
+													make(false),
+													debugMaterialSubscribersTropic(manager, createTropic(), level + 1)
+												),
+												manager.manager.renderStyle
+											)/* |> ignore;*/
+											|> (\f -> timer(5000, f));
+
+											debugMaterialSubs := false;
+										}
+									)
+								}
+							}
+						}
+					}
+				}
+			],
+			TEmpty()
+		)
+	]);
+}
+
+debugMaterialSubscribersTropic(manager : MaterialManager, newTr : Tropic, level : int) -> Tropic {
+	switch (newTr) {
+		TBorder(left, top, right, bottom, form) : TBorder(left, top, right, bottom, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TTranslate(point, form) : TTranslate(point, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TScale(factor, form) : TScale(factor, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TRotate(degree, form) : TRotate(degree, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TAlpha(alpha, form) : TAlpha(alpha, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TMask(mainTrop, mask) : TMask(debugMaterialSubscribers(manager, \ -> mainTrop, mainTrop.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> mask, mask.structname, true, level));
+		TFilter(filters, form) : TFilter(filters, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TCursor(kind, form) : TCursor(kind, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TAccess(properties, form) : TAccess(properties, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TCrop(topleft, widthHeight, form) : TCrop(topleft, widthHeight, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TVisible(visible, form) : TVisible(visible, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TInteractive(interactivity, form) : TInteractive(interactivity, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TBaselineOffset(offset, form) : TBaselineOffset(offset, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TMutable(form) : TMutable(fselect(form, FLift(\frm -> debugMaterialSubscribers(manager, \ -> frm, frm.structname, true, level))));
+		TIf(condition, then, elset) : TIf(condition, debugMaterialSubscribers(manager, \ -> then, then.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> elset, elset.structname, true, level));
+		TCase(sizes, cases) : TCase(map(sizes, \s -> debugMaterialSubscribers(manager, \ -> s, s.structname, true, level)), map(cases, \c ->
+			debugMaterialSubscribers(manager, \ -> c, c.structname, true, level)));
+		TConstruct(constructors, form) : TConstruct(constructors, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TDispose(disposers, form) : TDispose(disposers, debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TFormIn(form, box) : TFormIn(form, debugMaterialSubscribers(manager, \ -> box, box.structname, true, level));
+		TFormAvailable(form, box) : TFormAvailable(form, debugMaterialSubscribers(manager, \ -> box, box.structname, true, level));
+		TGroup2(box1, box2) : TGroup2(debugMaterialSubscribers(manager, \ -> box1, box1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> box2, box2.structname, true, level));
+		TCols2(box1, box2) : TCols2(debugMaterialSubscribers(manager, \ -> box1, box1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> box2, box2.structname, true, level));
+		TBaselineCols2(box1, box2) : TBaselineCols2(debugMaterialSubscribers(manager, \ -> box1, box1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> box2, box2.structname, true, level));
+		TLines2(box1, box2) : TLines2(debugMaterialSubscribers(manager, \ -> box1, box1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> box2, box2.structname, true, level));
+		TAvailable(content, maxsize) : TAvailable(debugMaterialSubscribers(manager, \ -> content, content.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> maxsize, maxsize.structname, true, level));
+		TTweak(style, content, size) : TTweak(style, debugMaterialSubscribers(manager, \ -> content, content.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> size, size.structname, true, level));
+		TZoomFill(box) : TZoomFill(debugMaterialSubscribers(manager, \ -> box, box.structname, true, level));
+		TAttach(ghost, fn) : TAttach(debugMaterialSubscribers(manager, \ -> ghost, ghost.structname, true, level), \v -> fn(v) |> (\trp ->
+			debugMaterialSubscribers(manager, \ -> trp, trp.structname, true, level)));
+		TRounded(nw, ne, lw, le, style, size) : TRounded(nw, ne, lw, le, style, debugMaterialSubscribers(manager, \ -> size, size.structname, true, level));
+		TScrollable(content, maxbox, style, state) : TScrollable(debugMaterialSubscribers(manager, \ -> content, content.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> maxbox, maxbox.structname, true, level), style, state);
+		TCropSize(size, form) : TCropSize(debugMaterialSubscribers(manager, \ -> size, size.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TShift(form, distance) : TShift(debugMaterialSubscribers(manager, \ -> form, form.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> distance, distance.structname, true, level));
+		TSize(size, form) : TSize(debugMaterialSubscribers(manager, \ -> size, size.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> form, form.structname, true, level));
+		TSizeOf(content) : TSizeOf(debugMaterialSubscribers(manager, \ -> content, content.structname, true, level));
+		TMinimumGroup2(t1, t2) : TMinimumGroup2(debugMaterialSubscribers(manager, \ -> t1, t1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> t2, t2.structname, true, level));
+		TSubtractGroup2(t1, t2) : TSubtractGroup2(debugMaterialSubscribers(manager, \ -> t1, t1.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> t2, t2.structname, true, level));
+		TDebug(color, b) : TDebug(color, debugMaterialSubscribers(manager, \ -> b, b.structname, true, level));
+		TLet(name, value, scope) : TLet(name, debugMaterialSubscribers(manager, \ -> value, value.structname, true, level),
+			debugMaterialSubscribers(manager, \ -> scope, scope.structname, true, level));
+		TLetAvailable(name, scope) : TLetAvailable(name, debugMaterialSubscribers(manager, \ -> scope, scope.structname, true, level));
+		TNamespace(tropic) : TNamespace(debugMaterialSubscribers(manager, \ -> tropic, tropic.structname, true, level));
+		TTag(tag, t) : TTag(tag, debugMaterialSubscribers(manager, \ -> t, t.structname, true, level));
+		TTag2(setfn, t) : TTag2(setfn, debugMaterialSubscribers(manager, \ -> t, t.structname, true, level));
+		TPositionScale(positionScale, t) : TPositionScale(positionScale, debugMaterialSubscribers(manager, \ -> t, t.structname, true, level));
+		TCssBlock(style, tropic) : TCssBlock(style, debugMaterialSubscribers(manager, \ -> tropic, tropic.structname, true, level));
+		default: newTr;
+	}
+}
