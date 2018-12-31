@@ -6,7 +6,7 @@ export {
 	wigi2text(document : WigiElement) -> string;
 
 	wigi2textExtended(document : WigiElement, styles : [Wigi2TextExtended]) -> string;
-		Wigi2TextExtended ::= WigifyEngine, Wigi2TextDetailed, Wigi2TextWithTextStyles, Wigi2TextDynamicValueTag;
+		Wigi2TextExtended ::= WigifyEngine, Wigi2TextDetailed, Wigi2TextWithTextStyles, Wigi2TextDynamicValuesReplacer;
 
 		// in case no CalculateBlockFn nor Block2TextFn were defined for the ExternalBlock,
 		// show the exType in the output
@@ -16,7 +16,7 @@ export {
 		// Use this style to surround dynamic parts of text by
 		// Special string tag. Dynamic parts of text are defined by
 		// external block style Block2TextDynamicFn.
-		Wigi2TextDynamicValueTag(tag : string);
+		Wigi2TextDynamicValuesReplacer(tag : string, placeHoldersB : DynamicBehaviour<Set<string>>);
 }
 
 wigi2text(document : WigiElement) -> string {
@@ -28,7 +28,7 @@ wigi2textExtended(document : WigiElement, styles : [Wigi2TextExtended]) -> strin
 	recursiveCall = \el, sep -> strGlue(map(el, \e -> wigi2textExtended(e, styles)), sep);
 	withDetails = contains(styles, Wigi2TextDetailed());
 	withTextStyles = contains(styles, Wigi2TextWithTextStyles());
-	dynValueTagM = tryExtractStruct(styles, Wigi2TextDynamicValueTag(""));
+	dynValuesReplacerM = tryExtractStruct(styles, Wigi2TextDynamicValuesReplacer("", make(makeSet())));
 
 	switch (document : WigiElement) {
 		WigiDocument(root, style): wigi2text(root);
@@ -105,11 +105,15 @@ wigi2textExtended(document : WigiElement, styles : [Wigi2TextExtended]) -> strin
 				WigiSmartArt(content, __): "<sa>" + content + "</sa>"; //35823
 				WigiExternalBlock(exType, content): eitherFn(getExternalBlockAPI(exType), \api -> {
 					eitherFn(
-						dynValueTagM,
-						\dynValueTag -> {
+						dynValuesReplacerM,
+						\replacer -> {
 							block2textDyn = extractStruct(api.style, Block2TextDynamicFn(\__, __, __ -> "")).fn;
 							textDyn = toLowerCase(block2textDyn(content, engine, globalWigiNamespace));
-							if (textDyn == "") "" else dynValueTag.tag + textDyn + dynValueTag.tag;
+							if (textDyn == "") "" else {
+								result = replacer.tag + textDyn + replacer.tag;
+								updateBehaviourDistinct(replacer.placeHoldersB, \set -> insertSet(set, result));
+								result;
+							}
 						},
 						\ -> {
 							calculateFn = extractStruct(api.style, CalculateBlockFn(\__, __, __ -> makeTree())).fn;
@@ -149,4 +153,3 @@ wigi2MembersNotation2text(elements : [WigiElement], notation : string, error : s
 		m1 + notation + m2
 	} else formatString("Wigi %1 conversion error", [error])
 }
-
