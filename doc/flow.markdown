@@ -2,8 +2,7 @@
 ======
 
 *flow* is a statically typed functional language for building software with
-dynamic user interfaces. It has taken elements from ML, haXe, D, Haskell,
-Lisp, and Pico (Prolog).
+dynamic user interfaces. It has taken elements primarily from ML & haXe.
 It is a relatively small and simple language, although it does have first-order
 functions, polymorphism, closures and simple pattern matching.
 

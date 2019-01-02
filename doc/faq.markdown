@@ -7,7 +7,7 @@ Flow language
 
 #### Why use flow in the first place? Why not HTML5?
 
-Primary reasons: HTML5 still performs bad on mobile devices. HTML+CSS+JavaScript is 10 times
+Primary reasons: HTML5 still performs bad on some mobile devices. HTML+CSS+JavaScript is 10 times
 more verbose than flow. Thus productivity is better for the kind of programs flow is designed for.
 
 Historical background: Flow was designed at a point in time when HTML5 did not exist, and you
@@ -21,12 +21,13 @@ landscape changes. Examples include migrating from Flash as the main platform to
 Migrating from a DOM-based rendering backend to a Pixi-based rendering backend in HTML5.
 
 Similarly, we have added our own JIT for desktop execution, and even a Windows Mobile
-target. This is proof that we can adjust all our software to work well on new platforms as
-they come, and get the benefits of those.
+target (which has been allowed to bitrot as that platform has died). This is proof that 
+software written in flow can made to work well on new platforms as they come, and get the 
+benefits of those without having to rewrite all the code in flow.
 
-One expected target we will add at some suitable time could be WebAssembly. This is a level
-of control we can not easily get with other languages, which are typically much bigger than
-flow.
+We are working on a new target for WebAssembly. This is a level of control we can not easily 
+get with other languages, which are typically much bigger than flow, and thus harder to port
+to other platforms.
 
 #### What about WebAssembly?
 
@@ -68,7 +69,7 @@ we prefer:
 The reason is that when we add `Whatever26`, then we get a compile error, and actively have to
 consider whether the `def()` is correct in that case as well. You can also switch on a union,
 but notice that the body will be copied for each struct in that union behind the scenes,
-bloating the binary.
+potentially bloating the binary.
 
 #### Why is there no support for recursive local functions, or lambas? ####
 
@@ -85,17 +86,17 @@ dynamic data with type errors.
 
 Using practices such as passing default values in calls help mitigate the downsides of
 lack of exceptions. See `lookupTreeDef` as an example. The use of `Maybe` returns can also
-work, but those very often lead to very verbose and is often slower than using the
+work, but those very often lead to verbose code that is often slower than using the
 default-as-parameter approach.
 
 #### Why not monads?
 
 Monads are complicated, and require very sophisticated optimizations to run fast.
 There was an experiment using monadic programming in the form of failstate and other similar
-constructs. Experience has clearly shown that this is a bad approach: It runs really slow,
+constructs. Experience has shown that this is a bad approach: It runs really slow,
 it makes debugging much harder, since callstacks are useless, and profiling just shows that
 the overhead of monads is expensive.
-The benefits in a flow content do not exist, so don't use those things.
+The benefits in a flow context do not really exist, so don't use those things.
 
 #### Why is there a global name space?
 
@@ -137,6 +138,34 @@ API-style structs is also a common pattern that is used to make big parts of
 code optional, so that programs that do not require all functionality can
 avoid taking the footprint hit of such code.
 
+#### How to do efficient string concatenation
+
+Consider the task of concatenating a lot of strings together. When you are used to languages like Java
+or C#, you might write something like this:
+
+    txt = ref "";
+    iter(items, \item -> {
+        txt := ^txt + item2string(item);
+    });
+    ^txt;
+
+However, in a functional language, you can express it much more directly using fold:
+
+	fold(items, "", \acc, item -> acc + item2string(item));
+
+Both of these versions is O(n^2), so if the array is very long, you might want to use a `List` instead and
+collapse it to a `string` in one operation:
+
+	l = fold(items, makeList(), \acc, item, Cons(item2string(item), acc) );
+	list2string(l);
+
+This will produce much less garbage in memory and take linear time. For small strings, however, the overhead
+of the `List` dwarfs these benefits, and then the shorter and simpler code can be best.
+
+In this particular case, the best option is arguably to use the `concatStrings` function from `string.flow`:
+
+    concatStrings(map(items, item2string));
+
 #### When I deserialize my data, I get an int back instead of a double. What is going on?
 
 When this happens, you get a runtime error that a double was expected. This is
@@ -169,7 +198,7 @@ we do not recommend this.
 
 When I try to compile bigger programs, I get this error message. What to do?
 
-See `flow/resources/neko/1.8.2 - 2.0.0/unlimited/`
+See `flow9/resources/neko/1.8.2 - 2.0.0/unlimited/`
 
 #### When I get a crash, there are no line numbers. What to do?
 
@@ -272,8 +301,7 @@ This is a wrong and dangerous way of doing this as there is no guarantee that
 state will be loaded before `useState` starts. Writing code like this you
 introduce race conditions that might be unnoticeable in the beginning when DB
 is very small (or when running locally, having good connection) but later very
-hard to debug. Instead of cours,e you should use callbacks, i.e. write
-something like this:
+hard to debug. Instead, you should use callbacks, i.e. write something like this:
 
 	loadState(\state -> {
 		useState(state);
@@ -294,7 +322,7 @@ introduce a global variable you should write it like this:
 
 This is the only way to guarantee correct order. 
 
-It is helpful to consider the use of Promises for asynchronous code. See `promise.flow`.
+It is also helpful to consider the use of Promises for asynchronous code. See `promise.flow`.
 
 #### How can I do multiple asynchronous calls?
 
@@ -339,7 +367,7 @@ And you call it with empty accumulator
 	loadAllData(items, [], callback, onError)
 
 Another way to do it is to use promises. You can find them (together with and
-some explanation and links) in `flow/lib/promise.fow`
+some explanation and links) in `flow9/lib/promise.fow`
 
 Basically for each item you create a promise that can call one of two
 callbacks. In our simple case it's just a wrapper around `loadDataForItem`.
@@ -366,7 +394,7 @@ error case if at least one promise failed
 binarytree, set, easygraph, datastream, dlist, list, inttree, inttrie, trie, iterator, ntree, quadtree,
 sentence_matching, ds/limitedheap.
 
-Using `Set` is much superior to calling `uniq`, which frankly has terrible performance on long arrays.
+Using `Set` is superior to calling `uniq`, which frankly has terrible performance on long arrays.
 
 #### Should I avoid using refs?
 
@@ -428,7 +456,10 @@ MLines([   MText(...) |> \m -> MBorder(..., m)   ... ]) ``` Here logic is even
 more complex while what we are trying to do is very simple. ``` MLines([
 MBorder(..., MText(...))   ... ]) ```
 
-There are a few situations when using pipe syntax is acceptable. For example
+If you do not want to nest that deeply, then you local variables, and the result
+will be simpler than pipes with lambdas.
+
+There are a few situations when using the pipe syntax is acceptable. For example
 in case functions don't change type, something like `message |> addQuotes |>
 trimSpaces |> addAuthor`. Here we just transform string sequentially. But in
 general try to avoid `|>`.

@@ -3,7 +3,6 @@ TABLE OF CONTENTS:
 
 * [Editor integration](#ides)
 * [Developing](#dev)
-* [Common mistakes](#commonerrors)
 * [How to refactor code](#refactor)
 * [My program crashes!](#crash)
 * [My GUI is slow!](#slow)
@@ -20,9 +19,14 @@ code. At minimum, you'll want syntax highlighting.  Also, the compiler
 supports looking up the definition sites of flow functions, which is very 
 handy.
 
+<h3>VS Code</h3>
+
+See `resources\vscode\readme.txt` for instructison on how to install all the
+*flow* support we have. This is the best editor at this point.
+
 <h3>Sublime Text 3 and the Debugger</h3>
 
-The best supported editor for *flow* programming is Sublime Text 2 or 3:
+Another good editor for *flow* programming is Sublime Text 2 or 3:
 
     http://www.sublimetext.com/
 
@@ -42,13 +46,13 @@ See `resources/emacs/readme.txt` for instructions on how to edit Flow code in Em
 When you are developing *flow* programs, here are a few tips to make it easier:
 
 - Use `println()` for debugging output. For the JavaScript target, the output appears
-  in the JavaScript console of your browser. This is typically found in some Tools/Developer menu
-  of the browser.
+  in the JavaScript console of your browser. This is typically found in some Tools/Developer 
+  menu of the browser.
 
 - Use `printCallstack()` to learn where code is called from. Requires that you compile
   with debug. For flowcpp, also use the "--no-jit" command line argument
 
-- Install and configure Sublimetext, and learn to use the single-step debugger
+- Install and configure VS Code or Sublimetext, and learn to use the single-step debugger
 
 - Use the JS debugger in your browser, and be sure to compile with debug info
 
@@ -62,44 +66,16 @@ When you are developing *flow* programs, here are a few tips to make it easier:
 
   Note that running in CGI mode will cause HTTP headers to be printed.
 
-<h2 id=commonerrors>Common mistakes</h2>
-
-Consider the task of concatenating a lot of strings together. When you are used to languages like Java
-or C#, you might write something like this:
-
-    txt = ref "";
-    iter(items, \item -> {
-        txt := ^txt + item2string(item);
-    });
-    ^txt;
-
-However, in a functional language, you can express it much more directly using fold:
-
-	fold(items, "", \acc, item -> acc + item2string(item));
-
-Both of these versions is O(n^2), so if the array is very long, you might want to use a `List` instead and
-collapse it to a `string` in one operation:
-
-	l = fold(items, makeList(), \acc, item, Cons(item2string(item), acc) );
-	list2string(l);
-
-This will produce much less garbage in memory and take linear time. For small strings, however, the overhead
-of the `List` dwarfs these benefits, and then the shorter and simpler code can be best.
-
-In this particular case, the best option is arguably to use the `concatStrings` function from `string.flow`:
-
-    concatStrings(map(items, item2string));
-
 <h3>Single step debugging on the command line</h3>
 
 You can use the debugger from the command prompt using a command like
-`flowcpp --batch --debug flow/sandbox/helloworld.flow`. Inside the debugger you can use 
+`flowcpp --batch --debug flow9/sandbox/helloworld.flow`. Inside the debugger you can use 
 the `help` command to see a list of available commands, most of which behave exactly as 
-the analogous commands in `gdb`. For example, if you are in a directory such that `flow` 
+the analogous commands in `gdb`. For example, if you are in a directory such that `flow9` 
 is a subdirectory, and you invoke the debugger with
-`flowcpp --batch --debug flow/sandbox/helloworld.flow`, then at the `fdb` prompt you could 
+`flowcpp --batch --debug flow9/sandbox/helloworld.flow`, then at the `fdb` prompt you could 
 set a breakpoint at the call to `println` (line 4) of `helloworld.flow` by typing: 
-`break flow/sandbox/helloworld.flow:4`.
+`break flow9/sandbox/helloworld.flow:4`.
 Note how the path is relative to the working directory from which you invoke the debugger.
 
 When debugging with `flowcpp`, you may see some strange looking stack trace entries of the
@@ -135,24 +111,6 @@ avoid producing garbage intermediate values. If you are building a long array or
 piece by piece, try to use a `List`, or a `Tree` instead in the construction phase.
 
 
-<h2 id=slow>My GUI is slow!</h2>
-
-The most common cause of slowness is due to excessive repaiting in your GUI. The second most cause is
-overly complicated layout.
-
-The first cause can be improved by moving dynamic parts of your UI further down to minimize the parts that
-change. Use the c++ runner with the --clip-tree argument to profile and find such problems. You can also
-try to add 'redraw=1' in the URL or command line (`flowcpp sandbox/fun.flow -- redraw=1`) and visually
-inspect where redraws happen when, and thus get a sense of where to improve the code.
-
-The second cause can be improved by using explicit sizes and avoid having loops in the layouts. 
-In particular, if you have a cyclic dependency in terms of size and available space from parent to children,
-you get into these vibration problems: The layout engine will layout the children. This in turns affects some
-parent grid to move things around, and also affect the layout of the children because of new available space
-from the new size, and then it cycles like that back and forth until a fix-point is found or the program crashes.
-
-You can also use the c++ profiler to do a GUI related profiling. This is explained later.
-
 <h2 id=leaks>Memory leaks</h2>
 
 #### Leaks. Overview
@@ -170,7 +128,7 @@ A behaviour is technically a mutable value and a list of subscribers -
 functions to be called when it gets new value. All the behaviours in the
 global scope are in the set of `roots` for GC. So, it is very easy to produce
 immortal object that is not used anymore but still consumes space as some
-behavior transforms are leaky (see `flow/lib/transforms.flow`). In the example
+behavior transforms are leaky (see `flow9/lib/transforms.flow`). In the example
 below `makeForm` produces a leaky `Form` as `select` adds a subscriber to the
 `globalAdditionalOffsetB` behaviour each time it is executed and following
 links chain is created ` globalAdditionalOffsetB` -> `offsetX` -> `Translate`
@@ -303,7 +261,7 @@ the program when done. Then use ctrl+shift+p with "flow" again, and then view th
 view window, you can right click and choose "self rating" and other things for advanced analysis.
 
 Note that the profile view feature requires that you have a 64-bit Java Runtime Environment installed. That's 
-because the viewer is a Clojure program, `flow/debug/flowprof.clj`.
+because the viewer is a Clojure program, `flow9/debug/flowprof.clj`.
 
 If you do not have Sublimetext, you can do the same manually:
 
@@ -388,7 +346,7 @@ In the profiling view, you can find some special nodes like <special 0> and so o
   This will dump the files in the profile, with some basic stats for each. To drill down into a file,
   add a filename as listed in the dump:
 
-     flowprof-coverage flowprof.ins foo.debug c:/flow/sandbox/foo.flow >out.txt
+     flowprof-coverage flowprof.ins foo.debug c:/flow9/sandbox/foo.flow >out.txt
 
   and look in the out.txt file for a line-by-line profile in that file.
 
@@ -421,7 +379,7 @@ This dumps an overview with these columns:
 
 You can then look into a specific file by adding the filename:
 
-  flowprof-coverage flowprof.cover foo.debug c:/flow/sandbox/foo.flow
+  flowprof-coverage flowprof.cover foo.debug c:/flow9/sandbox/foo.flow
 
 This dumps the source code of the file with prefixes explaining the coverage.
 Here, a "-" means that there is code for this line, but it was never executed.
@@ -437,9 +395,27 @@ how many of the instructions in the bytecode have been executed at least once. T
 the code coverage report useful to make sure all your code is exercised by unit tests,
 or similar.
 
+<h2 id=slow>My GUI is slow!</h2>
+
+The most common cause of slowness is due to excessive repaiting in your GUI. The second most cause is
+overly complicated layout.
+
+The first cause can be improved by moving dynamic parts of your UI further down to minimize the parts that
+change. Use the c++ runner with the --clip-tree argument to profile and find such problems. You can also
+try to add 'redraw=1' in the URL or command line (`flowcpp sandbox/fun.flow -- redraw=1`) and visually
+inspect where redraws happen when, and thus get a sense of where to improve the code.
+
+The second cause can be improved by using explicit sizes and avoid having loops in the layouts. 
+In particular, if you have a cyclic dependency in terms of size and available space from parent to children,
+you get into these vibration problems: The layout engine will layout the children. This in turns affects some
+parent grid to move things around, and also affect the layout of the children because of new available space
+from the new size, and then it cycles like that back and forth until a fix-point is found or the program crashes.
+
+You can also use the C++ or JS profiler to do a GUI related profiling.
+
 <h2 id=analyzing>Analyzing code</h2>
 
-The flow program contains some utilities for analyzing code.
+The flow platform contains some utilities for analyzing code.
 
 To find code which is almost identical across different files, the `--duplication` flag
 is useful. It does a heuristic search on the Abstract Syntax Tree to identify code which is the
@@ -447,7 +423,8 @@ same, except for a single node in the tree. Use the `--exact-only` flag to restr
 to exactly identical code (except for formatting).
 
 To find the definition of a name, use the `--find-definition` switch. There is also a faster
-version of --find-definition in the flowtools tool.
+version of --find-definition in the flowtools tool, or you can use the server version of the
+flowc compiler.
 
 You can produce a static call graph of your code with the `--callgraph` switch. It requires
 dot from graphviz to produce a nice graph. Beware that the graph is often so big as to be
@@ -458,7 +435,7 @@ Often, it is useful to only inspect the call graph of a single file. That can be
 
     flowuses lib/translation.flow
 
-run from `c:\flow\` will produce a "users.svg" file with a call graph of that file. It
+run from `c:\flow9\` will produce a "users.svg" file with a call graph of that file. It
 requires "dot" from the Graphviz package to be in your path. (This program uses a flow parser
 written in *lingo*, so it does have a few small differences in the syntax allowed compared to
 the compiler. You might get a syntax error. If so, rewrite the code to an equivalent notation,
