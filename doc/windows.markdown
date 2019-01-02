@@ -123,8 +123,6 @@ Then open this in your web browser:
 To see the output from this program, open the JavaScript console in your
 browser. That is ctrl+shift+J in Chrome in the address line.
 
-Details on mysql setup issues can be found in `flow/doc/mysql.markdown`
-
 ## What is really happening when compiling flow code
 
 When you run

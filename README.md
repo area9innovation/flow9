@@ -111,3 +111,7 @@ Community
 There is a chat in Telegram for discussions about flow:
 
 https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
+
+There is a mailing list group in groups.io about flow as well:
+
+https://groups.io/g/flow
