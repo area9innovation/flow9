@@ -58,7 +58,9 @@ connection.onDidChangeConfiguration((params) => {
 
 connection.onShutdown(() => {
 	if (null != flowServer) {
-		tools.shutdownFlowc();
+		tools.run_cmd("flowc1", "", ["server-shutdown=1"], (s) => {
+			console.log(s);
+		}, []);
 	}
 });
 
@@ -72,7 +74,9 @@ connection.onDidOpenTextDocument(params => {
 
 function spawnFlowcServer(projectRoot: string) {
 	if (null == flowServer && globalSettings.useCompilerServer) {
-		flowServer = tools.launchFlowc(projectRoot);
+		flowServer = tools.run_cmd("flowc1", projectRoot, ["server-mode=1"], (s) => {
+			console.log(s);
+		}, []);
 	}
 }
 
