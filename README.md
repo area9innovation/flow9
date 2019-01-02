@@ -32,14 +32,14 @@ However, should the need arise, then flow9 can also be used to refer to this lan
 History
 -------
 
-August 2010: The very first program ran on Flash & HTML5
-November 2013: First app approved in iOS store
-April 2014: First app approved in Android PlayStore
-November 2015: Flash was retired, completely migrated to HTML5
-January 2016: Material guidelines implemented
-November 2016: JIT for x64 was added
-May 2018: Self-hosted compiler writtn in flow itself
-2019: Initial open source release
+- August 2010: The very first program ran on Flash & HTML5
+- November 2013: First app approved in iOS store
+- April 2014: First app approved in Android PlayStore
+- November 2015: Flash was retired, completely migrated to HTML5
+- January 2016: Material guidelines implemented
+- November 2016: JIT for x64 was added
+- May 2018: Self-hosted compiler written in flow itself
+- 2019: Initial open source release
 
 Meet flow
 ---------
@@ -72,7 +72,7 @@ Add `flow9\bin` to your path. Requires 64-bit Java Runtime.
 
 Compile and run the first program:
 
-   flowcpp demos/demos.flow
+    flowcpp demos/demos.flow
 
 See `lib/demos/demos.flow` to read the code for this example.
 
@@ -93,14 +93,19 @@ Tooling
 Folders
 -------
 
-bin - binaries for the compiler and related tools
-debug - code for the debugger and profiler
-doc - documentation of the language and libraries
-lib - the flow standard library
-QtByteRunner - the bytecode runner used on Windows, Mac, Linux
-resources - integrations with VS code (recommended), Sublimetext and more
-sandbox - contains hello world
-src - the source code for the original haxe-based compiler, as well as the runtime
-tools - the compiler and processor for rendering fonts
-www - required files to be exposed by the web-server for running flow programs online
-www_source - the source files of some of the files in the www folder
+- bin - binaries for the compiler and related tools
+- debug - code for the debugger and profiler
+- doc - documentation of the language and libraries
+- lib - the flow standard library
+- QtByteRunner - the bytecode runner used on Windows, Mac, Linux
+- resources - integrations with VS code (recommended), Sublimetext and more
+- sandbox - contains hello world
+- src - the source code for the original haxe-based compiler, as well as the runtime
+- tools - the compiler and processor for rendering fonts
+- www - required files to be exposed by the web-server for running flow programs online
+- www_source - the source files of some of the files in the www folder
+
+Community
+---------
+
+To be decided.
