@@ -108,4 +108,6 @@ Folders
 Community
 ---------
 
-To be decided.
+There is a group chat in Telegram:
+
+https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
