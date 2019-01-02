@@ -69,7 +69,7 @@ export {
 		showTitle : bool,
 		enabled : Transform<bool>
 	) -> Material;
-	
+
 	timePeriod2string(period : TimePeriod) -> string;
 	// Convert TimePeriod: utc -> localTime or localTime -> utc
 	convertTimePeriod(period : TimePeriod, toUtcTime : bool) -> TimePeriod;
@@ -86,6 +86,10 @@ export {
 
 	MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material;
 		MAudioPlayerStyle ::= MVideoPlayerStyle, MWidth;
+
+
+	// FVideoTimeRange style disabled
+	MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material;
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -800,7 +804,7 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 	audioWH = if (mWidth > 0.) make(WidthHeight(mWidth, 0.)) else makeWH();
 
-	videoStyle = 
+	videoStyle =
 		filtermap(style, \st ->
 			switch (st) {
 				MVideoPlayerStyle() : {a : Maybe<MVideoPlayerStyle> = Some(st); a};
@@ -812,7 +816,7 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 		filename,
 		audioWH,
 		videoStyle
-		|> (\st -> 
+		|> (\st ->
 			eitherMap(
 				tryExtractStruct(st, FVideoControls([])),
 				\vc -> replaceStruct(st, FVideoControls(removeAllStructs(vc.controls, FullScreenPlayer()))),
@@ -865,6 +869,130 @@ MInlinePopup(
 	);
 }
 
+MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
+	amount = length(filenames);
+
+	style = removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.)));
+
+	// properties from external style
+	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
+	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
+	playEx = extractStruct(style, FVideoPlay(make(false))).play;
+
+	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
+	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
+
+	// playing audio
+	currIndexB = make(0);
+
+	// init properties for each audio
+	states = map(filenames, \__ ->
+		Quadruple(
+			make(0.),		// first: length
+			make(0.),		// second: position
+			make(false),	// third: is play
+			make(false)		// fourth: is ready
+		)
+	) |> unzipA4;
+
+	synchrocalls = mapi(filenames, \i, __ ->
+		SynchroCalls(
+			// set ready
+			\-> nextDistinct(states.fourth[i], true),
+			// play next or stop in the end
+			\-> {
+				// reset position (for js)
+				nextDistinct(states.second[i], 0.);
+				// if last audio
+				if (i == amount - 1) {
+					if (!fgetValue(loopEx)) {
+						// if not looping
+						nextDistinct(playEx, false);
+						synchrocallEx.onStop();
+					}
+				}
+				// next for case with length == 1
+				next(currIndexB, (i + 1) % amount);
+			}
+		)
+	);
+
+	players = mapi(filenames, \i, url ->
+		TVideo(
+			url,
+			make(WidthHeight(-1., -1.)),		// not to draw
+			replaceStructMany(style,
+				[
+					FVideoLength(states.first[i]),
+					FVideoPosition(states.second[i]),
+					FVideoPlay(states.third[i]),
+					synchrocalls[i],
+				]
+			)
+		)
+	);
+
+	changeAudioPlaying = \index, isPlay -> {
+		nextDistinct(states.third[index], isPlay);
+	}
+
+	playerPos = fsubselect(
+		currIndexB,
+		FLift(\index ->
+			faddition(
+				fsum(subrange(states.first, 0, index)),	// sum of previous lengths
+				states.second[index]					// current possition
+			)
+		)
+	);
+	playerPosChange = \pos -> nextDistinct(posEx, pos);
+	userPosChange = \pos -> {
+		allLength = fgetValue(fmerge(states.first));
+		// last index ; length sum of previous audio
+		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
+			newEnd = acc.second + len;
+			isNext = (acc.first + 1 == i);
+			if (isNext && newEnd < pos) Pair(i, newEnd)
+			else acc;
+		});
+
+		// reset current player
+		currIndex = getValue(currIndexB);
+		changeAudioPlaying(currIndex, false);
+		nextDistinct(states.second[currIndex], 0.);
+		// start new player
+		newIndex = lastEnd.first + 1;
+		nextDistinct(states.second[newIndex], pos - lastEnd.second);
+		// next need when index has not changed (continue playing)
+		next(currIndexB, newIndex);
+	}
+
+	MShow(
+		const(i2b(amount)),
+		// rendering (empty)
+		MConstruct(
+			[
+				// when all audios ready
+				makeSubscribe(fands(states.fourth, false), \isReady ->
+					if (isReady) synchrocallEx.onStart()
+				),
+				// sum all audio lengths
+				\-> fconnect(fsum(states.first), lenEx),
+				// set possition
+				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
+				// not make2Subscribe due to looping in 1-element array
+				\-> subscribe(currIndexB, \index ->
+					changeAudioPlaying(index, getValue(playEx))
+				),
+				\-> subscribe(playEx, \isPlay ->
+					changeAudioPlaying(getValue(currIndexB), isPlay)
+				)
+			],
+			MGroup(players)
+		)
+	)
+}
+
 MInlinePopupPosition(
 	manager : MaterialManager,
 	placeholder : Material,
@@ -873,3 +1001,5 @@ MInlinePopupPosition(
 ) -> Material {
 	MInlinePopup(manager, placeholder, fselect(position, FLift(\pos -> PositionScale(pos, Point(1.0, 1.0)))), popup);
 }
+
+
