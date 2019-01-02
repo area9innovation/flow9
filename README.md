@@ -108,6 +108,6 @@ Folders
 Community
 ---------
 
-There is a group chat in Telegram:
+There is a chat in Telegram for discussions about flow:
 
 https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
