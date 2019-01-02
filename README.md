@@ -115,3 +115,5 @@ https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
 There is a mailing list group in groups.io about flow as well:
 
 https://groups.io/g/flow
+
+Your first message requires moderation approval to avoid spam.
