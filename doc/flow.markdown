@@ -8,7 +8,6 @@ functions, polymorphism, closures and simple pattern matching.
 
 * [Design goals](#goals)
 * [Modules, imports, exports, and main](#modules)
-    * [Dynamic linking](#require)
 * [Declarations](#decls)
 * [Simple types and values](#types)
 * [Arrays](#arrays)
@@ -18,11 +17,11 @@ functions, polymorphism, closures and simple pattern matching.
 * [Function call: pipe-forward](#pipe)
 * [Sequence](#sequence)
 * [Structs](#structs)
-    * [Mutable fields](#mutable)
 * [Unions](#unions)
 * [switch](#switch)
+* [Mutable fields](#mutable)
 * [Casts](#casts)
-* [Special](#special)
+* [Special types `flow` and `native`](#special)
 * [Parameterized types](#parameterized)
 * [Impure functions](#impure)
 * [Native functions](#native)
@@ -31,7 +30,6 @@ functions, polymorphism, closures and simple pattern matching.
 * [Loops](#loops)
 * [Structs of functions](#structsoffunctions)
 * [flow vs. JavaScript](#javascript)
-* [Changing](#changing)
 
 <h2 id=goals>Design goals</h2>
 
