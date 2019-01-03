@@ -6,6 +6,7 @@ export {
 	// General utils
 	switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ?;
 	getCallstackIfNeeded(manager : MaterialManager) -> string;
+	getIScriptRecordingStarted(manager : MaterialManager) -> double;
 	getIScriptDelay(manager : MaterialManager) -> double;
 	getIScriptRecordCaption(aliases : Tree<IScriptComponentDescriptor, string>, script : Pair<double, IScriptRecord>) -> string;
 
@@ -18,6 +19,12 @@ export {
 	// IScript state utils
 	isIScriptEmpty(manager : MaterialManager) -> bool;
 	isBatchIScriptEmpty(manager : MaterialManager) -> bool;
+
+	isIScriptEnabled(manager : MaterialManager) -> bool;
+	// isIScriptEnabledB(manager : MaterialManager) -> Transform<bool>
+
+	getIScriptState(manager : MaterialManager) -> IScriptState;
+	setIScriptState(manager : MaterialManager, state : IScriptState) -> void;
 
 	getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording>;
 	isIScriptRecording(manager : MaterialManager) -> bool;
@@ -85,7 +92,7 @@ export {
 }
 
 isIScriptEmpty(manager : MaterialManager) -> bool {
-	sizeTree(getValue(manager.iscript.iScriptB).stack) == 0
+	sizeTree(getValue(manager.iscript.script).stack) == 0
 }
 
 isBatchIScriptEmpty(manager : MaterialManager) -> bool {
@@ -118,13 +125,15 @@ getCallstackIfNeeded(manager : MaterialManager) -> string {
 		"";
 }
 
+getIScriptRecordingStarted(manager : MaterialManager) -> double {
+	getValue(manager.iscript.script).recordingStarted;
+}
 
 getIScriptDelay(manager : MaterialManager) -> double {
-	switch (getValue(manager.iscript.iScriptStateB)) {
-		IScriptRecording(__, __): {
-			max(timestamp() - getValue(manager.iscript.iScriptB).recordingStarted, 1.)
-		}
-		default: 1.
+	if (isIScriptRecording(manager)) {
+		max(timestamp() - getIScriptRecordingStarted(manager), 1.0);
+	} else {
+		1.0;
 	}
 }
 
@@ -306,12 +315,24 @@ IScriptId2s(idList : List<IScriptIdentifier>) -> string {
 }
 
 isIScriptEnabled(manager : MaterialManager) -> bool {
-	contains(manager.style, MIScriptPanel())
+	getValue(manager.iscript.showPanel)
+}
+
+// isIScriptEnabledB(manager : MaterialManager) -> Transform<bool> {
+// 	fnot(feq(manager.iscript.state, IScriptDisabled()));
+// }
+
+getIScriptState(manager : MaterialManager) -> IScriptState {
+	getValue(manager.iscript.state);
+}
+
+setIScriptState(manager : MaterialManager, state : IScriptState) -> void {
+	nextDistinct(manager.iscript.state, state);
 }
 
 getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording> {
 	if (isIScriptEnabled(manager)) {
-		iScriptState = getValue(manager.iscript.iScriptStateB);
+		iScriptState = getIScriptState(manager);
 
 		switch (iScriptState) {
 			IScriptRecording(__, __): Some(iScriptState);
@@ -327,17 +348,17 @@ isIScriptRecording(manager : MaterialManager) -> bool {
 }
 
 isIScriptReplaying(manager : MaterialManager) -> bool {
-	iScriptState = getValue(manager.iscript.iScriptStateB);
+	iScriptState = getIScriptState(manager);
 
 	isIScriptEnabled(manager) && (isSameStructType(iScriptState, IScriptReplaying()) || isSameStructType(iScriptState, IScriptBatchReplaying()))
 }
 
 isIScriptRecordingB(manager : MaterialManager) -> Transform<bool> {
-	fselect(manager.iscript.iScriptStateB, FLift(\__ -> isIScriptRecording(manager)));
+	fselect(manager.iscript.state, FLift(\__ -> isIScriptRecording(manager)));
 }
 
 isIScriptReplayingB(manager : MaterialManager) -> Transform<bool> {
-	fselect(manager.iscript.iScriptStateB, FLift(\__ -> isIScriptReplaying(manager)));
+	fselect(manager.iscript.state, FLift(\__ -> isIScriptReplaying(manager)));
 }
 
 checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool {
@@ -552,20 +573,20 @@ addIScriptRecord(manager : MaterialManager, record : IScriptRecord) -> void {
 }
 
 addIScriptRecordWithDelay(manager : MaterialManager, delay : double, record : IScriptRecord) -> void {
-	rs : IScript = getValue(manager.iscript.iScriptB);
+	rs : IScript = getValue(manager.iscript.script);
 
 	switch (record) {
 		IScriptInputRecord(__, name, __, typeHint) : {
-			next(manager.iscript.inputValuesB, arrayPush(getValue(manager.iscript.inputValuesB), IScriptInputValue(name, typeHint, None())));
+			next(manager.iscript.input, arrayPush(getValue(manager.iscript.input), IScriptInputValue(name, typeHint, None())));
 		}
 		IScriptOutputRecord(__, name) : {
-			next(manager.iscript.outputValuesB, arrayPush(getValue(manager.iscript.outputValuesB), IScriptOutputValue(name, false, None())));
+			next(manager.iscript.output, arrayPush(getValue(manager.iscript.output), IScriptOutputValue(name, false, None())));
 		}
 		default : {}
 	}
 
 	next(
-		manager.iscript.iScriptB,
+		manager.iscript.script,
 		IScript(
 			rs.recordingStarted,
 			treePushToArrayValue(
@@ -597,8 +618,6 @@ addIScriptRequestRecord(manager : MaterialManager, url : string, post : bool, he
 	response : IScriptRequestRespose) -> void {
 
 	if (checkIScriptCaptureOption(manager, IScriptCaptureHttpRequests())) {
-		rs = getValue(manager.iscript.iScriptB);
-
 		addIScriptRecord(
 			manager,
 			IScriptRequestRecord(url, post, headers, params, delay, response)
@@ -629,11 +648,14 @@ iScriptError(manager : MaterialManager, error : string, id : Maybe<List<IScriptI
 }
 
 addGlobalAliasInIScript(manager : MaterialManager, focus : MaterialFocus, alias : string) -> void {
-	next(manager.iscript.aliasesB, setTree(
-		getValue(manager.iscript.aliasesB),
-		IScriptComponentDescriptor(focus.name, getFullMFocusId(focus)),
-		alias
-	))
+	next(
+		manager.iscript.aliases,
+		setTree(
+			getValue(manager.iscript.aliases),
+			IScriptComponentDescriptor(focus.name, getFullMFocusId(focus)),
+			alias
+		)
+	);
 }
 
 addIScriptUrlRecord(manager : MaterialManager, url : string) -> void {
@@ -646,24 +668,24 @@ replaceRecordInIScript(manager : MaterialManager, prevRecord : Pair<double, IScr
 }
 
 removeRecordFromIScript(manager : MaterialManager, record : Pair<double, IScriptRecord>) -> void {
-	is = getValue(manager.iscript.iScriptB);
+	is = getValue(manager.iscript.script);
 
 	switch (record.second) {
 		IScriptInputRecord(__, name, __, typeHint) : {
-			inputValues = getValue(manager.iscript.inputValuesB);
+			inputValues = getValue(manager.iscript.input);
 			inputValueIndex = findiDef(inputValues, \inputValue -> inputValue.name == name, -1);
-			next(manager.iscript.inputValuesB, removeIndex(inputValues, inputValueIndex));
+			next(manager.iscript.input, removeIndex(inputValues, inputValueIndex));
 		}
 		IScriptOutputRecord(__, name) : {
-			outputValues = getValue(manager.iscript.outputValuesB);
+			outputValues = getValue(manager.iscript.output);
 			outputValueIndex = findiDef(outputValues, \outputValue -> outputValue.name == name, -1);
-			next(manager.iscript.outputValuesB, removeIndex(outputValues, outputValueIndex));
+			next(manager.iscript.output, removeIndex(outputValues, outputValueIndex));
 		}
 		default : {}
 	}
 
 	next(
-		manager.iscript.iScriptB,
+		manager.iscript.script,
 		IScript(
 			is.recordingStarted,
 			filterIScriptStackTree(is.stack, \d, r -> d != record.first || r != record.second)
@@ -706,7 +728,7 @@ initIScriptRecording(manager : MaterialManager, f : MaterialFocus, disposeOnReco
 }
 
 captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, component : string, type : string) -> bool {
-	if (!handled && contains(manager.style, MIScriptPanel())) {
+	if (!handled && isIScriptEnabled(manager)) {
 		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureKeyEvents())) {
 			addIScriptBehaviourRecord(
 				manager,
@@ -726,7 +748,7 @@ captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, 
 }
 
 captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () -> MouseInfo, canvasPosition : () -> Point, component : string, type : string) -> bool {
-	if (!handled && contains(manager.style, MIScriptPanel())) {
+	if (!handled && isIScriptEnabled(manager)) {
 		getPoint = \ -> {
 			mi = miFn();
 			p = canvasPosition();
@@ -753,7 +775,7 @@ captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () ->
 }
 
 captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool {
-	if (!handled && contains(manager.style, MIScriptPanel())) {
+	if (!handled && isIScriptEnabled(manager)) {
 		getPoint = \ -> {
 			p = canvasPosition();
 
