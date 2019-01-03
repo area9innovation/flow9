@@ -48,7 +48,7 @@ Compile and run the first program:
 
     c:/flow9> flowcpp demos/demos.flow
 
-See `lib/demos/demos.flow` to read the code for this example.
+See `demos/demos.flow` to read the code for this example.
 
 See `doc/index.html` for further documentation about the language and platform.
 
