@@ -14,7 +14,7 @@
 
 [form.html](form.html) describes *form*, a low-level gui library.
 
-[tropic.html](tropic.html) describes *tropic*, another GUI library which is great for responsive design.
+[tropic.html](tropic.html) describes *tropic* and *material*, the recommended GUI libraries which are great for responsive design.
 
 [development.html](development.html) provides useful information on the daily development work with *flow*.
 
