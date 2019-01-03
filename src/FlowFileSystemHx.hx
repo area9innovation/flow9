@@ -216,6 +216,8 @@ class FlowFileSystemHx {
 		JSFileInput.value = ""; // force onchange event for the same path
 
 		JSFileInput.onchange = function(e : Dynamic) {
+			JSFileInput.onchange = null;
+
 			var files : js.html.FileList = JSFileInput.files;
 
 			var fls : Array<js.html.File> = [];
@@ -225,6 +227,18 @@ class FlowFileSystemHx {
 
 			callback(fls);
 		};
+
+		//workaround for case when cancel was pressed and onchange isn't fired
+		var onFocus : Dynamic;
+		onFocus = function(e : Dynamic) {			
+			js.Browser.window.removeEventListener("focus", onFocus);
+
+			//onfocus is fired before the change of JSFileInput value
+			haxe.Timer.delay(function() {
+				JSFileInput.dispatchEvent(new js.html.Event("change"));
+			}, 500);
+		}
+		js.Browser.window.addEventListener("focus", onFocus);
 
 		JSFileInput.click();
 		#end
