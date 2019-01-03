@@ -8,7 +8,6 @@ functions, polymorphism, closures and simple pattern matching.
 
 * [Design goals](#goals)
 * [Modules, imports, exports, and main](#modules)
-    * [Dynamic linking](#require)
 * [Declarations](#decls)
 * [Simple types and values](#types)
 * [Arrays](#arrays)
@@ -18,11 +17,11 @@ functions, polymorphism, closures and simple pattern matching.
 * [Function call: pipe-forward](#pipe)
 * [Sequence](#sequence)
 * [Structs](#structs)
-    * [Mutable fields](#mutable)
 * [Unions](#unions)
 * [switch](#switch)
+* [Mutable fields](#mutable)
 * [Casts](#casts)
-* [Special](#special)
+* [Special types `flow` and `native`](#special)
 * [Parameterized types](#parameterized)
 * [Impure functions](#impure)
 * [Native functions](#native)
@@ -31,21 +30,20 @@ functions, polymorphism, closures and simple pattern matching.
 * [Loops](#loops)
 * [Structs of functions](#structsoffunctions)
 * [flow vs. JavaScript](#javascript)
-* [Changing](#changing)
 
 <h2 id=goals>Design goals</h2>
 
 The main design goals of *flow* are:
 
- - Support easy construction of user interfaces
+ - Support easy construction of complex user interfaces
  - Allow programmers to use a normal text editor and compiler work flow
- - Easy to implement on multiple platforms, including desktop, iPhone, Android and HTML5.
-   This implies that the runtime needs to be small, because we can not reuse the same 
-   implementation on all these targets.
+ - The language should be easy to implement on multiple platforms, including desktop, 
+   iPhone, Android and HTML5. This implies that the runtime needs to be small, because 
+   we can not reuse the same implementation on all these targets.
    
 Although *flow* can be utilized to build server-side functionality it is primarily used for 
 building complicated UIs. That is the field where it starts shining and shows its real power. 
-Keep it in mind when working with it. 
+Worth keeping in mind when working with it.
 
 The main flow compiler is implemented in flow itself. The compiler produces a simple bytecode, 
 native JavaScript, Java and other targets. See the [runtimes.html](runtimes.html) document for 
@@ -57,7 +55,8 @@ A *flow* program consists of modules. A module `example` is defined by a file na
 `example.flow`.  (It is intentional that you do not to have to write the name of the
 module inside the file itself. Therefore, you can only use a restricted set of
 filenames for your flow files. Also be aware that all filenames are case sensitive,
-because the result needs to run on Unix systems.)
+because the result needs to run on Unix systems. The convention is to use lower-case
+only filenames.)
 
 Each module (file) can import any number of modules as dependencies. This is done
 with
@@ -91,7 +90,9 @@ global scope and can cause name conflicts. This might change in the future.)
 Execution starts by calling `main` in the main module compiled. Example command line for
 the C++ runner that compiles and then calls `main` in the `helloworld` module:
 
-	flowcpp sandbox/helloworld.flow
+	flowcpp sandbox/hello.flow
+
+Run from the root of your flow installation, such as `c:\flow9\` on Windows.
 
 See `windows.html`, `mac.html`, `linux.html` to learn how to use other targets.
 
@@ -177,15 +178,15 @@ Names are a sequence of letters, numbers and _, not starting with a number. Vari
 conventionally start with small letters.
 `int`s are digits, or hexadecimal digits with an `0x` prefix. `double`s are digits
 with a single `.` along them. (Currently, we do not support exponents in
-doubles.)
+double syntax.)
 
-Ints are 32-bit. Comparison and multiplicative operations on ints are signed.
+Ints are 32-bit. Comparisons and multiplicative operations on ints are signed.
 Doubles are 64-bit. Strings are UTF-16 encoded (i.e. 16 bit).
 
 Strings support \n, \t, \\ and \" escaping, as well as \xHH and \uHHHH where
 the HH are hexadecimal digits. Notice that it does not support \r out of the box,
-because those are problematic, and we try to avoid those as much as possible. If we added
-this escape, people might forget that we want to avoid them. (You can get it with \x0d).
+because those are problematic, and we try to avoid those. If we added this escape, 
+people might forget that we want to avoid them. (You can get it with \x0d).
 
 It is possible to define long strings in external files:
 
@@ -546,7 +547,8 @@ declare the type at the top level using either of the following syntaxes:
 	Mystruct(arg1 : int, arg2 : double);
 	Mystruct : (arg1 : int, arg2 : double);
 
-Either syntax is acceptable.  Both are commonly used in our codebases.
+Either syntax is acceptable.  Both are used in our codebases, although the 
+first is most common.
 
 Then to make an instance:
 
@@ -554,35 +556,13 @@ Then to make an instance:
 
 We have a strong conventions that the names of structs are written in caps,
 while variables and functions are written in lower-caps. There is an exception
-about functions that return user-interface elements, like Form and Material, where
+about functions that return user-interface elements, like `Form` and `Material`, where
 these functions can have a capitalized initial letter. We should never use a lower
 case initial letter for structs or unions, though.
 
 The syntax for making instances is intentionally the same as function calls, since when 
 you are programming user interfaces, most often it does not matter if something is a struct 
 or a function that produces a struct.
-
-Also there is one more way to make an instance:
-
-	oldval = Mystruct(1, 2.0);
-	val = Mystruct(oldval with arg1=1);
-
-It is useful when there is a lot of fields in struct, and you need to make another instance
-with one or two fields different from the source. You can even make a completely new
-instance by enumerating all fields after "with":
-
-	val = Mystruct(oldval with arg1=5, arg2=3.8);
-
-Notice, that this is just syntactic sugar, compiler transforms such construction into
-regular struct instantiation with the respective limitations. Avoid to produce or use any
-side effects within this construction, since it could work not as expected. E.g:
-
-	val = Mystruct(oldval with arg2={globalVar:=1; 5.1;}, arg1={globalVar:=2; 10;});
-
-So you would expect `globalVar` to have value *2*, but it has value *1*, because this example
-will be transformed into:
-
-	val = Mystruct({globalVar:=2; 10;}, {globalVar:=1; 5.1;});
 
 Languages like Prolog and Pico also have a similar syntax for the corresponding concept
 called constructors. In those languages, there really is no difference between a
@@ -607,6 +587,28 @@ special `structname` syntax: `val.structname;` which will give you the name as a
 `structname` is a low-level construct, and the use should be minimized, since it requires
 comparing against a string. That is not very type safe. Often, a better choice is to
 use the function `isSameStructType` defined in `flowstructs.flow`.
+
+Also there is one more way to make an instance of a struct value:
+
+	oldval = Mystruct(1, 2.0);
+	val = Mystruct(oldval with arg1=1);
+
+It is useful when there is a lot of fields in struct, and you need to make another instance
+with one or two fields different from the source. You can even make a completely new
+instance by enumerating all fields after "with":
+
+	val = Mystruct(oldval with arg1=5, arg2=3.8);
+
+Notice, that this is just syntactic sugar. The compiler transforms such construction into
+regular struct instantiation with the respective limitations. Avoid to produce or use any
+side effects within this construction, since it could work not as expected. E.g:
+
+	val = Mystruct(oldval with arg2={globalVar:=1; 5.1;}, arg1={globalVar:=2; 10;});
+
+So you would expect `globalVar` to have value *2*, but it has value *1*, because this example
+will be transformed into:
+
+	val = Mystruct({globalVar:=2; 10;}, {globalVar:=1; 5.1;});
 
 <h2 id=unions>Unions</h2>
 
@@ -754,6 +756,26 @@ To help with common casts, the following functions are defined:
 where i stands for int, d for double, s for string, and b for bool. For that reason,
 you rarely ever need to use `cast` directly.
 
+When you switch on a value v, the type of v will automatically be downcasted to whatever
+case is matched in the case body of the switch:
+
+	U ::= Foo, Bar;
+		Foo(foo : int);
+		Bar(bar : int);
+	
+	foobar(v : U) {
+		switch (v) {
+			Foo(a): {
+				// Here, v is of type Foo
+				v.foo;
+			}
+			Bar(a): {
+				// Here, v is of type bar
+				v.bar;
+			}
+		}
+	}
+	
 <h2 id=special>Special types `flow` and `native`</h2>
 
 The `flow` type means "any type":
@@ -767,6 +789,7 @@ The flow type is untyped and boxed at runtime, so use it sparingly.
 `flow` was added to the language to be able to give a type to built-in
 functions that get data from the "outside world", e.g., unstreaming
 binary data. It is not meant to be used for other purposes.
+
 Specifically, if you have a type that can be several types, use unions
 to model this in your datatypes, NOT `flow`.  Or model this union of
 types with other types.  And consider, whether you need this type. Is
@@ -786,7 +809,7 @@ that a given (native) function is impure and can not be calculated at compile ti
 
 <h2 id=parameterized>Parameterized types</h2>
 
-*flow* supports parameterizing types, similar to what exists in Haxe, Java, C# and
+*flow* supports parameterizing types, similar to what exists in ML, Haxe, Java, C# and
 similar language. Let's look at an example:
 
 	max(?, ?) -> ?;
@@ -890,12 +913,11 @@ In the Haxe target, a call to this function roughly translates to:
         }
     }
 
-
 Notice that adding new natives is done rarely. In many cases, we try to avoid it, because it comes 
 with a promise for the future. It makes porting flow to new platforms more expensive.
 
 However, if a new native is required, it needs to be implemented in all runtimes. This includes
-at least 2 different Haxe runtimes, C++, Java, Haskell, and C#.
+at least 2 different Haxe runtimes, C++, and Java.
 
 When the native is needed only for optimization purposes, or makes sense only for one target,
 it is possible to define a fallback body for the native as an ordinary flow function:

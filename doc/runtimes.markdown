@@ -1,7 +1,48 @@
+*flow* compilers and runtimes
+=============================
+
+There are different ways of compiling and executing *flow* code. This document attempts to document them all.
+
+Compilers
+---------
+
+There are two different compilers for flow.
+
+- `flow` is the original compiler, written in haxe. Invoke `flow` for usage info
+- `flowc` is the current compiler, written in flow. Invoke `flowc` for usage info
+
+The languages supported by these compilers is almost identical. The biggest difference
+is that `flowc` requires semi-colons at the end of types in export sections, and that
+the type checker is more strict in `flowc` especially around polymorphism. The code in 
+the standard library is intended to be compatible with both compilers for some time.
+
+`flowc` is the recommended compiler for daily use, since it is incremental also in
+typechecking. Also, `flowc` supports a compile server, which is automatically used
+when developing using Visual Code, providing a nice speed up in compile times.
+
+For more information about `flowc`, see `tools/flowc/readme.md`.
+
+`flow.config`
+-------------
+
+Both compilers support setting up a compile/build configuration using a `flow.config` file 
+in the current working directory when invoking the compiler. This is a .ini-syntax file, where
+can provide options to the compilers, compatible with 'the arguments as given to `flowc`.
+
+Include
+
+	flowcompiler=flowc
+
+or
+
+	flowcompiler=flow
+
+to select what compiler `flowcpp` should use when invoked like
+
+	flowcpp material/tests/material_test.flow
+
 *flow* runtimes
 ===============
-
-There are many different ways of executing *flow* code. This document attempts to document them all.
 
 Targets identified as "production" are, of course, the most critical.
 
@@ -22,11 +63,11 @@ haXe based runtimes
 		<td>JavaScript</td>
 		<td>HTML5 via RenderSupportJsPixiHx.hx</td>
 		<td>(JsWriter.hx)</td>
-		<td>program.js, made using neko flow.n --js program.js program.flow</td>
+		<td>program.js, made using `flowc js=program.js program.flow` or `flow --js program.js program.flow` </td>
 		<td>Compiles to Javascript.</td>
 		<td>Native JavaScript values.</td>
 		<td>Our production target for HTML5. Consider to optimise further using Google closure compiler:<br/>
-java -jar compiler.jar --compilation_level ADVANCED_OPTIMIZATIONS --js test.js --js_output_file testopt.js
+`java -jar compiler.jar --compilation_level ADVANCED_OPTIMIZATIONS --js test.js --js_output_file testopt.js`
 		</td>
 	</tr>
 </table>
@@ -47,32 +88,32 @@ C++ based runtimes
 		<td>Windows, Mac OS X, Linux</td>
 		<td>Qt with OpenGL</td>
 		<td>QtByterunner/core/ByteCodeRunner.cpp</td>
-		<td>flow bytecode. See bytecode.hx</td>
-		<td>Bytememory, 12 bytes per value</td>
+		<td>flow bytecode. See `src/Bytecode.hx`</td>
+		<td>Bytememory, 8 bytes per value</td>
 		<td>Useful for development, not for end users</td>
 	</tr>
 	<tr>
 		<td>Android</td>
 		<td>Android native API with OpenGL ES</td>
 		<td>QtByterunner/core/ByteCodeRunner.cpp</td>
-		<td>flow bytecode. See bytecode.hx</td>
-		<td>Bytememory, 12 bytes per value</td>
+		<td>flow bytecode. See `src/Bytecode.hx`</td>
+		<td>Bytememory, 8 bytes per value</td>
 		<td>Production use</td>
 	</tr>
 	<tr>
 		<td>iOS</td>
 		<td>iOS native API with OpenGL ES</td>
 		<td>QtByterunner/core/ByteCodeRunner.cpp</td>
-		<td>flow bytecode. See bytecode.hx</td>
-		<td>Bytememory, 12 bytes per value</td>
+		<td>flow bytecode. See `src/Bytecode.hx`</td>
+		<td>Bytememory, 8 bytes per value</td>
 		<td>Production use</td>
 	</tr>
 	<tr>
 		<td>Windows, Mac, Linux, Android, iOS</td>
 		<td></td>
 		<td>(Bytecode2cpp.hx)</td>
-		<td>C++, made using neko flow.n --cpp outputdir program.flow</td>
-		<td>Bytememory, 12 bytes per value</td>
+		<td>C++, made using `flow --cpp outputdir program.flow`</td>
+		<td>Bytememory, 8 bytes per value</td>
 		<td>Generates big C++ files that take long time to compile, but the fastest target. In production server-side</td>
 	</tr>
 </table>
@@ -95,7 +136,7 @@ This is a relatively fast target. For computational stuff, it can be 14 times fa
 	<tr>
 		<td>Windows, Mac OS X, Linux</td>
 		<td>JavaFX</td>
-		<td>src/java/?</td>
+		<td>src/java/*</td>
 		<td>Java</td>
 		<td>Java</td>
 		<td>Production for command line</td>
@@ -117,6 +158,9 @@ or on Linux and Mac,
 
 C# based runtime
 ----------------
+
+Notice this target is not being maintained since Windows Phone is a dying platform,
+so there can be bitrot.
 
 <table>
 	<tr>
@@ -143,7 +187,7 @@ Compile using
 
 	flow --csharp src/csharp/flowgen sandbox/helloworld.flow
 
-and then open the flow\src\csharp\WindowsApp\WindowsApp.sln solution file in Visual Studio and
+and then open the src\csharp\WindowsApp\WindowsApp.sln solution file in Visual Studio and
 compile and run. In the solution there are separate projects for Universal Windows (Windows 10) 
 and Windows 8.1.
 

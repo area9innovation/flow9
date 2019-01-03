@@ -15,32 +15,6 @@ flow has production quality targets for:
 - Android
 - Windows, Mac, Linux
 
-License
--------
-
-The flow compiler is licensed under GNU General Public License version 2 or any later version.
-The flow standard library is released under the MIT license.
-For the license of other components, see LICENSE.txt.
-
-Name
-----
-
-flow was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
-to keep the name, since it came first, is a full platform and the risk of confusion seems small. 
-However, should the need arise, then flow9 can also be used to refer to this language.
-
-History
--------
-
-- August 2010: The very first program ran on Flash & HTML5
-- November 2013: First app approved in iOS store
-- April 2014: First app approved in Android PlayStore
-- November 2015: Flash was retired, completely migrated to HTML5
-- January 2016: Material guidelines implemented
-- November 2016: JIT for x64 was added
-- May 2018: Self-hosted compiler written in flow itself
-- 2019: Initial open source release
-
 Meet flow
 ---------
 
@@ -72,18 +46,31 @@ Add `flow9\bin` to your path. Requires 64-bit Java Runtime.
 
 Compile and run the first program:
 
-    flowcpp demos/demos.flow
+    c:/flow9> flowcpp demos/demos.flow
 
 See `lib/demos/demos.flow` to read the code for this example.
 
-See `doc/index.html` for further documentation about the language.
+See `doc/index.html` for further documentation about the language and platform.
+
+Community
+---------
+
+There is a chat in Telegram for discussions about flow:
+
+https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
+
+There is a mailing list group in groups.io about flow as well:
+
+https://groups.io/g/flow
+
+Your first message requires moderation approval to avoid spam.
 
 Tooling
 -------
 
-- `flow` is the original compiler, written in haxe. See src/
 - `flowc` is the current compiler, written in flow itself. See tools/flowc. Can work as a compile server.
-- Single-step debugger
+- `flow` is the original compiler, written in haxe. See src/
+- Single-step debugger using gdb protocol (see QtByterunner/)
 - Profiler for time, instructions, memory, garbage collection
 - JIT (just-in-time) compiler for x64, interpreter for ARM and others
 - Compiles to C++ and Java for performance-critical code, typically server side
@@ -105,15 +92,29 @@ Folders
 - www - required files to be exposed by the web-server for running flow programs online
 - www_source - the source files of some of the files in the www folder
 
-Community
----------
+License
+-------
 
-There is a chat in Telegram for discussions about flow:
+The flow compiler is licensed under GNU General Public License version 2 or any later version.
+The flow standard library is released under the MIT license.
+For the license of other components, see LICENSE.txt.
 
-https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
+Name
+----
 
-There is a mailing list group in groups.io about flow as well:
+flow was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
+to keep the name, since it came first, is a full platform and the risk of confusion seems small. 
+However, should the need arise, then flow9 can also be used to refer to this language.
 
-https://groups.io/g/flow
+History
+-------
 
-Your first message requires moderation approval to avoid spam.
+- August 2010: The very first program ran on Flash & HTML5
+- November 2013: First app approved in iOS store
+- April 2014: First app approved in Android PlayStore
+- November 2015: Flash was retired, completely migrated to HTML5
+- January 2016: Material guidelines implemented
+- November 2016: JIT for x64 was added
+- May 2018: Self-hosted compiler written in flow itself
+- 2019: Initial open source release
+

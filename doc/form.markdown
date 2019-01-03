@@ -1,17 +1,16 @@
 *form*
 ======
 
-*form* is a domain specific language for building interactive user interfaces. It is
-influenced by Arctic, SVG, HTML and InDesign document models, as well as common user
-interface toolkits like WinForms, Qt and GTK. It tries to combine the learnings from
-using Arctic over the years and extend the reach to make it easier to make more dynamic,
-animated, optimized designs using declarative programming.
+*form* is an embedded domain specific language for building interactive user interfaces. 
+It is influenced by SVG and HTML document models, as well as common user interface toolkits 
+like WinForms, Qt and GTK. It tries to make it easier to make dynamic, animated, 
+optimized designs using declarative programming.
 
 Based on the experience of using *form* for years, we have since implemented `Tropic` 
 and `Material`. `Material` is the recommended technology to build UIs, and can be
 seen as an improved version of *form*. This document explains the background of *form*
 and thus `Material`, including behaviours, FRP and compositionality, all of which is
-relevant in `Material`.
+still relevant in `Material`.
 
 Design goals
 ------------
@@ -65,29 +64,29 @@ where RenderResult is defined like this:
 	             dispose : () -> void, capabilities : ClipCapabilities)	;
 
 First of all, we can see that when we render something, it produces a list of clips. Clips
-is the native type that can display something. For the flash target, a clip will be
-a `Sprite` (i.e. `MovieClip`), while it could be a `Canvas` in HTML5, or some native
-graphics element on the iPhone or with Android.
+is the `native` type that can display something. This is similar to a `Sprite` (i.e. `MovieClip`)
+as known from Flash, while it could be a `Canvas` in HTML5, or some native graphics element on 
+the iPhone or with Android.
 
 Secondly, the `Form` is a value-type, which can be produced by functions, copied, composed into
-a new `Form`, just like we know it from Arctic. Contrary to Arctic, the re-layout of the user
-interface is handled automatically when changes occur in the user interface, and as you will
-find, the use of behaviours really changes things compared to Arctic days.
+a new `Form`. One key benefit is that the re-layout of the user interface is handled automatically 
+when changes occur in the user interface, and as you will find, the use of behaviours make dynamic
+UI easier to handle.
 
 The second parameter to the call is a *behaviour*: the `available` metric. For now, consider this
 as a size which specifies how much space is available for this `Form` to render itself. The `Form`
 does not have to obey this specification. Consider it a hint given by the surrounding environment
 which is useful for some `Form`s to work well. The prime example is the `Align` form which can
 center, right-align or bottom-align a `Form` in some available space.
-(In case the content of the `Align` `Form` can not fit in the available space, it just ends up
+(In case the content of the `Align` can not fit in the available space, it just ends up
 putting itself where it is and uses as much space as is necessary, overflowing the available space.)
 
 Besides the clips, the result of the function gives the resulting width and height of itself here and
 a dispose function (as well as a capabilities structure which is used for optimizations, and can be
-ignore here.)
+ignored here.)
 So every `Form` has a size, which is always a rectangle. The visual look of a `Form` can obviously
-be anything but a rectangle, but in terms of layout, positioning and so on, all `Form`s are rectangular. In
-practice, most `Form`s will announce the tight bounding rectangle that contains the contents of
+be anything but a rectangle, but in terms of layout, positioning and so on, all `Form`s are rectangular. 
+In practice, most `Form`s will announce the tight bounding rectangle that contains the contents of
 the `Form`.
 
 The final interesting thing about rendering a `Form` is that it also returns a disposal function.
@@ -114,7 +113,7 @@ Behaviours are a construct known from
 found as libraries for
 [Haskell](http://www.haskell.org/haskellwiki/Functional_Reactive_Programming),
 [JavaScript](http://www.flapjax-lang.org/docs/) ([2](http://www.cs.brown.edu/~sk/Publications/Papers/Published/mgbcgbk-flapjax/paper.pdf)),
-and other languages. They are similar tosignal/slots as known from Qt and
+and other languages. They are somewhat similar to signal/slots as known from Qt and
 other places. They also exist in C# as the
 [Rx framework](http://msdn.microsoft.com/en-us/devlabs/ee794896.aspx)
 ([2](http://msdn.microsoft.com/en-us/library/ff403103\(v=VS.92\).aspx))
@@ -122,13 +121,12 @@ other places. They also exist in C# as the
 from Microsoft. There is also [research](http://www.mpi-sws.org/~umut/papers/pldi10.pdf) about
 how to optimize such things, although that is not directly applicable to our purposes.
 
-
 The main point of a behaviour is to capture dynamic values over time. It works by setting up a
 behaviour with a default value of some type by calling `make`. Observers can subscribe to this
 behaviour using `subscribe`, and will get notified when a new value is "sent" using `next`.
 Importantly, `subscribe` returns a disposal function which can be called to unsubscribe from a
-behaviour again, after which any changes to the behaviour are ignored by the subscription. Let's
-look at an example illustrating these:
+behaviour again, after which any changes to the behaviour are ignored by that subscription. Let's
+look at an example illustrating this:
 
 	a = make(0.0);
 	dispose = subscribe(a, \v -> println(v));
@@ -190,10 +188,10 @@ you can.)
 
 A behaviour is always available for composition, and has a value. Mentally, it is useful to
 consider behaviours as streams of values that change one after another. That can happen in the
-same "time step" of the interpreter, but it can also happen when an event happens later in real
-time, such as after a mouse click. I picture the behaviours as a line with changing values
-as time goes to the right, and transformations as taking these values at various points in time
-and then produce a new one:
+same "time step" or call-stack of the execution, but it can also happen when an event happens 
+later in real time, such as after a mouse click. It is useful to picture the behaviours as a line 
+with changing values as time goes to the right, and transformations as taking these values at 
+various points in time and then produce a new one:
 
 	a1:      4.0 ------------------------------------>
 	a2:      3.0 ------ 1.0 ------------------------->
@@ -206,14 +204,14 @@ and then produce a new one:
 
 Flow comes with a very simple implementation of behaviours, along with a set of useful
 transformations. The links above contain hundreds of different transformations that are useful in
-various circumstances. If you need a new one, check the literature for existing names, and then
-add it. You will most likely find that it is not more than 5 lines of code for a simple one, and
-up to 20 lines for a really complicated one. As an example, here is the implementation of `select`:
+various circumstances. Most simple transformations are not more than 5 lines of code, and
+up to 20 lines for a really complicated one, but combining them gives the power. As an example, 
+here is the implementation of `select`:
 
 	select(behaviour, fn) {
-		// subscribe immediately calls the function, so we start out with a dummy value
+		// subscribe immediately calls the function, so we start out with mapping the initial value
 		provider = make(fn(getValue(behaviour)));
-		subscribe(behaviour, \v -> next(provider, fn(v)));
+		subscribe2(behaviour, \v -> next(provider, fn(v)));
 		provider;
 	}
 
@@ -242,25 +240,24 @@ Physical forms
 
 Let's start with the simplest `Form` there is:
 
-	Empty : ();
+	Empty();
 
 `Empty` is the empty form. It has size 0.0,0.0, and is useful to remove parts of an interface when
 they serve no purpose anymore.
 
 Next up is the Text, which we saw a minute ago:
 
-	Text : (text : string, style : [CharacterStyle]);
+	Text(text : string, style : [CharacterStyle]);
 
 This is a static text in a given character style. `CharacterStyle` is a sub-type for concrete
 style attributes such as `FontFamily`, `FontSize`, and `Fill` for specifying the text color. It
-uses another pattern in `Form`: Instead of having an ever increasing number of arguments, most of
-which might be `null`, we uses an array of properties instead and only include those we need to
-change from the defaults. This is better for making the code readable, and it is easier to extend
-with new style features this way. And that means we can avoid having `null` in *flow* in the
-first place, once and for all getting rid of all null-pointer exceptions.
+uses another pattern in `Form`: Instead of having an ever increasing number of arguments, we use 
+an array of properties instead and only include those we need to change from the defaults. This 
+is better for making the code readable, and it is easier to extend with new style features this 
+way.
 
 Besides the `Text` form, there are other similar forms for `Picture`s, vector `Graphic`s.
-See the `flow/form.flow` file for documentation about these. It is interesting to note that the
+See the `lib/form.flow` file for documentation about these. It is interesting to note that the
 `Picture` form reports its size as 0.0,0.0 until the picture is loaded, which can happen many seconds
 later. But since everything is set up to handle dynamic changes, this does not have any harmful
 consequences: Once the `Picture` has been loaded and is inserted, the code just sends out the
@@ -272,7 +269,7 @@ Compositional forms
 
 The next category of forms are compositional. The first is
 
-	Group : (layers : [Form]);
+	Group(layers : [Form]);
 
 which takes an array of forms, and arranges them on top of each other in separate layers.
 The first element goes the farthest away from the screen into the back, while the last
@@ -281,14 +278,14 @@ that can contain all children.
 
 The other main compositional form is the `Grid`:
 
-	Grid : (cells: [[Form]]);
+	Grid(cells: [[Form]]);
 
 This is a simple, 2d grid that arranges the children in an aligned table. The height of
 a row is defined by the highest form in that row, and similarly for the columns. The
-Grid does *not* expose any "filling" behaviour, as seem with the `LineStack`s of arctic.
-They just arrange the elements in a predictable grid without expanding anything. (That
-said, the cells in the table will get `available` size reported to exploit any free space
-there is in that row/column cell size.)
+Grid does *not* expose any "filling" behaviour. They just arrange the elements in a 
+predictable grid without expanding anything. (That said, the cells in the table will 
+get the `available` size reported to exploit any free space there is in that row/column 
+cell size.)
 
 It goes without saying that the Grid supports changing metrics of the children, and will move
 everything around to fit the grid when changes in sizes happen in some cell.
@@ -303,7 +300,7 @@ All `Form`s define their own coordinate system starting at 0.0,0.0 in the upper,
 A complete set of `Form`s allow you to manipulate these coordinate systems. As an example,
 let's take a look at `Translate`:
 
-	Translate : (x : Behaviour<double>, y : Behaviour<double>, form : Form);
+	Translate(x : Behaviour<double>, y : Behaviour<double>, form : Form);
 
 This will render the child form at the given offset from the parent. The size of the form itself
 is the same as the child form, even though it is positioned differently. (If you want the size
@@ -314,14 +311,13 @@ form: Just construct a transformation that generate a stream of coordinates over
 goes.
 
 In this family of forms, you will also find `Scale` which does change metrics, and `Rotate`,
-which patently does not. Nobody has ever managed to calculate the correct bounding rectangle of a
-rotated rectangle, and it turns out that you never want that anyways.
+which does not. It turns out that you hardly never want that anyways.
 
-Let's also place `Alpha` which can adjust the complete transparency of a form into this category,
-although it does not change any coordinate systems. Another related `Form` called `Mask` which
-can do an alpha-channel style masking of a form with another form as the alpha channel does
-change the metrics of the result based on the *mask* only. If you want to hide a form, then use
-`Visible`. Notice that the size changes to 0,0 once you hide a form using `Visible`.
+`Alpha` can adjust the complete transparency of a form into this category, although it does not 
+change any coordinate systems. Another related `Form` called `Mask` which can do an alpha-channel 
+style masking of a form with another form as the alpha channel does change the metrics of the 
+result based on the *mask* only. If you want to hide a form, then use `Visible`. Notice that the 
+size changes to 0,0 once you hide a form using `Visible`.
 
 The `Crop` form allows you to cut out to a specific rectangle of a form. This is useful for
 cropping images and other elements, or for implementing scrolling panes with scrollbars.
@@ -345,12 +341,12 @@ Dynamic forms
 There are two main dynamic forms in *form*: The `Mutable` form we say earlier and the
 `Switch` form:
 
-	Mutable : (form : Behaviour<Form>);
-	Switch : (case : Behaviour<int>, cases: [Form]);
+	Mutable(form : Behaviour<Form>);
+	Switch(case : Behaviour<int>, cases: [Form]);
 
 The first parameter to `Switch` is a integer, which defines which "case" to display. The cases are packed
 together in the array, and when the `case` changes, the user interface changes accordingly. This
-is not more efficient than a `Mutable`, but often convenient. You might consider to use an
+is not more efficient than a `Mutable`, but sometimes convenient. You might consider to use an
 `Alpha` if you want to hide something temporarily, but restore it again without reconstructing it
 from scratch for performance reasons. However, that is often a bad idea, because that will not
 prevent spurious mouse events from disturbing things. It is better to just use `Visible` and
@@ -362,10 +358,10 @@ Meta-forms
 
 Let's turn the attention to the first interesting meta-form:
 
-	Disposer : (form : Form, fn : () -> void);
+	Disposer(form : Form, fn : () -> void);
 
 This form is special in that it has no special visual representation itself, or even any effect
-of the child. It looks exactly like the `Form` it takes as a child, so customers will never know
+on the child. It looks exactly like the `Form` it takes as a child, so customers will never know
 it is there. The interesting thing about a `Disposer` is that it comes out at night, when it is
 disposed of into the dark. At that point, it will first dispose of the child, and after that,
 call the given function before it fades away. This is useful when you have additional
@@ -375,7 +371,7 @@ ourselves.
 
 Alternative to `Disposer` form is the following:
 
-	Constructor : (form : Form, fn : () -> (() -> void));
+	Constructor(form : Form, fn : () -> (() -> void));
 
 Like `Disposer` it has no visual representation itself. It provides not only dispose facility,
 but also construct one. The function provided is a good place for additional subscriptions or other
@@ -388,22 +384,22 @@ The `Disposer` and `Constructor` forms are also remarkable for another reason: t
 `Form`s which does not take any child `Form` as the *last* parameter. That is otherwise the
 convention which all `Form`s should obey to avoid social isolation. However, the disposable
 function is called at the end of the form's life, so it made sense to put the form as the first
-parameter. That is also in line with our love of disposal in general.
+parameter.
 
 Another useful meta-form is the `Inspect` form, which provides a disciplined approach to extract
 metric information about a form:
 
-	Inspect : (inspectors : [Inspector], form : Form);
+	Inspect(inspectors : [Inspector], form : Form);
 
 Now, this declaration does not make much sense without clarifying what the `Inspector` type is:
 
 	Inspector ::= ISize, IAvailable2;
-	ISize : (widthHeight : DynamicBehaviour<WidthHeight>);
-	IAvailable2 : (widthHeight : DynamicBehaviour<WidthHeight>);
+		ISize(widthHeight : DynamicBehaviour<WidthHeight>);
+		IAvailable2(widthHeight : DynamicBehaviour<WidthHeight>);
 
 Now the picture emerges. Using the `Inspect` form, you have a handy way to learn the dimensions
-of a form. Notice how the behaviours save the day once again. Since everything is compositional,
-you can do things like this:
+of a form. Notice how the behaviours help again. Since everything is compositional, you can do 
+things like this:
 
 	size = make(WidthHeight(0.0, 0.0));
 	avail = make(WidthHeight(0.0, 0.0));
@@ -503,7 +499,7 @@ The final basic `Form` is the one that makes interactive user interfaces possibl
 surprise you to learn that there is in fact only one single `Form` for all interactions with
 the user:
 
-	Interactive : (listeners: [EventHandler], form : Form);
+	Interactive(listeners: [EventHandler], form : Form);
 
 Once again, it is hard to understand without the EventHandler type listed, so let's show that,
 in simplified form:
@@ -611,8 +607,9 @@ simpler ones are:
 	Border(left : double, top : double, right : double, bottom : double, form : Form) -> Form;
 	Offset(x : double, y : double, form : Form) -> Form;
 
-We also have a more or less complete set of widgets. See the ui/ folder and you can find things
-like:
+We also have a more or less complete set of widgets. Although `Material` is the recommended
+toolkit, if you need custom designs, widgest  in `Form` can be helpful. See the ui/ folder and 
+you can find things like:
 
 	CheckBox(caption: Form, value: DynamicBehaviour<bool>, size : double) -> Form;
 	ComboBox(width : double, maxdropheight : double, items : [Form], selected : DynamicBehaviour<int>, wBorder: double, hBorder: double) -> Form;
@@ -623,14 +620,6 @@ common cases. If you need a more fancy button, then have a look at `CustomButton
 in `buttons.flow`. Those are very configurable and flexible button functions, including full support for
 508 accessibility. Never try to make your own button - it will be buggy, because it is surprisingly
 hard.
-
-Widgets
--------
-
-If you have a need for a widget, chances are that you can find it already in the form of a function
-somewhere. We have buttons, combo-boxes, sliders, scrollbars and more. Search in the ui/ directory,
-and see what you can find.
-
 
 Z-order
 -------
@@ -721,7 +710,6 @@ add up. As a special detail, it is worth noting that most transforms in fact are
 clean up properly. You have to use the transforms with the "u" suffix and keep track of the unsubscribers
 to ensure memory is not leaked.
 
-There is an alternative to behaviours in the form of Transforms. These are used in Tropic, and are
+There is an alternative to behaviours in the form of Transforms. These are used in `Tropic`, and are
 leak-free. Other than that, they share the same challenge of making a big promise that the values
 will always be sane. See the documentation for Tropic to learn more about these.
-

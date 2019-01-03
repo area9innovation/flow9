@@ -12,9 +12,9 @@
 
 [flow.html](flow.html) describes *flow*, our own programming language.
 
-[form.html](form.html) describes *form*, our gui library.
+[form.html](form.html) describes *form*, a low-level gui library.
 
-[tropic.html](tropic.html) describes *tropic*, a GUI library built on top of *form* which is great for responsive design.
+[tropic.html](tropic.html) describes *tropic*, another GUI library which is great for responsive design.
 
 [development.html](development.html) provides useful information on the daily development work with *flow*.
 
@@ -29,7 +29,7 @@
 
 Be sure to also check out `readme.txt` in various places, like
 
-* [resources/vscode/flower/README.md](../resources/sublimetext3/flower/README.md) - how to set up Flower plugin for Sublime Text 3
+* [resources/vscode/README.md](../resources/vscode/README.md) - how to set up the extension for Visual Code
 * [resources/sublimetext3/flower/README.md](../resources/sublimetext3/flower/README.md) - how to set up Flower plugin for Sublime Text 3
 * [resources/sublimetext2/readme.txt](../resources/sublimetext2/readme.txt) - how to set up SublimeText for use with flow
 * [QtByteRunner/readme.txt](../QtByteRunner/readme.txt) - information about the C++ runner, including profiling and debugging and CGI mode

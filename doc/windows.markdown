@@ -1,14 +1,13 @@
 # Flow: getting started (on Windows)
 
-## Setup & compile the flow compiler
+## Setup & compile the haxe-based flow compiler
 
 First, download and install haXe and neko:
 
 	http://haxe.org/download/
 
-Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work, but you'll
-have to manually roll back neko version to 2.0.0 (see section below). The simplest
-way is to get haxe 3.2.1.
+Haxe 3.4.* should work, but you'll have to manually roll back neko version to 2.0.0 
+(see section below). The simplest way is to get haxe 3.2.1.
 
 Now install the "format" and "pixijs" haxe libraries:
 
@@ -18,10 +17,10 @@ Now install the "format" and "pixijs" haxe libraries:
 
 Now check that you can compile the compiler:
 
-	cd c:\flow\src
+	cd c:\flow9\src
 	haxe FlowNeko.hxml
 
-Also to go to `C:\flow\resources\neko\1.8.2-2.0.0`. Move the patched gc.dll
+Also to go to `C:\flow9\resources\neko\1.8.2-2.0.0`. Move the patched gc.dll
 to your Neko installation (there is a readme.txt in that folder with a little more detail).
 This will increase the amount of available memory to Neko, to avoid errors when
 compiling larger Flow programs.
@@ -33,8 +32,8 @@ make this work.
 
 First, install Haxe with the neko 2.1. Then, go to `...\HaxeToolkit\` folder
 where you installed Haxe and neko. You need to extract the
-`flow\resources\neko\neko-2.0.0-win.zip` file in this folder. Then you should copy the
-`flow\resources\neko\1.8.2-2.0.0\unlimited\gc.dll` on top of the one in the
+`flow9\resources\neko\neko-2.0.0-win.zip` file in this folder. Then you should copy the
+`flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll` on top of the one in the
 neko-2.0.0 folder.
 Now, rename the "neko" folder to "neko-2.1.0", and rename "neko-2.0.0" to "neko".
 Restart any command prompts, and you should be able to use the latest haxe with
@@ -42,26 +41,30 @@ neko 2.0, with the unlimited heap.
 
 At the end, you will have
 
-   ...\HaxeToolkit\haxe
-   ...\HaxeToolkit\neko-2.1        (unused)
-   ...\HaxeToolkit\neko            (with neko 2.0)
-   ...\HaxeToolkit\neko\gc.dll     (taken from `flow\resources\neko\1.8.2-2.0.0\unlimited\gc.dll`)
+- ...\HaxeToolkit\haxe
+- ...\HaxeToolkit\neko-2.1        (unused)
+- ...\HaxeToolkit\neko            (with neko 2.0)
+- ...\HaxeToolkit\neko\gc.dll     (taken from `flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll`)
 
 Verify that you can compile and run programs, and you are all set.
 
 # Install VC runtime
 
 Run
-	C:\flow\QtByteRunner\bin\windows\vcredist_x64.exe
+	C:\flow9\QtByteRunner\bin\windows\vcredist_x64.exe
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 
+# Install Java 8 or later in a 64-bit version
+
+This is required to run the flowc compiler.
+
 ## Add flow to your PATH
 
-Now you are ready to start use flow. First add `c:\flow\bin` to your PATH.
+Now you are ready to start use flow. First add `c:\flow9\bin` to your PATH.
 
 Now test that everything works by compiling & running the first program using
-the c++ runner in a command line at `c:/flow`:
+the c++ runner in a command line at `c:/flow9`:
 
 	flowcpp sandbox/hello.flow
 
@@ -70,7 +73,7 @@ If it prints "Hello console" in your console and "Hello window" on the screen, *
 ## Compile flow to JS and serve it from a web server
 
 You can also run flow code in JavaScript, served by a web server. First set up a web-server such
-that `http://localhost/flow/` points to the `/flow/www` directory.
+that `http://localhost/flow/` points to the `/flow9/www` directory.
 
 If you want to develop on Windows, you can do that using WampServer (preferred) or EasyPHP
 
@@ -82,16 +85,16 @@ When installing WampServer or EasyPHP on Windows 8 or later, run the installer a
 Make sure you configure your Skype to not use port 80 in Settings, Advanced, Connection
 and uncheck the check box for using port 80 and 443. In Wamp, next "Start all services".
 Now add an alias by selecting Apache, Alias directories, Add an alias, and make "flow"
-point to `c:/flow/www`.
+point to `c:/flow9/www`.
 
-For EasyPHP, go to the administration, under LOCAL FILES click "add an
-alias" to make "flow" point to `c:/flow/www`. Notice, however, recent versinos of EasyPHP
+For EasyPHP, go to the administration, under LOCAL FILES click "add an alias" to make 
+"flow" point to `c:/flow9/www`. Notice, however, recent versions of EasyPHP
 like to put an "edsa-" prefix to all alias, which is very annoying. To work around that,
 you have to hack the http.conf setup manually.
 
-        Alias /flow/ "C:/flow/www/"
+        Alias /flow/ "C:/flow9/www/"
 
-        <Directory "C:/flow/www/">
+        <Directory "C:/flow9/www/">
                 Options Indexes FollowSymLinks MultiViews
                 AllowOverride all
                 Order allow,deny
@@ -102,6 +105,7 @@ you have to hack the http.conf setup manually.
 There is another way to fix "edsa-" prefix
 (https://stackoverflow.com/questions/39339513/how-to-prevent-easyphp-devserver-16-to-add-prefix-edsa-for-alias).
 Go to the eds-dashboard subdirectory and edit the index.php file.
+
 Change:
 	$new_alias[0]['alias_name'] = 'edsa-' . $_POST['alias_name'];
 	<?php echo wordwrap(substr($alias['alias_name'],5), 20, "<br />", true); ?>
@@ -113,6 +117,10 @@ For:
 Because of this mess, we recommend Wamp instead.
 
 Now you can compile your code to JavaScript like
+
+	flowc1 sandbox/hello.flow js=www/hello.js
+
+or using the older, haxe-based compiler:
 
 	flow --js www/hello.js sandbox/hello.flow
 
@@ -133,32 +141,40 @@ the program will be compiled to flow bytecode and then interpreted.
 You can also do this manually like this. First compile to bytecode
 with a command line like this:
 
+	flowc1 sandbox/hello.flow bytecode=hello.bytecode
+
+or with the haxe-based compiler like:
+
 	flow -c hello.bytecode sandbox/hello.flow
 
-Next, you can interpret that by our C++ runner by typing
+Next, you can interpret that by the C++ runner by typing
 
-	flowcpp www/hello.bytecode
+	flowcpp hello.bytecode
 
-in a command prompt in `c:\flow`. This will use the Qt-based C++ flow runner.
+in a command prompt in `c:\flow9`. This will use the Qt-based C++ flow runner.
 See `QtBytecodeRunner/readme.txt` to learn more about this runner.
 
 As you saw above, you can also compile directly to JavaScript by using
+
+	flowc1 sandbox/hello.flow js=www/hello.js
+
+or
 
 	flow --js hello.js sandbox/hello.flow
 
 and run it as
 
 	http://localhost/flow/flowjs.html?name=hello
-Currently, we use [PixiJs](https://pixijs.io) rendering library to draw our js-compiled applications.
+
+Currently, we use the [PixiJs](https://pixijs.io) rendering library to draw our 
+js-compiled applications.
 
 Please note that js target won't run any code unless you render something.
 
 ## Why use PixiJs instead of DOM?
-We tried to use DOM for rendering but as a result we got huge DOM trees and browsers were unable to handle them and just kept crushing.
-With PixiJs we just render everything in one canvas and it can handle and reflect comlicated UI trees quite well compared to DOM implementation.
 
-Even though on smaller projects PixiJs driven apps are relatively fast but on bigger apps they can express quite significant slowdowns.
-As a remedy for this we are considering using [WebAssembly](https://webassembly.org) but it is only just in plans at the moment.
+We tried to use DOM for rendering, but as a result we got huge DOM trees and browsers were unable to handle them and just kept crashing.
+With PixiJs we render everything in one canvas and it can handle and reflect complicated UI trees quite well compared to DOM implementation.
 
 ## Sending emails
 
@@ -190,9 +206,3 @@ VirtualBox with Windows guest support is limited to non-gui mode of C++ runner. 
 Running GUI programs with the C++ runner may fail with the error *"OpenGL ARB_framebuffer_object extension is not available"*.
 In that case, you can still use the runner for command-line programs by running it with `flowcpp --batch`.
 For testing GUI code, use JavaScript instead.
-
-If Sublime Text is used for editing/running code, add --batch into the flowcpp.bat
-for example:
-`@%~dp0..\QtByteRunner\bin\windows\QtByteRunner.exe --batch %*`
-
-But it leads to inability to debug gui-based application under VirtualBox with Windows guest.
