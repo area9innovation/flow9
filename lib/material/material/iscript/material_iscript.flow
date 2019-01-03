@@ -110,7 +110,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 												nextDistinct(manager.iscript.iScriptStateB, IScriptDisabled());
 
 												// If there was a run with the parameter "playiscript", then we exit with the result return.
-												if (getUrlParameter("playiscript") != "") quit(b2i(!b));
+												if (getUrlParameter(PLAYISCRIPT_URLPAR) != "") quit(b2i(!b));
 											},
 											true
 										),
@@ -121,6 +121,13 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 						}));
 						IScriptBatchReplaying(): onlyOnce(manager.iscript.panelsBatchReplayingPad, \ -> deferred(\ -> {
 							if (!isBatchIScriptEmpty(manager)) {
+								dispUns(repUns);
+
+								nextDistinct(manager.iscript.outputValuesB, map(getValue(manager.iscript.outputValuesB), \ov -> IScriptOutputValue(ov.name, false, None())));
+								nextDistinct(manager.iscript.errors, makeList());
+
+								showIScriptReplayCursor(manager);
+
 								storedIScript = manager.iscript;
 
 								batchTestsFolder = getValue(manager.iscript.currentBatchTestsDirectoryB);
@@ -129,58 +136,58 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 								batchTestResults := [];
 
 								iScriptInfo(manager, "=== Start Batch Tests ===", None());
+
 								iterDeferred2(
 									getValue(manager.iscript.batchTestFileNamesB),
 									\filename, onDoneChunk -> {
 										dispUns(repUns);
-
+										tempStageWidthHeight = getValue(stageWidthHeight);
 										currentScriptFilename = batchTestsFolder + filename;
+
 										iScriptInfo(manager, "Replaying " + currentScriptFilename, None());
 
 										iterFunc = \ -> {
 											repUns := [
 												substituteHttpRequest(manager),
-												// replayIScript(manager, getValue(manager.iscript.iScriptB), m2t)
-												// |> (\f2 ->
-												// 	interruptibleTimerChain(
-												// 		f2,
-												// 		\isSuccessReplay : bool -> {
-												// 			if (!isSuccessReplay) {
-												// 				iScriptError(manager, filename + " finished with errors", None());
-												// 				errorsCount := ^errorsCount + 1;
-												// 			};
+												replayIScript(manager, m2t,
+													\b -> {
+														if (!b) {
+															iScriptError(manager, filename + " finished with errors", None());
+															errorsCount := ^errorsCount + 1;
+														}
 
-												// 			iscriptLogicalScreenshotM = extractLastLogicalScreenshot(manager);
-												// 			iscriptVisualScreenshotM = extractLastVisualScreenshot(manager);
+														iscriptLogicalScreenshotM = extractLastLogicalScreenshot(manager);
+														iscriptVisualScreenshotM = extractLastVisualScreenshot(manager);
 
-												// 			afterReplayLogicalScreenshot = getIScriptLogicalScreenshot(manager, fgetValue(formSize));
-												// 			afterReplayVisualScreenshot = getIScriptVisualScreenshot(manager, true);
+														afterReplayLogicalScreenshot = getIScriptLogicalScreenshot(manager, fgetValue(formSize));
+														afterReplayVisualScreenshot = getIScriptVisualScreenshot(manager, true);
 
-												// 			refArrayPush(batchTestResults,
-												// 				IScriptReplayResult(
-												// 					filename,
-												// 					isSuccessReplay,
-												// 					iscriptLogicalScreenshotM,
-												// 					iscriptVisualScreenshotM,
-												// 					afterReplayLogicalScreenshot,
-												// 					afterReplayVisualScreenshot
-												// 				)
-												// 			);
+														refArrayPush(batchTestResults,
+															IScriptReplayResult(
+																filename,
+																b,
+																iscriptLogicalScreenshotM,
+																iscriptVisualScreenshotM,
+																afterReplayLogicalScreenshot,
+																afterReplayVisualScreenshot
+															)
+														);
 
-												// 			outputValues = map(getValue(manager.iscript.outputValuesB), \ov -> Pair(ov.name, ov.value));
-												// 			if (length(outputValues) > 0) {
-												// 				setFileContent("iscript_output.txt", serialize(outputValues)) |> ignore;
-												// 			}
-												// 			iScriptInfo(manager, "", None());
-												// 			onDoneChunk()
-												// 		}
-												// 	)
-												// )
+														outputValues : [Pair<string, Maybe<flow>>] = map(getValue(manager.iscript.outputValuesB), \ov : IScriptOutputValue -> Pair(ov.name, ov.value));
+														if (length(outputValues) > 0) {
+															setFileContent("iscript_output.txt", getFileContent("iscript_output.txt") + serialize(outputValues)) |> ignore;
+														}
+														iScriptInfo(manager, "", None());
+														onDoneChunk()
+													},
+													true
+												),
+												\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
 											]
-											|> (\f3 -> (\ -> applyall(f3)))
+											|> (\f3 -> (\ -> applyall(f3)));
 										};
 
-										if (startsWith(currentScriptFilename, "DB:/")) {
+										if (isIScriptDBPath(currentScriptFilename)) {
 											storeCurrentAndSetIScriptDBPartition(manager);
 											iScriptFromDB2(manager, currentScriptFilename,
 												\v : StoredIScript -> {
@@ -197,15 +204,17 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 										}
 										else {
 											iScriptFromFile(manager, currentScriptFilename);
-											iterFunc()
+											iterFunc();
 										}
 									},
-									\ -> { // onDone
+									\ -> { // on done all
+										hideIScriptReplayCursor(manager);
+
 										nextDistinct(manager.iscript.iScriptStateB, IScriptDisabled());
 										iScriptInfo(manager, "=== End Batch Tests ===", None());
 
 										// If there was a run with the parameter "playbatchiscript", then we exit with the result return.
-										if (getUrlParameter("playbatchiscript") != "") quit(^errorsCount);
+										if (getUrlParameter(PLAYBATCHISCRIPT_URLPAR) != "") quit(^errorsCount);
 
 										showLogicalScreenshotCompareDialog(manager, batchTestsFolder, batchTestResults, m2t);
 									},
