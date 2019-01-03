@@ -229,7 +229,7 @@ class FlowFileSystemHx {
 		};
 
 		//workaround for case when cancel was pressed and onchange isn't fired
-		var onFocus : Dynamic;
+		var onFocus : Dynamic = null;
 		onFocus = function(e : Dynamic) {			
 			js.Browser.window.removeEventListener("focus", onFocus);
 
