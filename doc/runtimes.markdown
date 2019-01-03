@@ -1,5 +1,5 @@
-*flow* compilers
-================
+*flow* compilers and runtimes
+=============================
 
 There are different ways of compiling and executing *flow* code. This document attempts to document them all.
 
@@ -13,16 +13,33 @@ There are two different compilers for flow.
 
 The languages supported by these compilers is almost identical. The biggest difference
 is that `flowc` requires semi-colons at the end of types in export sections, and that
-the type checker is more strict in `flowc` especially around polymorphism.
-
-The code in the standard library is intended to be compatible with both compilers
-for some time.
+the type checker is more strict in `flowc` especially around polymorphism. The code in 
+the standard library is intended to be compatible with both compilers for some time.
 
 `flowc` is the recommended compiler for daily use, since it is incremental also in
 typechecking. Also, `flowc` supports a compile server, which is automatically used
 when developing using Visual Code, providing a nice speed up in compile times.
 
 For more information about `flowc`, see `tools/flowc/readme.md`.
+
+`flow.config`
+-------------
+
+Both compilers support setting up a compile/build configuration using a `flow.config` file 
+in the current working directory when invoking the compiler. This is a .ini-syntax file, where
+can provide options to the compilers, compatible with 'the arguments as given to `flowc`.
+
+Include
+
+	flowcompiler=flowc
+
+or
+
+	flowcompiler=flow
+
+to select what compiler `flowcpp` should use when invoked like
+
+	flowcpp material/tests/material_test.flow
 
 *flow* runtimes
 ===============
