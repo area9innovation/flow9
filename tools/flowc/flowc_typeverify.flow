@@ -51,8 +51,9 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 		),
 		\all5, struct -> insertSet(all5, struct.name)
 	);
+	flowfile = module.fileinfo.flowfile;
 	moduleEnv = TypeVerifyModuleEnv(
-		module.fileinfo.flowfile,
+		flowfile,
 		env,
 		fold(module.structs, 
 			fold(module.unions, 
@@ -61,7 +62,10 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 			), 
 			\acc, struct -> setTree(acc, struct.name, struct)
 		),
-		env.exported,
+		switch (env.exported) {
+			FcExportedSeparate(names): lookupTreeDef(names, flowfile, makeSet());
+			FcExportedCommon(names): names;
+		},
 		moduleNames,
 		ref false,
 		ref false,
@@ -274,6 +278,9 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 							false; // This branch must never occur
 					}
 				}
+				FcCreateClosurePrim(structName, functionName): {
+					checkNameAccessible(env, structName, onError, s) && checkNameAccessible(env, functionName, onError, s)
+				}
 				default: true;
 			} && 
 			typeverifyFiType(env, type, onError, expr.start) && 
@@ -339,7 +346,23 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 							length(args) == length(es) &&
 							forall(
 								zipWith(args, es, \a, e -> Pair(a, e)),
-								\p -> p.first.type == fiExpType(p.second) || typeverifyIsSubtype(env, name, n, onError, start)
+								\p -> {
+									argType = p.first.type;
+									expType = fiExpType(p.second);
+									argType == expType || 
+									switch (argType) {
+										FiTypeName(argName1, typars1): {
+											switch (expType) {
+												FiTypeName(expName1, typars2): {
+													length(typars1) == 0 && length(typars2) == 0 &&
+													typeverifyIsSubtype(env, expName1, argName1, onError, start)
+												}
+												default: false;
+											}
+										}
+										default: false;
+									}
+								}
 							)
 						}
 						FiTypeUnion(__,__,__,__): false;
