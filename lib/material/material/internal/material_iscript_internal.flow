@@ -20,6 +20,9 @@ export {
 	isIScriptEmpty(manager : MaterialManager) -> bool;
 	isBatchIScriptEmpty(manager : MaterialManager) -> bool;
 
+	clearCurrentIScript(manager : MaterialManager) -> void;
+	resumeCurrentIScript(manager : MaterialManager) -> void;
+
 	isIScriptEnabled(manager : MaterialManager) -> bool;
 	// isIScriptEnabledB(manager : MaterialManager) -> Transform<bool>
 
@@ -32,6 +35,8 @@ export {
 
 	isIScriptRecordingB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptReplayingB(manager : MaterialManager) -> Transform<bool>;
+	isIScriptAddingB(manager : MaterialManager) -> Transform<bool>;
+	isIScriptFilesystemDBPresent(manager : MaterialManager) -> Transform<bool>;
 
 	checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool;
 	checkIScriptCaptureOption(manager : MaterialManager, option : IScriptCaptureOption) -> bool;
@@ -48,9 +53,13 @@ export {
 	foldIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
 	foldRIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
 
-	findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<double>;
-	findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<Pair<double, ?>>;
-	extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<?>;
+	findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>) -> Maybe<double>;
+	findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>) -> Maybe<Pair<double, IScriptRecord>>;
+	extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>) -> Maybe<IScriptRecord>;
+
+	findIScriptLastRecordKeyOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<double>;
+	findIScriptLastRecordKeyValueOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<Pair<double, IScriptRecord>>;
+	extractIScriptLastRecordOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<IScriptRecord>;
 
 	addIScriptStackRecord(stack : Tree<double, [IScriptRecord]>, record : IScriptRecord) -> Tree<double, [IScriptRecord]>;
 	replaceRecordInIScriptStack(stack : Tree<double, [IScriptRecord]>, delay : double, prevValue : IScriptRecord, nextValue : IScriptRecord) -> Tree<double, [IScriptRecord]>;
@@ -89,6 +98,10 @@ export {
 	captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, component : string, type : string) -> bool;
 	captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () -> MouseInfo, canvasPosition : () -> Point, component : string, type : string) -> bool;
 	captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool;
+
+	loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void;
+	prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript;
+	filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot;
 }
 
 isIScriptEmpty(manager : MaterialManager) -> bool {
@@ -361,6 +374,27 @@ isIScriptReplayingB(manager : MaterialManager) -> Transform<bool> {
 	fselect(manager.iscript.state, FLift(\__ -> isIScriptReplaying(manager)));
 }
 
+isIScriptAddingB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.state, FLift(\state ->
+		switch (state : IScriptState) {
+			IScriptAddRecord(__): true;
+			IScriptAddMFocusRecord(__): true;
+			IScriptAddMFocusGroupRecord(__): true;
+			IScriptMakeAlias(__): true;
+			IScriptMakeGroupAlias(__): true;
+
+			IScriptRecording(__, __): false;
+			IScriptReplaying(): false;
+			IScriptBatchReplaying() : false;
+			IScriptDisabled(): false;
+		}
+	))
+}
+
+isIScriptFilesystemDBPresent(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.filesystemDB, isSome |> FLift)
+}
+
 checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool {
 	switch (type) {
 		ISDetailedTextEvent() : checkIScriptCaptureOption(manager, IScriptCaptureTextDetails());
@@ -452,30 +486,58 @@ foldRIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, 
 	foldRTree(stack, init, \delay, records, acc -> fold(reverseA(records), acc, \acc2, record -> fn(acc2, delay, record)))
 }
 
-findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<double> {
-	foldArrayTree(stack, None(),
-		\k, v, acc : Maybe<double> -> {
-			if (isSameStructType(v, type)) {
-				if (isNone(acc) || k > either(acc, k))
-					Some(k)
-				else acc
-			} else acc
+findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>) -> Maybe<Pair<double, IScriptRecord>> {
+	foldIScriptStackTree(stack, None(), \acc, k, v -> {
+			if (isNone(acc) || k > either(acc, Pair(k, v)).first) {
+				Some(Pair(k, v))
+			} else {
+				acc
+			}
 		}
 	);
 }
 
-findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<Pair<double, ?>> {
-	maybeBind(
-		findIScriptLastRecordKey(stack, type),
-		\v -> Some(Pair(v, extractStruct(lookupTreeDef(stack, v, []), type)))
-	)
+findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>) -> Maybe<double> {
+	maybeMap(
+		findIScriptLastRecordKeyValue(stack),
+		\v -> v.first
+	);
 }
 
-extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<?> {
-	maybeBind(
-		findIScriptLastRecordKey(stack, type),
-		\v -> tryExtractStruct(lookupTreeDef(stack, v, []), type)
-	)
+extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>) -> Maybe<IScriptRecord> {
+	maybeMap(
+		findIScriptLastRecordKeyValue(stack),
+		\v -> v.second
+	);
+}
+
+findIScriptLastRecordKeyValueOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<Pair<double, IScriptRecord>> {
+	foldIScriptStackTree(stack, None(), \acc, k, v -> {
+			if (isSameStructType(v, type)) {
+				if (isNone(acc) || k > either(acc, Pair(k, v)).first) {
+					Some(Pair(k, v))
+				} else {
+					acc
+				}
+			} else {
+				acc
+			}
+		}
+	);
+}
+
+findIScriptLastRecordKeyOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<double> {
+	maybeMap(
+		findIScriptLastRecordKeyValueOfType(stack, type),
+		\v -> v.first
+	);
+}
+
+extractIScriptLastRecordOfType(stack : Tree<double, [IScriptRecord]>, type : IScriptRecord) -> Maybe<IScriptRecord> {
+	maybeMap(
+		findIScriptLastRecordKeyValueOfType(stack, type),
+		\v -> v.second
+	);
 }
 
 addIScriptStackRecord(stack : Tree<double, [IScriptRecord]>, record : IScriptRecord) -> Tree<double, [IScriptRecord]> {
@@ -798,4 +860,108 @@ captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : M
 	}
 
 	handled;
+}
+
+clearCurrentIScript(manager : MaterialManager) -> void {
+	nextDistinct(manager.iscript.output, []);
+	nextDistinct(manager.iscript.input, []);
+
+	next(
+		manager.iscript.script,
+		makeEmptyIScript()
+	);
+}
+
+resumeCurrentIScript(manager : MaterialManager) -> void {
+	iScript = getValue(manager.iscript.script);
+
+	next(
+		manager.iscript.script,
+		IScript(
+			// shifting recordingStarted to ignore paused time
+			timestamp() - either(findIScriptLastRecordKey(getValue(manager.iscript.script).stack), 0.),
+			iScript.stack
+		)
+	);
+}
+
+loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void {
+	next(manager.iscript.input, map(additionalInfo.inputs, \pair -> IScriptInputValue(pair.first, pair.second, None())));
+	next(manager.iscript.output, map(additionalInfo.outputs, \outputName -> IScriptOutputValue(outputName, false, None())));
+	next(manager.iscript.aliases, mergeTree(getValue(manager.iscript.aliases), pairs2tree(additionalInfo.aliases)));
+}
+
+prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript {
+	prepareIScriptFromIScriptManagerForSave(manager.iscript)
+}
+
+prepareIScriptFromIScriptManagerForSave(ism : IScriptManager) -> StoredIScript {
+	iScript = getValue(ism.script);
+	aliases = getValue(ism.aliases);
+	inputValues = getValue(ism.input);
+	outputValues = getValue(ism.output);
+
+	prepareIScriptForSave(iScript, aliases, inputValues, outputValues);
+}
+
+prepareIScriptForSave(
+	iScript : IScript,
+	aliases : Tree<IScriptComponentDescriptor, string>,
+	inputValues : [IScriptInputValue],
+	outputValues : [IScriptOutputValue]) {
+
+	checkDescriptor = \descriptor : IScriptBehaviourDescriptor -> {
+		alias = lookupTreeDef(aliases, descriptor.component, "");
+
+		if (alias != "")
+			Some(Pair(descriptor.component, alias))
+		else
+			None();
+	}
+
+	usedAliases = filtermapIScriptStack(iScript.stack, \delay, record -> {
+		switch (record) {
+			IScriptBehaviourRecord(descriptor, __, __, __) : checkDescriptor(descriptor);
+			default : None();
+		}
+	});
+	usedInputs = map(inputValues, \inputValue -> Pair(inputValue.name, inputValue.typeHelper));
+	usedOutputs = map(outputValues, \outputValue -> outputValue.name);
+
+	StoredIScript(
+		storedIScriptCurrentVersion,
+		IScriptAdditionalInfo(
+			usedInputs,
+			usedOutputs,
+			usedAliases
+		),
+		IScript(
+			iScript.recordingStarted,
+			filtermapIScriptStackTree(
+				iScript.stack,
+				\delay, record ->
+					switch (record : IScriptRecord) {
+						IScriptScreenshot(__, __): {
+							Some(filterIScriptScreenshot(record))
+						}
+						default: {
+							if (!checkIsFn(serialize(record)))
+								Some(record)
+							else
+								None()
+						}
+					}
+			)
+		)
+	)
+}
+
+filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot {
+	IScriptScreenshot(
+		mapTree(
+			screenshot.behaviours,
+			\b -> filterTree(b, \k, v -> !checkIsFn(serialize(v)))
+		),
+		screenshot.check
+	)
 }

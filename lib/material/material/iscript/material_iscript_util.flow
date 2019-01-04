@@ -1,6 +1,7 @@
 import material/iscript/material_iscript_form;
 import material/iscript/material_iscript_screenshot;
 import material/iscript/material_iscript_cursors;
+import material/iscript/material_iscript_filesystem;
 import http_request_callback;
 
 export {
@@ -16,9 +17,8 @@ export {
 	getDefaultValueByTypeHint(typeHint : string) -> flow;
 
 	loadStoredIScript(manager : MaterialManager, storedIScript : StoredIScript) -> void;
-	loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void;
 
-	prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript;
+	handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, formSize : DynamicBehaviour<WidthHeight>) -> () -> void;
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
@@ -795,73 +795,277 @@ loadStoredIScript(manager : MaterialManager, storedIScript : StoredIScript) -> v
 	next(manager.iscript.script, storedIScript.script);
 }
 
-loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void {
-	next(manager.iscript.input, map(additionalInfo.inputs, \pair -> IScriptInputValue(pair.first, pair.second, None())));
-	next(manager.iscript.output, map(additionalInfo.outputs, \outputName -> IScriptOutputValue(outputName, false, None())));
-	next(manager.iscript.aliases, mergeTree(getValue(manager.iscript.aliases), pairs2tree(additionalInfo.aliases)));
-}
-
-prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript {
-	prepareIScriptFromIScriptManagerForSave(manager.iscript)
-}
-
-prepareIScriptFromIScriptManagerForSave(ism : IScriptManager) -> StoredIScript {
-	iScript = getValue(ism.script);
-	aliases = getValue(ism.aliases);
-	inputValues = getValue(ism.input);
-	outputValues = getValue(ism.output);
-
-	prepareIScriptForSave(iScript, aliases, inputValues, outputValues);
-}
-
-prepareIScriptForSave(
-	iScript : IScript,
-	aliases : Tree<IScriptComponentDescriptor, string>,
-	inputValues : [IScriptInputValue],
-	outputValues : [IScriptOutputValue]) {
-
-	checkDescriptor = \descriptor : IScriptBehaviourDescriptor -> {
-		alias = lookupTreeDef(aliases, descriptor.component, "");
-
-		if (alias != "")
-			Some(Pair(descriptor.component, alias))
-		else
-			None();
+startIScriptRecording(manager : MaterialManager, options : CaptureOptions, continueRec : bool) -> [() -> void] {
+	if (continueRec) {
+		resumeCurrentIScript(manager);
+	} else {
+		clearCurrentIScript(manager);
 	}
 
-	usedAliases = filtermapIScriptStack(iScript.stack, \delay, record -> {
-		switch (record) {
-			IScriptBehaviourRecord(descriptor, __, __, __) : checkDescriptor(descriptor);
-			default : None();
-		}
-	});
-	usedInputs = map(inputValues, \inputValue -> Pair(inputValue.name, inputValue.typeHelper));
-	usedOutputs = map(outputValues, \outputValue -> outputValue.name);
+	// addIScriptUrlRecord(manager, loaderUrl());
+	addIScriptScreenshot(manager, false);
 
-	StoredIScript(
-		storedIScriptCurrentVersion,
-		IScriptAdditionalInfo(
-			usedInputs,
-			usedOutputs,
-			usedAliases
-		),
-		IScript(
-			iScript.recordingStarted,
-			filtermapIScriptStackTree(
-				iScript.stack,
-				\delay, record ->
-					switch (record : IScriptRecord) {
-						IScriptScreenshot(__, __): {
-							Some(filterIScriptScreenshot(record))
-						}
-						default: {
-							if (!checkIsFn(serialize(record)))
-								Some(record)
-							else
-								None()
-						}
+	[subscribeToIScriptBehavioursFocus(manager, options.captureHttpRequests)]
+}
+
+startIScriptReplay(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> [() -> void] {
+	if (!isIScriptEmpty(manager)) {
+		tempStageWidthHeight = getValue(stageWidthHeight);
+
+		nextDistinct(manager.iscript.output, map(getValue(manager.iscript.output), \ov -> IScriptOutputValue(ov.name, false, None())));
+		nextDistinct(manager.iscript.errors, makeList());
+
+		showIScriptReplayCursor(manager);
+
+		[
+			substituteHttpRequest(manager),
+			replayIScript(
+				manager,
+				m2t,
+				\b -> {
+					hideIScriptReplayCursor(manager);
+					if (!b) {
+						iScriptError(manager, "IScript finished with errors", None());
 					}
-			)
-		)
-	)
+
+					outputValues : [Pair<string, Maybe<flow>>]= map(getValue(manager.iscript.output), \ov : IScriptOutputValue -> Pair(ov.name, ov.value));
+
+					if (length(outputValues) > 0) {
+						setFileContent("iscript_output.txt", serialize(outputValues)) |> ignore;
+					}
+
+					nextDistinct(manager.iscript.state, IScriptDisabled());
+
+					// If there was a run with the parameter "playiscript", then we exit with the result return.
+					if (getUrlParameter(PLAYISCRIPT_URLPAR) != "") quit(b2i(!b));
+				},
+				true
+			),
+			\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
+		]
+	} else {
+		[]
+	}
+}
+
+startIScriptBatchReplay(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, formSize : DynamicBehaviour<WidthHeight>) -> [() -> void] {
+	if (!isBatchIScriptEmpty(manager)) {
+		nextDistinct(manager.iscript.output, map(getValue(manager.iscript.output), \ov -> IScriptOutputValue(ov.name, false, None())));
+		nextDistinct(manager.iscript.errors, makeList());
+
+		showIScriptReplayCursor(manager);
+
+		storedIScript = manager.iscript;
+
+		batchTestsFolder = getValue(manager.iscript.currentBatchTestsDirectoryB);
+
+		errorsCount = ref 0;
+		batchTestResults = ref [];
+
+		iScriptInfo(manager, "=== Start Batch Tests ===", None());
+		currentBatch = make(0);
+
+		[
+			makeSubscribeUns(
+				fselect2(manager.iscript.batchTestFileNamesB, currentBatch, FLift2(\batches, id -> {
+					if (id >= 0 && id < length(batches)) {
+						Some(batches[id])
+					} else {
+						None()
+					}
+				})),
+				\batch -> {
+					eitherFn(
+						batch,
+						\filename -> {
+							tempStageWidthHeight = getValue(stageWidthHeight);
+							currentScriptFilename = batchTestsFolder + filename;
+
+							iScriptInfo(manager, "Replaying " + currentScriptFilename, None());
+
+							iterFunc = \ -> {
+								[
+									substituteHttpRequest(manager),
+									replayIScript(manager, m2t,
+										\b -> {
+											if (!b) {
+												iScriptError(manager, filename + " finished with errors", None());
+												errorsCount := ^errorsCount + 1;
+											}
+
+											iscriptLogicalScreenshotM = extractLastLogicalScreenshot(manager);
+											iscriptVisualScreenshotM = extractLastVisualScreenshot(manager);
+
+											afterReplayLogicalScreenshot = getIScriptLogicalScreenshot(manager, fgetValue(formSize));
+											afterReplayVisualScreenshot = getIScriptVisualScreenshot(manager, true);
+
+											refArrayPush(batchTestResults,
+												IScriptReplayResult(
+													filename,
+													b,
+													iscriptLogicalScreenshotM,
+													iscriptVisualScreenshotM,
+													afterReplayLogicalScreenshot,
+													afterReplayVisualScreenshot
+												)
+											);
+
+											outputValues : [Pair<string, Maybe<flow>>] = map(getValue(manager.iscript.output), \ov : IScriptOutputValue -> Pair(ov.name, ov.value));
+											if (length(outputValues) > 0) {
+												setFileContent("iscript_output.txt", getFileContent("iscript_output.txt") + serialize(outputValues)) |> ignore;
+											}
+											iScriptInfo(manager, "", None());
+
+											next(currentBatch, getValue(currentBatch) + 1);
+										},
+										true
+									),
+									\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
+								]
+							};
+
+							// if (isIScriptDBPath(currentScriptFilename)) {
+							// 	storeCurrentAndSetIScriptDBPartition(manager);
+
+							// 	iScriptFromDB2(
+							// 		manager,
+							// 		currentScriptFilename,
+							// 		\v : StoredIScript -> {
+							// 			restoreCurrentDBPartition(manager);
+							// 			next(manager.iscript.script, v.script);
+							// 			iterFunc();
+							// 		},
+							// 		\err_msg -> {
+							// 			restoreCurrentDBPartition(manager);
+
+							// 			iScriptInfo(manager, err_msg, None());
+
+							// 			next(currentBatch, getValue(currentBatch) + 1);
+							// 		}
+							// 	)
+							// } else {
+								iScriptFromFile(manager, currentScriptFilename);
+								iterFunc();
+							// }
+						},
+						\ -> {
+							hideIScriptReplayCursor(manager);
+
+							nextDistinct(manager.iscript.state, IScriptDisabled());
+							iScriptInfo(manager, "=== End Batch Tests ===", None());
+
+							// If there was a run with the parameter "playbatchiscript", then we exit with the result return.
+							if (getUrlParameter(PLAYBATCHISCRIPT_URLPAR) != "") quit(^errorsCount);
+
+							// showLogicalScreenshotCompareDialog(manager, batchTestsFolder, batchTestResults, m2t);
+							[]
+						}
+					);
+				}
+			)()
+		]
+	} else {
+		[]
+	}
+}
+
+handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, formSize : DynamicBehaviour<WidthHeight>) -> () -> void {
+	makeSubscribe2Uns(manager.iscript.state, \state -> {
+		switch (state) {
+			IScriptRecording(options, continueRec): {
+				startIScriptRecording(manager, options, continueRec);
+			}
+			IScriptReplaying(): {
+				startIScriptReplay(manager, m2t);
+			}
+			IScriptBatchReplaying(): {
+				startIScriptBatchReplay(manager, m2t, formSize);
+			}
+			IScriptDisabled(): {
+				[]
+				// manager.iscript.panelsRecordingPad := None();
+				// manager.iscript.panelsReplayingPad := None();
+				// manager.iscript.panelsBatchReplayingPad := None();
+
+				// if (!js)
+				// 	switch (s.first : IScriptState) {
+				// 		IScriptRecording(__, __): {
+				// 			next(manager.iscript.scriptChangedB, true);
+				// 		}
+				// 		default : {}
+				// 	}
+			}
+			// IScriptAddMFocusRecord(mf): {
+			// 	maybeApply(mf, \foc -> {
+			// 		dispUns(manager.iscript.panelsFocusUns);
+
+			// 		manager.iscript.panelsFocusUns :=
+			// 			interruptibleTimer(10, \ -> {
+			// 				setIScriptState(manager, IScriptDisabled());
+
+			// 				addIScriptEventDialog(
+			// 					manager,
+			// 					foc,
+			// 					\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+			// 					nop,
+			// 					m2t
+			// 				)
+			// 			})
+			// 	})
+			// }
+			// IScriptAddMFocusGroupRecord(mf): {
+			// 	maybeApply(mf, \foc -> {
+			// 		dispUns(manager.iscript.panelsFocusGroupUns);
+
+			// 		manager.iscript.panelsFocusGroupUns :=
+			// 			interruptibleTimer(10, \ -> {
+			// 				setIScriptState(manager, IScriptDisabled());
+
+			// 				addIScriptEventDialog(
+			// 					manager,
+			// 					foc,
+			// 					\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+			// 					nop,
+			// 					m2t
+			// 				)
+			// 			})
+			// 	})
+			// }
+			// IScriptMakeAlias(mf): {
+			// 	maybeApply(mf, \foc -> {
+			// 		dispUns(manager.iscript.panelsFocusUns);
+
+			// 		manager.iscript.panelsFocusUns :=
+			// 			interruptibleTimer(10, \ -> {
+			// 				setIScriptState(manager, IScriptDisabled());
+
+			// 				defineGlobalAliasOnFocusDialog(
+			// 					manager,
+			// 					foc,
+			// 					\alias -> addGlobalAliasInIScript(manager, foc, alias),
+			// 					m2t
+			// 				)
+			// 			})
+			// 	})
+			// }
+			// IScriptMakeGroupAlias(mf): {
+			// 	maybeApply(mf, \foc -> {
+			// 		dispUns(manager.iscript.panelsFocusGroupUns);
+
+			// 		manager.iscript.panelsFocusGroupUns :=
+			// 			interruptibleTimer(10, \ -> {
+			// 				setIScriptState(manager, IScriptDisabled());
+
+			// 				defineGlobalAliasOnFocusDialog(
+			// 					manager,
+			// 					foc,
+			// 					\alias -> addGlobalAliasInIScript(manager, foc, alias),
+			// 					m2t
+			// 				)
+			// 			})
+			// 	})
+			// }
+			default: []
+		}
+	})()
 }
