@@ -13,9 +13,13 @@ checkExports(env : FcTypeEnv, module : FiModule, onError : (string, int) -> void
 	locals = fold(module.natives, locals0, \acc, n -> insertSet(acc, n.name));
 	localTypenames0 = fold(module.structs, makeSet(), \acc, s -> insertSet(acc, s.name));
 	localTypenames = fold(module.unions, localTypenames0, \acc, u -> insertSet(acc, u.name));
+	flowfile = module.fileinfo.flowfile;
 	acc = ExportAcc(
 		env,
-		env.program.exported,
+		switch (env.program.exported) {
+			FcExportedSeparate(names): lookupTreeDef(names, flowfile, makeSet());
+			FcExportedCommon(names): names;
+		},
 		localTypenames,
 		fold(module.structs,
 			fold(module.unions,
@@ -25,7 +29,7 @@ checkExports(env : FcTypeEnv, module : FiModule, onError : (string, int) -> void
 			\acc, struct -> setTree(acc, struct.name, struct)
 		),
 		onError,
-		module.fileinfo.flowfile
+		flowfile
 	);
 	iter(module.functions, \f -> fiExpCheckExports(acc, locals, f.lambda));
 	iter(module.globalVars, \g -> fiExpCheckExports(acc, locals, g.value));
@@ -44,15 +48,16 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 	// fiExpCheckType(eacc, fiExpType(expr), expr.start);
 	fold_exports = \es -> iter(es, \e -> fiExpCheckExports(eacc, bound, e));
 	switch (expr) {
-		FiLambda(args, e, __, __):    fiExpCheckExports(eacc, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), e);
+		FiLambda(args, e, __, __): fiExpCheckExports(eacc, fold(args, bound, \acc, arg -> insertSet(acc, arg.name)), e);
 		FiCall(f, es, __, __): {
 			fiExpCheckExports(eacc, bound, f);
         	fold_exports(es);
 		}
 		FiVar(x, t, i): {
-			if (containsSet(bound, x) || containsSet(eacc.exports, x)) {
-			} else {
-				eacc.onError(x + " : " + prettyFiType(dummyPretty, t, makeSet()) + "; is not exported", i);
+			if (!containsSet(bound, x) && !containsSet(eacc.exports, x)) {
+				eacc.onError(x + " : " + prettyFiType(dummyPretty, t, makeSet()) + "; is not exported" + 
+					addMessageSuggestingProperImport(eacc, x), expr.start
+				);
 			}
 		}
 		FiLet(x, __, e1, e2, __, __): {
@@ -63,11 +68,12 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 		FiSwitch(e, __, cs, __, __):{
 			fiExpCheckExports(eacc, bound, e);
 			iter(cs, \c -> {
-				if (c.struct == "default" || containsSet(eacc.localTypeNames, c.struct) || containsSet(eacc.exports, c.struct)) {}
-				else {
-					eacc.onError("Can not deconstruct " + c.struct + " since that struct is not exported", expr.start);
+				if (c.struct != "default" && !containsSet(eacc.localTypeNames, c.struct) && !containsSet(eacc.exports, c.struct)) {
+					eacc.onError("Can not deconstruct " + c.struct + " since that struct is not exported" + 
+						addMessageSuggestingProperImport(eacc, c.struct), expr.start
+					);
 				}
-				fiExpCheckExports(eacc, bound, c.body)
+				fiExpCheckExports(eacc, mergeSets(bound, buildSet(c.argNames)), c.body)
 			});
 		}
 		FiCast(e, __, __, __, __):    fiExpCheckExports(eacc, bound, e);
@@ -75,9 +81,10 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 		FiCallPrim(o, es, ty, start): {
 			switch (o) {
 				FcStructPrim(name): {
-					if (containsSet(eacc.localTypeNames, name) || containsSet(eacc.exports, name)) {}
-					else {
-						eacc.onError("Can not construct " + name + " : " + prettyFiType(dummyPretty, fiExpType(expr), makeSet()) + " since it is not exported", expr.start);
+					if (!containsSet(eacc.localTypeNames, name) && !containsSet(eacc.exports, name)) {
+						eacc.onError("Can not construct " + name + " : " + prettyFiType(dummyPretty, fiExpType(expr), makeSet()) + " since it is not exported" +
+							addMessageSuggestingProperImport(eacc, name), expr.start
+						);
 					}
 				}
 				FcFieldPrim(fn): {
@@ -94,7 +101,7 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 											eacc.moduleName, start
 										);
 										if (!fieldExists) {
-											eacc.onError("Type name " + type_name + " don't have field " + fn, expr.start);
+											eacc.onError("Type name " + type_name + " doesn't have field " + fn, expr.start);
 										} else { }
 									}
 									FiTypeFlow(): {}  // We can't do better, if type is flow
@@ -102,7 +109,9 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 								}
 							}
 							else {
-								eacc.onError("Can not do " + "." + fn + " since struct " + tn + " is not exported", expr.start);
+								eacc.onError("Can not do " + "." + fn + " since struct " + tn + " is not exported" +
+									addMessageSuggestingProperImport(eacc, tn), expr.start
+								);
 							}
 						}
 						default: {}
@@ -111,12 +120,21 @@ fiExpCheckExports(eacc : ExportAcc, bound : Set<string>, expr : FiExp) -> void {
 				FcSetMutablePrim(fn): {
 					switch (ty) {
 						FiTypeName(n, __): {
-							if (containsSet(eacc.localTypeNames, n) || containsSet(eacc.exports, n)) {}
-							else {
-								eacc.onError("Can not set " + "." + fn + " since struct " + n + " is not exported", expr.start);
+							if (!containsSet(eacc.localTypeNames, n) && !containsSet(eacc.exports, n)) {
+								eacc.onError("Can not set " + "." + fn + " since struct " + n + " is not exported" +
+									addMessageSuggestingProperImport(eacc, n), expr.start
+								);
 							}
 						}
 						default: {}
+					}
+				}
+				FcCreateClosurePrim(structName, functionName): {
+					if (!containsSet(eacc.localTypeNames, structName) && !containsSet(eacc.exports, structName)) {
+						eacc.onError("Struct " + structName + " is not exported" + addMessageSuggestingProperImport(eacc, structName), expr.start);
+					}
+					if (!containsSet(eacc.localTypeNames, functionName) && !containsSet(eacc.exports, functionName)) {
+						eacc.onError("Function " + functionName + " is not exported" + addMessageSuggestingProperImport(eacc, functionName), expr.start);
 					}
 				}
 				default: {};
@@ -158,5 +176,14 @@ fiExpCheckType(eacc : ExportAcc, type : FiType, start : int) -> void {
 		FiTypeArray(t): fiExpCheckType(eacc, t, start);
 		FiTypeRef(t): fiExpCheckType(eacc, t, start);
 		FiTypeParameter(n): {}
+	}
+}
+
+addMessageSuggestingProperImport(eacc : ExportAcc, name : string) -> string {
+	definitionModule = moduleWhereNameIsDefined(eacc.env.program.acc.names, name);
+	if (definitionModule != "") {
+		"\nadd 'import " + moduleWhereNameIsDefined(eacc.env.program.acc.names, name) + ";' to the imports section"
+	} else {
+		""
 	}
 }
