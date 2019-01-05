@@ -19,7 +19,13 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
 }
 
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
-    return spawnSync(cmd, args, { cwd: wd, shell: true, encoding: 'utf8' });
+    const options = wd && wd.length > 0 ? { cwd: wd, shell: true, encoding: 'utf8' } :
+        { shell: true, encoding: 'utf8' };
+    return spawnSync(cmd, args, options);
+}
+
+export function shutdownFlowcSync() {
+    return run_cmd_sync("flowc1", "", ["server-shutdown=1"]);
 }
 
 export function shutdownFlowc() {

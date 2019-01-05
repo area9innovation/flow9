@@ -29,6 +29,7 @@ interface ProblemMatcher {
 let childProcesses = [];
 let client: LanguageClient;
 let flowChannel : vscode.OutputChannel = null;
+let flowRepoUpdateChannel : vscode.OutputChannel = null;
 let counter = 0; // used to silence not finished jobs when new ones got started
 let flowDiagnosticCollection : vscode.DiagnosticCollection = null;
 let problemMatchers: ProblemMatcher[] = meta['contributes'].problemMatchers;
@@ -109,6 +110,9 @@ export function deactivate() {
 }
 
 export async function updateFlowRepo() {
+    if (null == flowRepoUpdateChannel) {
+        flowRepoUpdateChannel = vscode.window.createOutputChannel("Flow Update");
+    }
     const flowRoot = getFlowRoot();
     if (!fs.existsSync(flowRoot)) {
         await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
@@ -124,12 +128,22 @@ export async function updateFlowRepo() {
         await vscode.window.showErrorMessage("Flow repository has local changes. Please push or stash those before proceeding");
         return;
     }
-    tools.shutdownFlowc();
+    flowRepoUpdateChannel.show(true);
+    flowRepoUpdateChannel.appendLine("Starting updating flow repository at " + flowRoot);
+    flowRepoUpdateChannel.append("Shutting down flowc server...");
+    tools.shutdownFlowcSync();
+    flowRepoUpdateChannel.appendLine("Done.");
+    flowRepoUpdateChannel.appendLine("Starting git pull --rebase..");
     try {
-        await git.pull('origin', 'master', {'--rebase' : 'true'});
+        const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
+        flowRepoUpdateChannel.appendLine(JSON.stringify(pullResult.summary));
     } catch (e) {
-        vscode.window.showInformationMessage("Flow repository pull failed: " + e);
+        flowRepoUpdateChannel.appendLine("Git pull failed:");
+        flowRepoUpdateChannel.appendLine(e);
+        vscode.window.showInformationMessage("Flow repository pull failed.");
     }
+
+    flowRepoUpdateChannel.append("Starting flowc server...");
     tools.launchFlowc(getFlowRoot());
 }
 
