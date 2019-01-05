@@ -129,11 +129,11 @@ export async function updateFlowRepo() {
         return;
     }
     flowRepoUpdateChannel.show(true);
-    flowRepoUpdateChannel.appendLine("Starting updating flow repository at " + flowRoot);
-    flowRepoUpdateChannel.append("Shutting down flowc server...");
+    flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
+    flowRepoUpdateChannel.append("Shutting down flowc server... ");
     tools.shutdownFlowcSync();
     flowRepoUpdateChannel.appendLine("Done.");
-    flowRepoUpdateChannel.appendLine("Starting git pull --rebase..");
+    flowRepoUpdateChannel.appendLine("Starting git pull --rebase... ");
     try {
         const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
         flowRepoUpdateChannel.appendLine(JSON.stringify(pullResult.summary));
@@ -143,8 +143,9 @@ export async function updateFlowRepo() {
         vscode.window.showInformationMessage("Flow repository pull failed.");
     }
 
-    flowRepoUpdateChannel.append("Starting flowc server...");
+    flowRepoUpdateChannel.append("Starting flowc server... ");
     tools.launchFlowc(getFlowRoot());
+    flowRepoUpdateChannel.appendLine("Done.");
 }
 
 function resolveProjectRoot(projectRoot: string, documentUri: vscode.Uri): string {
