@@ -3,7 +3,8 @@ import { spawn, ChildProcess, spawnSync } from 'child_process';
 
 export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (string) => void, childProcesses: ChildProcess[]):
     ChildProcess {
-    let child = spawn(cmd, args, { cwd: wd, shell: true });
+    const options = wd && wd.length > 0 ? { cwd: wd, shell: true } : { shell : true};
+    let child = spawn(cmd, args, options);
     child.stdout.setEncoding('utf8');
     child.stdout.on("data", outputProc);
     child.stderr.on("data", outputProc);
