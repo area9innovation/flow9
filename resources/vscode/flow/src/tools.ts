@@ -20,3 +20,15 @@ export function run_cmd(cmd: string, wd: string, args: string[], outputProc: (st
 export function run_cmd_sync(cmd: string, wd: string, args: string[]) {
     return spawnSync(cmd, args, { cwd: wd, shell: true, encoding: 'utf8' });
 }
+
+export function shutdownFlowc() {
+    run_cmd("flowc1", "", ["server-shutdown=1"], (s) => {
+        console.log(s);
+    }, []);
+}
+
+export function launchFlowc(projectRoot: string) {
+    return run_cmd("flowc1", projectRoot, ["server-mode=1"], (s) => {
+        console.log(s);
+    }, []);
+}

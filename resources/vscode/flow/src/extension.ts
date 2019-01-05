@@ -13,6 +13,7 @@ import {
 import * as tools from "./tools";
 import * as updater from "./updater";
 import * as meta from '../package.json';
+import * as simplegit from 'simple-git/promise';
 
 interface ProblemMatcher {
     name: string,
@@ -60,9 +61,15 @@ export function activate(context: vscode.ExtensionContext) {
     let getCompiler_command = vscode.commands.registerCommand('flow.GetFlowCompiler', 
         getFlowCompilerFamily);
 
+    let updateFlow_command = vscode.commands.registerCommand('flow.updateFlowRepo', () => {
+        updateFlowRepo();
+    })
+
     context.subscriptions.push(flowcpp_command);
     context.subscriptions.push(getCompiler_command);
     context.subscriptions.push(compileNeko_command);
+    context.subscriptions.push(run_command);
+    context.subscriptions.push(updateFlow_command);
 
    	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
@@ -99,6 +106,31 @@ export function deactivate() {
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
     });
+}
+
+export async function updateFlowRepo() {
+    const flowRoot = getFlowRoot();
+    if (!fs.existsSync(flowRoot)) {
+        await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
+        return;
+    }
+    const git = simplegit(flowRoot);
+    let status = await git.status();
+    if (status.current != "master") {
+        await vscode.window.showErrorMessage("Flow repository is not on master branch. Please switch to master to proceed.");
+        return;
+    }
+    if (status.modified.length > 0 || status.created.length > 0 || status.deleted.length > 0) {
+        await vscode.window.showErrorMessage("Flow repository has local changes. Please push or stash those before proceeding");
+        return;
+    }
+    tools.shutdownFlowc();
+    try {
+        await git.pull('origin', 'master', {'--rebase' : 'true'});
+    } catch (e) {
+        vscode.window.showInformationMessage("Flow repository pull failed: " + e);
+    }
+    tools.launchFlowc(getFlowRoot());
 }
 
 function resolveProjectRoot(projectRoot: string, documentUri: vscode.Uri): string {
@@ -168,6 +200,11 @@ function compileCurrentFile(compilerHint: string) {
     });
 }
 
+function getFlowRoot(): string {
+    let config = vscode.workspace.getConfiguration("flow");
+    return config.get("root");
+}
+
 function processFile(getProcessor : (flowBinPath : string, flowpath : string) => CommandWithArgs) {
     let document = vscode.window.activeTextEditor.document;
     document.save().then(() => {
@@ -180,7 +217,7 @@ function processFile(getProcessor : (flowBinPath : string, flowpath : string) =>
         flowChannel.clear();
         flowChannel.show(true);
         let config = vscode.workspace.getConfiguration("flow");
-        let flowpath: string = config.get("root");
+        let flowpath: string = getFlowRoot();
         let rootPath = resolveProjectRoot(config.get("projectRoot"), document.uri);
         let documentPath = path.relative(rootPath, document.uri.fsPath);
         let command = getProcessor(path.join(flowpath, "bin"), documentPath);
