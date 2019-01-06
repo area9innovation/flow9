@@ -1,12 +1,15 @@
-*Tropic*
-========
+*Tropic* & *Material*
+=====================
 
-*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superceded by *Form* in *flow*, which now in turn is superceded by *Tropic*.
+*Tropic* is the second generation layout language for *flow* building on the lessons learned from *Form*. The main key difference is that *Tropic* no longer contains code, only data. This makes the language more robust, perform better and work at a higher level. The name *Tropic* relates to our first layout library developed in Haxe called *Arctic*. This library got superceded by *Form* in *flow*, which now in turn is superceded by *Tropic*,
+which in turn is adopted by *Material*.
+
+*Material* is the recommended library for making UIs.
 
 Design Goals
 -------------
 
-The main goals for *Tropic* are: 
+The main goals for *Tropic* & *Material* are: 
 
 - Better basic layouts.
 - Lowering the cognitive load when building user interfaces.
@@ -19,9 +22,10 @@ The main goals for *Tropic* are:
 `Tropic` is implemented in *Flow*, and does support `Form` elements, so existing user interface components can be utilized in `Tropic` layouts.
 
 `Tropic` serves as the fundation for the `Material` library, which contains all of `Tropic`, and which is what you normally want to use.
+So learning `Tropic` is helpful, since the underlying principles and constructs are directly embedded in `Material`.
 
-Hello World
------------
+Hello World using Tropic
+------------------------
 As always, "Hello World":
 
 	import tropic/trender;
@@ -33,14 +37,41 @@ As always, "Hello World":
 We construct the text as a `TText`, and then render it. All basic entities are very similar to `Form` elements, and have a similar interface, e.g `TText(text : string, style : [CharacterStyle]);`. 
 This goes for `TEmpty`, `TGraphics`, `TPicture` as well as `TScale`, `TTranslate`, `TRotate` and so on, including common helpers like `TFixed` that construct an empty box of a given size. Notice that we shorten "Tropic" to "T" almost everywhere for brevity.
 
-They are all documented in `tropic.flow` and are all modelled after the corresponding Form equivalents, with smaller modifications.
+They are all documented in `tropic.flow` and are all modelled after the corresponding `Form` equivalents, with smaller modifications.
 
+Hello World using Material
+--------------------------
+
+	import material/material2tropic;
+
+	main() {
+		mManager = makeMaterialManager([]);
+		ui = MText("Hello World", []);
+		mrender(mManager, true, ui);
+	}
+
+This is similar to `Tropic`, except you need a Material Manager to use `Material`. This is a construct,
+which tracks keyboard focus, z-order and other global aspects of a modern UI.
+
+Similar to the T-prefix for Tropic constructs, there is an M-prefix for Material constructs. See the `lib/material/`
+folder and especially `material.flow` to see the definitions.
+
+Most constructs exist as both a T-version, and an M-version. You normally want to use the M-version, but since
+`Tropic` is a bit easier to use and display in small examples, we will use that in this document. The exact same 
+principles apply to the `Material` versions, though.
+
+Tropic has a place for high-design UIs, where you need pixel-precise control over the UI, but it is important
+to repeat that `Material` is the recommended toolkit for most programs, also since Tropic is completely compatible
+and embedded in `Material`.
 
 Examples
 --------
 
-There are many small `Tropic` examples in `sandbox/tropic/test_tropic.flow`.
+See the Material demo, as well as Material test programs to learn how to use Material (and Tropic):
 
+	c:\flow9> flowcpp demos/demos.flow
+
+	c:\flow9> flowcpp material/tests/material_test.flow
 
 Basic layout
 ------------
@@ -91,7 +122,7 @@ To make our hello-world example above align right, we use a horizontal filler:
 
 which introduces the filler element `TFillX`. A filler is an actual physical element of whatever size it can achieve - up to the maximum possible. An `TFillX` is thus as wide as it can be, always with zero height. Similarly, we have `TFillY`, which expands in the height up to the maximum possible, always with zero width. The combination `TFillXY` is useful if you need something that grows in both directions.
 
-Alignment is often done with fillers like this. In `Form`, we have `Align` and `Align2`, which allow alignment to arbitrary places, but in Tropic, we typically just use the `TCenterX` helper. You can think of that as defined like this:
+Alignment is often done with fillers like this. In `Form`, we have `Align` and `Align2`, which allow alignment to arbitrary places, but in `Tropic`, we typically just use the `TCenterX` helper. You can think of that as defined like this:
 
 	TCenterX(b : Tropic) -> Tropic {
 		TCols([TFillX(), b, TFillX()]);
@@ -119,7 +150,7 @@ the filler will be of size 0x0, since the huge picture takes all space first (un
 Rounded rectangles
 ------------------
 
-A rounded rectangle `TRounded` is built into `Tropic`. It draws a rounded rectangle the same size as a given tropic.
+A rounded rectangle `TRounded` is built into `Tropic`. It draws a rounded rectangle of the same size as a given tropic.
 
 Similarly, `TRectangle` also does that except that the corners are not round:
 
@@ -138,7 +169,7 @@ This is one of the ways we try to reduce the cognitive load: By having fewer, bu
 The fill-box
 ------------
 
-The fillers all expand according to how much space is available. At the top level, the available space is defined to be the entire screen. This is similar to the notion of available area in Form. This area can be controlled in Form using `Available`, and the same can be done in Tropic using the `TAvailable` primitive. This will center the text in a 300x200 pixel box:
+The fillers all expand according to how much space is available. At the top level, the available space is defined to be the entire screen/window. This is similar to the notion of available area in Form. This area can be controlled in Form using `Available`, and the same can be done in Tropic using the `TAvailable` primitive. This will center the text in a 300x200 pixel box:
 
 	import tropic/trender;
 
@@ -164,7 +195,7 @@ Inside an available-area, each filler gets a equal share. This is independent on
 Zooming
 -------
 
-Another important functionality is `TZoom`: 
+Another advanced functionality is `TZoom`: 
 
 	import tropic/trender;
 
@@ -186,10 +217,13 @@ If the `target` tropic is greedy, then our `TZoom` will be greedy. The zoom will
 
 Notice that this operation is zoom-to-fit, not zoom-to-fill. You can use `TTweak` to implement zoom-to-fill.
 
+When you use `Material`, you normally do not want to use `TZoom` and friends, since `Material` comes with
+good defaults for sizes of things depending on your DPI.
+
 TSelect
 -------
 
-This is the construct to use for dynamic parts of the user interface. As such, this is similar to `Mutable` and `Select` in Form. TSelect is really implemented through `TMutable`, which stores a concrete value. (There is also a variant called TFSelect, which uses the Transform-fusion-enabled behaviours. These are useful to avoid leaks from behaviour transforms. This is an advanced topic, which might be described some day, but until then, you can try to read `lib/fusion.flow` to understand this better.)
+This is the construct to use for dynamic parts of the user interface. As such, this is similar to `Mutable` and `Select` in Form. `TSelect` is really implemented through `TMutable`, which stores a concrete value. (There is also a variant called TFSelect, which uses the Transform-fusion-enabled behaviours. These are useful to avoid leaks from behaviour transforms. This is an advanced topic, which might be described some day, but until then, you can try to read `lib/fusion.flow` to understand this better.)
 
 TIf
 ---
@@ -261,40 +295,10 @@ This constructs a `TRectangle` which has a minimum size of 100x100, but a maximu
 This is so common that we have added helpers `TFillXH`, `TFillWY` and `TFillXYXY` which define
 fillers with fixed size.  See `tropic_gui.flow` for the full story.
 
-Finding the height of something
--------------------------------
-
-In some situations, we are interested in only the height of something, not the entire size.
-Maybe we want to draw a `Tropic`, and extend it to the edge of the screen with the same height.
-How can we do that? In `Form`, we would use `Inspect` with `Height` to just get the height,
-and then bind behaviours together with a Select to get this effect.
-
-In Tropic, there are helpers `THeight` and `TWidth` which do this. These can be implemented
-by scaling the child completely flag in on direction. This mean that any `TInteractive` or `TConstruct`
-with side-effects still are included. If you want to avoid this, you can send in a `TGhost` to
-`THeight` or `TWidth`.
-
-Basically, the result would expand to something like this:
-
-	TLet("line", line,
-		TCols2(
-			TDisplay("line"),
-			TRectangle(
-				[Fill(green)],
-				TGroup2(
-					TFillX(), // Grow in the width
-					TScale(const(Factor(0.0, 1.0)), TGhost("line")) // Define the height
-				)
-			)
-		)
-	)
-
-See example 58 in `sandbox/tropic/test_tropic.flow`.
-
 TAttach
 -------
 
-Since `Tropic` uses other `Tropic` elements for most layout jobs, this causes an increase in the number of `Tropic`s to deal with by the layout engine. This is normally not a problem, but in some cases, profiling shows that there is a problem. In those cases, it is possible to use `TAttach` to retrieve the specific metrics of a given Tropic, and use code to perform the layout of other logic that depends on the metrics. That can serve as a useful alternative to the approach given above.
+Since `Tropic` uses other `Tropic` elements for most layout jobs, this causes an increase in the number of `Tropic`s to deal with by the layout engine. This is normally not a problem, but in some cases, profiling shows that there is a problem. In those cases, it is possible to use `TAttach` to retrieve the specific metrics of a given Tropic, and use code to perform the layout of other logic that depends on the metrics.
 
 Drag'n'drop
 -----------
@@ -311,8 +315,8 @@ style with a certain tropic which isn't the same as stationary and not `TEmpty`.
 A key thing is that you have to use `trenderManager` to render your tropic user interface before
 drag'n'drop will work.
 
-See `tropic_dragdrop.flow` and `tropic_manager.flow` for the full interface. There is a small example 
-in `sandbox/tropic/drag.flow`.
+See `tropic_dragdrop.flow` and `tropic_manager.flow` for the full interface. If you use Material, there
+is a corresponding construct in `material.flow`.
 
 Advanced topics
 ===============
@@ -322,15 +326,15 @@ In the following, more advanced topics are discussed. When getting started, thos
 GUI components
 --------------
 
-We are porting more and more of the common components to the Tropic world. See `tropic_ui.flow`
-for `TTextInput`, `TTextButton`, `TRawButton` and `TTab` for tab control.
-
-The `TTextInput` is easier to use than the corresponding one in `Form`. It uses behaviours to 
-control everything, thus avoiding callbacks completely. It comes with automatic focus id handling.
+There are a number of GUI components written directly in Tropic. See `tropic_ui.flow` for `TTextInput`, 
+`TTextButton`, `TRawButton` and `TTab` for tab control.
 
 For a button, use `TTextButton`, or if that is not flexible enough, `TRawButton`. This construct is 
 hopefully strong enough to be able to realize all the hundreds of buttons we have in `Form` with 
 trivial code.
+
+But as mentioned, normally, you want to use the Material components, which have a higher level of
+graphical design, and better support for touch-devices out of the box.
 
 TParagraph
 ----------
@@ -360,12 +364,12 @@ Tropic is faster than `Form` for some things, and slower for other things. The k
 
 1. Optimize Tropic
 2. Construct Tropic and metrics (fusion)
-3. Display through Form
+3. Display through FForm
 4. Disposal
 
 The key difference between `Form` and `Tropic` lies in the optimization phase, as well as the metrics. In `Form`, the metrics phase can be very expensive, because it is very easy by mistake to make a layout-metric loop, which causes performance problems. This happens much less frequently in Tropic, but at the cost of bigger set-up time.
 
-To render a Tropic, the Tropic structure first has to be optimized, and then all the metric calculations have be constructed, including conversion to `Form`. If you profile rendering Tropic, you will see calls like `optimizeTropic`, `fuse` and `doFuse` in the profile. These correspond to phases 1 & 2. There will also be some "special" entries in the profile, which correspond to the physical rendering itself, but it is surprising to see how much time metrics, setup and destruction itself takes.
+To render a Tropic, the Tropic structure first has to be optimized, and then all the metric calculations have be constructed, including conversion to `FForm`. If you profile rendering Tropic, you will see calls like `optimizeTropic`, `fuse` and `doFuse` in the profile. These correspond to phases 1 & 2. There will also be some "special" entries in the profile, which correspond to the physical rendering itself, but it is surprising to see how much time metrics, setup and destruction itself takes.
 
 The best way to make sure your Tropic is fast is to make it as tight as possible. The time required is proportional to the number of Tropics that you need to display. For that reason, do not duplicate the same big chunk of Tropic many times if it can be avoided.
 
@@ -430,8 +434,10 @@ Zoom fill
 A great construct in Tropic `TZoomFill`. This construct will scale up the child to exploit the available space, preserving the aspect ratio of the child, but in such a way that the fillers of the child will expand well enough to match the aspect ratio of the fill box. This is typically used at the top-level of your Tropic user interface to make it scale nice.
 It effectively means that we will scale as much as we can, without breaking the aspect ratio, including to reduce fillers to make zoom possible.
 
-Pixels and hi-res screens
--------------------------
+In Material, there is little need for TZoomFill, since Material comes with good DPI-adjustments out of the box.
+
+Pixels and hi-res screens for high-design Tropic UIs
+----------------------------------------------------
 
 Since `Tropic` is vector-based in the sense that anything but pictures can be resized without becoming pixelized, we are in fact free to choose whatever unit we want instead of physical pixels. As you can see above, `Tropic` continues the tradition of using pixels for metrics in `TFixed`, `TBorder`, `TTranslate`, font-sizes as well as maximums in `TAvailable`.
 
@@ -441,7 +447,7 @@ The primary reason is that this makes it easier to implement graphical designs, 
 
 However, there is also another more subtle reason, which deals with how to make designs that work well on retina devices.
 
-The key insight to make user interfaces work well on many devices is to reduce the complexity of the task. Tropic invites to do this by employing a simple rule:
+The key insight to make user interfaces work well on many devices is to reduce the complexity of the task. Tropic supports one particular approach, which can help by employing a simple rule:
 
 - Implement your user interface as if you work on a standard 160 DPI display non-retina device
 - Make sure to implement your user interface in the smallest reasonable version, typically minimum 480x480 although this can vary. (If you target a mobile device, remember your minimal size has to have room for any virtual keyboard.)
@@ -478,11 +484,11 @@ thing is wrapped with the TZoomFill, and now the user interface will look and be
 of DPIs and resolutions.
 
 The `trender` call will do any required retina scaling, as well as add hooks to get Ctrl + and Ctrl - zooming
-working for accessibility on the Flash platform. So normally, you will not be using `tropic2form`, but rather
-`trender` to display your tropic GUI.
+working. So normally, you will not be using `tropic2form`, but rather `trender` to display your tropic GUI.
 
-The second parameter of `trender` is an array of TRenderStyle union elements. TRender style including `Stylesheet` structure.
-Setting `Stylesheet` in trender gives ability to use CSS stylesheets to skin Tropic user interfaces.
+The second parameter of `trender` is an array of TRenderStyle union elements. TRender style 
+includes a `Stylesheet` structure. Setting `Stylesheet` in trender gives ability to use CSS stylesheets to 
+skin Tropic user interfaces. See `doc/css.html` for more information.
 
 Making two tropics the same size without scaling
 ------------------------------------------------
@@ -539,14 +545,6 @@ Tooltips
 
 Tropic also supports tooltips, use `TTooltip` from `tropic_ui.flow`. Notice that tropic tooltips using is possible only through
 `trenderManager`, because `TTooltip` uses `TManager.xy` field as mouse global coordinates for positioning.
-
-Rich text
----------
-
-We have exposed the Wigi engine both in form of read-only rendering, as well as the editor:
-
-wigi/tropic_wigify - a Tropic-version of Wigi rendering
-wigi/tropic_wigi - a Tropic-version of a Wigi rich-text editor
 
 Stylesheet
 ----------
