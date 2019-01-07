@@ -49,10 +49,11 @@ On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
 
 ## FEATURES AND CONFIGURATION
 * Syntax highligting (flow, lingo, flowschema, sharekey), code snippets, and brace matching work out of the box
-* There are 3 commands:
+* There are 4 commands:
     * `flow.flowcpp` - that is also bound to F7 to type check current flow file using default compiler (flowc1 unless changed)
     * `flow.compileNeko` - that is also bound to Ctrl+F7 to type check current file using neko compiler
     * `flow.run` - that is also bound to Shift+F7 to run current file with `flowcpp`
+    * `flow.updateFlowRepo` - this stops flowc compile server, updates flow repo, and re-starts it
 * There are the following configuration settings found under File->Preferences-Extensions, and then "Flow configuration":
     1. `flow.root` - that shall point to the root of Flow repo (typically `c:\area9\flow`, this is also the default value)
     2. `flow.compiler` - the compiler to use. Supports same notation as in `flow.config` file - i.e. `nekocompiler`, `flowcompiler`, `flowc`, or `0`, `1`, `2`. Default is flowc, and that is fine.

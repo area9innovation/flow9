@@ -5,7 +5,85 @@ There is a precompiled binary in this repository. You can launch it with
 
   flowcpp
 
-from flow/bin, which you should put in your path.
+from flow9/bin, which you should put in your path.
+
+
+Command line usage
+------------------
+
+Define what program to run by giving the filename on the command line:
+
+    flowcpp sandbox/fun.flow
+
+This will invoke "flow" or "flowc1" to compile the program to bytecode, and then run it.
+
+You can also define what program to run by giving a bytecode filename on the command line:
+
+    flowcpp bytecode_file.bytecode [bytecode_file.debug | --disassemble]
+
+Here, bytecode_file.bytecode is a file with the compiled flow program.  
+The bytecode_file.debug is a file with debug information. 
+
+Example of how to compile a flow program to bytecode with debugging info:
+
+    flowc1 sandbox/hello.flow bytecode=driver.bytecode debug=1
+
+or
+
+    flow -c driver.bytecode --debuginfo driver.debug sandbox/hello.flow
+ 
+Example of how to run a flow program and pass a parameter that will be accepted
+through getUrlParameter in the flow code:
+
+    flow app/app.flow -- devtrace=1
+
+If you want flowcpp to compile flow code before running, there are 2 compilers to choose from.
+1. Legacy neko compiler (1st generation, default, `--nekocompiler` command line option)
+2. flowc compiler (3rd generation, `--flowc` command line option)
+
+Those options can also be set in `flow.config` file as described below.
+
+Other command line options to QtByteCoderunner
+----------------------------------------------
+
+`--disassemble`
+  makes QtByteRunner disassemble bytecode file without running.
+
+`--media-path <path>`
+  defines where the runner should find the font resource files.
+  Normally c:\flow9 on Windows.
+  Warning: wrong media-path now causes program crash!
+
+`--fallback_font <font>` 
+  enables lookup of unknown glyphs in the `<font>`. `<font>` example - `DejaVuSans`.
+
+`--touch`
+  Emulate touch device events.
+  Press `F12` to turn device orientation
+  Press `Ctrl-Shift-F11` to toggle Pan Gesture on/off.
+    Use Mouse to click and drag to emulate Pan Gesture when On.
+  Press `Ctrl-Shift-Arrow Key-Left Mouse` to simulate Swipe gestures
+  This also sets: `target::mobile = true`
+
+To learn about profiling, please read ../doc/development.html.
+
+If rendering performance is low, then try this command line
+
+`--antialiassamples <int>`
+    Adjust the amount of antialiasing used when rendering. Set to 0 or 1 if you have
+    slow rendering. If this helps, you can add this to your flow.config
+
+    antialiassamples=1
+
+Using `flow.config` file
+----------------------
+
+There is a way to provide a project-specific configuration setting via `flow.config` file put into project root - where `flowcpp` is ran from. This is a standard properties file (key=value), the following options are currently supported:
+ * `flowcompiler` - choice of `nekocompiler`, `flowcompiler`, `flowc` (or `0`,`1`,`2`)
+ * `media_path` 
+ * `fallback_font`
+
+Options given in the command line take precedence over `flow.config`.
 
 
 Building (command line)
@@ -37,7 +115,7 @@ So committing it with different rpath will break things.
 
 * To get rpath of byte runner you can do
 readelf -d QtByteRunner/bin/linux/QtByteRunner | grep rpath
-inside flow repo.
+inside flow9 repo.
 
 * Evidently, required version of QT is 5.10.0, and it can be installed with
 installer from
@@ -129,7 +207,7 @@ https://www.visualstudio.com/vs/visual-studio-express/
 
 Run Qt Creator.
 
-Open the project `flow/QtByteRunner/QtByteRunner.pro`
+Open the project `flow9/QtByteRunner/QtByteRunner.pro`
 
 Configure it to use the kit `Qt 5.10.0 + MSVC %2015|2013% 64bit` and `Qt 5.10.0 + MSVC %2015|2013% 32bit`
 
@@ -141,8 +219,8 @@ Arguments:
 
 Build either Release or Debug version.
 
-Copy the 64bit release executable to flow/QtByteRunner/bin/windows to deploy.
-Copy the 32bit release executable to flow/QtByteRunner/bin/windows32 to deploy.
+Copy the 64bit release executable to flow9/QtByteRunner/bin/windows to deploy.
+Copy the 32bit release executable to flow9/QtByteRunner/bin/windows32 to deploy.
 
 Running from IDE on Windows
 ---------------------------
@@ -155,14 +233,6 @@ For 32bit be sure to copy .dlls from win32-libs\bin to the
 build-QtByteRunner-Desktop_Qt_5_7_0_MSVC2015_32bit-Release/release  (or <...>-Debug/debug) directory where the
 QtByteRunner.exe resides.
 
-
-If rendering performance is low, then try this command line
-
-    --antialiassamples 1 
-  
-If this helps, you can add this to your flow.config
-
-    antialiassamples=1
 
 Running on Mac
 --------------
@@ -194,86 +264,9 @@ Usage
 Before you run the program, you have to define the command line in QtCreator by clicking "Projects" in
 the left hand side, and then choose the "Run Settings" tab.
 
-Also be sure that the working directory is set right to point to the root of the flow folder.
-So on a Mac, it could be /Users/asgerottaralstrup/flow/. On a Windows machine,
-it could be c:/flow/
-
-Command line usage
-------------------
-
-Define what program to run by giving the filename on the command line:
-
-    flowcpp sandbox/fun.flow
-
-This will invoke "neko flow.n" to compile the program to bytecode, and then run it.
-
-You can also define what program to run by giving a bytecode filename on the command line:
-
-    flowcpp bytecode_file.bytecode [bytecode_file.debug | --disassemble]
-
-Here, bytecode_file.bytecode is a file with the compiled flow program. To make this one you
-should run flow with the "--compile" option.
-
-bytecode_file.debug is a file with debug information. To make this one you should run flow.n with
-the "--debuginfo" option.
-
-Example of how to compile a flow program to bytecode with debugging info:
-
-    flow -c driver.bytecode --debuginfo driver.debug tests/helloworld.flow
-
-You can also launch products as if they were online:
-
-	flowcpp --url "http://localhost:81/flow/flowrunner.html?name=smartbuilder&product=Playground"
-
-In this case, the bytecode will be downloaded from the address and run.
-
-If you use BOTH a url and a bytecode file, then the bytecode file will be used, BUT the
-URL parameters defined by the URL will be available in the flow code that uses getUrlParameter.
-
-Example of how to run a flow program and pass a parameter through getUrlParameter:
-    flow app/app.flow -- devtrace=1
-
-If you want flowcpp to compile flow code before running, there are 3 compilers to choose from.
-1. Legacy neko compiler (1st generation, default, `--nekocompiler` command line option)
-2. flowcompiler (2nd generation, `--flowcompiler` command line option)
-3. flowc compiler (3rd generation, `--flowc` command line option)
-
-Those options can also be set in `flow.config` file as described below.
-
-Other command line options to QtByteCoderunner
-----------------------------------------------
-
-`--disassemble`
-  makes QtByteRunner disassemble bytecode file without running.
-
-`--media-path <path>`
-  defines where the runner should find the font resource files.
-  Normally c:\flow on Windows.
-  Warning: wrong media-path now causes program crash!
-
-`--fallback_font <font>` 
-  enables lookup of unknown glyphs in the `<font>`. `<font>` example - `DejaVuSans`.
-
-`--touch`
-  Emulate touch device events.
-  Press `F12` to turn device orientation
-  Press `Ctrl-Shift-F11` to toggle Pan Gesture on/off.
-    Use Mouse to click and drag to emulate Pan Gesture when On.
-  Press `Ctrl-Shift-Arrow Key-Left Mouse` to simulate Swipe gestures
-  This also sets: `target::mobile = true`
-
-To learn about profiling, please read ../flowprof.txt.
-
-Using `flow.config` file
-----------------------
-
-There is a way to provide a project-specific configuration setting via `flow.config` file put into project root - where `flowcpp` is ran from. This is a standard properties file (key=value), the following options are currently supported:
- * `flowcompiler` - choice of `nekocompiler`, `flowcompiler`, `flowc` (or `0`,`1`,`2`)
- * `media_path` 
- * `fallback_font`
-
-Options given in the command line take precedence over `flow.config`.
-
+Also be sure that the working directory is set right to point to the root of the flow9 folder.
+So on a Mac, it could be /Users/asgerottaralstrup/flow9/. On a Windows machine,
+it could be c:/flow9/
 
 Enabling fast-cgi in apache
 ---------------------------
@@ -319,15 +312,15 @@ File /etc/apache2/mods-enabled/fcgid.conf should look like this:
     </IfModule>
 
     where PATH_TO_CGI_BYTERUNNER is substituted for path to QtByteRunner.fcgi,
-    e.g. /home/user/code/flow/QtByteRunner/bin/cgi/linux/QtByteRunner.fcgi
+    e.g. /home/user/code/flow9/QtByteRunner/bin/cgi/linux/QtByteRunner.fcgi
 
 To compile QtByteRunner.fcgi use QtByteRunnerCgi.pro product.
 
 Configuring fast-cgi on Windows
 -------------------------------
 
-For windows we have a precompiled x32 version: flow/QtByteRunner/bin/windows32/QtByteRunner.fcgi.exe
-Flow repository already contains compiled version of fcgi.lib and libfcgi.dll(compiled with msvc 2015, win32 target). If you want to build it by yourself, use source code from here: https://github.com/FastCGI-Archives/fcgi2
+For windows we have a precompiled x32 version: flow9/QtByteRunner/bin/windows32/QtByteRunner.fcgi.exe
+Flow repository already contains compiled version of fcgi.lib and libfcgi.dll (compiled with msvc 2015, win32 target). If you want to build it by yourself, use source code from here: https://github.com/FastCGI-Archives/fcgi2
 QtByteRunnerCgi implements FastCGI mode. Apache must be configured to support this mode.
 
 You have to install mod_fcgid for apache:
@@ -363,7 +356,7 @@ LoadModule fcgid_module modules/mod_fcgid.so
   <Files ~ "\.serverbc$">
     Options +ExecCGI +Indexes +MultiViews
     AddHandler fcgid-script .serverbc
-    FcgidWrapper C:/flow/QtByteRunner/bin/cgi/windows32/QtByteRunner.fcgi.exe .serverbc
+    FcgidWrapper C:/flow9/QtByteRunner/bin/cgi/windows32/QtByteRunner.fcgi.exe .serverbc
   </Files>
 
 </IfModule>
@@ -416,15 +409,15 @@ choice is probably just to run GDB from the command line.
 Compile the Qt runner in debug mode. Then copy all the *d.dll's from your Qt installation,
 maybe C:\Qt\5.5\bin into the Debug build folder where QtByteRunner.exe is.
 
-Then go to c:\flow, or equivalent in a command line, and run:
+Then go to c:\flow9, or equivalent in a command line, and run:
 
-  C:\mingw32\bin\gdb c:\flow\build-QtByterunnder-Desktop-Debug\debug\QtByteRunner.exe
+  C:\mingw32\bin\gdb c:\flow9\build-QtByterunnder-Desktop-Debug\debug\QtByteRunner.exe
 
 This will start the debugger, and hopefully read symbols correctly.
 
 Next, to start the program, use
 
-  r wigi/test_wigi.flow
+  r sandbox/hello.flow
 
 or similar to start the program.
 
