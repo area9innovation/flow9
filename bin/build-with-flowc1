@@ -1,0 +1,169 @@
+#!/usr/bin/python
+
+import os
+import sys
+import shutil
+
+usage = '''
+Build a target with flowc. Options:
+	type=<name>       Target type. One of the following: java, c++. default=java 
+	file=<name>       file to build (obligatory)
+	flowdir=<dir>     flow directory (obligatory)
+	compiler=<name>   choose a compiler, optional, default=flowc1
+	opt_<name>=<val>  pass option <name> with value <val> to flowc
+'''
+
+def toStdout(text):
+	sys.stdout.write(text)
+	sys.stdout.flush()
+
+def parseArgs():
+	args = {}
+	for arg in sys.argv:
+		name_val = arg.split('=')
+		if len(name_val) > 2:
+			toStdout(usage)
+			sys.stdout.flush()
+			sys.exit(1)
+		elif len(name_val) == 2:
+			args[name_val[0]] = val = name_val[1]
+	return args
+
+def findConfigDir(dir_name):
+	try:
+		open(os.path.join(dir_name, "flow.config"))
+		return dir_name
+	except IOError:
+		prefix_dir = os.path.dirname(dir_name)
+		if prefix_dir != dir_name:
+			return findConfigDir(prefix_dir)
+		else:
+			return None
+
+'''
+Java building part.
+'''
+
+def buildRuntime(args):
+	toStdout('* Compiling runtime\n-----------------\n')
+	currdir = os.getcwd()
+	flowdir = args['flowdir']
+	javadir = os.path.join(flowdir, 'src', 'java')
+	os.chdir(javadir)
+	code = os.system('javac -g com/area9innovation/flow/*.java')
+	if code != 0:
+		toStdout('Runtime compilation failed: ' + str(code) + '\n')
+		sys.exit(1)
+	os.chdir(currdir)
+
+def generateJavaCode(args):
+	flowfile = args['file']
+	flowdir  = args['flowdir']
+	shutil.rmtree('javagen', True)
+	compiler = os.path.join(flowdir, 'bin', args.get('compiler', 'flowc1'))
+	toStdout('* Generating the Java modules for ' + flowfile + '\n-------------------------------------\n')
+	compiler_args = [compiler, 'java=javagen']
+	for name in args:
+		if 'opt_' in name:
+			opt_name = name[4:]
+			compiler_args.append(opt_name + '=' + args[name])
+	compiler_args.append(flowfile) 
+	code = os.system(' '.join(compiler_args))
+	if code != 0:
+		toStdout('Java code generation failed: ' + str(code) + '\n')
+		sys.exit(1)
+
+def compileGeneratedCode(args):
+	flowdir  = args['flowdir']
+	flowfile = args['file']
+	javadir = os.path.join(flowdir, 'src', 'java')
+	toStdout('* Compiling the generated code\n----------------------------\n')
+	code = os.system('javac -Xlint:unchecked -encoding UTF-8 -cp ' + javadir  + ' javagen/com/area9innovation/flow/*.java')
+	if code != 0:
+		toStdout('Generated java code compilation failed: ' + str(code))
+		sys.exit(1)
+
+def buildJarFile(args):
+	flowfile = args['file']
+	flowdir  = args['flowdir']
+	javadir = os.path.join(flowdir, 'src', 'java')
+	jarfile = flowfile[0:len(flowfile) - len('flow')] + 'jar'
+	toStdout('* Building the ' + jarfile + '\n----------------------------\n')
+	jarfile = flowfile[0:len(flowfile) - len('flow')] + 'jar'
+	os.chdir('javagen')
+	code = os.system('jar cfe ' + jarfile + ' com.area9innovation.flow.Main com/area9innovation/flow/*.class' + ' -C ' + javadir + ' com/area9innovation/flow')
+	os.chdir('..')
+	if code != 0:
+		toStdout('Building jar file failed: ' + str(code) + '\n')
+		sys.exit(1)
+
+def buildJava(args):
+	toStdout("Building java target with 'flowc1'\n==================================\n")
+	flowdir  = args['flowdir']
+	if not os.path.isfile(os.path.join(flowdir, 'src', 'java', 'com', 'area9innovation', 'flow', 'FlowRuntime.class')):
+		buildRuntime(args)
+	generateJavaCode(args)
+	compileGeneratedCode(args)
+	buildJarFile(args)
+	toStdout('==================================\nDone.\n')
+
+'''
+c++ building part.
+'''
+
+def generateCppCode(args):
+	flowfile = args['file']
+	flowdir  = args['flowdir']
+	cppfile  = flowfile[:len(flowfile) - len('.flow')] + '.cpp'
+	compiler = os.path.join(flowdir, 'bin', args.get('compiler', 'flowc1'))
+	toStdout('* Generating c++ code for ' + flowfile + '\n-------------------------------------\n')
+	compiler_args = [compiler, 'cpp=' + cppfile]
+	for name in args:
+		if 'opt_' in name:
+			opt_name = name[4:]
+			compiler_args.append(opt_name + '=' + args[name])
+	compiler_args.append(flowfile) 
+	code = os.system(' '.join(compiler_args))
+	if code != 0:
+		toStdout('c++ code generation failed: ' + str(code) + '\n')
+		sys.exit(1)
+
+def compileCppCode(args):
+	flowdir  = args['flowdir']
+	flowfile = args['file']
+	cppfile  = flowfile[:len(flowfile) - len('.flow')] + '.cpp'
+	exefile  = flowfile[:len(flowfile) - len('.flow')] + '.exe'
+	toStdout('* Compiling the generated code\n----------------------------\n')
+	code = os.system("g++ -std=c++1z -I" + flowdir + " -I" + flowdir + "/QtByteRunner/core/ -o " + exefile + " -O3 -fno-exceptions " + cppfile + " -lstdc++fs")
+	if code != 0:
+		toStdout('Generated c++ code compilation failed: ' + str(code) + '\n')
+		sys.exit(1)
+
+def buildCpp(args):
+	toStdout("Building c++ target with 'flowc1'\n==================================\n")
+	flowdir  = args['flowdir']
+	generateCppCode(args)
+	compileCppCode(args)
+	toStdout('==================================\nDone.\n')
+
+def main():
+	args = parseArgs()
+	if (not 'file' in args) or (not 'flowdir' in args):
+		toStdout(usage)
+		sys.exit(1)
+	confdir = findConfigDir(os.path.dirname(args['file']))
+	if confdir == None:
+		toStdout('provide a project with flow.config file\n')
+		sys.exit(1)
+	os.chdir(confdir)
+	buildType = args.get('type', 'java')
+	if buildType == 'java':
+		buildJava(args)
+	elif buildType == 'c++':
+		buildCpp(args)
+	else:
+		toStdout('Unsupported target type: ' + buildType + '\n')
+
+if __name__ == '__main__':
+	main()
+
