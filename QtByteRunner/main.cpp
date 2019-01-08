@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
 #endif
 
     // gathering command-line parameters to keep them later
-    QUrl params("https://cloud1.area9.dk/flow/flowrunner.html");
+    QUrl params("https://localhost/flow/flowrunner.html");
 
     while (argc > 2) {
         if (!strcmp(argv[1], "--flowcompiler")) {

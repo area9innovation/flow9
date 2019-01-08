@@ -20,7 +20,7 @@ docker volume rm -f "$volume_name"
 docker volume create "$volume_name"
 
 docker run -i --name build_qbr --rm \
-  -v "$volume_name:/flow/bin/linux" \
+  -v "$volume_name:/flow9/bin/linux" \
   area9/qt-byte-runner:desktop
 
 # extracting artifacts from the volume

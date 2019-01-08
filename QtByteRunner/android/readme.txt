@@ -89,7 +89,7 @@ So now we have libflowrunner.so for ARMv7 builded. If you need another architect
 - Project -> Properties -> C/C++ build
 	- Make sure build command contains correct path to your ndk-build
 	For example: nice /Users/vzakharov/adt/android-ndk-r10/ndk-build
-- Add Google play services(located here: flow\QtByteRunner\google-play-services_lib\), following this instructions for eclipse ADT: https://developers.google.com/android/guides/setup
+- Add Google play services(located here: flow9\QtByteRunner\google-play-services_lib\), following this instructions for eclipse ADT: https://developers.google.com/android/guides/setup
 	now line "android.library.reference.1=../../../Users/Anatoly/workspace/google-play-services_lib" in project.properties should reference to your local google play services lib from workspace
 
 4) Try to build the project

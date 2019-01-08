@@ -71,12 +71,12 @@
 
 ;; reasonable defaults for Mac & Linux. on Windows, override these
 ;; in your init file
-(defcustom a9flow-basedir "~/flow/"
+(defcustom a9flow-basedir "~/flow9/"
   "area9 code base directory"
   :safe #'stringp)
-(defcustom a9flow-include-dirs '("~/flow/" "~/flow/lib/")
+(defcustom a9flow-include-dirs '("~/flow9/" "~/flow9/lib/")
   "include directories for flow compiler")
-(defcustom a9flow-compiler-basedir "~/flow/"
+(defcustom a9flow-compiler-basedir "~/flow9/"
   "path to the flow compiler (svn root)")
 
 (defvar a9flow-mode-syntax-table
