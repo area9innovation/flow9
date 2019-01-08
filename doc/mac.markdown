@@ -160,7 +160,7 @@ and start a new shell.
 
 ## Compile Flow itself
 
-    cd ~/flow/src
+    cd ~/flow9/src
     haxe Build.hxml
     cd ..
     neko src/build.n
@@ -334,7 +334,7 @@ The tools are written in OCaml, so you may first need:
 
 Then to do the build:
 
-    cd ~/flow/flowtools/src
+    cd ~/flow9/flowtools/src
     make deploy
 
 The new binaries will be in the `flowtools/bin/mac` directory.

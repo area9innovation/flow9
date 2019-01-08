@@ -3662,7 +3662,7 @@ private class WebClip extends NativeWidgetClip {
 
 		var img = Browser.document.createElement("img");
 		img.style.cssText = "position: absolute; height: 20px; width: 20px; top: 0; right: 0; background: #BEBEBE;";
-		untyped img.src = "http://cloud1.area9.dk/flow/images/lms_reload.png";
+		untyped img.src = "images/realhtml_reload.png";
 		div.appendChild(img);
 
 		var span = Browser.document.createElement("span");

@@ -29,7 +29,7 @@ namespace WindowsApp
 	/// </summary>
 	public sealed partial class MainPage : Page
 	{
-		static Uri default_uri = new Uri("https://cloud1.area9.dk/flow/");
+		static Uri default_uri = new Uri("https://localhost/flow/");
 
         Uri base_uri;
 		flowgen.Program program;

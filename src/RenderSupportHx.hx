@@ -150,28 +150,9 @@ class RenderSupportHx {
 		#elseif flash
 
 		builtinFonts = new Map();
-		builtinFonts.set("Book", true);
-		builtinFonts.set("Italic", true);
-		builtinFonts.set("Demi", true);
-		builtinFonts.set("Medium", true);
-		builtinFonts.set("MediumItalic", true);
-		builtinFonts.set("Condensed", true);
-		builtinFonts.set("DejaVuSans", true);
-		builtinFonts.set("DejaVuSansOblique", true);
-		builtinFonts.set("DejaVuSerif", true);
-		builtinFonts.set("FeltTipRoman", true);
-		builtinFonts.set("Minion", true);
-		builtinFonts.set("MinionItalics", true);
-		builtinFonts.set("MHEelemsansRegular", true);
-		builtinFonts.set("NotoSansMinimal", true);
-		builtinFonts.set("ProximaSemiBold", true);
-		builtinFonts.set("ProximaExtraBold", true);
-		builtinFonts.set("ProximaSemiItalic", true);
-		builtinFonts.set("ProximaExtraItalic", true);
-		builtinFonts.set("GothamBold", true);
-		builtinFonts.set("GothamBook", true);
-		builtinFonts.set("GothamBookItalic", true);
-		builtinFonts.set("GothamHTFBook", true);
+		builtinFonts.set("Roboto", true);
+		builtinFonts.set("RobotoMedium", true);
+		builtinFonts.set("MaterialIcons", true);
 
 		// Check if we have a resource with the font names. If so, register all of those
 		var fonts = haxe.Resource.getString("fontnames");

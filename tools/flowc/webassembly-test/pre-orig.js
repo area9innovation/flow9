@@ -4947,7 +4947,7 @@ _$RenderSupportJSPixi_WebClip.prototype = $extend(_$RenderSupportJSPixi_NativeWi
 		div.style.cssText = "z-index: 101; position: absolute; top: 0; left: 0; width: 100%; height: 20px; opacity: 0.6;";
 		var img = window.document.createElement("img");
 		img.style.cssText = "position: absolute; height: 20px; width: 20px; top: 0; right: 0; background: #BEBEBE;";
-		img.src = "http://cloud1.area9.dk/flow/images/lms_reload.png";
+		img.src = "http://localhost/flow/images/lms_reload.png";
 		div.appendChild(img);
 		var span = window.document.createElement("span");
 		span.style.cssText = "position: absolute; right: 25px; top: 0px; color: white; display: none;";

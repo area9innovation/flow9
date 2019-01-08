@@ -71,8 +71,8 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/area9/flow/www/"
-<Directory /home/'$USER'/area9/flow/>
+printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
+<Directory /home/'$USER'/flow9/>
      Options Indexes FollowSymLinks
      AllowOverride None
      Require all granted
@@ -218,7 +218,7 @@ but the system can now find libraries on that path nonetheless.
 # Compile Flow itself
 Neko version of flow from the repo should be fine but if you wish to compile your own, do:
 ```bash
-cd ~/area9/flow/src
+cd ~/flow9/src
 haxe FlowNeko.hxml
 ```
 This should take a few minutes. If it takes more than 10 minutes, very likely something is going wrong.

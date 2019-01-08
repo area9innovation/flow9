@@ -1047,7 +1047,7 @@ public class FxRenderSupport extends RenderSupport {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {
-			img = new CachedPicture("http://cloud1.area9.dk/flow/"+name);
+			img = new CachedPicture("http://localhost/flow/"+name);
 			if (cache)
 				img_cache.put(name, img);
 		}

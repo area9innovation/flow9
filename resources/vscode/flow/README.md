@@ -14,7 +14,7 @@ Alternatively, run the following command line: `code --install-extension flow.vs
 The extension has auto-update functionality. At every activation (aka VSCode start-up) it will check for its updates by looking at package.json in flow repository and prompt user to update. The update procedue is also automatic.
 
 Configure the flow root folder under File->Preferences-Settings, and then "Flow configuration" and change `flow.root` to 
-point to the root of Flow repo (typically `c:\area9\flow`).
+point to the root of Flow repo (typically `c:\flow9`).
 
 Consider to download and install the font "Fira code". Then go to File -> Preferences -> Settings, Text Editor, Font, change the Font family
 to "Fira code" and make sure "Font Ligatures" is checked.
@@ -55,7 +55,7 @@ On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
     * `flow.run` - that is also bound to Shift+F7 to run current file with `flowcpp`
     * `flow.updateFlowRepo` - this stops flowc compile server, updates flow repo, and re-starts it
 * There are the following configuration settings found under File->Preferences-Extensions, and then "Flow configuration":
-    1. `flow.root` - that shall point to the root of Flow repo (typically `c:\area9\flow`, this is also the default value)
+    1. `flow.root` - that shall point to the root of Flow repo (typically `c:\flow9`, this is also the default value)
     2. `flow.compiler` - the compiler to use. Supports same notation as in `flow.config` file - i.e. `nekocompiler`, `flowcompiler`, `flowc`, or `0`, `1`, `2`. Default is flowc, and that is fine.
     3. `flow.compilerBackend` - the backend to use for compiler. Acceptable values are `flowcpp`, `java`, `auto` (default, current best practice), `manual` (verbose command - as specified).
     4. `flow.userCompilerServer` - whether to use or not the compiler server. Only works with `flowc`
@@ -89,7 +89,7 @@ customize the arguments given to flowcpp when running or debugging (i.e. screen 
     4. Rename - experimental
  
 ## Requirements
-Flow language tools configured in a standard layout - i.e. c:\area9\flow. There is a flow.root configuration parameter (in VS Code) to override that.
+Flow language tools configured in a standard layout - i.e. c:\flow9. There is a flow.root configuration parameter (in VS Code) to override that.
 
 ## Debug
 See https://code.visualstudio.com/docs/extensions/example-hello-world .

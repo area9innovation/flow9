@@ -2317,13 +2317,6 @@ namespace Area9Innovation.Flow
 				: base(owner)
 			{
 				UriBuilder tweak = new UriBuilder(link);
-				if (tweak.Scheme == "http" && tweak.Host.EndsWith(".mhlearnsmart.com"))
-				{
-					tweak.Scheme = "https";
-					tweak.Port = -1;
-				}
-				if (tweak.Host == "cloud1.mhlearnsmart.com" && tweak.Scheme == "https")
-					tweak.Host = "cloud1.area9.dk";
 				link = tweak.Uri;
 
 				this.link = link;
