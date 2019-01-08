@@ -51,7 +51,7 @@ Compile and run the first program:
 If this does not work, make sure you have [Git LFS](https://git-lfs.github.com) installed. 
 You have to reclone the flow9 repository after installing Git LFS.
 
-See `lib/demos/demos.flow` to read the code for this example.
+See `demos/demos.flow` to read the code for this example.
 
 See `doc/index.html` for further documentation about the language and platform.
 
