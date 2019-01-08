@@ -173,7 +173,7 @@ class RenderSupportHx {
 			flash.external.ExternalInterface.addCallback("onJsScroll", onJsScroll);
 		}
 
-		getStage().stageFocusRect = false;	// That should fix http://process.area9.dk/cases/default.asp?19760
+		getStage().stageFocusRect = false;
 
 		WebClipListeners = new Array<Dynamic>();
 		updateBrowserZoom();
