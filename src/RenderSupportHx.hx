@@ -2,7 +2,6 @@
 import js.Browser;
 import FlowFontStyle;
 import RenderSupportJSPixi;
-import RenderSupportJSPixiNew;
 #end
 
 #if js
@@ -66,8 +65,6 @@ class RenderSupportHx {
 	public static function __init__() {
 		if (Util.getParameter("oldjs") == "1") {
 			oldinit();
-		} else if (Util.getParameter("newjs") == "1") {
-			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixiNew");
 		} else {
 			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixi");
 		}
