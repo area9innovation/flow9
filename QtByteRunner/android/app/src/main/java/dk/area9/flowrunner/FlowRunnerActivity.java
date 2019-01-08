@@ -85,7 +85,7 @@ import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
 public class FlowRunnerActivity extends FragmentActivity  {
 
     public static final String DATA_PATH = "/sdcard/flow/";
-    private static String local_substitute_url = "https://binrunner.dev.area9learning.com/flow/flowswf.html";
+    private static String local_substitute_url = "https://localhost/flow/flowswf.html";
     
     File tmp_dir;
     
