@@ -2,12 +2,12 @@ import material/iscript/material_iscript_dialog;
 import material/iscript/material_iscript_test_combinations;
 import material/iscript/material_iscript_filter;
 import material/iscript/material_iscript_cursors;
+import material/iscript/material_focus_tree;
 import material/internal/material_splitter;
 import material/internal/material_textinput;
 import material/internal/material_tabs;
 import material/internal/material_datatable;
 import material/internal/material_dialog_internal;
-import material/tropic_size_util;
 import fusion_utils;
 
 export {
@@ -16,7 +16,6 @@ export {
 
 	MIScriptStack(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 	MInputOutputValues(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
-	MFocusTree(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 	MIScriptErrors(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 }
 
@@ -56,7 +55,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 						if (v) {
 							if (!isIScriptEmpty(manager)) {
 								showRecordingModeDialog(manager, m2t);
-								IScriptDisabled();
+								IScriptPaused();
 							} else {
 								IScriptRecording(manager.iscript.getCaptureOptions(), false);
 							}
@@ -66,21 +65,40 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 							addIScriptScreenshot(manager, true);
 							addIScriptLogicalScreenshot(manager, fgetValue(formSize));
 							addIScriptVisualScreenshot(manager, true);
-							IScriptDisabled();
+							IScriptPaused();
 						}
 					}
 				),
 				\ -> bidirectionalLink(
 					manager.iscript.state,
 					manager.iscript.panelsReplayToggleValue,
-					\s -> s == IScriptReplaying(),
-					\v -> if (v) IScriptReplaying() else IScriptDisabled()
+					\s -> isSameStructType(s, IScriptReplaying(nop1)),
+					\v ->
+						if (v)
+							IScriptReplaying(onIScriptReplayFinish(manager))
+						else
+							IScriptPaused()
 				),
 				\ -> bidirectionalLink(
 					manager.iscript.state,
 					manager.iscript.panelsBatchReplayToggleValue,
-					\s -> s == IScriptBatchReplaying(),
-					\v -> if (v) IScriptBatchReplaying() else IScriptDisabled()
+					\s -> isSameStructType(s, IScriptBatchReplaying(nop1)),
+					\v ->
+						if (v)
+							IScriptBatchReplaying(
+								onIScriptBatchReplayFinish(
+									manager,
+									\b ->
+										showLogicalScreenshotCompareDialog(
+											manager,
+											getValue(manager.iscript.currentBatchTestsDirectoryB),
+											b,
+											m2t
+										)
+								)
+							)
+						else
+							IScriptPaused()
 				)
 			],
 			f
@@ -133,7 +151,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 										MMenuSingleLine("New script",
 											[MOnClick(\ -> {
 												clearCurrentIScript(manager);
-												setIScriptState(manager, IScriptDisabled());
+												setIScriptState(manager, IScriptPaused());
 											}), MTooltipText(const(_("Clear current script")))]),
 										MSeparatorLine(),
 									],
@@ -172,14 +190,16 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 									else
 										[]
 								]),
-								[MOpenOnClick(), MEnabled(feq(manager.iscript.state, IScriptDisabled()))]
+								[MOpenOnClick(), MEnabled(isIScriptPausedB(manager))]
 							)
 					),
 					TFillX(),
-					MIconButton("settings", \ -> showRecordSettingsDialog(manager, m2t), [],
+					MIconButton(
+						"settings",
+						\ -> showRecordSettingsDialog(manager, m2t), [],
 						[
 							MTooltipText(const(_("Open record settings"))),
-							MEnabled(fnot(isIScriptReplaying(manager)))
+							MEnabled(fnot(isIScriptReplayingB(manager)))
 						]
 					),
 					MIconToggle(
@@ -202,18 +222,56 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 					),
 					MIf(
 						isIScriptAddingB(manager),
-						MIconButton("close", \ -> nextDistinct(manager.iscript.state, IScriptDisabled()), [], []),
+						MIconButton("close", \ -> nextDistinct(manager.iscript.state, IScriptPaused()), [], []),
 						MMenu(
 							MIconButton("add", nop, [], [MTooltipText(const(_("Add behaviour record")))]),
 							[
-								MMenuSingleLine("Capture single interaction",
-									[MOnClick(\ -> nextDistinct(manager.iscript.state, IScriptAddMFocusRecord(None()))),
-										MEnabled(feq(manager.iscript.state, IScriptDisabled()))]),
-								MMenuSingleLine("Capture group of interaction elements",
-									[MOnClick(\ -> nextDistinct(manager.iscript.state, IScriptAddMFocusGroupRecord(None()))),
-										MEnabled(feq(manager.iscript.state, IScriptDisabled()))]),
-								MMenuSingleLine("Capture screenshot",
-									[MOnClick(\ -> addIScriptScreenshot(manager, false))]),
+								MMenuSingleLine(
+									"Capture single interaction",
+									[
+										MOnClick(\ ->
+											nextDistinct(
+												manager.iscript.state,
+												IScriptAddMFocusRecord(\focus ->
+													addIScriptEventDialog(
+														manager,
+														focus,
+														\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+														nop,
+														m2t
+													)
+												)
+											)
+										),
+										MEnabled(isIScriptPausedB(manager))
+									]
+								),
+								MMenuSingleLine(
+									"Capture group of interaction elements",
+									[
+										MOnClick(\ ->
+											nextDistinct(
+												manager.iscript.state,
+												IScriptAddMFocusGroupRecord(\focus ->
+													addIScriptEventDialog(
+														manager,
+														focus,
+														\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
+														nop,
+														m2t
+													)
+												)
+											)
+										),
+										MEnabled(isIScriptPausedB(manager))
+									]
+								),
+								MMenuSingleLine(
+									"Capture screenshot",
+									[
+										MOnClick(\ -> addIScriptScreenshot(manager, false))
+									]
+								),
 								MMenuSingleLine(
 									"Capture snapshot of logical UI state",
 									[
@@ -230,14 +288,51 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 										)
 									]
 								),
-								MMenuSingleLine("Define alias for the element",
-									[MOnClick(\ -> nextDistinct(manager.iscript.state, IScriptMakeAlias(None()))),
-										MEnabled(feq(manager.iscript.state, IScriptDisabled()))]),
-								MMenuSingleLine("Define alias for the group of elements",
-									[MOnClick(\ -> nextDistinct(manager.iscript.state, IScriptMakeGroupAlias(None()))),
-										MEnabled(feq(manager.iscript.state, IScriptDisabled()))]),
-								MMenuSingleLine("Import script",
-									[MOnClick(\ -> loadIScriptDialog(manager, true, m2t)), MTooltipText(const(_("Add script from file to the current script")))])
+								MMenuSingleLine(
+									"Define alias for the element",
+									[
+										MOnClick(\ ->
+											nextDistinct(
+												manager.iscript.state,
+												IScriptAddMFocusAlias(\foc ->
+													defineGlobalAliasOnFocusDialog(
+														manager,
+														foc,
+														\alias -> addGlobalAliasInIScript(manager, foc, alias),
+														m2t
+													)
+												)
+											)
+										),
+										MEnabled(isIScriptPausedB(manager))
+									]
+								),
+								MMenuSingleLine(
+									"Define alias for the group of elements",
+									[
+										MOnClick(\ ->
+											nextDistinct(
+												manager.iscript.state,
+												IScriptAddMFocusAlias(\foc ->
+													defineGlobalAliasOnFocusDialog(
+														manager,
+														foc,
+														\alias -> addGlobalAliasInIScript(manager, foc, alias),
+														m2t
+													)
+												)
+											)
+										),
+										MEnabled(isIScriptPausedB(manager))
+									]
+								),
+								MMenuSingleLine(
+									"Import script",
+									[
+										MOnClick(\ -> loadIScriptDialog(manager, true, m2t)),
+										MTooltipText(const(_("Add script from file to the current script")))
+									]
+								)
 							],
 							[MOpenOnClick()]
 						)
@@ -259,11 +354,15 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 						"settings_backup_restore",
 						\ -> showReplaySettingsDialog(manager, m2t),
 						[],
-						[MTooltipText(const(_("Open replay settings")))]
+						[
+							MTooltipText(const(_("Open replay settings")))
+						]
 					),
 					MIconToggle(
 						"stop",
-						[MToggleFalseIcon("play_arrow", [MGreen(500)])],
+						[
+							MToggleFalseIcon("play_arrow", [MGreen(500)])
+						],
 						[
 							MToggleValue(manager.iscript.panelsReplayToggleValue),
 							MEnabled(fselect2(
@@ -272,7 +371,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 								FLift2(\isrs, iScript -> {
 									switch (isrs) {
 										IScriptRecording(__, __): false;
-										IScriptBatchReplaying(): false;
+										IScriptBatchReplaying(__): false;
 										default: true;
 									} && sizeTree(iScript.stack) > 0
 								})
@@ -282,7 +381,9 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 					),
 					MIconToggle(
 						"stop",
-						[MToggleFalseIcon("playlist_play", [MGreen(500)])],
+						[
+							MToggleFalseIcon("playlist_play", [MGreen(500)])
+						],
 						[
 							MToggleValue(manager.iscript.panelsBatchReplayToggleValue),
 							MEnabled(fselect2(
@@ -291,7 +392,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 								FLift2(\dir, state -> {
 									switch(state) {
 										IScriptRecording(__, __): false;
-										IScriptReplaying(): false;
+										IScriptReplaying(__): false;
 										default: true;
 									} && (dir != "")
 								})
@@ -301,7 +402,9 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 					),
 					MIconToggle(
 						"arrow_forward",
-						[MToggleFalseIcon("menu", [])],
+						[
+							MToggleFalseIcon("menu", [])
+						],
 						[
 							MToggleValue(manager.iscript.panelsShowSidebar),
 							MTooltipText(fselect(manager.iscript.panelsShowSidebar, FLift(\v -> if(v) _("Hide recording sidebar") else _("Show recording sidebar"))))
@@ -743,148 +846,6 @@ MAliases(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> 
 	// 		f
 	// 	)
 	// )
-}
-
-MFocusTree(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material {
-	MFocusTree2T2(manager, manager.focus, m2t, 0)
-	|> (\f -> MGetFocusGroup(\p -> MList2T(manager, p, MList([f], [], []), m2t)))
-	|> (\f -> MBorder(0., 8., 0., 8., f))
-	|> (\f -> MScroll(f, TFillXY(), [IScriptRecordingEnabled(const(false))]))
-}
-
-MFocusTree2T2(manager : MaterialManager, focus : MaterialFocus, m2t : (Material, MFocusGroup) -> Tropic, tabLevel : int) -> MListLine {
-	emptyResult : [MListLine] = []; // Typechecker workaround
-	hover = make(false);
-
-	switchMaterialFocus(
-		focus,
-		\f ->
-			MCustomLine(
-				(\p -> TBaselineCols([
-					MText2T(p, i2s(fgetValue(f.id)), [MCaption()])
-					|> TSetMinWidth(TFixed(18., 0.))
-					|> (\f2 -> TBorder(32. + i2d(tabLevel) * 16., 0., 8., 0., f2)),
-					MEllipsisText2T(manager, p, MEllipsisText(f.name, [MCaptionSolid(), MShowTooltip(const(true))]))
-					|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
-					eitherMap(
-						f.iScriptId,
-						\id ->
-							MEllipsisText2T(manager, p, MEllipsisText(id, [MCaption(), MShowTooltip(const(true))]))
-							|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
-						TEmpty()
-					),
-					MIconButton2T(
-						manager,
-						p,
-						MIconButton(
-							"add",
-							\ ->
-								addIScriptEventDialog(
-									manager,
-									focus,
-									\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
-									nop,
-									m2t
-								),
-							[MIconSize(16.), MIconButtonBorder(4.)],
-							[]
-						)
-					)
-					|> (\f2 -> TBorder(0., 0., 8., 0., f2))
-				])
-				|> (\f2 ->
-					TConstruct(
-						[
-							makeSubscribe2focusHovered(manager, \ -> Some(f), hover)
-						],
-						f2
-					)
-				)
-				|> TCenterY)
-				|> MGetFocusGroup,
-				[MClickEnabled(const(false)), MHeight(32.), THovering(hover)]
-			),
-		\f -> {
-			expanded = make(false);
-			hasItems = fselect(f.focusIds, FLift(\it -> sizeTree(it) > 0));
-
-			MSubmenuLine(
-				MCustomLine(
-					(\p -> TBaselineCols([
-						TIfLazy2(
-							hasItems,
-							\it ->
-								TIfLazy2(
-									expanded,
-									\ex ->
-										MIcon2T(
-											p,
-											if (ex)
-												"arrow_drop_up"
-											else
-												"arrow_drop_down",
-											if (it)
-												[MIconSize(18.)]
-											else
-												[MIconSize(18.), FillOpacity(0.2)]
-										),
-									true
-								),
-							true
-						)
-						|> (\f2 -> TBorder(8. + i2d(tabLevel) * 16., 0., 0., 0., f2)),
-						MText2T(p, i2s(fgetValue(f.id)), [MCaption()])
-						|> TSetMinWidth(TFixed(16., 0.))
-						|> (\f2 -> TBorder(8., 0., 8., 0., f2)),
-						MEllipsisText2T(manager, p, MEllipsisText(f.name, [MCaptionSolid(), MShowTooltip(const(true))]))
-						|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
-						eitherMap(
-							f.iScriptId,
-							\id ->
-								MEllipsisText2T(manager, p, MEllipsisText(id, [MCaption(), MShowTooltip(const(true))]))
-								|> (\f2 -> TBorder(0., 0., 4., 0., f2)),
-							TEmpty()
-						),
-						MIconButton2T(
-							manager,
-							p,
-							MIconButton(
-								"add",
-								\ ->
-									addIScriptEventDialog(
-										manager,
-										focus,
-										\rec -> addIScriptRecordWithDelay(manager, rec.first, rec.second),
-										nop,
-										m2t
-									),
-								[MIconSize(18.), MIconButtonBorder(4.)],
-								[]
-							)
-						)
-						|> (\f2 -> TBorder(0., 0., 8., 0., f2))
-					])
-					|> (\f2 ->
-						TConstruct(
-							[
-								makeSubscribe2focusHovered(manager, \ -> Some(f), hover)
-							],
-							f2
-						)
-					)
-					|> TCenterY)
-					|> MGetFocusGroup,
-					[MClickEnabled(hasItems), MHeight(32.), THovering(hover)]
-				),
-				fsubmap(
-					fselect(f.focusIds, getTreeValues |> FLift),
-					\f2 -> fif(f2.recordingEnabled, const(MFocusTree2T2(manager, f2, m2t, tabLevel + 1)), const(MCustomLine(MEmpty(), [])))
-				),
-				[],
-				expanded
-			)
-		}
-	)
 }
 
 MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {

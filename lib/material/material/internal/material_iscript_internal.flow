@@ -1,4 +1,5 @@
 import material/internal/types;
+import material/internal/material_stage_util;
 
 // Internal to material
 
@@ -30,12 +31,17 @@ export {
 	setIScriptState(manager : MaterialManager, state : IScriptState) -> void;
 
 	getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording>;
+
 	isIScriptRecording(manager : MaterialManager) -> bool;
 	isIScriptReplaying(manager : MaterialManager) -> bool;
+	isIScriptPaused(manager : MaterialManager) -> bool;
+	isIScriptAdding(manager : MaterialManager) -> bool;
 
 	isIScriptRecordingB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptReplayingB(manager : MaterialManager) -> Transform<bool>;
+	isIScriptPausedB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptAddingB(manager : MaterialManager) -> Transform<bool>;
+
 	isIScriptFilesystemDBPresent(manager : MaterialManager) -> Transform<bool>;
 
 	checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool;
@@ -102,6 +108,9 @@ export {
 	loadAdditionalIScriptInfo(manager : MaterialManager, additionalInfo : IScriptAdditionalInfo) -> void;
 	prepareCurrentIScriptForSave(manager : MaterialManager) -> StoredIScript;
 	filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot;
+
+	makeSubscribe2focusHovered(manager : MaterialManager, focus : () -> Maybe<MaterialFocus>, hover : DynamicBehaviour<bool>) -> () -> () -> void;
+	highlightMaterialFocus(manager : MaterialManager, focus : MaterialFocus) -> () -> void;
 }
 
 isIScriptEmpty(manager : MaterialManager) -> bool {
@@ -332,7 +341,7 @@ isIScriptEnabled(manager : MaterialManager) -> bool {
 }
 
 // isIScriptEnabledB(manager : MaterialManager) -> Transform<bool> {
-// 	fnot(feq(manager.iscript.state, IScriptDisabled()));
+// 	fnot(feq(manager.iscript.state, IScriptPaused()));
 // }
 
 getIScriptState(manager : MaterialManager) -> IScriptState {
@@ -363,7 +372,26 @@ isIScriptRecording(manager : MaterialManager) -> bool {
 isIScriptReplaying(manager : MaterialManager) -> bool {
 	iScriptState = getIScriptState(manager);
 
-	isIScriptEnabled(manager) && (isSameStructType(iScriptState, IScriptReplaying()) || isSameStructType(iScriptState, IScriptBatchReplaying()))
+	isIScriptEnabled(manager) && (isSameStructType(iScriptState, IScriptReplaying(nop1)) ||
+		isSameStructType(iScriptState, IScriptBatchReplaying(nop1)))
+}
+
+isIScriptPaused(manager : MaterialManager) -> bool {
+	iScriptState = getIScriptState(manager);
+
+	isIScriptEnabled(manager) && iScriptState == IScriptPaused
+}
+
+isIScriptAdding(manager : MaterialManager) -> bool {
+	isIScriptEnabled(manager) &&
+		switch (getValue(manager.iscript.state)) {
+			IScriptAddMFocusRecord(__): true;
+			IScriptAddMFocusGroupRecord(__): true;
+			IScriptAddMFocusAlias(__): true;
+			IScriptAddMFocusGroupAlias(__): true;
+
+			default : false;
+		}
 }
 
 isIScriptRecordingB(manager : MaterialManager) -> Transform<bool> {
@@ -374,21 +402,12 @@ isIScriptReplayingB(manager : MaterialManager) -> Transform<bool> {
 	fselect(manager.iscript.state, FLift(\__ -> isIScriptReplaying(manager)));
 }
 
-isIScriptAddingB(manager : MaterialManager) -> Transform<bool> {
-	fselect(manager.iscript.state, FLift(\state ->
-		switch (state : IScriptState) {
-			IScriptAddRecord(__): true;
-			IScriptAddMFocusRecord(__): true;
-			IScriptAddMFocusGroupRecord(__): true;
-			IScriptMakeAlias(__): true;
-			IScriptMakeGroupAlias(__): true;
+isIScriptPausedB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.state, FLift(\__ -> isIScriptPaused(manager)));
+}
 
-			IScriptRecording(__, __): false;
-			IScriptReplaying(): false;
-			IScriptBatchReplaying() : false;
-			IScriptDisabled(): false;
-		}
-	))
+isIScriptAddingB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.state, FLift(\__ -> isIScriptAdding(manager)));
 }
 
 isIScriptFilesystemDBPresent(manager : MaterialManager) -> Transform<bool> {
@@ -963,5 +982,124 @@ filterIScriptScreenshot(screenshot : IScriptScreenshot) -> IScriptScreenshot {
 			\b -> filterTree(b, \k, v -> !checkIsFn(serialize(v)))
 		),
 		screenshot.check
+	)
+}
+
+makeIScriptArrow(mainLength : double, mainHeight : double, arrowLength : double, arrowHeight : double, style : [TGraphicsStyle]) -> TGraphics {
+	x1 = 0.;
+	y1 = (arrowHeight - mainHeight) / 2.;
+	x2 = x1;
+	y2 = y1 + mainHeight;
+	x3 = x1 + mainLength;
+	y3 = y2;
+	x4 = x3;
+	y4 = y3 + y1;
+	x5 = x4 + arrowLength;
+	y5 = arrowHeight / 2.;
+	x6 = x4;
+	y6 = 0.;
+	x7 = x6;
+	y7 = y1;
+
+	TGraphics(
+		[
+			MoveTo(x1, y1),
+			LineTo(x2, y2),
+			LineTo(x3, y3),
+			LineTo(x4, y4),
+			LineTo(x5, y5),
+			LineTo(x6, y6),
+			LineTo(x7, y7),
+			ClosePath()
+		],
+		style
+	)
+}
+
+makeSubscribe2focusHovered(manager : MaterialManager, focus : () -> Maybe<MaterialFocus>, hover : DynamicBehaviour<bool>) -> () -> () -> void {
+	makeSubscribe2Uns(hover, \h ->
+		if (h)
+			eitherMap(
+				focus(),
+				\f -> [highlightMaterialFocus(manager, f)],
+				[]
+			)
+		else
+			[]
+	)
+}
+
+highlightMaterialFocus(manager : MaterialManager, focus : MaterialFocus) -> () -> void {
+	fillColor = switchMaterialFocus(focus, \__ -> MGreen(500), \__ -> MPurple(300));
+
+	pos = focus.position().pos;
+	wh = focus.widthHeight();
+	stage = getRealStageWidthHeight(manager);
+
+	xTranscendMin = pos.x + wh.width < 0.;
+	xTranscendMax = pos.x >= stage.width;
+	yTranscendMin = pos.y + wh.height < 0.;
+	yTranscendMax = pos.y >= stage.height;
+
+	trender(
+		if (xTranscendMin || xTranscendMax || yTranscendMin || yTranscendMax) {
+			TTranslate(
+				const(Point(min(max(pos.x + wh.width / 2., 0.), stage.width), min(max(pos.y + wh.height / 2., 0.), stage.height))),
+				TRotate(
+					const(if (xTranscendMin) {
+						if (yTranscendMin) {
+							180. + 45.
+						} else if (yTranscendMax) {
+							180. - 45.
+						} else {
+							180.
+						}
+					} else if (xTranscendMax) {
+						if (yTranscendMin) {
+							0. + 45.
+						} else if (yTranscendMax) {
+							0. - 45.
+						} else {
+							0.
+						}
+					} else if (yTranscendMin) {
+						270.
+					} else {
+						90.
+					}),
+					TTranslate(
+						const(Point(-40., -10.)),
+						makeIScriptArrow(
+							20.,
+							8.,
+							10.,
+							20.,
+							[
+								MFill(fillColor),
+								FillOpacity(0.8),
+								MStroke(fillColor),
+								StrokeWidth(1.),
+								StrokeOpacity(1.)
+							]
+						)
+					)
+				)
+			)
+		} else {
+			TTranslate(
+				const(pos),
+				TRectangle(
+					[
+						MFill(fillColor),
+						FillOpacity(0.3),
+						MStroke(fillColor),
+						StrokeWidth(1.),
+						StrokeOpacity(1.)
+					],
+					TSized(const(wh))
+				)
+			)
+		},
+		manager.manager.renderStyle
 	)
 }
