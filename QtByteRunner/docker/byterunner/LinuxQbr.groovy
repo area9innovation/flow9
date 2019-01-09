@@ -9,14 +9,14 @@ node('Flow') {
 	try {
 		stage('SCM') {
 			flow.checkoutFlowOpenSource(true, buildBranch)
-			flow.checkoutArea9Innovation("asmjit", "flow/QtByteRunner/asmjit", true, "next")
+			flow.checkoutArea9Innovation("asmjit", "flow9/QtByteRunner/asmjit", true, "next")
 		}
 
 		stage('Build') {
 			withEnv([
-				"FLOW=${WORKSPACE}/flow"
+				"FLOW=${WORKSPACE}/flow9"
 			]) {
-				dir("flow/QtByteRunner/docker/byterunner") {
+				dir("flow9/QtByteRunner/docker/byterunner") {
 					docker.withRegistry('', 'area9dockerhub') {
 						sh("./build_image.sh")
 						sh("./run.sh")
