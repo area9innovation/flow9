@@ -67,7 +67,7 @@ echo   -----------------
 echo.
 
 pushd %BASE_DIR%\src\java
-"%JAVAC%" -g com\area9innovation\flow9\*.java
+"%JAVAC%" -g com\area9innovation\flow\*.java
 popd
 
 echo.
@@ -90,7 +90,7 @@ echo.
 
 echo Main-Class: javagen.Main > Manifest.txt
 
-"%JAR%" cfm tools\flowc\flowc.jar Manifest.txt javagen\*.class -C src\java com\area9innovation\flow9
+"%JAR%" cfm tools\flowc\flowc.jar Manifest.txt javagen\*.class -C src\java com\area9innovation\flow
 
 echo.
 echo Done.

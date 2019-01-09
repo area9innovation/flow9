@@ -2,7 +2,6 @@
 import js.Browser;
 import FlowFontStyle;
 import RenderSupportJSPixi;
-import RenderSupportJSPixiNew;
 #end
 
 #if js
@@ -66,8 +65,6 @@ class RenderSupportHx {
 	public static function __init__() {
 		if (Util.getParameter("oldjs") == "1") {
 			oldinit();
-		} else if (Util.getParameter("newjs") == "1") {
-			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixiNew");
 		} else {
 			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixi");
 		}
@@ -173,7 +170,7 @@ class RenderSupportHx {
 			flash.external.ExternalInterface.addCallback("onJsScroll", onJsScroll);
 		}
 
-		getStage().stageFocusRect = false;	// That should fix http://process.area9.dk/cases/default.asp?19760
+		getStage().stageFocusRect = false;
 
 		WebClipListeners = new Array<Dynamic>();
 		updateBrowserZoom();

@@ -1,46 +1,32 @@
 import js.Browser;
-import js.html.ArrayBuffer;
 import js.html.Element;
-import js.html.DOMParser;
-import js.html.Document;
-import js.html.HTMLCollection;
-import js.html.MouseEvent;
-import js.html.WheelEvent;
-import js.html.Blob;
 import js.html.File;
 import js.html.FileList;
-import js.html.FileReader;
 import js.html.IFrameElement;
 
-import pixi.core.Pixi;
 import pixi.core.renderers.SystemRenderer;
 import pixi.core.sprites.Sprite;
-import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 import pixi.core.renderers.Detector;
 import pixi.core.renderers.canvas.CanvasRenderer;
 import pixi.core.renderers.webgl.WebGLRenderer;
-import pixi.core.graphics.Graphics;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.textures.Texture;
-import pixi.core.textures.VideoBaseTexture;
 import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.text.Text;
 import pixi.core.math.Point;
 
-import pixi.interaction.InteractionData;
-import pixi.core.text.Text;
-import js.html.IFrameElement;
-import pixi.core.textures.Texture;
-import pixi.core.textures.BaseTexture;
-import pixi.core.textures.VideoBaseTexture;
+import pixi.loaders.Loader;
 
 import MacroUtils;
 import Platform;
 import FlowFontStyle;
 
+using DisplayObjectHelper;
+
 class RenderSupportJSPixi {
-	public static var PixiStage = new FlowContainer();
+	public static var PixiView : Dynamic;
+	public static var PixiStage = new FlowContainer(true);
 	public static var PixiRenderer : SystemRenderer;
 
 	public static var AntialiasFont : Bool = Util.getParameter("antialiasfont") != null ? Util.getParameter("antialiasfont") == "1" : false;
@@ -52,13 +38,13 @@ class RenderSupportJSPixi {
 	private static var AnimationFrameId : Int = -1;
 
 	// Renderer options
-	private static var AccessibilityEnabled : Bool = false;
+	public static var AccessibilityEnabled : Bool = false;
 	private static var EnableFocusFrame : Bool = false;
 	private static var ShowDebugClipsTree : Bool = Util.getParameter("clipstree") == "1";
 	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
 	private static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
-	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen();
+	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
 	private static var UseVideoTextures : Bool = Util.getParameter("videotexture") != "0";
 
@@ -116,7 +102,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
-		haxe.Timer.delay(fn, time);
+		untyped __js__("setTimeout(fn, time)");
 	}
 
 	private static function preventDefaultFileDrop() {
@@ -134,8 +120,6 @@ class RenderSupportJSPixi {
 	//	Pixi renderer initialization
 	//
 	public static function init() : Bool {
-		if (Util.getParameter("newjs") == "1") return false;
-
 		if (Util.getParameter("oldjs") != "1") {
 			initPixiRenderer();
 		} else {
@@ -149,6 +133,273 @@ class RenderSupportJSPixi {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
 		if (CacheTextsAsBitmap) { Errors.print("Caches all textclips as bitmap is turned on"); }
 	}
+
+	private static function workaroundRendererDestroy() : Void {
+		untyped __js__("
+			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
+			{
+				texture = texture || this.emptyTextures[location];
+				texture = texture.baseTexture || texture;
+				texture.touched = this.textureGC.count;
+
+				if (!forceLocation)
+				{
+					// TODO - maybe look into adding boundIds.. save us the loop?
+					for (let i = 0; i < this.boundTextures.length; i++)
+					{
+						if (this.boundTextures[i] === texture)
+						{
+							return i;
+						}
+					}
+
+					if (location === undefined)
+					{
+						this._nextTextureLocation++;
+						this._nextTextureLocation %= this.boundTextures.length;
+						location = this.boundTextures.length - this._nextTextureLocation - 1;
+					}
+				}
+				else
+				{
+					location = location || 0;
+				}
+
+				const gl = this.gl;
+				const glTexture = texture._glTextures[this.CONTEXT_UID];
+
+				if (!glTexture)
+				{
+					// this will also bind the texture..
+					try {
+						this.textureManager.updateTexture(texture, location);
+					} catch (error) {
+						// usually a crossorigin problem
+					}
+				}
+				else
+				{
+					// bind the current texture
+					this.boundTextures[location] = texture;
+					gl.activeTexture(gl.TEXTURE0 + location);
+					gl.bindTexture(gl.TEXTURE_2D, glTexture.texture);
+				}
+
+				return location;
+			}
+
+			PIXI.WebGLRenderer.prototype.destroy = function(removeView)
+			{
+				// this.destroyPlugins();
+
+				// remove listeners
+				this.view.removeEventListener('webglcontextlost', this.handleContextLost);
+				this.view.removeEventListener('webglcontextrestored', this.handleContextRestored);
+
+				this.textureManager.destroy();
+
+				// call base destroy
+				this.type = PIXI.RENDERER_TYPE.UNKNOWN;
+
+				this.view = null;
+
+				this.screen = null;
+
+				this.resolution = 0;
+
+				this.transparent = false;
+
+				this.autoResize = false;
+
+				this.blendModes = null;
+
+				this.options = null;
+
+				this.preserveDrawingBuffer = false;
+				this.clearBeforeRender = false;
+
+				this.roundPixels = false;
+
+				this._backgroundColor = 0;
+				this._backgroundColorRgba = null;
+				this._backgroundColorString = null;
+
+				this._tempDisplayObjectParent = null;
+				this._lastObjectRendered = null;
+
+				this.uid = 0;
+
+				// destroy the managers
+				this.maskManager.destroy();
+				this.stencilManager.destroy();
+				this.filterManager.destroy();
+
+				this.maskManager = null;
+				this.filterManager = null;
+				this.textureManager = null;
+				this.currentRenderer = null;
+
+				this.handleContextLost = null;
+				this.handleContextRestored = null;
+
+				this._contextOptions = null;
+				// this.gl.useProgram(null);
+
+				// if (this.gl.getExtension('WEBGL_lose_context'))
+				// {
+				// 	this.gl.getExtension('WEBGL_lose_context').loseContext();
+				// }
+
+				this.gl = null;
+			}
+		");
+	}
+	private static function workaroundProcessInteractive() : Void {
+		untyped __js__("
+			PIXI.interaction.InteractionManager.prototype.processInteractive = function(interactionEvent, displayObject, func, hitTest, interactive)
+			{
+				if (!displayObject || !displayObject.visible)
+				{
+					return false;
+				}
+
+				const point = interactionEvent.data.global;
+
+				// Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
+				//
+				// This function will now loop through all objects and then only hit test the objects it HAS
+				// to, not all of them. MUCH faster..
+				// An object will be hit test if the following is true:
+				//
+				// 1: It is interactive.
+				// 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
+				//
+				// As another little optimisation once an interactive object has been hit we can carry on
+				// through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
+				// A final optimisation is that an object is not hit test directly if a child has already been hit.
+
+				interactive = displayObject.interactive || interactive;
+
+				let hit = false;
+				let interactiveParent = interactive;
+
+				// Flag here can set to false if the event is outside the parents hitArea or mask
+				let hitTestChildren = true;
+
+				// If there is a hitArea, no need to test against anything else if the pointer is not within the hitArea
+				// There is also no longer a need to hitTest children.
+				if (displayObject.hitArea)
+				{
+					if (hitTest)
+					{
+						displayObject.worldTransform.applyInverse(point, this._tempPoint);
+						if (!displayObject.hitArea.contains(this._tempPoint.x, this._tempPoint.y))
+						{
+							hitTest = false;
+							hitTestChildren = false;
+						}
+						else
+						{
+							hit = true;
+						}
+					}
+					interactiveParent = false;
+				}
+				// If there is a mask, no need to test against anything else if the pointer is not within the mask
+				else if (displayObject._mask)
+				{
+					if (hitTest)
+					{
+						if (!displayObject._mask.containsPoint(point))
+						{
+							hitTest = false;
+							// hitTestChildren = false;
+						}
+					}
+				}
+
+				// ** FREE TIP **! If an object is not interactive or has no buttons in it
+				// (such as a game scene!) set interactiveChildren to false for that displayObject.
+				// This will allow PixiJS to completely ignore and bypass checking the displayObjects children.
+				if (hitTestChildren && displayObject.interactiveChildren && displayObject.children)
+				{
+					const children = displayObject.children;
+
+					for (let i = children.length - 1; i >= 0; i--)
+					{
+						const child = children[i];
+
+						// time to get recursive.. if this function will return if something is hit..
+						const childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
+
+						if (childHit)
+						{
+							// its a good idea to check if a child has lost its parent.
+							// this means it has been removed whilst looping so its best
+							if (!child.parent)
+							{
+								continue;
+							}
+
+							// we no longer need to hit test any more objects in this container as we we
+							// now know the parent has been hit
+							interactiveParent = false;
+
+							// If the child is interactive , that means that the object hit was actually
+							// interactive and not just the child of an interactive object.
+							// This means we no longer need to hit test anything else. We still need to run
+							// through all objects, but we don't need to perform any hit tests.
+
+							if (childHit)
+							{
+								if (interactionEvent.target)
+								{
+									hitTest = false;
+								}
+								hit = true;
+							}
+						}
+					}
+				}
+
+				// no point running this if the item is not interactive or does not have an interactive parent.
+				if (interactive)
+				{
+					// if we are hit testing (as in we have no hit any objects yet)
+					// We also don't need to worry about hit testing if once of the displayObjects children
+					// has already been hit - but only if it was interactive, otherwise we need to keep
+					// looking for an interactive child, just in case we hit one
+					if (hitTest && !interactionEvent.target)
+					{
+						// already tested against hitArea if it is defined
+						if (!displayObject.hitArea && displayObject.containsPoint)
+						{
+							if (displayObject.containsPoint(point))
+							{
+								hit = true;
+							}
+						}
+					}
+
+					if (displayObject.interactive)
+					{
+						if (hit && !interactionEvent.target)
+						{
+							interactionEvent.target = displayObject;
+						}
+
+						if (func)
+						{
+							func(interactionEvent, displayObject, !!hit);
+						}
+					}
+				}
+
+				return hit;
+			}
+		");
+	}
+
 
 	private static function workaroundIEArrayFromMethod() : Void {
 		untyped __js__("
@@ -295,35 +546,151 @@ class RenderSupportJSPixi {
 		});");
 	}
 
-	private static function initPixiRenderer() {
-		if (untyped PIXI.VERSION[0] > 3)
-			workaroundDOMOverOutEventsTransparency();
+	private static function workaroundTextMetrics() : Void {
+		untyped __js__("
+			PIXI.TextMetrics.measureFont = function(font)
+			{
+				// as this method is used for preparing assets, don't recalculate things if we don't need to
+				if (PIXI.TextMetrics._fonts[font])
+				{
+					return PIXI.TextMetrics._fonts[font];
+				}
 
-		if (Platform.isIE) {
-			workaroundIEArrayFromMethod();
-			workaroundIECustomEvent();
-		}
+				const properties = {};
 
+				const canvas = PIXI.TextMetrics._canvas;
+				const context = PIXI.TextMetrics._context;
+
+				context.font = font;
+
+				const metricsString = PIXI.TextMetrics.METRICS_STRING + PIXI.TextMetrics.BASELINE_SYMBOL;
+				const width = Math.ceil(context.measureText(metricsString).width);
+				let baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
+				const height = 2 * baseline;
+
+				baseline = baseline * PIXI.TextMetrics.BASELINE_MULTIPLIER | 0;
+
+				canvas.width = width;
+				canvas.height = height;
+
+				context.fillStyle = '#f00';
+				context.fillRect(0, 0, width, height);
+
+				context.font = font;
+
+				context.textBaseline = 'alphabetic';
+				context.fillStyle = '#000';
+				context.fillText(metricsString, 0, baseline);
+
+				const imagedata = context.getImageData(0, 0, width, height).data;
+				const pixels = imagedata.length;
+				const line = width * 4;
+
+				let i = 0;
+				let idx = 0;
+				let stop = false;
+
+				// ascent. scan from top to bottom until we find a non red pixel
+				for (i = 0; i < baseline; ++i)
+				{
+					for (let j = 0; j < line; j += 4)
+					{
+						if (imagedata[idx + j] !== 255)
+						{
+							stop = true;
+							break;
+						}
+					}
+					if (!stop)
+					{
+						idx += line;
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				properties.ascent = baseline - i;
+
+				idx = pixels - line;
+				stop = false;
+
+				// descent. scan from bottom to top until we find a non red pixel
+				for (i = height; i > baseline; --i)
+				{
+					for (let j = 0; j < line; j += 4)
+					{
+						if (imagedata[idx + j] !== 255)
+						{
+							stop = true;
+							break;
+						}
+					}
+
+					if (!stop)
+					{
+						idx -= line;
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				properties.descent = i - baseline;
+				properties.fontSize = properties.ascent + properties.descent;
+
+				PIXI.TextMetrics._fonts[font] = properties;
+
+				return properties;
+			}
+		");
+	}
+
+	private static function detectExternalVideoCard() : Bool {
+		var canvas = Browser.document.createElement('canvas');
+		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
+		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+
+		trace("VideoCard information:");
+		trace(vendor);
+		trace(renderer);
+
+		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
+	}
+
+	private static function createPixiRenderer() {
 		backingStoreRatio = getBackingStoreRatio();
+
+		if (PixiRenderer != null) {
+			PixiRenderer.destroy();
+			untyped __js__("delete RenderSupportJSPixi.PixiRenderer");
+		}
 
 		var options = {
 			antialias : Antialias,
 			transparent : false,
 			backgroundColor : 0xFFFFFF,
 			preserveDrawingBuffer : false,
-			resolution: backingStoreRatio,
-			roundPixels: RoundPixels,
-			autoResize: true
+			resolution : backingStoreRatio,
+			roundPixels : RoundPixels,
+			autoResize : true,
+			view : PixiView
 		};
 
-		if (RendererType != null && RendererType == "webgl") {
-			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
-		} else if (RendererType != null && RendererType == "auto") {
+		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
+			PixiRenderer = new WebGLRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
+
+			RendererType = "webgl";
+		} else if (RendererType == "auto") {
 			#if (pixijs <= "4.5.4")
-				PixiRenderer = Detector.autoDetectRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+				PixiRenderer = Detector.autoDetectRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
 			#else
 				// With pixijs 4.5.5, this works:
-				PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth, Browser.window.innerHeight);
+				PixiRenderer = Detector.autoDetectRenderer(options, Browser.window.innerWidth + 1, Browser.window.innerHeight + 1);
 			#end
 
 			if (untyped __instanceof__(PixiRenderer, WebGLRenderer)) {
@@ -332,11 +699,53 @@ class RenderSupportJSPixi {
 				RendererType = "canvas";
 			}
 		} else {
-			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth, Browser.window.innerHeight, options);
+			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
 
 			RendererType = "canvas";
 		}
-		untyped PixiRenderer.maskManager.enableScissor = false; // Looks broken some times
+
+		// Disable Pixi's accessibility manager plugin.
+		// Use own.
+		if (PixiRenderer.plugins != null) {
+			PixiRenderer.plugins.accessibility.destroy();
+			PixiRenderer.plugins.prepare.destroy();
+
+			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.accessibility");
+			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.prepare");
+		}
+
+		// Destroy default pixi ticker
+		untyped PIXI.ticker.shared.autoStart = false;
+		untyped PIXI.ticker.shared.stop();
+		untyped PIXI.ticker.shared.destroy();
+		// untyped __js__("delete PIXI.ticker.shared");
+
+		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
+
+		PixiView = PixiRenderer.view;
+		// Make absolute position for canvas for Safari to fix fullscreen API
+		if (Platform.isSafari) {
+			PixiView.style.position = "absolute";
+			PixiView.style.top = "0px";
+		}
+	}
+
+	private static function initPixiRenderer() {
+		if (untyped PIXI.VERSION[0] > 3)
+			workaroundDOMOverOutEventsTransparency();
+
+		workaroundTextMetrics();
+		// Required for MaterialIcons measurements
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
+		workaroundRendererDestroy();
+		workaroundProcessInteractive();
+
+		if (Platform.isIE) {
+			workaroundIEArrayFromMethod();
+			workaroundIECustomEvent();
+		}
+
+		createPixiRenderer();
 
 		// Add specified Firefox property to say the canvas will never need to be transparent
 		if (Platform.isFirefox)
@@ -357,23 +766,12 @@ class RenderSupportJSPixi {
 
 		// Enable browser canvas rendered image smoothing
 		var ctx = untyped PixiRenderer.context;
-		ctx.mozImageSmoothingEnabled = true;
-		ctx.webkitImageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = "medium";
-		ctx.msImageSmoothingEnabled = true;
-		ctx.imageSmoothingEnabled = true;
-
-		// Disable Pixi's accessibility manager plugin.
-		// Use own.
-		if (PixiRenderer.plugins != null && PixiRenderer.plugins.accessibility != null) {
-			PixiRenderer.plugins.accessibility.destroy();
-			PixiRenderer.plugins.accessibility = null;
-		}
-
-		// Make absolute position for canvas for Safari to fix fullscreen API
-		if (Platform.isSafari) {
-			PixiRenderer.view.style.position = "absolute";
-			PixiRenderer.view.style.top = "0px";
+		if (ctx != null) {
+			ctx.mozImageSmoothingEnabled = true;
+			ctx.webkitImageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = "medium";
+			ctx.msImageSmoothingEnabled = true;
+			ctx.imageSmoothingEnabled = true;
 		}
 
 		// Set selfZOrder of the body to allow updation of its zOrder inside updateAccessWidgetZOrder
@@ -398,29 +796,20 @@ class RenderSupportJSPixi {
 			}
 		}
 
-		updatePixiResolution();
-
 		requestAnimationFrame();
-	}
-
-	private static function updatePixiResolution() {
-		PixiRenderer.resolution = backingStoreRatio;
-		untyped Filter.resolution = backingStoreRatio;
-		untyped PixiRenderer.plugins.interaction.resolution = backingStoreRatio;
-		untyped PIXI.RESOLUTION = backingStoreRatio;
 	}
 
 	//
 	//	Browser window events
 	//
-	private static function initBrowserWindowEventListeners() {
+	private static inline function initBrowserWindowEventListeners() {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener("resize", onBrowserWindowResize, false);
 		Browser.window.addEventListener('message', receiveWindowMessage); // Messages from crossdomaid iframes
 		Browser.window.addEventListener("focus", requestAnimationFrame, false);
 	}
 
-	private static function initClipboardListeners() {
+	private static inline function initClipboardListeners() {
 		var handler = function handlePaste (e : Dynamic) {
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.getData) { // IE
 				NativeHx.clipboardData = untyped Browser.window.clipboardData.getData('Text');
@@ -445,7 +834,7 @@ class RenderSupportJSPixi {
 		Browser.document.addEventListener('paste', handler, false);
 	}
 
-	private static function initFullScreenEventListeners() {
+	private static inline function initFullScreenEventListeners() {
 		for (e in ['fullscreenchange', 'mozfullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
 			Browser.document.addEventListener(e, fullScreenTrigger, false);
 		}
@@ -477,7 +866,7 @@ class RenderSupportJSPixi {
 		Errors.report("Warning: unknown message source");
 	}
 
-	private static function getScreenSize() {
+	private static inline function getScreenSize() {
 		if (Platform.isIOS && Platform.isChrome) {
 			var is_portrait = Browser.window.innerWidth < Browser.window.innerHeight;
 			return is_portrait ?
@@ -488,34 +877,38 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	private static function onBrowserWindowResize(e : Dynamic) : Void {
+	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
 		InvalidateStage();
 
 		backingStoreRatio = getBackingStoreRatio();
-		updatePixiResolution();
 
-		var win_width = e.target.innerWidth;
-		var win_height = e.target.innerHeight;
+		if (backingStoreRatio != PixiRenderer.resolution) {
+			createPixiRenderer();
+		} else {
+			var win_width = e.target.innerWidth + 1;
+			var win_height = e.target.innerHeight + 1;
 
-		if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
-			// Still send whole window size - without reducing by screen kbd
-			// for flow does not resize the stage. The stage will be
-			// scrolled by this renderer if needed or by the browser when it is supported.
-			// Assume that WindowTopHeight is equal for both landscape and portrait and
-			// browser window is fullscreen
-			var screen_size = getScreenSize();
-			win_width = screen_size.width;
-			win_height = screen_size.height - cast WindowTopHeight;
+			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
+				// Still send whole window size - without reducing by screen kbd
+				// for flow does not resize the stage. The stage will be
+				// scrolled by this renderer if needed or by the browser when it is supported.
+				// Assume that WindowTopHeight is equal for both landscape and portrait and
+				// browser window is fullscreen
+				var screen_size = getScreenSize();
+				win_width = screen_size.width + 1;
+				win_height = screen_size.height + 1 - cast WindowTopHeight;
 
-			if (Platform.isAndroid) {
-				PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
-				// Assume other mobile browsers do it theirselves
-				ensureCurrentInputVisible(); // Test overlap and shift if needed
+				if (Platform.isAndroid) {
+					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
+					// Assume other mobile browsers do it theirselves
+					ensureCurrentInputVisible(); // Test overlap and shift if needed
+				}
 			}
+
+			PixiRenderer.resize(win_width, win_height);
 		}
 
-		PixiRenderer.resize(win_width, win_height);
-		broadcastEvent(PixiStage, "resize", backingStoreRatio);
+		PixiStage.broadcastEvent("resize", backingStoreRatio);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		PixiRenderer.render(PixiStage);
@@ -540,7 +933,7 @@ class RenderSupportJSPixi {
 		if (!isEmulating) switchFocusFramesShow(false);
 	}
 
-	private static function initPixiStageEventListeners() {
+	private static inline function initPixiStageEventListeners() {
 		if (untyped __js__("window.navigator.msPointerEnabled")) {
 			setStagePointerHandler("MSPointerDown", function () { PixiStage.emit("mousedown"); });
 			setStagePointerHandler("MSPointerUp", function () { PixiStage.emit("mouseup"); });
@@ -566,15 +959,13 @@ class RenderSupportJSPixi {
 			Browser.document.body.addEventListener("keyup", function (e) { PixiStage.emit("keyup", parseKeyEvent(e)); });
 		}
 
-		PixiStage.on("mousedown", function () { MouseUpReceived = false; });
-		PixiStage.on("mouseup", function () { MouseUpReceived = true; });
+		PixiStage.on("mousedown", function (e) { MouseUpReceived = false; });
+		PixiStage.on("mouseup", function (e) { MouseUpReceived = true; });
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnDown(true);
 	}
 
 	private static var MouseUpReceived : Bool = false;
-
-
 
 	private static function setStagePointerHandler(event : String, listener : Void -> Void) {
 		var cb = switch (event) {
@@ -1020,14 +1411,18 @@ class RenderSupportJSPixi {
 				}
 
 				clip.accessWidget = Browser.document.createElement(tagName);
-				clip.accessWidget.clip = clip;
+				if (DebugAccessOrder) {
+					clip.accessWidget.clip = clip;
+				}
 
 				// Add focus notification. Used for focus control
 				clip.accessWidget.addEventListener("focus", function () {
 					clip.emit("focus");
 
-					if (clip.parent != null) {
-						emitEvent(clip.parent, "childfocused", clip);
+					var parent : DisplayObject = clip.parent;
+
+					if (parent != null) {
+						parent.emitEvent("childfocused", clip);
 					}
 				});
 
@@ -1044,7 +1439,7 @@ class RenderSupportJSPixi {
 					var newZorder : Int = untyped Browser.document.body.zOrder;
 
 					if (clip.parent != null && clip.accessWidget != null) {
-						clip.accessWidget.style.display = clip.accessWidget.zOrder >= newZorder && clip.worldVisible ? "block" : "none";
+						clip.accessWidget.style.display = clip.accessWidget.zOrder >= newZorder && cast(clip, DisplayObject).getClipVisible() ? "block" : "none";
 
 						var children : Array<Dynamic> = untyped clip.accessWidget.children;
 
@@ -1080,7 +1475,7 @@ class RenderSupportJSPixi {
 				}
 
 				clip.updateAccessWidget = function() if (clip.accessWidget != null && clip.accessWidget.parentNode != null) {
-					if (clip.worldVisible) {
+					if (cast(clip, DisplayObject).getClipVisible()) {
 						var newZorder : Int = untyped Browser.document.body.zOrder;
 						var transform = clip.accessWidget.parentNode.style.transform != "" && clip.accessWidget.parentNode.clip != null ?
 							clip.worldTransform.clone().append(clip.accessWidget.parentNode.clip.worldTransform.clone().invert()) : clip.worldTransform;
@@ -1285,7 +1680,7 @@ class RenderSupportJSPixi {
 				else if (w <= FONT_WEIGHT_ULTRA_LIGHT) return "Ultra Light"
 				else return "Light";
 			} else
-				if (w <= FONT_WEIGHT_BOOK) return ""  // "Book"
+				if (w <= FONT_WEIGHT_BOOK) return "" // "Book"
 				else return "Medium";
 		} else if (w <= FONT_WEIGHT_BOLD) {
 			if (w <= FONT_WEIGHT_SEMI_BOLD) return "Semi Bold"
@@ -1596,39 +1991,18 @@ class RenderSupportJSPixi {
 		return null;
 	}
 
-	public static function emitEvent(parent : Dynamic, event : String, ?value : Dynamic) : Void {
-		parent.emit(event, value);
-
-		if (parent.parent != null)
-			emitEvent(parent.parent, event, value);
-	}
-
-	public static function broadcastEvent(parent : Dynamic, event : String, ?value : Dynamic) : Void {
-		parent.emit(event, value);
-
-		if (parent.children != null) {
-			var children : Array<Dynamic> = untyped parent.children;
-			for (c in children)
-				broadcastEvent(c, event, value);
-		}
-
-		if (parent.mask != null) {
-			broadcastEvent(parent.mask, event, value);
-		}
-	}
-
 	// native addChild : (parent : native, child : native) -> void
-	public static function addChild(parent : FlowContainer, child : DisplayObject) : Void {
+	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.addChild(child);
 	}
 
 	// native addChildAt : (parent : native, child : native, id : int) -> void
-	public static function addChildAt(parent : FlowContainer, child : DisplayObject, id : Int) : Void {
+	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
 		parent.addChildAt(child, id);
 	}
 
 	// native removeChild : (parent : native, child : native) -> void
-	public static function removeChild(parent : Dynamic, child : DisplayObject) : Void {
+	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.removeChild(child);
 	}
 
@@ -1733,28 +2107,29 @@ class RenderSupportJSPixi {
 		// stub
 	}
 
-	public static function setClipX(clip : Dynamic, x : Float) : Void {
+	public static function setClipX(clip : DisplayObject, x : Float) : Void {
 		clip.setClipX(x);
 	}
 
-	public static function setClipY(clip : Dynamic, y : Float) : Void {
+	public static function setClipY(clip : DisplayObject, y : Float) : Void {
 		clip.setClipY(y);
 	}
 
-	public static function setClipScaleX(clip : Dynamic, scale : Float) : Void {
+	public static function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
 		clip.setClipScaleX(scale);
 	}
 
-	public static function setClipScaleY(clip : Dynamic, scale : Float) : Void {
+	public static function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
 		clip.setClipScaleY(scale);
 	}
 
-	public static function setClipRotation(clip : Dynamic, r : Float) : Void {
+	public static function setClipRotation(clip : DisplayObject, r : Float) : Void {
 		clip.setClipRotation(r * 0.0174532925 /*radians*/);
 	}
 
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
-		if (clip.parent != null && clip.renderable) {
+		if (clip.parent != null) {
+			clip.forceUpdateTransform();
 			var a = clip.worldTransform;
 			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
 		} else {
@@ -1767,8 +2142,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipAlpha(clip : DisplayObject, a : Float) : Void {
-		InvalidateStage();
-		clip.alpha = a;
+		clip.setClipAlpha(a);
 	}
 
 	private static function getFirstVideoWidget(clip : FlowContainer) : Dynamic {
@@ -1784,7 +2158,7 @@ class RenderSupportJSPixi {
 		return null;
 	}
 
-	public static function setClipMask(clip : Dynamic, mask : Dynamic) : Void {
+	public static function setClipMask(clip : FlowContainer, mask : Dynamic) : Void {
 		clip.setClipMask(mask);
 	}
 
@@ -1962,7 +2336,7 @@ class RenderSupportJSPixi {
 		return clip.addStreamStatusListener(fn);
 	}
 
-	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
+	public static function addEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "resize") {
 			PixiStage.on("resize", fn);
 			return function() { PixiStage.off("resize", fn); }
@@ -1985,13 +2359,19 @@ class RenderSupportJSPixi {
 			PixiStage.on(event, fn);
 			return function() { PixiStage.off(event, fn); }
 		} else if (event == "rollover") {
-			clip.interactive = true;
-			clip.on("mouseover", fn);
-			return function() { clip.off("mouseover", fn); };
+			clip.on("pointerover", fn);
+			clip.updateClipInteractive();
+			return function() {
+				clip.off("pointerover", fn);
+				clip.updateClipInteractive();
+			};
 		} else if (event == "rollout") {
-			clip.interactive = true;
-			clip.on("mouseout", fn);
-			return function() { clip.off("mouseout", fn); } ;
+			clip.on("pointerout", fn);
+			clip.updateClipInteractive();
+			return function() {
+				clip.off("pointerout", fn);
+				clip.updateClipInteractive();
+			};
 		} else if (event == "scroll") {
 			clip.on("scroll", fn);
 			return function() { clip.off("scroll", fn); };
@@ -2022,7 +2402,7 @@ class RenderSupportJSPixi {
 		dropArea.oncontextmenu = PixiRenderer.view.oncontextmenu;
 
 		clip.updateFileDropWidget = function() {
-			if (clip.worldVisible) {
+			if (cast(clip, DisplayObject).getClipVisible()) {
 				var bounds = clip.getBounds();
 				dropArea.style.left = "" + bounds.x + "px";
 				dropArea.style.top = "" + bounds.y + "px";
@@ -2214,7 +2594,7 @@ class RenderSupportJSPixi {
 		MousePos.y = y;
 	}
 
-	private static function hittestGraphics(g : Graphics, global : Point) : Bool {
+	private static function hittestGraphics(g : FlowGraphics, global : Point) : Bool {
 		var graphicsData : Array<Dynamic> = untyped g.graphicsData;
 		if (graphicsData == null || graphicsData.length == 0) return false;
 		var data = graphicsData[0]; // There may be only one shape when drawing with flow
@@ -2226,7 +2606,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function dohittest(clip : Dynamic, global : Point) : Bool {
-		if (!clip.worldVisible || clip.isMask) return false;
+		if (!cast(clip, DisplayObject).getClipWorldVisible() || clip.isMask) return false;
 		if (clip.mask != null && !hittestGraphics(clip.mask, global)) return false;
 
 		if (clip.graphicsData != null) { // Graphics
@@ -2263,7 +2643,7 @@ class RenderSupportJSPixi {
 		var cnt = parent.children.length;
 		for (i in 0...cnt) {
 			var child = parent.children[cnt - i - 1];
-			if ( child.visible && (child.mask == null || hittestGraphics(cast child.mask, p) ) &&
+			if ( child.getClipWorldVisible() && (child.mask == null || hittestGraphics(cast child.mask, p) ) &&
 				!(untyped child.isMask) && child.getBounds().contains(p.x, p.y)) {
 				if (untyped __instanceof__(child, TextField)) {
 					return child;
@@ -2319,23 +2699,18 @@ class RenderSupportJSPixi {
 		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
 
-	public static function setLineStyle2(graphics : FlowGraphics, width : Float, color : Int, opacity : Float, pixelHinting : Bool) : Void {
-		setLineStyle(graphics, width, removeAlphaChannel(color), opacity);
-	}
-
 	public static function beginFill(graphics : FlowGraphics, color : Int, opacity : Float) : Void {
 		graphics.beginFill(removeAlphaChannel(color), opacity);
 	}
 
 	// native beginLineGradientFill : (graphics : native, colors : [int], alphas: [double], offsets: [double], matrix : native) -> void = RenderSupport.beginFill;
 	public static function beginGradientFill(graphics : FlowGraphics, colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
-		beginFill(graphics, 0x000000, 1.0); // This will be used as a mask graphics
-		untyped graphics.gradient_data = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix, type : type };
+		graphics.beginGradientFill(colors, alphas, offsets, matrix, type);
 	}
 
 	// native setLineGradientStroke : (graphics : native, colors : [int], alphas: [double], offsets: [double]) -> void = RenderSupport.beginFill;
 	public static function setLineGradientStroke(graphics : FlowGraphics, colours : Array<Int>, alphas : Array<Float>, offsets : Array<Float>, matrix : Dynamic) : Void {
-		setLineStyle(graphics, 1.0, removeAlphaChannel(colours[0]), alphas[0]);
+		graphics.lineGradientStroke(colours, alphas, offsets, matrix);
 	}
 
 	public static function makeMatrix(width : Float, height : Float, rotation : Float, xOffset : Float, yOffset : Float) : Dynamic {
@@ -2358,38 +2733,8 @@ class RenderSupportJSPixi {
 		return "rgba(" + ((color >> 16) & 255) + "," + ((color >> 8) & 255) + "," + (color & 255) + "," + (alpha) + ")" ;
 	}
 
-	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
-		return f < min ? min : (f > max ? max : f);
-	}
-
-	public static function endFill(graphics : Dynamic) : Void {
+	public static function endFill(graphics : FlowGraphics) : Void {
 		graphics.endFill();
-
-		if (graphics.gradient_data != null) {
-			// Only linear gradient is supported
-			var canvas : js.html.CanvasElement = Browser.document.createCanvasElement();
-			var bounds = graphics.getBounds();
-			canvas.width = bounds.width;
-			canvas.height = bounds.height;
-
-			var ctx = canvas.getContext2d();
-			var matrix = graphics.gradient_data.matrix;
-			var gradient = ctx.createLinearGradient(matrix.xOffset, matrix.yOffset, matrix.width * Math.cos(matrix.rotation / 180.0 * Math.PI), matrix.height * Math.sin(matrix.rotation / 180.0 * Math.PI));
-			for (i in 0...graphics.gradient_data.colors.length)
-				gradient.addColorStop(trimFloat(graphics.gradient_data.offsets[i], 0.0, 1.0), makeCSSColor(graphics.gradient_data.colors[i], graphics.gradient_data.alphas[i]) );
-			ctx.fillStyle = gradient;
-			ctx.fillRect(0.0, 0.0, bounds.width, bounds.height);
-
-			var sprite = new Sprite( Texture.fromCanvas(canvas) );
-			sprite.mask = graphics;
-			sprite.width = bounds.width;
-			sprite.height = bounds.height;
-			graphics.parent.addChild(sprite);
-
-			graphics.parent.once("removed", function() {
-				graphics.parent.destroy({ children: true, texture: true, baseTexture: true });
-			});
-		}
 	}
 
 	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
@@ -2461,8 +2806,30 @@ class RenderSupportJSPixi {
 			});
 			untyped clip.canvasFilters = filters;
 		} else {
+			var dropShadowPadding = 0.0;
+			var dropShadowCount = 0;
+
 			// Get rid of null filters (Bevel is not implemented)
-			filters = filters.filter(function(f) { return f != null; });
+			filters = filters.filter(function(f) {
+				if (untyped __instanceof__(f, DropShadowFilter)) {
+					dropShadowPadding = Math.max(untyped f.padding, dropShadowPadding);
+					dropShadowCount++;
+				}
+
+				return f != null;
+			});
+
+			// Increase padding in case we have multiple DropShadowFilters
+			if (dropShadowCount > 1) {
+				filters = filters.filter(function(f) {
+					if (untyped __instanceof__(f, DropShadowFilter)) {
+						f.padding = dropShadowPadding * dropShadowCount;
+					}
+
+					return f != null;
+				});
+			}
+
 			clip.filters = filters.length > 0 ? filters : null;
 		}
 	}
@@ -2481,14 +2848,13 @@ class RenderSupportJSPixi {
 	}
 
 	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {
-		return new Filter(Shaders.VertexSrc.join('\n'), Shaders.GlowFragmentSrc.join('\n'), {});
+		return null;//new Filter(Shaders.VertexSrc.join('\n'), Shaders.GlowFragmentSrc.join('\n'), {});
 	}
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
 		clip.setScrollRect(left, top, width, height);
 	}
 
-	private static var sharedText = new Text("");
 	public static function getTextMetrics(textfield : TextField) : Array<Float> {
 		return textfield.getTextMetrics();
 	}
@@ -2501,16 +2867,15 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getClipVisible(clip : DisplayObject) : Bool {
-		return clip.worldVisible;
+		return clip.getClipVisible();
 	}
 
-	public static function setClipVisible(clip : Dynamic, vis : Bool) : Void {
-		if (clip.visible != vis) {
-			InvalidateStage();
-			clip.visible = vis;
-			if (AccessibilityEnabled)
-				updateAccessDisplay(clip);
-		}
+	public static function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
+		return clip.setClipVisible(visible);
+	}
+
+	public static function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
+		return clip.setClipRenderable(renderable);
 	}
 
 	public static function fullScreenTrigger() {
@@ -2545,7 +2910,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static var regularStageChildren : Array<DisplayObject> = null;
-	private static var regularFullScreenClipParent : Container = null;
+	private static var regularFullScreenClipParent : Dynamic = null;
 	public static var IsFullScreen : Bool = false;
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
@@ -2579,15 +2944,15 @@ class RenderSupportJSPixi {
 				// Make other content invisible to prevent from mouse events
 				for (child in regularStageChildren) {
 					untyped child._flow_visible = child.visible;
-					child.visible = false;
+					child.setClipVisible(false);
 				}
 
-				FullWindowTargetClip.visible = _clip_visible;
+				FullWindowTargetClip.setClipVisible(_clip_visible);
 				FullWindowTargetClip.updateTransform();
 			} else {
 				if (regularFullScreenClipParent != null && regularStageChildren.length != 0) {
 					for (child in regularStageChildren) {
-						child.visible = untyped child._flow_visible;
+						child.setClipVisible(untyped child._flow_visible);
 					}
 
 					PixiStage.children = regularStageChildren;
@@ -2601,7 +2966,7 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	public static function requestFullScreen(element : js.html.Element) {
+	public static function requestFullScreen(element : Element) {
 		if (untyped element.requestFullscreen != null)
 			untyped element.requestFullscreen();
 		else if (untyped element.mozRequestFullScreen != null)
@@ -2614,7 +2979,7 @@ class RenderSupportJSPixi {
 			untyped element.webkitEnterFullScreen();
 	}
 
-	public static function exitFullScreen(element : js.html.Element) {
+	public static function exitFullScreen(element : Element) {
 		if (untyped __instanceof__(element, js.html.CanvasElement)) {
 			element = untyped Browser.document;
 		}
@@ -2645,13 +3010,13 @@ class RenderSupportJSPixi {
 
 	public static function isFullScreen() : Bool {
 		return untyped Browser.document.fullScreen ||
-			   untyped Browser.document.mozFullScreen ||
-			   untyped Browser.document.webkitIsFullScreen ||
-			   untyped Browser.document.fullscreenElement != null ||
-			   untyped Browser.document.msFullscreenElement != null ||
-			   FullWindowTargetClip != null &&
-			   FullWindowTargetClip.nativeWidget != null &&
-			   FullWindowTargetClip.nativeWidget.webkitDisplayingFullscreen;
+			untyped Browser.document.mozFullScreen ||
+			untyped Browser.document.webkitIsFullScreen ||
+			untyped Browser.document.fullscreenElement != null ||
+			untyped Browser.document.msFullscreenElement != null ||
+			FullWindowTargetClip != null &&
+			FullWindowTargetClip.nativeWidget != null &&
+			FullWindowTargetClip.nativeWidget.webkitDisplayingFullscreen;
 	}
 
 	public static function onFullWindow(onChange : Bool -> Void) : Void -> Void {
@@ -2683,6 +3048,22 @@ class RenderSupportJSPixi {
 
 	public static function takeSnapshot(path : String) : Void {
 		// Empty for these targets
+		trace("takeSnapshot isn't implemented in js");
+		trace("use getSnapshot instead");
+	}
+
+	public static function getSnapshot() : String {
+		var child : FlowContainer = untyped PixiStage.children[0];
+
+		if (child == null) {
+			return "";
+		}
+
+		child.setScrollRect(0, 0, getStageWidth(), getStageHeight());
+		var img = PixiRenderer.plugins.extract.base64(PixiStage);
+		child.removeScrollRect();
+
+		return img;
 	}
 
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
@@ -2794,726 +3175,6 @@ class RenderSupportJSPixi {
 	}
 }
 
-private class FlowGraphics extends Graphics {
-	public var penX : Float = 0.0;
-	public var penY : Float = 0.0;
-
-	private var scrollRect : FlowGraphics;
-	private var alphaMask : FlowContainer;
-
-	public function new() {
-		super();
-
-		on("childrenchanged", function () {
-			if (parent != null) {
-				parent.emit("childrenchanged");
-			} else if (untyped this == RenderSupportJSPixi.PixiStage) {
-				RenderSupportJSPixi.InvalidateStage();
-			}
-		});
-		on("transformchanged", RenderSupportJSPixi.InvalidateStage);
-		on("graphicschanged", RenderSupportJSPixi.InvalidateStage);
-	}
-
-	public override function moveTo(x : Float, y : Float) : Graphics {
-		var newGraphics = super.moveTo(x, y);
-		penX = x;
-		penY = y;
-
-		emit("graphicschanged");
-		return newGraphics;
-	}
-
-	public override function lineTo(x : Float, y : Float) : Graphics {
-		var newGraphics = super.lineTo(x, y);
-		penX = x;
-		penY = y;
-
-		emit("graphicschanged");
-		return super.lineTo(x, y);
-	}
-
-	public override function quadraticCurveTo(cx : Float, cy : Float, x : Float, y : Float) : Graphics {
-		var dx = x - penX;
-		var dy = y - penY;
-
-		if (Math.sqrt(dx * dx + dy * dy) / lineWidth > 3) {
-			var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
-			penX = x;
-			penY = y;
-
-			emit("graphicschanged");
-			return newGraphics;
-		} else {
-			lineTo(cx, cy);
-			return lineTo(x, y);
-		}
-	}
-
-	public override function endFill() : Graphics {
-		var newGraphics = super.endFill();
-
-		emit("graphicschanged");
-		return newGraphics;
-	}
-
-	public override function drawRect(x : Float, y : Float, width : Float, height : Float) : Graphics {
-		var newGraphics = super.drawRect(x, y, width, height);
-
-		emit("graphicschanged");
-		return newGraphics;
-	};
-
-	public override function clear() : Graphics {
-		return super.clear();
-	};
-
-	public override function addChild<T:DisplayObject>(child : T) : T {
-		var addedChild = super.addChild(child);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
-		var addedChild = super.addChildAt(child, index);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function removeChild(child : DisplayObject) : DisplayObject {
-		var removedChild = super.removeChild(child);
-
-		if (removedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return removedChild;
-	}
-
-	public function setClipX(x : Float) : Void {
-		if (this.x != x) {
-			var previousX = this.x;
-			this.x = x;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipY(y : Float) : Void {
-		if (this.y != y) {
-			var previousY = this.y;
-			this.y = y;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleX(scale : Float) : Void {
-		if (this.scale.x != scale) {
-			var previousScaleX = this.scale.x;
-			this.scale.x = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleY(scale : Float) : Void {
-		if (this.scale.y != scale) {
-			var previousScaleY = this.scale.y;
-			this.scale.y = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipRotation(rotation : Float) : Void {
-		if (this.rotation != rotation) {
-			this.rotation = rotation;
-
-			emit("transformchanged");
-		}
-	}
-
-	// setScrollRect cancels setClipMask and vice versa
-	public function setScrollRect(left : Float, top : Float, width : Float, height : Float) : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x * 2 - left);
-			setClipY(y + scrollRect.y * 2 - top);
-
-			scrollRect.clear();
-		} else {
-			setClipX(x - left);
-			setClipY(y - top);
-
-			scrollRect = new FlowGraphics();
-			addChild(scrollRect);
-			setClipMask(scrollRect);
-		}
-
-		scrollRect.beginFill(0xFFFFFF);
-		scrollRect.drawRect(0.0, 0.0, width, height);
-		scrollRect.endFill();
-
-		scrollRect.setClipX(left);
-		scrollRect.setClipY(top);
-	}
-
-	private function removeScrollRect() : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x);
-			setClipY(y + scrollRect.y);
-
-			removeChild(scrollRect);
-			scrollRect = null;
-		}
-	}
-
-	// setClipMask cancels setScrollRect and vice versa
-	public function setClipMask(maskContainer : Dynamic) : Void {
-		if (maskContainer != scrollRect) removeScrollRect();
-		mask = null;
-
-		if (RenderSupportJSPixi.RendererType == "webgl") {
-			mask = FlowContainer.getFirstGraphicsOrSprite(maskContainer);
-			if (mask == null) {
-				maskContainer.visible = false;
-			}
-		} else {
-			alphaMask = null;
-
-			// If it's one Graphics, use clip mask; otherwise use alpha mask
-			var obj : Dynamic = maskContainer;
-			while (obj.children != null && obj.children.length == 1)
-				obj = obj.children[0];
-
-			if (untyped __instanceof__(obj, FlowGraphics)) {
-				mask = obj;
-			} else {
-				alphaMask = maskContainer;
-			}
-		}
-
-		if (mask != null) {
-			mask.once("removed", function () { mask = null; });
-		}
-		maskContainer.once("childrenchanged", function () { setClipMask(maskContainer); });
-		emit("graphicschanged");
-	}
-}
-
-private class FlowContainer extends Container {
-	private var scrollRect : FlowGraphics;
-	private var alphaMask : FlowContainer;
-
-	public function new() {
-		super();
-
-		on("childrenchanged", function () {
-			if (parent != null) {
-				parent.emit("childrenchanged");
-			} else if (this == RenderSupportJSPixi.PixiStage) {
-				RenderSupportJSPixi.InvalidateStage();
-			}
-		});
-		on("transformchanged", RenderSupportJSPixi.InvalidateStage);
-		on("graphicschanged", RenderSupportJSPixi.InvalidateStage);
-	}
-
-	public override function addChild<T:DisplayObject>(child : T) : T {
-		var addedChild = super.addChild(child);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
-		var addedChild = super.addChildAt(child, index);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function removeChild(child : DisplayObject) : DisplayObject {
-		var removedChild = super.removeChild(child);
-
-		if (removedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return removedChild;
-	}
-
-	public function setClipX(x : Float) : Void {
-		if (scrollRect != null) x = x - scrollRect.x;
-		if (this.x != x) {
-			var previousX = this.x;
-			this.x = x;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipY(y : Float) : Void {
-		if (scrollRect != null) y = y - scrollRect.y;
-		if (this.y != y) {
-			var previousY = this.y;
-			this.y = y;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleX(scale : Float) : Void {
-		if (this.scale.x != scale) {
-			var previousScaleX = this.scale.x;
-			this.scale.x = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleY(scale : Float) : Void {
-		if (this.scale.y != scale) {
-			var previousScaleY = this.scale.y;
-			this.scale.y = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipRotation(rotation : Float) : Void {
-		if (this.rotation != rotation) {
-			this.rotation = rotation;
-
-			emit("transformchanged");
-		}
-	}
-
-	// Get the first Graphics from the Pixi DisplayObjects tree
-	public static function getFirstGraphicsOrSprite(clip : FlowContainer) : Dynamic {
-		if (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite))
-			return clip;
-
-		if (clip.children != null) {
-			for (c in clip.children) {
-				var g = getFirstGraphicsOrSprite(untyped c);
-				if (g != null) return g;
-			}
-		}
-
-		return null;
-	}
-
-	// setScrollRect cancels setClipMask and vice versa
-	public function setScrollRect(left : Float, top : Float, width : Float, height : Float) : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x * 2 - left);
-			setClipY(y + scrollRect.y * 2 - top);
-
-			scrollRect.clear();
-		} else {
-			setClipX(x - left);
-			setClipY(y - top);
-
-			scrollRect = new FlowGraphics();
-			addChild(scrollRect);
-			setClipMask(scrollRect);
-		}
-
-		scrollRect.beginFill(0xFFFFFF);
-		scrollRect.drawRect(0.0, 0.0, width, height);
-		scrollRect.endFill();
-
-		scrollRect.setClipX(left);
-		scrollRect.setClipY(top);
-	}
-
-	private function removeScrollRect() : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x);
-			setClipY(y + scrollRect.y);
-
-			removeChild(scrollRect);
-			scrollRect = null;
-		}
-	}
-
-	// setClipMask cancels setScrollRect and vice versa
-	public function setClipMask(maskContainer : Dynamic) : Void {
-		if (maskContainer != scrollRect) removeScrollRect();
-		mask = null;
-
-		if (RenderSupportJSPixi.RendererType == "webgl") {
-			mask = getFirstGraphicsOrSprite(maskContainer);
-			if (mask == null) {
-				maskContainer.visible = false;
-			}
-		} else {
-			alphaMask = null;
-
-			// If it's one Graphics, use clip mask; otherwise use alpha mask
-			var obj : Dynamic = maskContainer;
-			while (obj.children != null && obj.children.length == 1)
-				obj = obj.children[0];
-
-			if (untyped __instanceof__(obj, FlowGraphics)) {
-				mask = obj;
-			} else {
-				alphaMask = maskContainer;
-			}
-		}
-
-		if (mask != null) {
-			mask.once("removed", function () { mask = null; });
-		}
-		maskContainer.once("childrenchanged", function () { setClipMask(maskContainer); });
-		emit("graphicschanged");
-	}
-}
-
-private class FlowSprite extends Sprite {
-	private var scrollRect : FlowGraphics;
-	private var alphaMask : FlowContainer;
-
-	private var url : String = "";
-	private var loaded : Bool = false;
-	private var cache : Bool = false;
-	private var metricsFn : Float -> Float -> Void;
-	private var errorFn : String -> Void;
-	private var onlyDownload : Bool = false;
-	private var retries : Int = 0;
-
-	private static inline var MAX_CHACHED_IMAGES : Int = 50;
-	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
-
-	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
-		super();
-
-		this.url = url;
-		this.cache = cache;
-		this.metricsFn = metricsFn;
-		this.errorFn = errorFn;
-		this.onlyDownload = onlyDownload;
-
-		if (StringTools.endsWith(url, ".swf")) {
-			url = StringTools.replace(url, ".swf", ".png");
-		};
-
-		once("removed", onRemoved);
-		once("added", onAdded);
-		on("childrenchanged", onChildrenChanged);
-		on("transformchanged", RenderSupportJSPixi.InvalidateStage);
-		on("graphicschanged", RenderSupportJSPixi.InvalidateStage);
-	}
-
-	private static function pushTextureToCache(texture : Texture) : Void {
-		if (texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
-			var url = texture.baseTexture.imageUrl;
-
-			if (url != null) {
-				if (cachedImagesUrls.exists(url)) {
-					cachedImagesUrls.set(url, cachedImagesUrls[url] + 1);
-				} else {
-					cachedImagesUrls.set(url, 1);
-
-					if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-						for (k in cachedImagesUrls.keys()) {
-							if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-								cachedImagesUrls.remove(k);
-								Texture.removeFromCache(url);
-								untyped BaseTexture.removeFromCache(url);
-							} else {
-								return;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	private static function removeTextureFromCache(texture : Texture) : Bool {
-		if (texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
-			var url = texture.baseTexture.imageUrl;
-
-			if (url != null) {
-				if (cachedImagesUrls.exists(url) && (cachedImagesUrls.get(url) > 1 || untyped texture.baseTexture.hasLoaded && texture.width * texture.height < 500 * 500)) {
-					cachedImagesUrls.set(url, cachedImagesUrls[url] - 1);
-
-					return cachedImagesUrls.get(url) == 0;
-				} else {
-					cachedImagesUrls.remove(url);
-					Texture.removeFromCache(url);
-					untyped BaseTexture.removeFromCache(url);
-
-					return true;
-				}
-			}
-		}
-
-		return false;
-	}
-
-	private function onAdded() : Void {
-		if (!loaded) {
-			if (StringTools.endsWith(url, ".svg")) {
-				var svgXhr = new js.html.XMLHttpRequest();
-				if (!Platform.isIE && !Platform.isEdge)
-					svgXhr.overrideMimeType('image/svg+xml');
-
-				svgXhr.onload = function () {
-					url = "data:image/svg+xml;utf8," + svgXhr.response;
-					loadTexture();
-				};
-
-				svgXhr.open('GET', url, true);
-				svgXhr.send();
-			} else {
-				loadTexture();
-			}
-		}
-	}
-
-	private function onRemoved() : Void {
-		if (removeTextureFromCache(texture) && !loaded) {
-			var nativeWidget = texture.baseTexture.source;
-
-			nativeWidget.removeAttribute('src');
-
-			if (nativeWidget != null) {
-				var parentNode : Dynamic = nativeWidget.parentNode;
-
-				if (parentNode != null) {
-					parentNode.removeChild(nativeWidget);
-				}
-
-				untyped __js__("delete nativeWidget");
-				nativeWidget = null;
-			}
-
-			texture.baseTexture.destroy();
-		}
-
-		texture = Texture.EMPTY;
-	}
-
-	private function onChildrenChanged() : Void {
-		if (parent != null)
-			parent.emit("childrenchanged");
-	}
-
-	private function onDispose() : Void {
-		renderable = false;
-		removeTextureFromCache(texture);
-		loaded = false;
-
-		if (parent != null) {
-			loadTexture();
-		} else {
-			texture = Texture.EMPTY;
-		}
-
-		emit("graphicschanged");
-	}
-
-	private function onError() : Void {
-		renderable = false;
-		removeTextureFromCache(texture);
-		loaded = false;
-
-		texture = Texture.EMPTY;
-		errorFn("Can not load " + url);
-	}
-
-	private function onLoaded() : Void {
-		try {
-			metricsFn(texture.width, texture.height);
-
-			emit("graphicschanged");
-			renderable = true;
-			loaded = true;
-		} catch (e : Dynamic) {
-			if (parent != null && retries < 2) {
-				loadTexture();
-			} else {
-				onError();
-			}
-		};
-	}
-
-	private function loadTexture() : Void {
-		retries++;
-		texture = Texture.fromImage(url);
-		pushTextureToCache(texture);
-
-		if (texture.baseTexture == null) {
-			onError();
-		} else {
-			if (texture.baseTexture.hasLoaded) {
-				onLoaded();
-			}
-
-			texture.baseTexture.on("loaded", onLoaded);
-			texture.baseTexture.on("error", onError);
-			texture.baseTexture.on("dispose", onDispose);
-		}
-	}
-
-	public override function addChild<T:DisplayObject>(child : T) : T {
-		var addedChild = super.addChild(child);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
-		var addedChild = super.addChildAt(child, index);
-
-		if (addedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return addedChild;
-	}
-
-	public override function removeChild(child : DisplayObject) : DisplayObject {
-		var removedChild = super.removeChild(child);
-
-		if (removedChild != null) {
-			emit("childrenchanged");
-		}
-
-		return removedChild;
-	}
-
-	public function setClipX(x : Float) : Void {
-		if (this.x != x) {
-			var previousX = this.x;
-			this.x = x;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipY(y : Float) : Void {
-		if (this.y != y) {
-			var previousY = this.y;
-			this.y = y;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleX(scale : Float) : Void {
-		if (this.scale.x != scale) {
-			var previousScaleX = this.scale.x;
-			this.scale.x = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipScaleY(scale : Float) : Void {
-		if (this.scale.y != scale) {
-			var previousScaleY = this.scale.y;
-			this.scale.y = scale;
-
-			emit("transformchanged");
-		}
-	}
-
-	public function setClipRotation(rotation : Float) : Void {
-		if (this.rotation != rotation) {
-			this.rotation = rotation;
-
-			emit("transformchanged");
-		}
-	}
-
-	// setScrollRect cancels setClipMask and vice versa
-	public function setScrollRect(left : Float, top : Float, width : Float, height : Float) : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x * 2 - left);
-			setClipY(y + scrollRect.y * 2 - top);
-
-			scrollRect.clear();
-		} else {
-			setClipX(x - left);
-			setClipY(y - top);
-
-			scrollRect = new FlowGraphics();
-			addChild(scrollRect);
-			setClipMask(scrollRect);
-		}
-
-		scrollRect.beginFill(0xFFFFFF);
-		scrollRect.drawRect(0.0, 0.0, width, height);
-		scrollRect.endFill();
-
-		scrollRect.setClipX(left);
-		scrollRect.setClipY(top);
-	}
-
-	private function removeScrollRect() : Void {
-		if (scrollRect != null) {
-			setClipX(x + scrollRect.x);
-			setClipY(y + scrollRect.y);
-
-			removeChild(scrollRect);
-			scrollRect = null;
-		}
-	}
-
-	// setClipMask cancels setScrollRect and vice versa
-	public function setClipMask(maskContainer : Dynamic) : Void {
-		if (maskContainer != scrollRect) removeScrollRect();
-		mask = null;
-
-		if (RenderSupportJSPixi.RendererType == "webgl") {
-			mask = FlowContainer.getFirstGraphicsOrSprite(maskContainer);
-			if (mask == null) {
-				maskContainer.visible = false;
-			}
-		} else {
-			alphaMask = null;
-
-			// If it's one Graphics, use clip mask; otherwise use alpha mask
-			var obj : Dynamic = maskContainer;
-			while (obj.children != null && obj.children.length == 1)
-				obj = obj.children[0];
-
-			if (untyped __instanceof__(obj, FlowGraphics)) {
-				mask = obj;
-			} else {
-				alphaMask = maskContainer;
-			}
-		}
-
-		if (mask != null) {
-			mask.once("removed", function () { mask = null; });
-		}
-		maskContainer.once("childrenchanged", function () { setClipMask(maskContainer); });
-		emit("graphicschanged");
-	}
-}
-
 private class NativeWidgetClip extends FlowContainer {
 	private var nativeWidget : Dynamic;
 	private var parentNode : Dynamic;
@@ -3524,19 +3185,22 @@ private class NativeWidgetClip extends FlowContainer {
 
 	public function updateNativeWidget() {
 		// Set actual HTML node metrics, opacity etc.
-		if (worldVisible) {
+		if (getClipVisible()) {
 			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
+
+			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
+			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
 
 			if (Platform.isIE) {
 				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
 					+ 0 + "," + 0 + ")";
 
-				nativeWidget.style.left = untyped "" + transform.tx + "px";
-				nativeWidget.style.top = untyped "" + transform.ty + "px";
+				nativeWidget.style.left = untyped "" + tx + "px";
+				nativeWidget.style.top = untyped "" + ty + "px";
 			} else {
 				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-					+ transform.tx + "," + transform.ty + ")";
+					+ tx + "," + ty + ")";
 			}
 
 			nativeWidget.style.width = untyped "" + getWidth() + "px";
@@ -3544,9 +3208,9 @@ private class NativeWidgetClip extends FlowContainer {
 
 			nativeWidget.style.opacity = worldAlpha;
 			nativeWidget.style.display = "block";
-		} else {
+		}/* else if (!getClipWorldVisible()) {
 			nativeWidget.style.display = "none";
-		}
+		}*/
 	}
 
 	private function addNativeWidget() : Void {
@@ -3626,13 +3290,16 @@ private class VideoClip extends FlowContainer {
 	private var playFn : Bool -> Void;
 	private var durationFn : Float -> Void;
 	private var positionFn : Float -> Void;
+	private var streamStatusListener : Array<String -> Void> = new Array<String -> Void>();
 
 	private var startTime : Float = 0;
 	private var endTime : Float = 0;
 
 	private var videoSprite : Sprite;
+	private var videoTexture : Texture;
 	private var fontFamily : String = '';
 	private var textField : TextField;
+	private var loaded : Bool = false;
 
 	private static var playingVideos : Int = 0;
 
@@ -3643,53 +3310,13 @@ private class VideoClip extends FlowContainer {
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
 		super();
 
-		var video_texture : Dynamic = Texture.fromVideoUrl("");
-		video_texture.baseTexture.autoPlay = false;
-		videoSprite = new Sprite(video_texture);
-		addChild(videoSprite);
-		nativeWidget = videoSprite.texture.baseTexture.source;
-		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
-		once("removed", deleteVideoClip);
-
 		this.metricsFn = metricsFn;
 		this.playFn = playFn;
 		this.durationFn = durationFn;
 		this.positionFn = positionFn;
-
-		nativeWidget.addEventListener('loadedmetadata', metadataLoadedHandler, false);
-		nativeWidget.addEventListener("ended", endedVideo);
-		if (Platform.isIOS) {
-			nativeWidget.addEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
-			nativeWidget.addEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
-		}
-
-		nativeWidget.addEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
-		nativeWidget.addEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
-		nativeWidget.addEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
 	}
 
-	private function metadataLoadedHandler() {
-		durationFn(nativeWidget.duration);
-
-		nativeWidget.width = nativeWidget.videoWidth;
-		nativeWidget.height = nativeWidget.videoHeight;
-		metricsFn(nativeWidget.width / RenderSupportJSPixi.backingStoreRatio, nativeWidget.height / RenderSupportJSPixi.backingStoreRatio);
-
-		checkTimeRange(nativeWidget.currentTime, true);
-
-		RenderSupportJSPixi.InvalidateStage(); // Update the widget
-
-		if (!nativeWidget.autoplay) nativeWidget.pause();
-
-		if (textField != null) {
-			swapChildren(videoSprite, textField);
-			updateSubtitlesClip();
-		};
-	}
-
-	private var tempAnchor : Dynamic;
-
-	private function determineCrossOrigin(url : String) {
+	private static inline function determineCrossOrigin(url : String) {
 		// data: and javascript: urls are considered same-origin
 		if (url.indexOf('data:') == 0)
 			return '';
@@ -3697,16 +3324,16 @@ private class VideoClip extends FlowContainer {
 		// default is window.location
 		var loc = Browser.window.location;
 
-		if (!tempAnchor)
-			tempAnchor = Browser.document.createElement('a');
+		var tempAnchor : Dynamic = Browser.document.createElement('a');
 
 		tempAnchor.href = url;
 
 		var samePort = (!tempAnchor.port && loc.port == '') || (tempAnchor.port == loc.port);
 
 		// if cross origin
-		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol)
+		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol) {
 			return 'anonymous';
+		}
 
 		return '';
 	}
@@ -3736,43 +3363,67 @@ private class VideoClip extends FlowContainer {
 				nativeWidget.currentTime = currentTime;
 			}
 		} catch (e : Dynamic) {}
+
+		if (videoTexture != null) {
+			untyped videoTexture.baseTexture.update();
+		}
+	}
+
+	private function createVideoClip(filename : String, startPaused : Bool) : Void {
+		deleteVideoClip();
+
+		nativeWidget = Browser.document.createElement("video");
+		nativeWidget.crossorigin = determineCrossOrigin(filename);
+		nativeWidget.autoplay = !startPaused;
+		nativeWidget.src = filename;
+
+		if (nativeWidget.autoplay) {
+			playingVideos++;
+		}
+
+		videoTexture = Texture.fromVideo(nativeWidget);
+		untyped videoTexture.baseTexture.autoPlay = !startPaused;
+		untyped videoTexture.baseTexture.autoUpdate = false;
+		videoSprite = new Sprite(videoTexture);
+		addChild(videoSprite);
+
+		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
+		once("removed", deleteVideoClip);
+
+		createStreamStatusListeners();
+		createFullScreenListeners();
 	}
 
 	private function deleteVideoClip() : Void {
-		nativeWidget.autoplay = false;
-		pauseVideo();
-
-		// Force video unload
-		nativeWidget.removeAttribute('src');
-		nativeWidget.load();
-
-		RenderSupportJSPixi.PixiStage.off("drawframe", updateNativeWidget);
-
-		deleteVideoSprite();
-		deleteSubtitlesClip();
-
-		nativeWidget.removeEventListener('loadedmetadata', metadataLoadedHandler);
-		nativeWidget.removeEventListener('ended', endedVideo);
-
-		if (Platform.isIOS) {
-			nativeWidget.removeEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger);
-			nativeWidget.removeEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger);
-		}
-
-		nativeWidget.removeEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
-		nativeWidget.removeEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
-		nativeWidget.removeEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
-
 		if (nativeWidget != null) {
-			var parentNode = nativeWidget.parentNode;
+			nativeWidget.autoplay = false;
+			pauseVideo();
 
-			if (parentNode != null) {
-				parentNode.removeChild(nativeWidget);
+			// Force video unload
+			nativeWidget.removeAttribute('src');
+			nativeWidget.load();
+
+			RenderSupportJSPixi.PixiStage.off("drawframe", updateNativeWidget);
+
+			deleteVideoSprite();
+			deleteSubtitlesClip();
+
+			destroyStreamStatusListeners();
+			destroyFullScreenListeners();
+
+			if (nativeWidget != null) {
+				var parentNode = nativeWidget.parentNode;
+
+				if (parentNode != null) {
+					parentNode.removeChild(nativeWidget);
+				}
+
+				untyped __js__("delete nativeWidget");
+				nativeWidget = null;
 			}
-
-			untyped __js__("delete nativeWidget");
-			nativeWidget = null;
 		}
+
+		loaded = false;
 	}
 
 	public function getDescription() : String {
@@ -3792,14 +3443,7 @@ private class VideoClip extends FlowContainer {
 	}
 
 	public function playVideo(filename : String, startPaused : Bool) : Void {
-		if (nativeWidget != null) {
-			nativeWidget.autoplay = !startPaused;
-			if(nativeWidget.autoplay) {
-				playingVideos++;
-			}
-			nativeWidget.src = filename;
-			nativeWidget.crossorigin = determineCrossOrigin(filename);
-		}
+		createVideoClip(filename, startPaused);
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
@@ -3862,7 +3506,14 @@ private class VideoClip extends FlowContainer {
 		if (videoSprite != null) {
 			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
 			removeChild(videoSprite);
+			untyped __js__("delete this.videoSprite");
 			videoSprite = null;
+		}
+
+		if (videoTexture != null) {
+			videoTexture.destroy(true);
+			untyped __js__("delete this.videoTexture");
+			videoTexture = null;
 		}
 	}
 
@@ -3871,47 +3522,125 @@ private class VideoClip extends FlowContainer {
 	}
 
 	public function pauseVideo() : Void {
-		if (nativeWidget != null && !nativeWidget.paused) {
+		if (loaded && !nativeWidget.paused) {
 		 	nativeWidget.pause();
 			playingVideos--;
 		}
 	}
 
 	public function resumeVideo() : Void {
-		if (nativeWidget != null && nativeWidget.paused) {
+		if (loaded && nativeWidget.paused) {
 			nativeWidget.play();
 			playingVideos++;
 		}
 	}
 
-	public function endedVideo() : Void {
+	private function onMetadataLoaded() {
+		durationFn(nativeWidget.duration);
+
+		nativeWidget.width = nativeWidget.videoWidth;
+		nativeWidget.height = nativeWidget.videoHeight;
+		metricsFn(nativeWidget.width / RenderSupportJSPixi.backingStoreRatio, nativeWidget.height / RenderSupportJSPixi.backingStoreRatio);
+
+		checkTimeRange(nativeWidget.currentTime, true);
+
+		RenderSupportJSPixi.InvalidateStage(); // Update the widget
+
+		if (!nativeWidget.autoplay) nativeWidget.pause();
+
+		if (textField != null) {
+			swapChildren(videoSprite, textField);
+			updateSubtitlesClip();
+		};
+
+		loaded = true;
+	}
+
+	private function onStreamLoaded() : Void {
+		streamStatusListener.map(function (l) { l("NetStream.Play.Start"); });
+	}
+
+	private function onStreamEnded() : Void {
 		if (!nativeWidget.autoplay) {
 			playingVideos--;
 		}
+
+		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });
 	}
+
+	private function onStreamError() : Void {
+		streamStatusListener.map(function (l) { l("NetStream.Play.StreamNotFound"); });
+	}
+
+	private function onStreamPlay() : Void {
+		if (nativeWidget != null && !nativeWidget.paused) {
+			streamStatusListener.map(function (l) { l("FlowGL.User.Resume"); });
+
+			playFn(true);
+		}
+	}
+
+	private function onStreamPause() : Void {
+		if (nativeWidget != null && nativeWidget.paused) {
+			streamStatusListener.map(function (l) { l("FlowGL.User.Pause"); });
+
+			playFn(false);
+		}
+	}
+
 
 	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
-		var on_start = function() { fn("NetStream.Play.Start"); };
-		var on_stop = function() { fn("NetStream.Play.Stop"); };
-		var on_not_found = function() { fn("NetStream.Play.StreamNotFound"); };
-		var on_resume = function() { if (nativeWidget != null && !nativeWidget.paused) { fn("FlowGL.User.Resume"); playFn(true); } };
-		var on_pause = function() { if (nativeWidget != null && nativeWidget.paused) { fn("FlowGL.User.Pause"); playFn(false); } };
-
-		nativeWidget.addEventListener("loadeddata", on_start);
-		nativeWidget.addEventListener("ended", on_stop);
-		nativeWidget.addEventListener("error", on_not_found);
-		nativeWidget.addEventListener("play", on_resume);
-		nativeWidget.addEventListener("pause", on_pause);
-
-		return function() if (nativeWidget != null) {
-			nativeWidget.removeEventListener("loadeddata", on_start);
-			nativeWidget.removeEventListener("ended", on_stop);
-			nativeWidget.removeEventListener("error", on_not_found);
-			nativeWidget.removeEventListener("play", on_resume);
-			nativeWidget.removeEventListener("pause", on_pause);
-		};
+		streamStatusListener.push(fn);
+		return function () { streamStatusListener.remove(fn); };
 	}
 
+	private function createStreamStatusListeners() {
+		if (nativeWidget != null) {
+			nativeWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
+			nativeWidget.addEventListener("loadeddata", onStreamLoaded, false);
+			nativeWidget.addEventListener("ended", onStreamEnded, false);
+			nativeWidget.addEventListener("error", onStreamError, false);
+			nativeWidget.addEventListener("play", onStreamPlay, false);
+			nativeWidget.addEventListener("pause", onStreamPause, false);
+		}
+	}
+
+	private function destroyStreamStatusListeners() {
+		if (nativeWidget != null) {
+			nativeWidget.removeEventListener('loadedmetadata', onMetadataLoaded);
+			nativeWidget.removeEventListener("loadeddata", onStreamLoaded);
+			nativeWidget.removeEventListener("ended", onStreamEnded);
+			nativeWidget.removeEventListener("error", onStreamError);
+			nativeWidget.removeEventListener("play", onStreamPlay);
+			nativeWidget.removeEventListener("pause", onStreamPause);
+		}
+	}
+
+	private function createFullScreenListeners() {
+		if (nativeWidget != null) {
+			if (Platform.isIOS) {
+				nativeWidget.addEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
+				nativeWidget.addEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
+			}
+
+			nativeWidget.addEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
+			nativeWidget.addEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
+			nativeWidget.addEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
+		}
+	}
+
+	private function destroyFullScreenListeners() {
+		if (nativeWidget != null) {
+			if (Platform.isIOS) {
+				nativeWidget.removeEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger);
+				nativeWidget.removeEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger);
+			}
+
+			nativeWidget.removeEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
+			nativeWidget.removeEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
+			nativeWidget.removeEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
+		}
+	}
 }
 
 private class WebClip extends NativeWidgetClip {
@@ -4017,7 +3746,7 @@ private class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyShrinkToFit() {
-		if (worldVisible && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
+		if (getClipVisible() && nativeWidget != null && iframe != null && shrinkToFit && htmlPageHeight != null && htmlPageWidth != null) {
 			var scaleH = nativeWidget.clientHeight / this.htmlPageHeight;
 			var scaleW = nativeWidget.clientWidth / this.htmlPageWidth;
 			var scaleWH = Math.min(1.0, Math.min(scaleH, scaleW));
@@ -4043,7 +3772,7 @@ private class WebClip extends NativeWidgetClip {
 	}
 
 	private function applyNativeWidgetSize() {
-		if (worldVisible && nativeWidget != null && iframe != null) {
+		if (getClipVisible() && nativeWidget != null && iframe != null) {
 			// Explicitly set w/h (for iOS at least it does not work with "100%")
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
@@ -4052,19 +3781,22 @@ private class WebClip extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidget() {
-		if (worldVisible) {
+		if (getClipVisible()) {
 			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
+
+			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
+			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
 
 			if (Platform.isIE) {
 				nativeWidget.style.transform = "matrix(" + 1 + "," + transform.b + "," + transform.c + "," + 1 + ","
 					+ 0 + "," + 0 + ")";
 
-				nativeWidget.style.left = untyped "" + transform.tx + "px";
-				nativeWidget.style.top = untyped "" + transform.ty + "px";
+				nativeWidget.style.left = untyped "" + tx + "px";
+				nativeWidget.style.top = untyped "" + ty + "px";
 			} else {
 				nativeWidget.style.transform = "matrix(" + 1 + "," + transform.b + "," + transform.c + "," + 1 + ","
-					+ transform.tx + "," + transform.ty + ")";
+					+ tx + "," + ty + ")";
 			}
 
 			nativeWidget.style.width = untyped "" + getWidth() * transform.a + "px";
@@ -4081,7 +3813,7 @@ private class WebClip extends NativeWidgetClip {
 			nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
 		}
 
-		if (worldVisible) {
+		if (getClipVisible()) {
 			if (this.shrinkToFit) {
 				applyShrinkToFit();
 			} else {
@@ -4177,7 +3909,7 @@ private class TextField extends NativeWidgetClip {
 	private var selectionStart : Int = -1;
 	private var selectionEnd : Int = -1;
 
-	private var background : Graphics = null;
+	private var background : FlowGraphics = null;
 
 	private var shouldPreventFromFocus : Bool = false;
 	public var shouldPreventFromBlur : Bool = false;
@@ -4220,39 +3952,22 @@ private class TextField extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidget() {
-		if (worldVisible) {
-			// if (nativeWidget.parentNode.style.transform != "") {
-			// 	var parentTransform = ~/((matrix\()|(, )|(\)))/g.split(nativeWidget.parentNode.style.transform).splice(1, 6).map(Std.parseFloat);
-
-			// 	nativeWidget.style.transform = "matrix("
-			// 		+ ((worldTransform.a / parentTransform[0]) + (worldTransform.c / parentTransform[1])) + ","
-			// 		+ ((worldTransform.b / parentTransform[0]) + (worldTransform.d / parentTransform[1])) + ","
-			// 		+ ((worldTransform.a / parentTransform[2]) + (worldTransform.c / parentTransform[3])) + ","
-			// 		+ ((worldTransform.b / parentTransform[2]) + (worldTransform.d / parentTransform[3])) + ","
-			// 		+ (worldTransform.tx - (parentTransform[4] * worldTransform.a) - (parentTransform[5] * worldTransform.c)) + ","
-			// 		+ (worldTransform.ty - (parentTransform[4] * worldTransform.b) - (parentTransform[5] * worldTransform.d)) + ")";
-			// } else {
-			// 	nativeWidget.style.transform = "matrix("
-			// 		+ worldTransform.a + ","
-			// 		+ worldTransform.b + ","
-			// 		+ worldTransform.c + ","
-			// 		+ worldTransform.d + ","
-			// 		+ worldTransform.tx + ","
-			// 		+ worldTransform.ty + ")";
-			// }
-
+		if (getClipVisible()) {
 			var transform = !Platform.isIE && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
+
+			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
+			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
 
 			if (Platform.isIE) {
 				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
 					+ 0 + "," + 0 + ")";
 
-				nativeWidget.style.left = untyped "" + worldTransform.tx + "px";
-				nativeWidget.style.top = untyped "" + worldTransform.ty + "px";
+				nativeWidget.style.left = untyped "" + tx + "px";
+				nativeWidget.style.top = untyped "" + ty + "px";
 			} else {
 				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-					+ transform.tx + "," + transform.ty + ")";
+					+ tx + "," + ty + ")";
 			}
 
 			nativeWidget.style.width = untyped "" + getWidth() + "px";
@@ -4340,8 +4055,6 @@ private class TextField extends NativeWidgetClip {
 
 			layoutText();
 		}
-
-		emit("graphicschanged");
 	}
 
 	private function layoutText() : Void {
@@ -4500,7 +4213,6 @@ private class TextField extends NativeWidgetClip {
 			background = new FlowGraphics();
 			background.beginFill(backgroundColor, backgroundOpacity);
 			background.drawRect(0.0, 0.0, text_bounds.width, text_bounds.height);
-			background.endFill();
 
 			addChildAt(background, 0);
 		} else {
@@ -4682,7 +4394,7 @@ private class TextField extends NativeWidgetClip {
 
 			emit("focus");
 			if (parent != null) {
-				RenderSupportJSPixi.emitEvent(parent, "childfocused", this);
+				parent.emitEvent("childfocused", this);
 			}
 			updateNativeWidgetStyle();
 		}
@@ -4977,15 +4689,29 @@ private class PixiText extends TextField {
 
 		on("removed", function () {
 			if (textClip != null) {
-				try {
+				destroyTextClipChildren();
+
+				if (textClip.canvas != null && Browser.document.body.contains(textClip.canvas)) {
 					Browser.document.body.removeChild(textClip.canvas);
-				} catch (e : Dynamic) {};
+				}
 
 				removeChild(textClip);
 				textClip.destroy({ children: true, texture: true, baseTexture: true });
+				untyped __js__("delete this.textClip");
 				textClip = null;
 			}
 		});
+	}
+
+	private inline function destroyTextClipChildren() {
+		for (clip in textClip.children) {
+			if (untyped clip.canvas != null && Browser.document.body.contains(untyped clip.canvas)) {
+				Browser.document.body.removeChild(untyped clip.canvas);
+			}
+
+			textClip.removeChild(clip);
+			clip.destroy({ children: true, texture: true, baseTexture: true });
+		}
 	}
 
 	private inline function invalidateMetrics() {
@@ -5016,15 +4742,6 @@ private class PixiText extends TextField {
 		var from_flow_style : FontStyle = FlowFontStyle.fromFlowFont(fontfamily);
 		var fontStyle = fontslope != "" ? fontslope : from_flow_style.style;
 
-		var workaroundPadding = fontsize / 16.0 * (if (letterspacing != 0.0)
-			16.0;
-		else if (fontStyle != "normal")
-			4.0;
-		else if (fontfamily == "MS Gothic" || fontfamily == "Book" || fontfamily == "Medium" || StringTools.startsWith(fontfamily, "Proxima"))
-			2.0;
-		else
-			0.0);
-
 		style =
 			{
 				fontSize : textScaleFactor * (fontsize < 0.6 ? 0.6 : fontsize), // pixi crashes when size < 0.6
@@ -5032,28 +4749,13 @@ private class PixiText extends TextField {
 				letterSpacing : letterspacing,
 				fontFamily : from_flow_style.family,
 				fontWeight : fontweight != 400 ? "" + fontweight : from_flow_style.weight,
-				fontStyle : fontStyle,
-				padding : workaroundPadding // Pixi crops some fonts, so padding is required as workaround
+				fontStyle : fontStyle
 			};
+
+		metrics = untyped pixi.core.text.TextMetrics.measureFont(new pixi.core.text.TextStyle(style).toFontString());
 
 		if (interlineSpacing != 0) {
 			style.lineHeight = style.fontSize * 1.1 + interlineSpacing;
-		}
-
-		metrics = DFontText.getDFontInfo(fontfamily);
-
-		if (metrics != null) {
-			// Workaround to set the pixi font metrics cache before it computes itself, done by pixi based
-			// on rendered characters, and, thus, is less precise than providing the metrics directly
-			// (if we happen to have it available from the dfont)
-			// Note the 'PIXI.Text.fontPropertiesCache' is not part of the exposed PIXI api, but we are
-			// setting it here so we don't have to modify PIXI itself
-			var pixi_font_metrics = {
-				ascent: metrics.ascender * style.fontSize,
-				descent: -metrics.descender * style.fontSize,
-				fontSize: (metrics.ascender - metrics.descender) * style.fontSize
-			}
-			untyped __js__ ('PIXI.Text.fontPropertiesCache[{0}] = {1}', Text.getFontStyle(style), pixi_font_metrics);
 		}
 
 		super.setTextAndStyle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
@@ -5065,6 +4767,8 @@ private class PixiText extends TextField {
 		var widthDelta = 0.0;
 
 		makeTextClip(text, style);
+
+		textClip.x = -letterSpacing;
 
 		if ((style.align == "center" || style.align == "right") && fieldWidth > 0) {
 			if (clipWidth < fieldWidth) {
@@ -5160,44 +4864,74 @@ private class PixiText extends TextField {
 	}
 
 	private function updateClipMetrics() {
-		var metrics = getTextClipMetrics(textClip);
+		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		emit("metricschanged");
-
-		clipWidth = metrics.width / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing, 0) / textScaleFactor;
 		clipHeight = metrics.height / textScaleFactor;
+	}
+
+	private static function checkTextLength(text : String) : Array<Array<String>> {
+		var textSplit = text.split('\n');
+
+		if (textSplit.filter(function (t) { return t.length > 1000; }).length > 0) {
+			return textSplit.map(function (t) { return t.length > 1000 ? splitString(t) : [t]; });
+		} else {
+			return [[text]];
+		}
+	}
+
+	private static function splitString(text : String) : Array<String> {
+		return text.length > 1000 ? [text.substr(0, 1000)].concat(splitString(text.substr(1000))) :
+			text.length > 0 ? [text] : [];
 	}
 
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
 			text = TextField.getBulletsString(text.length);
+		var texts = checkTextLength(text);
 
 		if (textClip == null) {
-			textClip = new Text(text, style);
+			textClip = createTextClip(texts[0][0], style);
+		}
 
-			textClip.scale.x = 1 / textScaleFactor;
-			textClip.scale.y = 1 / textScaleFactor;
+		if (metricsChanged) {
+			textClip.text = bidiDecorate(texts[0][0]);
+			textClip.style = style;
 
-			// The default font smoothing on webkit (-webkit-font-smoothing = subpixel-antialiased),
-			// makes the text bolder when light text is placed on a dark background.
-			// "antialised" produces a lighter text, which is what we want.
-			// Moreover, the css style only has any effect when the canvas element
-			// is part of the DOM, so we attach the underlying PIXI canvas backend
-			// and make it invisible.
-			// On Firefox, the equivalent css property (-moz-osx-font-smoothing = grayscale) seems to
-			// have no effect on the canvas element.
-			if (RenderSupportJSPixi.AntialiasFont && (Platform.isChrome || Platform.isSafari)) {
-				untyped textClip.canvas.style.webkitFontSmoothing = "antialiased";
-				textClip.canvas.style.display = "none";
-				Browser.document.body.appendChild(textClip.canvas);
+			if (text == "") {
+				removeChild(textClip);
+			} else {
+				addChild(textClip);
 			}
 
-			addChild(textClip);
+			destroyTextClipChildren();
 
-			updateClipMetrics();
-		} else if (metricsChanged) {
-			textClip.text = bidiDecorate(text);
-			textClip.style = style;
+			if (texts.length > 1 || texts[0].length > 1) {
+				var currentHeight = 0.0;
+
+				for (line in texts) {
+					var currentWidth = 0.0;
+					var lineHeight = 0.0;
+
+					for (txt in line) {
+						if (txt == texts[0][0]) {
+							currentWidth = textClip.getLocalBounds().width;
+							lineHeight = textClip.getLocalBounds().height;
+						} else {
+							var newTextClip = createTextClip(txt, style);
+							newTextClip.x = currentWidth;
+							newTextClip.y = currentHeight;
+
+							textClip.addChild(newTextClip);
+
+							currentWidth += newTextClip.getLocalBounds().width;
+							lineHeight = Math.max(lineHeight, newTextClip.getLocalBounds().height);
+						}
+					}
+
+					currentHeight += lineHeight;
+				}
+			}
 
 			updateClipMetrics();
 		}
@@ -5221,6 +4955,30 @@ private class PixiText extends TextField {
 		return textClip;
 	}
 
+	private function createTextClip(text : String, style : Dynamic) : Text {
+		var textClip = new Text(text, style);
+		untyped textClip._visible = true;
+
+		textClip.scale.x = 1 / textScaleFactor;
+		textClip.scale.y = 1 / textScaleFactor;
+
+		// The default font smoothing on webkit (-webkit-font-smoothing = subpixel-antialiased),
+		// makes the text bolder when light text is placed on a dark background.
+		// "antialised" produces a lighter text, which is what we want.
+		// Moreover, the css style only has any effect when the canvas element
+		// is part of the DOM, so we attach the underlying PIXI canvas backend
+		// and make it invisible.
+		// On Firefox, the equivalent css property (-moz-osx-font-smoothing = grayscale) seems to
+		// have no effect on the canvas element.
+		if (RenderSupportJSPixi.AntialiasFont && (Platform.isChrome || Platform.isSafari)) {
+			untyped textClip.canvas.style.webkitFontSmoothing = "antialiased";
+			textClip.canvas.style.display = "none";
+			Browser.document.body.appendChild(textClip.canvas);
+		}
+
+		return textClip;
+	}
+
 	private override function getTextClipMetrics(clip : Dynamic) : Dynamic {
 		return pixi.core.text.TextMetrics.measureText(clip.text, clip.style);
 	}
@@ -5229,7 +4987,7 @@ private class PixiText extends TextField {
 		if (metrics == null) {
 			return super.getTextMetrics();
 		} else {
-			return [metrics.ascender * fontSize, metrics.descender * fontSize, 0.15 * fontSize];
+			return [metrics.ascent, metrics.descent, metrics.descent];
 		}
 	}
 }
@@ -5441,12 +5199,12 @@ private class DebugClipsTree {
 	}
 
 	var UpdateTimer : haxe.Timer = null;
-	public function updateTree(stage : Container) : Void {
+	public function updateTree(stage : FlowContainer) : Void {
 		if (UpdateTimer != null) UpdateTimer.stop();
 		UpdateTimer = haxe.Timer.delay(function() { doUpdateTree(stage); }, 1000);
 	}
 
-	private function doUpdateTree(stage : Container) : Void {
+	private function doUpdateTree(stage : FlowContainer) : Void {
 		clearTree();
 		addItem(TreeDiv, stage);
 	}
@@ -5513,7 +5271,7 @@ private class DebugClipsTree {
 		description.style.display = "inline";
 
 		description.innerHTML = getClipDescription(item);
-		if (item.worldVisible) {
+		if (cast(item, DisplayObject).getClipVisible()) {
 			description.style.color = "#303030";
 		} else {
 			description.style.color = "#DDDDDD";

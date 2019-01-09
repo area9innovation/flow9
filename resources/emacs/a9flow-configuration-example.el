@@ -15,7 +15,7 @@
 
 ;; Configure project list:
 ;;   (setq a9flow-projects
-;;         '(("smartbuilder" "smartbuilder/smartbuilder.flow" ("--swf smartbuilder.swf" "--debug")))
+;;         '(("program" "program/program.flow" ("--js program.js" "--debug")))
 ;;   First element is a project name (you will enter it when you compile a project)
 ;;   Second element is an input file relative path
 ;;   Third one - argument list
