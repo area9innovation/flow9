@@ -4768,6 +4768,8 @@ private class PixiText extends TextField {
 
 		makeTextClip(text, style);
 
+		textClip.x = -letterSpacing;
+
 		if ((style.align == "center" || style.align == "right") && fieldWidth > 0) {
 			if (clipWidth < fieldWidth) {
 				widthDelta = fieldWidth - clipWidth;
@@ -4864,7 +4866,7 @@ private class PixiText extends TextField {
 	private function updateClipMetrics() {
 		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		clipWidth = metrics.width / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing, 0) / textScaleFactor;
 		clipHeight = metrics.height / textScaleFactor;
 	}
 
