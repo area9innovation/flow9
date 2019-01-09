@@ -9,7 +9,7 @@ class SwfRunner {
 		msg += "Stack trace:\n";
 		msg += Assert.callStackToString(haxe.CallStack.exceptionStack());
 
-		var http = new haxe.Http("smartbuilder/php/debug.php");
+		var http = new haxe.Http("php/debug.php");
 		http.setParameter("operation", "save_log");
 		http.setParameter("value", msg);
 		http.request(true);

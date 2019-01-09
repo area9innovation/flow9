@@ -48,7 +48,10 @@ Compile and run the first program:
 
     c:/flow9> flowcpp demos/demos.flow
 
-See `lib/demos/demos.flow` to read the code for this example.
+If this does not work, make sure you have [Git LFS](https://git-lfs.github.com) installed. 
+You have to reclone the flow9 repository after installing Git LFS.
+
+See `demos/demos.flow` to read the code for this example.
 
 See `doc/index.html` for further documentation about the language and platform.
 
@@ -74,7 +77,7 @@ Tooling
 - Profiler for time, instructions, memory, garbage collection
 - JIT (just-in-time) compiler for x64, interpreter for ARM and others
 - Compiles to C++ and Java for performance-critical code, typically server side
-- Visual Code, Sublimte Text, Kate & Emacs integrations with syntax coloring, find def. etc
+- Visual Code, Sublime Text, Kate & Emacs integrations with syntax coloring, find def. etc
 - Mature PEG parser generator. See doc/lingo.html
 
 Folders
@@ -82,6 +85,7 @@ Folders
 
 - bin - binaries for the compiler and related tools
 - debug - code for the debugger and profiler
+- demos - a demo program showing how the UI library can be used
 - doc - documentation of the language and libraries
 - lib - the flow standard library
 - QtByteRunner - the bytecode runner used on Windows, Mac, Linux
@@ -117,4 +121,3 @@ History
 - November 2016: JIT for x64 was added
 - May 2018: Self-hosted compiler written in flow itself
 - 2019: Initial open source release
-

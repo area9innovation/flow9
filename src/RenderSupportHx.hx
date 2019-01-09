@@ -2,7 +2,6 @@
 import js.Browser;
 import FlowFontStyle;
 import RenderSupportJSPixi;
-import RenderSupportJSPixiNew;
 #end
 
 #if js
@@ -66,8 +65,6 @@ class RenderSupportHx {
 	public static function __init__() {
 		if (Util.getParameter("oldjs") == "1") {
 			oldinit();
-		} else if (Util.getParameter("newjs") == "1") {
-			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixiNew");
 		} else {
 			untyped __js__ ("window.RenderSupportHx = window.RenderSupportJSPixi");
 		}
@@ -150,28 +147,9 @@ class RenderSupportHx {
 		#elseif flash
 
 		builtinFonts = new Map();
-		builtinFonts.set("Book", true);
-		builtinFonts.set("Italic", true);
-		builtinFonts.set("Demi", true);
-		builtinFonts.set("Medium", true);
-		builtinFonts.set("MediumItalic", true);
-		builtinFonts.set("Condensed", true);
-		builtinFonts.set("DejaVuSans", true);
-		builtinFonts.set("DejaVuSansOblique", true);
-		builtinFonts.set("DejaVuSerif", true);
-		builtinFonts.set("FeltTipRoman", true);
-		builtinFonts.set("Minion", true);
-		builtinFonts.set("MinionItalics", true);
-		builtinFonts.set("MHEelemsansRegular", true);
-		builtinFonts.set("NotoSansMinimal", true);
-		builtinFonts.set("ProximaSemiBold", true);
-		builtinFonts.set("ProximaExtraBold", true);
-		builtinFonts.set("ProximaSemiItalic", true);
-		builtinFonts.set("ProximaExtraItalic", true);
-		builtinFonts.set("GothamBold", true);
-		builtinFonts.set("GothamBook", true);
-		builtinFonts.set("GothamBookItalic", true);
-		builtinFonts.set("GothamHTFBook", true);
+		builtinFonts.set("Roboto", true);
+		builtinFonts.set("RobotoMedium", true);
+		builtinFonts.set("MaterialIcons", true);
 
 		// Check if we have a resource with the font names. If so, register all of those
 		var fonts = haxe.Resource.getString("fontnames");
@@ -192,7 +170,7 @@ class RenderSupportHx {
 			flash.external.ExternalInterface.addCallback("onJsScroll", onJsScroll);
 		}
 
-		getStage().stageFocusRect = false;	// That should fix http://process.area9.dk/cases/default.asp?19760
+		getStage().stageFocusRect = false;
 
 		WebClipListeners = new Array<Dynamic>();
 		updateBrowserZoom();

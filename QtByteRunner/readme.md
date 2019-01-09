@@ -248,8 +248,7 @@ Running on Mac
 2) Getting such messages:
     localhost:3306
     Exception:Can't connect to local MySQL server through socket '/tmp/mysql.sock' (2) QMYSQL: Unable to connect
-    -Change "localhost" to "127.0.0.1" in the code which tries to connect. flowapps/smartbuilder/reports/mysqlhosts.flow
-      is a good bet, especially if you trying to launch reports.
+    -Change "localhost" to "127.0.0.1" in the code which tries to connect.
     -3306 is for local DB. Usually connection to servers requires using a tunnel and port forwarding, so check that as well (usually we use 3307 for port forwarding).
 
 3) Getting such messages:

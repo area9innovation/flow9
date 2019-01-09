@@ -357,7 +357,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
     if ([absolute_url hasPrefix: @"file://"])
         return YES;
     
-    if ([self isFlowAppURL: request.URL]) { // Start another flow app via URL like learnsmart://?...
+    if ([self isFlowAppURL: request.URL]) { // Start another flow app via URL like app://?...
         [ [UIApplication sharedApplication] openURL: request.URL ];
         return NO;
     }

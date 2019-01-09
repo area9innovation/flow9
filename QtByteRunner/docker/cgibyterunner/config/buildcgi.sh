@@ -2,7 +2,7 @@
 set -e
 
 # prepare dist
-cd /flow/QtByteRunner
+cd /flow9/QtByteRunner
 mkdir -p dist/lib
 mkdir -p dist/sqldrivers
 

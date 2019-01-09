@@ -85,7 +85,7 @@ import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
 public class FlowRunnerActivity extends FragmentActivity  {
 
     public static final String DATA_PATH = "/sdcard/flow/";
-    private static String local_substitute_url = "https://binrunner.dev.area9learning.com/flow/flowswf.html";
+    private static String local_substitute_url = "https://localhost/flow/flowswf.html";
     
     File tmp_dir;
     
@@ -1013,7 +1013,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                             String name = link.getQueryParameter("name");
 
                             URI bc_uri;
-                            if (name != null) // "http://cloud1.area9.dk/flow/flowrunner.html?name=..."
+                            if (name != null) // "http://localhost/flow/flowrunner.html?name=..."
                                 bc_uri = new_uri.resolve(name + ".bytecode");
                             else // "http://myhost/local.bytecode..."
                                 bc_uri = new_uri;
