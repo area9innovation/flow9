@@ -12,19 +12,16 @@ import fusion_utils;
 
 export {
 	MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
-	MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	MIScriptStack(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 	MInputOutputValues(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
+	MAliases(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 	MIScriptErrors(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 }
 
 MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	contentForm = ref FEmpty();
 	contentFormKey = ref 0;
-
-	formSize = makeWH();
-	fullAvailable = makeWH();
 
 	TransformTAcc2(\t2a -> {
 		b = content |> t2a;
@@ -35,13 +32,12 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 
 		b
 	})
-	|> (\f -> TAttachBoxCopy(f, formSize))
-	|> (\f -> TGroup2SameMetrics(f, TShowLazy(manager.iscript.panelsShowGrid, \ -> TFillXYDrawGrid(64., 8.))))
-	|> (\f -> TAvailable(f, TSized(fullAvailable)))
+	|> (\f -> TGroup2SameMetrics(f, TShow(manager.iscript.panelsShowGrid, TFillXYDrawGrid(64., 8.))))
+	|> (\f -> TAvailable(f, TGhost("fullAvailable")))
 	|> (\f ->
 		TConstruct(
 			[
-				\ -> handleIScriptState(manager, m2t, formSize),
+				\ -> handleIScriptState(manager, m2t),
 				\ -> bidirectionalLink(
 					manager.iscript.state,
 					manager.iscript.panelsRecordToggleValue,
@@ -63,7 +59,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 							// The latest entries in the script should be screenshots.
 							// The order of the function call is important.
 							addIScriptScreenshot(manager, true);
-							addIScriptLogicalScreenshot(manager, fgetValue(formSize));
+							addIScriptLogicalScreenshot(manager);
 							addIScriptVisualScreenshot(manager, true);
 							IScriptPaused();
 						}
@@ -116,7 +112,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 							[
 								MTab(MIScriptStack(manager, m2t), const(_("Script")), []),
 								MTab(MInputOutputValues(manager, m2t), const(_("Input/Output")), []),
-								// MTab(MAliases2T(manager, p, m2t), const(_("Aliases")), []),
+								MTab(MAliases(manager, m2t), const(_("Aliases")), []),
 								MTab(MFocusTree(manager, m2t), const(_("UI Tree")), []),
 								MTab(MIScriptErrors(manager, m2t), const(_("Errors")), [])
 							]
@@ -282,8 +278,7 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 													IScriptRecording(__, __): timestamp() - getValue(manager.iscript.script).recordingStarted;
 													default: 0.0;
 												},
-												^contentForm,
-												fgetValue(formSize)
+												^contentForm
 											)
 										)
 									]
@@ -418,7 +413,16 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 				|> disableMInteractivesBelow // Prevent capturing mouse events by IScript on Script Panel
 			)
 			|> (\f2 -> MShow(manager.iscript.showPanel, f2)),
-			MAttachBoxCopyAvailable(f, fullAvailable)
+			MLetAvailable(
+				"fullAvailable",
+				MGroup2SameMetrics(
+					f,
+					TShow(
+						manager.iscript.replayCursorVisibleB,
+						TTranslate(manager.iscript.replayCursorPositionB, TSelect(manager.iscript.replayCursorShapeB, idfn))
+					)
+				)
+			)
 		)
 	)
 	|> (\f ->
@@ -428,15 +432,6 @@ MIScriptPanels2T(manager : MaterialManager, content : Tropic, m2t : (Material, M
 		)
 	)
 	|> (\f -> m2t(f, manager.focus))
-	|> (\f ->
-		TGroup2SameMetrics(
-			f,
-			TShow(
-				manager.iscript.replayCursorVisibleB,
-				TTranslate(manager.iscript.replayCursorPositionB, TSelect(manager.iscript.replayCursorShapeB, idfn))
-			)
-		)
-	)
 }
 
 compressScript(script : IScript) -> IScript {
@@ -846,177 +841,6 @@ MAliases(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> 
 	// 		f
 	// 	)
 	// )
-}
-
-MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	categoryTag = ref "material";
-	instanceTag = ref "material2tropic";
-	debuggingBehavioursNowB = make(false);
-	parent = dummyEnabledParentWithTheme(manager, !manager.theme.lightBackground);
-
-	subsInfo = make(true);
-	nextsInfo = make(false);
-	zorderInfo = make(true);
-	focusInfo = make(true);
-
-	content
-	|> (\f ->
-		TLines2(
-			MBaselineCols([
-				MGroup2(
-					MBaselineCols([
-						MShow(
-							subsInfo,
-							MConstruct(
-								[
-									\ -> {
-										setLeakingSubscribersHandler(100, 50, \subscribersCount, value -> {
-											if (subscribersCount != subscribersCountBelowThreshold) {
-												dumpValue = value |> getValue |> behaviourValueToString;
-												println("ERROR: Too many subscribers (" + toString(subscribersCount) + ") to " + dumpValue);
-												materialLogFn(
-													printCallstack,
-													MaterialWarning(),
-													nop
-												)
-											}
-										});
-
-										clearLeakingSubscribersHandler;
-									}
-								],
-								MCols2(
-									MText("Subscribers: ", []),
-									MSelect(getCurrentSubscribersCountBehaviour(), \t -> MText(i2s(t), []))
-								)
-							)
-						),
-						MShow(
-							nextsInfo,
-							MConstruct(
-								[
-									\ -> {
-										setCountNexts(true);
-
-										\ -> setCountNexts(false);
-									}
-								],
-								MCols2(
-									MText("  Nexts: ", []),
-									MSelect(getCurrentNextCountBehaviour(), \t -> MText(i2s(t), [])),
-								)
-							)
-						),
-						MShow(
-							zorderInfo,
-							MCols2(
-								MText("  Z-order: ", []),
-								MSelect(manager.currentZorder, \i -> MText(i2s(i), [])),
-							)
-						),
-						MShow(
-							focusInfo,
-							MCols2(
-								MText("  Focus: ", []),
-								MSelect(
-									getCurrentFocusedItemBehaviour(manager),
-									\focM ->
-										MEllipsisText(
-											eitherMap(
-												focM,
-												\foc -> {
-													pos : Point = foc.position().pos;
-													IScriptId2s(getFullMFocusId(foc)) + " " + toString(pos)
-												},
-												"-"
-											),
-											[MShowTooltip(const(true))]
-										)
-								)
-							)
-						),
-						MMenu(
-							MIconButton("more_vert", nop, [MIconSize(16.0)], []),
-							[
-								MMenuSingleLine(
-									"Subscribers",
-									[
-										MPrimaryAction(MMutable(fif(subsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
-										MOnClick(\ -> next(subsInfo, !getValue(subsInfo)))
-									]
-								),
-								MMenuSingleLine(
-									"Nexts",
-									[
-										MPrimaryAction(MMutable(fif(nextsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
-										MOnClick(\ -> next(nextsInfo, !getValue(nextsInfo)))
-									]
-								),
-								MMenuSingleLine(
-									"Z-order",
-									[
-										MPrimaryAction(MMutable(fif(zorderInfo, MIcon("check", []) |> const, TEmpty() |> const))),
-										MOnClick(\ -> next(zorderInfo, !getValue(zorderInfo)))
-									]
-								),
-								MMenuSingleLine(
-									"Focus",
-									[
-										MPrimaryAction(MMutable(fif(focusInfo, MIcon("check", []) |> const, TEmpty() |> const))),
-										MOnClick(\ -> next(focusInfo, !getValue(focusInfo)))
-									]
-								)
-							],
-							[]
-						)
-					]),
-					TFillX()
-				),
-				MIconToggle(
-					"stop",
-					[MIconSize(16.), MToggleFalseIcon("play_arrow", [MGreen(500)])],
-					[
-						MToggleValue(debuggingBehavioursNowB),
-						// MTooltipText("Start debugging behaviours (500 ms delay)"),
-						MRippleType(const(MNoRipple()))
-					]
-				),
-				MIconButton("camera_alt",
-					\ -> {
-						takeSubscribersSnapshot(manager, ^categoryTag, m2t, subsInfo);
-						next(debuggingBehavioursNowB, false);
-					},
-					[MIconSize(16.)],
-					[
-						// MTooltipText("Take a subscribers snapshot (500 ms delay)"),
-						MEnabled(debuggingBehavioursNowB),
-						MRippleType(const(MNoRipple()))
-					]
-				)
-			])
-			|> (\f2 -> MBorder(16., 0., 8., 0., f2))
-			|> MCenterY
-			|> (\f2 -> MFrame(0., 0., [MFill(MBackgroundColor(!manager.theme.lightBackground))], f2))
-			|> (\f2 -> MScroll2T(manager, parent, MScroll(f2, TFillXH(36.), []), m2t))
-			|> makeTropicConstantHeight(None()),
-			f
-		)
-	)
-	|> (\f ->
-		TConstruct(
-			[
-				makeSubscribe(debuggingBehavioursNowB, \v -> {
-					if (v)
-						startDebuggingBehavioursNow(^categoryTag, ^instanceTag)
-					else {
-						stopDebuggingBehavioursNow();
-						clearSuspects(^categoryTag);
-					}
-				})
-			],
-			f
-		)
-	)
 }
 
 MIScriptErrors(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material {

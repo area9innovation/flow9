@@ -1,0 +1,450 @@
+import material/internal/material_dialog_internal;
+import material/internal/material_edit_grid;
+
+export {
+	MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+
+	takeSubscribersSnapshot(manager : MaterialManager, categoryTag : ?, m2t : (Material, MFocusGroup) -> Tropic, subsInfo : DynamicBehaviour<bool>) -> void;
+}
+
+MSubscribersPanel2T(manager : MaterialManager, content : Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	categoryTag = ref "material";
+	instanceTag = ref "material2tropic";
+	debuggingBehavioursNowB = make(false);
+	parent = dummyEnabledParentWithTheme(manager, !manager.theme.lightBackground);
+
+	subsInfo = make(true);
+	nextsInfo = make(false);
+	zorderInfo = make(true);
+	focusInfo = make(true);
+
+	content
+	|> (\f ->
+		TLines2(
+			MBaselineCols([
+				MGroup2(
+					MBaselineCols([
+						MShow(
+							subsInfo,
+							MConstruct(
+								[
+									\ -> {
+										setLeakingSubscribersHandler(100, 50, \subscribersCount, value -> {
+											if (subscribersCount != subscribersCountBelowThreshold) {
+												dumpValue = value |> getValue |> behaviourValueToString;
+												println("ERROR: Too many subscribers (" + toString(subscribersCount) + ") to " + dumpValue);
+												materialLogFn(
+													printCallstack,
+													MaterialWarning(),
+													nop
+												)
+											}
+										});
+
+										clearLeakingSubscribersHandler;
+									}
+								],
+								MCols2(
+									MText("Subscribers: ", []),
+									MSelect(getCurrentSubscribersCountBehaviour(), \t -> MText(i2s(t), []))
+								)
+							)
+						),
+						MShow(
+							nextsInfo,
+							MConstruct(
+								[
+									\ -> {
+										setCountNexts(true);
+
+										\ -> setCountNexts(false);
+									}
+								],
+								MCols2(
+									MText("  Nexts: ", []),
+									MSelect(getCurrentNextCountBehaviour(), \t -> MText(i2s(t), [])),
+								)
+							)
+						),
+						MShow(
+							zorderInfo,
+							MCols2(
+								MText("  Z-order: ", []),
+								MSelect(manager.currentZorder, \i -> MText(i2s(i), [])),
+							)
+						),
+						MShow(
+							focusInfo,
+							MCols2(
+								MText("  Focus: ", []),
+								MSelect(
+									getCurrentFocusedItemBehaviour(manager),
+									\focM ->
+										MEllipsisText(
+											eitherMap(
+												focM,
+												\foc -> {
+													pos : Point = foc.position().pos;
+													IScriptId2s(getFullMFocusId(foc)) + " " + toString(pos)
+												},
+												"-"
+											),
+											[MShowTooltip(const(true))]
+										)
+								)
+							)
+						),
+						MMenu(
+							MIconButton("more_vert", nop, [MIconSize(16.0)], []),
+							[
+								MMenuSingleLine(
+									"Subscribers",
+									[
+										MPrimaryAction(MMutable(fif(subsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(subsInfo, !getValue(subsInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Nexts",
+									[
+										MPrimaryAction(MMutable(fif(nextsInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(nextsInfo, !getValue(nextsInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Z-order",
+									[
+										MPrimaryAction(MMutable(fif(zorderInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(zorderInfo, !getValue(zorderInfo)))
+									]
+								),
+								MMenuSingleLine(
+									"Focus",
+									[
+										MPrimaryAction(MMutable(fif(focusInfo, MIcon("check", []) |> const, TEmpty() |> const))),
+										MOnClick(\ -> next(focusInfo, !getValue(focusInfo)))
+									]
+								)
+							],
+							[]
+						)
+					]),
+					TFillX()
+				),
+				MIconToggle(
+					"stop",
+					[MIconSize(16.), MToggleFalseIcon("play_arrow", [MGreen(500)])],
+					[
+						MToggleValue(debuggingBehavioursNowB),
+						// MTooltipText("Start debugging behaviours (500 ms delay)"),
+						MRippleType(const(MNoRipple()))
+					]
+				),
+				MIconButton("camera_alt",
+					\ -> {
+						takeSubscribersSnapshot(manager, ^categoryTag, m2t, subsInfo);
+						next(debuggingBehavioursNowB, false);
+					},
+					[MIconSize(16.)],
+					[
+						// MTooltipText("Take a subscribers snapshot (500 ms delay)"),
+						MEnabled(debuggingBehavioursNowB),
+						MRippleType(const(MNoRipple()))
+					]
+				)
+			])
+			|> (\f2 -> MBorder(16., 0., 8., 0., f2))
+			|> MCenterY
+			|> (\f2 -> MFrame(0., 0., [MFill(MBackgroundColor(!manager.theme.lightBackground))], f2))
+			|> (\f2 -> MScroll2T(manager, parent, MScroll(f2, TFillXH(36.), []), m2t))
+			|> makeTropicConstantHeight(None()),
+			f
+		)
+	)
+	|> (\f ->
+		TConstruct(
+			[
+				makeSubscribe(debuggingBehavioursNowB, \v -> {
+					if (v)
+						startDebuggingBehavioursNow(^categoryTag, ^instanceTag)
+					else {
+						stopDebuggingBehavioursNow();
+						clearSuspects(^categoryTag);
+					}
+				})
+			],
+			f
+		)
+	)
+}
+
+takeSubscribersSnapshot(manager : MaterialManager, categoryTag : ?, m2t : (Material, MFocusGroup) -> Tropic, subsInfo : DynamicBehaviour<bool>) -> void {
+	closeWhenB = make(false);
+	closeWhen2B = make(false);
+	showAddedAndRemovedFunctionsIds = make(false);
+	material = MText("You already have recorded script. Do you want to continue recording or start a new record?", []);
+
+	subsSnapshot = ref getDebuggedSubscribers(categoryTag);
+	removedSubsSnapshot = ref getRemovedDebuggedSubscribers(categoryTag);
+
+	functionsIds =
+		map(^subsSnapshot, \snapshot -> Pair(snapshot, getFunctionIdsFromCallstack(callstack2string(snapshot.callstack))));
+	removedFunctionsIds = ref
+		map(^removedSubsSnapshot, \snapshot -> Pair(snapshot, getFunctionIdsFromCallstack(callstack2string(snapshot.callstack))));
+
+	addedAndRemovedFunctionsIds =
+		foldi(functionsIds, [], \i, acc, id -> {
+			if (length(^removedFunctionsIds) > 0) {
+				j =
+					foldi(^removedFunctionsIds, Pair(0, 0), \j, acc2 : Pair<int, int>, rid -> {
+						intersects = arraysIntersect(secondOfPair(id), secondOfPair(rid));
+
+						if (intersects > firstOfPair(acc2)) {
+							Pair(intersects, j)
+						} else {
+							acc2;
+						}
+					}).second;
+
+				fn = firstOfPair(functionsIds[i]);
+				rfn = firstOfPair(^removedFunctionsIds[j]);
+
+				subsSnapshot := removeIndex(^subsSnapshot, i);
+				removedSubsSnapshot := removeFirst(^removedSubsSnapshot, rfn);
+				removedFunctionsIds := removeIndex(^removedFunctionsIds, j);
+
+				arrayPush(acc, Pair(fn, rfn));
+			} else {
+				acc;
+			}
+		});
+
+	dialogStyle = [
+		MDialogTitle("Subscribers Snapshot"),
+		MDialogUseFrame(),
+		// MDialogResizable(),
+		MDialogActions([
+			MTextButton("CLOSE", \ -> {
+					next(closeWhenB, true);
+				},
+				[], [MShortcut("esc")]
+			)
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	dialogStyle2 = \title -> [
+		MDialogTitle(title),
+		MDialogUseFrame(),
+		MDialogScroll(),
+		MDialogActions([
+			MTextButton("CLOSE", \ -> {
+					next(closeWhen2B, true);
+				},
+				[], [MShortcut("esc")]
+			)
+		]),
+		IScriptRecordingEnabled(const(false))
+	];
+
+	content =
+		MDynamicDataTable(
+			[
+				MColumn("Disposed", "Disposed subscriber", 196, []),
+				MColumn("Subscribed", "Subscriber that was created", 196, []),
+				MColumn("Related", "Related material components", 196, []),
+				MColumn("Callstack", "Show subscriber callstack", 48, [])
+			],
+			fconcat(
+				fconcat(
+					const(map(
+						^subsSnapshot,
+						\sbs ->
+							[
+								TEmpty(),
+								MText(behaviourValueToString(sbs.behValue), []),
+								TEmpty(),
+								MIconButton(
+									"format_list_numbered",
+									\ ->
+										renderMDialog(
+											manager,
+											closeWhen2B,
+											dialogStyle2(behaviourValueToString(sbs.behValue)),
+											MGetFocusGroup(\p2 -> {
+												MParagraph(
+													callstack2string(sbs.callstack)
+													|> (\f ->
+														if (f == "")
+															"Callstack only with flowcpp in debug or profiling mode"
+														else
+															f
+													),
+													[]
+												)
+												|> (\f -> MEGItem2T(p2, f, [MWidth(400.)], m2t))
+											}),
+											m2t
+										),
+									[],
+									[]
+								)
+							]
+					)),
+					const(map(
+						^removedSubsSnapshot,
+						\sbs ->
+							[
+								MText(behaviourValueToString(sbs.behValue), []),
+								TEmpty(),
+								TEmpty(),
+								MIconButton(
+									"format_list_numbered",
+									\ ->
+										renderMDialog(
+											manager,
+											closeWhen2B,
+											dialogStyle2(behaviourValueToString(sbs.behValue)),
+											MGetFocusGroup(\p2 -> {
+												MParagraph(
+													callstack2string(sbs.callstack)
+													|> (\f ->
+														if (f == "")
+															"Callstack only with flowcpp in debug or profiling mode"
+														else
+															f
+													),
+													[]
+												)
+												|> (\f -> MEGItem2T(p2, f, [MWidth(400.)], m2t))
+											}),
+											m2t
+										),
+									[],
+									[]
+								)
+							]
+					))
+				),
+				fif(
+					showAddedAndRemovedFunctionsIds,
+					const(map(
+						addedAndRemovedFunctionsIds,
+						\sbs ->
+							[
+								MText(behaviourValueToString(secondOfPair(sbs).behValue), []),
+								MText(behaviourValueToString(firstOfPair(sbs).behValue), []),
+								TEmpty(),
+								MIconButton(
+									"format_list_numbered",
+									\ ->
+										renderMDialog(
+											manager,
+											closeWhen2B,
+											dialogStyle2(behaviourValueToString(firstOfPair(sbs).behValue)),
+											MGetFocusGroup(\p2 -> {
+												MParagraph(
+													callstack2string(firstOfPair(sbs).callstack)
+													|> (\f ->
+														if (f == "")
+															"Callstack only with flowcpp in debug or profiling mode"
+														else
+															f
+													),
+													[]
+												)
+												|> (\f -> MEGItem2T(p2, f, [MWidth(400.)], m2t))
+											}),
+											m2t
+										),
+									[],
+									[]
+								)
+							]
+					)),
+					const([])
+				)
+			),
+			[TScrollEnabled(const(true)), MFullWidth(), MCondensed(true)]
+		)
+		|> (\f -> MGroup2(TFillXY(), f))
+		|> (\f -> MLines2(MSwitchControl(showAddedAndRemovedFunctionsIds, [MOnOffText("Show added and removed", "Show added and removed")]), f));
+
+	renderMDialog(
+		manager,
+		closeWhenB,
+		dialogStyle,
+		MConstruct(
+			[
+				\ -> {
+					tempSubsInfo = getValue(subsInfo);
+					nextDistinct(subsInfo, false);
+					\ -> {
+						nextDistinct(subsInfo, tempSubsInfo);
+					}
+				}
+			],
+			content
+		),
+		m2t
+	);
+}
+
+getFunctionIdsFromCallstack(callstack : string) -> [string] {
+	strSplit(callstack, "#")
+	|> (\f -> subrange(f, 2, length(f) - 2))
+	|> (\f ->
+		fold(f, Pair([], []), \acc, st ->
+			strSplit(st, " ")
+			|> (\s -> filter(s, \v -> v != ""))
+			|> (\s ->
+				if (length(s) > 1 && s[1] != "" && startsWith(s[1], "0x")) {
+					if (length(s) > 3) {
+						if (strContains(toLowerCase(s[3]), "fuse") || strContains(toLowerCase(s[3]), "subscribe"))
+							Pair(concat(firstOfPair(acc), arrayPush(secondOfPair(acc), s[1])), [])
+						else
+							Pair(firstOfPair(acc), arrayPush(secondOfPair(acc), s[1]))
+					} else {
+						Pair(firstOfPair(acc), arrayPush(secondOfPair(acc), s[1]))
+					}
+				} else {
+					acc
+				}
+			)
+		)
+	)
+	|> firstOfPair
+}
+
+maxChain(a : [?], ai : int, bi : int, tree : Tree<?, [int]>, counter : int) -> int {
+	if (ai < length(a))
+		eitherMap(
+			lookupTree(tree, a[ai]),
+			\v ->
+				either(
+					maxA(map(v, \v0 ->
+						if (bi < 0)
+							maxChain(a, ai + 1, v0, tree, counter + 1)
+						else if (v0 == bi + 1)
+							maxChain(a, ai + 1, v0, tree, counter + 1)
+						else
+							counter
+					)),
+					counter
+				),
+			counter
+		)
+	else
+		counter
+}
+
+arraysIntersect(a : [?], b : [?]) -> int {
+	atree = foldi(a, makeTree(), \i, acc, v -> {
+		treePushToArrayValue(acc, v, i);
+	});
+
+	either(
+		maxA(mapi(b, \i, v -> maxChain(b, i, -1, atree, -1))),
+		-1
+	);
+}
