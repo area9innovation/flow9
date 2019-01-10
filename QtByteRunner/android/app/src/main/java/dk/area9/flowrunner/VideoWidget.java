@@ -5,8 +5,10 @@ import java.io.IOException;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.SurfaceTexture;
+import android.hardware.display.DisplayManager;
 import android.media.MediaPlayer;
 import android.opengl.GLES20;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.preference.PreferenceManager;
@@ -42,96 +44,130 @@ class VideoWidget extends NativeWidget {
     private MediaController mediaController;
     private MediaPlayer mediaPlayer;
     private SurfaceTexture surfaceTexture;
-    
+
+    private boolean useSurfaceTexture;
+    private int width, height;
+
+    private static boolean displayManagerSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
+    private DisplayManager.DisplayListener mDisplayListener;
+    private int sensorOrientation;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    public VideoWidget(FlowWidgetGroup group, long id) { 
+    public VideoWidget(FlowWidgetGroup group, long id) {
         super(group, id);
         if (useNativeVideo == null) {
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(group.getContext());
             useNativeVideo = !prefs.getBoolean("opengl_video", true);
         }
     }
-    
+
     protected View createView() {
         Context ctx = group.getContext();
         VideoView video = null;
         MediaPlayer player = null;
-        
+
         if (useNativeVideo) {
             video = new VideoView(ctx);
         } else {
             player = new MediaPlayer();
         }
 
-        mediaController = new MediaController(ctx) {
-            public void setMediaPlayer(final MediaController.MediaPlayerControl player) {
-                super.setMediaPlayer(new MediaController.MediaPlayerControl() {
-                    // Delegate methods to the real interface:
-                    public boolean canPause() { return player.canPause(); }
-                    public boolean canSeekBackward() { return player.canSeekBackward(); }
-                    public boolean canSeekForward() { return player.canSeekForward(); }
-                    public int getBufferPercentage() { return player.getBufferPercentage(); }
-                    public int getCurrentPosition() { return player.getCurrentPosition(); }
-                    public int getDuration() { return player.getDuration(); }
-                    public boolean isPlaying() { return player.isPlaying(); }
-                    // But also note some events and report them to flow:
-                    public void pause() {
-                        player.pause();
-                        reportStatusEvent(UserPause);
-                    }
-                    public void seekTo(int pos) {
-                        player.seekTo(pos);
-                        reportStatusEvent(UserSeek);
-                    }
-                    public void start() {
-                        player.start();
-                        reportStatusEvent(UserResume);
-                    }
-                    @Override
-                    public int getAudioSessionId() {
-                        // TODO Auto-generated method stub
-                        return 0;
+        if (!useSurfaceTexture) {
+            mediaController = new MediaController(ctx) {
+                public void setMediaPlayer(final MediaController.MediaPlayerControl player) {
+                    super.setMediaPlayer(new MediaController.MediaPlayerControl() {
+                        // Delegate methods to the real interface:
+                        public boolean canPause() {
+                            return player.canPause();
+                        }
+
+                        public boolean canSeekBackward() {
+                            return player.canSeekBackward();
+                        }
+
+                        public boolean canSeekForward() {
+                            return player.canSeekForward();
+                        }
+
+                        public int getBufferPercentage() {
+                            return player.getBufferPercentage();
+                        }
+
+                        public int getCurrentPosition() {
+                            return player.getCurrentPosition();
+                        }
+
+                        public int getDuration() {
+                            return player.getDuration();
+                        }
+
+                        public boolean isPlaying() {
+                            return player.isPlaying();
+                        }
+
+                        // But also note some events and report them to flow:
+                        public void pause() {
+                            player.pause();
+                            reportStatusEvent(UserPause);
+                        }
+
+                        public void seekTo(int pos) {
+                            player.seekTo(pos);
+                            reportStatusEvent(UserSeek);
+                        }
+
+                        public void start() {
+                            player.start();
+                            reportStatusEvent(UserResume);
+                        }
+
+                        @Override
+                        public int getAudioSessionId() {
+                            // TODO Auto-generated method stub
+                            return 0;
+                        }
+                    });
+                }
+
+                public void setAnchorView(View view) {
+                    super.setAnchorView(group);
+                }
+            };
+
+            if (video != null) {
+                video.setOnTouchListener(new View.OnTouchListener() {
+                    public boolean onTouch(View v, MotionEvent event) {
+                        if (event.getAction() == MotionEvent.ACTION_UP) {
+                            if (event.getEventTime() - event.getDownTime() > 500) { // Long Tap
+                                toggleFullscreen();
+                            } else {
+                                toggleMediaController();
+                            }
+                        }
+
+                        return true;
                     }
                 });
+
+                video.setZOrderMediaOverlay(true);
+                vview = video;
+            }
+            if (player != null) {
+                mediaPlayer = player;
+                createVideoTexture();
             }
 
-            public void setAnchorView(View view) {
-                super.setAnchorView(group);
-            }
-        };
-
-        if (video != null) {
-            video.setOnTouchListener(new View.OnTouchListener() {
-                public boolean onTouch(View v, MotionEvent event) {
-                    if (event.getAction() == MotionEvent.ACTION_UP) {
-                        if (event.getEventTime() - event.getDownTime() > 500 ) { // Long Tap
-                            toggleFullscreen();
-                        } else {
-                            toggleMediaController();
-                        }
-                    }
-    
-                    return true;
-                }
-            });
-            
-            video.setZOrderMediaOverlay(true);
-            vview = video;
-        }
-        if (player != null) {
-            mediaPlayer = player;
+            mediaPlayerPrepared = false;
+        } else {
             createVideoTexture();
         }
-        
-        mediaPlayerPrepared = false;
-        
         int fill = RelativeLayout.LayoutParams.FILL_PARENT;
         final RelativeLayout grp = new RelativeLayout(ctx);
 
-        RelativeLayout.LayoutParams vparams = new RelativeLayout.LayoutParams(fill,fill);
-        vparams.addRule(RelativeLayout.ALIGN_PARENT_TOP,-1);
-        vparams.addRule(RelativeLayout.ALIGN_PARENT_LEFT,-1);
+        RelativeLayout.LayoutParams vparams = new RelativeLayout.LayoutParams(fill, fill);
+        vparams.addRule(RelativeLayout.ALIGN_PARENT_TOP, -1);
+        vparams.addRule(RelativeLayout.ALIGN_PARENT_LEFT, -1);
         if (vview != null)
             grp.addView(vview, vparams);
 
@@ -169,7 +205,7 @@ class VideoWidget extends NativeWidget {
     }
 
     private void toggleMediaController() {
-        if ( mediaController.isShown() ) {
+        if (mediaController.isShown()) {
             mediaController.hide();
         } else {
             if (!isControllerEnabled())
@@ -178,22 +214,22 @@ class VideoWidget extends NativeWidget {
             mediaController.show();
         }
     }
-    
+
     private boolean fullscreen = false;
-    
+
     private void toggleFullscreen() {
         if ((controls & CtlFullScreen) == 0 && !fullscreen)
             return;
 
         fullscreen = !fullscreen;
-        
+
         view.requestLayout();
     }
 
     protected void doRequestLayout() {
         if (vview != null)
             vview.setVisibility(visible ? FlowWidgetGroup.VISIBLE : FlowWidgetGroup.INVISIBLE);
-     
+
         super.doRequestLayout();
     }
 
@@ -202,7 +238,7 @@ class VideoWidget extends NativeWidget {
 
         //Log.d(Utils.LOG_TAG, "VIDEO LAYOUT " + (maxx-minx) + "x" + (maxy-miny));
 
-       if (fullscreen && view != null)
+        if (fullscreen && view != null)
             view.layout(0, 0, group.getRight(), group.getBottom());
     }
 
@@ -215,18 +251,18 @@ class VideoWidget extends NativeWidget {
         // update the window in the compositing manager.
         //
         // This bug is present in android 2.2.1, and may still be in 4.1.1.
-        if (nmaxx <= nminx || nmaxy <= nminy)
-        {
-            nminx++; nminy++;
-            nmaxx = Math.max(nminx+1,nmaxx);
-            nmaxy = Math.max(nminy+1,nmaxy);
+        if (nmaxx <= nminx || nmaxy <= nminy) {
+            nminx++;
+            nminy++;
+            nmaxx = Math.max(nminx + 1, nmaxx);
+            nmaxy = Math.max(nminy + 1, nmaxy);
         }
 
         //Log.d(Utils.LOG_TAG, "VIDEO RESIZE " + (nmaxx-nminx) + "x" + (nmaxy-nminy));
 
         super.resize(nvisible, nminx, nminy, nmaxx, nmaxy, nscale, nalpha);
     }
-    
+
     private boolean isKitKatOrLower() {
         return android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.KITKAT;
     }
@@ -361,8 +397,8 @@ class VideoWidget extends NativeWidget {
 
     private Runnable createCallback = new Runnable() {
         public void run() {
-                if (id == 0) return;
-                getOrCreateView();
+            if (id == 0) return;
+            getOrCreateView();
 
             if (vview != null) {
                 vview.setOnErrorListener(errorListener);
@@ -385,30 +421,26 @@ class VideoWidget extends NativeWidget {
         }
     };
 
-    private long getReportId()
-    {
+    private long getReportId() {
         if (id == 0) return 0;
         if (group.getBlockEvents()) return 0;
         return id;
     }
 
-    private void reportFailure()
-    {
+    private void reportFailure() {
         long idv = getReportId();
         if (idv != 0)
             group.getWrapper().deliverVideoNotFound(idv);
     }
 
-    private void reportSize(int width, int height)
-    {
+    private void reportSize(int width, int height) {
         Log.d(Utils.LOG_TAG, "VIDEO SIZE " + width + "x" + height);
         long idv = getReportId();
         if (idv != 0)
             group.getWrapper().deliverVideoSize(idv, width, height);
     }
-    
-    private void reportDuration(long duration)
-    {
+
+    private void reportDuration(long duration) {
         Log.d(Utils.LOG_TAG, "VIDEO DURATION " + duration);
         long idv = getReportId();
         if (idv != 0)
@@ -421,8 +453,7 @@ class VideoWidget extends NativeWidget {
             group.getWrapper().deliverVideoPosition(idv, position);
     }
 
-    private void reportStatusEvent(final int event)
-    {
+    private void reportStatusEvent(final int event) {
         if (event == PlayStart)
             if (PlayStartReported)
                 return;
@@ -439,8 +470,7 @@ class VideoWidget extends NativeWidget {
         });
     }
 
-    public void init(final String url, boolean playing, boolean looping, int controls, float volume)
-    {
+    public void init(final String url, boolean playing, boolean looping, int controls, float volume) {
         this.url = url;
         this.filename = null;
         this.playing = playing;
@@ -472,34 +502,66 @@ class VideoWidget extends NativeWidget {
         }
     }
 
-    public void setPlaying(boolean playing)
-    {
+    public void init(SurfaceTexture surfaceTexture, int width, int height, int sensorOrientation) {
+        this.useSurfaceTexture = true;
+        this.surfaceTexture = surfaceTexture;
+        this.width = width;
+        this.height = height;
+        this.sensorOrientation = sensorOrientation;
+
+        if (displayManagerSupported) {
+            mDisplayListener = new DisplayManager.DisplayListener() {
+                @Override
+                public void onDisplayAdded(int displayId) {
+                }
+
+                @Override
+                public void onDisplayChanged(int displayId) {
+                    updateVideoTexture();
+                }
+
+                @Override
+                public void onDisplayRemoved(int displayId) {
+                }
+            };
+        }
+
+        handler.post(createCallback);
+    }
+
+    public void setPlaying(boolean playing) {
         this.playing = playing;
 
         handler.post(updateCallback);
     }
 
-    public void setPosition(long position)
-    {
-        this.seek_pos = (int)position;
+    public void setPosition(long position) {
+        this.seek_pos = (int) position;
         this.seek_pending = true;
 
         handler.post(updateCallback);
     }
 
-    public void setVolume(float volume)
-    {
+    public void setVolume(float volume) {
         this.volume = volume;
 
         handler.post(updateCallback);
     }
-    
+
     public void destroySurface() {
-        mediaPlayer.setSurface(null);
+        if (mediaPlayer != null)
+            mediaPlayer.setSurface(null);
+        if (useSurfaceTexture) {
+            if (displayManagerSupported) {
+                DisplayManager displayManager = (DisplayManager) group.getWidgetHostContext().getSystemService(Context.DISPLAY_SERVICE);
+                displayManager.unregisterDisplayListener(mDisplayListener);
+            }
+        }
+
     }
-    
+
     public void createSurface() {
-        if (mediaPlayerPrepared) {
+        if (mediaPlayerPrepared || useSurfaceTexture) {
             createVideoTexture();
         }
     }
@@ -521,25 +583,55 @@ class VideoWidget extends NativeWidget {
     private OnFrameAvailableListener frameAvailableListener = new OnFrameAvailableListener() {
         @Override
         public void onFrameAvailable(SurfaceTexture arg0) {
-            if (!mediaPlayerPrepared)
-                return;
+            if (mediaPlayer != null) {
+                if (!mediaPlayerPrepared)
+                    return;
 
-            // Hack to have a initial image
-            if (mediaPlayer != null && mediaPlayer.isPlaying() && !playing && isKitKatOrLower()) {
-                updateStateFlags();
+                // Hack to have a initial image
+                if (mediaPlayer.isPlaying() && !playing && isKitKatOrLower()) {
+                    updateStateFlags();
+                }
+
+                reportPosition(mediaPlayer.getCurrentPosition());
             }
-
-            reportPosition(mediaPlayer.getCurrentPosition());
 
             group.getFlowRunnerView().queueEvent(renderVideoImage);
         }
     };
-    
+
     // Should be called only from GL thread
     private boolean isValidGLESFramebuffer() {
         return GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE;
     }
-    
+
+
+    public void updateVideoTexture() {
+        if (displayManagerSupported) {
+            int displayRotation = view.getDisplay().getRotation();
+            boolean swappedDimensions = false;
+            switch (displayRotation) {
+                case Surface.ROTATION_0:
+                case Surface.ROTATION_180:
+                    if (sensorOrientation == 90 || sensorOrientation == 270) {
+                        swappedDimensions = true;
+                    }
+                    break;
+                case Surface.ROTATION_90:
+                case Surface.ROTATION_270:
+                    if (sensorOrientation == 0 || sensorOrientation == 180) {
+                        swappedDimensions = true;
+                    }
+                    break;
+            }
+            if (swappedDimensions) {
+                reportSize(height, width);
+            } else {
+                reportSize(width, height);
+            }
+            group.getWrapper().setVideoRotation(id, FlowMediaRecorderSupport.getOrientation(sensorOrientation, displayRotation));
+        }
+    }
+
     public void createVideoTexture() {
         group.getFlowRunnerView().queueEvent(new Runnable() {
             @Override
@@ -554,27 +646,40 @@ class VideoWidget extends NativeWidget {
                 GLES20.glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST);
                 GLES20.glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
 
-                surfaceTexture = new SurfaceTexture(texture_id);
-                Surface surface = new Surface(surfaceTexture);
+                if (!useSurfaceTexture) {
+                    surfaceTexture = new SurfaceTexture(texture_id);
+                    Surface surface = new Surface(surfaceTexture);
+                    try {
+                        mediaPlayer.setSurface(surface);
 
-                try {
-                    mediaPlayer.setSurface(surface);
+                        if (!mediaPlayerPrepared) {
+                            mediaPlayer.setDataSource(filename);
+                            mediaPlayer.prepareAsync();
+                        } else {
+                            mediaPlayer.seekTo(mediaPlayer.getCurrentPosition());
+                        }
 
-                    if (!mediaPlayerPrepared) {
-                        mediaPlayer.setDataSource(filename);
-                        mediaPlayer.prepareAsync();
-                    } else {
-                        mediaPlayer.seekTo(mediaPlayer.getCurrentPosition());
+                    } catch (Exception e1) {
+                        e1.printStackTrace();
+                        reportFailure();
                     }
+                } else {
+                    surfaceTexture.detachFromGLContext();
+                    surfaceTexture.attachToGLContext(texture_id);
+                }
 
-                    surfaceTexture.setOnFrameAvailableListener(frameAvailableListener);
+                surfaceTexture.setOnFrameAvailableListener(frameAvailableListener);
 
-                    if (id != 0) // Widget may be already destroyed at this point
-                        group.getWrapper().setVideoExternalTextureId(id, texture_id);
+                if (id != 0) { // Widget may be already destroyed at this point
+                    group.getWrapper().setVideoExternalTextureId(id, texture_id);
 
-                } catch (Exception e1) {
-                    e1.printStackTrace();
-                    reportFailure();
+                    if (useSurfaceTexture) {
+                        updateVideoTexture();
+                        if (displayManagerSupported) {
+                            DisplayManager displayManager = (DisplayManager) group.getWidgetHostContext().getSystemService(Context.DISPLAY_SERVICE);
+                            displayManager.registerDisplayListener(mDisplayListener, handler);
+                        }
+                    }
                 }
             }
         });

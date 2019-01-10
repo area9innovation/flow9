@@ -10,6 +10,10 @@
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
 
+#ifdef FLOW_MEDIARECORDER
+#include "qt-backend/QMediaRecorderSupport.h"
+#endif
+
 #include "utils/FileLocalStore.h"
 
 #ifdef FLOW_DEBUGGER
@@ -453,6 +457,9 @@ int main(int argc, char *argv[])
     FileLocalStore LocalStore(&FlowRunner);
     DatabaseSupport DbManager(&FlowRunner);
     StartProcess ProcStarter(&FlowRunner);
+#ifdef FLOW_MEDIARECORDER
+    QMediaRecorderSupport MediaRecorder(&FlowRunner, app->applicationDirPath());
+#endif
 
 #ifdef HANDLE_SIGSEGV
     main_runner = &FlowRunner;

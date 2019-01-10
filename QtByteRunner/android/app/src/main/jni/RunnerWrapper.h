@@ -12,6 +12,7 @@
 #include "utils/AbstractGeolocationSupport.h"
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
+#include "utils/MediaRecorderSupport.h"
 
 #include <jni.h>
 
@@ -90,6 +91,7 @@ public:
     void deliverVideoDuration(jlong clip, jlong duration);
     void deliverVideoPosition(jlong clip, jlong length);
     void deliverVideoPlayStatus(jlong clip, jint event);
+    void setVideoRotation(jlong clip, jint angle);
     void setVideoExternalTextureId(jlong clip, jint id);
 
     void deliverCameraError(jlong clip_id);
@@ -232,6 +234,59 @@ private:
     virtual void afterWatchDispose(int callbacksRoot);
 };
 
+class AndroidMediaRecorderSupport : public MediaRecorderSupport {
+    AndroidRunnerWrapper *owner;
+
+public:
+    AndroidMediaRecorderSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeMediaRecorder : public FlowNativeObject
+    {
+    public:
+
+        FlowNativeMediaRecorder(AndroidMediaRecorderSupport* owner);
+
+        jobject mediaRecorder;
+        jobject session;
+
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaRecorder, FlowNativeObject)
+    };
+
+    class FlowNativeMediaStream : public FlowNativeObject
+    {
+    public:
+
+        FlowNativeMediaStream(AndroidMediaRecorderSupport* owner);
+
+        jobject mediaStream;
+
+        jint width;
+        jint height;
+
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
+    };
+
+    void deliverInitializeDeviceInfoCallback(jint cb_root);
+    void deliverAudioDevices(jint cb_root, jobjectArray ids, jobjectArray names);
+    void deliverVideoDevices(jint cb_root, jobjectArray ids, jobjectArray names);
+    void deliverMediaRecorder(jint cb_root, jobject recorder);
+    void deliverMediaStream(jint cb_root, jobject mediaStream);
+private:
+    virtual void recordMedia(unicode_string websocketUri, unicode_string filePath, int timeslice, unicode_string videoMimeType,
+                            bool recordAudio, bool recordVideo, unicode_string videoDeviceId, unicode_string audioDeviceId,
+                            int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
+                            int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot);
+
+    virtual void initializeDeviceInfo(int callbackRoot);
+    virtual void getAudioInputDevices(int callbackRoot);
+    virtual void getVideoInputDevices(int callbackRoot);
+
+    virtual void startMediaRecorder(StackSlot recorder, int timeslice);
+    virtual void resumeMediaRecorder(StackSlot recorder);
+    virtual void pauseMediaRecorder(StackSlot recorder);
+    virtual void stopMediaRecorder(StackSlot recorder);
+};
+
 class AndroidRunnerWrapper {
     friend class AndroidRenderSupport;
     friend class AndroidHttpSupport;
@@ -241,6 +296,7 @@ class AndroidRunnerWrapper {
     friend class AndroidLocalyticsSupport;
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
+    friend class AndroidMediaRecorderSupport;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -257,6 +313,7 @@ class AndroidRunnerWrapper {
     AndroidNotificationsSupport notifications;
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
+    AndroidMediaRecorderSupport mediaRecorder;
     FileLocalStore store;
     FileSystemInterface fsinterface;
 
@@ -285,6 +342,7 @@ public:
     AndroidInAppPurchase *getInAppPurchase() { return &purchase; }
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
+    AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);

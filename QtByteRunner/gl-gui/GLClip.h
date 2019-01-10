@@ -181,7 +181,7 @@ public:
     bool checkFlag(unsigned flags) { return (state_flags & flags) == flags; }
 
     const GLTransform &getGlobalTransform() { return global_transform; }
-    const GLTransform &getLocalTransform();
+    virtual const GLTransform &getLocalTransform();
 
     float getGlobalAlpha() { return global_visible && global_renderable && !destroyed ? global_alpha : 0.0f; }
 

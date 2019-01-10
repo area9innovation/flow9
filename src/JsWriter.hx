@@ -311,7 +311,8 @@ class JsWriter {
 						|| cl == "NotificationsSupport"
 						|| cl == "GeolocationSupport"
 						|| cl == "ServiceWorkerCache"
-						|| cl == "WebSocketSupport") { "Hx"; } else "";
+						|| cl == "WebSocketSupport"
+						|| cl == "MediaRecorderSupport") { "Hx"; } else "";
 		ovl.nativeClasses.set(cla, true);
 		var renamed = cla + "." + parts[1];
 		if (renamed == "NativeHx.length") {

@@ -351,7 +351,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         FlowGeolocationAPI flowGeolocation = new FlowGeolocationAPI(this, wrapper, flowGooglePlayServices, gelocationPermissionGranted);
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
-        
+
+        FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(this, wrapper);
+        wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
+
         createContentView();
         
         menu_anchor = new View(this);

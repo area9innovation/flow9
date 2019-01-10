@@ -72,7 +72,8 @@ class HaxeWriter {
 									|| cl == "FlowFileSystem"
 									|| cl == "GeolocationSupport"
 									|| cl == "ServiceWorkerCache"
-									|| cl == "WebSocketSupport") { "Hx"; } else "";
+									|| cl == "WebSocketSupport"
+									|| cl == "MediaRecorderSupport") { "Hx"; } else "";
 					nativeClasses.set(cla, true);
 					var renamed = cla + "." + parts[1];
 

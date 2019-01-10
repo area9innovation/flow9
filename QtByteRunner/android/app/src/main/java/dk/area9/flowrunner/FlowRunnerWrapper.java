@@ -20,7 +20,9 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
+import android.hardware.camera2.CameraCaptureSession;
 import android.net.Uri;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
@@ -759,6 +761,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             int max_size, int cursor_pos, int sel_start, int sel_end
         );
         void onFlowCreateVideoWidget(long id, String url, boolean playing, boolean looping, int controls, float volume);
+        void onFlowCreateVideoWidgetFromMediaStream(long id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream);
         void onFlowCreateWebWidget(long id, String url);
         void onFlowWebClipHostCall(long id, String js);
         void onFlowSetWebClipZoomable(long id, boolean zoomable);
@@ -812,6 +815,11 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             widget_host.onFlowCreateVideoWidget(id, url, playing, looping, controls, volume);
     }
     
+    private void cbCreateVideoWidgetFromMediaStream(long id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream) {
+        if (widget_host != null)
+            widget_host.onFlowCreateVideoWidgetFromMediaStream(id, flowMediaStream);
+    }
+
     private void cbUpdateVideoPlay(long id, boolean playing) {
         if (widget_host != null)
             widget_host.onFlowUpdateVideoPlay(id, playing);
@@ -916,6 +924,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nDeliverVideoPosition(long ptr, long id, long position);
     
+    public synchronized void setVideoRotation(long id, int angle) {
+        nSetVideoRotation(cPtr(), id, angle);
+    }
+
+    private native void nSetVideoRotation(long ptr, long id, long angle);
+
     public synchronized void setVideoExternalTextureId(long id, int texture_id) {
         nSetVideoExternalTextureId(cPtr(), id, texture_id);
     }
@@ -1490,4 +1504,113 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             Log.e(Utils.LOG_TAG, "Were not able to call Localytics.tagEvent.");
         }
     }
+
+    private FlowMediaRecorderSupport mediaRecorderSupport = null;
+
+    public void setFlowMediaRecorderSupport(FlowMediaRecorderSupport mediaRecorderSupport) {
+        this.mediaRecorderSupport = mediaRecorderSupport;
+    }
+
+    private native void nDeviceInfoUpdated(long ptr, int id);
+
+    private synchronized void cbDeviceInfoUpdated(int cb) {
+        mediaRecorderSupport.initializeDeviceInfo();
+        nDeviceInfoUpdated(cPtr(), cb);
+    }
+
+    private native void nGetAudioDevices(long ptr, int id, String[] ids, String[] names);
+
+    private synchronized void cbGetAudioDevices(int cb) {
+        Map<String, String> audioDevices = mediaRecorderSupport.getAudioDevices();
+        ArrayList<String> ids = new ArrayList<String>();
+        ArrayList<String> names = new ArrayList<String>();
+        for (Entry<String, String> item : audioDevices.entrySet()) {
+            ids.add(item.getKey());
+            names.add(item.getValue());
+        }
+        nGetAudioDevices(cPtr(), cb, ids.toArray(new String[0]), names.toArray(new String[0]));
+    }
+
+    private native void nGetVideoDevices(long ptr, int id, String[] ids, String[] names);
+
+    private synchronized void cbGetVideoDevices(int cb) {
+        Map<String, String> audioDevices = mediaRecorderSupport.getVideoDevices();
+        ArrayList<String> ids = new ArrayList<String>();
+        ArrayList<String> names = new ArrayList<String>();
+        for (Entry<String, String> item : audioDevices.entrySet()) {
+            ids.add(item.getKey());
+            names.add(item.getValue());
+        }
+        nGetAudioDevices(cPtr(), cb, ids.toArray(new String[0]), names.toArray(new String[0]));
+    }
+
+    private native void nOnRecorderReady(long ptr, int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder);
+
+    public synchronized void cbOnRecorderReady(int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder) {
+        nOnRecorderReady(cPtr(), id, flowRecorder);
+    }
+
+    private native void nOnMediaStreamReady(long ptr, int id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream);
+
+    public synchronized void cbOnMediaStreamReady(int id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream) {
+        nOnMediaStreamReady(cPtr(), id, flowMediaStream);
+    }
+
+    private native void nOnRecorderError(long ptr, int id, String error);
+
+    public synchronized void cbOnRecorderError(int id, String error) {
+        nOnRecorderError(cPtr(), id, error);
+    }
+
+    private synchronized void cbRecordMedia(String websocketUri, String filePath, int timeslice, String videoMimeType,
+                                            boolean recordAudio, boolean recordVideo, String videoDeviceId, String audioDeviceId,
+                                            int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
+                                            int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot) {
+        mediaRecorderSupport.recordMedia(websocketUri, filePath, timeslice, videoMimeType, recordAudio, recordVideo, videoDeviceId,
+                audioDeviceId, cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
+    }
+
+    private synchronized void cbStartMediaRecorder(final FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+
+        recorder.mediaRecorder.start();
+    }
+
+    private synchronized void cbResumeMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
+            recorder.mediaRecorder.resume();
+        }
+    }
+
+    private synchronized void cbPauseMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
+            recorder.mediaRecorder.pause();
+        }
+    }
+
+    private synchronized void cbStopMediaRecorder(final FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isCamera2Supported) {
+            if (recorder.session != null) {
+//            try {
+//                session.stopRepeating();
+//            } catch (CameraAccessException e) {
+//               e.printStackTrace();
+//            }
+
+                recorder.session.close();
+
+                recorder.session.getDevice().close();
+            }
+
+        }
+        recorder.mediaRecorder.stop();
+        recorder.mediaRecorder.reset();
+        recorder.mediaRecorder.release();
+
+        if (!recorder.filePath.isEmpty()) {
+
+        }
+
+        recorder.tempFile.delete();
+    }
+
 }

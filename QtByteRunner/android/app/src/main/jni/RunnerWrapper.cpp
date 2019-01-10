@@ -177,6 +177,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbResizeWidget, "(JZFFFFFF)V") \
     CALLBACK(cbCreateTextWidget, "(JLjava/lang/String;Ljava/lang/String;FIZZFLjava/lang/String;Ljava/lang/String;IIII)V") \
     CALLBACK(cbCreateVideoWidget, "(JLjava/lang/String;ZZIF)V") \
+    CALLBACK(cbCreateVideoWidgetFromMediaStream, "(JLdk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaStreamObject;)V") \
     CALLBACK(cbUpdateVideoPlay, "(JZ)V") \
     CALLBACK(cbUpdateVideoPosition, "(JJ)V") \
     CALLBACK(cbUpdateVideoVolume, "(JF)V") \
@@ -220,8 +221,16 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbGeolocationWatchPosition, "(IZDDLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V") \
     CALLBACK(cbGeolocationAfterWatchDispose, "(I)V") \
     CALLBACK(cbDeleteAppCookies, "()V") \
-	CALLBACK(cbSystemDownloadFile, "(Ljava/lang/String;)V") \
-	CALLBACK(cbUsesNativeVideo, "()Z")
+    CALLBACK(cbSystemDownloadFile, "(Ljava/lang/String;)V") \
+    CALLBACK(cbUsesNativeVideo, "()Z") \
+    CALLBACK(cbDeviceInfoUpdated, "(I)V") \
+    CALLBACK(cbGetAudioDevices, "(I)V") \
+    CALLBACK(cbGetVideoDevices, "(I)V") \
+    CALLBACK(cbRecordMedia, "(Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;ZZLjava/lang/String;Ljava/lang/String;IIII)V") \
+    CALLBACK(cbStartMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
+    CALLBACK(cbResumeMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
+    CALLBACK(cbPauseMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
+    CALLBACK(cbStopMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
 
 
 #define CALLBACK(id, type) static jmethodID id = NULL;
@@ -595,6 +604,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverVideoPlayStatus
     WRAPPER(getRenderer()->deliverVideoPlayStatus(id, event));
 }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetVideoRotation
+  (JNIEnv *env, jobject obj, jlong ptr, jlong id, jint angle)
+{
+    WRAPPER(getRenderer()->setVideoRotation(id, angle));
+}
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetVideoExternalTextureId
   (JNIEnv *env, jobject obj, jlong ptr, jlong id, jint texture_id)
 {
@@ -770,10 +785,45 @@ NATIVE(bool) Java_dk_area9_flowrunner_FlowRunnerWrapper_nIsVirtualKeyboardListen
     WRAPPER_RET(getRenderer()->deliverIsVirtualKeyboardListenerAttached());
 }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeviceInfoUpdated
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root)
+{
+    WRAPPER(getMediaRecorder()->deliverInitializeDeviceInfoCallback(cb_root));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGetAudioDevices
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobjectArray ids, jobjectArray names)
+{
+    WRAPPER(getMediaRecorder()->deliverAudioDevices(cb_root, ids, names));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGetVideoDevices
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobjectArray ids, jobjectArray names)
+{
+    WRAPPER(getMediaRecorder()->deliverVideoDevices(cb_root, ids, names));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnRecorderReady
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject recorder)
+{
+    WRAPPER(getMediaRecorder()->deliverMediaRecorder(cb_root, recorder));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaStreamReady
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject mediaStream)
+{
+    WRAPPER(getMediaRecorder()->deliverMediaStream(cb_root, mediaStream));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnRecorderError
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring error)
+{
+}
+
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
-      geolocation(this), fsinterface(&runner)
+      geolocation(this), fsinterface(&runner), mediaRecorder(this)
 {
     bytecode_ok = main_ok = false;
     flow_time_profiling_enabled = false;
@@ -1284,6 +1334,19 @@ void AndroidRenderSupport::deliverVideoPlayStatus(jlong clip_id, jint event)
     dispatchVideoPlayStatus((GLClip*)clip_id, event);
 }
 
+void AndroidRenderSupport::setVideoRotation(jlong clip_id, jint angle)
+{
+	GLVideoClip * clip = (GLVideoClip*)clip_id;
+    FlowScreenRotation rotate = FlowRotation0;
+    switch(angle) {
+        case 0 : rotate = FlowRotation0; break;
+        case 90 : rotate = FlowRotation90; break;
+        case 180 : rotate = FlowRotation180; break;
+        case 270 : rotate = FlowRotation270; break;
+    }
+	clip->setRotation(rotate);
+}
+
 void AndroidRenderSupport::setVideoExternalTextureId(jlong clip_id, jint texture_id)
 {
 	GLVideoClip * clip = (GLVideoClip*)clip_id;
@@ -1351,19 +1414,29 @@ bool AndroidRenderSupport::doCreateNativeWidget(GLClip* clip, bool neww)
 
         return !owner->eatExceptions();
     } else if (GLVideoClip *video_clip = flow_native_cast<GLVideoClip>(clip)) {
-        jstring url = string2jni(env, video_clip->getName());
+        if (video_clip->useMediaStream()) {
+            AndroidMediaRecorderSupport::FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<AndroidMediaRecorderSupport::FlowNativeMediaStream*>(
+                getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
+            env->CallVoidMethod(
+                owner->owner, cbCreateVideoWidgetFromMediaStream,
+                (jlong)clip,
+                flowMediaStream->mediaStream
+            );
+        } else {
+            jstring url = string2jni(env, video_clip->getName());
 
-        env->CallVoidMethod(
-            owner->owner, cbCreateVideoWidget,
-            (jlong)clip,
-            url,
-            (jboolean)video_clip->isPlaying(),
-            (jboolean)video_clip->isLooping(),
-            (jint)video_clip->getControls(),
-            (jfloat)video_clip->getVolume()
-        );
+            env->CallVoidMethod(
+                owner->owner, cbCreateVideoWidget,
+                (jlong)clip,
+                url,
+                (jboolean)video_clip->isPlaying(),
+                (jboolean)video_clip->isLooping(),
+                (jint)video_clip->getControls(),
+                (jfloat)video_clip->getVolume()
+            );
 
-        env->DeleteLocalRef(url);
+            env->DeleteLocalRef(url);
+        }
 
         if (owner->eatExceptions())
             return false;
@@ -2114,4 +2187,154 @@ void AndroidGeolocationSupport::afterWatchDispose(int callbacksRoot)
 {
     owner->env->CallVoidMethod(owner->owner, cbGeolocationAfterWatchDispose, callbacksRoot);
     owner->eatExceptions();
+}
+
+AndroidMediaRecorderSupport::AndroidMediaRecorderSupport(AndroidRunnerWrapper *owner)
+    : MediaRecorderSupport(&owner->runner), owner(owner)
+{
+}
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(AndroidMediaRecorderSupport::FlowNativeMediaRecorder, FlowNativeObject)
+
+AndroidMediaRecorderSupport::FlowNativeMediaRecorder::FlowNativeMediaRecorder(AndroidMediaRecorderSupport *owner) : FlowNativeObject(owner->getFlowRunner()) {}
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(AndroidMediaRecorderSupport::FlowNativeMediaStream, FlowNativeObject)
+
+AndroidMediaRecorderSupport::FlowNativeMediaStream::FlowNativeMediaStream(AndroidMediaRecorderSupport *owner) : FlowNativeObject(owner->getFlowRunner()) {}
+
+void AndroidMediaRecorderSupport::recordMedia(unicode_string websocketUri, unicode_string filePath, int timeslice, unicode_string videoMimeType,
+                        bool recordAudio, bool recordVideo, unicode_string videoDeviceId, unicode_string audioDeviceId,
+                        int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
+                        int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbRecordMedia, string2jni(owner->env, websocketUri), string2jni(owner->env, filePath), timeslice,
+        string2jni(owner->env, videoMimeType), recordAudio, recordVideo, string2jni(owner->env, videoDeviceId), string2jni(owner->env, audioDeviceId),
+        cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::initializeDeviceInfo(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbDeviceInfoUpdated, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::getAudioInputDevices(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbGetAudioDevices, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::getVideoInputDevices(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbGetVideoDevices, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::startMediaRecorder(StackSlot recorder, int timeslice)
+{
+    FlowNativeMediaRecorder* flowRecorder = (FlowNativeMediaRecorder*)getFlowRunner()->GetNative<FlowNativeMediaRecorder*>(recorder);
+    owner->env->CallVoidMethod(owner->owner, cbStartMediaRecorder, flowRecorder->mediaRecorder);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::resumeMediaRecorder(StackSlot recorder)
+{
+    FlowNativeMediaRecorder* flowRecorder = (FlowNativeMediaRecorder*)getFlowRunner()->GetNative<FlowNativeMediaRecorder*>(recorder);
+    owner->env->CallVoidMethod(owner->owner, cbResumeMediaRecorder, flowRecorder->mediaRecorder);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::pauseMediaRecorder(StackSlot recorder)
+{
+    FlowNativeMediaRecorder* flowRecorder = (FlowNativeMediaRecorder*)getFlowRunner()->GetNative<FlowNativeMediaRecorder*>(recorder);
+    owner->env->CallVoidMethod(owner->owner, cbPauseMediaRecorder, flowRecorder->mediaRecorder);
+    owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::stopMediaRecorder(StackSlot recorder)
+{
+    FlowNativeMediaRecorder* flowRecorder = (FlowNativeMediaRecorder*)getFlowRunner()->GetNative<FlowNativeMediaRecorder*>(recorder);
+    owner->env->CallVoidMethod(owner->owner, cbStopMediaRecorder, flowRecorder->mediaRecorder);
+    //owner->eatExceptions();
+}
+
+void AndroidMediaRecorderSupport::deliverInitializeDeviceInfoCallback(jint cb_root)
+{
+     getFlowRunner()->EvalFunction(getFlowRunner()->LookupRoot(cb_root), 0);
+}
+
+void AndroidMediaRecorderSupport::deliverAudioDevices(jint cb_root, jobjectArray ids, jobjectArray names)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    int length = env->GetArrayLength(ids);
+    RUNNER_DefSlots2(deviceIds, labels);
+    deviceIds = RUNNER->AllocateArray(length);
+    labels = RUNNER->AllocateArray(length);
+
+    for (int i = 0; i < length; i++) {
+        jstring id = (jstring)env->GetObjectArrayElement(ids, i);
+        jstring name = (jstring)env->GetObjectArrayElement(names, i);
+
+        RUNNER->SetArraySlot(deviceIds, i, RUNNER->AllocateString(jni2unicode(env, id)));
+        RUNNER->SetArraySlot(labels, i, RUNNER->AllocateString(jni2unicode(env, name)));
+
+        env->DeleteLocalRef(id);
+        env->DeleteLocalRef(name);
+    }
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, deviceIds, labels);
+}
+
+void AndroidMediaRecorderSupport::deliverMediaRecorder(jint cb_root, jobject recorder)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    FlowNativeMediaRecorder* flowRecorder = new FlowNativeMediaRecorder(this);
+
+    //TODO: DeleteGlobalRef
+    flowRecorder->mediaRecorder = (jobject)env->NewGlobalRef(recorder);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowRecorder->getFlowValue());
+}
+
+void AndroidMediaRecorderSupport::deliverMediaStream(jint cb_root, jobject mediaStream)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    FlowNativeMediaStream* flowMediaStream = new FlowNativeMediaStream(this);
+
+    //TODO: DeleteGlobalRef
+    flowMediaStream->mediaStream = (jobject)env->NewGlobalRef(mediaStream);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowMediaStream->getFlowValue());
+}
+
+void AndroidMediaRecorderSupport::deliverVideoDevices(jint cb_root, jobjectArray ids, jobjectArray names)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    int length = env->GetArrayLength(ids);
+
+    RUNNER_DefSlots2(deviceIds, labels);
+    deviceIds = RUNNER->AllocateArray(length);
+    labels = RUNNER->AllocateArray(length);
+
+    for (int i = 0; i < length; i++) {
+        jstring id = (jstring)env->GetObjectArrayElement(ids, i);
+        jstring name = (jstring)env->GetObjectArrayElement(names, i);
+
+        RUNNER->SetArraySlot(deviceIds, i, RUNNER->AllocateString(jni2unicode(env, id)));
+        RUNNER->SetArraySlot(labels, i, RUNNER->AllocateString(jni2unicode(env, name)));
+
+        env->DeleteLocalRef(id);
+        env->DeleteLocalRef(name);
+    }
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, deviceIds, labels);
 }

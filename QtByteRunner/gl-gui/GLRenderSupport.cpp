@@ -1116,6 +1116,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     // Video Clip
     TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 3);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideoFromMediaStream, 3);
     TRY_USE_OBJECT_METHOD_NAME(GLVideoClip, playVideo2, "playVideo", 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, seekVideo, 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, pauseVideo, 1);

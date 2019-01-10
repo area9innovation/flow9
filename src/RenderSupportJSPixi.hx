@@ -1747,6 +1747,10 @@ class RenderSupportJSPixi {
 		vc.playVideo(filename, startPaused);
 	}
 
+	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
+		vc.playVideoFromMediaStream(mediaStream, startPaused);
+	}
+
 	public static function seekVideo(str : VideoClip, seek : Float) : Void {
 		str.setCurrentTime(seek);
 	}
@@ -3444,6 +3448,11 @@ private class VideoClip extends FlowContainer {
 
 	public function playVideo(filename : String, startPaused : Bool) : Void {
 		createVideoClip(filename, startPaused);
+	}
+
+	public function playVideoFromMediaStream(mediaStream : MediaStream, startPaused : Bool) : Void {
+		createVideoClip("", startPaused);
+		nativeWidget.srcObject = mediaStream;
 	}
 
 	public function setTimeRange(start : Float, end : Float) : Void {
