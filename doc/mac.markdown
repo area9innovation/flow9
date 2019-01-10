@@ -246,7 +246,7 @@ all supported commands.
 
 The debugger can also be used within an editor.  Because it mimics
 GDB, it works with editors with gdb integration, for example Sublime
-Text's SublimeGDB package.  See `resources/sublimetext2/readme.txt`
+Text's SublimeGDB package. See [resources/sublimetext/readme.md](../resources/sublimetext/readme.md)
 for more details.
 
 ## Try it (JavaScript in browser)

@@ -308,9 +308,9 @@ and `continue`. The `help` command will show a list of all supported
 commands.
 
 The debugger can also be used within an editor. Because it mimics GDB,
-it works with editors with gdb integration, for example Sublime Text’s
-flower package. See `flow/resources/sublimetext3/flower/README.md` for more
-details.
+it works with editors with gdb integration, for example Sublime Text
+package. See [resources/sublimetext/readme.md](../resources/sublimetext/readme.md)
+for more details.
 
 # Try it (JavaScript in browser)
 To compile Flow code to JavaScript, try e.g.
