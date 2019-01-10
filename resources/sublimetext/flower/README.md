@@ -23,8 +23,7 @@ It is easy to install & comes with batteries, such as:
 - Debugger is configured automagically - just install `SublimeGDB` package and run it with `Ctrl+F5`  
     - **Please note that SublimeGDB is not officially supported for ST3, so it may occassionally freeze editor**  
 
-
-However, *Flower* lacks certain features which are currently present in *sublimetext2/Flow* plugin:
+However, `flower` lacks certain features which are present in older `flow` plugin:
 
 - autocompletion
 - profiling
@@ -49,17 +48,17 @@ However, *Flower* lacks certain features which are currently present in *sublime
 
 4. Install **SublimeGDB** & **SublimeLinter** packages (`Package Control: Install Package`)
 
-5. Open `Packages` folder (`Preferences - Browse Packages..`) & remove your old `Packages/Flow` folder.
+5. Open `Packages` folder (`Preferences - Browse Packages..`) 
+   and remove old `Packages/Flow` plugin folder.  
+    Do the same for `SublimeLinter-contrib-flow` if you have it  
+    **Make sure to move them out of the `Packages/` folder completely**
 
-    **Do the same for `SublimeLinter-contrib-flow` if you have it**
-
-    **Make sure to move it out of the `Packages/` folder completely**
-
-6. Clone/Unpack the `flower` into `Packages/flower` folder.
+6. Copy the `sublimetext/flower` as `Packages/flower` folder.
 
 7. Modify settings (`Preferences: Flower Settings - User`):
 
-    **Set `repo` path parameter to the root location of your repositories if it's not auto-located(default: `C:/`, i.d. `"repo": "C:/"`)**
+    Set `repo` path parameter to the root location of your repositories if it's not auto-located
+    from `<repo>/flow9` folder (default: `C:/`, i.e. `"repo": "C:/"`)
 
 8. Modify keybindings if needed (`Preferences: Flower Key Bindings - User`)
 
@@ -135,28 +134,21 @@ However, *Flower* lacks certain features which are currently present in *sublime
 ### FAQ
 
 **Q: I get error: ` Error loading syntax file "Packages/Flow/Flow.tmLanguage": Unable to open Packages/Flow/Flow.tmLanguage`**  
-**A:** Sublime Text assigns syntax for each opened file, and since the old plugin has moved away, path was changed.  
+**A:** Sublime Text assigns syntax for each opened file, and since the old plugin was moved away, path was changed.  
        Close & Reopen all files or set new syntax with `Set Syntax: Flow` command.  
 
 **Q: I get error on compilation: `Could not find <component>/<component>.flow. Use -I <path>`**  
 **A:** Most likely this file's `flow.config` doesn't have this component in includes section.
        Open context menu with right-click and select `Open flow.config` to check.
 
-**Q: In console I see that `flow/bin/lint*` is run, but linter highlights every line as error!**  
+**Q: In console I see that `flow9/bin/lint*` is run, but linter highlights every line as error!**  
 **A:** That should never happen since plugin doesn't depend on `flow/bin/lint*` batch files.
        Make sure that you don't have `SublimeLinter-contrib-flow` package.
 
 **Q: Linter works only when file is saved. How to lint code in the background?**  
-**A:** Old linter/compiler works with files, so it's not possible to check source on the fly yet.
-       It may be fixed in the future.
+**A:** Old linter/compiler works with files, so it's not possible to check source on the fly.
 
 **Q: Lint error text is shown in status only when cursor is on the beginning of a line.
      How to make it show text in status when cursor is anywhere on this line?**  
 **A:** This happens with old linter/compiler, which doesn't provide error column.
-       Add this to SublimeLinter config: `"no_column_highlights_line": true`
-
-**Q: It would be nice to have X feature.**  
-**A:** Create a card in Flow Trello board & it'll be prioritized.
-
-**Q: I know Python and want to contribute.**  
-**A:** Pull requests are welcome! Be sure to request review when you're done.
+       Add this to `SublimeLinter` config: `"no_column_highlights_line": true`
