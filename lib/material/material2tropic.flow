@@ -194,8 +194,10 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 		dispose();
 
 		manager.disposers ::= removeFromTree(manager.disposers, renderId);
+		disposeMaterialManagerSubs(manager);
 	}
 
+	initMaterialManagerSubs(manager);
 	manager.disposers ::= setTree(manager.disposers, renderId, disp);
 
 	if (getUrlParameterDef("profile", "") >= "1") {
@@ -203,6 +205,76 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	}
 
 	disp;
+}
+
+initMaterialManagerSubs(manager : MaterialManager) -> void {
+	if (isNone(lookupTree(manager.disposers, -1))) {
+		manager.disposers ::=
+			setTree(
+				manager.disposers,
+				-1,
+				[
+					makeSubscribeUns(manager.iscript.showPanel, \sp -> {
+						if (sp)
+							[handleIScriptState(manager, \mat, p -> doMaterial2tropic(MaterialRender(manager, -1), mat, p))]
+						else
+							[];
+					})(),
+					makeSubscribe2(manager.focus.focusEnabled, \fen -> if (!fen) {
+						nextDistinct(manager.focus.focusedId, -1);
+						nextDistinct(manager.focus.focused, false);
+					})(),
+					makeSubscribe2(manager.focus.focusedId, \foc -> {
+						if (manager.focus.previousFocusedId != foc) {
+							if (foc != -1) {
+								nextDistinct(manager.focus.focused, true);
+								nextDistinct(manager.focus.nextId, foc);
+							}
+
+							maybeApply(lookupTree(fgetValue(manager.focus.focusIds), manager.focus.previousFocusedId), \v -> switchMaterialFocus(
+								v,
+								\fc -> {
+									next(fc.focused, false);
+								},
+								\fc -> {
+									next(fc.focused, false);
+									if (foc != -1)
+										next(fc.nextId, -1);
+									next(fc.focusedId, -1);
+								}
+							));
+
+							maybeApply(lookupTree(fgetValue(manager.focus.focusIds), foc), \v -> switchMaterialFocus(
+								v,
+								\fc -> {
+									if (fgetValue(fc.focusEnabled)) {
+										next(fc.focused, true);
+									} else {
+										nextDistinct(fc.focused, false);
+										deferred(\ -> next(manager.focus.focusedId, -1));
+									}
+								},
+								\fc -> {
+									next(fc.focused, true);
+								}
+							));
+
+							(manager.focus).previousFocusedId ::= foc;
+						}
+					})()
+				]
+				|> (\d -> \ -> applyall(d))
+			);
+	}
+}
+
+disposeMaterialManagerSubs(manager : MaterialManager) -> void {
+	if (sizeTree(manager.disposers) == 1) {
+		maybeApply(lookupTree(manager.disposers, -1), \d -> {
+			d();
+			manager.disposers ::= makeTree();
+		})
+	}
 }
 
 material2nativeForm(manager : MaterialManager, m : Material) -> Form {
