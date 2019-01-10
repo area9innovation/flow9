@@ -142,11 +142,13 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wasmfile = changeFileExt(cfg.outputfile, ".wasm");
 	fiInvokeWat2Wasm(cfg, contents, wasmfile, \result -> { 
 		if (result) {
-			fiGenerateNativeJSFile(cfg, \result1 -> {
+			fiGenerateNativeJSFile(cfg, natives, \result1 -> {
 				if (result1) {
 					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode);
-					fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
-					fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
+					if (!cfg.nodejs) {
+						fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
+						fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
+					}
 				}
 				fiWriteListingFile(cfg, wasmContext);
 				callback();
@@ -637,10 +639,21 @@ fiNativeJSFileName(hostfile: string) {
 
 // Temporary solution.
 // TODO: fix that
-fiGenerateNativeJSFile(cfg : FiWasmConfig, callback : (bool) -> void) -> void {	
+fiGenerateNativeJSFile(cfg : FiWasmConfig, natives : Tree<string, FiWasmNativeDec>, callback : (bool) -> void) -> void {	
 	tmp_name = "__temp_js_source.flow";
+
+	usedModules = foldTree(natives, ["import math;"], \k, v, acc -> {
+		s = if (startsWith(v.decl.nativeName, "Native.")) "import math;" // will create a NativeHx object
+		else if (startsWith(v.decl.nativeName, "RenderSupport.")) "import renderform;" // will create a RenderSupportHx object
+		else "";
+
+		if (s != "" && !contains(acc, s))
+			arrayPush(acc, s)
+		else acc;
+	});
+
 	// import math covers string & array as well
-	if (setFileContent(tmp_name, "import math;\nmain() {}")) {
+	if (setFileContent(tmp_name, strGlue(usedModules, "\n") + "\nmain() {}")) {
 		fcPrintln("Compiling natives ...");
 		nativeJsFn = fiNativeJSFileName(cfg.hostfile);
 		// call compilation routine
