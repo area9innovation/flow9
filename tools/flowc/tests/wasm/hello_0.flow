@@ -1,0 +1,169 @@
+import behaviour;
+import stylestructs;
+
+native currentClip : io () -> native = RenderSupport.currentClip;
+native addChild : io (parent : native, child : native) -> void = RenderSupport.addChild;
+native removeChild : io (parent : native, child : native) -> void = RenderSupport.removeChild;
+native makeTextfield : (fontFamily : string) -> native = RenderSupport.makeTextField;
+native getTextMetrics : io (text : native) -> [double] = RenderSupport.getTextMetrics;
+native getTextFieldWidth : io (clip : native) -> double = RenderSupport.getTextFieldWidth;
+native getTextFieldHeight : io (clip : native) -> double = RenderSupport.getTextFieldHeight;
+native setTextAndStyle : io (
+	textfield : native, text : string, fontfamily : string, fontsize : double,
+	fontweight : int, fontslope : string,
+	fillcolour : int, fillopacity : double, letterspacing : double,
+	backgroundcolour : int, backgroundopacity : double
+) -> void = RenderSupport.setTextAndStyle;
+native setAdvancedText : io (textfield : native, sharpness : int, antiAliasType : int, gridFitType : int) -> void = RenderSupport.setAdvancedText;
+
+main() {
+	r = renderText("Hello, world! My string!", [FontSize(36.0), BackgroundFill(0xff00ff)], const(WidthHeight(400.0, 300.0)), [], []);
+	attachChildren(currentClip(), r.clips, r.widthHeight, r.baseline, r.pending, r.disposers, r.capabilities);
+}
+
+RenderResult(
+	clips : [native],
+	widthHeight : Behaviour<WidthHeight>,
+	baseline : Behaviour<double>,
+	pending : Behaviour<int>,
+	disposers :[() -> void],
+	capabilities : ClipCapabilities
+);
+
+ClipCapabilities(move : bool, filters : bool, interactive : bool, scale : bool, alpha : bool);
+
+addChild_hack(parent : native, child : native) -> void {
+	addChild(parent, child);
+}
+
+removeChild_hack(parent : native, child : native) -> void {
+	removeChild(parent, child);
+}
+
+
+// This dance concerns how to hook up any clips from a child to ourselves
+attachChildren(clip : native, children : [native], widthHeight : Behaviour<WidthHeight>, baseline : Behaviour<double>,
+			pending : Behaviour<int>, disposers : [() -> void], cap : ClipCapabilities) -> RenderResult {
+	iter(children, \c -> {
+		addChild_hack(clip, c);
+	});
+	RenderResult([clip], widthHeight, baseline, pending, concat([\ -> {
+			iter(children, \c -> {
+				removeChild_hack(clip, c);
+			})
+		}], disposers)
+	, cap);
+}
+
+renderText(text : string, style : [CharacterStyle], available : Behaviour<WidthHeight>, zorder : [int], tabOrder: [int]) -> RenderResult {
+	textfield = makeTextfield("Book");
+	defineTextStyle(textfield, text, style);
+
+	metrics = getTextMetrics(textfield);
+
+	widthHeight = const(WidthHeight(getTextFieldWidth(textfield), getTextFieldHeight(textfield)));
+	caps = ClipCapabilities(true, true, true, false, true);
+
+	uStruct = fold(style, None(), \acc, s -> switch(s) { Underlined(v): Some(s); default: acc});
+	RenderResult([textfield], widthHeight, const(metrics[0]), const(0), [/*disposer*/], caps)
+}
+
+DefinedTextStyle(
+	fontFamily : string,
+	fontSize : double,
+	fontWeight : int,
+	fontSlope : string,
+	fillColor : int,
+	fillOpacity : double,
+	letterSpacing : double,
+	backgroundColor : int,
+	backgroundOpacity : double,
+	advancedSharpness : int,
+	antiAlias : int,
+	gridFit : int
+);
+
+// defaultFontFamily_ = "Book";
+
+getDefinedTextStyle(style : [CharacterStyle]) -> DefinedTextStyle {
+	// Set up the style
+	fontfamily = ref "Book";// defaultFontFamily_;
+	fontweight = ref 0;
+	fontslope = ref "normal";
+	fontsize = ref 11.0;
+	fillcolour = ref 0x000000;
+	fillopacity = ref 1.0;
+	backgroundcolour = ref 0x000000;
+	backgroundopacity = ref 1.0;//calculateDefaultTextBackgroundColorOpacity(style);
+	letterspacing = ref 0.0;
+	advancedSharpness = ref -400;
+	advancedAntiAliasType = ref FontAntiAliasAdvanced();
+	advancedGridFitType = ref FontGridFitNone();
+	specifiedSharpness = ref false;
+	iter(style, \s -> {
+		switch (s : CharacterStyle) {
+			FontFamily(name) : fontfamily := name;
+			FontSize(size) : fontsize := size;
+			Fill(col): fillcolour := col;
+			FillOpacity(op): fillopacity := op;
+			LetterSpacing(op) : letterspacing := op;
+			Sharpness(sharpness, antiAliasType, gridFitType) : {
+				advancedSharpness := sharpness;
+				advancedAntiAliasType := antiAliasType;
+				advancedGridFitType := gridFitType;
+				specifiedSharpness := true;
+			}
+			BackgroundFill(col): backgroundcolour := col;
+			BackgroundFillOpacity(opacity): backgroundopacity := opacity;
+			default : {}
+		}
+	});
+	// mappedFonts = map(strSplit(^fontfamily, ","), \family -> getMappedFont(family, ^fontsize));
+	fontfamily := "Book";// strGlue(map(mappedFonts, firstOfPair), ",");
+	fontsize := 36.0;// mappedFonts[0].second;
+
+	antialiasint = switch(^advancedAntiAliasType : FontAntiAliasType) {
+		FontAntiAliasNormal() : 0;
+		FontAntiAliasAdvanced() : 1;
+	};
+	gridfitint = switch(^advancedGridFitType : FontGridFitType) {
+		FontGridFitNone() : 0;
+		FontGridFitPixel() : 1;
+		FontGridFitSubpixel() : 2;
+	};
+
+	DefinedTextStyle(
+		^fontfamily,
+		^fontsize,
+		^fontweight,
+		^fontslope,
+		^fillcolour,
+		^fillopacity,
+		^letterspacing,
+		^backgroundcolour,
+		^backgroundopacity,
+		^advancedSharpness,
+		antialiasint,
+		gridfitint
+	);
+}
+
+defineTextStyle(textfield, text, style) {
+	definedTextStyle = getDefinedTextStyle(style);
+
+	setTextAndStyle(
+		textfield,
+		text,
+		definedTextStyle.fontFamily,
+		definedTextStyle.fontSize,
+		definedTextStyle.fontWeight,
+		definedTextStyle.fontSlope,
+		definedTextStyle.fillColor,
+		definedTextStyle.fillOpacity,
+		definedTextStyle.letterSpacing,
+		definedTextStyle.backgroundColor,
+		definedTextStyle.backgroundOpacity
+	);
+
+	setAdvancedText(textfield, definedTextStyle.advancedSharpness, definedTextStyle.antiAlias, definedTextStyle.gridFit);
+}

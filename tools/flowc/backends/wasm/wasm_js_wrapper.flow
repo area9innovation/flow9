@@ -69,7 +69,8 @@ fiNativeJSCallbackFileName(hostfile: string) {
 }
 
 fiNativeJSWrapperFunctionName(funcname: string) {
-	"wasmgen_" + funcname;
+	fname = toLowerCase(strReplace(funcname, ".", "_"));
+	"wasmgen_" + fname;
 }
 
 fiWriteHostNativeJSWrapperFile(cfg : FiWasmConfig, wrappersJSCode : string) {
@@ -149,7 +150,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 
 
 	buildArg = \nOut, retrievecode -> { [FuncArg(nameIn, nOut, retrievecode, empty_cb())]; };
-	buildEmpty = \ -> buildArg(nameIn, []);
+	buildEmpty = \ -> buildArg(nameOut, ["var " + nameOut + " = " + nameIn + ";"]);
 	buildArg1 = \retrievecode -> buildArg(nameOut, retrievecode);
 
 	switch (a) {
@@ -158,7 +159,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		WasmTypeDouble(): buildEmpty();
 		WasmTypeString(): buildArg1(["var " + nameOut + " = " + f(nameIn, [4])]);
 		WasmTypeArray(type): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
-		WasmTypeNative(): buildEmpty();
+		WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID("+nameIn+");" else "IDHandler.createObjectId("+nameIn+");")]);
 		WasmTypeFlow(): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
 
 		WasmTypeFunction(argTypes, returnType): {
@@ -191,7 +192,8 @@ getFuncArgs(args, typeTable : FiWasmTypeTable, callbacks: ref Tree<WasmTypeDescr
 wasmNativeName(name: string) {
 	nameComponents = strSplit(name, ".");
 	add = if (fiWasmIsHostWNative(name)) "" 
-	else if (fiWasmIsPureNative(name)) "NativeHx."
+	else if (startsWith(name, "Native.")) "NativeHx."
+	else if (startsWith(name, "RenderSupport.")) "RenderSupportHx."
 	else "";
 
 	last = nameComponents[length(nameComponents) - 1];
@@ -237,7 +239,7 @@ buildReturnValue(retName: string, ret: [FuncArg], indent: string, decode : bool)
 
 		if (a.cb.name != "") {
 			newretname = retName + "_";
-			name = if (!decode) a.namein else retName;
+			name = a.namein;
 			fnIndex = if (!decode) a.cb.name else "IDHandler.createObjectId(" + a.cb.name + ")";
 			buildFunction(a.cb.name, name, newretname, a.cb.args, a.cb.ret, indent, true, a.cb.decode) + ";\n" +
 			indent + "return " + fnIndex + ";\n"
@@ -276,7 +278,7 @@ buildFunction(name: string, nativeName: string, retName: string, args: [FuncArg]
 			nextindent + "var " + ret[0].namein + " = " + newname + "(" + strGlue(map(args, \a -> a.nameout), ", ") + ", " + nname + ");\n" +
 			buildReturnValue(ret[0].nameout, ret, nextindent, decode)
 		} else {
-			nextindent + "var " + ret[0].nameout + " = " + nname + "(" + strGlue(map(args, \a -> a.nameout), ", ") + ");\n" +
+			nextindent + "var " + ret[0].namein + " = " + nname + "(" + strGlue(map(args, \a -> a.nameout), ", ") + ");\n" +
 			buildReturnValue(ret[0].nameout, ret, nextindent, decode)
 		}
 	} +
@@ -306,7 +308,7 @@ fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWas
 
 		FiWasmNativeDec(decl,
 			if (/*needCheck &&*/ (fiWasmIsPureNative(decl.nativeName) || fiWasmIsHostWNative(decl.nativeName))) {
-				nameWrapped = fiNativeJSWrapperFunctionName(name);
+				nameWrapped = fiNativeJSWrapperFunctionName(decl.nativeName);
 
 				wr = fiWasmCreateNativeWrapper(name, nameWrapped, decl, typeTable, globalNames, callbacks);
 				wrapperJSCode = buildFunction(nameWrapped, decl.nativeName, "ret", wr.first, wr.second, "	", false, true);
