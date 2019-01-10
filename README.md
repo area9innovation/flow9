@@ -106,9 +106,9 @@ For the license of other components, see LICENSE.txt.
 Name
 ----
 
-flow was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
+`flow` was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
 to keep the name, since it came first, is a full platform and the risk of confusion seems small. 
-However, should the need arise, then flow9 can also be used to refer to this language.
+However, should the need arise, then `flow9` can also be used to refer to this language.
 
 History
 -------

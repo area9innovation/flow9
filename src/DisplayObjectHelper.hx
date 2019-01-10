@@ -240,8 +240,12 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
+
 			clip.mask.once("removed", function () { clip.mask = null; });
+		} else if (untyped clip.alphaMask != null) {
+			untyped maskContainer.isMask = true;
 		}
+
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 
