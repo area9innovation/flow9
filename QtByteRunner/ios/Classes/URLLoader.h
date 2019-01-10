@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #ifndef DEFAULT_BASE_URL
-#define DEFAULT_BASE_URL @"https://binrunner.dev.area9learning.com/flow/"
+#define DEFAULT_BASE_URL @"https://localhost/flow/"
 #endif
 
 @class URLLoader;

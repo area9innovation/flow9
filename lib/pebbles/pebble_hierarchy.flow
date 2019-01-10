@@ -1,0 +1,208 @@
+import material/material_snackbar;
+
+import pebbles/pebble_controller;
+import pebbles/pebble_utils;
+
+export {
+	/*
+		PebbledHierarchy is an arrangement of menu items in which items correspond to 
+		related data tables organized in a hierarchy. For example:
+
+			`organizations` -> `projects` -> `subjects` -> `modules`
+
+		In this example: clicking on a row in organizations table will open projects table 
+		filtered by selected organization ID and so on. 
+
+		Item name is used as a part of pebble parameters that allows to maintain URLs, 
+		handle tables filtering and build visual representation based on MChips. 
+
+	*/
+	PebbledHierarchyItem : (
+		name : string, // e.g. `organizations`
+		parameter : string, // e.g. `organization`
+		id2label : (int) -> string // e.g. find RhapsodeOrganization name by ID in DB/state
+	);
+
+	makePebbledHierarchyItem(name : string, id2label : (int) -> string) -> PebbledHierarchyItem;
+
+	// Build a material corresponding to the current values of pebbled hierarchy parameters.
+	// Appends UI element (chips) to visually represent and edit pebbled hierarchy filters.
+	MPebbledHierarchyBody(
+		controller : PebbleController, 
+		items : [PebbledHierarchyItem], 
+		content : (Tree</* item parameter name */ string, /* id */ int>) -> Material
+	) -> Material;
+
+	// Display view corresponding to selected item preserving pebble parameters.
+	// For example: open `organizations` table
+	setViewForPebbledHierarchyItem(controller : PebbleController, items : [PebbledHierarchyItem], itemName : string) -> void;
+
+	// Filter by the row ID of the data table corresponding to the given item. 
+	// For example: open `projects` table filtered by selected `organization` ID.
+	setViewForPebbledHierarchyFilter(
+		manager : MaterialManager, 
+		controller : PebbleController, 
+		items : [PebbledHierarchyItem], 
+		itemName : string, 
+		id : int
+	) -> void;
+
+	setViewWithNoFilter(controller : PebbleController, items : [PebbledHierarchyItem]) -> void;
+
+	makePebbledHierarchyParameterName(itemName : string) -> string;
+}
+
+makePebbledHierarchyItem(name : string, id2label : (int) -> string) -> PebbledHierarchyItem {
+	PebbledHierarchyItem(
+		name,
+		makePebbledHierarchyParameterName(name),
+		id2label
+	)
+}
+
+MPebbledHierarchyBody(controller : PebbleController, items : [PebbledHierarchyItem], content : (Tree<string, int>) -> Material) -> Material {
+	valuesBs = map(items, \__ -> make(""));
+
+	MLinkPebbleParameters(
+		controller,
+		mapi(items, \i, item -> {
+			PebbleStringLink(item.parameter, valuesBs[i], nop1, RecordURLChange())
+		}),
+		MSelect(fmerge(valuesBs), \values -> {
+			hdata = collectPebbledHierarchyData2(controller, items, values);
+			switch(hdata) {
+				PebbledHierarchyItemsData(datas): {
+					valuesMap = fold(datas, makeTree(), \acc, data -> {
+						setTree(acc, data.item.parameter, s2i(data.value))
+					});
+
+					MLines([
+						buildPebbledHierarchyChips(controller, datas),
+						content(valuesMap)
+					])
+				}
+				PebbledHierarchyError(error): {
+					MCenter(MText(error, [MTitle()]))
+				}
+			}
+		})	
+	)
+}
+
+PebbledHierarchyItemData : (
+	item : PebbledHierarchyItem,
+	value : string, // e.g. "123"
+	label : string,  // e.g. "My project"
+);
+
+PebbledHierarchyData ::= PebbledHierarchyItemsData, PebbledHierarchyError;
+	
+	PebbledHierarchyItemsData : (datas : [PebbledHierarchyItemData]);	
+	PebbledHierarchyError : (error : string);
+
+collectPebbledHierarchyData(controller : PebbleController, items : [PebbledHierarchyItem]) -> PebbledHierarchyData {
+	values = collectPebbledHierarchyItemsValues(controller, items);
+
+	collectPebbledHierarchyData2(controller, items, values);
+}
+
+collectPebbledHierarchyItemsValues(controller : PebbleController, items : [PebbledHierarchyItem]) -> [string] {
+	pvs : [KeyValue] = collectCurrentPebbleParametersAndValues(controller, map(items, \item -> item.parameter));
+
+	map(items, \item -> {
+		findDef(pvs, \pv -> pv.key == item.parameter, KeyValue(item.parameter, "")).value
+	})
+}
+	
+collectPebbledHierarchyData2(controller : PebbleController, items : [PebbledHierarchyItem], values : [string]) -> PebbledHierarchyData {
+	foldi(items, PebbledHierarchyItemsData([]), \i, acc, item -> {
+		switch(acc) {
+			PebbledHierarchyItemsData(datas): {
+				value = values[i];
+
+				if (value != "") {
+					label = item.id2label(s2i(value));
+					if (label != "") {
+						PebbledHierarchyItemsData(
+							arrayPush(datas, PebbledHierarchyItemData(item, value, label))
+						)						
+					} else {
+						PebbledHierarchyError(notFoundItemByPebbleParameterMessage(item.parameter, value));
+					}
+				} else {
+					acc
+				}
+			}
+			PebbledHierarchyError(__): acc;
+		}		
+	})
+}
+
+buildPebbledHierarchyChips(controller : PebbleController, datas : [PebbledHierarchyItemData]) -> Material {
+	if (datas == []) {
+		MEmpty()
+	} else {
+		chips = map(datas, \data -> {
+			MChip(data.label, [
+				MCloseButton(), 
+				MOnClose(\-> {
+					setViewFromPebble(
+						controller,
+						extendCurrentPebbleWithParameter(controller, data.item.parameter, "")
+					);	
+					true
+				}), 
+				MOnClick(\-> {
+					setViewForPebbledHierarchyItem(controller, map(datas, \d -> d.item), data.item.name)
+				})
+			])
+		});
+
+		MBorder(8.0, 8.0, 8.0, 8.0, MCols(chips))
+	}
+}
+
+	
+setViewForPebbledHierarchyItem(controller : PebbleController, items : [PebbledHierarchyItem], itemName : string) -> void {
+	hdata = collectPebbledHierarchyData(controller, items);
+	pebbleParameters = switch(hdata) {
+		PebbledHierarchyItemsData(datas): {
+			map(datas, \data -> KeyValue(data.item.parameter, data.value))
+		}
+		PebbledHierarchyError(__): {
+			// otherwise user will get stuck with this error
+			[]
+		}
+	};
+
+	setViewFromPebble(
+		controller, 
+		makeSimplePebble3(itemName, pebbleParameters)
+	)
+}
+
+setViewForPebbledHierarchyFilter(manager : MaterialManager, controller : PebbleController, items : [PebbledHierarchyItem], itemName : string, id : int) -> void {
+	index = findiDef(items, \item -> item.name == itemName, -1);
+
+	if (index >= 0 && index < length(items) - 1) {
+		item = items[index];
+
+		nextItem = items[index + 1];
+		setViewFromPebble(
+			controller,
+			makeSimplePebble2(nextItem.name, item.parameter, i2s(id))
+		);
+		showMSnackbar(manager, formatString(_("Filter by %1 " + item.parameter + " activated"), [item.id2label(id)]), []);
+	}
+}
+
+setViewWithNoFilter(controller : PebbleController, items : [PebbledHierarchyItem]) -> void {
+	setViewFromPebble(
+		controller,
+		extendCurrentPebbleWithParameters(controller, map(items, \item -> KeyValue(item.parameter, "")))
+	)
+}
+
+makePebbledHierarchyParameterName(itemName : string) -> string {
+	plural2single(makePebbleTabUid(itemName))
+}

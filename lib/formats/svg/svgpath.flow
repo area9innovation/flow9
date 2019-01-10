@@ -1,6 +1,4 @@
 import gui;
-import lingo/pegcode/driver;
-import formats/svg/svg_pegop;
 
 export {
 	svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) -> Form;
@@ -106,87 +104,6 @@ quadraticBezierApproximation(p0, p1, p2, p3) {
 		QuadraticBezierTo(p3.x, p3.y, pc_4.x, pc_4.y) ]
 }
 
-specialPegActions() {
-	pen = ref V2(0.0, 0.0);
-	last_cp = ref V2(0.0, 0.0);
-
-	readPt = \a : [double], rel : bool -> { pen := if (rel) v2Add(^pen, V2(a[0], a[1])) else V2(a[0], a[1]); };
-
-	move = \a, rel -> { readPt(a, rel); MoveTo(^pen.x, ^pen.y) };
-	line = \a, rel -> { readPt(a, rel); LineTo(^pen.x, ^pen.y) };
-	h = \a, rel -> { pen := if (rel) V2(^pen.x + a[0], ^pen.y) else V2(a[0], ^pen.y); LineTo(^pen.x, ^pen.y) };
-	v = \a, rel -> { pen := if (rel) V2(^pen.x, ^pen.y + a[0]) else V2(^pen.x, a[0]); LineTo(^pen.x, ^pen.y) };
-
-	readCurvePts = \a : [double], rel : bool -> {
-		pts = map(enumFromTo(0, length(a) / 2 - 1), if (rel) \i -> V2(a[i * 2] + ^pen.x, a[i * 2 + 1] + ^pen.y) else \i -> V2(a[i * 2], a[i * 2 + 1]) );
-		last_cp := lastElement(pts, ^last_cp);
-		pen := pts[0];
-		pts
-	};
-
-	cubicBezier = \a, rel -> {
-		p0 = ^pen;
-		pts  = readCurvePts(a, rel);
-		quadraticBezierApproximation(p0, pts[1], pts[2], pts[0])
-	};
-
-	smoothBezier = \a, rel -> {
-		p0 = ^pen;
-		p1 = if (^last_cp.x > 0.0) Some(v2Add(p0, v2Sub(p0, ^last_cp))) else None();
-		pts = readCurvePts(a, rel);
-		quadraticBezierApproximation(p0, either(p1, pts[1]), pts[1], pts[0])
-	}
-
-	quadBezier = \a, rel -> {
-		readCurvePts(a, rel);
-		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
-	}
-
-	smoothQuadBezier = \args, rel -> {
-		last_cp := v2Add(^pen, v2Sub(^pen, ^last_cp));
-		pen := if (rel) v2Add(^pen, V2(args[0], args[1])) else V2(args[0], args[1]); 
-		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
-	}
-
-	arc = \args, rel -> {
-		r = V2(args[0], args[1]);
-		xrot = args[2];
-		flagA = args[3] == 1.0;
-		flagS = args[4] == 1.0;
-		eP = if (rel) v2Add(^pen, V2(args[5], args[6])) else V2(args[5], args[6]);
-		res = ellipseArcToBezierCurves( endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP );
-		pen := eP;
-		res
-	}
-
-	t = ref defaultPegActions.t;
-
-	t := setTree(^t,"concatA", \a  -> { concatA(a[0]); } );
-
-	add = \n : string, fn : ([double], rel : bool) -> flow, rel : bool-> t := setTree( ^t, n, \args -> fn( map(args, s2d), rel ) );
-	
-	add("cubicBezier", cubicBezier, false);
-	add("cubicBezierRel", cubicBezier, true);
-	add("smoothBezier", smoothBezier, false);
-	add("smoothBezierRel", smoothBezier, true);
-	add("quadBezier", quadBezier, false);
-	add("quadBezierRel", quadBezier, true);
-	add("smoothQuadBezier", smoothQuadBezier, false);
-	add("smoothQuadBezierRel", smoothQuadBezier, true);
-	add("move", move, false);
-	add("moveRel", move, true);
-	add("line", line, false);
-	add("lineRel", line, true);
-	add("v", v, false);
-	add("vRel", v, true);
-	add("h", h, false);
-	add("hRel", h, true);
-	add("arc", arc, false);
-	add("arcRel", arc, true);
-
-	SemanticActions(^t);
-}
-
 getGraphicsRegion(path : [StaticGraphicOp]) {
 	fold(path, Quadruple(doubleMax, doubleMax, doubleMin, doubleMin), \q, op -> {
 			p = switch(op : StaticGraphicOp) {
@@ -206,23 +123,151 @@ regionContains(r : Quadruple, r1 : Quadruple) {
 }
 
 // Topological sort with layers:
-getLayers(group : [[StaticGraphicOp]]) -> [[[StaticGraphicOp]]] {
+getLayers2(group : [Pair<[StaticGraphicOp], Quadruple>]) ->  [[Pair<[StaticGraphicOp], Quadruple>]] {
 	if (group == []) {
 		[]
 	} else {
-		layer = filter( group, \graphics -> forall(group, \g -> !regionContains(getGraphicsRegion(g), getGraphicsRegion(graphics)) ) );
-		arrayPush( getLayers(subtractA(group, layer)), layer);
+		layer : [Pair<[StaticGraphicOp], Quadruple>] = filter(group, \graphics -> forall(group, \g -> !regionContains(g.second, graphics.second) ) );
+		arrayPush( getLayers2(subtractA(group, layer)), layer);
 	}
 }
 
+getLayers(group : [[StaticGraphicOp]]) -> [[[StaticGraphicOp]]] {
+	group_with_regions = map(group, \g -> Pair(g, getGraphicsRegion(g)));
+	layers_with_regions = getLayers2(group_with_regions);
+	map(layers_with_regions, \layer -> map(layer, \p -> p.first))
+}
+
+subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGraphicOp] {
+	pen = state.first; last_cp = state.second;
+
+	move = \a, offs -> { pen := V2(a[offs], a[offs + 1]); MoveTo(^pen.x, ^pen.y) };
+	moveRel = \a, offs -> { pen := v2Add(^pen, V2(a[offs], a[offs + 1])); MoveTo(^pen.x, ^pen.y) };
+	line = \a, offs -> { pen := V2(a[offs], a[offs + 1]); LineTo(^pen.x, ^pen.y) };
+	lineRel = \a, offs -> { pen := v2Add(^pen, V2(a[offs], a[offs + 1])); LineTo(^pen.x, ^pen.y) };
+	
+	h = \a, offs -> { pen := V2(a[offs], ^pen.y); LineTo(^pen.x, ^pen.y) };
+	hRel = \a, offs -> { pen := V2(^pen.x + a[offs], ^pen.y); LineTo(^pen.x, ^pen.y) };
+	v = \a, offs -> { pen := V2(^pen.x, a[offs]); LineTo(^pen.x, ^pen.y) };
+	vRel = \a, offs -> { pen := V2(^pen.x, ^pen.y + a[offs]); LineTo(^pen.x, ^pen.y) };
+
+	readCurvePts = \a : [double], offs : int, len : int, rel : bool -> {
+		pts = map(enumFromTo(0, len / 2 - 1), if (rel) \i -> V2(a[offs + i * 2] + ^pen.x, a[offs + i * 2 + 1] + ^pen.y) else \i -> V2(a[offs + i * 2], a[offs + i * 2 + 1]) );
+		last_cp := pts[len / 2 - 2];
+		pen := pts[len / 2 - 1];
+		pts
+	};
+
+	cubicBezier = \a, offs, rel -> {
+		p0 = ^pen;
+		pts  = readCurvePts(a, offs, 6, rel);
+		quadraticBezierApproximation(p0, pts[0], pts[1], pts[2])
+	};
+
+	smoothBezier = \a, offs, rel -> {
+		p0 = ^pen;
+		p1 = if (^last_cp.x > 0.0) Some(v2Add(p0, v2Sub(p0, ^last_cp))) else None();
+		pts = readCurvePts(a, offs, 4, rel);
+		quadraticBezierApproximation(p0, either(p1, pts[0]), pts[0], pts[1])
+	}
+
+	quadBezier = \a, offs, rel -> {
+		readCurvePts(a, offs, 4, rel);
+		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
+	}
+
+	smoothQuadBezier = \args, offs, rel -> {
+		last_cp := v2Add(^pen, v2Sub(^pen, ^last_cp));
+		pen := if (rel) v2Add(^pen, V2(args[offs], args[offs + 1])) else V2(args[offs], args[offs + 1]); 
+		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
+	}
+
+	arc = \args, offs, rel -> {
+		r = V2(args[offs], args[offs + 1]);
+		xrot = args[offs + 2];
+		flagA = args[offs + 3] == 1.0;
+		flagS = args[offs + 4] == 1.0;
+		eP = if (rel) v2Add(^pen, V2(args[offs + 5], args[offs + 6])) else V2(args[offs + 5], args[offs + 6]);
+		res = ellipseArcToBezierCurves( endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP );
+		pen := eP;
+		res
+	}
+
+	cmd_args = strSplit2(subpath, ["m", "M", "z", "Z", "L", "l", "H", "h", "V", "v", "C", "c", "S", "s", "Q", "q", "T", "t", "A", "a"]);
+	last_cmd = ref "";
+	grops = map(cmd_args, \cmd_arg -> {
+	 		if (cmd_arg == "Z" || cmd_arg == "z") {
+	 			[ClosePath()]
+	 		} else if (isLetter(cmd_arg)) {
+				last_cmd := cmd_arg; []
+			} else {
+				arr = strSplit2(cmd_arg, [",", " ", "-", "\n", "\t"]);
+				arr1 = filter(mapi(arr, \i, a -> if (i > 0 && arr[i - 1] == "-") "-" + a else a), \s -> s != "-" && s != "," && s != " " && s != "\n" && s != "\t");
+
+				points_strs = concatA(map(arr1, \a -> {
+					idxs = multipleStrIndexOf(a, ".");
+					if (length(idxs) < 2) {
+						[a]
+					} else {
+						mapi(idxs, \i, idx -> if (i == 0) strLeft(a, idxs[1]) else if (i == length(idxs) - 1) strRight(a, idx) else strSubRange(a, idx, idxs[i+1]) )
+					}
+				} ) );
+				points = map(points_strs, s2d);
+
+				getGrOps = \num, fn : ([double], int, bool) -> flow, rel -> { map(enumFromTo(0, length(points) / num - 1), \i -> fn(points, i * num, rel))  };
+				getGrOps2 = \num, fn : ([double], int) -> flow -> { map(enumFromTo(0, length(points) / num - 1), \i -> fn(points, i * num))  };
+
+				c = ^last_cmd;
+		 		if (c == "m") getGrOps2(2, moveRel)
+		 		else if (c == "M") getGrOps2(2, move)
+		 		else if (c == "l") getGrOps2(2, lineRel)
+		 		else if (c == "L") getGrOps2(2, line)
+		 		else if (c == "h") getGrOps2(1, hRel)
+		 		else if (c == "H") getGrOps2(1, h)
+		 		else if (c == "v") getGrOps2(1, vRel)
+		 		else if (c == "V") getGrOps2(1, v)
+		 		else if (c == "c") concatA(getGrOps(6, cubicBezier, true))
+		 		else if (c == "C") concatA(getGrOps(6, cubicBezier, false))
+		 		else if (c == "s") concatA(getGrOps(4, smoothBezier, true))
+		 		else if (c == "S") concatA(getGrOps(4, smoothBezier, false))
+		 		else if (c == "q") getGrOps(4, quadBezier, true)
+		 		else if (c == "Q") getGrOps(4, quadBezier, false)
+		 		else if (c == "t") getGrOps(2, smoothQuadBezier, true)
+		 		else if (c == "T") getGrOps(2, smoothQuadBezier, false)
+		 		else if (c == "a") concatA(getGrOps(7, arc, true))
+		 		else if (c == "A") concatA(getGrOps(7, arc, false))
+	 			else [];
+	 	}
+ 	});	
+
+	state.first := ^pen;
+	state.second := ^last_cp;
+	concatA(grops);
+}
+
+getSvgSubPaths(path : string) -> [string] {
+	parts = strSplit2(path, ["m", "M", "z", "Z"]);
+	filter(mapi(parts, \i, p -> if (i > 0 && toUpperCase(parts[i-1]) == "M") parts[i-1] + p else if (i < length(parts) - 1 && toUpperCase(parts[i + 1]) == "Z") p + parts[i+1] else p ),
+		\s -> s != "m" && s != "M" && s != "z" && s != "Z");	
+}
+
+// Without lingo:
 svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) {
-	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
-	layers = reverseA(getLayers(result));
-	Group( mapi(layers, \i, l -> Group(map(l, \gops -> Graphics(gops, if (even(i)) style else [Fill(bgcolor)] ) ) ) ) );
+	subpath_strings = getSvgSubPaths(path);
+
+	state = Pair(ref V2(0.0, 0.0),  ref V2(0.0, 0.0));
+	subpaths = map(subpath_strings, \s -> subPathString2GrOps(s, state));
+	layers = reverseA(getLayers(subpaths));
+
+	Group( mapi(layers, \i, l -> Group(map(l, \gops -> Graphics(gops, if (even(i)) style else [Fill(bgcolor)] ) ) ) ) )
 }
 
 // For svg2tropic. Only one shape per path is supposed.
 svgSimplePath2GraphicsOps(path : string) -> [StaticGraphicOp] {
-	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
-	result[0]
+	subpath_strings = getSvgSubPaths(path);
+	if (subpath_strings != []) {
+		subPathString2GrOps(subpath_strings[0], Pair(ref V2(0.0, 0.0),  ref V2(0.0, 0.0)));
+	} else {
+		[]
+	}
 }

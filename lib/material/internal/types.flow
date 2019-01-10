@@ -1,0 +1,621 @@
+import tropic/tropic_manager;
+import material/material_fontstyle;
+import material/material_color;
+import material/internal/urlparams;
+
+export {
+	MRenderStyle ::= TRenderStyle, MFeedbackOptions, MCaptureKeys, MCaptureLongTouch, MCaptureMouse, MaterialTheme, MFocusEnabled,
+		MThemeChangerEnabled, MFeedbackSnapshotEnabled, MIScriptPanel;
+
+		MFeedbackOptions(
+			mutable jwt : string,
+			saveFeedback : (manager : MaterialManager, screen : Tropic, closeWhen : DynamicBehaviour<bool>) -> void,
+			showFeedbacks : (manager : MaterialManager, closeWhen : DynamicBehaviour<bool>) -> void,
+		);
+
+		// All MCapture... styles would be added automatically when you create material_manager
+
+		// capture all key pressed
+		// press ctrl-i: change collor theme (white/dark)
+		// press ctrl-shift-s: grab snapshot and open save dialog
+		// press ctrl-shift-d: open dialog to show all feedbeks
+		// press tab: change MaterialManager.focus
+		MCaptureKeys(capture : (manager : MaterialManager) -> Tropic);
+
+		// Clicks "outside" reset focus. Works if used MScroll/TScroll has style TScrollDontHandle
+		MCaptureMouse(capture : (manager : MaterialManager) -> Tropic);
+
+		// long touch (1500 ms) in left bottom corner: grab snapshot and open save dialog
+		MCaptureLongTouch(capture : (manager : MaterialManager) -> Tropic);
+
+		// Enable or disable shortcuts and keys for focus, theme changer and feedback snapshots.
+		MFocusEnabled(enabled : Transform<bool>);
+		MThemeChangerEnabled(enabled : Transform<bool>);
+		MFeedbackSnapshotEnabled(enabled : Transform<bool>);
+
+		// Use iscript_panel by default
+		MIScriptPanel();
+
+	MaterialManager(
+		id : int,
+		// Is the background white or dark?
+		white : DynamicBehaviour<bool>,
+		// What is the current z-order? Used for focus handling and disabling for modal windows
+		currentZorder : DynamicBehaviour<int>,
+
+		// Root MFocusGroup that contains all the focuses and groups
+		focus : MFocusGroup,
+		// Previously focused item
+		previousFocus : DynamicBehaviour<Maybe<MFocus>>,
+
+		// The Tropic manager
+		manager : TManager,
+
+		// Since multiple materials are rendered using single TManager,
+		// we need to store each 'findPositionFn' and refer to them by 'nextRenderId'
+		mutable findPositionScaleFns : Tree<int, (int) -> PositionScale>,
+		nextRenderId : () -> int,
+
+		style : [MRenderStyle],
+		grabSnapshot : () -> Tropic,
+
+		mutable theme : MaterialTheme,
+
+		mutable disposers : Tree<int, () -> void>,
+
+		currentInteractionItemID : DynamicBehaviour<[int]>,
+
+		mutable downInsideFocus : Maybe<MaterialFocus>,
+
+		debugMetrics : DynamicBehaviour<bool>,
+
+		floatingActions : DynamicBehaviour<[flow]>,
+
+		iscript : IScriptManager,
+
+		forceRender : DynamicBehaviour<bool>,
+
+		stageWH : Transform<WidthHeight>
+	);
+
+	IScriptManager(
+		iScriptB : DynamicBehaviour<IScript>,
+		iScriptStateB : DynamicBehaviour<IScriptState>,
+		errors : DynamicBehaviour<List<IScriptError>>,
+		requests : DynamicBehaviour<List<Pair<double, IScriptRequestRecord>>>,
+
+		addingMFocus : Transform<bool>,
+		addingMFocusGroup : Transform<bool>,
+		addingAlias : Transform<bool>,
+		addingGroupAlias : Transform<bool>,
+
+		inputValuesB : DynamicBehaviour<[IScriptInputValue]>,
+		outputValuesB : DynamicBehaviour<[IScriptOutputValue]>,
+		aliasesB : DynamicBehaviour<Tree<IScriptComponentDescriptor, string>>,
+
+		panelsFocusUns : ref () -> void,
+		panelsFocusGroupUns : ref () -> void,
+		panelsRecordToggleValue : DynamicBehaviour<bool>,
+		panelsReplayToggleValue : DynamicBehaviour<bool>,
+		panelsBatchReplayToggleValue : DynamicBehaviour<bool>,
+		panelsShowSidebar : DynamicBehaviour<bool>,
+		panelsRecordingPad : ref Maybe<void>,
+		panelsReplayingPad : ref Maybe<void>,
+		panelsBatchReplayingPad : ref Maybe<void>,
+		panelsShowGrid : DynamicBehaviour<bool>,
+		panelsSplitterValue : DynamicBehaviour<double>,
+		panelsCurrentTab : DynamicBehaviour<int>,
+
+		settings : IScriptSettings,
+		getCaptureOptions : () -> CaptureOptions,
+
+		scriptChangedB : DynamicBehaviour<bool>,
+		currentFileNameB : DynamicBehaviour<string>,
+		currentBatchTestsDirectoryB : DynamicBehaviour<string>,
+		batchTestFileNamesB : DynamicBehaviour<[string]>,
+		topPanelWidthHeightB : DynamicBehaviour<WidthHeight>,
+
+		contentForms : ref Tree<int, FForm>,
+		contentFormIdx : ref int,
+
+		filesystemDB : DynamicBehaviour<Maybe<IScriptFilesystemDB>>,
+
+		iscriptPanelVisibleB : DynamicBehaviour<bool>,
+
+		replayCursorPositionB : DynamicBehaviour<Point>,
+		replayCursorVisibleB : DynamicBehaviour<bool>,
+		replayCursorShapeB : DynamicBehaviour<Tropic>,
+		replayCursorClickPointB : DynamicBehaviour<Point>,
+	);
+
+	IScriptFilesystemDB(
+		partitionName : string,
+		jwt : string,
+		iScriptPartitionId : int,
+		mutable storedPartitionId : int
+	);
+
+	IScriptReplayResult(
+		filename : string,
+		isReplaySuccessful : bool,
+		iscriptLogicalScreenshotM : Maybe<IScriptLogicalScreenshot>,
+		iscriptVisualScreenshotM : Maybe<IScriptVisualScreenshot>,
+		afterReplayLogicalScreenshot : IScriptLogicalScreenshot,
+		afterReplayVisualScreenshot : IScriptVisualScreenshot,
+	);
+
+	//This struct provides additional info for relative script
+	IScriptAdditionalInfo(
+		inputs : [Pair<string, string>],
+		outputs : [string],
+		aliases : [Pair<IScriptComponentDescriptor, string>]
+	);
+	makeEmptyIScriptAdditionalInfo = \ -> IScriptAdditionalInfo([], [], []);
+
+	// recordingStarted - is a timestamp of the moment when recording started
+	// stack is a list of actions performed in order
+	IScript(recordingStarted : double, stack : Tree<double, [IScriptRecord]>);
+	makeEmptyIScript = \ -> IScript(timestamp(), makeTree());
+
+	storedIScriptCurrentVersion = "0.9.1";
+
+	StoredIScript(
+		version : string,
+		additionalInfo : IScriptAdditionalInfo,
+		script : IScript
+	);
+
+	IScriptDescriptor ::= IScriptBehaviourDescriptor, IScriptComponentDescriptor;
+
+		IScriptBehaviourDescriptor(
+			component : IScriptComponentDescriptor,
+			name : string
+		);
+
+		IScriptComponentDescriptor(
+			name : string,
+			id : List<IScriptIdentifier>
+		);
+
+	KeyEventRecord(utf : string, ctrl : bool, shift : bool, alt : bool, meta : bool, keycode : int);
+
+	IScriptRecord ::= IScriptRequestRecord, IScriptScreenshot, IScriptLogicalScreenshot, IScriptVisualScreenshot,
+		IScriptCheck, IScriptNested, IScript, IScriptEditableRecord, IScriptUrlRecord;
+
+		IScriptEditableRecord ::= IScriptBehaviourRecord, IScriptInputRecord, IScriptOutputRecord, IScriptStageWidthHeight;
+			IScriptInputRecord(behaviourDescriptor : IScriptBehaviourDescriptor, name : string, possibleValues : [flow], valueTypeHelper : string);
+			IScriptOutputRecord(behaviourDescriptor : IScriptBehaviourDescriptor, name : string);
+
+			IScriptBehaviourRecord(descriptor : IScriptBehaviourDescriptor, value : flow, type : IScriptRecordType, callstack : string);
+
+				IScriptIdentifier ::= IScriptId, IScriptFocusTreePosition, IScriptFormPosition;
+					IScriptFocusTreePosition(id : int);
+					IScriptFormPosition(id : int);
+					IScriptId(id : string);
+				IScriptRecordType ::= ISDetailedTextEvent, ISMouseEvent, ISKeyEvent, ISInteractionEvent, ISClickEvent, ISAppearanceEvent, ISValueEvent,
+					ISEnableEvent, ISSelectionEvent, ISMiscEvent, ISWigiEvent, ISPebbleEvent, ISInputValue, ISCustomIScriptRecordType;
+					ISDetailedTextEvent();
+					ISMouseEvent();
+					ISKeyEvent();
+					ISInteractionEvent();
+					ISClickEvent();
+					ISAppearanceEvent();
+					ISValueEvent();
+					ISEnableEvent();
+					ISSelectionEvent();
+					ISMiscEvent();
+					ISWigiEvent();
+					ISPebbleEvent();
+					ISInputValue(possibleValues : [flow], valueTypeHelper : string, canBeScriptInput : bool);
+					ISCustomIScriptRecordType(name : string);
+
+			IScriptStageWidthHeight(wh : WidthHeight);
+
+			IScriptUrlRecord(url : string);
+
+		IScriptRequestRecord(url : string, post : bool, headers : [KeyValue], params : [KeyValue], delay : double,
+			response : IScriptRequestRespose);
+
+			IScriptRequestRespose ::= IScriptRequestOk, IScriptRequestError, IScriptRequestStatus;
+				IScriptRequestOk(data : string);
+				IScriptRequestError(error : string);
+				IScriptRequestStatus(status : int);
+
+		IScriptScreenshot(behaviours : Tree<Pair<[int], string>, Tree<string, flow>>, check : bool);
+
+		IScriptLogicalScreenshot(screenshot : string, size : WidthHeight);
+
+		IScriptVisualScreenshot(screenshot : string);
+
+		IScriptCheck(behaviourDescriptor : IScriptBehaviourDescriptor, checkFn : (flow) -> bool, type : IScriptRecordType);
+
+		IScriptNested(componentName : string, id : List<IScriptIdentifier>, iScript : IScript);
+
+	IScriptError(error : string, id : Maybe<List<IScriptIdentifier>>);
+
+	IScriptCaptureOption ::= IScriptCaptureCallstack, IScriptCaptureTextDetails, IScriptCaptureHttpRequests,
+		IScriptCaptureMouseEvents, IScriptCaptureKeyEvents, IScriptCaptureInteractionEvents, IScriptCaptureHover,
+		IScriptCaptureClickEvents, IScriptCaptureAppearanceEvents, IScriptCaptureValueEvents, IScriptCaptureEnableEvents,
+		IScriptCaptureSelectionEvents, IScriptCaptureInputValues, IScriptCaptureWigiEvents, IScriptCapturePebbleEvents,
+		IScriptCaptureCustomTypes, IScriptCaptureMiscEvents;
+
+		IScriptCaptureCallstack();
+		IScriptCaptureTextDetails();
+		IScriptCaptureHttpRequests();
+		IScriptCaptureMouseEvents();
+		IScriptCaptureKeyEvents();
+		IScriptCaptureInteractionEvents();
+		IScriptCaptureHover();
+		IScriptCaptureClickEvents();
+		IScriptCaptureAppearanceEvents();
+		IScriptCaptureValueEvents();
+		IScriptCaptureEnableEvents();
+		IScriptCaptureSelectionEvents();
+		IScriptCaptureInputValues();
+		IScriptCaptureWigiEvents();
+		IScriptCapturePebbleEvents();
+		IScriptCaptureCustomTypes();
+		IScriptCaptureMiscEvents();
+
+	CaptureOptions(
+		captureCallstack : bool,
+		captureTextDetails : bool,
+		captureHttpRequests : bool,
+		captureMouseEvents : bool,
+		captureKeyEvents : bool,
+		captureInteractionEvents : bool,
+		captureHover : bool,
+		captureClickEvents : bool,
+		captureAppearanceEvents : bool,
+		captureValueEvents : bool,
+		captureEnableEvents : bool,
+		captureSelectionEvents : bool,
+		captureInputValues : bool,
+		captureWigiEvents : bool,
+		capturePebbleEvents : bool,
+		captureCustomTypes : bool,
+		captureMiscEvents : bool,
+	);
+
+	defaultCaptureOptions =
+		CaptureOptions(
+			false,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+		);
+
+	ReplayOption(
+		replayCheckErrors : bool, // CheckErrors
+		replayCheckedBehaviours : [string], // names of behaviours whose values should be checked in the check errors mode
+		replayUncheckedBehaviours : [string],
+		replayReplayBehaviours : [string], // must be emulated for correct playback
+		replayVerbose : bool, // Verbose output
+		replaySpeed : double,
+	);
+
+	defaultReplayOptions =
+		ReplayOption(
+			false,
+			[ // Checked behaviours
+				"active",
+				"available",
+				"backgroundColor",
+				"baselineShift",
+				"blockAlignControls",
+				"bold",
+				"clipboard",
+				// "content",
+				"current_page",
+				"cursorWantThisX",
+				// "cursorCoord",
+				// "cursorHeight",
+				"document",
+				"doubleUnderlining",
+				"downAnywhere",
+				"editMode",
+				"editorView",
+				"enabled",
+				"error",
+				"expanded",
+				"expander",
+				"fontSize",
+				"fontColor",
+				"fontFamily",
+				"formulaEditor",
+				"hover_enabled",
+				"interlineSpacing",
+				"is_ok",
+				"italics",
+				"language",
+				"mouseSelecting",
+				"order",
+				"opened",
+				"paragraphSpacing",
+				"percent",
+				"previewSize",
+				"scale",
+				"Selected_item",
+				"selection",
+				"shiftHeld",
+				"show",
+				"sort_by",
+				"tx",
+				// "viewSize",
+				"viewX",
+				"viewY",
+				"visible",
+				"visible_factor",
+				"undefined",
+				"underlining",
+				"wigiName",
+				"zoom",
+				"down",
+				"value"
+			],
+			[ // Unchecked behaviours
+				"content",
+				"dragged_point",
+				"grab_xy",
+				"mouse_xy",
+				"swipe_down",
+				"xy",
+				"click",
+				"hover",
+				"point",
+				// Pebbles
+				"current_pebble",
+				"pebble_stack",
+				// MWEditor
+				"selectionAnchor",
+				"cursor",
+				"undoStack",
+				"redoStack",
+				"liveSerializedDocument"
+			],
+			[ // Behaviours to replay
+				"focused",
+				"selected",
+				"position",
+				"screen_size",
+				"screen_available",
+				"hasKeyboardFocus"
+			],
+			isUrlParameterTrue("iscriptverbose"),
+			1.0
+		);
+
+	IScriptSettings(
+		captureCallstack : DynamicBehaviour<bool>,
+		captureTextDetails : DynamicBehaviour<bool>,
+		captureHttpRequests : DynamicBehaviour<bool>,
+		captureMouseEvents : DynamicBehaviour<bool>,
+		captureKeyEvents : DynamicBehaviour<bool>,
+		captureInteractionEvents : DynamicBehaviour<bool>,
+		captureHover : DynamicBehaviour<bool>,
+		captureClickEvents : DynamicBehaviour<bool>,
+		captureAppearanceEvents : DynamicBehaviour<bool>,
+		captureValueEvents : DynamicBehaviour<bool>,
+		captureEnableEvents : DynamicBehaviour<bool>,
+		captureSelectionEvents : DynamicBehaviour<bool>,
+		captureInputValues : DynamicBehaviour<bool>,
+		captureWigiEvents : DynamicBehaviour<bool>,
+		capturePebbleEvents : DynamicBehaviour<bool>,
+		captureCustomTypes : DynamicBehaviour<bool>,
+		captureMiscEvents : DynamicBehaviour<bool>,
+		replayCheckErrors : DynamicBehaviour<bool>,
+		replayCheckedBehaviours : DynamicBehaviour<[string]>,
+		replayUncheckedBehaviours : DynamicBehaviour<[string]>,
+		replayReplayBehaviours : DynamicBehaviour<[string]>,
+		replayVerbose : DynamicBehaviour<bool>,
+		replaySpeed : DynamicBehaviour<double>
+	);
+
+	defaultIScriptSettings = \ ->
+		IScriptSettings(
+			make(defaultCaptureOptions.captureCallstack),
+			make(defaultCaptureOptions.captureTextDetails),
+			make(defaultCaptureOptions.captureHttpRequests),
+			make(defaultCaptureOptions.captureMouseEvents),
+			make(defaultCaptureOptions.captureKeyEvents),
+			make(defaultCaptureOptions.captureInteractionEvents),
+			make(defaultCaptureOptions.captureHover),
+			make(defaultCaptureOptions.captureClickEvents),
+			make(defaultCaptureOptions.captureAppearanceEvents),
+			make(defaultCaptureOptions.captureValueEvents),
+			make(defaultCaptureOptions.captureEnableEvents),
+			make(defaultCaptureOptions.captureSelectionEvents),
+			make(defaultCaptureOptions.captureInputValues),
+			make(defaultCaptureOptions.captureWigiEvents),
+			make(defaultCaptureOptions.capturePebbleEvents),
+			make(defaultCaptureOptions.captureCustomTypes),
+			make(defaultCaptureOptions.captureMiscEvents),
+			make(defaultReplayOptions.replayCheckErrors),
+			make(defaultReplayOptions.replayCheckedBehaviours),
+			make(defaultReplayOptions.replayUncheckedBehaviours),
+			make(defaultReplayOptions.replayReplayBehaviours),
+			make(defaultReplayOptions.replayVerbose),
+			make(defaultReplayOptions.replaySpeed)
+		);
+
+	// Current IScript recording and replaying state
+	IScriptState ::= IScriptRecording, IScriptReplaying, IScriptBatchReplaying, IScriptDisabled, IScriptAddRecord, IScriptAddMFocusRecord,
+		IScriptAddMFocusGroupRecord, IScriptMakeAlias, IScriptMakeGroupAlias;
+
+			IScriptRecording(captureOptions : CaptureOptions, continueRecording : bool);
+			IScriptReplaying();
+			IScriptBatchReplaying();
+			IScriptDisabled();
+			IScriptAddRecord(focus : Maybe<MFocus>);
+			IScriptAddMFocusRecord(focus : Maybe<MFocus>);
+			IScriptAddMFocusGroupRecord(focusGroup : Maybe<MFocusGroup>);
+			IScriptMakeAlias(focus : Maybe<MFocus>);
+			IScriptMakeGroupAlias(focusGroup : Maybe<MFocusGroup>);
+
+	IScriptInputValue(
+		name : string,
+		typeHelper : string,
+		value : Maybe<flow>
+	);
+
+	IScriptOutputValue(
+		name : string,
+		visible : bool,
+		value : Maybe<flow>
+	);
+
+	MaterialFocus ::= MFocusGroup, MFocus;
+
+		MFocus(
+			id : Transform<int>,
+			mutable form : FForm,
+			tabOrder : Transform<[int]>,
+			mutable iScriptId : Maybe<string>,
+			name : string,
+			title : Transform<string>,
+			parent : MFocusGroup,
+			onClick : Maybe<() -> void>,
+			down : DynamicBehaviour<bool>,
+			hover : DynamicBehaviour<bool>,
+			enabled : Transform<bool>,
+			focusEnabled : Transform<bool>,
+			recordingEnabled : Transform<bool>,
+			focused : DynamicBehaviour<bool>,
+			position : () -> PositionScale,
+			widthHeight : () -> WidthHeight,
+			updateEnabled : DynamicBehaviour<bool>,
+			mutable behaviours : Tree<string, Pair<DynamicBehaviour<flow>, IScriptRecordType>>
+		);
+
+		emptyMFocus = \manager : MaterialManager -> MFocus(const(-1), FEmpty(), make([]), None(), "emptyMFocus", const(""), manager.focus, None(), make(false),
+			make(false), const(false), const(false), const(false), make(false), \ -> PositionScale(zeroPoint, zeroPoint),
+			\ -> WidthHeight(0., 0.), make(true), makeTree());
+
+		MFocusGroup(
+			managerId : int,
+			// Focus group id
+			id : Transform<int>,
+			mutable form : FForm,
+			tabOrder : Transform<[int]>,
+			zorder : Transform<int>,
+			mutable iScriptId : Maybe<string>,
+			name : string,
+			parent : Maybe<MFocusGroup>,
+			mutable vertical : Maybe<MFocusGroup>,
+			mutable horizontal : Maybe<MFocusGroup>,
+			// What element has keyboard focus? -1 for none
+			focusedId : DynamicBehaviour<int>,
+			nextId : DynamicBehaviour<int>,
+			mutable previousFocusedId : int,
+			// Live focus ids along with their z-order
+			focusIds : DynamicBehaviour<Tree<int, MaterialFocus>>,
+			iScriptIds : DynamicBehaviour<Tree<string, MaterialFocus>>,
+			enabled : Transform<bool>,
+			zorderEnabled : Transform<bool>,
+			focusEnabled : Transform<bool>,
+			recordingEnabled : Transform<bool>,
+			selectionEnabled : Transform<bool>,
+			focused : DynamicBehaviour<bool>,
+			position : () -> PositionScale,
+			widthHeight : () -> WidthHeight,
+			mutable theme : MaterialTheme,
+			mutable behaviours : Tree<string, Pair<DynamicBehaviour<flow>, IScriptRecordType>>
+		);
+
+	MaterialTheme(
+		lightBackground : bool,
+		primaryColor : MColor,
+		accentColor : MColor,
+		toolbarItemsColor : MColor,
+		separatorColor : MColor,
+		textColor : MColor,
+		fontStyle : MFontStyle,
+		iconsColor : MColor,
+		enableAnimations : bool,
+		enableRipple : bool
+	);
+
+	makeMaterialTheme(lightBackground : bool, primaryColor : MColor, accentColor : MColor) -> MaterialTheme {
+		toolbarItemsColor = MToolbarItemsMColor(primaryColor);
+		itemsColor = if (lightBackground) MBlack() else MWhite();
+
+		MaterialTheme(
+			lightBackground,
+			primaryColor,
+			accentColor,
+			toolbarItemsColor,
+			itemsColor,
+			itemsColor,
+			MBody(),
+			itemsColor,
+			defaultMaterialTheme.enableAnimations,
+			defaultMaterialTheme.enableRipple
+		)
+	}
+
+	MLightTheme(theme : MaterialTheme, lightBackground : bool) -> MaterialTheme {
+		if (lightBackground != theme.lightBackground)
+			MaterialTheme(
+				lightBackground,
+				theme.primaryColor,
+				theme.accentColor,
+				theme.toolbarItemsColor,
+				if (MColor2int(theme.separatorColor) == white && lightBackground)
+					MBlack()
+				else if (MColor2int(theme.separatorColor) == black && !lightBackground)
+					MWhite()
+				else
+					theme.separatorColor,
+				if (MColor2int(theme.textColor) == white && lightBackground)
+					MBlack()
+				else if (MColor2int(theme.textColor) == black && !lightBackground)
+					MWhite()
+				else
+					theme.textColor,
+				theme.fontStyle,
+				if (MColor2int(theme.iconsColor) == white && lightBackground)
+					MBlack()
+				else if (MColor2int(theme.iconsColor) == black && !lightBackground)
+					MWhite()
+				else
+					theme.iconsColor,
+				theme.enableAnimations,
+				theme.enableRipple,
+			)
+		else
+			theme
+	}
+
+	defaultMaterialTheme =
+		MaterialTheme(
+			true,
+			MBlue(500),
+			MOrangeA(200),
+			MWhite(),
+			MBlack(),
+			MBlack(),
+			MBody(),
+			MBlack(),
+			true,
+			true,
+		);
+
+	contrastingColor = \p : MFocusGroup -> if (p.theme.lightBackground) black else white;
+	contrastingMColor = \p : MFocusGroup -> MDefaultTextColor(p.theme.lightBackground);
+	sameLightMColor = \p : MFocusGroup -> MDefaultTextColor(!p.theme.lightBackground);
+
+	MaterialRender(manager : MaterialManager, renderId : int);
+}

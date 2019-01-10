@@ -132,7 +132,6 @@ class Build {
 		{
 			// The unit tests
 			var files = [ "flowunit/flowunit_flash.flow" ];
-			// Find all smartbuilder project
 			files.reverse();
 			for (f in files) {
 				// The directory

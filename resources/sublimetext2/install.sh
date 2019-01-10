@@ -1,5 +1,4 @@
 #/bin/sh
-# file was tested on MHE mac
 
 DST=~/Library/Application\ Support/Sublime\ Text\ 2/Packages
 

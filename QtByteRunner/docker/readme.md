@@ -27,7 +27,7 @@ The flowcpp image can be used to run byte runner cron jobs. It does not have flo
 
 run.sh can be used to run a bytecode file. An absolute path to it is the only argument. For example
 
-`./run.sh /home/flow/helloworld.bytecode`
+`./run.sh /home/flow9/helloworld.bytecode`
 
 --batch argument is baked in, GUI apps will crash.
 

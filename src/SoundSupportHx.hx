@@ -12,7 +12,7 @@ class SoundSupportHx {
 	// from any place in the code
 	// (not only the user action handler)
 	private static var AudioStream : Dynamic;
-	private static inline var AudioStreamUrl = "smartbuilder/php/mp3stream/stream.php";
+	private static inline var AudioStreamUrl = "php/mp3stream/stream.php";
 	private static var UseAudioStream : Bool;
 
 	private static var hasSpeechSupport : Bool;

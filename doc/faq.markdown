@@ -278,14 +278,9 @@ Don't forget that you might require to translate parameters in the array as well
 4) Put everything in one translation rather than splitting the text somehow. It will help people who
 translate these lines to better understand the context and provide a better translation.
 
-#### When should I use `fselect` instead of `select`?
-
-See [development.html](https://github.com/area9innovation/flow/blob/master/doc/development.html), which 
-contains a lot of information about this.
-
 #### Does flow have threads?
 
-See [concurrent.flow](https://github.com/area9innovation/flow/blob/master/lib/concurrent.flow). Due to big 
+See [concurrent.flow](https://github.com/area9innovation/flow9/blob/master/lib/concurrent.flow). Due to big 
 differences in our targets, the APIs for parallel are very different from target to target.
 
 #### How can I do asynchronous call?
@@ -513,7 +508,7 @@ Antipatterns
 
 Don't make code more comlicated than it could be. We have a core function to
 react on some behaviours changes, it's `subscribe` at [behaviour.flow](https:/
-/github.com/area9innovation/flow/blob/master/lib/behaviour.flow). Then
+/github.com/area9innovation/flow9/blob/master/lib/behaviour.flow). Then
 Material was invented. And there is a MConstruct with such syntax
 `MConstruct(constructors : [() -> () -> void], m : Material);`. So writing
 like this doesn't look good:

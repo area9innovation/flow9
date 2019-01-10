@@ -1,0 +1,779 @@
+import material/internal/types;
+
+// Internal to material
+
+export {
+	// General utils
+	switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ?;
+	getCallstackIfNeeded(manager : MaterialManager) -> string;
+	getIScriptDelay(manager : MaterialManager) -> double;
+	getIScriptRecordCaption(aliases : Tree<IScriptComponentDescriptor, string>, script : Pair<double, IScriptRecord>) -> string;
+
+	// FocusId utils
+	getIScriptUniqueIdParent(focus : MaterialFocus) -> MFocusGroup;
+	fixIScriptUniqueId(focus : MaterialFocus) -> void;
+	getFullMFocusId(focus : MaterialFocus) -> List<IScriptIdentifier>;
+	IScriptId2s(idList : List<IScriptIdentifier>) -> string;
+
+	// IScript state utils
+	isIScriptEmpty(manager : MaterialManager) -> bool;
+	isBatchIScriptEmpty(manager : MaterialManager) -> bool;
+
+	getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording>;
+	isIScriptRecording(manager : MaterialManager) -> bool;
+	isIScriptReplaying(manager : MaterialManager) -> bool;
+
+	isIScriptRecordingB(manager : MaterialManager) -> Transform<bool>;
+	isIScriptReplayingB(manager : MaterialManager) -> Transform<bool>;
+
+	checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool;
+	checkIScriptCaptureOption(manager : MaterialManager, option : IScriptCaptureOption) -> bool;
+
+	// IScript stack utils
+	mapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> ?) -> [?];
+	filtermapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> Maybe<?>) -> [?];
+	foldIScriptStack(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
+	foldRIScriptStack(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
+
+	mapIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> IScriptRecord) -> Tree<double, [IScriptRecord]>;
+	filterIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> bool) -> Tree<double, [IScriptRecord]>;
+	filtermapIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> Maybe<IScriptRecord>) -> Tree<double, [IScriptRecord]>;
+	foldIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
+	foldRIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ?;
+
+	findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<double>;
+	findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<Pair<double, ?>>;
+	extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<?>;
+
+	addIScriptStackRecord(stack : Tree<double, [IScriptRecord]>, record : IScriptRecord) -> Tree<double, [IScriptRecord]>;
+	replaceRecordInIScriptStack(stack : Tree<double, [IScriptRecord]>, delay : double, prevValue : IScriptRecord, nextValue : IScriptRecord) -> Tree<double, [IScriptRecord]>;
+	getIScriptStackDelay(stack : Tree<double, [IScriptRecord]>) -> double;
+
+	// Focus search
+	getMaterialFocusById(parent : MFocusGroup, id : [int])  -> Maybe<MaterialFocus>;
+	getMaterialFocusByUniqueId(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus>;
+	getMaterialFocusByIScriptId(parent : MFocusGroup, id : List<IScriptIdentifier>) -> Maybe<MaterialFocus>;
+
+	getFocusById(parent : MFocusGroup, id : [int]) -> Maybe<MFocus>;
+	getFocusGroupById(parent : MFocusGroup, id : [int]) -> Maybe<MFocusGroup>;
+
+	// Adding records
+	addIScriptRecord(manager : MaterialManager, record : IScriptRecord) -> void;
+	addIScriptRecordWithDelay(manager : MaterialManager, delay : double, record : IScriptRecord) -> void;
+	addIScriptBehaviourRecord(manager : MaterialManager, componentName : string, behaviourName : string, value : flow, id : List<IScriptIdentifier>,
+		type : IScriptRecordType, callstack : string) -> void;
+	addIScriptRequestRecord(manager : MaterialManager, url : string, post : bool, headers : [KeyValue], params : [KeyValue], delay : double,
+		response : IScriptRequestRespose) -> void;
+	addGlobalAliasInIScript(manager : MaterialManager, focus : MaterialFocus, alias : string) -> void;
+	addIScriptUrlRecord(manager : MaterialManager, url : string) -> void;
+
+	// Logging
+	iScriptInfo(manager : MaterialManager, text : string, id : Maybe<List<IScriptIdentifier>>) -> void;
+	iScriptError(manager : MaterialManager, error : string, id : Maybe<List<IScriptIdentifier>>) -> void;
+
+	// Replace record
+	replaceRecordInIScript(manager : MaterialManager, prevRecord : Pair<double, IScriptRecord>, record : Pair<double, IScriptRecord>) -> void;
+
+	// Remove record
+	removeRecordFromIScript(manager : MaterialManager, record : Pair<double, IScriptRecord>) -> void;
+
+	// Handling recording
+	initIScriptRecording(manager : MaterialManager, f : MaterialFocus, disposeOnRecordStopped : bool) -> () -> void;
+	captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, component : string, type : string) -> bool;
+	captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () -> MouseInfo, canvasPosition : () -> Point, component : string, type : string) -> bool;
+	captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool;
+}
+
+isIScriptEmpty(manager : MaterialManager) -> bool {
+	sizeTree(getValue(manager.iscript.iScriptB).stack) == 0
+}
+
+isBatchIScriptEmpty(manager : MaterialManager) -> bool {
+	(getValue(manager.iscript.currentBatchTestsDirectoryB) == "") || (getValue(manager.iscript.batchTestFileNamesB) == [])
+}
+
+switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ? {
+	switch (focus : MaterialFocus) {
+		MFocus(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+			mFocusFn(focus)
+		}
+		MFocusGroup(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+			mFocusGroupFn(focus)
+		}
+	}
+}
+
+getMaterialFocusParent(focus : MaterialFocus) -> Maybe<MFocusGroup> {
+	switchMaterialFocus(
+		focus,
+		\f -> Some(f.parent),
+		\f -> f.parent
+	)
+}
+
+getCallstackIfNeeded(manager : MaterialManager) -> string {
+	if (checkIScriptCaptureOption(manager, IScriptCaptureCallstack()))
+		callstack2string(captureCallstack())
+	else
+		"";
+}
+
+
+getIScriptDelay(manager : MaterialManager) -> double {
+	switch (getValue(manager.iscript.iScriptStateB)) {
+		IScriptRecording(__, __): {
+			max(timestamp() - getValue(manager.iscript.iScriptB).recordingStarted, 1.)
+		}
+		default: 1.
+	}
+}
+
+getIScriptRecordCaption(aliases : Tree<IScriptComponentDescriptor, string>, script : Pair<double, IScriptRecord>) -> string {
+	recordTitle =
+		switch (script.second : IScriptRecord) {
+			IScriptBehaviourRecord(descriptor, value, type, callstack) : {
+				componentTitle = lookupTreeDef(
+					aliases,
+					IScriptComponentDescriptor(descriptor.component.name, descriptor.component.id),
+					descriptor.component.name + " [" + IScriptId2s(descriptor.component.id) + "]"
+				);
+
+				if (descriptor.name == "pebble_stack" || descriptor.name == "current_pebble")
+					descriptor.name + " : " + toString(value)
+				else
+					componentTitle + " " + descriptor.name + " : " + toString(value);
+			}
+			IScriptRequestRecord(url, post, headers, params, delay, response) :
+				url + " " + b2s(post) + " " + d2s(delay);
+			IScriptScreenshot(__, __) :
+				"Screenshot ";
+			IScript(recordingStarted, stack) :
+				"IScript " + d2s(script.first);
+			IScriptLogicalScreenshot(screenshot, size) :
+				"IScriptLogicalScreenshot " + toString(size);
+			IScriptVisualScreenshot(screenshot) :
+				"IScriptVisualScreenshot";
+			IScriptInputRecord(__, name, __, __) :
+				"Input    \"" + name + "\"";
+			IScriptOutputRecord(__, name) :
+				"Output    \"" + name + "\"";
+			IScriptStageWidthHeight(wh) :
+				"Stage size: " + toString(wh.width) + " x " + toString(wh.height);
+			default:
+				"";
+		}
+
+	"Delay " + d2s(script.first) + "        " + recordTitle;
+}
+
+getIScriptUniqueIdParentMaybe(focus : MaterialFocus) -> Maybe<MFocusGroup> {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			eitherFn(
+				f.parent.iScriptId,
+				\__ -> Some(f.parent),
+				\ -> getIScriptUniqueIdParentMaybe(f.parent)
+			)
+		},
+		\f : MFocusGroup -> {
+			eitherMap(
+				f.parent,
+				\p : MFocusGroup ->
+					eitherFn(
+						p.iScriptId,
+						\__ -> Some(p),
+						\ -> getIScriptUniqueIdParentMaybe(p)
+					),
+				None()
+			)
+		}
+	)
+}
+
+getIScriptUniqueIdParent(focus : MaterialFocus) -> MFocusGroup {
+	switchMaterialFocus(
+		focus,
+		\f -> {
+			eitherFn(
+				f.parent.iScriptId,
+				\__ -> f.parent,
+				\ -> getIScriptUniqueIdParent(f.parent)
+			)
+		},
+		\f : MFocusGroup -> {
+			eitherMap(
+				f.parent,
+				\p : MFocusGroup ->
+					eitherFn(
+						p.iScriptId,
+						\__ -> p,
+						\ -> getIScriptUniqueIdParent(p)
+					),
+				f
+			)
+		}
+	)
+}
+
+fixIScriptUniqueId(focus : MaterialFocus) -> void {
+	eitherFn(
+		focus.iScriptId,
+		\id0 -> {
+			parent = getIScriptUniqueIdParent(focus);
+			id = strReplaces(id0, [" ", "_", "[", "_", "]", "_", ",", "_"]);
+
+			if (lookupTree(getValue(parent.iScriptIds), id) == Some(focus)) {
+				next(parent.iScriptIds, removeFromTree(getValue(parent.iScriptIds), id))
+			}
+
+			switchMaterialFocus(
+				focus,
+				\f -> f.iScriptId ::= Some(id),
+				\f -> f.iScriptId ::= Some(id)
+			);
+
+			eitherFn(
+				lookupTree(getValue(parent.iScriptIds), id),
+				\f -> {
+					if (f != focus) {
+						switchMaterialFocus(
+							focus,
+							\f2 -> f2.iScriptId ::= Some(id + "_"),
+							\f2 -> f2.iScriptId ::= Some(id + "_")
+						);
+						fixIScriptUniqueId(focus);
+					}
+				},
+				\ -> {
+					next(parent.iScriptIds, setTree(getValue(parent.iScriptIds), id, focus));
+				}
+			);
+		},
+		\ -> {
+			switchMaterialFocus(
+				focus,
+				\f -> {
+					if (fgetValue(f.title) != "") {
+						f.iScriptId ::= Some(fgetValue(f.title));
+						fixIScriptUniqueId(f);
+					} else if (f.name != "") {
+						f.iScriptId ::= Some(f.name);
+						fixIScriptUniqueId(f);
+					}
+				},
+				\f -> {
+					if (f.name != "" && f.name != "MActivate" && f.name != "MActivateMutable" && f.name != "MMutable" && f.name != "MIfLazy2" && f.name != "MAttach"
+						&& f.name != "MIfPreRender true" && f.name != "MIfPreRender false" && f.name != "MRenderOnceContentContainer" && f.name != "MShow2") {
+						f.iScriptId ::= Some(f.name);
+						fixIScriptUniqueId(f);
+					}
+				}
+			);
+		}
+	)
+}
+
+getFullMFocusId(focus : MaterialFocus) -> List<IScriptIdentifier> {
+	eitherFn(
+		focus.iScriptId,
+		\id -> {
+			eitherMap(
+				getIScriptUniqueIdParentMaybe(focus),
+				\p -> concatList(getFullMFocusId(p), Cons(IScriptId(id), EmptyList())),
+				Cons(IScriptId(id), EmptyList())
+			)
+		},
+		\ -> {
+			eitherMap(
+				getMaterialFocusParent(focus),
+				\p -> concatList(getFullMFocusId(p), Cons(IScriptFocusTreePosition(fgetValue(focus.id)), EmptyList())),
+				EmptyList()
+			)
+		}
+	)
+}
+
+IScriptId2s(idList : List<IScriptIdentifier>) -> string {
+	foldList(idList, "", \acc, i ->
+		acc + (if (acc != "") ", " else "") +
+			switch (i : IScriptIdentifier) {
+				IScriptFocusTreePosition(id): toString(id);
+				IScriptId(id) : "\"" + id + "\"";
+				IScriptFormPosition(id) : "{" + toString(id) + "}";
+			}
+	)
+}
+
+isIScriptEnabled(manager : MaterialManager) -> bool {
+	contains(manager.style, MIScriptPanel())
+}
+
+getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording> {
+	if (isIScriptEnabled(manager)) {
+		iScriptState = getValue(manager.iscript.iScriptStateB);
+
+		switch (iScriptState) {
+			IScriptRecording(__, __): Some(iScriptState);
+			default: None();
+		}
+	} else {
+		None();
+	}
+}
+
+isIScriptRecording(manager : MaterialManager) -> bool {
+	isIScriptEnabled(manager) && isSome(getIScriptRecording(manager))
+}
+
+isIScriptReplaying(manager : MaterialManager) -> bool {
+	iScriptState = getValue(manager.iscript.iScriptStateB);
+
+	isIScriptEnabled(manager) && (isSameStructType(iScriptState, IScriptReplaying()) || isSameStructType(iScriptState, IScriptBatchReplaying()))
+}
+
+isIScriptRecordingB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.iScriptStateB, FLift(\__ -> isIScriptRecording(manager)));
+}
+
+isIScriptReplayingB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.iScriptStateB, FLift(\__ -> isIScriptReplaying(manager)));
+}
+
+checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool {
+	switch (type) {
+		ISDetailedTextEvent() : checkIScriptCaptureOption(manager, IScriptCaptureTextDetails());
+		ISMouseEvent() : checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents());
+		ISKeyEvent() : checkIScriptCaptureOption(manager, IScriptCaptureKeyEvents());
+		ISInteractionEvent() : {
+			if (behaviourName == "hover")
+				checkIScriptCaptureOption(manager, IScriptCaptureInteractionEvents()) && checkIScriptCaptureOption(manager, IScriptCaptureHover())
+			else
+				checkIScriptCaptureOption(manager, IScriptCaptureInteractionEvents());
+		}
+		ISClickEvent() : checkIScriptCaptureOption(manager, IScriptCaptureClickEvents());
+		ISAppearanceEvent() : checkIScriptCaptureOption(manager, IScriptCaptureAppearanceEvents());
+		ISValueEvent() : checkIScriptCaptureOption(manager, IScriptCaptureValueEvents());
+		ISEnableEvent() : checkIScriptCaptureOption(manager, IScriptCaptureEnableEvents());
+		ISSelectionEvent() : checkIScriptCaptureOption(manager, IScriptCaptureSelectionEvents());
+		ISMiscEvent() : checkIScriptCaptureOption(manager, IScriptCaptureMiscEvents());
+		ISWigiEvent() : checkIScriptCaptureOption(manager, IScriptCaptureWigiEvents());
+		ISPebbleEvent() : checkIScriptCaptureOption(manager, IScriptCapturePebbleEvents());
+		ISInputValue(__, __, __) : checkIScriptCaptureOption(manager, IScriptCaptureInputValues());
+		ISCustomIScriptRecordType(__) : checkIScriptCaptureOption(manager, IScriptCaptureCustomTypes());
+	}
+}
+
+checkIScriptCaptureOption(manager : MaterialManager, option : IScriptCaptureOption) -> bool {
+	eitherMap(
+		getIScriptRecording(manager),
+		\r : IScriptRecording ->
+			switch (option : IScriptCaptureOption) {
+				IScriptCaptureCallstack() : (r.captureOptions).captureCallstack;
+				IScriptCaptureTextDetails() : (r.captureOptions).captureTextDetails;
+				IScriptCaptureHttpRequests() : (r.captureOptions).captureHttpRequests;
+				IScriptCaptureMouseEvents() : (r.captureOptions).captureMouseEvents;
+				IScriptCaptureKeyEvents() : (r.captureOptions).captureKeyEvents;
+				IScriptCaptureInteractionEvents() : (r.captureOptions).captureInteractionEvents;
+				IScriptCaptureHover() : (r.captureOptions).captureHover;
+				IScriptCaptureClickEvents() : (r.captureOptions).captureClickEvents;
+				IScriptCaptureAppearanceEvents() : (r.captureOptions).captureAppearanceEvents;
+				IScriptCaptureValueEvents() : (r.captureOptions).captureValueEvents;
+				IScriptCaptureEnableEvents() : (r.captureOptions).captureEnableEvents;
+				IScriptCaptureSelectionEvents() : (r.captureOptions).captureSelectionEvents;
+				IScriptCaptureInputValues() : (r.captureOptions).captureInputValues;
+				IScriptCaptureWigiEvents() : (r.captureOptions).captureWigiEvents;
+				IScriptCapturePebbleEvents() : (r.captureOptions).capturePebbleEvents;
+				IScriptCaptureCustomTypes() : (r.captureOptions).captureCustomTypes;
+				IScriptCaptureMiscEvents() : (r.captureOptions).captureMiscEvents;
+			},
+		false
+	)
+}
+
+mapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> ?) -> [?] {
+	foldIScriptStack(stack, [], \acc, delay, record -> arrayPush(acc, fn(delay, record)))
+}
+
+filtermapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> Maybe<?>) -> [?] {
+	foldIScriptStack(stack, [], \acc, delay, record -> eitherMap(fn(delay, record), \r -> arrayPush(acc, r), acc))
+}
+
+foldIScriptStack(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ? {
+	foldTree(stack, init, \delay, records, acc -> {
+		fold(records, acc, \acc2, record -> fn(acc2, delay, record))
+	})
+}
+
+foldRIScriptStack(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ? {
+	foldRTree(stack, init, \delay, records, acc -> {
+		fold(reverseA(records), acc, \acc2, record -> fn(acc2, delay, record))
+	})
+}
+
+mapIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> IScriptRecord) -> Tree<double, [IScriptRecord]> {
+	mapTree2(stack, \delay, records -> map(records, \record -> fn(delay, record)))
+}
+
+filterIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> bool) -> Tree<double, [IScriptRecord]> {
+	mapTree2(stack, \delay, records -> filter(records, \record -> fn(delay, record)))
+}
+
+filtermapIScriptStackTree(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> Maybe<IScriptRecord>) -> Tree<double, [IScriptRecord]> {
+	mapTree2(stack, \delay, records -> filtermap(records, \record -> fn(delay, record)))
+}
+
+foldIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ? {
+	foldTree(stack, init, \delay, records, acc -> fold(records, acc, \acc2, record -> fn(acc2, delay, record)))
+}
+
+foldRIScriptStackTree(stack : Tree<double, [IScriptRecord]>, init : ?, fn : (?, double, IScriptRecord) -> ?) -> ? {
+	foldRTree(stack, init, \delay, records, acc -> fold(reverseA(records), acc, \acc2, record -> fn(acc2, delay, record)))
+}
+
+findIScriptLastRecordKey(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<double> {
+	foldArrayTree(stack, None(),
+		\k, v, acc : Maybe<double> -> {
+			if (isSameStructType(v, type)) {
+				if (isNone(acc) || k > either(acc, k))
+					Some(k)
+				else acc
+			} else acc
+		}
+	);
+}
+
+findIScriptLastRecordKeyValue(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<Pair<double, ?>> {
+	maybeBind(
+		findIScriptLastRecordKey(stack, type),
+		\v -> Some(Pair(v, extractStruct(lookupTreeDef(stack, v, []), type)))
+	)
+}
+
+extractIScriptLastRecord(stack : Tree<double, [IScriptRecord]>, type : ?) -> Maybe<?> {
+	maybeBind(
+		findIScriptLastRecordKey(stack, type),
+		\v -> tryExtractStruct(lookupTreeDef(stack, v, []), type)
+	)
+}
+
+addIScriptStackRecord(stack : Tree<double, [IScriptRecord]>, record : IScriptRecord) -> Tree<double, [IScriptRecord]> {
+	addIScriptStackRecordWithDelay(stack, getIScriptStackDelay(stack), record)
+}
+
+addIScriptStackRecordWithDelay(stack : Tree<double, [IScriptRecord]>, delay : double, record : IScriptRecord) -> Tree<double, [IScriptRecord]> {
+	treePushToArrayValue(stack,
+		delay,
+		record
+	)
+}
+
+replaceRecordInIScriptStack(stack : Tree<double, [IScriptRecord]>, delay : double, prevValue : IScriptRecord, nextValue : IScriptRecord) -> Tree<double, [IScriptRecord]> {
+	treePushToArrayValue(
+		treeRemoveFromArrayValue(stack, delay, prevValue),
+		delay,
+		nextValue
+	)
+}
+
+getIScriptStackDelay(stack : Tree<double, [IScriptRecord]>) -> double {
+	lastElement(sort(getTreeKeys(stack)), 0.)
+}
+
+getMaterialFocusById(parent : MFocusGroup, id : [int]) -> Maybe<MaterialFocus> {
+	if (length(id) > 0)
+		eitherMap(
+			lookupTree(getValue(parent.focusIds), id[0]),
+			\p ->
+				switchMaterialFocus(
+					p,
+					\f ->
+						if (length(id) == 1)
+							Some(f)
+						else
+							None(),
+					\f ->
+						if (length(id) == 1)
+							Some(f)
+						else
+							getMaterialFocusById(f, tail(id))
+				),
+			None()
+		)
+	else
+		Some(parent)
+}
+
+getMaterialFocusByUniqueId(parent : MFocusGroup, id : string) -> Maybe<MaterialFocus> {
+	iScriptIdParent =
+		if (isSome(parent.iScriptId))
+			parent
+		else
+			getIScriptUniqueIdParent(parent);
+
+	lookupTree(getValue(iScriptIdParent.iScriptIds), id);
+}
+
+getMaterialFocusByIScriptId(parent : MFocusGroup, id : List<IScriptIdentifier>) -> Maybe<MaterialFocus> {
+	maybeBind(
+		switch (headList(id, IScriptFocusTreePosition(0)) : IScriptIdentifier) {
+			IScriptFocusTreePosition(treePosition): {
+				getMaterialFocusById(parent, [treePosition])
+			}
+			IScriptId(iScriptId): {
+				getMaterialFocusByUniqueId(parent, iScriptId)
+			}
+			default: None()
+		},
+		\mf -> {
+			if (countList(id) > 1) {
+				switchMaterialFocus(
+					mf,
+					\__ -> None(),
+					\f -> getMaterialFocusByIScriptId(f, tailList(id))
+				)
+			} else {
+				Some(mf)
+			}
+		}
+	)
+}
+
+getFocusById(parent : MFocusGroup, id : [int]) -> Maybe<MFocus> {
+	eitherMap(getMaterialFocusById(parent, id), \mf -> switchMaterialFocus(mf, \f -> Some(f), \__ -> None()), None())
+}
+
+getFocusGroupById(parent : MFocusGroup, id : [int]) -> Maybe<MFocusGroup> {
+	eitherMap(getMaterialFocusById(parent, id), \mf -> switchMaterialFocus(mf, \__ -> None(), \f -> Some(f)), None())
+}
+
+addIScriptRecord(manager : MaterialManager, record : IScriptRecord) -> void {
+	addIScriptRecordWithDelay(manager, getIScriptDelay(manager), record);
+}
+
+addIScriptRecordWithDelay(manager : MaterialManager, delay : double, record : IScriptRecord) -> void {
+	rs : IScript = getValue(manager.iscript.iScriptB);
+
+	switch (record) {
+		IScriptInputRecord(__, name, __, typeHint) : {
+			next(manager.iscript.inputValuesB, arrayPush(getValue(manager.iscript.inputValuesB), IScriptInputValue(name, typeHint, None())));
+		}
+		IScriptOutputRecord(__, name) : {
+			next(manager.iscript.outputValuesB, arrayPush(getValue(manager.iscript.outputValuesB), IScriptOutputValue(name, false, None())));
+		}
+		default : {}
+	}
+
+	next(
+		manager.iscript.iScriptB,
+		IScript(
+			rs.recordingStarted,
+			treePushToArrayValue(
+				rs.stack,
+				delay,
+				record
+			)
+		)
+	)
+}
+
+addIScriptBehaviourRecord(manager : MaterialManager, componentName : string, behaviourName : string, value : flow, id : List<IScriptIdentifier>,
+	type : IScriptRecordType, callstack : string) -> void {
+
+	if (!checkIsFn(serialize(value)) && checkIScriptRecordTypeCaptureOption(manager, behaviourName, type)) {
+		addIScriptRecord(
+			manager,
+			IScriptBehaviourRecord(
+				IScriptBehaviourDescriptor(IScriptComponentDescriptor(componentName, id), behaviourName),
+				value,
+				type,
+				callstack
+			)
+		)
+	}
+}
+
+addIScriptRequestRecord(manager : MaterialManager, url : string, post : bool, headers : [KeyValue], params : [KeyValue], delay : double,
+	response : IScriptRequestRespose) -> void {
+
+	if (checkIScriptCaptureOption(manager, IScriptCaptureHttpRequests())) {
+		rs = getValue(manager.iscript.iScriptB);
+
+		addIScriptRecord(
+			manager,
+			IScriptRequestRecord(url, post, headers, params, delay, response)
+		);
+	}
+}
+
+iScriptInfo(manager : MaterialManager, text : string, id : Maybe<List<IScriptIdentifier>>) -> void {
+	if (getValue(manager.iscript.settings.replayVerbose)) {
+		idStr = switch (id : Maybe<List<IScriptIdentifier>>) {
+			None(): "";
+			Some(v): " : " + IScriptId2s(v);
+		};
+		println("ISCRIPT: " + text + idStr);
+	}
+}
+
+iScriptError(manager : MaterialManager, error : string, id : Maybe<List<IScriptIdentifier>>) -> void {
+	next(manager.iscript.errors, Cons(IScriptError(error, id), getValue(manager.iscript.errors)));
+
+	if (getValue(manager.iscript.settings.replayVerbose)) {
+		idStr = switch (id : Maybe<List<IScriptIdentifier>>) {
+			None(): "";
+			Some(v): " : " + IScriptId2s(v);
+		};
+		println("ISCRIPT ERROR: " + error + idStr);
+	}
+}
+
+addGlobalAliasInIScript(manager : MaterialManager, focus : MaterialFocus, alias : string) -> void {
+	next(manager.iscript.aliasesB, setTree(
+		getValue(manager.iscript.aliasesB),
+		IScriptComponentDescriptor(focus.name, getFullMFocusId(focus)),
+		alias
+	))
+}
+
+addIScriptUrlRecord(manager : MaterialManager, url : string) -> void {
+	addIScriptRecord(manager, IScriptUrlRecord(url));
+}
+
+replaceRecordInIScript(manager : MaterialManager, prevRecord : Pair<double, IScriptRecord>, record : Pair<double, IScriptRecord>) -> void {
+	removeRecordFromIScript(manager, prevRecord);
+	addIScriptRecordWithDelay(manager, record.first, record.second);
+}
+
+removeRecordFromIScript(manager : MaterialManager, record : Pair<double, IScriptRecord>) -> void {
+	is = getValue(manager.iscript.iScriptB);
+
+	switch (record.second) {
+		IScriptInputRecord(__, name, __, typeHint) : {
+			inputValues = getValue(manager.iscript.inputValuesB);
+			inputValueIndex = findiDef(inputValues, \inputValue -> inputValue.name == name, -1);
+			next(manager.iscript.inputValuesB, removeIndex(inputValues, inputValueIndex));
+		}
+		IScriptOutputRecord(__, name) : {
+			outputValues = getValue(manager.iscript.outputValuesB);
+			outputValueIndex = findiDef(outputValues, \outputValue -> outputValue.name == name, -1);
+			next(manager.iscript.outputValuesB, removeIndex(outputValues, outputValueIndex));
+		}
+		default : {}
+	}
+
+	next(
+		manager.iscript.iScriptB,
+		IScript(
+			is.recordingStarted,
+			filterIScriptStackTree(is.stack, \d, r -> d != record.first || r != record.second)
+		)
+	);
+
+	nextDistinct(manager.iscript.scriptChangedB, true);
+}
+
+initIScriptRecording(manager : MaterialManager, f : MaterialFocus, disposeOnRecordStopped : bool) -> () -> void {
+	makeSubscribeUns(f.recordingEnabled, \en : bool -> {
+		if (en)
+			mapTree2(
+				f.behaviours,
+				\k, mb ->
+					makeSubscribe2(mb.first, \v -> {
+						id = getFullMFocusId(f);
+
+						if (!containsList(id, IScriptFocusTreePosition(-1))) {
+							addIScriptBehaviourRecord(manager, f.name, k, v, id, mb.second, getCallstackIfNeeded(manager));
+						}
+					})()
+			)
+			|> getTreeValues
+			// |> (\f2 ->
+			// 	if (disposeOnRecordStopped)
+			// 		arrayPush(
+			// 			f2,
+			// 			makeSubscribe2(manager.iscript.iScriptStateB, \iss : IScriptState ->
+			// 				if (!isSameStructType(iss, IScriptRecording(defaultCaptureOptions, false)))
+			// 					deferred(\ -> dispUnsA(disp))
+			// 			)()
+			// 		)
+			// 	else
+			// 		f2
+			// )
+		else
+			[];
+	})()
+}
+
+captureIScriptKeyEvent(manager : MaterialManager, handled : bool, k : KeyEvent, component : string, type : string) -> bool {
+	if (!handled && contains(manager.style, MIScriptPanel())) {
+		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureKeyEvents())) {
+			addIScriptBehaviourRecord(
+				manager,
+				component,
+				type,
+				KeyEventRecord(k.utf, k.ctrl, k.shift, k.alt, k.meta, k.keycode),
+				makeList(),
+				ISKeyEvent(),
+				getCallstackIfNeeded(manager)
+			)
+		} else if (isIScriptReplaying(manager)) {
+			iScriptInfo(manager, component + " " + type + ": " + toString(k), None());
+		}
+	}
+
+	handled;
+}
+
+captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () -> MouseInfo, canvasPosition : () -> Point, component : string, type : string) -> bool {
+	if (!handled && contains(manager.style, MIScriptPanel())) {
+		getPoint = \ -> {
+			mi = miFn();
+			p = canvasPosition();
+
+			Point(mi.x + p.x, mi.y + p.y - getValue(manager.iscript.topPanelWidthHeightB).height);
+		};
+
+		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
+			addIScriptBehaviourRecord(
+				manager,
+				component,
+				type,
+				getPoint(),
+				makeList(),
+				ISMouseEvent(),
+				getCallstackIfNeeded(manager)
+			)
+		} else if (isIScriptReplaying(manager)) {
+			iScriptInfo(manager, component + " " + type + ": " + toString(getPoint()), None());
+		}
+	}
+
+	handled;
+}
+
+captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool {
+	if (!handled && contains(manager.style, MIScriptPanel())) {
+		getPoint = \ -> {
+			p = canvasPosition();
+
+			Point(miFn.x + p.x, miFn.y + p.y - getValue(manager.iscript.topPanelWidthHeightB).height);
+		};
+
+		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
+			addIScriptBehaviourRecord(
+				manager,
+				component,
+				"mousedown",
+				getPoint(),
+				makeList(),
+				ISMouseEvent(),
+				getCallstackIfNeeded(manager)
+			)
+		} else if (isIScriptReplaying(manager)) {
+			iScriptInfo(manager, component + " mousedown: " + toString(getPoint()), None());
+		}
+	}
+
+	handled;
+}

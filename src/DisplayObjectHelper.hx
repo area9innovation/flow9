@@ -4,7 +4,7 @@ import pixi.core.display.Container;
 class DisplayObjectHelper {
 	public static inline function InvalidateStage(clip : DisplayObject) : Void {
 		if (getClipWorldVisible(clip)) {
-			RenderSupportJSPixiNew.InvalidateStage();
+			RenderSupportJSPixi.InvalidateStage();
 		}
 	}
 
@@ -68,13 +68,13 @@ class DisplayObjectHelper {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
 
-			if (RenderSupportJSPixiNew.AccessibilityEnabled) {
-				RenderSupportJSPixiNew.updateAccessDisplay(clip);
+			if (RenderSupportJSPixi.AccessibilityEnabled) {
+				RenderSupportJSPixi.updateAccessDisplay(clip);
 			}
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixiNew.InvalidateStage();
+				RenderSupportJSPixi.InvalidateStage();
 			}
 		}
 	}
@@ -106,7 +106,7 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixiNew.InvalidateStage();
+				RenderSupportJSPixi.InvalidateStage();
 			}
 		}
 	}
@@ -220,7 +220,7 @@ class DisplayObjectHelper {
 
 		clip.mask = null;
 
-		if (RenderSupportJSPixiNew.RendererType == "webgl") {
+		if (RenderSupportJSPixi.RendererType == "webgl") {
 			clip.mask = getFirstGraphics(maskContainer);
 		} else {
 			untyped clip.alphaMask = null;
@@ -240,8 +240,12 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
+
 			clip.mask.once("removed", function () { clip.mask = null; });
+		} else if (untyped clip.alphaMask != null) {
+			untyped maskContainer.isMask = true;
 		}
+
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 

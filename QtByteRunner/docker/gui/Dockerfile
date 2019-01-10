@@ -30,4 +30,4 @@ RUN chown ${uid}:${gid} -R /flow
 USER flow
 ENV HOME /flow
 
-CMD /flow/bin/flowcpp
+CMD /flow9/bin/flowcpp

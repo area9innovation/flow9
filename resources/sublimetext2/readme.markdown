@@ -99,7 +99,7 @@ to that Sublime-Text-Packages folder
 
 Sample command for Mac OS X:
 
-    cd ~/flow/resources/sublimetext2/
+    cd ~/flow9/resources/sublimetext2/
     cp -rp Flow Lingo ~/Library/Application\ Support/Sublime\ Text\ 2/Packages
 
 Also copy flow.py and lingo.py from \<FLOWDIR\>/resources/sublimetext2/
@@ -170,9 +170,6 @@ after the installation. The script will install to SublimeText3 if available.
 The SublimeLinter has changed to use plugin so please unpack the "SublimeLinter-contrib-flow.zip"
 into the \<drive\>:\\Users\\\<username\>\\Appdate\\Roaming\\Sublime Text 3\\Packages\\
 after installing SublimeLinter.
-
-Please update SECONDARYPATH in \<FLOWDIR\>\\bin\\lint3.bat to include your path for the "flowapps" repository
-(if not in recommended path c:\flowapps.)
 
 Otherwise, the instructions are identical.
 
@@ -334,7 +331,7 @@ You can also access some commands by right clicking in any view.
 Tips & Tricks
 -------------
 
-To get Ctrl+p and "Find in Files" to work well, try File, Open folder and open c:\flowapps.
+To get Ctrl+p and "Find in Files" to work well, try File, Open folder and open c:\flow9.
 We recommend you always use this.
 
 To speed up "Find in Files" when searching for something in the source code, you can remove
@@ -482,7 +479,7 @@ It is good idea to put path to flow base directly, inside Flow plugin in file Fl
     }
 
 If it is empty - base dir will be calculated from the path of the current file assuming that this file is nested under 
-flowdir (like c:\flow\tools\myTool\my_tool.flow). "rootdir" parameter is also optional and may be found heuristically.
+flowdir (like c:\flow9\tools\myTool\my_tool.flow). "rootdir" parameter is also optional and may be found heuristically.
 
 
 Additional tools

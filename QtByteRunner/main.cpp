@@ -74,7 +74,7 @@
 using std::max;
 using std::min;
 
-// --profile-bytecode 2000 --url "http://localhost:81/flow/flowrunner.html?name=smartbuilder&product=Playground" smartbuilder.bytecode smartbuilder.debug
+// --profile-bytecode 2000 --url "http://localhost:81/flow/flowrunner.html?name=program" program.bytecode program.debug
 static QString compileFlow(int const flowCompiler, QString const & flow, QString const & flow_path, QStringList const & args, bool /*cgi*/) {
     QFileInfo fileinfo(flow);
     QString base = fileinfo.baseName();
@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
 #endif
 
     // gathering command-line parameters to keep them later
-    QUrl params("https://cloud1.area9.dk/flow/flowrunner.html");
+    QUrl params("https://localhost/flow/flowrunner.html");
 
     while (argc > 2) {
         if (!strcmp(argv[1], "--flowcompiler")) {

@@ -41,7 +41,7 @@ public class LauncherActivity extends Activity {
     
     private ArrayAdapter<String> ListAdapter;
     
-    private URI BaseURI = URI.create("https://ccl.area9learning.com/flow/");
+    private URI BaseURI = URI.create("https://localhost/flow/");
     private String BytecodesDir = "bytecodes/";
     
     private Map<String, String> URLParametersMap = new HashMap<String, String>();

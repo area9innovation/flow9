@@ -23,7 +23,7 @@ class FlowContainer extends Container {
 
 			if (getClipWorldVisible()) {
 				newChild.updateClipWorldVisible();
-				RenderSupportJSPixiNew.InvalidateStage();
+				RenderSupportJSPixi.InvalidateStage();
 			}
 
 			emitEvent("childrenchanged");
@@ -40,7 +40,7 @@ class FlowContainer extends Container {
 
 			if (getClipWorldVisible()) {
 				newChild.updateClipWorldVisible();
-				RenderSupportJSPixiNew.InvalidateStage();
+				RenderSupportJSPixi.InvalidateStage();
 			}
 
 			emitEvent("childrenchanged");

@@ -43,18 +43,18 @@ version.
 
 	If you continue getting errors that it's not possible to locate app's Bundle Id, it's probably your account which you use in the Team dropdown does not have access to the team. To check/fix it, go to developer.apple.com with credentials having access to the required App's Bundle Id and check People tab. If you can't find that buggy account, send an invite to the person
 
-* Local XCode settings update2: in Capabilities tab, enable Associated Domains and add needed domains there, for example “applinks:newconnectdev2.mheducation.com"
+* Local XCode settings update2: in Capabilities tab, enable Associated Domains and add needed domains there, for example “applinks:mysite.com"
 
-* Remove previously installed app with such Bundle ID (in our setup it could be MHE Connect  or  Test), and “Run” this project from XCode so app will be installed on the device. 
+* Remove previously installed app with such Bundle ID, and “Run” this project from XCode so app will be installed on the device. 
 
 * (Optional) Check logs of the web server (those which were in the “applinks” settings), there you should see something like "GET /apple-app-site-association … 200 … swcd (unknown version) CFNetwork/758.0.2 Darwin/15.0.0” swcd is probably unique UserAgent identifier related to this Universal Links mechanism. Answer should be 200 (or possibly 304?).
 
-  If you get 404 Not found, check existence of "apple-app-site-association" file in the root of the site (https://cloud1.area9.dk/apple-app-site-association). Create or edit it accordingly
-* In the Notes app, write a new link which corresponds to the path in the appple-app-site-association (it's faster then creating and uploading page on the server with SSL support). Example “https://newconnectdev2.mheducation.com/flow/connect.html”. Click it and your test app should handle the request through new delegate named continueUserActivity or restorationHandler.
+  If you get 404 Not found, check existence of "apple-app-site-association" file in the root of the site (https://mysite.com/apple-app-site-association). Create or edit it accordingly
+* In the Notes app, write a new link which corresponds to the path in the appple-app-site-association (it's faster then creating and uploading page on the server with SSL support). Example “https://mysite.com/flow/connect.html”. Click it and your test app should handle the request through new delegate named continueUserActivity or restorationHandler.
 
 ## Troubleshooting
  If Safari opens that link then double-check steps above.
- In the browser, you should get your association file back, i.e. https://cloud1.area9.dk/apple-app-site-association
+ In the browser, you should get your association file back, i.e. https://mysite.com/apple-app-site-association
 
  Also, using this command can ensure you that app is built with Associated Domains capabilities:
 ```
@@ -66,8 +66,8 @@ version.
 <dict>
     <key>com.apple.developer.associated-domains</key>
     <array>
-        <string>applinks:newconnectdev2.mheducation.com</string>
-        <string>applinks:ls-dev2.mheducation.com</string>
+        <string>applinks:mysite.com</string>
+        <string>applinks:site2.mysite.com</string>
         ...
     </array>
 </dict>

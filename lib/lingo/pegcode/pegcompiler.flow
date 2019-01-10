@@ -72,6 +72,7 @@ main() {
         result=1 prints the AST output of the grammar.
         trace=1 prints a debug trace after each completed match.
         trace=<ids> prints a debug trace at the end of the comma-separated rules.
+		noactions=1 ignores any semantic actions in the grammar, making it easier to test.
 
         Compiling to flow (fastest parser):
         flowparser=<file> produces a flow file that can parse the grammar using a SyntaxTree AST.
@@ -152,9 +153,17 @@ main() {
 							});
 						}
 
+						actionless = if (isUrlParameterTrue("noactions")) {
+							Grammar(map(dupped.productions, \p -> {
+								Production(p with choices = map(p.choices, \s -> {
+									Seq(map(s.seq, removePegActions))
+								}))
+							}));
+						} else dupped;
+
 						// Compile to a Flow parser?
 						if (flowparser != "") {
-							output = compileSyntaxGrammarToFlow(dupped, []);
+							output = compileSyntaxGrammarToFlow(actionless, []);
 							target = changeFileExt(flowparser, ".flow");
 							if (output.first != "") {
 								println("Error compiling to " + target + ": " + output.first);
@@ -169,11 +178,11 @@ main() {
 
 						// Inferred actions
 						actioned = if (isUrlParameterTrue("actions")) {
-							a  = inferPegActions(dupped, types);
+							a  = inferPegActions(actionless, types);
 							printGrammar(a);
 							a;
 						} else {
-							dupped;
+							actionless;
 						}
 
 						// Add tracing
@@ -391,3 +400,26 @@ pegOps4" + name + " : [PegOp] =\n\t" + s4 + ";\n"
 + (if (debug != makeTree()) "pegOps4" + name + "Debug = " + serialize(debug) + ";\n" else "")
 }
 
+removePegActions(pa : Parsing) -> Parsing {
+	switch (pa) {
+		Choices(p): Choices(map(p, removePegActions));
+		Seq(seq): Seq(map(seq, removePegActions));
+		Star(p): Star(removePegActions(p));
+		Plus(p): Plus(removePegActions(p));
+		Opt(p): Opt(removePegActions(p));
+		Negation(p): Negation(removePegActions(p));
+		CutUp(p): CutUp(removePegActions(p));
+		CutDown(p): CutDown(removePegActions(p));
+		Rule(name): pa;
+		iRule(i): pa;
+		Term(name): pa;
+		CharRange(first, last): pa;
+		Epsilon(): pa;
+		Action(fn): Epsilon();
+		Action2(e): Epsilon();
+		ActionIndex(): pa;
+		BindResult(name, v): BindResult(name, removePegActions(v));
+		BindMatched(name, v): BindMatched(name, removePegActions(v));
+		LingoValue(value): pa;
+	}
+}

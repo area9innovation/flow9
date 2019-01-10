@@ -1,6 +1,3 @@
-// This files checks for Flash version, launches JS version if swf is not present
-// parses and adds some URL parameters
-
 var leaveWarningText = "";
 
 function getNavigatorLanguage() {
@@ -55,34 +52,9 @@ function pausecomp(millis) {
 	while(curDate-date < millis);
 }
 
-window.onload = function() {
-	// flash.focus() breakes textboxes for FF on Mac OS X
-	if (swfobject.ua.mac && navigator.userAgent.toLowerCase().indexOf('firefox') > -1) return;
-
-	var flash = document.getElementById("flowFlash");
-	if (typeof(flash) != "undefined" && typeof(flash) != null && flash != null) {
-		flash.tabIndex = 1234;  // This was needed on Chrome 23
-		flash.focus();
-	}
-}
-
 window.onbeforeunload = function () {
-	try {
-		var flash = getFlash();
-			var param = flash.onbeforeunload();
-	        if ( typeof param == "string" ) {
-				setLeaveWarningText(param);
-		} else if (param)
-			pausecomp(3000);
-
-	} catch(err) { }
-
 	if (leaveWarningText != "")
 		return leaveWarningText;
-}
-
-function getFlash() {
-	return document.getElementById("flowFlash");
 }
 
 function closeWindow() {
@@ -109,11 +81,6 @@ function getOs() {
 
 function getUserAgent() {
 	return navigator.userAgent;
-}
-
-function getVersion() {
-	var playerVersion = swfobject.getFlashPlayerVersion(); 
-	return playerVersion.major + "." + playerVersion.minor + "." + playerVersion.release;
 }
 
 function getBrowser() {
@@ -246,42 +213,6 @@ var BrowserDetect = {
 };
 BrowserDetect.init();
 
-function startJSversion() {
-	if (window.location.href.indexOf("flowswf.html") > 0)
- 		window.location.href = window.location.href.replace("flowswf.html", "flowjs.html");
-	else if ( window.location.href.indexOf("ereaderlti_provider.php") > 0)		
-		window.location.href = window.location.href.replace("ereaderlti_provider.php", "flowjs.html");
-}
-var splashName = "splash.swf?v=8";
-
-function replaceSwfWithEmptyDiv(targetID){
-   var el = document.getElementById(targetID);
-   if(el){
-      var div = document.createElement("div");
-      el.parentNode.insertBefore(div, el);
-      swfobject.removeSWF(targetID);
-      div.setAttribute("id", "myAlternativeContent");
-   }
-}
-
-function switchToSB(skip) {
-    replaceSwfWithEmptyDiv("flowFlash");
-	var url = window.location.href;
-	url = url.replace("?name=learnsmart", "?name=smartbook");
-	if (skip == "true") url = url.concat("&skipredirect=once");
-	window.history.replaceState("","", url);
-	startSWFversion()
-}
-
-function switchToLS(skip) {
-    replaceSwfWithEmptyDiv("flowFlash");
-	var url = window.location.href;
-	url = url.replace("?name=smartbook", "?name=learnsmart");
-	if (skip == "true") url = url.concat("&skipredirect=once");
-	window.history.replaceState("","", url);
-	startSWFversion()
-}
-
 function arrayContains(a, obj) {
     var i = a.length;
     while (i--) {
@@ -290,120 +221,6 @@ function arrayContains(a, obj) {
        }
     }
     return false;
-}
-
-function startSWFversion() {
-	var flashvars = {};
-	startSWFversionWithPreParams(flashvars)
-}
-
-function startSWFversionWithPreParams(flashvars) {
-	var strHref = window.location.href;
-	var prod = getURLParameter("prod");
-	var source = getURLParameter("source");
-	if (strHref.indexOf("?") > -1) {
-		var qIndex = strHref.indexOf("?") + 1;
-		var hIndex = strHref.lastIndexOf("#");
-		var strQueryString = (hIndex != -1)
-			? strHref.substr(qIndex, hIndex - qIndex)
-			: strHref.substr(qIndex);
-		var aQueryString = strQueryString.split("&");
-		for ( var iParam = 0; iParam < aQueryString.length; iParam++ ) {
-			var aParam = aQueryString[iParam].split("=");
-			flashvars[aParam[0]] = aParam[1];
-		}
-	}
-
-	flashvars["originalHtmlUrl"] = encodeURIComponent(window.location.href);
-	var swf = flashvars["name"];
-	var params = {"allowFullScreen":"true", "allowscriptaccess" : "always", "wmode": "opaque"};
-	if (strHref.toLowerCase().indexOf("directwmode") > -1) {
-		params = {"allowFullScreen":"true", "allowscriptaccess" : "always", "wmode": "direct"};
-	}
-	var attributes = {};
-	attributes.id = "flowFlash";
-
-	if (getURLParameter("custom_splash") != null) splashName = getURLParameter("custom_splash") + ".swf";
-	if (getURLParameter("custom_splash_image") != null) splashName = "splash_ci.swf";
-	var nejmProducts = ['IM', 'IMTEST', 'FM', 'FMTEST', 'PD', 'PDTEST'];
-
-	if (prod != null && arrayContains(nejmProducts, prod.toUpperCase())) splashName = "images/NEJM/nejmsplash.swf";	
-	var splashAbs = "false";
-	var runProduct = function() {
-		flashvars["splashAbs"] = splashAbs;
-		if (swfobject.hasFlashPlayerVersion("9.0.18")) { // Flash 9 or above
-			swfobject.embedSWF(splashName, "myAlternativeContent", "100%", "100%", "11.0.0", "expressInstall.swf", flashvars, params, attributes);
-			var flash = null;
-			$(document).mousewheel(function(event, delta, dx, dy) {
-				//console.log(dx, dy);
-				if (flash == null) {
-					if (navigator.appName.indexOf("Microsoft") != -1) {
-						flash = window[attributes.id];
-					} else {
-						flash = document[attributes.id];
-					}
-				}
-				if (flash != null) {
-					flash.onJsScroll(-dx, dy);
-				}
-			});
-		} else if (prod != null && arrayContains(nejmProducts, prod.toUpperCase())) {
-			// window.location.hostname == "myknowledgeplus.nejm.org"
-			var suffix = "_" + prod.substring(0, 2).toLowerCase();
-			if (arrayContains(['iPad', 'iPhone', 'iPod'], navigator.platform)) 
-				if (window.location.search.indexOf("testmobileredirect=1") > -1) {
-					var mobStr = navigator.platform == 'iPad' ? "" : "&mobile=1";
-					window.location.href = window.location.origin + "/flow/flowjspixi.html" + window.location.search + mobStr;
-				} else window.location.replace("nejm_getFromAppstore" + suffix + ".html");
-			else if (navigator.userAgent.toLowerCase().indexOf("android") > -1)
-				startJSversion();
-			else
-				window.location.replace("nejm_noflash.html");
-		} else if (source == "ramboll_csr_t") {
-			window.location.replace("ramboll_noflash.html");
-		} else {
-			// No flash. Use native JS
-			startJSversion();
-		}
-	}
-	// var findCustomSplash = getURLParameter("source") != null && getURLParameter("name") == "binrunner";
-	var nameParam = getURLParameter("name");
-	var sourceParam = getURLParameter("source");
-	var isbnParam = getURLParameter("isbn");
-	var isBinrunner = nameParam == "binrunner";
-	var isLmsHardcoded = getURLParameter("lms");
-	var isLms = (nameParam != null) && ((nameParam.substr(0, 3) == "lms") || (nameParam == "proficiency_graph" && isLmsHardcoded == "1"));
-	var challengetoken = getURLParameter("challengetoken");
-
-	var checkBinrunnerCustomSplash = isBinrunner && (sourceParam != null || challengetoken != null);
-	var checkLmsCustomSplash = isLms && isbnParam != null;
-	
-	var checkCustomSplash = checkBinrunnerCustomSplash || checkLmsCustomSplash;
-	if (checkCustomSplash) {
-		params.operation = "get_custom_splash_screen"; //#41434 - do not reset allowFullScreen
-		if (checkBinrunnerCustomSplash) {
-			params.source = sourceParam;
-		} else if (checkLmsCustomSplash) {
-			params.isbn = isbnParam;
-		}
-		params.challenge_token = challengetoken;
-		$.post('smartbuilder/php/db.php', params, function(data) {
-			if (data.length >= 3 && data.substr(0, 3) == "OK\n") {
-				splashName = "splash_ci.swf";
-				splashImageName = data.substr(3, data.length - 3);
-				splashAbs = "true";
-				flashvars["custom_splash_image"] = splashImageName;
-				runProduct();
-			} else {
-				runProduct();
-			}
-		})
-		.fail(function() {
-			runProduct();
-		});
-	} else {
-		runProduct();
-	}
 }
 
 function getLocationHash() { 

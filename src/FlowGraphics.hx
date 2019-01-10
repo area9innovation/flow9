@@ -36,7 +36,7 @@ class FlowGraphics extends Graphics {
 	public function lineGradientStroke(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic) : Void {
 		strokeGradient = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix };
 
-		lineStyle(1.0, RenderSupportJSPixiNew.removeAlphaChannel(colors[0]), alphas[0]);
+		lineStyle(1.0, RenderSupportJSPixi.removeAlphaChannel(colors[0]), alphas[0]);
 	}
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
@@ -102,7 +102,7 @@ class FlowGraphics extends Graphics {
 			for (i in 0...fillGradient.colors.length) {
 				gradient.addColorStop(
 					trimFloat(fillGradient.offsets[i], 0.0, 1.0),
-					RenderSupportJSPixiNew.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
+					RenderSupportJSPixi.makeCSSColor(fillGradient.colors[i], fillGradient.alphas[i])
 				);
 			}
 

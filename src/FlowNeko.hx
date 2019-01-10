@@ -574,7 +574,7 @@ class FlowNeko extends Options {
 		}
 	}
 
-	private static inline var UPLOAD_SCRIPT_URL = "https://binrunner.dev.area9learning.com/flow/php/uploadbytecode.php";
+	private static inline var UPLOAD_SCRIPT_URL = "https://localhost/flow/php/uploadbytecode.php";
 	//private static inline var UPLOAD_SCRIPT_URL = "localhost:8000/php/uploadbytecode.php";
 	#if neko
 	private static var make_md5 = neko.Lib.load("std","make_md5", 1);

@@ -31,7 +31,7 @@ class FlowCgi {
 
 	function parse(name : String, container, fn : Module -> Bool) {
 		var nekoPath = basepath();
-		container.modules = new Modules([ nekoPath, nekoPath + "/flow/" ], null);
+		container.modules = new Modules([ nekoPath, nekoPath + "/flow9/" ], null);
 		container.modules.parseFileAndImports(name + ".flow", fn);
 	}
 	
@@ -109,9 +109,6 @@ class FlowCgi {
 	function basepath() : String {
 		var nekoFile = neko.vm.Module.local().name;
 		var path = nekoFile.substr(0, nekoFile.lastIndexOf('/'));
-		if (path == "/var/www/html/labsmart-prototype") {
-			return "/var/flow/flow";
-		}
 		return path;
 	}
 	

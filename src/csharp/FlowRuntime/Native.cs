@@ -390,7 +390,7 @@ namespace Area9Innovation.Flow
 			return (DateTime.UtcNow - Jan1st1970).TotalMilliseconds;
 		}
 
-		private string loader_url = "https://cloud1.area9.dk/flow/";
+		private string loader_url = "https://localhost/flow/";
 		private Dictionary<string, string> url_args;
 
 		public void setLoaderURL(Uri url)

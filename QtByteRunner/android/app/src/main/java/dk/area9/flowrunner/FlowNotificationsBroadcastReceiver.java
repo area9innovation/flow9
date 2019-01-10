@@ -1,7 +1,5 @@
 package dk.area9.flowrunner;
 
-import org.apache.cordova.LOG;
-
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;

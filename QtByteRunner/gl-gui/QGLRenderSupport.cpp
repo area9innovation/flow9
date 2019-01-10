@@ -858,10 +858,10 @@ bool QGLRenderSupport::loadPicture(unicode_string url, bool /*cache*/)
         if (!QFile::exists(png_path)) {
             // Code to automatically create missing PNGs for vector SWFs
             QProcess p;
-            p.setWorkingDirectory("c:\\flow");
+            p.setWorkingDirectory("c:\\flow9");
             QString target = unicode2qt(url);
             target = target.replace(".swf", ".png");
-            QString cmd = "c:\\flow\\resources\\swfrender.exe " + unicode2qt(url) + " -o " + target;
+            QString cmd = "c:\\flow9\\resources\\swfrender.exe " + unicode2qt(url) + " -o " + target;
             qDebug() << cmd;
             p.start(cmd);
             bool r = p.waitForFinished(-1);

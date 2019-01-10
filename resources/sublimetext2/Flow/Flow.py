@@ -25,7 +25,7 @@ def normalizePath(pth):
 # this tries to locate base flow dir
 # better way is to set it manually at User settings of Sublime Text.
 # open Preferences -> Settings-User
-# add line "flowdir":"c:/flow",
+# add line "flowdir":"c:/flow9",
 # where c:/flow is your base flow dir
 
 
@@ -45,7 +45,7 @@ def flowdir(view):
 
 
 # this returns all project folders
-# also tries to find and return ../flow/ dirs from them
+# also tries to find and return ../flow9/ dirs from them
 
 
 def flowdirs(view):
@@ -56,7 +56,7 @@ def flowdirs(view):
         if f.find(' ') >= 0:
             continue
         f1 = normalizePath(f) + '/'
-        x1 = max(f1.find('/flow/'), f1.find('/flowapps/'))
+        x1 = f1.find('/flow9/')
         if x1 > 0:
             f2 = f1[:x1+5]
             if os.path.isdir(f2):
@@ -155,7 +155,7 @@ def basedir(view):
     # maybe there's a directory somewhere above us called "flow".
     # if so return that.
     dir_name = normalizePath(os.path.dirname(file))+'/'
-    x1 = dir_name.find('/flow/')
+    x1 = dir_name.find('/flow9/')
     if x1 > 0:
         return dir_name[:x1+5]
 
@@ -879,9 +879,9 @@ class FlowcompilerBaseCompile(sublime_plugin.TextCommand):
         print ("cmd = " + " ".join(cmd))
         output, errors, fail = runcmd_base(flow_dir, cmd)
         # This regex allows to parse both types of error messages:
-        # c:\flow\tst.flow : 4:5: SYNTAX ERROR
+        # c:\flow9\tst.flow : 4:5: SYNTAX ERROR
         # and
-        # C:\flow\tst2.flow(4) : Error: Undefined variable println.
+        # C:\flow9\tst2.flow(4) : Error: Undefined variable println.
         # and allows double click on error line to open corresponding file.
         file_regex = "^([A-Za-z]?:?[^:]*)(?:\(|(?: : ))([0-9]+)(?:(?:\) : )|:)([0-9]*)(?:: )?(.*)"
         decoded = output.decode("utf-8").replace("\r", "")
