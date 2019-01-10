@@ -736,7 +736,7 @@ class RenderSupportJSPixi {
 
 		workaroundTextMetrics();
 		// Required for MaterialIcons measurements
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq'");
 		workaroundRendererDestroy();
 		workaroundProcessInteractive();
 
@@ -4987,7 +4987,7 @@ private class PixiText extends TextField {
 		if (metrics == null) {
 			return super.getTextMetrics();
 		} else {
-			return [metrics.ascent, metrics.descent, metrics.descent];
+			return [metrics.ascent / textScaleFactor, metrics.descent / textScaleFactor, metrics.descent / textScaleFactor];
 		}
 	}
 }
