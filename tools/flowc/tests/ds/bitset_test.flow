@@ -3,8 +3,11 @@ import arrayutils;
 import stringmath;
 
 
-createRandomBoolArray(maxLen : int) -> [bool] {
-	len = cast(random() * cast(maxLen : int -> double) : double -> int) + 1;
+createRandomLength(maxLen : int) -> int {
+	cast(random() * cast(maxLen : int -> double) : double -> int)
+}
+
+createRandomBoolArray(len : int) -> [bool] {
 	arrayRepeatDeferred(\ -> random() > 0.5, len);
 }
 
@@ -28,17 +31,18 @@ dumpBitArray(bitarr : [bool]) -> string {
 	)
 }
 
-main() -> int {
-	maxLen = 100000;
-	iter(enumFromTo(1, 1000), 
+testsOnCreation(maxLen : int, create : (int) -> BitSet) -> void {
+	time_start = timestamp();
+	iter(enumFromTo(1, 100), 
 		\n -> {
-			randArr = createRandomBoolArray(maxLen);
-			len = length(randArr);
-			println("RUNNING " + i2s(n) + " TEST OF SIZE: " + i2s(len));
-			bitsetPos = makeBitSet(len);
-			bitsetNeg = makeBitSet(len);
-			iter(enumFromTo(0, len - 1), \i -> { setBitSet(bitsetNeg, i); { }} );
-			iteri(randArr, \i, bit -> { if (bit) setBitSet(bitsetPos, i) else unsetBitSet(bitsetNeg, i); { }});
+			len = createRandomLength(maxLen);
+			randArr = createRandomBoolArray(len);
+			//println("RUNNING " + i2s(n) + " TEST OF SIZE: " + i2s(len));
+			bitsetPos = foldi(randArr, create(len), \i, acc, bit -> if (bit) setBitSet(acc, i) else acc);
+			bitsetNeg = foldi(randArr, 
+				fold(enumFromTo(0, len - 1), create(len), \acc, i -> setBitSet(acc, i)),
+				\i, acc, bit -> if (bit) acc else unsetBitSet(acc, i)
+			);
 			
 			error = \err, pos -> {
 				println(err);
@@ -78,6 +82,79 @@ main() -> int {
 			}
 		}
 	);
+	time = (timestamp() - time_start) / 1000.0;
+	println("TEST COMPLETED IN: " + d2st(time, 2) + "s");
+}
+
+testsOnOperations(maxLen : int, create : (int) -> BitSet) -> void {
+	time_start = timestamp();
+	iter(enumFromTo(1, 100), 
+		\n -> {
+			len = createRandomLength(maxLen);
+			randArr1 = createRandomBoolArray(len);
+			randArr2 = createRandomBoolArray(len);
+			
+			//println("RUNNING " + i2s(n) + " TEST OF SIZE: " + i2s(len));
+			
+			bitset1 = foldi(randArr1, create(len), \i, acc, bit -> if (bit) setBitSet(acc, i) else acc);
+			bitset2 = foldi(randArr2, create(len), \i, acc, bit -> if (bit) setBitSet(acc, i) else acc);
+			
+			error = \err -> {
+				println(err);
+				quit(0);
+			}
+			
+			switch (mergeBitSetImmutable(bitset1, bitset2)) {
+				Some(bitsetUnion): {
+					iteri(randArr1, 
+						\i, bit -> {
+							if (Some(bit || randArr2[i]) != getBitSet(bitsetUnion, i)) {
+								error("TEST FAIL: union differs");
+							}
+						}
+					)
+				}
+				None(): error("union of bitsets is not calculated");
+			}
+			switch (intersectBitSetImmutable(bitset1, bitset2)) {
+				Some(bitsetIntersect): {
+					iteri(randArr1, 
+						\i, bit -> {
+							if (Some(bit && randArr2[i]) != getBitSet(bitsetIntersect, i)) {
+								error("TEST FAIL: intersection differs");
+							}
+						}
+					)
+				}
+				None(): error("intersection of bitsets is not calculated");
+			}
+			bitsetComplement = complementBitSetImmutable(bitset1);
+			iteri(randArr1, 
+				\i, bit -> {
+					if (Some(!bit) != getBitSet(bitsetComplement, i)) {
+						error("TEST FAIL: complemetation differs");
+					}
+				}
+			);
+		}
+	);
+	time = (timestamp() - time_start) / 1000.0;
+	println("TEST COMPLETED IN: " + d2st(time, 2) + "s");
+}
+
+main() -> int {
+	maxLen = 20000;
+	println("TESTS OF CREATION OF MUTABLE BITSETS");
+	testsOnCreation(maxLen, makeBitSetMutable);
+
+	println("\nTESTS OF SET-THEORETIC OPERATIONS");
+	testsOnOperations(maxLen, makeBitSetMutable);
+	
+	println("\nTESTS OF CREATION OF IMMUTABLE BITSETS");
+	testsOnCreation(maxLen, makeBitSetImmutable);
+
+	println("\nTESTS OF SET-THEORETIC IMMUTABLE OPERATIONS");
+	testsOnOperations(maxLen, makeBitSetImmutable);
 
 	println("=========================");
 	println("ALL BIT SET TESTS PASSED");
