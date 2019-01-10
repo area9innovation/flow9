@@ -1,4 +1,5 @@
 import tools/common/compilerconfig;
+import tools/flowc/flowc_exports;
 import tools/flowc/flowcacc;
 import tools/flowc/preload_modules;
 import tools/flowc/manipulation/import_graph;
@@ -14,6 +15,15 @@ export {
 parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string) -> Pair<FiProgram, int> {
 	errors = ref 0;
 	acc = prepareInitialFlowcAcc(config);
+	errHandler = \e -> {
+			errors := ^errors + 1;
+			if (^errors < 200) {
+				printFcError(acc, e)
+			} else if (^errors == 200) {
+				fcPrintln("Too many errors. Ignoring the rest");
+			}
+		};
+
 	tenv1 = FcTypeEnvProgram(
 		acc,
 		makeTree(),
@@ -22,14 +32,7 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 		} else {
 			FcExportedCommon(makeSet());
 		},
-		\e -> {
-			errors := ^errors + 1;
-			if (^errors < 200) {
-				printFcError(acc, e)
-			} else if (^errors == 200) {
-				fcPrintln("Too many errors. Ignoring the rest");
-			}
-		}, 
+		errHandler,
 		errors,
 		ref makeTree()
 	);
@@ -49,7 +52,13 @@ parseAndTypecheckFlowFile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, fi
 		checkAllDependenciesAreResolved(modules, makeSet());
 		// Typecheck all files
 		tenv2 = processPreloadedModulesInParallel(tenv1, globEnv, modules);
-		Pair(fctypeenv2fi(tenv2), ^errors)
+
+		prog = fctypeenv2fi(tenv2);
+
+		// Check, that all names are properly exported/imported
+		fcCheckExports(prog, errHandler);
+
+		Pair(prog, ^errors)
 	} else {
 		Pair(fctypeenv2fi(tenv1), ^errors)
 	}
