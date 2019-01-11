@@ -33,7 +33,7 @@ fcCheckExports(env : FiProgram, onError : (FcError) -> void) -> void {
 	allNames = set2array(allExported);
 	fcPrintln("TOTAL NUM OF NAMES: " + i2s(length(allNames)));
 	name2index = foldi(allNames, makeTree(), \i, acc, name -> setTree(acc, name, i));
-	aaa = fold(env.traversal, ProgramExportsAcc(env, allNames, name2index, makeTree()), 
+	fold(env.traversal, ProgramExportsAcc(env, allNames, name2index, makeTree()), 
 		\acc, name -> {
 			module = lookupTreeDef(env.modules, name, dummyFiModule);
 			fcCheckModuleExports(acc, module,
@@ -46,9 +46,6 @@ fcCheckExports(env : FiProgram, onError : (FcError) -> void) -> void {
 }
 
 fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (string, int) -> void) -> ProgramExportsAcc {
-
-	
-
 	locals0 = buildSet(module.initOrder);
 	locals = fold(module.natives, locals0, \acc, n -> insertSet(acc, n.name));
 	localTypenames0 = fold(module.structs, makeSet(), \acc, s -> insertSet(acc, s.name));
@@ -66,18 +63,6 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 			lookupTreeDef(progAcc.moduleImports, imp.flowfile, makeEmptyBitVector(length(progAcc.allNames)))
 		)
 	);
-	
-	/*fcPrintln("MODULE " + flowfile + " IMPORTED NAMES: ");
-	fcPrintln("[" + foldi(progAcc.allNames, "", 
-		\i, acc, name -> {
-			switch (getBitVector(thisModuleImports, i)) {
-				Some(b): if (b) acc + ", " + name else acc;
-				None(): acc;
-			}
-		}
-		) + "]"
-	);*/
-	
 	newModuleImports = setTree(
 		progAcc.moduleImports,
 		flowfile,
@@ -86,10 +71,6 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 	
 	acc = ModuleExportsAcc(
 		progAcc,
-		/*switch (progAcc.env.program.exported) {
-			FcExportedSeparate(names): lookupTreeDef(names, flowfile, makeSet());
-			FcExportedCommon(names): names;
-		},*/
 		thisModuleImports,
 		localTypenames,
 		fold(module.structs,
@@ -102,8 +83,20 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 		onError,
 		flowfile
 	);
-	iter(module.functions, \f -> fcExpCheckExports(acc, locals, f.lambda));
-	iter(module.globalVars, \g -> fcExpCheckExports(acc, locals, g.value));
+	//iter(module.functions, \f -> fcExpCheckExports(acc, locals, f.lambda));
+	//iter(module.globalVars, \g -> fcExpCheckExports(acc, locals, g.value));
+	
+	
+	
+	
+	namesUsed = fold(module.globalVars,
+		fold(module.functions, makeTree(), 
+			\ac, fun -> fcExprGlobalNamesUsed(acc, locals, fun.lambda, ac)
+		),
+		\ac, gvar -> fcExprGlobalNamesUsed(acc, locals, gvar.value, ac)
+	);
+	checkProperImportExportOfNames(acc, namesUsed);
+	
 	ProgramExportsAcc(
 		progAcc.env,
 		progAcc.allNames, 
@@ -114,7 +107,6 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 
 ModuleExportsAcc(
 	progAcc : ProgramExportsAcc,
-	//exports : Set<string>,
 	bitVectorExports : BitVector,
 	localTypeNames : Set<string>,
 	moduleStructsUnions : Tree<string, FiStructOrUnion>,
@@ -257,6 +249,105 @@ fcExpCheckType(eacc : ModuleExportsAcc, type : FiType, start : int) -> void {
 	}
 }
 
+FcNameDescr(
+	kind : string, // var, struct, field, function, type
+	type : string,
+	start : int,
+);
+
+fcExprGlobalNamesUsed(eacc : ModuleExportsAcc, bound : Set<string>, expr : FiExp, acc : Tree<string, FcNameDescr>) -> Tree<string, FcNameDescr> {
+	gatherFromExprs = \es, ac -> fold(es, ac, \a, e -> fcExprGlobalNamesUsed(eacc, bound, e, a));
+	getFieldType = \e -> switch (fiExpType(e)) { FiTypeName(name, __): name; default: ""; };
+	switch (expr) {
+		FiLambda(args, e, t, __):
+			fcExprGlobalNamesUsed(eacc, fold(args, bound, \ac, arg -> insertSet(ac, arg.name)), e, acc);
+		FiCall(f, es, __, __):
+			fcExprGlobalNamesUsed(eacc, bound, f, gatherFromExprs(es, acc));
+		FiVar(x, t, i):
+			if (containsSet(bound, x)) acc else setTree(acc, x, FcNameDescr("variable", "", i));
+		FiLet(x, t1, e1, e2, t2, i):
+			fcExprGlobalNamesUsed(eacc, bound, e1, 
+				fcExprGlobalNamesUsed(eacc, insertSet(bound, x), e2, acc)
+			);
+		FiIf(e1, e2, e3, t, i): gatherFromExprs([e1, e2, e3], acc);
+		FiSwitch(e, t1, cs, t2, i):
+			fold(cs, 
+				fcExprGlobalNamesUsed(eacc, bound, e, acc),
+				\ac, c -> fcExprGlobalNamesUsed(eacc, mergeSets(bound, buildSet(c.argNames)), c.body,
+					if (c.struct == "default" || containsSet(eacc.localTypeNames, c.struct)) ac else {
+						setTree(ac, c.struct, FcNameDescr("struct", "", c.start));
+					}
+				)
+			);
+		FiCast(e, t1, t2, t3, i):    fcExprGlobalNamesUsed(eacc, bound, e, acc);
+		FiSeq(es, t, i):            gatherFromExprs(es, acc);
+		FiCallPrim(o, es, t, start):
+			gatherFromExprs(es, 
+				switch (o) {
+					FcStructPrim(name): 
+						if (containsSet(eacc.localTypeNames, name)) acc else {
+							setTree(acc, name, FcNameDescr("struct", "", start));
+						}
+					FcFieldPrim(field_name): {
+						type_name = getFieldType(es[0]);
+						if (containsSet(eacc.localTypeNames, type_name)) acc else {
+							setTree(acc, field_name, FcNameDescr("field", type_name, start));
+						}
+					}
+					FcSetMutablePrim(field_name): {
+						type_name = getFieldType(es[0]);
+						if (containsSet(eacc.localTypeNames, type_name)) acc else {
+							setTree(acc, field_name, FcNameDescr("field", type_name, start));
+						}
+					}
+					FcCreateClosurePrim(structName, functionName): {
+						if (containsSet(eacc.localTypeNames, structName)) acc else {
+							setTree(
+								if (containsSet(eacc.localTypeNames, functionName)) acc else {
+									setTree(acc, functionName, FcNameDescr("function", "", start));
+								}, 
+								structName, FcNameDescr("struct", "", start)
+							);
+						}
+					}
+					default: acc;
+				}
+			);
+		FiString(__, __):         acc;
+		FiBool(__, __):           acc;
+		FiDouble(__, __):         acc;
+		FiVoid(__):               acc;
+		FiInt(__, __):            acc;
+        FiRequire(__, e, __, __): fcExprGlobalNamesUsed(eacc, bound, e, acc);
+        FiUnsafe(__, fb, __, __): fcExprGlobalNamesUsed(eacc, bound, fb, acc);
+	}
+}
+
+fcTypeGlobalNamesUsed(eacc : ModuleExportsAcc, type : FiType, start : int, acc : Tree<string, FcNameDescr>) -> Tree<string, FcNameDescr> {
+	switch (type) {
+		FiTypeName(name, typeparameters):
+			fold(
+				typeparameters,
+				if (containsSet(eacc.localTypeNames, name)) acc else setTree(acc, name, FcNameDescr("type", "", start)),
+				\ac, typar -> fcTypeGlobalNamesUsed(eacc, typar, start, ac)
+			);
+		FiTypeFunction(args, returnType):
+			fcTypeGlobalNamesUsed(eacc, returnType, start, 
+				fold(args, acc, \ac, arg -> fcTypeGlobalNamesUsed(eacc, arg.type, start, ac))
+			);
+		FiTypeArray(t): fcTypeGlobalNamesUsed(eacc, t, start, acc);
+		FiTypeRef(t): fcTypeGlobalNamesUsed(eacc, t, start, acc);
+		FiTypeParameter(__): acc;
+		FiTypeVoid():   acc;
+		FiTypeBool():   acc;
+		FiTypeInt():    acc;
+		FiTypeDouble(): acc;
+		FiTypeString(): acc;
+		FiTypeFlow():   acc;
+		FiTypeNative(): acc;
+	}
+}
+
 checkForExportsName(eacc : ModuleExportsAcc, name : string) -> bool {
 	switch (lookupTree(eacc.progAcc.name2index, name)) {
 		Some(nameInd): 
@@ -266,6 +357,32 @@ checkForExportsName(eacc : ModuleExportsAcc, name : string) -> bool {
 			}
 		None(): false;
 	}
+}
+
+checkProperImportExportOfNames(eacc : ModuleExportsAcc, namesUsed : Tree<string, FcNameDescr>) -> void {
+	traverseInOrder(namesUsed,
+		\name, descr -> {
+			if (descr.kind == "field") {
+				if (descr.type != "") {
+					if(!fiEnsureFieldExists(eacc.progAcc.env.names, eacc.moduleStructsUnions, name, descr.type, \__ -> {}, eacc.moduleName, descr.start)) {
+						eacc.onError("Type name '" + descr.type + "' doesn't have field '" + name + "'", descr.start);
+					}
+					// TODO: switch on this check some day.
+					/*if (!checkForExportsName(eacc, descr.type)) {
+						eacc.onError("type '" + descr.type + "' is inaccessible" + 
+							fcAddMessageSuggestingProperImport(eacc, name), descr.start
+						);
+					}*/
+				}
+			} else {
+				if (!checkForExportsName(eacc, name)) {
+					eacc.onError(descr.kind + " '" + name + "' is inaccessible" + 
+						fcAddMessageSuggestingProperImport(eacc, name), descr.start
+					);
+				}
+			}
+		}
+	)
 }
 
 fcAddMessageSuggestingProperImport(eacc : ModuleExportsAcc, name : string) -> string {
