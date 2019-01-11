@@ -1,5 +1,7 @@
 import ds/bitvector;
+import ds/hashmap;
 import stringmath;
+import hash;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/fctypeenv;
 import tools/flowc/flowc_helpers;
@@ -17,13 +19,17 @@ ProgramExportsAcc(
 	allNames : [string],
 	
 	// Mapping from exported global names to their indexes in 'allNames'.
-	name2index : Tree<string, int>,
+	name2index : HashMap<string, int>,
 
 	// Cumulative imported names, which are available at given module.
 	// Strictly speaking, we store the bits of presence/non-presence
 	// of some global name from 'allNames' in the BitVector, corresponding to the module.
 	moduleImports : Tree<string, BitVector>,
+	
+	emptyBitVector : BitVector //= makeEmptyBitVector(length(progAcc.allNames));
 );
+
+timer1 = ref 0.0;
 
 fcCheckExports(env : FiProgram, onError : (FcError) -> void) -> void {
 	time_start = timestamp();
@@ -32,8 +38,15 @@ fcCheckExports(env : FiProgram, onError : (FcError) -> void) -> void {
 	);
 	allNames = set2array(allExported);
 	fcPrintln("TOTAL NUM OF NAMES: " + i2s(length(allNames)));
-	name2index = foldi(allNames, makeTree(), \i, acc, name -> setTree(acc, name, i));
-	fold(env.traversal, ProgramExportsAcc(env, allNames, name2index, makeTree()), 
+	name2index = foldi(allNames, makeHashMap(fastHashString), \i, acc, name -> setHashMap(acc, name, i));
+	progAcc = ProgramExportsAcc(
+		env, 
+		allNames, 
+		name2index, 
+		makeTree(),
+		makeEmptyBitVector(length(allNames))
+	);
+	fold(env.traversal, progAcc, 
 		\acc, name -> {
 			module = lookupTreeDef(env.modules, name, dummyFiModule);
 			fcCheckModuleExports(acc, module,
@@ -41,6 +54,7 @@ fcCheckExports(env : FiProgram, onError : (FcError) -> void) -> void {
 			)
 		}
 	);
+	fcPrintln("BIT VECTORS ARE CREATED IN: " + d2st(^timer1 / 1000.0, 2) + "s\n");
 	fcPrintln("EXPORTS CHECKED IN: " + d2st((timestamp() - time_start) / 1000.0, 2) + "s\n");
 	{ }
 }
@@ -54,15 +68,31 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 	exportsSet = buildSet(module.exports);
 	
 	
-	thisModuleImports = fold(
+	time_start = timestamp();
+	
+	
+	thisModuleExports = makeBitVector(length(progAcc.allNames), 
+		\i -> containsSet(exportsSet, progAcc.allNames[i])
+	);
+	thisModuleImports = bitVectorOrA(
+			concat(
+				[thisModuleExports], 
+				map(module.imports, \imp -> lookupTreeDef(progAcc.moduleImports, imp.flowfile, progAcc.emptyBitVector)
+			)
+		)
+	);
+	
+	/*thisModuleImports = fold(
 		module.imports,
 		makeBitVector(length(progAcc.allNames), 
 			\i -> containsSet(exportsSet, progAcc.allNames[i])
 		),
 		\a, imp -> bitVectorOr(a, 
-			lookupTreeDef(progAcc.moduleImports, imp.flowfile, makeEmptyBitVector(length(progAcc.allNames)))
+			lookupTreeDef(progAcc.moduleImports, imp.flowfile, progAcc.emptyBitVector)
 		)
-	);
+	);*/
+	timer1 := ^timer1 + timestamp() - time_start;
+	
 	newModuleImports = setTree(
 		progAcc.moduleImports,
 		flowfile,
@@ -83,25 +113,26 @@ fcCheckModuleExports(progAcc : ProgramExportsAcc, module : FiModule, onError : (
 		onError,
 		flowfile
 	);
-	//iter(module.functions, \f -> fcExpCheckExports(acc, locals, f.lambda));
-	//iter(module.globalVars, \g -> fcExpCheckExports(acc, locals, g.value));
+	iter(module.functions, \f -> fcExpCheckExports(acc, locals, f.lambda));
+	iter(module.globalVars, \g -> fcExpCheckExports(acc, locals, g.value));
 	
 	
 	
 	
-	namesUsed = fold(module.globalVars,
+	/*namesUsed = fold(module.globalVars,
 		fold(module.functions, makeTree(), 
 			\ac, fun -> fcExprGlobalNamesUsed(acc, locals, fun.lambda, ac)
 		),
 		\ac, gvar -> fcExprGlobalNamesUsed(acc, locals, gvar.value, ac)
 	);
-	checkProperImportExportOfNames(acc, namesUsed);
+	checkProperImportExportOfNames(acc, namesUsed);*/
 	
 	ProgramExportsAcc(
 		progAcc.env,
 		progAcc.allNames, 
 		progAcc.name2index,
-		newModuleImports
+		newModuleImports,
+		progAcc.emptyBitVector,
 	)
 }
 
@@ -349,7 +380,7 @@ fcTypeGlobalNamesUsed(eacc : ModuleExportsAcc, type : FiType, start : int, acc :
 }
 
 checkForExportsName(eacc : ModuleExportsAcc, name : string) -> bool {
-	switch (lookupTree(eacc.progAcc.name2index, name)) {
+	switch (lookupHashMap(eacc.progAcc.name2index, name)) {
 		Some(nameInd): 
 			switch (getBitVector(eacc.bitVectorExports, nameInd)) {
 				Some(v): v;
