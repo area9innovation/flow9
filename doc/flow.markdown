@@ -1276,7 +1276,7 @@ This shorter form is the preferred way to do it.
       return divs;
     }
 
-                                             import binarytree;
+                                             import ds/tree;
     var dict = new Hash();                   dict = makeTree();
     dict[1] = 2;                             dict2 = setTree(dict, 1, 2);
     var two = dict[1];                       two = lookUpTreeDef(dict2, 1, -1);
