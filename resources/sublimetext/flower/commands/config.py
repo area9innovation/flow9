@@ -55,8 +55,8 @@ def configRoot(configpath, root=False):
 def _linesToConfig(lines, path="local"):
     """Parse text lines and return config dictionary"""
     config = dict(
-        line.split('=') for line in lines
-        if not line.startswith("#") or '=' in line
+        line.partition('=')[::2] for line in lines
+        if not line.startswith("#")
     )
     config[CONFIG_PATH] = path
     return config
