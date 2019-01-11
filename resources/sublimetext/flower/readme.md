@@ -1,4 +1,4 @@
-## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1)`
+## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1a)`
 
 ### What is Flower?
 

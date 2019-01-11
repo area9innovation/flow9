@@ -8,7 +8,7 @@ PATH = {'q': os.path.join('flow9', 'bin')}
 SETTINGS = {}
 ENV = {}
 
-readme = os.path.join(os.path.dirname(__file__), "README.md")
+readme = os.path.join(os.path.dirname(__file__), "readme.md")
 with open(readme, encoding='utf-8') as f:
     VERSION = f.readline().rpartition(' ')[-1].strip('(\n)`')
 

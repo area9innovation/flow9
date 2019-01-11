@@ -67,10 +67,8 @@ class Flow:
         """Return linter command for SublimeLinter"""
         workdir = configRoot(self.configpath, root=True)
         includes = allNormalizedIncludes(path, configpath=self.configpath)
-        cmd = (
-            "{flowpath}/flowtools/bin/{platform}/flow"
-            " --sublime --root {workdir} {includes} $file_on_disk"
-        )
+        linterpath = flower.SETTINGS.get("old_linter_path", "") or "{flowpath}/flowtools/bin/{platform}/flow"
+        cmd = linterpath + " --sublime --root {workdir} {includes} $file_on_disk"
         return cmd.format(
             flowpath=flower.PATH['flow'],
             platform=sublime.platform().replace('osx', 'mac'),
