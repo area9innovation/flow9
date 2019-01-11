@@ -153,13 +153,9 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wasmfile = changeFileExt(cfg.outputfile, ".wasm");
 	fiInvokeWat2Wasm(cfg, contents, wasmfile, \result -> { 
 		if (result) {
-			fiGenerateNativeJSFile(cfg, usedModules, \result1 -> {
+			fiGenerateNativeJSFile(cfg, usedModules, \result1, native_code -> {
 				if (result1) {
-					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode, usedModules);
-					if (!cfg.nodejs) {
-						fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
-						fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
-					}
+					fiWriteHostTemplateFile(cfg, wasmfile, native_code, wrapped.js_code, wrapped.wrappersJSCode, usedModules);
 				}
 				fiWriteListingFile(cfg, wasmContext);
 				callback();
@@ -338,38 +334,27 @@ fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback
 	}
 }
 
-fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code : [string], jswrappers_code : string, usedModules : [string]) {
+fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : string, jscallbacks_code : [string], jswrappers_code : string, usedModules : [string]) {
 	if (cfg.hostfile != "") {
 		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
-		htmlprefix = if (cfg.nodejs) "" else "<html><head></head><body>\n";
-		scriptstart = if (cfg.nodejs) "" else "<script>";
-		htmlsuffix = if (cfg.nodejs) "" else "</script></body></html>";
-		includeScript = \name -> if (cfg.nodejs) "require(\"./" + name + "\");\n" else 
-			"<script type=\"text/javascript\" src=\"" + name + "\"></script>\n";
 
 		IDHandler = "#include tools/flowc/backends/wasm/idhandler.js";
 		TestJS = "#include tools/flowc/backends/wasm/tests.js";
 
-		JSWrap = if (cfg.nodejs) jswrappers_code else "";
-		JSCallbacks = if (cfg.nodejs) "var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" else "";
-
-		Pixi = if (contains(usedModules, "renderform")) {
-			includeScript("js/pixi.min.js") + 
-			includeScript("dfontjs/pixi-dfont.js")
-		} else "";
-
-		result = htmlprefix + 
-			Pixi + 
-			includeScript(fiNativeJSFileName(fileNameOnly(cfg.hostfile))) + 
-			(if (cfg.nodejs) JSWrap + "\n" else includeScript(fiNativeJSWrapperFileName(fileNameOnly(cfg.hostfile)))) + // import natives 
-			(if (cfg.nodejs) JSCallbacks + "\n" else includeScript(fiNativeJSCallbackFileName(fileNameOnly(cfg.hostfile)))) + // import callbacks 
-			(if (cfg.nodejs) "const fs = require(\"fs\");" else "") + // fs for node.js
-			(if (cfg.nodejs) "const util = require(\"util\");" else "") + // util for node.js
-			scriptstart + "
+		result =
+			"// ******************** NATIVE *************************\n" + 
+			 native_code + 
+			"// ******************** JSWrap *************************\n" + 
+			jswrappers_code +
+			"// ******************** JSCallbacks *************************\n" + 
+			"var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" + 
+			"// ******************** MAIN *************************\n" + 
+			(if (cfg.nodejs) "const fs = require(\"fs\");\n" else "") + // fs for node.js
+			(if (cfg.nodejs) "const util = require(\"util\");\n" else "") + // util for node.js
+			"
 			var WASMInstance;
 			var HEAP8, HEAPU8, HEAP16, HEAP32, HEAPF64;
-			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : 
-				new util.TextDecoder('utf-16le');
+			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : new util.TextDecoder('utf-16le');
 			var _malloc;
 			var _table;
 			var MisalignedDoubleF64, MisalignedDoubleI32;\n" +
@@ -601,7 +586,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 					WASMInstance.exports.wasm_init_global_vars();
 					_table = WASMInstance.exports.table;
 					WASMInstance.exports.main();
-				});" + htmlsuffix;
+				});";
 		if (!setFileContent(cfg.hostfile, result)) {
 			fcPrintln("Problem saving template file");
 		} else {
@@ -656,7 +641,7 @@ fiNativeJSFileName(hostfile: string) {
 
 // Temporary solution.
 // TODO: fix that
-fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (bool) -> void) -> void {	
+fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (bool, string) -> void) -> void {	
 	tmp_name = "__temp_js_source.flow";
 
 	// import math covers string & array as well
@@ -680,8 +665,11 @@ fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (b
 
 				if (ec == 0) fiSuppressNodeJsWarning(nativeJsFn);
 
+				data = getFileContent(nativeJsFn);
 				deleteFile(tmp_name);
-				callback(ec == 0);
+				deleteFile(nativeJsFn);
+
+				callback(ec == 0, data);
 			}
 		);
 	}

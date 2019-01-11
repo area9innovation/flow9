@@ -16,6 +16,6 @@
 	function test5_3(f) { f(function(s) { console.log(s); }); }
 	function test5_4(f, dbl) { f(dbl + 0.5); }
 	function test5_5(f) {
-		f2 = f("test5_5 1");
+		var f2 = f("test5_5 1");
 		f2("test5_5 2");
 	}
