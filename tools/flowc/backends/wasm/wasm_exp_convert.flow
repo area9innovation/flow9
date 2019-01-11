@@ -10,21 +10,45 @@ export {
 	wasmExpType(e : WasmExp) -> WasmTypeDescriptor;
 }
 
-fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool) -> WasmVar {
+// we will cache types for var since we need to now correct type when perform Call convert.
+// i.e. situation
+// 1	Let(FFF, typeFunction)
+// 2		Call(
+// 3			Var(function1, typeFunction), 
+// 4			args1, 
+// 5			typeFunction
+// 6		),
+// 7		Call(
+// 8			Var(FFF, typeFunction), 
+// 9			args2,
+// 10			type2
+// 11		)
+// if function1 on line 3 is native function then it will return not a simple function but JS callback.
+// So,  with caching we'll get proper type for FFF on line 8 and convert Call (line 7) to WasmCallHost
+lookupCachedVar(locals : ref Tree<string, WasmTypeDescriptor>, nameToFind : string, type : WasmTypeDescriptor) {
+	lookupTreeSet(locals, nameToFind, \n -> type);
+}
+
+fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool, get : bool) -> WasmVar {
 	name2 = getWasmLocalVarName(v.name, fitype2wasmtype(names, v.type));
-	var = WasmVar(v.name, lookupTreeSet(local, name2, \n -> fitype2wasmtypeEx(names, v.type, isnative)));
-	// debug check
 	t = fitype2wasmtypeEx(names, v.type, isnative);
-	if (var.type != t) {
+	var = WasmVar(v.name, lookupCachedVar(local, name2, t));
+
+	// in fact 'get' will be true for Var in Call node (var which define function to call) since we should know 
+	// correct function type (to distinquish simple call from js callback call)
+	if (get) {
 		s1 = fiPrintWasmType(wasmUnifyType(t));
 		s2 = fiPrintWasmType(wasmUnifyType(var.type));
 		if (s1 != s2) {
 			println("WARNING! Cached type differs from actual one for " + var.name);
-			// println("expected: " + s1);
-			// println("got:      " + s2);
+			println("expected: " + s1);
+			println("got:      " + s2);
 		}
-		WasmVar(v.name, t)
-	} else var
+
+		var;
+	} else {
+		WasmVar(v.name, t);
+	}
 }
 
 fiTypeFromType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
@@ -50,7 +74,7 @@ fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> Wasm
 		WasmCall(e1, args, type) : checkVar(e1, type);
 		WasmCallNative(e1, args, type) : checkVar(e1, type);
 		WasmCallHost(e1, args, type) : checkVar(e1, type);
-		WasmVar(name, type) : lookupTreeSet(local, name, \n -> type);
+		WasmVar(name, type) : lookupCachedVar(local, name, type);
 		WasmLet(__, __, __, __, type2) : fiTypeFromType(type2);
 		WasmIf(__, __, __, type) : type;
 		WasmSwitch(__, __, __, type) : type;
@@ -71,7 +95,7 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 	do_type	= \t -> fitype2wasmtypeEx(names, t, false);
 	do_exp	= \ex    -> dofiexp2wasmexp(context, names, ex, local, false);
 	do_exp2	= \ex, n -> dofiexp2wasmexp(context, names, ex, local, n);
-	do_var	= \v, n	 -> fivar2wasmvar(names, v, local, n);
+	do_var	= \v, n, g	 -> fivar2wasmvar(names, v, local, n, g);
 
 	switch (e) {
 		FiLambda(args, b, type, __): {
@@ -82,7 +106,8 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 			switch (f) {
 				FiVar(fname, ftype, __): {
 					is_native_call = containsKeyTree(context.natives, fname);
-					ee = do_exp2(f, is_native_call);
+					ee = do_var(f, is_native_call, true);
+					// ee = do_exp2(f, is_native_call);
 					tt = fiTypeFromExp(ee, local);
 					ttt = fiTypeFromType(fitype2wasmtypeEx(names, ftype, is_native_call));
 
@@ -117,12 +142,12 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 			}
 		}
 		FiVar(name, type, __): {
-			do_var(e, isnative);	// isnative needed here
+			do_var(e, isnative, false);	// isnative needed here
 		}
 		FiLet(name, type, e1, e2, type2, __): {
 			e1_conv = do_exp(e1);
 			name2 = getWasmLocalVarName(name, do_type(type));
-			t1_conv = lookupTreeSet(local, name2, \n -> fiTypeFromExp(e1_conv, local));
+			t1_conv = lookupCachedVar(local, name2, fiTypeFromExp(e1_conv, local));
 			e2_conv = do_exp(e2);
 			t2_conv = do_type(type2);
 			WasmLet(name, t1_conv, e1_conv, e2_conv, t2_conv)
@@ -131,7 +156,7 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 			WasmIf(do_exp(e1), do_exp(e2), do_exp(e3), do_type(type));
 		FiSwitch(x, switchType, cases, type, __): {
 			cases2 = map(cases, \c -> WasmCase(c.struct, c.argNames, do_exp(c.body)));
-			WasmSwitch(do_var(x, false), do_type(switchType), cases2, do_type(type))
+			WasmSwitch(do_var(x, false, false), do_type(switchType), cases2, do_type(type))
 		}
 		FiCast(ex, tFrom, tTo, type, __): 
 			WasmCast(do_exp(ex), do_type(tFrom), do_type(tTo), do_type(type));
