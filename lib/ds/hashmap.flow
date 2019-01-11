@@ -1,0 +1,197 @@
+import arrayutils;
+import ds/tree;
+import ds/dlist;
+import string;
+
+export {
+
+	// A hash table, containing key-value pairs.
+	// USE WITH CAUTION, because it is a mutable data structure,
+	// so calls of set/remove functions change their arguments.
+	//
+	// Tests (tools/flowc/tests/ds/hashmap_test) show, that it is approx. 
+	// 5 times faster for integer and string keys, then Tree<?, ??>.
+	//
+	// Hash collisions are handled with conventional Tree<?, ??> data structure. 
+	HashMap(
+		data : [ref Tree<?, ??>],
+		hash : (?) -> int,
+		size : ref int,
+		loadFactor : double // By default is 0.75
+	);
+
+	// Creates a hash map with a given hash function.
+	makeHashMap(hash : (?) -> int) -> HashMap<?, ??>;
+
+	// Creates a hash map with a given hash function and specific load factor
+	makeHashMapWithLoadFactor(hash : (?) -> int, loadFactor : double) -> HashMap<?, ??>;
+
+	lookupHashMap : (hashMap : HashMap<?, ??>, key : ?) -> Maybe<??>;
+	lookupHashMapDef : (hashMap : HashMap<?, ??>, key : ?, defaultValue : ??) -> ??;
+
+	containsKeyHashMap : (hashMap : HashMap<?, ??>, key : ?) -> bool;
+
+	setHashMap : (hashMap : HashMap<?, ??>, key : ?, value : ??) -> HashMap<?, ??>;
+
+	removeFromHashMap : (tree : HashMap<?, ??>, key : ?) -> HashMap<?, ??>;
+
+	// count the number of nodes in tree. Complexity is O(1).
+	sizeHashMap : (HashMap<?, ??>) -> int;
+
+	iterHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void;
+
+	foldHashMap(hashMap : HashMap<?, ??>, acc: ???, f: (key: ?, value: ??, acc: ???) -> ???) -> ???;
+
+	mapHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> ???) -> [???];
+
+	// Merges two hash maps. t2 overrides t1 on duplicate entries.
+	// (complexity is O(t1+t2))
+	mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> HashMap<?, ??>;
+
+	// Collect all it's keys in an array
+	getHashMapKeys(hashMap : HashMap<?, ??>) -> [?];
+
+	// Collect all it's values in an array
+	getHashMapValues(hashMap : HashMap<?, ??>) -> [??];
+
+	pairs2hashMap : (pairs : [Pair<?, ??>], hash : (?) -> int) -> HashMap<?, ??>;
+	pairs2hashMapWithLoadFactor : (pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??>;
+	hashMap2pairs : (hashMap : HashMap<?, ??>) -> [Pair<?, ??>];
+
+	hashMapIndex(hashMap : HashMap<?, ??>, key : ?) -> int;
+}
+
+sizeHashMap(hashMap : HashMap<?, ??>) -> int {
+	^(hashMap.size)
+}
+
+makeHashMap(hash : (?) -> int) -> HashMap<?, ??> {
+	// The default capacity of hash map is 4
+	makeHashMapOfVolume(hash, defaultHashMapCapacity, defaultHashMapLoadFactor)
+}
+
+makeHashMapWithLoadFactor(hash : (?) -> int, loadFactor : double) -> HashMap<?, ??> {
+	// The default capacity of hash map is 4
+	makeHashMapOfVolume(hash, defaultHashMapCapacity, loadFactor)
+}
+
+defaultHashMapLoadFactor = 0.75;
+defaultHashMapCapacity = 4;
+
+makeHashMapOfVolume(hash : (?) -> int, volume : int, loadFactor : double) -> HashMap<?, ??> {
+	// The initial size of hash map is 0
+	HashMap(arrayRepeatDeferred(\ -> ref makeTree(), volume), hash, ref 0, loadFactor)
+}
+
+lookupHashMap(hashMap : HashMap<?, ??>, key : ?) -> Maybe<??> {
+	lookupTree(^(hashMap.data[hashMapIndex(hashMap, key)]), key)
+}
+
+lookupHashMapDef(hashMap : HashMap<?, ??>, key : ?, defaultValue : ??) -> ?? {
+	lookupTreeDef(^(hashMap.data[hashMapIndex(hashMap, key)]), key, defaultValue)
+}
+
+containsKeyHashMap(hashMap : HashMap<?, ??>, key : ?) -> bool {
+	containsKeyTree(^(hashMap.data[hashMapIndex(hashMap, key)]), key)
+}
+
+setHashMap(hashMap : HashMap<?, ??>, key : ?, value : ??) -> HashMap<?, ??> {
+	resized = resizeHashMapOnDemand(hashMap);
+	i = hashMapIndex(resized, key);
+	bucket = ^(resized.data[i]);
+	switch (lookupTree(bucket, key)) {
+		Some(__): { }
+		None(): resized.size := ^(resized.size) + 1;
+	}
+	resized.data[i] := setTree(bucket, key, value);
+	resized
+}
+
+resizeHashMapOnDemand(hashMap : HashMap<?, ??>) -> HashMap<?, ??> {
+	if (cast(^(hashMap.size) + 1 : int -> double) > cast(length(hashMap.data): int -> double) * hashMap.loadFactor) {
+		resized = makeHashMapOfVolume(hashMap.hash, length(hashMap.data) * 2, hashMap.loadFactor);
+		iter(hashMap.data, 
+			\bucket -> {
+				traverseInOrder(^bucket, \key, value -> {
+						i = hashMapIndex(resized, key);
+						resized.data[i] := setTree(^(resized.data[i]), key, value);
+					}
+				)
+			}
+		);
+		resized.size := ^(hashMap.size);
+		resized
+	} else {
+		hashMap
+	}
+}
+
+removeFromHashMap(hashMap : HashMap<?, ??>, key : ?) -> HashMap<?, ??> {
+	i = hashMapIndex(hashMap, key);
+	bucket = ^(hashMap.data[i]);
+	switch (lookupTree(bucket, key)) {
+		Some(__): hashMap.size := ^(hashMap.size) - 1;
+		None(): { }
+	}
+	hashMap.data[i] := removeFromTree(bucket, key);
+	hashMap
+}
+
+iterHashMap(hashMap : HashMap<?, ??>, fn : (key : ?, value : ??) -> void) -> void {
+	iter(hashMap.data, 
+		\tree -> traverseInOrder(^tree, \key, value -> fn(key, value))
+	)
+}
+
+foldHashMap(hashMap : HashMap<?, ??>, acc: ???, f: (key: ?, value: ??, acc: ???) -> ???) -> ??? {
+	fold(hashMap.data, acc,
+		\ac, tree -> foldTree(^tree, ac, \key, value, a -> f(key, value, a))
+	)
+}
+
+mapHashMap(hashMap : HashMap<?, ??>, f: (key: ?, value: ??) -> ???) -> [???] {
+	foldHashMap(hashMap, [], \key, value, acc -> concat(acc, [f(key, value)]))
+}
+
+mergeHashMap(h1 : HashMap<?, ??>, h2 : HashMap<?, ??>) -> HashMap<?, ??> {
+	merged = makeHashMapOfVolume(h1.hash, (sizeHashMap(h1) + sizeHashMap(h2)) * 2, (h1.loadFactor + h2.loadFactor) / 2.0);
+	add2merged = \key, value -> { setHashMap(merged, key, value); { }};
+	iterHashMap(h1, add2merged);
+	iterHashMap(h2, add2merged);
+	merged
+}
+
+getHashMapKeys(hashMap : HashMap<?, ??>) -> [?] {
+	foldHashMap(hashMap, [], \k, v, acc -> concat(acc, [k]))
+}
+
+getHashMapValues(hashMap : HashMap<?, ??>) -> [??] {
+	foldHashMap(hashMap, [], \k, v, acc -> concat(acc, [v]))
+}
+
+pairs2hashMap(pairs : [Pair<?, ??>], hash : (?) -> int) -> HashMap<?, ??> {
+	len = cast(cast(length(pairs) : int -> double) / defaultHashMapLoadFactor : double -> int) * 2;
+	hashMap = makeHashMapOfVolume(hash, len, defaultHashMapLoadFactor);
+	iter(pairs, \pair -> { setHashMap(hashMap, pair.first, pair.second); { }});
+	hashMap
+}
+
+pairs2hashMapWithLoadFactor(pairs : [Pair<?, ??>], hash : (?) -> int, loadFactor : double) -> HashMap<?, ??> {
+	len = cast(cast(length(pairs) : int -> double) / loadFactor : double -> int) * 2;
+	hashMap = makeHashMapOfVolume(hash, len, loadFactor);
+	iter(pairs, \pair -> { setHashMap(hashMap, pair.first, pair.second); { }});
+	hashMap
+}
+
+hashMap2pairs(hashMap : HashMap<?, ??>) -> [Pair<?, ??>] {
+	foldHashMap(hashMap, [], \k, v, a -> concat(a, [Pair(k, v)]))
+}
+
+hashMapIndex(hashMap : HashMap<?, ??>, key : ?) -> int {
+	i = hashMap.hash(key) % length(hashMap.data);
+	if (i < 0) {
+		i + length(hashMap.data);
+	} else {
+		i
+	}
+}

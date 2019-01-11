@@ -1,6 +1,4 @@
 import gui;
-import lingo/pegcode/driver;
-import formats/svg/svg_pegop;
 
 export {
 	svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) -> Form;
@@ -104,87 +102,6 @@ quadraticBezierApproximation(p0, p1, p2, p3) {
 		QuadraticBezierTo(pa_2.x, pa_2.y, pc_2.x, pc_2.y),
 		QuadraticBezierTo(pa_3.x, pa_3.y, pc_3.x, pc_3.y),
 		QuadraticBezierTo(p3.x, p3.y, pc_4.x, pc_4.y) ]
-}
-
-specialPegActions() {
-	pen = ref V2(0.0, 0.0);
-	last_cp = ref V2(0.0, 0.0);
-
-	readPt = \a : [double], rel : bool -> { pen := if (rel) v2Add(^pen, V2(a[0], a[1])) else V2(a[0], a[1]); };
-
-	move = \a, rel -> { readPt(a, rel); MoveTo(^pen.x, ^pen.y) };
-	line = \a, rel -> { readPt(a, rel); LineTo(^pen.x, ^pen.y) };
-	h = \a, rel -> { pen := if (rel) V2(^pen.x + a[0], ^pen.y) else V2(a[0], ^pen.y); LineTo(^pen.x, ^pen.y) };
-	v = \a, rel -> { pen := if (rel) V2(^pen.x, ^pen.y + a[0]) else V2(^pen.x, a[0]); LineTo(^pen.x, ^pen.y) };
-
-	readCurvePts = \a : [double], rel : bool -> {
-		pts = map(enumFromTo(0, length(a) / 2 - 1), if (rel) \i -> V2(a[i * 2] + ^pen.x, a[i * 2 + 1] + ^pen.y) else \i -> V2(a[i * 2], a[i * 2 + 1]) );
-		last_cp := lastElement(pts, ^last_cp);
-		pen := pts[0];
-		pts
-	};
-
-	cubicBezier = \a, rel -> {
-		p0 = ^pen;
-		pts  = readCurvePts(a, rel);
-		quadraticBezierApproximation(p0, pts[1], pts[2], pts[0])
-	};
-
-	smoothBezier = \a, rel -> {
-		p0 = ^pen;
-		p1 = if (^last_cp.x > 0.0) Some(v2Add(p0, v2Sub(p0, ^last_cp))) else None();
-		pts = readCurvePts(a, rel);
-		quadraticBezierApproximation(p0, either(p1, pts[1]), pts[1], pts[0])
-	}
-
-	quadBezier = \a, rel -> {
-		readCurvePts(a, rel);
-		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
-	}
-
-	smoothQuadBezier = \args, rel -> {
-		last_cp := v2Add(^pen, v2Sub(^pen, ^last_cp));
-		pen := if (rel) v2Add(^pen, V2(args[0], args[1])) else V2(args[0], args[1]); 
-		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
-	}
-
-	arc = \args, rel -> {
-		r = V2(args[0], args[1]);
-		xrot = args[2];
-		flagA = args[3] == 1.0;
-		flagS = args[4] == 1.0;
-		eP = if (rel) v2Add(^pen, V2(args[5], args[6])) else V2(args[5], args[6]);
-		res = ellipseArcToBezierCurves( endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP );
-		pen := eP;
-		res
-	}
-
-	t = ref defaultPegActions.t;
-
-	t := setTree(^t,"concatA", \a  -> { concatA(a[0]); } );
-
-	add = \n : string, fn : ([double], rel : bool) -> flow, rel : bool-> t := setTree( ^t, n, \args -> fn( map(args, s2d), rel ) );
-	
-	add("cubicBezier", cubicBezier, false);
-	add("cubicBezierRel", cubicBezier, true);
-	add("smoothBezier", smoothBezier, false);
-	add("smoothBezierRel", smoothBezier, true);
-	add("quadBezier", quadBezier, false);
-	add("quadBezierRel", quadBezier, true);
-	add("smoothQuadBezier", smoothQuadBezier, false);
-	add("smoothQuadBezierRel", smoothQuadBezier, true);
-	add("move", move, false);
-	add("moveRel", move, true);
-	add("line", line, false);
-	add("lineRel", line, true);
-	add("v", v, false);
-	add("vRel", v, true);
-	add("h", h, false);
-	add("hRel", h, true);
-	add("arc", arc, false);
-	add("arcRel", arc, true);
-
-	SemanticActions(^t);
 }
 
 getGraphicsRegion(path : [StaticGraphicOp]) {
@@ -328,12 +245,16 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 	concatA(grops);
 }
 
+getSvgSubPaths(path : string) -> [string] {
+	parts = strSplit2(path, ["m", "M", "z", "Z"]);
+	filter(mapi(parts, \i, p -> if (i > 0 && toUpperCase(parts[i-1]) == "M") parts[i-1] + p else if (i < length(parts) - 1 && toUpperCase(parts[i + 1]) == "Z") p + parts[i+1] else p ),
+		\s -> s != "m" && s != "M" && s != "z" && s != "Z");	
+}
+
 // Without lingo:
 svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) {
-	parts = strSplit2(path, ["m", "M", "z", "Z"]);
-	subpath_strings = filter(mapi(parts, \i, p -> if (i > 0 && toUpperCase(parts[i-1]) == "M") parts[i-1] + p else if (i < length(parts) - 1 && toUpperCase(parts[i + 1]) == "Z") p + parts[i+1] else p ),
-		\s -> s != "m" && s != "M" && s != "z" && s != "Z");
-	
+	subpath_strings = getSvgSubPaths(path);
+
 	state = Pair(ref V2(0.0, 0.0),  ref V2(0.0, 0.0));
 	subpaths = map(subpath_strings, \s -> subPathString2GrOps(s, state));
 	layers = reverseA(getLayers(subpaths));
@@ -341,16 +262,12 @@ svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) {
 	Group( mapi(layers, \i, l -> Group(map(l, \gops -> Graphics(gops, if (even(i)) style else [Fill(bgcolor)] ) ) ) ) )
 }
 
-/*
-svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) {
-	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
-	layers = reverseA(getLayers(result));
-	Group( mapi(layers, \i, l -> Group(map(l, \gops -> Graphics(gops, if (even(i)) style else [Fill(bgcolor)] ) ) ) ) );
-}
-*/
-
 // For svg2tropic. Only one shape per path is supposed.
 svgSimplePath2GraphicsOps(path : string) -> [StaticGraphicOp] {
-	result = parsic3(pegOps4Svg, path, specialPegActions(), [[]]).first;
-	result[0]
+	subpath_strings = getSvgSubPaths(path);
+	if (subpath_strings != []) {
+		subPathString2GrOps(subpath_strings[0], Pair(ref V2(0.0, 0.0),  ref V2(0.0, 0.0)));
+	} else {
+		[]
+	}
 }

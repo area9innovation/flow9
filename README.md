@@ -18,12 +18,12 @@ flow has production quality targets for:
 Meet flow
 ---------
 
-- flow is a simple, functional language in the ML family.
+- flow is a simple, functional language in the ML family
 - C-family syntax
 - Strongly typed, polymorphism, subtypes
 - Designed to look like other languages and be easy to learn
 - Minimalistic to reduce complexity and ease porting to new platforms
-- Same code compiles and runs on HTML5, iOS, Android, Windows, macOS, Linux.
+- Same code compiles and runs on HTML5, iOS, Android, Windows, macOS, Linux
 - Production quality. Software used by millions of users
 - Pixel precision—high-design, responsive UI on all platforms with identical code
 - Complete standard library written in flow itself, with natives for each backend
@@ -49,7 +49,7 @@ Compile and run the first program:
     c:/flow9> flowcpp demos/demos.flow
 
 If this does not work, make sure you have [Git LFS](https://git-lfs.github.com) installed. 
-You have to reclone the flow9 repository after installing Git LFS.
+You have to reclone the flow9 repository after installing Git LFS, or use `git lfs pull`.
 
 See `demos/demos.flow` to read the code for this example.
 
@@ -106,9 +106,9 @@ For the license of other components, see LICENSE.txt.
 Name
 ----
 
-flow was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
+`flow` was started in 2010. This predates the 'flow' typechecker from Facebook. Thus, we elect 
 to keep the name, since it came first, is a full platform and the risk of confusion seems small. 
-However, should the need arise, then flow9 can also be used to refer to this language.
+However, should the need arise, then `flow9` can also be used to refer to this language.
 
 History
 -------

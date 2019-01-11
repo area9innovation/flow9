@@ -43,6 +43,17 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wrapped = fiWasmCreateNativeWrappers(natives2, types0, program3.names);
 	natives : Tree<string, FiWasmNativeDec> = wrapped.natives;
 	callbacks : Tree<string, FiDeclaration> = wrapped.callbacks;
+
+	// since we need NativeHx we add 'math' as initial
+	usedModules = foldTree(natives, ["math"], \k, v, acc -> {
+		s = if (startsWith(v.decl.nativeName, "RenderSupport.")) "renderform" // will create a RenderSupportHx object
+		else "";
+
+		if (s != "" && !contains(acc, s))
+			arrayPush(acc, s)
+		else acc;
+	});
+
 	
 	fcVerbose(cfg, 1, "Creating WASM-side wrappers..");
 	program = wrap_natives(cfg, program3, program3.names, types0, natives);
@@ -142,11 +153,13 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wasmfile = changeFileExt(cfg.outputfile, ".wasm");
 	fiInvokeWat2Wasm(cfg, contents, wasmfile, \result -> { 
 		if (result) {
-			fiGenerateNativeJSFile(cfg, \result1 -> {
+			fiGenerateNativeJSFile(cfg, usedModules, \result1 -> {
 				if (result1) {
-					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode);
-					fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
-					fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
+					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode, usedModules);
+					if (!cfg.nodejs) {
+						fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
+						fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
+					}
 				}
 				fiWriteListingFile(cfg, wasmContext);
 				callback();
@@ -325,7 +338,7 @@ fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback
 	}
 }
 
-fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code : [string], jswrappers_code : string) {
+fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code : [string], jswrappers_code : string, usedModules : [string]) {
 	if (cfg.hostfile != "") {
 		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
 		htmlprefix = if (cfg.nodejs) "" else "<html><head></head><body>\n";
@@ -340,7 +353,13 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 		JSWrap = if (cfg.nodejs) jswrappers_code else "";
 		JSCallbacks = if (cfg.nodejs) "var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" else "";
 
+		Pixi = if (contains(usedModules, "renderform")) {
+			includeScript("js/pixi.min.js") + 
+			includeScript("dfontjs/pixi-dfont.js")
+		} else "";
+
 		result = htmlprefix + 
+			Pixi + 
 			includeScript(fiNativeJSFileName(fileNameOnly(cfg.hostfile))) + 
 			(if (cfg.nodejs) JSWrap + "\n" else includeScript(fiNativeJSWrapperFileName(fileNameOnly(cfg.hostfile)))) + // import natives 
 			(if (cfg.nodejs) JSCallbacks + "\n" else includeScript(fiNativeJSCallbackFileName(fileNameOnly(cfg.hostfile)))) + // import callbacks 
@@ -637,10 +656,11 @@ fiNativeJSFileName(hostfile: string) {
 
 // Temporary solution.
 // TODO: fix that
-fiGenerateNativeJSFile(cfg : FiWasmConfig, callback : (bool) -> void) -> void {	
+fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (bool) -> void) -> void {	
 	tmp_name = "__temp_js_source.flow";
+
 	// import math covers string & array as well
-	if (setFileContent(tmp_name, "import math;\nmain() {}")) {
+	if (setFileContent(tmp_name, strGlue(map(usedModules, \m -> { "import " + m + ";"	}), "\n") + "\nmain() {}")) {
 		fcPrintln("Compiling natives ...");
 		nativeJsFn = fiNativeJSFileName(cfg.hostfile);
 		// call compilation routine
