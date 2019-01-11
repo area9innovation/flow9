@@ -2984,7 +2984,7 @@ class RenderSupportJSPixi {
 			element = untyped Browser.document;
 		}
 
-		if (untyped element.fullscreenElement != null) {
+		if (IsFullScreen) {
 			if (untyped element.exitFullscreen != null)
 				untyped element.exitFullscreen();
 			else if (untyped element.mozCancelFullScreen != null)
