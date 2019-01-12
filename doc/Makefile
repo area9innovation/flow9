@@ -1,4 +1,4 @@
-run: datawarp.html \
+run: css.html \
 	development.html \
 	faq.html \
 	flow.html \

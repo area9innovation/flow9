@@ -736,7 +736,7 @@ class RenderSupportJSPixi {
 
 		workaroundTextMetrics();
 		// Required for MaterialIcons measurements
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
 		workaroundRendererDestroy();
 		workaroundProcessInteractive();
 
@@ -2984,14 +2984,16 @@ class RenderSupportJSPixi {
 			element = untyped Browser.document;
 		}
 
-		if (untyped element.exitFullscreen != null)
-			untyped element.exitFullscreen();
-		else if (untyped element.mozCancelFullScreen != null)
-			untyped element.mozCancelFullScreen();
-		else if (untyped element.webkitExitFullscreen != null)
-			untyped element.webkitExitFullscreen();
-		else if (untyped element.msExitFullscreen != null)
-			untyped element.msExitFullscreen();
+		if (IsFullScreen) {
+			if (untyped element.exitFullscreen != null)
+				untyped element.exitFullscreen();
+			else if (untyped element.mozCancelFullScreen != null)
+				untyped element.mozCancelFullScreen();
+			else if (untyped element.webkitExitFullscreen != null)
+				untyped element.webkitExitFullscreen();
+			else if (untyped element.msExitFullscreen != null)
+				untyped element.msExitFullscreen();
+		}
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
@@ -3385,6 +3387,7 @@ private class VideoClip extends FlowContainer {
 		untyped videoTexture.baseTexture.autoPlay = !startPaused;
 		untyped videoTexture.baseTexture.autoUpdate = false;
 		videoSprite = new Sprite(videoTexture);
+		untyped videoSprite._visible = true;
 		addChild(videoSprite);
 
 		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
