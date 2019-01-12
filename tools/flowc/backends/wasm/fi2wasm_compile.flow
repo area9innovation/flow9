@@ -32,8 +32,7 @@ export {
 		cfg : FiWasmConfig,
 		decl : FiFunctionDec, 
 		acc : WasmAcc, 
-		context : WasmContext, 
-		names : FiGlobalNames
+		context : WasmContext
 	) -> string;
 }
 
@@ -56,45 +55,10 @@ fiWasmCompileToplevel(
 	acc = WasmAcc(ref 0);
 	res = switch (decl) {
 		FiFunctionDec(name, lambda, type, declStart, defiStart): {
-			fiWasmCompileFunctionDecl(cfg, decl, acc, context, context.globalNames/*program.names*/);
+			fiWasmCompileFunctionDecl(cfg, decl, acc, context);
 		}
 		FiGlobalVar(name, value, type, declStart, defiStart): {
-			supported = switch (type) {
-				FiTypeRef(type2): {
-					switch (type2) {
-						FiTypeInt(): true;
-						FiTypeBool(): true;
-						FiTypeDouble(): true;
-						FiTypeString(): true;
-						FiTypeFlow(): true;
-						FiTypeArray(__): true;
-						FiTypeFunction(__, __): true;
-						FiTypeName(__, __): true;
-						default: {
-							println("WARNING! Unsupported global ref " + toString(type2));
-							false;
-						}
-					}
-				}
-				FiTypeName(__, __): true;
-				FiTypeArray(__): true;
-				default: false;
-			}
-			if (supported) {
-				wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(value));
-				wasmExpr = "\t" + compileWasmExp(acc, wasmValue, context) + " set_global $" + name + "\n";
-				locals = getWasmLocals(acc, wasmValue, makeTree()) |> tree2pairs;
-				context.globalVarsInitializers := Cons(Triple(name, wasmExpr, locals), ^(context.globalVarsInitializers));
-				"(global $" + name + " (mut i32) i32.const 0)"
-			} else {
-				// support for mutable global variables - they start with wasm_ and end with _mut
-				mut = startsWith(name, "wasm_") && endsWith(name, "_mut");
-				mutPref = if (mut) "(mut " else "";
-				mutSuff = if (mut) ")" else "";
-				wasmValue = fiexp2wasmexp(context, context.globalNames/*program.names*/, wasmTransformExpression(value));
-				"(global $" + name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, type), false) + mutSuff + " " + 
-					compileWasmExp(acc, wasmValue, context) + ")";
-			}
+			fiWasmCompileGlobalVar(cfg, decl, acc, context);
 		}
 		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 			"";
@@ -111,10 +75,53 @@ fiWasmCompileToplevel(
 	}
 }
 
-fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext, names : FiGlobalNames) {
+fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, context : WasmContext) {
+	supported = switch (decl.type) {
+		FiTypeRef(type2): {
+			switch (type2) {
+				FiTypeInt(): true;
+				FiTypeBool(): true;
+				FiTypeDouble(): true;
+				FiTypeString(): true;
+				FiTypeFlow(): true;
+				FiTypeArray(__): true;
+				FiTypeFunction(__, __): true;
+				FiTypeName(__, __): true;
+				default: {
+					println("WARNING! Unsupported global ref " + toString(type2));
+					false;
+				}
+			}
+		}
+		FiTypeName(__, __): true;
+		FiTypeArray(__): true;
+		default: false;
+	}
+	if (supported) {
+		initFunction = FiFunctionDec("wasm__init__global__var__" + decl.name, 
+			FiLambda([], decl.value, FiTypeFunction([], decl.type), decl.declStart),
+			FiTypeFunction([], decl.type),
+			decl.declStart, decl.defiStart);
+		wasmInitFunction = fiWasmCompileFunctionDecl(cfg, initFunction, acc, context);
+		wasmExpr = "\t call $" + initFunction.name + " set_global $" + decl.name + "\n";
+		context.globalVarsInitializers := Cons(Pair(decl.name, wasmExpr), ^(context.globalVarsInitializers));
+		"\n" + wasmInitFunction + 
+		"\n(global $" + decl.name + " (mut i32) i32.const 0)"
+	} else {
+		// support for mutable global variables - they start with wasm_ and end with _mut
+		mut = startsWith(decl.name, "wasm_") && endsWith(decl.name, "_mut");
+		mutPref = if (mut) "(mut " else "";
+		mutSuff = if (mut) ")" else "";
+		wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(decl.value));
+		"(global $" + decl.name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, decl.type), false) + mutSuff + " " + 
+			compileWasmExp(acc, wasmValue, context) + ")";
+	}
+}
+
+fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext) {
 	fiBody = wasmTransformExpression(decl.lambda.body);
-	wasmBody = fiexp2wasmexp(context, names, fiBody);
-	wasmType = cast(fitype2wasmtype(names, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
+	wasmBody = fiexp2wasmexp(context, context.globalNames, fiBody);
+	wasmType = cast(fitype2wasmtype(context.globalNames, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
 
 	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBody, wasmType);
 }
