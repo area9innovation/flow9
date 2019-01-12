@@ -5,14 +5,15 @@ import hash;
 import tools/flowc/manipulation/freevars;
 import tools/flowc/fctypeenv;
 import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_module;
 import tools/flowc/incremental/fiprettyprint;
 import tools/flowc/incremental/fi_helpers;
 
 export {
-	fcCheckImportsExports(prog : FiProgram, onError : (FcError) -> void) -> void;
+	fcCheckImports(prog : FiProgram, onError : (FcError) -> void) -> void;
 }
 
-ProgramImportsExportsAcc(
+ProgramImportsAcc(
 	prog : FiProgram,
 
 	// All exported global names in the programm.
@@ -30,17 +31,14 @@ ProgramImportsExportsAcc(
 	emptyBitVector : BitVector
 );
 
-timer1 = ref 0.0;
-
-fcCheckImportsExports(prog : FiProgram, onError : (FcError) -> void) -> void {
-	time_start = timestamp();
+fcCheckImports(prog : FiProgram, onError : (FcError) -> void) -> void {
+	time = timestamp();
 	allNames = foldTree(prog.modules, makeSet(),
 		\name, module, acc -> fold(module.exports, acc, \a, n -> insertSet(a, n))
 	);
 	allExportedNames = set2array(allNames);
-	fcPrintln("TOTAL NUM OF NAMES: " + i2s(length(allExportedNames)));
 	name2index = foldi(allExportedNames, makeHashMap(fastHashString), \i, acc, name -> setHashMap(acc, name, i));
-	progAcc = ProgramImportsExportsAcc(
+	progAcc = ProgramImportsAcc(
 		prog,
 		allExportedNames,
 		name2index,
@@ -50,19 +48,16 @@ fcCheckImportsExports(prog : FiProgram, onError : (FcError) -> void) -> void {
 	fold(prog.traversal, progAcc,
 		\acc, name -> {
 			module = lookupTreeDef(prog.modules, name, dummyFiModule);
-			fcCheckModuleImportsExports(acc, module,
+			fcCheckModuleImports(acc, module,
 				\e, s -> onError(FcError(e, [FcPosition(module.fileinfo.flowfile, s, s)]))
 			)
 		}
 	);
-	fcPrintln("BIT VECTORS ARE CREATED IN: " + d2st(^timer1 / 1000.0, 2) + "s\n");
-	fcPrintln("EXPORTS CHECKED IN: " + d2st((timestamp() - time_start) / 1000.0, 2) + "s\n");
-	{ }
+	incrementTimePhase(fcTimePhases.checkImports, time);
 }
 
-fcCheckModuleImportsExports(progAcc : ProgramImportsExportsAcc, module : FiModule, onError : (string, int) -> void) -> ProgramImportsExportsAcc {
+fcCheckModuleImports(progAcc : ProgramImportsAcc, module : FiModule, onError : (string, int) -> void) -> ProgramImportsAcc {
 	exportsSet = buildSet(module.exports);
-	time_start = timestamp();
 	thisModuleImports = bitVectorOrA(
 			concat(
 				[makeBitVector(length(progAcc.allExportedNames),
@@ -72,9 +67,7 @@ fcCheckModuleImportsExports(progAcc : ProgramImportsExportsAcc, module : FiModul
 			)
 		)
 	);
-	timer1 := ^timer1 + timestamp() - time_start;
-
-	acc = ModuleImportsExportsAcc(
+	acc = ModuleImportsAcc(
 		progAcc,
 		thisModuleImports,
 		fold(module.unions,
@@ -94,11 +87,11 @@ fcCheckModuleImportsExports(progAcc : ProgramImportsExportsAcc, module : FiModul
 		module.fileinfo.flowfile
 	);
 	locals = fold(module.natives, buildSet(module.initOrder), \ac, n -> insertSet(ac, n.name));
-	iter(module.functions, \f -> fcCheckExprImportsExports(acc, locals, f.lambda));
-	iter(module.globalVars, \g -> fcCheckExprImportsExports(acc, locals, g.value));
-	iter(module.natives, \n -> fcCheckExprImportsExports(acc, locals, n.fallbackLambda));
+	iter(module.functions, \f -> fcCheckExprImports(acc, locals, f.lambda));
+	iter(module.globalVars, \g -> fcCheckExprImports(acc, locals, g.value));
+	iter(module.natives, \n -> fcCheckExprImports(acc, locals, n.fallbackLambda));
 
-	ProgramImportsExportsAcc(
+	ProgramImportsAcc(
 		progAcc.prog,
 		progAcc.allExportedNames,
 		progAcc.name2index,
@@ -111,8 +104,8 @@ fcCheckModuleImportsExports(progAcc : ProgramImportsExportsAcc, module : FiModul
 	)
 }
 
-ModuleImportsExportsAcc(
-	progAcc : ProgramImportsExportsAcc,
+ModuleImportsAcc(
+	progAcc : ProgramImportsAcc,
 	bitVectorExports : BitVector,
 	localTypeNames : Set<string>,
 	moduleStructsUnions : Tree<string, FiStructOrUnion>,
@@ -120,8 +113,8 @@ ModuleImportsExportsAcc(
 	moduleName : string
 );
 
-fcCheckExprImportsExports(eacc : ModuleImportsExportsAcc, localNames : Set<string>, expr : FiExp) -> void {
-	checkExprs = \es -> iter(es, \e -> fcCheckExprImportsExports(eacc, localNames, e));
+fcCheckExprImports(eacc : ModuleImportsAcc, localNames : Set<string>, expr : FiExp) -> void {
+	checkExprs = \es -> iter(es, \e -> fcCheckExprImports(eacc, localNames, e));
 	checkField = \field_name, e, start -> {
 		switch (fiExpType(e)) {
 			FiTypeName(type_name, __): {
@@ -130,7 +123,7 @@ fcCheckExprImportsExports(eacc : ModuleImportsExportsAcc, localNames : Set<strin
 						eacc.onError("Type '" + type_name + "' doesn't have field '" + field_name + "'", start);
 					}
 				} else {
-					fcExportImportCheckError(eacc, "Type", type_name, start);
+					fcImportCheckError(eacc, "Type", type_name, start);
 				}
 			}
 			default: {}
@@ -138,39 +131,39 @@ fcCheckExprImportsExports(eacc : ModuleImportsExportsAcc, localNames : Set<strin
 	};
 	switch (expr) {
 		FiLambda(args, e, __, __):
-			fcCheckExprImportsExports(eacc, fold(args, localNames, \acc, arg -> insertSet(acc, arg.name)), e);
+			fcCheckExprImports(eacc, fold(args, localNames, \acc, arg -> insertSet(acc, arg.name)), e);
 		FiCall(f, es, __, __): {
-			fcCheckExprImportsExports(eacc, localNames, f);
+			fcCheckExprImports(eacc, localNames, f);
         	checkExprs(es);
 		}
 		FiVar(name, __, start):
 			if (!containsSet(localNames, name) && !fcCheckForExportsName(eacc, name)) {
-				fcExportImportCheckError(eacc, "Name", name, start);
+				fcImportCheckError(eacc, "Name", name, start);
 			}
 		FiLet(x, __, e1, e2, __, __): {
-			fcCheckExprImportsExports(eacc, localNames, e1);
-			fcCheckExprImportsExports(eacc, insertSet(localNames, x), e2);
+			fcCheckExprImports(eacc, localNames, e1);
+			fcCheckExprImports(eacc, insertSet(localNames, x), e2);
 		}
 		FiIf(e1, e2, e3, __, __):
 			checkExprs([e1, e2, e3]);
 		FiSwitch(e, __, cs, __, __):{
-			fcCheckExprImportsExports(eacc, localNames, e);
+			fcCheckExprImports(eacc, localNames, e);
 			iter(cs, \c -> {
 				if (c.struct != "default" && !containsSet(eacc.localTypeNames, c.struct) && !fcCheckForExportsName(eacc, c.struct)) {
-					fcExportImportCheckError(eacc, "Struct", c.struct, c.start);
+					fcImportCheckError(eacc, "Struct", c.struct, c.start);
 				}
-				fcCheckExprImportsExports(eacc, mergeSets(localNames, buildSet(c.argNames)), c.body)
+				fcCheckExprImports(eacc, mergeSets(localNames, buildSet(c.argNames)), c.body)
 			});
 		}
 		FiCast(e, __, __, __, __):
-			fcCheckExprImportsExports(eacc, localNames, e);
+			fcCheckExprImports(eacc, localNames, e);
 		FiSeq(es, __, __):
 			checkExprs(es);
 		FiCallPrim(o, es, ty, start): {
 			switch (o) {
 				FcStructPrim(name):
 					if (!containsSet(eacc.localTypeNames, name) && !fcCheckForExportsName(eacc, name)) {
-						fcExportImportCheckError(eacc, "Struct", name, start);
+						fcImportCheckError(eacc, "Struct", name, start);
 					}
 				FcFieldPrim(field_name):
 					if (isConfigParameterTrue(eacc.progAcc.prog.config.config, "check-fields")) {
@@ -182,10 +175,10 @@ fcCheckExprImportsExports(eacc : ModuleImportsExportsAcc, localNames : Set<strin
 					}
 				FcCreateClosurePrim(structName, functionName): {
 					if (!containsSet(eacc.localTypeNames, structName) && !fcCheckForExportsName(eacc, structName)) {
-						fcExportImportCheckError(eacc, "Struct", structName, start);
+						fcImportCheckError(eacc, "Struct", structName, start);
 					}
 					if (!containsSet(eacc.localTypeNames, functionName) && !fcCheckForExportsName(eacc, functionName)) {
-						fcExportImportCheckError(eacc, "Function", structName, start);
+						fcImportCheckError(eacc, "Function", structName, start);
 					}
 				}
 				default: {};
@@ -197,12 +190,12 @@ fcCheckExprImportsExports(eacc : ModuleImportsExportsAcc, localNames : Set<strin
 		FiDouble(__, __):             {};
 		FiVoid(__):                   {};
 		FiInt(__, __):                {};
-        FiRequire(__, e, __, __):     fcCheckExprImportsExports(eacc, localNames, e);
-        FiUnsafe(__, fb, __, __):     fcCheckExprImportsExports(eacc, localNames, fb);
+        FiRequire(__, e, __, __):     fcCheckExprImports(eacc, localNames, e);
+        FiUnsafe(__, fb, __, __):     fcCheckExprImports(eacc, localNames, fb);
 	}
 }
 
-fcCheckForExportsName(eacc : ModuleImportsExportsAcc, name : string) -> bool {
+fcCheckForExportsName(eacc : ModuleImportsAcc, name : string) -> bool {
 	switch (lookupHashMap(eacc.progAcc.name2index, name)) {
 		Some(nameInd): 
 			switch (getBitVector(eacc.bitVectorExports, nameInd)) {
@@ -213,7 +206,7 @@ fcCheckForExportsName(eacc : ModuleImportsExportsAcc, name : string) -> bool {
 	}
 }
 
-fcExportImportCheckError(eacc : ModuleImportsExportsAcc, kind : string, name : string, start : int) -> void {
+fcImportCheckError(eacc : ModuleImportsAcc, kind : string, name : string, start : int) -> void {
 	firstLine = kind + " '" + name + "' is inaccessible";
 	definitionModule = fiModuleWhereNameIsDefined(eacc.progAcc.prog.names, name);
 	secondLine = if (definitionModule != "") {
