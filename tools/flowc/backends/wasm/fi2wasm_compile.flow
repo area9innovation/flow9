@@ -32,8 +32,7 @@ export {
 		cfg : FiWasmConfig,
 		decl : FiFunctionDec, 
 		acc : WasmAcc, 
-		context : WasmContext, 
-		names : FiGlobalNames
+		context : WasmContext
 	) -> string;
 }
 
@@ -56,45 +55,10 @@ fiWasmCompileToplevel(
 	acc = WasmAcc(ref 0);
 	res = switch (decl) {
 		FiFunctionDec(name, lambda, type, declStart, defiStart): {
-			fiWasmCompileFunctionDecl(cfg, decl, acc, context, context.globalNames/*program.names*/);
+			fiWasmCompileFunctionDecl(cfg, decl, acc, context);
 		}
 		FiGlobalVar(name, value, type, declStart, defiStart): {
-			supported = switch (type) {
-				FiTypeRef(type2): {
-					switch (type2) {
-						FiTypeInt(): true;
-						FiTypeBool(): true;
-						FiTypeDouble(): true;
-						FiTypeString(): true;
-						FiTypeFlow(): true;
-						FiTypeArray(__): true;
-						FiTypeFunction(__, __): true;
-						FiTypeName(__, __): true;
-						default: {
-							println("WARNING! Unsupported global ref " + toString(type2));
-							false;
-						}
-					}
-				}
-				FiTypeName(__, __): true;
-				FiTypeArray(__): true;
-				default: false;
-			}
-			if (supported) {
-				wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(value));
-				wasmExpr = "\t" + compileWasmExp(acc, wasmValue, context) + " set_global $" + name + "\n";
-				locals = getWasmLocals(acc, wasmValue, makeTree()) |> tree2pairs;
-				context.globalVarsInitializers := Cons(Triple(name, wasmExpr, locals), ^(context.globalVarsInitializers));
-				"(global $" + name + " (mut i32) i32.const 0)"
-			} else {
-				// support for mutable global variables - they start with wasm_ and end with _mut
-				mut = startsWith(name, "wasm_") && endsWith(name, "_mut");
-				mutPref = if (mut) "(mut " else "";
-				mutSuff = if (mut) ")" else "";
-				wasmValue = fiexp2wasmexp(context, context.globalNames/*program.names*/, wasmTransformExpression(value));
-				"(global $" + name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, type), false) + mutSuff + " " + 
-					compileWasmExp(acc, wasmValue, context) + ")";
-			}
+			fiWasmCompileGlobalVar(cfg, decl, acc, context);
 		}
 		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 			"";
@@ -111,9 +75,53 @@ fiWasmCompileToplevel(
 	}
 }
 
-fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext, names : FiGlobalNames) {
-	wasmBody = fiexp2wasmexp(context, names, wasmTransformExpression(decl.lambda.body));
-	wasmType = cast(fitype2wasmtype(names, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
+fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, context : WasmContext) {
+	supported = switch (decl.type) {
+		FiTypeRef(type2): {
+			switch (type2) {
+				FiTypeInt(): true;
+				FiTypeBool(): true;
+				FiTypeDouble(): true;
+				FiTypeString(): true;
+				FiTypeFlow(): true;
+				FiTypeArray(__): true;
+				FiTypeFunction(__, __): true;
+				FiTypeName(__, __): true;
+				default: {
+					println("WARNING! Unsupported global ref " + toString(type2));
+					false;
+				}
+			}
+		}
+		FiTypeName(__, __): true;
+		FiTypeArray(__): true;
+		default: false;
+	}
+	if (supported) {
+		initFunction = FiFunctionDec("wasm__init__global__var__" + decl.name, 
+			FiLambda([], decl.value, FiTypeFunction([], decl.type), decl.declStart),
+			FiTypeFunction([], decl.type),
+			decl.declStart, decl.defiStart);
+		wasmInitFunction = fiWasmCompileFunctionDecl(cfg, initFunction, acc, context);
+		wasmExpr = "\t call $" + initFunction.name + " set_global $" + decl.name + "\n";
+		context.globalVarsInitializers := Cons(Pair(decl.name, wasmExpr), ^(context.globalVarsInitializers));
+		"\n" + wasmInitFunction + 
+		"\n(global $" + decl.name + " (mut i32) i32.const 0)"
+	} else {
+		// support for mutable global variables - they start with wasm_ and end with _mut
+		mut = startsWith(decl.name, "wasm_") && endsWith(decl.name, "_mut");
+		mutPref = if (mut) "(mut " else "";
+		mutSuff = if (mut) ")" else "";
+		wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(decl.value));
+		"(global $" + decl.name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, decl.type), false) + mutSuff + " " + 
+			compileWasmExp(acc, wasmValue, context) + ")";
+	}
+}
+
+fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext) {
+	fiBody = wasmTransformExpression(decl.lambda.body);
+	wasmBody = fiexp2wasmexp(context, context.globalNames, fiBody);
+	wasmType = cast(fitype2wasmtype(context.globalNames, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
 
 	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBody, wasmType);
 }
@@ -135,8 +143,8 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		else 
 			paramPairs;
 	tailCalls = fiWasmCollectTailCalls(name, lambdaBody, makeSet());
-	finalizers = foldSet(fiWasmFindLastStatements(lambdaBody), makeTree(), 
-		\acc0, ex -> setTree(acc0, ex, finalizerVars));
+	lastStatements = fiWasmFindLastStatements(lambdaBody);
+	finalizers = foldSet(lastStatements, makeTree(), \acc0, ex -> setTree(acc0, ex, finalizerVars));
 	resultClause = (if (type.returnType != WasmTypeVoid()) // to be used when generating tail call block
 		" (result " + compileWasmType(type.returnType, false) + ")" else "");
 
@@ -221,7 +229,7 @@ fiWasmBuildNativeFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type
 		";; wasm_compiler.get_string_by_addr\n"
 	} else if (nativeName == "wasm_compiler.call_indirect") {
 		args1 = strGlue(mapi(type.args, \i, a -> {
-					if (i+1 < length(type.args)) 
+					if (i + 1 < length(type.args)) 
 						"(param " + compileWasmType(a.type, false) + ")"
 					else ""
 				}), " ");
@@ -259,12 +267,12 @@ fiWasmBuildFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type : Was
 
 compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 	result = switch (ex) {
-		WasmLambda(args, body, type): "";
-		WasmCall(f, args, type): {
+		WasmLambda(args, body, type, __): "";
+		WasmCall(f, args, type, __): {
 			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
 			(if (length(args) > 0) "\n" else "") +
 			switch (f) {
-				WasmVar(fname, ftype): {
+				WasmVar(fname, ftype, __): {
 					if (containsSet(context.tailCalls, ex)) {
 						// emitting tail call: instead of pushing to stack, insert set_local's to save to parameters
 						supergluei(args, \i,e -> compileWasmExp(acc, e, context) + "\nset_local " + i2s(i), " ") + 
@@ -283,7 +291,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				}
 			} + "\n"
 		}
-		WasmCallNative(f, args, type): {
+		WasmCallNative(f, args, type, __): {
 			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
 			(if (length(args) > 0) "\n" else "") +
 
@@ -304,7 +312,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				+ "\n"
 			}
 		}
-		WasmCallHost(f, args, type): {
+		WasmCallHost(f, args, type, __): {
 			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
 			(if (length(args) > 0) "\n" else "") + {
 				var = cast(f : WasmExp -> WasmVar);
@@ -313,7 +321,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				+ "\n"
 			}
 		}
-		WasmVar(name, type): {
+		WasmVar(name, type, __): {
 			name2 = getWasmLocalVarName(name, type);
 			funIndex = lookupTreeDef(context.functions.functionIndices, name, -1);
 			if (containsKeyTree(context.localNames, name2))
@@ -323,14 +331,14 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			else if (funIndex >= 0) {
 				switch (lookupTree(context.typeTable.structTypes, "WasmGlobalClosureWrapper")) {
 					None(): wasmError(acc, "Global closure wrapper not defined");
-					Some(s): makeWasmConstructor(acc, context, s, [WasmInt(funIndex)]);
+					Some(s): makeWasmConstructor(acc, context, s, [WasmInt(funIndex, 0)]);
 				}
 			} else if (containsKeyTree(context.globalNames.toplevel, name))
 				"get_global $" + name
 			else
 				wasmError(acc, "Cannot resolve variable in WasmVar: " + name);
 		}
-		WasmLet(name, type, e1, e2, type2): {
+		WasmLet(name, type, e1, e2, type2, __): {
 			// for heap types, we need to free local variables after use
 			// this is done at the end of the scope - i.e. end of e2
 			scopeContext = if (wasmTypeUsesWasmHeap(type)) { 
@@ -349,23 +357,23 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			+ " set_local $" + name2 
 			+ " " + compileWasmExp(acc, e2, scopeContext)
 		}
-		WasmIf(e1, e2, e3, type): {
+		WasmIf(e1, e2, e3, type, __): {
 			elsePresent = !isSameStructType(e3, FiVoid(0));
 			if (type == WasmTypeVoid()) {
 				" (if "
 				+ " (block (result i32) " + compileWasmExp(acc, e1, context) + ")"
 				+ " (then " + compileWasmExp(acc, e2, context) + ")"
-				+ (if (elsePresent) " (else "+ compileWasmExp(acc, e3, context) + ")" else "")
+				+ (if (elsePresent) " (else " + compileWasmExp(acc, e3, context) + ")" else "")
 				+ ")"
 			} else {
 				" (if " + "(result " + compileWasmType(type, false) + ")"
 				+ " (block (result i32) " + compileWasmExp(acc, e1, context) + ")"
 				+ " (then " + compileWasmExp(acc, e2, context) + ")"
-				+ (if (elsePresent) " (else "+ compileWasmExp(acc, e3, context) + ")" else "")
+				+ (if (elsePresent) " (else " + compileWasmExp(acc, e3, context) + ")" else "")
 				+ ")"
 			}
 		}
-		WasmSwitch(x, switchType, cases, type): {
+		WasmSwitch(x, switchType, cases, type, __): {
 			makeWasmSwitch(acc, context, compileWasmExp(acc, x, context), 
 				map(cases, \case -> {
 					WasmCaseHolder(0, case.struct, compileWasmExp(acc, case.body, context))
@@ -373,7 +381,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				type
 			);
 		}
-		WasmCast(e, tFrom, tTo, type): {
+		WasmCast(e, tFrom, tTo, type, __): {
 			value = compileWasmExp(acc, e, context) + fiWasmGenerateConstructor(wasmExpType(e));
 			switch (tFrom) {
 				WasmTypeInt(): {
@@ -432,14 +440,14 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			}
 			
 		}
-		WasmSeq(es, type): {
+		WasmSeq(es, type, __): {
 			canReturn = type != WasmTypeVoid(); // whether the result of last statement shall be discarded
 			strGlue(mapi(es, \i, e : WasmExp -> {
 				compileWasmExp(acc, e, context) // we may need drop after last statement if function returns void and it is non-void
 				+ (if (wasmExpType(e) == WasmTypeVoid() || ((i == length(es) - 1) && canReturn)) " " else " drop ")
 			}), "")
 		};
-		WasmCallPrim(op, es, type): {
+		WasmCallPrim(op, es, type, __): {
 			args = superglue(es, 
 				\e -> compileWasmExp(acc, e, context) + fiWasmGenerateConstructor(wasmExpType(e))
 			, " ") + " ";
@@ -611,7 +619,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						if (funIndex < 0) {
 							wasmError(acc, "closure - missing lifted function");
 						} else {
-							makeWasmConstructor(acc, context, st, concat([WasmInt(funIndex)], es));
+							makeWasmConstructor(acc, context, st, concat([WasmInt(funIndex, 0)], es));
 						}
 
 					};
@@ -624,10 +632,10 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				}
 			}
 		}
-		WasmVoid(): "";
-		WasmDouble(d): "f64.const " + d2s(d);
-		WasmInt(i): "i32.const " + i2s(i);
-		WasmString(s): {
+		WasmVoid(__): "";
+		WasmDouble(d, __): "f64.const " + d2s(d);
+		WasmInt(i, __): "i32.const " + i2s(i);
+		WasmString(s, __): {
 			maddress = lookupTree(context.stringAcc.address, s);
 			switch (maddress) {
 				None(): wasmError(acc, "string not found");
@@ -637,11 +645,11 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				}
 			}
 		}
-		WasmBool(b): "i32.const " + i2s(b2i(b));
-		WasmRequire(flowfile, e, type): {
+		WasmBool(b, __): "i32.const " + i2s(b2i(b));
+		WasmRequire(flowfile, e, type, __): {
 			wasmError(acc, "require");
 		}
-		WasmUnsafe(name, fallback, type): {
+		WasmUnsafe(name, fallback, type, __): {
 			wasmError(acc, "unsafe");
 		}			
 	}
@@ -774,7 +782,7 @@ makeWasmSwitchCases(acc : WasmAcc, context : WasmContext, x : string, resultType
 			+ ")";
 		}
 	} else {
-		half = (n +1) / 2;
+		half = (n + 1) / 2;
 		cut = cases[half].typeDescriptor;
 		// if x.typedescriptor < cut  
 		//  	makeWasmSwitchCases(first_half)

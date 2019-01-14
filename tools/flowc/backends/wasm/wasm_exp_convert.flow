@@ -10,21 +10,53 @@ export {
 	wasmExpType(e : WasmExp) -> WasmTypeDescriptor;
 }
 
-fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool) -> WasmVar {
+nextWasmExpId = ref 0;
+
+getNextWasmExpId() {
+	value = ^nextWasmExpId;
+	nextWasmExpId := value + 1;
+	value;
+}
+
+// we will cache types for var since we need to now correct type when perform Call convert.
+// i.e. situation
+// 1	Let(FFF, typeFunction)
+// 2		Call(
+// 3			Var(function1, typeFunction), 
+// 4			args1, 
+// 5			typeFunction
+// 6		),
+// 7		Call(
+// 8			Var(FFF, typeFunction), 
+// 9			args2,
+// 10			type2
+// 11		)
+// if function1 on line 3 is native function then it will return not a simple function but JS callback.
+// So,  with caching we'll get proper type for FFF on line 8 and convert Call (line 7) to WasmCallHost
+lookupCachedVar(locals : ref Tree<string, WasmTypeDescriptor>, nameToFind : string, type : WasmTypeDescriptor) {
+	lookupTreeSet(locals, nameToFind, \n -> type);
+}
+
+fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool, get : bool) -> WasmVar {
 	name2 = getWasmLocalVarName(v.name, fitype2wasmtype(names, v.type));
-	var = WasmVar(v.name, lookupTreeSet(local, name2, \n -> fitype2wasmtypeEx(names, v.type, isnative)));
-	// debug check
 	t = fitype2wasmtypeEx(names, v.type, isnative);
-	if (var.type != t) {
+	var = WasmVar(v.name, lookupCachedVar(local, name2, t), getNextWasmExpId());
+
+	// in fact 'get' will be true for Var in Call node (var which define function to call) since we should know 
+	// correct function type (to distinquish simple call from js callback call)
+	if (get) {
 		s1 = fiPrintWasmType(wasmUnifyType(t));
 		s2 = fiPrintWasmType(wasmUnifyType(var.type));
 		if (s1 != s2) {
 			println("WARNING! Cached type differs from actual one for " + var.name);
-			// println("expected: " + s1);
-			// println("got:      " + s2);
+			println("expected: " + s1);
+			println("got:      " + s2);
 		}
-		WasmVar(v.name, t)
-	} else var
+
+		var;
+	} else {
+		WasmVar(v.name, t, getNextWasmExpId());
+	}
 }
 
 fiTypeFromType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
@@ -38,7 +70,7 @@ fiTypeFromType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
 fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> WasmTypeDescriptor {
 	checkVar = \e1, t -> {
 		switch (e1) {
-			WasmVar(name, type): {
+			WasmVar(name, type, __): {
 				fiTypeFromType(type);		
 			}
 			default: t;
@@ -46,24 +78,24 @@ fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> Wasm
 	}
 
 	switch (e) {
-		WasmLambda(args, b, type) : type;
-		WasmCall(e1, args, type) : checkVar(e1, type);
-		WasmCallNative(e1, args, type) : checkVar(e1, type);
-		WasmCallHost(e1, args, type) : checkVar(e1, type);
-		WasmVar(name, type) : lookupTreeSet(local, name, \n -> type);
-		WasmLet(__, __, __, __, type2) : fiTypeFromType(type2);
-		WasmIf(__, __, __, type) : type;
-		WasmSwitch(__, __, __, type) : type;
-		WasmCast(__, __, __, type) : type;
-		WasmSeq(__, type) : type;
-		WasmCallPrim(__, __, type) : type;
-		WasmRequire(__, __, type) : type;
-		WasmUnsafe(__, __, type) : type;
-		WasmVoid() : WasmTypeVoid();
-		WasmDouble(__) : WasmTypeDouble();
-		WasmInt(__) : WasmTypeInt();
-		WasmString(__) : WasmTypeString();
-		WasmBool(__) : WasmTypeBool();
+		WasmLambda(args, b, type, __) : type;
+		WasmCall(e1, args, type, __) : checkVar(e1, type);
+		WasmCallNative(e1, args, type, __) : checkVar(e1, type);
+		WasmCallHost(e1, args, type, __) : checkVar(e1, type);
+		WasmVar(name, type, __) : lookupCachedVar(local, name, type);
+		WasmLet(__, __, __, __, type2, __) : fiTypeFromType(type2);
+		WasmIf(__, __, __, type, __) : type;
+		WasmSwitch(__, __, __, type, __) : type;
+		WasmCast(__, __, __, type, __) : type;
+		WasmSeq(__, type, __) : type;
+		WasmCallPrim(__, __, type, __) : type;
+		WasmRequire(__, __, type, __) : type;
+		WasmUnsafe(__, __, type, __) : type;
+		WasmVoid(__) : WasmTypeVoid();
+		WasmDouble(__, __) : WasmTypeDouble();
+		WasmInt(__, __) : WasmTypeInt();
+		WasmString(__, __) : WasmTypeString();
+		WasmBool(__, __) : WasmTypeBool();
 	}
 }
 
@@ -71,18 +103,19 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 	do_type	= \t -> fitype2wasmtypeEx(names, t, false);
 	do_exp	= \ex    -> dofiexp2wasmexp(context, names, ex, local, false);
 	do_exp2	= \ex, n -> dofiexp2wasmexp(context, names, ex, local, n);
-	do_var	= \v, n	 -> fivar2wasmvar(names, v, local, n);
+	do_var	= \v, n, g	 -> fivar2wasmvar(names, v, local, n, g);
 
 	switch (e) {
 		FiLambda(args, b, type, __): {
 			args2 = map(args, \a -> WasmFunArg(a.name, do_type(a.type)));
-			WasmLambda(args2, do_exp(b), do_type(type))
+			WasmLambda(args2, do_exp(b), do_type(type), getNextWasmExpId())
 		}
 		FiCall(f, args, type, __): {
 			switch (f) {
 				FiVar(fname, ftype, __): {
 					is_native_call = containsKeyTree(context.natives, fname);
-					ee = do_exp2(f, is_native_call);
+					ee = do_var(f, is_native_call, true);
+					// ee = do_exp2(f, is_native_call);
 					tt = fiTypeFromExp(ee, local);
 					ttt = fiTypeFromType(fitype2wasmtypeEx(names, ftype, is_native_call));
 
@@ -94,60 +127,61 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, local :
 								ee, 
 								concat(
 									// add a function index (returned from JS)
-									[WasmVar(fname, WasmTypeInt())],
+									[WasmVar(fname, WasmTypeInt(), getNextWasmExpId())],
 									args_new
 								), 
-								ttt
+								ttt,
+								getNextWasmExpId()
 							);
 						}
 
 						default: {
 							if (is_native_call) {
-								WasmCallNative(ee, args_new, ttt);
+								WasmCallNative(ee, args_new, ttt, getNextWasmExpId());
 							} else {
-								WasmCall(ee, args_new, ttt);
+								WasmCall(ee, args_new, ttt, getNextWasmExpId());
 							}
 						}
 					}
 
 				}
 				default: {
-					WasmCall(do_exp(f), map(args, \a -> do_exp(a)), do_type(type));
+					WasmCall(do_exp(f), map(args, \a -> do_exp(a)), do_type(type), getNextWasmExpId());
 				}
 			}
 		}
 		FiVar(name, type, __): {
-			do_var(e, isnative);	// isnative needed here
+			do_var(e, isnative, false);	// isnative needed here
 		}
 		FiLet(name, type, e1, e2, type2, __): {
 			e1_conv = do_exp(e1);
 			name2 = getWasmLocalVarName(name, do_type(type));
-			t1_conv = lookupTreeSet(local, name2, \n -> fiTypeFromExp(e1_conv, local));
+			t1_conv = lookupCachedVar(local, name2, fiTypeFromExp(e1_conv, local));
 			e2_conv = do_exp(e2);
 			t2_conv = do_type(type2);
-			WasmLet(name, t1_conv, e1_conv, e2_conv, t2_conv)
+			WasmLet(name, t1_conv, e1_conv, e2_conv, t2_conv, getNextWasmExpId())
 		}
 		FiIf(e1, e2, e3, type, __): 
-			WasmIf(do_exp(e1), do_exp(e2), do_exp(e3), do_type(type));
+			WasmIf(do_exp(e1), do_exp(e2), do_exp(e3), do_type(type), getNextWasmExpId());
 		FiSwitch(x, switchType, cases, type, __): {
-			cases2 = map(cases, \c -> WasmCase(c.struct, c.argNames, do_exp(c.body)));
-			WasmSwitch(do_var(x, false), do_type(switchType), cases2, do_type(type))
+			cases2 = map(cases, \c -> WasmCase(c.struct, c.argNames, do_exp(c.body), getNextWasmExpId()));
+			WasmSwitch(do_var(x, false, false), do_type(switchType), cases2, do_type(type), getNextWasmExpId())
 		}
 		FiCast(ex, tFrom, tTo, type, __): 
-			WasmCast(do_exp(ex), do_type(tFrom), do_type(tTo), do_type(type));
+			WasmCast(do_exp(ex), do_type(tFrom), do_type(tTo), do_type(type), getNextWasmExpId());
 		FiSeq(es, type, __): 
-			WasmSeq(map(es, \stmt -> do_exp(stmt)), do_type(type));
+			WasmSeq(map(es, \stmt -> do_exp(stmt)), do_type(type), getNextWasmExpId());
 		FiCallPrim(op, es, type, __): 
-			WasmCallPrim(op, map(es, \stmt -> do_exp(stmt)), do_type(type));
-		FiVoid(start): WasmVoid();
-		FiDouble(d, __): WasmDouble(d);
-		FiInt(i, __): WasmInt(i);
-		FiString(s, __): WasmString(s);
-		FiBool(b, __): WasmBool(b);
+			WasmCallPrim(op, map(es, \stmt -> do_exp(stmt)), do_type(type), getNextWasmExpId());
+		FiVoid(start): WasmVoid(getNextWasmExpId());
+		FiDouble(d, __): WasmDouble(d, getNextWasmExpId());
+		FiInt(i, __): WasmInt(i, getNextWasmExpId());
+		FiString(s, __): WasmString(s, getNextWasmExpId());
+		FiBool(b, __): WasmBool(b, getNextWasmExpId());
 		FiRequire(flowfile, ex, type, __): 
-			WasmRequire(flowfile, do_exp(ex), do_type(type)); 
+			WasmRequire(flowfile, do_exp(ex), do_type(type), getNextWasmExpId()); 
 		FiUnsafe(name, fallback, type, __): 
-			WasmUnsafe(name, do_exp(fallback), do_type(type));
+			WasmUnsafe(name, do_exp(fallback), do_type(type), getNextWasmExpId());
 	}
 }
 
@@ -157,24 +191,24 @@ fiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp) {
 
 wasmExpType(e : WasmExp) -> WasmTypeDescriptor {
 	switch (e) {
-		WasmLambda(__, __, type) : type;
-		WasmCall(__, __, type) : type;
-		WasmCallNative(__, __, type) : type;
-		WasmCallHost(__, __, type) : type;
-		WasmVar(__, type) : type;
-		WasmLet(__, __, __, __, type2) : type2;
-		WasmIf(__, __, __, type) : type;
-		WasmSwitch(__, __, __, type) : type;
-		WasmCast(__, __, __, type) : type;
-		WasmSeq(__, type) : type;
-		WasmCallPrim(__, __, type) : type;
-		WasmRequire(__, __, type) : type;
-		WasmUnsafe(__, __, type) : type;
-		WasmVoid() : WasmTypeVoid();
-		WasmDouble(__) : WasmTypeDouble();
-		WasmInt(__) : WasmTypeInt();
-		WasmString(__) : WasmTypeString();
-		WasmBool(__) : WasmTypeBool();
+		WasmLambda(__, __, type, __) : type;
+		WasmCall(__, __, type, __) : type;
+		WasmCallNative(__, __, type, __) : type;
+		WasmCallHost(__, __, type, __) : type;
+		WasmVar(__, type, __) : type;
+		WasmLet(__, __, __, __, type2, __) : type2;
+		WasmIf(__, __, __, type, __) : type;
+		WasmSwitch(__, __, __, type, __) : type;
+		WasmCast(__, __, __, type, __) : type;
+		WasmSeq(__, type, __) : type;
+		WasmCallPrim(__, __, type, __) : type;
+		WasmRequire(__, __, type, __) : type;
+		WasmUnsafe(__, __, type, __) : type;
+		WasmVoid(__) : WasmTypeVoid();
+		WasmDouble(__, __) : WasmTypeDouble();
+		WasmInt(__, __) : WasmTypeInt();
+		WasmString(__, __) : WasmTypeString();
+		WasmBool(__, __) : WasmTypeBool();
 	}
 }
 
@@ -182,7 +216,7 @@ wasmUnifyType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
 	rec = \t -> wasmUnifyType(t);
 	func = \args, rt -> {
 		args2 = filtermapi(args, \i, a -> {
-			if ((i+1 < length(args)) || !strContains(a.name, "__closure__")) {
+			if ((i + 1 < length(args)) || !strContains(a.name, "__closure__")) {
 				Some(WasmFunArg("", rec(a.type)))
 			} else None();
 		});

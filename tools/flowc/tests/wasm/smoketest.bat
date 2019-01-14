@@ -31,7 +31,7 @@ exit /b
 
 :run_test
 echo ********** Running %1... ********************
-node --expose-wasm %1.js
+node --expose-wasm %1.node.js
 exit /b
 
 :cleanup

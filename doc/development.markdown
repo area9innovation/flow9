@@ -21,16 +21,14 @@ handy.
 
 <h3>VS Code</h3>
 
-See `resources\vscode\readme.txt` for instructison on how to install all the
+See [resources/vscode/readme.md](../resources/vscode/readme.md) for instructions on how to install all the
 *flow* support we have. This is the best editor at this point.
 
-<h3>Sublime Text 3 and the Debugger</h3>
+<h3>Sublime Text 3</h3>
 
-Another good editor for *flow* programming is Sublime Text 2 or 3:
+Another good editor for *flow* programming is Sublime Text 3.
 
-    http://www.sublimetext.com/
-
-See `resources/sublimetext/readme.txt` for instructions on how to install all the *flow*
+See [resources/sublimetext/readme.md](../resources/sublimetext/readme.md) for instructions on how to install all the *flow*
 support we have. This includes syntax highlighting, live syntax checking, look-up definition,
 single-step debugging, profiling and more.
 
@@ -39,7 +37,7 @@ for quick navigation of files.
 
 <h3>Emacs</h3>
 
-See `resources/emacs/readme.txt` for instructions on how to edit Flow code in Emacs.
+See [resources/emacs/readme.txt](../resources/emacs/readme.txt) for instructions on how to edit Flow code in Emacs.
 
 <h2 id=dev>Developing</h2>
 
