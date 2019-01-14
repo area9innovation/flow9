@@ -790,7 +790,12 @@ void iosGLRenderSupport::destroyAllNativeWidgets() {
         UIView * widget = it->second;
         
         [widget removeFromSuperview];
-        [widget release];
+        if (CDVViewControllers.find(widget) != CDVViewControllers.end()) {
+            [CDVViewControllers[widget] release];
+            CDVViewControllers.erase(widget);
+        } else {
+            [widget release];
+        }
     }
     NativeWidgetClips.clear();
     NativeWidgets.clear();
