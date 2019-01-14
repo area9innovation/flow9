@@ -4869,8 +4869,10 @@ private class PixiText extends TextField {
 	private function updateClipMetrics() {
 		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		clipWidth = Math.max(metrics.width - letterSpacing, 0) / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing * 2, 0) / textScaleFactor;
 		clipHeight = metrics.height / textScaleFactor;
+
+		hitArea = new Rectangle(letterSpacing, 0, clipWidth + letterSpacing, clipHeight);
 	}
 
 	private static function checkTextLength(text : String) : Array<Array<String>> {

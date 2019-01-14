@@ -9,13 +9,6 @@ import tools/flowc/backends/java/fi2java_defines;
 import tools/flowc/typechecker/fautomaton_types;
 
 export {
-	// generates a name for js file that holds wrapping functions
-	fiNativeJSWrapperFileName(hostfile: string) -> string;
-	fiNativeJSCallbackFileName(hostfile: string) -> string;
-
-	fiWriteHostNativeJSWrapperFile(cfg : FiWasmConfig, wrappersJSCode : string) -> void;
-	fiWriteHostNativeJSCallbackFile(cfg : FiWasmConfig, js_code: [string]) -> void;
-
 	WasmCallback(
 		callbackJS: string, // js part. something like: func_js(id, arg0, ...) {...}
 		callbackWASM: [string], // wasm part: func(arg0, ...) { call func_js }
@@ -60,43 +53,9 @@ fiInvokeDecl(ftype : WasmTypeDescriptor, typeTable : FiWasmTypeTable) {
 	"(func $" + name + " " + strGlue(argsStr, " ") + ret + ")";
 }
 
-fiNativeJSWrapperFileName(hostfile: string) {
-	hostfile+".jswrap.js";
-}
-
-fiNativeJSCallbackFileName(hostfile: string) {
-	hostfile+".jscallback.js";
-}
-
 fiNativeJSWrapperFunctionName(funcname: string) {
 	fname = toLowerCase(strReplace(funcname, ".", "_"));
 	"wasmgen_" + fname;
-}
-
-fiWriteHostNativeJSWrapperFile(cfg : FiWasmConfig, wrappersJSCode : string) {
-	if (cfg.hostfile != "") {
-		fcVerbose(cfg, 0, "Creating Wasm JS Wrapper '" + fiNativeJSWrapperFileName(cfg.hostfile) + "'...");
-
-		if (!setFileContent(fiNativeJSWrapperFileName(cfg.hostfile), wrappersJSCode))
-			println("Problem saving JS Wrapper file");
-
-	} else {
-		fcVerbose(cfg, 1, "Creating Wasm JS Wrapper finished");
-	}
-}
-
-fiWriteHostNativeJSCallbackFile(cfg : FiWasmConfig, js_code: [string]) -> void {
-	if (cfg.hostfile != "") {
-		fcVerbose(cfg, 0, "Creating Wasm JS Callback '" + fiNativeJSCallbackFileName(cfg.hostfile) + "'...");
-		
-		code = "var callbacks = {\n" + strGlue(js_code, ",\n") + "\n};";
-
-		if (!setFileContent(fiNativeJSCallbackFileName(cfg.hostfile), code/*list2string(code)*/))
-			println("Problem saving JS Callback file");
-
-	} else {
-		fcVerbose(cfg, 1, "Creating Wasm JS Callback finished");
-	}
 }
 
 callback_counter = ref 0;
@@ -123,7 +82,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 			name, 
 			dec, 
 			getFuncArgs(argTypes, typeTable, callbacks, dec), 
-			getFuncArg("cb_in_"+index, "cb_ret_"+index, returnType, typeTable, callbacks, !dec)
+			getFuncArg("cb_in_" + index, "cb_ret_" + index, returnType, typeTable, callbacks, !dec)
 		);
 
 		if (dec) {
@@ -132,7 +91,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 				WasmCallback(
 					fiInvokeName(a, typeTable) + ": function(fn_id, " + args + ") {\n" + 
 					"		var fn = IDHandler.getObjectFromID(fn_id);\n" + 
-					"		return fn(" + args+ ");\n" + 
+					"		return fn(" + args + ");\n" + 
 					"	}",
 					[]
 				)
@@ -159,8 +118,12 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		WasmTypeDouble(): buildEmpty();
 		WasmTypeString(): buildArg1(["var " + nameOut + " = " + f(nameIn, [4])]);
 		WasmTypeArray(type): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
-		WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID("+nameIn+");" else "IDHandler.createObjectId("+nameIn+");")]);
+		WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID(" + nameIn + ");" else "IDHandler.createObjectId(" + nameIn + ");")]);
 		WasmTypeFlow(): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
+
+		WasmTypeUnion(u_name, u_structs): {
+			buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
+		}
 
 		WasmTypeFunction(argTypes, returnType): {
 			fn(argTypes, returnType, !decode);
@@ -193,7 +156,7 @@ wasmNativeName(name: string) {
 	nameComponents = strSplit(name, ".");
 	add = if (fiWasmIsHostWNative(name)) "" 
 	else if (startsWith(name, "Native.")) "NativeHx."
-	else if (startsWith(name, "RenderSupport.")) "RenderSupportHx."
+	else if (startsWith(name, "RenderSupport.")) "RenderSupportJSPixi."
 	else "";
 
 	last = nameComponents[length(nameComponents) - 1];
@@ -244,8 +207,8 @@ buildReturnValue(retName: string, ret: [FuncArg], indent: string, decode : bool)
 			buildFunction(a.cb.name, name, newretname, a.cb.args, a.cb.ret, indent, true, a.cb.decode) + ";\n" +
 			indent + "return " + fnIndex + ";\n"
 		} else {
-			indent + strGlue(a.retrievecode, "\n"+ indent) + "\n" +
-			indent + "return " + retName/*ret[0].nameout*/ + ";\n";
+			indent + strGlue(a.retrievecode, "\n" + indent) + "\n" +
+			indent + "return " + retName + ";\n";
 		}
 	} else {
 		indent + "return " + retName + ";\n";
@@ -259,7 +222,7 @@ buildFunction(name: string, nativeName: string, retName: string, args: [FuncArg]
 			fn = buildFunction(funname, a.namein, a.cb.ret[0].namein, a.cb.args, a.cb.ret, i, true, a.cb.decode) + ";\n";
 			if (a.cb.decode) {
 				fn + 
-				indent + "	" + a.nameout + " = IDHandler.createObjectId(" + funname + ");\n";
+				indent + "	var " + a.nameout + " = IDHandler.createObjectId(" + funname + ");\n";
 			} else fn;
 		} else {
 			if (length(a.retrievecode) <= 0) { "" } else { i + strGlue(a.retrievecode, "\n" + i) + "\n" }
@@ -307,22 +270,20 @@ fiWasmCreateNativeWrappers(natives: Tree<string, FiNativeDec>, typeTable : FiWas
 		// 	};
 
 		FiWasmNativeDec(decl,
-			if (/*needCheck &&*/ (fiWasmIsPureNative(decl.nativeName) || fiWasmIsHostWNative(decl.nativeName))) {
+			if ((fiWasmIsPureNative(decl.nativeName) || fiWasmIsHostWNative(decl.nativeName))) {
 				nameWrapped = fiNativeJSWrapperFunctionName(decl.nativeName);
 
 				wr = fiWasmCreateNativeWrapper(name, nameWrapped, decl, typeTable, globalNames, callbacks);
 				wrapperJSCode = buildFunction(nameWrapped, decl.nativeName, "ret", wr.first, wr.second, "	", false, true);
 
 				refArrayPush(allWrapperJSCode, wrapperJSCode);
-//				wrapperJSCode;
 
 				FiWasmNativeWrap(
 					nameWrapped, {
 						fiWasmBuildFunctionDecl(nameWrapped, fitype2wasmtype(globalNames, decl.type), false, true)
-					}/*, {
-					}*/
+					}
 				)
-			} else FiWasmNativeWrap("", ""/*, ""*/)
+			} else FiWasmNativeWrap("", "")
 		)
 	});
 

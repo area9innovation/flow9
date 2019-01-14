@@ -1,0 +1,280 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import transforms;
+import form/form;
+import form/gui;
+
+// A facility for making forms draggable and droppable.
+
+// Make this form draggable. Both forms are always show, but only dragForm moves around
+// with the mouse.
+// You can use something like
+//   draggingThis = distinctUntilChanged(select(dragging, \d -> {if (d == id) 1 else 0}));
+//   Draggable(
+//        id,
+//        Switch(draggingThis, [StayNotDragging, StayWhenDraggingThis]),
+//        Switch(draggingThis, [MovingNotDragging, MovingWhenDraggingThis])
+//	)
+// to control the look completely when dragging.
+
+export {
+	// A dragable area. Tracks the mouse coordinates
+	Draggable : (id : int, form : Form, draggingForm : Form, hoverForm : Form) -> Form;
+	Draggable2 : (id : int, cookie : flow, form : Form, draggingForm : Form, hoverForm : Form) -> Form;
+
+	// Adds a layer where copy of taken draggable (_.draggingForm) is rendered.
+	// I. Should be top layer i.e.
+	// makeTopApplicationForm() |> DragArea
+	// Possible problem - renders initial size of draggable form regardless to actual external scale.
+	// II. Or should be applied to some subform that contains draggables
+	// makeTopForm() {
+	//	subForm = composeDraggables(d1, d2, d3) |> DragArea // Respects scale applied to subForm
+	//  ...
+	// }
+	// Implementation assumes that only one set of draggables is active and its DragArea is a top one.
+	DragArea : (Form) -> Form;
+
+	// Make this form a target for a drop. If a drop is received, the callback is called with the id of the draggable.
+	// form is show normally, but when a drag is on top, we change to the dropform
+	DropTarget : (onDrop : (int) -> void, form : Form, hoverForm : Form) -> Form;
+	
+	DropTargetCustom(
+		onDrop : (int, Maybe<flow>, MouseInfo) -> void, 
+		getForm : (int, Maybe<flow>) -> Form, 
+		getCoverForm : (int, Maybe<flow>) -> Form, 
+		style : [DropTargetStyle]
+	) -> Form;
+		
+	DropTargetStyle ::= IgnoreCovering, CheckDraggableSize, ChangeHovered;
+		IgnoreCovering(value : bool);
+		CheckDraggableSize(value : bool);
+		ChangeHovered(value : DynamicBehaviour<bool>);
+
+	// While dragging, this is set to the corresponding id.  You can use a Switch on this to change the look while dragging
+	dragging : DynamicBehaviour<int>;
+
+	draggingCookie : DynamicBehaviour<Maybe<flow>>;
+
+}
+
+currentDraggableStartX = make(0.0);
+currentDraggableStartY = make(0.0);
+
+currentDraggableSize : DynamicBehaviour<FormMetrics> = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
+
+dragLayer : DynamicBehaviour<Form> = make(Empty());
+
+dragAreasStack : DynamicBehaviour<[int]> = make([]);
+
+topDragAreaId : Behaviour<int> = select(dragAreasStack, \st -> lastElement(st, -1)); //-1 is result for Empty stack
+
+isHover = make(0);
+
+dragAreaId = ref 0;
+
+DragArea(form) {
+	myId = ^dragAreaId;
+	dragAreaId := ^dragAreaId + 1;	
+	x = make(0.0);
+	y = make(0.0);
+
+	area = Group([
+		Interactive(
+			[
+				MouseMove(\gm -> {
+					if (getValue(dragLayer) != Empty()) {
+						mouseInfo = gm();
+						nextDistinct(x, mouseInfo.x);
+						nextDistinct(y, mouseInfo.y);
+					}
+					// Important that we do not handle this event, so that drop areas below us also get the event
+					false;
+				}),
+				MouseDown2(\h, mouseInfo -> {
+						nextDistinct(x, mouseInfo.x);
+						nextDistinct(y, mouseInfo.y);
+						h;
+				})
+			],
+			form
+		),
+		SelectGlobal(topDragAreaId, \id -> b2i(myId == id), \v -> Visible(v, Translate(x, y, Mutable(dragLayer))))
+	]);
+
+	Constructor(
+		area,
+		\ -> {
+			next(dragAreasStack, arrayPush(getValue(dragAreasStack), myId));
+			\ -> {
+				next(dragAreasStack, removeFirst(getValue(dragAreasStack), myId));
+			}
+		}
+	)
+}
+
+// While dragging, this is set to the corresponding id.  You can use a Switch on this to change the look while dragging
+dragging = make(0);
+draggingCookie = make(None());
+
+// When dropping, this is set to the corresponding id. Used internally, but you can use it if you want to
+drop = make(0);
+dropCookie : DynamicBehaviour<Maybe<flow>> = make(None());
+
+dropMouseInfo = make(emptyMouseInfo);
+
+setDragging(id : int, cookie : flow) {
+	nextDistinct(draggingCookie, Some(cookie));
+	nextDistinct(dragging, id);
+}
+
+clearDragging() {
+	nextDistinct(draggingCookie, None());
+	nextDistinct(dragging, 0);
+}
+
+setDrop(id : int, cookie : flow) {
+	nextDistinct(dropCookie, Some(cookie));
+	nextDistinct(drop, id);
+}
+
+clearDrop() {
+	nextDistinct(dropCookie, None());
+	nextDistinct(drop, 0);
+}
+
+Draggable(id : int, form : Form, draggingForm : Form, hoverForm : Form) -> Form {
+	Draggable2(id, 0, form, draggingForm, hoverForm);
+}
+
+Draggable2(id : int, cookie : flow, form : Form, draggingForm : Form, hoverForm : Form) -> Form {
+
+	localF = make(Empty());
+	currentDraggableX = make(0.0);
+	currentDraggableY = make(0.0);
+	
+
+	Constructor(
+		Interactive([
+			MouseDown(\mouseInfo -> {
+				if (mouseInfo.inside()) {
+					if (getValue(dragging) == 0) {
+						firstX = -mouseInfo.x;
+						firstY = -mouseInfo.y;
+						nextDistinct(currentDraggableStartX, firstX);
+						nextDistinct(currentDraggableStartY, firstY);
+
+						setDragging(id, cookie);						
+						
+						nextDistinct(dragLayer, Interactive([
+							MouseUp(\gm1 -> {
+								if (getValue(dragging) == id) {
+									setDrop(id, cookie);
+									clearDragging();
+									clearDrop();
+									nextDistinct(dragLayer, Empty());
+									true;
+								} else {
+									false;
+								}
+							})
+							],
+							Translate(currentDraggableStartX, currentDraggableStartY, 
+								Inspect([IMetrics(currentDraggableSize)], Switch(isHover, [draggingForm, hoverForm]))
+							)
+						));
+					
+						true;
+					} else false;
+				} else false;
+			})
+		], form),
+		\ -> {
+			\ -> {
+				if (getValue(dragging) == id) {
+					clearDragging();
+					nextDistinct(dragLayer, Empty());
+				}
+			}
+		}
+	)
+}
+
+DropTarget(onDrop : (int) -> void, form : Form, hoverForm : Form) -> Form {
+	DropTargetCustom(\id, __, __ -> onDrop(id), \__, __ -> form, \__, __ -> hoverForm, [])
+}
+
+DropTargetCustom(onDrop : (int, Maybe<flow>, MouseInfo) -> void, getForm : (int, Maybe<flow>) -> Form, getCoverForm : (int, Maybe<flow>) -> Form, style : [DropTargetStyle]) -> Form {
+	ignoreCovering = extractStruct(style, IgnoreCovering(false)).value;
+	checkDraggableSize = extractStruct(style, CheckDraggableSize(false)).value;
+	changeHovered = extractStruct(style, ChangeHovered(make(false))).value;
+
+	isCover = make(0);
+	d = ref nop;
+	wh = makeWH();
+
+	// Check on the intersection of two rectangles (drop target and draggable form)
+	// x, y - coordinates of left top corner
+	// dropTargetSize - size of the drop target point, 0.0 and 0.0 - left top corner coordinates of the drop target
+	formSizeBasedInside = \mouseInfo -> {
+		if (checkDraggableSize && mouseInfo != emptyMouseInfo) {
+			x = mouseInfo.x + getValue(currentDraggableStartX);
+			y = mouseInfo.y + getValue(currentDraggableStartY);
+			dragSize = getValue(currentDraggableSize);
+			dropSize = getValue(wh);
+			x <= dropSize.width && x + dragSize.width >= 0.0 && y <= dropSize.height && y + dragSize.height >= 0.0
+		} else false
+	}
+
+	Constructor(
+		Interactive([
+			// RollOver and RollOut does not work here, for some strange reason
+			MouseMove(\gm -> {
+				mouseInfo = gm();
+				someDragging = i2b(getValue(dragging));
+				if (someDragging && (mouseInfo.inside || ignoreCovering || formSizeBasedInside(mouseInfo))) {
+					next(dropMouseInfo, mouseInfo);
+					if (getValue(isCover) == 0) {
+						d := connect(isCover, isHover);
+					}
+					nextDistinct(isCover, 1);
+					false
+				} else {
+					nextDistinct(isCover, 0);
+					^d();
+					false;
+				}
+			})
+		],
+		Select2(isCover, dragging, \h, id -> {
+			if (h == 0) {
+				nextDistinct(changeHovered, false);
+				Inspect([ISize(wh)], getForm(id, getValue(draggingCookie)))
+			} else {
+				nextDistinct(changeHovered, true);
+				getCoverForm(id, getValue(draggingCookie))
+			}
+		})),
+		\ -> {
+			unsub = subscribe2(drop, \id ->
+				if (id != 0 && getValue(isCover) == 1) {
+					// We are not a target any more
+					nextDistinct(isCover, 0);
+					^d();
+					onDrop(id, getValue(dropCookie), getValue(dropMouseInfo));
+				}
+			);
+			\ -> { unsub(); ^d(); }
+		}
+	);
+}
+
+
+/*main() {
+	render(
+		Lines([
+			Draggable(1, Text("Drag", [FontSize(48.0)]), Text("Drag 2", [FontSize(48.0)]), Text("Drag 3", [FontSize(48.0)])) |> DragArea,
+			DropTarget(println, Text("Drop here", [FontSize(48.0)] ), Text("Dropping", [FontSize(48.0)] ))
+		])
+	);
+}
+*/
