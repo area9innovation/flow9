@@ -42,10 +42,6 @@
 }
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    
-    if ([request.URL.host rangeOfString: @"ezto.*\\.mheducation\\.com" options: NSRegularExpressionSearch].location != NSNotFound)
-        return false;
-    
     return ([self useCustomCacheForURL: request.URL] && ![NSURLProtocol propertyForKey: @"URLLoaderHandling" inRequest: request]);
 }
 
