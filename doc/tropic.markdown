@@ -256,7 +256,7 @@ This works for any kind of `Form`. This is useful as a way to reuse existing cod
 If you need some `Form` constructs to adapt to some available area, you can use `TFormIn`:
 
 	import tropic/trender;
-	import gui;
+	import form/gui;
 	import ui/easybutton;
 
 	main() {
