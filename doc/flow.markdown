@@ -997,7 +997,7 @@ to the recommended way to format code in *flow*:
 
 Besides the builtin array and structs, some useful data structures
 have been implemented in *flow* itself. Most useful is arguably the
-binary tree implemented in `binarytree.flow`.
+binary tree implemented in `ds/tree.flow`.
 
 This implements a key/value store organized in a binary tree. This data
 structure implements dictionaries (`setTree`) as well as heaps using 
@@ -1008,10 +1008,12 @@ allow you to add any number of items to a key, and then extract those as an
 array as a multi-map.
 
 If you need to build data structures one element at a time, use a `List`
-declared in `list.flow`. This is a traditional functional list, implemented
+declared in `ds/list.flow`. This is a traditional functional list, implemented
 using structs. It supports constant time append (`Cons`), contrary to an
 array where append is linear time. You can convert a  `List` to an array
 using `list2array`. (You can also convert to a string using `list2string`.)
+
+Have a look in the `ds/` folder to find other useful data structures.
 
 <h2 id=loops>Loops</h2>
 
@@ -1276,7 +1278,7 @@ This shorter form is the preferred way to do it.
       return divs;
     }
 
-                                             import binarytree;
+                                             import ds/tree;
     var dict = new Hash();                   dict = makeTree();
     dict[1] = 2;                             dict2 = setTree(dict, 1, 2);
     var two = dict[1];                       two = lookUpTreeDef(dict2, 1, -1);
