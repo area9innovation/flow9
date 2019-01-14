@@ -33,7 +33,7 @@ Hello world
 
 To whet your appetite, here is "Hello world":
 
-	import form;
+	import form/form;
 	import form/renderform;
 
 	main() {
