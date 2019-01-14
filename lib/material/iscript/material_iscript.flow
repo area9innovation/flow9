@@ -12,6 +12,7 @@ import fusion_utils;
 
 export {
 	MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MIScriptCaptureMouse2T(manager : MaterialManager) -> Tropic;
 
 	MIScriptStack(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
 	MInputOutputValues(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Material;
@@ -20,11 +21,8 @@ export {
 }
 
 MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	showSidebar = make(false);
-	showGrid = make(false);
-
 	MSplitter(
-		TGroup2SameMetrics(TFillXY(), TShowLazy(showGrid, \ -> TFillXYDrawGrid(64., 8.))),
+		TFillXY(),
 		(\p ->
 			MDynamicTabs(
 				fselect(
@@ -49,7 +47,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 		|> disableMInteractivesBelow, // Prevent capturing mouse events by IScript on Script Panel
 		TFillXY(),
 		[
-			MEnabled(fmin(showSidebar, fnot(isIScriptRecordingB(manager)))),
+			MEnabled(fmin(manager.iscript.showSidebar, fnot(isIScriptReplayingOrRecordingB(manager)))),
 			MSplitterWidthHeight(manager.iscript.available, make(zeroWH)),
 		]
 	)
@@ -79,7 +77,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 												[MOnClick(\ -> saveIScript(manager, getValue(manager.iscript.currentFileNameB), m2t)),
 													MEnabled(fselect(manager.iscript.scriptChangedB, FLift(\scriptChanged -> scriptChanged && getValue(manager.iscript.currentFileNameB) != "")))]),
 											MMenuSingleLine("Save script as ...",
-												[MOnClick(\ -> saveIScriptDialog(manager, m2t)), MEnabled(fselect(manager.iscript.script, FLift(\script -> !isIScriptEmpty(manager))))]),
+												[MOnClick(\ -> saveIScriptDialog(manager, m2t)), MEnabled(fnot(isIScriptEmptyB(manager)))]),
 											MSeparatorLine(),
 											MMenuSingleLine("Open Batch Tests",
 												[MOnClick(\ -> loadBatchTestsDialog(manager, m2t))]),
@@ -98,7 +96,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 												[MOnClick(\ -> saveDBIScript(manager, getValue(manager.iscript.currentFileNameB), m2t)),
 													MEnabled(fselect(manager.iscript.scriptChangedB, FLift(\scriptChanged -> scriptChanged && getValue(manager.iscript.currentFileNameB) != "")))]),
 											MMenuSingleLine("Save script to DB as ...",
-												[MOnClick(\ -> saveDBIScriptDialog(manager, m2t)), MEnabled(fselect(manager.iscript.script, FLift(\script -> !isIScriptEmpty(manager))))]),
+												[MOnClick(\ -> saveDBIScriptDialog(manager, m2t)), MEnabled(fnot(isIScriptEmptyB(manager)))]),
 											MSeparatorLine(),
 											MMenuSingleLine("Open Batch Tests from DB",
 												[MOnClick(\ -> loadDBBatchTestsDialog(manager, m2t))]),
@@ -122,7 +120,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 						"grid_off",
 						[MToggleFalseIcon("grid_on", [])],
 						[
-							MToggleValue(showGrid),
+							MToggleValue(manager.iscript.showGrid),
 							MTooltipText(const(_("Show Grid")))
 						]
 					),
@@ -131,7 +129,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 						\ -> showCombinationsDialog(manager, m2t),
 						[],
 						[
-							MEnabled(fselect(manager.iscript.script, FLift(\script -> !isIScriptEmpty(manager)))),
+							MEnabled(fnot(isIScriptEmptyB(manager))),
 							MTooltipText(const(_("Open test combinations dialog")))
 						]
 					),
@@ -190,17 +188,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 								MMenuSingleLine(
 									"Capture snapshot of logical UI state",
 									[
-										MOnClick(\ ->
-											addIScriptShallowLogicalScreenshot(
-												manager,
-												switch (getValue(manager.iscript.state)) {
-													IScriptRecording(__, __): timestamp() - getValue(manager.iscript.script).recordingStarted;
-													default: 0.0;
-												},
-												FEmpty()
-												// ^contentForm
-											)
-										)
+										MOnClick(\ -> addIScriptLogicalScreenshot(manager))
 									]
 								),
 								MMenuSingleLine(
@@ -311,7 +299,7 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 											IScriptPaused()
 									)
 							),
-							MEnabled(fmin(fnot(fmax(isIScriptReplayingB(manager), isIScriptRecordingB(manager))), isIScriptReplayReadyB(manager))),
+							MEnabled(fmin(fnot(isIScriptReplayingOrRecordingB(manager)), isIScriptReplayReadyB(manager))),
 							MTooltipText(fselect(isIScriptReplayingB(manager), FLift(\v -> if(v) _("Stop replaying") else _("Replay recording"))))
 						]
 					),
@@ -353,8 +341,9 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 							MToggleFalseIcon("menu", [])
 						],
 						[
-							MToggleValue(showSidebar),
-							MTooltipText(fselect(showSidebar, FLift(\v -> if(v) _("Hide recording sidebar") else _("Show recording sidebar"))))
+							MToggleValue(manager.iscript.showSidebar),
+							MEnabled(fnot(isIScriptReplayingOrRecordingB(manager))),
+							MTooltipText(fselect(manager.iscript.showSidebar, FLift(\v -> if(v) _("Hide recording sidebar") else _("Show recording sidebar"))))
 						]
 					),
 				])
@@ -368,16 +357,19 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 		)
 	)
 	|> (\f ->
-		MGroup2SameMetrics(
+		MActivate(
 			f,
-			TShow(
-				manager.iscript.replayCursorVisibleB,
-				TTranslate(manager.iscript.replayCursorPositionB, TSelect(manager.iscript.replayCursorShapeB, idfn))
-			)
+			[IScriptRecordingEnabled(const(false)), MZorder(manager.currentZorder), MFocusName("MIScriptPanel")]
 		)
 	)
+	|> (\f -> MIf(manager.iscript.showPanel, f, MAttachBoxCopy(TFillXY(), manager.iscript.available)))
+	|> (\f -> m2t(f, manager.focus))
+}
+
+MIScriptCaptureMouse2T(manager : MaterialManager) -> Tropic {
+	TGroup2SameMetrics(TFillXY(), TShowLazy(manager.iscript.showGrid, \ -> TFillXYDrawGrid(64., 8.)))
 	|> (\f ->
-		MInteractive(
+		TInteractive(
 			[
 				MouseDown2(\h, mi -> captureIScriptMouseDownEvent(manager, h, mi, \ -> Point(0., 0.), "canvas")),
 				MouseUp2(\h, mi -> captureIScriptMouseEvent(manager, h, mi, \ -> Point(0., 0.), "canvas", "mouseup")),
@@ -386,14 +378,17 @@ MIScriptPanels2T(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tro
 			f
 		)
 	)
+	|> (\f -> TCropSize(TSized(manager.iscript.available), f))
+	|> (\f -> TLines2(TIf(manager.iscript.showPanel, TFixed(0.0, 48.0), TEmpty()), f))
 	|> (\f ->
-		MActivate(
+		TGroup2SameMetrics(
 			f,
-			[IScriptRecordingEnabled(const(false)), MZorder(manager.currentZorder), MFocusName("MIScriptPanel")]
+			TShow(
+				manager.iscript.replayCursorVisibleB,
+				TTranslate(manager.iscript.replayCursorPositionB, TSelect(manager.iscript.replayCursorShapeB, idfn))
+			)
 		)
 	)
-	|> (\f -> MShow(manager.iscript.showPanel, f))
-	|> (\f -> m2t(f, manager.focus))
 }
 
 compressScript(script : IScript) -> IScript {
@@ -587,7 +582,7 @@ MIScriptStack(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic
 							next(manager.iscript.scriptChangedB, true);
 						},
 						[],
-						[MEnabled(fselect(manager.iscript.script, FLift(\__ -> !isIScriptEmpty(manager))))]
+						[MEnabled(fnot(isIScriptEmptyB(manager)))]
 					)
 				])
 			),
