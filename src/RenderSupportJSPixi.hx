@@ -734,6 +734,10 @@ class RenderSupportJSPixi {
 		if (untyped PIXI.VERSION[0] > 3)
 			workaroundDOMOverOutEventsTransparency();
 
+		if (untyped PIXI.VERSION != "4.8.2") {
+			untyped __js__("document.location.reload(true)");
+		}
+
 		workaroundTextMetrics();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
