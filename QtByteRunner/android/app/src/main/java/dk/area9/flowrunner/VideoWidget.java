@@ -67,13 +67,13 @@ class VideoWidget extends NativeWidget {
         VideoView video = null;
         MediaPlayer player = null;
 
-        if (useNativeVideo) {
-            video = new VideoView(ctx);
-        } else {
-            player = new MediaPlayer();
-        }
-
         if (!useSurfaceTexture) {
+            if (useNativeVideo) {
+                video = new VideoView(ctx);
+            } else {
+                player = new MediaPlayer();
+            }
+
             mediaController = new MediaController(ctx) {
                 public void setMediaPlayer(final MediaController.MediaPlayerControl player) {
                     super.setMediaPlayer(new MediaController.MediaPlayerControl() {
@@ -548,6 +548,16 @@ class VideoWidget extends NativeWidget {
         handler.post(updateCallback);
     }
 
+    public void onPause() {
+        if(useSurfaceTexture)
+            group.getFlowRunnerView().queueEvent(new Runnable() {
+                @Override
+                public void run() {
+                    surfaceTexture.detachFromGLContext();
+                }
+            });
+    }
+
     public void destroySurface() {
         if (mediaPlayer != null)
             mediaPlayer.setSurface(null);
@@ -607,7 +617,7 @@ class VideoWidget extends NativeWidget {
 
     public void updateVideoTexture() {
         if (displayManagerSupported) {
-            int displayRotation = view.getDisplay().getRotation();
+            int displayRotation = group.getDisplay().getRotation();
             boolean swappedDimensions = false;
             switch (displayRotation) {
                 case Surface.ROTATION_0:
@@ -664,7 +674,6 @@ class VideoWidget extends NativeWidget {
                         reportFailure();
                     }
                 } else {
-                    surfaceTexture.detachFromGLContext();
                     surfaceTexture.attachToGLContext(texture_id);
                 }
 
@@ -674,7 +683,9 @@ class VideoWidget extends NativeWidget {
                     group.getWrapper().setVideoExternalTextureId(id, texture_id);
 
                     if (useSurfaceTexture) {
+                        surfaceTexture.updateTexImage();
                         updateVideoTexture();
+                        reportStatusEvent(PlayStart);
                         if (displayManagerSupported) {
                             DisplayManager displayManager = (DisplayManager) group.getWidgetHostContext().getSystemService(Context.DISPLAY_SERVICE);
                             displayManager.registerDisplayListener(mDisplayListener, handler);

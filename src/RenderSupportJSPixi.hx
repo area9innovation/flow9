@@ -3450,7 +3450,7 @@ private class VideoClip extends FlowContainer {
 		createVideoClip(filename, startPaused);
 	}
 
-	public function playVideoFromMediaStream(mediaStream : MediaStream, startPaused : Bool) : Void {
+	public function playVideoFromMediaStream(mediaStream : js.html.MediaStream, startPaused : Bool) : Void {
 		createVideoClip("", startPaused);
 		nativeWidget.srcObject = mediaStream;
 	}

@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,9 +19,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
-import android.hardware.camera2.CameraCaptureSession;
 import android.net.Uri;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
@@ -32,6 +29,7 @@ import android.text.TextPaint;
 import android.util.Log;
 import android.content.Context;
 import android.content.SharedPreferences;
+
 public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     /*
      * Native back-end initialization 
@@ -1570,47 +1568,20 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                 audioDeviceId, cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
     }
 
-    private synchronized void cbStartMediaRecorder(final FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-
-        recorder.mediaRecorder.start();
+    private synchronized void cbStartMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+        mediaRecorderSupport.startMediaRecorder(recorder);
     }
 
     private synchronized void cbResumeMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
-            recorder.mediaRecorder.resume();
-        }
+        mediaRecorderSupport.resumeMediaRecorder(recorder);
     }
 
     private synchronized void cbPauseMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
-            recorder.mediaRecorder.pause();
-        }
+        mediaRecorderSupport.pauseMediaRecorder(recorder);
     }
 
-    private synchronized void cbStopMediaRecorder(final FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isCamera2Supported) {
-            if (recorder.session != null) {
-//            try {
-//                session.stopRepeating();
-//            } catch (CameraAccessException e) {
-//               e.printStackTrace();
-//            }
-
-                recorder.session.close();
-
-                recorder.session.getDevice().close();
-            }
-
-        }
-        recorder.mediaRecorder.stop();
-        recorder.mediaRecorder.reset();
-        recorder.mediaRecorder.release();
-
-        if (!recorder.filePath.isEmpty()) {
-
-        }
-
-        recorder.tempFile.delete();
+    private synchronized void cbStopMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
+        mediaRecorderSupport.stopMediaRecorder(recorder);
     }
 
 }

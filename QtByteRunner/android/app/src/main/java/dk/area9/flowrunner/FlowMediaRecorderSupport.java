@@ -12,19 +12,25 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.hardware.display.DisplayManager;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
+import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.util.Size;
 import android.util.SparseIntArray;
 import android.view.Surface;
 
+import org.java_websocket.client.WebSocketClient;
+import org.java_websocket.handshake.ServerHandshake;
+
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,13 +56,15 @@ public class FlowMediaRecorderSupport {
         public File tempFile;
         public String filePath;
         public String websocketUri;
+        public int cbOnWebSocketError;
 
-        public FlowMediaRecorderObject(MediaRecorder mediaRecorder, CameraCaptureSession session, File tempFile, String filePath, String websocketUri) {
+        public FlowMediaRecorderObject(MediaRecorder mediaRecorder, CameraCaptureSession session, File tempFile, String filePath, String websocketUri, int cbOnWebSocketError) {
             this.mediaRecorder = mediaRecorder;
             this.session = session;
             this.tempFile = tempFile;
             this.filePath = filePath;
             this.websocketUri = websocketUri;
+            this.cbOnWebSocketError = cbOnWebSocketError;
         }
     }
 
@@ -74,8 +82,8 @@ public class FlowMediaRecorderSupport {
         }
     }
 
-    private Map<String, String> videoDevices = new HashMap<String, String>();
-    private Map<String, String> audioDevices = new HashMap<String, String>();
+    private Map<String, String> videoDevices = new HashMap<>();
+    private Map<String, String> audioDevices = new HashMap<>();
 
     private FlowRunnerActivity flowRunnerActivity;
     private FlowRunnerWrapper wrapper;
@@ -171,7 +179,7 @@ public class FlowMediaRecorderSupport {
                     mediaRecorder.setVideoFrameRate(profile.videoFrameRate);
                 }
 
-                final FlowMediaRecorderObject flowRecorder = new FlowMediaRecorderObject(mediaRecorder, null, null, filePath, websocketUri);
+                final FlowMediaRecorderObject flowRecorder = new FlowMediaRecorderObject(mediaRecorder, null, null, filePath, websocketUri, cbOnWebsocketErrorRoot);
 
                 try {
                     File outputFile = File.createTempFile("record", null);
@@ -183,7 +191,6 @@ public class FlowMediaRecorderSupport {
                     wrapper.cbOnRecorderError(cbOnRecorderErrorRoot, e.getMessage());
                 }
 
-                mediaRecorder.setOutputFile(filePath);
                 if (recordVideo) {
                     try {
                         CameraCharacteristics characteristics = manager.getCameraCharacteristics(videoDeviceId);
@@ -207,29 +214,30 @@ public class FlowMediaRecorderSupport {
 
                         manager.openCamera(videoDeviceId, new CameraDevice.StateCallback() {
                             @Override
-                            public void onOpened(CameraDevice camera) {
+                            public void onOpened(@NonNull CameraDevice camera) {
                                 try {
                                     flowMediaStream.surfaceTexture = new SurfaceTexture(0);
+                                    flowMediaStream.surfaceTexture.detachFromGLContext();
                                     flowMediaStream.surfaceTexture.setDefaultBufferSize(flowMediaStream.width, flowMediaStream.height);
-                                    Surface surface = new Surface(flowMediaStream.surfaceTexture);
+                                    Surface previewSurface = new Surface(flowMediaStream.surfaceTexture);
 
                                     mediaRecorder.prepare();
                                     List<Surface> list = new ArrayList<>();
 
                                     final CaptureRequest.Builder captureRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
                                     Surface recorderSurface = mediaRecorder.getSurface();
-
                                     list.add(recorderSurface);
-                                    list.add(surface);
+                                    list.add(previewSurface);
                                     captureRequest.addTarget(recorderSurface);
-                                    captureRequest.addTarget(surface);
+                                    captureRequest.addTarget(previewSurface);
 
                                     camera.createCaptureSession(list, new CameraCaptureSession.StateCallback() {
                                         @Override
-                                        public void onConfigured(CameraCaptureSession session) {
+                                        public void onConfigured(@NonNull CameraCaptureSession session) {
                                             captureRequest.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
                                             try {
                                                 session.setRepeatingRequest(captureRequest.build(), null, null);
+
                                             } catch (CameraAccessException e) {
                                                 e.printStackTrace();
                                             }
@@ -240,7 +248,13 @@ public class FlowMediaRecorderSupport {
                                         }
 
                                         @Override
-                                        public void onConfigureFailed(CameraCaptureSession session) {
+                                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                                        }
+
+                                        @Override
+                                        public void onClosed(@NonNull CameraCaptureSession session) {
+                                            super.onClosed(session);
+                                            session.getDevice().close();
                                         }
                                     }, null);
                                 } catch (Exception e) {
@@ -249,11 +263,13 @@ public class FlowMediaRecorderSupport {
                             }
 
                             @Override
-                            public void onDisconnected(CameraDevice camera) {
+                            public void onDisconnected(@NonNull CameraDevice camera) {
+                                camera.close();
                             }
 
                             @Override
-                            public void onError(CameraDevice camera, int error) {
+                            public void onError(@NonNull CameraDevice camera, int error) {
+                                camera.close();
                                 wrapper.cbOnRecorderError(cbOnRecorderErrorRoot, "CameraDevice error " + error);
                             }
                         }, null);
@@ -272,4 +288,99 @@ public class FlowMediaRecorderSupport {
         }
     }
 
+    public void startMediaRecorder(FlowMediaRecorderObject recorder) {
+        recorder.mediaRecorder.start();
+    }
+
+    public void resumeMediaRecorder(FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
+            recorder.mediaRecorder.resume();
+        }
+    }
+
+    public void pauseMediaRecorder(FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isPauseResumeSupported) {
+            recorder.mediaRecorder.pause();
+        }
+    }
+
+    public void stopMediaRecorder(final FlowMediaRecorderObject recorder) {
+        if (FlowMediaRecorderSupport.isCamera2Supported) {
+            if (recorder.session != null) {
+                try {
+                    recorder.session.stopRepeating();
+                } catch (CameraAccessException e) {
+                    e.printStackTrace();
+                }
+
+                recorder.session.close();
+            }
+
+            recorder.mediaRecorder.stop();
+            recorder.mediaRecorder.reset();
+            recorder.mediaRecorder.release();
+
+            if (!recorder.filePath.isEmpty()) {
+                InputStream is = null;
+                OutputStream os = null;
+                try {
+                    is = new FileInputStream(recorder.tempFile);
+                    os = new FileOutputStream(recorder.filePath);
+                    byte[] buffer = new byte[1024];
+                    int length;
+                    while ((length = is.read(buffer)) > 0) {
+                        os.write(buffer, 0, length);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    try {
+                        is.close();
+                        os.close();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+
+            if (!recorder.websocketUri.isEmpty()) {
+                WebSocketClient client = new FlowWebSocketClient(URI.create(recorder.websocketUri)) {
+                    @Override
+                    public void onOpen(ServerHandshake serverHandshake) {
+                        InputStream is = null;
+                        try {
+                            is = new FileInputStream(recorder.tempFile);
+                            byte[] buffer = new byte[1024 * 1024];
+                            while (is.read(buffer) > 0) {
+                                send(buffer);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            try {
+                                is.close();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        close();
+                    }
+
+                    @Override
+                    public void onClose(int code, String reason, boolean remote) {
+                        recorder.tempFile.delete();
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        wrapper.cbOnRecorderError(recorder.cbOnWebSocketError, e.getMessage());
+                        recorder.tempFile.delete();
+                    }
+                };
+                client.connect();
+            } else {
+                recorder.tempFile.delete();
+            }
+        }
+    }
 }
