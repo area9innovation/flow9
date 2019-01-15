@@ -3543,7 +3543,7 @@ private class VideoClip extends FlowContainer {
 
 		nativeWidget.width = nativeWidget.videoWidth;
 		nativeWidget.height = nativeWidget.videoHeight;
-		metricsFn(nativeWidget.width / RenderSupportJSPixi.backingStoreRatio, nativeWidget.height / RenderSupportJSPixi.backingStoreRatio);
+		metricsFn(nativeWidget.width, nativeWidget.height);
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
