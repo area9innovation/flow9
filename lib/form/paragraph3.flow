@@ -35,7 +35,14 @@ GhostForm ::= Form, Ghost, CoordinateInspectElement, InspectGhost;
 // For dynamic elements, we use a ghost to allow reuse of the physical forms
 Ghosted ::= Empty, Ghost, CoordinateInspectElement, InspectGhost;
 	CoordinateInspectElement(index : int, xc : DynamicBehaviour<double>, yc : DynamicBehaviour<double>, wh : DynamicBehaviour<WidthHeight>, lineHeight : DynamicBehaviour<double>, form : Form);
-	InspectGhost(xc : DynamicBehaviour<double>, yc : DynamicBehaviour<double>, wh : DynamicBehaviour<WidthHeight>, lineHeight : DynamicBehaviour<double>, form : Form);
+	InspectGhost(
+		xc : DynamicBehaviour<double>,
+		yc : DynamicBehaviour<double>,
+		wh : DynamicBehaviour<WidthHeight>,
+		lineHeight : DynamicBehaviour<double>,
+		lineNumber : DynamicBehaviour<int>,
+		form : Form
+	);
 
 // Each word to be placed in the paragraph, including the metrics and as well as any ghost constructed
 ParaWord(word : ParaAtomic, metrics : Behaviour<FormMetrics>, ghosted : Ghosted, form: GhostForm);
@@ -156,7 +163,7 @@ expandGlueFragments(elements : [ParaElement], glueNext : bool, running : List<Pa
 					NewLine(): acc2;
 					Space(f): Cons(f, acc2);
 					LinePart(pr, i, po): Cons(i, acc2);
-					InspectElement(i, x, y, wh, lh, e): {
+					InspectElement(i, x, y, wh, lh, ln, e): {
 						switch (e : InspectableElement) {
 							Space(f): Cons(f, acc2);
 							Text(t, s): Cons(e, acc2);
@@ -221,7 +228,7 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 			line : Form = Line(oc);
 			getDynamicFormSize(line) |> s2w;
 		}
-		InspectElement(i, x, y, wh, lh, e): {
+		InspectElement(i, x, y, wh, lh, ln, e): {
 			switch (e : InspectableElement) {
 				Text(t, s): {
 					ParaWord(e, const(getStaticFormSize(e)), CoordinateInspectElement(i, x, y, wh, lh, e), Empty());
@@ -231,7 +238,7 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 				}
 				default: {
 					s = getDynamicFormSize(cast(e : InspectableElement -> Form));
-					ParaWord(Empty(), s.second, InspectGhost(x, y, wh, lh, s.first), Empty());
+					ParaWord(Empty(), s.second, InspectGhost(x, y, wh, lh, ln, s.first), Empty());
 				}
 			}
 		}
@@ -316,7 +323,7 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 					switch (_word.ghosted: Ghosted) {
 						Empty(): cast(_word.word : ParaAtomic -> Form);
 						Ghost(xc, yc, f): f;
-						InspectGhost(xc, yc, wh, lh, f): f;
+						InspectGhost(__, __, __, __, __, f): f;
 						CoordinateInspectElement(index, x, y, wh, lh, f): f;
 					};
 				};
@@ -361,7 +368,7 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 							switch (g : Ghosted) {
 								Empty(): cast(_word.word : ParaAtomic -> Form);
 								Ghost(xc, yc, fm): g;
-								InspectGhost(xc, yc, wh, lh, fm): g;
+								InspectGhost(__, __, __, __, __, fm): g;
 								CoordinateInspectElement(index, x, y, wh, lh, fm): g;
 							}
 						));
@@ -457,7 +464,7 @@ renderParaLines(availableWidth : double, lines : [ParaLine], tightWidth : bool, 
 			} else {
 				alignment;
 			}
-		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent);
+		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
@@ -483,8 +490,9 @@ getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Pair<Gho
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
-RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, alignment : ParaLineAlignment, lineIndent: double) -> ParaLineResult {
-	//println("Render line " + d2s(width));
+RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, alignment : ParaLineAlignment, lineIndent: double, lineNumber : int) -> ParaLineResult {
+
+	println("Render line " + d2s(width) + " " + i2s(lineNumber));
 	optimizedLine = getOptimizedLine(words, alignment);
 	metrics = map(optimizedLine, \p -> getValue(p.second));
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
@@ -526,14 +534,18 @@ RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, al
 					nextDistinct(yc, y + dy);
 					None();
 				}
-				InspectGhost(xc, yc, wh, lh, fm): {
+				InspectGhost(xc, yc, wh, lh, ln,  fm): {
+					println("this is line number " + toString(lineNumber));
 					nextDistinct(xc, ^alignmentOffset);
 					nextDistinct(yc, y + dy);
 					nextDistinct(wh, WidthHeight(m.width, m.height));
 					nextDistinct(lh, lineHeight);
+					nextDistinct(ln, lineNumber);
 					None();
 				}
 				CoordinateInspectElement(in, xc, yc, wh, lh, fm): {
+					println("this is id " + toString(in));
+					println("this is line number " + toString(lineNumber));
 					fo = Translate(const(^alignmentOffset), const(y + dy), fm);
 					nextDistinct(xc, ^alignmentOffset);
 					nextDistinct(yc, y + dy);
@@ -594,7 +606,7 @@ constructDynamicParaForms(words : [ParaWord]) -> [Form] {
 		switch (word.ghosted : Ghosted) {
 			Empty(): None();
 			Ghost(x, y, f): Some(Translate(x, y, f));
-			InspectGhost(xc, yc, wh, lh, f): Some(Translate(xc, yc, f));
+			InspectGhost(xc, yc, __, __, __, f): Some(Translate(xc, yc, f));
 			CoordinateInspectElement(i, x, y, wh, lh, f): None();
 		}
 	})
@@ -613,7 +625,7 @@ getWordText(w: ParaWord) -> string {
 		Text(t, __): t;
 		Empty(): if (isUrlParameterTrue("new") || isUrlParameterTrue("wigirtlwordorderfix")) {
 			switch (w.form) {
-				InspectGhost(__, __, __, __, form): getFormText(form);
+				InspectGhost(__, __, __, __, __, form): getFormText(form);
 				Ghost(__, __, form): getFormText(form);
 				default: "";
 			}
