@@ -1,0 +1,388 @@
+// © Copyright 2014 Area9 Innovation. All rights reserved
+
+import form/interactiveutils; // absorbMouseEvents, absorbKeyEvents
+import api_filesystem;
+import api_filebrowser;
+import ui/messagebox;
+
+import form/styleform;
+
+export {
+	showCustomFileBrowser(caption: string, ext:[string], buttons : [FileBrowserButtons], style : [FbStyle]) -> void;
+
+	FbStyle ::= FbModalWindow, FbAdditionalText, FbLimitAccessToUpperFolder, FbStartDir, FbCurrentPath;
+		FbModalWindow(modal : bool);
+		FbAdditionalText(text : string);
+		FbLimitAccessToUpperFolder(mode : bool);
+		FbStartDir(dir : string);
+		FbCurrentPath(path : DynamicBehaviour<string>);
+
+
+	FileBrowserButtons ::= OpenFBB, SaveFBB, CancelFBB, CustomFBB;
+		OpenFBB(func:(string) -> void);
+		SaveFBB(func:(string) -> void);
+		CancelFBB(func:() -> void);
+		CustomFBB(caption:string, func:(string, string) -> void);
+
+	// Allow to set Filebrowser API
+	// Example of usage fileDir, imageDir:
+	// 		Some(Pair(initFolderB, true))	- value of initial folder will be taken from behaviour initFolderB each time when CallFileBrowser is call
+	// 		Some(Pair(const(""), true))		- initial folder always will be "" (current working dir for c++, root website folder for flash)
+	// 		None()							- don't initialize this API
+	setFileBrowserAPI(fileDir : Maybe<Pair<Behaviour<string>, bool>>, imageDir : Maybe<Pair<Behaviour<string>, bool>>) -> void;
+}
+
+currentDialogPath = make("");
+
+setFileBrowserAPI(fileDir : Maybe<Pair<Behaviour<string>, bool>>, imageDir : Maybe<Pair<Behaviour<string>, bool>>) -> void {
+	maybeApply(fileDir, \_fileDir ->{
+		unpair(_fileDir, \fileStartDirB, limitFileFolder -> {
+			SetFileBrowser(OpenFileDialog(), \ext, onDone -> showCustomFileBrowser("Open file", ext, [OpenFBB(onDone), CancelFBB(nop)], [FbCurrentPath(currentDialogPath), FbStartDir(getValue(fileStartDirB)), FbLimitAccessToUpperFolder(limitFileFolder)]));
+			SetFileBrowser(SaveFileDialog(), \ext, onDone -> showCustomFileBrowser("Save file", ext, [SaveFBB(onDone), CancelFBB(nop)], [FbCurrentPath(currentDialogPath), FbStartDir(getValue(fileStartDirB)), FbLimitAccessToUpperFolder(limitFileFolder)]));
+		})
+	});
+	maybeApply(imageDir, \_imageDir ->{
+		unpair(_imageDir, \imageStartDirB, limitImageFolder -> {
+			SetFileBrowser(MediaFileDialog(), \ext, onDone -> showCustomFileBrowser("Insert an image", ext, [OpenFBB(onDone), CancelFBB(nop)], [FbModalWindow(false), FbStartDir(getValue(imageStartDirB)), FbLimitAccessToUpperFolder(limitImageFolder)]));
+		})
+	});
+}
+
+folderIcon = FixSize(64.0, 64.0, Scale(const(0.5), const(0.5), Picture(fixPictureUrl("images/folder.png"), [])));
+backIcon = FixSize(64.0, 64.0, Scale(const(0.5), const(0.5), Picture(fixPictureUrl("images/back.png"), [])));
+tipsIcon = FixSize(24.0, 24.0, Scale(const(0.15), const(0.15), Picture("images/info.png", [])));
+
+createDirFormUI(name : string, dirOnly : bool, currentRelativeLibraryPath : DynamicBehaviour<string>, selectedFileForm : DynamicBehaviour<string>) {
+	content = Lines([
+		folderIcon,
+		Align(0.5, 0.0, Text(name, []))
+	]);
+
+	isSelected = select(selectedFileForm, \sf -> if (sf == name) 1 else 0);
+	ui = Behind(\w, h -> Switch(isSelected,
+		[
+			Empty(),
+			Graphics(roundedRect(w, h, 2.0), [Fill(0x0000ff), FillOpacity(0.7)])
+		]),
+		Border(6.0, 3.0, 6.0, 3.0, content)
+	);
+
+	Button(
+		ui, 
+		\ -> {
+			if(getValue(isSelected) == 0) {
+				next(selectedFileForm, name);
+			} else {
+				curPath = getValue(currentRelativeLibraryPath);
+				next(currentRelativeLibraryPath, 
+					{
+						if (curPath == "") {
+							""
+						} else {
+							if (!endsWith(curPath, "/")) curPath + "/" else curPath
+						}
+					} + name
+				)
+			}
+		}
+	)
+}
+
+createFileFormUI(name, currentRelativeLibraryPath : DynamicBehaviour<string>, selectedFileForm : DynamicBehaviour<string>) -> Form {
+	s = getValue(currentRelativeLibraryPath);
+	fullName = (if (s != "") s + "/" else "") + name;
+
+	preview = resolveContent2Form(fullName) |> \form -> withRoundedShadow(FixSize(64.0, 64.0, scaleToFit(64.0, 64.0, form).first));
+
+	whileLoading = WhileLoading(
+		preview,
+		withRoundedShadow(FixSize(64.0, 64.0, Align(0.5, 0.5, Text("N/A", [Fill(0x666666), FontSize(16.0)])))),
+		\ -> {}
+	);
+
+	i = strLastIndexOf(name, ".");
+	name0 = if (i != -1) strLeft(name, i)else name;
+	shortName = if (strlen(name0) > 12) strLeft(name0, 9)+ "..." else name0;
+
+	isSelected = select(selectedFileForm, \sf -> if (sf == name) 1 else 0);
+
+	content = Lines([
+		Switch(isSelected,
+		[
+			whileLoading,
+			Draggable2(1, Pair("addToCanvas", fullName), whileLoading, whileLoading, whileLoading),
+		]),
+		Align(0.5, 0.0, withTooltip(Text(shortName, []), name))
+	]);
+
+	ui = Behind(\w, h -> Switch(isSelected,
+		[
+			Empty(),
+			Graphics(roundedRect(w, h, 2.0), [Fill(0x0000ff), FillOpacity(0.7)])
+		]),
+		Border(6.0, 3.0, 6.0, 3.0, content)
+	);
+
+	Button(ui, \ -> next(selectedFileForm, name))
+}
+
+showContentUI(dirs: [string], files: [string], currentRelativeLibraryPath : DynamicBehaviour<string>, selectedFileForm : DynamicBehaviour<string>, limitFolder : string) -> Form {
+	lastSlash = strLastIndexOf(getValue(currentRelativeLibraryPath), "/");
+
+	backButton = if (contains(dirs, "..")&&
+					(!endsWith(getValue(currentRelativeLibraryPath), limitFolder)) && (!endsWith(getValue(currentRelativeLibraryPath), "/")) ) {
+			prevDir1 = if (lastSlash > 0) strLeft(getValue(currentRelativeLibraryPath), lastSlash) else "";
+			prevDir = if (endsWith(prevDir1, ":")) prevDir1+"/" else prevDir1;
+			button = SimpleButton(backIcon, backIcon, "", \ -> next(currentRelativeLibraryPath, prevDir));
+
+			[
+				Border(6.0, 3.0, 6.0, 3.0,
+					Lines([
+						button,
+						Align(0.5, 0.0, Text("..", []))
+					])
+				)
+			]
+		} else {
+			[]
+	}
+
+	Available(const(400.0), const(400.0),
+		Lines(
+			map(
+				splitByNumber(
+					concat3(
+						backButton,
+						map(filter(dirs, \dir->dir != ".."), \d -> createDirFormUI(d, if(length(files) == 0) true else false, currentRelativeLibraryPath, selectedFileForm)),
+						map(files, \f -> createFileFormUI(f, currentRelativeLibraryPath, selectedFileForm))
+					),
+					6
+				),
+				\row -> Cols(row)
+			)
+		)
+	);
+}
+
+makeLibraryUI(currentPath: string, ext: [string], currentRelativeLibraryPath : DynamicBehaviour<string>, selectedFileForm : DynamicBehaviour<string>, limitFolder : string) -> Form {
+	caption = Text("Files in: " + currentPath, []);
+
+	items = make(Text("Loading content, please wait...", [Fill(0x666666)]));
+
+	getLibraryContent(currentPath, ext, \dirs, files -> {
+		next(items, showContentUI(dirs, files, currentRelativeLibraryPath, selectedFileForm, limitFolder));
+	}, \error -> {
+		next(items, Text("Error: " + error, []));
+	});
+
+	Lines([
+		caption,
+		Fixed(400.0, 4.0),	// Make it wide enough
+		Mutable(items),
+	])
+	|> \f -> frameAround(Border(4.0, 4.0, 4.0, 4.0, f), 1.0, 0x120000)
+	|> \f1 -> Scrollable(make(0.0), make(0.0), const(480.0), const(400.0), f1)
+}
+
+sortString(aa : [string]) -> [string] {
+	tree = fold(aa, makeTree(), \acc, a ->{
+		setTree(acc, toUpperCase(a), a)
+	});
+	getTreeValues(tree);
+}
+
+getLibraryContent(path, ext: [string], callback: (dirs: [string], files: [string]) -> void, onError : (string) -> void) {
+	getFilesystemAPI().readDirectory(path, \data -> {
+		dd = strSplit(data, "\n");
+
+		if (length(dd) < 2) {
+			onError("Too few elements. " + data)
+		} else {
+			funcs = ref [];
+
+			nonEmpty = neq("");
+			okExt = if (ext == []) 
+					\f -> false 
+				else 
+					\f -> exists(ext, \val -> endsWith(f, val));
+
+			// input structure is Pair(dirs, files)
+			refArrayPush(funcs, \input : Pair<[string], [string]>, onDone -> {
+				dirs = filter(input.first, nonEmpty);
+				files = filter(input.second, \fe -> nonEmpty(fe) && okExt(fe) );
+				onDone(Pair(dirs, files));
+			});
+			
+			// sort of dirs
+			refArrayPush(funcs, \input : Pair<[string], [string]>, onDone -> {
+				onDone(Pair(sortString(input.first), input.second));
+			});
+
+			// sort of files
+			refArrayPush(funcs, \input, onDone -> {
+				onDone(Pair(input.first, sortString(input.second)));
+			});
+
+			refArrayPush(funcs, \input, onDone -> {
+				callback(input.first, input.second);
+			});
+
+			threadApplyDeferred(Pair(strSplit(dd[0], ","), strSplit(dd[1], ",")), ^funcs);
+		}
+	});
+}
+
+showCustomFileBrowser(caption: string, ext:[string], buttons : [FileBrowserButtons], styles : [FbStyle]) -> void {
+	modalWindow = ref true;
+	currentPath = ref make("");
+	startDir = ref "";
+	limitAccess = ref false;
+	additionalText = ref "";
+	iter(styles, \style ->{
+		switch (style) {
+			FbModalWindow(modal): {
+				modalWindow := modal;
+			};
+			FbAdditionalText(text): {
+				additionalText := text;
+			};
+			FbLimitAccessToUpperFolder(mode): {
+				limitAccess := mode;
+			};
+			FbStartDir(dir): {
+				startDir := dir;
+			};
+			FbCurrentPath(path): {
+				currentPath := path;
+			};
+		}
+	});
+
+	unsub = ref \ -> {};
+	closeWindow = ref \ -> {};
+	closeMe = \ -> { ^unsub(); (^closeWindow)(); };
+
+
+	if (getValue(^currentPath) == "") {
+		b = strReplace(getFilesystemAPI().resolveRelativePath("."), "\\", "/");
+		s = ^startDir;
+		p = b + (if ((b != "")&&(s != "")) "/" else "") + s;
+		next(^currentPath, p);
+	};
+	selectedFileForm = make("");	// Currently selected file
+
+	form = {
+		unsub := subscribe(^currentPath, \cp -> next(selectedFileForm, ""));	// Every time path changes we don't have a selection anymore
+
+		fileList = makeEmpty();
+
+		uns = subscribe(^currentPath, \curPath -> {
+			next(fileList, makeLibraryUI(curPath, ext, ^currentPath, selectedFileForm, if (^limitAccess) ^startDir else ":::"));
+		});
+
+		buttonForms = map(buttons, \button -> {
+			switch(button) {
+				OpenFBB(func): {
+					orangeSkinButtonWithWidth(100.0, "Open", make(true), "Enter", \ -> {
+						filename = getValue(^currentPath) + "/" + getValue(selectedFileForm);
+						getFilesystemAPI().isDirectory(filename, \resultD -> {
+							if (resultD) {
+								next(^currentPath, filename);
+							} else {
+								getFilesystemAPI().fileExists(filename, \resultF -> {
+									if (resultF) {
+										closeMe();
+										func(filename);
+									} else {
+										println("File '" + filename + "' doesn't exist.")
+									}
+								})
+							}
+						})
+					})
+				};
+				SaveFBB(func): {
+					orangeSkinButtonWithWidth(100.0, "Save", make(true), "Enter", \ -> {
+						filename = getValue(^currentPath) + "/"+ getValue(selectedFileForm);
+						getFilesystemAPI().isDirectory(filename, \result -> {
+							if (result) {
+								next(^currentPath, filename);
+							} else {
+								filename1 = if (strContains(filename, ".")) {
+									filename
+								} else if (length(ext) > 0) {
+									filename + ext[0] 
+								} else {
+									filename;
+								};
+								getFilesystemAPI().fileExists(filename1, \result1 -> {
+									if (result1) {
+										withConfirmation("File with specified name has already exist.\nDo you want to rewrite it?", 
+											\->{
+												closeMe();
+												func(filename1);
+											}
+										)
+									} else {
+										closeMe();
+										func(filename1);
+									}
+								})
+							}
+						})
+					})
+				};
+				CancelFBB(func): {
+					orangeSkinButtonWithWidth(100.0, "Cancel", make(true), "", \ -> { closeMe(); func(); })
+				};
+				CustomFBB(cap, func): {
+					orangeSkinButtonWithWidth(100.0, cap, make(true), "", \ -> func(getValue(^currentPath), getValue(selectedFileForm)))
+				};
+			}
+		});
+
+		fileNameField = Cols([
+			Text("Filename:", []),
+			Fixed(5.0, 0.0),
+			Rounded(5.0,[Stroke(0x000000)], Background([Fill(0xffffff)],
+				TextEditor(selectedFileForm, 420.0, 20.0, [FontSize(16.0)], [Focus(true)])
+			))
+		]);
+
+		tipsForm = {
+			if (^additionalText != "") {
+				f = Cols([
+					tipsIcon,
+					Text(^additionalText, [FontSize(12.0)])
+				]);
+				Border(4.0, 4.0, 4.0, 4.0, f)
+			} else Empty();
+		};
+
+		ui = HeaderFooter(
+			tipsForm,
+			Mutable(fileList),
+			Lines([
+				fileNameField,
+				Fixed(0.0, 10.0),
+				Border(0.0, 4.0, 0.0, 4.0, Cols(
+					interleave(
+						buttonForms,
+						Fixed(6.0, 0.0)
+					)
+				))
+			])
+		);
+
+		Disposer(
+			makeOrangeWindow(caption, Available(const(600.0), const(400.0), ui)),
+			uns
+		);
+	};
+
+	closeWindow := if (^modalWindow) {
+		showModal(absorbKeyEvents(absorbMouseEvents(SimpleMovable(Align(0.5, 0.5, form)))))
+	} else {
+		render(DragArea(absorbMouseEvents(SimpleMovable(Align(1.0, 0.5, form)))))
+	}
+}

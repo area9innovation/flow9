@@ -388,11 +388,12 @@ wasm_copy_item(dst : int, src : int, type : int) {
 		wasm_i32_store(dst + 4, wasm_i32_load(src + 4));
 	} else if (type == 1 || type == 2) { // bool, int
 		wasm_i32_store(dst, wasm_i32_load(src));
-	} else if (type == 4 || type == 10) { // string, struct
+	} else if (type == 4 || type == 10 || type == 11) { // string, struct, union
 		addr = wasm_i32_load(src);
 		wasm_i32_store(dst, addr);
 		wasm_inc_refcnt(addr);
 	} else {
+		printi(type);
 		wasm_unreachable();
 	}
 }
@@ -452,7 +453,8 @@ wasm_get_argtype(f : int, args : int, ret : bool) -> int {
 		elemType == 6 ||	// native
 		elemType == 9 ||	// array
 		elemType == 10 ||	// struct
-		elemType == 11		// union
+		elemType == 11 ||	// union
+		elemType == 12		// function
 	)) {
 		prints("unknown elemType");
 		printi(elemType);
@@ -658,52 +660,67 @@ wasm_do_filter(dst : int, src : int, n : int, f : int, elemSize : int, idx : int
 }
 */
 
+// fold does not need special processsing for ref/stack accumulator - it is just passed as is
+// it does need special processing based on array element double/ref/stack - this is done dynamically
+
 wasm_fold_i32(arr : int, acc : int, f : int) -> int {
-	wasm_do_fold_init(arr, acc, f, false, false)	
+	wasm_do_fold_init(arr, acc, f, false)	
 }
 
 wasm_fold_i32_ref(arr : int, acc : int, f : int) -> int {
-	wasm_do_fold_init(arr, acc, f, true, false)
+	wasm_do_fold_init(arr, acc, f, false)
 }
 
 wasm_foldi_i32(arr : int, acc : int, f : int) -> int {
-	wasm_do_fold_init(arr, acc, f, false, true)	
+	wasm_do_fold_init(arr, acc, f, true)	
 }
 
 wasm_foldi_i32_ref(arr : int, acc : int, f : int) -> int {
-	wasm_do_fold_init(arr, acc, f, true, true)
+	wasm_do_fold_init(arr, acc, f, true)
 }
 
 wasm_fold_f64(arr : int, acc : double, f : int) -> double {
-	wasm_do_fold_init(arr, acc, f, false, false)
+	wasm_do_fold_init(arr, acc, f, false)
 }
 
 wasm_foldi_f64(arr : int, acc : double, f : int) -> double {
-	wasm_do_fold_init(arr, acc, f, false, true)
+	wasm_do_fold_init(arr, acc, f, true)
 }
 
-wasm_do_fold_init(arr : int, acc : ?, f : int, heap : bool, isFoldi : bool) -> ? {
+/*
+  There are 4 refcounts to manage:
+    - to closure (f) - just increase upon every function call
+	- accumulator (acc) - do nothing, we got it live and we pass as is to function, get 
+		return value, pass further - all inc's/dec's are compensated
+	- to array element [if needed]
+	- to array itself
+*/
+wasm_do_fold_init(arr : int, acc : ?, f : int, isFoldi : bool) -> ? {
 	idx = if (isFoldi) 3 else 2;
 	elemType = wasm_get_argtype(f, idx, false);
+	elemHeap = isHeap(elemType);
 	elemSize = type2size(elemType);
 	
 	n = wasm_length(arr);
 
-	if (n == 0) {
+	res = if (n == 0) {
 		acc
 	} else {
-		wasm_do_fold(arr + 8, acc, f, elemSize, n, 0, isFoldi, heap)
-	}	
+		wasm_do_fold(arr + 8, acc, f, elemSize, n, 0, isFoldi, elemHeap)
+	}
+	wasm_dec_refcnt(arr);
+	res;
 }
 
 wasm_do_fold_call(idx : int, acc : ?, xx : ??, f : int, isFoldi : bool) -> ? {
 	faddr = wasm_i32_load(f + 8);
-	wasm_inc_refcnt(f);
+	// increase refcnt for closure pointer
+	wasm_inc_refcnt(f); 
 	if(!isFoldi) wasm_call_indirect2ret(acc, xx, f, faddr)
 	else wasm_call_indirect3ret(idx, acc, xx, f, faddr)
 }
 
-wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, heap : bool) -> ? {
+wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, elemHeap : bool) -> ? {
 	if (idx == n) {
 		acc;
 	} else {
@@ -711,9 +728,9 @@ wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, is
 		y = if (elemSize == 8) {
 			wasm_do_fold_call(idx, acc, wasm_f64_load(src), f, isFoldi)
 		} else {
-			wasm_do_fold_call(idx, acc, wasm_i32_load_inc(src, heap), f, isFoldi)
+			wasm_do_fold_call(idx, acc, wasm_i32_load_inc(src, elemHeap), f, isFoldi)
 		}
-		wasm_do_fold(arr, y, f, elemSize, n, idx + 1, isFoldi, heap);
+		wasm_do_fold(arr, y, f, elemSize, n, idx + 1, isFoldi, elemHeap);
 	}
 }
 
@@ -950,6 +967,7 @@ subrange(arr : int, start : int, len : int) -> int {
 }
 
 replace(arr : int, idx : int, elem : int) -> int {
+	prints("replace() not implemented yet");
 	wasm_unreachable();
 	0
 }

@@ -16,29 +16,27 @@ log = logging.getLogger(flower.NAME)
 CONFIG_PATH = "#path"
 CONFIG_CACHE = {}
 
-def _findConfig(path):
+def _findConfig(dirpath):
     """Find flow.config file recursively in current directory & climbing up, caching everything"""
-    if path in CONFIG_CACHE:
-        return CONFIG_CACHE.get(path)
+    try:
+        return CONFIG_CACHE[dirpath]
+    except KeyError:
+        configpath = op.join(dirpath, 'flow.config')
+        if op.exists(configpath):
+            return CONFIG_CACHE.setdefault(dirpath, configpath)
 
-    root = op.dirname(path)
-    if path == root:  # this is the end
-        return None
+        root = op.dirname(dirpath)
+        if dirpath == root:  # this is the end
+            return None
 
-    configpath = op.join(root, 'flow.config')
-
-    if op.exists(configpath):
-        return CONFIG_CACHE.setdefault(path, configpath)
-
-    found = _findConfig(root)
-    return CONFIG_CACHE.setdefault(path, found)
+        return CONFIG_CACHE.setdefault(dirpath, _findConfig(root))
 
 
 def findConfig(path):
     """Find applicable flow.config file for path, preferably in cache. May return None"""
     # prefer dirs to files, since neighbouring files will have same config
-    searchpath = op.dirname(path) if op.splitext(path)[1] else path
-    configpath = _findConfig(searchpath)
+    dirpath = op.dirname(path) if op.splitext(path)[1] else path
+    configpath = _findConfig(dirpath)
     return configpath
 
 
