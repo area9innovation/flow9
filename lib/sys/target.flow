@@ -1,0 +1,298 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import ds/array;
+import math/math;
+import runtime;
+import devmode;
+
+export {
+	native getTotalMemoryUsed : io () -> double = Native.getTotalMemoryUsed;
+
+	// What rendering target is this? 
+	// Format: comma-separated list of tokens.
+	// "flash", "js", "neko", "qt", "opengl", "dpi=..." defined so far.
+	native getTargetName : io () -> string = Native.getTargetName;
+
+	allTargets = strSplit(getTargetName(), ",");
+
+	hasTargetName(s : string) -> bool { contains(allTargets, s) }
+
+	// Are we targeting javascript, qt, flash, etc.?
+	js : bool;
+	nodejs : bool;
+	nwjs : bool;
+	jslibrary : bool;
+	qt : bool;
+	opengl : bool;
+	flash : bool;
+	xaml : bool;
+	neko : bool;
+	cpp : bool;
+	java : bool;
+	csharp : bool;
+
+	cgi : bool;
+
+	// Is this a mobile device (iOS or Android)?
+	// 'true' for C++ mobile targets only
+	// Also set when using "--touch" parameter with desktop QtByteRunner
+	mobile : bool;
+
+	// Do we have a GUI?
+	nogui : bool;
+
+	// There is getPixelsPerCm() in zorder.flow
+	// [-Revise-] Should we pass the value as string in the targets tokens too?
+	screenDPI : int;
+
+	// Does not work with c++ runner yet!
+	windows : () -> bool;
+	macosx : () -> bool;	// NOTE this may return true also for iOS
+	linux : () -> bool;
+	ios : () -> bool;
+	android : () -> bool;
+	
+	windowsxp : () -> bool;  
+
+	isMobileBrowser() -> bool;
+
+	// name getOs makes collision in Web target with many JS, HTML, PHP files
+	getOsFlow : () -> string;
+	getFlashVersion : () -> string;
+	getBrowser : () -> string;
+	getResolution : () -> string;
+	getUserAgent() -> string;
+
+	// No Mask support in target
+	targetNoMask : () -> bool;
+
+	// No Filter support in target
+	targetNoFilters : () -> bool;
+
+	// Does this target have filesystem, processes?
+	targetHasSystem : () -> bool;
+
+	// Native support for video looping
+	targetVideoLooping : () -> bool;
+
+	// Subtitles and controls built into native video form
+	targetVideoControls : () -> bool;
+
+	targetNoFullscreen : () -> bool;
+
+	// Makes sure that flash storage is available. If it doesn't then it blocks
+	// all getKeyValue and setKeyValue calls. It allows to show storage settings
+	// popup only once per session. As a side effect: getKeyValue and setKeyValue
+	// won't be available during first run.
+	checkFlashStorage : (fn : () -> void) -> void;
+}
+
+// Gets the OS of the client. Returns a string of the format "<major>,<minor>"
+// where <major> is one of 
+//   "Windows", "MacOSX", "Linux", "iOS", "Android", "other" 
+// and <minor> determines the OS version (not specified yet).
+
+js = hasTargetName("js");
+nodejs = hasTargetName("nodejs");
+nwjs = hasTargetName("nwjs");
+jslibrary = hasTargetName("jslibrary");
+qt = hasTargetName("qt");
+opengl = hasTargetName("opengl");
+flash = hasTargetName("flash");
+xaml = hasTargetName("xaml");
+neko = hasTargetName("neko");
+cpp = hasTargetName("c++");
+java = hasTargetName("java");
+csharp = hasTargetName("csharp");
+cgi = hasTargetName("cgi");
+mobile = hasTargetName("mobile") || isUrlParameterTrue("overridemobile");
+nativevideo = hasTargetName("nativevideo");
+
+nogui = neko || cgi || (cpp && !hasTargetName("gui")) || getUrlParameter("nogui") != "";
+
+screenDPI = 
+	switch (find(allTargets, \v -> strLeft(v, 4) == "dpi=") : Maybe) {
+		None() : 90;
+		Some(v) : s2i(substring(v,4,strlen(v)-4));
+	};
+
+
+isWindows = ref false;
+isMacOSX = ref false;
+isLinux = ref false;
+isIos = ref false;
+isAndroid = ref false;
+majorOsPart = ref "";
+minorOsPart = ref "";
+flashVersion = ref "";
+browser = ref "";
+resolution = ref "";
+userAgent = ref "";
+
+getFlashVersion() -> string {
+	initOsParts();
+	^flashVersion;
+}
+
+getBrowser() -> string {
+	initOsParts();
+	^browser;
+}
+
+getResolution() -> string {
+	initOsParts();
+	^resolution;
+}
+
+getOsFlow() -> string {
+	initOsParts();
+	^majorOsPart + " " + ^minorOsPart;
+}
+
+getUserAgent() -> string {
+	initOsParts();
+	^userAgent
+}
+
+initOsParts() {
+	if (^majorOsPart == "") {
+		browserOs = hostCall("getOs", []);
+
+		os = if (toString(browserOs) != "{}") {
+			browserOs
+		} else {
+			// Host calls is not implemented in C++ targets
+			// Try to get OS from target tokens
+			if (hasTargetName("iOS")) "iOS"
+			else if (hasTargetName("android")) "Android"
+			else if (hasTargetName("windows")) "Windows"
+			else if (hasTargetName("linux")) "Linux"
+			else if (hasTargetName("macosx")) "MacOSX"
+			else "";
+		}
+		osParts = strSplit(os, ",");
+		majorOsPart := if (length(osParts) > 0 && osParts[0] != "") osParts[0] else "other";
+		minorOsPart := if (length(osParts) > 1 && osParts[1] != "") osParts[1] else "other";
+		isWindows := ^majorOsPart == "Windows";
+
+		userAgentCheck = hostCall("getUserAgent", []);
+		userAgent := if (toString(userAgentCheck) != "{}") userAgentCheck else "other";
+
+		isMacOSX := ^majorOsPart == "MacOSX" 
+					|| strContains(toLowerCase(^userAgent), "mac os x");  // [-Revise-] temporary fix for Firefox on Mac. Must be removed once we have correct majorOsPart
+		isLinux := ^majorOsPart == "Linux";
+		isIos := ^majorOsPart == "iOS";
+		isAndroid := ^majorOsPart == "Android";
+
+		flashCheck = hostCall("getVersion", []);
+		flashVersion := if (toString(flashCheck) != "{}") flashCheck else "other";
+
+		browserCheck = hostCall("getBrowser", []);
+		browser := if (toString(browserCheck) != "{}") browserCheck else "other";
+
+		resolutionCheck = hostCall("getResolution", []);
+		resolution := if (toString(resolutionCheck) != "{}") resolutionCheck else "other";
+
+	}
+}
+
+windows() {
+	initOsParts();
+	^isWindows;
+}
+
+windowsxp() {
+	// For browser targets only:
+	ua = toLowerCase(getUserAgent());
+	(strContains(ua, "windows nt 5.1") || strContains(ua, "windows xp"));
+}
+
+macosx() {
+	initOsParts();
+	^isMacOSX;
+}
+
+linux() {
+	initOsParts();
+	^isLinux;
+}
+
+ios() {
+	initOsParts();
+	^isIos;
+}
+
+android() {
+	initOsParts();
+	^isAndroid;
+}
+
+targetNoMask() {
+	xaml || js;
+}
+
+targetNoFilters() {
+	xaml || isUrlParameterTrue("no_shadows_test");
+}
+
+targetHasSystem() {
+	cpp || nodejs || nwjs || java;
+}
+
+targetVideoLooping() {
+    opengl || xaml || js;
+}
+
+targetVideoControls() {
+	nativevideo}
+
+targetNoFullscreen() {
+	mobile
+}
+
+checkFlashStorage(fn) {
+	if (flash) {
+		ntimes = \m, str -> concatStrings(generate(0, m, \i -> str));
+		v1 = ntimes(10, "a");   // 10
+		v3 = ntimes(100, v1);   // 1K
+		v6 = ntimes(1000, v3);  // 1M
+		v7 = ntimes(11, v6);    // 11M
+		checkKeyName = "megaCheckKeyName";
+
+		// looks like storage popup is broken in flash plugin for MacOS, it is impossible to close it
+		if (!macosx() && setKeyValue(checkKeyName, v7)) {
+			setKeyValue(checkKeyName, "");
+			{}
+		} else {
+			disableLocalStorage()
+		}
+	}
+
+	fn()
+}
+
+bootTargetInit = {
+	if (isDevMode()) {
+		println("target: " + getTargetName());
+		println("target: ");
+		println("target: windows=" + toString(windows()));
+		println("target: windowsxp=" + toString(windowsxp()));
+		println("target: macosx=" + toString(macosx()));
+		println("target: linux=" + toString(linux()));
+		println("target: ios=" + toString(ios()));
+		println("target: android=" + toString(android()));
+		println("target: ");
+		println("target: mobile=" + toString(mobile));
+		println("target: screenDPI=" + toString(screenDPI));
+		println("target: getOsFlow=" + toString(getOsFlow()));
+		println("target: getFlashVersion=" + toString(getFlashVersion()));
+		println("target: getBrowser=" + toString(getBrowser()));
+		println("target: getResolution=" + toString(getResolution()));
+		println("target: getUserAgent=" + toString(getUserAgent()));
+	}
+	0;
+}
+
+isMobileBrowser() -> bool {
+	js && mobile;
+}

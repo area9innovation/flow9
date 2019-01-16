@@ -734,6 +734,10 @@ class RenderSupportJSPixi {
 		if (untyped PIXI.VERSION[0] > 3)
 			workaroundDOMOverOutEventsTransparency();
 
+		if (untyped PIXI.VERSION != "4.8.2") {
+			untyped __js__("document.location.reload(true)");
+		}
+
 		workaroundTextMetrics();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
@@ -3543,7 +3547,7 @@ private class VideoClip extends FlowContainer {
 
 		nativeWidget.width = nativeWidget.videoWidth;
 		nativeWidget.height = nativeWidget.videoHeight;
-		metricsFn(nativeWidget.width / RenderSupportJSPixi.backingStoreRatio, nativeWidget.height / RenderSupportJSPixi.backingStoreRatio);
+		metricsFn(nativeWidget.width, nativeWidget.height);
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
@@ -4869,8 +4873,10 @@ private class PixiText extends TextField {
 	private function updateClipMetrics() {
 		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		clipWidth = Math.max(metrics.width - letterSpacing, 0) / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing * 2, 0) / textScaleFactor;
 		clipHeight = metrics.height / textScaleFactor;
+
+		hitArea = new Rectangle(letterSpacing, 0, clipWidth + letterSpacing, clipHeight);
 	}
 
 	private static function checkTextLength(text : String) : Array<Array<String>> {

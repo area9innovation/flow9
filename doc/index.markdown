@@ -10,7 +10,7 @@
 
 ## Documentation
 
-[flow.html](flow.html) describes *flow*, our own programming language.
+[flow.html](flow.html) describes *flow*, the programming language.
 
 [form.html](form.html) describes *form*, a low-level gui library.
 
@@ -20,7 +20,7 @@
 
 [runtimes.html](runtimes.html) describes all the different ways we can run *flow* code.
 
-[lingo.html](lingo.html) describes *lingo*, our technology for implementing Domain Specific Languages.
+[lingo.html](lingo.html) describes *lingo*, a technology for implementing Domain Specific Languages.
 
 [faq.html](faq.html) contains answers to frequently asked questions.
 

@@ -33,8 +33,8 @@ Hello world
 
 To whet your appetite, here is "Hello world":
 
-	import form;
-	import renderform;
+	import form/form;
+	import form/renderform;
 
 	main() {
 		render(Text("Hello world!", []));

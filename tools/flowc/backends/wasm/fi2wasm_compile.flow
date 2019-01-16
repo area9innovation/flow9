@@ -10,7 +10,7 @@ import tools/flowc/backends/wasm/wasm_string_constants;
 import tools/flowc/backends/wasm/wasm_type_descriptor;
 import tools/flowc/backends/wasm/wasm_function_table;
 import tools/flowc/backends/wasm/wasm_ref_counters;
-import blueprint;
+import text/blueprint;
 
 import tools/flowc/backends/wasm/wasm_print;
 
@@ -215,6 +215,15 @@ fiWasmBuildNativeFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type
 			wasmError(acc, "Attempt to take an address of a non-heap value")
 		else 
 			""; 
+	} else if (nativeName == "wasm_compiler.stack_size_of") {
+		// gets the size of its argument - drops argument and replaces with const
+		argType = type.args[0].type;
+		"drop i32.const " + i2s(fiWasmTypeStackSize(argType) * 4);
+	} else if (nativeName == "wasm_compiler.uses_heap") {
+		// puts 0 or 1 depending on whether argument type uses heap - drops the argument first
+		// TODO: optimize
+		argType = type.args[0].type;
+		"drop i32.const " + if (wasmTypeUsesWasmHeap(argType)) "1 " else "0 ";
 	} else if (nativeName == "wasm_compiler.type_of") {
 		argType = type.args[0].type;
 		typeIndex = switch (lookupTree(context.typeTable.typesMap, argType)) {
@@ -382,6 +391,12 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			);
 		}
 		WasmCast(e, tFrom, tTo, type, __): {
+			castError = \ -> {
+				sF = toString(tFrom);
+				sT = toString(tTo);
+				wasmError(acc, "cast (" + sF + ") -> (" + sT + ")");
+			};
+
 			value = compileWasmExp(acc, e, context) + fiWasmGenerateConstructor(wasmExpType(e));
 			switch (tFrom) {
 				WasmTypeInt(): {
@@ -396,7 +411,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						WasmTypeFlow(): {
 							makeWasmFlowValue(context, value, tFrom);
 						}
-						default: wasmError(acc, "cast");
+						default: castError();
 					}
 				}
 				WasmTypeDouble(): {
@@ -411,7 +426,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						WasmTypeFlow(): {
 							makeWasmFlowValue(context, value, tFrom);
 						}
-						default: wasmError(acc, "cast");
+						default: castError();
 					}
 				}
 				WasmTypeBool(): {
@@ -422,7 +437,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						WasmTypeFlow(): {
 							makeWasmFlowValue(context, value, tFrom);
 						}
-						default: wasmError(acc, "cast");
+						default: castError();
 					}
 				}
 				WasmTypeFlow(): {
@@ -434,7 +449,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						WasmTypeFlow(): {
 							makeWasmFlowValue(context, value, tFrom);
 						}
-						default: wasmError(acc, "cast");
+						default: castError();
 					}
 				}
 			}
@@ -571,8 +586,9 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 					args + " call $wasm_get_array_" + compileWasmType(type, true) + " "
 				}
 				FcDerefPrim(): {
-					cmd = if (type0 == WasmTypeRef(WasmTypeDouble())) "$wasm_deref_f64"
-						  else "$wasm_deref_" + compileWasmType(type0, true);
+					t = cast(type0 : WasmTypeDescriptor -> WasmTypeRef);
+					cmd = if (t.type == WasmTypeDouble()) "$wasm_deref_f64"
+						  else "$wasm_deref_" + compileWasmType(t.type, true);
 					args + " call " + cmd
 				}
 				FcAssignPrim(): {
