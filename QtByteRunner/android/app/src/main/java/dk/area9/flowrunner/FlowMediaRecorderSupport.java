@@ -117,7 +117,7 @@ public class FlowMediaRecorderSupport {
                      int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot) {
 
         MediaRecorder mediaRecorder = new MediaRecorder();
-        FlowMediaRecorderObject flowRecorder = new FlowMediaRecorderObject(mediaRecorder, null, null, filePath, websocketUri, cbOnWebsocketErrorRoot);
+        FlowMediaRecorderObject flowRecorder = new FlowMediaRecorderObject(mediaRecorder, null, null, null, websocketUri, cbOnWebsocketErrorRoot);
         FlowMediaStreamObject flowMediaStream = new FlowMediaStreamObject();
 
         if (audioDeviceId.isEmpty())
@@ -126,17 +126,7 @@ public class FlowMediaRecorderSupport {
             videoDeviceId = "0";
 
         configureDataSource(mediaRecorder, recordAudio, recordVideo, audioDeviceId);
-
-        try {
-            File outputFile = File.createTempFile("record", null);
-            mediaRecorder.setOutputFile(outputFile.getAbsolutePath());
-            flowRecorder.tempFile = outputFile;
-        } catch (IOException e) {
-            if (!filePath.isEmpty())
-                mediaRecorder.setOutputFile(filePath);
-            wrapper.cbOnRecorderError(cbOnRecorderErrorRoot, e.getMessage());
-        }
-
+        configureOutput(flowRecorder, filePath, cbOnRecorderErrorRoot);
         setVideoParams(flowRecorder, flowMediaStream, recordAudio, recordVideo, videoDeviceId);
 
         try {
@@ -150,7 +140,6 @@ public class FlowMediaRecorderSupport {
         } else {
             wrapper.cbOnRecorderReady(cbOnRecorderReadyRoot, flowRecorder);
         }
-
     }
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
@@ -161,6 +150,28 @@ public class FlowMediaRecorderSupport {
             mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
 
         mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+    }
+
+    private void configureOutput(FlowMediaRecorderObject flowRecorder, String filePath, int cbOnRecorderErrorRoot) {
+        if (!filePath.isEmpty()) {
+            flowRecorder.outputFile = new File(filePath);
+            File parentDir = flowRecorder.outputFile.getParentFile();
+
+            if(!parentDir.exists() && !parentDir.mkdirs()) {
+                wrapper.cbOnRecorderError(cbOnRecorderErrorRoot, "MediaRecorder: Wrong output file path.");
+            } else {
+                flowRecorder.mediaRecorder.setOutputFile(filePath);
+            }
+        } else {
+            try {
+                File outputFile = File.createTempFile("record", null);
+                flowRecorder.mediaRecorder.setOutputFile(outputFile.getAbsolutePath());
+                flowRecorder.tempFile = outputFile;
+            } catch (IOException e) {
+                wrapper.cbOnRecorderError(cbOnRecorderErrorRoot, e.getMessage());
+            }
+        }
+
     }
 
     @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
@@ -321,34 +332,22 @@ public class FlowMediaRecorderSupport {
         recorder.mediaRecorder.reset();
         recorder.mediaRecorder.release();
 
-        if (!recorder.filePath.isEmpty()) {
-            InputStream inputStream = null;
-            OutputStream outputStream = null;
-            try {
-                inputStream = new FileInputStream(recorder.tempFile);
-                outputStream = new FileOutputStream(recorder.filePath);
 
-                Utils.copyData(outputStream, inputStream, null);
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                try {
-                    inputStream.close();
-                    outputStream.close();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
+        File recordedFile = recorder.outputFile;
+        Runnable onEnd = () -> {};
+
+        if(recorder.tempFile != null) {
+            recordedFile = recorder.tempFile;
+            onEnd = () -> recorder.tempFile.delete();
         }
-
         if (!recorder.websocketUri.isEmpty()) {
-            sendFileToWSServer(URI.create(recorder.websocketUri), recorder.tempFile, recorder.cbOnWebSocketError);
+            sendFileToWSServer(URI.create(recorder.websocketUri), recordedFile, recorder.cbOnWebSocketError, onEnd);
         } else {
-            recorder.tempFile.delete();
+            onEnd.run();
         }
     }
 
-    private void sendFileToWSServer(URI uri, final File file, final int cbOnWebSocketError) {
+    private void sendFileToWSServer(URI uri, final File file, final int cbOnWebSocketError, final Runnable onEnd) {
         WebSocketClient client = new FlowWebSocketClient(uri) {
             @Override
             public void onOpen(ServerHandshake serverHandshake) {
@@ -373,13 +372,13 @@ public class FlowMediaRecorderSupport {
 
             @Override
             public void onClose(int code, String reason, boolean remote) {
-                file.delete();
+                onEnd.run();
             }
 
             @Override
             public void onError(Exception e) {
                 wrapper.cbOnRecorderError(cbOnWebSocketError, e.getMessage());
-                file.delete();
+                onEnd.run();
             }
         };
         client.connect();
@@ -389,15 +388,15 @@ public class FlowMediaRecorderSupport {
         CameraCaptureSession session;
         MediaRecorder mediaRecorder;
         File tempFile;
-        String filePath;
+        File outputFile;
         String websocketUri;
         int cbOnWebSocketError;
 
-        FlowMediaRecorderObject(MediaRecorder mediaRecorder, CameraCaptureSession session, File tempFile, String filePath, String websocketUri, int cbOnWebSocketError) {
+        FlowMediaRecorderObject(MediaRecorder mediaRecorder, CameraCaptureSession session, File tempFile, File outputFile, String websocketUri, int cbOnWebSocketError) {
             this.mediaRecorder = mediaRecorder;
             this.session = session;
             this.tempFile = tempFile;
-            this.filePath = filePath;
+            this.outputFile = outputFile;
             this.websocketUri = websocketUri;
             this.cbOnWebSocketError = cbOnWebSocketError;
         }
