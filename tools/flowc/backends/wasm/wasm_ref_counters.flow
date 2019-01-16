@@ -4,7 +4,7 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/wasm/wasm_types;
 import tools/flowc/backends/wasm/f2wasm_utils;
 import tools/flowc/backends/wasm/wasm_exp;
-import array;
+import ds/array;
 import string;
 
 export {
@@ -17,29 +17,33 @@ export {
 fiWasmFindLastStatements(ex : WasmExp) {
     ex0 : WasmExp = ex;
     switch (ex0 : WasmExp) {
-		WasmLambda(args, b, type): makeSet1(ex);
-		WasmCall(f, args, type): makeSet1(ex);
-		WasmCallNative(f, args, type): makeSet1(ex);
-		WasmCallHost(f, args, type): makeSet1(ex);
-		WasmVar(name, type): makeSet1(ex);
-		WasmLet(name, type, e1, e2, type2): makeSet1(ex);
-		WasmIf(e1, e2, e3, type): // consider both if and else branches
+		WasmLambda(args, b, type, __): makeSet1(ex);
+		WasmCall(f, args, type, __): makeSet1(ex);
+		WasmCallNative(f, args, type, __): makeSet1(ex);
+		WasmCallHost(f, args, type, __): makeSet1(ex);
+		WasmVar(name, type, __): makeSet1(ex);
+		WasmLet(name, type, e1, e2, type2, __): 
+			switch (e2) {
+				WasmVoid(__): makeSet1(ex);
+				default: fiWasmFindLastStatements(e2);
+			} 
+		WasmIf(e1, e2, e3, type, __): // consider both if and else branches
 			mergeSets(fiWasmFindLastStatements(e2), fiWasmFindLastStatements(e3));
-		WasmSwitch(x, switchType, cases, type): 
+		WasmSwitch(x, switchType, cases, type, __): 
 			mergeSetsA(map(cases, \c -> fiWasmFindLastStatements(c.body)));
-		WasmCast(e, tFrom, tTo, type): makeSet1(ex);
-		WasmSeq(es, type): // only consider last element of a sequence
-			fiWasmFindLastStatements(lastElement(es, WasmVoid()));
+		WasmCast(e, tFrom, tTo, type, __): makeSet1(ex);
+		WasmSeq(es, type, iid): // only consider last element of a sequence
+			fiWasmFindLastStatements(lastElement(es, WasmVoid(iid)));
 		// if there are calls inside es, CallPrim would be performed after it - 
 		//   therefore, those calls aren't tail
-		WasmCallPrim(op, es, type): makeSet1(ex); 
-		WasmVoid(): makeSet1(ex);
-		WasmDouble(d): makeSet1(ex);
-		WasmInt(i): makeSet1(ex);
-		WasmString(s): makeSet1(ex);
-		WasmBool(b): makeSet1(ex);
-		WasmRequire(flowfile, e, type): makeSet1(ex); 
-		WasmUnsafe(name, fallback, type): fiWasmFindLastStatements(fallback);
+		WasmCallPrim(op, es, type, __): makeSet1(ex); 
+		WasmVoid(__): makeSet1(ex);
+		WasmDouble(d, __): makeSet1(ex);
+		WasmInt(i, __): makeSet1(ex);
+		WasmString(s, __): makeSet1(ex);
+		WasmBool(b, __): makeSet1(ex);
+		WasmRequire(flowfile, e, type, __): makeSet1(ex); 
+		WasmUnsafe(name, fallback, type, __): fiWasmFindLastStatements(fallback);
 	}
 }
 
@@ -47,7 +51,7 @@ fiWasmGenerateDestructors(vars : [Pair<string, WasmTypeDescriptor>]) {
     filtered = filter(vars, \v -> wasmTypeUsesWasmHeap(v.second));
 	refCntIncreasers = filter(filtered, \v -> v.first == "__return__");
 	refCntDecreasers = filter(filtered, \v -> v.first != "__return__");
-	increaseExp = fold(refCntIncreasers, "", \acc, v -> acc + " call $wasm_inc_refcnt_passthru ;; auto-increase function return value\n");
+	increaseExp = fold(refCntIncreasers, "", \acc, v -> acc + "\n call $wasm_inc_refcnt_passthru ;; auto-increase function return value\n");
     fold(refCntDecreasers, increaseExp, \acc, v -> acc + " get_local $" + v.first + " call $wasm_dec_refcnt ;; auto-destruct \n");
 }
 

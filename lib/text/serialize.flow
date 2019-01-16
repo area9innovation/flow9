@@ -1,0 +1,403 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import runtime;
+import math/math;
+import ds/tree;
+import text/deserialize_string;
+
+export {
+	/* Prepares a string representation of any value usable for persistance and transmitance. The format is flow values in text
+	Note that it uses toString that can be lossy for floating point and depends on platform.
+	E.g. println(1.0000000000000002); println(1.0000000000000002 == 1.0);
+	prints `1.0` and then `false` saying that numbers are really different,
+	but not all bits are represented properly when printing them.
+	*/
+	serialize(value : flow) -> string;
+
+	/* Converts a string representation to a value.
+	Limitations: References make a copy for each restore, so this will not handle
+	cycles or other cases where multiple references point to the same value.
+	Native values can not be serialized. Functions and closures can not be serialized.
+	If there is a parsing error, the default value is returned.
+	*/
+	deserialize(value : string, default_ : flow) -> flow;
+
+	/*
+	The structFixups tree provides a way to ensure backwards compability in case
+	we need to deserialize some old format of structs. All structs that match a
+	name in the tree are transformed by the function given rather than the normal
+	struct construction.
+	*/
+	deserialize2(value : string, structFixups : Tree<string, (args : [flow]) -> flow>,
+		default_ : flow) -> flow;
+
+	/*
+	Makes the same as 'deserialize' but in case of parsing error returns array with error message.
+	This allows you to display where the error is in a user interface.
+	A better interface would have been this:
+		deserialize3(value : string, def : flow) -> Pair<flow, string>
+	but that is too late
+	*/
+	deserialize3(value : string) -> flow;
+
+	deserializeNumber(s : string, negate : bool) -> Pair<flow, string>;
+	//deserializeHex2(s : string, start : int) -> Pair<int, int>;
+	deserializeHex(s : string) -> Pair<int, string>;
+
+	// That parses Wiki variables identifier [A-Za-z_][A-Za-z0-9_]*
+	//deserializeIdentifier2(s : string, start : int) -> Pair<string, int>;
+	deserializeIdentifier(s : string) -> Pair<string, string>;
+
+	DeserializeOptions ::= DeserializeOptionFixupsEx, DeserializeOptionFixups, DeserializeOptionThrowErrors, DeserializeOptionRootArray,
+							DeserializeOptionFailProc;
+	DeserializeOptionFixups(fixups: Tree<string, (args: [flow]) -> flow>);
+	DeserializeOptionFixupsEx(fixups: Tree<string, (options: [DeserializeOptions], args: [flow]) -> flow>);
+	DeserializeOptionThrowErrors(opt: bool);
+	DeserializeOptionRootArray(onIllegalStub: Maybe<(src: string) -> flow>, onRootItem: Maybe<(v: flow, src: string)->flow>);
+	DeserializeOptionFailProc(onFailProc:Maybe<(srcStr: string, errPos: int, errMsg: string) -> void>);
+
+	deserializeText(s: string, options: [DeserializeOptions]) -> flow;
+
+	checkIsFn(s : string) -> bool;
+}
+
+serialize(v) {
+	toString(v);
+}
+
+deserializeArray(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
+	deserializeListUntil(s, start+1, "]", options);
+}
+
+findNextNonSpaceCharIndex(s : string, start : int) {
+	if (strlen(s) >= start) {
+		char = getCharAt(s, start);
+		if (char == " " || char == "\n" || char == "\t") {
+			findNextNonSpaceCharIndex(s, start + 1)
+		} else {
+			start
+		}
+	} else {
+		start
+	}
+}
+
+// Values separated by , until the endChar character comes. Returns the value, the remaining string, and any errors
+deserializeListUntil(s : string, start : int, endChar : string, options: [DeserializeOptions]) -> Triple<[flow], int, string> {
+	if (getCharAt(s, start) == endChar) {
+		Triple([], start + 1, "");
+	} else {
+		head : Triple<flow, int, string> = deserializeNext(s, start, options);
+		nextCharIdx = findNextNonSpaceCharIndex(s, head.second);
+		nextChar = getCharAt(s, nextCharIdx);
+		if (nextChar == endChar) {
+			Triple([head.first], nextCharIdx + 1, head.third);
+		} else if (nextChar == ",") {
+			more : Triple<[flow], int, string> = deserializeListUntil(s, nextCharIdx + 1, endChar, options);
+			if (more.third != "") {
+				// There is a problem
+				more;
+			} else
+				Triple(concat([head.first], more.first), more.second, head.third);
+		} else {
+			nearestString = substring(s, start, nextCharIdx - start + 1);
+			sLen = strlen(s);
+			errMsg = "Expected , or " + endChar;
+			maybeApply(extractStruct(options, DeserializeOptionFailProc(None())).onFailProc, \proc -> proc(s, nextCharIdx, errMsg));
+			// There is a bug! We expected , or ]. Just ignore
+			Triple([], nextCharIdx, errMsg);
+		}
+	}
+}
+
+deserializeHex2(s : string, start : int) -> Pair<int, int> {
+	end = countUntil(start, strlen(s), \i -> {
+		c = getCharAt(s, i);
+		! ( ("0" <= c && c <= "9") || ("A" <= c && c <= "F") || ("a" <= c && c <= "f") || (c == "X") || (c == "x") );
+	});
+
+	number = substring(s, start+2, end-start-2);
+	i = parseHex(number);
+	Pair(
+		i,
+		end
+	)
+}
+
+deserializeHex(s : string) -> Pair<int, string> {
+	rv = deserializeHex2(s, 0);
+	Pair(rv.first, strRight(s, rv.second))
+}
+
+deserializeNumber2(s : string, start : int, negate : bool) -> Triple<flow, int, string> {
+	limit = strlen(s);
+	end = countUntil(start, limit, \i -> {
+		c = getCharAt(s, i);
+		! ( ("0" <= c && c <= "9") || c == ".");
+	});
+	if (end > start) {
+		number = strSubRange(s, start, end);
+		d = s2d(number);
+		nd = if (negate) -d else d;
+		//strWithPossibleExponenent = strRight(s, end);
+		nextChar = getCharAt(s, end);
+		if (nextChar == "e" || nextChar == "E") {
+			exponentBeg = end + 1;
+			firstChar = getCharAt(s, exponentBeg);
+			negateExp = firstChar == "-";
+			positiveExp = firstChar == "+";
+			expWithoutSignum = if (negateExp || positiveExp) exponentBeg + 1 else exponentBeg;
+			expEnd = countUntil(expWithoutSignum, limit, \i -> {
+				c = getCharAt(s, i);
+				! ( ("0" <= c && c <= "9"));
+			});
+			if (expEnd > expWithoutSignum) {
+				expVal = (if (negateExp) -1.0 else 1.0) * s2d(strSubRange(s, expWithoutSignum, expEnd));
+				value = nd * exp(log(10.0) * expVal);
+				e = if (substring(s, expEnd, 2) == ".0") expEnd + 2 else expEnd;
+				Triple(flow(value), e, "");
+			} else {
+				Triple(flow(IllegalStruct()), exponentBeg, "Invalid scientific format");
+			}
+		} else {
+			value = {
+				if (strIndexOf(number, ".") == -1) {
+					// Sometimes a double does not have . in it, so let's check that we can represent ourselves as an int
+					i = floor(nd);
+					if (i2d(i) == nd)
+						flow(i) // It survived as int, so it is an int
+					else
+						flow(nd);
+				} else
+					flow(nd);
+			}
+			Triple(value, end, "");
+		}
+	} else {
+		Triple(flow(IllegalStruct()), end, "Not a number");
+	}
+}
+
+deserializeNumber(s : string, negate : bool) -> Pair<flow, string> {
+	rv = deserializeNumber2(s, 0, negate);
+	Pair(rv.first, strRight(s, rv.second))
+}
+
+deserializeIdentifier2(s : string, start : int) -> Pair<string, int> {
+	firstChar = getCharAt(s, start);
+	if (isLetter(firstChar) || firstChar == "_") {
+		end = countUntil(start+1, strlen(s), \i -> {
+			c = getCharAt(s, i);
+			!(isLetter(c) || isDigit(c) || c == "_")
+		});
+		Pair(strSubRange(s, start, end), end)
+	} else {
+		Pair("", start)
+	}
+}
+
+deserializeIdentifier(s : string) -> Pair<string, string> {
+	rv = deserializeIdentifier2(s, 0);
+	Pair(rv.first, strRight(s, rv.second))
+}
+
+deserializeStruct(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
+
+	paren = strRangeIndexOf(s, "(", start, strlen(s));
+	if (paren == -1) {
+		errMsg = "Expected (";
+		maybeApply(extractStruct(options, DeserializeOptionFailProc(None())).onFailProc, \proc -> proc(s, start, errMsg));
+		// Something fishy is going on.
+		Triple(flow(IllegalStruct()), start, errMsg);
+	} else {
+		throwErrors = extractStruct(options, DeserializeOptionThrowErrors(false)).opt;
+		name = rtrim2(strSubRange(s, start, paren), " \n\t");
+		args = deserializeListUntil(s, paren + 1, ")", options);
+		if (args.third != "") {
+			// There is a problem
+			Triple(flow(IllegalStruct()), args.second, args.third)
+		} else if (throwErrors && contains(args.first, IllegalStruct())) {
+			Triple(flow(IllegalStruct()), args.second, "Struct member is IllegalStruct");
+		} else {
+			fixup : Maybe<([flow]) -> Triple<flow, int, string>> = fold(options, None(), \acc, option -> {
+				switch(option) {
+					DeserializeOptionFixups(tree) : {
+						switch(lookupTree(tree, name)) {
+							Some(v): {
+								Some(\fixArgs: [flow]-> {
+									fixupStruct = v(fixArgs);
+									msg = if (throwErrors && fixupStruct == IllegalStruct()) "Fixup for \"" + name + "\" error." else "";
+									Triple(fixupStruct, args.second, msg);
+								});
+							}
+							None(): None();
+						}
+					}
+					DeserializeOptionFixupsEx(tree) : {
+						switch(lookupTree(tree, name)) {
+							Some(v): Some(\fixArgs: [flow]-> {
+								fixupStruct = v(options, fixArgs);
+								msg = if (throwErrors && fixupStruct == IllegalStruct()) "Fixup for \"" + name + "\" error." else "";
+								Triple(fixupStruct, args.second, msg);
+							});
+							None(): None();
+						}
+					}
+					default: acc;
+				}
+			});
+
+			switch (fixup) {
+				Some(v): v(args.first);
+				None(): {
+					e = makeStructValue(name, args.first, IllegalStruct());
+					if (e == IllegalStruct()) {
+							println("Error: Could not make struct " + name + " when deserializing: " + substring(s, start, 100));
+						if (throwErrors) {
+							// Coward: We want this instead, but we dare not, because it might completely break existing code that
+							// is wrong. So we leave the print above in the code for some time, and check whether it is OK to enable this
+							// which will potentially help avoid crashes.
+							Triple(e, args.second, "Could not make struct " + name);
+						} else {
+							Triple(e, args.second, "");
+						}
+					} else {
+						Triple(e, args.second, "");
+					}
+				}
+			}
+		}
+	}
+}
+
+// Eats as much as possible, and returns the value and the remaining part
+deserializeNext(s : string, start : int, options: [DeserializeOptions]) -> Triple<flow, int, string> {
+
+	trip = \p : Pair<string, int> -> Triple(flow(p.first), p.second, "");
+	limit = strlen(s);
+	if (start >= limit) {
+		Triple(flow(None()), start, "");
+	} else {
+		firstChar = getCharAt(s, start);
+		if (firstChar == " " || firstChar == "\n" || firstChar == "\t") {
+			deserializeNext(s, start+1, options);
+		} else if (isDigit(firstChar)) {
+			deserializeNumber2(s, start, false);
+		} else if (firstChar == "\"") {
+			trip(deserializeString2(s, start));
+		} else if (firstChar == "f" && substring(s, start, 5) == "false") {
+			Triple(flow(false), start+5, "");
+		} else if (firstChar == "t" && substring(s, start, 4) == "true") {
+			Triple(flow(true), start+4, "");
+		} else if (firstChar == "-") {
+			deserializeNumber2(s, start+1, true);
+		} else if (firstChar == "[") {
+			deserializeArray(s, start, options);
+		} else if (firstChar == "{" && substring(s, start, 2) == "{}") {
+			Triple(flow(None()), start+2, ""); // The type system is so strict about {} that we can not serialize those guys
+		} else if (substring(s, start, 4) == "ref ") {
+			r = deserializeNext(s, start + 4, options);
+			Triple(flow(ref r.first), r.second, r.third);
+		} else {
+			r = deserializeStruct(s, start, options);
+			if (r.third == "" && r.first == IllegalStruct() && extractStruct(options, DeserializeOptionThrowErrors(false)).opt)
+				Triple(r.first, r.second, "Illegal struct deserialized.")
+			else
+				r;
+		}
+	}
+}
+
+deserialize(s, default_) {
+	deserialize2(s, makeTree(), default_);
+}
+
+deserialize2(s, fixups, default_) {
+	if (s == "") default_ // deserializeNext will give None in this case, which is NOT what we wnat
+	else {
+		r = deserializeNext(s, 0, [DeserializeOptionFixups(fixups)]);
+		if (r.third != "") {
+			// Print the error
+			println(r.third + " at character " + i2s(r.second) + ", got: \"" + substring(s, r.second, 80) + "\"");
+			default_;
+		} else {
+			/*if (r.second != "") {
+				println("Deserializing " + s + " gave tail of " + r.second);
+			}*/
+			r.first;
+		}
+	}
+}
+
+
+deserialize3(s : string) -> flow {
+	fixups = makeTree();
+	r = deserializeNext(s, 0, [DeserializeOptionFixups(fixups)]);
+	if (r.third != "") {
+		// Print the error and return it
+		errText = r.third + " at character " + i2s(r.second) + ", got: \"" + substring(s, r.second, 80) + "\"";
+		println(errText);
+		flow([errText]);
+	} else {
+		r.first;
+	}
+}
+
+deserializeRootListUntil(s: string, start: int, endChar: string, options: [DeserializeOptions]) -> [flow] {
+	if (getCharAt(s, start) == endChar)
+		[]
+	else {
+		head = deserializeNext(s, start, options);
+		headValue = {
+			if (isSameStructType(head.first, head.first)) {
+				// It is a struct
+				if (head.first == IllegalStruct()) {
+					v =	extractStruct(options, DeserializeOptionRootArray(None(), None())).onIllegalStub;
+					switch(v) {
+						Some(onIllegalStub): onIllegalStub(substring(s, start, head.second - start));
+						default: head.first
+					}
+				} else {
+					v = extractStruct(options, DeserializeOptionRootArray(None(), None())).onRootItem;
+					switch(v) {
+						Some(onRootItem): onRootItem(head.first, substring(s, start, head.second - start));
+						default: head.first
+					}
+
+				}
+			} else
+				head.first;
+		}
+		nextChar = getCharAt(s, head.second);
+		if (nextChar == endChar) {
+			[headValue];
+		} else if (nextChar == ",") {
+			more = deserializeRootListUntil(s, head.second + 1, endChar, options);
+			concat([headValue], more);
+		} else {
+			// There is a bug! We expected , or ]. Just ignore
+			[flow(None())];
+		}
+	}
+}
+
+deserializeText(s: string, options: [DeserializeOptions]) -> flow {
+	asRootArray = \-> fold(options, false, \acc, option -> {
+		switch(option) {
+			DeserializeOptionRootArray(__, __): true;
+			default: acc;
+		}
+	});
+	if (startsWith(s, "[") && asRootArray())
+		flow(deserializeRootListUntil(s, 1, "]", options))
+	else {
+		if (s == "")
+			flow(IllegalStruct()) // deserializeNext will give None in this case, which is NOT what we wnat
+		else
+			flow(deserializeNext(s, 0, options).first);
+	}
+}
+
+checkIsFn(s : string) -> bool {
+	strContains(s, "closure") || strContains(s, "DList") || strContains(s, "<fn:") || strContains(s, "<native fn") || strContains(s, "<function>")
+}

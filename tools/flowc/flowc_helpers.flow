@@ -1,5 +1,5 @@
 import tools/common/pathutil;
-import md5;
+import math/md5;
 import lingo/linecolumn;
 import tools/flowc/fctypeenv;
 import tools/flowc/type_helpers;
@@ -37,8 +37,22 @@ export {
 		start : int
 	) -> bool;
 
+	// Checks, that a type has a given field.
+	fiEnsureFieldExists(
+		globalNames : FiGlobalNames,
+		moduleNames : Tree<string, FiStructOrUnion>,
+		field_name : string,
+		type_name : string,
+		onError : (FcError) -> void,
+		moduleName : string,
+		start : int
+	) -> bool;
+
 	// Returns the name of the module, where 'name' is defined
 	moduleWhereNameIsDefined(globalNames : FcGlobalNames, name : string) -> string;
+
+	// Returns the name of the module, where 'name' is defined
+	fiModuleWhereNameIsDefined(globalNames : FiGlobalNames, name : string) -> string;
 
 	// Returns a callback for deferred check of dependencies.
 	fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool;
@@ -255,41 +269,10 @@ addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcType
 		acc.tracer
 	);
 
-	exports = if (isConfigParameterTrue(config.config, "thorough-exports")) {
-			switch(tenv2.exported) {
-				FcExportedSeparate(tree): {
-					FcExportedSeparate(setTree(
-						tree,
-						flowfile,
-						fold(
-							module.imports,
-							module.exports,
-							\a, imp -> mergeSets(a, lookupTreeDef(tree, imp.flowfile, makeSet()))
-						)
-					))
-				}
-				FcExportedCommon(__): {
-					fcPrintln("impossible branch: FcExportedCommon");
-					FcExportedSeparate(makeTree());
-				}
-			}
-		} else {
-			switch(tenv2.exported) {
-				FcExportedSeparate(__): {
-					fcPrintln("impossible branch: FcExportedSeparate");
-					FcExportedCommon(makeSet());
-				}
-				FcExportedCommon(s): {
-					FcExportedCommon(mergeSets(s, module.exports))
-				}
-			}
-		};
-
 	// OK, now this dude is ready for type checking
 	FcTypeEnvProgram(
 		nacc,
 		tenv2.types,
-		exports,
 		tenv2.printError,
 		tenv2.errors,
 		tenv2.union2typenamesCache
@@ -439,7 +422,6 @@ mergeTypingToFcTypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv0
 		foldTree(typing, tenv.types, \name, type, a -> 
 			setTree(a, name, type)
 		),
-		tenv.exported,
 		tenv.printError, 
 		tenv.errors,
 		tenv.union2typenamesCache
@@ -488,7 +470,6 @@ addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimod
 			acc.tracer
 		),
 		tenv.types,
-		tenv.exported,
 		tenv.printError, 
 		tenv.errors,
 		tenv.union2typenamesCache
@@ -562,7 +543,81 @@ ensureFieldExists(
 	}
 }
 
+fiEnsureFieldExists(
+	globalNames : FiGlobalNames,
+	moduleNames : Tree<string, FiStructOrUnion>,
+	field_name : string,
+	type_name : string,
+	onError : (FcError) -> void,
+	moduleName : string,
+	start : int
+	) -> bool {
+	if (field_name == "structname") true  else {
+		switch (lookupTree(globalNames.structs, type_name)) {
+			Some(struct): {
+				ret = exists(struct.args, \arg -> arg.name == field_name);
+				if (!ret) {
+					onError(FcError(
+						"there's no field '" + field_name + "' in struct '" + type_name + "'",
+						[
+							FcPosition(fiModuleWhereNameIsDefined(globalNames, type_name), struct.start, struct.start),
+							FcPosition(moduleName, start, start)
+						]
+					));
+				}
+				ret
+			}
+			None(): {
+				switch (lookupTree(globalNames.unions, type_name)) {
+					Some(union):
+						forall(union.typenames, \tp -> fiEnsureFieldExists(globalNames, moduleNames, field_name, tp.name, onError, moduleName, start));
+					None(): {
+						switch (lookupTree(moduleNames, type_name)) {
+							Some(struct): {
+								switch (struct) {
+									FiTypeStruct(__,__,__,__): {
+										ret = exists(struct.args, \arg -> arg.name == field_name);
+										if (!ret) {
+											onError(FcError(
+												"there's no field '" + field_name + "' in struct '" + type_name + "'", 
+												[
+													FcPosition(moduleName, struct.start, struct.start),
+													FcPosition(moduleName, start, start)
+												]
+											));
+										}
+										ret
+									}
+									FiTypeUnion(__, __, typenames, __):
+										forall(typenames, \tp -> fiEnsureFieldExists(globalNames, moduleNames, field_name, tp.name, onError, moduleName, start));
+								}
+							}
+							None(): {
+								// This branch must be impossible
+								false;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
 moduleWhereNameIsDefined(globalNames : FcGlobalNames, name : string) -> string {
+	lookupTreeDef(globalNames.function2module, name,
+		lookupTreeDef(globalNames.globalVar2module, name,
+			lookupTreeDef(globalNames.struct2module, name,
+				lookupTreeDef(globalNames.union2module, name,
+					lookupTreeDef(globalNames.native2module, name, "")
+				)
+			)
+		)
+	)
+}
+
+fiModuleWhereNameIsDefined(globalNames : FiGlobalNames, name : string) -> string {
 	lookupTreeDef(globalNames.function2module, name,
 		lookupTreeDef(globalNames.globalVar2module, name,
 			lookupTreeDef(globalNames.struct2module, name,

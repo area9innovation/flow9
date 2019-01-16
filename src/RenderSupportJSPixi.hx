@@ -734,6 +734,10 @@ class RenderSupportJSPixi {
 		if (untyped PIXI.VERSION[0] > 3)
 			workaroundDOMOverOutEventsTransparency();
 
+		if (untyped PIXI.VERSION != "4.8.2") {
+			untyped __js__("document.location.reload(true)");
+		}
+
 		workaroundTextMetrics();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
@@ -2988,14 +2992,16 @@ class RenderSupportJSPixi {
 			element = untyped Browser.document;
 		}
 
-		if (untyped element.exitFullscreen != null)
-			untyped element.exitFullscreen();
-		else if (untyped element.mozCancelFullScreen != null)
-			untyped element.mozCancelFullScreen();
-		else if (untyped element.webkitExitFullscreen != null)
-			untyped element.webkitExitFullscreen();
-		else if (untyped element.msExitFullscreen != null)
-			untyped element.msExitFullscreen();
+		if (IsFullScreen) {
+			if (untyped element.exitFullscreen != null)
+				untyped element.exitFullscreen();
+			else if (untyped element.mozCancelFullScreen != null)
+				untyped element.mozCancelFullScreen();
+			else if (untyped element.webkitExitFullscreen != null)
+				untyped element.webkitExitFullscreen();
+			else if (untyped element.msExitFullscreen != null)
+				untyped element.msExitFullscreen();
+		}
 	}
 
 	public static function toggleFullScreen(fs : Bool) : Void {
@@ -3389,6 +3395,7 @@ private class VideoClip extends FlowContainer {
 		untyped videoTexture.baseTexture.autoPlay = !startPaused;
 		untyped videoTexture.baseTexture.autoUpdate = false;
 		videoSprite = new Sprite(videoTexture);
+		untyped videoSprite._visible = true;
 		addChild(videoSprite);
 
 		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
@@ -3549,7 +3556,7 @@ private class VideoClip extends FlowContainer {
 
 		nativeWidget.width = nativeWidget.videoWidth;
 		nativeWidget.height = nativeWidget.videoHeight;
-		metricsFn(nativeWidget.width / RenderSupportJSPixi.backingStoreRatio, nativeWidget.height / RenderSupportJSPixi.backingStoreRatio);
+		metricsFn(nativeWidget.width, nativeWidget.height);
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
@@ -4875,8 +4882,10 @@ private class PixiText extends TextField {
 	private function updateClipMetrics() {
 		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		clipWidth = Math.max(metrics.width - letterSpacing, 0) / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing * 2, 0) / textScaleFactor;
 		clipHeight = metrics.height / textScaleFactor;
+
+		hitArea = new Rectangle(letterSpacing, 0, clipWidth + letterSpacing, clipHeight);
 	}
 
 	private static function checkTextLength(text : String) : Array<Array<String>> {
@@ -4996,7 +5005,7 @@ private class PixiText extends TextField {
 		if (metrics == null) {
 			return super.getTextMetrics();
 		} else {
-			return [metrics.ascent, metrics.descent, metrics.descent];
+			return [metrics.ascent / textScaleFactor, metrics.descent / textScaleFactor, metrics.descent / textScaleFactor];
 		}
 	}
 }

@@ -1,0 +1,700 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import fusion;
+import runtime;
+import form/videoform;
+import math/geometry;
+import math/transformmatrix;
+
+export {
+
+Form ::= Text, Graphics, Translate, Scale, Rotate, Alpha, Visible, Available2, Size2, SetPending, Baseline, Group,
+		Grid, Empty, Border, Mask2, Interactive, TextInput, Filter2, Cursor, Inspect, Mutable2,
+		Crop2, Picture, Switch, Constructor, Create2, Video, Access, Camera, RealHTML2, ControlFocus,
+		NativeForm, FullWindow, DynamicGroup2;
+
+Empty : ();
+
+// Add borders around a Form. For efficiency reasons, this one is useful. Also, it allows
+// controlling the baseline explicitly: "top" is the baseline of this form when used in a Paragraph.
+Border(left : double, top : double, right : double, bottom : double, form : Form);
+
+// When rendered, the given function is called. The result disposer is called when removed.
+// Useful inside Switch in pair with Disposer
+Constructor : (form : Form, fn : () -> (() -> void));
+
+Create2 : (current : ref Form, fn : () -> Form);
+
+Create(fn : () -> Form) -> Create2 {
+	Create2(ref Empty(), fn);
+}
+
+// Composes a complicated Form to get fn2 executed immediatelly after renderForm(form) call.
+// See example in ui/fontmapping.flow::renderWithLang
+Constructor2(form : Form, fn : () -> (() -> void), fn2 : () -> void) -> Form;
+
+// A static text
+Text : (text : string, style : [CharacterStyle]);
+
+// A vector graphic built from primitive operations.
+// The size of this form is (0,0) to the maximum x and y coordinates found (not considering control points)
+// You can only use the same graphics style for the entire element. Use a Group with multiple elements
+// if you need more complicated structures. (This is to keep it easy to port this to HTML and other platforms
+// where vector graphics have other semantics.)
+Graphics : (path : [StaticGraphicOp], style : [GraphicsStyle]);
+
+/// A static picture
+Picture : (url : string, style : [PictureStyle]);
+	PictureStyle ::= DontCache, OnlyDownloadToCache, OnLoadingError, OnLoaded;
+	DontCache : ();
+	OnlyDownloadToCache : ();
+	OnLoadingError : (fn : (string) -> void);
+	OnLoaded : (fn : ()->void);
+
+Camera : (filename : string, parameters : [RecordParameter], listeners: [RecordStreamEvent], controls: [RecordControl]);
+// Tested with Wowza Media Server 3.6
+// Example of usage:
+// 1. Only show video from camera - Camera("", [VideoSize(480, 320), CameraSize(640, 480, 30.0)], [], []),
+// 2. Only record video from camera - Camera("mymovie", [CameraSize(640, 480, 30.0), 
+//                RTMPServer("rtmp://localhost:1935/videorecording"), NoAutoRecord()], [], [Recording(isRecording)]),
+// 3. Show and record video from camera - Camera("mymovie", [VideoSize(480, 320), 
+//                CameraSize(640, 480, 30.0), RTMPServer("rtmp://localhost:1935/videorecording"), NoAutoRecord()], [], [Recording(isRecording)]),
+	RecordParameter ::= CameraSize, CameraID, RTMPServer, VideoSize, SoundOnly, OnConnectingError;
+		// CameraSize is required allways, it's parameters of camera for recording video
+		// RTMPServer is required for recording stream from camera to media-server
+		// VideoSize  is required for viewing camera only, it's size of window for viewing video at the screen
+		CameraSize : (width : int, height : int, fps : double); // parameters for recording video
+		CameraID : (id : int);
+		RTMPServer : (uri : string);
+		SoundOnly();
+		OnConnectingError : (fn : (msg : string) -> void);
+	RecordStreamEvent ::= StreamStatus; // isn't used yet, for the future functionality
+	RecordControl ::= Recording;
+		Recording(status : DynamicBehaviour<bool>);
+
+// RealHTML embeds HTML frame to a flow stage.
+// Notice we have simple wrapper in realhtml.flow, which also supports cross-domain communication.
+// Consider to use that instead.
+
+// Crazy JS security policies can be hacked with the domain parameter, but it requires pure luck.
+
+// "getHostCall" - flow callback function, which receives a function to call JS in
+//  the embedded HTML. (flow calls JS interface)
+
+// "callback" - flow function to be called from JS of embedded HTML (JS calls
+//  flow interface). Include js/toflow.js in the html and call
+//  callflow_platform with a number of arguments to invoke the callback in
+//  flow. The callback can not return any result back to JS.
+//  useCache - use cached content even online (mobile platforms)
+
+// iOS:
+// https://webkit.org/blog/6784/new-video-policies-for-ios/
+// By new video policy we cannot autoplay in iOS mobile browsers (but possible for mobile applications);
+// To allow a video play inline (not in fullscreen mode only) playsinline property is required;
+RealHTML2 : (url : string, wh : Behaviour<WidthHeight>, style : [RealHTMLStyle]);
+
+RealHTMLStyle ::= UpdateCachedContent, OverridePageDomain, FlowCallback, PageHostcallSetter,
+	OnError, OnPageLoaded, ZoomEnabled, ReloadBlock, PageEvalJS, MouseDisabled, SandBoxJS, RealHtmlShrink2Fit, WhitelistDomains;
+
+	// UpdateCachedContent - download the latest version of resources when online. true by default.
+	// When false WebView shows cached version even online.
+	UpdateCachedContent : (update : bool);
+	OverridePageDomain : (domain : string);
+	FlowCallback : (fn : ([string]) -> string);
+	PageHostcallSetter : (fn : ((name : string, args : [string]) -> string) -> void);
+	PageEvalJS : (fn : ((code : string) -> string) -> void);
+	// OnError is reliable only for Android. iOS and JS(iframe) do not have good error reporting mechanisms, even for 404, 500, etc
+	// sometimes, instead of DNS entry not found, internet providers return valid HTML page with search results
+	OnError : (fn : (string) -> void);
+	OnPageLoaded : (fn : () -> void);
+	ZoomEnabled : (enabled : Behaviour<bool>);
+	ReloadBlock : (show : bool);
+	// Sets an gray overlay disabling any mouse interaction
+	MouseDisabled : (disabled : Behaviour<bool>);
+	// iframe only property
+	SandBoxJS : (sandbox : [SandBoxJSStyle]);
+	// scale page to fit instead scrolls
+	RealHtmlShrink2Fit();
+	// list of trusted domains to open inside RealHTML on mobiles
+	WhitelistDomains : (domains : [string]);
+
+// If specified adds sandbox attribute to IFRAME (<iframe sandbox="...">) which allows
+// to limit page access rights if needed
+SandBoxJSStyle ::= AllowSameOrigin, AllowTopNavigation, AllowForms, AllowScripts;
+
+	AllowSameOrigin : ();
+	AllowTopNavigation : ();
+	AllowForms : ();
+	AllowScripts : ();
+
+RealHTML : (url : string, domain : string, useCache : bool, wh : Behaviour<WidthHeight>, zoomEnabled : Behaviour<bool>, 
+	getHostCall : ((name : string, args : [string]) -> string) -> void, callback : ([string]) -> string) -> RealHTML2;
+
+/// Move the form x,y pixels. Does not change metrics
+Translate : (x : Behaviour<double>, y : Behaviour<double>, form : Form);
+
+// Resize the child according to the stream. Changes metrics, but does not adjust the availableWidth
+// and availableHeight to the child. If you want that behaviour, you can do it yourself with something
+// like
+//  Inspect(
+//		Available(
+//			select2(scaleX, availableWidth, \s, a -> a / s),
+//			select2(scaleY, availableHeight, \s, a -> a / s),
+//			Scale(scaleX, scaleY, form)
+//		),
+//		[AvailableWidth(availableWidth), AvailableHeight(availableHeight)]
+//	)
+//  where you have to construct availableWidth and availableHeight in advance.
+Scale : (x : Behaviour<double>, y : Behaviour<double>, form : Form);
+
+/// Rotate the child according to the stream. Uses degrees from 0-360. Does not change metrics!
+// Rotation point is upper, left corner!
+Rotate : (degree : Behaviour<double>, form : Form);
+
+/// Adjust the alpha channel according to the stream. 0-1, where 0 is invisible
+Alpha : (alpha : Behaviour<double>, form : Form);
+
+Visible : (visible : Behaviour<int>, form : Form);
+
+/// Masking the form with the alpha channel from mask. The size of this form is given by the mask only!
+Mask2 : (main : Form, mask : Form, stack : native);
+
+Mask (mainf : Form, mask : Form) -> Mask2 {
+    Mask2(mainf, mask, captureCallstack());
+}
+
+// First is lowest is z-order.
+Group : (layers : [Form]);
+
+// A 2d grid
+Grid : (cells: [[Form]]);
+
+/// Defines how much available width/height there is for the given form, overriding the environment
+Available2 : (widthHeight : Behaviour<WidthHeight>, form : Form);
+
+// Sets a specific size to the given form, overriding the form's own metrics. Has no visual consequence for the form itself.
+// Notice that this also sets the baseline!
+Size2 : (widthHeight : Behaviour<WidthHeight>, form : Form);
+
+// Sets a specific baseline
+Baseline : (baseline : Behaviour<double>, form : Form);
+
+// Set a number of pending metric updates overriding the form's pending. Useful with Inspect([IPending], ...)
+// who will get this number added up along with other pending forms.  This is rarely used.
+SetPending : (pending : Behaviour<int>, form : Form);
+
+// Get information about events on this form (and elsewhere)
+Interactive : (listeners: [EventHandler], form : Form);
+
+	EventHandler ::= MouseDown2, MouseUp2, MouseRightDown2, MouseRightUp2, MouseMiddleDown2, MouseMiddleUp2, RollOver, RollOut, 
+		MouseWheel, FineGrainMouseWheel2, KeyDown2, KeyUp2, MouseMove2,
+		PinchGesture, SwipeGesture, PanGesture, IgnoreHitTest, RespectHandled, FileDrop;
+
+	// A helper to emulate mouse clicks
+	MouseClick(fn : (MouseDownInfo) -> void) -> RespectHandled {
+		MouseDown(\mi -> {
+			if (mi.inside()) {
+				fn(mi);
+				true;
+			} else false;
+		});
+	}
+
+
+	MouseRightClick(fn: (MouseDownInfo) -> void) -> RespectHandled {
+		MouseRightDown(\mi -> {
+			if (mi.inside()) {
+				fn(mi);
+				true;
+			} else false;
+		});
+	}
+
+	MouseMiddleClick(fn: (MouseDownInfo) -> void) -> RespectHandled {
+		MouseMiddleDown(\mi -> {
+			if (mi.inside()) {
+				fn(mi);
+				true;
+			} else false;
+		});
+	}
+
+	// When a mouse event comes, all event handlers are called in turn, starting with the topmost element.
+	// The topmost element is first called with the "handled" parameter as false. Each handler should
+	// return a bool that signifies whether the handler accepted and handled the event or not.
+	// So if a topmost handler gets the event, and returns true, then any remaining handlers are called with
+	// "true" as the handled parameter. Conversely, if the topmost handler returns false, then the second-highest
+	// handler in the z-order is called with "false" as handled - giving it the chance to handle it.
+	// This continues until all handlers have been called.
+
+	// The helpers "MouseDown" and "MouseUp" handle this protocol.
+	MouseDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
+	MouseUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+	MouseRightDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
+	MouseRightUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+	MouseMiddleDown2 : (fn : (handled : bool, MouseDownInfo) -> bool);
+	MouseMiddleUp2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+	MouseMove2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+
+	// Useful helpers which obey z-order rules
+	MouseDown(fn : (MouseDownInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseDown2(\h, mi -> fn(mi)));
+	}
+	MouseUp(fn : (() -> MouseInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseUp2(\h, mi -> fn(mi)));
+	}
+	MouseRightDown(fn : (MouseDownInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseRightDown2(\h, mi -> fn(mi)));
+	}
+	MouseRightUp(fn : (() -> MouseInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseRightUp2(\h, mi -> fn(mi)));
+	}
+	MouseMiddleDown(fn : (MouseDownInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseMiddleDown2(\h, mi -> fn(mi)));
+	}
+	MouseMiddleUp(fn : (() -> MouseInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseMiddleUp2(\h, mi -> fn(mi)));
+	}
+	MouseMove(fn : (() -> MouseInfo) -> bool) -> RespectHandled {
+		RespectHandled(MouseMove2(\h, mi -> fn(mi)));
+	}
+
+	// Into this form (or any of the children). Ignore the mouse hit bool for best results
+	// This respects z-order, so only the top-most clip will get this event.
+	RollOver : (fn : (() -> MouseInfo) -> void);
+	RollOut : (fn : (() -> MouseInfo) -> void);
+
+	// Does not respect z-order
+	MouseWheel(fn : (() -> MouseInfo) -> void);
+	MouseInfo(x : double, y : double, dx : double, dy : double, inside : bool);
+
+	MouseDownInfo(x : double, y : double, dx : double, dy : double, inside : () -> bool);
+
+	// Shares the list of event handlers with MouseMove2 handlers. 
+	// Thus, Form with MouseMove handler prevents underlying one's scrolling,
+	// but MouseWheel movement might be considered as MouseMove without x and y changes.
+	// If both dx and dy are 0.0 we are processing MouseMove.
+	FineGrainMouseWheel2 : (fn : (handled : bool, () -> MouseInfo) -> bool);
+	FineGrainMouseWheel(fn : (MouseInfo) -> void) -> FineGrainMouseWheel2 {
+		FineGrainMouseWheel2(\handled, mi -> { 
+			if (!handled) { 
+				mwi = mi();
+				if (mwi.inside && (mwi.dx != 0.0 || mwi.dy != 0.0)) {
+					fn(mwi);
+					true 
+				} else {
+					false
+				}
+			} else {
+				true 
+			}
+		})
+	};
+
+	KeyDown2 : (fn : (handled : bool, KeyEvent) -> bool);
+	KeyUp2 : (fn : (handled : bool, KeyEvent) -> bool);
+
+	KeyDown(fn : (KeyEvent) -> void) -> KeyDown2 {
+		KeyDown2(\handled, ke -> { if (!handled) { fn(ke); } false; });
+	}
+	KeyUp(fn : (KeyEvent) -> void) -> KeyUp2 {
+		KeyUp2(\handled, ke -> { if (!handled) { fn(ke); } false; });
+	}
+
+	// Makes nested Form to allow any file to be dropped. Provides name and file content as data URL.
+	// maxFiles is a limit of files should be loaded at one drop. If you do not want to limit set to -1.
+	// Note: onData 3'rd argument should be called every time when you are ready to receive next chunk.
+	// mimeTypeRegExpFilter is a regular expression string which applies to each file MIME type. If you don't want to filter just set to empty string.
+	// Here is MIME Types list https://www.sitepoint.com/web-foundations/mime-types-complete-list/
+	FileDrop(maxFiles : int, mimeTypeRegExpFilter : string,  onDone : (files : [native]) -> void);
+	// In JavaScript, we can not really be very reliable: http://www.quirksmode.org/js/keys.html
+	// For JS target consider calling preventDefault function inside event handler to disable
+	// browser native behaviour on event, as described here: https://www.w3schools.com/jsref/event_preventdefault.asp
+	KeyEvent(utf : string, ctrl : bool, shift : bool, alt : bool, meta : bool, keycode : int, preventDefault : () -> void);
+
+	GestureState ::= GestureStateBegin, GestureStateProgress, GestureStateEnd;
+	GestureStateBegin : (); GestureStateProgress : (); GestureStateEnd : ();
+	// fn is called when focus point is inside the form.
+	// return value = prevent default platform action (zooming the whole stage)
+	// i.e. fn returns true when handled
+	PinchGesture : (fn : (state : GestureState, scale : double, dx : double, dy : double) -> bool);
+	// fn is called when touch is inside the form. vx, vy - velocity of movement
+	// return value = prevent default platform action (popup platform menu etc.)
+	SwipeGesture : (fn : (vx : double, vy : double) -> bool);
+	PanGesture : (fn : (state : GestureState, dx : double, dy : double) -> bool);
+
+	// When you wrap an event with this, then the mouse info function will not bother to do a hittest.
+	// This is useful in situations where you do not care about the hittest, because the hittest is
+	// extremely slow in Flash
+	IgnoreHitTest(event : EventHandler);
+
+	// When you wrap an event with this, it means that this listener will be skipped if event was
+	// already handled by someone else
+	RespectHandled(event : EventHandler);
+
+// An input text field. Use TTextInput wrapper with better interface from tropic/tropic_ui.flow
+TextInput(state : [TextInputState], listeners: [TextInputEvent], stateaccess : [StateAccess]);
+
+	// The initial state of the text input can be set up using these types.
+	// Notice that ordering of these is important! I.e. since the control supports
+	// defining the size based on the content, you have to set up the properties required
+	// before defining the content.
+	InputType ::= EmailType, TelType, UrlType, TextType, NumericType, SearchType, PasswordType;
+		EmailType();
+		TelType();
+		UrlType();
+		TextType();
+		NumericType();
+		SearchType();
+		PasswordType();
+	TextInputState ::= AutoAlign, Multiline, TextSize,  Focus, WordWrap, Numeric,
+		ReadOnly, MaxChars, Content, Selection, PasswordMode, TabIndex, EatKeyDownOnFocus, ScrollInfo, TextInputType, TextInputFilter, TabEnabled;
+
+	TextInputFilter(f : (string) -> bool); // Callback receives content of textfield which is set if cb returns true.
+	TextInputType(inputType : InputType);
+	// Be sure to set multiline and content before this for it to work
+	TextSize(width : double, height : double);
+	Focus(focus : bool);
+	WordWrap(wordWrap: bool);// Wordwrap is equal to fixed size. Fixed size blocks align. Do not use. Introduced for very special case. Default true
+	// Notice you should set this before the content to get the desired result
+	Multiline(multiline: bool);
+	Numeric(numeric : bool);
+	ReadOnly(readOnly : bool);
+	MaxChars(n : int);
+	Content(content : string, style : [CharacterStyle]);
+	// To set the cursor at a given place, set both start and end to that spot
+	// It might not work if set before setting content
+	Selection(start : int, end : int);
+	PasswordMode(password : bool);
+	TabIndex(index : int);
+	TabEnabled(enabled : bool);
+	// When this is given, we eat key presses when we have focus
+	EatKeyDownOnFocus();
+
+	//id of first visible line, id of bottom visible line, number of lines in text input
+	ScrollInfo(scrollV : int, bottomScrollV : int, numLines : int); // #14447 Add scrollbars to textinputs
+
+	// Text auto align (and autosize in flash : must be NONE for fixed height)
+	// Be sure to define this before the content, as well as any fixed textsize.
+	AutoAlign(autoalign : AutoAlignType);
+		AutoAlignType ::= AutoAlignLeft, AutoAlignRight, AutoAlignCenter, AutoAlignNone;
+		AutoAlignLeft : ();
+		AutoAlignRight : ();
+		AutoAlignCenter : ();
+		AutoAlignNone : ();
+
+	// A structure to reveal the current state, as it is sent by the event handler below
+	TextInputModel(content : string, width : double, height : double, cursorPosition: int, selection : Selection, focus : bool, scrollinfo : Maybe<ScrollInfo>);
+
+	// The events exposed by the Flash TextInput widget
+	TextInputEvent ::= TextChange, TextScroll, FocusIn, FocusOut;
+	TextChange(fn : (TextInputModel) -> void);
+	TextScroll(fn : (TextInputModel) -> void); //#14477 implemented only for Flash target to implement scrolling for text input
+	FocusIn(fn : () -> void);
+	FocusOut(fn : () -> void);
+
+	// These provide access to change or query the state of the TextInput at any time
+	StateAccess ::= StateChanger, StateQuery, StateQuery2;
+	// Sets up a behaviour to allow you to change the state of this TextInput by
+	// sending an array of TextInputStates to it.
+	StateChanger(state : Behaviour<[TextInputState]>);
+	// This is called when rendering with a function which can tell you the state of the
+	// TextInput at any time
+	StateQuery(reader : (() -> TextInputModel) -> void);
+	// This is updated when rendering with a function which can tell you the state of the
+	// TextInput at any time
+	StateQuery2(reader : ref () -> TextInputModel);
+
+Filter2(filters : [Filters], form : Form, stack : native);
+
+Filter (filters : [Filters], form : Form) -> Filter2 {
+    Filter2(filters, form, captureCallstack());
+}
+
+	// http://www.adobe.com/livedocs/flash/9.0/ActionScriptLangRefV3/flash/filters/package-detail.html
+	// http://en.wikipedia.org/wiki/SVG_filter_effects
+	Filters ::= Bevel, DropShadow, Blur, Glow;
+
+	// Bevel can be done natively in Flash, and emulated using graphics in HTML, probably except for radius
+	Bevel(parameters : [BevelParameter]);
+		BevelParameter ::= Placement, Color, ShadowColor, Radius, Spread, Inner;
+		Placement(angle : double, distance : double); // HTML has xoffset, yoffset
+		Color(color : int, alpha : double);
+		ShadowColor(color : int, alpha : double);
+		Radius(radius : double); // This is blurX and blurY in Flash
+		Spread(radius : double); // This is strength in Flash
+		Inner(inner : bool);
+		// Flash also has: Quality, Knockout
+
+	// DropShadow can be done in Flash and HTML:
+	// http://dev.opera.com/articles/view/cross-browser-box-shadows/
+	// http://www.adobe.com/livedocs/flash/9.0/ActionScriptLangRefV3/flash/filters/DropShadowFilter.html
+	// http://www.w3.org/TR/css3-background/#the-box-shadow
+	DropShadow(parameters : [DropShadowParameter]);
+		DropShadowParameter ::= Placement, Radius, Spread, Color, Inner;
+		// Flash also has: Quality, Knockout, HideObject
+
+	Blur(parameters : [BlurParameter]);
+		BlurParameter ::= Radius, Spread;
+
+	Glow(parameters : [GlowParameter]);
+		GlowParameter ::= Radius, Spread, Color, Inner;
+
+Cursor(kind : CursorShape2, form : Form);
+	// This is the common set for HTML and Flash:
+	CursorShape ::=
+		ArrowCursor,
+		FingerCursor,
+		MoveCursor,
+		TextCursor,
+		CrosshairCursor,
+		HelpCursor,
+		WaitCursor,
+		ProgressCursor,
+		NotAllowedCursor,
+		ColResizeCursor,
+		RowResizeCursor,
+		NResizeCursor,
+		EWResizeCursor,
+		NSResizeCursor,
+		NESWResizeCursor,
+		NWSEResizeCursor,
+		GrabCursor,
+		GrabbingCursor,
+		NoCursor,
+		DefaultCursor,
+		EmptyCursor,
+		CssCursorShape;
+
+	/*
+		Available in JS target only.
+		Will result in default cursor on other targets.
+	*/
+	CssCursorShape ::=
+		AllScrollCursor,
+		ContextMenuCursor,
+		CopyCursor,
+		EResizeCursor,
+		SResizeCursor,
+		WResizeCursor,
+		NEResizeCursor,
+		NWResizeCursor,
+		SWResizeCursor,
+		ZoomInCursor,
+		ZoomOutCursor;
+
+	CursorShape2 ::= DynamicCursor, CursorShape;
+		// One more to support dynamic cursor
+		DynamicCursor : (cursorShape : Transform<CursorShape>);
+
+	// http://livedocs.adobe.com/flex/3/langref/flash/ui/Mouse.html
+	// http://www.quackit.com/html/codes/html_cursor_code.cfm
+
+	ArrowCursor();			// Default cursor, typically an arrow.
+	FingerCursor();			// Used when hovering over links, typically a hand with a finger.
+	MoveCursor();			// The hovered object may be moved, either arrows or a full hand.
+	TextCursor();			// Indicating text can be selected, typically an I-beam.
+	CrosshairCursor : ();	// Cross cursor, often used to indicate selection in a bitmap.
+	HelpCursor : ();		// Indicating help is available.
+	WaitCursor : ();		// The program is busy (sometimes an hourglass or a watch).
+	ContextMenuCursor : ();	// A context menu is available under the cursor.
+	ProgressCursor : ();	// The program is busy in the background but the user can still interact with the interface.
+	CopyCursor : ();		// Indicating that something can be copied.
+	NotAllowedCursor : ();	// Cursor showing that something cannot be done.
+	AllScrollCursor : ();	// Cursor showing that something can be scrolled in any direction.
+	ColResizeCursor : ();	// The item/column can be resized horizontally.
+	RowResizeCursor : ();	// The item/row can be resized vertically.
+
+	/*
+		Some edge is to be moved.
+		For example, the se-resize cursor is used when the movement starts
+		from the south-east corner of the box.
+	*/
+	NResizeCursor : ();
+	EResizeCursor : ();
+	SResizeCursor : ();
+	WResizeCursor : ();
+	NEResizeCursor : ();
+	NWResizeCursor : ();
+	SWResizeCursor : ();
+
+	/*
+		Indicates a bidirectional resize cursor.
+	*/
+	EWResizeCursor : ();
+	NSResizeCursor : ();
+	NESWResizeCursor : ();
+	NWSEResizeCursor : ();
+
+	/*
+		Indicates that something can be zoomed (magnified) in or out.
+	*/
+	ZoomInCursor : ();
+	ZoomOutCursor : ();
+
+	/*
+		Indicates that something can be grabbed (dragged to be moved).
+	*/
+	GrabCursor : ();
+	GrabbingCursor : ();
+	NoCursor();				// Hide it.
+	DefaultCursor();		// Automatically calculated.
+	EmptyCursor();			// Don't change the cursor.
+
+// Provide a way to inspect the metrics of a rendered child. Give the list of metrics you are interested in, and
+// your behaviours will be updated accordingly.
+Inspect : (inspectors : [Inspector], form : Form);
+	Inspector ::= Width, Height, AvailableWidth, AvailableWidth2, AvailableHeight, ISize, IMetrics, IAvailable, IAvailable2, IPending, ITag, ITransformMatrix;
+	Width : (width : DynamicBehaviour<double>);
+	Height : (height : DynamicBehaviour<double>);
+	AvailableWidth : (width : DynamicBehaviour<double>); // This is updated AFTER the child form is constructed.
+	AvailableWidth2 : (width : DynamicBehaviour<double>); // This is updated BEFORE the child form is constructed.
+	AvailableHeight : (height : DynamicBehaviour<double>); // This is updated BEFORE the child form is constructed.
+	ISize : (widthHeight : DynamicBehaviour<WidthHeight>);
+	IMetrics : (metrics : DynamicBehaviour<FormMetrics>);
+		// The metrics for a form
+		// dHeight is offset of visible top point to virtual top line.
+		// Notice: The baseline and dHeight are not accurate yet!
+		FormMetrics : (width : double, height : double, baseline : double, dHeight : double);
+
+	// This is updated after the child form is constructed.
+	IAvailable : (widthHeight : DynamicBehaviour<WidthHeight>);
+	// This is updated before the child form is constructed.
+	IAvailable2 : (widthHeight : DynamicBehaviour<WidthHeight>);
+	// How many size updates are pending? For instance, Pictures are loaded asynchronously, so until they load (or fail).
+	// 2 means that 2 pictures (or video, etc) are still loading. Wait until this is zero if you want to be notified once
+	// everything has been loaded and the size is stable.
+	IPending : (pending : DynamicBehaviour<int>);
+	// This is useful for finding elements inside a form. findTaggedFormPosition in formtransforms.flow look them up for you.
+	ITag(i : int);
+	ITransformMatrix(setfn : (fn : () -> TransformMatrix) -> void);
+
+/// An element in the design that can change
+Mutable2 : (form : Behaviour<Form>, stack : native);
+
+Mutable (form : Behaviour<Form>) -> Mutable2 {
+    Mutable2(form, captureCallstack());
+}
+
+/// Conditional. This is not more efficient than a Mutable, but often convenient. Use Visible if you want to hide something efficiently
+Switch : (val : Behaviour<int>, cases: [Form]);
+
+// An accessibility attributes to support WIA-ARIA screen readers and other accessibility features
+Access : (properties : [AccessProperty], form : Form);
+	AccessProperty ::= AccessRole, AccessDescription, AccessTabindex, AccessState, AccessSelectable, AccessCallback, AccessGroup, AccessChildSelected, 
+		AccessFocused, AccessEnabled, AccessKbdShortcutString, AccessAttribute, AccessTabOrder, AccessZorder;
+		// role = live | button | menu | checkbox. See WIA-ARIA specification for more roles
+		// 	http://www.w3.org/TR/wai-aria/roles#role_definitions
+		// Use "live" to make form a WAI-ARIA live region for AT tool reads aloud any changes
+		// should be first in properties when element is created so actual representation (i.e. tagName in JS) is chosen
+		AccessRole : (role : string);
+		// description = WIA-ARIA description
+		AccessDescription : (description : string);
+		// shortcut - description of keyboard shortcut
+		AccessKbdShortcutString : (shortcut : string);
+		AccessTabindex : (tabindex : int);
+		// "checked"/"unchecked" to set aria-checked attribute to true/false
+		AccessState : (state : Behaviour<string>);
+		// Is text user-selectable (JS target). It is not by default.
+		AccessSelectable : ();
+		// Callback function to call when control is activated with keyboard (tab - enter) or accessibility tool.
+		AccessCallback : (cb : () -> void);
+		// To bring together tab order of forms(group of forms) which are far from each other in Form hierarchy
+		// example: one around MenuButton and one around Menu which is shown after click
+		// groupId should be the same for the desired effect.
+		// 1st form which is actually rendered will define where other forms of the group will be put in tabIndex
+		// Other forms of the group will compete with each other based on their tabOrder (not their order of appearance)
+		AccessGroup(groupId: string);
+		// Callback function to call when control is focused with keyboard (tab). It needs to Scrollable to scroll form to the focused control.
+		AccessChildSelected(accessChildSelectedFn : (pos : Point, wh : WidthHeight) -> void);
+		AccessFocused(focused : DynamicBehaviour<bool>);
+		// Enable or disable user interaction for the accessible element
+		AccessEnabled(enabled : Behaviour<bool>);
+		AccessAttribute(name : string, value : Behaviour<string>);
+		AccessTabOrder(tabOrder : Behaviour<[int]>);
+		AccessZorder(zOrder : Behaviour<int>);
+
+/// Crop a form
+Crop2 : (left : Behaviour<double>, top : Behaviour<double>, width : Behaviour<double>, height : Behaviour<double>, form : Form, stack : native);
+
+Crop (left : Behaviour<double>, top : Behaviour<double>, width : Behaviour<double>, height : Behaviour<double>, form : Form) -> Crop2 {
+    Crop2(left, top, width, height, form, captureCallstack());
+}
+
+// Provide a way to set focus on form (mostly for JS version)
+ControlFocus(focus : DynamicBehaviour<bool>, form : Form);
+
+// Provides a way to build a function that renders stuff directly.
+// TODO: Consider if we should have support for finding tags and other Form features like tab order.
+// The function should construct any clips as required, as well as report the size and resulting baseline.
+// The clips returned will be added to the rendering tree as appropriate. The function has to remove the
+// clips in the dispose function.
+NativeForm(init : flow, metrics : Behaviour<FormMetrics>, form : () -> Form,
+	fn : (available : Behaviour<WidthHeight>, zorder : [int], tabOrder : [int]) -> NativeRenderResult);
+	NativeRenderResult(clips : [native], dispose : () -> void);
+
+
+// Provide a way to get a Form as full window out of current display context.
+// You cannot start with fullscreen on
+FullWindow(fullscreen : DynamicBehaviour<bool>, form : Form);
+
+// return true if we need to disable browser cache when requesting images/videos: ?v=...random... will be added to media url (case 27140)
+AvoidMediaCacheRequest() -> bool;
+setAvoidMediaCacheRequest(avoidCache: bool) -> void;
+
+DynamicGroup2(
+	stackChanges : DynamicBehaviour<[GroupChange]>,
+	combiner : DynamicGroupCombiner,
+	currentStack : DynamicBehaviour<[Form]>,
+	stack : native
+);
+	GroupChange ::= GroupAdd, GroupDelete, GroupMove;
+		GroupAdd : (form : Form, z : int);
+		GroupDelete : (z : int);
+		GroupMove : (from : int, to : int);
+
+	DynamicGroupCombiner ::= LinesCombiner, ColsCombiner, GroupCombiner;
+		LinesCombiner : ();
+		ColsCombiner : ();
+		GroupCombiner : ();
+
+DynamicGroup(
+	stackChanges : DynamicBehaviour<[GroupChange]>,
+	combiner : DynamicGroupCombiner) -> DynamicGroup2 {
+
+	DynamicGroup2(stackChanges, combiner, make([]), captureCallstack());
+}
+
+}
+
+avoidMediaCacheRequestFlag = ref false;
+AvoidMediaCacheRequest() {
+	^avoidMediaCacheRequestFlag;
+}
+setAvoidMediaCacheRequest(avoidCache: bool){
+	avoidMediaCacheRequestFlag := avoidCache;
+}
+
+RealHTML(url : string, domain : string, useCache : bool, wh : Behaviour<WidthHeight>, zoomEnabled : Behaviour<bool>, 
+		getHostCall : ((name : string, args : [string]) -> string) -> void, callback : ([string]) -> string) {
+	style = [FlowCallback(callback), PageHostcallSetter(getHostCall),
+		OverridePageDomain(domain), UpdateCachedContent(!useCache), ZoomEnabled(zoomEnabled)];
+	RealHTML2(url, wh, style)
+}
+
+// Order of execution
+// uns = construct()
+// renderForm(form)
+// afterConstruct()
+// ...
+// On dispose - uns()
+Constructor2(form, construct, afterConstruct) {	
+	emptyConstruct = \ -> {
+		afterConstruct();
+		nop
+	}
+	Group([
+		Constructor(form, construct),
+		Constructor(Empty(), emptyConstruct)
+	])
+}

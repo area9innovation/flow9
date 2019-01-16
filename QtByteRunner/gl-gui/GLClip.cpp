@@ -633,7 +633,7 @@ void GLClip::addChildAt(GLClip *pchild, int id)
     }
 
     pchild->parent = this;
-    children.insert(children.begin() + id, pchild);
+    children.insert(children.begin() + std::min(id, (int) children.size()), pchild);
 
     wipeFlags(WipeChildChanged);
     pchild->wipeFlags(WipeParentChanged);

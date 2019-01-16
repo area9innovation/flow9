@@ -8,8 +8,8 @@ import tools/flowc/manipulation/specialization;
 import tools/flowc/backends/wasm/wasm_js_wrapper;
 import tools/flowc/backends/wasm/wasm_native_linkage;
 import tools/flowc/backends/wasm/wasm_native_wrapper;
-import blueprint;
-import system;
+import text/blueprint;
+import sys/system;
 
 import tools/flowc/flowc_typecheck;
 
@@ -21,9 +21,9 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "'...");
 
 	// Extend with the Wasm runtime
-	program1 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
-	program2 = lift_lambdas(program1);
-
+	program11 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
+	program12 = fiWasmAddIndirectWrappers(program11, cfg.flowfile);
+	program2 = lift_lambdas(program12);
 	program3 = specializeProgram(cfg, program2);
 
 	fcVerbose(cfg, 1, "Collecting declarations..");
@@ -43,6 +43,17 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wrapped = fiWasmCreateNativeWrappers(natives2, types0, program3.names);
 	natives : Tree<string, FiWasmNativeDec> = wrapped.natives;
 	callbacks : Tree<string, FiDeclaration> = wrapped.callbacks;
+
+	// since we need NativeHx we add 'math' as initial
+	usedModules = foldTree(natives, ["math/math"], \k, v, acc -> {
+		s = if (startsWith(v.decl.nativeName, "RenderSupport.")) "form/renderform" // will create a RenderSupportHx object
+		else "";
+
+		if (s != "" && !contains(acc, s))
+			arrayPush(acc, s)
+		else acc;
+	});
+
 	
 	fcVerbose(cfg, 1, "Creating WASM-side wrappers..");
 	program = wrap_natives(cfg, program3, program3.names, types0, natives);
@@ -104,7 +115,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	fiWriteASTFile(cfg, wasmContext, decls);
 
 	modulesCode1 = foldi(decls, Cons("", makeList()), \i, acc, p: Pair<string, [FiDeclaration]> -> {
-		fcVerbose(cfg, 1, "[" + i2s(i+1) + "/" + moduleCount + "] Generating Wasm code for module " + p.first);
+		fcVerbose(cfg, 1, "[" + i2s(i + 1) + "/" + moduleCount + "] Generating Wasm code for module " + p.first);
 
 		mdl = lookupTree(program.modules, p.first);
 		switch (mdl) {
@@ -142,13 +153,9 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wasmfile = changeFileExt(cfg.outputfile, ".wasm");
 	fiInvokeWat2Wasm(cfg, contents, wasmfile, \result -> { 
 		if (result) {
-			fiGenerateNativeJSFile(cfg, natives, \result1 -> {
+			fiGenerateNativeJSFile(cfg, usedModules, \result1, native_code -> {
 				if (result1) {
-					fiWriteHostTemplateFile(cfg, wasmfile, wrapped.js_code, wrapped.wrappersJSCode);
-					if (!cfg.nodejs) {
-						fiWriteHostNativeJSWrapperFile(cfg, wrapped.wrappersJSCode);
-						fiWriteHostNativeJSCallbackFile(cfg, wrapped.js_code);
-					}
+					fiWriteHostTemplateFile(cfg, wasmfile, native_code, wrapped.js_code, wrapped.wrappersJSCode, usedModules);
 				}
 				fiWriteListingFile(cfg, wasmContext);
 				callback();
@@ -206,9 +213,6 @@ fiWasmBuildFallbackFixup(
 fiWasmBuildInitGlobalVars(context : WasmContext) -> string {
 	gvi = ^(context.globalVarsInitializers);
 	"(func $wasm_init_global_vars\n" 
-		+ strGlue(map(concatA(map(list2array(gvi), \nameExprLocals -> nameExprLocals.third)), \nameType ->
-				"\t(local $" + nameType.first + " i32)\n"
-			), "")
 		+ list2string(mapList(gvi, \nameExprLocals -> 
 			nameExprLocals.second
 		)
@@ -327,32 +331,27 @@ fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback
 	}
 }
 
-fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code : [string], jswrappers_code : string) {
+fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : string, jscallbacks_code : [string], jswrappers_code : string, usedModules : [string]) {
 	if (cfg.hostfile != "") {
 		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
-		htmlprefix = if (cfg.nodejs) "" else "<html><head></head><body>\n";
-		scriptstart = if (cfg.nodejs) "" else "<script>";
-		htmlsuffix = if (cfg.nodejs) "" else "</script></body></html>";
-		includeScript = \name -> if (cfg.nodejs) "require(\"./" + name + "\");\n" else 
-			"<script type=\"text/javascript\" src=\"" + name + "\"></script>\n";
 
 		IDHandler = "#include tools/flowc/backends/wasm/idhandler.js";
 		TestJS = "#include tools/flowc/backends/wasm/tests.js";
 
-		JSWrap = if (cfg.nodejs) jswrappers_code else "";
-		JSCallbacks = if (cfg.nodejs) "var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" else "";
-
-		result = htmlprefix + 
-			includeScript(fiNativeJSFileName(fileNameOnly(cfg.hostfile))) + 
-			(if (cfg.nodejs) JSWrap + "\n" else includeScript(fiNativeJSWrapperFileName(fileNameOnly(cfg.hostfile)))) + // import natives 
-			(if (cfg.nodejs) JSCallbacks + "\n" else includeScript(fiNativeJSCallbackFileName(fileNameOnly(cfg.hostfile)))) + // import callbacks 
-			(if (cfg.nodejs) "const fs = require(\"fs\");" else "") + // fs for node.js
-			(if (cfg.nodejs) "const util = require(\"util\");" else "") + // util for node.js
-			scriptstart + "
+		result =
+			"// ******************** NATIVE *************************\n" + 
+			 native_code + 
+			"\n// ******************** JSWrap *************************\n" + 
+			jswrappers_code +
+			"\n// ******************** JSCallbacks *************************\n" + 
+			"var callbacks = {\n" + strGlue(jscallbacks_code, ",\n") + "\n};" + 
+			"\n// ******************** MAIN *************************\n" + 
+			(if (cfg.nodejs) "const fs = require(\"fs\");\n" else "") + // fs for node.js
+			(if (cfg.nodejs) "const util = require(\"util\");\n" else "") + // util for node.js
+			"
 			var WASMInstance;
 			var HEAP8, HEAPU8, HEAP16, HEAP32, HEAPF64;
-			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : 
-				new util.TextDecoder('utf-16le');
+			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : new util.TextDecoder('utf-16le');
 			var _malloc;
 			var _table;
 			var MisalignedDoubleF64, MisalignedDoubleI32;\n" +
@@ -372,7 +371,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 			}
 
 			function expandTypeTagByTypedesc(desc_address) {
-				tag = HEAP8[desc_address];
+				var tag = HEAP8[desc_address];
 				switch (tag) {
 					case 9: // array
 						return [tag].concat(expandTypeTagByTypedesc(desc_address + 1));
@@ -464,6 +463,10 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 						return arr;
 					}
 
+					case 11: { // union
+						console.log('Trying to decode union');
+					}
+
 					default: {
 						console.error('Unsupported data type: ' + tag);
 						return "";
@@ -485,7 +488,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 					case 4 : // string (ref cnt; len in bytes; data)
 						var bufLen = value.length * 2;
 						var strPtr = _malloc(4 + 4 + alignBytes(bufLen, 4));
-						HEAP32[(strPtr>>2) + 0] = 0;
+						HEAP32[(strPtr>>2) + 0] = 1; // initial refcount
 						HEAP32[(strPtr>>2) + 1] = bufLen;
 						stringToUTF16(value, strPtr + 8, bufLen);
 						return strPtr;
@@ -494,7 +497,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 						var elementTag = tag.slice(1);
 						var bufLen = value.length * (elementTag[0] == 3 ? 2 : 1) * 4;
 						var strPtr = _malloc(alignBytes(4 + 4 + bufLen, 4));
-						HEAP32[(strPtr>>2) + 0] = 0;
+						HEAP32[(strPtr>>2) + 0] = 1; // initial refcount
 						HEAP32[(strPtr>>2) + 1] = value.length;
 						var offset = 0;
 						value.forEach(function(entry) {
@@ -584,7 +587,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 					WASMInstance.exports.wasm_init_global_vars();
 					_table = WASMInstance.exports.table;
 					WASMInstance.exports.main();
-				});" + htmlsuffix;
+				});";
 		if (!setFileContent(cfg.hostfile, result)) {
 			fcPrintln("Problem saving template file");
 		} else {
@@ -596,7 +599,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, jscallbacks_code :
 // creates module import section by generating import declaration for import functions
 // obeys 2-level wasm namespace, defaults to "runtime" module is missing
 fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
-	imports = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
+	imports1 = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
 		if (fiWasmIsHostNative(nativeDec.decl.nativeName)) {
 			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
 			module = if (length(nameComponents) > 2) nameComponents[1] else "runtime";
@@ -626,6 +629,11 @@ fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
 		} else acc;
 	});
 
+	imports = reverseList(foldList(imports1, EmptyList(), \acc, i -> {
+		if (containsList(acc, i)) acc
+		else Cons(i, acc);
+	}));
+
 	invokers = fold(callbacks, imports, \acc, cb -> {
 		Cons(cb, acc)
 	});
@@ -639,28 +647,18 @@ fiNativeJSFileName(hostfile: string) {
 
 // Temporary solution.
 // TODO: fix that
-fiGenerateNativeJSFile(cfg : FiWasmConfig, natives : Tree<string, FiWasmNativeDec>, callback : (bool) -> void) -> void {	
+fiGenerateNativeJSFile(cfg : FiWasmConfig, usedModules : [string], callback : (bool, string) -> void) -> void {	
 	tmp_name = "__temp_js_source.flow";
 
-	usedModules = foldTree(natives, ["import math;"], \k, v, acc -> {
-		s = if (startsWith(v.decl.nativeName, "Native.")) "import math;" // will create a NativeHx object
-		else if (startsWith(v.decl.nativeName, "RenderSupport.")) "import renderform;" // will create a RenderSupportHx object
-		else "";
-
-		if (s != "" && !contains(acc, s))
-			arrayPush(acc, s)
-		else acc;
-	});
-
 	// import math covers string & array as well
-	if (setFileContent(tmp_name, strGlue(usedModules, "\n") + "\nmain() {}")) {
+	if (setFileContent(tmp_name, strGlue(map(usedModules, \m -> { "import " + m + ";"	}), "\n") + "\nmain() {}")) {
 		fcPrintln("Compiling natives ...");
 		nativeJsFn = fiNativeJSFileName(cfg.hostfile);
 		// call compilation routine
 		startProcess(
 			if (windows()) "flowc.bat" else "flowc",
 			["server=0", "file=" + tmp_name, 
-				(if (cfg.nodejs) "es6=" else "js=" )+ nativeJsFn, 
+				(if (cfg.nodejs) "es6=" else "js=" ) + nativeJsFn, 
 				if (cfg.nodejs) "nodejs=1" else "", 
 				"dce=0",
 				"use_haxe_runtime=1"
@@ -668,13 +666,16 @@ fiGenerateNativeJSFile(cfg : FiWasmConfig, natives : Tree<string, FiWasmNativeDe
 			".", "",
 			\ec, so, se -> { 
 				if (ec != 0 || strContains(so, "Error")) {
-					fcPrintln("Error while compiling native js.\nCode: "+i2s(ec)+"\nOutput: "+so+"\nError: "+se);
+					fcPrintln("Error while compiling native js.\nCode: " + i2s(ec) + "\nOutput: " + so + "\nError: " + se);
 				}
 
 				if (ec == 0) fiSuppressNodeJsWarning(nativeJsFn);
 
+				data = getFileContent(nativeJsFn);
 				deleteFile(tmp_name);
-				callback(ec == 0);
+				deleteFile(nativeJsFn);
+
+				callback(ec == 0, data);
 			}
 		);
 	}
@@ -686,6 +687,123 @@ fiSuppressNodeJsWarning(fn : string) {
 	content = getFileContent(fn);
 	if (strContains(content, s)) {
 		setFileContent(fn, strReplace(content, s, ss)) |> ignore;
+	}
+}
+
+iterProgramExpr(program : FiProgram, cb : (FiExp) -> void) -> void {
+	traverseInOrder(program.names.toplevel, \__, decl : FiDeclaration -> {
+		switch (decl) {
+			FiFunctionDec(__, lambda, __, __, __): iterFiExp(lambda, cb);
+			default: {}
+		}
+	});
+}
+
+iterFiExp(expr : FiExp, cb : (FiExp) -> void) -> void {
+	cb(expr);
+	rec = \ex -> iterFiExp(ex, cb);
+	switch (expr) {
+		FiBool(b, __): {}
+		FiInt(i, __): {}
+		FiVar(name, type, __): {}
+		FiString(s, __): {}
+		FiDouble(d, __): {}
+		FiVoid(__): {}
+		FiCall(__, args, __, __):
+			iter(args, rec);
+		FiSwitch(x, __, cases, __, __): {
+			cb(x); 
+			iter(cases, \c -> rec(c.body));
+		}
+		FiLambda(__, body, __, __): 
+			rec(body);
+		FiLet(__, __, e1, e2, __, __): {
+			rec(e1); rec(e2);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			rec(e1); rec(e2); rec(e3);
+		}
+		FiCallPrim(__, es, __, __):
+			iter(es, rec);
+		FiRequire(__, e, __, __): 
+			rec(e);
+		FiUnsafe(__, fallback, __, __): 
+			rec(fallback);
+		FiSeq(es, __, __): 
+			iter(es, rec);
+		FiCast(e, __, __, __, __): 
+			rec(e);
+	}
+}
+
+fiWasmAddIndirectWrappers(program : FiProgram, flowfile : string) {
+	nativesToWrap = ref makeTree();
+	iterProgramExpr(program, \e : FiExp -> {
+		switch (e) {
+			FiCall(__, args, __, __): {
+				iter(args, \a -> {
+					switch (a) {
+						FiVar(n, t, __): {
+							switch (t) {
+								FiTypeFunction(__, __): {
+									switch (lookupTree(program.names.toplevel, n)) {
+										Some(d): {
+											switch (d) {
+												FiNativeDec(__, __, __, __, __, __, __): {
+													nativesToWrap := setTree(^nativesToWrap, n, d);
+												}
+												default: {}
+											}
+										}
+										None(): {}
+									}
+								}
+								default: {}
+							}
+						}
+						default: {}
+					}
+				});
+			}
+			default: {}
+		}
+	});
+	funcs = map(getTreeValues(^nativesToWrap), \f -> {
+		type0 = cast(f.type : FiType -> FiTypeFunction);
+		args = mapi(type0.args, \i, a -> FiFunArg("arg" + i2s(i), a.type));
+		type = FiTypeFunction(args, type0.returnType);
+		FiFunctionDec(
+			f.name + "__wrapped__",
+			FiLambda(
+				args, 
+				FiCall(
+					FiVar(f.name, type, 0),
+					map(args, \a -> FiVar(a.name, a.type, 0)),
+					type.returnType, 0),
+				type, 0),
+			type, 0, 0)
+	});
+	fiInjectFunctions(program, flowfile, funcs)
+}
+
+fiInjectFunctions(program : FiProgram, flowfile : string, funcs : [FiFunctionDec]) {
+	switch (lookupTree(program.modules, flowfile)) {
+		Some(module): {
+			module2 = FiModule(module with
+				functions = concat(module.functions, funcs),
+				initOrder = concat(module.initOrder, map(funcs, \f -> f.name))
+			);
+			FiProgram(program with 
+				modules = setTree(program.modules, flowfile, module2),
+				names = FiGlobalNames(program.names with 
+					toplevel = fold(funcs, program.names.toplevel, \acc, f -> setTree(acc, f.name, f))
+				)
+			)
+		}
+		None(): {
+			println("Cannot find module " + flowfile);
+			program
+		}
 	}
 }
 

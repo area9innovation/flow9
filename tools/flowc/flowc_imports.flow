@@ -1,0 +1,226 @@
+import ds/bitvector;
+import ds/hashmap;
+import math/stringmath;
+import math/hash;
+import tools/flowc/manipulation/freevars;
+import tools/flowc/fctypeenv;
+import tools/flowc/flowc_helpers;
+import tools/flowc/flowc_module;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	fcCheckImports(prog : FiProgram, onError : (FcError) -> void) -> void;
+}
+
+ProgramImportsAcc(
+	prog : FiProgram,
+
+	// All exported global names in the programm.
+	allExportedNames : [string],
+	
+	// Mapping from exported global names to their indexes in 'allExportedNames'.
+	name2index : HashMap<string, int>,
+
+	// Cumulative imported names, which are available at given module.
+	// Strictly speaking, we store the bits of presence/non-presence
+	// of some global name from 'allExportedNames' in the BitVector, corresponding to the module.
+	moduleImports : Tree<string, BitVector>,
+
+	// Used as a default value to speedup processing.
+	emptyBitVector : BitVector,
+
+	onError : (FcError) -> void,
+);
+
+fcCheckImports(prog : FiProgram, onError : (FcError) -> void) -> void {
+	time = timestamp();
+	allNames = foldTree(prog.modules, makeSet(),
+		\name, module, acc -> fold(module.exports, acc, \a, n -> insertSet(a, n))
+	);
+	allExportedNames = set2array(allNames);
+	name2index = foldi(allExportedNames, makeHashMap(fastHashString), \i, acc, name -> setHashMap(acc, name, i));
+	progAcc = ProgramImportsAcc(
+		prog,
+		allExportedNames,
+		name2index,
+		makeTree(),
+		makeEmptyBitVector(length(allExportedNames)),
+		onError
+	);
+	fold(prog.traversal, progAcc,
+		\acc, name -> {
+			module = lookupTreeDef(prog.modules, name, dummyFiModule);
+			fcCheckModuleImports(acc, module,
+				\e, s -> onError(FcError(e, [FcPosition(module.fileinfo.flowfile, s, s)]))
+			)
+		}
+	);
+	incrementTimePhase(fcTimePhases.checkImports, time);
+}
+
+fcCheckModuleImports(progAcc : ProgramImportsAcc, module : FiModule, onError : (string, int) -> void) -> ProgramImportsAcc {
+	exportsSet = buildSet(module.exports);
+	thisModuleImports = bitVectorOrA(
+			concat(
+				[makeBitVector(length(progAcc.allExportedNames),
+					\i -> containsSet(exportsSet, progAcc.allExportedNames[i])
+				)],
+				map(module.imports, \imp -> lookupTreeDef(progAcc.moduleImports, imp.flowfile, progAcc.emptyBitVector)
+			)
+		)
+	);
+	acc = ModuleImportsAcc(
+		progAcc,
+		thisModuleImports,
+		fold(module.unions,
+			fold(module.structs, makeSet(),
+				\acc, s -> insertSet(acc, s.name)
+			),
+			\acc, u -> insertSet(acc, u.name)
+		),
+		fold(module.structs,
+			fold(module.unions,
+				makeTree(),
+				\acc : Tree<string, FiStructOrUnion>, union -> setTree(acc, union.name, union)
+			),
+			\acc, struct -> setTree(acc, struct.name, struct)
+		),
+		onError,
+		module.fileinfo.flowfile
+	);
+	locals = fold(module.natives, buildSet(module.initOrder), \ac, n -> insertSet(ac, n.name));
+	iter(module.functions, \f -> fcCheckExprImports(acc, locals, f.lambda));
+	iter(module.globalVars, \g -> fcCheckExprImports(acc, locals, g.value));
+	iter(module.natives, \n -> fcCheckExprImports(acc, locals, n.fallbackLambda));
+
+	ProgramImportsAcc(
+		progAcc.prog,
+		progAcc.allExportedNames,
+		progAcc.name2index,
+		setTree(
+			progAcc.moduleImports,
+			module.fileinfo.flowfile,
+			thisModuleImports
+		),
+		progAcc.emptyBitVector,
+		progAcc.onError
+	)
+}
+
+ModuleImportsAcc(
+	progAcc : ProgramImportsAcc,
+	bitVectorExports : BitVector,
+	localTypeNames : Set<string>,
+	moduleStructsUnions : Tree<string, FiStructOrUnion>,
+	onError : (string, int) -> void,
+	moduleName : string
+);
+
+fcCheckExprImports(eacc : ModuleImportsAcc, localNames : Set<string>, expr : FiExp) -> void {
+	checkExprs = \es -> iter(es, \e -> fcCheckExprImports(eacc, localNames, e));
+	checkField = \field_name, e, start -> {
+		switch (fiExpType(e)) {
+			FiTypeName(type_name, __): {
+				if (containsSet(eacc.localTypeNames, type_name) || fcCheckForExportsName(eacc, type_name)) {
+					fiEnsureFieldExists(
+						eacc.progAcc.prog.names,
+						eacc.moduleStructsUnions,
+						field_name, type_name,
+						eacc.progAcc.onError,
+						eacc.moduleName, start
+					); {}
+				} else {
+					fcImportCheckError(eacc, "Type", type_name, start);
+				}
+			}
+			default: {}
+		}
+	};
+	switch (expr) {
+		FiLambda(args, e, __, __):
+			fcCheckExprImports(eacc, fold(args, localNames, \acc, arg -> insertSet(acc, arg.name)), e);
+		FiCall(f, es, __, __): {
+			fcCheckExprImports(eacc, localNames, f);
+        	checkExprs(es);
+		}
+		FiVar(name, __, start):
+			if (!containsSet(localNames, name) && !fcCheckForExportsName(eacc, name)) {
+				fcImportCheckError(eacc, "Name", name, start);
+			}
+		FiLet(x, __, e1, e2, __, __): {
+			fcCheckExprImports(eacc, localNames, e1);
+			fcCheckExprImports(eacc, insertSet(localNames, x), e2);
+		}
+		FiIf(e1, e2, e3, __, __):
+			checkExprs([e1, e2, e3]);
+		FiSwitch(e, __, cs, __, __):{
+			fcCheckExprImports(eacc, localNames, e);
+			iter(cs, \c -> {
+				if (c.struct != "default" && !containsSet(eacc.localTypeNames, c.struct) && !fcCheckForExportsName(eacc, c.struct)) {
+					fcImportCheckError(eacc, "Struct", c.struct, c.start);
+				}
+				fcCheckExprImports(eacc, mergeSets(localNames, buildSet(c.argNames)), c.body)
+			});
+		}
+		FiCast(e, __, __, __, __):
+			fcCheckExprImports(eacc, localNames, e);
+		FiSeq(es, __, __):
+			checkExprs(es);
+		FiCallPrim(o, es, ty, start): {
+			switch (o) {
+				FcStructPrim(name):
+					if (!containsSet(eacc.localTypeNames, name) && !fcCheckForExportsName(eacc, name)) {
+						fcImportCheckError(eacc, "Struct", name, start);
+					}
+				FcFieldPrim(field_name):
+					if (isConfigParameterTrue(eacc.progAcc.prog.config.config, "check-fields")) {
+						checkField(field_name, es[0], start);
+					}
+				FcSetMutablePrim(field_name):
+					if (isConfigParameterTrue(eacc.progAcc.prog.config.config, "check-fields")) {
+						checkField(field_name, es[0], start);
+					}
+				FcCreateClosurePrim(structName, functionName): {
+					if (!containsSet(eacc.localTypeNames, structName) && !fcCheckForExportsName(eacc, structName)) {
+						fcImportCheckError(eacc, "Struct", structName, start);
+					}
+					if (!containsSet(eacc.localTypeNames, functionName) && !fcCheckForExportsName(eacc, functionName)) {
+						fcImportCheckError(eacc, "Function", structName, start);
+					}
+				}
+				default: {};
+			}
+			checkExprs(es);
+		} 
+		FiString(__, __):             {}; // here I would want to match simply on union FcConst
+		FiBool(__, __):               {};
+		FiDouble(__, __):             {};
+		FiVoid(__):                   {};
+		FiInt(__, __):                {};
+        FiRequire(__, e, __, __):     fcCheckExprImports(eacc, localNames, e);
+        FiUnsafe(__, fb, __, __):     fcCheckExprImports(eacc, localNames, fb);
+	}
+}
+
+fcCheckForExportsName(eacc : ModuleImportsAcc, name : string) -> bool {
+	switch (lookupHashMap(eacc.progAcc.name2index, name)) {
+		Some(nameInd): 
+			switch (getBitVector(eacc.bitVectorExports, nameInd)) {
+				Some(v): v;
+				None(): false;
+			}
+		None(): false;
+	}
+}
+
+fcImportCheckError(eacc : ModuleImportsAcc, kind : string, name : string, start : int) -> void {
+	firstLine = kind + " '" + name + "' is inaccessible";
+	definitionModule = fiModuleWhereNameIsDefined(eacc.progAcc.prog.names, name);
+	secondLine = if (definitionModule != "") {
+		"add 'import " + definitionModule + ";' to the imports section"
+	} else {
+		"symbol '" + name + "' is not defined"
+	}
+	eacc.onError(firstLine + "\n" + secondLine, start)
+}

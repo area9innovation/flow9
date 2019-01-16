@@ -1437,7 +1437,44 @@ class NativeHx {
 							w.removeEventListener(event, cb);
 						}
 					}
-				} 
+				}
+			} else if (event == "suspend") {
+				Browser.window.addEventListener("blur", cb);
+				return function() { Browser.window.removeEventListener("blur", cb); };
+			} else if (event == "resume") {
+				Browser.window.addEventListener("focus", cb);
+				return function() { Browser.window.removeEventListener("focus", cb); };
+			} else if (event == "idle") {
+				var timeoutId = -1;
+				var setTimeoutFn = function () {};
+				var timestamp : Float = 0;
+				var idleLimit : Float = 1000 * 60; // 1 min
+
+				setTimeoutFn = function () {
+					var timePassed = Date.now().getTime() - timestamp;
+
+					if (timePassed >= idleLimit) {
+						timeoutId = -1;
+						cb();
+					} else {
+						timeoutId = untyped __js__("setTimeout(setTimeoutFn, idleLimit - timePassed)");
+					}
+				};
+
+				var mouseMoveFn = function () {
+					timestamp = Date.now().getTime();
+
+					if (timeoutId == -1) {
+						setTimeoutFn();
+					}
+				};
+
+				Browser.window.addEventListener("mousemove", mouseMoveFn);
+
+				return function() {
+					untyped __js__("clearTimeout(timeoutId)");
+					Browser.window.removeEventListener("mousemove", mouseMoveFn);
+				};
 			}
 		#end
 

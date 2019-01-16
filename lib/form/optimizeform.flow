@@ -1,0 +1,434 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import render;
+import form/form;
+import string;
+import sys/target;
+import ui/fontmapping; // getMappedFont
+
+export {
+	// This method will optimize a form based on high-level semantics of the forms. In particular,
+	// it will attempt to join adjacent texts, and reduce some special grid forms
+	optimizeForm(form : Form) -> Form;
+
+	optimizeCols(line : [Form]) -> [Form];
+
+	availableDependent(f : Form) -> bool;
+
+	joinText(t1 : string, s1 : [CharacterStyle], t2: string, s2 : [CharacterStyle]) -> [Form];
+}
+
+optimizeForm(form) {
+	switch (form : Form) {
+	// Empty: Nothing
+	Constructor(f, fn): {
+		// Nested Constructor is a target, but since there are no clips involved, not worth it
+		c = optimizeForm(f);
+		if (c != f) Constructor(c, fn) else form;
+	}
+	Create2(__, __): form;
+	Text(t, style): if (strlen(t) == 0) Empty() else form;
+	// Picture: Nothing
+	Graphics(p, style): if (length(p) == 0) Empty() else form;
+	Translate(x, y, f): {
+		of = optimizeForm(f);
+		if (of == Empty()) {
+			Empty();
+		} else {
+			// TODO: If of is a Border, we can maybe do something
+			// TODO: If of is a translate, we can add behaviours
+			if (of == f) form
+			else Translate(x, y, of);
+		}
+	}
+	Scale(x, y, f): {
+		of = optimizeForm(f);
+		if (of == Empty()) {
+			Empty();
+		} else {
+			// TODO: If x and y are constant, we can avoid subscriptions
+			// TODO: If of is a scale, we can multiple scaling
+			if (of == f) form
+			else Scale(x, y, of);
+		}
+	}
+	Rotate(r, f): {
+		of = optimizeForm(f);
+		if (of == Empty()) {
+			Empty();
+		} else {
+			// TODO: If r is constant, we can avoid subscriptions, and angle == 0 is Nop
+			// TODO: If of is a Rotate, we can add rotation
+			if (of == f) form
+			else Rotate(r, of);
+		}
+	}
+	Alpha(a, f): {
+		of = optimizeForm(f);
+		if (of == Empty()) {
+			Empty();
+		} else {
+			// TODO: If a is constant, we can avoid subscriptions
+			//      a == 0 is Empty, a == 1 is Nop
+			// TODO: If of is a Alpha, we can combine alphas
+			if (of == f) form
+			else Alpha(a, of);
+		}
+	}
+	Available2(wh, f): {
+		of = optimizeForm(f);
+		if (of == Empty()) {
+			Empty();
+		} else if (!availableDependent(of)) {
+			// It can be dropped!
+			of;
+		} else if (of == f) {
+			form
+		// TODO: If of is a Available2, this one is nop
+		} else {
+			Available2(wh, of);
+		}
+	}
+	Size2(__, __): optimizeSize2(form);
+	SetPending(p, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else SetPending(p, of);
+	}
+	Group(g): {
+		l = length(g);
+		if (l == 0) {
+			Empty();
+		} else if (l == 1) {
+			optimizeForm(g[0]);
+		} else {
+			fs = optimizeGroups(g);
+			if (fs == g) form
+			else Group(fs);
+		}
+	}
+	Grid(cells): {
+		ys = length(cells);
+		if (ys == 0) {
+			Empty();
+		} else if (ys == 1) {
+			line = cells[0];//optimizeCols(cells[0]);
+			xs = length(line);
+			if (xs == 0) {
+				Empty();
+			} else if (xs == 1) {
+				line[0];
+			} else {
+				if (line == cells[0]) form
+				else Grid([line]);
+			}
+		} else {
+			ocells = map(cells, \row-> {
+				map(row, \cell -> optimizeForm(cell))
+			});
+			if (ocells == cells) form
+			else Grid(ocells);
+		}
+	}
+	Border(l, t, r, b, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else Border(l, t, r, b, of)
+	}
+	Camera(filename, parameters, listeners, controls): form;
+    Empty(): form;
+    Picture(url, style): form;
+	Filter2(filters, f, stack): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else Filter2(filters, of, stack)
+	}
+    Mutable2(f, stack): form; // we optimize Mutable2 inside renderform
+	Mask2(f, mask, stack): {
+		of = optimizeForm(f);
+		mf = optimizeForm(mask);
+		if (of == f && mf == mask) form
+		else Mask2(of, mf, stack);
+	}
+	Visible(v, f): {
+		if (isConst(v)) {
+			if (getValue(v) != 0) {
+				optimizeForm(f);
+			} else {
+				Empty();
+			}
+		} else {
+			of = optimizeForm(f);
+			if (of == f) form
+			else Visible(v, of);
+		}
+	}
+    Video(filename, parameters, listeners, controls): form;
+    TextInput(state, listeners, stateaccess): form;
+	RealHTML2(url, wh, style): form;
+	Baseline(b, f): {
+		of = optimizeForm(f);
+		if (of == f) form else Baseline(b, of)
+	}
+    Switch(case, cases): {
+    	ocases = map(cases, optimizeForm);
+    	if (ocases == cases) form else Switch(case, ocases)
+    }
+    Inspect(inspectors, f): {
+    	of = optimizeForm(f);
+    	if (of == f) form else Inspect(inspectors, of);
+    }
+    Interactive(listeners, f): {
+    	of = optimizeForm(f);
+    	if (of == f) form
+		else Interactive(listeners, of);
+	}
+	Crop2(left, top, width, height, f, stack): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else Crop2(left, top, width, height, of, stack);
+	}
+	Cursor(kind, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else Cursor(kind, of);
+	}
+	Access(props, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else Access(props, of);
+	}
+	ControlFocus(focus, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else ControlFocus(focus, of);
+	}
+	FullWindow(fs, f): {
+		of = optimizeForm(f);
+		if (of == f) form
+		else FullWindow(fs, of);
+	}
+	NativeForm(__, __, __, fn): form;
+	DynamicGroup2(__, __, __, __): form;
+	}
+}
+
+// Only works for a single line, where alignment with other lines is not required
+optimizeCols(line) {
+	ol = map(line, optimizeForm);
+	fold(ol, [Empty()], \c, n -> {
+		last = c[length(c) - 1];
+		join = horizontalJoinForms(last, n);
+		concat(subrange(c, 0, length(c) - 1), join);
+	});
+}
+
+optimizeGroups(layers : [Form]) -> [Form] {
+	mapConcat(layers, \l -> switch (l : Form) {
+		Group(g): optimizeGroups(g);
+		default: [optimizeForm(l)];
+	});
+}
+
+optimizeSize2(form : Size2) -> Size2 {
+	f = form.form;
+	switch (f : Form) {
+		Size2(__, __): optimizeSize2(f);
+		default: {
+			of = optimizeForm(f);
+			if (of == f) form
+			else Size2(form.widthHeight, of)
+		}
+	}
+}
+
+// Tries to horizontally join two forms
+horizontalJoinForms(f1 : Form, f2 : Form) -> [Form] {
+	if (f1 == Empty()) [f2]
+	else {
+		switch (f1 : Form) {
+		Empty(): [f2];
+		Text(t1, s1): {
+			switch (f2 : Form) {
+				Empty(): [f1];
+				Text(t2, s2): {
+					joinText(t1, s1, t2, s2)
+				}
+				Grid(cells) : {
+					if (length(cells) == 1) {
+						row = cells[0];
+						if (anyAvailableDependent(row)) {
+							[f1, f2];
+						} else {
+							[Grid([concat([f1], row)])];
+						}
+					} else {
+						[f1, f2];
+					}
+				}
+				default: [f1, f2];
+			}
+		}
+		default: [f1, f2];
+		}
+	}
+}
+
+// formatText("a", "sans", 12.0, 0xff0000)
+// Output is parsed in form2html. Do not forget to update on changes.
+formatText(text : string, family : string, size : double, color : int) -> string {
+	"<font face=\"" + family + "\" size=\"" + d2s(size) + "\" color=\"#" + lpad(formatHex(color),"0", 6) + "\">" + text + "</font>";
+}
+
+joinText(t1 : string, s1 : [CharacterStyle], t2: string, s2 : [CharacterStyle]) -> [Form] {
+	if (strContains(t1, "\n") || strContains(t2, "\n")) {
+		[Text(t1, s1), Text(t2, s2)];
+	} else if (s1 == s2) {
+		[Text(t1 + t2, s1)];
+	} else if (js) {
+		[Text(t1, s1), Text(t2, s2)];
+	} else {
+		// Set up the first style
+		fontfamily1 = ref "Roboto";
+		fontsize1 = ref 11.0;
+		fillcolour1 = ref 0x000000;
+		fillopacity1 = ref 1.0;
+		backgroundcolour1 = ref 0x000000;
+		backgroundopacity1 = ref calculateDefaultTextBackgroundColorOpacity(s1);
+		letterspacing1 = ref 0.0;
+		advancedSharpness1 = ref -400;
+		advancedAntiAliasType1 = ref FontAntiAliasAdvanced();
+		advancedGridFitType1 = ref FontGridFitNone();
+		underlined1 = ref None();
+
+		iter(s1, \s -> {
+			switch (s : CharacterStyle) {
+				FontFamily(name) : fontfamily1 := name;
+				FontSize(size) : fontsize1 := size;
+				BackgroundFill(col): backgroundcolour1 := col;
+				BackgroundFillOpacity(opacity): backgroundopacity1 := opacity;
+				LetterSpacing(op) : letterspacing1 := op;
+				Sharpness(sharpness, antiAliasType, gridFitType) : {
+					advancedSharpness1 := sharpness;
+					advancedAntiAliasType1 := antiAliasType;
+					advancedGridFitType1 := gridFitType;
+				}
+				Underlined(style) : underlined1 := Some(style);
+				Fill(c): fillcolour1 := c;
+				FillOpacity(o): fillopacity1 := o;
+				EscapeHTML(__): {}
+			}
+		});
+		mappedFont1 = getMappedFont(^fontfamily1, ^fontsize1);
+		fontfamily1 := mappedFont1.first;
+		fontsize1 := mappedFont1.second;
+
+
+		// Now, set up the second style
+		fontfamily2 = ref "Roboto";
+		fontsize2 = ref 11.0;
+		fillcolour2 = ref 0x000000;
+		fillopacity2 = ref 1.0;
+		backgroundcolour2 = ref 0x000000;
+		backgroundopacity2 = ref  calculateDefaultTextBackgroundColorOpacity(s2);
+		letterspacing2 = ref 0.0;
+		advancedSharpness2 = ref -400;
+		advancedAntiAliasType2 = ref FontAntiAliasAdvanced();
+		advancedGridFitType2 = ref FontGridFitNone();
+		underlined2 = ref None();
+
+		iter(s2, \s -> {
+			switch (s : CharacterStyle) {
+			FontFamily(name) : fontfamily2 := name;
+			FontSize(size) : fontsize2 := size;
+			Fill(col): fillcolour2 := col;
+			FillOpacity(op): fillopacity2 := op;
+			BackgroundFill(col): backgroundcolour2 := col;
+			BackgroundFillOpacity(opacity) : backgroundopacity2 := opacity;
+			LetterSpacing(op) : letterspacing2 := op;
+			Sharpness(sharpness, antiAliasType, gridFitType) : {
+				advancedSharpness2 := sharpness;
+				advancedAntiAliasType2 := antiAliasType;
+				advancedGridFitType2 := gridFitType;
+			}
+			Underlined(style) : underlined2 := Some(style);
+			EscapeHTML(__) : {}
+			}
+		});
+		mappedFont2 = getMappedFont(^fontfamily2, ^fontsize2);
+		fontfamily2 := mappedFont2.first;
+		fontsize2 := mappedFont2.second;
+
+		if (^fillopacity1 != ^fillopacity2 || ^letterspacing1 != ^letterspacing2 || ^advancedSharpness1 != ^advancedSharpness2 ||
+			^advancedAntiAliasType1 != ^advancedAntiAliasType2 || ^advancedGridFitType1 != ^advancedGridFitType2 ||
+			^backgroundcolour1 != ^backgroundcolour2 || ^backgroundopacity1 != ^backgroundopacity2 ||
+			^underlined1 != ^underlined2) {
+			[Text(t1, s1), Text(t2, s2)];
+		} else {
+			// Be sure to format the first text, so that we use the second style in case we have to add more stuff here
+			[Text(formatText(t1, ^fontfamily1, ^fontsize1, ^fillcolour1) + t2, s2)];
+		}
+	}
+}
+
+// Are any of these forms dependent on width/height available?
+anyAvailableDependent(a : [Form]) -> bool {
+	exists(a, \f -> availableDependent(f));
+}
+
+// Determines whether this form is dependent on what width and height is available
+availableDependent(f) {
+	switch (f: Form) {
+	Border(left, top, right, bottom, form): availableDependent(form);
+	Translate(x, y, form): availableDependent(form);
+	Scale(x, y, form): availableDependent(form);
+	Rotate(degree, form): availableDependent(form);
+	Alpha(alpha, form): availableDependent(form);
+	Visible(visible, form): availableDependent(form);
+	Mask2(main1, mask, stack): availableDependent(main1) || availableDependent(mask);
+	Group(layers): anyAvailableDependent(layers);
+	Grid(cells): false;
+	Available2(widthheight, form): false;
+	Size2(widthHeight, form): availableDependent(form);
+	SetPending(pending, form): availableDependent(form);
+	Baseline(baseline, form): availableDependent(form);
+	Interactive(listeners, form): availableDependent(form);
+	TextInput(state, listeners, stateaccess): false;
+	Filter2(filters, form, stack): availableDependent(form);
+	Cursor(kind, form): availableDependent(form);
+	Inspect(inspectors, form):
+		availableDependent(form)
+		||
+		fold(inspectors, false, \v, i -> v || switch (i : Inspector) {
+			AvailableWidth(a) : true;
+			AvailableWidth2(a) : true;
+			AvailableHeight(a) : true;
+			IAvailable(aw): true;
+			IAvailable2(aw): true;
+			Width(w): v;
+			Height(h): v;
+			ISize(s): v;
+			IMetrics(m): v;
+			IPending(p): v;
+			ITag(id): v;
+			ITransformMatrix(fn): v;
+		});
+	Mutable2(form, stack): true; // We never know what happens
+	Switch(case, cases): anyAvailableDependent(cases);
+	Crop2(left, top, width, height, form, stack): availableDependent(form);
+	Empty(): false;
+    Text(text, style): false;
+    Picture(url, style): false;
+    Camera(filename, parameters, listeners, controls): false;
+    Graphics(path, style): false;
+    Constructor(form, fn): availableDependent(form);
+    Create2(__, __): true; // We never know what happens
+    Video(filename, parameters, listeners, controls): false;
+    Access(properties, form): availableDependent(form);
+    RealHTML2(url, wh, style): false;
+    ControlFocus(focus, form): availableDependent(form);
+    FullWindow(fs, form): availableDependent(form);
+    NativeForm(init, __, __, fn): false;
+    DynamicGroup2(__, __, __, __): true;
+	}
+}

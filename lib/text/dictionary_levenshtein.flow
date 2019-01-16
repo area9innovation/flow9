@@ -1,0 +1,226 @@
+// See http://stevehanov.ca/blog/index.php?id=114
+import ds/trie;
+import ds/tree;
+import formats/unicode/unidecode;
+import algorithms;
+
+export {
+	// Construct a dictionary of these words along with a cookie of some kind
+	buildDictionary(words : [Pair<string, ?>]) -> Trie<?>;
+
+	// Will find all dictionary words that are within maxCost levenshtein distance of the input.
+	// Returns the dictionary words, their cookie and their distance to the word.
+	// If prefixOnly is given, we find all words which have the given word (with spelling mistakes) as a prefix.
+	// (The cost for a prefix-match is the distance plus 1 delete for the entire missing suffix).
+	// maxHits controls how many results we need. If we get that amount, we stop looking for more.
+	// (maxHits not implemented yet)
+	approximateDictionarySearch(trie : Trie<?>, word : string, maxCost : int, prefixOnly : bool, maxHits : int) -> [DictionaryHit<?>];
+		DictionaryHit(word : string, cookie : ?, distance : int);
+
+	// Convert the distance to a relative score, based on the given string length
+	relativeLevenshteinDistance(i : int, l : int) -> double;
+}
+
+// The basic distance for insert, delete operations
+distanceUnit = 10;
+
+// The distance between two letters for replacement:
+// 0 Identical
+// 1 Only different by case or accents
+// 8 Both vowels
+// 9 Both consonants - here, groups of similar consonants like s/c/x k/c/g/x h/j and similar could be considered closer
+// 10 Otherwise
+letterDistance(l : string, r : string) -> int {
+	if (l == r) 0
+	else {
+		llc = toLowerCase(l);
+		rlc = toLowerCase(r);
+		if (llc == rlc) 1
+		else if (isLowerCaseLetter(llc) && isLowerCaseLetter(rlc)) {
+			lv = isLowerCaseVowel(llc);
+			rv = isLowerCaseVowel(rlc);
+			if (lv && rv) 8
+			else if (!lv && !rv) 9
+			else 10
+		} else {
+			lc = unidecode(llc);
+			rc = unidecode(rlc);
+			if (lc == rc) 1
+			else if (isLowerCaseLetter(lc) && isLowerCaseLetter(rc)) {
+				lv = isLowerCaseVowel(lc);
+				rv = isLowerCaseVowel(rc);
+				if (lv && rv) 8
+				else if (!lv && !rv) 9
+				else 10
+			} else 10;
+		}
+	}
+}
+
+isLowerCaseLetter(s) {
+	(s >= "a" && s <= "z")
+}
+
+isLowerCaseVowel(l : string) -> bool {
+	strContains("aeiouy", l);
+}
+
+relativeLevenshteinDistance(t : int, len : int) -> double {
+	l = len * distanceUnit;
+	if (t == l) 1.0 
+	else if (t > l) 0.0 
+	else i2d(l-t) / i2d(l)
+}
+
+
+buildDictionary(words : [Pair<string, ?>]) -> Trie<?> {
+	fold(words, makeTrie(), \acc, w : Pair<string, ?> -> {
+
+//		println("Adding " + w.first);
+//		r = addTrie1(acc, w.first, w);
+//		printTrie(r, "");
+//		r;
+
+		addTrie1(acc, w.first, w.second);
+	});
+}
+
+// The search function returns a list of all words that are less than the given
+// maximum distance from the target word
+approximateDictionarySearch(trie : Trie<?>, word : string, maxCost : int, prefixOnly : bool, maxHits : int) -> [DictionaryHit<?>] {
+	row = generate(0, strlen(word) + 1, \i -> distanceUnit * i);
+	matches = fold(trie.children, DictionaryHits([]), \acc : DictionaryHits<?>, c -> {
+		trieSearchRecursive(c, c.key, 0, word, row, acc, distanceUnit * maxCost, prefixOnly, maxHits)
+	});
+
+	hits = matches.hits;
+
+	if (prefixOnly) {
+		// This mode might give duplicates, so we have to filter them
+		getTreeValues(fold(hits, makeTree(), \acc, m -> {
+			dup = lookupTree(acc, m.word);
+			switch (dup) {
+				None(): {
+					setTree(acc, m.word, m)
+				}
+				Some(exi): {
+					best = if (m.distance < exi.distance) m else exi;
+					setTree(acc, m.word, best)
+				}
+			}
+
+		}));
+	} else hits;
+}
+
+DictionaryHits(hits : [DictionaryHit<?>]);
+
+// This recursive helper is used by the search function above. It assumes that
+// the previousRow has been filled in already.
+trieSearchRecursive(node : Trie<?>, letter : string, depth : int, word : string, previousRow : [int], results : DictionaryHits<?>, maxCost : int, prefixOnly : bool, maxHits : int) -> DictionaryHits<?> {
+	// println(substring("                         ", 0, depth) + letter);
+	columns = strlen(word) + 1;
+
+	xrange = generate(1, columns, \i -> i);
+	// Build one row for the letter, with a column for each letter in the target
+	// word, plus one for the empty string at column 0
+	currentRow = fold(xrange, [ previousRow[0] + distanceUnit /* delete */], \acc, column -> {
+		insertCost = acc[column - 1] + distanceUnit;
+		deleteCost = previousRow[column] + distanceUnit;
+
+		expected = getCharAt(word, column - 1);
+		replaceCost = previousRow[column - 1] + letterDistance(expected, letter);
+		firstLetterAdjustment = if (prefixOnly && column == 1) distanceUnit * replaceCost else replaceCost;
+		arrayPush(acc, min3(insertCost, deleteCost, firstLetterAdjustment));
+	});
+
+
+	// If the last entry in the row indicates the optimal cost is less than the
+	// maximum cost, and there is a word in this trie node, then add it.
+	lastCost = lastElement(currentRow, columns);
+
+	results2 = if (lastCost <= maxCost) {
+			mv : Maybe<?> = node.value;
+			switch (mv) {
+				None(): results;
+				Some(match): {
+					addDictionaryHit(results, DictionaryHit(word, match, lastCost), maxHits)
+				}
+			}
+		} else results;
+
+	result3 = if (lastCost < maxCost && prefixOnly && depth == columns - 2) {
+			// Collect all words in the children!
+			collectTrieKeys(word, node.children, depth, lastCost, results2, maxHits);
+		} else {
+			results2;
+		};
+
+	if (fold(currentRow, intMax, min) <= maxCost) {
+		fold(node.children, result3, \acc2, c -> {
+			if (c.key != "") {
+				trieSearchRecursive(c, c.key, depth + 1, word, currentRow, acc2, maxCost, prefixOnly, maxHits)
+			} else acc2;
+		});
+	} else results2;
+}
+
+collectTrieKeys(word : string, c : [Trie<?>], depth : int, cost : int, hits : DictionaryHits, maxHits : int) -> DictionaryHits {
+	fold(c, hits, \acc, t : Trie<?> -> {
+		cword = word + t.key;
+		acc2 = collectTrieKeys(cword, t.children, depth, cost, acc, maxHits);
+		m : Maybe<?> = t.value;
+		switch (m) {
+			None(): acc2;
+			Some(v): {
+				// Give small penalty based on the extra number of characters
+				superfluous = strlen(cword) - depth - 1;
+				addDictionaryHit(acc2, DictionaryHit(cword, v, cost + superfluous), maxHits);
+			}
+		}
+	});
+}
+
+addDictionaryHit(h : DictionaryHits, hit : DictionaryHit, maxHits : int) -> DictionaryHits {
+	_insert = \ -> {
+		DictionaryHits(arrayPushSortedWithLimit(h.hits, hit, \h1, h2 -> genericCompare(h1.distance, h2.distance), maxHits));
+	}
+
+	n = length(h.hits);
+	if (n < maxHits) {
+		_insert();
+	} else {
+		last = h.hits[n - 1];
+		if (last.distance < hit.distance) h
+		else {
+			_insert();
+		}
+	}
+}
+
+/*
+
+printTrie(t : Trie, indent : string) -> void {
+	println(indent + t.key);
+	iter(t.children, \c -> {
+		printTrie(c, "   " + indent);
+	});
+}
+
+
+main() {
+	words = mapi(strSplit("#include redgrapes.txt", "\n"), \i, s -> Pair(s, i));
+
+	words2 = subrange(words, 100, 20);
+
+	println(words2);
+
+//	words2 = [Pair("the", true), Pair("them", false), Pair("this", false), Pair("therefore", true)];
+	dict = buildDictionary(words2);
+
+	r = approximateDictionarySearch(dict, "Fer", 2, true);
+	println(r);
+	quit(0);
+}
+
+*/

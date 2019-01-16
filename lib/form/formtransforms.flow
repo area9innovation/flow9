@@ -1,0 +1,1436 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import form/gui2;
+import form/form;
+import form/formmetrics;
+import transforms;
+import math/geometry;
+import runtime; // isSameObj
+
+export {
+
+	TransForm : (
+		replacementForm : Form,  // replacement form
+		traverseChildren : bool  // second defines whether to traverse children forms of a replacement form
+	);
+
+	// Traverses form tree calling fn on each node.
+	transformForm(form : Form, fn : (Form) -> TransForm) -> Form;
+
+
+	// Make static copy of a form
+	takeSnapshot : (form : Form) -> Form;
+
+	// Could be used to set text background
+	transformText : (form : Form, fn : (Text) -> Form) -> Form;
+
+	// Change style of every Text in specified form
+	changeTextStyle : (form : Form, fn : ([CharacterStyle]) -> [CharacterStyle]) -> Form;
+
+	// Change style of every Text in specified form; style is behaviour
+	changeTextStyleB : (form : Form, b : Behaviour<?>, fn : (?, [CharacterStyle]) -> [CharacterStyle]) -> Form;
+
+	// Creates form, that will dynamically calculate form metrics
+	getDynamicFormSize : (form : Form) -> Pair<Form, Behaviour<FormMetrics>>;
+
+	// Creates form, that will dynamically calculate form metrics
+	// Partially implemented function for very specific case. getExactTopPoint = true does not work for Grid.
+	getDynamicFormSize2(form : Form, getExactTopPoint : bool) -> Pair<Form, Behaviour<FormMetrics>>;
+
+	// Is this form visibly empty right now? Not the same as width == 0 && height == 0
+	// Complicated cases like Crop(0.0, 0.0, 10.0, 10.0, Tranlate(20.0, 20.0, NonEmpty)) are not recognized (result is false i.e. non empty)
+	// That does not match old implementation. Border(10, 10, 10, 10, Empty()) is now considered empty as well as Alpha(make(0.0), form)
+	isEmptyForm : (f : Form) -> bool;
+
+	isConstEmptyForm : (f : Form) -> bool;
+
+	// Is this form visibly empty?
+	// Returns form with Constructor which prevents subscribers leaks
+	isEmptyFormB(f : Form) -> Pair<Form, Behaviour<bool>>;
+
+	// Returns plain text from the form
+	getFormText : (f : Form) -> string;
+
+	// check if there is an ITag
+	hasTaggedForm(f : Form, tag : int) -> bool;
+
+	// Where is the form with this ITag right now?
+	findTaggedFormPosition(f : Form, tag : int) -> Point;
+	// Really searches for given tag. Does not stop on the first found one if exactMatch = true
+	findTaggedFormPosition2(form : Form, tag : int, exactMatch : bool) -> Point;
+	// Behaviour version. Returns None when tag is not found.
+	findTaggedFormPositionB(f : Form, tag : int) -> Pair<Form, Behaviour<Maybe<Point>>>;
+
+	// Scale of the form with this ITag right now.
+	findTaggedFormScale(form : Form, tag : int) -> Point;
+	// Really searches for given tag. Does not stop on the first found one if exactMatch = true
+	findTaggedFormScale2(form : Form, tag : int, exactMatch : bool) -> Point;
+	// Behaviour version. Returns None when tag is not found.
+	findTaggedFormScaleB(form : Form, tag : int) -> Pair<Form, Behaviour<Maybe<Point>>>;
+}
+
+transformForm(f : Form, fn : (Form) -> TransForm) -> Form {
+	transform = \stepFn : () -> Form -> {
+		res = fn(f);
+		if (!res.traverseChildren)
+			res.replacementForm
+		else if (!isSameObj(res.replacementForm, f))
+			transformForm(res.replacementForm, fn)
+		else
+			stepFn();
+	};
+	switch(f: Form) {
+		Empty(): transform(\ -> f);
+		Graphics(p, s): transform(\ -> f);
+		Picture(url, s): transform(\ -> f);
+		Camera(file, pars, listeners, controls): transform(\ -> f);
+		Text(t,s): transform(\ -> f);
+		TextInput(state, listeners, stateaccess): transform(\ -> f);
+		Video(file, pars, listeners, controls): transform(\ -> f);
+		RealHTML2(url, wh, style): transform(\ -> f);
+		NativeForm(init, met, form, fn2): transform(\ -> NativeForm(init, met, \ -> transformForm(form(), fn), fn2));
+
+		Border(left, top, right, bottom, subform): transform(\ -> Border(left, top, right, bottom, transformForm(subform, fn)));
+		Crop2(left, top, width, height, subform, stack): transform(\ -> Crop2(left, top, width, height, transformForm(subform, fn), stack));
+		Constructor(subform, fun): transform(\ -> Constructor(transformForm(subform, fn), fun));
+		Translate(x, y, subform): transform(\ -> Translate(x, y, transformForm(subform, fn)));
+		Scale(x, y, subform): transform(\ -> Scale(x, y, transformForm(subform, fn)));
+		Rotate(degree, subform): transform(\ -> Rotate(degree, transformForm(subform, fn)));
+		Alpha(alpha, subform): transform(\ -> Alpha(alpha, transformForm(subform, fn)));
+		Visible(visible, subform): transform(\ -> Visible(visible, transformForm(subform, fn)));
+		Mask2(mainform, maskform, stack): transform(\ -> Mask2(transformForm(mainform, fn), maskform, stack));
+		Available2(widthHeight, subform): transform(\ -> Available2(widthHeight, transformForm(subform, fn)));
+		Size2(widthHeight, subform): transform(\ -> Size2(widthHeight, transformForm(subform, fn)));
+		SetPending(pending, subform): transform(\ -> SetPending(pending, transformForm(subform, fn)));
+		Baseline(baseline, subform): transform(\ -> Baseline(baseline, transformForm(subform, fn)));
+		Cursor(kind, subform): transform(\ -> Cursor(kind, transformForm(subform, fn)));
+		Access(props, subform): transform(\ -> Access(props, transformForm(subform, fn)));
+		ControlFocus(focus, subform): transform(\ -> ControlFocus(focus, transformForm(subform, fn)));
+		FullWindow(fullscreen, subform): transform(\ -> FullWindow(fullscreen, transformForm(subform, fn)));
+		Interactive(listeners, subform): transform(\ -> Interactive(listeners, transformForm(subform, fn)));
+		Inspect(inspectors, subform): transform(\ -> Inspect(inspectors, transformForm(subform, fn)));
+		Filter2(filters, subform, stack): transform(\ -> Filter2(filters, transformForm(subform, fn), stack));
+
+		Group(layers): transform(\ -> Group(map(layers, \sf -> transformForm(sf, fn))));
+		Grid(rows): transform(\ -> Grid(map(rows, \row -> map(row, \sf -> transformForm(sf, fn)))));
+		DynamicGroup2(sc, c, cs, s) : transform(\ -> DynamicGroup2(sc, c, make(map(getValue(cs), \l -> transformForm(l, fn))), s));
+
+		Switch(case, cases): transform(\ -> Switch(case, map(cases, \sf -> transformForm(sf, fn))));
+		Mutable2(subformB, stack): transform(\ -> Select(subformB, \sf -> transformForm(sf, fn)));
+		Create2(current, fn2): transform(\ -> Create2(ref transformForm(^current, fn), \ -> transformForm(fn2(), fn)));
+	}
+}
+
+
+// Create behaviour with the value as original
+_cb(b : Behaviour<?>) -> Behaviour<?> {const(getValue(b));}
+
+takeSnapshot(f) {
+	switch(f: Form) {
+	Empty() : f;
+	Border(left, top, right, bottom, form): Border(left, top, right, bottom, takeSnapshot(form));
+	Constructor(form, fn): takeSnapshot(form);
+	Create2(current, fn): takeSnapshot(if (^current != Empty()) ^current else fn());
+	Text(t,s) : f;
+	Graphics(p, s) : f;
+	Picture(url, s) : {
+		filteredStyle = filter(s, \style -> {
+			switch (style : PictureStyle) {
+				OnLoadingError(__) : false;
+				OnLoaded(__) : false;
+				DontCache() : true;
+				OnlyDownloadToCache() : true;
+			}
+		});
+		Picture(url, filteredStyle)
+	};
+	Camera(file, pars, listeners, controls) : Camera(file, pars, [], controls);
+	Translate(x, y, form): Translate(_cb(x), _cb(y), takeSnapshot(form));
+	Scale(x, y, form): Scale(_cb(x), _cb(y), takeSnapshot(form));
+	Rotate(degree, form): Rotate(_cb(degree), takeSnapshot(form));
+	Alpha(alpha, form): Alpha(_cb(alpha), takeSnapshot(form));
+	Visible(v, form): if (getValue(v) == 0) Empty() else takeSnapshot(form);
+	Mask2(main1, mask, stack): Mask2(takeSnapshot(main1), takeSnapshot(mask), stack);
+	Group(layers): Group(map(layers, takeSnapshot));
+	Grid(cells): Grid(map(cells, \line -> map(line, takeSnapshot)));
+	Available2(widthHeight, form): Available2(_cb(widthHeight), takeSnapshot(form));
+	Size2(widthHeight, form): Size2(_cb(widthHeight), takeSnapshot(form));
+	SetPending(pending, form): SetPending(_cb(pending), takeSnapshot(form));
+	Baseline(baseline, form): Baseline(_cb(baseline), takeSnapshot(form));
+	Interactive(listeners, form): takeSnapshot(form);
+	TextInput(initialState, listeners, stateaccess): {
+		eitherMap(
+			findmap(
+				stateaccess,
+				\sa -> switch(sa : StateAccess) {
+					StateQuery2(getTimRef) : Some(^getTimRef);
+					default : None();
+				}
+			),
+			\getTim -> {
+				state = getTim();
+				//TextInputModel(content : string, width : double, height : double, cursorPosition: int, selection : Selection, focus : bool, scrollinfo : Maybe<ScrollInfo>);
+				initialContent : Content = extractStruct(initialState, Content("", []));
+				//Actual style can differ from initial style, but current style is not listed in TextInputModel.
+				//Not hard to fix if necessary.
+				Text(state.content, initialContent.style)
+			},
+			TextInput(initialState, [], [])
+		)
+	}
+	Filter2(filters, form, stack): Filter2(filters, takeSnapshot(form), stack);
+	Cursor(kind, form): takeSnapshot(form);
+	Inspect(inspectors, form): takeSnapshot(form);
+	Mutable2(form, stack): takeSnapshot(getValue(form));
+	Switch(case, cases): takeSnapshot(cases[getValue(case)]);
+	Crop2(left, top, width, height, form, stack): Crop2(_cb(left), _cb(top), _cb(width), _cb(height), takeSnapshot(form), stack);
+	Video(file, pars, listeners, controls): Video(file, filterVideoParameters(pars), [], filterVideoControls(controls));
+	Access(props, fo): takeSnapshot(fo);
+	RealHTML2(url, wh, style): f;
+	ControlFocus(focus, form): takeSnapshot(form);
+	FullWindow(fullscreen, form): takeSnapshot(form);
+	NativeForm(__, __, form, __): form();
+	DynamicGroup2(__, combiner, currentStack, __): {
+		forms = getValue(currentStack);
+		Group( map(forms, takeSnapshot) ); // Placeholder
+	}
+	}
+}
+
+filterVideoParameters(pars : [VideoParameter]) -> [VideoParameter] {
+	filtermap(pars, \par ->
+		switch (par : VideoParameter) {
+			OnVideoLoadingError(__) : None();
+			default: Some(par);
+		}
+	)
+}
+
+filterVideoControls(controls : [VideoControl]) -> [VideoControl] {
+	filtermap(controls, \c ->
+		switch (c : VideoControl) {
+			PlayerVolume(volume) : cast(Some(PlayerVolume(const(getValue(volume)))) : Some<PlayerVolume> -> Maybe<VideoControl>);
+			PlayerPause(pause) : Some(PlayerPause(make(getValue(pause))));
+			PlayerSeek(position) : Some(PlayerSeek(const(getValue(position))));
+			VideoFullScreen(__) : None();
+			VideoPlayerControls(__) : Some(c);
+			VideoPlayerSubtitles(subtitle) : Some(VideoPlayerSubtitles(const(getValue(subtitle))));
+			VideoMediaStream(__) : Some(c);
+		}
+	)
+}
+
+transformText(form, fn) {
+	transformForm(form,
+		\f -> switch(f : Form) {
+			Text(t,s): TransForm(fn(Text(t, s)), false);
+			default: TransForm(f, true);
+		}
+	)
+}
+
+changeTextStyle(form, fn) {
+	transformText(form, \text -> Text(text.text, fn(text.style)))
+}
+
+changeTextStyleB(form, b, fn) {
+	transformText(form, \text -> Select(b, \v -> Text(text.text, fn(v, text.style))))
+}
+
+emptyFormSizeConstructorAction() -> () -> void {
+	nop;
+}
+
+inspectFormSize(form : Form) -> Triple<Form, Behaviour<FormMetrics>, () -> (() -> void)> {
+	m = make(FormMetrics(0.0, 0.0, 0.0, 0.0));
+	Triple(
+		Inspect([IMetrics(m)], form),
+		m,
+		emptyFormSizeConstructorAction
+	)
+}
+
+getDynamicFormSize(form : Form) -> Pair<Form, Behaviour<FormMetrics>> {
+	getDynamicFormSize2(form, false)
+}
+
+getDynamicFormSize2(form : Form, getExactTopPoint : bool) -> Pair<Form, Behaviour<FormMetrics>> {
+	res = getDynamicFormSize2Ex(form, getExactTopPoint);
+
+	if (res.third != emptyFormSizeConstructorAction) {
+		Pair(Constructor(res.first, res.third), res.second)
+	} else {
+		Pair(res.first, res.second)
+	}
+}
+
+getDynamicFormSize2Ex(form : Form, getExactTopPoint : bool) -> Triple<Form, Behaviour<FormMetrics>, () -> (() -> void)> {
+	// Paragraph engine uses getDynamicFormSize for Space but then doesn't respect metrics changes i.e. initial value is used.
+	// Not sure if that should be fixed. So, check for !getExactTopPoint is moved below.
+	if (isStaticForm2(form, getExactTopPoint)) {
+		Triple(form, const(getStaticFormSizeCached2(form, getExactTopPoint)), emptyFormSizeConstructorAction);
+	//} else if (!getExactTopPoint) { // This optimization causes LSTSBD-402
+	//	inspectFormSize(form)
+	} else {
+		switch (form : Form) {
+			Empty() : {
+				Triple(form, const(zeroMetrics), emptyFormSizeConstructorAction);
+			}
+			Border(l, t, r, b, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				resM = make(zeroMetrics);
+				Triple(
+					Border(l, t, r, b, p.first) |> asForm,
+					resM,
+					\ -> {
+						unsC = p.third();
+						uns = connectSelectDistinctu(p.second, resM, \c -> FormMetrics(l + r + c.width, t + b + c.height, t + c.baseline, t + c.dHeight));
+						\ -> {
+							uns();
+							unsC();
+						}
+					}
+				)
+			}
+			Text(t,s): {
+				Triple(form, const(getStaticFormSizeCached2(form, getExactTopPoint)), emptyFormSizeConstructorAction)
+			}
+			Graphics(p, s): {
+				Triple(form, const(getStaticFormSizeCached(form)), emptyFormSizeConstructorAction)
+			}
+			Picture(url, s): {
+				inspectFormSize(form)
+			}
+			Camera(file, pars, listeners, controls): {
+				inspectFormSize(form)
+			}
+			Translate(x, y, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Translate(x, y, p.first), p.second, p.third)
+			}
+			Scale(x, y, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				resM = make(zeroMetrics);
+				Triple(
+					Scale(x, y, p.first),
+					resM,
+					\ -> {
+						unsC = p.third();
+						uns = connectSelect3Distinctu(p.second, x, y, resM, \c, xs, ys -> FormMetrics(xs * c.width, ys * c.height, ys * c.baseline, ys * c.dHeight));
+						\ -> {
+							uns();
+							unsC();
+						}
+					}
+
+				)
+			}
+			Rotate(d, child) : {
+				p = getDynamicFormSize2Ex(child, false); // Hard to calculate exact top point of rotated form.
+				Triple(Rotate(d, p.first), p.second, p.third)
+			}
+			Alpha(a, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Alpha(a, p.first), p.second, p.third)
+			}
+			Visible(v, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				resM = make(zeroMetrics);
+				Triple(
+					Visible(v, p.first),
+					resM,
+					\ -> {
+						unsC = p.third();
+						sp = subselectu(v, \vi -> if (vi == 0) const(zeroMetrics) else p.second);
+						uns = connectDistinct(sp.first, resM);
+						\ -> {
+							uns();
+							sp.second();
+							unsC();
+						}
+					}
+
+				)
+			}
+			Mask2(main1, mask, stack): { // The size of this form is given by the mask only!
+				p = getDynamicFormSize2Ex(mask, getExactTopPoint);
+				Triple(Mask2(main1, p.first, stack), p.second, p.third)
+			}
+			Group(layers) : {
+				n = length(layers);
+				if (n == 0) {
+					Triple(Empty(), const(zeroMetrics), emptyFormSizeConstructorAction)
+				} else if (n == 2) {
+					// Extremely common case is optimized
+					fs0 = getDynamicFormSize2Ex(layers[0], getExactTopPoint);
+					fs1 = getDynamicFormSize2Ex(layers[1], getExactTopPoint);
+					resM = make(zeroMetrics);
+					Triple(
+						Group([fs0.first, fs1.first]) |> asForm,
+						resM,
+						\ -> {
+							unsC1 = fs0.third();
+							unsC2 = fs1.third();
+							uns = connectSelect2Distinctu(fs0.second, fs1.second, resM, \m0 : FormMetrics, m1 : FormMetrics -> {
+								FormMetrics(max(m0.width, m1.width), max(m0.height, m1.height), max(m0.baseline, m1.baseline), min(m0.dHeight, m1.dHeight))
+							});
+							\ -> {
+								uns();
+								unsC2();
+								unsC1();
+							}
+						}
+
+					)
+				} else {
+					ps = map(layers, \l -> getDynamicFormSize2Ex(l, getExactTopPoint));
+					resM = make(zeroMetrics);
+					res : Triple<Form, Behaviour<FormMetrics>, () -> (() -> void)> = Triple(
+						Group(map(ps, firstOfTriple)) |> asForm,
+						resM,
+						\ -> {
+							unsCA = map(ps, \p -> p |> thirdOfTriple |> executefn);
+							unsC = \ -> applyall(unsCA);
+							mCA = map(ps, secondOfTriple) |> mergeu;
+
+							myM = selectu(mCA.first, \metrics : [FormMetrics] -> {
+								fold(tail(metrics), metrics[0], \acc, c -> {
+									FormMetrics(max(c.width, acc.width), max(c.height, acc.height), max(c.baseline, acc.baseline), min(c.dHeight, acc.dHeight))
+								})
+							});
+
+							myMStable = myM.first |> whenFormMetricsChanged2;
+
+							uns = connectDistinct(myMStable.first, resM);
+
+							\ -> {
+								uns();
+								myMStable.second();
+								myM.second();
+								mCA.second();
+								unsC();
+							}
+						}
+					);
+					res
+				}
+			}
+			Grid(cells) : {
+				// getExactTop point is not supported (and was not supported).
+				// Inspect([IMetrics]) used in inspectFormSize returns baseline, so all the code can be eliminated to do not duplicate renderform.
+				inspectFormSize(form)
+			}
+			Available2(wh, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Available2(wh, p.first), p.second, p.third)
+			}
+			Size2(wh, f): {
+				resM = make(zeroMetrics);
+				p = getDynamicFormSize2Ex(f, getExactTopPoint);
+				Triple(
+					Size2(wh, p.first) |> asForm,
+					resM,
+					\ -> {
+						unsC = p.third();
+						uns = connectSelect2Distinctu(wh, p.second, resM, \wh2, m -> FormMetrics(wh2.width, wh2.height, wh2.height, m.dHeight));
+						\ -> {
+							uns();
+							unsC();
+						}
+					}
+				)
+			}
+			SetPending(pending, f): {
+				p = getDynamicFormSize2Ex(f, getExactTopPoint);
+				Triple(if (p.first != f) SetPending(pending, p.first) else form, p.second, p.third)
+			}
+			Baseline(baseline, f): {
+				p = getDynamicFormSize2Ex(f, getExactTopPoint);
+				resM = make(zeroMetrics);
+				Triple(
+					if (p.first != f) Baseline(baseline, p.first) else form,
+					resM,
+					\ -> {
+						unsC = p.third();
+						uns = connectSelect2Distinctu(baseline, p.second, resM, \b, wh -> FormMetrics(wh.width, wh.height, b, wh.dHeight));
+						\ -> {
+							uns();
+							unsC();
+						}
+					}
+				)
+			}
+			Interactive(l, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Interactive(l, p.first), p.second, p.third)
+			}
+			TextInput(state, listeners, stateaccess): {
+				baseline = getStaticFormSize(form).baseline; // Not accurate, but good bet
+				wh = make(zeroWH);
+				resM = make(zeroMetrics);
+				Triple(
+					Inspect([ISize(wh)], form),
+					resM,
+					\ -> connectSelectDistinctu(wh, resM, \s -> FormMetrics(s.width, s.height, baseline, 0.0))
+				)
+			}
+			Filter2(filters, child, stack) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Filter2(filters, p.first, stack), p.second, p.third)
+			}
+			Cursor(kind, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Cursor(kind, p.first), p.second, p.third)
+			}
+			Inspect(inspectors, child) : {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Inspect(inspectors, p.first), p.second, p.third)
+			}
+			Mutable2(f, stack): {
+				pb = select(f, \_f -> getDynamicFormSize2(_f, getExactTopPoint));
+				Triple(
+					Select(pb, \p -> p.first),
+					whenFormMetricsChanged2(subselect(pb, secondOfPair)).first,
+					emptyFormSizeConstructorAction
+				)
+			}
+			Switch(case, cases) : {
+				numCases = length(cases);
+				pcases = map(cases, \c -> getDynamicFormSize2Ex(c, getExactTopPoint));
+				resM = make(zeroMetrics);
+				Triple(
+					Switch(case, map(pcases, firstOfTriple)),
+					resM,
+					\ -> {
+						uns = ref nop;
+						sp = subselectu(case, \c -> {
+							^uns();
+							if (0 <= c && c < numCases) {
+								uns := pcases[c].third();
+								pcases[c].second
+							} else {
+								uns := nop;
+								make(zeroMetrics)
+							}
+						});
+						uns2 = connectDistinct(sp.first, resM);
+						\ -> {
+							uns2();
+							sp.second();
+							^uns();
+						}
+
+					}
+
+				)
+			}
+			Crop2(l, t, w, h, f, stack) : {
+				resM = make(zeroMetrics);
+				Triple(
+					form,
+					resM,
+					\ -> connectSelect2Distinctu(w, h, resM, \xs, ys -> makeMetrics(xs, ys))
+				)
+			}
+			Constructor(child, fn): {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Constructor(p.first, fn), p.second, p.third)
+			}
+			Create2(current, fn): {
+				met = make(zeroMetrics);
+
+				Triple(Create2(current, \ -> {
+					p = getDynamicFormSize2Ex(fn(), getExactTopPoint);
+					uns = connect(p.second, met);
+					uns2 = p.third();
+					Constructor(p.first, \ -> \ -> {uns(); uns2();})
+				}), met, \ -> nop);
+			}
+			Video(file, pars, list, list1): {
+				inspectFormSize(form)
+			}
+			Access(props, child): {
+				p = getDynamicFormSize2Ex(child, getExactTopPoint);
+				Triple(Access(props, p.first), p.second, p.third)
+			}
+			RealHTML2(url, wh, style): {
+				resM = make(makeMetrics(getValue(wh).width, getValue(wh).height));
+				Triple(
+					form,
+					resM,
+					\ -> connectSelectDistinctu(wh, resM, \wh2 -> makeMetrics(wh2.width, wh2.height))
+				)
+			}
+			ControlFocus(focus, f): {
+				p = getDynamicFormSize2Ex(f, getExactTopPoint);
+				Triple(ControlFocus(focus, p.first), p.second, p.third);
+			}
+			FullWindow(fullscreen, f): {
+				p = getDynamicFormSize2Ex(f, getExactTopPoint);
+				Triple(FullWindow(fullscreen, p.first), p.second, p.third);
+			}
+			NativeForm(__, metrics, __, fn): {
+				Triple(form, metrics, \ -> nop);
+			}
+			DynamicGroup2(__, __, __, __) : {
+				// Placeholder
+				Triple(form, const(zeroMetrics), \ -> nop);
+			}
+		}
+	}
+}
+
+whenFormMetricsChanged2(b : Behaviour<FormMetrics>) -> Pair<Behaviour<FormMetrics>, () -> void> {
+	cond = filterWithLastu(b, \l, n -> {
+		abs(l.width - n.width) > 0.5 || abs(l.height - n.height) > 0.5 || abs(l.baseline - n.baseline) > 0.5 || abs(l.dHeight - n.dHeight) > 0.5
+	});
+
+	m = stall2u(cond.first, 0, make(false));
+
+	Pair(m.first, \-> { cond.second(); m.second() })
+}
+
+// Merges array of isEmptyFormB2 results into one.
+// If all are empty, result is empty (true), otherwise - non empty (false)
+isEmptyFormArray(cells : [Pair<Behaviour<bool>, () -> (() -> void)>]) -> Pair<Behaviour<bool>, () -> (() -> void)> {
+	behaviours = map(cells, firstOfPair);
+	if (exists(behaviours, \b -> isConst(b) && !getValue(b))) {//there is empty = const(false) in array
+		Pair(const(false), emptyFormSizeConstructorAction)
+	} else if (forall(behaviours, isConst)) {
+		Pair(const(true), emptyFormSizeConstructorAction) // there is no const(false) value as first branch is not taken, so all the values are const(true)
+	} else {
+		resB = make(false);
+		subscribers = map(cells, secondOfPair);
+		Pair(
+			resB,
+			\ -> {
+				uns1 = map(subscribers, executefn);
+				sp = selectMergeu(behaviours, make(true), \e1, e2 -> e1 && e2); // At least one non empty form (i.e. empty == false) makes the whole array non empty
+				uns2 = connectDistinct(sp.first, resB);
+				\ -> {
+					uns2();
+					sp.second();
+					applyall(uns1);
+				}
+			}
+		)
+	}
+}
+
+isEmptyForm(f : Form) -> bool {
+	f |> isEmptyFormB2 |> firstOfPair |> getValue
+}
+
+isConstEmptyForm(f : Form) -> bool {
+	emptyB = f |> isEmptyFormB2 |> firstOfPair;
+	getValue(emptyB) && isConst(emptyB)
+}
+
+isEmptyFormB(f : Form) -> Pair<Form, Behaviour<bool>> {
+	ep = isEmptyFormB2(f);
+	Pair(Constructor(f, ep.second), ep.first)
+}
+
+isEmptyFormB2(f : Form) -> Pair<Behaviour<bool>, () -> (() -> void)> {
+	switch(f: Form) {
+		Empty() : Pair(const(true), emptyFormSizeConstructorAction);
+		Border(left, top, right, bottom, form): isEmptyFormB2(form);
+		Constructor(form, fun): isEmptyFormB2(form);
+		Create2(current, fn): isEmptyFormB2(if (^current != Empty()) ^current else fn());
+
+		Text(t,s) : Pair(const(false), emptyFormSizeConstructorAction);
+
+		Graphics(p, s) : Pair(const(p == []), emptyFormSizeConstructorAction);
+		Picture(url, s) : Pair(const(false), emptyFormSizeConstructorAction);
+		Camera(file, pars, listeners, controls) : Pair(const(false), emptyFormSizeConstructorAction);
+		Translate(x, y, form): isEmptyFormB2(form);
+		Scale(x, y, form): {
+			cp = isEmptyFormB2(form);
+			isEmpty = \xs, ys, e -> xs == 0.0 || ys == 0.0 || e;
+			resB = make(isEmpty(getValue(x), getValue(y), getValue(cp.first)));
+			Pair(
+				resB,
+				\ -> {
+					select3u(x, y, cp.first, \xs, ys, e -> next(resB, isEmpty(xs, ys, e))).second
+				}
+			)
+		}
+		Rotate(degree, form): isEmptyFormB2(form);
+		Alpha(alpha, form): {
+			cp = isEmptyFormB2(form);
+			isEmpty = \a, e -> a == 0.0 || e;
+			resB = make(isEmpty(getValue(alpha), getValue(cp.first)));
+			Pair(
+				resB,
+				\ -> {
+					select2u(alpha, cp.first, \a, e -> next(resB, isEmpty(a, e))).second
+				}
+			)
+		}
+		Visible(visible, form): {
+			cp = isEmptyFormB2(form);
+			if (isConst(cp.first) && getValue(cp.first)) {
+				cp
+			} else {
+				isEmpty = \v, e -> v == 0 || e;
+				resB = make(isEmpty(getValue(visible), getValue(cp.first)));
+				Pair(
+					resB,
+					\ -> {
+						uns1 = cp.second();
+						uns2 = select2u(visible, cp.first, \v, e -> next(resB, isEmpty(v, e))).second;
+						\ -> {
+							uns2();
+							uns1();
+						}
+					}
+				)
+
+
+			}
+		};
+		Mask2(main1, mask, stack): isEmptyFormB2(mask);
+		Group(layers): map(layers, isEmptyFormB2) |> isEmptyFormArray;
+		Grid(lines): mapConcat(lines, \line -> map(line, isEmptyFormB2)) |> isEmptyFormArray;
+		Available2(widthHeight, form): isEmptyFormB2(form);
+		Size2(widthHeight, form): isEmptyFormB2(form); //Overrided size does not make contentless form visible
+		SetPending(pending, form): isEmptyFormB2(form);
+		Baseline(baseline, form): isEmptyFormB2(form); //Overrided baseline does not make contentless form visible
+		Interactive(listeners, form): isEmptyFormB2(form);
+		TextInput(state, listeners, stateaccess): Pair(const(false), emptyFormSizeConstructorAction);
+		Filter2(filters, form, stack): isEmptyFormB2(form);
+		Cursor(kind, form): isEmptyFormB2(form);
+		Inspect(inspectors, form): isEmptyFormB2(form);
+		Mutable2(formB, stack): {
+			resB = make(isEmptyForm(getValue(formB)));
+			Pair(
+				resB,
+				\ -> {
+					unsRef = ref nop;
+					uns1 = \ -> {
+						^unsRef();
+						unsRef := nop;
+					}
+
+					sp = subselectu(formB, \form -> {
+						uns1();
+						res = isEmptyFormB2(form);
+						unsRef := res.second();
+						res.first
+					});
+					uns2 = connectDistinct(sp.first, resB);
+					\ -> {
+						uns2();
+						sp.second();
+						uns1();
+
+					}
+				}
+			)
+		}
+		Switch(case, cases): {
+			numCases = length(cases);
+			currC = getValue(case);
+			resB : DynamicBehaviour<bool> = if (0 <= currC && currC < numCases) {
+				make(isEmptyForm(cases[currC]))
+			} else {
+				make(true)
+			}
+
+			Pair(
+				resB,
+				\ -> {
+					unsRef = ref nop;
+					uns1 = \ -> {
+						^unsRef();
+						unsRef := nop;
+					}
+					sp = subselectu(case, \c -> {
+						uns1();
+						if (0 <= c && c < numCases) {
+							res = isEmptyFormB2(cases[c]);
+							unsRef := res.second();
+							res.first
+						} else {
+							make(true)
+						}
+					});
+					uns2 = connectDistinct(sp.first, resB);
+					\ -> {
+						uns2();
+						sp.second();
+						uns1();
+					}
+				}
+			)
+		}
+		Crop2(left, top, width, height, form, stack): {
+			cp = isEmptyFormB2(form);
+			isEmpty = \w, h, e -> w == 0.0 || h == 0.0 || e; // Unlike Size2 || is used as Crop(l, t, 0, 0, f) makes content invisible
+			resB = make(isEmpty(getValue(width), getValue(height), getValue(cp.first)));
+			Pair(
+				resB,
+				\ -> {
+					select3u(width, height, cp.first, \w, h, e -> next(resB, isEmpty(w, h, e))).second
+				}
+			)
+		}
+		Video(file, pars, listeners, controls): Pair(const(false), emptyFormSizeConstructorAction);
+		Access(props, form): isEmptyFormB2(form);
+		RealHTML2(url, wh, style): Pair(const(false), emptyFormSizeConstructorAction);
+		ControlFocus(focus, form): isEmptyFormB2(form);
+		FullWindow(fullscreen, form): isEmptyFormB2(form);
+		NativeForm(__, __, __, fn): Pair(const(false), emptyFormSizeConstructorAction);
+		DynamicGroup2(__, __, currentStack, __) : {
+			result = make( getValue(currentStack) == [] );
+
+			Pair(
+				result,
+				\ -> connectSelectu(
+					currentStack,
+					result,
+					eq([])
+				)
+			)
+		}
+	}
+}
+
+getFormText(f : Form) {
+	text_for_array = \arr -> {
+		fold(arr, "", \acc, item -> {
+			item_text = getFormText(item);
+			if (acc == "") item_text else if (item_text != "") acc + " " + item_text else acc;
+		});
+	}
+
+	switch (f : Form) {
+		Empty() : "";
+		Border(left, top, right, bottom, form): getFormText(form);
+		Constructor(form, fn): getFormText(form);
+		Create2(current, fn): getFormText(if (^current != Empty()) ^current else fn());
+		Text(t,s) : t;
+		Graphics(p, s) : "";
+		Picture(url, s) : "";
+		Camera(file, pars, listeners, controls): "";
+		Translate(x, y, form): getFormText(form);
+		Scale(x, y, form): getFormText(form);
+		Rotate(degree, form): getFormText(form);
+		Alpha(alpha, form): getFormText(form);
+		Visible(v, form): getFormText(form);
+		Mask2(main1, mask, stack): getFormText(main1);
+		Group(layers): text_for_array(layers);
+		Grid(rows): text_for_array(concatA(rows));
+		Available2(widthHeight, form): getFormText(form);
+		Size2(widthHeight, form): getFormText(form);
+		SetPending(pending, form): getFormText(form);
+		Baseline(baseline, form): getFormText(form);
+		Interactive(listeners, form): getFormText(form);
+		TextInput(__, __, stateaccess): eitherMap(
+			findmap(
+				stateaccess,
+				\sa -> switch(sa : StateAccess) {
+					StateQuery2(getTimRef) : Some(^getTimRef);
+					default : None();
+				}
+			),
+			\getTim -> {
+				getTim().content
+			},
+			""
+		);
+		Filter2(filters, form, stack): getFormText(form);
+		Cursor(kind, form): getFormText(form);
+		Inspect(inspectors, form): getFormText(form);
+		Mutable2(form, stack): getFormText(getValue(form));
+		Switch(case, cases): getFormText(cases[getValue(case)]);
+		Crop2(left, top, width, height, form, stack): getFormText(form);
+		Video(file, pars, listeners, controls): "";
+		Access(props, form): getFormText(form);
+		RealHTML2(url, wh, style): "";
+		ControlFocus(focus, form): getFormText(form);
+		FullWindow(fullscreen, form): getFormText(form);
+		NativeForm(__, __, form, __): getFormText(form());
+		DynamicGroup2(__, __, currentStack, __) : {
+			text_for_array( getValue(currentStack) );
+		}
+	}
+}
+
+
+hasTaggedForm(f : Form, tag : int) -> bool {
+	switch (f : Form) {
+	Empty() : false;
+	Border(left, top, right, bottom, form): hasTaggedForm(form, tag);
+	Constructor(form, fn): hasTaggedForm(form, tag);
+	Create2(current, fn): hasTaggedForm(if (^current != Empty()) ^current else fn(), tag);
+	Text(t,s) : false;
+	Graphics(p, s) : false;
+	Picture(url, s) : false;
+	Camera(file, pars, listeners, controls): false;
+	Translate(x, y, form): hasTaggedForm(form, tag);
+	Scale(x, y, form): hasTaggedForm(form, tag);
+	Rotate(degree, form): hasTaggedForm(form, tag);
+	Alpha(alpha, form): hasTaggedForm(form, tag);
+	Visible(v, form): hasTaggedForm(form, tag);
+	Mask2(main1, mask, stack): hasTaggedForm(main1, tag);
+	Group(layers): exists(layers, \l -> hasTaggedForm(l, tag));
+	Grid(cells): {
+		fn = \l -> hasTaggedForm(l, tag);
+		exists(cells, \line -> exists(line, fn));
+	}
+	Available2(widthHeight, form): hasTaggedForm(form, tag);
+	Size2(widthHeight, form): hasTaggedForm(form, tag);
+	SetPending(pending, form): hasTaggedForm(form, tag);
+	Baseline(baseline, form): hasTaggedForm(form, tag);
+	Interactive(listeners, form): hasTaggedForm(form, tag);
+	TextInput(state, listeners, stateaccess): false;
+	Filter2(filters, form, stack): hasTaggedForm(form, tag);
+	Cursor(kind, form): hasTaggedForm(form, tag);
+	Inspect(inspectors, form): {
+		found = contains(inspectors, ITag(tag));
+		if (found) true
+		else {
+			blocker = contains(inspectors, ITag(-1));
+			if (!blocker) hasTaggedForm(form, tag) else false;
+		}
+	}
+	Mutable2(form, stack): hasTaggedForm(getValue(form), tag);
+	Switch(case, cases): exists(cases, \l -> hasTaggedForm(l, tag));
+	Crop2(left, top, width, height, form, stack): hasTaggedForm(form, tag);
+	Video(file, pars, listeners, controls): false;
+	Access(props, fo): hasTaggedForm(fo, tag);
+	RealHTML2(url, wh, style): false;
+	ControlFocus(focus, form): hasTaggedForm(form, tag);
+	FullWindow(fullscreen, form): hasTaggedForm(form, tag);
+	NativeForm(__, __, form, __): hasTaggedForm(form(), tag);
+	DynamicGroup2(sc, __, cs, __) : {
+		exists(
+			fold(getValue(sc), getValue(cs), \acc, s ->
+				switch (s : GroupChange) {
+					GroupAdd(form, __): arrayPush(acc, form);
+					GroupDelete(__): acc;
+					GroupMove(__, __): acc;
+				}
+			),
+			\l -> hasTaggedForm(l, tag)
+		);
+	}
+	}
+}
+
+findTaggedFormPosition(form : Form, tag : int) -> Point {
+	findTaggedFormPosition2(form, tag, false)
+}
+
+//exactMatch = false gives old behaviour - search for the first ITag
+findTaggedFormPosition2(form : Form, tag : int, exactMatch : bool) -> Point {
+	switch (form : Form) {
+		Translate(x, y, f): {
+			cp = findTaggedFormPosition2(f, tag, exactMatch);
+			Point(cp.x + getValue(x), cp.y + getValue(y));
+		}
+		Scale(x, y, f): {
+			cp = findTaggedFormPosition2(f, tag, exactMatch);
+			Point(getValue(x) * cp.x, getValue(y) * cp.y);
+		}
+		Border(l, t, r, b, f): {
+			cp = findTaggedFormPosition2(f, tag, exactMatch);
+			Point(cp.x + l, cp.y + t);
+		}
+		Grid(rows): {
+			foldi(rows, zeroPoint, \y, ac2, row -> {
+				foldi(row, ac2, \x, ac3, f -> {
+					if (ac2 == zeroPoint && hasTaggedForm(f, tag)) {
+						// We found it. Find the coordinate
+						// We have to look at all rows when finding the x, since later rows
+						// might shift the x position
+						xc = getStaticFormSize(Grid(
+							map(rows, \r : [Form] -> subrange(r, 0, x))
+						));
+						// Similarly, when finding the y coordinate, we have to look at all columns,
+						// since later columns could shift the y position
+						yc = getStaticFormSize(Grid(subrange(rows, 0, y)));
+						cp = findTaggedFormPosition2(f, tag, exactMatch);
+						Point(cp.x + xc.width, cp.y + yc.height);
+					} else {
+						ac3;
+					}
+				})
+			});
+		}
+		Inspect(inspectors, f): {
+			ctag : ITag = extractStruct(inspectors, ITag(-1));
+			if (tag == ctag.i || ctag.i != -1 && !exactMatch) {
+				// If we find any tag, we stop, so we do not get accidental hits
+				zeroPoint;
+			} else {
+				findTaggedFormPosition2(f, tag, exactMatch);
+			}
+		}
+		Crop2(l, t, w, h, f, s): {
+			cp = findTaggedFormPosition2(f, tag, exactMatch);
+			Point(cp.x - getValue(l), cp.y - getValue(t));
+		}
+		// TODO: This can be done better
+		Rotate(d, f): findTaggedFormPosition2(f, tag, exactMatch);
+
+		Group(g): {
+			fold(g, zeroPoint, \acc, e -> {
+				if (acc == zeroPoint && hasTaggedForm(e, tag)) {
+					findTaggedFormPosition2(e, tag, exactMatch)
+				} else acc
+			});
+		}
+
+		Switch(bf, cases): {
+			findTaggedFormPosition2(cases[getValue(bf)], tag, exactMatch)
+		}
+
+		Mutable2(bf, stack): findTaggedFormPosition2(getValue(bf), tag, exactMatch);
+
+		Visible(v, f): {
+			if (getValue(v) == 0)
+				zeroPoint // invisible
+			else
+				findTaggedFormPosition2(f, tag, exactMatch); // visible
+		}
+
+		Available2(wh, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Interactive(l, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Constructor(f, fn): findTaggedFormPosition2(f, tag, exactMatch);
+		Create2(current, fn): findTaggedFormPosition2(if (^current != Empty()) ^current else fn(), tag, exactMatch);
+		Filter2(fl, f, s): findTaggedFormPosition2(f, tag, exactMatch);
+		Size2(wh, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Access(p, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Baseline(b, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Cursor(c, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Alpha(a, f): findTaggedFormPosition2(f, tag, exactMatch);
+		SetPending(p, f): findTaggedFormPosition2(f, tag, exactMatch);
+		Mask2(f, m, n): findTaggedFormPosition2(f, tag, exactMatch);
+		ControlFocus(focus, f): findTaggedFormPosition2(f, tag, exactMatch);
+		FullWindow(fullscreen, f): findTaggedFormPosition2(f, tag, exactMatch);
+
+		Empty(): zeroPoint;
+		Text(t, s): zeroPoint;
+		TextInput(s, l, a): zeroPoint;
+		Graphics(g, s): zeroPoint;
+		Picture(p, s): zeroPoint;
+		Camera(f, p, l, c): zeroPoint;
+		Video(f, p, l, c): zeroPoint;
+		RealHTML2(url, wh, style): zeroPoint;
+		NativeForm(__, __, f, __): findTaggedFormPosition2(f(), tag, exactMatch);
+		DynamicGroup2(__, combiner, currentStack, __): {
+			plus : (double, double) -> double =
+				\x, y -> x + y;
+
+			combineWidth =
+				if (combiner == ColsCombiner()) plus else max;
+			combineHeight =
+				if (combiner == LinesCombiner()) plus else max;
+			combine = \p1, p2 ->
+				Point(
+					combineWidth(p1.x, p2.y),
+					combineHeight(p1.x, p2.y)
+				);
+
+			fold(
+				getValue(currentStack),
+				Pair(false, zeroPoint),
+				\point : Pair<bool, Point>, f : Form -> {
+					if (!point.first) {
+						if (combiner == GroupCombiner()) {
+							if (hasTaggedForm(f, tag))
+								Pair(
+									true,
+									findTaggedFormPosition2(f, tag, exactMatch)
+								)
+							else
+								point;
+						} else {
+							if (hasTaggedForm(f, tag))
+								Pair(
+									true,
+									combine(
+										point.second,
+										findTaggedFormPosition2(f, tag, exactMatch)
+									)
+								)
+							else
+								Pair(
+									false,
+									combine(
+										point.second,
+										getStaticFormSize(f)
+										|> (\fs -> Point(fs.width, fs.height))
+									)
+								);
+						}
+					} else {
+						point
+					}
+				}
+			).second
+		}
+	}
+}
+
+constNone : ConstBehaviour<Maybe<Point>> = const(None());
+
+asForm(f : Form) -> Form { f }; // typing errors resolving helper
+
+findTaggedFormPositionB(form : Form, tag : int) -> Pair<Form, Behaviour<Maybe<Point>>> {
+	switch (form : Form) {
+		Translate(bx, by, f): {
+			t = findTaggedFormPositionB(f, tag);
+			Pair(
+				Translate(bx, by, t.first) |> asForm,
+				if (t.second == constNone)
+					constNone
+				else
+					select3(t.second, bx, by, \cpv,x,y -> maybeMap(cpv, \p -> Point(p.x + x, p.y + y)))
+			);
+		}
+		Scale(bx, by, f): {
+			t = findTaggedFormPositionB(f, tag);
+			Pair(
+				Scale(bx, by, t.first),
+				if (t.second == constNone)
+					constNone
+				else
+					select3(t.second, bx, by, \cpv,x,y -> maybeMap(cpv, \p -> Point(p.x * x, p.y * y)))
+			);
+		}
+		Border(l, t, r, b, f): {
+			res = findTaggedFormPositionB(f, tag);
+			Pair(
+				Border(l,t,r,b, res.first),
+				if (res.second == constNone)
+					constNone
+				else
+					select(res.second, \cpv -> maybeMap(cpv, \p -> Point(p.x + l, p.y + t)))
+			);
+		}
+
+		Grid(rows): {
+
+			cellResultsDraft : [[Triple<Form, Behaviour<Maybe<Point>>, Behaviour<FormMetrics>>]] =
+				map(rows, \row ->
+					map(row, \cell -> {
+						sz = getDynamicFormSize(cell);
+						res = findTaggedFormPositionB(sz.first, tag);
+						Triple(res.first, res.second, sz.second)
+					})
+				);
+
+			cellResults = map(cellResultsDraft, \row ->
+				map(row, \cell -> {
+					select2(cell.third, cell.second,
+						\wh,res -> findTaggedFormPosition_cellResult(wh, res)
+					)
+				})
+			);
+
+			resultB : Behaviour<Maybe<Point>> =
+				select(merge2d(cellResults), \results -> {
+
+					// look for cell containing tag
+					foundX = ref -1;
+					foundY = findi(results, \row -> {
+						foundX := iteriUntil(row, \x,cell -> isSome(cell.result));
+						(^foundX >= 0 && ^foundX < length(row)) // true if tag is found in cells of this row
+					});
+
+					if (isNone(foundY)) {
+						// tag not found in cells
+						None()
+					} else {
+						// tag found in cell [tagY, tagX]
+						tagX = ^foundX;
+						tagY = either(foundY, 0);
+
+						// calc cell offset in the grid
+
+						cellPosY = foldi(results, 0.0, \cellY,acc,row ->
+							if (cellY >= tagY)
+								acc
+							else
+								acc + fold(row, 0.0, \acc2,cell -> max(acc2, cell.wh.height))
+						);
+
+						cellPosX = fold(results, 0.0, \acc,row -> {
+							rowWidth = foldi(row, 0.0, \cellX,acc2,cell ->
+								if (cellX >= tagX)
+									acc2
+								else
+									acc2 + cell.wh.width
+							);
+							max(acc, rowWidth)
+						});
+
+						// finally the result
+						tagPosInCell = either(results[tagY][tagX].result, zeroPoint);
+						Some(Point(tagPosInCell.x + cellPosX, tagPosInCell.y + cellPosY))
+					}
+				});
+
+			Pair(
+				Grid(map(cellResultsDraft, \row -> map(row, firstOfTriple))) |> asForm,
+				resultB
+			)
+		}
+
+		Inspect(inspectors, f): {
+			if (contains(inspectors, ITag(tag)))
+				Pair(form, const(Some(zeroPoint))) // found the tag
+			else if (contains(inspectors, ITag(-1)))
+				Pair(form, const(None())) // found blocker tag - stop traversing
+			else {
+				t : Pair<Form, Behaviour<Maybe<Point>>> = findTaggedFormPositionB(f, tag);
+				Pair(
+					Inspect(inspectors, t.first) |> asForm,
+					t.second
+				)
+			}
+		}
+
+		Crop2(lb, tb, wb, hb, f, stack): {
+			res = findTaggedFormPositionB(f, tag);
+			Pair(
+				Crop2(lb,tb,wb,hb, res.first, stack) |> asForm,
+				if (res.second == constNone)
+					constNone
+				else
+					select3(res.second, lb, tb, \cpv,l,t -> maybeMap(cpv, \p -> Point(p.x - l, p.y - t)))
+			);
+		}
+
+		Group(layers): {
+			layerResultPairs = map(layers, \f -> findTaggedFormPositionB(f, tag));
+			layerResults = map(layerResultPairs, secondOfPair);
+			resultB : Behaviour<Maybe<Point>> =
+				select(merge(layerResults), \results : [Maybe<Point>] ->
+					// take last non-None result
+					fold(results, None(), \acc, r ->
+						if (isSome(r)) r else acc
+					)
+				);
+			Pair(
+				Group(map(layerResultPairs, firstOfPair)) |> asForm,
+				resultB
+			)
+		}
+
+		Switch(case, cases): {
+			pcases = map(cases, \c -> findTaggedFormPositionB(c, tag));
+			Pair(
+				Switch(case, map(pcases, firstOfPair)),
+				subselect(case, \c -> pcases[c].second)
+			)
+		}
+
+		Mutable2(bf, stack): {
+			formB = make(getValue(bf));
+			pointB = make(None());
+
+			resForm = Constructor(
+				Mutable(formB),
+				\ -> {
+					pb = selectu(bf, \f -> findTaggedFormPositionB(f, tag)) |> makeDisposable;
+					s1 = selectu(pb.value, firstOfPair) |> makeDisposable;
+					u1 = connectDistinct(s1.value, formB);
+					s2 = subselectu(pb.value, secondOfPair) |> makeDisposable;
+					u2 = connectDistinct(s2.value, pointB);
+					\ -> {
+						u2();
+						s2.dispose();
+						u1();
+						s1.dispose();
+						pb.dispose();
+					}
+				}
+			);
+
+			Pair(resForm, pointB)
+		}
+
+		Visible(v, f): {
+			t = findTaggedFormPositionB(f, tag);
+			Pair(
+				Visible(v, t.first),
+				if (t.second == constNone)
+					constNone
+				else
+					select2(t.second, v, \cpv, vv -> maybeMap(cpv, \p -> if (vv != 0) p else zeroPoint))
+			)
+		}
+
+		Rotate(d, f):           { t = findTaggedFormPositionB(f, tag); Pair(Rotate(d, t.first), t.second); }
+		Available2(wh, f):      { t = findTaggedFormPositionB(f, tag); Pair(Available2(wh, t.first), t.second); }
+		Interactive(l, f):      { t = findTaggedFormPositionB(f, tag); Pair(Interactive(l, t.first), t.second); }
+		Constructor(f, fn):     { t = findTaggedFormPositionB(f, tag); Pair(Constructor(t.first, fn), t.second); }
+		Filter2(fl, f, s):      { t = findTaggedFormPositionB(f, tag); Pair(Filter2(fl, t.first, s), t.second); }
+		Size2(wh, f):           { t = findTaggedFormPositionB(f, tag); Pair(Size2(wh, t.first), t.second); }
+		Access(p, f):           { t = findTaggedFormPositionB(f, tag); Pair(Access(p, t.first), t.second); }
+		Baseline(b, f):         { t = findTaggedFormPositionB(f, tag); Pair(Baseline(b, t.first), t.second); }
+		Cursor(c, f):           { t = findTaggedFormPositionB(f, tag); Pair(Cursor(c, t.first), t.second); }
+		Alpha(a, f):            { t = findTaggedFormPositionB(f, tag); Pair(Alpha(a, t.first), t.second); }
+		SetPending(p, f):       { t = findTaggedFormPositionB(f, tag); Pair(SetPending(p, t.first), t.second); }
+		Mask2(f, m, n):         { t = findTaggedFormPositionB(f, tag); Pair(Mask2(t.first, m, n), t.second); }
+		ControlFocus(focus, f): { t = findTaggedFormPositionB(f, tag); Pair(ControlFocus(focus, t.first), t.second); }
+		FullWindow(fs, f): 		{ t = findTaggedFormPositionB(f, tag); Pair(FullWindow(fs, t.first), t.second); }
+
+		Empty(): Pair(form, const(None()));
+		Text(t, s): Pair(form, const(None()));
+		TextInput(s, l, a): Pair(form, const(None()));
+		Graphics(g, s): Pair(form, const(None()));
+		Picture(p, s): Pair(form, const(None()));
+		Camera(f, p, l, c): Pair(form, const(None()));
+		Video(f, p, l, c): Pair(form, const(None()));
+		RealHTML2(url, wh, style): Pair(form, const(None()));
+
+		default: Pair(Empty(), constNone);
+	}
+}
+
+findTaggedFormPosition_cellResult : (
+	wh : FormMetrics,     // cell size
+	result : Maybe<Point> // tag position in cell, if tag is there
+);
+
+
+scaleIdentity = Point(1.0, 1.0);
+
+findTaggedFormScale(form : Form, tag : int) -> Point {
+	findTaggedFormScale2(form, tag, false)
+}
+
+//exactMatch = false gives old behaviour - search for the first ITag
+findTaggedFormScale2(form : Form, tag : int, exactMatch : bool) -> Point {
+
+	deeper =\f -> findTaggedFormScale2(f, tag, exactMatch);
+	group = \g -> fold(g, scaleIdentity, \acc, e -> { if (hasTaggedForm(e, tag)) deeper(e) else acc; });
+
+	switch (form : Form) {
+		Translate(x, y, f): deeper(f);
+		Scale(x, y, f): {
+			cp = findTaggedFormScale2(f, tag, exactMatch);
+			Point(getValue(x) * cp.x, getValue(y) * cp.y);
+		}
+		Border(l, t, r, b, f): deeper(f);
+		Grid(rows): group(concatA(rows));
+		Group(g): group(g);
+		DynamicGroup2(__, __, cs, __) : group(getValue(cs));
+
+		Switch(bf, cases): deeper(cases[getValue(bf)]);
+		Inspect(inspectors, f): {
+			ctag : ITag = extractStruct(inspectors, ITag(-1));
+			if (tag == ctag.i || ctag.i != -1 && !exactMatch) scaleIdentity else deeper(f);
+		}
+		Crop2(l, t, w, h, f, s): deeper(f);
+		Rotate(d, f): deeper(f);
+
+		Mutable2(bf, stack):  deeper(getValue(bf));
+
+		Visible(v, f): if (getValue(v) == 0) scaleIdentity else  deeper(f);
+
+		Available2(wh, f): deeper(f);
+		Interactive(l, f): deeper(f);
+		Constructor(f, fn): deeper(f);
+		Create2(current, fn): deeper(if (^current != Empty()) ^current else fn());
+		Filter2(fl, f, s): deeper(f);
+		Size2(wh, f): deeper(f);
+		Access(p, f): deeper(f);
+		Baseline(b, f): deeper(f);
+		Cursor(c, f): deeper(f);
+		Alpha(a, f): deeper(f);
+		SetPending(p, f): deeper(f);
+		Mask2(f, m, n): deeper(f);
+		ControlFocus(focus, f): deeper(f);
+		FullWindow(fs, f): deeper(f);
+
+		Empty(): scaleIdentity;
+		Text(t, s): scaleIdentity;
+		TextInput(s, l, a): scaleIdentity;
+		Graphics(g, s): scaleIdentity;
+		Picture(p, s): scaleIdentity;
+		Camera(f, p, l, c): scaleIdentity;
+		Video(f, p, l, c): scaleIdentity;
+		RealHTML2(url, wh, style): scaleIdentity;
+		NativeForm(__, __, f, __): deeper(f());
+	}
+}
+
+findTaggedFormScaleB(form : Form, tag : int) -> Pair<Form, Behaviour<Maybe<Point>>> {
+
+	no = Pair(form, const(None()));
+	deeper = \f -> findTaggedFormScaleB(f, tag);
+	group = \g -> fold(g, Pair(Empty(), const(None())), \acc : Pair, e -> { if (hasTaggedForm(e, tag)) deeper(e) else acc; });
+
+	switch (form : Form) {
+		Translate(bx, by, f): deeper(f);
+		Scale(bx, by, f): {
+			t = deeper(f);
+			Pair(
+				Scale(bx, by, t.first),
+				if (t.second == constNone) constNone
+				else select3(t.second, bx, by, \cpv, x, y -> maybeMap(cpv, \p -> Point(p.x * x, p.y * y)))
+			);
+		}
+		Border(l, t, r, b, f): deeper(f);
+		Grid(rows): group(concatA(rows));
+		Crop2(lb, tb, wb, hb, f, stack): deeper(f);
+		Group(layers): group(layers);
+
+		Switch(case, cases): {
+			pcases = map(cases, deeper);
+			Pair(
+				Switch(case, map(pcases, firstOfPair)),
+				subselect(case, \c -> pcases[c].second)
+			)
+		}
+
+		Mutable2(bf, stack): {
+			pb = select(bf, deeper);
+			Pair(
+				Select(pb, firstOfPair),
+				subselect(pb, secondOfPair)
+			)
+		}
+
+		Visible(v, f): {
+			t = deeper(f);
+			Pair(
+				Visible(v, t.first),
+				if (t.second == constNone) constNone
+				else select2(t.second, v, \cpv, vv -> maybeMap(cpv, \p -> if (vv != 0) p else scaleIdentity))
+			)
+		}
+
+		Rotate(d, f):           { t = deeper(f); Pair(Rotate(d, t.first), t.second); }
+		Available2(wh, f):      { t = deeper(f); Pair(Available2(wh, t.first), t.second); }
+		Interactive(l, f):      { t = deeper(f); Pair(Interactive(l, t.first), t.second); }
+		Constructor(f, fn):     { t = deeper(f); Pair(Constructor(t.first, fn), t.second); }
+		Filter2(fl, f, s):      { t = deeper(f); Pair(Filter2(fl, t.first, s), t.second); }
+		Size2(wh, f):           { t = deeper(f); Pair(Size2(wh, t.first), t.second); }
+		Access(p, f):           { t = deeper(f); Pair(Access(p, t.first), t.second); }
+		Baseline(b, f):         { t = deeper(f); Pair(Baseline(b, t.first), t.second); }
+		Cursor(c, f):           { t = deeper(f); Pair(Cursor(c, t.first), t.second); }
+		Alpha(a, f):            { t = deeper(f); Pair(Alpha(a, t.first), t.second); }
+		SetPending(p, f):       { t = deeper(f); Pair(SetPending(p, t.first), t.second); }
+		Mask2(f, m, n):         { t = deeper(f); Pair(Mask2(t.first, m, n), t.second); }
+		ControlFocus(focus, f): { t = deeper(f); Pair(ControlFocus(focus, t.first), t.second); }
+		FullWindow(fs, f): 		{ t = deeper(f); Pair(FullWindow(fs, t.first), t.second); }
+
+		Empty(): no;
+		Text(t, s): no;
+		TextInput(s, l, a): no;
+		Graphics(g, s): no;
+		Picture(p, s): no;
+		Camera(f, p, l, c): no;
+		Video(f, p, l, c): no;
+		RealHTML2(url, wh, style): no;
+
+		default: no;
+	}
+}

@@ -1,0 +1,128 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import form/form;
+import behaviour;
+import transforms;
+
+export {
+	// A non-leaking version of Mutable(select(b, fn))
+	Select(b : Behaviour<?>, fn : (?) -> Form) -> Form;
+	Select2(b1 : Behaviour<?>, b2 : Behaviour<??>, fn : (?, ??) -> Form) -> Form;
+	Select3(b1 : Behaviour<?>, b2 : Behaviour<??>, b3 : Behaviour<???>, fn : (?, ??, ???) -> Form) -> Form;
+
+	SelectClassic(b : Behaviour<?>, fn : (?) -> Form) -> Form;
+
+	// Helper to make memory leak free Form equal to
+	// Translate(select(globalBehaviour, calcX), zero, form)
+	// It is safe to do not unsubscribe from Behaviour<??>.
+	// You do not this if b is not a global behaviour.
+	SelectGlobal(b : Behaviour<?>, transform : (?) -> ??, fn : (Behaviour<??>) -> Form) -> Form;
+}
+
+Select(b : Behaviour<?>, fn : (?) -> Form) -> Form {
+	if (isConst(b)) {
+		fn(getValue(b));
+	} else {
+		// Remember the value when we constructed this guy
+		lastValue = ref getValue(b);
+		// Call the function immediately to make sure we have some reasonable size
+		form = make(fn(^lastValue));
+		impersonateCallstackNone(1);
+		Constructor(Mutable(form), \ -> {
+			// Now, the first time, we need to make sure the value did not change
+			// since we constructed.
+			v = getValue(b);
+			if (v != ^lastValue) {
+				// Since we constructed the form, the value changed, so
+				// call the function again
+				lastValue := v;
+				impersonateCallstackFn(fn,0);
+				nextDistinct(form, fn(v));
+			}
+			// We use subscribe2 here to avoid calling the function two times initially
+			subscribe2(b, \nv -> {
+				lastValue := nv;
+				impersonateCallstackFn(fn,0);
+				nextDistinct(form, fn(nv));
+			});
+		});
+	}
+}
+
+Select2(b1 : Behaviour<?>, b2 : Behaviour<??>, fn : (?, ??) -> Form) -> Form {
+	if (isConst(b1) && isConst(b2)) {
+		fn(getValue(b1), getValue(b2));
+	} else {
+		curVal = \ -> fn(getValue(b1), getValue(b2));
+		form = make(Empty()); // Should be curVal() instead of Empty() here
+		impersonateCallstackNone(1);
+		Constructor(Mutable(form), \ -> {
+			// This is a lazy form thus subscriptions will only happen on render.
+			// But b1 and b2 may be changed before that happens and first form
+			// won't be in synch with Behaviour values. Using simple subscribe once
+			// to initialize the form
+			cb = \b:flow -> { impersonateCallstackFn(fn,0); nextDistinct(form, curVal()); };
+			u1 = subscribe(b1, cb);
+			u2 = subscribe2(b2, cb);
+			\ -> { u1(); u2() }
+			}
+		);
+	}
+}
+
+Select3(b1 : Behaviour<?>, b2 : Behaviour<??>, b3 : Behaviour<???>, fn : (?, ??, ???) -> Form) -> Form {
+	if (isConst(b1) && isConst(b2) && isConst(b3)) {
+		fn(getValue(b1), getValue(b2), getValue(b3));
+	} else {
+		curVal = \ -> fn(getValue(b1), getValue(b2), getValue(b3));
+		form = make(Empty()); // Should be curVal() instead of Empty() here
+		impersonateCallstackNone(1);
+		Constructor(Mutable(form), \ -> {
+			// This is a lazy form thus subscriptions will only happen on render.
+			// But b1, b2 and b3 may be changed before that happens and first form
+			// won't be in synch with Behaviour values. Using simple subscribe once
+			// to initialize the form
+			cb = \b:flow -> { impersonateCallstackFn(fn,0); nextDistinct(form, curVal()); };
+			u1 = subscribe(b1, cb);
+			u2 = subscribe2(b2, cb);
+			u3 = subscribe2(b3, cb);
+			\ -> { u1(); u2(); u3(); }
+			}
+		);
+	}
+}
+
+SelectClassic(b : Behaviour<?>, fn : (?) -> Form) -> Form {
+	if (isConst(b)) {
+		fn(getValue(b));
+	} else {
+		form = make(Empty());
+		impersonateCallstackNone(1);
+		Constructor(Mutable(form), \ -> {
+			subscribe(b, \v -> {
+				impersonateCallstackFn(fn,0);
+				nextDistinct(form, fn(v));
+			});
+		});
+	}
+}
+
+SelectGlobal(b : Behaviour<?>, transform : (?) -> ??, fn : (Behaviour<??>) -> Form) -> Form {
+	provider = b |> getValue |> transform |> make;
+	form = provider |> fn;
+	Constructor(
+		form,
+		\ -> {
+			tb = selectu(b, \v -> {
+				impersonateCallstackFn(transform,0);
+				transform(v)
+			});
+			cu = connect(tb.first, provider);
+			\ -> {
+				tb.second();
+				cu();
+			}
+		}
+	)
+}
+

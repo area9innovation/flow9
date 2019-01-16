@@ -1,0 +1,681 @@
+import net/http;
+import formats/json/json;
+import math/sha1;
+import text/blueprint;
+import formats/html/html;
+
+/*
+	This is a library which allow you to construct valid OData requests for in an OData client.
+
+	The Open Data Protocol (OData) is a data access protocol built on core
+	protocols like HTTP and commonly accepted methodologies like REST for the web. 
+
+	More at http://www.odata.org
+*/
+
+export {
+	DQuery ::= DSelectQuery, DInsertQuery, DUpdateQuery, DDeleteQuery, DCountQuery, DApplyQuery, DBatchQuery;
+		DSelectQuery(resource : DResource, parameters : [DParameter]);
+		DInsertQuery(resource : DCommonResourceU, entity : Json, parameters : [DParameter]);
+		DUpdateQuery(resource : DSpecificResourceU, value : Json);
+		DDeleteQuery(resource : DSpecificResourceU);
+		DCountQuery(resource : DCommonResourceU, parameters : [DParameter]);
+		DApplyQuery(resource : DCommonResourceU, expression : DApplyExpression);
+		DBatchQuery(queries : [DQuery]);
+
+	DResource ::= DCommonResourceU, DSpecificResourceU, DFunctionU;
+		DCommonResourceU ::= DCommonResource, DCommonResource2;
+		DSpecificResourceU ::= DSpecificResource, DSpecificResource2;
+		DFunctionU ::= DFunction, DFunction2;
+			DCommonResource(resource : string);
+			DCommonResource2(resource : string, parent : DResource);
+			DSpecificResource(resource : string, value : DResourceValue);
+			DSpecificResource2(resource : string, value : DResourceValue, parent : DResource);
+			DFunction(name : string, parameters : [DFunctionParameter]);
+			DFunction2(name : string, parameters : [DFunctionParameter], parent : DResource);
+				DFunctionParameter(name : string, value : DResourceValue);
+
+	DApplyExpression ::= DAggregate, DGroupByU;
+		DAggregate(expressions : [DAggregateExpressionU]);
+			DAggregateExpressionU ::= DAggregateExpression, DAggregateWithResource;
+				DAggregateExpression(property : DExpression, method : DAggregateMethod, alias : string);
+					DAggregateMethod ::= DSum, DMin, DMax, DAverage, DCountDistinct;
+						DSum();
+						DMin();
+						DMax();
+						DAverage();
+						DCountDistinct();
+				DAggregateWithResource(resource : DPropertyU, expressions : [DAggregateExpressionU]);
+		DGroupByU ::= DGroupBy, DGroupByAggregate;
+			DGroupBy(properties : [DPropertyU]);
+			DGroupByAggregate(properties : [DPropertyU], aggregation : DAggregate);
+
+	DParameter ::= DExpand, DSelect, DFilter, DOrderBy, DSkip, DTop, DCompute;
+		DExpand(values : [DExpandValueU]);
+			DExpandValueU ::= DExpandValue, DCount;
+				DExpandValue(resource : string, parameters : [DExpandParameterU]);
+					DExpandParameterU ::= DParameter, DCountParameter, DLevels;
+						DCountParameter();
+						DLevels(value : DLevelsValueU);
+							DLevelsValueU ::= DLevelsValue, DLevelsMax;
+								DLevelsValue(value : int);
+								DLevelsMax();
+		DSelect(resources : [string]);
+		DFilter(filter : DExpression);
+		DOrderBy(values : [DOrderByValue]);
+			DOrderByValue(resource : DPropertyU, ascending : bool);
+		DSkip(val : int);
+		DTop(val: int);
+		DCompute(expression : DExpression, alias : string);
+
+	DResourceValue ::= DInt, DString, DDouble, DBool, DNull;
+		DInt(val : int);
+		DString(val : string);
+		DDouble(val : double);
+		DBool(val : bool);
+		DNull();
+
+	DExpression ::= DResourceValue, DPropertyU, DBinaryExression, DComparison, DLogicalExp, DBuiltIn, DCount;
+
+		DPropertyU ::= DProperty, DProperty2;
+			DProperty(resource : string);
+			DProperty2(resource : string, parent : DPropertyU);
+
+		DBinaryExression(left : DPropertyU, op : DBinaryOp, righ : DPropertyU);
+			DBinaryOp ::= DAdd, DSub, DMul, DDiv, DMod;
+				DAdd();
+				DSub();
+				DMul();
+				DDiv();
+				DMod();
+
+		DComparison(left : DExpression, op : DComparisonOp, right : DExpression);
+			DComparisonOp ::= DEq, DNe, DGt, DGe, DLt, DLe;
+				DEq();
+				DNe();
+				DGt();
+				DGe();
+				DLt();
+				DLe();
+
+		DLogicalExp ::= DAnd, DAnd2, DOr, DOr2, DNot, DHas, DIn;
+			DAnd(expressions : [DExpression]);
+			DAnd2(exp1 : DExpression, exp2 : DExpression);
+			DOr(expressions : [DExpression]);
+			DOr2(exp1 : DExpression, exp2 : DExpression);
+			DNot(expression : DExpression);
+			DHas(resource : DPropertyU, val : DExpression);
+			DIn(resource : DPropertyU, values : [DResourceValue]);
+			/*
+			Not implemented yet:
+			DAny, DAll
+			*/
+
+		DBuiltIn ::=
+			DContains, DEndsWith, DStartsWith, DLength, DIndexOf, DSubstring, DToLower, DToUpper, DTrim, DConcat,
+			DDay, DMonth, DYear, DHour, DMinute, DSecond, /*DFractionalSeconds,*/ DDate, DTime, /*DTotalOffsetMinutes, DNow, DMinDateTime, DMaxDateTime,*/
+			DRound, DFloor, DCeiling;
+
+				// String functions
+				DContains(str : DExpression, substr : DExpression);
+				DEndsWith(str : DExpression, substr : DExpression);
+				DStartsWith(str : DExpression, substr : DExpression);
+				DLength(str : DExpression);
+				DIndexOf(str : DExpression, substr : DExpression);
+				DSubstring(str : DExpression, from : DExpression, toM : Maybe<DExpression>);
+				DToLower(str : DExpression);
+				DToUpper(str : DExpression);
+				DTrim(str : DExpression);
+				DConcat(str1 : DExpression, str2 : DExpression);
+
+				// Date and time functions
+				DDay(dateTime : DExpression);
+				DMonth(dateTime : DExpression);
+				DYear(dateTime : DExpression);
+				DHour(dateTime : DExpression);
+				DMinute(dateTime : DExpression);
+				DSecond(dateTime : DExpression);
+				// DFractionalSeconds(date : DExpression);
+				DDate(dateTime : DExpression);
+				DTime(dateTime : DExpression);
+				// DTotalOffsetMinutes(dateTime : DExpression);
+				// DNow();
+				// DMinDateTime();
+				// DMaxDateTime();
+
+				// Math functions
+				DRound(val : DExpression);
+				DFloor(val : DExpression);
+				DCeiling(val : DExpression);
+
+		DCount(property : DPropertyU);
+
+
+	makeODataRequest(host : string, jwt : string, query : DQuery, onOK : (Json) -> void, onError : (string) -> void) -> void;
+	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
+
+	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResourceU;
+	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
+	json2ResourceValue(json : Json) -> DResourceValue;
+
+
+	/*
+		Examples of DQuery that is uses in makeODataRequest
+		---------------------------------------------------
+		Get all the people:
+		DSelectQuery(
+			DCommonResource("People"),
+			[]
+		)
+
+		GET ~/People
+
+		---------------------------------------------------
+		Get person with id 'russel':
+		DSelectQuery(
+			DSpecificResource("People", DString("russel")),
+			[]
+		)
+
+		GET ~/People('russel')
+
+		---------------------------------------------------
+		Get info about Russel and his trips:
+		DSelectQuery(
+			DSpecificResource("People", DString("russel")),
+			[
+				DExpand([DExpandValue("Trips", [])])
+			]
+		)
+
+		GET ~/People('russel')?$expand=Trips
+
+		---------------------------------------------------
+		Get Russel's first trip:
+		DSelectQuery(
+			DSpecificResource2(
+				"Trips", DInt(0),
+				DSpecificResource("People", DString("russel"))
+			),
+			[]
+		)
+
+		GET ~/People('russel')/Trips(0)
+
+		---------------------------------------------------
+		Get people that are older than 25 and younger than 38 and
+		sort them by FirstName (descending) and UserName (ascending)
+		DSelectQuery(
+			DCommonResource("People"),
+			[
+				DFilter(
+					DAnd2(
+						DGt("age", DInt(25)),
+						DLt("age", DInt(48)),
+					)
+				),
+				DOrderBy([
+					DOrderByValue(DProperty("FirstName"), false),
+					DOrderByValue(DProperty("UserName"), true)
+				])
+			]
+		)
+
+		GET ~/People/?$filter=age gt 25 and age lt 38&$orderby=FirstName desc,UserName"
+
+		---------------------------------------------------
+		Get UserNames and FirstNames of first seven people and Description of their Trips
+		DSelectQuery(
+			DCommonResource("People"),
+			[
+				DSelect(["UserName", "FirstName"]),
+				DExpand([DExpandValue("Trips", [DSelect(["Description"])])]),
+				DTop(5)
+			]
+		)
+
+		GET ~/People?$select=UserName,FirstName&$expand=Trips($select=Description)&$top=5
+
+		---------------------------------------------------
+		Delete people with id 'russel'
+		DSelectQuery(
+			DSpecificResource("People", DString("russel")),
+			[]
+		)
+
+		DELETE ~/People('russel')
+
+		---------------------------------------------------
+		Change Russel's FirstName, LastName and BestFriend
+		considering that BestFriend is expandable field
+		DUpdateQuery(
+			DSpecificResource("People", DString("russel")),
+			JsonObject([
+				Pair("FirstName", JsonString("New first name")),
+				Pair("LastName", JsonString("New last name")),
+				Pair("BestFriend@odata.bind", JsonString("People('Ronald')"))
+			])
+		)
+
+		PATCH ~/People('russel')
+		{
+			"FirstName": "New first name",
+			"LastName": "New last name",
+			"BestFriend@odata.bind": "People('Ronald')"
+		}
+
+		---------------------------------------------------
+		GET ~/Sales?$apply=aggregate(Amount with sum as Total,Amount with max as MxA)
+		DApplyQuery(
+			DCommonResource("Sales"),
+			DAggregate([
+				DAggregateExpression(DProperty("Amount"), DSum(), "Total"),
+				DAggregateExpression(DProperty("Amount"), DMax(), "MxA")
+			])
+		)
+
+		---------------------------------------------------
+		GET ~/Products?$apply=aggregate(Sales(Amount with sum as Tax))
+		DApplyQuery(
+			DCommonResource("Products"),
+			DAggregate([
+				DAggregateWithResource(
+					DProperty("Sales"),
+					[DAggregateExpression(DProperty("Amount"), DSum(), "Tax")]
+				)
+			])
+		)
+
+		---------------------------------------------------
+		GET ~/Customers?$apply=groupby((Name))
+		DApplyQuery(
+			DCommonResource("Customers"),
+			DGroupBy([DProperty("Name")])
+		)
+
+		---------------------------------------------------
+		GET ~/Products?$apply=groupby((Name,Sales/Currency/Code),aggregate(Sales/Amount with sum as Total))
+		DApplyQuery(
+			DCommonResource("Products"),
+			DGroupByAggregate(
+				[
+					DProperty("Name"),
+					DProperty2("Code", DProperty2("Currency", DProperty("Sales")))
+				],
+				DAggregate([
+					DAggregateExpression(DProperty2("Amount", DProperty("Sales")), DSum(), "Total"),
+				])
+			)
+		)
+
+		---------------------------------------------------
+		Batch requests are also supported more at
+		www.odata.org/getting-started/advanced-tutorial/#batch
+
+		More examples at http://www.odata.org/getting-started/
+	*/
+}
+
+ODataQuery(method : RequestMethod, data : RequestData, resource : string);
+
+specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResourceU {
+	switch (resource) {
+		DCommonResource(res): DSpecificResource(res, value);
+		DCommonResource2(res, parent): DSpecificResource2(res, value, parent);
+	}
+}
+
+makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json> {
+	Pair(fieldName + "@odata.bind", JsonString(resourceName + "(" + json2string(value) + ")"));
+}
+
+json2ResourceValue(json : Json) -> DResourceValue {
+	switch (json) {
+		JsonNull(): DNull();
+		JsonBool(v): DBool(v);
+		JsonString(s): DString(s);
+		JsonDouble(v): {
+			intV = trunc(v);
+			if (i2d(intV) == v) DInt(intV)
+			else DDouble(v)
+		}
+		default: DString(json2string(json))
+	}
+}
+
+buildODataQuery(query : DQuery) -> ODataQuery {
+	switch (query : DQuery) {
+		DSelectQuery(resource, parameters): {
+			paramsStr = if (length(parameters) > 0) "?" + parameters2string(parameters, "&") else "";
+			res = resource2string(resource) + paramsStr;
+			ODataQuery(GET(), RequestParameters([]), res);
+		}
+		DInsertQuery(resource, entity, parameters): {
+			paramsStr = if (length(parameters) > 0) "?" + parameters2string(parameters, "&") else "";
+			res = resource2string(resource) + paramsStr;
+			ODataQuery(POST(), RequestPayload(json2string(entity)), res);
+		}
+		DUpdateQuery(resource, value): ODataQuery(PATCH(), RequestPayload(json2string(value)), resource2string(resource));
+		DDeleteQuery(resource): ODataQuery(DELETE(), RequestParameters([]), resource2string(resource));
+		DBatchQuery(queries): buildBatchQuery(queries);
+		DApplyQuery(resource, expression): {
+			expr = applyExpression2string(expression);
+			res = resource2string(resource) + "?$apply=" + expr;
+			ODataQuery(GET(), RequestParameters([]), res)
+		}
+		DCountQuery(resource, parameters): {
+			paramsStr = if (length(parameters) > 0) "?" + parameters2string(parameters, "&") else "";
+			res = resource2string(resource) + "/$count" + paramsStr;
+			ODataQuery(GET(), RequestParameters([]), res);
+		}
+	};
+}
+
+buildBatchQuery(queries : [DQuery]) -> ODataQuery {
+	boundary = "--" + SHA1(time2string(timestamp()));
+	body = superglue(queries, \query -> {
+		odataQuery = buildODataQuery(query);
+		method = odataQuery.method;
+		resource = odataQuery.resource;
+		hasBody = !isSameStructType(method, GET()) && !isSameStructType(method, DELETE());
+		body = switch (odataQuery.data) {
+			RequestPayload(body): body;
+			default: "";
+		};
+		blueprint("
+			%boundary%
+			Content-Type: application/http
+			Content-Transfer-Encoding: binary
+
+			%method% %resource% HTTP/1.1
+			Content-Type: application/json
+			Accept: application/json
+			% if hasBody %
+				\n%body%
+			% endif %
+		",
+		[
+			"boundary", boundary,
+			"hasBody", b2s(hasBody),
+			"method", method2string(method),
+			"resource", strReplace(resource, " ", "%20"),
+			"body", body
+		])
+	}, "\n") + "\n" + boundary + "--";
+
+	ODataQuery(POST(), RequestPayload(body), "$batch");
+}
+
+resource2string(resource : DResource) -> string {
+	switch (resource : DResource) {
+		DCommonResource(res): res;
+		DCommonResource2(res, parent): resource2string(parent) + "/" + res;
+		DSpecificResource(res, value): res + "(" + resourceValue2string(value) + ")";
+		DSpecificResource2(res, value, parent): resource2string(parent) + "/" + res + "(" + resourceValue2string(value) + ")";
+		DFunction(name, parameters): name + "(" + functionParameters2string(parameters) + ")";
+		DFunction2(name, parameters, parent): resource2string(parent) + "/" + name + "(" + functionParameters2string(parameters) + ")";
+	}
+}
+
+resourceValue2string(value : DResourceValue) -> string {
+	switch (value : DResourceValue) {
+		DInt(val): i2s(val);
+		DString(val): "'" + val + "'";
+		DDouble(val): d2s(val);
+		DBool(val): b2s(val);
+		DNull(): "null";
+	}
+}
+
+functionParameters2string(parameters : [DFunctionParameter]) -> string {
+	superglue(
+		parameters,
+		\parameter -> parameter.name + "=" + resourceValue2string(parameter.value),
+		","
+	)
+}
+
+applyExpression2string(expression : DApplyExpression) {
+	switch (expression) {
+		DAggregate(expressions): "aggregate(" + aggregateExpressions2string(expressions) + ")";
+		DGroupBy(properties): "groupby((" + groupbyProperties2string(properties) + "))";
+		DGroupByAggregate(properties, aggregation): {
+			props = groupbyProperties2string(properties);
+			agg = applyExpression2string(aggregation);
+			"groupby((" + props + ")," + agg + ")"
+		}
+	}
+}
+
+aggregateExpressions2string(expressions : [DAggregateExpressionU]) -> string {
+	superglue(expressions, aggregateExpression2string, ",")
+}
+
+aggregateExpression2string(expression : DAggregateExpressionU) -> string {
+	switch (expression) {
+		DAggregateExpression(property, method, alias): {
+			expr = expression2string(property);
+			methodS = aggregationMethod2string(method);
+			expr + " with " + methodS + " as " + alias;
+		}
+		DAggregateWithResource(resource, expressions): {
+			res = expression2string(resource);
+			expr = aggregateExpressions2string(expressions);
+			res + "(" + expr + ")";
+		}
+	}
+}
+
+groupbyProperties2string(properties : [DPropertyU]) -> string {
+	superglue(properties, expression2string, ",")
+}
+
+aggregationMethod2string(method : DAggregateMethod) -> string {
+	switch (method) {
+		DSum(): "sum";
+		DMin(): "min";
+		DMax(): "max";
+		DAverage(): "average";
+		DCountDistinct(): "countdistinct";
+	}
+}
+
+parameters2string(parameters : [DExpandParameterU], separator : string) -> string {
+	superglue(
+		parameters,
+		\parameter -> {
+			switch (parameter : DExpandParameterU) {
+				DExpand(values): if (length(values) > 0) "$expand=" + expand2string(values) else "";
+				DSelect(resources): if (length(resources) > 0) "$select=" + strGlue(resources, ",") else "";
+				DFilter(expression): "$filter=" + expression2string(expression);
+				DOrderBy(values): if (length(values) > 0) "$orderby=" + orderBy2string(values) else "";
+				DSkip(val): "$skip=" + i2s(val);
+				DTop(val): "$top=" + i2s(val);
+				DCountParameter(): "$count=true";
+				DLevels(levelsValue): {
+					levelsValueS = switch (levelsValue) {
+						DLevelsValue(value): i2s(value);
+						DLevelsMax(): "max"
+					}
+					"$levels=" + levelsValueS
+				}
+				DCompute(expression, alias): "$compute=" + expression2string(expression) + " as " + alias;
+			}
+		},
+		separator
+	)
+}
+
+expand2string(values : [DExpandValueU]) -> string {
+	superglue(
+		values,
+		\value -> {
+			switch (value) {
+				DExpandValue(resource, parameters): {
+					parametersS = parameters2string(parameters, ";");
+					resource + if (strlen(parametersS) > 0) "(" + parametersS + ")" else ""
+				};
+				DCount(__): count2string(value);
+			}
+		},
+		","
+	)
+}
+
+count2string(count : DCount) -> string {
+	property2string(count.property) + "/$count";
+}
+
+property2string(property : DPropertyU) -> string {
+	switch (property) {
+		DProperty(res): res;
+		DProperty2(res, parent): property2string(parent) + "/" + res;
+	}
+}
+
+expression2string(expression : DExpression) -> string {
+	switch (expression) {
+		DResourceValue(): resourceValue2string(expression);
+		DPropertyU(): property2string(expression);
+		DBinaryExression(left, op, righ): expression2string(left) + " " + binaryOp2string(op) + " " + expression2string(righ);
+		DComparison(left, op, right): expression2string(left) + " " + comparisonOp2string(op) + " " + expression2string(right);
+		DLogicalExp(): logicalExpression2string(expression);
+		DBuiltIn(): builtinFunction2string(expression);
+		DCount(__): count2string(expression);
+	}
+}
+
+logicalExpression2string(expression : DLogicalExp) -> string {
+	switch (expression) {
+		DAnd(expressions): superglue(expressions, \e -> "(" + expression2string(e) + ")", " and ");
+		DAnd2(exp1, exp2): "(" + expression2string(exp1) + ") and (" + expression2string(exp2) + ")";
+		DOr(expressions): superglue(expressions, \e -> "(" + expression2string(e) + ")", " or ");
+		DOr2(exp1, exp2): "(" + expression2string(exp1) + ") or (" + expression2string(exp2) + ")";
+		DNot(exp1): "not (" + expression2string(exp1) + ")";
+		DHas(resource, val): expression2string(resource) + " has " + expression2string(val);
+		DIn(resource, values): expression2string(resource) + " in (" + superglue(values, resourceValue2string, ", ") + ")";
+	}
+}
+
+builtinFunction2string(function : DBuiltIn) -> string {
+	switch (function) {
+		DContains(str, substr): makeBuiltinFunction("contains", [str, substr]);
+		DEndsWith(str, substr): makeBuiltinFunction("endswith", [str, substr]);
+		DStartsWith(str, substr): makeBuiltinFunction("startswith", [str, substr]);
+		DLength(str): makeBuiltinFunction("length", [str]);
+		DIndexOf(str, substr): makeBuiltinFunction("indexof", [str, substr]);
+		DSubstring(str, from, toM): makeBuiltinFunction("substring", eitherMap(toM, \to -> [str, from, to], [str, from]));
+		DToLower(str): makeBuiltinFunction("tolower", [str]);
+		DToUpper(str): makeBuiltinFunction("toupper", [str]);
+		DTrim(str): makeBuiltinFunction("trim", [str]);
+		DConcat(str1, str2): makeBuiltinFunction("concat", [str1, str2]);
+
+		DDay(dateTime): makeBuiltinFunction("day", [dateTime]);
+		DMonth(dateTime): makeBuiltinFunction("month", [dateTime]);
+		DYear(dateTime): makeBuiltinFunction("year", [dateTime]);
+		DHour(dateTime): makeBuiltinFunction("hour", [dateTime]);
+		DMinute(dateTime): makeBuiltinFunction("minute", [dateTime]);
+		DSecond(dateTime): makeBuiltinFunction("second", [dateTime]);
+		DDate(dateTime): makeBuiltinFunction("date", [dateTime]);
+		DTime(dateTime): makeBuiltinFunction("time", [dateTime]);
+
+		DRound(val): makeBuiltinFunction("round", [val]);
+		DFloor(val): makeBuiltinFunction("floor", [val]);
+		DCeiling(val): makeBuiltinFunction("ceiling", [val]);
+	}
+}
+
+makeBuiltinFunction(name : string, parameters : [DExpression]) -> string {
+	parametersS = superglue(parameters, expression2string, ",");
+	name + "(" + parametersS + ")"
+}
+
+binaryOp2string(op : DBinaryOp) -> string {
+	switch (op) {
+		DAdd(): "add";
+		DSub(): "sub";
+		DMul(): "mul";
+		DDiv(): "div";
+		DMod(): "mod";
+	}
+}
+
+comparisonOp2string(op : DComparisonOp) -> string {
+	switch (op) {
+		DEq(): "eq";
+		DNe(): "ne";
+		DGt(): "gt";
+		DGe(): "ge";
+		DLt(): "lt";
+		DLe(): "le";
+	}
+}
+
+orderBy2string(values : [DOrderByValue<DPropertyU, bool>]) -> string {
+	superglue(
+		values,
+		\value -> expression2string(value.resource) + if (value.ascending) "" else " desc",
+		","
+	)
+}
+
+makeODataRequest(host : string, jwt : string, query : DQuery, onOK : (Json) -> void, onError : (string) -> void) -> void {
+	q = buildODataQuery(query);
+	headers = ifArrayPush([], jwt != "", KeyValue("Authorization", "Bearer " + jwt));
+	url = host + q.resource;
+	makeODataRequest2(url, q.method, headers, q.data, onOK, onError)
+}
+
+makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void {
+	makeODataRequest(host, jwt, DBatchQuery(queries), \json -> onOK(getJsonArrayValue(json, [])), onError)
+}
+
+makeODataRequest2(url : string, method : RequestMethod, headers : [KeyValue], data : RequestData, onOK : (Json) -> void, onError : (string) -> void) -> void {
+	body = switch (data) {
+		RequestPayload(body): body;
+		default: "";
+	};
+	isBatch = isSameStructType(method, POST()) && startsWith(body, "--");
+	contentType = if (isBatch) {
+		boundary = substring(body, 2, strIndexOf(body, "\n") - 2);
+		"multipart/mixed;boundary=" + boundary;
+	} else "application/json";
+	accept = if (isBatch) "multipart/mixed" else "application/json";
+
+	setHeaderIfNotExists = \arr : [KeyValue], kv : KeyValue -> ifArrayPush(arr, !exists(arr, \h -> kv.key == h.key), kv);
+
+	headers2 : [KeyValue] = headers
+		|> (\arr -> setHeaderIfNotExists(arr, KeyValue("Content-Type", contentType)))
+		|> (\arr -> setHeaderIfNotExists(arr, KeyValue("Accept", accept)));
+		// |> (\arr -> setHeaderIfNotExists(arr, KeyValue("If-Match", "*")));
+
+	httpCustomRequest(
+		url,
+		method,
+		headers2,
+		data,
+		\status, respData, respHeaders -> {
+			if (isErrorStatus(status)) {
+				onError(respData)
+			} else {
+				onOK(parseResponse(respData, respHeaders))
+			}
+		},
+		true
+	)
+}
+
+parseResponse(response : string, respHeaders : [KeyValue]) -> Json {
+	contentType = findDef(respHeaders, \header -> toLowerCase(header.key) == "content-type", KeyValue("", "")).value;
+	if (startsWith(contentType, "multipart/mixed;")) {
+		boundary = "--"+ takeAfter(contentType, "boundary=", "");
+		chunks = strSplit(response, boundary);
+		responses = subrange(chunks, 1, length(chunks) - 2);
+		JsonArray(map(responses, \resp -> {
+			json = strRight(resp, strIndexOf(resp, "{"));
+			parseJson(json)
+		}));
+	} else {
+		parseJson(response)
+	}
+}

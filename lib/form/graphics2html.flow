@@ -1,0 +1,466 @@
+export {
+	graphicsheader() -> string;
+	graphics2html(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
+
+	graphics2svg(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
+	graphics2canvas(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
+	graphics2vml(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
+}
+
+import stylestructs;
+import string;
+import math/bits;
+
+graphicsheader() {
+	"<style>v\\: * { behavior:url(#default#VML); display:inline-block }</style><xml:namespace ns=\"urn:schemas-microsoft-com:vml\" prefix=\"v\" />";
+}
+
+graphics2html(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
+	graphics2canvas(path, style)
+	+ "\n<!--[if lt IE 9]>" + graphics2vml(path, style) + "<![endif]-->";
+}
+
+// ---- SVG support ----
+
+graphics2svg(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
+	// Set up the style
+	fillcolour = ref 0xdeaddead; // A hack
+	fillopacity = ref 1.0;
+
+	gradientFill : ref Maybe<GradientFill> = ref None();
+	gradientType = ref "linear";
+
+	strokecolour = ref 0xdeaddead;
+	strokeopacity = ref 1.0;
+	strokewidth = ref 1.0;
+	strokeLineGradient = ref None();
+	iter(style, \s -> {
+		switch (s : GraphicsStyle) {
+		Fill(col): fillcolour := col;
+		FillOpacity(op): fillopacity := op;
+		GradientFill(c, rotation): gradientFill := Some(GradientFill(c, rotation));
+		RadialGradient(): gradientType := "radial";
+		Stroke(colour): strokecolour := colour;
+		StrokeOpacity(opacity): strokeopacity := opacity;
+		StrokeWidth(width): strokewidth := width;
+		StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+		}
+	});
+
+	// Determine dimensions
+	w = ref 0.0;
+	h = ref 0.0;
+	mymax = \r, v -> if (v > ^r) r := v;
+	iter(path, \ope ->
+		switch(ope : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		LineTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		ClosePath(): {}
+		}
+	);
+
+	svgheader = "<svg width=" + d2s(^w) + " height=" + d2s(^h)
+		+ " xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">";
+
+	svgstyle = ref "";
+
+	if (0xdeaddead != (^fillcolour)) {
+		svgstyle := ^svgstyle + "fill: #" + formatColor(^fillcolour)
+			+ "; fill-opacity: " + d2s(^fillopacity) + "; "
+			;
+	}
+	if (0xdeaddead != (^strokecolour)) {
+		svgstyle := ^svgstyle + "stroke:#" + formatColor(^strokecolour)
+			+ "; stroke-opacity:" + d2s(^strokeopacity)
+			+ "; stroke-width: " + d2s(^strokewidth) + "; "
+			;
+	}
+
+	defs = ref "";
+
+	switch (^gradientFill : Maybe<GradientFill>) {
+		Some(mgf): {
+			gf : GradientFill = mgf;
+			colors = map(gf.points, \c -> c.color);
+			alphas = map(gf.points, \c -> c.alpha);
+			offsets = map(gf.points, \c -> c.offset);
+			defs := makeSvgGradientDef(gf.rotation, colors, alphas, offsets, "f");
+			svgstyle := ^svgstyle + "fill:url(#f); ";
+		}
+		None(): {}
+	}
+
+	switch (^strokeLineGradient : Maybe) {
+		Some(sg): {
+			colors = map(sg.points, \c -> c.color);
+			alphas = map(sg.points, \c -> c.alpha);
+			offsets = map(sg.points, \c -> c.offset);
+			defs := ^defs + makeSvgGradientDef(sg.rotation, colors, alphas, offsets, "s");
+		}
+		None(): {}
+	}
+
+	// Render the path
+	needClose = ref false;
+	pathcommands = fold(path, "", \acc, op ->
+		switch(op : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			acc + "M" + d2s(x) + "," + d2s(y) + " ";
+		}
+		LineTo(x, y) : {
+			needClose := true;
+			acc + "L" + d2s(x) + "," + d2s(y) + " ";
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			needClose := true;
+			acc + "S"  + " " + d2s(cx) + "," + d2s(cy) + " " + d2s(x) + " " + d2s(y);
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			needClose := true;
+			acc + "Q" + d2s(x) + "," + d2s(y) + " " + d2s(cx) + " " + d2s(cy) + " ";
+		}
+		ClosePath(): {
+			needClose := false;
+			acc + "z";
+		}
+		}
+	);
+	svgpath = "<path"
+		+ " d=\"" +
+		(if (^needClose) {
+			pathcommands + "z";
+		} else {
+			pathcommands;
+		}) + "\""
+		+ " style=\"" + ^svgstyle + "\""
+		+ " />";
+
+	svgheader + ^defs + svgpath + "</svg>";
+}
+
+makeSvgGradientDef(rotation, colors, alphas, offsets, id) {
+	gradient = ref "<defs><linearGradient id=\"" + id + "\""
+		" gradientTransform=\"rotate(" + d2s(rotation) + " .5 .5)\""
+		+ ">";
+
+	iteri(colors, \i,c -> {
+		stop = "<stop offset=\""
+			+ d2s(offsets[i]) + "\" style=\"stop-color:" + formatColor(c)
+			+ "; stop-opacity:" + d2s(alphas[i]) + ";\"/>";
+		gradient := ^gradient + stop;
+	});
+	gradient := ^gradient + "</linearGradient></defs>";
+	^gradient;
+}
+
+
+// ---- Canvas support ----
+
+
+nextCanvasId = ref 0;
+
+graphics2canvas(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
+	// Set up the style
+	fillcolour = ref 0xdeaddead; // A hack
+	fillopacity = ref 1.0;
+
+	gradientFill : ref Maybe<GradientFill> = ref None();
+	gradientType = ref "linear";
+
+	strokecolour = ref 0xdeaddead;
+	strokeopacity = ref 1.0;
+	strokewidth = ref 1.0;
+	strokeLineGradient = ref None();
+	iter(style, \s -> {
+		switch (s : GraphicsStyle) {
+		Fill(col): fillcolour := col;
+		FillOpacity(op): fillopacity := op;
+		GradientFill(c, rotation): 	gradientFill := Some(GradientFill(c,rotation));
+		RadialGradient(): gradientType := "radial";
+		Stroke(colour): strokecolour := colour;
+		StrokeOpacity(opacity): strokeopacity := opacity;
+		StrokeWidth(width): strokewidth := width;
+		StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+		}
+	});
+
+	// Determine dimensions
+	w = ref 0.0;
+	h = ref 0.0;
+	mymax = \r, v -> if (v > ^r) r := v;
+	iter(path, \ope ->
+		switch(ope : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		LineTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		ClosePath(): {}
+		}
+	);
+
+	canvasid = "c" + i2s(^nextCanvasId);
+	nextCanvasId := 1 + ^nextCanvasId;
+
+	canvascode = ref "<canvas id=\"" + canvasid + "\" width=\"" + i2s(ceil(^w)) + "\" height=\"" + i2s(ceil(^h))
++ "\"></canvas><script type=\"application/x-javascript\">var canvas = document.getElementById('" + canvasid + "');
+if (canvas.getContext) { var ctx = canvas.getContext('2d');
+";
+
+	closecode = ref "";
+	if (0xdeaddead != (^fillcolour)) {
+		canvascode := ^canvascode + "ctx.fillStyle = " + canvasColor(^fillcolour, ^fillopacity) + ";\n";
+		closecode := ^closecode + "ctx.fill();";
+	}
+	if (0xdeaddead != (^strokecolour)) {
+		canvascode := ^canvascode + "ctx.strokeStyle = " + canvasColor(^strokecolour, ^strokeopacity) + ";\n";
+		closecode := ^closecode + "ctx.stroke();";
+	}
+	if (^strokewidth != 1.0) {
+		canvascode := ^canvascode + "ctx.lineWidth = " + d2s(^strokewidth) + ";\n";
+	}
+
+	closecode := ^closecode + "ctx.closePath();\n";
+
+	defs = ref "";
+
+	switch (^gradientFill : Maybe<GradientFill>) {
+		Some(mgf): {
+			gf : GradientFill = mgf;
+			colors = map(gf.points, \c -> c.color);
+			alphas = map(gf.points, \c -> c.alpha);
+			offsets = map(gf.points, \c -> c.offset);
+			canvascode := ^canvascode + makeCanvasGradientDef(^w, ^h, gf.rotation, colors, alphas, offsets);
+			closecode := ^closecode + "ctx.fillStyle = grd;" + "ctx.fill();";
+		}
+		None(): {}
+	}
+
+	/*
+	switch (^strokeLineGradient : Maybe) {
+		Some(sg): {
+			colors = map(sg.points, \c -> c.color);
+			alphas = map(sg.points, \c -> c.alpha);
+			offsets = map(sg.points, \c -> c.offset);
+			defs := ^defs + makeSvgGradientDef(sg.rotation, colors, alphas, offsets, "s");
+		}
+		None(): {}
+	}
+	*/
+	// Render the path
+	needClose = ref false;
+	pathcommandsArray = map(path, \op ->
+		switch(op : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			"ctx.moveTo(" + d2s(x) + "," + d2s(y) + ");";
+		}
+		LineTo(x, y) : {
+			needClose := true;
+			"ctx.lineTo(" + d2s(x) + "," + d2s(y) + ");";
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			needClose := true;
+			"ctx.bezierCurveTo(" + d2s(cx) + "," + d2s(cy) + "," + d2s(cx) + "," + d2s(cy) + "," + d2s(x) + "," + d2s(y) + ");";
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			needClose := true;
+			"ctx.quadraticCurveTo(" + d2s(cx) + "," + d2s(cy) + "," + d2s(x) + "," + d2s(y) + ");";
+		}
+		ClosePath(): {
+			needClose := false;
+			^closecode;
+		}
+		}
+	);
+	pathcommands = "ctx.beginPath();" + strGlue(pathcommandsArray, "");
+	^canvascode
+	+ (if (^needClose) {
+			pathcommands + ^closecode;
+		} else {
+			pathcommands;
+		})
+	+ "}\n</script>";
+}
+
+makeCanvasGradientDef(width, height, rotation, colors, alphas, offsets) {
+	//TODO: check and fix if necessary for rotation that is not 0.0 or 90.0 degree
+	assert(length(colors) == length(offsets) && length(offsets) == length(alphas), "Arrays of different lengths are given to makeCanvasGradientDef");
+	startX = 0.0;
+	startY = 0.0;
+	finishX = startX + cosinus(rotation) * width;
+	finishY = startY + sinus(rotation) * height;
+	gradient = "var grd = ctx.createLinearGradient(" + d2s(startX) + ", " + d2s(startY) + ", " + d2s(finishX) + ", " + d2s(finishY) + ");";
+	points = foldi(colors, "", \i, acc, color -> {
+		acc + "grd.addColorStop(" + d2s(offsets[i]) + ", " + canvasColor(color, alphas[i]) + ");"
+	});
+	gradient + points
+}
+
+canvasColor(color : int, fill : double) -> string {
+	blueC = bitAnd(color, 0xff);
+	redgreen = bitUshr(color, 8);
+	greenC = bitAnd(redgreen, 0xff);
+	redC = bitUshr(redgreen, 8);
+	if (fill == 1.0) {
+		"\"rgb(" + i2s(redC) + ", " + i2s(greenC) + ", " + i2s(blueC) + ")\"";
+	} else {
+		"\"rgba(" + i2s(redC) + ", " + i2s(greenC) + ", " + i2s(blueC) + ", " + d2s(fill) + ")\"";
+	}
+}
+
+// ---- VML support ----
+
+graphics2vml(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
+	// Set up the style
+	fillcolour = ref 0xdeaddead; // A hack
+	fillopacity = ref 1.0;
+
+	gradientFill : ref Maybe<GradientFill> = ref None();
+	gradientType = ref "linear";
+
+	strokecolour = ref 0xdeaddead;
+	strokeopacity = ref 1.0;
+	strokewidth = ref 1.0;
+	strokeLineGradient = ref None();
+	iter(style, \s -> {
+		switch (s : GraphicsStyle) {
+		Fill(col): fillcolour := col;
+		FillOpacity(op): fillopacity := op;
+		GradientFill(c, rotation): gradientFill := Some(s);
+		RadialGradient(): gradientType := "radial";
+		Stroke(colour): strokecolour := colour;
+		StrokeOpacity(opacity): strokeopacity := opacity;
+		StrokeWidth(width): strokewidth := width;
+		StrokeLineGradient(c, rotation): strokeLineGradient := Some(s);
+		}
+	});
+
+	// Determine dimensions
+	w = ref 0.0;
+	h = ref 0.0;
+	mymax = \r, v -> if (v > ^r) r := v;
+	iter(path, \ope ->
+		switch(ope : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		LineTo(x, y) : {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			mymax(w, x);
+			mymax(h, y);
+		}
+		ClosePath(): {}
+		}
+	);
+
+	vmlheader = ref "<v:shape style='width:" + d2s(^w) + ";height:" + d2s(^h)
+		+ "' coordsize='" + d2s(^w) + " " + d2s(^h) + "'";
+
+	if (0xdeaddead != (^fillcolour)) {
+		vmlheader := ^vmlheader + " fillcolor=\"#" + formatColor(^fillcolour) + "\"";
+		// No opacity support in VML
+	}
+	if (0xdeaddead != (^strokecolour)) {
+		// No opacity support in VML
+		vmlheader := ^vmlheader + " strokecolor=\"#" + formatColor(^strokecolour) + "\""
+			+ "; strokeweight=\"" + d2s(^strokewidth) + "\"";
+	} else {
+		vmlheader := ^vmlheader + " stroked=\"False\"";
+	}
+	vmlheader := ^vmlheader + ">";
+
+/*	defs = ref "";
+	switch (^gradientFill : Maybe<GradientFill>) {
+		Some(mgf): {
+			gf : GradientFill = mgf;
+			colors = map(gf.points, \c -> c.color);
+			alphas = map(gf.points, \c -> c.alpha);
+			offsets = map(gf.points, \c -> c.offset);
+			defs := makeSvgGradientDef(gf.rotation, colors, alphas, offsets, "f");
+			svgstyle := ^svgstyle + "fill:url(#f); ";
+		}
+		None(): {}
+	}
+
+	switch (^strokeLineGradient : Maybe) {
+		Some(sg): {
+			colors = map(sg.points, \c -> c.color);
+			alphas = map(sg.points, \c -> c.alpha);
+			offsets = map(sg.points, \c -> c.offset);
+			defs := ^defs + makeSvgGradientDef(sg.rotation, colors, alphas, offsets, "s");
+		}
+		None(): {}
+	}
+	*/
+
+	// Render the path
+//	<v:path v="m 0,0 l 100,0 l 100,100 l 0,100 x e"/>
+	needClose = ref false;
+	pathcommands = fold(path, "", \acc, op ->
+		switch(op : StaticGraphicOp) {
+		MoveTo(x, y) : {
+			acc + "m" + i2s(round(x)) + "," + i2s(round(y)) + " ";
+		}
+		LineTo(x, y) : {
+			needClose := true;
+			acc + "l" + i2s(round(x)) + "," + i2s(round(y)) + " ";
+		}
+		CubicBezierTo(x, y, cx, cy): {
+			needClose := true;
+			acc + "l" + i2s(round(x)) + "," + i2s(round(y))/* + " " + d2s(cx) + " " + d2s(cy) + " "*/;
+		}
+		QuadraticBezierTo(x, y, cx, cy): {
+			needClose := true;
+			acc + "l" + i2s(round(x)) + "," + i2s(round(y))/* + " " + d2s(cx) + " " + d2s(cy) + " "*/;
+		}
+		ClosePath(): {
+			needClose := false;
+			acc + "x e";
+		}
+		}
+	);
+
+	vmlpath = "<v:path"
+		+ " v=\"" +
+		(if (^needClose) {
+			pathcommands + "x e";
+		} else {
+			pathcommands;
+		}) + "\""
+		+ " />";
+
+	^vmlheader + vmlpath + "</v:shape>";
+}

@@ -1,0 +1,127 @@
+// © Copyright 2013 Area9 Innovation. All rights reserved
+import form/form;
+import string;
+import ds/tree;
+
+export {
+	// Filebrowser API
+	SetFileBrowser(
+		type : FileBrowserDialogType,
+		fileBrowser : (
+			ext : [string],
+			onDone : (filename : string) -> void
+		) -> void
+	) -> void;
+
+	CallFileBrowser(
+		type : FileBrowserDialogType,
+		ext : [string],
+		onDone : (filename : string) -> void
+	) -> void;
+
+	// Same as above but provides onCancel
+	SetFileBrowserWithCancel(
+		type : FileBrowserDialogType,
+		fileBrowser : (
+			ext : [string],
+			onDone : (filename : string) -> void,
+			onCancel : () -> void
+		) -> void
+	) -> void;
+
+	CallFileBrowserWithCancel(
+		type : FileBrowserDialogType,
+		ext : [string],
+		onDone : (filename : string) -> void,
+		onCancel : () -> void,
+	) -> void;
+
+	FileBrowserDialogType ::= OpenFileDialog, SaveFileDialog, MediaFileDialog, CustomFileDialog;
+		OpenFileDialog();
+		SaveFileDialog();
+		// MediaFileDialog was added, because usually we have different implementation in SmartBuilder version.
+		MediaFileDialog();
+		CustomFileDialog();
+
+	// Resolve content of file API, can be used in implementation of FilebrowserAPI
+	// register new resolve content handler for specified ext
+	registerResolveContentAPI(ext : [string], getForm : (filename : string) -> Form) -> void;
+	// get preview Form for specified file
+	resolveContent2Form(filename : string) -> Form;
+}
+
+// Filebrowser API
+fileBrowsers : ref Tree<FileBrowserDialogType, (
+	ext : [string],
+	onDone : (filename : string) -> void,
+	onCancel : () -> void
+	) -> void> = ref makeTree();
+
+
+SetFileBrowser(
+	type : FileBrowserDialogType,
+	fileBrowser : (ext : [string], onDone : (filename : string) -> void) -> void
+	) -> void
+{
+	closableFileBrowser = \ext, onDone, onCancel -> fileBrowser(ext, onDone);
+	SetFileBrowserWithCancel(type, closableFileBrowser);
+}
+
+CallFileBrowser(
+	type : FileBrowserDialogType,
+	ext : [string],
+	onDone : (filename : string) -> void
+	) -> void
+{
+	onCancel = nop;
+	CallFileBrowserWithCancel(type, ext, onDone, onCancel);
+}
+
+SetFileBrowserWithCancel(
+	type : FileBrowserDialogType,
+	fileBrowser : (ext : [string], onDone : (filename : string) -> void, onCancel : () -> void) -> void
+	) -> void
+{
+	maybeApply(lookupTree(^fileBrowsers, type), \searchResult -> {
+		fileBrowsers := removeFromTree(^fileBrowsers, type)
+	});
+	fileBrowsers := setTree(^fileBrowsers, type, fileBrowser)
+}
+
+CallFileBrowserWithCancel(
+	type : FileBrowserDialogType,
+	ext : [string],
+	onDone : (filename : string) -> void,
+	onCancel : () -> void,
+	) -> void
+{
+	switch (lookupTree(^fileBrowsers, type)) {
+		Some(fileBrowser): {
+			fileBrowser(ext, onDone, onCancel);
+		}
+		None(): {
+			println("FileBrowser API for type=" + toString(type) + ", isn't set.");
+		}
+	}
+}
+
+// Resolve content of file API
+ResolveContentAPI : (
+	ext : [string],
+	getForm : (filename : string) -> Form
+);
+
+rcAPI : ref [ResolveContentAPI] = ref [];
+
+registerResolveContentAPI(ext : [string], getForm : (filename : string) -> Form) -> void {
+	rcAPI := arrayPush(^rcAPI, ResolveContentAPI(ext, getForm));
+}
+
+resolveContent2Form(filename : string) -> Form {
+	ext = "."+getUrlExtension(filename);
+	res = ref Empty();
+	iter(^rcAPI, \api -> {
+		if (contains(api.ext, ext)) res := api.getForm(filename)
+	});
+	^res
+}

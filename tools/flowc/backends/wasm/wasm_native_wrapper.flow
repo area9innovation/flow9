@@ -7,7 +7,7 @@ export {
 }
 
 wrap_natives(cfg : FiWasmConfig, program : FiProgram, names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<string, FiWasmNativeDec>) -> FiProgram {
-	fold(program.traversal, program, \prg, moduleName ->{
+	fold(program.traversal, program, \prg, moduleName -> {
 		switch (lookupTree(prg.modules, moduleName)) {
 			None(): prg;
 			Some(m): {
@@ -21,14 +21,11 @@ wrap_natives(cfg : FiWasmConfig, program : FiProgram, names : FiGlobalNames, typ
 				names2 = prg.names;
 				toplevel2 : Tree<string, FiDeclaration> = fold(newfuncs, names2.toplevel, \tls, s -> setTree(tls, s.name, s));
 
-				prgTmp = FiProgram(
-					prg.config,
-					setTree(prg.modules, moduleName, module),
-					prg.traversal,
-					FiGlobalNames(names2 with toplevel = toplevel2)
-				);
+				prgTmp = FiProgram(prg with
+					names = FiGlobalNames(names2 with toplevel = toplevel2),
+					modules = setTree(prg.modules, moduleName, module));
 
-				lift_lambdas_module(prgTmp, moduleName);
+				lift_lambdas_module(prgTmp, moduleName)
 			}
 		}
 	});
@@ -136,20 +133,23 @@ embedd_lambda(names : FiGlobalNames, types : FiWasmTypeTable, natives: Tree<stri
 		FiLambda(args, b, type, start): 
 			FiLambda(args, process(b), type, start);
 		FiCall(f, args, type, start): {
+			simpleCall = \ -> FiCall(process(f), map(args, \a -> process(a)), type, start);
 			switch (f) {
 				FiVar(fname, ftype, __): {
 					nativeDec = lookupTree(natives, fname);
-					switch (nativeDec) {
-						Some(v): {
-							wrap_create_lambda(names, types, e, f);
-						}
-						None(): {
-							FiCall(process(f), map(args, \a -> process(a)), type, start);
-						}
-					}
+					eitherFn(
+						nativeDec,
+						\d -> { 
+							if (fiWasmIsPureNative(d.decl.nativeName) || fiWasmIsHostWNative(d.decl.nativeName)) 
+								wrap_create_lambda(names, types, e, f)
+							else 
+								simpleCall();
+						},
+						simpleCall
+					);
 				}
 				default: {
-					FiCall(process(f), map(args, \a -> process(a)), type, start);
+					simpleCall();
 				}
 			}
 		}

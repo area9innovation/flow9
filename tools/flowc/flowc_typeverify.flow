@@ -1,4 +1,4 @@
-import binarytree;
+import ds/tree;
 import tools/flowc/fctypeenv;
 import tools/flowc/incremental/fimodule;
 import tools/flowc/incremental/fi_helpers;
@@ -20,7 +20,6 @@ TypeVerifyModuleEnv(
 	name : string, 
 	global : FcTypeEnvProgram,
 	moduleStructsUnions : Tree<string, FiStructOrUnion>,
-	globalNames : Set<string>,
 	moduleNames : Set<string>,
 	exprError : ref bool,
 	typeError : ref bool,
@@ -62,10 +61,6 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 			), 
 			\acc, struct -> setTree(acc, struct.name, struct)
 		),
-		switch (env.exported) {
-			FcExportedSeparate(names): lookupTreeDef(names, flowfile, makeSet());
-			FcExportedCommon(names): names;
-		},
 		moduleNames,
 		ref false,
 		ref false,
@@ -224,7 +219,7 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			typeverifyFiExp(env, f, onError) && 
 			fold(args, true, \ok, arg -> ok && typeverifyFiExp(env, arg, onError));
 		FiVar(name, type, s):
-			typeverifyFiVar(env, expr, onError) && checkNameAccessible(env, name, onError,s);
+			typeverifyFiVar(env, expr, onError);
 		FiLet(x, tp, e1, e2, type, __): {
 			newEnv = TypeVerifyEnv(
 				env.module,
@@ -256,30 +251,24 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
 		FiCallPrim(prim, es, type, s):   {
 			switch (prim) {
-				FcStructPrim(struct_name): {
-					checkNameAccessible(env, struct_name, onError, s) &&
+				FcStructPrim(struct_name):
 					typeverifyFcStructPrim(env, struct_name, es, onError, s);
-				}
 				FcFieldPrim(field_name): {
 					// Check, that the given field name exists
 					switch (fiExpType(es[0])) {
 						FiTypeName(type_name, __): {
-							fieldExists = ensureFieldExists(
+							ensureFieldExists(
 								env.module.global.acc.names,
 								env.module.moduleStructsUnions,
 								field_name, type_name, onError,
 								env.module.name, s
 							);
-							checkNameAccessible(env, type_name, onError, s) && fieldExists;
 						}
 						FiTypeFlow():
 							true;  // We can't do better, if type is flow
 						default:
 							false; // This branch must never occur
 					}
-				}
-				FcCreateClosurePrim(structName, functionName): {
-					checkNameAccessible(env, structName, onError, s) && checkNameAccessible(env, functionName, onError, s)
 				}
 				default: true;
 			} && 
@@ -456,8 +445,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 			typeverifyFiExp(newEnv, c.body, onError) && 
 			argsNumIsOk
 		}
-	) && 
-	forall(set2array(switchCaseTypes), \caseTypeName -> (caseTypeName == "default" || checkNameAccessible(env, caseTypeName, onError, sw.start)));
+	)
 }
 
 
@@ -504,7 +492,6 @@ typeverifyFiType(env : TypeVerifyEnv, type : FiType, onError : (FcError) -> void
 		FiTypeVoid():   true;
 		FiTypeNative(): true;
 		FiTypeName(name,__):
-			checkNameAccessible(env, name, onError, 0) && 
 			typeverifyFiTypeName(env, type, onError, start);
 	}
 	if (!ret && !^(env.module.typeError)) {
@@ -513,26 +500,6 @@ typeverifyFiType(env : TypeVerifyEnv, type : FiType, onError : (FcError) -> void
 			"in type '" + cutoffString(prettyFiType(dummyPretty, type, makeSet()), 32) + "'", 
 			[FcPosition(env.module.name, start, start)]
 		));
-	}
-	ret
-}
-
-checkNameAccessible(env : TypeVerifyEnv, name : string, onError : (FcError) -> void, start : int) -> bool {
-	isLocalScope = containsSet(env.local.varNames, name);
-	isModuleScope = containsSet(env.module.moduleNames, name);
-	isGlobalScope = !isModuleScope && containsSet(env.module.globalNames, name);
-	isDefinedSomewhere = isGlobalScope || isModuleScope || isLocalScope;
-	definition_module = moduleWhereNameIsDefined(env.module.global.acc.names, name);
-	isImported = containsSet(env.module.imports, definition_module);
-
-	ret = (isDefinedSomewhere && (!isGlobalScope || isImported)) || typeverifyIsStructOrUnionName(env, name, onError, start);
-	if (!ret) {
-		if (!isDefinedSomewhere) {
-			onError(FcError("name '" + name + "' is not accessible in context", [FcPosition(env.module.name, start, start)]));
-		}
-		if (isGlobalScope && !isImported) {
-			onError(FcError("name '" + name + "' is not imported, use 'import " + definition_module + ";' to fix", [FcPosition(env.module.name, start, start)]));
-		}
 	}
 	ret
 }
