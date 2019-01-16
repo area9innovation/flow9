@@ -242,21 +242,24 @@ public:
 
     class FlowNativeMediaRecorder : public FlowNativeObject
     {
+        AndroidMediaRecorderSupport *owner;
     public:
 
         FlowNativeMediaRecorder(AndroidMediaRecorderSupport* owner);
+        ~FlowNativeMediaRecorder();
 
         jobject mediaRecorder;
-        jobject session;
 
         DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaRecorder, FlowNativeObject)
     };
 
     class FlowNativeMediaStream : public FlowNativeObject
     {
+        AndroidMediaRecorderSupport *owner;
     public:
 
         FlowNativeMediaStream(AndroidMediaRecorderSupport* owner);
+        ~FlowNativeMediaStream();
 
         jobject mediaStream;
 
@@ -271,6 +274,7 @@ public:
     void deliverVideoDevices(jint cb_root, jobjectArray ids, jobjectArray names);
     void deliverMediaRecorder(jint cb_root, jobject recorder);
     void deliverMediaStream(jint cb_root, jobject mediaStream);
+    void deliverError(jint cb_root, jstring error);
 private:
     virtual void recordMedia(unicode_string websocketUri, unicode_string filePath, int timeslice, unicode_string videoMimeType,
                             bool recordAudio, bool recordVideo, unicode_string videoDeviceId, unicode_string audioDeviceId,

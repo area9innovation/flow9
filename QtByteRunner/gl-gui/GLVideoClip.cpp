@@ -65,11 +65,10 @@ const GLTransform &GLVideoClip::getLocalTransform()
 {
     if (!checkFlag(LocalTransformReady)) {
         setFlags(LocalTransformReady);
-        local_transform_raw.x += rotation_offset.x;
-        local_transform_raw.y += rotation_offset.y;
-        local_transform = local_transform_raw.toMatrixForm();
-        local_transform_raw.x -= rotation_offset.x;
-        local_transform_raw.y -= rotation_offset.y;
+        GLUnpackedTransform temp = local_transform_raw;
+        temp.x += rotation_offset.x;
+        temp.y += rotation_offset.y;
+        local_transform = temp.toMatrixForm();
     }
 
     return local_transform;

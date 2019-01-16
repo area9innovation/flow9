@@ -1512,7 +1512,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nDeviceInfoUpdated(long ptr, int id);
 
     private synchronized void cbDeviceInfoUpdated(int cb) {
-        mediaRecorderSupport.initializeDeviceInfo();
+        if (FlowMediaRecorderSupport.isCamera2Supported)
+            mediaRecorderSupport.initializeDeviceInfo();
         nDeviceInfoUpdated(cPtr(), cb);
     }
 
@@ -1544,19 +1545,19 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nOnRecorderReady(long ptr, int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder);
 
-    public synchronized void cbOnRecorderReady(int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder) {
+    synchronized void cbOnRecorderReady(int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder) {
         nOnRecorderReady(cPtr(), id, flowRecorder);
     }
 
     private native void nOnMediaStreamReady(long ptr, int id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream);
 
-    public synchronized void cbOnMediaStreamReady(int id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream) {
+    synchronized void cbOnMediaStreamReady(int id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream) {
         nOnMediaStreamReady(cPtr(), id, flowMediaStream);
     }
 
     private native void nOnRecorderError(long ptr, int id, String error);
 
-    public synchronized void cbOnRecorderError(int id, String error) {
+    synchronized void cbOnRecorderError(int id, String error) {
         nOnRecorderError(cPtr(), id, error);
     }
 
@@ -1564,24 +1565,29 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                                             boolean recordAudio, boolean recordVideo, String videoDeviceId, String audioDeviceId,
                                             int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
                                             int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot) {
-        mediaRecorderSupport.recordMedia(websocketUri, filePath, timeslice, videoMimeType, recordAudio, recordVideo, videoDeviceId,
-                audioDeviceId, cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
+        if (FlowMediaRecorderSupport.isCamera2Supported)
+            mediaRecorderSupport.recordMedia(websocketUri, filePath, timeslice, videoMimeType, recordAudio, recordVideo, videoDeviceId,
+                    audioDeviceId, cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
     }
 
     private synchronized void cbStartMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        mediaRecorderSupport.startMediaRecorder(recorder);
+        if (FlowMediaRecorderSupport.isCamera2Supported)
+            mediaRecorderSupport.startMediaRecorder(recorder);
     }
 
     private synchronized void cbResumeMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        mediaRecorderSupport.resumeMediaRecorder(recorder);
+        if (FlowMediaRecorderSupport.isPauseResumeSupported)
+            mediaRecorderSupport.resumeMediaRecorder(recorder);
     }
 
     private synchronized void cbPauseMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        mediaRecorderSupport.pauseMediaRecorder(recorder);
+        if (FlowMediaRecorderSupport.isPauseResumeSupported)
+            mediaRecorderSupport.pauseMediaRecorder(recorder);
     }
 
     private synchronized void cbStopMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        mediaRecorderSupport.stopMediaRecorder(recorder);
+        if (FlowMediaRecorderSupport.isCamera2Supported)
+            mediaRecorderSupport.stopMediaRecorder(recorder);
     }
 
 }

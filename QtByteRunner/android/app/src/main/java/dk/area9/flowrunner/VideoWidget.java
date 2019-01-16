@@ -8,7 +8,6 @@ import android.graphics.SurfaceTexture;
 import android.hardware.display.DisplayManager;
 import android.media.MediaPlayer;
 import android.opengl.GLES20;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.preference.PreferenceManager;
