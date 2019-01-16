@@ -1,0 +1,530 @@
+import ds/digraph;
+import ds/digraph2dot;
+
+// TODO: Move to the ds/ folder
+
+export {
+	EasyGraph : (
+		nodes : Tree<int, GNode<?>>,
+		edges : Tree<int, [GEdge<??>]>, // from -> successors
+		numberOfEdges : int
+	);
+
+	/////////////////
+	// Constructors
+	/////////////////
+	makeEasyGraph() -> EasyGraph<?, ??>;
+
+	// Add a node, where you define the unique int node id manually
+	addEGNode(graph : EasyGraph<?, ??>, node : GNode<?>) -> EasyGraph<?, ??>;
+		// GNode : (id : int, data : ?);
+
+	// Adds a node, finding the id automatically (linear time)
+	addEGNodeData(graph : EasyGraph<?, ??>, nodeData : ?) -> Pair<EasyGraph<?, ??>, GNode<?>>;
+
+	addEGEdge(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??>;
+		// GEdge : (from : int, to : int, data : ?, weight : int);
+
+	/////////////////
+	// Getters
+	/////////////////
+	getEGNode(graph : EasyGraph<?, ??>, id : int, alternative : GNode<?>) -> GNode<?>;
+	getEGEdge(graph : EasyGraph<?, ??>, from : int, to : int, alternative : GEdge<??>) -> GEdge<??>;
+
+	getEGNodes(graph : EasyGraph<?, ??>) -> [GNode<?>];
+	getEGEdges(graph : EasyGraph<?, ??>) -> [GEdge<??>];
+
+	// Those reachable by a directed path of length 1
+	getAdjacentEGNodes(graph : EasyGraph<?, ??>, from : int) -> [int]; 
+
+	numberOfEGNodes(graph : EasyGraph<?, ??>) -> int;
+	numberOfEGEdges(graph : EasyGraph<?, ??>) -> int;
+
+	/////////////////
+	// Filters
+	/////////////////
+	removeEGNodes(graph : EasyGraph<?, ??>, keepFn : (GNode<?>) -> bool) -> EasyGraph<?, ??>;
+	removeEGEdges(graph : EasyGraph<?, ??>, keepFn : (GEdge<??>) -> bool) -> EasyGraph<?, ??>;
+
+	// TODO: Remove subgraph from the graph 
+	// TODO: Add subgraph to the graph
+
+	/////////////////
+	// Travelers
+	/////////////////
+	deepFirstSearchInEasyGraph(
+		graph : EasyGraph<?, ??>, 
+		source : int, 
+		init : ???, 
+		// Process node before processing it's children (pre-ordering, Polish notation)
+		beforeFn : (
+			???,                // accumulator
+			int,                // current node
+			Maybe<GEdge<??>>,   // the edge we came from (None for the root)
+			bool                // is this node already visited
+		) -> Pair<???, bool >,  // continue going deep after current node? doesn't matter, if visited is true
+		// Process node after processing it's children (post-ordering, reverse Polish notation)
+		afterFn : (
+			???,                // accumulator
+			int,                // current node
+			Maybe<GEdge<??>>    // the edge we came from (None for the root)
+		) -> ???
+	) -> ???;
+
+	// Backwards DFS (using same graph, but going backwards)
+	deepFirstSearchInEasyGraphBackward(
+		graph : EasyGraph<???, ??>, 
+		source : int, 
+		init : ?, 
+		// Process node before processing it's children (pre-ordering, Polish notation)
+		beforeFn : (
+			?,                  // accumulator
+			int,                // current node
+			Maybe<GEdge<??>>,   // the edge we came from (None for the root)
+			bool                // is this node already visited
+		) -> Pair<?, bool >,    // continue going deep after current node? doesn't matter, if visited is true
+		// Process node after processing it's children (post-ordering, reverse Polish notation)
+		afterFn : (
+			?,                  // accumulator
+			int,                // current node
+			Maybe<GEdge<??>>    // the edge we came from (None for the root)
+		) -> ?
+	) -> ?;
+
+	/////////////////
+	// Back edges - i.e. loops
+	/////////////////
+	collectBackEGEdges(graph : EasyGraph<?, ??>, sources : [int]) -> [GEdge<??>];
+
+	removeBackEGEdges(graph : EasyGraph<?, ??>, sources : [int]) -> EasyGraph<?, ??>; // DAG-ify
+
+	/////////////////
+	// Reachability
+	/////////////////
+	// Check if any path exists between "source" and any of "targets"
+	isConnectedToAnyEGNode(graph : EasyGraph<?, ??>, source : int, targets : [int]) -> bool; 
+
+	 // Keep only nodes and edges that are reachable on any path between "source" to any of "targets" and on backward path between any of "targets" to "source"
+	buildConnectedEasySubGraph(graph : EasyGraph<?, ??>, source : int, targets : [int]) -> EasyGraph<?, ??>;
+
+	// Interface with DiGraph
+	diGraph2easyGraph(graph : DiGraph<?, ??>) -> EasyGraph<?, ??>;
+	easyGraph2DiGraph(graph : EasyGraph<?, ??>, root : GNode<?>, badNodeData : ?, badEdgeData : ??) -> DiGraph<?, ??>;
+
+
+	/////////////////
+	// Dump
+	/////////////////
+	easyGraph2dot(
+		graph : EasyGraph<?, ??>, 
+		root : int, 
+		graphstyles : [DiGraphStyle<??>], 
+		node2styles : (GNode<?>) -> [GNodeStyle], 
+		edge2styles : (GEdge<??>) -> [GEdgeStyle]
+	) -> string;
+}
+
+/////////////////
+// Constructors
+/////////////////
+makeEasyGraph() -> EasyGraph<?, ??> {
+	EasyGraph(makeTree(), makeTree(), 0)
+}
+
+diGraph2easyGraph(graph : DiGraph<?, ??>) -> EasyGraph<?, ??> {
+	nodes = getGNodes(graph);
+	edges = getGEdges(graph);
+
+	easyGraphWithNodes = 
+		fold(nodes, makeEasyGraph(), \acc, node -> {
+			addEGNode(acc, node)
+		});
+
+	fold(edges, easyGraphWithNodes, \acc, edge -> {
+		addEGEdge(acc, edge)
+	});
+}
+
+easyGraph2DiGraph(graph : EasyGraph<?, ??>, root : GNode<?>, badNodeData : ?, badEdgeData : ??) -> DiGraph<?, ??> {	
+	inDegree = 
+		foldTree(graph.edges, makeTree(), \from, edges, acc -> {
+			fold(edges, acc, \acc2, edge -> {
+				incTreeValue(acc2, edge.to)
+			})
+		});
+
+	maxNodeId = foldTree(graph.nodes, -1, \id, node, acc -> max(id, acc));
+
+	DiGraph(
+		root, 
+		GNode(-1, badNodeData), 
+		GEdge(-1, -1, badEdgeData, 0),
+		graph.nodes,
+		graph.edges,
+		numberOfEGNodes(graph),
+		numberOfEGEdges(graph),
+		maxNodeId + 1,
+		inDegree
+	)
+}
+
+addEGNode(graph : EasyGraph<?, ??>, node : GNode<?>) -> EasyGraph<?, ??> {
+	EasyGraph(
+		setTree(graph.nodes, node.id, node),
+		graph.edges,
+		graph.numberOfEdges
+	)
+}
+
+addEGNodeData(graph : EasyGraph<?, ??>, nodeData : ?) -> Pair<EasyGraph<?, ??>, GNode<?>> {
+	node = GNode(numberOfEGNodes(graph), nodeData);
+
+	graph2 = addEGNode(graph, node);
+
+	Pair(graph2, node)
+}
+
+addEGEdge(graph : EasyGraph<?, ??>, edge : GEdge<??>) -> EasyGraph<?, ??> {
+	EasyGraph(
+		graph.nodes,
+		treePushToArrayValue(graph.edges, edge.from, edge),
+		graph.numberOfEdges + 1
+	)
+}
+
+/////////////////
+// Getters
+/////////////////
+getEGNode(graph : EasyGraph<?, ??>, id : int, alternative : GNode<?>) -> GNode<?> {
+	lookupTreeDef(graph.nodes, id, alternative)
+}
+
+getEGEdge(graph : EasyGraph<?, ??>, from : int, to : int, alternative : GEdge<??>) -> GEdge<??> {
+	succs = lookupTreeDef(graph.edges, from, []);
+
+	edgeM = find(succs, \edge -> edge.to == to);
+
+	either(edgeM, alternative)
+}
+
+getEGNodes(graph : EasyGraph<?, ??>) -> [GNode<?>] {
+	getTreeValues(graph.nodes)
+}
+
+getEGEdges(graph : EasyGraph<?, ??>) -> [GEdge<??>] {
+	foldTree(graph.edges, [], \from, succs, acc -> {
+		concat(acc, succs)
+	})
+}
+
+getAdjacentEGNodes(graph : EasyGraph<?, ??>, from : int) -> [int] {
+	succs = lookupTreeDef(graph.edges, from, []);
+
+	map(succs, \edge -> edge.to)
+}
+
+numberOfEGNodes(graph : EasyGraph<?, ??>) -> int {
+	sizeTree(graph.nodes)
+}
+
+numberOfEGEdges(graph : EasyGraph<?, ??>) -> int {
+	graph.numberOfEdges
+}
+
+/////////////////
+// Filters
+/////////////////
+removeEGNodes(graph : EasyGraph<?, ??>, keepFn : (GNode<?>) -> bool) -> EasyGraph<?, ??> {
+	nodes2 = foldTree(graph.nodes, makeTree(), \id, node, acc -> {
+		if (keepFn(node)) {
+			setTree(acc, id, node)
+		} else {
+			acc
+		}
+	});
+
+	ids = getTreeKeys(nodes2);
+
+	graph2 = EasyGraph(
+		nodes2,
+		graph.edges,
+		graph.numberOfEdges
+	);
+
+	removeEGEdges(graph2, \edge -> contains(ids, edge.from) && contains(ids, edge.to))
+}
+
+removeEGEdges(graph : EasyGraph<?, ??>, keepFn : (GEdge<??>) -> bool) -> EasyGraph<?, ??> {
+	init = EasyGraph(graph.nodes, makeTree(), 0);
+
+	foldTree(graph.edges, init, \from, succs, acc -> {
+		succs2 = filter(succs, keepFn);
+
+		EasyGraph(
+			acc.nodes,
+			setTree(acc.edges, from, succs2),
+			acc.numberOfEdges + length(succs2)
+		)
+	})
+}
+
+/////////////////
+// Travelers
+/////////////////
+deepFirstSearchInEasyGraph(
+	graph : EasyGraph<?, ??>, 
+	source : int, 
+	init : ???, 
+	preFn : (???, int, Maybe<GEdge<??>>, bool) -> Pair<???, bool>, 
+	postFn : (???, int, Maybe<GEdge<??>>) -> ???,	
+) -> ??? {
+	initState = SeachingState(init, makeSet());
+
+	deepFirstSearchInEasyGraphCustom(
+		graph, 
+		source, 
+		initState, 
+		\node -> lookupTreeDef(graph.edges, node, []),
+		\e -> e.to,
+		preFn, 
+		postFn
+	).data
+}
+
+deepFirstSearchInEasyGraphBackward(
+	graph : EasyGraph<???, ??>, 
+	source : int, 
+	init : ?, 
+	preFn : (?, int, Maybe<GEdge<??>>, bool) -> Pair<?, bool>, 
+	postFn : (?, int, Maybe<GEdge<??>>) -> ?,	
+) -> ?  {
+	bedges = buildBackwardEdges(graph);
+
+	initState = SeachingState(init, makeSet());
+
+	deepFirstSearchInEasyGraphCustom(
+		graph, 
+		source, 
+		initState, 
+		\node -> lookupTreeDef(bedges, node, []),
+		\edge -> edge.from,
+		preFn, 
+		postFn
+	).data
+}
+
+buildBackwardEdges(graph : EasyGraph<?, ??>) -> Tree<int, [GEdge<??>]> {
+	edges = getEGEdges(graph);
+
+	fold(edges, makeTree(), \acc, edge -> {
+		treePushToArrayValue(acc, edge.to, edge)
+	});
+}
+
+SeachingState : (
+	data : ?,
+	visited : Set<int>
+);
+
+deepFirstSearchInEasyGraphCustom(
+	graph : EasyGraph<???, ??>, 
+	source : int, 
+	initState : SeachingState<?>,
+	node2edges : (int) -> [GEdge<??>],
+	edge2node : (GEdge<??>) -> int,
+	preFn : (?, int, Maybe<GEdge<??>>, bool) -> Pair<?, bool>, 
+	postFn : (?, int, Maybe<GEdge<??>>) -> ?
+) -> SeachingState<?> {
+	deepFirstSearchInEasyGraphCustom2(
+		graph, 
+		source, 
+		None(), 
+		initState, 
+		node2edges,
+		edge2node,
+		preFn, 
+		postFn
+	)
+}
+
+deepFirstSearchInEasyGraphCustom2(
+	graph : EasyGraph<???, ??>, 
+	node : int, 
+	edgeM : Maybe<GEdge<??>>, 
+	init : SeachingState<?>, 
+	node2edges : (int) -> [GEdge<??>],
+	edge2node : (GEdge<??>) -> int,
+	preFn : (?, int, Maybe<GEdge<??>>, bool) -> Pair<?, bool>, 
+	postFn : (?, int, Maybe<GEdge<??>>) -> ?
+) -> SeachingState<?>  {
+	if (containsSet(init.visited, node)) {
+		preRes = preFn(init.data, node, edgeM, true).first;
+
+		SeachingState(preRes, init.visited)
+	} else {
+		unpair(preFn(init.data, node, edgeM, false), \preRes, continue -> {
+			state : SeachingState = SeachingState(preRes, insertSet(init.visited, node));
+
+			childrenState = if (continue) {
+				edges : [GEdge] = node2edges(node);
+
+				fold(edges, state, \acc, edge -> {
+					deepFirstSearchInEasyGraphCustom2(graph, edge2node(edge), Some(edge), acc, node2edges, edge2node, preFn, postFn)
+				})
+			} else {
+				state
+			};
+
+			postRes = postFn(childrenState.data, node, edgeM);
+
+			SeachingState(
+				postRes,
+				insertSet(childrenState.visited, node)
+			)
+		})
+	}
+}
+
+/////////////////
+// Back edges
+/////////////////
+collectBackEGEdges(graph : EasyGraph<?, ??>, from : [int]) -> [GEdge<??>] {
+	numbering = numberNodesInEasyGraph(graph, from);
+
+	edges = getEGEdges(graph);
+
+	filter(edges, \edge -> isBackEdge(edge, numbering))
+}
+
+removeBackEGEdges(graph : EasyGraph<?, ??>, from : [int]) -> EasyGraph<?, ??> {
+	numbering = numberNodesInEasyGraph(graph, from);
+
+	removeEGEdges(graph, \edge -> !isBackEdge(edge, numbering))
+}
+
+NumberingState : (
+	id2start : Tree<int, int>,
+	id2end : Tree<int, int>,
+	clock : int,
+);
+
+isBackEdge(edge : GEdge<??>, numbering : NumberingState) -> bool {
+	fromStart = lookupTreeDef(numbering.id2start, edge.from, 0);
+	toStart = lookupTreeDef(numbering.id2start, edge.to, 0);
+
+	fromEnd = lookupTreeDef(numbering.id2end, edge.from, 0);
+	toEnd = lookupTreeDef(numbering.id2end, edge.to, 0);
+
+	fromStart > toStart && fromEnd < toEnd
+}
+
+numberNodesInEasyGraph(graph : EasyGraph<?, ??>, nodes : [int]) -> NumberingState {
+	init = NumberingState(makeTree(), makeTree(), 0);
+
+	fold(nodes, init, \acc, node -> {
+		numberNodesInEasyGraph2(graph, acc, node)
+	})
+}
+
+numberNodesInEasyGraph2(graph : EasyGraph<?, ??>, init : NumberingState, node : int) -> NumberingState {
+	deepFirstSearchInEasyGraph(graph, node, init, 
+		\acc, curr, __, visited -> {
+			res = if (visited) {
+				acc
+			} else {
+				NumberingState(
+					setTree(acc.id2start, curr, acc.clock),
+					acc.id2end,
+					acc.clock + 1
+				)
+			};
+
+			Pair(res, true)
+		},
+		\acc, curr, __ -> {
+			NumberingState(
+				acc.id2start,
+				setTree(acc.id2end, curr, acc.clock),
+				acc.clock + 1
+			)
+		}
+	)
+}
+
+/////////////////
+// Reachability
+/////////////////
+isConnectedToAnyEGNode(graph : EasyGraph<?, ??>, source : int, targets : [int]) -> bool {
+	deepFirstSearchInEasyGraph(graph, source, false, \acc, node, edgeM, visited -> {
+		if(acc) {
+			// already found a path
+			Pair(acc, false)
+		} else if (visited) {
+			// already visited this node before
+			Pair(acc, false)
+		} else {
+			if (contains(targets, node)) {
+				Pair(true, false)
+			} else {
+				Pair(false, true)
+			}
+		}
+	}, \acc, __, __ -> acc)
+}
+
+buildConnectedEasySubGraph(graph : EasyGraph<?, ??>, sources : int, tagets : [int]) -> EasyGraph<?, ??> {
+	subGraph = collectSubGraphOnThePaths(graph, sources, tagets);
+
+	graphWithoutEdges = 
+		removeEGEdges(graph, \edge -> {
+			containsSet(subGraph, edge.from) && containsSet(subGraph, edge.to)
+		});
+
+	removeEGNodes(graphWithoutEdges, \node -> {
+		containsSet(subGraph, node.id)
+	});
+}
+
+collectSubGraphOnThePaths(graph : EasyGraph<?, ??>, sources : int, tagets : [int]) -> Set<int> {
+	initState = SeachingState(0, makeSet());
+
+	forwardCover = 
+		deepFirstSearchInEasyGraphCustom2(
+			graph, 
+			sources, 
+			None(),
+			initState, 
+			\node -> lookupTreeDef(graph.edges, node, []),
+			\e -> e.to,
+			\acc, __, __, __ -> Pair(acc, true),
+			\acc, __, __ -> acc
+		).visited;
+
+	bedges = buildBackwardEdges(graph);
+
+	backwardCover = 
+		fold(tagets, initState, \acc, target -> {
+			deepFirstSearchInEasyGraphCustom2(
+				graph, 
+				target,
+				None(), 
+				acc, 
+				\node -> lookupTreeDef(bedges, node, []),
+				\edge -> edge.from,
+				\acc2, __, __, __ -> Pair(acc2, true), 
+				\acc2, __, __ -> acc2
+			)
+		}).visited;
+
+	intersectSets(forwardCover, backwardCover)
+}
+
+/////////////////
+// Dump
+/////////////////
+easyGraph2dot(graph : EasyGraph<?, ??>, root : int, graphstyles : [DiGraphStyle<??>], node2styles : (GNode<?>) -> [GNodeStyle], edge2styles : (GEdge<??>) -> [GEdgeStyle]) -> string {
+	nodes =	getEGNodes(graph);
+	edges = getEGEdges(graph);
+
+	anyGraph2dot(root, nodes, edges, graphstyles, node2styles, edge2styles)
+}

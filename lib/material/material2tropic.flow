@@ -14,11 +14,12 @@ import material/internal/material_dragdrop;
 import material/internal/material_pickers;
 import material/debug_subscribers;
 import material/iscript/material_iscript;
+import material/iscript/material_subscribers_panel;
 import material/internal/material_player;
 import material/internal/material_tree;
 
 import tropic/tropic_profile;
-import serviceworkercache;
+import sys/serviceworkercache;
 
 export {
 	// Use this if you render multiple materials with single MaterialManager
@@ -42,8 +43,6 @@ export {
 // You can have more than one render counter only if you have dialogs opened.
 // Otherwise somebody forgot to call disposer from mrender
 renderCounterRef = ref 0;
-
-iScriptInit = ref false;
 
 mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
 	mrenderInit = timestamp();
@@ -87,41 +86,6 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 		nop
 	);
 
-	if (!^iScriptInit && contains(manager.style, MIScriptPanel())) {
-		iScriptInit := true;
-
-		handleRealEvents(
-			MouseDown2(\h, mi -> captureIScriptMouseDownEvent(manager, h, mi, \ -> Point(0., 0.), "canvas")),
-			getStage(),
-			ref true,
-			getStage(),
-			[intMax],
-			false,
-			false
-		)
-		|> ignore;
-		handleRealEvents(
-			MouseUp2(\h, mi -> captureIScriptMouseEvent(manager, h, mi, \ -> Point(0., 0.), "canvas", "mouseup")),
-			getStage(),
-			ref true,
-			getStage(),
-			[intMax],
-			false,
-			false
-		)
-		|> ignore;
-		handleRealEvents(
-			MouseMove2(\h, mi -> captureIScriptMouseEvent(manager, h, mi, \ -> Point(0., 0.), "canvas", "mousemove")),
-			getStage(),
-			ref true,
-			getStage(),
-			[intMax],
-			false,
-			false
-		)
-		|> ignore;
-	}
-
 	t0 = material2tropic(manager, m);
 
 	mouseCapture = extractStruct(manager.style, MCaptureMouse(\__ -> TEmpty())).capture(manager);
@@ -144,12 +108,6 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	// Create the top IScript menu last.
 	t = t1
 		|> (\f ->
-			if (contains(manager.style, MIScriptPanel()))
-				MIScriptPanels2T(manager, f, \mat, p -> material2tropicWithParent(manager, p, mat))
-			else
-				f
-		)
-		|> (\f ->
 			materialLogFn(
 				\ -> {
 					println("render counter: " + i2s(^renderCounterRef));
@@ -159,7 +117,9 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 				MaterialError(),
 				\ -> f
 			)
-		);
+		)
+		|> (\f -> TCropSize(TSized(manager.iscript.available), f))
+		|> (\f -> TLines2(TIf(manager.iscript.showPanel, TFixed(0.0, 48.0), TEmpty()), f));
 
 
 	// trenderManager without warning
@@ -198,8 +158,10 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 		dispose();
 
 		manager.disposers ::= removeFromTree(manager.disposers, renderId);
+		disposeMaterialManagerSubs(manager);
 	}
 
+	initMaterialManagerSubs(manager);
 	manager.disposers ::= setTree(manager.disposers, renderId, disp);
 
 	if (getUrlParameterDef("profile", "") >= "1") {
@@ -207,6 +169,81 @@ mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> vo
 	}
 
 	disp;
+}
+
+initMaterialManagerSubs(manager : MaterialManager) -> void {
+	if (isNone(lookupTree(manager.disposers, -1))) {
+		m2t = \mat, p -> material2tropicWithParent(manager, p, mat);
+
+		manager.disposers ::=
+			setTree(
+				manager.disposers,
+				-1,
+				[
+					handleIScriptState(manager, \mat, p -> doMaterial2tropic(MaterialRender(manager, -1), mat, p)),
+					makeSubscribe2(manager.focus.focusEnabled, \fen -> if (!fen) {
+						nextDistinct(manager.focus.focusedId, -1);
+						nextDistinct(manager.focus.focused, false);
+					})(),
+					makeSubscribe2(manager.focus.focusedId, \foc -> {
+						if (manager.focus.previousFocusedId != foc) {
+							if (foc != -1) {
+								nextDistinct(manager.focus.focused, true);
+								nextDistinct(manager.focus.nextId, foc);
+							}
+
+							maybeApply(lookupTree(fgetValue(manager.focus.focusIds), manager.focus.previousFocusedId), \v -> switchMaterialFocus(
+								v,
+								\fc -> {
+									next(fc.focused, false);
+								},
+								\fc -> {
+									next(fc.focused, false);
+									if (foc != -1)
+										next(fc.nextId, -1);
+									next(fc.focusedId, -1);
+								}
+							));
+
+							maybeApply(lookupTree(fgetValue(manager.focus.focusIds), foc), \v -> switchMaterialFocus(
+								v,
+								\fc -> {
+									if (fgetValue(fc.focusEnabled)) {
+										next(fc.focused, true);
+									} else {
+										nextDistinct(fc.focused, false);
+										deferred(\ -> next(manager.focus.focusedId, -1));
+									}
+								},
+								\fc -> {
+									next(fc.focused, true);
+								}
+							));
+
+							(manager.focus).previousFocusedId ::= foc;
+						}
+					})(),
+					trender(
+						MIScriptPanels2T(manager, m2t),
+						manager.manager.renderStyle
+					),
+					trender(
+						MIScriptCaptureMouse2T(manager),
+						arrayPush(manager.manager.renderStyle, TZorder(intMax))
+					)
+				]
+				|> (\d -> \ -> applyall(d))
+			);
+	}
+}
+
+disposeMaterialManagerSubs(manager : MaterialManager) -> void {
+	if (sizeTree(manager.disposers) == 1) {
+		maybeApply(lookupTree(manager.disposers, -1), \d -> {
+			d();
+			manager.disposers ::= makeTree();
+		})
+	}
 }
 
 material2nativeForm(manager : MaterialManager, m : Material) -> Form {

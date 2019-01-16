@@ -33,7 +33,7 @@ class FlowContainer extends Container {
 	}
 
 	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
-		var newChild = super.addChildAt(child, index);
+		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
 
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);

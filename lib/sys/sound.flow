@@ -1,0 +1,241 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import runtime;
+import transforms;
+import net/picutil; //addServerPathIfRelative
+
+
+export {
+	// high level api
+	loadSound : (url : string) -> (([SoundOption]) -> (() -> void));
+
+	loadSoundExt : (url : string, onFail : (string) -> void, onLoaded : (soundLength: double) -> void) -> (([SoundOption]) -> (() -> void));
+
+	SoundOption ::= SoundComplete, LoopSound, SoundVolume, PauseSound, SoundPosition, ResetSound;
+		SoundComplete : (done : () -> void);
+		LoopSound : ();
+		SoundVolume : (volume : Behaviour<double>);
+		PauseSound : (isPaused: DynamicBehaviour<bool>);
+		SoundPosition: (position: DynamicBehaviour<double>);
+		ResetSound : ();
+
+
+	native playSoundUrl : io (string) -> void = SoundSupport.play;
+
+	native noSound : io () -> native = SoundSupport.noSound;
+
+	// Works only for iOS. Enables different audio session categories.
+	// https://developer.apple.com/reference/avfoundation/avaudiosession/audio_session_categories
+	setAudioSessionCategory(category : AudioSessionCategory) -> void;
+	getAudioSessionCategory() -> AudioSessionCategory;
+
+	AudioSessionCategory ::= AudioSessionAmbient, AudioSessionSoloAmbient, AudioSessionPlayback, AudioSessionRecord, AudioSessionPlayAndRecord, AudioSessionMultiRoute;
+		// The category for an app in which sound playback is nonprimary—that is, your app can be used successfully with the sound turned off.
+		AudioSessionAmbient : ();
+		// The default audio session category.
+		AudioSessionSoloAmbient : ();
+		// The category for playing recorded music or other sounds that are central to the successful use of your app.
+		AudioSessionPlayback : ();
+		// The category for recording audio; this category silences playback audio.
+		AudioSessionRecord : ();
+		// The category for recording (input) and playback (output) of audio, such as for a VoIP (Voice over Internet Protocol) app.
+		AudioSessionPlayAndRecord : ();
+		// The category for routing distinct streams of audio data to different output devices at the same time.
+		AudioSessionMultiRoute : ();
+
+
+	native addDeviceVolumeEventListener : io ((volume : double) -> void) -> (() -> void) = SoundSupport.addDeviceVolumeEventListener;
+}
+
+native getAudioSessionCategoryNative : io () -> string = SoundSupport.getAudioSessionCategory;
+native setAudioSessionCategoryNative : io (category : string) -> void = SoundSupport.setAudioSessionCategory;
+
+getAudioSessionCategory() {
+	category = getAudioSessionCategoryNative();
+	
+	if (category == "ambient") {
+		AudioSessionAmbient();
+	} else if (category == "playback") {
+		AudioSessionPlayback();
+	} else if (category == "record") {
+		AudioSessionRecord();
+	} else if (category == "playandrecord") {
+		AudioSessionPlayAndRecord();
+	} else if (category == "multiroute") {
+		AudioSessionMultiRoute();
+	} else {
+		AudioSessionSoloAmbient();
+	} 
+}
+
+setAudioSessionCategory(category : AudioSessionCategory) {
+	switch (category : AudioSessionCategory) {
+		AudioSessionAmbient(): 		"ambient";
+		AudioSessionSoloAmbient():  "soloambient";
+		AudioSessionPlayback(): 	"playback";
+		AudioSessionRecord(): 		"record";
+		AudioSessionPlayAndRecord():"playandrecord";
+		AudioSessionMultiRoute(): 	"multiroute";
+	} |> setAudioSessionCategoryNative;
+}
+
+
+//low level api
+
+native loadSoundInt : io (url : string, onFail : (message : string) -> void, onComplete : () -> void) -> native /*Sound*/ = SoundSupport.loadSound;
+
+native playSoundInt : io (native, loopSound : bool, onDone : () -> void) -> native /*SoundChannel*/ = SoundSupport.playSound;
+
+native setVolume : io (native /*SoundChannel*/, double) -> void = SoundSupport.setVolume;
+
+native stopSound : io (native /*SoundChannel*/) -> void = SoundSupport.stopSound;
+
+// pause/resume suppport
+
+native playSoundFrom : io (native, cue : double, onDone : () -> void) -> native /*SoundChannel*/ = SoundSupport.playSoundFrom;
+
+native getSoundPosition : io (native /*SoundChannel*/) -> double = SoundSupport.getSoundPosition;
+
+// NOTE: this native cannot be supported on some targets (see getSoundLength below); it can only work with a SoundChannel argument
+// How long is this sound in milliseconds?
+// on unsupported targets will return 0
+native getSoundLength : io (native /*Sound*/) -> double=SoundSupport.getSoundLength;
+
+loadSound(url) {
+	loadSoundExt(url, \arg -> {}, \l -> {})
+}
+
+loadSoundExt(_url, onFail, onLoaded) {
+	url = addServerPathIfRelative(_url);
+	// Try to load all sounds at once and go on with the first that succeeds
+	sound = ref noSound();
+
+	onCompleted = \-> {
+		onLoaded(getSoundLength(^sound));
+	}
+
+	sound := loadSoundInt(url, onFail, \ -> deferred(onCompleted));
+
+	// play
+	\options -> {
+		playing = ref false;
+		channel = ref noSound();
+
+		if (^playing) {
+			stopSound(^channel);
+		}
+
+		onSoundComplete = ref nop; // saved SoundComplete handler
+		loopSound = ref false;
+		newVolume = ref None();
+		soundPosition = ref make(0.0);
+		internalPositionChange = ref true;
+		isPaused = ref make(false);
+		resetSound = ref false;
+
+		unsP = ref nop;
+		unsV = ref nop;
+		unsPr = ref nop;
+		unsProgress = ref nop;
+
+		onStop = \ -> {
+			playing := false;
+			next(^soundPosition, getSoundLength(^sound));
+			^unsP();
+			^unsV();
+			^unsPr();
+			^unsProgress();
+			^onSoundComplete();
+		}
+
+		iter(options, \o -> {
+			switch (o : SoundOption) {
+				SoundComplete(done) : { onSoundComplete := done; };
+				LoopSound() : { loopSound := true; };
+				SoundVolume(volume) : { newVolume := Some(volume); };
+				PauseSound(arg) : isPaused := arg;
+				SoundPosition(position): soundPosition := position;
+				ResetSound() : { resetSound := true; };
+			};
+		});
+
+//		subscribe(^soundPosition, \pos -> println("Sound position: " + d2s(pos)));
+
+		setupTimer = \ -> {
+			^unsPr();
+
+			tmr = repeatable(100);
+			time_start = getValue(tmr.value);
+			position_start = getValue(^soundPosition);
+
+			uns = subscribe(tmr.value, \v -> {
+				internalPositionChange := true;
+				next(^soundPosition, position_start + v - time_start);
+				internalPositionChange := false;
+			});
+			unsPr := \ -> {
+				uns();
+				tmr.stop();
+			}
+		}
+
+		unsP := subscribe2(^isPaused, \pause -> if (^playing) {
+			if (pause) {
+				^unsPr();
+				internalPositionChange := true;
+				next(^soundPosition, getSoundPosition(^channel));
+				internalPositionChange := false;
+				stopSound(^channel);
+			} else {
+				// pause/resume kills loop...
+				setupTimer();
+				channel := playSoundFrom(^sound, getValue(^soundPosition), onStop);
+				maybeApply(^newVolume, \v -> setVolume(^channel, getValue(v)));
+			}
+		});
+
+		unsProgress := subscribe2(^soundPosition, \sp -> {
+			if (!(^internalPositionChange)){
+				if (!getValue(^isPaused)){
+					next(^isPaused,  true);
+					internalPositionChange := true;
+					next(^soundPosition, sp);
+					internalPositionChange := false;
+					next(^isPaused, false);
+				}
+			}
+		});
+
+		playing := true;
+		if (!getValue(^isPaused) && (!js || !mobile)) {
+			setupTimer();
+			if (^resetSound)
+				channel := playSoundFrom(^sound, 0.0, onStop)
+			else
+				channel := playSoundInt(^sound, ^loopSound, onStop);
+		} else {
+			nextDistinct(^isPaused, true);
+		}
+
+		unsV := switch (^newVolume : Maybe) {
+				Some(v): {
+					subscribe(v, \vol -> {
+						setVolume(^channel, vol);
+					});
+				}
+				None(): \ -> {}
+			}
+
+		// stop
+		\ -> {
+			if (^playing) {
+				stopSound(^channel);
+				playing := false;
+			}
+			^unsV();
+			^unsP();
+			^unsPr();
+			^unsProgress();
+		}
+	}
+}
