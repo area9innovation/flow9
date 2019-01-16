@@ -11,20 +11,34 @@ MAppState(
 	interactionId : int,
 	content : Pair<Material, Transform<bool>>,
 	floatingContent : Pair<Material, Transform<bool>>,
-	appBar : Maybe<Pair<Material, Transform<bool>>>,
+	appBar : Maybe<MAppBarState>,
 	leftNav : Maybe<MAppNav>,
 	rightNav : Maybe<MAppNav>,
 	flexible : Maybe<MAppFlexibleState>,
 	point : DynamicBehaviour<Point>,
 	down : DynamicBehaviour<bool>,
 	wh : DynamicBehaviour<WidthHeight>,
-	state : [MActivateState]
+	scrollInspect : TScrollInspectVisible,
+	state : [MActivateState],
 );
 
 MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, persistent : Transform<bool>, width : double, miniWidth : double,
 	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>);
 
 MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
+
+MAppBarState(
+	content : Material,
+	focusEnabled : Transform<bool>,
+	scrollPosition : DynamicBehaviour<Point>,
+	floatingToolbar : Maybe<MFloatingToolbarState>
+);
+
+MFloatingToolbarState(
+	translation : Transform<double>,
+	expanded : Transform<bool>,
+	subs : [() -> () -> void]
+);
 
 MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 		state = makeMAppState(manager, m);
@@ -40,11 +54,33 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 			else
 				[]
 		] |> concatA)
+		|> (\f -> TLines2(TGhost("MAppBar"), f))
 		|> (\f ->
-			if (isSome(state.appBar))
-				TGroup2SameMetrics(TLines2(TGhost("MAppBar"), f), TDisplay("MAppBar"))
-			else
+			eitherMap(state.appBar, \ab ->
+				TGroup2SameMetrics(
+					if (isSome(ab.floatingToolbar))
+						MScroll2T(
+							manager,
+							parent,
+							MScroll(
+								f,
+								TFillXY(),
+								[
+									state.scrollInspect,
+									MScrollPosition(ab.scrollPosition),
+									MScrollKeysEnabled(const(true)),
+									MScrollDisableOutOfBounds(ref true),
+									TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)
+								]
+							),
+							m2t
+						)
+					else				
+						f,
+					TDisplay("MAppBar")
+				),
 				f
+			)
 		)
 		|> (\f ->
 			TGroup2SameMetrics(
@@ -76,6 +112,9 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 
 makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 	appWH = extractStruct(m.style, MAppWH(makeWH())).wh;
+	scrollInspect = extractStruct(m.style, makeTScrollInspectVisible());
+	mouseDown = make(false);
+
 	flexible =
 		eitherMap(
 			tryExtractStruct(m.style, MAppStructureFlexible([])),
@@ -145,17 +184,54 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		);
 	floatingContent = Pair(extractStruct(m.parts, MFloatingContent(TEmpty())).content, content.second);
 	appBar =
-		eitherMap(
+		maybeMap(
 			tryExtractStruct(m.parts, MAppBar(TEmpty())),
-			\fc ->
-				Some(Pair(
+			\fc -> {
+				focusEnabled =
+					fand(
+						eitherMap(leftNav, \ln -> if (ln.mini) const(true) else fOr(ln.persistent, fnot(ln.expander)), const(true)),
+						eitherMap(rightNav, \rn -> if (rn.mini) const(true) else fOr(rn.persistent, fnot(rn.expander)), const(true))
+					);
+
+				scrollPosition = make(zeroPoint);
+
+				floatingToolbar = 
+					if (contains(m.style, MFloatingToolbar()) && mobile) {
+						startPoint = ref 0.;
+						updateStartPoint = \ -> startPoint := getValue(scrollPosition).y;
+
+						isUp = fselectWithLast(scrollPosition, FLift2(\last, new ->
+							new.y - last.y > 0.
+						));
+
+						expanded =
+							ftransistor(
+								fnot(mouseDown),
+								fnot(isUp)
+							);
+
+						delta = fselect(scrollPosition, FLift(\sp -> sp.y - ^startPoint));
+
+						subs = [
+							makeSubscribe2(isUp, \__ ->
+								if (!getValue(mouseDown)) updateStartPoint()
+							),
+							makeSubscribe2(mouseDown, \d -> 
+								if (d) updateStartPoint()
+							)
+						];
+
+						Some(MFloatingToolbarState(delta, expanded, subs))
+					} else None();
+
+				
+				MAppBarState(
 					fc.content,
-					fmin(
-						eitherMap(leftNav, \ln -> if (ln.mini) const(true) else fmax(ln.persistent, fnot(ln.expander)), const(true)),
-						eitherMap(rightNav, \rn -> if (rn.mini) const(true) else fmax(rn.persistent, fnot(rn.expander)), const(true))
-					)
-				)),
-			None()
+					focusEnabled,
+					scrollPosition,
+					floatingToolbar
+				)
+			}
 		);
 
 	MAppState(
@@ -167,14 +243,16 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		rightNav,
 		flexible,
 		make(zeroPoint),
-		make(false),
+		mouseDown,
 		appWH,
-		extractMActivateState(m.style)
+		scrollInspect,
+		extractMActivateState(m.style),
 	);
 }
 
 letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MAppStyle], state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
 	TLet(
 		"MAppContent",
 		MActivate2T(
@@ -194,14 +272,18 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 				|> (\t ->
 					if (contains(style, MNoScroll()))
 						TCenterXIn(t(p), TFillXY())
-					else
+					else if (eitherMap(state.appBar, \ab -> isSome(ab.floatingToolbar), false)) t(p)
+					else 
 						MScroll2T(
 							manager,
 							p,
 							MScroll(
 								MGetFocusGroup(t),
 								TFillXY(),
-								[extractStruct(style, makeTScrollInspectVisible())]
+								[
+									state.scrollInspect,
+									MScrollKeysEnabled(const(true)),
+								]
 							),
 							m2t
 						)
@@ -238,12 +320,12 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 									p,
 									"MAppBar",
 									[
-										MFocusEnabled(ab.second),
+										MFocusEnabled(ab.focusEnabled),
 										MFocusId(const(0)),
 										AccessRole("toolbar")
 									],
 									\p2 ->
-										switch (ab.first : Material) {
+										switch (ab.content : Material) {
 											MToolbar(expander, title, right, style):
 												MToolbar2T(
 													manager,
@@ -256,7 +338,7 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 													),
 													m2t
 												);
-											default: m2t(ab.first, p2);
+											default: m2t(ab.content, p2);
 										}
 								)
 						),
@@ -266,17 +348,21 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 							parent,
 							"MAppBar",
 							[
-								MFocusEnabled(ab.second),
+								MFocusEnabled(ab.focusEnabled),
 								MFocusId(const(0)),
 								AccessRole("toolbar")
 							],
-							\p -> m2t(ab.first, p)
+							\p -> m2t(ab.content, p)
 						)
+				)
+				|> (\t -> eitherMap(ab.floatingToolbar, \ft ->
+				 		TConstruct(ft.subs,	TCollapsingBox(manager, parent, t, ft.translation, ft.expanded)),
+				 		t)
 				),
 				content
 			),
 		content
-	)
+	)	
 }
 
 letFloatingContent(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
