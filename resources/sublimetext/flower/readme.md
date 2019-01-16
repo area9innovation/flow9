@@ -1,4 +1,4 @@
-## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1a)`
+## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1b)`
 
 ### What is Flower?
 
@@ -54,6 +54,14 @@ However, `flower` lacks certain features which are present in older `flow` plugi
     **Make sure to move them out of the `Packages/` folder completely**
 
 6. Copy the `sublimetext/flower` as `Packages/flower` folder.
+
+      Alternatively, you can create a symbolic link to always get the newest version.  
+      On Linux:
+
+       cd /home/user/.config/sublime-text-3/Packages/
+       ln -s <repo>/flow9/resources/sublimetext/flower flower
+
+      On Windows same can be achieved with `mklink`, see [guide](https://www.howtogeek.com/howto/16226/complete-guide-to-symbolic-links-symlinks-on-windows-or-linux/).
 
 7. Modify settings (`Preferences: Flower Settings - User`):
 
@@ -152,3 +160,20 @@ However, `flower` lacks certain features which are present in older `flow` plugi
      How to make it show text in status when cursor is anywhere on this line?**  
 **A:** This happens with old linter/compiler, which doesn't provide error column.
        Add this to `SublimeLinter` config: `"no_column_highlights_line": true`
+
+
+### Changelog
+
+#### 19.1b
+
+- Fixed reading malformed `flow.config`.
+- Fixed finding `flow.config` in current directory.
+
+
+#### 19.1a
+
+- Added `old_linter_path` config variable.
+
+#### 19.1
+
+- New year release for flow9!
