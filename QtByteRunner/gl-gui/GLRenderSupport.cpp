@@ -1824,8 +1824,6 @@ StackSlot GLRenderSupport::deferUntilRender(RUNNER_ARGS)
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
 
-    doRequestRedraw();
-
     RETVOID;
 }
 
