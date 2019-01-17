@@ -434,13 +434,21 @@ export class MI2 extends EventEmitter implements IBackend {
 		const localsResult = await this.sendCommand("stack-list-locals");
 		const stackInfo = await this.sendCommand("stack-info-frame");
 		const locals: any[] = localsResult.result("locals");
-		const frameArgs: any[] = MINode.valueOf(stackInfo.result("frame"), "args");
-		const args = frameArgs && frameArgs[frame] ? frameArgs[frame] : [];
-		const varNamesRaw: any = MINode.valueOf(locals.concat(args), "name");
+		// 1. args - they are returned with values, wrapping into Variable
+		const argsRaw: any[] = MINode.valueOf(stackInfo.result("frame"), "args") || [];
+		const args = argsRaw.map(a => 
+			({name : MINode.valueOf(a, "name"), valueStr : MINode.valueOf(a, "value")}));
+		// 2. locals - we only get names, so need to get values later
+		const varNamesRaw: any = MINode.valueOf(locals, "name") || [];
 		const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
-		return Promise.all(varNames.map(async n => 
+		// 3.1 Getting local values - this is async. 
+		const varPromises = varNames.map(async n => 
 			({ name : n, valueStr: (await this.evalExpression(n)).result("value") })
-		));
+		);
+		// 3.2 wrapping args values into promises that return immediately
+		const argsPromises = args.map(a => Promise.resolve(a));
+		// 4. wait and return all
+		return Promise.all(varPromises.concat(argsPromises));
 	}
 
 	examineMemory(from: number, length: number): Thenable<any> {

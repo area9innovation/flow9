@@ -93,3 +93,6 @@
 
 ## 0.2.3
  - fixed debugger for stack arguments
+
+## 0.2.4
+ - fixed debugger for multiple stack arguments
