@@ -60,133 +60,146 @@ MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Mater
 	|> MListAddAvailable(state)
 }
 
+MDynamicListData : (
+	lineHeights : Pair<[Maybe<double>], int>, // lineHeights + itemsLength
+	items : [MListLine],
+	sameHeight : bool
+);
+
 MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	scrollPosition : MScrollPosition = extractStruct(m.state, MScrollPosition(make(zeroPoint)));
 
 	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
-	hasItems = fselect(m.items, FLift(\itms -> length(itms) > 0));
-	itemsLoadQuota = 1000;
-	boxWH = makeWH();
+	scrollPosition : MScrollPosition = extractStruct(m.state, MScrollPosition(make(zeroPoint)));
 	addScroll = !contains(m.state, MNoScroll());
+
+	boxH = make(0.);
+	availableW = make(0.);
 	hgt = make(0.);
-	translates : DynamicBehaviour<[DynamicBehaviour<Pair<Point, int>>]> = make([]);
-	loadQuota = make(itemsLoadQuota);
-	sameHeight =
-		if (isNone(tryExtractStruct(m.state, MItemsHeights(\__ -> zero))))
-			fselect(m.items, FLift(\i -> isNone(tryExtractStruct(i, MSubmenuLine(MSingleLine("", []), const([]), [], make(false))))))
-		else
-			const(false);
+
+	down = make(false);
+	draggingItem = make(-1);
+	draggingXY = make(zeroPoint);
+
 	changingSize = ref false;
-	heightsTree : ref Tree<int, Transform<Maybe<double>>> = ref makeTree();
-	itemsHeights : (bool, int) -> Transform<Maybe<double>> = \sh, i ->
-		if (sh)
-			fsubmaybeMap(fselect(m.items, FLift(\it -> if (length(it) > 0) Some(it[0]) else None())), \it : MListLine -> MListLine2Height(const(it), state))
-		else
-			lookupTreeSet(heightsTree, i, \__ ->
-				extractStruct(m.state, MItemsHeights(\j -> MListLine2Height(const(fgetValue(m.items)[j]), state))).height(i)
-				|> (\hg : Transform<double> -> if (fgetValue(hg) > 0.) make(Some(fgetValue(hg))) else make(None()))
-			);
 	metricsLock = ref false;
-
-	itemsLength : Transform<int> =
-		fsubselect(sameHeight, FLift(\sh -> {
-			if (sh)
-				fselect(m.items, FLift(length))
-			else
-				fmin(fselect(m.items, FLift(length)), loadQuota);
-		}));
-
-	lineHeights : Transform<Pair<[Maybe<double>], int>> =
-		fsubselect(sameHeight, FLift(\sh -> {
-			if (sh)
-				fselect2(itemsHeights(true, 0), itemsLength, FLift2(\ih, il -> {
-					nextDistinct(hgt, i2d(il) * either(ih, 0.));
-					Pair([ih], il)
-				}))
-			else
-				fsubselect(itemsLength, FLift(\il -> fselect(fmerge(generate(0, il, \i -> itemsHeights(false, i))), FLift(\lh -> {
-					nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
-					Pair(lh, il)
-				}))));
-		}));
-
 	prevBottomItem : ref Pair<int, double> = ref Pair(0, 0.);
 	prevItemsCount : ref Pair<int, double> = ref Pair(0, 0.);
 	prevLineHeights : ref Pair<[Maybe<double>], int> = ref Pair([], 0);
+	
+	itemsLoadQuota = 1000;
+	loadQuota = make(itemsLoadQuota);
+	
+	itemsHeights0 = tryExtractStruct(m.state, MItemsHeights(\__ -> zero));
+	heightsTree : ref Tree<int, DynamicBehaviour<Maybe<double>>> = ref makeTree();
+	itemsHeights : (int) -> DynamicBehaviour<Maybe<double>> = \i ->
+		lookupTreeSet(heightsTree, i, \__ ->
+			eitherMap(
+				itemsHeights0,
+				\ih -> ih.height,
+				\j -> const(MListLine2Height(fgetValue(m.items)[j], state))
+			)
+			|> (\ih : (int) -> Transform<double> -> {
+				hg = fgetValue(ih(i));
+				make(if (hg > 0.) Some(hg) else None())
+			})
+		);
 
-	draggingItem = make(-1);
-	draggingXY = make(zeroPoint);
-	availableWH = makeWH();
-	down = make(false);
+	dynListData : Transform<MDynamicListData> =
+		fsubselect(m.items, FLift(\itms : [MListLine] -> {
+			sh = isNone(itemsHeights0) && !containsStruct(itms, dummySubmenuLine());
+
+			if (sh) {
+				il = length(itms);
+				ih : Maybe<double> =	
+					if (il > 0)
+						Some(MListLine2Height(itms[0], state))
+					else
+						None();
+
+				nextDistinct(hgt, i2d(il) * either(ih, 0.));
+				const(
+					MDynamicListData(
+						Pair([ih], il),
+						itms,
+						sh
+					)
+				)
+			}
+			else
+				fsubselect(loadQuota, FLift(\lq -> {
+					il = min(length(itms), lq);
+					fselect(
+						fmerge(generate(0, il, itemsHeights)),
+						FLift(\lh : [Maybe<double>] -> {
+							nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
+							MDynamicListData(
+								Pair(lh, il),
+								itms,
+								sh
+							)
+						})
+					)
+				}))
+		}));
+
+	items = fselect(dynListData, FLift(\data -> data.items));
+	sameHeight = fselect(dynListData, FLift(\data -> data.sameHeight));
+	itemsLength = fselect(dynListData, FLift(\data -> data.lineHeights.second));
+	hasItems = fselect(itemsLength, FLift(\il -> il > 0));
+
+	translates : DynamicBehaviour<[DynamicBehaviour<Pair<Point, int>>]> = make([]);
 
 	(\par ->
-		MGetFocusGroup(\par2 -> SelectMGroup2T(
-			manager,
-			par2,
-			translates,
-			\__, __, tr : DynamicBehaviour<Pair<Point, int>>, p -> {
-				materialLog("Rerender container " + i2s(getValue(tr).second), MaterialInfo());
-				lineHeight = make(0.);
-				hgtUns = initUnsM();
+		MGetFocusGroup(\par2 ->
+			SelectMGroup2T(
+				manager,
+				par2,
+				fthrottle(translates, 1),
+				\__, __, tr : DynamicBehaviour<Pair<Point, int>>, p -> {
+					materialLog("Rerender container " + i2s(getValue(tr).second), MaterialInfo());
+					lineHeight = make(0.);
+					hgtUns = initUnsM();
 
-				lineId =
-					eitherFn(
-						state.reorder,
-						\rdr ->
-							fselect2(tr, rdr.order, FLift2(\trn, sl ->
-								if (trn.second >= 0 && length(sl) > trn.second)
-									sl[trn.second]
-								else
-									trn.second
-							)),
-						\ ->
-							fselect(tr, secondOfPair |> FLift)
-					);
-				lineContent =
-					fselect2(m.items, lineId, FLift2(\itms, i ->
-						if (i >= 0 && length(itms) > i)
-							itms[i]
-						else
-							MSingleLine("", [])
-					));
+					lineId =
+						eitherFn(
+							state.reorder,
+							\rdr ->
+								fselect2(fSecondOfPair(tr), rdr.order, FLift2(\trn, sl ->
+									if (trn >= 0 && length(sl) > trn)
+										sl[trn]
+									else
+										trn
+								)),
+							\ ->
+								fSecondOfPair(tr)
+						);
 
-				TTranslate(
-					fselect(tr, FLift(\trn : Pair<Point, int> -> trn.first)),
+					lineContent =
+						fselect2(items, lineId, FLift2(\itms, i ->
+							elementAt(itms, i, dummySingleLine())
+						));
+
 					MListLine2T(p, lineId, lineContent, state, down)
-					|> (\listLine ->
-						TCopySize(
-							listLine,
-							\trp ->
-								TShow(
-									fnot(sameHeight),
-									TConstruct(
-										[
-											make2Subscribe(lineHeight, lineId, \hg, i -> {
-												dispUnsM(hgtUns);
-												hgts = itemsHeights(false, i);
+					|> (\line -> TAttachHeightTrigger(line, lineHeight, fnot(sameHeight)))
+					|> (\t -> TConstruct(
+							[
+								make2SubscribeTrigger(fnot(sameHeight), lineHeight, lineId, \hg, i -> {
+									dispUnsM(hgtUns);
+									itemHgt : DynamicBehaviour<Maybe<double>> = itemsHeights(i);
+									hgFn = \ -> nextDistinct(itemHgt, Some(hg));
 
-												switch (hgts) {
-													DynamicBehaviour(__, __): {
-														if (^metricsLock) {
-															setUnsM(
-																hgtUns,
-																interruptibleTimer(0, \ -> nextDistinct(hgts, Some(hg)))
-															);
-														} else {
-															nextDistinct(hgts, Some(hg));
-														}
-													}
-													default: {}
-												}
-											}),
-											\ -> \ -> dispUnsM(hgtUns)
-										],
-										TAttachHeight(trp, lineHeight)
-									)
-								),
-							false
-						)
-					)
+									if (^metricsLock)
+										setUnsM(
+											hgtUns,
+											interruptibleTimer(0, hgFn)
+										)
+									else
+										hgFn();
+								}),
+								\ -> \ -> dispUnsM(hgtUns)
+							],
+							t
+					))
 					|> (\listLine ->
 						eitherMap(
 							state.reorder,
@@ -254,34 +267,34 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 						)
 					)
 					|> makeTropicConstantHeight(Some(0.))
-				)
-			}
-		)
-		|> (\f ->
-			TransformTAcc2(\t2a -> {
-				bf = f |> t2a;
+					|> (\listLine -> TTranslate(fFirstOfPair(tr), listLine))
+				}
+			)
+			|> (\f ->
+				TransformTAcc2(\t2a -> {
+					bf = f |> t2a;
 
-				TAcc(
-					bf.form,
-					TFormMetrics(
-						bf.metrics.width,
+					TAcc(
+						bf.form,
+						TFormMetrics(
+							bf.metrics.width,
+							hgt,
+							hgt
+						),
+						bf.minWidth,
 						hgt,
-						hgt
-					),
-					bf.minWidth,
-					hgt,
-					bf.maxWidth,
-					hgt,
-					zero,
-					bf.yFillers,
-					bf.addFillers,
-					bf.xConstant,
-					bf.yConstant,
-					bf.disposers
-				)
-			})
-		)
-		|> MListAddAvailable(state)
+						bf.maxWidth,
+						hgt,
+						zero,
+						bf.yFillers,
+						bf.addFillers,
+						bf.xConstant,
+						bf.yConstant,
+						bf.disposers
+					)
+				})
+			)
+			|> MListAddAvailable(state)
 		)
 		|> (\f ->
 			if (addScroll)
@@ -290,7 +303,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 					par,
 					MScroll(
 						f,
-						TAttachBox(TFillXY(), boxWH),
+						TFillXY(),
 						replaceStructMany(extractMScrollStyle(m.state), [scrollPosition, MScrollToFocusEnabled(const(false))])
 					),
 					m2t
@@ -301,7 +314,11 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 		|> (\f ->
 			TConstruct(
 				[
-					make5Subscribe(m.items, scrollPosition.position, fheight(boxWH), lineHeights, sameHeight, \itms, sPosition, boxHeight, lhgts, sh -> {
+					make3Subscribe(dynListData, scrollPosition.position, boxH, \data, sPosition, boxHeight -> {
+						itms = data.items;
+						lhgts = data.lineHeights;
+						sh = data.sameHeight;
+
 						if (!contains(lhgts.first, None())) {
 							metricsLock := true;
 
@@ -449,7 +466,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 
 										nextDistinct(translates, translatesPrev);
 									})
-								}
+								};
 
 								prevBottomItem := bottomItem;
 								prevItemsCount := itemsCount;
@@ -473,13 +490,14 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 									nop
 								);
 
-								if (addScroll && !^changingSize && !sh && il != length(itms) && sPosition.y > (fgetValue(hgt) - boxHeight) *
-									i2d(il - itemsLoadQuota / 5) / i2d(il)) {
+								if (addScroll && !^changingSize && !sh && il != length(itms)
+									&& sPosition.y > (fgetValue(hgt) - boxHeight) * i2d(il - itemsLoadQuota / 5) / i2d(il)) {
+
 									changingSize := true;
 									newItemsLength = fgetValue(itemsLength) + itemsLoadQuota;
 
 									deferred(\ -> {
-										nextDistinct(loadQuota, min(newItemsLength, length(itms)));
+										nextDistinct(loadQuota, newItemsLength);
 										changingSize := false;
 									})
 								}
@@ -488,7 +506,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 								prevBottomItem := bottomItem;
 								prevItemsCount := itemsCount;
 								prevLineHeights := lhgts;
-							}
+							};
 
 							metricsLock := false;
 						}
@@ -553,23 +571,17 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 								mouseXY = make(zeroPoint);
 
 								[
-									MMonitorMousePosition(
-										manager,
-										mouseXY,
-										TTranslate(
+									(\par ->
+										MListLine2T(par, const(dr), const(fgetValue(items)[dr]), state, down)
+										|> (\t -> TAvailableWidth(t, availableW))
+										|> (\t -> MGrabAnimation(state.manager, par, t))
+									)
+									|> (\fn -> MActivate2T(manager, parent, "MDynamicListDraggable", [], fn))
+									|> (\t -> TTranslate(
 											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(draggingXY).x, xy0.y - getValue(draggingXY).y))),
-											MActivate2T(manager, parent, "MDynamicListDraggable", [], \par ->
-												MGrabAnimation(
-													state.manager,
-													par,
-													TAvailable(
-														MListLine2T(par, const(dr), const(fgetValue(m.items)[dr]), state, down),
-														TWidth(TSized(availableWH))
-													)
-												)
-											)
-										)
-									)()
+											t
+										))
+									|> (\t -> MMonitorMousePosition(manager, mouseXY, t)())
 								]
 							} else {
 								[]
@@ -581,6 +593,15 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 			f
 		)
 	)
-	|> (\f -> TAttachBoxCopy(f, availableWH))
+	|> (\f -> TAttachWidthCopy(f, availableW))
+	|> (\f -> TAttachBoxCopyAvailableHeight(f, boxH))
 	|> MListAddAvailable(state)
+}
+
+dummySubmenuLine() -> MSubmenuLine {
+	MSubmenuLine(MSingleLine("", []), const([]), [], make(false))
+}
+
+dummySingleLine() -> MSingleLine {
+	MSingleLine("", [])
 }
