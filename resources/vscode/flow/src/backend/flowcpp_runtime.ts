@@ -435,8 +435,8 @@ export class MI2 extends EventEmitter implements IBackend {
 		const stackInfo = await this.sendCommand("stack-info-frame");
 		const locals: any[] = localsResult.result("locals");
 		const args: any[] = MINode.valueOf(stackInfo.result("frame"), "args");
-		const varNames: string[] = MINode.valueOf(locals.concat(args), "name");
-
+		const varNamesRaw: any = MINode.valueOf(locals.concat(args), "name");
+		const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
 		return Promise.all(varNames.map(async n => 
 			({ name : n, valueStr: (await this.evalExpression(n)).result("value") })
 		));
