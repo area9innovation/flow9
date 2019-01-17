@@ -667,7 +667,6 @@ class RenderSupportJSPixi {
 
 		if (PixiRenderer != null) {
 			PixiRenderer.destroy();
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer");
 		}
 
 		var options = {
@@ -709,16 +708,12 @@ class RenderSupportJSPixi {
 		if (PixiRenderer.plugins != null) {
 			PixiRenderer.plugins.accessibility.destroy();
 			PixiRenderer.plugins.prepare.destroy();
-
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.accessibility");
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.prepare");
 		}
 
 		// Destroy default pixi ticker
 		untyped PIXI.ticker.shared.autoStart = false;
 		untyped PIXI.ticker.shared.stop();
 		untyped PIXI.ticker.shared.destroy();
-		// untyped __js__("delete PIXI.ticker.shared");
 
 		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 
@@ -1516,7 +1511,6 @@ class RenderSupportJSPixi {
 							parentNode.removeChild(clip.accessWidget);
 						}
 
-						untyped __js__("delete clip.accessWidget");
 						clip.accessWidget = null;
 
 						if (parentNode != null) {
@@ -3261,7 +3255,6 @@ private class NativeWidgetClip extends FlowContainer {
 				parentNode.removeChild(nativeWidget);
 			}
 
-			untyped __js__("delete nativeWidget");
 			nativeWidget = null;
 		}
 	}
@@ -3425,7 +3418,6 @@ private class VideoClip extends FlowContainer {
 					parentNode.removeChild(nativeWidget);
 				}
 
-				untyped __js__("delete nativeWidget");
 				nativeWidget = null;
 			}
 		}
@@ -3513,13 +3505,11 @@ private class VideoClip extends FlowContainer {
 		if (videoSprite != null) {
 			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
 			removeChild(videoSprite);
-			untyped __js__("delete this.videoSprite");
 			videoSprite = null;
 		}
 
 		if (videoTexture != null) {
 			videoTexture.destroy(true);
-			untyped __js__("delete this.videoTexture");
 			videoTexture = null;
 		}
 	}
@@ -4704,7 +4694,6 @@ private class PixiText extends TextField {
 
 				removeChild(textClip);
 				textClip.destroy({ children: true, texture: true, baseTexture: true });
-				untyped __js__("delete this.textClip");
 				textClip = null;
 			}
 		});
