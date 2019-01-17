@@ -1,33 +1,13 @@
 import { MINode } from "./mi_parse"
 
 const resultRegex = /^([a-zA-Z_\-][a-zA-Z0-9_\-]*|\[\d+\])\s*=\s*/;
+const structRegex = /^[a-zA-Z_\_][a-zA-Z0-9_\_]*\(/;
 const variableRegex = /^[a-zA-Z_\-][a-zA-Z0-9_\-]*/;
 const errorRegex = /^\<.+?\>/;
-const referenceStringRegex = /^(0x[0-9a-fA-F]+\s*)"/;
-const referenceRegex = /^0x[0-9a-fA-F]+/;
 const nullpointerRegex = /^0x0+\b/;
 const charRegex = /^(\d+) ['"]/;
 const numberRegex = /^\d+/;
 const pointerCombineChar = ".";
-
-export function isExpandable(value: string): number {
-	let primitive: any;
-	let match;
-	value = value.trim();
-	if (value.length == 0) return 0;
-	else if (value.startsWith("{...}")) return 2; // lldb string/array
-	else if (value[0] == '{') return 1; // object
-	else if (value.startsWith("true")) return 0;
-	else if (value.startsWith("false")) return 0;
-	else if (match = nullpointerRegex.exec(value)) return 0;
-	else if (match = referenceStringRegex.exec(value)) return 0;
-	else if (match = referenceRegex.exec(value)) return 2; // reference
-	else if (match = charRegex.exec(value)) return 0;
-	else if (match = numberRegex.exec(value)) return 0;
-	else if (match = variableRegex.exec(value)) return 0;
-	else if (match = errorRegex.exec(value)) return 0;
-	else return 0;
-}
 
 export function expandValue(variableCreate: Function, value: string, root: string = "", extra: any = undefined): any {
 	let parseCString = () => {
@@ -158,14 +138,6 @@ export function expandValue(variableCreate: Function, value: string, root: strin
 		}
 		else if (match = nullpointerRegex.exec(value)) {
 			primitive = "<nullptr>";
-			value = value.substr(match[0].length).trim();
-		}
-		else if (match = referenceStringRegex.exec(value)) {
-			value = value.substr(match[1].length).trim();
-			primitive = parseCString();
-		}
-		else if (match = referenceRegex.exec(value)) {
-			primitive = "*" + match[0];
 			value = value.substr(match[0].length).trim();
 		}
 		else if (match = charRegex.exec(value)) {
