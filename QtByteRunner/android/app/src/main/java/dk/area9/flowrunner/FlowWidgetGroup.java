@@ -226,7 +226,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         if (widget == null) {
             widgets.put(id, widget = new VideoWidget(this, id));
             videoWidgets.put(id, widget);
-            widget.init(flowMediaStream.surfaceTexture, flowMediaStream.width, flowMediaStream.height, flowMediaStream.sensorOrientation);
+            widget.init(flowMediaStream);
         }
     }
 

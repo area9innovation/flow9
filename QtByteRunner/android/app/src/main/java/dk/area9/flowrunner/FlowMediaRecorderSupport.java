@@ -36,9 +36,14 @@ import java.util.Map;
 
 public class FlowMediaRecorderSupport {
 
-    private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
     static boolean isCamera2Supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
     static boolean isPauseResumeSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
+    private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
+
+    private Map<String, String> videoDevices = new HashMap<>();
+    private Map<String, String> audioDevices = new HashMap<>();
+    private FlowRunnerActivity flowRunnerActivity;
+    private FlowRunnerWrapper wrapper;
 
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
@@ -47,18 +52,15 @@ public class FlowMediaRecorderSupport {
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
-    private Map<String, String> videoDevices = new HashMap<>();
-    private Map<String, String> audioDevices = new HashMap<>();
-    private FlowRunnerActivity flowRunnerActivity;
-    private FlowRunnerWrapper wrapper;
-
     FlowMediaRecorderSupport(FlowRunnerActivity ctx, FlowRunnerWrapper wrp) {
         flowRunnerActivity = ctx;
         wrapper = wrp;
     }
 
-    static int getOrientation(int sensorOrientation, int rotation) {
-        // Sensor orientation is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
+    static int getOrientation(boolean isFacingFront, int sensorOrientation, int rotation) {
+        if (isFacingFront)
+            return (sensorOrientation + rotation * 90) % 360;
+        // Sensor orientation of CameraMetadata.LENS_FACING_BACK is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
         // We have to take that into account and rotate JPEG properly.
         // For devices with orientation of 90, we simply return our mapping from ORIENTATIONS.
         // For devices with orientation of 270, we need to rotate the JPEG 180 degrees.
@@ -124,7 +126,7 @@ public class FlowMediaRecorderSupport {
 
         try {
             configureDataSource(mediaRecorder, recordAudio, recordVideo, audioDeviceId);
-            configureOutput(flowRecorder, filePath, cbOnRecorderErrorRoot);
+            configureOutput(flowRecorder, filePath);
             setVideoParams(flowRecorder, flowMediaStream, recordAudio, recordVideo, videoDeviceId);
 
             mediaRecorder.prepare();
@@ -150,7 +152,7 @@ public class FlowMediaRecorderSupport {
         mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
     }
 
-    private void configureOutput(FlowMediaRecorderObject flowRecorder, String filePath, int cbOnRecorderErrorRoot) throws Exception {
+    private void configureOutput(FlowMediaRecorderObject flowRecorder, String filePath) throws Exception {
         File output = null;
         if (!filePath.isEmpty()) {
             output = new File(filePath);
@@ -198,10 +200,10 @@ public class FlowMediaRecorderSupport {
             flowMediaStream.height = maxSize.getHeight();
             flowRecorder.mediaRecorder.setVideoSize(flowMediaStream.width, flowMediaStream.height);
 
-            int displayRotation = flowRunnerActivity.getWindowManager().getDefaultDisplay().getRotation();
+            flowMediaStream.isFacingFront = characteristics.get(CameraCharacteristics.LENS_FACING) == CameraMetadata.LENS_FACING_FRONT;
             flowMediaStream.sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
-            flowRecorder.mediaRecorder.setOrientationHint(getOrientation(flowMediaStream.sensorOrientation, displayRotation));
-
+            int displayRotation = flowRunnerActivity.getWindowManager().getDefaultDisplay().getRotation();
+            flowRecorder.mediaRecorder.setOrientationHint(getOrientation(flowMediaStream.isFacingFront, flowMediaStream.sensorOrientation, displayRotation));
         }
     }
 
@@ -391,6 +393,7 @@ public class FlowMediaRecorderSupport {
         int height;
         SurfaceTexture surfaceTexture;
         int sensorOrientation;
+        boolean isFacingFront;
 
         FlowMediaStreamObject() {
         }
