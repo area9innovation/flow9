@@ -7,6 +7,11 @@ import { MI2 } from './backend/flowcpp_runtime';
 
 logger.setup(Logger.LogLevel.Verbose, true);
 
+process.on("unhandledRejection", (error) => {
+	console.error(error); // This prints error with stack included (as for normal errors)
+	throw error; // Following best practices re-throw error and let the process exit with error code
+});
+
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	cwd: string;
 	target: string;
@@ -185,7 +190,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (running)
 				await this.miDebugger.continue();
 			response.body = {
-				breakpoints: brkpoints.map(brkp => new Breakpoint(brkp[0], brkp[1].line))
+				breakpoints: brkpoints.map(brkp => 
+					new Breakpoint(brkp[0], brkp[0] ? brkp[1].line : undefined))
 			};
 			this.sendResponse(response);
 		}, msg => {

@@ -324,29 +324,34 @@ export class MI2 extends EventEmitter implements IBackend {
 			location += '"' + escape(breakpoint.raw) + '"';
 		else
 			location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
-		let result = await this.sendCommand("break-insert " + location);
-		if (result.resultRecords.resultClass == "done") {
-			let bkptNum = parseInt(result.result("bkpt.number"));
-			let newBrk = {
-				file: result.result("bkpt.file"),
-				line: parseInt(result.result("bkpt.line")),
-				condition: breakpoint.condition
-			};
-			if (breakpoint.condition) {
-				let result = await this.setBreakPointCondition(bkptNum, breakpoint.condition);
-				if (result.resultRecords.resultClass == "done") {
+		try { 
+			let result = await this.sendCommand("break-insert " + location);
+			if (result.resultRecords.resultClass == "done") {
+				let bkptNum = parseInt(result.result("bkpt.number"));
+				let newBrk = {
+					file: result.result("bkpt.file"),
+					line: parseInt(result.result("bkpt.line")),
+					condition: breakpoint.condition
+				};
+				if (breakpoint.condition) {
+					let result = await this.setBreakPointCondition(bkptNum, breakpoint.condition);
+					if (result.resultRecords.resultClass == "done") {
+						this.breakpoints.set(newBrk, bkptNum);
+						return [true, newBrk];
+					} else {
+						return [false, null];
+					}
+				} else {
 					this.breakpoints.set(newBrk, bkptNum);
 					return [true, newBrk];
-				} else {
-					return [false, null];
 				}
-			} else {
-				this.breakpoints.set(newBrk, bkptNum);
-				return [true, newBrk];
 			}
-		}
-		else 
+			else 
+				return [false, undefined];
+		} catch (e) {
+			this.log("stderr", "Error setting breakpoint: " + e);
 			return [false, undefined];
+		}
 	}
 
 	async removeBreakPoint(breakpoint: BackendBreakpoint): Promise<boolean> {
