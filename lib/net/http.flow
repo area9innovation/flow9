@@ -1,0 +1,425 @@
+// © Copyright 2011 Area9 Innovation. All rights reserved
+
+import sys/target;
+import net/url;
+import ds/arrayutils;
+
+export {
+	/*currentRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
+	okRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
+	errorRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
+	statusRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));*/
+
+	// Example simple call disregarding errors:
+	// httpRequest("http://localhost:81/flow/myfile.txt", false, [], [], \c -> println(c), \e -> {}, \s -> {});
+
+	// The response is assumed to be UTF-8 encoded, unless a UTF-16 BOM is present
+
+	// at the moment of comment POST-request parameters were encoded differently for different compiler backends:
+	// in flowcpp POST-request parameters arent url-encoded, thus doesn't work with getUrlParameter
+	// in js POST-request parameters are url-encoded
+	httpRequest : (
+		url : string,
+		postMethod : bool,
+		headers : [KeyValue],
+		params : [KeyValue],
+		onData : (string) -> void,
+		onError : (string) -> void,
+		onStatus : (int) -> void
+	) -> void;
+
+	// Can be synchronous only for JS target
+	httpCustomRequest(
+		url : string,
+		method : RequestMethod,
+		headers : [KeyValue],
+		data : RequestData,
+		onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+		async : bool
+	) -> void;
+
+	// List of allowed request methods for httpCustomRequest
+	RequestMethod ::= GET, POST, PUT, PATCH, DELETE;
+		GET();
+		POST();
+		PUT();
+		PATCH();
+		DELETE();
+
+	// Describes content for httpCustomRequest functionality.
+	// RequestParameters contains KeyValue pairs for application/x-www-urlencoded and multipart/form-data requests content types.
+	// RequestPayload contains a string which should be written into request body.
+	RequestData ::= RequestPayload, RequestParameters;
+		RequestPayload(data : string);
+		RequestParameters(parameters : [KeyValue]);
+
+	// Here and below. onProgress callback receives (done, total) parameters, so progress is done/total.
+	// downloadFile usually does not invoke onProgress(total, total) when download is over.
+	// So when some application code waits for 100% progress, it should consider onDone invokation as
+	// 100% and stop waiting then.
+	native downloadFile : io (url : string,
+					onData : (string) -> void,
+					onError : (string) -> void,
+					onProgress : (double, double) -> void,
+					) -> void = HttpSupport.downloadFile;
+
+	// platform-specific call for system to download the file
+	native systemDownloadFile : (url : string) -> void = HttpSupport.systemDownloadFile;
+
+	// A very simple wrapper that just gets a file and ignores errors and parameters
+	httpRequest2(url : string, onData : (string) -> void) -> void;
+	httpRequest3(url : string, onData : (string) -> void, onError : (string) -> void) -> void;
+
+	preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void;
+	native removeUrlFromCache : (url : string) -> void = HttpSupport.removeUrlFromCache;
+	native clearUrlCache : () -> void = HttpSupport.clearUrlCache;
+
+	native getAvailableCacheSpaceMb : () -> int = HttpSupport.getAvailableCacheSpaceMb;
+
+	native deleteAppCookies : () -> void = HttpSupport.deleteAppCookies;
+
+	sendHttpRequestWithAttachments(
+		url : string,
+		headers : [KeyValue],
+		params : [KeyValue],
+		attachments : [KeyValue],	// [(name, local path of file to be uploaded)]
+		onData : (string) -> void,
+		onError : (string) -> void
+	) -> void;
+
+	// Sets withCredentials attribute for CORS requests (for targets where they are used - JS).
+	// Setting to true (default value) requires non-wildcard domain in the server's response
+	// Access-Control-Allow-Origin header.
+	native enableCORSCredentials : (enabled : bool) -> void = HttpSupport.enableCORSCredentials;
+
+	// Deprecated: use filesystem.flow openFileDialog + uploadFileClient instead
+	// Returns function that can cancel an upload
+	// it won't cancel OS browse dialog though
+	// Default payload file name is Filedata.
+	// To change it just add to params parameter with "uploadDataFieldName" as key and name of file as value
+	uploadFile : (
+		url : string,
+		params : [KeyValue],
+		headers : [KeyValue],
+		fileTypes : [string], // array of "*.jpg" like strings
+		eventListeners : [UploadEventListener]
+	) -> () -> void;
+
+	//Returns and array without empry values of
+	removeEmptyURLValues(params: [KeyValue]) -> [KeyValue];
+
+	UploadEventListener ::= UploadSelect, UploadOnlyEventListener;
+		// Here we get the filename and the size.
+		UploadSelect(onSelect: (name: string, size: int) -> bool);
+
+	// used in filesystem.flow
+	UploadOnlyEventListener ::= UploadCancel, UploadData, UploadProgress, UploadOpen, UploadError;
+		// If the user cancels the upload
+		UploadCancel(onCancel: () -> void);
+		// Once the upload is done, here is the browser response
+		UploadData(onData: (data:string) -> void);
+		// During the upload, we get progress data
+		UploadProgress(onProgress: (loaded:double, total:double) -> void);
+		// When the connection to upload is opened
+		UploadOpen(onOpen: () -> void);
+		// When something goes wrong
+		UploadError(onError: (err:string) -> void);
+
+	method2string(method : RequestMethod) -> string;
+	string2method(method : string) -> RequestMethod; // POST by default
+	isErrorStatus(status : int) -> bool;
+
+	// current running HTTP requests
+	runningRealtimeHTTPrequests: ref int;
+}
+
+// passing array of KeyValue to native wasn't working in flash on 01.04.2011
+// hence this wrapper
+native makeHttpRequest : io (url : string,
+					postMethod : bool,
+					headers : [[string]],
+					params : [[string]],
+					onData : (string) -> void,
+					onError : (string) -> void,
+					onStatus : (int) -> void,
+					) -> void = HttpSupport.httpRequest;
+
+native httpCustomRequestNative : io (url : string,
+	method : string,
+	headers : [[string]],
+	parameters : [[string]],
+	data : string,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [[string]]) -> void,
+	async : bool
+) -> void = HttpSupport.httpCustomRequestNative;
+
+
+native doPreloadMediaUrl : io (url : string, onSuccess : () -> void, onError : (string) -> void) -> void = HttpSupport.preloadMediaUrl;
+
+// Always post
+native makeSendHttpRequestWithAttachments : (
+	url : string,
+	headers : [[string]],
+	params : [[string]],
+	attachments : [[string]], // path to files in file system.
+	onData : (string) -> void,
+	onError : (string) -> void
+) -> void = HttpSupport.sendHttpRequestWithAttachments;
+
+runningRealtimeHTTPrequests = ref 0;
+httpRequest(url, postMethod2, headers, params2, onData, onError, onStatus) {
+	if (js || (cpp && !mobile)) {
+		httpCustomRequest(
+			url,
+			if (postMethod2) POST() else GET(),
+			headers,
+			RequestParameters(params2),
+			\responseStatus, responseData, responseHeaders -> {
+				onStatus(responseStatus);
+
+				if (!isErrorStatus(responseStatus)) {
+					onData(responseData);
+				} else {
+					onError("HTTPRequest error. Status: " + i2s(responseStatus) + ";\nData: " + responseData);
+				}
+			},
+			true
+		)
+	} else {
+		// next(currentRequest, Quadruple(url, postMethod2, headers, params2));
+
+		// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
+		postMethod = 
+			if (isOWASPLevel1() && !postMethod2 && (params2 != [] || strContains(url, "?"))) {
+				if (!cgi) println2(flow("GET request with parameters is forbidden by the current security settings. It is replaced by POST."));
+				true;
+			} else postMethod2;
+
+		params = if (endsWith(url, ".php")) arrayPush(params2, KeyValue("t", d2s(timestamp()))) else params2;
+		runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests + 1;
+		fixedUrl =
+			if (!isOWASPLevel1() && isUrlParameterTrue("disable_https_fix_protocol")) {
+				url;
+			} else {
+				if (!nwjs && js && startsWith(url, "http://")) {
+					proto = if (startsWith(loaderUrl(), "http://")) "http" else "https";
+					proto + strRight(url, 4) 
+				} else url;
+			}
+
+		makeHttpRequest(
+			fixedUrl,
+			postMethod,
+			map(headers, \header -> [header.key, header.value]),
+			map(params, \param -> [param.key, param.value]),
+			\ d -> {
+				// nextDistinct(okRequest, Quadruple(url, postMethod2, headers, params2));
+				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+				onData(d)
+			},
+			\ e -> {
+				// nextDistinct(errorRequest, Quadruple(url, postMethod2, headers, params2));
+				runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+				onError(e)
+			},
+			\st -> {
+				// nextDistinct(statusRequest, Quadruple(url, postMethod2, headers, params2));
+				onStatus(st)
+			}
+		)
+	}
+}
+
+httpRequest2(url, onData) {
+	httpRequest(url, false, [], [], onData, println, \i -> {});
+}
+
+httpRequest3(url, onData, onError) httpRequest(url, false, [], [], onData, onError, nop1);
+
+httpCustomRequest(url : string,
+	method : RequestMethod,
+	headers : [KeyValue],
+	data : RequestData,
+	onResponse : (responseStatus : int, responseData : string, responseHeaders : [KeyValue]) -> void,
+	async : bool
+) -> void {
+	isPHPRequest = endsWith(url, ".php");
+	noCacheTimestamp = KeyValue("t", d2s(timestamp()));
+	params = switch(data : RequestData) {
+		RequestParameters(params): ifArrayPush(params, isPHPRequest, noCacheTimestamp);
+		default: [];
+	}
+
+	headers2 = ifArrayPush(headers, isPHPRequest && !isSameStructType(data, RequestParameters([])), noCacheTimestamp);
+
+	payload = switch(data: RequestData) {
+		RequestPayload(body): body;
+		default: "";
+	}
+
+	methodName = method2string(method);
+	// In OWASP mode GET request with parameters is forbidden, so we replace it with POST
+	methodName2 = 
+		if (isOWASPLevel1() && methodName == "GET" && (payload != "" || params != [] || strContains(url, "?"))) {
+			if (!cgi) println2(flow("GET request with parameters is forbidden by the current security settings. It is replaced by POST."));
+			"POST"
+		} else methodName;
+
+	runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests + 1;
+	fixedUrl =
+		if (!isOWASPLevel1() && isUrlParameterTrue("disable_https_fix_protocol")) {
+			url;
+		} else {
+			if (!nwjs && js && startsWith(url, "http://")) {
+				proto = if (startsWith(loaderUrl(), "http://")) "http" else "https";
+				proto + strRight(url, 4)
+			} else url;
+		}
+
+	httpCustomRequestNative(
+		fixedUrl,
+		methodName2,
+		map(headers, \header -> [header.key, header.value]),
+		map(params, \param -> [param.key, param.value]),
+		payload,
+		\responseStatus, responseData, responseHeaders -> {
+			runningRealtimeHTTPrequests := ^runningRealtimeHTTPrequests - 1;
+
+			onResponse(
+				responseStatus,
+				responseData,
+				map(responseHeaders, \kv -> KeyValue(kv[0], kv[1]))
+			);
+		},
+		async
+	)
+}
+
+preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void) -> void {
+	if (cpp || csharp) {
+		doPreloadMediaUrl(url, onSuccess, onError)
+	} else {
+		httpRequest(url+"#", false, [], [], \data -> onSuccess(), onError, nop1)
+	}
+}
+
+native doUploadFile: io (
+			url : string,
+			params : [[string]],
+			headers : [[string]],
+			fileTypes : [string],
+			onOpen : () -> void,
+			onSelect : (string, int) -> bool,
+			onData : (string) -> void,
+			onError : (string) -> void,
+			onProgress : (double, double) -> void,
+			onCancel : () -> void
+) ->  (() -> void) = HttpSupport.uploadFile;
+
+removeEmptyURLValues(params: [KeyValue]) -> [KeyValue] {
+	filter(params, \p -> p.value != "")
+}
+
+uploadFile(url, params, headers, fileTypes, listeners) {
+	// all this stuff is here cause I don't want to export a function with 10 arguments
+	onData = ref nop1;
+	onError = ref nop1;
+	onSelect : ref (string, int) -> bool = ref \type, size -> {true};
+	onOpen = ref nop;
+	onProgress = ref nop2;
+	onCancel = ref nop;
+	iter(listeners,
+		\l ->
+		switch (l:UploadEventListener) {
+			UploadData(fn):
+				onData := fn;
+			UploadCancel(fn):
+				onCancel := fn;
+			UploadError(fn):
+				onError := fn;
+			UploadOpen(fn):
+				onOpen := fn;
+			UploadProgress(fn):
+				onProgress := fn;
+			UploadSelect(fn):
+				onSelect := fn;
+		});
+
+	doUploadFile(
+		url,
+		map(params, \param -> [param.key, param.value]),
+		map(headers, \header -> [header.key, header.value]),
+		fileTypes,
+		^onOpen,
+		^onSelect,
+		^onData,
+		^onError,
+		^onProgress,
+		^onCancel
+	);
+}
+
+sendHttpRequestWithAttachments(
+	url : string,
+	headers : [KeyValue],
+	params : [KeyValue],
+	attachments : [KeyValue],
+	onData : (string) -> void,
+	onError : (string) -> void
+) -> void {
+	makeSendHttpRequestWithAttachments(
+		url,
+		map(headers, \header -> [header.key, header.value]),
+		map(params, \param -> [param.key, param.value]),
+		map(attachments, \attachment -> [attachment.key, attachment.value]),
+		onData,
+		onError
+	);
+}
+
+method2string(method : RequestMethod) -> string {
+	switch(method) {
+		GET(): "GET";
+		POST(): "POST";
+		PUT(): "PUT";
+		PATCH(): "PATCH";
+		DELETE(): "DELETE";
+	}
+}
+
+string2method(method : string) -> RequestMethod {
+	if (method == "GET") {
+		GET()
+	} else if (method == "PUT") {
+		PUT()
+	} else if (method == "PATCH") {
+		PATCH()
+	} else if (method == "DELETE") {
+		DELETE()
+	} else {
+		POST()
+	}
+}
+
+isErrorStatus(status : int) -> bool {
+	status < 200 || status >= 400;
+}
+
+// getAvailableCacheSpaceMb is implemented only in C++ targets
+getAvailableCacheSpaceMb() {
+	-1
+}
+
+systemDownloadFile(url : string) {
+	// NOP
+	// Fallback for non-C++ targets
+}
+
+deleteAppCookies() {
+	// Clean all webview cookies of your mobile app
+}
+
+enableCORSCredentials(enabled : bool) {
+	// NOP
+	// Works in JS only
+}

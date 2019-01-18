@@ -199,3 +199,44 @@ Debugging
 ---------
 
 Use "&debug_pebbles=true" to see pebbles logs in the console
+
+Example
+-------
+
+	import pebbles/pebble_controller;
+	import pebbles/pebble_parameters;
+	import material/material2tropic;
+
+	main () {
+		mManager = makeMaterialManager([]);
+		controller = makePebbleController(println);
+		mrender(mManager, true, getPebblesControlledView(controller));
+
+		registerDispatcher(controller, "home", \-> showView(controller));
+
+		validateCurrentPebbleAndInitView(controller, mManager, makeSimplePebble("home"));
+	}
+
+	showView(controller) -> Material {
+		valueB = make(0);
+
+		MLinkPebbleParameters(
+			controller,
+			[
+				PebbleIntLink(
+					"param", 
+					valueB, 
+					\value -> println("value = " + i2s(value)), 
+					RecordURLChange()
+				)
+			],
+			MLines([
+				MTextButton("Click me to change parameter", \-> {
+					next(valueB, getValue(valueB) + 1)
+				}, [], []),
+				MSelect(valueB, \value -> {
+					MText("Value is " + i2s(value), [])
+				})
+			])
+		)
+	}

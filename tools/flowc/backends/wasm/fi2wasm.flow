@@ -8,8 +8,8 @@ import tools/flowc/manipulation/specialization;
 import tools/flowc/backends/wasm/wasm_js_wrapper;
 import tools/flowc/backends/wasm/wasm_native_linkage;
 import tools/flowc/backends/wasm/wasm_native_wrapper;
-import blueprint;
-import system;
+import text/blueprint;
+import sys/system;
 
 import tools/flowc/flowc_typecheck;
 
@@ -21,8 +21,9 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "'...");
 
 	// Extend with the Wasm runtime
-	program1 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
-	program2 = lift_lambdas(program1);
+	program11 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
+	program12 = fiWasmAddIndirectWrappers(program11, cfg.flowfile);
+	program2 = lift_lambdas(program12);
 	program3 = specializeProgram(cfg, program2);
 
 	fcVerbose(cfg, 1, "Collecting declarations..");
@@ -44,7 +45,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	callbacks : Tree<string, FiDeclaration> = wrapped.callbacks;
 
 	// since we need NativeHx we add 'math' as initial
-	usedModules = foldTree(natives, ["math"], \k, v, acc -> {
+	usedModules = foldTree(natives, ["math/math"], \k, v, acc -> {
 		s = if (startsWith(v.decl.nativeName, "RenderSupport.")) "form/renderform" // will create a RenderSupportHx object
 		else "";
 
@@ -598,7 +599,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 // creates module import section by generating import declaration for import functions
 // obeys 2-level wasm namespace, defaults to "runtime" module is missing
 fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
-	imports = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
+	imports1 = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
 		if (fiWasmIsHostNative(nativeDec.decl.nativeName)) {
 			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
 			module = if (length(nameComponents) > 2) nameComponents[1] else "runtime";
@@ -627,6 +628,11 @@ fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
 
 		} else acc;
 	});
+
+	imports = reverseList(foldList(imports1, EmptyList(), \acc, i -> {
+		if (containsList(acc, i)) acc
+		else Cons(i, acc);
+	}));
 
 	invokers = fold(callbacks, imports, \acc, cb -> {
 		Cons(cb, acc)
@@ -681,6 +687,123 @@ fiSuppressNodeJsWarning(fn : string) {
 	content = getFileContent(fn);
 	if (strContains(content, s)) {
 		setFileContent(fn, strReplace(content, s, ss)) |> ignore;
+	}
+}
+
+iterProgramExpr(program : FiProgram, cb : (FiExp) -> void) -> void {
+	traverseInOrder(program.names.toplevel, \__, decl : FiDeclaration -> {
+		switch (decl) {
+			FiFunctionDec(__, lambda, __, __, __): iterFiExp(lambda, cb);
+			default: {}
+		}
+	});
+}
+
+iterFiExp(expr : FiExp, cb : (FiExp) -> void) -> void {
+	cb(expr);
+	rec = \ex -> iterFiExp(ex, cb);
+	switch (expr) {
+		FiBool(b, __): {}
+		FiInt(i, __): {}
+		FiVar(name, type, __): {}
+		FiString(s, __): {}
+		FiDouble(d, __): {}
+		FiVoid(__): {}
+		FiCall(__, args, __, __):
+			iter(args, rec);
+		FiSwitch(x, __, cases, __, __): {
+			cb(x); 
+			iter(cases, \c -> rec(c.body));
+		}
+		FiLambda(__, body, __, __): 
+			rec(body);
+		FiLet(__, __, e1, e2, __, __): {
+			rec(e1); rec(e2);
+		}
+		FiIf(e1, e2, e3, __, __): {
+			rec(e1); rec(e2); rec(e3);
+		}
+		FiCallPrim(__, es, __, __):
+			iter(es, rec);
+		FiRequire(__, e, __, __): 
+			rec(e);
+		FiUnsafe(__, fallback, __, __): 
+			rec(fallback);
+		FiSeq(es, __, __): 
+			iter(es, rec);
+		FiCast(e, __, __, __, __): 
+			rec(e);
+	}
+}
+
+fiWasmAddIndirectWrappers(program : FiProgram, flowfile : string) {
+	nativesToWrap = ref makeTree();
+	iterProgramExpr(program, \e : FiExp -> {
+		switch (e) {
+			FiCall(__, args, __, __): {
+				iter(args, \a -> {
+					switch (a) {
+						FiVar(n, t, __): {
+							switch (t) {
+								FiTypeFunction(__, __): {
+									switch (lookupTree(program.names.toplevel, n)) {
+										Some(d): {
+											switch (d) {
+												FiNativeDec(__, __, __, __, __, __, __): {
+													nativesToWrap := setTree(^nativesToWrap, n, d);
+												}
+												default: {}
+											}
+										}
+										None(): {}
+									}
+								}
+								default: {}
+							}
+						}
+						default: {}
+					}
+				});
+			}
+			default: {}
+		}
+	});
+	funcs = map(getTreeValues(^nativesToWrap), \f -> {
+		type0 = cast(f.type : FiType -> FiTypeFunction);
+		args = mapi(type0.args, \i, a -> FiFunArg("arg" + i2s(i), a.type));
+		type = FiTypeFunction(args, type0.returnType);
+		FiFunctionDec(
+			f.name + "__wrapped__",
+			FiLambda(
+				args, 
+				FiCall(
+					FiVar(f.name, type, 0),
+					map(args, \a -> FiVar(a.name, a.type, 0)),
+					type.returnType, 0),
+				type, 0),
+			type, 0, 0)
+	});
+	fiInjectFunctions(program, flowfile, funcs)
+}
+
+fiInjectFunctions(program : FiProgram, flowfile : string, funcs : [FiFunctionDec]) {
+	switch (lookupTree(program.modules, flowfile)) {
+		Some(module): {
+			module2 = FiModule(module with
+				functions = concat(module.functions, funcs),
+				initOrder = concat(module.initOrder, map(funcs, \f -> f.name))
+			);
+			FiProgram(program with 
+				modules = setTree(program.modules, flowfile, module2),
+				names = FiGlobalNames(program.names with 
+					toplevel = fold(funcs, program.names.toplevel, \acc, f -> setTree(acc, f.name, f))
+				)
+			)
+		}
+		None(): {
+			println("Cannot find module " + flowfile);
+			program
+		}
 	}
 }
 

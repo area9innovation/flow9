@@ -1,43 +1,37 @@
 import { MINode } from "./mi_parse"
 
 const resultRegex = /^([a-zA-Z_\-][a-zA-Z0-9_\-]*|\[\d+\])\s*=\s*/;
+const structRegex = /^[a-zA-Z_\_][a-zA-Z0-9_\_]*\(/;
 const variableRegex = /^[a-zA-Z_\-][a-zA-Z0-9_\-]*/;
 const errorRegex = /^\<.+?\>/;
-const referenceStringRegex = /^(0x[0-9a-fA-F]+\s*)"/;
-const referenceRegex = /^0x[0-9a-fA-F]+/;
 const nullpointerRegex = /^0x0+\b/;
 const charRegex = /^(\d+) ['"]/;
 const numberRegex = /^\d+/;
 const pointerCombineChar = ".";
 
-export function isExpandable(value: string): number {
-	let primitive: any;
-	let match;
-	value = value.trim();
-	if (value.length == 0) return 0;
-	else if (value.startsWith("{...}")) return 2; // lldb string/array
-	else if (value[0] == '{') return 1; // object
-	else if (value.startsWith("true")) return 0;
-	else if (value.startsWith("false")) return 0;
-	else if (match = nullpointerRegex.exec(value)) return 0;
-	else if (match = referenceStringRegex.exec(value)) return 0;
-	else if (match = referenceRegex.exec(value)) return 2; // reference
-	else if (match = charRegex.exec(value)) return 0;
-	else if (match = numberRegex.exec(value)) return 0;
-	else if (match = variableRegex.exec(value)) return 0;
-	else if (match = errorRegex.exec(value)) return 0;
-	else return 0;
-}
+class Parser{
+	value: string;
+	stack: string[];
+	variable: string;
+	variableCreate: (arg: any) => number;
+	extra: any;
 
-export function expandValue(variableCreate: Function, value: string, root: string = "", extra: any = undefined): any {
-	let parseCString = () => {
-		value = value.trim();
-		if (value[0] != '"' && value[0] != '\'')
+	constructor (variableCreate: (arg: any) => number, 
+		value: string, root: string = "", extra: any = undefined) {
+		this.variableCreate = variableCreate;
+		this.value = value;
+		this.stack = [root];
+		this.extra = extra;
+	}
+
+	parseCString() {
+		this.value = this.value.trim();
+		if (this.value[0] != '"' && this.value[0] != '\'')
 			return "";
 		let stringEnd = 1;
 		let inString = true;
-		let charStr = value[0];
-		let remaining = value.substr(1);
+		let charStr = this.value[0];
+		let remaining = this.value.substr(1);
 		let escaped = false;
 		while (inString) {
 			if (escaped)
@@ -50,20 +44,16 @@ export function expandValue(variableCreate: Function, value: string, root: strin
 			remaining = remaining.substr(1);
 			stringEnd++;
 		}
-		let str = value.substr(0, stringEnd).trim();
-		value = value.substr(stringEnd).trim();
+		let str = this.value.substr(0, stringEnd).trim();
+		this.value = this.value.substr(stringEnd).trim();
 		return str;
-	};
+	}
 
-	let stack = [root];
-	let parseValue, parseCommaResult, parseCommaValue, parseResult, createValue;
-	let variable = "";
-
-	let getNamespace = (variable) => {
+	getNamespace(variable) {
 		let namespace = "";
 		let prefix = "";
-		stack.push(variable);
-		stack.forEach(name => {
+		this.stack.push(variable);
+		this.stack.forEach(name => {
 			prefix = "";
 			if (name != "") {
 				if (name.startsWith("["))
@@ -81,161 +71,144 @@ export function expandValue(variableCreate: Function, value: string, root: strin
 				}
 			}
 		});
-		stack.pop();
+		this.stack.pop();
 		return prefix + namespace;
 	};
 
-	let parseTupleOrList = () => {
-		value = value.trim();
-		if (value[0] != '{')
+	parseTupleOrList() {
+		this.value = this.value.trim();
+		if (this.value[0] != '{')
 			return undefined;
-		let oldContent = value;
-		value = value.substr(1).trim();
-		if (value[0] == '}') {
-			value = value.substr(1).trim();
+		this.value = this.value.substr(1).trim();
+		if (this.value[0] == '}') {
+			this.value = this.value.substr(1).trim();
 			return [];
 		}
-		if (value.startsWith("...")) {
-			value = value.substr(3).trim();
-			if (value[0] == '}') {
-				value = value.substr(1).trim();
+		if (this.value.startsWith("...")) {
+			this.value = this.value.substr(3).trim();
+			if (this.value[0] == '}') {
+				this.value = this.value.substr(1).trim();
 				return <any>"<...>";
 			}
 		}
-		let eqPos = value.indexOf("=");
-		let newValPos1 = value.indexOf("{");
-		let newValPos2 = value.indexOf(",");
+		let eqPos = this.value.indexOf("=");
+		let newValPos1 = this.value.indexOf("{");
+		let newValPos2 = this.value.indexOf(",");
 		let newValPos = newValPos1;
 		if (newValPos2 != -1 && newValPos2 < newValPos1)
 			newValPos = newValPos2;
-		if (newValPos != -1 && eqPos > newValPos || eqPos == -1) { // is value list
+		if (newValPos != -1 && eqPos > newValPos || eqPos == -1) { // is this.value list
 			let values = [];
-			stack.push("[0]");
-			let val = parseValue();
-			stack.pop();
-			values.push(createValue("[0]", val));
-			let remaining = value;
+			this.stack.push("[0]");
+			let val = this.parseValue();
+			this.stack.pop();
+			values.push(this.createValue("[0]", val));
+			let remaining = this.value;
 			let i = 0;
 			while (true) {
-				stack.push("[" + (++i) + "]");
-				if (!(val = parseCommaValue())) {
-					stack.pop();
+				this.stack.push("[" + (++i) + "]");
+				if (!(val = this.parseCommaValue())) {
+					this.stack.pop();
 					break;
 				}
-				stack.pop();
-				values.push(createValue("[" + i + "]", val));
+				this.stack.pop();
+				values.push(this.createValue("[" + i + "]", val));
 			}
-			value = value.substr(1).trim(); // }
+			this.value = this.value.substr(1).trim(); // }
 			return values;
 		}
 
-		let result = parseResult(true);
+		let result = this.parseResult(true);
 		if (result) {
 			let results = [];
 			results.push(result);
-			while (result = parseCommaResult(true))
+			while (result = this.parseCommaResult(true))
 				results.push(result);
-			value = value.substr(1).trim(); // }
+			this.value = this.value.substr(1).trim(); // }
 			return results;
 		}
 
 		return undefined;
-	};
+	}
 
-	let parsePrimitive = () => {
+	parsePrimitive() {
 		let primitive: any;
 		let match;
-		value = value.trim();
-		if (value.length == 0)
+		this.value = this.value.trim();
+		if (this.value.length == 0)
 			primitive = undefined;
-		else if (value.startsWith("true")) {
+		else if (this.value.startsWith("true")) {
 			primitive = "true";
-			value = value.substr(4).trim();
+			this.value = this.value.substr(4).trim();
 		}
-		else if (value.startsWith("false")) {
+		else if (this.value.startsWith("false")) {
 			primitive = "false";
-			value = value.substr(5).trim();
+			this.value = this.value.substr(5).trim();
 		}
-		else if (match = nullpointerRegex.exec(value)) {
+		else if (match = nullpointerRegex.exec(this.value)) {
 			primitive = "<nullptr>";
-			value = value.substr(match[0].length).trim();
+			this.value = this.value.substr(match[0].length).trim();
 		}
-		else if (match = referenceStringRegex.exec(value)) {
-			value = value.substr(match[1].length).trim();
-			primitive = parseCString();
-		}
-		else if (match = referenceRegex.exec(value)) {
-			primitive = "*" + match[0];
-			value = value.substr(match[0].length).trim();
-		}
-		else if (match = charRegex.exec(value)) {
+		else if (match = charRegex.exec(this.value)) {
 			primitive = match[1];
-			value = value.substr(match[0].length - 1);
-			primitive += " " + parseCString();
+			this.value = this.value.substr(match[0].length - 1);
+			primitive += " " + this.parseCString();
 		}
-		else if (match = numberRegex.exec(value)) {
+		else if (match = numberRegex.exec(this.value)) {
 			primitive = match[0];
-			value = value.substr(match[0].length).trim();
+			this.value = this.value.substr(match[0].length).trim();
 		}
-		else if (match = variableRegex.exec(value)) {
+		else if (match = variableRegex.exec(this.value)) {
 			primitive = match[0];
-			value = value.substr(match[0].length).trim();
+			this.value = this.value.substr(match[0].length).trim();
 		}
-		else if (match = errorRegex.exec(value)) {
+		else if (match = errorRegex.exec(this.value)) {
 			primitive = match[0];
-			value = value.substr(match[0].length).trim();
+			this.value = this.value.substr(match[0].length).trim();
 		}
 		else {
-			primitive = value;
+			primitive = this.value;
 		}
 		return primitive;
 	};
 
-	parseValue = () => {
-		value = value.trim();
-		if (value[0] == '"')
-			return parseCString();
-		else if (value[0] == '{')
-			return parseTupleOrList();
+	parseValue() {
+		this.value = this.value.trim();
+		if (this.value[0] == '"')
+			return this.parseCString();
+		else if (this.value[0] == '{')
+			return this.parseTupleOrList();
 		else
-			return parsePrimitive();
+			return this.parsePrimitive();
 	};
 
-	parseResult = (pushToStack: boolean = false) => {
-		value = value.trim();
-		let variableMatch = resultRegex.exec(value);
+	parseResult(pushToStack: boolean = false) {
+		this.value = this.value.trim();
+		let variableMatch = resultRegex.exec(this.value);
 		if (!variableMatch)
 			return undefined;
-		value = value.substr(variableMatch[0].length).trim();
-		let name = variable = variableMatch[1];
+		this.value = this.value.substr(variableMatch[0].length).trim();
+		let name = this.variable = variableMatch[1];
 		if (pushToStack)
-			stack.push(variable);
-		let val = parseValue();
+			this.stack.push(this.variable);
+		let val = this.parseValue();
 		if (pushToStack)
-			stack.pop();
-		return createValue(name, val);
+			this.stack.pop();
+		return this.createValue(name, val);
 	};
 
-	createValue = (name, val) => {
+	createValue(name, val) {
 		let ref = 0;
 		if (typeof val == "object") {
-			ref = variableCreate(val);
+			ref = this.variableCreate(val);
 			val = "Object";
 		}
 		if (typeof val == "string" && val.startsWith("*0x")) {
-			if (extra && MINode.valueOf(extra, "arg") == "1")
-			{
-				ref = variableCreate(getNamespace("*(" + name), { arg: true });
-				val = "<args>";
-			}
-			else
-			{
-				ref = variableCreate(getNamespace("*" + name));
-				val = "Object@" + val;
-			}
+			ref = this.variableCreate(this.getNamespace("*" + name));
+			val = "Object@" + val;
 		}
 		if (typeof val == "string" && val.startsWith("<...>")) {
-			ref = variableCreate(getNamespace(name));
+			ref = this.variableCreate(this.getNamespace(name));
 			val = "...";
 		}
 		return {
@@ -243,25 +216,28 @@ export function expandValue(variableCreate: Function, value: string, root: strin
 			value: val,
 			variablesReference: ref
 		};
-	};
+	}
 
-	parseCommaValue = () => {
-		value = value.trim();
-		if (value[0] != ',')
+	parseCommaValue() {
+		this.value = this.value.trim();
+		if (this.value[0] != ',')
 			return undefined;
-		value = value.substr(1).trim();
-		return parseValue();
+		this.value = this.value.substr(1).trim();
+		return this.parseValue();
 	};
 
-	parseCommaResult = (pushToStack: boolean = false) => {
-		value = value.trim();
-		if (value[0] != ',')
+	parseCommaResult(pushToStack: boolean = false) {
+		this.value = this.value.trim();
+		if (this.value[0] != ',')
 			return undefined;
-		value = value.substr(1).trim();
-		return parseResult(pushToStack);
+		this.value = this.value.substr(1).trim();
+		return this.parseResult(pushToStack);
 	};
+}
 
-
-	value = value.trim();
-	return parseValue();
+export function expandValue(variableCreate: (arg: any) => number, 
+	value: string, root: string = "", extra: any = undefined): any {
+	
+	let parser = new Parser(variableCreate, value, root, extra);
+	return parser.parseValue();
 }
