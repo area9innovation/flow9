@@ -32,6 +32,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 	protected variableHandles = new Handles<string | VariableObject>(VAR_HANDLES_START);
 	protected variableHandlesReverse: { [id: string]: number } = {};
 	protected StackFrames: Stack[] = [];
+	protected useVarObjects: boolean = false;
 	protected quit: boolean;
 	protected needContinue: boolean;
 	protected started: boolean;
@@ -154,10 +155,24 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
 		try {
-			await this.miDebugger.changeVariable(args.name, args.value);
-			response.body = {
-				value: args.value
-			};
+			if (this.useVarObjects) {
+				let name = args.name;
+				if (args.variablesReference >= VAR_HANDLES_START) {
+					const parent = this.variableHandles.get(args.variablesReference) as VariableObject;
+					name = `${parent.name}.${name}`;
+				}
+
+				let res = await this.miDebugger.varAssign(name, args.value);
+				response.body = {
+					value: res.result("value")
+				};
+			}
+			else {
+				await this.miDebugger.changeVariable(args.name, args.value);
+				response.body = {
+					value: args.value
+				};
+			}
 			this.sendResponse(response);
 		}
 		catch (err) {
@@ -278,28 +293,66 @@ export class FlowDebugSession extends LoggingDebugSession {
 			try {
 				stack = await this.miDebugger.getStackVariables(this.threadID, id);
 				for (const variable of stack) {
-					if (variable.valueStr !== undefined) {
-						let expanded = expandValue(createVariable, `{${variable.name}=${variable.valueStr}}`, "", variable.raw);
-						if (expanded) {
-							if (typeof expanded[0] == "string")
-								expanded = [
-									{
-										name: "<value>",
-										value: prettyStringArray(expanded),
-										variablesReference: 0
-									}
-								];
-								expanded[0].presentationHint = { attributes : [ "readOnly" ] };
-							variables.push(expanded[0]);
+					if (this.useVarObjects) {
+						try {
+							let varObjName = `var_${variable.name}`;
+							let varObj: VariableObject;
+							try {
+								const changes = await this.miDebugger.varUpdate(varObjName);
+								const changelist = changes.result("changelist");
+								changelist.forEach((change) => {
+									const vId = this.variableHandlesReverse[varObjName];
+									const v = this.variableHandles.get(vId) as any;
+									v.applyChanges(change);
+								});
+								const varId = this.variableHandlesReverse[varObjName];
+								varObj = this.variableHandles.get(varId) as any;
+							}
+							catch (err) {
+								if (err instanceof MIError && err.message.startsWith("No such var:")) {
+									varObj = await this.miDebugger.varCreate(variable.name, varObjName);
+									const varId = findOrCreateVariable(varObj);
+									varObj.exp = variable.name;
+									varObj.id = varId;
+								}
+								else {
+									throw err;
+								}
+							}
+							variables.push(varObj.toProtocolVariable());
 						}
-					} else
-						variables.push({
-							name: variable.name,
-							type: variable.type,
-							value: "<unknown>",
-							presentationHint: { attributes: ["readOnly"]},
-							variablesReference: createVariable(variable.name)
-						});
+						catch (err) {
+							variables.push({
+								name: variable.name,
+								value: `<${err}>`,
+								variablesReference: 0
+							});
+						}
+					}
+					else {
+						if (variable.valueStr !== undefined) {
+							let expanded = expandValue(createVariable, `{${variable.name}=${variable.valueStr}}`, "", variable.raw);
+							if (expanded) {
+								if (typeof expanded[0] == "string")
+									expanded = [
+										{
+											name: "<value>",
+											value: prettyStringArray(expanded),
+											variablesReference: 0
+										}
+									];
+									expanded[0].presentationHint = { attributes : [ "readOnly" ] };
+								variables.push(expanded[0]);
+							}
+						} else
+							variables.push({
+								name: variable.name,
+								type: variable.type,
+								value: "<unknown>",
+								presentationHint: { attributes: ["readOnly"]},
+								variablesReference: createVariable(variable.name)
+							});
+					}
 				}
 				response.body = {
 					variables: variables
