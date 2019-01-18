@@ -45,7 +45,6 @@ export interface IBackend {
 	isReady(): boolean;
 	isRunning(): boolean;
 	changeVariable(name: string, rawValue: string): Thenable<any>;
-	examineMemory(from: number, to: number): Thenable<any>;
 }
 
 export class VariableObject {

@@ -1,18 +1,16 @@
 import { LoggingDebugSession, Logger, logger, InitializedEvent, TerminatedEvent, StoppedEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles, DebugSession, Breakpoint } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { Variable, Stack, VariableObject, MIError } from './backend/backend';
-import { MINode } from './backend/mi_parse';
 import { expandValue } from './backend/gdb_expansion';
 import { MI2 } from './backend/flowcpp_runtime';
-import { posix } from "path";
 
 
 logger.setup(Logger.LogLevel.Verbose, true);
 
-class ExtendedVariable {
-	constructor(public name, public options) {
-	}
-}
+process.on("unhandledRejection", (error) => {
+	console.error(error); // This prints error with stack included (as for normal errors)
+	throw error; // Following best practices re-throw error and let the process exit with error code
+});
 
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	cwd: string;
@@ -31,10 +29,9 @@ const STACK_HANDLES_START = 1000;
 const VAR_HANDLES_START = 2000;
 
 export class FlowDebugSession extends LoggingDebugSession {
-	protected variableHandles = new Handles<string | VariableObject | ExtendedVariable>(VAR_HANDLES_START);
+	protected variableHandles = new Handles<string | VariableObject>(VAR_HANDLES_START);
 	protected variableHandlesReverse: { [id: string]: number } = {};
 	protected StackFrames: Stack[] = [];
-	protected useVarObjects: boolean = false;
 	protected quit: boolean;
 	protected needContinue: boolean;
 	protected started: boolean;
@@ -157,24 +154,10 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
 		try {
-			if (this.useVarObjects) {
-				let name = args.name;
-				if (args.variablesReference >= VAR_HANDLES_START) {
-					const parent = this.variableHandles.get(args.variablesReference) as VariableObject;
-					name = `${parent.name}.${name}`;
-				}
-
-				let res = await this.miDebugger.varAssign(name, args.value);
-				response.body = {
-					value: res.result("value")
-				};
-			}
-			else {
-				await this.miDebugger.changeVariable(args.name, args.value);
-				response.body = {
-					value: args.value
-				};
-			}
+			await this.miDebugger.changeVariable(args.name, args.value);
+			response.body = {
+				value: args.value
+			};
 			this.sendResponse(response);
 		}
 		catch (err) {
@@ -207,7 +190,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 			if (running)
 				await this.miDebugger.continue();
 			response.body = {
-				breakpoints: brkpoints.map(brkp => new Breakpoint(brkp[0], brkp[1].line))
+				breakpoints: brkpoints.map(brkp => 
+					new Breakpoint(brkp[0], brkp[0] ? brkp[1].line : undefined))
 			};
 			this.sendResponse(response);
 		}, msg => {
@@ -265,7 +249,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
 		const variables: DebugProtocol.Variable[] = [];
-		let id: number | string | VariableObject | ExtendedVariable;
+		let id: number | string | VariableObject;
 		if (args.variablesReference < VAR_HANDLES_START) {
 			id = args.variablesReference - STACK_HANDLES_START;
 		}
@@ -273,11 +257,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 			id = this.variableHandles.get(args.variablesReference);
 		}
 
-		let createVariable = (arg, options?) => {
-			if (options)
-				return this.variableHandles.create(new ExtendedVariable(arg, options));
-			else
-				return this.variableHandles.create(arg);
+		let createVariable = (arg) => {
+			return this.variableHandles.create(arg);
 		};
 
 		let findOrCreateVariable = (varObj: VariableObject): number => {
@@ -297,66 +278,28 @@ export class FlowDebugSession extends LoggingDebugSession {
 			try {
 				stack = await this.miDebugger.getStackVariables(this.threadID, id);
 				for (const variable of stack) {
-					if (this.useVarObjects) {
-						try {
-							let varObjName = `var_${variable.name}`;
-							let varObj: VariableObject;
-							try {
-								const changes = await this.miDebugger.varUpdate(variable.name);
-								const changelist = changes.result("changelist");
-								changelist.forEach((change) => {
-									const vId = this.variableHandlesReverse[varObjName];
-									const v = this.variableHandles.get(vId) as any;
-									v.applyChanges(change);
-								});
-								const varId = this.variableHandlesReverse[varObjName];
-								varObj = this.variableHandles.get(varId) as any;
-							}
-							catch (err) {
-								if (err instanceof MIError && err.message == "Variable object not found") {
-									varObj = await this.miDebugger.varCreate(variable.name, varObjName);
-									const varId = findOrCreateVariable(varObj);
-									varObj.exp = variable.name;
-									varObj.id = varId;
-								}
-								else {
-									throw err;
-								}
-							}
-							variables.push(varObj.toProtocolVariable());
+					if (variable.valueStr !== undefined) {
+						let expanded = expandValue(createVariable, `{${variable.name}=${variable.valueStr}}`, "", variable.raw);
+						if (expanded) {
+							if (typeof expanded[0] == "string")
+								expanded = [
+									{
+										name: "<value>",
+										value: prettyStringArray(expanded),
+										variablesReference: 0
+									}
+								];
+								expanded[0].presentationHint = { attributes : [ "readOnly" ] };
+							variables.push(expanded[0]);
 						}
-						catch (err) {
-							variables.push({
-								name: variable.name,
-								value: `<${err}>`,
-								variablesReference: 0
-							});
-						}
-					}
-					else {
-						if (variable.valueStr !== undefined) {
-							let expanded = expandValue(createVariable, `{${variable.name}=${variable.valueStr}}`, "", variable.raw);
-							if (expanded) {
-								if (typeof expanded[0] == "string")
-									expanded = [
-										{
-											name: "<value>",
-											value: prettyStringArray(expanded),
-											variablesReference: 0
-										}
-									];
-									expanded[0].presentationHint = { attributes : [ "readOnly" ] };
-								variables.push(expanded[0]);
-							}
-						} else
-							variables.push({
-								name: variable.name,
-								type: variable.type,
-								value: "<unknown>",
-								presentationHint: { attributes: ["readOnly"]},
-								variablesReference: createVariable(variable.name)
-							});
-					}
+					} else
+						variables.push({
+							name: variable.name,
+							type: variable.type,
+							value: "<unknown>",
+							presentationHint: { attributes: ["readOnly"]},
+							variablesReference: createVariable(variable.name)
+						});
 				}
 				response.body = {
 					variables: variables
@@ -421,67 +364,6 @@ export class FlowDebugSession extends LoggingDebugSession {
 				catch (err) {
 					this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
 				}
-			}
-			else if (id instanceof ExtendedVariable) {
-				let varReq = id;
-				if (varReq.options.arg) {
-					let strArr = [];
-					let argsPart = true;
-					let arrIndex = 0;
-					let submit = () => {
-						response.body = {
-							variables: strArr
-						};
-						this.sendResponse(response);
-					};
-					let addOne = async () => {
-						const variable = await this.miDebugger.evalExpression(JSON.stringify(`${varReq.name}+${arrIndex})`));
-						try {
-							let expanded = expandValue(createVariable, variable.result("value"), varReq.name, variable);
-							if (!expanded) {
-								this.sendErrorResponse(response, 15, `Could not expand variable`);
-							}
-							else {
-								if (typeof expanded == "string") {
-									if (expanded == "<nullptr>") {
-										if (argsPart)
-											argsPart = false;
-										else
-											return submit();
-									}
-									else if (expanded[0] != '"') {
-										strArr.push({
-											name: "[err]",
-											value: expanded,
-											variablesReference: 0
-										});
-										return submit();
-									}
-									strArr.push({
-										name: `[${(arrIndex++)}]`,
-										value: expanded,
-										variablesReference: 0
-									});
-									addOne();
-								}
-								else {
-									strArr.push({
-										name: "[err]",
-										value: expanded,
-										variablesReference: 0
-									});
-									submit();
-								}
-							}
-						}
-						catch (e) {
-							this.sendErrorResponse(response, 14, `Could not expand variable: ${e}`);
-						}
-					};
-					addOne();
-				}
-				else
-					this.sendErrorResponse(response, 13, `Unimplemented variable request options: ${JSON.stringify(varReq.options)}`);
 			}
 			else {
 				response.body = {

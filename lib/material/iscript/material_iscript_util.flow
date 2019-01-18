@@ -34,42 +34,72 @@ replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic
 	replayIScript2(manager, getValue(manager.iscript.script), m2t, onFinished, handleInputOutput);
 }
 
-continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) -> () -> void {
-	isFinished = ref false;
-	delays = ref getTreeKeys(tree);
-	maxDelay = either(maxA(^delays), 0.0);
-	r = repeatable(1);
-	started = timestamp();
+ContiniousTimer(
+	start : () -> void,
+	stop : () -> void,
+	pause : () -> void
+);
+
+continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) -> ContiniousTimer {
+	isFinished = ref true;
+	delays = ref [];
+	maxDelay = ref 0.0;
+	r = repeatable2(1, false);
+	started = ref 0.0;
 	uns = ref [];
 
-	uns :=
-		[
-			r.stop,
-			\ -> if (!(^isFinished)) {
-				isFinished := true;
-				onFinished(length(^delays) == 0);
-			},
-			makeSubscribe(r.value, \ts -> {
-				if (length(^delays) == 0) {
-					dispUnsA(uns);
-				}
+	startFn = \ -> {
+		started := timestamp() - either(minA(^delays), 0.0);
+		r.start();
+	};
+	stopFn = \ -> {
+		dispUnsA(uns);
+	};
+	pauseFn = \ -> {
+		r.stop();
+	};
+	initFn = \ -> {
+		isFinished := false;
+		delays := getTreeKeys(tree);
 
-				foldWhile(^delays, ts - started, \t, d -> {
-					if (d < t) {
-						maybeApply(lookupTree(tree, d), \records -> iter(records, \fn -> if (!fn()) dispUnsA(uns)));
-						delays := subrange(^delays, 1, length(^delays));
-
-						Some(t)
-					} else {
-						None()
+		uns :=
+			[
+				r.stop,
+				\ -> if (!(^isFinished)) {
+					isFinished := true;
+					onFinished(length(^delays) == 0);
+				},
+				makeSubscribe2(r.value, \ts -> {
+					if (length(^delays) == 0) {
+						dispUnsA(uns);
 					}
-				})
-				|> ignore
-			})()
-		];
 
-	\ -> dispUnsA(uns)
+					foldWhile(^delays, ts - ^started, \t, d -> {
+						if (d < t) {
+							maybeApply(lookupTree(tree, d), \records -> iter(records, \fn -> if (!fn()) dispUnsA(uns)));
+							delays := subrange(^delays, 1, length(^delays));
 
+							Some(t)
+						} else {
+							None()
+						}
+					})
+					|> ignore
+				})()
+			];
+	}
+
+	ContiniousTimer(
+		\ -> {
+			if (^isFinished == true || length(^delays) == 0) {
+				initFn();
+			}
+
+			startFn();
+		},
+		stopFn,
+		pauseFn
+	)
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
@@ -83,6 +113,10 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 		)
 	)
 	|> (\t -> continiousTimer(t, onFinished))
+	|> (\t -> {
+		t.start();
+		t.stop;
+	})
 }
 
 replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Material, MFocusGroup) -> Tropic, handleInputOutput : bool) -> bool {
@@ -272,7 +306,14 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 			">> Replay " + componentName + " " + name + " value " + toString(value);
 
 	emitMouseEv = \event, point -> {
-		emitMouseEvent(currentClip(), event, point.x, point.y);
+		emitMouseEvent(
+			currentClip(), event,
+			point.x,
+			point.y + if (getValue(manager.iscript.showPanel))
+						getValue(manager.iscript.topPanelWidthHeightB).height
+					else
+						0.0
+			);
 
 		next(manager.iscript.replayCursorPositionB,
 			Point(
@@ -306,17 +347,16 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 			emitKeyEvent(currentClip(), name, kst.utf, kst.ctrl, kst.shift, kst.alt, kst.meta, kst.keycode);
 			true
 		} else {
-			checkErrors = contains(getValue(manager.iscript.settings.replayReplayBehaviours), name);
-			checkEnabled = checkErrors;
-			checkFocused = checkErrors && name == "focused";
-			checkClickable = checkErrors && ((name == "down" && flow(value) != None()) || (name == "click" && flow(value) == true)
+			replayBehaviour = contains(getValue(manager.iscript.settings.replayReplayBehaviours), name);
+			checkEnabled = replayBehaviour;
+			checkFocused = replayBehaviour && name == "focused";
+			checkClickable = replayBehaviour && ((name == "down" && flow(value) != None()) || (name == "click" && flow(value) == true)
 				|| (name == "hover" && flow(value) == true) || name == "position");
 			checkExists = checkFocused || checkClickable;
-
 			eitherMap(
 				getBehaviourById(manager, behaviourDescriptor, checkExists, checkEnabled, checkFocused, checkClickable),
 				\b -> {
-					if (checkErrors) {
+					if (replayBehaviour) {
 						// Behaviours we need to replay
 						if (name == "point" && false) {
 							eitherFn(

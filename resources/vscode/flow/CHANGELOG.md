@@ -81,3 +81,18 @@
 
 ## 0.1.13
  - better way to shutdown `flowc` when exiting
+
+## 0.2.0
+ - update for new flow9 repository
+
+## 0.2.1
+ - added command flow.updateFlowRepo to stop flowc, update flow repo, start flowc
+
+## 0.2.2
+ - fixed debugger for one available local variable
+
+## 0.2.3
+ - fixed debugger for stack arguments
+
+## 0.2.4
+ - fixed debugger for multiple stack arguments

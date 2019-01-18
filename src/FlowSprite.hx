@@ -119,7 +119,6 @@ class FlowSprite extends Sprite {
 					parentNode.removeChild(nativeWidget);
 				}
 
-				untyped __js__("delete nativeWidget");
 				nativeWidget = null;
 			}
 
