@@ -224,9 +224,9 @@ export class MI2 extends EventEmitter implements IBackend {
 				if (this.debug) {
 					this.log("console", "Running executable");
 					let info = await this.sendCommand("exec-run");
-					return info.resultRecords.resultClass == "running";
+					resolve(info.resultRecords.resultClass == "running");
 				} else {
-					return true;
+					resolve(true);
 				}
 			});
 		});
@@ -454,16 +454,6 @@ export class MI2 extends EventEmitter implements IBackend {
 		const argsPromises = args.map(a => Promise.resolve(a));
 		// 4. wait and return all
 		return Promise.all(varPromises.concat(argsPromises));
-	}
-
-	examineMemory(from: number, length: number): Thenable<any> {
-		if (trace)
-			this.log("stderr", "examineMemory");
-		return new Promise((resolve, reject) => {
-			this.sendCommand("data-read-memory-bytes 0x" + from.toString(16) + " " + length).then((result) => {
-				resolve(result.result("memory[0].contents"));
-			}, reject);
-		});
 	}
 
 	async varCreate(expression: string, name: string = "-"): Promise<VariableObject> {
