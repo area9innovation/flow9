@@ -8,4 +8,4 @@
 ::java -Xss32m -Xms256m -Xmx4G %argsFor8% -cp src/java/;. -jar %~dp0..\tools\flowc\flowc.jar bin-dir=%~dp0 %*
 
 :: Use python script to run flowc1
-python flowc1 %*
+python %~dp0\flowc1 %*
