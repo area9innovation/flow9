@@ -61,8 +61,10 @@ export {
 	wasm_replace_i32_ref(int, int, int) -> int;	
 	
 	// native subrange : ([?], index : int, length : int) -> [?] = Native.subrange;
-	subrange(int, int, int) -> int;
-	
+	wasm_subrange_i32(int, int, int) -> int;
+	wasm_subrange_f64(int, int, int) -> int;
+	wasm_subrange_i32_ref(int, int, int) -> int;
+
 	// native enumFromTo : (start : int, end : int) -> [int] = Native.enumFromTo;
 	enumFromTo(int, int) -> int;
 	
@@ -790,25 +792,6 @@ wasm_do_enumFromTo(dst : int, cur : int, count : int) -> void {
 }
 
 /*
-subrange(arr : int, start : int, len : int) -> int {
-	arr_len = length(arr);
-
-	//get real elemsize. 
-	elemSize = 4;
-
-	if (start == 0 && arr_len <= len) {
-		arr;
-	} else if (start >= arr_len || start < 0) {
-		wasm_alloc_array(0, 8);
-	} else {
-		real_len = if(len + start > arr_len) arr_len - start else len;
-
-		res = wasm_alloc_array(real_len, 8 + elemSize * real_len);
-		wasm_copy_mem(arr + 8 + start * elemSize, elemSize * real_len, res + 8);
-		res;
-	}
-}
-
 replace(arr : int, idx : int, elem : int) -> int {
 	len = length(arr);
 
@@ -1026,10 +1009,36 @@ captureCallstack() -> int {
 	0
 }
 
-subrange(arr : int, start : int, len : int) -> int {
-	prints("subrange() not implemented yet");
-	wasm_unreachable();
-	0
+wasm_subrange_i32(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 4, false);
+}
+
+wasm_subrange_f64(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 8, false);
+}
+
+wasm_subrange_i32_ref(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 4, true);
+}
+
+wasm_subrange_impl(arr : int, start : int, count : int, elemSize : int, isRefCnt : bool) -> int {
+	len = do_wasm_length(arr);
+
+	if (start < 0 || start >= len || count < 0) {
+		// empty array
+		wasm_alloc_array(0, 8);
+	} else {
+		cnt = if (count < len - start) count else len - start;
+
+		res = wasm_alloc_array(cnt, 8 + elemSize * len);
+		wasm_copy_mem(arr + 8 + start * elemSize, cnt * elemSize, res + 8);	
+
+		if (isRefCnt) {
+			wasm_inc_refcnt_array(res + 8, cnt);
+		}
+		wasm_dec_refcnt(arr);
+		res;
+	}
 }
 
 wasm_replace_i32(arr : int, idx : int, elem : int) -> int {
