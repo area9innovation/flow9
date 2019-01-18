@@ -224,9 +224,9 @@ export class MI2 extends EventEmitter implements IBackend {
 				if (this.debug) {
 					this.log("console", "Running executable");
 					let info = await this.sendCommand("exec-run");
-					return info.resultRecords.resultClass == "running";
+					resolve(info.resultRecords.resultClass == "running");
 				} else {
-					return true;
+					resolve(true);
 				}
 			});
 		});
@@ -324,29 +324,34 @@ export class MI2 extends EventEmitter implements IBackend {
 			location += '"' + escape(breakpoint.raw) + '"';
 		else
 			location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
-		let result = await this.sendCommand("break-insert " + location);
-		if (result.resultRecords.resultClass == "done") {
-			let bkptNum = parseInt(result.result("bkpt.number"));
-			let newBrk = {
-				file: result.result("bkpt.file"),
-				line: parseInt(result.result("bkpt.line")),
-				condition: breakpoint.condition
-			};
-			if (breakpoint.condition) {
-				let result = await this.setBreakPointCondition(bkptNum, breakpoint.condition);
-				if (result.resultRecords.resultClass == "done") {
+		try { 
+			let result = await this.sendCommand("break-insert " + location);
+			if (result.resultRecords.resultClass == "done") {
+				let bkptNum = parseInt(result.result("bkpt.number"));
+				let newBrk = {
+					file: result.result("bkpt.file"),
+					line: parseInt(result.result("bkpt.line")),
+					condition: breakpoint.condition
+				};
+				if (breakpoint.condition) {
+					let result = await this.setBreakPointCondition(bkptNum, breakpoint.condition);
+					if (result.resultRecords.resultClass == "done") {
+						this.breakpoints.set(newBrk, bkptNum);
+						return [true, newBrk];
+					} else {
+						return [false, null];
+					}
+				} else {
 					this.breakpoints.set(newBrk, bkptNum);
 					return [true, newBrk];
-				} else {
-					return [false, null];
 				}
-			} else {
-				this.breakpoints.set(newBrk, bkptNum);
-				return [true, newBrk];
 			}
-		}
-		else 
+			else 
+				return [false, undefined];
+		} catch (e) {
+			this.log("stderr", "Error setting breakpoint: " + e);
 			return [false, undefined];
+		}
 	}
 
 	async removeBreakPoint(breakpoint: BackendBreakpoint): Promise<boolean> {
@@ -434,22 +439,21 @@ export class MI2 extends EventEmitter implements IBackend {
 		const localsResult = await this.sendCommand("stack-list-locals");
 		const stackInfo = await this.sendCommand("stack-info-frame");
 		const locals: any[] = localsResult.result("locals");
-		const args: any[] = MINode.valueOf(stackInfo.result("frame"), "args");
-		const varNames: string[] = MINode.valueOf(locals.concat(args), "name");
-
-		return Promise.all(varNames.map(async n => 
+		// 1. args - they are returned with values, wrapping into Variable
+		const argsRaw: any[] = MINode.valueOf(stackInfo.result("frame"), "args") || [];
+		const args = argsRaw.map(a => 
+			({name : MINode.valueOf(a, "name"), valueStr : MINode.valueOf(a, "value")}));
+		// 2. locals - we only get names, so need to get values later
+		const varNamesRaw: any = MINode.valueOf(locals, "name") || [];
+		const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
+		// 3.1 Getting local values - this is async. 
+		const varPromises = varNames.map(async n => 
 			({ name : n, valueStr: (await this.evalExpression(n)).result("value") })
-		));
-	}
-
-	examineMemory(from: number, length: number): Thenable<any> {
-		if (trace)
-			this.log("stderr", "examineMemory");
-		return new Promise((resolve, reject) => {
-			this.sendCommand("data-read-memory-bytes 0x" + from.toString(16) + " " + length).then((result) => {
-				resolve(result.result("memory[0].contents"));
-			}, reject);
-		});
+		);
+		// 3.2 wrapping args values into promises that return immediately
+		const argsPromises = args.map(a => Promise.resolve(a));
+		// 4. wait and return all
+		return Promise.all(varPromises.concat(argsPromises));
 	}
 
 	async varCreate(expression: string, name: string = "-"): Promise<VariableObject> {

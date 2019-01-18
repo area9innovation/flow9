@@ -46,7 +46,7 @@ Ctrl+k o to open the current file in a new window.
 
 On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
 
-Be sure to convert indentation to Tabs, as well as ensure line-endings is LF.
+A lot of tips: https://medium.freecodecamp.org/here-are-some-super-secret-vs-code-hacks-to-boost-your-productivity-20d30197ac76 
 
 ## FEATURES AND CONFIGURATION
 * Syntax highligting (flow, lingo, flowschema, sharekey), code snippets, and brace matching work out of the box
