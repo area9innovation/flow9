@@ -10,7 +10,7 @@
 #import "URLLoader.h"
 #import <MediaPlayer/MediaPlayer.h>
 #import <WebKit/WebKit.h>
-#import "MHECordovaViewController.h"
+#import "CordovaViewController.h"
 #import "AVPlayerController.h"
 
 #import "FlowAVPlayerView.h"
@@ -136,7 +136,7 @@ public:
     std::map<GLClip*, UIView*> NativeWidgets;
     std::map<UIView*, GLClip*> NativeWidgetClips;
     
-    std::map<UIView*, MHECordovaViewController *> CDVViewControllers;
+    std::map<UIView*, CordovaViewController *> CDVViewControllers;
     std::map<UIView*, FlowAVPlayerController *> FlowAVPlayerControllers;
     
     FlowUITextView * activeTextWidget;
@@ -247,7 +247,7 @@ private:
     ImagePickerControllerDelegate * commonImagePickerControllerDelegate;
     AudioRecordControlDelegate * commonAudioRecordControllerDelegate;
 
-    MHECordovaViewController* viewController;
+    CordovaViewController* viewController;
   
     FlowUIOrientation flowUIOrientation;
     

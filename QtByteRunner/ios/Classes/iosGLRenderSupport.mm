@@ -11,7 +11,6 @@
 #import <objc/runtime.h>
 #include "core/RunnerMacros.h"
 #import "iosAppDelegate.h"
-#import "MHECordovaViewController.h"
 #import <MobileCoreServices/UTCoreTypes.h>
 #import "EAGLViewController.h"
 #import <CoreText/CoreText.h>
@@ -1518,7 +1517,7 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
             }
         }
     } else {
-        viewController = [[MHECordovaViewController alloc] init];
+        viewController = [[CordovaViewController alloc] init];
         viewController.startPage = rq_url.absoluteString;
         viewController.flowDelegate = commonWebViewDelegate;
         
