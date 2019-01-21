@@ -838,7 +838,7 @@ class NativeHx {
 	public static function getSessionKeyValue(key : String, def : String) : String {
 		#if js
 		return getKeyValueJS(key, def, true);
-		else
+		#else
 		return def;
 		#end
 	}
