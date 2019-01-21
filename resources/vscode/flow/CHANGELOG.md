@@ -96,3 +96,6 @@
 
 ## 0.2.4
  - fixed debugger for multiple stack arguments
+
+##
+ - additional diagnostics for find-definition, less verbose for others

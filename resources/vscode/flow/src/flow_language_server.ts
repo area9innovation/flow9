@@ -100,7 +100,7 @@ function getCompilerPaths(wsFolders: WorkspaceFolder[], documentUri: string) {
 
 async function validateTextDocument(textDocument: VersionedTextDocumentIdentifier): Promise<void> {
 	let paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), textDocument.uri);
-	connection.console.log("Analyzing document " + paths.documentPath);
+	//connection.console.log("Analyzing document " + paths.documentPath);
 }
 
 function extractToken(line: string, position: number): string {
@@ -157,8 +157,11 @@ async function findObject(fileUri: string, lineNum: number, columnNum: number, o
 
 	let serverArgs = !globalSettings.useCompilerServer ? ["server=0"] : [];
 
-	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
-		serverArgs.concat([paths.documentPath, operation + token]).concat(extra_args));
+	let flowcArgs = serverArgs.concat([paths.documentPath, operation + token]).concat(extra_args);
+	connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
+		"\n\t\t in folder: " + paths.projectRoot);
+
+	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, flowcArgs);
 	
 	return extractDefinition(result);
 }
