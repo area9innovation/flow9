@@ -1,5 +1,6 @@
 import material/internal/material_ellipsis;
 import material/internal/material_button;
+import material/internal/material_progress;
 // Internal to material
 
 export {
@@ -8,16 +9,34 @@ export {
 	tryExtractMToolbarItemsMColor(parent : MFocusGroup, bgStyle : [TGraphicsStyle], style : [flow]) -> Maybe<MColor>;
 }
 
+MExtendedToolbarState(
+	expand : Transform<bool>,
+	maxHeight : double,
+	factor : DynamicBehaviour<double>
+);
+
 MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	bgStyle = extractStruct(m.style, MBackgroundStyle([MFill(parent.theme.primaryColor)])).style;
 	itemsColor = tryExtractMToolbarItemsMColor(parent, bgStyle, m.style);
 	width = extractStruct(m.style, MWidth(-1.)).width;
-	height = extractStruct(m.style, MHeight(if (true || mobile) 56. else 64.)).height;
+	minHeight = extractStruct(m.style, MHeight(56.)).height;
+	backgroundImage = tryExtractStruct(m.style, MBackgroundImage("", true));
 	elevation  = extractStruct(m.style, MElevation(const(6.))).elevation;
 	toolbarContent = tryExtractStruct(m.style, MToolbarContent(TEmpty(), false));
 	toolbarFAB = tryExtractStruct(m.style, MFloatingButton("", [], []));
 	showExpander = extractStruct(m.style, MShowExpander(const(true))).show;
 	backButton = tryExtractStruct(m.style, MToolbarBackButton(TEmpty()));
+	extended =
+		maybeMap(
+			tryExtractStruct(m.style, MExtendedToolbar(const(false))),
+			\ext -> MExtendedToolbarState(ext.expand, 128., make(b2d(fgetValue(ext.expand))))
+		);
+
+	height = eitherMap(
+		extended,
+		\ext -> flerp(minHeight, ext.maxHeight, ext.factor),
+		const(minHeight)
+	);
 
 	right = \p ->
 		map(m.right, \r -> {
@@ -25,7 +44,7 @@ MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : 
 				MCenterY(__): {
 					m2t(r, p)
 				}
-				default: TCenterY(m2t(r, p));
+				default: m2t(r, p) |> if (isNone(extended)) TCenterY else idfn;
 			}
 		})
 		|> TColsA;
@@ -36,7 +55,8 @@ MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : 
 			p,
 			showExpander,
 			\se, p2 ->
-				if (se) {
+				MToolbarTitle2T(manager, p2, m.title, \mat -> m2t(mat, p2), backButton, extended)
+				|> (\title -> if (se) {
 					customExpander =
 						extractStruct(
 							m.style,
@@ -64,20 +84,21 @@ MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : 
 							default: customExpander;
 						};
 
-					TCols2A(
+					expander =
 						m2t(toggleIcon, p2)
-						|> (\f -> TBorder(if (true || mobile) 4. else 12., 0., if (isSome(backButton)) 4. else 12., 0., f))
-						|> TCenterY,
-						MToolbarTitle2T(manager, p2, m.title, \mat -> m2t(mat, p2), backButton)
-					)
+						|> (\f -> TBorder(4., 0., if (isSome(backButton)) 4. else 12., 0., f))
+						|> if (isSome(extended)) idfn else TCenterY;
+
+					TCols2A(expander, title)
 				} else
-					MToolbarTitle2T(manager, p2, m.title, \mat -> m2t(mat, p2), backButton)
-					|> TBorderLeft(if (true || mobile) 24. else 32.),
+					title
+					|> TBorderLeft(24.)
+				),
 			false
 		)
 		|> alignRightForRTL
 		|> (\t -> TGroup2(t, TFillX()))
-		|> (\t -> TCols2A(t, right(p) |> TBorderRight(if (true || mobile) 4. else 12.)))
+		|> (\t -> TCols2A(t, right(p) |> TBorderRight(4.)))
 		|> (\f ->
 			eitherFn(
 				toolbarContent,
@@ -97,12 +118,29 @@ MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : 
 					TGroup2(TFillXY(), f)
 			)
 		)
+		|> (\t -> eitherMap(
+				backgroundImage,
+				\im ->
+					TGroup2(
+						TZoomToFill(
+							MPicture2T(manager, p, MPicture(im.image, [])),
+							TFillXY(),
+							true
+						)
+						|> (\t2 -> TAlpha(
+								eitherMap(extended, \e -> e.factor, const(1.)),
+								t2
+							)),
+						t
+					),
+				t
+			))
 		|> (\f -> TFrame(0., 0., bgStyle, f))
 		|> (\t -> TAvailable(t, 
 			if (width > 0.0)
-				TFixed(width, height)
+				TSizedHeight(width, height)
 			else
-				TFillXH(height)
+				TFillXHT(height)
 		))
 	)
 	|> (\f ->
@@ -143,15 +181,43 @@ MToolbar2T(manager : MaterialManager, parent : MFocusGroup, m : MToolbar, m2t : 
 				f
 		)
 	)
-	// |> makeTropicConstant2(width, height)
+	|> (\t -> eitherMap(extended, \ext -> {
+				startFactor = ref getValue(ext.factor);
+				MEasingAnimation(
+					manager,
+					parent,
+					const(0.3),
+					const(easingFastOutSlowIn),
+					ext.expand,
+					\e -> {
+						startFactor := getValue(ext.factor);
+						Some(e)
+					},
+					\e, prc -> {
+						next(ext.factor, lerp(^startFactor, b2d(e), prc))
+					},
+					[],
+					t
+				)},
+			t
+	))
 }
 
 MToolbarTitle2T(manager : MaterialManager, parent : MFocusGroup, title : Material, m2t : (Material) -> Tropic,
-	backButton : Maybe<MToolbarBackButton>) -> Tropic {
+	backButton : Maybe<MToolbarBackButton>, extended : Maybe<MExtendedToolbarState>) -> Tropic {
 
 	addBackButton = 
 		\toolbarTitle ->
-			TCenterY(toolbarTitle)
+			eitherMap(
+				extended,
+				\ext -> {
+					lb = flerp(20., 36., ext.factor);
+					bb = flerp(16., 24., ext.factor);
+
+					TLines2(TFillY(), TBorderT(lb, zero, zero, bb, toolbarTitle))
+				},
+				TCenterY(toolbarTitle)
+			)
 			|> (\t -> TGroup2(TFixed(24., 0.), t))
 			|> (\t -> eitherMap(
 					backButton,
@@ -161,15 +227,33 @@ MToolbarTitle2T(manager : MaterialManager, parent : MFocusGroup, title : Materia
 			|> TBorderRight(8.);
 
 	m2ellipsis = \text, textStyle : [MEllipsisTextStyle] ->
-		MEllipsisText2T(
-			manager,
-			parent,
-			MEllipsisText(
-				text,
-				if (textStyle == [])
-					[MTitle(), MShowTooltip(const(true))]
-				else
-					replaceStructMany(textStyle, [extractStruct(textStyle, MShowTooltip(const(true)))])
+		eitherMap(
+			extended,
+			\ext -> 
+				TSelect(flerp(20., 24., ext.factor), \font ->
+					MEllipsisText2T(
+						manager,
+						parent,
+						MEllipsisText(
+							text,
+							replaceStructMany(textStyle, [
+								extractStruct(textStyle, MShowTooltip(const(true))),
+								MFullWidth(),
+								MCustomFont(font, "Roboto", 0.87)
+							])
+						)
+					)
+				),
+			MEllipsisText2T(
+				manager,
+				parent,
+				MEllipsisText(
+					text,
+					if (textStyle == [])
+						[MTitle(), MShowTooltip(const(true))]
+					else
+						replaceStructMany(textStyle, [extractStruct(textStyle, MShowTooltip(const(true)))])
+				)
 			)
 		)
 		|> addBackButton;
@@ -177,7 +261,7 @@ MToolbarTitle2T(manager : MaterialManager, parent : MFocusGroup, title : Materia
 	switch (title : Material) {
 		MEllipsisText(text, textStyle): 	m2ellipsis(text, textStyle);
 		MText(text, textStyle): 			m2ellipsis(text, textStyle);
-		MCenterY(c):						MToolbarTitle2T(manager, parent, c, m2t, backButton);
+		MCenterY(c):						MToolbarTitle2T(manager, parent, c, m2t, backButton, extended);
 		default: 							title |> m2t |> addBackButton;
 	}
 }
