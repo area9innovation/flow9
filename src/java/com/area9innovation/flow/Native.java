@@ -827,6 +827,14 @@ public class Native extends NativeHost {
 		return null;
 	}
 
+	public final Object removeAllKeyValues() {
+		return null;
+	}
+
+	public final String[] getKeysList() {
+		return new String[0];
+	}
+
 	public final Object clearTrace() {
 		return null;
 	}
