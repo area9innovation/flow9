@@ -831,8 +831,8 @@ public class Native extends NativeHost {
 		return null;
 	}
 
-	public final String[] getKeysList() {
-		return new String[0];
+	public final Object[] getKeysList() {
+		return new Object[0];
 	}
 
 	public final Object clearTrace() {

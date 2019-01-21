@@ -249,6 +249,14 @@ namespace Area9Innovation.Flow
 			return null;
 		}
 
+		public override object removeAllKeyValues() {
+			return null;
+		}
+
+		public override Object[] getKeysList() {
+			return null;
+		}
+
 		public override Func0 addCameraPhotoEventListener(Func5 cb)
 		{
 			string cbId = Guid.NewGuid().ToString();
