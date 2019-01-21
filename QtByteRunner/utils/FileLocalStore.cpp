@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <dirent.h>
 
 #ifdef WIN32
 #include <io.h>
@@ -73,6 +74,21 @@ std::string FileLocalStore::makePath(unicode_string key)
     return base_path + urlEscapePath(encodeUtf8(key));
 }
 
+KeysVector FileLocalStore::getKeysList()
+{
+    KeysVector files;
+    DIR* storage = opendir(base_path.c_str());
+    if (storage == NULL) return files;
+    while(struct dirent * file = readdir(storage)) {
+        if (file->d_type != 4)
+            files.push_back(file->d_name);
+    }
+    
+    closedir(storage);
+    
+    return files;
+}
+
 NativeFunction *FileLocalStore::MakeNativeFunction(const char *name, int num_args)
 {
 #undef NATIVE_NAME_PREFIX
@@ -81,6 +97,8 @@ NativeFunction *FileLocalStore::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_METHOD(FileLocalStore, getKeyValue, 2);
     TRY_USE_NATIVE_METHOD(FileLocalStore, setKeyValue, 2);
     TRY_USE_NATIVE_METHOD(FileLocalStore, removeKeyValue, 1);
+    TRY_USE_NATIVE_METHOD(FileLocalStore, removeAllKeyValues, 0);
+    TRY_USE_NATIVE_METHOD(FileLocalStore, getKeysList, 0);
 
     return NULL;
 }
@@ -165,6 +183,35 @@ StackSlot FileLocalStore::removeKeyValue(RUNNER_ARGS)
     } else remove(filename.c_str());
 
     RETVOID;
+}
+
+
+StackSlot FileLocalStore::removeAllKeyValues(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+    
+    if (base_path.empty()) RETVOID;
+    
+    KeysVector keys = getKeysList();
+    for (KeysVector::iterator it = keys.begin(); it != keys.end(); it++) {
+        std::string filename = base_path + *it;
+        remove(filename.c_str());
+    }
+    
+    RETVOID;
+}
+
+StackSlot FileLocalStore::getKeysList(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+    
+    KeysVector keys = getKeysList();
+    RUNNER_DefSlots1(list);
+    list = RUNNER->AllocateArray(keys.size());
+    for (KeysVector::iterator it = keys.begin(); it != keys.end(); it++)
+        RUNNER->SetArraySlot(list, it - keys.begin(), RUNNER->AllocateString(parseUtf8(*it)));
+    
+    return list;
 }
 
 bool endsWithAsterisk(std::string str)
