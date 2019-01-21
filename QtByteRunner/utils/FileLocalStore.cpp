@@ -79,9 +79,11 @@ KeysVector FileLocalStore::getKeysList()
     KeysVector files;
 #ifdef WIN32
     WIN32_FIND_DATAA FindFileData;
-    HANDLE hFind = FindFirstFileA(base_path, &FindFileData);
+    HANDLE hFind = FindFirstFileA((base_path + "*").c_str(), &FindFileData);
     while (hFind != INVALID_HANDLE_VALUE) {
-        files.push_back(FindFileData.cFileName);
+        if (!(FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            files.push_back(FindFileData.cFileName);
+
         if (!FindNextFileA(hFind, &FindFileData)) {
             FindClose(hFind);
             hFind = INVALID_HANDLE_VALUE;
