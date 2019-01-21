@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
-#include <dirent.h>
 
 #ifdef WIN32
 #include <io.h>
@@ -16,7 +15,8 @@
         #include <direct.h>
         #define mkdir _mkdir
     #endif
-
+#else
+#include <dirent.h>
 #endif
 
 std::string urlEscapePath(std::string path)
