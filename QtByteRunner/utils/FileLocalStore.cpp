@@ -77,6 +77,17 @@ std::string FileLocalStore::makePath(unicode_string key)
 KeysVector FileLocalStore::getKeysList()
 {
     KeysVector files;
+#ifdef WIN32
+    WIN32_FIND_DATAA FindFileData;
+    HANDLE hFind = FindFirstFileA(base_path, &FindFileData);
+    while (hFind != INVALID_HANDLE_VALUE) {
+        files.push_back(FindFileData.cFileName);
+        if (!FindNextFileA(hFind, &FindFileData)) {
+            FindClose(hFind);
+            hFind = INVALID_HANDLE_VALUE;
+        }
+    }
+#else
     DIR* storage = opendir(base_path.c_str());
     if (storage == NULL) return files;
     while(struct dirent * file = readdir(storage)) {
@@ -85,6 +96,7 @@ KeysVector FileLocalStore::getKeysList()
     }
     
     closedir(storage);
+#endif
     
     return files;
 }
