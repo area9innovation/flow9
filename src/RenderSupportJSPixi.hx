@@ -708,6 +708,9 @@ class RenderSupportJSPixi {
 		if (PixiRenderer.plugins != null) {
 			PixiRenderer.plugins.accessibility.destroy();
 			PixiRenderer.plugins.prepare.destroy();
+
+			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.accessibility");
+			untyped __js__("delete RenderSupportJSPixi.PixiRenderer.plugins.prepare");
 		}
 
 		// Destroy default pixi ticker
