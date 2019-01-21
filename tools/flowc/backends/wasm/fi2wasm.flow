@@ -292,18 +292,16 @@ overrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDec
 		natives2 = map(module.natives, \nat -> {
 			eitherMap(lookupTree(toplevels, nat.name), \fb -> {
 				switch (fb) {
-					FiFunctionDec(n, lambda, __, __, __): {
-						FiNativeDec(nat with fallbackLambda = lambda)
-					}
-					FiGlobalVar(name, value, type, declStart, defiStart): nat;
-					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): nat;
+					FiFunctionDec(__, lambda, __, __, __):
+						FiNativeDec(nat with fallbackLambda = lambda);
+					FiGlobalVar(__, __, __, __, __): nat;
+					FiNativeDec(__, __, __, __, __, __, __): nat;
 				}
 			}, nat)
 		});
 		FiModule(module with natives = natives2)
 	});
 }
-
 
 fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback : (bool) -> void) {
 	watfile = changeFileExt(cfg.outputfile, ".wat");
@@ -604,26 +602,20 @@ fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
 			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
 			module = if (length(nameComponents) > 2) nameComponents[1] else "runtime";
 			function = if (length(nameComponents) > 2) nameComponents[2] else nameComponents[1];
-			switch (nativeDec.decl.type) {
-				FiTypeFunction(args, returnType): {
-					Cons("(import \"" + module + "\" \"" + function + "\"" + 
-						fiWasmBuildFunctionDecl(name, fitype2wasmtype(wasmContext.globalNames, nativeDec.decl.type), 
-							false, true) 
-						+ "))\n", acc)
-				}
-				default: acc;
-			}
+			if (fiTypeIsFunction(nativeDec.decl.type)) {
+				Cons("(import \"" + module + "\" \"" + function + "\"" + 
+					fiWasmBuildFunctionDecl(name, fitype2wasmtype(wasmContext.globalNames, nativeDec.decl.type), 
+						false, true) 
+					+ "))\n", acc)
+			} else acc;
 		} else if (fiWasmIsPureNative(nativeDec.decl.nativeName) || fiWasmIsHostWNative(nativeDec.decl.nativeName)) {
 			// create an js wrapper here
 			module = "native";
 		
 			if (nativeDec.wrap.name != "") {
-				switch (nativeDec.decl.type) {
-					FiTypeFunction(args, returnType): {
-						Cons("(import \"" + module + "\" \"" + nativeDec.wrap.name + "\"" + nativeDec.wrap.decl + "))\n", acc)
-					}
-					default: acc;
-				}
+				if (fiTypeIsFunction(nativeDec.decl.type)) {
+					Cons("(import \"" + module + "\" \"" + nativeDec.wrap.name + "\"" + nativeDec.wrap.decl + "))\n", acc)
+				} else acc
 			} else acc;
 
 		} else acc;
@@ -690,35 +682,38 @@ fiSuppressNodeJsWarning(fn : string) {
 	}
 }
 
-iterProgramExpr(program : FiProgram, cb : (FiExp) -> void) -> void {
+iterProgramExpr(program : FiProgram, cb : (FiExp, FiExp, bool) -> void) -> void {
 	traverseInOrder(program.names.toplevel, \__, decl : FiDeclaration -> {
 		switch (decl) {
-			FiFunctionDec(__, lambda, __, __, __): iterFiExp(lambda, cb);
+			FiFunctionDec(__, lambda, __, __, __): iterFiExp(lambda, FiVoid(0), false, cb);
 			default: {}
 		}
 	});
 }
 
-iterFiExp(expr : FiExp, cb : (FiExp) -> void) -> void {
-	cb(expr);
-	rec = \ex -> iterFiExp(ex, cb);
+iterFiExp(expr : FiExp, parent : FiExp, b : bool, cb : (FiExp, FiExp, bool) -> void) -> void {
+	cb(expr, parent, b);
+	rec2 = \ex, bb -> iterFiExp(ex, expr, bb, cb);
+	rec = \ex -> rec2(ex, false);
 	switch (expr) {
-		FiBool(b, __): {}
-		FiInt(i, __): {}
-		FiVar(name, type, __): {}
+		FiBool(__, __): {}
+		FiInt(__, __): {}
+		FiVar(__, __, __): {}
 		FiString(s, __): {}
 		FiDouble(d, __): {}
 		FiVoid(__): {}
-		FiCall(__, args, __, __):
+		FiCall(f, args, __, __): {
+			rec2(f, true);
 			iter(args, rec);
+		}
 		FiSwitch(x, __, cases, __, __): {
-			cb(x); 
+			rec2(x, true); 
 			iter(cases, \c -> rec(c.body));
 		}
 		FiLambda(__, body, __, __): 
 			rec(body);
 		FiLet(__, __, e1, e2, __, __): {
-			rec(e1); rec(e2);
+			rec2(e1, true); rec(e2);
 		}
 		FiIf(e1, e2, e3, __, __): {
 			rec(e1); rec(e2); rec(e3);
@@ -736,39 +731,42 @@ iterFiExp(expr : FiExp, cb : (FiExp) -> void) -> void {
 	}
 }
 
+fiTypeIsFunction(t : FiType) {
+	switch (t) {
+		FiTypeFunction(__, __): true;
+		default: false;
+	}
+}
+
 fiWasmAddIndirectWrappers(program : FiProgram, flowfile : string) {
 	nativesToWrap = ref makeTree();
-	iterProgramExpr(program, \e : FiExp -> {
+	iterProgramExpr(program, \e : FiExp, parent : FiExp, isFirst : bool -> {
 		switch (e) {
-			FiCall(__, args, __, __): {
-				iter(args, \a -> {
-					switch (a) {
-						FiVar(n, t, __): {
-							switch (t) {
-								FiTypeFunction(__, __): {
-									switch (lookupTree(program.names.toplevel, n)) {
-										Some(d): {
-											switch (d) {
-												FiNativeDec(__, __, __, __, __, __, __): {
-													nativesToWrap := setTree(^nativesToWrap, n, d);
-												}
-												default: {}
-											}
-										}
-										None(): {}
-									}
+			FiVar(n, t, __): {
+				if (fiTypeIsFunction(t)) {
+					doWrap = switch (parent) {
+						FiCall(__, __, __, __): !isFirst;
+						FiLet(__, __, __, __, __, __): true;
+						default: false;
+					}
+					if (doWrap) switch (lookupTree(program.names.toplevel, n)) {
+						Some(d): {
+							switch (d) {
+								FiNativeDec(__, __, __, __, __, __, __): {
+									nativesToWrap := setTree(^nativesToWrap, n, d);
 								}
 								default: {}
 							}
 						}
-						default: {}
+						None(): {}
 					}
-				});
+				}
 			}
 			default: {}
 		}
 	});
 	funcs = map(getTreeValues(^nativesToWrap), \f -> {
+		// println("*** adding wrapper for " + f.name);
 		type0 = cast(f.type : FiType -> FiTypeFunction);
 		args = mapi(type0.args, \i, a -> FiFunArg("arg" + i2s(i), a.type));
 		type = FiTypeFunction(args, type0.returnType);
