@@ -807,6 +807,24 @@ class NativeHx {
 		#end
 	}
 
+	// Remove all stored key/value pairs.
+	public static function removeAllKeyValues() : Void {
+		#if js
+		removeAllKeyValuesJS(false);
+		#else
+		return;
+		#end
+	}
+
+	// Get list of stored keys.
+	public static function getKeysList() : Array<String> {
+		#if js
+		return getKeysListJS(false);
+		#else
+		return [];
+		#end
+	}
+
 	// Save a session key/value pair. Persistent on the client for the duration of the session
 	public static function setSessionKeyValue(k : String, v : String) : Bool {
 		#if js
@@ -929,6 +947,25 @@ class NativeHx {
 			} else storage.removeItem(key);
 		} catch (e : Dynamic) {
 			Errors.report("Cannot remove key \"" + key + "\": " + e);
+		}
+	}
+
+	public static function removeAllKeyValuesJS(session : Bool) : Void {
+		try {
+			var storage = session? untyped sessionStorage : untyped localStorage;
+			storage.clear();
+		} catch (e : Dynamic) {
+			Errors.report("Cannot clear storage: " + e);
+		}
+	}
+
+	public static function getKeysListJS(session : Bool) : Array<String> {
+		try {
+			var storage = session? untyped sessionStorage : untyped localStorage;
+			return untyped Object.keys(storage);
+		} catch (e : Dynamic) {
+			Errors.report("Cannot get keys list: " + e);
+			return [];
 		}
 	}
 	#end

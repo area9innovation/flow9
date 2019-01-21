@@ -1293,6 +1293,8 @@ private:
     static StackSlot failWithError(ByteCodeRunner*,StackSlot*);
     static StackSlot setKeyValue(ByteCodeRunner*,StackSlot*);
     static StackSlot getKeyValue(ByteCodeRunner*,StackSlot*);
+    static StackSlot removeAllKeyValues(ByteCodeRunner*,StackSlot*);
+    static StackSlot getKeysList(ByteCodeRunner*,StackSlot*);
     static StackSlot removeKeyValue(ByteCodeRunner*,StackSlot*);
     static StackSlot enumFromTo(ByteCodeRunner*,StackSlot*);
     static StackSlot toLowerCase(ByteCodeRunner*,StackSlot*);
