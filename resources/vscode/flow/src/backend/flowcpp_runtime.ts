@@ -1,4 +1,4 @@
-import { BackendBreakpoint, IBackend, Stack, Variable, VariableObject, MIError } from "./backend"
+import { BackendBreakpoint, Stack, Variable, VariableObject, MIError } from "./backend"
 import * as ChildProcess from "child_process"
 import { EventEmitter } from "events"
 import { parseMI, MINode } from './mi_parse';
@@ -29,7 +29,7 @@ enum ProcessState {
 	Running
 };
 
-export class MI2 extends EventEmitter implements IBackend {
+export class MI2 extends EventEmitter {
 	constructor(public application: string, debug : boolean, public preargs: string[], public extraargs: string[], procEnv: any) {
 		super();
 
