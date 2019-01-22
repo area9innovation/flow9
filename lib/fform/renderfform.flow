@@ -4,7 +4,7 @@ import form/renderform;
 import formats/svg/svg;
 
 export {
-	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>, zorder : Maybe<int>) -> (() -> void);
+	frender : (form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void);
 	renderFForm(rform : FForm, zorder : [int]) -> FRenderResult;
 
 	// Override to set custom stage wh
@@ -14,26 +14,14 @@ export {
 
 currentFFormCount = ref 0;
 
-frender(form : FForm, awh : DynamicBehaviour<WidthHeight>, zorder : Maybe<int>) -> (() -> void) {
-	renCt =
-		eitherFn(
-			zorder,
-			idfn,
-			\ -> {
-				renCt = either(maxA(^globalRenderStack), -1) + 1;
-				globalRenderStack := arrayPush(^globalRenderStack, renCt);
-				renCt;
-			}
-		);
+frender(form : FForm, awh : DynamicBehaviour<WidthHeight>) -> (() -> void) {
+	renCt = ^globalRenderCount;
+	globalRenderCount := ^globalRenderCount + 1;
 
 	d1 = monitorFResize(awh);
-	d2 = optimizeAndRenderFFormAt(currentClip(), form, [renCt], either(findi(^globalRenderStack, \v -> v == renCt), length(^globalRenderStack)));
+	d2 = optimizeAndRenderFForm(currentClip(), form, [renCt]);
 
-	\ -> {
-		d1();
-		applyall(d2.disposers);
-		globalRenderStack := removeFirst(^globalRenderStack, renCt);
-	}
+	\ -> {d1(); applyall(d2.disposers); if (renCt == ^globalRenderCount - 1) globalRenderCount := renCt}
 }
 
 monitorFResize(awh : DynamicBehaviour<WidthHeight>) -> () -> void {
@@ -198,6 +186,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 
 				decreaseFFilesCount = increaseFFilesCount();
 				url = applyMediaPathMapping(url_);
+				clipalive = ref true;
 
 				iter(style, \s ->
 					switch (s : PictureStyle) {
@@ -226,28 +215,38 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							[],
 							[],
 							\d -> {
-								form = svgString2Form(d, []);
-								formWH = getStaticFormSize(form) |> (\fm -> WidthHeight(fm.width, fm.height));
+								if (^clipalive) {
+									form = svgString2Form(d, []);
+									formWH = getStaticFormSize(form) |> (\fm -> WidthHeight(fm.width, fm.height));
 
-								iter(renderFForm(form |> form2fform |> optimizeFForm, zorder).clips, \c -> addChild(container, c));
+									iter(renderFForm(form |> form2fform |> optimizeFForm, zorder).clips, \c -> addChild(container, c));
 
-								CachedPicturesSizes := setTree(^CachedPicturesSizes, url, formWH);
-								nextDistinct(wh, formWH);
+									CachedPicturesSizes := setTree(^CachedPicturesSizes, url, formWH);
+									nextDistinct(wh, formWH);
 
-								decreaseFFilesCount();
+									decreaseFFilesCount();
 
-								^onLoaded();
+									^onLoaded();
+								} else {
+									decreaseFFilesCount();
+								}
 							},
 							\er -> {
-								e = "Cannot load " + url + " " + er;
+								if (^clipalive) {
+									e = "Cannot load " + url + " " + er;
 
-								CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
-								nextDistinct(wh, zeroWH);
+									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+									nextDistinct(wh, zeroWH);
 
-								^picErrorHandler(e);
-								decreaseFFilesCount();
+									^picErrorHandler(e);
+									decreaseFFilesCount();
 
-								println(e);
+									println(e);
+								} else {
+									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
+
+									decreaseFFilesCount();
+								}
 							},
 							\s -> {}
 						);
@@ -285,6 +284,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 					[picture],
 					[
 						\ -> {
+							clipalive := false;
 							//Decrease loading files count if Form is closed until onOK or onError has happened.
 							decreaseFFilesCount();
 							deleteNative(picture);
