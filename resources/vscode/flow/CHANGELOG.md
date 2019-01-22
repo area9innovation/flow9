@@ -102,3 +102,6 @@
 
 ## 0.2.6
  - make find definition use folder with nearest flow.config as cwd
+
+## 0.3.0
+ - enable structured variable support in debugger
