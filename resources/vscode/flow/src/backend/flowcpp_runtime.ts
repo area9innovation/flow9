@@ -459,7 +459,7 @@ export class MI2 extends EventEmitter implements IBackend {
 	async varCreate(expression: string, name: string = "-"): Promise<VariableObject> {
 		if (trace)
 			this.log("stderr", "varCreate");
-		const res = await this.sendCommand(`var-create ${name} @ "${expression}"`);
+		const res = await this.sendCommand(`var-create ${name} * "${expression}"`);
 		return new VariableObject(res.result(""));
 	}
 
@@ -484,6 +484,12 @@ export class MI2 extends EventEmitter implements IBackend {
 			this.log("stderr", "varAssign");
 		return this.sendCommand(`var-assign ${name} ${rawValue}`);
 	}
+
+	async varDelete(name: string): Promise<MINode> {
+		if (trace)
+			this.log("stderr", "varAssign");
+		return this.sendCommand(`var-delete ${name}`);
+	}	
 
 	logNoNewLine(type: string, msg: string) {
 		this.emit("msg", type, msg);

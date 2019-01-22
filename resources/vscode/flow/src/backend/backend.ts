@@ -95,7 +95,8 @@ export class VariableObject {
 			evaluateName: this.name,
 			value: (this.value === void 0) ? "<unknown>" : this.value,
 			type: this.type,
-			presentationHint: { kind: this.displayhint, attributes: ["readOnly"]},
+			namedVariables: this.numchild,
+			//presentationHint: { kind: this.displayhint, attributes: ["readOnly"]},
 			variablesReference: this.id
 		};
 		return res;
