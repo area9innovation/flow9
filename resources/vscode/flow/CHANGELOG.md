@@ -108,3 +108,9 @@
 
 ## 0.3.1
  - make debugger return all stack frames, not first 20
+
+## 0.3.2
+ - separate scopes for Arguments and Locals
+ - frame navigation works 
+ - older unused code removed
+ - watch expressions work
