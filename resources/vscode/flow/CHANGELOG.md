@@ -105,3 +105,6 @@
 
 ## 0.3.0
  - enable structured variable support in debugger
+
+## 0.3.1
+ - make debugger return all stack frames, not first 20

@@ -242,7 +242,9 @@ export class FlowDebugSession extends LoggingDebugSession {
 	}
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-		this.miDebugger.getStack(args.levels).then(async stack => {
+		// ignore requested stack depth and return the entire stack all the time - flowcpp does not have a way to
+		// give the number of stack frames without actually listing them all
+		this.miDebugger.getStack(0).then(async stack => {
 			let ret: StackFrame[] = stack.map(element => {
 				let file = element.file;
 				if (file) {
