@@ -12,6 +12,11 @@ process.on("unhandledRejection", (error) => {
 	throw error; // Following best practices re-throw error and let the process exit with error code
 });
 
+process.on("uncaughtException", (error) => {
+	console.error(error); // This prints error with stack included (as for normal errors)
+	throw error; // Following best practices re-throw error and let the process exit with error code
+});
+
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	cwd: string;
 	target: string;
@@ -32,7 +37,7 @@ export class FlowDebugSession extends LoggingDebugSession {
 	protected variableHandles = new Handles<string | VariableObject>(VAR_HANDLES_START);
 	protected variableHandlesReverse: { [id: string]: number } = {};
 	protected StackFrames: Stack[] = [];
-	protected useVarObjects: boolean = false;
+	protected useVarObjects: boolean = true;
 	protected quit: boolean;
 	protected needContinue: boolean;
 	protected started: boolean;
@@ -41,6 +46,11 @@ export class FlowDebugSession extends LoggingDebugSession {
 	protected miDebugger: MI2;
 	protected threadID: number = 1;
 	protected debug : boolean;
+
+	private resetHandleMaps() {
+		this.variableHandles = new Handles<string | VariableObject>(VAR_HANDLES_START);
+		this.variableHandlesReverse = {};
+	}
 
 	public constructor(debuggerLinesStartAt1: boolean, isServer: boolean = false, threadID: number = 1) {
 		super("flow-debug.txt", debuggerLinesStartAt1, isServer);
@@ -223,9 +233,18 @@ export class FlowDebugSession extends LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
+	// performs deep compare of two stacks
+	private compareStacks(s1: Stack[], s2: Stack[]) {
+		return (null == s1 && null == s2) || 
+			(s1 && s2 && s1.length == s2.length && s1.reduce(
+				(acc, s, i) => acc && (s.address == s2[i].address), 
+				true));
+	}
+
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-		this.miDebugger.getStack(args.levels).then(stack => {
-			this.StackFrames = stack;
+		// ignore requested stack depth and return the entire stack all the time - flowcpp does not have a way to
+		// give the number of stack frames without actually listing them all
+		this.miDebugger.getStack(0).then(async stack => {
 			let ret: StackFrame[] = stack.map(element => {
 				let file = element.file;
 				if (file) {
@@ -239,6 +258,18 @@ export class FlowDebugSession extends LoggingDebugSession {
 				else
 					return new StackFrame(element.level, element.function + "@" + element.address, null, element.line, 0);
 			});
+			// if changing stack frames, reset all var handles
+			if (!this.compareStacks(this.StackFrames, stack)) {
+				for (let varName in this.variableHandlesReverse) {
+					try {
+						await this.miDebugger.varDelete(varName);
+					} catch {
+						// it might crash with variable not existing - this is OK
+					}
+				}
+				this.resetHandleMaps();
+			}
+			this.StackFrames = stack;
 			response.body = {
 				stackFrames: ret
 			};
