@@ -97,5 +97,11 @@
 ## 0.2.4
  - fixed debugger for multiple stack arguments
 
-##
+## 0.2.5
  - additional diagnostics for find-definition, less verbose for others
+
+## 0.2.6
+ - make find definition use folder with nearest flow.config as cwd
+
+## 0.3.0
+ - enable structured variable support in debugger

@@ -1,4 +1,4 @@
-import { BackendBreakpoint, IBackend, Stack, Variable, VariableObject, MIError } from "./backend"
+import { BackendBreakpoint, Stack, Variable, VariableObject, MIError } from "./backend"
 import * as ChildProcess from "child_process"
 import { EventEmitter } from "events"
 import { parseMI, MINode } from './mi_parse';
@@ -29,7 +29,7 @@ enum ProcessState {
 	Running
 };
 
-export class MI2 extends EventEmitter implements IBackend {
+export class MI2 extends EventEmitter {
 	constructor(public application: string, debug : boolean, public preargs: string[], public extraargs: string[], procEnv: any) {
 		super();
 
@@ -459,7 +459,7 @@ export class MI2 extends EventEmitter implements IBackend {
 	async varCreate(expression: string, name: string = "-"): Promise<VariableObject> {
 		if (trace)
 			this.log("stderr", "varCreate");
-		const res = await this.sendCommand(`var-create ${name} @ "${expression}"`);
+		const res = await this.sendCommand(`var-create ${name} * "${expression}"`);
 		return new VariableObject(res.result(""));
 	}
 
@@ -484,6 +484,12 @@ export class MI2 extends EventEmitter implements IBackend {
 			this.log("stderr", "varAssign");
 		return this.sendCommand(`var-assign ${name} ${rawValue}`);
 	}
+
+	async varDelete(name: string): Promise<MINode> {
+		if (trace)
+			this.log("stderr", "varAssign");
+		return this.sendCommand(`var-delete ${name}`);
+	}	
 
 	logNoNewLine(type: string, msg: string) {
 		this.emit("msg", type, msg);
