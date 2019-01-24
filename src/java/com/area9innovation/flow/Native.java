@@ -9,6 +9,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.nio.file.InvalidPathException;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
@@ -237,7 +238,7 @@ public class Native extends NativeHost {
 			Object[] struct_fields = s.getFields();
 			RuntimeType[] field_types = s.getFieldTypes();
 			int fields_count = struct_fields.length;
-			
+
 			int struct_idx = 0;
 			if (structIdxs.containsKey(struct_id)) {
 				struct_idx = structIdxs.get(struct_id);
@@ -246,10 +247,10 @@ public class Native extends NativeHost {
 				structIdxs.put(struct_id, struct_idx);
 				structDefs.add(s);
 			}
-			
+
 			writeCharValue(0xFFF4, buf);
 			writeCharValue(struct_idx, buf);
-			
+
 			for (int i=0; i < fields_count; ++i)  {
 				writeBinaryValue(struct_fields[i], buf, structIdxs, structDefs);
 			}
@@ -315,7 +316,7 @@ public class Native extends NativeHost {
 		}
 		return len;
 	}
-	
+
 	public final boolean isArray(Object obj) {
 		return FlowRuntime.isArray(obj);
 	}
@@ -360,7 +361,7 @@ public class Native extends NativeHost {
 		return -1;
 	}
 
-	public final String substring(String str, int start, int len) {	
+	public final String substring(String str, int start, int len) {
 		int strlen = str.length();
 		if (len < 0) {
 			if (start < 0) len = 0;
@@ -381,11 +382,11 @@ public class Native extends NativeHost {
 		} else if (start >= strlen) {
 			len = 0;
 		}
-		
+
 		if (len < 1) return "";
-		
+
 		len = clipLenToRange(start, len, strlen);
-		
+
 		return str.substring(start, start + len);
 	}
 
@@ -775,7 +776,7 @@ public class Native extends NativeHost {
 
 	public Object[][] getAllUrlParameters() {
 		String[] args = runtime.getUrlArgs();
-		
+
 		Object[][] parameters = new Object[args.length][2];
 
 		for (int i = 0; i < args.length; i++) {
@@ -923,7 +924,8 @@ public class Native extends NativeHost {
 		try {
 		    byte[] bytes = Files.readAllBytes(Paths.get(name));
 			result = utf82string(bytes);
-		} catch( IOException e ) {
+		} catch (IOException e) {
+		} catch (InvalidPathException e) {
 		}
 		return result;
 	}
@@ -1145,7 +1147,7 @@ public class Native extends NativeHost {
 	}
     }
 
-    public final Object runProcess(String command, Object[] args, String currentWorkingDirectory, 
+    public final Object runProcess(String command, Object[] args, String currentWorkingDirectory,
     				Func1<Object, String> onstdout, Func1<Object, String> onstderr, Func1<Object, String> onExit) {
     	return null;
     }
