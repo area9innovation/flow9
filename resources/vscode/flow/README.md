@@ -28,6 +28,15 @@ Install these extensions by clicking extentions in the sidebar, and typing these
 
 Be sure to click the "Spaces: 4" area in the bottom and change to use indentation by Tabs with size 4.
 
+To change the tabs and line endings globally, use the following settings:
+```
+        "editor.detectIndentation": false,
+        "editor.tabSize" : 4,
+        "files.eol": "\n" 
+```
+You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
+Using VS Code Settings UI has the same effect.
+
 ## COMMON USAGE
 
 See if there is a `*.code-workspace` file in your project, and then open that. There might also be a
@@ -76,7 +85,8 @@ customize the arguments given to flowcpp when running or debugging (i.e. screen 
     2. Choose `Tasks -> Configure Tasks` - it will create `tasks.json` (choose external program if asked to)
     3. Copy task definition from the `tasks.json` file next to this README to your tasks.json
     4. You might want to change your tasks - i.e. always pass a single file to compile - self-explanatory how to do
-* Debugging support - limited now, but breakpoints and variables (simple) are supported. To debug a program:
+* Debugging support - limited now, but breakpoints, call stack, and variables (including structured)
+are supported. To debug a program:
     1. Open a folder in VS Code - it will make it a workspace
     2. Choose `Debug -> Add Configuration...` - it will create a `launch.json` and let you choose a template to use
     3. Choose `Flow: Debug Program`
