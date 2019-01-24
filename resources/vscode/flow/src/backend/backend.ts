@@ -11,7 +11,7 @@ export interface BackendBreakpoint {
 
 export interface Variable {
 	name: string;
-	valueStr: string;
+	valueStr?: string;
 	type?: string;
 	raw?: any;
 }
@@ -71,7 +71,7 @@ export class VariableObject {
 	public toProtocolVariable(): DebugProtocol.Variable {
 		let res: DebugProtocol.Variable = {
 			name: this.exp,
-			evaluateName: this.name,
+			evaluateName: this.exp,
 			value: (this.value === void 0) ? "<unknown>" : this.value,
 			type: this.type,
 			namedVariables: this.numchild,
