@@ -818,9 +818,6 @@ unicode_string recognizeBuiltinFont(unicode_string name) {
     if (startsWith(name, parseUtf8("Material Icons"))) {
         r = parseUtf8("MaterialIcons");
     }
-    else if (startsWith(name, parseUtf8("DejaVu Sans"))) {
-        r = parseUtf8("DejaVuSans");
-    }
     else {
         unicode_string tail = name.substr(tpos);
         if (startsWith(name, parseUtf8("Franklin Gothic"))) r = tail;
