@@ -59,6 +59,9 @@ class FontLoader {
 		if (!Platform.isIOS) return;
 
 		var fontList = Reflect.field(Reflect.field(config, "google"), "families");
+		if (fontList == null)
+			return;
+		
 		for (i in 0...fontList.length) {
 			var font = untyped fontList[i];
 			var parts : Array<String> = font.split(":");

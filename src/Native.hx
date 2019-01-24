@@ -875,6 +875,16 @@ class Native {
 		return ConstantVoid(pos);
 	}
 
+	public function removeAllKeyValues(args : FlowArray<Flow>, pos : Position) : Flow {
+		throw "removeAllKeyValues: This operation is not supported on this target";
+		return ConstantVoid(pos);
+	}
+
+	public function getAllKeys(args : FlowArray<Flow>, pos : Position) : Flow {
+		throw "removeAllKeyValues: This operation is not supported on this target";
+		return ConstantArray([], pos);
+	}
+
 	public function setSessionKeyValue(args : FlowArray<Flow>, pos : Position) : Flow {
 		var key = FlowUtil.getString(args[0]);
 		var value = FlowUtil.getString(args[1]);

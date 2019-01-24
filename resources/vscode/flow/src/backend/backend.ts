@@ -11,7 +11,7 @@ export interface BackendBreakpoint {
 
 export interface Variable {
 	name: string;
-	valueStr: string;
+	valueStr?: string;
 	type?: string;
 	raw?: any;
 }
@@ -24,27 +24,6 @@ export interface Stack {
 	file: string;
 	line: number;
 	args: Variable[]; 
-}
-
-export interface IBackend {
-	load(cwd: string, target: string, procArgs: string, separateConsole: string): Thenable<any>;
-	start(): Thenable<boolean>;
-	stop();
-	interrupt(): Thenable<boolean>;
-	continue(): Thenable<boolean>;
-	next(): Thenable<boolean>;
-	step(): Thenable<boolean>;
-	stepOut(): Thenable<boolean>;
-	loadBreakPoints(breakpoints: BackendBreakpoint[]): Thenable<[boolean, BackendBreakpoint][]>;
-	addBreakPoint(breakpoint: BackendBreakpoint): Thenable<[boolean, BackendBreakpoint]>;
-	removeBreakPoint(breakpoint: BackendBreakpoint): Thenable<boolean>;
-	clearBreakPoints(): Thenable<any>;
-	getStack(maxLevels: number): Thenable<Stack[]>;
-	getStackVariables(thread: number, frame: number): Thenable<Variable[]>;
-	evalExpression(name: string): Thenable<any>;
-	isReady(): boolean;
-	isRunning(): boolean;
-	changeVariable(name: string, rawValue: string): Thenable<any>;
 }
 
 export class VariableObject {
@@ -92,10 +71,11 @@ export class VariableObject {
 	public toProtocolVariable(): DebugProtocol.Variable {
 		let res: DebugProtocol.Variable = {
 			name: this.exp,
-			evaluateName: this.name,
+			evaluateName: this.exp,
 			value: (this.value === void 0) ? "<unknown>" : this.value,
 			type: this.type,
-			presentationHint: { kind: this.displayhint, attributes: ["readOnly"]},
+			namedVariables: this.numchild,
+			//presentationHint: { kind: this.displayhint, attributes: ["readOnly"]},
 			variablesReference: this.id
 		};
 		return res;

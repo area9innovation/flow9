@@ -1,4 +1,4 @@
-import { BackendBreakpoint, IBackend, Stack, Variable, VariableObject, MIError } from "./backend"
+import { BackendBreakpoint, Stack, Variable, VariableObject, MIError } from "./backend"
 import * as ChildProcess from "child_process"
 import { EventEmitter } from "events"
 import { parseMI, MINode } from './mi_parse';
@@ -29,7 +29,7 @@ enum ProcessState {
 	Running
 };
 
-export class MI2 extends EventEmitter implements IBackend {
+export class MI2 extends EventEmitter {
 	constructor(public application: string, debug : boolean, public preargs: string[], public extraargs: string[], procEnv: any) {
 		super();
 
@@ -431,35 +431,34 @@ export class MI2 extends EventEmitter implements IBackend {
 		return this.sendCommand("var-show-attributes " + name);
 	}
 
-	async getStackVariables(thread: number, frame: number): Promise<Variable[]> {
+	async getStackVariables(thread: number, frame: number, argsOnly : boolean): Promise<Variable[]> {
 		if (trace)
 			this.log("stderr", "getStackVariables");
 
 		const selectRes = await this.sendCommand(`stack-select-frame ${frame}`);
-		const localsResult = await this.sendCommand("stack-list-locals");
-		const stackInfo = await this.sendCommand("stack-info-frame");
-		const locals: any[] = localsResult.result("locals");
-		// 1. args - they are returned with values, wrapping into Variable
-		const argsRaw: any[] = MINode.valueOf(stackInfo.result("frame"), "args") || [];
-		const args = argsRaw.map(a => 
-			({name : MINode.valueOf(a, "name"), valueStr : MINode.valueOf(a, "value")}));
-		// 2. locals - we only get names, so need to get values later
-		const varNamesRaw: any = MINode.valueOf(locals, "name") || [];
-		const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
-		// 3.1 Getting local values - this is async. 
-		const varPromises = varNames.map(async n => 
-			({ name : n, valueStr: (await this.evalExpression(n)).result("value") })
-		);
-		// 3.2 wrapping args values into promises that return immediately
-		const argsPromises = args.map(a => Promise.resolve(a));
-		// 4. wait and return all
-		return Promise.all(varPromises.concat(argsPromises));
+		
+		if (argsOnly) {
+			const stackInfo = await this.sendCommand("stack-info-frame");
+			// args - they are returned with values, wrapping into Variable
+			const argsRaw: any[] = MINode.valueOf(stackInfo.result("frame"), "args") || [];
+			const args = argsRaw.map(a => 
+				({name : MINode.valueOf(a, "name"), valueStr : MINode.valueOf(a, "value")}));
+			return args; 
+		} else {
+			const localsResult = await this.sendCommand("stack-list-locals");
+			const locals: any[] = localsResult.result("locals");
+			// locals - we only get names - but we do not actually need values 
+			const varNamesRaw: any = MINode.valueOf(locals, "name") || [];
+			const varNames: string[] = typeof(varNamesRaw) == "string" ? [varNamesRaw] : varNamesRaw;
+			
+			return varNames.map(a => ({ name : a}));
+		}
 	}
 
-	async varCreate(expression: string, name: string = "-"): Promise<VariableObject> {
+	async varCreate(expression: string, frameNum : number, name: string = "-"): Promise<VariableObject> {
 		if (trace)
 			this.log("stderr", "varCreate");
-		const res = await this.sendCommand(`var-create ${name} @ "${expression}"`);
+		const res = await this.sendCommand(`var-create ${name} ${frameNum} "${expression}"`);
 		return new VariableObject(res.result(""));
 	}
 
@@ -484,6 +483,12 @@ export class MI2 extends EventEmitter implements IBackend {
 			this.log("stderr", "varAssign");
 		return this.sendCommand(`var-assign ${name} ${rawValue}`);
 	}
+
+	async varDelete(name: string): Promise<MINode> {
+		if (trace)
+			this.log("stderr", "varAssign");
+		return this.sendCommand(`var-delete ${name}`);
+	}	
 
 	logNoNewLine(type: string, msg: string) {
 		this.emit("msg", type, msg);

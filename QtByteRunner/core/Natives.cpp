@@ -737,6 +737,19 @@ StackSlot ByteCodeRunner::getKeyValue(RUNNER_ARGS)
 
 StackSlot ByteCodeRunner::removeKeyValue(RUNNER_ARGS)
 {
+    IGNORE_RUNNER_ARGS;
+    RETVOID;
+}
+
+StackSlot ByteCodeRunner::removeAllKeyValues(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+    RETVOID;
+}
+
+StackSlot ByteCodeRunner::getKeysList(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
     RETVOID;
 }
 

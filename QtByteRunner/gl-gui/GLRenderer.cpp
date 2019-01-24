@@ -337,7 +337,7 @@ void GLRenderer::beginDrawFont(float radius)
 
 void GLRenderer::beginFilter(GLDrawSurface *main, GLDrawSurface *mask)
 {
-    assert(!mask || main->isCompatible(mask));
+    //assert(!mask || main->isCompatible(mask));
 
     main->bindToTexture(GL_TEXTURE0);
     if (mask)

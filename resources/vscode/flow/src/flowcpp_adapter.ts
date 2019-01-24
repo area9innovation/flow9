@@ -12,6 +12,11 @@ process.on("unhandledRejection", (error) => {
 	throw error; // Following best practices re-throw error and let the process exit with error code
 });
 
+process.on("uncaughtException", (error) => {
+	console.error(error); // This prints error with stack included (as for normal errors)
+	throw error; // Following best practices re-throw error and let the process exit with error code
+});
+
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	cwd: string;
 	target: string;
@@ -25,13 +30,16 @@ export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArgum
 	compiler: string;
 }
 
+// this is used to for stack handles - IDs for stack frames are within (0, 1000)
 const STACK_HANDLES_START = 1000;
+// this is used for variables
 const VAR_HANDLES_START = 2000;
 
 export class FlowDebugSession extends LoggingDebugSession {
-	protected variableHandles = new Handles<string | VariableObject>(VAR_HANDLES_START);
+	protected variableHandles = new Handles<VariableObject>(VAR_HANDLES_START);
 	protected variableHandlesReverse: { [id: string]: number } = {};
 	protected StackFrames: Stack[] = [];
+	protected useVarObjects: boolean = true;
 	protected quit: boolean;
 	protected needContinue: boolean;
 	protected started: boolean;
@@ -40,6 +48,11 @@ export class FlowDebugSession extends LoggingDebugSession {
 	protected miDebugger: MI2;
 	protected threadID: number = 1;
 	protected debug : boolean;
+
+	private resetHandleMaps() {
+		this.variableHandles = new Handles<VariableObject>(VAR_HANDLES_START);
+		this.variableHandlesReverse = {};
+	}
 
 	public constructor(debuggerLinesStartAt1: boolean, isServer: boolean = false, threadID: number = 1) {
 		super("flow-debug.txt", debuggerLinesStartAt1, isServer);
@@ -51,7 +64,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 		response.body.supportsConfigurationDoneRequest = true;
 		response.body.supportsConditionalBreakpoints = true;
 		response.body.supportsFunctionBreakpoints = true;
-		response.body.supportsEvaluateForHovers = true;
+        response.body.supportsEvaluateForHovers = true;
+        response.body.supportsDelayedStackTraceLoading = false;
 		//response.body.supportsSetVariable = true;
 		this.sendResponse(response);
 	}
@@ -113,7 +127,8 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 		this.debug = !args.noDebug;
 
-		let compiler = args.compiler || "flowcompiler";
+        // defaults to flowc
+		let compiler = args.compiler || "flowc";
 
 		this.miDebugger = new MI2(args.runner_path || "flowcpp", this.debug,
 			[this.getCompilerSwitch(compiler)], [args.debugger_args], args.env);
@@ -154,10 +169,24 @@ export class FlowDebugSession extends LoggingDebugSession {
 
 	protected async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
 		try {
-			await this.miDebugger.changeVariable(args.name, args.value);
-			response.body = {
-				value: args.value
-			};
+			if (this.useVarObjects) {
+				let name = args.name;
+				if (args.variablesReference >= VAR_HANDLES_START) {
+					const parent = this.variableHandles.get(args.variablesReference) as VariableObject;
+					name = `${parent.name}.${name}`;
+				}
+
+				let res = await this.miDebugger.varAssign(name, args.value);
+				response.body = {
+					value: res.result("value")
+				};
+			}
+			else {
+				await this.miDebugger.changeVariable(args.name, args.value);
+				response.body = {
+					value: args.value
+				};
+			}
 			this.sendResponse(response);
 		}
 		catch (err) {
@@ -208,9 +237,18 @@ export class FlowDebugSession extends LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
+	// performs deep compare of two stacks
+	private compareStacks(s1: Stack[], s2: Stack[]) {
+		return (null == s1 && null == s2) || 
+			(s1 && s2 && s1.length == s2.length && s1.reduce(
+				(acc, s, i) => acc && (s.address == s2[i].address), 
+				true));
+	}
+
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-		this.miDebugger.getStack(args.levels).then(stack => {
-			this.StackFrames = stack;
+		// ignore requested stack depth and return the entire stack all the time - flowcpp does not have a way to
+		// give the number of stack frames without actually listing them all
+		this.miDebugger.getStack(0).then(async stack => {
 			let ret: StackFrame[] = stack.map(element => {
 				let file = element.file;
 				if (file) {
@@ -224,6 +262,18 @@ export class FlowDebugSession extends LoggingDebugSession {
 				else
 					return new StackFrame(element.level, element.function + "@" + element.address, null, element.line, 0);
 			});
+			// if changing stack frames, reset all var handles
+			if (!this.compareStacks(this.StackFrames, stack)) {
+				for (let varName in this.variableHandlesReverse) {
+					try {
+						await this.miDebugger.varDelete(varName);
+					} catch {
+						// it might crash with variable not existing - this is OK
+					}
+				}
+				this.resetHandleMaps();
+			}
+			this.StackFrames = stack;
 			response.body = {
 				stackFrames: ret
 			};
@@ -241,65 +291,80 @@ export class FlowDebugSession extends LoggingDebugSession {
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
+		// 2 handles - one for args, one for locals
+		const stackHandle = STACK_HANDLES_START + (parseInt(args.frameId as any) || 0) * 2; 
 		response.body = {
-			scopes: [new Scope("Local", STACK_HANDLES_START + (parseInt(args.frameId as any) || 0), false)]
+			scopes: [
+				new Scope("Locals", stackHandle + 1, false),			
+				new Scope("Arguments",  stackHandle, false),
+			]
 		};
 		this.sendResponse(response);
-	}
+    }
+    
+    private createVariable(arg) { 
+        return this.variableHandles.create(arg);
+    }
 
-	protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
+    private findOrCreateVariable(varObj: VariableObject): number {
+        let id: number;
+        if (this.variableHandlesReverse.hasOwnProperty(varObj.name)) {
+            id = this.variableHandlesReverse[varObj.name];
+        }
+        else {
+            id = this.createVariable(varObj);
+            this.variableHandlesReverse[varObj.name] = id;
+        }
+        return varObj.isCompound() ? id : 0;
+    };
+
+    protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
 		const variables: DebugProtocol.Variable[] = [];
-		let id: number | string | VariableObject;
-		if (args.variablesReference < VAR_HANDLES_START) {
-			id = args.variablesReference - STACK_HANDLES_START;
-		}
-		else {
-			id = this.variableHandles.get(args.variablesReference);
-		}
 
-		let createVariable = (arg) => {
-			return this.variableHandles.create(arg);
-		};
-
-		let findOrCreateVariable = (varObj: VariableObject): number => {
-			let id: number;
-			if (this.variableHandlesReverse.hasOwnProperty(varObj.name)) {
-				id = this.variableHandlesReverse[varObj.name];
-			}
-			else {
-				id = createVariable(varObj);
-				this.variableHandlesReverse[varObj.name] = id;
-			}
-			return varObj.isCompound() ? id : 0;
-		};
-
-		if (typeof id == "number") {
+        if (args.variablesReference < VAR_HANDLES_START) {
+			const id = args.variablesReference - STACK_HANDLES_START;
 			let stack: Variable[];
 			try {
-				stack = await this.miDebugger.getStackVariables(this.threadID, id);
+				const args = id % 2 == 0;
+				const frameNum = Math.floor(id / 2);
+				stack = await this.miDebugger.getStackVariables(this.threadID, frameNum, args);
 				for (const variable of stack) {
-					if (variable.valueStr !== undefined) {
-						let expanded = expandValue(createVariable, `{${variable.name}=${variable.valueStr}}`, "", variable.raw);
-						if (expanded) {
-							if (typeof expanded[0] == "string")
-								expanded = [
-									{
-										name: "<value>",
-										value: prettyStringArray(expanded),
-										variablesReference: 0
-									}
-								];
-								expanded[0].presentationHint = { attributes : [ "readOnly" ] };
-							variables.push(expanded[0]);
+					if (this.useVarObjects) {
+						try {
+							let varObjName = `var_${frameNum}_${variable.name}`;
+							let varObj: VariableObject;
+							try {
+								const changes = await this.miDebugger.varUpdate(varObjName);
+								const changelist = changes.result("changelist");
+								changelist.forEach((change) => {
+									const vId = this.variableHandlesReverse[varObjName];
+									const v = this.variableHandles.get(vId) as any;
+									v.applyChanges(change);
+								});
+								const varId = this.variableHandlesReverse[varObjName];
+								varObj = this.variableHandles.get(varId) as any;
+							}
+							catch (err) {
+								if (err instanceof MIError && err.message.startsWith("No such var:")) {
+									varObj = await this.miDebugger.varCreate(variable.name, frameNum, varObjName);
+									const varId = this.findOrCreateVariable(varObj);
+									varObj.exp = variable.name;
+									varObj.id = varId;
+								}
+								else {
+									throw err;
+								}
+							}
+							variables.push(varObj.toProtocolVariable());
 						}
-					} else
-						variables.push({
-							name: variable.name,
-							type: variable.type,
-							value: "<unknown>",
-							presentationHint: { attributes: ["readOnly"]},
-							variablesReference: createVariable(variable.name)
-						});
+						catch (err) {
+							variables.push({
+								name: variable.name,
+								value: `<${err}>`,
+								variablesReference: 0
+							});
+						}
+					}
 				}
 				response.body = {
 					variables: variables
@@ -310,74 +375,26 @@ export class FlowDebugSession extends LoggingDebugSession {
 				this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
 			}
 		}
-		else if (typeof id == "string") {
-			// Variable members
-			let variable;
-			try {
-				variable = await this.miDebugger.evalExpression(JSON.stringify(id));
-				try {
-					let expanded = expandValue(createVariable, variable.result("value"), id, variable);
-					if (!expanded) {
-						this.sendErrorResponse(response, 2, `Could not expand variable`);
-					}
-					else {
-						if (typeof expanded[0] == "string")
-							expanded = [
-								{
-									name: "<value>",
-									value: prettyStringArray(expanded),
-									variablesReference: 0
-								}
-							];
-						expanded[0].presentationHint = { attributes: [ "readOnly" ] };
-						response.body = {
-							variables: expanded
-						};
-						this.sendResponse(response);
-					}
-				}
-				catch (e) {
-					this.sendErrorResponse(response, 2, `Could not expand variable: ${e}`);
-				}
-			}
-			catch (err) {
-				this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
-			}
-		}
-		else if (typeof id == "object") {
-			if (id instanceof VariableObject) {
-				// Variable members
-				let children: VariableObject[];
-				try {
-					children = await this.miDebugger.varListChildren(id.name);
-					const vars = children.map(child => {
-						const varId = findOrCreateVariable(child);
-						child.id = varId;
-						return child.toProtocolVariable();
-					});
-
-					response.body = {
-						variables: vars
-					}
-					this.sendResponse(response);
-				}
-				catch (err) {
-					this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
-				}
-			}
-			else {
-				response.body = {
-					variables: id
-				};
-				this.sendResponse(response);
-			}
-		}
 		else {
-			response.body = {
-				variables: variables
-			};
-			this.sendResponse(response);
-		}
+            const varObj = this.variableHandles.get(args.variablesReference);
+            try {
+                // Variable members
+                const children = await this.miDebugger.varListChildren(varObj.name);
+                const vars = children.map(child => {
+                    const varId = this.findOrCreateVariable(child);
+                    child.id = varId;
+                    return child.toProtocolVariable();
+                });
+
+                response.body = {
+                    variables: vars
+                }
+                this.sendResponse(response);
+            }
+            catch (err) {
+                this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
+            }
+        }
 	}
 
 	protected pauseRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {

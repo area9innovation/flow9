@@ -80,12 +80,30 @@ function getFsPath(uri: string): string {
 	return Uri.parse(uri).fsPath;
 }
 
+function findClosestFlowConfig(root: string, relativePath: string) {
+	if (relativePath.length == 0) {
+		return root;
+	}
+	if (fs.existsSync(path.resolve(root, relativePath, "flow.config"))) {
+		return path.resolve(root, relativePath);
+	} else {
+		let pathComponents = relativePath.split(path.sep);
+		pathComponents.pop();
+		const parent = path.join(...pathComponents);
+		if (parent.length > 0 && parent != relativePath && parent != ".")
+			return findClosestFlowConfig(root, parent);
+		else 
+			return root;
+	}
+}
+
 function getProjectRoot(wsFolders: WorkspaceFolder[], documentPath: string): string {
 	for (let f of wsFolders) {
 		const folderRoot = getFsPath(f.uri);
 		const relative = path.relative(folderRoot, documentPath);
+		const relativePath = path.parse(relative).dir;
 		if (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
-			return folderRoot;
+			return findClosestFlowConfig(folderRoot, relativePath);
 	}
 
 	// fall to folder containing document
@@ -100,7 +118,7 @@ function getCompilerPaths(wsFolders: WorkspaceFolder[], documentUri: string) {
 
 async function validateTextDocument(textDocument: VersionedTextDocumentIdentifier): Promise<void> {
 	let paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), textDocument.uri);
-	connection.console.log("Analyzing document " + paths.documentPath);
+	//connection.console.log("Analyzing document " + paths.documentPath);
 }
 
 function extractToken(line: string, position: number): string {
@@ -157,8 +175,11 @@ async function findObject(fileUri: string, lineNum: number, columnNum: number, o
 
 	let serverArgs = !globalSettings.useCompilerServer ? ["server=0"] : [];
 
-	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
-		serverArgs.concat([paths.documentPath, operation + token]).concat(extra_args));
+	let flowcArgs = serverArgs.concat([paths.documentPath, operation + token]).concat(extra_args);
+	connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
+		"\n\t\t in folder: " + paths.projectRoot);
+
+	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, flowcArgs);
 	
 	return extractDefinition(result);
 }

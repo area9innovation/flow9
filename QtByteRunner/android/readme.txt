@@ -2,7 +2,8 @@
 
 1) Install Android Studio: https://developer.android.com/studio/index.html
 
-2) Install the latest SDK and NDK versions: AS Menu -> Tools -> Android -> SDK manager.
+2) Install the latest SDK (at least v26) and NDK versions: 
+AS Menu -> Edit -> Preferences -> Appearance & Behavior -> System Settings -> Android SDK.
 
 3) Set up desired flow bytecode: replace QtByteRunner/android/app/src/main/assets/default.b content with 
 your bytecode.
@@ -17,6 +18,16 @@ In the manifest it is set if it the package starts FlowRunner with bytecode laun
 Examples for standalone apps is in the AndroidManifest.LearnSmart.xml and others.
 
 After that project is ready for building.
+
+Helpful tips:
+ - to run in the emulator, you may need to enable building for x86-64 - to do that, replace line
+		abiFilters 'armeabi-v7a'
+	with
+		abiFilters 'armeabi-v7a', 'x86_64'
+	in app/build.gradle.
+ - instead of packaging your bytecode into the apk, you can download it from the launcher - it will 
+ prompt you to do that - use your local machine, refer to this guide how to access it from the emulator:
+ https://developer.android.com/studio/run/emulator-networking 
 
 
 ------ Building with Eclipse (obsolete) ------

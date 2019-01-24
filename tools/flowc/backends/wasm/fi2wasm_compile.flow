@@ -156,8 +156,11 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		"(block $exit " + resultClause + "\n(loop $cont " + resultClause + "\n" else "")
 	+ (if (isSameStructType(lambdaBody, FiVoid(0))) "" else 
 		compileWasmExp(acc, lambdaBody, 
-			WasmContext(context.natives, context.stringAcc, tailCalls, finalizers, context.typeTable, 
-				context.functions, context.globalNames, mergeTree(locals, pairs2tree(paramPairs)), context.globalVarsInitializers)))
+			WasmContext(context with 
+				tailCalls = tailCalls, 
+				finalizers = finalizers,
+				localNames = mergeTree(locals, pairs2tree(paramPairs)))
+	  ))
 	+ (if (!isEmptySet(tailCalls)) "br $exit))" else "") // finalizing tail call wrapper
 	+ "\n)"
 }
@@ -331,8 +334,17 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			}
 		}
 		WasmVar(name, type, __): {
+			isFunc = switch (type) {
+				WasmTypeFunction(__, __): true;
+				default: false;
+			}
 			name2 = getWasmLocalVarName(name, type);
-			funIndex = lookupTreeDef(context.functions.functionIndices, name, -1);
+			funIndex = if (isFunc) {
+				fname = if (containsKeyTree(context.natives, name)) name + "__wrapped__"
+						else name;
+				lookupTreeDef(context.functions.functionIndices, fname, -1)
+			} else -1;
+			
 			if (containsKeyTree(context.localNames, name2))
 				"get_local $" + name2
 			else if (containsKeyTree(context.localNames, name))
@@ -352,11 +364,10 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 			// this is done at the end of the scope - i.e. end of e2
 			scopeContext = if (wasmTypeUsesWasmHeap(type)) { 
 				lastScopeStatements = fiWasmFindLastStatements(e2);
-				WasmContext(context.natives, context.stringAcc, context.tailCalls,
-					foldSet(lastScopeStatements, context.finalizers, 
+				WasmContext(context with 
+					finalizers = foldSet(lastScopeStatements, context.finalizers, 
 						\acc1, s -> treePushToArrayValue(acc1, s, Pair(name, type))), 
-					context.typeTable, context.functions, context.globalNames, 
-						setTree(context.localNames, name, type), context.globalVarsInitializers);
+					localNames = setTree(context.localNames, name, type))
 			} else context;
 			
 			name2 = getWasmLocalVarName(name, type);

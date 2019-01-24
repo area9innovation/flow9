@@ -42,6 +42,7 @@
 }
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    
     return ([self useCustomCacheForURL: request.URL] && ![NSURLProtocol propertyForKey: @"URLLoaderHandling" inRequest: request]);
 }
 

@@ -61,8 +61,10 @@ export {
 	wasm_replace_i32_ref(int, int, int) -> int;	
 	
 	// native subrange : ([?], index : int, length : int) -> [?] = Native.subrange;
-	subrange(int, int, int) -> int;
-	
+	wasm_subrange_i32(int, int, int) -> int;
+	wasm_subrange_f64(int, int, int) -> int;
+	wasm_subrange_i32_ref(int, int, int) -> int;
+
 	// native enumFromTo : (start : int, end : int) -> [int] = Native.enumFromTo;
 	enumFromTo(int, int) -> int;
 	
@@ -76,7 +78,7 @@ export {
 	iteriUntil(int, int) -> int;
 	
 	// native filter : ([?], (?)->bool) -> [?] = Native.filter;
-	// filter(int, int) -> int;
+	filter(arr : int, f : int) -> int;
 
 
 	//////////////////////////////////////////////////////////////////////////////
@@ -645,60 +647,6 @@ wasm_do_map(dst : int, src : int, n : int, idx : int, f : int, elemSize : int, r
 	}
 }
 
-/*
-filter(arr : int, f : int) -> int {
-	elemType = wasm_get_argtype(f, 1, false);
-	elemSize = if (elemType == 3) 8 else 4;
-	heap = !(
-			elemType == 1 || // bool
-			elemType == 2 || // int
-			elemType == 3	 // double
-			);
-
-	n = length(arr);
-
-	// alloc full array, but change length afterwards.
-	// TODO: instead, maybe use Cons, and list2array. 
-	// or find some other way to save memory
-	res = wasm_alloc_array(n, 8 + n * elemSize);
-	wasm_do_filter(res + 8, arr + 8, n, f, elemSize, 0, 0, heap);
-	res;
-}
-
-wasm_do_filter(dst : int, src : int, n : int, f : int, elemSize : int, idx : int, new_len : int, heap : bool) -> void {
-	if (idx == n) {
-		wasm_i32_store(dst - 4, new_len);
-	} else {
-		faddr = wasm_i32_load(f + 8);
-		wasm_inc_refcnt(f);
-
-		if (elemSize == 8) {
-			xx = wasm_f64_load(src + idx * elemSize);
-			yy = wasm_call_indirect1ret(xx, f, faddr);
-			if (yy == 1) {
-				// true
-				wasm_f64_store(dst + new_len * elemSize, xx);
-				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len + 1, heap);
-			} else {
-				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len, heap);
-			}
-		} else {
-			x = wasm_i32_load(src + idx * elemSize);
-			if (heap) wasm_inc_refcnt(x);
-
-			y = wasm_call_indirect1ret(x, f, faddr);
-			if (y == 1) {
-				// true
-				wasm_i32_store(dst + new_len * elemSize, x);
-				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len + 1, heap);
-			} else {
-				wasm_do_filter(dst, src, n, f, elemSize, idx + 1, new_len, heap);
-			}
-		}
-	}
-}
-*/
-
 // fold does not need special processsing for ref/stack accumulator - it is just passed as is
 // it does need special processing based on array element double/ref/stack - this is done dynamically
 
@@ -788,48 +736,6 @@ wasm_do_enumFromTo(dst : int, cur : int, count : int) -> void {
 		wasm_do_enumFromTo(dst + 4, cur + 1, count - 1);
 	}
 }
-
-/*
-subrange(arr : int, start : int, len : int) -> int {
-	arr_len = length(arr);
-
-	//get real elemsize. 
-	elemSize = 4;
-
-	if (start == 0 && arr_len <= len) {
-		arr;
-	} else if (start >= arr_len || start < 0) {
-		wasm_alloc_array(0, 8);
-	} else {
-		real_len = if(len + start > arr_len) arr_len - start else len;
-
-		res = wasm_alloc_array(real_len, 8 + elemSize * real_len);
-		wasm_copy_mem(arr + 8 + start * elemSize, elemSize * real_len, res + 8);
-		res;
-	}
-}
-
-replace(arr : int, idx : int, elem : int) -> int {
-	len = length(arr);
-
-	elemSize = 4;
-
-	if (idx > len || idx < 0) {
-		// wasm_nop();
-		wasm_alloc(1);
-	} else if (idx == len) {
-		res = wasm_alloc_array(len + 1, 8 + elemSize * (len + 1));
-		wasm_copy_mem(arr + 8, elemSize * len, res + 8);
-		wasm_i32_store(res + 8 + elemSize * len, elem);
-		res;
-	} else {
-		res = wasm_alloc_array(len, 8 + elemSize * len);
-		wasm_copy_mem(arr + 8, len * elemSize, res + 8);
-		wasm_i32_store(res + 8 + idx * elemSize, elem);
-		res;
-	}
-}
-*/
 
 wasm_concat_i32(arr1 : int, arr2 : int) -> int {
 	wasm_concat_impl(arr1, arr2, 4, false);
@@ -1026,10 +932,39 @@ captureCallstack() -> int {
 	0
 }
 
-subrange(arr : int, start : int, len : int) -> int {
-	prints("subrange() not implemented yet");
-	wasm_unreachable();
-	0
+wasm_subrange_i32(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 4, false);
+}
+
+wasm_subrange_f64(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 8, false);
+}
+
+wasm_subrange_i32_ref(arr : int, start : int, count : int) -> int {
+	wasm_subrange_impl(arr, start, count, 4, true);
+}
+
+wasm_subrange_impl(arr : int, start : int, count : int, elemSize : int, isRefCnt : bool) -> int {
+	len = do_wasm_length(arr);
+
+	res = if (start < 0 || start >= len || count <= 0) {
+		// empty array
+		wasm_alloc_array(0, 8);
+	} else {
+		cnt = if (count < len - start) count else len - start;
+
+		res1 = wasm_alloc_array(cnt, 8 + elemSize * len);
+		wasm_copy_mem(arr + 8 + start * elemSize, cnt * elemSize, res1 + 8);	
+
+		if (isRefCnt) {
+			wasm_inc_refcnt_array(res1 + 8, cnt);
+		}
+
+		res1;
+	}
+
+	wasm_dec_refcnt(arr);
+	res;
 }
 
 wasm_replace_i32(arr : int, idx : int, elem : int) -> int {
@@ -1076,4 +1011,70 @@ wasm_replace_impl(arr : int, idx : int, elemI : int, elemD : double, elemSize : 
 		wasm_dec_refcnt(arr);
 		res;
 	}
+}
+
+filter(arr : int, f : int) -> int {
+	len = do_wasm_length(arr);
+	
+	elemType = wasm_get_argtype(f, 1, false);
+	elemSize = type2size(elemType);
+
+	heap = isHeap(elemType);
+
+	res = wasm_alloc(len * elemSize);
+
+	cnt = wasm_do_filter(res, arr + 8, len, 0, 0, f, elemSize, heap);
+
+	out = wasm_alloc_array(cnt, 8 + elemSize * cnt);
+	wasm_copy_mem(res, cnt * elemSize, out + 8);	
+
+	wasm_free(res);
+
+	if (heap) {
+		wasm_inc_refcnt_array(out + 8, cnt);
+	}
+
+	wasm_dec_refcnt(arr);
+	wasm_dec_refcnt(f);
+
+	out;
+}
+
+wasm_do_filter_call(xx : ?, f : int) -> int {
+	faddr = wasm_i32_load(f + 8);
+	wasm_inc_refcnt(f);
+	wasm_call_indirect1ret(xx, f, faddr)
+}
+
+wasm_do_filter(dst : int, src : int, n : int, idxSrc : int, idxDst : int, f : int, elemSize : int, heap : bool) -> int {
+	if (idxSrc < n) {
+		curSrc = src + idxSrc * elemSize;
+		curDst = dst + idxDst * elemSize;
+
+		idxDstNext = 
+		if (elemSize == 8) {
+			xx = wasm_f64_load(curSrc);
+			yy = wasm_do_filter_call(xx, f);
+
+			if (yy != 0) {
+				wasm_f64_store(curDst, xx);
+				idxDst + 1;
+			} else {
+				idxDst;
+			}
+
+		} else {
+			x = wasm_i32_load_inc(curSrc, heap);
+			y = wasm_do_filter_call(x, f);
+
+			if (y != 0) {
+				wasm_i32_store(curDst, x);
+				idxDst + 1;
+			} else {
+				idxDst;
+			}
+		}
+
+		wasm_do_filter(dst, src, n, idxSrc + 1, idxDstNext, f, elemSize, heap);
+	} else idxDst;
 }
