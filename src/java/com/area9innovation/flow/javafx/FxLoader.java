@@ -4,11 +4,6 @@ import java.util.*;
 import com.area9innovation.flow.*;
 
 import javafx.application.Application;
-import javafx.event.ActionEvent;
-import javafx.event.EventHandler;
-import javafx.scene.Scene;
-import javafx.scene.control.Button;
-import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 import java.lang.reflect.Constructor;
@@ -22,9 +17,9 @@ public class FxLoader extends Application {
 	public void start(Stage primaryStage) throws Exception {
 		String flowapp = getParameters().getNamed().get("flowapp");
 		if (flowapp == null)
-			flowapp = "javagen";
+			flowapp = "com.area9innovation.flow";
 		final List<String> params = this.getParameters().getRaw();
-		String[] params1 = params.toArray(new String[params.size()]);
+		String[] params1 = params.toArray(new String[0]);
 
 		Class cl = Class.forName(flowapp+".Main");
 
@@ -33,16 +28,14 @@ public class FxLoader extends Application {
 		runtime = (FlowRuntime)constructor.newInstance((Object)params1);
 
 		natives = new FxNative(this);
-		renderer = new FxRenderSupport(this, primaryStage);
+		renderer = new FxRenderSupport(primaryStage);
 
-		runtime.start(new IHostFactory() {
-			public NativeHost allocateHost(Class<? extends NativeHost> type) {
-				if (type.isAssignableFrom(FxNative.class))
-					return natives;
-				if (type.isAssignableFrom(FxRenderSupport.class))
-					return renderer;
-				return null;
-			}
+		runtime.start(type -> {
+			if (type.isAssignableFrom(FxNative.class))
+				return natives;
+			if (type.isAssignableFrom(FxRenderSupport.class))
+				return renderer;
+			return null;
 		});
 	}
 
