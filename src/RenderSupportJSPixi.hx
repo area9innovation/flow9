@@ -3306,7 +3306,12 @@ private class VideoClip extends FlowContainer {
 	private static var playingVideos : Int = 0;
 
 	public static inline function NeedsDrawing() : Bool {
-		return playingVideos != 0;
+		if (playingVideos != 0) {
+			Browser.window.dispatchEvent(new js.html.Event('videoplaying'));
+			return true;
+		}
+
+		return false;
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
