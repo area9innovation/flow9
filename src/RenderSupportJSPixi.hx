@@ -3307,7 +3307,7 @@ private class VideoClip extends FlowContainer {
 
 	public static inline function NeedsDrawing() : Bool {
 		if (playingVideos != 0) {
-			Browser.window.dispatchEvent(new js.html.Event('videoplaying'));
+			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
 			return true;
 		}
 
