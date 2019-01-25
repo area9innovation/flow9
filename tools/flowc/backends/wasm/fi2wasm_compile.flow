@@ -95,6 +95,7 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 		}
 		FiTypeName(__, __): true;
 		FiTypeArray(__): true;
+		FiTypeFunction(__, __): true;
 		default: false;
 	}
 	if (supported) {
@@ -264,17 +265,25 @@ fiWasmBuildHostFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type :
 	"call $" + fiInvokeName(type, context.typeTable);
 }
 
-fiWasmBuildFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type : WasmTypeFunction, context : WasmContext) -> string {
-	// superglue(args, \e -> compileWasmExp(acc, e, context), " ") + 
-	// (if (length(args) > 0) "\n" else "") +
+fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, context : WasmContext) -> string {
 	if (containsKeyTree(context.functions.functionIndices, func)) {
 		if (startsWith(func, "wasm_"))
 			"call $" + func // call function in runtime library directly, no dummy closure
 		else 
 			"i32.const 0 call $" + func // call global function and pass dummy closure argument as last one
 	} else {
-		fiWasmBuildIndirectCall(acc, "get_local $" + func, type, context)
+		cmd = if (fiWasmIsGlobalVar(context, func)) "get_global" else "get_local";
+		fiWasmBuildIndirectCall(acc, cmd + " $" + func, type, context)
 	}
+}
+
+fiWasmIsGlobalVar(context : WasmContext, name : string) {
+	eitherMap(lookupTree(context.globalNames.toplevel, name), \decl : FiDeclaration -> {
+		switch (decl) {
+			FiGlobalVar(__, __, __, __, __): true;
+			default: false;
+		}
+	}, false)
 }
 
 compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
@@ -291,7 +300,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						"\nbr $cont" // jump to outer loop - effectively function start
 					} else {
 						functionType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
-					 	fiWasmBuildFunctionCall(acc, fname, args, functionType, context);
+					 	fiWasmBuildFunctionCall(acc, fname, functionType, context);
 					}
 				}
 				default: {
