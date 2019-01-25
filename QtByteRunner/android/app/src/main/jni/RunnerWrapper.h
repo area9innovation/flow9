@@ -12,6 +12,7 @@
 #include "utils/AbstractGeolocationSupport.h"
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
+#include "utils/WebSocketSupport.h"
 
 #include <jni.h>
 
@@ -232,6 +233,33 @@ private:
     virtual void afterWatchDispose(int callbacksRoot);
 };
 
+class AndroidWebSocketSupport : public WebSocketSupport {
+    AndroidRunnerWrapper *owner;
+public:
+    AndroidWebSocketSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeWebSocket : public FlowNativeObject
+    {
+        AndroidWebSocketSupport *owner;
+    public:
+        FlowNativeWebSocket(AndroidWebSocketSupport* owner);
+        ~FlowNativeWebSocket();
+        jobject websocket;
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeWebSocket, FlowNativeObject)
+    };
+
+    void deliverOnClose(jint cb_root, jint closeCode, jstring reason, jboolean wasClean);
+    void deliverOnError(jint cb_root, jstring error);
+    void deliverOnMessage(jint cb_root, jstring message);
+    void deliverOnOpen(jint cb_root);
+
+protected:
+    virtual StackSlot doOpen(unicode_string url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot);
+    virtual StackSlot doSend(StackSlot websocket, unicode_string message);
+    virtual StackSlot doHasBufferedData(StackSlot websocket);
+    virtual void doClose(StackSlot websocket, int code, unicode_string reason);
+};
+
 class AndroidRunnerWrapper {
     friend class AndroidRenderSupport;
     friend class AndroidHttpSupport;
@@ -241,6 +269,7 @@ class AndroidRunnerWrapper {
     friend class AndroidLocalyticsSupport;
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
+    friend class AndroidWebSocketSupport;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -257,6 +286,7 @@ class AndroidRunnerWrapper {
     AndroidNotificationsSupport notifications;
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
+    AndroidWebSocketSupport websockets;
     FileLocalStore store;
     FileSystemInterface fsinterface;
 
@@ -285,6 +315,7 @@ public:
     AndroidInAppPurchase *getInAppPurchase() { return &purchase; }
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
+    AndroidWebSocketSupport *getWebSockets() { return &websockets; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);

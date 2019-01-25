@@ -16,9 +16,9 @@ NativeFunction *WebSocketSupport::MakeNativeFunction(const char *name, int num_a
 
     TRY_USE_NATIVE_METHOD(WebSocketSupport, send, 2);
 
-    TRY_USE_NATIVE_METHOD(WebSocketSupport, close, 3);
-
     TRY_USE_NATIVE_METHOD(WebSocketSupport, hasBufferedData, 1);
+
+    TRY_USE_NATIVE_METHOD(WebSocketSupport, close, 3);
 
     return NULL;
 }
@@ -45,6 +45,14 @@ StackSlot WebSocketSupport::send(RUNNER_ARGS)
     return doSend(websocket, RUNNER->GetString(message));
 }
 
+StackSlot WebSocketSupport::hasBufferedData(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(websocket);
+    RUNNER_CheckTag1(TNative, websocket);
+
+    return doHasBufferedData(websocket);
+}
+
 StackSlot WebSocketSupport::close(RUNNER_ARGS)
 {
     RUNNER_PopArgs3(websocket, code, reason);
@@ -57,11 +65,27 @@ StackSlot WebSocketSupport::close(RUNNER_ARGS)
     RETVOID;
 }
 
-
-StackSlot WebSocketSupport::hasBufferedData(RUNNER_ARGS)
+void WebSocketSupport::onClose(int cbOnCloseRoot, int closeCode, unicode_string reason, bool wasClean)
 {
-    RUNNER_PopArgs1(websocket);
-    RUNNER_CheckTag1(TNative, websocket);
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnCloseRoot), 3,
+                         StackSlot::MakeInt(closeCode), RUNNER->AllocateString(reason), StackSlot::MakeBool(wasClean));
+}
 
-    return doHasBufferedData(websocket);
+void WebSocketSupport::onError(int cbOnErrorRoot, unicode_string error)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnErrorRoot), 1, RUNNER->AllocateString(error));
+}
+
+void WebSocketSupport::onMessage(int cbOnMessageRoot, unicode_string message)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnMessageRoot), 1, RUNNER->AllocateString(message));
+}
+
+void WebSocketSupport::onOpen(int cbOnOpenRoot)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnOpenRoot), 0);
 }

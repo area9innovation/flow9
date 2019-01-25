@@ -30,6 +30,9 @@ import android.text.TextPaint;
 import android.util.Log;
 import android.content.Context;
 import android.content.SharedPreferences;
+
+import org.java_websocket.client.WebSocketClient;
+
 public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     /*
      * Native back-end initialization 
@@ -311,7 +314,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nRendererInit(long ptr);
     private native void nRendererResize(long ptr, int w, int h);
     private native void nRendererPaint(long ptr);
-    
+
     /**
      * Listener interface for receiving events from the runner.
      * The callbacks are always invoked from within a wrapper
@@ -1489,5 +1492,51 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         } catch (Exception e) {
             Log.e(Utils.LOG_TAG, "Were not able to call Localytics.tagEvent.");
         }
+    }
+
+    private FlowWebSocketSupport webSocketSupport = null;
+
+    public void setFlowWebSocketSupport(FlowWebSocketSupport webSocketSupport) {
+        this.webSocketSupport = webSocketSupport;
+    }
+
+    public synchronized void deliverWebSocketOnClose(int cb_root, int closeCode, String reason, boolean wasClean) {
+        nDeliverWebSocketOnClose(cPtr(), cb_root, closeCode, reason, wasClean);
+    }
+
+    private native void nDeliverWebSocketOnClose(long ptr, int cb_root, int closeCode, String reason, boolean wasClean);
+
+    public synchronized void deliverWebSocketOnError(int cb_root, String error) {
+        nDeliverWebSocketOnError(cPtr(), cb_root, error);
+    }
+
+    private native void nDeliverWebSocketOnError(long ptr, int cb_root, String error);
+
+    public synchronized void deliverWebSocketOnMessage(int cb_root, String message) {
+        nDeliverWebSocketOnMessage(cPtr(), cb_root, message);
+    }
+
+    private native void nDeliverWebSocketOnMessage(long ptr, int cb_root, String message);
+
+    public synchronized void deliverWebSocketOnOpen(int cb_root) {
+        nDeliverWebSocketOnOpen(cPtr(), cb_root);
+    }
+
+    private native void nDeliverWebSocketOnOpen(long ptr, int cb_root);
+
+    public synchronized WebSocketClient cbOpenWSClient(String url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot) {
+        return webSocketSupport.open(url, cbOnCloseRoot, cbOnErrorRoot, cbOnMessageRoot, cbOnOpenRoot);
+    }
+
+    public synchronized boolean cbSendMessageWSClient(WebSocketClient webSocketClient, String message) {
+        return webSocketSupport.send(webSocketClient, message);
+    }
+
+    public synchronized boolean cbHasBufferedDataWSClient(WebSocketClient webSocketClient) {
+        return webSocketSupport.hasBufferedData(webSocketClient);
+    }
+
+    public synchronized void cbCloseWSClient(WebSocketClient webSocketClient, int code, String reason) {
+        webSocketSupport.close(webSocketClient, code, reason);
     }
 }

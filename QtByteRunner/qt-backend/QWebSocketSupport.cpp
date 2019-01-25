@@ -17,26 +17,25 @@ StackSlot QWebSocketSupport::doOpen(unicode_string url, int cbOnCloseRoot, int c
 
     FlowNativeWebSocket *websocketNative = new FlowNativeWebSocket(this);
 
-    connect(&websocketNative->websocket, &QWebSocket::disconnected, this, [websocketNative, cbOnCloseRoot, RUNNER](){
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
-        bool wasClean = websocketNative->websocket.closeCode() == QWebSocketProtocol::CloseCodeNormal;
-        RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnCloseRoot), 3,
-                             StackSlot::MakeInt(websocketNative->websocket.closeCode()), RUNNER->AllocateString(websocketNative->websocket.closeReason()), StackSlot::MakeBool(wasClean));
+    connect(&websocketNative->websocket, &QWebSocket::disconnected, this,
+        [this, websocketNative, cbOnCloseRoot](){
+            bool wasClean = websocketNative->websocket.closeCode() == QWebSocketProtocol::CloseCodeNormal;
+            this->onClose(cbOnCloseRoot, websocketNative->websocket.closeCode(), qt2unicode(websocketNative->websocket.closeReason()), wasClean);
     });
 
-    connect(&websocketNative->websocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error), [websocketNative, cbOnErrorRoot, RUNNER](QAbstractSocket::SocketError error){
-            WITH_RUNNER_LOCK_DEFERRED(RUNNER);
-            RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnErrorRoot), 1, RUNNER->AllocateString(websocketNative->websocket.errorString()));
+    connect(&websocketNative->websocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+        [this, websocketNative, cbOnErrorRoot](QAbstractSocket::SocketError error){
+            this->onError(cbOnErrorRoot, qt2unicode(websocketNative->websocket.errorString()));
     });
 
-    connect(&websocketNative->websocket, &QWebSocket::textMessageReceived, this, [cbOnMessageRoot, RUNNER](QString message){
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
-        RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnMessageRoot), 1, RUNNER->AllocateString(message));
+    connect(&websocketNative->websocket, &QWebSocket::textMessageReceived, this,
+        [this, cbOnMessageRoot](QString message){
+            this->onMessage(cbOnMessageRoot, qt2unicode(message));
     });
 
-    connect(&websocketNative->websocket, &QWebSocket::connected, this, [cbOnOpenRoot, RUNNER](){
-        WITH_RUNNER_LOCK_DEFERRED(RUNNER);
-        RUNNER->EvalFunction(RUNNER->LookupRoot(cbOnOpenRoot), 0);
+    connect(&websocketNative->websocket, &QWebSocket::connected, this,
+        [this, cbOnOpenRoot](){
+            this->onOpen(cbOnOpenRoot);
     });
 
     websocketNative->websocket.open(QUrl(unicode2qt(url)));
@@ -55,16 +54,16 @@ StackSlot QWebSocketSupport::doSend(StackSlot websocket, unicode_string message)
     return StackSlot::MakeBool(isValid);
 }
 
-void QWebSocketSupport::doClose(StackSlot websocket, int code, unicode_string reason)
-{
-    RUNNER_VAR = owner;
-    FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
-    websocketNative->websocket.close(static_cast<QWebSocketProtocol::CloseCode>(code), unicode2qt(reason));
-}
-
 StackSlot QWebSocketSupport::doHasBufferedData(StackSlot websocket)
 {
     RUNNER_VAR = owner;
     FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
     return StackSlot::MakeBool(websocketNative->websocket.bytesToWrite() > 0);
+}
+
+void QWebSocketSupport::doClose(StackSlot websocket, int code, unicode_string reason)
+{
+    RUNNER_VAR = owner;
+    FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
+    websocketNative->websocket.close(static_cast<QWebSocketProtocol::CloseCode>(code), unicode2qt(reason));
 }
