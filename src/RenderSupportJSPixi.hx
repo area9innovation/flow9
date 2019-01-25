@@ -4430,7 +4430,11 @@ private class TextField extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
-		var newValue = nativeWidget.value;
+		var newValue : String = nativeWidget.value;
+
+		if (maxChars > 0) {
+			newValue = newValue.substr(0, maxChars);
+		}
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
