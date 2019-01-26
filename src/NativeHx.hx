@@ -639,7 +639,6 @@ class NativeHx {
 				params.push(key + "=" + untyped parametersMap[key]);
 			});
 			#elseif (flow_nodejs)
-			trace(process.argv.slice(2));
 			var params = process.argv.slice(2);
 			#elseif (nwjs)
 
