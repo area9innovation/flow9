@@ -76,29 +76,12 @@ fiWasmCompileToplevel(
 }
 
 fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, context : WasmContext) {
-	supported = switch (decl.type) {
-		FiTypeRef(type2): {
-			switch (type2) {
-				FiTypeInt(): true;
-				FiTypeBool(): true;
-				FiTypeDouble(): true;
-				FiTypeString(): true;
-				FiTypeFlow(): true;
-				FiTypeArray(__): true;
-				FiTypeFunction(__, __): true;
-				FiTypeName(__, __): true;
-				default: {
-					println("WARNING! Unsupported global ref " + toString(type2));
-					false;
-				}
-			}
-		}
-		FiTypeName(__, __): true;
-		FiTypeArray(__): true;
-		FiTypeFunction(__, __): true;
-		default: false;
-	};
-	if (supported) {
+    // we can only inline initializer for simple types and constants
+    // for other initializers, we need to generate an initializer function
+    wasmTyp = fitype2wasmtype(context.globalNames, decl.type);
+    wasmType = compileWasmType(wasmTyp, false);
+    useInitFunction = wasmTypeUsesWasmHeap(wasmTyp) || !fiExpIsConstant(decl.value); 
+	if (useInitFunction) {
 		initFunction = FiFunctionDec("wasm__init__global__var__" + decl.name, 
 			FiLambda([], decl.value, FiTypeFunction([], decl.type), decl.declStart),
 			FiTypeFunction([], decl.type),
@@ -107,14 +90,14 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 		wasmExpr = "\t call $" + initFunction.name + " set_global $" + decl.name + "\n";
 		context.globalVarsInitializers := Cons(Pair(decl.name, wasmExpr), ^(context.globalVarsInitializers));
 		"\n" + wasmInitFunction + 
-		"\n(global $" + decl.name + " (mut i32) i32.const 0)"
+		"\n(global $" + decl.name + " (mut " + wasmType + ") " + wasmType + ".const 0)"
 	} else {
 		// support for mutable global variables - they start with wasm_ and end with _mut
 		mut = startsWith(decl.name, "wasm_") && endsWith(decl.name, "_mut");
 		mutPref = if (mut) "(mut " else "";
 		mutSuff = if (mut) ")" else "";
 		wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(decl.value));
-		"(global $" + decl.name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, decl.type), false) + mutSuff + " " + 
+		"(global $" + decl.name + " " + mutPref + wasmType + mutSuff + " " + 
 			compileWasmExp(acc, wasmValue, context) + ")";
 	}
 }
