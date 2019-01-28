@@ -18,7 +18,7 @@ getNextWasmExpId() {
 	value;
 }
 
-// we will cache types for var since we need to now correct type when perform Call convert.
+// We cache types for var since we need to now correct type when perform Call convert.
 // i.e. situation
 // 1	Let(FFF, typeFunction)
 // 2		Call(
@@ -34,17 +34,18 @@ getNextWasmExpId() {
 // if function1 on line 3 is native function then it will return not a simple function but JS callback.
 // So,  with caching we'll get proper type for FFF on line 8 and convert Call (line 7) to WasmCallHost
 lookupCachedVar(locals : ref Tree<string, WasmTypeDescriptor>, nameToFind : string, type : WasmTypeDescriptor) {
+	// This function is not used anymore!
 	lookupTreeSet(locals, nameToFind, \n -> type);
 }
 
-fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTypeDescriptor>, isnative : bool, get : bool) -> WasmVar {
-	name2 = getWasmLocalVarName(v.name, fitype2wasmtype(names, v.type));
+// This function used only in one place. Do we need it? Besides, "get" parameter does not seem to be used.
+fivar2wasmvar(names : FiGlobalNames, v : FiVar, locals : Tree<string, WasmTypeDescriptor>, isnative : bool, get : bool) -> WasmVar {
 	t = fitype2wasmtypeEx(names, v.type, isnative);
-	var = WasmVar(v.name, lookupCachedVar(local, name2, t), getNextWasmExpId());
 
 	// in fact 'get' will be true for Var in Call node (var which define function to call) since we should know 
 	// correct function type (to distinquish simple call from js callback call)
 	if (get) {
+		var = WasmVar(v.name, lookupTreeDef(locals, v.name, t), getNextWasmExpId());
 		t1_u  = wasmUnifyType(t);
 		t2_u = wasmUnifyType(var.type);
 		if (!isSameStructType(t1_u, t2_u)) {
@@ -52,28 +53,31 @@ fivar2wasmvar(names : FiGlobalNames, v : FiVar, local : ref Tree<string, WasmTyp
 			println("expected: " + fiPrintWasmType(t1_u));
 			println("got:      " + fiPrintWasmType(t2_u));
 		}
-
 		var;
 	} else {
 		WasmVar(v.name, t, getNextWasmExpId());
 	}
 }
 
-fiTypeFromType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
+fiWasmFunctionReturnType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
 	switch (type) {
 		WasmTypeFunction(args, returnType): returnType;
 		WasmTypeJSCallback(args, returnType): returnType;
-		default: type;
+		default: {
+			println("ERROR! Expected function type, but got " + toString(type));
+			WasmTypeVoid();
+		}
 	}
 }
 
-fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> WasmTypeDescriptor {
+fiTypeFromExp(e : WasmExp, locals : Tree<string, WasmTypeDescriptor>) -> WasmTypeDescriptor {
 	checkVar = \e1, t -> {
 		switch (e1) {
-			WasmVar(name, type, __): {
-				fiTypeFromType(type);		
+			WasmVar(x, type, __): fiWasmFunctionReturnType(type);
+			default: {
+				// This place is never reached in tests! Is that correct?
+				t
 			}
-			default: t;
 		}
 	}
 
@@ -82,8 +86,11 @@ fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> Wasm
 		WasmCall(e1, args, type, __) : checkVar(e1, type);
 		WasmCallNative(e1, args, type, __) : checkVar(e1, type);
 		WasmCallHost(e1, args, type, __) : checkVar(e1, type);
-		WasmVar(name, type, __) : lookupCachedVar(local, name, type);
-		WasmLet(__, __, __, __, type2, __) : fiTypeFromType(type2);
+		WasmVar(name, type, __) : 
+			// The locals is only used to replace WasmTypeFunction() with WasmTypeJSCallback()
+			// when needed. Probably we can do it in another place of code.
+			lookupTreeDef(locals, name, type);
+		WasmLet(__, __, __, __, type2, __) : type2;
 		WasmIf(__, __, __, type, __) : type;
 		WasmSwitch(__, __, __, type, __) : type;
 		WasmCast(__, __, __, type, __) : type;
@@ -99,12 +106,12 @@ fiTypeFromExp(e : WasmExp, local : ref Tree<string, WasmTypeDescriptor>) -> Wasm
 	}
 }
 
-dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, lcl : Tree<string, WasmTypeDescriptor>, isnative : bool) {
-	local : ref Tree<string, WasmTypeDescriptor> = ref lcl;
-	do_type	= \t -> fitype2wasmtypeEx(names, t, false);
-	do_exp	= \ex    -> dofiexp2wasmexp(context, names, ex, ^local, false);
-	do_exp2	= \ex, n -> dofiexp2wasmexp(context, names, ex, ^local, n);
-	do_var	= \v, n, g	 -> fivar2wasmvar(names, v, local, n, g);
+dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, locals : Tree<string, WasmTypeDescriptor>, isnative : bool) {
+	do_type	= \t -> fitype2wasmtype(names, t);
+	do_expExt = \ex, newLocals, isNative -> dofiexp2wasmexp(context, names, ex, newLocals, isNative);
+	do_exp	= \ex -> do_expExt(ex, locals, false);
+	// Attention! Putting g to false below does not break any test. Do we really need this param?
+	do_var	= \v, n, g__ -> fivar2wasmvar(names, v, locals, n, false);
 
 	switch (e) {
 		FiLambda(args, b, type, __): {
@@ -117,34 +124,22 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, lcl : T
 				FiVar(fname, ftype, __): {
 					is_native_call = containsKeyTree(context.natives, fname);
 					ee = do_var(f, is_native_call, true);
-					tt = fiTypeFromExp(ee, local);
-					ttt = fiTypeFromType(fitype2wasmtypeEx(names, ftype, is_native_call));
+					tt = fiTypeFromExp(ee, locals);
+					ttt = fiWasmFunctionReturnType(fitype2wasmtypeEx(names, ftype, is_native_call));
 
-					args_new = map(args, \a -> do_exp2(a, is_native_call));
+					args_new = map(args, \a -> do_expExt(a, locals, is_native_call));
 
-					switch (tt) {
-						WasmTypeJSCallback(__, __): {	
-							WasmCallHost(
-								ee, 
-								concat(
-									// add a function index (returned from JS)
-									[WasmVar(fname, WasmTypeInt(), getNextWasmExpId())],
-									args_new
-								), 
-								ttt,
-								getNextWasmExpId()
-							);
-						}
-
-						default: {
-							if (is_native_call) {
-								WasmCallNative(ee, args_new, ttt, getNextWasmExpId());
-							} else {
-								WasmCall(ee, args_new, ttt, getNextWasmExpId());
-							}
-						}
+					// TODO: WasmCall, WasmCallHost and WasmCallNative look similar. Can they be
+					// joined into one struct with .callType parameter?
+					if (fiWasmIsJSCallback(tt)) {
+						// add a function index (returned from JS)
+						args3 = concat([WasmVar(fname, WasmTypeInt(), getNextWasmExpId())], args_new);
+						WasmCallHost(ee, args3, ttt, getNextWasmExpId())
+					} else if (is_native_call) {
+						WasmCallNative(ee, args_new, ttt, getNextWasmExpId());
+					} else {
+						WasmCall(ee, args_new, ttt, getNextWasmExpId());
 					}
-
 				}
 				default: {
 					WasmCall(do_exp(f), map(args, \a -> do_exp(a)), do_type(type), getNextWasmExpId());
@@ -157,8 +152,10 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, lcl : T
 		FiLet(name, type, e1, e2, type2, __): {
 			e1_conv = do_exp(e1);
 			name2 = getWasmLocalVarName(name, do_type(type));
-			t1_conv = lookupCachedVar(local, name2, fiTypeFromExp(e1_conv, local));
-			e2_conv = do_exp(e2);
+			t1_conv = fiTypeFromExp(e1_conv, locals);
+			locals2 = if (fiWasmIsJSCallback(t1_conv)) setTree(locals, name2, t1_conv)
+					  else locals;
+			e2_conv = do_expExt(e2, locals2, false);
 			t2_conv = do_type(type2);
 			WasmLet(name, t1_conv, e1_conv, e2_conv, t2_conv, getNextWasmExpId())
 		}
@@ -187,6 +184,13 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, lcl : T
 			WasmRequire(flowfile, do_exp(ex), do_type(type), getNextWasmExpId()); 
 		FiUnsafe(name, fallback, type, __): 
 			WasmUnsafe(name, do_exp(fallback), do_type(type), getNextWasmExpId());
+	}
+}
+
+fiWasmIsJSCallback(type : WasmTypeDescriptor) {
+	switch (type) {
+		WasmTypeJSCallback(__, __): true;
+		default: false;
 	}
 }
 
