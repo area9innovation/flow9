@@ -12,7 +12,7 @@
 #include "utils/AbstractGeolocationSupport.h"
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
-#include "utils/WebSocketSupport.h"
+#include "utils/AbstractWebSocketSupport.h"
 
 #include <jni.h>
 
@@ -233,7 +233,7 @@ private:
     virtual void afterWatchDispose(int callbacksRoot);
 };
 
-class AndroidWebSocketSupport : public WebSocketSupport {
+class AndroidWebSocketSupport : public AbstractWebSocketSupport {
     AndroidRunnerWrapper *owner;
 public:
     AndroidWebSocketSupport(AndroidRunnerWrapper *owner);
@@ -248,13 +248,13 @@ public:
         DEFINE_FLOW_NATIVE_OBJECT(FlowNativeWebSocket, FlowNativeObject)
     };
 
-    void deliverOnClose(jint cb_root, jint closeCode, jstring reason, jboolean wasClean);
-    void deliverOnError(jint cb_root, jstring error);
-    void deliverOnMessage(jint cb_root, jstring message);
-    void deliverOnOpen(jint cb_root);
+    void deliverOnClose(jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean);
+    void deliverOnError(jint callbacksKey, jstring error);
+    void deliverOnMessage(jint callbacksKey, jstring message);
+    void deliverOnOpen(jint callbacksKey);
 
 protected:
-    virtual StackSlot doOpen(unicode_string url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot);
+    virtual StackSlot doOpen(unicode_string url, int callbacksKey);
     virtual StackSlot doSend(StackSlot websocket, unicode_string message);
     virtual StackSlot doHasBufferedData(StackSlot websocket);
     virtual void doClose(StackSlot websocket, int code, unicode_string reason);

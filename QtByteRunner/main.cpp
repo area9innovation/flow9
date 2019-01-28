@@ -559,7 +559,7 @@ int main(int argc, char *argv[])
     QFileSystemInterface FileSystem(&FlowRunner, &HttpManager);
     QtNotificationsSupport NotificationsManager(&FlowRunner, cgi);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
-    QWebSocketSupport WebSocketSupport(&FlowRunner);
+    QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
 
     RunParallelHost RunParallel(&FlowRunner);
 

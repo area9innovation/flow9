@@ -1500,32 +1500,32 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         this.webSocketSupport = webSocketSupport;
     }
 
-    public synchronized void deliverWebSocketOnClose(int cb_root, int closeCode, String reason, boolean wasClean) {
-        nDeliverWebSocketOnClose(cPtr(), cb_root, closeCode, reason, wasClean);
+    public synchronized void deliverWebSocketOnClose(int callbacksKey, int closeCode, String reason, boolean wasClean) {
+        nDeliverWebSocketOnClose(cPtr(), callbacksKey, closeCode, reason, wasClean);
     }
 
-    private native void nDeliverWebSocketOnClose(long ptr, int cb_root, int closeCode, String reason, boolean wasClean);
+    private native void nDeliverWebSocketOnClose(long ptr, int callbacksKey, int closeCode, String reason, boolean wasClean);
 
-    public synchronized void deliverWebSocketOnError(int cb_root, String error) {
-        nDeliverWebSocketOnError(cPtr(), cb_root, error);
+    public synchronized void deliverWebSocketOnError(int callbacksKey, String error) {
+        nDeliverWebSocketOnError(cPtr(), callbacksKey, error);
     }
 
-    private native void nDeliverWebSocketOnError(long ptr, int cb_root, String error);
+    private native void nDeliverWebSocketOnError(long ptr, int callbacksKey, String error);
 
-    public synchronized void deliverWebSocketOnMessage(int cb_root, String message) {
-        nDeliverWebSocketOnMessage(cPtr(), cb_root, message);
+    public synchronized void deliverWebSocketOnMessage(int callbacksKey, String message) {
+        nDeliverWebSocketOnMessage(cPtr(), callbacksKey, message);
     }
 
-    private native void nDeliverWebSocketOnMessage(long ptr, int cb_root, String message);
+    private native void nDeliverWebSocketOnMessage(long ptr, int callbacksKey, String message);
 
-    public synchronized void deliverWebSocketOnOpen(int cb_root) {
-        nDeliverWebSocketOnOpen(cPtr(), cb_root);
+    public synchronized void deliverWebSocketOnOpen(int callbacksKey) {
+        nDeliverWebSocketOnOpen(cPtr(), callbacksKey);
     }
 
-    private native void nDeliverWebSocketOnOpen(long ptr, int cb_root);
+    private native void nDeliverWebSocketOnOpen(long ptr, int callbacksKey);
 
-    public synchronized WebSocketClient cbOpenWSClient(String url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot) {
-        return webSocketSupport.open(url, cbOnCloseRoot, cbOnErrorRoot, cbOnMessageRoot, cbOnOpenRoot);
+    public synchronized WebSocketClient cbOpenWSClient(String url, int callbacksKey) {
+        return webSocketSupport.open(url, callbacksKey);
     }
 
     public synchronized boolean cbSendMessageWSClient(WebSocketClient webSocketClient, String message) {

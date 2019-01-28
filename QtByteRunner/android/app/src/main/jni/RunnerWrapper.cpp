@@ -222,7 +222,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbDeleteAppCookies, "()V") \
 	CALLBACK(cbSystemDownloadFile, "(Ljava/lang/String;)V") \
 	CALLBACK(cbUsesNativeVideo, "()Z") \
-	CALLBACK(cbOpenWSClient, "(Ljava/lang/String;IIII)Lorg/java_websocket/client/WebSocketClient;") \
+	CALLBACK(cbOpenWSClient, "(Ljava/lang/String;I)Lorg/java_websocket/client/WebSocketClient;") \
 	CALLBACK(cbHasBufferedDataWSClient, "(Lorg/java_websocket/client/WebSocketClient;)Z") \
 	CALLBACK(cbSendMessageWSClient, "(Lorg/java_websocket/client/WebSocketClient;Ljava/lang/String;)Z") \
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V")
@@ -775,27 +775,27 @@ NATIVE(bool) Java_dk_area9_flowrunner_FlowRunnerWrapper_nIsVirtualKeyboardListen
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnClose
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jint closeCode, jstring reason, jboolean wasClean)
+        (JNIEnv *env, jobject obj, jlong ptr, jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean)
 {
-    WRAPPER(getWebSockets()->deliverOnClose(cb_root, closeCode, reason, wasClean));
+    WRAPPER(getWebSockets()->deliverOnClose(callbacksKey, closeCode, reason, wasClean));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnError
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring error)
+        (JNIEnv *env, jobject obj, jlong ptr, jint callbacksKey, jstring error)
 {
-    WRAPPER(getWebSockets()->deliverOnError(cb_root, error));
+    WRAPPER(getWebSockets()->deliverOnError(callbacksKey, error));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnMessage
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring message)
+        (JNIEnv *env, jobject obj, jlong ptr, jint callbacksKey, jstring message)
 {
-    WRAPPER(getWebSockets()->deliverOnMessage(cb_root, message));
+    WRAPPER(getWebSockets()->deliverOnMessage(callbacksKey, message));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnOpen
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root)
+        (JNIEnv *env, jobject obj, jlong ptr, jint callbacksKey)
 {
-    WRAPPER(getWebSockets()->deliverOnOpen(cb_root));
+    WRAPPER(getWebSockets()->deliverOnOpen(callbacksKey));
 }
 
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
@@ -2144,7 +2144,7 @@ void AndroidGeolocationSupport::afterWatchDispose(int callbacksRoot)
     owner->eatExceptions();
 }
 
-AndroidWebSocketSupport::AndroidWebSocketSupport(AndroidRunnerWrapper *owner) : WebSocketSupport(&owner->runner), owner(owner)
+AndroidWebSocketSupport::AndroidWebSocketSupport(AndroidRunnerWrapper *owner) : AbstractWebSocketSupport(&owner->runner), owner(owner)
 {
 }
 
@@ -2157,34 +2157,34 @@ AndroidWebSocketSupport::FlowNativeWebSocket::~FlowNativeWebSocket()
     owner->owner->env->DeleteGlobalRef(websocket);
 }
 
-void AndroidWebSocketSupport::deliverOnClose(jint cb_root, jint closeCode, jstring reason, jboolean wasClean)
+void AndroidWebSocketSupport::deliverOnClose(jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean)
 {
     unicode_string reason_str = jni2unicode(owner->env, reason);
-    onClose(cb_root, closeCode, reason_str, wasClean);
+    onClose(callbacksKey, closeCode, reason_str, wasClean);
 }
 
-void AndroidWebSocketSupport::deliverOnError(jint cb_root, jstring error)
+void AndroidWebSocketSupport::deliverOnError(jint callbacksKey, jstring error)
 {
     unicode_string e_str = jni2unicode(owner->env, error);
-    onError(cb_root, e_str);
+    onError(callbacksKey, e_str);
 }
 
-void AndroidWebSocketSupport::deliverOnMessage(jint cb_root, jstring message)
+void AndroidWebSocketSupport::deliverOnMessage(jint callbacksKey, jstring message)
 {
     unicode_string message_str = jni2unicode(owner->env, message);
-    onMessage(cb_root, message_str);
+    onMessage(callbacksKey, message_str);
 }
 
-void AndroidWebSocketSupport::deliverOnOpen(jint cb_root)
+void AndroidWebSocketSupport::deliverOnOpen(jint callbacksKey)
 {
-    onOpen(cb_root);
+    onOpen(callbacksKey);
 }
 
-StackSlot AndroidWebSocketSupport::doOpen(unicode_string url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot)
+StackSlot AndroidWebSocketSupport::doOpen(unicode_string url, int callbacksKey)
 {
     JNIEnv *env = owner->env;
     jstring url_str = string2jni(env, url);
-    jobject websocket = env->CallObjectMethod(owner->owner, cbOpenWSClient, url_str, cbOnCloseRoot, cbOnErrorRoot, cbOnMessageRoot, cbOnOpenRoot);
+    jobject websocket = env->CallObjectMethod(owner->owner, cbOpenWSClient, url_str, callbacksKey);
     owner->eatExceptions();
 
     FlowNativeWebSocket* websocketNative = new FlowNativeWebSocket(this);

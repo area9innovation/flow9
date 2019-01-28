@@ -7,35 +7,34 @@ IMPLEMENT_FLOW_NATIVE_OBJECT(QWebSocketSupport::FlowNativeWebSocket, FlowNativeO
 QWebSocketSupport::FlowNativeWebSocket::FlowNativeWebSocket(QWebSocketSupport *owner) : FlowNativeObject(owner->getFlowRunner()) {}
 
 QWebSocketSupport::QWebSocketSupport(ByteCodeRunner *Runner)
-    : WebSocketSupport(Runner), owner(Runner)
+    : AbstractWebSocketSupport(Runner), owner(Runner)
 {
 }
 
-StackSlot QWebSocketSupport::doOpen(unicode_string url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot)
+StackSlot QWebSocketSupport::doOpen(unicode_string url, int callbacksKey)
 {
-    RUNNER_VAR = owner;
 
     FlowNativeWebSocket *websocketNative = new FlowNativeWebSocket(this);
 
     connect(&websocketNative->websocket, &QWebSocket::disconnected, this,
-        [this, websocketNative, cbOnCloseRoot](){
+        [this, websocketNative, callbacksKey](){
             bool wasClean = websocketNative->websocket.closeCode() == QWebSocketProtocol::CloseCodeNormal;
-            this->onClose(cbOnCloseRoot, websocketNative->websocket.closeCode(), qt2unicode(websocketNative->websocket.closeReason()), wasClean);
+            this->onClose(callbacksKey, websocketNative->websocket.closeCode(), qt2unicode(websocketNative->websocket.closeReason()), wasClean);
     });
 
     connect(&websocketNative->websocket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
-        [this, websocketNative, cbOnErrorRoot](QAbstractSocket::SocketError error){
-            this->onError(cbOnErrorRoot, qt2unicode(websocketNative->websocket.errorString()));
+        [this, websocketNative, callbacksKey](QAbstractSocket::SocketError error){
+            this->onError(callbacksKey, qt2unicode(websocketNative->websocket.errorString()));
     });
 
     connect(&websocketNative->websocket, &QWebSocket::textMessageReceived, this,
-        [this, cbOnMessageRoot](QString message){
-            this->onMessage(cbOnMessageRoot, qt2unicode(message));
+        [this, callbacksKey](QString message){
+            this->onMessage(callbacksKey, qt2unicode(message));
     });
 
     connect(&websocketNative->websocket, &QWebSocket::connected, this,
-        [this, cbOnOpenRoot](){
-            this->onOpen(cbOnOpenRoot);
+        [this, callbacksKey](){
+            this->onOpen(callbacksKey);
     });
 
     websocketNative->websocket.open(QUrl(unicode2qt(url)));

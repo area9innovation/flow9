@@ -74,7 +74,7 @@ LOCAL_SRC_FILES += \
     utils/AbstractGeolocationSupport.cpp \
     utils/FileLocalStore.cpp \
     utils/FileSystemInterface.cpp \
-    utils/WebSocketSupport.cpp
+    utils/AbstractWebSocketSupport.cpp
 
 LOCAL_STATIC_LIBRARIES := librunnercore $(MY_PROF_LIB) $(MY_GEN_LIB)
 

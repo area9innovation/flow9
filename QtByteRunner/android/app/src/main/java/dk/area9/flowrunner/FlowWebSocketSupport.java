@@ -13,26 +13,26 @@ class FlowWebSocketSupport {
         wrapper = wrp;
     }
 
-    WebSocketClient open(String url, final int cbOnCloseRoot, final int cbOnErrorRoot, final int cbOnMessageRoot, final int cbOnOpenRoot) {
-        FlowWebSocketClient webSocketClient = new FlowWebSocketClient(URI.create("wss://demos.kaazing.com/echo")) {
+    WebSocketClient open(String url, final int callbacksKey) {
+        FlowWebSocketClient webSocketClient = new FlowWebSocketClient(URI.create(url)) {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
-                wrapper.deliverWebSocketOnOpen(cbOnOpenRoot);
+                wrapper.deliverWebSocketOnOpen(callbacksKey);
             }
 
             @Override
             public void onMessage(String message) {
-                wrapper.deliverWebSocketOnMessage(cbOnMessageRoot, message);
+                wrapper.deliverWebSocketOnMessage(callbacksKey, message);
             }
 
             @Override
             public void onClose(int code, String reason, boolean remote) {
-                wrapper.deliverWebSocketOnClose(cbOnCloseRoot, code, reason, code == 1000);
+                wrapper.deliverWebSocketOnClose(callbacksKey, code, reason, code == 1000);
             }
 
             @Override
             public void onError(Exception ex) {
-                wrapper.deliverWebSocketOnError(cbOnErrorRoot, ex.getMessage());
+                wrapper.deliverWebSocketOnError(callbacksKey, ex.getMessage());
             }
         };
         webSocketClient.connect();

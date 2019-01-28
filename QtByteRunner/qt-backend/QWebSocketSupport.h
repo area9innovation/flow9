@@ -5,9 +5,9 @@
 #include <QtWebSockets/QtWebSockets>
 
 #include "core/ByteCodeRunner.h"
-#include "utils/WebSocketSupport.h"
+#include "utils/AbstractWebSocketSupport.h"
 
-class QWebSocketSupport : public QObject, public WebSocketSupport
+class QWebSocketSupport : public QObject, public AbstractWebSocketSupport
 {
     Q_OBJECT
     ByteCodeRunner *owner;
@@ -23,7 +23,7 @@ public:
     };
 
 protected:
-    virtual StackSlot doOpen(unicode_string url, int cbOnCloseRoot, int cbOnErrorRoot, int cbOnMessageRoot, int cbOnOpenRoot);
+    virtual StackSlot doOpen(unicode_string url, int callbacksKey);
     virtual StackSlot doSend(StackSlot websocket, unicode_string message);
     virtual StackSlot doHasBufferedData(StackSlot websocket);
     virtual void doClose(StackSlot websocket, int code, unicode_string reason);
