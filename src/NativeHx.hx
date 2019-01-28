@@ -639,7 +639,6 @@ class NativeHx {
 				params.push(key + "=" + untyped parametersMap[key]);
 			});
 			#elseif (flow_nodejs)
-			trace(process.argv.slice(2));
 			var params = process.argv.slice(2);
 			#elseif (nwjs)
 
@@ -1507,10 +1506,16 @@ class NativeHx {
 				};
 
 				Browser.window.addEventListener("mousemove", mouseMoveFn);
+				Browser.window.addEventListener("videoplaying", mouseMoveFn);
+				Browser.window.addEventListener("focus", mouseMoveFn);
+				Browser.window.addEventListener("blur", mouseMoveFn);
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutId)");
 					Browser.window.removeEventListener("mousemove", mouseMoveFn);
+					Browser.window.removeEventListener("videoplaying", mouseMoveFn);
+					Browser.window.removeEventListener("focus", mouseMoveFn);
+					Browser.window.removeEventListener("blur", mouseMoveFn);
 				};
 			}
 		#end
