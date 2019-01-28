@@ -4712,13 +4712,17 @@ private class PixiText extends TextField {
 	}
 
 	private inline function destroyTextClipChildren() {
-		for (clip in textClip.children) {
+		var clip = textClip.children.length > 0 ? textClip.children[0] : null;
+
+		while (clip != null) {
 			if (untyped clip.canvas != null && Browser.document.body.contains(untyped clip.canvas)) {
 				Browser.document.body.removeChild(untyped clip.canvas);
 			}
 
 			textClip.removeChild(clip);
 			clip.destroy({ children: true, texture: true, baseTexture: true });
+
+			clip = textClip.children.length > 0 ? textClip.children[0] : null;
 		}
 	}
 
@@ -4898,7 +4902,7 @@ private class PixiText extends TextField {
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
 			text = TextField.getBulletsString(text.length);
-		var texts = checkTextLength(text);
+		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {
 			textClip = createTextClip(texts[0][0], style);
@@ -4929,6 +4933,7 @@ private class PixiText extends TextField {
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
 							var newTextClip = createTextClip(txt, style);
+
 							newTextClip.x = currentWidth;
 							newTextClip.y = currentHeight;
 
