@@ -18,47 +18,6 @@ getNextWasmExpId() {
 	value;
 }
 
-// We cache types for var since we need to now correct type when perform Call convert.
-// i.e. situation
-// 1	Let(FFF, typeFunction)
-// 2		Call(
-// 3			Var(function1, typeFunction), 
-// 4			args1, 
-// 5			typeFunction
-// 6		),
-// 7		Call(
-// 8			Var(FFF, typeFunction), 
-// 9			args2,
-// 10			type2
-// 11		)
-// if function1 on line 3 is native function then it will return not a simple function but JS callback.
-// So,  with caching we'll get proper type for FFF on line 8 and convert Call (line 7) to WasmCallHost
-lookupCachedVar(locals : ref Tree<string, WasmTypeDescriptor>, nameToFind : string, type : WasmTypeDescriptor) {
-	// This function is not used anymore!
-	lookupTreeSet(locals, nameToFind, \n -> type);
-}
-
-// This function used only in one place. Do we need it? Besides, "get" parameter does not seem to be used.
-fivar2wasmvar(names : FiGlobalNames, v : FiVar, locals : Tree<string, WasmTypeDescriptor>, isnative : bool, get : bool) -> WasmVar {
-	t = fitype2wasmtypeEx(names, v.type, isnative);
-
-	// in fact 'get' will be true for Var in Call node (var which define function to call) since we should know 
-	// correct function type (to distinquish simple call from js callback call)
-	if (get) {
-		var = WasmVar(v.name, lookupTreeDef(locals, v.name, t), getNextWasmExpId());
-		t1_u  = wasmUnifyType(t);
-		t2_u = wasmUnifyType(var.type);
-		if (!isSameStructType(t1_u, t2_u)) {
-			println("WARNING! Cached type differs from actual one for " + var.name);
-			println("expected: " + fiPrintWasmType(t1_u));
-			println("got:      " + fiPrintWasmType(t2_u));
-		}
-		var;
-	} else {
-		WasmVar(v.name, t, getNextWasmExpId());
-	}
-}
-
 fiWasmFunctionReturnType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
 	switch (type) {
 		WasmTypeFunction(args, returnType): returnType;
@@ -106,12 +65,26 @@ fiTypeFromExp(e : WasmExp, locals : Tree<string, WasmTypeDescriptor>) -> WasmTyp
 	}
 }
 
+// We cache types for var since we need to now correct type when perform Call convert.
+// i.e. situation
+// 1	Let(FFF, typeFunction)
+// 2		Call(
+// 3			Var(function1, typeFunction), 
+// 4			args1, 
+// 5			typeFunction
+// 6		),
+// 7		Call(
+// 8			Var(FFF, typeFunction), 
+// 9			args2,
+// 10			type2
+// 11		)
+// if function1 on line 3 is native function then it will return not a simple function but JS callback.
+// So,  with caching we'll get proper type for FFF on line 8 and convert Call (line 7) to WasmCallHost
 dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, locals : Tree<string, WasmTypeDescriptor>, isnative : bool) {
 	do_type	= \t -> fitype2wasmtype(names, t);
 	do_expExt = \ex, newLocals, isNative -> dofiexp2wasmexp(context, names, ex, newLocals, isNative);
 	do_exp	= \ex -> do_expExt(ex, locals, false);
-	// Attention! Putting g to false below does not break any test. Do we really need this param?
-	do_var	= \v, n, g__ -> fivar2wasmvar(names, v, locals, n, false);
+	do_var	= \v, n -> WasmVar(v.name, fitype2wasmtypeEx(names, v.type, n), getNextWasmExpId());
 
 	switch (e) {
 		FiLambda(args, b, type, __): {
@@ -123,7 +96,7 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, locals 
 			switch (f) {
 				FiVar(fname, ftype, __): {
 					is_native_call = containsKeyTree(context.natives, fname);
-					ee = do_var(f, is_native_call, true);
+					ee = do_var(f, is_native_call);
 					tt = fiTypeFromExp(ee, locals);
 					ttt = fiWasmFunctionReturnType(fitype2wasmtypeEx(names, ftype, is_native_call));
 
@@ -147,7 +120,7 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, locals 
 			}
 		}
 		FiVar(name, type, __): {
-			do_var(e, isnative, false);	// isnative needed here
+			do_var(e, isnative);	// isnative needed here
 		}
 		FiLet(name, type, e1, e2, type2, __): {
 			e1_conv = do_exp(e1);
@@ -164,7 +137,7 @@ dofiexp2wasmexp(context : WasmContext, names : FiGlobalNames, e : FiExp, locals 
 		}
 		FiSwitch(x, switchType, cases, type, __): {
 			cases2 = map(cases, \c -> WasmCase(c.struct, c.argNames, do_exp(c.body), getNextWasmExpId()));
-			WasmSwitch(do_var(x, false, false), do_type(switchType), cases2, do_type(type), getNextWasmExpId())
+			WasmSwitch(do_var(x, false), do_type(switchType), cases2, do_type(type), getNextWasmExpId())
 		}
 		FiCast(ex, tFrom, tTo, type, __): {
 			WasmCast(do_exp(ex), do_type(tFrom), do_type(tTo), do_type(type), getNextWasmExpId());
