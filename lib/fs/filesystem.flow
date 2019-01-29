@@ -1,0 +1,250 @@
+import ds/array;
+import string;
+import net/http;
+import math/md5;
+
+export {
+	// get native file object by path in file system (works only for QT)
+	native getFileByPath : (path : string) -> native = FlowFileSystem.getFileByPath;
+
+	// opens up a file dialog with multiple file choosing supported
+	// returns an array of native file objects in callback
+	native openFileDialog : (
+		maxFiles : int,
+		fileTypes: [string], // array of "*.jpg" like strings or "image/*" mime-type filter strings
+		callback : (files : [native]) -> void
+	) -> void = FlowFileSystem.openFileDialog;
+
+	// Uploads native file to server
+	uploadClientFile : (
+		file : native,
+		url: string,
+		params: [KeyValue],
+		eventListeners: [UploadOnlyEventListener]
+	) -> () -> void;
+
+	native doUploadClientFile : (
+		file : native,
+		url: string,
+		params: [[string]],
+		onOpen: () -> void,
+		onData: (string) -> void,
+		onError: (string) -> void,
+		onProgress: (double, double) -> void,
+		onCancel: () -> void
+	) -> () -> void = FlowFileSystem.uploadNativeFile;
+
+
+	// returns name of native file for js
+	// returns full path to file for cpp
+	native fileNameClient : (file : native) -> string = FlowFileSystem.fileName;
+
+	// returns MIME type for all targets except flash - file extension.
+	native fileTypeClient : (file : native) -> string = FlowFileSystem.fileType;
+
+	// returns size of native file
+	native fileSizeClient : (file : native) -> double = FlowFileSystem.fileSizeNative;
+
+	// reuturns last modified timestamp
+	native fileModifiedClient : (file : native) -> double = FlowFileSystem.fileModifiedNative;
+
+	// slices native file to subfile
+	native fileSliceClient : (
+		file : native,
+		offset : int,
+		end : int
+	) -> native = FlowFileSystem.fileSlice;
+
+	// Reads a content of native file to flow
+	native readFileClient : (
+		file : native,
+		as : string, // Acceptable values: text, uri, data. Default value: text.
+		onData : (string) -> void,
+		onError : (string) -> void
+	) -> void = FlowFileSystem.readFile;
+
+	// On mobile only fileExists and deleteFile has been tested. No guarantee that other methods will work as expected.
+
+	// These return an error string if it did not work well, "" is things are cool
+	native createDirectory : (string) -> string = FlowFileSystem.createDirectory;
+	native deleteDirectory : (string) -> string = FlowFileSystem.deleteDirectory;
+	native deleteFile : (string) -> string = FlowFileSystem.deleteFile;
+	native renameFile : (old : string, new : string) -> string = FlowFileSystem.renameFile;
+
+	native fileExists : (string) -> bool = FlowFileSystem.fileExists;
+	native isDirectory : (string) -> bool = FlowFileSystem.isDirectory;
+	// Find all files in this directory, including folders
+	native readDirectory : (string) -> [string] = FlowFileSystem.readDirectory;
+	// How big is this file in bytes?
+	native fileSize : (string) -> double = FlowFileSystem.fileSize;
+	// When was the file modified as a timestamp in UTC? Do not rely on sub-second precision, which
+	// differs from platform to platform. Haskell has subsecond, while c++ does not.
+	native fileModified : (string) -> double = FlowFileSystem.fileModified;
+
+	// Given a relative path, make it absolute. Can be used to get current working directory with "."
+	native resolveRelativePath : (string) -> string = FlowFileSystem.resolveRelativePath;
+	// Transforms a full path to relative to given basis
+	relatingPath : (fullPath : string, basePath : string) -> string;
+
+	pathCombine(path1 : string, path2 : string) -> string;
+	pathCombineMany(paths : [string]) -> string;
+
+	// Extracts the directory from a path, without the trailing slash, i.e,
+	//     "/dir/file" -> "/dir"
+	//     "/dir/"     -> "/dir"
+	//     "/file"     -> ""
+	// Forward and backslashes are considered
+	dirName(filename: string) -> string;
+	fileNameOnly(filename : string) -> string;
+
+	ensureDirectoryExists(path : string) -> string;
+
+	isFileURI(path : string) -> bool;
+	getPathFromURI(path : string) -> string;
+
+	getFileExt(file : string) -> string;
+	changeFileExt(file : string, ext : string) -> string;
+
+	// Returns MD5 checksum for the file mentioned in path. Returns an empty line if file is not found.
+	// Optimized for cpp target: the file won't be loaded into memory.
+	native fileChecksum : (path : string) -> string = Native.fileChecksum;
+
+	// Checks, that the path is absolute, i.e.
+	// -- in *NIX systems starts with '/'
+	// -- in windows starts with smth. like C:\dir1\dir2 or C:/dir1/dir2
+	isAbsolutePath(path : string) -> bool;
+}
+
+uploadClientFile(file, url, params, listeners) {
+	// all this stuff is here cause I don't want to export a function with 10 arguments
+	onData = ref nop1;
+	onError = ref nop1;
+	onOpen = ref nop;
+	onProgress = ref nop2;
+	onCancel = ref nop;
+	iter(listeners,
+		\l ->
+		switch (l:UploadOnlyEventListener) {
+			UploadData(fn):
+				onData := fn;
+			UploadCancel(fn):
+				onCancel := fn;
+			UploadError(fn):
+				onError := fn;
+			UploadOpen(fn):
+				onOpen := fn;
+			UploadProgress(fn):
+				onProgress := fn;
+		});
+
+	doUploadClientFile(
+		file,
+		url,
+		map(params, \param -> [param.key, param.value]),
+		^onOpen,
+		^onData,
+		^onError,
+		^onProgress,
+		^onCancel
+	);
+}
+
+relatingPath(fullPath, basePath) {
+	if (fullPath == basePath) "."
+	else {
+		fullFolders = filter(strSplit2WithoutLeave(fullPath, ["\\", "/"]), \folder -> folder != "");
+		baseFolders = filter(strSplit2WithoutLeave(basePath, ["\\", "/"]), \folder -> folder != "");
+		ss = sameStartLength(baseFolders, fullFolders);
+		strGlue(
+			concat(
+				generate(0, length(baseFolders) - ss, \__-> ".."),
+				tailFrom(fullFolders, ss)
+			),
+			"/"
+		)
+	}
+}
+
+pathCombine(path1, path2) {
+	if (trim(path1) == "")
+		path2
+	else {
+		res = rtrim2(path1, "/\\") + "/" + ltrim2(path2, "/\\");
+		res;
+	}
+}
+
+pathCombineMany(paths : [string]) {
+	fold(paths |> tail, paths[0], \acc, e -> pathCombine(acc, e))
+}
+
+dirName(filename: string) -> string {
+	x = strLastIndexOf(strReplace(filename, "\\", "/"),"/");
+	if (x < 0) filename else strLeft(filename, x);
+}
+
+// [-Revise-] for "/qwe" returns "/qwe", that is with slash. Isn't it a bug?
+fileNameOnly(filename: string) -> string {
+	x = strLastIndexOf(strReplace(filename, "\\", "/"),"/");
+	if (x < 0) filename else strRight(filename, x + 1);
+}
+
+ensureDirectoryExists(path : string) -> string {
+	if (isDirectory(path)) ""
+	else {
+		t = rtrim2(path, "\\/");
+		x = strLastIndexOf(strReplace(t, "\\", "/"), "/");
+		if (x > 0) {
+			parent = strLeft(t, x);
+			e = ensureDirectoryExists(parent);
+			if (e != "") e
+			else {
+				createDirectory(t)
+			}
+		} else {
+			createDirectory(t)
+		}
+	}
+}
+
+isFileURI(path : string) -> bool {
+	startsWith(path, "file://");
+}
+
+getPathFromURI(path : string) -> string {
+	if (isFileURI(path)) strRight(path, 7) else path;
+}
+
+getFileExt(file : string) -> string {
+	ix = strLastIndexOf(file, ".");
+	sep = \c -> strRangeIndexOf(file,c, ix, strlen(file)) >= 0;
+	if (ix > 0 && !sep("/") && !sep("\\")) strRight(file, ix) else "";
+}
+
+changeFileExt(file : string, ext : string) -> string {
+	ix = strLastIndexOf(file, ".");
+	sep = \c -> strRangeIndexOf(file,c, ix, strlen(file)) >= 0;
+	l = if (ix > 0 && !sep("/") && !sep("\\")) strLeft(file, ix) else file;
+	l + ext;
+}
+
+fileChecksum(path : string) -> string {
+	if (fileExists(path)) {
+		md5(getFileContent(path));
+	} else "";
+}
+
+isAbsolutePath(path : string) -> bool {
+	if (strlen(path) == 0) false else {
+		// *NIX or windows absolute path like: /dir1/dir2 or \dir1\dir2
+		if (strIsFirst(path, "/\\")) {
+			true
+		} else if (strlen(path) > 2){
+			// Windows absolute path like:
+			// C:\dir1\dir2
+			isLetter(getCharAt(path, 0)) && (getCharAt(path, 1) == ":") && strIsFirst(getCharAt(path, 2), "/\\");
+		} else {
+			false
+		}
+	}
+}

@@ -459,6 +459,14 @@ namespace Area9Innovation.Flow
 			return null;
 		}
 
+		public virtual object removeAllKeyValues() {
+			return null;
+		}
+
+		public virtual Object[] getKeysList() {
+			return null;
+		}
+
 		public Object profileStart(String n) {
 			return null;
 		}

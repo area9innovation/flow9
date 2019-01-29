@@ -426,7 +426,7 @@ int main(int argc, char *argv[])
 #else
         flowdir.cdUp();
         flowdir.cdUp();
-        if (!flowdir.path().endsWith("flow"))
+        if (!flowdir.path().endsWith("flow9"))
             flowdir.cdUp();
 #endif
     }

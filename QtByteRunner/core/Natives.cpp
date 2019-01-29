@@ -306,6 +306,8 @@ StackSlot ByteCodeRunner::addPlatformEventListener(RUNNER_ARGS)
     std::string event_str = encodeUtf8(RUNNER->GetString(event));
     PlatformEvent e = PlatformEventUnknown;
 
+    if (event_str == "idle") e = PlatformApplicationUserIdle; else
+    if (event_str == "active") e = PlatformApplicationUserActive; else
     if (event_str == "resume") e = PlatformApplicationResumed; else
     if (event_str == "suspend") e = PlatformApplicationSuspended; else
     if (event_str == "online") e = PlatformNetworkOnline; else
@@ -737,6 +739,19 @@ StackSlot ByteCodeRunner::getKeyValue(RUNNER_ARGS)
 
 StackSlot ByteCodeRunner::removeKeyValue(RUNNER_ARGS)
 {
+    IGNORE_RUNNER_ARGS;
+    RETVOID;
+}
+
+StackSlot ByteCodeRunner::removeAllKeyValues(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+    RETVOID;
+}
+
+StackSlot ByteCodeRunner::getKeysList(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
     RETVOID;
 }
 

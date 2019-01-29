@@ -45,10 +45,11 @@ class Preset(Entity):
     allowed = ('name', 'main', 'imports', 'args', 'binaryfolder', 'url')
 
     def normalize(self, _):
-        self.main = expandPath(self.main)
-        self.imports = expandEnv(*self.imports) if self.imports else ()
-        self.args = tuple(self.args or [])
-        super().normalize(getFileName(self.main).title())
+        if self.main:
+            self.main = expandPath(self.main)
+            self.imports = expandEnv(*self.imports) if self.imports else ()
+            self.args = tuple(self.args or [])
+            super().normalize(getFileName(self.main).title())
 
     def toStr(self):
         return '{name}\nFile: {main}\nArgs: {args}'.format(

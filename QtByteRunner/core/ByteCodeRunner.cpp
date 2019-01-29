@@ -3692,6 +3692,8 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setKeyValue, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getKeyValue, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, removeKeyValue, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, removeAllKeyValues, 0);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, getKeysList, 0);
 
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, enumFromTo, 2);
 

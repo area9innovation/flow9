@@ -1,0 +1,183 @@
+import string;
+import text/languages;
+import fs/filesystem; // fileNameOnly
+import formats/json/json;
+import math/stringmath;
+import text/translationapi; // ContentUnit
+import ui/fontmapping; // getLang
+
+export {
+	// Returns a language name for given two language letters: de -> German
+	getLanguageName(letters : string) -> string;
+	// Returns two letters of language code for given language name: Danish -> da
+	getLanguageLetters(langName : string) -> string;
+	// Returns lang for given file path/name. (Actually just returns file name without extension)
+	getLangFromFileName(filepath : string) -> string;
+	// Checks if there are corresponding language in the language table for given file path
+	isValidLangFileName(fname : string) -> bool;
+	// In some languages we should write units before number like this %30 .
+	isLeftUnits() -> bool;
+	withUnits(val : string, unit : string, withSpace : bool) -> string;
+	withPercents(val : string) -> string;
+	getLanguageNativeName(letters : string) -> string;
+	getLanguageLettersFromNativeName(nativeName : string) -> string;
+	// Changes language, resets translations tree, loads and extracts translations
+	initLanguage(pathToDictionary : string, onSuccess : () -> void, onFail : () -> void, showPopup : () -> (() -> void)) -> void;
+	// Loads dictionary and initializes translations tree.
+	// Provided showPopup function is used to display a message during loading;
+	// you can use translationInitPopup() from ui/messagebox.flow  or simply \->nop
+	initTranslations(filePath : string, onSuccess : () -> void, onFail : () -> void, showPopup : () -> (() -> void)) -> void;
+	// Clears translation dictionary currently in memory.
+	// Call it when switching application language at run time.
+	clearTranslationDictionary() -> void;
+	// Extract translation pairs from json and initialize translation tree
+	extractTranslationsFromJson(content : string, translationTree : ref Tree<string, string>, onDone : () -> void) -> void;
+	isValidSourceText(text : string) -> bool;
+	filterSources(texts : [GeneralContentUnit]) -> [GeneralContentUnit];
+
+	// Converts int to string in th-format: 1st, 2nd, 3rd, 4th, etc.
+	i2sTh(value : int) -> string;
+}
+
+isValidSourceText(text : string) -> bool {
+	strlen(text) > 1 && isNotSpace(text)
+}
+
+filterSources(texts : [GeneralContentUnit]) {
+	// remove whitespaces and single char texts
+	filter(texts, \v -> isValidSourceText(v.text));
+}
+
+initLanguage(pathToDictionary, onSuccess, onFail, showPopup) {
+	lang = getLangFromFileName(pathToDictionary);
+	if (isValidLangShortName(lang)) {
+		translations := makeTree();
+		setLang(lang);
+		if (lang != "en")
+			initTranslations(pathToDictionary, onSuccess, onFail, showPopup)
+		else onSuccess()
+	} else {
+		if (getUrlParameter("dev") == "1")
+			println("initLanguage: incorrect lang: " + lang);
+		onFail();
+	}
+}
+
+initTranslations(filePath, onSuccess, onFail, showPopup) {
+	// nocache = \fn -> fn + "?nocache=" + d2st(timestamp(), 8);  // don't do it here. Leave caller a chance to put timestamp instead. See LSTSBU-573
+
+	if (!isValidLangFileName(filePath)) {
+		if (getUrlParameter("dev") == "1")
+			println("initTranslations: incorrect file name: " + filePath);
+		onFail();
+	} else {
+		closeWarning = {
+			if (!cgi) showPopup()
+			else nop
+		};
+
+		onInitialized = \ -> {
+			isUIdictionary = strContains(filePath, "translations");
+			if (isUIdictionary)
+				next(isUITranslationsLoaded, true);
+			closeWarning();
+			onSuccess();
+		}
+
+		onError = \ -> {
+			closeWarning();
+			onFail();
+		};
+
+		maybeVOTree =
+			if (isUrlParameterTrue("sounddebug"))
+				Some(translatedCoachTexts)
+			else
+				None();
+
+		loadTranslations(filePath, translations, maybeVOTree, None(), None(), onInitialized, onError);
+	}
+}
+
+clearTranslationDictionary() {
+	translations := makeTree();
+	next(isUITranslationsLoaded, false);
+	next(isContentTranslationsLoaded, false);
+}
+
+extractTranslationsFromJson(content : string, translationTree : ref Tree<string, string>, onDone : () -> void) {
+	json = parseJson(content);
+	switch (json : Json) {
+		JsonObject(members): {
+			iter(members, \m : Pair<string, Json> ->
+				switch(m.second : Json) {
+					JsonString(v): translationTree := setTree(^translationTree, m.first, v);
+					default: {}
+				}
+			)
+		}
+		default: {}
+	}
+	onDone();
+}
+
+getLanguageName(letters : string) {
+	letters_lo = toLowerCase(letters);
+	eitherMap(find(languages, \l : [string] -> l[1] == letters_lo), \descr -> descr[0], "")
+}
+
+getLanguageNativeName(letters : string) {
+	letters_lo = toLowerCase(letters);
+	eitherMap(find(languages, \l : [string] -> l[1] == letters_lo), \descr -> descr[3], "")
+}
+
+getLanguageLetters(langName : string) {
+	langName_lo = toLowerCase(langName);
+	eitherMap(find(languages, \l : [string] -> toLowerCase(l[0]) == langName_lo), \descr -> descr[1], "")
+}
+
+getLanguageLettersFromNativeName(nativeName : string) {
+	nativeName_lo = toLowerCase(nativeName);
+	eitherMap(find(languages, \l : [string] -> toLowerCase(l[3]) == nativeName_lo), \descr -> descr[1], "")
+}
+
+isLeftUnits() {
+	getLang() == "zh"
+}
+
+withUnits(val, unit, withSpace) {
+	sp = if (withSpace) " " else "";
+	val + sp + unit;
+}
+
+withPercents(val : string) {
+	withUnits(val, "%", false)
+}
+
+getLangFromFileName(filepath : string) {
+	name = fileNameOnly(filepath);
+	eitherMap(strLastIndexOfM(name, "."), \i -> strLeft(name, i), name) |> toLowerCase
+}
+
+isValidLangFileName(fname : string) {
+	lang = getLangFromFileName(fname);
+	isValidLangShortName(lang) && lang != "en"
+}
+
+isValidLangShortName(lang : string) {
+	getLanguageName(lang) != ""
+}
+
+i2sThSuffixes = [_("th"), _("1st"), _("2nd"), _("3rd")];
+i2sTh(value : int) -> string {
+	lastDigit = mod(value, 10);
+	strValue = i2s(value);
+
+	if (value > 10 && value < 20 || lastDigit == 0) {
+		strValue + i2sThSuffixes[0]
+	} else if (lastDigit < 4) {
+		strLeft(strValue, strlen(strValue) - 1) + i2sThSuffixes[lastDigit]
+	} else {
+		strValue + i2sThSuffixes[0]
+	}
+}
