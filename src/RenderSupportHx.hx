@@ -2312,7 +2312,7 @@ class RenderSupportHx {
       return null;
 	}
 
-	public static function setScrollRect(clip : Dynamic, left : Float, top : Float, width : Float, height : Float) : Dynamic  {
+	public static function setScrollRect(clip : Dynamic, left : Float, top : Float, width : Float, height : Float) : Void  {
 		#if js
 			// Update position right here
 			clip.style.top = "" + (-top) + "px";
@@ -2339,7 +2339,6 @@ class RenderSupportHx {
 			// We have to restore focus if we lost it
 			if ((focus != null) && (stage.focus == null)) stage.focus = focus;
 		#end
-		return null;
 	}
 
 	public static function getTextMetrics(textfield : Dynamic) : Array<Float> {
