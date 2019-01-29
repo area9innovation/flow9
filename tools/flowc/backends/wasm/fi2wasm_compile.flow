@@ -272,57 +272,53 @@ fiWasmIsGlobalVar(context : WasmContext, name : string) {
 compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 	result = switch (ex) {
 		WasmLambda(args, body, type, __): "";
-		WasmCall(f, args, type, __): {
+		WasmCall(f, args, type, calltype, __): {
 			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
-			(if (length(args) > 0) "\n" else "") +
-			switch (f) {
-				WasmVar(fname, ftype, __): {
-					if (containsSet(context.tailCalls, ex)) {
-						// emitting tail call: instead of pushing to stack, insert set_local's to save to parameters
-						supergluei(args, \i,e -> compileWasmExp(acc, e, context) + "\nset_local " + i2s(i), " ") + 
-						"\nbr $cont" // jump to outer loop - effectively function start
-					} else {
-						functionType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
-					 	fiWasmBuildFunctionCall(acc, fname, functionType, context);
-					}
+			(if (length(args) > 0) "\n" else "") + 
+			switch (calltype) {
+				WasmCallSimple(): {					
+					switch (f) {
+						WasmVar(fname, ftype, __): {
+							if (containsSet(context.tailCalls, ex)) {
+								// emitting tail call: instead of pushing to stack, insert set_local's to save to parameters
+								supergluei(args, \i,e -> compileWasmExp(acc, e, context) + "\nset_local " + i2s(i), " ") + 
+								"\nbr $cont" // jump to outer loop - effectively function start
+							} else {
+								functionType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
+							 	fiWasmBuildFunctionCall(acc, fname, functionType, context);
+							}
+						}
+						default: {
+							compileWasmExp(acc, f, context) + " " + 
+							// storing temp value globally - only to be used in the next 2 instructions
+							// essentially, a substitute for temp variable or stack dup instruction
+							"set_global $wasm_global_temp_holder_mut \n" + 
+							fiWasmBuildIndirectCall(acc, "get_global $wasm_global_temp_holder_mut", wasmExpType(f), context);
+						}
+					} + "\n"
 				}
-				default: {
-					compileWasmExp(acc, f, context) + " " + 
-					// storing temp value globally - only to be used in the next 2 instructions
-					// essentially, a substitute for temp variable or stack dup instruction
-					"set_global $wasm_global_temp_holder_mut \n" + 
-					fiWasmBuildIndirectCall(acc, "get_global $wasm_global_temp_holder_mut", wasmExpType(f), context);
-				}
-			} + "\n"
-		}
-		WasmCallNative(f, args, type, __): {
-			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
-			(if (length(args) > 0) "\n" else "") +
+				WasmCallNative(): {					
+					var = cast(f : WasmExp -> WasmVar);
+					nativeDec = lookupTree(context.natives, var.name);
 
-			{
-				var = cast(f : WasmExp -> WasmVar);
-				nativeDec = lookupTree(context.natives, var.name);
-
-				switch (nativeDec) {
-					Some(v): {					
-						functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeFunction);
-						fiWasmBuildNativeFunctionCall(acc, var.name, args, functionType, v, context);
+					switch (nativeDec) {
+						Some(v): {					
+							functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeFunction);
+							fiWasmBuildNativeFunctionCall(acc, var.name, args, functionType, v, context);
+						}
+						None(): {
+							fcPrintln("Error occurred in WasmCallNative: " + var.name);
+							"";
+						}
 					}
-					None(): {
-						fcPrintln("Error occurred in WasmCallNative: " + var.name);
-						"";
-					}
+					+ "\n"
 				}
-				+ "\n"
-			}
-		}
-		WasmCallHost(f, args, type, __): {
-			superglue(args, \e -> compileWasmExp(acc, e, context) + " " + fiWasmGenerateConstructor(wasmExpType(e)), " ") + 
-			(if (length(args) > 0) "\n" else "") + {
-				var = cast(f : WasmExp -> WasmVar);
-				functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeJSCallback);
-				fiWasmBuildHostFunctionCall(acc, var.name, args, functionType, context)
-				+ "\n"
+				WasmCallHost(): {					
+					var = cast(f : WasmExp -> WasmVar);
+					functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeJSCallback);
+					fiWasmBuildHostFunctionCall(acc, var.name, args, functionType, context)
+					+ "\n"
+				}
 			}
 		}
 		WasmVar(name, type, __): {
