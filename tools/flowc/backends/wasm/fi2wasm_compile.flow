@@ -76,28 +76,12 @@ fiWasmCompileToplevel(
 }
 
 fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, context : WasmContext) {
-	supported = switch (decl.type) {
-		FiTypeRef(type2): {
-			switch (type2) {
-				FiTypeInt(): true;
-				FiTypeBool(): true;
-				FiTypeDouble(): true;
-				FiTypeString(): true;
-				FiTypeFlow(): true;
-				FiTypeArray(__): true;
-				FiTypeFunction(__, __): true;
-				FiTypeName(__, __): true;
-				default: {
-					println("WARNING! Unsupported global ref " + toString(type2));
-					false;
-				}
-			}
-		}
-		FiTypeName(__, __): true;
-		FiTypeArray(__): true;
-		default: false;
-	}
-	if (supported) {
+    // we can only inline initializer for simple types and constants
+    // for other initializers, we need to generate an initializer function
+    wasmTyp = fitype2wasmtype(context.globalNames, decl.type);
+    wasmType = compileWasmType(wasmTyp, false);
+    useInitFunction = wasmTypeUsesWasmHeap(wasmTyp) || !fiExpIsConstant(decl.value); 
+	if (useInitFunction) {
 		initFunction = FiFunctionDec("wasm__init__global__var__" + decl.name, 
 			FiLambda([], decl.value, FiTypeFunction([], decl.type), decl.declStart),
 			FiTypeFunction([], decl.type),
@@ -106,14 +90,14 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 		wasmExpr = "\t call $" + initFunction.name + " set_global $" + decl.name + "\n";
 		context.globalVarsInitializers := Cons(Pair(decl.name, wasmExpr), ^(context.globalVarsInitializers));
 		"\n" + wasmInitFunction + 
-		"\n(global $" + decl.name + " (mut i32) i32.const 0)"
+		"\n(global $" + decl.name + " (mut " + wasmType + ") " + wasmType + ".const 0)"
 	} else {
 		// support for mutable global variables - they start with wasm_ and end with _mut
 		mut = startsWith(decl.name, "wasm_") && endsWith(decl.name, "_mut");
 		mutPref = if (mut) "(mut " else "";
 		mutSuff = if (mut) ")" else "";
 		wasmValue = fiexp2wasmexp(context, context.globalNames, wasmTransformExpression(decl.value));
-		"(global $" + decl.name + " " + mutPref + compileWasmType(fitype2wasmtype(context.globalNames, decl.type), false) + mutSuff + " " + 
+		"(global $" + decl.name + " " + mutPref + wasmType + mutSuff + " " + 
 			compileWasmExp(acc, wasmValue, context) + ")";
 	}
 }
@@ -264,17 +248,25 @@ fiWasmBuildHostFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type :
 	"call $" + fiInvokeName(type, context.typeTable);
 }
 
-fiWasmBuildFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type : WasmTypeFunction, context : WasmContext) -> string {
-	// superglue(args, \e -> compileWasmExp(acc, e, context), " ") + 
-	// (if (length(args) > 0) "\n" else "") +
+fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, context : WasmContext) -> string {
 	if (containsKeyTree(context.functions.functionIndices, func)) {
 		if (startsWith(func, "wasm_"))
 			"call $" + func // call function in runtime library directly, no dummy closure
 		else 
 			"i32.const 0 call $" + func // call global function and pass dummy closure argument as last one
 	} else {
-		fiWasmBuildIndirectCall(acc, "get_local $" + func, type, context)
+		cmd = if (fiWasmIsGlobalVar(context, func)) "get_global" else "get_local";
+		fiWasmBuildIndirectCall(acc, cmd + " $" + func, type, context)
 	}
+}
+
+fiWasmIsGlobalVar(context : WasmContext, name : string) {
+	eitherMap(lookupTree(context.globalNames.toplevel, name), \decl : FiDeclaration -> {
+		switch (decl) {
+			FiGlobalVar(__, __, __, __, __): true;
+			default: false;
+		}
+	}, false)
 }
 
 compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
@@ -291,7 +283,7 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 						"\nbr $cont" // jump to outer loop - effectively function start
 					} else {
 						functionType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
-					 	fiWasmBuildFunctionCall(acc, fname, args, functionType, context);
+					 	fiWasmBuildFunctionCall(acc, fname, functionType, context);
 					}
 				}
 				default: {
@@ -453,6 +445,17 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> string {
 				}
 				WasmTypeFlow(): {
 					makeWasmUnboxFlowValue(context, value, tTo);
+				}
+				WasmTypeUnion(u_name, u_structs): {
+					switch(tTo) {
+						WasmTypeStruct(s_name, s_fields): {				
+							value
+						}
+						WasmTypeFlow(): {
+							makeWasmFlowValue(context, value, tFrom);
+						}
+						default: castError();
+					}
 				}
 
 				default: {

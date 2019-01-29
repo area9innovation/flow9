@@ -90,6 +90,13 @@ export {
 		content : Tropic,
 		expanded : Transform<bool>,
 		vertical : bool) -> Tropic;
+
+	TCollapsingBox(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		content : Tropic,
+		yTrans : Transform<double>,
+		expand : Transform<bool>) -> Tropic;
 }
 
 MGridSize(t : Tropic) -> Tropic {
@@ -387,7 +394,7 @@ MZoomMaterial(mat : Material, scale : Transform<double>, scrollStyle : [MScrollS
 	prevSc = ref fgetValue(scale);
 
 	MScroll(
-		MZoom(mat, TScale(fselect(scale, FLift(\sc -> Factor(sc, sc))), TSized(box.box)), true)
+		MZoom(mat, TScale(ffactor2(scale), TSized(box.box)), true)
 		|> MCenter,
 		TFillXY(),
 		replaceStructMany(scrollStyle, [box, scrollPosition])
@@ -696,4 +703,56 @@ TAnimatedExpander(
 				[],
 				m
 			))
+}
+
+TCollapsingBox(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	content : Tropic,
+	yTrans : Transform<double>, // in upper direction only
+	expand : Transform<bool> // trigger to open or close
+) -> Tropic {
+
+	height = make(0.);
+	trans = make(0.); // px to translate up
+
+	block = ref false; // to block outer translations while animation is active
+	startFactor = ref 1.;
+	factor = make(0.); // 0 .. 1
+
+	box = TSizedHeight(0., fsubtract(height, trans));
+
+	content
+	|> (\m -> TAlpha(factor, m))
+	|> (\t -> TAttachHeightCopy(t, height))
+	|> (\t -> TTranslate(fselect(trans, FLift(\y -> Point(0., -y))), t))
+	|> (\t -> TFixSize(t, box))
+	|> (\t -> TConstruct([
+			make2Subscribe(yTrans, height, \y, hgt -> if (!^block)
+				nextDistinct(factor, forceRange(b2d(fgetValue(expand)) - y / hgt, 0., 1.))
+			),
+			\ -> fconnect2Select(factor, height, trans, \f, hgt -> (1. - f) * hgt)
+		], t
+	))
+	|> (\t ->
+		MEasingAnimation(
+			manager,
+			parent,
+			const(0.3),
+			const(easingFastOutSlowIn),
+			expand,
+			\e -> {
+				startFactor := fgetValue(factor);
+				block := true;
+				Some(e)
+			},
+			\e, prc -> {
+				f = lerp(^startFactor, b2d(e), prc);
+				nextDistinct(factor, f);
+				if (prc == 1.) block := false;
+			},
+			[],
+			t
+		)
+	)
 }
