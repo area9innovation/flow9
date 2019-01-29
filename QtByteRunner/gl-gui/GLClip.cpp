@@ -1244,7 +1244,7 @@ StackSlot GLClip::setScrollRect(RUNNER_ARGS)
     local_transform_raw.x = -min_pt.x;
     local_transform_raw.y = -min_pt.y;
 
-    vec2 size(width.GetDouble()-1, height.GetDouble()-1);
+    vec2 size(width.GetDouble(), height.GetDouble());
     scroll_rect_box = GLBoundingBox(min_pt, min_pt+size);
     scroll_rect = true;
 
