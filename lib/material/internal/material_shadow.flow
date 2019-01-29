@@ -11,15 +11,19 @@ export {
 	// Adds a shadow to reflect the z-order as specified in
 	// https://www.google.com/design/spec/what-is-material/elevation-shadows.html
 	// z is between 0.0 (no shade) to 24.0
-	TShadow(z : Transform<double>, lightBackground : bool, t : Tropic) -> Tropic;
+	TShadow(parent : MFocusGroup, z : Transform<double>, t : Tropic) -> Tropic;
 	TEasedShadow(manager : MaterialManager, parent : MFocusGroup, z : Transform<double>, t : Tropic, duration : double) -> Tropic;
 
-	TShadowShape(z : Transform<double>, lightBackground : bool, t : Tropic, shape: ShadowShape) -> Tropic;
+	TShadowShape(parent : MFocusGroup, z : Transform<double>, t : Tropic, shape: ShadowShape) -> Tropic;
 	TEasedShadowShape(manager : MaterialManager, parent : MFocusGroup, z : Transform<double>, t : Tropic, duration : double, shape : ShadowShape) -> Tropic;
+
+	FContainer(parent : MFocusGroup, style : [GraphicsStyle]) -> (WidthHeight) -> FForm;
+	MContainer(manager : MFocusGroup, style : [TGraphicsStyle], size : Tropic) -> Tropic;
+	MContainerFrame(manager : MFocusGroup, style : [TGraphicsStyle], content : Tropic) -> Tropic;
 }
 
-TShadow(z : Transform<double>, lightBackground : bool, t : Tropic) -> Tropic {
-	TShadowShape(z, lightBackground, t, RectangleShape());
+TShadow(parent : MFocusGroup, z : Transform<double>, t : Tropic) -> Tropic {
+	TShadowShape(parent, z, t, RectangleShape());
 }
 
 TEasedShadow(manager : MaterialManager, parent : MFocusGroup, z : Transform<double>, t : Tropic, duration : double) -> Tropic {
@@ -31,7 +35,7 @@ TEasedShadowShape(manager : MaterialManager, parent : MFocusGroup, z0 : Transfor
 	if (parent.theme.enableAnimations) {
 		zAnimation = make(fgetValue(z0));
 
-		TShadowShape(zAnimation, parent.theme.lightBackground, t, shape)
+		TShadowShape(parent, zAnimation, t, shape)
 		|> (\f ->
 			MEasingAnimation(
 				manager,
@@ -46,7 +50,7 @@ TEasedShadowShape(manager : MaterialManager, parent : MFocusGroup, z0 : Transfor
 			)
 		)
 	} else {
-		TShadowShape(z0, parent.theme.lightBackground, t, shape)
+		TShadowShape(parent, z0, t, shape)
 	}
 }
 
@@ -286,7 +290,9 @@ TBottomRectangleShadow(tr : Tropic, lightBackground : bool, z : Transform<double
 	})
 }
 
-TShadowShape(zo : Transform<double>, lightBackground : bool, t : Tropic, shape : ShadowShape) -> Tropic {
+TShadowShape(parent : MFocusGroup, zo : Transform<double>, t : Tropic, shape : ShadowShape) -> Tropic {
+	lightBackground = parent.theme.lightBackground;
+
 	if (!^showMaterialShadows || zo == zero) {
 		t
 	} else if (^useShadowFilters) {
@@ -331,7 +337,7 @@ TShadowShape(zo : Transform<double>, lightBackground : bool, t : Tropic, shape :
 					switch (shape: ShadowShape) {
 						RectangleShape():
 							TBorder(-0.5, -0.5, -0.5, -0.5, tr)
-							|> (\f -> TRounded(2.0, 2.0, 2.0, 2.0, [MFill(MBackgroundColor(lightBackground))], f))
+							|> (\f -> MContainer(parent, [MFill(MBackgroundColor(lightBackground))], f))
 							|> addFilter
 							|> (\f -> TCenterIn(f, tr));
 						BottomRectangleShape():
@@ -437,4 +443,104 @@ TShadowShape(zo : Transform<double>, lightBackground : bool, t : Tropic, shape :
 		|> (\f -> TGroup2(f, TDisplay("content")))
 		|> (\f -> TLet("content", t, f))
 	}*/
+}
+
+FContainer(parent : MFocusGroup, style : [GraphicsStyle]) -> (WidthHeight) -> FForm {
+	topLeftR = parent.theme.corners.topLeft.radius;
+	topLeftRounded = isSameStructType(parent.theme.corners.topLeft, RoundedCorner(0.0));
+	topRightR = parent.theme.corners.topRight.radius;
+	topRightRounded = isSameStructType(parent.theme.corners.topRight, RoundedCorner(0.0));
+	bottomRightR = parent.theme.corners.bottomRight.radius;
+	bottomRightRounded = isSameStructType(parent.theme.corners.bottomRight, RoundedCorner(0.0));
+	bottomLeftR = parent.theme.corners.bottomLeft.radius;
+	bottomLeftRounded = isSameStructType(parent.theme.corners.bottomLeft, RoundedCorner(0.0));
+
+	\wh -> {
+		width = wh.width;
+		height = wh.height;
+
+		if (width == 0.0 || height == 0.0) { // special case (without this check we get two small dots)
+			FEmpty() // Fixed(width, height)
+		} else {
+			// We need to normalize rounding when rounding size of neighboгr angles is more then width/height by division on the common factor.
+			normalizeLocal = \tl, tr, br, bl, w1, h1 -> {
+				normalizeRounds = \f, s, len -> {
+					if (f + s <= len)
+						1.0
+					else {
+						len / (f + s);
+					}
+				}
+				min(normalizeRounds(tl, tr, w1),
+					min(normalizeRounds(tr, br, h1),
+						min(normalizeRounds(br, bl, w1),
+							normalizeRounds(bl, tl, h1))));
+			}
+
+			factor = normalizeLocal(topLeftR, topRightR, bottomRightR, bottomLeftR, width, height);
+			w = width;
+			h = height;
+			r1 = topLeftR * factor;
+			r2 = topRightR * factor;
+			r3 = bottomRightR * factor;
+			r4 = bottomLeftR * factor;
+
+			FGraphics(
+				[
+					MoveTo(r1, 0.0),
+					LineTo(w - r2, 0.0),
+					if (topRightRounded)
+						CubicBezierTo(w, r2, w, 0.0)
+					else
+						LineTo(w, r2),
+					LineTo(w, h - r3),
+					if (bottomRightRounded)
+						CubicBezierTo(w - r3, h, w, h)
+					else
+						LineTo(w - r3, h),
+					LineTo(r4, h),
+					if (bottomLeftRounded)
+						CubicBezierTo(0.0, h - r4, 0.0, h)
+					else
+						LineTo(0.0, h - r4),
+					LineTo(0.0, r1),
+					if (topLeftRounded)
+						CubicBezierTo(r1, 0.0, 0.0, 0.0)
+					else
+						LineTo(r1, 0.0),
+				],
+				style
+			)
+		}
+	}
+}
+
+MContainer(parent : MFocusGroup, style : [TGraphicsStyle], size : Tropic) -> Tropic {
+	TransformTAcc(\t2a, pi, ss, mo -> {
+		b = t2a(size, pi, ss, true);
+		container = FContainer(parent, style |> tgraphicsStyle2graphicsStyle);
+
+		TAcc(
+			FMutable(fselect(fwidthheight(b.metrics.width, b.metrics.height), container |> FLift)),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
+MContainerFrame(parent : MFocusGroup, style : [TGraphicsStyle], content : Tropic) -> Tropic {
+	TCopySize(
+		content,
+		\tr -> MContainer(parent, style, tr),
+		false
+	)
 }
