@@ -10,6 +10,7 @@
 #import "iosLocalyticsSupport.h"
 #import "iosNotificationsSupport.h"
 #import "iosGeolocationSupport.h"
+#import "iosWebSocketSupport.h"
 #ifdef BYTECODE_FILE
 #import "AppleStorePurchase.h"
 #endif
@@ -34,6 +35,7 @@ class iosGLRenderSupport;
 #ifdef NSLOCATION_WHEN_IN_USE_USAGE_DESCRIPTION
     iosGeolocationSupport * GeolocationSupport;
 #endif
+    iosWebSocketSupport * WebSocketSupport;
     FileLocalStore     * LocalStore;
     FileSystemInterface * FSInterface;
     
