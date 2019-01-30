@@ -234,7 +234,7 @@ www/js/flowrunner.js
 ```
 # C++ runner (flowcpp)
 Under linux it’s easier to compile yourself a binary instead of using
-the precompiled one. To do so, you should have Qt 5.10.0 set up by default
+the precompiled one. To do so, you should have Qt 5.12.0 set up by default
 Install required libraries:
 ```bash
 sudo apt-get install zlib1g-dev libjpeg-dev libpng-dev -y
@@ -242,21 +242,21 @@ wget -q -O /tmp/libpng12.deb http://mirrors.kernel.org/ubuntu/pool/main/libp/lib
   && sudo dpkg -i /tmp/libpng12.deb \
   && rm /tmp/libpng12.deb
 ```
-Download and setup QT 5.10.0 (or later):
+Download and setup QT 5.12.0 (or later):
 ```bash
-wget https://download.qt.io/archive/qt/5.10/5.10.0/qt-opensource-linux-x64-5.10.0.run
-chmod +x qt-opensource-linux-x64-5.10.0.run
+wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
+chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
-**Install into `<path to your home directory>/Qt/5.10.0` and be sure to select all items to install!**
+**Install into `<path to your home directory>/Qt/5.12.0` and be sure to select all items to install!**
 ```bash
-./qt-opensource-linux-x64-5.10.0.run
-rm qt-opensource-linux-x64-5.10.0.run
+./qt-opensource-linux-x64-5.12.0.run
+rm qt-opensource-linux-x64-5.12.0.run
 ```
 
 ```bash
 sudo apt install libpulse-dev libglu1-mesa-dev qtchooser -y
-qtchooser -install qt510 ~/Qt/5.10.0/5.10.0/gcc_64/bin/qmake
-echo "export QT_SELECT=qt510" >> ~/.env && source ~/.env
+qtchooser -install qt512 ~/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
+echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
