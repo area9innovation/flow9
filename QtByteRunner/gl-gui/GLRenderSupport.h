@@ -202,6 +202,7 @@ protected:
     int Width, Height, RealWidth, RealHeight;
     int MouseX, MouseY;
     int MouseDownX, MouseDownY;
+    double lastUserAction;
 
     GLClip *getCurrentFocus();
 private:
@@ -437,6 +438,7 @@ protected:
     static StackSlot removeDrawFrameListener(ByteCodeRunner*, StackSlot*, void*);
     static StackSlot removeFullWindowListener(ByteCodeRunner*, StackSlot*, void*);
     
+    void updateLastUserAction();
 private:
     DECLARE_NATIVE_METHOD(NativeGetUrl)
 

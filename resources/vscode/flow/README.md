@@ -1,8 +1,6 @@
 # Flow for VS Code
 
-This folder contains Visual Studio Code extension for flow and lingo. Structure:
- - flow - the extension source code
- - flow.vsix - compiled extension
+This folder contains Visual Studio Code extension for flow and lingo.
 
 ## INSTALLATION and UPDATE
 1. Launch Visual Studio Code
@@ -11,12 +9,17 @@ This folder contains Visual Studio Code extension for flow and lingo. Structure:
 
 Alternatively, run the following command line: `code --install-extension flow.vsix` or one of the `install-or-update` scripts provided. 
 
-The extension has auto-update functionality. At every activation (aka VSCode start-up) it will check for its updates by looking at package.json in flow repository and prompt user to update. The update procedue is also automatic.
+The extension has auto-update functionality. At every activation (aka VSCode start-up and opening 
+a `.flow` file) it will check for its updates by looking at package.json in flow repository 
+and prompt user to update. It will also monitor this file for changes. The update procedure 
+itself is automatic as well.
 
-Configure the flow root folder under File->Preferences-Settings, and then "Flow configuration" and change `flow.root` to 
-point to the root of Flow repo (typically `c:\area9\flow`).
+Configure the flow root folder under File->Preferences-Settings, and then "Flow configuration" 
+and change `flow.root` to 
+point to the root of Flow repo (typically `c:\flow9`).
 
-Consider to download and install the font "Fira code". Then go to File -> Preferences -> Settings, Text Editor, Font, change the Font family
+Consider to download and install the font "Fira code". Then go to File -> Preferences -> Settings
+Text Editor, Font, change the Font family
 to "Fira code" and make sure "Font Ligatures" is checked.
 
 https://github.com/tonsky/FiraCode/releases
@@ -105,7 +108,6 @@ See https://code.visualstudio.com/docs/extensions/example-hello-world .
 
 ## Build
 1. Make sure Node.js, NPM and `vsce` package are all installed (i.e. `npm install -g vsce`)
-2. Update the `README.md` file inside the flow folder if needed
 2. Run `build.cmd` to update the `flow.vsix` package
 
 ## Release Notes

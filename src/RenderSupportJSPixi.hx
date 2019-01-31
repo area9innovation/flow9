@@ -3306,7 +3306,12 @@ private class VideoClip extends FlowContainer {
 	private static var playingVideos : Int = 0;
 
 	public static inline function NeedsDrawing() : Bool {
-		return playingVideos != 0;
+		if (playingVideos != 0) {
+			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
+			return true;
+		}
+
+		return false;
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
@@ -4430,7 +4435,11 @@ private class TextField extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
-		var newValue = nativeWidget.value;
+		var newValue : String = nativeWidget.value;
+
+		if (maxChars > 0) {
+			newValue = newValue.substr(0, maxChars);
+		}
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
@@ -4703,13 +4712,17 @@ private class PixiText extends TextField {
 	}
 
 	private inline function destroyTextClipChildren() {
-		for (clip in textClip.children) {
+		var clip = textClip.children.length > 0 ? textClip.children[0] : null;
+
+		while (clip != null) {
 			if (untyped clip.canvas != null && Browser.document.body.contains(untyped clip.canvas)) {
 				Browser.document.body.removeChild(untyped clip.canvas);
 			}
 
 			textClip.removeChild(clip);
 			clip.destroy({ children: true, texture: true, baseTexture: true });
+
+			clip = textClip.children.length > 0 ? textClip.children[0] : null;
 		}
 	}
 
@@ -4889,7 +4902,7 @@ private class PixiText extends TextField {
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
 			text = TextField.getBulletsString(text.length);
-		var texts = checkTextLength(text);
+		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {
 			textClip = createTextClip(texts[0][0], style);
@@ -4920,6 +4933,7 @@ private class PixiText extends TextField {
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
 							var newTextClip = createTextClip(txt, style);
+
 							newTextClip.x = currentWidth;
 							newTextClip.y = currentHeight;
 

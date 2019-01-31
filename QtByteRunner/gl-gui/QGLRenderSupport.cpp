@@ -708,6 +708,7 @@ void QGLRenderSupport::videoPositionChanged(int64_t position)
     if (!owner) return;
 
     doRequestRedraw();
+    updateLastUserAction();
 
     dispatchVideoPosition(owner, position);
 }
@@ -959,6 +960,8 @@ void QGLRenderSupport::mouseMoveEvent(QMouseEvent *event)
     // No mouse tracking in fake touch mode
     if (NoHoverMouse && !event->buttons())
         return;
+
+    updateLastUserAction();
 
     dispatchMouseEvent(FlowMouseMove, event->x(), event->y());
 }
@@ -1572,6 +1575,22 @@ void QGLRenderSupport::showFullScreen()
 void QGLRenderSupport::hideFullScreen()
 {
     qobject_cast<MainWindow*>(this->parent())->showNormal();
+}
+
+void QGLRenderSupport::focusInEvent (QFocusEvent * event )
+{
+   QWidget::focusInEvent(event);
+
+   updateLastUserAction();
+   getFlowRunner()->NotifyPlatformEvent(PlatformApplicationResumed);
+}
+
+void QGLRenderSupport::focusOutEvent (QFocusEvent * event )
+{
+   QWidget::focusInEvent(event);
+
+   updateLastUserAction();
+   getFlowRunner()->NotifyPlatformEvent(PlatformApplicationSuspended);
 }
 
 NativeFunction *QGLRenderSupport::MakeNativeFunction(const char *name, int num_args)
