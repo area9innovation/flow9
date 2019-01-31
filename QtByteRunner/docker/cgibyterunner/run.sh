@@ -1,5 +1,5 @@
 #!/bin/bash
-FLOW_FOLDER=~/area9/copenhagen/flow
+FLOW_FOLDER=$FLOW
 if [ ! -f $FLOW_FOLDER/QtByteRunner/buildcgi.sh ]; then
     echo "Could not find flow in $FLOW_FOLDER"
     echo "Either make a symlink or adjust path in this script"

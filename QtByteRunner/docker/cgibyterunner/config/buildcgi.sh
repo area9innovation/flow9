@@ -2,7 +2,7 @@
 set -e
 
 # prepare dist
-cd /flow9/QtByteRunner
+cd /flow/QtByteRunner
 mkdir -p dist/lib
 mkdir -p dist/sqldrivers
 
@@ -20,7 +20,7 @@ cp -L \
    bin/cgi/linux/lib/
 
 qmake QtByteRunnerCgi.pro
-make -j $(nproc)
+make -j$(nproc)
 
 mv QtByteRunner.fcgi bin/cgi/linux/ 
 
