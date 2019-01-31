@@ -2,9 +2,7 @@
 set -e
 
 # prepare dist
-cd /flow/QtByteRunner
-mkdir -p dist/lib
-mkdir -p dist/sqldrivers
+cd /flow
 
 # copy libraries required by mysql driver and driver itself
 mkdir -p bin/cgi/linux/sqldrivers

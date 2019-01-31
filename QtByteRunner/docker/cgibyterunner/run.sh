@@ -1,14 +1,30 @@
 #!/bin/bash
-FLOW_FOLDER=$FLOW
-if [ ! -f $FLOW_FOLDER/QtByteRunner/buildcgi.sh ]; then
-    echo "Could not find flow in $FLOW_FOLDER"
-    echo "Either make a symlink or adjust path in this script"
-else
-    docker run --rm \
-      -v $FLOW_FOLDER:/flow \
-      -it area9/qt-byte-runner:cgi $1
-    echo ""
-    echo "Results will be in $FLOW_FOLDER/QtByteRunner/bin/cgi/linux/"
-    echo "Do ./run.sh \"make clean\" to recompile from scratch"
-fi
+set -e
+
+echo "Building Linux CGI QBR in a container"
+
+folder="artifacts"
+volume_name="build_qbr_artifact"
+dummy_container="qbr_artifact"
+
+rm -rf "$folder"
+#mkdir -p "$folder"
+
+# This has to be usable from jenkins agents, which run inside docker themselves
+# I can not map a folder inside the container into another container, so I create
+# named volume instead and use dummy container to copy files out of it.
+# cleanup
+docker rm "$dummy_container" || true
+docker volume rm -f "$volume_name"
+docker volume create "$volume_name"
+
+docker run -i --rm --name build_qbr \
+  -v "$volume_name:/flow" \
+  area9/qt-byte-runner:cgi
+
+# extracting artifacts from the volume
+docker create --name "$dummy_container" -v "$volume_name:/artifact" hello-world
+docker cp "$dummy_container:/artifact/bin/cgi/linux" "$folder"
+docker rm "$dummy_container"
+docker volume rm "$volume_name"
 
