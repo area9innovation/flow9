@@ -16,11 +16,12 @@ mkdir -p "$folder"
 # named volume instead and use dummy container to copy files out of it.
 
 # cleanup
+docker rm "$dummy_container" || true
 docker volume rm -f "$volume_name"
 docker volume create "$volume_name"
 
-docker run -i --name build_qbr --rm \
-  -v "$volume_name:/flow9/bin/linux" \
+docker run -i --rm --name build_qbr \
+  -v "$volume_name:/flow" \
   area9/qt-byte-runner:desktop
 
 # extracting artifacts from the volume

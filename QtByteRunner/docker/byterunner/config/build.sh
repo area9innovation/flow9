@@ -1,6 +1,6 @@
 #!/bin/bash
-cd /flow9/QtByteRunner/bin/linux
+cd /flow
 
-qmake ../../QtByteRunner.pro
-make -j $(nproc)
+qmake QtByteRunner.pro
+make -j$(nproc)
 
