@@ -26,7 +26,7 @@ docker run -i --rm --name build_qbr \
 
 # extracting artifacts from the volume
 docker create --name "$dummy_container" -v "$volume_name:/artifact" hello-world
-docker cp "$dummy_container:/artifact/QtByteRunner" "$folder/QtByteRunner"
+docker cp "$dummy_container:/artifact/bin/linux/QtByteRunner" "$folder/QtByteRunner"
 docker rm "$dummy_container"
 docker volume rm "$volume_name"
 
