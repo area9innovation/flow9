@@ -31,6 +31,9 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	mouseEnabled = extractStruct(m.style, MScrollMouseEnabled(const(true))).enabled;
 	scrollToFocusEnabled = extractStruct(m.style, MScrollToFocusEnabled(const(true))).enabled;
 
+	onScrolledToBottom = tryExtractStruct(m.style, MOnScrolledToBottom(nop));
+	onScrolledToSide = tryExtractStruct(m.style, MOnScrolledToSide(nop));
+
 	// WidthHeight of content
 	contentWH = wh.content;
 	// WidthHeight of available box
@@ -244,9 +247,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 						),
 						\newParent ->
 							TCrop(scrollPosition, boxWH0,
-								eitherMap(
-									tryExtractStruct(m.style, MOnScrolledToBottom(nop)),
-									\onScrolledToBottom -> TransformTAcc2(\t2a2 -> {
+								if (isSome(onScrolledToBottom) || isSome(onScrolledToSide)) {
+									TransformTAcc2(\t2a2 -> {
 										c1 = t2a2(c0(newParent));
 										TAcc(
 											c1.form,
@@ -260,25 +262,60 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 											c1.addFillers,
 											c1.xConstant,
 											c1.yConstant,
-											arrayPush(
+											concatA([
 												c1.disposers,
-												makeSubscribe(
-													fselect3(
-														b.metrics.height,
-														c1.metrics.height,
-														scrollPosition,
-														\bH, cH, sPos ->
-															bH + sPos.y >= cH
-													),
-													\isBottom ->
-														if (isBottom)
-															onScrolledToBottom.event()
-												)()
-											)
+												eitherMap(
+													onScrolledToBottom,
+													\onBottom ->
+													[
+														makeSubscribe(
+															fselect3(
+																b.metrics.height,
+																c1.metrics.height,
+																scrollPosition,
+																\bH, cH, sPos ->
+																	bH + sPos.y >= cH
+															),
+															\isBottom ->
+																if (isBottom)
+																	onBottom.event()
+														)()
+													],
+													[]
+												),
+												eitherMap(
+													onScrolledToSide,
+													\onSide ->
+													[
+														makeSubscribe(
+															if (getDefaultRtl())
+																fselect(
+																	scrollPosition,
+																	FLift(\sPos ->
+																		sPos.x <= 0.0
+																	)
+																)
+															else
+																fselect3(
+																	b.metrics.width,
+																	c1.metrics.width,
+																	scrollPosition,
+																	\bW, cW, sPos ->
+																		bW + sPos.x >= cW
+																),
+															\isSide ->
+																if (isSide)
+																	onSide.event()
+														)()
+													],
+													[]
+												)
+											])
 										);
-									}),
-									c0(newParent)
-								)
+									});
+								} else {
+									c0(newParent);
+								}
 							)
 					)
 				),

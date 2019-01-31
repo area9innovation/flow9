@@ -297,9 +297,7 @@ class RenderSupportHx {
 		return null;
 	}
 
-	public static function setScrollRect(clip : Dynamic, left : Float, top : Float, width : Float, height : Float) : Dynamic {
-		return null;
-	}
+	public static function setScrollRect(clip : Dynamic, left : Float, top : Float, width : Float, height : Float) : Void {}
 
 	public static function getTextMetrics(textfield : Dynamic) : Array<Float> {
 		return [];

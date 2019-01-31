@@ -1,4 +1,4 @@
-## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1b)`
+## Flower - Flow Extensible Runner for Sublime Text 3 `(19.1c)`
 
 ### What is Flower?
 
@@ -61,7 +61,8 @@ However, `flower` lacks certain features which are present in older `flow` plugi
        cd /home/user/.config/sublime-text-3/Packages/
        ln -s <repo>/flow9/resources/sublimetext/flower flower
 
-      On Windows same can be achieved with `mklink`, see [guide](https://www.howtogeek.com/howto/16226/complete-guide-to-symbolic-links-symlinks-on-windows-or-linux/).
+      On Windows same can be achieved with `mklink`, see
+      [guide](https://www.howtogeek.com/howto/16226/complete-guide-to-symbolic-links-symlinks-on-windows-or-linux/).
 
 7. Modify settings (`Preferences: Flower Settings - User`):
 
@@ -163,6 +164,10 @@ However, `flower` lacks certain features which are present in older `flow` plugi
 
 
 ### Changelog
+
+#### 19.1c
+
+- Fixed F8 menu not opening for empty file
 
 #### 19.1b
 

@@ -9,6 +9,7 @@
 #include "qt-backend/StartProcess.h"
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
+#include "qt-backend/QWebSocketSupport.h"
 
 #ifdef FLOW_MEDIARECORDER
 #include "qt-backend/QMediaRecorderSupport.h"
@@ -565,6 +566,7 @@ int main(int argc, char *argv[])
     QFileSystemInterface FileSystem(&FlowRunner, &HttpManager);
     QtNotificationsSupport NotificationsManager(&FlowRunner, cgi);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
+    QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
 
     RunParallelHost RunParallel(&FlowRunner);
 

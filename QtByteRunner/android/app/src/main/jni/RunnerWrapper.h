@@ -13,6 +13,7 @@
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
 #include "utils/MediaRecorderSupport.h"
+#include "utils/AbstractWebSocketSupport.h"
 
 #include <jni.h>
 
@@ -289,6 +290,31 @@ private:
     virtual void resumeMediaRecorder(StackSlot recorder);
     virtual void pauseMediaRecorder(StackSlot recorder);
     virtual void stopMediaRecorder(StackSlot recorder);
+class AndroidWebSocketSupport : public AbstractWebSocketSupport {
+    AndroidRunnerWrapper *owner;
+public:
+    AndroidWebSocketSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeWebSocket : public FlowNativeObject
+    {
+        AndroidWebSocketSupport *owner;
+    public:
+        FlowNativeWebSocket(AndroidWebSocketSupport* owner);
+        ~FlowNativeWebSocket();
+        jobject websocket;
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeWebSocket, FlowNativeObject)
+    };
+
+    void deliverOnClose(jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean);
+    void deliverOnError(jint callbacksKey, jstring error);
+    void deliverOnMessage(jint callbacksKey, jstring message);
+    void deliverOnOpen(jint callbacksKey);
+
+protected:
+    virtual StackSlot doOpen(unicode_string url, int callbacksKey);
+    virtual StackSlot doSend(StackSlot websocket, unicode_string message);
+    virtual StackSlot doHasBufferedData(StackSlot websocket);
+    virtual void doClose(StackSlot websocket, int code, unicode_string reason);
 };
 
 class AndroidRunnerWrapper {
@@ -301,6 +327,7 @@ class AndroidRunnerWrapper {
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
     friend class AndroidMediaRecorderSupport;
+    friend class AndroidWebSocketSupport;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -318,6 +345,7 @@ class AndroidRunnerWrapper {
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
     AndroidMediaRecorderSupport mediaRecorder;
+    AndroidWebSocketSupport websockets;
     FileLocalStore store;
     FileSystemInterface fsinterface;
 
@@ -347,6 +375,7 @@ public:
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
     AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
+    AndroidWebSocketSupport *getWebSockets() { return &websockets; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);

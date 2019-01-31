@@ -639,7 +639,6 @@ class NativeHx {
 				params.push(key + "=" + untyped parametersMap[key]);
 			});
 			#elseif (flow_nodejs)
-			trace(process.argv.slice(2));
 			var params = process.argv.slice(2);
 			#elseif (nwjs)
 
@@ -807,6 +806,24 @@ class NativeHx {
 		#end
 	}
 
+	// Remove all stored key/value pairs.
+	public static function removeAllKeyValues() : Void {
+		#if js
+		removeAllKeyValuesJS(false);
+		#else
+		return;
+		#end
+	}
+
+	// Get list of stored keys.
+	public static function getKeysList() : Array<String> {
+		#if js
+		return getKeysListJS(false);
+		#else
+		return [];
+		#end
+	}
+
 	// Save a session key/value pair. Persistent on the client for the duration of the session
 	public static function setSessionKeyValue(k : String, v : String) : Bool {
 		#if js
@@ -929,6 +946,25 @@ class NativeHx {
 			} else storage.removeItem(key);
 		} catch (e : Dynamic) {
 			Errors.report("Cannot remove key \"" + key + "\": " + e);
+		}
+	}
+
+	public static function removeAllKeyValuesJS(session : Bool) : Void {
+		try {
+			var storage = session? untyped sessionStorage : untyped localStorage;
+			storage.clear();
+		} catch (e : Dynamic) {
+			Errors.report("Cannot clear storage: " + e);
+		}
+	}
+
+	public static function getKeysListJS(session : Bool) : Array<String> {
+		try {
+			var storage = session? untyped sessionStorage : untyped localStorage;
+			return untyped Object.keys(storage);
+		} catch (e : Dynamic) {
+			Errors.report("Cannot get keys list: " + e);
+			return [];
 		}
 	}
 	#end
@@ -1425,6 +1461,8 @@ class NativeHx {
 	}
 
 	private static var PlatformEventListeners : Map< String, Array<Void -> Bool> > = new Map();
+	private static var LastUserAction : Float = -1;
+	private static var IdleLimit : Float = 1000.0 * 60.0; // 1 min
 	public static function addPlatformEventListener(event : String, cb : Void -> Bool) : Void -> Void {
 		#if (js && !flow_nodejs)
 			if (event == "online" || event == "offline") {
@@ -1444,36 +1482,85 @@ class NativeHx {
 			} else if (event == "resume") {
 				Browser.window.addEventListener("focus", cb);
 				return function() { Browser.window.removeEventListener("focus", cb); };
-			} else if (event == "idle") {
-				var timeoutId = -1;
-				var setTimeoutFn = function () {};
-				var timestamp : Float = 0;
-				var idleLimit : Float = 1000 * 60; // 1 min
+			} else if (event == "active") {
+				var timeoutActiveId = -1;
+				var setTimeoutActiveFn = function () {};
+				var activeCalled = false;
 
-				setTimeoutFn = function () {
-					var timePassed = Date.now().getTime() - timestamp;
+				setTimeoutActiveFn = function () {
+					var timePassedActive = Date.now().getTime() - LastUserAction;
 
-					if (timePassed >= idleLimit) {
-						timeoutId = -1;
-						cb();
+					if (timePassedActive >= IdleLimit) {
+						timeoutActiveId = -1;
+						activeCalled = false;
 					} else {
-						timeoutId = untyped __js__("setTimeout(setTimeoutFn, idleLimit - timePassed)");
+						timeoutActiveId = untyped __js__("setTimeout(setTimeoutActiveFn, NativeHx.IdleLimit - timePassedActive)");
+						if (!activeCalled) {
+							activeCalled = true;
+							cb();
+						}
 					}
 				};
 
-				var mouseMoveFn = function () {
-					timestamp = Date.now().getTime();
+				var mouseMoveActiveFn = function () {
+					LastUserAction = Date.now().getTime();
 
-					if (timeoutId == -1) {
-						setTimeoutFn();
+					if (timeoutActiveId == -1) {
+						setTimeoutActiveFn();
 					}
 				};
 
-				Browser.window.addEventListener("mousemove", mouseMoveFn);
+				Browser.window.addEventListener("mousemove", mouseMoveActiveFn);
+				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
+				Browser.window.addEventListener("focus", mouseMoveActiveFn);
+				Browser.window.addEventListener("blur", mouseMoveActiveFn);
 
 				return function() {
-					untyped __js__("clearTimeout(timeoutId)");
-					Browser.window.removeEventListener("mousemove", mouseMoveFn);
+					untyped __js__("clearTimeout(timeoutActiveId)");
+					Browser.window.removeEventListener("mousemove", mouseMoveActiveFn);
+					Browser.window.removeEventListener("videoplaying", mouseMoveActiveFn);
+					Browser.window.removeEventListener("focus", mouseMoveActiveFn);
+					Browser.window.removeEventListener("blur", mouseMoveActiveFn);
+				};
+			} else if (event == "idle") {
+				var timeoutIdleId = -1;
+				var setTimeoutIdleFn = function () {};
+				var idleCalled = false;
+
+				setTimeoutIdleFn = function () {
+					var timePassedIdle = Date.now().getTime() - LastUserAction;
+
+					if (timePassedIdle >= IdleLimit) {
+						timeoutIdleId = -1;
+						if (!idleCalled) {
+							idleCalled = true;
+							cb();
+						}
+					} else {
+						timeoutIdleId = untyped __js__("setTimeout(setTimeoutIdleFn, NativeHx.IdleLimit - timePassedIdle)");
+						idleCalled = false;
+					}
+				};
+
+				var mouseMoveIdleFn = function () {
+					LastUserAction = Date.now().getTime();
+
+					if (timeoutIdleId == -1) {
+						setTimeoutIdleFn();
+					}
+				};
+
+				Browser.window.addEventListener("mousemove", mouseMoveIdleFn);
+				Browser.window.addEventListener("videoplaying", mouseMoveIdleFn);
+				Browser.window.addEventListener("focus", mouseMoveIdleFn);
+				Browser.window.addEventListener("blur", mouseMoveIdleFn);
+
+				return function() {
+					untyped __js__("clearTimeout(timeoutIdleId)");
+					Browser.window.removeEventListener("mousemove", mouseMoveIdleFn);
+					Browser.window.removeEventListener("videoplaying", mouseMoveIdleFn);
+					Browser.window.removeEventListener("focus", mouseMoveIdleFn);
+					Browser.window.removeEventListener("blur", mouseMoveIdleFn);
 				};
 			}
 		#end

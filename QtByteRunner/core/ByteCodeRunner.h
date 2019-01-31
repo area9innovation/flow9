@@ -118,7 +118,9 @@ enum PlatformEvent {
     PlatformNetworkOffline = 3,
     PlatformNetworkOnline = 4,
     PlatformLowMemory = 5,
-    PlatformDeviceBackButton = 6
+    PlatformDeviceBackButton = 6,
+    PlatformApplicationUserIdle = 7,
+    PlatformApplicationUserActive = 8
 };
 
 class ByteCodeRunner : public LocalRootHost
@@ -1293,6 +1295,8 @@ private:
     static StackSlot failWithError(ByteCodeRunner*,StackSlot*);
     static StackSlot setKeyValue(ByteCodeRunner*,StackSlot*);
     static StackSlot getKeyValue(ByteCodeRunner*,StackSlot*);
+    static StackSlot removeAllKeyValues(ByteCodeRunner*,StackSlot*);
+    static StackSlot getKeysList(ByteCodeRunner*,StackSlot*);
     static StackSlot removeKeyValue(ByteCodeRunner*,StackSlot*);
     static StackSlot enumFromTo(ByteCodeRunner*,StackSlot*);
     static StackSlot toLowerCase(ByteCodeRunner*,StackSlot*);

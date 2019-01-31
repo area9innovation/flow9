@@ -1,0 +1,64 @@
+#!/usr/bin/python
+
+# Use this script to execute flow files as scripts.
+# Make a simlink to this file from /usr/bin, then
+# to use it, just write #!/usr/bin/flows in the first line of a script.
+
+import os
+import sys
+import shutil
+import subprocess
+
+def remove_shebang(script_orig, script_flow):
+	shebang_line = True
+	removed = ''
+	for line in open(script_orig, 'r'):
+		if not shebang_line:
+			removed += line
+		shebang_line = False
+	open(script_flow, 'w').write(removed)
+
+def find_flowdir():
+	paths = os.environ['PATH'].split(':')
+	for path in paths:
+		if os.path.isfile(os.path.join(path, 'flowc')):
+			return os.path.split(path)[0]
+	return None
+
+def main():
+	if len(sys.argv) < 2:
+		print('Uasge: flowc_script <flow_script_file>')
+		sys.exit(0)
+
+	flowdir = find_flowdir()
+	if flowdir == None:
+		print('Flowdir is not found')
+		sys.exit(1)
+
+	script_orig = sys.argv[1]
+	script_flow = script_orig + '__.flow'
+	remove_shebang(script_orig, script_flow)
+
+	builder = os.path.join(flowdir, 'bin', 'build-with-flowc1')
+	builder_args = [builder, 'file=' + script_flow, 'flowdir=' + flowdir]
+	p = subprocess.Popen(builder_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	out, err = p.communicate()
+	if not p.returncode == 0:
+		print(out)
+		print(err)
+		os.remove(script_flow)
+		sys.exit(1)
+
+	script_jar = script_orig + '__.jar'
+	code = os.system('java -jar javagen/' + script_jar)
+	if code != 0:
+		print('Execution of script failed: ' + str(code))
+		shutil.rmtree('javagen', True)
+		os.remove(script_flow)
+		sys.exit(1)
+
+	shutil.rmtree('javagen', True)
+	os.remove(script_flow)
+
+if __name__ == '__main__':
+	main()

@@ -60,6 +60,7 @@ GLRenderSupport::GLRenderSupport(ByteCodeRunner *owner) :
 
     ScaleCenterX = ScaleCenterY = 0.5;
     ScaleFactor = 1.0f;
+    lastUserAction = -1;
 
     FontLibrary = GLFontLibrary::Load(this);
 
@@ -301,8 +302,14 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
     double start_time = GetCurrentTime();
 #endif
 
-    if (startRenderTimestamp == 0.0)
+    if (startRenderTimestamp == 0.0) {
         startRenderTimestamp = GetCurrentTime();
+    }
+
+    if (lastUserAction != -1 && lastUserAction < GetCurrentTime() - 60.0) {
+        getFlowRunner()->NotifyPlatformEvent(PlatformApplicationUserIdle);
+        lastUserAction = -1;
+    }
 
     RUNNER_VAR = getFlowRunner();
     WITH_RUNNER_LOCK_DEFERRED(RUNNER);
@@ -433,6 +440,15 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 #ifdef LOG_PAINT_TIME
     getFlowRunner()->flow_err << "PAINT: " << (GetCurrentTime() - start_time) << endl;
 #endif
+}
+
+void GLRenderSupport::updateLastUserAction()
+{
+    if (lastUserAction == -1) {
+        getFlowRunner()->NotifyPlatformEvent(PlatformApplicationUserActive);
+    }
+
+    lastUserAction = GetCurrentTime();
 }
 
 void GLRenderSupport::adjustGlobalScale(float shift_x, float shift_y, float center_x, float center_y, float df)
@@ -1824,8 +1840,6 @@ StackSlot GLRenderSupport::deferUntilRender(RUNNER_ARGS)
     RUNNER_PopArgs1(fn);
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
-
-    doRequestRedraw();
 
     RETVOID;
 }

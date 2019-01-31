@@ -69,6 +69,34 @@ using namespace std;
     [self readAppPreferences];
     self.DefaultURLParameters = @"";
     localNotificationWakingUpId = -1;
+    
+    if (![[NSUserDefaults standardUserDefaults] objectForKey:@"use_cordova"])  {
+        
+        LogI(@"application: updating the standardUserDefaults: use_cordova");
+        
+        NSString  *mainBundlePath = [[NSBundle mainBundle] bundlePath];
+        NSString  *settingsPropertyListPath = [mainBundlePath
+                                               stringByAppendingPathComponent:@"Settings.bundle/Root.plist"];
+        
+        NSDictionary *settingsPropertyList = [NSDictionary
+                                              dictionaryWithContentsOfFile:settingsPropertyListPath];
+        
+        NSMutableArray      *preferenceArray = [settingsPropertyList objectForKey:@"PreferenceSpecifiers"];
+        NSMutableDictionary *registerableDictionary = [NSMutableDictionary dictionary];
+        
+        for (int i = 0; i < [preferenceArray count]; i++)  {
+            NSString  *key = [[preferenceArray objectAtIndex:i] objectForKey:@"Key"];
+            
+            if (key)  {
+                id  value = [[preferenceArray objectAtIndex:i] objectForKey:@"DefaultValue"];
+                [registerableDictionary setObject:value forKey:key];
+            }
+        }
+        
+        [[NSUserDefaults standardUserDefaults] registerDefaults:registerableDictionary];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+
 
 #ifdef LOCALYTICS_APP_KEY
     // Localytics API key is defined in project properties.
@@ -320,10 +348,16 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     
     [self initFlowRunner];
     
+    Boolean useCordova = [[NSUserDefaults standardUserDefaults] boolForKey: @"use_cordova"];
+    
     // TO DO : may be there is better way to get it
     UIWebView *web_view = [[UIWebView alloc] initWithFrame:CGRectZero];
     NSString * current_ua = [web_view stringByEvaluatingJavaScriptFromString: @"navigator.userAgent"];
-    
+        
+    if (useCordova) {
+        current_ua = [current_ua stringByAppendingString:@" Cordova"];
+    }
+        
     [web_view release];
         
 #if defined(APP_VISIBLE_NAME) && defined(APP_VERSION)
@@ -388,6 +422,7 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
 #ifdef FLOW_INAPP_PURCHASE
     InAppPurchases = new AppleStorePurchase(Runner);
 #endif
+    WebSocketSupport = new iosWebSocketSupport(Runner);
     FSInterface = new FileSystemInterface(Runner);
    
     NSString * resources_path = [[[NSProcessInfo processInfo] environment] valueForKey:@"MEDIA_PATH"];

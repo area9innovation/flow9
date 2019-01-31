@@ -83,7 +83,12 @@ mangleName(name : string, t : FiType) -> string {
 }
 
 doMangleName(name : string, t : FiType) -> string {
-	name + "___" + mangleSuffix(t);
+	suffix = mangleSuffix(t);
+/*	if (strContains(suffix, "fp")) {
+		println(t);
+		//printCallstack();
+	}*/
+	name + "___" + suffix;
 }
 
 getTypeName(type : FiType) -> string {
@@ -122,20 +127,40 @@ specializeEntity(
 	}
 }
 
+// specializes function body and creates new FiFunctionDec
+specializeFunctionBody(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>, 
+	polymorphics : Tree<string, FiType>, mangle : bool) 
+{
+	functionType = instantiateFiTypeFunctionTypars(f.type, typars, mangle);
+	body = instantiateFiLambdaTypars(f.lambda, typars, polymorphics, makeSet(), mangle);
+	FiFunctionDec(mangledName, body, functionType, f.declStart, f.defiStart);
+}
+
+// specializes function and deals with unbound type parameters inside
 specializeFunction(f : FiFunctionDec, mangledName : string, typars : Tree<string, FiType>, 
 	polymorphics : Tree<string, FiType>, mangle : bool) {
 
-	//println(mangledName);
-	body = instantiateFiLambdaTypars(f.lambda, typars, polymorphics, makeSet(), mangle);
-	type = instantiateFiTypeFunctionTypars(f.type, typars, mangle);
-	bodyParams = fiTypeGetUnboundParametersExp(body);
-	// looking for unbound parameters in function bodies
-	if (fiTypeFullyDefined(type) && !isEmptySet(bodyParams)) {
-		extendedTypars = foldSet(bodyParams, typars, \acc, n -> setTree(acc, n, FiTypeFlow()));
-		//println(extendedTypars);
-		specializeFunction(f, mangledName, extendedTypars, polymorphics, mangle);
-	} else {
-		FiFunctionDec(mangledName, body, type, f.declStart, f.defiStart);
+	// always instantiating without mangle first time to detect unbound parameters correctly
+	draftType = instantiateFiTypeFunctionTypars(f.type, typars, false);
+	// if function parameters are fully specialized, detect unbound type params inside function body
+	// and replace with flow
+	if (fiTypeFullyDefined(draftType)) {
+		// always instantiating without mangle first time to detect unbound parameters correctly
+		draftBody = instantiateFiLambdaTypars(f.lambda, typars, polymorphics, makeSet(), false);
+		bodyParams = fiTypeGetUnboundParametersExp(draftBody);
+		if (!isEmptySet(bodyParams)) {
+			// if there are unbound parameters in function bodies, replace them with flow and do everything again
+			extendedTypars = foldSet(bodyParams, typars, \acc, n -> setTree(acc, n, FiTypeFlow()));
+			specializeFunction(f, mangledName, extendedTypars, polymorphics, mangle);
+		} else {
+			// otherwise, just proceed - if !mangle, use existing versions, or redo
+			if (mangle)
+				specializeFunctionBody(f, mangledName, typars, polymorphics, mangle)
+			else
+				FiFunctionDec(f with name=mangledName, lambda=draftBody, type=draftType)
+		}
+	} else { // otherwise, just do what we can - this is not the final step then
+		specializeFunctionBody(f, mangledName, typars, polymorphics, mangle);
 	}
 }
 

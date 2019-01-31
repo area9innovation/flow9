@@ -350,6 +350,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
 
         FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(this, wrapper);
         wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
+        FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
+        wrapper.setFlowWebSocketSupport(flowWebSocketSupport);
 
         createContentView();
         

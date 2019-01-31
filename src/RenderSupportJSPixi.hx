@@ -667,7 +667,6 @@ class RenderSupportJSPixi {
 
 		if (PixiRenderer != null) {
 			PixiRenderer.destroy();
-			untyped __js__("delete RenderSupportJSPixi.PixiRenderer");
 		}
 
 		var options = {
@@ -718,7 +717,6 @@ class RenderSupportJSPixi {
 		untyped PIXI.ticker.shared.autoStart = false;
 		untyped PIXI.ticker.shared.stop();
 		untyped PIXI.ticker.shared.destroy();
-		// untyped __js__("delete PIXI.ticker.shared");
 
 		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 
@@ -1516,7 +1514,6 @@ class RenderSupportJSPixi {
 							parentNode.removeChild(clip.accessWidget);
 						}
 
-						untyped __js__("delete clip.accessWidget");
 						clip.accessWidget = null;
 
 						if (parentNode != null) {
@@ -3265,7 +3262,6 @@ private class NativeWidgetClip extends FlowContainer {
 				parentNode.removeChild(nativeWidget);
 			}
 
-			untyped __js__("delete nativeWidget");
 			nativeWidget = null;
 		}
 	}
@@ -3314,7 +3310,12 @@ private class VideoClip extends FlowContainer {
 	private static var playingVideos : Int = 0;
 
 	public static inline function NeedsDrawing() : Bool {
-		return playingVideos != 0;
+		if (playingVideos != 0) {
+			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
+			return true;
+		}
+
+		return false;
 	}
 
 	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
@@ -3429,7 +3430,6 @@ private class VideoClip extends FlowContainer {
 					parentNode.removeChild(nativeWidget);
 				}
 
-				untyped __js__("delete nativeWidget");
 				nativeWidget = null;
 			}
 		}
@@ -3522,13 +3522,11 @@ private class VideoClip extends FlowContainer {
 		if (videoSprite != null) {
 			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
 			removeChild(videoSprite);
-			untyped __js__("delete this.videoSprite");
 			videoSprite = null;
 		}
 
 		if (videoTexture != null) {
 			videoTexture.destroy(true);
-			untyped __js__("delete this.videoTexture");
 			videoTexture = null;
 		}
 	}
@@ -4446,7 +4444,11 @@ private class TextField extends NativeWidgetClip {
 	}
 
 	private function onInput(e : Dynamic) {
-		var newValue = nativeWidget.value;
+		var newValue : String = nativeWidget.value;
+
+		if (maxChars > 0) {
+			newValue = newValue.substr(0, maxChars);
+		}
 
 		for (f in TextInputFilters) {
 			newValue = f(newValue);
@@ -4713,20 +4715,23 @@ private class PixiText extends TextField {
 
 				removeChild(textClip);
 				textClip.destroy({ children: true, texture: true, baseTexture: true });
-				untyped __js__("delete this.textClip");
 				textClip = null;
 			}
 		});
 	}
 
 	private inline function destroyTextClipChildren() {
-		for (clip in textClip.children) {
+		var clip = textClip.children.length > 0 ? textClip.children[0] : null;
+
+		while (clip != null) {
 			if (untyped clip.canvas != null && Browser.document.body.contains(untyped clip.canvas)) {
 				Browser.document.body.removeChild(untyped clip.canvas);
 			}
 
 			textClip.removeChild(clip);
 			clip.destroy({ children: true, texture: true, baseTexture: true });
+
+			clip = textClip.children.length > 0 ? textClip.children[0] : null;
 		}
 	}
 
@@ -4906,7 +4911,7 @@ private class PixiText extends TextField {
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
 			text = TextField.getBulletsString(text.length);
-		var texts = checkTextLength(text);
+		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {
 			textClip = createTextClip(texts[0][0], style);
@@ -4937,6 +4942,7 @@ private class PixiText extends TextField {
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
 							var newTextClip = createTextClip(txt, style);
+
 							newTextClip.x = currentWidth;
 							newTextClip.y = currentHeight;
 

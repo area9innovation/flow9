@@ -87,3 +87,33 @@
 
 ## 0.2.1
  - added command flow.updateFlowRepo to stop flowc, update flow repo, start flowc
+
+## 0.2.2
+ - fixed debugger for one available local variable
+
+## 0.2.3
+ - fixed debugger for stack arguments
+
+## 0.2.4
+ - fixed debugger for multiple stack arguments
+
+## 0.2.5
+ - additional diagnostics for find-definition, less verbose for others
+
+## 0.2.6
+ - make find definition use folder with nearest flow.config as cwd
+
+## 0.3.0
+ - enable structured variable support in debugger
+
+## 0.3.1
+ - make debugger return all stack frames, not first 20
+
+## 0.3.2
+ - separate scopes for Arguments and Locals
+ - frame navigation works 
+ - older unused code removed
+ - watch expressions work
+
+## 0.3.3
+ - added debugging logging to language server

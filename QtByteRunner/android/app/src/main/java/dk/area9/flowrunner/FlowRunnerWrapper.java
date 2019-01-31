@@ -30,6 +30,8 @@ import android.util.Log;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.java_websocket.client.WebSocketClient;
+
 public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     /*
      * Native back-end initialization 
@@ -311,7 +313,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nRendererInit(long ptr);
     private native void nRendererResize(long ptr, int w, int h);
     private native void nRendererPaint(long ptr);
-    
+
     /**
      * Listener interface for receiving events from the runner.
      * The callbacks are always invoked from within a wrapper
@@ -1590,4 +1592,49 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             mediaRecorderSupport.stopMediaRecorder(recorder);
     }
 
+    private FlowWebSocketSupport webSocketSupport = null;
+
+    public void setFlowWebSocketSupport(FlowWebSocketSupport webSocketSupport) {
+        this.webSocketSupport = webSocketSupport;
+    }
+
+    public synchronized void deliverWebSocketOnClose(int callbacksKey, int closeCode, String reason, boolean wasClean) {
+        nDeliverWebSocketOnClose(cPtr(), callbacksKey, closeCode, reason, wasClean);
+    }
+
+    private native void nDeliverWebSocketOnClose(long ptr, int callbacksKey, int closeCode, String reason, boolean wasClean);
+
+    public synchronized void deliverWebSocketOnError(int callbacksKey, String error) {
+        nDeliverWebSocketOnError(cPtr(), callbacksKey, error);
+    }
+
+    private native void nDeliverWebSocketOnError(long ptr, int callbacksKey, String error);
+
+    public synchronized void deliverWebSocketOnMessage(int callbacksKey, String message) {
+        nDeliverWebSocketOnMessage(cPtr(), callbacksKey, message);
+    }
+
+    private native void nDeliverWebSocketOnMessage(long ptr, int callbacksKey, String message);
+
+    public synchronized void deliverWebSocketOnOpen(int callbacksKey) {
+        nDeliverWebSocketOnOpen(cPtr(), callbacksKey);
+    }
+
+    private native void nDeliverWebSocketOnOpen(long ptr, int callbacksKey);
+
+    public synchronized WebSocketClient cbOpenWSClient(String url, int callbacksKey) {
+        return webSocketSupport.open(url, callbacksKey);
+    }
+
+    public synchronized boolean cbSendMessageWSClient(WebSocketClient webSocketClient, String message) {
+        return webSocketSupport.send(webSocketClient, message);
+    }
+
+    public synchronized boolean cbHasBufferedDataWSClient(WebSocketClient webSocketClient) {
+        return webSocketSupport.hasBufferedData(webSocketClient);
+    }
+
+    public synchronized void cbCloseWSClient(WebSocketClient webSocketClient, int code, String reason) {
+        webSocketSupport.close(webSocketClient, code, reason);
+    }
 }

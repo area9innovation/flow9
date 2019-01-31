@@ -331,6 +331,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
 // UIWebView messages:
 //
 - (BOOL)webView: (UIWebView*)web_view shouldStartLoadWithRequest: (NSURLRequest*)request navigationType:(UIWebViewNavigationType)nt {
+    [owner->CDVViewControllers[web_view].originalCordovaDelegate webView: web_view shouldStartLoadWithRequest: request navigationType: nt];
     // request.URL.relativeString contains absolute url here too
     NSString * absolute_url = [[request URL] absoluteString];
     NSLog(@"wV shouldStart %@", absolute_url);
@@ -400,7 +401,12 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
     return YES;
 }
 
+- (void)webViewDidStartLoad:(UIWebView *)webView {
+    [owner->CDVViewControllers[webView].originalCordovaDelegate webViewDidStartLoad: webView];
+}
+
 - (void)webViewDidFinishLoad:(UIWebView *)webView {
+    [owner->CDVViewControllers[webView].originalCordovaDelegate webViewDidFinishLoad: webView];
     if (!webView.isLoading) LogI(@"%@ loaded to embedded webview", webView.request.URL.absoluteString);
     
     GLWebClip* web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
@@ -423,6 +429,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
 }
 
 - (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error {
+    [owner->CDVViewControllers[webView].originalCordovaDelegate webView: webView didFailLoadWithError: error];
     LogI(@"%@ failed to load to embedded webview (%@)", webView.request.URL.absoluteString, error);
     
     GLWebClip * web_clip = flow_native_cast<GLWebClip>(owner->NativeWidgetClips[webView]);
@@ -758,7 +765,10 @@ iosGLRenderSupport::iosGLRenderSupport( ByteCodeRunner *owner, EAGLView *glview,
     }
     
     useWKWebView = false;
- }
+    useCordova = [[NSUserDefaults standardUserDefaults] boolForKey: @"use_cordova"];
+    
+    LogI(@"UseCordova from user settings = %@", useCordova ? @"true" : @"false");
+}
 
 iosGLRenderSupport::~iosGLRenderSupport() {
     [commonTextFieldDelegate release];
@@ -790,7 +800,12 @@ void iosGLRenderSupport::destroyAllNativeWidgets() {
         UIView * widget = it->second;
         
         [widget removeFromSuperview];
-        [widget release];
+        if (CDVViewControllers.find(widget) != CDVViewControllers.end()) {
+            [CDVViewControllers[widget] release];
+            CDVViewControllers.erase(widget);
+        } else {
+            [widget release];
+        }
     }
     NativeWidgetClips.clear();
     NativeWidgets.clear();
@@ -1126,8 +1141,19 @@ void iosGLRenderSupport::doDestroyNativeWidget(GLClip *clip)
         } else if (flow_native_cast<GLWebClip>(clip)) {
             [commonWebViewDelegate removeInnerDomainsForWebView: widget];
             [widget removeFromSuperview];
-            LogI(@"WebView destroyed");
-            [widget release];
+            if (useCordova) {
+                // delay is used to avoid app crash from MDC-1289 ticket
+                // something inside Cordova or Cocoa sends messages to deleted object
+                DELAY(2000, ^{
+                    [CDVViewControllers[widget] release];
+                    CDVViewControllers.erase(widget);
+                    LogI(@"Cordova WebView is destroyed");
+                });
+                // Widget is released by Controller
+            } else {
+                LogI(@"WebView destroyed");
+                [widget release];
+            }
         } else {
             [widget removeFromSuperview];
             [widget release];
@@ -1462,32 +1488,55 @@ bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip)
     else
         rq_url = [NSURL URLWithString: ns_url relativeToURL: [URLLoader getBaseURL]];
 
-    if (useWKWebView && SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0") && NSClassFromString(@"WKWebView") != nil) {
-        LogI(@"Create WKWebView for URL %@", rq_url);
-        WKWebView * web_view = [[WKWebView alloc] init];
-        web_view.navigationDelegate = commonWebViewDelegate;
-        widget = web_view;
-        [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+    if (!useCordova) {
+        if (useWKWebView && SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0") && NSClassFromString(@"WKWebView") != nil) {
+            LogI(@"Create WKWebView for URL %@", rq_url);
+            WKWebView * web_view = [[WKWebView alloc] init];
+            web_view.navigationDelegate = commonWebViewDelegate;
+            widget = web_view;
+            [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+        } else {
+            LogI(@"Create UIWebView for URL %@ and %@", rq_url, [URLLoader getBaseURL]);
+            FixedWebView * web_view = [[FixedWebView alloc] init];
+            [(FixedWebView*)web_view _prepareForNoCrashes];
+            web_view.delegate = commonWebViewDelegate;
+            
+            // zoom enables here and controls by WebScrollViewDelegate
+            web_view.scalesPageToFit = YES;
+            web_view.scrollView.bounces = NO;
+            [web_view setMediaPlaybackRequiresUserAction: NO]; // For youtube videos
+            
+            widget = web_view;
+
+            if ([rq_url isFileURL]) {
+                NSError *error = nil;
+                NSString *htmlString = [NSString stringWithContentsOfURL:rq_url encoding:NSUTF8StringEncoding error:&error];
+                [web_view loadHTMLString:htmlString baseURL:nil];
+            } else {
+                [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
+            }
+        }
     } else {
-        LogI(@"Create UIWebView for URL %@ and %@", rq_url, [URLLoader getBaseURL]);
-        FixedWebView * web_view = [[FixedWebView alloc] init];
-        [(FixedWebView*)web_view _prepareForNoCrashes];
-        web_view.delegate = commonWebViewDelegate;
+        viewController = [[CordovaViewController alloc] init];
+        viewController.startPage = rq_url.absoluteString;
+        viewController.flowDelegate = commonWebViewDelegate;
         
         // zoom enables here and controls by WebScrollViewDelegate
-        web_view.scalesPageToFit = YES;
-        web_view.scrollView.bounces = NO;
-        [web_view setMediaPlaybackRequiresUserAction: NO]; // For youtube videos
+        NSString* flowUserAgent = [[NSUserDefaults standardUserDefaults] objectForKey:@"FlowUserAgent"];
+        [viewController.settings setObject:flowUserAgent forKey:@"OverrideUserAgent"];
         
-        widget = web_view;
+        [viewController.settings setObject:@"true" forKey:@"EnableViewportScale"];
+        [viewController.settings setObject:@"true" forKey:@"DisallowOverscroll"];
+        [viewController.settings setObject:@"false" forKey:@"UIWebViewBounce"];
 
-        if ([rq_url isFileURL]) {
-            NSError *error = nil;
-            NSString *htmlString = [NSString stringWithContentsOfURL:rq_url encoding:NSUTF8StringEncoding error:&error];
-            [web_view loadHTMLString:htmlString baseURL:nil];
-        } else {
-            [web_view loadRequest:[NSURLRequest requestWithURL:rq_url]];
-        }
+        LogI(@"Create CDVViewController %@ for URL %@", viewController.view, rq_url);
+        ((UIWebView*)viewController.webView).mediaPlaybackRequiresUserAction = NO;
+        ((UIWebView*)viewController.webView).allowsInlineMediaPlayback = YES;
+        
+        widget = viewController.webView;
+        NSDictionary * user_info = @{ @"webView" : widget, @"domain" : (rq_url && rq_url.host)? rq_url.host: @"" };
+        [[NSNotificationCenter defaultCenter] postNotificationName: @"addInnerDomain" object: nil userInfo: user_info];
+        CDVViewControllers[widget] = viewController;
     }
     
     [commonWebViewDelegate addInnerDomain: rq_url.host forWebView: widget]; // Add the main frame
@@ -1524,7 +1573,7 @@ StackSlot iosGLRenderSupport::setWebClipZoomable(GLWebClip *clip, const StackSlo
     
     if ([view isKindOfClass: UIWebView.class]) {
         UIWebView * web_view = (UIWebView*)view;
-        LogI(@"Set UIWebView scalable to %s with current zoom %f", zoomable ? "YES" : "NO", web_view.scrollView.zoomScale);
+        LogI(@"Set%@ UIWebView scalable to %s with current zoom %f", useCordova ? @" Cordova" : @"", zoomable ? "YES" : "NO", web_view.scrollView.zoomScale);
         if (zoomable) {
             web_view.scrollView.delegate = nil;
         } else {

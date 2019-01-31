@@ -10,9 +10,8 @@ import java.security.NoSuchAlgorithmException;
 import javax.net.ssl.SSLContext;
 
 public class FlowWebSocketClient extends WebSocketClient {
-    public FlowWebSocketClient(URI serverURI) {
+    FlowWebSocketClient(URI serverURI) {
         super(serverURI);
-
         if (serverURI.getScheme().equals("wss")) {
             try {
                 SSLContext sslContext = SSLContext.getDefault();
