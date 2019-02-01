@@ -5,50 +5,21 @@ import string;
 import ds/list;
 import expect;
 
-// native printd : (double) -> void = host.printd;
-// native printa : ([?], [??]) -> void = host.printa;
-// native printb : (bool) -> void = host.printi;
+// replace [func]
+// concat [func]
+// filter [func]
 
 
-//TODO Array Natives:
-// map/mapi: doesn't work for structs. Not tested for flow/ref/unions yet.
-// 	Map only works with lambda functions. Check if case is the same for other array natives as well
+FooBar ::= Foo, Bar, Baz, Sbar;
+	Foo(n : int);
+	Bar(m : double);
+	Baz(o : Foo);
+	Sbar(s : string);
 
-// filter: shrink array after filter finished? 
-// 		method 1: update size in header, and insert the remainder of the block into the list of free blocks
-//		method 2: dynamically build the array, e.g. list2array. 
-//		method 3(very bad): run filter without saving result, only length. Then alloc length and run again. This will double runtime, and is therefore bad.
-
-// fold: We cannot have the init value, or the return value to be double atm. Since function signatures 
-//		in wasm_natives_native doesn't seem to work with '?' 
-//		 
-
-// subrange, concat, replace: How do we get the element type of the array? we need to know if it's [double], or something else. 
-
-// TODO: order of work
-// fold/foldi:
-// 	- we cannot have the init value of type double, or return type double, because of function signature
-// 	in wasm_natives_native. putting '?' as type in the signature does not work. 
-
-// filter:
-// 	- shrink array size after looping over elements, OR build array dynamically and save in the end. E.g. list2array.
-
-// concat/subrange/replace:
-// 	+ get type of the array, so we can have the right elemsize. 
-// 	- These functions work for all other cases than double. 
-
-
-Foo(n : int);
-Bar(m : double);
-Baz(o : Foo);
-Sbar(s : string);
-Abar(a : [?]);
 
 foo2bar(x : Foo) -> Bar {
 	Bar(cast(x.n : int -> double));
 }
-
-// expect2(a : int, b : bool) -> void {}
 
 testSubrange() {
 	arr = [1, 2, 3, 4];
@@ -116,6 +87,13 @@ testReplace() {
 	arr4 : [MyUnion] = [MyStructA(111), MyStructB(222), MyStructC(333)];
 	res9 = replace(arr4, 1, MyStructD(444));
 	expect2(210, res9 == [MyStructA(111), MyStructD(444), MyStructC(333)]);
+
+	expect2(211, replace([[1], [2,1], [3,2,1], [4,3,2,1]], 3, [3,2,1]) == [[1], [2,1], [3,2,1], [3,2,1]]);
+	expect2(212, replace([Foo(1), Foo(2), Foo(3), Foo(4)], 2, Foo(2)) == [Foo(1), Foo(2), Foo(2), Foo(4)]);
+	// expect2(213, replace([\->"a1", \->"b2", \->"c3"], 0, \->"aa1") == [\->"aa1", \->"b2", \->"c3"]); // fails. Even when when trying: replace([\->"a1", \->"b2", \->"c3"], 0, \->"a1")
+	expect2(214, replace([true, false, false, true], 2, true) == [true, false, true, true]);
+
+
 }
 
 testConcat() {
@@ -134,12 +112,20 @@ testConcat() {
 
 	// [string]
 	res9 = concat(["1", "2", "3"], ["4", "5", "6"]);
-	// iter(res9, \s -> printss(s));
-	// prints(toString(res9));
 	expect2(310, res9 == ["1", "2", "3", "4", "5", "6"]);
 	
 	// array of arrays
 	expect2v(311, [[1],[2],[3]], concat([[1]], [[2],[3]]));
+
+	expect2(312, concat([true, false], [false, true]) == [true, false, false, true]);
+	expect2(312, concat([Foo(1), Foo(2)], [Foo(3), Foo(4)]) == [Foo(1), Foo(2), Foo(3), Foo(4)]);
+	
+	arru1 : [FooBar] = [Foo(1), Bar(2.0)];
+	arru2 : [FooBar] = [Foo(3), Sbar("hello")];
+	arru : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	expect2v(312, concat(arru1, arru2), arru);
+
+	// expect2(313, concat([\->"a1"], [\->"b2", \->"c3"]) == [\->"a1", \->"b2", \->"c3"]); //fails
 }
 
 
@@ -191,29 +177,38 @@ testMap() {
 	res12 = map([1.0, 2.0, 3.0, 4.0], \a -> cast(a : double -> int));
 	expect2(413, res12 == [1,2,3,4]);
 
+	expect2(414, map([[1], [2,1], [3,2,1], [4,3,2,1]], \a -> map(a, \b -> b * 2)) == [[2], [4,2], [6,4,2], [8,6,4,2]]);
+
+	arrUnion : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	expect2(415, map(arrUnion, \a -> 
+		switch (a) {
+			Foo(n) : Foo(n*2);
+			default : a;
+		}) == [Foo(2), Bar(2.0), Foo(6), Sbar("hello")]);
+
+
+	arrf = [\->"a1", \->"b2", \->"c3"];
+	expect2(416, map(arrf, \f -> f()) == ["a1", "b2", "c3"]);
+
+	expect2(417, map([true, false, false, true], \a -> !a) == [false, true, true, false]);
+
 }
 
 testMapi() {
 	arr = [1, 2, 3, 4];
 
-	res0 = mapi(arr, \i, a -> a + i);
-	expect2(501, res0 == [1, 3, 5, 7]);
+	expect2(501, mapi(arr, \i, a -> a + i) == [1, 3, 5, 7]);
+	expect2(502, mapi(arr, \i, a -> i) == [0, 1, 2, 3]);
+	expect2(503, mapi(["H", "e", "l", "l", "o"], \i, c -> getCharCodeAt(c, 0) + i) == [72, 102, 110, 111, 115]);
+	expect2(504, mapi(arr, \i, a -> cast((a + i) : int -> double)) == [1.0, 3.0, 5.0, 7.0]);
+	expect2(505, mapi([1.0, 2.0, 3.0], \i, a -> cast(i : int -> double) + a) == [1.0, 3.0, 5.0]);
+	expect2(506, mapi([Foo(1), Foo(2), Foo(3)], \i, a -> Bar(cast((a.n + i) : int -> double))) == [Bar(1.0), Bar(3.0), Bar(5.0)]);
+	expect2(507, mapi([true, false, false, true], \i, a -> i == 3 || !a) == [false, true, true, true]);
 
-	res1 = mapi(arr, \i, a -> i);
-	expect2(502, res1 == [0, 1, 2, 3]);
+	arru : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	expect2(508, mapi(arru, \i, a -> Foo(i)) == [Foo(0), Foo(1), Foo(2), Foo(3)]);
+	expect2(509, mapi([\->"a1", \->"b2", \->"c3"], \i, f -> cast(i :int -> string) + f()) == ["0a1", "1b2", "2c3"]);
 
-	res2 = mapi(["H", "e", "l", "l", "o"], \i, c -> getCharCodeAt(c, 0) + i);
-	expect2(503, res2 == [72, 102, 110, 111, 115]);
-
-
-	res3 = mapi(arr, \i, a -> cast((a + i) : int -> double));
-	expect2(504, res3 == [1.0, 3.0, 5.0, 7.0]);
-
-	res4 = mapi([1.0, 2.0, 3.0], \i, a -> cast(i : int -> double) + a);
-	expect2(505, res4 == [1.0, 3.0, 5.0]);
-
-	res5 = mapi([Foo(1), Foo(2), Foo(3)], \i, a -> Bar(cast((a.n + i) : int -> double)));
-	expect2(506, res5 == [Bar(1.0), Bar(3.0), Bar(5.0)]);
 
 }
 
@@ -231,6 +226,8 @@ testFold() {
 	arrs = ["H", "e", "l", "l", "o"];
 	arra = [[1], [2,1], [3,2,1], [4,3,2,1]];
 	arrstruct = [Foo(1), Foo(2), Foo(3), Foo(4)];
+	arrUnion : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	arrf = [\->"a1", \->"b2", \->"c3"];
 
 	expect2(601, fold(arrb, false, \a, b -> a == b) == false);
 	expect2(602, fold(arrb, 0, \a, b -> if (b) a + 1 else a) == 3);
@@ -270,7 +267,7 @@ testFold() {
 	expect2(632, fold(arra, "", \a, b -> if (b[0] % 2 == 0) "even" else "odd") == "even");
 	expect2(633, fold(arra, [], \a, b -> myConcat(a, b)) == [1,2,1,3,2,1,4,3,2,1]);
 	expect2(634, fold(arra, [[]], \a, b -> [myConcat(a[0], b)]) == [[1,2,1,3,2,1,4,3,2,1]]);
-	expect2(635, fold(arra, Abar([]), \a, b -> Abar(myConcat(a.a, b))) == Abar([1,2,1,3,2,1,4,3,2,1]));
+	expect2(635, fold(arra, Foo(0), \a, b -> Foo(a.n + fold(b, a.n, \c, d -> c + d))) == Foo(42));
 
 	expect2(636, fold(arrstruct, false, \a, b -> b.n % 2 == 0) == true);
 	expect2(637, fold(arrstruct, 5, \a, b -> a + b.n) == 15);
@@ -280,6 +277,46 @@ testFold() {
 	expect2(641, fold(arrstruct, [[]], \a, b -> [myConcat(a[0], [b])]) == [arrstruct]);
 	expect2(642, fold(arrstruct, Baz(Foo(0)), \a, b -> Baz(b)) == Baz(Foo(4)));
 	
+	expect2(643, fold(arrUnion, false, \a, b -> 
+		switch (b) {
+			Baz(f) : true;
+			default : a;
+			}) == false );
+
+	expect2(644, fold(arrUnion, 0, \a, b -> 
+		switch (b) {
+			Foo(k) : a + k;
+			default : a;
+		}) == 4);
+
+	expect2(645, fold(arrUnion, 0.0, \a, b -> 
+		switch (b) {
+			Bar(k) : a + k;
+			default : a;
+		}) == 2.0);
+
+	expect2(646, fold(arrUnion, "", \a, b -> 
+		switch (b) {
+			Sbar(s) : a + s;
+			default : a;
+		}) == "hello");
+
+	expect2(647, fold(arrUnion, [], \a, b -> myConcat(a, [b])) == arrUnion);
+	expect2(648, fold(arrUnion, [[]], \a, b -> myConcat(a, [[b]])) == [[], [Foo(1)], [Bar(2.0)], [Foo(3)], [Sbar("hello")]]);
+	expect2(649, fold(arrUnion, Foo(0), \a, b -> 
+		switch (b) {
+			Foo(k) : Foo(a.n + k);
+			default : a;
+			}) == Foo(4));
+
+	expect2(650, fold(arrf, false, \a, f -> a || f() == "b2") == true);
+	expect2(651, fold(arrf, 0, \a, f -> if (f() == "b2") a + 1 else a) == 1);
+	expect2(652, fold(arrf, 0.0, \a, f -> if (f() == "b2") a + 3.14 else a) == 3.14);
+	expect2(653, fold(arrf, "", \a, f -> a + f()) == "a1b2c3");
+	expect2(654, fold(arrf, [], \a, f -> myConcat(a, [f()])) == ["a1", "b2", "c3"]);
+	expect2(655, fold(arrf, [[]], \a, f -> myConcat(a, [[f()]])) == [[], ["a1"], ["b2"], ["c3"]]);
+	expect2(656, fold(arrf, Sbar(""), \a, f -> Sbar(a.s + f())) == Sbar("a1b2c3"));
+
 	a : [MyUnion] = [MyStructA(111), MyStructB(222), MyStructC(333)];
 	s = fold(a, "", \acc, u : MyUnion -> {
 		acc + switch (u) {
@@ -289,55 +326,128 @@ testFold() {
 			MyStructD(__): "d" + cast(u.d : int -> string);
 		}
 	});
-	expect2v(643, "a111b222c333", s);
-
-	arrf = [\->"a1", \->"b2", \->"c3"];
-	sf = fold(arrf, "", \acc, f -> {
-		acc + f()
-	});
-
-	expect2v(644, "a1b2c3", sf);
+	expect2v(657, "a111b222c333", s);
 }
 
+
 testFoldi() {
-	arr = [1, 2, 3, 4];
+	arrb = [true, true, false, false, true];
+	arri = [1, 2, 3, 4];
+	arrd = [1.0, 2.0, 3.0, 4.0];
+	arrs = ["H", "e", "l", "l", "o"];
+	arra = [[1], [2,1], [3,2,1], [4,3,2,1]];
+	arrstruct = [Foo(1), Foo(2), Foo(3), Foo(4)];
+	arrUnion : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	arrf = [\->"a1", \->"b2", \->"c3"];
 
-	res0 = foldi(arr, 9, \i, a, b -> a + i + b);
-	expect2(701, res0 == 25);
+	expect2(701, foldi(arrb, false, \i, a, b -> i == 2 || !a) == true);
+	expect2(702, foldi(arrb, 0, \i, a, b -> if (b) a + i + 1 else a + i) == 13);
+	expect2(703, foldi(arrb, 2.0, \i, a, b -> if (b) a + cast(i : int -> double) else a * cast(i : int -> double)) == 22.0);
+	expect2(704, foldi(arrb, "", \i, a, b -> if (i > 3) "long array" else if (b) "true last" else "false last") == "long array");
+	expect2(705, foldi(arrb, [], \i, a, b -> if (i %2 == 0) myConcat(a, [b]) else a) == [true, false, true]);
+	expect2(706, foldi(arrb, [[]], \i, a, b -> if (i % 2 != 0) [myConcat(a[0], [b])] else a) == [[true, false]]);
+	expect2(707, foldi(arrb, Foo(0), \i, a, b -> if (b) Foo(a.n + i) else a) == Foo(5));
 
-	res1 = foldi([101, 107, 106, 108], "H", \i, a, b -> 
-										list2string(Cons(fromCharCode(b+i), Cons(a, EmptyList())))
-									);
-	expect2(702, res1 == "Hello");
-	
-	res2 = foldi([1.0, 2.0, 3.0, 4.0], 9.0, \i, a, b -> a + cast(i : int -> double) + b);
-	expect2(703, res2 == 25.0);
+	expect2(708, foldi(arri, false, \i, a, b -> if ((i * b) % 3 == 0) !a else a) == true);
+	expect2(709, foldi(arri, 0, \i, a, b -> a + i + b) == 16);
+	expect2(710, foldi(arri, 2.0, \i, a, b -> cast(i + b : int -> double) + a) == 18.0);
+	expect2(711, foldi(arri, "", \i, a, b -> if (b % 2 == 0) "even" else "odd") == "even");
+	expect2(712, foldi(arri, [], \i, a, b -> myConcat(a, [i,b])) == [0,1,1,2,2,3,3,4]);
+	expect2(713, foldi(arri, [[]], \i, a, b -> myConcat(a, [[i,b]])) == [[],[0,1],[1,2],[2,3],[3,4]]);
+	expect2(714, foldi(arri, Foo(9), \i, a, b -> Foo(a.n + i + b)) == Foo(25));
 
-	res3 = foldi(arr, 9.0, \i, a, b -> a + cast((i + b) : int -> double));
-	expect2(704, res3 == 25.0);
+	expect2(715, foldi(arrd, true, \i, a, b -> if (i % 2 == 0) b % 2.0 == 0.0 else a) == false);
+	expect2(716, foldi(arrd, 0, \i, a, b -> i + a + cast(b : double -> int)) == 16);
+	expect2(717, foldi(arrd, 2.0, \i, a, b -> if (i % 2 == 0) a * b else a + b) == 16.0);
+	expect2(718, foldi(arrd, "", \i, a, b -> if (b % 3.0 == 1.0) "1bmod3" else if (i % 2 == 0) "even" else "odd") == "1bmod3");
+	expect2(719, foldi(arrd, [], \i, a, b -> if (i % 2 == 0) myConcat(a, [b]) else a) == [1.0, 3.0]);
+	expect2(720, foldi(arrd, [[]], \i, a, b -> if (i % 2 == 0) myConcat(a, [[b]]) else a) == [[],[1.0],[3.0]]);
+	expect2(721, foldi(arrd, Bar(5.0), \i, a, b -> if (i % 2 == 0) Bar(a.m + b) else a) == Bar(9.0));
 
-	res4 = foldi(arr , false, \i, a, b -> a || b == 10 || i == 2);
-	expect2(705, res4 == true);
+	expect2(722, foldi(arrs, false, \i, a, b -> a || b == "e") == true);
+	expect2(723, foldi(arrs, 0, \i, a, b -> if (b == "l") a + 1 else a) == 2);
+	expect2(724, foldi(arrs, 0.0, \i, a, b -> if (b == "l" && i == 2) a + 0.5 else a) == 0.5);
+	expect2(725, foldi(arrs, "A", \i, a, b -> if (i % 3 == 1) b else a) == "o");
+	expect2(726, foldi(arrs, [], \i, a, b -> myConcat(a, [Pair(i, b)])) == [Pair(0, "H"), Pair(1, "e"), Pair(2, "l"), Pair(3, "l"), Pair(4, "o")]);
+	expect2(727, foldi(arrs, [[]], \i, a, b -> myConcat(a, [[b]])) == [[],["H"],["e"],["l"],["l"],["o"]]);
+	expect2(728, foldi(arrs, Sbar("A"), \i, a, b -> if (i % 3 == 1) Sbar(b) else a) == Sbar("o"));
 
-	res5 = foldi([Foo(1), Foo(2), Foo(3), Foo(4)], 5, \i, a, b -> i + a + b.n);
-	expect2(706, res5 == 21);
+	expect2(729, foldi(arra, false, \i, a, b -> a || length(b) == 3) == true);
+	expect2(730, foldi(arra, 0, \i, a, b -> foldi(b, a, \j, c, d -> c + d + j)) == 30);
+	expect2(731, foldi(arra, 0.0, \i, a, b -> foldi(b, a, \j, c, d -> c + cast(d + j : int -> double))) == 30.0);
+	expect2(732, foldi(arra, "", \i, a, b -> if ((myLength(b) * i) % 2 == 0) "even" else "odd") == "even");
+	expect2(733, foldi(arra, [], \i, a, b -> myConcat(a, myConcat([i], b))) == [0,1,1,2,1,2,3,2,1,3,4,3,2,1]);
+	expect2(734, foldi(arra, [[]], \i, a, b -> myConcat(a, [myConcat([i],b)])) == [[],[0,1],[1,2,1],[2,3,2,1],[3,4,3,2,1]]);
+	expect2(735, foldi(arra, Foo(0), \i, a, b -> if (myLength(b) > 0) Foo(b[myLength(b)-1-i]) else a) == Foo(4));
 
-	res6 = foldi(["H", "e", "l", "l", "o"], false, \i, a, b -> a || b == "z" || i == 10);
-	expect2(707, res6 == false);
+
+	expect2(736, foldi(arrstruct, false, \i, a, b -> a || b.n > 2 || i > 5 ) == true);
+	expect2(737, foldi(arrstruct, 0, \i, a, b -> a + i + b.n) == 16);
+	expect2(738, foldi(arrstruct, 0.0, \i, a, b -> a + cast((i + b.n) : int -> double)) == 16.0);
+	expect2(739, foldi(arrstruct, "", \i, a, b -> if (b.n + i % 2 == 0) "even" else "odd") == "odd");
+	expect2(740, foldi(arrstruct, [], \i, a, b -> myConcat(a, [Foo(i), b])) == [Foo(0), Foo(1), Foo(1), Foo(2), Foo(2), Foo(3), Foo(3), Foo(4)]);
+	expect2(741, foldi(arrstruct, [[]], \i, a, b -> myConcat(a, [[Foo(i), b]])) == [[], [Foo(0), Foo(1)], [Foo(1), Foo(2)], [Foo(2), Foo(3)], [Foo(3), Foo(4)]]);
+	expect2(742, foldi(arrstruct, Foo(0), \i, a, b -> Foo(a.n + i + b.n)) == Foo(16));
+
+
+	expect2(743, foldi(arrUnion, false,\i, a, b -> 
+		switch (b) {
+			Sbar(s) : true;
+			default : a;
+		}) == true);
+
+	expect2(744, foldi(arrUnion, 0, \i, a, b -> 
+		switch (b) {
+			Foo(k) : a + k + i;
+			default : a; 
+		}) == 6);
+
+	expect2(745, foldi(arrUnion, 0.0, \i, a, b -> 
+		switch (b) {
+			Bar(k) : a + k + cast(i : int -> double);
+			default : a; 
+		}) == 3.0);
+
+	expect2(746, foldi(arrUnion, "", \i, a, b -> 
+		switch(b) {
+			Sbar(s) : a + s;
+			default: a;
+		}) == "hello");
+
+	expect2(747, foldi(arrUnion, [], \i, a, b -> myConcat(a, [Foo(i), b])) == [Foo(0), Foo(1), Foo(1), Bar(2.0), Foo(2), Foo(3), Foo(3), Sbar("hello")]);
+	expect2(748, foldi(arrUnion, [[]], \i, a, b -> myConcat(a, [[Foo(i), b]])) == [[], [Foo(0), Foo(1)], [Foo(1), Bar(2.0)], [Foo(2), Foo(3)], [Foo(3), Sbar("hello")]]);
+
+	expect2(749, foldi(arrUnion, Foo(0), \i, a, b -> 
+		switch (b) {
+			Foo(k) : Foo(a.n + i + k);
+			default : a;
+		}) == Foo(6));
+
+	expect2(750, foldi(arrf, false, \i, a, f -> a || f() == "b2") == true);
+	expect2(751, foldi(arrf, 0, \i, a, f -> if (f() == "c3") a + i else a) == 2);
+	expect2(752, foldi(arrf, 0.0, \i, a, f -> if (f() == "c3") a + cast(i : int -> double) else a) == 2.0);
+	expect2(753, foldi(arrf, "", \i, a, f -> if (i % 2 == 0) a + f() else a) == "a1c3");
+	expect2(754, foldi(arrf, [], \i, a, f -> myConcat(a, [f()])) == ["a1", "b2", "c3"]);
+	expect2(755, foldi(arrf, [[]], \i, a, f -> myConcat(a, [[f()]])) == [[], ["a1"], ["b2"], ["c3"]]);
+	expect2(756, foldi(arrf, Sbar(""), \i, a, f -> if (i % 2 == 0) Sbar(a.s + f()) else a) == Sbar("a1c3"));
 }
 
 testFilter() {
-	res0 = filter([1, 2, 3, 4], \a -> a % 2 == 0);
-	expect2(801, res0 == [2, 4]);
+	arru : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
 
-	res1 = filter([1.0, 2.0, 3.0, 4.0], \a -> a % 2.0 == 1.0);
-	expect2(802, res1 == [1.0, 3.0]);
 
-	res2 = filter(["H", "e", "l", "l", "o"], \c -> getCharCodeAt(c, 0) == 108);
-	expect2(803, res2 == ["l", "l"]);
-
-	res3 = filter([MyStructA(111), MyStructB(222), MyStructC(333)], \s -> isSameStructType(s, MyStructB(0)));
-	expect2(804, res3 == [MyStructB(222)]);
+	expect2(801, filter([true, false, false, true], \a -> a) == [true, true]);
+	expect2(802, filter([1, 2, 3, 4], \a -> a % 2 == 0) == [2, 4]);
+	expect2(803, filter([1.0, 2.0, 3.0, 4.0], \a -> a % 2.0 == 1.0) == [1.0, 3.0]);
+	expect2(804, filter(["H", "e", "l", "l", "o"], \c -> getCharCodeAt(c, 0) == 108) == ["l", "l"]);
+	expect2(805, filter([[1], [2,1], [3,2,1], [4,3,2,1]], \a -> myLength(a) > 2) == [[3,2,1], [4,3,2,1]]);
+	expect2(806, filter([Foo(1), Foo(2), Foo(3), Foo(4)], \a -> a.n % 2 == 0) == [Foo(2), Foo(4)]);
+	expect2(807, filter(arru, \a -> 
+		switch (a) {
+			Foo(n) : true;
+			default : false;
+		}) == [Foo(1), Foo(3)]);
+	// expect2(808, filter([\->"a1", \->"b2", \->"c3"], \f -> f() == "b2") == [\->"b2"]); // fails
 }
 
 testIteriUntil() {
@@ -368,6 +478,11 @@ testIteriUntil() {
 	res8 = iteriUntil([true, false, false, true, true], \i, a -> a && i != 0);
 	expect2(909, res8 == 3);
 
+	arru : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	expect2(910, iteriUntil(arru, \i, a -> a == Foo(3)) == 2);
+
+	expect2(911, iteriUntil([\->"a1", \->"b2", \->"c3"], \i, f -> f() == "b2") == 1);
+
 }
 
 S10i(x : int);
@@ -388,6 +503,12 @@ testElemIndex() {
 	astr = ["1","2","3"];
 	expect2(1007, elemIndex(astr, "2", -1) == 1);
 	expect2(1008, elemIndex(astr, "4", 666) == 666);
+
+	expect2(1009, elemIndex([[1], [2,1], [3,2,1], [4,3,2,1]], [3,2,1], 666) == 2);
+	expect2(1010, elemIndex([false, false, false, true, false, false], true, 666) == 3);
+
+	arru : [FooBar] = [Foo(1), Bar(2.0), Foo(3), Sbar("hello")];
+	expect2(1011, elemIndex(arru, Foo(3), 666) == 2);
 }
 
 testCallbacksApply(a : ?, cb : (?) -> ??) -> ?? {
@@ -436,11 +557,11 @@ main() {
 	testMapi();
 	testFold();
 	testFoldi();
+	testFilter();
 	testIteriUntil();
 	testElemIndex();
 	testCallbacks(1100);
 	testList2array();
-	testFilter();
 	
 	expectFinish();
 }
