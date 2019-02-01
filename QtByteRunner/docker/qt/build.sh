@@ -9,7 +9,7 @@ echo "When switching between QT versions, you have to manually clean up download
 # - installer may start putting QT into different folder internally
 # - Some libraries may become deprecated and get removed
 # - libmysqlclient may get fixed rendering manual mysql driver compiling obsolete
-QT_VERSION=5.10.0
+QT_VERSION=5.12.0
 MYSQL_TAR=mysql-5.6.36-linux-glibc2.5-x86_64.tar.gz
 
 DOWNLOADS=downloads

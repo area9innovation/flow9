@@ -109,7 +109,7 @@ A few Mac-specific tips:
 
 Linux specific tips:
 
-* QT libs are expected to be in /opt/Qt5.10.0/5.10.0/gcc_64/lib. This is because
+* QT libs are expected to be in /opt/Qt5.12.0/5.12.0/gcc_64/lib. This is because
 Linux runner is provided without the libraries and used in CI pipelines.
 So committing it with different rpath will break things.
 
@@ -117,14 +117,14 @@ So committing it with different rpath will break things.
 readelf -d QtByteRunner/bin/linux/QtByteRunner | grep rpath
 inside flow9 repo.
 
-* Evidently, required version of QT is 5.10.0, and it can be installed with
+* Evidently, required version of QT is 5.12.0, and it can be installed with
 installer from
-https://download.qt.io/archive/qt/5.10/5.10.0/qt-opensource-linux-x64-5.10.0.run
-Installation path should be /opt/Qt5.10.0. Or you can install wherever and symlink.
+https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
+Installation path should be /opt/Qt5.12.0. Or you can install wherever and symlink.
 
 * It's possible to have several versions of QT installed at once
 with qtchooser. If you are using it, either provide qt= parameter when
-using qmake or set default version to 5.10.0 with libs at the location 
+using qmake or set default version to 5.12.0 with libs at the location 
 mentioned above. man qtchooser will tell you how.
 
 * Minimal list of libraries required to run QT byte runner on Linux:

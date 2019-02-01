@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-export QT_VERSION=5.10.0
+export QT_VERSION=5.12.0
 
 if [ -z "$FLOW" ]; then
     echo "\$FLOW is not defined, can't find QtByteRunner to use"
