@@ -1822,6 +1822,10 @@ class RenderSupportJSPixi {
 		textfield.setTextInputType(type);
 	}
 
+	public static function setTextInputStep(textfield : TextField, step : Float) : Void {
+		textfield.setTextInputStep(step);
+	}
+
 	public static function setTabIndex(textfield : TextField, index : Int) : Void {
 		textfield.setTabIndex(index);
 	}
@@ -3901,6 +3905,7 @@ private class TextField extends NativeWidgetClip {
 	private var style : Dynamic = {};
 
 	private var type : String = "text";
+	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
 	private var fieldWidth : Float = -1.0;
 	private var fieldHeight : Float = -1.0;
@@ -4012,6 +4017,7 @@ private class TextField extends NativeWidgetClip {
 		if (isInput()) {
 			setScrollRect(0, 0, 0, 0);
 			nativeWidget.type = type;
+			if (type == "number") nativeWidget.step = step;
 			if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != "")
 				nativeWidget.autocomplete = accessWidget.autocomplete
 			else if (type == "password" && nativeWidget.autocomplete == "")
@@ -4227,6 +4233,11 @@ private class TextField extends NativeWidgetClip {
 
 	public function setTextInputType(type : String) : Void {
 		this.type = type;
+		updateNativeWidgetStyle();
+	}
+
+	public function setTextInputStep(step : Float) : Void {
+		this.step = step;
 		updateNativeWidgetStyle();
 	}
 
