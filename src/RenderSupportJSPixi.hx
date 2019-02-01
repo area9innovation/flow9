@@ -3383,6 +3383,7 @@ private class VideoClip extends FlowContainer {
 		nativeWidget.crossorigin = determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
 		nativeWidget.src = filename;
+		nativeWidget.playsinline = true;
 
 		if (nativeWidget.autoplay) {
 			playingVideos++;
