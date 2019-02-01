@@ -1,3 +1,6 @@
+// documentation for this shit:
+// https://doc.qt.io/qtinstallerframework/noninteractive.html
+//
 function Controller() {
     installer.autoRejectMessageBoxes();
     installer.installationFinished.connect(function() {
