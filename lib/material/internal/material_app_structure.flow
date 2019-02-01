@@ -1,5 +1,3 @@
-import material/internal/material_clickable;
-import material/internal/material_popup;
 import material/internal/material_toolbar;
 // Internal to material
 
@@ -11,20 +9,41 @@ MAppState(
 	interactionId : int,
 	content : Pair<Material, Transform<bool>>,
 	floatingContent : Pair<Material, Transform<bool>>,
-	appBar : Maybe<Pair<Material, Transform<bool>>>,
+	appBar : Maybe<MAppBarState>,
 	leftNav : Maybe<MAppNav>,
 	rightNav : Maybe<MAppNav>,
 	flexible : Maybe<MAppFlexibleState>,
 	point : DynamicBehaviour<Point>,
 	down : DynamicBehaviour<bool>,
 	wh : DynamicBehaviour<WidthHeight>,
-	state : [MActivateState]
+	scrollInspect : TScrollInspectVisible,
+	state : [MActivateState],
 );
 
 MAppNav(content : Material, expander : DynamicBehaviour<bool>, mini : bool, persistent : Transform<bool>, width : double, miniWidth : double,
 	gap : Transform<double>, swipeEnabled : Transform<bool>, focusEnabled : Transform<bool>);
 
 MAppFlexibleState(persistent : Transform<bool>, persistentB : DynamicBehaviour<bool>, showExpander : Transform<bool>, showToolbar : Transform<bool>);
+
+MAppBarState(
+	content : Material,
+	focusEnabled : Transform<bool>,
+	scrollPosition : DynamicBehaviour<Point>,
+	floatingToolbar : Maybe<MFloatingToolbarState>,
+	extendToolbar : Maybe<MExtendedAppBarState>
+);
+
+MFloatingToolbarState(
+	translation : Transform<double>,
+	expanded : Transform<bool>,
+	subs : [() -> () -> void]
+);
+
+MExtendedAppBarState(
+	trigger : DynamicBehaviour<bool>,
+	image : Maybe<MBackgroundImage>,
+	style : [MExtendedToolbarStyle]
+);
 
 MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 		state = makeMAppState(manager, m);
@@ -41,11 +60,49 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 				[]
 		] |> concatA)
 		|> (\f ->
-			if (isSome(state.appBar))
-				TGroup2SameMetrics(TLines2(TGhost("MAppBar"), f), TDisplay("MAppBar"))
-			else
+			eitherMap(state.appBar, \ab -> {
+				scrollEnabled = eitherMap(ab.extendToolbar, \eab -> fnot(eab.trigger), const(true));
+				TLines2(TGhost("MAppBar"), f)
+				|> (\t ->
+					TGroup2SameMetrics(
+						if (isSome(ab.floatingToolbar) || isSome(ab.extendToolbar))
+							MScroll2T(
+								manager,
+								parent,
+								MScroll(
+									t,
+									TFillXY(),
+									[
+										state.scrollInspect,
+										MScrollPosition(ab.scrollPosition),
+										MScrollKeysEnabled(const(true)),
+										MScrollDisableOutOfBounds(ref true),
+										TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar),
+										MScrollMouseEnabled(scrollEnabled)
+									]
+								),
+								m2t
+							)
+						else				
+							t,
+						TDisplay("MAppBar")
+					))
+				},
 				f
+			)
 		)
+		|> (\f -> eitherMap(state.appBar, \ab -> eitherMap(ab.extendToolbar, \eab ->
+				MSwipe2T(manager, parent, MSwipe(f, [
+					MOnSwipeUp(\p, delta -> {
+						nextDistinct(eab.trigger, false);
+						true
+					}),
+					MOnSwipeDown(\p, delta -> {
+						if (getValue(ab.scrollPosition) == zeroPoint) nextDistinct(eab.trigger, true);
+						true
+					})
+				]), m2t),
+			f), f))
 		|> (\f ->
 			TGroup2SameMetrics(
 				f,
@@ -76,8 +133,11 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 
 makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 	appWH = extractStruct(m.style, MAppWH(makeWH())).wh;
+	scrollInspect = extractStruct(m.style, makeTScrollInspectVisible());
+	mouseDown = make(false);
+
 	flexible =
-		eitherMap(
+		maybeMap(
 			tryExtractStruct(m.style, MAppStructureFlexible([])),
 			\asf -> {
 				enabled = extractStruct(asf.style, MEnabled(const(true))).enabled;
@@ -87,50 +147,48 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 				persistentB = extractStruct(asf.style, MPersistent(make(false))).persistent;
 				persistent = fif(enabled, fselect(appWH, FLift(\wh -> wh.width > mWidth)), const(false));
 
-				Some(MAppFlexibleState(
+				MAppFlexibleState(
 					persistent,
 					persistentB,
-					fmax(fnot(persistent), showExpander),
-					fmax(fnot(persistent), showToolbar)
-				));
-			},
-			None()
+					fOr(fnot(persistent), showExpander),
+					fOr(fnot(persistent), showToolbar)
+				)
+			}
 		);
 
 	tryExtractNav = \left : bool ->
-		eitherMap(
+		maybeMap(
 			tryExtractStruct(m.parts, if (changeBoolIfRTL(left)) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
 			\nav : MNav -> {
 				navMini = contains(nav.style, MSideNavMini());
 				navMiniWidth = extractStruct(nav.style, MListMinimizedWidth(72.)).width;
 				navSwipe : MSwipeLeftOrRight =
 					extractStruct(
-						nav.style,
+						m.style,
 						if (changeBoolIfRTL(left))
 							MSwipeLeft(const(if (navMini) navMiniWidth else 16.), const(mobile))
 						else
 							MSwipeRight(const(if (navMini) navMiniWidth else 16.), const(mobile))
 					);
 
-				Some(
-					MAppNav(
-						nav.content,
-						nav.expander,
-						navMini,
-						eitherFn(
-							flexible,
-							\flx -> fmax(extractStruct(nav.style, MSideNavPersistent(const(false))).persistent, flx.persistent),
-							\ -> extractStruct(nav.style, MSideNavPersistent(const(false))).persistent
-						),
-						extractStruct(nav.style, MSideNavWidth(if (getStageWidth() > 360. || cpp) 320. else getStageWidth() / 9. * 8.)).width,
-						navMiniWidth,
-						navSwipe.gapLength,
-						navSwipe.enabled,
-						if (navMini) const(true) else nav.expander
-					)
+				navPersistent = extractStruct(nav.style, MSideNavPersistent(const(false))).persistent;
+
+				MAppNav(
+					nav.content,
+					nav.expander,
+					navMini,
+					eitherMap(
+						flexible,
+						\flx -> fOr(navPersistent, flx.persistent),
+						navPersistent
+					),
+					extractStruct(nav.style, MSideNavWidth(if (getStageWidth() > 360. || cpp) 320. else getStageWidth() / 9. * 8.)).width,
+					navMiniWidth,
+					navSwipe.gapLength,
+					navSwipe.enabled,
+					if (navMini) const(true) else nav.expander
 				)
-			},
-			None()
+			}
 		);
 
 	leftNav = tryExtractNav(true);
@@ -138,24 +196,75 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 	content =
 		Pair(
 			extractStruct(m.parts, MContent(TEmpty())).content,
-			fmin(
-				eitherMap(leftNav, \ln -> fmax(ln.persistent, fnot(ln.expander)), const(true)),
-				eitherMap(rightNav, \rn -> fmax(rn.persistent, fnot(rn.expander)), const(true))
+			fand(
+				eitherMap(leftNav, \ln -> fOr(ln.persistent, fnot(ln.expander)), const(true)),
+				eitherMap(rightNav, \rn -> fOr(rn.persistent, fnot(rn.expander)), const(true))
 			)
 		);
 	floatingContent = Pair(extractStruct(m.parts, MFloatingContent(TEmpty())).content, content.second);
 	appBar =
-		eitherMap(
+		maybeMap(
 			tryExtractStruct(m.parts, MAppBar(TEmpty())),
-			\fc ->
-				Some(Pair(
+			\fc -> {
+				focusEnabled =
+					fand(
+						eitherMap(leftNav, \ln -> if (ln.mini) const(true) else fOr(ln.persistent, fnot(ln.expander)), const(true)),
+						eitherMap(rightNav, \rn -> if (rn.mini) const(true) else fOr(rn.persistent, fnot(rn.expander)), const(true))
+					);
+
+				scrollPosition = make(zeroPoint);
+
+				extendToolbar =
+					maybeMap(
+						tryExtractStruct(m.style, MExtendedAppBar([])),
+						\eab : MExtendedAppBar ->
+							MExtendedAppBarState(
+								make(false),
+								tryExtractStruct(eab.style, MBackgroundImage("", false)),
+								{filtermap(eab.style, \st -> switch (st) {
+									MExtendedToolbarStyle() : Some(st);
+									default : None()
+								})}
+							)
+					);
+
+				floatingToolbar = 
+					if (contains(m.style, MFloatingToolbar()) && mobile) {
+						startPoint = ref 0.;
+						updateStartPoint = \ -> startPoint := getValue(scrollPosition).y;
+
+						isUp = fselectWithLast(scrollPosition, FLift2(\last, new ->
+							new.y - last.y > 0.
+						));
+
+						expanded =
+							ftransistor(
+								fnot(mouseDown),
+								fnot(isUp)
+							);
+
+						delta = fselect(scrollPosition, FLift(\sp -> sp.y - ^startPoint));
+
+						subs = [
+							makeSubscribe2(isUp, \__ ->
+								if (!getValue(mouseDown)) updateStartPoint()
+							),
+							makeSubscribe2(mouseDown, \d -> 
+								if (d) updateStartPoint()
+							)
+						];
+
+						Some(MFloatingToolbarState(delta, expanded, subs))
+					} else None();
+				
+				MAppBarState(
 					fc.content,
-					fmin(
-						eitherMap(leftNav, \ln -> if (ln.mini) const(true) else fmax(ln.persistent, fnot(ln.expander)), const(true)),
-						eitherMap(rightNav, \rn -> if (rn.mini) const(true) else fmax(rn.persistent, fnot(rn.expander)), const(true))
-					)
-				)),
-			None()
+					focusEnabled,
+					scrollPosition,
+					floatingToolbar,
+					extendToolbar
+				)
+			}
 		);
 
 	MAppState(
@@ -167,114 +276,151 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		rightNav,
 		flexible,
 		make(zeroPoint),
-		make(false),
+		mouseDown,
 		appWH,
-		extractMActivateState(m.style)
+		scrollInspect,
+		extractMActivateState(m.style),
 	);
 }
 
 letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MAppStyle], state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	TLet(
-		"MAppContent",
-		MActivate2T(
-			manager,
-			parent,
-			"MAppContent",
-			concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
-			\p -> {
-				(\p2 -> state.content.first
-				|> (\m -> m2t(m, p2))
-				|> alignRightForRTL
-				|> (\t ->
-					if (contains(style, MNoContentBorder()))
-						t
-					else
-						TBorder(8., 8., 8., 8., t)))
-				|> (\t ->
-					if (contains(style, MNoScroll()))
-						TCenterXIn(t(p), TFillXY())
-					else
-						MScroll2T(
-							manager,
-							p,
-							MScroll(
-								MGetFocusGroup(t),
-								TFillXY(),
-								[extractStruct(style, makeTScrollInspectVisible())]
-							),
-							m2t
-						)
-				)
-			}
-		),
+
+	TGroup2(
+		TAttachBoxCopyThrottle(TDisplay("MAppSize"), state.wh, 33),
+		TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
+	)
+	|> (\t -> TLet("MAppSize", content, t))
+	|> (\f ->
 		TLet(
-			"MAppSize",
-			content,
-			TGroup2(
-				TAttachBoxCopyThrottle(TDisplay("MAppSize"), state.wh, 33),
-				TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
-			)
+			"MAppContent",
+			MActivate2T(
+				manager,
+				parent,
+				"MAppContent",
+				concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
+				\p ->
+					(\p2 -> state.content.first
+					|> (\m -> m2t(m, p2))
+					|> TBaseAlignA
+					|> (\t ->
+						if (contains(style, MNoContentBorder()))
+							t
+						else
+							TBorder4(8., t))
+					)
+					|> (\t ->
+						if (contains(style, MNoScroll()))
+							TCenterXIn(t(p), TFillXY())
+						else if (eitherMap(state.appBar, \ab -> isSome(ab.floatingToolbar) || isSome(ab.extendToolbar), false)) t(p)
+						else 
+							MScroll2T(
+								manager,
+								p,
+								MScroll(
+									MGetFocusGroup(t),
+									TFillXY(),
+									[
+										state.scrollInspect,
+										MScrollKeysEnabled(const(true)),
+									]
+									|> (\st -> arrayPushMaybe(st, maybeMap(state.appBar, \ab -> MScrollPosition(ab.scrollPosition))))
+								),
+								m2t
+							)
+					)
+			),
+			f
 		)
 	)
 }
 
 letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	eitherMap(
-		state.appBar,
-		\ab ->
-			TLet(
-				"MAppBar",
-				eitherFn(
-					state.flexible,
-					\flx ->
-						MShow2(
-							manager,
-							parent,
-							flx.showToolbar,
-							\p ->
-								MActivate2T(
-									manager,
-									p,
-									"MAppBar",
-									[
-										MFocusEnabled(ab.second),
-										MFocusId(const(0)),
-										AccessRole("toolbar")
-									],
-									\p2 ->
-										switch (ab.first : Material) {
-											MToolbar(expander, title, right, style):
-												MToolbar2T(
-													manager,
-													p2,
-													MToolbar(
-														expander,
-														title,
-														right,
-														replaceStruct(style, MShowExpander(fmin(flx.showExpander, extractStruct(style, MShowExpander(const(true))).show)))
-													),
-													m2t
-												);
-											default: m2t(ab.first, p2);
-										}
+	
+	makeAppBar = \ab -> {
+		extTool =
+			eitherMap(
+				ab.extendToolbar,
+				\eab : MExtendedAppBarState -> switch (ab.content : Material) {
+							MToolbar(expander, title, right, style):
+								MToolbar(
+									expander,
+									title,
+									right,
+									replaceStruct(style, MExtendedToolbar(eab.trigger, eab.style))
+									|> (\st : [MToolbarStyle] -> eitherMap(eab.image, \im : MToolbarStyle -> arrayPush(st, im), st))
 								)
-						),
-					\ ->
+								|> (\m -> MConstruct([makeSubscribe2(feq(ab.scrollPosition, zeroPoint), \v ->
+										if (!v) nextDistinct(eab.trigger, false)
+									)], m));
+							default: ab.content;
+						},
+				ab.content
+			);
+		
+		eitherFn(
+			state.flexible,
+			\flx ->
+				MShow2(
+					manager,
+					parent,
+					flx.showToolbar,
+					\p ->
 						MActivate2T(
 							manager,
-							parent,
+							p,
 							"MAppBar",
 							[
-								MFocusEnabled(ab.second),
+								MFocusEnabled(ab.focusEnabled),
 								MFocusId(const(0)),
 								AccessRole("toolbar")
 							],
-							\p -> m2t(ab.first, p)
+							\p2 ->
+								switch (extTool : Material) {
+									MToolbar(expander, title, right, style):
+										MToolbar2T(
+											manager,
+											p2,
+											MToolbar(
+												expander,
+												title,
+												right,
+												replaceStruct(style,
+													MShowExpander(fand(flx.showExpander, extractStruct(style, MShowExpander(const(true))).show))
+												)
+											),
+											m2t
+										);
+									default: m2t(extTool, p2);
+								}
 						)
 				),
-				content
-			),
+			\ ->
+				MActivate2T(
+					manager,
+					parent,
+					"MAppBar",
+					[
+						MFocusEnabled(ab.focusEnabled),
+						MFocusId(const(0)),
+						AccessRole("toolbar")
+					],
+					\p -> m2t(extTool, p)
+				)
+		)
+		|> (\t ->
+				eitherMap(
+					ab.floatingToolbar, \ft ->
+		 			TConstruct(ft.subs,	TCollapsingBox(manager, parent, t, ft.translation, ft.expanded)),
+		 			t
+		 		)
+			);
+	}
+
+	eitherMap(
+		state.appBar,
+		\ab ->
+			TLet("MAppBar", makeAppBar(ab), content),
 		content
 	)
 }
@@ -328,8 +474,6 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 	eitherFn(
 		if (left) state.leftNav else state.rightNav,
 		\nav -> {
-			allowMovement = fmax(nav.persistent, fnot(nav.expander));
-
 			eContent =
 				switch (nav.content) {
 					MSideNav(h, l, ex, st): {
@@ -350,7 +494,7 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 				}
 
 			expander2Point = if (left) {\e -> if (e) 0. else -nav.width} else {\e -> if (e) 0. else nav.width};
-			ePoint = make(Point(expander2Point(getValue(nav.expander)), 0.));
+			ePointX = make(expander2Point(getValue(nav.expander)));
 			delta2Point =
 				if (left)
 					{\d -> min(max(-nav.width, expander2Point(getValue(nav.expander)) + d), 0.)}
@@ -359,12 +503,12 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 			bgMouseDown = make(false);
 			mouseDown = ref false;
 			startingPoint = ref Point(-1., -1.);
-			trigger = make(Pair(fgetValue(ePoint).x, fgetValue(ePoint).x));
-			showPanel = fneq(ePoint, Point(expander2Point(false), 0.));
+			trigger = make(Pair(fgetValue(ePointX), fgetValue(ePointX)));
+			showPanel = fneq(ePointX, expander2Point(false));
 			panelName = if (left) "MAppLeftPanel" else "MAppRightPanel";
 			bgAlpha =
 				if (nav.width != 0.)
-					fselect(ePoint, FLift(\p -> lerp(0., 0.6, (expander2Point(false) - p.x) / expander2Point(false))))
+					fselect(ePointX, FLift(\ep -> lerp(0., 0.6, 1. - ep / expander2Point(false))))
 				else
 					const(0.6);
 
@@ -375,20 +519,23 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 				|> disableInteractivesBelow
 				|> disableMouseWheelBelow
 				|> (\f -> TCursor(FingerCursor(), f)))
-				|> (\f -> TShowLazy(fmin(fnot(nav.persistent), showPanel), f)),
+				|> (\f -> TShowLazy(fand(fnot(nav.persistent), showPanel), f)),
 				(if (!nav.mini)
 					(\ -> TTranslate(
-						ePoint,
+						fselect(ePointX, FLift(\ep -> Point(ep, 0.))),
 						TDisplay(panelName + "Inner")
-						|> (\f -> TShadow(const(2.), parent.theme.lightBackground, f))
+						|> (\f -> TShadow(parent, const(2.), f))
 					))
 					|> (\f -> TRenderOnce(showPanel, f))
 				else
 					TCropSize(
-						TScale(fselect(ePoint, FLift(\ep -> Factor(max(nav.width - abs(ep.x), nav.miniWidth) / nav.width, 1.))), TFillWY(nav.width)),
+						TScale(
+							fselect(ePointX, FLift(\ep -> Factor(max(nav.width - abs(ep), nav.miniWidth) / nav.width, 1.))),
+							TFillWY(nav.width)
+						),
 						TDisplay(panelName + "Inner")
 					)
-					|> (\f -> TShadow(const(2.), parent.theme.lightBackground, f)))
+					|> (\f -> TShadow(parent, const(2.), f)))
 				|> (\f -> if (left) f else TCols2(TFillX(), f))
 			)
 			|> (\f ->
@@ -404,7 +551,7 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 						else
 							None()
 					},
-					\tr, px -> next(ePoint, Point(lerp(tr.first, tr.second, px), 0.)),
+					\tr, px -> next(ePointX, lerp(tr.first, tr.second, px)),
 					[],
 					f
 				)
@@ -431,18 +578,18 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 									blockOtherInteractionItemIds(manager, state.interactionId);
 
 								// Update panel point
-								next(ePoint, Point(delta2Point(pt.x - ^startingPoint.x), 0.));
+								next(ePointX, delta2Point(pt.x - ^startingPoint.x));
 							}
 						),
 						makeSubscribe2(state.down, \d ->
 							if (d) {
-								if (fgetValue(nav.swipeEnabled) && !fgetValue(nav.persistent) && fgetValue(allowMovement) && !^mouseDown) {
+								if (fgetValue(nav.swipeEnabled) && !fgetValue(nav.persistent) && !^mouseDown) {
 									pt = fgetValue(state.point);
 
 									// Start panel movement
 									if (pt.x < (if (left) fgetValue(nav.gap) else getRealStageWidthHeight(manager).width - fgetValue(nav.gap)) ||
-										fgetValue(nav.expander) == true) {
-										nextDistinct(trigger, Pair(fgetValue(ePoint).x, fgetValue(ePoint).x));
+										fgetValue(nav.expander)) {
+										nextDistinct(trigger, Pair(fgetValue(ePointX), fgetValue(ePointX)));
 
 										mouseDown := true;
 										startingPoint := Point(pt.x, pt.y);
@@ -452,28 +599,19 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 								}
 							} else if (^mouseDown) {
 								// Finish panel movement
-								next(
-									nav.expander,
-									if (left)
-										fgetValue(ePoint).x > expander2Point(false) / 3.0
-									else
-										fgetValue(ePoint).x < expander2Point(false) / 3.0
+								fn = \a, b -> if (left) a > b else a < b;
+								next(nav.expander,
+									fn(fgetValue(ePointX), expander2Point(false) / 3.0)
 								);
 								mouseDown := false;
 							}
 						),
-						\ -> subscribe(nav.expander, \e -> nextDistinct(trigger, Pair(fgetValue(ePoint).x, expander2Point(e))))
+						\ -> subscribe(nav.expander, \e -> nextDistinct(trigger, Pair(fgetValue(ePointX), expander2Point(e))))
 					],
 					f
 				)
 			)
-			|> (\f ->
-				TLet(
-					panelName,
-					f,
-					content
-				)
-			)
+			|> (\f -> TLet(panelName, f, content))
 			|> (\f ->
 				TLet(
 					panelName + "Size",

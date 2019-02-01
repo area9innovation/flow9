@@ -1,0 +1,158 @@
+import runtime;
+import server/secure_context;
+
+/*
+	Websocket server implementation for flow based on
+	https://www.npmjs.com/package/ws
+
+	Functions from module are only supported when compiled to NodeJS.
+	Module contains only server-side functionality and
+	should not be used in any way on client-side,
+	if you're in need for websocket client, please check up websocket.flow
+
+	Brief instructions how to use websocket server locally :
+
+		1. Write a flow program using server/websocket.flow, for a dumb example
+		   you can check up tests/websocket_server.flow
+
+		2. Compile to nodejs using flowcompiler, e.g.
+		   flowcompiler1 --file=your/file.flow --es6=destination/folder/name.js --nodejs=1
+
+		   Normally destination folder is flow/www/node
+
+		3. Add dependencies for express and ws, e.g. add
+		   "express": "^4.13.4", "ws" : "^3.3.3"
+
+		   to your package.json file. Make sure config.json and package.json reflect
+		   structure of your designed module.
+
+		4. Install dependencies, e.g. npm run setup
+
+		5. Run nodejs file, e.g. npm run run
+*/
+
+export {
+	WSCapabilities : (
+
+		// Send text message via websocket connection
+		send : (msg : string) -> bool,
+
+		// Close connection server-side with code and reason
+		close : (code : int, reason : string) -> void,
+		
+		// Get number of unsent bytes in queue via send
+		getBufferedAmount : () -> int
+	);
+
+	// Listens to events on client side
+	WSListener : (
+		onClose : (code : int) -> void,
+		onError : (code : int) -> void,
+		onMessage : (msg : string) -> void
+	);
+
+	createWsServer : (
+		port : int,
+		// When a connection to server is open, defines server reaction
+		// on client-side events
+		onEvents : (WSCapabilities) -> WSListener
+	) -> bool;
+
+	createWssServer(
+		port : int,
+		credentials : Maybe<HttpsCredentials>,
+		onEvents : (WSCapabilities) -> WSListener
+	) -> bool;
+}
+
+createWsServer(
+	port : int,
+	onEvents : (WSCapabilities) -> WSListener) -> bool {
+
+	createWsServerBase(
+		port,
+		None(),
+		onEvents
+	);
+	
+}
+
+createWssServer(
+	port : int,
+	credentials : HttpsCredentials,
+	onEvents : (WSCapabilities) -> WSListener) -> bool {
+
+	createWsServerBase(
+		port,
+		Some(credentials),
+		onEvents
+	);
+	
+}
+
+createWsServerBase(
+	port : int,
+	credentials : Maybe<HttpsCredentials>,
+	onEvents : (WSCapabilities) -> WSListener) -> bool {
+
+	createWsServerNative(
+		port,
+		isSome(credentials),
+		eitherMap(credentials, \cs -> cs.key, ""),
+		eitherMap(credentials, \cs -> cs.cert, ""),
+		eitherMap(credentials, \cs -> cs.passphrase, ""),
+		\webSocket -> {
+
+			listeners : WSListener =
+				getWSCapabilities(webSocket)
+					|> onEvents;
+
+			wsEmbedListeners(
+				webSocket,
+				listeners.onClose,
+				listeners.onError,
+				listeners.onMessage
+			);
+		}
+	);
+	
+}
+
+getWSCapabilities(webSocket : native) -> WSCapabilities {
+	WSCapabilities(
+		\msg -> wsSendNative(webSocket, msg),
+		\code, reason -> wsCloseNative(webSocket, code, reason),
+		\ -> wsGetBufferedAmountNative(webSocket)
+	);
+}
+
+native createWsServerNative : (
+	port : int,
+	isHttps : bool,
+	key : string,
+	cert : string,
+	passphrase : string,
+	onOpen : (webSocket : native) -> void
+) -> bool = WebSocketServerSupport.createWsServerNative;
+
+native wsEmbedListeners : (
+	webSocket : native,
+	onClose : (code : int) -> void,
+	onError : (code : int) -> void,
+	onMessage : (msg : string) -> void
+) -> void = WebSocketServerSupport.embedListeners;
+
+native wsSendNative : (
+	webSocket : native,
+	msg : string
+) -> bool = WebSocketServerSupport.send;
+
+native wsCloseNative : (
+	webSocket : native,
+	code : int,
+	reason : string
+) -> void = WebSocketServerSupport.close;
+
+native wsGetBufferedAmountNative : (
+	webSocket : native
+) -> int = WebSocketServerSupport.getBufferedAmount;

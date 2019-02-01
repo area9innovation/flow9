@@ -114,3 +114,6 @@
  - frame navigation works 
  - older unused code removed
  - watch expressions work
+
+## 0.3.3
+ - added debugging logging to language server

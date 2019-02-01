@@ -170,6 +170,8 @@ async function findObject(fileUri: string, lineNum: number, columnNum: number, o
 	if (!token || token.length == 0)
 		return undefined;
 
+    console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
+
 	// this will spawn a flowc server in the project root unless already spawned
 	spawnFlowcServer(paths.projectRoot);
 
