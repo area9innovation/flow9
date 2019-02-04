@@ -109,6 +109,8 @@ export {
 	printCallstack() -> void;
 	captureCallstack() -> int;
 
+	wasm_descriptor_from_type(typedesc : int, typelength : int) -> int;
+
 	// TODO:
 	// native quit : io (code : int) -> void = Native.quit;
 	// native gc : io () -> void = Native.gc;
@@ -293,8 +295,8 @@ wasm_b2s(v : int) -> int {
 	wasm_bool_to_string(v)
 }
 
-wasm_array2string(v : int, type : int) -> int {
-	wasm_array_to_string(v, type)
+wasm_array2string(v : int, type_addr : int) -> int {
+	wasm_array_to_string(v, type_addr)
 }
 
 toString222(v : int) -> int {
@@ -302,7 +304,8 @@ toString222(v : int) -> int {
 }
 
 toString2(v : int) -> int {
-	type = wasm_i32_load8_u(wasm_i32_load(v + 4));
+	type_addr = wasm_i32_load(v + 4);
+	type = wasm_i32_load8_u(type_addr);
 
 	res = if (type == 3) {	// double
 		wasm_d2s(wasm_f64_load(v + 8))
@@ -315,8 +318,7 @@ toString2(v : int) -> int {
 		} else if (type == 2) {	// int
 			wasm_i2s(val)
 		} else if (type == 9) {	// array
-			arr_type = wasm_i32_load8_u(wasm_i32_load(v + 4) + 1);
-			wasm_array2string(val, arr_type)
+			wasm_array2string(val, type_addr)
 		} else {
 			prints("Type not known!");
 			wasm_address_of("")
@@ -1077,4 +1079,143 @@ wasm_do_filter(dst : int, src : int, n : int, idxSrc : int, idxDst : int, f : in
 
 		wasm_do_filter(dst, src, n, idxSrc + 1, idxDstNext, f, elemSize, heap);
 	} else idxDst;
+}
+
+// typedesc - pointer to type (memory representation of a type, see wasmTypeDescriptor2bytes)
+// typelength - lenght of memory representation of a type
+// this function search in typetable for passed type and return descriptor if found. 
+// Otherwise it search (create if not exist) this type created in 'dynamic' type table and return descriptor from there 
+wasm_descriptor_from_type(typedesc : int, typelength : int) -> int {
+	// 1. search for type in table
+	ret = wasm_find_type(typedesc, typelength, wasm_typetable_start());
+	if (ret < 0) {
+		// try to find in dynamic type table 
+		ret2 = wasm_find_dynamictype(typedesc, typelength, dynamicTypeTable.first);
+		if (ret2 >= 0)
+			ret2
+		else {
+			// create in 'dynamic' table
+			wasm_alloc_dynamic_type(typedesc, typelength)
+		}
+	} else 
+		ret;
+}
+
+WasmDynamicTypesTable(
+	mutable first : int,
+	mutable last : int
+);
+
+WasmDynamicTypesTableBlock(
+	mutable free : int,		// offset from the start of block data (self_ptr + DynamicTypeTableBlockHeaderLength)
+	mutable next : int,		// pointer to next block
+	self_ptr : int
+);
+
+DummyWasmDynamicTypesTableBlock = WasmDynamicTypesTableBlock(-1, -1, -1);
+
+DynamicTypeTableBlockLength = 256;
+DynamicTypeTableBlockHeaderLength = 8;
+
+dynamicTypeTable = WasmDynamicTypesTable(-1, -1);
+
+wasm_get_dynamic_type_table_block(ptr : int) -> WasmDynamicTypesTableBlock {	
+	WasmDynamicTypesTableBlock(
+		wasm_i32_load(ptr + 0),
+		wasm_i32_load(ptr + 4),
+		ptr
+	)
+}
+
+wasm_set_dynamic_type_table(table : WasmDynamicTypesTableBlock) -> void {	
+	if (table.self_ptr >= 0) {
+		wasm_i32_store(table.self_ptr + 0, table.free);
+		wasm_i32_store(table.self_ptr + 4, table.next);
+	}
+}
+
+// return blcok where free area will be >= then required
+wasm_get_suitable_block(required_length : int, table_ptr : int) -> WasmDynamicTypesTableBlock {
+	if (table_ptr < 0) {
+		DummyWasmDynamicTypesTableBlock;
+	} else {
+		table = wasm_get_dynamic_type_table_block(table_ptr);
+		if (DynamicTypeTableBlockLength - table.free >= required_length) {
+			table;
+		} else {
+			if (table.next < 0) {
+				DummyWasmDynamicTypesTableBlock;
+			} else {
+				wasm_get_suitable_block(required_length, table.next);
+			}
+		}
+	}
+}
+
+wasm_alloc_dynamic_type(typedesc : int, typelength : int) -> int {
+
+	table_block_0 = wasm_get_suitable_block(typelength, dynamicTypeTable.first);
+	table = if (table_block_0.free < 0) {
+		// dummy block. we need to allocate a new one
+		tmp = wasm_alloc(DynamicTypeTableBlockHeaderLength + DynamicTypeTableBlockLength);
+		if (dynamicTypeTable.last >= 0) 
+			wasm_i32_store(dynamicTypeTable.last + 4, tmp);
+
+		dynamicTypeTable.last ::= tmp;
+
+		if (dynamicTypeTable.first < 0)
+			dynamicTypeTable.first ::= tmp;
+		
+		WasmDynamicTypesTableBlock(
+			0, // points to bytes right after the header
+			dynamicTypeTable.last,
+			tmp
+		);
+	} else table_block_0;
+	type_ptr = table.self_ptr + DynamicTypeTableBlockHeaderLength + table.free;
+	table.free ::= table.free + typelength;
+	wasm_copy_mem(typedesc, typelength, type_ptr);
+	wasm_set_dynamic_type_table(table);
+	type_ptr;
+}
+
+wasm_do_find_type_loop(type : int, typelength : int, curindex : int, typeDescriptor : int) {
+	if (curindex >= typelength) {
+		true;
+	} else {
+		tag1 = wasm_i32_load8_u(type + curindex);
+		tag2 = wasm_i32_load8_u(typeDescriptor + curindex);
+
+		if (tag1 == tag2)
+			wasm_do_find_type_loop(type, typelength, curindex + 1, typeDescriptor)
+		else  {
+			false;
+		}
+	}
+}
+
+wasm_do_find_type(type : int, typelength : int, typeDescriptor : int, bound : int) -> int {
+	if (typeDescriptor >= bound || typelength > bound - typeDescriptor) 
+		-1
+	else {
+		if (wasm_do_find_type_loop(type, typelength, 0, typeDescriptor))
+			typeDescriptor
+		else
+			wasm_do_find_type(type, typelength, wasm_next_typedescriptor(typeDescriptor), bound);
+	}
+}
+
+wasm_find_type(type : int, typelength : int, typeDescriptor : int) -> int {
+	wasm_do_find_type(type, typelength, typeDescriptor, wasm_heap_start());
+}
+
+wasm_find_dynamictype(type : int, typelength : int, block : int) -> int {
+	if (block < 0) { -1 } else {
+		table = wasm_get_dynamic_type_table_block(block);
+
+		ret = wasm_do_find_type(type, typelength, table.self_ptr + DynamicTypeTableBlockHeaderLength, table.self_ptr + DynamicTypeTableBlockHeaderLength + table.free);
+
+		if (ret >= 0) ret
+		else wasm_find_dynamictype(type, typelength, table.next);
+	}
 }

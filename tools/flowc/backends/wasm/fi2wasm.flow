@@ -335,6 +335,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
 
 		IDHandler = "#include tools/flowc/backends/wasm/idhandler.js";
+		TagsFromValue = "#include tools/flowc/backends/wasm/tags_from_value.js";
 		TestJS = "#include tools/flowc/backends/wasm/tests.js";
 
 		result =
@@ -352,6 +353,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 			var HEAP8, HEAPU8, HEAP16, HEAP32, HEAPF64;
 			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : new util.TextDecoder('utf-16le');
 			var _malloc;
+			var _descriptor_from_type;
 			var _table;
 			var MisalignedDoubleF64, MisalignedDoubleI32;\n" +
 
@@ -378,7 +380,9 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 					default:
 						return [tag];
 				}
-			}
+			}\n" + 
+
+			TagsFromValue + "
 
 			function pushDoubleToHeap(address, value) {
 				MisalignedDoubleF64[0] = value;
@@ -492,6 +496,37 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 						stringToUTF16(value, strPtr + 8, bufLen);
 						return strPtr;
 
+					case 5: // flow
+						elementTag = extractTagsFromValue(value);
+
+						if (elementTag == -1) {
+							// problem;
+							return 0;
+						}
+
+						// alloc memory for type
+						var type_lenght = elementTag.length;
+						var type_ptr = _malloc(alignBytes(type_lenght, 4));
+						var offset = 0;
+						elementTag.forEach(function(entry) {
+							HEAPU8[type_ptr + offset] = entry;
+							offset += 1;
+						});
+						var type = _descriptor_from_type(type_ptr, type_lenght);
+
+						// alloc memory for flow itself
+						bytes = 4 + 4 + 4 * (elementTag[0] == 3 ? 2 : 1); //  2 for double
+						var ptr = _malloc(alignBytes(bytes, 4));
+						HEAP32[(ptr >> 2) + 0] = 1; // initial refcount
+						HEAP32[(ptr >> 2) + 1] = type; //  ????????????????????????????????????
+						if (elementTag[0] == 3 /*double*/) {
+							pushDoubleToHeap(ptr + 8, value);
+						} else {
+							HEAP32[(ptr + 8) >> 2] = encode_data(value, elementTag);
+						}
+
+						return ptr;						
+
 					case 9: // array 
 						var elementTag = tag.slice(1);
 						var bufLen = value.length * (elementTag[0] == 3 ? 2 : 1) * 4;
@@ -567,21 +602,24 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 							var aa = decode_data(0, a, [9, t], false);
 							console.log(aa.toString());
 						},
-						'wasm_array_to_string' : function(a, t) {
-							var arr = decode_data(0, a, [9, t], false);
+						'wasm_array_to_string' : function(a, t_addr) {
+							var tags = expandTypeTagByTypedesc(t_addr);
+							console.log('wasm_array_to_string: ' + tags);
+							var arr = decode_data(0, a, tags, false);
 							var s = arr.toString();
 							return encode_data(s, [4]);
 						}				  		
 					}
-				};" + 
+				};\n" + 
 		(if (cfg.nodejs)  // nodejs has to fetch API that supports local urls - workaround
-			"  WebAssembly.instantiate(bytes, imports)"
+			"				WebAssembly.instantiate(bytes, imports)"
 			else 
-				 "return WebAssembly.instantiate(bytes, imports);
+			"				return WebAssembly.instantiate(bytes, imports);
 				})") + 
 					".then(m => {
 					WASMInstance = m.instance;
 					_malloc = WASMInstance.exports.wasm_alloc;
+					_descriptor_from_type = WASMInstance.exports.wasm_descriptor_from_type;
 					WASMInstance.exports.wasm_init_runtime();
 					WASMInstance.exports.wasm_init_global_vars();
 					_table = WASMInstance.exports.table;
