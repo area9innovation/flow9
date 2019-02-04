@@ -402,6 +402,12 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetDPI
     WRAPPER(getRenderer()->setDPI(dpi));
 }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetDensity
+        (JNIEnv *env, jobject obj, jlong ptr, jfloat density)
+{
+    WRAPPER(getRenderer()->setDensity(density));
+}
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetScreenWidthHeight
   (JNIEnv *env, jobject obj, jlong ptr, jint width, jint height)
 {
@@ -1023,6 +1029,11 @@ void AndroidRenderSupport::setDPI(int v)
     MouseRadius = dpi * (radius_mm / 25.4f);
 }
 
+void AndroidRenderSupport::setDensity(float v)
+{
+    density = v;
+}
+
 void AndroidRenderSupport::setScreenWidthHeight(int w, int h) {
 	RealWidth = w; RealHeight = h;
 	if (isScreenRotated()) {
@@ -1170,6 +1181,7 @@ void AndroidRenderSupport::GetTargetTokens(std::set<std::string> &tokens)
     tokens.insert(stl_sprintf("android_api_level=%d", sdkInt));
 
     tokens.insert(stl_sprintf("dpi=%d", dpi));
+    tokens.insert(stl_sprintf("density=%f", density));
 
   	jboolean native_video = env->CallBooleanMethod(owner->owner, cbUsesNativeVideo);
   	if (native_video) tokens.insert("nativevideo");
