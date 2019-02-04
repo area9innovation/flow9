@@ -3383,6 +3383,7 @@ private class VideoClip extends FlowContainer {
 		nativeWidget.crossorigin = determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
 		nativeWidget.src = filename;
+		nativeWidget.setAttribute('playsinline', true);
 
 		if (nativeWidget.autoplay) {
 			playingVideos++;
@@ -3593,6 +3594,19 @@ private class VideoClip extends FlowContainer {
 		}
 	}
 
+	private function onFullScreen() : Void {
+		if (nativeWidget != null) {
+			RenderSupportJSPixi.fullScreenTrigger();
+
+			if (RenderSupportJSPixi.IsFullScreen) {
+				Browser.document.body.appendChild(nativeWidget);
+			} else {
+				Browser.document.body.removeChild(nativeWidget);
+			}
+
+		}
+	}
+
 
 	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
 		streamStatusListener.push(fn);
@@ -3624,26 +3638,26 @@ private class VideoClip extends FlowContainer {
 	private function createFullScreenListeners() {
 		if (nativeWidget != null) {
 			if (Platform.isIOS) {
-				nativeWidget.addEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
-				nativeWidget.addEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger, false);
+				nativeWidget.addEventListener('webkitbeginfullscreen', onFullScreen, false);
+				nativeWidget.addEventListener('webkitendfullscreen', onFullScreen, false);
 			}
 
-			nativeWidget.addEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
-			nativeWidget.addEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
-			nativeWidget.addEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger, false);
+			nativeWidget.addEventListener('fullscreenchange', onFullScreen, false);
+			nativeWidget.addEventListener('webkitfullscreenchange', onFullScreen, false);
+			nativeWidget.addEventListener('mozfullscreenchange', onFullScreen, false);
 		}
 	}
 
 	private function destroyFullScreenListeners() {
 		if (nativeWidget != null) {
 			if (Platform.isIOS) {
-				nativeWidget.removeEventListener('webkitbeginfullscreen', RenderSupportJSPixi.fullScreenTrigger);
-				nativeWidget.removeEventListener('webkitendfullscreen', RenderSupportJSPixi.fullScreenTrigger);
+				nativeWidget.removeEventListener('webkitbeginfullscreen', onFullScreen);
+				nativeWidget.removeEventListener('webkitendfullscreen', onFullScreen);
 			}
 
-			nativeWidget.removeEventListener('fullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
-			nativeWidget.removeEventListener('webkitfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
-			nativeWidget.removeEventListener('mozfullscreenchange', RenderSupportJSPixi.fullScreenTrigger);
+			nativeWidget.removeEventListener('fullscreenchange', onFullScreen);
+			nativeWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
+			nativeWidget.removeEventListener('mozfullscreenchange', onFullScreen);
 		}
 	}
 }

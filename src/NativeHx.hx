@@ -151,6 +151,8 @@ class NativeHx {
 
 			if (untyped Browser.window.clipboardData && untyped Browser.window.clipboardData.setData) { // IE
 				untyped Browser.window.clipboardData.setData('Text', text);
+			} else if (untyped Browser.navigator.clipboard && untyped Browser.navigator.clipboard.writeText) { // Chrome Async Clipboard API
+				untyped Browser.navigator.clipboard.writeText(text);
 			} else {
 				var textArea = createInvisibleTextArea();
 				untyped textArea.value = text;
