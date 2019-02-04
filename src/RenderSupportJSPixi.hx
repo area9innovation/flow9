@@ -961,7 +961,7 @@ class RenderSupportJSPixi {
 			Browser.document.body.addEventListener("keyup", function (e) { PixiStage.emit("keyup", parseKeyEvent(e)); });
 		}
 
-		PixiStage.on("mousedown", function (e) { MouseUpReceived = false; });
+		PixiStage.on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
 		PixiStage.on("mouseup", function (e) { MouseUpReceived = true; });
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnDown(true);
@@ -3305,6 +3305,8 @@ private class VideoClip extends FlowContainer {
 
 	private static var playingVideos : Int = 0;
 
+	public static var CanAutoPlay = false;
+
 	public static inline function NeedsDrawing() : Bool {
 		if (playingVideos != 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
@@ -3401,6 +3403,9 @@ private class VideoClip extends FlowContainer {
 
 		createStreamStatusListeners();
 		createFullScreenListeners();
+
+		if (!startPaused && !CanAutoPlay) 
+			playFn(false);
 	}
 
 	private function deleteVideoClip() : Void {
