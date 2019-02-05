@@ -21,44 +21,62 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-;;;; Simple  project support ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; Simple project support ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
-;; Project file is normal elisp-file, for example:
+;; Creating project file
+;; it is a ordinary elisp-file, for example:
 ;;
+;; (a9flow-add-target "learner-js"  "flowc1 learner/learner.flow js=~/area9/lyceum/rhapsode/www2/learner.js")
+;; (a9flow-add-target "educator" :compile-cmd "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
+;; 		 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Load project:
+;; M-x a9flow-open-project
 ;;
-;; (a9flow-proj-add :name "learner-js"
-;; 		 :compile-cmd "flowc1 learner/learner.flow js=~/area9/lyceum/rhapsode/www2/learner.js")
-;; (a9flow-proj-add :name "educator"
-;; 		 :compile-cmd "flowcpp --no-jit educator/educator.flow -- devtrace=1 dev=1")
+;; Compile project:
+;; M-x a9flow-compile-project
+;; or more convenient with ido:
+;; M-x a9flow-compile-project-ido
 ;;
-;; load project:
-;; a9flow-open-proj-file
+;; You can set default target:
+;; M-x a9flow-set-default-target
+;;  or more convenient with ido:
+;; M-x a9flow-set-default-target-ido
+;; and then compile it:
+;; M-x a9flow-compile-default-target
 ;;
-;; compile project:
-;; a9flow-proj-compile or a9flow-proj-compile-ido
-
-;; You can add to your .emacs:
+;; find function definition or import file:
+;; M-x a9flow-goto-definition
+;; and
+;; M-x a9flow-go-back
 ;;
-;; (load-library "a9flow-mode2")
+;; go to function body in this file:
+;; M-x a9flow-goto-function-body
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; You can add to your .emacs something like:
+;;
+;; (require 'a9flow-mode2)
+;;
 ;; (setq auto-mode-alist
 ;;      (append '(("\\.flow$" . a9flow-mode)) auto-mode-alist))
+;;
 ;; (add-hook 'a9flow-mode-hook
 ;; 	  (lambda ()
 ;; 	    (setq tab-width 4)
-;; 	    (local-set-key (kbd "C-c c") 'a9flow-proj-compile-default)
-;; 	    (local-set-key (kbd "C-c d") 'a9flow-proj-set-default)
-;; 	    (local-set-key (kbd "C-c p") 'a9flow-proj-compile-ido)
-;; 	    (local-set-key (kbd "C-c o") 'a9flow-open-proj-file)
-;; 	    (local-set-key (kbd "C-.") 'a9flow-history-point)
-;; 	    (local-set-key (kbd "M-.") 'a9flow-goto-definition)
-;; 	    (local-set-key (kbd "M-,") 'a9flow-go-back)
-;; 	    (local-set-key (kbd "M-/") 'a9flow-goto-function-body)
+;; 	    (local-set-key (kbd "C-c o") 'a9flow-open-project)
+;; 	    (local-set-key (kbd "C-c p") 'a9flow-compile-project-ido)
+;; 	    (local-set-key (kbd "C-c d") 'a9flow-set-default-target)
+;; 	    (local-set-key (kbd "C-c c") 'a9flow-compile-default-target)
+;; 	    (local-set-key (kbd "M-.")   'a9flow-goto-definition)
+;; 	    (local-set-key (kbd "M-,")   'a9flow-go-back)
+;; 	    (local-set-key (kbd "M-/")   'a9flow-goto-function-body)
+;; 	    (local-set-key (kbd "C-.")   'a9flow-history-point)
 ;; 	    )
 ;; 	  )
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (require 'cl)
-;;(require 'a9flow-mode-simple)
 
+;;;; Syntax ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (require 'generic-x)
 
 (setq a9flow-compat nil) ;; Compatibility mode
@@ -393,84 +411,82 @@ point currently is on, and the associated indentation rules."
 ;;;;;;;;;;;;; PROJECT MANAGEMENT ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defvar a9flow-flow-directory "../../flow9" "a9flow flow directory")
-  
 (defvar a9flow-proj-default-directory nil "a9flow default directory")
 (defvar a9flow-include-list () "a9flow include directories list")
-(defvar a9flow-proj-list () "a9flow projects list")
-(defvar a9flow-proj-default nil "a9flow default project")
+(defvar a9flow-target-list () "a9flow project targets list")
+(defvar a9flow-default-target nil "a9flow default target")
 
 (defvar a9flow-goto-history '())
 (defvar a9flow-goto-hash '())
 
-(cl-defun a9flow-proj-add (&key name compile-cmd)
+(cl-defun a9flow-add-target (name compile-cmd)
   "Add project (or replace) to project list"
   (if (stringp name)
       (progn
-	(setq a9flow-proj-default name) 
-	(setq a9flow-proj-list
+	(setq a9flow-default-target name) 
+	(setq a9flow-target-list
 	      (cons (list 'name name 'compile-cmd compile-cmd)
-	      (cl-delete name a9flow-proj-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
+	      (cl-delete name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))))
     (message "load project error: name:'%s'" name)))
 
 
 
-(defun a9flow-proj-find (name)
-  (cl-find name a9flow-proj-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))
+(defun a9flow-proj-find (target-name)
+  (cl-find target-name a9flow-target-list :test 'equal :key (lambda (proj) (plist-get proj 'name))))
 
-(defun a9flow-open-proj-file (project-file-name)
-  "Compile project project-name"
+(defun a9flow-open-project (project-file-name)
+  "Load project file"
   (interactive	"fProject file: ")
   (let* ((proj-dir (file-name-directory project-file-name))
-	(dir (if proj-dir proj-dir default-directory))    
-	    )
-    (message "a9flow-proj project:%s" project-file-name)
-    (message "a9flow-proj default dir:%s" dir)
-    (setq a9flow-proj-default-directory dir)
-    (a9flow-load-flow-config)
-    (load-file project-file-name)))  
+	(dir (if proj-dir proj-dir default-directory)))
+    (message "a9flow project:%s" project-file-name)
+    (setq a9flow-proj-default-directory nil)
+    (setq a9flow-include-list nil)
+    (load-file project-file-name)
+    (when (not a9flow-proj-default-directory) (setq a9flow-proj-default-directory dir))
+    (a9flow-load-flow-config) ;; after project's load and set a9flow-proj-default-directory    
+    (message "a9flow default dir:%s" a9flow-proj-default-directory)
+    ;;(message "a9flow include list:\n%s" a9flow-include-list)
+    ))  
 
-(defun a9flow-proj-compile-ido ()
+(defun a9flow-compile-project-ido ()
   (interactive)
   (if (fboundp 'ido-completing-read)
       (progn
-        (setq proj-name (ido-completing-read "Project name: " (mapcar 'cadr a9flow-proj-list)))
-        (a9flow-proj-compile proj-name))
+        (setq target-name (ido-completing-read "Compile target: " (mapcar 'cadr a9flow-target-list)))
+        (a9flow-compile-project target-name))
     (message "ido not found")))
 
-(defun a9flow-proj-compile (project-name)
-  "Compile project project-name"
-  (interactive	"sProject name: ")
+(defun a9flow-compile-project (target-name)
+  "Compile project's target"
+  (interactive	"sTarget name: ")
   ;;(setq compilation-filter-hook 'a9flow-compile-filter-hk)
-  (let ((proj (a9flow-proj-find project-name)))
+  (let ((proj (a9flow-proj-find target-name)))
     (if proj
 	(let ((compile-cmd (plist-get proj 'compile-cmd))
 	      (work-dir (plist-get proj 'work-dir)))
 	    (cd a9flow-proj-default-directory)
 	    (compile compile-cmd))
-      (message "project '%s' not found" project-name))))
+      (message "Target '%s' not found" target-name))))
 
-(defun a9flow-proj-compile-default ()
+(defun a9flow-compile-default-target ()
   "Compile the default project"
   (interactive)
-  (a9flow-proj-compile  a9flow-proj-default))
+  (a9flow-compile-project a9flow-default-target))
 
-(defun a9flow-proj-set-default-ido ()
+(defun a9flow-set-default-target-ido ()
   (interactive)
   (if (fboundp 'ido-completing-read)
       (progn
-        (setq proj-name (ido-completing-read "Project name: " (mapcar 'cadr a9flow-proj-list)))
-        (a9flow-proj-set-default proj-name))
+        (setq target-name (ido-completing-read "Default target: " (mapcar 'cadr a9flow-target-list)))
+        (a9flow-set-default-target target-name))
     (message "ido not found")))
 
-(defun a9flow-proj-set-default (project-name)
-  "Set default project name"
-  (interactive "sProject name: ")
-  (setq a9flow-proj-default project-name))
+(defun a9flow-set-default-target (target-name)
+  "Set default target"
+  (interactive "sTarget name: ")
+  (setq a9flow-default-target target-name))
 
-(defun a9flow-load-default-proj-file ()
-  (interactive)
-  (load-file "proj.el")
-  )
 
 (defun a9flow-find-file-in-include-paths (fname)
   (let ((dir (seq-find (lambda (dir) (file-exists-p (concat dir "/" fname)))  a9flow-include-list)))
@@ -484,10 +500,10 @@ point currently is on, and the associated indentation rules."
     (insert-file-contents "flow.config")
     (let ((include (when (string-match "include=\\(.*\\)" (buffer-string))
 	   	     (match-string 1 (buffer-string)))))
-      (setq a9flow-include-list (split-string include ","))
-      (message "FLOW INCLUDE:%s" a9flow-include-list))))
+      (setq a9flow-include-list (append a9flow-include-list (split-string include ",")))
+      )))
 
-;;;;;;;;;; GOTO ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;; GOTO PROCEDURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun a9flow-goto-function-definition ()
   (interactive)
@@ -537,7 +553,7 @@ point currently is on, and the associated indentation rules."
   (interactive)
   (setq current-position `(,(buffer-name) ,(point)))
   (push current-position a9flow-goto-history)
-  (let* ((proj (a9flow-proj-find a9flow-proj-default))
+  (let* ((proj (a9flow-proj-find a9flow-default-target))
 	 (cv (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
     (string-match "import[ \\t]+\\(.*\\);" cv)
     (let* ((rpath (match-string 1 cv))
