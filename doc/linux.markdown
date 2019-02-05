@@ -103,10 +103,16 @@ Make area9 dir:
 ```bash
 mkdir -p ~/area9 && cd ~/area9
 ```
-Clone flow and material repos:
+Clone flow9 and innovation repos:
 ```bash
-git clone ssh://git@github.com/area9innovation/flow.git
-git clone ssh://git@github.com/area9innovation/material.git
+git clone ssh://git@github.com/area9innovation/flow9.git
+git clone ssh://git@github.com/area9innovation/innovation.git
+```
+
+Notice, that flow9 repo requires installed [Git LFS](https://git-lfs.github.com).
+You have to reclone the flow9 repository after installing Git LFS, or use 
+```bash
+git lfs pull
 ```
 # Install `Haxe`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work.

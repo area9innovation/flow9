@@ -146,14 +146,20 @@ No issues to report at the moment.
 
 ## Check out Flow repository
 
+You should have [Git LFS](https://git-lfs.github.com) installed.
+Reclone the flow9 repository after installing Git LFS, or use 
+```bash
+git lfs pull
+```
+
 Do the checkout:
 
     cd ~
-    git clone https://github.com/area9innovation/flow
+    git clone https://github.com/area9innovation/flow9
 
 And add this to your shell init file (e.g. `~/.bash_profile` or `~/.zshrc`):
 
-    export FLOW=$HOME/flow
+    export FLOW=$HOME/flow9
     export PATH=$FLOW/bin:$PATH
 
 and start a new shell.
@@ -200,7 +206,7 @@ The repository contains a prebuilt Mac OS X binary for `flowcpp`.
 You can also run command-line-only stuff with it, and avoid
 initializing the GUI subsystem, using `--batch`:
 
-    cd ~/flow
+    cd ~/flow9
     flowcpp --batch sandbox/helloworld.flow
 
 You should see:

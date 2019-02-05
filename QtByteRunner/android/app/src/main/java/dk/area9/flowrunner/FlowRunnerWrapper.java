@@ -167,6 +167,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     public synchronized void setDPI(int dpi) {
         nSetDPI(cPtr(), this.dpi = dpi);
     }
+
+    private native void nSetDensity(long ptr, float density);
+
+    public synchronized void setDensity(float density) {
+        nSetDensity(cPtr(), density);
+    }
     
     public int getDPI() {
         return dpi;
