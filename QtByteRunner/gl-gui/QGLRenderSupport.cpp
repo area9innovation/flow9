@@ -529,7 +529,7 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
     }
     if (video_clip->useMediaStream()) {
 #ifdef FLOW_MEDIARECORDER
-        QMediaRecorderSupport::FlowNativeVideoSurface *p = (QMediaRecorderSupport::FlowNativeVideoSurface*)getFlowRunner()->GetNative<QMediaRecorderSupport::FlowNativeVideoSurface*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
+        QMediaRecorderSupport::FlowNativeVideoSurface *p = getFlowRunner()->GetNative<QMediaRecorderSupport::FlowNativeVideoSurface*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
 
         widget = videoWidget = new VideoWidget(this);
         p->videoSurface = videoWidget->videoSurface();
@@ -541,7 +541,11 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         videoWidget->setTargetVideoTexture(texture_bitmap);
         videoWidget->setVideoClip(video_clip);
 
-        connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, &QGLRenderSupport::doRequestRedraw);
+        connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, [this, videoWidget, video_clip](){
+            video_clip->notifyEvent(GLVideoClip::PlayStart);
+            disconnect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, 0, 0);
+            connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, &QGLRenderSupport::doRequestRedraw);
+        });
 #endif
     } else {
         // Media player does the video decoding and hands us new frames

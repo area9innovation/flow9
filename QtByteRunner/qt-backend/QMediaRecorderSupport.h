@@ -100,6 +100,19 @@ private:
     void pauseMediaRecorder(StackSlot recorder);
     void stopMediaRecorder(StackSlot recorder);
 
+    void addAudioDevice(GstElement *element, GstDevice* currentDevice, GParamSpec **properties, guint number_of_properties);
+    void addVideoDevice(GstElement *element, GstDevice* currentDevice, GParamSpec **properties, guint number_of_properties);
+
+    void addFilesink(GstElement *bin, GstElement *output_tee, unicode_string filePath);
+    void addWebsocketSender(FlowNativeMediaRecorder* flowRecorder, GstElement *bin, GstElement *output_tee, unicode_string websocketUri, int timeslice, int cbOnWebsocketErrorRoot);
+
+    void addVideoCapture(FlowNativeVideoSurface *flowVideoSurface, GstElement *bin, GstElement *muxer, unicode_string videoDeviceId);
+    void addVideoCapturePreview(FlowNativeVideoSurface *flowVideoSurface, GstElement *bin, GstElement *videosource_tee);
+    void addAudioCapture(GstElement *bin, GstElement *muxer, unicode_string audioDeviceId);
+
+    QString formatGSTDeviceId(QString deviceId);
+    QString getPropertyValue(GstElement *element, GParamSpec **properties, guint number_of_properties, char const* name);
+
 protected:
     static void freeMediaRecorderResources(FlowNativeMediaRecorder *flowRecorder);
     static bool waitForEOS(GstBus* bus, GstMessage* message, void* loop);
