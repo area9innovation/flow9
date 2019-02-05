@@ -8,13 +8,9 @@ import material/internal/material_mutable;
 export {
 	MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic;
 	MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
-		rippleType : Transform<RippleType>, highlighted : Transform<bool>, component : string) -> Tropic;
+		rippleType : Transform<RippleType>, focused : Transform<bool>, hovered : Transform<bool>, component : string) -> Tropic;
 
 	MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic;
-
-	defaultRippleColor : MColor = MGrey(500);
-	defaultRippleOpacity : double = 0.5;
-	defaultHighlightOpacity : double = 0.5;
 }
 
 MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic {
@@ -22,16 +18,17 @@ MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content 
 		manager,
 		parent,
 		content,
-		const(defaultRippleColor),
-		const(defaultRippleOpacity),
+		const(if (getLightBackground(parent)) MBlack() else MWhite()),
+		const(1.0),
 		rippleType,
+		const(false),
 		const(false),
 		parent.name
 	)
 }
 
 MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
-	rippleType : Transform<RippleType>, highlighted : Transform<bool>, component : string) -> Tropic {
+	rippleType : Transform<RippleType>, focused : Transform<bool>, hovered : Transform<bool>, component : string) -> Tropic {
 	down = make(false);
 	point = make(zeroPoint);
 
@@ -45,7 +42,8 @@ MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropi
 			MRippleColor(color),
 			MRippleOpacity(opacity),
 			MRippleType(rippleType),
-			MRippleHighlight(fselect3(highlighted, color, opacity, \h, c, co -> if (h) Some([MFill(c), FillOpacity(co)]) else None())),
+			MRippleFocused(focused),
+			MRippleHovered(hovered),
 			MRippleShape(component),
 			MRippleOverlay(true)
 		]
@@ -54,31 +52,23 @@ MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropi
 
 MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic {
 	rippleType = extractStruct(style, MRippleType(const(MNoRipple()))).type;
-	opacity = extractStruct(style, MRippleOpacity(const(defaultRippleOpacity))).opacity;
-	highlight = extractStruct(style, MRippleHighlight(const(None()))).highlight;
+	focused = extractStruct(style, MRippleFocused(const(false))).focused;
+	hovered = extractStruct(style, MRippleHovered(const(false))).hovered;
+	selected = extractStruct(style, MRippleSelected(const(false))).selected;
+	triggered = fselectdelay(trigger, \tr -> Pair(if (tr) 0 else 600, tr), false);
 
-	if (parent.theme.enableRipple && (!isFConst(rippleType) || fgetValue(rippleType) != MNoRipple() || !isFConst(highlight) || fgetValue(highlight) != None() ||
-		!isFConst(opacity) || fgetValue(opacity) != 0.)) {
+	if (parent.theme.enableRipple && (rippleType != const(MNoRipple()) || focused != const(false) || hovered != const(false) ||
+		selected != const(false))) {
 		point = extractStruct(style, MRipplePosition(const(zeroPoint))).position;
-		color = extractStruct(style, MRippleColor(const(defaultRippleColor))).color;
+		color = extractStruct(style, MRippleColor(const(if (getLightBackground(parent)) MBlack() else MWhite()))).color;
+		opacity = extractStruct(style, MRippleOpacity(const(1.0))).opacity;
 		shape = extractStruct(style, MRippleShape("")).component;
 		overlay = extractStruct(style, MRippleOverlay(true)).overlay;
 
 		TransformTAcc2(\t2a -> {
-			radiusOffset =
-				fselect(rippleType, FLift(\rt -> {
-					switch (rt : RippleType) {
-						MRippleFill(): Pair(rippleRadiusFill, rippleOffsetFill);
-						MRippleCenter(): Pair(rippleRadiusCentered, rippleOffsetCentered);
-						MRippleCustom(rippleRadius, rippleOffset): Pair(rippleRadius, rippleOffset);
-						MNoRipple(): Pair(\__, __ -> 0., \__, __, __ -> zeroPoint);
-					}
-				}));
-
 			b1 = content |> t2a;
 			rippleWH = tryExtractStruct(style, MRippleWidthHeight(const(WidthHeight(0., 0.))));
-			showHighlight = fselect(highlight, isSome |> FLift);
-			showRipple = make(false);
+			showRipple = fmin(fneq(rippleType, MNoRipple()), fmax(fmax(selected, focused), fmax(hovered, triggered)));
 
 			wd = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.width)), b1.metrics.width);
 			hgt = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.height)), b1.metrics.height);
@@ -86,6 +76,9 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 
 			egrowth = makeMEasing(0.6, mStandartCurve, manager.manager.deltaTimer);
 			efade = makeMEasing(0.6, mStandartCurve, manager.manager.deltaTimer);
+
+			next(egrowth.percent, 0.0);
+			next(efade.percent, 1.0);
 
 			startingPoint = ref fgetValue(point);
 
@@ -103,78 +96,41 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 					})()
 				];
 
-			rippleOpacity : Transform<double> =
-				fselect2(
-					opacity,
-					efade.percent,
-					FLift2(\co, pfade -> co * (1. - pfade))
+			opacityPercent =
+				fmultiply(
+					fif(
+						fmax(triggered, selected),
+						fmax(fsubtract(const(0.16), fmultiply(efade.percent, const(0.16))), fif(selected, const(0.08), zero)),
+						fif(focused, const(0.12), fif(hovered, const(0.04), zero))
+					),
+					fif(fselect(color, FLift(\c -> MColor2int(c) != black)), const(2.0), const(1.0))
+				);
+			rippleOpacity = fmultiply(opacity, opacityPercent);
+			radiusPercent = fif(triggered, egrowth.percent, fif(fmax3(focused, hovered, selected), const(1.0), zero));
+			radius = fmultiply(fselect(box, FLift(\b -> sqrt(b.width * b.width + b.height * b.height))), radiusPercent);
+			position =
+				fif(
+					fmax(feq(rippleType, MRippleCenter()), fmin(fmax3(focused, hovered, selected), fnot(triggered))),
+					fselect2(box, radius, FLift2(\b, r -> Point(b.width / 2.0 - r * 2.0, b.height / 2.0 - r * 2.0))),
+					fselect(radius, FLift(\r -> Point(^startingPoint.x - r * 2.0, ^startingPoint.y - r * 2.0)))
 				);
 
-			radius : Transform<double> =
-				fselect3(
-					radiusOffset,
-					box,
-					egrowth.percent,
-					\ro : Pair<(box : WidthHeight, click : Point) -> double, (box : WidthHeight, click : Point, radius : double) -> Point>, b : WidthHeight, pradius : double ->
-						ro.first(b, ^startingPoint) * pradius * (if (shape != "") 2.0 else 1.0)
-				);
-
-			ripplePosition : Transform<Point> =
-				fselect3(
-					radiusOffset,
-					box,
-					radius,
-					\ro : Pair<(box : WidthHeight, click : Point) -> double, (box : WidthHeight, click : Point, radius : double) -> Point>, b : WidthHeight, r : double -> {
-						pt = ro.second(b, ^startingPoint, r);
-						Point(pt.x - r, pt.y - r);
-					}
-				);
-
-			rippleContent : FForm =
+			rippleContent =
 				FAlpha(
 					rippleOpacity,
 					FTranslate(
-						fselect(ripplePosition, FLift(\pt -> pt.x)),
-						fselect(ripplePosition, FLift(\pt -> pt.y)),
-						FMutable(fselect(color, FLift(\c ->
-							FScale(
-								radius,
-								radius,
-								FCircle(1.0, [MFill(c)])
-							)
-						)))
+						fselect(position, FLift(\pt -> pt.x)),
+						fselect(position, FLift(\pt -> pt.y)),
+						FScale(
+							radius,
+							radius,
+							FMutable(fselect(color, FLift(\c -> FCircle(1.0, [MFill(c)]))))
+						)
 					)
 				);
 
 			rippleFForm = \ -> {
-				FDecorator(
-					rippleContent,
-					[
-						Pair(
-							showHighlight,
-							\ ->
-								FMutable(fselect4(radiusOffset, highlight, color, opacity, \ro : Pair<(WidthHeight, Point) -> double, (WidthHeight, Point, double) -> Point>, h, c, co ->
-									eitherMap(
-										h,
-										\hlt -> {
-											b = fgetValue(box);
-											p = fgetValue(point);
-											r = ro.first(b, p) * (if (shape != "") 2.0 else 1.0);
-											tr = ro.second(b, p, r);
-
-											FTranslate(
-												const(tr.x - r),
-												const(tr.y - r),
-												FCircle(r, if (hlt == []) [MFill(c), FillOpacity(co)] else hlt)
-											)
-										},
-										FEmpty()
-									)
-								))
-						)
-					],
-					false
-				)
+				rippleContent
 				|> (\f ->
 					if (shape != "") {
 						container = FMaterialShape(parent, [Fill(black)], shape);
@@ -201,10 +157,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 					contentFForm,
 					[
 						Pair(
-							fmax(
-								showRipple,
-								showHighlight
-							),
+							showRipple,
 							rippleFForm
 						)
 					],
@@ -227,45 +180,12 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				b1.addFillers,
 				b1.xConstant,
 				b1.yConstant,
-				arrayPush(
-					concat(b1.disposers, disp),
-					makeSubscribeUns(trigger, \tr -> {
-						if (tr) {
-							nextDistinct(showRipple, true);
-							[]
-						} else {
-							[interruptibleTimer(600, \ -> next(showRipple, false))]
-						}
-					})()
+				concat(
+					b1.disposers,
+					disp
 				)
 			)
 		})
 	} else
 		content
-}
-
-rippleRadiusCentered(box : WidthHeight, click : Point) -> double {
-	min(box.width, box.height) / 2.0
-}
-
-rippleOffsetCentered(box : WidthHeight, click : Point, radius : double) -> Point {
-	Point(box.width / 2.0 - radius, box.height / 2.0 - radius)
-}
-
-rippleRadiusFill(box : WidthHeight, click : Point) -> double {
-	b = box;
-	p = click;
-	radiusVariants = [
-		hypot(p.x, p.y), hypot(b.width - p.x, p.y),
-		hypot(p.x, b.height - p.y), hypot(b.width - p.x, b.height - p.y)
-	];
-	either(maxA(radiusVariants), 0.0)
-}
-
-rippleOffsetFill(box : WidthHeight, click : Point, radius : double) -> Point {
-	Point(click.x - radius, click.y - radius)
-}
-
-hypot(a : double, b : double) -> double {
-	sqrt(a*a + b*b)
 }
