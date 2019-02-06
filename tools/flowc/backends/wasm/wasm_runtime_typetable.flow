@@ -17,39 +17,44 @@ wasm_descriptor_from_type(typedesc : int, typelength : int) -> int {
 	if (ret < 0) {
 		// try to find in runtime type table 
 		ret2 = wasm_find_runtimetype(typedesc, typelength, runtimeTypeTable.first);
-		if (ret2 >= 0)
-			ret2
-		else {
+		if (ret2 >= 0) {
+			ret2;
+		} else {
 			// create in 'runtime' table
 			wasm_alloc_runtime_type(typedesc, typelength)
 		}
-	} else 
+	} else {
 		ret;
+	}
 }
 
 WasmRuntimeTypesTable(
 	mutable first : int,
-	mutable last : int
+	mutable last : int,
+	mutable blocks_count : int
 );
 
 WasmRuntimeTypesTableBlock(
 	mutable free : int,		// offset from the start of block data (self_ptr + RuntimeTypeTableBlockHeaderLength)
 	mutable next : int,		// pointer to next block
-	self_ptr : int
+	// Usually will be RuntimeTypeTableBlockLength. 
+	// But if requested type's length greater than this value we'll allocate enought length to fit type
+	length : int,		
+	self_ptr : int,
 );
 
-DummyWasmRuntimeTypesTableBlock = WasmRuntimeTypesTableBlock(-1, -1, -1);
+DummyWasmRuntimeTypesTableBlock = WasmRuntimeTypesTableBlock(-1, -1, 0, -1);
 
-RuntimeTypeTableBlockLength = 16;
-RuntimeTypeTableBlockHeaderLength = 8;
+RuntimeTypeTableBlockLength = 64;
+RuntimeTypeTableBlockHeaderLength = 12;
 
-runtimeTypeTable = WasmRuntimeTypesTable(-1, -1);
+runtimeTypeTable = WasmRuntimeTypesTable(-1, -1, 0);
 
 wasm_get_runtime_type_table_block(ptr : int) -> WasmRuntimeTypesTableBlock {	
-	prints("wasm_get_runtime_type_table_block(" + __i2s(ptr) + ")");
 	WasmRuntimeTypesTableBlock(
 		wasm_i32_load(ptr + 0),
 		wasm_i32_load(ptr + 4),
+		wasm_i32_load(ptr + 8),
 		ptr
 	)
 }
@@ -58,6 +63,7 @@ wasm_set_runtime_type_table(table : WasmRuntimeTypesTableBlock) -> void {
 	if (table.self_ptr >= 0) {
 		wasm_i32_store(table.self_ptr + 0, table.free);
 		wasm_i32_store(table.self_ptr + 4, table.next);
+		wasm_i32_store(table.self_ptr + 8, table.length);
 	}
 }
 
@@ -67,8 +73,7 @@ wasm_get_suitable_block(required_length : int, table_ptr : int) -> WasmRuntimeTy
 		DummyWasmRuntimeTypesTableBlock;
 	} else {
 		table = wasm_get_runtime_type_table_block(table_ptr);
-		if (RuntimeTypeTableBlockLength - table.free >= required_length) {
-			prints("free: " + cast((RuntimeTypeTableBlockLength - table.free) : int -> string));
+		if (table.length - table.free >= required_length) {
 			table;
 		} else {
 			if (table.next < 0) {
@@ -83,30 +88,31 @@ wasm_get_suitable_block(required_length : int, table_ptr : int) -> WasmRuntimeTy
 wasm_alloc_runtime_type(typedesc : int, typelength : int) -> int {
 	table_block_0 = wasm_get_suitable_block(typelength, runtimeTypeTable.first);
 	table = if (table_block_0.free < 0) {
-		prints("can't find suitable block. will alloc");
 		// dummy block. we need to allocate a new one
-		tmp = wasm_alloc(RuntimeTypeTableBlockHeaderLength + RuntimeTypeTableBlockLength);
-		last = runtimeTypeTable.last;
-		if (runtimeTypeTable.last >= 0) 
-			wasm_i32_store(runtimeTypeTable.last + 4, tmp);
+		len = if (typelength > RuntimeTypeTableBlockLength) typelength else RuntimeTypeTableBlockLength;
+		ret = WasmRuntimeTypesTableBlock(
+			0, // points to bytes right after the header
+			-1,
+			len,
+			wasm_alloc(RuntimeTypeTableBlockHeaderLength + len)
+		);
 
-		runtimeTypeTable.last ::= tmp;
+		if (runtimeTypeTable.last >= 0) 
+			wasm_i32_store(runtimeTypeTable.last + 4, ret.self_ptr);
+
+		runtimeTypeTable.last ::= ret.self_ptr;
 
 		if (runtimeTypeTable.first < 0)
-			runtimeTypeTable.first ::= tmp;
-		
-		WasmRuntimeTypesTableBlock(
-			0, // points to bytes right after the header
-			last,
-			tmp
-		);
+			runtimeTypeTable.first ::= ret.self_ptr;
+
+		runtimeTypeTable.blocks_count ::= runtimeTypeTable.blocks_count + 1;
+
+		ret;
 	} else table_block_0;
 	type_ptr = table.self_ptr + RuntimeTypeTableBlockHeaderLength + table.free;
 	table.free ::= table.free + typelength;
 	wasm_copy_mem(typedesc, typelength, type_ptr);
 	wasm_set_runtime_type_table(table);
-
-	prints("after alloc: free: " + cast((RuntimeTypeTableBlockLength - table.free) : int -> string));
 
 	type_ptr;
 }
@@ -144,8 +150,6 @@ wasm_find_type(type : int, typelength : int, typeDescriptor : int) -> int {
 __i2s(i:int) -> string { cast(i : int -> string); }
 
 wasm_find_runtimetype(type : int, typelength : int, block : int) -> int {
-	prints("wasm_find_runtimetype(" + __i2s(type) + ", " + __i2s(typelength) + "," + __i2s(block) + ")");
-
 	if (block < 0) { -1 } else {
 		table = wasm_get_runtime_type_table_block(block);
 
@@ -154,4 +158,62 @@ wasm_find_runtimetype(type : int, typelength : int, block : int) -> int {
 		if (ret >= 0) ret
 		else wasm_find_runtimetype(type, typelength, table.next);
 	}
+}
+
+//************************* DEBUG section ***********************************
+
+wasm_rtt_blocks_count() -> int {
+	runtimeTypeTable.blocks_count;
+}
+
+// return default block length
+wasm_rtt_block_length() -> int {
+	RuntimeTypeTableBlockLength;
+}
+
+wasm_do_rrt_foreach_block(block : int, fn : (WasmRuntimeTypesTableBlock) -> void) {	
+	if (block >= 0) {
+		table = wasm_get_runtime_type_table_block(block);
+		fn(table);
+		wasm_do_rrt_foreach_block(table.next, fn);
+	}
+}
+
+wasm_rrt_foreach_block(fn : (WasmRuntimeTypesTableBlock) -> void) {
+	wasm_do_rrt_foreach_block(runtimeTypeTable.first, fn);	
+}
+
+wasm_rtt_dump_blocks(fn : (string) -> void) -> void {
+	wasm_rrt_foreach_block(\t -> 
+		fn("Block: " + __i2s(t.self_ptr) + 
+			";\n    length: " + __i2s(t.length) + 
+			";\n    free bytes: " + __i2s(t.length - t.free) + 
+			";\n    next block: " + __i2s(t.next)
+		)
+	);
+}
+
+wasm_rrt_do_dump_type(type_ptr : int, type_len : int, offset : int, acc : string) -> string {
+	if (offset < type_len) {
+		type = wasm_i32_load8_u(type_ptr + offset);
+		s = acc + (if (acc == "") "" else ", ") + __i2s(type);
+
+		wasm_rrt_do_dump_type(type_ptr, type_len, offset + 1, s);
+	} else acc;
+}
+
+wasm_rrt_do_dump_types(type_ptr : int, bound : int, fn : (string) -> void) {
+	if (type_ptr >= bound) {
+	} else {
+		fn("    " + wasm_rrt_do_dump_type(type_ptr, wasm_next_typedescriptor(type_ptr) - type_ptr, 0, ""));
+		wasm_rrt_do_dump_types(wasm_next_typedescriptor(type_ptr), bound, fn);
+	}
+}
+
+wasm_rtt_dump_types(fn : (string) -> void) -> void {
+	wasm_rrt_foreach_block(\t -> {
+		data_ptr = t.self_ptr + RuntimeTypeTableBlockHeaderLength;
+		fn("Block: " + __i2s(t.self_ptr));
+		wasm_rrt_do_dump_types(data_ptr, data_ptr + t.free, fn);
+	});
 }
