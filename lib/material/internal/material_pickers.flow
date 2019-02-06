@@ -14,9 +14,7 @@ export {
 		parent : MFocusGroup,
 		colorB : DynamicBehaviour<MColor>,
 		style : [MColorPickerStyle],
-		colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>
-	) -> Tropic;
-	// MColorPickerMultiSelect2T(manager : MaterialManager, parent : MFocusGroup, m : MColorPickerMultiSelect) -> Tropic;
+		colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>) -> Tropic;
 }
 
 dateCellW = 41.0;
@@ -56,6 +54,7 @@ pickerLayout(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	color : MColor,
+	showHeaderPanel : bool,
 	album : bool,
 	dialogButtons : [MDialogButton],
 	pickerWidth0 : double,
@@ -87,13 +86,12 @@ pickerLayout(
 
 	makeDialogButton0 = \title, fn, shortcut ->
 		[
-			TBorder(0., 0., 8., 0.,
-				MTextButton2T(
-					manager,
-					parent,
-					MTextButton(_(title), fn, [color], [MShortcut(shortcut), MEnabled(enabled)])
-				)
+			MTextButton2T(
+				manager,
+				parent,
+				MTextButton(_(title), fn, [color], [MShortcut(shortcut), MEnabled(enabled)])
 			)
+			|> TBorderRight(8.)
 		];
 
 	makeDialogButton = \button : Maybe<MDialogButton>, title ->
@@ -118,7 +116,7 @@ pickerLayout(
 			[
 				[TFillX()],
 				makeDialogButton(cancelButton, "CANCEL"),
-				map(textButtons, \tb -> TBorder(0., 0., 8., 0., MTextButton2T(manager, parent, tb))),
+				map(textButtons, \tb -> MTextButton2T(manager, parent, tb) |> TBorderRight(8.)),
 				makeDialogButton(okButton, "OK")
 			]
 			|> concatA
@@ -128,19 +126,23 @@ pickerLayout(
 		|> (\t -> TGroup2(mainSectionBack(getLightBackground(parent)), t));
 
 	infoSection1 =
-		TGroup2(
-			TIfLazy2(
-				enabled,
-				\en -> {
-					st = [MFill(if (en) color else MGrey(500))];
-					if (album)
-						TRounded(radiusMenu, 0.0, 0.0, radiusMenu, st, TSizedHeight(pickerWidthInfoAlbum, height))
-					else
-						TRounded(radiusMenu, radiusMenu, 0.0, 0.0, st, TFixed(pickerWidth, 100.0))
-				},
-				true
-			),
-			TAvailable(infoSection, if (album) TSizedHeight(pickerWidthInfoAlbum, height) else TFixed(pickerWidth, 100.0))
+		TAvailable(infoSection, if (album) TSizedHeight(pickerWidthInfoAlbum, height) else TFixed(pickerWidth, 100.0))
+		|> (\t -> if (showHeaderPanel)
+				TGroup2(
+					TIfLazy2(
+						enabled,
+						\en -> {
+							st = [MFill(if (en) color else MGrey(500))];
+							if (album)
+								TRounded(radiusMenu, 0.0, 0.0, radiusMenu, st, TSizedHeight(pickerWidthInfoAlbum, height))
+							else
+								TRounded(radiusMenu, radiusMenu, 0.0, 0.0, st, TFixed(pickerWidth, 100.0))
+						},
+						true
+					),
+					t		
+				)
+			else t
 		);
 
 	[infoSection1, mainSection1]
@@ -686,6 +688,7 @@ MDatePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MDatePicker) 
 		manager,
 		parent,
 		color,
+		true,
 		album,
 		buttons,
 		mpickerWidth,
@@ -1404,7 +1407,7 @@ MTimePicker2T(manager : MaterialManager, parent : MFocusGroup, m : MTimePicker) 
 		if (album) TFixed(pickerWidthInfoAlbum, pickerHeightCells) else TFixed(mpickerWidth * getScaling(manager, mpickerWidth, album), 100.0)
 	);
 
-	pickerLayout(manager, parent, color, album,
+	pickerLayout(manager, parent, color, true, album,
 		extractStruct(m.style, MDialogButtons([])).buttons,
 		mpickerWidth,
 		const(pickerHeightCells),
@@ -1427,25 +1430,28 @@ MColorPicker2T(
 	parent : MFocusGroup,
 	colorB : DynamicBehaviour<MColor>,
 	style : [MColorPickerStyle],
-	colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>
-) -> Tropic {
+	colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>) -> Tropic {
+
 	album = extractStruct(style, MDialogAlbum(false)).album;
 	color = extractStruct(style, getPrimaryColor(parent));
 	showPreviousColor = extractStruct(style, MShowPreviousColor(true)).show;
 	materialColorPicker = contains(style, MaterialColorPicker());
 	enabled = extractStruct(style, MEnabled(const(true))).enabled;
 	updateOnClose = contains(style, MUpdateOnClose());
-	selectedColorB = if (updateOnClose) make(getValue(colorB)) else colorB;
+	selectedColorB = if (updateOnClose) cloneBehaviour(colorB) else colorB;
 	selectedColorSetMB = maybeBind(
 		colorsSetMB,
 		\colorsSetB : DynamicBehaviour<Set<MColor>> ->
-			Some(if (updateOnClose) make(getValue(colorsSetB)) else colorsSetB)
+			Some(if (updateOnClose) cloneBehaviour(colorsSetB) else colorsSetB)
 	);
+	opacityPicker0 = tryExtractStruct(style, MOpacityPicker(make(0.)));
+	opacityPicker = if (updateOnClose) maybeMap(opacityPicker0, \op -> MOpacityPicker(cloneBehaviour(op.opacity))) else opacityPicker0;
 
 	picker = if (materialColorPicker || isSome(colorsSetMB))
 		colorPickerMaterialColorsBody(
 			manager,
 			selectedColorB,
+			opacityPicker,
 			style,
 			parent,
 			enabled,
@@ -1453,7 +1459,7 @@ MColorPicker2T(
 		)
 	else
 		Pair(
-			colorPickerSliderBody(manager, parent, selectedColorB, getLightBackground(parent), enabled),
+			colorPickerSliderBody(manager, parent, selectedColorB, opacityPicker, enabled),
 			const(colorPickerHeight2)
 		);
 
@@ -1462,7 +1468,12 @@ MColorPicker2T(
 
 	TDispose(
 		[
-			\ -> nextDistinct(colorB, getValue(selectedColorB)),
+			\ -> if (updateOnClose) {
+				nextDistinct(colorB, getValue(selectedColorB));
+				maybeApply(opacityPicker0, \op0 -> maybeApply(opacityPicker, \op ->
+					nextDistinct(op0.opacity, fgetValue(op.opacity))
+				))
+			},
 			\ -> maybeApply(
 				selectedColorSetMB,
 				\selectedColorsB -> nextDistinct(
@@ -1471,17 +1482,18 @@ MColorPicker2T(
 				)
 			)
 		],
-		TBorder(0., 0., 0., 8., body)
+		body
 	)
+	|> TBorderBottom(8.)
 	|> (\f ->
-		pickerLayout(manager, parent, color, album,
+		pickerLayout(manager, parent, color, false, album,
 			extractStruct(style, MDialogButtons([])).buttons,
 			colorPickerWidth,
 			faddition(height, const(8.)),
 			eitherMap(
 				selectedColorSetMB,
 				\colorSetB  -> colorPickerMultiSelectHeader(manager, parent, colorSetB, enabled, album),
-				colorPickerHeader(manager, parent, colorB, showPreviousColor, enabled, album)
+				colorPickerHeader(manager, parent, selectedColorB, opacityPicker, showPreviousColor, enabled, album)
 			),
 			f,
 			enabled
@@ -1494,8 +1506,8 @@ colorPickerMultiSelectHeader(
 	parent : MFocusGroup,
 	selectedColorsB : DynamicBehaviour<Set<MColor>>,
 	enabled : Transform<bool>,
-	album : bool
-) -> Tropic {
+	album : bool) -> Tropic {
+
 	colorPickerWidthScaled = colorPickerWidth * getScaling(manager, colorPickerWidth, album);
 	cellSize = 16.0;
 	positionB = make(zeroPositionScale);
@@ -1609,9 +1621,9 @@ colorPickerSliderBody(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	colorB : DynamicBehaviour<MColor>,
-	lightBackground : bool,
-	enabled : Transform<bool>
-) -> Tropic {
+	opacityPicker : Maybe<MOpacityPicker>,
+	enabled : Transform<bool>) -> Tropic {
+
 	redValue = make(0.);
 	greenValue = make(0.);
 	blueValue = make(0.);
@@ -1647,13 +1659,14 @@ colorPickerSliderBody(
 			),
 			dummyM2t
 		)
-			|> TCenterX,
+		|> TCenterX,
 		TLinesA([
 			makeSlider(MRed, redValue),
 			makeSlider(MGreen, greenValue),
-			makeSlider(MBlue, blueValue)
+			makeSlider(MBlue, blueValue),
+			opacityPickerBody(manager, parent, opacityPicker, enabled)
 		])
-			|> (\f -> TBorderA(8., 0., 12., 0., f)),
+		|> (\f -> TBorderA(8., 0., 12., 0., f)),
 	)
 	|> (\f -> TAvailable(f, TFixed(colorPickerWidth, colorPickerHeight2)))
 	|> (\f -> TCenterIn(f, TFixed(colorPickerWidth, colorPickerHeight2)))
@@ -1682,6 +1695,523 @@ colorPickerSliderBody(
 		)
 	)
 }
+
+
+
+colorPickerMaterialColorsBody(
+	manager : MaterialManager,
+	selectedColorB : DynamicBehaviour<MColor>,
+	opacityPicker : Maybe<MOpacityPicker>,
+	style : [MColorPickerStyle],
+	parent : MFocusGroup,
+	enabled : Transform<bool>,
+	colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>) -> Pair<Tropic, Transform<double>> {
+
+	down = make(false);
+	hover = make(false);
+	point = make(zeroPoint);
+	uns = ref nop;
+	cellSize = 16.0;
+	position = make(zeroPositionScale);
+	nextDistinct(selectedColorB, mCustomColor2MColor(getValue(selectedColorB)));
+
+	additionalColors = fselect(
+		extractStruct(style, MColorPickerAdditionalColors(const([]))).colors,
+		FLift(\colors -> splitByNumber(colors, length(materialColors)))
+	);
+
+	mainCellsEnabled = !contains(style, MColorPickerDisableMainPalette());
+	indexDividingRow = (length(materialShades) + length(materialAccentShades) + 1) * b2i(mainCellsEnabled);
+
+	mainCells =
+		mapi(materialColors, \i, c ->
+			mapi(materialShades, \j, shade ->
+				ColorCell(MColor(c, shade, false), i, j)
+			)
+			|> (\f ->
+				if (i < 16)
+					concat(
+						f,
+						mapi(materialAccentShades, \j, shade ->
+							ColorCell(MColor(c, shade, true), i, 10 + j)
+						)
+					)
+				else if (i == 16)
+					arrayPush(f, ColorCell(MWhite(), 16, 10))
+				else if (i == 17)
+					arrayPush(f, ColorCell(MBlack(), 17, 10))
+				else
+					f
+			)
+		);
+
+	additionalCells =
+		fselect(
+			additionalColors,
+			FLift(\addColors ->
+				mapi(mainCells, \i, c ->
+					foldi(addColors, [], \j, acc, line -> {
+						if (existsIndex(line, i)) {
+							color = mCustomColor2MColor(line[i]);
+							arrayPush(acc, ColorCell(color, i, j + indexDividingRow))
+						} else {
+							acc
+						}
+					})
+				)
+			)
+		);
+
+	cells = if (mainCellsEnabled)
+		fselect(
+			additionalCells,
+			FLift(\addCells ->
+				mapi(mainCells, \i, c ->
+					concat(c, addCells[i])
+				)
+			)
+		)
+	else
+		additionalCells;
+
+	colorPickerHeight = fselect(cells, FLift(\currentCells ->
+		i2d(
+			if (existsIndex(currentCells, 0)) {
+				rows = length(currentCells[0]) + 1;
+				if (rows < 1)
+					1
+				else if (rows == indexDividingRow)
+					indexDividingRow - 1
+				else
+					rows
+			} else
+				1
+		) * cellSize
+	));
+
+	cellFromPosition = \fn -> {
+		pos = getValue(point);
+		currentCells = fgetValue(cells);
+
+		i = floor(pos.x / 16.);
+		j = floor(pos.y / 16.);
+		if (i >= 0 && length(currentCells) > i && j >= 0 && length(currentCells[i]) > j && j != indexDividingRow)
+			fn(currentCells[i][j])
+		else if (i >= 0 && length(currentCells) > i && j >= 0) {
+			cell = findDef(currentCells[i], \cc -> cc.x == i && cc.y == j, ColorCell(MBlue(0), -1, -1));
+			if (cell.x >= 0) fn(cell)
+		}
+	}
+
+	currentCell : DynamicBehaviour<ColorCell> = make(mainCells[0][0]);
+	onClick = \ -> cellFromPosition(\cell -> {
+		nextDistinct(currentCell, cell);
+		maybeApply(
+			colorsSetMB,
+			\colorsB -> nextDistinct(colorsB, insertSet(getValue(colorsB), cell.color))
+		);
+	});
+
+	moveToCell = selectableCells(cells, currentCell);
+
+	colorPickerBackground = MGrey(500);
+
+	showClearCustomColorsButtons : Maybe<MClearCustomColorsButtons> = tryExtractStruct(
+		style,
+		MClearCustomColorsButtons(
+			nop1,
+			nop
+		)
+	);
+
+	dialogCaptionHeight = 48.0;
+	embedCustomColorDialog =
+		\f : Tropic, customColorDialog : MCustomColorPickerDialog -> {
+
+		iconButtonsStyle = [MIconSize(17.0), MWhite()];
+		addClearButtons = \t -> eitherMap(
+			showClearCustomColorsButtons,
+			\showClearButtons ->
+				TColsA([
+					t,
+					TFillX(),
+					MIconButton2T(
+						manager,
+						parent,
+						MIconButton(
+							"delete",
+							\ -> showClearButtons.removeColor(getValue(currentCell).color),
+							iconButtonsStyle,
+							[
+								MEnabled(fand(enabled, fselect2(
+									currentCell, additionalCells,
+									FLift2(\cell, addCells -> exists(addCells, \addCell -> contains(addCell, cell)))
+								))),
+								MTooltipText(const(_("Remove selected")))
+							]
+						)
+					),
+					MIconButton2T(
+						manager,
+						parent,
+						MIconButton(
+							"delete_forever",
+							showClearButtons.removeAllColors,
+							iconButtonsStyle,
+							[
+								MEnabled(fand(enabled, fselect(additionalColors, FLift(\addColors -> length(addColors[0]) > 0)))),
+								MTooltipText(const(_("Remove all")))
+							]
+						)
+					)
+				])
+				|> (\t2 -> TAvailableWidth(t2, const(colorPickerWidth - 8.0))),
+			t
+		);
+
+		showMCustomColorPickerDialogPopup = \ -> {
+
+			close = make(false);
+			customColor = make(getValue(selectedColorB));
+
+			customColorPicker =
+				MColorPicker(customColor, [
+					MDialogButtons([
+						MButtonOk("enter", \ -> {
+							getValue(customColor)
+								|> customColorDialog.pick;
+							next(selectedColorB, getValue(customColor));
+							next(close, true);
+						}),
+						MButtonCancel("esc", \ -> next(close, true))
+					])
+				]);
+
+			renderMDialog(
+				manager,
+				close,
+				[],
+				customColorPicker,
+				\mat, p -> switch (mat) {
+					MColorPicker(__, ___) :
+						MColorPicker2T(manager, p, mat.color, mat.style, None());
+					default : TEmpty(); // Can't occur
+				}
+			);
+		}
+
+		TLines2(
+			f,
+			MTextButton2T(
+				manager,
+				parent,
+				MTextButton(
+					customColorDialog.button.text,
+					showMCustomColorPickerDialogPopup,
+					customColorDialog.button.style,
+					arrayPush(customColorDialog.button.state, MEnabled(enabled))
+				)
+			)
+				|> addClearButtons
+				|> (\t -> TBorderA(8.0, 0.0, 0.0, 0.0, t))
+				|> (\t -> TCenterYIn(t, TFixed(0.0, dialogCaptionHeight)))
+				|> (\t -> TGroup2(t, TFixed(colorPickerWidth, 0.0)))
+		)
+	}
+
+	customColorDialog : Maybe<MCustomColorPickerDialog> = tryExtractStruct(
+		style,
+		MCustomColorPickerDialog(
+			MTextButton("", nop, [], []),
+			nop1
+		)
+	);
+
+	opacityHeight = make(0.);
+
+	opacitySlider =
+		opacityPickerBody(manager, parent, opacityPicker, enabled)
+		|> (\op -> TAttachHeight(op, opacityHeight))
+		|> (\op -> TAvailableWidth(op, const(colorPickerWidth - 8.)));
+
+	bodyHeight =
+		(if (isSome(customColorDialog)) faddition(colorPickerHeight, const(dialogCaptionHeight)) else colorPickerHeight)
+		|> (\bh -> eitherMap(opacityPicker, \__ -> faddition(bh, opacityHeight), bh));
+
+	makeCellsGrid =
+		\colorCells : [[ColorCell]], en : bool ->
+			concatA(colorCells)
+				|> (\f -> map(f, \cc -> makeColorCell(manager, cc, getLightBackground(parent), currentCell, cellSize, en)))
+				|> TGroup;
+
+	TIfLazy2(enabled, \en ->
+		TGroup2(
+			if (mainCellsEnabled) makeCellsGrid(mainCells, en) else TEmpty(),
+			TSelect(additionalCells, \addCells ->
+				makeCellsGrid(addCells, en)
+			)
+		),
+		true
+	)
+	|> (\f -> TFixSize(f, TSizedHeight(colorPickerWidth, colorPickerHeight)))
+	|> addCellsZoomingAndOnClick(
+		manager,
+		getLightBackground(parent),
+		cellSize,
+		position,
+		hover,
+		down,
+		point,
+		onClick,
+		cellFromPosition,
+		currentCell,
+		enabled
+	)
+	|> (\t -> TLines2(t, opacitySlider))
+	|> (\f -> TAlpha(fif(enabled, const(1.0), const(0.5)), f))
+	|> (\f -> TKeyListener(["left"], \ -> moveToCell.first(MLeft()), nop, f))
+	|> (\f -> TKeyListener(["right"], \ -> moveToCell.first(MRight()), nop, f))
+	|> (\f -> TKeyListener(["up"], \ -> moveToCell.first(MUp()), nop, f))
+	|> (\f -> TKeyListener(["down"], \ -> moveToCell.first(MDown()), nop, f))
+	|> (\f -> eitherMap(customColorDialog, \customDialog -> embedCustomColorDialog(f, customDialog), f))
+	|> addTBackground(colorPickerBackground)
+	|> (\f -> TDispose([moveToCell.second], f))
+	|> (\f ->
+		TConstruct(
+			[
+				\ ->
+					bidirectionalLink(
+						selectedColorB,
+						currentCell,
+						\c ->
+							findDef(fgetValue(cells) |> concatA, \c0 : ColorCell -> c0.color == getValue(selectedColorB), ColorCell(c, -1, -1)),
+						\c ->
+							c.color
+					)
+			],
+			f
+		)
+	)
+	|> (\f -> Pair(f, bodyHeight))
+}
+
+colorPickerHeader(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	colorB : DynamicBehaviour<MColor>,
+	opacityPicker : Maybe<MOpacityPicker>,
+	showPrevious : bool,
+	enabled : Transform<bool>,
+	album : bool) -> Tropic {
+
+	prevColor0 = getValue(colorB);
+	prevOpacity = maybeMap(opacityPicker, \op -> FillOpacity(getValue(op.opacity)));
+
+	colorPickerWidthScaled = colorPickerWidth * getScaling(manager, colorPickerWidth, album);
+
+	topGap = colorPickerWidth / 3.;
+	bottomGap = topGap + 48.;
+
+	addOpacity = \t ->
+		eitherMap(opacityPicker, \op ->
+			TAlpha(op.opacity, t),
+			t
+		);
+
+	colorPickerHeaderTitle = \text, c, font, en ->
+		eitherMap(
+			opacityPicker, \opac ->
+			TSelect(opac.opacity, \op ->
+				MText2T(parent, text, [if (op < 0.3) MBlack() else MTextMColor(c), font] |> addDisabledStyle(en))
+			),
+			MText2T(parent, text, [MTextMColor(c), font] |> addDisabledStyle(en))
+		)
+		|> TBaseAlignA;
+
+	TSelect2(colorB, enabled, \color, en -> {
+		c = if (en) color else MGrey(500);
+
+		if (showPrevious) {
+			prevColor = if (en) prevColor0 else MGrey(500);
+
+			prevColorBox =
+				if (getDefaultRtl()) [
+					LineTo(topGap, 0.),
+					LineTo(bottomGap, 100.),
+					LineTo(0., 100.),
+					ClosePath()
+				] else [
+					MoveTo(colorPickerWidthScaled - topGap, 0.),
+					LineTo(colorPickerWidthScaled, 0.),
+					LineTo(colorPickerWidthScaled, 100.),
+					LineTo(colorPickerWidthScaled - bottomGap, 100.),
+					ClosePath()
+				];
+
+			newColorBox = if (getDefaultRtl())
+				[
+					MoveTo(topGap, 0.),
+					LineTo(colorPickerWidthScaled, 0.),
+					LineTo(colorPickerWidthScaled, 100.),
+					LineTo(bottomGap, 100.),
+					ClosePath()
+				] else [
+					LineTo(colorPickerWidthScaled - topGap, 0.),
+					LineTo(colorPickerWidthScaled - bottomGap, 100.),
+					LineTo(0., 100.),
+					ClosePath()
+				];
+
+			prevTextColor =
+				eitherMap(prevOpacity, \op ->
+					if (op.opacity < 0.3) MBlack() else MTextMColor(prevColor),
+					MTextMColor(prevColor)
+				);
+
+			onPrevClick = \ -> {
+				nextDistinct(colorB, prevColor);
+				maybeApply(opacityPicker, \op -> nextDistinct(op.opacity, eitherMap(prevOpacity, \opac -> opac.opacity, 0.)));
+			}
+
+			TGroup([
+				TGraphics(prevColorBox, arrayPushMaybe([MFill(prevColor)], prevOpacity))
+				|> (\f -> if (en) clickable(manager, parent, f, onPrevClick) else f),
+
+				TGraphics(newColorBox, [MFill(c)])
+				|> (\f -> TInteractive([TMouseDown(make(false))], f))
+				|> addOpacity,
+				
+				colorPickerHeaderTitle(mColorShade2s(c), c, MSubheading(), en)
+				|> (\f2 -> TBorderA(16., 24., 0., 0., f2)),
+
+				colorPickerHeaderTitle(mColorName2s(c), c, MHeadline(), en)
+				|> (\f2 -> TBorderA(16., 48., 0., 0., f2)),
+
+				MText2T(parent, mColorShade2s(prevColor), [prevTextColor, MBodyBold()] |> addDisabledStyle(en))
+				|> (\f2 -> TBorderA(0., 32., 16., 0., f2))
+				|> TEndAlignA,
+
+				MText2T(parent, mColorName2s(prevColor), [prevTextColor, MSubheading()] |> addDisabledStyle(en))
+				|> (\f2 -> TBorderA(0., 52., 16., 0., f2))
+				|> TEndAlignA
+			])
+		} else
+			TGroup([
+				TRectangle([MFill(c)], TFixed(colorPickerWidthScaled, 100.0))
+				|> addOpacity,
+				colorPickerHeaderTitle(mColorShade2s(c), c, MSubheading(), en)
+				|> (\f2 -> TBorderA(16., 20., 0., 0., f2)),
+				colorPickerHeaderTitle(mColorName2s(c), c, MDisplay1Medium(), en)
+				|> (\f2 -> TBorderA(16., 40., 0., 0., f2))
+			])
+	})
+	|> (\f -> TAvailable(f, TFixed(colorPickerWidthScaled, 100.)))
+}
+
+makeColorCell(
+	manager : MaterialManager,
+	cell0 : ColorCell,
+	lightBackground : bool,
+	currentCell : DynamicBehaviour<ColorCell>,
+	size : double,
+	en : bool) -> Tropic {
+
+	cell =
+		if (en)
+			cell0
+		else
+			ColorCell(
+				if (cell0.color.color == CCustom()) MGrey(500)
+				else MColor(CGrey(), cell0.color.shade, false), cell0.x, cell0.y
+			);
+
+	TIf(feq(currentCell, cell),
+		TGroup2(
+			TRectangle([Fill(MTextColor(cell.color))], TFixed(size, size)),
+			TTranslate(const(Point(2., 2.)), TRectangle([MFill(cell.color)], TFixed(size - 4., size - 4.)))
+		),
+		TRectangle([MFill(cell.color)], TFixed(size, size))
+	)
+	// |> (\f -> TCursor(FingerCursor(), f))
+	|> (\f -> TTranslate(const(Point(i2d(cell.x) * 16., i2d(cell.y) * 16.)), f))
+}
+
+
+addCellsZoomingAndOnClick(
+	manager : MaterialManager,
+	lightBackground : bool,
+	cellSize : double,
+	positionB : DynamicBehaviour<PositionScale>,
+	downB : DynamicBehaviour<bool>,
+	hoverB :  DynamicBehaviour<bool>,
+	pointB : DynamicBehaviour<Point>,
+	onClick : () -> void,
+	cellFromPosition : ((cell : ColorCell) -> void) -> void,
+	currentCell : DynamicBehaviour<ColorCell>,
+	enabled : Transform<bool>) -> (Tropic) -> Tropic {
+
+	uns = initUnsM();
+	\tropic ->
+		mouseDownAround(manager, Some(pointB), downB, hoverB, onClick,
+			TConstruct(
+				[
+					make2Subscribe(fOr(hoverB, downB), pointB, \h, point ->
+						if (fgetValue(enabled)) {
+							if (h) {
+								dispUnsM(uns);
+								cellFromPosition(\cell : ColorCell -> {
+									setUnsM(
+										uns,
+										trender(
+											TTranslate(
+												fselect(
+													positionB,
+													FLift(\p : PositionScale -> Point(p.pos.x - 4. * p.scale.x, p.pos.y - 4. * p.scale.y))
+												),
+												TScale(
+													fselect(positionB, FLift(\p : PositionScale -> Factor(p.scale.x, p.scale.y))),
+													makeColorCell(manager, cell, lightBackground, currentCell, 1.5 * cellSize, true)
+												)
+											),
+											manager.manager.renderStyle
+										)
+									)
+								})
+							} else {
+								dispUnsM(uns)
+							}
+						}
+					),
+					\ -> \ -> dispUnsM(uns)
+				],
+				TPositionScale(positionB, tropic)
+			)
+		)
+}
+
+opacityPickerBody(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	opacityPicker : Maybe<MOpacityPicker>,
+	enabled : Transform<bool>) -> Tropic {
+
+	eitherMap(
+		opacityPicker,
+		\op ->
+			MSlider2T(
+				manager,
+				parent,
+				MSlider(
+					op.opacity,
+					[MSliderDisplayValue(true), MEnabled(enabled)]
+				),
+				dummyM2t
+			),
+		TEmpty()
+	)
+}
+
+// NOT USED
 
 colorPickerMaterialColorsCirclesBody(manager : MaterialManager, parent : MFocusGroup, m : MColorPicker, m2t : (Material, MFocusGroup) -> Tropic,
 	updateOnClose : Maybe<DynamicBehaviour<MColor>>) -> Tropic {
@@ -1764,461 +2294,4 @@ colorPickerMaterialColorShadesCirclesBody(manager : MaterialManager, parent : MF
 	|> (\f -> TBorder(8., 0., 8., 0., f))
 	|> (\f -> TAvailable(f, TFixed(colorPickerWidth, colorPickerHeight2)))
 	|> (\f -> TCenterIn(f, TFixed(colorPickerWidth, colorPickerHeight2)))
-}
-
-colorPickerMaterialColorsBody(
-	manager : MaterialManager,
-	selectedColorB : DynamicBehaviour<MColor>,
-	style : [MColorPickerStyle],
-	parent : MFocusGroup,
-	enabled : Transform<bool>,
-	colorsSetMB : Maybe<DynamicBehaviour<Set<MColor>>>,
-) -> Pair<Tropic, Transform<double>> {
-	down = make(false);
-	hover = make(false);
-	point = make(zeroPoint);
-	uns = ref nop;
-	cellSize = 16.0;
-	position = make(zeroPositionScale);
-	nextDistinct(selectedColorB, mCustomColor2MColor(getValue(selectedColorB)));
-
-	additionalColors = fselect(
-		extractStruct(style, MColorPickerAdditionalColors(const([]))).colors,
-		FLift(\colors -> splitByNumber(colors, length(materialColors)))
-	);
-
-	mainCellsEnabled = !containsStruct(style, MColorPickerDisableMainPalette());
-	indexDividingRow = (length(materialShades) + length(materialAccentShades) + 1) * b2i(mainCellsEnabled);
-
-	mainCells =
-		mapi(materialColors, \i, c ->
-			mapi(materialShades, \j, shade ->
-				ColorCell(MColor(c, shade, false), i, j)
-			)
-			|> (\f ->
-				if (i < 16)
-					concat(
-						f,
-						mapi(materialAccentShades, \j, shade ->
-							ColorCell(MColor(c, shade, true), i, 10 + j)
-						)
-					)
-				else if (i == 16)
-					arrayPush(f, ColorCell(MWhite(), 16, 10))
-				else if (i == 17)
-					arrayPush(f, ColorCell(MBlack(), 17, 10))
-				else
-					f
-			)
-		);
-
-	additionalCells =
-		fselect(
-			additionalColors,
-			FLift(\addColors ->
-				mapi(mainCells, \i, c ->
-					foldi(addColors, [], \j, acc, line -> {
-						if (existsIndex(line, i)) {
-							color = mCustomColor2MColor(line[i]);
-							arrayPush(acc, ColorCell(color, i, j + indexDividingRow))
-						} else {
-							acc
-						}
-					})
-				)
-			)
-		);
-
-	cells = if (mainCellsEnabled) {
-		fselect(
-			additionalCells,
-			FLift(\addCells ->
-				mapi(mainCells, \i, c ->
-					concat(c, addCells[i])
-				)
-			)
-		);
-	} else {
-		additionalCells;
-	}
-
-
-
-	colorPickerHeight = fselect(cells, FLift(\currentCells ->
-		i2d(
-			if (existsIndex(currentCells, 0)) {
-				rows = length(currentCells[0]) + 1;
-				if (rows < 1) {
-					1
-				} else if (rows == indexDividingRow) {
-					indexDividingRow - 1
-				} else {
-					rows
-				}
-			} else {
-				1
-			}
-		) * cellSize
-	));
-
-	cellFromPosition = \fn -> {
-		pos = getValue(point);
-		currentCells = fgetValue(cells);
-
-		i = floor(pos.x / 16.);
-		j = floor(pos.y / 16.);
-		if (i >= 0 && length(currentCells) > i && j >= 0 && length(currentCells[i]) > j && j != indexDividingRow) {
-			fn(currentCells[i][j])
-		} else if (i >= 0 && length(currentCells) > i && j >= 0) {
-			cell = findDef(currentCells[i], \cc -> cc.x == i && cc.y == j, ColorCell(MBlue(0), -1, -1));
-			if (cell.x >= 0) fn(cell)
-		}
-	}
-
-	currentCell : DynamicBehaviour<ColorCell> = make(mainCells[0][0]);
-	onClick = \ -> cellFromPosition(\cell -> {
-		nextDistinct(currentCell, cell);
-		maybeApply(
-			colorsSetMB,
-			\colorsB -> nextDistinct(colorsB, insertSet(getValue(colorsB), cell.color))
-		);
-	});
-
-	moveToCell = selectableCells(cells, currentCell);
-
-	colorPickerBackground = MGrey(500);
-
-	showClearCustomColorsButtons : Maybe<MClearCustomColorsButtons> = tryExtractStruct(
-		style,
-		MClearCustomColorsButtons(
-			nop1,
-			nop
-		)
-	);
-
-	dialogCaptionHeight = 48.0;
-	embedCustomColorDialog =
-		\f : Tropic, customColorDialog : MCustomColorPickerDialog -> {
-		addClearButtons = \t -> eitherMap(
-			showClearCustomColorsButtons,
-			\showClearButtons -> TAvailable(
-				TColsA([
-					t,
-					TFillX(),
-					MIconButton2T(
-						manager,
-						parent,
-						MIconButton(
-							"delete",
-							\ -> showClearButtons.removeColor(getValue(currentCell).color),
-							[MIconSize(17.0), MWhite()],
-							[MEnabled(fselect2(
-								currentCell, additionalCells,
-								FLift2(\cell, addCells -> exists(addCells, \addCell -> contains(addCell, cell)))
-							)), MTooltipText(const(_("Remove selected")))]
-						)
-					),
-					MIconButton2T(
-						manager,
-						parent,
-						MIconButton(
-							"delete_forever",
-							showClearButtons.removeAllColors,
-							[MIconSize(17.0), MWhite()],
-							[MEnabled(fselect(additionalColors, FLift(\addColors -> length(addColors[0]) > 0))),
-							MTooltipText(const(_("Remove all")))]
-						)
-					)
-				]),
-				TFixed(colorPickerWidth - 8.0, 0.0)
-			),
-			t
-		);
-
-		showMCustomColorPickerDialogPopup =
-			\ -> {
-
-			close = make(false);
-			customColor = make(getValue(selectedColorB));
-
-			customColorPicker =
-				MColorPicker(customColor, [
-					MDialogButtons([
-						MButtonOk("enter", \ -> {
-							getValue(customColor)
-								|> customColorDialog.pick;
-							next(selectedColorB, getValue(customColor));
-							next(close, true);
-						}),
-						MButtonCancel("esc", \ -> next(close, true))
-					])
-				]);
-
-			renderMDialog(
-				manager,
-				close,
-				[],
-				customColorPicker,
-				\mat, p -> switch (mat) {
-					MColorPicker(__, ___) :
-						MColorPicker2T(manager, p, mat.color, mat.style, None());
-					default : TEmpty(); // Can't occur
-				}
-			);
-		}
-
-		TLines2(
-			f,
-			MTextButton2T(
-				manager,
-				parent,
-				MTextButton(
-					customColorDialog.button.text,
-					showMCustomColorPickerDialogPopup,
-					customColorDialog.button.style,
-					customColorDialog.button.state
-				)
-			)
-				|> addClearButtons
-				|> (\t -> TBorderA(8.0, 0.0, 0.0, 0.0, t))
-				|> (\t -> TCenterYIn(t, TFixed(0.0, dialogCaptionHeight)))
-				|> (\t -> TGroup2(t, TFixed(colorPickerWidth, 0.0)))
-				|> (\t -> TFrame(0.0, 0.0, [MFill(colorPickerBackground)], t))
-		)
-	}
-
-	customColorDialog : Maybe<MCustomColorPickerDialog> = tryExtractStruct(
-		style,
-		MCustomColorPickerDialog(
-			MTextButton("", nop, [], []),
-			nop1
-		)
-	);
-
-	makeCellsGrid =
-		\colorCells : [[ColorCell]], en : bool ->
-			concatA(colorCells)
-				|> (\f -> map(f, \cc -> makeColorCell(manager, cc, getLightBackground(parent), currentCell, cellSize, en)))
-				|> TGroup;
-
-	TIfLazy2(enabled, \en ->
-		TGroup2(
-			if (mainCellsEnabled) makeCellsGrid(mainCells, en) else TEmpty(),
-			TSelect(additionalCells, \addCells ->
-				makeCellsGrid(addCells, en)
-			)
-		),
-		true
-	)
-	|> (\f -> TFixSize(f, TSizedHeight(colorPickerWidth, colorPickerHeight)))
-	|> addCellsZoomingAndOnClick(
-		manager,
-		getLightBackground(parent),
-		cellSize,
-		position,
-		hover,
-		down,
-		point,
-		onClick,
-		cellFromPosition,
-		currentCell,
-		enabled
-	)
-	|> (\f -> TAlpha(fif(enabled, const(1.0), const(0.5)), f))
-	|> addTBackground(colorPickerBackground)
-	|> (\f -> TKeyListener(["left"], \ -> moveToCell.first(MLeft()), nop, f))
-	|> (\f -> TKeyListener(["right"], \ -> moveToCell.first(MRight()), nop, f))
-	|> (\f -> TKeyListener(["up"], \ -> moveToCell.first(MUp()), nop, f))
-	|> (\f -> TKeyListener(["down"], \ -> moveToCell.first(MDown()), nop, f))
-	|> (\f -> eitherMap(customColorDialog, \customDialog -> embedCustomColorDialog(f, customDialog), f))
-	|> (\f -> TDispose([moveToCell.second], f))
-	|> (\f ->
-		TConstruct(
-			[
-				\ ->
-					bidirectionalLink(
-						selectedColorB,
-						currentCell,
-						\c ->
-							findDef(fgetValue(cells) |> concatA, \c0 : ColorCell -> c0.color == getValue(selectedColorB), ColorCell(c, -1, -1)),
-						\c ->
-							c.color
-					)
-			],
-			f
-		)
-	)
-	|> (\f -> Pair(f, if (isSome(customColorDialog)) faddition(colorPickerHeight, const(dialogCaptionHeight)) else colorPickerHeight))
-}
-
-colorPickerHeader(
-	manager : MaterialManager,
-	parent : MFocusGroup,
-	colorB : DynamicBehaviour<MColor>,
-	showPrevious : bool,
-	enabled : Transform<bool>,
-	album : bool,
-) -> Tropic {
-	prevCustomColor = getValue(colorB);
-	prevColor0 = getValue(colorB);
-
-	colorPickerWidthScaled = colorPickerWidth * getScaling(manager, colorPickerWidth, album);
-
-	topGap = colorPickerWidth / 3.;
-	bottomGap = topGap + 48.;
-
-	TSelect2(colorB, enabled, \color, en -> {
-		c = if (en) color else MGrey(500);
-
-		if (showPrevious) {
-			prevColor = if (en) prevColor0 else MGrey(500);
-
-			prevColorBox =
-				if (getDefaultRtl()) [
-					LineTo(topGap, 0.),
-					LineTo(bottomGap, 100.),
-					LineTo(0., 100.),
-					ClosePath()
-				] else [
-					MoveTo(colorPickerWidthScaled - topGap, 0.),
-					LineTo(colorPickerWidthScaled, 0.),
-					LineTo(colorPickerWidthScaled, 100.),
-					LineTo(colorPickerWidthScaled - bottomGap, 100.),
-					ClosePath()
-				];
-
-			newColorBox = if (getDefaultRtl())
-				[
-					MoveTo(topGap, 0.),
-					LineTo(colorPickerWidthScaled, 0.),
-					LineTo(colorPickerWidthScaled, 100.),
-					LineTo(bottomGap, 100.),
-					ClosePath()
-				] else [
-					LineTo(colorPickerWidthScaled - topGap, 0.),
-					LineTo(colorPickerWidthScaled - bottomGap, 100.),
-					LineTo(0., 100.),
-					ClosePath()
-				];
-
-			TGroup([
-				TGraphics(prevColorBox, [MFill(prevColor)])
-					|> (\f -> if (en) clickable(manager, parent, f, \ -> nextDistinct(colorB, prevColor)) else f),
-				TGraphics(newColorBox, [MFill(c)])
-					|> (\f -> TInteractive([TMouseDown(make(false))], f)),
-				TGroup([
-					MText2T(parent, mColorShade2s(c), [MTextMColor(c), MSubheading()] |> addDisabledStyle(en))
-						|> (\f2 -> TBorderA(16., 24., 0., 0., f2))
-						|> TBaseAlignA,
-					MText2T(parent, mColorName2s(c), [MTextMColor(c), MHeadline()] |> addDisabledStyle(en))
-						|> TBaseAlignA
-						|> (\f2 -> TBorderA(16., 48., 0., 0., f2)),
-					TGroup2(
-						TCols2A(
-							TFillX(),
-							MText2T(parent, mColorShade2s(prevColor), [MTextMColor(prevColor), MBodyBold()] |> addDisabledStyle(en))
-							|> (\f2 -> TBorderA(0., 32., 16., 0., f2))
-						),
-						TCols2A(
-							TFillX(),
-							MText2T(parent, mColorName2s(prevColor), [MTextMColor(prevColor), MSubheading()] |> addDisabledStyle(en))
-							|> (\f2 -> TBorderA(0., 52., 16., 0., f2))
-						)
-					)
-				])
-			])
-		} else {
-			TGroup([
-				TRectangle([MFill(c)], TFixed(colorPickerWidthScaled, 100.0)),
-				MText2T(parent, mColorShade2s(c), [MTextMColor(c), MSubheading()] |> addDisabledStyle(en))
-					|> TBaseAlignA
-					|> (\f2 -> TBorderA(16., 20., 0., 0., f2)),
-				MText2T(parent, mColorName2s(c), [MTextMColor(c), MDisplay1Medium()] |> addDisabledStyle(en))
-					|> TBaseAlignA
-					|> (\f2 -> TBorderA(16., 40., 0., 0., f2))
-			])
-		}
-	})
-	|> (\f -> TAvailable(f, TFixed(colorPickerWidthScaled, 100.)))
-}
-
-makeColorCell(
-	manager : MaterialManager,
-	cell0 : ColorCell,
-	lightBackground : bool,
-	currentCell : DynamicBehaviour<ColorCell>,
-	size : double,
-	en : bool
-) -> Tropic {
-	cell =
-		if (en)
-			cell0
-		else
-			ColorCell(if (cell0.color.color == CCustom()) MGrey(500)
-		else
-			MColor(CGrey(), cell0.color.shade, false), cell0.x, cell0.y);
-
-	TIf(feq(currentCell, cell),
-		TGroup2(
-			TRectangle([Fill(MTextColor(cell.color))], TFixed(size, size)),
-			TTranslate(const(Point(2., 2.)), TRectangle([MFill(cell.color)], TFixed(size - 4., size - 4.)))
-		),
-		TRectangle([MFill(cell.color)], TFixed(size, size))
-	)
-	// |> (\f -> TCursor(FingerCursor(), f))
-	|> (\f -> TTranslate(const(Point(i2d(cell.x) * 16., i2d(cell.y) * 16.)), f))
-}
-
-
-addCellsZoomingAndOnClick(
-	manager : MaterialManager,
-	lightBackground : bool,
-	cellSize : double,
-	positionB : DynamicBehaviour<PositionScale>,
-	downB : DynamicBehaviour<bool>,
-	hoverB :  DynamicBehaviour<bool>,
-	pointB : DynamicBehaviour<Point>,
-	onClick : () -> void,
-	cellFromPosition : ((cell : ColorCell) -> void) -> void,
-	currentCell : DynamicBehaviour<ColorCell>,
-	enabled : Transform<bool>,
-) -> (Tropic) -> Tropic {
-	uns = initUnsM();
-	\tropic ->
-		mouseDownAround(manager, Some(pointB), downB, hoverB, onClick,
-			TConstruct(
-				[
-					make2Subscribe(fOr(hoverB, downB), pointB, \h, point ->
-						if (fgetValue(enabled)) {
-							if (h) {
-								dispUnsM(uns);
-								cellFromPosition(\cell : ColorCell -> {
-									setUnsM(
-										uns,
-										trender(
-											TTranslate(
-												fselect(
-													positionB,
-													FLift(\p : PositionScale -> Point(p.pos.x - 4. * p.scale.x, p.pos.y - 4. * p.scale.y))
-												),
-												TScale(
-													fselect(positionB, FLift(\p : PositionScale -> Factor(p.scale.x, p.scale.y))),
-													makeColorCell(manager, cell, lightBackground, currentCell, 1.5 * cellSize, true)
-												)
-											),
-											manager.manager.renderStyle
-										)
-									)
-								})
-							} else {
-								dispUnsM(uns)
-							}
-						}
-					),
-					\ -> \ -> dispUnsM(uns)
-				],
-				TPositionScale(positionB, tropic)
-			)
-		)
-
 }
