@@ -22,5 +22,5 @@
 	function test_type(data) {
 		// just return data back
 		// console.log('got: ' + data);
-		return ['4', '5'];
+		return [data];
 	}
