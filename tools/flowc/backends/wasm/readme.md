@@ -75,7 +75,7 @@ array - i32. Heap pointer to ref. count, then 32-bit length of items, then data 
 
 ref - i32. Heap pointer to ref. count, then data in stack value format
 
-native - i32. Pointer to JS heap
+native - i32. Heap pointer to ref. count, then Pointer to JS heap
 
 struct - i32. Heap pointer to ref. count, 32-bit pointer to type descriptor, then args in stack value format
 
