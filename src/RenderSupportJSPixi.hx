@@ -2146,6 +2146,13 @@ class RenderSupportJSPixi {
 		PixiStage.once("drawframe", fn);
 	}
 
+	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
+		PixiStage.once("drawframe", fn);
+		return function() {
+			PixiStage.off("drawframe", fn);
+		};
+	}
+
 	public static function setClipAlpha(clip : DisplayObject, a : Float) : Void {
 		clip.setClipAlpha(a);
 	}
