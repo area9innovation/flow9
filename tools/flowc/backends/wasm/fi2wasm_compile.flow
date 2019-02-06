@@ -105,9 +105,10 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext) {
 	fiBody = wasmTransformExpression(decl.lambda.body);
 	wasmBody = fiexp2wasmexp(context, context.globalNames, fiBody);
+    wasmBodyConverted = fiWasmInjectIncrements(wasmBody);
 	wasmType = cast(fitype2wasmtype(context.globalNames, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
 
-	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBody, wasmType);
+	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBodyConverted, wasmType);
 }
 
 // compiles a function or lambda declaration
@@ -122,13 +123,9 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		// we only need to do that for lambdas - global functions always get closures == 0
 		if (fiWasmFunctionNeedsClosureParam(name) && strContains(name, "__lambda__")) [Pair("__closure__", WasmTypeStruct("", []))]
 			else []);
-	finalizerVars = if (wasmTypeUsesWasmHeap(type.returnType)) 
-			arrayPush(paramPairs, Pair("__return__", type.returnType))
-		else 
-			paramPairs;
 	tailCalls = fiWasmCollectTailCalls(name, lambdaBody, makeSet());
 	lastStatements = fiWasmFindLastStatements(lambdaBody);
-	finalizers = foldSet(lastStatements, makeTree(), \acc0, ex -> setTree(acc0, ex, finalizerVars));
+	finalizers = foldSet(lastStatements, makeTree(), \acc0, ex -> setTree(acc0, ex, paramPairs));
 	resultClause = (if (type.returnType != WasmTypeVoid()) // to be used when generating tail call block
 		" (result " + compileWasmType(type.returnType, false) + ")" else "");
 
@@ -327,7 +324,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
                 // this actually should never happen - but happens when specializing
                 voidFiller = if (expType == WasmTypeVoid()) " i32.const 0 " else "";
 				// TODO
-                wasm2string(compileWasmExpAndConstruct(acc, e, context)) + voidFiller
+                wasm2string(compileWasmExp2(acc, e, context)) + voidFiller
             }, " ") + 
 			(if (length(args) > 0) "\n" else "") + 
 			switch (calltype) {
@@ -416,7 +413,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 
 			Wasm2Seq([
 				rec(e1),
-				if (!startsWith(name, "__temp__")) fiWasmGenerateConstructor(type) else Wasm2Void(),
+				//if (!startsWith(name, "__temp__")) fiWasmGenerateConstructor(type) else Wasm2Void(),
 				Wasm2SetLocal(name2),
 				rec2(e2, scopeContext)
 			])
@@ -667,10 +664,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				None(): wasmError(acc, "string not found") |> conv;
 				Some(address): {
 					// OK, we produce the address
-					Wasm2Seq([
-						Wasm2I32Const(address),
-						fiWasmGenerateConstructor(WasmTypeString())
-					])
+					Wasm2I32Const(address)
 				}
 			}
 		}
