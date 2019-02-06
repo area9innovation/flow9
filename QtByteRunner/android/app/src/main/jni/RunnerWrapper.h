@@ -34,6 +34,7 @@ class AndroidRenderSupport : public GLRenderSupport {
     AndroidRunnerWrapper *owner;
 
     int dpi;
+    float density;
 
     int next_timer_id;
     STL_HASH_MAP<int, StackSlot> timers; // ROOT
@@ -75,6 +76,7 @@ public:
     jboolean resolvePictureError(jstring url, jstring error);
 
     void setDPI(int v);
+    void setDensity(float v);
     void setScreenWidthHeight(int w, int h);
     void adjustScale(jfloat dx, jfloat dy, jfloat cx, jfloat cy, jfloat df);
 

@@ -4,6 +4,7 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/wasm/wasm_types;
 import tools/flowc/backends/wasm/f2wasm_utils;
 import tools/flowc/backends/wasm/wasm_exp;
+import tools/flowc/backends/wasm/wasm_exp_convert;
 import ds/array;
 import string;
 
@@ -12,6 +13,7 @@ export {
     fiWasmGenerateDestructors(vars : [Pair<string, WasmTypeDescriptor>]) -> string;
 	fiWasmGenerateConstructor(type : WasmTypeDescriptor) -> Wasm2Cmd;
     fiWasmInjectTempVariables(ex : FiExp) -> FiExp;
+    fiWasmInjectIncrements(e : WasmExp) -> WasmExp;
 }
 
 fiWasmFindLastStatements(ex : WasmExp) {
@@ -42,15 +44,13 @@ fiWasmFindLastStatements(ex : WasmExp) {
 		WasmBool(b, __): makeSet1(ex);
 		WasmRequire(flowfile, e, type, __): makeSet1(ex); 
 		WasmUnsafe(name, fallback, type, __): fiWasmFindLastStatements(fallback);
+        WasmIncRefcnt(e, __, __): makeSet1(ex);
 	}
 }
 
 fiWasmGenerateDestructors(vars : [Pair<string, WasmTypeDescriptor>]) {
     filtered = filter(vars, \v -> wasmTypeUsesWasmHeap(v.second));
-	refCntIncreasers = filter(filtered, \v -> v.first == "__return__");
-	refCntDecreasers = filter(filtered, \v -> v.first != "__return__");
-	increaseExp = fold(refCntIncreasers, "", \acc, v -> acc + "\n call $wasm_inc_refcnt_passthru ;; auto-increase function return value\n");
-    fold(refCntDecreasers, increaseExp, \acc, v -> acc + " get_local $" + v.first + " call $wasm_dec_refcnt ;; auto-destruct \n");
+    fold(filtered, "", \acc, v -> acc + " get_local $" + v.first + " call $wasm_dec_refcnt ;; auto-destruct \n");
 }
 
 fiWasmGenerateConstructor(type : WasmTypeDescriptor) {
@@ -71,4 +71,60 @@ fiWasmTypeUsesHeap(t : FiType) {
 
 fiWasmInjectTempVariables(ex : FiExp) {
 	splitExpressions(ex, fiWasmTypeUsesHeap);
+}
+
+wrapAsIncRefcount(e: WasmExp) -> WasmExp {
+    switch (e) {
+        WasmVar(__, type, __): {
+            if (wasmTypeUsesWasmHeap(type))
+                WasmIncRefcnt(e, type, getNextWasmExpId())
+            else
+                e;
+        }
+        default: e;
+    }
+}
+
+fiWasmInjectIncrements(ex : WasmExp) {
+    switch (ex : WasmExp) {
+		WasmLambda(args, b, type, __): ex;
+		WasmCall(f, args, type, callType, id): 
+            WasmCall(f, 
+                map(args, fiWasmInjectIncrements), type, callType, id);
+		WasmVar(name, type, __): 
+            if (wasmTypeUsesWasmHeap(type))
+                WasmIncRefcnt(ex, type, getNextWasmExpId())
+            else
+                ex;
+		WasmLet(name, type, e1, e2, type2, id): 
+			WasmLet(name, type, 
+                fiWasmInjectIncrements(e1), 
+                fiWasmInjectIncrements(e2), type2, id); 
+		WasmIf(e1, e2, e3, type, id): 
+			WasmIf(fiWasmInjectIncrements(e1), fiWasmInjectIncrements(e2), fiWasmInjectIncrements(e3), type, id);
+		WasmSwitch(x, switchType, cases, type, id): 
+			WasmSwitch(x, switchType, 
+                map(cases, \c -> WasmCase(c.struct, c.argNames, fiWasmInjectIncrements(c.body), c.id)),
+                type, id);
+		WasmCast(e, tFrom, tTo, type, id): 
+            WasmCast(fiWasmInjectIncrements(e), tFrom, tTo, type, id);
+		WasmSeq(es, type, iid): /*{
+            total = length(es);
+            mapped = mapi(es, \i, e -> {
+                injected = fiWasmInjectIncrements(e);
+                if (i == total - 1) wrapAsIncRefcount(injected) else injected;
+            });
+            WasmSeq(mapped, type, iid);
+        }*/ WasmSeq(map(es, fiWasmInjectIncrements), type, iid);
+			
+		WasmCallPrim(op, es, type, id): WasmCallPrim(op, map(es, fiWasmInjectIncrements), type, id);
+		WasmVoid(__): ex;
+		WasmDouble(d, __): ex;
+		WasmInt(i, __): ex;
+		WasmString(s, __): WasmIncRefcnt(ex, WasmTypeString(), getNextWasmExpId());
+		WasmBool(b, __): ex;
+		WasmRequire(flowfile, e, type, id): WasmRequire(flowfile, fiWasmInjectIncrements(e), type, id); 
+		WasmUnsafe(name, fallback, type, id): WasmUnsafe(name, fiWasmInjectIncrements(fallback), type, id);
+        WasmIncRefcnt(e, __, __): ex; // should not happen
+	}
 }

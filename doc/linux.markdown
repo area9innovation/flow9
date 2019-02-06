@@ -57,7 +57,7 @@ Configure MySQL-server mode:
 printf '[mysqld]
 sql-mode=STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION\n' | sudo tee -a /etc/mysql/my.cnf
 ```
-More details on mysql setup can be found in `flow/doc/mysql.markdown`
+More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
 ## PHP5.6
 Set up PHP:
@@ -103,10 +103,15 @@ Make area9 dir:
 ```bash
 mkdir -p ~/area9 && cd ~/area9
 ```
-Clone flow and material repos:
+Clone flow9 repos:
 ```bash
-git clone ssh://git@github.com/area9innovation/flow.git
-git clone ssh://git@github.com/area9innovation/material.git
+git clone ssh://git@github.com/area9innovation/flow9.git
+```
+
+Notice, that flow9 repo requires installed [Git LFS](https://git-lfs.github.com).
+You have to reclone the flow9 repository after installing Git LFS, or use 
+```bash
+git lfs pull
 ```
 # Install `Haxe`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work.
@@ -123,7 +128,7 @@ In such case, run following command:
 After running the installer, run this:
 ```bash
 printf 'export HAXE_STD_PATH=/usr/share/haxe/std
-export FLOW=$HOME/area9/flow
+export FLOW=$HOME/area9/flow9
 export PATH=$FLOW/bin:$PATH\n' >> ~/.env
 ```
 and run `source ~/.env`.
@@ -221,16 +226,10 @@ Neko version of flow from the repo should be fine but if you wish to compile you
 cd ~/flow9/src
 haxe FlowNeko.hxml
 ```
-This should take a few minutes. If it takes more than 10 minutes, very likely something is going wrong.
-The following files will be created or overwritten:
+This should take a few seconds. If it takes more than a minute, very likely something is going wrong.
+The following file will be created or overwritten:
 ```
-bin/flow.n
-bin/flowrunner.n
-src/build.n
-www/js/flow.js
-www/js/flow.js.map
-www/js/flowrunner.js
-\*.bytecode
+flow9/bin/flow.n
 ```
 # C++ runner (flowcpp)
 Under linux it’s easier to compile yourself a binary instead of using
@@ -274,13 +273,16 @@ New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
-cd ~/area9/flow
+cd ~/area9/flow9/
 flowcpp sandbox/hello.flow
 ```
 You should see:
 ```
-neko flow.n  --compile hello.bytecode --debuginfo hello.debug sandbox/hello.flow
-Compiling sandbox/hello.flow ...
+Flow compiler (3rd generation)
+
+Processing 'sandbox/hello' on server.
+0.63s
+
 
 Hello console
 ```
@@ -315,14 +317,15 @@ for more details.
 # Try it (JavaScript in browser)
 To compile Flow code to JavaScript, try e.g.
 ```bash
-flow --js hello.js sandbox/hello.flow
+flowc1 sandbox/hello.flow js=www/hello.js
 ```
 You should see:
 ```bash
-neko flow.n  --js helloworld.js sandbox/hello.flow
-Compiling sandbox/hello.flow ...
+Flow compiler (3rd generation)
+
+Processing 'sandbox/hello' on server.
 ```
-and `hello.js` should be created.
+and `flow9/www/hello.js` should be created.
 
 You might think to try the resulting JavaScript code with a command line
 tool like Node or SpiderMonkey, but that will break. So you’ll need to
@@ -330,7 +333,6 @@ run it a browser.
 
 A quick way to try that is:
 ```bash
-mv hello.js www
 xdg-open http://localhost/flow/flowjs.html?name=hello
 ```
 Your browser should open and display a “Hello window” screen indefinitely and you look in the error console of your
@@ -346,10 +348,10 @@ in section "Enabling fast-cgi in apache"
 The auxiliary tools for Flow include a linter, a code formatter, and a
 refactoring tool.
 
-They can be run directly using `flow/bin/lint.sh`.
+They can be run directly using `flow9/bin/lint.sh`.
 
 These tools are also used by the Sublime Text and Emacs integrations.
-(The editors also use `flow/bin/autocomplete.sh` for autocompletion.)
+(The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
 The instructions in [development.html](development.html) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
