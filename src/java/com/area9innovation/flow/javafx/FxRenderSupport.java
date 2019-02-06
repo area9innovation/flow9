@@ -1,23 +1,30 @@
 package com.area9innovation.flow.javafx;
 
+import java.awt.*;
 import java.util.*;
+import java.util.List;
+
 import com.area9innovation.flow.*;
 
-import javafx.application.Application;
-import javafx.event.ActionEvent;
+import javafx.application.Platform;
+import javafx.beans.property.StringProperty;
+import javafx.beans.property.StringPropertyBase;
 import javafx.event.EventHandler;
 import javafx.event.EventType;
+import javafx.geometry.BoundingBox;
+import javafx.geometry.Bounds;
+import javafx.geometry.NodeOrientation;
 import javafx.scene.Scene;
 import javafx.scene.Group;
 import javafx.scene.Parent;
 import javafx.scene.Node;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
-import javafx.scene.layout.StackPane;
+import javafx.scene.control.PasswordField;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.TextInputControl;
+import javafx.scene.input.*;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Text;
-import javafx.scene.text.Font;
-import javafx.scene.text.TextBoundsType;
 import javafx.stage.Stage;
 import javafx.scene.shape.*;
 import javafx.scene.paint.Color;
@@ -26,10 +33,6 @@ import javafx.scene.transform.Scale;
 import javafx.scene.effect.BoxBlur;
 import javafx.scene.effect.Effect;
 import javafx.beans.value.ChangeListener;
-import javafx.beans.value.ObservableValue;
-import javafx.scene.input.MouseEvent;
-import javafx.scene.input.KeyEvent;
-import javafx.scene.input.KeyCode;
 import javafx.geometry.Point2D;
 import javafx.scene.Cursor;
 import javafx.scene.image.Image;
@@ -41,36 +44,41 @@ import javafx.scene.paint.CycleMethod;
 import javafx.scene.paint.Stop;
 import javafx.scene.paint.LinearGradient;
 import javafx.scene.paint.RadialGradient;
+import javafx.scene.text.Font;
 
 public class FxRenderSupport extends RenderSupport {
-	private Application app_object;
 	private Stage stage;
 	private Scene scene;
 	private Clip stage_clip;
 	private int next_event_id = 0;
 	private double mouse_x, mouse_y;
 	private String cur_cursor = "";
+	private Boolean isMouseDown = false;
 
-	private SortedMap<Integer,Func0<Object>> event_resize = new TreeMap<Integer,Func0<Object>>();
-	private SortedMap<Integer,Func0<Object>> event_mousemove = new TreeMap<Integer,Func0<Object>>();
-	private SortedMap<Integer,Func0<Object>> event_mousedown = new TreeMap<Integer,Func0<Object>>();
-	private SortedMap<Integer,Func0<Object>> event_mouseup = new TreeMap<Integer,Func0<Object>>();
-	private SortedMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keydown = new TreeMap<>();
-	private SortedMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keyup = new TreeMap<>();
+	private TreeMap<Integer, Func0<Object>> event_resize = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mousemove = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mousedown = new TreeMap<>();
+	private TreeMap<Integer,Func0<Object>> event_mouseup = new TreeMap<>();
+	private TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keydown = new TreeMap<>();
+	private TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> event_keyup = new TreeMap<>();
+	private TreeMap<Integer,Func1<Object,Double>> event_mousewheel = new TreeMap<>();
+	private TreeMap<Integer,Func2<Object,Double,Double>> event_finegrain_mousewheel = new TreeMap<>();
 
-	private Func0<Object> no_op = new Func0<Object>() {
-		public Object invoke() { return null; }
-	};
+	private Func0<Object> no_op = () -> null;
 
-	private <T> Func0<Object> addEvent(final SortedMap<Integer,T> map, T listener) {
+	private <T> Func0<Object> addEvent(final TreeMap<Integer,T> map, T listener) {
 		final int id = next_event_id++;
 		map.put(id, listener);
-		return new Func0<Object>() {
-			public Object invoke() {
-				map.remove(id);
-				return null;
-			}
+		return () -> {
+			map.remove(id);
+			return null;
 		};
+	}
+
+	private static boolean checkNodeCliped(Node node, double x, double y) {
+		Point2D pos = node.sceneToLocal(x,y);
+		if (pos == null) return false;
+		else return node.getClip().intersects(pos.getX(), pos.getY(), 1, 1);
 	}
 
 	private static boolean checkNodeHit(Node node, double x, double y) {
@@ -82,38 +90,43 @@ public class FxRenderSupport extends RenderSupport {
 	private class Clip {
 		Group container, top;
 		Clip parent, mask, mask_owner;
-		List<Clip> children = new ArrayList<Clip>();
+		List<Clip> children = new ArrayList<>();
 		Graphics graphics;
 		Rotate rotation;
 		Scale scaling;
 		double x, y;
 
-		SortedMap<Integer,Func0<Object>> event_mouseenter;
-		SortedMap<Integer,Func0<Object>> event_mouseleave;
+		TreeMap<Integer,Func0<Object>> event_mouseenter;
+		TreeMap<Integer,Func0<Object>> event_mouseleave;
 
-		public Clip() {
+		Clip() {
 			container = top = new Group();
 		}
-		protected Parent makeObj() {
-			return new Group();
-		}
-		public Parent getTop() {
+
+		Parent getTop() {
 			return top;
 		}
-		public void setMaskOwner(Clip owner) {
-			if (owner.mask != null)
-				owner.mask.mask_owner = null;
-			owner.mask = this;
-			this.mask_owner = owner;
-			owner.getTop().setClip(getTop());
-			if (parent != null)
-				parent.container.getChildren().remove(getTop());
+		void setScrollRect(BoundingBox rect) {
+			getTop().setClip(new Rectangle(rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight()));
+			getTop().setTranslateX(-rect.getMinX());
+			getTop().setTranslateY(-rect.getMinY());
 		}
-		public void setParent(Clip new_parent) {
+		void setMask(Clip mask) {
+			if (this.mask != null)
+				this.mask.mask_owner = null;
+			this.mask = this;
+			mask.mask_owner = this;
+			this.getTop().setClip(mask.getTop());
+			if (mask.parent != null) {
+				parent.container.getChildren().remove(mask.getTop());
+				parent.children.remove(mask);
+			}
+		}
+		void setParent(Clip new_parent) {
 			setParentAt(new_parent, new_parent != null ? new_parent.children.size() : 0);
 		}
-		public void setParentAt(Clip new_parent, Integer at) {
-			if (new_parent == parent)
+		void setParentAt(Clip new_parent, Integer at) {
+			if (new_parent == parent || mask_owner != null)
 				return;
 			if (parent != null) {
 				parent.children.remove(this);
@@ -126,17 +139,39 @@ public class FxRenderSupport extends RenderSupport {
 					parent.container.getChildren().add(getTop());
 			}
 		}
-		public Graphics getGraphics() {
+		Graphics getGraphics() {
 			if (graphics == null)
 				graphics = new Graphics(this);
 			return graphics;
 		}
+		Point2D getMousePos(Point2D global) {
+			if (graphics != null)
+				return graphics.path.sceneToLocal(global);
+
+			Bounds globalBounds = getTop().localToScene(getTop().getBoundsInLocal());
+			return new Point2D(global.getX() - globalBounds.getMinX(), global.getY() - globalBounds.getMinY());
+		}
+
+		boolean hittestCliped(double x, double y) {
+			if (getTop().getClip() != null && !checkNodeCliped(getTop(), x, y)) {
+				return false;
+			} else if (getTop().getParent() != null) {
+				return parent.hittestCliped(x, y);
+			} else {
+				return true;
+			}
+		}
+
 		public boolean hittest(double x, double y) {
 			if (graphics != null && graphics.hittest(x, y))
 				return true;
+			if (getTop().getClip() != null && !checkNodeCliped(getTop(), x, y))
+				return false;
+
 			for (Clip child : children)
 				if (child.hittest(x,y))
 					return true;
+
 			return false;
 		}
 	}
@@ -144,68 +179,82 @@ public class FxRenderSupport extends RenderSupport {
 	@SuppressWarnings("unchecked")
 	private static Func0<Object>[] event_cb_arr = new Func0[0];
 
-	FxRenderSupport(Application app, Stage stage) {
-		this.app_object = app;
+	FxRenderSupport(Stage stage) {
 		this.stage = stage;
 
 		stage_clip = new Clip();
-		scene = new Scene(stage_clip.getTop(), 640, 480);
+		scene = new Scene(stage_clip.getTop(), 1024, 600);
+		scene.getStylesheets().add(getClass().getClassLoader().getResource("./css/style.css").toExternalForm());
+		scene.getStylesheets().add("https://fonts.googleapis.com/css?family=Roboto:400,500%7CMaterial+Icons");
 		stage.setScene(scene);
 		stage.show();
 
-		ChangeListener<Number> resize_cb = new ChangeListener<Number>() {
-			public void changed(ObservableValue<? extends Number> observable, Number oldValue, Number newValue) {
-				for (Func0<Object> cb : event_resize.values().toArray(event_cb_arr))
-					cb.invoke();
-			}
+		ChangeListener<Number> resize_cb = (observable, oldValue, newValue) -> {
+			for (Func0<Object> cb : event_resize.values())
+				cb.invoke();
 		};
 
 		stage.widthProperty().addListener(resize_cb);
 		stage.heightProperty().addListener(resize_cb);
 
-		EventHandler<MouseEvent> move_cb = new EventHandler<MouseEvent>() {
-			@Override public void handle(MouseEvent event) {
+		EventHandler<MouseEvent> move_cb = event -> {
 			//	System.out.print(".");
-				mouse_x = event.getSceneX();
-				mouse_y = event.getSceneY();
-				for (Func0<Object> cb : event_mousemove.values().toArray(event_cb_arr))
-					cb.invoke();
-			}
+			mouse_x = event.getSceneX();
+			mouse_y = event.getSceneY();
+			for (Func0<Object> cb : event_mousemove.values().toArray(event_cb_arr))
+				cb.invoke();
 		};
 
-		stage.addEventFilter(MouseEvent.MOUSE_MOVED, move_cb);
-		stage.addEventFilter(MouseEvent.MOUSE_DRAGGED, move_cb);
-		stage.addEventHandler(MouseEvent.MOUSE_PRESSED, new EventHandler<MouseEvent>() {
-			@Override public void handle(MouseEvent event) {
-				event.consume();
-				mouse_x = event.getSceneX();
-				mouse_y = event.getSceneY();
-				for (Func0<Object> cb : event_mousedown.values().toArray(event_cb_arr))
-					cb.invoke();
-			}
-		});
-		stage.addEventHandler(MouseEvent.MOUSE_RELEASED, new EventHandler<MouseEvent>() {
-			@Override public void handle(MouseEvent event) {
-				mouse_x = event.getSceneX();
-				mouse_y = event.getSceneY();
-				for (Func0<Object> cb : event_mouseup.values().toArray(event_cb_arr))
-					cb.invoke();
-			}
-		});
+		stage.addEventHandler(MouseEvent.MOUSE_MOVED, move_cb);
+		stage.addEventHandler(MouseEvent.MOUSE_DRAGGED, move_cb);
 
-		EventHandler<KeyEvent> keyEventHandler = new EventHandler<KeyEvent>() {
-			@Override public void handle(KeyEvent event) {
-				handleKeyEvent(event);
-			}
+		// Sometimes javafx doesn't fire mouse released event.
+		// At least when textinput was previously focused
+		EventHandler<MouseEvent> mouseDownHandler = event -> {
+			isMouseDown = true;
+			mouse_x = event.getSceneX();
+			mouse_y = event.getSceneY();
+
+			for (Func0<Object> cb : event_mousedown.values().toArray(event_cb_arr))
+				cb.invoke();
 		};
+		EventHandler<MouseEvent> mouseUpHandler = event -> {
+			isMouseDown = false;
+			mouse_x = event.getSceneX();
+			mouse_y = event.getSceneY();
+
+			for (Func0<Object> cb : event_mouseup.values().toArray(event_cb_arr))
+				cb.invoke();
+		};
+		EventHandler<MouseEvent> mouseClickHandler = event -> {
+			if (!isMouseDown)
+				return;
+
+			mouseUpHandler.handle(event);
+		};
+		EventHandler<ScrollEvent> mouseWheelHandler = event -> {
+			Double dx = event.getDeltaX() / 12;
+			Double dy = event.getDeltaY() / 12;
+			for (Func1<Object,Double> cb : event_mousewheel.values())
+				cb.invoke(dy + dx);
+
+			for (Func2<Object,Double,Double> cb : event_finegrain_mousewheel.values())
+				cb.invoke(dx, dy);
+		};
+
+		stage.addEventHandler(MouseEvent.MOUSE_PRESSED, mouseDownHandler);
+		stage.addEventHandler(MouseEvent.MOUSE_RELEASED, mouseUpHandler);
+		stage.addEventHandler(MouseEvent.MOUSE_CLICKED, mouseClickHandler);
+		stage.addEventHandler(ScrollEvent.SCROLL, mouseWheelHandler);
+
+		EventHandler<KeyEvent> keyEventHandler = this::handleKeyEvent;
 
 		scene.setOnKeyPressed(keyEventHandler);
 		scene.setOnKeyReleased(keyEventHandler);
 	}
 
 	private void handleKeyEvent(KeyEvent event) {
-		SortedMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> handler_map;
-		KeyCode[] codes = KeyCode.values();
+		TreeMap<Integer,Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>>> handler_map;
 
 		EventType<KeyEvent> type = event.getEventType();
 		if (type == KeyEvent.KEY_PRESSED) {
@@ -232,7 +281,7 @@ public class FxRenderSupport extends RenderSupport {
 	}
 
 	private Integer parseKeyCode(KeyCode keyCode) {
-		Integer code = 0;
+		Integer code;
 		switch(keyCode) {
 			case BACK_SPACE: code = 8; break;
 			case TAB: code = 9; break;
@@ -332,7 +381,7 @@ public class FxRenderSupport extends RenderSupport {
 			case CLOSE_BRACKET: code = 221; break;
 			case QUOTE: code = 222; break;
 			default: code = 0;
-		};
+		}
 
 		return code;
 	}
@@ -402,9 +451,9 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object addFilters(Object stg, Object[] filters) {
 		Clip cl = (Clip)stg;
-		for (int i = 0; i < filters.length; i++)
-			if (filters[i] != null)
-				cl.getTop().setEffect((Effect)filters[i]);
+		for (Object filter : filters)
+			if (filter != null)
+				cl.getTop().setEffect((Effect) filter);
 		return null;
 	}
 	@Override
@@ -440,7 +489,7 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public Object setClipMask(Object stg, Object mask) {
-		((Clip)mask).setMaskOwner((Clip)stg);
+		((Clip)stg).setMask((Clip)mask);
 		return null;
 	}
 	@Override
@@ -449,11 +498,29 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public double getMouseX(Object stg) {
-		return mouse_x;
+		Clip cl = (Clip) stg;
+		Point2D pos = cl.getMousePos(new Point2D(mouse_x, mouse_y));
+		if (pos == null) {
+			System.out.println(cl.graphics == null);
+			System.out.println(cl.getTop() == null);
+			System.out.println(cl.getTop().getScene() == scene);
+			Node node = cl.getTop();
+			while (node.getParent() != null) {
+				node = node.getParent();
+				if (node.getClip() != null) {
+					System.out.println("Found mask on my way");
+				}
+			}
+
+			System.out.println(node == stage_clip.getTop());
+			System.out.println(cl.getTop().localToScene(cl.getTop().getBoundsInLocal()));
+		}
+		return pos.getX();
 	}
 	@Override
 	public double getMouseY(Object stg) {
-		return mouse_y;
+		Clip cl = (Clip)stg;
+		return cl.getMousePos(new Point2D(mouse_x, mouse_y)).getY();
 	}
 	@Override
 	public boolean getClipVisible(Object stg) {
@@ -469,15 +536,13 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object setClipX(Object stg, double val) {
 		Clip cl = (Clip)stg;
-		if (cl.mask_owner == null)
-			cl.getTop().setTranslateX(cl.x = val);
+		cl.getTop().setLayoutX(cl.x = val);
 		return null;
 	}
 	@Override
 	public Object setClipY(Object stg, double val) {
 		Clip cl = (Clip)stg;
-		if (cl.mask_owner == null)
-			cl.getTop().setTranslateY(cl.y = val);
+		cl.getTop().setLayoutY(cl.y = val);
 		return null;
 	}
 	@Override
@@ -532,13 +597,7 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object setScrollRect(Object stg, double x, double y, double w, double h) {
 		Clip cl = (Clip)stg;
-		if (cl.top == cl.container) {
-			cl.top = new Group();
-			cl.top.getChildren().add(cl.container);
-		}
-		cl.container.setClip(new Rectangle(x, y, w, h));
-		cl.container.setTranslateX(-x);
-		cl.container.setTranslateY(-y);
+		cl.setScrollRect(new BoundingBox(x, y, w, h));
 		return null;
 	}
 	@Override
@@ -548,13 +607,13 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Object setCursor(String val) {
 		cur_cursor = val;
-		if (val == "finger")
+		if ("finger".equals(val))
 			scene.setCursor(Cursor.HAND);
-		else if (val == "move")
+		else if ("move".equals(val))
 			scene.setCursor(Cursor.MOVE);
-		else if (val == "text")
+		else if ("text".equals(val))
 			scene.setCursor(Cursor.TEXT);
-		else if (val == "none")
+		else if ("none".equals(val))
 			scene.setCursor(Cursor.NONE);
 		else
 			scene.setCursor(Cursor.DEFAULT);
@@ -563,63 +622,58 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public Func0<Object> addEventListener(Object stg, String event, Func0<Object> fn) {
 		final Clip cl = (Clip)stg;
-		if (event == "resize")
+		if ("resize".equals(event))
 			return addEvent(event_resize, fn);
-		else if (event == "mousemove")
+		else if ("mousemove".equals(event))
 			return addEvent(event_mousemove, fn);
-		else if (event == "mousedown")
+		else if ("mousedown".equals(event))
 			return addEvent(event_mousedown, fn);
-		else if (event == "mouseup")
+		else if ("mouseup".equals(event))
 			return addEvent(event_mouseup, fn);
-		else if (event == "mouseenter" || event == "rollover") {
+		else if ("mouseenter".equals(event) || "rollover".equals(event)) {
+			System.out.println("ENTER");
 			if (cl.event_mouseenter == null) {
-				cl.event_mouseenter = new TreeMap<Integer,Func0<Object>>();
-				cl.getTop().addEventHandler(
-					MouseEvent.MOUSE_ENTERED_TARGET, new EventHandler<MouseEvent>() {
-					@Override public void handle(MouseEvent event) {
-						mouse_x = event.getSceneX();
-						mouse_y = event.getSceneY();
-						for (Func0<Object> cb : cl.event_mouseenter.values().toArray(event_cb_arr))
-							cb.invoke();
-					}
+				cl.event_mouseenter = new TreeMap<>();
+				cl.getTop().setOnMouseEntered(e -> {
+					mouse_x = e.getSceneX();
+					mouse_y = e.getSceneY();
+					for (Func0<Object> cb : cl.event_mouseenter.values().toArray(event_cb_arr))
+						cb.invoke();
 				});
 			}
 			return addEvent(cl.event_mouseenter, fn);
 		}
-		else if (event == "mouseleave" || event == "rollout") {
+		else if ("mouseleave".equals(event) || "rollout".equals(event)) {
 			if (cl.event_mouseleave == null) {
-				cl.event_mouseleave = new TreeMap<Integer,Func0<Object>>();
-				cl.getTop().addEventHandler(
-					MouseEvent.MOUSE_EXITED_TARGET, new EventHandler<MouseEvent>() {
-					@Override public void handle(MouseEvent event) {
-						mouse_x = event.getSceneX();
-						mouse_y = event.getSceneY();
-						for (Func0<Object> cb : cl.event_mouseleave.values().toArray(event_cb_arr))
-							cb.invoke();
-					}
+				cl.event_mouseleave = new TreeMap<>();
+				cl.getTop().setOnMouseExited(e -> {
+					mouse_x = e.getSceneX();
+					mouse_y = e.getSceneY();
+					for (Func0<Object> cb : cl.event_mouseleave.values().toArray(event_cb_arr))
+						cb.invoke();
 				});
 			}
 			return addEvent(cl.event_mouseleave, fn);
+		} else if (cl instanceof TextInput) {
+			TextInput ti = (TextInput)cl;
+
+			if ("change".equals(event)) {
+				return ti.addTextListener(fn);
+//			} else if ("scroll".equals(event)) {
+			} else if ("focusin".equals(event)) {
+				ti.addFocusInListener(fn);
+			} else if ("focusout".equals(event)) {
+				ti.addFocusOutListener(fn);
+			}
 		}
-		/*
-    else if (event == "click")
-        type = FlowMouseClick;
-     else if (event == "change")
-        type = FlowTextChange;
-    else if (event == "scroll")
-        type = FlowTextScroll;
-    else if (event == "focusin")
-        type = FlowFocusIn;
-    else if (event == "focusout")
-        type = FlowFocusOut;
-		*/
+
 		return no_op;
 	}
 	@Override
 	public Func0<Object> addKeyEventListener(Object stg, String event, Func7<Object,String,Boolean,Boolean,Boolean,Boolean,Integer,Func0<Object>> fn) {
-		if (event == "keydown") {
+		if ("keydown".equals(event)) {
 			return addEvent(event_keydown, fn);
-		} else if (event == "keyup") {
+		} else if ("keyup".equals(event)) {
 			return addEvent(event_keyup, fn);
 		} else {
 			System.out.println("Unknown key event!");
@@ -633,13 +687,11 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public Func0<Object> addMouseWheelEventListener(Object stg, Func1<Object,Double> cb) {
-		System.out.println("addMouseWheelEventListener not implemented");
-		return no_op;
+		return addEvent(event_mousewheel, cb);
 	}
 	@Override
 	public Func0<Object> addFinegrainMouseWheelEventListener(Object stg, Func2<Object,Double,Double> cb) {
-		System.out.println("addFinegrainMouseWheelEventListener not implemented");
-		return no_op;
+		return addEvent(event_finegrain_mousewheel, cb);
 	}
 	@Override
 	public Func0<Object> addGestureListener(String name, Func5<Boolean,Integer,Double,Double,Double,Double> cb) {
@@ -649,50 +701,366 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public boolean hittest(Object stg, double x, double y) {
 		Clip cl = (Clip)stg;
-		return cl.hittest(x, y);
+		return cl.hittestCliped(x, y) && cl.hittest(x, y);
 	}
 
 	private class TextClip extends Clip {
-		Text text;
+		Text textClip;
 
-		public TextClip() {
-			text = new Text("");
-			container.getChildren().add(text);
+		StringProperty text = new StringPropertyBase("") {
+			@Override
+			public Object getBean() {
+				return null;
+			}
+
+			@Override
+			public String getName() {
+				return "text";
+			}
+		};
+
+		String font, slope;
+		Integer weight, fill, backgroundColor;
+		Double size, fillOpacity, letterspacing, backgroundOpacity;
+
+		TextClip() {
+			super();
+
+			textClip = new Text(text.getValue());
+			container.getChildren().add(textClip);
 		}
+
 		public boolean hittest(double x, double y) {
-			if (checkNodeHit(text, x, y))
+			if (checkNodeHit(textClip, x, y))
 				return true;
 			return super.hittest(x, y);
+		}
+
+		String makeCssColor(Integer color, Double opacity) {
+			return "rgba(" + ((color >> 16) & 255) + "," + ((color >> 8) & 255) + "," + (color & 255) + "," + (opacity) + ")" ;
+		}
+
+		protected String getCssStyle() {
+			String style = "-fx-font-weight: " + weight + ";\n";
+			style += "-fx-letterspacing: " + letterspacing + "px;\n";
+			style += "background-color: " + makeCssColor(backgroundColor, backgroundOpacity) + ";\n";
+			style += "-fx-font-family: \"" + font + "\";\n";
+			style += "-fx-font-size: " + size + "px;\n";
+
+			return style;
+		}
+
+		protected void updateWidgetTextStyle() {
+			this.textClip.setText(this.text.getValue());
+			this.textClip.setStyle(this.getCssStyle());
+			this.textClip.setFont(new Font(this.font, this.size));
+			this.textClip.setFill(Color.rgb((fill >> 16) & 255, (fill >> 8) & 255, fill & 255, fillOpacity));
+			this.textClip.setTranslateY(textClip.getBaselineOffset());
+		}
+
+		Object[] getTextMetrics() {
+			return new Object[] { textClip.getBaselineOffset(), 0.1 * size, 0.15 * size };
+		}
+
+		void setTextAndStyle(String text, String font, double size, int weight,
+							 String slope, int fill, double fillopacity, double letterspacing,
+							 int bgColor, double bgOpacity) {
+			this.text.setValue(text);
+			this.font = font;
+			this.size = size;
+			this.weight = weight;
+			this.slope = slope;
+			this.fill = fill;
+			this.fillOpacity = fillopacity;
+			this.letterspacing = letterspacing;
+			this.backgroundColor = bgColor;
+			this.backgroundOpacity = bgOpacity;
+
+			updateWidgetTextStyle();
+		}
+
+		public Double getWidth() {
+			return textClip.getLayoutBounds().getWidth();
+		}
+
+		public Double getHeight() {
+			return textClip.getLayoutBounds().getHeight();
+		}
+	}
+
+	private class TextInput extends TextClip {
+		TextInputControl textField;
+
+		private Boolean multiline, wordWrap, readOnly;
+		private String type, textDirection, autoAlign;
+		private Double width, height, interlineSpacing;
+		private Integer tabIndex, maxChars;
+
+		TextInput() {
+			super();
+
+			textField = null;
+			multiline = wordWrap = readOnly = false;
+
+			size = width = height = interlineSpacing = 0.0;
+			backgroundOpacity = fillOpacity = 1.0;
+
+			type = "text";
+			textDirection = "ltr";
+			autoAlign = "AutoAlignNone";
+
+			fill = tabIndex = 0;
+			backgroundColor = 0xffffff;
+			weight = 400;
+		}
+
+		private String makeCssAlignment(String align) {
+			if ("AutoAlignCenter".equals(align)) {
+				return "center";
+			} else if ("AutoAlignRight".equals(align)) {
+				return "right";
+			} else {
+				return "left";
+			}
+		}
+
+		private NodeOrientation getDirection(String direction) {
+			return "rtl".equals(direction) ? NodeOrientation.RIGHT_TO_LEFT : NodeOrientation.LEFT_TO_RIGHT;
+		}
+
+		@Override
+		protected String getCssStyle() {
+			String style = super.getCssStyle();
+			style += "-fx-text-fill: " + makeCssColor(fill, fillOpacity) + ";\n";
+			style += "-fx-wrap-text: " + wordWrap + ";\n";
+			style += "-fx-line-spacing: " + Math.abs(size * 1.1 + interlineSpacing) + "px;\n";
+			style += "text-alignment: " + makeCssAlignment(autoAlign) + ";\n";
+			style += "direction: " + textDirection + ";\n";
+
+			return style;
+		}
+
+		@Override
+		protected void updateWidgetTextStyle() {
+			if (textField == null) {
+				super.updateWidgetTextStyle();
+				return ;
+			}
+
+			textField.setText(text.getValue());
+			textField.setStyle(getCssStyle());
+		}
+
+		void setTextInputType(String type) {
+			this.type = type;
+
+			if (textField != null && type.equals("password"))
+				setTextInput();
+		}
+
+		void setWordWrap(Boolean wordWrap) {
+			this.wordWrap = wordWrap;
+
+			updateWidgetTextStyle();
+		}
+
+		void setMultiline(Boolean multiline) {
+			this.multiline = multiline;
+
+			if (textField != null)
+				setTextInput();
+		}
+
+		void setWidth(Double width) {
+			this.width = width;
+
+			if (textField != null) {
+				textField.setPrefWidth(width);
+			}
+		}
+
+		void setHeight(Double height) {
+			this.height = height;
+
+			if (textField != null) {
+				textField.setPrefHeight(height);
+			}
+		}
+
+		void requestFocus() {
+			textField.requestFocus();
+		}
+
+		void setInterlineSpacing(Double spacing) {
+			this.interlineSpacing = spacing;
+			updateWidgetTextStyle();
+		}
+
+		void setTextDirection(String direction) {
+			this.textDirection = direction;
+			updateWidgetTextStyle();
+		}
+
+		void setAutoAlign(String autoAlign) {
+			this.autoAlign = autoAlign;
+			updateWidgetTextStyle();
+		}
+
+		void setTabIndex(Integer index) {
+			this.tabIndex = index;
+
+			// TODO: Implement tab indexing
+		}
+
+		void setReadOnly(Boolean readOnly) {
+			this.readOnly = readOnly;
+
+			if (this.textField != null)
+				this.textField.setEditable(!readOnly);
+		}
+
+		void setMaxChars(Integer max) {
+			this.maxChars = max;
+		}
+
+		void setTextInput() {
+			TextInputControl field = multiline ? new TextArea() : type.equals("password") ? new PasswordField() : new TextField();
+
+			if (textField != null) {
+				field.setText(textField.getText());
+				field.setStyle(textField.getStyle());
+				field.setEditable(!readOnly);
+				field.setPrefWidth(this.width);
+				field.setPrefHeight(this.height);
+				textField.textProperty().unbindBidirectional(this.text);
+				container.getChildren().remove(textField);
+			}
+
+			textField = field;
+			container.getChildren().add(textField);
+			textField.relocate(0.0, 0.0);
+			textField.textProperty().bindBidirectional(this.text);
+
+			textField.setMouseTransparent(false);
+
+			EventHandler<MouseEvent> test = event -> {
+				System.out.println(event.toString());
+			};
+			textField.addEventFilter(MouseEvent.ANY, test);
+			container.addEventFilter(MouseEvent.ANY, test);
+		}
+
+		@Override
+		public Double getWidth() {
+			if (textField != null)
+				return this.width;
+			else
+				return super.getWidth();
+		}
+
+		@Override
+		public Double getHeight() {
+			if (textField != null)
+				return this.height;
+			else
+				return super.getHeight();
+		}
+
+		@Override
+		Object[] getTextMetrics() {
+			textClip.setFont(new Font(this.font, this.size));
+
+			return super.getTextMetrics();
+		}
+
+		Func0<Object> addTextListener(Func0<Object> listener) {
+			final ChangeListener<String> changeListener = (observable, oldValue, newValue) -> {
+				listener.invoke();
+			};
+
+			textField.textProperty().addListener(changeListener);
+			return () -> {
+				textField.textProperty().removeListener(changeListener);
+				return null;
+			};
+		}
+
+		private Func0<Object> addFocusListener(Func1<Object, Boolean> listener) {
+			final ChangeListener<Boolean> changeListener = (observable, oldValue, newValue) -> listener.invoke(newValue);
+
+			textField.focusedProperty().addListener(changeListener);
+			return () -> {
+				textField.focusedProperty().removeListener(changeListener);
+				return null;
+			};
+		}
+
+		Func0<Object> addFocusInListener(Func0<Object> listener) {
+			return addFocusListener(value -> {
+				if (value)
+					listener.invoke();
+
+				return null;
+			});
+		}
+
+		Func0<Object> addFocusOutListener(Func0<Object> listener) {
+			return addFocusListener(value -> {
+				if (!value)
+					listener.invoke();
+
+				return null;
+			});
+		}
+
+		String getText() {
+			return text.getValue();
+		}
+
+		Integer getCursorPosition() {
+			return textField.getCaretPosition();
+		}
+
+		boolean isFocused() {
+			return textField.isFocused();
 		}
 	}
 
 	@Override
 	public Object makeTextField(String fontfamily) {
-		return new TextClip();
+		return new TextInput();
 	}
 	@Override
 	public Object setTextInput(Object stg) {
-		System.out.println("setTextInput not implemented");
+		TextInput tf = (TextInput)stg;
+		tf.setTextInput();
 		return null;
 	}
 	@Override
 	public double getTextFieldWidth(Object tf) {
 		TextClip tc = (TextClip)tf;
-		return tc.text.getLayoutBounds().getWidth();
+		return tc.getWidth();
 	}
 	@Override
 	public double getTextFieldHeight(Object tf) {
 		TextClip tc = (TextClip)tf;
-		return tc.text.getLayoutBounds().getHeight();
+		return tc.getHeight();
 	}
 	@Override
 	public Object setTextFieldWidth(Object stg, double val) {
-		System.out.println("setTextFieldWidth not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setWidth(val);
 		return null;
 	}
 	@Override
 	public Object setTextFieldHeight(Object stg, double val) {
-		System.out.println("setTextFieldHeight not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setHeight(val);
+		return null;
+	}
+	@Override
+	public Object setTextFieldCropWords(Object stg, boolean crop) {
+		// Impossible for this target
 		return null;
 	}
 	@Override
@@ -702,8 +1070,8 @@ public class FxRenderSupport extends RenderSupport {
 		return null;
 	}
 	@Override
-	public Object setTextAndStyle(Object tf, String text, String font, double size, int weight, 
-								  String slope, int fill, double fillopacity, double letterspacing, 
+	public Object setTextAndStyle(Object tf, String text, String font, double size, int weight,
+								  String slope, int fill, double fillopacity, double letterspacing,
 								  int bgColor,double bgOpacity) {
 		TextClip tc = (TextClip)tf;
 		// Unescape HTML glyphs here
@@ -717,7 +1085,6 @@ public class FxRenderSupport extends RenderSupport {
 				if (semi == -1) {
 					unicode.append(c);
 				} else {
-					int v = 0;
 					String hex = text.substring(i + 3, semi);
 					int code = Integer.decode("0x" + hex);
 					unicode.append((char) code);
@@ -727,16 +1094,26 @@ public class FxRenderSupport extends RenderSupport {
 				unicode.append(c);
 			}
 		}
-		tc.text.setText(unicode.toString());
-		// TODO: Translate font names here somehow
-		tc.text.setFont(new Font(font, size));
-		tc.text.setFill(mkColor(fill,fillopacity));
-		tc.text.relocate(0,0);
+
+		String f = font;
+
+		switch (font) {
+			case "RobotoMedium":
+				f = "Roboto";
+				weight = 500;
+				break;
+			case "MaterialIcons":
+				f = "Material Icons";
+				break;
+		}
+
+		tc.setTextAndStyle(unicode.toString(), f, size, weight, slope, fill, fillopacity, letterspacing, bgColor, bgOpacity);
 		return null;
 	}
 	@Override
 	public Object setTextDirection(Object stg, String val) {
-		System.out.println("setTextDirection is not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setTextDirection(val);
 		return null;
 	}
 	@Override
@@ -746,57 +1123,66 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public int getCursorPosition(Object stg) {
-		System.out.println("getCursorPosition not implemented");
-		return 0;
+		TextInput ti = (TextInput)stg;
+		return ti.getCursorPosition();
 	}
 	@Override
 	public boolean getFocus(Object stg) {
-		System.out.println("getFocus not implemented");
-		return false;
+		return ((TextInput)stg).isFocused();
 	}
 	@Override
 	public Object setFocus(Object stg, boolean val) {
-		System.out.println("setFocus not implemented");
+		TextInput ti = (TextInput)stg;
+		if (val)
+			ti.requestFocus();
+		else
+			stage.requestFocus();
 		return null;
 	}
 	@Override
 	public String getContent(Object stg) {
-		System.out.println("getContent not implemented");
-		return null;
+		return ((TextInput)stg).getText();
 	}
 	@Override
 	public Object setMultiline(Object stg, boolean val) {
-		System.out.println("setMultiline not implemented");
+		TextInput tc = (TextInput)stg;
+		tc.setMultiline(val);
+		return null;
+	}
+	@Override
+	public Object setTextFieldInterlineSpacing(Object stg, double val) {
+		TextInput ti = (TextInput)stg;
+		ti.setInterlineSpacing(val);
 		return null;
 	}
 	@Override
 	public Object setWordWrap(Object stg, boolean val) {
-		System.out.println("setWordWrap not implemented");
+		TextInput tc = (TextInput)stg;
+		tc.setWordWrap(val);
 		return null;
 	}
 	@Override
-	public Object setNumeric(Object stg, boolean val) {
-		System.out.println("setNumeric not implemented");
+	public Object setTextInputType(Object stg, String type) {
+		TextInput tc = (TextInput)stg;
+		tc.setTextInputType(type);
 		return null;
 	}
 	@Override
 	public Object setReadOnly(Object stg, boolean val) {
-		System.out.println("setReadOnly not implemented");
+		TextInput tc = (TextInput)stg;
+		tc.setReadOnly(val);
 		return null;
 	}
 	@Override
 	public Object setAutoAlign(Object stg, String val) {
-		System.out.println("setAutoAlign not implemented");
-		return null;
-	}
-	@Override
-	public Object setTextFieldPasswordMode(Object stg, boolean val) {
-		System.out.println("setTextFieldPasswordMode not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setAutoAlign(val);
 		return null;
 	}
 	@Override
 	public Object setTabIndex(Object stg, int val) {
-		System.out.println("setTabIndex not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setTabIndex(val);
 		return null;
 	}
 	@Override
@@ -816,22 +1202,14 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public Object setMaxChars(Object stg, int val) {
-		System.out.println("setMaxChars not implemented");
+		TextInput ti = (TextInput)stg;
+		ti.setMaxChars(val);
 		return null;
 	}
 	@Override
 	public Object[] getTextMetrics(Object tf) {
-		TextClip tc = (TextClip)tf;
-		Text text = tc.text;
-		Font font = text.getFont();
-
-		double size = font.getSize();
-
-		double ascent = text.getBaselineOffset();
-		// double ascent2 = 0.9 * size;
-		double descent = 0.1 * size;
-		double leading = 0.15 * size;
-		return new Object[] { ascent, descent, leading };
+		TextInput ti = (TextInput)tf;
+		return ti.getTextMetrics();
 	}
 	@Override
 	public int getSelectionStart(Object stg) {
@@ -899,8 +1277,8 @@ public class FxRenderSupport extends RenderSupport {
 		return null;
 	}
 	@Override
-	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
-								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
+	public Object setVideoSubtitle(Object tf, String text, String fontFamily, double fontSize, int fontWeight,
+								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing,
 								  int backgroundColour,double backgroundOpacity) {
 		System.out.println("setVideoSubtitle not implemented");
 		return null;
@@ -962,9 +1340,9 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public Object makeDropShadow(double angle,double distance,double radius,double spread,int color, double alpha,boolean inside) {
-		double a = Math.PI * angle / 180.0;
+		double a = Math.PI * (90 - angle) / 180.0;
 		double dx = Math.cos(a) * distance, dy = Math.sin(a) * distance;
-		return new DropShadow(BlurType.TWO_PASS_BOX, mkColor(color, alpha), radius, spread, dx, dy);
+		return new DropShadow(BlurType.GAUSSIAN, mkColor(color, alpha), radius * 2.5, 0.0, dx, dy);
 	}
 	@Override
 	public Object makeBlur(double radius,double spread) {
@@ -980,57 +1358,53 @@ public class FxRenderSupport extends RenderSupport {
 		Image image;
 		boolean loaded = false;
 		boolean failed = false;
-		SortedMap<Integer,Func2<Object,Double,Double>> event_metrics = new TreeMap<Integer,Func2<Object,Double,Double>>();
-		SortedMap<Integer,Func1<Object,String>> event_error = new TreeMap<Integer,Func1<Object,String>>();
+		TreeMap<Integer,Func2<Object,Double,Double>> event_metrics = new TreeMap<>();
+		TreeMap<Integer,Func1<Object,String>> event_error = new TreeMap<>();
 
 		CachedPicture(String url) {
 			image = new Image(url, true);
 
-			ChangeListener<Number> resize_cb = new ChangeListener<Number>() {
-				public void changed(ObservableValue<? extends Number> observable, Number oldValue, Number newValue) {
-					double w = image.getWidth();
-					double h = image.getHeight();
+			ChangeListener<Number> resize_cb = (observable, oldValue, newValue) -> {
+				double w = image.getWidth();
+				double h = image.getHeight();
 
-					if (w == 0 || h == 0 || loaded)
-						return;
+				if (w == 0 || h == 0 || loaded)
+					return;
 
-					for (Func2<Object,Double,Double> cb : event_metrics.values())
-						cb.invoke(w, h);
+				for (Func2<Object,Double,Double> cb : event_metrics.values())
+					cb.invoke(w, h);
 
-					loaded = true;
-					event_metrics = null;
-					event_error = null;
-				}
+				loaded = true;
+				event_metrics = null;
+				event_error = null;
 			};
 
 			image.widthProperty().addListener(resize_cb);
 			image.heightProperty().addListener(resize_cb);
 
-			ChangeListener<Boolean> error_cb = new ChangeListener<Boolean>() {
-				public void changed(ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue) {
-					if (!newValue || loaded)
-						return;
+			ChangeListener<Boolean> error_cb = (observable, oldValue, newValue) -> {
+				if (!newValue || loaded)
+					return;
 
-					for (Func1<Object,String> cb : event_error.values())
-						cb.invoke("load failed");
+				for (Func1<Object,String> cb : event_error.values())
+					cb.invoke("load failed");
 
-					loaded = failed = true;
-					event_metrics = null;
-					event_error = null;
-				}
+				loaded = failed = true;
+				event_metrics = null;
+				event_error = null;
 			};
 
 			image.errorProperty().addListener(error_cb);
 		}
 	}
 
-	private Hashtable<String,CachedPicture> img_cache = new Hashtable<String,CachedPicture>();
+	private Hashtable<String,CachedPicture> img_cache = new Hashtable<>();
 
 	private class PictureClip extends Clip {
 		ImageView view;
 		CachedPicture pic;
 
-		public PictureClip(CachedPicture pic) {
+		PictureClip(CachedPicture pic) {
 			this.pic = pic;
 			view = new ImageView(pic.image);
 			container.getChildren().add(view);
@@ -1047,7 +1421,7 @@ public class FxRenderSupport extends RenderSupport {
 		CachedPicture img = img_cache.get(name);
 
 		if (img == null) {
-			img = new CachedPicture("http://localhost/flow/"+name);
+			img = new CachedPicture(name);
 			if (cache)
 				img_cache.put(name, img);
 		}
@@ -1091,7 +1465,7 @@ public class FxRenderSupport extends RenderSupport {
 			path.setStroke(null);
 			owner.container.getChildren().add(0,path);
 		}
-		public boolean hittest(double x, double y) {
+		boolean hittest(double x, double y) {
 			return checkNodeHit(path, x, y);
 		}
 	}
@@ -1127,7 +1501,7 @@ public class FxRenderSupport extends RenderSupport {
 		double dx = Math.cos(a) * mat[0], dy = Math.sin(a) * mat[0];
 		double x1 = mat[3] + (mat[0] - dx) * 0.5, y1 = mat[4] + (mat[1] - dy) * 0.5;
 		double x2 = mat[3] + (mat[0] + dx) * 0.5, y2 = mat[4] + (mat[1] + dy) * 0.5;
-		List<Stop> stops = new ArrayList<Stop>();
+		List<Stop> stops = new ArrayList<>();
 		for (int i = 0; i < color.length; i++)
 			stops.add(new Stop((double)offset[i], mkColor((int)color[i], (double)alpha[i])));
 		return new LinearGradient(x1,y1,x2,y2,false,CycleMethod.NO_CYCLE,stops);
@@ -1136,7 +1510,7 @@ public class FxRenderSupport extends RenderSupport {
 		double[] mat = (double[])matrix;
 		double x = mat[3] + mat[0] * 0.5, y = mat[4] + mat[1] * 0.5;
 		double r = Math.sqrt((mat[0]*mat[0]+mat[1]*mat[1])/8.0);
-		List<Stop> stops = new ArrayList<Stop>();
+		List<Stop> stops = new ArrayList<>();
 		for (int i = 0; i < color.length; i++)
 			stops.add(new Stop((double)offset[i], mkColor((int)color[i], (double)alpha[i])));
 		return new RadialGradient(0,0,x,y,r,false,CycleMethod.NO_CYCLE,stops);
@@ -1145,7 +1519,7 @@ public class FxRenderSupport extends RenderSupport {
 	public Object beginGradientFill(Object gr,Object[] color,Object[] alpha,Object[] offset,Object matrix,String type) {
 		Graphics g = (Graphics)gr;
 		Paint p;
-		if (type == "radial")
+		if ("radial".equals(type))
 			p = makeRadialGradient(color,alpha,offset,matrix);
 		else
 			p = makeLinearGradient(color,alpha,offset,matrix);

@@ -39,7 +39,7 @@ function extractTagsFromValue(value) {
 			return [9, 2];
 
 		// ensure all elements are the same length
-		var baseLen = t[0].length;
+		var baseLen = t[0].length; // each element in t is an array ([2] - int, [9, 2] - array of int, etc)
 		if (t.some(elem => elem.length != baseLen))
 			return -1; // all lengths should be equal
 
@@ -55,18 +55,6 @@ function extractTagsFromValue(value) {
 		return [9].concat(ret);
 	};
 
-	var mergeTag = function(t) {
-		var ret = t[0];
-		var itemlength = ret.length;
-		for (var i = 1; i < t.length; ++i) {
-			for (var j = 0; j < itemlength; ++j) {
-				ret[j] = Math.max(ret[j], t[i][j]);
-			};
-		}
-
-		return ret;
-	};
-
 	var ret = forTag(value, function(t) {
 		return t;
 	});
@@ -75,25 +63,30 @@ function extractTagsFromValue(value) {
 		console.error('Something wrong with value of type: ' + typeof(value));
 	}
 
-	// console.log('data: ' + JSON.stringify(value) + '; result type: ' + ret);
 	return ret;
 }
 
+// TESTING SECTION
 // function test1() {
-// 	extractTagsFromValue(5);
-// 	extractTagsFromValue(6.7);
-// 	extractTagsFromValue("8");
-// 	extractTagsFromValue([]);
-// 	extractTagsFromValue([1, 2, 3]);
-// 	extractTagsFromValue([1, 2.2, 1]);
-// 	extractTagsFromValue([1, 1, 2.2]);
-// 	extractTagsFromValue([1, 2.2, "3.3"]);
-// 	extractTagsFromValue([[1, 2], [3, 4]]);
-// 	extractTagsFromValue([[1, 2], [3.1, 4]]);
-// 	extractTagsFromValue([[1, 2], [3.1, "4"]]);
-// 	extractTagsFromValue([[[1, 2], [1, 2]], [[1, 2], [1, 2]]]);
-// 	extractTagsFromValue([[[1, 2], [1.1, 2]], [[1, 2], [1, 2]]]);
-// 	extractTagsFromValue([[[1, 2], [1, 2]], [["1", 2], [1, 2]]]);
+// 	var do_test = function(v) {
+// 		var t = extractTagsFromValue(v);
+// 		console.log('data: ' + JSON.stringify(v) + '; result type: ' + t);
+// 	};
+
+// 	do_test(5);
+// 	do_test(6.7);
+// 	do_test("8");
+// 	do_test([]);
+// 	do_test([1, 2, 3]);
+// 	do_test([1, 2.2, 1]);
+// 	do_test([1, 1, 2.2]);
+// 	do_test([1, 2.2, "3.3"]);
+// 	do_test([[1, 2], [3, 4]]);
+// 	do_test([[1, 2], [3.1, 4]]);
+// 	do_test([[1, 2], [3.1, "4"]]);
+// 	do_test([[[1, 2], [1, 2]], [[1, 2], [1, 2]]]);
+// 	do_test([[[1, 2], [1.1, 2]], [[1, 2], [1, 2]]]);
+// 	do_test([[[1, 2], [1, 2]], [["1", 2], [1, 2]]]);
 // }
 
 // test1();

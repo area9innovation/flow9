@@ -887,8 +887,8 @@ class RenderSupportJSPixi {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = e.target.innerWidth + 1;
-			var win_height = e.target.innerHeight + 1;
+			var win_width = Browser.window.innerWidth + 1;
+			var win_height = Browser.window.innerHeight + 1;
 
 			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
 				// Still send whole window size - without reducing by screen kbd
@@ -1820,6 +1820,10 @@ class RenderSupportJSPixi {
 
 	public static function setTextInputType(textfield : TextField, type : String) : Void {
 		textfield.setTextInputType(type);
+	}
+
+	public static function setTextInputStep(textfield : TextField, step : Float) : Void {
+		textfield.setTextInputStep(step);
 	}
 
 	public static function setTabIndex(textfield : TextField, index : Int) : Void {
@@ -3920,6 +3924,7 @@ private class TextField extends NativeWidgetClip {
 	private var style : Dynamic = {};
 
 	private var type : String = "text";
+	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
 	private var fieldWidth : Float = -1.0;
 	private var fieldHeight : Float = -1.0;
@@ -4031,6 +4036,7 @@ private class TextField extends NativeWidgetClip {
 		if (isInput()) {
 			setScrollRect(0, 0, 0, 0);
 			nativeWidget.type = type;
+			if (type == "number") nativeWidget.step = step;
 			if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != "")
 				nativeWidget.autocomplete = accessWidget.autocomplete
 			else if (type == "password" && nativeWidget.autocomplete == "")
@@ -4246,6 +4252,11 @@ private class TextField extends NativeWidgetClip {
 
 	public function setTextInputType(type : String) : Void {
 		this.type = type;
+		updateNativeWidgetStyle();
+	}
+
+	public function setTextInputStep(step : Float) : Void {
+		this.step = step;
 		updateNativeWidgetStyle();
 	}
 

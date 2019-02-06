@@ -167,6 +167,9 @@ public class RenderSupport extends NativeHost {
 	public Object setTextFieldHeight(Object stg, double val) {
 		return null;
 	}
+	public Object setTextFieldCropWords(Object stg, boolean val) {
+		return null;
+	}
 	public Object setAdvancedText(Object stg,int a,int o,int e) {
 		return null;
 	}
@@ -176,6 +179,9 @@ public class RenderSupport extends NativeHost {
 	public Object setTextAndStyle(Object tf, String text, String fontFamily, double fontSize, int fontWeight, 
 								  String fontSlope, int fillColour, double fillOpacity, double letterSpacing, 
 								  int backgroundColour,double backgroundOpacity) {
+		return null;
+	}
+	public Object setTextFieldInterlineSpacing(Object stg, double val) {
 		return null;
 	}
 	public Object setTextDirection(Object stg, String val) {
@@ -202,16 +208,10 @@ public class RenderSupport extends NativeHost {
 	public Object setWordWrap(Object stg, boolean val) {
 		return null;
 	}
-	public Object setNumeric(Object stg, boolean val) {
-		return null;
-	}
 	public Object setReadOnly(Object stg, boolean val) {
 		return null;
 	}
 	public Object setAutoAlign(Object stg, String val) {
-		return null;
-	}
-	public Object setTextFieldPasswordMode(Object stg, boolean val) {
 		return null;
 	}
 	public Object setTabIndex(Object stg, int val) {
