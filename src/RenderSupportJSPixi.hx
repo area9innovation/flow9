@@ -866,8 +866,8 @@ class RenderSupportJSPixi {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = Browser.window.innerWidth + 1;
-			var win_height = Browser.window.innerHeight + 1;
+			var win_width = e.target.innerWidth;
+			var win_height = e.target.innerHeight;
 
 			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
 				// Still send whole window size - without reducing by screen kbd
