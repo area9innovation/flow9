@@ -21,6 +21,7 @@ import pixi.loaders.Loader;
 import MacroUtils;
 import Platform;
 import FlowFontStyle;
+import AccessManager;
 
 using DisplayObjectHelper;
 
@@ -42,7 +43,7 @@ class RenderSupportJSPixi {
 	private static var EnableFocusFrame : Bool = false;
 	private static var ShowDebugClipsTree : Bool = Util.getParameter("clipstree") == "1";
 	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
-	private static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
 	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
@@ -776,28 +777,6 @@ class RenderSupportJSPixi {
 			ctx.imageSmoothingEnabled = true;
 		}
 
-		// Set selfZOrder of the body to allow updation of its zOrder inside updateAccessWidgetZOrder
-		var accessWidget : Dynamic = untyped Browser.document.body;
-
-		accessWidget.selfZOrder = 0;
-		accessWidget.updateDisplay = function() {
-			var newZorder : Int = accessWidget.zOrder;
-
-			if (accessWidget.previousZorder != newZorder) {
-				accessWidget.previousZorder = newZorder;
-
-				var children : Array<Dynamic> = accessWidget.children;
-
-				if (children != null) {
-					for (child in children) {
-						if (child.updateDisplay != null) {
-							child.updateDisplay(accessWidget.zOrder);
-						}
-					}
-				}
-			}
-		}
-
 		requestAnimationFrame();
 	}
 
@@ -1218,6 +1197,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function animate(timestamp : Float) {
+		AccessNode.updateAccessTree();
 		PixiStage.emit("drawframe", timestamp);
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
@@ -1315,12 +1295,13 @@ class RenderSupportJSPixi {
 				case "description":
 					if (val != "") clip.accessWidget.setAttribute("aria-label", val);
 				case "zorder": {
-					clip.accessWidget.selfZOrder = Std.parseInt(val);
-					if (DebugAccessOrder) clip.accessWidget.setAttribute("selfzorder", val);
+					var zOrder = Std.parseInt(val);
+					clip.accessWidget.setAttribute("self_zorder", zOrder);
 
-					if (clip.accessWidget.parentNode != null) {
-						updateAccessWidgetZOrder(clip.accessWidget);
+					if (clip.accessNode == null) {
+						clip.accessNode = new AccessNode(clip, clip.accessWidget);
 					}
+					cast(clip.accessNode, AccessNode).zOrder = zOrder;
 				}
 				case "id":
 					clip.accessWidget.id = val;
@@ -1334,16 +1315,16 @@ class RenderSupportJSPixi {
 					}
 				case "nodeindex": {
 					var nodeindex_strings = ~/ /g.split(val);
-					clip.accessWidget.nodeindex = new Array();
-					if (DebugAccessOrder) clip.accessWidget.setAttribute("nodeindex", val);
+					var nodeIndex = new Array();
 
 					for (i in 0...nodeindex_strings.length) {
-						clip.accessWidget.nodeindex = clip.accessWidget.nodeindex.concat([Std.parseInt(nodeindex_strings[i])]);
+						nodeIndex = nodeIndex.concat([Std.parseInt(nodeindex_strings[i])]);
 					}
 
-					if (clip.accessWidget.parentNode != null) {
-						addNode(clip.accessWidget.parentNode, clip.accessWidget);
+					if (clip.accessNode == null) {
+						clip.accessNode = new AccessNode(clip, clip.accessWidget);
 					}
+					cast(clip.accessNode, AccessNode).nodeIndex = nodeIndex;
 				}
 				case "tabindex": {
 					clip.accessWidget.tabIndex = Std.parseInt(val);
@@ -1434,26 +1415,6 @@ class RenderSupportJSPixi {
 				});
 
 				clip.accessWidget.setAttribute("aria-disabled", "false");
-				// selfZOrder - self zOrder of the accessWidget that is set from flow
-				// instead of zOrder field that contain max zOrder of the accessWidget and its children
-				clip.accessWidget.selfZOrder = 0;
-				clip.accessWidget.updateDisplay = function() {
-					var newZorder : Int = untyped Browser.document.body.zOrder;
-
-					if (clip.parent != null && clip.accessWidget != null) {
-						clip.accessWidget.style.display = clip.accessWidget.zOrder >= newZorder && cast(clip, DisplayObject).getClipVisible() ? "block" : "none";
-
-						var children : Array<Dynamic> = untyped clip.accessWidget.children;
-
-						if (children != null) {
-							for (child in children) {
-								if (child.updateDisplay != null) {
-									child.updateDisplay();
-								}
-							}
-						}
-					}
-				}
 
 				// adding human-meaningful attributes first so they appear earlier for easier reading HTML
 				addAccessAttributes(clip, attributes);
@@ -1508,17 +1469,10 @@ class RenderSupportJSPixi {
 					if (DebugAccessOrder)
 						PixiStage.off("stagechanged", clip.updateAccessWidget);
 					if (clip.accessWidget != null) {
-						var parentNode = clip.accessWidget.parentNode;
-
-						if (parentNode != null) {
-							parentNode.removeChild(clip.accessWidget);
+						if (clip.accessNode != null && clip.accessNode.parent != null) {
+							AccessNode.removeNode(clip.accessNode.parent);
 						}
-
 						clip.accessWidget = null;
-
-						if (parentNode != null) {
-							updateAccessWidgetZOrder(parentNode);
-						}
 
 						clip.addAccessWidget = null;
 						clip.updateAccessWidget = null;
@@ -1530,11 +1484,14 @@ class RenderSupportJSPixi {
 					if (clip.accessWidget != null) {
 						var parentNode = findParentAccessibleWidget(clip.parent);
 
+						if (clip.accessNode == null) {
+							trace("empty access node");
+							clip.accessNode = new AccessNode(clip, clip.accessWidget);
+						}
+
 						if (parentNode == null) {
 							findTopParent(clip).once("added", clip.addAccessWidget);
 						} else {
-							addNode(parentNode, clip.accessWidget);
-
 							if (DebugAccessOrder)
 								PixiStage.on("stagechanged", clip.updateAccessWidget);
 
@@ -1580,38 +1537,12 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	// Update zOrder fields of the accessWidget and its children
-	// zOrder field contain max zOrder of the accessWidget and its children
-	public static function updateAccessWidgetZOrder(accessWidget : Dynamic) : Void {
-		if (accessWidget != null && accessWidget.selfZOrder != null) {
-			var previousZOrder = accessWidget.zOrder;
-			accessWidget.zOrder = accessWidget.selfZOrder;
-			var children : Array<Dynamic> = untyped accessWidget.children;
-
-			if (children != null) {
-				for (child in children) {
-					if (accessWidget.zOrder < child.zOrder)
-						accessWidget.zOrder = child.zOrder;
-				}
-			}
-
-			if (DebugAccessOrder) {
-				accessWidget.setAttribute("zorder", accessWidget.zOrder);
-				accessWidget.setAttribute("selfzorder", accessWidget.selfZOrder);
-			}
-
-			if (previousZOrder != accessWidget.zOrder && accessWidget != Browser.document.body) {
-				updateAccessWidgetZOrder(accessWidget.parentNode);
-			} else if (accessWidget.updateDisplay != null) {
-				accessWidget.updateDisplay();
-			}
-		}
-	}
-
 	public static function updateAccessDisplay(clip : Dynamic) : Void {
-		if (clip.accessWidget != null && clip.accessWidget.updateDisplay != null) {
-			clip.accessWidget.updateDisplay();
- 		} else if (clip.children != null) {
+		if (clip.accessNode != null) {
+			cast(clip.accessNode, AccessNode).updateDisplay();
+ 		}
+
+ 		if (clip.children != null) {
  			var children : Array<Dynamic> = clip.children;
 
 			for (child in children) {
@@ -1936,34 +1867,6 @@ class RenderSupportJSPixi {
 			else null;
 	}
 
-	// Returns next access element after currentChild
-	private static function getNextAccessElement(parent : Element, currentChild : Dynamic) : Element {
-		// This is about 444 ms out of 8000 ms in complicated renderings
-		// In 3400 out of 3445 cases, we return null.
-		return Lambda.find(untyped __js__("Array.from(parent.children)"), function(childclip : Dynamic) {
-
-			if (currentChild != childclip && currentChild.nodeindex) {
-				if (childclip.nodeindex) {
-					var _g = 0;
-					var childclipB = false;
-					var stopCheck = false;
-
-					while (!stopCheck && _g < childclip.nodeindex.length && _g < currentChild.nodeindex.length) {
-						stopCheck = childclip.nodeindex[_g] != currentChild.nodeindex[_g];
-						childclipB = childclip.nodeindex[_g] >= currentChild.nodeindex[_g];
-						++_g;
-					}
-
-					return childclipB;
-				} else {
-					return false;
-				}
-			} else {
-				return false;
-			}
-		});
-	}
-
 	public static function findParentAccessibleWidget(clip : Dynamic) : Element {
 		if (clip == null) {
 			return null;
@@ -2011,102 +1914,6 @@ class RenderSupportJSPixi {
 	// native removeChild : (parent : native, child : native) -> void
 	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.removeChild(child);
-	}
-
-	// Check if nodeindex of the child starts with nodeindex of the parent (IOW can parent contain child with such nodeindex)
-	private static function parentNodeIndex(parent : Dynamic, child : Dynamic) : Bool {
-		var res = false;
-
-		if (!child.contains(parent) && parent.nodeindex != null && child.nodeindex != null &&
-			parent.nodeindex.length != 0 && child.nodeindex.length >= parent.nodeindex.length) {
-			res = true;
-
-			for (i in 0...parent.nodeindex.length) {
-				if (parent.nodeindex[i] != child.nodeindex[i]) {
-					res = false;
-					break;
-				}
-			}
-		}
-
-		return res;
-	}
-
-	// Check if parent and child have equal nodeindex fields
-	private static function equalNodeIndex(parent : Dynamic, child : Dynamic) : Bool {
-		var res = false;
-
-		if (parent.nodeindex != null && child.nodeindex != null && parent.nodeindex.length != 0 &&
-			child.nodeindex.length == parent.nodeindex.length) {
-
-			res = true;
-
-			for (i in 0...parent.nodeindex.length) {
-				if (parent.nodeindex[i] != child.nodeindex[i]) {
-					res = false;
-					break;
-				}
-			}
-		}
-
-		return res;
-	}
-
-	public static function addNode(parent : Dynamic, child : Dynamic) : Void {
-		// This is about 299 ms for itself out of 8000 ms in complicated renderings
-		// - with children, it is 1200 ms out of 8000 ms
-		try {
-			var nextAccessChild = getNextAccessElement(parent, child);
-			var previousParentNode = child.parentNode;
-
-			if (nextAccessChild != null) {
-				if (parentNodeIndex(nextAccessChild, child)) {
-					if (equalNodeIndex(nextAccessChild, child)) {
-						if (nextAccessChild.nextSibling == null)
-							parent.appendChild(child)
-						else
-							parent.insertBefore(child, nextAccessChild.nextSibling);
-					} else {
-						addNode(nextAccessChild, child);
-					}
-				} else {
-					if (DebugAccessOrder && parent != Browser.document.body && !parentNodeIndex(parent, child)) {
-						trace("Wrong accessWidget parentNode nodeindex");
-						trace(parent);
-						trace(child);
-					}
-
-					parent.insertBefore(child, nextAccessChild);
-				}
-			} else {
-				// This is the case we get in 3400 out of 3445 cases
-				if (DebugAccessOrder && parent != Browser.document.body && !parentNodeIndex(parent, child)) {
-					trace("Wrong accessWidget parentNode nodeindex");
-					trace(parent);
-					trace(child);
-				}
-
-				parent.appendChild(child);
-			}
-
-			if (previousParentNode != child.parentNode) {
-				updateAccessWidgetZOrder(previousParentNode);
-				updateAccessWidgetZOrder(child.parentNode);
-				updateAccessWidgetZOrder(child);
-			}
-		} catch (e : Dynamic) {
-			if (DebugAccessOrder && parent != Browser.document.body && !parentNodeIndex(parent, child)) {
-				trace("Wrong accessWidget parentNode nodeindex");
-				trace(parent);
-				trace(child);
-			}
-
-			if (parent.parentNode != null) {
-				addNode(parent.parentNode, child);
-			} else {
-				addNode(Browser.document.body, child);
-			}
-		}
 	}
 
 	public static function makeClip() : FlowContainer {
@@ -3242,7 +3049,9 @@ private class NativeWidgetClip extends FlowContainer {
 				nativeWidget.style.position = "fixed";
 				nativeWidget.style.zIndex = RenderSupportJSPixi.zIndexValues.nativeWidget;
 
-				RenderSupportJSPixi.addNode(parentNode, nativeWidget);
+				if (untyped this.nativeNode == null) {
+					untyped this.nativeNode = new AccessNode(this, nativeWidget);
+				}
 
 				RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
 				once("removed", deleteNativeWidget);
@@ -3268,10 +3077,8 @@ private class NativeWidgetClip extends FlowContainer {
 	private function deleteNativeWidget() : Void {
 		RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
 		if (nativeWidget != null) {
-			parentNode = nativeWidget.parentNode;
-
-			if (parentNode != null) {
-				parentNode.removeChild(nativeWidget);
+			if (untyped this.accessNode != null && untyped this.accessNode.parent != null) {
+				AccessNode.removeNode(untyped this.accessNode.parent);
 			}
 
 			nativeWidget = null;

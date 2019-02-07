@@ -68,10 +68,6 @@ class DisplayObjectHelper {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
 
-			if (RenderSupportJSPixi.AccessibilityEnabled) {
-				RenderSupportJSPixi.updateAccessDisplay(clip);
-			}
-
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
 				RenderSupportJSPixi.InvalidateStage();
@@ -84,6 +80,10 @@ class DisplayObjectHelper {
 
 		if (clip.interactive && !getClipWorldVisible(clip)) {
 			clip.emit("pointerout");
+		}
+
+		if (RenderSupportJSPixi.AccessibilityEnabled) {
+			RenderSupportJSPixi.updateAccessDisplay(clip);
 		}
 
 		var children : Array<Dynamic> = untyped clip.children;
