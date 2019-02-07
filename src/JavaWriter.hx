@@ -432,7 +432,7 @@ class JavaWriter {
 			var tstr = flowType2objType(type);
 			sb.add('new ');
 			sb.add(tstr); sb.add('() {\n');
-			sb.add(indent); sb.add('\tpublic '); sb.add(flowType2objType(ret)); sb.add(' invoke(');
+			sb.add(indent); sb.add('\tfinal public '); sb.add(flowType2objType(ret)); sb.add(' invoke(');
 			var pfix = '';
 			for (i in 0...args.length) {
 				sb.add(pfix); sb.add(flowType2objType(args[i])); sb.add(' a'); sb.add(i);
