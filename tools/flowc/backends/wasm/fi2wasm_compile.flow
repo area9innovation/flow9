@@ -105,8 +105,8 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAcc, context : WasmContext) {
 	fiBody = wasmTransformExpression(decl.lambda.body);
 	wasmBody = fiexp2wasmexp(context, context.globalNames, fiBody);
-    wasmBodyConverted = fiWasmInjectIncrements(wasmBody);
 	wasmType = cast(fitype2wasmtype(context.globalNames, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
+    wasmBodyConverted = wasmAddRefcounting(wasmBody, wasmType.args);
 
 	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBodyConverted, wasmType);
 }
@@ -124,8 +124,6 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		if (fiWasmFunctionNeedsClosureParam(name) && strContains(name, "__lambda__")) [Pair("__closure__", WasmTypeStruct("", []))]
 			else []);
 	tailCalls = fiWasmCollectTailCalls(name, lambdaBody, makeSet());
-	lastStatements = fiWasmFindLastStatements(lambdaBody);
-	finalizers = foldSet(lastStatements, makeTree(), \acc0, ex -> setTree(acc0, ex, paramPairs));
 	resultClause = (if (type.returnType != WasmTypeVoid()) // to be used when generating tail call block
 		" (result " + compileWasmType(type.returnType, false) + ")" else "");
 
@@ -139,7 +137,6 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		compileWasmExp(acc, lambdaBody, 
 			WasmContext(context with 
 				tailCalls = tailCalls, 
-				finalizers = finalizers,
 				localNames = mergeTree(locals, pairs2tree(paramPairs)))
 	  ))
 	+ (if (!isEmptySet(tailCalls)) "br $exit))" else "") // finalizing tail call wrapper
@@ -308,16 +305,13 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) {
 	wasm2string(compileWasmExp2(acc, ex, context))
 }
 
-compileWasmExpAndConstruct(acc : WasmAcc, ex : WasmExp, context : WasmContext) {
-	Wasm2Seq([compileWasmExp2(acc, ex, context), fiWasmGenerateConstructor(wasmExpType(ex))])
-}
-
 compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd {
 	conv = \s -> Wasm2Code(s);
 	rec2 = \e, context2 -> compileWasmExp2(acc, e, context2);
 	rec = \e -> rec2(e, context);
 	error = \reason -> wasmError(acc, reason) |> conv;
-	result : Wasm2Cmd = switch (ex) {
+	
+    switch (ex) {
 		WasmLambda(args, body, type, __): conv("");	// strange
 		WasmCall(f, args, type, calltype, __): {
 			superglue(args, \e -> {
@@ -401,23 +395,13 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				error("Cannot resolve variable in WasmVar: " + name);
 		}
 		WasmLet(name, type, e1, e2, type2, __): {
-			// for heap types, we need to free local variables after use
-			// this is done at the end of the scope - i.e. end of e2
-			scopeContext = if (wasmTypeUsesWasmHeap(type)) { 
-				lastScopeStatements = fiWasmFindLastStatements(e2);
-				WasmContext(context with 
-					finalizers = foldSet(lastScopeStatements, context.finalizers, 
-						\acc1, s -> treePushToArrayValue(acc1, s, Pair(name, type))), 
-					localNames = setTree(context.localNames, name, type))
-			} else context;
-			
 			name2 = getWasmLocalVarName(name, type);
 
 			Wasm2Seq([
 				rec(e1),
 				//if (!startsWith(name, "__temp__")) fiWasmGenerateConstructor(type) else Wasm2Void(),
 				Wasm2SetLocal(name2),
-				rec2(e2, scopeContext)
+				rec2(e2, context)
 			])
 		}
 		WasmIf(e1, e2, e3, type, __): {
@@ -437,7 +421,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				sT = toString(tTo);
 				error("cast (" + sF + ") -> (" + sT + ")")
 			};
-			value : Wasm2Cmd = compileWasmExpAndConstruct(acc, e, context);
+			value : Wasm2Cmd = compileWasmExp2(acc, e, context);
 			switch (tFrom) {
 				WasmTypeInt(): {
 					// to string, and to double
@@ -485,17 +469,11 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				}
 			} |> \cmd -> Wasm2Seq([value, cmd]);
 		}
-		WasmSeq(es, type, __): {
-			canReturn = type != WasmTypeVoid(); // whether the result of last statement shall be discarded
-			Wasm2Seq(mapi(es, \i, e : WasmExp -> {
-				e2 = rec(e);
-				// we may need drop after last statement if function returns void and it is non-void
-				if (wasmExpType(e) == WasmTypeVoid() || ((i == length(es) - 1) && canReturn)) e2
-				else Wasm2Seq([e2, Wasm2Drop()]);
-			}))
-		};
+		WasmSeq(es, type, __): 
+			Wasm2Seq(map(es, rec)); // this code assumes no mid-sequence statements return value
+            // see split_expressions for the logic that eliminates those
 		WasmCallPrim(op, es, type, __): {
-			args1 = map(es, \e -> compileWasmExpAndConstruct(acc, e, context));
+			args1 = map(es, \e -> compileWasmExp2(acc, e, context));
 			argsAppend1 = \cmd -> Wasm2Seq(arrayPush(args1, cmd));
 			argsAppend = \s -> argsAppend1(Wasm2Code(s));
 			// TODO
@@ -603,7 +581,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 						//   it does NOT decrease refcnt for array passed
 						[
 							Wasm2I32Const(8 + i * elemSize),
-							compileWasmExpAndConstruct(acc, e, context),
+							compileWasmExp2(acc, e, context),
 							Wasm2Call("$wasm_set_array_" + compileWasmType(elemType, true))
 						]
 					}))))
@@ -680,20 +658,16 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 		WasmUnsafe(name, fallback, type, __): {
 			wasmError(acc, "unsafe") |> conv;
 		}
-        WasmIncRefcnt(e, type, __):
-            compileWasmExpAndConstruct(acc, e, context);
-        WasmDecRefcnt(name, type, __):
-            if (wasmTypeUsesWasmHeap(type)) {
-                Wasm2Seq([
-                    Wasm2GetLocal(name),
-                    Wasm2Call("wasm_dec_refcnt")
-                ])
-            } else Wasm2Void();
-	}
-
-	switch (lookupTree(context.finalizers, ex)) {
-		None(): result;
-		Some(vars): Wasm2Seq([result, conv(fiWasmGenerateDestructors(vars))]);
+        WasmIncRefcnt(e, type, __): // correct type of e is assumed
+            Wasm2Seq([
+                compileWasmExp2(acc, e, context), 
+                Wasm2Call("$wasm_inc_refcnt_passthru")
+            ]);
+        WasmDecRefcnt(name, type, __): // correct type of variable 'name' is assumed
+            Wasm2Seq([
+                Wasm2GetLocal(name),
+                Wasm2Call("$wasm_dec_refcnt")
+            ])
 	}
 }
 
@@ -731,7 +705,7 @@ makeWasmConstructor(acc : WasmAcc, context : WasmContext, structType : WasmTypeS
 		// do NOT increase refcnt for the address - wasm_set_array_xxx will NOT decrease it
 		nacc = acc1.second + "i32.const " + i2s(offset) + " " 
 				// TODO
-				+ wasm2string(compileWasmExpAndConstruct(acc, e, context))
+				+ wasm2string(compileWasmExp2(acc, e, context))
 				+ " call $wasm_set_array_" + compileWasmType(wasmExpType(args[i]), true) + " ";
 		Pair(offset + argSizes[i], nacc);
 	}).second |> \s -> Wasm2Code(s);
