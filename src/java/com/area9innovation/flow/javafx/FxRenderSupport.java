@@ -25,6 +25,7 @@ import javafx.scene.control.TextInputControl;
 import javafx.scene.input.*;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Text;
+import javafx.scene.transform.Transform;
 import javafx.stage.Stage;
 import javafx.scene.shape.*;
 import javafx.scene.paint.Color;
@@ -148,8 +149,11 @@ public class FxRenderSupport extends RenderSupport {
 			if (graphics != null)
 				return graphics.path.sceneToLocal(global);
 
+			Transform globalTransform = getTop().getLocalToSceneTransform();
 			Bounds globalBounds = getTop().localToScene(getTop().getBoundsInLocal());
-			return new Point2D(global.getX() - globalBounds.getMinX(), global.getY() - globalBounds.getMinY());
+			return new Point2D(
+					(global.getX() - globalBounds.getMinX()) / globalTransform.getMxx(),
+					(global.getY() - globalBounds.getMinY()) / globalTransform.getMyy());
 		}
 
 		boolean hittestCliped(double x, double y) {
@@ -499,23 +503,7 @@ public class FxRenderSupport extends RenderSupport {
 	@Override
 	public double getMouseX(Object stg) {
 		Clip cl = (Clip) stg;
-		Point2D pos = cl.getMousePos(new Point2D(mouse_x, mouse_y));
-		if (pos == null) {
-			System.out.println(cl.graphics == null);
-			System.out.println(cl.getTop() == null);
-			System.out.println(cl.getTop().getScene() == scene);
-			Node node = cl.getTop();
-			while (node.getParent() != null) {
-				node = node.getParent();
-				if (node.getClip() != null) {
-					System.out.println("Found mask on my way");
-				}
-			}
-
-			System.out.println(node == stage_clip.getTop());
-			System.out.println(cl.getTop().localToScene(cl.getTop().getBoundsInLocal()));
-		}
-		return pos.getX();
+		return cl.getMousePos(new Point2D(mouse_x, mouse_y)).getX();
 	}
 	@Override
 	public double getMouseY(Object stg) {
