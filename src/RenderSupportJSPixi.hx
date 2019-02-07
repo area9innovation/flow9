@@ -1938,6 +1938,8 @@ class RenderSupportJSPixi {
 
 	// Returns next access element after currentChild
 	private static function getNextAccessElement(parent : Element, currentChild : Dynamic) : Element {
+		// This is about 444 ms out of 8000 ms in complicated renderings
+		// In 3400 out of 3445 cases, we return null.
 		return Lambda.find(untyped __js__("Array.from(parent.children)"), function(childclip : Dynamic) {
 
 			if (currentChild != childclip && currentChild.nodeindex) {
@@ -2051,6 +2053,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addNode(parent : Dynamic, child : Dynamic) : Void {
+		// This is about 299 ms for itself out of 8000 ms in complicated renderings
+		// - with children, it is 1200 ms out of 8000 ms
 		try {
 			var nextAccessChild = getNextAccessElement(parent, child);
 			var previousParentNode = child.parentNode;
@@ -2075,6 +2079,7 @@ class RenderSupportJSPixi {
 					parent.insertBefore(child, nextAccessChild);
 				}
 			} else {
+				// This is the case we get in 3400 out of 3445 cases
 				if (DebugAccessOrder && parent != Browser.document.body && !parentNodeIndex(parent, child)) {
 					trace("Wrong accessWidget parentNode nodeindex");
 					trace(parent);
