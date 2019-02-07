@@ -9,6 +9,8 @@ export {
 	/* 
 	* Detailed description see at function definition
 	* In addition this function will skip __ vars (what can be met in structs in switch's cases). 
+    * Im addition it will create temporary variables to hold unneeded values in sequences like
+    * { a = 2; 2; a; } - 2 is dropped silently, but this will introduce an extra temp variable to hold it
 	  Check FiLet in splitExpressionsRec
 	*/
 	splitExpressions(ex : FiExp, typeFilter : (FiType) -> bool) -> FiExp;
@@ -106,8 +108,14 @@ splitExpressionsRec(ex : FiExp, typeFilter : (FiType) -> bool, scopeType : FiTyp
 				type, start));
 		FiCast(e, tFrom, tTo, type, start): 
 			expandExpression(e, typeFilter, scopeType, \v -> makeWrapper(FiCast(v, tFrom, tTo, type, start)));
-		FiSeq(es, type, start): 
-			makeWrapper(FiSeq(map(es, \stmt -> splitExpressions(stmt, typeFilter)), type, start));
+		FiSeq(es, type, start): {
+            canReturn = type != FiTypeVoid();
+            normalized = mapi(es, \i, e -> {
+                if (fiExpType(e) == FiTypeVoid() || ((i == length(es) - 1) && canReturn)) e
+				    else FiLet(getTempVarName(e), fiExpType(e), e, FiVoid(e.start), FiTypeVoid(), e.start);
+            });
+			makeWrapper(FiSeq(map(normalized, \stmt -> splitExpressions(stmt, typeFilter)), type, start));
+        }
 		FiCallPrim(op, es, type, start): 
 			expandExpList(es, typeFilter, scopeType, \vars -> makeWrapper(FiCallPrim(op, vars, type, start)));
 		FiVoid(start): makeWrapper(ex);
