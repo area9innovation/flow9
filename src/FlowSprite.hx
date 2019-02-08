@@ -6,6 +6,7 @@ using DisplayObjectHelper;
 
 class FlowSprite extends Sprite {
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
 
 	private var url : String = "";
 	private var loaded : Bool = false;

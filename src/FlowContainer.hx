@@ -6,12 +6,13 @@ using DisplayObjectHelper;
 class FlowContainer extends Container {
 	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
 
-		_visible = true;
 		visible = worldVisible;
+		clipVisible = worldVisible;
 		interactiveChildren = false;
 	}
 
@@ -21,7 +22,7 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
 
-			if (getClipWorldVisible()) {
+			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
 				RenderSupportJSPixi.InvalidateStage();
 			}
@@ -38,7 +39,7 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
 
-			if (getClipWorldVisible()) {
+			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
 				RenderSupportJSPixi.InvalidateStage();
 			}

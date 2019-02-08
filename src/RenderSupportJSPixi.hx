@@ -21,7 +21,6 @@ import pixi.loaders.Loader;
 import MacroUtils;
 import Platform;
 import FlowFontStyle;
-import AccessManager;
 
 using DisplayObjectHelper;
 
@@ -1066,7 +1065,7 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	private static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
+	public static function emulateMouseClickOnClip(clip : DisplayObject) : Void {
 		var b = clip.getBounds();
 		MousePos = clip.toGlobal(new Point( b.width / 2.0, b.height / 2.0));
 
@@ -1197,7 +1196,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function animate(timestamp : Float) {
-		AccessNode.updateAccessTree();
+		AccessWidget.updateAccessTree();
+
 		PixiStage.emit("drawframe", timestamp);
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
@@ -1236,111 +1236,13 @@ class RenderSupportJSPixi {
 	}
 
 	private static function addAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
+		var attributesMap = new Map<String, String>();
+
 		for (kv in attributes) {
-			var key = kv[0];
-			var val = kv[1];
-			switch (key) {
-				case "role": {
-					clip.accessWidget.setAttribute("role", val);
-
-					// Sets events
-					if (accessRoleMap.get(val) == "button") {
-						clip.accessWidget.onclick = function(e) {
-							if (e.target == clip.accessWidget) {
-								if (clip.accessCallback != null) {
-									clip.accessCallback();
-								} else {
-									emulateMouseClickOnClip(clip);
-								}
-							}
-						};
-
-						var onFocus = clip.accessWidget.onfocus;
-						var onBlur = clip.accessWidget.onblur;
-
-						clip.accessWidget.onfocus = function(e) {
-							if (onFocus != null) {
-								onFocus(e);
-							}
-
-							clip.accessWidget.classList.add('focused');
-						};
-
-						clip.accessWidget.onblur = function(e) {
-							if (onBlur != null) {
-								onBlur(e);
-							}
-
-							clip.accessWidget.classList.remove('focused');
-						};
-
-						if (clip.accessWidget.tabIndex == null) {
-							clip.accessWidget.tabIndex = 0;
-						}
-					} else if (val == "textbox") {
-						clip.accessWidget.onkeyup = function(e) {
-							if (e.keyCode == 13 && clip.accessCallback != null)
-								clip.accessCallback();
-						}
-
-						if (clip.accessWidget.tabIndex == null) {
-							clip.accessWidget.tabIndex = 0;
-						}
-					} else if (val == "iframe") {
-						if (clip.accessWidget.tabIndex == null) {
-							clip.accessWidget.tabIndex = 0;
-						}
-					}
-				}
-				case "description":
-					if (val != "") clip.accessWidget.setAttribute("aria-label", val);
-				case "zorder": {
-					var zOrder = Std.parseInt(val);
-					clip.accessWidget.setAttribute("self_zorder", zOrder);
-
-					if (clip.accessNode == null) {
-						clip.accessNode = new AccessNode(clip, clip.accessWidget);
-					}
-					cast(clip.accessNode, AccessNode).zOrder = zOrder;
-				}
-				case "id":
-					clip.accessWidget.id = val;
-				case "enabled":
-					if (val == "true") {
-						clip.accessWidget.removeAttribute("disabled");
-						clip.accessWidget.setAttribute("aria-disabled", "false");
-					} else {
-						clip.accessWidget.setAttribute("disabled", "disabled");
-						clip.accessWidget.setAttribute("aria-disabled", "true");
-					}
-				case "nodeindex": {
-					var nodeindex_strings = ~/ /g.split(val);
-					var nodeIndex = new Array();
-
-					for (i in 0...nodeindex_strings.length) {
-						nodeIndex = nodeIndex.concat([Std.parseInt(nodeindex_strings[i])]);
-					}
-
-					if (clip.accessNode == null) {
-						clip.accessNode = new AccessNode(clip, clip.accessWidget);
-					}
-					cast(clip.accessNode, AccessNode).nodeIndex = nodeIndex;
-				}
-				case "tabindex": {
-					clip.accessWidget.tabIndex = Std.parseInt(val);
-				}
-				case "autocomplete": {
-					clip.accessWidget.autocomplete = val;
-
-					if (clip.setReadOnly != null) {
-						clip.setReadOnly(clip.readOnly);
-					}
-				}
-				default: {
-					clip.accessWidget.setAttribute(key, val);
-				}
-			}
+			attributesMap.set(kv[0], kv[1]);
 		}
+
+		clip.accessWidget.addAccessAttributes(attributesMap);
 	}
 
 	public static function setAccessibilityEnabled(enabled : Bool) : Void {
@@ -1351,160 +1253,16 @@ class RenderSupportJSPixi {
 		EnableFocusFrame = show;
 	}
 
-	// ARIA-role to HTML tag map
-	private static var accessRoleMap:Map<String, String> = [
-		"button" => "button",
-		"checkbox" => "button",
-		"radio" => "button",
-		"menu" => "button",
-		"listitem" => "button",
-		"menuitem" => "button",
-		"tab" => "button",
-		"banner" => "header",
-		"main" => "section",
-		"navigation" => "nav",
-		"contentinfo" => "footer",
-		"form" => "form",
-		"textbox" => "input",
-	];
-
 	public static function setAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
 		if (!AccessibilityEnabled) return;
 
 		if (clip.accessWidget == null) {
 			// Create DOM node for access. properties
 			if (clip.nativeWidget != null) {
-				clip.accessWidget = clip.nativeWidget; // Just create a link
+				clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
 				addAccessAttributes(clip, attributes);
 			} else {
-				InvalidateStage();
-
-				var tagName = "div";
-
-				for (kv in attributes) {
-					if (kv[0] == "role" && tagName == "div") {
-						var mapval = accessRoleMap.get(kv[1]);
-
-						if (mapval != null) {
-							tagName = mapval;
-						}
-					} else if (kv[0] == "tag") {
-						tagName = kv[1];
-					}
-				}
-
-				clip.accessWidget = Browser.document.createElement(tagName);
-				if (DebugAccessOrder) {
-					clip.accessWidget.clip = clip;
-				}
-
-				// Add focus notification. Used for focus control
-				clip.accessWidget.addEventListener("focus", function () {
-					clip.emit("focus");
-
-					var parent : DisplayObject = clip.parent;
-
-					if (parent != null) {
-						parent.emitEvent("childfocused", clip);
-					}
-				});
-
-				// Add blur notification. Used for focus control
-				clip.accessWidget.addEventListener("blur", function () {
-					clip.emit("blur");
-				});
-
-				clip.accessWidget.setAttribute("aria-disabled", "false");
-
-				// adding human-meaningful attributes first so they appear earlier for easier reading HTML
-				addAccessAttributes(clip, attributes);
-
-				clip.accessWidget.style.zIndex = RenderSupportJSPixi.zIndexValues.accessButton;
-				if (tagName == "button") {
-					// setting temp. value so it will be easier to read in DOM
-					if (clip.accessWidget.getAttribute("aria-label") == null) {
-						clip.accessWidget.setAttribute("aria-label", "");
-					}
-					clip.accessWidget.classList.add("accessButton");
-				} else if (tagName == "input") {
-					clip.accessWidget.style.position = "fixed";
-					clip.accessWidget.style.cursor = "inherit";
-					clip.accessWidget.style.opacity = 0;
-					clip.accessWidget.setAttribute("readonly", "");
-				} else if (tagName == "form") {
-					clip.accessWidget.onsubmit = function() { return false; }
-				} else {
-					clip.accessWidget.classList.add("accessElement");
-				}
-
-				clip.updateAccessWidget = function() if (clip.accessWidget != null && clip.accessWidget.parentNode != null) {
-					if (cast(clip, DisplayObject).getClipVisible()) {
-						var newZorder : Int = untyped Browser.document.body.zOrder;
-						var transform = clip.accessWidget.parentNode.style.transform != "" && clip.accessWidget.parentNode.clip != null ?
-							clip.worldTransform.clone().append(clip.accessWidget.parentNode.clip.worldTransform.clone().invert()) : clip.worldTransform;
-
-						if (Platform.isIE) {
-							clip.accessWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-								+ 0 + "," + 0 + ")";
-
-							clip.accessWidget.style.left = untyped "" + clip.worldTransform.tx + "px";
-							clip.accessWidget.style.top = untyped "" + clip.worldTransform.ty + "px";
-						} else {
-							clip.accessWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-								+ transform.tx + "," + transform.ty + ")";
-						}
-
-						clip.accessWidget.style.width = untyped "" + clip.width + "px";
-						clip.accessWidget.style.height = untyped "" + clip.height + "px";
-
-						clip.accessWidget.style.display = clip.accessWidget.zOrder >= newZorder ? "block" : "none";
-					} else {
-						clip.accessWidget.style.display = "none";
-					}
-				};
-
-				clip.deleteAccessWidget = function() {
-					// Removed from stage
-
-					if (DebugAccessOrder)
-						PixiStage.off("stagechanged", clip.updateAccessWidget);
-					if (clip.accessWidget != null) {
-						if (clip.accessNode != null && clip.accessNode.parent != null) {
-							AccessNode.removeNode(clip.accessNode.parent);
-						}
-						clip.accessWidget = null;
-
-						clip.addAccessWidget = null;
-						clip.updateAccessWidget = null;
-						clip.deleteAccessWidget = null;
-					};
-				}
-
-				clip.addAccessWidget = function() {
-					if (clip.accessWidget != null) {
-						var parentNode = findParentAccessibleWidget(clip.parent);
-
-						if (clip.accessNode == null) {
-							trace("empty access node");
-							clip.accessNode = new AccessNode(clip, clip.accessWidget);
-						}
-
-						if (parentNode == null) {
-							findTopParent(clip).once("added", clip.addAccessWidget);
-						} else {
-							if (DebugAccessOrder)
-								PixiStage.on("stagechanged", clip.updateAccessWidget);
-
-							clip.once("removed", clip.deleteAccessWidget);
-						}
-					}
-				}
-
-				if (clip.parent != null) {
-					clip.addAccessWidget();
-				} else {
-					clip.once("added", clip.addAccessWidget);
-				}
+				AccessWidget.createAccessWidget(clip, attributes);
 			}
 		} else {
 			addAccessAttributes(clip, attributes);
@@ -1512,9 +1270,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function removeAccessAttributes(clip : Dynamic) : Void {
-		if (clip.deleteAccessWidget != null) {
-			clip.deleteAccessWidget();
-			clip.deleteAccessWidget = null;
+		if (clip.accessWidget != null) {
+			AccessWidget.removeAccessWidget(clip.accessWidget);
 		}
 	}
 
@@ -1535,20 +1292,6 @@ class RenderSupportJSPixi {
 				setShouldPreventFromBlur(child);
 			}
 		}
-	}
-
-	public static function updateAccessDisplay(clip : Dynamic) : Void {
-		if (clip.accessNode != null) {
-			cast(clip.accessNode, AccessNode).updateDisplay();
- 		}
-
- 		if (clip.children != null) {
- 			var children : Array<Dynamic> = clip.children;
-
-			for (child in children) {
-				updateAccessDisplay(child);
-			}
- 		}
 	}
 
 	// native currentClip : () -> flow = FlashSupport.currentClip;
@@ -1792,6 +1535,26 @@ class RenderSupportJSPixi {
 		return 0;
 	}
 
+	private static inline function getAccessElement(clip: DisplayObject) : Element {
+		return if (untyped clip.accessWidget != null) untyped clip.accessWidget.element
+			else if (untyped __instanceof__(clip, NativeWidgetClip) && untyped clip.nativeWidget != null) untyped clip.nativeWidget
+			else null;
+	}
+
+	private static function findAccessibleChild(clip : Dynamic) : Element {
+		var accessElement = getAccessElement(clip);
+		if (accessElement != null) return accessElement;
+
+		var children : Array<DisplayObject> = untyped clip.children;
+		if (children != null)
+			for (childclip in children) {
+				var childElement = findAccessibleChild(childclip);
+				if (childElement != null) return childElement;
+			}
+
+		return null;
+	}
+
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		if (untyped clip.setFocus != null) {
 			untyped clip.setFocus(focus);
@@ -1861,19 +1624,13 @@ class RenderSupportJSPixi {
 			return textfield.addTextInputKeyUpEventFilter(filter);
 	}
 
-	private static inline function getAccessElement(clip: DisplayObject) : Element {
-		return if (untyped clip.accessWidget != null) untyped clip.accessWidget
-			else if (untyped __instanceof__(clip, NativeWidgetClip) && untyped clip.nativeWidget != null) untyped clip.nativeWidget
-			else null;
-	}
-
 	public static function findParentAccessibleWidget(clip : Dynamic) : Element {
 		if (clip == null) {
 			return null;
 		} else if (clip == PixiStage) {
 			return Browser.document.body;
 		} else if (clip.accessWidget != null) {
-			return clip.accessWidget;
+			return clip.accessWidget.element;
 		} else {
 			return findParentAccessibleWidget(clip.parent);
 		}
@@ -1885,20 +1642,6 @@ class RenderSupportJSPixi {
 		} else {
 			return findTopParent(clip.parent);
 		}
-	}
-
-	private static function findAccessibleChild(clip : Dynamic) : Element {
-		var accessElement = getAccessElement(clip);
-		if (accessElement != null) return accessElement;
-
-		var children : Array<DisplayObject> = untyped clip.children;
-		if (children != null)
-			for (childclip in children) {
-				var childElement = findAccessibleChild(childclip);
-				if (childElement != null) return childElement;
-			}
-
-		return null;
 	}
 
 	// native addChild : (parent : native, child : native) -> void
@@ -2763,11 +2506,11 @@ class RenderSupportJSPixi {
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
 				PixiStage.addChild(FullWindowTargetClip);
 
-				var _clip_visible = FullWindowTargetClip.visible;
+				var _clip_visible = untyped FullWindowTargetClip._visible;
 
 				// Make other content invisible to prevent from mouse events
 				for (child in regularStageChildren) {
-					untyped child._flow_visible = child.visible;
+					untyped child._flow_visible = untyped child._visible;
 					child.setClipVisible(false);
 				}
 
@@ -3003,6 +2746,7 @@ class RenderSupportJSPixi {
 
 private class NativeWidgetClip extends FlowContainer {
 	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
 	private var parentNode : Dynamic;
 
 	// Returns metrics to set correct native widget size
@@ -3012,7 +2756,7 @@ private class NativeWidgetClip extends FlowContainer {
 	public function updateNativeWidget() {
 		// Set actual HTML node metrics, opacity etc.
 		if (getClipVisible()) {
-			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
+			var transform = nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
@@ -3049,8 +2793,8 @@ private class NativeWidgetClip extends FlowContainer {
 				nativeWidget.style.position = "fixed";
 				nativeWidget.style.zIndex = RenderSupportJSPixi.zIndexValues.nativeWidget;
 
-				if (untyped this.nativeNode == null) {
-					untyped this.nativeNode = new AccessNode(this, nativeWidget);
+				if (accessWidget == null) {
+					accessWidget = new AccessWidget(this, nativeWidget);
 				}
 
 				RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
@@ -3076,13 +2820,10 @@ private class NativeWidgetClip extends FlowContainer {
 
 	private function deleteNativeWidget() : Void {
 		RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
-		if (nativeWidget != null) {
-			if (untyped this.accessNode != null && untyped this.accessNode.parent != null) {
-				AccessNode.removeNode(untyped this.accessNode.parent);
-			}
-
-			nativeWidget = null;
+		if (accessWidget != null) {
+			AccessWidget.removeAccessWidget(accessWidget);
 		}
+		nativeWidget = null;
 	}
 
 	static private var lastFocusedClip : Dynamic = null;
@@ -3629,7 +3370,7 @@ private class WebClip extends NativeWidgetClip {
 
 	public override function updateNativeWidget() {
 		if (getClipVisible()) {
-			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
+			var transform = nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
@@ -3771,7 +3512,6 @@ private class TextField extends NativeWidgetClip {
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
-	public var accessWidget : Dynamic = null;
 	private var preFocus : Bool = false;
 
 	private function preOnFocus() { // Workaround for IE inputs readonly attribute
@@ -3801,7 +3541,7 @@ private class TextField extends NativeWidgetClip {
 
 	public override function updateNativeWidget() {
 		if (getClipVisible()) {
-			var transform = !Platform.isIE && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
+			var transform = !Platform.isIE && nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
@@ -4158,7 +3898,7 @@ private class TextField extends NativeWidgetClip {
 		nativeWidget.onblur = onBlur;
 
 		if (accessWidget != null) {
-			accessWidget = nativeWidget;
+			accessWidget.element = nativeWidget;
 		}
 
 		nativeWidget.addEventListener("input", onInput);
@@ -4822,6 +4562,7 @@ private class PixiText extends TextField {
 	private function createTextClip(text : String, style : Dynamic) : Text {
 		var textClip = new Text(text, style);
 		untyped textClip._visible = true;
+		untyped textClip.clipVisible = false;
 
 		textClip.scale.x = 1 / textScaleFactor;
 		textClip.scale.y = 1 / textScaleFactor;

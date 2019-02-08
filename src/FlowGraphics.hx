@@ -15,6 +15,7 @@ class FlowGraphics extends Graphics {
 	private var scrollRect : FlowGraphics;
 
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
@@ -115,6 +116,7 @@ class FlowGraphics extends Graphics {
 			mask.graphicsData = graphicsData.map(function (gd) { return gd.clone(); });
 			sprite.mask = mask;
 			untyped sprite._visible = true;
+			untyped sprite.clipVisible = true;
 
 			for (gd in graphicsData) {
 				gd.fillAlpha = 0.0;

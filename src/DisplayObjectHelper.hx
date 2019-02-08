@@ -75,29 +75,45 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function updateClipWorldVisible(clip : DisplayObject) : Void {
-		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (untyped clip._visible && clip.renderable));
+	public static inline function updateAccessDisplay(clip : DisplayObject) : Void {
+		if (untyped clip.accessWidget != null) {
+			untyped clip.accessWidget.updateDisplay();
+ 		} else if (untyped clip.children != null) {
+ 			var children : Array<Dynamic> = untyped clip.children;
+
+			for (child in children) {
+				updateAccessDisplay(child);
+			}
+ 		}
+	}
+
+	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
+		var prevClipVisible = getClipVisible(clip);
+		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
+		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
 
 		if (clip.interactive && !getClipWorldVisible(clip)) {
 			clip.emit("pointerout");
 		}
 
-		if (RenderSupportJSPixi.AccessibilityEnabled) {
-			RenderSupportJSPixi.updateAccessDisplay(clip);
-		}
+		updateAccess = RenderSupportJSPixi.AccessibilityEnabled && updateAccess && prevClipVisible != getClipVisible(clip);
 
 		var children : Array<Dynamic> = untyped clip.children;
 		if (children != null) {
 			for (c in children) {
-				if (getClipWorldVisible(c) != getClipWorldVisible(clip)) {
-					updateClipWorldVisible(c);
+				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || prevClipVisible != getClipVisible(clip)) {
+					updateClipWorldVisible(c, !updateAccess);
 				}
 			}
+		}
+
+		if (updateAccess) {
+			updateAccessDisplay(clip);
 		}
 	}
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
-		return untyped clip._visible && (getClipWorldVisible(clip) || (clip.parent != null && getClipVisible(clip.parent)));
+		return untyped clip.clipVisible;
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
