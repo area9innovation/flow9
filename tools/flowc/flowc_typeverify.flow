@@ -3,6 +3,7 @@ import tools/flowc/fctypeenv;
 import tools/flowc/incremental/fimodule;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fisubtype;
 import tools/flowc/flowc_helpers;
 import tools/flowc/flowc_module;
 
@@ -214,10 +215,22 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			typeverifyFiExp(newEnv, body, onError) && 
 			fold(args, true, \ok, arg -> ok && typeverifyFiType(newEnv, arg.type, onError, expr.start));
 		}
-		FiCall(f, args, type, __):
+		FiCall(f, args, type, __): {
+            fnType = fiExpType(f);
+            callType = FiTypeFunction(map(args, \a -> FiFunArg("", fiExpType(a))), type);
+            if (!isFiSubType(callType, fnType)) {
+                onError(
+                    FcError(
+                        "Wrong type in call. Expected\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, callType, makeSet()),
+                        [FcPosition(env.module.name, expr.start, expr.start)]
+                    )
+                );
+            }
+            
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, f, onError) && 
 			fold(args, true, \ok, arg -> ok && typeverifyFiExp(env, arg, onError));
+        }
 		FiVar(name, type, s):
 			typeverifyFiVar(env, expr, onError);
 		FiLet(x, tp, e1, e2, type, __): {
@@ -426,7 +439,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 			);
 			argsNumIsOk = (
 				c.struct == "default" ||
-				length(c.argNames) == 0 || // This exception is added because unions in switch cases always produce structs with no args
+				isSome(typeverifyName2Union(env, c.struct)) || // This exception is added because unions in switch cases always produce structs with no args
 				typeverifyNumberOfStructArgs(env, c.struct) == length(c.argNames)
 			);
 			if (!argsNumIsOk) {
@@ -536,6 +549,30 @@ typeverifyName2StructOrUnion(env : TypeVerifyEnv, name : string) -> Maybe<FcFiSt
 				None(): {
 					switch (lookupTree(env.module.moduleStructsUnions, name)) {
 						Some(su): Some(su);
+						None(): None();
+					}
+				}
+			}
+		}
+	}
+}
+
+typeverifyName2Union(env : TypeVerifyEnv, name : string) -> Maybe<FcFiStructOrUnion> {
+	struct : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.structs, name);
+	switch (struct) {
+		Some(s): None();
+		None(): {
+			union : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.unions, name);
+			switch (union) {
+				Some(u): Some(u);
+				None(): {
+					switch (lookupTree(env.module.moduleStructsUnions, name)) {
+						Some(su): {
+							switch (su) {
+								FiTypeStruct(__,__, args,__): None();
+								FiTypeUnion(__,__,__,__): Some(su);
+							}
+						}
 						None(): None();
 					}
 				}

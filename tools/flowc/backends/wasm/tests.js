@@ -12,4 +12,15 @@
 	}
 	function test5_2(f, res) { f(function(s) { res(s); }); }	
 	function test5_3(f, dbl) { f(dbl + 0.5); }
-
+	
+	function test5_4(data) {
+		// just return data back
+		// console.log(data);
+		return data;
+	}
+	
+	function test_type(data) {
+		// just return data back
+		// console.log('got: ' + data);
+		return [data];
+	}

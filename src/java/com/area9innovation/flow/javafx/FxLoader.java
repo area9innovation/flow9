@@ -14,7 +14,6 @@ import javafx.stage.Stage;
 import java.lang.reflect.Constructor;
 
 public class FxLoader extends Application {
-	private FlowRuntime runtime;
 	private FxNative natives;
 	private FxRenderSupport renderer;
 
@@ -24,25 +23,23 @@ public class FxLoader extends Application {
 		if (flowapp == null)
 			flowapp = "javagen";
 		final List<String> params = this.getParameters().getRaw();
-		String[] params1 = params.toArray(new String[params.size()]);
+		String[] params1 = params.toArray(new String[0]);
 
 		Class cl = Class.forName(flowapp+".Main");
 
 		Constructor constructor =
-			cl.getConstructor(new Class[]{String[].class});
-		runtime = (FlowRuntime)constructor.newInstance((Object)params1);
+			cl.getConstructor(String[].class);
+		FlowRuntime runtime = (FlowRuntime) constructor.newInstance((Object) params1);
 
 		natives = new FxNative(this);
-		renderer = new FxRenderSupport(this, primaryStage);
+		renderer = new FxRenderSupport(primaryStage);
 
-		runtime.start(new IHostFactory() {
-			public NativeHost allocateHost(Class<? extends NativeHost> type) {
-				if (type.isAssignableFrom(FxNative.class))
-					return natives;
-				if (type.isAssignableFrom(FxRenderSupport.class))
-					return renderer;
-				return null;
-			}
+		runtime.start(type -> {
+			if (type.isAssignableFrom(FxNative.class))
+				return natives;
+			if (type.isAssignableFrom(FxRenderSupport.class))
+				return renderer;
+			return null;
 		});
 	}
 

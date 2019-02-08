@@ -887,8 +887,8 @@ class RenderSupportJSPixi {
 		if (backingStoreRatio != PixiRenderer.resolution) {
 			createPixiRenderer();
 		} else {
-			var win_width = e.target.innerWidth + 1;
-			var win_height = e.target.innerHeight + 1;
+			var win_width = e.target.innerWidth;
+			var win_height = e.target.innerHeight;
 
 			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
 				// Still send whole window size - without reducing by screen kbd
@@ -1822,6 +1822,10 @@ class RenderSupportJSPixi {
 		textfield.setTextInputType(type);
 	}
 
+	public static function setTextInputStep(textfield : TextField, step : Float) : Void {
+		textfield.setTextInputStep(step);
+	}
+
 	public static function setTabIndex(textfield : TextField, index : Int) : Void {
 		textfield.setTabIndex(index);
 	}
@@ -1934,6 +1938,8 @@ class RenderSupportJSPixi {
 
 	// Returns next access element after currentChild
 	private static function getNextAccessElement(parent : Element, currentChild : Dynamic) : Element {
+		// This is about 444 ms out of 8000 ms in complicated renderings
+		// In 3400 out of 3445 cases, we return null.
 		return Lambda.find(untyped __js__("Array.from(parent.children)"), function(childclip : Dynamic) {
 
 			if (currentChild != childclip && currentChild.nodeindex) {
@@ -2047,6 +2053,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addNode(parent : Dynamic, child : Dynamic) : Void {
+		// This is about 299 ms for itself out of 8000 ms in complicated renderings
+		// - with children, it is 1200 ms out of 8000 ms
 		try {
 			var nextAccessChild = getNextAccessElement(parent, child);
 			var previousParentNode = child.parentNode;
@@ -2071,6 +2079,7 @@ class RenderSupportJSPixi {
 					parent.insertBefore(child, nextAccessChild);
 				}
 			} else {
+				// This is the case we get in 3400 out of 3445 cases
 				if (DebugAccessOrder && parent != Browser.document.body && !parentNodeIndex(parent, child)) {
 					trace("Wrong accessWidget parentNode nodeindex");
 					trace(parent);
@@ -2140,6 +2149,13 @@ class RenderSupportJSPixi {
 
 	public static function deferUntilRender(fn : Void -> Void) : Void {
 		PixiStage.once("drawframe", fn);
+	}
+
+	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
+		PixiStage.once("drawframe", fn);
+		return function() {
+			PixiStage.off("drawframe", fn);
+		};
 	}
 
 	public static function setClipAlpha(clip : DisplayObject, a : Float) : Void {
@@ -3920,6 +3936,7 @@ private class TextField extends NativeWidgetClip {
 	private var style : Dynamic = {};
 
 	private var type : String = "text";
+	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
 	private var fieldWidth : Float = -1.0;
 	private var fieldHeight : Float = -1.0;
@@ -4031,6 +4048,7 @@ private class TextField extends NativeWidgetClip {
 		if (isInput()) {
 			setScrollRect(0, 0, 0, 0);
 			nativeWidget.type = type;
+			if (type == "number") nativeWidget.step = step;
 			if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != "")
 				nativeWidget.autocomplete = accessWidget.autocomplete
 			else if (type == "password" && nativeWidget.autocomplete == "")
@@ -4246,6 +4264,11 @@ private class TextField extends NativeWidgetClip {
 
 	public function setTextInputType(type : String) : Void {
 		this.type = type;
+		updateNativeWidgetStyle();
+	}
+
+	public function setTextInputStep(step : Float) : Void {
+		this.step = step;
 		updateNativeWidgetStyle();
 	}
 

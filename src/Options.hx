@@ -406,6 +406,8 @@ class Options
 						//ignore
 					} else if (opt == "flowcompiler") {
 						//ignore
+					} else if (opt == "server") {
+						//ignore
 					} else if (StringTools.startsWith(opt, "objsync")) {
 						//ignore, implemented in new compiler
 					} else {

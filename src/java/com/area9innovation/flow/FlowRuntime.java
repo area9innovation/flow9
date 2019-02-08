@@ -38,7 +38,7 @@ public abstract class FlowRuntime {
 			if (host_factory != null)
 				host = (T)host_factory.allocateHost(cls);
 			if (host == null)
-				host = cls.newInstance();
+				host = cls.getDeclaredConstructor().newInstance();
 
 			if (!cls.isInstance(host))
 				throw new RuntimeException("Invalid host: "+cls.getName()+" expected, "+host.getClass().getName()+" allocated");
@@ -88,7 +88,7 @@ public abstract class FlowRuntime {
 			if (t1 != RuntimeType.UNKNOWN && t2 != RuntimeType.UNKNOWN)
 				return t1.compareTo(t2);
 
-			return new Integer(o1.getClass().hashCode()).compareTo(o2.getClass().hashCode());
+			return Integer.valueOf(o1.getClass().hashCode()).compareTo(o2.getClass().hashCode());
 		}
 		else if (o2 instanceof Comparable)
 			return 1;
@@ -115,7 +115,7 @@ public abstract class FlowRuntime {
 		if (o1.equals(o2))
 			return 0;
 
-		return new Integer(o1.hashCode()).compareTo(o2.hashCode());
+		return Integer.valueOf(o1.hashCode()).compareTo(o2.hashCode());
 	}
 
 	public static String toString(Object value) {
@@ -240,35 +240,35 @@ public abstract class FlowRuntime {
 
 	public static Number negate(Object o1) {
 		if (o1 instanceof Double)
-			return new Double(-((Number)o1).doubleValue());
-		return new Integer(-((Number)o1).intValue());
+			return Double.valueOf(-((Number)o1).doubleValue());
+		return Integer.valueOf(-((Number)o1).intValue());
 	}
 	public static Object add(Object o1, Object o2) {
 		if (o1 instanceof String || o2 instanceof String)
 			return o1.toString() + o2.toString();
 		if (o1 instanceof Double || o2 instanceof Double)
-			return new Double(((Number)o1).doubleValue() + ((Number)o2).doubleValue());
-		return new Integer(((Number)o1).intValue() + ((Number)o2).intValue());
+			return Double.valueOf(((Number)o1).doubleValue() + ((Number)o2).doubleValue());
+		return Integer.valueOf(((Number)o1).intValue() + ((Number)o2).intValue());
 	}
 	public static Number sub(Object o1, Object o2) {
 		if (o1 instanceof Double || o2 instanceof Double)
-			return new Double(((Number)o1).doubleValue() - ((Number)o2).doubleValue());
-		return new Integer(((Number)o1).intValue() - ((Number)o2).intValue());
+			return Double.valueOf(((Number)o1).doubleValue() - ((Number)o2).doubleValue());
+		return Integer.valueOf(((Number)o1).intValue() - ((Number)o2).intValue());
 	}
 	public static Number mul(Object o1, Object o2) {
 		if (o1 instanceof Double || o2 instanceof Double)
-			return new Double(((Number)o1).doubleValue() * ((Number)o2).doubleValue());
-		return new Integer(((Number)o1).intValue() * ((Number)o2).intValue());
+			return Double.valueOf(((Number)o1).doubleValue() * ((Number)o2).doubleValue());
+		return Integer.valueOf(((Number)o1).intValue() * ((Number)o2).intValue());
 	}
 	public static Number div(Object o1, Object o2) {
 		if (o1 instanceof Double || o2 instanceof Double)
-			return new Double(((Number)o1).doubleValue() / ((Number)o2).doubleValue());
-		return new Integer(((Number)o1).intValue() / ((Number)o2).intValue());
+			return Double.valueOf(((Number)o1).doubleValue() / ((Number)o2).doubleValue());
+		return Integer.valueOf(((Number)o1).intValue() / ((Number)o2).intValue());
 	}
 	public static Number mod(Object o1, Object o2) {
 		if (o1 instanceof Double || o2 instanceof Double)
-			return new Double(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
-		return new Integer(((Number)o1).intValue() % ((Number)o2).intValue());
+			return Double.valueOf(((Number)o1).doubleValue() % ((Number)o2).doubleValue());
+		return Integer.valueOf(((Number)o1).intValue() % ((Number)o2).intValue());
 	}
 
 	public String[] getUrlArgs() {
