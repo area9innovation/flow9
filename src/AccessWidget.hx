@@ -166,22 +166,17 @@ class AccessWidgetTree {
 		var previousChild = getChild(child.id);
 
 		if (previousChild != null) {
-			if (previousChild.accessWidget != null) {
-				if (child.accessWidget != null && child.accessWidget.nodeindex != null) {
-					children.remove(previousChild.id);
+			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
+				if (child.accessWidget != null && child.accessWidget.nodeindex != null && child.accessWidget.nodeindex.length > 0) {
 					previousChild.id = childrenSize;
-					children.set(previousChild.id, previousChild);
-
-					childrenSize++;
-					children.set(child.id, child);
-					child.parent = this;
 				} else {
+					child.parent = null;
 					child.id = childrenSize;
-
-					childrenSize++;
-					children.set(child.id, child);
-					child.parent = this;
 				}
+
+				childrenSize++;
+				children.set(child.id, child);
+				child.parent = this;
 			} else {
 				previousChild.accessWidget = child.accessWidget;
 			}
@@ -619,7 +614,7 @@ class AccessWidget {
 		}
 	}
 
-	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element) : Bool {
+	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element) : Bool {
 		if (tree == null) {
 			tree = AccessWidget.tree;
 		}
@@ -643,11 +638,8 @@ class AccessWidget {
 
 			if (accessWidget != null && accessWidget.element != null) {
 				if (child.changed) {
-					var nextChild = tree.children.get(key + 1);
-
-					if (nextChild != null && nextChild.accessWidget != null && nextChild.accessWidget.element != null && nextChild.accessWidget.element.parentNode == parent) {
-						// TODO: Improve
-						parent.insertBefore(accessWidget.element, nextChild.accessWidget.element);
+					if (previousElement != null && previousElement.nextSibling != null) {
+						parent.insertBefore(accessWidget.element, previousElement.nextSibling);
 					} else {
 						parent.appendChild(accessWidget.element);
 					}
@@ -655,9 +647,10 @@ class AccessWidget {
 					child.changed = false;
 				}
 
-				updateAccessTree(child, accessWidget.element);
+				previousElement = accessWidget.element;
+				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild);
 			} else {
-				updateAccessTree(child, parent);
+				updateAccessTree(child, parent, previousElement);
 			}
 		}
 
