@@ -17,6 +17,7 @@ QGLTextEdit::QGLTextEdit(QGLRenderSupport * owner_, QWidget *parent, GLTextClip 
     cursor_width = 2;
     cursor_color = QColor(0, 0, 0, 255);
     real_text = unicode2qt(text_clip->getPlainText());
+    setText(real_text);
 
     onStateChange();
 
@@ -121,10 +122,7 @@ void QGLTextEdit::keyPressEvent(QKeyEvent *event)
 {
     FlowKeyEvent flowKeyEvent = owner->keyEventToFlowKeyEvent(FlowKeyDown, event);
 
-    if ((edit_multiline || flowKeyEvent.code != 13) && text_clip && text_clip->keyEventFilteredByFlowFilters(flowKeyEvent) &&
-        (max_chars == -1
-            || QTextEdit::toPlainText().length() < max_chars
-            || event->text().length() == 0)) {
+    if ((edit_multiline || flowKeyEvent.code != 13) && text_clip && text_clip->keyEventFilteredByFlowFilters(flowKeyEvent)) {
         QTextEdit::keyPressEvent(event);
     }
 
@@ -215,7 +213,7 @@ QString QGLTextEdit::toPlainText()
     QString text = QTextEdit::toPlainText();
 
     for (int it = 0; it != text.length(); ++it){
-        if (text_clip->inputType() == "password" && text[it] == QChar(0x2022)) {
+        if (text_clip->inputType() == "password" && text[it] == QChar(0x2022) && real_text.length() > it) {
             text[it] = real_text[it];
         } else {
             if (real_text.length() < text.length()) {
@@ -231,7 +229,7 @@ QString QGLTextEdit::toPlainText()
     return real_text;
 }
 
-void QGLTextEdit::filterText(QString &text)
+void QGLTextEdit::filterText(QString text)
 {
     int pos = QTextEdit::textCursor().position();
 
@@ -241,11 +239,30 @@ void QGLTextEdit::filterText(QString &text)
 
     if (text_clip) {
         text = unicode2qt(text_clip->textFilteredByFlowFilters(qt2unicode(text)));
+
+        if (text_clip->isNumeric()) {
+            QString temptext = text;
+            text = "";
+            int i = 0;
+
+            for (QChar c : temptext) {
+                if (c.isDigit()) {
+                    text += c;
+                } else if (i > 0 && c == ".") {
+                    i = -temptext.length();
+                    text += c;
+                }
+
+                i++;
+            }
+        }
     }
 
     if (!edit_multiline) {
         text = text.remove('\n');
     }
+
+    real_text = text;
 
     if (text_clip->inputType() == "password") {
         text = QString(text.length(), QChar(0x2022));
@@ -385,7 +402,7 @@ void QGLTextEdit::resetCursorBlink()
     QGLTextEdit::update();
 }
 
-void QGLTextEdit::setText(QString &text)
+void QGLTextEdit::setText(QString text)
 {
     filterText(text);
     onTextChange();

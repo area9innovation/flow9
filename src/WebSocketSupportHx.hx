@@ -4,13 +4,12 @@ class WebSocketSupportHx {
 
 	public static function open(
 		url : String,
-		protocols : Array<String>,
 		onClose : Int -> String -> Bool -> Void,
 		onError : String -> Void,
 		onMessage : String -> Void,
-		onOpen : String -> Void) : Dynamic {
+		onOpen : Void -> Void) : Dynamic {
 
-		var webSocket = new WebSocket(url, protocols);
+		var webSocket = new WebSocket(url);
 		webSocket.onclose = function (closeEvent) {
 			onClose(closeEvent.code, closeEvent.reason, closeEvent.wasClean);
 		};
@@ -25,7 +24,7 @@ class WebSocketSupportHx {
 			onMessage(msgEvent.data);
 		};
 		webSocket.onopen = function (openEvent) {
-			onOpen(webSocket.protocol);
+			onOpen();
 		};
 
 		return webSocket;
@@ -43,8 +42,8 @@ class WebSocketSupportHx {
 		return;
 	}
 
-	public static function getBufferedAmount(webSocket : Dynamic) : Int {
-		return webSocket.bufferedAmount;
+	public static function hasBufferedData(webSocket : Dynamic) : Bool {
+		return webSocket.bufferedAmount > 0;
 	}
 
 }

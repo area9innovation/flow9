@@ -1,0 +1,107 @@
+import ds/hashset;
+import math/hash;
+import math/stringmath;
+
+random_string() -> string {
+	len = cast(random() * 20.0 : double -> int) + 1;
+	symbs = arrayRepeatDeferred(\ -> 
+		33 + cast(cast((126 - 33) : int -> double) * random() : double -> int),
+		len
+	);
+	fold(symbs, "", \acc, code -> acc + fromCharCode(code))
+}
+
+random_int() -> int {
+	cast(random() * 100000000.0 - 50000000.0 : double -> int);
+}
+
+Sample(
+	pairs : [Pair<?, ?>],
+	toRemove : [?],
+	toLookup : [?]
+);
+
+benchmarkPass(size : int, iters : int, random_gen : () -> ?, hash : (?) -> int) -> void {
+	println("---------------------");
+	println("SAMPLE OF SIZE: " + i2s(size) + " ITERS: " + i2s(iters));
+	
+	testSet = mapRange(iters,
+		\__ -> {
+			sample = mapRange(size, \__ -> Pair(random_gen(), random_gen()));
+			toRemove = mapRange(size / 3, \__ -> random_gen());
+			toLookup = mapRange(size, \__ -> random_gen());
+			Sample(sample, toRemove, toLookup)
+		}
+	);
+	
+	tree_time_start1 = timestamp();
+	fori(0, iters - 1, 
+		\i -> {pairs2tree(testSet[i].pairs); {} }
+	);
+	tree_time1 = (timestamp() - tree_time_start1) / 1000.0;
+	
+	loadFactor = 0.75;
+	hash_time_start1 = timestamp();
+	fori(0, iters - 1, 
+		\i -> {pairs2hashMapWithLoadFactor(testSet[i].pairs, hash, loadFactor); {} }
+	);
+	hash_time1 = (timestamp() - hash_time_start1) / 1000.0;
+	
+	println("HASH CREATION IS FASTER: " + d2st(tree_time1 / hash_time1, 2) + " TIMES");
+	
+	tree_time_start11 = timestamp();
+	trees = mapRange(iters, \i -> pairs2tree(testSet[i].pairs));
+	tree_time11 = (timestamp() - tree_time_start11) / 1000.0;
+
+	hash_time_start11 = timestamp();
+	hashMaps = mapRange(iters, \i -> pairs2hashMapWithLoadFactor(testSet[i].pairs, hash, loadFactor));
+	hash_time11 = (timestamp() - hash_time_start11) / 1000.0;
+	println("HASH ADDING IS FASTER: " + d2st(tree_time11 / hash_time11, 2) + " TIMES");
+	
+	tree_time_start2 = timestamp();
+	tree1 = mapi(
+		trees,
+		\i, tree -> fold(testSet[i].toRemove, tree, \acc, toRemove -> removeFromTree(acc, toRemove))
+	);
+	tree_time2 = (timestamp() - tree_time_start2) / 1000.0;
+	
+	hash_time_start2 = timestamp();
+	hashMap1 = mapi(
+		hashMaps,
+		\i, hashMap -> fold(testSet[i].toRemove, hashMap, \acc, toRemove -> removeFromHashMap(acc, toRemove))
+	);
+	hash_time2 = (timestamp() - hash_time_start2) / 1000.0;
+
+	println("HASH REMOVING IS FASTER: " + d2st(tree_time2 / hash_time2, 2) + " TIMES");
+	
+	tree_time_start3 = timestamp();
+	fori(0, iters - 1, \i ->
+		iter(testSet[i].toLookup, \key -> {lookupTree(trees[i], key); {} })
+	);
+	tree_time3 = (timestamp() - tree_time_start3) / 1000.0;
+	
+	hash_time_start3 = timestamp();
+	fori(0, iters - 1, \i ->
+		iter(testSet[i].toLookup, \key -> {lookupHashMap(hashMaps[i], key); {} })
+	);
+	hash_time3 = (timestamp() - hash_time_start3) / 1000.0;
+
+	println("HASH LOOKUP IS FASTER: " + d2st(tree_time3 / hash_time3, 2) + " TIMES");
+}
+
+benchmark(size : int, iters : int, random_gen : () -> ?, hash : (?) -> int) -> void {
+	benchmarkPass(size, iters, random_gen, hash);
+	if (size > 10) {
+		benchmark(size / 10, iters * 10, random_gen, hash);
+	}
+}
+
+main() -> int {
+	println("BENCHMARK INT -> INT MAPS");
+	benchmark(1000000, 1, random_int, idfn);
+	println("======================");
+	
+	println("BENCHMARK STRING -> STRING MAPS");
+	benchmark(1000000, 1, random_string, fastHashString);
+	0
+}

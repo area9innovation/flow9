@@ -9,8 +9,8 @@ echo "When switching between QT versions, you have to manually clean up download
 # - installer may start putting QT into different folder internally
 # - Some libraries may become deprecated and get removed
 # - libmysqlclient may get fixed rendering manual mysql driver compiling obsolete
-QT_VERSION=5.10.0
-QT_MAJOR_VERSION=5.10
+QT_VERSION=5.12.0
+QT_MAJOR_VERSION=5.12
 QT_INSTALLER=qt-opensource-linux-x64-${QT_VERSION}.run
 
 DOWNLOADS=downloads

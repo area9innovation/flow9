@@ -142,6 +142,7 @@ protected:
     bool TabOrderingEnabled = false;
     int exitCode;
     bool gl_fake_touch;
+
     void initializeGL();
     void resizeGL(int w, int h);
     void paintGL();
@@ -193,6 +194,8 @@ protected:
     static void readFile_native(ByteCodeRunner* runner, StackSlot*, QFile *file, QUrl url, QMimeDatabase *mimeTypes, QMimeType type, QRegExp *mimeRegExp, uint16_t offset);
 
     void setFocus(GLClip *clip, bool focus);
+    void focusInEvent(QFocusEvent *event);
+    void focusOutEvent(QFocusEvent *event);
 
     const QString getFullResourcePath(QString path);
 

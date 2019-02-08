@@ -422,6 +422,7 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
 #ifdef FLOW_INAPP_PURCHASE
     InAppPurchases = new AppleStorePurchase(Runner);
 #endif
+    WebSocketSupport = new iosWebSocketSupport(Runner);
     FSInterface = new FileSystemInterface(Runner);
    
     NSString * resources_path = [[[NSProcessInfo processInfo] environment] valueForKey:@"MEDIA_PATH"];

@@ -1,6 +1,7 @@
 #!/bin/bash
+set -e
 
-export QT_VERSION=5.10.0
+export QT_VERSION=5.12.0
 
 sed "s|%QT_VERSION%|${QT_VERSION}|" Dockerfile.template > Dockerfile
 

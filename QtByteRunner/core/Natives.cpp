@@ -306,6 +306,8 @@ StackSlot ByteCodeRunner::addPlatformEventListener(RUNNER_ARGS)
     std::string event_str = encodeUtf8(RUNNER->GetString(event));
     PlatformEvent e = PlatformEventUnknown;
 
+    if (event_str == "idle") e = PlatformApplicationUserIdle; else
+    if (event_str == "active") e = PlatformApplicationUserActive; else
     if (event_str == "resume") e = PlatformApplicationResumed; else
     if (event_str == "suspend") e = PlatformApplicationSuspended; else
     if (event_str == "online") e = PlatformNetworkOnline; else

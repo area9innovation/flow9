@@ -1,6 +1,6 @@
 import fusion_utils;
 import material/internal/material_clickable;
-import material/measing;
+import material/internal/material_shadow;
 import material/internal/material_mutable;
 
 // Internal to material
@@ -8,7 +8,7 @@ import material/internal/material_mutable;
 export {
 	MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, rippleType : Transform<RippleType>) -> Tropic;
 	MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
-		rippleType : Transform<RippleType>, highlighted : Transform<bool>, roundedCorners : bool) -> Tropic;
+		rippleType : Transform<RippleType>, highlighted : Transform<bool>, component : string) -> Tropic;
 
 	MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic;
 
@@ -26,12 +26,12 @@ MRippleOnDownDefault2T(manager : MaterialManager, parent : MFocusGroup, content 
 		const(defaultRippleOpacity),
 		rippleType,
 		const(false),
-		false
+		parent.name
 	)
 }
 
 MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, color : Transform<MColor>, opacity : Transform<double>,
-	rippleType : Transform<RippleType>, highlighted : Transform<bool>, roundedCorners : bool) -> Tropic {
+	rippleType : Transform<RippleType>, highlighted : Transform<bool>, component : string) -> Tropic {
 	down = make(false);
 	point = make(zeroPoint);
 
@@ -46,7 +46,7 @@ MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropi
 			MRippleOpacity(opacity),
 			MRippleType(rippleType),
 			MRippleHighlight(fselect3(highlighted, color, opacity, \h, c, co -> if (h) Some([MFill(c), FillOpacity(co)]) else None())),
-			MRippleRoundedCorners(roundedCorners),
+			MRippleShape(component),
 			MRippleOverlay(true)
 		]
 	)
@@ -61,7 +61,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 		!isFConst(opacity) || fgetValue(opacity) != 0.)) {
 		point = extractStruct(style, MRipplePosition(const(zeroPoint))).position;
 		color = extractStruct(style, MRippleColor(const(defaultRippleColor))).color;
-		roundedCorners = extractStruct(style, MRippleRoundedCorners(false)).rounded;
+		shape = extractStruct(style, MRippleShape("")).component;
 		overlay = extractStruct(style, MRippleOverlay(true)).overlay;
 
 		TransformTAcc2(\t2a -> {
@@ -85,7 +85,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 			box = eitherMap(rippleWH, \b -> b.wh, fwidthheight(b1.metrics.width, b1.metrics.height));
 
 			egrowth = makeMEasing(0.6, mStandartCurve, manager.manager.deltaTimer);
-			efade = makeMEasing(0.6, mStandartCurve, manager.manager.deltaTimer);
+			efade = makeMEasing(0.2, mStandartCurve, manager.manager.deltaTimer);
 
 			startingPoint = ref fgetValue(point);
 
@@ -116,7 +116,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 					box,
 					egrowth.percent,
 					\ro : Pair<(box : WidthHeight, click : Point) -> double, (box : WidthHeight, click : Point, radius : double) -> Point>, b : WidthHeight, pradius : double ->
-						ro.first(b, ^startingPoint) * pradius
+						ro.first(b, ^startingPoint) * pradius * (if (shape != "") 2.0 else 1.0)
 				);
 
 			ripplePosition : Transform<Point> =
@@ -159,7 +159,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 										\hlt -> {
 											b = fgetValue(box);
 											p = fgetValue(point);
-											r = ro.first(b, p);
+											r = ro.first(b, p) * (if (shape != "") 2.0 else 1.0);
 											tr = ro.second(b, p, r);
 
 											FTranslate(
@@ -176,10 +176,13 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 					false
 				)
 				|> (\f ->
-					if (roundedCorners && !js)
-						FMask(f, FMutable(fselect(box, FLift(\wh -> FGraphics(perfectRoundedRect(wh.width, wh.height, 2.), [Fill(black)])))))
-					else
+					if (shape != "") {
+						container = FMaterialShape(parent, [Fill(black)], shape);
+
+						FMask(f, FMutable(fselect(box, container |> FLift)))
+					} else {
 						FCrop(zero, zero, wd, hgt, f)
+					}
 				)
 			};
 
@@ -231,7 +234,9 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 							nextDistinct(showRipple, true);
 							[]
 						} else {
-							[interruptibleTimer(600, \ -> next(showRipple, false))]
+                            if (getValue(showRipple)) {
+    							[interruptibleTimer(200, \ -> next(showRipple, false))]
+                            } else []
 						}
 					})()
 				)

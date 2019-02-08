@@ -219,6 +219,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         Log.i(Utils.LOG_TAG, "Tmp dir path = " + tmp_dir.getAbsolutePath());
              
         wrapper.setDPI((int)((metrics.xdpi + metrics.ydpi) / 2.0f));
+        wrapper.setDensity(metrics.density);
         wrapper.setScreenWidthHeight(metrics.widthPixels, metrics.heightPixels);
         
         Log.i(Utils.LOG_TAG, "Display DPI = " + metrics.densityDpi);
@@ -347,7 +348,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         FlowGeolocationAPI flowGeolocation = new FlowGeolocationAPI(this, wrapper, flowGooglePlayServices, gelocationPermissionGranted);
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
-        
+
+        FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
+        wrapper.setFlowWebSocketSupport(flowWebSocketSupport);
+
         createContentView();
         
         menu_anchor = new View(this);
