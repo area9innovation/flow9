@@ -149,7 +149,12 @@ class AccessWidgetTree {
 					accessWidget.element.setAttribute("nodeindex", Std.string(accessWidget.nodeindex));
 				}
 
-				accessWidget.element.style.display = zorder >= AccessWidget.tree.zorder && accessWidget.clip.getClipVisible() ? "block" : "none";
+				if (zorder >= AccessWidget.tree.zorder && accessWidget.clip.getClipVisible()) {
+					accessWidget.element.style.display = "block";
+				} else {
+					accessWidget.element.style.display = "none";
+					return;
+				}
 			}
 		}
 
@@ -354,6 +359,10 @@ class AccessWidget {
 		if (this.nodeindex != nodeindex) {
 			this.nodeindex = nodeindex;
 
+			if (element != null) {
+				element.setAttribute("nodeindex", Std.string(nodeindex));
+			}
+
 			if (clip.parent != null) {
 				addAccessWidget(this);
 			}
@@ -534,6 +543,11 @@ class AccessWidget {
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
 				case "tabindex" : tabindex = Std.parseInt(attributes.get(key));
 				case "autocomplete" : autocomplete = attributes.get(key);
+				default : {
+					if (element != null) {
+						element.setAttribute(key, attributes.get(key));
+					}
+				}
 			}
 		}
 	}
@@ -575,18 +589,23 @@ class AccessWidget {
 	}
 
 	private static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
-		if (parent != null) {
-			if (untyped parent.accessWidget != null) {
-				if (untyped parent.accessWidget.parent == null) {
-					addAccessWidget(untyped parent.accessWidget);
-				}
+		if (untyped parent.accessWidget != null) {
+			trace(untyped parent.accessWidget.nodeindex);
 
-				untyped parent.accessWidget.parent.addChild(new AccessWidgetTree(untyped parent.accessWidget.parent.childrenSize, accessWidget));
-			} else {
-				addAccessWidgetWithoutNodeindex(accessWidget, parent.parent);
+			if (untyped parent.accessWidget.parent == null) {
+				addAccessWidget(untyped parent.accessWidget);
 			}
-		} else {
+
+			untyped parent.accessWidget.parent.addChild(new AccessWidgetTree(untyped parent.accessWidget.parent.childrenSize, accessWidget));
+		} else if (parent == RenderSupportJSPixi.PixiStage) {
 			tree.addChild(new AccessWidgetTree(tree.childrenSize, accessWidget));
+		} else if (parent.parent == null) {
+			parent.onAdded(function() {
+				addAccessWidget(accessWidget);
+				return function() {};
+			});
+		} else {
+			addAccessWidgetWithoutNodeindex(accessWidget, parent.parent);
 		}
 	}
 
