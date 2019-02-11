@@ -261,8 +261,7 @@ void GLTextClip::layoutTextWrapLines()
         extent->char_idx = cur_char;
         extent->layout.reset();
 
-        // FIXME: memory consuming, maybe redo via iterators.
-        unicode_string ctext = GLTextLayout::getLigatured(extent->text);
+        unicode_string ctext = extent->text;
         GLFont::Ptr font = extent->format.font;
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
@@ -271,7 +270,11 @@ void GLTextClip::layoutTextWrapLines()
         if (input_type == "password")
             ctext = unicode_string(ctext.length(), 0x2022);
 
+        // FIXME: memory consuming, maybe redo via iterators.
+        ctext = GLTextLayout::getLigatured(ctext);
+
         // Word-wrapping loop:
+        cout << endl << "Extent: " << i << endl;
         do {
             if (already_split || prev_newline) {
                 text_lines.push_back(Line());
@@ -283,15 +286,25 @@ void GLTextClip::layoutTextWrapLines()
 
             GLTextLayout::Ptr layout = font->layoutTextLine(ctext, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
             unicode_string layout_text = layout->getText();
+            cout << "layout text (" << layout_text.size() << ")" << endl;
+            unicode_string::iterator lti = layout_text.begin();
+            while (lti != layout_text.end()) cout << *(lti++) << "\t";
+            cout << endl;
+            cout << "ctext (" << ctext.size() << ")" << endl;
+            unicode_string::iterator cti = ctext.begin();
+            while (cti != ctext.end()) cout << *(cti++) << "\t";
+            cout << endl;
 
             // Wrapping splits
             if (layout_text.size() < ctext.size()) {
+                cout << "layout_text.size("<<layout_text.size()<<") < ctext.size("<<ctext.size()<<")" << endl;
                 unsigned lsize = 0;
                 bool on_new_line = line.extents.empty();
 
                 already_split = true;
 
                 if (layout_text.size() > 0) {
+                    cout << "layout_text.size("<<layout_text.size()<<") > 0" << endl;
                     int wpos = layout_text.size()-1;
                     for (; wpos >= 0; --wpos) {
                         unicode_char c = layout_text[wpos];
@@ -299,11 +312,18 @@ void GLTextClip::layoutTextWrapLines()
                             break;
                     }
 
-                    if (wpos >= 0)
+                    if (wpos >= 0) {
+                        cout << "wpos >= 0" << endl;
                         lsize = wpos+1;
-                    else if (on_new_line)
+                    }
+                    else if (on_new_line) {
+                        cout << "on_new_line" << endl;
                         lsize = layout_text.size();
+                    } else {
+                        cout << "not on_new_line" << endl;
+                    }
                 } else if (on_new_line) {
+                    cout << "lsize = 1" << endl;
                     lsize = 1;
                 }
 
@@ -316,9 +336,12 @@ void GLTextClip::layoutTextWrapLines()
                 unicode_string new_text = ctext.substr(0, lsize);
                 ctext = ctext.substr(lsize);
 
-                if (lsize != layout_text.size())
+                if (lsize != layout_text.size()) {
+                    cout << "lsize(" << lsize << ") != layout_text.size("<<layout_text.size()<<")" << endl;
                     layout = font->layoutTextLine(new_text, fsize, -1.0f, fspacing, (!is_input || multiline) && crop_words, rtl);
+                }
             } else {
+                cout << "ctext.clear()" << endl;
                 ctext.clear();
             }
 
@@ -352,6 +375,14 @@ void GLTextClip::layoutTextWrapLines()
             cidx_it = text_char_index.insert(cidx_it, char_ref);
 
             cur_char += real_extent->text.size() + (real_extent->newline ? 1 : 0);
+
+            T_index::iterator leiiview = line.extent_index.begin();
+            cout << "line.extent_index begin" << endl;
+            while (leiiview != line.extent_index.end()) {
+                cout << leiiview->first << ", " << leiiview->second << endl;
+                ++leiiview;
+            }
+            cout << "line.extent_index end" << endl;
         } while (!ctext.empty());
 
         prev_newline = extent->newline;
@@ -359,6 +390,14 @@ void GLTextClip::layoutTextWrapLines()
 
     T_int_index::value_type char_ref(cur_char, text_real_extents.size());
     cidx_it = text_char_index.insert(cidx_it, char_ref);
+
+    T_int_index::iterator tciiview = text_char_index.begin();
+    cout << "text_char_index begin" << endl;
+    while (tciiview != text_char_index.end()) {
+        cout << tciiview->first << ", " << tciiview->second << endl;
+        ++tciiview;
+    }
+    cout << "text_char_index end" << endl;
 
     if (unsigned(scroll_v) >= text_lines.size())
         scroll_v = text_lines.size()-1;
