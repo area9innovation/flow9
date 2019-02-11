@@ -1196,7 +1196,9 @@ class RenderSupportJSPixi {
 	}
 
 	private static function animate(timestamp : Float) {
-		AccessWidget.updateAccessTree();
+		if (AccessibilityEnabled) {
+			AccessWidget.updateAccessTree();
+		}
 
 		PixiStage.emit("drawframe", timestamp);
 
@@ -1569,19 +1571,24 @@ class RenderSupportJSPixi {
 					accessWidget = untyped accessWidget.querySelector("*[tabindex]:not([disabled]):not([tabindex^='-'])") || accessWidget;
 			}
 
-			if (accessWidget != null && accessWidget.parentNode != null) {
-				if (focus && accessWidget.focus != null) {
-					accessWidget.focus();
-				} else if (!focus && accessWidget.blur != null) {
-					accessWidget.blur();
-				} else {
-					Errors.print("Can't set focus on element.");
-					clip.emit("blur");
+			if (accessWidget != null) {
+				if (AccessibilityEnabled && accessWidget.parentNode == null) {
+					AccessWidget.updateAccessTree();
 				}
-			} else {
-				Errors.print("Can't set focus on element.");
-				clip.emit("blur");
+
+				if (accessWidget.parentNode != null) {
+					if (focus && accessWidget.focus != null) {
+						accessWidget.focus();
+						return;
+					} else if (!focus && accessWidget.blur != null) {
+						accessWidget.blur();
+						return;
+					}
+				}
 			}
+
+			Errors.print("Can't set focus on element.");
+			clip.emit("blur");
 		}
 	}
 
@@ -4117,18 +4124,24 @@ private class TextField extends NativeWidgetClip {
 	}
 
 	public override function setFocus(focus : Bool) : Void {
-		shouldPreventFromFocus = false;
-
-		if (nativeWidget != null && nativeWidget.parentNode != null) {
-			// Workaround for IE not updating readonly after textfield is focused
-			if (focus) {
-				if (Platform.isIE || Platform.isEdge) {
-					preOnFocus();
-				}
-				nativeWidget.focus();
-			} else {
-				nativeWidget.blur();
+		if (nativeWidget != null) {
+			if (RenderSupportJSPixi.AccessibilityEnabled && nativeWidget.parentNode == null) {
+				AccessWidget.updateAccessTree();
 			}
+
+		 	if (nativeWidget.parentNode != null) {
+				shouldPreventFromFocus = false;
+
+				// Workaround for IE not updating readonly after textfield is focused
+				if (focus) {
+					if (Platform.isIE || Platform.isEdge) {
+						preOnFocus();
+					}
+					nativeWidget.focus();
+				} else {
+					nativeWidget.blur();
+				}
+			};
 		}
 	}
 
