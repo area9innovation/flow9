@@ -3,75 +3,100 @@ import tools/flowc/incremental/fi_helpers;
 import ds/array;
 
 export {
-    expandFlowCasts(decl : FiDeclaration) -> FiDeclaration;
+	expandFlowCasts(decl : FiDeclaration) -> FiDeclaration;
 }
 
 injectFlowCast(leftType : FiType, expr : FiExp) -> FiExp {
-    rightType = fiExpType(expr);
-    expanded = doExpandFlowCasts(expr);
-    if (leftType == FiTypeFlow() && rightType != FiTypeFlow()) {
-        FiCast(expanded, rightType, FiTypeFlow(), FiTypeFlow(), expr.start);
-    } else if (leftType != FiTypeFlow() && rightType == FiTypeFlow()) {
-        FiCast(expanded, FiTypeFlow(), leftType, leftType, expr.start);
-    } else 
-        expanded;
-}   
+	rightType = fiExpType(expr);
+	expanded = doExpandFlowCasts(expr);
+	if (leftType == FiTypeFlow() && rightType != FiTypeFlow()) {
+		FiCast(expanded, rightType, FiTypeFlow(), FiTypeFlow(), expr.start);
+	} else if (leftType != FiTypeFlow() && rightType == FiTypeFlow()) {
+		FiCast(expanded, FiTypeFlow(), leftType, leftType, expr.start);
+	} else if (leftType == FiTypeRef(FiTypeFlow()) || rightType == FiTypeRef(FiTypeFlow())) {        
+		// this case implemented for situations as follows:
+		// g : ref flow = ref 123;
+		// g : ref int = ref flow(123);
+        // note that the right expression shall be constant - i.e. ref smth
+        // then it is converted to g : ref flow = ref flow(smth)
+		t1 = cast(leftType : FiType -> FiTypeRef).t;
+		t2 = cast(rightType : FiType -> FiTypeRef).t;
+        switch (expr) {
+            FiCallPrim(op, args, typ, __): {
+                switch (op) {
+                    FcRefPrim(): {
+                        arg = args[0];
+                   		v1 = injectFlowCast(t1, arg);
+                		v2 = FiCallPrim(FcRefPrim(), [v1], leftType, expr.start);
+                        v2;
+                    }
+                    default: {
+                        println("Cannot convert non-const ref to ref flow");
+                        expanded;
+                    }                    
+                }
+            }
+            default: {
+                println("Cannot convert non-const ref to ref flow");
+                expanded;
+            }
+        }
+	} else 
+		expanded;
+}
 
 expandFlowCasts(decl : FiDeclaration) -> FiDeclaration {
-    switch (decl) {
-        FiFunctionDec(name, lambda, ftype, declStart, defiStart): {
-            newlambda0 = FiLambda(lambda with type = ftype);
-            newlambda = cast(doExpandFlowCasts(newlambda0) : FiExp -> FiLambda);
-            FiFunctionDec(name, newlambda, ftype, declStart, defiStart);
-        }
-        FiGlobalVar(name, value, type, declStart, defiStart): {
-            FiGlobalVar(name, doExpandFlowCasts(value), type, declStart, defiStart);
-        }
-        FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
-            decl;
-        }
-    }
+	switch (decl) {
+		FiFunctionDec(name, lambda, ftype, declStart, defiStart): {
+			newlambda0 = FiLambda(lambda with type = ftype);
+			newlambda = cast(doExpandFlowCasts(newlambda0) : FiExp -> FiLambda);
+			FiFunctionDec(name, newlambda, ftype, declStart, defiStart);
+		}
+		FiGlobalVar(name, value, type, declStart, defiStart): {
+			FiGlobalVar(name, injectFlowCast(type, value), type, declStart, defiStart);
+		}
+		FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
+			decl;
+		}
+	}
 }
 
 doExpandFlowCasts(expr : FiExp) {
-    switch (expr) {
-	    FiLambda(args, body, type, start): {
-            functionType = cast(type : FiType -> FiTypeFunction);
-            FiLambda(args, injectFlowCast(functionType.returnType, body), type, start);
-        }
+	switch (expr) {
+		FiLambda(args, body, type, start): {
+			functionType = cast(type : FiType -> FiTypeFunction);
+			FiLambda(args, injectFlowCast(functionType.returnType, body), type, start);
+		}
 		FiCall(f, args, type, start): {
-            functionType = cast(fiExpType(f) : FiType -> FiTypeFunction);
-            FiCall(doExpandFlowCasts(f), 
-                zipWith(functionType.args, args, \fa, a -> injectFlowCast(fa.type, a)), 
-                type, start);
-        }
+			functionType = cast(fiExpType(f) : FiType -> FiTypeFunction);
+			FiCall(doExpandFlowCasts(f), 
+				zipWith(functionType.args, args, \fa, a -> injectFlowCast(fa.type, a)), 
+				type, start);
+		}
 		FiVar(__, __, __): expr;
 		FiLet(x, t, e1, e2, t2, start): 
-            FiLet(x, t, injectFlowCast(t, e1), injectFlowCast(t2, e2), t2, start);
+			FiLet(x, t, injectFlowCast(t, e1), injectFlowCast(t2, e2), t2, start);
 		FiIf(e1, e2, e3, type, start): 
-            FiIf(injectFlowCast(type, e1), doExpandFlowCasts(e2), doExpandFlowCasts(e3), type, start);
+			FiIf(doExpandFlowCasts(e1), injectFlowCast(type, e2), injectFlowCast(type, e3), type, start);
 		FiSwitch(e0, typ, cs, type, start): 
-            FiSwitch(e0, typ, 
-                map(cs, \c -> FiCase(c.struct, c.argNames, injectFlowCast(type, c.body), c.start)),
-                type, start);
+			FiSwitch(e0, typ, 
+				map(cs, \c -> FiCase(c.struct, c.argNames, injectFlowCast(type, c.body), c.start)),
+				type, start);
 		FiCast(e0, tFrom, tTo, type, start): FiCast(injectFlowCast(tFrom, e0), tFrom, tTo, type, start);
 		FiSeq(es, type, start): 
-            // injecting cast to last statement if needed
-            // for others, just proceed recursively
-            FiSeq(mapi(es, 
-                \i, e -> if (i != length(es) - 1) doExpandFlowCasts(e) else injectFlowCast(type, e)
-            ), type, start);
+			// injecting cast to last statement if needed
+			// for others, just proceed recursively
+			FiSeq(mapi(es, 
+				\i, e -> if (i != length(es) - 1) doExpandFlowCasts(e) else injectFlowCast(type, e)
+			), type, start);
 		FiCallPrim(op, es, type, start): {
-            type0 = if (length(es) > 0) fiExpType(es[0]) else FiTypeVoid();
-            // TODO: might be incorrect for some prims
-            switch (op) {
-                FcAssignPrim(): {
-                    t = cast(type0 : FiType -> FiTypeRef);
-                    FiCallPrim(op, map(es, \e -> injectFlowCast(t.t, e)), type, start);
-                }
-                default: FiCallPrim(op, map(es, doExpandFlowCasts), type, start);
-            }
-        }
+			type0 = if (length(es) > 0) fiExpType(es[0]) else FiTypeVoid();
+			// TODO: might be incorrect for some prims
+			if (length(es) > 0) {
+				t = if (isSameStructType(type0, FiTypeRef(FiTypeVoid()))) (cast(type0 : FiType -> FiTypeRef)).t else type0;
+				FiCallPrim(op, mapi(es, \i, e -> if (i == 0) doExpandFlowCasts(e) else injectFlowCast(t, e)), type, start);
+			} else FiCallPrim(op, map(es, doExpandFlowCasts), type, start);
+		}
 		FiString(__, __): expr;
 		FiBool(__, __): expr;
 		FiDouble(__, __): expr;
