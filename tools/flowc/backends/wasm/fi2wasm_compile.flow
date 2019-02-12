@@ -320,10 +320,10 @@ compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool) -> [Wasm2
 
 compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd {
 	conv = \s -> Wasm2Code(s);
-	rec2 = \e, context2 -> compileWasmExp2(acc, e, context2);
-	rec = \e -> rec2(e, context);
+	rec = \e -> compileWasmExp2(acc, e, context);
 	error = \reason -> wasmError(acc, reason) |> conv;
     destructors = compileDestructors(ex.destructedVars, false);
+	addDestructors = \cmd -> Wasm2Seq(arrayPush(destructors, cmd));
 	
     switch (ex) {
 		WasmLambda(args, body, type, __): Wasm2Seq(destructors);	// does not happen after lifted lambdas
@@ -420,32 +420,21 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				Wasm2GetGlobal(name)
 			else
 				error("Cannot resolve variable in WasmVar: " + name);
-
-            Wasm2Seq(arrayPush(destructors, result));
+            addDestructors(result);
 		}
 		WasmLet(name, type, e1, e2, type2, __): {
 			name2 = getWasmLocalVarName(name, type);
-
-			Wasm2Seq(concat(destructors, [
-				rec(e1),
-				//if (!startsWith(name, "__temp__")) fiWasmGenerateConstructor(type) else Wasm2Void(),
-				Wasm2SetLocal(name2),
-				rec2(e2, context)
-			]))
+			addDestructors(Wasm2Seq([rec(e1), Wasm2SetLocal(name2), rec(e2)]))
 		}
 		WasmIf(e1, e2, e3, type, __): {
-            Wasm2Seq(arrayPush(destructors, 
+            addDestructors(
 			    Wasm2If(rec(e1), type == WasmTypeVoid(), type == WasmTypeDouble(), rec(e2), rec(e3))
-            ));
+            );
 		}
 		WasmSwitch(x, switchType, cases, type, __): {
-			wasm2string(Wasm2Seq(destructors)) + 
-            makeWasmSwitch(acc, context, compileWasmExp(acc, x, context), 
-				map(cases, \case -> {
-					WasmCaseHolder(0, case.struct, compileWasmExp(acc, case.body, context))
-				}),
-				type
-			) |> conv;
+			cases2 = map(cases, \case -> WasmCaseHolder(0, case.struct, rec(case.body)));
+			cmd = makeWasmSwitch(acc, context, rec(x), cases2, type);
+			addDestructors(cmd)
 		}
 		WasmCast(e, tFrom, tTo, type, __): {
 			castError = \ -> {
@@ -677,24 +666,24 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 			}
 		}
 		WasmVoid(__): Wasm2Seq(destructors);
-		WasmDouble(d, __): Wasm2Seq(arrayPush(destructors, Wasm2F64Const(d)));
-		WasmInt(i, __): Wasm2Seq(arrayPush(destructors, Wasm2I32Const(i)));
+		WasmDouble(d, __): addDestructors(Wasm2F64Const(d));
+		WasmInt(i, __): addDestructors(Wasm2I32Const(i));
 		WasmString(s, __): {
 			maddress = lookupTree(context.stringAcc.address, s);
 			switch (maddress) {
 				None(): error("string not found");
 				Some(address): {
 					// OK, we produce the address
-					Wasm2Seq(arrayPush(destructors, Wasm2I32Const(address)))
+					addDestructors(Wasm2I32Const(address))
 				}
 			}
 		}
-		WasmBool(b, __): Wasm2Seq(arrayPush(destructors, Wasm2I32Const(b2i(b))));
+		WasmBool(b, __): addDestructors(Wasm2I32Const(b2i(b)));
 		WasmRequire(flowfile, e, type, __): {
-			error("require"); Wasm2Seq(destructors);
+			addDestructors(error("require"))
 		}
 		WasmUnsafe(name, fallback, type, __): {
-			error("unsafe"); Wasm2Seq(destructors);
+			addDestructors(error("unsafe"))
 		}
         WasmIncRefcnt(e, type, __): // correct type of e is assumed
             Wasm2Seq(concat([
@@ -793,9 +782,9 @@ makeWasmSetMutableField(sargs : [WasmStructField], field : string, args : [Wasm2
 	]))
 }
 
-WasmCaseHolder(typeDescriptor : int, struct : string, body : string);
+WasmCaseHolder(typeDescriptor : int, struct : string, body : Wasm2Cmd);
 
-makeWasmSwitch(acc : WasmAcc, context : WasmContext, x : string, cases : [WasmCaseHolder], type : WasmTypeDescriptor) -> string {
+makeWasmSwitch(acc : WasmAcc, context : WasmContext, x : Wasm2Cmd, cases : [WasmCaseHolder], type : WasmTypeDescriptor) -> Wasm2Cmd {
 	typeDescriptors : [WasmCaseHolder] = map(cases, \case : WasmCaseHolder -> {
 		WasmCaseHolder(
 			if (case.struct == "default") -1
@@ -813,32 +802,40 @@ makeWasmSwitch(acc : WasmAcc, context : WasmContext, x : string, cases : [WasmCa
 
 	sorted = sort(typeDescriptors);
 
-	resultType = if (type == WasmTypeVoid()) ""
-		else "(result " + compileWasmType(type, false) + ")";
-
-	makeWasmSwitchCases(acc, context, x, resultType, sorted);
+	makeWasmSwitchCases(acc, context, x, type, sorted);
 }
 
-makeWasmSwitchCases(acc : WasmAcc, context : WasmContext, x : string, resultType : string, cases : [WasmCaseHolder]) -> string {
+makeWasmSwitchCases(acc : WasmAcc, context : WasmContext, x : Wasm2Cmd, resultType : WasmTypeDescriptor, cases : [WasmCaseHolder]) -> Wasm2Cmd {
 	n = length(cases);
-	if (n == 0) ""
+	makeCase = \idx -> Wasm2Seq([
+		Wasm2Code(";; " + cases[idx].struct),
+		cases[idx].body
+	]);
+	if (n == 0) Wasm2Void()
 	else if (n == 1) {
-        ";; " + cases[0].struct + "\n" +
-		cases[0].body;
+		makeCase(0)
 	} else if (n == 2) {
 		if (cases[0].typeDescriptor == -1) {
 			// The default case, we swap them
-			makeWasmSwitchCases(acc, context, x, resultType, [cases[1], cases[0]]);
+			makeWasmSwitchCases(acc, context, x, resultType, [cases[1], cases[0]])
 		} else {
 			// if x.typescriptor == case[0].typescriptor case1.body else case2.body
 			// (if (block (result i32) x <cast0.typescriptor> $call wasm_is_struct_type i32.eqz)
 			//    (then <case0.body>)
 			//    (else <case1.body>)
 			// )
-			"(if "  + resultType + " (block (result i32) " + x + " i32.const " + i2s(cases[0].typeDescriptor) + " call $wasm_compare_struct_type i32.eqz)\n"
-			+ "\t(then ;; " + cases[0].struct + "\n" + cases[0].body + ")\n"
-			+ "\t(else ;; " + cases[1].struct + "\n" + cases[1].body + ")\n"
-			+ ")";
+			Wasm2If(
+				Wasm2Seq([
+					x,
+					Wasm2I32Const(cases[0].typeDescriptor),
+					Wasm2Call("$wasm_compare_struct_type"),
+					Wasm2Code("i32.eqz")
+				]),
+				resultType == WasmTypeVoid(), 
+				resultType == WasmTypeDouble(),
+				makeCase(0),
+				makeCase(1)
+			)
 		}
 	} else {
 		half = (n + 1) / 2;
@@ -860,10 +857,19 @@ makeWasmSwitchCases(acc : WasmAcc, context : WasmContext, x : string, resultType
 		firstHalfCode = makeWasmSwitchCases(acc, context, x, resultType, firstHalf);
 		secondHalfCode = makeWasmSwitchCases(acc, context, x, resultType, secondHalf);
 
-		"(if "  + resultType + " (block (result i32) " + x + " i32.const " + i2s(cut) + " call $wasm_compare_struct_type i32.const 0 i32.lt_s)\n"
-		+ "\t(then " + firstHalfCode + ")\n"
-		+ "\t(else " + secondHalfCode + ")\n"
-		+ ")";
+		Wasm2If(
+			Wasm2Seq([
+				x,
+				Wasm2I32Const(cut),
+				Wasm2Call("$wasm_compare_struct_type"),
+				Wasm2I32Const(0),
+				Wasm2Code("i32.lt_s")
+			]),
+			resultType == WasmTypeVoid(), 
+			resultType == WasmTypeDouble(),
+			firstHalfCode,
+			secondHalfCode
+		)
 	}
 }
 
