@@ -19,6 +19,38 @@ inline float ftToFloat(int v) {
 }
 
 
+PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
+    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
+{
+    ++*nx;
+}
+PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
+    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
+{
+    ++*nx;
+}
+
+ucs4_char PasswordUtf32Iter::operator *() {
+    return *cur == *end? 0: 0x2022;
+}
+
+ucs4_char_tracer PasswordUtf32Iter::traceCurrent() {
+    ucs4_char_tracer(cur->position(), nx->position(), **this);
+}
+
+PasswordUtf32Iter& PasswordUtf32Iter::next() {
+    cur = nx;
+    nx = nx->clone();
+    ++*nx;
+    return *this;
+}
+
+shared_ptr<Utf32InputIterator> PasswordUtf32Iter::clone() {
+    shared_ptr<Utf32InputIterator> r(new PasswordUtf32Iter(*this->org, *this->end, *this->cur));
+    return r;
+}
+
+
 void LigatureUtf32Iter::yield() {
     if (*cur == *end) {
         ligalen = 1;
@@ -30,17 +62,17 @@ void LigatureUtf32Iter::yield() {
     int ligai;
     ligalen = 0;
     bool anyCandidate = true;
-    shared_ptr<Utf32InputIterator> aux(cur->clone());
-    for (*aux; anyCandidate && *aux!=*end; ++*aux, ++ligalen) {
+    nx = cur->clone();
+    for (*nx; anyCandidate && *nx!=*end; ++*nx, ++ligalen) {
         anyCandidate = false;
         for (ligai=0; ligai<ligacnt; ++ligai) {
             if (matchlengths[ligai] != ligalen) continue;
             anyCandidate = true;
-            if (**aux == LIGATURES[ligai].meaning[matchlengths[ligai]])
+            if (**nx == LIGATURES[ligai].meaning[matchlengths[ligai]])
                 ++matchlengths[ligai];
             if (!LIGATURES[ligai].meaning[matchlengths[ligai]]) {
-                cur = aux;
                 yieldedChar = LIGATURES[ligai].form;
+                ++*nx;
                 return;
             }
         }
@@ -48,22 +80,24 @@ void LigatureUtf32Iter::yield() {
     // No ligature match
     ligalen = 1;
     yieldedChar = **cur;
+    nx = cur->clone();
+    ++*nx;
 }
 
 LigatureUtf32Iter& LigatureUtf32Iter::next() {
-    ++*cur;
+    cur = nx;
     yield();
     return *this;
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
-    org(org.clone()), cur(org.clone()), end(end.clone())
+    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
 {
     yield();
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
-    org(org.clone()), cur(cur.clone()), end(end.clone())
+    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
 {
     yield();
 }
@@ -71,9 +105,14 @@ LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator
 ucs4_char LigatureUtf32Iter::operator *() {
     return yieldedChar;
 }
+
+ucs4_char_tracer LigatureUtf32Iter::traceCurrent() {
+    ucs4_char_tracer(cur->position(), nx->position(), yieldedChar);
+}
+
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::clone() {
     shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter(*this->org, *this->end, *this->cur));
-   return r;
+    return r;
 }
 
 GLFontLibrary::GLFontLibrary(GLRenderSupport *owner) : owner(owner)
@@ -700,7 +739,6 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
                 leftPos = rightPos;
                 rightPos = strRevStart;
                 strRevStart = strIter->cloneDirect();
-                //rightPos = strIter->cloneDirect();
                 strRevEnd = strProc = strEnd;  // *strProc == *strEnd — no character processing
             } else {
                 strProc = strIter;  // character processing goes on from strProc

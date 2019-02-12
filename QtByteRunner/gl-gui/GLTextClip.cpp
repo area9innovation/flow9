@@ -266,12 +266,15 @@ void GLTextClip::layoutTextWrapLines()
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
         bool already_split = false;
+        shared_ptr<Utf32InputIterator> ctexti;
 
-        if (input_type == "password")
+        if (input_type == "password") {
             ctext = unicode_string(ctext.length(), 0x2022);
-
-        // FIXME: memory consuming, maybe redo via iterators.
-        ctext = GLTextLayout::getLigatured(ctext);
+            ctexti = new PasswordUtf32Iter(&decoder.begin(), &decoder.end());
+        } else {
+            ctext = GLTextLayout::getLigatured(ctext);
+            ctexti = new LigatureUtf32Iter(&decoder.begin(), &decoder.end());
+        }
 
         // Word-wrapping loop:
         cout << endl << "Extent: " << i << endl;
@@ -375,14 +378,6 @@ void GLTextClip::layoutTextWrapLines()
             cidx_it = text_char_index.insert(cidx_it, char_ref);
 
             cur_char += real_extent->text.size() + (real_extent->newline ? 1 : 0);
-
-            T_index::iterator leiiview = line.extent_index.begin();
-            cout << "line.extent_index begin" << endl;
-            while (leiiview != line.extent_index.end()) {
-                cout << leiiview->first << ", " << leiiview->second << endl;
-                ++leiiview;
-            }
-            cout << "line.extent_index end" << endl;
         } while (!ctext.empty());
 
         prev_newline = extent->newline;
@@ -390,14 +385,6 @@ void GLTextClip::layoutTextWrapLines()
 
     T_int_index::value_type char_ref(cur_char, text_real_extents.size());
     cidx_it = text_char_index.insert(cidx_it, char_ref);
-
-    T_int_index::iterator tciiview = text_char_index.begin();
-    cout << "text_char_index begin" << endl;
-    while (tciiview != text_char_index.end()) {
-        cout << tciiview->first << ", " << tciiview->second << endl;
-        ++tciiview;
-    }
-    cout << "text_char_index end" << endl;
 
     if (unsigned(scroll_v) >= text_lines.size())
         scroll_v = text_lines.size()-1;

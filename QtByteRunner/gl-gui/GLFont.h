@@ -82,9 +82,25 @@ static const LIGATURE LIGATURES[] = {
 class GLFont;
 class GLRenderSupport;
 
-class LigatureUtf32Iter: public Utf32InputIterator {
+class PasswordUtf32Iter: public Utf32InputIterator {
 protected:
     shared_ptr<Utf32InputIterator> org, cur, end;
+    PasswordUtf32Iter& next();
+public:
+    PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
+    PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur);
+    virtual size_t position() {return cur->position();}
+    virtual void *data() {return org->data();}
+    virtual ucs4_char operator *();
+    virtual ucs4_char_tracer traceCurrent();
+    virtual Utf32InputIterator &operator ++() {return next();}
+    virtual Utf32InputIterator &operator ++(int _)  {return next();}
+    virtual shared_ptr<Utf32InputIterator> clone();
+}
+
+class LigatureUtf32Iter: public Utf32InputIterator {
+protected:
+    shared_ptr<Utf32InputIterator> org, cur, nx, end;
     void yield();
     LigatureUtf32Iter& next();
     size_t ligalen;  // input characters decoded count
@@ -96,6 +112,7 @@ public:
     virtual size_t position() {return cur->position();}
     virtual void *data() {return org->data();}
     virtual ucs4_char operator *();
+    virtual ucs4_char_tracer traceCurrent();
     virtual Utf32InputIterator &operator ++() {return next();}
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();

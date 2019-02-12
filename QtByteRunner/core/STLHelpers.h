@@ -193,6 +193,7 @@ typedef uint16_t unicode_char;
 typedef uint32_t ucs4_char;
 typedef std::basic_string<unicode_char> unicode_string;
 typedef std::basic_string<ucs4_char> utf32_string;
+typedef std::tuple<size_t, size_t, ucs4_char> ucs4_char_tracer;
 
 #if !defined(_MSC_VER)
 BEGIN_STL_HASH_NAMESPACE
@@ -241,6 +242,7 @@ public:
     bool operator ==(Utf32InputIterator &other) {return data() == other.data() && position() == other.position();}
     bool operator !=(Utf32InputIterator &other) {return !(*this == other);}
     virtual ucs4_char operator *() =0;
+    virtual ucs4_char_tracer traceCurrent();
 
     // Cycle through all characters and one extra «ending» position.
     virtual Utf32InputIterator &operator ++() =0;
@@ -282,6 +284,7 @@ public:
         virtual void *data() {return parent->org;}
         virtual size_t position() {return pos;}
         virtual ucs4_char operator *();
+        virtual ucs4_char_tracer traceCurrent();
         virtual bool operator ==(Iterator &other);
     };
     class DirectIterator: public Iterator {

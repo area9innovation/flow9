@@ -176,6 +176,9 @@ ucs4_char DecodeUtf16toUtf32::Iterator::operator *(){
     decodeChar();
     return outbuf;
 }
+ucs4_char_tracer DecodeUtf16toUtf32::Iterator::traceCurrent() {
+    return ucs4_char_tracer({pos, pos+currentCharLen, **this});
+}
 
 bool DecodeUtf16toUtf32::Iterator::operator ==(DecodeUtf16toUtf32::Iterator &other){
     decodeChar();
