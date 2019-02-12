@@ -4,77 +4,116 @@ import tools/flowc/backends/common;
 import tools/flowc/backends/wasm/wasm_types;
 import tools/flowc/backends/wasm/f2wasm_utils;
 import tools/flowc/backends/wasm/wasm_exp;
+import tools/flowc/backends/wasm/wasm_exp_convert;
 import ds/array;
 import string;
 
 export {
-    fiWasmFindLastStatements(ex : WasmExp) -> Set<WasmExp>;
-    fiWasmGenerateDestructors(vars : [Pair<string, WasmTypeDescriptor>]) -> string;
-	fiWasmGenerateConstructor(type : WasmTypeDescriptor) -> Wasm2Cmd;
     fiWasmInjectTempVariables(ex : FiExp) -> FiExp;
-    fiWasmInjectIncrements(e : WasmExp) -> WasmExp;
+    wasmAddRefcounting(e : WasmExp, args : [WasmFunArg]) -> WasmExp;
 }
 
-fiWasmFindLastStatements(ex : WasmExp) {
+// checks if the statement is last in control flow sense - there is no nesting
+// i.e. consts or vars are last, while if, switch, or sequence are not
+wasmIsLastStemenet(ex : WasmExp) {
     ex0 : WasmExp = ex;
     switch (ex0 : WasmExp) {
-		WasmLambda(args, b, type, __): makeSet1(ex);
-		WasmCall(f, args, type, __, __): makeSet1(ex);
-		WasmVar(name, type, __): makeSet1(ex);
-		WasmLet(name, type, e1, e2, type2, __): 
+		WasmLambda(__, __, __, __): true;
+		WasmCall(__, __, __, __, __): true;
+		WasmVar(__, __, __): true;
+		WasmLet(__, __, __, e2, __, __): 
 			switch (e2) {
-				WasmVoid(__): makeSet1(ex);
-				default: fiWasmFindLastStatements(e2);
+				WasmVoid(__): true;
+				default: false;
 			} 
-		WasmIf(e1, e2, e3, type, __): // consider both if and else branches
-			mergeSets(fiWasmFindLastStatements(e2), fiWasmFindLastStatements(e3));
-		WasmSwitch(x, switchType, cases, type, __): 
-			mergeSetsA(map(cases, \c -> fiWasmFindLastStatements(c.body)));
-		WasmCast(e, tFrom, tTo, type, __): makeSet1(ex);
-		WasmSeq(es, type, iid): // only consider last element of a sequence
-			fiWasmFindLastStatements(lastElement(es, WasmVoid(iid)));
-		// if there are calls inside es, CallPrim would be performed after it - 
-		//   therefore, those calls aren't tail
-		WasmCallPrim(op, es, type, __): makeSet1(ex); 
-		WasmVoid(__): makeSet1(ex);
-		WasmDouble(d, __): makeSet1(ex);
-		WasmInt(i, __): makeSet1(ex);
-		WasmString(s, __): makeSet1(ex);
-		WasmBool(b, __): makeSet1(ex);
-		WasmRequire(flowfile, e, type, __): makeSet1(ex); 
-		WasmUnsafe(name, fallback, type, __): fiWasmFindLastStatements(fallback);
-        WasmIncRefcnt(e, __, __): fiWasmFindLastStatements(e);
+		WasmIf(e1, e2, e3, __, __): false;
+		WasmSwitch(__, __, cases, __, __): false;
+		WasmCast(__, __, __, __, __): true;
+		WasmSeq(es, __, iid): false;
+		WasmCallPrim(__, __, __, __): true;
+		WasmVoid(__): true;
+		WasmDouble(__, __): true;
+		WasmInt(__, __): true;
+		WasmString(__, __): true;
+		WasmBool(__, __): true;
+		WasmRequire(__, __, __, __): true; 
+		WasmUnsafe(__, fallback, __, __): false;
+        WasmIncRefcnt(__, __, __): true;
+        WasmDecRefcnt(__, __, __): true;
 	}
 }
 
-fiWasmGenerateDestructors(vars : [Pair<string, WasmTypeDescriptor>]) {
-    filtered = filter(vars, \v -> wasmTypeUsesWasmHeap(v.second));
-	refCntIncreasers = filter(filtered, \v -> v.first == "__return__");
-	refCntDecreasers = filter(filtered, \v -> v.first != "__return__");
-	increaseExp = fold(refCntIncreasers, "", \acc, v -> acc + "\n call $wasm_inc_refcnt_passthru ;; auto-increase function return value\n");
-    fold(refCntDecreasers, increaseExp, \acc, v -> acc + " get_local $" + v.first + " call $wasm_dec_refcnt ;; auto-destruct \n");
-}
-
-fiWasmGenerateConstructor(type : WasmTypeDescriptor) {
-	if (wasmTypeUsesWasmHeap(type)) Wasm2Call("$wasm_inc_refcnt_passthru")
-	else Wasm2Void()
-}
-
-fiWasmTypeUsesHeap(t : FiType) {
+fiTypeUsesWasmHeap(t : FiType) {
 	switch (t) {
 		FiTypeVoid(): false;
 		FiTypeDouble(): false;
 		FiTypeInt(): false;
 		FiTypeBool(): false;
-		FiTypeNative(): false;
 		default: true;
 	}
 }
 
 fiWasmInjectTempVariables(ex : FiExp) {
-	splitExpressions(ex, fiWasmTypeUsesHeap);
+	splitExpressions(ex, fiTypeUsesWasmHeap);
 }
 
-fiWasmInjectIncrements(ex : WasmExp) {
-    ex;
+wasmAddRefcounting(ex : WasmExp, args : [WasmFunArg]) {
+    scopeVars = map(filter(args, \a -> wasmTypeUsesWasmHeap(a.type)), \a -> {
+        if (a.name == "") println("Internal error: empty var name passed as scope parameter");
+        WasmScopeVar(a.name, a.type, false);
+    });
+    fiWasmInjectIncrements(ex, scopeVars, false);
+}
+
+// not last means never consider this statement last - i.e. it can be part of a sequence
+fiWasmInjectIncrements(ex : WasmExp, scopeVars : [WasmScopeVar], notLast : bool) {
+    rec = \e -> fiWasmInjectIncrements(e, scopeVars, notLast);
+    recNotLast = \e -> fiWasmInjectIncrements(e, scopeVars, true);
+    destructedVars = if (!notLast && wasmIsLastStemenet(ex)) scopeVars else [];
+
+    switch (ex : WasmExp) {
+		WasmLambda(args, b, type, __): WasmLambda(ex with destructedVars=destructedVars);
+		WasmCall(f, args, type, callType, __): 
+            WasmCall(f, 
+                map(args, recNotLast), type, callType, destructedVars);
+		WasmVar(name, type, __): 
+            if (wasmTypeUsesWasmHeap(type))
+                WasmIncRefcnt(ex, type, destructedVars)
+            else
+                WasmVar(ex with destructedVars=destructedVars);
+		WasmLet(name, type, e1, e2, type2, __): {
+            newScopeVars = if (wasmTypeUsesWasmHeap(type)) 
+                arrayPush(scopeVars, WasmScopeVar(name, type, true))
+            else
+                scopeVars;
+            isE2Empty = switch (e2) {
+                WasmVoid(__) : true;
+                default : false;
+            }
+			WasmLet(name, type, fiWasmInjectIncrements(e1, scopeVars, notLast || !isE2Empty), 
+                fiWasmInjectIncrements(e2, newScopeVars, notLast), type2, destructedVars); 
+        }
+		WasmIf(e1, e2, e3, type, __): 
+			WasmIf(recNotLast(e1), rec(e2), rec(e3), type, destructedVars);
+		WasmSwitch(x, switchType, cases, type, __): 
+			WasmSwitch(x, switchType, // TODO : this is implicit scope
+                map(cases, \c -> WasmCase(c.struct, c.argNames, rec(c.body))),
+                type, destructedVars);
+		WasmCast(e, tFrom, tTo, type, __): 
+            WasmCast(recNotLast(e), tFrom, tTo, type, destructedVars);
+		WasmSeq(es, type, __): 
+            WasmSeq(mapi(es, 
+                \i, e -> fiWasmInjectIncrements(e, scopeVars, notLast || i != length(es) - 1)
+                ), type, destructedVars);
+		WasmCallPrim(op, es, type, __): WasmCallPrim(op, map(es, recNotLast), type, destructedVars);
+		WasmVoid(__): WasmVoid(destructedVars);
+		WasmDouble(__, __): WasmDouble(ex with destructedVars=destructedVars);
+		WasmInt(__, __): WasmInt(ex with destructedVars=destructedVars);
+		WasmString(__, __): WasmIncRefcnt(ex, WasmTypeString(), destructedVars);
+		WasmBool(__, __): WasmBool(ex with destructedVars=destructedVars);
+		WasmRequire(flowfile, e, type, id): WasmRequire(flowfile, rec(e), type, destructedVars); 
+		WasmUnsafe(name, fallback, type, id): WasmUnsafe(name, rec(fallback), type, destructedVars);
+        WasmIncRefcnt(__, __, __): ex; // should not happen
+        WasmDecRefcnt(__, __, __): ex; // should not happen
+	}
 }

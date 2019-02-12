@@ -32,8 +32,7 @@ export {
 	showRecordSettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	showReplaySettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
-	showLogicalScreenshotCompareDialog(manager : MaterialManager, batchTestsFolder : string,
-		batchTestResults : [IScriptReplayResult], m2t : (Material, MFocusGroup) -> Tropic) -> void;
+	showLogicalScreenshotCompareDialog(manager : MaterialManager, batchTestResults : [IScriptReplayResult], m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
 	loadDBIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	saveDBIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
@@ -1286,7 +1285,7 @@ showRecordingModeDialog(manager : MaterialManager, m2t : (Material, MFocusGroup)
 		MDialogActions([
 			MTextButton("CANCEL", \ -> {
 					next(closeWhenB, true);
-					setIScriptState(manager, IScriptPaused());
+					setIScriptState(manager, IScriptStopped());
 				},
 				[], [MShortcut("esc")]
 			),
@@ -1325,27 +1324,26 @@ showRecordingModeDialog(manager : MaterialManager, m2t : (Material, MFocusGroup)
 
 showLogicalScreenshotCompareDialog(
 	manager : MaterialManager,
-	batchTestsFolder : string,
-	batchTestResults : [IScriptReplayResult],
+	replayResults : [IScriptReplayResult],
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> void {
-	batchTestResultsRef = ref batchTestResults;
+	replayResultsRef = ref replayResults;
 
-	if (length(^batchTestResultsRef) > 0) {
+	if (length(^replayResultsRef) > 0) {
 		closeWhenB = make(false);
 
 		resultDataTable = make([]);
 
 		updateResultDataTable = \ -> {
 			res = mapi(
-				^batchTestResultsRef,
+				^replayResultsRef,
 				\i : int, v : IScriptReplayResult -> {
 					iconSuccess = MIcon("done", [MGreen(500)]);
 					iconCurrent = MIcon("done_all", [MGreen(500)]);
 					iconError = MIcon("clear", [MRed(500)]);
 					[
 						MText(i2s(i), []),
-						MText(v.filename, []),
+						MText(fileNameOnly(v.filepath), []),
 						if (v.isReplaySuccessful) iconSuccess else iconError,
 						if (isSome(v.iscriptVisualScreenshotM))
 							MZoom(TPicture(either(v.iscriptVisualScreenshotM, IScriptVisualScreenshot("")).screenshot, []), TFixed(120.0, 90.0), true)
@@ -1371,7 +1369,7 @@ showLogicalScreenshotCompareDialog(
 			transparentB = make(0.5);
 			availViewSizeB = make(WidthHeight(0.0, 0.0));
 
-			prevRR = (^batchTestResultsRef)[rowId];
+			prevRR = (^replayResultsRef)[rowId];
 
 			iscriptVisualScreenshot = make(either(prevRR.iscriptVisualScreenshotM, IScriptVisualScreenshot("")).screenshot);
 			replayVisualScreenshot = prevRR.afterReplayVisualScreenshot.screenshot;
@@ -1382,9 +1380,9 @@ showLogicalScreenshotCompareDialog(
 				MDialogActions([
 					MTextButton("SET REPLAY SCREENSHOT AS CORRECT IN ISCRIPT", \ -> {
 						next(iscriptVisualScreenshot, prevRR.afterReplayVisualScreenshot.screenshot);
-						batchTestResultsRef := replace(^batchTestResultsRef, rowId,
+						replayResultsRef := replace(^replayResultsRef, rowId,
 							IScriptReplayResult(
-								prevRR.filename,
+								prevRR.filepath,
 								prevRR.isReplaySuccessful,
 								Some(prevRR.afterReplayLogicalScreenshot),
 								Some(prevRR.afterReplayVisualScreenshot),
@@ -1392,7 +1390,7 @@ showLogicalScreenshotCompareDialog(
 								prevRR.afterReplayVisualScreenshot
 							)
 						);
-						updateIScriptFile(manager, batchTestsFolder + prevRR.filename,
+						updateIScriptFile(manager, prevRR.filepath,
 							\storedIScript : StoredIScript -> {
 								storedIScript.script.stack
 								|> (\stack -> switch (findIScriptLastRecordKeyValueOfType(stack, IScriptLogicalScreenshot("", WidthHeight(0., 0.)))) {
@@ -1570,12 +1568,10 @@ saveDBIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> 
 	if (isIScriptFilesystemDBInitialized(manager)) {
 		storeCurrentAndSetIScriptDBPartition(manager);
 
-		fileNameB = make(getValue(manager.iscript.currentFileNameB));
-
 		onSave = \fileObjects -> {
 			if (fileObjects != []) {
 				filename = fileObjects[0].fullPath;
-				next(fileNameB, filename);
+				next(manager.iscript.currentFileNameB, filename);
 
 				iScriptInfo(manager, filename, None());
 

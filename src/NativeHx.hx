@@ -536,7 +536,7 @@ class NativeHx {
 	}
 	#end
 
-	public static function timer(ms : Int, cb : Void -> Void) : Void {
+	public static function interruptibleTimer(ms : Int, cb : Void -> Void) : Void -> Void {
 		#if !neko
 		#if flash
 		var cs = haxe.CallStack.callStack();
@@ -560,15 +560,22 @@ class NativeHx {
 		#if js
 		// TO DO : may be the same for all short timers
 		if (ms == 0) {
-			defer(fn);
-			return;
+			var alive = true;
+			defer(function () {if (alive) fn(); });
+			return function() { alive = false; };
 		}
 		#end
 
-		haxe.Timer.delay(fn, ms);
+		var t = haxe.Timer.delay(fn, ms);
+		return t.stop;
 		#else
 		cb();
+		return function() {};
 		#end
+	}
+
+	public static function timer(ms : Int, cb : Void -> Void) : Void {
+		interruptibleTimer(ms, cb);
 	}
 
 	public static inline function sin(a : Float) : Float {
