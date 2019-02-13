@@ -51,13 +51,11 @@ MRippleOnDown2T(manager : MaterialManager, parent : MFocusGroup, content : Tropi
 }
 
 MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, trigger : Transform<bool>, style : [MRippleStyle]) -> Tropic {
-	rippleInit = ref false;
-
 	rippleType = extractStruct(style, MRippleType(const(MNoRipple()))).type;
 	focused = extractStruct(style, MRippleFocused(const(false))).focused;
 	hovered = extractStruct(style, MRippleHovered(const(false))).hovered;
 	selected = extractStruct(style, MRippleSelected(const(false))).selected;
-	triggered = fselectdelay(fmax(trigger, focused), \tr -> Pair(if (tr || !(^rippleInit)) 0 else 400, tr), false);
+	triggered = fselectdelay(fmax(trigger, focused), \tr -> Pair(if (tr) 0 else 400, tr));
 
 	if (parent.theme.enableRipple && (rippleType != const(MNoRipple()) || focused != const(false) || hovered != const(false) || selected != const(false))) {
 		point = extractStruct(style, MRipplePosition(const(zeroPoint))).position;
@@ -65,6 +63,8 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 		opacity = extractStruct(style, MRippleOpacity(const(1.0))).opacity;
 		shape = extractStruct(style, MRippleShape("")).component;
 		overlay = extractStruct(style, MRippleOverlay(true)).overlay;
+
+		isCircleCenteredRipple = rippleType == const(MRippleCenter()) && getShapeByComponent(parent, shape).defaultShape == defaultMaterialRoundShape;
 
 		TransformTAcc2(\t2a -> {
 			b1 = content |> t2a;
@@ -75,7 +75,7 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 			hgt = eitherMap(rippleWH, \b -> fselect(b.wh, FLift(\wh -> wh.height)), b1.metrics.height);
 			box = eitherMap(rippleWH, \b -> b.wh, fwidthheight(b1.metrics.width, b1.metrics.height));
 
-			egrowth = makeMEasing(0.6, mStandartCurve, manager.manager.deltaTimer);
+			egrowth = makeMEasing(if (isCircleCenteredRipple) 0.3 else 0.6, mStandartCurve, manager.manager.deltaTimer);
 			efade = makeMEasing(0.4, mStandartCurve, manager.manager.deltaTimer);
 
 			next(egrowth.percent, 0.0);
@@ -93,7 +93,14 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 				);
 			rippleOpacity = fmultiply(opacity, opacityPercent);
 			radiusPercent = fif(triggered, egrowth.percent, fif(fmax(hovered, selected), const(1.0), zero));
-			radius = fmultiply(fselect(box, FLift(\b -> sqrt(b.width * b.width + b.height * b.height))), radiusPercent);
+			radius =
+				fmultiply(
+					if (isCircleCenteredRipple)
+						fselect(box, FLift(\b -> max(b.width, b.height) / 2.0))
+					else
+						fselect(box, FLift(\b -> sqrt(b.width * b.width + b.height * b.height))),
+					radiusPercent
+				);
 			position =
 				fif(
 					fmax(feq(rippleType, MRippleCenter()), fmin(fmax(hovered, selected), fnot(triggered))),
@@ -114,10 +121,12 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 			rippleFForm = \ -> {
 				rippleContent
 				|> (\f ->
-					if (shape != "") {
+					if (isCircleCenteredRipple) {
+						f;
+					} else if (shape != "") {
 						container = FMaterialShape(parent, [Fill(black)], shape);
 
-						FMask(f, FMutable(fselect(box, container |> FLift)))
+						FMask(f, FMutable(fselect(box, container |> FLift)));
 					} else {
 						FMask(f, FMutable(fselect2(rippleType, box, FLift2(\rt, b ->
 							switch (rt : RippleType) {
@@ -147,43 +156,41 @@ MRipple2T(manager : MaterialManager, parent : MFocusGroup, content : Tropic, tri
 					b1.form;
 
 			TAcc(
-				FConstruct(
-					[
-						makeSubscribe2(trigger, \tr -> {
-							rippleInit := true;
-
-							if (tr) {
-								startingPoint := fgetValue(point);
-
-								efade.stop();
-								egrowth.start();
-							} else {
-								efade.start();
-							}
-						}),
-						makeSubscribe(focused, \tr -> {
-							rippleInit := true;
-
-							if (tr) {
-								startingPoint := Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0);
-
-								efade.stop();
-								egrowth.start();
-							} else {
-								efade.start();
-							}
-						})
-					],
-					FDecorator(
-						contentFForm,
+				FDecorator(
+					FConstruct(
 						[
-							Pair(
-								showRipple,
-								rippleFForm
-							)
+							makeSubscribe2(trigger, \tr -> {
+								if (tr) {
+									startingPoint := fgetValue(point);
+
+									efade.stop();
+									egrowth.start();
+								} else {
+									efade.start();
+								}
+							}),
+							makeSubscribeUns(focused, \tr -> {
+								if (tr) {
+									startingPoint := Point(fgetValue(box).width / 2.0, fgetValue(box).height / 2.0);
+
+									efade.stop();
+									egrowth.start();
+
+									[efade.start]
+								} else {
+									[]
+								}
+							})
 						],
-						overlay
-					)
+						contentFForm
+					),
+					[
+						Pair(
+							showRipple,
+							rippleFForm
+						)
+					],
+					overlay
 				),
 				if (isSome(rippleWH))
 					TFormMetrics(
