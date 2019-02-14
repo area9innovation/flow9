@@ -237,6 +237,7 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V")
 
 
+#define CALLBACK(id, type) static jmethodID id = NULL;
 CALLBACKS
 #undef CALLBACK
 
@@ -822,6 +823,8 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnRecorderError
         (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring error)
 {
     WRAPPER(getMediaRecorder()->deliverError(cb_root, error));
+}
+
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnClose
         (JNIEnv *env, jobject obj, jlong ptr, jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean)
 {
@@ -2378,6 +2381,8 @@ void AndroidMediaRecorderSupport::deliverVideoDevices(jint cb_root, jobjectArray
     }
 
     RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, deviceIds, labels);
+}
+
 AndroidWebSocketSupport::AndroidWebSocketSupport(AndroidRunnerWrapper *owner) : AbstractWebSocketSupport(&owner->runner), owner(owner)
 {
 }

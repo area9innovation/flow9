@@ -290,6 +290,8 @@ private:
     virtual void resumeMediaRecorder(StackSlot recorder);
     virtual void pauseMediaRecorder(StackSlot recorder);
     virtual void stopMediaRecorder(StackSlot recorder);
+};
+
 class AndroidWebSocketSupport : public AbstractWebSocketSupport {
     AndroidRunnerWrapper *owner;
 public:
