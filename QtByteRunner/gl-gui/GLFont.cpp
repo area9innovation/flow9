@@ -885,7 +885,7 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
             if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' '))
-                break;
+                break;  // This quits layout cycle.
 
             charLen = encodeCharUtf32toUtf16(chr, charUTF16);
             for (int j = 0; j < charLen; ++j) text.push_back(charUTF16[j]);
@@ -918,7 +918,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator begin, Utf32InputIterator end,
 
     this->spacing = spacing;
 
-    text.reserve(str.size());
+    char_indices.reserve(str.size());
     glyphs.reserve(str.size());
     positions.reserve(str.size()+1);
 
@@ -1043,7 +1043,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator begin, Utf32InputIterator end,
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
             if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' '))
-                break;
+                break;  // This quits layout cycle.
 
             // TODO yield chr
             glyphs.push_back(info);

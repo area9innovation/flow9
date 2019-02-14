@@ -383,6 +383,7 @@ protected:
     GLBoundingBox bbox;
 
     unicode_string text;
+    std::vector<size_t> char_indices;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
 
