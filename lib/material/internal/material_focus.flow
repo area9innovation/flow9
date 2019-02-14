@@ -343,7 +343,9 @@ addMaterialFocusId(manager : MaterialManager, parent : MFocusGroup, name : strin
 
 					if (fgetValue(focusedB)) {
 						updateParentFocusId(true);
-					};
+					} else if (getValue(focused)) {
+						next(focused, false);
+					}
 
 					\ -> applyall(disps)
 				},
@@ -381,27 +383,15 @@ addMaterialFocusGroupId(manager : MaterialManager, parent : MFocusGroup, name : 
 			eitherMap(zorderB, idfn, const(getValue(manager.currentZorder)))
 		else
 			parent.zorder;
-	en =
-		if (zorderKeeper)
-			enabled
-		else
-			fmin(parent.enabled, enabled);
+	en = fmin(parent.enabled, enabled);
 	zorderEn =
 		if (zorderKeeper)
 			fmin(fselect2(manager.currentZorder, zorder, FLift2(\mz, z -> z >= mz)), clickEnabled)
 		else
 			fmin(parent.zorderEnabled, clickEnabled);
 
-	focusEn =
-		if (zorderKeeper)
-			fmin(en, focusEnabled)
-		else
-			fmin3(en, parent.focusEnabled, focusEnabled);
-	recEn =
-		if (zorderKeeper)
-			recordingEnabled
-		else
-			fmin(parent.recordingEnabled, recordingEnabled);
+	focusEn = fmin3(en, parent.focusEnabled, focusEnabled);
+	recEn = fmin(parent.recordingEnabled, recordingEnabled);
 
 	position = ref getDummyTransformMatrix;
 	box = ref \ -> WidthHeight(0., 0.);
@@ -547,12 +537,8 @@ makeTropicTag(manager : MaterialManager) -> int {
 }
 
 yieldFocus(manager : MaterialManager, gotonext : bool) -> void {
-	// clears inner flash focus from text input fields before switching
-	resetFocus();
-
 	if (isNone(nextFocus(manager, manager.focus, gotonext))) {
 		resetMFocus(manager);
-		nextFocus(manager, manager.focus, gotonext) |> ignore;
 	}
 }
 
@@ -605,16 +591,10 @@ nextFocus(manager : MaterialManager, parent : MFocusGroup, inOrder : bool) -> Ma
 }
 
 yieldFocusVH(manager : MaterialManager, gotonext : bool, vertical : bool) -> void {
-	// clears inner flash focus from text input fields before switching
-	resetFocus();
-
-	maybeApply(getCurrentFocusedItem(manager), \fc ->
-		maybeApply(if (vertical) fc.parent.vertical else fc.parent.horizontal, \p ->
-			if (fc == nextFocusVH(manager, p, fc, gotonext, vertical))
-				updateWhile(fc, \f -> nextFocusVH(manager, p, f, !gotonext, vertical)
-					|> (\f2 -> if (f == f2) None() else Some(f2))) |> ignore
-		)
-	)
+	if (isNone(nextFocusVH(manager, manager.focus, getCurrentFocusedItem(manager), getCurrentFocusedItem(manager), gotonext, vertical))) {
+		resetMFocus(manager);
+		nextFocusVH(manager, manager.focus, None(), None(), gotonext, vertical) |> ignore;
+	}
 }
 
 calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, vertical : bool) -> double {
@@ -664,62 +644,74 @@ calculateFocusWeight(currentFocus : MFocus, newFocus : MFocus, inOrder : bool, v
 	}
 }
 
-compareFocusWeights(currentFocus : MFocus, prevFocus : MFocus, newFocus : MFocus, inOrder : bool, vertical : bool) -> bool {
-	prevFocusWeight = calculateFocusWeight(currentFocus, prevFocus, inOrder, vertical);
-	newFocusWeight = calculateFocusWeight(currentFocus, newFocus, inOrder, vertical);
+compareFocusWeights(initialFocus : Maybe<MFocus>, prevFocus : Maybe<MFocus>, newFocus : MFocus, inOrder : bool, vertical : bool) -> bool {
+	eitherMap(
+		initialFocus,
+		\cf -> {
+			prevFocusWeight = eitherMap(prevFocus, \pf -> calculateFocusWeight(cf, pf, inOrder, vertical), 0.);
+			newFocusWeight = calculateFocusWeight(cf, newFocus, inOrder, vertical);
 
-	newFocusWeight > 0. && (prevFocusWeight < 0. || prevFocusWeight > newFocusWeight)
+			newFocusWeight > 0. && (prevFocusWeight < 0. || prevFocusWeight > newFocusWeight)
+		},
+		isNone(prevFocus)
+	)
 }
 
-nextFocusVH(manager : MaterialManager, parent : MFocusGroup, currentFocus : MFocus, inOrder : bool, vertical : bool) -> MFocus {
-	eitherMap(
-		getCurrentFocusedItem(manager),
-		\cf -> {
-			currentFocusedId = getValue(parent.focusedId);
+nextFocusVH(manager : MaterialManager, parent : MFocusGroup, initialFocus : Maybe<MFocus>, previousFocus : Maybe<MFocus>, inOrder : bool, vertical : bool) -> Maybe<MFocus> {
+	initialFocusedId = getValue(parent.focusedId);
 
-			(\fid, focus, prevF -> {
-				if (currentFocusedId == -1 || (if (inOrder) (fid >= currentFocusedId) else (fid <= currentFocusedId))) {
-					switchMaterialFocus(
-						focus,
-						\f : MFocus -> {
-							if (fgetValue(f.focusEnabled) && fid != currentFocusedId &&
-								((vertical && isSome(f.parent.vertical)) || isSome(f.parent.horizontal)) &&
-								compareFocusWeights(currentFocus, prevF, f, inOrder, vertical) &&
-								setMFocus(f, true)) {
-								f
-							} else
-								prevF
-						},
-						\f -> {
-							if (fgetValue(f.focusEnabled))
-								eitherMap(f.parent, \p ->
-									if (vertical && isSome(p.vertical)) {
-										if (isSome(p.horizontal) && p.horizontal == currentFocus.parent.horizontal)
-											prevF
-										else
-											nextFocusVH(manager, f, currentFocus, inOrder, vertical)
-									} else if (isSome(p.horizontal)) {
-										nextFocusVH(manager, f, currentFocus, inOrder, vertical)
-									} else {
-										prevF
-									},
-									prevF
-								)
-							else
-								prevF
-						}
-					)
-				} else
-					prevF
-			})
-			|> (\f ->
-				if (inOrder)
-					foldTree(getValue(parent.focusIds), cf, f)
-				else
-					foldRTree(getValue(parent.focusIds), cf, f)
+	checkFocusedId =
+		if (initialFocusedId != -1) {
+			if (inOrder)
+				\fid -> fid >= initialFocusedId
+			else
+				\fid -> fid <= initialFocusedId;
+		} else {
+			\__ -> true;
+		};
+
+	compareFocus = \fid, focus, prevFocus -> {
+		fgetValue(focus.focusEnabled) &&
+			fid != initialFocusedId &&
+			((vertical && isSome(focus.parent.vertical)) || isSome(focus.parent.horizontal)) &&
+			compareFocusWeights(initialFocus, prevFocus, focus, inOrder, vertical) &&
+			setMFocus(focus, true)
+	};
+
+	(\fid, currentFocus, prevFocus -> {
+		if (checkFocusedId(fid)) {
+			switchMaterialFocus(
+				currentFocus,
+				\focus -> {
+					if (compareFocus(fid, focus, prevFocus)) {
+						Some(focus);
+					} else {
+						prevFocus;
+					}
+				},
+				\focus -> {
+					if (fgetValue(focus.focusEnabled)) {
+						eitherMap(nextFocusVH(manager, focus, initialFocus, prevFocus, inOrder, vertical), \f -> Some(f), prevFocus)
+					} else {
+						prevFocus;
+					}
+				}
 			)
-		},
-		currentFocus
+		} else {
+			prevFocus;
+		}
+	})
+	|> (\f ->
+		if (inOrder)
+			foldTree(getValue(parent.focusIds), previousFocus, f)
+		else
+			foldRTree(getValue(parent.focusIds), previousFocus, f)
+	)
+	|> (\f ->
+		if (f == previousFocus)
+			None()
+		else
+			f
 	)
 }
 
