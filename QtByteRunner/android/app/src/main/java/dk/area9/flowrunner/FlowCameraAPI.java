@@ -209,6 +209,9 @@ public class FlowCameraAPI {
         if (takePictureIntent.resolveActivity(context.getPackageManager()) != null) {
             String imageFileName = fileName + ".jpg";
             File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+            if (!storageDir.exists()) {
+                storageDir.mkdirs();
+            }
             File image = new File(storageDir, imageFileName);
 
             cameraAppPhotoFilePath = image.getAbsolutePath();
@@ -224,6 +227,9 @@ public class FlowCameraAPI {
         if (takeVideoIntent.resolveActivity(context.getPackageManager()) != null) {
             String videoFileName = fileName + ".mp4";
             File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
+            if (!storageDir.exists()) {
+                storageDir.mkdirs();
+            }
             File video = new File(storageDir, videoFileName);
 
             cameraAppVideoFilePath = video.getAbsolutePath();
