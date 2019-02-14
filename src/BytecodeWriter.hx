@@ -535,6 +535,22 @@ class BytecodeWriter {
 					default: throw "Not implemented: " + Prettyprint.print(v);
 				}
 			}
+			case TArray(fa): {
+				switch (totype) {
+					case TArray(ta): {
+						switch (fa) {
+							case TName(n1, args1):
+								switch (ta) {
+								// Array of named types are OK 
+								case TName(n2, args2): // NOP
+								default: throw "Not implemented: " + Prettyprint.print(v);
+							}
+							default: throw "Not implemented: " + Prettyprint.print(v);
+						}
+					}
+					default: throw "Not implemented: " + Prettyprint.print(v);
+				}
+			}
 			default: throw "Not implemented: " + Prettyprint.print(v);
 			}
 		case Let(name, sigma, value, scope, pos):
