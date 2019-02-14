@@ -2466,6 +2466,22 @@ class CppWriter {
 			case TBoundTyvar(__): {
 				copyValue(ctx, out, ref);
 			}
+			case TArray(fa): {
+				switch (totype) {
+					case TArray(ta): {
+						switch (fa) {
+							case TName(n1, args1):
+								switch (ta) {
+								// Array of named types are OK 
+								case TName(n2, args2): copyValue(ctx, out, ref);
+								default: throw "Not implemented: " + Prettyprint.print(code);
+							}
+							default: throw "Not implemented: " + Prettyprint.print(code);
+						}
+					}
+					default: throw "Not implemented: " + Prettyprint.print(code);
+				}
+			}
 			case TFlow: {
 				copyValue(ctx, out, ref);
 			}
