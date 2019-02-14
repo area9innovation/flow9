@@ -81,10 +81,11 @@ static const LIGATURE LIGATURES[] = {
 
 class GLFont;
 class GLRenderSupport;
+typedef std::map<size_t, size_t> size_t2size_t;
 
 class PasswordUtf32Iter: public Utf32InputIterator {
 protected:
-    shared_ptr<Utf32InputIterator> org, cur, end;
+    shared_ptr<Utf32InputIterator> org, cur, nx, end;
     PasswordUtf32Iter& next();
 public:
     PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
@@ -96,15 +97,44 @@ public:
     virtual Utf32InputIterator &operator ++() {return next();}
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
-}
+    virtual shared_ptr<Utf32InputIterator> cloneReversed();
+};
 
 class LigatureUtf32Iter: public Utf32InputIterator {
 protected:
     shared_ptr<Utf32InputIterator> org, cur, nx, end;
-    void yield();
-    LigatureUtf32Iter& next();
     size_t ligalen;  // input characters decoded count
     ucs4_char yieldedChar;
+
+    void yieldSelf();
+    LigatureUtf32Iter& next();
+
+    // There's way to optimize memory consuming
+    // making this field static and adding mapping by org->data and usage counter.
+    // This will keep single size_t->size_t map per origin, not per
+    // LigatureUtf32Iter instance. Not forget to remove org->data key on last
+    // LigatureUtf32Iter instance disposal.
+    size_t2size_t reverseMap;
+    void buildReverseMap();
+
+    class Reversed: public Utf32InputIterator {
+    protected:
+        LigatureUtf32Iter *master;
+        shared_ptr<Utf32InputIterator> cur, masterNx;
+
+        Reversed& next();
+    public:
+        Reversed(LigatureUtf32Iter *master);
+        virtual size_t position() {return cur->position();}
+        virtual void *data() {return master->data();}
+        virtual ucs4_char operator *();
+        virtual ucs4_char_tracer traceCurrent();
+        virtual Utf32InputIterator &operator ++() {return next();}
+        virtual Utf32InputIterator &operator ++(int _)  {return next();}
+        virtual shared_ptr<Utf32InputIterator> clone();
+        virtual shared_ptr<Utf32InputIterator> cloneReversed();
+        bool isEnd() {return *cur==*master->end;}
+    };
 
 public:
     LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
@@ -113,9 +143,11 @@ public:
     virtual void *data() {return org->data();}
     virtual ucs4_char operator *();
     virtual ucs4_char_tracer traceCurrent();
+    static ucs4_char yield(Utf32InputIterator *cur, Utf32InputIterator *end, shared_ptr<Utf32InputIterator> *nx, size_t *ligalen);
     virtual Utf32InputIterator &operator ++() {return next();}
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
+    virtual shared_ptr<Utf32InputIterator> cloneReversed();
     bool isEnd() {return *cur==*end;}
 };
 

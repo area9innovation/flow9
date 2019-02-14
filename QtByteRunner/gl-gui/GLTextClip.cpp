@@ -255,6 +255,7 @@ void GLTextClip::layoutTextWrapLines()
 
     for (unsigned i = 0; i < text_extents.size(); i++) {
         Extent::Ptr extent = text_extents[i];
+        DecodeUtf16toUtf32 decoder(extent->text);
 
         assert(extent->newline || !extent->text.empty() || (i == text_extents.size()-1));
 
@@ -270,10 +271,10 @@ void GLTextClip::layoutTextWrapLines()
 
         if (input_type == "password") {
             ctext = unicode_string(ctext.length(), 0x2022);
-            ctexti = new PasswordUtf32Iter(&decoder.begin(), &decoder.end());
+            ctexti.reset(new PasswordUtf32Iter(*decoder.begin().clone(), *decoder.end().clone()));
         } else {
             ctext = GLTextLayout::getLigatured(ctext);
-            ctexti = new LigatureUtf32Iter(&decoder.begin(), &decoder.end());
+            ctexti.reset(new LigatureUtf32Iter(*decoder.begin().clone(), *decoder.end().clone()));
         }
 
         // Word-wrapping loop:

@@ -177,7 +177,8 @@ ucs4_char DecodeUtf16toUtf32::Iterator::operator *(){
     return outbuf;
 }
 ucs4_char_tracer DecodeUtf16toUtf32::Iterator::traceCurrent() {
-    return ucs4_char_tracer({pos, pos+currentCharLen, **this});
+    **this;
+    return ucs4_char_tracer(pos, pos+currentCharLen, outbuf);
 }
 
 bool DecodeUtf16toUtf32::Iterator::operator ==(DecodeUtf16toUtf32::Iterator &other){
@@ -196,23 +197,13 @@ shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::ReversedIterator::clone() {
     return r;
 }
 
-shared_ptr<Utf32ReversibleInputIterator> DecodeUtf16toUtf32::DirectIterator::cloneDirect() {
-    shared_ptr<Utf32ReversibleInputIterator> r(new DirectIterator(this->parent, this->pos));
+shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::DirectIterator::cloneReversed() {
+    shared_ptr<Utf32InputIterator> r(new ReversedIterator(this->parent, this->pos));
     return r;
 }
 
-shared_ptr<Utf32ReversibleInputIterator> DecodeUtf16toUtf32::ReversedIterator::cloneDirect() {
-    shared_ptr<Utf32ReversibleInputIterator> r(new ReversedIterator(this->parent, this->pos));
-    return r;
-}
-
-shared_ptr<Utf32ReversibleInputIterator> DecodeUtf16toUtf32::DirectIterator::cloneReversed() {
-    shared_ptr<Utf32ReversibleInputIterator> r(new ReversedIterator(this->parent, this->pos));
-    return r;
-}
-
-shared_ptr<Utf32ReversibleInputIterator> DecodeUtf16toUtf32::ReversedIterator::cloneReversed() {
-    shared_ptr<Utf32ReversibleInputIterator> r(new DirectIterator(this->parent, this->pos));
+shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::ReversedIterator::cloneReversed() {
+    shared_ptr<Utf32InputIterator> r(new DirectIterator(this->parent, this->pos));
     return r;
 }
 

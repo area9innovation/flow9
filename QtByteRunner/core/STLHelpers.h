@@ -242,19 +242,14 @@ public:
     bool operator ==(Utf32InputIterator &other) {return data() == other.data() && position() == other.position();}
     bool operator !=(Utf32InputIterator &other) {return !(*this == other);}
     virtual ucs4_char operator *() =0;
-    virtual ucs4_char_tracer traceCurrent();
+    virtual ucs4_char_tracer traceCurrent() =0;
 
     // Cycle through all characters and one extra «ending» position.
     virtual Utf32InputIterator &operator ++() =0;
     virtual Utf32InputIterator &operator ++(int _) =0;
 
     virtual shared_ptr<Utf32InputIterator> clone() =0;
-};
-
-class Utf32ReversibleInputIterator: public Utf32InputIterator {
-public:
-    virtual shared_ptr<Utf32ReversibleInputIterator> cloneDirect() =0;
-    virtual shared_ptr<Utf32ReversibleInputIterator> cloneReversed() =0;
+    virtual shared_ptr<Utf32InputIterator> cloneReversed() =0;
 };
 
 class DecodeUtf16toUtf32 {
@@ -267,7 +262,7 @@ public:
     DecodeUtf16toUtf32(unicode_char *org, size_t size);
     DecodeUtf16toUtf32(unicode_string& org);
 
-    class Iterator: public Utf32ReversibleInputIterator {
+    class Iterator: public Utf32InputIterator {
     protected:
         DecodeUtf16toUtf32 *parent;
         size_t pos;
@@ -297,8 +292,7 @@ public:
         virtual Utf32InputIterator &operator ++(int _) {return forward();}
 
         virtual shared_ptr<Utf32InputIterator> clone();
-        virtual shared_ptr<Utf32ReversibleInputIterator> cloneDirect();
-        virtual shared_ptr<Utf32ReversibleInputIterator> cloneReversed();
+        virtual shared_ptr<Utf32InputIterator> cloneReversed();
     };
     class ReversedIterator: public Iterator {
         friend class DecodeUtf16toUtf32;
@@ -310,8 +304,7 @@ public:
         virtual Utf32InputIterator &operator ++(int _)  {return backward();}
 
         virtual shared_ptr<Utf32InputIterator> clone();
-        virtual shared_ptr<Utf32ReversibleInputIterator> cloneDirect();
-        virtual shared_ptr<Utf32ReversibleInputIterator> cloneReversed();
+        virtual shared_ptr<Utf32InputIterator> cloneReversed();
     };
 
     DirectIterator begin();
