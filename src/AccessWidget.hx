@@ -590,8 +590,6 @@ class AccessWidget {
 
 	private static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
 		if (untyped parent.accessWidget != null) {
-			trace(untyped parent.accessWidget.nodeindex);
-
 			if (untyped parent.accessWidget.parent == null) {
 				addAccessWidget(untyped parent.accessWidget);
 			}
