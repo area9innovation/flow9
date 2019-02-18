@@ -848,7 +848,7 @@ class RenderSupportJSPixi {
 
 	private static inline function getScreenSize() {
 		if (Platform.isIOS && Platform.isChrome) {
-			var is_portrait = Browser.window.innerWidth < Browser.window.innerHeight;
+			var is_portrait = Browser.window.matchMedia("(orientation: portrait)").matches;
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
 				{ height : Browser.window.screen.width, width : Browser.window.screen.height};
