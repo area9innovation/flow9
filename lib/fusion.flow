@@ -166,6 +166,7 @@ export {
 	ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?>;
 	fthrottle(v : Transform<?>, samplingRate : int) -> Transform<?>;
 	fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?>;
+	fthrottleNextFrame(v : Transform<?>) -> Transform<?>;
 	fselectWithLast(b : Transform<??>, fn : FFn2<??, ??, ?>) -> Transform<?>;
 	fdelay(v : Transform<?>, ms : int) -> Transform<?>;
 	fstall(v : Transform<?>, ms : int) -> Transform<?>;
@@ -1581,6 +1582,47 @@ fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?> {
 			fsubselect(v, FLift(\v0 -> {
 				^uns();
 				uns := interruptibleTimer(maxDelta, \ -> next(newV, v0));
+
+				newV
+			}))
+		}
+	}
+}
+
+fthrottleNextFrameTimer(pendingV : ref Maybe<?>, newV : DynamicBehaviour<?>) -> void {
+	deferUntilNextFrameRendered(\ -> {
+		maybeApply(
+			^pendingV,
+			\pv -> if (pv != getValue(newV)) {
+				next(newV, pv);
+				fthrottleNextFrameTimer(pendingV, newV)
+			} else {
+				pendingV := None();
+			}
+		);
+	});
+}
+
+fthrottleNextFrame(v : Transform<?>) -> Transform<?> {
+	switch (v) {
+		ConstBehaviour(__): v;
+		default: {
+			newV = make(fgetValue(v));
+			pendingV = ref None();
+
+			fsubselect(v, FLift(\v0 -> {
+				eitherFn(
+					^pendingV,
+					\pv -> {
+						pendingV := Some(v0);
+					},
+					\ -> {
+						pendingV := Some(v0);
+						next(newV, v0);
+
+						fthrottleNextFrameTimer(pendingV, newV);
+					}
+				);
 
 				newV
 			}))
