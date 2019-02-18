@@ -111,6 +111,7 @@ protected:
     void invalidateLayout();
 
     void layoutText();
+    void layoutTextWrapLinesIter();
     void layoutTextWrapLines();
     void layoutTextSpaceLines();
 

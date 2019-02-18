@@ -367,6 +367,7 @@ public:
     ~GLFont();
 
     shared_ptr<GLTextLayout> layoutTextLine(unicode_string str, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
+    shared_ptr<GLTextLayout> layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
 
     std::string getFamilyName() { return family_name; }
     std::string getStyleName() { return style_name; }
@@ -386,10 +387,12 @@ protected:
     std::vector<size_t> char_indices;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
+    shared_ptr<Utf32InputIterator> endpos;
 
     GLTextLayout(GLFont::Ptr font, float size);
 
     void buildLayout(unicode_string str, float width_limit, float spacing, bool crop_long_words, bool rtl);
+    void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
     struct RenderPass {
         GLRectStrip pcoords;
@@ -441,6 +444,8 @@ public:
     float getWidth() { return bbox.size().x; }
 
     const unicode_string &getText() { return text; }
+    const utf32_string getText(utf32_string &base);
+    shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
 
     const GLBoundingBox &getBoundingBox() { return bbox; }

@@ -230,6 +230,7 @@ unicode_string encodeUtf8u(const unicode_string &str);
 
 size_t encodeCharUtf32toUtf16(uint32_t c, uint16_t *out);
 size_t decodeCharsUtf16toUtf32(const uint16_t *input, size_t input_size, uint32_t *output, size_t *output_size);
+size_t encodeCharsUtf32toUtf16(const uint32_t *input, size_t input_size, uint16_t *output, size_t *output_size);
 
 class Utf32InputIterator: public std::iterator<std::input_iterator_tag, ucs4_char> {
 public:
