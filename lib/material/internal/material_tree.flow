@@ -43,40 +43,39 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Mater
 	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
 	multiSelection = tryExtractStruct(m.style, MMultiSelection(make(makeSet())));
 	itemsLength = tryExtractStruct(m.style, MItemsLength(make(0)));
+	showSeparators = !containsStruct(m.style, MTreeHideSeparators());
 
 	state =
 		MTreeState(
 			selIndexes.first,
 			extractStruct(m.style, MTreeSelection(make(makeSet()))).selected,
 			extractStruct(m.style, MTreeExpanded(make(makeSet()))).expanded,
-			extractStruct(m.style, parent.theme.primaryColor),
+			extractStruct(m.style, getPrimaryColor(parent)),
 			isSome(multiSelection),
-			!containsStruct(m.style, MTreeHideSeparators())
+			showSeparators
 		);
 
-	TBorderA(0., 0., 0., 1.,
-		SelectMLines2T(
-			manager,
-			parent,
-			fmap(children.first, \c -> c.content),
-			\index, id, __, p -> {
-				MTreeNode2T(manager, p, state, getValue(children.first)[fgetValue(index)], farray(index), m2t, const(true));
-			}
-		)
+	SelectMLines2T(
+		manager,
+		parent,
+		fmap(children.first, \c -> c.content),
+		\index, __, __, p ->
+			MTreeNode2T(manager, p, state, getValue(children.first)[fgetValue(index)], farray(index), m2t, const(showSeparators))
 	)
+	|> TBorderBottom(1.)
 	|> (\mtree ->
 		TConstruct(
 			[
-				makeSubscribe(state.selected, \selSet -> {
-					iterSet(selSet, \sel -> {
+				makeSubscribe(state.selected, \selSet ->
+					iterSet(selSet, \sel ->
 						loop(
 							subrange(sel, 0, length(sel) - 1),
 							\s -> subrange(s, 0, length(s) - 1),
 							\s -> length(s) > 0,
 							\s -> nextDistinct(state.expanded, insertSet(getValue(state.expanded), s))
-						);
-					})
-				})
+						)
+					)
+				)
 			],
 			mtree
 		)
@@ -172,13 +171,12 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 	}
 	highlightFn = extractStruct(m.style, MTreeNodeCustomHighlighter(defaultHightlightFn)).fn;
 
-	buildDefaultIconFn = \isExpandedB : DynamicBehaviour<bool>, color -> {
+	buildDefaultIconFn = \isExpandedB : DynamicBehaviour<bool>, color ->
 		MIconToggle(
 			"remove_circle",
 			[MIconSize(16.), FillOpacity(1.), color, MToggleFalseIcon("add_circle", [MIconSize(16.), FillOpacity(1.), color])],
 			[MToggleValue(isExpandedB)]
-		)
-	}
+		);
 	buildIconFn = extractStruct(m.style, MTreeNodeCustomIcon(buildDefaultIconFn)).fn;
 
 	buildDefaultLineFn = \contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor ->
@@ -203,70 +201,69 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 		);
 
 	contentBoxB = makeWH();
-	TBorderA(if (length(fgetValue(treeIndex)) > 1) 24. else 0., 0., 0., 0.,
-		TLinesA([
-			MFocusClickable2T(manager, parent, "MTreeNode", focusState, \focus ->
-				TDecorator(
-					TAvailable(
-						TColsYCenterA([
-							TVisible(
-								fneq(childrenLength, 0),
-								m2t(buildIconFn(expanded, state.color), focus.parent)
-							),
-							TAttachBoxCopy(m2t(m.content2material(m.content), focus.parent), contentBoxB)
-						]),
-						TFillX()
-					),
-					concat(
-						eitherMap(
-							tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
-							\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
-							[]
+	
+	TLinesA([
+		MComponent2T(manager, parent, "MTreeNode", focusState, \focus ->
+			TDecorator(
+				TAvailable(
+					TColsYCenterA([
+						TVisible(
+							fneq(childrenLength, 0),
+							m2t(buildIconFn(expanded, state.color), focus.parent)
 						),
-						[Pair(selected, \wh -> m2t(highlightFn(wh), focus.parent))]
+						TAttachBox(m2t(m.content2material(m.content), focus.parent), contentBoxB)
+					]),
+					TFillX()
+				),
+				concat(
+					eitherMap(
+						tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
+						\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
+						[]
 					),
-					false
-				)
-			),
-			TShowLazy(
-				fand(fneq(childrenLength, 0), expanded),
-				\ ->
-					TAvailable(
-						TCopySize(
-							SelectMLines2T(
-								manager,
-								parent,
-								fmap(children.first, \c -> c.content),
-								\index, id, __, p -> {
-									nextDistinct(expanded, true);
-
-									MTreeNode2T(
-										manager,
-										p,
-										state,
-										getValue(children.first)[fgetValue(index)],
-										farrayPush(treeIndex, index),
-										m2t,
-										if (state.showSeparators)
-											flessi(index, fadditioni(childrenLength, const(-1)))
-										else
-											const(false)
-									);
-								}
-							),
-							\tr -> TAvailable(m2t(buildLineFn(contentBoxB, state.color), parent), tr),
-							true
-						),
-						TFillX()
-					)
-			),
-			TBaseAlignA(
-				TShow(addVerticalSeparator,
-					TBorder(16., 0., 16., 0., MSeparator2T(manager, parent, true))
-				)
+					[Pair(selected, \wh -> m2t(highlightFn(wh), focus.parent))]
+				),
+				false
 			)
-		])
-	)
+		),
+		
+		TShowLazy(
+			fand(fneq(childrenLength, 0), expanded),
+			\ ->
+				SelectMLines2T(
+					manager,
+					parent,
+					fmap(children.first, \c -> c.content),
+					\index, __, __, p -> {
+						nextDistinct(expanded, true);
+
+						MTreeNode2T(
+							manager,
+							p,
+							state,
+							getValue(children.first)[fgetValue(index)],
+							farrayPush(treeIndex, index),
+							m2t,
+							if (state.showSeparators)
+								flessi(index, fadditioni(childrenLength, const(-1)))
+							else
+								const(false)
+						);
+					}
+				)
+				|> (\t -> TCopySize(t, \tr ->
+						TAvailable(m2t(buildLineFn(contentBoxB, state.color), parent), tr),
+						true
+					))
+				|> (\t -> TAvailable(t, TFillX()))
+		),
+
+		MSeparator2T(manager, parent, true)
+		|> TBorderLeftRight(16.)
+		|> (\t -> TShow(addVerticalSeparator, t))
+		|> TBaseAlignA
+	])
+	|> (\treeNode -> TBorderA(if (length(fgetValue(treeIndex)) > 1) 24. else 0., 0., 0., 0., treeNode))
 	|> (\treeNode ->
 		TConstruct(
 			[
@@ -275,8 +272,8 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(selected, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
 					fselect2(state.selected, treeIndex, containsSet |> FLift2),
-					\s -> {
-						if (length(s.first) > 0 || length(s.second) > 0) {
+					\s ->
+						if (length(s.first) > 0 || length(s.second) > 0)
 							nextDistinct(
 								state.selected,
 								getValue(state.selected)
@@ -297,18 +294,15 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 										sel
 									}
 								)
-							)
-						}
-					},
-					\s -> {
-						nextDistinct(selected, s);
-					}
+							),
+					\s ->
+						nextDistinct(selected, s)
 				),
 				\ -> fBidirectionalLink(
 					fselectWithLast(fif(expanded, treeIndex, const([])), FLift2(\v1, v2 -> Pair(v1, v2))),
 					fselect2(state.expanded, treeIndex, containsSet |> FLift2),
-					\e -> {
-						if (length(e.first) > 0 || length(e.second) > 0) {
+					\e ->
+						if (length(e.first) > 0 || length(e.second) > 0)
 							nextDistinct(
 								state.expanded,
 								getValue(state.expanded)
@@ -324,27 +318,21 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 									else
 										ex
 								)
-							)
-						}
-					},
-					\e -> {
-						nextDistinct(expanded, e);
-					}
+							),
+					\e ->
+						nextDistinct(expanded, e)
 				),
 				\ -> {
-					if (containsSet(getValue(state.selected), fgetValue(treeIndex))) {
+					if (containsSet(getValue(state.selected), fgetValue(treeIndex)))
 						nextDistinct(selected, true);
-					}
-					if (containsSet(getValue(state.expanded), fgetValue(treeIndex))) {
-						nextDistinct(expanded, true);
-					}
 
-					\ -> {
-						if (!contains(getValue(state.items), fgetValue(treeIndex))) {
+					if (containsSet(getValue(state.expanded), fgetValue(treeIndex)))
+						nextDistinct(expanded, true);
+
+					\ -> if (!contains(getValue(state.items), fgetValue(treeIndex))) {
 							nextDistinct(state.expanded, removeSet(getValue(state.expanded), fgetValue(treeIndex)));
 							nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndex)));
 						}
-					}
 				}
 			],
 			treeNode

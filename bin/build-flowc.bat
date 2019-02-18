@@ -67,7 +67,7 @@ echo   -----------------
 echo.
 
 pushd %BASE_DIR%\src\java
-"%JAVAC%" -g com\area9innovation\flow\*.java
+"%JAVAC%" -g com\area9innovation\flow\*.java -Xlint:deprecation
 popd
 
 echo.

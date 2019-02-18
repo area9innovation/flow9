@@ -30,6 +30,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	currentInteractive = extractStruct(m.style, MCurrentInteractive(make(None()))).current;
 	mouseEnabled = extractStruct(m.style, MScrollMouseEnabled(const(true))).enabled;
 	scrollToFocusEnabled = extractStruct(m.style, MScrollToFocusEnabled(const(true))).enabled;
+	scrollBarsVisible = extractStruct(m.style, MScrollbarsVisible(make(false), make(false)));
+	scrollFadeContent = tryExtractStruct(m.style, MScrollFadeContent(0, 0.0));
 
 	onScrolledToBottom = tryExtractStruct(m.style, MOnScrolledToBottom(nop));
 	onScrolledToSide = tryExtractStruct(m.style, MOnScrolledToSide(nop));
@@ -132,7 +134,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 		cAcc = ref TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(true), true, true, []);
 		c0 = \newParent ->
 			TransformTAcc2(\t2a2 -> {
-				cAcc := TAvailable(TAttachBoxCopy(scrollContent(newParent), contentWH), TAcc2SizeAttach(b, boxWH0)) |> t2a2;
+				cAcc := TAvailable(TAttachBox(scrollContent(newParent), contentWH), TAcc2SizeAttach(b, boxWH0)) |> t2a2;
 
 				^cAcc;
 			});
@@ -141,7 +143,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 			TGroupWithoutMetrics([
 				TShowLazy(
 					fand(showScrolling, enabled),
-					\ -> MScrollHandling2T(scrollId, manager, m.style, parent.theme.lightBackground, contentWH, boxWH, scrollPosition, maxWH,
+					\ -> MScrollHandling2T(scrollId, manager, m.style, getLightBackground(parent), contentWH, boxWH, scrollPosition, maxWH,
 						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
 						TRectangle(interactiveRectangleStyle, TSized(boxWH)))
 				),
@@ -232,12 +234,12 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							f2
 						)
 					),
-					MActivate2T(
+					MComponentGroup2T(
 						manager,
 						parent,
 						extractStruct(m.style, MFocusName("MScroll")).name,
 						concat(
-							extractMActivateState(m.style),
+							extractMComponentGroupState(m.style),
 							[
 								IScriptBehaviour("point", currentPoint, ISInputValue([], serialize(getValue(currentPoint)), true)),
 								IScriptBehaviour("down", moving, ISInputValue([], serialize(getValue(moving)), true)),
@@ -319,6 +321,39 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							)
 					)
 				),
+				eitherMap(
+					scrollFadeContent,
+					\sfc -> {
+						gradientPoints = [GradientPoint(sfc.color, 0.0, 0.0), GradientPoint(sfc.color, 1.0, 1.0)];
+						TGroup2(
+							TShowLazy(
+								scrollBarsVisible.y,
+								\-> TLines2(
+									TFillY(), 
+									TFrame(
+										0.0,
+										0.0,
+										[GradientFill(90.0, gradientPoints)],
+										TFillXH(sfc.width)
+									)
+								)
+							),
+							TShowLazy(
+								scrollBarsVisible.x,
+								\-> TCols2A(
+									TFillX(), 
+									TFrame(
+										0.0,
+										0.0,
+										[GradientFill(0.0, gradientPoints)],
+										TFillWY(sfc.width)
+									)
+								)
+							)
+						)
+					},
+					TEmpty()
+				),
 				TInteractive(
 					[
 						MouseDown(\mi -> {
@@ -337,8 +372,19 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 				),
 				TShowLazy(
 					showScrolling,
-					\ -> MScrollBars2T(manager, scrollId, m.style, contentWH, boxWH, scrollPosition, xMoving, yMoving,
-						currentInteractive, downXBar, downYBar,	TRectangle(interactiveRectangleStyle, TSized(boxWH))
+					\ -> MScrollBars2T(
+						manager,
+						scrollId,
+						eitherMap(scrollFadeContent, \__ -> m.style, replaceStruct(m.style, scrollBarsVisible)),
+						contentWH,
+						boxWH,
+						scrollPosition,
+						xMoving,
+						yMoving,
+						currentInteractive,
+						downXBar,
+						downYBar,
+						TRectangle(interactiveRectangleStyle, TSized(boxWH))
 					)
 				)
 			])
@@ -567,19 +613,19 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 			TMouseInside(inside, false),
 			KeyDown2(\handled, ke -> {
 				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside)) {
-					if (ke.utf == "up") {
+					if (ke.utf == "up" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
 						true
-					} else if (ke.utf == "down") {
+					} else if (ke.utf == "down" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
 						true
-					} else if (ke.utf == "left") {
+					} else if (ke.utf == "left" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
 						true
-					} else if (ke.utf == "right") {
+					} else if (ke.utf == "right" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
 						true
@@ -611,12 +657,13 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 						else
 							nextDistinct(scrollPosition, Point(sp.x, fgetValue(maxWH).height));
 						true
-					}
-					else
+					} else {
 						false
-				} else
+					}
+				} else {
 					false
-				}),
+				}
+			}),
 			MouseDown2(\h, mi -> {
 				if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId)) {
 					if (mi.inside()) {

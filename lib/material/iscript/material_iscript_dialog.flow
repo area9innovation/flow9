@@ -21,7 +21,7 @@ export {
 
 	loadBatchTestsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
-	loadIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void;
+	loadLocalIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	saveIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
 	extendedLoadSaveIScriptDialog(manager : MaterialManager, storedIScript : StoredIScript, m2t : (Material, MFocusGroup) -> Tropic, isRunningB : Transform<bool>, onClose : () -> void) -> void;
@@ -32,8 +32,7 @@ export {
 	showRecordSettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	showReplaySettingsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
-	showLogicalScreenshotCompareDialog(manager : MaterialManager, batchTestsFolder : string,
-		batchTestResults : [IScriptReplayResult], m2t : (Material, MFocusGroup) -> Tropic) -> void;
+	showLogicalScreenshotCompareDialog(manager : MaterialManager, batchTestResults : [IScriptReplayResult], m2t : (Material, MFocusGroup) -> Tropic) -> void;
 
 	loadDBIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	saveDBIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void;
@@ -42,8 +41,6 @@ export {
 	saveIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 	saveDBIScript(manager : MaterialManager, name : string, m2t : (Material, MFocusGroup) -> Tropic) -> void;
 }
-
-
 
 addIScriptRecordHover(manager : MaterialManager, script : Pair<double, IScriptRecord>, hover : DynamicBehaviour<bool>) -> (Material) -> Material {
 	eitherMap(
@@ -1023,21 +1020,93 @@ loadBatchTestsDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) ->
 
 }
 
-loadIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void {
+loadIScriptDialog(
+	manager : MaterialManager,
+	onOpen : ([FbObject]) -> void,
+	onCancel : () -> void,
+	title : string,
+	extensions : [string],
+	additionalStyle : [FbStyle],
+	appendToCurrent : bool,
+	recordTimeB : DynamicBehaviour,
+	m2t : (Material, MFocusGroup) -> Tropic
+) -> void {
+
+	recordTimeInputB = make(d2s(getValue(recordTimeB)));
+	closeDelayDialog = make(false);
+	saveDelayEnable = fneq(recordTimeInputB, "");
+
+	delayDialog = \__, __ -> {
+		renderMDialog(manager, closeDelayDialog,
+			[
+				MDialogTitle("Enter delay value"),
+				MDialogUseFrame(),
+				MDialogActions([
+					MTextButton(_("CANCEL"), \-> next(closeDelayDialog, true), [], [MShortcut("esc")]),
+					MTextButton(
+						_("SET"),
+						\ -> {
+							next(recordTimeB, s2d(getValue(recordTimeInputB)));
+							next(closeDelayDialog, true);
+						},
+						[],
+						[
+							MShortcut("enter"),
+							MEnabled(saveDelayEnable)
+						]
+					)
+				]),
+			],
+			MConstruct(
+				[],
+				MCols([
+					MFixSize(MText("Delay (ms):", []), TFixed(75.0, 20.0)),
+					TFixed(8.0, 0.0),
+					MTextInput(
+						recordTimeInputB,
+						[
+							TextInputType(NumericType()),
+							MWidth(400.0),
+							MMaxLines(1)
+						],
+						[
+							MEnabled(const(true))
+						]
+					)
+				])
+			),
+			m2t
+		)
+	}
+
+	renderCustomMFileBrowser(manager, manager.focus, title, extensions,
+		concat(
+			if (appendToCurrent) [CustomExtFBB("Delay (ms)", delayDialog)] else [],
+			[
+				OpenExtFBB(onOpen),
+				CancelExtFBB(onCancel)
+			]
+		),
+		concatA([
+			[
+				FbModalWindow(true)
+			],
+			additionalStyle
+		]),
+		m2t
+	);
+}
+
+loadLocalIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Material, MFocusGroup) -> Tropic) -> void {
 	storeFilesystemExtAPI = getFilesystemExtAPI();
 
 	restoreFilesystemExtAPI = \ -> setFilesystemExtAPI(storeFilesystemExtAPI);
 
 	setLocalFilesystemExtAPI();
 
-	fileNameB = make("");
 	recordTimeB = make(0.);
-	recordTimeInputB = make(d2s(getValue(recordTimeB)));
 
-	closeDelayDialog = make(false);
-	saveDelayEnable = fneq(recordTimeInputB, "");
-
-	onOpen = \fileObjects -> {
+	onOpen = \fileObjects : [FbObject] -> {
 		if (fileObjects != []) {
 			fileName = fileObjects[0].fullPath;
 			next(manager.iscript.currentFileNameB, fileName);
@@ -1054,48 +1123,20 @@ loadIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Mate
 
 	onCancel = \ -> restoreFilesystemExtAPI();
 
-	delayDialog = \__, __ -> {
-		renderMDialog(manager, closeDelayDialog,
-			[
-				MDialogTitle("Enter delay value"),
-				MDialogUseFrame(),
-				MDialogActions([
-					MTextButton(_("CANCEL"), \-> next(closeDelayDialog, true), [], [MShortcut("esc")]),
-					MTextButton(_("SET"), \-> {
-						next(recordTimeB, s2d(getValue(recordTimeInputB)));
-						next(closeDelayDialog, true);
-					}, [], [MShortcut("enter"), MEnabled(saveDelayEnable)])
-				]),
-			],
-			MConstruct(
-				[],
-				MCols([
-					MFixSize(MText("Delay (ms):", []), TFixed(75.0, 20.0)),
-					TFixed(8.0, 0.0),
-					MTextInput(
-						recordTimeInputB,
-						[TextInputType(NumericType()), MWidth(400.0), MMaxLines(1)],
-						[MEnabled(const(true))]
-					)
-				])
-			),
-			m2t
-		)
-	}
-
-	renderCustomMFileBrowser(manager, manager.focus, "Open file", [".iscript"],
-		concat(
-			if (appendToCurrent) [CustomExtFBB("Delay (ms)", delayDialog)] else [],
-			[
-				OpenExtFBB(onOpen),
-				CancelExtFBB(onCancel)
-			]
-		),
+	loadIScriptDialog(
+		manager,
+		onOpen,
+		onCancel,
+		"Open file",
+		[".iscript"],
 		[
-			FbModalWindow(true),
 			FbCurrentPath(make("")),
 			FbStartDir(getCurrentDirectory())
-		], m2t);
+		],
+		appendToCurrent,
+		recordTimeB,
+		m2t
+	);
 }
 
 saveIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> void {
@@ -1244,7 +1285,7 @@ viewIScriptVisualScreenshotDialog(manager : MaterialManager, screenshot : string
 	closeWhenB = make(false);
 	availViewSizeB = make(WidthHeight(0.0, 0.0));
 
-	MAttachBoxCopy(
+	MAttachBox(
 		MSelect(availViewSizeB,
 			\vs -> MGroup2(
 				MZoom(TPicture(screenshot, []), TFixed(vs.width, vs.height), true),
@@ -1286,7 +1327,7 @@ showRecordingModeDialog(manager : MaterialManager, m2t : (Material, MFocusGroup)
 		MDialogActions([
 			MTextButton("CANCEL", \ -> {
 					next(closeWhenB, true);
-					setIScriptState(manager, IScriptPaused());
+					setIScriptState(manager, IScriptStopped());
 				},
 				[], [MShortcut("esc")]
 			),
@@ -1325,27 +1366,26 @@ showRecordingModeDialog(manager : MaterialManager, m2t : (Material, MFocusGroup)
 
 showLogicalScreenshotCompareDialog(
 	manager : MaterialManager,
-	batchTestsFolder : string,
-	batchTestResults : [IScriptReplayResult],
+	replayResults : [IScriptReplayResult],
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> void {
-	batchTestResultsRef = ref batchTestResults;
+	replayResultsRef = ref replayResults;
 
-	if (length(^batchTestResultsRef) > 0) {
+	if (length(^replayResultsRef) > 0) {
 		closeWhenB = make(false);
 
 		resultDataTable = make([]);
 
 		updateResultDataTable = \ -> {
 			res = mapi(
-				^batchTestResultsRef,
+				^replayResultsRef,
 				\i : int, v : IScriptReplayResult -> {
 					iconSuccess = MIcon("done", [MGreen(500)]);
 					iconCurrent = MIcon("done_all", [MGreen(500)]);
 					iconError = MIcon("clear", [MRed(500)]);
 					[
 						MText(i2s(i), []),
-						MText(v.filename, []),
+						MText(fileNameOnly(v.filepath), []),
 						if (v.isReplaySuccessful) iconSuccess else iconError,
 						if (isSome(v.iscriptVisualScreenshotM))
 							MZoom(TPicture(either(v.iscriptVisualScreenshotM, IScriptVisualScreenshot("")).screenshot, []), TFixed(120.0, 90.0), true)
@@ -1371,7 +1411,7 @@ showLogicalScreenshotCompareDialog(
 			transparentB = make(0.5);
 			availViewSizeB = make(WidthHeight(0.0, 0.0));
 
-			prevRR = (^batchTestResultsRef)[rowId];
+			prevRR = (^replayResultsRef)[rowId];
 
 			iscriptVisualScreenshot = make(either(prevRR.iscriptVisualScreenshotM, IScriptVisualScreenshot("")).screenshot);
 			replayVisualScreenshot = prevRR.afterReplayVisualScreenshot.screenshot;
@@ -1382,9 +1422,9 @@ showLogicalScreenshotCompareDialog(
 				MDialogActions([
 					MTextButton("SET REPLAY SCREENSHOT AS CORRECT IN ISCRIPT", \ -> {
 						next(iscriptVisualScreenshot, prevRR.afterReplayVisualScreenshot.screenshot);
-						batchTestResultsRef := replace(^batchTestResultsRef, rowId,
+						replayResultsRef := replace(^replayResultsRef, rowId,
 							IScriptReplayResult(
-								prevRR.filename,
+								prevRR.filepath,
 								prevRR.isReplaySuccessful,
 								Some(prevRR.afterReplayLogicalScreenshot),
 								Some(prevRR.afterReplayVisualScreenshot),
@@ -1392,7 +1432,7 @@ showLogicalScreenshotCompareDialog(
 								prevRR.afterReplayVisualScreenshot
 							)
 						);
-						updateIScriptFile(manager, batchTestsFolder + prevRR.filename,
+						updateIScriptFile(manager, prevRR.filepath,
 							\storedIScript : StoredIScript -> {
 								storedIScript.script.stack
 								|> (\stack -> switch (findIScriptLastRecordKeyValueOfType(stack, IScriptLogicalScreenshot("", WidthHeight(0., 0.)))) {
@@ -1424,7 +1464,7 @@ showLogicalScreenshotCompareDialog(
 			content2 =
 				MLines([
 					MSlider(transparentB, [MSliderRange(0.0, 1.0), MSliderStep(0.1), MSliderDisplayValue(true), MSliderIconLeft("brightness_1"), MSliderIconRight("brightness_5")]),
-					MAttachBoxCopy(
+					MAttachBox(
 						MGroup([
 							MSelect(fpair(availViewSizeB, iscriptVisualScreenshot),
 								\vs -> MGroup2(
@@ -1496,12 +1536,8 @@ loadDBIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Ma
 		storeCurrentAndSetIScriptDBPartition(manager);
 
 		recordTimeB = make(0.);
-		recordTimeInputB = make(d2s(getValue(recordTimeB)));
 
-		closeDelayDialog = make(false);
-		saveDelayEnable = fneq(recordTimeInputB, "");
-
-		onOpen = \fileObjects -> {
+		onOpen = \fileObjects : [FbObject] -> {
 			if (fileObjects != []) {
 				fileName = fileObjects[0].fullPath;
 				next(manager.iscript.currentFileNameB, fileName);
@@ -1523,46 +1559,17 @@ loadDBIScriptDialog(manager : MaterialManager, appendToCurrent : bool, m2t : (Ma
 
 		onCancel = \ -> restoreCurrentDBPartition(manager);
 
-		delayDialog = \__, __ -> {
-			renderMDialog(manager, closeDelayDialog,
-				[
-					MDialogTitle("Enter delay value"),
-					MDialogUseFrame(),
-					MDialogActions([
-						MTextButton(_("CANCEL"), \-> next(closeDelayDialog, true), [], [MShortcut("esc")]),
-						MTextButton(_("SET"), \-> {
-							next(recordTimeB, s2d(getValue(recordTimeInputB)));
-							next(closeDelayDialog, true);
-						}, [], [MShortcut("enter"), MEnabled(saveDelayEnable)])
-					]),
-				],
-				MConstruct(
-					[],
-					MCols([
-						MFixSize(MText("Delay (ms):", []), TFixed(75.0, 20.0)),
-						TFixed(8.0, 0.0),
-						MTextInput(
-							recordTimeInputB,
-							[TextInputType(NumericType()), MWidth(400.0), MMaxLines(1)],
-							[MEnabled(const(true))]
-						)
-					])
-				),
-				m2t
-			)
-		}
-
-		renderCustomMFileBrowser(manager, manager.focus, "Open file", [".iscript"],
-			concat(
-				if (appendToCurrent) [CustomExtFBB("Delay (ms)", delayDialog)] else [],
-				[
-					OpenExtFBB(onOpen),
-					CancelExtFBB(onCancel)
-				]
-			),
-			[
-				FbModalWindow(true),
-			], m2t);
+		loadIScriptDialog(
+			manager,
+			onOpen,
+			onCancel,
+			"Open file",
+			[".iscript"],
+			[],
+			appendToCurrent,
+			recordTimeB,
+			m2t
+		);
 	}
 }
 
@@ -1570,12 +1577,10 @@ saveDBIScriptDialog(manager : MaterialManager, m2t : (Material, MFocusGroup) -> 
 	if (isIScriptFilesystemDBInitialized(manager)) {
 		storeCurrentAndSetIScriptDBPartition(manager);
 
-		fileNameB = make(getValue(manager.iscript.currentFileNameB));
-
 		onSave = \fileObjects -> {
 			if (fileObjects != []) {
 				filename = fileObjects[0].fullPath;
-				next(fileNameB, filename);
+				next(manager.iscript.currentFileNameB, filename);
 
 				iScriptInfo(manager, filename, None());
 

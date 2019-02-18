@@ -1,1 +1,1 @@
-call flowc server=0 incremental=0 file=%~n1.flow wasm=%~n1.wasm wasmhost=%~n1.node.js wasmnodejs=1 wasmlisting=%~n1.lst %2 %3
+call flowc server=0 incremental=0 verify-types=1 file=%~n1.flow wasm=%~n1.wasm wasmhost=%~n1.node.js wasmnodejs=1 wasmlisting=%~n1.lst %2 %3
