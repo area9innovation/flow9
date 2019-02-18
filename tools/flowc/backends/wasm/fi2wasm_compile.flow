@@ -386,7 +386,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 							// essentially, a substitute for temp variable or stack dup instruction
 							Wasm2Seq([
 								rec(f),
-								Wasm2SetGlobal("$wasm_global_temp_holder_mut"),
+								Wasm2SetGlobal("wasm_global_temp_holder_mut"),
 								fiWasmBuildIndirectCall(acc, Wasm2GetGlobal("wasm_global_temp_holder_mut"), 
 									wasmExpType(f), context, destructors)
 							])
@@ -508,10 +508,15 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				}
 			} |> \cmd -> Wasm2Seq(concat([value, cmd], destructors));
 		}
-		WasmSeq(es, type, __): 
-			// this code assumes no mid-sequence statements return value
-            // see split_expressions for the logic that eliminates those
-			Wasm2Seq(concat(destructors, map(es, rec))); 
+		WasmSeq(es, type, __): {
+			canReturn = type != WasmTypeVoid(); // whether the result of last statement shall be discarded
+			Wasm2Seq(concat(destructors, mapi(es, \i, e : WasmExp -> {
+				e2 = rec(e);
+				// we may need drop after last statement if function returns void and it is non-void
+				if (wasmExpType(e) == WasmTypeVoid() || ((i == length(es) - 1) && canReturn)) e2
+				else Wasm2Seq([e2, Wasm2Drop()]);
+			})));
+        }
 		WasmCallPrim(op, es, type, __): {
 			compileWasmCallPrim(op, es, type, acc, context, error, destructors)
 		}
