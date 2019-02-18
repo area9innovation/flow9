@@ -1,5 +1,5 @@
 import tools/flowc/backends/java/fi2java_compile;
-
+import sys/system;
 export {
 	fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void;
 }
@@ -85,5 +85,48 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 	main_fname = pathCombine(package_path, "Main.java");
 	setFileContent(main_fname, javaList2String(gcontext.main_file_text, "}\n"));
 
-	callback();
+	if (cfg.jarfile != "") {
+
+		jarScript =
+			"javac -encoding UTF-8 -cp " + getFlowDir() + "src/java " + package_path + "/*.java\n" + 
+			"jar cf " + cfg.jarfile + " -C " + getFlowDir() + "src/java com/area9innovation/flow/\n" +
+			"jar feu " + cfg.jarfile + " " + cfg.packageName + ".Main -C " + cfg.outputdir + " " + pathCombineMany(strSplit(cfg.packageName, ".")) + "\n";
+
+		buildJarWin = "build_jar.bat";
+		buildJarNix = "build_jar.sh";
+
+		setFileContent(if (windows()) buildJarWin else buildJarNix, jarScript);
+
+		startProcess(buildJarNix, [], ".", "",
+			\c, o, e -> {
+				fcVerbose(cfg, 0, "Assembling JAR file " + cfg.jarfile + "...");
+				if (c != 0) {
+					// Windows version of build_jar utility named differently
+					startProcess("sh", [buildJarNix], ".", "",
+						\c1, o1, e1 -> {
+							callback();
+							if (c1 != 0) {
+								fcPrintln("JAR build failed.");
+								fcPrintln(e1);
+								fcPrintln(o1);
+								fcPrintln(i2s(c1));
+							}
+							deleteFile(buildJarWin);
+							deleteFile(buildJarNix);
+							{}
+						}
+					);
+				} else {
+					fcVerbose(cfg, 0, "JAR assembling done.");
+					callback();
+					deleteFile(buildJarWin);
+					deleteFile(buildJarNix);
+					{}
+				}
+			}
+		);
+
+	} else {
+		callback();
+	}
 }
