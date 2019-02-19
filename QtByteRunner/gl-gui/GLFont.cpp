@@ -904,8 +904,10 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             // We shouldn't add spacing after the last char in the string
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
-            if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' '))
+            if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) {
+                endpos = strProc;
                 break;  // This quits layout cycle.
+            }
 
             // TODO yield chr
             char_indices.push_back(chrIdx);
@@ -922,6 +924,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     }
 
     positions.push_back(cursor);
+    endpos = end.clone();
 
     if (!glyphs.empty()) {
         bbox |= vec2(0.0f);
