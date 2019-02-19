@@ -31,6 +31,7 @@ class FlowGraphics extends Graphics {
 		fillGradient = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix, type : type };
 
 		beginFill(0x000000, 1.0); // This will be used as a mask graphics
+		lineStyle(1.0, 0, 0.0);
 	}
 
 	public function lineGradientStroke(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic) : Void {
