@@ -166,6 +166,7 @@ export {
 	ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?>;
 	fthrottle(v : Transform<?>, samplingRate : int) -> Transform<?>;
 	fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?>;
+	fthrottleNextFrame(v : Transform<?>) -> Transform<?>;
 	fselectWithLast(b : Transform<??>, fn : FFn2<??, ??, ?>) -> Transform<?>;
 	fdelay(v : Transform<?>, ms : int) -> Transform<?>;
 	fstall(v : Transform<?>, ms : int) -> Transform<?>;
@@ -429,10 +430,11 @@ make5Subscribe2(v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, v4 :
 makeSubscribeUns(v : Transform<?>, f : (?) -> [() -> void]) -> () -> () -> void {
 	\ -> {
 		uns = ref [];
-		uns2 = makeSubscribe(v, \val -> {
+		uns2 = makeSubscribe2(v, \val -> {
 			dispUnsA(uns);
 			uns := f(val);
 		})();
+		uns := f(fgetValue(v));
 
 		\ -> {
 			uns2();
@@ -495,10 +497,11 @@ makeSubscribe2UnsTimer(v : Transform<?>, ms : int, f : (?) -> [() -> void]) -> (
 make2SubscribeUns(v1 : Transform<?>, v2 : Transform<??>, f : (?, ??) -> [() -> void]) -> () -> () -> void {
 	\ -> {
 		uns = ref [];
-		uns2 = make2Subscribe(v1, v2, \val1, val2 -> {
+		uns2 = make2Subscribe2(v1, v2, \val1, val2 -> {
 			dispUnsA(uns);
 			uns := f(val1, val2);
 		})();
+		uns := f(fgetValue(v1), fgetValue(v2));
 
 		\ -> {
 			uns2();
@@ -701,7 +704,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 									subs = ref 1;
 									dyn = make(ifn(^dv1, ^dv2));
 									disp =
-										if (checkEqualTransforms(b1, b2)) {
+										if (flow(b1) == b2) {
 											u = subscribe2(b1, \b -> nextDistinct(dyn, ifn(b, flow(b))));
 											\ -> {subs := ^subs - 1; if (^subs == 0) {u(); t.beh ::= FDestroyed();}};
 										} else {
@@ -805,7 +808,7 @@ doFuseDynamic(t : Transform<?>) -> Pair<DynamicBehaviour<?>, () -> void> {
 									Pair(dyn, disp)
 								}
 								default: {
-									if (checkEqualTransforms(b1, b2)) {
+									if (b1 == b2) {
 										cb1 = doFuseDynamic(b1);
 
 										subs = ref 1;
@@ -1155,16 +1158,26 @@ fmax(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 					const(max(v1, v2));
 				}
 				default: {
-					fselect(b2, FMaxConst(v1));
+					if (flow(v1) == true) {
+						const(flow(true))
+					} else {
+						fselect(b2, FMaxConst(v1));
+					}
 				}
 			}
 		}
 		default: {
 			switch (b2) {
 				ConstBehaviour(v2): {
-					fselect(b1, FMaxConst(v2));
+					if (flow(v2) == true) {
+						const(flow(true))
+					} else {
+						fselect(b1, FMaxConst(v2));
+					}
 				}
-				default: fselect2(b1, b2, FMax());
+				default: {
+					fselect2(b1, b2, FMax());
+				}
 			}
 		}
 	}
@@ -1187,16 +1200,26 @@ fmin(b1 : Transform<?>, b2 : Transform<?>) -> Transform<?> {
 					ConstBehaviour(min(v1, v2));
 				}
 				default: {
-					fselect(b2, FMinConst(v1));
+					if (flow(v1) == false) {
+						const(flow(false))
+					} else {
+						fselect(b2, FMinConst(v1));
+					}
 				}
 			}
 		}
 		default: {
 			switch (b2) {
 				ConstBehaviour(v2): {
-					fselect(b1, FMinConst(v2));
+					if (flow(v2) == false) {
+						const(flow(false))
+					} else {
+						fselect(b1, FMinConst(v2));
+					}
 				}
-				default: fselect2(b1, b2, FMin());
+				default: {
+					fselect2(b1, b2, FMin());
+				}
 			}
 		}
 	}
@@ -1391,51 +1414,6 @@ fxor(a : Transform<bool>, b : Transform<bool>) -> Transform<bool> {
 	fselect2(a, b, FusionXor());
 }
 
-checkEqualTransforms(b1 : Transform<flow>, b2 : Transform<flow>) -> bool {
-	switch (b1) {
-		DynamicBehaviour(v1, __) : {
-			switch (b2) {
-				DynamicBehaviour(v2, __): {
-					b1 == b2;
-				}
-				default: false;
-			}
-		}
-		ConstBehaviour(v1): {
-			switch (b2) {
-				ConstBehaviour(v2): {
-					v1 == v2;
-				}
-				default: false;
-			}
-		}
-		FSelect(v1, fn1, __) : {
-			switch (b2) {
-				FSelect(v2, fn2, __) : {
-					fn1 == fn2 && checkEqualTransforms(v1, v2);
-				}
-				default: false;
-			}
-		}
-		FSelect2(v1, v2, fn1, __) : {
-			switch (b2) {
-				FSelect2(v3, v4, fn2, __) : {
-					fn1 == fn2 && checkEqualTransforms(v1, v3) && checkEqualTransforms(v2, v4)
-				}
-				default: false;
-			}
-		}
-		FSubSelect(v1, fn1, __) : {
-			switch (b2) {
-				FSubSelect(v2, fn2, __) : {
-					fn1 == fn2 && checkEqualTransforms(v1, v2);
-				}
-				default: false;
-			}
-		}
-	}
-}
-
 fpair(v1 : Transform<?>, v2 : Transform<??>) -> Transform<Pair<?, ??>> {
 	fselect2(v1, v2, FIdentity2())
 }
@@ -1604,6 +1582,47 @@ fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?> {
 			fsubselect(v, FLift(\v0 -> {
 				^uns();
 				uns := interruptibleTimer(maxDelta, \ -> next(newV, v0));
+
+				newV
+			}))
+		}
+	}
+}
+
+fthrottleNextFrameTimer(pendingV : ref Maybe<?>, newV : DynamicBehaviour<?>) -> void {
+	deferUntilNextFrameRendered(\ -> {
+		maybeApply(
+			^pendingV,
+			\pv -> if (pv != getValue(newV)) {
+				next(newV, pv);
+				fthrottleNextFrameTimer(pendingV, newV)
+			} else {
+				pendingV := None();
+			}
+		);
+	});
+}
+
+fthrottleNextFrame(v : Transform<?>) -> Transform<?> {
+	switch (v) {
+		ConstBehaviour(__): v;
+		default: {
+			newV = make(fgetValue(v));
+			pendingV = ref None();
+
+			fsubselect(v, FLift(\v0 -> {
+				eitherFn(
+					^pendingV,
+					\pv -> {
+						pendingV := Some(v0);
+					},
+					\ -> {
+						pendingV := Some(v0);
+						next(newV, v0);
+
+						fthrottleNextFrameTimer(pendingV, newV);
+					}
+				);
 
 				newV
 			}))

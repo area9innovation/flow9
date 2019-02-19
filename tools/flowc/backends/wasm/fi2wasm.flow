@@ -5,6 +5,7 @@ import tools/flowc/backends/wasm/wasm_type_descriptor;
 import tools/flowc/backends/wasm/wasm_function_table;
 import tools/flowc/manipulation/lambda_lifting;
 import tools/flowc/manipulation/specialization;
+import tools/flowc/manipulation/wrap_funcs_as_args;
 import tools/flowc/backends/wasm/wasm_js_wrapper;
 import tools/flowc/backends/wasm/wasm_native_linkage;
 import tools/flowc/backends/wasm/wasm_native_wrapper;
@@ -109,7 +110,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 		makeTree(), 
 		ref makeList()
 	);
-	moduleHeader = fiWasmCreateModuleHeader(wasmContext, wrapped.import_string);
+	moduleHeader = fiWasmCreateModuleHeader(cfg, wasmContext, wrapped.import_string);
 	
 	fcVerbose(cfg, 0, "Generating Wasm code for declarations...");
 
@@ -652,7 +653,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 
 // creates module import section by generating import declaration for import functions
 // obeys 2-level wasm namespace, defaults to "runtime" module is missing
-fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
+fiWasmCreateModuleHeader(cfg : FiWasmConfig, wasmContext : WasmContext, callbacks : [string]) {
 	imports1 = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
 		if (fiWasmIsHostNative(nativeDec.decl.nativeName)) {
 			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
@@ -686,7 +687,7 @@ fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
 		Cons(cb, acc)
 	});
 
-	Cons("(memory $memory (export \"memory\") 100)\n", invokers);
+	Cons("(memory $memory (export \"memory\") " + i2s(cfg.memory) + ")\n", invokers);
 }
 
 fiNativeJSFileName(hostfile: string) {
@@ -787,13 +788,6 @@ iterFiExp(expr : FiExp, parent : FiExp, b : bool, cb : (FiExp, FiExp, bool) -> v
 	}
 }
 
-fiTypeIsFunction(t : FiType) {
-	switch (t) {
-		FiTypeFunction(__, __): true;
-		default: false;
-	}
-}
-
 fiWasmAddIndirectWrappers(program : FiProgram, flowfile : string) {
 	nativesToWrap = ref makeTree();
 	iterProgramExpr(program, \e : FiExp, parent : FiExp, isFirst : bool -> {
@@ -860,98 +854,3 @@ fiInjectFunctions(program : FiProgram, flowfile : string, funcs : [FiFunctionDec
 		}
 	}
 }
-
-doWrapFuncArgs(names : FiGlobalNames, ex : FiExp, isArg : bool) {
-	processA = \exp0 -> doWrapFuncArgs(names, exp0, true);
-	process = \exp0 -> doWrapFuncArgs(names, exp0, false);
-
-	switch (ex) {
-		FiBool(b, start): ex;
-		FiInt(i, start): ex;
-		FiString(s, start): ex;
-		FiDouble(d, start): ex;
-		FiVoid(start): ex;
-		FiVar(name, type, start): {
-			if (isArg && fiTypeIsFunction(type) && containsKeyTree(names.toplevel, name)) {
-				println("doWrapFuncArgs: " + name);
-
-				ftype = cast (type : FiType -> FiTypeFunction);
-				fargs = mapi(ftype.args, \i, a -> {
-					FiFunArg("__" + name + "__arg__" + i2s(i) + "__" + a.name, a.type);
-				}); 
-				args = map(fargs, \aaa -> {
-					FiVar(aaa.name, aaa.type, 0);
-				});
-
-				FiLambda(
-					fargs,
-					FiCall(ex, args, ftype.returnType, start),
-					FiTypeFunction(fargs, ftype.returnType),
-					start
-				);
-			} else {
-				ex;
-			}
-		}
-		FiCall(f, args, type, start):
-			FiCall(process(f), map(args, \a -> processA(a)), type, start);
-		FiSwitch(__, __, __, __, __): 
-			FiSwitch(ex with cases = 
-				map(ex.cases, \c -> FiCase(c with body = process(c.body))));
-		FiLambda(args, body, type, start):
-			FiLambda(args, process(body), type, start); 
-		FiLet(name, type, e1, e2, type2, start): 
-			FiLet(ex with e1 = process(e1), e2 = process(e2));
-		FiIf(e1, e2, e3, type, start): 
-			FiIf(process(e1), process(e2), process(e3), type, start);
-		FiCallPrim(__, es, __, __):
-			FiCallPrim(ex with es = map(es, process));
-		FiRequire(flowfile, e, type, start):
-			FiRequire(flowfile, process(e), type, start);
-		FiUnsafe(name, fallback, type, start):
-			FiUnsafe(name, process(fallback), type, start);
-		FiSeq(es, type, start):
-			FiSeq(map(es, process), type, start);
-		FiCast(__, __, __, __, __): 
-			FiCast(ex with e = process(ex.e));
-	}
-}
-
-fiWasmWrapFuncArgs(prg : FiProgram) {
-	fold(prg.traversal, prg, \program, moduleName -> {
-		switch (lookupTree(program.modules, moduleName)) {
-			None(): program;
-			Some(m): {
-				doWrap = \expr -> doWrapFuncArgs(prg.names, expr, false);
-				functions0 = map(m.functions, \f : FiFunctionDec -> {
-					FiFunctionDec(f with lambda = FiLambda(f.lambda with body = doWrap(f.lambda.body)))
-				});
-
-				globalVars = map(m.globalVars, \v -> FiGlobalVar(v with value = doWrap(v.value)));
-					
-				// lifting natives with fallbacks
-				natives = map(m.natives, \n -> {
-					switch (n.fallbackLambda) {
-						FiLambda(args, body, type, start): {
-							wrapped = doWrap(body);
-							if (wrapped != body) {
-								FiNativeDec(n with fallbackLambda = FiLambda(args, wrapped, type, start))
-							} else n;
-						}
-						default: n;
-					}
-				});
-
-				module = FiModule(m with
-					functions = functions0,
-					globalVars = globalVars,
-					natives = natives,
-					// initOrder = concat(m.initOrder, map(liftedDecls, \l -> l.name))
-				);
-
-				FiProgram(program with modules = setTree(program.modules, moduleName, module));
-			}
-		};
-	});
-}
-

@@ -275,7 +275,8 @@ have apache configured, see below Linux/Windows configuring.
 
 You need to compile flow file into bytecode like this:
 
-	flow --compile helloworld.serverbc helloworld.flow
+    flow --compile helloworld.serverbc helloworld.flow
+    flowc1 helloworld.flow bytecode=helloworld.serverbc
 
 It is important to finish the code with `quit` function, otherwise the program will hang.
 
