@@ -98,6 +98,8 @@ public:
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
     virtual shared_ptr<Utf32InputIterator> cloneReversed();
+    virtual void seekBegin() { cur = org->clone(); nx = org->clone(); ++*nx; };
+    virtual void seekEnd() { cur = end->clone(); nx = org->clone(); };
 };
 
 class LigatureUtf32Iter: public Utf32InputIterator {
@@ -134,6 +136,7 @@ protected:
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
         bool isEnd() {return *cur==*master->end;}
+        virtual void seekEnd() { cur = master->end->cloneReversed(); };
     };
 
 public:
@@ -149,6 +152,8 @@ public:
     virtual shared_ptr<Utf32InputIterator> clone();
     virtual shared_ptr<Utf32InputIterator> cloneReversed();
     bool isEnd() {return *cur==*end;}
+    virtual void seekBegin() { cur = org->clone(); yieldSelf(); };
+    virtual void seekEnd() { cur = end->clone(); yieldSelf(); };
 };
 
 

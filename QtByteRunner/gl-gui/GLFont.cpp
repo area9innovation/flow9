@@ -65,6 +65,8 @@ ucs4_char LigatureUtf32Iter::yield(
 ) {
     if (*cur == *end) {
         *ligalen = 1;
+        *nx = cur->clone();
+        ++**nx;
         return **end;
     }
     int ligacnt = (sizeof LIGATURES)/(sizeof *LIGATURES);
@@ -115,14 +117,17 @@ void LigatureUtf32Iter::buildReverseMap() {
     if (reverseMap.size()) return;
     shared_ptr<LigatureUtf32Iter> passer;
     passer.reset(new LigatureUtf32Iter(*this->org, *this->end));
-    while (passer->cur != this->end) {
-        shared_ptr<Utf32InputIterator> probe = passer->cur->clone();
+    shared_ptr<Utf32InputIterator> probe;
+    while (*passer->cur != *this->end) {
+        probe = passer->cur->clone();
         ++*probe;
         if (*probe != *passer->nx) reverseMap[passer->nx->position()] = passer->cur->position();
+        ++*passer;
     }
 
     // Just any valid key-value pair to make map non-empty.
-    if (!reverseMap.size()) reverseMap[1] = 0;  
+    if (!reverseMap.size())
+        reverseMap[org->position()] = end->position();
 }
 
 ucs4_char LigatureUtf32Iter::operator *() {
@@ -139,6 +144,7 @@ shared_ptr<Utf32InputIterator> LigatureUtf32Iter::clone() {
 }
 
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::cloneReversed() {
+    buildReverseMap();
     shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(this));
     return r;
 }
@@ -157,7 +163,7 @@ LigatureUtf32Iter::Reversed::Reversed(LigatureUtf32Iter *master):master(master) 
 
 ucs4_char LigatureUtf32Iter::Reversed::operator *() {
     size_t ligalen;
-    return master->yield(&*cur, &*master->end, &masterNx, &ligalen);
+    return master->yield(&*cur->cloneReversed(), &*master->end, &masterNx, &ligalen);
 }
 
 ucs4_char_tracer LigatureUtf32Iter::Reversed::traceCurrent() {
@@ -781,10 +787,12 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     }
 
     GLFont::GlyphInfo *info = NULL, *prev = NULL;
-    shared_ptr<Utf32InputIterator> strIter(begin.clone());
-    shared_ptr<Utf32InputIterator> strEnd(end.clone());
-    shared_ptr<Utf32InputIterator> strRevStart(end.clone());
-    shared_ptr<Utf32InputIterator> strRevEnd(end.clone());
+    shared_ptr<Utf32InputIterator> strIter;
+    shared_ptr<Utf32InputIterator> strEnd;
+    shared_ptr<Utf32InputIterator> strRevStart(begin.cloneReversed());
+    shared_ptr<Utf32InputIterator> strRevEnd(begin.cloneReversed());
+    strRevStart->seekEnd();
+    strRevEnd->seekEnd();
     bool (*isReverse)(ucs4_char code) = rtl? isLtrChar : isRtlChar;
     bool (*isDirect)(ucs4_char code) = rtl? isRtlChar : isLtrChar;
 
@@ -794,13 +802,14 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     // so, leftmost character is first for LTR, and last for RTL.
     GLTextLayout::GLYPH_VARIANT gv = GLTextLayout::GV_ISOLATED;
     if (rtl) {
-        strIter = end.cloneReversed();
-        ++*strIter;
-        strEnd = end.cloneReversed();
+        strIter = begin.cloneReversed();
+        strIter->seekBegin();
+        strEnd = begin.cloneReversed();
     } else {
         strIter = begin.clone();
-        strEnd = end.clone();
+        strEnd = begin.clone();
     }
+    strEnd->seekEnd();
 
     shared_ptr<Utf32InputIterator> leftPos(strEnd->clone()); // Setting to End state, so connecting algo won't connect left.
     shared_ptr<Utf32InputIterator> rightPos(strIter->clone());

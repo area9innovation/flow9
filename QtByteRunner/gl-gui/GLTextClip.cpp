@@ -256,8 +256,6 @@ void GLTextClip::layoutTextWrapLinesIter()
     for (unsigned i = 0; i < text_extents.size(); i++) {
         Extent::Ptr extent = text_extents[i];
         DecodeUtf16toUtf32 decoder(extent->text);
-        shared_ptr<Utf32InputIterator> strBegin(decoder.begin().clone());
-        shared_ptr<Utf32InputIterator> strEnd(decoder.end().clone());
 
         assert(extent->newline || !extent->text.empty() || (i == text_extents.size()-1));
 
@@ -271,10 +269,17 @@ void GLTextClip::layoutTextWrapLinesIter()
         bool already_split = false;
         shared_ptr<Utf32InputIterator> ctexti;
 
-        if (input_type == "password")
-            ctexti.reset(new PasswordUtf32Iter(*strBegin, *strEnd));
-        else
-            ctexti.reset(new LigatureUtf32Iter(*strBegin, *strEnd));
+        shared_ptr<Utf32InputIterator> strBegin(decoder.begin().clone());
+        shared_ptr<Utf32InputIterator> strEnd(decoder.end().clone());
+        if (input_type == "password") {
+            strBegin.reset(new PasswordUtf32Iter(*strBegin, *strEnd));
+            strEnd.reset(new PasswordUtf32Iter(*strBegin, *strEnd));
+        } else {
+            strBegin.reset(new LigatureUtf32Iter(*strBegin, *strEnd));
+            strEnd.reset(new LigatureUtf32Iter(*strBegin, *strEnd));
+        }
+        strEnd->seekEnd();
+        ctexti = strBegin->clone();
 
         // Word-wrapping loop:
         do {
@@ -286,7 +291,7 @@ void GLTextClip::layoutTextWrapLinesIter()
             Line &line = text_lines.back();
             float limit = ((wordwrap && (!is_input || multiline)) ? explicit_size.x - line.width : -1.0f);
 
-            GLTextLayout::Ptr layout = font->layoutTextLine(*ctexti, *strEnd, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
+            GLTextLayout::Ptr layout = font->layoutTextLine(*ctexti, *strEnd, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
             unicode_string layout_text = layout->getText();
 
             // Wrapping splits
@@ -298,14 +303,14 @@ void GLTextClip::layoutTextWrapLinesIter()
 
                 if (*layout->getEndPos() != *ctexti) {
                     ++*wpos;
-                    for (; *wpos != *strBegin; ++*wpos) {
+                    for (; *wpos != *strEnd; ++*wpos) {
                         unicode_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
                     }
                     wpos = wpos->cloneReversed();
 
-                    if (*wpos != *strBegin)
+                    if (*wpos != *strEnd)
                         ++*wpos;
                     else if (on_new_line)
                         wpos = layout->getEndPos();

@@ -113,6 +113,12 @@ utf32_string decodeUtf16toUtf32(const unicode_string &str) {
     return decodeUtf16toUtf32(str.data(), str.size());
 }
 
+
+void Utf32InputIterator::seekBegin() {
+    seekEnd();
+    ++*this;
+}
+
 DecodeUtf16toUtf32::DecodeUtf16toUtf32(DecodeUtf16toUtf32 &org) {
     this->org = org.org;
     this->size = org.size;

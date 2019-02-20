@@ -251,6 +251,9 @@ public:
 
     virtual shared_ptr<Utf32InputIterator> clone() =0;
     virtual shared_ptr<Utf32InputIterator> cloneReversed() =0;
+
+    virtual void seekBegin();
+    virtual void seekEnd() = 0;
 };
 
 class DecodeUtf16toUtf32 {
@@ -282,6 +285,7 @@ public:
         virtual ucs4_char operator *();
         virtual ucs4_char_tracer traceCurrent();
         virtual bool operator ==(Iterator &other);
+        virtual void seekEnd() { pos = parent->size; }
     };
     class DirectIterator: public Iterator {
         friend class DecodeUtf16toUtf32;
@@ -291,6 +295,7 @@ public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return forward();}
         virtual Utf32InputIterator &operator ++(int _) {return forward();}
+        virtual void seekBegin() { pos = 0; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
@@ -303,6 +308,7 @@ public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return backward();}
         virtual Utf32InputIterator &operator ++(int _)  {return backward();}
+        virtual void seekBegin() { pos = parent->size-1; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
