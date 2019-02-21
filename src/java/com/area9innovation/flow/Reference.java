@@ -8,7 +8,7 @@ public final class Reference<T> implements Comparable<Reference<T>> {
 	}
 
 	public int compareTo(Reference<T> other) {
-		return new Integer(this.hashCode()).compareTo(other.hashCode());
+		return Integer.valueOf(this.hashCode()).compareTo(other.hashCode());
 	}
 
 	public String toString() {

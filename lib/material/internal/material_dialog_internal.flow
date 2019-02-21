@@ -1,6 +1,7 @@
 import material/internal/material_ellipsis;
 import material/internal/material_movable;
 import material/iscript/material_iscript_cursors;
+import material/tropic_size_util;
 
 export {
 	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogCloseButton,
@@ -65,8 +66,16 @@ renderMDialog2(
 	us = ref [];
 	disp = \ -> dispUnsA(us);
 
-	focusOnPrevious = contains(style, MDialogFocusOnPrevious());
-	focusedBeforeDialog = if (focusOnPrevious) getCurrentFocusedItem(manager) else None();
+	focusedBeforeDialog =
+		if (contains(style, MDialogFocusOnPrevious())) {
+			eitherFn(
+				getCurrentFocusedItem(manager),
+				\fi -> Some(fi),
+				\ -> getPreviousFocusedItem(manager)
+			)
+		} else {
+			None();
+		};
 
 	u1 =
 		switch (closeWhen : Transform<bool>) {
@@ -98,16 +107,23 @@ renderMDialog2(
 	zUns = if (nonModal) nop else pushZorder(manager);
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
+	name = "MDialog";
 
 	customFrame =
 		if (contains(style, MDialogUseFrame()))
 			MDialogCustomFrame(24., 24., 24., 24.,
-				TShadow(
+				TShadowShape(
 					manager.focus,
 					const(6.0),
-					MShape(manager.focus, [if (getLightBackground(manager.focus)) Fill(white) else Fill(0x303030)], TFillXY(), "MDialog")
-					|> (\c -> TBorder4(8., c)),
+					MShape(
+						manager.focus,
+						[if (getLightBackground(manager.focus)) Fill(white) else Fill(0x303030)],
+						if (fullScreen) TBorder4(8.0, TFillXY()) else TFillXY(),
+						name
+					),
+					RectangleShape(name)
 				)
+				|> (\shp -> if (fullScreen) TBorder4(-8.0, shp) else shp)
 			) |> Some
 		else
 			tryExtractStruct(style, MDialogCustomFrame(0., 0., 0., 0., TEmpty()));
@@ -140,7 +156,16 @@ renderMDialog2(
 					TCopySize2(
 						m2t(t.title, p),
 						\sz, tr ->
-							TBorder(0., 0., 0., -8., TMask(tr, TRounded(2., 2., 2., 2., [Fill(white)], TBorder(0., 0., 0., 8., tr))))
+							TBorder(0., 0., 0., -8.,
+								TMask(tr,
+									MShape(
+										manager.focus,
+										[Fill(white)],
+										TBorder(0., 0., 0., 8., tr),
+										name
+									)
+								)
+							)
 					),
 				\ ->
 					eitherMap(
@@ -165,17 +190,22 @@ renderMDialog2(
 					closeButton,
 					\cb ->
 						TGroup2(
-							TAttachWidthCopy(t, titleW),
+							TAttachWidth(t, titleW),
 							TCols2(TFillX(), TBorder(8., 8., 8., 8., m2t(cb.close, p)))
-							|> (\t2 -> TAvailableWidth(t2, fmaxA([titleW, contentW, actionsW], 0.)))
+							|> (\t2 ->
+								TAvailableWidth(
+									t2,
+									fmaxA([titleW, contentW, fsubtract(actionsW, eitherMap(customFrame, \cf -> const(cf.end), zero))], 0.)
+								)
+							)
 						),
 					t
 				)
 			)
-			|> (\t -> TAttachWidthCopy(t, headerW));
+			|> (\t -> TAttachWidth(t, headerW));
 
 		contentM =
-			if (content != TEmpty() && content != MEmpty())
+			(if (content != TEmpty() && content != MEmpty())
 				content
 				|> (\m -> if (fullScreen) MGroup2(TFillXY(), m) else m)
 				|> (\m ->
@@ -189,36 +219,74 @@ renderMDialog2(
 					else
 						m2t(m, p)
 				)
-				|> (\t ->
-					eitherMap(
-						floatingContent,
-						\fc ->
-							TCopySize(
-								t,
-								\tr ->
-									TAvailable(m2t(fc.content, p), tr),
-								true
-							),
-						t
-					)
-				)
-				|> (\t -> TAttachWidthCopy(t, contentW))
+			else if (fullScreen)
+				TFillXY()
 			else
-				TEmpty();
+				TEmpty())
+			|> (\t ->
+				eitherMap(
+					floatingContent,
+					\fc ->
+						TCopySize(
+							t,
+							\tr ->
+								TAvailable(m2t(fc.content, p), tr),
+							true
+						),
+					t
+				)
+			)
+			|> (\t -> TGroup2(t, TFixed(eitherMap(customFrame, \cf -> 280.0 - cf.start - cf.end, 280.0), 0.0)))
+			|> (\t -> TAttachWidth(t, contentW));
 
 		actionsM =
 			eitherMap(
 				actions,
-				\act ->
-					concat(
-						if (contains(act.actions, TFillX())) [TFixed(16.0, 0.0)] else [TFillX()],
-						map(act.actions, \ac -> TBorderA(0., 0., 8., 0., m2t(ac, p)))
+				\act -> {
+					actionsAv =
+						fsubtract(
+							availW,
+							eitherMap(customFrame, \cf -> const(if (fullScreen) max(cf.end + cf.start - 8.0, 0.0) else cf.start), zero)
+						);
+					actionsBox = makeWH();
+
+					MCols2A(
+						if (contains(act.actions, TFillX())) TFixed(16.0, 0.0) else TFillX(),
+						map(act.actions, \ac -> MBorderA(0., 0., 8., 0., ac))
+						|> MBaselineColsA
+						|> (\t -> MBorderA(0., 8., 0., 8., t))
+						|> (\t -> MAttachBox(t, actionsBox))
 					)
-					|> TBaselineColsA
-					|> (\t -> TBorderA(8., 8., 0., 8., t))
-					|> (\t -> TAvailableWidth(t, fmin(availW, fmax(contentW, headerW))))
-					|> (\t -> TAttachWidthCopy(t, actionsW))
-					|> (\t -> eitherMap(customFrame, \cf -> TBorderA(cf.start, 0., cf.end, 0., t), t)),
+					|> (\t ->
+						if (scrolls)
+							MScroll2T(
+								manager,
+								p,
+								MScroll(
+									t,
+									TGroup2(TFillX(), TSizedHeight(0., fheight(actionsBox))),
+									[]
+								),
+								m2t
+							)
+						else
+							m2t(t, p)
+					)
+					|> (\t ->
+						TAvailableWidth(
+							t,
+							fmax(
+								faddition(
+									fmax(contentW, headerW),
+									eitherMap(customFrame, \cf -> const(if (fullScreen && cf.end > 0.0) 8.0 else cf.end), zero)
+								),
+								fmin(fwidth(actionsBox), actionsAv)
+							)
+						)
+					)
+					|> (\t -> TAttachWidth(t, actionsW))
+					|> (\t -> eitherMap(customFrame, \cf -> TBorderA(cf.start, 0.0, if (fullScreen) max(cf.end - 8.0, 0.0) else 0.0, 0.0, t), t))
+				},
 				TEmpty()
 			);
 
@@ -301,7 +369,7 @@ renderMDialog2(
 						TAvailableWidthHeight(t, availW, availH)
 						|> (\t2 -> TAlpha(easing.percent, t2))
 						|> (\t2 -> TScale(ffactor2(easing.percent), t2))
-						|> (\t2 -> TAttachBoxCopyAvailableHeight(t2, availH))
+						|> (\t2 -> TAttachAvailableHeight(t2, availH))
 				}))
 		|> (\t ->
 			eitherMap(
@@ -340,13 +408,13 @@ renderMDialog2(
 									}
 								],
 								MMovable2T(manager, p, MMovable(m.target, m.movableArea, arrayPush(m.style, MMovablePosition(sPos))), m2t)
-								|> (\t2 -> TAttachBoxCopyAvailableHeight(t2, avH))
+								|> (\t2 -> TAttachAvailableHeight(t2, avH))
 							)
 						}
 					),
 				t
 			))
-		|> (\t -> TAttachBoxCopyAvailableWidth(t, availW))
+		|> (\t -> TAttachAvailableWidth(t, availW))
 		|> (\t -> TBorder(sideBorder, sideBorder, sideBorder, sideBorder, t))
 		|> (\t ->
 			TGroup2( // click events shall not pass
@@ -415,7 +483,7 @@ renderMDialog2(
 		MActivate2T(
 			manager,
 			manager.focus,
-			"MDialog",
+			name,
 			[
 				IScriptBehaviour("point", point, ISInteractionEvent()),
 				IScriptBehaviour("down", down, ISInteractionEvent()),

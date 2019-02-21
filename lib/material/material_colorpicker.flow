@@ -1,67 +1,75 @@
 import material/material_dialog;
 
 export {
-	MCPDialogStyle ::= MCPHideClearColorButtons, MCPDefaultColor, MCPDisableMainPalette, MCPAdditionalColors, MCPForceUpdate;
+	MCPDialogStyle ::= MCPHideClearColorButtons, MCPDefaultColor, MCPDisableMainPalette, MCPAdditionalColors, MCPForceUpdate, MCPOpacity;
 		MCPHideClearColorButtons : ();
 		MCPDefaultColor : (defaultColor : MColor);
 		MCPDisableMainPalette : ();
 		MCPAdditionalColors : (additionalColors : DynamicBehaviour<[int]>);
+		MCPOpacity : (opacity : DynamicBehaviour<double>);
 		// use next instead nextDistinct
 		MCPForceUpdate();
 
 	showMColorPickerDialogPopup(
 		manager : MaterialManager,
 		color : DynamicBehaviour<int>,
-		style : [MCPDialogStyle]
-	) -> void;
+		style : [MCPDialogStyle]) -> void;
 
 	embeddedMultiSelectColorPicker(colorsB : DynamicBehaviour<[int]>, additionalColors: DynamicBehaviour<[int]>) -> Material;
+}
+
+makeForceFn(force : bool) -> ((DynamicBehaviour<?>, ?) -> void) {
+	if (force) next	else nextDistinct;
 }
 
 showMColorPickerDialogPopup(
 	manager : MaterialManager,
 	color : DynamicBehaviour<int>,
-	style : [MCPDialogStyle]
-) -> void {
+	style : [MCPDialogStyle]) -> void {
 
-	hideClearColorButtons = containsStruct(style, MCPHideClearColorButtons());
+	hideClearColorButtons = contains(style, MCPHideClearColorButtons());
 	defaultColor = extractStruct(style, MCPDefaultColor(MBlack())).defaultColor;
-	disableMainPalette = containsStruct(style, MCPDisableMainPalette());
+	disableMainPalette = contains(style, MCPDisableMainPalette());
 	additionalColors = extractStruct(style, MCPAdditionalColors(make([]))).additionalColors;
-
-	onOK = \c -> {
-		if (containsStruct(style, MCPForceUpdate())) {
-			next(color, MColor2int(c));
-		} else {
-			nextDistinct(color, MColor2int(c));
-		}
-	}
+	opacityPicker = tryExtractStruct(style, MCPOpacity(make(0.)));
 
 	showClearButtons = MClearCustomColorsButtons(
 		\colorToRemove -> next(additionalColors, removeAll(getValue(additionalColors), MColor2int(colorToRemove))),
 		\ -> next(additionalColors, [])
 	);
 	mColor = color |> getValue |> MCustomColor |> make;
+	opacity = maybeMap(opacityPicker, \op -> cloneBehaviour(op.opacity));
+	defaultOpacity = eitherMap(opacity, getValue, 1.);
+
+	onOK = \ -> {
+		force = contains(style, MCPForceUpdate());
+		makeForceFn(force)(color, MColor2int(getValue(mColor)));
+		maybeApply(opacityPicker, \op -> makeForceFn(force)(op.opacity, eitherMap(opacity, getValue, 1.)))
+	};
+
 	close = make(false);
 	ShowMDialog(manager, close, [MDialogFocusOnPrevious()],
 		MColorPicker(mColor,
 			concatA([
 				[
 					MDialogButtons([
-						MTextButton(_("RESET"), \ -> nextDistinct(mColor, defaultColor), [MLeftIcon("format_color_reset")], []),
+						MTextButton(_("RESET"), \ -> {
+								nextDistinct(mColor, defaultColor);
+								maybeApply(opacity, \op -> nextDistinct(op, defaultOpacity))
+							}, [MLeftIcon("format_color_reset")], []),
 						MTextButton(_("CANCEL"), \ -> next(close, true), [], [MShortcut("esc")]),
 						MTextButton(_("SAVE"), \ -> {
 							updateAdditionalColors(additionalColors, MColor2int(getValue(mColor)));
-							onOK(getValue(mColor));
+							onOK();
 							next(close, true);
 						}, [MButtonRaised()], [MShortcut("enter")]),
 					]),
-					MaterialColorPicker(),
-
+					MaterialColorPicker()
 				],
 				getCommonStylesForAdditionalColors(additionalColors),
 				if (!hideClearColorButtons) [showClearButtons] else [],
-				if (disableMainPalette) [MColorPickerDisableMainPalette()] else []
+				if (disableMainPalette) [MColorPickerDisableMainPalette()] else [],
+				eitherMap(opacity, \op -> [MOpacityPicker(op)], [])
 			])
 		)
 	);
@@ -69,9 +77,8 @@ showMColorPickerDialogPopup(
 
 updateAdditionalColors(additionalColors : DynamicBehaviour<[int]>, newColor : int) -> void {
 	colors = getValue(additionalColors);
-	if (!contains(colors, newColor)) {
+	if (!contains(colors, newColor))
 		nextDistinct(additionalColors, arrayPush(colors, newColor));
-	}
 }
 
 getCommonStylesForAdditionalColors(additionalColors : DynamicBehaviour<[int]>) -> [MColorPickerMultiSelectStyle] {

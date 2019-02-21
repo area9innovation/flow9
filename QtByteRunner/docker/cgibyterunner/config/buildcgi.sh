@@ -2,9 +2,7 @@
 set -e
 
 # prepare dist
-cd /flow9/QtByteRunner
-mkdir -p dist/lib
-mkdir -p dist/sqldrivers
+cd /flow
 
 # copy libraries required by mysql driver and driver itself
 mkdir -p bin/cgi/linux/sqldrivers
@@ -20,7 +18,7 @@ cp -L \
    bin/cgi/linux/lib/
 
 qmake QtByteRunnerCgi.pro
-make -j $(nproc)
+make -j$(nproc)
 
 mv QtByteRunner.fcgi bin/cgi/linux/ 
 

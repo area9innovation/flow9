@@ -60,6 +60,7 @@ export {
 		multiline : bool,
 		wordWrap : bool,
 		numeric : bool,
+		numericStep : Maybe<MNumericStep>,
 		readOnly : bool,
 		color : MColor,
 		width : double,
@@ -261,6 +262,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	inputType = iScriptBehaviours.inputType;
 	readOnly = iScriptBehaviours.readOnly;
 	numeric = iScriptBehaviours.numeric;
+	numericStep = if (numeric) tryExtractStruct(style, MNumericStep(const(1.))) else None();
 	editIcon = iScriptBehaviours.editIcon;
 	useNativeInput = iScriptBehaviours.useNativeInput;
 	label = iScriptBehaviours.label;
@@ -1022,6 +1024,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		multiline,
 		wordWrap,
 		numeric,
+		numericStep,
 		readOnly,
 		color,
 		width,
@@ -2038,7 +2041,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState) -> Trop
 				fold(lns, "", \acc, s -> acc + s.visibleText),
 				if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
 			)
-			|> (\f -> TAttachBoxCopy(f, editorState.contentWH))
+			|> (\f -> TAttachBox(f, editorState.contentWH))
 			|> TSetMinWidth(TFixed(wd, 0.))
 			|> TFixHeight(TFixed(0., i2d(length(lns)) * editorState.textHeight))
 		);
@@ -2205,7 +2208,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 				inputState.content,
 				inpWH,
 				concatA([
-					inputState.textStyle,
+					cast(inputState.textStyle : [CharacterStyle] -> [FTextInputStyle]),
 					[
 						FWordWrap(const(inputState.wordWrap)),
 						FMultiline(const(inputState.multiline)),
@@ -2250,6 +2253,12 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 							filterKey;
 						})
 					],
+					eitherMap(
+						inputState.numericStep,
+						\st ->
+							[FNumericStep(st.step)],
+						[]
+					),
 					eitherMap(
 						inputState.filterFn,
 						\fn ->
@@ -2345,7 +2354,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 		)
 	)
 	|> (\f -> TGroup2SameMetrics(TDisplay("MTextInputSize"), f))
-	|> (\f -> TLet("MTextInputSize", TAttachBox(inputSize, inpWH), f))
+	|> (\f -> TLet("MTextInputSize", TAttachBox2(inputSize, inpWH, TEmpty()), f))
 	|> (\f ->
 		TLet(
 			"MTextInputText",
@@ -2404,34 +2413,43 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 					TConstruct(
 						[
-							makeSubscribeUnsTimer(inputState.mfocus.focused, 10, \fc ->
-								if (fc)
+							makeSubscribeUns(inputState.mfocus.focused, \fc ->
+								if (fc) {
+									uns = ref None();
+
 									[
-										trender(
-											TInteractive(
-												[
-													KeyDown2(\h, k -> {
-														c = fgetValue(inputState.content);
+										interruptibleTimer(
+											10,
+											\ -> {
+												uns := Some(trender(
+													TInteractive(
+														[
+															KeyDown2(\h, k -> {
+																c = fgetValue(inputState.content);
 
-														if (!pk.fn(k) && (js || ^prevC != fgetValue(inputState.content))) {
-															if (js)
-																deferred(\ -> next(inputState.content, c));
+																if (!pk.fn(k) && (js || ^prevC != fgetValue(inputState.content))) {
+																	if (js)
+																		deferred(\ -> next(inputState.content, c));
 
-															next(inputState.content, ^prevC);
-														}
+																	next(inputState.content, ^prevC);
+																}
 
-														prevC := fgetValue(inputState.content);
+																prevC := fgetValue(inputState.content);
 
-														h
-													})
-												],
-												TRectangle(interactiveRectangleStyle, TFillXY())
-											),
-											inputState.manager.manager.renderStyle
-										)
+																h
+															})
+														],
+														TRectangle(interactiveRectangleStyle, TFillXY())
+													),
+													inputState.manager.manager.renderStyle
+												))
+											}
+										),
+										\ -> dispUnsM(uns)
 									]
-								else
+								} else {
 									[]
+								}
 							)
 						],
 						f

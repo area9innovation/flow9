@@ -57,11 +57,7 @@ StackSlot QWebSocketSupport::doHasBufferedData(StackSlot websocket)
 {
     RUNNER_VAR = owner;
     FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
-    bool hasBufferedData = false;
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 12, 0))
-    hasBufferedData = websocketNative->websocket.bytesToWrite() > 0;
-#endif
-    return StackSlot::MakeBool(hasBufferedData);
+    return StackSlot::MakeBool(websocketNative->websocket.bytesToWrite() > 0);
 }
 
 void QWebSocketSupport::doClose(StackSlot websocket, int code, unicode_string reason)

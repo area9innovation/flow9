@@ -36,9 +36,12 @@ export {
 	getIScriptRecording(manager : MaterialManager) -> Maybe<IScriptRecording>;
 
 	isIScriptRecording(manager : MaterialManager) -> bool;
+	isIScriptRecordingPaused(manager : MaterialManager) -> bool;
 	isIScriptReplaying(manager : MaterialManager) -> bool;
+	isIScriptReplayingPaused(manager : MaterialManager) -> bool;
 	isIScriptBatchReplaying(manager : MaterialManager) -> bool;
-	isIScriptPaused(manager : MaterialManager) -> bool;
+	isIScriptBatchReplayingPaused(manager : MaterialManager) -> bool;
+	isIScriptStopped(manager : MaterialManager) -> bool;
 	isIScriptAdding(manager : MaterialManager) -> bool;
 	isIScriptReplayingOrRecording(manager : MaterialManager) -> bool;
 
@@ -48,7 +51,7 @@ export {
 	isIScriptRecordingB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptReplayingB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptBatchReplayingB(manager : MaterialManager) -> Transform<bool>;
-	isIScriptPausedB(manager : MaterialManager) -> Transform<bool>;
+	isIScriptStoppedB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptAddingB(manager : MaterialManager) -> Transform<bool>;
 	isIScriptReplayingOrRecordingB(manager : MaterialManager) -> Transform<bool>;
 
@@ -60,9 +63,8 @@ export {
 	checkIScriptRecordTypeCaptureOption(manager : MaterialManager, behaviourName : string, type : IScriptRecordType) -> bool;
 	checkIScriptCaptureOption(manager : MaterialManager, option : IScriptCaptureOption) -> bool;
 
-	suspendIScriptRecording(manager : MaterialManager) -> void;
+	pauseIScriptRecording(manager : MaterialManager) -> void;
 	resumeIScriptRecording(manager : MaterialManager) -> void;
-	isIScriptRecordingSuspended(manager : MaterialManager) -> bool;
 
 	// IScript stack utils
 	mapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> ?) -> [?];
@@ -148,10 +150,10 @@ isBatchIScriptEmptyB(manager : MaterialManager) -> Transform<bool> {
 
 switchMaterialFocus(focus : MaterialFocus, mFocusFn : (MFocus) -> ?, mFocusGroupFn : (MFocusGroup) -> ?) -> ? {
 	switch (focus : MaterialFocus) {
-		MFocus(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+		MFocus(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
 			mFocusFn(focus)
 		}
-		MFocusGroup(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
+		MFocusGroup(__, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __, __): {
 			mFocusGroupFn(focus)
 		}
 	}
@@ -394,10 +396,34 @@ isIScriptRecording(manager : MaterialManager) -> bool {
 	isIScriptEnabled(manager) && isSome(getIScriptRecording(manager))
 }
 
+
+getIScriptRecordingPaused(manager : MaterialManager) -> Maybe<IScriptRecordingPaused> {
+	if (isIScriptEnabled(manager)) {
+		iScriptState = getIScriptState(manager);
+
+		switch (iScriptState) {
+			IScriptRecordingPaused(__, __): Some(iScriptState);
+			default: None();
+		}
+	} else {
+		None();
+	}
+}
+
+isIScriptRecordingPaused(manager : MaterialManager) -> bool {
+	isIScriptEnabled(manager) && isSome(getIScriptRecordingPaused(manager))
+}
+
 isIScriptReplaying(manager : MaterialManager) -> bool {
 	iScriptState = getIScriptState(manager);
 
 	isIScriptEnabled(manager) && isSameStructType(iScriptState, IScriptReplaying(nop1))
+}
+
+isIScriptReplayingPaused(manager : MaterialManager) -> bool {
+	iScriptState = getIScriptState(manager);
+
+	isIScriptEnabled(manager) && isSameStructType(iScriptState, IScriptReplayingPaused())
 }
 
 isIScriptBatchReplaying(manager : MaterialManager) -> bool {
@@ -406,10 +432,16 @@ isIScriptBatchReplaying(manager : MaterialManager) -> bool {
 	isIScriptEnabled(manager) && isSameStructType(iScriptState, IScriptBatchReplaying(nop1))
 }
 
-isIScriptPaused(manager : MaterialManager) -> bool {
+isIScriptBatchReplayingPaused(manager : MaterialManager) -> bool {
 	iScriptState = getIScriptState(manager);
 
-	isIScriptEnabled(manager) && iScriptState == IScriptPaused()
+	isIScriptEnabled(manager) && isSameStructType(iScriptState, IScriptBatchReplayingPaused())
+}
+
+isIScriptStopped(manager : MaterialManager) -> bool {
+	iScriptState = getIScriptState(manager);
+
+	isIScriptEnabled(manager) && iScriptState == IScriptStopped()
 }
 
 isIScriptAdding(manager : MaterialManager) -> bool {
@@ -448,8 +480,8 @@ isIScriptBatchReplayingB(manager : MaterialManager) -> Transform<bool> {
 	fselect(manager.iscript.state, FLift(\__ -> isIScriptBatchReplaying(manager)));
 }
 
-isIScriptPausedB(manager : MaterialManager) -> Transform<bool> {
-	fselect(manager.iscript.state, FLift(\__ -> isIScriptPaused(manager)));
+isIScriptStoppedB(manager : MaterialManager) -> Transform<bool> {
+	fselect(manager.iscript.state, FLift(\__ -> isIScriptStopped(manager)));
 }
 
 isIScriptAddingB(manager : MaterialManager) -> Transform<bool> {
@@ -523,16 +555,22 @@ checkIScriptCaptureOption(manager : MaterialManager, option : IScriptCaptureOpti
 	)
 }
 
-suspendIScriptRecording(manager : MaterialManager) -> void {
-	nextDistinct(manager.iscript.recordingSuspended, true)
+pauseIScriptRecording(manager : MaterialManager) -> void {
+	switch(getIScriptState(manager) : IScriptState) {
+		IScriptRecording(captureOptions, continueRecording) : {
+			setIScriptState(manager, IScriptRecordingPaused(captureOptions, continueRecording))
+		}
+		default: {}
+	}
 }
 
 resumeIScriptRecording(manager : MaterialManager) -> void {
-	nextDistinct(manager.iscript.recordingSuspended, false)
-}
-
-isIScriptRecordingSuspended(manager : MaterialManager) -> bool {
-	getValue(manager.iscript.recordingSuspended)
+	switch(getIScriptState(manager) : IScriptState) {
+		IScriptRecordingPaused(captureOptions, continueRecording) : {
+			setIScriptState(manager, IScriptRecording(captureOptions, continueRecording))
+		}
+		default: {}
+	}
 }
 
 mapIScriptStack(stack : Tree<double, [IScriptRecord]>, fn : (double, IScriptRecord) -> ?) -> [?] {
@@ -855,7 +893,7 @@ initIScriptRecording(manager : MaterialManager, f : MaterialFocus, disposeOnReco
 					makeSubscribe2(mb.first, \v -> {
 						id = getFullMFocusId(f);
 
-						if (!containsList(id, IScriptFocusTreePosition(-1)) && !isIScriptRecordingSuspended(manager)) {
+						if (!containsList(id, IScriptFocusTreePosition(-1)) && !isIScriptRecordingPaused(manager)) {
 							addIScriptBehaviourRecord(manager, f.name, k, v, id, mb.second, getCallstackIfNeeded(manager));
 						}
 					})()
