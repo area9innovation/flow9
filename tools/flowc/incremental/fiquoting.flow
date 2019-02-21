@@ -25,12 +25,7 @@ expandFiQuote(f : FiExp, qstart : int) -> FiExp {
 			mkop = \name -> {
 				mkstruct("QCallPrim", [
 					mkstruct(name, []), 
-					FiCallPrim(
-						FcArrayPrim(),
-						expandFiQuotes(args, start),
-						FiTypeName("QExp", []),
-						start
-					)
+					quoteFiArray(args, start)
 				]);
 			}
 			switch (op) {
@@ -62,22 +57,54 @@ expandFiQuote(f : FiExp, qstart : int) -> FiExp {
 				FcQuote(): todo();
 			}
 		}
-		FiLambda(args, body, type, start): todo();
-		FiCall(fn, args, type, start): todo();
-		FiVar(name, type, start): todo();
-		FiLet(name, type, e1, e2, type2, start): todo();
-		FiIf(e1, e2, e3, type, start): todo();
-		FiSwitch(x, switchType, cases, type, start): todo();
+		FiVar(name, type, start): mkstruct("QVar", [FiString(name, start)]);
+		FiCall(fn, args, type, start): {
+			mkstruct("QCall", [
+				expandFiQuote(fn, start),
+				quoteFiArray(args, start)
+			])
+		}
+		FiLet(name, type, e1, e2, type2, start): {
+			mkstruct("QLet", [FiString(name, start), expandFiQuote(e1, start), expandFiQuote(e2, start)])
+		}
+		FiIf(e1, e2, e3, type, start): {
+			mkstruct("QIf", [expandFiQuote(e1, start), expandFiQuote(e2, start), expandFiQuote(e3, start)])
+		}
+		FiSeq(es, type, start): {
+			mkstruct("QSeq", [quoteFiArray(es, start)]);
+		}
+
+		FiLambda(args, body, type, start): {
+			mkstruct("QLambda", [
+				// Args
+				FiCallPrim(
+					FcArrayPrim(),
+					map(args, \a : FiFunArg -> FiString(a.name, start)),
+					FiTypeName("QExp", []),
+					start
+				),
+				// Body
+				expandFiQuote(body, start)
+			]);
+		}
+		FiSwitch(x, switchType, cases, type, start): {
+			todo();
+		}
+
 		FiCast(e, tFrom, tTo, type, start): todo();
-		FiSeq(es, type, start): todo();
 		FiRequire(flowfile, e, type, start): todo();
 		FiUnsafe(name, fallback, type, start): todo();
 	}
 }
 
 
-expandFiQuotes(f : [FiExp], start : int) -> [FiExp] {
-	map(f, \a -> expandFiQuote(a, start))
+quoteFiArray(f : [FiExp], start : int) -> FiExp {
+	FiCallPrim(
+		FcArrayPrim(),
+		map(f, \a -> expandFiQuote(a, start)),
+		FiTypeName("QExp", []),
+		start
+	)
 }
 
 unquote(f : FiExp) -> FiExp {
@@ -85,25 +112,48 @@ unquote(f : FiExp) -> FiExp {
 		FiCallPrim(FcStructPrim(name), args, FiTypeName(name, []), f.start);
 	}
 
+	qexp = FiTypeName("QExp", []);
+
 	type = fiExpType(f);
 	todo = \ -> {
-		println("TODO: Unquote");
+		println("TODO: Unquote of this type not supported: ");
 		println(f);
 		println(type);
 		f;
 	}
 	switch (type) {
-		FiTypeArray(t): todo();
-		FiTypeFunction(args, returnType): todo();
-		FiTypeRef(t): todo();
-		FiTypeParameter(n): todo();
-		FiTypeBool(): todo();
+		FiTypeVoid(): mkstruct("QVoid", []);
+		FiTypeBool(): mkstruct("QBool", [f]);
 		FiTypeInt(): mkstruct("QInt", [f]);
-		FiTypeDouble(): todo();
-		FiTypeString(): todo();
-		FiTypeFlow(): todo();
-		FiTypeVoid(): todo();
-		FiTypeNative(): todo();
+		FiTypeDouble(): mkstruct("QDouble", [f]);
+		FiTypeString(): mkstruct("QString", [f]);
+
+		FiTypeArray(t): {
+			// OK, we have to lift the value into constructions for each element
+			// so the result should be similar to
+			// QCallPrim(QArrayPrim(), map(f, \e -> {
+			//		QInt(e)
+			// })
+			mkstruct("QCallPrim", 
+				[
+					mkstruct("QArrayPrim", []),
+					FiCall(FiVar("map", FiTypeFlow(), f.start), [
+						f,
+						FiLambda([FiFunArg("a__", t)], unquote(FiVar("a__", t, f.start)), qexp, f.start)
+					], FiTypeArray(FiTypeName("QExp", [])), f.start)
+				]
+			)
+		}
+		FiTypeRef(t): {
+			// OK, we could maybe lift the value into a quoted ref with something like
+			// QCallPrim(QRefPrim(), QInt(^t))
+			todo();
+		}
 		FiTypeName(name, typeparameters): todo();
+
+		FiTypeFunction(args, returnType): todo();
+		FiTypeParameter(n): todo();
+		FiTypeFlow(): todo();
+		FiTypeNative(): todo();
 	}
 }
