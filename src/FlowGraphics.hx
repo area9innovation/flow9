@@ -25,13 +25,13 @@ class FlowGraphics extends Graphics {
 
 		visible = false;
 		interactiveChildren = false;
+		lineStyle(1.0, 0, 0.0);
 	}
 
 	public function beginGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {
 		fillGradient = { colors : colors, alphas : alphas, offsets : offsets, matrix : matrix, type : type };
 
 		beginFill(0x000000, 1.0); // This will be used as a mask graphics
-		lineStyle(1.0, 0, 0.0);
 	}
 
 	public function lineGradientStroke(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic) : Void {
