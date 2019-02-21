@@ -109,9 +109,12 @@ protected:
     std::string parseHtmlRec(const unicode_string &str, unsigned &pos, const FormatRec &format, std::set<std::string> &open_tags);
 
     void invalidateLayout();
-
+    static void applyProcessing(
+        std::string input_type,
+        Utf32InputIterator &inputBegin, Utf32InputIterator &inputEnd,
+        shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
+    );
     void layoutText();
-    void layoutTextWrapLinesIter();
     void layoutTextWrapLines();
     void layoutTextSpaceLines();
 

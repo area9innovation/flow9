@@ -371,7 +371,6 @@ public:
 
     ~GLFont();
 
-    shared_ptr<GLTextLayout> layoutTextLine(unicode_string str, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
     shared_ptr<GLTextLayout> layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
 
     std::string getFamilyName() { return family_name; }
@@ -388,7 +387,6 @@ protected:
     float size, spacing;
     GLBoundingBox bbox;
 
-    unicode_string text;
     std::vector<size_t> char_indices;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
@@ -396,7 +394,6 @@ protected:
 
     GLTextLayout(GLFont::Ptr font, float size);
 
-    void buildLayout(unicode_string str, float width_limit, float spacing, bool crop_long_words, bool rtl);
     void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
     struct RenderPass {
@@ -448,8 +445,6 @@ public:
     float getLineHeight() { return ceilf(font->line_height * size); }
     float getWidth() { return bbox.size().x; }
 
-    const unicode_string &getText() { return text; }
-    const utf32_string getText(utf32_string &base);
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
 
@@ -498,25 +493,6 @@ public:
         if (0==((mask >> tr_gv) & 1)) tr_gv &= -3;
         if (0==((mask >> tr_gv) & 1)) tr_gv &= -2;
         return TRANSLATION[idx].form + tr_gv;
-    }
-
-    static unicode_string getLigatured(unicode_string str) {
-        int ligacnt = (sizeof LIGATURES)/(sizeof *LIGATURES);
-        unicode_string result;
-        result.reserve(str.size());
-        std::vector<int> matchlengths(ligacnt, 0);
-        DecodeUtf16toUtf32 decoder(str);
-        shared_ptr<Utf32InputIterator> begin = decoder.begin().clone();
-        shared_ptr<Utf32InputIterator> end = decoder.end().clone();
-        LigatureUtf32Iter iend(*begin, *end, *end);
-        LigatureUtf32Iter i(*begin, *end);
-        for (i; i != iend; ++i) {
-            unicode_char outbuf[2];
-            char len;
-            len = encodeCharUtf32toUtf16(*i, outbuf);
-            for(char j=0; j<len; ++j) result.push_back(outbuf[j]);
-        }
-        return result;
     }
 
     int findIndexByPos(float x, bool nearest = false);
