@@ -43,6 +43,7 @@ class RenderSupportJSPixi {
 	private static var ShowDebugClipsTree : Bool = Util.getParameter("clipstree") == "1";
 	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
 	private static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	private static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
 	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
@@ -671,8 +672,8 @@ class RenderSupportJSPixi {
 
 		var options = {
 			antialias : Antialias,
-			transparent : false,
-			backgroundColor : 0xFFFFFF,
+			transparent : TransparentBackground,
+			backgroundColor : TransparentBackground ? 0 : 0xFFFFFF,
 			preserveDrawingBuffer : false,
 			resolution : backingStoreRatio,
 			roundPixels : RoundPixels,
