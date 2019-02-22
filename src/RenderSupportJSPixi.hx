@@ -4345,6 +4345,7 @@ private class TextField extends NativeWidgetClip {
 		if (NativeHx.isTouchScreen()) {
 			nativeWidget.ontouchstart = onMouseDown;
 			nativeWidget.ontouchend = onMouseUp;
+			nativeWidget.ontouchmove = onMouseMove;
 		}
 
 		nativeWidget.onfocus = onFocus;
@@ -4394,21 +4395,22 @@ private class TextField extends NativeWidgetClip {
 		// }
 
 		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+
 		RenderSupportJSPixi.provideEvent(e);
 	}
 
 	private function onMouseDown(e : Dynamic) {
 		if (isNativeWidgetShown()) {
 			checkPositionSelection();
-			return;
-		}
-
-		var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
-		nativeWidget.readOnly = shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(point) != this;
-
-		if (shouldPreventFromFocus) {
-			e.preventDefault();
 			RenderSupportJSPixi.provideEvent(e);
+		} else {
+			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
+			nativeWidget.readOnly = shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(point) != this;
+
+			if (shouldPreventFromFocus) {
+				e.preventDefault();
+				RenderSupportJSPixi.provideEvent(e);
+			}
 		}
 
 		if ((Platform.isIE || Platform.isEdge) && !shouldPreventFromFocus) {
