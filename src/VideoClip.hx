@@ -1,0 +1,384 @@
+import js.Browser;
+import pixi.core.sprites.Sprite;
+import pixi.core.textures.Texture;
+import pixi.core.textures.BaseTexture;
+
+using DisplayObjectHelper;
+
+class VideoClip extends FlowContainer {
+	private var nativeWidget : Dynamic;
+
+	private var metricsFn : Float -> Float -> Void;
+	private var playFn : Bool -> Void;
+	private var durationFn : Float -> Void;
+	private var positionFn : Float -> Void;
+	private var streamStatusListener : Array<String -> Void> = new Array<String -> Void>();
+
+	private var startTime : Float = 0;
+	private var endTime : Float = 0;
+
+	private var videoSprite : Sprite;
+	private var videoTexture : Texture;
+	private var fontFamily : String = '';
+	private var textField : TextField;
+	private var loaded : Bool = false;
+
+	private static var playingVideos : Int = 0;
+
+	public static var CanAutoPlay = false;
+
+	public static inline function NeedsDrawing() : Bool {
+		if (playingVideos != 0) {
+			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
+			return true;
+		}
+
+		return false;
+	}
+
+	public function new(metricsFn : Float -> Float -> Void, playFn : Bool -> Void, durationFn : Float -> Void, positionFn : Float -> Void) {
+		super();
+
+		this.metricsFn = metricsFn;
+		this.playFn = playFn;
+		this.durationFn = durationFn;
+		this.positionFn = positionFn;
+	}
+
+	private static inline function determineCrossOrigin(url : String) {
+		// data: and javascript: urls are considered same-origin
+		if (url.indexOf('data:') == 0)
+			return '';
+
+		// default is window.location
+		var loc = Browser.window.location;
+
+		var tempAnchor : Dynamic = Browser.document.createElement('a');
+
+		tempAnchor.href = url;
+
+		var samePort = (!tempAnchor.port && loc.port == '') || (tempAnchor.port == loc.port);
+
+		// if cross origin
+		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol) {
+			return 'anonymous';
+		}
+
+		return '';
+	}
+
+	public function updateNativeWidget() {
+		if (!nativeWidget.paused) {
+			checkTimeRange(nativeWidget.currentTime, true);
+		}
+	}
+
+	private function checkTimeRange(currentTime : Float, videoResponse : Bool) : Void {
+		try { // Crashes in IE sometimes
+			if (currentTime < startTime && startTime < nativeWidget.duration) {
+				nativeWidget.currentTime = startTime;
+				positionFn(nativeWidget.currentTime);
+			} else if (endTime > 0 && endTime > startTime && currentTime >= endTime) {
+				if (nativeWidget.paused) {
+					nativeWidget.currentTime = endTime;
+				} else {
+					nativeWidget.currentTime = startTime;
+					if (!nativeWidget.loop) nativeWidget.pause();
+				}
+				positionFn(nativeWidget.currentTime);
+			} else if (videoResponse) {
+				positionFn(nativeWidget.currentTime);
+			} else {
+				nativeWidget.currentTime = currentTime;
+			}
+		} catch (e : Dynamic) {}
+	}
+
+	private function createVideoClip(filename : String, startPaused : Bool) : Void {
+		deleteVideoClip();
+
+		nativeWidget = Browser.document.createElement("video");
+		nativeWidget.crossorigin = determineCrossOrigin(filename);
+		nativeWidget.autoplay = !startPaused;
+		nativeWidget.src = filename;
+		nativeWidget.setAttribute('playsinline', true);
+
+		if (nativeWidget.autoplay) {
+			playingVideos++;
+		}
+
+		videoTexture = Texture.fromVideo(nativeWidget);
+		untyped videoTexture.baseTexture.autoPlay = !startPaused;
+		untyped videoTexture.baseTexture.autoUpdate = false;
+		videoSprite = new Sprite(videoTexture);
+		untyped videoSprite._visible = true;
+		addChild(videoSprite);
+
+		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
+		once("removed", deleteVideoClip);
+
+		createStreamStatusListeners();
+		createFullScreenListeners();
+
+		if (!startPaused && !CanAutoPlay)
+			playFn(false);
+	}
+
+	private function deleteVideoClip() : Void {
+		if (nativeWidget != null) {
+			nativeWidget.autoplay = false;
+			pauseVideo();
+
+			// Force video unload
+			nativeWidget.removeAttribute('src');
+			nativeWidget.load();
+
+			RenderSupportJSPixi.PixiStage.off("drawframe", updateNativeWidget);
+
+			deleteVideoSprite();
+			deleteSubtitlesClip();
+
+			destroyStreamStatusListeners();
+			destroyFullScreenListeners();
+
+			if (nativeWidget != null) {
+				var parentNode = nativeWidget.parentNode;
+
+				if (parentNode != null) {
+					parentNode.removeChild(nativeWidget);
+				}
+
+				nativeWidget = null;
+			}
+		}
+
+		loaded = false;
+	}
+
+	public function getDescription() : String {
+		return nativeWidget != null ? 'VideoClip (url = ${nativeWidget.url})' : '';
+	}
+
+	public function setVolume(volume : Float) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.volume = volume;
+		}
+	}
+
+	public function setLooping(loop : Bool) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.loop = loop;
+		}
+	}
+
+	public function playVideo(filename : String, startPaused : Bool) : Void {
+		createVideoClip(filename, startPaused);
+	}
+
+	public function setTimeRange(start : Float, end : Float) : Void {
+		startTime = start >= 0 ? start : 0;
+		endTime = end > startTime ? end : nativeWidget.duration;
+		checkTimeRange(nativeWidget.currentTime, true);
+	}
+
+	public function setCurrentTime(time : Float) : Void {
+		checkTimeRange(time, false);
+	}
+
+	public function setVideoSubtitle(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		if (text == '') {
+			deleteSubtitlesClip();
+		} else {
+			setVideoSubtitleClip(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		};
+	}
+
+	public function setPlaybackRate(rate : Float) : Void {
+		if (nativeWidget != null) {
+			nativeWidget.playbackRate = rate;
+		}
+	}
+
+	private function setVideoSubtitleClip(text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String, fillcolor : Int,
+		fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
+		if (fontFamily != fontfamily && fontfamily != '') {
+			fontFamily = fontfamily;
+			deleteSubtitlesClip();
+		}
+
+		createSubtitlesClip();
+		textField.setTextAndStyle(' ' + text + ' ', fontFamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		updateSubtitlesClip();
+	}
+
+	private function createSubtitlesClip() : Void {
+		if (textField == null) {
+			textField = RenderSupportJSPixi.makeTextField(fontFamily);
+			addChild(textField);
+		};
+	}
+
+	private function updateSubtitlesClip() : Void {
+		if (nativeWidget != null) {
+			textField.x = (nativeWidget.width - textField.getWidth()) / 2;
+			textField.y = (nativeWidget.height - textField.getHeight()) - 2;
+		}
+	}
+
+	private function deleteSubtitlesClip() : Void {
+		removeChild(textField);
+		textField = null;
+	}
+
+	private function deleteVideoSprite() : Void {
+		if (videoSprite != null) {
+			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
+			removeChild(videoSprite);
+			videoSprite = null;
+		}
+
+		if (videoTexture != null) {
+			videoTexture.destroy(true);
+			videoTexture = null;
+		}
+	}
+
+	public function getCurrentTime() : Float {
+		return nativeWidget != null ? nativeWidget.currentTime : 0;
+	}
+
+	public function pauseVideo() : Void {
+		if (loaded && !nativeWidget.paused) {
+		 	nativeWidget.pause();
+			playingVideos--;
+		}
+	}
+
+	public function resumeVideo() : Void {
+		if (loaded && nativeWidget.paused) {
+			nativeWidget.play();
+			playingVideos++;
+		}
+	}
+
+	private function onMetadataLoaded() {
+		durationFn(nativeWidget.duration);
+
+		nativeWidget.width = nativeWidget.videoWidth;
+		nativeWidget.height = nativeWidget.videoHeight;
+		metricsFn(nativeWidget.width, nativeWidget.height);
+
+		checkTimeRange(nativeWidget.currentTime, true);
+
+		InvalidateStage(); // Update the widget
+
+		if (!nativeWidget.autoplay) nativeWidget.pause();
+
+		if (textField != null) {
+			swapChildren(videoSprite, textField);
+			updateSubtitlesClip();
+		};
+
+		loaded = true;
+	}
+
+	private function onStreamLoaded() : Void {
+		streamStatusListener.map(function (l) { l("NetStream.Play.Start"); });
+	}
+
+	private function onStreamEnded() : Void {
+		if (!nativeWidget.autoplay) {
+			playingVideos--;
+		}
+
+		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });
+	}
+
+	private function onStreamError() : Void {
+		streamStatusListener.map(function (l) { l("NetStream.Play.StreamNotFound"); });
+	}
+
+	private function onStreamPlay() : Void {
+		if (nativeWidget != null && !nativeWidget.paused) {
+			streamStatusListener.map(function (l) { l("FlowGL.User.Resume"); });
+
+			playFn(true);
+		}
+	}
+
+	private function onStreamPause() : Void {
+		if (nativeWidget != null && nativeWidget.paused) {
+			streamStatusListener.map(function (l) { l("FlowGL.User.Pause"); });
+
+			playFn(false);
+		}
+	}
+
+	private function onFullScreen() : Void {
+		if (nativeWidget != null) {
+			RenderSupportJSPixi.fullScreenTrigger();
+
+			if (RenderSupportJSPixi.IsFullScreen) {
+				Browser.document.body.appendChild(nativeWidget);
+			} else {
+				Browser.document.body.removeChild(nativeWidget);
+			}
+
+		}
+	}
+
+
+	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
+		streamStatusListener.push(fn);
+		return function () { streamStatusListener.remove(fn); };
+	}
+
+	private function createStreamStatusListeners() {
+		if (nativeWidget != null) {
+			nativeWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
+			nativeWidget.addEventListener("loadeddata", onStreamLoaded, false);
+			nativeWidget.addEventListener("ended", onStreamEnded, false);
+			nativeWidget.addEventListener("error", onStreamError, false);
+			nativeWidget.addEventListener("play", onStreamPlay, false);
+			nativeWidget.addEventListener("pause", onStreamPause, false);
+		}
+	}
+
+	private function destroyStreamStatusListeners() {
+		if (nativeWidget != null) {
+			nativeWidget.removeEventListener('loadedmetadata', onMetadataLoaded);
+			nativeWidget.removeEventListener("loadeddata", onStreamLoaded);
+			nativeWidget.removeEventListener("ended", onStreamEnded);
+			nativeWidget.removeEventListener("error", onStreamError);
+			nativeWidget.removeEventListener("play", onStreamPlay);
+			nativeWidget.removeEventListener("pause", onStreamPause);
+		}
+	}
+
+	private function createFullScreenListeners() {
+		if (nativeWidget != null) {
+			if (Platform.isIOS) {
+				nativeWidget.addEventListener('webkitbeginfullscreen', onFullScreen, false);
+				nativeWidget.addEventListener('webkitendfullscreen', onFullScreen, false);
+			}
+
+			nativeWidget.addEventListener('fullscreenchange', onFullScreen, false);
+			nativeWidget.addEventListener('webkitfullscreenchange', onFullScreen, false);
+			nativeWidget.addEventListener('mozfullscreenchange', onFullScreen, false);
+		}
+	}
+
+	private function destroyFullScreenListeners() {
+		if (nativeWidget != null) {
+			if (Platform.isIOS) {
+				nativeWidget.removeEventListener('webkitbeginfullscreen', onFullScreen);
+				nativeWidget.removeEventListener('webkitendfullscreen', onFullScreen);
+			}
+
+			nativeWidget.removeEventListener('fullscreenchange', onFullScreen);
+			nativeWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
+			nativeWidget.removeEventListener('mozfullscreenchange', onFullScreen);
+		}
+	}
+}
