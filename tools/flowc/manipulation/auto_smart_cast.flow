@@ -2,13 +2,16 @@ import tools/flowc/incremental/fitype;
 import tools/flowc/backends/common;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/manipulation/lambda_lifting;
+import tools/flowc/manipulation/explicit_casts;
 
 export {
-	// This function will wrap ... with lambdas
-	fiSmartCast(prg : FiProgram) -> FiProgram;
+	// this is a general cast-processing pass that does the following:
+    // 1. expand implicit casts to and from flow (see explicit_casts)
+    // 2. expand type-erasing casts ? -> flow -> ?? to something more manageable whenever possible
+	expandCasts(prg : FiProgram) -> FiProgram;
 }
 
-doSmartCast(ex : FiExp) {
+optimizeTypeErasure(ex : FiExp) {
 	switch (ex) {
 		FiBool(b, start): ex;
 		FiInt(i, start): ex;
@@ -29,23 +32,24 @@ doSmartCast(ex : FiExp) {
 	}
 }
 
-fiSmartCast(prg : FiProgram) {
+expandCasts(prg : FiProgram) {
 	fold(prg.traversal, prg, \program, moduleName -> {
 		switch (lookupTree(program.modules, moduleName)) {
 			None(): program;
 			Some(m): {
-				doCast = \expr -> doSmartCast(expr);
 
 				functions0 = map(m.functions, \f : FiFunctionDec -> {
-					FiFunctionDec(f with lambda = FiLambda(f.lambda with body = doCast(f.lambda.body)))
+					FiFunctionDec(f with lambda = 
+                        FiLambda(f.lambda with body = optimizeTypeErasure(expandFlowCastsExp(f.lambda.body))))
 				});
 
-				globalVars = map(m.globalVars, \v -> FiGlobalVar(v with value = doCast(v.value)));
+				globalVars = map(m.globalVars, \v -> FiGlobalVar(v with value = 
+                    optimizeTypeErasure(injectFlowCast(v.type, v.value))));
 					
 				natives = map(m.natives, \n -> {
 					switch (n.fallbackLambda) {
 						FiLambda(args, body, type, start): {
-							wrapped = doCast(body);
+							wrapped = optimizeTypeErasure(expandFlowCastsExp(body));
 							if (wrapped != body) {
 								FiNativeDec(n with fallbackLambda = FiLambda(args, wrapped, type, start))
 							} else n;
@@ -60,9 +64,7 @@ fiSmartCast(prg : FiProgram) {
 					natives = natives,
 				);
 
-				prgTmp = FiProgram(program with modules = setTree(program.modules, moduleName, module));
-
-				lift_lambdas_module(prgTmp, moduleName);
+				FiProgram(program with modules = setTree(program.modules, moduleName, module));
 			}
 		};
 	});

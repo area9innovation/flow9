@@ -1,5 +1,6 @@
 import tools/flowc/incremental/fitype;
 import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fimodule;
 import tools/flowc/backends/wasm/wasm_type_descriptor;
 import tools/flowc/backends/wasm/f2wasm_utils;
 import tools/flowc/backends/common;
@@ -7,6 +8,9 @@ import ds/tree;
 
 export {
 	wasmLinkNative(cfg : FiWasmConfig, program : FiProgram, nativ : FiNativeDec) -> FiNativeDec;
+    // this filters out native declarations that match functions defined in top level
+    // used to substitute natives with functions in runtime
+    wasmOverrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDeclaration>) -> Tree<string, FiModule>;
 }
 
 linkIsIntArray(decl : FiNativeDec, wt : WasmTypeFunction) -> string {
@@ -68,3 +72,24 @@ wasmLinkNative(cfg : FiWasmConfig, program : FiProgram, n : FiNativeDec) {
 }
 
 linkageMap : Tree<string, (FiNativeDec, WasmTypeFunction) -> string> = buildLinkageMap();
+
+// This grabs flow-based implementations of natives to run in the Wasm side, and uses that as the implementation
+wasmOverrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDeclaration>) -> Tree<string, FiModule> {
+    filterTopLevels = \name -> {
+			eitherMap(lookupTree(toplevels, name), \fb -> {
+				switch (fb) {
+					FiFunctionDec(__, __, __, __, __): false;
+					FiGlobalVar(__, __, __, __, __): true;
+					FiNativeDec(__, __, __, __, __, __, __): true;
+				}
+			}, true)
+		};
+
+	mapTree(modules, \module -> {
+		natives2 = filter(module.natives, \n -> filterTopLevels(n.name));
+        functions2 = filter(module.functions, \f -> filterTopLevels(f.name));
+        initOrder2 = filter(module.initOrder, filterTopLevels);
+
+		FiModule(module with natives = natives2, functions = functions2, initOrder = initOrder2);
+	});
+}
