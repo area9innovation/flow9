@@ -103,6 +103,8 @@ export {
 	// Resizes the form to fill the target metrics croping borders that don't fit, always keeps aspect ratio.
 	TZoomToFill(content : Tropic, container : Tropic, crop : bool) -> Tropic;
 
+	TZoomOnOverflow(content : Tropic, container : Tropic, keepAspect : bool) -> Tropic;
+
 	// Horizontal centering
 	TCenterX(b : Tropic) -> Tropic;
 	// Horizontal centering inside the box
@@ -263,10 +265,14 @@ export {
 	TDebugPositionScale(c : int, tr : Tropic) -> Tropic;
 	TDebugViewBounds(c : int, tr : Tropic) -> Tropic;
 
+	TDebugConstruct(tag : string, tr : Tropic) -> Tropic;
+
 	// Hide tropic if available size is less than tropic metrics
 	TIfFits(tr : Tropic) -> Tropic;
 
 	TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic;
+
+	TEvenGrid(content : [[Tropic]]) -> Tropic;
 
 	wh2Tropic(wh : WidthHeight) -> Tropic;
 }
@@ -737,6 +743,15 @@ TZoom(content : Tropic, container : Tropic, keepAspect : bool) -> Tropic {
 
 TZoomToFill(content : Tropic, container : Tropic, crop : bool) -> Tropic {
 	TTweak([TFillZoom(crop)], content, container);
+}
+
+TZoomOnOverflow(content : Tropic, container : Tropic, keepAspect : bool) -> Tropic {
+	TCopySize(
+		container,
+		\tr ->
+			TTweak([TFitZoom(keepAspect, false)], TGroup2(content, tr), tr),
+		true
+	);
 }
 
 TCenterScale(tropic : Tropic, xscale : double, yscale: double) -> Tropic {
@@ -2148,6 +2163,20 @@ TDebugViewBounds(c : int, tr : Tropic) -> Tropic {
 	})
 }
 
+TDebugConstruct(tag : string, tr : Tropic) -> Tropic {
+	name = if (tag == "") tr.structname else tag;
+
+	TConstruct(
+		[
+			\ -> {
+				println(name + " constructed");
+				\ -> println(name + " destroyed");
+			}
+		],
+		tr
+	)
+}
+
 TIfFits(tr : Tropic) -> Tropic {
 	TransformTAcc(\t2a, pi, ss, mo -> {
 		b = t2a(tr, pi, ss, mo);
@@ -2191,6 +2220,177 @@ TOnConstruct(fn : () -> void) -> (Tropic) -> Tropic {
 		],
 		tr
 	)
+}
+
+TEvenGrid(content : [[Tropic]]) -> Tropic {
+	if (length(content) > 0 && length(content[0]) > 0)
+		TransformTAcc(\t2a, p, s, mo -> {
+			maxX = p.maxX;
+			maxY = p.maxY;
+
+			columnWidths = generate(0, either(maxA(map(content, length)), 0), \__ -> make(0.));
+			rowHeights = generate(0, length(content), \__ -> make(0.));
+
+			translatesX = generate(0, length(columnWidths), \__ -> make(0.));
+			translatesY = generate(0, length(rowHeights), \__ -> make(0.));
+
+			contentAcc =
+				mapi(content, \j, c -> mapi(c, \i, tr ->
+					t2a(
+						tr,
+						TParentInfo(
+							columnWidths[i],
+							rowHeights[j],
+							p.environment,
+							fworldtransform(p.transformMatrix, fpoint2transform(fpoint(translatesX[i], translatesY[j]))),
+							p.worldVisible,
+							p.viewBounds
+						),
+						s,
+						mo
+					)
+				));
+			form =
+				FGroup(
+					mapi(contentAcc, \j, c -> mapi(c, \i, tacc -> FTranslate(translatesX[i], translatesY[j], tacc.form))) |> concatA,
+					true
+				);
+			disp = concatA(map(concatA(contentAcc), \tacc -> tacc.disposers));
+
+			minWidths = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].minWidth else zero), 0.)) |> fmerge;
+			minHeights = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.minHeight), 0.)) |> fmerge;
+			maxWidths = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].maxWidth else zero), 0.)) |> fmerge;
+			maxHeights = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.maxHeight), 0.)) |> fmerge;
+			xFillers = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].xFillers else zero), 0.)) |> fmerge;
+			yFillers = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.yFillers), 0.)) |> fmerge;
+
+			realWidths = generate(0, length(columnWidths), \i -> fmaxA(map(contentAcc, \c -> if (i < length(c)) c[i].minWidth else zero), 0.));
+			realHeights = map(contentAcc, \c -> fmaxA(map(c, \tacc -> tacc.metrics.height), 0.));
+
+			uns1 =
+				make4Subscribe(minWidths, maxWidths, maxX, xFillers, \minW, maxW, mx, xf -> {
+					wd = ref 0.;
+
+					iteri(distributeSizesEvenly2(minW, maxW, map(columnWidths, getValue), xf, max(mx, dsum(minW))), \i, nw -> {
+						nextDistinct(translatesX[i], ^wd);
+						wd := ^wd + nw;
+						nextDistinct(columnWidths[i], nw);
+					})
+				})();
+
+			uns2 =
+				make4Subscribe(minHeights, maxHeights, maxY, yFillers, \minH, maxH, my, yf -> {
+					hgt = ref 0.;
+
+					iteri(distributeSizesEvenly2(minH, maxH, map(rowHeights, getValue), yf, max(my, dsum(minH))), \i, nh -> {
+						nextDistinct(translatesY[i], ^hgt);
+						hgt := ^hgt + nh;
+						nextDistinct(rowHeights[i], nh);
+					})
+				})();
+
+			TAcc(
+				form,
+				TFormMetrics(
+					fsum(realWidths),
+					fsum(realHeights),
+					zero
+				),
+				fselect(minWidths, FLift(dsum)),
+				fselect(minHeights, FLift(dsum)),
+				fselect(maxWidths, FLift(dsum)),
+				fselect(maxHeights, FLift(dsum)),
+				fselect(xFillers, FLift(dsum)),
+				fselect(yFillers, FLift(dsum)),
+				const(false),
+				false,
+				false,
+				concatA([disp, [uns1, uns2]])
+			)
+		})
+	else
+		TEmpty()
+}
+
+distributeSizesEvenly2(minWidths : [double], maxWidths : [double], columnWidths0 : [double], xFillers : [double], availableWidth : double) -> [double] {
+	columnsCount = either(minA([length(minWidths), length(maxWidths), length(columnWidths0)]), 0);
+
+	additionThreshold = 0.;
+	sumFillers = max(dsum(xFillers), 1.);
+
+	if (columnsCount > 0) {
+		columnWidths = generate(0, columnsCount, \i -> max(columnWidths0[i], minWidths[i]));
+		sumWidth = dsum(columnWidths);
+
+		if (sumWidth < availableWidth - additionThreshold || sumWidth > availableWidth + additionThreshold) {
+			available = availableWidth - sumWidth;
+			addition = available / sumFillers;
+
+			availableForAddition =
+				mapi(subrange(maxWidths, 0, columnsCount), \i, mw -> ref
+					xFillers[i] > 0. && (if (sumWidth < availableWidth)
+						(mw > minWidths[i] && columnWidths[i] < mw) || (mw < minWidths[i])
+					else
+						columnWidths[i] > minWidths[i])
+				);
+
+			newWidths =
+				mapi(subrange(columnWidths, 0, columnsCount), \i, cw -> ref
+					if (^(availableForAddition[i])) {
+						nw = cw + addition * xFillers[i];
+
+						if (nw < minWidths[i]) {
+							availableForAddition[i] := false;
+							minWidths[i];
+						} else if (maxWidths[i] >= minWidths[i] && nw > maxWidths[i]) {
+							availableForAddition[i] := false;
+							maxWidths[i];
+						} else {
+							nw
+						}
+					} else {
+						if (minWidths[i] > 0.) {
+							if (minWidths[i] <= maxWidths[i])
+								min(max(cw, minWidths[i]), maxWidths[i])
+							else
+								max(cw, minWidths[i])
+						} else
+							cw
+					}
+				);
+
+			updateWhile(
+				countA(availableForAddition, \afa -> ^afa)
+				|> (\afa ->
+					if (afa > 0)
+						(availableWidth - fold(newWidths, 0., \acc, nw -> acc + ^nw)) / sumFillers
+					else
+						0.
+				),
+				\newAddition -> {
+					if ((newAddition > additionThreshold || newAddition < additionThreshold) &&
+						foldi(availableForAddition, false, \i, acc, afa -> {
+							if (^afa) {
+								newWidths[i] :=
+									max(minWidths[i], ^(newWidths[i]) + newAddition * xFillers[i])
+									|> (\f -> if (minWidths[i] < maxWidths[i]) min(f, maxWidths[i]) else f);
+								false
+							} else {
+								acc
+							}
+						}))
+						Some((availableWidth - fold(newWidths, 0., \acc, nw -> acc + ^nw)) / i2d(countA(availableForAddition, \afa -> ^afa)))
+					else
+						None()
+				}
+			);
+
+			map(newWidths, \nw -> ^nw);
+		} else {
+			columnWidths
+		}
+	} else
+		columnWidths0
 }
 
 wh2Tropic(wh : WidthHeight) -> Tropic {

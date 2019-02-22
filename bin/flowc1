@@ -16,13 +16,14 @@ import time
 import socket
 
 if sys.version_info[0] > 2:
-	import _thread
+	import _thread as thread
 else:
 	import thread
 
 def find_flowdir():
 	paths = os.environ['PATH'].split(os.pathsep)
 	for path in paths:
+		path = path.rstrip(os.sep)
 		if os.path.isfile(os.path.join(path, 'flowc')):
 			return os.path.split(path)[0]
 	return None
@@ -35,14 +36,19 @@ def run_flowc1(args):
 	if flowdir == None:
 		print("Flow directory not found: flowc must be found by PATH environment variable")
 		print("PATH variable: " + os.environ['PATH'])
-		sys.exit(1)
+		return 1
 
 	run_args = ['java', '-Xss12m', '-Xmx3g', '-Xms1g']
 	if ver_no < 9:
 		run_args += ['-XX:+UseConcMarkSweepGC', '-XX:ParallelGCThreads=2']
-	run_args += ['-cp', flowdir + 'src/java/.:', '-jar', flowdir + '/tools/flowc/flowc.jar', 'bin-dir=' + flowdir + '/bin']
+	java_cp = os.path.join(flowdir, 'src', 'java', '.') + ':'
+	java_jar = os.path.join(flowdir, 'tools', 'flowc', 'flowc.jar')
+	java_bin_dir = os.path.join(flowdir, 'bin')
+	run_args += ['-cp', java_cp, '-jar', java_jar, 'bin-dir=' + java_bin_dir]
 	run_args += args
-	subprocess.Popen(run_args).communicate()
+	proc = subprocess.Popen(run_args)
+	proc.communicate()
+	return proc.returncode
 
 def server(input_port, server_port):
 	try:
@@ -53,12 +59,8 @@ def server(input_port, server_port):
 			client_socket = dock_socket.accept()[0]
 			server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			server_socket.connect(('localhost', server_port))
-			if sys.version_info[0] > 2:
-				_thread.start_new_thread(forward_request, (client_socket, server_socket))
-				_thread.start_new_thread(forward_response, (server_socket, client_socket))
-			else:
-				thread.start_new_thread(forward_request, (client_socket, server_socket))
-				thread.start_new_thread(forward_response, (server_socket, client_socket))
+			thread.start_new_thread(forward_request, (client_socket, server_socket))
+			thread.start_new_thread(forward_response, (server_socket, client_socket))
 
 	except:
 		print("Couldn't start server via proxy")
@@ -116,13 +118,10 @@ def main():
 				server_args += [arg]
 		if not port_explicitly_set:
 			server_args += ["server-port=" + str(server_port)]
-		if sys.version_info[0] > 2:
-			_thread.start_new_thread(server, (input_port, server_port))
-		else:
-			thread.start_new_thread(server, (input_port, server_port))
-		run_flowc1(server_args)
+		thread.start_new_thread(server, (input_port, server_port))
+		return run_flowc1(server_args)
 	else:
-		run_flowc1(args)
+		return run_flowc1(args)
 
 if __name__ == '__main__':
-	main()
+	sys.exit(main())

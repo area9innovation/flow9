@@ -1619,6 +1619,21 @@ class CSharpWriter {
 					wrapCast(v, fromtype, totype);
 				default: throw "Not implemented: " + Prettyprint.print(value);
 				}
+			case TArray(fa):
+				switch (totype) {
+					case TArray(ta): {
+						switch (fa) {
+							case TName(n1, args1):
+								switch (ta) {
+								// Array of named types are OK 
+								case TName(n2, args2): wrapCast(v, fromtype, totype);
+								default: throw "Not implemented: " + Prettyprint.print(code);
+							}
+							default: throw "Not implemented: " + Prettyprint.print(code);
+						}
+					}
+					default: throw "Not implemented: " + Prettyprint.print(code);
+				}
 			default: throw "Not implemented: " + Prettyprint.print(value);
 			});
 		case And(e1, e2, pos):

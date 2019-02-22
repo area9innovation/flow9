@@ -729,6 +729,8 @@ bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) 
     QString path = unicode2qt(web_clip->getUrl());
     QString full_path = getFullResourcePath(path);
 
+    web_view->setGeometry(0, 0, Width, Height);
+
     if (QFile::exists(full_path)) {
         web_view->load(QUrl::fromLocalFile(full_path));
     } else {
