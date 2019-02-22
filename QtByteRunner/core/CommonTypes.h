@@ -316,15 +316,6 @@ public:
     FlowPtr GetInternalArrayPtr() const { assert(IsArray()); return slot_private.PtrValue+4; }
 
 public:
-    bool operator == (const StackSlot& st) {
-      return
-              slot_private.Bytes == st.slot_private.Bytes && slot_private.Ints == st.slot_private.Ints && slot_private.DoubleVal == st.slot_private.DoubleVal &&
-      #ifdef __x86_64__
-              slot_private.QWordVal == st.slot_private.QWordVal &&
-      #endif
-              slot_private.IntValue == st.slot_private.IntValue && slot_private.PtrValue == st.slot_private.PtrValue &&
-              slot_private.AuxValue == st.slot_private.AuxValue && slot_private.Tag == st.slot_private.Tag;
-    }
     static StackSlot MakeVoid() {
         StackSlot s; return SetVoid(s);
     }

@@ -222,7 +222,7 @@ private:
     typedef STL_HASH_MAP<unicode_string, std::vector<GLPictureClip*> > T_PendingPictures;
     typedef std::map<FlowEvent, std::set<GLClip*> > T_EventListeners;
     typedef std::set<GLClip*> T_ClipSet;
-    typedef std::list<int> T_Listeners;
+    typedef std::vector<int> T_Listeners;
     typedef std::set<GLClip*> T_TabIndexClips;
     typedef std::vector<GLClip*> T_AccessibleClips;
 
@@ -236,7 +236,7 @@ private:
 
     GLTextClip *TextFocus, *PressTextFocus;
     GLClip *CurrentFocus;
-
+    
     T_Listeners SwipeListeners, PinchListeners, PanListeners;
     T_Listeners RenderDeferredFunctions;
 
@@ -294,7 +294,7 @@ public:
     GLClip *getStage() { return Stage; }
 
     bool needsRendering();
-
+    
     // Read a resource bundled with the program
     virtual bool loadAssetData(StaticBuffer *buffer, std::string name, size_t size);
 
@@ -316,7 +316,7 @@ public:
     bool setFallbackFont(unicode_string name);
 protected:
     GLRenderer *getRenderer() { return Renderer; }
-
+    
     T_AccessibleClips accessible_clips;
 
     bool initGLContext(unsigned root_fb_id = 0);
@@ -412,7 +412,7 @@ protected:
     virtual void doStartRecordAudio(std::string additionalInfo, std::string fileName, int duration) {}
     virtual void doStopRecordAudio() {}
     virtual void doTakeAudioRecord() {}
-
+    
     virtual void doSetInterfaceOrientation(std::string) {}
 
     // The url must be exactly the same string as was passed to loadPicture
@@ -428,17 +428,16 @@ protected:
     void removePictureFromPending(GLPictureClip *clip);
 
     virtual bool loadStubPicture(unicode_string url, shared_ptr<GLTextureImage> &img);
-
+    
     static StackSlot removeListener(ByteCodeRunner*, StackSlot*, void*);
 
     void tryFocusNextClip(GLClip *focused, bool direct);
-
+    
     void updateAccessibleClips();
 
     static StackSlot removeDrawFrameListener(ByteCodeRunner*, StackSlot*, void*);
     static StackSlot removeFullWindowListener(ByteCodeRunner*, StackSlot*, void*);
-    static StackSlot removeDeferredFunction(ByteCodeRunner*, StackSlot*, void*);
-
+    
     void updateLastUserAction();
 private:
     DECLARE_NATIVE_METHOD(NativeGetUrl)
@@ -481,7 +480,6 @@ private:
     DECLARE_NATIVE_METHOD(setInterfaceOrientation)
     DECLARE_NATIVE_METHOD(setGlobalZoomEnabled)
     DECLARE_NATIVE_METHOD(deferUntilRender)
-    DECLARE_NATIVE_METHOD(interruptibleDeferUntilRender)
 
     DECLARE_NATIVE_METHOD(resetFullWindowTarget)
     DECLARE_NATIVE_METHOD(toggleFullWindow)

@@ -316,8 +316,8 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
 
     double rendertime = (GetCurrentTime() - startRenderTimestamp) * 1000.0;
 
-    for (T_Listeners::iterator it = DrawFrameListeners.begin(); it != DrawFrameListeners.end(); ++it) {
-        RUNNER->EvalFunction(RUNNER->LookupRoot(*it), 1, StackSlot::MakeDouble(rendertime));
+    for (int it = 0; it < DrawFrameListeners.size(); ++it) {
+        RUNNER->EvalFunction(RUNNER->LookupRoot(DrawFrameListeners[it]), 1, StackSlot::MakeDouble(rendertime));
     }
 
     if (DrawFrameListeners.size()) {
@@ -415,9 +415,9 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         if (RenderDeferredFunctions.size() > 0) {
             ByteCodeRunner * rnr = getFlowRunner();
 
-            for (T_Listeners::iterator it = RenderDeferredFunctions.begin(); it != RenderDeferredFunctions.end(); ++it) {
-                rnr->EvalFunction(rnr->LookupRoot(*it), 0);
-                rnr->ReleaseRoot(*it);
+            for (unsigned i = 0; i < RenderDeferredFunctions.size(); ++i) {
+                rnr->EvalFunction(rnr->LookupRoot(RenderDeferredFunctions[i]), 0);
+                rnr->ReleaseRoot(RenderDeferredFunctions[i]);
             }
 
             RenderDeferredFunctions.clear();
@@ -524,9 +524,8 @@ void GLRenderSupport::addEventListener(FlowEvent event, GLClip *clip)
 {
     clip->setFlags(GLClip::ListensToEvents);
 
-    if (event == FlowMouseEnter || event == FlowMouseLeave) {
+    if (event == FlowMouseEnter || event == FlowMouseLeave)
         clip->setFlags(GLClip::ListensToOverOutEvents);
-    }
 
     EventListeners[event].insert(clip);
 }
@@ -534,10 +533,6 @@ void GLRenderSupport::addEventListener(FlowEvent event, GLClip *clip)
 void GLRenderSupport::removeEventListener(FlowEvent event, GLClip *clip)
 {
     EventListeners[event].erase(clip);
-
-    if ((event == FlowMouseEnter || event == FlowMouseLeave) && EventListeners[FlowMouseEnter].size() == 0 && EventListeners[FlowMouseLeave].size() == 0) {
-        clip->wipeFlags(GLClip::ListensToOverOutEvents);
-    }
 }
 
 void GLRenderSupport::removeEventListener(GLClip *clip)
@@ -613,7 +608,7 @@ void GLRenderSupport::updateHoveredClips()
         PredicateFn predicate;
         ActionFn action;
         PredicatableActionFn predicatableAction;
-        Stage->computeHitSubtreesOrdered(Stage->getStageMousePos(), &hover, NULL, predicate, action, predicatableAction);
+        Stage->computeHitSubtreesOrdered(Stage->getStageMousePos(), &hover, NULL, predicate, action, predicatableAction, false);
     }
 
     HoveredClips.swap(hover);
@@ -1667,7 +1662,7 @@ bool GLRenderSupport::dispatchGestureEvent(FlowEvent event, FlowGestureState sta
     bool prevent_default = false;
     ByteCodeRunner * rnr = getFlowRunner();
     if (NULL != listeners) {
-        for (T_Listeners::iterator it = listeners->begin(); it != listeners->end(); ++it) {
+        for (T_Listeners::iterator it = listeners->begin(); it < listeners->end(); ++it) {
             StackSlot args[] = {StackSlot::MakeInt(state), StackSlot::MakeDouble(p1), StackSlot::MakeDouble(p2), StackSlot::MakeDouble(p3), StackSlot::MakeDouble(p4)};
             const StackSlot & result = rnr->EvalFunctionArr(rnr->LookupRoot(*it), 5, args);
             prevent_default |= (result.IsBool() && result.GetBool());
@@ -1841,30 +1836,11 @@ StackSlot GLRenderSupport::setGlobalZoomEnabled(RUNNER_ARGS)
 
 StackSlot GLRenderSupport::deferUntilRender(RUNNER_ARGS)
 {
-    interruptibleDeferUntilRender(RUNNER, pRunnerArgs__);
-
-    RETVOID;
-}
-
-StackSlot GLRenderSupport::removeDeferredFunction(RUNNER_ARGS, void *data)
-{
-    RUNNER_PopArgs1(cb_root);
-    RUNNER_CheckTag(TInt, cb_root);
-
-    GLRenderSupport *instance = reinterpret_cast<GLRenderSupport*>(data);
-    instance->RenderDeferredFunctions.remove(cb_root.GetInt());
-
-    RETVOID;
-}
-
-
-StackSlot GLRenderSupport::interruptibleDeferUntilRender(RUNNER_ARGS)
-{
     RUNNER_PopArgs1(fn);
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
 
-    return RUNNER->AllocateNativeClosure(ByteCodeRunner::RemoveDeferredAction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
+    RETVOID;
 }
 
 std::vector<GLClip*> regularStageChildren = std::vector<GLClip*>();
@@ -1919,8 +1895,8 @@ void GLRenderSupport::notifyFullWindow(bool fw)
     if (IsFullWindow != fw) {
         IsFullWindow = fw;
         RUNNER_VAR = getFlowRunner();
-        for (T_Listeners::iterator it = FullWindowListeners.begin(); it != FullWindowListeners.end(); ++it) {
-            RUNNER->EvalFunction(RUNNER->LookupRoot(*it), 1, StackSlot::MakeBool(fw));
+        for (unsigned it = 0; it < FullWindowListeners.size(); ++it) {
+            RUNNER->EvalFunction(RUNNER->LookupRoot(FullWindowListeners[it]), 1, StackSlot::MakeBool(fw));
         }
     }
 }
@@ -1982,8 +1958,11 @@ void GLRenderSupport::dispatchVirtualKeyboardCallbacks(double height)
     RUNNER_VAR = getFlowRunner();
     WITH_RUNNER_LOCK_DEFERRED(RUNNER);
 
-    for (T_Listeners::iterator it = VirtualKeyboardHeightListeners.begin(); it != VirtualKeyboardHeightListeners.end(); ++it) {
-        RUNNER->EvalFunction(RUNNER->LookupRoot(*it), 1, StackSlot::MakeDouble(height));
+    for (int i = 0; i < VirtualKeyboardHeightListeners.size(); i++) {
+        RUNNER->EvalFunction(
+                    RUNNER->LookupRoot(VirtualKeyboardHeightListeners[i]),
+                    1,
+                    StackSlot::MakeDouble(height));
     }
 }
 

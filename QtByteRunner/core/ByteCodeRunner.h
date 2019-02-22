@@ -1144,12 +1144,6 @@ public:
         DeferredActionQueue.push_back(cb);
     }
 
-    static StackSlot RemoveDeferredAction(ByteCodeRunner *const RUNNER, StackSlot *const pRunnerArgs__, void *) {
-        const StackSlot &cb = pRunnerArgs__[0];
-
-        RUNNER->DeferredActionQueue.remove(cb);
-    }
-
     double DeferredQueueTimeout; // <= 0 - no timeout
 
     void RunDeferredActions();
