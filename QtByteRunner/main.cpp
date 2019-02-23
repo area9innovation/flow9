@@ -193,7 +193,6 @@ int main(int argc, char *argv[])
     int msaa_samples = 16;
     QString fallback_font = "";
 #endif
-    NativeProgram *nprogram = NULL;
     QString media_path = "";
     QStringList flowArgs;
     QStringList flowIncludes;
@@ -366,9 +365,6 @@ int main(int argc, char *argv[])
             fallback_font = argv[2];
             shift_args(argc, argv, 2);
 #endif
-        } else if (!strcmp(argv[1], "--test-native")) {
-            nprogram = load_native_program();
-            shift_args(argc, argv, 1);
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
             exit(1);
@@ -588,12 +584,12 @@ int main(int argc, char *argv[])
 #endif // QT_GUI_LIB
 
 #if !COMPILED
-    if (nprogram) {
-        FlowRunner.Init(nprogram);
+#ifdef NATIVE_BUILD
+        FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
         FlowRunner.RunMain();
-    }
-    else if (argc >= 2) {
+#else
+    if (argc >= 2) {
         QString bytecodeFile = argv[1];
 
         if (bytecodeFile.endsWith(".flow")) {
@@ -767,6 +763,7 @@ int main(int argc, char *argv[])
         pRenderer->StartBytecodeDownload(params);
 #endif
     }
+#endif
 #endif
 
     int rv = 0;

@@ -316,7 +316,7 @@ public:
     FlowPtr GetInternalArrayPtr() const { assert(IsArray()); return slot_private.PtrValue+4; }
 
 public:
-    bool operator == (const StackSlot& st) {
+    bool operator == (const StackSlot& st) const {
       return
               slot_private.Bytes == st.slot_private.Bytes && slot_private.Ints == st.slot_private.Ints && slot_private.DoubleVal == st.slot_private.DoubleVal &&
       #ifdef __x86_64__
