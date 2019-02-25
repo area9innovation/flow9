@@ -2,6 +2,7 @@ package dk.area9.flowrunner;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -39,6 +40,7 @@ import org.apache.http.params.BasicHttpParams;
 import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.HTTP;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
@@ -55,6 +57,8 @@ import android.net.http.AndroidHttpClient;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.annotation.RequiresApi;
+import android.support.v4.content.FileProvider;
 import android.util.Log;
 import android.view.Window;
 import android.view.WindowManager;
@@ -510,6 +514,31 @@ public class Utils {
     
     public static double sharedPreferencesGetDouble(final SharedPreferences prefs, final String key, final double defaultValue) {
         return Double.longBitsToDouble(prefs.getLong(key, Double.doubleToLongBits(defaultValue)));
+    }
+
+    /**
+     *
+     * @return true if permissions are granted. otherwise returns false and requests permissions
+     */
+    @RequiresApi(api = Build.VERSION_CODES.M)
+    public static boolean checkAndRequestPermissions(Activity activity, String[] permissions, int requestCode) {
+        boolean granted = true;
+        for(String permission : permissions) {
+            if(activity.checkSelfPermission(permission) == PackageManager.PERMISSION_DENIED) {
+                granted = false;
+                break;
+            }
+        }
+        if (!granted)
+            activity.requestPermissions(permissions, requestCode);
+        return granted;
+    }
+
+    public static Uri fileUriToContentUri(Context context, File file) {
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return FileProvider.getUriForFile(context, "dk.area9.flowrunner.fileprovider", file);
+        }
+        return Uri.fromFile(file);
     }
     
     // method to retrieve correct path from uri like: content://
