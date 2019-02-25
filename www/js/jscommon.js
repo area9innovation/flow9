@@ -283,7 +283,8 @@ if (scriptName.length > 4 && scriptName.substring(0, 4) == "http") {
 	loadJSFileInternal("js/websoftware.js");
 }
 
-if (!window.location.pathname.endsWith(".html")) {
+// TODO: Maybe we will return this condition after flowc1 is changed
+// if (!window.location.pathname.endsWith(".html")) {
 	if (scriptName != "") {
 		if (slave != "") {
 			loadJSFileInternal("js/toflow.js");
@@ -316,7 +317,7 @@ if (!window.location.pathname.endsWith(".html")) {
 	} else {
 		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
-}
+// }
 
 var leaveWarningText = undefined;
 window.onbeforeunload = function() {
