@@ -4,6 +4,7 @@ using DisplayObjectHelper;
 
 class NativeWidgetClip extends FlowContainer {
 	private var nativeWidget : Dynamic;
+	private var accessWidget : AccessWidget;
 	private var parentNode : Dynamic;
 
 	// Returns metrics to set correct native widget size
@@ -13,7 +14,7 @@ class NativeWidgetClip extends FlowContainer {
 	public function updateNativeWidget() {
 		// Set actual HTML node metrics, opacity etc.
 		if (getClipVisible()) {
-			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
+			var transform = nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
@@ -50,7 +51,9 @@ class NativeWidgetClip extends FlowContainer {
 				nativeWidget.style.position = "fixed";
 				nativeWidget.style.zIndex = RenderSupportJSPixi.zIndexValues.nativeWidget;
 
-				RenderSupportJSPixi.addNode(parentNode, nativeWidget);
+				if (accessWidget == null) {
+					accessWidget = new AccessWidget(this, nativeWidget);
+				}
 
 				RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
 				once("removed", deleteNativeWidget);
@@ -75,15 +78,12 @@ class NativeWidgetClip extends FlowContainer {
 
 	private function deleteNativeWidget() : Void {
 		RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
-		if (nativeWidget != null) {
-			parentNode = nativeWidget.parentNode;
 
-			if (parentNode != null) {
-				parentNode.removeChild(nativeWidget);
-			}
-
-			nativeWidget = null;
+		if (accessWidget != null) {
+			AccessWidget.removeAccessWidget(accessWidget);
 		}
+
+		nativeWidget = null;
 	}
 
 	static private var lastFocusedClip : Dynamic = null;

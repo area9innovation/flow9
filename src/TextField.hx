@@ -55,7 +55,6 @@ class TextField extends NativeWidgetClip {
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
-	public var accessWidget : Dynamic = null;
 	private var preFocus : Bool = false;
 
 	private function preOnFocus() { // Workaround for IE inputs readonly attribute
@@ -85,8 +84,8 @@ class TextField extends NativeWidgetClip {
 
 	public override function updateNativeWidget() {
 		if (getClipVisible()) {
-			var transform = !Platform.isIE && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
-				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
+			var transform = !Platform.isIE && nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" &&
+				nativeWidget.parentNode.clip != null ? worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
 			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;

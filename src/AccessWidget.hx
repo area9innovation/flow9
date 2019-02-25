@@ -7,6 +7,8 @@ import pixi.core.display.DisplayObject;
 using DisplayObjectHelper;
 
 class AccessWidgetTree {
+	private static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+
 	@:isVar public var id : Int;
 	@:isVar public var accessWidget(get, set) : AccessWidget;
 	@:isVar public var parent(get, set) : AccessWidgetTree;
@@ -144,7 +146,7 @@ class AccessWidgetTree {
 			}
 
 			if (accessWidget.element != null) {
-				if (RenderSupportJSPixi.DebugAccessOrder) {
+				if (DebugAccessOrder) {
 					accessWidget.element.setAttribute("zorder", Std.string(zorder));
 					accessWidget.element.setAttribute("nodeindex", Std.string(accessWidget.nodeindex));
 				}

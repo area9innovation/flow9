@@ -297,6 +297,7 @@ class PixiText extends TextField {
 	private function createTextClip(text : String, style : Dynamic) : Text {
 		var textClip = new Text(text, style);
 		untyped textClip._visible = true;
+		untyped textClip.clipVisible = false;
 
 		textClip.scale.x = 1 / textScaleFactor;
 		textClip.scale.y = 1 / textScaleFactor;

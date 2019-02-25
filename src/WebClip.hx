@@ -141,7 +141,7 @@ class WebClip extends NativeWidgetClip {
 
 	public override function updateNativeWidget() {
 		if (getClipVisible()) {
-			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
+			var transform = nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
 				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
 
 			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
