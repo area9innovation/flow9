@@ -283,7 +283,7 @@ if (scriptName.length > 4 && scriptName.substring(0, 4) == "http") {
 	loadJSFileInternal("js/websoftware.js");
 }
 
-if (!window.location.pathname.endsWith(".html")) {
+if (typeof htmlBundle == "undefined") {
 	if (scriptName != "") {
 		if (slave != "") {
 			loadJSFileInternal("js/toflow.js");
