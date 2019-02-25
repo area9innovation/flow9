@@ -283,38 +283,41 @@ if (scriptName.length > 4 && scriptName.substring(0, 4) == "http") {
 	loadJSFileInternal("js/websoftware.js");
 }
 
-if (scriptName != "") {
-	if (slave != "") {
-		loadJSFileInternal("js/toflow.js");
-		window.addEventListener('message', function (e) {
-			h = e.data;
-			window.location.hash = (h[0] != '#') ? h : h.substring(1);
-		});
+// TODO: Maybe we will return this condition after flowc1 is changed
+// if (!window.location.pathname.endsWith(".html")) {
+	if (scriptName != "") {
+		if (slave != "") {
+			loadJSFileInternal("js/toflow.js");
+			window.addEventListener('message', function (e) {
+				h = e.data;
+				window.location.hash = (h[0] != '#') ? h : h.substring(1);
+			});
 
-		loadJSFileInternal(scriptName + ".js?" + slave);
-		loadExternalResources();
-	} else {
-		var xmlhttp = new XMLHttpRequest();
-		xmlhttp.onreadystatechange = function () {
-			if (this.readyState == 4 && this.status == 200) {
-				try {
-					var timestamp = this.responseText;
-					overlayLoadTimestamp = "?" + timestamp;
-					loadFavicon("icons/" + scriptName + ".ico");
-					loadJSFileInternal(scriptName + ".js?" + timestamp);
-					loadExternalResources();
-				}
-				catch(exception) {
-					document.body.appendChild(document.createTextNode(exception.message));
+			loadJSFileInternal(scriptName + ".js?" + slave);
+			loadExternalResources();
+		} else {
+			var xmlhttp = new XMLHttpRequest();
+			xmlhttp.onreadystatechange = function () {
+				if (this.readyState == 4 && this.status == 200) {
+					try {
+						var timestamp = this.responseText;
+						overlayLoadTimestamp = "?" + timestamp;
+						loadFavicon("icons/" + scriptName + ".ico");
+						loadJSFileInternal(scriptName + ".js?" + timestamp);
+						loadExternalResources();
+					}
+					catch(exception) {
+						document.body.appendChild(document.createTextNode(exception.message));
+					}
 				}
 			}
+			xmlhttp.open("GET", "php/stamp.php?t=" + Date.now() + "&file=" + scriptName + ".js", true);
+			xmlhttp.send();
 		}
-		xmlhttp.open("GET", "php/stamp.php?t=" + Date.now() + "&file=" + scriptName + ".js", true);
-		xmlhttp.send();
+	} else {
+		document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
 	}
-} else {
-	document.body.appendChild(document.createTextNode("Use 'name' URI parameter to run corresponding flow app"));
-}
+// }
 
 var leaveWarningText = undefined;
 window.onbeforeunload = function() {

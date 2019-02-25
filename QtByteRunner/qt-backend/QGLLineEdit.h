@@ -2,7 +2,7 @@
 #define QGLLINEEDIT_H
 
 #include <QLineEdit>
-#include "gl-gui/QGLRenderSupport.h"
+#include "qt-gui/QGLRenderSupport.h"
 
 class QGLLineEdit : public QLineEdit
 {

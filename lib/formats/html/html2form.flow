@@ -201,7 +201,9 @@ getHtmlPictureMagnifyPDA(form : Form, popup : Form, fullscreen : bool)->Pair<For
 
 	closeFullscreen = ref nop;
 
-	zobuttonWH = makeWH();
+	zobuttonWHB = makeWH();
+	zoomedFormWHB = makeWH();
+	availWidthB = make(0.0);
 
 	attachZoomButton = \xAlign, yAlign, btn, f -> {
 		formSize = makeWH();
@@ -228,24 +230,26 @@ getHtmlPictureMagnifyPDA(form : Form, popup : Form, fullscreen : bool)->Pair<For
 		SimpleButton(frm, frm, "", onAction)
 	} else {
 		Cols([
-			Available2(
-				select(zobuttonWH, \ wh ->
-					WidthHeight(getStageWidth() - wh.width, getStageHeight())
-				),
-				zoomLevel1
-			),
-			Inspect([ISize(zobuttonWH)],
-				SimpleButton(
-					zoomOutIcon |> AdaptiveScale,
-					zoomOutIcon |> AdaptiveScale,
-					"",
-					\-> {
-						zoomOutAction();
-						^closeFullscreen()
-					}
-				)
-			)
-		]) |> Center
+			Available2(zoomedFormWHB, zoomLevel1),
+			Inspect([ISize(zobuttonWHB)], SimpleButton(
+				AdaptiveScale(zoomOutIcon),
+				AdaptiveScale(zoomOutIcon),
+				"",
+				\-> {
+					zoomOutAction();
+					^closeFullscreen()
+				}
+			))
+		])
+		|> Center
+		|> (\f -> Inspect([AvailableWidth(availWidthB)], f))
+		|> (\f -> Constructor(f, \ -> connectSelect2Distinctu(
+			zobuttonWHB,
+			availWidthB,
+			zoomedFormWHB,
+			\buttonWH, __ ->
+				WidthHeight(getStageWidth() - buttonWH.width, getStageHeight())
+		)))
 	}
 
 	postCropTransfrom = if (!fullscreen) \f -> attachZoomButton(1.0, 0.0, zoomInIcon, f) else idfn;
@@ -1150,7 +1154,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				pictureUrl = getXmlAttribute(attrs, "src", "");
 				mediaCollector = extractStruct(special, HTMLMediaCollector(ref [])).acc;
 				mediaCollector := arrayPush(^mediaCollector, pictureUrl);
-				p2 = Picture(pictureUrl, [OnLoaded(\-> {nextDistinct(pictureLoadBeh, 1)})]);
+				p2 = Picture(pictureUrl, [OnLoaded(\-> {nextDistinct(pictureLoadBeh, 1)}), OnLoadingError(\__ -> {nextDistinct(pictureLoadBeh, 1)})]);
 
 				maxw = getXmlAttribute(attrs, "max-width", "");
 				p1 = if (strlen(maxw) > 0) shrinkToFit(s2d(maxw), 2000.0, p2) else p2;
@@ -1192,15 +1196,21 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					])
 				});
 
-				p = if (strlen(p_caption) == 0)
+				p = if (strlen(p_caption) == 0) {
 						p_fixed
-					else
-						WideLines([
-							Fixed(0.0, 30.0),
-							p_fixed,
-							renderHtmlXml(XmlText(p_caption), select2(p_zoomed_size, pictureLoadBeh, \size, flg -> if (flg != 0) size.width else 20.0), stylesheet, [CenterAlign()], [HTMLDefaultFont(asItalic([FontSize(12.0)]))]),
-							Fixed(0.0, 30.0)
-							]);
+					} else {
+                        aW = make(0.0);
+
+                        Constructor(
+                            WideLines([
+                                Fixed(0.0, 30.0),
+                                p_fixed,
+                                renderHtmlXml(XmlText(p_caption), aW, stylesheet, [CenterAlign()], [HTMLDefaultFont(asItalic([FontSize(12.0)]))]),
+                                Fixed(0.0, 30.0)
+                            ]),
+                            \ -> connectSelect2u(p_zoomed_size, pictureLoadBeh, aW, \size, flg -> if (flg != 0) size.width else 20.0)
+                        )
+                    }
 
 				centered = if (getXmlAttribute(attrs, "align", "") == "middle") Align(0.5, 0.5, p) else p;
 				ac2 = HtmlAcc(HTMLStyle(cs, ps), acc.story, acc.storyStyle, Cons(centered, acc.paragraph), acc.listNumber, acc.paragraphNumber);
