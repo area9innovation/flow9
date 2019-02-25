@@ -362,7 +362,7 @@ GLClip::HitType GLClip::computeHitSubtrees(vec3 pos, std::set<GLClip*> *out, std
     ActionMockFn action;
     PredicatableActionMockFn predicatableAction;
 
-    return computeHitSubtreesOrdered(pos, out, leaves, predicate, action, predicatableAction, false);
+    return computeHitSubtreesOrdered(pos, out, leaves, predicate, action, predicatableAction);
 }
 
 bool GLClip::pointHitsSubtree(vec3 pos) {
