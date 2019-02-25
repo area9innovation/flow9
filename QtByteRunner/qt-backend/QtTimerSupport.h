@@ -1,3 +1,32 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:488193347b0c5e805cff5aa94547057f6823189e923b9b8a66e5dd82385c72fb
-size 665
+#ifndef TIMERSUPPORT_H
+#define TIMERSUPPORT_H
+
+#include "ByteCodeRunner.h"
+
+#include <QObject>
+#include <QMap>
+#include <QTimerEvent>
+
+class QtTimerSupport : public QObject, public NativeMethodHost
+{
+    Q_OBJECT
+public:
+    QtTimerSupport(ByteCodeRunner *Runner);
+
+protected:
+    NativeFunction *MakeNativeFunction(const char *name, int num_args);
+
+private:
+    ByteCodeRunner* Runner;
+
+    // Timer id -> FLow Call back
+    QMap<int, int> TimersMap;
+
+    void timerEvent(QTimerEvent*);
+    static StackSlot KillTimer(ByteCodeRunner*, StackSlot*, void*);
+
+    DECLARE_NATIVE_METHOD(Timer)
+    DECLARE_NATIVE_METHOD(InterruptibleTimer)
+};
+
+#endif // TIMERSUPPORT_H
