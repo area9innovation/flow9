@@ -2,10 +2,10 @@
 #include "QGLTextEdit.h"
 #include "QGLLineEdit.h"
 
-#include "GLRenderer.h"
-#include "GLTextClip.h"
-#include "GLVideoClip.h"
-#include "GLWebClip.h"
+#include "gl-gui/GLRenderer.h"
+#include "gl-gui/GLTextClip.h"
+#include "gl-gui/GLVideoClip.h"
+#include "gl-gui/GLWebClip.h"
 
 #include "swfloader.h"
 

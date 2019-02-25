@@ -19,7 +19,7 @@
 
 #ifdef QT_GUI_LIB
 #include "soundsupport.h"
-#include "gl-gui/QGLRenderSupport.h"
+#include "qt-gui/QGLRenderSupport.h"
 
 #include <QApplication>
 #include <QScrollArea>
@@ -29,7 +29,7 @@
 #include <qt-gui/testopengl.h>
 
 #ifdef FLOW_DEBUGGER
-#include "gl-gui/QGLClipTreeBrowser.h"
+#include "qt-gui/QGLClipTreeBrowser.h"
 #endif
 #else
 #include <QtCore/QCoreApplication>

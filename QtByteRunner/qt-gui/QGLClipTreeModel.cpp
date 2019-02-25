@@ -1,6 +1,6 @@
 #include "QGLClipTreeModel.h"
-#include "GLClip.h"
-#include "GLGraphics.h"
+#include "gl-gui/GLClip.h"
+#include "gl-gui/GLGraphics.h"
 
 #include <sstream>
 

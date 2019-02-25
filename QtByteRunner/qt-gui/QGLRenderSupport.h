@@ -1,7 +1,7 @@
 #ifndef QGLRENDERSUPPORT_H
 #define QGLRENDERSUPPORT_H
 
-#include "GLRenderSupport.h"
+#include "gl-gui/GLRenderSupport.h"
 
 #include <qmediaplayer.h>
 

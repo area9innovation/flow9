@@ -3,7 +3,7 @@
 
 #include <QTextEdit>
 #include <qlineedit.h>
-#include "gl-gui/QGLRenderSupport.h"
+#include "qt-gui/QGLRenderSupport.h"
 #include "gl-gui/GLTextClip.h"
 
 class QGLTextEdit : public QTextEdit
