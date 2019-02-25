@@ -442,7 +442,7 @@ class TextField extends NativeWidgetClip {
 		nativeWidget.onblur = onBlur;
 
 		if (accessWidget != null) {
-			accessWidget = nativeWidget;
+			accessWidget.element = nativeWidget;
 		}
 
 		nativeWidget.addEventListener("input", onInput);
@@ -662,18 +662,24 @@ class TextField extends NativeWidgetClip {
 	}
 
 	public override function setFocus(focus : Bool) : Void {
-		shouldPreventFromFocus = false;
-
-		if (nativeWidget != null && nativeWidget.parentNode != null) {
-			// Workaround for IE not updating readonly after textfield is focused
-			if (focus) {
-				if (Platform.isIE || Platform.isEdge) {
-					preOnFocus();
-				}
-				nativeWidget.focus();
-			} else {
-				nativeWidget.blur();
+		if (nativeWidget != null) {
+			if (RenderSupportJSPixi.AccessibilityEnabled && nativeWidget.parentNode == null) {
+				AccessWidget.updateAccessTree();
 			}
+
+		 	if (nativeWidget.parentNode != null) {
+				shouldPreventFromFocus = false;
+
+				// Workaround for IE not updating readonly after textfield is focused
+				if (focus) {
+					if (Platform.isIE || Platform.isEdge) {
+						preOnFocus();
+					}
+					nativeWidget.focus();
+				} else {
+					nativeWidget.blur();
+				}
+			};
 		}
 	}
 
