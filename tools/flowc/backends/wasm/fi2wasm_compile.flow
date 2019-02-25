@@ -89,12 +89,14 @@ fiWasmCompileGlobalVar(cfg : FiWasmConfig, decl : FiGlobalVar, acc : WasmAcc, co
 	} else {
 		// support for mutable global variables - they start with wasm_ and end with _mut
 		mut = startsWith(decl.name, "wasm_") && endsWith(decl.name, "_mut");
+
 		mutPref = if (mut) "(mut " else "";
 		mutSuff = if (mut) ")" else "";
 		expandedDecl = cast(expandFlowCasts(decl) : FiDeclaration -> FiGlobalVar);
 		wasmValue = fiexp2wasmexp(context, context.globalNames, fiWasmInjectTempVariables(expandedDecl.value));
-		"(global $" + decl.name + " " + mutPref + wasmType + mutSuff + " " + 
-			compileWasmExp(acc, wasmValue, context) + ")";
+		compiled = compileWasmExp(acc, wasmValue, context, cfg.doinline);
+
+		"(global $" + decl.name + " " + mutPref + wasmType + mutSuff + " " + compiled.code + ")";
 	}
 }
 
@@ -105,11 +107,11 @@ fiWasmCompileFunctionDecl(cfg : FiWasmConfig, decl : FiFunctionDec, acc : WasmAc
 	wasmType = cast(fitype2wasmtype(context.globalNames, decl.type) : WasmTypeDescriptor -> WasmTypeFunction);
     wasmBodyConverted = wasmAddRefcounting(wasmBody, wasmType.args);
 
-	doWasmCompileFunctionDecl(acc, context, decl.name, wasmBodyConverted, wasmType);
+	doWasmCompileFunctionDecl(cfg, acc, context, decl.name, wasmBodyConverted, wasmType);
 }
 
 // compiles a function or lambda declaration
-doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext, 
+doWasmCompileFunctionDecl(cfg : FiWasmConfig, acc : WasmAcc, context : WasmContext, 
 	name : string, lambdaBody : WasmExp, type : WasmTypeFunction) {
 
 	locals = getWasmLocals(acc, lambdaBody, makeTree());
@@ -121,21 +123,24 @@ doWasmCompileFunctionDecl(acc : WasmAcc, context : WasmContext,
 		if (fiWasmFunctionNeedsClosureParam(name) && strContains(name, "__lambda__")) [Pair("__closure__", WasmTypeStruct("", []))]
 			else []);
 	tailCalls = fiWasmCollectTailCalls(name, lambdaBody, []);
+	compiled = compileWasmExp(acc, lambdaBody, 
+		WasmContext(context with 
+			tailCalls = tailCalls, 
+			localNames = mergeTree(locals, pairs2tree(paramPairs))),
+		cfg.doinline
+	);
+	localsEx = mergeTree(locals, compiled.locals);
+
 	resultClause = (if (type.returnType != WasmTypeVoid()) // to be used when generating tail call block
 		" (result " + compileWasmType(type.returnType, false) + ")" else "");
 
 	//	we'll not inject module start section for main() but instead forcibly add 'main' into export and call it after WASM module instantiated
 	fiWasmBuildFunctionDecl(name, type, false, false) + "\n"
 	//   (local $x i32)
-	+ strGlue(convertTreeToArray(locals, \n, t -> "(local $" + n + " " + compileWasmType(t, false) + ") "), "\n")
+	+ strGlue(convertTreeToArray(localsEx, \n, t -> "(local $" + n + " " + compileWasmType(t, false) + ") "), "\n")
 	+ (if (length(tailCalls) > 0) // tail call requires wrapping in a loop
 		"(block $exit " + resultClause + "\n(loop $cont " + resultClause + "\n" else "")
-	+ (if (isSameStructType(lambdaBody, FiVoid(0))) "" else 
-		"\n" + compileWasmExp(acc, lambdaBody, 
-			WasmContext(context with 
-				tailCalls = tailCalls, 
-				localNames = mergeTree(locals, pairs2tree(paramPairs)))
-	  ))
+	+ (if (isSameStructType(lambdaBody, FiVoid(0))) "" else "\n" + compiled.code)
 	+ (if (length(tailCalls) > 0) "br $exit))" else "") // finalizing tail call wrapper
 	+ "\n)"
 }
@@ -158,22 +163,52 @@ fiWasmCompileModuleExports(module: FiModule, acc: List<string>) -> List<string> 
 }
 
 fiWasmBuildIndirectCall(acc : WasmAcc, callExp1 : Wasm2Cmd, type : WasmTypeDescriptor, 
-    context : WasmContext, destructors : [Wasm2Cmd]) -> Wasm2Cmd {
+    context : WasmContext, destructors : [Wasm2Cmd], doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
+
+	if (doinline) locals := setTree(^locals, "_inc_refcnt_", WasmTypeInt());
+
 	// assuming calling a closure - indirect call
 	// we do not need the exact struct type - but we know first field is function index
-	Wasm2Seq([
-		callExp1, // put closure pointer as a last extra implicit argument
-		Wasm2Call("$wasm_inc_refcnt_passthru"), // increase refcount for it
-		// We have callExp on stack already. Should we use DUP here?
-		callExp1, // loading pointer to the closure again - we need it to get function address
-		Wasm2I32Const(8), Wasm2Code("i32.add"), // add 8 to what we have provided (0 = refcount, 4 = struct ID)
-		Wasm2Code("i32.load"), // now we have function index loaded 
-		// and closure remains the implicit first argument on stack
-		Wasm2Seq(destructors), // inject destructors right before the call with all data on stack already
-		// the syntax is "(call_indirect <inline_type_declaration>)"
-		Wasm2Code("(call_indirect " 
-			+ fiWasmBuildFunctionDecl("", type, true, false) + " )")
-	])
+
+	Wasm2Seq(concat3([
+			callExp1, // put closure pointer as a last extra implicit argument
+		],
+		(if (doinline) {
+			[
+				Wasm2Code("i32.load"),
+
+				Wasm2SetLocal("_inc_refcnt_"),
+				Wasm2If(
+					Wasm2Seq([
+						Wasm2GetLocal("_inc_refcnt_"),
+						Wasm2I32Const(1), 
+						Wasm2Code("i32.lt_s")
+					]), true, false, Wasm2Code("unreachable"), Wasm2Void()),
+				callExp1,
+				Wasm2GetLocal("_inc_refcnt_"),
+
+				Wasm2I32Const(1), 
+				Wasm2Code("i32.add"),
+				Wasm2Code("i32.store"),
+				callExp1
+			]
+		} else {
+			[
+				Wasm2Call("$wasm_inc_refcnt_passthru") // increase refcount for it
+			]
+		}),
+		[
+			// We have callExp on stack already. Should we use DUP here?
+			callExp1, // loading pointer to the closure again - we need it to get function address
+			Wasm2I32Const(8), Wasm2Code("i32.add"), // add 8 to what we have provided (0 = refcount, 4 = struct ID)
+			Wasm2Code("i32.load"), // now we have function index loaded 
+			// and closure remains the implicit first argument on stack
+			Wasm2Seq(destructors), // inject destructors right before the call with all data on stack already
+			// the syntax is "(call_indirect <inline_type_declaration>)"
+			Wasm2Code("(call_indirect " 
+				+ fiWasmBuildFunctionDecl("", type, true, false) + " )")
+		]
+	))
 }
 
 // TODO: convert fiWasmBuildNativeFunctionCall() to non-string representation
@@ -251,7 +286,7 @@ fiWasmBuildHostFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type :
 }
 
 fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, context : WasmContext,
-    destructors : [Wasm2Cmd]) -> Wasm2Cmd {
+    destructors : [Wasm2Cmd], doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	if (containsKeyTree(context.functions.functionIndices, func)) {
 		callCmd = Wasm2Call("$" + func);
 		Wasm2Seq(concat(destructors,
@@ -264,7 +299,7 @@ fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, co
 		))
 	} else {
 		cmd = if (fiWasmIsGlobalVar(context, func)) Wasm2GetGlobal(func) else Wasm2GetLocal(func);
-		fiWasmBuildIndirectCall(acc, cmd, type, context, destructors)
+		fiWasmBuildIndirectCall(acc, cmd, type, context, destructors, doinline, locals)
 	}
 }
 
@@ -320,9 +355,17 @@ wasm2string(e : Wasm2Cmd, indent : string) -> string {
 	if (endsWith(s, "\n")) s else s + "\n"
 }
 
+WasmCompileResult(
+	code : string,
+	// additional locals. may appear when we inline 'inc_refcnt'
+	locals : Tree<string, WasmTypeDescriptor> 
+);
+
 // TODO
-compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext) {
-	wasm2string(compileWasmExp2(acc, ex, context), "   ")
+compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : bool) {
+	locals = ref makeTree();
+	code = compileWasmExp2(acc, ex, context, doinline, locals);
+	WasmCompileResult(wasm2string(code, "   "), ^locals);	
 }
 
 compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool) -> [Wasm2Cmd] {
@@ -334,9 +377,9 @@ compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool) -> [Wasm2
             ]));
 }
 
-compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd {
+compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	conv = \s -> Wasm2Code(s);
-	rec = \e -> compileWasmExp2(acc, e, context);
+	rec = \e -> compileWasmExp2(acc, e, context, doinline, locals);
 	error = \reason -> wasmError(acc, reason) |> conv;
     destructors = compileDestructors(ex.destructedVars, false);
 	addDestructors = \cmd -> Wasm2Seq(arrayPush(destructors, cmd));
@@ -378,7 +421,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 								))
 							} else {
 								functionType = cast(ftype : WasmTypeDescriptor -> WasmTypeFunction);
-							 	fiWasmBuildFunctionCall(acc, fname, functionType, context, destructors);
+							 	fiWasmBuildFunctionCall(acc, fname, functionType, context, destructors, doinline, locals);
 							}
 						}
 						default: {
@@ -388,7 +431,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 								rec(f),
 								Wasm2SetGlobal("wasm_global_temp_holder_mut"),
 								fiWasmBuildIndirectCall(acc, Wasm2GetGlobal("wasm_global_temp_holder_mut"), 
-									wasmExpType(f), context, destructors)
+									wasmExpType(f), context, destructors, doinline, locals)
 							])
 						}
 					}
@@ -432,7 +475,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 			else if (funIndex >= 0) {
 				switch (lookupTree(context.typeTable.structTypes, "WasmGlobalClosureWrapper")) {
 					None(): error("Global closure wrapper not defined");
-					Some(s): makeWasmConstructor(acc, context, s, [WasmInt(funIndex, [])]);
+					Some(s): makeWasmConstructor(acc, context, s, [WasmInt(funIndex, [])], doinline, locals);
 				}
 			} else if (containsKeyTree(context.globalNames.toplevel, name))
 				Wasm2GetGlobal(name)
@@ -460,7 +503,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 				sT = toString(tTo);
 				error("cast (" + sF + ") -> (" + sT + ")")
 			};
-			value : Wasm2Cmd = compileWasmExp2(acc, e, context);
+			value : Wasm2Cmd = compileWasmExp2(acc, e, context, doinline, locals);
 			switch (tFrom) {
 				WasmTypeInt(): {
 					// to string, and to double
@@ -512,13 +555,16 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 			canReturn = type != WasmTypeVoid(); // whether the result of last statement shall be discarded
 			Wasm2Seq(concat(destructors, mapi(es, \i, e : WasmExp -> {
 				e2 = rec(e);
+				
 				// we may need drop after last statement if function returns void and it is non-void
 				if (wasmExpType(e) == WasmTypeVoid() || ((i == length(es) - 1) && canReturn)) e2
-				else Wasm2Seq([e2, Wasm2Drop()]);
+				else {
+					Wasm2Seq([e2, Wasm2Drop()]);
+				}
 			})));
         }
 		WasmCallPrim(op, es, type, __): {
-			compileWasmCallPrim(op, es, type, acc, context, error, destructors)
+			compileWasmCallPrim(op, es, type, acc, context, error, destructors, doinline, locals)
 		}
 		WasmVoid(__): Wasm2Seq(destructors);
 		WasmDouble(d, __): addDestructors(Wasm2F64Const(d));
@@ -541,10 +587,39 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext) -> Wasm2Cmd 
 			addDestructors(error("unsafe"))
 		}
         WasmIncRefcnt(e, type, __): // correct type of e is assumed
-            Wasm2Seq(concat([
-                compileWasmExp2(acc, e, context), 
-                Wasm2Call("$wasm_inc_refcnt_passthru")
-            ], destructors));
+        {
+        	if (doinline) {
+	        	locals := setTree(^locals, "_tmp_address_", WasmTypeInt());
+	        	locals := setTree(^locals, "_inc_refcnt_", WasmTypeInt());
+	        }
+
+            Wasm2Seq(concatA([
+                [ compileWasmExp2(acc, e, context, doinline, locals) ], 
+                (if (doinline) {
+                	[
+						Wasm2SetLocal("_tmp_address_"),
+						Wasm2GetLocal("_tmp_address_"),
+						Wasm2Code("i32.load"),
+						Wasm2SetLocal("_inc_refcnt_"),
+						Wasm2If(
+							Wasm2Seq([
+								Wasm2GetLocal("_inc_refcnt_"),
+								Wasm2I32Const(1), 
+								Wasm2Code("i32.lt_s")
+							]), true, false, Wasm2Code("unreachable"), Wasm2Void()),
+						Wasm2GetLocal("_tmp_address_"),
+						Wasm2GetLocal("_inc_refcnt_"),
+						Wasm2I32Const(1), 
+						Wasm2Code("i32.add"),
+						Wasm2Code("i32.store"),
+						Wasm2GetLocal("_tmp_address_")
+					]
+            	} else {
+	                [ Wasm2Call("$wasm_inc_refcnt_passthru") ]
+            	}),
+            	destructors
+            ]));
+        }
         WasmDecRefcnt(name, type, __): // correct type of variable 'name' is assumed
             Wasm2Void();
 	}
@@ -588,8 +663,9 @@ compileWasmCallPrimCmp(cmp0 : string, type0 : WasmTypeDescriptor, context) -> Wa
 }
 
 
-compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, context, error, destructors) -> Wasm2Cmd {
-	args1 = map(es, \e -> compileWasmExp2(acc, e, context));
+compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, context, error, destructors, 
+	doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
+	args1 = map(es, \e -> compileWasmExp2(acc, e, context, doinline, locals));
 	argsAppend = \cmd -> Wasm2Seq(concat3(args1, destructors, [cmd]));
 	type0 = if (length(es) > 0) wasmExpType(es[0]) else WasmTypeVoid();
 	buildCmp = \cmp0 : string -> {
@@ -696,7 +772,7 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 		}
 		FcStructPrim(struct_name): {
 			cons = switch (lookupTree(context.typeTable.structTypes, struct_name)) {
-				Some(st): makeWasmConstructor(acc, context, st, es);
+				Some(st): makeWasmConstructor(acc, context, st, es, doinline, locals);
 				None(): error("struct");
 			}
 			Wasm2Seq(concat([cons], destructors));
@@ -727,7 +803,7 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 				funIndex = lookupTreeDef(context.functions.functionIndices, function_name, -1);
 				if (funIndex < 0) error("closure - missing lifted function")
 				else Wasm2Seq(concat(
-					[makeWasmConstructor(acc, context, st, concat([WasmInt(funIndex, [])], es))],
+					[makeWasmConstructor(acc, context, st, concat([WasmInt(funIndex, [])], es), doinline, locals)],
 					destructors));
 			}, \ -> error("closure - missing struct"))
 		}
@@ -735,7 +811,7 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 }
 
 makeWasmConstructor(acc : WasmAcc, context : WasmContext, structType : WasmTypeStruct, 
-	args : [WasmExp]) -> Wasm2Cmd {
+	args : [WasmExp], doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	// struct - i32. Heap pointer to ref. count, 32-bit struct id, then args in stack value format
 	argSizes = map(args, \arg -> 4 * fiWasmTypeStackSize(wasmExpType(arg)));
 	requiredSize = fold(argSizes, 8, \acc1, size -> acc1 + size);
@@ -755,7 +831,7 @@ makeWasmConstructor(acc : WasmAcc, context : WasmContext, structType : WasmTypeS
 		// do NOT increase refcnt for the address - wasm_set_array_xxx will NOT decrease it
 		nacc = Cons(Wasm2Seq([
 			Wasm2I32Const(offset),
-			compileWasmExp2(acc, e, context),
+			compileWasmExp2(acc, e, context, doinline, locals),
 			Wasm2Call("$wasm_set_array_" + compileWasmType(wasmExpType(args[i]), true))
 		]), acc1.second);
 		Pair(offset + argSizes[i], nacc);

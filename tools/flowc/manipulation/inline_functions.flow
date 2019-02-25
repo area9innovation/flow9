@@ -1,4 +1,5 @@
 import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fi_helpers;
 import tools/flowc/backends/common;
 // import tools/flowc/incremental/fi_helpers;
 
@@ -55,16 +56,21 @@ doInlineVars(ex : FiExp, varmap : ref Tree<string, string>) {
 	}
 }
 
+InlineFunction(
+	body : FiExp,
+	type : FiTypeFunction
+);
+
 // inlines: <name, module, decl>
 doInlineFunctions(ex : FiExp, inlines : [Triple<string, string, FiDeclaration>]) {
 	// return pair<exp, type> 
-	def = Pair(FiVoid(0), FiTypeFunction([], FiTypeVoid()));
+	def = InlineFunction(FiVoid(0), FiTypeFunction([], FiTypeVoid()));
 	get_inline = \f -> {		
 		switch (f) {
 			FiVar(fname, type, start): {	
 				ret = eitherMap(find(inlines, \i -> i.first == fname), \i -> switch (i.third) {
 					FiFunctionDec(__, lambda, ftype, __, __): {
-						Pair(lambda.body, ftype);
+						InlineFunction(lambda.body, ftype);
 					}
 					FiGlobalVar(__, __, __, __, __): {
 						def;
@@ -73,7 +79,7 @@ doInlineFunctions(ex : FiExp, inlines : [Triple<string, string, FiDeclaration>])
 						switch (fallbackLambda) {
 	  						FiLambda(__, __, __, __): { 
 	  							ftype = cast(fallbackLambda.type : FiType -> FiTypeFunction);
-	  							Pair(fallbackLambda.body, ftype);
+	  							InlineFunction(fallbackLambda.body, ftype);
 	  						}
 	  						default: def; 
 						}
@@ -101,21 +107,19 @@ doInlineFunctions(ex : FiExp, inlines : [Triple<string, string, FiDeclaration>])
 				// replace call with function body
 				varmap : ref Tree<string, string> = ref makeTree();
 
-				args2var1 = foldi(inl.second.args, [], \i, acc, a -> {
+				args2var1 = foldi(inl.type.args, [], \i, acc, a -> {
 					vname = getInlineVar(a.name);
 					varmap := setTree(^varmap, a.name, vname);
 
-					arrayPush(acc, Triple(vname, process(args[i]), a.type));
+					arg = process(args[i]);
+					arrayPush(acc, Pair(vname, arg));
 				});
 
-				args2var = foldi(args2var1, Pair(process(doInlineVars(inl.first, varmap)), inl.second.returnType), \i, acc, m -> {
-					Pair(
-						FiLet(m.first, m.third, m.second, acc.first, acc.second, start),
-						m.third
-					)
+				args2var = foldi(args2var1, process(doInlineVars(inl.body, varmap)), \i, acc, m -> {
+					FiLet(m.first, fiExpType(m.second), m.second, acc, fiExpType(acc), start);
 				});
 
-				args2var.first;
+				args2var;
 			} else FiCall(process(f), map(args, process), type, start);
 		}
 		FiSwitch(__, __, __, __, __): 
