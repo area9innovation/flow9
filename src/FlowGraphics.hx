@@ -26,6 +26,7 @@ class FlowGraphics extends Graphics {
 
 		visible = false;
 		interactiveChildren = false;
+		lineStyle(1.0, 0, 0.0);
 	}
 
 	public function beginGradientFill(colors : Array<Int>, alphas : Array<Float>, offsets: Array<Float>, matrix : Dynamic, type : String) : Void {

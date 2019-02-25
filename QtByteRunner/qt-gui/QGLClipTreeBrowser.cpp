@@ -1,5 +1,5 @@
 #include "QGLClipTreeBrowser.h"
-#include "GLClip.h"
+#include "gl-gui/GLClip.h"
 
 #include <QSplitter>
 #include <QVBoxLayout>
