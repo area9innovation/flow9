@@ -210,18 +210,20 @@ dumpFcProgramIds(prog : FiProgram, file : string) -> void {
 }
 
 findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, symbol : string) -> void {
+	errors = ref [];
 	tenv1 = FcTypeEnvProgram(
-		prepareInitialFlowcAcc(config), 
+		prepareInitialFlowcAcc(config),
 		makeTree(),
-		\e -> { }, 
+		\err -> refArrayPush(errors, err),
 		ref 0, ref makeTree()
 	);
-	modules = preloadModules(config, globEnv, file, \err -> { }); // Skip error messages
-	findDefinitionInFcModules(tenv1, globEnv, modules, symbol, file)
+	modules = preloadModules(config, globEnv, file, \err -> refArrayPush(errors, err)); // Skip error messages
+	tenv2 = findDefinitionInFcModules(tenv1, globEnv, modules, symbol, file);
+	iter(^errors, \err -> printFcError(tenv2.acc, err))
 }
 
 // Here we don't use typechecking because desugaring is enough to find a symbol definition
-findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>, symbol : string, file : string) -> void {
+findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, preloadedModules : Tree<string, FcPreloadedModule>, symbol : string, file : string) -> FcTypeEnvProgram {
 	readyForProcessing : [FcPreloadedModule] = filtermap(tree2pairs(preloadedModules), 
 		\p : Pair<string, FcPreloadedModule> ->
 			if (!containsKeyTree(tenv.acc.modules, preloadedFiFileInfo(p.second).flowfile) && forall(preloadedFcImports(p.second), 
@@ -230,14 +232,17 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 	if (readyForProcessing == []) {
 		// we are done, everything is processed - nothing is found
 		fcPrintln(file + ": Could not find " + symbol);
+		tenv
 	} else {
-		fromCache : [FiModule] = filtermap(readyForProcessing, \preloaded -> 
+		fromCache : [FiModule] = filtermap(readyForProcessing, \preloaded ->
 			switch (preloaded : FcPreloadedModule) {
 				FcLoaded(module, __, ): Some(module);
 				default: None();
 			}
 		);
-		tenv1 = fold(fromCache, tenv, \acc, module : FiModule -> updateTypeEnvForIncrementalModule(acc, globEnv, module));
+		tenv1 = fold(fromCache, tenv, \acc, module : FiModule -> {
+			updateTypeEnvForIncrementalModule(acc, globEnv, module)
+		});
 
 		if (!findDefDeclInFlowcAcc(tenv1.acc, file, symbol)) {
 
@@ -254,7 +259,11 @@ findDefinitionInFcModules(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, pr
 
 			if (!findDefDeclInFlowcAcc(tenv2.acc, file, symbol)) {
 				findDefinitionInFcModules(tenv2, globEnv, preloadedModules, symbol, file)
+			} else {
+				tenv2
 			}
+		} else {
+			tenv1
 		}
 	}
 }
