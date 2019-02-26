@@ -369,7 +369,7 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 			for (auto outLine : outLines) {
 				if (fileLineRegex.exactMatch(outLine)) {
 					QString file = fileLineRegex.cap(1);
-            		int line = fileLineRegex.cap(2).toInt() - 1;
+            		int line = fileLineRegex.cap(2).toInt();
             		if (line > -1) {
             			gotoLocation(file, line);
             		}
@@ -496,6 +496,7 @@ bool FlowManager::makeGlobalConfig(const QString& root) const {
 
 void FlowManager::gotoLocation(const QString& path, const int line, const int column) {
 	if (!QFile::exists(path)) {
+		KMessageBox::sorry(0, i18n("File '") + path + i18n("' doesn't exist"));
         return;
     }
 	if (KTextEditor::View* view = mainWindow_->openUrl(QUrl::fromLocalFile(path))) {
