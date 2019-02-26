@@ -638,7 +638,85 @@ class RenderSupportJSPixi {
 				PIXI.TextMetrics._fonts[font] = properties;
 
 				return properties;
-			}
+			};
+
+			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged = false) {
+				if (this.transformChanged || transformChanged) {
+					this.transform.updateTransform(this.parent.transform);
+					// multiply the alphas..
+					this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+					this._bounds.updateID++;
+
+					this.transformChanged = false;
+				}
+			};
+
+			// PIXI.Container.prototype.renderCanvas = function(renderer) {
+			// 	if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+			// 	{
+			// 		return;
+			// 	}
+
+			// 	if (this.childrenChanged) {
+			// 		this.childrenChanged = false;
+			// 		this.childrenUnchangedCounter = 0;
+
+			// 		this.cacheAsBitmap = false;
+			// 	} else if (!this.cacheAsBitmap) {
+			// 		this.childrenUnchangedCounter = this.childrenUnchangedCounter != null ? this.childrenUnchangedCounter + 1 : 0;
+
+			// 		if (this.childrenUnchangedCounter > 100) {
+			// 			setInterval(function () { this.cacheAsBitmap = true; }, 100);
+			// 		}
+			// 	}
+
+			// 	if (this._mask)
+			// 	{
+			// 		renderer.maskManager.pushMask(this._mask);
+			// 	}
+
+			// 	this._renderCanvas(renderer);
+
+			// 	for (let i = 0, j = this.children.length; i < j; ++i)
+			// 	{
+			// 		this.children[i].renderCanvas(renderer);
+			// 	}
+
+			// 	if (this._mask)
+			// 	{
+			// 		renderer.maskManager.popMask(renderer);
+			// 	}
+			// };
+
+			PIXI.Container.prototype.updateTransform = function(transformChanged = false) {
+				transformChanged = this.transformChanged || transformChanged;
+
+				if (transformChanged) {
+					this._boundsID++;
+
+					this.transform.updateTransform(this.parent.transform);
+
+					// TODO: check render flags, how to process stuff here
+					this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+					if (this.updateNativeWidget && this.nativeWidget) {
+						this.updateNativeWidget();
+					}
+
+					this.transformChanged = false;
+				}
+
+				for (let i = 0, j = this.children.length; i < j; ++i)
+				{
+					const child = this.children[i];
+
+					if (child.visible)
+					{
+						child.updateTransform(transformChanged);
+					}
+				}
+			};
 		");
 	}
 
@@ -765,7 +843,7 @@ class RenderSupportJSPixi {
 		if (ctx != null) {
 			ctx.mozImageSmoothingEnabled = true;
 			ctx.webkitImageSmoothingEnabled = true;
-			ctx.imageSmoothingQuality = "medium";
+			ctx.imageSmoothingQuality = if (Platform.isChrome) "high" else "medium";
 			ctx.msImageSmoothingEnabled = true;
 			ctx.imageSmoothingEnabled = true;
 		}
@@ -2227,7 +2305,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
-		if (!clipOnTheStage(clip)) return false;
+		if (!clip.getClipWorldVisible()) return false;
 
 		var global = new Point(x, y);
 
@@ -2299,6 +2377,22 @@ class RenderSupportJSPixi {
 
 	public static function endFill(graphics : FlowGraphics) : Void {
 		graphics.endFill();
+	}
+
+	public static function drawRect(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float) : Void {
+		graphics.drawRect(x, y, width, height);
+	}
+
+	public static function drawRoundedRect(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float, radius : Float) : Void {
+		graphics.drawRoundedRect(x, y, width, height, radius);
+	}
+
+	public static function drawEllipse(graphics : FlowGraphics, x : Float, y : Float, width : Float, height : Float) : Void {
+		graphics.drawEllipse(x, y, width, height);
+	}
+
+	public static function drawCircle(graphics : FlowGraphics, x : Float, y : Float, radius : Float) : Void {
+		graphics.drawCircle(x, y, radius);
 	}
 
 	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,

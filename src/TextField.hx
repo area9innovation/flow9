@@ -57,6 +57,10 @@ class TextField extends NativeWidgetClip {
 
 	private var preFocus : Bool = false;
 
+	// Signalizes where we have changed any properties
+	// influencing text width or height
+	private var metricsChanged : Bool = false;
+
 	private function preOnFocus() { // Workaround for IE inputs readonly attribute
 		if (isInput()) {
 			this.preFocus = true;
@@ -337,11 +341,11 @@ class TextField extends NativeWidgetClip {
 		return {};
 	}
 
-	private function setTextBackground() : Void {
+	private function setTextBackground(?text_bounds : Rectangle) : Void {
 		if (background != null) removeChild(background);
 
 		if (backgroundOpacity > 0.0) {
-			var text_bounds = getLocalBounds();
+			var text_bounds = text_bounds != null ? text_bounds : getLocalBounds();
 			background = new FlowGraphics();
 			background.beginFill(backgroundColor, backgroundOpacity);
 			background.drawRect(0.0, 0.0, text_bounds.width, text_bounds.height);
@@ -784,10 +788,13 @@ class TextField extends NativeWidgetClip {
 
 	#if (pixijs < "4.7.0")
 		public override function getLocalBounds() : Rectangle {
-			if (isInput() && fieldHeight > 0.0 && fieldWidth > 0.0)
+			if (isInput() && fieldHeight > 0.0 && fieldWidth > 0.0) {
 				return new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);
-			else
+			} else if (clipWidth > 0.0 && clipHeight > 0.0) {
+				return new Rectangle(0.0, 0.0, clipWidth, clipHeight)
+			} else {
 				return super.getLocalBounds();
+			}
 		}
 	#else
 		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
@@ -795,12 +802,14 @@ class TextField extends NativeWidgetClip {
 				if (rect != null) {
 					rect = new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);
 					return rect;
+				} else if (clipWidth > 0.0 && clipHeight > 0.0) {
+					return new Rectangle(0.0, 0.0, clipWidth, clipHeight);
 				} else {
 					return new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);
 				}
-			}
-			else
+			} else {
 				return super.getLocalBounds(rect);
+			}
 		}
 	#end
 

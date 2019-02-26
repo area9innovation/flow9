@@ -1028,6 +1028,41 @@ StackSlot GLGraphics::endFill(RUNNER_ARGS)
     RETVOID;
 }
 
+StackSlot GLGraphics::drawRect(RUNNER_ARGS)
+{
+    RUNNER_PopArgs4(x, y, wd, hgt);
+    RUNNER_CheckTag4(TDouble, x, y, wd, hgt);
+
+    vec2 pt(x.GetDouble(), y.GetDouble());
+    vec2 cpt(cx.GetDouble(), cy.GetDouble());
+
+    if (isnan(pt.x) || isnan(pt.y) || isnan(cpt.x) || isnan(cpt.y)) {
+        RUNNER->flow_err << "NaN in Graphics::curveTo" << std::endl;
+        RETVOID;
+    }
+
+    if (!cur_contour) {
+        contours.push_back(cur_contour = Contour::Ptr(new Contour()));
+        cur_contour->elements.push_back(Element(Element::MoveTo, cur_pt));
+    }
+
+    std::vector<Element> &elements = cur_contour->elements;
+
+    vec2 prev_pt = elements.empty() ? pt : elements.back().pt;
+
+    float len = glm::distance(prev_pt, cpt) + glm::distance(cpt, pt);
+
+    cur_contour->max_curve = std::max(cur_contour->max_curve, len);
+    cur_contour->sum_curve += len;
+    if (len != 0.f) {
+        elements.push_back(Element(Element::CurveTo, pt, cpt, len));
+
+        parent->wipeFlags(GLClip::WipeGraphicsChanged);
+    }
+
+    RETVOID;
+}
+
 StackSlot GLGraphics::setLineGradientStroke(RUNNER_ARGS)
 {
     RUNNER_CopyArgArray(newargs, 4, 1);

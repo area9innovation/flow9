@@ -20,15 +20,15 @@ class VideoClip extends FlowContainer {
 	private var videoSprite : Sprite;
 	private var videoTexture : Texture;
 	private var fontFamily : String = '';
-	private var textField : TextField;
+	private var textField : PixiText;
 	private var loaded : Bool = false;
 
-	private static var playingVideos : Int = 0;
+	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
 	public static var CanAutoPlay = false;
 
 	public static inline function NeedsDrawing() : Bool {
-		if (playingVideos != 0) {
+		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
 			return true;
 		}
@@ -104,7 +104,7 @@ class VideoClip extends FlowContainer {
 		nativeWidget.setAttribute('playsinline', true);
 
 		if (nativeWidget.autoplay) {
-			playingVideos++;
+			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 
 		videoTexture = Texture.fromVideo(nativeWidget);
@@ -214,15 +214,15 @@ class VideoClip extends FlowContainer {
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
-			textField = RenderSupportJSPixi.makeTextField(fontFamily);
+			textField = new PixiText();
 			addChild(textField);
 		};
 	}
 
 	private function updateSubtitlesClip() : Void {
 		if (nativeWidget != null) {
-			textField.x = (nativeWidget.width - textField.getWidth()) / 2;
-			textField.y = (nativeWidget.height - textField.getHeight()) - 2;
+			textField.setClipX((nativeWidget.width - textField.getWidth()) / 2.0);
+			textField.setClipY(nativeWidget.height - textField.getHeight() - 2.0);
 		}
 	}
 
@@ -251,14 +251,14 @@ class VideoClip extends FlowContainer {
 	public function pauseVideo() : Void {
 		if (loaded && !nativeWidget.paused) {
 		 	nativeWidget.pause();
-			playingVideos--;
+			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 	}
 
 	public function resumeVideo() : Void {
 		if (loaded && nativeWidget.paused) {
 			nativeWidget.play();
-			playingVideos++;
+			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 	}
 
@@ -271,7 +271,7 @@ class VideoClip extends FlowContainer {
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
-		InvalidateStage(); // Update the widget
+		invalidateStage(); // Update the widget
 
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 
@@ -289,7 +289,7 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamEnded() : Void {
 		if (!nativeWidget.autoplay) {
-			playingVideos--;
+			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 
 		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });

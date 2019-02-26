@@ -2,8 +2,34 @@ import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
 
 class DisplayObjectHelper {
-	public static inline function InvalidateStage(clip : DisplayObject) : Void {
+	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
+
+	public static inline function invalidateStage(clip : DisplayObject) : Void {
 		if (getClipWorldVisible(clip)) {
+			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
+				var updateGraphics = new FlowGraphics();
+
+				if (untyped clip.updateGraphics == null) {
+					untyped clip.updateGraphics = updateGraphics;
+					updateGraphics.beginFill(0x0000FF, 0.2);
+					updateGraphics.drawRect(0, 0, 100, 100);
+				} else {
+					updateGraphics = untyped clip.updateGraphics;
+				}
+
+				untyped updateGraphics._visible = true;
+				untyped updateGraphics.visible = true;
+				untyped updateGraphics.clipVisible = true;
+				untyped updateGraphics.renderable = true;
+
+				untyped __js__("PIXI.Container.prototype.addChild.call({0}, {1})", clip, updateGraphics);
+
+				NativeHx.timer(100, function () {
+					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
+					RenderSupportJSPixi.InvalidateStage();
+				});
+			}
+
 			RenderSupportJSPixi.InvalidateStage();
 		}
 	}
@@ -15,8 +41,9 @@ class DisplayObjectHelper {
 
 		if (clip.x != x) {
 			clip.x = x;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
@@ -27,50 +54,56 @@ class DisplayObjectHelper {
 
 		if (clip.y != y) {
 			clip.y = y;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
 	public static inline function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.x != scale) {
 			clip.scale.x = scale;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
 	public static inline function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.y != scale) {
 			clip.scale.y = scale;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
 	public static inline function setClipRotation(clip : DisplayObject, rotation : Float) : Void {
 		if (clip.rotation != rotation) {
 			clip.rotation = rotation;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
 	public static inline function setClipAlpha(clip : DisplayObject, alpha : Float) : Void {
 		if (clip.alpha != alpha) {
 			clip.alpha = alpha;
+			untyped clip.transformChanged = true;
 
-			InvalidateStage(clip);
+			invalidateStage(clip);
 		}
 	}
 
 	public static inline function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
+			untyped clip.transformChanged = true;
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixi.InvalidateStage();
+				invalidateStage(clip);
 			}
 		}
 	}
@@ -122,7 +155,7 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixi.InvalidateStage();
+				invalidateStage(clip);
 			}
 		}
 	}
@@ -206,7 +239,7 @@ class DisplayObjectHelper {
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
 	}
 
 	public static inline function removeScrollRect(clip : Container) : Void {
@@ -225,7 +258,7 @@ class DisplayObjectHelper {
 			untyped clip.scrollRect = null;
 		}
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
@@ -265,7 +298,7 @@ class DisplayObjectHelper {
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree

@@ -9,10 +9,6 @@ using DisplayObjectHelper;
 class PixiText extends TextField {
 	private var textClip : Text = null;
 
-	// Signalizes where we have changed any properties
-	// influencing text width or height
-	private var metricsChanged : Bool = false;
-
 	// Use the property to set up custom antialias factor
 	// Implemented by enlarging font size and decreasing scale of text clip
 	private var textScaleFactor : Int = Platform.isMacintosh ? 2 : 1;
@@ -120,7 +116,7 @@ class PixiText extends TextField {
 			clipWidth = Math.max(clipWidth, fieldWidth);
 		}
 
-		setTextBackground();
+		setTextBackground(new Rectangle(0, 0, getWidth() + widthDelta, getHeight()));
 		if (isInput())
 			setScrollRect(0, 0, getWidth() + widthDelta, getHeight());
 	}

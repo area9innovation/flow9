@@ -285,8 +285,9 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return this._CF_originalRenderCanvas(renderer);
 	}
 
-	if (this.children != null && this.children.length == 1 &&
-		(this.children[0].graphicsData != null || (this.children[0].children != null && this.children[0].children.length > 0 && this.children[0].children[0].graphicsData != null)) &&
+	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
+		(this.children != null && this.children.length == 1 &&
+		(this.children[0].graphicsData != null || (this.children[0].children != null && this.children[0].children.length > 0 && this.children[0].children[0].graphicsData != null))) &&
 		this._alphaMask == null && filters != null && filters.length == 1 && filters[0] instanceof PIXI.filters.DropShadowFilter) {
 		// Special fast case
 		// Shadow around graphics
@@ -307,6 +308,8 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 		return;
 	}
+
+	console.log("optimize shadows!");
 
 	var bounds = this.getBounds(true);
 	var wt = this.worldTransform;

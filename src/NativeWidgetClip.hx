@@ -36,9 +36,9 @@ class NativeWidgetClip extends FlowContainer {
 
 			nativeWidget.style.opacity = worldAlpha;
 			nativeWidget.style.display = "block";
-		}/* else if (!getClipWorldVisible()) {
+		} else {
 			nativeWidget.style.display = "none";
-		}*/
+		}
 	}
 
 	private function addNativeWidget() : Void {
@@ -55,7 +55,7 @@ class NativeWidgetClip extends FlowContainer {
 					accessWidget = new AccessWidget(this, nativeWidget);
 				}
 
-				RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
+				// RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
 				once("removed", deleteNativeWidget);
 			} else {
 				RenderSupportJSPixi.findTopParent(this).once("added", addNativeWidget);
@@ -77,7 +77,7 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	private function deleteNativeWidget() : Void {
-		RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
+		// RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
 
 		if (accessWidget != null) {
 			AccessWidget.removeAccessWidget(accessWidget);

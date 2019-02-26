@@ -5,8 +5,10 @@ import pixi.core.textures.BaseTexture;
 using DisplayObjectHelper;
 
 class FlowSprite extends Sprite {
+	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
+	private var transformChanged : Bool = true;
 
 	private var url : String = "";
 	private var loaded : Bool = false;
@@ -140,7 +142,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		InvalidateStage();
+		invalidateStage();
 	}
 
 	private function onError() : Void {
@@ -156,7 +158,7 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			InvalidateStage();
+			invalidateStage();
 
 			renderable = true;
 			loaded = true;

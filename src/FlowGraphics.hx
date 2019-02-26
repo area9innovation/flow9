@@ -1,21 +1,22 @@
 import js.Browser;
 import pixi.core.graphics.Graphics;
+import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
 using DisplayObjectHelper;
 
 class FlowGraphics extends Graphics {
+	private var scrollRect : FlowGraphics;
+	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+	private var transformChanged : Bool = true;
+
 	public var penX : Float = 0.0;
 	public var penY : Float = 0.0;
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
-
-	private var scrollRect : FlowGraphics;
-
-	private var _visible : Bool = true;
-	private var clipVisible : Bool = false;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
