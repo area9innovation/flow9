@@ -6,6 +6,7 @@ import tools/flowc/backends/wasm/wasm_function_table;
 import tools/flowc/manipulation/lambda_lifting;
 import tools/flowc/manipulation/specialization;
 import tools/flowc/manipulation/wrap_funcs_as_args;
+import tools/flowc/manipulation/auto_smart_cast;
 import tools/flowc/manipulation/inline_functions;
 import tools/flowc/backends/wasm/wasm_js_wrapper;
 import tools/flowc/backends/wasm/wasm_native_linkage;
@@ -19,31 +20,31 @@ export {
 	fi2wasm(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void;
 }
 
+inlineFunctions = [
+	"bitNot", "bitAnd", "bitOr", "bitXor", "bitShl", "bitUshr", 
+	"wasm_inc_refcnt", "wasm_inc_refcnt_passthru", "wasm_dec_refcnt",
+	"makeBitSet", "setBitSet", "unsetBitSet", "getBitSet", 
+	"wasm_get_next_field", "wasm_get_prev_field", "wasm_get_size_field", "wasm_get_next_block", 
+	"wasm_get_prev_block", "wasm_get_block_size", "wasm_set_next_block", "wasm_set_prev_block",
+	"wasm_read_head", "wasm_write_head", "wasm_write_header",
+	"wasm_get_array_i32", "wasm_get_array_i32_ref", "wasm_get_field_i32", "wasm_get_field_i32_ref", 
+];
+
 fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void {
 	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "'...");
 
-	// Extend with the Wasm runtime
-	program11 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
-	program12 = fiWasmAddIndirectWrappers(program11, cfg.flowfile);
-	program13 = fiWasmWrapFuncArgs(program12);
-	program2 = lift_lambdas(program13);
-	program31 = specializeProgram(cfg, program2);
+    // applying transformations in sequence
+    processors = [
+        \p -> fiWasmExtendWithRuntime(p, globEnv),
+        \p -> fiWasmAddIndirectWrappers(p, cfg.flowfile),
+        \p -> specializeProgram(cfg, p),
+        expandCasts,
+        fiWasmWrapFuncArgs,
+        lift_lambdas,
+        \p -> (if (cfg.doinline) fiInlineFunctions(p, \fname -> contains(inlineFunctions, fname)) else p),
+    ];
 
-	program3 = if (cfg.doinline) {
-		inlineFunctions = [
-			"bitNot", "bitAnd", "bitOr", "bitXor", "bitShl", "bitUshr", 
-			"wasm_inc_refcnt", "wasm_inc_refcnt_passthru", "wasm_dec_refcnt",
-			"makeBitSet", "setBitSet", "unsetBitSet", "getBitSet", 
-			"wasm_get_next_field", "wasm_get_prev_field", "wasm_get_size_field", "wasm_get_next_block", 
-			"wasm_get_prev_block", "wasm_get_block_size", "wasm_set_next_block", "wasm_set_prev_block",
-			"wasm_read_head", "wasm_write_head", "wasm_write_header",
-			"wasm_get_array_i32", "wasm_get_array_i32_ref", "wasm_get_field_i32", "wasm_get_field_i32_ref", 
-			// "pot2"
-		];
-		fiInlineFunctions(program31, \fname -> contains(inlineFunctions, fname));
-	} else {
-		program31;
-	}
+    program3 = fold(processors, program0, \p, proc -> proc(p));
 
 	fcVerbose(cfg, 1, "Collecting declarations..");
 	decls1: [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program3);
@@ -90,7 +91,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 			Pair(d.first, dd);
 		} else d;
 	});
-	
+
 	allDecls : [FiDeclaration] = concatA(map(decls, \p -> p.second));
 	// collect all FiFunctionDec
 	funcDecls : Tree<string, FiFunctionDec> = fold(allDecls, makeTree(), \acc, decl : FiDeclaration -> {
@@ -99,7 +100,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 			default: acc;
 		}
 	});
-	
+
 	// register fallbacks for non-existing natives
 	functions = fold(allDecls, fiWasmBuildFunctionTable(cfg, decls), \acc, decl -> {
 		doAdd = switch (decl) {
@@ -252,7 +253,7 @@ fiWasmExtendWithRuntime(program : FiProgram, globEnv : FcTypeEnvGlobal) -> FiPro
 	}
 	wasmRuntime = parsedWasmRuntime.first;
 
-	overridden = overrideNatives(program.modules, wasmRuntime.names.toplevel);
+	overridden = wasmOverrideNatives(program.modules, wasmRuntime.names.toplevel);
 
 	FiProgram(
 		program.config,
@@ -285,8 +286,7 @@ fiWriteListingFile(cfg : FiWasmConfig, context : WasmContext) {
 fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, [FiDeclaration]>]) {
 	if (strlen(cfg.wasmast) > 0) {
 		contents = strGlue(fold(decls, [], \acc, p -> {
-			m = map(p.second, \decl0 ->{
-				decl = expandFlowCasts(decl0);
+			m = map(p.second, \decl -> {
 				switch (decl) {
 					FiFunctionDec(name, lambda, type, declStart, defiStart): {
 						"FUNCTION: " + 
@@ -301,7 +301,8 @@ fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, 
 					}
 					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
 						"NATIVE: " + name + " " +
-						fiPrintWasmType(fitype2wasmtype(context.globalNames, type))
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
+                        fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, fallbackLambda), "");
 					}
 				}
 			});
@@ -310,23 +311,6 @@ fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, 
 
 		setFileContent(cfg.wasmast, contents);
 	} else true;
-}
-
-// This grabs flow-based implementations of natives to run in the Wasm side, and uses that as the implementation
-overrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDeclaration>) -> Tree<string, FiModule> {
-	mapTree(modules, \module -> {
-		natives2 = map(module.natives, \nat -> {
-			eitherMap(lookupTree(toplevels, nat.name), \fb -> {
-				switch (fb) {
-					FiFunctionDec(__, lambda, __, __, __):
-						FiNativeDec(nat with fallbackLambda = lambda);
-					FiGlobalVar(__, __, __, __, __): nat;
-					FiNativeDec(__, __, __, __, __, __, __): nat;
-				}
-			}, nat)
-		});
-		FiModule(module with natives = natives2)
-	});
 }
 
 fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback : (bool) -> void) {
