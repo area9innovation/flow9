@@ -766,7 +766,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
 
     {
         size_t elemcount = end.position() - begin.position();
-        char_indices.reserve(elemcount);
+        char_indices.reserve(elemcount+1);
         glyphs.reserve(elemcount);
         positions.reserve(elemcount+1);
     }
@@ -899,7 +899,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
             if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) {
-                endpos = strProc;
+                strIter = strProc;
                 break;  // This quits layout cycle.
             }
 
@@ -917,7 +917,8 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     }
 
     positions.push_back(cursor);
-    endpos = end.clone();
+    char_indices.push_back(strIter->position());
+    endpos = strIter->clone();
 
     if (!glyphs.empty()) {
         bbox |= vec2(0.0f);

@@ -447,6 +447,7 @@ public:
 
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
+    const std::vector<size_t> &getCharIndices() { return char_indices; }
 
     const GLBoundingBox &getBoundingBox() { return bbox; }
 
