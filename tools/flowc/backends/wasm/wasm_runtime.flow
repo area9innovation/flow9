@@ -160,6 +160,8 @@ export {
 	wasm_get_flow_content_type(address : int) -> int;
 
 	native wasm_typetable_start: () -> int = wasm_compiler.typetable_start;
+
+	wasm_dump_type(type_ptr : int) -> string;
 }
 
 // this is used as a temporary place to hold return value of a function 
@@ -815,10 +817,16 @@ wasm_compare_native(address1 : int, address2 : int) -> int {
 	res;
 }
 
+wasm_unbox_error(typeRequested : int, typeActual : int) {
+	prints("Types mismatch\n    requested(addr: " + cast(typeRequested : int -> string) + "): " + wasm_dump_type(typeRequested) + 
+		"\n    actual(addr: " + cast(typeActual : int -> string) + "): " + wasm_dump_type(typeActual));
+	wasm_unreachable();
+}
+
 wasm_unbox_flow_i32(address : int, typeDescriptor : int) -> int {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_i32_load(address + 8);
 	wasm_dec_refcnt(address);
@@ -828,7 +836,7 @@ wasm_unbox_flow_i32(address : int, typeDescriptor : int) -> int {
 wasm_unbox_flow_f64(address : int, typeDescriptor : int) -> double {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_f64_load(address + 8);
 	wasm_dec_refcnt(address);
@@ -844,7 +852,7 @@ wasm_get_flow_content_type(address : int) -> int {
 wasm_unbox_flow_i32_ref(address : int, typeDescriptor : int) -> int {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_i32_load(address + 8);
 	td = wasm_i32_load(r + 4);
@@ -892,5 +900,18 @@ do_wasm_find_struct_descriptor(typedescriptor : int, structname : int) -> int {
 			do_wasm_find_struct_descriptor(wasm_next_typedescriptor(typedescriptor), structname)
 		} else -1;
 	}
+}
+
+wasm_do_dump_type(type_ptr : int, type_len : int, offset : int, acc : string) -> string {
+	if (offset < type_len) {
+		type = wasm_i32_load8_u(type_ptr + offset);
+		s = acc + (if (acc == "") "" else ", ") + cast(type : int -> string);
+
+		wasm_do_dump_type(type_ptr, type_len, offset + 1, s);
+	} else acc;
+}
+
+wasm_dump_type(type_ptr : int) -> string { 
+	wasm_do_dump_type(type_ptr, wasm_next_typedescriptor(type_ptr) - type_ptr, 0, "");
 }
 
