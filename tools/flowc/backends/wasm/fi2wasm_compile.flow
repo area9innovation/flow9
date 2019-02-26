@@ -368,20 +368,68 @@ compileWasmExp(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : bo
 	WasmCompileResult(wasm2string(code, "   "), ^locals);	
 }
 
-compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool) -> [Wasm2Cmd] {
+compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool, 
+	context : WasmContext, doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> [Wasm2Cmd] {
+
+	// if (doinline) {
+	// 	locals := setTree(^locals, "_inc_refcnt_", WasmTypeInt());
+	// }
+
     // only filter locals if asked for
     vars = if (localsOnly) filter(destructedVars, \v -> v.local) else destructedVars;
-    concatA(map(vars, \v -> [
-                Wasm2GetLocal(v.name),
-                Wasm2Call("$wasm_dec_refcnt")
-            ]));
+	    concatA(map(vars, \v -> 
+			// if (doinline) {[
+			// 	Wasm2GetLocal(v.name),
+			// 	Wasm2Code("i32.load"),
+			// 	Wasm2SetLocal("_inc_refcnt_"),
+			// 	Wasm2If(
+			// 		Wasm2Seq([
+			// 			Wasm2GetLocal("_inc_refcnt_"),
+			// 			Wasm2I32Const(0), 
+			// 			Wasm2Code("i32.le_s")
+			// 		]), true, false, 
+			// 		Wasm2Seq([
+			// 			Wasm2GetLocal("_inc_refcnt_"),
+			// 			Wasm2Call("$printi"),
+			// 			Wasm2Code("unreachable")
+			// 		]), 							
+			// 		Wasm2Void()
+			// 	),
+			// 	Wasm2GetLocal(v.name),
+			// 	Wasm2GetLocal("_inc_refcnt_"),
+			// 	Wasm2I32Const(1), 
+			// 	Wasm2Code("i32.sub"),
+			// 	Wasm2Code("i32.store"),
+			// 	Wasm2If(
+			// 		Wasm2Seq([
+			// 			Wasm2GetLocal("_inc_refcnt_"),
+			// 			Wasm2I32Const(1), 
+			// 			Wasm2Code("i32.eq"),
+			// 			Wasm2GetLocal(v.name),
+			// 			Wasm2I32Const(context.typeTable.nextOffset), 
+			// 			Wasm2Code("i32.ge_s"),
+			// 			Wasm2Code("i32.and"),
+			// 		]), true, false, 
+			// 		Wasm2Seq([
+			// 			Wasm2GetLocal(v.name),
+			// 			Wasm2Call("$wasm_free"),
+			// 		]), 							
+			// 		Wasm2Void()
+			// 	)
+			// ]} else {
+				[
+			        Wasm2GetLocal(v.name),
+			        Wasm2Call("$wasm_dec_refcnt")
+				]
+			// }
+	    ));
 }
 
 compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	conv = \s -> Wasm2Code(s);
 	rec = \e -> compileWasmExp2(acc, e, context, doinline, locals);
 	error = \reason -> wasmError(acc, reason) |> conv;
-    destructors = compileDestructors(ex.destructedVars, false);
+    destructors = compileDestructors(ex.destructedVars, false, context, doinline, locals);
 	addDestructors = \cmd -> Wasm2Seq(arrayPush(destructors, cmd));
 	
     switch (ex) {
@@ -415,7 +463,7 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : b
                                 // destructors go between the args pushed on stack and the actual call
                                 // recompiling them to only destruct locals, not params
 								Wasm2Seq(concat3(
-									compileDestructors(ex.destructedVars, true),
+									compileDestructors(ex.destructedVars, true, context, doinline, locals),
 									mapi(args, \i,e -> Wasm2SetLocalI(length(args) - i - 1)),
 									[Wasm2Br("$cont")]
 								))
