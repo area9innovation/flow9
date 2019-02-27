@@ -1113,8 +1113,8 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldWidth, 1);
     TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldHeight, 1);
-    TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldCharXPosition, 1);
-    TRY_USE_OBJECT_METHOD(GLTextClip, findTextFieldCharByPosition, 2)
+    TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldCharXPosition, 2);
+    TRY_USE_OBJECT_METHOD(GLTextClip, findTextFieldCharByPosition, 3)
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldWidth, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldHeight, 2);
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldCropWords, 2);
