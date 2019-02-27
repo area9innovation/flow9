@@ -7,6 +7,7 @@ import tools/flowc/incremental/fisubtype;
 import tools/flowc/incremental/fi_verify_struct_type;
 import tools/flowc/flowc_helpers;
 import tools/flowc/flowc_module;
+import tools/flowc/incremental/fc2fi;
 
 export {
 	// Check that all types in a module are consistent with FcTypeEnvGlobal
@@ -266,14 +267,11 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		FiCallPrim(prim, es, type, s):   {
 			switch (prim) {
 				FcStructPrim(struct_name): {
-                    // OK, the type of the struct can be reconstructed from the args
-                    mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
-                    switch (mstr) {
-                        None(): {
-                            println("Could not find " + struct_name);
-                        }
-                        Some(str): {
-                            verifyFiStructInstantiation(env.module.global, struct_name, str, map(es, \e -> fiExpType(e)), type, \err -> {
+                    if (isUrlParameterTrue("verify-structs")) {
+                        // OK, the type of the struct can be reconstructed from the args
+                        mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
+                        verify = \fitype : FiTypeStruct -> {
+                            verifyFiStructInstantiation(fitype, map(es, \e -> fiExpType(e)), type, \err -> {
                                 onError(
                                     FcError(
                                         prettyFiType(dummyPretty, type, makeSet()) + " " + err,
@@ -282,7 +280,41 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
                                 );
                             });
                         }
+                        switch (mstr) {
+                            None(): {
+                    			switch (lookupTree(env.module.moduleStructsUnions, struct_name)) {
+                                    None(): {
+                                        onError(
+                                            FcError(
+                                                "Could not find struct " + struct_name,
+                                                [FcPosition(env.module.name, expr.start, expr.start)]
+                                            )
+                                        );
+                                    }
+                                    Some(lfi): {
+                                        switch (lfi) {
+                                            FiTypeStruct(__, __, __, __): verify(lfi);
+                                            FiTypeUnion(__, __, __, __): println("Can not make union");
+                                        }
+                                    }
+                                }
+                            }
+                            Some(str): {
+                                dummyFcTypeEnv = FcTypeEnv(
+                                    FcTypeEnvGlobal(ref makeTree()),
+                                    env.module.global,
+                                    initFcTypeEnvLocal()
+                                );
+
+                                // OK, now convert the struct def to fitype
+                                st = fctypestruct2fi(dummyFcTypeEnv, \e, __ -> {
+                                        println(e);
+                                    }, str);
+                                verify(st);
+                            }
+                        }
                     }
+
 					typeverifyFcStructPrim(env, struct_name, es, onError, s);
                 }
 				FcFieldPrim(field_name): {
