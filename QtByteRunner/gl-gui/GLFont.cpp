@@ -743,6 +743,16 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 }
 #endif
 
+int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
+    typename std::map<size_t, size_t>::const_iterator it = char_to_glyph_index.find( charidx );
+    if ( it == char_to_glyph_index.end() ) {
+       return -1;
+    }
+    else {
+       return it->second;
+    }
+}
+
 GLTextLayout::Ptr GLFont::layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit, float spacing, bool crop_long_words, bool rtl)
 {
     GLTextLayout::Ptr layout(new GLTextLayout(self.lock(), size));
@@ -767,6 +777,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     {
         size_t elemcount = end.position() - begin.position();
         char_indices.reserve(elemcount+1);
+        char_to_glyph_index.clear();
         glyphs.reserve(elemcount);
         positions.reserve(elemcount+1);
     }
@@ -903,6 +914,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
                 break;  // This quits layout cycle.
             }
 
+            char_to_glyph_index[chrIdx] = char_indices.size();
             char_indices.push_back(chrIdx);
             glyphs.push_back(info);
             positions.push_back(pos);

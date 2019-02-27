@@ -388,6 +388,7 @@ protected:
     GLBoundingBox bbox;
 
     std::vector<size_t> char_indices;
+    std::map<size_t, size_t> char_to_glyph_index;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
     shared_ptr<Utf32InputIterator> endpos;
@@ -448,6 +449,7 @@ public:
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
+    int getCharGlyphPositionIdx(int charidx);
 
     const GLBoundingBox &getBoundingBox() { return bbox; }
 

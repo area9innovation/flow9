@@ -1074,22 +1074,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
-    if (i > 0) {
-        const std::vector<float> &positions = extent->layout->getPositions();
-        const std::vector<size_t> &char_indices = extent->layout->getCharIndices();
-        size_t cidx = extent->layout->getEndPos()->position();
-        float pos = positions.back();
-        for (i=positions.size()-1; i > 0;) {
-            size_t last_cidx = cidx;
-            float last_pos = pos;
-            --i;
-            cidx = char_indices[static_cast<size_t>(i)];
-            pos = positions[static_cast<size_t>(i)];
-            if (cidx > idx_v) continue;
-            if (cidx == static_cast<size_t>(idx_v)) break;
-        }
-    }
-    return StackSlot::MakeDouble(pos);
+    return StackSlot::MakeDouble(extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)]);
 }
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
