@@ -3,24 +3,19 @@ function mergePredefinedParams(result, predefined) {
 	if (typeof predefined == "undefined") {
 		return result;
 	}
-	var p = [];
-	predefined.forEach(function(v, k, m) {
-		p.push([k, v]);
-	});
+	return predefined.concat(result);
 
-	var m1 = new Map(p.concat(result));
-	p = [];
-	m1.forEach(function(v, k, m) {
-		p.push([k, v]);
-	});
-	return p;
 }
 
 function getUrlParameter(n, s) {
 	var predefined = "";
 	if (typeof predefinedBundleParams != "undefined") {
-		if (predefinedBundleParams.has(n)) {
-			predefined = predefinedBundleParams.get(n);
+		for (var i = 0; i < predefinedBundleParams.length; i++) {
+			var item = predefinedBundleParams[i];
+			if (i.length == 2 && item[0] == n) {
+				predefined = item[1];
+				break
+			}
 		}
 	}
 
