@@ -18,23 +18,21 @@ export {
 	DQuery ::= DSelectQuery, DInsertQuery, DUpdateQuery, DDeleteQuery, DCountQuery, DApplyQuery, DBatchQuery;
 		DSelectQuery(resource : DResource, parameters : [DParameter]);
 		DInsertQuery(resource : DCommonResourceU, entity : Json, parameters : [DParameter]);
-		DUpdateQuery(resource : DSpecificResourceU, value : Json);
-		DDeleteQuery(resource : DSpecificResourceU);
+		DUpdateQuery(resource : DSpecificResource, value : Json);
+		DDeleteQuery(resource : DSpecificResource);
 		DCountQuery(resource : DCommonResourceU, parameters : [DParameter]);
 		DApplyQuery(resource : DCommonResourceU, expression : DApplyExpression);
 		DBatchQuery(queries : [DQuery]);
 
-	DResource ::= DCommonResourceU, DSpecificResourceU, DFunctionU;
+	DResource ::= DCommonResourceU, DSpecificResource, DFunction;
 		DCommonResourceU ::= DCommonResource, DCommonResource2;
-		DSpecificResourceU ::= DSpecificResource, DSpecificResource2;
-		DFunctionU ::= DFunction, DFunction2;
+			// Resource is typically a table name
 			DCommonResource(resource : string);
 			DCommonResource2(resource : string, parent : DResource);
-			DSpecificResource(resource : string, value : DResourceValue);
-			DSpecificResource2(resource : string, value : DResourceValue, parent : DResource);
-			DFunction(name : string, parameters : [DFunctionParameter]);
-			DFunction2(name : string, parameters : [DFunctionParameter], parent : DResource);
-				DFunctionParameter(name : string, value : DResourceValue);
+		// Resource is typically a table name, and value is a primary key
+		DSpecificResource(resource : DResource, value : DResourceValue);
+		DFunction(resource : DResource, parameters : [DFunctionParameter]);
+			DFunctionParameter(name : string, value : DResourceValue);
 
 	DApplyExpression ::= DAggregate, DGroupByU;
 		DAggregate(expressions : [DAggregateExpressionU]);
@@ -78,13 +76,13 @@ export {
 		DDateTime(val : Time);
 		DNull();
 
-	DExpression ::= DResourceValue, DPropertyU, DBinaryExression, DComparison, DLogicalExp, DBuiltIn, DCount;
+	DExpression ::= DResourceValue, DPropertyU, DBinaryExpression, DComparison, DLogicalExp, DBuiltIn, DCount;
 
 		DPropertyU ::= DProperty, DProperty2;
 			DProperty(resource : string);
 			DProperty2(resource : string, parent : DPropertyU);
 
-		DBinaryExression(left : DPropertyU, op : DBinaryOp, righ : DPropertyU);
+		DBinaryExpression(left : DExpression, op : DBinaryOp, right : DExpression);
 			DBinaryOp ::= DAdd, DSub, DMul, DDiv, DMod;
 				DAdd();
 				DSub();
@@ -157,7 +155,7 @@ export {
 	makeODataRequest(host : string, jwt : string, query : DQuery, onOK : (Json) -> void, onError : (string) -> void) -> void;
 	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
 
-	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResourceU;
+	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource;
 	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
 	json2ResourceValue(json : Json) -> DResourceValue;
 
@@ -176,7 +174,10 @@ export {
 		---------------------------------------------------
 		Get person with id 'russel':
 		DSelectQuery(
-			DSpecificResource("People", DString("russel")),
+			DSpecificResource(
+				DCommonResource("People"),
+				DString("russel")
+			),
 			[]
 		)
 
@@ -185,7 +186,10 @@ export {
 		---------------------------------------------------
 		Get info about Russel and his trips:
 		DSelectQuery(
-			DSpecificResource("People", DString("russel")),
+			DSpecificResource(
+				DCommonResource("People"),
+				DString("russel")
+			),
 			[
 				DExpand([DExpandValue("Trips", [])])
 			]
@@ -196,9 +200,15 @@ export {
 		---------------------------------------------------
 		Get Russel's first trip:
 		DSelectQuery(
-			DSpecificResource2(
-				"Trips", DInt(0),
-				DSpecificResource("People", DString("russel"))
+			DSpecificResource(
+				DCommonResouce2(
+					"Trips",
+					DSpecificResource(
+						DCommonResource("People"),
+						DString("russel")
+					)
+				),
+				DInt(0)
 			),
 			[]
 		)
@@ -227,7 +237,7 @@ export {
 		GET ~/People/?$filter=age gt 25 and age lt 38&$orderby=FirstName desc,UserName"
 
 		---------------------------------------------------
-		Get UserNames and FirstNames of first seven people and Description of their Trips
+		Get UserNames and FirstNames of first five people and Description of their Trips
 		DSelectQuery(
 			DCommonResource("People"),
 			[
@@ -242,7 +252,10 @@ export {
 		---------------------------------------------------
 		Delete people with id 'russel'
 		DSelectQuery(
-			DSpecificResource("People", DString("russel")),
+			DSpecificResource(
+				DComonResource("People"),
+				DString("russel")
+			),
 			[]
 		)
 
@@ -252,7 +265,10 @@ export {
 		Change Russel's FirstName, LastName and BestFriend
 		considering that BestFriend is expandable field
 		DUpdateQuery(
-			DSpecificResource("People", DString("russel")),
+			DSpecificResource(
+				DCommonResource("People"),
+				DString("russel")
+			),
 			JsonObject([
 				Pair("FirstName", JsonString("New first name")),
 				Pair("LastName", JsonString("New last name")),
@@ -321,11 +337,8 @@ export {
 
 ODataQuery(method : RequestMethod, data : RequestData, resource : string);
 
-specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResourceU {
-	switch (resource) {
-		DCommonResource(res): DSpecificResource(res, value);
-		DCommonResource2(res, parent): DSpecificResource2(res, value, parent);
-	}
+specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource {
+	DSpecificResource(resource, value)
 }
 
 makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json> {
@@ -413,10 +426,8 @@ resource2string(resource : DResource) -> string {
 	switch (resource : DResource) {
 		DCommonResource(res): res;
 		DCommonResource2(res, parent): resource2string(parent) + "/" + res;
-		DSpecificResource(res, value): res + "(" + resourceValue2string(value) + ")";
-		DSpecificResource2(res, value, parent): resource2string(parent) + "/" + res + "(" + resourceValue2string(value) + ")";
-		DFunction(name, parameters): name + "(" + functionParameters2string(parameters) + ")";
-		DFunction2(name, parameters, parent): resource2string(parent) + "/" + name + "(" + functionParameters2string(parameters) + ")";
+		DSpecificResource(res, value): resource2string(res) + "(" + resourceValue2string(value) + ")";
+		DFunction(res, parameters): resource2string(res) + "(" + functionParameters2string(parameters) + ")";
 	}
 }
 
@@ -542,7 +553,7 @@ expression2string(expression : DExpression) -> string {
 	switch (expression) {
 		DResourceValue(): resourceValue2string(expression);
 		DPropertyU(): property2string(expression);
-		DBinaryExression(left, op, righ): expression2string(left) + " " + binaryOp2string(op) + " " + expression2string(righ);
+		DBinaryExpression(left, op, right): expression2string(left) + " " + binaryOp2string(op) + " " + expression2string(right);
 		DComparison(left, op, right): expression2string(left) + " " + comparisonOp2string(op) + " " + expression2string(right);
 		DLogicalExp(): logicalExpression2string(expression);
 		DBuiltIn(): builtinFunction2string(expression);

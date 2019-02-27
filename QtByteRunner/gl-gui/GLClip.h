@@ -327,8 +327,7 @@ public:
             std::vector<GLClip*> *leaves,
             Predicate predicate,
             Action action,
-            PredicatableAction predicatableAction,
-            bool parentAbsorbs) {
+            PredicatableAction predicatableAction) {
         if (local_transform_raw.isZeroScale() || !global_visible)
             return HitNone;
         
@@ -370,7 +369,7 @@ public:
             if (child->scroll_rect && !child->scroll_rect_box.contains(cpos))
                 continue;
             
-            HitType c_hit = child->computeHitSubtreesOrdered(cpos, out, leaves, predicate, action, predicatableAction, predicate(this) || parentAbsorbs);
+            HitType c_hit = child->computeHitSubtreesOrdered(cpos, out, leaves, predicate, action, predicatableAction);
             
             if (c_hit == HitTransparent) {
                 if (predicate(this))
@@ -389,9 +388,6 @@ public:
                 if (c_hit == HitFull)
                     break;
             }
-            
-            if (hit == HitTransparent && parentAbsorbs)
-                break;
         }
         
         if ((hit && out || hit == HitTransparent) && predicate(this)) {

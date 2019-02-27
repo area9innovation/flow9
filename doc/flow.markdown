@@ -25,6 +25,7 @@ functions, polymorphism, closures and simple pattern matching.
 * [Parameterized types](#parameterized)
 * [Impure functions](#impure)
 * [Native functions](#native)
+* [Quoting and unquoting](#quoting)
 * [Coding conventions](#coding)
 * [Data structures](#data)
 * [Loops](#loops)
@@ -934,6 +935,57 @@ compiled in such a way that any targets that actually implement the native would
 those that don't will fall back to the flow implementation instead of signalling an error.
 Targets that cannot detect if they implement a native without causing an error always use the 
 fallback.
+
+<h2 id=quoting>Quoting and unquoting</h2>
+
+There is support for quoting expressions in flow. This provides a way to use flow syntax to
+construct an AST (Abstract Syntax Tree) structure directly in the source code.
+
+This is done with the `@<exp>` syntax:
+
+	import qexp;	// You have to add this import yourself for quoting to work
+	import runtime;
+
+	foo() {
+		@1;	// This is short for QInt(1)
+		@1+2; // This is short for QCallPrim(QAddPrim(), [QInt(1), QInt(2)]);
+
+		println(QInt(1) == @1); // Will print 'true'
+	}
+
+The type of a `@` expression is thus the union `QExp`. This type defines an (untyped) AST 
+of all flow expression constructs (except for `cast`, which is not supported). It is mirrored
+exactly after the type `FiExp` used inside the `flowc` compiler, except that it is untyped and does not
+contain position information.
+
+The quoting feature is thus a way to shortly and naturally write constants that define code instead of
+writing a lot of structs manually.
+
+If you want to have variables in the resulting AST, then you can unquote expressions inside a quote, 
+using the `$<atom>` syntax. This can be used like this:
+
+	import qexp;	// You have to add this import yourself for quoting to work
+
+	foo(a : int) {
+		@1+$a; // This is short for QCallPrim(QAddPrim(), [QInt(1), QInt(a)]);
+	}
+
+This works for any expression:
+
+	import qexp;	// You have to add this import yourself for quoting to work
+
+	foo(a : int) {
+		@1+$(a+2*3); // This is short for QCallPrim(QAddPrim(), [QInt(1), QInt(a+2*3)]);
+	}
+
+When you unquote, we only support unquoting expressions of type `bool`, `int`, 
+`double`, `string`, or array types of these. (We might later allow structs of type `QExp`
+to be unquoted, but so far there has been no need for this.)
+
+Quoting and unquoting is an advanced feature, which is not often used. It can be used to make
+embedded DSLs that naturally interact with flow. That will often be done by having an
+interpreter of the `DExp` union that implements whatever semantics you desire. (There is 
+currently no implementation of a flow interpreter based on the `QExp` type.)
 
 <h2 id=coding>Coding conventions</h2>
 
