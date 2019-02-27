@@ -18,9 +18,11 @@ void CompilerTextEdit::mousePressEvent(QMouseEvent *e) {
 	static QRegExp errorPosExp(QLatin1String("^(([A-Za-z]:/)?[^:]*):([0-9]*)(:([0-9]*):?)?.*"));
 	if (errorPosExp.exactMatch(line)) {
 		QString file = errorPosExp.cap(1);
-		int line = errorPosExp.cap(3).toInt();
+		int line = errorPosExp.cap(3).toInt() - 1;
 		int col = errorPosExp.cap(5).toInt();
-		emit signalCompilerError(file, line, col);
+		if (line > -1) {
+			emit signalCompilerError(file, line, col);
+		}
 	}
 	QPlainTextEdit::mousePressEvent(e);
 }
