@@ -3,7 +3,17 @@ function mergePredefinedParams(result, predefined) {
 	if (typeof predefined == "undefined") {
 		return result;
 	}
-	return Array.from(new Map([...Array.from(predefined), ...result]));
+	var p = [];
+	predefined.forEach(function(v, k, m) {
+		p.push([k, v]);
+	});
+
+	var m1 = new Map(p.concat(result));
+	p = [];
+	m1.forEach(function(v, k, m) {
+		p.push([k, v]);
+	});
+	return p;
 }
 
 function getUrlParameter(n, s) {

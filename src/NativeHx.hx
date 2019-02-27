@@ -682,7 +682,7 @@ class NativeHx {
 			i++;
 		}
 		#if (js)
-		untyped __js__("result = mergePredefinedParams(result, predefinedBundleParams);");
+		untyped __js__("if (typeof predefinedBundleParams != 'undefined') {result = mergePredefinedParams(result, predefinedBundleParams);}");
 		#end
 		  return result;
 	}
