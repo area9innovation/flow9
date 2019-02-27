@@ -222,7 +222,7 @@ private:
     typedef STL_HASH_MAP<unicode_string, std::vector<GLPictureClip*> > T_PendingPictures;
     typedef std::map<FlowEvent, std::set<GLClip*> > T_EventListeners;
     typedef std::set<GLClip*> T_ClipSet;
-    typedef std::list<int> T_Listeners;
+    typedef std::vector<int> T_Listeners;
     typedef std::set<GLClip*> T_TabIndexClips;
     typedef std::vector<GLClip*> T_AccessibleClips;
 

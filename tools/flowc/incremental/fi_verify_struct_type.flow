@@ -1,0 +1,57 @@
+import tools/flowc/incremental/fitype;
+import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fisubtype;
+import ds/tree;
+import string;
+
+export {
+	verifyFiStructInstantiation(structdef : FiTypeStruct, argTypes : [FiType], type : FiType, onError : (string) -> void) -> void;
+}
+
+verifyFiStructInstantiation(fistruct : FiTypeStruct, argTypes : [FiType], type : FiType, onError : (string) -> void) -> void {
+    // Figure out how we instantiated typars
+	typars = switch (type) {
+		FiTypeName(n, typars): typars;
+		default: [];
+	}
+	typarEnv = foldi(typars, makeTree(), \i, acc, ttype -> {
+		name = strLeft("????????????", i + 1);
+		setTree(acc, name, ttype);
+	});
+
+	// OK:
+	// We should instantiate the arguments of the structdef from the typename
+	// to get concrete types.
+	structargs = map(fistruct.args, \arg -> instantiateFiTypars(arg.type, typarEnv));
+
+	// Then we should check arguments against that.
+	iteri(structargs, \i, sarg -> {
+		atype = argTypes[i];
+		if (!isFiSubType(atype, sarg, true)) {
+			onError("arg #" + i2s(i + 1) + " should be " + prettyFiType(dummyPretty, sarg, makeSet()) + ", got " + prettyFiType(dummyPretty, atype, makeSet()))
+		}
+	});
+}
+
+instantiateFiTypars(f : FiType, typars : Tree<string, FiType>) -> FiType {
+	switch (f) {
+		FiTypeArray(t): FiTypeArray(instantiateFiTypars(t, typars));
+		FiTypeFunction(args, returnType): {
+			FiTypeFunction(map(args, \fa -> FiFunArg(fa.name, instantiateFiTypars(fa.type, typars))), instantiateFiTypars(returnType, typars));
+		} 
+		FiTypeRef(t): FiTypeRef(instantiateFiTypars(t, typars));
+		FiTypeParameter(n): {
+			lookupTreeDef(typars, n, FiTypeFlow()); // Unknown are resolved to flow
+		}
+		FiTypeBool(): f;
+		FiTypeInt(): f;
+		FiTypeDouble(): f; 
+		FiTypeString(): f;
+		FiTypeFlow(): f;
+		FiTypeVoid(): f;
+		FiTypeNative(): f;
+		FiTypeName(name, typeparameters): {
+			FiTypeName(name, map(typeparameters, \tp -> instantiateFiTypars(tp, typars)))
+		}
+	}
+}
