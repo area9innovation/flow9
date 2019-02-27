@@ -11,6 +11,7 @@ class FlowGraphics extends Graphics {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 	private var transformChanged : Bool = true;
+	private var skipRender : Bool = false;
 
 	public var penX : Float = 0.0;
 	public var penY : Float = 0.0;

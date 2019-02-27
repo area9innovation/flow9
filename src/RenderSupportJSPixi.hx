@@ -36,11 +36,9 @@ class RenderSupportJSPixi {
 	public static var AccessibilityEnabled : Bool = false;
 	private static var EnableFocusFrame : Bool = false;
 	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
-	private static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
 	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
-	private static var UseVideoTextures : Bool = Util.getParameter("videotexture") != "0";
 
 	public static var DropCurrentFocusOnDown : Bool;
 	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
@@ -652,47 +650,54 @@ class RenderSupportJSPixi {
 				}
 			};
 
-			// PIXI.Container.prototype.renderCanvas = function(renderer) {
-			// 	if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
-			// 	{
-			// 		return;
-			// 	}
+			PIXI.Container.prototype.renderCanvas = function(renderer, skipRender = true) {
+				if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+				{
+					this.skipRender = true;
+					return;
+				}
 
-			// 	if (this.childrenChanged) {
-			// 		this.childrenChanged = false;
-			// 		this.childrenUnchangedCounter = 0;
+				if (this._mask)
+				{
+					renderer.maskManager.pushMask(this._mask);
+				}
 
-			// 		this.cacheAsBitmap = false;
-			// 	} else if (!this.cacheAsBitmap) {
-			// 		this.childrenUnchangedCounter = this.childrenUnchangedCounter != null ? this.childrenUnchangedCounter + 1 : 0;
+				skipRender = skipRender && this.skipRender;
 
-			// 		if (this.childrenUnchangedCounter > 100) {
-			// 			setInterval(function () { this.cacheAsBitmap = true; }, 100);
-			// 		}
-			// 	}
+				if (!skipRender)
+				{
+					this._renderCanvas(renderer);
+				}
 
-			// 	if (this._mask)
-			// 	{
-			// 		renderer.maskManager.pushMask(this._mask);
-			// 	}
+				for (let i = 0, j = this.children.length; i < j; ++i)
+				{
+					var tempRendererView = renderer.view;
 
-			// 	this._renderCanvas(renderer);
+					if (this.children[i].view) {
+						this.children[i].view.setAttribute('width', renderer.view.getAttribute('width'));
+						this.children[i].view.setAttribute('height', renderer.view.getAttribute('height'));
 
-			// 	for (let i = 0, j = this.children.length; i < j; ++i)
-			// 	{
-			// 		this.children[i].renderCanvas(renderer);
-			// 	}
+						renderer.context = this.children[i].view.getContext('2d', { alpha: true });
+						this.children[i].renderCanvas(renderer, skipRender);
+						renderer.context = renderer.view.getContext('2d', { alpha: renderer.transparent });
+					} else {
+						this.children[i].renderCanvas(renderer, skipRender);
+					}
+				}
 
-			// 	if (this._mask)
-			// 	{
-			// 		renderer.maskManager.popMask(renderer);
-			// 	}
-			// };
+				if (this._mask)
+				{
+					renderer.maskManager.popMask(renderer);
+				}
+
+				this.skipRender = true;
+			};
 
 			PIXI.Container.prototype.updateTransform = function(transformChanged = false) {
-				transformChanged = this.transformChanged || transformChanged;
+				transformChanged = transformChanged || this.transformChanged;
 
-				if (transformChanged) {
+				if (transformChanged)
+				{
 					this._boundsID++;
 
 					this.transform.updateTransform(this.parent.transform);
@@ -700,7 +705,8 @@ class RenderSupportJSPixi {
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-					if (this.updateNativeWidget && this.nativeWidget) {
+					if (this.updateNativeWidget && this.nativeWidget)
+					{
 						this.updateNativeWidget();
 					}
 
@@ -713,9 +719,11 @@ class RenderSupportJSPixi {
 
 					if (child.visible)
 					{
-						child.updateTransform(transformChanged);
+						this.skipRender = !child.updateTransform(transformChanged) && this.skipRender;
 					}
 				}
+
+				return !this.skipRender;
 			};
 		");
 	}
@@ -743,13 +751,14 @@ class RenderSupportJSPixi {
 
 		var options = {
 			antialias : Antialias,
-			transparent : TransparentBackground,
-			backgroundColor : TransparentBackground ? 0 : 0xFFFFFF,
+			transparent : true,
+			backgroundColor : 0,
 			preserveDrawingBuffer : false,
 			resolution : backingStoreRatio,
 			roundPixels : RoundPixels,
 			autoResize : true,
-			view : PixiView
+			view : PixiView,
+			clearBeforeRender : false
 		};
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
@@ -848,6 +857,7 @@ class RenderSupportJSPixi {
 			ctx.imageSmoothingEnabled = true;
 		}
 
+		PixiRenderer.render(PixiStage, null, true);
 		requestAnimationFrame();
 	}
 
@@ -930,7 +940,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
-		InvalidateStage();
+		PixiStage.invalidateStage();
 
 		backingStoreRatio = getBackingStoreRatio();
 
@@ -963,7 +973,7 @@ class RenderSupportJSPixi {
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
-		PixiRenderer.render(PixiStage);
+		PixiRenderer.render(PixiStage, null, true);
 	}
 
 	private static function dropCurrentFocus() : Void {
@@ -1224,8 +1234,7 @@ class RenderSupportJSPixi {
 			if (node_name == "input" || node_name == "textarea") {
 				var rect = focused_node.getBoundingClientRect();
 				if (rect.bottom > Browser.window.innerHeight) { // Overlaped by screen keyboard
-					PixiStage.y = Browser.window.innerHeight - rect.bottom;
-					InvalidateStage();
+					PixiStage.setClipY(Browser.window.innerHeight - rect.bottom);
 				}
 			}
 		}
@@ -2453,7 +2462,7 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
-		InvalidateStage();
+		clip.invalidateStage();
 
 		if (RendererType == "canvas") {
 			filters = filters.filter(function(f) {
@@ -2573,7 +2582,7 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			InvalidateStage();
+			PixiStage.invalidateStage();
 
 			if (Platform.isIOS) {
 				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;

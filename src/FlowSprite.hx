@@ -9,6 +9,7 @@ class FlowSprite extends Sprite {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 	private var transformChanged : Bool = true;
+	private var skipRender : Bool = false;
 
 	private var url : String = "";
 	private var loaded : Bool = false;

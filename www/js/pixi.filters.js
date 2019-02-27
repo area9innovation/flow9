@@ -271,18 +271,21 @@ PIXI.Container.prototype._calculateFilterBounds = function ()
 	}
 }
 
-PIXI.Container.prototype._renderFilterCanvas = function (renderer)
+PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender = true)
 {
 	if (!this.visible || this.alpha <= 0 || !this.renderable)
 	{
+		this.skipRender = true;
 		return;
 	}
 
+	skipRender = skipRender && this.skipRender;
+
 	var filters = this._canvasFilters;
 
-	if ((filters == null || filters.length == 0) && this._alphaMask == null)
+	if (((filters == null || filters.length == 0) && this._alphaMask == null) || skipRender)
 	{
-		return this._CF_originalRenderCanvas(renderer);
+		return this._CF_originalRenderCanvas(renderer, skipRender);
 	}
 
 	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
@@ -303,13 +306,11 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		ctx.shadowBlur = filter.blur * 2 * res;
 		ctx.shadowOffsetX = Math.cos(angle) * dist * res;
 		ctx.shadowOffsetY = Math.sin(angle) * dist * res;
-		this._CF_originalRenderCanvas(renderer);
+		this._CF_originalRenderCanvas(renderer, skipRender);
 		ctx.restore();
 
 		return;
 	}
-
-	console.log("optimize shadows!");
 
 	var bounds = this.getBounds(true);
 	var wt = this.worldTransform;
