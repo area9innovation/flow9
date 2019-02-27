@@ -5,6 +5,8 @@ export {
 	graphics2svg(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
 	graphics2canvas(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
 	graphics2vml(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string;
+
+	deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp];
 }
 
 import stylestructs;
@@ -18,6 +20,115 @@ graphicsheader() {
 graphics2html(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
 	graphics2canvas(path, style)
 	+ "\n<!--[if lt IE 9]>" + graphics2vml(path, style) + "<![endif]-->";
+}
+
+deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp] {
+	fold(path, [], \acc, p ->
+		switch (p : StaticGraphicOp) {
+			GRect(x, y, wd, hgt): {
+				concat(
+					acc,
+					[
+						MoveTo(x, y),
+						LineTo(x + wd, y),
+						LineTo(x + wd, y + hgt),
+						LineTo(x, y + hgt),
+						ClosePath()
+					]
+				)
+			}
+			GRoundedRect(x, y, wd, hgt, r): {
+				concat(
+					acc,
+					[
+						MoveTo(r + x, y),
+						LineTo(wd - r + x, y),
+						CubicBezierTo(wd + x, r + y, wd + x, y),
+						LineTo(wd + x, r + y),
+						LineTo(wd + x, hgt - r + y),
+						CubicBezierTo(wd - r + x, hgt + y, wd + x, hgt + y),
+						LineTo(wd - r + x, hgt + y),
+						LineTo(r + x, hgt + y),
+						CubicBezierTo(x, hgt - r + y, x, hgt + y),
+						LineTo(x, hgt - r + y),
+						LineTo(x, r + y),
+						CubicBezierTo(r + x, y, x, y),
+						LineTo(r + x, y),
+						ClosePath()
+					]
+				)
+			}
+			GEllipse(x, y, wd, hgt): {
+				segs = 8;
+				angleStep = 45.0;
+				angleStepR = PI / 4.0;
+
+				currAngleR = ref 0.0;
+				angleMidR = ref 0.0;
+
+				graphicsPathInit = [MoveTo(x, y - hgt)];
+
+				lastX = ref 0.0;
+				lastY = ref 0.0;
+
+				concat(
+					acc,
+					for(graphicsPathInit, \gp -> (length(gp) < segs + length(graphicsPathInit)), \gp -> {
+						currAngleR := min(^currAngleR + angleStepR, 2.0 * PI);
+						angleMidR := ^currAngleR - angleStepR * 0.5;
+
+						lastX := x + sin(^currAngleR) * wd;
+						lastY := y - cos(^currAngleR) * hgt;
+
+						arrayPush(
+							gp,
+							CubicBezierTo(
+								^lastX,
+								^lastY,
+								x + sin(^angleMidR) * wd / cos(angleStepR * 0.5),
+								y - cos(^angleMidR) * hgt / cos(angleStepR * 0.5)
+							)
+						)
+					})
+				)
+			}
+			GCircle(x, y, r): {
+				segs = 8;
+				angleStep = 45.0;
+				angleStepR = PI / 4.0;
+
+				currAngleR = ref 0.0;
+				angleMidR = ref 0.0;
+
+				graphicsPathInit = [MoveTo(x, y - r)];
+
+				lastX = ref 0.0;
+				lastY = ref 0.0;
+
+				concat(
+					acc,
+					for(graphicsPathInit, \gp -> (length(gp) < segs + length(graphicsPathInit)), \gp -> {
+						currAngleR := min(^currAngleR + angleStepR, 2.0 * PI);
+						angleMidR := ^currAngleR - angleStepR * 0.5;
+
+						lastX := x + sin(^currAngleR) * r;
+						lastY := y - cos(^currAngleR) * r;
+
+						arrayPush(
+							gp,
+							CubicBezierTo(
+								^lastX,
+								^lastY,
+								x + sin(^angleMidR) * r / cos(angleStepR * 0.5),
+								y - cos(^angleMidR) * r / cos(angleStepR * 0.5)
+							)
+						)
+					})
+				)
+			}
+			default : arrayPush(acc, p);
+		}
+	)
 }
 
 // ---- SVG support ----
@@ -132,8 +243,8 @@ graphics2svg(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
 
 	// Render the path
 	needClose = ref false;
-	pathcommands = fold(path, "", \acc, op ->
-		switch(op : StaticGraphicOp) {
+	pathcommands = fold(path |> deconstructGraphicsPath, "", \acc, op ->
+		switch (op : StaticGraphicOp) {
 			MoveTo(x, y) : {
 				acc + "M" + d2s(x) + "," + d2s(y) + " ";
 			}
@@ -153,7 +264,7 @@ graphics2svg(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
 				needClose := false;
 				acc + "z";
 			}
-			default: acc; // TODO:
+			default: acc;
 		}
 	);
 	svgpath = "<path"
@@ -307,7 +418,7 @@ if (canvas.getContext) { var ctx = canvas.getContext('2d');
 	*/
 	// Render the path
 	needClose = ref false;
-	pathcommandsArray = map(path, \op ->
+	pathcommandsArray = map(path |> deconstructGraphicsPath, \op ->
 		switch(op : StaticGraphicOp) {
 			MoveTo(x, y) : {
 				"ctx.moveTo(" + d2s(x) + "," + d2s(y) + ");";
@@ -327,22 +438,6 @@ if (canvas.getContext) { var ctx = canvas.getContext('2d');
 			ClosePath(): {
 				needClose := false;
 				^closecode;
-			}
-			GRect(x, y, wd, hgt): {
-				needClose := false;
-				"ctx.rect(" + d2s(x) + "," + d2s(y) + "," + d2s(wd) + "," + d2s(hgt) + ");";
-			}
-			GRoundedRect(x, y, wd, hgt, __): {
-				needClose := false;
-				"ctx.rect(" + d2s(x) + "," + d2s(y) + "," + d2s(wd) + "," + d2s(hgt) + ");"; // TODO:
-			}
-			GEllipse(x, y, wd, hgt): {
-				needClose := false;
-				"ctx.ellipse(" + d2s(x) + "," + d2s(y) + "," + d2s(wd) + "," + d2s(hgt) + ", 0.0, 0.0, Math.PI * 2.0);";
-			}
-			GCircle(x, y, r): {
-				needClose := false;
-				"ctx.ellipse(" + d2s(x) + "," + d2s(y) + "," + d2s(r) + "," + d2s(r) + ", 0.0, 0.0, Math.PI * 2.0);";
 			}
 		}
 	);
@@ -494,7 +589,7 @@ graphics2vml(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
 	// Render the path
 //	<v:path v="m 0,0 l 100,0 l 100,100 l 0,100 x e"/>
 	needClose = ref false;
-	pathcommands = fold(path, "", \acc, op ->
+	pathcommands = fold(path |> deconstructGraphicsPath, "", \acc, op ->
 		switch(op : StaticGraphicOp) {
 			MoveTo(x, y) : {
 				acc + "m" + i2s(round(x)) + "," + i2s(round(y)) + " ";
@@ -515,7 +610,7 @@ graphics2vml(path : [StaticGraphicOp], style : [GraphicsStyle]) -> string {
 				needClose := false;
 				acc + "x e";
 			}
-			default: acc; // TODO:
+			default: acc;
 		}
 	);
 
