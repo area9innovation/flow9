@@ -255,6 +255,13 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 	fixSize = contains(style, MGridFixSize()) || true;
 	grabDelay = extractStructMany(style, MGrabDelay(0));
 	borders = extractStruct(style, MBorders(0.)).borders;
+	dropSpotM = tryExtractStruct(style, MReorderDropSpot(MEmpty()));
+	items1 =
+		eitherMap(
+			dropSpotM,
+			\__ -> map(items0, \it -> MReorderItem(it.content, concat([MDragging(make(false))], it.style))),
+			items0
+		);
 
 	uniqueIds = ref makeTree();
 	getUniqueIdByIndex = \index -> lookupTreeSet(uniqueIds, index, \__ -> makeTropicTag(manager));
@@ -262,9 +269,11 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 
 	onHover = generate(0, itemsLength, \__ -> make(-1));
 
+	sizes = generate(0, itemsLength, \__ -> make(zeroWH));
+
 	(\par -> {
 		items =
-			mapi(items0, \i, it -> \ -> {
+			mapi(items1, \i, it -> \ -> {
 				extractStruct(it.style, MReorderItemId(ref -1)).id := getUniqueIdByIndex(i);
 				itEn = extractStruct(it.style, MEnabled(const(true))).enabled;
 				isDragging = extractStruct(it.style, MDragging(make(false)));
@@ -277,8 +286,18 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 						par,
 						MDragDrop(
 							const(getUniqueIdByIndex(i)),
-							f,
-							concat([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
+							eitherMap(
+								dropSpotM,
+								\dropSpot -> {
+									MIfLazy(isDragging.dragging, \d -> if (d) {
+										MAvailable(dropSpot.spot, TSized(sizes[i]))
+									} else {
+										f
+									})
+								},
+								f
+							),
+							concat([MDraggingContent(f), MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
 						),
 						m2t
 					)
@@ -303,7 +322,6 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 				)
 			);
 
-		sizes = generate(0, itemsLength, \__ -> make(zeroWH));
 		onDrop = generate(0, itemsLength, \__ -> make(-1));
 		translates : [DynamicBehaviour<Point>] = generate(0, itemsLength, \__ -> make(zeroPoint));
 		orderIn = make(concat([itemsLength - 1], generate(0, itemsLength - 1, \i ->
@@ -313,7 +331,7 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 		prevSizes : ref [WidthHeight] = ref [];
 		animating = make(false);
 
-		itemVisible0 = map(items0, \it -> extractStruct(it.style, MReorderItemVisible(make(true))).visible);
+		itemVisible0 = map(items1, \it -> extractStruct(it.style, MReorderItemVisible(make(true))).visible);
 		itemVisibleB = fmerge(itemVisible0);
 		itemVisible = arrayPush(itemVisible0, fselect(itemVisibleB, FLift(\itV -> !contains(itV, true))));
 
@@ -369,7 +387,18 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 				if (i == itemsLength - 1)
 					TShowLazy(itemVisible[i], items[i])
 				else
-					TVisible(itemVisible[i], items[i]()),
+					eitherMap(
+						dropSpotM,
+						\dropSpot -> {
+							isDragging = extractStruct(items1[i].style, MDragging(make(false)));
+							TGroup2(
+								TVisible(itemVisible[i], items[i]()),
+								TShow(isDragging.dragging, m2t(dropSpot.spot, parent))
+								|> (\t -> TAvailable(t, TSized(sizes[i])))
+							)
+						},
+						TVisible(itemVisible[i], items[i]())
+					),
 				sizes[i]
 			)
 			|> (\f ->
