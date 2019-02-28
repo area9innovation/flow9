@@ -70,6 +70,15 @@ haXe based runtimes
 `java -jar compiler.jar --compilation_level ADVANCED_OPTIMIZATIONS --js test.js --js_output_file testopt.js`
 		</td>
 	</tr>
+	<tr>
+		<td>HTML</td>
+		<td>HTML5 via RenderSupportJsPixiHx.hx</td>
+		<td>(fi2html.flow)</td>
+		<td>program.html, made using `flowc1 html=program.js program.flow` </td>
+		<td>Compiles to bundled HTML file with JavaScript included.</td>
+		<td>Native JavaScript values.</td>
+		<td>May include additional JavaScript libraries if necessary.</td>
+	</tr>
 </table>
 
 C++ based runtimes

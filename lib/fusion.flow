@@ -166,6 +166,7 @@ export {
 	ftransistor(g : Transform<bool>, v: Transform<?>) -> Transform<?>;
 	fthrottle(v : Transform<?>, samplingRate : int) -> Transform<?>;
 	fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?>;
+	fthrottleNextFrame(v : Transform<?>) -> Transform<?>;
 	fselectWithLast(b : Transform<??>, fn : FFn2<??, ??, ?>) -> Transform<?>;
 	fdelay(v : Transform<?>, ms : int) -> Transform<?>;
 	fstall(v : Transform<?>, ms : int) -> Transform<?>;
@@ -606,8 +607,13 @@ fgetValue(t : Transform<?>) -> ? {
 			^b;
 		FSelect(b, fn, beh):
 			switch (beh) {
-				FInitialized(__, __, dyn): getValue(dyn);
-				FDestroyed(): instantiateFn(fn)(fgetValue(b));
+				FInitialized(__, __, dyn): cast(getValue(dyn) : flow -> ?);
+				FDestroyed(): {
+					ffn = instantiateFn(fn);
+					bb = fgetValue(b); 
+					ffn(bb);
+					// instantiateFn(fn)(fgetValue(b));
+				}
 			}
 		FSelect2(b1, b2, fn, beh):
 			switch (beh) {
@@ -1588,6 +1594,47 @@ fthrottle2(v : Transform<?>, maxDelta : int) -> Transform<?> {
 	}
 }
 
+fthrottleNextFrameTimer(pendingV : ref Maybe<?>, newV : DynamicBehaviour<?>) -> void {
+	deferUntilNextFrameRendered(\ -> {
+		maybeApply(
+			^pendingV,
+			\pv -> if (pv != getValue(newV)) {
+				next(newV, pv);
+				fthrottleNextFrameTimer(pendingV, newV)
+			} else {
+				pendingV := None();
+			}
+		);
+	});
+}
+
+fthrottleNextFrame(v : Transform<?>) -> Transform<?> {
+	switch (v) {
+		ConstBehaviour(__): v;
+		default: {
+			newV = make(fgetValue(v));
+			pendingV = ref None();
+
+			fsubselect(v, FLift(\v0 -> {
+				eitherFn(
+					^pendingV,
+					\pv -> {
+						pendingV := Some(v0);
+					},
+					\ -> {
+						pendingV := Some(v0);
+						next(newV, v0);
+
+						fthrottleNextFrameTimer(pendingV, newV);
+					}
+				);
+
+				newV
+			}))
+		}
+	}
+}
+
 fselectWithLast(b : Transform<??>, fn : FFn2<??, ??, ?>) -> Transform<?> {
 	ifn = instantiateFn2(fn);
 	lastV = ref None();
@@ -1670,7 +1717,7 @@ instantiateFn(fn : FFn<?, ??>) -> (?) -> ?? {
 		FNegate(): flow(\p : double -> -p);
 		FAddConst(v): flow(\p : double -> p + v);
 		FMulConst(v): flow(\p : double -> p * v);
-		FMaxConst(v): flow(\p -> max(p, v));
+		FMaxConst(v): flow(\p -> cast(flow(max(p, v)) : flow -> ??));
 		FMinConst(v): flow(\p -> min(p, v));
 		FEqual(v): flow(\p -> p == v);
 		FIf(t, e): flow(\c : bool -> if (c) t else e);

@@ -681,8 +681,10 @@ class NativeHx {
 			result[i] = keyvalue;
 			i++;
 		}
-
-		return result;
+		#if (js)
+		untyped __js__("if (typeof predefinedBundleParams != 'undefined') {result = mergePredefinedParams(result, predefinedBundleParams);}");
+		#end
+		  return result;
 	}
 
 	public static function getUrlParameter(name : String) : String {

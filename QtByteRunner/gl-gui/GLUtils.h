@@ -142,7 +142,7 @@ struct GLBoundingBox {
     void roundOut() {
         if (!isEmpty) {
             min_pt = glm::floor(min_pt);
-            max_pt = glm::ceil(max_pt);
+            max_pt = glm::floor(max_pt);
         }
     }
 

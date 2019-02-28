@@ -1,0 +1,200 @@
+import text/blueprint;
+import runtime;
+import sys/system;
+import formats/base64;
+import fs/filesystem;
+import tools/common/pathutil;
+import ds/list;
+import tools/flowc/backends/common;
+import tools/flowc/backends/html/fi2html_defines;
+
+export {
+	fi2MonolithicHTML(
+		cfg0 : FiHTMLConfig,
+		callback : () -> void) -> void;
+}
+
+makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams) {
+// ****************************************************************
+// Please pay attention!
+// It is very important to have variable 'htmlBundle' defined
+// in the <script>.
+// This variable is used to determine if we run html bundle
+// or regular js file. Decision is made in www/js/jscommon.js
+// ****************************************************************
+
+Cons("<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en'>
+  <head> 
+    <title>", Cons(title, Cons("</title>
+
+    <meta http-equiv='X-UA-Compatible' content='IE=11' />
+    <meta http-equiv='content-type' content='application/xhtml+xml; charset=utf-8' />
+    <meta http-equiv='cache-control' content='no-cache'/>
+    <!-- disable user scaling on mobile devices -->
+    <meta name='viewport' content='initial-scale=1.0,maximum-scale=1.0,user-scalable=no' />
+    <meta name='apple-mobile-web-app-capable' content='yes'/>
+    <!-- Suppress browser request for favicon.ico -->
+    <link rel='shortcut icon' type='image/x-icon' href='data:image/x-icon;,'/>
+
+    <script>
+    var htmlBundle = true;", Cons(predefinedParams, Cons("
+    var favIcon ='", Cons(lnFavicon, Cons("';
+    var docHead = document.getElementsByTagName('head')[0];       
+    var newLink = document.createElement('link');
+    newLink.rel = 'shortcut icon';
+    newLink.href = 'data:image/png;base64,'+favIcon;
+    docHead.appendChild(newLink);
+    </script>
+  </head>
+  <body style=\"background-image: url('data:image/png;base64,", Cons(bgimage, Cons("'); background-position: center top; background-repeat: no-repeat; zoom: 1;\">
+
+",
+Cons(lnCss, Cons(scripts, Cons("
+
+</body>
+</html>
+", makeList())))))))))))) |> reverseList |> list2string;
+}
+
+
+includeScript(cfg : FiHTMLConfig, name: string)  {
+	fcVerbose(cfg, 1, "Linker: reading " + name);
+	content = getFileContent(findFlowPath(name, false, cfg.includes, cfg.workingDir));
+	
+	fcVerbose(cfg, 1, "Linker: blueprinting " + name + "...");
+	"
+<!-- " + name + " -->
+<script type='text/javascript'>
+  <!--//--><![CDATA[//><!--
+" + content + "
+//--><!]]>
+</script>
+";
+}
+
+includeCss(cfg : FiHTMLConfig, name: string) -> string {
+	fcVerbose(cfg, 1, "Linker: reading " + name + "...");
+	content = getFileContent(findFlowPath(name, false, cfg.includes, cfg.workingDir));
+	
+	fcVerbose(cfg, 1, "Linker: blueprinting " + name + "...");
+"
+<style type='text/css'>
+	<!--/*--><![CDATA[/*><!--*/
+" + content + "
+	/*]]>*/-->
+</style>
+";
+}
+
+includeImage(cfg : FiHTMLConfig, name: string) {
+	fcVerbose(cfg, 1, "Linker: reading " + name + "...");
+	// Pay attention, getFileContentBinary() used instead of getFileContent()
+	strGlue(map(strSplit(encodeBase64(getFileContentBinary(findFlowPath(name, false, cfg.includes, cfg.workingDir))), fromCharCode(10)), \e -> {trim2(e, "\u000d")}), "");
+}
+
+filesAvailable(cfg : FiHTMLConfig) {
+	fcVerbose(cfg, 0, "Checking files availability");
+	fileList = arrayPush(concat3(cfg.scripts, cfg.additionalScripts, [fiHTMLFavIcon, cfg.splash, fiHTMLCss]), cfg.jsfile);
+	r = fold(fileList, true, \acc, e -> {
+		fe = findFlowPath(e, false, cfg.includes, cfg.workingDir);
+		fe1 = fileExists(fe);
+		fcVerbose(cfg, 0, "Found '" + e + "' at: " + fe);
+		if (!fe1) {
+			println("!Not found '" + e + "' during linking...");
+		}
+		acc && fe1;
+	});
+	fcVerbose(cfg, 0, "All files available: " + toString(r));
+	r;
+}
+
+fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
+
+	cfg = FiHTMLConfig(
+		cfg0.flowfile,
+		cfg0.outputfile,
+		cfg0.includes,
+		cfg0.jsfile,
+		cfg0.verbose,
+		cfg0.title,
+		cfg0.splash,
+		cfg0.minify,
+		if (cfg0.scripts == []) fiHTMLScriptList else cfg0.scripts,
+		cfg0.additionalScripts,
+		cfg0.predefinedParams,
+		cfg0.workingDir
+	);
+
+	doLink = \ -> {
+		fcVerbose(cfg, 0, "Start linking " + cfg.outputfile);
+		if (filesAvailable(cfg)) {
+			scripts = strGlue(map(arrayPush(concat(cfg.scripts, cfg.additionalScripts), cfg.jsfile), \e -> {
+				fcVerbose(cfg, 0, "Preparing file '" + e + "' for linking.");
+				includeScript(cfg, e)
+			}), "");
+
+			predefinedParams =
+				if (cfg.predefinedParams == []) {
+					""
+				} else {
+					"\n    var predefinedBundleParams=[" +
+					strGlue(map(cfg.predefinedParams, \e -> "[\"" + e.first + "\", \"" + e.second + "\"]"), ",") +
+					"];"
+				}
+
+			fcVerbose(cfg, 0, "Assembling...");
+			res = makeHtml(
+				cfg.title,
+				includeImage(cfg, fiHTMLFavIcon),
+				includeImage(cfg, cfg.splash),
+				scripts,
+				includeCss(cfg, fiHTMLCss),
+				predefinedParams
+			);
+			
+			fcVerbose(cfg, 1, "Saving...");
+			setFileContent(cfg.outputfile, res);
+			fcVerbose(cfg, 0, "File " + cfg.outputfile + " linked.");
+		} else {
+			println("Linking monolithic file " + cfg.outputfile + " failed.");
+			// If we already in verbose mode, do not show this help line.
+			if (cfg.verbose == 0)
+				println("Run once again with verbose=1 or verbose=2 to see which file missed.");
+		}
+	}
+
+	file = cfg.outputfile;
+
+	if (cfg.minify) {
+			// This branch for Unix-based systems
+			minify_params = [cfg.jsfile, "-o", cfg.jsfile];
+			startProcess("uglifyjs", minify_params, ".", "",
+				\c, o, e -> {
+					fcVerbose(cfg, 0, "Running 'uglifyjs' for " + cfg.jsfile);
+					if (c != 0) {
+						// Windows version of js-beautify utility named differently
+						startProcess("uglifyjs.cmd", minify_params, ".", "",
+							\c1, o1, e1 -> {
+								fcVerbose(cfg, 0, "Trying 'uglifyjs.cmd' for " + cfg.jsfile);
+								doLink();
+								callback();
+								if (c1 != 0) {
+									println("uglifyjs.cmd failed.");
+									println(e1);
+									println(o1);
+									println(c1);
+								}
+							}
+						);
+					} else {
+						doLink();
+						callback();
+					}
+				}
+			);
+		} else {
+			doLink();
+			callback();
+		}
+}
+
