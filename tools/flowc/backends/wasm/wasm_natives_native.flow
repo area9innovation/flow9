@@ -91,10 +91,6 @@ export {
 	fromCharCode(int) -> int;
 	getCharCodeAt(int, int) -> int;
 
-	// those are placeholders for isXX natives that actually work in compile time
-	wasm_true1_ref(int) -> bool;
-	wasm_false1_ref(int) -> bool;
-	
 	//////////////////////////////////////////////////////////////////////////////
 	// Natives from runtime.flow
 	
@@ -152,18 +148,11 @@ bitUshr(a : int, b : int) -> int {
 }
 
 isArray(v : int) -> bool {
-	res = 9 == wasm_i32_load8_u(wasm_i32_load(v + 4));
-	wasm_dec_refcnt(v);
+	// TODO: fix - this is not actually true for arrays.. 
+	td = wasm_i32_load(v + 4);
+	res = 9 == wasm_i32_load8_u(td);
+	wasm_dec_refcnt(v, td);
 	res;
-}
-
-wasm_true1_ref(v : int) -> bool {
-	wasm_dec_refcnt(v);
-	true;
-}
-wasm_false1_ref(v: int) -> bool {
-	wasm_dec_refcnt(v);
-	false;
 }
 
 wasm_debug_ensure_flow_type(addr : int) -> void {
@@ -249,14 +238,14 @@ makeStructValue(structname : int, args : int, default_value : int) -> int {
 		// printi(wasm_i32_load(struct + 12));
 		// printi(wasm_i32_load(struct + 16));
 		// printi(wasm_i32_load(struct + 20));
-		wasm_dec_refcnt(structname);
-		wasm_dec_refcnt(args);
-		wasm_dec_refcnt(default_value);
+		wasm_dec_refcnt(structname, wasm_string_type_id());
+		wasm_dec_refcnt(args, wasm_array_flow_type_id());
+		wasm_dec_refcnt(default_value, wasm_flow_type_id());
 
 		wasm_alloc_flow_i32_ref(struct, 12, typedesc)
 	} else {
-		wasm_dec_refcnt(structname);
-		wasm_dec_refcnt(args);
+		wasm_dec_refcnt(structname, wasm_string_type_id());
+		wasm_dec_refcnt(args, wasm_flow_type_id());
 
 		default_value
 	}
@@ -264,8 +253,9 @@ makeStructValue(structname : int, args : int, default_value : int) -> int {
 
 // both parameters are pointers
 isSameObj(v1 : int, v2 : int) -> bool {
-	wasm_dec_refcnt(v1);
-	wasm_dec_refcnt(v2);
+	// TODO: fix this
+	wasm_dec_refcnt(v1, wasm_native_type_id());
+	wasm_dec_refcnt(v2, wasm_native_type_id());
 
 	v1 == v2
 }
@@ -325,7 +315,7 @@ toString2(v : int) -> int {
 		}
 	}
 
-	wasm_dec_refcnt(v);
+	wasm_dec_refcnt(v, type_addr);
 	wasm_inc_refcnt_passthru(res)	// we shall increase the refcount for function return value
 }
 
@@ -367,12 +357,13 @@ list2string(v : int) -> int {
 	wasm_i32_store(str, 1); // initial refcnt is 1
 	wasm_i32_store(str + 4, len);
 	wasm_copy_strings_from_list(str + 8 + len, v);
-	wasm_dec_refcnt(v);
+	wasm_dec_refcnt(v, wasm_string_type_id());
 	str
 }
 
 wasm_length(arr : int) -> int {
 	res = do_wasm_length(arr);
+	// TODO: fix type
 	wasm_dec_refcnt(arr);
 	res;
 }
@@ -389,7 +380,7 @@ list2array(l : int) -> int {
 	if (n > 0) {
 		wasm_do_copy_list_to_array(arr + 8 + (n-1) * elemSize, l, elemSize, type);
 	}
-	wasm_dec_refcnt(l);
+	wasm_dec_refcnt(l, wasm_i32_load(l + 4));
 	arr
 }
 
@@ -453,10 +444,10 @@ wasm_find_arg_address(arg_pnt : int, arg_idx : int) -> int {
 // f : int = function address
 // args : int = number of args to function.
 // ret : bool = if true get return type, else elemtype of last arg
-// returns descriptor bytes for last arg in function f, or ret type. e.g. 2 = int, 3 = double
+// returns descriptor address for last arg in function f, or ret type. e.g. 2 = int, 3 = double
 // We can add an index argument to this function, if we ever want to get the elemtype of an element
 // that is not the last, or return type.
-wasm_get_argtype(f : int, args : int, ret : bool) -> int {
+wasm_get_arg_td(f : int, arg_idx : int) -> int {
 	funcDescr = wasm_struct_nfields_address(f) + 1 + 2;
 
 	if (wasm_i32_load8_u(funcDescr + 0) != 12) {
@@ -466,14 +457,17 @@ wasm_get_argtype(f : int, args : int, ret : bool) -> int {
 	}
 	nargs = wasm_i32_load8_u(funcDescr + 1);
 
-	if (nargs != args) {
+	/*if (nargs != args) {
 		prints("nargs != args");
 		wasm_unreachable();
-	}
+	}*/
 	
-	arg_idx = if (ret) args else args - 1;
-	arg_address = wasm_find_arg_address(funcDescr + 1 + 1, arg_idx);
+	wasm_find_arg_address(funcDescr + 1 + 1, arg_idx);
+}
 
+wasm_get_argtype(f : int, args : int, ret : bool) -> int {
+	arg_idx = if (ret) args else args - 1;
+	arg_address = wasm_get_arg_td(f, arg_idx);
 	elemType = wasm_i32_load8_u(arg_address);
 
 	if (!(
@@ -526,8 +520,8 @@ wasm_iter(arr : int, f : int, isIteri : bool) -> void {
 		wasm_do_iter(arr + 8, f, faddr, elemSize, 0, n, isIteri, heap);
 	}
 
-	wasm_dec_refcnt(arr);
-	wasm_dec_refcnt(f);
+	wasm_dec_refcnt(arr, wasm_get_arg_td(f, 0));
+	wasm_dec_refcnt(f, wasm_get_arg_td());
 }
 
 wasm_do_iter_call(idx : int, v : ?, f : int, faddr : int, isIteri : bool) -> void {

@@ -269,6 +269,8 @@ fiWasmBuildNativeFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type
 		"i32.const " + i2s(lookupTreeDef(context.typeTable.typesMap, WasmTypeFlow(), 0));
 	} else if (nativeName == "wasm_compiler.native_type_id") { 
 		"i32.const " + i2s(lookupTreeDef(context.typeTable.typesMap, WasmTypeNative(), 0));
+	} else if (nativeName == "wasm_compiler.array_flow_type_id") { 
+		"i32.const " + i2s(lookupTreeDef(context.typeTable.typesMap, WasmTypeArray(WasmTypeFlow()), 0));
 	} else {
 		name = if (nativeDec.wrap.name != "") {
 			nativeDec.wrap.name;
@@ -701,12 +703,10 @@ compileWasmCallPrimCmp(cmp0 : string, type0 : WasmTypeDescriptor, context) -> Wa
 		WasmTypeFlow():					makeCall("$wasm_compare_flow");
 		WasmTypeArray(at): {
 			atype = compileWasmType(at, true);
+			// Make sure to include the offset to the type descriptor table
+			typeDescriptor = fiWasmGetTypeDescriptor(context, at);
 			Wasm2Seq([
-				if (strContains(atype, "_ref")) {
-					typeDescriptor = fiWasmGetTypeDescriptor(context, at);
-					// Make sure to include the offset to the type descriptor table
-					Wasm2I32Const(typeDescriptor)
-				} else Wasm2Void(),
+				Wasm2I32Const(typeDescriptor),
 				makeCall("$wasm_compare_arrays_" + atype)
 			])
 		}
@@ -718,6 +718,9 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 	doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	args1 = map(es, \e -> compileWasmExp2(acc, e, context, doinline, locals));
 	argsAppend = \cmd -> Wasm2Seq(concat3(args1, destructors, [cmd]));
+	argsAppendTD = \cmd -> Wasm2Seq(concat3(args1, destructors, [
+		Wasm2I32Const(fiWasmGetTypeDescriptor(context, wasmExpType(es[0]))), cmd
+	]));
 	type0 = if (length(es) > 0) wasmExpType(es[0]) else WasmTypeVoid();
 	buildCmp = \cmp0 : string -> {
 		compileWasmCallPrimCmp(cmp0, type0, context) |> argsAppend
@@ -804,7 +807,7 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 			})), destructors))
 		}
 		FcIndexPrim(): {
-			argsAppend(Wasm2Call("$wasm_get_array_" + compileWasmType(type, true) + " "))
+			argsAppendTD(Wasm2Call("$wasm_get_array_" + compileWasmType(type, true) + " "))
 		}
 		FcDerefPrim(): {
 			t = cast(type0 : WasmTypeDescriptor -> WasmTypeRef);
@@ -843,7 +846,7 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 		FcSetMutablePrim(name): {
 			cmd = switch (type0) {
 				WasmTypeStruct(sname, fields): {
-					makeWasmSetMutableField(fields, name, args1, type);
+					makeWasmSetMutableField(context, fields, name, args1, type);
 				}
 				default: error("mutable wrong type");
 			}
@@ -926,7 +929,7 @@ makeWasmUnionField(typeTable : FiWasmTypeTable, unionCmd : Wasm2Cmd, type : Wasm
 	}
 }
 
-makeWasmSetMutableField(sargs : [WasmStructField], field : string, args : [Wasm2Cmd], type : WasmTypeDescriptor) -> Wasm2Cmd {
+makeWasmSetMutableField(context : WasmContext, sargs : [WasmStructField], field : string, args : [Wasm2Cmd], type : WasmTypeDescriptor) -> Wasm2Cmd {
 	argSizes = map(sargs, \arg -> 4 * fiWasmTypeStackSize(arg.type));
 	offset = -foldi(sargs, 8, \i, acc, arg -> {
 		if (acc < 0) acc
@@ -935,6 +938,7 @@ makeWasmSetMutableField(sargs : [WasmStructField], field : string, args : [Wasm2
 	});
 	Wasm2Seq(concat(args, [
 		Wasm2I32Const(offset),
+		if (wasmTypeUsesWasmHeap(type)) Wasm2I32Const(fiWasmGetTypeDescriptor(context, type)) else Wasm2Void(),
 		Wasm2Call("$wasm_set_mutable_field_" + compileWasmType(type, true))
 	]))
 }
