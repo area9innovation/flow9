@@ -71,8 +71,11 @@ public class Utils {
     // it will be easier to filter with adb or in Eclipse
     public static final String LOG_TAG = "dk.area9.flowrunner";
     private static final BasicHttpContext commonHttpContext = new BasicHttpContext();
-    protected static boolean httpProfiling = false;     
-    
+    protected static boolean httpProfiling = false;
+
+    public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+    public static final boolean isFileProviderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
+
     static {
         BasicCookieStore cookieStore = new BasicCookieStore();
         commonHttpContext.setAttribute(ClientContext.COOKIE_STORE, cookieStore);
@@ -535,7 +538,7 @@ public class Utils {
     }
 
     public static Uri fileUriToContentUri(Context context, File file) {
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        if(Utils.isFileProviderSupported) {
             return FileProvider.getUriForFile(context, "dk.area9.flowrunner.fileprovider", file);
         }
         return Uri.fromFile(file);

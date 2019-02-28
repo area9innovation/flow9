@@ -230,7 +230,7 @@ public class FlowCameraAPI {
             }
         };
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+        if (Utils.isRequestPermissionsSupported &&
             !Utils.checkAndRequestPermissions((FlowRunnerActivity)context, new String[] {
                     Manifest.permission.CAMERA,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -267,7 +267,7 @@ public class FlowCameraAPI {
             }
         };
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+        if (Utils.isRequestPermissionsSupported &&
                 !Utils.checkAndRequestPermissions((FlowRunnerActivity)context, new String[] {
                         Manifest.permission.CAMERA,
                         Manifest.permission.RECORD_AUDIO,
