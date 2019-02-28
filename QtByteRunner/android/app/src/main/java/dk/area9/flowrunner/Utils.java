@@ -40,7 +40,6 @@ import org.apache.http.params.BasicHttpParams;
 import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.HTTP;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
@@ -74,7 +73,7 @@ public class Utils {
     protected static boolean httpProfiling = false;
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
-    public static final boolean isFileProviderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
+    public static final boolean isFileProviderRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
 
     static {
         BasicCookieStore cookieStore = new BasicCookieStore();
@@ -538,7 +537,7 @@ public class Utils {
     }
 
     public static Uri fileUriToContentUri(Context context, File file) {
-        if(Utils.isFileProviderSupported) {
+        if(Utils.isFileProviderRequired) {
             return FileProvider.getUriForFile(context, "dk.area9.flowrunner.fileprovider", file);
         }
         return Uri.fromFile(file);
