@@ -1,5 +1,6 @@
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
+import pixi.core.display.Bounds;
 
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
@@ -110,28 +111,16 @@ class DisplayObjectHelper {
 		}
 	}
 
-	public static inline function updateAccessDisplay(clip : DisplayObject) : Void {
-		if (untyped clip.accessWidget != null) {
-			untyped clip.accessWidget.updateDisplay();
- 		} else if (untyped clip.children != null) {
- 			var children : Array<Dynamic> = untyped clip.children;
-
-			for (child in children) {
-				updateAccessDisplay(child);
-			}
- 		}
-	}
-
 	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
 		var prevClipVisible = getClipVisible(clip);
+		var prevClipWorldVisible = getClipWorldVisible(clip);
+
 		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
 		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
 
 		if (clip.interactive && !getClipWorldVisible(clip)) {
 			clip.emit("pointerout");
 		}
-
-		updateAccess = RenderSupportJSPixi.AccessibilityEnabled && updateAccess && prevClipVisible != getClipVisible(clip);
 
 		var children : Array<Dynamic> = untyped clip.children;
 		if (children != null) {
@@ -142,9 +131,9 @@ class DisplayObjectHelper {
 			}
 		}
 
-		if (updateAccess) {
-			updateAccessDisplay(clip);
-		}
+		if (untyped clip.accessWidget != null) {
+			untyped clip.accessWidget.updateDisplay();
+ 		}
 	}
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
@@ -154,6 +143,7 @@ class DisplayObjectHelper {
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
+			untyped clip.transformChanged = true;
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
@@ -300,6 +290,11 @@ class DisplayObjectHelper {
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 
+		invalidateStage(clip);
+	}
+
+	public static inline function setClipViewBounds(clip : Container, bounds : Bounds) : Void {
+		untyped clip.viewBounds = bounds;
 		invalidateStage(clip);
 	}
 

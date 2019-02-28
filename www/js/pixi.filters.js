@@ -271,8 +271,10 @@ PIXI.Container.prototype._calculateFilterBounds = function ()
 	}
 }
 
-PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender = true)
+PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender)
 {
+	skipRender = skipRender !== undefined ? skipRender : true;
+
 	if (!this.visible || this.alpha <= 0 || !this.renderable)
 	{
 		this.skipRender = true;

@@ -87,33 +87,11 @@ class TextField extends NativeWidgetClip {
 	}
 
 	public override function updateNativeWidget() {
-		if (getClipVisible()) {
-			var transform = !Platform.isIE && nativeWidget.parentNode != null && nativeWidget.parentNode.style.transform != "" &&
-				nativeWidget.parentNode.clip != null ? worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
+		super.updateNativeWidget();
 
-			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
-			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
-
-			if (Platform.isIE) {
-				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-					+ 0 + "," + 0 + ")";
-
-				nativeWidget.style.left = untyped "" + tx + "px";
-				nativeWidget.style.top = untyped "" + ty + "px";
-			} else {
-				nativeWidget.style.transform = "matrix(" + transform.a + "," + transform.b + "," + transform.c + "," + transform.d + ","
-					+ tx + "," + ty + ")";
-			}
-
-			nativeWidget.style.width = untyped "" + getWidth() + "px";
-			nativeWidget.style.height = untyped "" + getHeight() + "px";
-
-			if (isInput() && (!shouldPreventFromFocus || !Platform.isEdge)) {
-				nativeWidget.style.opacity = preFocus && multiline && Platform.isEdge ? 1 : isNativeWidgetShown() ? fillOpacity * worldAlpha : 0;
-				nativeWidget.style.display = "block";
-			} else {
-				nativeWidget.style.display = "none";
-			}
+		if (getClipVisible() && isInput() && (!shouldPreventFromFocus || !Platform.isEdge)) {
+			nativeWidget.style.opacity = Platform.isEdge && preFocus && multiline ? 1 : isNativeWidgetShown() ? fillOpacity * worldAlpha : 0;
+			nativeWidget.style.display = "block";
 		} else {
 			nativeWidget.style.display = "none";
 		}
@@ -366,17 +344,17 @@ class TextField extends NativeWidgetClip {
 		updateNativeWidgetStyle();
 	}
 
-	public function setWordWrap(wordWrap : Bool) : Void {
+	public  function setWordWrap(wordWrap : Bool) : Void {
 		this.wordWrap = wordWrap;
 		updateNativeWidgetStyle();
 	}
 
-	public function setWidth(fieldWidth : Float) : Void {
+	public override function setWidth(fieldWidth : Float) : Void {
 		this.fieldWidth = fieldWidth;
 		updateNativeWidgetStyle();
 	}
 
-	public function setHeight(fieldHeight : Float) : Void {
+	public override function setHeight(fieldHeight : Float) : Void {
 		this.fieldHeight = fieldHeight;
 		updateNativeWidgetStyle();
 	}

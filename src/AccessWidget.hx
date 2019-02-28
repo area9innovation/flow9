@@ -128,9 +128,9 @@ class AccessWidgetTree {
 
 		if (previousZOrder != zorder) {
 			if (parent == null) {
-				updateDisplay();
+				updateDisplay(true);
 			} else if (!parent.updateZorder()) {
-				updateDisplay();
+				updateDisplay(true);
 			}
 
 			return true;
@@ -139,10 +139,14 @@ class AccessWidgetTree {
 		}
 	}
 
-	public function updateDisplay() : Void {
+	public function updateDisplay(updateChildren : Bool = false) : Void {
 		if (accessWidget != null) {
 			if (accessWidget.clip.parent == null) {
 				return;
+			}
+
+			if (untyped accessWidget.clip.nativeWidget != null) {
+				untyped accessWidget.clip.updateNativeWidget();
 			}
 
 			if (accessWidget.element != null) {
@@ -160,8 +164,10 @@ class AccessWidgetTree {
 			}
 		}
 
-		for (child in children) {
-			child.updateDisplay();
+		if (updateChildren) {
+			for (child in children) {
+				child.updateDisplay();
+			}
 		}
 	}
 

@@ -6,6 +6,7 @@ import js.html.IFrameElement;
 
 import pixi.core.renderers.SystemRenderer;
 import pixi.core.display.DisplayObject;
+import pixi.core.display.Bounds;
 import pixi.core.renderers.Detector;
 import pixi.core.renderers.canvas.CanvasRenderer;
 import pixi.core.renderers.webgl.WebGLRenderer;
@@ -33,7 +34,7 @@ class RenderSupportJSPixi {
 	private static var AnimationFrameId : Int = -1;
 
 	// Renderer options
-	public static var AccessibilityEnabled : Bool = false;
+	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	private static var EnableFocusFrame : Bool = false;
 	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
@@ -638,7 +639,7 @@ class RenderSupportJSPixi {
 				return properties;
 			};
 
-			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged = false) {
+			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged) {
 				if (this.transformChanged || transformChanged) {
 					this.transform.updateTransform(this.parent.transform);
 					// multiply the alphas..
@@ -650,7 +651,9 @@ class RenderSupportJSPixi {
 				}
 			};
 
-			PIXI.Container.prototype.renderCanvas = function(renderer, skipRender = true) {
+			PIXI.Container.prototype.renderCanvas = function(renderer, skipRender) {
+				skipRender = skipRender !== undefined ? skipRender : true;
+
 				if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
 				{
 					this.skipRender = true;
@@ -693,7 +696,7 @@ class RenderSupportJSPixi {
 				this.skipRender = true;
 			};
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged = false) {
+			PIXI.Container.prototype.updateTransform = function(transformChanged) {
 				transformChanged = transformChanged || this.transformChanged;
 
 				if (transformChanged)
@@ -705,9 +708,9 @@ class RenderSupportJSPixi {
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
-					if (this.updateNativeWidget && this.nativeWidget)
+					if (this.accessWidget != null && this.nativeWidget)
 					{
-						this.updateNativeWidget();
+						this.accessWidget.updateDisplay();
 					}
 
 					this.transformChanged = false;
@@ -830,9 +833,6 @@ class RenderSupportJSPixi {
 
 		createPixiRenderer();
 
-		// Add specified Firefox property to say the canvas will never need to be transparent
-		if (Platform.isFirefox)
-			untyped PixiRenderer.view.mozOpaque = true;
 		PixiRenderer.view.style.zIndex = RenderSupportJSPixi.zIndexValues.canvas;
 		Browser.document.body.appendChild(PixiRenderer.view);
 
@@ -868,6 +868,7 @@ class RenderSupportJSPixi {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener("resize", onBrowserWindowResize, false);
 		Browser.window.addEventListener('message', receiveWindowMessage); // Messages from crossdomaid iframes
+		Browser.window.addEventListener("focus", PixiStage.invalidateStage, false);
 		Browser.window.addEventListener("focus", requestAnimationFrame, false);
 	}
 
@@ -940,8 +941,6 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function onBrowserWindowResize(e : Dynamic) : Void {
-		PixiStage.invalidateStage();
-
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (backingStoreRatio != PixiRenderer.resolution) {
@@ -971,6 +970,8 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
+		untyped PixiStage.transformChanged = true;
+		PixiStage.invalidateStage();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		PixiRenderer.render(PixiStage, null, true);
@@ -1277,9 +1278,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function animate(timestamp : Float) {
-		if (AccessibilityEnabled) {
-			AccessWidget.updateAccessTree();
-		}
+		AccessWidget.updateAccessTree();
 
 		PixiStage.emit("drawframe", timestamp);
 
@@ -1637,7 +1636,7 @@ class RenderSupportJSPixi {
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		if (untyped clip.setFocus != null) {
 			untyped clip.setFocus(focus);
-		} else if (AccessibilityEnabled) {
+		} else {
 			var accessWidget = findAccessibleChild(clip);
 			if (accessWidget == null) return;
 			// check if found element accepts focus.
@@ -1649,7 +1648,7 @@ class RenderSupportJSPixi {
 			}
 
 			if (accessWidget != null) {
-				if (AccessibilityEnabled && accessWidget.parentNode == null) {
+				if (accessWidget.parentNode == null) {
 					AccessWidget.updateAccessTree();
 				}
 
@@ -1811,6 +1810,25 @@ class RenderSupportJSPixi {
 
 	public static function setClipMask(clip : FlowContainer, mask : Dynamic) : Void {
 		clip.setClipMask(mask);
+	}
+
+	public static function setClipViewBounds(clip : FlowContainer, minX : Float, minY : Float, maxX : Float, maxY : Float) : Void {
+		var bounds = new Bounds();
+
+		bounds.minX = minX;
+		bounds.minY = minY;
+		bounds.maxX = maxX;
+		bounds.maxY = maxY;
+
+		clip.setClipViewBounds(bounds);
+	}
+
+	public static function setClipWidth(clip : NativeWidgetClip, width : Float) : Void {
+		clip.setWidth(width);
+	}
+
+	public static function setClipHeight(clip : NativeWidgetClip, height : Float) : Void {
+		clip.setHeight(height);
 	}
 
 	public static function getStage() : Dynamic {

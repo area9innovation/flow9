@@ -1,4 +1,5 @@
 import js.Browser;
+import pixi.core.display.Bounds;
 
 using DisplayObjectHelper;
 
@@ -6,10 +7,14 @@ class NativeWidgetClip extends FlowContainer {
 	private var nativeWidget : Dynamic;
 	private var accessWidget : AccessWidget;
 	private var parentNode : Dynamic;
+	private var viewBounds : Bounds;
+
+	private var widgetWidth : Float = 0.0;
+	private var widgetHeight : Float = 0.0;
 
 	// Returns metrics to set correct native widget size
-	private function getWidth() : Float { return 0.0; }
-	private function getHeight() : Float { return 0.0; }
+	private function getWidth() : Float { return widgetWidth; }
+	private function getHeight() : Float { return widgetHeight; }
 
 	public function updateNativeWidget() {
 		// Set actual HTML node metrics, opacity etc.
@@ -33,6 +38,24 @@ class NativeWidgetClip extends FlowContainer {
 
 			nativeWidget.style.width = untyped "" + getWidth() + "px";
 			nativeWidget.style.height = untyped "" + getHeight() + "px";
+
+			if (viewBounds != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${viewBounds.minY}px,
+						${viewBounds.maxX}px,
+						${viewBounds.maxY}px,
+						${viewBounds.minX}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = 'polygon(
+						${viewBounds.minX}px ${viewBounds.minY}px,
+						${viewBounds.minX}px ${viewBounds.maxY}px,
+						${viewBounds.maxX}px ${viewBounds.maxY}px,
+						${viewBounds.maxX}px ${viewBounds.minY}px
+					)';
+				}
+			}
 
 			nativeWidget.style.opacity = worldAlpha;
 			nativeWidget.style.display = "block";
@@ -105,5 +128,15 @@ class NativeWidgetClip extends FlowContainer {
 		if (nativeWidget != null) {
 			RenderSupportJSPixi.exitFullScreen(nativeWidget);
 		}
+	}
+
+	public function setWidth(widgetWidth : Float) : Void {
+		this.widgetWidth = widgetWidth;
+		updateNativeWidget();
+	}
+
+	public function setHeight(widgetHeight : Float) : Void {
+		this.widgetHeight = widgetHeight;
+		updateNativeWidget();
 	}
 }
