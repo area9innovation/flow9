@@ -369,9 +369,9 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 			for (auto outLine : outLines) {
 				if (fileLineRegex.exactMatch(outLine)) {
 					QString file = fileLineRegex.cap(1);
-            		int line = fileLineRegex.cap(2).toInt();
+            		int line = fileLineRegex.cap(2).toInt() - 1;
             		if (line > -1) {
-            			gotoLocation(file, line);
+            			flowView_.slotGotoLocation(file, line);
             		}
             		break;
 				}
@@ -399,16 +399,6 @@ void FlowManager::slotCompileFinished(int exitCode, QProcess::ExitStatus status)
 			break;
 		}
 		case LOOKUP_USES:
-			/*static QRegExp fileLineRegex(QLatin1String("([^:]+):([0-9]*)[: ].*"));
-			QStringList outLines = internal_state.output.split(QLatin1Char('\n'));
-			for (auto outLine : outLines) {
-				if (fileLineRegex.exactMatch(outLine)) {
-					QString file = fileLineRegex.cap(1);
-            		int line = fileLineRegex.cap(2).toInt() - 1;
-            		gotoLocation(file, line);
-            		break;
-				}
-			}*/
 			break;
 		case RENAMING: {
 			QStringList state = internal_state.data.value<QString>().split(QLatin1Char(':'));
@@ -493,20 +483,5 @@ bool FlowManager::makeGlobalConfig(const QString& root) const {
 		return true;
 	}
 }
-
-void FlowManager::gotoLocation(const QString& path, const int line, const int column) {
-	if (!QFile::exists(path)) {
-		KMessageBox::sorry(0, i18n("File '") + path + i18n("' doesn't exist"));
-        return;
-    }
-	if (KTextEditor::View* view = mainWindow_->openUrl(QUrl::fromLocalFile(path))) {
-		mainWindow_->activateView(view->document());
-		mainWindow_->activeView()->setCursorPosition(KTextEditor::Cursor (line, column));
-		mainWindow_->activeView()->setFocus();
-	} else {
-		KMessageBox::sorry(0, i18n ("Cannot open ") + path);
-	}
-}
-
 
 }
