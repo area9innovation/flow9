@@ -276,8 +276,9 @@ fiWasmBuildNativeFunctionCall(acc : WasmAcc, func: string, args: [WasmExp], type
 			nativeDec.wrap.name;
 		} else {
 			nativeDec.decl.name;
-		}
+		};
 
+		(if (startsWith(name, "wasm_typed_")) "i32.const " + i2s(lookupTreeDef(context.typeTable.typesMap, type, 0)) + "\n" else "") + 
 		"call $" + name;
 	}
 }
@@ -295,9 +296,17 @@ fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, co
 	if (containsKeyTree(context.functions.functionIndices, func)) {
 		callCmd = Wasm2Call("$" + func);
 		Wasm2Seq(concat(destructors,
-			if (startsWith(func, "wasm_"))
+			if (startsWith(func, "wasm_typed_"))
+				// call function in runtime library directly, no dummy closure but function type
+				[
+					Wasm2I32Const(lookupTreeDef(context.typeTable.typesMap, type, 0)), 
+					callCmd
+				] 
+			else if (startsWith(func, "wasm_"))
 				// call function in runtime library directly, no dummy closure
-				[callCmd] 
+				[
+					callCmd
+				] 
 			else 
 				// call global function and pass dummy closure argument as last one
 				[Wasm2I32Const(0), callCmd]
@@ -424,6 +433,7 @@ compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool,
 			// ]} else {
 				[
 			        Wasm2GetLocal(v.name),
+					Wasm2I32Const(lookupTreeDef(context.typeTable.typesMap, v.type, 0)), 
 			        Wasm2Call("$wasm_dec_refcnt")
 				]
 			// }
@@ -813,13 +823,13 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 			t = cast(type0 : WasmTypeDescriptor -> WasmTypeRef);
 			cmd = if (t.type == WasmTypeDouble()) "$wasm_deref_f64"
 				  else "$wasm_deref_" + compileWasmType(t.type, true);
-			argsAppend(Wasm2Call(cmd))
+			argsAppendTD(Wasm2Call(cmd))
 		}
 		FcAssignPrim(): {
 			t = cast(type0 : WasmTypeDescriptor -> WasmTypeRef);
 			cmd = if (t.type == WasmTypeDouble()) "$wasm_set_ref_f64"
 				  else "$wasm_set_ref_" + compileWasmType(t.type, true);
-			argsAppend(Wasm2Call(cmd));
+			argsAppendTD(Wasm2Call(cmd));
 		}
 		FcRefPrim(): {
 			argsAppend(Wasm2Call("$wasm_make_ref_" + compileWasmType(type0, true)));
