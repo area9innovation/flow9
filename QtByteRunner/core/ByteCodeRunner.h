@@ -671,14 +671,14 @@ private:
         }
     }
 
-    FlowPtr AllocateClosureBuffer(int code, unsigned short length, StackSlot *data);
+    FlowPtr AllocateClosureBuffer(int code, unsigned long length, StackSlot *data);
     StackSlot AllocateKnownStruct(const char *name, int size, int id, StackSlot *data);
 
     unicode_char *AllocateStringBuffer(StackSlot *out, unsigned length);
     FlowPtr *AllocateStringRef(StackSlot *out, unsigned length);
 
     StackSlot AllocateUninitializedArray(unsigned length);
-    StackSlot AllocateUninitializedClosure(unsigned short length, FlowPtr code);
+    StackSlot AllocateUninitializedClosure(unsigned long length, FlowPtr code);
 
 public:
     StackSlot AllocateRawStruct(StructDef &def, bool clear = true);
@@ -691,7 +691,7 @@ public:
 
 #ifdef FLOW_COMPACT_STRUCTS
     template<class T>
-    T *AllocateRawStruct(StackSlot *out, unsigned short id) {
+    T *AllocateRawStruct(StackSlot *out, unsigned long id) {
         FlowPtr buf = Allocate(sizeof(T));
         FlowGCHeader *phdr = Memory.GetObjectPointer(buf, true);
         phdr->IntVal = id;
@@ -700,7 +700,7 @@ public:
     }
 
     template<class T>
-    T *AllocateRawClosure(StackSlot *out, unsigned short id, int funcid) {
+    T *AllocateRawClosure(StackSlot *out, unsigned id, int funcid) {
         FlowPtr buf = Allocate(sizeof(T) + 4) + 4;
         FlowGCHeader *phdr = Memory.GetObjectPointer(buf, true);
         phdr->IntVal = id;
@@ -772,7 +772,7 @@ private:
         if (slot > hp_ref_base) RegisterWrite(slot);
     }
     unsigned GetSplitAuxValue(const StackSlot &str) {
-        return str.GetSign() ? (str.slot_private.AuxValue<<16)|Memory.GetUInt16(str.slot_private.PtrValue) : str.slot_private.AuxValue;
+        return str.GetSign() ? (str.slot_private.AuxValue<<16)|Memory.GetUInt32(str.slot_private.PtrValue) : str.slot_private.AuxValue;
     }
 
 public:
@@ -1114,7 +1114,7 @@ protected:
 
 public:
     // Copy the closure reference
-    StackSlot AllocateClosure(const StackSlot &base, unsigned short num_upvals, StackSlot *upval_data = NULL)
+    StackSlot AllocateClosure(const StackSlot &base, unsigned long num_upvals, StackSlot *upval_data = NULL)
     {
         if (base.IsNativeFn())
         {

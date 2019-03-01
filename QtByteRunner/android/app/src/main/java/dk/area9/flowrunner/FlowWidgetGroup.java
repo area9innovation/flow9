@@ -286,7 +286,6 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
     }
 
     public void onFlowSetInterfaceOrientation(String orientation) {
-        Log.i(Utils.LOG_TAG, "onFlowSetInterfaceOrientation: " + orientation);
         Activity activity = (Activity)getContext();
         if (orientation.equals("landscape")) {
             activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);

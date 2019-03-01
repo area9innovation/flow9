@@ -282,8 +282,8 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
     static StackSlot dummy_ss[2];
     static FlowPtr dummy_fp[2];
 
-    if (sizeof(int) != 4 || sizeof(FlowPtr) != 4 || sizeof(StackSlot) != STACK_SLOT_SIZE ||
-        sizeof(dummy_fp) != 8 || sizeof(dummy_ss) != 2*STACK_SLOT_SIZE)
+    if (sizeof(int) != 4 || sizeof(FlowPtr) != 8 || sizeof(StackSlot) != STACK_SLOT_SIZE ||
+        sizeof(dummy_fp) != 16 || sizeof(dummy_ss) != 2*STACK_SLOT_SIZE)
     {
         flow_err << "Platform violates data type size assumptions.\n";
         abort();
@@ -1352,7 +1352,7 @@ StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data m
     return rv;
 }
 
-StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowPtr code)
+StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned long len, FlowPtr code)
 {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
@@ -1363,7 +1363,7 @@ StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowP
     return StackSlot::InternalMakeClosurePointer(buf, len);
 }
 
-FlowPtr ByteCodeRunner::AllocateClosureBuffer(int code, unsigned short len, StackSlot *data) {
+FlowPtr ByteCodeRunner::AllocateClosureBuffer(int code, unsigned long len, StackSlot *data) {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
 
