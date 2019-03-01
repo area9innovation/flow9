@@ -477,16 +477,16 @@ class TextField extends NativeWidgetClip {
 	private function onMouseDown(e : Dynamic) {
 		if (isNativeWidgetShown()) {
 			checkPositionSelection();
-			RenderSupportJSPixi.provideEvent(e);
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
 			nativeWidget.readOnly = shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(point) != this;
 
 			if (shouldPreventFromFocus) {
 				e.preventDefault();
-				RenderSupportJSPixi.provideEvent(e);
 			}
 		}
+
+		RenderSupportJSPixi.provideEvent(e);
 
 		if ((Platform.isIE || Platform.isEdge) && !shouldPreventFromFocus) {
 			// IE & Edge cannot handle onfocus completely
