@@ -1374,6 +1374,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function addAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
+		if (clip.accessWidget == null) return;
+
 		var attributesMap = new Map<String, String>();
 
 		for (kv in attributes) {
@@ -1392,9 +1394,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
-		if (!AccessibilityEnabled) return;
-
-		if (clip.accessWidget == null) {
+		if (AccessibilityEnabled && clip.accessWidget == null) {
 			// Create DOM node for access. properties
 			if (clip.nativeWidget != null) {
 				clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);

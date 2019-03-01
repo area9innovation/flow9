@@ -74,11 +74,6 @@ class NativeWidgetClip extends FlowContainer {
 				nativeWidget.style.position = "fixed";
 				nativeWidget.style.zIndex = RenderSupportJSPixi.zIndexValues.nativeWidget;
 
-				if (accessWidget == null) {
-					accessWidget = new AccessWidget(this, nativeWidget);
-				}
-
-				// RenderSupportJSPixi.PixiStage.on("stagechanged", updateNativeWidget);
 				once("removed", deleteNativeWidget);
 			} else {
 				RenderSupportJSPixi.findTopParent(this).once("added", addNativeWidget);
@@ -92,6 +87,10 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.style.transformOrigin = "top left";
 
+		if (accessWidget == null) {
+			accessWidget = new AccessWidget(this, nativeWidget);
+		}
+
 		if (parent != null) {
 			addNativeWidget();
 		} else {
@@ -100,8 +99,6 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	private function deleteNativeWidget() : Void {
-		// RenderSupportJSPixi.PixiStage.off("stagechanged", updateNativeWidget);
-
 		if (accessWidget != null) {
 			AccessWidget.removeAccessWidget(accessWidget);
 		}

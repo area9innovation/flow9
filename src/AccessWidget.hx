@@ -553,7 +553,11 @@ class AccessWidget {
 				case "autocomplete" : autocomplete = attributes.get(key);
 				default : {
 					if (element != null) {
-						element.setAttribute(key, attributes.get(key));
+						if (key.indexOf("style:") == 0) {
+							element.style.setProperty(key.substr(6, key.length), attributes.get(key));
+						} else {
+							element.setAttribute(key, attributes.get(key));
+						}
 					}
 				}
 			}
