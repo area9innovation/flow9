@@ -866,10 +866,9 @@ class RenderSupportJSPixi {
 	//
 	private static inline function initBrowserWindowEventListeners() {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
-		Browser.window.addEventListener("resize", onBrowserWindowResize, false);
+		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
 		Browser.window.addEventListener('message', receiveWindowMessage); // Messages from crossdomaid iframes
-		Browser.window.addEventListener("focus", PixiStage.invalidateStage, false);
-		Browser.window.addEventListener("focus", requestAnimationFrame, false);
+		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
 	}
 
 	private static inline function initClipboardListeners() {
@@ -1018,6 +1017,7 @@ class RenderSupportJSPixi {
 			setStagePointerHandler("mousemiddleup", function () { PixiStage.emit("mousemiddleup"); });
 			setStagePointerHandler("mousemove", function () { PixiStage.emit("mousemove"); });
 			setStagePointerHandler("mouseout", function () { PixiStage.emit("mouseup"); }); // Emulate mouseup to release scrollable for example
+			setStageWheelHandler(function (p : Point) { PixiStage.emit("mousewheel", p); });
 			Browser.document.body.addEventListener("keydown", function (e) { PixiStage.emit("keydown", parseKeyEvent(e)); });
 			Browser.document.body.addEventListener("keyup", function (e) { PixiStage.emit("keyup", parseKeyEvent(e)); });
 		}
@@ -1030,7 +1030,7 @@ class RenderSupportJSPixi {
 
 	private static var MouseUpReceived : Bool = false;
 
-	private static function setStagePointerHandler(event : String, listener : Void -> Void) {
+	private static function setStagePointerHandler(event : String, listener : Void -> Void) : Void {
 		var cb = switch (event) {
 			case "touchstart" | "touchmove" | "MSPointerDown" | "MSPointerMove":
 				function(e : Dynamic) {
@@ -1111,6 +1111,7 @@ class RenderSupportJSPixi {
 				function(e : Dynamic) {
 					MousePos.x = e.pageX;
 					MousePos.y = e.pageY;
+
 					listener();
 				}
 		}
@@ -1123,6 +1124,65 @@ class RenderSupportJSPixi {
 		else
 			PixiRenderer.view.addEventListener(event, cb);
 	}
+
+	private static function setStageWheelHandler(listener : Point -> Void) : Void {
+		var event_name = untyped __js__("'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
+			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
+			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox");
+
+
+		var wheel_cb = function(event) {
+			var sX = 0.0, sY = 0.0,	// spinX, spinY
+				pX = 0.0, pY = 0.0;	// pixelX, pixelY
+
+			// Legacy
+			if (event.detail != null) { sY = event.detail; }
+			if (event.wheelDelta != null) { sY = -event.wheelDelta / 120; }
+			if (event.wheelDeltaY != null) { sY = -event.wheelDeltaY / 120; }
+			if (event.wheelDeltaX != null) { sX = -event.wheelDeltaX / 120; }
+
+			// side scrolling on FF with DOMMouseScroll
+			if (event.axis != null && untyped __strict_eq__(event.axis, event.HORIZONTAL_AXIS)) {
+				sX = sY;
+				sY = 0.0;
+			}
+
+			pX = sX * PIXEL_STEP;
+			pY = sY * PIXEL_STEP;
+
+			if (event.deltaY != null) { pY = event.deltaY; }
+			if (event.deltaX != null) { pX = event.deltaX; }
+
+			if ((pX != 0.0 || pY != 0.0) && event.deltaMode != null) {
+				if (event.deltaMode == 1) {	// delta in LINE units
+					pX *= LINE_HEIGHT;
+					pY *= LINE_HEIGHT;
+				} else { // delta in PAGE units
+					pX *= PAGE_HEIGHT;
+					pY *= PAGE_HEIGHT;
+				}
+			}
+
+			// Fall-back if spin cannot be determined
+			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
+			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
+
+			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
+				sX = sY;
+				sY = 0.0;
+			}
+
+			listener(new Point(-sX, -sY));
+
+			return false;
+		};
+
+		Browser.window.addEventListener(event_name, wheel_cb, false);
+		if ( event_name == "DOMMouseScroll" ) {
+			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
+		}
+	}
+
 
 	private static function emitForInteractives(clip : DisplayObject, event : String) : Void {
 		if (clip.interactive)
@@ -2173,68 +2233,9 @@ class RenderSupportJSPixi {
 	private static var PAGE_HEIGHT = 800;
 
 	public static function addMouseWheelEventListener(clip : Dynamic, fn : Float -> Float -> Void) : Void -> Void {
-		var event_name = untyped __js__("'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
-			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
-			'DOMMouseScroll'; // let's assume that remaining browsers are older Firefox");
-
-
-		var wheel_cb = function(event) {
-			var sX = 0.0, sY = 0.0,	// spinX, spinY
-				pX = 0.0, pY = 0.0;	// pixelX, pixelY
-
-			// Legacy
-			if (event.detail != null) { sY = event.detail; }
-			if (event.wheelDelta != null) { sY = -event.wheelDelta / 120; }
-			if (event.wheelDeltaY != null) { sY = -event.wheelDeltaY / 120; }
-			if (event.wheelDeltaX != null) { sX = -event.wheelDeltaX / 120; }
-
-			// side scrolling on FF with DOMMouseScroll
-			if (event.axis != null && untyped __strict_eq__(event.axis, event.HORIZONTAL_AXIS)) {
-				sX = sY;
-				sY = 0.0;
-			}
-
-			pX = sX * PIXEL_STEP;
-			pY = sY * PIXEL_STEP;
-
-			if (event.deltaY != null) { pY = event.deltaY; }
-			if (event.deltaX != null) { pX = event.deltaX; }
-
-			if ((pX != 0.0 || pY != 0.0) && event.deltaMode != null) {
-				if (event.deltaMode == 1) {	// delta in LINE units
-					pX *= LINE_HEIGHT;
-					pY *= LINE_HEIGHT;
-				} else { // delta in PAGE units
-					pX *= PAGE_HEIGHT;
-					pY *= PAGE_HEIGHT;
-				}
-			}
-
-			// Fall-back if spin cannot be determined
-			if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
-			if (pY != 0.0 && sY == 0.0) { sY = (pY < 1.0) ? -1.0 : 1.0; }
-
-			if (event.shiftKey != null && event.shiftKey && sX == 0.0) {
-				sX = sY;
-				sY = 0.0;
-			}
-
-			fn(-sX, -sY);
-
-			return false;
-		};
-
-		Browser.window.addEventListener(event_name, wheel_cb, false);
-		if ( event_name == "DOMMouseScroll" ) {
-			Browser.window.addEventListener("MozMousePixelScroll", wheel_cb, false);
-		}
-
-		return function() {
-			Browser.window.removeEventListener(event_name, wheel_cb);
-			if ( event_name == "DOMMouseScroll" ) {
-				Browser.window.removeEventListener("MozMousePixelScroll", wheel_cb);
-			}
-		}
+		var cb = function (p) { fn(p.x, p.y); };
+		PixiStage.on("mousewheel", cb);
+		return function() { PixiStage.off("mousewheel", cb); };
 	}
 
 	public static function addFinegrainMouseWheelEventListener(clip : Dynamic, f : Float -> Float -> Void) : Void -> Void {
