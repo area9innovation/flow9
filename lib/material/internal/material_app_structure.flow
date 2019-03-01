@@ -11,6 +11,7 @@ MAppState(
 	appBar : Maybe<MAppBarState>,
 	leftNav : Maybe<MAppNav>,
 	rightNav : Maybe<MAppNav>,
+	bottomSheet : Maybe<MBottomSheet>,
 	flexible : Maybe<MAppFlexibleState>,
 	point : DynamicBehaviour<Point>,
 	down : DynamicBehaviour<bool>,
@@ -82,6 +83,7 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 								),
 								m2t
 							)
+							|> (\t2 -> TLines2(t2, TGhost("MAppBottomSheet")))
 						else
 							t,
 						TDisplay("MAppBar")
@@ -102,6 +104,7 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 					})
 				]), m2t),
 			f), f))
+		|> (\t -> TGroup2(t, TLines2(TFillY(), TDisplay("MAppBottomSheet"))))
 		|> (\f ->
 			TGroup2SameMetrics(
 				f,
@@ -124,10 +127,84 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		)
 		|> (\f -> letAppBar(manager, parent, f, state, m2t))
 		|> (\f -> letContentAndSize(manager, parent, f, m.style, state, m2t))
+		|> (\f -> letBottomSheet(manager, parent, f, state, m2t))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, false))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, true))
 		|> (\f -> letFloatingContent(manager, parent, f, state, m2t))
 		|> (\f -> letFlextibleApp(f, state))
+}
+
+letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherMap(
+		state.bottomSheet,
+		\bottom -> {
+			minBottomSheetHeight = 56.;
+			gapThreshold = extractStruct(bottom.style, MSwipeGap(24.)).gap;
+			expanded = extractStruct(bottom.style, MExpanded(make(false))).expanded;
+
+			bottomSheetMaxCollapsed = fdivide(fheight(state.wh), const(2.));
+			collapsedHeight0 = extractStruct(bottom.style, MCollapsedHeight(const(minBottomSheetHeight))).height;
+			collapsedHeight = fmin(fmax(collapsedHeight0, const(minBottomSheetHeight)), bottomSheetMaxCollapsed);
+
+			bottomSheetHeight0 = make(0.);
+			bottomSheetHeight = fmax(bottomSheetHeight0, collapsedHeight);
+
+			startPointY = ref 0.;
+			startAvail = ref 0.;
+			mouseInside = make(false);
+
+			m2t(bottom.content(expanded), parent)
+			|> (\t -> MScroll2T(manager, parent, MScroll(
+					t,
+					TFillXHT(bottomSheetHeight),
+					[
+						MScrollCropByContent(),
+						MScrollDisableOutOfBounds(ref true),
+						MEnabled(const(false)),
+						TScrollEnabled(const(false)),
+						MScrollbars(const(invisibleScrollBar), const(invisibleScrollBar))
+					]
+				), m2t)
+			)
+			|> (\t2 -> TGroup2(TFillXH(minBottomSheetHeight), t2))
+			|> (\m ->
+					MEasingAnimation(
+						manager,
+						parent,
+						const(0.3),
+						const(easingFastOutSlowIn),
+						fpair(state.down, expanded),
+						\trigger ->
+							if (trigger.first) None()
+							else {
+								from = fgetValue(bottomSheetHeight);
+								to = if (fgetValue(expanded)) fgetValue(state.wh).height else 0.;
+								Some(Pair(from, to))
+							},
+						\coord, prc ->
+							nextDistinct(bottomSheetHeight0, lerp(coord.first, coord.second, prc)),
+						[],
+						m
+					))
+			|> (\t -> TConstruct([
+					makeSubscribe2(state.down, \d -> 
+						if (d) {
+							startPointY := getValue(state.point).y;
+							startAvail := fgetValue(bottomSheetHeight);
+						} else if (getValue(mouseInside)) {
+							gap = ^startPointY - getValue(state.point).y;
+							next(expanded, gap > gapThreshold);
+						}),
+					makeSubscribe2(state.point, \p -> if (getValue(state.down) && getValue(mouseInside))
+						nextDistinct(bottomSheetHeight0, ^startAvail + (^startPointY - p.y))
+					),
+				], t))
+			|> (\t -> TInteractive([TMouseInside(mouseInside, true)], t))
+			|> disableInteractivesBelow
+		},
+		TEmpty()
+	)
+	|> (\t -> TLet("MAppBottomSheet", t, content))
 }
 
 makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
@@ -266,6 +343,9 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 			}
 		);
 
+	bottomSheet =
+		tryExtractStruct(m.parts, MBottomSheet(\__ -> TEmpty(), []));
+
 	MAppState(
 		makeTropicTag(manager),
 		content,
@@ -273,6 +353,7 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		appBar,
 		leftNav,
 		rightNav,
+		bottomSheet,
 		flexible,
 		make(zeroPoint),
 		mouseDown,
@@ -328,6 +409,7 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 								),
 								m2t
 							)
+							|> (\t2 -> TLines2(t2, TGhost("MAppBottomSheet")))
 					)
 			),
 			f
