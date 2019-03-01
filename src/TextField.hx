@@ -160,6 +160,7 @@ class TextField extends NativeWidgetClip {
 				default : "left";
 			}
 		}
+
 		if (!isNativeWidgetShown()) {
 			if (isInput()) {
 				nativeWidget.style.cursor = "inherit";
@@ -168,6 +169,8 @@ class TextField extends NativeWidgetClip {
 			}
 
 			layoutText();
+		} else {
+			updateNativeWidget();
 		}
 	}
 
