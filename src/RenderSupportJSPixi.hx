@@ -1768,6 +1768,22 @@ class RenderSupportJSPixi {
 		// NOP for this target
 	}
 
+	public static function getTextFieldCharXPosition(textfield : TextField, chridx: Int) : Double {
+		var pos = -1.0;
+
+		layoutText();
+		Extent::Ptr extent;
+		for (i = text_real_extents.size()-1; i>=0; --i) {
+			extent = text_real_extents[i];
+			if (extent->char_idx <= chridx) break;
+		}
+		return extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(chridx-extent->char_idx)];
+	}
+
+	public static function findTextFieldCharByPosition(textfield : TextField, x: Double, y: Double) : Int {
+
+	}
+
 	public static function getTextFieldWidth(textfield : TextField) : Float {
 		return textfield.getWidth();
 	}
@@ -4107,7 +4123,7 @@ private class TextField extends NativeWidgetClip {
 			i--;
 		}
 
-		var lines = (isInput() && type == "password" ? getBulletsString(text.length) : text).split("\n");
+		var lines = (isInput() && type == "password" ? getBulletsString(text) : getActualGlyphsString(text)).split("\n");
 
 		clipWidth = 0.0;
 		clipHeight = 0.0;
@@ -4677,10 +4693,18 @@ private class TextField extends NativeWidgetClip {
 		return [ascent, descent, leading];
 	}
 
-	private static function getBulletsString(l : Int) : String {
+	private static function getBulletsString(t : String) : String {
+		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
 		var bullet = String.fromCharCode(8226);
 		var i = 0; var ret = "";
-		for (i in 0...l) ret += bullet;
+		for (i in 0...t.length) ret += bullet;
+		return ret;
+	}
+
+	private static function getActualGlyphsString(t : String) : String {
+		var ret = "";
+		// TODO iterate the string given yielding ligature characters and
+		// also variants of arabic/hebrew/etc in respect of neighbour chars connection.
 		return ret;
 	}
 
@@ -4943,7 +4967,9 @@ private class PixiText extends TextField {
 
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
-			text = TextField.getBulletsString(text.length);
+			text = TextField.getBulletsString(text);
+		else
+			text = TextField.getActualGlyphsString(text);
 		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {

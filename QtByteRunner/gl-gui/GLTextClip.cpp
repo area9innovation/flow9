@@ -1039,28 +1039,6 @@ StackSlot GLTextClip::setScrollV(RUNNER_ARGS)
 
 
 
-StackSlot GLTextClip::getTextFieldWidth(RUNNER_ARGS)
-{
-    IGNORE_RUNNER_ARGS;
-
-    if (is_input && explicit_size.x != 0.0) return StackSlot::MakeDouble(explicit_size.x);
-
-    layoutText();
-
-    return StackSlot::MakeDouble(ui_size.x);
-}
-
-StackSlot GLTextClip::getTextFieldHeight(RUNNER_ARGS)
-{
-    IGNORE_RUNNER_ARGS;
-
-    if (is_input && explicit_size.y != 0.0) return StackSlot::MakeDouble(explicit_size.y);
-
-    layoutText();
-
-    return StackSlot::MakeDouble(ui_size.y);
-}
-
 StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(idx);
@@ -1109,6 +1087,28 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
         }
     }
     return StackSlot::MakeInt(char_idx);
+}
+
+StackSlot GLTextClip::getTextFieldWidth(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+
+    if (is_input && explicit_size.x != 0.0) return StackSlot::MakeDouble(explicit_size.x);
+
+    layoutText();
+
+    return StackSlot::MakeDouble(ui_size.x);
+}
+
+StackSlot GLTextClip::getTextFieldHeight(RUNNER_ARGS)
+{
+    IGNORE_RUNNER_ARGS;
+
+    if (is_input && explicit_size.y != 0.0) return StackSlot::MakeDouble(explicit_size.y);
+
+    layoutText();
+
+    return StackSlot::MakeDouble(ui_size.y);
 }
 
 StackSlot GLTextClip::setTextFieldWidth(RUNNER_ARGS)
