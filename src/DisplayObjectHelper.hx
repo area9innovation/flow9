@@ -102,11 +102,10 @@ class DisplayObjectHelper {
 	public static inline function setClipVisible(clip : DisplayObject, visible : Bool) : Void {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
-			untyped clip.transformChanged = true;
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				invalidateStage(clip);
+				invalidateStage(clip.parent);
 			}
 		}
 	}
@@ -143,7 +142,6 @@ class DisplayObjectHelper {
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
-			untyped clip.transformChanged = true;
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);

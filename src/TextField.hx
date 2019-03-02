@@ -772,7 +772,7 @@ class TextField extends NativeWidgetClip {
 			if (isInput() && fieldHeight > 0.0 && fieldWidth > 0.0) {
 				return new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);
 			} else if (clipWidth > 0.0 && clipHeight > 0.0) {
-				return new Rectangle(0.0, 0.0, clipWidth, clipHeight)
+				return new Rectangle(0.0, 0.0, clipWidth, clipHeight);
 			} else {
 				return super.getLocalBounds();
 			}
