@@ -28,6 +28,9 @@ And then run with node.js:
 There is an option to produce listing file - `wasmlisting=<file>` - that dumps compiler-generated 
 tables in JSON format into the specified file. Helps debugging code generation.
 
+Wasm memory size is 100 pages (each page is 64K) by default, to change that, use `wasm-memory=<size>`
+(i.e. `wasm-memory=1000` provides `65 536 000` available bytes).
+
 We might be able to run command line using something like
 
 https://github.com/WAVM/WAVM

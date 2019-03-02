@@ -113,6 +113,10 @@ Change:
 For:
 	$new_alias[0]['alias_name'] = $_POST['alias_name'];
 	<?php echo wordwrap(substr($alias['alias_name'],0), 20, "<br />", true); ?>
+	
+Remove comments from php.ini for useful extensions:
+	extension=php_openssl.dll
+	extension=php_curl.dll
 
 Because of this mess, we recommend Wamp instead.
 

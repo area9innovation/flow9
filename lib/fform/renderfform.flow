@@ -11,6 +11,7 @@ export {
 	// Override to set custom stage wh
 	stageWidthHeight = make(None());
 	fAccessibilityEnabled = ref false;
+	fSvg2GraphicsEnabled = ref true;
 }
 
 currentFFormCount = ref 0;
@@ -64,22 +65,57 @@ optimizeAndRenderFFormAt(parent : native, form : FForm, zorder : [int], id : int
 	|> (\r  -> attachFChildrenAt(parent, r.clips, r.disposers, r.capabilities, id))
 }
 
+addChildClip(parent : native, child : native, alive : ref bool) -> void {
+	if (!^alive) {
+		alive := true;
+		addChild(parent, child);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double construct");
+		printCallstack();
+		println("---");
+	}
+}
+
+addChildClipAt(parent : native, child : native, id : int, alive : ref bool) -> void {
+	if (!^alive) {
+		alive := true;
+		addChildAt(parent, child, id);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double construct");
+		printCallstack();
+		println("---");
+	}
+}
+
+removeChildClip(parent : native, child : native, alive : ref bool) -> void {
+	if (^alive) {
+		alive := false;
+		removeChild(parent, child);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double dispose");
+		printCallstack();
+		println("---");
+	}
+}
+
 attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : FClipCapabilities) -> FRenderResult {
-	iter(children, \c -> addChild(clip, c));
+	alive = generate(0, length(children), \__ -> ref false);
+	iteri(children, \i, c -> addChildClip(clip, c, alive[i]));
 
 	FRenderResult(
 		[clip],
-		concat([\ -> iter(children, \c -> removeChild(clip, c))], disposers),
+		concat([\ -> iteri(children, \i, c -> removeChildClip(clip, c, alive[i]))], disposers),
 		cap
 	)
 }
 
 attachFChildrenAt(clip : native, children : [native], disposers : [() -> void], cap : FClipCapabilities, id : int) -> FRenderResult {
-	iteri(children, \i, c -> addChildAt(clip, c, id + i));
+	alive = generate(0, length(children), \__ -> ref false);
+	iteri(children, \i, c -> addChildClipAt(clip, c, id + i, alive[i]));
 
 	FRenderResult(
 		[clip],
-		concat([\ -> iter(children, \c -> removeChild(clip, c))], disposers),
+		concat([\ -> iteri(children, \i, c -> removeChildClip(clip, c, alive[i]))], disposers),
 		cap
 	)
 }
@@ -207,7 +243,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				);
 
 				picture =
-					if (endsWith(url, ".svg")) {
+					if (endsWith(url, ".svg") && ^fSvg2GraphicsEnabled) {
 						container = makeClip();
 
 						httpRequest(
@@ -405,22 +441,23 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			setClipDebugInfo(parentClip, "form", rform);
 
 			childDisposers : ref [[() -> void]] = ref [[]];
-			childrenClips : ref [[native]] = ref [[]];
+			childrenClips : ref [[Pair<native, ref bool>]] = ref [[]];
 			childrenCount : ref [int] = ref [];
 
 			handleAdd = \form, z -> {
 				childrenAfter = tailFrom(^childrenClips, z);
 
 				childResult = renderFForm(form, arrayPush(zorder, z));
+				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 				clipsBefore = length(concatA(subrange(^childrenClips, 0, z)));
-				iteri(childResult.clips, \i, d -> addChildAt(parentClip, d, clipsBefore + i));
+				iteri(childClip, \i, d -> addChildClipAt(parentClip, d.first, clipsBefore + i, d.second));
 
-				childrenClips := insertArray(^childrenClips, z, childResult.clips);
+				childrenClips := insertArray(^childrenClips, z, childClip);
 				childDisposers := insertArray(^childDisposers, z, childResult.disposers);
 			};
 
 			handleDelete = \z -> if (existsIndex(^childrenClips, z)) {
-				iter(^childrenClips[z], \clip -> removeChild(parentClip, clip));
+				iter(^childrenClips[z], \clip -> removeChildClip(parentClip, clip.first, clip.second));
 				childrenClips := removeIndex(^childrenClips, z);
 
 				applyall(^childDisposers[z]);
@@ -431,20 +468,21 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				childrenAfter = tailFrom(^childrenClips, z);
 
 				iter(childrenAfter, \children ->
-					iter(children, \child -> removeChild(parentClip, child))
+					iter(children, \child -> removeChildClip(parentClip, child.first, child.second))
 				);
 
 				applyall(^childDisposers[z]);
 
 				childResult = renderFForm(form, arrayPush(zorder, z));
+				childClip = map(childResult.clips, \c -> Pair(c, ref false));
 
 				iter(
-					replace(childrenAfter, 0, childResult.clips),
+					replace(childrenAfter, 0, childClip),
 					\childClips ->
-						iter(childClips, \clip -> addChild(parentClip, clip))
+						iter(childClips, \clip -> addChildClip(parentClip, clip.first, clip.second))
 				);
 
-				childrenClips := replace(^childrenClips, z, childResult.clips);
+				childrenClips := replace(^childrenClips, z, childClip);
 				childDisposers := replace(^childDisposers, z, childResult.disposers);
 			}
 
@@ -453,13 +491,13 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				childrenChanged = tailFrom(childrenFixedOrder, min(from, to));
 
 				iter(childrenChanged, \children ->
-					iter(children, \child -> removeChild(parentClip, child))
+					iter(children, \child -> removeChildClip(parentClip, child.first, child.second))
 				);
 
 				iter(
 					childrenChanged,
 					\childClips ->
-						iter(childClips, \clip -> addChild(parentClip, clip))
+						iter(childClips, \clip -> addChildClip(parentClip, clip.first, clip.second))
 				);
 
 				childrenClips := childrenFixedOrder;
@@ -508,7 +546,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				\ -> {
 					callList(disposeChanges);
 
-					iter(^childrenClips, \childClips -> iter(childClips, \clip -> removeChild(parentClip, clip)));
+					iter(^childrenClips, \childClips -> iter(childClips, \clip -> removeChildClip(parentClip, clip.first, clip.second)));
 					childrenClips := [];
 
 					iter(^childDisposers, applyall);
@@ -537,7 +575,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			setClipCallstack(clip, stack);
 			setClipDebugInfo(clip, "form", rform);
 
-			clips : ref [[native]] = ref generate(0, length(decorators), \__ -> []);
+			clips : ref [[Pair<native, ref bool>]] = ref generate(0, length(decorators), \__ -> []);
 
 			d1 = renderFForm(
 					optimizeFForm(form),
@@ -553,7 +591,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 				uns = ref [];
 
 				makeSubscribe(d.first, \en -> {
-					iter(^clips[i], \c -> removeChild(clip, c));
+					iter(^clips[i], \c -> removeChildClip(clip, c.first, c.second));
 					clips := replace(^clips, i, []);
 					applyall(^uns);
 
@@ -568,8 +606,9 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 							);
 
 							clipsBefore = length(concatA(subrange(^clips, 0, i)));
-							iteri(r.clips, \j, c -> addChildAt(clip, c, clipsBefore + j + if (above) length(d1.clips) else 0));
-							clips := replace(^clips, i, r.clips);
+							childClip = map(r.clips, \c -> Pair(c, ref false));
+							iteri(childClip, \j, c -> addChildClipAt(clip, c.first, clipsBefore + j + if (above) length(d1.clips) else 0, c.second));
+							clips := replace(^clips, i, childClip);
 
 							r.disposers
 						} else {

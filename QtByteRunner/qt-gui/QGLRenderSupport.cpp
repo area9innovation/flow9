@@ -2,10 +2,10 @@
 #include "QGLTextEdit.h"
 #include "QGLLineEdit.h"
 
-#include "GLRenderer.h"
-#include "GLTextClip.h"
-#include "GLVideoClip.h"
-#include "GLWebClip.h"
+#include "gl-gui/GLRenderer.h"
+#include "gl-gui/GLTextClip.h"
+#include "gl-gui/GLVideoClip.h"
+#include "gl-gui/GLWebClip.h"
 
 #include "swfloader.h"
 
@@ -728,6 +728,8 @@ bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) 
 
     QString path = unicode2qt(web_clip->getUrl());
     QString full_path = getFullResourcePath(path);
+
+    web_view->setGeometry(0, 0, Width, Height);
 
     if (QFile::exists(full_path)) {
         web_view->load(QUrl::fromLocalFile(full_path));
