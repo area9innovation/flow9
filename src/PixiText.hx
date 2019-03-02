@@ -225,7 +225,9 @@ class PixiText extends TextField {
 
 	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
 		if (isInput() && type == "password")
-			text = TextField.getBulletsString(text.length);
+			text = TextField.getBulletsString(text);
+		else
+			text = TextField.getActualGlyphsString(text);
 		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {

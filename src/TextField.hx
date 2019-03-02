@@ -198,7 +198,7 @@ class TextField extends NativeWidgetClip {
 			i--;
 		}
 
-		var lines = (isInput() && type == "password" ? getBulletsString(text.length) : text).split("\n");
+		var lines = (isInput() && type == "password" ? getBulletsString(text) : getActualGlyphsString(text)).split("\n");
 
 		clipWidth = 0.0;
 		clipHeight = 0.0;
@@ -770,10 +770,18 @@ class TextField extends NativeWidgetClip {
 		return [ascent, descent, leading];
 	}
 
-	private static function getBulletsString(l : Int) : String {
+	private static function getBulletsString(t : String) : String {
+		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
 		var bullet = String.fromCharCode(8226);
 		var i = 0; var ret = "";
-		for (i in 0...l) ret += bullet;
+		for (i in 0...t.length) ret += bullet;
+		return ret;
+	}
+
+	private static function getActualGlyphsString(t : String) : String {
+		var ret = "";
+		// TODO iterate the string given yielding ligature characters and
+		// also variants of arabic/hebrew/etc in respect of neighbour chars connection.
 		return ret;
 	}
 
