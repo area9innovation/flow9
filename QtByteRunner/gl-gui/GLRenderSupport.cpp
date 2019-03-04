@@ -375,7 +375,8 @@ void GLRenderSupport::paintGLContext(unsigned ad_hoc_fb)
         glDisable(GL_SCISSOR_TEST);
 
         glStencilMask(GLuint(-1));
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+        float clear = gl_transparent ? 0.0f : 1.0f;
+        glClearColor(clear, clear, clear, clear);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         Renderer->reportGLErrors("paintGLContext post clear");
 
