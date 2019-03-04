@@ -4,6 +4,7 @@ import material/iscript/material_iscript_cursors;
 import material/iscript/material_iscript_filesystem;
 import material/iscript/material_iscript_config;
 import net/http_request_callback;
+import net/http_request_util;
 
 export {
 	replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
@@ -27,7 +28,7 @@ export {
 }
 
 stopIScriptReplay(manager : MaterialManager) -> void {
-	next(manager.iscript.state, IScriptPaused());
+	next(manager.iscript.state, IScriptStopped());
 }
 
 replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
@@ -527,9 +528,14 @@ checkBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehav
 }
 
 subscribeToIScriptBehavioursFocus(manager : MaterialManager, captureHttp : bool) -> () -> void {
+
+	if (captureHttp) {
+		if (isNone((manager.iscript).httpRequestDisposer))
+		(manager.iscript).httpRequestDisposer ::= Some(subscribeToHttpRequest(manager));
+	};
+
 	subscribeToIScriptBehavioursFocus2(manager, manager.focus)
 	|> (\uns -> arrayPush(uns, subscribeToStageWidthHeight(manager)))
-	|> (\uns -> if (captureHttp) arrayPush(uns, subscribeToHttpRequest(manager)) else uns)
 	|> (\uns -> \ -> applyall(uns))
 }
 
@@ -553,7 +559,6 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 	if (countList(getValue(manager.iscript.requests)) > 0) {
 		setHttpRequestCallback(\url, post, headers, params2 -> {
 			params = filter(params2, \p -> p.key != "t" && p.key != "jwt");
-
 			eitherFn(
 				foldList(getValue(manager.iscript.requests), None(), \acc, r -> {
 					if (isNone(acc)) {
@@ -561,11 +566,12 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 
 						switch (rec : IScriptRecord) {
 							IScriptRequestRecord(_url, _post, _headers, _params, delay, response): {
-								if (_url == url && _post == post && _headers == headers && _params == params) {
-									Some(rec);
-								} else {
-									acc;
-								}
+								eitherMap(
+									getHttpRequestCompareFn(),
+									\fn -> fn(IScriptRequestRecord(url, post, headers, params, delay, response), rec),
+									(_url == url && _post == post && _headers == headers && _params == params)
+								)
+								|> (\v -> if (v) Some(rec) else acc)
 							}
 							default: acc;
 						}
@@ -576,18 +582,30 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 				\rq : IScriptRequestRecord -> {
 					HttpRequestCallbacks(
 						\data -> {
-							if (rq.response == IScriptRequestOk(data)) {
+							eitherMap(
+								getHttpResponseOkCompareFn(),
+								\fn -> fn(rq, IScriptRequestOk(data)),
+								rq.response == IScriptRequestOk(data)
+							)
+							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
-							} else {
-								iScriptError(manager, "Request error " + url + " : wrong response", None());
 							}
+							else {
+								iScriptError(manager, "Request error " + url + " : wrong response", None());
+							})
 						},
 						\error -> {
-							if (rq.response == IScriptRequestError(error)) {
+							eitherMap(
+								getHttpResponseErrorCompareFn(),
+								\fn -> fn(rq, IScriptRequestError(error)),
+								rq.response == IScriptRequestError(error)
+							)
+							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
-							} else {
-								iScriptError(manager, "Request error " + url + " : wrong response", None());
 							}
+							else {
+								iScriptError(manager, "Request error " + url + " : wrong response", None());
+							})
 						},
 						\status -> {
 							// if (rq.response == IScriptRequestStatus(status)) {
@@ -623,6 +641,9 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 		clearHttpRequestCallback();
 		if (countList(getValue(manager.iscript.requests)) > 0) {
 			iScriptError(manager, "Requests error : " + i2s(countList(getValue(manager.iscript.requests))) + " requests left in queue", None());
+			// Temporary for testing purpose
+			if (getUrlParameter(UP_ISCRIPTTEST) != "") println(getValue(manager.iscript.requests));
+			//
 			next(manager.iscript.requests, makeList());
 		}
 	}
@@ -870,8 +891,8 @@ startIScriptReplaying(
 
 		showIScriptReplayCursor(manager);
 
+		(manager.iscript).httpRequestDisposer ::= Some(substituteHttpRequest(manager));
 		[
-			substituteHttpRequest(manager),
 			replayIScript(
 				manager,
 				m2t,
@@ -879,7 +900,7 @@ startIScriptReplaying(
 					onFinish(
 						[
 							IScriptReplayResult(
-								"",
+								getValue(manager.iscript.currentFileNameB),
 								b,
 								extractLastLogicalScreenshot(manager),
 								extractLastVisualScreenshot(manager),
@@ -893,49 +914,49 @@ startIScriptReplaying(
 			),
 			\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
 		]
-	} else {
-		[]
-	}
+		|> (\d -> \ -> applyall(d))
+		|> (\f -> (manager.iscript).replayDisposer ::= Some(f))
+	};
+	[]
 }
 
-startIScriptBatchReplaying(
+startIScriptScenarioReplaying(
 	manager : MaterialManager,
 	m2t : (Material, MFocusGroup) -> Tropic,
 	onFinish : ([IScriptReplayResult]) -> void
 ) -> [() -> void] {
-	if (!isBatchIScriptEmpty(manager)) {
+	if (!isIScriptScenarioEmpty(manager)) {
 		nextDistinct(manager.iscript.output, map(getValue(manager.iscript.output), \ov -> IScriptOutputValue(ov.name, false, None())));
 		nextDistinct(manager.iscript.errors, makeList());
+		scenarioTestResults = ref [];
 
-		batchTestsFolder = getValue(manager.iscript.currentBatchTestsDirectoryB);
-		batchTestResults = ref [];
+		iScriptInfo(manager, "=== Start Scenario Tests ===", None());
+		next(manager.iscript.scenario.runningIScriptIdxB, 0);
 
-		iScriptInfo(manager, "=== Start Batch Tests ===", None());
-		currentBatch = make(0);
-
-		stopBatchReplay = \ -> {
-			onFinish(^batchTestResults);
+		stopScenarioReplay = \ -> {
+			onFinish(^scenarioTestResults);
 		};
 
 		[
 			makeSubscribeUns(
-				fselect2(manager.iscript.batchTestFileNamesB, currentBatch, FLift2(\batches, id -> {
-					if (id >= 0 && id < length(batches)) {
-						Some(batches[id])
+				fselect2(manager.iscript.scenario.scriptsB, manager.iscript.scenario.runningIScriptIdxB, FLift2(\scriptRecords, id -> {
+					if (id >= 0 && id < length(scriptRecords)) {
+						Some(scriptRecords[id])
 					} else {
 						None()
 					}
 				})),
-				\batch -> {
+				\scriptRecordM -> {
 					eitherFn(
-						batch,
-						\filename -> {
+						scriptRecordM,
+						\scriptRecord -> {
 							uns = ref [];
 
-							tempStageWidthHeight = getValue(stageWidthHeight);
-							currentScriptFilename = batchTestsFolder + filename;
+							scriptPath = scriptRecord.scriptPath;
 
-							iScriptInfo(manager, "Replaying " + currentScriptFilename, None());
+							tempStageWidthHeight = getValue(stageWidthHeight);
+
+							iScriptInfo(manager, "Replaying " + scriptPath, None());
 
 							onSuccess = \ -> {
 								showIScriptReplayCursor(manager);
@@ -947,7 +968,7 @@ startIScriptBatchReplaying(
 											hideIScriptReplayCursor(manager);
 
 											if (!b) {
-												iScriptError(manager, filename + " finished with errors", None());
+												iScriptError(manager, scriptPath + " finished with errors", None());
 											}
 
 											iscriptLogicalScreenshotM = extractLastLogicalScreenshot(manager);
@@ -957,9 +978,9 @@ startIScriptBatchReplaying(
 											afterReplayVisualScreenshot = getIScriptVisualScreenshot(manager, true);
 
 											refArrayPush(
-												batchTestResults,
+												scenarioTestResults,
 												IScriptReplayResult(
-													filename,
+													scriptPath,
 													b,
 													iscriptLogicalScreenshotM,
 													iscriptVisualScreenshotM,
@@ -974,10 +995,10 @@ startIScriptBatchReplaying(
 											}
 											iScriptInfo(manager, "", None());
 
-											if (isIScriptBatchReplaying(manager)) {
-												next(currentBatch, getValue(currentBatch) + 1);
+											if (isIScriptScenarioReplaying(manager)) {
+												next(manager.iscript.scenario.runningIScriptIdxB, getValue(manager.iscript.scenario.runningIScriptIdxB) + 1);
 											} else {
-												stopBatchReplay();
+												stopScenarioReplay();
 											}
 										},
 										true
@@ -987,15 +1008,15 @@ startIScriptBatchReplaying(
 							};
 
 							onError = \ -> {
-								next(currentBatch, getValue(currentBatch) + 1);
+								next(manager.iscript.scenario.runningIScriptIdxB, getValue(manager.iscript.scenario.runningIScriptIdxB) + 1);
 							};
 
-							uns := [loadIScriptFile(manager, currentScriptFilename, onSuccess, onError)];
+							uns := [loadIScriptFile(manager, scriptPath, onSuccess, onError)];
 
 							[\ -> dispUnsA(uns)];
 						},
 						\ -> {
-							stopBatchReplay();
+							stopScenarioReplay();
 
 							[];
 						}
@@ -1008,19 +1029,41 @@ startIScriptBatchReplaying(
 	}
 }
 
+disposeIScriptHandler(manager : MaterialManager) -> void {
+	maybeApply((manager.iscript).httpRequestDisposer, apply0);
+	(manager.iscript).httpRequestDisposer ::= None();
+	maybeApply((manager.iscript).replayDisposer, apply0);
+	(manager.iscript).replayDisposer ::= None();
+}
+
 handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void {
 	makeSubscribe2Uns(manager.iscript.state, \state -> {
 		switch (state) {
 			IScriptRecording(options, continue): {
+				disposeIScriptHandler(manager);
 				startIScriptRecording(manager, options, continue);
 			}
+			IScriptRecordingPaused(options, continue): {
+				[]
+			}
 			IScriptReplaying(onFinish): {
+				disposeIScriptHandler(manager);
 				startIScriptReplaying(manager, m2t, onFinish);
 			}
-			IScriptBatchReplaying(onFinish): {
-				startIScriptBatchReplaying(manager, m2t, onFinish);
+			IScriptReplayingPaused(): {
+				disposeIScriptHandler(manager);
+				[]
 			}
-			IScriptPaused(): {
+			IScriptScenarioReplaying(onFinish): {
+				disposeIScriptHandler(manager);
+				startIScriptScenarioReplaying(manager, m2t, onFinish);
+			}
+			IScriptScenarioReplayingPaused(): {
+				disposeIScriptHandler(manager);
+				[]
+			}
+			IScriptStopped(): {
+				disposeIScriptHandler(manager);
 				[]
 			}
 			IScriptAddMFocusRecord(addDialog): {
@@ -1029,7 +1072,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 						eitherFn(
 							pb,
 							\p -> {
-								setIScriptState(manager, IScriptPaused());
+								setIScriptState(manager, IScriptStopped());
 								addDialog(p);
 
 								[]
@@ -1051,7 +1094,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 						eitherFn(
 							pb,
 							\p -> {
-								setIScriptState(manager, IScriptPaused());
+								setIScriptState(manager, IScriptStopped());
 								addDialog(p.parent);
 
 								[]
@@ -1073,7 +1116,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 						eitherFn(
 							pb,
 							\p -> {
-								setIScriptState(manager, IScriptPaused());
+								setIScriptState(manager, IScriptStopped());
 								addDialog(p);
 
 								[]
@@ -1095,7 +1138,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 						eitherFn(
 							pb,
 							\p -> {
-								setIScriptState(manager, IScriptPaused());
+								setIScriptState(manager, IScriptStopped());
 								addDialog(p.parent);
 
 								[]
@@ -1129,22 +1172,24 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			setFileContent("iscript_output.txt", serialize(outputValues)) |> ignore;
 		}
 
-		nextDistinct(manager.iscript.state, IScriptPaused());
+		nextDistinct(manager.iscript.state, IScriptStopped());
 
 		// If there was a run with the parameter "playiscript", then we exit with the result return.
 		if (length(b) > 1) {
-			iScriptInfo(manager, "=== End Batch Tests ===", None());
-			if (getUrlParameter(UP_ISCRIPTPLAYBATCH) != "") quit(countA(b, \v -> !v.isReplaySuccessful));
+			iScriptInfo(manager, "=== End Scenario ===", None());
+			if (getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "") quit(countA(b, \v -> !v.isReplaySuccessful));
 
 			compareDialog(b);
 		} else {
 			if (getUrlParameter(UP_ISCRIPTPLAY) != "") quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)));
+
+			compareDialog(b);
 		}
 	}
 }
 
 isIScriptUrlParamsSet() -> bool {
 	isUrlParameterTrue(UP_ISCRIPTRECORD) ||
-	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYBATCH) != ""
+	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != ""
 }
 

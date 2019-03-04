@@ -1,6 +1,7 @@
 import ds/treeutils;
 import server/http;
 import net/http;
+import sys/target;
 import text/serialize;
 import tools/flowc/flowc_println;
 import tools/flowc/flowc_find;
@@ -272,7 +273,7 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 }
 
 runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : (int) -> void) -> void {
-	if (isConfigParameterFalse(config.config, "server")) {
+	if (isConfigParameterFalse(config.config, "server") || !java) {
 		runConfigLocally(config, globalEnv, onRunComplete);
 	} else {
 		serverUrl = 
@@ -301,6 +302,7 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 				},
 			)
 		);
+		onComplete = ref nop;
 		httpCustomRequest(
 			serverUrl,
 			GET(), [], RequestPayload(serialize(patchedConfig)),
@@ -308,22 +310,23 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 				code = status - 200;
 				if (code == 0) {
 					fcPrintln(data);
-					onRunComplete(0);
+					onComplete := \-> onRunComplete(0);
 				} else if (0 < code && code < 64) {
 					fcPrintln("Compilation error " + i2s(code));
 					fcPrintln(data);
-					onRunComplete(code);
+					onComplete := \-> onRunComplete(code);
 				} else {
 					if (isConfigParameterTrue(config.config, "client-mode")) {
-						fcPrintln("Server connection error " + i2s(code));
+						fcPrintln("Server connection error " + i2s(status));
 						fcPrintln(data);
 					} else {
 						runConfigLocally(config, globalEnv, onRunComplete);
 					}
 				}
 			},
-			true
-		)
+			false
+		);
+		^onComplete();
 	}
 }
 
@@ -383,7 +386,7 @@ main() {
 								fcPrintln("Server stopped.");
 								HttpResponse(200, fcOutput(), []) |> response;
 								//^server();  // TODO: why calling ^server(); causes freezing of flowc?
-								quit(0);
+								timer(100, \-> quit(0));
 							} else {
 								code = ref 0;
 								fcPrintln("Processing '" + conf.flowfile + "' on server.");

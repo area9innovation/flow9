@@ -432,7 +432,7 @@ class JavaWriter {
 			var tstr = flowType2objType(type);
 			sb.add('new ');
 			sb.add(tstr); sb.add('() {\n');
-			sb.add(indent); sb.add('\tpublic '); sb.add(flowType2objType(ret)); sb.add(' invoke(');
+			sb.add(indent); sb.add('\tfinal public '); sb.add(flowType2objType(ret)); sb.add(' invoke(');
 			var pfix = '';
 			for (i in 0...args.length) {
 				sb.add(pfix); sb.add(flowType2objType(args[i])); sb.add(' a'); sb.add(i);
@@ -1528,6 +1528,22 @@ class JavaWriter {
 			case TBoundTyvar(__): {
 				// ? -> something
 				wrapCast(v, fromtype, totype);
+			}
+			case TArray(fa): {
+				switch (totype) {
+					case TArray(ta): {
+						switch (fa) {
+							case TName(n1, args1):
+								switch (ta) {
+								// Array of named types are OK 
+								case TName(n2, args2): wrapCast(v, fromtype, totype);
+								default: throw "Not implemented: " + Prettyprint.print(code);
+							}
+							default: throw "Not implemented: " + Prettyprint.print(code);
+						}
+					}
+					default: throw "Not implemented: " + Prettyprint.print(code);
+				}
 			}
 			default: {
 				throw "Not implemented: " + Prettyprint.print(value) + " " + fromtype;

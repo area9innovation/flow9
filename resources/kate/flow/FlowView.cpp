@@ -2,9 +2,10 @@
 #include <QTextStream>
 #include <KXMLGUIFactory>
 #include <KActionCollection>
-#include <klocalizedstring.h>
-#include "KConfigGroup"
-#include "KSharedConfig"
+#include <KMessageBox>
+#include <KLocalizedString>
+#include <KConfigGroup>
+#include <KSharedConfig>
 
 #include "common.hpp"
 #include "FlowView.hpp"
@@ -46,7 +47,7 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
     initActions();
     debugView_->slotReloadLaunchConfigs();
     slotReloadLaunchConfigs();
-    connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerError(QString, int, int)), this, SLOT(slotGoTo(QString, int, int)));
+    connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerError(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
 
     mainWindow_->guiFactory()->addClient(this);
     if (flowConfig_.ui.serverAutostartCheckBox->isChecked()) {
@@ -75,18 +76,21 @@ void FlowView::slotReloadLaunchConfigs() {
     forceBuildSelectAction_->setItems(launchNames);
 }
 
-void FlowView::slotGoTo(const QString& file, int line, int col) {
-    // skip not existing files
-    if (!QFile::exists(file)) {
+void FlowView::slotGotoLocation(const QString& path, const int line, const int column) {
+	if (!QFile::exists(path)) {
+		KMessageBox::sorry(0, i18n("File '") + path + i18n("' doesn't exist"));
         return;
     }
-    KTextEditor::View* editView = mainWindow_->openUrl(QUrl::fromLocalFile(file));
-    if (editView && editView->setCursorPosition(KTextEditor::Cursor(line, col))) {
-    	editView->raise();
-    	editView->setFocus(Qt::OtherFocusReason);
-    }
+	if (KTextEditor::View* view = mainWindow_->openUrl(QUrl::fromLocalFile(path))) {
+		QString lineString = view->document()->line(line);
+		int tabsNum = lineString.count(QLatin1Char('\t'));
+		mainWindow_->activateView(view->document());
+		mainWindow_->activeView()->setCursorPosition(KTextEditor::Cursor(line, column - tabsNum * 3));
+		mainWindow_->activeView()->setFocus();
+	} else {
+		KMessageBox::sorry(0, i18n("Cannot open ") + path);
+	}
 }
-
 
 void FlowView::initActions() {
 

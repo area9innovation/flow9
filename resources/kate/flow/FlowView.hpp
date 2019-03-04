@@ -26,7 +26,7 @@ public:
 public Q_SLOTS:
 	void slotReloadLaunchConfigs();
 	void showMenu();
-	void slotGoTo(const QString& file, int line, int col);
+	void slotGotoLocation(const QString& file, int line, int col = 0);
 
 private:
 	friend class DebugView;

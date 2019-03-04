@@ -528,7 +528,7 @@ public class Native extends NativeHost {
 		int l = str.length();
 		Object[] rv = new Object[l];
 		for (int i = 0; i < l; i++)
-			rv[i] = new Integer(str.charAt(i)&0xFFFF);
+			rv[i] = Integer.valueOf(str.charAt(i)&0xFFFF);
 		return rv;
 	}
 
@@ -883,8 +883,16 @@ public class Native extends NativeHost {
 	}
 
 	public final Struct getCurrentDate() {
-		Date date = new Date();
-		return runtime.makeStructValue("Date", new Object[] { date.getYear()+1900, date.getMonth()+1, date.getDate() }, null);
+		GregorianCalendar date = new GregorianCalendar();
+		return runtime.makeStructValue(
+				"Date",
+				new Object[] {
+					date.get(Calendar.YEAR) + 1900,
+					date.get(Calendar.MONTH) + 1,
+					date.get(Calendar.DAY_OF_MONTH)
+				},
+				null
+			);
 	}
 
 	// Monday is 0

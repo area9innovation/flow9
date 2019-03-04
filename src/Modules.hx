@@ -158,7 +158,7 @@ class Modules {
 												} else {
 													for (i in 0...args.length) {
 														var value = newFields.get(args[i].name);
-														var valueToPush = if (value == null) Field(sourceRef, args[i].name, pos) else value;
+														var valueToPush = if (value == null) Field(sourceRef, args[i].name, PositionUtil.copy(pos)) else value;
 														newArgs.push(valueToPush);
 													}
 												}

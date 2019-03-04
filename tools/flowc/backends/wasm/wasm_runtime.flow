@@ -71,7 +71,6 @@ export {
 	// Set a reference to a pure f64 value
 	wasm_set_ref_f64(reference : int, val : double) -> void;
 
-
 	// Ref. counting
 
 	// Increase ref. counting for this heap value
@@ -82,6 +81,8 @@ export {
 
 	// Decrease ref. counting for this heap value
 	wasm_dec_refcnt(address : int) -> void;
+
+	wasm_dec_refcnt_type(address : int, typeDescriptor : int) -> void;
 
 	// Print refcnt - used for debugging
 	wasm_print_refcnt_passthru(address : int) -> int;
@@ -155,8 +156,13 @@ export {
 	wasm_unbox_flow_i32_ref(address : int, typeDescriptor : int) -> int;
 
 	wasm_compare_flow(val1 : int, val2 : int) -> int;
+	wasm_compare_native(val1 : int, val2 : int) -> int;
 
 	wasm_get_flow_content_type(address : int) -> int;
+
+	native wasm_typetable_start: () -> int = wasm_compiler.typetable_start;
+
+	wasm_dump_type(type_ptr : int) -> string;
 }
 
 // this is used as a temporary place to hold return value of a function 
@@ -166,8 +172,6 @@ export {
 // get_global $wasm_global_temp_holder // to get the closure pointer again to compute function address
 // mut suffix is important - it makes global variable mutable
 wasm_global_temp_holder_mut : int = 0; 
-
-native wasm_typetable_start: () -> int = wasm_compiler.typetable_start;
 
 wasm_init_runtime() {
 	wasm_init_allocator();
@@ -318,10 +322,12 @@ wasm_compare_i32_using_typedescriptor(val1 : int, val2 : int, typeDescriptor : i
 	} else if (tag == 5) {
 		// 5: flow
 		wasm_compare_flow(wasm_inc_refcnt_passthru(val1), wasm_inc_refcnt_passthru(val2));
+	} else if (tag == 6) {
+		// 6: flow
+		wasm_compare_native(wasm_inc_refcnt_passthru(val1), wasm_inc_refcnt_passthru(val2));
 	} else {
 		// 3: double - not supposed to happen here
 
-		// 6: native
 		// 7: type parameter
 		printi(tag);
 		0;
@@ -403,7 +409,7 @@ wasm_set_ref_i32(reference : int, val : int) -> void {
 }
 
 wasm_set_ref_i32_ref(reference : int, val : int) -> void {
-	wasm_dec_refcnt(reference + 4);		// should it be reference + 0 here instead?!!!
+	wasm_dec_refcnt(wasm_i32_load(reference + 4));
 	// do NOT increase refcnt on val to compensate on missing auto-decrement upon function exit
 	//wasm_inc_refcnt(val);
 	wasm_i32_store(reference + 4, val);
@@ -413,6 +419,12 @@ wasm_set_ref_i32_ref(reference : int, val : int) -> void {
 wasm_set_ref_f64(reference : int, val : double) -> void {
 	wasm_f64_store(reference + 4, val);
 	wasm_dec_refcnt(reference);
+}
+
+wasm_free_ref(reference : int, typeDescriptor : int) -> void {
+	valueTag = wasm_i32_load8_u(typeDescriptor + 1);
+	if (is_ref_tag(valueTag))
+		wasm_dec_refcnt_type(reference + 4, typeDescriptor + 1);
 }
 
 wasm_inc_refcnt(address : int) -> void {
@@ -438,6 +450,43 @@ wasm_dec_refcnt(address : int) -> void {
 	if (val == 1 && address >= wasm_heap_start()) {
 		wasm_free(address);
 	}
+}
+
+wasm_dec_refcnt_type(address : int, typeDescriptor : int) {
+	tag = wasm_i32_load8_u(typeDescriptor);
+	// This should match wasmTypeDescriptor2bytes 
+	if (tag == 0 || tag == 1 || tag == 2 || tag == 3 || tag == 4) {
+		// do nothing
+	} else if (tag == 5) {
+		// flow
+		wasm_free_flow(address); 
+	} else if (tag == 6) {
+		// native - ??
+	}else if (tag == 8) {
+		// ref
+		wasm_free_ref(address, typeDescriptor);
+	} else if (tag == 9) { 
+		// array
+		wasm_free_array(address, typeDescriptor);		
+	} else if (tag == 10) {
+		// struct
+		wasm_free_struct(address);
+	} else if (tag == 11) {
+		// union
+		// does not actually happen
+	} else if (tag == 12) {
+		// function / closure
+		// does not actually happen
+		//nargs = wasm_i32_load8_u(typeDescriptor + 1);
+		//returntype = wasm_next_arg_typedescriptor(typeDescriptor + 2, nargs);
+		//wasm_next_typedescriptor(returntype);
+	} else {
+		// TODO:
+		// 7: type parameter
+		// printi(tag);
+		//typeDescriptor + 1;
+	}
+	wasm_dec_refcnt(address);
 }
 
 wasm_print_refcnt_passthru(address : int) -> int {
@@ -494,6 +543,25 @@ wasm_alloc_array(elements : int, bytes : int) -> int {
 	addr;
 }
 
+// whether a given tag represents a reference type
+is_ref_tag(tag : int) {
+	tag >= 4; // void, int, bool, double are not references 
+}
+
+wasm_free_array(addr : int, typeDescriptor : int) {
+	elementTag = wasm_i32_load8_u(typeDescriptor + 1);
+	if (is_ref_tag(elementTag)) {
+		count = wasm_i32_load(addr + 4);
+		step = if (elementTag == 3) 8 else 4; // special case for doubles
+		do_wasm_free_array(addr + 8, typeDescriptor + 1, count, step);
+	}
+}
+
+do_wasm_free_array(elementAddr : int, typeDescriptor : int, count : int, step : int) {
+	wasm_dec_refcnt_type(elementAddr, typeDescriptor);
+	if (count > 1)
+		do_wasm_free_array(elementAddr + step, typeDescriptor, count - 1, step);
+}
 
 wasm_set_array_i32(array_address : int, offset : int, val : int) -> int {
 	wasm_i32_store(array_address + offset, val);
@@ -543,6 +611,22 @@ wasm_alloc_struct(id : int, bytes : int) -> int {
 	wasm_i32_store(addr, 1); // initialize refcount to 1 - it will be stored somewhere 
 	wasm_i32_store(addr + 4, id);
 	addr;
+}
+
+wasm_free_struct(addr : int) {
+	typeDescriptor = wasm_i32_load(addr + 4);
+	snamelen = wasm_i32_load8_u(typeDescriptor + 1);
+	nfields = wasm_i32_load8_u(typeDescriptor + 2 + snamelen);
+	wasm_free_struct_fields(addr + 8, typeDescriptor + 3 + snamelen, nfields);
+}
+
+wasm_free_struct_fields(fieldAddr : int, fieldDesc : int, nfields : int) {
+	typeDescriptor = fieldDesc + 2; // skipping field ID
+	fieldSize = wasm_type_size(typeDescriptor);
+	wasm_dec_refcnt_type(fieldAddr, typeDescriptor);
+	if (nfields > 1) {
+		wasm_free_struct_fields(fieldAddr + fieldSize, wasm_next_typedescriptor(typeDescriptor), nfields - 1);
+	}
 }
 
 wasm_get_field_i32(struct_address : int, offset : int) -> int {
@@ -702,6 +786,10 @@ wasm_next_typedescriptor(typeDescriptor : int) -> int {
 		snamelen = wasm_i32_load8_u(typeDescriptor + 1);
 		nfields = wasm_i32_load8_u(typeDescriptor + 2 + snamelen);
 		wasm_next_field_typedescriptor(typeDescriptor + 2 + snamelen + 1, nfields);
+	} else if (tag == 11) {
+		// union
+		slen = wasm_i32_load8_u(typeDescriptor + 1);
+		typeDescriptor + 1 + 1 + slen * 2;
 	} else if (tag == 12) {
 		nargs = wasm_i32_load8_u(typeDescriptor + 1);
 		returntype = wasm_next_arg_typedescriptor(typeDescriptor + 2, nargs);
@@ -709,7 +797,6 @@ wasm_next_typedescriptor(typeDescriptor : int) -> int {
 	} else {
 		// TODO:
 		// 7: type parameter
-		// 11: union
 		// printi(tag);
 		typeDescriptor + 1;
 	}
@@ -766,6 +853,11 @@ wasm_alloc_flow_i32_ref(value : int, bytes : int, typeDescriptor : int) -> int {
 	addr;
 }
 
+wasm_free_flow(address : int) {
+	// type descriptor is embedded along with the value
+	wasm_dec_refcnt_type(address, wasm_i32_load(address + 4));
+}
+
 wasm_compare_flow(address1 : int, address2 : int) -> int {
 	res = if (address1 == address2) 0
 	else {
@@ -796,10 +888,29 @@ wasm_compare_flow(address1 : int, address2 : int) -> int {
 	res;
 }
 
+wasm_compare_native(address1 : int, address2 : int) -> int {
+	res = if (address1 == address2) 0
+	else {
+		val1 = wasm_i32_load(address1 + 4);
+		val2 = wasm_i32_load(address2 + 4);
+		if (val1 == val2) 0 else if (val1 < val2) -1 else 1;
+	}
+
+	wasm_dec_refcnt(address1);
+	wasm_dec_refcnt(address2);
+	res;
+}
+
+wasm_unbox_error(typeRequested : int, typeActual : int) {
+	prints("Types mismatch\n    requested(addr: " + cast(typeRequested : int -> string) + "): " + wasm_dump_type(typeRequested) + 
+		"\n    actual(addr: " + cast(typeActual : int -> string) + "): " + wasm_dump_type(typeActual));
+	wasm_unreachable();
+}
+
 wasm_unbox_flow_i32(address : int, typeDescriptor : int) -> int {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_i32_load(address + 8);
 	wasm_dec_refcnt(address);
@@ -809,7 +920,7 @@ wasm_unbox_flow_i32(address : int, typeDescriptor : int) -> int {
 wasm_unbox_flow_f64(address : int, typeDescriptor : int) -> double {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_f64_load(address + 8);
 	wasm_dec_refcnt(address);
@@ -825,7 +936,7 @@ wasm_get_flow_content_type(address : int) -> int {
 wasm_unbox_flow_i32_ref(address : int, typeDescriptor : int) -> int {
 	type = wasm_i32_load(address + 4);
 	if (type != typeDescriptor) {
-		wasm_unreachable();
+		wasm_unbox_error(typeDescriptor, type);
 	}
 	r = wasm_i32_load(address + 8);
 	td = wasm_i32_load(r + 4);
@@ -873,5 +984,18 @@ do_wasm_find_struct_descriptor(typedescriptor : int, structname : int) -> int {
 			do_wasm_find_struct_descriptor(wasm_next_typedescriptor(typedescriptor), structname)
 		} else -1;
 	}
+}
+
+wasm_do_dump_type(type_ptr : int, type_len : int, offset : int, acc : string) -> string {
+	if (offset < type_len) {
+		type = wasm_i32_load8_u(type_ptr + offset);
+		s = acc + (if (acc == "") "" else ", ") + cast(type : int -> string);
+
+		wasm_do_dump_type(type_ptr, type_len, offset + 1, s);
+	} else acc;
+}
+
+wasm_dump_type(type_ptr : int) -> string { 
+	wasm_do_dump_type(type_ptr, wasm_next_typedescriptor(type_ptr) - type_ptr, 0, "");
 }
 

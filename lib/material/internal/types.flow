@@ -96,15 +96,18 @@ export {
 
 		scriptChangedB : DynamicBehaviour<bool>,
 		currentFileNameB : DynamicBehaviour<string>,
-		currentBatchTestsDirectoryB : DynamicBehaviour<string>,
-		batchTestFileNamesB : DynamicBehaviour<[string]>,
+
 		topPanelWidthHeightB : DynamicBehaviour<WidthHeight>,
 
 		filesystemDB : DynamicBehaviour<Maybe<IScriptFilesystemDB>>,
 
 		replayCursor : IScriptReplayCursor,
 
-		recordingSuspended : DynamicBehaviour<bool>,
+		mutable httpRequestDisposer : Maybe<() -> void>,
+
+		mutable replayDisposer : Maybe<() -> void>,
+
+		scenario : IScriptScenario,
 	);
 
 	IScriptFilesystemDB(
@@ -122,12 +125,25 @@ export {
 	);
 
 	IScriptReplayResult(
-		filename : string,
+		filepath : string,
 		isReplaySuccessful : bool,
 		iscriptLogicalScreenshotM : Maybe<IScriptLogicalScreenshot>,
 		iscriptVisualScreenshotM : Maybe<IScriptVisualScreenshot>,
 		afterReplayLogicalScreenshot : IScriptLogicalScreenshot,
 		afterReplayVisualScreenshot : IScriptVisualScreenshot,
+	);
+
+	IScriptScenario(
+		pathB : DynamicBehaviour<string>,
+		descriptionB : DynamicBehaviour<string>,
+		scenarioChangedB : DynamicBehaviour<bool>,
+		runningIScriptIdxB : DynamicBehaviour<int>,
+		scriptsB : DynamicBehaviour<[IScriptScenarioRecord]>,
+	);
+
+	IScriptScenarioRecord(
+		scriptPath : string,
+		descriptionB : DynamicBehaviour<string>,
 	);
 
 	//This struct provides additional info for relative script
@@ -513,13 +529,16 @@ export {
 		);
 
 	// Current IScript recording and replaying state
-	IScriptState ::= IScriptRecording, IScriptReplaying, IScriptBatchReplaying, IScriptPaused, IScriptAddRecord;
+	IScriptState ::= IScriptRecording, IScriptRecordingPaused, IScriptReplaying, IScriptReplayingPaused,
+		IScriptScenarioReplaying, IScriptScenarioReplayingPaused, IScriptStopped, IScriptAddRecord;
 
 			IScriptRecording(captureOptions : CaptureOptions, continueRecording : bool);
+			IScriptRecordingPaused(captureOptions : CaptureOptions, continueRecording : bool);
 			IScriptReplaying(onFinish : (result : [IScriptReplayResult]) -> void);
-			IScriptBatchReplaying(onFinish : (result : [IScriptReplayResult]) -> void);
-			IScriptPaused();
-
+			IScriptReplayingPaused();
+			IScriptScenarioReplaying(onFinish : (result : [IScriptReplayResult]) -> void);
+			IScriptScenarioReplayingPaused();
+			IScriptStopped();
 
 			IScriptAddRecord ::= IScriptAddMFocusRecord, IScriptAddMFocusGroupRecord, IScriptAddMFocusAlias, IScriptAddMFocusGroupAlias;
 
@@ -557,15 +576,13 @@ export {
 			focusEnabled : Transform<bool>,
 			recordingEnabled : Transform<bool>,
 			focused : DynamicBehaviour<bool>,
+			active : DynamicBehaviour<bool>,
+			selected : DynamicBehaviour<bool>,
 			position : () -> PositionScale,
 			widthHeight : () -> WidthHeight,
 			updateEnabled : DynamicBehaviour<bool>,
 			mutable behaviours : Tree<string, Pair<DynamicBehaviour<flow>, IScriptRecordType>>
 		);
-
-		emptyMFocus = \manager : MaterialManager -> MFocus(const(-1), FEmpty(), make([]), None(), "emptyMFocus", const(""), manager.focus, None(), make(false),
-			make(false), const(false), const(false), const(false), make(false), \ -> PositionScale(zeroPoint, zeroPoint),
-			\ -> WidthHeight(0., 0.), make(true), makeTree());
 
 		MFocusGroup(
 			managerId : int,
@@ -592,6 +609,7 @@ export {
 			recordingEnabled : Transform<bool>,
 			selectionEnabled : Transform<bool>,
 			focused : DynamicBehaviour<bool>,
+			active : DynamicBehaviour<bool>,
 			position : () -> PositionScale,
 			widthHeight : () -> WidthHeight,
 			mutable theme : MaterialTheme,
@@ -599,86 +617,49 @@ export {
 		);
 
 	MaterialTheme(
-		lightBackground : bool,
-		primaryColor : MColor,
-		accentColor : MColor,
-		toolbarItemsColor : MColor,
-		separatorColor : MColor,
-		textColor : MColor,
-		fontStyle : MFontStyle,
-		iconsColor : MColor,
+		palette : MaterialPalette,
+		shape : MaterialShapeManager,
+		font : MFontStyle,
 		enableAnimations : bool,
 		enableRipple : bool
 	);
 
-	makeMaterialTheme(lightBackground : bool, primaryColor : MColor, accentColor : MColor) -> MaterialTheme {
-		toolbarItemsColor = MToolbarItemsMColor(primaryColor);
-		itemsColor = if (lightBackground) MBlack() else MWhite();
-
-		MaterialTheme(
-			lightBackground,
-			primaryColor,
-			accentColor,
-			toolbarItemsColor,
-			itemsColor,
-			itemsColor,
-			MBody(),
-			itemsColor,
-			defaultMaterialTheme.enableAnimations,
-			defaultMaterialTheme.enableRipple
-		)
-	}
-
-	MLightTheme(theme : MaterialTheme, lightBackground : bool) -> MaterialTheme {
-		if (lightBackground != theme.lightBackground)
-			MaterialTheme(
-				lightBackground,
-				theme.primaryColor,
-				theme.accentColor,
-				theme.toolbarItemsColor,
-				if (MColor2int(theme.separatorColor) == white && lightBackground)
-					MBlack()
-				else if (MColor2int(theme.separatorColor) == black && !lightBackground)
-					MWhite()
-				else
-					theme.separatorColor,
-				if (MColor2int(theme.textColor) == white && lightBackground)
-					MBlack()
-				else if (MColor2int(theme.textColor) == black && !lightBackground)
-					MWhite()
-				else
-					theme.textColor,
-				theme.fontStyle,
-				if (MColor2int(theme.iconsColor) == white && lightBackground)
-					MBlack()
-				else if (MColor2int(theme.iconsColor) == black && !lightBackground)
-					MWhite()
-				else
-					theme.iconsColor,
-				theme.enableAnimations,
-				theme.enableRipple,
-			)
-		else
-			theme
-	}
-
-	defaultMaterialTheme =
-		MaterialTheme(
-			true,
-			MBlue(500),
-			MOrangeA(200),
-			MWhite(),
-			MBlack(),
-			MBlack(),
-			MBody(),
-			MBlack(),
-			true,
-			true,
+		MaterialPalette(
+			light : bool,
+			primary : MColor,
+			accent : MColor,
+			text : MColor,
+			icon : MColor,
+			toolbar : MColor, // Toolbar items
+			separator : MColor
 		);
 
-	contrastingColor = \p : MFocusGroup -> if (p.theme.lightBackground) black else white;
-	contrastingMColor = \p : MFocusGroup -> MDefaultTextColor(p.theme.lightBackground);
-	sameLightMColor = \p : MFocusGroup -> MDefaultTextColor(!p.theme.lightBackground);
+		MaterialShapeManager(
+			mutable small : Tree<string, MaterialShapeRange>,
+			mutable medium : Tree<string, MaterialShapeRange>,
+			mutable large : Tree<string, MaterialShapeRange>
+		);
+
+			MaterialShape(
+				tl : MaterialShapeCorner, // Top Left
+				tr : MaterialShapeCorner, // Top Right
+				br : MaterialShapeCorner, // Bottom Right
+				bl : MaterialShapeCorner, // Bottom Left
+			);
+				MaterialShapeCorner ::= RoundedCorner, CutCorner, RoundedCornerPercent, CutCornerPercent;
+					RoundedCorner(radius : double);
+					CutCorner(radius : double);
+					RoundedCornerPercent(percent : double);
+					CutCornerPercent(percent : double);
+
+			MaterialShapeRange(
+				mutable defaultShape : MaterialShape,
+				applicable : MaterialShapeApplicable,
+				rounded : MaterialShapeLimit,
+				cut : MaterialShapeLimit
+			);
+				MaterialShapeApplicable(tl : bool, tr : bool, br : bool, bl : bool);
+				MaterialShapeLimit(minRadius : double, maxRadius : double, minPercent : double, maxPercent : double);
 
 	MaterialRender(manager : MaterialManager, renderId : int);
 }
