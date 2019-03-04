@@ -39,7 +39,8 @@ static void unlock_destroy(const std::vector<GLClip*> &clips)
 }
 
 GLRenderSupport::GLRenderSupport(ByteCodeRunner *owner) :
-    NativeMethodHost(owner)
+    NativeMethodHost(owner),
+    gl_transparent()
 {
     ScreenRotation = FlowRotation0;
     Width = Height = RealWidth = RealHeight = 100;

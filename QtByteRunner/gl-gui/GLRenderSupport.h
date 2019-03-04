@@ -203,7 +203,7 @@ protected:
     int MouseX, MouseY;
     int MouseDownX, MouseDownY;
     double lastUserAction;
-    bool gl_transparent = false;
+    bool gl_transparent;
 
     GLClip *getCurrentFocus();
 private:
