@@ -6,6 +6,7 @@ export {
 
 	// JS natives
 
+	native js_free_native : (int) -> void = host.js_free_native;
 	native printi : (int) -> void = host.printi;
 	native printd : (double) -> void = host.printd;
 	native prints : (string) -> void = host.prints;
@@ -90,8 +91,6 @@ export {
 
 	// Decrease ref. counting for this heap value
 	wasm_dec_refcnt(address : int, typeDescriptor : int) -> void;
-
-	wasm_dec_refcnt_type(address : int, typeDescriptor : int) -> void;
 
 	// Print refcnt - used for debugging
 	wasm_print_refcnt_passthru(address : int) -> int;
@@ -434,7 +433,7 @@ wasm_set_ref_f64(reference : int, val : double, typeDescriptor : int) -> void {
 wasm_free_ref(reference : int, typeDescriptor : int) -> void {
 	valueTag = wasm_i32_load8_u(typeDescriptor + 1);
 	if (is_ref_tag(valueTag))
-		wasm_dec_refcnt_type(reference + 4, typeDescriptor + 1);
+		wasm_dec_refcnt(reference + 4, typeDescriptor + 1);
 }
 
 wasm_inc_refcnt(address : int) -> void {
@@ -456,22 +455,17 @@ wasm_dec_refcnt(address : int, typeDescriptor : int) -> void {
 		wasm_unreachable();
 	}
 	wasm_i32_store(address, val - 1);
-	// do not attempt to free static strings
-	if (val == 1 && address >= wasm_heap_start()) {
-		wasm_free(address);
-	}
-}
 
-wasm_dec_refcnt_type(address : int, typeDescriptor : int) {
+	// process refs. we have to decrement refcnt for underlying elements
 	tag = wasm_i32_load8_u(typeDescriptor);
-	// This should match wasmTypeDescriptor2bytes 
-	if (tag == 0 || tag == 1 || tag == 2 || tag == 3 || tag == 4) {
+	if (!is_ref_tag(tag)) {
 		// do nothing
 	} else if (tag == 5) {
 		// flow
 		wasm_free_flow(address); 
 	} else if (tag == 6) {
 		// native - ??
+		if (val == 1) js_free_native(wasm_i32_load(address + 4));
 	}else if (tag == 8) {
 		// ref
 		wasm_free_ref(address, typeDescriptor);
@@ -496,7 +490,14 @@ wasm_dec_refcnt_type(address : int, typeDescriptor : int) {
 		// printi(tag);
 		//typeDescriptor + 1;
 	}
-	wasm_dec_refcnt(address, typeDescriptor);
+
+	// finally free mem if refcnt equal 1
+	// do not attempt to free static strings
+	if (val == 1 && address >= wasm_heap_start()) {
+		wasm_free(address);
+		printi(555);
+		printi(tag);
+	}
 }
 
 wasm_print_refcnt_passthru(address : int) -> int {
@@ -559,18 +560,20 @@ is_ref_tag(tag : int) {
 }
 
 wasm_free_array(addr : int, typeDescriptor : int) {
-	elementTag = wasm_i32_load8_u(typeDescriptor + 1);
-	if (is_ref_tag(elementTag)) {
-		count = wasm_i32_load(addr + 4);
-		step = if (elementTag == 3) 8 else 4; // special case for doubles
-		do_wasm_free_array(addr + 8, typeDescriptor + 1, count, step);
+	count = wasm_i32_load(addr + 4);
+	if (count > 0) {
+		elementTag = wasm_i32_load8_u(typeDescriptor + 1);
+		if (is_ref_tag(elementTag)) {
+			do_wasm_free_array(addr + 8, typeDescriptor + 1, count);
+		}
 	}
 }
 
-do_wasm_free_array(elementAddr : int, typeDescriptor : int, count : int, step : int) {
-	wasm_dec_refcnt_type(elementAddr, typeDescriptor);
+// this function is intended to be called for arrays of ref types. And thus we'll increment element address by 4 bytes
+do_wasm_free_array(elementAddr : int, typeDescriptor : int, count : int) {
+	wasm_dec_refcnt(elementAddr, typeDescriptor);
 	if (count > 1)
-		do_wasm_free_array(elementAddr + step, typeDescriptor, count - 1, step);
+		do_wasm_free_array(elementAddr + 4, typeDescriptor, count - 1);
 }
 
 wasm_set_array_i32(array_address : int, offset : int, val : int) -> int {
@@ -627,15 +630,18 @@ wasm_free_struct(addr : int) {
 	typeDescriptor = wasm_i32_load(addr + 4);
 	snamelen = wasm_i32_load8_u(typeDescriptor + 1);
 	nfields = wasm_i32_load8_u(typeDescriptor + 2 + snamelen);
-	wasm_free_struct_fields(addr + 8, typeDescriptor + 3 + snamelen, nfields);
+	if (nfields > 0) wasm_free_struct_fields(addr + 8, typeDescriptor + 3 + snamelen, nfields);
 }
 
 wasm_free_struct_fields(fieldAddr : int, fieldDesc : int, nfields : int) {
 	typeDescriptor = fieldDesc + 2; // skipping field ID
-	fieldSize = wasm_type_size(typeDescriptor);
-	wasm_dec_refcnt_type(fieldAddr, typeDescriptor);
-	if (nfields > 1) {
-		wasm_free_struct_fields(fieldAddr + fieldSize, wasm_next_typedescriptor(typeDescriptor), nfields - 1);
+	tag = wasm_i32_load8_u(typeDescriptor + 1);
+	if (is_ref_tag(tag)) {
+		wasm_dec_refcnt(fieldAddr, typeDescriptor);
+		if (nfields > 1) {
+			fieldSize = wasm_type_size(typeDescriptor);
+			wasm_free_struct_fields(fieldAddr + fieldSize, wasm_next_typedescriptor(typeDescriptor), nfields - 1);
+		}
 	}
 }
 
@@ -871,7 +877,7 @@ wasm_alloc_flow_i32_ref(value : int, bytes : int, typeDescriptor : int) -> int {
 
 wasm_free_flow(address : int) {
 	// type descriptor is embedded along with the value
-	wasm_dec_refcnt_type(address, wasm_i32_load(address + 4));
+	wasm_dec_refcnt(address, wasm_i32_load(address + 4));
 }
 
 wasm_compare_flow(address1 : int, address2 : int) -> int {
