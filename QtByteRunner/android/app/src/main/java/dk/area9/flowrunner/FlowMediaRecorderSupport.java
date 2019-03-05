@@ -35,9 +35,6 @@ import java.util.List;
 import java.util.Map;
 
 public class FlowMediaRecorderSupport {
-
-    static boolean isCamera2Supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
-    static boolean isPauseResumeSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
 
     private Map<String, String> videoDevices = new HashMap<>();

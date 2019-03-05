@@ -350,8 +350,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
 
-        FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(this, wrapper);
-        wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
+        if (Utils.MediaRecorderIsCamera2Supported) {
+            FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(this, wrapper);
+            wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
+        }
+
         FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
         wrapper.setFlowWebSocketSupport(flowWebSocketSupport);
 

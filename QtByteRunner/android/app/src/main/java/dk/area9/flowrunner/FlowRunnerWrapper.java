@@ -1520,7 +1520,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nDeviceInfoUpdated(long ptr, int id);
 
     private synchronized void cbDeviceInfoUpdated(int cb) {
-        if (FlowMediaRecorderSupport.isCamera2Supported)
+        if (Utils.MediaRecorderIsCamera2Supported)
             mediaRecorderSupport.initializeDeviceInfo();
         nDeviceInfoUpdated(cPtr(), cb);
     }
@@ -1573,28 +1573,28 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                                             boolean recordAudio, boolean recordVideo, String videoDeviceId, String audioDeviceId,
                                             int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
                                             int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot) {
-        if (FlowMediaRecorderSupport.isCamera2Supported)
+        if (Utils.MediaRecorderIsCamera2Supported)
             mediaRecorderSupport.recordMedia(websocketUri, filePath, timeslice, videoMimeType, recordAudio, recordVideo, videoDeviceId,
                     audioDeviceId, cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
     }
 
     private synchronized void cbStartMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isCamera2Supported)
+        if (Utils.MediaRecorderIsCamera2Supported)
             mediaRecorderSupport.startMediaRecorder(recorder);
     }
 
     private synchronized void cbResumeMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isPauseResumeSupported)
+        if (Utils.MediaRecorderIsPauseResumeSupported)
             mediaRecorderSupport.resumeMediaRecorder(recorder);
     }
 
     private synchronized void cbPauseMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isPauseResumeSupported)
+        if (Utils.MediaRecorderIsPauseResumeSupported)
             mediaRecorderSupport.pauseMediaRecorder(recorder);
     }
 
     private synchronized void cbStopMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (FlowMediaRecorderSupport.isCamera2Supported)
+        if (Utils.MediaRecorderIsCamera2Supported)
             mediaRecorderSupport.stopMediaRecorder(recorder);
     }
 

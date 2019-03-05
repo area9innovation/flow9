@@ -75,6 +75,10 @@ public class Utils {
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
     public static final boolean isFileProviderRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
 
+
+    public static boolean MediaRecorderIsCamera2Supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
+    public static boolean MediaRecorderIsPauseResumeSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
+
     static {
         BasicCookieStore cookieStore = new BasicCookieStore();
         commonHttpContext.setAttribute(ClientContext.COOKIE_STORE, cookieStore);
