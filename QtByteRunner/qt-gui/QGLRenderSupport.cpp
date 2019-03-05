@@ -31,7 +31,7 @@
 
 #include "VideoWidget.h"
 
-QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch) :
+QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch, bool transparent) :
     QOpenGLWidget(parent),
     GLRenderSupport(owner),
     gl_fake_touch(fake_touch),
@@ -41,6 +41,13 @@ QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool 
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
+
+    gl_transparent = transparent;
+
+    if (gl_transparent) {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_NoSystemBackground, true);
+    }
 
     bc_download_progress = NULL;
     bc_reply = NULL;
@@ -1907,7 +1914,7 @@ StackSlot QGLRenderSupport::takeSnapshot(RUNNER_ARGS) {
     RUNNER_PopArgs1(path);
     RUNNER_CheckTag(TString, path);
 
-    QImage screen = QWidget::window()->grab().toImage();
+    QImage screen = grab().toImage();
     QString full_path = getFullResourcePath(unicode2qt(RUNNER->GetString(path)));
 
     // Make sure the full directory path exists
@@ -1924,7 +1931,7 @@ StackSlot QGLRenderSupport::getSnapshot(RUNNER_ARGS) {
 
     IGNORE_RUNNER_ARGS;
 
-    QImage image = QWidget::window()->grab().toImage();
+    QImage image = grab().toImage();
     QByteArray byteArray;
     QBuffer buffer(&byteArray);
     image.save(&buffer, "PNG");
@@ -1937,7 +1944,7 @@ StackSlot QGLRenderSupport::getScreenPixelColor(RUNNER_ARGS) {
     RUNNER_PopArgs2(x,y);
     RUNNER_CheckTag2(TInt, x, y);
 
-    QImage screen = QWidget::window()->grab().toImage();
+    QImage screen = grab().toImage();
 
     if (x.GetInt() < 0 || x.GetInt() >= screen.width() || y.GetInt() < 0 || y.GetInt() >= screen.height())
         return StackSlot::MakeInt(0);

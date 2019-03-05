@@ -155,7 +155,9 @@ static void sigsegv_handler(int)
 
 NativeProgram *load_native_program();
 
+#ifdef FLOW_JIT
 FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file);
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -182,6 +184,7 @@ int main(int argc, char *argv[])
 #ifdef QT_GUI_LIB
     bool cliptree = false;
     bool fake_touch = false;
+    bool transparent = false;
     bool no_qglfb = false;
     int fake_dpi = 96;
     int screen_w = 1024;
@@ -364,6 +367,9 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--fallback_font")) {
             fallback_font = argv[2];
             shift_args(argc, argv, 2);
+        } else if (!strcmp(argv[1], "--transparent")) {
+            transparent = true;
+            shift_args(argc, argv, 1);
 #endif
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
@@ -382,6 +388,8 @@ int main(int argc, char *argv[])
     format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     if (msaa_samples > 1) format.setSamples(msaa_samples);
     //format.setSwapInterval(60);
+    if (transparent)
+        format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
 
     // We need to share the OpenGL context for Qt's QVideoWidget (when used)
@@ -523,7 +531,7 @@ int main(int argc, char *argv[])
             // here is a loop while test is not passed
         }
 
-        pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch);
+        pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch, transparent);
         pRenderer->setDPI(fake_dpi);
         pRenderer->no_qglfb = no_qglfb;
         pRenderer->ProfilingInsnCost = gui_prof_cost;
@@ -738,6 +746,7 @@ int main(int argc, char *argv[])
                        "--max-heap <m>         Maximum size of the heap in mega-bytes.\n"
                        "--min-heap <m>         Starting size of the heap in mega-bytes.\n"
                        "--fallback_font <font> Enables lookup of unknown glyphs in the <font>. <font> example - DejaVuSans.\n"
+                       "--transparent          Enables GL transparency.\n"
 #endif
 
                        "-I dir                 passes -I parameter to flow compiler\n"
