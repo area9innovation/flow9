@@ -19,6 +19,6 @@ class FlowFontStyle {
 		}
 
 		var style : FontStyle = Reflect.field(flowFontStyles, name.toLowerCase());
-		return (style != null)? style : {family: name, weight: "", size: 0.0, style: RenderSupportJSPixi.FONT_SLOPE_NORMAL};
+		return (style != null)? style : {family: name, weight: "", size: 0.0, style: "normal"};
 	}
 }

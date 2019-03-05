@@ -1,7 +1,5 @@
 import js.Browser;
 import js.html.Element;
-import js.html.File;
-import js.html.FileList;
 import js.html.IFrameElement;
 
 import pixi.core.renderers.SystemRenderer;
@@ -25,7 +23,6 @@ class RenderSupportJSPixi {
 	public static var PixiStage = new FlowContainer(true);
 	public static var PixiRenderer : SystemRenderer;
 
-	public static var AntialiasFont : Bool = Util.getParameter("antialiasfont") != null ? Util.getParameter("antialiasfont") == "1" : false;
 	public static var RendererType : String = Util.getParameter("renderer") != null ? Util.getParameter("renderer") : untyped Browser.window.useRenderer;
 
 	private static var MousePos : Point = new Point(0.0, 0.0);
@@ -36,7 +33,6 @@ class RenderSupportJSPixi {
 	// Renderer options
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	private static var EnableFocusFrame : Bool = false;
-	private static var CacheTextsAsBitmap : Bool = Util.getParameter("cachetext") == "1";
 	/* Antialiasing doesn't work correctly on mobile devices */
 	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
@@ -47,35 +43,30 @@ class RenderSupportJSPixi {
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
 
-	public static var UseDFont : Bool = Util.getParameter("dfont") == "1";
-
-	public static var zIndexValues = {
-		"canvas" : "0",
-		"accessButton" : "2",
-		"droparea" : "1",
-		"nativeWidget" : "2"
-	};
-
 	// In fact that is needed only for android to have dimentions without
 	// screen keyboard
 	private static var WindowTopHeight : Int;
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 	private static var RequestAnimationFrameId : Int = -1;
 
-	// Font param constants
-	public static inline var FONT_WEIGHT_THIN = 100;
-	public static inline var FONT_WEIGHT_ULTRA_LIGHT = 200;
-	public static inline var FONT_WEIGHT_LIGHT = 300;
-	public static inline var FONT_WEIGHT_BOOK = 400;
-	public static inline var FONT_WEIGHT_MEDIUM = 500;
-	public static inline var FONT_WEIGHT_SEMI_BOLD = 600;
-	public static inline var FONT_WEIGHT_BOLD = 700;
-	public static inline var FONT_WEIGHT_EXTRA_BOLD = 800;
-	public static inline var FONT_WEIGHT_BLACK = 900;
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.on(event, fn, context);
+	}
 
-	public static inline var FONT_SLOPE_NORMAL = "normal";
-	public static inline var FONT_SLOPE_ITALIC = "italic";
-	public static inline var FONT_SLOPE_OBLIQUE = "oblique";
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function off(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.off(event, fn, context);
+	}
+
+	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
+	public static inline function once(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
+		PixiStage.once(event, fn, context);
+	}
+
+	public static inline function emit(event : String, ?a1 : Dynamic, ?a2 : Dynamic, ?a3 : Dynamic, ?a4 : Dynamic, ?a5 : Dynamic) : Bool {
+		return PixiStage.emit(event, a1, a2, a3, a4, a5);
+	}
 
 	private static function roundPlus(x : Float, n : Int) : Float {
 		var m = Math.pow(10, n);
@@ -124,611 +115,6 @@ class RenderSupportJSPixi {
 
 	private static function printOptionValues() : Void {
 		if (AccessibilityEnabled) Errors.print("Flow Pixi renderer DEBUG mode is turned on");
-		if (CacheTextsAsBitmap) { Errors.print("Caches all textclips as bitmap is turned on"); }
-	}
-
-	private static function workaroundRendererDestroy() : Void {
-		untyped __js__("
-			PIXI.WebGLRenderer.prototype.bindTexture = function(texture, location, forceLocation)
-			{
-				texture = texture || this.emptyTextures[location];
-				texture = texture.baseTexture || texture;
-				texture.touched = this.textureGC.count;
-
-				if (!forceLocation)
-				{
-					// TODO - maybe look into adding boundIds.. save us the loop?
-					for (let i = 0; i < this.boundTextures.length; i++)
-					{
-						if (this.boundTextures[i] === texture)
-						{
-							return i;
-						}
-					}
-
-					if (location === undefined)
-					{
-						this._nextTextureLocation++;
-						this._nextTextureLocation %= this.boundTextures.length;
-						location = this.boundTextures.length - this._nextTextureLocation - 1;
-					}
-				}
-				else
-				{
-					location = location || 0;
-				}
-
-				const gl = this.gl;
-				const glTexture = texture._glTextures[this.CONTEXT_UID];
-
-				if (!glTexture)
-				{
-					// this will also bind the texture..
-					try {
-						this.textureManager.updateTexture(texture, location);
-					} catch (error) {
-						// usually a crossorigin problem
-					}
-				}
-				else
-				{
-					// bind the current texture
-					this.boundTextures[location] = texture;
-					gl.activeTexture(gl.TEXTURE0 + location);
-					gl.bindTexture(gl.TEXTURE_2D, glTexture.texture);
-				}
-
-				return location;
-			}
-
-			PIXI.WebGLRenderer.prototype.destroy = function(removeView)
-			{
-				// this.destroyPlugins();
-
-				// remove listeners
-				this.view.removeEventListener('webglcontextlost', this.handleContextLost);
-				this.view.removeEventListener('webglcontextrestored', this.handleContextRestored);
-
-				this.textureManager.destroy();
-
-				// call base destroy
-				this.type = PIXI.RENDERER_TYPE.UNKNOWN;
-
-				this.view = null;
-
-				this.screen = null;
-
-				this.resolution = 0;
-
-				this.transparent = false;
-
-				this.autoResize = false;
-
-				this.blendModes = null;
-
-				this.options = null;
-
-				this.preserveDrawingBuffer = false;
-				this.clearBeforeRender = false;
-
-				this.roundPixels = false;
-
-				this._backgroundColor = 0;
-				this._backgroundColorRgba = null;
-				this._backgroundColorString = null;
-
-				this._tempDisplayObjectParent = null;
-				this._lastObjectRendered = null;
-
-				this.uid = 0;
-
-				// destroy the managers
-				this.maskManager.destroy();
-				this.stencilManager.destroy();
-				this.filterManager.destroy();
-
-				this.maskManager = null;
-				this.filterManager = null;
-				this.textureManager = null;
-				this.currentRenderer = null;
-
-				this.handleContextLost = null;
-				this.handleContextRestored = null;
-
-				this._contextOptions = null;
-				// this.gl.useProgram(null);
-
-				// if (this.gl.getExtension('WEBGL_lose_context'))
-				// {
-				// 	this.gl.getExtension('WEBGL_lose_context').loseContext();
-				// }
-
-				this.gl = null;
-			}
-		");
-	}
-	private static function workaroundProcessInteractive() : Void {
-		untyped __js__("
-			PIXI.interaction.InteractionManager.prototype.processInteractive = function(interactionEvent, displayObject, func, hitTest, interactive)
-			{
-				if (!displayObject || !displayObject.visible)
-				{
-					return false;
-				}
-
-				const point = interactionEvent.data.global;
-
-				// Took a little while to rework this function correctly! But now it is done and nice and optimised. ^_^
-				//
-				// This function will now loop through all objects and then only hit test the objects it HAS
-				// to, not all of them. MUCH faster..
-				// An object will be hit test if the following is true:
-				//
-				// 1: It is interactive.
-				// 2: It belongs to a parent that is interactive AND one of the parents children have not already been hit.
-				//
-				// As another little optimisation once an interactive object has been hit we can carry on
-				// through the scenegraph, but we know that there will be no more hits! So we can avoid extra hit tests
-				// A final optimisation is that an object is not hit test directly if a child has already been hit.
-
-				interactive = displayObject.interactive || interactive;
-
-				let hit = false;
-				let interactiveParent = interactive;
-
-				// Flag here can set to false if the event is outside the parents hitArea or mask
-				let hitTestChildren = true;
-
-				// If there is a hitArea, no need to test against anything else if the pointer is not within the hitArea
-				// There is also no longer a need to hitTest children.
-				if (displayObject.hitArea)
-				{
-					if (hitTest)
-					{
-						displayObject.worldTransform.applyInverse(point, this._tempPoint);
-						if (!displayObject.hitArea.contains(this._tempPoint.x, this._tempPoint.y))
-						{
-							hitTest = false;
-							hitTestChildren = false;
-						}
-						else
-						{
-							hit = true;
-						}
-					}
-					interactiveParent = false;
-				}
-				// If there is a mask, no need to test against anything else if the pointer is not within the mask
-				else if (displayObject._mask)
-				{
-					if (hitTest)
-					{
-						if (!displayObject._mask.containsPoint(point))
-						{
-							hitTest = false;
-							// hitTestChildren = false;
-						}
-					}
-				}
-
-				// ** FREE TIP **! If an object is not interactive or has no buttons in it
-				// (such as a game scene!) set interactiveChildren to false for that displayObject.
-				// This will allow PixiJS to completely ignore and bypass checking the displayObjects children.
-				if (hitTestChildren && displayObject.interactiveChildren && displayObject.children)
-				{
-					const children = displayObject.children;
-
-					for (let i = children.length - 1; i >= 0; i--)
-					{
-						const child = children[i];
-
-						// time to get recursive.. if this function will return if something is hit..
-						const childHit = this.processInteractive(interactionEvent, child, func, hitTest, interactiveParent);
-
-						if (childHit)
-						{
-							// its a good idea to check if a child has lost its parent.
-							// this means it has been removed whilst looping so its best
-							if (!child.parent)
-							{
-								continue;
-							}
-
-							// we no longer need to hit test any more objects in this container as we we
-							// now know the parent has been hit
-							interactiveParent = false;
-
-							// If the child is interactive , that means that the object hit was actually
-							// interactive and not just the child of an interactive object.
-							// This means we no longer need to hit test anything else. We still need to run
-							// through all objects, but we don't need to perform any hit tests.
-
-							if (childHit)
-							{
-								if (interactionEvent.target)
-								{
-									hitTest = false;
-								}
-								hit = true;
-							}
-						}
-					}
-				}
-
-				// no point running this if the item is not interactive or does not have an interactive parent.
-				if (interactive)
-				{
-					// if we are hit testing (as in we have no hit any objects yet)
-					// We also don't need to worry about hit testing if once of the displayObjects children
-					// has already been hit - but only if it was interactive, otherwise we need to keep
-					// looking for an interactive child, just in case we hit one
-					if (hitTest && !interactionEvent.target)
-					{
-						// already tested against hitArea if it is defined
-						if (!displayObject.hitArea && displayObject.containsPoint)
-						{
-							if (displayObject.containsPoint(point))
-							{
-								hit = true;
-							}
-						}
-					}
-
-					if (displayObject.interactive)
-					{
-						if (hit && !interactionEvent.target)
-						{
-							interactionEvent.target = displayObject;
-						}
-
-						if (func)
-						{
-							func(interactionEvent, displayObject, !!hit);
-						}
-					}
-				}
-
-				return hit;
-			}
-		");
-	}
-
-
-	private static function workaroundIEArrayFromMethod() : Void {
-		untyped __js__("
-		if (!Array.from) {
-			Array.from = (function () {
-				var toStr = Object.prototype.toString;
-				var isCallable = function (fn) {
-					return typeof fn === 'function' || toStr.call(fn) === '[object Function]';
-				};
-				var toInteger = function (value) {
-					var number = Number(value);
-					if (isNaN(number)) { return 0; }
-					if (number === 0 || !isFinite(number)) { return number; }
-					return (number > 0 ? 1 : -1) * Math.floor(Math.abs(number));
-				};
-				var maxSafeInteger = Math.pow(2, 53) - 1;
-				var toLength = function (value) {
-					var len = toInteger(value);
-					return Math.min(Math.max(len, 0), maxSafeInteger);
-				};
-
-				// The length property of the from method is 1.
-				return function from(arrayLike/*, mapFn, thisArg */) {
-					// 1. Let C be the this value.
-					var C = this;
-
-					// 2. Let items be ToObject(arrayLike).
-					var items = Object(arrayLike);
-
-					// 3. ReturnIfAbrupt(items).
-					if (arrayLike == null) {
-						throw new TypeError('Array.from requires an array-like object - not null or undefined');
-					}
-
-					// 4. If mapfn is undefined, then let mapping be false.
-					var mapFn = arguments.length > 1 ? arguments[1] : void undefined;
-					var T;
-					if (typeof mapFn !== 'undefined') {
-						// 5. else
-						// 5. a If IsCallable(mapfn) is false, throw a TypeError exception.
-						if (!isCallable(mapFn)) {
-							throw new TypeError('Array.from: when provided, the second argument must be a function');
-						}
-
-						// 5. b. If thisArg was supplied, let T be thisArg; else let T be undefined.
-						if (arguments.length > 2) {
-							T = arguments[2];
-						}
-					}
-
-					// 10. Let lenValue be Get(items, 'length').
-					// 11. Let len be ToLength(lenValue).
-					var len = toLength(items.length);
-
-					// 13. If IsConstructor(C) is true, then
-					// 13. a. Let A be the result of calling the [[Construct]] internal method of C with an argument list containing the single item len.
-					// 14. a. Else, Let A be ArrayCreate(len).
-					var A = isCallable(C) ? Object(new C(len)) : new Array(len);
-
-					// 16. Let k be 0.
-					var k = 0;
-					// 17. Repeat, while k < len… (also steps a - h)
-					var kValue;
-					while (k < len) {
-						kValue = items[k];
-						if (mapFn) {
-							A[k] = typeof T === 'undefined' ? mapFn(kValue, k) : mapFn.call(T, kValue, k);
-						} else {
-							A[k] = kValue;
-						}
-						k += 1;
-					}
-					// 18. Let putStatus be Put(A, 'length', len, true).
-					A.length = len;
-					// 20. Return A.
-					return A;
-				};
-			}());
-		}");
-	}
-
-	private static function workaroundIECustomEvent() : Void {
-		untyped __js__("
-		if ( typeof window.CustomEvent !== 'function' ) {
-			function CustomEvent ( event, params ) {
-				params = params || { bubbles: false, cancelable: false, detail: undefined };
-				var evt = document.createEvent( 'CustomEvent' );
-				evt.initCustomEvent( event, params.bubbles, params.cancelable, params.detail );
-
-				for (var key in params) {
-					evt[key] = params[key];
-				}
-
-				return evt;
-			}
-
-			CustomEvent.prototype = window.Event.prototype;
-
-			window.CustomEvent = CustomEvent;
-		};");
-	}
-
-	private static function workaroundDOMOverOutEventsTransparency() : Void {
-		untyped __js__("
-		var binder = function(fn) {
-			return fn.bind(RenderSupportJSPixi.PixiRenderer.plugins.interaction);
-		}
-
-		var emptyFn = function() {};
-
-		var old_pointer_over = PIXI.interaction.InteractionManager.prototype.onPointerOver;
-		var old_pointer_out = PIXI.interaction.InteractionManager.prototype.onPointerOut;
-
-		PIXI.interaction.InteractionManager.prototype.onPointerOver = emptyFn;
-		PIXI.interaction.InteractionManager.prototype.onPointerOut = emptyFn;
-
-		var pointer_over = function(e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		}
-
-		var mouse_move = function(e) {
-			pointer_over(e);
-			document.removeEventListener('mousemove', mouse_move);
-		}
-
-		// if mouse is already over document
-		document.addEventListener('mousemove', mouse_move);
-
-		document.addEventListener('mouseover', pointer_over);
-
-		document.addEventListener('mouseout', function(e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});
-
-		document.addEventListener('pointerover', function (e) {
-			if (e.fromElement == null)
-				binder(old_pointer_over)(e);
-		});
-		document.addEventListener('pointerout', function (e) {
-			if (e.toElement == null)
-				binder(old_pointer_out)(e);
-		});");
-	}
-
-	private static function workaroundTextMetrics() : Void {
-		untyped __js__("
-			PIXI.TextMetrics.measureFont = function(font)
-			{
-				// as this method is used for preparing assets, don't recalculate things if we don't need to
-				if (PIXI.TextMetrics._fonts[font])
-				{
-					return PIXI.TextMetrics._fonts[font];
-				}
-
-				const properties = {};
-
-				const canvas = PIXI.TextMetrics._canvas;
-				const context = PIXI.TextMetrics._context;
-
-				context.font = font;
-
-				const metricsString = PIXI.TextMetrics.METRICS_STRING + PIXI.TextMetrics.BASELINE_SYMBOL;
-				const width = Math.ceil(context.measureText(metricsString).width);
-				let baseline = Math.ceil(context.measureText(PIXI.TextMetrics.BASELINE_SYMBOL).width) * 2;
-				const height = 2 * baseline;
-
-				baseline = baseline * PIXI.TextMetrics.BASELINE_MULTIPLIER | 0;
-
-				canvas.width = width;
-				canvas.height = height;
-
-				context.fillStyle = '#f00';
-				context.fillRect(0, 0, width, height);
-
-				context.font = font;
-
-				context.textBaseline = 'alphabetic';
-				context.fillStyle = '#000';
-				context.fillText(metricsString, 0, baseline);
-
-				const imagedata = context.getImageData(0, 0, width, height).data;
-				const pixels = imagedata.length;
-				const line = width * 4;
-
-				let i = 0;
-				let idx = 0;
-				let stop = false;
-
-				// ascent. scan from top to bottom until we find a non red pixel
-				for (i = 0; i < baseline; ++i)
-				{
-					for (let j = 0; j < line; j += 4)
-					{
-						if (imagedata[idx + j] !== 255)
-						{
-							stop = true;
-							break;
-						}
-					}
-					if (!stop)
-					{
-						idx += line;
-					}
-					else
-					{
-						break;
-					}
-				}
-
-				properties.ascent = baseline - i;
-
-				idx = pixels - line;
-				stop = false;
-
-				// descent. scan from bottom to top until we find a non red pixel
-				for (i = height; i > baseline; --i)
-				{
-					for (let j = 0; j < line; j += 4)
-					{
-						if (imagedata[idx + j] !== 255)
-						{
-							stop = true;
-							break;
-						}
-					}
-
-					if (!stop)
-					{
-						idx -= line;
-					}
-					else
-					{
-						break;
-					}
-				}
-
-				properties.descent = i - baseline;
-				properties.fontSize = properties.ascent + properties.descent;
-
-				PIXI.TextMetrics._fonts[font] = properties;
-
-				return properties;
-			};
-
-			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged) {
-				if (this.transformChanged || transformChanged) {
-					this.transform.updateTransform(this.parent.transform);
-					// multiply the alphas..
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					this._bounds.updateID++;
-
-					this.transformChanged = false;
-				}
-			};
-
-			PIXI.Container.prototype.renderCanvas = function(renderer, skipRender) {
-				skipRender = skipRender !== undefined ? skipRender : true;
-
-				if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
-				{
-					this.skipRender = true;
-					return;
-				}
-
-				if (this._mask)
-				{
-					renderer.maskManager.pushMask(this._mask);
-				}
-
-				skipRender = skipRender && this.skipRender;
-
-				if (!skipRender)
-				{
-					this._renderCanvas(renderer);
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					var tempRendererView = renderer.view;
-
-					if (this.children[i].view) {
-						this.children[i].view.setAttribute('width', renderer.view.getAttribute('width'));
-						this.children[i].view.setAttribute('height', renderer.view.getAttribute('height'));
-
-						renderer.context = this.children[i].view.getContext('2d', { alpha: true });
-						this.children[i].renderCanvas(renderer, skipRender);
-						renderer.context = renderer.view.getContext('2d', { alpha: renderer.transparent });
-					} else {
-						this.children[i].renderCanvas(renderer, skipRender);
-					}
-				}
-
-				if (this._mask)
-				{
-					renderer.maskManager.popMask(renderer);
-				}
-
-				this.skipRender = true;
-			};
-
-			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				transformChanged = transformChanged || this.transformChanged;
-
-				if (transformChanged)
-				{
-					this._boundsID++;
-
-					this.transform.updateTransform(this.parent.transform);
-
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					if (this.accessWidget != null && this.nativeWidget)
-					{
-						this.accessWidget.updateDisplay();
-					}
-
-					this.transformChanged = false;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
-					{
-						this.skipRender = !child.updateTransform(transformChanged) && this.skipRender;
-					}
-				}
-
-				return !this.skipRender;
-			};
-		");
 	}
 
 	private static function detectExternalVideoCard() : Bool {
@@ -760,8 +146,7 @@ class RenderSupportJSPixi {
 			resolution : backingStoreRatio,
 			roundPixels : RoundPixels,
 			autoResize : true,
-			view : PixiView,
-			clearBeforeRender : false
+			view : PixiView
 		};
 
 		if (RendererType == "webgl" /*|| (RendererType == "canvas" && RendererType == "auto" && detectExternalVideoCard() && !Platform.isIE)*/) {
@@ -814,36 +199,34 @@ class RenderSupportJSPixi {
 
 	private static function initPixiRenderer() {
 		if (untyped PIXI.VERSION[0] > 3)
-			workaroundDOMOverOutEventsTransparency();
+			PixiWorkarounds.workaroundDOMOverOutEventsTransparency();
 
 		if (untyped PIXI.VERSION != "4.8.2") {
 			untyped __js__("document.location.reload(true)");
 		}
 
-		workaroundTextMetrics();
+		PixiWorkarounds.workaroundTextMetrics();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
-		workaroundRendererDestroy();
-		workaroundProcessInteractive();
+		PixiWorkarounds.workaroundRendererDestroy();
+		PixiWorkarounds.workaroundProcessInteractive();
 
 		if (Platform.isIE) {
-			workaroundIEArrayFromMethod();
-			workaroundIECustomEvent();
+			PixiWorkarounds.workaroundIEArrayFromMethod();
+			PixiWorkarounds.workaroundIECustomEvent();
 		}
 
 		createPixiRenderer();
 
-		PixiRenderer.view.style.zIndex = RenderSupportJSPixi.zIndexValues.canvas;
+		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
 		Browser.document.body.appendChild(PixiRenderer.view);
 
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
 		initFullScreenEventListeners();
-		FontLoader.LoadFonts(UseDFont, StartFlowMain);
+		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
-
-		TextField.cacheTextsAsBitmap = CacheTextsAsBitmap;
 
 		printOptionValues();
 
@@ -857,7 +240,7 @@ class RenderSupportJSPixi {
 			ctx.imageSmoothingEnabled = true;
 		}
 
-		PixiRenderer.render(PixiStage, null, true);
+		render();
 		requestAnimationFrame();
 	}
 
@@ -890,7 +273,7 @@ class RenderSupportJSPixi {
 					files[i] = e.clipboardData.files[i];
 				}
 
-			PixiStage.emit("paste", files);
+			emit("paste", files);
 		};
 
 		Browser.document.addEventListener('paste', handler, false);
@@ -969,11 +352,11 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
-		untyped PixiStage.transformChanged = true;
+		PixiStage.transformChanged = true;
 		PixiStage.invalidateStage();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
-		PixiRenderer.render(PixiStage, null, true);
+		render();
 	}
 
 	private static function dropCurrentFocus() : Void {
@@ -985,9 +368,9 @@ class RenderSupportJSPixi {
 		if (DropCurrentFocusOnDown != drop) {
 			DropCurrentFocusOnDown = drop;
 			if (drop)
-				PixiStage.on("mousedown", dropCurrentFocus);
+				on("mousedown", dropCurrentFocus);
 			else
-				PixiStage.off("mousedown", dropCurrentFocus);
+				off("mousedown", dropCurrentFocus);
 		}
 	}
 
@@ -997,33 +380,33 @@ class RenderSupportJSPixi {
 
 	private static inline function initPixiStageEventListeners() {
 		if (untyped __js__("window.navigator.msPointerEnabled")) {
-			setStagePointerHandler("MSPointerDown", function () { PixiStage.emit("mousedown"); });
-			setStagePointerHandler("MSPointerUp", function () { PixiStage.emit("mouseup"); });
-			setStagePointerHandler("MSPointerMove", function () { PixiStage.emit("mousemove"); });
+			setStagePointerHandler("MSPointerDown", function () { emit("mousedown"); });
+			setStagePointerHandler("MSPointerUp", function () { emit("mouseup"); });
+			setStagePointerHandler("MSPointerMove", function () { emit("mousemove"); });
 		}
 
 		if (NativeHx.isTouchScreen()) {
-			setStagePointerHandler("touchstart", function () { PixiStage.emit("mousedown"); });
-			setStagePointerHandler("touchend", function () { PixiStage.emit("mouseup"); });
-			setStagePointerHandler("touchmove", function () { PixiStage.emit("mousemove"); });
+			setStagePointerHandler("touchstart", function () { emit("mousedown"); });
+			setStagePointerHandler("touchend", function () { emit("mouseup"); });
+			setStagePointerHandler("touchmove", function () { emit("mousemove"); });
 		}
 
 		if (!Platform.isMobile) {
-			setStagePointerHandler("mousedown", function () { PixiStage.emit("mousedown"); });
-			setStagePointerHandler("mouseup", function () { PixiStage.emit("mouseup"); });
-			setStagePointerHandler("mouserightdown", function () { PixiStage.emit("mouserightdown"); });
-			setStagePointerHandler("mouserightup", function () { PixiStage.emit("mouserightup"); });
-			setStagePointerHandler("mousemiddledown", function () { PixiStage.emit("mousemiddledown"); });
-			setStagePointerHandler("mousemiddleup", function () { PixiStage.emit("mousemiddleup"); });
-			setStagePointerHandler("mousemove", function () { PixiStage.emit("mousemove"); });
-			setStagePointerHandler("mouseout", function () { PixiStage.emit("mouseup"); }); // Emulate mouseup to release scrollable for example
-			setStageWheelHandler(function (p : Point) { PixiStage.emit("mousewheel", p); });
-			Browser.document.body.addEventListener("keydown", function (e) { PixiStage.emit("keydown", parseKeyEvent(e)); });
-			Browser.document.body.addEventListener("keyup", function (e) { PixiStage.emit("keyup", parseKeyEvent(e)); });
+			setStagePointerHandler("mousedown", function () { emit("mousedown"); });
+			setStagePointerHandler("mouseup", function () { emit("mouseup"); });
+			setStagePointerHandler("mouserightdown", function () { emit("mouserightdown"); });
+			setStagePointerHandler("mouserightup", function () { emit("mouserightup"); });
+			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
+			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
+			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
+			setStagePointerHandler("mouseout", function () { emit("mouseup"); }); // Emulate mouseup to release scrollable for example
+			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); });
+			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
+			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
 		}
 
-		PixiStage.on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
-		PixiStage.on("mouseup", function (e) { MouseUpReceived = true; });
+		on("mousedown", function (e) { VideoClip.CanAutoPlay = true; MouseUpReceived = false; });
+		on("mouseup", function (e) { MouseUpReceived = true; });
 		switchFocusFramesShow(false);
 		setDropCurrentFocusOnDown(true);
 	}
@@ -1065,7 +448,7 @@ class RenderSupportJSPixi {
 						return false;
 					}
 
-					// Prevent from mouseout to native textfield or droparea element to allow dragging over
+					// Prevent from mouseout to native clip or droparea element to allow dragging over
 					if (checkElement(e.toElement) && e.fromElement != null || checkElement(e.fromElement) && e.toElement != null)
 						return;
 
@@ -1226,7 +609,7 @@ class RenderSupportJSPixi {
 
 		if (event == "mousemove" || event == "mousedown" || event == "mouseup" || event == "mouserightdown" || event == "mouserightup" ||
 			event == "mousemiddledown" || event == "mousemiddleup") {
-			PixiStage.emit(event);
+			emit(event);
 		} else {
 			clip.emit(event);
 		}
@@ -1236,7 +619,7 @@ class RenderSupportJSPixi {
 		var activeElement = Browser.document.activeElement;
 
 		var ke = {key : key, ctrl : ctrl, shift : shift, alt : alt, meta : meta, keyCode : keyCode, preventDefault : function () {}};
-		PixiStage.emit(event, ke);
+		emit(event, ke);
 
 		if (activeElement.tagName.toLowerCase() == "input" || activeElement.tagName.toLowerCase() == "textarea") {
 			var ke = {key : key, ctrlKey : ctrl, shiftKey : shift, altKey : alt, metaKey : meta, keyCode : keyCode};
@@ -1280,7 +663,7 @@ class RenderSupportJSPixi {
 				if (clip != null)
 					emitForInteractives(clip, event);
 			} else {
-				PixiStage.emit(event);
+				emit(event);
 			}
 
 			isEmulating = false;
@@ -1317,10 +700,10 @@ class RenderSupportJSPixi {
 				var newRuleIndex = 0;
 				if (!toShowFrames) {
 					pixijscss.insertRule(".focused { border: none !important; box-shadow: none !important; }", newRuleIndex);
-					PixiStage.off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
+					off("mousemove", pixiStageOnMouseMove); // Remove mouse event listener that not handle it always when focus frames are hidden
 				} else {
 					pixijscss.deleteRule(newRuleIndex);
-					PixiStage.on("mousemove", pixiStageOnMouseMove);
+					on("mousemove", pixiStageOnMouseMove);
 				}
 			}
 		}
@@ -1332,20 +715,22 @@ class RenderSupportJSPixi {
 		untyped Browser.window[FlowMainFunction]();
 	}
 
+	private static var rendering = false;
+
 	private static function requestAnimationFrame() {
 		Browser.window.cancelAnimationFrame(AnimationFrameId);
 		AnimationFrameId = Browser.window.requestAnimationFrame(animate);
 	}
 
 	private static function animate(timestamp : Float) {
-		AccessWidget.updateAccessTree();
+		emit("drawframe", timestamp);
 
-		PixiStage.emit("drawframe", timestamp);
+		AccessWidget.updateAccessTree();
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
 			PixiRenderer.render(PixiStage);
 
-			PixiStage.emit("stagechanged", timestamp);
+			emit("stagechanged", timestamp);
 
 			PixiStageChanged = false;
 		}
@@ -1353,9 +738,13 @@ class RenderSupportJSPixi {
 		requestAnimationFrame();
 	}
 
+	private static inline function render() {
+		animate(Browser.window.performance.now());
+	}
+
 	public static function addPasteEventListener(fn : Array<Dynamic> -> Void) : Void -> Void {
-		PixiStage.on("paste", fn);
-		return function() { PixiStage.off("paste", fn); };
+		on("paste", fn);
+		return function() { off("paste", fn); };
 	}
 
 	public static inline function InvalidateStage() : Void {
@@ -1437,18 +826,13 @@ class RenderSupportJSPixi {
 		return PixiStage;
 	}
 
-	private static function hideFlowJSLoadingIndicator() {
+	public static function enableResize() : Void {
+		// The first flow render call. Hide loading progress indicator.
 		Browser.document.body.style.backgroundImage = "none";
 		var indicator = Browser.document.getElementById("loading_js_indicator");
 		if (indicator != null) {
 			Browser.document.body.removeChild(indicator);
 		}
-	}
-
-	// native enableResize() -> void;
-	public static function enableResize() : Void {
-		// The first flow render call. Hide loading progress indicator.
-		hideFlowJSLoadingIndicator();
 	}
 
 	public static function getStageWidth() : Float {
@@ -1459,71 +843,17 @@ class RenderSupportJSPixi {
 		return PixiRenderer.height / backingStoreRatio;
 	}
 
-	public static function makeTextField(fontFamily : String) : TextField {
-		return (UseDFont && FontLoader.hasDFont(fontFamily))? new DFontTextClip() : new PixiText();
+	public static function makeTextField(fontFamily : String) : TextClip {
+		return new TextClip();
 	}
 
-	inline public static function capitalize(s : String) : String {
-		return s.substr(0, 1).toUpperCase() + s.substr(1, s.length - 1);
+	public static function setTextAndStyle(clip : TextClip, text : String, fontFamily : String, fontSize : Float, fontWeight : Int, fontSlope : String,
+		fillColor : Int, fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
+		clip.setTextAndStyle(text, fontFamily, fontSize, fontWeight, fontSlope,
+			fillColor, fillOpacity, letterSpacing, backgroundColor, backgroundOpacity);
 	}
 
-	// HACK due to unable remake builtin fonts
-	public static function recognizeBuiltinFont(fontfamily: String, fontweight: Int, fontslope: String) : String {
-		if (StringTools.startsWith(fontfamily, "'Material Icons")) {
-			return "MaterialIcons";
-		}
-		else if (StringTools.startsWith(fontfamily, "'DejaVu Sans")) {
-			return "DejaVuSans";
-		}
-		else if (StringTools.startsWith(fontfamily, "'Franklin Gothic")) {
-			return fontslope == FONT_SLOPE_ITALIC? "Italic" : fontweight == FONT_WEIGHT_BOLD? "Bold" : "Book";
-		} else if (StringTools.startsWith(fontfamily, "Roboto")) {
-			return fontfamily +
-				intFontWeight2StrSuffix(fontweight) +
-				(fontslope == FONT_SLOPE_NORMAL? "" : capitalize(fontslope));
-		}
-		return "";
-	}
-	// ENDHACK
-
-	public static function intFontWeight2StrSuffix(w: Int) : String {
-		if (w <= FONT_WEIGHT_MEDIUM) {
-			if (w <= FONT_WEIGHT_LIGHT) {
-				if (w <= FONT_WEIGHT_THIN) return "Thin"
-				else if (w <= FONT_WEIGHT_ULTRA_LIGHT) return "Ultra Light"
-				else return "Light";
-			} else
-				if (w <= FONT_WEIGHT_BOOK) return "" // "Book"
-				else return "Medium";
-		} else if (w <= FONT_WEIGHT_BOLD) {
-			if (w <= FONT_WEIGHT_SEMI_BOLD) return "Semi Bold"
-			else return "Bold";
-		} else if (w <= FONT_WEIGHT_EXTRA_BOLD) return "Extra Bold"
-		else return "Black";
-	}
-
-	// Assumption : setTextAndStyle always follow setTextInput for text inputs
-	// Pay attention that you cannot change font family (switch between system and built-in fonts)
-	// after field has been created with makeTextField function.
-	public static function setTextAndStyle(
-		textfield : TextField, text : String, fontfamily : String,
-		fontsize : Float, fontweight : Int, fontslope : String,
-		fillcolour : Int, fillopacity : Float, letterspacing : Float,
-		backgroundcolour : Int, backgroundopacity : Float
-	) : Void {
-		var maybeBuiltin = fontweight > 0 || fontslope != "" ? recognizeBuiltinFont(fontfamily, fontweight, fontslope) : fontfamily;
-		if (maybeBuiltin != "") {
-			fontfamily = maybeBuiltin;
-			/*fontweight = FONT_WEIGHT_BOOK;
-			fontslope = FONT_SLOPE_NORMAL;*/
-		};
-		textfield.setTextAndStyle(
-			text, fontfamily, fontsize, fontweight, fontslope,
-			fillcolour, fillopacity, letterspacing, backgroundcolour, backgroundopacity
-		);
-	}
-
-	public static function setAdvancedText(textfield : TextField, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
+	public static function setAdvancedText(clip : TextClip, sharpness : Int, antialiastype : Int, gridfittype : Int) : Void {
 		// NOP
 	}
 
@@ -1531,145 +861,145 @@ class RenderSupportJSPixi {
 		return new VideoClip(metricsFn, playFn, durationFn, positionFn);
 	}
 
-	public static function setVideoVolume(str : VideoClip, volume : Float) : Void {
-		str.setVolume(volume);
+	public static function setVideoVolume(clip : VideoClip, volume : Float) : Void {
+		clip.setVolume(volume);
 	}
 
-	public static function setVideoLooping(str : VideoClip, loop : Bool) : Void {
-		str.setLooping(loop);
+	public static function setVideoLooping(clip : VideoClip, loop : Bool) : Void {
+		clip.setLooping(loop);
 	}
 
-	public static function setVideoControls(str : VideoClip, controls : Dynamic) : Void {
+	public static function setVideoControls(clip : VideoClip, controls : Dynamic) : Void {
 		// STUB; only implemented in C++/OpenGL
 	}
 
-	public static function setVideoSubtitle(str: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
+	public static function setVideoSubtitle(clip: Dynamic, text : String, fontfamily : String, fontsize : Float, fontweight : Int, fontslope : String,
 		fillcolor : Int, fillopacity : Float, letterspacing : Float, backgroundcolour : Int, backgroundopacity : Float) : Void {
-		str.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
+		clip.setVideoSubtitle(text, fontfamily, fontsize, fontweight, fontslope, fillcolor, fillopacity, letterspacing, backgroundcolour, backgroundopacity);
 	}
 
-	public static function setVideoPlaybackRate(str : VideoClip, rate : Float) : Void {
-		str.setPlaybackRate(rate);
+	public static function setVideoPlaybackRate(clip : VideoClip, rate : Float) : Void {
+		clip.setPlaybackRate(rate);
 	}
 
-	public static function setVideoTimeRange(str: VideoClip, start : Float, end : Float) : Void {
-		str.setTimeRange(start, end);
+	public static function setVideoTimeRange(clip: VideoClip, start : Float, end : Float) : Void {
+		clip.setTimeRange(start, end);
 	}
 
 	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
 		vc.playVideo(filename, startPaused);
 	}
 
-	public static function seekVideo(str : VideoClip, seek : Float) : Void {
-		str.setCurrentTime(seek);
+	public static function seekVideo(clip : VideoClip, seek : Float) : Void {
+		clip.setCurrentTime(seek);
 	}
 
-	public static function getVideoPosition(str : VideoClip) : Float {
-		return str.getCurrentTime();
+	public static function getVideoPosition(clip : VideoClip) : Float {
+		return clip.getCurrentTime();
 	}
 
-	public static function pauseVideo(str : VideoClip) : Void {
-		str.pauseVideo();
+	public static function pauseVideo(clip : VideoClip) : Void {
+		clip.pauseVideo();
 	}
 
-	public static function resumeVideo(str : VideoClip) : Void {
-		str.resumeVideo();
+	public static function resumeVideo(clip : VideoClip) : Void {
+		clip.resumeVideo();
 	}
 
-	public static function closeVideo(str : VideoClip) : Void {
+	public static function closeVideo(clip : VideoClip) : Void {
 		// NOP for this target
 	}
 
-	public static function getTextFieldWidth(textfield : TextField) : Float {
-		return textfield.getWidth();
+	public static function getTextFieldWidth(clip : TextClip) : Float {
+		return clip.getWidth();
 	}
 
-	public static function setTextFieldWidth(textfield : TextField, width : Float) : Void {
+	public static function setTextFieldWidth(clip : TextClip, width : Float) : Void {
 		// NOTE : It is called by flow only for textinputs
-		textfield.setWidth(width);
+		clip.setWidth(width);
 	}
 
-	public static function getTextFieldHeight(textfield : TextField) : Float {
-		return textfield.getHeight();
+	public static function getTextFieldHeight(clip : TextClip) : Float {
+		return clip.getHeight();
 	}
 
-	public static function setTextFieldHeight(textfield : TextField, height : Float) : Void {
+	public static function setTextFieldHeight(clip : TextClip, height : Float) : Void {
 		// This check is needed for cases when we get zero height for input field. Flash and cpp
 		// ignore height (flash ignores it at all, cpp takes it into account only when input has
 		// has a focus), so we have to have some workaround here.
 		// TODO: Find a better fix
 		if (height > 0.0)
-			textfield.setHeight(height);
+			clip.setHeight(height);
 	}
 
-	public static function setTextFieldCropWords(textfield : TextField, crop : Bool) : Void {
-		textfield.setCropWords(crop);
+	public static function setTextFieldCropWords(clip : TextClip, crop : Bool) : Void {
+		clip.setCropWords(crop);
 	}
 
-	public static function setTextFieldCursorColor(textfield : TextField, color : Int, opacity : Float) : Void {
-		textfield.setCursorColor(color, opacity);
+	public static function setTextFieldCursorColor(clip : TextClip, color : Int, opacity : Float) : Void {
+		clip.setCursorColor(color, opacity);
 	}
 
-	public static function setTextFieldCursorWidth(textfield : TextField, width : Float) : Void {
-		textfield.setCursorWidth(width);
+	public static function setTextFieldCursorWidth(clip : TextClip, width : Float) : Void {
+		clip.setCursorWidth(width);
 	}
 
-	public static function setTextFieldInterlineSpacing(textfield : TextField, spacing : Float) : Void {
-		textfield.setInterlineSpacing(spacing);
+	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
+		clip.setInterlineSpacing(spacing);
 	}
 
-	public static function setTextDirection(textfield : TextField, direction : String) : Void {
-		textfield.setTextDirection(direction);
+	public static function setTextDirection(clip : TextClip, direction : String) : Void {
+		clip.setTextDirection(direction);
 	}
 
-	public static function setAutoAlign(textfield : TextField, autoalign : String) : Void {
-		textfield.setAutoAlign(autoalign);
+	public static function setAutoAlign(clip : TextClip, autoalign : String) : Void {
+		clip.setAutoAlign(autoalign);
 	}
 
-	public static function setTextInput(textfield : TextField) : Void {
-		textfield.setTextInput();
+	public static function setTextInput(clip : TextClip) : Void {
+		clip.setTextInput();
 	}
 
-	public static function setTextInputType(textfield : TextField, type : String) : Void {
-		textfield.setTextInputType(type);
+	public static function setTextInputType(clip : TextClip, type : String) : Void {
+		clip.setTextInputType(type);
 	}
 
-	public static function setTextInputStep(textfield : TextField, step : Float) : Void {
-		textfield.setTextInputStep(step);
+	public static function setTextInputStep(clip : TextClip, step : Float) : Void {
+		clip.setTextInputStep(step);
 	}
 
-	public static function setTabIndex(textfield : TextField, index : Int) : Void {
-		textfield.setTabIndex(index);
+	public static function setTabIndex(clip : TextClip, index : Int) : Void {
+		clip.setTabIndex(index);
 	}
 
 	public static function setTabEnabled(enabled : Bool) : Void {
 		// STUB; usefull only in flash
 	}
 
-	public static function getContent(textfield : TextField) : String {
-		return textfield.getContent();
+	public static function getContent(clip : TextClip) : String {
+		return clip.getContent();
 	}
 
-	public static function getCursorPosition(textfield : TextField) : Int {
-		return textfield.getCursorPosition();
+	public static function getCursorPosition(clip : TextClip) : Int {
+		return clip.getCursorPosition();
 	}
 
 	public static function getFocus(clip : NativeWidgetClip) : Bool {
 		return clip.getFocus();
 	}
 
-	public static function getScrollV(textfield : TextField) : Int {
+	public static function getScrollV(clip : TextClip) : Int {
 		return 0;
 	}
 
-	public static function setScrollV(textfield : TextField, suggestedPosition : Int) : Void {
+	public static function setScrollV(clip : TextClip, suggestedPosition : Int) : Void {
 	}
 
-	public static function getBottomScrollV(textfield : TextField) : Int {
+	public static function getBottomScrollV(clip : TextClip) : Int {
 		return 0;
 	}
 
-	public static function getNumLines(textfield : TextField) : Int {
+	public static function getNumLines(clip : TextClip) : Int {
 		return 0;
 	}
 
@@ -1708,9 +1038,8 @@ class RenderSupportJSPixi {
 			}
 
 			if (accessWidget != null) {
-				if (accessWidget.parentNode == null) {
-					AccessWidget.updateAccessTree();
-				}
+				AccessWidget.updateAccessTree();
+				PixiStage.updateTransform();
 
 				if (accessWidget.parentNode != null) {
 					if (focus && accessWidget.focus != null) {
@@ -1728,43 +1057,43 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	public static function setMultiline(textfield : TextField, multiline : Bool) : Void {
-		textfield.setMultiline(multiline);
+	public static function setMultiline(clip : TextClip, multiline : Bool) : Void {
+		clip.setMultiline(multiline);
 	}
 
-	public static function setWordWrap(textfield : TextField, wordWrap : Bool) : Void {
-		textfield.setWordWrap(wordWrap);
+	public static function setWordWrap(clip : TextClip, wordWrap : Bool) : Void {
+		clip.setWordWrap(wordWrap);
 	}
 
-	public static function getSelectionStart(textfield : TextField) : Int {
-		return textfield.getSelectionStart();
+	public static function getSelectionStart(clip : TextClip) : Int {
+		return clip.getSelectionStart();
 	}
 
-	public static function getSelectionEnd(textfield : TextField) : Int {
-		return textfield.getSelectionEnd();
+	public static function getSelectionEnd(clip : TextClip) : Int {
+		return clip.getSelectionEnd();
 	}
 
-	public static function setSelection(textfield : TextField, start : Int, end : Int) : Void {
-		textfield.setSelection(start, end);
+	public static function setSelection(clip : TextClip, start : Int, end : Int) : Void {
+		clip.setSelection(start, end);
 	}
 
-	public static function setReadOnly(textfield: TextField, readOnly: Bool) : Void {
-		textfield.setReadOnly(readOnly);
+	public static function setReadOnly(clip: TextClip, readOnly: Bool) : Void {
+		clip.setReadOnly(readOnly);
 	}
 
-	public static function setMaxChars(textfield : TextField, maxChars : Int) : Void {
-		textfield.setMaxChars(maxChars);
+	public static function setMaxChars(clip : TextClip, maxChars : Int) : Void {
+		clip.setMaxChars(maxChars);
 	}
 
-	public static function addTextInputFilter(textfield : TextField, filter : String -> String) : Void -> Void {
-		return textfield.addTextInputFilter(filter);
+	public static function addTextInputFilter(clip : TextClip, filter : String -> String) : Void -> Void {
+		return clip.addTextInputFilter(filter);
 	}
 
-	public static function addTextInputKeyEventFilter(textfield : TextField, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
+	public static function addTextInputKeyEventFilter(clip : TextClip, event : String, filter : String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool) : Void -> Void {
 		if (event == "keydown")
-			return textfield.addTextInputKeyDownEventFilter(filter);
+			return clip.addTextInputKeyDownEventFilter(filter);
 		else
-			return textfield.addTextInputKeyUpEventFilter(filter);
+			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
 	public static function findParentAccessibleWidget(clip : Dynamic) : Element {
@@ -1787,17 +1116,14 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	// native addChild : (parent : native, child : native) -> void
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.addChild(child);
 	}
 
-	// native addChildAt : (parent : native, child : native, id : int) -> void
 	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
 		parent.addChildAt(child, id);
 	}
 
-	// native removeChild : (parent : native, child : native) -> void
 	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
 		parent.removeChild(child);
 	}
@@ -1841,13 +1167,13 @@ class RenderSupportJSPixi {
 	}
 
 	public static function deferUntilRender(fn : Void -> Void) : Void {
-		PixiStage.once("drawframe", fn);
+		once("drawframe", fn);
 	}
 
 	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
-		PixiStage.once("drawframe", fn);
+		once("drawframe", fn);
 		return function() {
-			PixiStage.off("drawframe", fn);
+			off("drawframe", fn);
 		};
 	}
 
@@ -1872,7 +1198,7 @@ class RenderSupportJSPixi {
 		clip.setClipMask(mask);
 	}
 
-	public static function setClipViewBounds(clip : FlowContainer, minX : Float, minY : Float, maxX : Float, maxY : Float) : Void {
+	public static function setClipViewBounds(clip : NativeWidgetClip, minX : Float, minY : Float, maxX : Float, maxY : Float) : Void {
 		var bounds = new Bounds();
 
 		bounds.minX = minX;
@@ -1880,7 +1206,7 @@ class RenderSupportJSPixi {
 		bounds.maxX = maxX;
 		bounds.maxY = maxY;
 
-		clip.setClipViewBounds(bounds);
+		clip.setViewBounds(bounds);
 	}
 
 	public static function setClipWidth(clip : NativeWidgetClip, width : Float) : Void {
@@ -1970,8 +1296,6 @@ class RenderSupportJSPixi {
 				case 8: "backspace";
 				case 9: {
 					switchFocusFramesShow(EnableFocusFrame);
-					if (Platform.isIE || Platform.isEdge)
-						PixiStage.emit("preonfocus");
 
 					"tab";
 				}
@@ -2057,8 +1381,8 @@ class RenderSupportJSPixi {
 			fn(ke.key, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keyCode, ke.preventDefault);
 		}
 
-		PixiStage.on(event, keycb);
-		return function() { PixiStage.off(event, keycb); }
+		on(event, keycb);
+		return function() { off(event, keycb); }
 	}
 
 	public static function addStreamStatusListener(clip : VideoClip, fn : String -> Void) : Void -> Void {
@@ -2067,26 +1391,17 @@ class RenderSupportJSPixi {
 
 	public static function addEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "resize") {
-			PixiStage.on("resize", fn);
-			return function() { PixiStage.off("resize", fn); }
+			on("resize", fn);
+			return function() { off("resize", fn); }
 		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup") {
-			PixiStage.on(event, fn);
-			return function() { PixiStage.off(event, fn); }
+			on(event, fn);
+			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			var blockContextMenuFn = function () {
-				return false;
-			}
+			PixiRenderer.view.oncontextmenu = function () { return false; };
 
-			PixiRenderer.view.oncontextmenu = blockContextMenuFn;
-
-			var dropareas = Browser.window.document.getElementsByClassName("droparea");
-			for (droparea in dropareas) {
-				droparea.oncontextmenu = blockContextMenuFn;
-			}
-
-			PixiStage.on(event, fn);
-			return function() { PixiStage.off(event, fn); }
+			on(event, fn);
+			return function() { off(event, fn); }
 		} else if (event == "rollover") {
 			clip.on("pointerover", fn);
 			clip.updateClipInteractive();
@@ -2120,86 +1435,10 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
-		var regExp = new EReg(mimeTypeRegExpFilter, "g");
+		var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
-		/********* Create HTML block and setup metrics *********/
-
-		var dropArea = Browser.document.createElement("div");
-		dropArea.className = "droparea";
-		dropArea.style.position = "absolute";
-		dropArea.style.zIndex = RenderSupportJSPixi.zIndexValues.droparea;
-		dropArea.oncontextmenu = PixiRenderer.view.oncontextmenu;
-
-		clip.updateFileDropWidget = function() {
-			if (cast(clip, DisplayObject).getClipVisible()) {
-				var bounds = clip.getBounds();
-				dropArea.style.left = "" + bounds.x + "px";
-				dropArea.style.top = "" + bounds.y + "px";
-				dropArea.style.width = "" + bounds.width + "px";
-				dropArea.style.height = "" + bounds.height + "px";
-			} else {
-				dropArea.style.display = "none";
-			}
-		};
-
-		clip.createFileDropWidget = function() {
-			Browser.document.body.appendChild(dropArea);
-			PixiStage.on("stagechanged", clip.updateFileDropWidget);
-		};
-
-		clip.deleteFileDropWidget = function() {
-			try {
-				Browser.document.body.removeChild(dropArea);
-			} catch (e : Dynamic) {}
-			PixiStage.off("stagechanged", clip.updateFileDropWidget);
-		};
-
-		clip.createFileDropWidget();
-		clip.once("removed", function() clip.deleteFileDropWidget);
-
-		/********* Provide mouse events to PixiRenderer view *********/
-
-		var dropAreaProvideEvent = function (event : Dynamic) {
-			event.preventDefault();
-			dropArea.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
-			provideEvent(event);
-		};
-
-		dropArea.onmousemove = dropAreaProvideEvent;
-		dropArea.onmousedown = dropAreaProvideEvent;
-		dropArea.onmouseup = dropAreaProvideEvent;
-
-		/********* Set up drag&drop event listeners *********/
-
-		dropArea.ondragover = function (event) {
-			event.dataTransfer.dropEffect = 'copy';
-			return false;
-		}
-
-		dropArea.ondrop = function (event) {
-			event.preventDefault();
-
-			var files : FileList = event.dataTransfer.files;
-			var fileArray : Array<File> = [];
-
-			if (maxFilesCount < 0)
-				maxFilesCount = files.length;
-
-			for (idx in 0...Math.floor(Math.min(files.length, maxFilesCount))) {
-				var file : File = files.item(idx);
-
-				if (!regExp.match(file.type)) {
-					maxFilesCount++;
-					continue;
-				}
-
-				fileArray.push(file);
-			}
-
-			onDone(fileArray);
-		}
-
-		return clip.deleteFileDropWidget;
+		clip.addChild(dropArea);
+		return function() { clip.removeChild(dropArea); };
 	}
 
 	public static function addVirtualKeyboardHeightListener(fn : Float -> Void) : Void -> Void {
@@ -2223,8 +1462,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addDrawFrameEventListener(fn : Float -> Void) : Void -> Void {
-		PixiStage.on("drawframe", fn);
-		return function() { PixiStage.off("drawframe", fn); };
+		on("drawframe", fn);
+		return function() { off("drawframe", fn); };
 	}
 
 	// Reasonable defaults
@@ -2234,8 +1473,8 @@ class RenderSupportJSPixi {
 
 	public static function addMouseWheelEventListener(clip : Dynamic, fn : Float -> Float -> Void) : Void -> Void {
 		var cb = function (p) { fn(p.x, p.y); };
-		PixiStage.on("mousewheel", cb);
-		return function() { PixiStage.off("mousewheel", cb); };
+		on("mousewheel", cb);
+		return function() { off("mousewheel", cb); };
 	}
 
 	public static function addFinegrainMouseWheelEventListener(clip : Dynamic, f : Float -> Float -> Void) : Void -> Void {
@@ -2275,6 +1514,7 @@ class RenderSupportJSPixi {
 		return false;
 	}
 
+	// TODO:
 	public static function dohittest(clip : Dynamic, global : Point) : Bool {
 		if (!cast(clip, DisplayObject).getClipWorldVisible() || clip.isMask) return false;
 		if (clip.mask != null && !hittestGraphics(clip.mask, global)) return false;
@@ -2307,15 +1547,16 @@ class RenderSupportJSPixi {
 
 	public static function getClipAt(p : Point, parent : FlowContainer = null) : Dynamic {
 		// Use PixiStage as default clip for searching
-		if (parent == null)
+		if (parent == null) {
 			parent = PixiStage;
+		}
 
 		var cnt = parent.children.length;
 		for (i in 0...cnt) {
 			var child = parent.children[cnt - i - 1];
 			if ( child.getClipWorldVisible() && (child.mask == null || hittestGraphics(cast child.mask, p) ) &&
 				!(untyped child.isMask) && child.getBounds().contains(p.x, p.y)) {
-				if (untyped __instanceof__(child, TextField)) {
+				if (untyped __instanceof__(child, TextClip)) {
 					return child;
 				} else if (untyped child.graphicsData != null && child.graphicsData.length > 0 &&
 					child.graphicsData[0].fillAlpha > 0) { // ignore transparent graphics
@@ -2341,7 +1582,7 @@ class RenderSupportJSPixi {
 		// Transforms will be updated only on the next animate
 		// So lets do that here
 		// TO DO: Optimize
-		clip.updateTransform(); // Crashes if parent = null
+		//clip.updateTransform(); // Crashes if parent = null
 
 		// TO DO : Check bounding rect at first?
 
@@ -2541,8 +1782,8 @@ class RenderSupportJSPixi {
 		clip.setScrollRect(left, top, width, height);
 	}
 
-	public static function getTextMetrics(textfield : TextField) : Array<Float> {
-		return textfield.getTextMetrics();
+	public static function getTextMetrics(clip : TextClip) : Array<Float> {
+		return clip.getTextMetrics();
 	}
 
 	public static function makeBitmap() : Dynamic {
@@ -2566,12 +1807,12 @@ class RenderSupportJSPixi {
 
 	public static function fullScreenTrigger() {
 		IsFullScreen = isFullScreen();
-		PixiStage.emit("fullscreen", IsFullScreen);
+		emit("fullscreen", IsFullScreen);
 	}
 
 	public static function fullWindowTrigger(fw : Bool) {
 		IsFullWindow = fw;
-		PixiStage.emit("fullwindow", fw);
+		emit("fullwindow", fw);
 	}
 
 	private static var FullWindowTargetClip : DisplayObject = null;
@@ -2692,8 +1933,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function onFullScreen(fn : Bool -> Void) : Void -> Void {
-		PixiStage.on("fullscreen", fn);
-		return function () { PixiStage.off("fullscreen", fn); };
+		on("fullscreen", fn);
+		return function () { off("fullscreen", fn); };
 	}
 
 	public static function isFullScreen() : Bool {
@@ -2708,8 +1949,8 @@ class RenderSupportJSPixi {
 	}
 
 	public static function onFullWindow(onChange : Bool -> Void) : Void -> Void {
-		PixiStage.on("fullwindow", onChange);
-		return function() { PixiStage.off("fullwindow", onChange); }
+		on("fullwindow", onChange);
+		return function() { off("fullwindow", onChange); }
 	}
 
 	public static function isFullWindow() : Bool {

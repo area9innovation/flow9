@@ -1,15 +1,17 @@
 import js.Browser;
 import js.html.Element;
 
+import pixi.core.math.Matrix;
+import pixi.core.display.Bounds;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 
 using DisplayObjectHelper;
 
 class AccessWidgetTree {
-	private static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
+	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 
-	@:isVar public var id : Int;
+	@:isVar public var id(get, set) : Int;
 	@:isVar public var accessWidget(get, set) : AccessWidget;
 	@:isVar public var parent(get, set) : AccessWidgetTree;
 	public var children : Map<Int, AccessWidgetTree> = new Map<Int, AccessWidgetTree>();
@@ -17,8 +19,10 @@ class AccessWidgetTree {
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
 	public var zorder : Int = -9999;
+	private var realId : Int;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
+		this.realId = id;
 		this.changed = false;
 		this.childrenChanged = false;
 		this.id = id;
@@ -32,8 +36,10 @@ class AccessWidgetTree {
 
 	public function set_id(id : Int) : Int {
 		if (this.id != id) {
+			var parent = parent;
+
 			if (parent != null) {
-				parent.removeChild(this);
+				parent.removeChild(this, false);
 			}
 
 			this.id = id;
@@ -139,27 +145,90 @@ class AccessWidgetTree {
 		}
 	}
 
+	public function getTransform(append : Bool = true) : Matrix {
+		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
+			if (append && parent != null) {
+				var parentTransform = parent.getTransform(false);
+				return accessWidget.clip.worldTransform.clone().append(parentTransform.clone().invert());
+			} else {
+				return accessWidget.clip.worldTransform;
+			}
+		} else if (!append && parent != null) {
+			return parent.getTransform();
+		} else {
+			return new Matrix();
+		}
+	}
+
 	public function updateDisplay(updateChildren : Bool = false) : Void {
 		if (accessWidget != null) {
 			if (accessWidget.clip.parent == null) {
 				return;
 			}
 
-			if (untyped accessWidget.clip.nativeWidget != null) {
-				untyped accessWidget.clip.updateNativeWidget();
-			}
+			var nativeWidget : Dynamic = accessWidget.element;
+			var clip : DisplayObject = accessWidget.clip;
 
-			if (accessWidget.element != null) {
-				if (DebugAccessOrder) {
-					accessWidget.element.setAttribute("zorder", Std.string(zorder));
-					accessWidget.element.setAttribute("nodeindex", Std.string(accessWidget.nodeindex));
+			if (nativeWidget != null) {
+				if (untyped clip.nativeWidget != null) {
+					if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+						nativeWidget.style.display = "block";
+						nativeWidget.style.opacity = clip.worldAlpha;
+					} else {
+						nativeWidget.style.display = "none";
+						return;
+					}
+
+					if (untyped accessWidget.clip.nativeWidget != null) {
+						untyped accessWidget.clip.updateNativeWidget();
+					}
+
+					var transform = getTransform();
+
+					var tx = clip.getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
+					var ty = clip.getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
+
+					if (Platform.isIE) {
+						nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+						nativeWidget.style.left = '${tx}px';
+						nativeWidget.style.top = '${ty}px';
+					} else {
+						nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+					}
+
+					nativeWidget.style.width = '${untyped clip.getWidth()}px';
+					nativeWidget.style.height = '${untyped clip.getHeight()}px';
+
+					if (untyped clip.styleChanged) {
+						var viewBounds : Bounds = untyped clip.viewBounds;
+
+						if (viewBounds != null) {
+							if (Platform.isIE || Platform.isEdge) {
+								nativeWidget.style.clip = 'rect(
+									${viewBounds.minY}px,
+									${viewBounds.maxX}px,
+									${viewBounds.maxY}px,
+									${viewBounds.minX}px
+								)';
+							} else {
+								nativeWidget.style.clipPath = 'polygon(
+									${viewBounds.minX}px ${viewBounds.minY}px,
+									${viewBounds.minX}px ${viewBounds.maxY}px,
+									${viewBounds.maxX}px ${viewBounds.maxY}px,
+									${viewBounds.maxX}px ${viewBounds.minY}px
+								)';
+							}
+						}
+
+						untyped clip.styleChanged = false;
+					}
 				}
 
-				if (zorder >= AccessWidget.tree.zorder && accessWidget.clip.getClipVisible()) {
-					accessWidget.element.style.display = "block";
-				} else {
-					accessWidget.element.style.display = "none";
-					return;
+				if (DebugAccessOrder) {
+					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+					nativeWidget.setAttribute("zorder", '${zorder}');
+					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
 				}
 			}
 		}
@@ -176,11 +245,15 @@ class AccessWidgetTree {
 	}
 
 	public function addChild(child : AccessWidgetTree) : Void {
+		if (child.parent != null) {
+			child.parent.removeChild(child, false);
+		}
+
 		var previousChild = getChild(child.id);
 
 		if (previousChild != null) {
 			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
-				if (child.accessWidget != null && child.accessWidget.nodeindex != null && child.accessWidget.nodeindex.length > 0) {
+				if (child.accessWidget != null && child.accessWidget.nodeindex != null && previousChild.accessWidget.nodeindex.length > child.accessWidget.nodeindex.length) {
 					previousChild.id = childrenSize;
 				} else {
 					child.parent = null;
@@ -202,8 +275,8 @@ class AccessWidgetTree {
 		childrenChanged = true;
 	}
 
-	public function removeChild(child : AccessWidgetTree) : Void {
-		if (child.accessWidget != null) {
+	public function removeChild(child : AccessWidgetTree, ?destroy : Bool = true) : Void {
+		if (destroy && child.accessWidget != null) {
 			child.accessWidget.element = null;
 			untyped child.accessWidget.clip.accessWidget = null;
 		}
@@ -215,10 +288,19 @@ class AccessWidgetTree {
 
 		child.parent = null;
 
-		if (childrenSize == 0 && accessWidget == null && parent != null) {
-			parent.removeChild(this);
-		} else {
-			updateZorder();
+		if (destroy) {
+			if (childrenSize == 0 && accessWidget == null && parent != null) {
+				parent.removeChild(this);
+			} else {
+				for (child in children) {
+					if (child.id != child.realId && getChild(child.realId) == null) {
+						child.id = child.realId;
+						addChild(child);
+					}
+				}
+
+				updateZorder();
+			}
 		}
 	}
 }
@@ -240,6 +322,13 @@ class AccessWidget {
 		"form" => "form",
 		"textbox" => "input",
 	];
+
+	public static var zIndexValues = {
+		"canvas" : "0",
+		"accessButton" : "2",
+		"droparea" : "1",
+		"nativeWidget" : "2"
+	};
 
 	public static var tree : AccessWidgetTree = new AccessWidgetTree(0);
 
@@ -274,6 +363,10 @@ class AccessWidget {
 	}
 
 	public static inline function createAccessWidget(clip : DisplayObject, attributes : Array<Array<String>>) : Void {
+		if (untyped clip.accessWidget != null) {
+			removeAccessWidget(untyped clip.accessWidget);
+		}
+
 		var attributesMap = new Map<String, String>();
 
 		for (kv in attributes) {
@@ -328,7 +421,9 @@ class AccessWidget {
 				});
 
 				this.element.setAttribute("aria-disabled", "false");
-				this.element.style.zIndex = RenderSupportJSPixi.zIndexValues.accessButton;
+				if (this.element.style.zIndex == null) {
+					this.element.style.zIndex = AccessWidget.zIndexValues.accessButton;
+				}
 
 				if (tagName == "button") {
 					// setting temp. value so it will be easier to read in DOM
@@ -337,7 +432,7 @@ class AccessWidget {
 					}
 
 					this.element.classList.add("accessButton");
-				} else if (tagName == "input") {
+				} else if (tagName == "input" || tagName == "textarea") {
 					this.element.style.position = "fixed";
 					this.element.style.cursor = "inherit";
 					this.element.style.opacity = "0";
@@ -590,7 +685,7 @@ class AccessWidget {
 		var id = accessWidget.nodeindex[nodeindexPosition];
 
 		if (nodeindexPosition == accessWidget.nodeindex.length - 1) {
-			tree.addChild(new AccessWidgetTree(id, accessWidget));
+			tree.addChild(accessWidget.parent != null ? accessWidget.parent : new AccessWidgetTree(id, accessWidget));
 		} else {
 			if (tree.getChild(id) == null) {
 				tree.addChild(new AccessWidgetTree(id, null));
@@ -601,6 +696,7 @@ class AccessWidget {
 	}
 
 	private static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
+		trace("addAccessWidgetWithoutNodeindex");
 		if (untyped parent.accessWidget != null) {
 			if (untyped parent.accessWidget.parent == null) {
 				addAccessWidget(untyped parent.accessWidget);
@@ -638,14 +734,18 @@ class AccessWidget {
 
 		for (key in tree.children.keys()) {
 			var accessWidget = tree.children.get(key).accessWidget;
-			trace(id + key + " " + (accessWidget != null ? accessWidget.element.getAttribute("role") : "null"));
+			trace(id + key + " " + (accessWidget != null && accessWidget.element != null ? accessWidget.nodeindex + " " + accessWidget.element.getAttribute("role") : "null"));
 			printTree(tree.children.get(key), id + key + " ");
 		}
 	}
 
-	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element) : Bool {
+	public static function updateAccessTree(?tree : AccessWidgetTree, ?parent : Element, ?previousElement : Element, ?childrenChanged : Bool = false) : Bool {
 		if (tree == null) {
 			tree = AccessWidget.tree;
+
+			if (AccessWidgetTree.DebugAccessOrder && tree.childrenChanged) {
+				printTree();
+			}
 		}
 
 		if (!tree.childrenChanged) {
@@ -677,9 +777,9 @@ class AccessWidget {
 				}
 
 				previousElement = accessWidget.element;
-				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild);
+				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, true);
 			} else {
-				updateAccessTree(child, parent, previousElement);
+				updateAccessTree(child, parent, previousElement, true);
 			}
 		}
 

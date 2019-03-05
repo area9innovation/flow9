@@ -20,7 +20,7 @@ class VideoClip extends FlowContainer {
 	private var videoSprite : Sprite;
 	private var videoTexture : Texture;
 	private var fontFamily : String = '';
-	private var textField : PixiText;
+	private var textField : TextClip;
 	private var loaded : Bool = false;
 
 	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
@@ -114,7 +114,7 @@ class VideoClip extends FlowContainer {
 		untyped videoSprite._visible = true;
 		addChild(videoSprite);
 
-		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
+		RenderSupportJSPixi.on("drawframe", updateNativeWidget);
 		once("removed", deleteVideoClip);
 
 		createStreamStatusListeners();
@@ -133,7 +133,7 @@ class VideoClip extends FlowContainer {
 			nativeWidget.removeAttribute('src');
 			nativeWidget.load();
 
-			RenderSupportJSPixi.PixiStage.off("drawframe", updateNativeWidget);
+			RenderSupportJSPixi.off("drawframe", updateNativeWidget);
 
 			deleteVideoSprite();
 			deleteSubtitlesClip();
@@ -214,7 +214,7 @@ class VideoClip extends FlowContainer {
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
-			textField = new PixiText();
+			textField = new TextClip();
 			addChild(textField);
 		};
 	}

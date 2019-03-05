@@ -5,12 +5,10 @@ import pixi.core.display.DisplayObject;
 using DisplayObjectHelper;
 
 class FlowContainer extends Container {
-	private static var MultipleCanvases : Bool = Util.getParameter("multiplecanvases") == "1";
-
 	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
-	private var transformChanged : Bool = true;
+	public var transformChanged : Bool = true;
 	private var childrenChanged : Bool = true;
 	private var skipRender : Bool = false;
 
@@ -26,18 +24,6 @@ class FlowContainer extends Container {
 		var newChild = super.addChild(child);
 
 		if (newChild != null) {
-			if (MultipleCanvases && this == RenderSupportJSPixi.PixiStage) {
-				var view = Browser.document.createElement('canvas');
-				untyped view.style.pointerEvents = 'none';
-				untyped newChild.view = view;
-
-				Browser.document.body.appendChild(view);
-
-				newChild.on('removed', function() {
-					Browser.document.body.removeChild(view);
-				});
-			}
-
 			newChild.updateClipInteractive(interactiveChildren);
 
 			if (getClipVisible()) {
