@@ -176,13 +176,17 @@ fiWasmBuildTypeTable(names : FiGlobalNames, decls : [Pair<string, [FiDeclaration
 fiWasmCollectTypeDecls(names : FiGlobalNames, decls: [Pair<string, [FiDeclaration]>]) -> Set<WasmTypeDescriptor> {
 	fold(decls, makeSet(), \macc, mdecl -> 
 		fold(mdecl.second, macc, \acc, decl -> {
+			do = \t -> {
+				insertSet(acc, wasmUnifyType(fitype2wasmtype(names, t)))
+			};
+
 			switch (decl) {
 				FiFunctionDec(name, lambda, type, declStart, defiStart): 
-					fiWasmCollectFiExpTypeDecls(names, lambda, insertSet(acc, fitype2wasmtype(names, type)));
+					fiWasmCollectFiExpTypeDecls(names, lambda, do(type));
 				FiGlobalVar(name, value, type, declStart, defiStart):
-					fiWasmCollectFiExpTypeDecls(names, value, insertSet(acc, fitype2wasmtype(names, type)));
+					fiWasmCollectFiExpTypeDecls(names, value, do(type));
 				FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart):
-					acc;
+					fiWasmCollectFiExpTypeDecls(names, fallbackLambda, do(type));
 			}
 		})
 	);
@@ -194,39 +198,47 @@ fiWasmCollectFiExpTypeDecls(names : FiGlobalNames, expr : FiExp, acc : Set<WasmT
 			fiWasmCollectFiExpTypeDecls(names, e, acc1)
 		});
 	}
+
+	conv_u = \t -> {wasmUnifyType(fitype2wasmtype(names, t))};
+
+	do = \t -> {
+		insertSet(acc, wasmUnifyType(fitype2wasmtype(names, t)))
+	};
+
 	switch (expr) {
 		FiVoid(start): acc;
 		FiBool(b, start): acc;
 		FiDouble(d, start): acc;
 		FiInt(i, start): acc;
-		FiVar(name, type, start): insertSet(acc, fitype2wasmtype(names, type));
+		FiVar(name, type, start): do(type);
 
 		FiCall(f, args, type, start): rec(concat([f], args), acc);
 
 		FiString(s, start): acc;
 		FiLambda(args, body, type, start): 
 			// look everywhere: function type, arg types, body
-			fold(args, rec([body], insertSet(acc, fitype2wasmtype(names, type))),
-				\acc1 : Set<WasmTypeDescriptor>, e -> insertSet(acc1, fitype2wasmtype(names, e.type)));
+			fold(args, rec([body], do(type)),
+				\acc1 : Set<WasmTypeDescriptor>, e -> insertSet(acc1, conv_u(e.type)));
 
 		FiSeq(es, type, start): rec(es, acc);
 
 		FiLet(name, type, e1, e2, type2, start): 
-			rec([e1, e2], insertSet(acc, fitype2wasmtype(names, type)));
+			rec([e1, e2], do(type));
 		FiIf(e1, e2, e3, type, start): rec([e1, e2, e3], acc);
-		FiCallPrim(op, es, type, start): rec(es, insertSet(acc, fitype2wasmtype(names, type)));
+		FiCallPrim(op, es, type, start): rec(es, do(type));
 
 		FiSwitch(x, switchType, cases, type, start): 
-			rec(map(cases, \c -> c.body), insertSet(acc, fitype2wasmtype(names, type)));
+			rec(map(cases, \c -> c.body), do(type));
 		FiCast(e, tFrom, tTo, type, start): 
-			rec([e], mergeSets(acc, buildSet(map([tFrom, tTo, type], \t -> fitype2wasmtype(names, t)))));
+			rec([e], mergeSets(acc, buildSet(map([tFrom, tTo, type], \t -> conv_u(t)))));
 
-		FiRequire(flowfile, e, type, start): rec([e], insertSet(acc, fitype2wasmtype(names, type)));
-		FiUnsafe(name, fallback, type, start): rec([fallback], insertSet(acc, fitype2wasmtype(names, type)));
+		FiRequire(flowfile, e, type, start): rec([e], do(type));
+		FiUnsafe(name, fallback, type, start): rec([fallback], do(type));
 	}
 }
 
-fiWasmUpdateTypeTable(acc : FiWasmTypeTable, t : WasmTypeDescriptor) -> FiWasmTypeTable {
+fiWasmUpdateTypeTable(acc : FiWasmTypeTable, type : WasmTypeDescriptor) -> FiWasmTypeTable {
+	t = wasmUnifyType(type);
 	bytes = wasmTypeDescriptor2bytes(acc, t, true);
 
 	debugPrintTypeTable = false;
@@ -258,7 +270,7 @@ fiWasmUpdateTypeTableStruct(acc : FiWasmTypeTable, t : WasmTypeStruct) -> FiWasm
 
 fistruct2wasmstruct(names : FiGlobalNames, s: FiTypeStruct) {
 	WasmTypeStruct(s.name, 
-		map(s.args, \a -> WasmStructField(a.name, fitype2wasmtype(names, a.type)))
+		map(s.args, \a -> WasmStructField(a.name, wasmUnifyType(fitype2wasmtype(names, a.type))))
 	)
 }
 
@@ -372,7 +384,7 @@ fiWasmSerializeTypeTable(cfg : FiWasmConfig, types : FiWasmTypeTable, initialOff
 }
 
 fiWasmGetTypeDescriptor(context : WasmContext, type : WasmTypeDescriptor) {
-	lookupTreeDef(context.typeTable.typesMap, type, 0);
+	lookupTreeDef(context.typeTable.typesMap, wasmUnifyType(type), 0);
 }
 
 wasmGenerateTypeRef(context : WasmContext, type : WasmTypeDescriptor) -> Wasm2Cmd {
@@ -405,4 +417,31 @@ wasmTypeDescriptor2Json(table : FiWasmTypeTable) -> Json {
 		list2array(foldTree(table.typesMap, makeList(), \desc, index, lst ->
 			Cons(Pair(i2s(index), JsonString(wasmTypeToString(desc))), lst)))
 	);
+}
+
+wasmUnifyType(type : WasmTypeDescriptor) -> WasmTypeDescriptor {
+	rec = \t -> wasmUnifyType(t);
+	func = \args, rt -> {
+		args2 = filtermapi(args, \i, a -> {
+			if ((i + 1 < length(args)) || !strContains(a.name, "__closure__")) {
+				Some(WasmFunArg("", rec(a.type)))
+			} else None();
+		});
+		WasmTypeFunction(args2, rec(rt))
+	}
+	switch (type) {
+		WasmTypeVoid(): type;
+		WasmTypeBool(): type;
+		WasmTypeInt(): type;
+		WasmTypeDouble(): type;
+		WasmTypeString(): type;
+		WasmTypeFlow(): type;
+		WasmTypeArray(t): WasmTypeArray(rec(t));
+		WasmTypeRef(t): WasmTypeRef(rec(t));
+		WasmTypeNative(): type;
+		WasmTypeStruct(name, fields): WasmTypeStruct(name, map(fields, \f -> WasmStructField(f.name, rec(f.type))));
+		WasmTypeUnion(name, structs): type;
+		WasmTypeFunction(args, returnType): func(args, returnType);
+		WasmTypeJSCallback(args, returnType): func(args, returnType);
+	}
 }
