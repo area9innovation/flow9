@@ -391,7 +391,18 @@ compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool,
 
     // only filter locals if asked for
     vars = if (localsOnly) filter(destructedVars, \v -> v.local) else destructedVars;
-	    concatA(map(vars, \v -> 
+	    concatA(map(vars, \v -> {
+				// when freeing a function, we shall actually free its closure - it is hidden in its type
+				adjustedType = switch (v.type) {
+					WasmTypeFunction(args, __): {
+						len = length(args);
+						if (len > 0 && args[len - 1].name == "__closure__")
+							args[len - 1].type
+						else
+							v.type;
+					}
+					default: v.type;
+				};
 			// if (doinline) {[
 			// 	Wasm2GetLocal(v.name),
 			// 	Wasm2Code("i32.load"),
@@ -433,11 +444,11 @@ compileDestructors(destructedVars : [WasmScopeVar], localsOnly : bool,
 			// ]} else {
 				[
 			        Wasm2GetLocal(v.name),
-					wasmGenerateTypeRef(context, v.type),
+					wasmGenerateTypeRef(context, adjustedType),
 			        Wasm2Call("$wasm_dec_refcnt")
 				]
 			// }
-	    ));
+		}));
 }
 
 compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
