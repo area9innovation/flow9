@@ -8,8 +8,9 @@ class FlowSprite extends Sprite {
 	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
-	private var transformChanged : Bool = true;
-	private var skipRender : Bool = false;
+	public var transformChanged : Bool = true;
+	public var alphaChanged : Bool = true;
+	public var visibleChanged : Bool = true;
 
 	private var url : String = "";
 	private var loaded : Bool = false;

@@ -139,15 +139,23 @@ class WebClip extends NativeWidgetClip {
 		}
 	}
 
-	public override function updateNativeWidget() {
-		super.updateNativeWidget();
+	public override function onUpdateStyle() : Void {
+		super.onUpdateStyle();
 
-		if (nativeWidget.getAttribute("tabindex") != null) {
-			iframe.setAttribute("tabindex", nativeWidget.getAttribute("tabindex")); // Needed to the correct tab order of iframe elements
-			nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
+		if (nativeWidget != null) {
+			if (nativeWidget.getAttribute("tabindex") != null) {
+				iframe.setAttribute("tabindex", nativeWidget.getAttribute("tabindex")); // Needed to the correct tab order of iframe elements
+				nativeWidget.removeAttribute("tabindex"); // FF set focus to div if it has tabindex
+			}
+
+			onUpdateVisible();
 		}
+	}
 
-		if (getClipVisible()) {
+	public override function onUpdateVisible() : Void {
+		super.onUpdateVisible();
+
+		if (nativeWidget != null && getClipVisible()) {
 			if (this.shrinkToFit) {
 				applyShrinkToFit();
 			} else {

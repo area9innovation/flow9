@@ -352,8 +352,8 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
-		PixiStage.transformChanged = true;
-		PixiStage.invalidateStage();
+
+		RenderSupportJSPixi.InvalidateStage();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -1582,7 +1582,7 @@ class RenderSupportJSPixi {
 		// Transforms will be updated only on the next animate
 		// So lets do that here
 		// TO DO: Optimize
-		//clip.updateTransform(); // Crashes if parent = null
+		// clip.forceUpdateTransform(); // Crashes if parent = null
 
 		// TO DO : Check bounding rect at first?
 

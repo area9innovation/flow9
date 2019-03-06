@@ -13,15 +13,11 @@ using DisplayObjectHelper;
 
 class TextClip extends NativeWidgetClip {
 	private var text : String = '';
-	private var fillColor : Int = 0;
-	private var fillOpacity : Float = 0.0;
-	private var letterSpacing : Float = 0.0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
-	private var fontStyle : FontStyle = {weight : '', style : '', size : 0.0, family : ''};
 	private var textDirection : String = 'ltr';
 	private var style : TextStyle = new TextStyle();
 
@@ -41,6 +37,7 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : TextMetrics;
+	private var fontMetrics : Dynamic;
 	private var multiline : Bool = false;
 
 	private var clipWidth : Float = 100.0;
@@ -78,12 +75,14 @@ class TextClip extends NativeWidgetClip {
 			text.length > 0 ? [text] : [];
 	}
 
-	public override function updateNativeWidget() : Void {
-		if (styleChanged) {
+	public override function onUpdateStyle() : Void {
+		super.onUpdateStyle();
+
+		if (isInput) {
 			nativeWidget.type = type;
 			nativeWidget.value = text;
-			nativeWidget.style.color = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
-			nativeWidget.style.letterSpacing = '${letterSpacing}px';
+			nativeWidget.style.color = style.fill;
+			nativeWidget.style.letterSpacing = '${cast(style.letterSpacing, Float) / textScaleFactor}px';
 			nativeWidget.style.fontFamily = style.fontFamily;
 			nativeWidget.style.fontWeight = style.fontWeight;
 			nativeWidget.style.fontStyle = style.fontStyle;
@@ -133,95 +132,15 @@ class TextClip extends NativeWidgetClip {
 				nativeWidget.style.resize = 'none';
 				nativeWidget.wrap = wordWrap ? 'soft' : 'off';
 			}
+
+			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+			onUpdateAlpha();
 		}
 
-		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-		nativeWidget.style.opacity = isFocused ? fillOpacity * worldAlpha : 0;
-	}
-
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
-			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
-			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
-		} else {
-			return text;
-		}
-	}
-
-	private static inline function capitalize(s : String) : String {
-		return s.substr(0, 1).toUpperCase() + s.substr(1, s.length - 1);
-	}
-
-	// HACK due to unable remake builtin fonts
-	private static inline function recognizeBuiltinFont(fontFamily : String, fontWeight : Int, fontSlope : String) : String {
-		if (StringTools.startsWith(fontFamily, "'Material Icons")) {
-			return "MaterialIcons";
-		} else if (StringTools.startsWith(fontFamily, "'DejaVu Sans")) {
-			return "DejaVuSans";
-		} else if (StringTools.startsWith(fontFamily, "'Franklin Gothic")) {
-			return fontSlope == "italic" ? "Italic" : fontWeight == 700 ? "Bold" : "Book";
-		} else if (StringTools.startsWith(fontFamily, "'Roboto")) {
-			return fontFamily + fontWeightToString(fontWeight) + fontSlope == "normal" ? "" : capitalize(fontSlope);
-		} else {
-			return fontFamily;
-		}
-	}
-
-	private static inline function fontWeightToString(fontWeight : Int) : String {
-		if (fontWeight <= 100)
-			return "Thin"
-		else if (fontWeight <= 200)
-			return "Ultra Light"
-		else if (fontWeight <= 300)
-			return "Light"
-		else if (fontWeight <= 400)
-			return "Book"
-		else if (fontWeight <= 500)
-			return "Medium"
-		else if (fontWeight <= 600)
-			return "Semi Bold"
-		else if (fontWeight <= 700)
-			return "Bold"
-		else if (fontWeight <= 800)
-			return "Extra Bold"
-		else
-			return "Black";
-	}
-
-	public function setTextAndStyle(text : String, fontFamily : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
-		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
-		fontFamily = fontWeight > 0 || fontSlope != "" ? recognizeBuiltinFont(fontFamily, fontWeight, fontSlope) : fontFamily;
-
-		var fontStyle : FontStyle = FlowFontStyle.fromFlowFont(fontFamily);
-
-		style.fontSize = textScaleFactor * fontSize;
-		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
-		style.letterSpacing = textScaleFactor * letterSpacing;
-		style.fontFamily = fontStyle.family;
-		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
-		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = textScaleFactor * (fontSize * 1.15 + interlineSpacing);
-		style.wordWrap = wordWrap;
-		style.wordWrapWidth = textScaleFactor * (widgetWidth > 0 ? widgetWidth : 2048);
-		style.breakWords = cropWords;
-		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
-
-		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
-		this.fillColor = fillColor;
-		this.fillOpacity = fillOpacity;
-		this.letterSpacing = letterSpacing;
-		this.backgroundColor = backgroundColor;
-		this.backgroundOpacity = backgroundOpacity;
-		this.fontStyle = FlowFontStyle.fromFlowFont(fontFamily);
-
-		invalidateStyle();
-	}
-
-	private function layoutText() : Void {
 		if (isFocused) {
 			setScrollRect(0, 0, 0, 0);
-		} else if (styleChanged) {
+		} else {
 			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
 
@@ -302,8 +221,7 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * (getWidth() - clipWidth) + widthDelta - letterSpacing);
-			// textClip.setClipAlpha(fillOpacity);
+			textClip.setClipX(anchorX * (getWidth() - clipWidth) + widthDelta - cast(style.letterSpacing, Float));
 
 			setTextBackground(new Rectangle(0, 0, getWidth() + widthDelta, getHeight()));
 
@@ -311,10 +229,90 @@ class TextClip extends NativeWidgetClip {
 				setScrollRect(0, 0, getWidth() + widthDelta, getHeight());
 			}
 		}
+	}
 
-		if (isInput && accessWidget != null) {
-			accessWidget.updateDisplay();
+	public override function onUpdateAlpha() : Void {
+		super.onUpdateAlpha();
+
+		if (isInput) {
+			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
 		}
+	}
+
+	private function bidiDecorate(text : String) : String {
+		if (textDirection == 'ltr') {
+			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
+		} else if (textDirection == 'rtl') {
+			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
+		} else {
+			return text;
+		}
+	}
+
+	private static inline function capitalize(s : String) : String {
+		return s.substr(0, 1).toUpperCase() + s.substr(1, s.length - 1);
+	}
+
+	// HACK due to unable remake builtin fonts
+	private static inline function recognizeBuiltinFont(fontFamily : String, fontWeight : Int, fontSlope : String) : String {
+		if (StringTools.startsWith(fontFamily, "'Material Icons")) {
+			return "MaterialIcons";
+		} else if (StringTools.startsWith(fontFamily, "'DejaVu Sans")) {
+			return "DejaVuSans";
+		} else if (StringTools.startsWith(fontFamily, "'Franklin Gothic")) {
+			return fontSlope == "italic" ? "Italic" : fontWeight == 700 ? "Bold" : "Book";
+		} else if (StringTools.startsWith(fontFamily, "'Roboto")) {
+			return fontFamily + fontWeightToString(fontWeight) + fontSlope == "normal" ? "" : capitalize(fontSlope);
+		} else {
+			return fontFamily;
+		}
+	}
+
+	private static inline function fontWeightToString(fontWeight : Int) : String {
+		if (fontWeight <= 100)
+			return "Thin"
+		else if (fontWeight <= 200)
+			return "Ultra Light"
+		else if (fontWeight <= 300)
+			return "Light"
+		else if (fontWeight <= 400)
+			return "Book"
+		else if (fontWeight <= 500)
+			return "Medium"
+		else if (fontWeight <= 600)
+			return "Semi Bold"
+		else if (fontWeight <= 700)
+			return "Bold"
+		else if (fontWeight <= 800)
+			return "Extra Bold"
+		else
+			return "Black";
+	}
+
+	public function setTextAndStyle(text : String, fontFamily : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
+		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
+		fontFamily = fontWeight > 0 || fontSlope != "" ? recognizeBuiltinFont(fontFamily, fontWeight, fontSlope) : fontFamily;
+
+		var fontStyle : FontStyle = FlowFontStyle.fromFlowFont(fontFamily);
+
+		style.fontSize = textScaleFactor * fontSize;
+		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
+		style.fontFamily = fontStyle.family;
+		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
+		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
+		style.lineHeight = textScaleFactor * (fontSize * 1.15 + interlineSpacing);
+		style.wordWrap = wordWrap;
+		style.wordWrapWidth = textScaleFactor * (widgetWidth > 0 ? widgetWidth : 2048);
+		style.breakWords = cropWords;
+		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
+
+		fontMetrics = TextMetrics.measureFont(untyped style.toFontString());
+
+		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
+		this.backgroundColor = backgroundColor;
+		this.backgroundOpacity = backgroundOpacity;
+
+		invalidateStyle();
 	}
 
 	private function createTextClip(text : String, style : Dynamic) : Text {
@@ -670,7 +668,7 @@ class TextClip extends NativeWidgetClip {
 			return widgetWidth;
 		} else {
 			updateTextMetrics();
-			return untyped metrics.width;
+			return metrics != null ? untyped metrics.width : 0;
 		}
 	}
 
@@ -679,7 +677,7 @@ class TextClip extends NativeWidgetClip {
 			return widgetHeight;
 		} else {
 			updateTextMetrics();
-			return untyped metrics.height;
+			return metrics != null ? untyped metrics.height : 0;
 		}
 	}
 
@@ -761,17 +759,20 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (metrics == null || untyped metrics.text != text || untyped metrics.style != style) {
+		if (text != "" && cast(style.fontSize, Float) > 1 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		// updateTextMetrics();
-		// return untyped [metrics.ascent / textScaleFactor, metrics.descent / textScaleFactor, metrics.descent / textScaleFactor];
-		var ascent = 0.9 * cast(style.fontSize, Float) / textScaleFactor;
-		var descent = 0.1 * cast(style.fontSize, Float) / textScaleFactor;
-		var leading = 0.15 * cast(style.fontSize, Float) / textScaleFactor;
-		return [ascent, descent, leading];
+		if (fontMetrics == null) {
+			var ascent = 0.9 * cast(style.fontSize, Float) / textScaleFactor;
+			var descent = 0.1 * cast(style.fontSize, Float) / textScaleFactor;
+			var leading = 0.15 * cast(style.fontSize, Float) / textScaleFactor;
+
+			return [ascent, descent, leading];
+		} else {
+			return [fontMetrics.ascent / textScaleFactor, fontMetrics.descent / textScaleFactor, fontMetrics.descent / textScaleFactor];
+		}
 	}
 }

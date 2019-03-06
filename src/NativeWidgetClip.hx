@@ -20,8 +20,34 @@ class NativeWidgetClip extends FlowContainer {
 	private function getWidth() : Float { return widgetWidth; }
 	private function getHeight() : Float { return widgetHeight; }
 
-	// Set actual HTML node metrics, opacity etc.
-	public function updateNativeWidget() : Void {}
+	public function onUpdateStyle() : Void {
+		if (nativeWidget != null) {
+			nativeWidget.style.width = '${getWidth()}px';
+			nativeWidget.style.height = '${getHeight()}px';
+
+			if (viewBounds != null) {
+				if (Platform.isIE || Platform.isEdge) {
+					nativeWidget.style.clip = 'rect(
+						${viewBounds.minY}px,
+						${viewBounds.maxX}px,
+						${viewBounds.maxY}px,
+						${viewBounds.minX}px
+					)';
+				} else {
+					nativeWidget.style.clipPath = 'polygon(
+						${viewBounds.minX}px ${viewBounds.minY}px,
+						${viewBounds.minX}px ${viewBounds.maxY}px,
+						${viewBounds.maxX}px ${viewBounds.maxY}px,
+						${viewBounds.maxX}px ${viewBounds.minY}px
+					)';
+				}
+			}
+		}
+	}
+
+	public function onUpdateAlpha() : Void {}
+	public function onUpdateVisible() : Void {}
+	public function onUpdateTransform() : Void {}
 
 	private function addNativeWidget() : Void {
 		if (nativeWidget != null) {
@@ -95,7 +121,7 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function invalidateStyle() : Void {
 		styleChanged = true;
-		invalidateTransform();
+		invalidateStage();
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {

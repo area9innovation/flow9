@@ -511,62 +511,60 @@ class PixiWorkarounds {
 				return properties;
 			};
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				transformChanged = transformChanged || this.transformChanged;
+			PIXI.DisplayObject.prototype.clipVisible = true;
 
-				if (transformChanged)
-				{
-					this._boundsID++;
-
-					this.transform.updateTransform(this.parent.transform);
-
-					// TODO: check render flags, how to process stuff here
+			PIXI.Container.prototype.updateTransform = function(transformChanged, alphaChanged, visibleChanged) {
+				if (this.alphaChanged) {
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 					if (this.accessWidget) {
-						this.accessWidget.updateDisplay();
-					}
-
-					this.transformChanged = false;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
-					{
-						child.updateTransform(transformChanged);
+						this.accessWidget.updateAlpha();
 					}
 				}
-			};
 
-			TextClip.prototype.updateTransform = function(transformChanged) {
-				transformChanged = transformChanged || this.transformChanged;
+				if (this.visibleChanged) {
+					this.clipVisible = this.parent.clipVisible && this._visible;
+					this.visible = this.parent.visible && (this.isMask || (this.clipVisible && this.renderable));
 
-				if (transformChanged)
-				{
+					if (this.accessWidget) {
+						this.accessWidget.updateVisible();
+					}
+
+					if (this.interactive && !this.visible) {
+						this.emit('pointerout');
+					}
+				}
+
+				if (this.transformChanged) {
 					this._boundsID++;
-
 					this.transform.updateTransform(this.parent.transform);
 
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					this.layoutText();
-
-					this.transformChanged = false;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
-					{
-						child.updateTransform(transformChanged);
+					if (this.accessWidget) {
+						this.accessWidget.updateTransform();
 					}
 				}
+
+				if (this.styleChanged) {
+					this.onUpdateStyle();
+
+					this.styleChanged = false;
+				}
+
+				for (let i = 0, j = this.children.length; i < j; ++i) {
+					const child = this.children[i];
+
+					child.transformChanged = child.transformChanged || this.transformChanged;
+					child.visibleChanged = child.visibleChanged || this.visibleChanged;
+					child.alphaChanged = child.alphaChanged || this.alphaChanged;
+
+					if (child.visible || child.visibleChanged) {
+						child.updateTransform();
+					}
+				}
+
+				this.alphaChanged = false;
+				this.transformChanged = false;
+				this.visibleChanged = false;
 			};
 		");
 	}

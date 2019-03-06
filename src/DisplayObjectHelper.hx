@@ -27,12 +27,10 @@ class DisplayObjectHelper {
 
 				NativeHx.timer(100, function () {
 					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
-					untyped clip.skipRender = false;
 					RenderSupportJSPixi.InvalidateStage();
 				});
 			}
 
-			untyped clip.skipRender = false;
 			RenderSupportJSPixi.InvalidateStage();
 		}
 	}
@@ -40,6 +38,19 @@ class DisplayObjectHelper {
 	public static inline function invalidateTransform(clip : DisplayObject) : Void {
 		untyped clip.transformChanged = true;
 		invalidateStage(clip);
+	}
+
+	public static inline function invalidateAlpha(clip : DisplayObject) : Void {
+		untyped clip.alphaChanged = true;
+		invalidateStage(clip);
+	}
+
+	public static inline function invalidateVisible(clip : DisplayObject) : Void {
+		untyped clip.visibleChanged = true;
+
+		if (clip.parent != null) {
+			invalidateStage(clip.parent);
+		}
 	}
 
 	public static inline function setClipX(clip : DisplayObject, x : Float) : Void {
@@ -88,7 +99,7 @@ class DisplayObjectHelper {
 	public static inline function setClipAlpha(clip : DisplayObject, alpha : Float) : Void {
 		if (clip.alpha != alpha) {
 			clip.alpha = alpha;
-			invalidateTransform(clip);
+			invalidateAlpha(clip);
 		}
 	}
 
@@ -96,55 +107,28 @@ class DisplayObjectHelper {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
 
-			if (clip.parent != null && getClipVisible(clip.parent)) {
-				updateClipWorldVisible(clip);
-				invalidateTransform(clip.parent);
-			}
+			invalidateVisible(clip);
 		}
-	}
-
-	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
-		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
-		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
-
-		if (clip.interactive && !getClipWorldVisible(clip)) {
-			clip.emit("pointerout");
-		}
-
-		var children : Array<Dynamic> = untyped clip.children;
-		if (children != null) {
-			for (c in children) {
-				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || getClipVisible(c) != getClipVisible(clip)) {
-					updateClipWorldVisible(c, !updateAccess);
-				}
-			}
-		}
-
-		if (untyped clip.accessWidget != null) {
-			untyped clip.accessWidget.updateDisplay();
- 		}
-	}
-
-	public static inline function getClipVisible(clip : DisplayObject) : Bool {
-		return untyped clip.clipVisible;
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
 
-			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
-				updateClipWorldVisible(clip);
-				invalidateTransform(clip.parent);
-			}
+			invalidateVisible(clip);
 		}
 	}
 
 	public static inline function forceUpdateTransform(clip : DisplayObject) : Void {
 		if (clip.parent != null && !clip.visible) {
 			forceUpdateTransform(clip.parent);
+			untyped clip.transformChanged = true;
 			clip.updateTransform();
 		}
+	}
+
+	public static inline function getClipVisible(clip : DisplayObject) : Bool {
+		return untyped clip.clipVisible;
 	}
 
 	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {

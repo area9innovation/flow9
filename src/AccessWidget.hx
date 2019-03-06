@@ -133,9 +133,9 @@ class AccessWidgetTree {
 
 		if (previousZOrder != zorder) {
 			if (parent == null) {
-				updateDisplay(true);
+				updateDisplay();
 			} else if (!parent.updateZorder()) {
-				updateDisplay(true);
+				updateDisplay();
 			}
 
 			return true;
@@ -144,8 +144,51 @@ class AccessWidgetTree {
 		}
 	}
 
-	public function getTransform(append : Bool = true) : Matrix {
-		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
+	public function updateDisplay() : Void {
+		updateVisible();
+
+		for (child in children) {
+			child.updateDisplay();
+		}
+	}
+
+	public function updateVisible() : Void {
+		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null) {
+			var nativeWidget : Dynamic = accessWidget.element;
+			var clip : DisplayObject = accessWidget.clip;
+
+			if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+				nativeWidget.style.display = "block";
+			} else {
+				nativeWidget.style.display = "none";
+			}
+
+			if (DebugAccessOrder) {
+				nativeWidget.setAttribute("zorder", '${zorder}');
+				nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
+			}
+
+			if (untyped clip.onUpdateVisible != null) {
+				untyped clip.onUpdateVisible();
+			}
+		}
+	}
+
+	public function updateAlpha(updateChildren : Bool = false) : Void {
+		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null) {
+			var nativeWidget : Dynamic = accessWidget.element;
+			var clip : DisplayObject = accessWidget.clip;
+
+			nativeWidget.style.opacity = clip.worldAlpha;
+
+			if (untyped clip.onUpdateAlpha != null) {
+				untyped clip.onUpdateAlpha();
+			}
+		}
+	}
+
+	private function getTransform(append : Bool = true) : Matrix {
+		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null) {
 			if (append && parent != null) {
 				var parentTransform = parent.getTransform(false);
 				return accessWidget.clip.worldTransform.clone().append(parentTransform.clone().invert());
@@ -159,82 +202,58 @@ class AccessWidgetTree {
 		}
 	}
 
-	public function updateDisplay(updateChildren : Bool = false) : Void {
+	private function getWidth() : Float {
 		if (accessWidget != null) {
-			if (accessWidget.clip.parent == null) {
-				return;
-			}
+			var clip : DisplayObject = accessWidget.clip;
 
+			if (untyped clip.getWidth == null) {
+				var bounds = clip.getBounds(true);
+				return bounds.width * clip.worldTransform.a + bounds.height * clip.worldTransform.c;
+			} else {
+				return untyped clip.getWidth();
+			}
+		} else {
+			return 0;
+		}
+	}
+
+	private function getHeight() : Float {
+		if (accessWidget != null) {
+			var clip : DisplayObject = accessWidget.clip;
+
+			if (untyped clip.getHeight == null) {
+				var bounds = clip.getBounds(true);
+				return bounds.width * clip.worldTransform.b + bounds.height * clip.worldTransform.d;
+			} else {
+				return untyped clip.getHeight();
+			}
+		} else {
+			return 0;
+		}
+	}
+
+	public function updateTransform() {
+		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
-			if (nativeWidget != null) {
-				if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-					nativeWidget.style.display = "block";
-					nativeWidget.style.opacity = clip.worldAlpha;
-				} else {
-					nativeWidget.style.display = "none";
-					return;
-				}
+			var transform = getTransform();
 
-				if (untyped clip.nativeWidget != null) {
-					if (untyped accessWidget.clip.nativeWidget != null) {
-						untyped accessWidget.clip.updateNativeWidget();
-					}
+			if (Platform.isIE) {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
 
-					var transform = getTransform();
-
-					var tx = clip.getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
-					var ty = clip.getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
-
-					if (Platform.isIE) {
-						nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-						nativeWidget.style.left = '${tx}px';
-						nativeWidget.style.top = '${ty}px';
-					} else {
-						nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
-					}
-
-					nativeWidget.style.width = '${untyped clip.getWidth()}px';
-					nativeWidget.style.height = '${untyped clip.getHeight()}px';
-
-					if (untyped clip.styleChanged) {
-						var viewBounds : Bounds = untyped clip.viewBounds;
-
-						if (viewBounds != null) {
-							if (Platform.isIE || Platform.isEdge) {
-								nativeWidget.style.clip = 'rect(
-									${viewBounds.minY}px,
-									${viewBounds.maxX}px,
-									${viewBounds.maxY}px,
-									${viewBounds.minX}px
-								)';
-							} else {
-								nativeWidget.style.clipPath = 'polygon(
-									${viewBounds.minX}px ${viewBounds.minY}px,
-									${viewBounds.minX}px ${viewBounds.maxY}px,
-									${viewBounds.maxX}px ${viewBounds.maxY}px,
-									${viewBounds.maxX}px ${viewBounds.minY}px
-								)';
-							}
-						}
-
-						untyped clip.styleChanged = false;
-					}
-				}
-
-				if (DebugAccessOrder) {
-					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-					nativeWidget.setAttribute("zorder", '${zorder}');
-					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
-				}
+				nativeWidget.style.left = '${transform.tx}px';
+				nativeWidget.style.top = '${transform.tx}px';
+			} else {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${transform.tx}, ${transform.ty})';
 			}
-		}
 
-		if (updateChildren) {
-			for (child in children) {
-				child.updateDisplay();
+			if (DebugAccessOrder) {
+				nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+			}
+
+			if (untyped clip.onUpdateTransform != null) {
+				untyped clip.onUpdateTransform();
 			}
 		}
 	}
@@ -480,7 +499,9 @@ class AccessWidget extends EventEmitter {
 		if (this.zorder != zorder) {
 			this.zorder = zorder;
 
-			updateZorder();
+			if (this.parent != null) {
+				this.parent.updateZorder();
+			}
 		}
 
 		return this.zorder;
@@ -618,7 +639,7 @@ class AccessWidget extends EventEmitter {
 
 			if (parent != null) {
 				emit("added");
-				updateZorder();
+				parent.updateZorder();
 			}
 		}
 
@@ -660,15 +681,21 @@ class AccessWidget extends EventEmitter {
 		}
 	}
 
-	public function updateZorder() : Void {
+	public function updateAlpha() : Void {
 		if (parent != null) {
-			parent.updateZorder();
+			parent.updateAlpha();
 		}
 	}
 
-	public function updateDisplay() : Void {
+	public function updateTransform() : Void {
 		if (parent != null) {
-			parent.updateDisplay();
+			parent.updateTransform();
+		}
+	}
+
+	public function updateVisible() : Void {
+		if (parent != null) {
+			parent.updateVisible();
 		}
 	}
 
