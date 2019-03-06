@@ -63,31 +63,24 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		|> (\f ->
 			eitherMap(state.appBar, \ab -> {
 				scrollEnabled = eitherMap(ab.extendToolbar, \eab -> fnot(eab.trigger), const(true));
+				scrollStyle = [
+					[
+						state.scrollInspect,
+						MScrollPosition(ab.scrollPosition),
+						MScrollKeysEnabled(const(true)),
+						MScrollMouseEnabled(scrollEnabled)
+					],
+					if (isSome(ab.floatingToolbar) || isSome(ab.extendToolbar)) [
+						MScrollDisableOutOfBounds(ref true),
+						TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar),
+					]
+					else []
+				]
+				|> concatA;
+
 				TLines2(TGhost("MAppBar"), f)
-				|> (\t ->
-					TGroup2SameMetrics(
-						if (isSome(ab.floatingToolbar) || isSome(ab.extendToolbar))
-							MScroll2T(
-								manager,
-								parent,
-								MScroll(
-									t,
-									TFillXY(),
-									[
-										state.scrollInspect,
-										MScrollPosition(ab.scrollPosition),
-										MScrollKeysEnabled(const(true)),
-										MScrollDisableOutOfBounds(ref true),
-										TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar),
-										MScrollMouseEnabled(scrollEnabled)
-									]
-								),
-								m2t
-							)
-						else
-							t,
-						TDisplay("MAppBar")
-					))
+				|> wrapContentByScroll(manager, parent, m2t, m.style, scrollStyle)
+				|> (\t -> TGroup2SameMetrics(t, TDisplay("MAppBar")))
 				|> (\t ->
 					eitherMap(ab.extendToolbar, \eab ->
 						MSwipe2T(manager, parent, MSwipe(t, [
@@ -102,7 +95,10 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 						]), m2t),
 					t))
 				},
-				f
+				wrapContentByScroll(manager, parent, m2t, m.style, [
+					state.scrollInspect,
+					MScrollKeysEnabled(const(true)),
+				])(f)
 			)
 		)
 		|> (\t -> TLines2(t, eitherMap(
@@ -386,54 +382,29 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MAppStyle], state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
+	mainContent =
+		MComponentGroup2T(
+			manager,
+			parent,
+			"MAppContent",
+			concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
+			\p ->
+				state.content.first
+				|> (\m -> m2t(m, p))
+				|> TBaseAlignA
+				|> (\t ->
+					if (contains(style, MNoContentBorder()))
+						t
+					else
+						TBorder4(8., t))
+		);
+
 	TGroup2(
 		TAttachBox(TDisplay("MAppSize"), state.wh),
 		TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
 	)
 	|> (\t -> TLet("MAppSize", content, t))
-	|> (\f ->
-		TLet(
-			"MAppContent",
-			MComponentGroup2T(
-				manager,
-				parent,
-				"MAppContent",
-				concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
-				\p ->
-					(\p2 -> state.content.first
-					|> (\m -> m2t(m, p2))
-					|> TBaseAlignA
-					|> (\t ->
-						if (contains(style, MNoContentBorder()))
-							t
-						else
-							TBorder4(8., t))
-					)
-					|> (\t ->
-						if (contains(style, MNoScroll()))
-							TCenterXIn(t(p), TFillXY())
-						else if (eitherMap(state.appBar, \ab -> isSome(ab.floatingToolbar) || isSome(ab.extendToolbar), false))
-							t(p)
-						else
-							MScroll2T(
-								manager,
-								p,
-								MScroll(
-									MGetFocusGroup(t),
-									TFillXY(),
-									[
-										state.scrollInspect,
-										MScrollKeysEnabled(const(true)),
-									]
-									|> (\st -> arrayPushMaybe(st, maybeMap(state.appBar, \ab -> MScrollPosition(ab.scrollPosition))))
-								),
-								m2t
-							)
-					)
-			),
-			f
-		)
-	)
+	|> (\t -> TLet("MAppContent", mainContent, t))
 }
 
 letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -756,4 +727,23 @@ restrictSizeBySideNavs(state : MAppState) -> (Tropic) -> Tropic {
 			eitherMap(state.rightNav, \__ -> [TDisplay("MAppRightPanelSize")], []),
 		)
 		|> TCols
+}
+
+wrapContentByScroll(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	appStyle : [MAppStyle],
+	style : [MScrollStyle]) -> (Tropic) -> Tropic {
+
+	\t ->
+		if (contains(appStyle, MNoScroll()))
+			TCenterXIn(t, TFillXY())
+		else
+			MScroll2T(
+				manager,
+				parent,
+				MScroll(t, TFillXY(), style),
+				m2t
+			)
 }
