@@ -241,14 +241,14 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 
 	tryExtractNav = \left : bool ->
 		maybeMap(
-			tryExtractStruct(m.parts, if (changeBoolIfRTL(left)) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
+			tryExtractStruct(m.parts, if (left) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
 			\nav : MNav -> {
 				navMini = contains(nav.style, MSideNavMini());
 				navMiniWidth = extractStruct(nav.style, MListMinimizedWidth(72.)).width;
 				navSwipe : MSwipeLeftOrRight =
 					extractStruct(
 						m.style,
-						if (changeBoolIfRTL(left))
+						if (left)
 							MSwipeLeft(const(if (navMini) navMiniWidth else 16.), const(mobile))
 						else
 							MSwipeRight(const(if (navMini) navMiniWidth else 16.), const(mobile))
@@ -274,8 +274,8 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 			}
 		);
 
-	leftNav = tryExtractNav(true);
-	rightNav = tryExtractNav(false);
+	leftNav = tryExtractNav(changeBoolIfRTL(true));
+	rightNav = tryExtractNav(changeBoolIfRTL(false));
 	content =
 		Pair(
 			extractStruct(m.parts, MContent(TEmpty())).content,
@@ -560,9 +560,20 @@ letFlextibleApp(content : Tropic, state : MAppState) -> Tropic {
 
 letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic, left : bool) -> Tropic {
-	eitherFn(
+	eitherMap(
 		if (left) state.leftNav else state.rightNav,
 		\nav -> {
+			sideNavSize0 = makeWH();
+			
+			sclX = fif(
+				fand(nav.persistent, nav.expander),
+				const(1.),
+				const(if (nav.mini) nav.miniWidth / nav.width else 0.)
+			);
+
+			sideNavSize = 
+				fselect2(sideNavSize0, sclX, FLift2(\sns, scl -> WidthHeight(sns.width * scl, sns.height)));
+
 			eContent =
 				switch (nav.content) {
 					MSideNav(h, l, ex, st): {
@@ -597,35 +608,56 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 			panelName = if (left) "MAppLeftPanel" else "MAppRightPanel";
 			bgAlpha =
 				if (nav.width != 0.)
-					fselect(ePointX, FLift(\ep -> lerp(0., 0.6, 1. - ep / expander2Point(false))))
+					flerp(0., 0.6, fselect(ePointX, FLift(\ep -> 1. - ep / expander2Point(false))))
 				else
 					const(0.6);
 
-			TGroup2(
-				(\ -> TRectangle([Fill(black)], TGhost("MAppSize"))
-				|> (\f -> TAlpha(bgAlpha, f))
-				|> (\f -> mouseDownAround(manager, None(), bgMouseDown, make(false), nop, f))
-				|> disableInteractivesBelow
-				|> disableMouseWheelBelow
-				|> (\f -> TCursor(FingerCursor(), f)))
-				|> (\f -> TShowLazy(fand(fnot(nav.persistent), showPanel), f)),
-				(if (!nav.mini)
-					(\ -> TTranslate(
-						fselect(ePointX, FLift(\ep -> Point(ep, 0.))),
-						TDisplay(panelName + "Inner")
+			sideNav =
+				MComponentGroup2T(
+					manager,
+					parent,
+					panelName,
+					[
+						MFocusEnabled(nav.focusEnabled),
+						MFocusId(const(if (left) 1 else 3)),
+						AccessRole("list"),
+						IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false))
+					],
+					\p -> m2t(eContent, p)
+				)
+				|> (\t -> TAttachBox(t, sideNavSize0))
+				|> (\t ->
+					if (nav.mini)
+						TCropSize(
+							TFillWYT(
+								fselect(ePointX, FLift(\ep ->
+									max(nav.width - abs(ep), nav.miniWidth)
+								))
+							),
+							t
+						)
 						|> (\f -> TShadow(parent, const(2.), f))
-					))
-					|> (\f -> TRenderOnce(showPanel, f))
-				else
-					TCropSize(
-						TScale(
-							fselect(ePointX, FLift(\ep -> Factor(max(nav.width - abs(ep), nav.miniWidth) / nav.width, 1.))),
-							TFillWY(nav.width)
-						),
-						TDisplay(panelName + "Inner")
-					)
-					|> (\f -> TShadow(parent, const(2.), f)))
-				|> (\f -> if (left) f else TCols2(TFillX(), f))
+					else
+						TRenderOnce(showPanel, \ -> 
+							t
+							|> (\f -> TShadow(parent, const(2.), f))
+							|> (\f -> TTranslate(fselect(ePointX, FLift(\ep -> Point(ep, 0.))), f))
+						)
+				)
+				|> (\f -> if (left) f else TCols2(TFillX(), f));
+
+			TGroup2(
+				(
+					\ -> TRectangle([Fill(black)], TGhost("MAppSize"))
+					|> (\f -> TAlpha(bgAlpha, f))
+					|> (\f -> mouseDownAround(manager, None(), bgMouseDown, make(false), nop, f))
+					|> disableInteractivesBelow
+					|> disableMouseWheelBelow
+					|> (\f -> TCursor(FingerCursor(), f))
+				)
+				|> (\f -> TShowLazy(fand(fnot(nav.persistent), showPanel), f)),
+
+				sideNav
 			)
 			|> (\f ->
 				MEasingAnimation(
@@ -701,47 +733,8 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 				)
 			)
 			|> (\f -> TLet(panelName, f, content))
-			|> (\f ->
-				TLet(
-					panelName + "Size",
-					TIf(
-						nav.persistent,
-						TScale(
-							fif(
-								nav.expander,
-								const(Factor(1., 1.)),
-								const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.))
-							),
-							TGhost(panelName + "Inner")
-						),
-						if (nav.mini)
-							TScale(const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.)), TGhost(panelName + "Inner"))
-						else
-							TEmpty()
-					),
-					f
-				)
-			)
-			|> (\f ->
-				TLet(
-					panelName + "Inner",
-					MComponentGroup2T(
-						manager,
-						parent,
-						panelName,
-						[
-							MFocusEnabled(nav.focusEnabled),
-							MFocusId(const(if (left) 1 else 3)),
-							AccessRole("list"),
-							IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false))
-						],
-						\p -> m2t(eContent, p)
-					),
-					f
-				)
-			)
+			|> (\f -> TLet(panelName + "Size", TSized(sideNavSize), f))
 		},
-		\ ->
-			content
+		content
 	)
 }
