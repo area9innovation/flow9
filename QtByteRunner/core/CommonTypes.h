@@ -10,7 +10,7 @@
 #include <emscripten.h>
 #endif
 
-#define STACK_SLOT_SIZE 24
+#define STACK_SLOT_SIZE 8
 
 #if defined(_WIN64)
 #ifndef FLOW_JIT
@@ -109,9 +109,9 @@ BEGIN_STL_HASH_NAMESPACE
     };
 END_STL_HASH_NAMESPACE
 #else
-typedef unsigned long FlowPtr;
+typedef unsigned FlowPtr;
 #define MakeFlowPtr(x) FlowPtr(x)
-#define FlowPtrToInt(x) (unsigned long)(x)
+#define FlowPtrToInt(x) (unsigned)(x)
 #endif
 
 inline FlowPtr FlowPtrAlignDown(FlowPtr x, int size) {
@@ -187,8 +187,8 @@ struct StackSlot {
                 int IntValue;
                 FlowPtr PtrValue;
             };
-            unsigned long AuxValue;
-            unsigned long Tag;
+            unsigned short AuxValue;
+            unsigned short Tag;
         };
     } slot_private;
 
@@ -355,19 +355,19 @@ public:
     static StackSlot &SetEmptyArray(StackSlot &s) {
         s.slot_private.Ints[0] = 0; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_ARRAY,0); return s;
     }
-    static StackSlot InternalMakeArray(FlowPtr ptr, unsigned long len_part, bool big) {
+    static StackSlot InternalMakeArray(FlowPtr ptr, unsigned short len_part, bool big) {
         return InternalMakeSlot(ptr, len_part, big ? (TAG_ARRAY|TAG_SIGN) : TAG_ARRAY);
     }
     static StackSlot MakeEmptyString() {
         StackSlot s; s.slot_private.Ints[0] = 0; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_STRING,0); return s;
     }
-    static StackSlot &InternalSetString(StackSlot &s, FlowPtr ptr, unsigned long len_part, bool big) {
+    static StackSlot &InternalSetString(StackSlot &s, FlowPtr ptr, unsigned short len_part, bool big) {
         return InternalSetSlot(s, ptr, len_part, big ? (TAG_STRING|TAG_SIGN) : TAG_STRING);
     }
-    static StackSlot InternalMakeString(FlowPtr ptr, unsigned long len_part, bool big) {
+    static StackSlot InternalMakeString(FlowPtr ptr, unsigned short len_part, bool big) {
         StackSlot s; return InternalSetString(s, ptr, len_part, big);
     }
-    static StackSlot InternalMakeRefTo(FlowPtr ptr, unsigned long id_part, bool big) {
+    static StackSlot InternalMakeRefTo(FlowPtr ptr, unsigned short id_part, bool big) {
         return InternalMakeSlot(ptr, id_part, big ? (TAG_REFTO|TAG_SIGN) : TAG_REFTO);
     }
     static StackSlot MakeNative(int id) {
@@ -376,28 +376,28 @@ public:
     static StackSlot MakeNativeFn(int id) {
         StackSlot s; s.slot_private.IntValue = id; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_NATIVEFN,0); return s;
     }
-    static StackSlot InternalMakeNativeClosure(FlowPtr p, unsigned long len) {
+    static StackSlot InternalMakeNativeClosure(FlowPtr p, unsigned short len) {
         return InternalMakeSlot(p, len, TAG_NATIVEFN|TAG_SIGN);
     }
     static StackSlot MakeCodePointer(FlowPtr code) {
         StackSlot s; s.slot_private.PtrValue = code; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_FLOWCODE,0); return s;
     }
-    static StackSlot InternalMakeClosurePointer(FlowPtr p, unsigned long len) {
+    static StackSlot InternalMakeClosurePointer(FlowPtr p, unsigned short len) {
         return InternalMakeSlot(p, len, TAG_FLOWCODE|TAG_SIGN);
     }
-    static StackSlot MakeStruct(FlowPtr p, unsigned long id) {
+    static StackSlot MakeStruct(FlowPtr p, unsigned short id) {
         return InternalMakeSlot(p, id, TAG_STRUCT);
     }
-    static StackSlot &SetStruct(StackSlot &s, FlowPtr p, unsigned long id) {
+    static StackSlot &SetStruct(StackSlot &s, FlowPtr p, unsigned short id) {
         return InternalSetSlot(s, p, id, TAG_STRUCT);
     }
-    static StackSlot InternalMakeCapturedFrame(FlowPtr pcode, unsigned long subid) {
+    static StackSlot InternalMakeCapturedFrame(FlowPtr pcode, unsigned short subid) {
         return InternalMakeSlot(pcode, subid, TAG_CAPFRAME);
     }
-    static StackSlot InternalMakeSlot(FlowPtr ptr, unsigned long aux, unsigned long tag) {
+    static StackSlot InternalMakeSlot(FlowPtr ptr, unsigned short aux, unsigned short tag) {
         StackSlot s; return InternalSetSlot(s, ptr, aux, tag);
     }
-    static StackSlot &InternalSetSlot(StackSlot &s, FlowPtr ptr, unsigned long aux, unsigned long tag) {
+    static StackSlot &InternalSetSlot(StackSlot &s, FlowPtr ptr, unsigned short aux, unsigned short tag) {
         s.slot_private.PtrValue = ptr;
         s.slot_private.AuxValue = aux;
         s.slot_private.Tag = tag;

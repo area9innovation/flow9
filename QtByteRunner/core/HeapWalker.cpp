@@ -58,7 +58,7 @@ void HeapWalker::ProcessStackRoots()
     if (Runner->closurepointer != 0)
     {
         FlowPtr ptr = Runner->closurepointer;
-        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt32(ptr-4));
+        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt16(ptr-4));
 
         Process(tmp);
     }
@@ -67,7 +67,7 @@ void HeapWalker::ProcessStackRoots()
     for (unsigned i = 0; i < Runner->CallStack.size(); i++)
     {
         FlowPtr ptr = Runner->CallStack[i].last_closure;
-        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt32(ptr-4));
+        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt16(ptr-4));
 
         Process(tmp);
     }

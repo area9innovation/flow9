@@ -671,14 +671,14 @@ private:
         }
     }
 
-    FlowPtr AllocateClosureBuffer(int code, unsigned long length, StackSlot *data);
+    FlowPtr AllocateClosureBuffer(int code, unsigned short length, StackSlot *data);
     StackSlot AllocateKnownStruct(const char *name, int size, int id, StackSlot *data);
 
     unicode_char *AllocateStringBuffer(StackSlot *out, unsigned length);
     FlowPtr *AllocateStringRef(StackSlot *out, unsigned length);
 
     StackSlot AllocateUninitializedArray(unsigned length);
-    StackSlot AllocateUninitializedClosure(unsigned long length, FlowPtr code);
+    StackSlot AllocateUninitializedClosure(unsigned short length, FlowPtr code);
 
 public:
     StackSlot AllocateRawStruct(StructDef &def, bool clear = true);
@@ -772,7 +772,7 @@ private:
         if (slot > hp_ref_base) RegisterWrite(slot);
     }
     unsigned GetSplitAuxValue(const StackSlot &str) {
-        return str.GetSign() ? (str.slot_private.AuxValue<<16)|Memory.GetUInt32(str.slot_private.PtrValue) : str.slot_private.AuxValue;
+        return str.GetSign() ? (str.slot_private.AuxValue<<16)|Memory.GetUInt16(str.slot_private.PtrValue) : str.slot_private.AuxValue;
     }
 
 public:
