@@ -5,6 +5,7 @@ import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
+import pixi.interaction.EventEmitter;
 
 using DisplayObjectHelper;
 
@@ -19,10 +20,8 @@ class AccessWidgetTree {
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
 	public var zorder : Int = -9999;
-	private var realId : Int;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
-		this.realId = id;
 		this.changed = false;
 		this.childrenChanged = false;
 		this.id = id;
@@ -170,15 +169,15 @@ class AccessWidgetTree {
 			var clip : DisplayObject = accessWidget.clip;
 
 			if (nativeWidget != null) {
-				if (untyped clip.nativeWidget != null) {
-					if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-						nativeWidget.style.display = "block";
-						nativeWidget.style.opacity = clip.worldAlpha;
-					} else {
-						nativeWidget.style.display = "none";
-						return;
-					}
+				if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+					nativeWidget.style.display = "block";
+					nativeWidget.style.opacity = clip.worldAlpha;
+				} else {
+					nativeWidget.style.display = "none";
+					return;
+				}
 
+				if (untyped clip.nativeWidget != null) {
 					if (untyped accessWidget.clip.nativeWidget != null) {
 						untyped accessWidget.clip.updateNativeWidget();
 					}
@@ -253,16 +252,20 @@ class AccessWidgetTree {
 
 		if (previousChild != null) {
 			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
-				if (child.accessWidget != null && child.accessWidget.nodeindex != null && previousChild.accessWidget.nodeindex.length > child.accessWidget.nodeindex.length) {
+				if (previousChild.accessWidget.nodeindex == null) {
 					previousChild.id = childrenSize;
-				} else {
-					child.parent = null;
-					child.id = childrenSize;
-				}
 
-				childrenSize++;
-				children.set(child.id, child);
-				child.parent = this;
+					childrenSize++;
+					children.set(child.id, child);
+					child.parent = this;
+				} else {
+					AccessWidget.addAccessWidgetWithoutNodeindex(child.accessWidget, child.accessWidget.clip.parent);
+					previousChild.accessWidget.once("removed", function() {
+						if (child != null && child.accessWidget != null) {
+							AccessWidget.addAccessWidget(child.accessWidget);
+						}
+					});
+				}
 			} else {
 				previousChild.accessWidget = child.accessWidget;
 			}
@@ -288,24 +291,17 @@ class AccessWidgetTree {
 
 		child.parent = null;
 
-		if (destroy) {
-			if (childrenSize == 0 && accessWidget == null && parent != null) {
-				parent.removeChild(this);
-			} else {
-				for (child in children) {
-					if (child.id != child.realId && getChild(child.realId) == null) {
-						child.id = child.realId;
-						addChild(child);
-					}
-				}
-
-				updateZorder();
-			}
+		if (destroy && childrenSize == 0 && accessWidget == null && parent != null) {
+			parent.removeChild(this);
+		} else {
+			updateZorder();
 		}
+
+		childrenChanged = true;
 	}
 }
 
-class AccessWidget {
+class AccessWidget extends EventEmitter {
 	// ARIA-role to HTML tag map
 	private static var accessRoleMap : Map<String, String> = [
 		"button" => "button",
@@ -348,6 +344,8 @@ class AccessWidget {
 	@:isVar public var parent(get, set) : AccessWidgetTree;
 
 	public function new(clip : DisplayObject, element : Element, ?nodeindex : Array<Int>, ?zorder : Int = 0) {
+		super();
+
 		this.clip = clip;
 		this.element = element;
 		this.nodeindex = nodeindex;
@@ -618,7 +616,10 @@ class AccessWidget {
 		if (this.parent != parent) {
 			this.parent = parent;
 
-			updateZorder();
+			if (parent != null) {
+				emit("added");
+				updateZorder();
+			}
 		}
 
 		return this.parent;
@@ -671,7 +672,7 @@ class AccessWidget {
 		}
 	}
 
-	private static function addAccessWidget(accessWidget : AccessWidget, ?nodeindexPosition : Int = 0, ?tree : AccessWidgetTree) : Void {
+	public static function addAccessWidget(accessWidget : AccessWidget, ?nodeindexPosition : Int = 0, ?tree : AccessWidgetTree) : Void {
 		if (accessWidget.nodeindex == null || accessWidget.nodeindex.length == 0) {
 			addAccessWidgetWithoutNodeindex(accessWidget, accessWidget.clip.parent);
 
@@ -685,7 +686,12 @@ class AccessWidget {
 		var id = accessWidget.nodeindex[nodeindexPosition];
 
 		if (nodeindexPosition == accessWidget.nodeindex.length - 1) {
-			tree.addChild(accessWidget.parent != null ? accessWidget.parent : new AccessWidgetTree(id, accessWidget));
+			if (accessWidget.parent != null) {
+				accessWidget.parent.id = id;
+				tree.addChild(accessWidget.parent);
+			} else {
+				tree.addChild(new AccessWidgetTree(id, accessWidget));
+			}
 		} else {
 			if (tree.getChild(id) == null) {
 				tree.addChild(new AccessWidgetTree(id, null));
@@ -695,20 +701,30 @@ class AccessWidget {
 		}
 	}
 
-	private static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
-		trace("addAccessWidgetWithoutNodeindex");
-		if (untyped parent.accessWidget != null) {
-			if (untyped parent.accessWidget.parent == null) {
-				addAccessWidget(untyped parent.accessWidget);
-			}
+	public static function addAccessWidgetWithoutNodeindex(accessWidget : AccessWidget, parent : DisplayObject) : Void {
+		if (parent == null) {
+			return;
+		} else if (parent == RenderSupportJSPixi.PixiStage || (untyped parent.accessWidget != null && untyped parent.accessWidget.parent != null)) {
+			var id = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree.childrenSize : untyped parent.accessWidget.parent.childrenSize;
+			var tree = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree : untyped parent.accessWidget.parent;
 
-			untyped parent.accessWidget.parent.addChild(new AccessWidgetTree(untyped parent.accessWidget.parent.childrenSize, accessWidget));
-		} else if (parent == RenderSupportJSPixi.PixiStage) {
-			tree.addChild(new AccessWidgetTree(tree.childrenSize, accessWidget));
+			if (accessWidget.parent != null) {
+				accessWidget.parent.id = id;
+				tree.addChild(accessWidget.parent);
+			} else {
+				tree.addChild(new AccessWidgetTree(tree.childrenSize, accessWidget));
+			}
 		} else if (parent.parent == null) {
-			parent.onAdded(function() {
-				addAccessWidget(accessWidget);
-				return function() {};
+			parent.once("added", function() {
+				if (parent != null && parent.parent != null && accessWidget != null) {
+					addAccessWidgetWithoutNodeindex(accessWidget, parent);
+				}
+			});
+		} else if (untyped parent.accessWidget != null && untyped parent.accessWidget.parent == null) {
+			untyped parent.accessWidget.once("added", function() {
+				if (parent != null && parent.parent != null && parent.accessWidget != null) {
+					addAccessWidgetWithoutNodeindex(accessWidget, parent);
+				}
 			});
 		} else {
 			addAccessWidgetWithoutNodeindex(accessWidget, parent.parent);
@@ -718,6 +734,7 @@ class AccessWidget {
 	public static function removeAccessWidget(accessWidget : AccessWidget) : Void {
 		if (accessWidget != null && accessWidget.parent != null) {
 			removeAccessWidgetTree(accessWidget.parent);
+			accessWidget.emit("removed");
 		}
 	}
 

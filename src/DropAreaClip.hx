@@ -2,6 +2,9 @@ import js.Browser;
 import js.html.File;
 import js.html.FileList;
 
+import pixi.core.display.Bounds;
+import pixi.core.display.TransformBase;
+
 using DisplayObjectHelper;
 
 class DropAreaClip extends NativeWidgetClip {
@@ -22,8 +25,8 @@ class DropAreaClip extends NativeWidgetClip {
 	private override function createNativeWidget(node_name : String) : Void {
 		super.createNativeWidget(node_name);
 
+		accessWidget.nodeindex = [-1];
 		nativeWidget.className = "droparea";
-		// nativeWidget.style.position = "absolute";
 		nativeWidget.style.zIndex = AccessWidget.zIndexValues.droparea;
 		nativeWidget.onmousemove = provideEvent;
 		nativeWidget.onmousedown = provideEvent;
@@ -44,7 +47,6 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	private static inline function onDragOver(event : Dynamic) : Bool {
-		trace("drag over");
 		event.dataTransfer.dropEffect = 'copy';
 		return false;
 	}
@@ -73,10 +75,20 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	private override function getWidth() : Float {
-		return parent != null ? parent.getBounds(true).width : widgetWidth;
+		if (parent != null) {
+			var bounds = parent.getBounds(true);
+			return bounds.width * parent.worldTransform.a + bounds.height * parent.worldTransform.c;
+		} else {
+			return widgetWidth;
+		}
 	}
 
 	private override function getHeight() : Float {
-		return parent != null ? parent.getBounds(true).height : widgetHeight;
+		if (parent != null) {
+			var bounds = parent.getBounds(true);
+			return bounds.width * parent.worldTransform.b + bounds.height * parent.worldTransform.d;
+		} else {
+			return widgetWidth;
+		}
 	}
 }

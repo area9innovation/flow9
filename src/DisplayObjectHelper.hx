@@ -98,9 +98,8 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
+				invalidateTransform(clip.parent);
 			}
-
-			invalidateTransform(clip);
 		}
 	}
 
@@ -136,9 +135,8 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
+				invalidateTransform(clip.parent);
 			}
-
-			invalidateTransform(clip);
 		}
 	}
 
