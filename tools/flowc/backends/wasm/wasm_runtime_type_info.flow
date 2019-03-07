@@ -1,0 +1,146 @@
+import tools/flowc/backends/wasm/wasm_opcodes;
+import tools/flowc/backends/wasm/wasm_runtime;
+
+export {
+	wasm_calc_struct_size(typedesc : int) -> int;
+	wasm_set_struct_values(struct : int, typedesc : int, args : int) -> void;
+	wasm_calc_struct_nfields(v : int) -> int;
+	wasm_struct_nfields_address(v : int) -> int;
+
+	// helpers to parse type info at runtime
+	wasm_get_arg_td(f : int, arg_idx : int) -> int;
+	wasm_get_arg_td2(funcDescr : int, arg_idx : int) -> int;
+	wasm_find_arg_address(arg_pnt : int, arg_idx : int) -> int;
+	wasm_get_argtype(f : int, args : int, ret : bool) -> int;
+
+	isHeap(type : int) -> bool;
+	type2size(elemType : int) -> int;
+}
+
+wasm_calc_struct_size(typedesc : int) -> int {
+	snamelen = wasm_i32_load8_u(typedesc + 1);
+	nfields = wasm_i32_load8_u(typedesc + 2 + snamelen);
+	wasm_do_calc_struct_size(typedesc + 3 + snamelen, 0, nfields) + 8
+}
+
+wasm_do_calc_struct_size(typedesc : int, acc : int, count : int) -> int {
+	if (count == 0) {
+		acc 
+	} else {
+		size = wasm_type_size(typedesc);
+		wasm_do_calc_struct_size(typedesc + size, acc + size, count - 1)
+	}
+}
+
+wasm_set_struct_values(struct : int, typedesc : int, args : int) -> void {
+	snamelen = wasm_i32_load8_u(typedesc + 1);
+	nfields = wasm_i32_load8_u(typedesc + 2 + snamelen);
+	firstField = typedesc + 3 + snamelen;
+	wasm_do_set_struct_values(struct + 8, firstField, args, 0, nfields)
+}
+
+wasm_do_set_struct_values(dst : int, typedesc0 : int, arr : int, idx : int, nfields : int) -> void {
+	typedesc = typedesc0 + 2;	// skipping field id
+	if (idx < nfields) {
+		type = wasm_i32_load8_u(typedesc);
+		if (type == 2) { // int
+			// add refcnt before invoking to compensate for automatic decrease
+			f = wasm_get_array_i32_ref(wasm_inc_refcnt_passthru(arr), idx, wasm_array_flow_type_id());
+			v = wasm_i32_load(f + 8);
+			wasm_i32_store(dst, v);
+		} else {
+			printi(type);
+			wasm_unreachable();	// not supported yet
+		}
+		wasm_do_set_struct_values(
+			dst + 4,
+			wasm_next_typedescriptor(typedesc),
+			arr,
+			idx + 1,
+			nfields
+		)
+	}
+}
+
+wasm_struct_nfields_address(v : int) {
+	typedesc = wasm_i32_load(v + 4);
+	snamelen = wasm_i32_load8_u(typedesc + 1);
+	typedesc + 2 + snamelen
+}
+
+wasm_calc_struct_nfields(v : int) {
+	wasm_i32_load8_u(wasm_struct_nfields_address(v));
+}
+
+wasm_find_arg_address(arg_pnt : int, arg_idx : int) -> int {
+	if (arg_idx == 0) {
+		arg_pnt
+	} else {
+		next = wasm_next_typedescriptor(arg_pnt);
+
+		wasm_find_arg_address(next, arg_idx - 1)
+	}
+}
+
+// we expect f to be a function here. 
+// f : int = function address
+// args : int = number of args to function.
+// ret : bool = if true get return type, else elemtype of last arg
+// returns descriptor address for last arg in function f, or ret type. e.g. 2 = int, 3 = double
+// We can add an index argument to this function, if we ever want to get the elemtype of an element
+// that is not the last, or return type.
+wasm_get_arg_td(f : int, arg_idx : int) -> int {
+	funcDescr = wasm_struct_nfields_address(f) + 1 + 2;
+
+	wasm_get_arg_td2(funcDescr, arg_idx);
+}
+
+wasm_get_arg_td2(funcDescr : int, arg_idx : int) -> int {
+	if (wasm_i32_load8_u(funcDescr + 0) != 12) {
+		prints("not a function");
+		printi(wasm_i32_load8_u(funcDescr + 0));
+		wasm_unreachable();
+	}
+	nargs = wasm_i32_load8_u(funcDescr + 1);
+
+	/*if (nargs != args) {
+		prints("nargs != args");
+		wasm_unreachable();
+	}*/
+	
+	wasm_find_arg_address(funcDescr + 1 + 1, arg_idx);
+}
+
+wasm_get_argtype(f : int, args : int, ret : bool) -> int {
+	arg_idx = if (ret) args else args - 1;
+	arg_address = wasm_get_arg_td(f, arg_idx);
+	elemType = wasm_i32_load8_u(arg_address);
+
+	if (!(
+		elemType == 1 ||	// bool
+		elemType == 2 ||	// int
+		elemType == 3 ||	// double
+		elemType == 4 ||	// string
+		elemType == 5 ||	// flow
+		elemType == 6 ||	// native
+		elemType == 8 ||	// ref
+		elemType == 9 ||	// array
+		elemType == 10 ||	// struct
+		elemType == 11 ||	// union
+		elemType == 12		// function
+	)) {
+		prints("unknown elemType");
+		printi(elemType);
+		wasm_unreachable();
+	}
+	elemType;
+}
+
+isHeap(type : int) -> bool {
+	//type is not bool-int-double
+	!(type == 1 || type == 2 || type == 3)
+}
+
+type2size(elemType : int) -> int {
+	if (elemType == 3) 8 else 4;
+}
