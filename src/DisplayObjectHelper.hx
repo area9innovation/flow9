@@ -49,7 +49,11 @@ class DisplayObjectHelper {
 		untyped clip.visibleChanged = true;
 
 		if (clip.parent != null) {
-			invalidateStage(clip.parent);
+			if (getClipWorldVisible(clip.parent)) {
+				invalidateStage(clip.parent);
+			} else {
+				updateClipVisible(clip);
+			}
 		}
 	}
 
@@ -129,6 +133,17 @@ class DisplayObjectHelper {
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
 		return untyped clip.clipVisible;
+	}
+
+	public static function updateClipVisible(clip : DisplayObject) : Void {
+		untyped clip.clipVisible = untyped clip.parent.clipVisible && untyped clip._visible;
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (c in children) {
+				updateClipVisible(c);
+			}
+		}
 	}
 
 	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {

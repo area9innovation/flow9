@@ -601,7 +601,7 @@ class PixiWorkarounds {
 					child.visibleChanged = child.visibleChanged || this.visibleChanged;
 					child.alphaChanged = child.alphaChanged || this.alphaChanged;
 
-					if (child.visible || child.visibleChanged) {
+					if (child.clipVisible || child.visibleChanged) {
 						child.updateTransform();
 					}
 				}

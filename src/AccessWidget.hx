@@ -175,7 +175,7 @@ class AccessWidgetTree {
 	}
 
 	public function updateAlpha(updateChildren : Bool = false) : Void {
-		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null) {
+		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
@@ -187,8 +187,34 @@ class AccessWidgetTree {
 		}
 	}
 
+	public function updateTransform() {
+		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
+			var nativeWidget : Dynamic = accessWidget.element;
+			var clip : DisplayObject = accessWidget.clip;
+
+			var transform = getTransform();
+
+			if (Platform.isIE) {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+				nativeWidget.style.left = '${transform.tx}px';
+				nativeWidget.style.top = '${transform.tx}px';
+			} else {
+				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${transform.tx}, ${transform.ty})';
+			}
+
+			if (DebugAccessOrder) {
+				nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+			}
+
+			if (untyped clip.onUpdateTransform != null) {
+				untyped clip.onUpdateTransform();
+			}
+		}
+	}
+
 	private function getTransform(append : Bool = true) : Matrix {
-		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null) {
+		if (accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null && untyped accessWidget.clip.nativeWidget != null) {
 			if (append && parent != null) {
 				var parentTransform = parent.getTransform(false);
 				return accessWidget.clip.worldTransform.clone().append(parentTransform.clone().invert());
@@ -229,32 +255,6 @@ class AccessWidgetTree {
 			}
 		} else {
 			return 0;
-		}
-	}
-
-	public function updateTransform() {
-		if (accessWidget != null && accessWidget.element != null && accessWidget.clip.parent != null) {
-			var nativeWidget : Dynamic = accessWidget.element;
-			var clip : DisplayObject = accessWidget.clip;
-
-			var transform = getTransform();
-
-			if (Platform.isIE) {
-				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
-
-				nativeWidget.style.left = '${transform.tx}px';
-				nativeWidget.style.top = '${transform.tx}px';
-			} else {
-				nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${transform.tx}, ${transform.ty})';
-			}
-
-			if (DebugAccessOrder) {
-				nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-			}
-
-			if (untyped clip.onUpdateTransform != null) {
-				untyped clip.onUpdateTransform();
-			}
 		}
 	}
 
@@ -437,28 +437,13 @@ class AccessWidget extends EventEmitter {
 					clip.emit("blur");
 				});
 
-				this.element.setAttribute("aria-disabled", "false");
 				if (this.element.style.zIndex == null) {
 					this.element.style.zIndex = AccessWidget.zIndexValues.accessButton;
 				}
 
 				if (tagName == "button") {
-					// setting temp. value so it will be easier to read in DOM
-					if (this.element.getAttribute("aria-label") == null) {
-						this.element.setAttribute("aria-label", "");
-					}
-
 					this.element.classList.add("accessButton");
-				} else if (tagName == "input" || tagName == "textarea") {
-					this.element.style.position = "fixed";
-					this.element.style.cursor = "inherit";
-					this.element.style.opacity = "0";
-					this.element.setAttribute("readonly", "");
-				} else if (tagName == "form") {
-					this.element.onsubmit = function() {
-						return false;
-					}
-				} else {
+				} else if (tagName == "div") {
 					this.element.classList.add("accessElement");
 				}
 
@@ -478,10 +463,6 @@ class AccessWidget extends EventEmitter {
 	public function set_nodeindex(nodeindex : Array<Int>) : Array<Int> {
 		if (this.nodeindex != nodeindex) {
 			this.nodeindex = nodeindex;
-
-			if (element != null) {
-				element.setAttribute("nodeindex", Std.string(nodeindex));
-			}
 
 			if (clip.parent != null) {
 				addAccessWidget(this);
@@ -600,16 +581,14 @@ class AccessWidget extends EventEmitter {
 	}
 
 	public function get_enabled() : Bool {
-		return element.getAttribute("aria-disabled") != "true";
+		return element.getAttribute("disabled") != null;
 	}
 
 	public function set_enabled(enabled : Bool) : Bool {
 		if (enabled) {
 			element.removeAttribute("disabled");
-			element.setAttribute("aria-disabled", "false");
 		} else {
 			element.setAttribute("disabled", "disabled");
-			element.setAttribute("aria-disabled", "true");
 		}
 
 		return this.enabled;
