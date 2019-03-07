@@ -215,7 +215,15 @@ class TextClip extends NativeWidgetClip {
 		super.onUpdateAlpha();
 
 		if (isInput) {
-			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+			if (Platform.isEdge || Platform.isIE) {
+				nativeWidget.style.opacity = 1;
+				var slicedColor : Array<String> = style.fill.split(",");
+				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
+
+				nativeWidget.style.color = newColor;
+			} else {
+				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
+			}
 		}
 	}
 
@@ -517,9 +525,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
-			nativeWidget.readOnly = RenderSupportJSPixi.getClipAt(point) != this;
-
-			if (nativeWidget.readOnly) {
+			if (RenderSupportJSPixi.getClipAt(point) != this) {
 				e.preventDefault();
 			}
 		}
@@ -531,8 +537,6 @@ class TextClip extends NativeWidgetClip {
 		if (isFocused) {
 			checkPositionSelection();
 		}
-
-		nativeWidget.readOnly = nativeWidget.readOnly && nativeWidget.autocomplete == '';
 
 		RenderSupportJSPixi.provideEvent(e);
 	}

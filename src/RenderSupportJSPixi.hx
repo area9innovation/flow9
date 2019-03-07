@@ -1038,8 +1038,8 @@ class RenderSupportJSPixi {
 			}
 
 			if (accessWidget != null) {
-				AccessWidget.updateAccessTree();
 				PixiStage.updateTransform();
+				AccessWidget.updateAccessTree();
 
 				if (accessWidget.parentNode != null) {
 					if (focus && accessWidget.focus != null) {

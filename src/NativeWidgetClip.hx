@@ -92,8 +92,8 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) {
 		if (nativeWidget != null) {
-			AccessWidget.updateAccessTree();
 			RenderSupportJSPixi.PixiStage.updateTransform();
+			AccessWidget.updateAccessTree();
 
 			if (focus) {
 				nativeWidget.focus();
