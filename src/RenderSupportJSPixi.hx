@@ -1003,58 +1003,11 @@ class RenderSupportJSPixi {
 		return 0;
 	}
 
-	private static inline function getAccessElement(clip: DisplayObject) : Element {
-		return if (untyped clip.accessWidget != null) untyped clip.accessWidget.element
-			else if (untyped __instanceof__(clip, NativeWidgetClip) && untyped clip.nativeWidget != null) untyped clip.nativeWidget
-			else null;
-	}
-
-	private static function findAccessibleChild(clip : Dynamic) : Element {
-		var accessElement = getAccessElement(clip);
-		if (accessElement != null) return accessElement;
-
-		var children : Array<DisplayObject> = untyped clip.children;
-		if (children != null)
-			for (childclip in children) {
-				var childElement = findAccessibleChild(childclip);
-				if (childElement != null) return childElement;
-			}
-
-		return null;
-	}
-
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
-		if (untyped clip.setFocus != null) {
-			untyped clip.setFocus(focus);
-		} else {
-			var accessWidget = findAccessibleChild(clip);
-			if (accessWidget == null) return;
-			// check if found element accepts focus.
-			if (accessWidget.getAttribute("tabindex") == null
-				|| accessWidget.getAttribute("tabindex").charAt(0) == "-"
-				|| untyped accessWidget.disabled != false) {
-					// Searching children which are focusable: not disabled and tabindex is positive
-					accessWidget = untyped accessWidget.querySelector("*[tabindex]:not([disabled]):not([tabindex^='-'])") || accessWidget;
-			}
+		AccessWidget.updateAccessTree();
+		PixiStage.updateTransform();
 
-			if (accessWidget != null) {
-				PixiStage.updateTransform();
-				AccessWidget.updateAccessTree();
-
-				if (accessWidget.parentNode != null) {
-					if (focus && accessWidget.focus != null) {
-						accessWidget.focus();
-						return;
-					} else if (!focus && accessWidget.blur != null) {
-						accessWidget.blur();
-						return;
-					}
-				}
-			}
-
-			Errors.print("Can't set focus on element.");
-			clip.emit("blur");
-		}
+		clip.setClipFocus(focus);
 	}
 
 	public static function setMultiline(clip : TextClip, multiline : Bool) : Void {
@@ -1094,26 +1047,6 @@ class RenderSupportJSPixi {
 			return clip.addTextInputKeyDownEventFilter(filter);
 		else
 			return clip.addTextInputKeyUpEventFilter(filter);
-	}
-
-	public static function findParentAccessibleWidget(clip : Dynamic) : Element {
-		if (clip == null) {
-			return null;
-		} else if (clip == PixiStage) {
-			return Browser.document.body;
-		} else if (clip.accessWidget != null) {
-			return clip.accessWidget.element;
-		} else {
-			return findParentAccessibleWidget(clip.parent);
-		}
-	}
-
-	public static function findTopParent(clip : Dynamic) : Dynamic {
-		if (clip.parent == null) {
-			return clip;
-		} else {
-			return findTopParent(clip.parent);
-		}
 	}
 
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {

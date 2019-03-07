@@ -123,6 +123,38 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static function setClipFocus(clip : DisplayObject, focus : Bool) : Bool {
+		var nativeWidget = untyped clip.accessWidget;
+
+		if (untyped clip.setFocus != null) {
+			untyped clip.setFocus(focus);
+
+			return true;
+		} else if (nativeWidget != null && nativeWidget.parentNode != null && nativeWidget.getAttribute("tabindex") != null) {
+			if (focus && nativeWidget.focus != null) {
+				nativeWidget.focus();
+
+				return true;
+			} else if (!focus && nativeWidget.blur != null) {
+				nativeWidget.blur();
+
+				return true;
+			}
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+
+		if (children != null) {
+			for (c in children) {
+				if (setClipFocus(c, focus)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	public static inline function forceUpdateTransform(clip : DisplayObject) : Void {
 		if (clip.parent != null && !clip.visible) {
 			forceUpdateTransform(clip.parent);

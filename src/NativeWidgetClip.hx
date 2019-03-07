@@ -50,15 +50,7 @@ class NativeWidgetClip extends FlowContainer {
 	public function onUpdateTransform() : Void {}
 
 	private function addNativeWidget() : Void {
-		if (nativeWidget != null) {
-			var parentNode = RenderSupportJSPixi.findParentAccessibleWidget(parent);
-
-			if (parentNode != null) {
-				once('removed', deleteNativeWidget);
-			} else {
-				RenderSupportJSPixi.findTopParent(this).once('added', addNativeWidget);
-			}
-		}
+		once('removed', deleteNativeWidget);
 	}
 
 	private function createNativeWidget(node_name : String) : Void {
@@ -92,9 +84,6 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function setFocus(focus : Bool) {
 		if (nativeWidget != null) {
-			RenderSupportJSPixi.PixiStage.updateTransform();
-			AccessWidget.updateAccessTree();
-
 			if (focus) {
 				nativeWidget.focus();
 			} else {
