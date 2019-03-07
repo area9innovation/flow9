@@ -443,19 +443,14 @@ wasm_find_arg_address(arg_pnt : int, arg_idx : int) -> int {
 	}
 }
 
-// we expect f to be a function here. 
-// f : int = function address
-// args : int = number of args to function.
-// ret : bool = if true get return type, else elemtype of last arg
-// returns descriptor address for last arg in function f, or ret type. e.g. 2 = int, 3 = double
-// We can add an index argument to this function, if we ever want to get the elemtype of an element
-// that is not the last, or return type.
+// 
 wasm_get_arg_td(f : int, arg_idx : int) -> int {
 	funcDescr = wasm_struct_nfields_address(f) + 1 + 2;
 
 	wasm_get_arg_td2(funcDescr, arg_idx);
 }
 
+// if arg_idx == -1 then we'll return 'returnType' for passed function description
 wasm_get_arg_td2(funcDescr : int, arg_idx : int) -> int {
 	if (wasm_i32_load8_u(funcDescr + 0) != 12) {
 		prints("not a function");
@@ -469,9 +464,16 @@ wasm_get_arg_td2(funcDescr : int, arg_idx : int) -> int {
 		wasm_unreachable();
 	}*/
 	
-	wasm_find_arg_address(funcDescr + 1 + 1, arg_idx);
+	wasm_find_arg_address(funcDescr + 1 + 1, if (arg_idx == -1) nargs else arg_idx);
 }
 
+// we expect f to be a function here. 
+// f : int = function address
+// args : int = number of args to function.
+// ret : bool = if true get return type, else elemtype of last arg
+// returns descriptor address for last arg in function f, or ret type. e.g. 2 = int, 3 = double
+// We can add an index argument to this function, if we ever want to get the elemtype of an element
+// that is not the last, or return type.
 wasm_get_argtype(f : int, args : int, ret : bool) -> int {
 	arg_idx = if (ret) args else args - 1;
 	arg_address = wasm_get_arg_td(f, arg_idx);
@@ -607,12 +609,17 @@ wasm_typed_mapi(arr : int, f : int, type : int) -> int {
 wasm_map(arr : int, f : int, type : int, isMapi : bool) -> int {
 	n = do_wasm_length(arr);
 
-	idx = if (isMapi) 2 else 1;
+	idx = if (isMapi) 1 else 0;
 	
-	elemType = wasm_get_argtype(f, idx, false);
+	arr_td = wasm_get_arg_td2(type, 0);
+	f_td = wasm_get_arg_td2(type, 1);
+
+	elemType_td = wasm_get_arg_td2(f_td, idx);
+	elemType = wasm_i32_load8_u(elemType_td);
 	elemSize = type2size(elemType);
 
-	retType = wasm_get_argtype(f, idx, true);
+	retType_td = wasm_get_arg_td2(f_td, -1);
+	retType = wasm_i32_load8_u(retType_td);
 	retSize = type2size(retType);
 
 	heap = isHeap(elemType);
@@ -620,9 +627,6 @@ wasm_map(arr : int, f : int, type : int, isMapi : bool) -> int {
 	res = wasm_alloc_array(n, 8 + n * retSize);
 
 	wasm_do_map(res + 8, arr + 8, n, 0, f, elemSize, retSize, isMapi, heap);
-
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
 
 	wasm_dec_refcnt(arr, arr_td);
 	wasm_dec_refcnt(f, f_td);
