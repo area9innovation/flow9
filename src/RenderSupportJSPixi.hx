@@ -751,9 +751,6 @@ class RenderSupportJSPixi {
 		PixiStageChanged = true;
 	}
 
-	//
-	// Flow native functions implementation
-	//
 	public static function getPixelsPerCm() : Float {
 		return 96.0 / 2.54;
 	}
@@ -1091,7 +1088,8 @@ class RenderSupportJSPixi {
 
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
-			clip.forceUpdateTransform();
+			RenderSupportJSPixi.PixiStage.updateTransform();
+
 			var a = clip.worldTransform;
 			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
 		} else {
@@ -1436,97 +1434,86 @@ class RenderSupportJSPixi {
 		MousePos.y = y;
 	}
 
-	private static function hittestGraphics(g : FlowGraphics, global : Point) : Bool {
-		var graphicsData : Array<Dynamic> = untyped g.graphicsData;
-		if (graphicsData == null || graphicsData.length == 0) return false;
-		var data = graphicsData[0]; // There may be only one shape when drawing with flow
-		if(data.fill && data.shape != null) {
-			var local = g.toLocal(global);
+	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
+		if (!clip.getClipWorldVisible() || clip.parent == null) {
+			return false;
+		}
+
+		var point = new Point(x, y);
+		clip.updateTransform();
+
+		return hittestMask(clip.parent, point) && doHitTest(clip, point);
+	}
+
+	private static function hittestMask(clip : DisplayObject, point : Point) : Bool {
+		if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+			return false;
+		} else {
+			return clip.parent == null || hittestMask(clip.parent, point);
+		}
+	}
+
+	private static function hittestGraphics(clip : FlowGraphics, point : Point) : Bool {
+		var graphicsData : Array<Dynamic> = clip.graphicsData;
+
+		if (graphicsData == null || graphicsData.length == 0) {
+			return false;
+		}
+
+		var data = graphicsData[0];
+
+		if (data.fill && data.shape != null) {
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+
 			return data.shape.contains(local.x, local.y);
+		} else {
+			return false;
 		}
-		return false;
 	}
 
-	// TODO:
-	public static function dohittest(clip : Dynamic, global : Point) : Bool {
-		if (!cast(clip, DisplayObject).getClipWorldVisible() || clip.isMask) return false;
-		if (clip.mask != null && !hittestGraphics(clip.mask, global)) return false;
-
-		if (clip.graphicsData != null) { // Graphics
-			if (hittestGraphics(clip, global)) { return true; }
-		} else if (clip.texture != null) { // image or text sprite
-			var w = clip.texture.frame.width; var h = clip.texture.frame.height;
-			var local = clip.toLocal(global);
-			if (local.x > 0.0 && local.y > 0.0 && local.x < w && local.y < h) { return true; }
-		} else if (clip.tint != null) { // DFontTextNative
-			var b = clip.getLocalBounds();
-			var local = clip.toLocal(global);
-			untyped local.y += clip.y; // DFontTextNative is shifted to fit baseline.
-			if (local.x > 0.0 && local.y > 0.0 && local.x < b.width && local.y < b.height) { return true; }
-		}
-
-		if (clip.children != null) {
-			var childs : Array<FlowContainer> = clip.children;
-			for (c in childs) if (dohittest(c, global)) return true;
-		}
-
-		return false;
+	private static function doHitTest(clip : DisplayObject, point : Point) : Bool {
+		return getClipAt(clip, point, false) != null;
 	}
 
-	private static inline function clipOnTheStage(clip : DisplayObject) : Bool {
-		// TO DO : check clip is on the stage more correctly
-		return clip == PixiStage || clip.parent != null;
-	}
-
-	public static function getClipAt(p : Point, parent : FlowContainer = null) : Dynamic {
-		// Use PixiStage as default clip for searching
-		if (parent == null) {
-			parent = PixiStage;
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true) : DisplayObject {
+		if (!clip.getClipWorldVisible() || untyped clip.isMask) {
+			return null;
+		} else if (checkMask && !hittestMask(clip, point)) {
+			return null;
+		} else if (clip.mask != null && !hittestGraphics(clip.mask, point)) {
+			return null;
 		}
 
-		var cnt = parent.children.length;
-		for (i in 0...cnt) {
-			var child = parent.children[cnt - i - 1];
-			if ( child.getClipWorldVisible() && (child.mask == null || hittestGraphics(cast child.mask, p) ) &&
-				!(untyped child.isMask) && child.getBounds().contains(p.x, p.y)) {
-				if (untyped __instanceof__(child, TextClip)) {
-					return child;
-				} else if (untyped child.graphicsData != null && child.graphicsData.length > 0 &&
-					child.graphicsData[0].fillAlpha > 0) { // ignore transparent graphics
-					if (hittestGraphics(cast child, p)) return child;
-				} else if (untyped child.texture != null) {
-					return child;
-				} else if (untyped child.children != null) {
-					var r = getClipAt(p, untyped child);
-					if (r != null) return r;
+		switch (Type.getClassName(Type.getClass(clip))) {
+			case "FlowContainer" : {
+				var children : Array<DisplayObject> = untyped clip.children;
+
+				for (child in children) {
+					var clipHit = getClipAt(child, point, false);
+
+					if (clipHit != null) {
+						return clipHit;
+					}
 				}
+			}
+			case "FlowGraphics" : {
+				if (hittestGraphics(untyped clip, point)) {
+					return clip;
+				}
+			}
+			case "FlowSprite" | "TextClip" | "NativeWidgetClip" | "VideoClip" | "WebClip" : {
+				var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+
+				if (local.x >= 0.0 && local.y >= 0.0 && local.x <= untyped clip.getWidth() && local.y <= untyped clip.getHeight()) {
+					return clip;
+				}
+			}
+			case __ : {
+				trace("getClipAt error: No such clip type");
 			}
 		}
 
 		return null;
-	}
-
-	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
-		if (!clip.getClipWorldVisible()) return false;
-
-		var global = new Point(x, y);
-
-		// Previous event handlers might change the stage tree.
-		// Transforms will be updated only on the next animate
-		// So lets do that here
-		// TO DO: Optimize
-		// clip.forceUpdateTransform(); // Crashes if parent = null
-
-		// TO DO : Check bounding rect at first?
-
-		// Check toplevel masks
-		var parent : Dynamic = clip.parent;
-		while (parent != null) {
-			if (parent.mask != null && !hittestGraphics(parent.mask, global)) return false; // Outside the mask
-			parent = parent.parent;
-		}
-
-		return dohittest(clip, global);
 	}
 
 	public static function makeGraphics() : FlowGraphics {

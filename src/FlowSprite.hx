@@ -23,6 +23,14 @@ class FlowSprite extends Sprite {
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
 
+	public function getWidth() : Float {
+		return texture != null ? texture.width : 0;
+	}
+
+	public function getHeight() : Float {
+		return texture != null ? texture.height : 0;
+	}
+
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
 		super();
 

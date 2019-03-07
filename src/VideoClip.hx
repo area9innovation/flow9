@@ -27,6 +27,14 @@ class VideoClip extends FlowContainer {
 
 	public static var CanAutoPlay = false;
 
+	public function getWidth() : Float {
+		return nativeWidget != null ? nativeWidget.width : 0;
+	}
+
+	public function getHeight() : Float {
+		return nativeWidget != null ? nativeWidget.height : 0;
+	}
+
 	public static inline function NeedsDrawing() : Bool {
 		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
