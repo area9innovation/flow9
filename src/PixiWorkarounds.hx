@@ -511,6 +511,50 @@ class PixiWorkarounds {
 				return properties;
 			};
 
+			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y, isStroke = false)
+			{
+				const style = this._style;
+
+				// letterSpacing of 0 means normal
+				// Skip directional chars
+
+				const letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0)
+				{
+					if (isStroke)
+					{
+						this.context.strokeText(text, x, y);
+					}
+					else
+					{
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				const characters = String.prototype.split.call(text, '');
+				let currentPosition = x;
+				let index = 0;
+				let current = '';
+
+				while (index < text.length)
+				{
+					current = characters[index++];
+					if (isStroke)
+					{
+						this.context.strokeText(current, currentPosition, y);
+					}
+					else
+					{
+						this.context.fillText(current, currentPosition, y);
+					}
+					currentPosition += this.context.measureText(current).width +
+						(current == String.fromCharCode(0x202A) || current == String.fromCharCode(0x202B) || current == String.fromCharCode(0x202C) ? 0.0 : letterSpacing);
+				}
+			}
+
 			PIXI.DisplayObject.prototype.clipVisible = true;
 
 			PIXI.Container.prototype.updateTransform = function(transformChanged, alphaChanged, visibleChanged) {

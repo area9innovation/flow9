@@ -40,9 +40,6 @@ class TextClip extends NativeWidgetClip {
 	private var fontMetrics : Dynamic;
 	private var multiline : Bool = false;
 
-	private var clipWidth : Float = 100.0;
-	private var clipHeight : Float = 100.0;
-
 	private var TextInputFilters : Array<String -> String> = new Array();
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
@@ -138,28 +135,25 @@ class TextClip extends NativeWidgetClip {
 			onUpdateAlpha();
 		}
 
-		if (isFocused) {
-			setScrollRect(0, 0, 0, 0);
+		if (isFocused || text == '') {
+			if (textClip != null) {
+				textClip.renderable = false;
+			}
 		} else {
 			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
-			var texts = wordWrap ? [[text]] : checkTextLength(text);
+			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(texts[0][0], style);
+				addChild(textClip);
 			}
+
+			textClip.renderable = true;
 
 			text = bidiDecorate(texts[0][0]);
 
-			if (textClip.text != text || textClip.style != style) {
-				textClip.text = text;
-				textClip.style = style;
-
-				if (text == '') {
-					removeChild(textClip);
-				} else {
-					addChild(textClip);
-				}
-			}
+			textClip.text = text;
+			textClip.style = style;
 
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
@@ -200,20 +194,6 @@ class TextClip extends NativeWidgetClip {
 				}
 			}
 
-			var widthDelta = 0.0;
-
-			if ((style.align == 'center' || style.align == 'right') && widgetWidth > 0) {
-				if (clipWidth < widgetWidth) {
-					widthDelta = widgetWidth - clipWidth;
-
-					if (style.align == 'center') {
-						widthDelta = widthDelta / 2;
-					}
-				}
-
-				clipWidth = Math.max(clipWidth, widgetWidth);
-			}
-
 			var anchorX = switch (autoAlign) {
 				case 'AutoAlignLeft' : 0;
 				case 'AutoAlignRight' : 1;
@@ -221,12 +201,12 @@ class TextClip extends NativeWidgetClip {
 				default : textDirection == 'rtl' ? 1 : 0;
 			};
 
-			textClip.setClipX(anchorX * (getWidth() - clipWidth) + widthDelta - cast(style.letterSpacing, Float));
+			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
 
-			setTextBackground(new Rectangle(0, 0, getWidth() + widthDelta, getHeight()));
+			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
 			if (isInput) {
-				setScrollRect(0, 0, getWidth() + widthDelta, getHeight());
+				setScrollRect(0, 0, getWidth(), getHeight());
 			}
 		}
 	}
@@ -289,14 +269,17 @@ class TextClip extends NativeWidgetClip {
 			return "Black";
 	}
 
-	public function setTextAndStyle(text : String, fontFamily : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
+	public function setTextAndStyle(text : String, fontFamilies : String, fontSize : Float, fontWeight : Int, fontSlope : String, fillColor : Int,
 		fillOpacity : Float, letterSpacing : Float, backgroundColor : Int, backgroundOpacity : Float) : Void {
-		fontFamily = fontWeight > 0 || fontSlope != "" ? recognizeBuiltinFont(fontFamily, fontWeight, fontSlope) : fontFamily;
+		fontFamilies = fontWeight > 0 || fontSlope != ""
+				? fontFamilies.split(",").map(function (fontFamily) { return recognizeBuiltinFont(fontFamily, fontWeight, fontSlope); }).join(",")
+				: fontFamilies;
 
-		var fontStyle : FontStyle = FlowFontStyle.fromFlowFont(fontFamily);
+		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 
 		style.fontSize = textScaleFactor * fontSize;
 		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
+		style.letterSpacing = textScaleFactor * letterSpacing;
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
@@ -414,7 +397,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
-			this.textDirection = textDirection;
+			this.textDirection = textDirection.toLowerCase();
 			// if (textDirection == 'RTL' || textDirection == 'rtl')
 			// 	style.textDirection = 'rtl';
 			// else
@@ -664,21 +647,21 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function getWidth() : Float {
-		if (widgetWidth > 0.0 && isInput) {
-			return widgetWidth;
-		} else {
-			updateTextMetrics();
-			return metrics != null ? untyped metrics.width : 0;
-		}
+		return widgetWidth > 0.0 && isInput ? widgetWidth : getClipWidth();
+	}
+
+	private function getClipWidth() : Float {
+		updateTextMetrics();
+		return metrics != null ? untyped metrics.width / textScaleFactor : 0;
 	}
 
 	public override function getHeight() : Float {
-		if (widgetHeight > 0.0 && isInput) {
-			return widgetHeight;
-		} else {
-			updateTextMetrics();
-			return metrics != null ? untyped metrics.height : 0;
-		}
+		return widgetHeight > 0.0 && isInput ? widgetHeight : getClipHeight();
+	}
+
+	private function getClipHeight() : Float {
+		updateTextMetrics();
+		return metrics != null ? untyped metrics.height / textScaleFactor : 0;
 	}
 
 	public function getContent() : String {
