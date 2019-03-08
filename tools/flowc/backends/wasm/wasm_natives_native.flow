@@ -311,7 +311,7 @@ list2string(v : int) -> int {
 // type is WasmTypeDescriptor for this function
 wasm_typed_length(arr : int, type : int) -> int {
 	res = do_wasm_length(arr);
-	td = wasm_get_arg_td2(type, 0);
+	td = wasm_get_arg_td(type, 0);
 
 	wasm_dec_refcnt(arr, td);
 	res;
@@ -388,7 +388,10 @@ wasm_typed_iteri(arr : int, f : int, type : int) -> void {
 }
 
 wasm_iter(arr : int, f : int, type : int, isIteri : bool) -> void {
-	elemType = if (isIteri) wasm_get_argtype(f, 2, false) else wasm_get_argtype(f, 1, false);
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 1);
+	
+	elemType = wasm_get_arg_type(f_td, if (isIteri) 1 else 0);
 	elemSize = type2size(elemType);
 	
 	heap = isHeap(elemType);
@@ -399,9 +402,6 @@ wasm_iter(arr : int, f : int, type : int, isIteri : bool) -> void {
 		wasm_do_iter(arr + 8, f, faddr, elemSize, 0, n, isIteri, heap);
 	}
 
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
-	
 	wasm_dec_refcnt(arr, arr_td);
 	wasm_dec_refcnt(f, f_td);
 }
@@ -431,18 +431,17 @@ wasm_do_iter(src : int, f : int, faddr : int, elemSize : int, idx : int, n : int
 
 // arr is array, f is function, returns int
 wasm_typed_iteriUntil(arr: int, f : int, type : int) -> int {
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 1);
 	
 	n = do_wasm_length(arr);
 
-	elemType = wasm_get_argtype(f, 2, false);
+	elemType = wasm_get_arg_type(f_td, 1);
 	elemSize = type2size(elemType);
 	heap = isHeap(elemType);
 
 	res = wasm_do_iteriUntil(arr + 8, f, elemSize, n, 0, heap);	
-	// wasm_dec_refcnt(arr);
-	// wasm_dec_refcnt(f);
+
 	wasm_dec_refcnt(arr, arr_td);
 	wasm_dec_refcnt(f, f_td);
 	res;
@@ -482,15 +481,13 @@ wasm_map(arr : int, f : int, type : int, isMapi : bool) -> int {
 
 	idx = if (isMapi) 1 else 0;
 	
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 1);
 
-	elemType_td = wasm_get_arg_td2(f_td, idx);
-	elemType = wasm_i32_load8_u(elemType_td);
+	elemType = wasm_get_arg_type(f_td, idx);
 	elemSize = type2size(elemType);
 
-	retType_td = wasm_get_arg_td2(f_td, -1);
-	retType = wasm_i32_load8_u(retType_td);
+	retType = wasm_get_arg_type(f_td, -1);
 	retSize = type2size(retType);
 
 	heap = isHeap(elemType);
@@ -572,8 +569,11 @@ wasm_typed_foldi_f64(arr : int, acc : double, f : int, type : int) -> double {
 	- to array itself
 */
 wasm_do_fold_init(arr : int, acc : ?, f : int, type : int, isFoldi : bool) -> ? {
-	idx = if (isFoldi) 3 else 2;
-	elemType = wasm_get_argtype(f, idx, false);
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 2);
+
+	idx = if (isFoldi) 2 else 1;
+	elemType = wasm_get_arg_type(f_td, idx);
 	elemHeap = isHeap(elemType);
 	elemSize = type2size(elemType);
 	
@@ -584,9 +584,6 @@ wasm_do_fold_init(arr : int, acc : ?, f : int, type : int, isFoldi : bool) -> ? 
 	} else {
 		wasm_do_fold(arr + 8, acc, f, elemSize, n, 0, isFoldi, elemHeap)
 	}
-
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
 
 	wasm_dec_refcnt(arr, arr_td);
 	wasm_dec_refcnt(f, f_td);
@@ -652,8 +649,8 @@ wasm_concat_impl(arr1 : int, arr2 : int, elemSize : int, type : int, isRefCnt : 
 		wasm_inc_refcnt_array(res + 8, len1 + len2);
 	}
 
-	arr1_td = wasm_get_arg_td2(type, 0);
-	arr2_td = wasm_get_arg_td2(type, 1);
+	arr1_td = wasm_get_arg_td(type, 0);
+	arr2_td = wasm_get_arg_td(type, 1);
 
 	wasm_dec_refcnt(arr1, arr1_td);
 	wasm_dec_refcnt(arr2, arr2_td);
@@ -860,7 +857,7 @@ wasm_subrange_impl(arr : int, start : int, count : int, elemSize : int, type : i
 		res1;
 	}
 
-	arr_td = wasm_get_arg_td2(type, 0);
+	arr_td = wasm_get_arg_td(type, 0);
 
 	wasm_dec_refcnt(arr, arr_td);
 	res;
@@ -877,7 +874,7 @@ wasm_typed_replace_f64(arr : int, idx : int, elem : double, type : int) -> int {
 wasm_typed_replace_i32_ref(arr : int, idx : int, elem : int, type : int) -> int {
 	ret = wasm_replace_impl(arr, idx, elem, 0.0, 4, type, true);
 
-	elem_td = wasm_get_arg_td2(type, 2);
+	elem_td = wasm_get_arg_td(type, 2);
 
 	wasm_dec_refcnt(elem, elem_td);
 	ret;
@@ -911,7 +908,7 @@ wasm_replace_impl(arr : int, idx : int, elemI : int, elemD : double, elemSize : 
 			wasm_inc_refcnt_array(res + 8, len);
 		}
 
-		arr_td = wasm_get_arg_td2(type, 0);
+		arr_td = wasm_get_arg_td(type, 0);
 
 		wasm_dec_refcnt(arr, arr_td);
 		res;
@@ -919,9 +916,12 @@ wasm_replace_impl(arr : int, idx : int, elemI : int, elemD : double, elemSize : 
 }
 
 wasm_typed_filter(arr : int, f : int, type : int) -> int {
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 1);
+
 	len = do_wasm_length(arr);
 	
-	elemType = wasm_get_argtype(f, 1, false);
+	elemType = wasm_get_arg_type(f_td, 0);
 	elemSize = type2size(elemType);
 
 	heap = isHeap(elemType);
@@ -938,9 +938,6 @@ wasm_typed_filter(arr : int, f : int, type : int) -> int {
 	if (heap) {
 		wasm_inc_refcnt_array(out + 8, cnt);
 	}
-
-	arr_td = wasm_get_arg_td2(type, 0);
-	f_td = wasm_get_arg_td2(type, 1);
 
 	wasm_dec_refcnt(arr, arr_td);
 	wasm_dec_refcnt(f, f_td);
