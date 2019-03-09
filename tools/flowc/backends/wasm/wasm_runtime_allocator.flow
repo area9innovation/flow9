@@ -18,6 +18,8 @@ export {
 	
 	// For debugging
 	wasm_read_head() -> int;
+	wasm_available_memory() -> int;
+	wasm_free_memory() -> int;
 }
 
 // flow structs are not yet available, so malloc cannot use them 
@@ -96,14 +98,16 @@ wasm_list_insert(prev: int, next: int, address: int) {
 
 // remove item from the list
 wasm_list_remove(address: int) {
-	if (wasm_get_prev_block(address) > 0) {
-		wasm_set_next_block(wasm_get_prev_block(address), wasm_get_next_block(address));
+	prev = wasm_get_prev_block(address);
+	next = wasm_get_next_block(address);
+	if (prev > 0) {
+		wasm_set_next_block(prev, next);
 	} else {
-		wasm_write_head(wasm_get_next_block(address));
+		wasm_write_head(next);
 	}
 
-	if (wasm_get_next_block(address) > 0) {
-		wasm_set_prev_block(wasm_get_next_block(address), wasm_get_prev_block(address));
+	if (next > 0) {
+		wasm_set_prev_block(next, prev);
 	}
 }
 
@@ -121,8 +125,7 @@ wasm_split_or_use_block(size: int, address: int) {
 				(non_aligned + 4) / 4 * 4;
 
 		// write its header and put pointers to prev and next
-		wasm_write_header(next_free_block, next, prev,
-			wasm_get_block_size(address) - (next_free_block - address));
+		wasm_write_header(next_free_block, next, prev, wasm_get_block_size(address) - (next_free_block - address));
 
 		wasm_list_insert(prev, next, next_free_block);
 
@@ -158,6 +161,7 @@ wasm_alloc(size: int) {
 	allocated = wasm_alloc_tail(size, wasm_read_head());
 	if (allocated > 0) allocated + wasm_header_size else -1;
 }
+
 wasm_free(address: int) {
 	if (wasm_read_head() < 0) {
 		wasm_write_head(address);
@@ -172,4 +176,20 @@ wasm_init_allocator() {
     // count for header size for the first block plus constant storage plus 4 for head storage 
     available_size = 65536 * wasm_memory_size() - wasm_header_size - wasm_heap_start() - 4;
 	wasm_write_header(wasm_read_head(), -1, -1, available_size);
+}
+
+wasm_available_memory() {
+	65536 * wasm_memory_size() - wasm_header_size - wasm_heap_start() - 4;
+}
+
+
+wasm_free_memory() -> int {
+	wasm_do_free_memory(wasm_read_head(), 0);
+}
+
+wasm_do_free_memory(block, acc) -> int {
+	next = wasm_get_next_block(block);
+	nextAcc = wasm_get_block_size(block) + acc + wasm_header_size;
+
+	if (next > 0) wasm_do_free_memory(next, nextAcc) else nextAcc;
 }
