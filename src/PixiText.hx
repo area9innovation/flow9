@@ -1,10 +1,18 @@
 import js.Browser;
-import pixi.core.text.Text;
+import pixi.core.text.Text in PixiCoreText;
 import pixi.core.math.shapes.Rectangle;
+import TextField.TextMappedModification;
 
 import FlowFontStyle;
 
 using DisplayObjectHelper;
+
+class Text extends PixiCoreText {
+	public var charIdx : Int = 0;
+	public var orgCharIdxStart : Int = 0;
+	public var orgCharIdxEnd : Int = 0;
+	public var difPositionMapping : Array<Int>;
+}
 
 class PixiText extends TextField {
 	private var textClip : Text = null;
@@ -102,7 +110,7 @@ class PixiText extends TextField {
 			removeScrollRect();
 		var widthDelta = 0.0;
 
-		makeTextClip(text, style);
+		makeTextClip(text, 0, style);
 
 		textClip.x = -letterSpacing;
 
@@ -223,19 +231,58 @@ class PixiText extends TextField {
 			text.length > 0 ? [text] : [];
 	}
 
-	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
+	public override function getCharXPosition(charIdx: Int) : Float {
+		var pos = -1.0;
+
+		layoutText();
+
+		for (child in children) {
+			var c : Dynamic = child;
+			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
+				var text = "";
+				var chridx : Int = c.orgCharIdxStart;
+				for (i in 0...c.text.length) {
+					if (chridx >= charIdx) break;
+					chridx += 1 + Math.round(c.difPositionMapping[i]);
+					text += c.text.substr(i, 1);
+				}
+				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
+				return c.x + mtx.width;
+			}
+		}
+		return -1.0;
+	}
+
+	private override function makeTextClip(text : String, charIdx : Int, style : Dynamic) : Dynamic {
+		var modification : TextMappedModification;
 		if (isInput() && type == "password")
-			text = TextField.getBulletsString(text);
+			modification = TextField.getBulletsString(text);
 		else
-			text = TextField.getActualGlyphsString(text);
+			modification = TextField.getActualGlyphsString(text);
+		text = modification.modified;
+
+		var chrIdx: Int = charIdx;
 		var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 		if (textClip == null) {
-			textClip = createTextClip(texts[0][0], style);
+			textClip = createTextClip(
+				new TextMappedModification(
+					texts[0][0],
+					modification.difPositionMapping.slice(0, texts[0][0].length)
+				),
+				chrIdx, style
+			);
+			textClip.orgCharIdxStart = chrIdx;
+			textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
+			for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 		}
 
 		if (metricsChanged) {
 			textClip.text = bidiDecorate(texts[0][0]);
+			if (textClip.text != texts[0][0]) {
+				textClip.difPositionMapping.unshift(-1);
+				textClip.difPositionMapping.push(-1);
+			}
 			textClip.style = style;
 
 			if (text == "") {
@@ -258,7 +305,13 @@ class PixiText extends TextField {
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
-							var newTextClip = createTextClip(txt, style);
+							var newTextClip = createTextClip(
+								new TextMappedModification(
+									txt, modification.difPositionMapping.slice(chrIdx, txt.length)
+								),
+								chrIdx, style
+							);
+							chrIdx += txt.length;
 
 							newTextClip.x = currentWidth;
 							newTextClip.y = currentHeight;
@@ -270,6 +323,7 @@ class PixiText extends TextField {
 						}
 					}
 
+					chrIdx += 1;
 					currentHeight += lineHeight;
 				}
 			}
@@ -296,13 +350,15 @@ class PixiText extends TextField {
 		return textClip;
 	}
 
-	private function createTextClip(text : String, style : Dynamic) : Text {
-		var textClip = new Text(text, style);
+	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
+		var textClip = new Text(textMod.modified, style);
+		textClip.charIdx = chrIdx;
+		textClip.difPositionMapping = textMod.difPositionMapping;
 		untyped textClip._visible = true;
 
 		textClip.scale.x = 1 / textScaleFactor;
 		textClip.scale.y = 1 / textScaleFactor;
-
+ 
 		// The default font smoothing on webkit (-webkit-font-smoothing = subpixel-antialiased),
 		// makes the text bolder when light text is placed on a dark background.
 		// "antialised" produces a lighter text, which is what we want.

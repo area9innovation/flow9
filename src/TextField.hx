@@ -6,6 +6,64 @@ import FlowFontStyle;
 
 using DisplayObjectHelper;
 
+class TextMappedModification {
+	public var modified: String;
+	public var difPositionMapping : Array<Int>;
+	public function new(modified: String, difPositionMapping: Array<Int>) {
+		this.modified = modified;
+		this.difPositionMapping = difPositionMapping;
+	}
+}
+
+class UnicodeTranslation {
+	public var rangeStart : Int;
+	public var rangeContentFlags : Int;
+	static var map : Map<String, UnicodeTranslation> = new Map<String, UnicodeTranslation>();
+
+	public function new(rangeStart, rangeContentFlags) {
+		this.rangeStart = rangeStart;
+		this.rangeContentFlags = rangeContentFlags;
+	}
+
+	static public function getCharAvailableVariants(chr: String): Int {
+		var unit = map.get(chr);
+		if (unit == null) return 1;
+		return unit.rangeContentFlags;
+	}
+
+	static public function getCharVariant(chr: String, gv: Int): String {
+		var found = "";
+		for (found in map) break;
+		if (found != "") {
+			var rangeStart : Int = 0xFE81;
+			var flags : Int = 0x1FE1F50;
+			for (i in 0x622...0x63B) {
+				var is4range: Int = flags & 1;
+				flags = flags >> 1;
+				map[String.fromCharCode(i)] = new UnicodeTranslation(rangeStart, 3 + 12*is4range);
+				rangeStart += 2 + is4range*2;
+			}
+			flags = 0x27F;
+			for (i in 0x641...0x64B) {
+				var is4range: Int = flags & 1;
+				flags = flags >> 1;
+				map[String.fromCharCode(i)] = new UnicodeTranslation(rangeStart, 3 + 12*is4range);
+				rangeStart += 2 + is4range*2;
+			}
+			for (i in 0...4) {
+				map[String.fromCharCode(rangeStart)] = new UnicodeTranslation(rangeStart, 3);
+				rangeStart += 2;
+			}
+		}
+		var unit = map[chr];
+		if (unit == null) return chr;
+		var tr_gv = unit.rangeContentFlags;
+		if (0==((tr_gv >> gv) & 1)) gv &= -3;
+		if (0==((tr_gv >> gv) & 1)) gv &= -2;
+		return String.fromCharCode(unit.rangeStart + gv);
+	}
+}
+
 class TextField extends NativeWidgetClip {
 	public static var cacheTextsAsBitmap : Bool = false; // Use cacheAsBitmap for all text clips
 
@@ -198,10 +256,12 @@ class TextField extends NativeWidgetClip {
 			i--;
 		}
 
-		var lines = (isInput() && type == "password" ? getBulletsString(text) : getActualGlyphsString(text)).split("\n");
+		var modification : TextMappedModification = (isInput() && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+		var lines = modification.modified.split("\n");
 
 		clipWidth = 0.0;
 		clipHeight = 0.0;
+		var chrIdx : Int = 0;
 
 		for (line in lines) {
 			var line_width = 0.0;
@@ -213,24 +273,26 @@ class TextField extends NativeWidgetClip {
 				for (wordId in 0...words.length) {
 					var word = wordId == words.length - 1 ? words[wordId] : words[wordId] + " ";
 
-					var clip : Dynamic = makeTextClip(word, style);
+					var clip : Dynamic = makeTextClip(word, chrIdx, style);
 					var textDimensions = getTextClipMetrics(clip);
 
 					while (word.length > 0) {
 						if (cropWords) {
 							var currentLength = word.length;
-							clip = makeTextClip(word, style);
+							clip = makeTextClip(word, chrIdx, style);
 							textDimensions = getTextClipMetrics(clip);
 
 							while (textDimensions.width > fieldWidth) {
 								--currentLength;
-								clip = makeTextClip(word.substr(0, currentLength), style);
+								clip = makeTextClip(word.substr(0, currentLength), chrIdx, style);
 								textDimensions = getTextClipMetrics(clip);
 							}
 
 							word = word.substr(currentLength, word.length - currentLength);
+							chrIdx += currentLength;
 							if (word == " ") word = "";
 						} else {
+							chrIdx += word.length;
 							word = "";
 						}
 
@@ -254,7 +316,7 @@ class TextField extends NativeWidgetClip {
 
 				clipWidth = Math.max(clipWidth, line_width);
 			} else {
-				var clip : Dynamic = makeTextClip(line, style);
+				var clip : Dynamic = makeTextClip(line, chrIdx, style);
 				var textDimensions = getTextClipMetrics(clip);
 
 				var PART_SIZE = 2048;
@@ -266,7 +328,11 @@ class TextField extends NativeWidgetClip {
 					clipWidth = 0;
 
 					for (partIndex in 0...partsAmount) {
-						var partClip : Dynamic = makeTextClip(line.substr(partIndex * partLength, partLength), style);
+						var partClip : Dynamic = makeTextClip(
+							line.substr(partIndex * partLength, partLength),
+							chrIdx + partIndex * partLength,
+							style
+						);
 						var partTextDimensions = getTextClipMetrics(partClip);
 
 						partClip.x += clipWidth;
@@ -280,6 +346,7 @@ class TextField extends NativeWidgetClip {
 					clip.y += clipHeight;
 					addChild(clip);
 				}
+				chrIdx += line.length;
 				clipHeight += textDimensions.line_height * textDimensions.line_count + interlineSpacing;
 				clipWidth = Math.max(clipWidth, textDimensions.width);
 			}
@@ -330,7 +397,11 @@ class TextField extends NativeWidgetClip {
 		setScrollRect(0, 0, getWidth(), getHeight());
 	}
 
-	private function makeTextClip(text : String, style : Dynamic) : Dynamic {
+	public function getCharXPosition(charIdx: Int) : Float {
+		return -1.0;
+	}
+
+	private function makeTextClip(text : String, charIdx : Int, style : Dynamic) : Dynamic {
 		return {};
 	}
 
@@ -770,22 +841,100 @@ class TextField extends NativeWidgetClip {
 		return [ascent, descent, leading];
 	}
 
-	private static function getBulletsString(t : String) : String {
+	private static function isCharCombining(testChr : String, pos: Int) : Bool {
+		var chr = testChr.charCodeAt(pos);
+		return
+			(chr >= 0x300 && chr < 0x370) || (chr >= 0x483 && chr < 0x488) || (chr >= 0x591 && chr < 0x5C8) ||
+			(chr >= 0x610 && chr < 0x61B) || (chr >= 0x64B && chr < 0x660) || (chr == 0x670) ||
+			(chr >= 0x6D6 && chr < 0x6EE) || (chr == 0x711) || (chr >= 0x730 && chr < 0x7F4) ||
+			(chr >= 0x816 && chr < 0x82E) || (chr >= 0x859 && chr < 0x85C) || (chr >= 0x8D4 && chr < 0x903) ||
+			(chr >= 0x93A && chr < 0x93D) || (chr >= 0x941 && chr < 0x94E) || (chr >= 0x951 && chr < 0x958) ||
+			(chr >= 0x962 && chr < 0x964) || (chr == 0x981) || (chr == 0x9BC) || (chr >= 0x9C1 && chr < 0x9C5) ||
+			(chr == 0x9BC) || (chr >= 0x9E2 && chr < 0x9E3) || (chr >= 0xA01 && chr < 0xA03) || (chr == 0xA3C) ||
+			(chr >= 0xA41 && chr < 0xA43) || (chr >= 0xA47 && chr < 0xA49) || (chr >= 0xA4B && chr < 0xA4E) ||
+			(chr == 0xA51) || (chr >= 0xA70 && chr < 0xA72) || (chr == 0xA75) || (chr >= 0xA81 && chr < 0xA83) ||
+			(chr == 0xABC) || (chr >= 0xAC1 && chr < 0xACE) || (chr >= 0xAE2 && chr < 0xAE4) ||
+			(chr >= 0xAFA && chr < 0xB00) || (chr == 0xB01) || (chr == 0xB3C) || (chr == 0xB3F) ||
+			(chr >= 0xB41 && chr < 0xB45) || (chr == 0xB4D) || (chr == 0xB56) || (chr >= 0xB62 && chr < 0xB64) ||
+			(chr == 0xB82) || (chr == 0xBC0) || (chr == 0xBCD) || (chr == 0xC00) ||
+			(chr >= 0xC3E && chr < 0xC41) || (chr >= 0xC46 && chr < 0xC4E && chr != 0xC49) ||
+			(chr >= 0xC55 && chr < 0xC57) || (chr >= 0xC62 && chr < 0xC64) || (chr == 0xC81) || (chr == 0xCBC) ||
+			(chr == 0xCBF) || (chr == 0xCC6) || (chr >= 0xCCC && chr < 0xCCE) || (chr >= 0xCE2 && chr < 0xCE4) ||
+			// TODO add ranges from 0xD00..0x1AB0 from http://www.fileformat.info/info/unicode/category/Mn/list.htm
+			(chr >= 0x1AB0 && chr < 0x1B00);
+	}
+
+	private static function getBulletsString(t : String) : TextMappedModification {
 		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
 		var bullet = String.fromCharCode(8226);
-		var i = 0; var ret = "";
-		for (i in 0...t.length) ret += bullet;
-		return ret;
-	}
-
-	private static function getActualGlyphsString(t : String) : String {
+		var i = 0;
 		var ret = "";
-		// TODO iterate the string given yielding ligature characters and
-		// also variants of arabic/hebrew/etc in respect of neighbour chars connection.
-		return ret;
+		var positionsDiff : Array<Int> = [];
+		for (i in 0...t.length) {
+			ret += bullet;
+			positionsDiff.push(0);
+		}
+		return new TextMappedModification(ret, positionsDiff);
 	}
 
-	#if (pixijs < "4.7.0")
+	private static var LIGATURES(default, never) : Map<String, String> = [
+		"لآ" => "ﻵ", "لأ" => "ﻷ", "لإ" => "ﻹ", "لا" => "ﻻ",
+	];
+
+	private static var LIGA_LENGTHS(default, never) = [2];
+
+	private static inline var GV_ISOLATED = 0;
+	private static inline var GV_FINAL = 1;
+	private static inline var GV_INITIAL = 2;
+	private static inline var GV_MEDIAL = 3;
+
+	private static function getActualGlyphsString(t : String) : TextMappedModification {
+		var positionsDiff : Array<Int> = [];
+		var lret = "";
+		var i : Int = 0;
+		while (i<t.length) {
+			var subst : String = null;
+			for (ll in LIGA_LENGTHS) {
+				var cand = t.substr(i, ll);
+				subst = LIGATURES.get(cand);
+				if (subst != null) {
+					positionsDiff.push(ll-1);
+					lret += subst;
+					i += ll;
+					break;
+				}
+			}
+			if (subst == null) {
+				lret += t.substr(i, 1);
+				positionsDiff.push(0);
+				i += 1;
+			}
+		}
+		var gv = GV_ISOLATED;
+		i = 0;
+		var ret = "";
+		var rightConnect = false;  // Assume only RTL ones have connections.
+		while (i<=lret.length) {
+			var j = i+1;
+			while (j<lret.length && isCharCombining(lret, j)) j += 1;
+			var conMask = UnicodeTranslation.getCharAvailableVariants(j >= lret.length? "" : lret.substr(j, 1));
+
+			// Simplified implementation due seems following character, if RTL, always support connection.
+			if ((conMask & 3) == 3) {
+				gv = rightConnect? GV_MEDIAL : GV_INITIAL;
+				rightConnect = true;
+			} else {
+				gv = rightConnect? GV_FINAL : GV_ISOLATED;
+				rightConnect = false;
+			}
+			if (i>0) ret += UnicodeTranslation.getCharVariant(lret.substr(i-1, 1), gv);
+			ret += lret.substr(i, j-i-1);
+			i = j;
+		}
+		return new TextMappedModification(ret, positionsDiff);
+	}
+
+	#if (pixijs < "4.7.0")cd
 		public override function getLocalBounds() : Rectangle {
 			if (isInput() && fieldHeight > 0.0 && fieldWidth > 0.0)
 				return new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);

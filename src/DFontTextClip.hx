@@ -38,7 +38,7 @@ class DFontTextClip extends TextField {
 			letterspacing, backgroundcolour, backgroundopacity);
 	}
 
-	private override function makeTextClip(text : String, style : Dynamic) : Dynamic {
+	private override function makeTextClip(text : String, charIdx : Int, style : Dynamic) : Dynamic {
 		var clip : Dynamic = new DFontTextNative(text, style);
 
 		clip.resolution = RenderSupportJSPixi.PixiRenderer.resolution; // calculateBounds needs that
