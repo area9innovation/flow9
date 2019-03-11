@@ -124,19 +124,17 @@ class DisplayObjectHelper {
 	}
 
 	public static function setClipFocus(clip : DisplayObject, focus : Bool) : Bool {
-		var nativeWidget = untyped clip.accessWidget;
+		var accessWidget = untyped clip.accessWidget;
 
-		if (untyped clip.setFocus != null) {
-			untyped clip.setFocus(focus);
-
+		if (untyped clip.setFocus != null && clip.setFocus(focus)) {
 			return true;
-		} else if (nativeWidget != null && nativeWidget.parentNode != null && nativeWidget.getAttribute("tabindex") != null) {
-			if (focus && nativeWidget.focus != null) {
-				nativeWidget.focus();
+		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
+			if (focus && accessWidget.element.focus != null) {
+				accessWidget.element.focus();
 
 				return true;
-			} else if (!focus && nativeWidget.blur != null) {
-				nativeWidget.blur();
+			} else if (!focus && accessWidget.element.blur != null) {
+				accessWidget.element.blur();
 
 				return true;
 			}

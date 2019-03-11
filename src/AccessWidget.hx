@@ -9,7 +9,7 @@ import pixi.interaction.EventEmitter;
 
 using DisplayObjectHelper;
 
-class AccessWidgetTree {
+class AccessWidgetTree extends EventEmitter {
 	public static var DebugAccessOrder : Bool = Util.getParameter("accessorder") == "1";
 
 	@:isVar public var id(get, set) : Int;
@@ -17,11 +17,14 @@ class AccessWidgetTree {
 	@:isVar public var parent(get, set) : AccessWidgetTree;
 	public var children : Map<Int, AccessWidgetTree> = new Map<Int, AccessWidgetTree>();
 	public var childrenSize : Int = 0;
+	public var nextId : Int = 0;
 	@:isVar public var childrenChanged(get, set) : Bool;
 	@:isVar public var changed(get, set) : Bool;
-	public var zorder : Int = -9999;
+	public var zorder : Int = 0;
 
 	public function new(id : Int, ?accessWidget : AccessWidget, ?parent : AccessWidgetTree) {
+		super();
+
 		this.changed = false;
 		this.childrenChanged = false;
 		this.id = id;
@@ -117,18 +120,24 @@ class AccessWidgetTree {
 		return this.childrenChanged;
 	}
 
+	private function getZorder() : Int {
+		if (accessWidget != null) {
+			return accessWidget.zorder;
+		} else if (parent != null) {
+			return parent.getZorder();
+		} else {
+			return 0;
+		}
+	}
+
 	public function updateZorder() : Bool {
 		var previousZOrder = zorder;
-		zorder = accessWidget != null ? accessWidget.zorder : -9999;
+		zorder = getZorder();
 
 		for (child in children) {
 			if (child.zorder > zorder) {
 				zorder = child.zorder;
 			}
-		}
-
-		if (zorder == -9999) {
-			return false;
 		}
 
 		if (previousZOrder != zorder) {
@@ -269,29 +278,44 @@ class AccessWidgetTree {
 
 		var previousChild = getChild(child.id);
 
+		if (previousChild == child) {
+			return;
+		}
+
 		if (previousChild != null) {
 			if (previousChild.accessWidget != null && previousChild.accessWidget != child.accessWidget) {
 				if (previousChild.accessWidget.nodeindex == null) {
-					previousChild.id = childrenSize;
+					previousChild.id = nextId;
 
+					nextId++;
 					childrenSize++;
 					children.set(child.id, child);
 					child.parent = this;
+					child.emit("added");
 				} else {
 					AccessWidget.addAccessWidgetWithoutNodeindex(child.accessWidget, child.accessWidget.clip.parent);
-					previousChild.accessWidget.once("removed", function() {
-						if (child != null && child.accessWidget != null) {
+
+					var addFn = function() {
+						if (child != null && child.accessWidget != null && child.accessWidget.clip != null && child.accessWidget.clip.parent != null) {
 							AccessWidget.addAccessWidget(child.accessWidget);
 						}
-					});
+					};
+
+					child.once("removed", function() { previousChild.off("removed", addFn); });
+					previousChild.once("removed", addFn);
 				}
 			} else {
 				previousChild.accessWidget = child.accessWidget;
 			}
 		} else {
+			if (child.id >= nextId) {
+				nextId = child.id + 1;
+			}
+
 			childrenSize++;
 			children.set(child.id, child);
 			child.parent = this;
+			child.emit("added");
 		}
 
 		childrenChanged = true;
@@ -305,10 +329,17 @@ class AccessWidgetTree {
 
 		if (children.get(child.id) == child) {
 			children.remove(child.id);
-			childrenSize--;
-		}
 
-		child.parent = null;
+			if (nextId == child.id + 1) {
+				nextId--;
+			}
+
+			childrenSize--;
+			child.parent = null;
+			child.emit("removed");
+		} else {
+			NativeHx.printCallstack();
+		}
 
 		if (destroy && childrenSize == 0 && accessWidget == null && parent != null) {
 			parent.removeChild(this);
@@ -445,6 +476,8 @@ class AccessWidget extends EventEmitter {
 					this.element.classList.add("accessButton");
 				} else if (tagName == "div") {
 					this.element.classList.add("accessElement");
+				} else if (tagName == "form") {
+					this.element.onsubmit = function() { return false; };
 				}
 
 				if (parent != null) {
@@ -517,24 +550,13 @@ class AccessWidget extends EventEmitter {
 				}
 			};
 
-			var onFocus = element.onfocus;
-			var onBlur = element.onblur;
-
-			element.onfocus = function(e) {
-				if (onFocus != null) {
-					onFocus(e);
-				}
-
+			element.addEventListener('focus', function() {
 				element.classList.add('focused');
-			};
+			});
 
-			element.onblur = function(e) {
-				if (onBlur != null) {
-					onBlur(e);
-				}
-
+			element.addEventListener('blur', function() {
 				element.classList.remove('focused');
-			};
+			});
 
 			if (element.tabIndex == null) {
 				element.tabIndex = 0;
@@ -711,24 +733,24 @@ class AccessWidget extends EventEmitter {
 		if (parent == null) {
 			return;
 		} else if (parent == RenderSupportJSPixi.PixiStage || (untyped parent.accessWidget != null && untyped parent.accessWidget.parent != null)) {
-			var id = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree.childrenSize : untyped parent.accessWidget.parent.childrenSize;
+			var id = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree.nextId : untyped parent.accessWidget.parent.nextId;
 			var tree = parent == RenderSupportJSPixi.PixiStage ? AccessWidget.tree : untyped parent.accessWidget.parent;
 
 			if (accessWidget.parent != null) {
 				accessWidget.parent.id = id;
 				tree.addChild(accessWidget.parent);
 			} else {
-				tree.addChild(new AccessWidgetTree(tree.childrenSize, accessWidget));
+				tree.addChild(new AccessWidgetTree(id, accessWidget));
 			}
 		} else if (parent.parent == null) {
 			parent.once("added", function() {
-				if (parent != null && parent.parent != null && accessWidget != null) {
+				if (parent != null && parent.parent != null && accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null) {
 					addAccessWidgetWithoutNodeindex(accessWidget, parent);
 				}
 			});
 		} else if (untyped parent.accessWidget != null && untyped parent.accessWidget.parent == null) {
 			untyped parent.accessWidget.once("added", function() {
-				if (parent != null && parent.parent != null && parent.accessWidget != null) {
+				if (parent != null && parent.parent != null && parent.accessWidget != null && accessWidget.clip != null && accessWidget.clip.parent != null) {
 					addAccessWidgetWithoutNodeindex(accessWidget, parent);
 				}
 			});
@@ -747,6 +769,7 @@ class AccessWidget extends EventEmitter {
 	private static function removeAccessWidgetTree(tree : AccessWidgetTree) : Void {
 		if (tree.parent != null) {
 			tree.parent.removeChild(tree);
+			tree.emit("removed");
 		}
 	}
 
@@ -756,7 +779,8 @@ class AccessWidget extends EventEmitter {
 		}
 
 		for (key in tree.children.keys()) {
-			var accessWidget = tree.children.get(key).accessWidget;
+			var parent = tree.children.get(key);
+			var accessWidget = parent.accessWidget;
 			trace(id + key + " " + (accessWidget != null && accessWidget.element != null ? accessWidget.nodeindex + " " + accessWidget.element.getAttribute("role") : "null"));
 			printTree(tree.children.get(key), id + key + " ");
 		}

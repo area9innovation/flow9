@@ -82,13 +82,17 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget = null;
 	}
 
-	public function setFocus(focus : Bool) {
+	public function setFocus(focus : Bool) : Bool {
 		if (nativeWidget != null) {
 			if (focus) {
 				nativeWidget.focus();
 			} else {
 				nativeWidget.blur();
 			}
+
+			return true;
+		} else {
+			return false;
 		}
 	}
 
