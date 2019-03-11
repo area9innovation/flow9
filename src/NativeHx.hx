@@ -607,23 +607,15 @@ class NativeHx {
 	}
 
 	public static function enumFromTo(from : Int, to : Int) : Array<Int> {
-		#if flash
-			var n = to - from + 1;
-			if (n < 0) {
-				return untyped Array(0);
-			}
-			var result = untyped Array(n);
-			for (i in 0...n) {
-				result[i] = i + from;
-			}
-			return result;
-		#else
-			var newArray : Array<Int> = new Array();
-			for (i in (from)...(to) + 1) {
-				newArray.push((i));
-			}
-			return newArray;
-		#end
+		var n = to - from + 1;
+		if (n < 0) {
+			return untyped Array(0);
+		}
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = i + from;
+		}
+		return result;
 	}
 
 	public static function getAllUrlParameters() : Array<Array<String>> {
