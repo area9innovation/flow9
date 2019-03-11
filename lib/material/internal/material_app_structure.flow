@@ -54,11 +54,10 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 			TDisplay("MAppContent"),
 			TDisplay("MAppFloatingContent")
 		)
-		|> (\t -> eitherMap(
-				state.flexible,
-				\fl -> TCols2(t, TShow(fl.persistent, TGhost("MAppBottomSheet"))),
-				t
-			))
+		|> (\t -> eitherMap(state.flexible,
+				\__ -> TCols2(t, TGhost("MAppSideSheet")),
+				t)
+			)
 		|> restrictSizeBySideNavs(state)
 		|> (\f ->
 			eitherMap(state.appBar, \ab -> {
@@ -101,16 +100,11 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 				])(f)
 			)
 		)
-		|> (\t -> eitherMap(
-				state.flexible,
-				\fl -> TGroup2(t, TCols2(TFillX(), TShow(fl.persistent, TDisplay("MAppBottomSheet")))),
-				t
-			))
-		|> (\t -> TLines2(t, eitherMap(
-				state.flexible,
-				\fl -> TShow(fnot(fl.persistent), TDisplay("MAppBottomSheet")),
-				TDisplay("MAppBottomSheet")
-			)))
+		|> (\t -> TLines2(t, TDisplay("MAppBottomSheet")))
+		|> (\t -> eitherMap(state.flexible,
+				\__ -> TGroup2(t, TCols2(TFillX(), TDisplay("MAppSideSheet"))),
+				t)
+			)
 		|> (\f ->
 			TGroup2SameMetrics(
 				f,
@@ -131,6 +125,7 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		|> (\f -> letAppBar(manager, parent, f, state, m2t))
 		|> (\f -> letContentAndSize(manager, parent, f, m.style, state, m2t))
 		|> (\f -> letBottomSheet(manager, parent, f, state, m2t))
+		|> (\f -> letSideSheet(manager, parent, f, state, m2t))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, false))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, true))
 		|> (\f -> letFloatingContent(manager, parent, f, state, m2t))
@@ -163,13 +158,6 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 					mouseDown,
 					fOr(swipeDownEnabled, fnot(expanded))
 				);
-
-			// for wide screens
-			sideSheet =
-				m2t(bottom.content(const(true)), parent)
-				|> (\t -> TAvailable(t, TFillWY(sideNavStandardWidth)))
-				|> (\t -> TLines2(THeight(TGhost("MAppBar")), t))
-				|> (\t -> TCols2(t, TGhost("MAppRightPanelSize")));
 
 			m2t(bottom.content(expanded), parent)
 			|> (\t -> MScroll2T(manager, parent, MScroll(
@@ -214,24 +202,45 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 							next(expanded, gap > gapThreshold);
 						}
 						),
-					\ -> fconnectSelect(
+					makeSubscribe2(
 						ftransistor(enabled, state.point),
-						bottomSheetHeight0,
-						\p -> ^startAvail + (^startPointY - p.y)
+						\p -> nextDistinct(bottomSheetHeight0, ^startAvail + (^startPointY - p.y))
 					)
 				], t))
 			|> (\t -> TInteractive([TMouseDownGhost(mouseDown)], t))
 			|> disableInteractivesBelow
 			|> restrictSizeBySideNavs(state)
-			|> (\t -> eitherMap(
-					state.flexible,
-					\fl -> TIfLazy(fl.persistent, \v -> if (v) sideSheet else t),
+			|> (\t -> eitherMap(state.flexible,
+					\fl -> TShow(fnot(fl.persistent), t),
 					t
 				))
 		},
 		TEmpty()
 	)
 	|> (\t -> TLet("MAppBottomSheet", t, content))
+}
+
+letSideSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherMap(
+		state.bottomSheet,
+		\bottom -> {
+			sideSheet = \ ->
+				m2t(bottom.content(const(true)), parent)
+				|> disableInteractivesBelow
+				|> (\t -> TAvailable(t, TFillWY(sideNavStandardWidth)))
+				|> (\t -> TLines2(THeight(TGhost("MAppBar")), t))
+				|> (\t -> TCols2(t, TGhost("MAppRightPanelSize")));
+
+
+			eitherMap(
+				state.flexible,
+				\fl -> TShowLazy(fl.persistent, sideSheet),
+				TEmpty()
+			)
+		},
+		TEmpty()
+	)
+	|> (\t -> TLet("MAppSideSheet", t, content))
 }
 
 makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
