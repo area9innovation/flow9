@@ -78,7 +78,7 @@ class QGLRenderSupport : public QOpenGLWidget, public GLRenderSupport
     void hideFullScreen();
 
 public:
-    QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch = false);
+    QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch = false, bool transparent = false);
 
     bool no_qglfb;
 
