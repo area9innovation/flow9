@@ -974,7 +974,7 @@ class TextField extends NativeWidgetClip {
 		return new TextMappedModification(ret, positionsDiff);
 	}
 
-	#if (pixijs < "4.7.0")cd
+	#if (pixijs < "4.7.0")
 		public override function getLocalBounds() : Rectangle {
 			if (isInput() && fieldHeight > 0.0 && fieldWidth > 0.0)
 				return new Rectangle(0.0, 0.0, fieldWidth, fieldHeight);
