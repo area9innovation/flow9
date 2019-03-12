@@ -199,7 +199,7 @@ class TextClip extends NativeWidgetClip {
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 
-		style.fontSize = fontSize;
+		style.fontSize = Math.max(fontSize, 0.6);
 		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
 		style.letterSpacing = letterSpacing;
 		style.fontFamily = fontStyle.family;
@@ -735,7 +735,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && cast(style.fontSize, Float) > 1 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
+		if (text != "" && cast(style.fontSize, Float) > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}

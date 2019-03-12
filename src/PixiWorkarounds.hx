@@ -555,6 +555,42 @@ class PixiWorkarounds {
 				}
 			}
 
+			PIXI.Text.prototype._renderCanvas = function(renderer)
+			{
+				const scaleX = this.worldTransform.a;
+				const scaleY = this.worldTransform.d;
+				const scaleFactor = Math.min(scaleX, scaleY);
+
+				if (scaleFactor > 0.0) {
+					this.worldTransform.a = 1.0;
+					this.worldTransform.d = 1.0;
+
+					this.style.fontSize = this.style.fontSize * scaleFactor;
+					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
+					this.style.lineHeight = this.style.lineHeight * scaleFactor;
+					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+				}
+
+				if (this.resolution !== renderer.resolution)
+				{
+					this.resolution = renderer.resolution;
+					this.dirty = true;
+				}
+
+				PIXI.Text.prototype.updateText.call(this, true);
+				PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
+
+				if (scaleFactor > 0.0) {
+					this.style.fontSize = this.style.fontSize / scaleFactor;
+					this.style.letterSpacing = this.style.letterSpacing / scaleFactor;
+					this.style.lineHeight = this.style.lineHeight / scaleFactor;
+					this.style.wordWrapWidth = this.style.wordWrapWidth / scaleFactor;
+
+					this.worldTransform.a = scaleX;
+					this.worldTransform.d = scaleY;
+				}
+			}
+
 			PIXI.Container.prototype.updateTransform = function(transformChanged) {
 				transformChanged = transformChanged || this.transformChanged;
 
