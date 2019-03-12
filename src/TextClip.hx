@@ -45,7 +45,6 @@ class TextClip extends NativeWidgetClip {
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
 	private var textClip : Text = null;
-	private var textScaleFactor : Int = Platform.isMacintosh ? 2 : 1;
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
@@ -78,12 +77,12 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.type = type;
 		nativeWidget.value = text;
 		nativeWidget.style.color = style.fill;
-		nativeWidget.style.letterSpacing = '${cast(style.letterSpacing, Float) / textScaleFactor}px';
+		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';
 		nativeWidget.style.fontFamily = style.fontFamily;
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
-		nativeWidget.style.fontSize =  '${cast(style.fontSize, Float) / textScaleFactor}px';
-		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) / textScaleFactor * 1.15 + interlineSpacing}px';
+		nativeWidget.style.fontSize =  '${style.fontSize}px';
+		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) * 1.15 + interlineSpacing}px';
 		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
@@ -200,15 +199,15 @@ class TextClip extends NativeWidgetClip {
 
 		var fontStyle : FontStyle = FlowFontStyle.fromFlowFonts(fontFamilies);
 
-		style.fontSize = textScaleFactor * fontSize;
+		style.fontSize = fontSize;
 		style.fill = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
-		style.letterSpacing = textScaleFactor * letterSpacing;
+		style.letterSpacing = letterSpacing;
 		style.fontFamily = fontStyle.family;
 		style.fontWeight = fontWeight != 400 ? '${fontWeight}' : fontStyle.weight;
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
-		style.lineHeight = textScaleFactor * (fontSize * 1.15 + interlineSpacing);
+		style.lineHeight = fontSize * 1.15 + interlineSpacing;
 		style.wordWrap = wordWrap;
-		style.wordWrapWidth = textScaleFactor * (widgetWidth > 0 ? widgetWidth : 2048);
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 
@@ -306,8 +305,6 @@ class TextClip extends NativeWidgetClip {
 		textClip = new Text(text, style);
 
 		textClip.setClipVisible(true);
-		textClip.setClipScaleX(1 / textScaleFactor);
-		textClip.setClipScaleY(1 / textScaleFactor);
 
 		return textClip;
 	}
@@ -360,7 +357,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = textScaleFactor * (widgetWidth > 0 ? widgetWidth : 2048);
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
 		super.setWidth(widgetWidth);
 	}
 
@@ -393,7 +390,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = cast(style.fontSize, Float) * 1.15 + textScaleFactor * interlineSpacing;
+			style.lineHeight = cast(style.fontSize, Float) * 1.15 + interlineSpacing;
 
 			invalidateMetrics();
 		}
@@ -648,7 +645,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipWidth() : Float {
 		updateTextMetrics();
-		return metrics != null ? untyped metrics.width / textScaleFactor : 0;
+		return metrics != null ? untyped metrics.width : 0;
 	}
 
 	public override function getHeight() : Float {
@@ -657,7 +654,7 @@ class TextClip extends NativeWidgetClip {
 
 	private function getClipHeight() : Float {
 		updateTextMetrics();
-		return metrics != null ? untyped metrics.height / textScaleFactor : 0;
+		return metrics != null ? untyped metrics.height : 0;
 	}
 
 	public function getContent() : String {
@@ -745,13 +742,13 @@ class TextClip extends NativeWidgetClip {
 
 	public function getTextMetrics() : Array<Float> {
 		if (fontMetrics == null) {
-			var ascent = 0.9 * cast(style.fontSize, Float) / textScaleFactor;
-			var descent = 0.1 * cast(style.fontSize, Float) / textScaleFactor;
-			var leading = 0.15 * cast(style.fontSize, Float) / textScaleFactor;
+			var ascent = 0.9 * cast(style.fontSize, Float);
+			var descent = 0.1 * cast(style.fontSize, Float);
+			var leading = 0.15 * cast(style.fontSize, Float);
 
 			return [ascent, descent, leading];
 		} else {
-			return [fontMetrics.ascent / textScaleFactor, fontMetrics.descent / textScaleFactor, fontMetrics.descent / textScaleFactor];
+			return [fontMetrics.ascent, fontMetrics.descent, fontMetrics.descent];
 		}
 	}
 }
