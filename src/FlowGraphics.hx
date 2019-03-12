@@ -60,16 +60,11 @@ class FlowGraphics extends Graphics {
 		var dx = x - penX;
 		var dy = y - penY;
 
-		if (Math.sqrt(dx * dx + dy * dy) / lineWidth > 3) {
-			var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
-			penX = x;
-			penY = y;
+		var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
+		penX = x;
+		penY = y;
 
-			return newGraphics;
-		} else {
-			lineTo(cx, cy);
-			return lineTo(x, y);
-		}
+		return newGraphics;
 	}
 
 	public override function endFill() : Graphics {
