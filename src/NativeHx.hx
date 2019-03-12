@@ -608,7 +608,7 @@ class NativeHx {
 
 	public static function enumFromTo(from : Int, to : Int) : Array<Int> {
 		var n = to - from + 1;
-		if (n < 0) {
+		if (n <= 0) {
 			return untyped Array(0);
 		}
 		var result = untyped Array(n);
