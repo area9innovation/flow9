@@ -1774,12 +1774,13 @@ class RenderSupportJSPixi {
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
 		var localX = x - org.x;
+		if (TextField.getStringDirection(clip.text) == "RTL") localX = rightVal - localX;
 		var leftPos: Float = 0;
 		var rightPos: Float = clip.text.length;
 		var midVal: Float = -1.0;
 		var midPos: Float = -1;
 		var oldPos: Float = rightPos;
-		while (Math.round(midPos) != Math.round(oldPos)) {
+		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
 			mtx = pixi.core.text.TextMetrics.measureText(clip.text.substr(Math.floor(leftPos), Math.ceil(leftPos)), clip.style);
@@ -1788,13 +1789,8 @@ class RenderSupportJSPixi {
 			midVal += mtx.width;
 			mtx = pixi.core.text.TextMetrics.measureText(clip.text.substr(Math.floor(midPos), Math.ceil(midPos)), clip.style);
 			midVal += mtx.width * (midPos - Math.floor(midPos));
-			if (midVal <= localX) {
-				leftPos = midPos;
-				leftVal = midVal;
-			} else {
-				rightPos = midPos;
-				rightVal = midVal;
-			}
+			leftPos = midPos;
+			leftVal = midVal;
 		}
 		return Math.round(midPos) + clip.charIdx;
 	}

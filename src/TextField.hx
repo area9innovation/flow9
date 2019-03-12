@@ -841,6 +841,46 @@ class TextField extends NativeWidgetClip {
 		return [ascent, descent, leading];
 	}
 
+	public static function isRtlChar(ch: String) {
+		var code = ch.charCodeAt(0);
+		return (code >= 0x590 && code < 0x900)
+			|| (code >= 0xFB1D && code < 0xFDD0)
+			|| (code >= 0xFDF0 && code < 0xFE00)
+			|| (code >= 0xFE70 && code < 0xFF00)
+			// TODO treat also UCS-2 misencoded characters
+			/*|| (code >= 0x10800 && code < 0x11000)
+			|| (code >= 0x1E800 && code < 0x1F000)*/;
+	}
+
+	public static function isLtrChar(ch: String) {
+		var code = ch.charCodeAt(0);
+		return (code >= 0x30 && code < 0x3A)
+			|| (code >= 0x41 && code < 0x5B)
+			|| (code >= 0x61 && code < 0x7B)
+			|| (code >= 0xA0 && code < 0x590)
+			|| (code >= 0x700 && code < 0x2000)
+			|| (code >= 0x2100 && code < 0x2190)
+			|| (code >= 0x2460 && code < 0x2500)
+			|| (code >= 0x2800 && code < 0x2900)
+			|| (code >= 0x2E80 && code < 0x3000)
+			|| (code >= 0x3040 && code < 0xD800)
+			|| (code >= 0xF900 && code < 0xFB1D)
+			|| (code >= 0xFE20 && code < 0xFE70)
+			|| (code >= 0xFF00 && code < 0xFFF0)
+			// TODO treat also UCS-2 misencoded characters
+			/*|| (code >= 0x1D300 && code < 0x1D800)
+			|| (code >= 0x20000 && code < 0x2FA20)*/;
+	}
+
+	public static function getStringDirection(s: String) {
+		for (i in 0...s.length) {
+			var c = s.charAt(i);
+			if (isRtlChar(c)) return "RTL";
+			if (isLtrChar(c)) return "LTR";
+		}
+		return "";
+	}
+
 	private static function isCharCombining(testChr : String, pos: Int) : Bool {
 		var chr = testChr.charCodeAt(pos);
 		return

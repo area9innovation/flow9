@@ -247,7 +247,12 @@ class PixiText extends TextField {
 					text += c.text.substr(i, 1);
 				}
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
-				return c.x + mtx.width;
+				var result = c.x + mtx.width;
+				if (TextField.getStringDirection(c.text) == "RTL") {
+					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
+					return c.width - result;
+				}
+				return result;
 			}
 		}
 		return -1.0;
