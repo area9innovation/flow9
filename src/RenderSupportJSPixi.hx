@@ -1504,7 +1504,7 @@ class RenderSupportJSPixi {
 					return clip;
 				}
 			}
-			case "FlowSprite" | "TextClip" | "NativeWidgetClip" | "VideoClip" | "WebClip" : {
+			case "FlowSprite" | "TextClip" | "NativeWidgetClip" | "VideoClip" | "WebClip" | "DropAreaClip" : {
 				var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 
 				if (local.x >= 0.0 && local.y >= 0.0 && local.x <= untyped clip.getWidth() && local.y <= untyped clip.getHeight()) {

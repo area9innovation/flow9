@@ -523,11 +523,15 @@ class AccessWidget extends EventEmitter {
 			};
 
 			element.addEventListener('focus', function() {
-				element.classList.add('focused');
+				if (element != null) {
+					element.classList.add('focused');
+				}
 			});
 
 			element.addEventListener('blur', function() {
-				element.classList.remove('focused');
+				if (element != null) {
+					element.classList.remove('focused');
+				}
 			});
 
 			if (element.tabIndex == null) {
