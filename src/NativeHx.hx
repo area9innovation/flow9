@@ -364,14 +364,13 @@ class NativeHx {
 	}
 
 	public static function list2string(h : Dynamic) : String {
-		var result = [];
+		var res : String = "";
 		while (Reflect.hasField(h, "head")) {
 			var s : String = Std.string(h.head);
-			result.push(s);
+			res = s + res;
 			h = h.tail;
 		}
-		result.reverse();
-		return result.join('');
+		return res;
 	}
 
 	public static function list2array(h : Dynamic) : Array<Dynamic> {
