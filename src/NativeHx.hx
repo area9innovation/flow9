@@ -324,12 +324,14 @@ class NativeHx {
 	}
 
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
+		if (start < 0) return -1;
+
 		if (end >= str.length)
 			return str.indexOf(substr, start);
 
-		// Doesn't seem to be an efficient way to support the end limit without substr
-		var rv = str.substr(start, end-start).indexOf(substr, 0);
-		return (rv < 0) ? rv : start+rv;
+		var pos = str.indexOf(substr, start);
+		var finish = pos + substr.length - 1;
+		return (pos < 0) ? -1 : (finish < end ? pos : -1);
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
