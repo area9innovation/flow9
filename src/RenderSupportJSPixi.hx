@@ -352,8 +352,8 @@ class RenderSupportJSPixi {
 		}
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
-
-		RenderSupportJSPixi.InvalidateStage();
+		PixiStage.transformChanged = true;
+		PixiStage.invalidateStage();
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();

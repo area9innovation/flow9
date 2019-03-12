@@ -1,5 +1,6 @@
 import js.Browser;
 
+import pixi.core.math.Matrix;
 import pixi.core.display.Bounds;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
@@ -19,35 +20,54 @@ class NativeWidgetClip extends FlowContainer {
 	// Returns metrics to set correct native widget size
 	private function getWidth() : Float { return widgetWidth; }
 	private function getHeight() : Float { return widgetHeight; }
-
-	public function onUpdateStyle() : Void {
-		if (nativeWidget != null) {
-			nativeWidget.style.width = '${getWidth()}px';
-			nativeWidget.style.height = '${getHeight()}px';
-
-			if (viewBounds != null) {
-				if (Platform.isIE || Platform.isEdge) {
-					nativeWidget.style.clip = 'rect(
-						${viewBounds.minY}px,
-						${viewBounds.maxX}px,
-						${viewBounds.maxY}px,
-						${viewBounds.minX}px
-					)';
-				} else {
-					nativeWidget.style.clipPath = 'polygon(
-						${viewBounds.minX}px ${viewBounds.minY}px,
-						${viewBounds.minX}px ${viewBounds.maxY}px,
-						${viewBounds.maxX}px ${viewBounds.maxY}px,
-						${viewBounds.maxX}px ${viewBounds.minY}px
-					)';
-				}
-			}
+	private function getTransform() : Matrix {
+		if (accessWidget != null) {
+			return accessWidget.getTransform();
+		} else {
+			return worldTransform;
 		}
 	}
 
-	public function onUpdateAlpha() : Void {}
-	public function onUpdateVisible() : Void {}
-	public function onUpdateTransform() : Void {}
+	public function updateNativeWidget() : Void {
+		var transform = getTransform();
+
+		var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
+		var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
+
+		if (Platform.isIE) {
+			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
+
+			nativeWidget.style.left = '${tx}px';
+			nativeWidget.style.top = '${ty}px';
+		} else {
+			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, ${tx}, ${ty})';
+		}
+	}
+
+	public function updateNativeWidgetStyle() : Void {
+		nativeWidget.style.width = '${untyped getWidth()}px';
+		nativeWidget.style.height = '${untyped getHeight()}px';
+
+		if (viewBounds != null) {
+			if (Platform.isIE || Platform.isEdge) {
+				nativeWidget.style.clip = 'rect(
+					${viewBounds.minY}px,
+					${viewBounds.maxX}px,
+					${viewBounds.maxY}px,
+					${viewBounds.minX}px
+				)';
+			} else {
+				nativeWidget.style.clipPath = 'polygon(
+					${viewBounds.minX}px ${viewBounds.minY}px,
+					${viewBounds.minX}px ${viewBounds.maxY}px,
+					${viewBounds.maxX}px ${viewBounds.maxY}px,
+					${viewBounds.maxX}px ${viewBounds.minY}px
+				)';
+			}
+		}
+
+		styleChanged = false;
+	}
 
 	private function addNativeWidget() : Void {
 		once('removed', deleteNativeWidget);
@@ -114,7 +134,7 @@ class NativeWidgetClip extends FlowContainer {
 
 	public function invalidateStyle() : Void {
 		styleChanged = true;
-		invalidateStage();
+		invalidateTransform();
 	}
 
 	public function setWidth(widgetWidth : Float) : Void {

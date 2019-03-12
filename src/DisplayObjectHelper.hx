@@ -40,23 +40,6 @@ class DisplayObjectHelper {
 		invalidateStage(clip);
 	}
 
-	public static inline function invalidateAlpha(clip : DisplayObject) : Void {
-		untyped clip.alphaChanged = true;
-		invalidateStage(clip);
-	}
-
-	public static inline function invalidateVisible(clip : DisplayObject) : Void {
-		untyped clip.visibleChanged = true;
-
-		if (clip.parent != null) {
-			if (getClipWorldVisible(clip.parent)) {
-				invalidateStage(clip.parent);
-			} else {
-				updateClipVisible(clip);
-			}
-		}
-	}
-
 	public static inline function setClipX(clip : DisplayObject, x : Float) : Void {
 		if (untyped clip.scrollRect != null) {
 			x = x - untyped clip.scrollRect.x;
@@ -103,7 +86,7 @@ class DisplayObjectHelper {
 	public static inline function setClipAlpha(clip : DisplayObject, alpha : Float) : Void {
 		if (clip.alpha != alpha) {
 			clip.alpha = alpha;
-			invalidateAlpha(clip);
+			invalidateTransform(clip);
 		}
 	}
 
@@ -111,15 +94,47 @@ class DisplayObjectHelper {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
 
-			invalidateVisible(clip);
+			if (clip.parent != null && getClipVisible(clip.parent)) {
+				updateClipWorldVisible(clip);
+				invalidateTransform(clip.parent);
+			}
 		}
+	}
+
+	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
+		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
+		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
+
+		if (clip.interactive && !getClipWorldVisible(clip)) {
+			clip.emit("pointerout");
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (c in children) {
+				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || getClipVisible(c) != getClipVisible(clip)) {
+					updateClipWorldVisible(c, false);
+				}
+			}
+		}
+
+		if (untyped clip.accessWidget != null) {
+			untyped clip.accessWidget.updateDisplay();
+ 		}
+	}
+
+	public static inline function getClipVisible(clip : DisplayObject) : Bool {
+		return untyped clip.clipVisible;
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
 		if (clip.renderable != renderable) {
 			clip.renderable = renderable;
 
-			invalidateVisible(clip);
+			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
+				updateClipWorldVisible(clip);
+				invalidateTransform(clip.parent);
+			}
 		}
 	}
 
@@ -151,29 +166,6 @@ class DisplayObjectHelper {
 		}
 
 		return false;
-	}
-
-	public static inline function forceUpdateTransform(clip : DisplayObject) : Void {
-		if (clip.parent != null && !clip.visible) {
-			forceUpdateTransform(clip.parent);
-			untyped clip.transformChanged = true;
-			clip.updateTransform();
-		}
-	}
-
-	public static inline function getClipVisible(clip : DisplayObject) : Bool {
-		return untyped clip.clipVisible;
-	}
-
-	public static function updateClipVisible(clip : DisplayObject) : Void {
-		untyped clip.clipVisible = untyped clip.parent.clipVisible && untyped clip._visible;
-
-		var children : Array<Dynamic> = untyped clip.children;
-		if (children != null) {
-			for (c in children) {
-				updateClipVisible(c);
-			}
-		}
 	}
 
 	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {

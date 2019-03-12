@@ -72,158 +72,73 @@ class TextClip extends NativeWidgetClip {
 			text.length > 0 ? [text] : [];
 	}
 
-	public override function onUpdateStyle() : Void {
-		super.onUpdateStyle();
+	public override function updateNativeWidgetStyle() : Void {
+		super.updateNativeWidgetStyle();
 
-		if (isInput) {
-			nativeWidget.type = type;
-			nativeWidget.value = text;
-			nativeWidget.style.color = style.fill;
-			nativeWidget.style.letterSpacing = '${cast(style.letterSpacing, Float) / textScaleFactor}px';
-			nativeWidget.style.fontFamily = style.fontFamily;
-			nativeWidget.style.fontWeight = style.fontWeight;
-			nativeWidget.style.fontStyle = style.fontStyle;
-			nativeWidget.style.fontSize =  '${cast(style.fontSize, Float) / textScaleFactor}px';
-			nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) / textScaleFactor * 1.15 + interlineSpacing}px';
-			nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
-			nativeWidget.readOnly = readOnly;
-			nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
+		nativeWidget.type = type;
+		nativeWidget.value = text;
+		nativeWidget.style.color = style.fill;
+		nativeWidget.style.letterSpacing = '${cast(style.letterSpacing, Float) / textScaleFactor}px';
+		nativeWidget.style.fontFamily = style.fontFamily;
+		nativeWidget.style.fontWeight = style.fontWeight;
+		nativeWidget.style.fontStyle = style.fontStyle;
+		nativeWidget.style.fontSize =  '${cast(style.fontSize, Float) / textScaleFactor}px';
+		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) / textScaleFactor * 1.15 + interlineSpacing}px';
+		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
+		nativeWidget.readOnly = readOnly;
+		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
 
-			nativeWidget.style.direction = switch (textDirection) {
-				case 'RTL' : 'rtl';
-				case 'rtl' : 'rtl';
-				default : 'ltr';
-			}
-
-			nativeWidget.style.textAlign = switch (autoAlign) {
-				case 'AutoAlignLeft' : 'left';
-				case 'AutoAlignRight' : 'right';
-				case 'AutoAlignCenter' : 'center';
-				case 'AutoAlignNone' : 'none';
-				default : 'left';
-			}
-
-			if (cursorColor >= 0) {
-				nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
-			}
-
-			if (type == 'number') {
-				nativeWidget.step = step;
-			}
-
-			if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != '') {
-				nativeWidget.autocomplete = accessWidget.autocomplete;
-			} else if (type == 'password' && nativeWidget.autocomplete == '') {
-				nativeWidget.autocomplete = 'new-password';
-			}
-
-			if (maxChars >= 0) {
-				nativeWidget.maxLength = maxChars;
-			}
-
-			if (tabIndex >= 0) {
-				nativeWidget.tabIndex = tabIndex;
-			}
-
-			if (multiline) {
-				nativeWidget.style.resize = 'none';
-				nativeWidget.wrap = wordWrap ? 'soft' : 'off';
-			}
-
-			nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
-
-			onUpdateAlpha();
+		nativeWidget.style.direction = switch (textDirection) {
+			case 'RTL' : 'rtl';
+			case 'rtl' : 'rtl';
+			default : 'ltr';
 		}
 
-		if (isFocused || text == '') {
-			if (textClip != null) {
-				textClip.renderable = false;
-			}
+		nativeWidget.style.textAlign = switch (autoAlign) {
+			case 'AutoAlignLeft' : 'left';
+			case 'AutoAlignRight' : 'right';
+			case 'AutoAlignCenter' : 'center';
+			case 'AutoAlignNone' : 'none';
+			default : 'left';
+		}
+
+		if (cursorColor >= 0) {
+			nativeWidget.style.caretColor = RenderSupportJSPixi.makeCSSColor(cursorColor, cursorOpacity);
+		}
+
+		if (type == 'number') {
+			nativeWidget.step = step;
+		}
+
+		if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != '') {
+			nativeWidget.autocomplete = accessWidget.autocomplete;
+		} else if (type == 'password' && nativeWidget.autocomplete == '') {
+			nativeWidget.autocomplete = 'new-password';
+		}
+
+		if (maxChars >= 0) {
+			nativeWidget.maxLength = maxChars;
+		}
+
+		if (tabIndex >= 0) {
+			nativeWidget.tabIndex = tabIndex;
+		}
+
+		if (multiline) {
+			nativeWidget.style.resize = 'none';
+			nativeWidget.wrap = wordWrap ? 'soft' : 'off';
+		}
+
+		nativeWidget.style.cursor = isFocused ? 'text' : 'inherit';
+
+		if (Platform.isEdge || Platform.isIE) {
+			nativeWidget.style.opacity = 1;
+			var slicedColor : Array<String> = style.fill.split(",");
+			var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
+
+			nativeWidget.style.color = newColor;
 		} else {
-			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
-			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
-
-			if (textClip == null) {
-				textClip = createTextClip(texts[0][0], style);
-				addChild(textClip);
-			}
-
-			textClip.renderable = true;
-
-			text = bidiDecorate(texts[0][0]);
-
-			textClip.text = text;
-			textClip.style = style;
-
-			var child = textClip.children.length > 0 ? textClip.children[0] : null;
-
-			while (child != null) {
-				textClip.removeChild(child);
-				child.destroy({ children: true, texture: true, baseTexture: true });
-
-				child = textClip.children.length > 0 ? textClip.children[0] : null;
-			}
-
-			if (texts.length > 1 || texts[0].length > 1) {
-				var currentHeight = 0.0;
-
-				for (line in texts) {
-					var currentWidth = 0.0;
-					var lineHeight = 0.0;
-
-					for (txt in line) {
-						text = bidiDecorate(txt);
-
-						if (txt == texts[0][0]) {
-							currentWidth = textClip.getLocalBounds().width;
-							lineHeight = textClip.getLocalBounds().height;
-						} else {
-							var newTextClip = createTextClip(text, style);
-
-							newTextClip.setClipX(currentWidth);
-							newTextClip.setClipY(currentHeight);
-
-							textClip.addChild(newTextClip);
-
-							currentWidth += newTextClip.getLocalBounds().width;
-							lineHeight = Math.max(lineHeight, newTextClip.getLocalBounds().height);
-						}
-					}
-
-					currentHeight += lineHeight;
-				}
-			}
-
-			var anchorX = switch (autoAlign) {
-				case 'AutoAlignLeft' : 0;
-				case 'AutoAlignRight' : 1;
-				case 'AutoAlignCenter' : 0.5;
-				default : textDirection == 'rtl' ? 1 : 0;
-			};
-
-			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
-
-			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
-
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-		}
-	}
-
-	public override function onUpdateAlpha() : Void {
-		super.onUpdateAlpha();
-
-		if (isInput) {
-			if (Platform.isEdge || Platform.isIE) {
-				nativeWidget.style.opacity = 1;
-				var slicedColor : Array<String> = style.fill.split(",");
-				var newColor = slicedColor.slice(0, 3).join(",") + "," + Std.parseFloat(slicedColor[3]) * (isFocused ? worldAlpha : 0) + ")";
-
-				nativeWidget.style.color = newColor;
-			} else {
-				nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
-			}
+			nativeWidget.style.opacity = isFocused ? worldAlpha : 0;
 		}
 	}
 
@@ -303,7 +218,88 @@ class TextClip extends NativeWidgetClip {
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
-		invalidateStyle();
+		invalidateMetrics();
+	}
+
+	private function layoutText() : Void {
+		if (isFocused || text == '') {
+			if (textClip != null) {
+				textClip.renderable = false;
+			}
+		} else if (styleChanged) {
+			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
+			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
+
+			if (textClip == null) {
+				textClip = createTextClip(texts[0][0], style);
+				addChild(textClip);
+			}
+
+			text = bidiDecorate(texts[0][0]);
+
+			textClip.text = text;
+			textClip.style = style;
+
+			var child = textClip.children.length > 0 ? textClip.children[0] : null;
+
+			while (child != null) {
+				textClip.removeChild(child);
+				child.destroy({ children: true, texture: true, baseTexture: true });
+
+				child = textClip.children.length > 0 ? textClip.children[0] : null;
+			}
+
+			if (texts.length > 1 || texts[0].length > 1) {
+				var currentHeight = 0.0;
+
+				for (line in texts) {
+					var currentWidth = 0.0;
+					var lineHeight = 0.0;
+
+					for (txt in line) {
+						text = bidiDecorate(txt);
+
+						if (txt == texts[0][0]) {
+							currentWidth = textClip.getLocalBounds().width;
+							lineHeight = textClip.getLocalBounds().height;
+						} else {
+							var newTextClip = createTextClip(text, style);
+
+							newTextClip.setClipX(currentWidth);
+							newTextClip.setClipY(currentHeight);
+
+							textClip.addChild(newTextClip);
+
+							currentWidth += newTextClip.getLocalBounds().width;
+							lineHeight = Math.max(lineHeight, newTextClip.getLocalBounds().height);
+						}
+					}
+
+					currentHeight += lineHeight;
+				}
+			}
+
+			var anchorX = switch (autoAlign) {
+				case 'AutoAlignLeft' : 0;
+				case 'AutoAlignRight' : 1;
+				case 'AutoAlignCenter' : 0.5;
+				default : textDirection == 'rtl' ? 1 : 0;
+			};
+
+			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+
+			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
+
+			if (isInput) {
+				setScrollRect(0, 0, getWidth(), getHeight());
+			}
+
+			textClip.renderable = true;
+		}
+
+		if (isInput && accessWidget != null) {
+			accessWidget.updateTransform();
+		}
 	}
 
 	private function createTextClip(text : String, style : Dynamic) : Text {
@@ -316,9 +312,9 @@ class TextClip extends NativeWidgetClip {
 		return textClip;
 	}
 
-	public override function invalidateStyle() : Void {
+	public function invalidateMetrics() : Void {
 		metrics = null;
-		super.invalidateStyle();
+		invalidateStyle();
 	}
 
 	private function setTextBackground(?text_bounds : Rectangle) : Void {
@@ -359,7 +355,7 @@ class TextClip extends NativeWidgetClip {
 			this.wordWrap = wordWrap;
 			style.wordWrap = wordWrap;
 
-			invalidateStyle();
+			invalidateMetrics();
 		}
 	}
 
@@ -373,7 +369,7 @@ class TextClip extends NativeWidgetClip {
 			this.cropWords = cropWords;
 			style.breakWords = cropWords;
 
-			invalidateStyle();
+			invalidateMetrics();
 		}
 	}
 
@@ -399,17 +395,13 @@ class TextClip extends NativeWidgetClip {
 			this.interlineSpacing = interlineSpacing;
 			style.lineHeight = cast(style.fontSize, Float) * 1.15 + textScaleFactor * interlineSpacing;
 
-			invalidateStyle();
+			invalidateMetrics();
 		}
 	}
 
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
-			// if (textDirection == 'RTL' || textDirection == 'rtl')
-			// 	style.textDirection = 'rtl';
-			// else
-			// 	style.textDirection = 'ltr';
 
 			invalidateStyle();
 		}
@@ -425,7 +417,7 @@ class TextClip extends NativeWidgetClip {
 			else
 				style.align = 'left';
 
-			invalidateStyle();
+			invalidateMetrics();
 		}
 	}
 
@@ -549,14 +541,14 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
-		invalidateStyle();
+		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
 
-		invalidateStyle();
+		invalidateMetrics();
 	}
 
 	private function onInput(e : Dynamic) {

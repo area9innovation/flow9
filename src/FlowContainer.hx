@@ -9,8 +9,6 @@ class FlowContainer extends Container {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 	public var transformChanged : Bool = true;
-	public var alphaChanged : Bool = true;
-	public var visibleChanged : Bool = true;
 	private var childrenChanged : Bool = true;
 
 	public function new(?worldVisible : Bool = false) {
@@ -26,7 +24,11 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
-			newChild.invalidateVisible();
+
+			if (getClipVisible()) {
+				newChild.updateClipWorldVisible();
+				newChild.invalidateStage();
+			}
 
 			childrenChanged = true;
 			emitEvent("childrenchanged");
@@ -40,7 +42,11 @@ class FlowContainer extends Container {
 
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
-			newChild.invalidateVisible();
+
+			if (getClipVisible()) {
+				newChild.updateClipWorldVisible();
+				newChild.invalidateStage();
+			}
 
 			childrenChanged = true;
 			emitEvent("childrenchanged");
@@ -54,6 +60,7 @@ class FlowContainer extends Container {
 
 		if (oldChild != null) {
 			updateClipInteractive();
+			oldChild.updateClipWorldVisible();
 
 			invalidateStage();
 

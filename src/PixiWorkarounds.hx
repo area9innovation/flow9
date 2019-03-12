@@ -555,60 +555,62 @@ class PixiWorkarounds {
 				}
 			}
 
-			PIXI.DisplayObject.prototype.clipVisible = true;
+			PIXI.Container.prototype.updateTransform = function(transformChanged) {
+				transformChanged = transformChanged || this.transformChanged;
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged, alphaChanged, visibleChanged) {
-				if (this.alphaChanged) {
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-
-					if (this.accessWidget) {
-						this.accessWidget.updateAlpha();
-					}
-				}
-
-				if (this.visibleChanged) {
-					this.clipVisible = this.parent.clipVisible && this._visible;
-					this.visible = this.parent.visible && (this.isMask || (this.clipVisible && this.renderable));
-
-					if (this.accessWidget) {
-						this.accessWidget.updateVisible();
-					}
-
-					if (this.interactive && !this.visible) {
-						this.emit('pointerout');
-					}
-				}
-
-				if (this.transformChanged) {
+				if (transformChanged)
+				{
 					this._boundsID++;
+
 					this.transform.updateTransform(this.parent.transform);
+
+					// TODO: check render flags, how to process stuff here
+					this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 					if (this.accessWidget) {
 						this.accessWidget.updateTransform();
 					}
+
+					this.transformChanged = false;
 				}
 
-				if (this.styleChanged) {
-					this.onUpdateStyle();
-
-					this.styleChanged = false;
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i) {
+				for (let i = 0, j = this.children.length; i < j; ++i)
+				{
 					const child = this.children[i];
 
-					child.transformChanged = child.transformChanged || this.transformChanged;
-					child.visibleChanged = child.visibleChanged || this.visibleChanged;
-					child.alphaChanged = child.alphaChanged || this.alphaChanged;
-
-					if (child.clipVisible || child.visibleChanged) {
-						child.updateTransform();
+					if (child.visible)
+					{
+						child.updateTransform(transformChanged);
 					}
 				}
+			};
 
-				this.alphaChanged = false;
-				this.transformChanged = false;
-				this.visibleChanged = false;
+			TextClip.prototype.updateTransform = function(transformChanged) {
+				transformChanged = transformChanged || this.transformChanged;
+
+				if (transformChanged)
+				{
+					this._boundsID++;
+
+					this.transform.updateTransform(this.parent.transform);
+
+					// TODO: check render flags, how to process stuff here
+					this.worldAlpha = this.alpha * this.parent.worldAlpha;
+
+					this.layoutText();
+
+					this.transformChanged = false;
+				}
+
+				for (let i = 0, j = this.children.length; i < j; ++i)
+				{
+					const child = this.children[i];
+
+					if (child.visible)
+					{
+						child.updateTransform(transformChanged);
+					}
+				}
 			};
 		");
 	}
