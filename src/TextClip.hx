@@ -298,6 +298,8 @@ class TextClip extends NativeWidgetClip {
 
 		if (isInput && accessWidget != null) {
 			accessWidget.updateTransform();
+		} else {
+			styleChanged = false;
 		}
 	}
 
