@@ -324,12 +324,14 @@ class NativeHx {
 	}
 
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
+		if (start < 0) return -1;
+
 		if (end >= str.length)
 			return str.indexOf(substr, start);
 
-		// Doesn't seem to be an efficient way to support the end limit without substr
-		var rv = str.substr(start, end-start).indexOf(substr, 0);
-		return (rv < 0) ? rv : start+rv;
+		var pos = str.indexOf(substr, start);
+		var finish = pos + substr.length - 1;
+		return (pos < 0) ? -1 : (finish < end ? pos : -1);
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
@@ -364,23 +366,34 @@ class NativeHx {
 	}
 
 	public static function list2string(h : Dynamic) : String {
-		var result = [];
+		var res : String = "";
 		while (Reflect.hasField(h, "head")) {
 			var s : String = Std.string(h.head);
-			result.push(s);
+			res = s + res;
 			h = h.tail;
 		}
-		result.reverse();
-		return result.join('');
+		return res;
 	}
 
 	public static function list2array(h : Dynamic) : Array<Dynamic> {
-		var result = [];
-		while (Reflect.hasField(h, "head")) {
-			result.push(h.head);
-			h = h.tail;
+		var cnt = 0;
+		var p: Dynamic = h;
+		while (Reflect.hasField(p, "head")) {
+			cnt += 1;
+			p = p.tail;
 		}
-		result.reverse();
+		if (cnt == 0) {
+		  return untyped Array(0);
+		}
+		var result = untyped Array(cnt);
+
+		p = h;
+		cnt -= 1;
+		while (Reflect.hasField(p, "head")) {
+			result[cnt] = p.head;
+			cnt -= 1;
+			p = p.tail;
+		}
 		return result;
 	}
 
@@ -607,23 +620,15 @@ class NativeHx {
 	}
 
 	public static function enumFromTo(from : Int, to : Int) : Array<Int> {
-		#if flash
-			var n = to - from + 1;
-			if (n < 0) {
-				return untyped Array(0);
-			}
-			var result = untyped Array(n);
-			for (i in 0...n) {
-				result[i] = i + from;
-			}
-			return result;
-		#else
-			var newArray : Array<Int> = new Array();
-			for (i in (from)...(to) + 1) {
-				newArray.push((i));
-			}
-			return newArray;
-		#end
+		var n = to - from + 1;
+		if (n <= 0) {
+			return untyped Array(0);
+		}
+		var result = untyped Array(n);
+		for (i in 0...n) {
+			result[i] = i + from;
+		}
+		return result;
 	}
 
 	public static function getAllUrlParameters() : Array<Array<String>> {
