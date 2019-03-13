@@ -324,14 +324,12 @@ class NativeHx {
 	}
 
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
-		if (start < 0) return -1;
-
 		if (end >= str.length)
 			return str.indexOf(substr, start);
 
-		var pos = str.indexOf(substr, start);
-		var finish = pos + substr.length - 1;
-		return (pos < 0) ? -1 : (finish < end ? pos : -1);
+		// Doesn't seem to be an efficient way to support the end limit without substr
+		var rv = str.substr(start, end-start).indexOf(substr, 0);
+		return (rv < 0) ? rv : start+rv;
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
@@ -1104,6 +1102,28 @@ class NativeHx {
 				return false;
 			}
 			return true;
+		#elseif (js)
+			try {
+				var fileBlob = new js.html.Blob([content]);
+
+				var a : Dynamic = js.Browser.document.createElement("a");
+				var url = js.html.URL.createObjectURL(fileBlob);
+
+				a.href = url;
+				a.download = file;
+				js.Browser.document.body.appendChild(a);
+				a.click();
+
+				NativeHx.defer(function() {
+					js.Browser.document.body.removeChild(a);
+					js.html.URL.revokeObjectURL(url);
+				});
+
+				return true;
+			} catch (error : Dynamic) {
+				return false;
+			}
+
 		#else
 			// throw "Not implemented for this target: setFileContentBinary";
 			return false;
