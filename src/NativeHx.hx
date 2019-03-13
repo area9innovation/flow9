@@ -1102,6 +1102,28 @@ class NativeHx {
 				return false;
 			}
 			return true;
+		#elseif (js)
+			try {
+				var fileBlob = new js.html.Blob([content]);
+
+				var a : Dynamic = js.Browser.document.createElement("a");
+				var url = js.html.URL.createObjectURL(fileBlob);
+
+				a.href = url;
+				a.download = file;
+				js.Browser.document.body.appendChild(a);
+				a.click();
+
+				NativeHx.defer(function() {
+					js.Browser.document.body.removeChild(a);
+					js.html.URL.revokeObjectURL(url);
+				});
+
+				return true;
+			} catch (error : Dynamic) {
+				return false;
+			}
+
 		#else
 			// throw "Not implemented for this target: setFileContentBinary";
 			return false;

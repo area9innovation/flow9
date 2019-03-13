@@ -2173,6 +2173,14 @@ class RenderSupportJSPixi {
 		clip.setClipMask(mask);
 	}
 
+	public static function startProfile(name : String) : Void {
+		Browser.console.profile(name);
+	}
+
+	public static function endProfile() : Void {
+		Browser.console.profileEnd();
+	}
+
 	public static function getStage() : Dynamic {
 		return PixiStage;
 	}
