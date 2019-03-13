@@ -27,6 +27,7 @@ class RenderSupportJSPixi {
 
 	private static var MousePos : Point = new Point(0.0, 0.0);
 	private static var PixiStageChanged : Bool = true;
+	private static var TransformChanged : Bool = true;
 	private static var isEmulating : Bool = false;
 	private static var AnimationFrameId : Int = -1;
 
@@ -731,10 +732,11 @@ class RenderSupportJSPixi {
 		AccessWidget.updateAccessTree();
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
-			PixiRenderer.render(PixiStage);
+			PixiRenderer.render(PixiStage, null, null, null, !TransformChanged);
 
 			emit("stagechanged", timestamp);
 
+			TransformChanged = false;
 			PixiStageChanged = false;
 		}
 
@@ -751,6 +753,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static inline function InvalidateStage() : Void {
+		TransformChanged = true;
 		PixiStageChanged = true;
 	}
 
@@ -1005,7 +1008,7 @@ class RenderSupportJSPixi {
 
 	public static function setFocus(clip : DisplayObject, focus : Bool) : Void {
 		AccessWidget.updateAccessTree();
-		PixiStage.updateTransform();
+		updateTransform();
 
 		clip.setClipFocus(focus);
 	}
@@ -1091,7 +1094,7 @@ class RenderSupportJSPixi {
 
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
-			RenderSupportJSPixi.PixiStage.updateTransform();
+			updateTransform();
 
 			var a = clip.worldTransform;
 			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
@@ -1445,13 +1448,26 @@ class RenderSupportJSPixi {
 		MousePos.y = y;
 	}
 
+	private static inline function updateTransform() : Void {
+		if (TransformChanged && PixiStage != null) {
+			var cacheParent = PixiStage.parent;
+			PixiStage.parent = untyped PixiStage._tempDisplayObjectParent;
+
+			PixiStage.updateTransform();
+
+			PixiStage.parent = cacheParent;
+
+			TransformChanged = false;
+		}
+	}
+
 	public static function hittest(clip : DisplayObject, x : Float, y : Float) : Bool {
 		if (!clip.getClipWorldVisible() || clip.parent == null) {
 			return false;
 		}
 
 		var point = new Point(x, y);
-		clip.updateTransform();
+		updateTransform();
 
 		return hittestMask(clip.parent, point) && doHitTest(clip, point);
 	}
