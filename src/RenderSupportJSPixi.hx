@@ -645,6 +645,55 @@ class RenderSupportJSPixi {
 		");
 	}
 
+	private static function workaroundTextLetterSpacing() {
+		untyped __js__("
+			PIXI.Text.prototype.drawLetterSpacing = function drawLetterSpacing(text, x, y) {
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
+				var style = this._style;
+
+				// letterSpacing of 0 means normal
+				var letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0) {
+					if (isStroke) {
+						this.context.strokeText(text, x, y);
+					} else {
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
+
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
+					}
+
+					if (text == '')
+						tailWidth = 0;
+					else
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth + letterSpacing;
+					allWidth = tailWidth;
+			    } while (text != '');
+		    };
+		");
+	}
+
 	private static function detectExternalVideoCard() : Bool {
 		var canvas = Browser.document.createElement('canvas');
 		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
@@ -735,6 +784,7 @@ class RenderSupportJSPixi {
 		}
 
 		workaroundTextMetrics();
+		workaroundTextLetterSpacing();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
 		workaroundRendererDestroy();
