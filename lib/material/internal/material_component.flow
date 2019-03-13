@@ -12,12 +12,12 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 	fn : (focus : MFocus) -> Tropic) -> Tropic {
 	focused = extractStruct(state, MFocused(make(false))).focused;
 	active = extractStruct(state, MActive(make(false))).active;
-	enabled = fmin(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled);
+	enabled = fand(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled);
 	forceFocusEnabled = tryExtractStruct(state, MForceFocusEnabled(const(true)));
 	focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
 	clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
 	recordingEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
-	keepFocus = length(extractStructMany(state, MKeepFocusOnClickOut())) > 0;
+	keepFocus = contains(state, MKeepFocusOnClickOut());
 	onClick =
 		tryExtractStruct(state, MOnClick(nop))
 		|> (\cl ->
@@ -31,9 +31,9 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 	down = extractStruct(state, TPressed(make(false))).pressed;
 	hover = extractStruct(state, THovering(make(false))).hovering;
 	selected = extractStruct(state, MSelected(make(false))).selected;
-	hoverEnabled = length(extractStructMany(state, MDisableHover())) == 0;
-	point = extractStruct(state, MMousePosition(make(zeroPoint))).point;
-	tabOrder = eitherMap(tryExtractStruct(state, MFocusId(const(-1))), \fid -> Some(fid.id), None());
+	hoverEnabled = !contains(state, MDisableHover());
+	point = extractStruct(state, MMousePosition(makePoint())).point;
+	tabOrder = maybeMap(tryExtractStruct(state, MFocusId(const(-1))), \fid -> fid.id);
 	mGetFocus = tryExtractStruct(state, MGetFocus(nop1));
 	highlightOnFocus = extractStruct(state, MHighlightOnFocus(const(false))).enabled;
 	highlightOnHover = extractStruct(state, MHighlightOnHover(const(false))).enabled;
@@ -42,22 +42,21 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 	title = extractStruct(state, MButtonTitle(const(""))).title;
 	focusClicks = MFocusClicks(state);
 	focusOnPrevious =
-		if (length(extractStructMany(state, MFocusOnPrevious())) > 0) {
+		if (contains(state, MFocusOnPrevious()))
 			[
-				makeSubscribe(focused, \f -> {
+				makeSubscribe(focused, \f ->
 					if (!f && isNone(getCurrentFocusedItem(manager))) {
 						foc = getPreviousFocusedItem(manager);
 						maybeApply(foc, \pf -> deferred(\ -> nextDistinct(pf.focused, true)));
 					}
-				})
+				)
 			]
-		} else {
+		else
 			[];
-		};
 
 	(\parent ->
 		addMaterialFocusId(manager, parent, name, title, maybeMap(onClick, \c -> c.fn), down, if (hoverEnabled) hover else make(false), focused,
-			active, selected, enabled, fmin(eitherMap(forceFocusEnabled, \ffe -> ffe.enabled, parent.focusEnabled), focusEnabled), keepFocus,
+			active, selected, enabled, fand(eitherMap(forceFocusEnabled, \ffe -> ffe.enabled, parent.focusEnabled), focusEnabled), keepFocus,
 			concat(
 				extractStructMany(state, IScriptBehaviour("", make(flow(false)), ISMiscEvent())),
 				concatA([
@@ -68,7 +67,7 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 						IScriptBehaviour("focused", focused, ISInteractionEvent()),
 					]
 					|> (\st -> arrayPushMaybe(st, maybeMap(onClick, \c -> c.monitorBehaviour))),
-					focusClicks.second,
+					focusClicks.iScriptBehaviour,
 					// extractDynamicBehaviours(enabled, "enabled", MLowLevelChanges()),
 					extractDynamicBehavioursEx(enabled, "enabled", ISEnableEvent()),
 					// extractDynamicBehaviours(focusEnabled, "focus_enabled", MLowLevelChanges()),
@@ -113,7 +112,7 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 						)
 					)
 					|> (\f ->
-						MComponent2TMouseDown(manager, state, focusClicks.first, focus, point, mouseDownEnabled, f)
+						MComponent2TMouseDown(manager, state, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, f)
 					)
 					|> (\f ->
 						eitherMap(
@@ -141,7 +140,7 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 								f
 							)
 					)
-					|> (\f -> TConstruct(arrayPushMaybe(concat(focusClicks.third, focusOnPrevious), maybeMap(onClick, \c -> c.subscribers)), f))
+					|> (\f -> TConstruct(arrayPushMaybe(concat(focusClicks.subscribers, focusOnPrevious), maybeMap(onClick, \c -> c.subscribers)), f))
 				} else
 					fn(focus)
 				)
@@ -169,7 +168,13 @@ MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, st
 	)
 }
 
-MFocusClicks(state : [flow]) -> Triple<[MouseOnDownAroundState], [IScriptBehaviour], [() -> () -> void]> {
+MFocusClicksState(
+	mouseOnDownState : [MouseOnDownAroundState],
+	iScriptBehaviour : [IScriptBehaviour],
+	subscribers : [() -> () -> void]
+);
+
+MFocusClicks(state : [flow]) -> MFocusClicksState {
 	middleClick =
 		extractStructMany(state, MOnMiddleClick(nop))
 		|> (\middleClick ->
@@ -254,8 +259,12 @@ MFocusClicks(state : [flow]) -> Triple<[MouseOnDownAroundState], [IScriptBehavio
 			onTouch,
 			onClickAsync
 		]),
-		Triple([], [], []),
-		\acc, cl -> Triple(arrayPush(acc.first, cl.first), arrayPush(acc.second, cl.second), arrayPush(acc.third, cl.third))
+		MFocusClicksState([], [], []),
+		\acc, cl -> MFocusClicksState(
+			arrayPush(acc.mouseOnDownState, cl.first),
+			arrayPush(acc.iScriptBehaviour, cl.second),
+			arrayPush(acc.subscribers, cl.third)
+		)
 	);
 }
 
@@ -283,8 +292,9 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 	}
 
 	keyOnClick =
-		if (isSome(tryExtractStruct(state, MOnClick(nop))))
-			Some(\b -> {
+		maybeMap(
+			tryExtractStruct(state, MOnClick(nop)),
+			\__ -> \b -> {
 				if (b) {
 					nextDistinct(
 						point,
@@ -299,9 +309,8 @@ MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [Mouse
 				} else {
 					nextDistinct(focus.down, false);
 				}
-			})
-		else
-			None();
+			}
+		);
 
 	clickableState =
 		concatA([
@@ -461,7 +470,7 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 				f2
 			)
 		);
-	oneWayConnection = eitherMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> Some(owc.focusedPopup), None());
+	oneWayConnection = maybeMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> owc.focusedPopup);
 
 	TConstruct(
 		[
@@ -487,57 +496,11 @@ MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], 
 	)
 }
 
-defaultMButtonStructs : [MButtonState] = [
-	TEnabled(const(true)),
-	TPressed(make(false)),
-	THovering(make(false)),
-	TOnClicked(nop),
-	MEnabled(const(true)),
-	MFocusEnabled(const(true)),
-	MForceFocusEnabled(const(true)),
-	MFocusOnPrevious(),
-	MShortcut(""),
-	MShortcutPreventDefault(),
-	MDefaultShortcutEnabled(const(true)),
-	MOnClick(nop),
-	MOnDoubleClick(nop),
-	MOnTripleClick(nop),
-	MOnMiddleClick(nop),
-	MOnRightClick(nop),
-	AccessRole(""),
-	MRippleColor(const(MGrey(500))),
-	MRippleOpacity(const(1.0)),
-	MRippleType(const(MNoRipple())),
-	MRippleShape(""),
-	MRippleOverlay(false),
-	MRipplePosition(const(zeroPoint)),
-	MRippleWidthHeight(const(WidthHeight(0., 0.))),
-	MFocusOnDown(ref false),
-	MHighlightOnFocus(const(false)),
-	MHighlightOnHover(const(false)),
-	MCursorShape(const(DefaultCursor())),
-	MClickEnabled(const(true)),
-	MShortcutFilter(\__, __ -> false),
-	MTooltipText(const("")),
-	MSelected(make(false)),
-	MFocused(make(false)),
-	MActive(make(false)),
-	MKeepFocusOnClickOut(),
-	MMousePosition(make(zeroPoint)),
-	IScriptBehaviour("", make(flow(false)), ISMiscEvent()),
-	IScriptId(""),
-	IScriptRecordingEnabled(const(true)),
-	MFocusId(const(-1)),
-	MDisableHover(),
-	MAddFocusGroup(false),
-	MPassClicks()
-];
-
 extractMButtonState(state : [flow]) -> [MButtonState] {
-	fold(state, [], \acc : [MButtonState], el : flow -> {
-		switch (el) {
-			MButtonState(): arrayPush(acc, el);
-			default: acc;
+	filtermap(state, \el ->
+		switch (el : flow) {
+			MButtonState() : {a : Maybe<MButtonState> = Some(el); a};
+			default : None();
 		}
-	})
+	)
 }
