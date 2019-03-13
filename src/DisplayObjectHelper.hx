@@ -96,7 +96,7 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				invalidateTransform(clip.parent);
+				invalidateTransform(clip);
 			}
 		}
 	}
@@ -109,16 +109,18 @@ class DisplayObjectHelper {
 			clip.emit("pointerout");
 		}
 
+		var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
+
 		var children : Array<Dynamic> = untyped clip.children;
 		if (children != null) {
 			for (c in children) {
 				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || getClipVisible(c) != getClipVisible(clip)) {
-					updateClipWorldVisible(c, false);
+					updateClipWorldVisible(c, updateAccess && !updateAccessWidget);
 				}
 			}
 		}
 
-		if (untyped clip.accessWidget != null) {
+		if (updateAccessWidget) {
 			untyped clip.accessWidget.updateDisplay();
  		}
 	}
@@ -133,7 +135,7 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				invalidateTransform(clip.parent);
+				invalidateTransform(clip);
 			}
 		}
 	}

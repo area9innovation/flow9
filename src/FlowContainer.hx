@@ -60,7 +60,6 @@ class FlowContainer extends Container {
 
 		if (oldChild != null) {
 			updateClipInteractive();
-			oldChild.updateClipWorldVisible();
 
 			invalidateStage();
 
