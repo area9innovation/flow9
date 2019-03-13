@@ -511,13 +511,14 @@ class PixiWorkarounds {
 				return properties;
 			};
 
-			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y, isStroke = false)
+			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
 			{
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
 				const style = this._style;
 
 				// letterSpacing of 0 means normal
 				// Skip directional chars
-
 				const letterSpacing = style.letterSpacing;
 
 				if (letterSpacing === 0)
@@ -534,25 +535,32 @@ class PixiWorkarounds {
 					return;
 				}
 
-				const characters = String.prototype.split.call(text, '');
-				let currentPosition = x;
-				let index = 0;
-				let current = '';
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
 
-				while (index < text.length)
-				{
-					current = characters[index++];
-					if (isStroke)
-					{
-						this.context.strokeText(current, currentPosition, y);
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
 					}
+
+					if (text == '')
+						tailWidth = 0;
 					else
-					{
-						this.context.fillText(current, currentPosition, y);
-					}
-					currentPosition += this.context.measureText(current).width +
-						(current == String.fromCharCode(0x202A) || current == String.fromCharCode(0x202B) || current == String.fromCharCode(0x202C) ? 0.0 : letterSpacing);
-				}
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth +
+						(char == String.fromCharCode(0x202A) || char == String.fromCharCode(0x202B) || char == String.fromCharCode(0x202C)) ? 0.0 : letterSpacing;
+					allWidth = tailWidth;
+			    } while (text != '');
 			}
 
 			PIXI.Text.prototype._renderCanvas = function(renderer)
