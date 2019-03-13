@@ -324,14 +324,23 @@ class NativeHx {
 	}
 
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
-		if (start < 0) return -1;
+		if (str == "" || start < 0)
+			return -1;
 
-		if (end >= str.length)
-			return str.indexOf(substr, start);
+		var s = (start < 0) ? 0 : start;
 
-		var pos = str.indexOf(substr, start);
-		var finish = pos + substr.length - 1;
-		return (pos < 0) ? -1 : (finish < end ? pos : -1);
+		var e = (end > str.length || end < 0) ? str.length : end;
+
+		if (substr.length == 0) {
+			return 0;
+		} else if (substr.length > e - s) {
+			return -1;
+		} else {
+			var pos = str.indexOf(substr, s);
+			var finish = pos + substr.length - 1;
+			return (pos < 0) ? -1 : (finish < e ? pos : -1);
+		}
+		return -1;
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
