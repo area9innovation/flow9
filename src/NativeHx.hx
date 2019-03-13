@@ -373,19 +373,24 @@ class NativeHx {
 		return res;
 	}
 
-	public static function list2array(h : Dynamic) : Array<Dynamic> {
+	public static function countList(h : Dynamic) : Int {
 		var cnt = 0;
 		var p: Dynamic = h;
 		while (Reflect.hasField(p, "head")) {
 			cnt += 1;
 			p = p.tail;
 		}
+		return cnt;
+	}
+
+	public static function list2array(h : Dynamic) : Array<Dynamic> {
+		var cnt = countList(h);
 		if (cnt == 0) {
 		  return untyped Array(0);
 		}
 		var result = untyped Array(cnt);
 
-		p = h;
+		var p: Dynamic = h;
 		cnt -= 1;
 		while (Reflect.hasField(p, "head")) {
 			result[cnt] = p.head;

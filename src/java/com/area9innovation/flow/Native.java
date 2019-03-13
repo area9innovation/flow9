@@ -566,6 +566,18 @@ public class Native extends NativeHost {
 		}
 	}
 
+	public final Integer countList1(Struct list) {
+		int count = 0;
+		for (Struct cur = list;;) {
+			Object[] data = cur.getFields();
+			if (data.length == 0)
+				break;
+			count++;
+			cur = (Struct)data[1];
+		}
+		return (Integer) count;
+	}
+
 	public final Object[] list2array(Struct list) {
 		int count = 0;
 		for (Struct cur = list;;) {

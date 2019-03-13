@@ -1462,6 +1462,19 @@ void ByteCodeRunner::StructTypeError(const StackSlot &slot, const char *fn, cons
     }
 }
 
+int ByteCodeRunner::countList(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(list);
+    RUNNER_CheckTag(TStruct, list);
+    RUNNER_DefSlots1(cur);
+
+    int count = 0;
+    RUNNER_ForEachCons(cur, list) {
+        count++;
+    }
+	return count;
+}
+
 StackSlot ByteCodeRunner::list2array(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(list);
