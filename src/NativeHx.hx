@@ -329,31 +329,29 @@ class NativeHx {
 		  This makes searching a bit faster. But JavaScript has no means for this. 
 		  We have only way to do this - make a copy of string within the range and search there.
 		  It is significantly faster for a long string comparing to simple `indexOf()` for whole string.
-		  But copying is not free, so for short strings search without copying is still faster.
-		  So, in fact, we have two different implementations here, one for relatively short strings
-		  and second for long strings.
+		  But copying is not free. Since copy is linear in general and search is linear in general too,
+		  we can select method depending on source string length and range width.
 		*/
-		if (str.length > 32768) {
+
+		if (str == "" || start < 0)
+			return -1;
+
+		var s = start;
+		var e = (end > str.length || end < 0) ? str.length : end;
+
+		if (substr.length == 0) {
+			return 0;
+		} else if (substr.length > e - s) {
+			return -1;
+		}
+		if (2*(e-s) < str.length - s) {
 			if (end >= str.length) return str.indexOf(substr, start);
 			var rv = str.substr(start, end-start).indexOf(substr, 0);
 			return (rv < 0) ? rv : start+rv;
 		} else {
-			if (str == "" || start < 0)
-				return -1;
-
-			var s = (start < 0) ? 0 : start;
-			var e = (end > str.length || end < 0) ? str.length : end;
-
-			if (substr.length == 0) {
-				return 0;
-			} else if (substr.length > e - s) {
-				return -1;
-			} else {
-				var pos = str.indexOf(substr, s);
-				var finish = pos + substr.length - 1;
-				return (pos < 0) ? -1 : (finish < e ? pos : -1);
-			}
-			return -1;
+			var pos = str.indexOf(substr, s);
+			var finish = pos + substr.length - 1;
+			return (pos < 0) ? -1 : (finish < e ? pos : -1);
 		}
 	}
 
