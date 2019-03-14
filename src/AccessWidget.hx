@@ -121,35 +121,39 @@ class AccessWidgetTree extends EventEmitter {
 	}
 
 	private function getZorder() : Int {
-		if (accessWidget != null) {
-			return accessWidget.zorder;
+		if (zorder != null) {
+			return zorder;
 		} else if (parent != null) {
 			return parent.getZorder();
 		} else {
-			return 0;
+			return AccessWidget.tree.zorder;
 		}
 	}
 
 	public function updateZorder() : Bool {
 		var previousZOrder = zorder;
-		zorder = getZorder();
+		zorder = accessWidget != null && accessWidget.zorder != null ? accessWidget.zorder : null;
 
 		for (child in children) {
-			if (child.zorder > zorder) {
+			if (child.zorder > zorder || zorder == null) {
 				zorder = child.zorder;
 			}
 		}
 
-		if (previousZOrder != zorder) {
-			if (parent == null) {
-				updateDisplay();
-			} else if (!parent.updateZorder()) {
-				updateDisplay();
-			}
+		if (zorder == null) {
+			updateDisplay();
 
 			return true;
 		} else {
-			return false;
+			if (previousZOrder != zorder) {
+				if (parent == null || !parent.updateZorder()) {
+					updateDisplay();
+				}
+
+				return true;
+			} else {
+				return false;
+			}
 		}
 	}
 
@@ -208,34 +212,28 @@ class AccessWidgetTree extends EventEmitter {
 
 	public function updateTransform() : Void {
 		if (accessWidget != null) {
-			if (accessWidget.clip.parent == null) {
-				return;
-			}
-
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
-			if (nativeWidget != null) {
-				if (zorder >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-					nativeWidget.style.display = "block";
-					nativeWidget.style.opacity = clip.worldAlpha;
-				} else {
-					nativeWidget.style.display = "none";
-					return;
-				}
+			if (DebugAccessOrder) {
+				nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+				nativeWidget.setAttribute("zorder", '${zorder}');
+				nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
+			}
 
-				if (untyped clip.nativeWidget != null) {
-					untyped clip.updateNativeWidget();
+			if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+				nativeWidget.style.display = "block";
+				nativeWidget.style.opacity = clip.worldAlpha;
+			} else {
+				nativeWidget.style.display = "none";
+				return;
+			}
 
-					if (untyped clip.styleChanged) {
-						untyped clip.updateNativeWidgetStyle();
-					}
-				}
+			if (untyped clip.nativeWidget != null) {
+				untyped clip.updateNativeWidget();
 
-				if (DebugAccessOrder) {
-					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-					nativeWidget.setAttribute("zorder", '${zorder}');
-					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
+				if (untyped clip.styleChanged) {
+					untyped clip.updateNativeWidgetStyle();
 				}
 			}
 		}
@@ -291,6 +289,8 @@ class AccessWidgetTree extends EventEmitter {
 			child.parent = this;
 			child.emit("added");
 		}
+
+		updateZorder();
 
 		childrenChanged = true;
 	}
@@ -367,7 +367,7 @@ class AccessWidget extends EventEmitter {
 
 	@:isVar public var parent(get, set) : AccessWidgetTree;
 
-	public function new(clip : DisplayObject, element : Element, ?nodeindex : Array<Int>, ?zorder : Int = 0) {
+	public function new(clip : DisplayObject, element : Element, ?nodeindex : Array<Int>, ?zorder : Int) {
 		super();
 
 		this.clip = clip;

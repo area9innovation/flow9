@@ -78,7 +78,9 @@ class WebClip extends NativeWidgetClip {
 
 		nativeWidget.appendChild(iframe);
 
-		if (reloadBlock) appendReloadBlock();
+		if (reloadBlock) {
+			appendReloadBlock();
+		}
 
 		iframe.onload = function() {
 			try {
@@ -96,10 +98,17 @@ class WebClip extends NativeWidgetClip {
 				}
 
 				ondone("OK");
-				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) iframe.scrolling = "no";
+
+				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
+					iframe.scrolling = "no";
+				}
 				iframe.contentWindow.callflow = cb;
-				if (iframe.contentWindow.pushCallflowBuffer) iframe.contentWindow.pushCallflowBuffer();
-				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) iframe.scrolling = "no"; // Obviousely it is flow page.
+				if (iframe.contentWindow.pushCallflowBuffer) {
+					iframe.contentWindow.pushCallflowBuffer();
+				}
+				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
+					iframe.scrolling = "no"; // Obviousely it is flow page.
+				}
 			} catch(e : Dynamic) { Errors.report(e); }
 		};
 	}
@@ -139,8 +148,8 @@ class WebClip extends NativeWidgetClip {
 		}
 	}
 
-	public override function updateNativeWidget() {
-		super.updateNativeWidget();
+	public override function updateNativeWidgetStyle() {
+		super.updateNativeWidgetStyle();
 
 		if (nativeWidget.getAttribute("tabindex") != null) {
 			iframe.setAttribute("tabindex", nativeWidget.getAttribute("tabindex")); // Needed to the correct tab order of iframe elements

@@ -40,6 +40,13 @@ class DisplayObjectHelper {
 		invalidateStage(clip);
 	}
 
+	public static inline function invalidateTransformByParent(clip : DisplayObject) : Void {
+		untyped clip.transformChanged = true;
+		if (clip.parent != null) {
+			invalidateStage(clip.parent);
+		}
+	}
+
 	public static inline function setClipX(clip : DisplayObject, x : Float) : Void {
 		if (untyped clip.scrollRect != null) {
 			x = x - untyped clip.scrollRect.x;
@@ -96,8 +103,9 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				invalidateTransform(clip);
 			}
+
+			invalidateTransformByParent(clip);
 		}
 	}
 
@@ -135,8 +143,9 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				invalidateTransform(clip);
 			}
+
+			invalidateTransformByParent(clip);
 		}
 	}
 

@@ -217,6 +217,11 @@ class TextClip extends NativeWidgetClip {
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
+		// Force text value right away
+		if (nativeWidget != null) {
+			nativeWidget.value = text;
+		}
+
 		invalidateMetrics();
 	}
 

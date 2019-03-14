@@ -30,7 +30,7 @@ class DropAreaClip extends NativeWidgetClip {
 	private override function createNativeWidget(node_name : String) : Void {
 		super.createNativeWidget(node_name);
 
-		accessWidget.nodeindex = [-1];
+		accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
 		nativeWidget.className = "droparea";
 		nativeWidget.style.zIndex = AccessWidget.zIndexValues.droparea;
 		nativeWidget.onmousemove = provideEvent;
