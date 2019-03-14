@@ -1472,24 +1472,21 @@ StackSlot ByteCodeRunner::countList(RUNNER_ARGS)
     RUNNER_ForEachCons(cur, list) {
         count++;
     }
+    RUNNER_CheckEmptyList(cur, "countList");
+
     return StackSlot::MakeInt(count);
 }
 
 StackSlot ByteCodeRunner::list2array(RUNNER_ARGS)
 {
+    StackSlot countSlot = countList(RUNNER, pRunnerArgs__);
+    RUNNER_CheckTag1(TInt, countSlot);
+    int count = countSlot.GetInt();
+
     RUNNER_PopArgs1(list);
     RUNNER_CheckTag(TStruct, list);
-    RUNNER_DefSlots2(cur,arr);
+    RUNNER_DefSlots2(cur, arr);
 
-    // 1st pass: measure size
-    int count = 0;
-    RUNNER_ForEachCons(cur, list) {
-        count++;
-    }
-
-    RUNNER_CheckEmptyList(cur, "list2array");
-
-    // 2nd pass: construct the array (in reverse)
     arr = RUNNER->AllocateArray(count);
 
     if (RUNNER->IsErrorReported())

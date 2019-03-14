@@ -575,11 +575,11 @@ public class Native extends NativeHost {
 			count++;
 			cur = (Struct)data[1];
 		}
-		return (Integer) count;
+		return (Integer)count;
 	}
 
 	public final Object[] list2array(Struct list) {
-		int count = 0;
+		int count = this.countList(list);
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();
 			if (data.length == 0)
