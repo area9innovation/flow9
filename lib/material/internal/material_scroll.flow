@@ -38,7 +38,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	boxWH0 = wh.box;
 
 	// Maximum scroll offset (0 if content fits available box)
-	maxWH = fselect2(contentWH, boxWH0, FLift2(\c, b -> WidthHeight(max(c.width - b.width, 0.), max(c.height - b.height, 0.))));
+	maxWH = fwhmax(fwhsubtract(contentWH, boxWH0), const(WidthHeight(0., 0.)));
 
 	// Is moving by axis
 	xMoving = make(false);
@@ -119,21 +119,29 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	TransformTAcc2(\t2a -> {
 		boxWH =
 			if (cropByContent)
-				fselect2(boxWH0, contentWH, FLift2(\bWH, cWH ->
-					WidthHeight(min(bWH.width, cWH.width), min(bWH.height, cWH.height))
-				))
+				fwhmin(boxWH0, contentWH)
 			else
 				boxWH0;
 
-		b = m2t(m.box, parent) |> t2a;
+		b = TAttachBox(m2t(m.box, parent), boxWH0) |> t2a;
 
-		cAcc = ref TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(true), true, true, []);
-		c0 = \newParent ->
-			TransformTAcc2(\t2a2 -> {
-				cAcc := TAvailable(TAttachBox(scrollContent(newParent), contentWH), TAcc2SizeAttach(b, boxWH0)) |> t2a2;
+		cAcc = ref zeroTAcc;
+		c0 = \newParent -> {
+			cont = 
+				TAvailableWidthHeight(
+					TAttachBox(scrollContent(newParent), contentWH),
+					b.metrics.width,
+					b.metrics.height
+				);
 
-				^cAcc;
-			});
+			if (cropByContent)
+				TransformTAcc2(\t2a2 -> {
+					cAcc := cont |> t2a2;
+					^cAcc;
+				})
+			else
+				cont
+		}
 
 		c =
 			TGroupWithoutMetrics([
@@ -244,22 +252,11 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							]
 						),
 						\newParent ->
-							TCrop(scrollPosition, boxWH0,
-								if (isSome(onScrolledToBottom) || isSome(onScrolledToSide)) {
+							c0(newParent)
+							|> (\t -> if (isSome(onScrolledToBottom) || isSome(onScrolledToSide))
 									TransformTAcc2(\t2a2 -> {
-										c1 = t2a2(c0(newParent));
-										TAcc(
-											c1.form,
-											c1.metrics,
-											c1.minWidth,
-											c1.minHeight,
-											c1.maxWidth,
-											c1.maxHeight,
-											c1.xFillers,
-											c1.yFillers,
-											c1.addFillers,
-											c1.xConstant,
-											c1.yConstant,
+										c1 = t2a2(t);
+										disp =
 											concatA([
 												c1.disposers,
 												eitherMap(
@@ -308,13 +305,14 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 													],
 													[]
 												)
-											])
-										);
-									});
-								} else {
-									c0(newParent);
-								}
+											]);
+
+										TAcc(c1 with disposers = disp)
+									})
+								else
+									t
 							)
+							|> (\t -> TCrop(scrollPosition, boxWH0, t))
 					)
 				),
 				eitherMap(
