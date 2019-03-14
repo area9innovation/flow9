@@ -324,12 +324,35 @@ class NativeHx {
 	}
 
 	public static inline function strRangeIndexOf(str : String, substr : String, start : Int, end : Int) : Int {
-		if (end >= str.length)
-			return str.indexOf(substr, start);
+		/*
+		  Searching within a range suggest that we can stop searching inside long string after end position.
+		  This makes searching a bit faster. But JavaScript has no means for this. 
+		  We have only way to do this - make a copy of string within the range and search there.
+		  It is significantly faster for a long string comparing to simple `indexOf()` for whole string.
+		  But copying is not free. Since copy is linear in general and search is linear in general too,
+		  we can select method depending on source string length and range width.
+		*/
 
-		// Doesn't seem to be an efficient way to support the end limit without substr
-		var rv = str.substr(start, end-start).indexOf(substr, 0);
-		return (rv < 0) ? rv : start+rv;
+		if (str == "" || start < 0)
+			return -1;
+
+		var s = start;
+		var e = (end > str.length || end < 0) ? str.length : end;
+
+		if (substr.length == 0) {
+			return 0;
+		} else if (substr.length > e - s) {
+			return -1;
+		}
+		if (2*(e-s) < str.length - s) {
+			if (end >= str.length) return str.indexOf(substr, start);
+			var rv = str.substr(start, end-start).indexOf(substr, 0);
+			return (rv < 0) ? rv : start+rv;
+		} else {
+			var pos = str.indexOf(substr, s);
+			var finish = pos + substr.length - 1;
+			return (pos < 0) ? -1 : (finish < e ? pos : -1);
+		}
 	}
 
 	public static inline function substring(str : String, start : Int, end : Int) : String {
