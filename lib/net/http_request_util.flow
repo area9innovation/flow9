@@ -9,21 +9,36 @@ export {
 		HRCPositionAny();
 		HRCPositionConcrete(pos : int);
 
-	HRCAction ::= HRCActionAllow, HRCActionCheckStatus, HRCActionCheckAll, HRCActionDeny;
-		HRCActionAllow();
-		HRCActionCheckStatus();
-		HRCActionCheckAll();
-		HRCActionDeny();
-
-	HRCAtomRule ::= HRCURL, HRCPost, HRCHeader, HRCParam;
+	HRCAtomRule ::= HRCURL, HRCPost, HRCHeader, HRCParamExists, HRCParamValuesCompare;
 		HRCURL(url : string);
 		HRCPost(post : bool);
 		HRCHeader(header : KeyValue, position : HRCPosition);
-		HRCParam(param : KeyValue, position : HRCPosition);
+		HRCParamExists(param : KeyValue, position : HRCPosition);
+		HRCParamValuesCompare(valueKeys : [string]);
 
-	HRCRule(
+	HttpResponseCompareAction ::= HRCAResponseAcceptWithoutChecking, HRCAResponseCheckStatus, HRCAResponseCheckAll, HRCAResponseReject;
+		HRCAResponseAcceptWithoutChecking();
+		HRCAResponseCheckStatus();
+		HRCAResponseCheckAll();
+		HRCAResponseReject();
+
+	HttpResponseCompareRule(
 		filters : [HRCAtomRule],
-		action : HRCAction
+		action : HttpResponseCompareAction
+	);
+
+	HttpRequestCompareOptions ::= HRCOTimeFiltering;
+		HRCOTimeFiltering();
+
+	HttpRequestCompareAction ::= HRCATakeEqual, HRCATakeNotEqual, HRCADrop;
+		HRCATakeEqual();
+		HRCATakeNotEqual();
+		HRCADrop();
+
+	HttpRequestCompareRule(
+		filters : [HRCAtomRule],
+		options : [HttpRequestCompareOptions],
+		action : HttpRequestCompareAction,
 	);
 
 	dummyHttpRequestCompareFn(left : IScriptRequestRecord, right : IScriptRequestRecord) -> bool;
@@ -48,7 +63,7 @@ export {
 
 	getHttpResponseStatusCompareFn() -> Maybe<(request : IScriptRequestRecord, response : IScriptRequestRespose) -> bool>;
 
-	createHttpResponseCompareFn(rules : [ HRCRule ]) -> (request : IScriptRequestRecord, response : IScriptRequestRespose) -> bool;
+	createHttpResponseCompareFn(rules : [ HttpResponseCompareRule ]) -> (request : IScriptRequestRecord, response : IScriptRequestRespose) -> bool;
 }
 
 httpRequestCompareFn : ref Maybe<(left : IScriptRequestRecord, right : IScriptRequestRecord) -> bool> = ref None();
@@ -111,7 +126,7 @@ getHttpResponseStatusCompareFn() -> Maybe<(request : IScriptRequestRecord, right
 	^httpResponseStatusCompareFn
 }
 
-createHttpResponseCompareFn(rules : [ HRCRule ]) -> (request : IScriptRequestRecord, response : IScriptRequestRespose) -> bool {
+createHttpResponseCompareFn(rules : [ HttpResponseCompareRule ]) -> (request : IScriptRequestRecord, response : IScriptRequestRespose) -> bool {
 	\_request : IScriptRequestRecord, _response : IScriptRequestRespose -> {
 		// Search through an array of rules to find the first suitable.
 		fold(rules, None(), \acc, r -> {
@@ -129,20 +144,24 @@ createHttpResponseCompareFn(rules : [ HRCRule ]) -> (request : IScriptRequestRec
 									HRCPositionAny() : if (!contains(_request.headers, header)) false else acc2;
 								}
 							};
-							HRCParam(param, position) : {
+							HRCParamExists(param, position) : {
 								switch (position : HRCPosition) {
 									HRCPositionConcrete(pos) : if (elementAt(_request.params, pos, KeyValue("", "")) != param) false else acc2;
 									HRCPositionAny() : if (!contains(_request.params, param)) false else acc2;
 								}
 							};
+							HRCParamValuesCompare(valueKeys) : {
+								acc2
+							}
+
 						}
 					} else acc2;
 				})
 				|> (\v -> if (v) {
 					// If the suitable rule is found, apply the action
-						switch (r.action : HRCAction) {
-							HRCActionAllow() : Some(true);
-							HRCActionCheckStatus() : {
+						switch (r.action : HttpResponseCompareAction) {
+							HRCAResponseAcceptWithoutChecking() : Some(true);
+							HRCAResponseCheckStatus() : {
 								switch ((_request.response) : IScriptRequestRespose) {
 									IScriptRequestOk(data) : {
 										switch (_response : IScriptRequestRespose) {
@@ -174,8 +193,8 @@ createHttpResponseCompareFn(rules : [ HRCRule ]) -> (request : IScriptRequestRec
 									}
 								}
 							}
-							HRCActionCheckAll() : Some(_request.response == _response);
-							HRCActionDeny() : Some(false);
+							HRCAResponseCheckAll() : Some(_request.response == _response);
+							HRCAResponseReject() : Some(false);
 						}
 					} else acc
 				)
