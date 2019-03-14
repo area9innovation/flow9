@@ -1864,7 +1864,7 @@ StackSlot GLRenderSupport::interruptibleDeferUntilRender(RUNNER_ARGS)
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
 
-    return RUNNER->AllocateNativeClosure(ByteCodeRunner::RemoveDeferredAction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
+    return RUNNER->AllocateNativeClosure(removeDeferredFunction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
 }
 
 std::vector<GLClip*> regularStageChildren = std::vector<GLClip*>();

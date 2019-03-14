@@ -202,7 +202,7 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
     HttpRequest *rq = getRequestById(id);
 
     if (rq && !rq->response_cb.IsVoid()) {
-        RUNNER_DefSlots1(data);
+        RUNNER_DefSlots2(data, headersArray);
 
         if (rq->tmp_filename != "") {
             data = RUNNER->LoadFileAsString(rq->tmp_filename, true);
@@ -217,9 +217,10 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
         }
 
         int i = 0;
-        StackSlot headersArray = RUNNER->AllocateArray(headers.size());
+        headersArray = RUNNER->AllocateArray(headers.size());
         for (std::map<unicode_string, unicode_string>::iterator it = headers.begin(); it != headers.end(); ++it) {
-            StackSlot headerPair = RUNNER->AllocateArray(2);
+            RUNNER_DefSlots1(headerPair);
+            headerPair = RUNNER->AllocateArray(2);
 
             RUNNER->SetArraySlot(headerPair, 0, RUNNER->AllocateString(it->first));
             RUNNER->SetArraySlot(headerPair, 1, RUNNER->AllocateString(it->second));
