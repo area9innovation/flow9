@@ -566,7 +566,7 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public final Integer countList1(Struct list) {
+	public final Object countList(Struct list) {
 		int count = 0;
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();

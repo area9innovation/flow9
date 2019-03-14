@@ -3730,6 +3730,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, number2double, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getCharCodeAt, 2);
 
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, countList, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, list2array, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, list2string, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, isArray, 1);

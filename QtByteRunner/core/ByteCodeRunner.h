@@ -1328,6 +1328,7 @@ private:
     static StackSlot number2double(ByteCodeRunner*,StackSlot*);
     static StackSlot getCharCodeAt(ByteCodeRunner*,StackSlot*);
     static StackSlot string2utf8(ByteCodeRunner*,StackSlot*);
+    static StackSlot countList(ByteCodeRunner*,StackSlot*);
     static StackSlot list2array(ByteCodeRunner*,StackSlot*);
     static StackSlot list2string(ByteCodeRunner*,StackSlot*);
     static StackSlot isArray(ByteCodeRunner*,StackSlot*);
