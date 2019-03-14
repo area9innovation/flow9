@@ -566,7 +566,7 @@ public class Native extends NativeHost {
 		}
 	}
 
-	public final Object countList(Struct list) {
+	private final int countListInternal(Struct list) {
 		int count = 0;
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();
@@ -575,11 +575,15 @@ public class Native extends NativeHost {
 			count++;
 			cur = (Struct)data[1];
 		}
-		return (Integer)count;
+		return count;
+	}
+	
+	public final Object countList(Struct list) {
+		return Integer.valueOf(countListInternal(list));
 	}
 
 	public final Object[] list2array(Struct list) {
-		int count = this.countList(list);
+		int count = countListInternal(list);
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();
 			if (data.length == 0)
