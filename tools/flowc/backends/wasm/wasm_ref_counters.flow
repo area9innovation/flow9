@@ -21,15 +21,11 @@ wasmIsLastStemenet(ex : WasmExp) {
 		WasmLambda(__, __, __, __): true;
 		WasmCall(__, __, __, __, __): true;
 		WasmVar(__, __, __): true;
-		WasmLet(__, __, __, e2, __, __): 
-			switch (e2) {
-				WasmVoid(__): true;
-				default: false;
-			} 
+		WasmLet(__, __, __, __, __, __): false;
 		WasmIf(e1, e2, e3, __, __): false;
 		WasmSwitch(__, __, cases, __, __): false;
 		WasmCast(__, __, __, __, __): true;
-		WasmSeq(es, __, iid): false;
+		WasmSeq(es, __, iid): length(es) == 0; // last if there are no statements inside
 		WasmCallPrim(__, __, __, __): true;
 		WasmVoid(__): true;
 		WasmDouble(__, __): true;
@@ -62,57 +58,54 @@ wasmAddRefcounting(ex : WasmExp, args : [WasmFunArg]) {
         if (a.name == "") println("Internal error: empty var name passed as scope parameter");
         WasmScopeVar(a.name, a.type, false);
     });
-    fiWasmInjectIncrements(ex, scopeVars, false);
+    fiWasmInjectIncrements(ex, scopeVars);
 }
 
-// not last means never consider this statement last - i.e. it can be part of a sequence
-fiWasmInjectIncrements(ex : WasmExp, scopeVars : [WasmScopeVar], notLast : bool) {
-    rec = \e -> fiWasmInjectIncrements(e, scopeVars, notLast);
-    recNotLast = \e -> fiWasmInjectIncrements(e, scopeVars, true);
-    destructedVars = if (!notLast && wasmIsLastStemenet(ex)) scopeVars else [];
+// scopeVars - a list of vars currently in scope
+// when calling recursively for a statement that cannot be last on itself, list as passed as empty
+// it may come non-empty inside when new vars are introduced
+fiWasmInjectIncrements(ex : WasmExp, scopeVars : [WasmScopeVar]) {
+    rec = \e -> fiWasmInjectIncrements(e, scopeVars);
+    recNotLast = \e -> fiWasmInjectIncrements(e, []);
 
     switch (ex : WasmExp) {
-		WasmLambda(args, b, type, __): WasmLambda(ex with destructedVars=destructedVars);
+		WasmLambda(args, b, type, __): WasmLambda(ex with destructedVars=scopeVars);
 		WasmCall(f, args, type, callType, __): 
             WasmCall(f, 
-                map(args, recNotLast), type, callType, destructedVars);
+                map(args, recNotLast), type, callType, scopeVars);
 		WasmVar(name, type, __): 
             if (wasmTypeUsesWasmHeap(type))
-                WasmIncRefcnt(ex, type, destructedVars)
+                WasmIncRefcnt(ex, type, scopeVars)
             else
-                WasmVar(ex with destructedVars=destructedVars);
+                WasmVar(ex with destructedVars=scopeVars);
 		WasmLet(name, type, e1, e2, type2, __): {
             newScopeVars = if (wasmTypeUsesWasmHeap(type)) 
                 arrayPush(scopeVars, WasmScopeVar(name, type, true))
             else
                 scopeVars;
-            isE2Empty = switch (e2) {
-                WasmVoid(__) : true;
-                default : false;
-            }
-			WasmLet(name, type, fiWasmInjectIncrements(e1, scopeVars, notLast || !isE2Empty), 
-                fiWasmInjectIncrements(e2, newScopeVars, notLast), type2, destructedVars); 
+			WasmLet(name, type, recNotLast(e1), 
+                fiWasmInjectIncrements(e2, newScopeVars), type2, []); 
         }
 		WasmIf(e1, e2, e3, type, __): 
-			WasmIf(recNotLast(e1), rec(e2), rec(e3), type, destructedVars);
+			WasmIf(recNotLast(e1), rec(e2), rec(e3), type, []);
 		WasmSwitch(x, switchType, cases, type, __): 
 			WasmSwitch(x, switchType, // TODO : this is implicit scope
                 map(cases, \c -> WasmCase(c.struct, c.argNames, rec(c.body))),
-                type, destructedVars);
+                type, []);
 		WasmCast(e, tFrom, tTo, type, __): 
-            WasmCast(recNotLast(e), tFrom, tTo, type, destructedVars);
+            WasmCast(recNotLast(e), tFrom, tTo, type, scopeVars);
 		WasmSeq(es, type, __): 
             WasmSeq(mapi(es, 
-                \i, e -> fiWasmInjectIncrements(e, scopeVars, notLast || i != length(es) - 1)
-                ), type, destructedVars);
-		WasmCallPrim(op, es, type, __): WasmCallPrim(op, map(es, recNotLast), type, destructedVars);
-		WasmVoid(__): WasmVoid(destructedVars);
-		WasmDouble(__, __): WasmDouble(ex with destructedVars=destructedVars);
-		WasmInt(__, __): WasmInt(ex with destructedVars=destructedVars);
-		WasmString(__, __): WasmIncRefcnt(ex, WasmTypeString(), destructedVars);
-		WasmBool(__, __): WasmBool(ex with destructedVars=destructedVars);
-		WasmRequire(flowfile, e, type, id): WasmRequire(flowfile, rec(e), type, destructedVars); 
-		WasmUnsafe(name, fallback, type, id): WasmUnsafe(name, rec(fallback), type, destructedVars);
+                \i, e -> if (i != length(es) - 1) recNotLast(e) else rec(e),
+                ), type, if (length(es) > 0) [] else scopeVars); // empty seq is last statement
+		WasmCallPrim(op, es, type, __): WasmCallPrim(op, map(es, recNotLast), type, scopeVars);
+		WasmVoid(__): WasmVoid(scopeVars);
+		WasmDouble(__, __): WasmDouble(ex with destructedVars=scopeVars);
+		WasmInt(__, __): WasmInt(ex with destructedVars=scopeVars);
+		WasmString(__, __): WasmIncRefcnt(ex, WasmTypeString(), scopeVars);
+		WasmBool(__, __): WasmBool(ex with destructedVars=scopeVars);
+		WasmRequire(flowfile, e, type, id): WasmRequire(flowfile, rec(e), type, []); 
+		WasmUnsafe(name, fallback, type, id): WasmUnsafe(name, rec(fallback), type, []);
         WasmIncRefcnt(__, __, __): ex; // should not happen
         WasmDecRefcnt(__, __, __): ex; // should not happen
 	}

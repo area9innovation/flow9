@@ -85,15 +85,17 @@ class RenderSupportJSPixi {
 	}
 
 	private static function getBackingStoreRatio() : Float {
+		var minRatio = 1.0;
 		var ratio = ((Util.getParameter("resolution") != null) ?
 			Std.parseFloat(Util.getParameter("resolution")) :
 			((Browser.window.devicePixelRatio != null)? Browser.window.devicePixelRatio : 1.0));
 
 		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
 			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
+			minRatio = detectExternalVideoCard() && ratio > 0.49 && ratio < 2.02 ? 2.0 : 1.0;
 		}
 
-		return Math.max(roundPlus(ratio, 2), 1.0);
+		return Math.max(roundPlus(ratio, 2), minRatio);
 	}
 
 	private static function defer(fn : Void -> Void, ?time : Int = 10) : Void {
@@ -643,16 +645,66 @@ class RenderSupportJSPixi {
 		");
 	}
 
+	private static function workaroundTextLetterSpacing() {
+		untyped __js__("
+			PIXI.Text.prototype.drawLetterSpacing = function drawLetterSpacing(text, x, y) {
+				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+
+				var style = this._style;
+
+				// letterSpacing of 0 means normal
+				var letterSpacing = style.letterSpacing;
+
+				if (letterSpacing === 0) {
+					if (isStroke) {
+						this.context.strokeText(text, x, y);
+					} else {
+						this.context.fillText(text, x, y);
+					}
+
+					return;
+				}
+
+				var currentPosition = x;
+				var allWidth = this.context.measureText(text).width;
+				var char, tailWidth, charWidth;
+
+				do {
+					char = text.substr(0, 1);
+					text = text.substr(1);
+
+					if (isStroke) {
+						this.context.strokeText(char, currentPosition, y);
+					} else {
+						this.context.fillText(char, currentPosition, y);
+					}
+
+					if (text == '')
+						tailWidth = 0;
+					else
+						tailWidth = this.context.measureText(text).width;
+
+
+					charWidth = allWidth - tailWidth;
+
+					currentPosition += charWidth + letterSpacing;
+					allWidth = tailWidth;
+			    } while (text != '');
+		    };
+		");
+	}
+
 	private static function detectExternalVideoCard() : Bool {
 		var canvas = Browser.document.createElement('canvas');
 		var gl = untyped __js__("canvas.getContext('webgl') || canvas.getContext('experimental-webgl')");
+
+		if (gl == null) {
+			return false;
+		}
+
 		var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
 		var vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
 		var renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-
-		trace("VideoCard information:");
-		trace(vendor);
-		trace(renderer);
 
 		return renderer.toLowerCase().indexOf("nvidia") >= 0 || renderer.toLowerCase().indexOf("ati") >= 0 || renderer.toLowerCase().indexOf("radeon") >= 0;
 	}
@@ -732,6 +784,7 @@ class RenderSupportJSPixi {
 		}
 
 		workaroundTextMetrics();
+		workaroundTextLetterSpacing();
 		// Required for MaterialIcons measurements
 		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
 		workaroundRendererDestroy();
@@ -2168,6 +2221,14 @@ class RenderSupportJSPixi {
 
 	public static function setClipMask(clip : FlowContainer, mask : Dynamic) : Void {
 		clip.setClipMask(mask);
+	}
+
+	public static function startProfile(name : String) : Void {
+		Browser.console.profile(name);
+	}
+
+	public static function endProfile() : Void {
+		Browser.console.profileEnd();
 	}
 
 	public static function getStage() : Dynamic {
