@@ -9,7 +9,6 @@ import javafx.stage.Stage;
 import java.lang.reflect.Constructor;
 
 public class FxLoader extends Application {
-	private FlowRuntime runtime;
 	private FxNative natives;
 	private FxRenderSupport renderer;
 
@@ -24,8 +23,8 @@ public class FxLoader extends Application {
 		Class cl = Class.forName(flowapp+".Main");
 
 		Constructor constructor =
-			cl.getConstructor(new Class[]{String[].class});
-		runtime = (FlowRuntime)constructor.newInstance((Object)params1);
+			cl.getConstructor(String[].class);
+		FlowRuntime runtime = (FlowRuntime) constructor.newInstance((Object) params1);
 
 		natives = new FxNative(this);
 		renderer = new FxRenderSupport(primaryStage);

@@ -1,7 +1,6 @@
-import material/internal/material_focus;
+import material/internal/material_component;
 import material/internal/material_ellipsis;
 import material/internal/material_icons;
-import material/internal/material_dragdrop;
 
 export {
 	MListLine2Height(line : MListLine, listState : MListInnerState) -> double;
@@ -20,9 +19,8 @@ export {
 		condensed : bool,
 		lightBackground : bool,
 		color : Pair<MColor, MColor>,
-		bgStyle : Pair<(bool) -> [TGraphicsStyle], [TGraphicsStyle]>,
+		bgStyle : Pair<[TGraphicsStyle], [TGraphicsStyle]>,
 		separators : bool,
-		shadows : bool,
 		ellipsis : bool,
 		onClick : (int) -> void,
 		hoverEnabled : Transform<bool>,
@@ -39,16 +37,16 @@ export {
 
 	hoverLine(tr : Tropic, lightBackground : bool) -> Tropic {
 		TRectangle([
-				MFill(MGrey(500)),
-				FillOpacity(if (lightBackground) 0.2 else 0.15)
+				Fill(if (lightBackground) black else white),
+				FillOpacity(if (lightBackground) 0.04 else 0.08)
 			], tr
 		)
 	}
 
 	pressedLine(tr : Tropic, lightBackground : bool) -> Tropic {
 		TRectangle([
-				Fill(if (lightBackground) 0x999999 else 0xcccccc),
-				FillOpacity(if (lightBackground) 0.2 else 0.1)
+				Fill(if (lightBackground) black else white),
+				FillOpacity(if (lightBackground) 0.16 else 0.32)
 			], tr
 		)
 	}
@@ -100,7 +98,7 @@ MListLine2Height(line : MListLine, listState : MListInnerState) -> double {
 		MTripleLine(__, __, state0): extractStruct(state0, MHeight(if (listState.condensed) 76. else 88.)).height;
 		MCustomLine(content0, state0):
 			eitherFn(
-				tryExtractStruct(state0, MHeight(-1.)),
+				tryExtractStruct(state0, MHeight(-1.0)),
 				\hgt -> hgt.height,
 				\ -> getTWordMetrics(TAvailable(listState.m2t(content0, dummyParent(listState.manager)), TEmpty()), makeTree()).height
 			);
@@ -173,6 +171,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			listState.onClick(fgetValue(i));
 		};
 		selected = fselect2(listState.selection.selected, i, FLift2(contains));
+		focusSelected = make(fgetValue(selected));
 
 		focusState : [flow] =
 			replaceStructMany(
@@ -180,10 +179,14 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				[
 					MOnClick(onClick),
 					MEnabled(enabled),
+					MSelected(focusSelected),
 					AccessRole("listitem"),
 					MFocusEnabled(hoverEnabled),
 					MAddFocusGroup(true),
 					MRippleType(fif(hoverEnabled, const(MRippleFill()), const(MNoRipple()))),
+					MHighlightOnFocus(const(true)),
+					MHighlightOnHover(const(true)),
+					// MHighlightOnSelect(const(true)),
 					MCursorShape(fif(hoverEnabled, const(FingerCursor()), const(DefaultCursor()))),
 					MButtonTitle(fselect2(title, subtitle, FLift2(\t, st -> t + " " + st.first))),
 					THovering(hovering)
@@ -258,8 +261,8 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			);
 
 		makeText = \p2, ttl -> \sel -> {
-			color = if (sel) listState.color.second else listState.color.first;
-			TSelect(textStyle, \tst ->
+			color : MColor = if (sel) listState.color.second else listState.color.first;
+			TSelect(textStyle, \tst : [MTextStyle] ->
 				if (listState.ellipsis)
 					MEllipsisText2T(listState.manager, p2, MEllipsisText(ttl, concat([color, MShowTooltip(const(true))], tst)))
 				else
@@ -268,8 +271,8 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		};
 
 		makeSubText = \p2, sbttl -> \sel -> {
-			color = if (sel) listState.color.second else listState.color.first;
-			TSelect(secondaryTextStyle, \stst ->
+			color : MColor = if (sel) listState.color.second else listState.color.first;
+			TSelect(secondaryTextStyle, \stst : [MTextStyle] ->
 				if (listState.ellipsis)
 					MEllipsisText2T(
 						listState.manager,
@@ -287,7 +290,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					cc,
 					\c ->
 						TGroup2(
-							(\ -> alignRightForRTL(listState.m2t(c, p2)))
+							(\ -> TBaseAlignA(listState.m2t(c, p2)))
 							|> minimize,
 
 							TFillX()
@@ -311,7 +314,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 											f
 									)
 								)
-								|> alignRightForRTL
+								|> TBaseAlignA
 								|> (\f -> TCenterYIn(f, TFillXHT(lineHeight)))
 						)
 						|> addActions(p2)
@@ -326,16 +329,43 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 			|> (\t -> TBorderT(sideBorders, const(0.), sideBorders, const(0.), t))
 		)
 		|> (\f ->
-			MFocusClickable2T(listState.manager, p, if (isFConst(name)) fgetValue(name) else "MDynamicListLine", focusState,
+			MComponent2T(listState.manager, p, if (isFConst(name)) fgetValue(name) else "MDynamicListLine", focusState,
 				\focus ->
-					makeTListLine(focus.parent.theme.lightBackground, f(focus.parent), focus, selected,
-						hoverEnabled, listState.bgStyle.first(listState.shadows), listState.bgStyle.second)
+					TAlpha(
+						fif(focus.enabled, const(1.), const(if (getLightBackground(parent)) 0.26 else 0.3)),
+						TCopySize(
+							f(focus.parent),
+							\tr ->
+								TIf(
+									selected,
+									TFrame(0., 0., listState.bgStyle.second, tr),
+									TFrame(0., 0., listState.bgStyle.first, tr)
+								),
+							false
+						)
+					)
 			)
 		)
 		|> (\f -> TAvailable(f, TFillX()))
 		|> (\f ->
 			TConstruct(
 				[
+					\ -> fBidirectionalLink(
+						selected,
+						focusSelected,
+						\s -> {
+							nextDistinct(focusSelected, s);
+						},
+						\fs -> {
+							nextDistinct(
+								listState.selection.selected,
+								if (fs)
+									removeFirst(fgetValue(listState.selection.selected), fgetValue(i))
+								else
+									arrayPush(fgetValue(listState.selection.selected), fgetValue(i))
+							);
+						}
+					),
 					makeSubscribeUns(
 						state,
 						\st ->
@@ -352,7 +382,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				f
 			)
 		)
-		|> (\f -> MListAddShadowsAndLeaveBehinds(p, f, listState, enabled, state))
+		|> (\f -> MListAddLeaveBehinds(p, f, listState, enabled, state))
 		|> if (isFConst(lineHeight) && fgetValue(lineHeight) > 0.) makeTropicConstantHeight(fgetValue(lineHeight) |> Some) else idfn
 	};
 
@@ -411,15 +441,14 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 					|> TLines
 			);
 		yFact = make(b2d(fgetValue(expanded)));
-		factor = 
-			fselect(yFact, FLift(\f -> Factor(1., f)));
+		factor = fselect(yFact, FLift(\f -> Factor(1., f)));
 		enabled = fsubselect(subStyle, FLift(\ss -> extractStruct(ss, MEnabled(const(true))).enabled));
 		customExpanding = fselect(subStyle, FLift(\ss -> contains(ss, MCustomExpanding())));
 		noDispose = fselect(subStyle, FLift(\ss -> contains(ss, MNoDispose())));
 
 		TLines2(
 			fif(customExpanding, subMain, addClickToSubMain(subMain, expanded))
-			|> (\f -> MListLine2T(p, i, f, removeShadowsFromListState(listState), down)),
+			|> (\f -> MListLine2T(p, i, f, listState, down)),
 			TCopySize2(
 				TSelect(noDispose, \nd ->
 					if (nd)
@@ -472,7 +501,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 				f
 			)
 		)
-		|> (\f -> MListAddShadowsAndLeaveBehinds(p, f, listState, enabled, const([])))
+		|> (\f -> MListAddLeaveBehinds(p, f, listState, enabled, const([])))
 	}
 
 	makeSeparatorLine = \p -> {
@@ -482,7 +511,7 @@ MListLine2T(parent : MFocusGroup, i : Transform<int>, line : Transform<MListLine
 		|> TBorderTopBottom(padding);
 	}
 
-	MActivate2T(listState.manager, parent, "MListLine", [MFocusId(i), MFocusHorizontal(true)], \p ->
+	MComponentGroup2T(listState.manager, parent, "MListLine", [MFocusId(i)], \p ->
 		TSelect(
 			fselect(line, FLift(\ln ->
 				switch (ln : MListLine) {
@@ -534,17 +563,12 @@ defaultListState(manager : MaterialManager, parent : MFocusGroup, m2t : (Materia
 		72.,
 		MListSelection(const(false), false, false, make([])),
 		false,
-		parent.theme.lightBackground,
+		getLightBackground(parent),
 		Pair(contrastingMColor(parent), contrastingMColor(parent)),
 		Pair(
-			\shadows ->
-				if (shadows)
-					[MFill(MDialogColor(parent.theme.lightBackground))]
-				else
-					[],
-			[Fill(contrastingColor(parent)), FillOpacity(0.2)]
+			[],
+			[Fill(contrastingColor(parent)), FillOpacity(if (getLightBackground(parent)) 0.08 else 0.16)]
 		),
-		false,
 		false,
 		true,
 		nop1,
@@ -572,7 +596,6 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 	selectionEnabled = extractStruct(state, MListSelectionEnabled([])).enabled;
 	isCondensed = extractStruct(state, MCondensed(false)).condensed || listState.condensed;
 	separators = contains(state, MAddSeparators()) || listState.separators;
-	shadows = contains(state, MAddShadows()) || listState.shadows;
 	color =
 		Pair(
 			extractStruct(state, listState.color.first),
@@ -580,8 +603,7 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 		);
 	bgStyle =
 		Pair(
-			\sh ->
-				extractStruct(state, MBackgroundStyle(listState.bgStyle.first(sh))).style,
+			extractStruct(state, MBackgroundStyle(listState.bgStyle.first)).style,
 			extractStruct(state, MSelectedBackgroundStyle(listState.bgStyle.second)).style
 		);
 	onListClick = extractStruct(state, MOnListClick(const(false), nop1));
@@ -645,7 +667,6 @@ makeMListInnerState(listState : MListInnerState, state : [flow]) -> MListInnerSt
 		color,
 		bgStyle,
 		separators,
-		shadows,
 		ellipsisText,
 		onClick,
 		hoverEnabled,
@@ -690,14 +711,14 @@ makeMListLine(line : Material, focus : MFocus, selected : Transform<bool>, hover
 	MGetFocusGroup(\p ->
 		MLetDisplay(
 			"MListLine",
-			MAlpha(fif(focus.enabled, const(1.), const(if (p.theme.lightBackground) 0.26 else 0.3)), line),
+			MAlpha(fif(focus.enabled, const(1.), const(if (getLightBackground(p)) 0.26 else 0.3)), line),
 			TGroup([
 				TRectangle(bgStyle, TGhost("MListLine")),
 				TShowLazy(selected, \ -> TFrame(0.0, 0.0, selectedBgStyle, TGhost("MListLine"))),
-				TShowLazy(fmin(hoverEnabled, fmin(focus.down, focus.enabled)), \ -> pressedLine(TGhost("MListLine"), p.theme.lightBackground)),
+				TShowLazy(fmin(hoverEnabled, fmin(focus.down, focus.enabled)), \ -> pressedLine(TGhost("MListLine"), getLightBackground(p))),
 				TShowLazy(
 					fmin(hoverEnabled, fmin(fmax(focus.focused, focus.hover), focus.enabled)),
-					\ -> hoverLine(TGhost("MListLine"), p.theme.lightBackground)
+					\ -> hoverLine(TGhost("MListLine"), getLightBackground(p))
 				)
 			]),
 			false
@@ -745,8 +766,8 @@ MListIcon2T(manager : MaterialManager, content : Material, color : MColor, selec
 		}
 		MAvatar(imageurl, style): {
 			Pair(
-				\__, __ ->
-					MAvatar2T(imageurl, style),
+				\__, p ->
+					MAvatar2T(p, imageurl, style),
 				true
 			)
 		}
@@ -769,7 +790,7 @@ MListIcon2T(manager : MaterialManager, content : Material, color : MColor, selec
 	}
 }
 
-MListAddShadowsAndLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MListInnerState, enabled : Transform<bool>, state : Transform<[?]>) -> Tropic {
+MListAddLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MListInnerState, enabled : Transform<bool>, state : Transform<[?]>) -> Tropic {
 	leaveBehinds : Transform<Pair<Maybe<MLeaveBehind>, Maybe<MLeaveBehind>>> =
 		fselect(state, FLift(\st -> Pair(
 			tryExtractStruct(st, MLeftLeaveBehind(TEmpty(), nop, [])),
@@ -780,12 +801,6 @@ MListAddShadowsAndLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MLi
 		TLines2(l, TBorder(0., -1., 0., 0., MSeparator2T(listState.manager, parent, true)))
 	else
 		l)
-	|> (\f ->
-		if (listState.shadows)
-			TBorder(0., 2., 0., 0., TShadowShape(const(0.5), parent.theme.lightBackground, TBorder(0., -2., 0., 0., f), RectangleShape()))
-		else
-			f
-	)
 	|> (\f : Tropic ->
 		TSelect(leaveBehinds, \lbP: Pair<Maybe<MLeaveBehind>, Maybe<MLeaveBehind>> -> {
 			leftLeaveBehind : Maybe<MLeaveBehind> = if (getDefaultRtl()) lbP.second else lbP.first;
@@ -833,7 +848,7 @@ MListAddShadowsAndLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MLi
 
 
 				TCopySize(
-					TTranslate(point, TFrame(0., 0., listState.bgStyle.first(listState.shadows), f)),
+					TTranslate(point, TFrame(0., 0., listState.bgStyle.first, f)),
 					\tr ->
 						MSwipe2T(
 							listState.manager,
@@ -900,41 +915,5 @@ MListAddShadowsAndLeaveBehinds(parent : MFocusGroup, l : Tropic, listState : MLi
 			} else
 				f
 		})
-	)
-}
-
-removeShadowsFromListState(listState : MListInnerState) -> MListInnerState {
-	MListInnerState(
-		listState.manager,
-		listState.m2t,
-		listState.width,
-		listState.emptyMessage,
-		listState.reorder,
-		listState.reorderShowIcon,
-		listState.minimize,
-		listState.minimizedWidth,
-		listState.selection,
-		listState.condensed,
-		listState.lightBackground,
-		listState.color,
-		if (listState.shadows)
-			Pair(
-				\sh ->
-					listState.bgStyle.first(true),
-				listState.bgStyle.second
-			)
-		else
-			listState.bgStyle,
-		listState.separators,
-		false,
-		listState.ellipsis,
-		listState.onClick,
-		listState.hoverEnabled,
-		listState.enabled,
-		listState.collapseUnactive,
-		listState.currentSubmenu,
-		listState.sideBorders,
-		listState.primaryActionWidth,
-		listState.subs
 	)
 }

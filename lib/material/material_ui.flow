@@ -1,5 +1,6 @@
 import material/material_dialog;
 import material/internal/material_reorder;
+import ui/animate/teasing;
 import form/realhtmlworkaround;
 
 export {
@@ -23,7 +24,8 @@ export {
 	// topLeft is catched only when isVisible becomes true
 	MPopupMenu(topleft : DynamicBehaviour<Point>, isVisible : DynamicBehaviour<bool>, items : [MMenuLine]) -> Material;
 
-	MAnimatedExpander(manager : MaterialManager, content : Material, expanded : Transform<bool>, vertical : bool) -> Tropic;
+	// Helper for creating dashed or dotted circle
+	MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material;
 
 	MEditGrid(items : [[MEGItem]], style : [MEGItemStyle]) -> Material;
 	MEGItem2M(item : MEGItem, gstyle : [MEGItemStyle]) -> Material;
@@ -37,43 +39,6 @@ export {
 		receiveChannel : DynamicBehaviour<string>, targetOrigin : string, key : string, onLoaded : () -> void, onError : (string) -> void,
 		zoomEnabled : Transform<bool>) -> Material;
 
-	MTimePeriodPicker(
-		manager : MaterialManager,
-		timePeriod : DynamicBehaviour<TimePeriod>,
-		style : [MTimePeriodPickerStyle]
-	) -> Material;
-
-		TimePeriod ::= HourlyPeriod, DailyPeriod,
-			WeeklyPeriod, MonthlyPeriod, YearlyPeriod;
-
-			HourlyPeriod(minute : int, sec : int);
-			DailyPeriod(hour : int, minute : int);
-			WeeklyPeriod(dayOfWeek : int, hour : int, minute : int);
-
-			MonthlyPeriod ::= DateOfMonthPeriod, WeekDayOfMonthPeriod;
-
-				DateOfMonthPeriod(date : int);
-				// 3, 1 = every third Tuesday
-				WeekDayOfMonthPeriod(ordering : int, dayOfWeek : int);
-
-			YearlyPeriod(month : int, day : int, hour : int, minute : int);
-
-		MTimePeriodPickerStyle ::= MEnabled, MSpaceSize;
-			// Space between pickers
-			// 16px by default
-			MSpaceSize(size : double);
-	MTimePeriodMTimePicker(
-		time : DynamicBehaviour<Time>,
-		manager : MaterialManager,
-		showSec : bool,
-		showTitle : bool,
-		enabled : Transform<bool>
-	) -> Material;
-	
-	timePeriod2string(period : TimePeriod) -> string;
-	// Convert TimePeriod: utc -> localTime or localTime -> utc
-	convertTimePeriod(period : TimePeriod, toUtcTime : bool) -> TimePeriod;
-
 	// Changes items on every dragging ends
 	MReorderCols(items : DynamicBehaviour<[?]>, materialize : (?) -> Material, style : [MReorderStyle]) -> Material;
 	MReorderLines(items : DynamicBehaviour<[?]>, materialize : (?) -> Material,	style : [MReorderStyle]) -> Material;
@@ -86,6 +51,9 @@ export {
 
 	MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material;
 		MAudioPlayerStyle ::= MVideoPlayerStyle, MWidth;
+
+	// FVideoTimeRange style disabled
+ 	MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material;
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -144,15 +112,6 @@ MShowLazy(condition : Transform<bool>, fn : () -> Material) -> Material {
 	MLazyOnCondition(condition, \ -> MShow(condition, fn()))
 }
 
-takeMetrics(content : Material, width : DynamicBehaviour<double>, height : DynamicBehaviour<double>) -> Material {
-	takeMetrics2(TGhost("content"), width, height, TDisplay("content"))
-		|> (\m -> MLet("content", content, m));
-}
-
-takeMetrics2(box : Material, width : DynamicBehaviour<double>, height : DynamicBehaviour<double>, display : Material) -> Material {
-	MAttach(box, \wh -> MDispose([fconnect(wh.width, width), fconnect(wh.height, height)], display));
-}
-
 MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Material {
 
 	height = make(0.0);
@@ -173,7 +132,7 @@ MLazyList(lines : [() -> Material], scrollInspect : TScrollInspectVisible) -> Ma
 	], TEmpty())
 		|> (\m -> arrayPush(mapi(lines, \i, line -> MShowLazy(loadState[i], line)), m))
 		|> MLines
-		|> (\m -> takeMetrics(m, make(0.0), height));
+		|> (\m -> MAttachHeight(m, height));
 }
 
 // this can help to close all currently opened popups to have only latest be visible at a time
@@ -192,43 +151,16 @@ MPopupMenu(topleft : DynamicBehaviour<Point>, isVisible : DynamicBehaviour<bool>
 
 }
 
-MAnimatedExpander(
-	manager : MaterialManager,
-	content : Material,
-	expanded : Transform<bool>,
-	vertical : bool) -> Tropic {
+MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material {
+	stepSize = 180. / i2d(dashNumber);
 
-	tcontent = material2tropic(manager, content);
-	fexpanded = make(fgetValue(expanded));
-
-	size = TGhost("content");
-	alpha = make(if (getValue(fexpanded)) 1.0 else 0.0);
-	factor = make(if (getValue(fexpanded)) Factor(1.0, 1.0) else if (vertical) Factor(1.0, 0.0) else Factor(0.0, 1.0));
-	box = TScale(factor, size);
-	offset = TSubtractGroup2(size, box);
-
-	TConstruct(
-		[\ -> fconnect(expanded, fexpanded)],
-		TEasingAnimation(
-			managerTimer(manager),
-			0.3,
-			easingFastOutSlowIn,
-			fexpanded,
-			\e -> Some(e),
-			nop1,
-			\e, prc -> {
-				p2 = if (e) prc else 1.0 - prc;
-				next(alpha, p2);
-				next(factor, if (vertical) Factor(1.0, p2) else Factor(p2, 1.0));
-			},
-			TDisplay("content")
-				|> (\f -> TShift(f, offset))
-				|> (\f -> TCropSize(box, f))
-				|> (\f -> TAlpha(alpha, f))
+	TGraphics(
+		generate(0, dashNumber, \i ->
+			SectorPath(radius, radius, radius, stepSize * i2d(i) * 2., stepSize * (i2d(i) * 2. + 1.), false, false, true)
 		)
+		|> concatA,
+		[MStroke(color)]
 	)
-		|> (\f -> TLet("content", tcontent, f));
-
 }
 
 MEditGrid(items : [[MEGItem]], style : [MEGItemStyle]) -> Material {
@@ -332,422 +264,6 @@ MRealHTMLCrossDomain2(
 	)
 }
 
-buildPeriod(
-	period : int,
-	monthlyPeriod : int,
-	order : int,
-	weekDay : int,
-	day : int,
-	time : Time
-) -> TimePeriod {
-	if (period == 0)
-		HourlyPeriod(time.min, time.sec)
-	else if (period == 1)
-		DailyPeriod(time.hour, time.min)
-	else if (period == 2)
-		WeeklyPeriod(weekDay, time.hour, time.min)
-	else if (period == 3)
-		if (monthlyPeriod == 0)
-			WeekDayOfMonthPeriod(order, weekDay)
-		else
-			DateOfMonthPeriod(day)
-	else
-		YearlyPeriod(time.month, time.day, time.hour, time.min)
-};
-
-MTimePeriodPicker(
-	manager : MaterialManager,
-	timePeriod : DynamicBehaviour<TimePeriod>,
-	style : [MTimePeriodPickerStyle]
-) -> Material {
-	spaceSize = extractStruct(style, MSpaceSize(16.)).size;
-	enabled = extractStruct(style, MEnabled(const(true))).enabled;
-	currentMTPDate = timestamp() |> stamp2time;
-
-	showMTPMonth = make(false);
-	showMTPOrder = make(false);
-	showMTPWeekDay = make(false);
-	showMTPDay = make(false);
-	showMTPSecond = make(false);
-	showMTPTime = make(false);
-	showMTPDate = make(false);
-
-	selectedMTPPeriod = make(0);
-	selectedMTPMonth = make(0);
-	selectedMTPOrder = make(0);
-	selectedMTPWeekDay = make(0);
-	selectedMTPDay = make(0);
-	selectedMTPTime = make(currentMTPDate);
-
-	// Update Functions
-
-	updateMTPSelectors = \period -> {
-		nextDistinct(showMTPMonth, false);
-		nextDistinct(showMTPOrder, false);
-		nextDistinct(showMTPWeekDay, false);
-		nextDistinct(showMTPDay, false);
-		nextDistinct(showMTPSecond, false);
-		if (period == 0) {
-			nextDistinct(showMTPSecond, true);
-			nextDistinct(showMTPTime, false);
-			nextDistinct(showMTPDate, false);
-		}  else if (period == 1) {
-			nextDistinct(showMTPTime, true);
-			nextDistinct(showMTPDate, false);
-		}  else if (period == 2) {
-			nextDistinct(showMTPWeekDay, true);
-			nextDistinct(showMTPTime, true);
-			nextDistinct(showMTPDate, false);
-		}  else if (period == 3) {
-			if (getValue(selectedMTPMonth) == 0) {
-				nextDistinct(showMTPOrder, true);
-				nextDistinct(showMTPWeekDay, true);
-				nextDistinct(showMTPDate, false);
-			} else {
-				nextDistinct(showMTPDay, true);
-			}
-			nextDistinct(showMTPTime, false);
-			nextDistinct(showMTPDate, false);
-			nextDistinct(showMTPMonth, true);
-		}  else if (period == 4) {
-			nextDistinct(showMTPDate, true);
-			nextDistinct(showMTPDay, false);
-			nextDistinct(showMTPTime, true);
-		}
-	};
-
-	updateMTPSelectorsByMonthPeriod = \period -> {
-		if (period == 0 && getValue(selectedMTPPeriod) == 3) {
-			nextDistinct(showMTPOrder, true);
-			nextDistinct(showMTPWeekDay, true);
-			nextDistinct(showMTPDay, false);
-		} else if (period == 1 && getValue(selectedMTPPeriod) == 3) {
-			nextDistinct(showMTPOrder, false);
-			nextDistinct(showMTPWeekDay, false);
-			nextDistinct(showMTPDay, true);
-		}
-	};
-
-	// Selectors
-
-	periodMTPSelector = \ -> MTimePeriodSelectorMenu(
-		_("Frequency"),
-		[_("Hourly"), _("Daily"), _("Weekly"), _("Monthly"), _("Yearly")],
-		selectedMTPPeriod,
-		enabled
-	);
-
-	monthMTPSelector = \ -> MTimePeriodSelectorMenu(
-		_("Type"),
-		[_("By Day Of The Week"), _("By Date")],
-		selectedMTPMonth,
-		enabled
-	);
-
-	dateMTPSelector = \ -> MTimePeriodMDatePicker(selectedMTPTime, manager, enabled);
-
-	orderMTPSelector = \ -> MTimePeriodSelectorMenu(
-		_("Order"),
-		[_("First"), _("Second"), _("Third"), _("Fourth")],
-		selectedMTPOrder,
-		enabled
-	);
-
-	weekDayMTPSelector = \ -> MTimePeriodSelectorMenu(
-		_("Week day"),
-		[
-			_("Monday"),
-			_("Tuesday"),
-			_("Wednesday"),
-			_("Thursday"),
-			_("Friday"),
-			_("Saturday"),
-			_("Sunday")
-		],
-		selectedMTPWeekDay,
-		enabled
-	);
-
-	dayMTPSelector = \ -> MTimePeriodSelectorMenu(
-		_("Day"),
-		generate(1, 32, i2s),
-		selectedMTPDay,
-		enabled
-	);
-
-	timeMTPSelector = \ -> MTimePeriodMTimePicker(selectedMTPTime, manager, false, true, enabled);
-	timeMTPSelectorWithSec = \ -> MTimePeriodMTimePicker(selectedMTPTime, manager, true, true, enabled);
-
-	insSpace = \m : () -> Material -> \ -> MCols2(MFixedX(spaceSize), m());
-
-	MConstruct(
-		[
-			\ -> selectu(
-				timePeriod,
-				\newTimePeriod -> {
-					switch (newTimePeriod : TimePeriod) {
-						HourlyPeriod(minute, sec): {
-							nextDistinct(selectedMTPPeriod, 0);
-							updateMTPSelectors(0);
-							nextDistinct(selectedMTPTime, Time(2017, 1, 1, 0, minute, sec));
-						};
-						DailyPeriod(hour, minute): {
-							nextDistinct(selectedMTPPeriod, 1);
-							updateMTPSelectors(1);
-							nextDistinct(selectedMTPTime, Time(currentMTPDate.year, 1, 1, hour, minute, 0));
-						};
-						WeeklyPeriod(d, h, m): {
-							nextDistinct(selectedMTPPeriod, 2);
-							updateMTPSelectors(2);
-							nextDistinct(selectedMTPWeekDay, d);
-							nextDistinct(selectedMTPTime, Time(currentMTPDate.year, 1, 1, h, m, 0));
-						};
-						WeekDayOfMonthPeriod(o, d): {
-							nextDistinct(selectedMTPPeriod, 3);
-							nextDistinct(showMTPOrder, true);
-							nextDistinct(showMTPWeekDay, true);
-							nextDistinct(showMTPDay, false);
-							nextDistinct(showMTPSecond, false);
-							nextDistinct(selectedMTPMonth, 0);
-							nextDistinct(showMTPMonth, true);
-							nextDistinct(selectedMTPOrder, o);
-							nextDistinct(selectedMTPWeekDay, d);
-						};
-						DateOfMonthPeriod(d): {
-							nextDistinct(selectedMTPPeriod, 3);
-							nextDistinct(showMTPOrder, false);
-							nextDistinct(showMTPWeekDay, false);
-							nextDistinct(showMTPDay, true);
-							nextDistinct(showMTPSecond, false);
-							nextDistinct(showMTPMonth, true);
-							nextDistinct(selectedMTPMonth, 1);
-							nextDistinct(selectedMTPDay, d);
-						};
-						YearlyPeriod(m, d, h, mi): {
-							nextDistinct(selectedMTPPeriod, 4);
-							updateMTPSelectors(4);
-							nextDistinct(selectedMTPTime, Time(currentMTPDate.year, m, d, h, mi, 0));
-						};
-					};
-				}
-			).second,
-			makeSubscribe(
-				fpair(fmerge([selectedMTPPeriod, selectedMTPMonth, selectedMTPOrder, selectedMTPWeekDay, selectedMTPDay]), selectedMTPTime),
-				\sel : Pair<[int], Time> -> {
-					updateMTPSelectors(firstOfPair(sel)[0]);
-					updateMTPSelectorsByMonthPeriod(firstOfPair(sel)[1]);
-
-					nextDistinct(
-						timePeriod,
-						buildPeriod(
-							firstOfPair(sel)[0],
-							firstOfPair(sel)[1],
-							firstOfPair(sel)[2],
-							firstOfPair(sel)[3],
-							firstOfPair(sel)[4],
-							secondOfPair(sel)
-						)
-					);
-				}
-			)
-		],
-		MCols([
-			periodMTPSelector(),
-			MShowLazy(showMTPMonth, monthMTPSelector |> insSpace),
-			MShowLazy(showMTPDate, dateMTPSelector |> insSpace),
-			MShowLazy(showMTPOrder, orderMTPSelector |> insSpace),
-			MShowLazy(showMTPWeekDay, weekDayMTPSelector |> insSpace),
-			MShowLazy(showMTPDay, dayMTPSelector |> insSpace),
-			MShowLazy(showMTPTime, timeMTPSelector |> insSpace),
-			MShowLazy(showMTPSecond, timeMTPSelectorWithSec |> insSpace)
-		])
-	)
-}
-
-timePeriod2string(period : TimePeriod) -> string {
-	getWeekDay = \num -> {
-		if (num == 0) _("Monday")
-		else if (num == 1) _("Tuesday")
-		else if (num == 2) _("Wednesday")
-		else if (num == 3) _("Thursday")
-		else if (num == 4) _("Friday")
-		else if (num == 5) _("Saturday")
-		else _("Sunday")
-	};
-
-	getOrdering = \num -> {
-		if (num == 0) _("first")
-		else if (num == 1) _("second")
-		else if (num == 2) _("third")
-		else _("forth")
-	};
-
-	m2s = \m -> formatString("%1%2", [if (m < 10) "0" else "", i2s(m)]);
-	localTimePeriod = convertTimePeriod(period, false);
-
-	switch (localTimePeriod : TimePeriod) {
-		HourlyPeriod(minute, sec):
-			formatString(_("Hourly at %1:%2"), [m2s(minute), m2s(sec)]);
-		DailyPeriod(hour, minute):
-			formatString(_("Daily at %1:%2"), [i2s(hour), m2s(minute)]);
-		WeeklyPeriod(d, h, m):
-			formatString(_("Weekly on %1 at %2:%3"), [getWeekDay(d), i2s(h), m2s(m)]);
-		WeekDayOfMonthPeriod(o, d):
-			formatString(_("Monthly on %1 %2"), [getOrdering(o), getWeekDay(d)]);
-		DateOfMonthPeriod(d):
-			formatString(_("Monthly on date %1"), [i2s(d + 1)]);
-		YearlyPeriod(m, d, h, mi):
-			formatString(_("Yearly on %1 %2 at %3:%4"), [monthString(Date(2017, m, d), true), i2s(d), i2s(h), m2s(mi)]);
-	}
-}
-
-convertTimePeriod(period : TimePeriod, toUtcTime : bool) -> TimePeriod {
-
-	convertTime2New = \oldTime -> {
-		if (toUtcTime) oldTime |> time2stamp2 |> localTime2utc |> stamp2time
-		else oldTime |> time2stamp |> stamp2time2
-	}
-	utc2LocalHours = \_hour, _mins -> {
-		localTime = convertTime2New(Time(2017, 10, 3, _hour, _mins, 0));
-		DailyPeriod(localTime.hour, localTime.min)
-	}
-
-	utc2LocalDayOfWeeks = \d, _hour, _mins -> {
-		utcTime = Time(2017, 10, 3, _hour, _mins, 0);
-		localTime = convertTime2New(utcTime);
-		newWeekDay =
-			if (utcTime.day != localTime.day) {
-				if (utcTime > localTime) {
-					if (d == 0) 6 else d - 1
-				} else {
-					if (d == 6) 0 else d + 1
-				}
-			} else d;
-
-		WeeklyPeriod(newWeekDay, localTime.hour, localTime.min)
-	}
-
-	utc2LocalDateTouch = \m, d, h, mi -> {
-		localTime = convertTime2New(Time(2017, m, d, h, mi, 0));
-		YearlyPeriod(localTime.month, localTime.day, localTime.hour, localTime.min)
-	}
-
-	switch (period : TimePeriod) {
-		HourlyPeriod(minute, sec): HourlyPeriod(minute, sec);
-		DailyPeriod(hour, minute): utc2LocalHours(hour, minute);
-		WeeklyPeriod(d, h, m): utc2LocalDayOfWeeks(d, h, m);
-		WeekDayOfMonthPeriod(o, d): WeekDayOfMonthPeriod(o, d);
-		DateOfMonthPeriod(d): DateOfMonthPeriod(d);
-		YearlyPeriod(m, d, h, mi): utc2LocalDateTouch(m, d, h, mi);
-	}
-}
-
-MTimePeriodSelectorMenu(
-	label : string,
-	items : [string],
-	behaviour : DynamicBehaviour<int>,
-	enabled : Transform<bool>
-) -> Material {
-	menuLines = map(items, \item -> MMenuSingleLine(item, []));
-	MDropDownMenu(menuLines, behaviour, [MLabel(label)])
-};
-
-MTimePeriodMTimePicker(
-	time : DynamicBehaviour<Time>,
-	manager : MaterialManager,
-	showSec : bool,
-	showTitle : bool,
-	enabled : Transform<bool>
-) -> Material {
-	touchTimePicker = MIconButton("timer", \ -> {
-		close = make(false);
-		pickedTime = make(
-			if (isNullTime(getValue(time)))
-				stamp2time(timestamp())
-			else {
-				getValue(time);
-			}
-		);
-
-		customStyles = if (showSec) [MTimeSeconds(true), MTimeMax(Time(2017, 1, 1, 0, 59, 59))] else [];
-		ShowMDialog(manager, close, [],
-			MTimePicker(pickedTime,
-				concat(
-					customStyles,
-					[
-						MDialogButtons([
-							MButtonOk("enter", \ -> {
-								nextDistinct(time, getValue(pickedTime));
-								next(close, true);
-							}),
-							MButtonCancel("esc", \ -> next(close, true))
-						]),
-						MTimeAMPM(false)
-					]
-				)
-			)
-		)
-	}, [], [MEnabled(const(true))]);
-
-	time2stringWithoutDate = \t -> {
-		if (showSec) lpad(i2s(t.min), "0", 2) + ":" + lpad(i2s(t.sec), "0", 2)
-		else lpad(i2s(t.hour), "0", 2) + ":" + lpad(i2s(t.min), "0", 2)
-	}
-
-	MLines([
-		MShow(const(showTitle), MText(_("Time"), [])),
-		MBaselineCols([
-			MSelect(time, \t -> MText(t |> time2stringWithoutDate, [])),
-			touchTimePicker,
-		])
-	])
-}
-
-MTimePeriodMDatePicker(time : DynamicBehaviour<Time>, manager : MaterialManager, enabled : Transform<bool>) -> Material {
-	touchDatePicker = MIconButton("today", \ -> {
-		close = make(false);
-		pickedDate = make(
-			if (isNullTime(getValue(time)))
-				stamp2date(timestamp())
-			else {
-				initialTime = getValue(time);
-				Date(initialTime.year, initialTime.month, initialTime.day)
-			}
-		);
-
-		ShowMDialog(manager, close, [],
-			MDatePicker(pickedDate, [
-				MDialogButtons([
-					MButtonOk("enter", \ -> {
-						picked = getValue(pickedDate);
-						timeVal = getValue(time);
-						nextDistinct(
-							time,
-							Time(picked.year, picked.month, picked.day, timeVal.hour, timeVal.min, timeVal.sec)
-						);
-						next(close, true);
-					}),
-					MButtonCancel("esc", \ -> next(close, true))
-				]),
-				MDateMin(addYearsToDate(stamp2date(timestamp()), -10)),
-				MYearDisabled()
-			])
-		)
-	}, [], [MEnabled(const(true))]);
-
-	time2stringWithDate = \t -> {
-		lpad(i2s(t.day), "0", 2) + "/" + lpad(i2s(t.month), "0", 2)
-	}
-
-	MLines([
-		MText(_("Date"), []),
-		MCols([
-			MCenterYIn(MSelect(time, \t -> MText(t |> time2stringWithDate, [])), TFixed(0.0, 48.0)),
-			touchDatePicker,
-		])
-	])
-}
-
 MReorderCols(items : DynamicBehaviour<[?]>, materialize : (?) -> Material, style : [MReorderStyle]) -> Material {
 	MReorderTemplate(items, materialize, style, false)
 }
@@ -800,7 +316,7 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 	audioWH = if (mWidth > 0.) make(WidthHeight(mWidth, 0.)) else makeWH();
 
-	videoStyle = 
+	videoStyle =
 		filtermap(style, \st ->
 			switch (st) {
 				MVideoPlayerStyle() : {a : Maybe<MVideoPlayerStyle> = Some(st); a};
@@ -812,7 +328,7 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 		filename,
 		audioWH,
 		videoStyle
-		|> (\st -> 
+		|> (\st ->
 			eitherMap(
 				tryExtractStruct(st, FVideoControls([])),
 				\vc -> replaceStruct(st, FVideoControls(removeAllStructs(vc.controls, FullScreenPlayer()))),
@@ -830,11 +346,135 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 				[
 					\ -> fconnectSelect(avW, audioWH, \w -> WidthHeight(w, 0.))
 				],
-				MAttachBoxCopyAvailableWidth(audioPlayer, avW)
+				MAttachAvailableWidth(audioPlayer, avW)
 			)
 		}
 	)
 }
+
+MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
+ 	amount = length(filenames);
+
+  	style = removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.)));
+
+  	// properties from external style
+ 	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
+ 	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
+ 	playEx = extractStruct(style, FVideoPlay(make(false))).play;
+
+  	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
+ 	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
+
+  	// playing audio
+ 	currIndexB = make(0);
+
+  	// init properties for each audio
+ 	states = map(filenames, \__ ->
+ 		Quadruple(
+ 			make(0.),		// first: length
+ 			make(0.),		// second: position
+ 			make(false),	// third: is play
+ 			make(false)		// fourth: is ready
+ 		)
+ 	) |> unzipA4;
+
+  	synchrocalls = mapi(filenames, \i, __ ->
+ 		SynchroCalls(
+ 			// set ready
+ 			\-> nextDistinct(states.fourth[i], true),
+ 			// play next or stop in the end
+ 			\-> {
+ 				// reset position (for js)
+ 				nextDistinct(states.second[i], 0.);
+ 				// if last audio
+ 				if (i == amount - 1) {
+ 					if (!fgetValue(loopEx)) {
+ 						// if not looping
+ 						nextDistinct(playEx, false);
+ 						synchrocallEx.onStop();
+ 					}
+ 				}
+ 				// next for case with length == 1
+ 				next(currIndexB, (i + 1) % amount);
+ 			}
+ 		)
+ 	);
+
+  	players = mapi(filenames, \i, url ->
+ 		TVideo(
+ 			url,
+ 			make(WidthHeight(-1., -1.)),		// not to draw
+ 			replaceStructMany(style,
+ 				[
+ 					FVideoLength(states.first[i]),
+ 					FVideoPosition(states.second[i]),
+ 					FVideoPlay(states.third[i]),
+ 					synchrocalls[i],
+ 				]
+ 			)
+ 		)
+ 	);
+
+  	changeAudioPlaying = \index, isPlay -> {
+ 		nextDistinct(states.third[index], isPlay);
+ 	}
+
+  	playerPos = fsubselect(
+ 		currIndexB,
+ 		FLift(\index ->
+ 			faddition(
+ 				fsum(subrange(states.first, 0, index)),	// sum of previous lengths
+ 				states.second[index]					// current possition
+ 			)
+ 		)
+ 	);
+ 	playerPosChange = \pos -> nextDistinct(posEx, pos);
+ 	userPosChange = \pos -> {
+ 		allLength = fgetValue(fmerge(states.first));
+ 		// last index ; length sum of previous audio
+ 		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
+ 			newEnd = acc.second + len;
+ 			isNext = (acc.first + 1 == i);
+ 			if (isNext && newEnd < pos) Pair(i, newEnd)
+ 			else acc;
+ 		});
+
+  		// reset current player
+ 		currIndex = getValue(currIndexB);
+ 		changeAudioPlaying(currIndex, false);
+ 		nextDistinct(states.second[currIndex], 0.);
+ 		// start new player
+ 		newIndex = lastEnd.first + 1;
+ 		nextDistinct(states.second[newIndex], pos - lastEnd.second);
+ 		// next need when index has not changed (continue playing)
+ 		next(currIndexB, newIndex);
+ 	}
+
+  	MShow(
+ 		const(i2b(amount)),
+ 		// rendering (empty)
+ 		MConstruct(
+ 			[
+ 				// when all audios ready
+ 				makeSubscribe(fands(states.fourth, false), \isReady ->
+ 					if (isReady) synchrocallEx.onStart()
+ 				),
+ 				// sum all audio lengths
+ 				\-> fconnect(fsum(states.first), lenEx),
+ 				// set possition
+ 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
+ 				// not make2Subscribe due to looping in 1-element array
+ 				\-> subscribe(currIndexB, \index ->
+ 					changeAudioPlaying(index, getValue(playEx))
+ 				),
+ 				\-> subscribe(playEx, \isPlay ->
+ 					changeAudioPlaying(getValue(currIndexB), isPlay)
+ 				)
+ 			],
+ 			MGroup(players)
+ 		)
+ 	)
+ }
 
 MInlinePopup(
 	manager : MaterialManager,

@@ -16,10 +16,12 @@ export {
 	getCharCatSplitPos(t: string, i: int, endPos: int) -> int;
 	// END TODO
 
+	DirectionAndMajority(d: int, m: int);
+
+	getTextDirectionAndMajority(t: string) -> DirectionAndMajority;
+
 	reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?) -> [[?]];
 }
-
-DirectionAndMajority(d: int, m: bool);
 
 // Appears when automatic line break takes place, disappears on no more need.
 LineTerminal(dm: DirectionAndMajority);
@@ -63,7 +65,6 @@ getCharCatSplitPos(t: string, i: int, endPos: int) -> int {
 			cur_rsc = getCharRelativeScale(cur_pspcode);
 			if (
 				(isPunct(cur_cat) && !(contains([0x27, 0x2C, 0x2E], cur_pspcode) || pre_cat == uc_decimalDigitNumber || nxt_cat == uc_decimalDigitNumber)) ||
-				(ppr_cat != uc_decimalDigitNumber && pre_cat != uc_decimalDigitNumber && cur_cat == uc_decimalDigitNumber) ||
 				(isPunct(pre_cat) && (cur_cat != uc_decimalDigitNumber || ppr_cat != uc_decimalDigitNumber)) ||
 				(isPunct(cur_cat) && (pre_cat != uc_decimalDigitNumber || nxt_cat != uc_decimalDigitNumber)) ||
 
@@ -95,21 +96,22 @@ mirrorWordGlyphsForRtl(s: string, rtl: bool) -> string {
 }
 
 getCharDirectionAndMajority(code: int) -> DirectionAndMajority {
-	DirectionAndMajority(getUnicodeDirection(code), _isLetter(getUnicodeCategory(code)));
+	cat = getUnicodeCategory(code);
+	DirectionAndMajority(getUnicodeDirection(code), if (_isLetter(cat) || contains([0x200E, 0x202D], code)) 2 else b2i(cat == uc_decimalDigitNumber));
 }
 
 // Makes one DM pair from two, this function is fold helper.
 fold2DMs(first: DirectionAndMajority, second: DirectionAndMajority) -> DirectionAndMajority {
-	if (first.m) first else
-	if (second.m) second else
-	DirectionAndMajority(if (first.d == uc_dir_rtl || first.d == uc_dir_ltr) first.d else second.d, false);
+	if (first.m > second.m) first else
+	if (second.m > first.m) second else
+	DirectionAndMajority(if (first.d == uc_dir_rtl || first.d == uc_dir_ltr) first.d else second.d, max(first.m, second.m));
 }
 
 // Returns word direction and majority flag (meaning this direction to be inherited
 // by adjacent words with no majority).
 getTextDirectionAndMajority(t: string) -> DirectionAndMajority {
 	stringFold(
-		unescapeHtml(t), DirectionAndMajority(uc_dir_flow, false), \acc: DirectionAndMajority, code: int ->
+		unescapeHtml(t), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, code: int ->
 			fold2DMs(acc, getCharDirectionAndMajority(code))
 	);
 }
@@ -122,7 +124,7 @@ getWordDirectionAndMajority(w: BiDiWord<?>, getText: (?) -> string) -> Direction
 }
 
 getWordsDirectionAndMajority(ws: [BiDiWord<?>], getText: (?) -> string) -> DirectionAndMajority {
-	fold(map(ws, \w -> getWordDirectionAndMajority(w, getText)), DirectionAndMajority(uc_dir_flow, false), fold2DMs);
+	fold(map(ws, \w -> getWordDirectionAndMajority(w, getText)), DirectionAndMajority(uc_dir_flow, 0), fold2DMs);
 }
 
 debugWord(w: BiDiWord<?>, getText: (?) -> string) -> string {
@@ -140,17 +142,18 @@ groupByCounterDirReverse(ws: [BiDiWord<?>], getText: (?) -> string) -> [[BiDiWor
 		tail(ws), Pair([[ws[0]]], getWordDirectionAndMajority(ws[0], getText)), \acc: Pair<[[BiDiWord<?>]], DirectionAndMajority>, w: BiDiWord<?> -> {
 			wdm = getWordDirectionAndMajority(w, getText);
 			Pair(
-				if (acc.second.d == counterDir && acc.second.m && wdm.d != defaultDir)
+				if (acc.second.d == counterDir && acc.second.m > 1 && wdm.d != defaultDir)
 					insertArray(tail(acc.first), 0, insertArray(acc.first[0], 0, w))
 				else
 					insertArray(acc.first, 0, [w]),
-				if (wdm.m) wdm else acc.second
+				if (wdm.m > 1) wdm else acc.second
 			)
 		}
-	).first
+	).first;
 }
 
 reflowLineToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> string, setText: (?, string) -> ?) -> [BiDiWord<?>] {
+	rtl = getDefaultRtl();
 	// Grouping words with counter-direction into subarrays, and reversing order.
 	ltrGrouping = groupByCounterDirReverse(ws, getText);
 
@@ -161,18 +164,17 @@ reflowLineToBiDi(ws: [BiDiWord<?>], isEmpty: (?) -> bool, getText: (?) -> string
 	r = filter(
 		concatA(
 			map(ltrCleanGrouping, \grp -> {
-				lgrp = length(unwrapLine(grp));
-				grprtl = (length(unwrapLine(grp)) == 1) == getDefaultRtl();
+				grprtl = (length(unwrapLine(grp)) == 1) == rtl;
 				map(grp, \w -> switch(w) {
 					BiDiWrapper(nativeW): BiDiWrapper(setText(nativeW, mirrorWordGlyphsForRtl(getText(nativeW), grprtl)));
 					LineTerminal(__): w;
 				});
 			})
 		),
-	 	\re -> switch(re) {
-	 		BiDiWrapper(w): !isEmpty(w);
-	 		LineTerminal(__): false;
-	 	}
+		\re -> switch(re) {
+			BiDiWrapper(w): !isEmpty(w);
+			LineTerminal(__): false;
+		}
 	);
 
 	// Globally, text remains in reverse order after first operation, which only good for RTL.
@@ -200,11 +202,11 @@ reflowTextToBiDi(text: [[?]], isEmpty: (?) -> bool, getText: (?) -> string, setT
 			reflowLineToBiDi(
 				concat3(
 					[LineTerminal(fold(
-						reverseA(take(lines, i)), DirectionAndMajority(uc_dir_flow, false), \acc: DirectionAndMajority, lineAbove -> fold2DMs(acc, lineAbove.endDM)
+						reverseA(take(lines, i)), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineAbove -> fold2DMs(acc, lineAbove.endDM)
 					))],
 					line.words,
 					[LineTerminal(fold(
-						tailFrom(lines, i+1), DirectionAndMajority(uc_dir_flow, false), \acc: DirectionAndMajority, lineBelow -> fold2DMs(acc, lineBelow.startDM)
+						tailFrom(lines, i+1), DirectionAndMajority(uc_dir_flow, 0), \acc: DirectionAndMajority, lineBelow -> fold2DMs(acc, lineBelow.startDM)
 					))]
 				),
 				isEmpty, getText, setText,

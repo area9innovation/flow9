@@ -118,7 +118,9 @@ enum PlatformEvent {
     PlatformNetworkOffline = 3,
     PlatformNetworkOnline = 4,
     PlatformLowMemory = 5,
-    PlatformDeviceBackButton = 6
+    PlatformDeviceBackButton = 6,
+    PlatformApplicationUserIdle = 7,
+    PlatformApplicationUserActive = 8
 };
 
 class ByteCodeRunner : public LocalRootHost
@@ -1140,6 +1142,12 @@ public:
     // Register the action to be called later
     void AddDeferredAction(const StackSlot &cb) {
         DeferredActionQueue.push_back(cb);
+    }
+
+    static StackSlot RemoveDeferredAction(ByteCodeRunner *const RUNNER, StackSlot *const pRunnerArgs__, void *) {
+        const StackSlot &cb = pRunnerArgs__[0];
+
+        RUNNER->DeferredActionQueue.remove(cb);
     }
 
     double DeferredQueueTimeout; // <= 0 - no timeout

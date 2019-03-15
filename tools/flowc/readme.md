@@ -11,7 +11,8 @@ Goals:
 Use
 ---
 
-Install Java Runtime 1.8 or later in a 64-bit version. Then use
+Install Java Runtime 1.8 or later in a 64-bit version and python 3.
+Python 3 is necessary to run the flowc1 launching script. Then use
 
   flowc1
 
@@ -37,6 +38,14 @@ the default. When this is done, it means that Sublime Text, Visual Code
 and flowcpp will automatically use flowc:
 
   flowcpp sandbox/fun.flow
+
+On *nix based OS you can use flow as a scripting language. To do it,
+place a link to the bin/flows script into /usr/bin. Then it is sufficient
+to provide a shebang-header to the file like
+
+  #!/usr/bin/flows
+
+and make it executable to run the file (it must contain main function).
 
 Differences to haxe compiler
 ----------------------------

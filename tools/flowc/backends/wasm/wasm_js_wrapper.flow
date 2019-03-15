@@ -90,7 +90,7 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 				args = strGlue(mapi(argTypes, \i, ar -> "arg_" + i2s(i)), ", ");
 				WasmCallback(
 					fiInvokeName(a, typeTable) + ": function(fn_id, " + args + ") {\n" + 
-					"		var fn = IDHandler.getObjectFromID(fn_id);\n" + 
+					"		var fn = IDHandler.getObjectFromID(decode_data(0, fn_id, [6]));\n" + 
 					"		return fn(" + args + ");\n" + 
 					"	}",
 					[]
@@ -118,7 +118,14 @@ getFuncArg(nameIn : string, nameOut : string, a : WasmTypeDescriptor, typeTable 
 		WasmTypeDouble(): buildEmpty();
 		WasmTypeString(): buildArg1(["var " + nameOut + " = " + f(nameIn, [4])]);
 		WasmTypeArray(type): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
-		WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID(" + nameIn + ");" else "IDHandler.createObjectId(" + nameIn + ");")]);
+		// WasmTypeNative(): buildArg1(["var " + nameOut + " = " + (if (decode)  "IDHandler.getObjectFromID(" + nameIn + ");" else "IDHandler.createObjectId(" + nameIn + ");")]);
+		WasmTypeNative(): {
+			tmpName = if (decode)  
+				"IDHandler.getObjectFromID(decode_data(0, " + nameIn + ", [6]))" 
+			else 
+				"encode_data(IDHandler.createObjectId(" + nameIn + "), [6])";
+			buildArg1(["var " + nameOut + " = " + tmpName]);
+		}
 		WasmTypeFlow(): buildArg1(["var " + nameOut + " = " + f(nameIn, wasmTypeDescriptor2bytes(typeTable, a, false))]);
 
 		WasmTypeUnion(u_name, u_structs): {
@@ -203,7 +210,7 @@ buildReturnValue(retName: string, ret: [FuncArg], indent: string, decode : bool)
 		if (a.cb.name != "") {
 			newretname = retName + "_";
 			name = a.namein;
-			fnIndex = if (!decode) a.cb.name else "IDHandler.createObjectId(" + a.cb.name + ")";
+			fnIndex = if (!decode) a.cb.name else "encode_data(IDHandler.createObjectId(" + a.cb.name + "), [6])";
 			buildFunction(a.cb.name, name, newretname, a.cb.args, a.cb.ret, indent, true, a.cb.decode) + ";\n" +
 			indent + "return " + fnIndex + ";\n"
 		} else {
@@ -222,7 +229,7 @@ buildFunction(name: string, nativeName: string, retName: string, args: [FuncArg]
 			fn = buildFunction(funname, a.namein, a.cb.ret[0].namein, a.cb.args, a.cb.ret, i, true, a.cb.decode) + ";\n";
 			if (a.cb.decode) {
 				fn + 
-				indent + "	var " + a.nameout + " = IDHandler.createObjectId(" + funname + ");\n";
+				indent + "	var " + a.nameout + " = encode_data(IDHandler.createObjectId(" + funname + "), [6]);\n";
 			} else fn;
 		} else {
 			if (length(a.retrievecode) <= 0) { "" } else { i + strGlue(a.retrievecode, "\n" + i) + "\n" }
@@ -237,8 +244,9 @@ buildFunction(name: string, nativeName: string, retName: string, args: [FuncArg]
 		if (lambda && !decode) {
 			// this is func in wasm. we have to get index in table and call appropriate func
 			newname = nname + "_fn";
+			argsStr = strGlue(map(args, \a -> a.nameout), ", ") + (if (length(args) > 0) ", " else "") + nname;
 			nextindent + "var " + newname + " = getFunctionFromTable(" + nname + ");\n" + 
-			nextindent + "var " + ret[0].namein + " = " + newname + "(" + strGlue(map(args, \a -> a.nameout), ", ") + ", " + nname + ");\n" +
+			nextindent + "var " + ret[0].namein + " = " + newname + "(" + argsStr + ");\n" +
 			buildReturnValue(ret[0].nameout, ret, nextindent, decode)
 		} else {
 			nextindent + "var " + ret[0].namein + " = " + nname + "(" + strGlue(map(args, \a -> a.nameout), ", ") + ");\n" +

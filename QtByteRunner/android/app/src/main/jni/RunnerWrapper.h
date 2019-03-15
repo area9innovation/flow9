@@ -12,6 +12,7 @@
 #include "utils/AbstractGeolocationSupport.h"
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
+#include "utils/AbstractWebSocketSupport.h"
 
 #include <jni.h>
 
@@ -33,6 +34,7 @@ class AndroidRenderSupport : public GLRenderSupport {
     AndroidRunnerWrapper *owner;
 
     int dpi;
+    float density;
 
     int next_timer_id;
     STL_HASH_MAP<int, StackSlot> timers; // ROOT
@@ -74,6 +76,7 @@ public:
     jboolean resolvePictureError(jstring url, jstring error);
 
     void setDPI(int v);
+    void setDensity(float v);
     void setScreenWidthHeight(int w, int h);
     void adjustScale(jfloat dx, jfloat dy, jfloat cx, jfloat cy, jfloat df);
 
@@ -232,6 +235,33 @@ private:
     virtual void afterWatchDispose(int callbacksRoot);
 };
 
+class AndroidWebSocketSupport : public AbstractWebSocketSupport {
+    AndroidRunnerWrapper *owner;
+public:
+    AndroidWebSocketSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeWebSocket : public FlowNativeObject
+    {
+        AndroidWebSocketSupport *owner;
+    public:
+        FlowNativeWebSocket(AndroidWebSocketSupport* owner);
+        ~FlowNativeWebSocket();
+        jobject websocket;
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeWebSocket, FlowNativeObject)
+    };
+
+    void deliverOnClose(jint callbacksKey, jint closeCode, jstring reason, jboolean wasClean);
+    void deliverOnError(jint callbacksKey, jstring error);
+    void deliverOnMessage(jint callbacksKey, jstring message);
+    void deliverOnOpen(jint callbacksKey);
+
+protected:
+    virtual StackSlot doOpen(unicode_string url, int callbacksKey);
+    virtual StackSlot doSend(StackSlot websocket, unicode_string message);
+    virtual StackSlot doHasBufferedData(StackSlot websocket);
+    virtual void doClose(StackSlot websocket, int code, unicode_string reason);
+};
+
 class AndroidRunnerWrapper {
     friend class AndroidRenderSupport;
     friend class AndroidHttpSupport;
@@ -241,6 +271,7 @@ class AndroidRunnerWrapper {
     friend class AndroidLocalyticsSupport;
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
+    friend class AndroidWebSocketSupport;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -257,6 +288,7 @@ class AndroidRunnerWrapper {
     AndroidNotificationsSupport notifications;
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
+    AndroidWebSocketSupport websockets;
     FileLocalStore store;
     FileSystemInterface fsinterface;
 
@@ -285,6 +317,7 @@ public:
     AndroidInAppPurchase *getInAppPurchase() { return &purchase; }
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
+    AndroidWebSocketSupport *getWebSockets() { return &websockets; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);

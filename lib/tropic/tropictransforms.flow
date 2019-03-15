@@ -44,7 +44,7 @@ fform2tropic(f : FForm) -> Tropic {
 		FInteractive(listeners, form) : TInteractive(listeners, fform2tropic(form));
 		FFilter2(filt, form, stack) : TFilter(filt, fform2tropic(form));
 		FCursor(shape, form) : TCursor(shape, fform2tropic(form));
-		FInspect(inspectors, form) : TInspect(inspectors, fform2tropic(form));
+		FInspect(inspectors, form) : TInspectForm(inspectors, fform2tropic(form));
 		FMutable2(form, stack) : TMutable(fselect(form, fform2tropic |> FLift));
 		FCrop2(left, top, width, height, form, stack) : TCrop(fpoint(left, top), fwidthheight(width, height), fform2tropic(form));
 		FControlFocus(focus, form) : TControlFocus(focus, fform2tropic(form));
@@ -120,7 +120,7 @@ form2tropic(form : Form) -> Tropic {
 		// }
 		Filter2(filters, child, stack): TFilter(filters, form2tropic(child));
 		Cursor(kind, child): TCursor(kind, form2tropic(child));
-		Inspect(inspectors, child) : TInspect(inspectors, form2tropic(child)); // fix
+		Inspect(inspectors, child) : TInspectForm(inspectors, form2tropic(child)); // fix
 		Mutable2(child, stack): TMutable(fselect(child, FLift(form2tropic)));
 		Switch(case, cases) : TMutable(fselect(case, FLift(\cs -> form2tropic(cases[cs]))));
 		Crop2(l, t, w, h, child, stack): TCrop(fselect2(l, t, FLift2(\l0, t0 -> Point(l0, t0))),
@@ -138,9 +138,15 @@ form2tropic(form : Form) -> Tropic {
 	}
 }
 
-TInspect(inspectors : [Inspector], tr : Tropic) -> Tropic {
+TInspectForm(inspectors : [Inspector], tr : Tropic) -> Tropic {
 	TransformTAcc(\t2a, pi, st, mo -> {
 		b = t2a(tr, pi, st, mo);
+
+		needsAvailableWidth = ref false;
+		needsAvailableHeight = ref false;
+
+		iTag = ref None();
+		iTransformMatrix = ref None();
 
 		disp =
 			fold(
@@ -148,37 +154,49 @@ TInspect(inspectors : [Inspector], tr : Tropic) -> Tropic {
 				b.disposers,
 				\acc, insp ->
 					switch (insp : Inspector) {
-						Width(width):
+						Width(width): {
 							arrayPush(
 								acc,
 								fconnect(b.metrics.width, width)
 							);
-						Height(height):
+						}
+						Height(height): {
 							arrayPush(
 								acc,
 								fconnect(b.metrics.height, height)
 							);
-						AvailableWidth(width):
+						}
+						AvailableWidth(width): {
+							needsAvailableWidth := true;
+
 							arrayPush(
 								acc,
 								fconnect(pi.maxX, width)
 							);
-						AvailableWidth2(width):
+						}
+						AvailableWidth2(width): {
+							needsAvailableWidth := true;
+
 							arrayPush(
 								acc,
 								fconnect(pi.maxX, width)
 							);
-						AvailableHeight(height):
+						}
+						AvailableHeight(height): {
+							needsAvailableHeight := true;
+
 							arrayPush(
 								acc,
 								fconnect(pi.maxY, height)
 							);
-						ISize(widthHeight):
+						}
+						ISize(widthHeight): {
 							arrayPush(
 								acc,
 								fconnect(fwidthheight(b.metrics.width, b.metrics.height), widthHeight)
 							);
-						IMetrics(metrics):
+						}
+						IMetrics(metrics): {
 							arrayPush(
 								acc,
 								fconnect(
@@ -188,34 +206,52 @@ TInspect(inspectors : [Inspector], tr : Tropic) -> Tropic {
 									metrics
 								)
 							);
-						IAvailable(widthHeight):
+						}
+						IAvailable(widthHeight): {
+							needsAvailableWidth := true;
+							needsAvailableHeight := true;
+
 							arrayPush(
 								acc,
 								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
 							);
-						IAvailable2(widthHeight):
+						}
+						IAvailable2(widthHeight): {
+							needsAvailableWidth := true;
+							needsAvailableHeight := true;
+
 							arrayPush(
 								acc,
 								fconnect(fwidthheight(pi.maxX, pi.maxY), widthHeight)
 							);
-						default: acc;
-						// IPending : (pending : DynamicBehaviour<int>);
-						// // This is useful for finding elements inside a form. findTaggedFormPosition in formtransforms.flow look them up for you.
-						// ITag(i : int);
-						// ITransformMatrix(setfn : ( fn : () -> TransformMatrix ) -> void );
+						}
+						IPending(pending): {
+							acc;
+						}
+						ITag(tag): {
+							iTag := Some(tag);
+
+							acc;
+						}
+						ITransformMatrix(setfn): {
+							iTransformMatrix := Some(setfn);
+
+							acc;
+						}
 					}
 			);
 
-
 		TAcc(
-			b.form,
+			b.form
+			|> (\f -> eitherMap(^iTag, \tag -> FInspect([ITag(tag)], f), f))
+			|> (\f -> eitherMap(^iTransformMatrix, \setfn -> FInspect([ITransformMatrix(setfn)], f), f)),
 			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
+			if (^needsAvailableWidth && !b.xConstant) zero else b.minWidth,
+			if (^needsAvailableHeight && !b.yConstant) zero else b.minHeight,
+			if (^needsAvailableWidth && !b.xConstant) const(^tropicFillersMax) else b.maxWidth,
+			if (^needsAvailableHeight && !b.yConstant) const(^tropicFillersMax) else b.maxHeight,
+			if (^needsAvailableWidth) fmax(const(1.0), b.xFillers) else b.xFillers,
+			if (^needsAvailableHeight) fmax(const(1.0), b.yFillers) else b.yFillers,
 			b.addFillers,
 			b.xConstant,
 			b.yConstant,

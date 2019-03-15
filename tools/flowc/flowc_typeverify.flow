@@ -3,8 +3,11 @@ import tools/flowc/fctypeenv;
 import tools/flowc/incremental/fimodule;
 import tools/flowc/incremental/fi_helpers;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fisubtype;
+import tools/flowc/incremental/fi_verify_struct_type;
 import tools/flowc/flowc_helpers;
 import tools/flowc/flowc_module;
+import tools/flowc/incremental/fc2fi;
 
 export {
 	// Check that all types in a module are consistent with FcTypeEnvGlobal
@@ -214,10 +217,22 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			typeverifyFiExp(newEnv, body, onError) && 
 			fold(args, true, \ok, arg -> ok && typeverifyFiType(newEnv, arg.type, onError, expr.start));
 		}
-		FiCall(f, args, type, __):
+		FiCall(f, args, type, __): {
+			fnType = fiExpType(f);
+			callType = FiTypeFunction(map(args, \a -> FiFunArg("", fiExpType(a))), type);
+			if (!isFiSubType(callType, fnType, true)) {
+				onError(
+					FcError(
+						"Wrong type in call. Expected\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, callType, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+			}
+			
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, f, onError) && 
 			fold(args, true, \ok, arg -> ok && typeverifyFiExp(env, arg, onError));
+		}
 		FiVar(name, type, s):
 			typeverifyFiVar(env, expr, onError);
 		FiLet(x, tp, e1, e2, type, __): {
@@ -251,8 +266,57 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
 		FiCallPrim(prim, es, type, s):   {
 			switch (prim) {
-				FcStructPrim(struct_name):
+				FcStructPrim(struct_name): {
+                    if (true || isUrlParameterTrue("verify-structs")) {
+                        // OK, the type of the struct can be reconstructed from the args
+                        mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
+                        verify = \fitype : FiTypeStruct -> {
+                            verifyFiStructInstantiation(fitype, map(es, \e -> fiExpType(e)), type, \err -> {
+                                onError(
+                                    FcError(
+                                        prettyFiType(dummyPretty, type, makeSet()) + " " + err,
+                                        [FcPosition(env.module.name, expr.start, expr.start)]
+                                    )
+                                );
+                            });
+                        }
+                        switch (mstr) {
+                            None(): {
+                    			switch (lookupTree(env.module.moduleStructsUnions, struct_name)) {
+                                    None(): {
+                                        onError(
+                                            FcError(
+                                                "Could not find struct " + struct_name,
+                                                [FcPosition(env.module.name, expr.start, expr.start)]
+                                            )
+                                        );
+                                    }
+                                    Some(lfi): {
+                                        switch (lfi) {
+                                            FiTypeStruct(__, __, __, __): verify(lfi);
+                                            FiTypeUnion(__, __, __, __): println("Can not make union");
+                                        }
+                                    }
+                                }
+                            }
+                            Some(str): {
+                                dummyFcTypeEnv = FcTypeEnv(
+                                    FcTypeEnvGlobal(ref makeTree()),
+                                    env.module.global,
+                                    initFcTypeEnvLocal()
+                                );
+
+                                // OK, now convert the struct def to fitype
+                                st = fctypestruct2fi(dummyFcTypeEnv, \e, __ -> {
+                                        println(e);
+                                    }, str);
+                                verify(st);
+                            }
+                        }
+                    }
+
 					typeverifyFcStructPrim(env, struct_name, es, onError, s);
+                }
 				FcFieldPrim(field_name): {
 					// Check, that the given field name exists
 					switch (fiExpType(es[0])) {
@@ -311,10 +375,12 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 			length(struct.args) == length(es) &&
 			forall(
 				zipWith(struct.args, es, \a, e -> Pair(a, e)),
-				\p -> consistentInstantiationOfFcTypeWithFiType(
-					TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())),
-					fiExpType(p.second), p.first.type, onError, start
-				)
+				\p -> {
+                    consistentInstantiationOfFcTypeWithFiType(
+                        TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())),
+                        fiExpType(p.second), p.first.type, onError, start
+                    )
+                }
 			);
 		}
 		None(): {
@@ -392,7 +458,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 
 	// Look in the global environment
 	subtypes = buildSet(getTreeKeys(typeVerifyName2structs(env, switchTypeName, makeTree())));
-       
+	   
 	caseTypesCoincide = (switchTypeName == "" || containsSet(switchCaseTypes, "default") || equalSet(switchCaseTypes, subtypes));
 	if (!caseTypesCoincide) {
 		diff_set = \s1, s2 -> foldSet(s1, makeSet(), \acc, x -> if (containsSet(s2, x)) acc else insertSet(acc, x));
@@ -426,7 +492,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 			);
 			argsNumIsOk = (
 				c.struct == "default" ||
-				length(c.argNames) == 0 || // This exception is added because unions in switch cases always produce structs with no args
+				isSome(typeverifyName2Union(env, c.struct)) || // This exception is added because unions in switch cases always produce structs with no args
 				typeverifyNumberOfStructArgs(env, c.struct) == length(c.argNames)
 			);
 			if (!argsNumIsOk) {
@@ -544,6 +610,30 @@ typeverifyName2StructOrUnion(env : TypeVerifyEnv, name : string) -> Maybe<FcFiSt
 	}
 }
 
+typeverifyName2Union(env : TypeVerifyEnv, name : string) -> Maybe<FcFiStructOrUnion> {
+	struct : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.structs, name);
+	switch (struct) {
+		Some(s): None();
+		None(): {
+			union : Maybe<FcFiStructOrUnion> = lookupTree(env.module.global.acc.names.unions, name);
+			switch (union) {
+				Some(u): Some(u);
+				None(): {
+					switch (lookupTree(env.module.moduleStructsUnions, name)) {
+						Some(su): {
+							switch (su) {
+								FiTypeStruct(__,__, args,__): None();
+								FiTypeUnion(__,__,__,__): Some(su);
+							}
+						}
+						None(): None();
+					}
+				}
+			}
+		}
+	}
+}
+
 typeverifyNumberOfStructArgs(env : TypeVerifyEnv, typename : string) -> int {
 	switch (lookupTree(env.module.global.acc.names.structs, typename)) {
 		Some(st): length(st.args);
@@ -652,19 +742,23 @@ typeverifyIsSubtype(env : TypeVerifyEnv, supertype_name : string, subtype_name, 
 	if (sizeTree(full_diff) > 0) {
 		super_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, supertype_name));
 		sub_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, subtype_name));
-		onError(FcError("subtyping error occured",
+		onError(FcError("The type '" + subtype_name + "' is not a subtype of '" + supertype_name + "'",
 				[FcPosition(env.module.name, start, start)]
 			)
 		);
-		onError(FcError("type '" + supertype_name + "' is not a supertype for type '" + subtype_name + "'", 
+		onError(FcError("  Subtype '" + subtype_name + "' is defined here", 
+			[
+				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, subtype_name), sub_start, sub_start)
+			])
+		);
+		onError(FcError("  Supertype '" + supertype_name + "' is defined here", 
 			[
 				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, supertype_name), super_start, super_start),
-				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, subtype_name), sub_start, sub_start)
 			])
 		);
 		cutoff_diff = cutoffTree(full_diff, 3);
 		onError(FcError(
-			"absent in '" + supertype_name + "' structs from a '" + subtype_name + "': " + 
+			"  These structs from '" + subtype_name + "' are absent in '" + supertype_name + "': " + 
 			strGlueTreeKeysWithCutoff(full_diff, 3),
 			foldTree(cutoff_diff, [], 
 				\name, s, acc -> 

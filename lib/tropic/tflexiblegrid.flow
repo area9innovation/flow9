@@ -1,24 +1,29 @@
 import tropic/selecttarray;
 import tropic/tropic_gui;
+import ui/animate/teasing;
 import form/gui;
 
 export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
-		TFlexibleGridStyle ::= TGroupByCols, TOrdered, TVertical, TCropView, CenterAlign, EndAlign;
+		TFlexibleGridStyle ::= TGroupByCols, TOrdered, TVertical, TCropView, CenterAlign, EndAlign, TAnimation, TOrder, TEnabled;
 			TGroupByCols(); // "TGroupByLines" in case with TVertical
 			TOrdered(newLine : bool); // Lines (Cols in case with TVertical) won't overlap if newLine is true
 			TVertical();
 			TCropView(); // Crop grid size by items sizes
+			TAnimation(deltaTimer : LazyDeltaTimer);
+			TOrder(order : Transform<[int]>);
 }
 
 TFlexibleGridItem(t : Tropic, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
 
 TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic {
 	groupByCols = contains(style, TGroupByCols());
+	order = tryExtractStruct(style, TOrder(const([])));
 	orderedGrid = maybeMap(tryExtractStruct(style, TOrdered(false)), \o -> o.newLine);
 	verticalGrid = contains(style, TVertical());
 	cropView = contains(style, TCropView());
-	gridEnabled = const(true);
+	gridEnabled = extractStruct(style, TEnabled(const(true))).enabled;
+	animation = tryExtractStruct(style, TAnimation(LazyDeltaTimer(make(0.0), nop, nop)));
 
 	contentSize = makeWH();
 	contentBaseline = make(0.);
@@ -31,7 +36,27 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 
 	SelectTGroup(itemsB.first, \idx, __, item -> {
 		TransformTAcc2(\t2a -> {
-				b1 = TTranslate(item.tr, item.t) |> t2a;
+				b1 =
+					eitherMap(
+						animation,
+						\a -> {
+							pos = make(getValue(item.tr));
+
+							TEasingAnimation(
+								a.deltaTimer,
+								0.2,
+								CubicBezierEasing(0.4, 0.0, 0.2, 1.0),
+								item.tr,
+								\tr -> Some(Pair(getValue(pos), tr)),
+								\__ -> {},
+								\tr, p -> nextDistinct(pos, Point(lerp(tr.first.x, tr.second.x, p), lerp(tr.first.y, tr.second.y, p))),
+								TTranslate(pos, item.t)
+							)
+							|> TOnConstruct(\ -> nextDistinct(pos, getValue(item.tr)))
+						},
+						TTranslate(item.tr, item.t)
+					)
+					|> t2a;
 
 				TAcc(
 					b1.form,
@@ -119,14 +144,24 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 		TConstruct(
 			[
 				make2Subscribe(
-					fsubmap(itemsB.first, \it -> it.wh),
+					eitherFn(
+						order,
+						\or -> forder(fsubmap(itemsB.first, \it -> it.wh), or.order),
+						\ -> fsubmap(itemsB.first, \it -> it.wh)
+					),
 					ftransistor(gridEnabled, stageSizeB),
 					\itemsSizes, stageSize -> {
 						if (!contains(itemsSizes, None())) {
-							gridItems = getValue(itemsB.first);
-							root = if (verticalGrid) BPRoot(0., 0., 0., stageSize, []) else BPRoot(0., 0., stageSize, 0., []);
+							gridItems = eitherFn(order, \or -> fgetValue(forder(itemsB.first, or.order)), \ -> getValue(itemsB.first));
 							blocks = map(itemsSizes, \sz -> either(sz, WidthHeight(0., 0.)) |> (\wh -> BPBlock(wh.width, wh.height)));
-							parameters = BPParameters(groupByCols, orderedGrid, verticalGrid);
+
+							root = if (verticalGrid) BPRoot(0., 0., 0., stageSize, []) else BPRoot(0., 0., stageSize, 0., []);
+							parameters =
+								BPParameters(
+									groupByCols,
+									eitherFn(orderedGrid, \og -> Some(og), \ -> if (length(uniq(itemsSizes)) == 1) Some(true) else None()),
+									verticalGrid
+								);
 
 							iteri(bpFit(root, blocks, parameters), \i, tr -> nextDistinct(gridItems[i].tr, either(tr, Point(0., 0.))));
 							next(
@@ -153,9 +188,9 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 		)
 	)
 	|> (\f -> if (verticalGrid) {
-			if (cropView) TAttachBoxCopyAvailableHeight(f, stageSizeB) else TAttachHeight2(TFillY(), stageSizeB, f)
+			if (cropView) TAttachAvailableHeight(f, stageSizeB) else TAttachHeight2(TFillY(), stageSizeB, f)
 		} else {
-			if (cropView) TAttachBoxCopyAvailableWidth(f, stageSizeB) else TAttachWidth2(TFillX(), stageSizeB, f)
+			if (cropView) TAttachAvailableWidth(f, stageSizeB) else TAttachWidth2(TFillX(), stageSizeB, f)
 		}
 	)
 }

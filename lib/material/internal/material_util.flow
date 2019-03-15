@@ -1,9 +1,6 @@
-import material/internal/material_manager_internal;
-import material/material_gui;
 import material/measing;
-import loop;
-
-// Internal to material
+import tropic/tropic_constant;
+import material/internal/material_theme;
 
 export {
 	// Increases the size of this tropic to be a 8x8 multiple
@@ -58,8 +55,6 @@ export {
 
 	interruptibleTimerChain(chain : List<Pair<double, ((bool) -> void) -> void>>, onFinished : (bool) -> void) -> () -> void;
 
-	TFillXYDrawGrid(primaryLineDelta : double, secondaryLineDelta : double) -> Tropic;
-
 	getTypeString(value : flow) -> string;
 
 	MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Point>, content : Tropic) -> () -> () -> void;
@@ -75,21 +70,28 @@ export {
 	addTBackground(color : MColor) -> (Tropic) -> Tropic;
 	addMBackground(color : MColor) -> (Material) -> Material;
 
-	alignRightForRTL(t : Tropic) -> Tropic;
+	// Deprecated, use MBaseAlignA instead
 	alignMRightForRTL(m : Material) -> Material;
 	changeBoolIfRTL(b : bool) -> bool;
 
 	getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TGraphicsStyle];
-
-	// Show text and progressbar below
-	MLoading(text : string) -> Material;
 
 	TAnimatedExpander(
 		manager : MaterialManager,
 		parent : MFocusGroup,
 		content : Tropic,
 		expanded : Transform<bool>,
-		vertical : bool) -> Tropic;
+		vertical : bool,
+		expandFromStart : bool) -> Tropic;
+
+	TCollapsingBox(
+		manager : MaterialManager,
+		parent : MFocusGroup,
+		content : Tropic,
+		yTrans : Transform<double>,
+		expand : Transform<bool>) -> Tropic;
+
+	MLetDisplay(name : string, value : Material, scope : Tropic, above : bool) -> Material;
 }
 
 MGridSize(t : Tropic) -> Tropic {
@@ -116,7 +118,7 @@ FixedTableAlignLeft(lines : [[Material]], widths : [double], height : double) ->
 					MAvailable(
 						MGroup2(
 							TFillX(),
-							MCenterYIn(cell, MFixedY(height))
+							MCenterYIn(cell, TFixed(0., height))
 						),
 						TFixed(widths[i], height)
 					)
@@ -378,7 +380,7 @@ makeTropicHeightStatic(t : Tropic) -> Tropic {
 
 MSeparator2T(manager : MaterialManager, parent : MFocusGroup, horizontal : bool) -> Tropic {
 	(if (horizontal) TFillXH(1.) else TFillWY(1.))
-	|> (\f -> TRectangle([MFill(parent.theme.separatorColor), FillOpacity(0.12)], f))
+	|> (\f -> TRectangle([MFill(getSeparatorColor(parent)), FillOpacity(0.12)], f))
 }
 
 MZoomMaterial(mat : Material, scale : Transform<double>, scrollStyle : [MScrollStyle]) -> Material {
@@ -387,7 +389,7 @@ MZoomMaterial(mat : Material, scale : Transform<double>, scrollStyle : [MScrollS
 	prevSc = ref fgetValue(scale);
 
 	MScroll(
-		MZoom(mat, TScale(fselect(scale, FLift(\sc -> Factor(sc, sc))), TSized(box.box)), true)
+		MZoom(mat, TScale(ffactor2(scale), TSized(box.box)), true)
 		|> MCenter,
 		TFillXY(),
 		replaceStructMany(scrollStyle, [box, scrollPosition])
@@ -496,52 +498,6 @@ interruptibleTimerChain2(prevDelay : double, chain : List<Pair<double, ((bool) -
 	\ -> dispUnsM(uns);
 }
 
-TFillXYDrawGrid(primaryLineDelta : double, secondaryLineDelta : double) -> Tropic {
-	TAttachSelect(
-		TFillXY(),
-		\wh -> {
-			TGroup2WithoutMetrics(
-				TGraphics(
-					concat(
-						generate(0, floor(wh.width / 8.), \i ->
-							[
-								MoveTo(i2d(i) * 8., 0.),
-								LineTo(i2d(i) * 8., wh.height)
-							]
-						),
-						generate(0, floor(wh.height / 8.), \i ->
-							[
-								MoveTo(0., i2d(i) * 8.),
-								LineTo(wh.width, i2d(i) * 8.)
-							]
-						)
-					)
-					|> concatA,
-					[FillOpacity(0.), StrokeOpacity(0.1), Stroke(black)]
-				),
-				TGraphics(
-					concat(
-						generate(0, floor(wh.width / 64.), \i ->
-							[
-								MoveTo(i2d(i) * 64., 0.),
-								LineTo(i2d(i) * 64., wh.height)
-							]
-						),
-						generate(0, floor(wh.height / 64.), \i ->
-							[
-								MoveTo(0., i2d(i) * 64.),
-								LineTo(wh.width, i2d(i) * 64.)
-							]
-						)
-					)
-					|> concatA,
-					[FillOpacity(0.), StrokeOpacity(0.2), Stroke(black)]
-				),
-			)
-		}
-	)
-}
-
 getTypeString(value : flow) -> string {
 	sv : string = serialize(value);
 	ts : string = toStringNoExtraQuotes(value);
@@ -563,7 +519,7 @@ getTypeString(value : flow) -> string {
 
 MMonitorMousePosition(manager : MaterialManager, position : DynamicBehaviour<Point>, content : Tropic) -> () -> () -> void {
 	\ -> {
-		density = extractStruct(manager.manager.renderStyle, TDpif(screenDPI2pixelDensity(screenDPI))).dpif;
+		density = extractStruct(manager.manager.renderStyle, TDpif(screenDensity)).dpif;
 		stage = getStage();
 		nextDistinct(position, Point(getMouseX(stage) / density, getMouseY(stage) / density));
 
@@ -600,7 +556,7 @@ updateMaterialTheme(manager : MaterialManager, theme : MaterialTheme) -> void {
 	if (manager.theme != theme) {
 		manager.theme ::= theme;
 		(manager.focus).theme ::= theme;
-		nextDistinct(manager.white, theme.lightBackground);
+		nextDistinct(manager.white, theme.palette.light);
 		reverseBehaviour(manager.forceRender);
 	}
 }
@@ -618,17 +574,7 @@ addMBackground(color : MColor) -> (Material) -> Material {
 	\m -> MFrame(0.0, 0.0, [MFill(color)], m)
 }
 
-alignRightForRTL(t : Tropic) -> Tropic {
-	if (getDefaultRtl())
-		TTweak(
-			[TAlign(const(1.0), const(0.0))],
-			t,
-			TFillX()
-		)
-	else
-		t
-}
-
+// Deprecated, use MBaseAlignA instead
 alignMRightForRTL(m : Material) -> Material {
 	if (getDefaultRtl())
 		MTweak(
@@ -648,39 +594,27 @@ getStrokeGraphicsStyle(stroke : MColor, opacity : double, width : double) -> [TG
 	if (!equalDoubles(width, 0.0)) [MStroke(stroke), StrokeOpacity(opacity), StrokeWidth(width)] else [];
 };
 
-MLoading(text : string) -> Material {
-	MLet(
-		"Label",
-		MCols([TFixed(8.0, 0.0), MCenterX(MText(text, [])), TFixed(8.0, 0.0)]),
-		MAvailable(
-			MGroup2(
-				MZoomToFill(MProgressBar([MBlue(200), MProgressBackgroundColor(MWhite()), WidthHeight(100.0, 10.0)]), TFillXY(), false) |> MCenterX,
-				TDisplay("Label") |> MCenterX
-			),
-			TGhost("Label")
-		)
-	)
-}
-
 TAnimatedExpander(
 	manager : MaterialManager,
 	parent : MFocusGroup,
 	content : Tropic,
 	expanded : Transform<bool>,
-	vertical : bool) -> Tropic {
+	vertical : bool,
+	expandFromStart : bool) -> Tropic {
 
+	size = TGhost("TAnimatedExpanderContent");
 	startFactor = b2d(fgetValue(expanded));
 	makeFactor = \f -> if (vertical) Factor(1.0, f) else Factor(f, 1.0);
 	alpha = make(startFactor);
 	factor = make(makeFactor(startFactor));
-	box = TScale(factor, content);
-	offset = TSubtractGroup2(content, box);
+	box = TScale(factor, size);
+	offset = TSubtractGroup2(size, box);
 
-	content
-	|> (\m -> TAlpha(alpha, m))
-	|> (\m -> TShift(m, offset))
-	|> (\m -> TFixSize(m, box))
-	|> (\m ->
+	TDisplay("TAnimatedExpanderContent")
+	|> (\t -> TAlpha(alpha, t))
+	|> (\t -> if (expandFromStart) t else TShift(t, offset))
+	|> (\t -> TCropSize(box, t))
+	|> (\t ->
 			MEasingAnimation(
 				manager,
 				parent,
@@ -694,6 +628,92 @@ TAnimatedExpander(
 					next(factor, makeFactor(f));
 				},
 				[],
-				m
+				t
 			))
+	|> (\t -> TLet("TAnimatedExpanderContent", content, t))
+}
+
+TCollapsingBox(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	content : Tropic,
+	yTrans : Transform<double>, // in upper direction only
+	expand : Transform<bool> // trigger to open or close
+) -> Tropic {
+
+	height = make(0.);
+	trans = make(0.); // px to translate up
+
+	block = ref false; // to block outer translations while animation is active
+	startFactor = ref 1.;
+	factor = make(0.); // 0 .. 1
+
+	box = TSizedHeight(0., fsubtract(height, trans));
+
+	content
+	|> (\m -> TAlpha(factor, m))
+	|> (\t -> TAttachHeight(t, height))
+	|> (\t -> TTranslate(fselect(trans, FLift(\y -> Point(0., -y))), t))
+	|> (\t -> TFixSize(t, box))
+	|> (\t -> TConstruct([
+			make2Subscribe(yTrans, height, \y, hgt -> if (!^block)
+				nextDistinct(factor, forceRange(b2d(fgetValue(expand)) - y / hgt, 0., 1.))
+			),
+			\ -> fconnect2Select(factor, height, trans, \f, hgt -> (1. - f) * hgt)
+		], t
+	))
+	|> (\t ->
+		MEasingAnimation(
+			manager,
+			parent,
+			const(0.3),
+			const(easingFastOutSlowIn),
+			expand,
+			\e -> {
+				startFactor := fgetValue(factor);
+				block := true;
+				Some(e)
+			},
+			\e, prc -> {
+				f = lerp(^startFactor, b2d(e), prc);
+				nextDistinct(factor, f);
+				if (prc == 1.) block := false;
+			},
+			[],
+			t
+		)
+	)
+}
+
+MLetDisplay(name : string, value : Material, scope : Tropic, above : bool) -> Material {
+	MLet(
+		name,
+		value,
+		TransformTAcc2(\t2a -> {
+			ba1 = TDisplay(name) |> t2a;
+			ba2 = scope |> t2a;
+
+			TAcc(
+				FGroup([
+					ba1.form,
+					ba2.form
+				] |> (\f : [FForm] -> if (above) f else reverseA(f)), true),
+				TFormMetrics(
+					fmax(ba1.metrics.width, ba2.metrics.width),
+					fmax(ba1.metrics.height, ba2.metrics.height),
+					fmax(ba1.metrics.baseline, ba2.metrics.baseline)
+				),
+				fmax(ba1.minWidth, ba2.minWidth),
+				fmax(ba1.minHeight, ba2.minHeight),
+				fmax(ba1.maxWidth, ba2.maxWidth),
+				fmax(ba1.maxHeight, ba2.maxHeight),
+				fmax(ba1.xFillers, ba2.xFillers),
+				fmax(ba1.yFillers, ba2.yFillers),
+				if (isUrlParameterTrue("group2filler")) fmax(ba1.addFillers, ba2.addFillers) else const(false),
+				ba1.xConstant && ba2.xConstant,
+				ba1.yConstant && ba2.yConstant,
+				concat(ba1.disposers, ba2.disposers)
+			)
+		})
+	)
 }

@@ -62,8 +62,6 @@ private:
     void build(int, State nextState, bool force = false);
     bool makeGlobalConfig(const QString& root) const;
 
-    void gotoLocation (const QString& file, const int line, const int col = 0);
-
     KTextEditor::MainWindow* mainWindow_;
     FlowView& flowView_;
 	QProcess  compileProcess_;

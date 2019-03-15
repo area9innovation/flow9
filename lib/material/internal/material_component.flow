@@ -1,0 +1,506 @@
+import material/internal/material_ripple;
+import material/internal/material_tooltip;
+
+export {
+	MComponent2T(manager : MaterialManager, parent : MFocusGroup, name : string, state : [flow],
+		fn : (focus : MFocus) -> Tropic) -> Tropic;
+
+	extractMButtonState(state : [flow]) -> [MButtonState];
+}
+
+MComponent2T(manager : MaterialManager, parent0 : MFocusGroup, name : string, state : [flow],
+	fn : (focus : MFocus) -> Tropic) -> Tropic {
+	focused = extractStruct(state, MFocused(make(false))).focused;
+	active = extractStruct(state, MActive(make(false))).active;
+	enabled = fand(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled);
+	forceFocusEnabled = tryExtractStruct(state, MForceFocusEnabled(const(true)));
+	focusEnabled = extractStruct(state, MFocusEnabled(const(true))).enabled;
+	clickEnabled = extractStruct(state, MClickEnabled(const(true))).enabled;
+	recordingEnabled = extractStruct(state, IScriptRecordingEnabled(const(true))).enabled;
+	keepFocus = contains(state, MKeepFocusOnClickOut());
+	onClick =
+		tryExtractStruct(state, MOnClick(nop))
+		|> (\cl ->
+			eitherFn(
+				tryExtractStruct(state, TOnClicked(nop)),
+				\c2 -> eitherMap(cl, \c -> Some(\ -> { c.click(); c2.clicked(); }), Some(c2.clicked)),
+				\ -> maybeMap(cl, \c -> c.click)
+			)
+		)
+		|> (\cl -> maybeMap(cl, \c -> fn2IScriptBehaviourDisposable(c, "click", ISClickEvent())));
+	down = extractStruct(state, TPressed(make(false))).pressed;
+	hover = extractStruct(state, THovering(make(false))).hovering;
+	selected = extractStruct(state, MSelected(make(false))).selected;
+	hoverEnabled = !contains(state, MDisableHover());
+	point = extractStruct(state, MMousePosition(makePoint())).point;
+	tabOrder = maybeMap(tryExtractStruct(state, MFocusId(const(-1))), \fid -> fid.id);
+	mGetFocus = tryExtractStruct(state, MGetFocus(nop1));
+	highlightOnFocus = extractStruct(state, MHighlightOnFocus(const(false))).enabled;
+	highlightOnHover = extractStruct(state, MHighlightOnHover(const(false))).enabled;
+	highlightOnSelect = extractStruct(state, MHighlightOnSelect(const(false))).enabled;
+	elevation = extractStruct(state, MElevation(zero)).elevation;
+	title = extractStruct(state, MButtonTitle(const(""))).title;
+	focusClicks = MFocusClicks(state);
+	focusOnPrevious =
+		if (contains(state, MFocusOnPrevious()))
+			[
+				makeSubscribe(focused, \f ->
+					if (!f && isNone(getCurrentFocusedItem(manager))) {
+						foc = getPreviousFocusedItem(manager);
+						maybeApply(foc, \pf -> deferred(\ -> nextDistinct(pf.focused, true)));
+					}
+				)
+			]
+		else
+			[];
+
+	(\parent ->
+		addMaterialFocusId(manager, parent, name, title, maybeMap(onClick, \c -> c.fn), down, if (hoverEnabled) hover else make(false), focused,
+			active, selected, enabled, fand(eitherMap(forceFocusEnabled, \ffe -> ffe.enabled, parent.focusEnabled), focusEnabled), keepFocus,
+			concat(
+				extractStructMany(state, IScriptBehaviour("", make(flow(false)), ISMiscEvent())),
+				concatA([
+					[
+						IScriptBehaviour("down", down, ISInteractionEvent()),
+						IScriptBehaviour("point", point, ISInteractionEvent()),
+						IScriptBehaviour("hover", hover, ISInteractionEvent()),
+						IScriptBehaviour("focused", focused, ISInteractionEvent()),
+					]
+					|> (\st -> arrayPushMaybe(st, maybeMap(onClick, \c -> c.monitorBehaviour))),
+					focusClicks.iScriptBehaviour,
+					// extractDynamicBehaviours(enabled, "enabled", MLowLevelChanges()),
+					extractDynamicBehavioursEx(enabled, "enabled", ISEnableEvent()),
+					// extractDynamicBehaviours(focusEnabled, "focus_enabled", MLowLevelChanges()),
+					extractDynamicBehavioursEx(focusEnabled, "focus_enabled", ISEnableEvent()),
+					// extractDynamicBehaviours(clickEnabled, "click_enabled", MLowLevelChanges()),
+					extractDynamicBehavioursEx(clickEnabled, "click_enabled", ISEnableEvent())
+				])
+			),
+			recordingEnabled,
+			maybeMap(tryExtractStruct(state, IScriptId("")), \ui -> ui.id),
+			tabOrder,
+			\focus -> {
+				mouseDownEnabled = fmin3(focus.enabled, clickEnabled, parent.zorderEnabled);
+				maybeApply(mGetFocus, \getFoc -> getFoc.getFn(focus));
+
+				(if (mouseDownEnabled != const(false)) {
+					mCursorShape = extractStruct(state, MCursorShape(const(FingerCursor()))).shape;
+					tooltipText = tryExtractStruct(state, MTooltipText(const("")));
+
+					fn(focus)
+					|> (\f ->
+						MRipple2T(
+							manager,
+							parent,
+							f,
+							down,
+							concat(
+								[
+									extractStruct(state, MRipplePosition(point)),
+									extractStruct(state, MRippleColor(const(if (getLightBackground(parent)) MBlack() else MWhite()))),
+									extractStruct(state, MRippleOpacity(const(1.0))),
+									extractStruct(state, MRippleType(const(MNoRipple()))),
+									MRippleFocused(fmin(highlightOnFocus, extractStruct(state, MRippleFocused(focus.focused)).focused)),
+									MRippleHovered(fmin(highlightOnHover, extractStruct(state, MRippleHovered(focus.hover)).hovered)),
+									MRippleSelected(fmin(highlightOnSelect, extractStruct(state, MRippleSelected(focus.selected)).selected)),
+									extractStruct(state, MRippleShape(name)),
+									extractStruct(state, MRippleOverlay(true)),
+									MEnabled(focus.enabled)
+								],
+								extractStructMany(state, MRippleWidthHeight(const(WidthHeight(0., 0.))))
+							)
+						)
+					)
+					|> (\f ->
+						MComponent2TMouseDown(manager, state, focusClicks.mouseOnDownState, focus, point, mouseDownEnabled, f)
+					)
+					|> (\f ->
+						eitherMap(
+							tooltipText,
+							\tt ->
+								MTooltip2T(
+									manager,
+									parent,
+									MTooltip(
+										f,
+										TSelect(tt.text, \t -> MText2T(parent, t, [sameLightMColor(parent), MTooltipDesktop()])),
+										[MEnabled(fand(focus.enabled, fneq(tt.text, "")))]
+									),
+									dummyM2t
+								),
+							f
+						)
+					)
+					|> (\f ->
+						if (mCursorShape == const(DefaultCursor()))
+							f
+						else
+							TCursor(
+								DynamicCursor(fselect2(mCursorShape, mouseDownEnabled, FLift2(\shp, en -> if (en) shp else EmptyCursor()))),
+								f
+							)
+					)
+					|> (\f -> TConstruct(arrayPushMaybe(concat(focusClicks.subscribers, focusOnPrevious), maybeMap(onClick, \c -> c.subscribers)), f))
+				} else
+					fn(focus)
+				)
+				|> (\f -> TShadow(parent, elevation, f))
+			}
+		)
+	)
+	|> (\f ->
+		if (extractStruct(state, MAddFocusGroup(false)).add)
+			MComponentGroup2T(manager, parent0, "MFocusContainer", [], f)
+		else
+			f(parent0)
+	)
+	|> (\f ->
+		materialLogFn(
+			\ ->
+				TCopySize(
+					f,
+					\t -> TShow(manager.debugMetrics, TDebug(yellow, t)),
+					true
+				),
+			MaterialInfo(),
+			\ -> f
+		)
+	)
+}
+
+MFocusClicksState(
+	mouseOnDownState : [MouseOnDownAroundState],
+	iScriptBehaviour : [IScriptBehaviour],
+	subscribers : [() -> () -> void]
+);
+
+MFocusClicks(state : [flow]) -> MFocusClicksState {
+	middleClick =
+		extractStructMany(state, MOnMiddleClick(nop))
+		|> (\middleClick ->
+			map(middleClick, \mc -> {
+				bd = fn2IScriptBehaviourDisposable(mc.click, "middleclick", ISClickEvent());
+
+				Triple(MOnMiddleClick(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	rightClick =
+		extractStructMany(state, MOnRightClick(nop))
+		|> (\rightClick ->
+			map(rightClick, \rc -> {
+				bd = fn2IScriptBehaviourDisposable(rc.click, "rightclick", ISClickEvent());
+
+				Triple(MOnRightClick(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	doubleClick =
+		extractStructMany(state, MOnDoubleClick(nop))
+		|> (\doubleClick ->
+			map(doubleClick, \dc -> {
+				bd = fn2IScriptBehaviourDisposable(dc.click, "doubleclick", ISClickEvent());
+
+				Triple(MOnDoubleClick(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	tripleClick =
+		extractStructMany(state, MOnTripleClick(nop))
+		|> (\tripleClick ->
+			map(tripleClick, \tc -> {
+				bd = fn2IScriptBehaviourDisposable(tc.click, "tripleclick", ISClickEvent());
+
+				Triple(MOnTripleClick(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	longClick =
+		extractStructMany(state, MOnLongClick(nop))
+		|> (\longClick ->
+			map(longClick, \lc -> {
+				bd = fn2IScriptBehaviourDisposable(lc.click, "longclick", ISClickEvent());
+
+				Triple(MOnLongClick(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	longTouch =
+		extractStructMany(state, MOnLongTouch(nop))
+		|> (\longTouch ->
+			map(longTouch, \lt -> {
+				bd = fn2IScriptBehaviourDisposable(lt.touch, "longtouch", ISClickEvent());
+
+				Triple(MOnLongTouch(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	onTouch =
+		extractStructMany(state, MOnTouch(500, nop))
+		|> (\onTouch ->
+			map(onTouch, \ot -> {
+				bd = fn2IScriptBehaviourDisposable(ot.touch, "ontouch", ISClickEvent());
+
+				Triple(MOnTouch(ot.delay, bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+	onClickAsync =
+		extractStructMany(state, MOnClickAsync(nop1))
+		|> (\onClickAsync ->
+			map(onClickAsync, \oca -> {
+				bd = fn2IScriptBehaviourDisposableAsync(oca.click, "onclickasync", ISClickEvent());
+
+				Triple(MOnClickAsync(bd.fn), bd.monitorBehaviour, bd.subscribers);
+			})
+		);
+
+	fold(
+		concatA([
+			middleClick,
+			rightClick,
+			doubleClick,
+			tripleClick,
+			longClick,
+			longTouch,
+			onTouch,
+			onClickAsync
+		]),
+		MFocusClicksState([], [], []),
+		\acc, cl -> MFocusClicksState(
+			arrayPush(acc.mouseOnDownState, cl.first),
+			arrayPush(acc.iScriptBehaviour, cl.second),
+			arrayPush(acc.subscribers, cl.third)
+		)
+	);
+}
+
+MComponent2TMouseDown(manager : MaterialManager, state : [flow], clicks : [MouseOnDownAroundState], focus : MFocus, point : DynamicBehaviour<Point>,
+	mouseDownEnabled : Transform<bool>, tr : Tropic) -> Tropic {
+	focusOnDown = extractStruct(state, MFocusOnDown(ref false)).enabled;
+	hoverDisabled = extractStructMany(state, MDisableHover());
+
+	cursorPoint = extractStructMany(state, MMousePosition(point));
+	interactionId = extractStructMany(state, MInteractionId(0));
+	passClicks = extractStructMany(state, MPassClicks());
+	additionalCheck = extractStructMany(state, MAdditionalRollOutCheck());
+	mobileForceHover = extractStructMany(state, MMobileForceHover());
+	onUp = extractStructMany(state, MOnMouseUp(nop2));
+	shortcut = toLowerCase(extractStruct(state, MShortcut("")).shortcut);
+	onDown = tryExtractStruct(state, MOnMouseDown(nop2));
+
+	onClick = \ -> {
+		// On click was deferred. Prev. key handler from the queue might change the enabled state:
+		if (fgetValue(mouseDownEnabled))
+			maybeApply(focus.onClick, apply0);
+
+		if (^focusOnDown)
+			deferred(\ -> if (fgetValue(focus.focusEnabled)) nextDistinct(focus.focused, true));
+	}
+
+	keyOnClick =
+		maybeMap(
+			tryExtractStruct(state, MOnClick(nop)),
+			\__ -> \b -> {
+				if (b) {
+					nextDistinct(
+						point,
+						focus.widthHeight()
+						|> (\f -> Point(f.width / 2., f.height / 2.))
+					);
+
+					nextDistinct(focus.down, true);
+					next(focus.down, false);
+
+					deferred(onClick);
+				} else {
+					nextDistinct(focus.down, false);
+				}
+			}
+		);
+
+	clickableState =
+		concatA([
+			cursorPoint,
+			hoverDisabled,
+			interactionId,
+			passClicks,
+			additionalCheck,
+			mobileForceHover,
+			onUp,
+			clicks,
+			if (length(hoverDisabled) == 0)
+				[THovering(focus.hover)]
+			else
+				[],
+			[
+				MOnClick(onClick),
+				MEnabled(mouseDownEnabled),
+				TPressed(focus.down),
+				MOnMouseDown(eitherMap(
+					onDown,
+					\od -> \p, inside -> {
+						if (inside) nextDistinct(point, p);
+						od.down(p, inside);
+					},
+					\p, inside -> if (inside) nextDistinct(point, p)
+				))
+			]
+		]);
+
+	mouseOnDownAround(manager, clickableState, tr)
+	|> (\f -> MComponent2TAction(manager, f, state, focus, keyOnClick, shortcut))
+	|> (\f -> MComponent2TShortcut(manager, f, state, focus, keyOnClick, shortcut, mouseDownEnabled))
+}
+
+MComponent2TShortcut(manager : MaterialManager, content : Tropic, state : [flow], focus : MFocus, keyOnClick : Maybe<(bool) -> void>,
+	shortcut : string, mouseDownEnabled : Transform<bool>) -> Tropic {
+	shortcutPreventDefault = contains(state, MShortcutPreventDefault());
+	defaultShortcutEnabled = extractStruct(state, MDefaultShortcutEnabled(const(true))).enabled;
+	shortcutFilter = extractStructMany(state, MShortcutFilter(\__, __ -> false));
+	isShortcutFilter = length(shortcutFilter) != 0;
+	isKeyCodeShortcutComparison = length(extractStructMany(state, MShortcutKeyCodeComparison())) != 0;
+	match = \e, s -> if (isKeyCodeShortcutComparison) matchShortcutKeyCode(e, s) else matchShortcut(e, s);
+
+	checkIsKeyOnClick =
+		if (!^fAccessibilityEnabled || !js) {
+			(\e -> fgetValue(defaultShortcutEnabled) && (e.utf == "enter" || e.utf == " ") && getValue(focus.focused))
+			|> (\fn ->
+				if (shortcut != "" && (!mobile || strContains(shortcut, "enter"))) {
+					shortcutKey = parseShortcut(shortcut);
+
+					\e -> {
+						if (fn(e)) {
+							true;
+						} else if (match(e, shortcutKey)) {
+							if (shortcutPreventDefault)
+								e.preventDefault();
+
+							true;
+						} else {
+							false;
+						}
+					}
+				} else {
+					fn
+				}
+			)
+		} else if (shortcut != "" && (!mobile || strContains(shortcut, "enter"))) {
+			shortcutKey = parseShortcut(shortcut);
+
+			\e -> {
+				if (match(e, shortcutKey)) {
+					if (shortcutPreventDefault)
+						e.preventDefault();
+
+					true;
+				} else {
+					false;
+				}
+			}
+		} else {
+			\__ -> false
+		};
+
+	if (checkIsKeyOnClick != \__ -> false || isShortcutFilter) {
+		keyClick = ref false;
+		filterClick = ref false;
+
+		TInteractive(
+			[
+				KeyDown2(\handled, e ->
+					if (!handled && fgetValue(mouseDownEnabled)) {
+						if (isShortcutFilter && shortcutFilter[0].filterFn(getValue(focus.focused), e)) {
+							filterClick := true;
+
+							true
+						} else {
+							eitherMap(
+								keyOnClick,
+								\koc ->
+									if (checkIsKeyOnClick(e)) {
+										koc(true);
+										keyClick := true;
+
+										true
+									} else {
+										false
+									},
+								false
+							)
+						}
+					} else
+						handled
+				),
+				KeyUp2(\handled, e ->
+					if (!handled) {
+						if (^filterClick) {
+							filterClick := false;
+
+							shortcutFilter[0].filterFn(getValue(focus.focused), noKey)
+						} else {
+							eitherMap(
+								keyOnClick,
+								\koc ->
+									if (^keyClick) {
+										koc(false);
+										keyClick := false;
+
+										true
+									} else {
+										false
+									},
+								false
+							)
+						}
+					} else
+						handled
+				)
+			],
+			content
+		)
+	} else
+		content
+}
+
+MComponent2TAction(manager : MaterialManager, content : Tropic, state : [flow], focus : MFocus, keyOnClick : Maybe<(bool) -> void>, shortcut : string) -> Tropic {
+	accessRole = extractStruct(state, AccessRole("button")).role;
+	accessAttributes =
+		concat(
+			extractStructMany(state, FAccessAttribute("", const(""))),
+			[FAccessAttribute("aria-pressed", fif(focus.down, const("true"), const("false")))]
+		)
+		|> (\f2 ->
+			eitherMap(
+				focus.iScriptId,
+				\id -> arrayPush(f2, FAccessAttribute("id", const(id))),
+				f2
+			)
+		);
+	oneWayConnection = maybeMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> owc.focusedPopup);
+
+	TConstruct(
+		[
+			makeSubscribe2(focus.down, \d -> {
+				if (d && getValue(focus.focused) && isNone(manager.downInsideFocus)) {
+					manager.downInsideFocus ::= Some(focus);
+					deferred(\ -> manager.downInsideFocus ::= None());
+				}
+			})
+		],
+		content
+	)
+	|> (\f ->
+		if (extractStruct(state, MAddFocusGroup(false)).add)
+			TCopySize(
+				f,
+				\tr ->
+					MComponent2TAccessibility(manager, tr, focus, keyOnClick, accessRole, shortcut, oneWayConnection, accessAttributes),
+				false
+			)
+		else
+			MComponent2TAccessibility(manager, f, focus, keyOnClick, accessRole, shortcut, oneWayConnection, accessAttributes)
+	)
+}
+
+extractMButtonState(state : [flow]) -> [MButtonState] {
+	filtermap(state, \el ->
+		switch (el : flow) {
+			MButtonState() : {a : Maybe<MButtonState> = Some(el); a};
+			default : None();
+		}
+	)
+}

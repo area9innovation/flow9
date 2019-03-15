@@ -79,6 +79,11 @@ lift_lambdas_module(program : FiProgram, moduleName : string) -> FiProgram {
 				natives = natives,
 				initOrder = concat(m.initOrder, map(liftedDecls, \l -> l.name)));
 
+
+            toplevel0 = fold(module.natives, program.names.toplevel, \tls, f -> setTree(tls, f.name, f));
+            toplevel1 = fold(module.globalVars, toplevel0, \acc, v -> setTree(acc, v.name, v));
+            toplevel2 = fold(module.functions, toplevel1, \tls, n -> setTree(tls, n.name, n));
+
             FiProgram(
                 program.config,
                 setTree(program.modules, moduleName, module),
@@ -86,7 +91,8 @@ lift_lambdas_module(program : FiProgram, moduleName : string) -> FiProgram {
                 FiGlobalNames(program.names with
 					struct2module = fold(closures, program.names.struct2module, \s2m, s -> setTree(s2m, s.name, moduleName)),
 					structs = fold(closures, program.names.structs, \structs, s -> setTree(structs, s.name, s)),
-					toplevel = fold(module.functions, program.names.toplevel, \tls, s -> setTree(tls, s.name, s)))
+					toplevel = toplevel2
+                )
             );
         }
     }
@@ -156,8 +162,17 @@ lift_lambdas_exp(context : LLContext, sc : Maybe<LexicalScope>, ex : FiExp) -> F
 	}
 }
 
+lambda_index = ref 0;
+
+generate_lambda_name(context : LLContext, lambda : FiLambda) {
+    lambdaName = strReplace(context.moduleName, "/", "_") + "__lambda__" + 
+        i2s(lambda.start) + "__" + i2s(^lambda_index);
+    lambda_index := ^lambda_index + 1;
+    lambdaName;
+}
+
 lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) -> FiExp {
-	lambdaName = strReplace(context.moduleName, "/", "_") + "__lambda__" + i2s(lambda.start);
+	lambdaName = generate_lambda_name(context, lambda);
     originalLambdaType = cast(lambda.type : FiType -> FiTypeFunction);
 
     // vars from outer scope are already bound - we do not need to store those in a closure
@@ -177,7 +192,7 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
 
     // add a field to closure that is a reference to parent scope if needed
     // this means - if lambda does reference outer variables, we need a reference to parent closure
-    parentScopeField = switch (sc) {
+    parentScopeField : [Pair<string, FiType>] = switch (sc) {
         None(): [];
         Some(scope): if (lambdaAllVars == lambdaOwnVars) []
             else [Pair(closureArgumentName, FiTypeName(scope.closure.name, scope.closure.typars))];
@@ -195,7 +210,7 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
     // add a field for referencing the function itself
 	closureType = FiTypeStruct(lambdaName + "__closure__", closureTypars, 
 		map(concat3(
-                [Pair(closureFunctionIndexName, lambda.type)], 
+                [Pair(closureFunctionIndexName, FiTypeInt())], 
                 parentScopeField,
                 lambdaOwnVars
             ), 
@@ -212,13 +227,15 @@ lift_lambda(context : LLContext, sc : Maybe<LexicalScope>, lambda : FiLambda) ->
         mergeSets(scopeVars, parentScopeVars)
     );
 
+    closureFunArg = FiFunArg(closureArgumentName, closureTypeName);
+
     // generating new function type - adding closure
-    lambdaType = FiTypeFunction(arrayPush(originalLambdaType.args, 
-        FiFunArg(closureArgumentName, closureTypeName)), originalLambdaType.returnType);
+    lambdaType = FiTypeFunction(arrayPush(originalLambdaType.args, closureFunArg), 
+        originalLambdaType.returnType);
 
 	// generating lifted function declaration
     lambdaDecl = FiFunctionDec(lambdaName, 
-        FiLambda(lambda.args, lift_lambdas_exp(context, Some(nestedScope), lambda.body), 
+        FiLambda(arrayPush(lambda.args, closureFunArg), lift_lambdas_exp(context, Some(nestedScope), lambda.body), 
             lambdaType, lambda.start),
         lambdaType, lambda.start, lambda.start + 1);
 

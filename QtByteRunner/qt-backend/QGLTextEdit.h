@@ -3,7 +3,7 @@
 
 #include <QTextEdit>
 #include <qlineedit.h>
-#include "gl-gui/QGLRenderSupport.h"
+#include "qt-gui/QGLRenderSupport.h"
 #include "gl-gui/GLTextClip.h"
 
 class QGLTextEdit : public QTextEdit
@@ -21,7 +21,7 @@ public:
     void setCursorColor(vec4 color);
     void setWordWrapMode(QTextOption::WrapMode policy);
     void setMultiline(bool multiline);
-    void setText(QString &text);
+    void setText(QString text);
     void setInterlineSpacing(float interline_spacing);
     void resetCursorBlink();
     void onStateChange();
@@ -41,7 +41,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *);
     void mousePressEvent(QMouseEvent *);
     void mouseReleaseEvent(QMouseEvent *);
-    void filterText(QString &text);
+    void filterText(QString text);
 
     QColor vec2qColor(vec4 color);
 

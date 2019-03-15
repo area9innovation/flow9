@@ -1,6 +1,5 @@
-import material/measing;
 import material/internal/material_dragdrop;
-import material/selectmarray;
+import material/internal/selectmarray;
 
 export {
 	MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGrid, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -239,9 +238,9 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 		)
 	)
 	|> (\f -> if (verticalGrid) {
-			if (cropSize) TAttachBoxCopyAvailableHeight(f, stageSize) else TAttachHeight2(TFillY(), stageSize, f)
+			if (cropSize) TAttachAvailableHeight(f, stageSize) else TAttachHeight2(TFillY(), stageSize, f)
 		} else {
-			if (cropSize) TAttachBoxCopyAvailableWidth(f, stageSize) else TAttachWidth2(TFillX(), stageSize, f)
+			if (cropSize) TAttachAvailableWidth(f, stageSize) else TAttachWidth2(TFillX(), stageSize, f)
 		}
 	)
 }
@@ -249,13 +248,20 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReorderItem],
 	order : DynamicBehaviour<[int]>, style : [MReorderGridStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
+	customDraggingOrder = contains(style, MReorderCustomDraggingOrder());
 	stageSize = make(0.);
-	itemsLength = length(items0) + 1;
+	itemsLength = length(items0) + if (customDraggingOrder) 2 else 1;
 	verticalGrid = contains(style, MGridVertical());
 	en = extractStruct(style, MEnabled(const(true))).enabled;
-	fixSize = contains(style, MGridFixSize()) || true;
 	grabDelay = extractStructMany(style, MGrabDelay(0));
 	borders = extractStruct(style, MBorders(0.)).borders;
+	dropSpotM = tryExtractStruct(style, MReorderDropSpot(MEmpty()));
+	items1 =
+		eitherMap(
+			dropSpotM,
+			\__ -> map(items0, \it -> MReorderItem(it.content, concat([MDragging(make(false))], it.style))),
+			items0
+		);
 
 	uniqueIds = ref makeTree();
 	getUniqueIdByIndex = \index -> lookupTreeSet(uniqueIds, index, \__ -> makeTropicTag(manager));
@@ -263,12 +269,14 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 
 	onHover = generate(0, itemsLength, \__ -> make(-1));
 
+	sizes = generate(0, itemsLength, \__ -> make(zeroWH));
+
 	(\par -> {
 		items =
-			mapi(items0, \i, it -> \ -> {
+			mapi(items1, \i, it -> \ -> {
 				extractStruct(it.style, MReorderItemId(ref -1)).id := getUniqueIdByIndex(i);
 				itEn = extractStruct(it.style, MEnabled(const(true))).enabled;
-				isDragging = extractStruct(it.style, MDragging(make(false)));
+				isDragging : MDragging = extractStruct(it.style, MDragging(make(false)));
 
 				it.content
 				|> (\f -> (if (verticalGrid) MAvailableHeight else MAvailableWidth)(f, stageSize))
@@ -278,14 +286,40 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 						par,
 						MDragDrop(
 							const(getUniqueIdByIndex(i)),
-							f,
-							concat([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
+							eitherMap(
+								dropSpotM,
+								\dropSpot -> {
+									MIfLazy(isDragging.dragging, \d -> if (d) {
+										MGroup2(f, MAvailable(dropSpot.spot, TSized(sizes[i])))
+									} else {
+										f
+									})
+								},
+								f
+							),
+							concat([MDraggingContent(f), MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
 						),
 						m2t
 					)
 				)
 				|> (\f -> TBorder4(borders, f))
 			})
+			|> (\f -> if (customDraggingOrder) arrayPush(f, \ ->
+					TRectangle(interactiveRectangleStyle, TSizedWidth(stageSize, 1.))
+					|> (\f2 ->
+						MDragDrop2T(
+							manager,
+							par,
+							MDragDrop(
+								const(getUniqueIdByIndex(itemsLength - 2)),
+								f2,
+								concat([MHoveringId(onHover[itemsLength - 2]), MDraggingEnabled(const(false))], grabDelay)
+							),
+							m2t
+						)
+					)
+				) else f
+			)
 			|> (\f -> arrayPush(f, \ ->
 					TRectangle(interactiveRectangleStyle, TFillXH(48.))
 					|> (\f2 -> TAvailable(f2, if (verticalGrid) TSizedHeight(0., stageSize) else TSizedWidth(stageSize, 0.)))
@@ -304,7 +338,6 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 				)
 			);
 
-		sizes = generate(0, itemsLength, \__ -> make(zeroWH));
 		onDrop = generate(0, itemsLength, \__ -> make(-1));
 		translates : [DynamicBehaviour<Point>] = generate(0, itemsLength, \__ -> make(zeroPoint));
 		orderIn = make(concat([itemsLength - 1], generate(0, itemsLength - 1, \i ->
@@ -314,9 +347,10 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 		prevSizes : ref [WidthHeight] = ref [];
 		animating = make(false);
 
-		itemVisible0 = map(items0, \it -> extractStruct(it.style, MReorderItemVisible(make(true))).visible);
+		itemVisible0 = map(items1, \it -> extractStruct(it.style, MReorderItemVisible(make(true))).visible);
 		itemVisibleB = fmerge(itemVisible0);
-		itemVisible = arrayPush(itemVisible0, fselect(itemVisibleB, FLift(\itV -> !contains(itV, true))));
+		edgeVisible = fselect(itemVisibleB, FLift(\itV -> !contains(itV, true)));
+		itemVisible = concat(itemVisible0, if (customDraggingOrder) [fnot(edgeVisible), edgeVisible] else [edgeVisible]);
 
 		draggingItem = extractStruct(style, MDraggingItem(make(-1))).item;
 		hovering = extractStruct(style, MHoveringItem(make(-1))).item;
@@ -366,11 +400,22 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 		}
 
 		generate(0, itemsLength, \i ->
-			TAttachBoxCopy(
-				if (i == itemsLength - 1)
+			TAttachBox(
+				if ((i == itemsLength - 1) || customDraggingOrder && (i == itemsLength - 2))
 					TShowLazy(itemVisible[i], items[i])
 				else
-					TVisible(itemVisible[i], items[i]()),
+					eitherMap(
+						dropSpotM,
+						\dropSpot -> {
+							isDragging = extractStruct(items1[i].style, MDragging(make(false)));
+							TGroup2(
+								TVisible(itemVisible[i], items[i]()),
+								TShow(isDragging.dragging, m2t(dropSpot.spot, parent))
+								|> (\t -> TAvailable(t, TSized(sizes[i])))
+							)
+						},
+						TVisible(itemVisible[i], items[i]())
+					),
 				sizes[i]
 			)
 			|> (\f ->
@@ -412,14 +457,16 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 							if (hov != -1 && hov != i && hov >= 0 && hov < itemsLength && !getValue(animating)) {
 								order0 = getValue(orderIn);
 
+								newOrder = removeIndex(order0, elemIndex(order0, hov, 0));
+
 								nextDistinct(
 									orderIn,
 									insertArray(
-										removeIndex(order0, elemIndex(order0, hov, 0)),
+										newOrder,
 										if (i == itemsLength - 1)
 											1
 										else
-											elemIndex(order0, i, 0),
+											elemIndex(if (customDraggingOrder) newOrder else order0, i, 0),
 										hov
 									)
 								);
@@ -548,7 +595,7 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 			TransformTAcc2(\t2a -> {
 					b1 = f |> t2a;
 					applyFixSize =
-						if (fixSize)
+						if (parent.theme.enableAnimations)
 							\tr -> ftransistor(fnot(animating), tr)
 						else
 							idfn;
@@ -577,10 +624,10 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 				}
 			)
 		)
-		|> (\f -> (if (verticalGrid) TAttachBoxCopyAvailableHeight else TAttachBoxCopyAvailableWidth)(f, stageSize))
+		|> (\f -> (if (verticalGrid) TAttachAvailableHeight else TAttachAvailableWidth)(f, stageSize))
 	})
 	|> (\f ->
-		MActivate2T(
+		MComponentGroup2T(
 			manager,
 			parent,
 			"MReorderGrid",
@@ -711,7 +758,7 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 					TTranslate(
 						c.tr,
 						TAvailable(
-							TCenter(TMutable(fselect2(c.id, items.first, FLift2(\i, it -> m2t(if (i >= 0 && i < length(it)) it[i] else TEmpty(), p))))),
+							TCenter(TMutable(fselect2(c.id, items.first, FLift2(\i, it -> m2t(if (existsIndex(it, i)) it[i] else TEmpty(), p))))),
 							TSized(itemSize)
 						)
 					)
@@ -756,9 +803,14 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 			[
 				items.second,
 				make4Subscribe(boxSize, itemSize, position, itemsLength, \wh, sz, p, il -> {
+					// items count in the row
 					rowCount = max(floor(wh.width / sz.width), 1);
+					// how much items on the screen
 					itemCount = min((ceil(wh.height / sz.height) + 1) * rowCount, il);
-					topItem = min(max(floor(p.y / sz.height) * rowCount, 0), (il - itemCount) / rowCount * rowCount);
+					// max avaliable value of the first index
+					topItemMax = (ceil(i2d(il - itemCount) / i2d(rowCount)) * rowCount) + if ((il - itemCount) % rowCount > 0) rowCount else 0;
+					// index of the first shown item
+					topItem = min(max(floor(p.y / sz.height) * rowCount, 0), topItemMax);
 
 					if (itemCount > 0) {
 						if (length(getValue(containers)) > itemCount) {

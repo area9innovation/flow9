@@ -1,20 +1,20 @@
 package dk.area9.flowrunner;
 
-import java.io.File;
-import java.util.List;
-
+import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.hardware.Camera;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.SurfaceHolder;
+
+import java.io.File;
+import java.util.List;
 
 @TargetApi(Build.VERSION_CODES.GINGERBREAD)
 public class FlowCameraAPI {
@@ -50,6 +50,9 @@ public class FlowCameraAPI {
     public static int cameraAppDuration = 15;
     public static int cameraAppSize = 15728640;
     public static int cameraAppVideoQuality = 1;
+
+    public static Runnable cameraAppOpenPhotoRunnable = null;
+    public static Runnable cameraAppOpenVideoRunnable = null;
 
     private static final int DIALOG_FROM_CAMERA_ITEM = 0;
     private static final int DIALOG_FROM_GALLERY_ITEM = 1;
@@ -204,37 +207,75 @@ public class FlowCameraAPI {
         ((FlowRunnerActivity)context).startActivityForResult(Intent.createChooser(intent, "Select File"), GALLERY_VIDEO_PICKER_MODE);
     }
 
-    private void openCameraAppPhoto(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, String fileName) {
-        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-        if (takePictureIntent.resolveActivity(context.getPackageManager()) != null) {
-            String imageFileName = fileName + ".jpg";
-            File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
-            File image = new File(storageDir, imageFileName);
+    private void openCameraAppPhoto(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, final String fileName) {
+        cameraAppOpenPhotoRunnable = new Runnable() {
+            @Override
+            public void run() {
+                Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                if (takePictureIntent.resolveActivity(context.getPackageManager()) != null) {
+                    String imageFileName = fileName + ".jpg";
+                    File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+                    if (!storageDir.exists()) {
+                        storageDir.mkdirs();
+                    }
+                    File image = new File(storageDir, imageFileName);
 
-            cameraAppPhotoFilePath = image.getAbsolutePath();
+                    cameraAppPhotoFilePath = image.getAbsolutePath();
 
-            takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(image));
+                    takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, Utils.fileUriToContentUri(context, image));
+                    takePictureIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
-            ((FlowRunnerActivity)context).startActivityForResult(takePictureIntent, CAMERA_APP_PHOTO_MODE);
-        }
+                    ((FlowRunnerActivity) context).startActivityForResult(takePictureIntent, CAMERA_APP_PHOTO_MODE);
+                }
+            }
+        };
+
+        if (Utils.isRequestPermissionsSupported &&
+            !Utils.checkAndRequestPermissions((FlowRunnerActivity)context, new String[] {
+                    Manifest.permission.CAMERA,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+            }, FlowRunnerActivity.FlowCameraAPIPermissionCode))
+            return;
+
+        cameraAppOpenPhotoRunnable.run();
+        cameraAppOpenPhotoRunnable = null;
     }
 
-    private void openCameraAppVideo(int cameraId, String additionalInfo, int duration, int size, int quality, String fileName) {
-        Intent takeVideoIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-        if (takeVideoIntent.resolveActivity(context.getPackageManager()) != null) {
-            String videoFileName = fileName + ".mp4";
-            File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
-            File video = new File(storageDir, videoFileName);
+    private void openCameraAppVideo(int cameraId, String additionalInfo, final int duration, final int size, final int quality, final String fileName) {
+        cameraAppOpenVideoRunnable = new Runnable() {
+            @Override
+            public void run() {
+                Intent takeVideoIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+                if (takeVideoIntent.resolveActivity(context.getPackageManager()) != null) {
+                    String videoFileName = fileName + ".mp4";
+                    File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES);
+                    if (!storageDir.exists()) {
+                        storageDir.mkdirs();
+                    }
+                    File video = new File(storageDir, videoFileName);
 
-            cameraAppVideoFilePath = video.getAbsolutePath();
+                    cameraAppVideoFilePath = video.getAbsolutePath();
 
-            takeVideoIntent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, duration);
-            takeVideoIntent.putExtra(MediaStore.EXTRA_SIZE_LIMIT, size);
-            takeVideoIntent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, quality);
-            takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(video));
+                    takeVideoIntent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, duration);
+                    takeVideoIntent.putExtra(MediaStore.EXTRA_SIZE_LIMIT, size);
+                    takeVideoIntent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, quality);
+                    takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, Utils.fileUriToContentUri(context, video));
+                    takeVideoIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
-            ((FlowRunnerActivity)context).startActivityForResult(takeVideoIntent, CAMERA_APP_VIDEO_MODE);
-        }
+                    ((FlowRunnerActivity) context).startActivityForResult(takeVideoIntent, CAMERA_APP_VIDEO_MODE);
+                }
+            }
+        };
+
+        if (Utils.isRequestPermissionsSupported &&
+                !Utils.checkAndRequestPermissions((FlowRunnerActivity)context, new String[] {
+                        Manifest.permission.CAMERA,
+                        Manifest.permission.RECORD_AUDIO,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                }, FlowRunnerActivity.FlowCameraAPIPermissionCode))
+            return;
+        cameraAppOpenVideoRunnable.run();
+        cameraAppOpenVideoRunnable = null;
     }
 
     public void openCameraAppPhotoMode(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, String fileName, int fitMode) {

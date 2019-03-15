@@ -1,8 +1,10 @@
 import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fiquoting;
 import tools/flowc/fctypeenv;
 import tools/flowc/type_helpers;
 
 import tools/flowc/flowc_helpers;
+
 
 export {
 	// Converts a typed and linked program to the lean structure
@@ -15,6 +17,8 @@ export {
 
 	// Converts this module to an fimodule. Returns non-dummy FiModule even with errors, errors are handled with onError
 	fcmodule2fiWithErrorHandler(e : FcTypeEnv, m : FcModule, onError : (string, FcInfo2) -> void) -> FiModule;
+
+    fctypestruct2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcTypeStruct) -> FiTypeStruct;
 }
 
 fctypeenv2fi(global : FcTypeEnvProgram) -> FiProgram {
@@ -70,7 +74,7 @@ fcmodule2fi(e : FcTypeEnv, m : FcModule) -> FiModule {
 	r = fcmodule2fiWithErrorHandler(e, m, onError);
 	if (^errors) {
 		fcPrintln("Could not type " + m.fileinfo.flowfile);
-		FiModule(FiFileInfo(m.fileinfo.flowfile, 0.0, "", "", 0.0), [], [], [], [], [], [], [], [], [], [], 0, 0)
+		FiModule(FiFileInfo(m.fileinfo.flowfile, 0.0, "", "", 0.0, -1.0), [], [], [], [], [], [], [], [], [], [], 0, 0)
 	} else {
 		r
 	}
@@ -95,7 +99,7 @@ fcmodule2fiWithErrorHandler(e : FcTypeEnv, m : FcModule, onError : (string, FcIn
 }
 
 fcfileinfo2fi(f : FcFileInfo) -> FiFileInfo {
-	FiFileInfo(f.flowfile, f.trampstamp, f.fullpath, f.md5sum, f.filesize);
+	FiFileInfo(f.flowfile, f.trampstamp, f.fullpath, f.md5sum, f.filesize, timestamp());
 }
 
 fcimport2fi(f : FcImport) -> FiImport {
@@ -169,7 +173,19 @@ fcexp2fi(env : FcTypeEnv, onError : (string, FcInfo2) -> void, e : FcExp) -> FiE
 		FcLambda(args, body, info): fclambda2fi(env, onError, e);
 		FcLet(name, type, e1, e2, info): FiLet(name, fctype2fi(env, onError, type), fcexp2fi(env, onError, e1), fcexp2fi(env, onError, e2), mfctype2fi(env, onError, ^(info.type)), info.start);
 		FcIf(e1, e2, e3, info): FiIf(fcexp2fi(env, onError, e1), fcexp2fi(env, onError, e2), fcexp2fi(env, onError, e3), mfctype2fi(env, onError, ^(info.type)), info.start);
-		FcCallPrim(op, es, info): FiCallPrim(op, fcexps2fi(env, onError, es), mfctype2fi(env, onError, ^(info.type)), info.start);
+		FcCallPrim(op, es, info): {
+			if (op == FcQuote()) {
+				ies = fcexps2fi(env, onError, es);
+				r = expandFiQuote(ies[0], info.start);
+
+				conf = FcPretty(false /* true */, true, makeTree(), makeTree());
+				// println(prettyFiExp(conf, ies[0]) + " -> " + prettyFiExp(conf, r));
+
+				r;
+			} else {
+				FiCallPrim(op, fcexps2fi(env, onError, es), mfctype2fi(env, onError, ^(info.type)), info.start);
+			}
+		}
 		FcVar(__, __): fcvar2fi(env, onError, e);
 		FcRequire(flowfile, ex, info): FiRequire(flowfile, fcexp2fi(env, onError, ex), mfctype2fi(env, onError, ^(info.type)), info.start);
 		FcUnsafe(name, fallback, info): FiUnsafe(name, fcexp2fi(env, onError, fallback), mfctype2fi(env, onError, ^(info.type)), info.start);

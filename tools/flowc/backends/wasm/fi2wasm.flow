@@ -5,6 +5,9 @@ import tools/flowc/backends/wasm/wasm_type_descriptor;
 import tools/flowc/backends/wasm/wasm_function_table;
 import tools/flowc/manipulation/lambda_lifting;
 import tools/flowc/manipulation/specialization;
+import tools/flowc/manipulation/wrap_funcs_as_args;
+import tools/flowc/manipulation/auto_smart_cast;
+import tools/flowc/manipulation/inline_functions;
 import tools/flowc/backends/wasm/wasm_js_wrapper;
 import tools/flowc/backends/wasm/wasm_native_linkage;
 import tools/flowc/backends/wasm/wasm_native_wrapper;
@@ -17,14 +20,31 @@ export {
 	fi2wasm(program : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void;
 }
 
+inlineFunctions = [
+	"bitNot", "bitAnd", "bitOr", "bitXor", "bitShl", "bitUshr", 
+	"wasm_inc_refcnt", "wasm_inc_refcnt_passthru", "wasm_dec_refcnt",
+	"makeBitSet", "setBitSet", "unsetBitSet", "getBitSet", 
+	"wasm_get_next_field", "wasm_get_prev_field", "wasm_get_size_field", "wasm_get_next_block", 
+	"wasm_get_prev_block", "wasm_get_block_size", "wasm_set_next_block", "wasm_set_prev_block",
+	"wasm_read_head", "wasm_write_head", "wasm_write_header",
+	"wasm_get_array_i32", "wasm_get_array_i32_ref", "wasm_get_field_i32", "wasm_get_field_i32_ref", 
+];
+
 fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, callback : () -> void) -> void {
 	fcVerbose(cfg, 0, "Making Wasm '" + cfg.outputfile + "'...");
 
-	// Extend with the Wasm runtime
-	program11 = if (false) program0 else fiWasmExtendWithRuntime(program0, globEnv);
-	program12 = fiWasmAddIndirectWrappers(program11, cfg.flowfile);
-	program2 = lift_lambdas(program12);
-	program3 = specializeProgram(cfg, program2);
+    // applying transformations in sequence
+    processors = [
+        \p -> fiWasmExtendWithRuntime(p, globEnv),
+        \p -> fiWasmAddIndirectWrappers(p, cfg.flowfile),
+        \p -> specializeProgram(cfg, p),
+        expandCasts,
+        fiWasmWrapFuncArgs,
+        lift_lambdas,
+        \p -> (if (cfg.doinline) fiInlineFunctions(p, \fname -> contains(inlineFunctions, fname)) else p),
+    ];
+
+    program3 = fold(processors, program0, \p, proc -> proc(p));
 
 	fcVerbose(cfg, 1, "Collecting declarations..");
 	decls1: [Pair<string, [FiDeclaration]>] = fiCollectDeclarationsCommon(program3);
@@ -47,6 +67,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	// since we need NativeHx we add 'math' as initial
 	usedModules = foldTree(natives, ["math/math"], \k, v, acc -> {
 		s = if (startsWith(v.decl.nativeName, "RenderSupport.")) "form/renderform" // will create a RenderSupportHx object
+		else if (startsWith(v.decl.nativeName, "FlowFileSystem.")) "fs/filesystem" 
 		else "";
 
 		if (s != "" && !contains(acc, s))
@@ -70,7 +91,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 			Pair(d.first, dd);
 		} else d;
 	});
-	
+
 	allDecls : [FiDeclaration] = concatA(map(decls, \p -> p.second));
 	// collect all FiFunctionDec
 	funcDecls : Tree<string, FiFunctionDec> = fold(allDecls, makeTree(), \acc, decl : FiDeclaration -> {
@@ -79,7 +100,7 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 			default: acc;
 		}
 	});
-	
+
 	// register fallbacks for non-existing natives
 	functions = fold(allDecls, fiWasmBuildFunctionTable(cfg, decls), \acc, decl -> {
 		doAdd = switch (decl) {
@@ -100,15 +121,14 @@ fi2wasm(program0 : FiProgram, globEnv : FcTypeEnvGlobal, cfg : FiWasmConfig, cal
 	wasmContext = WasmContext(
 		natives, 
 		stringAcc, 
-		makeSet(), 
-		makeTree(), 
+		[], 
 		types, 
 		functions, 
 		names, 
 		makeTree(), 
 		ref makeList()
 	);
-	moduleHeader = fiWasmCreateModuleHeader(wasmContext, wrapped.import_string);
+	moduleHeader = fiWasmCreateModuleHeader(cfg, wasmContext, wrapped.import_string);
 	
 	fcVerbose(cfg, 0, "Generating Wasm code for declarations...");
 
@@ -233,7 +253,7 @@ fiWasmExtendWithRuntime(program : FiProgram, globEnv : FcTypeEnvGlobal) -> FiPro
 	}
 	wasmRuntime = parsedWasmRuntime.first;
 
-	overridden = overrideNatives(program.modules, wasmRuntime.names.toplevel);
+	overridden = wasmOverrideNatives(program.modules, wasmRuntime.names.toplevel);
 
 	FiProgram(
 		program.config,
@@ -266,16 +286,23 @@ fiWriteListingFile(cfg : FiWasmConfig, context : WasmContext) {
 fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, [FiDeclaration]>]) {
 	if (strlen(cfg.wasmast) > 0) {
 		contents = strGlue(fold(decls, [], \acc, p -> {
-			m = map(p.second, \decl ->{
+			m = map(p.second, \decl -> {
 				switch (decl) {
 					FiFunctionDec(name, lambda, type, declStart, defiStart): {
-						"FUNCTION: " + decl.name + fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, lambda), "");
+						"FUNCTION: " + 
+						decl.name + " " + 
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
+						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, lambda), "");
 					}
 					FiGlobalVar(name, value, type, declStart, defiStart): {
-						"GLOBAL VAR: " + name
+						"GLOBAL VAR: " + name + " " +
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
+						fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, value), "");
 					}
 					FiNativeDec(name, io, type, nativeName, fallbackLambda, declStart, defiStart): {
-						"NATIVE: " + name
+						"NATIVE: " + name + " " +
+						fiPrintWasmType(fitype2wasmtype(context.globalNames, type)) + 
+                        fiPrintWasmExp(fiexp2wasmexp(context, context.globalNames, fallbackLambda), "");
 					}
 				}
 			});
@@ -284,23 +311,6 @@ fiWriteASTFile(cfg : FiWasmConfig, context : WasmContext, decls : [Pair<string, 
 
 		setFileContent(cfg.wasmast, contents);
 	} else true;
-}
-
-// This grabs flow-based implementations of natives to run in the Wasm side, and uses that as the implementation
-overrideNatives(modules : Tree<string, FiModule>, toplevels : Tree<string, FiDeclaration>) -> Tree<string, FiModule> {
-	mapTree(modules, \module -> {
-		natives2 = map(module.natives, \nat -> {
-			eitherMap(lookupTree(toplevels, nat.name), \fb -> {
-				switch (fb) {
-					FiFunctionDec(__, lambda, __, __, __):
-						FiNativeDec(nat with fallbackLambda = lambda);
-					FiGlobalVar(__, __, __, __, __): nat;
-					FiNativeDec(__, __, __, __, __, __, __): nat;
-				}
-			}, nat)
-		});
-		FiModule(module with natives = natives2)
-	});
 }
 
 fiInvokeWat2Wasm(cfg: FiWasmConfig, contents: string, wasmfile: string, callback : (bool) -> void) {
@@ -334,6 +344,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 		fcVerbose(cfg, 0, "Creating Wasm host template '" + cfg.hostfile + "'...");
 
 		IDHandler = "#include tools/flowc/backends/wasm/idhandler.js";
+		TagsFromValue = "#include tools/flowc/backends/wasm/tags_from_value.js";
 		TestJS = "#include tools/flowc/backends/wasm/tests.js";
 
 		result =
@@ -351,6 +362,8 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 			var HEAP8, HEAPU8, HEAP16, HEAP32, HEAPF64;
 			var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : new util.TextDecoder('utf-16le');
 			var _malloc;
+			var _free;
+			var _descriptor_from_type;
 			var _table;
 			var MisalignedDoubleF64, MisalignedDoubleI32;\n" +
 
@@ -377,7 +390,9 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 					default:
 						return [tag];
 				}
-			}
+			}\n" + 
+
+			TagsFromValue + "
 
 			function pushDoubleToHeap(address, value) {
 				MisalignedDoubleF64[0] = value;
@@ -428,7 +443,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 						}
 						var ptr = address + 8;
 						if (len == 0)
-							return ["", address];
+							return \"\";
 						return UTF16Decoder.decode(HEAPU8.subarray(ptr, ptr + len));
 					}
 					
@@ -442,8 +457,9 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 						return decode_data(base, ptr, tags, true);
 					}
 
-					case 6 : // native
-							return HEAP32[address >> 2]; // just a pointer to js heap
+					case 6 : { // native (ref cnt; ptr to js heap)
+						return HEAP32[(address + 4) >> 2]; // skip ref count and return a value
+					}
 
 					case 9: { // array 
 						if (stack) address = HEAP32[address >> 2];
@@ -490,6 +506,45 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 						HEAP32[(strPtr>>2) + 1] = bufLen;
 						stringToUTF16(value, strPtr + 8, bufLen);
 						return strPtr;
+
+					case 5: // flow
+						elementTag = extractTagsFromValue(value);
+
+						if (elementTag == -1) {
+							// problem;
+							return 0;
+						}
+
+						// alloc memory for type
+						var type_lenght = elementTag.length;
+						var type_ptr = _malloc(alignBytes(type_lenght, 4));
+						var offset = 0;
+						elementTag.forEach(function(entry) {
+							HEAPU8[type_ptr + offset] = entry;
+							offset += 1;
+						});
+						var type = _descriptor_from_type(type_ptr, type_lenght);
+						// free type memory. it's no longer needed
+						_free(type_ptr);
+
+						// alloc memory for flow itself
+						bytes = 4 + 4 + 4 * (elementTag[0] == 3 ? 2 : 1); //  2 for double
+						var ptr = _malloc(alignBytes(bytes, 4));
+						HEAP32[(ptr >> 2) + 0] = 1; // initial refcount
+						HEAP32[(ptr >> 2) + 1] = type; //  ????????????????????????????????????
+						if (elementTag[0] == 3 /*double*/) {
+							pushDoubleToHeap(ptr + 8, value);
+						} else {
+							HEAP32[(ptr + 8) >> 2] = encode_data(value, elementTag);
+						}
+
+						return ptr;						
+
+					case 6 : // native (ref cnt; ptr to js heap)
+						var ptr = _malloc(8);
+						HEAP32[(ptr >> 2) + 0] = 1; // initial refcount
+						HEAP32[(ptr >> 2) + 1] = value;
+						return ptr;
 
 					case 9: // array 
 						var elementTag = tag.slice(1);
@@ -546,6 +601,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 							var ss = decode_data(0, s, [4], false);
 							console.log(ss);
 						},
+						'js_free_native' : function (i) {  IDHandler.revokeObjectId(i); console.log('free native: ' + i); },
 						'printi' : function (i) { console.log(i); },
 						'printd' : function (d) { console.log(d); },
 						'wasm_dmod' : function(a,b) { return a % b; },
@@ -566,21 +622,24 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 							var aa = decode_data(0, a, [9, t], false);
 							console.log(aa.toString());
 						},
-						'wasm_array_to_string' : function(a, t) {
-							var arr = decode_data(0, a, [9, t], false);
+						'wasm_array_to_string' : function(a, t_addr) {
+							var tags = expandTypeTagByTypedesc(t_addr);
+							var arr = decode_data(0, a, tags, false);
 							var s = arr.toString();
 							return encode_data(s, [4]);
 						}				  		
 					}
-				};" + 
+				};\n" + 
 		(if (cfg.nodejs)  // nodejs has to fetch API that supports local urls - workaround
-			"  WebAssembly.instantiate(bytes, imports)"
+			"				WebAssembly.instantiate(bytes, imports)"
 			else 
-				 "return WebAssembly.instantiate(bytes, imports);
+			"				return WebAssembly.instantiate(bytes, imports);
 				})") + 
 					".then(m => {
 					WASMInstance = m.instance;
 					_malloc = WASMInstance.exports.wasm_alloc;
+					_free = WASMInstance.exports.wasm_free;
+					_descriptor_from_type = WASMInstance.exports.wasm_descriptor_from_type;
 					WASMInstance.exports.wasm_init_runtime();
 					WASMInstance.exports.wasm_init_global_vars();
 					_table = WASMInstance.exports.table;
@@ -596,7 +655,7 @@ fiWriteHostTemplateFile(cfg : FiWasmConfig, wasmfile: string, native_code : stri
 
 // creates module import section by generating import declaration for import functions
 // obeys 2-level wasm namespace, defaults to "runtime" module is missing
-fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
+fiWasmCreateModuleHeader(cfg : FiWasmConfig, wasmContext : WasmContext, callbacks : [string]) {
 	imports1 = foldTree(wasmContext.natives, Cons("(module \n", makeList()), \name, nativeDec, acc -> {
 		if (fiWasmIsHostNative(nativeDec.decl.nativeName)) {
 			nameComponents = strSplit(nativeDec.decl.nativeName, ".");
@@ -630,7 +689,7 @@ fiWasmCreateModuleHeader(wasmContext : WasmContext, callbacks : [string]) {
 		Cons(cb, acc)
 	});
 
-	Cons("(memory $memory (export \"memory\") 1)\n", invokers);
+	Cons("(memory $memory (export \"memory\") " + i2s(cfg.memory) + ")\n", invokers);
 }
 
 fiNativeJSFileName(hostfile: string) {
@@ -731,13 +790,6 @@ iterFiExp(expr : FiExp, parent : FiExp, b : bool, cb : (FiExp, FiExp, bool) -> v
 	}
 }
 
-fiTypeIsFunction(t : FiType) {
-	switch (t) {
-		FiTypeFunction(__, __): true;
-		default: false;
-	}
-}
-
 fiWasmAddIndirectWrappers(program : FiProgram, flowfile : string) {
 	nativesToWrap = ref makeTree();
 	iterProgramExpr(program, \e : FiExp, parent : FiExp, isFirst : bool -> {
@@ -804,4 +856,3 @@ fiInjectFunctions(program : FiProgram, flowfile : string, funcs : [FiFunctionDec
 		}
 	}
 }
-

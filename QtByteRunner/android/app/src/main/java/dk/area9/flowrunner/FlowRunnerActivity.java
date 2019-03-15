@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.regex.Matcher;
@@ -219,6 +220,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         Log.i(Utils.LOG_TAG, "Tmp dir path = " + tmp_dir.getAbsolutePath());
              
         wrapper.setDPI((int)((metrics.xdpi + metrics.ydpi) / 2.0f));
+        wrapper.setDensity(metrics.density);
         wrapper.setScreenWidthHeight(metrics.widthPixels, metrics.heightPixels);
         
         Log.i(Utils.LOG_TAG, "Display DPI = " + metrics.densityDpi);
@@ -347,7 +349,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         FlowGeolocationAPI flowGeolocation = new FlowGeolocationAPI(this, wrapper, flowGooglePlayServices, gelocationPermissionGranted);
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
-        
+
+        FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
+        wrapper.setFlowWebSocketSupport(flowWebSocketSupport);
+
         createContentView();
         
         menu_anchor = new View(this);
@@ -1250,7 +1255,39 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 }
             }
          });
-    }    
+    }
+
+    public static final int FlowCameraAPIPermissionCode = 1;
+
+    public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
+        switch (requestCode) {
+            case FlowCameraAPIPermissionCode: {
+                boolean granted = true;
+                for (int result : grantResults) {
+                    if (result == PackageManager.PERMISSION_DENIED) {
+                        granted = false;
+                        break;
+                    }
+                }
+                if (Arrays.asList(permissions).contains(permission.RECORD_AUDIO)) {
+                    if (granted) {
+                        FlowCameraAPI.cameraAppOpenVideoRunnable.run();
+                        FlowCameraAPI.cameraAppOpenVideoRunnable = null;
+                    } else {
+                        wrapper.NotifyCameraEventVideo(3, "ERROR: Permission not granted", FlowCameraAPI.cameraAppCallbackAdditionalInfo, -1, -1, -1, -1);
+                    }
+                } else {
+                    if (granted) {
+                        FlowCameraAPI.cameraAppOpenPhotoRunnable.run();
+                        FlowCameraAPI.cameraAppOpenPhotoRunnable = null;
+                    } else {
+                        wrapper.NotifyCameraEvent(3, "ERROR: Permission not granted", FlowCameraAPI.cameraAppCallbackAdditionalInfo, -1, -1);
+                    }
+                }
+                break;
+            }
+        }
+    }
     
     private void safeOnActivityResult(int requestCode, int resultCode, final Intent data) {
         if (resultCode != RESULT_OK) {

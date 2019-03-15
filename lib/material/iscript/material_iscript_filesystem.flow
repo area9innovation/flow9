@@ -2,8 +2,7 @@ import material/iscript/material_iscript_filesystem_local;
 import material/iscript/material_iscript_filesystem_db;
 
 export {
-	updateBatchTestFilenames(manager : MaterialManager, path : string) -> void;
-	playIScriptFromFile(manager : MaterialManager, fileName : string, onFinish : ([IScriptReplayResult]) -> void) -> void;
+	playIScriptFromLocalFile(manager : MaterialManager, fileName : string, onFinish : ([IScriptReplayResult]) -> void) -> void;
 
 	IScriptReplayStyles ::= ISRSourceLocal, ISRSourceDB, ISRDelay;
 		ISRSourceLocal();
@@ -11,7 +10,7 @@ export {
 		ISRDelay(defaultDelay : int);
 
 	playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScriptReplayStyles], onFinish : ([IScriptReplayResult]) -> void) -> void;
-	playBatchTestsFromDirectory(manager : MaterialManager, directory : string, onFinish : ([IScriptReplayResult]) -> void) -> void;
+	playScenarioFromLocalFile(manager : MaterialManager, directory : string, onFinish : ([IScriptReplayResult]) -> void) -> void;
 
 	updateIScriptFile(manager : MaterialManager, currentScriptFilename : string,
 		updateFn : (storedIScript : StoredIScript) -> StoredIScript) -> void;
@@ -19,25 +18,14 @@ export {
 	loadIScriptFile(manager : MaterialManager, name : string, onSuccess : () -> void, onError : () -> void) -> () -> void;
 }
 
-updateBatchTestFilenames(manager : MaterialManager, path : string) -> void {
-	getFilesystemExtAPI().readDirectory(
-		path,
-		\__, files -> {
-			testFiles = sort(filter(files, \v1 -> endsWith(v1, ".iscript")));
-			next(manager.iscript.batchTestFileNamesB, testFiles);
-		},
-		\error -> iScriptInfo(manager, "Too few elements. " + error, None())
-	)
-}
-
-playIScriptFromFile(manager : MaterialManager, fileName : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
-	iScriptFromFile(manager, fileName);
+playIScriptFromLocalFile(manager : MaterialManager, fileName : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
+	iScriptFromLocalFile(manager, fileName);
 	setIScriptState(manager, IScriptReplaying(onFinish));
 }
 
 playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScriptReplayStyles], onFinish : ([IScriptReplayResult]) -> void) -> void {
 	scriptFileName = getUrlParameter(UP_ISCRIPTPLAY);
-	batchTestsDirectory = getUrlParameter(UP_ISCRIPTPLAYBATCH);
+	scenarioPath = getUrlParameter(UP_ISCRIPTPLAYSCENARIO);
 
 	isrReplayLocalSource = containsStruct(styles, ISRSourceLocal());
 	isrReplayDBSource = containsStruct(styles, ISRSourceDB());
@@ -54,20 +42,19 @@ playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScri
 			setLocalFilesystemExtAPI();
 			if (fileExists(scriptFileName)) {
 				iScriptInfo(manager, "playiscript: " + scriptFileName, None());
-				timer(replayDelay, \ -> playIScriptFromFile(manager, scriptFileName, onFinish));
+				timer(replayDelay, \ -> playIScriptFromLocalFile(manager, scriptFileName, onFinish));
 			} else {
 				iScriptInfo(manager, "IScript file not found: " + scriptFileName, None());
 			}
 			setFilesystemExtAPI(storeFilesystemExtAPI);
-		} else if (!js && batchTestsDirectory != "" && !isIScriptDBPath(batchTestsDirectory)) {
+		} else if (!js && scenarioPath != "" && !isIScriptDBPath(scenarioPath)) {
 			storeFilesystemExtAPI = getFilesystemExtAPI();
 			setLocalFilesystemExtAPI();
-			if (isDirectory(batchTestsDirectory)) {
-				folderName = if (!endsWith(batchTestsDirectory, "\\")) batchTestsDirectory + "\\" else batchTestsDirectory;
-				iScriptInfo(manager, "playbatchiscript: " + folderName, None());
-				timer(replayDelay, \ -> playBatchTestsFromDirectory(manager, folderName, onFinish));
+			if (fileExists(scenarioPath)) {
+				iScriptInfo(manager, "playiscriptscenario: " + scenarioPath, None());
+				timer(replayDelay, \ -> playScenarioFromLocalFile(manager, scenarioPath, onFinish));
 			} else {
-				iScriptInfo(manager, "Batch directory not found: " + batchTestsDirectory, None());
+				iScriptInfo(manager, "IScript scenario not found: " + scenarioPath, None());
 			}
 			setFilesystemExtAPI(storeFilesystemExtAPI);
 		}
@@ -90,47 +77,51 @@ playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScri
 					iScriptInfo(manager, err_msg, None());
 				}
 			)
-		} else if (isIScriptDBPath(batchTestsDirectory)) {
+		} else if (isIScriptDBPath(scenarioPath)) {
 			storeCurrentAndSetIScriptDBPartition(manager);
-			getFilesystemExtAPI().isDirectory(batchTestsDirectory,
+			getFilesystemExtAPI().fileExists(scenarioPath,
 				\b -> if (b) {
-						folderName = if (!endsWith(batchTestsDirectory, "\\")) batchTestsDirectory + "\\" else batchTestsDirectory;
-						iScriptInfo(manager, "playbatchiscript: " + folderName, None());
-						next(manager.iscript.currentBatchTestsDirectoryB, folderName);
-						updateBatchTestFilenames(manager, folderName);
-						restoreCurrentDBPartition(manager);
-						timer(replayDelay, \ -> setIScriptState(manager, IScriptBatchReplaying(onFinish)));
-					} else {
-						restoreCurrentDBPartition(manager);
-						iScriptInfo(manager, "Batch directory not found: " + batchTestsDirectory, None());
-					}
+					iScriptInfo(manager, "playiscriptscenario: " + scenarioPath, None());
+					iScriptScenarioFromDB2(manager, scenarioPath,
+						\scenario : IScriptScenario -> {
+							next(manager.iscript.scenario.pathB, scenarioPath);
+							next(manager.iscript.scenario.descriptionB, getValue(scenario.descriptionB));
+							next(manager.iscript.scenario.scriptsB, getValue(scenario.scriptsB));
+							nextDistinct(manager.iscript.scenario.scenarioChangedB, false);
+							nextDistinct(manager.iscript.scenario.runningIScriptIdxB, -1);
+							restoreCurrentDBPartition(manager);
+							timer(replayDelay, \ -> setIScriptState(manager, IScriptScenarioReplaying(onFinish)));
+						},
+						\err_msg -> {
+							restoreCurrentDBPartition(manager);
+							iScriptInfo(manager, err_msg, None());
+						}
+					)
+				}
 			)
 		}
 	}
 }
 
-playBatchTestsFromDirectory(manager : MaterialManager, folderName : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
-	if (folderName != "") {
-		next(manager.iscript.currentBatchTestsDirectoryB, folderName);
-		updateBatchTestFilenames(manager, folderName);
-		setIScriptState(manager, IScriptBatchReplaying(onFinish));
-	}
+playScenarioFromLocalFile(manager : MaterialManager, scenarioPath : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
+	iScriptScenarioFromLocalFile(manager, scenarioPath);
+	setIScriptState(manager, IScriptScenarioReplaying(onFinish));
 }
 
 updateIScriptFile(
 	manager : MaterialManager,
-	currentScriptFilename : string,
+	currentScriptFilepath : string,
 	updateFn : (storedIScript : StoredIScript) -> StoredIScript) -> void {
 
-	if (startsWith(currentScriptFilename, "DB:/")) {
+	if (startsWith(currentScriptFilepath, "DB:/")) {
 		storeCurrentAndSetIScriptDBPartition(manager);
 
-		iScriptFromDB2(manager, currentScriptFilename,
+		iScriptFromDB2(manager, currentScriptFilepath,
 			\currentScript : StoredIScript -> {
 				resultScript = updateFn(currentScript);
 				iScriptToDB2(
 					manager,
-					currentScriptFilename,
+					currentScriptFilepath,
 					resultScript,
 					\ -> restoreCurrentDBPartition(manager),
 					\err_msg -> {
@@ -146,9 +137,9 @@ updateIScriptFile(
 		)
 	}
 	else {
-		currentScript = storedIScriptFromFile(currentScriptFilename);
+		currentScript = storedIScriptFromLocalFile(currentScriptFilepath);
 		resultScript = updateFn(currentScript);
-		res = iScriptToFile2(manager, resultScript, currentScriptFilename);
+		res = iScriptToLocalFile2(manager, resultScript, currentScriptFilepath);
 		if (!res) {
 			iScriptInfo(manager, "Update of local iScript file failed.", None());
 		}
@@ -180,7 +171,7 @@ loadIScriptFile(manager : MaterialManager, name : string, onSuccess : () -> void
 		\ -> disposed := true;
 	} else {
 		interruptibleDeferUntilNextFrameRendered(\ -> {
-			iScriptFromFile(manager, name);
+			iScriptFromLocalFile(manager, name);
 			onSuccess();
 		});
 	}

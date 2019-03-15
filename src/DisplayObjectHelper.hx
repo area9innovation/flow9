@@ -97,7 +97,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
-		return untyped clip._visible;
+		return untyped clip._visible && (getClipWorldVisible(clip) || (clip.parent != null && getClipVisible(clip.parent)));
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
