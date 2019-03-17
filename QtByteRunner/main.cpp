@@ -9,6 +9,7 @@
 #include "qt-backend/StartProcess.h"
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/RunParallel.h"
+#include "qt-backend/QWebSocketSupport.h"
 
 #include "utils/FileLocalStore.h"
 
@@ -18,7 +19,7 @@
 
 #ifdef QT_GUI_LIB
 #include "soundsupport.h"
-#include "gl-gui/QGLRenderSupport.h"
+#include "qt-gui/QGLRenderSupport.h"
 
 #include <QApplication>
 #include <QScrollArea>
@@ -28,7 +29,7 @@
 #include <qt-gui/testopengl.h>
 
 #ifdef FLOW_DEBUGGER
-#include "gl-gui/QGLClipTreeBrowser.h"
+#include "qt-gui/QGLClipTreeBrowser.h"
 #endif
 #else
 #include <QtCore/QCoreApplication>
@@ -154,7 +155,9 @@ static void sigsegv_handler(int)
 
 NativeProgram *load_native_program();
 
+#ifdef FLOW_JIT
 FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file);
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -181,6 +184,7 @@ int main(int argc, char *argv[])
 #ifdef QT_GUI_LIB
     bool cliptree = false;
     bool fake_touch = false;
+    bool transparent = false;
     bool no_qglfb = false;
     int fake_dpi = 96;
     int screen_w = 1024;
@@ -192,7 +196,6 @@ int main(int argc, char *argv[])
     int msaa_samples = 16;
     QString fallback_font = "";
 #endif
-    NativeProgram *nprogram = NULL;
     QString media_path = "";
     QStringList flowArgs;
     QStringList flowIncludes;
@@ -364,10 +367,10 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--fallback_font")) {
             fallback_font = argv[2];
             shift_args(argc, argv, 2);
-#endif
-        } else if (!strcmp(argv[1], "--test-native")) {
-            nprogram = load_native_program();
+        } else if (!strcmp(argv[1], "--transparent")) {
+            transparent = true;
             shift_args(argc, argv, 1);
+#endif
         } else if (argv[1][0] == '-') {
             printf("Unknown argument: %s\n", argv[1]);
             exit(1);
@@ -385,6 +388,8 @@ int main(int argc, char *argv[])
     format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     if (msaa_samples > 1) format.setSamples(msaa_samples);
     //format.setSwapInterval(60);
+    if (transparent)
+        format.setAlphaBufferSize(8);
     QSurfaceFormat::setDefaultFormat(format);
 
     // We need to share the OpenGL context for Qt's QVideoWidget (when used)
@@ -526,7 +531,7 @@ int main(int argc, char *argv[])
             // here is a loop while test is not passed
         }
 
-        pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch);
+        pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch, transparent);
         pRenderer->setDPI(fake_dpi);
         pRenderer->no_qglfb = no_qglfb;
         pRenderer->ProfilingInsnCost = gui_prof_cost;
@@ -558,6 +563,7 @@ int main(int argc, char *argv[])
     QFileSystemInterface FileSystem(&FlowRunner, &HttpManager);
     QtNotificationsSupport NotificationsManager(&FlowRunner, cgi);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
+    QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
 
     RunParallelHost RunParallel(&FlowRunner);
 
@@ -586,12 +592,12 @@ int main(int argc, char *argv[])
 #endif // QT_GUI_LIB
 
 #if !COMPILED
-    if (nprogram) {
-        FlowRunner.Init(nprogram);
+#ifdef NATIVE_BUILD
+        FlowRunner.Init(load_native_program());
         FlowRunner.setUrl(params);
         FlowRunner.RunMain();
-    }
-    else if (argc >= 2) {
+#else
+    if (argc >= 2) {
         QString bytecodeFile = argv[1];
 
         if (bytecodeFile.endsWith(".flow")) {
@@ -740,6 +746,7 @@ int main(int argc, char *argv[])
                        "--max-heap <m>         Maximum size of the heap in mega-bytes.\n"
                        "--min-heap <m>         Starting size of the heap in mega-bytes.\n"
                        "--fallback_font <font> Enables lookup of unknown glyphs in the <font>. <font> example - DejaVuSans.\n"
+                       "--transparent          Enables GL transparency.\n"
 #endif
 
                        "-I dir                 passes -I parameter to flow compiler\n"
@@ -765,6 +772,7 @@ int main(int argc, char *argv[])
         pRenderer->StartBytecodeDownload(params);
 #endif
     }
+#endif
 #endif
 
     int rv = 0;

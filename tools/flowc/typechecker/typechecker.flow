@@ -109,7 +109,7 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 
 	// We need to type the names in an order that respects dependencies the best
 	// See test 43, 44.
-	initOrder0 = makeInitOrder(env, module, module.initOrder);
+	initOrder0 = makeInitOrder(env.program.acc.config, module, module.initOrder);
 	initOrder = concatA(initOrder0);
 
 	// First, record a preliminary type for all local functions since
@@ -213,7 +213,10 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 			onModuleError(FcError(err, [FcPosition(module.fileinfo.flowfile, info.start, info.end)]))
 	);
 
-	if (getConfigParameterDef(env.program.acc.config.config, "verify-types", "") != "") {
+	if (getConfigParameterDef(env.program.acc.config.config, "verify-types", "1") != "0") {
+		if (env.program.acc.config.verbose >= 1) {
+			fcPrintln("Verifying types in module '" + module.fileinfo.flowfile + "' after typechecking");
+		}
 		typeverifyFiModule(ret.first.program, fi, onModuleError);
 		{}
 	}
@@ -531,8 +534,8 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 				} else {
 					// Check that some common supertype exists
 					supertype = makeFcTyVar2(tyvarIdGroup, ci);
-					checkOrRecordTypeExpect(acc, FcLessOrEqual(tFrom, supertype, "from-type in cast", ci, e));
 					checkOrRecordTypeExpect(acc, FcLessOrEqual(tTo, supertype, "to-type in cast", ci, e));
+					checkOrRecordTypeExpect(acc, FcLessOrEqual(tFrom, supertype, "from-type in cast", ci, e));
 				}
 			}
 
@@ -1135,6 +1138,20 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 				FcCreateClosurePrim(sName, fName): 
 					typecheckFcExp(acc, tyvarIdGroup, flowfile, // same as corresponding struct 
 						FcCallPrim(FcStructPrim(sName), es, i));
+                FcQuote(): {
+					// We only typecheck the unquotes inside this body
+					typecheckFcExpUnquotes(
+						acc,
+						es[0], 
+						\re -> typecheckFcExp(acc, tyvarIdGroup, flowfile, re) |> ignore
+					);
+					// This type does not really matter
+					// This is always a QExp
+					FcTypeName("QExp", [], ci);
+                }
+                FcUnquote(): {
+					typecheckFcExp(acc, tyvarIdGroup, flowfile, es[0]);
+                }
 			}
 			set(rettype);
 		}
@@ -1358,4 +1375,58 @@ checkReservedIds(id : string, onError : (string) -> void) -> void {
 	if (contains(reserved, id)) {
 		onError("Can not use reserved name " + id);
 	}
+}
+
+typecheckFcExpUnquotes(env : FcTypeEnv, c : FcExp, typecheckfn : (FcExp) -> void) -> void {
+	qexp = FcTypeName("QExp", [], copyFcInfo2(c.info));
+	c.info.type := Some(qexp);
+
+	switch (c) {
+		FcLambda(args, body, info): {
+			iter(args, \a -> {
+				setAnyTyvarToType(env, a.type, qexp);
+			});
+			typecheckFcExpUnquotes(env, body, typecheckfn);
+		}
+		FcCall(f, args, info): {
+			typecheckFcExpUnquotes(env, f, typecheckfn);
+			typecheckFcExpsUnquotes(env, args, typecheckfn);
+		}
+		FcLet(name, type, e1, e2, info): {
+			setAnyTyvarToType(env, type, qexp);
+			typecheckFcExpsUnquotes(env, [e1, e2], typecheckfn);
+		}
+		FcIf(e1, e2, e3, info): typecheckFcExpsUnquotes(env, [e1, e2, e3], typecheckfn);
+		FcSwitch(x, switchType, cases, info):  typecheckFcExpsUnquotes(env, map(cases, \cs -> cs.body), typecheckfn);
+		FcCast(e, tFrom, tTo, info): typecheckFcExpUnquotes(env, e, typecheckfn);
+		FcSeq(es, info):  typecheckFcExpsUnquotes(env, es, typecheckfn);
+		FcCallPrim(op, es, info): {
+			if (op == FcUnquote()) {
+				typecheckfn(es[0]);
+			} else {
+				typecheckFcExpsUnquotes(env, es, typecheckfn);
+			}
+		} 
+		FcVar(name, info): {}
+		FcVoid(info): {}
+		FcDouble(d, info): {}
+		FcInt(i, info): {}
+		FcString(s, info): {}
+		FcBool(b, info): {}
+		FcRequire(flowfile, e, info):  typecheckFcExpUnquotes(env, e, typecheckfn);
+		FcUnsafe(name, fallback, info):  typecheckFcExpUnquotes(env, fallback, typecheckfn);
+	}
+}
+
+setAnyTyvarToType(env : FcTypeEnv, type : FcType, to : FcType) -> void {
+	switch (type) {
+		FcTypeVar(id, __): {
+			setTyvar(env, id, to);
+		}
+		default: {}
+	}
+}
+
+typecheckFcExpsUnquotes(env : FcTypeEnv, es : [FcExp], typecheckfn : (FcExp) -> void) -> void {
+	iter(es, \e -> typecheckFcExpUnquotes(env, e, typecheckfn));
 }

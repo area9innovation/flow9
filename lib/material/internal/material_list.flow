@@ -1,9 +1,5 @@
 import material/internal/material_grid;
-import material/selectmarray;
 import material/internal/material_list_util;
-import material/internal/material_dragdrop;
-
-// Internal to material
 
 export {
 	MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -14,28 +10,32 @@ MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Mater
 	state = makeMListInnerState(defaultListState(manager, parent, m2t), concat(m.style, m.state));
 
 	down = make(false);
-	MActivate2T(
+	MComponentGroup2T(
 		manager,
 		parent,
 		"MList",
 		[
 			IScriptBehaviour("selected", state.selection.selected, ISInputValue([], "[int]", true)),
 			extractStruct(m.state, IScriptRecordingEnabled(const(true))),
-			AccessRole("list"),
-			MFocusVertical(true)
+			AccessRole("list")
 		],
 		\p ->
 			MGetFocusGroup(\p2 -> eitherFn(
 				state.reorder,
 				\rdr -> {
-					grabDelay = extractStructMany(m.state, MGrabDelay(0));
+					reorderState = concatA([
+						[MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false))],
+						extractStructMany(m.state, MGrabDelay(0)),
+						extractStructMany(m.state, MReorderDropSpot(MEmpty())),
+						extractStructMany(m.state, MReorderCustomDraggingOrder()),
+					]);
 
 					MReorderGrid2T(
 						manager,
 						p2,
 						mapi(m.lines, \i, line -> MReorderItem(MGetFocusGroup(\par -> MListLine2T(par, const(i), const(line), state, down)), [])),
 						rdr.order,
-						concat([MEnabled(fminA([state.enabled, rdr.enabled, fnot(down)], false)), MGridFixSize()], grabDelay),
+						reorderState,
 						m2t
 					)
 				},
@@ -60,10 +60,20 @@ MList2T(manager : MaterialManager, parent : MFocusGroup, m : MList, m2t : (Mater
 	|> MListAddAvailable(state)
 }
 
-MDynamicListData : (
-	lineHeights : Pair<[Maybe<double>], int>, // lineHeights + itemsLength
+MDynamicListData(
+	lineHeights : MDynamicListLineHeights,
 	items : [MListLine],
 	sameHeight : bool
+);
+
+MDynamicListLineHeights(
+	lineHeights : [Maybe<double>],
+	itemsLength : int
+);
+
+MDynamicListItem(
+	id : int,
+	translation : double
 );
 
 MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -82,13 +92,13 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 
 	changingSize = ref false;
 	metricsLock = ref false;
-	prevBottomItem : ref Pair<int, double> = ref Pair(0, 0.);
+	prevBottomItem : ref MDynamicListItem = ref MDynamicListItem(0, 0.);
 	prevItemsCount : ref Pair<int, double> = ref Pair(0, 0.);
-	prevLineHeights : ref Pair<[Maybe<double>], int> = ref Pair([], 0);
-	
+	prevLineHeights : ref MDynamicListLineHeights = ref MDynamicListLineHeights([], 0);
+
 	itemsLoadQuota = 1000;
 	loadQuota = make(itemsLoadQuota);
-	
+
 	itemsHeights0 = tryExtractStruct(m.state, MItemsHeights(\__ -> zero));
 	heightsTree : ref Tree<int, DynamicBehaviour<Maybe<double>>> = ref makeTree();
 	itemsHeights : (int) -> DynamicBehaviour<Maybe<double>> = \i ->
@@ -110,7 +120,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 
 			if (sh) {
 				il = length(itms);
-				ih : Maybe<double> =	
+				ih : Maybe<double> =
 					if (il > 0)
 						Some(MListLine2Height(itms[0], state))
 					else
@@ -119,7 +129,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 				nextDistinct(hgt, i2d(il) * either(ih, 0.));
 				const(
 					MDynamicListData(
-						Pair([ih], il),
+						MDynamicListLineHeights([ih], il),
 						itms,
 						sh
 					)
@@ -128,50 +138,65 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 			else
 				fsubselect(loadQuota, FLift(\lq -> {
 					il = min(length(itms), lq);
-					fselect(
-						fmerge(generate(0, il, itemsHeights)),
-						FLift(\lh : [Maybe<double>] -> {
-							nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
-							MDynamicListData(
-								Pair(lh, il),
-								itms,
-								sh
-							)
-						})
+					eitherMap(
+						state.reorder,
+						\rdr ->
+							fselect2(
+								fmerge(generate(0, il, itemsHeights)),
+								rdr.order,
+								FLift2(\lh : [Maybe<double>], ord : [int] -> {
+									nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
+									lhgts =	generate(0, il, \i -> elementAt(lh, elementAt(ord, i, i), None()));
+
+									MDynamicListData(
+										MDynamicListLineHeights(lhgts, il),
+										itms,
+										sh
+									)
+								})
+							),
+						fselect(
+							fmerge(generate(0, il, itemsHeights)),
+							FLift(\lh : [Maybe<double>] -> {
+								nextDistinct(hgt, dsum(map(lh, \v -> either(v, 0.))));
+								MDynamicListData(
+									MDynamicListLineHeights(lh, il),
+									itms,
+									sh
+								)
+							})
+						)
 					)
 				}))
 		}));
 
 	items = fselect(dynListData, FLift(\data : MDynamicListData -> data.items));
 	sameHeight = fselect(dynListData, FLift(\data -> data.sameHeight));
-	itemsLength = fselect(dynListData, FLift(\data -> data.lineHeights.second));
+	itemsLength = fselect(dynListData, FLift(\data -> data.lineHeights.itemsLength));
 	hasItems = fselect(itemsLength, FLift(\il -> il > 0));
 
-	translates : DynamicBehaviour<[DynamicBehaviour<Pair<Point, int>>]> = make([]);
+	translates : DynamicBehaviour<[DynamicBehaviour<MDynamicListItem>]> = make([]);
 
 	(\par ->
 		MGetFocusGroup(\par2 ->
 			SelectMGroup2T(
 				manager,
 				par2,
-				fthrottle(translates, 1),
-				\__, __, tr : DynamicBehaviour<Pair<Point, int>>, p -> {
-					materialLog("Rerender container " + i2s(getValue(tr).second), MaterialInfo());
+				fthrottleNextFrame(translates),
+				\__, __, tr : DynamicBehaviour<MDynamicListItem>, p -> {
+					itemId = fselect(tr, FLift(\t -> t.id));
+					materialLog("Rerender container " + i2s(fgetValue(itemId)), MaterialInfo());
 					lineHeight = make(0.);
 					hgtUns = initUnsM();
 
 					lineId =
-						eitherFn(
+						eitherMap(
 							state.reorder,
 							\rdr ->
-								fselect2(fSecondOfPair(tr), rdr.order, FLift2(\trn, sl ->
-									if (trn >= 0 && length(sl) > trn)
-										sl[trn]
-									else
-										trn
+								fselect2(itemId, rdr.order, FLift2(\id, ord ->
+									elementAt(ord, id, id)
 								)),
-							\ ->
-								fSecondOfPair(tr)
+							itemId
 						);
 
 					lineContent =
@@ -217,7 +242,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 										TCopySize(
 											listLineVisible,
 											\trop ->
-												MFocusClickable2T(
+												MComponent2T(
 													manager,
 													p,
 													"MDynamicListDragDropHandle",
@@ -267,7 +292,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 						)
 					)
 					|> makeTropicConstantHeight(Some(0.))
-					|> (\listLine -> TTranslate(fFirstOfPair(tr), listLine))
+					|> (\listLine -> TTranslate(fselect(tr, FLift(\t -> Point(0., t.translation))), listLine))
 				}
 			)
 			|> (\f ->
@@ -319,165 +344,167 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 						lhgts = data.lineHeights;
 						sh = data.sameHeight;
 
-						if (!contains(lhgts.first, None())) {
+						if (!contains(lhgts.lineHeights, None())) {
 							metricsLock := true;
 
-							lineHeight = map(lhgts.first, \v -> either(v, 0.));
-							il = lhgts.second;
+							lineHeightsChanged = ^prevLineHeights != lhgts;
+
+							lineHeights = map(lhgts.lineHeights, \v -> either(v, 0.));
+							il = lhgts.itemsLength;
+							getLineHeights = \idx -> lineHeights[if (sh) 0 else idx];
 
 							lineHeight2translate = \idStart, idEnd ->
 								if (sh)
-									lineHeight[0] * i2d(idEnd - idStart)
+									lineHeights[0] * i2d(idEnd - idStart)
 								else
-									dsum(subrange(lineHeight, idStart, max(0, idEnd - idStart)));
+									dsum(subrange(lineHeights, idStart, max(0, idEnd - idStart)));
 
-							bottomItem : Pair<int, double> =
+							bottomItem : MDynamicListItem =
 								updateWhile(
-									if (^prevLineHeights == lhgts)
-										^prevBottomItem
+									if (lineHeightsChanged)
+										MDynamicListItem(
+											^prevBottomItem.id,
+											lineHeight2translate(0, ^prevBottomItem.id)
+										)
 									else
-										Pair(
-											^prevBottomItem.first,
-											lineHeight2translate(0, ^prevBottomItem.first)
-										),
-									\i -> {
-										id = i.first;
+										^prevBottomItem,
+									\item -> {
+										id = item.id;
 
-										if (id < il && id >= 0) {
-											if (sPosition.y <= i.second + lineHeight[if (sh) 0 else id]) {
-												if (id == 0 || sPosition.y >= i.second) {
+										if (id < 0 || id >= il)
+											Some(MDynamicListItem(0, 0.))
+										else
+											if (sPosition.y <= item.translation + getLineHeights(id)) {
+												if (id == 0 || sPosition.y >= item.translation)
 													None()
-												} else {
-													Some(Pair(id - 1, i.second - lineHeight[if (sh) 0 else id - 1]))
-												}
+												else
+													Some(MDynamicListItem(id - 1, item.translation - getLineHeights(id - 1)))
 											} else {
 												if (id == il - 1)
 													None()
 												else
-													Some(Pair(id + 1, i.second + lineHeight[if (sh) 0 else id]))
+													Some(MDynamicListItem(id + 1, item.translation + getLineHeights(id)))
 											}
-										} else {
-											Some(Pair(0, 0.))
-										}
 									}
 								);
 
+							bottomItemChanged = ^prevBottomItem != bottomItem;
+
 							itemsCount : Pair<int, double> =
 								updateWhile(
-									if (sh || (^prevBottomItem == bottomItem && ^prevLineHeights == lhgts))
+									if (sh || (!bottomItemChanged && !lineHeightsChanged))
 										^prevItemsCount
 									else
 										Pair(
 											^prevItemsCount.first,
-											lineHeight2translate(bottomItem.first, bottomItem.first + ^prevItemsCount.first)
+											lineHeight2translate(bottomItem.id, bottomItem.id + ^prevItemsCount.first)
 										),
-									\i : Pair<int, double> -> {
-										id = bottomItem.first + i.first;
-										heightWithoutBottomItem = i.second - lineHeight[if (sh) 0 else bottomItem.first];
+									\item : Pair<int, double> -> {
+										id = bottomItem.id + item.first;
+										heightWithoutBottomItem = item.second - getLineHeights(bottomItem.id);
 
-										if (id <= il && id >= 0) {
+										if (id < 0 || id > il)
+											Some(Pair(0, 0.))
+										else
 											if (boxHeight <= heightWithoutBottomItem && addScroll) {
-												if (id == 0 || boxHeight >= heightWithoutBottomItem - lineHeight[if (sh) 0 else id - 1])
+												if (id == 0 || boxHeight >= heightWithoutBottomItem - getLineHeights(id - 1))
 													None()
 												else
-													Some(Pair(i.first - 1, i.second - lineHeight[if (sh) 0 else id - 1]))
+													Some(Pair(item.first - 1, item.second - getLineHeights(id - 1)))
 											} else {
-												if (id == il) {
+												if (id == il)
 													None()
-												} else {
-													Some(Pair(i.first + 1, i.second + lineHeight[if (sh) 0 else id]))
-												}
+												else
+													Some(Pair(item.first + 1, item.second + getLineHeights(id)))
 											}
-										} else {
-											Some(Pair(0, 0.))
-										}
 									}
 								);
 
-							if (itemsCount.first > 0) {
-								topItem = Pair(bottomItem.first + itemsCount.first, bottomItem.second + itemsCount.second);
+							itemsCountChanged = ^prevItemsCount != itemsCount;
 
-								if (^prevLineHeights != lhgts) {
-									nextDistinct(
-										translates,
-										firstOfTriple(foldi(enumFromTo(bottomItem.first, topItem.first - 1), Triple([], 0., 0), \i, acc, id -> {
-											itemTranslate = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
+							if (itemsCount.first > 0) {
+								topItem =
+									MDynamicListItem(
+										bottomItem.id + itemsCount.first,
+										bottomItem.translation + itemsCount.second
+									);
+
+								prevTranslates = getValue(translates);
+
+								newTranslates =
+									if (lineHeightsChanged)
+										foldi(enumFromTo(bottomItem.id, topItem.id - 1), Triple([], 0., 0), \i, acc, id -> {
+											itemTranslation = secondOfTriple(acc) + lineHeight2translate(thirdOfTriple(acc), id);
+											item = MDynamicListItem(id, itemTranslation);
 
 											tr =
-												if (length(getValue(translates)) > i) {
-													nextDistinct(getValue(translates)[i], Pair(Point(0., itemTranslate), id));
-													getValue(translates)[i]
-												} else {
-													make(Pair(Point(0., itemTranslate), id));
-												};
+												if (i < length(prevTranslates)) {
+													nextDistinct(prevTranslates[i], item);
+													prevTranslates[i]
+												} else
+													make(item);
 
-											Triple(arrayPush(firstOfTriple(acc), tr), itemTranslate, id)
-										}))
-									);
-								} else if (^prevBottomItem != bottomItem || ^prevItemsCount != itemsCount) {
-									getValue(translates)
-									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] ->
-										if (itemsCount.first < length(translatesPrev)) {
-											filter(translatesPrev, \tr : DynamicBehaviour<Pair<Point, int>> ->
-												getValue(tr).second < topItem.first && getValue(tr).second >= bottomItem.first
-											)
-											|> uniq;
-										} else {
-											translatesPrev;
-										}
-									)
-									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] ->
-										if (itemsCount.first > length(translatesPrev)) {
-											maxId = either(maxA(map(translatesPrev, \tr -> getValue(tr).second)), -1);
-
-											concat(translatesPrev, generate(0, itemsCount.first - length(translatesPrev), \i -> {
-												id0 = maxId + i + 1;
-												id = if (id0 > length(itms) - 1) id0 - itemsCount.first else id0;
-
-												make(Pair(Point(0., bottomItem.second + lineHeight2translate(bottomItem.first, id)), id))
-											}));
-										} else {
-											translatesPrev;
-										}
-									)
-									|> (\translatesPrev : [DynamicBehaviour<Pair<Point, int>>] -> {
-										bottomLine = bottomItem.first - bottomItem.first % itemsCount.first + itemsCount.first;
-
-										iteri(translatesPrev, \i, trB -> {
-											tr = getValue(trB);
-
-											if (tr.second < bottomItem.first || tr.second >= topItem.first) {
-												newId =
-													(bottomLine + tr.second % itemsCount.first)
-													|> (\f2 -> if (f2 >= topItem.first) f2 - itemsCount.first else f2);
-
-												nextDistinct(
-													trB,
-													Pair(
-														Point(
-															0.,
-															bottomItem.second + lineHeight2translate(bottomItem.first, newId)
-														),
-														newId
-													)
+											Triple(arrayPush(firstOfTriple(acc), tr), itemTranslation, id)
+										})
+										|> firstOfTriple
+										|> Some
+									else if (bottomItemChanged || itemsCountChanged)
+										prevTranslates
+										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] ->
+											if (itemsCount.first < length(translatesPrev)) {
+												filter(translatesPrev, \tr : DynamicBehaviour<MDynamicListItem> ->
+													getTrId(tr) < topItem.id && getTrId(tr) >= bottomItem.id
 												)
-											}
-										});
+												|> uniq;
+											} else
+												translatesPrev
+										)
+										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem>] ->
+											if (itemsCount.first > length(translatesPrev)) {
+												maxId = either(maxA(map(translatesPrev, getTrId)), -1);
 
-										nextDistinct(translates, translatesPrev);
-									})
-								};
+												concat(translatesPrev, generate(0, itemsCount.first - length(translatesPrev), \i -> {
+													id0 = maxId + i + 1;
+													id = if (id0 > length(itms) - 1) id0 - itemsCount.first else id0;
 
-								prevBottomItem := bottomItem;
-								prevItemsCount := itemsCount;
-								prevLineHeights := lhgts;
+													translation = bottomItem.translation + lineHeight2translate(bottomItem.id, id);
+
+													make(MDynamicListItem(id, translation))
+												}));
+											} else
+												translatesPrev
+										)
+										|> (\translatesPrev : [DynamicBehaviour<MDynamicListItem >] -> {
+											bottomLine = bottomItem.id - bottomItem.id % itemsCount.first + itemsCount.first;
+
+											iter(translatesPrev, \tr -> {
+												id = getTrId(tr);
+
+												if (id < bottomItem.id || id >= topItem.id) {
+													newId =
+														(bottomLine + id % itemsCount.first)
+														|> (\f2 -> if (f2 >= topItem.id) f2 - itemsCount.first else f2);
+
+													translation = bottomItem.translation + lineHeight2translate(bottomItem.id, newId);
+
+													nextDistinct(tr, MDynamicListItem(newId, translation))
+												}
+											});
+
+											Some(translatesPrev)
+										})
+									else // if nothing changed
+										None();
+
+								maybeApply(newTranslates, \tr -> nextDistinct(translates, tr));
 
 								materialLogFn(
 									\ ->
-										map(getValue(translates), \tr -> getValue(tr).second)
+										map(getValue(translates), \tr -> getValue(tr).id)
 										|> (\f2 ->
-											if (length(f2) != length(uniq(f2)) || either(minA(f2), bottomItem.first) < bottomItem.first ||
-												either(maxA(f2), topItem.first - 1) >= topItem.first) {
+											if (length(f2) != length(uniq(f2))
+												|| either(minA(f2), bottomItem.id) < bottomItem.id
+												|| either(maxA(f2), topItem.id - 1) >= topItem.id) {
 
 												println("MDynamicList error");
 												println(bottomItem);
@@ -494,19 +521,19 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 									&& sPosition.y > (fgetValue(hgt) - boxHeight) * i2d(il - itemsLoadQuota / 5) / i2d(il)) {
 
 									changingSize := true;
-									newItemsLength = fgetValue(itemsLength) + itemsLoadQuota;
+									newItemsLength = il + itemsLoadQuota;
 
 									deferred(\ -> {
 										nextDistinct(loadQuota, newItemsLength);
 										changingSize := false;
 									})
 								}
-							} else {
+							} else
 								nextDistinct(translates, []);
-								prevBottomItem := bottomItem;
-								prevItemsCount := itemsCount;
-								prevLineHeights := lhgts;
-							};
+
+							prevBottomItem := bottomItem;
+							prevItemsCount := itemsCount;
+							prevLineHeights := lhgts;
 
 							metricsLock := false;
 						}
@@ -536,15 +563,14 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 		|> (\f2 -> TIf(hasItems, f2, eitherMap(state.emptyMessage, \em -> TCenter(m2t(em, par)), TFillX())))
 	)
 	|> (\f ->
-		MActivate2T(
+		MComponentGroup2T(
 			manager,
 			parent,
 			"MDynamicList",
 			concat(
 				[
 					IScriptBehaviour("selected", state.selection.selected, ISInputValue([], "[int]", true)),
-					AccessRole("list"),
-					MFocusVertical(true)
+					AccessRole("list")
 				],
 				// |> (\st ->
 				// 	eitherMap(
@@ -576,7 +602,7 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 										|> (\t -> TAvailableWidth(t, availableW))
 										|> (\t -> MGrabAnimation(state.manager, par, t))
 									)
-									|> (\fn -> MActivate2T(manager, parent, "MDynamicListDraggable", [], fn))
+									|> (\fn -> MComponentGroup2T(manager, parent, "MDynamicListDraggable", [], fn))
 									|> (\t -> TTranslate(
 											fselect(mouseXY, FLift(\xy0 -> Point(xy0.x - getValue(draggingXY).x, xy0.y - getValue(draggingXY).y))),
 											t
@@ -593,8 +619,8 @@ MDynamicList2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicList
 			f
 		)
 	)
-	|> (\f -> TAttachWidthCopy(f, availableW))
-	|> (\f -> TAttachBoxCopyAvailableHeight(f, boxH))
+	|> (\f -> TAttachWidth(f, availableW))
+	|> (\f -> TAttachAvailableHeight(f, boxH))
 	|> MListAddAvailable(state)
 }
 
@@ -604,4 +630,8 @@ dummySubmenuLine() -> MSubmenuLine {
 
 dummySingleLine() -> MSingleLine {
 	MSingleLine("", [])
+}
+
+getTrId(tr : DynamicBehaviour<MDynamicListItem>) -> int {
+	getValue(tr).id
 }

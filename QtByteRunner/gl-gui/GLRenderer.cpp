@@ -1335,7 +1335,7 @@ void GLDrawSurface::setScissor(const GLBoundingBox &bbox)
     vec2 maxp = bbox.max_pt - bias;
     vec2 bsize = maxp - minp;
     double dpr = renderer->getDevicePixelRatio();
-    glScissor(dpr*minp.x, dpr*(fb->size.y - maxp.y - 1), dpr*(bsize.x+1), dpr*(bsize.y+1));
+    glScissor(dpr*minp.x, dpr*(fb->size.y - maxp.y), dpr*(bsize.x), dpr*(bsize.y));
 }
 
 void GLDrawSurface::redrawCropStencil()

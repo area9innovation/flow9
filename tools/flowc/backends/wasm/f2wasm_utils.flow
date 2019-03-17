@@ -34,7 +34,7 @@ export {
 	fiWasmBuildFunctionDecl(name : string, type : WasmTypeDescriptor, signatureOnly : bool, skipClosure : bool) -> string;
 
 	// collects all potential tail calls in a function body
-	fiWasmCollectTailCalls(selfName: string, body : WasmExp, acc : Set<WasmExp>) -> Set<WasmExp>;
+	fiWasmCollectTailCalls(selfName: string, body : WasmExp, acc : [WasmExp]) -> [WasmExp];
 
 	// collects names of all global variables
 	fiWasmCollectGlobalVars(cfg : FiWasmConfig, decls: [Pair<string, [FiDeclaration]>]) -> Set<string>;
@@ -135,7 +135,7 @@ compileWasmType(type : WasmTypeDescriptor, refSuffix : bool) -> string {
 		WasmTypeFlow(): "i32" + refsuf;
 		WasmTypeArray(t): "i32" + refsuf;
 		WasmTypeRef(t): "i32"  + refsuf;
-		WasmTypeNative(): "i32" + (if (refSuffix) "_ref" else ""); // TODO: handle jsrefs correctly - 
+		WasmTypeNative(): "i32" + refsuf; // TODO: handle jsrefs correctly - 
 		WasmTypeStruct(name, fields): "i32"  + refsuf;
 		WasmTypeUnion(name, structs): "i32"  + refsuf;
 		WasmTypeFunction(args, returnType): "i32" + refsuf; // is actually a closure - i.e. struct
@@ -173,7 +173,7 @@ wasmTypeUsesWasmHeap(type : WasmTypeDescriptor) -> bool {
 		WasmTypeRef(t): true;
 		WasmTypeFlow(): true;
 		WasmTypeVoid(): false;
-		WasmTypeNative(): false;
+		WasmTypeNative(): true;
 		WasmTypeStruct(name, fields): true;
 		WasmTypeUnion(id, structs): true;
 		WasmTypeFunction(args, returnType): true;
@@ -184,19 +184,17 @@ wasmTypeUsesWasmHeap(type : WasmTypeDescriptor) -> bool {
 // Call is considered tail iff it is the last in a sequence. For if and switch, there
 // can be multiple tail calls - one at each final branch (i.e. for nested statements, the number of
 // tail calls can be exponentially high)
-fiWasmCollectTailCalls(selfName: string, body: WasmExp, acc : Set<WasmExp>) {
+fiWasmCollectTailCalls(selfName: string, body: WasmExp, acc : [WasmExp]) {
 	checkCall = \f -> {
 		switch (f) { // tail call if calling itself
-			WasmVar(fname, ftype, __): if (selfName == fname) insertSet(acc, body) else acc;
+			WasmVar(fname, ftype, __): if (selfName == fname) arrayPush(acc, body) else acc;
 			default: acc;
 		}	
 	}
 
 	switch (body) {
 		WasmLambda(args, b, type, __): acc;
-		WasmCall(f, args, type, __): checkCall(f);
-		WasmCallNative(f, args, type, __): checkCall(f);
-		WasmCallHost(f, args, type, __): checkCall(f);
+		WasmCall(f, args, type, __, __): checkCall(f);
 		WasmVar(name, type, __): acc;
 		WasmLet(name, type, e1, e2, type2, __): fiWasmCollectTailCalls(selfName, e2, acc);
 		WasmIf(e1, e2, e3, type, __): // consider both if and else branches
@@ -205,7 +203,7 @@ fiWasmCollectTailCalls(selfName: string, body: WasmExp, acc : Set<WasmExp>) {
 			fold(cases, acc, \acc0, c -> fiWasmCollectTailCalls(selfName, c.body, acc0));
 		WasmCast(e, tFrom, tTo, type, __): fiWasmCollectTailCalls(selfName, e, acc);
 		WasmSeq(es, type, __): // only consider last element of a sequence
-			fiWasmCollectTailCalls(selfName, lastElement(es, WasmVoid(0)), acc);
+			fiWasmCollectTailCalls(selfName, lastElement(es, WasmVoid([])), acc);
 		// if there are calls inside es, CallPrim would be performed after it - 
 		//   therefore, those calls aren't tail
 		WasmCallPrim(op, es, type, __): acc; 
@@ -216,6 +214,8 @@ fiWasmCollectTailCalls(selfName: string, body: WasmExp, acc : Set<WasmExp>) {
 		WasmBool(b, __): acc;
 		WasmRequire(flowfile, e, type, __): acc; 
 		WasmUnsafe(name, fallback, type, __): fiWasmCollectTailCalls(selfName, fallback, acc);
+        WasmIncRefcnt(ex, __, __): fiWasmCollectTailCalls(selfName, ex, acc);
+        WasmDecRefcnt(__, __, __): acc;
 	}
 }
 
@@ -256,13 +256,7 @@ foldWasmExp(root : WasmExp, acc0 : ?, fun : (?, WasmExp) -> ?) -> ? {
 		WasmDouble(d, __): acc;
 		WasmVoid(__): acc;
 
-		WasmCall(f, args, type, __): {
-			fold(args, foldWasmExp(f, acc, fun), rec);
-		}
-		WasmCallNative(f, args, type, __): {
-			fold(args, foldWasmExp(f, acc, fun), rec);
-		}
-		WasmCallHost(f, args, type, __): {
+		WasmCall(f, args, type, __, __): {
 			fold(args, foldWasmExp(f, acc, fun), rec);
 		}
 		WasmSwitch(x, switchType, cases, type, __): {
@@ -279,6 +273,8 @@ foldWasmExp(root : WasmExp, acc0 : ?, fun : (?, WasmExp) -> ?) -> ? {
 		WasmUnsafe(name, fallback, type, __): foldWasmExp(fallback, acc, fun);
 		WasmSeq(es, type, __): fold(es, acc, rec);
 		WasmCast(e, tFrom, tTo, type, __): foldWasmExp(e, acc, fun);
+        WasmIncRefcnt(ex, __, __): foldWasmExp(ex, acc, fun);
+        WasmDecRefcnt(__, __, __): acc;
 	}
 }
 

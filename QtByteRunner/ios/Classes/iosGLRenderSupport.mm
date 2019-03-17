@@ -1775,6 +1775,7 @@ void iosGLRenderSupport::GetTargetTokens(std::set<std::string>& tokens)
     tokens.insert("iOS");
     tokens.insert("mobile");
     tokens.insert([[NSString stringWithFormat:@"dpi=%d", DisplayDPI] cStringUsingEncoding: NSUTF8StringEncoding]);
+    tokens.insert([[NSString stringWithFormat:@"density=%f", [UIScreen mainScreen].scale] cStringUsingEncoding: NSUTF8StringEncoding]);
     tokens.insert(UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad? "iPad" : "iPhone");
     if (![FlowAVPlayerView useOpenGLVideo]) tokens.insert("nativevideo");
 }

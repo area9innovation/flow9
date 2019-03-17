@@ -6,6 +6,7 @@ export {
 	fmapi(v : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]>;
 	fsubmap(v : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]>;
 	fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]>;
+	ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(v : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
 	ffiltermapi(v : Transform<[??]>, fn : (int, ??) -> Maybe<?>) -> Transform<[?]>;
 	flength(v : Transform<[?]>) -> Transform<int>;
@@ -19,6 +20,8 @@ export {
 	fwhsubtract(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
+	fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
+	fwhmax(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 
 	fwidthaddition(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight>;
 	fwidthsubtract(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight>;
@@ -41,6 +44,7 @@ export {
 
 	fIsSome(b : Transform<Maybe<?>>) -> Transform<bool>;
 	fIsNone(b : Transform<Maybe<?>>) -> Transform<bool>;
+	fifsome(b1 : Transform<Maybe<??>>, then1 : Transform<?>, else1 : Transform<?>)  -> Transform<?>;
 
 	fFirstOfPair(b : Transform<Pair<?, ??>>) -> Transform<?>;
 	fSecondOfPair(b : Transform<Pair<?, ??>>) -> Transform<??>;
@@ -65,6 +69,16 @@ export {
 	forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]>;
 
 	fpprint(title : string) -> (Transform<?>) -> Transform<?>;
+
+	ffuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> () -> void]>;
+	applyallsubs(array : [() -> () -> void]) -> [() -> void];
+
+	fselectdelay(b : Transform<?>, fn : (?) -> Pair<int, ??>) -> Transform<??>;
+
+	// Advised dispose helpers
+	initUnsM() -> ref Maybe<() -> void>;
+	setUnsM(uns : ref Maybe<() -> void>, v : () -> void) -> void;
+	dispUnsM(uns : ref Maybe<() -> void>) -> void;
 }
 
 fmap(v : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
@@ -141,6 +155,24 @@ fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]> 
 	}))
 }
 
+ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]> {
+	prevV : ref Tree<?, bool> = ref makeTree();
+
+	fselect(v, FLift(\v0 -> {
+		filter(v0, \val ->
+			eitherFn(
+				lookupTree(^prevV, val),
+				idfn,
+				\ -> {
+					pVal = fn(val);
+					prevV := setTree(^prevV, val, pVal);
+					pVal
+				}
+			)
+		)
+	}))
+}
+
 ffiltermap(v : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]> {
 	prevV : ref Tree<??, Maybe<?>> = ref makeTree();
 
@@ -211,6 +243,14 @@ fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Trans
 
 fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
 	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(v1.width / v2.width, v1.height / v2.height)));
+}
+
+fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
+	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(min(v1.width, v2.width), min(v1.height, v2.height))));
+}
+
+fwhmax(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
+	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(max(v1.width, v2.width), max(v1.height, v2.height))));
 }
 
 fwidthaddition(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight> {
@@ -362,6 +402,10 @@ fIsNone(b : Transform<Maybe<?>>) -> Transform<bool> {
 	fselect(b, FLift(isNone));
 }
 
+fifsome(b1 : Transform<Maybe<??>>, then1 : Transform<?>, else1 : Transform<?>)  -> Transform<?> {
+	fif(fIsSome(b1), then1, else1)
+}
+
 fFirstOfPair(b : Transform<Pair<?, ??>>) -> Transform<?> {
 	fselect(b, FLift(\p : Pair<?, ??> -> p.first))
 }
@@ -427,6 +471,69 @@ fsubmaybeMap(b : Transform<Maybe<?>>, fn : (?) -> Transform<??>) -> Transform<Ma
 
 forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
 	fselect2(b, order, FLift2(\v, o -> fold(o, [], \acc, i -> if (i >= 0 && i < length(v)) arrayPush(acc, v[i]) else acc)))
+}
+
+ffuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> () -> void]> {
+	switch (t) {
+		ConstBehaviour(v): Pair(t, []);
+		default: {
+			b = make(fgetValue(t));
+
+			Pair(b, [\ -> fconnect(t, b)])
+		}
+	}
+}
+
+applyallsubs(array : [() -> () -> void]) -> [() -> void] {
+	map(array, apply0)
+}
+
+fselectdelay(b : Transform<?>, fn : (?) -> Pair<int, ??>) -> Transform<??> {
+	provider : ref Maybe<DynamicBehaviour<?>> = ref None();
+	uns = ref nop;
+
+	fsubselect(b, FLift(\v -> {
+		^uns();
+		r = fn(v);
+
+		eitherFn(
+			^provider,
+			\p -> {
+				uns :=
+					if (r.first > 0) {
+						interruptibleTimer(r.first, \ -> nextDistinct(p, r.second));
+					} else {
+						nextDistinct(p, r.second);
+						nop;
+					};
+
+				p;
+			},
+			\ -> {
+				provider := Some(make(r.second));
+				either(^provider, make(r.second));
+			}
+		);
+	}))
+}
+
+initUnsM() -> ref Maybe<() -> void> {
+	ref None()
+}
+
+setUnsM(uns : ref Maybe<() -> void>, v : () -> void) -> void {
+	uns := Some(v);
+}
+
+dispUnsM(uns : ref Maybe<() -> void>) -> void {
+	// a version of dispUns() without functions comparison
+	switch (^uns) {
+		Some(f): {
+			f();
+			uns := None();
+		}
+		None(): {}
+	}
 }
 
 // For debug purposes

@@ -1,9 +1,5 @@
 import material/internal/material_clickable;
-import material/internal/material_mutable;
-import material/measing;
 import sys/keycodes;
-
-// Internal to material
 
 export {
 	MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
@@ -30,6 +26,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	currentInteractive = extractStruct(m.style, MCurrentInteractive(make(None()))).current;
 	mouseEnabled = extractStruct(m.style, MScrollMouseEnabled(const(true))).enabled;
 	scrollToFocusEnabled = extractStruct(m.style, MScrollToFocusEnabled(const(true))).enabled;
+	scrollBarsVisible = extractStruct(m.style, MScrollbarsVisible(make(false), make(false)));
+	scrollFadeContent = tryExtractStruct(m.style, MScrollFadeContent(0, 0.0));
 
 	onScrolledToBottom = tryExtractStruct(m.style, MOnScrolledToBottom(nop));
 	onScrolledToSide = tryExtractStruct(m.style, MOnScrolledToSide(nop));
@@ -40,7 +38,7 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	boxWH0 = wh.box;
 
 	// Maximum scroll offset (0 if content fits available box)
-	maxWH = fselect2(contentWH, boxWH0, FLift2(\c, b -> WidthHeight(max(c.width - b.width, 0.), max(c.height - b.height, 0.))));
+	maxWH = fwhmax(fwhsubtract(contentWH, boxWH0), const(WidthHeight(0., 0.)));
 
 	// Is moving by axis
 	xMoving = make(false);
@@ -54,9 +52,9 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	downYBar = make(false);
 
 	showScrolling =
-		fthrottle(fselect2(contentWH, boxWH0, FLift2(\cwh, bwh ->
+		fthrottleNextFrame(fselect2(contentWH, boxWH0, FLift2(\cwh, bwh ->
 			cwh.height > 0. && cwh.width > 0. && (dfloor(cwh.height) > bwh.height || dfloor(cwh.width) > bwh.width)
-		)), 33);
+		)));
 
 	uns = initUnsM();
 
@@ -121,27 +119,35 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 	TransformTAcc2(\t2a -> {
 		boxWH =
 			if (cropByContent)
-				fselect2(boxWH0, contentWH, FLift2(\bWH, cWH ->
-					WidthHeight(min(bWH.width, cWH.width), min(bWH.height, cWH.height))
-				))
+				fwhmin(boxWH0, contentWH)
 			else
 				boxWH0;
 
-		b = m2t(m.box, parent) |> t2a;
+		b = TAttachBox(m2t(m.box, parent), boxWH0) |> t2a;
 
-		cAcc = ref TAcc(FEmpty(), TFormMetrics(zero, zero, zero), zero, zero, zero, zero, zero, zero, const(true), true, true, []);
-		c0 = \newParent ->
-			TransformTAcc2(\t2a2 -> {
-				cAcc := TAvailable(TAttachBoxCopy(scrollContent(newParent), contentWH), TAcc2SizeAttach(b, boxWH0)) |> t2a2;
+		cAcc = ref zeroTAcc;
+		c0 = \newParent -> {
+			cont = 
+				TAvailableWidthHeight(
+					TAttachBox(scrollContent(newParent), contentWH),
+					b.metrics.width,
+					b.metrics.height
+				);
 
-				^cAcc;
-			});
+			if (cropByContent)
+				TransformTAcc2(\t2a2 -> {
+					cAcc := cont |> t2a2;
+					^cAcc;
+				})
+			else
+				cont
+		}
 
 		c =
 			TGroupWithoutMetrics([
 				TShowLazy(
 					fand(showScrolling, enabled),
-					\ -> MScrollHandling2T(scrollId, manager, m.style, parent.theme.lightBackground, contentWH, boxWH, scrollPosition, maxWH,
+					\ -> MScrollHandling2T(scrollId, manager, m.style, getLightBackground(parent), contentWH, boxWH, scrollPosition, maxWH,
 						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
 						TRectangle(interactiveRectangleStyle, TSized(boxWH)))
 				),
@@ -232,12 +238,12 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							f2
 						)
 					),
-					MActivate2T(
+					MComponentGroup2T(
 						manager,
 						parent,
 						extractStruct(m.style, MFocusName("MScroll")).name,
 						concat(
-							extractMActivateState(m.style),
+							extractMComponentGroupState(m.style),
 							[
 								IScriptBehaviour("point", currentPoint, ISInputValue([], serialize(getValue(currentPoint)), true)),
 								IScriptBehaviour("down", moving, ISInputValue([], serialize(getValue(moving)), true)),
@@ -246,22 +252,11 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							]
 						),
 						\newParent ->
-							TCrop(scrollPosition, boxWH0,
-								if (isSome(onScrolledToBottom) || isSome(onScrolledToSide)) {
+							c0(newParent)
+							|> (\t -> if (isSome(onScrolledToBottom) || isSome(onScrolledToSide))
 									TransformTAcc2(\t2a2 -> {
-										c1 = t2a2(c0(newParent));
-										TAcc(
-											c1.form,
-											c1.metrics,
-											c1.minWidth,
-											c1.minHeight,
-											c1.maxWidth,
-											c1.maxHeight,
-											c1.xFillers,
-											c1.yFillers,
-											c1.addFillers,
-											c1.xConstant,
-											c1.yConstant,
+										c1 = t2a2(t);
+										disp =
 											concatA([
 												c1.disposers,
 												eitherMap(
@@ -310,15 +305,61 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 													],
 													[]
 												)
-											])
-										);
-									});
-								} else {
-									c0(newParent);
-								}
+											]);
+
+										TAcc(c1 with disposers = disp)
+									})
+								else
+									t
 							)
+							|> (\t -> TCrop(scrollPosition, boxWH0, t))
 					)
 				),
+				eitherMap(
+					scrollFadeContent,
+					\sfc -> {
+						gradientPointsStart = [GradientPoint(sfc.color, 0.0, 1.0), GradientPoint(sfc.color, 1.0, 0.0)];
+						gradientPointsEnd = [GradientPoint(sfc.color, 0.0, 0.0), GradientPoint(sfc.color, 1.0, 1.0)];
+
+						makeGradientBorder = \vertical -> {
+							gradientBlock = \offset, gradientPoints -> 
+								TFrame(
+									0.0,
+									0.0,
+									[GradientFill(if (vertical) 90.0 else 0.0, gradientPoints)],
+									if (vertical) TFillXH(sfc.width) else TFillWY(sfc.width)
+								)
+								|> (\t -> TAlpha(fmin(fdivide(offset, const(sfc.width)), const(1.)), t));
+
+							[
+								gradientBlock(
+									if (vertical) fpointY(scrollPosition)
+									else fpointX(scrollPosition),
+									gradientPointsStart
+								),
+								if (vertical) TFillY() else TFillX(),
+								gradientBlock(
+									if (vertical) fsubtract(fheight(maxWH), fpointY(scrollPosition))
+									else fsubtract(fwidth(maxWH), fpointX(scrollPosition)),
+									gradientPointsEnd
+								)
+							]
+							|> if (vertical) TLines else TColsA;
+						}
+						TGroup2(
+							TShowLazy(
+								fgreater(fheight(maxWH), const(0.)),
+								\ -> makeGradientBorder(true)
+							),
+							TShowLazy(
+								fgreater(fwidth(maxWH), const(0.)),
+								\ -> makeGradientBorder(false)
+							)
+						)
+					},
+					TEmpty()
+				)
+				|> (\t -> TAvailable(t, TSized(boxWH))),
 				TInteractive(
 					[
 						MouseDown(\mi -> {
@@ -337,8 +378,19 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 				),
 				TShowLazy(
 					showScrolling,
-					\ -> MScrollBars2T(manager, scrollId, m.style, contentWH, boxWH, scrollPosition, xMoving, yMoving,
-						currentInteractive, downXBar, downYBar,	TRectangle(interactiveRectangleStyle, TSized(boxWH))
+					\ -> MScrollBars2T(
+						manager,
+						scrollId,
+						eitherMap(scrollFadeContent, \__ -> replaceStruct(m.style, scrollBarsVisible), m.style),
+						contentWH,
+						boxWH,
+						scrollPosition,
+						xMoving,
+						yMoving,
+						currentInteractive,
+						downXBar,
+						downYBar,
+						TRectangle(interactiveRectangleStyle, TSized(boxWH))
 					)
 				)
 			])
@@ -560,6 +612,7 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 	scrollStep = 20.;
 	changeDirection = \ke -> if (js) ke.shift else ke.alt;
 	inside = make(false);
+	mouseWheelPos = ref None();
 
 	// Interactives for mouse and keyboard handling
 	TInteractive(
@@ -567,19 +620,19 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 			TMouseInside(inside, false),
 			KeyDown2(\handled, ke -> {
 				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside)) {
-					if (ke.utf == "up") {
+					if (ke.utf == "up" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
 						true
-					} else if (ke.utf == "down") {
+					} else if (ke.utf == "down" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
 						true
-					} else if (ke.utf == "left") {
+					} else if (ke.utf == "left" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
 						true
-					} else if (ke.utf == "right") {
+					} else if (ke.utf == "right" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
 						sp = getValue(scrollPosition);
 						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
 						true
@@ -611,12 +664,13 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 						else
 							nextDistinct(scrollPosition, Point(sp.x, fgetValue(maxWH).height));
 						true
-					}
-					else
+					} else {
 						false
-				} else
+					}
+				} else {
 					false
-				}),
+				}
+			}),
 			MouseDown2(\h, mi -> {
 				if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId)) {
 					if (mi.inside()) {
@@ -658,17 +712,11 @@ MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollSty
 		else
 			TGroupWithoutMetrics([
 				f2,
-				TShowLazy(fselect2(boxWH, contentWH, FLift2(\bWH, cWH -> bWH.height < cWH.height)),
-					\ -> {
-						mousePos = ref None();
-
-						materialMouseWheel(
-							manager,
-							tr,
-							MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mousePos, deltaTimer, reverseWheel, speedX, speedY, true),
-							MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mousePos, deltaTimer, reverseWheel, speedX, speedY, false)
-						)
-					}
+				materialMouseWheel(
+					manager,
+					tr,
+					MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, true),
+					MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, false)
 				)
 			])
 	)
@@ -822,8 +870,8 @@ MScrollBars2T(
 		(\ ->
 			TShowLazy(fless(scale, const(1.)), \ ->
 				TSelect(barStyle, \bs -> {
-					translatePoint = fselect3(scale, scrollPosition, barGap, \scl, sp, gap -> {
-						boxSz = fgetValue(boxSize);
+					translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
+						scl = fgetValue(scale);
 						coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
 					});
 
@@ -852,9 +900,9 @@ MScrollBars2T(
 					)
 					|> (\t -> TCropSize(makeBox(boxSize), t))
 					|> (\t -> TConstruct([
-							makeSubscribe(scale, \scl -> {
+							makeSubscribe(boxSize, \boxSz -> {
+								scl = fgetValue(scale);
 								nextDistinct(barVisible, scl < 1.);
-								boxSz = fgetValue(boxSize);
 								minBSize = min(24., boxSz / 2.);
 								bSize0 = boxSz * scl;
 								nextDistinct(barHeight, max(bSize0, minBSize));
