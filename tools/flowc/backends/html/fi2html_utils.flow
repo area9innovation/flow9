@@ -7,6 +7,7 @@ import tools/common/pathutil;
 import ds/list;
 import tools/flowc/backends/common;
 import tools/flowc/backends/html/fi2html_defines;
+import tools/flowc/backends/html/fi2html_manifest;
 
 export {
 	fi2MonolithicHTML(
@@ -14,7 +15,7 @@ export {
 		callback : () -> void) -> void;
 }
 
-makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams) {
+makeHtml(title, lnFavicon, bgimage, scripts, lnCss, predefinedParams, manifestLink) {
 // ****************************************************************
 // Please pay attention!
 // It is very important to have variable 'htmlBundle' defined
@@ -34,7 +35,8 @@ Cons("<html xmlns='http://www.w3.org/1999/xhtml' xml:lang='en'>
     <meta name='viewport' content='initial-scale=1.0,maximum-scale=1.0,user-scalable=no' />
     <meta name='apple-mobile-web-app-capable' content='yes'/>
     <!-- Suppress browser request for favicon.ico -->
-    <link rel='shortcut icon' type='image/x-icon' href='data:image/x-icon;,'/>
+    <link rel='shortcut icon' type='image/x-icon' href='data:image/x-icon;,'/>",
+	Cons(manifestLink, Cons("
 
     <script>
     var htmlBundle = true;", Cons(predefinedParams, Cons("
@@ -53,7 +55,7 @@ Cons(lnCss, Cons(scripts, Cons("
 
 </body>
 </html>
-", makeList())))))))))))) |> reverseList |> list2string;
+", makeList())))))))))))))) |> reverseList |> list2string;
 }
 
 
@@ -122,7 +124,9 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 		if (cfg0.scripts == []) fiHTMLScriptList else cfg0.scripts,
 		cfg0.additionalScripts,
 		cfg0.predefinedParams,
-		cfg0.workingDir
+		cfg0.workingDir,
+		cfg0.manifestFileName,
+		cfg0.manifest
 	);
 
 	doLink = \ -> {
@@ -132,6 +136,10 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 				fcVerbose(cfg, 0, "Preparing file '" + e + "' for linking.");
 				includeScript(cfg, e)
 			}), "");
+
+			manifestLink = if (cfg.manifestFileName != "") "\n    <link rel=\"manifest\" href=\"/" + cfg.manifestFileName + "\">" else "";
+			if (cfg.manifestFileName != "")
+				fiSaveHTMLManifest(cfg);
 
 			predefinedParams =
 				if (cfg.predefinedParams == []) {
@@ -149,7 +157,8 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 				includeImage(cfg, cfg.splash),
 				scripts,
 				includeCss(cfg, fiHTMLCss),
-				predefinedParams
+				predefinedParams,
+				manifestLink
 			);
 			
 			fcVerbose(cfg, 1, "Saving...");
@@ -165,7 +174,18 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 
 	file = cfg.outputfile;
 
-	if (cfg.minify) {
+	manifestEmptyOrValid = if (cfg.manifestFileName != "") {
+		errors = fiValidateHTMLManifest(cfg);
+			if (errors != []) {
+				iter(errors, \e -> println(e.message));
+				false
+			} else true;
+		} else {
+			true;
+		}
+
+	if (manifestEmptyOrValid) {
+		if (cfg.minify) {
 			// This branch for Unix-based systems
 			minify_params = [cfg.jsfile, "-o", cfg.jsfile];
 			startProcess("uglifyjs", minify_params, ".", "",
@@ -196,5 +216,8 @@ fi2MonolithicHTML(cfg0 : FiHTMLConfig, callback) {
 			doLink();
 			callback();
 		}
+	} else {
+		callback();
+	}
 }
 
