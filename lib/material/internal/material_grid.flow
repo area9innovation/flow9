@@ -18,9 +18,8 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 	cropSize = contains(m.style, MGridCropByContent());
 	keepOrder = contains(m.style, MGridKeepOrder());
 	verticalGrid = contains(m.style, MGridVertical());
-	groupByCols = extractStruct(m.style, MGridGroupByCols(!verticalGrid)).cols;
-
-	maxRows = if (!verticalGrid && keepOrder) -1 else extractStruct(m.style, MMaxRows(-1)).rows;
+	groupByCols = extractStruct(m.style, MGridGroupByCols(false)).cols;
+	maxRows = extractStruct(m.style, MMaxRows(-1)).rows;
 
 	(\par -> TFlexibleGrid(
 		fmap(m.items, \it -> m2t(it, par)),
@@ -30,6 +29,7 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 		|> (\st -> if (keepOrder) arrayPush(st, TOrdered(false)) else st)
 		|> (\st -> if (verticalGrid) arrayPush(st, TVertical()) else st)
 		|> (\st -> if (groupByCols) arrayPush(st, TGroupByCols()) else st)
+		|> (\st -> if (maxRows > 0) arrayPush(st, TMaxRows(maxRows)) else st)
 		|> (\st -> arrayPush(st, TEnabled(en)))
 	))
 	|> (\f ->
@@ -50,13 +50,13 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 	cropSize = false;//contains(style, MGridCropByContent());
 	keepOrder = true;//contains(style, MGridKeepOrder());
 	verticalGrid = contains(style, MGridVertical());
-	groupByCols = extractStruct(style, MGridGroupByCols(!verticalGrid)).cols;
+	groupByCols = extractStruct(style, MGridGroupByCols(false)).cols;
 	borders = extractStruct(style, MBorders(0.)).borders;
 	grabDelay = extractStructMany(style, MGrabDelay(0));
 	customDraggingOrder = false;//contains(style, MReorderCustomDraggingOrder());
 	itemsLength = length(items0) + if (customDraggingOrder) 2 else 1;
 
-	dropSpotM = None(); //tryExtractStruct(style, MReorderDropSpot(MEmpty()));
+	dropSpotM = tryExtractStruct(style, MReorderDropSpot(MEmpty()));
 	items =
 		eitherMap(
 			dropSpotM,
@@ -87,7 +87,16 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 					par,
 					MDragDrop(
 						const(getUniqueIdByIndex(i)),
-						it.content,
+						eitherMap(
+							dropSpotM,
+							\dropSpot ->
+								MCopySize(
+									it.content,
+									\sz -> MShow(isDragging.dragging, MAvailable(dropSpot.spot, sz)),
+									true
+								),
+							it.content
+						),
 						concat([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
 					),
 					m2t
@@ -380,181 +389,4 @@ MDynamicGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicGrid
 			f
 		)
 	)
-}
-
-updateFreePoints(
-	freePoints : ref [Point],
-	keepOrder : bool,
-	verticalGrid : bool,
-	groupByCols : bool,
-	maxRows : int,
-	newSizes : [WidthHeight],
-	stageSize0 : double,
-	getTranslatePoint : (int) -> DynamicBehaviour<Point>,
-	onEnd : (freePoint : Point, sz : WidthHeight) -> void) -> void {
-
-	maxSize =
-		if (groupByCols) {
-			maxSize = either(maxA(map(newSizes, \sz2 -> if (verticalGrid) sz2.height else sz2.width)), 0.);
-			sumSize = dsum(map(newSizes, \sz2 -> if (verticalGrid) sz2.width else sz2.height));
-			cols = i2d(floor(stageSize0 / maxSize));
-			sumSize / cols;
-		} else {
-			doubleMax
-		};
-
-	emptyPoint = Point(doubleMax, doubleMax);
-
-	iteri(newSizes, \i, sz -> {
-		freePoint0 : Point =
-			fold(^freePoints, emptyPoint, \acc, p -> {
-				isSuitableSize =
-					if (verticalGrid)
-						((p.y + sz.height <= stageSize0 || p.y == 0. || maxRows > 0) && p.x < maxSize)
-					else
-						((p.x + sz.width <= stageSize0 || p.x == 0.) && p.y < maxSize);
-
-				countLeftTop = \ ->
-					if (if (groupByCols) !verticalGrid else verticalGrid)
-						((p.x < acc.x) || (p.x == acc.x && p.y < acc.y))
-					else
-						((p.y < acc.y) || (p.y == acc.y && p.x < acc.x));
-
-				filterCrossings = \ ->
-					foldi(subrange(newSizes, 0, i), true, \j, acc2, sz2 ->
-						if (acc2) {
-							tr = getValue(getTranslatePoint(j));
-
-							!((p.x + sz.width > tr.x) && (p.y + sz.height > tr.y) &&
-								(p.x < tr.x + sz2.width) && (p.y < tr.y + sz2.height));
-						} else {
-							false
-						}
-					);
-
-				if (isSuitableSize && countLeftTop() && filterCrossings())
-					p
-				else
-					acc
-			});
-
-		freePoint =  if (maxRows > 0) {
-			nextDistinct(getTranslatePoint(i), freePoint0);
-
-			if (getOverlapingRectanglesCount(Quadruple(freePoint0.x, 0., freePoint0.x + sz.width, freePoint0.y + sz.height), newSizes, getTranslatePoint) > maxRows) {
-				fold(^freePoints, emptyPoint, \acc, p -> {
-					isSuitableSize = getOverlapingRectanglesCount(Quadruple(p.x, 0., p.x + sz.width, p.y + sz.height), newSizes, getTranslatePoint) < maxRows;
-
-					countLeftTop = \ -> ((p.x < acc.x) || (p.x == acc.x && p.y < acc.y));
-
-					filterCrossings = \ ->
-						foldi(subrange(newSizes, 0, i), true, \j, acc2, sz2 ->
-							if (acc2) {
-								tr = getValue(getTranslatePoint(j));
-
-								!((p.x + sz.width > tr.x) && (p.y + sz.height > tr.y) &&
-									(p.x < tr.x + sz2.width) && (p.y < tr.y + sz2.height));
-							} else {
-								false
-							}
-						);
-
-					if (isSuitableSize && countLeftTop() && filterCrossings())
-						p
-					else
-						acc
-				});
-			} else {
-				freePoint0;
-			}
-		} else {
-			freePoint0;
-		};
-
-		freePoints :=
-			if (keepOrder) {
-				if (if (groupByCols) !verticalGrid else verticalGrid) {
-					[
-						Point(freePoint.x, freePoint.y + sz.height),
-						Point(either(maxA(arrayPush(map(^freePoints, \fp -> fp.x), freePoint.x + sz.width)), freePoint.x + sz.width), 0.)
-					]
-				} else {
-					[
-						Point(freePoint.x + sz.width, freePoint.y),
-						Point(0., either(maxA(arrayPush(map(^freePoints, \fp -> fp.y), freePoint.y + sz.height)), freePoint.y + sz.height))
-					]
-				}
-			} else {
-				newPoints =
-					concat3(
-						^freePoints,
-						[
-							Point(freePoint.x + sz.width, freePoint.y),
-							Point(freePoint.x + sz.width, freePoint.y + sz.height),
-							Point(freePoint.x, freePoint.y + sz.height)
-						],
-						if (if (groupByCols) !verticalGrid else verticalGrid) {
-							if (freePoint.y != 0.)
-								[Point(freePoint.x + sz.width, 0.)]
-							else
-								[]
-						} else {
-							if (freePoint.x != 0.)
-								[Point(0., freePoint.y + sz.height)]
-							else
-								[]
-						}
-					);
-
-				currentSizes = subrange(newSizes, 0, i);
-
-				fold(newPoints, [], \acc2, p -> {
-					validPoint =
-						foldi(currentSizes, true, \j, acc3, sz2 ->
-							if (acc3) {
-								tr = getValue(getTranslatePoint(j));
-
-								if (groupByCols) {
-									if (verticalGrid)
-										!(p.y >= tr.y && p.y < tr.y + sz2.height && (p.x < tr.x + sz2.width || p.y != tr.y))
-									else
-										!(p.x >= tr.x && p.x < tr.x + sz2.width && (p.y < tr.y + sz2.height || p.x != tr.x));
-								} else {
-									!(p.x >= tr.x && p.y >= tr.y && p.x < tr.x + sz2.width && p.y < tr.y + sz2.height);
-								}
-							} else {
-								false
-							}
-						);
-
-					if (validPoint)
-						arrayPush(acc2, p)
-					else
-						acc2
-				});
-			}
-
-		nextDistinct(getTranslatePoint(i), freePoint);
-		onEnd(freePoint, sz);
-	})
-}
-
-// TODO: optimize
-getOverlapingRectanglesCount(
-	rect : Quadruple<double, double, double, double>,
-	sizes : [WidthHeight],
-	getTranslatePoint : (int) -> DynamicBehaviour<Point>
-) -> int {
-	foldi(sizes, Pair(makeSet(), 0), \i, acc, sz -> {
-		tr = getValue(getTranslatePoint(i));
-
-		if (!containsSet(acc.first, tr.y)) {
-			if (tr.x + sz.width > rect.first && tr.x < rect.third && tr.y + sz.height > rect.second && tr.y < rect.fourth)
-				Pair(insertSet(acc.first, tr.y), acc.second + 1)
-			else
-				acc;
-		} else {
-			acc;
-		}
-	}).second
 }
