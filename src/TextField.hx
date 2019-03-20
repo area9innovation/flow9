@@ -185,7 +185,6 @@ class TextField extends NativeWidgetClip {
 				nativeWidget.style.opacity = preFocus && multiline && Platform.isEdge ? 1 : 0;
 				nativeWidget.readOnly = readOnly || !preFocus;
 			}
-
 			layoutText();
 		}
 	}
@@ -345,7 +344,7 @@ class TextField extends NativeWidgetClip {
 			var text_bounds = getLocalBounds();
 			background = new FlowGraphics();
 			background.beginFill(backgroundColor, backgroundOpacity);
-			background.drawRect(0.0, 0.0, text_bounds.width, text_bounds.height);
+			background.drawRect(0.0, 0.0, clipWidth, text_bounds.height);
 
 			addChildAt(background, 0);
 		} else {
