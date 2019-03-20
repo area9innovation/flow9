@@ -61,14 +61,18 @@ isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool)
 						|| areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow)
 					} else {
 						relation = getFiTypenameRelation(env, sname, bname);
-
-	
-						if (relation == 4) {
-							println("Expected " + sname + " <= " + bname);
-							false;
-						} else {
-							// TODO: If the relation is 2, we might have a problem, so worth figuring out
-							true;
+						switch (relation) {
+							FiRelationEqual(): true;
+							FiName2Supertype(): true;
+							FiName1Supertype(): {
+								// TODO: We are not ready for this, but that would be best
+								if (false) {
+									println(sname + ">=" + bname + " but expected the opposite");
+									false;
+								} else true
+							}
+							FiCommonSupertype(): true;
+							FiNotRelated(): false;
 						}
 					}
 				}
@@ -157,14 +161,16 @@ fiSuperTypesExists(env : FcGlobalNames, small : [FiType], big : [FiType], allowf
 
 
 // How are these names related? 
-// 0 if they are the same.
-// 1 if name2 is a supertype of name1
-// 2 if name1 is a supertype of name2
-// 3 if they have a shared supertype
-// 4 if they are not related
 
-getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> int {
-	if (name1 == name2) 0
+FiTypeRelation ::= FiRelationEqual, FiName2Supertype, FiName1Supertype, FiCommonSupertype, FiNotRelated;
+	FiRelationEqual();
+	FiName2Supertype();
+	FiName1Supertype();
+	FiCommonSupertype();
+	FiNotRelated();
+
+getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> FiTypeRelation {
+	if (name1 == name2) FiRelationEqual()
 	else {
 		union1 = lookupTree(env.unions, name1);
 		union2 = lookupTree(env.unions, name2);
@@ -182,18 +188,10 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> in
 						// They need a shared unions
 						shared = intersection(unions1, unions2);
 						if (shared != []) {
-							3;
+							FiCommonSupertype();
 						} else {
 							// Not related!
-
-							println("Unrelated 0");
-							println(name1);
-							println(unions1);
-
-							println(name2);
-							println(unions2);
-
-							4;
+							FiNotRelated();
 						}
 					}
 					Some(u2): {
@@ -201,18 +199,10 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> in
 						// See if name1 is part of that union
 						if (contains(unions1, name2)) {
 							// name2 is a supertype of name1
-							1
+							FiName2Supertype();
 						} else {
 							// name2 is a union, but name1 is not part of it. They are NOT related
-
-							println("Unrelated 1");
-							println(name1);
-							println(unions1);
-
-							println(name2);
-							println(unions2);
-
-							4;
+							FiNotRelated();
 						}
 					}
 				}
@@ -223,44 +213,38 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> in
 						// name1 is a union, but name2 is a struct
 						if (contains(unions2, name1)) {
 							// name1 is a supertype of name2
-							2
+							FiName1Supertype()
 						} else {
 							// name1 is a union, but name2 is not part of it. They are NOT related
-							println("Unrelated 2");
-							println(name1);
-							println(unions1);
-
-							println(name2);
-							println(unions2);
-
-							4;
+							FiNotRelated();
 						}
 					}
 					Some(u2): {
 						// OK, both are unions.
-						shared = intersection(unions1, unions2);
-						if (shared != []) {
-							3;
-						} else {
-							// Not related!
-
-							if (false) {
-								println("Unrelated 3");
-								println(name1);
-								println(unions1);
-
-								println(name2);
-								println(unions2);
-
-								// Seems unions does not work for unions, so this is no good yet.
-								4;
-							} else {
-								0;
-							}
-						}						
+						rel = getFiUnionRelation(env, u1, u2);
+						rel;
 					}
 				}
 			}
 		}
+	}
+}
+
+getFiUnionRelation(env : FcGlobalNames, union1 : FcTypeUnion, union2 : FcTypeUnion) -> FiTypeRelation {
+	seenRelations = fold(union1.typenames, makeSet(), \seen : Set<FiTypeRelation>, tn : FcTypeName -> {
+		rel = getFiTypenameRelation(env, tn.name, union2.name);
+		insertSet(seen, rel);
+	});
+
+	seen = set2array(seenRelations);
+	if (length(seen) == 1) seen[0]
+	else if (seen == sort([FiNotRelated(), FiRelationEqual()])) {
+		FiName2Supertype();
+	} else if (seen == sort([FiName2Supertype(), FiNotRelated()])) {
+		FiName2Supertype();
+	} else {
+		println("Resolve if this is possible");
+		println(set2array(seenRelations));
+		FiNotRelated();
 	}
 }
