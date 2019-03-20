@@ -2,11 +2,16 @@ import tools/flowc/incremental/fitype;
 import ds/array;
 import runtime;
 
+import tools/flowc/flowcacc;
+
 export {
-	isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool;
+	isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool) -> bool;
+
+	// Would we be able to find some super type to make these two types compatible?
+	fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : bool) -> bool;
 }
 
-isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool {
+isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool) -> bool {
     flowok = \ -> {
         (allowFlow && small == FiTypeFlow()) || small == big;
     }
@@ -17,7 +22,7 @@ isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool {
 		FiTypeDouble(): flowok();
 		FiTypeString(): flowok();
 		FiTypeArray(bt): switch (small) {
-			FiTypeArray(st): isFiSubType(st, bt, allowFlow); // We could do false here
+			FiTypeArray(st): isFiSubType(env, st, bt, allowFlow); // We could do false here
 			default: flowok();
 		}
 		FiTypeFlow(): true;
@@ -25,16 +30,16 @@ isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool {
 		FiTypeFunction(bargs, breturnType): {
 			switch (small) {
 				FiTypeFunction(sargs, sreturnType): {
-					isFiSubType(sreturnType, breturnType, allowFlow)
+					isFiSubType(env, sreturnType, breturnType, allowFlow)
 					// Here, we reverse
-					&& areFiSubTypes(map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type), allowFlow)
+					&& areFiSubTypes(env, map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type), allowFlow)
 				}
 				default: flowok();
 			}
 		}
 		FiTypeRef(bt): switch (small) {
 			FiTypeRef(st): {
-				isFiSubType(st, bt, false)
+				isFiSubType(env, st, bt, false)
 			}
 			default: false;
 		}
@@ -53,10 +58,23 @@ isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool {
                         // as well as for implicit polymorphism due to polymorphic unions
                         stypeparameters == [] 
                         || btypeparameters == [] 
-						|| areFiSubTypes(stypeparameters, btypeparameters, allowFlow)
+						|| areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow)
 					} else {
-						//println("TODO: Check that " + sname + " <= " + bname);
-						true;
+						polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
+						relation = getFiTypenameRelation(env, sname, bname);
+						switch (relation) {
+							FiRelationEqual(): true;
+							FiName2Supertype(): true;
+							FiName1Supertype(): {
+								// TODO: We are not ready for this, but that would be best
+								if (true) {
+									// println(sname + ">=" + bname + " but expected the opposite");
+									false;
+								} else true
+							}
+							FiCommonSupertype(): true;
+							FiNotRelated(): false;
+						} && polymorphicOK
 					}
 				}
 				default: flowok();
@@ -65,9 +83,203 @@ isFiSubType(small : FiType, big : FiType, allowFlow : bool) -> bool {
 	}
 }
 
-areFiSubTypes(small : [FiType], big : [FiType], allowflow : bool) -> bool {
+areFiSubTypes(env : FcGlobalNames, small : [FiType], big : [FiType], allowflow : bool) -> bool {
 	length(small) == length(big)
 	&& foldi(small, true, \i, acc, sa -> {
-		acc && isFiSubType(sa, big[i], allowflow)
+		acc && isFiSubType(env, sa, big[i], allowflow)
 	})
+}
+
+fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : bool) -> bool {
+    flowok = \ -> {
+        (allowFlow && t1 == FiTypeFlow()) 
+		|| switch (t1) {
+			FiTypeParameter(bn): {
+				// We just accept this
+				true;
+			}
+			default: t1 == t2;
+		}
+    };
+	switch (t2) {
+		FiTypeVoid(): t1 == t2;
+		FiTypeBool(): flowok();
+		FiTypeInt(): flowok();
+		FiTypeDouble(): flowok();
+		FiTypeString(): flowok();
+		FiTypeArray(bt): switch (t1) {
+			FiTypeArray(st): fiSuperTypeExists(env, st, bt, allowFlow);
+			default: flowok();
+		}
+		FiTypeFlow(): true;
+		FiTypeNative(): t1 == t2;
+		FiTypeFunction(bargs, breturnType): {
+			switch (t1) {
+				FiTypeFunction(sargs, sreturnType): {
+					fiSuperTypeExists(env, sreturnType, breturnType, allowFlow)
+					// Here, we reverse
+					&& fiSuperTypesExists(env, map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type), allowFlow)
+				}
+				default: flowok();
+			}
+		}
+		FiTypeRef(bt): switch (t1) {
+			FiTypeRef(st): {
+				fiSuperTypeExists(env, st, bt, false)
+			}
+			default: false;
+		}
+		FiTypeParameter(bn): {
+			// We just accept this
+			true;
+		}
+		FiTypeName(bname, btypeparameters): {
+			switch (t1) {
+				FiTypeName(sname, stypeparameters): {
+					if (sname == bname) {
+                        // This is required for some cases, like switch, where we do not have typars
+                        // as well as for implicit polymorphism due to polymorphic unions
+                        stypeparameters == [] 
+                        || btypeparameters == [] 
+						|| fiSuperTypesExists(env, stypeparameters, btypeparameters, allowFlow)
+					} else {
+						polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
+
+						relation = getFiTypenameRelation(env, sname, bname);
+						switch (relation) {
+							FiRelationEqual(): true;
+							FiName2Supertype(): true;
+							FiName1Supertype(): true;
+							FiCommonSupertype(): true;
+							FiNotRelated(): false;
+						} && polymorphicOK
+					}
+				}
+				default: flowok();
+			}
+		} 
+	}
+}
+
+fiSuperTypesExists(env : FcGlobalNames, small : [FiType], big : [FiType], allowflow : bool) -> bool {
+	length(small) == length(big)
+	&& foldi(small, true, \i, acc, sa -> {
+		acc && fiSuperTypeExists(env, sa, big[i], allowflow)
+	})
+}
+
+
+// How are these names related? 
+
+FiTypeRelation ::= FiRelationEqual, FiName2Supertype, FiName1Supertype, FiCommonSupertype, FiNotRelated;
+	FiRelationEqual();
+	FiName2Supertype();
+	FiName1Supertype();
+	FiCommonSupertype();
+	FiNotRelated();
+
+getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> FiTypeRelation {
+	if (name1 == name2) FiRelationEqual()
+	else {
+		union1 = lookupTree(env.unions, name1);
+		union2 = lookupTree(env.unions, name2);
+
+		unions1 = getTreeArrayValue(env.struct2unions, name1);
+		unions2 = getTreeArrayValue(env.struct2unions, name2);
+
+		switch (union1) {
+			None(): {
+				// name1 is a struct.
+				// Check if name2 is a struct as well
+				switch (union2) {
+					None(): {
+						// name2 is also a struct.
+						// They need a shared unions
+						shared = intersection(unions1, unions2);
+						if (shared != []) {
+							FiCommonSupertype();
+						} else {
+							// Not related!
+							FiNotRelated();
+						}
+					}
+					Some(u2): {
+						// name2 is a union.
+						// See if name1 is part of that union
+						if (contains(unions1, name2)) {
+							// name2 is a supertype of name1
+							// unless the union is exactly one element
+							if (length(u2.typenames) == 1) {
+								FiRelationEqual();
+							} else {
+								FiName2Supertype();
+							}
+						} else {
+							// name2 is a union, but name1 is not part of it. They are NOT related
+							FiNotRelated();
+						}
+					}
+				}
+			}
+			Some(u1): {
+				switch (union2) {
+					None(): {
+						// name1 is a union, but name2 is a struct
+						if (contains(unions2, name1)) {
+							// name1 is a supertype of name2
+							// unless the union is exactly one element
+							if (length(u1.typenames) == 1) {
+								FiRelationEqual()
+							} else {
+								FiName1Supertype()
+							}
+						} else {
+							// name1 is a union, but name2 is not part of it. They are NOT related
+							FiNotRelated();
+						}
+					}
+					Some(u2): {
+						// OK, both are unions.
+						rel = getFiUnionRelation(env, u1, u2);
+						rel;
+					}
+				}
+			}
+		}
+	}
+}
+
+getFiUnionRelation(env : FcGlobalNames, union1 : FcTypeUnion, union2 : FcTypeUnion) -> FiTypeRelation {
+	structs1 = expandFiUnion(env, union1, makeSet());
+	structs2 = expandFiUnion(env, union2, makeSet());
+
+	super1 = differenceSets(structs1, structs2);
+	super2 = differenceSets(structs2, structs1);
+
+	if (isEmptySet(super1) && !isEmptySet(super2)) {
+		FiName2Supertype();
+	} else if (!isEmptySet(super1) && isEmptySet(super2)) {
+		FiName1Supertype();
+	} else if (isEmptySet(super1) && isEmptySet(super2)) {
+		FiRelationEqual()
+	} else {
+		println("TODO: Check if there is a superset " + union1.name + " vs " + union2.name);
+		FiNotRelated();
+	};
+}
+
+expandFiUnion(env : FcGlobalNames, union : FcTypeUnion, acc : Set<string>) -> Set<string> {
+	fold(union.typenames, acc, \acc0, tn : FcTypeName -> {
+		mst = lookupTree(env.structs, tn.name);
+		switch (mst) {
+			None(): {
+				mun = lookupTree(env.unions, tn.name);
+				switch (mun) {
+					None(): acc;	// Will never happen
+					Some(un): expandFiUnion(env, un, acc0);
+				}
+			}
+			Some(st): insertSet(acc0, tn.name);
+		}
+	});
 }

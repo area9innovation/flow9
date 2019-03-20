@@ -18,18 +18,21 @@ Configure the flow root folder under File->Preferences-Settings, and then "Flow 
 and change `flow.root` to 
 point to the root of Flow repo (typically `c:\flow9`).
 
+# Useful coding font
+
 Consider to download and install the font "Fira code". Then go to File -> Preferences -> Settings
-Text Editor, Font, change the Font family
-to "Fira code" and make sure "Font Ligatures" is checked.
+Text Editor, Font, change the Font family to "Fira code" and make sure "Font Ligatures" is checked.
 
 https://github.com/tonsky/FiraCode/releases
+
+# Useful extensions
 
 Install these extensions by clicking extentions in the sidebar, and typing these names:
 
 - GitLens
 - Bracket Pair Colorizer 2
 
-Be sure to click the "Spaces: 4" area in the bottom and change to use indentation by Tabs with size 4.
+# Useful settings
 
 To change the tabs and line endings globally, use the following settings:
 ```
@@ -38,7 +41,10 @@ To change the tabs and line endings globally, use the following settings:
         "files.eol": "\n" 
 ```
 You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
-Using VS Code Settings UI has the same effect.
+
+You can also consider to turn off File Preview, where files open with italics in the tab, and are lost again
+when another file opens. This is called "Workbench -> Editor -> Enable Preview" in setting, and can be turned
+off if you do not like that behavior.
 
 ## COMMON USAGE
 
@@ -52,7 +58,7 @@ Ctrl+p to open file.
 
 Ctrl+click on compile errors to open at that point.
 
-Double click the name of the file in the file tab to make it stay open.
+Double click the name of the file in the file tab to make it stay open (or turn Preview off).
 
 Ctrl+k o to open the current file in a new window.
 

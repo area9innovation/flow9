@@ -167,45 +167,20 @@ fiWasmBuildIndirectCall(acc : WasmAcc, callExp1 : Wasm2Cmd, type : WasmTypeDescr
 	// assuming calling a closure - indirect call
 	// we do not need the exact struct type - but we know first field is function index
 
-	Wasm2Seq(concat3([
-			callExp1, // put closure pointer as a last extra implicit argument
-		],
-		(if (doinline) {
-			[
-				Wasm2Code("i32.load"),
-
-				Wasm2SetLocal("_inc_refcnt_"),
-				Wasm2If(
-					Wasm2Seq([
-						Wasm2GetLocal("_inc_refcnt_"),
-						Wasm2I32Const(1), 
-						Wasm2Code("i32.lt_s")
-					]), true, false, Wasm2Code("unreachable"), Wasm2Void()),
-				callExp1,
-				Wasm2GetLocal("_inc_refcnt_"),
-
-				Wasm2I32Const(1), 
-				Wasm2Code("i32.add"),
-				Wasm2Code("i32.store"),
-				callExp1
-			]
-		} else {
-			[
-				Wasm2Call("$wasm_inc_refcnt_passthru") // increase refcount for it
-			]
-		}),
+	Wasm2Seq(
 		[
 			// We have callExp on stack already. Should we use DUP here?
+			callExp1, // put closure pointer as a last extra implicit argument
 			callExp1, // loading pointer to the closure again - we need it to get function address
 			Wasm2I32Const(8), Wasm2Code("i32.add"), // add 8 to what we have provided (0 = refcount, 4 = struct ID)
 			Wasm2Code("i32.load"), // now we have function index loaded 
 			// and closure remains the implicit first argument on stack
-			Wasm2Seq(destructors), // inject destructors right before the call with all data on stack already
 			// the syntax is "(call_indirect <inline_type_declaration>)"
 			Wasm2Code("(call_indirect " 
-				+ fiWasmBuildFunctionDecl("", type, true, false) + " )")
+				+ fiWasmBuildFunctionDecl("", type, true, false) + " )"),
+			Wasm2Seq(destructors) // add destructors right after the call 
 		]
-	))
+	)
 }
 
 // TODO: convert fiWasmBuildNativeFunctionCall() to non-string representation
@@ -295,7 +270,7 @@ fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, co
     destructors : [Wasm2Cmd], doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	if (containsKeyTree(context.functions.functionIndices, func)) {
 		callCmd = Wasm2Call("$" + func);
-		Wasm2Seq(concat(destructors,
+		Wasm2Seq(concat(
 			if (startsWith(func, "wasm_typed_"))
 				// call function in runtime library directly, no dummy closure but function type
 				[
@@ -309,7 +284,8 @@ fiWasmBuildFunctionCall(acc : WasmAcc, func: string, type : WasmTypeFunction, co
 				] 
 			else 
 				// call global function and pass dummy closure argument as last one
-				[Wasm2I32Const(0), callCmd]
+				[Wasm2I32Const(0), callCmd],
+			destructors
 		))
 	} else {
 		cmd = if (fiWasmIsGlobalVar(context, func)) Wasm2GetGlobal(func) else Wasm2GetLocal(func);
@@ -517,9 +493,9 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : b
 						Some(v): {					
 							functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeFunction);
 							// TODO : conv
-							Wasm2Seq(arrayPush(
-								destructors,
-								fiWasmBuildNativeFunctionCall(acc, var.name, args, functionType, v, context) |> conv
+							Wasm2Seq(concat(
+								[fiWasmBuildNativeFunctionCall(acc, var.name, args, functionType, v, context) |> conv],
+								destructors
 							));
 						}
 						None(): error("Error occurred in WasmCallNative: " + var.name);
@@ -528,9 +504,9 @@ compileWasmExp2(acc : WasmAcc, ex : WasmExp, context : WasmContext, doinline : b
 				WasmCallHost(): {					
 					var = cast(f : WasmExp -> WasmVar);
 					functionType = cast(var.type : WasmTypeDescriptor -> WasmTypeJSCallback);
-					Wasm2Seq(arrayPush(
+					Wasm2Seq(concat(
+						[fiWasmBuildHostFunctionCall(acc, var.name, args, functionType, context)],
 						destructors,
-						fiWasmBuildHostFunctionCall(acc, var.name, args, functionType, context)
 					));
 				}
 			}
@@ -744,10 +720,10 @@ compileWasmCallPrimCmp(cmp0 : string, type0 : WasmTypeDescriptor, context) -> Wa
 compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, context, error, destructors, 
 	doinline : bool, locals : ref Tree<string, WasmTypeDescriptor>) -> Wasm2Cmd {
 	args1 = map(es, \e -> compileWasmExp2(acc, e, context, doinline, locals));
-	argsAppend = \cmd -> Wasm2Seq(concat3(args1, destructors, [cmd]));
-	argsAppendTD = \cmd -> Wasm2Seq(concat3(args1, destructors, [
+	argsAppend = \cmd -> Wasm2Seq(concat3(args1, [cmd], destructors));
+	argsAppendTD = \cmd -> Wasm2Seq(concat3(args1, [
 		wasmGenerateTypeRef(context, wasmExpType(es[0])), cmd
-	]));
+	], destructors));
 	type0 = if (length(es) > 0) wasmExpType(es[0]) else WasmTypeVoid();
 	buildCmp = \cmp0 : string -> {
 		compileWasmCallPrimCmp(cmp0, type0, context) |> argsAppend
@@ -871,9 +847,10 @@ compileWasmCallPrim(op: FcPrim, es: [WasmExp], type : WasmTypeDescriptor, acc, c
 			Wasm2Seq(concat([cmd], destructors))
 		}
 		FcSetMutablePrim(name): {
+			argType = wasmExpType(es[1]);
 			cmd = switch (type0) {
 				WasmTypeStruct(sname, fields): {
-					makeWasmSetMutableField(context, fields, name, args1, type);
+					makeWasmSetMutableField(context, fields, name, args1, argType);
 				}
 				default: error("mutable wrong type");
 			}
