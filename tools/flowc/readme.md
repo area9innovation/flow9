@@ -127,6 +127,13 @@ Phases and representations
    e. The top-level function types are recorded in a global FcTypeEnv
       environment. The local types are recorded in the AST itself.
 
+   f. At the end, we convert the FcExp and FcType to the corresponding
+      FiExp and FiType, which are suitable for incremental serialization.
+
+   g. We can run type verification on the FiModule representation. This is
+      done when dependent code is changed, and we have to check that the
+	  current module is still correct.
+
 4. Code generation. Bytecode works, JS works, others are in progress.
 
 You can inspect the process of type checking in detail, including the 
@@ -287,11 +294,6 @@ Todos
 - Fix error reporting when unknown names are found to do a levenshtein search to find the closest
   ids that might match
 
-- Port the HTML backend to the new compiler
-
-- Support nodejs
-
-
 Typechecker improvement desires
 -------------------------------
 
@@ -326,32 +328,12 @@ Performance:
 - Consider postponing call/struct construct disambiguation until typechecking
 
 
-Webassembly
+WebAssembly
 -----------
 
-a) Try assemblyscript on our Typescript output
-
-b) New backend. At first, maybe only provide ability to compile
-   some subset of functions to Wasm, and leave the rest in JS for
-   a hybrid model. This backend can maybe be extended over time.
-   The subset of functions could be pure, standalone with only
-   "simple" types and easy communication with JS.
-
-c) Double flow compilation:
-   - Implement the native code annotation idea, and have a WASM mode.
-   - Write functions for interpreting flow language constructs, which 
-     has a WASM native implementation
-   - Implement the runtime by adding native WASM implementations
-   - Compile to WASM by compiling flow to a flow program, which calls
-     the functions to interpret the code.
-   - Then compile this program to WASM, which should be simple, since
-     everything is written as functions with native WASM implementations.
-
-d) New c++ bytecode interpreter
-
-e) The c++ target with emscripten
-
-
+We have a beta backend for this. See `tools/flowc/backends/wasm/readme.md`. Unfortunately,
+all speed tests show that JS is faster, even for integer-only code. WebAssembly has to be
+considered a young technology. Maybe it will be faster in the future.
 
 
 <h3 id=require>Restricted scope and dynamic linking</h3>
