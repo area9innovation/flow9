@@ -89,6 +89,8 @@ if (o1 === o2) return true;
 }
 ");
     return o1 == o2;
+#else
+    compareByValue(o1, o2) == 0;
 #end
   }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
