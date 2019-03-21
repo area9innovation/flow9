@@ -6,47 +6,17 @@ First, download and install haXe and neko:
 
 	http://haxe.org/download/
 
-Haxe 3.4.* should work, but you'll have to manually roll back neko version to 2.0.0 
-(see section below). The simplest way is to get haxe 3.2.1.
+Haxe 3.4.* should work.
 
 Now install the "format" and "pixijs" haxe libraries:
 
 	haxelib install format
-	haxelib set pixijs 4.5.4
-	(a newer version might be not supported yet)
+	haxelib install pixijs
 
 Now check that you can compile the compiler:
 
 	cd c:\flow9\src
 	haxe FlowNeko.hxml
-
-Also to go to `C:\flow9\resources\neko\1.8.2-2.0.0`. Move the patched gc.dll
-to your Neko installation (there is a readme.txt in that folder with a little more detail).
-This will increase the amount of available memory to Neko, to avoid errors when
-compiling larger Flow programs.
-
-# Using haxe 3.4.x or later
-
-It is possible to use later Haxe versions, but you have to revert back to neko 2.0.0 to
-make this work.
-
-First, install Haxe with the neko 2.1. Then, go to `...\HaxeToolkit\` folder
-where you installed Haxe and neko. You need to extract the
-`flow9\resources\neko\neko-2.0.0-win.zip` file in this folder. Then you should copy the
-`flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll` on top of the one in the
-neko-2.0.0 folder.
-Now, rename the "neko" folder to "neko-2.1.0", and rename "neko-2.0.0" to "neko".
-Restart any command prompts, and you should be able to use the latest haxe with
-neko 2.0, with the unlimited heap.
-
-At the end, you will have
-
-- ...\HaxeToolkit\haxe
-- ...\HaxeToolkit\neko-2.1        (unused)
-- ...\HaxeToolkit\neko            (with neko 2.0)
-- ...\HaxeToolkit\neko\gc.dll     (taken from `flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll`)
-
-Verify that you can compile and run programs, and you are all set.
 
 # Install VC runtime
 
@@ -55,7 +25,7 @@ Run
 
 to install the Visual Studio runtime needed for our flow bytecode runner.
 
-# Install Java 8 or later in a 64-bit version
+# Install Python 3.* and Java 8 or later in a 64-bit version
 
 This is required to run the flowc compiler.
 
@@ -75,21 +45,85 @@ If it prints "Hello console" in your console and "Hello window" on the screen, *
 You can also run flow code in JavaScript, served by a web server. First set up a web-server such
 that `http://localhost/flow/` points to the `/flow9/www` directory.
 
-If you want to develop on Windows, you can do that using WampServer (preferred) or EasyPHP
+If you want to develop on Windows, you can do that using WampServer
 
 	http://www.wampserver.com/
-	http://www.easyphp.org/
 
-When installing WampServer or EasyPHP on Windows 8 or later, run the installer as administrator.
+When installing on Windows 8 or later, run the installer as administrator.
 
 Make sure you configure your Skype to not use port 80 in Settings, Advanced, Connection
 and uncheck the check box for using port 80 and 443. In Wamp, next "Start all services".
 Now add an alias by selecting Apache, Alias directories, Add an alias, and make "flow"
 point to `c:/flow9/www`.
 
+# Compile and run as JS
+
+Now you can compile your code to JavaScript like
+
+	flowc1 sandbox/hello.flow js=www/hello.js
+
+or using the older, haxe-based compiler:
+
+	flow --js www/hello.js sandbox/hello.flow
+
+Then open this in your web browser:
+
+	http://localhost/flow/flowjs.html?name=hello
+
+To see the output from this program, open the JavaScript console in your
+browser. That is ctrl+shift+J in Chrome in the address line.
+
+## What is really happening when compiling flow code
+
+When you run
+
+	flowcpp sandbox/hello.flow
+
+the program will be compiled to flow bytecode and then interpreted (JITed).
+You can also do this manually like this. First compile to bytecode
+with a command line like this:
+
+	flowc1 sandbox/hello.flow bytecode=hello.bytecode
+
+or with the haxe-based compiler like:
+
+	flow -c hello.bytecode sandbox/hello.flow
+
+Next, you can interpret that by the C++ runner by typing
+
+	flowcpp hello.bytecode
+
+in a command prompt in `c:\flow9`. This will use the Qt-based C++ flow runner.
+See `QtBytecodeRunner/readme.txt` to learn more about this runner.
+
+As you saw above, you can also compile directly to JavaScript by using
+
+	flowc1 sandbox/hello.flow js=www/hello.js
+
+or
+
+	flow --js hello.js sandbox/hello.flow
+
+and run it as
+
+	http://localhost/flow/flowjs.html?name=hello
+
+We use the [PixiJs](https://pixijs.io) rendering library to draw our 
+js-compiled applications.
+
+Please note that js target won't run any code unless you render something.
+
+# Using EasyPHP instead of Wamp
+
+You can use EasyPHP instead of Wamp, although it is not as easy.
+
+	http://www.easyphp.org/
+
+When installing WampServer or EasyPHP on Windows 8 or later, run the installer as administrator.
+
 For EasyPHP, go to the administration, under LOCAL FILES click "add an alias" to make 
-"flow" point to `c:/flow9/www`. Notice, however, recent versions of EasyPHP
-like to put an "edsa-" prefix to all alias, which is very annoying. To work around that,
+"flow" point to `c:/flow9/www`. Notice, however, recent versions of EasyPHP like to put 
+an "edsa-" prefix to all alias, which is very annoying. To work around that,
 you have to hack the http.conf setup manually.
 
         Alias /flow/ "C:/flow9/www/"
@@ -120,61 +154,6 @@ Remove comments from php.ini for useful extensions:
 
 Because of this mess, we recommend Wamp instead.
 
-Now you can compile your code to JavaScript like
-
-	flowc1 sandbox/hello.flow js=www/hello.js
-
-or using the older, haxe-based compiler:
-
-	flow --js www/hello.js sandbox/hello.flow
-
-Then open this in your web browser:
-
-	http://localhost/flow/flowjs.html?name=hello
-
-To see the output from this program, open the JavaScript console in your
-browser. That is ctrl+shift+J in Chrome in the address line.
-
-## What is really happening when compiling flow code
-
-When you run
-
-	flowcpp sandbox/hello.flow
-
-the program will be compiled to flow bytecode and then interpreted.
-You can also do this manually like this. First compile to bytecode
-with a command line like this:
-
-	flowc1 sandbox/hello.flow bytecode=hello.bytecode
-
-or with the haxe-based compiler like:
-
-	flow -c hello.bytecode sandbox/hello.flow
-
-Next, you can interpret that by the C++ runner by typing
-
-	flowcpp hello.bytecode
-
-in a command prompt in `c:\flow9`. This will use the Qt-based C++ flow runner.
-See `QtBytecodeRunner/readme.txt` to learn more about this runner.
-
-As you saw above, you can also compile directly to JavaScript by using
-
-	flowc1 sandbox/hello.flow js=www/hello.js
-
-or
-
-	flow --js hello.js sandbox/hello.flow
-
-and run it as
-
-	http://localhost/flow/flowjs.html?name=hello
-
-Currently, we use the [PixiJs](https://pixijs.io) rendering library to draw our 
-js-compiled applications.
-
-Please note that js target won't run any code unless you render something.
-
 ## Why use PixiJs instead of DOM?
 
 We tried to use DOM for rendering, but as a result we got huge DOM trees and browsers were unable to handle them and just kept crashing.
@@ -197,6 +176,29 @@ If it is commented, uncomment it and append the full path of the downloaded file
 
 Information on this topic can be found in QtByteRunner/readme.md
 in section "Enabling fast-cgi in apache"
+
+# Memory exhaustion problems
+
+When you compile big programs with `flow`, you might run into a neko memory limit.
+If so, you can fix it by reverting to neko 2, and using a patched gc.dll
+
+First, install Haxe with the neko 2.1. Then, go to `...\HaxeToolkit\` folder
+where you installed Haxe and neko. You need to extract the
+`flow9\resources\neko\neko-2.0.0-win.zip` file in this folder. Then you should copy the
+`flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll` on top of the one in the
+neko-2.0.0 folder.
+Now, rename the "neko" folder to "neko-2.1.0", and rename "neko-2.0.0" to "neko".
+Restart any command prompts, and you should be able to use the latest haxe with
+neko 2.0, with the unlimited heap.
+
+At the end, you will have
+
+- ...\HaxeToolkit\haxe
+- ...\HaxeToolkit\neko-2.1        (unused)
+- ...\HaxeToolkit\neko            (with neko 2.0)
+- ...\HaxeToolkit\neko\gc.dll     (taken from `flow9\resources\neko\1.8.2-2.0.0\unlimited\gc.dll`)
+
+Verify that you can compile and run programs, and you are all set.
 
 ## Running in a virtual environment?
 
