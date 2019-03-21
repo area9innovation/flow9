@@ -5,6 +5,14 @@ import tools/flowc/typechecker/ftype_finalize;
 import tools/flowc/flowc_module;
 
 /*
+Run like:
+
+flowcpp tools/flowc/unify/unify.flow -- file=20
+
+
+flowcpp tools/flowc/unify/unify.flow -- test=1
+
+
 Status:
 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 16: ok
 
@@ -65,22 +73,31 @@ runUnify(config : CompilerConfig, file : string) -> string {
 	unifyParse = parseUnify(program, Unify([], [], [], []));
 
 	if (unifyParse.third != "") {
-		fcPrintln(file + ": " + unifyParse.third + "\n" + strLeft(program, unifyParse.second));
-		fcPrintln(unifyParse.first);
+		println(file + ": " + unifyParse.third + "\n" + strLeft(program, unifyParse.second));
+		println(unifyParse.first);
 	}
 	unify = unifyParse.first;
 
-	typeenv = fold(unify.flowfile, makeEmptyFcTypeEnv(config), \acc, flowfile -> {
-		path = if (fileExists(flowfile)) flowfile
-			else "tools/flowc/unify/tests/" + flowfile;
-		addFlowFileToEnv(acc, config, path);
-	});
+	typeenv = if (true) {
+		fold(unify.flowfile, makeEmptyFcTypeEnv(config), \env, flowfile -> {
+			path = if (fileExists(flowfile)) flowfile
+				else "tools/flowc/unify/tests/" + flowfile;
+			addFlowFileToEnv(env, config, path);
+		})
+
+	} else {
+		fold(unify.flowfile, makeEmptyFcTypeEnv(config), \env, flowfile -> {
+			path = if (fileExists(flowfile)) flowfile
+				else "tools/flowc/unify/tests/" + flowfile;
+			addFlowFileToEnv(env, config, path);
+		})
+	}
 
 	tyvars : Tree<int, FType> = fold(unify.bindings, makeTree(), \acc, binding -> {
 		setTree(acc, binding.tyvar.id, binding.type)
 	});
 
-	fenv = FEnv(typeenv, typeenv.global.acc.tyvarIdGroup, typeenv.global.acc.config.verbose, tyvars, makeTree(), makeTree());
+	fenv = FEnv(typeenv, typeenv.program.acc.tyvarIdGroup, typeenv.program.acc.config.verbose, tyvars, makeTree(), makeTree());
 
 	// OK, run the constraints
 	errors = ref "";
@@ -118,29 +135,16 @@ makeEmptyFcTypeEnv(
 		config : CompilerConfig, 
 	) -> FcTypeEnv {
 
-	names =
-		FcGlobalNames(
-			makeTree(), // struct2module : Tree<string, string>,
-			makeTree(), // union2module : Tree<string, string>,
-			makeTree(), // function2module : Tree<string, string>,
-			makeTree(), // globalVar2module : Tree<string, string>,
-			makeTree(), // native2module : Tree<string, string>,
-			makeTree(),
-			makeTree(),
-			makeTree(),
-			makeTree(),
-			makeTree(), // toplevel : Tree<string, FcDeclaration>
-			makeTree(),
-		);
-
 	factory = makeIdFactory(100, 0);
 	acc = FlowcAcc(
 			makeDependencyTracker(), makeTree(), makeTree(), makeTree(),
-			[], names, config, factory, makeIdGroup(factory),
+			[], dummyFcGlobalNames, config, factory, makeIdGroup(factory),
+			makeTracer()
 		);
 
 	FcTypeEnv(
-		FcTypeEnvGlobal(acc, makeTree(), \error : FcError -> printFcError(acc, error), ref 0),
+		FcTypeEnvGlobal(ref makeTree()),
+		FcTypeEnvProgram(acc, makeTree(), \error : FcError -> printFcError(acc, error), ref 0, ref makeTree()),
 		FcTypeEnvLocal(
 			// Requirements for types.
 			ref makeList(),
@@ -164,23 +168,24 @@ makeEmptyFcTypeEnv(
 
 // Parses the given flow file, and adds it to the environment without type checking
 addFlowFileToEnv(env : FcTypeEnv, config : CompilerConfig, file : string) -> FcTypeEnv {
-	preloadedErrorPair : Pair<FcPreloadedModule, FcError> = doParseFlowFileOrLoadCached(config, file, "unify", 0, 0);
+	preloadedErrorPair : Pair<FcPreloadedModule, FcError> = parseFlowFileOrLoadCached(config, env.global, file, "unify", 0, 0);
 	if (preloadedErrorPair.second == dummyFcError) {
 		preloaded = preloadedErrorPair.first;
 		module : FcModule = switch (preloaded) {
 			FcParsed(__, __, __, __, __): {
 				parsed : FcParsed = preloaded;
-				desugarFcModule(env.global.acc, env.local, preloaded.fileinfo, parsed.syntaxtree);
+				desugarFcModule(env.program.acc, env.local, preloaded.fileinfo, parsed.syntaxtree);
 			}
-			FiModule(__, __, __, __, __, __, __, __, __, __, __, __, __): fimodule2fc(preloaded, false);
+			FcLoaded(modul, __): fimodule2fc(modul, false);
 		}
 
 		FcTypeEnv(
-			addModuleToGlobal(env.global, module).first,
+			env.global,
+			addDesugaredModuleToGlobal(env.program, module),
 			env.local
 		)
 	} else {
-		printFcError(env.global.acc, preloadedErrorPair.second);
+		printFcError(env.program.acc, preloadedErrorPair.second);
 		env
 	}
 }
