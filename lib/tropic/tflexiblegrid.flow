@@ -27,10 +27,22 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	animation = tryExtractStruct(style, TAnimation(LazyDeltaTimer(make(0.0), nop, nop)));
 	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 
-	contentSize = makeWH();
 	contentBaseline = make(0.);
 	stageSizeB = make(0.);
 	itemsB = fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint), make(None())));
+	contentSize =
+		fselect2(
+			fsubmap(itemsB, \it -> it.wh),
+			fsubmap(itemsB, \it -> it.tr),
+			FLift2(\wh, tr ->
+				foldi(wh, WidthHeight(0.0, 0.0), \i, acc, v ->
+					WidthHeight(
+						max(acc.width, either(v, WidthHeight(0., 0.)).width + tr[i].x),
+						max(acc.height, either(v, WidthHeight(0., 0.)).height + tr[i].y)
+					)
+				)
+			)
+		);
 	parameters =
 		BFParameters(
 			groupByCols,
@@ -156,7 +168,10 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 							if (!contains(itemsSizes, None())) {
 								blocks = map(itemsSizes, \sz -> either(sz, WidthHeight(0., 0.)) |> (\wh -> BFBlock(wh.width, wh.height)));
 
-								bfFit(stageSize, blocks, parameters);
+								// if (parameters.ordered || parameters.groupByCols || isSome(parameters.maxRows))
+									bfFit(stageSize, blocks, parameters)
+								// else
+								// 	bpFit(stageSize, blocks, BFParameters(!parameters.vertical, false, parameters.vertical, None()))
 							} else {
 								[];
 							}
@@ -166,20 +181,10 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 					\tr -> {
 						gridItems = fgetValue(itemsB);
 
-						nextDistinct(
-							contentSize,
-							foldi(tr, WidthHeight(0., 0.), \i, acc, p -> {
-								if (length(gridItems) > i) {
-									nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-
-									WidthHeight(
-										max(acc.width, either(getValue(gridItems[i].wh), WidthHeight(0., 0.)).width + getValue(gridItems[i].tr).x),
-										max(acc.height, either(getValue(gridItems[i].wh), WidthHeight(0., 0.)).height + getValue(gridItems[i].tr).y)
-									)
-								} else {
-									acc;
-								}
-							})
+						iteri(tr, \i, p ->
+							if (length(gridItems) > i) {
+								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
+							}
 						);
 					}
 				)
@@ -245,7 +250,7 @@ bfFitBlocks(line : [Point], size : double, blocks : [BFBlock], par : BFParameter
 	foldi(blocks, BFState(line, size, makeTree()), \i, acc, block -> {
 		state = bfFindNode(i, acc, block, par);
 
-		if (state.s > acc.s && isSome(par.maxRows) && (par.groupByCols || par.ordered))
+		if (state.s > acc.s)
 			bfFitBlocks(line, state.s, subrange(blocks, 0, i + 1), par)
 		else
 			state;
@@ -405,309 +410,311 @@ checkBFMaxRows(state : BFState, block : BFBlock, point : Point, par : BFParamete
 	eitherMap(
 		par.maxRows,
 		\mr -> {
-			if (par.vertical) {
-				minY = point.y;
-				maxY = minY + block.h;
+			filteredTree = filterTree(state.p, \k, v -> if (par.vertical) v.second.y == 0.0 else v.second.x == 0.0);
 
-				sizeTree(filterTree(state.p, \k, v -> v.second.y + v.first.h > minY && v.second.y < maxY)) < mr;
+			if (sizeTree(filteredTree) < mr) {
+				true
 			} else {
-				minX = point.x;
-				maxX = minX + block.w;
+				maxSize =
+					foldTree(filteredTree, 0.0, \k, v, acc ->
+						if (par.vertical) {
+							if (v.second.x > acc)
+								v.second.x
+							else
+								acc;
+						} else {
+							if (v.second.y > acc)
+								v.second.y
+							else
+								acc;
+						}
+					);
 
-				sizeTree(filterTree(state.p, \k, v -> v.second.x + v.first.w > minX && v.second.x < maxX)) < mr;
+				if (par.vertical)
+					point.x <= maxSize
+				else
+					point.y <= maxSize;
 			}
 		},
 		true
 	)
 }
 
-// BPRoot(x : double, y : double, w : double, h : double, c : [BPRoot]);
-// BPBlock(w : double, h : double);
-// BPState(r : BPRoot, p : Tree<int, Pair<BPBlock, Point>>);
-
-// BPParameters(
-// 	groupByCols : bool,
-// 	ordered : Maybe<bool>,
-// 	vertical : bool
-// );
+BPRoot(x : double, y : double, w : double, h : double, c : [BPRoot]);
+BPState(r : BPRoot, p : Tree<int, Pair<BFBlock, Point>>);
 
 // Binary packing algorithm
-// bpFit(root : BPRoot, blocks : [BPBlock], par : BPParameters) -> [Maybe<Point>] {
-// 	if (par.ordered) {
-// 		wh =
-// 			if (par.vertical)
-// 				WidthHeight(doubleMax, max(root.h, either(maxA(map(blocks, \b -> b.h)), 0.0)))
-// 			else
-// 				WidthHeight(max(root.w, either(maxA(map(blocks, \b -> b.w)), 0.0)), doubleMax);
+bpFit(size : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
+	if (par.ordered) {
+		wh =
+			if (par.vertical)
+				WidthHeight(doubleMax, max(size, either(maxA(map(blocks, \b -> b.h)), 0.0)))
+			else
+				WidthHeight(max(size, either(maxA(map(blocks, \b -> b.w)), 0.0)), doubleMax);
 
-// 		bpFitBlocks(BPRoot(root.x, root.y, wh.width, wh.height, root.c), blocks, par);
-// 	} else {
-// 		blocksI =
-// 			mergeSort(mapi(blocks, \i, b -> Pair(i, b)), \a : Pair<int, BPBlock>, b : Pair<int, BPBlock> ->
-// 				if (par.vertical) {
-// 					if (a.second.h == b.second.h)
-// 						b2i(a.second.w < b.second.w)
-// 					else
-// 						b2i(a.second.h < b.second.h)
-// 				} else {
-// 					if (a.second.w == b.second.w)
-// 						b2i(a.second.h < b.second.h)
-// 					else
-// 						b2i(a.second.w < b.second.w)
-// 				}
-// 			);
+		bpFitBlocks(BPRoot(0.0, 0.0, wh.width, wh.height, []), blocks, par);
+	} else {
+		blocksI =
+			mergeSort(mapi(blocks, \i, b -> Pair(i, b)), \a : Pair<int, BFBlock>, b : Pair<int, BFBlock> ->
+				if (par.vertical) {
+					if (a.second.h == b.second.h)
+						b2i(a.second.w < b.second.w)
+					else
+						b2i(a.second.h < b.second.h)
+				} else {
+					if (a.second.w == b.second.w)
+						b2i(a.second.h < b.second.h)
+					else
+						b2i(a.second.w < b.second.w)
+				}
+			);
 
-// 		orderI = map(blocksI, \b -> b.first);
+		orderI = map(blocksI, \b -> b.first);
 
-// 		wh =
-// 			if (par.vertical)
-// 				WidthHeight(blocksI[0].second.w, max(blocksI[0].second.h, root.h))
-// 			else
-// 				WidthHeight(max(blocksI[0].second.w, root.w), blocksI[0].second.h);
+		wh =
+			if (par.vertical)
+				WidthHeight(blocksI[0].second.w, max(blocksI[0].second.h, size))
+			else
+				WidthHeight(max(blocksI[0].second.w, size), blocksI[0].second.h);
 
-// 		getTreeValues(
-// 			foldi(
-// 				bpFitBlocks(BPRoot(root.x, root.y, wh.width, wh.height, root.c), map(blocksI, secondOfPair), par),
-// 				makeTree(),
-// 				\i, acc, tr -> setTree(acc, orderI[i], tr)
-// 			)
-// 		);
-// 	}
-// }
+		getTreeValues(
+			foldi(
+				bpFitBlocks(BPRoot(0.0, 0.0, wh.width, wh.height, []), map(blocksI, secondOfPair), par),
+				makeTree(),
+				\i, acc, tr -> setTree(acc, orderI[i], tr)
+			)
+		);
+	}
+}
 
-// bpFitBlocks(root : BPRoot, blocks : [BPBlock], par : BPParameters) -> [Maybe<Point>] {
-// 	points = foldi(blocks, BPState(root, makeTree()), \i, state, block -> {
-// 		newState = bpFindNode(i, state, block, par);
+bpFitBlocks(root : BPRoot, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
+	points = foldi(blocks, BPState(root, makeTree()), \i, state, block -> {
+		newState = bpFindNode(i, state, block, par);
 
-// 		if (isNone(lookupTree(newState.p, i))) {
-// 			bpGrowNode(i, newState, block, par);
-// 		} else {
-// 			newState;
-// 		}
-// 	}).p;
+		if (isNone(lookupTree(newState.p, i))) {
+			bpGrowNode(i, newState, block, par);
+		} else {
+			newState;
+		}
+	}).p;
 
-// 	generate(0, length(blocks), \i -> maybeMap(lookupTree(points, i), \p -> p.second));
-// }
+	generate(0, length(blocks), \i -> maybeMap(lookupTree(points, i), \p -> p.second));
+}
 
-// bpFindNode(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
-// 	if (length(state.r.c) > 0) {
-// 		if (par.ordered) {
-// 			p = ref state.p;
+bpFindNode(i : int, state : BPState, block : BFBlock, par : BFParameters) -> BPState {
+	if (length(state.r.c) > 0) {
+		if (par.ordered) {
+			p = ref state.p;
 
-// 			newChildren =
-// 				map(state.r.c, \c -> {
-// 					if (isNone(lookupTree(^p, i))) {
-// 						newState = bpFindNode(i, BPState(c, ^p), block, par);
-// 						p := newState.p;
-// 						newState.r.c;
-// 					} else {
-// 						[c];
-// 					}
-// 				})
-// 				|> concatA
-// 				|> (\newChildren -> bpFilterRoots(newChildren, BPState(state.r, ^p), par));
+			newChildren =
+				map(state.r.c, \c -> {
+					if (isNone(lookupTree(^p, i))) {
+						newState = bpFindNode(i, BPState(c, ^p), block, par);
+						p := newState.p;
+						newState.r.c;
+					} else {
+						[c];
+					}
+				})
+				|> concatA
+				|> (\newChildren -> bpFilterRoots(newChildren, BPState(state.r, ^p), par));
 
-// 			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
-// 		} else {
-// 			p = ref state.p;
+			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
+		} else {
+			p = ref state.p;
 
-// 			newChildren =
-// 				map(state.r.c, \c -> {
-// 					if (isNone(lookupTree(^p, i))) {
-// 						newState = bpFindNode(i, BPState(c, ^p), block, par);
-// 						p := newState.p;
-// 						newState.r;
-// 					} else {
-// 						c;
-// 					}
-// 				});
+			newChildren =
+				map(state.r.c, \c -> {
+					if (isNone(lookupTree(^p, i))) {
+						newState = bpFindNode(i, BPState(c, ^p), block, par);
+						p := newState.p;
+						newState.r;
+					} else {
+						c;
+					}
+				});
 
 
-// 			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
-// 		}
-// 	} else if (state.r.w >= block.w && state.r.h >= block.h) {
-// 		if (par.ordered) {
-// 			pt =
-// 				foldTree(state.p, if (par.vertical) Point(0., state.r.y) else Point(state.r.x, 0.), \k, v, acc -> {
-// 					x = v.second.x + v.first.w;
-// 					y = v.second.y + v.first.h;
+			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
+		}
+	} else if (state.r.w >= block.w && state.r.h >= block.h) {
+		if (par.ordered) {
+			pt =
+				foldTree(state.p, if (par.vertical) Point(0., state.r.y) else Point(state.r.x, 0.), \k, v, acc -> {
+					x = v.second.x + v.first.w;
+					y = v.second.y + v.first.h;
 
-// 					if (par.vertical) {
-// 						if (y > acc.y && v.second.y < acc.y + block.h && x > acc.x) {
-// 							Point(x, acc.y);
-// 						} else {
-// 							acc;
-// 						}
-// 					} else {
-// 						if (x > acc.x && v.second.x < acc.x + block.w && y > acc.y) {
-// 							Point(acc.x, y);
-// 						} else {
-// 							acc;
-// 						}
-// 					}
-// 				});
+					if (par.vertical) {
+						if (y > acc.y && v.second.y < acc.y + block.h && x > acc.x) {
+							Point(x, acc.y);
+						} else {
+							acc;
+						}
+					} else {
+						if (x > acc.x && v.second.x < acc.x + block.w && y > acc.y) {
+							Point(acc.x, y);
+						} else {
+							acc;
+						}
+					}
+				});
 
-// 			r =
-// 				if (par.vertical) {
-// 					if (pt.y > 0.0 && pt.x < either(maxA(map(getTreeValues(state.p), \v -> v.second.x + v.first.w)), 0.0))
-// 						BPRoot(pt.x, pt.y, state.r.w - pt.x + state.r.x, state.r.h - pt.y + state.r.y, state.r.c)
-// 					else
-// 						state.r;
-// 				} else {
-// 					if (pt.x > 0.0 && pt.y < either(maxA(map(getTreeValues(state.p), \v -> v.second.y + v.first.h)), 0.0))
-// 						BPRoot(pt.x, pt.y, state.r.w - pt.x + state.r.x, state.r.h - pt.y + state.r.y, state.r.c)
-// 					else
-// 						state.r;
-// 				};
+			r =
+				if (par.vertical) {
+					if (pt.y > 0.0 && pt.x < either(maxA(map(getTreeValues(state.p), \v -> v.second.x + v.first.w)), 0.0))
+						BPRoot(pt.x, pt.y, state.r.w - pt.x + state.r.x, state.r.h - pt.y + state.r.y, state.r.c)
+					else
+						state.r;
+				} else {
+					if (pt.x > 0.0 && pt.y < either(maxA(map(getTreeValues(state.p), \v -> v.second.y + v.first.h)), 0.0))
+						BPRoot(pt.x, pt.y, state.r.w - pt.x + state.r.x, state.r.h - pt.y + state.r.y, state.r.c)
+					else
+						state.r;
+				};
 
-// 			if (!bpCheckIntersect(BPState(r, state.p), block)) {
-// 				BPState(bpSplitNode(state.r, block, par), setTree(state.p, i, Pair(block, pt)));
-// 			} else {
-// 				state;
-// 			}
-// 		} else {
-// 			BPState(bpSplitNode(state.r, block, par), setTree(state.p, i, Pair(block, Point(state.r.x, state.r.y))));
-// 		}
-// 	} else {
-// 		state;
-// 	}
-// }
+			if (!bpCheckIntersect(BPState(r, state.p), block)) {
+				BPState(bpSplitNode(state.r, block, par), setTree(state.p, i, Pair(block, pt)));
+			} else {
+				state;
+			}
+		} else {
+			BPState(bpSplitNode(state.r, block, par), setTree(state.p, i, Pair(block, Point(state.r.x, state.r.y))));
+		}
+	} else {
+		state;
+	}
+}
 
-// bpFilterRoots(roots : [BPRoot], state : BPState, par : BPParameters) -> [BPRoot] {
-// 	lastMetric = ref 0.;
-// 	maxMetric = foldTree(state.p, Pair(0.0, 0.0), \k, v, acc ->
-// 		if (par.vertical) {
-// 			lastMetric := v.second.y;
+bpFilterRoots(roots : [BPRoot], state : BPState, par : BFParameters) -> [BPRoot] {
+	lastMetric = ref 0.;
+	maxMetric = foldTree(state.p, Pair(0.0, 0.0), \k, v, acc ->
+		if (par.vertical) {
+			lastMetric := v.second.y;
 
-// 			Pair(max(v.second.x, acc.first), max(v.second.x + v.first.w, acc.second))
-// 		} else {
-// 			lastMetric := v.second.x;
+			Pair(max(v.second.x, acc.first), max(v.second.x + v.first.w, acc.second))
+		} else {
+			lastMetric := v.second.x;
 
-// 			Pair(max(v.second.y, acc.first), max(v.second.y + v.first.h, acc.second))
-// 		}
-// 	);
+			Pair(max(v.second.y, acc.first), max(v.second.y + v.first.h, acc.second))
+		}
+	);
 
-// 	filter(roots, \b ->
-// 		if (par.vertical)
-// 			eitherMap(par.ordered, \o ->
-// 				if (o)
-// 					b.x >= maxMetric.second || (b.x >= maxMetric.first && b.y >= ^lastMetric)
-// 				else
-// 					b.x >= maxMetric.first && (b.y == 0.0 || b.y >= ^lastMetric),
-// 				true
-// 			)
-// 		else
-// 			eitherMap(par.ordered, \o ->
-// 				if (o)
-// 					b.y >= maxMetric.second || (b.x >= ^lastMetric && b.y >= maxMetric.first)
-// 				else
-// 					b.y >= maxMetric.first && (b.x == 0.0 || b.x >= ^lastMetric),
-// 				true
-// 			)
-// 	)
-// 	|> (\f ->
-// 		if (par.vertical)
-// 			mergeSort(f, \a : BPRoot, b : BPRoot -> if (a.x < b.x) -1 else if (a.x > b.x) 1 else genericCompare(a.y, b.y))
-// 		else
-// 			mergeSort(f, \a : BPRoot, b : BPRoot-> if (a.y < b.y) -1 else if (a.y > b.y) 1 else genericCompare(a.x, b.x))
-// 	);
-// }
+	filter(roots, \b ->
+		if (par.vertical) {
+			if (par.ordered)
+				b.x >= maxMetric.first && (b.y == 0.0 || b.y >= ^lastMetric)
+			else
+				true;
+		} else {
+			if (par.ordered)
+				b.y >= maxMetric.first && (b.x == 0.0 || b.x >= ^lastMetric)
+			else
+				true;
+		}
+	)
+	|> (\f ->
+		if (par.vertical)
+			mergeSort(f, \a : BPRoot, b : BPRoot -> if (a.x < b.x) -1 else if (a.x > b.x) 1 else genericCompare(a.y, b.y))
+		else
+			mergeSort(f, \a : BPRoot, b : BPRoot-> if (a.y < b.y) -1 else if (a.y > b.y) 1 else genericCompare(a.x, b.x))
+	);
+}
 
-// bpCheckIntersect(state : BPState, block : BPBlock) -> bool {
-// 	foldTree(state.p, false, \k, v, acc -> {
-// 		if (!acc) {
-// 			doIntersect(v.second.x, v.second.y, v.first.w, v.first.h, state.r.x, state.r.y, block.w, block.h)
-// 		} else {
-// 			acc;
-// 		}
-// 	})
-// }
+bpCheckIntersect(state : BPState, block : BFBlock) -> bool {
+	foldTree(state.p, false, \k, v, acc -> {
+		if (!acc) {
+			doIntersect(v.second.x, v.second.y, v.first.w, v.first.h, state.r.x, state.r.y, block.w, block.h)
+		} else {
+			acc;
+		}
+	})
+}
 
-// doIntersect(x1 : double, y1 : double, w1 : double, h1 : double, x2 : double, y2 : double, w2 : double, h2 : double) -> bool {
-// 	x1 + w1 > x2 && x1 < x2 + w2 && y1 + h1 > y2 && y1 < y2 + h2;
-// }
+doIntersect(x1 : double, y1 : double, w1 : double, h1 : double, x2 : double, y2 : double, w2 : double, h2 : double) -> bool {
+	x1 + w1 > x2 && x1 < x2 + w2 && y1 + h1 > y2 && y1 < y2 + h2;
+}
 
-// bpSplitNode(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
-// 	BPRoot(
-// 		root.x,
-// 		root.y,
-// 		root.w,
-// 		root.h,
-// 		if (par.vertical)
-// 			[
-// 				if (par.ordered)
-// 					BPRoot(root.x + block.w, 0.0, root.w - block.w, root.h + root.y, [])
-// 				else
-// 					BPRoot(root.x + block.w, root.y, root.w - block.w, if (par.groupByCols) block.h else root.h, []),
-// 				BPRoot(root.x, root.y + block.h, if (par.ordered || par.groupByCols) root.w else block.w, root.h - block.h, []),
-// 			]
-// 			|> (\c -> if (par.ordered) reverseA(c) else c)
-// 		else
-// 			[
-// 				BPRoot(root.x + block.w, root.y, root.w - block.w, if (par.ordered || par.groupByCols) root.h else block.h, []),
-// 				if (par.ordered)
-// 					BPRoot(0.0, root.y + block.h, root.w + root.x, root.h - block.h, [])
-// 				else
-// 					BPRoot(root.x, root.y + block.h, if (par.groupByCols) block.w else root.w, root.h - block.h, [])
-// 			]
-// 	)
-// }
+bpSplitNode(root : BPRoot, block : BFBlock, par : BFParameters) -> BPRoot {
+	BPRoot(
+		root.x,
+		root.y,
+		root.w,
+		root.h,
+		if (par.vertical)
+			[
+				if (par.ordered)
+					BPRoot(root.x + block.w, 0.0, root.w - block.w, root.h + root.y, [])
+				else
+					BPRoot(root.x + block.w, root.y, root.w - block.w, if (par.groupByCols) block.h else root.h, []),
+				BPRoot(root.x, root.y + block.h, if (par.ordered || par.groupByCols) root.w else block.w, root.h - block.h, []),
+			]
+			|> (\c -> if (par.ordered) reverseA(c) else c)
+		else
+			[
+				BPRoot(root.x + block.w, root.y, root.w - block.w, if (par.ordered || par.groupByCols) root.h else block.h, []),
+				if (par.ordered)
+					BPRoot(0.0, root.y + block.h, root.w + root.x, root.h - block.h, [])
+				else
+					BPRoot(root.x, root.y + block.h, if (par.groupByCols) block.w else root.w, root.h - block.h, [])
+			]
+	)
+}
 
-// bpGrowNode(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
-// 	// canGrowDown = block.w <= state.r.w;
-// 	// canGrowRight = block.h <= state.r.h;
+bpGrowNode(i : int, state : BPState, block : BFBlock, par : BFParameters) -> BPState {
+	// canGrowDown = block.w <= state.r.w;
+	// canGrowRight = block.h <= state.r.h;
 
-// 	// if (canGrowRight)
-// 	// 	bpGrowRight(i, state, block, par)
-// 	// else if (canGrowDown)
-// 	// 	bpGrowDown(i, state, block, par)
-// 	// else
-// 	// 	state;
-// 	// if (canGrowDown)
-// 	if (par.vertical)
-// 		bpGrowRight(i, state, block, par)
-// 	else
-// 		bpGrowDown(i, state, block, par);
-// 	// else
-// 	// 	None();
-// }
+	// if (canGrowRight)
+	// 	bpGrowRight(i, state, block, par)
+	// else if (canGrowDown)
+	// 	bpGrowDown(i, state, block, par)
+	// else
+	// 	state;
+	// if (canGrowDown)
+	if (par.vertical)
+		bpGrowRight(i, state, block, par)
+	else
+		bpGrowDown(i, state, block, par);
+	// else
+	// 	None();
+}
 
-// bpGrowRight(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
-// 	newState = BPState(bpGrowRight2(state.r, block, par), state.p);
+bpGrowRight(i : int, state : BPState, block : BFBlock, par : BFParameters) -> BPState {
+	newState = BPState(bpGrowRight2(state.r, block, par), state.p);
 
-// 	bpFindNode(i, newState, block, par);
-// }
+	bpFindNode(i, newState, block, par);
+}
 
-// bpGrowRight2(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
-// 	if (length(root.c) == 0) {
-// 		BPRoot(root.x, root.y, root.w + block.w, root.h, []);
-// 	} else {
-// 		c =
-// 			if (par.groupByCols)
-// 				map(root.c, \c -> bpGrowRight2(c, block, par))
-// 			else
-// 				[bpGrowRight2(root.c[0], block, par), root.c[1]];
+bpGrowRight2(root : BPRoot, block : BFBlock, par : BFParameters) -> BPRoot {
+	if (length(root.c) == 0) {
+		BPRoot(root.x, root.y, root.w + block.w, root.h, []);
+	} else {
+		c =
+			if (par.groupByCols)
+				map(root.c, \c -> bpGrowRight2(c, block, par))
+			else
+				[bpGrowRight2(root.c[0], block, par), root.c[1]];
 
-// 		BPRoot(root.x, root.y, root.w + block.w, root.h, c);
-// 	}
-// }
+		BPRoot(root.x, root.y, root.w + block.w, root.h, c);
+	}
+}
 
-// bpGrowDown(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
-// 	newState = BPState(bpGrowDown2(state.r, block, par), state.p);
+bpGrowDown(i : int, state : BPState, block : BFBlock, par : BFParameters) -> BPState {
+	newState = BPState(bpGrowDown2(state.r, block, par), state.p);
 
-// 	bpFindNode(i, newState, block, par);
-// }
+	bpFindNode(i, newState, block, par);
+}
 
-// bpGrowDown2(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
-// 	if (length(root.c) == 0) {
-// 		BPRoot(root.x, root.y, root.w, root.h + block.h, []);
-// 	} else {
-// 		c =
-// 			if (par.groupByCols)
-// 				map(root.c, \c -> bpGrowDown2(c, block, par))
-// 			else
-// 				[root.c[0], bpGrowDown2(root.c[1], block, par)];
+bpGrowDown2(root : BPRoot, block : BFBlock, par : BFParameters) -> BPRoot {
+	if (length(root.c) == 0) {
+		BPRoot(root.x, root.y, root.w, root.h + block.h, []);
+	} else {
+		c =
+			if (par.groupByCols)
+				map(root.c, \c -> bpGrowDown2(c, block, par))
+			else
+				[root.c[0], bpGrowDown2(root.c[1], block, par)];
 
-// 		BPRoot(root.x, root.y, root.w, root.h + block.h, c);
-// 	}
-// }
+		BPRoot(root.x, root.y, root.w, root.h + block.h, c);
+	}
+}
