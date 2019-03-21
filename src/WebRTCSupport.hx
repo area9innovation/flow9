@@ -43,12 +43,12 @@ class WebRTCSupport {
 				iceServers: [],
 				iceTransportPolicy: 'relay'
 			};
-			for(url in stunUrls) {
+			for (url in stunUrls) {
 				pcConfig.iceServers.push({
 					'urls':url
 				});
 			}
-			for(server in turnServers) {
+			for (server in turnServers) {
 				pcConfig.iceServers.push({
 					'urls': server[0],
 					'username': server[1],
@@ -105,11 +105,19 @@ class WebRTCSupport {
 		}
 	#end
 	}
+
 	public static function stopMediaSender(mediaSender : Dynamic) : Void {
 	#if (js && !flow_nodejs)
 		if (mediaSender) {
+			if (mediaSender.socket) {
+				mediaSender.socket.emit("message", {
+					content: "disconnect"
+				});
+				mediaSender.socket.close();
+				mediaSender.socket = null;
+			}
 			var peerConnections : Map<String, PeerConnection> = mediaSender.peerConnections;
-			for(peerConnection in peerConnections) {
+			for (peerConnection in peerConnections) {
 				peerConnection.stop();
 			}
 			mediaSender = null;
@@ -206,11 +214,6 @@ class PeerConnection {
 
 	public function stop() {
 		this.onParticipantLeave(this.clientId);
-		if (this.socket) {
-			sendMessage("disconnect");
-			this.socket.close();
-			this.socket = null;
-		}
 		if (this.connection) {
 			this.connection.close();
 			this.connection = null;
