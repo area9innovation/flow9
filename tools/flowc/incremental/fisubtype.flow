@@ -60,20 +60,21 @@ isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool)
                         || btypeparameters == [] 
 						|| areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow)
 					} else {
+						polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
 						relation = getFiTypenameRelation(env, sname, bname);
 						switch (relation) {
 							FiRelationEqual(): true;
 							FiName2Supertype(): true;
 							FiName1Supertype(): {
 								// TODO: We are not ready for this, but that would be best
-								if (false) {
-									println(sname + ">=" + bname + " but expected the opposite");
+								if (true) {
+									// println(sname + ">=" + bname + " but expected the opposite");
 									false;
 								} else true
 							}
 							FiCommonSupertype(): true;
 							FiNotRelated(): false;
-						}
+						} && polymorphicOK
 					}
 				}
 				default: flowok();
@@ -142,8 +143,16 @@ fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : boo
                         || btypeparameters == [] 
 						|| fiSuperTypesExists(env, stypeparameters, btypeparameters, allowFlow)
 					} else {
-						// println("TODO: Check that " + sname + " compatible with " + bname);
-						true;
+						polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
+
+						relation = getFiTypenameRelation(env, sname, bname);
+						switch (relation) {
+							FiRelationEqual(): true;
+							FiName2Supertype(): true;
+							FiName1Supertype(): true;
+							FiCommonSupertype(): true;
+							FiNotRelated(): false;
+						} && polymorphicOK
 					}
 				}
 				default: flowok();
@@ -199,7 +208,12 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> Fi
 						// See if name1 is part of that union
 						if (contains(unions1, name2)) {
 							// name2 is a supertype of name1
-							FiName2Supertype();
+							// unless the union is exactly one element
+							if (length(u2.typenames) == 1) {
+								FiRelationEqual();
+							} else {
+								FiName2Supertype();
+							}
 						} else {
 							// name2 is a union, but name1 is not part of it. They are NOT related
 							FiNotRelated();
@@ -213,7 +227,12 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> Fi
 						// name1 is a union, but name2 is a struct
 						if (contains(unions2, name1)) {
 							// name1 is a supertype of name2
-							FiName1Supertype()
+							// unless the union is exactly one element
+							if (length(u1.typenames) == 1) {
+								FiRelationEqual()
+							} else {
+								FiName1Supertype()
+							}
 						} else {
 							// name1 is a union, but name2 is not part of it. They are NOT related
 							FiNotRelated();
@@ -231,20 +250,36 @@ getFiTypenameRelation(env : FcGlobalNames, name1 : string, name2 : string) -> Fi
 }
 
 getFiUnionRelation(env : FcGlobalNames, union1 : FcTypeUnion, union2 : FcTypeUnion) -> FiTypeRelation {
-	seenRelations = fold(union1.typenames, makeSet(), \seen : Set<FiTypeRelation>, tn : FcTypeName -> {
-		rel = getFiTypenameRelation(env, tn.name, union2.name);
-		insertSet(seen, rel);
-	});
+	structs1 = expandFiUnion(env, union1, makeSet());
+	structs2 = expandFiUnion(env, union2, makeSet());
 
-	seen = set2array(seenRelations);
-	if (length(seen) == 1) seen[0]
-	else if (seen == sort([FiNotRelated(), FiRelationEqual()])) {
+	super1 = differenceSets(structs1, structs2);
+	super2 = differenceSets(structs2, structs1);
+
+	if (isEmptySet(super1) && !isEmptySet(super2)) {
 		FiName2Supertype();
-	} else if (seen == sort([FiName2Supertype(), FiNotRelated()])) {
-		FiName2Supertype();
+	} else if (!isEmptySet(super1) && isEmptySet(super2)) {
+		FiName1Supertype();
+	} else if (isEmptySet(super1) && isEmptySet(super2)) {
+		FiRelationEqual()
 	} else {
-		println("Resolve if this is possible");
-		println(set2array(seenRelations));
+		println("TODO: Check if there is a superset " + union1.name + " vs " + union2.name);
 		FiNotRelated();
-	}
+	};
+}
+
+expandFiUnion(env : FcGlobalNames, union : FcTypeUnion, acc : Set<string>) -> Set<string> {
+	fold(union.typenames, acc, \acc0, tn : FcTypeName -> {
+		mst = lookupTree(env.structs, tn.name);
+		switch (mst) {
+			None(): {
+				mun = lookupTree(env.unions, tn.name);
+				switch (mun) {
+					None(): acc;	// Will never happen
+					Some(un): expandFiUnion(env, un, acc0);
+				}
+			}
+			Some(st): insertSet(acc0, tn.name);
+		}
+	});
 }
