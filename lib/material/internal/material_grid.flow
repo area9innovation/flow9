@@ -43,26 +43,19 @@ MFlexibleGrid2T(manager : MaterialManager, parent : MFocusGroup, m : MFlexibleGr
 	)
 }
 
-MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReorderItem],
+MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items : [MReorderItem],
 	order : DynamicBehaviour<[int]>, style : [MReorderGridStyle], m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	en = extractStruct(style, MEnabled(const(true))).enabled;
-	enableAnimation = contains(style, MEnableAnimation());
+	enableAnimation = true;//contains(style, MEnableAnimation());
 	cropSize = false;//contains(style, MGridCropByContent());
 	keepOrder = true;//contains(style, MGridKeepOrder());
 	verticalGrid = contains(style, MGridVertical());
 	groupByCols = extractStruct(style, MGridGroupByCols(false)).cols;
 	borders = extractStruct(style, MBorders(0.)).borders;
 	grabDelay = extractStructMany(style, MGrabDelay(0));
-	customDraggingOrder = false;//contains(style, MReorderCustomDraggingOrder());
-	itemsLength = length(items0) + if (customDraggingOrder) 2 else 1;
-
-	dropSpotM = tryExtractStruct(style, MReorderDropSpot(MEmpty()));
-	items =
-		eitherMap(
-			dropSpotM,
-			\__ -> map(items0, \it -> MReorderItem(it.content, concat([MDragging(make(false))], it.style))),
-			items0
-		);
+	customDraggingOrder = contains(style, MReorderCustomDraggingOrder());
+	itemsLength = length(items) + if (customDraggingOrder) 2 else 1;
+	draggingPlaceholder = map(extractStructMany(style, MReorderDropSpot(TEmpty())), \c -> MDraggingPlaceholder(c.spot));
 
 	uniqueIds = ref makeTree();
 	getUniqueIdByIndex = \index -> lookupTreeSet(uniqueIds, index, \__ -> makeTropicTag(manager));
@@ -73,6 +66,7 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 	hoveringItem = extractStruct(style, MHoveringItem(make(-1))).item;
 
 	orderIn = make(concat([itemsLength - 1], generate(0, itemsLength - 1, \i -> if (length(getValue(order)) > i) getValue(order)[i] else i)));
+	edgeVisible = if (length(items) > 1) const(false) else if (length(items) > 0) fselect(onHover[0], FLift(\oh -> oh != -1)) else const(true);
 
 	(\par -> TFlexibleGrid(
 		mapi(
@@ -87,17 +81,8 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 					par,
 					MDragDrop(
 						const(getUniqueIdByIndex(i)),
-						eitherMap(
-							dropSpotM,
-							\dropSpot ->
-								MCopySize(
-									it.content,
-									\sz -> MShow(isDragging.dragging, MAvailable(dropSpot.spot, sz)),
-									true
-								),
-							it.content
-						),
-						concat([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay)
+						it.content,
+						concat3([MHoveringId(onHover[i]), MDraggingEnabled(fand(en, itEn)), isDragging], grabDelay, draggingPlaceholder)
 					),
 					m2t
 				)
@@ -110,15 +95,16 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 
 								if (hov != -1 && hov != i && hov >= 0 && hov < itemsLength) {
 									order0 = getValue(orderIn);
+									newOrder = removeIndex(order0, elemIndex(order0, hov, 0));
 
 									nextDistinct(
 										orderIn,
 										insertArray(
-											removeIndex(order0, elemIndex(order0, hov, 0)),
+											newOrder,
 											if (i == itemsLength - 1)
 												1
 											else
-												elemIndex(order0, i, 0),
+												elemIndex(if (customDraggingOrder) newOrder else order0, i, 0),
 											hov
 										)
 									);
@@ -129,6 +115,47 @@ MReorderGrid2T(manager : MaterialManager, parent : MFocusGroup, items0 : [MReord
 					)
 				)
 			}
+		)
+		|> (\f ->
+			if (customDraggingOrder)
+				arrayPush(
+					f,
+					TRectangle(interactiveRectangleStyle, TFillXH(1.))
+					|> (\f2 ->
+						MDragDrop2T(
+							manager,
+							par,
+							MDragDrop(
+								const(getUniqueIdByIndex(itemsLength - 2)),
+								f2,
+								concat([MHoveringId(onHover[itemsLength - 2]), MDraggingEnabled(const(false))], grabDelay)
+							),
+							m2t
+						)
+					)
+					|> (\f2 -> TShow(fnot(edgeVisible), f2))
+				)
+			else
+				f
+		)
+		|> (\f ->
+			arrayPush(
+				f,
+				TRectangle(interactiveRectangleStyle, TFillXH(48.))
+				|> (\f2 ->
+					MDragDrop2T(
+						manager,
+						par,
+						MDragDrop(
+							const(getUniqueIdByIndex(itemsLength - 1)),
+							f2,
+							concat([MHoveringId(onHover[itemsLength - 1]), MDraggingEnabled(const(false))], grabDelay)
+						),
+						m2t
+					)
+				)
+				|> (\f2 -> TShow(edgeVisible, f2))
+			)
 		)
 		|> const,
 		concat(extractStructMany(style, CenterAlign()), extractStructMany(style, EndAlign()))
