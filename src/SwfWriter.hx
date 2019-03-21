@@ -656,8 +656,7 @@ class SwfWriter {
 										|| cl == "LocalyticsSupport"
 										|| cl == "NotificationsSupport"
 										|| cl == "GeolocationSupport"
-										|| cl == "WebSocketSupport"
-										|| cl == "MediaRecorderSupport") { "Hx"; } else "";
+										|| cl == "WebSocketSupport") { "Hx"; } else "";
 						nativeClasses.set(cla, true);
 
 						// Find where to put the native reference
