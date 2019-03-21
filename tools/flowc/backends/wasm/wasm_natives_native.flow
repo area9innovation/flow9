@@ -505,31 +505,39 @@ wasm_do_map(dst : int, src : int, n : int, idx : int, f : int, elemSize : int, r
 // it does need special processing based on array element double/ref/stack - this is done dynamically
 
 wasm_typed_fold_i32(arr : int, acc : int, f : int, type : int) -> int {
-	wasm_do_fold_init(arr, acc, f, type, false)	
+	wasm_do_fold_init_i(arr, acc, f, type, false)	
 }
 
 wasm_typed_fold_i32_ref(arr : int, acc : int, f : int, type : int) -> int {
-	res = wasm_do_fold_init(arr, acc, f, type, false);
+	res = wasm_do_fold_init_i(arr, acc, f, type, false);
 	wasm_inc_refcnt(acc);
 	res;
 }
 
 wasm_typed_foldi_i32(arr : int, acc : int, f : int, type : int) -> int {
-	wasm_do_fold_init(arr, acc, f, type, true)	
+	wasm_do_fold_init_i(arr, acc, f, type, true)	
 }
 
 wasm_typed_foldi_i32_ref(arr : int, acc : int, f : int, type : int) -> int {
-	res = wasm_do_fold_init(arr, acc, f, type, true);
+	res = wasm_do_fold_init_i(arr, acc, f, type, true);
 	wasm_inc_refcnt(acc);
 	res;
 }
 
 wasm_typed_fold_f64(arr : int, acc : double, f : int, type : int) -> double {
-	wasm_do_fold_init(arr, acc, f, type, false)
+	wasm_do_fold_init_f(arr, acc, f, type, false)
 }
 
 wasm_typed_foldi_f64(arr : int, acc : double, f : int, type : int) -> double {
-	wasm_do_fold_init(arr, acc, f, type, true)
+	wasm_do_fold_init_f(arr, acc, f, type, true)
+}
+
+wasm_do_fold_call(idx : int, acc : ?, xx : ??, f : int, isFoldi : bool) -> ? {
+	faddr = wasm_i32_load(f + 8);
+	// increase refcnt for closure pointer
+	// wasm_inc_refcnt(f); 
+	if(!isFoldi) wasm_call_indirect2ret(acc, xx, f, faddr)
+	else wasm_call_indirect3ret(idx, acc, xx, f, faddr)
 }
 
 /*
@@ -540,7 +548,7 @@ wasm_typed_foldi_f64(arr : int, acc : double, f : int, type : int) -> double {
 	- to array element [if needed]
 	- to array itself
 */
-wasm_do_fold_init(arr : int, acc : ?, f : int, type : int, isFoldi : bool) -> ? {
+wasm_do_fold_init_f(arr : int, acc : double, f : int, type : int, isFoldi : bool) -> double {
 	arr_td = wasm_get_arg_td(type, 0);
 	f_td = wasm_get_arg_td(type, 2);
 
@@ -554,21 +562,36 @@ wasm_do_fold_init(arr : int, acc : ?, f : int, type : int, isFoldi : bool) -> ? 
 	res = if (n == 0) {
 		acc
 	} else {
-		wasm_do_fold(arr + 8, acc, f, elemSize, n, 0, isFoldi, elemHeap)
+		wasm_do_fold_f(arr + 8, acc, f, elemSize, n, 0, isFoldi, elemHeap)
 	}
 
 	res;
 }
 
-wasm_do_fold_call(idx : int, acc : ?, xx : ??, f : int, isFoldi : bool) -> ? {
-	faddr = wasm_i32_load(f + 8);
-	// increase refcnt for closure pointer
-	// wasm_inc_refcnt(f); 
-	if(!isFoldi) wasm_call_indirect2ret(acc, xx, f, faddr)
-	else wasm_call_indirect3ret(idx, acc, xx, f, faddr)
+wasm_do_fold_init_i(arr : int, acc : int, f : int, type : int, isFoldi : bool) -> int {
+	arr_td = wasm_get_arg_td(type, 0);
+	f_td = wasm_get_arg_td(type, 2);
+
+	idx = if (isFoldi) 2 else 1;
+	elemType = wasm_get_arg_type(f_td, idx);
+	elemHeap = isHeap(elemType);
+	elemSize = type2size(elemType);
+
+	acc_td = wasm_get_arg_td(type, 1);
+	isAccRef = isHeap(wasm_i32_load8_u(acc_td));
+	
+	n = do_wasm_length(arr);
+
+	res = if (n == 0) {
+		acc
+	} else {
+		wasm_do_fold_i(arr + 8, acc, f, elemSize, n, 0, isFoldi, elemHeap, acc_td, isAccRef)
+	}
+
+	res;
 }
 
-wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, elemHeap : bool) -> ? {
+wasm_do_fold_f(arr : int, acc : double, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, elemHeap : bool) -> double {
 	if (idx == n) {
 		acc;
 	} else {
@@ -578,7 +601,27 @@ wasm_do_fold(arr : int, acc : ?, f : int, elemSize : int, n : int, idx : int, is
 		} else {
 			wasm_do_fold_call(idx, acc, wasm_i32_load(src), f, isFoldi)
 		}
-		wasm_do_fold(arr, y, f, elemSize, n, idx + 1, isFoldi, elemHeap);
+
+		wasm_do_fold_f(arr, y, f, elemSize, n, idx + 1, isFoldi, elemHeap);
+	}
+}
+
+wasm_do_fold_i(arr : int, acc : int, f : int, elemSize : int, n : int, idx : int, isFoldi : bool, elemHeap : bool, acc_td : int, isAccRef : bool) -> int {
+	if (idx == n) {
+		acc;
+	} else {
+		src = arr + idx * elemSize;
+		y = if (elemSize == 8) {
+			wasm_do_fold_call(idx, acc, wasm_f64_load(src), f, isFoldi)
+		} else {
+			wasm_do_fold_call(idx, acc, wasm_i32_load(src), f, isFoldi)
+		}
+
+		if (isAccRef) {
+			wasm_dec_refcnt(acc, acc_td);
+		}
+
+		wasm_do_fold_i(arr, y, f, elemSize, n, idx + 1, isFoldi, elemHeap, acc_td, isAccRef);
 	}
 }
 
