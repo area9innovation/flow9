@@ -88,7 +88,7 @@ if (a === b) return true;
     return true;
 }
 ");
-    return a == b;
+    return false;
 #else
     compareByValue(a, b) == 0;
 #end
