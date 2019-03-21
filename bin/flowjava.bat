@@ -38,13 +38,13 @@ cd %~dp0..\src\java
 popd
 
 rem Generate the Java for our program
-call %~dp0/flow --java %~dp0/../javagen %*
+call %~dp0/flowc1 %* java=%~dp0/../javagen
 
 cd %~dp0..
 
 rem Compile the generated code
-"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp src/java/build/ javagen/*.java
+"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp src/java/build/ javagen/com/area9innovation/flow/*.java
 
 rem Run the program!
-java -cp src/java/build;. com.area9innovation.flow.javafx.FxLoader %*
+java -cp javagen;src/java/build;. com.area9innovation.flow.javafx.FxLoader %*
 popd
