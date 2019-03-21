@@ -1,9 +1,9 @@
 import material/material_ui;
-import media_utils;
-import webrtc;
-import mediarecorder;
+import media/mediastream;
+import media/webrtc;
+import media/mediarecorder;
 
-Participant(id : string, stream : native);
+Participant(id : string, stream : MediaStream);
 
 main(){
 	manager = makeMaterialManager([]);
@@ -17,6 +17,7 @@ main(){
 	choosedVideoDevice = make(0);
 
 	userMediaStream = make(None());
+	stopUserMediaStream = make(nop);
 
 	jwt = make("");
 	partitionId = make("");
@@ -47,7 +48,7 @@ main(){
 			MCheckBox(MText("Record audio", [MBody()]), recordAudio, []),
 			MCheckBox(MText("Record video", [MBody()]), recordVideo, []),
 			MSelect(audioDevices, \d ->
-				eitherMap(d, 
+				eitherMap(d,
 					\val -> MDropDown(
 						choosedAudioDevice,
 						"NONE",
@@ -58,7 +59,7 @@ main(){
 				)
 			),
 			MSelect(videoDevices, \d ->
-				eitherMap(d, 
+				eitherMap(d,
 					\val -> MDropDown(
 						choosedVideoDevice,
 						"NONE",
@@ -71,26 +72,29 @@ main(){
 			MCols([
 				MTextButton("Create MediaStream",
 					\ -> {
-						makeMediaStream([
-							eitherMap(getValue(audioDevices), \d -> MediaUtilsAudioDeviceId(d[getValue(choosedAudioDevice)].deviceId), MediaUtilsAudioDeviceId("")),
-							eitherMap(getValue(videoDevices), \d -> MediaUtilsVideoDeviceId(d[getValue(choosedVideoDevice)].deviceId), MediaUtilsVideoDeviceId("")),
-							MediaUtilsRecordAudio(getValue(recordAudio)),
-							MediaUtilsRecordVideo(getValue(recordVideo)),
-							MediaUtilsOnMediaStreamError(\error -> println(error)),	
-							MediaUtilsOnMediaStreamReady(\stream -> {
+						makeMediaStream(
+							\stream, stop -> {
 								next(userMediaStream, Some(stream));
-							}),						
+								next(stopUserMediaStream, stop);
+							},
+							\error -> println(error),
+							[
+							eitherMap(getValue(audioDevices), \d -> MediaStreamAudioDeviceId(d[getValue(choosedAudioDevice)].deviceId), MediaStreamAudioDeviceId("")),
+							eitherMap(getValue(videoDevices), \d -> MediaStreamVideoDeviceId(d[getValue(choosedVideoDevice)].deviceId), MediaStreamVideoDeviceId("")),
+							MediaStreamRecordAudio(getValue(recordAudio)),
+							MediaStreamRecordVideo(getValue(recordVideo))
 						]);
-					}, [], []),				
+					}, [], []),
 				MTextButton("Stop MediaStream",
 					\ -> {
-						eitherFn(getValue(userMediaStream), stopMediaStream, nop);
+						getValue(stopUserMediaStream)();
+						next(userMediaStream, None());
 					}, [], []),
 			]),
 
 
 			MSelect(userMediaStream, \streamMaybe -> {
-				eitherMap(streamMaybe, 
+				eitherMap(streamMaybe,
 					\stream -> {
 						MLines([
 							MVideoPlayer(
@@ -98,7 +102,7 @@ main(){
 								make(WidthHeight(640., 360.)),
 								[
 									FVideoPlay(make(true)),
-									FVideoMediaStream(stream),
+									stream,
 									MRed(500)
 								]
 							),
@@ -121,14 +125,13 @@ main(){
 											)
 										],
 										stream,
-										[									
-											MediaRecorderOnRecorderError(\error -> println(error)),
-											MediaRecorderOnRecorderReady(\controls -> next(mediaControls, Some(controls)))
-										]
+										\controls -> next(mediaControls, Some(controls)),
+										\error -> println(error),
+										[]
 									);
 								},	[], []),
 							MSelect(mediaControls, \controls -> {
-								eitherMap(controls, 
+								eitherMap(controls,
 									\c -> MCols([
 										MTextButton("start", \ -> c.start(), [], []),
 										MTextButton("resume", \ -> c.resume(), [], []),
@@ -140,33 +143,41 @@ main(){
 
 
 							MTextInput(room, [MLabel("Room")], []),
-							MCols([
-								MTextButton("Join chat room",
+							MSelect(mediaSender, \s -> {
+								eitherMap(s, \sender -> {
+										MTextButton("Leave chat room",	\ -> {
+											sender.stop();
+											next(mediaSender, None());
+										}, [], []);
+									},
+									MTextButton("Join chat room",
 									\ -> {
-										makeMediaSenderFromStream("https://172.24.0.151:1400", getValue(room), stream, [
-											WebRTCTURNServer("turn:172.24.0.151:3478", "user", "pass"),
-											WebRTCOnMediaSenderReady(\sender -> {
+										makeMediaSenderFromStream("https://172.24.0.151:1400", getValue(room), stream,
+											\sender -> {
 												next(mediaSender, Some(sender));
-											}),
-											WebRTCOnNewParticipant(\id, mediaStream -> {
+											},
+											\error -> {
+												println(error);
+											},
+											\id, mediaStream -> {
 												participant = Participant(id, mediaStream);
 												participants = either(getValue(chatParticipants), []);
 												next(chatParticipants, Some(arrayPush(participants, participant)));
-											}),
-											WebRTCOnParticipantLeave(\id -> {
+											},
+											\id -> {
 												participants = either(getValue(chatParticipants), []);
 												index = either(findi(participants, \participant -> {
 													participant.id == id
 												}), -1);
 												next(chatParticipants, Some(removeIndex(participants, index)));
-											})
-										]);
-									},	[], []),
-								MTextButton("Leave chat room",
-									\ -> {
-										eitherFn(getValue(mediaSender), stopMediaSender, nop);										
-									},	[], []),
-							]),
+											},
+											[
+												WebRTCTURNServer("turn:172.24.0.151:3478", "user", "pass")
+											]
+										);
+									},	[], [])
+								);
+							}),
 
 							MSelect(chatParticipants, \participantsMaybe -> {
 								eitherMap(participantsMaybe,
@@ -177,7 +188,7 @@ main(){
 												make(WidthHeight(640., 360.)),
 												[
 													FVideoPlay(make(true)),
-													FVideoMediaStream(participant.stream),
+													participant.stream,
 													MRed(500)
 												]
 											)
@@ -196,5 +207,5 @@ main(){
 		[]
 		)
 	);
-	
+
 }

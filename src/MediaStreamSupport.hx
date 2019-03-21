@@ -3,16 +3,10 @@ import js.html.MediaRecorder;
 import js.html.MediaStream;
 import js.html.WebSocket;
 
-class MediaUtils {
+class MediaStreamSupport {
 
-	private static var audioDevices = {
-		deviceIds : [],
-		labels : []
-	};
-	private static var videoDevices = {
-		deviceIds : [],
-		labels : []
-	};
+	private static var audioDevices : Array<Array<String>> = [];
+	private static var videoDevices : Array<Array<String>> = [];
 
 	public static function stopMediaStream(mediaStream : MediaStream) : Void {
 		for (track in mediaStream.getTracks()) {
@@ -21,7 +15,7 @@ class MediaUtils {
 	}
 
 	public static function initDeviceInfo(
-		OnDeviceInfoReady : Void->Void
+		onDeviceInfoReady : Void->Void
 	) : Void {
 	#if (js && !flow_nodejs)
 		untyped navigator.mediaDevices.getUserMedia({audio: true, video : true})
@@ -36,28 +30,26 @@ class MediaUtils {
 
 				devices.forEach(function(device) {
 					if (device.kind == 'audioinput') {
-						audioDevices.deviceIds.push(device.deviceId);
-						audioDevices.labels.push(device.label);
+						audioDevices.push([device.deviceId, device.label]);
 					} else if (device.kind == 'videoinput') {
-						videoDevices.deviceIds.push(device.deviceId);
-						videoDevices.labels.push(device.label);
+						videoDevices.push([device.deviceId, device.label]);
 					}
 				});
 
 				stopMediaStream(mediaStream);
-				
-				OnDeviceInfoReady();
+
+				onDeviceInfoReady();
 			}, function() {});
 		}, function() {});
 	#end
 	}
 
-	public static function requestAudioInputDevices(OnDeviceInfoReady : Array<String>->Array<String>->Void) : Void {
-		OnDeviceInfoReady(audioDevices.deviceIds, audioDevices.labels);
+	public static function requestAudioInputDevices(onDeviceInfoReady : Array<Array<String>>->Void) : Void {
+		onDeviceInfoReady(audioDevices);
 	}
 
-	public static function requestVideoInputDevices(OnDeviceInfoReady : Array<String>->Array<String>->Void) : Void {
-		OnDeviceInfoReady(videoDevices.deviceIds, videoDevices.labels);
+	public static function requestVideoInputDevices(onDeviceInfoReady : Array<Array<String>>->Void) : Void {
+		onDeviceInfoReady(videoDevices);
 	}
 
 	public static function makeMediaStream(
@@ -65,8 +57,8 @@ class MediaUtils {
 		recordVideo : Bool,
 		videoDeviceId : String,
 		audioDeviceId : String,
-		OnMediaStreamReady : Dynamic->Void,
-		OnMediaStreamError : String->Void
+		onMediaStreamReady : Dynamic->Void,
+		onMediaStreamError : String->Void
 	) : Void {
 	#if (js && !flow_nodejs)
 		var constraints = {
@@ -81,9 +73,9 @@ class MediaUtils {
 		}
 		untyped navigator.mediaDevices.getUserMedia(constraints)
 		.then(function(mediaStream) {
-			OnMediaStreamReady(mediaStream);
+			onMediaStreamReady(mediaStream);
 		}, function(error) {
-			OnMediaStreamError(error.message);
+			onMediaStreamError(error.message);
 		});
 	#end
 	}

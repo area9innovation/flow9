@@ -15,68 +15,27 @@ class WebRTCSupport {
 	}
 
 	public static function initWebRTC(
-			OnReady : Void->Void
+			onReady : Void->Void
 		) : Void {
 	#if (js && !flow_nodejs)
 		var adapterPromise = loadJSFilePromise("js/webrtc/adapter.js");
 		var socketioPromise = loadJSFilePromise("js/socket.io/socket.io.js");
-		Promise.all([adapterPromise, socketioPromise]).then(function(res){
-			OnReady();
-		}, function(e){});
+		Promise.all([adapterPromise, socketioPromise]).then(function(res) {
+			onReady();
+		}, function(e) {});
 	#end
 	}
-
-	public static function makeMediaSender(
-		serverUrl : String,
-		roomId : String,
-		stunUrls : Array<String>,
-		turnUrls : Array<String>,		
-		turnUsernames : Array<String>,
-		turnPasswords : Array<String>,
-		recordAudio : Bool,
-		recordVideo : Bool,
-		audioDeviceId : String,
-		videoDeviceId : String,
-		OnMediaSenderReady : Dynamic->Void,
-		OnNewParticipant : String->Dynamic->Void,
-		OnParticipantLeave : String -> Void,
-		OnMediaStreamReady : Dynamic->Void,
-		OnError : String -> Void
-	) : Void {
-	#if (js && !flow_nodejs)
-		var constraints = {
-			audio : recordAudio,
-			video : recordVideo
-		};
-		if (recordVideo && videoDeviceId != "") {
-			constraints.video = untyped { deviceId : videoDeviceId };
-		}
-		if (recordAudio && audioDeviceId != "") {
-			constraints.audio = untyped { deviceId : audioDeviceId };
-		}
-		untyped navigator.mediaDevices.getUserMedia(constraints)
-		.then(function(mediaStream) {
-			OnMediaStreamReady(mediaStream);
-			makeMediaSenderFromStream(serverUrl, roomId, stunUrls, turnUrls, turnUsernames, turnPasswords, mediaStream, OnMediaSenderReady, OnNewParticipant, OnParticipantLeave, OnError);
-		}, function(error) {
-			OnError(error.message);
-		});
-	#end
-	}
-
 
 	public static function makeMediaSenderFromStream(
 		serverUrl : String,
 		roomId : String,
 		stunUrls : Array<String>,
-		turnUrls : Array<String>,		
-		turnUsernames : Array<String>,
-		turnPasswords : Array<String>,
+		turnServers : Array<Array<String>>,
 		mediaStream : Dynamic,
-		OnMediaSenderReady : Dynamic->Void,
-		OnNewParticipant : String->Dynamic->Void,
-		OnParticipantLeave : String -> Void,
-		OnError : String -> Void
+		onMediaSenderReady : Dynamic->Void,
+		onNewParticipant : String->Dynamic->Void,
+		onParticipantLeave : String -> Void,
+		onError : String -> Void
 	) : Void {
 	#if (js && !flow_nodejs)
 		if (serverUrl != "") {
@@ -89,11 +48,11 @@ class WebRTCSupport {
 					'urls':url
 				});
 			}
-			for(i in 0...turnUrls.length) {
+			for(server in turnServers) {
 				pcConfig.iceServers.push({
-					'urls': turnUrls[i],
-					'username': turnUsernames[i],
-					'credential': turnPasswords[i]
+					'urls': server[0],
+					'username': server[1],
+					'credential': server[2]
 				});
 			}
 
@@ -102,38 +61,20 @@ class WebRTCSupport {
 			var peerConnections : Map<String, PeerConnection> = new Map<String, PeerConnection>();
 
 			if (roomId != '') {
-				socket.emit('create or join', roomId);
+				socket.emit('join', roomId);
 			}
 
 			socket.on('message', function(m) {
 				var clientId : String = m.clientId;
 				var message : Dynamic = m.message;
-				if (message == 'got user media') {
-					peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, OnNewParticipant, OnParticipantLeave);
-					peerConnections[clientId].createOffer().then(
-						function(sessionDescription) {
-							peerConnections[clientId].setLocalDescription(sessionDescription);
-							socket.emit("message", {
-								to : clientId,
-								content : sessionDescription
-							});
-						},
-						function(e){}
-					);
+				if (message == 'new_user') {
+					peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, onNewParticipant, onParticipantLeave);
+					peerConnections[clientId].createOffer(onError);
 				} else if (message.type == 'offer') {
-					if(peerConnections[clientId] == null) { 
-						peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, OnNewParticipant, OnParticipantLeave);
+					if (peerConnections[clientId] == null) {
+						peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, onNewParticipant, onParticipantLeave);
 						peerConnections[clientId].setRemoteDescription(message);
-						peerConnections[clientId].createAnswer().then(
-							function(sessionDescription) {
-								peerConnections[clientId].setLocalDescription(sessionDescription);
-								socket.emit("message", {
-									to : clientId,
-									content : sessionDescription
-								});
-							},
-							function(e){}
-						);
+						peerConnections[clientId].createAnswer(onError);
 					}
 				} else if (message.type == 'answer') {
 					peerConnections[clientId].setRemoteDescription(message);
@@ -143,13 +84,13 @@ class WebRTCSupport {
 						candidate: message.candidate
 					};
 					peerConnections[clientId].addIceCandidate(candidate);
-				} else if (message == 'bye') {
+				} else if (message == 'disconnect') {
 					peerConnections[clientId].stop();
 				}
 			});
 
 			socket.emit("message", {
-				content : "got user media"
+				content : "new_user"
 			});
 
 			var mediaSender = {
@@ -157,22 +98,16 @@ class WebRTCSupport {
 				peerConnections : peerConnections
 			};
 
-			Browser.window.addEventListener("beforeunload", function(){
+			Browser.window.addEventListener("beforeunload", function() {
 				stopMediaSender(mediaSender);
 			});
-			OnMediaSenderReady(mediaSender);
+			onMediaSenderReady(mediaSender);
 		}
 	#end
 	}
 	public static function stopMediaSender(mediaSender : Dynamic) : Void {
 	#if (js && !flow_nodejs)
 		if (mediaSender) {
-			var socket : Dynamic = mediaSender.socket;
-			socket.emit("message", {
-				content: "bye"
-			});
-			socket.close();
-
 			var peerConnections : Map<String, PeerConnection> = mediaSender.peerConnections;
 			for(peerConnection in peerConnections) {
 				peerConnection.stop();
@@ -186,18 +121,18 @@ class WebRTCSupport {
 class PeerConnection {
 	private var clientId : String = "";
 	private var connection : Dynamic = null;
-	private var OnNewParticipant: String->Dynamic->Void;
-	private var OnParticipantLeave: String->Void;
+	private var onNewParticipant: String->Dynamic->Void;
+	private var onParticipantLeave: String->Void;
 	private var socket : Dynamic;
-	
+
 	public function new(socket : Dynamic, pcConfig : Dynamic, clientId : String, localStream : Dynamic,
-		OnNewParticipant : String->Dynamic->Void,
-		OnParticipantLeave : String -> Void) {
+		onNewParticipant : String->Dynamic->Void,
+		onParticipantLeave : String -> Void) {
 		if (localStream) {
 			this.socket = socket;
 			this.clientId = clientId;
-			this.OnNewParticipant = OnNewParticipant;
-			this.OnParticipantLeave = OnParticipantLeave;
+			this.onNewParticipant = onNewParticipant;
+			this.onParticipantLeave = onParticipantLeave;
 
 			this.connection = untyped __js__("new RTCPeerConnection(pcConfig)");
 			this.connection.onicecandidate = handleIceCandidate;
@@ -206,12 +141,40 @@ class PeerConnection {
 		}
 	}
 
-	public function createOffer() : Promise<Dynamic> {
-		return this.connection.createOffer();
+	private function sendMessage(content : String) {
+		this.socket.emit("message", {
+			content: content
+		});
 	}
 
-	public function createAnswer() : Promise<Dynamic> {
-		return this.connection.createAnswer();
+	private function sendMessageTo(to : String, content : Dynamic) {
+		this.socket.emit("message", {
+			to : to,
+			content: content
+		});
+	}
+
+	private function updateLocalDescription(sessionDescription : Dynamic) {
+		this.connection.setLocalDescription(sessionDescription);
+		sendMessageTo(this.clientId, sessionDescription);
+	}
+
+	public function createOffer(onError : String -> Void) {
+		this.connection.createOffer().then(
+			updateLocalDescription,
+			function(error) {
+				onError(error.message);
+			}
+		);
+	}
+
+	public function createAnswer(onError : String -> Void) {
+		this.connection.createAnswer().then(
+			updateLocalDescription,
+			function(error) {
+				onError(error.message);
+			}
+		);
 	}
 
 	public function setLocalDescription(description : Dynamic) {
@@ -228,25 +191,29 @@ class PeerConnection {
 
 	public function handleIceCandidate(event : Dynamic) {
 		if (event.candidate) {
-			socket.emit("message", {
-				to: this.clientId, 
-				content: {
-					type: 'candidate',
-					label: event.candidate.sdpMLineIndex,
-					id: event.candidate.sdpMid,
-					candidate: event.candidate.candidate,
-				}
+			sendMessageTo(this.clientId, {
+				type: 'candidate',
+				label: event.candidate.sdpMLineIndex,
+				id: event.candidate.sdpMid,
+				candidate: event.candidate.candidate,
 			});
 		}
 	}
 
 	public function handleRemoteStreamAdded(event : Dynamic) {
-		this.OnNewParticipant(this.clientId, event.stream);
+		this.onNewParticipant(this.clientId, event.stream);
 	}
 
 	public function stop() {
-		this.OnParticipantLeave(this.clientId);
-		connection.close();
-		connection = null;
+		this.onParticipantLeave(this.clientId);
+		if (this.socket) {
+			sendMessage("disconnect");
+			this.socket.close();
+			this.socket = null;
+		}
+		if (this.connection) {
+			this.connection.close();
+			this.connection = null;
+		}
 	}
 }

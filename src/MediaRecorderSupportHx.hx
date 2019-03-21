@@ -29,72 +29,26 @@ class MediaRecorderSupportHx {
 	#end
 	}
 
-	public static function makeMediaRecorder(
-		websocketUri : String,
-		filePath : String,
-		timeslice : Int,
-		videoMimeType : String,
-		recordAudio : Bool,
-		recordVideo : Bool,
-		videoDeviceId : String,
-		audioDeviceId : String,
-		OnWebSocketError : String -> Void,
-		OnRecorderReady : Dynamic->Void,
-		OnMediaStreamReady : Dynamic->Void,
-		OnRecorderError : String -> Void
-	) : Void {
-	#if (js && !flow_nodejs)
-		if (websocketUri != "") {
-			var constraints = {
-				audio : recordAudio,
-				video : recordVideo
-			};
-			if (recordVideo && videoDeviceId != "") {
-				constraints.video = untyped { deviceId : videoDeviceId };
-			}
-			if (recordAudio && audioDeviceId != "") {
-				constraints.audio = untyped { deviceId : audioDeviceId };
-			}
-			untyped navigator.mediaDevices.getUserMedia(constraints)
-			.then(function(mediaStream) {
-				OnMediaStreamReady(mediaStream);
-				makeMediaRecorderFromStream(websocketUri, filePath, mediaStream, timeslice, videoMimeType, OnWebSocketError, OnRecorderReady, OnRecorderError);
-			}, function(error) {
-				OnRecorderError(error.message);
-			});
-		}
-	#end
-	}
-
 	public static function makeMediaRecorderFromStream(
 		websocketUri : String,
 		filePath : String,
 		mediaStream : Dynamic,
 		timeslice : Int,
-		videoMimeType : String,
-		OnWebSocketError : String -> Void,
-		OnRecorderReady : Dynamic->Void,
-		OnRecorderError : String -> Void
+		onReady : Dynamic->Void,
+		onError : String -> Void
 	) : Void {
 	#if (js && !flow_nodejs)
 		if (websocketUri != "") {
 			var socket = new WebSocket(websocketUri);
 			socket.addEventListener("error", function(error) {
-				OnWebSocketError(error.message);
+				onError(error.message);
 			});
 
-			var mediaRecorder;
-			if (untyped MediaRecorder.isTypeSupported(videoMimeType)) {
-				mediaRecorder = new MediaRecorder(mediaStream, {
-					mimeType : videoMimeType
-				});	
-			} else {
-				mediaRecorder = new MediaRecorder(mediaStream);
-			}
+			var mediaRecorder = new MediaRecorder(mediaStream);
 			mediaRecorder.onerror = function(event : Dynamic) {
-				OnRecorderError(event.error.name);
+				onError(event.error.name);
 			}
-			mediaRecorder.onstop = function(){			
+			mediaRecorder.onstop = function(){
 				socket.close();
 			}
 			mediaRecorder.addEventListener("dataavailable", function(event : Dynamic) {
@@ -103,8 +57,8 @@ class MediaRecorderSupportHx {
 				}
 			});
 
-			OnRecorderReady({
-				mediaRecorder : mediaRecorder, 
+			onReady({
+				mediaRecorder : mediaRecorder,
 				socket: socket
 			});
 		}
