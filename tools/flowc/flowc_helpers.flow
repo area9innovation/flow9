@@ -57,8 +57,8 @@ export {
 	// Returns a callback for deferred check of dependencies.
 	fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, module : FiModule) -> () -> bool;
 
-	printLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> void;
-	makeLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> string;
+	printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void;
+	makeLocation(config : CompilerConfig, file : string, start : int) -> string;
 
 	name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule;
 
@@ -270,13 +270,7 @@ addDesugaredModuleToGlobal(tenv : FcTypeEnvProgram, module : FcModule) -> FcType
 	);
 
 	// OK, now this dude is ready for type checking
-	FcTypeEnvProgram(
-		nacc,
-		tenv2.types,
-		tenv2.printError,
-		tenv2.errors,
-		tenv2.union2typenamesCache
-	)
+	FcTypeEnvProgram(tenv2 with acc = nacc)
 }
 
 getStructsInUnion(structs : Tree<string, FcTypeStruct>, unions : Tree<string, FcTypeUnion>, union : FcTypeUnion, onError : (string) -> void) -> [string] {
@@ -328,26 +322,12 @@ printFcError(acc : FlowcAcc, error : FcError) -> void {
 
 	iteri(un, \i : int, p : FcPosition -> {
 		module = lookupTree(acc.modules, p.file);
-		err =  (if (i == 0) ": " + error.message else ": and here");
-		switch (module) {
-			None(): {
-				fileinfo = getFcFileInfo(p.file, acc.config);
-				code = if (fileinfo.content == "") getFileContent(fileinfo.fullpath) else fileinfo.content;
-				sline = findLineOneTime(code, p.start);
-
-				if (fileinfo.flowfile == "") {
-					fcPrintln(error.message);
-				} else {
-					fcPrintln(fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
-				}
-			}
-			Some(m): {
-				code = getFileContent(m.fileinfo.fullpath);
-				sline = findLineOneTime(code, p.start);
-
-				fcPrintln(m.fileinfo.fullpath + ":" + i2s(sline.lineno - if (sline.column == 0) 1 else 0) + ":" + i2s(sline.column) + err);
-			}
+		err =  (if (i == 0) " " + error.message else " and here");
+		file = switch (module) {
+			None():  getFcFileInfo(p.file, acc.config).fullpath;
+			Some(m): m.fileinfo.fullpath;
 		}
+		printLocation(acc.config, file, p.start, err);
 	});
 }
 
@@ -394,37 +374,15 @@ mergeTypingToFcTypeEnv(typing : Tree<string, FcType>, fimodule : FiModule, tenv0
 	names = acc.names;
 
 	FcTypeEnvProgram(
-		FlowcAcc(
-			acc.dependency, 
-			acc.preloaded, 
-			acc.modules,
-			acc.file2flowfile,
-			acc.traversal, 
-			FcGlobalNames(
-				names.struct2module,
-				names.union2module,
-				names.function2module,
-				names.globalVar2module,
-				names.native2module,
-				names.structs,
-				names.unions,
-				names.struct2unions,
-				names.field2structs,
-				updateToplevel(names.toplevel, fimodule),
-				names.structTypars,
-				names.moduleImports
-			), 
-			acc.config, 
-			acc.tyvarIdFactory,
-			acc.tyvarIdGroup,
-			acc.tracer
+		tenv 
+		with acc = FlowcAcc(
+			acc with names = FcGlobalNames(
+				names with toplevel = updateToplevel(names.toplevel, fimodule)
+			)
 		),
-		foldTree(typing, tenv.types, \name, type, a -> 
+		types = foldTree(typing, tenv.types, \name, type, a -> 
 			setTree(a, name, type)
 		),
-		tenv.printError, 
-		tenv.errors,
-		tenv.union2typenamesCache
 	)
 }
 
@@ -457,22 +415,11 @@ addFiModuleToFcTypeEnv(tenv : FcTypeEnvProgram, globEnv : FcTypeEnvGlobal, fimod
 	}
 
 	FcTypeEnvProgram(
-		FlowcAcc(
-			acc.dependency, 
-			acc.preloaded, 
-			setTree(acc.modules, fimodule.fileinfo.flowfile, fimodule), 
-			setTree(acc.file2flowfile, fimodule.fileinfo.fullpath, fimodule.fileinfo.flowfile),
-			acc.traversal, 
-			acc.names,
-			acc.config, 
-			acc.tyvarIdFactory,
-			acc.tyvarIdGroup,
-			acc.tracer
-		),
-		tenv.types,
-		tenv.printError, 
-		tenv.errors,
-		tenv.union2typenamesCache
+		tenv with acc = FlowcAcc(acc with
+			// A set of what global files we have loaded to catch duplicate imports by different flowpaths
+			modules = setTree(acc.modules, fimodule.fileinfo.flowfile, fimodule),
+			file2flowfile = setTree(acc.file2flowfile, fimodule.fileinfo.fullpath, fimodule.fileinfo.flowfile),
+		)
 	);
 }
 
@@ -651,23 +598,23 @@ fcDependencyChangedCallback(config : CompilerConfig, globEnv : FcTypeEnvGlobal, 
 	changed
 }
 
-printLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> void {
-	fcPrintln(makeLocation(config, m, start, message))
+printLocation(config : CompilerConfig, file : string, start : int, message : string) -> void {
+	fcPrintln(makeLocation(config, file, start) + " " + message)
 }
 
-makeLocation(config : CompilerConfig, m : FiModule, start : int, message : string) -> string {
-	code = getFileContent(m.fileinfo.fullpath);
-	resolver = makeLineResolver(code);
-	sline = findLine(resolver, start);
-	// eline = findLine(resolver, p.end);
+makeLocation(config : CompilerConfig, file : string, start : int) -> string {
+	if (file == "") "" else {
+		code = getFileContent(file);
+		resolver = makeLineResolver(code);
+		sline = findLine(resolver, start);
+		line_string = i2s(sline.lineno);
+		column_string = i2s(sline.column);
 
-	line_string = i2s(sline.lineno - if (sline.column == 0) 1 else 0);
-	column_string = i2s(sline.column);
-
-	if (isConfigParameterTrue(config.config, "legacy-format"))
-		m.fileinfo.fullpath + ":" + line_string + " (" + m.fileinfo.fullpath + ":" + line_string + ") " + message
-	else
-		m.fileinfo.fullpath + ":" + line_string + ":" + column_string + ":" + message
+		if (isConfigParameterTrue(config.config, "legacy-format"))
+			file + ":" + line_string + " (" + file + ":" + line_string + ")"
+		else
+			file + ":" + line_string + ":" + column_string + ":"
+	}
 }
 
 name2FimoduleInFiProgram(prog : FiProgram, flowfile : string, name : string) -> FiModule {

@@ -13,10 +13,6 @@ class PixiText extends TextField {
 	// influencing text width or height
 	private var metricsChanged : Bool = false;
 
-	// Use the property to set up custom antialias factor
-	// Implemented by enlarging font size and decreasing scale of text clip
-	private var textScaleFactor : Int = Platform.isMacintosh ? 2 : 1;
-
 	public function new() {
 		super();
 
@@ -80,7 +76,7 @@ class PixiText extends TextField {
 
 		style =
 			{
-				fontSize : textScaleFactor * (fontsize < 0.6 ? 0.6 : fontsize), // pixi crashes when size < 0.6
+				fontSize : fontsize < 0.6 ? 0.6 : fontsize, // pixi crashes when size < 0.6
 				fill : "#" + StringTools.hex(RenderSupportJSPixi.removeAlphaChannel(fillcolor), 6),
 				letterSpacing : letterspacing,
 				fontFamily : from_flow_style.family,
@@ -166,7 +162,7 @@ class PixiText extends TextField {
 			this.invalidateMetrics();
 
 		this.fieldWidth = fieldWidth;
-		style.wordWrapWidth = textScaleFactor * (fieldWidth > 0 ? fieldWidth : 2048);
+		style.wordWrapWidth = fieldWidth > 0 ? fieldWidth : 2048;
 		updateNativeWidgetStyle();
 	}
 
@@ -202,8 +198,8 @@ class PixiText extends TextField {
 	private function updateClipMetrics() {
 		var metrics = textClip.children.length > 0 ? textClip.getLocalBounds() : getTextClipMetrics(textClip);
 
-		clipWidth = Math.max(metrics.width - letterSpacing * 2, 0) / textScaleFactor;
-		clipHeight = metrics.height / textScaleFactor;
+		clipWidth = Math.max(metrics.width - letterSpacing * 2, 0);
+		clipHeight = metrics.height;
 
 		hitArea = new Rectangle(letterSpacing, 0, clipWidth + letterSpacing, clipHeight);
 	}
@@ -298,9 +294,6 @@ class PixiText extends TextField {
 		var textClip = new Text(text, style);
 		untyped textClip._visible = true;
 
-		textClip.scale.x = 1 / textScaleFactor;
-		textClip.scale.y = 1 / textScaleFactor;
-
 		// The default font smoothing on webkit (-webkit-font-smoothing = subpixel-antialiased),
 		// makes the text bolder when light text is placed on a dark background.
 		// "antialised" produces a lighter text, which is what we want.
@@ -326,7 +319,7 @@ class PixiText extends TextField {
 		if (metrics == null) {
 			return super.getTextMetrics();
 		} else {
-			return [metrics.ascent / textScaleFactor, metrics.descent / textScaleFactor, metrics.descent / textScaleFactor];
+			return [metrics.ascent, metrics.descent, metrics.descent];
 		}
 	}
 }

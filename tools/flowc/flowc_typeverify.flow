@@ -220,7 +220,8 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		FiCall(f, args, type, __): {
 			fnType = fiExpType(f);
 			callType = FiTypeFunction(map(args, \a -> FiFunArg("", fiExpType(a))), type);
-			if (!isFiSubType(callType, fnType, true)) {
+			// println("Check call super\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", sub\n\t"  + prettyFiType(dummyPretty, callType, makeSet()));
+			if (!isFiSubType(env.module.global.acc.names, fnType, callType, true)) {
 				onError(
 					FcError(
 						"Wrong type in call. Expected\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, callType, makeSet()),
@@ -264,14 +265,28 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		FiSeq(es, type, __):
 			typeverifyFiType(env, type, onError, expr.start) && 
 			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
-		FiCallPrim(prim, es, type, s):   {
+		FiCallPrim(prim, es, type, s): {
+			twoArgsConsistent = \ -> {
+				t1 = fiExpType(es[0]);
+				t2 = fiExpType(es[1]);
+				if (!fiSuperTypeExists(env.module.global.acc.names, t1, t2, true)) {
+					onError(
+						FcError(
+							prettyFiType(dummyPretty, t1, makeSet()) + " not compatible with " + prettyFiType(dummyPretty, t2, makeSet()),
+							[FcPosition(env.module.name, expr.start, expr.start)]
+						)
+					);
+					false;
+				} else true
+			}
+
 			switch (prim) {
 				FcStructPrim(struct_name): {
                     if (true || isUrlParameterTrue("verify-structs")) {
                         // OK, the type of the struct can be reconstructed from the args
                         mstr = lookupTree(env.module.global.acc.names.structs, struct_name);
                         verify = \fitype : FiTypeStruct -> {
-                            verifyFiStructInstantiation(fitype, map(es, \e -> fiExpType(e)), type, \err -> {
+                            verifyFiStructInstantiation(env.module.global.acc.names, fitype, map(es, \e -> fiExpType(e)), type, \err -> {
                                 onError(
                                     FcError(
                                         prettyFiType(dummyPretty, type, makeSet()) + " " + err,
@@ -334,7 +349,36 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 							false; // This branch must never occur
 					}
 				}
-				default: true;
+				FcNePrim(): twoArgsConsistent();
+				FcEqPrim(): twoArgsConsistent();
+				FcLePrim(): twoArgsConsistent();
+				FcGePrim(): twoArgsConsistent();
+				FcLtPrim(): twoArgsConsistent();
+				FcGtPrim(): twoArgsConsistent();
+				FcArrayPrim(): {
+					at = switch (type) {
+						FiTypeArray(tt): tt;
+						default: type; // Will never happen
+					};
+					argno = ref 0;
+					forall(es, \e -> {
+						argno := ^argno + 1;
+						if (isUrlParameterTrue("struct")) {
+							if (!isFiSubType(env.module.global.acc.names, fiExpType(e), at, true)) {
+								onError(FcError(
+									"Wrong type in array element #" + i2s(^argno) 
+									+ ". Expected\n\t" + prettyFiType(dummyPretty, at, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, fiExpType(e), makeSet())
+									,  
+									[FcPosition(env.module.name, e.start, e.start)])
+								);
+								false;
+							} else true;
+						} else true;
+					});
+				}
+				default: {
+					true;
+				}
 			} && 
 			typeverifyFiType(env, type, onError, expr.start) && 
 			fold(es, true, \ok, e -> ok && typeverifyFiExp(env, e, onError));
