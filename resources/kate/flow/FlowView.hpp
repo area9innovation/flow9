@@ -10,6 +10,7 @@
 
 #include "FlowOutput.hpp"
 #include "FlowConfig.hpp"
+#include "Outline.hpp"
 
 namespace flow {
 
@@ -23,6 +24,8 @@ public:
 	FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin);
 	virtual ~FlowView();
 
+	KatePluginFlow* plugin() { return plugin_; }
+
 public Q_SLOTS:
 	void slotReloadLaunchConfigs();
 	void showMenu();
@@ -31,6 +34,7 @@ public Q_SLOTS:
 private:
 	friend class DebugView;
 	friend class DebugManager;
+	friend class Outline;
 	void initActions();
 
 	void readConfig(const KConfigGroup& config);
@@ -56,6 +60,7 @@ public:
 	FlowManager* flowManager_;
 	DebugView*   debugView_;
 	FlowServer*  flowServer_;
+	Outline*     outline_;
 };
 
 }

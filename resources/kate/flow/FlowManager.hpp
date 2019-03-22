@@ -29,7 +29,8 @@ public:
 		LOOKUP_TYPE,
 		LOOKUP_USES,
 		RENAMING,
-		DUMPING_IDS
+		DUMPING_IDS,
+		OUTLINE
 	};
 
 	FlowManager(KTextEditor::MainWindow* mainWin, FlowView& view);
@@ -46,6 +47,7 @@ public Q_SLOTS:
     void slotLookupUses();
     void slotRename();
     void slotCompleteRename();
+    void slotOutline();
 
 private Q_SLOTS:
     void slotCompileError(QProcess::ProcessError err);

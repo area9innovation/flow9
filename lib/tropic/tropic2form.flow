@@ -2513,62 +2513,65 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				[]
 			)
 		}
-		TPicture(u, s): {
-			ps =
-				fold(s, [], \acc, st : TPictureStyle ->
-					switch (st) {
-						OnLoadingError(fn): arrayPush(acc, st);
-						OnlyDownloadToCache(): arrayPush(acc, st);
-						OnLoaded(fn): arrayPush(acc, st);
-						DontCache(): arrayPush(acc, st);
-						WidthHeight(__, __): acc;
-						TIgnoreCachedPictureSize() : acc;
-						default : acc; //add default after error in swf compiler, don't forget to add new types in switch
-					}
+		TPicture(u, style): {
+			ps = filtermap(style, \s -> switch (s) {
+				PictureStyle() : {a : Maybe<PictureStyle> = Some(s); a};
+				default : None();
+			});
+
+			boxSize =
+				eitherMap(
+					tryExtractStruct(style, TPictureSize(const(WidthHeight(0., 0.)))),
+					\ds -> Some(ds.size),
+					maybeMap(
+						tryExtractStruct(style, WidthHeight(-1.0, -1.0)),
+						\cs -> const(cs)
+					)
 				);
 
-			size = extractStruct(s, WidthHeight(-1.0, -1.0));
-			ignoreCachedPictureSize = contains(s, TIgnoreCachedPictureSize());
+			ignoreCachedPictureSize = contains(style, TIgnoreCachedPictureSize());
 			wh = makeWH();
 
-			if (size != WidthHeight(-1.0, -1.0)) {
-				TAcc(
-					if (metricsOnly || isUrlParameterTrue("profile"))
-						FEmpty()
-					else
-						FScale(
-							fselect(fwidth(wh), FLift(\wd -> if (wd <= 0.) 1. else size.width / wd)),
-							fselect(fheight(wh), FLift(\hgt -> if (hgt <= 0.) 1. else size.height / hgt)),
-							FPicture(u, wh, ps)
+			fpicture = FPicture(u, wh, ps);
+			optimizeFPicture = \f -> if (metricsOnly || isUrlParameterTrue("profile")) FEmpty() else f;
+
+			eitherMap(
+				boxSize,
+				\boxSz : Transform<WidthHeight> -> {
+					boxWidth = fwidth(boxSz);
+					boxHeight = fheight(boxSz);
+
+					scaleFn = \psz, bsz -> if (psz <= 0. || bsz < 0.) 1. else bsz / psz;
+					scaleX = fselect2(fwidth(wh), boxWidth, FLift2(scaleFn));
+					scaleY = fselect2(fheight(wh), boxHeight, FLift2(scaleFn));
+
+					TAcc(
+						optimizeFPicture(FScale(scaleX, scaleY, fpicture)),
+						TFormMetrics(
+							boxWidth,
+							boxHeight,
+							boxHeight
 						),
-					TFormMetrics(
-						const(size.width),
-						const(size.height),
-						const(size.height)
-					),
-					const(size.width),
-					const(size.height),
-					const(size.width),
-					const(size.height),
-					zero,
-					zero,
-					const(true),
-					true,
-					true,
-					[]
-				);
-			} else {
+						boxWidth,
+						boxHeight,
+						boxWidth,
+						boxHeight,
+						zero,
+						zero,
+						const(true),
+						true,
+						true,
+						[]
+					)
+				},
 				eitherFn(
 					if (ignoreCachedPictureSize)
 						None()
 					else
 						getCachedPictureSize(u),
-					\sz -> {
+					\sz : WidthHeight -> {
 						TAcc(
-							if (metricsOnly || isUrlParameterTrue("profile"))
-								FEmpty()
-							else
-								FPicture(u, wh, ps),
+							optimizeFPicture(fpicture),
 							TFormMetrics(
 								const(sz.width),
 								const(sz.height),
@@ -2591,10 +2594,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						h = fheight(wh);
 
 						TAcc(
-							if (metricsOnly || isUrlParameterTrue("profile"))
-								FEmpty()
-							else
-								FPicture(u, wh, ps),
+							optimizeFPicture(fpicture),
 							TFormMetrics(
 								w,
 								h,
@@ -2613,7 +2613,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						)
 					}
 				)
-			 }
+			)
 		}
 
 		// Recursive and fusioning forms
