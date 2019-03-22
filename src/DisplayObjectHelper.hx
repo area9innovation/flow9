@@ -313,6 +313,54 @@ class DisplayObjectHelper {
 		invalidateStage(clip);
 	}
 
+	public static function getMaskedBounds(clip : DisplayObject) : Bounds {
+		var calculatedBounds = new Bounds();
+
+		calculatedBounds.minX = Math.NEGATIVE_INFINITY;
+		calculatedBounds.minY = Math.NEGATIVE_INFINITY;
+		calculatedBounds.maxX = Math.POSITIVE_INFINITY;
+		calculatedBounds.maxY = Math.POSITIVE_INFINITY;
+
+		var parentBounds = clip.parent != null ? getMaskedBounds(clip.parent) : null;
+
+		if (untyped clip._mask != null) {
+			untyped clip._mask.renderable = true;
+			var maskBounds = untyped clip._mask.getBounds();
+
+			calculatedBounds.minX = maskBounds.x;
+			calculatedBounds.minY = maskBounds.y;
+			calculatedBounds.maxX = calculatedBounds.minX + maskBounds.width;
+			calculatedBounds.maxY = calculatedBounds.minY + maskBounds.height;
+
+			untyped clip._mask.renderable = false;
+		}
+
+		if (parentBounds != null) {
+			calculatedBounds.minX = parentBounds.minX > calculatedBounds.minX ? parentBounds.minX : calculatedBounds.minX;
+			calculatedBounds.minY = parentBounds.minY > calculatedBounds.minY ? parentBounds.minY : calculatedBounds.minY;
+			calculatedBounds.maxX = parentBounds.maxX < calculatedBounds.maxX ? parentBounds.maxX : calculatedBounds.maxX;
+			calculatedBounds.maxY = parentBounds.maxY < calculatedBounds.maxY ? parentBounds.maxY : calculatedBounds.maxY;
+		}
+
+		return calculatedBounds;
+	}
+
+	public static function getMaskedLocalBounds(clip : DisplayObject) : Bounds {
+		if (untyped clip.viewBounds != null) {
+			return untyped clip.viewBounds;
+		}
+
+		var bounds = getMaskedBounds(clip);
+		var worldTransform = clip.worldTransform.invert();
+
+		bounds.minX = bounds.minX * worldTransform.a + bounds.minY * worldTransform.c + worldTransform.tx;
+		bounds.minY = bounds.minX * worldTransform.b + bounds.minY * worldTransform.d + worldTransform.ty;
+		bounds.maxX = bounds.maxX * worldTransform.a + bounds.maxY * worldTransform.c + worldTransform.tx;
+		bounds.maxY = bounds.maxX * worldTransform.b + bounds.maxY * worldTransform.d + worldTransform.ty;
+
+		return bounds;
+	}
+
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphicsOrSprite(clip : Container) : Container {
 		if (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite))

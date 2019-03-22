@@ -48,22 +48,22 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.width = '${untyped getWidth()}px';
 		nativeWidget.style.height = '${untyped getHeight()}px';
 
-		if (viewBounds != null) {
-			if (Platform.isIE || Platform.isEdge) {
-				nativeWidget.style.clip = 'rect(
-					${viewBounds.minY}px,
-					${viewBounds.maxX}px,
-					${viewBounds.maxY}px,
-					${viewBounds.minX}px
-				)';
-			} else {
-				nativeWidget.style.clipPath = 'polygon(
-					${viewBounds.minX}px ${viewBounds.minY}px,
-					${viewBounds.minX}px ${viewBounds.maxY}px,
-					${viewBounds.maxX}px ${viewBounds.maxY}px,
-					${viewBounds.maxX}px ${viewBounds.minY}px
-				)';
-			}
+		var maskedBounds = getMaskedLocalBounds();
+
+		if (Platform.isIE || Platform.isEdge) {
+			nativeWidget.style.clip = 'rect(
+				${maskedBounds.minY}px,
+				${maskedBounds.maxX}px,
+				${maskedBounds.maxY}px,
+				${maskedBounds.minX}px
+			)';
+		} else {
+			nativeWidget.style.clipPath = 'polygon(
+				${maskedBounds.minX}px ${maskedBounds.minY}px,
+				${maskedBounds.minX}px ${maskedBounds.maxY}px,
+				${maskedBounds.maxX}px ${maskedBounds.maxY}px,
+				${maskedBounds.maxX}px ${maskedBounds.minY}px
+			)';
 		}
 
 		styleChanged = false;
@@ -162,6 +162,10 @@ class NativeWidgetClip extends FlowContainer {
 	}
 
 	public override function getLocalBounds(?rect:Rectangle) : Rectangle {
+		if (rect == null) {
+			rect = new Rectangle();
+		}
+
 		rect.x = 0;
 		rect.y = 0;
 		rect.width = getWidth();

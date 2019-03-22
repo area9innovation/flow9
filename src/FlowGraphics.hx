@@ -1,4 +1,8 @@
 import js.Browser;
+
+import pixi.core.display.Bounds;
+import pixi.core.math.shapes.Rectangle;
+import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
 import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
@@ -12,8 +16,8 @@ class FlowGraphics extends Graphics {
 	private var clipVisible : Bool = false;
 	private var transformChanged : Bool = true;
 
-	public var penX : Float = 0.0;
-	public var penY : Float = 0.0;
+	private var pen = new Point(0.0, 0.0);
+	private var localBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
@@ -44,28 +48,31 @@ class FlowGraphics extends Graphics {
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
 		var newGraphics = super.moveTo(x, y);
-		penX = x;
-		penY = y;
+		pen.x = x;
+		pen.y = y;
+		localBounds.addPoint(pen);
 
 		return newGraphics;
 	}
 
 	public override function lineTo(x : Float, y : Float) : Graphics {
 		var newGraphics = super.lineTo(x, y);
-		penX = x;
-		penY = y;
+		pen.x = x;
+		pen.y = y;
+		localBounds.addPoint(pen);
 
 		return super.lineTo(x, y);
 	}
 
 	public override function quadraticCurveTo(cx : Float, cy : Float, x : Float, y : Float) : Graphics {
-		var dx = x - penX;
-		var dy = y - penY;
+		var dx = x - pen.x;
+		var dy = y - pen.y;
 
 		if (Math.sqrt(dx * dx + dy * dy) / lineWidth > 3) {
 			var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
-			penX = x;
-			penY = y;
+			pen.x = x;
+			pen.y = y;
+			localBounds.addPoint(pen);
 
 			return newGraphics;
 		} else {
@@ -134,6 +141,9 @@ class FlowGraphics extends Graphics {
 	public override function drawRect(x : Float, y : Float, width : Float, height : Float) : Graphics {
 		var newGraphics = super.drawRect(x, y, width, height);
 
+		localBounds.addPoint(new Point(x, y));
+		localBounds.addPoint(new Point(x + width, y + height));
+
 		endFill();
 
 		return newGraphics;
@@ -142,13 +152,19 @@ class FlowGraphics extends Graphics {
 	public override function drawRoundedRect(x : Float, y : Float, width : Float, height : Float, radius : Float) : Graphics {
 		var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
 
+		localBounds.addPoint(new Point(x, y));
+		localBounds.addPoint(new Point(x + width, y + height));
+
 		endFill();
 
 		return newGraphics;
 	}
 
 	public override function drawEllipse(x : Float, y : Float, width : Float, height : Float) : Graphics {
-		var newGraphics = super.drawRect(x, y, width, height);
+		var newGraphics = super.drawEllipse(x, y, width, height);
+
+		localBounds.addPoint(new Point(x - width, y - height));
+		localBounds.addPoint(new Point(x + width, y + height));
 
 		endFill();
 
@@ -158,12 +174,33 @@ class FlowGraphics extends Graphics {
 	public override function drawCircle(x : Float, y : Float, radius : Float) : Graphics {
 		var newGraphics = super.drawCircle(x, y, radius);
 
+		localBounds.addPoint(new Point(x - radius, y - radius));
+		localBounds.addPoint(new Point(x + radius, y + radius));
+
 		endFill();
 
 		return newGraphics;
 	}
 
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		var bounds = new Bounds();
+
+		bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+
+		return bounds.getRectangle(rect);
+	}
+
 	public override function clear() : Graphics {
+		pen = new Point();
+		localBounds = new Bounds();
+
 		return super.clear();
 	};
 }

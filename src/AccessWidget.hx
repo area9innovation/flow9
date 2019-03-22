@@ -232,7 +232,7 @@ class AccessWidgetTree extends EventEmitter {
 			if (untyped clip.nativeWidget != null) {
 				untyped clip.updateNativeWidget();
 
-				if (untyped clip.styleChanged) {
+				if (untyped clip.styleChanged || untyped clip.viewBounds == null) {
 					untyped clip.updateNativeWidgetStyle();
 				}
 			}
