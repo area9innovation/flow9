@@ -800,13 +800,15 @@ class AccessWidget extends EventEmitter {
 
 			if (accessWidget != null && accessWidget.element != null) {
 				if (child.changed) {
-					if (previousElement != null && previousElement.nextSibling != null) {
-						parent.insertBefore(accessWidget.element, previousElement.nextSibling);
-					} else {
-						parent.appendChild(accessWidget.element);
-					}
+					try {
+						if (previousElement != null && previousElement.nextSibling != null) {
+							parent.insertBefore(accessWidget.element, previousElement.nextSibling);
+						} else {
+							parent.appendChild(accessWidget.element);
+						}
 
-					child.changed = false;
+						child.changed = false;
+					} catch (e : Dynamic) {}
 				}
 
 				previousElement = accessWidget.element;
