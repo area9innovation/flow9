@@ -134,8 +134,34 @@ class FlowGraphics extends Graphics {
 	public override function drawRect(x : Float, y : Float, width : Float, height : Float) : Graphics {
 		var newGraphics = super.drawRect(x, y, width, height);
 
+		endFill();
+
 		return newGraphics;
-	};
+	}
+
+	public override function drawRoundedRect(x : Float, y : Float, width : Float, height : Float, radius : Float) : Graphics {
+		var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
+
+		endFill();
+
+		return newGraphics;
+	}
+
+	public override function drawEllipse(x : Float, y : Float, width : Float, height : Float) : Graphics {
+		var newGraphics = super.drawRect(x, y, width, height);
+
+		endFill();
+
+		return newGraphics;
+	}
+
+	public override function drawCircle(x : Float, y : Float, radius : Float) : Graphics {
+		var newGraphics = super.drawCircle(x, y, radius);
+
+		endFill();
+
+		return newGraphics;
+	}
 
 	public override function clear() : Graphics {
 		return super.clear();
