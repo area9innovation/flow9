@@ -1031,11 +1031,63 @@ emitJavaFnWrapper(gctx : JavaGlobalContext, csmodule : JavaModule, ftype : FiTyp
 }
 
 emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rtype : string) -> string {
+	singletonNo = \e -> {
+		switch(e) {
+			FiCallPrim(cop, __, __, __): {
+				switch(cop) {
+					FcStructPrim(sname): {
+						switch (lookupTree(ctx.func.gctx.cstructs, sname)) {
+							Some(sinfo): {
+								if (sinfo.fields == []) sinfo.id else -1;
+							}
+							None(): -1;
+						}
+					}
+					default: -1;
+				}
+			}
+			default: -1;
+		}
+	}
 	opwrap = \ts -> {
 		"(" + emitJavaExpression(ctx, e1, ts) + op + emitJavaExpression(ctx, e2, ts) + ")";
 	}
 	fnwrap = \fn,ts -> {
-		"(" + fn + "(" + emitJavaExpression(ctx, e1, ts) + "," + emitJavaExpression(ctx, e2, ts) + ")" + op + "0)";
+		re1 = emitJavaExpression(ctx, e1, ts);
+		re2 = emitJavaExpression(ctx, e2, ts);
+
+		wrap = \ -> {
+			if (op == "==") {
+				"FlowRuntime.compareEqual(" + re1 + "," + re2 + ")";
+			} else if (op == "!=") {
+				"(!FlowRuntime.compareEqual(" + re1 + "," + re2 + "))";				
+			} else {
+				"(" + fn + "(" + re1 + "," + re2 + ")" + op + "0)";
+			}
+		}
+
+		aempty = "runtime.arr_empty";
+		rs1 = singletonNo(e1);
+		rs2 = singletonNo(e2);
+		if ((re1 == aempty || re2 == aempty) && (op == "==" || op == "!=")) {
+			if (re1 == aempty) {
+				"((Object[])" + re2 + ").length " + op + " 0";
+			} else if (re2 == aempty) {
+				"((Object[])" + re1 + ").length " + op + " 0";
+			} else {
+				wrap();
+			}
+		} else if ((rs1 > 0 || rs2 > 0) && (op == "==" || op == "!=")) {
+			if (rs1 > 0) {
+				"((Struct)" + re2 + ").getTypeId() " + op + " " + i2s(rs1);
+			} else if (rs2 > 0) {
+				"((Struct)" + re1 + ").getTypeId() " + op + " " + i2s(rs2);
+			} else {
+				wrap();
+			}
+		} else {
+			wrap();
+		}
 	}
 	strwrap = \ -> {
 		s1 = emitJavaExpression(ctx, e1, "String");
@@ -1050,6 +1102,7 @@ emitJavaCompare(ctx : JavaScopeContext, op : string, e1 : FiExp, e2 : FiExp, rty
 	switch (fiExpType(e1)) {
 		FiTypeInt():    opwrap("int");
 		FiTypeDouble(): opwrap("double");
+		FiTypeBool():   opwrap("boolean");
 		FiTypeString(): strwrap();
 		default:        fnwrap("FlowRuntime.compareByValue","Object");
 	}

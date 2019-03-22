@@ -51,7 +51,31 @@ public abstract class FlowRuntime {
 			throw new RuntimeException("Could not instantiate native method host "+cls.getName(), e);
 		}
 	}
+	public static boolean compareEqual(Object a, Object b) {
+		if (a == b) return true;
+		if (a.getClass() != b.getClass()) return false;
+		if (a instanceof Integer || a instanceof Boolean || a instanceof Double || a instanceof String) {
+			return a.equals(b);
+		}
+		if (a instanceof Object[]) {
+			int len = ((Object[])a).length;
+			if (len != ((Object[])b).length) return false;
+			for (int i = len; i-- != 0;) {
+				if (!compareEqual(((Object[])a)[i], ((Object[])b)[i])) return false;
+			}
+			return true;
+		}
+		if (a instanceof Struct) {
+			if (((Struct)a).getTypeId() != ((Struct)b).getTypeId()) return false;
+			if (((Struct)a).compareTo(((Struct)b)) != 0) return false;
 
+			return true;
+		}
+		if (a instanceof Reference) {
+			return false;
+		}
+		return false;
+	}
 	@SuppressWarnings("unchecked")
 	public static int compareByValue(Object o1, Object o2) {
 		// Special cases for performance improvement.
