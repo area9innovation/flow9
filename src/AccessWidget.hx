@@ -442,7 +442,7 @@ class AccessWidget extends EventEmitter {
 					clip.emit("blur");
 				});
 
-				if (this.element.style.zIndex == null) {
+				if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
 					this.element.style.zIndex = AccessWidget.zIndexValues.accessButton;
 				}
 

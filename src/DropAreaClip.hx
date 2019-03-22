@@ -48,7 +48,11 @@ class DropAreaClip extends NativeWidgetClip {
 	}
 
 	private static inline function onContextMenu(event : Dynamic) : Dynamic {
-		return RenderSupportJSPixi.PixiView.oncontextmenu(event);
+		if (RenderSupportJSPixi.PixiView.oncontextmenu != null) {
+			return RenderSupportJSPixi.PixiView.oncontextmenu(event);
+		} else {
+			return true;
+		}
 	}
 
 	private static inline function onDragOver(event : Dynamic) : Bool {

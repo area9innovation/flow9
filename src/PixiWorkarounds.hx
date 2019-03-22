@@ -558,7 +558,7 @@ class PixiWorkarounds {
 					charWidth = allWidth - tailWidth;
 
 					currentPosition += charWidth +
-						(char == String.fromCharCode(0x202A) || char == String.fromCharCode(0x202B) || char == String.fromCharCode(0x202C)) ? 0.0 : letterSpacing;
+						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
 					allWidth = tailWidth;
 			    } while (text != '');
 			}
