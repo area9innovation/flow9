@@ -25,7 +25,14 @@ and then
 
 	mkdot
 
-to produce the graphviz relations
+to produce the graphviz relations.
+
+TODO:
+- Solve the tyvar graph
+- Union vs union case
+- Get rid of GAnd, GOr, GBounded
+- Reconstruct struct defs with correct number of typars, and be smarter about
+  implicit typars. (31, 37, 54, ..., 103, 114, 127)
 */
 
 gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> GEnv {
@@ -63,7 +70,7 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		unifyGType(genv, ot, it, \m -> onError(m, info, description()));
 	}
 
-	ge2 = foldList(expects, ge, \acc, e -> {
+	ge1 = foldList(expects, ge, \acc, e -> {
 		// If verbose is on, we keep track of what expects to debug
 		solveDebug = (ge.verbose >= 1 && containsSet(^(env.local.debugExpects), e)) || ge.verbose >= 3;
 		if (solveDebug) {
@@ -104,16 +111,18 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		re;
 	});
 
+	// TODO: Solve the graph here.
+	// Go through all nodes, and propagate those we can to neighbours
+	// Keep track of determined nodes?
+	// Get rid of loops in the graph?
+	// Collect adjacent tyvars into groups? 
+	// When we discover some tyvar, be sure to match against the neighbours again to propagate typars
+	ge2 = ge1;
+
 	if (ge2.verbose >= 2) {
-/*		println("Result:");
-		traverseInOrder(be2.tyvars, \tv, type -> {
-			 println("α" + i2s(tv) + " = " + gtype2string(be2, type));
-			 {}
-		});
-*/
 		println("Tyvars: " + toString(set2array(ge2.unresolvedTyvars)));
 
-		// Build the relation graph
+		// Build the relation graph if there is one
 		mroot = popMinSet(ge2.unresolvedTyvars);
 		switch (mroot) {
 			None(): {}
@@ -262,7 +271,13 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 		GFunction(largs, lrt): {
 			switch (right) {
 				GFunction(rargs, rrt): {
-					nenv = unifyGTypes(env, rargs, largs, onError);
+					nenv = unifyGTypes(env, rargs, largs, \i, e -> {
+						if (i == -1) {
+							onError(e + " function args")
+						} else {
+							onError("Arg #" + i2s(i) + ": " + e)
+						}
+					});
 					unifyGType(nenv, lrt, rrt, onError);
 				}
 				default: rest();
@@ -312,13 +327,13 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 	nenv;
 }
 
-unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (string) -> void) -> GEnv {
+unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (int, string) -> void) -> GEnv {
 	if (length(lefts) != length(rights)) {
-		onError("Got " + i2s(length(lefts) + 1) + ", but expected " + i2s(length(rights) + 1));
+		onError(-1, "Got " + i2s(length(lefts) + 1) + ", but expected " + i2s(length(rights) + 1));
 		env;
 	} else {
 		foldi(lefts, env, \i, acc, l -> {
-			unifyGType(acc, l, rights[i], onError)
+			unifyGType(acc, l, rights[i], \e -> onError(i + 1, e))
 		})
 	}
 }
@@ -347,10 +362,19 @@ gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (
 				GNamed(rname, rtypars): {
 					if (lname == rname) {
 						// Do the typars
-						unifyGTypes(env, ltypars, rtypars, onError);
+						unifyGTypes(env, ltypars, rtypars, \i, e -> {
+							if (i == -1) {
+								onError(e + " type parameters")
+							} else {
+								onError("Type par #" + i2s(i) + ": " + e)
+							}
+						});
 					} else {
 						gunifyNamedTypes(env, left, right, onError);
 					}
+				}
+				GField(rname, rtype): {
+					unifyGNamedAgainstField(env, left, right, onError);
 				}
 				default: todo();
 			}
@@ -420,29 +444,65 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 }
 
 unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, onError : (string) -> void) -> GEnv {
-	todo = \ -> {
-		printStay(env.env, "TODO: Subtype " + gtype2string(env, GSubType(left)) + " c= union? " + gtype2string(env, GSubType(right)));
-		env;
+	fieldType = getInstantiatedGNamedField(env, right, left.name, onError);
+	unifyAndRecurseGType(env, left.type, fieldType, onError);
+}
+
+unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, onError : (string) -> void) -> GEnv {
+	fieldType = getInstantiatedGNamedField(env, left, right.name, onError);
+	unifyAndRecurseGType(env, fieldType, right.type, onError);
+}
+
+// Given a named structure, extract the instantiated type of a given field
+getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, onError : (string) -> void) -> GType {
+	error = \ -> {
+		onError("Expected " + gtype2string(env, GSubType(named)) + " to have ." + field);
+		GFlow();
 	}
-	mstruct = lookupTree(env.env.program.acc.names.structs, right.name);
+	mstruct = lookupTree(env.env.program.acc.names.structs, named.name);
 	switch (mstruct) {
 		None(): {
-			todo();
+			munion = lookupTree(env.env.program.acc.names.unions, named.name);
+			switch (munion) {
+				None(): error();
+				Some(union): {
+					typenames : [FcTypeName] = union2typenames(env.env, named.name);
+					instantiated = map(typenames, \tn -> {
+						ginstantiateStructFromUnion(env, named, tn, onError);
+					});
+					fields = map(instantiated, \i : GType -> {
+						switch (i) {
+							GSubType(st): {
+								switch (st) {
+									GNamed(__, __): getInstantiatedGNamedField(env, st, field, onError);
+									default: error();
+								}
+							}
+							default: error();
+						}
+					});
+					shared = uniq(fields);
+					if (length(shared) != 1) {
+						error();
+					} else {
+						shared[0];
+					}
+				}
+			}
 		}
 		Some(struct): {
 			sfield = find(struct.args, \a : FcStructArg -> {
-				a.name == left.name;
+				a.name == field;
 			});
 			switch (sfield) {
-				None(): todo();
-				Some(field): {
-					// OK, instantiate the struct typars from our right hand side
-					gtypars = foldi(right.typars, makeTree(), \i, acc, tp -> {
+				None(): error();
+				Some(stfield): {
+					// OK, instantiate the struct typars from our named struct
+					gtypars = foldi(named.typars, makeTree(), \i, acc, tp -> {
 						setTree(acc, strLeft("????????????", i + 1), tp)
 					});
-					gfield = fctype2gtype(env.env, env.tyvarIdGroup, field.type);
-					fieldType = instantiateGTypePars(env, gtypars, gfield, onError);
-					unifyAndRecurseGType(env, left.type, fieldType, onError);
+					gfield = fctype2gtype(env.env, env.tyvarIdGroup, stfield.type);
+					instantiateGTypePars(env, gtypars, gfield, onError);
 				}
 			}
 		}
