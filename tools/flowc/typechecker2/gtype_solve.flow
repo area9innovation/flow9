@@ -1,0 +1,346 @@
+import tools/flowc/typechecker2/gtype_util;
+import tools/flowc/typechecker2/fctype2gtype;
+import tools/flowc/fcexp_description;
+import tools/flowc/debug;
+import tools/flowc/type_helpers;
+import tools/flowc/typechecker/type_expect_helpers;
+
+export {
+	// This resolves the constraints
+	gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> GEnv;
+}
+
+gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> GEnv {
+	expects = reverseList(^(env.local.expects));
+
+	// Build a map from tyvar to typar
+	typars : Tree<int, GType> = foldTree(^(env.local.typars), makeTree(), \typar, tyvar, acc : Tree<int, GType> -> {
+		setTree(acc, tyvar.id, GTypePar(typar));
+	});
+
+	be = GEnv(
+		env, 
+		tyvarIdGroup, 
+		// While debugging, let us do this
+		if (true) 3 else if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
+		typars, 
+		makeSet(), 
+		makeSimpleGraph()
+	);
+
+	if (be.verbose >= 2)  {
+		fcPrintln("\nType " + name);
+	}
+
+	onError = \m, info, description -> {
+		poss = FcPosition(pos.file, info.start, info.end);
+		addFcTypeError(env.program, FcError(name + ": " + (if (description != "") description + ": " else "") + m, [poss]));
+	};
+
+	gunify = \benv : GEnv, output : FcType, input : FcType, info : FcInfo2, description : () -> string -> {
+		ot = fctype2gtype(benv.env, tyvarIdGroup, output);
+		it = fctype2gtype(benv.env, tyvarIdGroup, input);
+		unifyGType(benv, ot, it, \m -> onError(m, info, description()));
+	}
+
+	be2 = foldList(expects, be, \acc, e -> {
+		// If verbose is on, we keep track of what expects to debug
+		solveDebug = (be.verbose >= 1 && containsSet(^(env.local.debugExpects), e)) || be.verbose >= 3;
+		if (solveDebug) {
+			env.local.debugTyping := 1;
+		};
+		if (solveDebug || be.verbose >= 2) {
+			fcPrintln("\n// " + strReplace(fcExpect2string(acc.env, e), "\n", " "));
+		}
+
+		re = switch (e : FcTypeExpect) {
+			FcLessOrEqual(e1, e2, d, info, ex): {
+				re1 = getResolvedFcType(env, e1);
+				re2 = getResolvedFcType(env, e2);
+				gunify(acc, re1, re2, info, \ -> d + ": " + fcexpDescription(ex));
+			}
+			FcVerifyType(e1, e2, info): {
+				re1 = getResolvedFcType(env, e1);
+				re2 = getResolvedFcType(env, e2);
+				et1 = gunify(acc, re1, re2, info, \ -> "");
+				gunify(et1, re2, re1, info, \ -> "");
+			}
+			FcExpectField(field, ftype, t, info, ex): {
+				struct = getResolvedFcType(env, t);
+				// Some unnamed struct or union
+				/*
+				fields = FFields([
+					FField(field, fctype2gtype(env, tyvarIdGroup, GType), FGetField())
+				], makeSet(), makeSet());
+				oe = \m -> onError(m, info, "." + field);
+
+				st = fctype2gtype(env, tyvarIdGroup, struct);
+
+				et = unifyGType(restricted.env, fields, st, oe);
+				et.env;*/
+				println("TODO");
+				acc;
+			}
+			FcSetMutableField(stype, field, ftype, info): {
+				st = fctype2gtype(acc.env, tyvarIdGroup, stype);
+				ft = fctype2gtype(acc.env, tyvarIdGroup, ftype);
+
+/*				rt = FFields([FField(field, ft, FSetField())], makeSet(), makeSet());
+
+				et = unifyGType(acc, st, rt, \m -> onError(m, info, "set mutable"));
+				et.env;
+*/
+				println("TODO");
+				acc;
+			}
+		}
+		if (solveDebug) {
+			env.local.debugTyping := 0;
+		}
+		re;
+	});
+
+	if (be2.verbose >= 2) {
+		println("Result:");
+		traverseInOrder(be2.tyvars, \tv, type -> {
+			 println("α" + i2s(tv) + " = " + gtype2string(be2, type));
+			 {}
+		});
+
+		// Build the relation graph
+		root = GFlow();
+
+		dot = simpleGraph2dot(addSimpleNode(be2.relations, root), root, [], 
+			\n -> [DotLabel(gtype2string(be2, n))], 
+			\e -> []
+		);
+		setFileContent("relations.dot", dot);
+		command = "dot relations.dot -Tsvg -orelations.svg\n";
+		setFileContent("makedot.bat", command);
+		{}
+	}
+
+	be2;
+}
+
+unifyGType(env : GEnv, output : GType, input : GType, onError : (string) -> void) -> GEnv {
+	if (output == input) {
+		env;
+	} else {
+		tr = Pair(output, input);
+		if (containsSet(env.seen, tr)) {
+			env;
+		} else {
+			// We set an entry in the cache to avoid infinite recursion
+			seen = insertSet(env.seen, tr);
+			if (env.verbose >= 3)  {
+				pt = \t -> gtype2string(env, t);
+				printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
+			}
+			env2 = GEnv(env with seen = seen);
+			env3 = unifyAndRecurseGType(env2, output, input, onError);
+
+			if (env.verbose >= 3)  {
+				printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
+			}
+			env3;
+		}
+	}
+}
+
+// Alright, these GTypes meet. We have to recursively spiral down on these guys
+unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string) -> void) -> GEnv {
+	if (env.verbose >= 4)  {
+		printIndent(env.env, "Unify  " + gtype2string(env, left) + " c= " + gtype2string(env, right));
+	}
+
+	todo = \ -> {
+		printStay(env.env, "TODO: " + gtype2string(env, left) + " c= " + gtype2string(env, right));
+		env;
+	}
+
+	error = \ -> {
+		onError(gtype2string(env, left) + " != " + gtype2string(env, right));
+		env;
+	}
+
+	rest = \ -> {
+		switch (right) {
+			GTypeVar(rid): gunifyTyvar(env, left, right, onError);
+			GFlow(): {
+				explicit_flow = isConfigParameterTrue(env.env.program.acc.config.config, "explicit-flow");
+				switch (left) {
+					GFlow(): env;
+					GBasicType(bt): {
+						if (explicit_flow) {
+							switch (bt) {
+								FcTypeNative(__): env;
+								default: {
+									// We require explicit casts to/from flow
+									error();
+								}
+							}
+						} else env;
+					}
+					default: {
+						todo();
+					}
+				}
+			}
+			default: {
+/*
+				if (left == GFlow()) {
+					// OK, we find all unbound tyvars and bind them to flow!
+					tyvars = extractFTypeVars(env, right, makeSet());
+					acc2 = foldSet(tyvars, env, \acc, tv -> {
+						if (containsKeyTree(acc.tyvars, tv)) acc
+						else setFTypeVar(acc, tv, left);
+					});
+					FEnvType(acc2, 
+						if (kind == FUnifyLeft() || kind == FReduceLeft()) left else right
+					);
+				} else {
+					onError(ftype2string(env, left) + "   and   " + ftype2string(env, right) + " are incompatible");
+						// we do not support toString(FType) at the moment
+						// + (if (env.verbose > 1) "\n   " + toString(left) + "\nvs " + toString(right) else ""));
+					simplest = switch (left) {
+						FBasicType(__): left;
+						default: right;
+					}
+					FEnvType(env, simplest);
+				}*/
+				todo();
+			}
+		}
+	}
+
+	nenv = switch (left) {
+		GBasicType(ltype): {
+			switch (right) {
+				GBasicType(rtype): {
+					if (isSameFcType(env.env, ltype, rtype, false)) {
+						env;
+					} else {
+						error();
+					}
+				}
+				default: rest();
+			}
+		}
+		GFlow(): rest();
+		GTypePar(lid): {
+			switch (right) {
+				GTypePar(rid): {
+					if (lid == rid) {
+						env;
+					} else {
+						strict = getConfigParameter(env.env.program.acc.config.config, "strict");
+						if (strict == "1") {
+							onError(lid + " and " + rid + " are distinct");
+						}
+						env;
+					}
+				}
+				default: {
+					rest();
+				}
+			}
+		}
+		GFunction(largs, lrt): {
+			switch (right) {
+				GFunction(rargs, rrt): {
+					nenv = unifyGTypes(env, rargs, largs, onError);
+					unifyGType(nenv, lrt, rrt, onError);
+				}
+				default: rest();
+			}
+		}
+		GArray(ltype): {
+			switch (right) {
+				GArray(rtype): {
+					unifyGType(env, ltype, rtype, onError);
+				}
+				default: rest();
+			}
+		}
+		GRef(ltype): {
+			switch (right) {
+				GRef(rtype): {
+					unifyGType(env, ltype, rtype, onError);
+				}
+				default: rest();
+			}
+		}
+		GTypeVar(lid): {
+			gunifyTyvar(env, left, right, onError);
+		}
+		GSubType(lexp): {
+			switch (right) {
+				GBasicType(t): error();
+				GFlow(): rest();
+				GTypePar(id): rest();
+				GFunction(args, rt): error();
+				GArray(type): error();
+				GRef(type): error();
+				GTypeVar(rid): {
+					gunifyTyvar(env, left, right, onError);
+				}
+				GSubType(rexp): {
+					gunifySubType(env, lexp, rexp, onError);
+				}
+			}
+		}
+	}
+
+	if (env.verbose >= 4)  {
+		printDedent(env.env, "Unify  " + gtype2string(env, left) + " c= " + gtype2string(env, right));
+	}
+
+	nenv;
+}
+
+unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (string) -> void) -> GEnv {
+	if (length(lefts) != length(rights)) {
+		onError("Got " + i2s(length(lefts) + 1) + ", but expected " + i2s(length(rights) + 1));
+		env;
+	} else {
+		foldi(lefts, env, \i, acc, l -> {
+			unifyGType(acc, l, rights[i], onError)
+		})
+	}
+}
+
+gunifyTyvar(env : GEnv, left : GType, right : GType, onError : (string) -> void) -> GEnv {
+	GEnv(
+		env with relations = addSimpleEdge(env.relations, left, right, true, 0);
+	)
+}
+
+gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (string) -> void) -> GEnv {
+	todo = \ -> {
+		printStay(env.env, "TODO: Subtype " + gtype2string(env, GSubType(left)) + " c= " + gtype2string(env, GSubType(right)));
+		env;
+	}
+	switch (left) {
+		GTypeVar(lid): unifyGType(env, left, GSubType(right), onError);
+		GNamed(lname, ltypars): {
+			switch (right) {
+				GNamed(rname, rtypars): {
+					if (lname == rname) {
+						unifyGTypes(env, ltypars, rtypars, onError);
+					} else {
+						// OK, we have to remap the typars across different names,
+						// and then map those
+						todo();
+					}
+				}
+				default: todo();
+			}
+		}
+		GField(lname, ltype): todo();
+		GAnd(lexprs): todo();
+		GOr(lexprs): todo();
+		GBounded(lower, upper): todo();
+		GTopBottom(): todo();
+	}
+}
