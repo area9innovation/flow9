@@ -2,14 +2,19 @@ import tools/flowc/typechecker2/gtype;
 import ds/easygraph_utils;
 import text/blueprint;
 import tools/flowc/typechecker2/gtype_util;
+import tools/flowc/debug;
 
 export {
 	// Resolve the graph
-	resolveGGraph(env : GEnv, name : string) -> GEnv;
+	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
-resolveGGraph(env : GEnv, name : string) -> GEnv {
+resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	graph = env.relations.graph;
+
+	println("Iterate graph");
+
+	// TODO: We only have to do the reachableClosure on unbound tyvars in the graph 
 
 	// What nodes define the upper bound for each node?
 	upperBounds : Tree<int, Set<int>> = reachableClosure(graph);
@@ -18,31 +23,103 @@ resolveGGraph(env : GEnv, name : string) -> GEnv {
 	reverseGraph = reverseEasyGraph(graph);
 	lowerBounds : Tree<int, Set<int>> = reachableClosure(reverseGraph);
 
-	mapTree2(upperBounds, \nodeid, upperIds -> {
-		upper = buildGNodes(env, graph, upperIds);
-		lowerIds = lookupTreeDef(lowerBounds, nodeid, makeSet());
-		lower = buildGNodes(env, graph, lowerIds);
+	unresolved = sizeSet(env.unresolvedTyvars);
 
-		// Combine into a type with tyvars, fixed, lower and upper
-		// and store that for each tyvar.
-		// If multiple tyvars have the same structure, then they can
-		// be unified
-		mnode = lookupTree(graph.nodes, nodeid);
-		switch (mnode) {
-			None(): {}
-			Some(node): {
-				println(gnodes2string(env, lower) + " c= " + gtype2string(env, node.data) + " c= " + gnodes2string(env, upper));
+	nenv = foldSet(env.unresolvedTyvars, env, \acc, tyvarId -> {
+		if (!containsKeyTree(acc.tyvars, tyvarId)) {
+			nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
+			mnode = lookupTree(graph.nodes, nodeid);
+			switch (mnode) {
+				None(): {
+					println("Could not find node for alpha " + i2s(tyvarId));
+					acc;
+				}
+				Some(node): {
+					lowerIds = lookupTreeDef(lowerBounds, nodeid, makeSet());
+					lower = buildGNodes(acc, graph, lowerIds);
+					upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
+					upper = buildGNodes(acc, graph, upperIds);
+					clarifyGTyvar(acc, unify, tyvarId, lower, upper);
+				}
 			}
-		}
-
-		0;
+		} else acc;
 	});
 
-	env;
+	if (sizeSet(nenv.unresolvedTyvars) != unresolved) {
+		resolveGGraph(nenv, name, unify)
+	} else nenv;
+}
+
+// We know this tyvar is unbound
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GNodes, upper : GNodes) -> GEnv {
+	lowerFree = lower == emptyGNodes();
+	upperFree = upper == emptyGNodes();
+
+	if (lowerFree && !upperFree) {
+		setGTyvars(env, unify, tyvar, upper);
+	} else if (!lowerFree && upperFree) {
+		setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, lower);
+	} else if (lowerFree && upperFree) {
+		env;
+	} else {
+		fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
+		// OK, if there are no subtype requirements in either end,
+		// but we have a fixed type somewhere, we can set the entire thing
+		if (isEmptySet(lower.subtypes) 
+			&& isEmptySet(upper.subtypes)
+			&& !isEmptySet(fixed)) {
+			setGTyvars(env, unify, tyvar, GNodes(
+					mergeSets(lower.tyvars, upper.tyvars),
+					fixed,
+					makeSet()
+				)
+			);
+		} else {
+			println("TODO: Can we do something about " + gnodes2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gnodes2string(env, upper));
+			env;
+		}
+	}
+}
+
+setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node : GNodes) -> GEnv {
+	mtype = resolveGNodes(env, node);
+	switch (mtype) {
+		None(): env;
+		Some(type): {
+			foldSet(insertSet(node.tyvars, tyvar), env, \acc, tv -> {
+				if (env.verbose >= 3) {
+					printStay(env.env, "α" + i2s(tv) + " = " + gtype2string(env, type));
+				}
+				nacc = GEnv(
+					acc with
+					tyvars = setTree(acc.tyvars, tv, type),
+					unresolvedTyvars = removeSet(acc.unresolvedTyvars, tv)
+				);
+				unify(nacc, GTypeVar(tv), type)
+			});
+		}
+	}
+}
+
+resolveGNodes(env : GEnv, nodes : GNodes) -> Maybe<GType> {
+	fixed = set2array(nodes.fixedTypes);
+	subtypes = set2array(nodes.subtypes);
+	if (length(fixed) == 1 && subtypes == []) {
+		Some(fixed[0]);
+	} else if (length(subtypes) == 1 && fixed == []) {
+		Some(GSubType(subtypes[0]));
+	} else {
+		println("TODO: Resolve " + gnodes2string(env, nodes));
+		None();
+	}
+}
+
+emptyGNodes() -> GNodes {
+	GNodes(makeSet(), makeSet(), makeSet())
 }
 
 buildGNodes(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GNodes {
-	foldSet(nodes, GNodes(makeSet(), makeSet(), makeSet()), \acc : GNodes, nodeid : int -> {
+	foldSet(nodes, emptyGNodes(), \acc : GNodes, nodeid : int -> {
 		mnode = lookupTree(graph.nodes, nodeid);
 		switch (mnode) {
 			None(): acc; // Not supposed to happen
@@ -61,15 +138,22 @@ addGTypeToGNodes(env : GEnv, acc : GNodes, tt : GType) -> GNodes {
 		GArray(type): fixed();
 		GRef(type): fixed();
 		GTypeVar(id): {
-			// TODO: If the tyvar is defined, we should put it to fixedTypes
-			GNodes(acc with tyvars = insertSet(acc.tyvars, id));
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): {
+					GNodes(acc with tyvars = insertSet(acc.tyvars, id));
+				}
+				Some(type): {
+					// If the tyvar is defined, we should put it to fixedTypes
+					GNodes(acc with fixedTypes = insertSet(acc.fixedTypes, type));
+				}
+			}
 		}
 		GSubType(expr): GNodes(acc with subtypes = insertSet(acc.subtypes, expr));
 	}
 }
 
 GNodes(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
-
 
 gnodes2string(env : GEnv, g : GNodes) -> string {
 	"{"
