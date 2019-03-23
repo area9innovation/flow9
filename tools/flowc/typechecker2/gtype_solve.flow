@@ -10,6 +10,24 @@ export {
 	gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> GEnv;
 }
 
+/*
+This works using a few passes algorithm:
+First, recursively deconstruct all relations based on the expectations and build a graph
+of requirements for each tyvar.
+Then, for each tyvar, figure out how to resolve it.
+
+
+Run with something like
+
+	flowcpp tools/flowc/flowc.flow -- test=1 incremental=0 gtype=1 >out.flow
+
+and then
+
+	mkdot
+
+to produce the graphviz relations
+*/
+
 gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv) -> GEnv {
 	expects = reverseList(^(env.local.expects));
 
@@ -344,13 +362,85 @@ gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (
 	}
 }
 
+// We know the names are different, and that the right name is supposed to be a union.
 gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -> void) -> GEnv {
-	// OK, we have to remap the typars across different names,
-	// and then map those
-	printStay(env.env, "TODO: Check subtypes andrRemap polymorphism between " + gtype2string(env, GSubType(left)) + " c= " + gtype2string(env, GSubType(right)));
+	// From the name of a union to the structs, uninstantiated
+	typenames : [FcTypeName] = union2typenames(env.env, right.name);
 
-	// TODO: We should traverse the graph of structs and unions and see if there is a path between
-	// these nodes. If so, they are in a subtyping relation.
+	mstruct = find(typenames, \tn -> tn.name == left.name);
+	switch (mstruct) {
+		None(): {
+			onError("Expected " + gtype2string(env, GSubType(left)) + " to be part of " + gtype2string(env, GSubType(right)));			
+			env;
+		}
+		Some(ustruct): {
+			// The struct as it appears in the union. Let us remap typars from the union to the struct
+			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
+			// And then subtype with our struct
+			unifyAndRecurseGType(env, GSubType(left), istruct, onError);
+		}
+	}
+}
 
-	env;
+// We known that master is a union, and we want the instantiated struct which we know is part of it
+ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, onError : (string) -> void) -> GType {
+	munion = lookupTree(env.env.program.acc.names.unions, master.name);
+	switch (munion) {
+		None(): {
+			onError("Expected " + master.name + " to be a union");
+			GSubType(GNamed(ustruct.name, []));
+		}
+		Some(union): {
+			// Take the union def and map the typars
+			typars = foldi(union.typeparameters, makeTree(), \i, acc, tp -> {
+				setTree(acc, strLeft("????????????", i + 1), tp)
+			});
+			// Now we make a struct with typar names that correspond to the unions
+			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
+			gtype = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+
+			// Now, instantiate the typars in this gtype
+			gtypars = foldi(master.typars, makeTree(), \i, acc, tp -> {
+				setTree(acc, strLeft("????????????", i + 1), tp)
+			});
+			instantiateGTypePars(env, gtypars, gtype, onError);
+		}
+	}
+}
+
+instantiateGTypePars(env : GEnv, typars : Tree<string, GType>, type : GType, onError : (string) -> void) -> GType {
+	switch (type) {
+		GBasicType(t): type;
+		GFlow(): type;
+		GTypePar(id): lookupTreeDef(typars, id, type);
+		GFunction(args, rt): {
+			GFunction(instantiateGTypesPars(env, typars, args, onError), instantiateGTypePars(env, typars, rt, onError))
+		}
+		GArray(atype): GArray(instantiateGTypePars(env, typars, atype, onError));
+		GRef(rtype): GArray(instantiateGTypePars(env, typars, rtype, onError));
+		GTypeVar(id): type;
+		GSubType(expr): GSubType(instantiateGSubTypePars(env, typars, expr, onError));
+	}
+}
+
+instantiateGTypesPars(env : GEnv, typars : Tree<string, GType>, types : [GType], onError : (string) -> void) -> [GType] {
+	map(types, \t -> {
+		instantiateGTypePars(env, typars, t, onError)
+	})
+}
+
+instantiateGSubTypePars(env : GEnv, typars : Tree<string, GType>, expr : GSubTypeExpr, onError : (string) -> void) -> GSubTypeExpr {
+	todo = \ -> {
+		println("TODO: Instantiate");
+		expr;
+	}
+	switch (expr) {
+		GTypeVar(id): expr;
+		GNamed(name, ntypars): GNamed(name, instantiateGTypesPars(env, typars, ntypars, onError));
+		GField(name, type): GField(name, instantiateGTypePars(env, typars, type, onError));
+		GAnd(exprs): todo();
+		GOr(exprs):  todo();
+		GBounded(lower, upper):  todo();
+		GTopBottom():  todo();
+	}
 }
