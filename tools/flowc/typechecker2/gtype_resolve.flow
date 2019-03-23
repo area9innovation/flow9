@@ -1,0 +1,94 @@
+import tools/flowc/typechecker2/gtype;
+import ds/easygraph_utils;
+import text/blueprint;
+import tools/flowc/typechecker2/gtype_util;
+
+export {
+	// Resolve the graph
+	resolveGGraph(env : GEnv, name : string) -> GEnv;
+}
+
+resolveGGraph(env : GEnv, name : string) -> GEnv {
+	graph = env.relations.graph;
+
+	// What nodes define the upper bound for each node?
+	upperBounds : Tree<int, Set<int>> = reachableClosure(graph);
+
+	// What nodes define the lower bounds for each node?
+	reverseGraph = reverseEasyGraph(graph);
+	lowerBounds : Tree<int, Set<int>> = reachableClosure(reverseGraph);
+
+	mapTree2(upperBounds, \nodeid, upperIds -> {
+		upper = buildGNodes(env, graph, upperIds);
+		lowerIds = lookupTreeDef(lowerBounds, nodeid, makeSet());
+		lower = buildGNodes(env, graph, lowerIds);
+
+		// Combine into a type with tyvars, fixed, lower and upper
+		// and store that for each tyvar.
+		// If multiple tyvars have the same structure, then they can
+		// be unified
+		mnode = lookupTree(graph.nodes, nodeid);
+		switch (mnode) {
+			None(): {}
+			Some(node): {
+				println(gnodes2string(env, lower) + " c= " + gtype2string(env, node.data) + " c= " + gnodes2string(env, upper));
+			}
+		}
+
+		0;
+	});
+
+	env;
+}
+
+buildGNodes(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GNodes {
+	foldSet(nodes, GNodes(makeSet(), makeSet(), makeSet()), \acc : GNodes, nodeid : int -> {
+		mnode = lookupTree(graph.nodes, nodeid);
+		switch (mnode) {
+			None(): acc; // Not supposed to happen
+			Some(node): addGTypeToGNodes(env, acc, node.data);
+		}
+	});
+}
+
+addGTypeToGNodes(env : GEnv, acc : GNodes, tt : GType) -> GNodes {
+	fixed = \ -> GNodes(acc with fixedTypes = insertSet(acc.fixedTypes, tt));
+	switch (tt) {
+		GBasicType(t): fixed();
+		GFlow(): fixed();
+		GTypePar(id): fixed();
+		GFunction(args, rt): fixed();
+		GArray(type): fixed();
+		GRef(type): fixed();
+		GTypeVar(id): {
+			// TODO: If the tyvar is defined, we should put it to fixedTypes
+			GNodes(acc with tyvars = insertSet(acc.tyvars, id));
+		}
+		GSubType(expr): GNodes(acc with subtypes = insertSet(acc.subtypes, expr));
+	}
+}
+
+GNodes(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
+
+
+gnodes2string(env : GEnv, g : GNodes) -> string {
+	"{"
+	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
+	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
+	+ " : " + superglue(set2array(g.subtypes), \st -> gtype2string(env, GSubType(st)), ", ")
+	+ "}"
+}
+
+isGTypeResolved(tt : GType) -> bool {
+	switch (tt) {
+		GBasicType(t): true;
+		GFlow(): true;
+		GTypePar(id): true;
+		GFunction(args, rt): forall(args, isGTypeResolved) && isGTypeResolved(rt);
+		GArray(type): isGTypeResolved(type);
+		GRef(type): isGTypeResolved(type);
+		GTypeVar(id): false;
+		GSubType(expr): false;
+	}
+}
+
