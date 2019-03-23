@@ -1,11 +1,15 @@
 import tools/flowc/typechecker2/gtype_util;
 import tools/flowc/typechecker2/gtype_resolve;
 import tools/flowc/typechecker2/fctype2gtype;
+import tools/flowc/typechecker2/gtype2fctype;
+import tools/flowc/typechecker/combine_types;
 import tools/flowc/fcexp_description;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
 import tools/flowc/typechecker/type_expect_helpers;
 import ds/easygraph_utils;
+
+import tools/flowc/typechecker/solve_expectations;
 
 export {
 	// This resolves the constraints
@@ -124,13 +128,30 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 
 	// Now, we have loop-free graph with the same semantics as before, but fewer edges
 
+	// Make sure all unresolve tyvars are in the graph 
+	ge1c = GEnv(
+		ge1b with relations = foldSet(ge1b.unresolvedTyvars, ge1b.relations, \acc, tv -> {
+			if (containsKeyTree(ge1b.tyvars, tv)) {
+				acc;
+			} else {
+				addSimpleNode(acc, GTypeVar(tv))
+			}
+		});
+	);
+
 	// Go ahead and resolve it
-	ge2 = resolveGGraph(ge1b, name, \e, l, u -> {
+	ge2 = resolveGGraph(ge1c, name, \e, l, u -> {
 		unifyGType(e, l, u, \err -> {
 			// TODO: We could keep a map from tyvar to position and use that for
 			// smarter error reporting based on tyvars
 			addFcTypeError(env.program, FcError(name + ": " + err, [pos]));
 		})
+	});
+
+	// Now, set the tyvars in the environment
+	foldTree(ge2.tyvars, env, \tv, type, acc -> {
+		setTyvar(acc, tv, gtype2fctype(ge2, type));
+		acc;
 	});
 
 	if (ge2.verbose >= 2) {
@@ -153,7 +174,23 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 				{}
 			}
 		}
+
 	}
+
+	// Run the final checks
+	onError2 = \m, is -> {
+		addFcTypeError(ge2.env.program, FcError(name + ": " + m, map(is, \i -> {
+				FcPosition(pos.file, i.start, i.end)
+			})
+		));
+	};
+	applyList(^(ge2.env.local.checks), \e -> {
+		checkFinalTypeExpect(ge2.env, e, onError2);
+	});
+
+	// And we have resolved all expectations
+	ge2.env.local.expects := makeList();
+	ge2.env.local.checks := makeList();
 
 	ge2;
 }
@@ -353,13 +390,10 @@ unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (int, strin
 }
 
 gunifyTyvar(env : GEnv, left : GType, right : GType, onError : (string) -> void) -> GEnv {
-	addTyvar = \ut, t -> switch (t) {
-		GTypeVar(id): insertSet(ut, id);
-		default: ut;
-	}
+	addTyvars = \ut, t -> extractGTypeVars(env, t, ut);
 	GEnv(
 		env with 
-		unresolvedTyvars = addTyvar(addTyvar(env.unresolvedTyvars, left), right),
+		unresolvedTyvars = addTyvars(addTyvars(env.unresolvedTyvars, left), right),
 		relations = addSimpleEdge(env.relations, left, right, true, 0);
 	)
 }

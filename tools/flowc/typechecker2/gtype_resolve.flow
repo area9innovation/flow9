@@ -25,49 +25,70 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 
 	unresolved = sizeSet(env.unresolvedTyvars);
 
-	nenv = foldSet(env.unresolvedTyvars, env, \acc, tyvarId -> {
-		if (!containsKeyTree(acc.tyvars, tyvarId)) {
-			nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
-			mnode = lookupTree(graph.nodes, nodeid);
-			switch (mnode) {
-				None(): {
-					println("Could not find node for alpha " + i2s(tyvarId));
-					acc;
-				}
-				Some(node): {
-					lowerIds = lookupTreeDef(lowerBounds, nodeid, makeSet());
-					lower = buildGNodes(acc, graph, lowerIds);
-					upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
-					upper = buildGNodes(acc, graph, upperIds);
-					clarifyGTyvar(acc, unify, tyvarId, lower, upper);
+	nenv = foldTree(lowerBounds, env, \nodeid, lowerIds, acc -> {
+		mnode = lookupTree(graph.nodes, nodeid);
+		switch (mnode) {
+			None(): {
+				println("Could not find node " + i2s(nodeid));
+				acc;
+			}
+			Some(node): {
+				type = node.data;
+				switch (type) {
+					GTypeVar(tyvarId): {
+						if (!containsKeyTree(acc.tyvars, tyvarId)) {
+							lower = buildGNodes(acc, graph, lowerIds);
+							upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
+							upper = buildGNodes(acc, graph, upperIds);
+							clarifyGTyvar(acc, unify, tyvarId, lower, upper);
+						} else {
+							acc;
+						}
+					}
+					default: {
+						acc;
+					}
 				}
 			}
-		} else acc;
+		}
 	});
 
 	if (sizeSet(nenv.unresolvedTyvars) != unresolved) {
 		resolveGGraph(nenv, name, unify)
-	} else nenv;
+	} else {
+		nenv;
+	}
 }
 
 // We know this tyvar is unbound
 clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GNodes, upper : GNodes) -> GEnv {
-	lowerFree = lower == emptyGNodes();
-	upperFree = upper == emptyGNodes();
+	lowerFree = isGNodesUnconstrained(env, lower);
+	upperFree = isGNodesUnconstrained(env, upper);
 
 	if (lowerFree && !upperFree) {
 		setGTyvars(env, unify, tyvar, upper);
 	} else if (!lowerFree && upperFree) {
 		setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, lower);
 	} else if (lowerFree && upperFree) {
-		env;
+		// OK, these tyvars are all identical and should be bound
+		// to the next free typar
+		tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
+		resolveGTypeVarToTyPar(env, tyvars);
 	} else {
+		// OK, check if it is fixed
 		fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
-		// OK, if there are no subtype requirements in either end,
-		// but we have a fixed type somewhere, we can set the entire thing
-		if (isEmptySet(lower.subtypes) 
-			&& isEmptySet(upper.subtypes)
+	
+		// If the upper and lower types are fully contained in the fixed,
+		// we are good.
+		lowerMissing = differenceSets(mapSet(lower.subtypes, \s -> GSubType(s)), fixed);	
+		upperMissing = differenceSets(mapSet(upper.subtypes, \s -> GSubType(s)), fixed);	
+
+		if (isEmptySet(lowerMissing) 
+			&& isEmptySet(upperMissing)
 			&& !isEmptySet(fixed)) {
+
+			// OK, if there are no outsanding subtype requirements in either end,
+			// but we have a fixed type somewhere, we can set the entire thing
 			setGTyvars(env, unify, tyvar, GNodes(
 					mergeSets(lower.tyvars, upper.tyvars),
 					fixed,
@@ -79,6 +100,37 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 			env;
 		}
 	}
+}
+
+// Set all these tyvars to the next free typar
+resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
+	// Find the next free type par
+	typars = foldTree(env.tyvars, makeSet(), \tv, type, acc -> {
+		extractGTypePars(env, type, acc)
+	});
+	mtypar = popMaxSet(typars);
+	lasttypar = eitherMap(mtypar, \r -> r.value, "");
+	typar = GTypePar(lasttypar + "?");
+
+	// Now, set all tyvars to this typar		
+	foldSet(tyvars, env, \acc, tv -> {
+		if (env.verbose >= 3) {
+			printStay(env.env, "α" + i2s(tv) + " = " + gtype2string(env, typar));
+		}
+		GEnv(
+			acc with
+			tyvars = setTree(acc.tyvars, tv, typar),
+			unresolvedTyvars = removeSet(acc.unresolvedTyvars, tv)
+		);
+	});
+
+}
+
+isGNodesUnconstrained(env : GEnv, node : GNodes) -> bool {
+	isEmptySet(node.fixedTypes) && isEmptySet(node.subtypes)
+	&& foldSet(node.tyvars, true, \acc, tv -> {
+		acc && !containsKeyTree(env.tyvars, tv)
+	})
 }
 
 setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node : GNodes) -> GEnv {
