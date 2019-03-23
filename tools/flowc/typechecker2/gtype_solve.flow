@@ -25,7 +25,9 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		if (true) 3 else if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
 		typars, 
 		makeSet(), 
-		makeSimpleGraph()
+		makeSet(),
+		makeSimpleGraph(),
+		makeSimpleGraph(),
 	);
 
 	if (be.verbose >= 2)  {
@@ -67,31 +69,15 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 			}
 			FcExpectField(field, ftype, t, info, ex): {
 				struct = getResolvedFcType(env, t);
-				// Some unnamed struct or union
-				/*
-				fields = FFields([
-					FField(field, fctype2gtype(env, tyvarIdGroup, GType), FGetField())
-				], makeSet(), makeSet());
-				oe = \m -> onError(m, info, "." + field);
-
 				st = fctype2gtype(env, tyvarIdGroup, struct);
-
-				et = unifyGType(restricted.env, fields, st, oe);
-				et.env;*/
-				println("TODO");
-				acc;
+				gfield = GSubType(GField(field, fctype2gtype(env, tyvarIdGroup, ftype)));
+				unifyGType(acc, gfield, st, \m -> onError(m, info, ""));
 			}
 			FcSetMutableField(stype, field, ftype, info): {
 				st = fctype2gtype(acc.env, tyvarIdGroup, stype);
 				ft = fctype2gtype(acc.env, tyvarIdGroup, ftype);
-
-/*				rt = FFields([FField(field, ft, FSetField())], makeSet(), makeSet());
-
-				et = unifyGType(acc, st, rt, \m -> onError(m, info, "set mutable"));
-				et.env;
-*/
-				println("TODO");
-				acc;
+				gfield = GSubType(GField(field, ft));
+				unifyGType(acc, st, gfield, \m -> onError(m, info, "set mutable"));
 			}
 		}
 		if (solveDebug) {
@@ -101,23 +87,31 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	});
 
 	if (be2.verbose >= 2) {
-		println("Result:");
+/*		println("Result:");
 		traverseInOrder(be2.tyvars, \tv, type -> {
 			 println("α" + i2s(tv) + " = " + gtype2string(be2, type));
 			 {}
 		});
+*/
+		println("Tyvars: " + toString(set2array(be2.unresolvedTyvars)));
 
 		// Build the relation graph
-		root = GFlow();
+		mroot = popMinSet(be2.unresolvedTyvars);
+		switch (mroot) {
+			None(): {}
+			Some(root): {
+				dot = simpleGraph2dot(be2.relations, GTypeVar(root.value), [], 
+					\n -> [DotLabel(gtype2string(be2, n))], 
+					\e -> []
+				);
+				setFileContent(name + ".dot", dot);
 
-		dot = simpleGraph2dot(addSimpleNode(be2.relations, root), root, [], 
-			\n -> [DotLabel(gtype2string(be2, n))], 
-			\e -> []
-		);
-		setFileContent("relations.dot", dot);
-		command = "dot relations.dot -Tsvg -orelations.svg\n";
-		setFileContent("makedot.bat", command);
-		{}
+				batch = getFileContent("mkdot.bat");
+				batch0 = batch + "dot "+ name + ".dot -Tsvg -o" + name + ".svg\n";
+				setFileContent("mkdot.bat", batch0);
+				{}
+			}
+		}
 	}
 
 	be2;
@@ -311,8 +305,14 @@ unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (string) ->
 }
 
 gunifyTyvar(env : GEnv, left : GType, right : GType, onError : (string) -> void) -> GEnv {
+	addTyvar = \ut, t -> switch (t) {
+		GTypeVar(id): insertSet(ut, id);
+		default: ut;
+	}
 	GEnv(
-		env with relations = addSimpleEdge(env.relations, left, right, true, 0);
+		env with 
+		unresolvedTyvars = addTyvar(addTyvar(env.unresolvedTyvars, left), right),
+		relations = addSimpleEdge(env.relations, left, right, true, 0);
 	)
 }
 
@@ -327,11 +327,10 @@ gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (
 			switch (right) {
 				GNamed(rname, rtypars): {
 					if (lname == rname) {
+						// Do the typars
 						unifyGTypes(env, ltypars, rtypars, onError);
 					} else {
-						// OK, we have to remap the typars across different names,
-						// and then map those
-						todo();
+						gunifyNamedTypes(env, left, right, onError);
 					}
 				}
 				default: todo();
@@ -343,4 +342,15 @@ gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (
 		GBounded(lower, upper): todo();
 		GTopBottom(): todo();
 	}
+}
+
+gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -> void) -> GEnv {
+	// OK, we have to remap the typars across different names,
+	// and then map those
+	printStay(env.env, "TODO: Check subtypes andrRemap polymorphism between " + gtype2string(env, GSubType(left)) + " c= " + gtype2string(env, GSubType(right)));
+
+	// TODO: We should traverse the graph of structs and unions and see if there is a path between
+	// these nodes. If so, they are in a subtyping relation.
+
+	env;
 }
