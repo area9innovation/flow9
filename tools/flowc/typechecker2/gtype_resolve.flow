@@ -56,72 +56,63 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 	}
 }
 
-// We know this tyvar is unbound
+// We know this tyvar is unbound, and we know about all the bounds.
+// See if we can solve it
 clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds) -> GEnv {
-/*	// OK, check if it is fixed
+	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
-	// If the upper and lower types are fully contained in the fixed,
-	// we are good.
-	lowerMissing = differenceSets(mapSet(lower.subtypes, \s -> GSubType(s)), fixed);	
-	upperMissing = differenceSets(mapSet(upper.subtypes, \s -> GSubType(s)), fixed);	
+	if (!isEmptySet(fixed)) {
+		// OK, we have something fixed. Let us go with that
 
-	if (isEmptySet(lowerMissing) 
-		&& isEmptySet(upperMissing)
-		&& !isEmptySet(fixed)) {
-		// There are no outstanding subtype requirements in either end,
-		// but we have a fixed type somewhere, we can set the entire thing
-		setGTyvars(env, unify, tyvar, GBounds(
-				mergeSets(lower.tyvars, upper.tyvars),
-				fixed,
-				makeSet()
-			)
-		);
-	} else {
-		
-	}
-*/
-	lowerFree = isGBoundsUnconstrained(env, lower);
-	upperFree = isGBoundsUnconstrained(env, upper);
-
-	if (lowerFree && !upperFree) {
-		// Upper decides
-		setGTyvars(env, unify, tyvar, upper);
-	} else if (!lowerFree && upperFree) {
-		// Lower decides. We just have to make sure we unify the result backwards
-		setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, lower);
-	} else if (lowerFree && upperFree) {
-		// OK, these tyvars are all identical and should be bound
-		// to the next free typar
-		tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
-		resolveGTypeVarToTyPar(env, tyvars);
-	} else {
-		// OK, check if it is fixed
-		fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
-	
-		// If the upper and lower types are fully contained in the fixed,
-		// we are good.
+		// What remains of the subtypes bounds once the fixed types are removed?
 		lowerMissing = differenceSets(mapSet(lower.subtypes, \s -> GSubType(s)), fixed);	
 		upperMissing = differenceSets(mapSet(upper.subtypes, \s -> GSubType(s)), fixed);	
 
-		if (isEmptySet(lowerMissing) 
-			&& isEmptySet(upperMissing)
-			&& !isEmptySet(fixed)) {
-			// There are no outstanding subtype requirements in either end,
-			// but we have a fixed type somewhere, we can set the entire thing
-			setGTyvars(env, unify, tyvar, GBounds(
-					mergeSets(lower.tyvars, upper.tyvars),
-					fixed,
-					makeSet()
-				)
-			);
-		} else if (isEmptySet(fixed)) {
-			// OK, we only have subtyping constraints
-			resolveGSubtypeBounds(env, unify, tyvar, lower, upper)			
+		if (isEmptySet(lowerMissing) && isEmptySet(upperMissing)) {
+			// OK, some fixed type. If flow is there, we can ignore that
+			sansFlow = removeSet(fixed, GFlow());
+			if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
+				// OK, we have a unique, fixed type
+				setGTyvars(env, unify, tyvar, GBounds(
+						mergeSets(lower.tyvars, upper.tyvars),
+						sansFlow,
+						makeSet()
+					)
+				);
+			} else {
+				// It is not clear yet. Let us unify the lowers with the upppers in an attempt to
+				// uncover more constraints
+				foldSet(lower.fixedTypes, env, \acc, lt -> {
+					foldSet(upper.fixedTypes, acc, \acc2, ut -> {
+						unify(acc2, lt, ut)
+					})
+				})
+			}
 		} else {
 			// This is a mixed bag, so probably this is an error?
 			println("TODO: Can we do something about " + gnodes2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gnodes2string(env, upper));
 			env;
+		}
+	} else {
+		// OK, no fixed
+		lowerFree = isGBoundsUnconstrained(env, lower);
+		upperFree = isGBoundsUnconstrained(env, upper);
+
+		if (lowerFree && upperFree) {
+			// No constraints. Al lof these tyvars are all identical and should be bound
+			// to the next free typar
+			tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
+			resolveGTypeVarToTyPar(env, tyvars);
+		} else if (lowerFree && !upperFree) {
+			// Upper decides to be the subtype
+			setGTyvars(env, unify, tyvar, upper);
+		} else if (!lowerFree && upperFree) {
+			// Lower decides. We just have to make sure we unify the result backwards
+			setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, lower);
+		} else {
+			// OK, we only have subtyping constraints, but from both ends
+			resolveGSubtypeBounds(env, unify, tyvar, lower, upper)			
 		}
 	}
 }
