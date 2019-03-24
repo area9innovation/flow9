@@ -58,6 +58,29 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 
 // We know this tyvar is unbound
 clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds) -> GEnv {
+/*	// OK, check if it is fixed
+	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
+
+	// If the upper and lower types are fully contained in the fixed,
+	// we are good.
+	lowerMissing = differenceSets(mapSet(lower.subtypes, \s -> GSubType(s)), fixed);	
+	upperMissing = differenceSets(mapSet(upper.subtypes, \s -> GSubType(s)), fixed);	
+
+	if (isEmptySet(lowerMissing) 
+		&& isEmptySet(upperMissing)
+		&& !isEmptySet(fixed)) {
+		// There are no outstanding subtype requirements in either end,
+		// but we have a fixed type somewhere, we can set the entire thing
+		setGTyvars(env, unify, tyvar, GBounds(
+				mergeSets(lower.tyvars, upper.tyvars),
+				fixed,
+				makeSet()
+			)
+		);
+	} else {
+		
+	}
+*/
 	lowerFree = isGBoundsUnconstrained(env, lower);
 	upperFree = isGBoundsUnconstrained(env, upper);
 
@@ -92,9 +115,11 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 					makeSet()
 				)
 			);
+		} else if (isEmptySet(fixed)) {
+			// OK, we only have subtyping constraints
+			resolveGSubtypeBounds(env, unify, tyvar, lower, upper)			
 		} else {
-			// TODO: Here, we have to find solutions to a mixed bag, but
-			// the only interesting case is subtypes on either side
+			// This is a mixed bag, so probably this is an error?
 			println("TODO: Can we do something about " + gnodes2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gnodes2string(env, upper));
 			env;
 		}
@@ -122,7 +147,12 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 			unresolvedTyvars = removeSet(acc.unresolvedTyvars, tv)
 		);
 	});
+}
 
+resolveGSubtypeBounds(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds) -> GEnv {
+	println("TODO: Resolve subtype bounds " + gnodes2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gnodes2string(env, upper));
+
+	env;
 }
 
 isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
@@ -132,6 +162,7 @@ isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 	})
 }
 
+// Set all tyvars (also in the bounds) to a resolved type, assuming it exists 
 setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node : GBounds) -> GEnv {
 	mtype = resolveGBounds(env, node);
 	switch (mtype) {
@@ -154,13 +185,29 @@ setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node :
 
 resolveGBounds(env : GEnv, nodes : GBounds) -> Maybe<GType> {
 	fixed = set2array(nodes.fixedTypes);
-	subtypes = set2array(nodes.subtypes);
-	if (length(fixed) == 1 && subtypes == []) {
-		Some(fixed[0]);
-	} else if (length(subtypes) == 1 && fixed == []) {
-		Some(GSubType(subtypes[0]));
+
+	missingSubTypes : Set<GType> = differenceSets(mapSet(nodes.subtypes, \s -> GSubType(s)), nodes.fixedTypes);	
+	subtypes = set2array(missingSubTypes);
+
+	if (fixed != [] && subtypes == []) {
+		// OK, some fixed type
+		if (length(fixed) == 1) {
+			// A single fixed
+			Some(fixed[0]);
+		} else {
+			println("TODO: Resolve fixed conflict " + gnodes2string(env, nodes));
+			None();
+		}
+	} else if (fixed == [] && subtypes != []) {
+		if (length(subtypes) == 1) {
+			// A single subtype
+			Some(subtypes[0]);
+		} else {
+			println("TODO: Find union for " + gnodes2string(env, nodes));
+			None();
+		}
 	} else {
-		println("TODO: Resolve " + gnodes2string(env, nodes));
+		println("TODO: Conflict " + gnodes2string(env, nodes));
 		None();
 	}
 }
