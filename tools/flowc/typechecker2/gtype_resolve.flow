@@ -9,37 +9,33 @@ export {
 	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
+
+// TODO: We only have to do the reachableClosure on unbound tyvars in the graph 
+// TODO: We only have to recalc this when related part of the graph changes
+
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	graph = env.relations.graph;
 
-	println("Iterate graph");
-
-	// TODO: We only have to do the reachableClosure on unbound tyvars in the graph 
-
-	// What nodes define the upper bound for each node?
+	// What nodes define the transitive upper bounds for each node?
 	upperBounds : Tree<int, Set<int>> = reachableClosure(graph);
 
-	// What nodes define the lower bounds for each node?
+	// What nodes define the transitive lower bounds for each node?
 	reverseGraph = reverseEasyGraph(graph);
 	lowerBounds : Tree<int, Set<int>> = reachableClosure(reverseGraph);
 
 	unresolved = sizeSet(env.unresolvedTyvars);
-
 	nenv = foldTree(lowerBounds, env, \nodeid, lowerIds, acc -> {
 		mnode = lookupTree(graph.nodes, nodeid);
 		switch (mnode) {
-			None(): {
-				println("Could not find node " + i2s(nodeid));
-				acc;
-			}
+			None(): acc;
 			Some(node): {
 				type = node.data;
 				switch (type) {
 					GTypeVar(tyvarId): {
 						if (!containsKeyTree(acc.tyvars, tyvarId)) {
-							lower = buildGNodes(acc, graph, lowerIds);
+							lower = buildGBounds(acc, graph, lowerIds);
 							upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
-							upper = buildGNodes(acc, graph, upperIds);
+							upper = buildGBounds(acc, graph, upperIds);
 							clarifyGTyvar(acc, unify, tyvarId, lower, upper);
 						} else {
 							acc;
@@ -61,13 +57,15 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 }
 
 // We know this tyvar is unbound
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GNodes, upper : GNodes) -> GEnv {
-	lowerFree = isGNodesUnconstrained(env, lower);
-	upperFree = isGNodesUnconstrained(env, upper);
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds) -> GEnv {
+	lowerFree = isGBoundsUnconstrained(env, lower);
+	upperFree = isGBoundsUnconstrained(env, upper);
 
 	if (lowerFree && !upperFree) {
+		// Upper decides
 		setGTyvars(env, unify, tyvar, upper);
 	} else if (!lowerFree && upperFree) {
+		// Lower decides. We just have to make sure we unify the result backwards
 		setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, lower);
 	} else if (lowerFree && upperFree) {
 		// OK, these tyvars are all identical and should be bound
@@ -86,16 +84,17 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 		if (isEmptySet(lowerMissing) 
 			&& isEmptySet(upperMissing)
 			&& !isEmptySet(fixed)) {
-
-			// OK, if there are no outsanding subtype requirements in either end,
+			// There are no outstanding subtype requirements in either end,
 			// but we have a fixed type somewhere, we can set the entire thing
-			setGTyvars(env, unify, tyvar, GNodes(
+			setGTyvars(env, unify, tyvar, GBounds(
 					mergeSets(lower.tyvars, upper.tyvars),
 					fixed,
 					makeSet()
 				)
 			);
 		} else {
+			// TODO: Here, we have to find solutions to a mixed bag, but
+			// the only interesting case is subtypes on either side
 			println("TODO: Can we do something about " + gnodes2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gnodes2string(env, upper));
 			env;
 		}
@@ -126,15 +125,15 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 
 }
 
-isGNodesUnconstrained(env : GEnv, node : GNodes) -> bool {
+isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 	isEmptySet(node.fixedTypes) && isEmptySet(node.subtypes)
 	&& foldSet(node.tyvars, true, \acc, tv -> {
 		acc && !containsKeyTree(env.tyvars, tv)
 	})
 }
 
-setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node : GNodes) -> GEnv {
-	mtype = resolveGNodes(env, node);
+setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node : GBounds) -> GEnv {
+	mtype = resolveGBounds(env, node);
 	switch (mtype) {
 		None(): env;
 		Some(type): {
@@ -153,7 +152,7 @@ setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, node :
 	}
 }
 
-resolveGNodes(env : GEnv, nodes : GNodes) -> Maybe<GType> {
+resolveGBounds(env : GEnv, nodes : GBounds) -> Maybe<GType> {
 	fixed = set2array(nodes.fixedTypes);
 	subtypes = set2array(nodes.subtypes);
 	if (length(fixed) == 1 && subtypes == []) {
@@ -166,22 +165,22 @@ resolveGNodes(env : GEnv, nodes : GNodes) -> Maybe<GType> {
 	}
 }
 
-emptyGNodes() -> GNodes {
-	GNodes(makeSet(), makeSet(), makeSet())
+emptyGBounds() -> GBounds {
+	GBounds(makeSet(), makeSet(), makeSet())
 }
 
-buildGNodes(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GNodes {
-	foldSet(nodes, emptyGNodes(), \acc : GNodes, nodeid : int -> {
+buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GBounds {
+	foldSet(nodes, emptyGBounds(), \acc : GBounds, nodeid : int -> {
 		mnode = lookupTree(graph.nodes, nodeid);
 		switch (mnode) {
 			None(): acc; // Not supposed to happen
-			Some(node): addGTypeToGNodes(env, acc, node.data);
+			Some(node): addGTypeToGBounds(env, acc, node.data);
 		}
 	});
 }
 
-addGTypeToGNodes(env : GEnv, acc : GNodes, tt : GType) -> GNodes {
-	fixed = \ -> GNodes(acc with fixedTypes = insertSet(acc.fixedTypes, tt));
+addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
+	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, tt));
 	switch (tt) {
 		GBasicType(t): fixed();
 		GFlow(): fixed();
@@ -193,21 +192,23 @@ addGTypeToGNodes(env : GEnv, acc : GNodes, tt : GType) -> GNodes {
 			mtype = lookupTree(env.tyvars, id);
 			switch (mtype) {
 				None(): {
-					GNodes(acc with tyvars = insertSet(acc.tyvars, id));
+					GBounds(acc with tyvars = insertSet(acc.tyvars, id));
 				}
 				Some(type): {
 					// If the tyvar is defined, we should put it to fixedTypes
-					GNodes(acc with fixedTypes = insertSet(acc.fixedTypes, type));
+					GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, type));
 				}
 			}
 		}
-		GSubType(expr): GNodes(acc with subtypes = insertSet(acc.subtypes, expr));
+		GSubType(expr): GBounds(acc with subtypes = insertSet(acc.subtypes, expr));
 	}
 }
 
-GNodes(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
+// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
+// The tyvars are all known to be unbound.
+GBounds(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
 
-gnodes2string(env : GEnv, g : GNodes) -> string {
+gnodes2string(env : GEnv, g : GBounds) -> string {
 	"{"
 	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
 	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
