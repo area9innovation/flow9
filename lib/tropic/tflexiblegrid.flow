@@ -5,13 +5,10 @@ import form/gui;
 
 export {
 	TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic;
-		TFlexibleGridStyle ::= TWrapNewRow, TWrapNewColumn, TVertical, TMaxRows, TCropView,
-			CenterAlign, EndAlign, TAnimation, TOrder, TEnabled;
-
-			TWrapNewRow(); // New row should be below all the elements in the previous one
-			TWrapNewColumn(); // New column should be to the right of all the elements in the previous one
-			TVertical(); // Pack elements vertically and bound them with available height
-			TMaxRows(rows : int); // Max elements in a first column (Max elements in a first row if TVertical is passed)
+		TFlexibleGridStyle ::= TGroupByCols, TOrdered, TVertical, TCropView, CenterAlign, EndAlign, TAnimation, TOrder, TEnabled;
+			TGroupByCols(); // "TGroupByLines" in case with TVertical
+			TOrdered(newLine : bool); // Lines (Cols in case with TVertical) won't overlap if newLine is true
+			TVertical();
 			TCropView(); // Crop grid size by items sizes
 			TAnimation(deltaTimer : LazyDeltaTimer);
 			TOrder(order : Transform<[int]>);
@@ -20,44 +17,24 @@ export {
 TFlexibleGridItem(t : Tropic, tr : DynamicBehaviour<Point>, wh : DynamicBehaviour<Maybe<WidthHeight>>);
 
 TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Tropic {
-	wrapNewRow = contains(style, TWrapNewRow());
-	wrapNewColumn = contains(style, TWrapNewColumn());
+	groupByCols = contains(style, TGroupByCols());
 	order = tryExtractStruct(style, TOrder(const([])));
+	orderedGrid = maybeMap(tryExtractStruct(style, TOrdered(false)), \o -> o.newLine);
 	verticalGrid = contains(style, TVertical());
 	cropView = contains(style, TCropView());
 	gridEnabled = extractStruct(style, TEnabled(const(true))).enabled;
 	animation = tryExtractStruct(style, TAnimation(LazyDeltaTimer(make(0.0), nop, nop)));
-	maxRows = maybeMap(tryExtractStruct(style, TMaxRows(0)), \mr -> mr.rows);
 
+	contentSize = makeWH();
 	contentBaseline = make(0.);
 	stageSizeB = make(0.);
-	itemsB = fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint), make(None())));
-	contentSize =
-		fselect2(
-			fsubmap(itemsB, \it -> it.wh),
-			fsubmap(itemsB, \it -> it.tr),
-			FLift2(\wh, tr ->
-				foldi(wh, WidthHeight(0.0, 0.0), \i, acc, v ->
-					if (i < length(tr))
-						WidthHeight(
-							max(acc.width, either(v, WidthHeight(0., 0.)).width + tr[i].x),
-							max(acc.height, either(v, WidthHeight(0., 0.)).height + tr[i].y)
-						)
-					else
-						acc
-				)
-			)
-		);
-	parameters =
-		BFParameters(
-			wrapNewRow,
-			wrapNewColumn,
-			isSome(order),
-			verticalGrid,
-			eitherMap(maxRows, \og -> Some(og), None()),
-		);
+	itemsB = ffuseinit(fmapi(items, \__, it -> TFlexibleGridItem(it, make(zeroPoint), make(None()))), make([]));
 
-	SelectTGroup(itemsB, \idx, __, item -> {
+	prevSize : ref double = ref getValue(stageSizeB);
+	prevSizes : ref [Maybe<WidthHeight>] = ref [];
+	prevTranslates : ref [Pair<Point, Point>] = ref [];
+
+	SelectTGroup(itemsB.first, \idx, __, item -> {
 		TransformTAcc2(\t2a -> {
 				b1 =
 					eitherMap(
@@ -167,29 +144,45 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 		TConstruct(
 			[
 				make2Subscribe(
-					fselect2(
-						fsubmap(eitherMap(order, \or -> forder(itemsB, or.order), itemsB), \it -> it.wh),
-						ftransistor(gridEnabled, stageSizeB),
-						FLift2(\itemsSizes, stageSize ->
-							if (!contains(itemsSizes, None())) {
-								blocks = map(itemsSizes, \sz -> either(sz, WidthHeight(0., 0.)) |> (\wh -> BFBlock(wh.width, wh.height)));
+					eitherFn(
+						order,
+						\or -> forder(fsubmap(itemsB.first, \it -> it.wh), or.order),
+						\ -> fsubmap(itemsB.first, \it -> it.wh)
+					),
+					ftransistor(gridEnabled, stageSizeB),
+					\itemsSizes, stageSize -> {
+						if (!contains(itemsSizes, None())) {
+							gridItems = eitherFn(order, \or -> fgetValue(forder(itemsB.first, or.order)), \ -> getValue(itemsB.first));
+							blocks = map(itemsSizes, \sz -> either(sz, WidthHeight(0., 0.)) |> (\wh -> BPBlock(wh.width, wh.height)));
 
-								bfFit(stageSize, blocks, parameters)
-							} else {
-								[];
-							}
-						)
-					)
-					|> (\tr -> eitherMap(order, \or -> fdeorder(tr, or.order), tr)),
-					itemsB,
-					\tr, gridItems -> {
-						iteri(tr, \i, p ->
-							if (length(gridItems) > i) {
-								nextDistinct(gridItems[i].tr, either(p, Point(0., 0.)));
-							}
-						);
-					}
-				)
+							root = if (verticalGrid) BPRoot(0., 0., 0., stageSize, []) else BPRoot(0., 0., stageSize, 0., []);
+							parameters =
+								BPParameters(
+									groupByCols,
+									eitherFn(orderedGrid, \og -> Some(og), \ -> if (length(uniq(itemsSizes)) == 1) Some(true) else None()),
+									verticalGrid
+								);
+
+							iteri(bpFit(root, blocks, parameters), \i, tr -> nextDistinct(gridItems[i].tr, either(tr, Point(0., 0.))));
+							next(
+								contentSize,
+								foldi(blocks, WidthHeight(0., 0.), \i, acc, b ->
+									WidthHeight(
+										max(acc.width, b.w + getValue(gridItems[i].tr).x),
+										max(acc.height, b.h + getValue(gridItems[i].tr).y)
+									)
+								)
+							);
+						}
+				})
+			],
+			f
+		)
+	)
+	|> (\f ->
+		TConstruct(
+			[
+				itemsB.second
 			],
 			f
 		)
@@ -202,26 +195,29 @@ TFlexibleGrid(items : Transform<[Tropic]>, style : [TFlexibleGridStyle]) -> Trop
 	)
 }
 
-BFBlock(w : double, h : double);
-BFState(l : [Point], s : double, p : Tree<int, Pair<BFBlock, Point>>);
-BFParameters(
-	wrapNewRow : bool,
-	wrapNewColumn : bool,
-	ordered : bool,
-	vertical : bool,
-	maxRows : Maybe<int>
+BPRoot(x : double, y : double, w : double, h : double, c : [BPRoot]);
+BPBlock(w : double, h : double);
+BPState(r : BPRoot, p : Tree<int, Pair<BPBlock, Point>>);
+
+BPParameters(
+	groupByCols : bool,
+	ordered : Maybe<bool>,
+	vertical : bool
 );
 
-bfFit(size : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
-	sz = max(size, either(maxA(map(blocks, \b -> if (par.vertical) b.h else b.w)), 0.0));
+// Binary packing algorithm
+bpFit(root : BPRoot, blocks : [BPBlock], par : BPParameters) -> [Maybe<Point>] {
+	if (isSome(par.ordered)) {
+		wh =
+			if (par.vertical)
+				WidthHeight(doubleMax, max(root.h, either(maxA(map(blocks, \b -> b.h)), 0.0)))
+			else
+				WidthHeight(max(root.w, either(maxA(map(blocks, \b -> b.w)), 0.0)), doubleMax);
 
-	if (par.ordered) {
-		state = bfFitBlocks([Point(0.0, 0.0)], sz, blocks, par);
-
-		generate(0, length(blocks), \i -> maybeMap(lookupTree(state.p, i), \p -> p.second));
+		bpFitBlocks(BPRoot(root.x, root.y, wh.width, wh.height, root.c), blocks, par);
 	} else {
 		blocksI =
-			mergeSort(mapi(blocks, \i, b -> Pair(i, b)), \a : Pair<int, BFBlock>, b : Pair<int, BFBlock> ->
+			mergeSort(mapi(blocks, \i, b -> Pair(i, b)), \a : Pair<int, BPBlock>, b : Pair<int, BPBlock> ->
 				if (par.vertical) {
 					if (a.second.h == b.second.h)
 						b2i(a.second.w < b.second.w)
@@ -237,11 +233,15 @@ bfFit(size : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
 
 		orderI = map(blocksI, \b -> b.first);
 
-		state = bfFitBlocks([Point(0.0, 0.0)], sz, map(blocksI, secondOfPair), par);
+		wh =
+			if (par.vertical)
+				WidthHeight(blocksI[0].second.w, max(blocksI[0].second.h, root.h))
+			else
+				WidthHeight(max(blocksI[0].second.w, root.w), blocksI[0].second.h);
 
 		getTreeValues(
 			foldi(
-				generate(0, length(blocks), \i -> maybeMap(lookupTree(state.p, i), \p -> p.second)),
+				bpFitBlocks(BPRoot(root.x, root.y, wh.width, wh.height, root.c), map(blocksI, secondOfPair), par),
 				makeTree(),
 				\i, acc, tr -> setTree(acc, orderI[i], tr)
 			)
@@ -249,228 +249,197 @@ bfFit(size : double, blocks : [BFBlock], par : BFParameters) -> [Maybe<Point>] {
 	}
 }
 
-bfFitBlocks(line : [Point], size : double, blocks : [BFBlock], par : BFParameters) -> BFState {
-	foldi(blocks, BFState(line, size, makeTree()), \i, acc, block -> {
-		state = bfFindNode(i, acc, block, par);
+bpFitBlocks(root : BPRoot, blocks : [BPBlock], par : BPParameters) -> [Maybe<Point>] {
+	points = foldi(blocks, BPState(root, makeTree()), \i, state, block -> {
+		newState = bpFindNode(i, state, block, par);
 
-		if (state.s > acc.s)
-			bfFitBlocks(line, state.s, subrange(blocks, 0, i + 1), par)
-		else
-			state;
-	});
+		if (isNone(lookupTree(newState.p, i))) {
+			bpGrowNode(i, newState, block, par);
+		} else {
+			newState;
+		}
+	}).p;
+
+	generate(0, length(blocks), \i -> maybeMap(lookupTree(points, i), \p -> p.second));
 }
 
-bfFindNode(i : int, state : BFState, block : BFBlock, par : BFParameters) -> BFState {
-	p =
-		fold(enumFromTo(0, length(state.l) - 1), Point(doubleMax, doubleMax), \acc, l -> {
-			if (par.vertical) {
-				if (state.l[l].y <= state.s - block.h) {
-					p = getBFLinePoint(state.l, l, block, par);
+bpFindNode(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
+	if (length(state.r.c) > 0) {
+		if (isSome(par.ordered)) {
+			p = ref state.p;
 
-					if (p.x < acc.x && checkBFMaxRows(state, block, p, par)) {
-						p;
+			newChildren =
+				map(state.r.c, \c -> {
+					if (isNone(lookupTree(^p, i))) {
+						newState = bpFindNode(i, BPState(c, ^p), block, par);
+						p := newState.p;
+						newState.r.c;
 					} else {
-						acc;
+						[c];
 					}
-				} else {
-					acc;
-				}
-			} else {
-				if (state.l[l].x <= state.s - block.w) {
-					p = getBFLinePoint(state.l, l, block, par);
+				})
+				|> concatA
+				|> (\newChildren -> bpFilterRoots(newChildren, BPState(state.r, ^p), par));
 
-					if (p.y < acc.y && checkBFMaxRows(state, block, p, par)) {
-						p;
+			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
+		} else {
+			p = ref state.p;
+
+			newChildren =
+				map(state.r.c, \c -> {
+					if (isNone(lookupTree(^p, i))) {
+						newState = bpFindNode(i, BPState(c, ^p), block, par);
+						p := newState.p;
+						newState.r;
 					} else {
-						acc;
+						c;
 					}
-				} else {
-					acc;
-				}
-			}
-		});
+				});
 
-	if (p == Point(doubleMax, doubleMax)) {
+			BPState(BPRoot(state.r.x, state.r.y, state.r.w, state.r.h, newChildren), ^p);
+		}
+	} else if (state.r.w >= block.w && state.r.h >= block.h && (isNone(par.ordered) || !bpCheckIntersect(state, block))) {
+		BPState(bpSplitNode(state.r, block, par), setTree(state.p, i, Pair(block, Point(state.r.x, state.r.y))));
+	} else {
+		state;
+	}
+}
+
+bpFilterRoots(roots : [BPRoot], state : BPState, par : BPParameters) -> [BPRoot] {
+	lastMetric = ref 0.;
+	maxMetric = foldTree(state.p, Pair(0.0, 0.0), \k, v, acc ->
 		if (par.vertical) {
-			maxY = foldTree(state.p, 0.0, \k, v, acc -> if (v.second.y + v.first.h > acc) v.second.y + v.first.h else acc);
+			lastMetric := v.second.y;
 
-			BFState(state.l, maxY + block.h, state.p);
+			Pair(max(v.second.x, acc.first), max(v.second.x + v.first.w, acc.second))
 		} else {
-			maxX = foldTree(state.p, 0.0, \k, v, acc -> if (v.second.x + v.first.w > acc) v.second.x + v.first.w else acc);
+			lastMetric := v.second.x;
 
-			BFState(state.l, maxX + block.w, state.p);
+			Pair(max(v.second.y, acc.first), max(v.second.y + v.first.h, acc.second))
 		}
-	} else {
-		BFState(updateBFLine(state, block, p, par), state.s, setTree(state.p, i, Pair(block, p)));
-	}
-}
+	);
 
-updateBFLine(state : BFState, block : BFBlock, point : Point, par : BFParameters) -> [Point] {
-	(if (par.vertical) {
-		i = ref 0;
-		lastX = ref 0.0;
-
-		filter(state.l, \l ->
-			if (l.y <= point.y + block.h) {
-				lastX := l.x;
-
-				if (l.y < point.y) {
-					i := ^i + 1;
-
-					true;
-				} else {
-					false;
-				}
-			} else {
-				true;
-			}
-		)
-		|> (\ln -> {
-			insertArray(
-				insertArray(
-					ln,
-					^i,
-					Point(^lastX, point.y + block.h)
-				),
-				^i,
-				Point(point.x + block.w, point.y)
-			)
-		});
-	} else {
-		i = ref 0;
-		lastY = ref 0.0;
-
-		filter(state.l, \l ->
-			if (l.x <= point.x + block.w) {
-				lastY := l.y;
-
-				if (l.x < point.x) {
-					i := ^i + 1;
-
-					true;
-				} else {
-					false;
-				}
-			} else {
-				true;
-			}
-		)
-		|> (\ln -> {
-			insertArray(
-				insertArray(
-					ln,
-					^i,
-					Point(point.x + block.w, ^lastY)
-				),
-				^i,
-				Point(point.x, point.y + block.h)
-			)
-		})
-	})
-	|> (\ln ->
-		if (par.wrapNewColumn) {
-			p = arrayPush(getTreeValues(state.p), Pair(block, point));
-
-			map(ln, \l ->
-				Point(
-					fold(
-						p,
-						l.x,
-						\acc, pt ->
-							if (pt.second.x < l.x && pt.second.x + pt.first.w > l.x)
-								max(acc, pt.second.x + pt.first.w)
-							else
-								acc
-					),
-					l.y
-				)
-			);
-		} else {
-			ln
-		}
-	)
-	|> (\ln ->
-		if (par.wrapNewRow) {
-			p = arrayPush(getTreeValues(state.p), Pair(block, point));
-
-			map(ln, \l ->
-				Point(
-					l.x,
-					fold(
-						p,
-						l.y,
-						\acc, pt ->
-							if (pt.second.y < l.y && pt.second.y + pt.first.h > l.y)
-								max(acc, pt.second.y + pt.first.h)
-							else
-								acc
-					)
-				)
-			);
-		} else {
-			ln
-		}
-	)
-}
-
-getBFLinePoint(line : [Point], i : int, block : BFBlock, par : BFParameters) -> Point {
-	if (par.vertical) {
-		minY = line[i].y;
-		maxY = minY + block.h;
-
-		fold(subrange(line, i, length(line)), 0.0, \acc, l -> {
-			if (l.y >= minY && l.y < maxY && l.x > acc) {
-				l.x;
-			} else {
-				acc;
-			}
-		})
-		|> (\f -> Point(f, minY))
-	} else {
-		minX = line[i].x;
-		maxX = minX + block.w;
-
-		fold(subrange(line, i, length(line)), 0.0, \acc, l -> {
-			if (l.x >= minX && l.x < maxX && l.y > acc) {
-				l.y;
-			} else {
-				acc;
-			}
-		})
-		|> (\f -> Point(minX, f))
-	}
-}
-
-checkBFMaxRows(state : BFState, block : BFBlock, point : Point, par : BFParameters) -> bool {
-	eitherMap(
-		par.maxRows,
-		\mr -> {
-			filteredTree = filterTree(state.p, \k, v -> if (par.vertical) v.second.y == 0.0 else v.second.x == 0.0);
-
-			if (sizeTree(filteredTree) < mr) {
-				true
-			} else {
-				maxSize =
-					foldTree(filteredTree, 0.0, \k, v, acc ->
-						if (par.vertical) {
-							if (v.second.x > acc)
-								v.second.x
-							else
-								acc;
-						} else {
-							if (v.second.y > acc)
-								v.second.y
-							else
-								acc;
-						}
-					);
-
-				if (par.vertical)
-					point.x <= maxSize
+	filter(roots, \b ->
+		if (par.vertical)
+			eitherMap(par.ordered, \o ->
+				if (o)
+					b.x >= maxMetric.second || (b.x >= maxMetric.first && b.y >= ^lastMetric)
 				else
-					point.y <= maxSize;
-			}
-		},
-		true
+					b.x >= maxMetric.first && (b.y == 0.0 || b.y >= ^lastMetric),
+				true
+			)
+		else
+			eitherMap(par.ordered, \o ->
+				if (o)
+					b.y >= maxMetric.second || (b.x >= ^lastMetric && b.y >= maxMetric.first)
+				else
+					b.y >= maxMetric.first && (b.x == 0.0 || b.x >= ^lastMetric),
+				true
+			)
 	)
+	|> (\f ->
+		if (par.vertical)
+			mergeSort(f, \a : BPRoot, b : BPRoot -> if (a.x < b.x) -1 else if (a.x > b.x) 1 else genericCompare(a.y, b.y))
+		else
+			mergeSort(f, \a : BPRoot, b : BPRoot-> if (a.y < b.y) -1 else if (a.y > b.y) 1 else genericCompare(a.x, b.x))
+	);
+}
+
+bpCheckIntersect(state : BPState, block : BPBlock) -> bool {
+	foldTree(state.p, false, \k, v, acc -> {
+		if (!acc) {
+			doIntersect(v.second.x, v.second.y, v.first.w, v.first.h, state.r.x, state.r.y, block.w, block.h)
+		} else {
+			acc;
+		}
+	})
+}
+
+doIntersect(x1 : double, y1 : double, w1 : double, h1 : double, x2 : double, y2 : double, w2 : double, h2 : double) -> bool {
+	x1 + w1 > x2 && x1 < x2 + w2 && y1 + h1 > y2 && y1 < y2 + h2;
+}
+
+bpSplitNode(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
+	BPRoot(
+		root.x,
+		root.y,
+		root.w,
+		root.h,
+		if (par.vertical)
+			[
+				if (isSome(par.ordered))
+					BPRoot(root.x + block.w, 0.0, root.w - block.w, root.h + root.y, [])
+				else
+					BPRoot(root.x + block.w, root.y, root.w - block.w, if (par.groupByCols) block.h else root.h, []),
+				BPRoot(root.x, root.y + block.h, if (isSome(par.ordered) || par.groupByCols) root.w else block.w, root.h - block.h, []),
+			]
+			|> (\c -> if (isSome(par.ordered)) reverseA(c) else c)
+		else
+			[
+				BPRoot(root.x + block.w, root.y, root.w - block.w, if (isSome(par.ordered) || par.groupByCols) root.h else block.h, []),
+				if (isSome(par.ordered))
+					BPRoot(0.0, root.y + block.h, root.w + root.x, root.h - block.h, [])
+				else
+					BPRoot(root.x, root.y + block.h, if (par.groupByCols) block.w else root.w, root.h - block.h, [])
+			]
+	)
+}
+
+bpGrowNode(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
+	// canGrowDown = block.w <= state.r.w;
+	// canGrowRight = block.h <= state.r.h;
+
+	// if (canGrowRight)
+	// 	bpGrowRight(i, state, block, par)
+	// else if (canGrowDown)
+	// 	bpGrowDown(i, state, block, par)
+	// else
+	// 	state;
+	// if (canGrowDown)
+	if (par.vertical)
+		bpGrowRight(i, state, block, par)
+	else
+		bpGrowDown(i, state, block, par);
+	// else
+	// 	None();
+}
+
+bpGrowRight(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
+	newState = BPState(bpGrowRight2(state.r, block, par), state.p);
+
+	bpFindNode(i, newState, block, par);
+}
+
+bpGrowRight2(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
+	if (length(root.c) == 0) {
+		BPRoot(root.x, root.y, root.w + block.w, root.h, []);
+	} else {
+		c =
+			if (par.groupByCols)
+				map(root.c, \c -> bpGrowRight2(c, block, par))
+			else
+				[bpGrowRight2(root.c[0], block, par), root.c[1]];
+
+		BPRoot(root.x, root.y, root.w + block.w, root.h, c);
+	}
+}
+
+bpGrowDown(i : int, state : BPState, block : BPBlock, par : BPParameters) -> BPState {
+	newState = BPState(bpGrowDown2(state.r, block, par), state.p);
+
+	bpFindNode(i, newState, block, par);
+}
+
+bpGrowDown2(root : BPRoot, block : BPBlock, par : BPParameters) -> BPRoot {
+	if (length(root.c) == 0) {
+		BPRoot(root.x, root.y, root.w, root.h + block.h, []);
+	} else {
+		c =
+			if (par.groupByCols)
+				map(root.c, \c -> bpGrowDown2(c, block, par))
+			else
+				[root.c[0], bpGrowDown2(root.c[1], block, par)];
+
+		BPRoot(root.x, root.y, root.w, root.h + block.h, c);
+	}
 }
