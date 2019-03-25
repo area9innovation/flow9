@@ -7,18 +7,22 @@ import tools/flowc/type_helpers;
 
 export {
 	// Resolve the graph
-	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
+	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv;
 }
-
-
-// TODO: We should not convert to typepars until at the very end, since
-// otherwise, we might overwrite typevars that can capture constraints
-// during the process. test1
 
 // TODO: We only have to do the reachableClosure on unbound tyvars in the graph 
 // TODO: We only have to recalc this when related part of the graph changes
+// TODO: Introduce a structure to keep lower and upper bounds for each tyvar
+// along with a set of nodes  we depend on, so we can more efficiently update
+// and only recalc what is required
 
-resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
+// TODO: findPotentialGSupertypes and findPotentialGSubtypes can be greatly optimized
+// by having a subtype graph of structs and unions
+
+resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv {
+	if (env.verbose >= 2) {
+		println("Resolving tyvars: " + toString(set2array(env.unresolvedTyvars)) + " making typars: " + b2s(makeTypars));
+	}
 	graph = env.relations.graph;
 
 	// What nodes define the transitive upper bounds for each node?
@@ -41,7 +45,7 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 							lower = buildGBounds(acc, graph, lowerIds);
 							upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
 							upper = buildGBounds(acc, graph, upperIds);
-							clarifyGTyvar(acc, unify, tyvarId, lower, upper);
+							clarifyGTyvar(acc, unify, tyvarId, lower, upper, makeTypars);
 						} else {
 							acc;
 						}
@@ -55,15 +59,20 @@ resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -
 	});
 
 	if (sizeSet(nenv.unresolvedTyvars) != unresolved) {
-		resolveGGraph(nenv, name, unify)
+		resolveGGraph(nenv, name, unify, false)
 	} else {
-		nenv;
+		if (makeTypars) {
+			nenv;
+		} else {
+			// Do a final round where we make typars
+			resolveGGraph(nenv, name, unify, true)
+		}
 	}
 }
 
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds) -> GEnv {
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds, makeTypars : bool) -> GEnv {
 	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
@@ -103,11 +112,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 		upperFree = isGBoundsUnconstrained(env, upper);
 
 		if (lowerFree && upperFree) {
-			// No constraints. All of these tyvars are all identical and should be bound
-			// to the next free typar. Hm, TODO: We might have to wait with this
-			// since other resolutions could fix this.
-			tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
-			resolveGTypeVarToTyPar(env, tyvars);
+			if (makeTypars) {
+				// No constraints. All of these tyvars are all identical and should be bound
+				// to the next free typar.
+				tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
+				resolveGTypeVarToTyPar(env, tyvars);
+			} else {
+				// While we are working, do not pin these down since new contraints can appear
+				// witch lift them away from type par land. test 1 is an example.
+				env;
+			}
 		} else {
 			// Subtypes only. Find any types that might be compatible
 			ltypenames : [string] = findPotentialGSupertypes(env, lower.subtypes);
@@ -160,10 +174,22 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 						unify(acc, GSubType(st), solution)
 					});
 				} else {
-					println("TODO: Lower should decide from " + gbounds2string(env, lower));
-					println(ltypenames);
-					println(ltypes);
-					env;
+					if (sizeSet(lower.subtypes) == 1) {
+						subtype = set2array(lower.subtypes)[0];
+						switch (subtype) {
+							GNamed(__, __): setGTyvars(env, \e, l, u -> unify(e, u, l), insertSet(upper.tyvars, tyvar), GSubType(subtype));
+							default: {
+								println("TODO: Lower should decide from " + gbounds2string(env, lower));
+								println(gtype2string(env, GSubType(subtype)));
+								env;
+							}
+						}
+					} else {
+						println("TODO: Lower should decide from " + gbounds2string(env, lower));
+						println(ltypenames);
+						println(ltypes);
+						env;
+					}
 				}
 			} else {
 				// TODO: Check the intersection and if that is unique
@@ -223,10 +249,11 @@ isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 
 // Set all tyvars to this resolved type
 setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvars : Set<int>, type : GType) -> GEnv {
-	if (env.verbose >= 3) {
+	if (env.verbose >= 2) {
 		printStay(env.env, superglue(set2array(tyvars), \tv -> "α" + i2s(tv), ", ") + " = " + gtype2string(env, type));
 	}
-	foldSet(tyvars, env, \acc, tv -> {
+
+	nenv = foldSet(tyvars, env, \acc, tv -> {
 		nacc = GEnv(
 			acc with
 			tyvars = setTree(acc.tyvars, tv, type),
@@ -234,6 +261,13 @@ setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvars : Set<int>, 
 		);
 		unify(nacc, GTypeVar(tv), type)
 	});
+
+	// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
+	tyvarsInType = extractGTypeVars(nenv, type, makeSet());
+	GEnv(
+		nenv with
+		unresolvedTyvars = mergeSets(nenv.unresolvedTyvars, tyvarsInType)
+	);
 }
 
 // Given these constraints, what supertypes could meet all of these?
