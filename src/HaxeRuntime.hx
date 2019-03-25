@@ -35,6 +35,64 @@ class HaxeRuntime {
 		_structargtypes_.set(id, atypes);
 	}
 
+  static public function compareEqual(a : Dynamic, b : Dynamic) : Bool {
+    // Modelled after https://github.com/epoberezkin/fast-deep-equal/blob/master/index.js
+#if (js)
+    untyped __js__("
+if (a === b) return true;
+    var isArray = Array.isArray;
+    var keyList = Object.keys;
+    var hasProp = Object.prototype.hasOwnProperty;
+
+    if (a && b && typeof a == 'object' && typeof b == 'object') {
+        var arrA = isArray(a)
+          , arrB = isArray(b)
+          , i
+          , length
+          , key;
+
+    if (arrA && arrB) {
+      length = a.length;
+      if (length != b.length) return false;
+      for (i = length; i-- !== 0;)
+        if (!HaxeRuntime.compareEqual(a[i], b[i])) return false;
+      return true;
+    }
+
+    if (arrA != arrB) return false;
+");
+#if (readable)
+    untyped __js__("
+    if (hasProp.call(a, '_name') && hasProp.call(b, '_name')) {
+        if (a._name !== b._name) return false
+");
+#else
+    untyped __js__("
+    if (hasProp.call(a, '_id') && hasProp.call(b, '_id')) {
+        if (a._id !== b._id) return false
+");
+#end
+    untyped __js__("
+        var keys = keyList(a);
+        length = keys.length;
+
+        for (i = 1; i < length; i++) {
+            key = keys[i];
+            if (!HaxeRuntime.compareEqual(a[key], b[key])) return false;
+        }
+    }
+
+    if (hasProp.call(a, '__v') && hasProp.call(b, '__v')) {
+        return false;
+    }
+    return true;
+}
+");
+    return false;
+#else
+    compareByValue(a, b) == 0;
+#end
+  }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
 		#if (js)
 			untyped __js__("if (o1 === o2) return 0;");

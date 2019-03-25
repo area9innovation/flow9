@@ -6,6 +6,7 @@ export {
 	fmapi(v : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]>;
 	fsubmap(v : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]>;
 	fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]>;
+	ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(v : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
 	ffiltermapi(v : Transform<[??]>, fn : (int, ??) -> Maybe<?>) -> Transform<[?]>;
 	flength(v : Transform<[?]>) -> Transform<int>;
@@ -19,6 +20,8 @@ export {
 	fwhsubtract(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 	fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
+	fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
+	fwhmax(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight>;
 
 	fwidthaddition(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight>;
 	fwidthsubtract(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight>;
@@ -64,6 +67,7 @@ export {
 	fsubmaybeMap(b : Transform<Maybe<?>>, fn : (?) -> Transform<??>) -> Transform<Maybe<??>>;
 
 	forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]>;
+	fdeorder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]>;
 
 	fpprint(title : string) -> (Transform<?>) -> Transform<?>;
 
@@ -152,6 +156,24 @@ fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]> 
 	}))
 }
 
+ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]> {
+	prevV : ref Tree<?, bool> = ref makeTree();
+
+	fselect(v, FLift(\v0 -> {
+		filter(v0, \val ->
+			eitherFn(
+				lookupTree(^prevV, val),
+				idfn,
+				\ -> {
+					pVal = fn(val);
+					prevV := setTree(^prevV, val, pVal);
+					pVal
+				}
+			)
+		)
+	}))
+}
+
 ffiltermap(v : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]> {
 	prevV : ref Tree<??, Maybe<?>> = ref makeTree();
 
@@ -222,6 +244,14 @@ fwhmultiply(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Trans
 
 fwhdivide(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
 	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(v1.width / v2.width, v1.height / v2.height)));
+}
+
+fwhmin(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
+	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(min(v1.width, v2.width), min(v1.height, v2.height))));
+}
+
+fwhmax(wh1 : Transform<WidthHeight>, wh2 : Transform<WidthHeight>) -> Transform<WidthHeight> {
+	fselect2(wh1, wh2, FLift2(\v1, v2 -> WidthHeight(max(v1.width, v2.width), max(v1.height, v2.height))));
 }
 
 fwidthaddition(wh : Transform<WidthHeight>, width : Transform<double>) -> Transform<WidthHeight> {
@@ -444,6 +474,17 @@ forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
 	fselect2(b, order, FLift2(\v, o -> fold(o, [], \acc, i -> if (i >= 0 && i < length(v)) arrayPush(acc, v[i]) else acc)))
 }
 
+fdeorder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
+	fselect2(b, order, FLift2(\v, o -> foldi(v, [], \i, acc, it -> {
+		id = findiDef(o, \oi -> oi == i, -1);
+
+		if (id >= 0 && id < length(v))
+			arrayPush(acc, v[id])
+		else
+			acc;
+	})))
+}
+
 ffuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> () -> void]> {
 	switch (t) {
 		ConstBehaviour(v): Pair(t, []);
@@ -511,7 +552,7 @@ dispUnsM(uns : ref Maybe<() -> void>) -> void {
 
 fpprint(title : string) -> (Transform<?>) -> Transform<?> {
 	\tr -> {
-		fsubscribe(tr, \v -> pprint(title)(v) |> ignore);
+		fsubscribe(tr, \v -> pprint(title + " : ")(v) |> ignore);
 		tr
 	}
 }

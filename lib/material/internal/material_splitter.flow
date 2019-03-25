@@ -10,24 +10,26 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 	percent = extractStruct(m.style, MSplitterValue(make(0.5))).percent;
 	pressed = make(false);
 	innerPercent = cloneBehaviour(percent);
-	mouseXY = make(zeroPoint);
+	mouseXY = makePoint();
 	itemId = makeTropicTag(manager);
 
-	dividerW = 8.0;
+	dividerW = extractStruct(m.style, MSplitterSeparatorSize(8.0)).size;
 	splitterColor = extractStruct(m.style, if (getLightBackground(parent)) MGrey(950) else MGrey(100));
 	handleColor = extractStruct(m.style, MSplitterHandleColor(if (getLightBackground(parent)) MWhite() else MGrey(950))).color;
 	sizeWatcher = extractStruct(m.style, MSplitterSizeWatcher(make(0.0))).size;
-	handle = TRounded(1.0, 1.0, 1.0, 1.0, [MFill(handleColor)], TFixed(dividerW / 4.0, dividerW * 2.0));
+	
 	splitterHandle = !contains(m.style, MSplitterDontHandle());
 	splitterSize = extractStruct(m.style, MSplitterSize(0., -1., 0., -1.));
-	splitterWH = tryExtractStruct(m.style, MSplitterWidthHeight(make(zeroWH), make(zeroWH)));
+	splitterWH = tryExtractStruct(m.style, MSplitterWidthHeight(makeWH(), makeWH()));
 	vertical = !contains(m.style, MSplitterHorizontal());
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
 	stageWH = makeWH();
-	minMax =
-		fselect(stageWH, FLift(\wh -> {
-			metric = if (vertical) wh.width else wh.height;
+	stageW = fwidth(stageWH);
+	stageH = fheight(stageWH);
+	stageSize = if (vertical) stageW else stageH;
 
+	minMax =
+		fselect(stageSize, FLift(\metric ->
 			if (metric > 0.) {
 				dividerGap = dividerW / metric / 2.;
 
@@ -49,39 +51,32 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 				)
 			} else
 				MSplitterPercentMinMax(doubleMin, doubleMax)
+		));
+
+	fillerSizeFn = if (vertical) TFillWY else TFillXH;
+	fixedSizeFn = \sz -> if (vertical) TFixed(sz, 0.) else TFixed(0., sz);
+	cursor = if (vertical) EWResizeCursor() else NSResizeCursor();
+
+	handle =
+		TRounded(1.0, 1.0, 1.0, 1.0, [MFill(handleColor)], TFixed(2.0, 16.0))
+		|> (if (vertical) idfn else TRotate90Left);
+
+	transCoord =
+		fselect2(innerPercent, stageSize, FLift2(\perc, s -> {
+			nextDistinct(sizeWatcher, s * perc);
+			perc * s - dividerW / 2.0;
 		}));
 
-	splitter = \ ->
-		(
-			if (vertical)
-				TTranslate(
-					fselect2(innerPercent, stageWH, FLift2(\perc, wh -> {
-						nextDistinct(sizeWatcher, wh.width * perc);
-						Point(perc * wh.width - dividerW / 2.0, 0.0);
-					})),
-					TGroup2(
-						TRectangle([MFill(splitterColor)], TFillWY(dividerW)),
-						TCenterIn(handle,
-							TFillWY(dividerW)
-						)
-					)
-				)
-			else
-				TTranslate(
-					fselect2(innerPercent, stageWH, FLift2(\perc, wh -> {
-						nextDistinct(sizeWatcher, wh.height * perc);
-						Point(0.0, perc * wh.height - dividerW / 2.0);
-					})),
-					TGroup2(
-						TRectangle([MFill(splitterColor)], TFillXH(dividerW)),
-						TCenterIn(TRotate90Left(handle),
-							TFillXH(dividerW)
-						)
-					)
-				)
+	trans = if (vertical) fpoint(transCoord, const(0.)) else fpoint(const(0.), transCoord);
+
+	splitter =
+		TGroup2(
+			TRectangle([MFill(splitterColor)], fillerSizeFn(dividerW)),
+			TCenterIn(handle, fillerSizeFn(dividerW))
 		)
+		|> (\t -> TTranslate(trans, t))
 		|> (\t -> TShow(enabled, t))
-		|> (\t -> TCursor(MoveCursor(), t))
+		|> (\t -> TCursor(cursor, t))
 		|> (\t -> TInteractive([
 				if (splitterHandle) TMouseDown(pressed) else TMouseDownGhost(pressed),
 				TMouseXY(mouseXY),
@@ -96,7 +91,7 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 						idfn
 					),
 					makeSubscribe(pressed, \pr -> if (pr) addInteractionItemId(manager, itemId)),
-					make3Subscribe(mouseXY, stageWH, minMax, \mxy, wh, mm ->
+					make3Subscribe(mouseXY, stageSize, minMax, \mxy, s, mm ->
 						nextDistinct(
 							innerPercent,
 							forceRange(
@@ -104,9 +99,9 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 									blockOtherInteractionItemIds(manager, itemId);
 
 									if (vertical)
-									 	mxy.x / wh.width
+									 	mxy.x / s
 									else
-									 	mxy.y / wh.height;
+									 	mxy.y / s;
 								} else
 									getValue(innerPercent),
 								mm.min,
@@ -119,66 +114,35 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 			)
 		);
 
-	makeContentBox = \p, isLeft ->
-		MScroll2T(
-			manager,
-			p,
-			MScroll(
-				if (isLeft) m.m1 else m.m2,
-				TIf(
-					enabled,
-					if (vertical)
-						TSizedWidthHeight(
-							fselect2(innerPercent, stageWH, FLift2(\perc, wh ->
-								(if (isLeft) perc else (1.0 - perc)) * wh.width - (dividerW / 2.))),
-							fheight(stageWH)
-						)
-					else
-						TSizedWidthHeight(
-							fwidth(stageWH),
-							fselect2(innerPercent, stageWH, FLift2(\perc, wh ->
-								(if (isLeft) perc else (1.0 - perc)) * wh.height - (dividerW / 2.)))
-						),
-					if (isLeft)
-						TSized(stageWH)
-					else if (vertical)
-						TSizedHeight(0., fheight(stageWH))
-					else
-						TSizedWidth(fwidth(stageWH), 0.)
-				)
-				|> (\scrollSize ->
-					eitherMap(
-						splitterWH,
-						\swh ->
-							TAttachBox(
-								scrollSize,
-								if (isLeft)
-									swh.left
-								else
-									swh.right
-							),
-						scrollSize
-					)
-				),
-				[]
-			),
-			m2t
-		);
+	makeContentBox = \p, isLeft -> {
+		countPercent = \prc -> if (isLeft) prc else (1.0 - prc);
+
+		scrollSize = \v, sSize ->
+			fif(enabled,
+				if (v) fselect2(innerPercent, sSize, FLift2(\prc, s -> countPercent(prc) * s - (dividerW / 2.))) else sSize,
+				if (isLeft || !v) sSize else const(0.)
+			);
+
+		scrollWidth = scrollSize(vertical, stageW);
+		scrollHeight = scrollSize(!vertical, stageH);
+		scrollBox =	fwidthheight(scrollWidth, scrollHeight);
+
+		MScroll2T(manager, p, MScroll(if (isLeft) m.m1 else m.m2, TSized(scrollBox), []), m2t)
+		|> (\t -> eitherMap(splitterWH, \swh -> 
+				TConstruct([\ -> fconnect(scrollBox, if (isLeft) swh.left else swh.right)], t),
+				t
+			))
+	};
 
 	(\p ->
 		TAttachBox2(
 			TGroup2(
-				if (vertical)
-					TFixed(max(0., splitterSize.min1) + dividerW + max(0., splitterSize.min2), 0.)
-				else
-					TFixed(0., max(0., splitterSize.min1) + dividerW + max(0., splitterSize.min2)),
+				fixedSizeFn(max(0., splitterSize.min1) + dividerW + max(0., splitterSize.min2)),
+
 				if (splitterSize.max1 > 0. && splitterSize.max2 > 0.)
 					TAvailable(
 						m2t(m.size, p),
-						if (vertical)
-							TFillWY(max3(0., splitterSize.min1, splitterSize.max1) + dividerW + max3(0., splitterSize.min2, splitterSize.max2))
-						else
-							TFillXH(max3(0., splitterSize.min1, splitterSize.max1) + dividerW + max3(0., splitterSize.min2, splitterSize.max2))
+						fillerSizeFn(max3(0., splitterSize.min1, splitterSize.max1) + dividerW + max3(0., splitterSize.min2, splitterSize.max2))
 					)
 				else
 					m2t(m.size, p)
@@ -186,12 +150,12 @@ MSplitter2T(manager : MaterialManager, parent : MFocusGroup, m : MSplitter, m2t 
 			stageWH,
 			[
 				makeContentBox(p, true),
-				if (vertical) TFixed(dividerW, 0.) else TFixed(0., dividerW),
+				fixedSizeFn(dividerW),
 				makeContentBox(p, false)
-					|> (\box -> TShow(enabled, box))
+				|> (\t -> TShow(enabled, t))
 			]
 			|> (if (vertical) TCols else TLines)
-			|> (\t -> TGroup2(t, splitter()))
+			|> (\t -> TGroup2(t, splitter))
 		)
 	)
 	|> (\f -> MComponentGroup2T(
