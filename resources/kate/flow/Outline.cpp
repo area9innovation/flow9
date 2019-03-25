@@ -56,7 +56,7 @@ Outline::Outline(KTextEditor::MainWindow* window, FlowView* view) :
 Outline::~Outline() { }
 
 void Outline::refresh() {
-	if (!window_->activeView()) return;
+	if (!window_->activeView() || !toolView_->isVisible()) return;
 	view_->flowManager_->slotOutline();
 }
 
