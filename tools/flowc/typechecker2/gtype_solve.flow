@@ -34,10 +34,13 @@ and then
 to produce the graphviz relations.
 
 TODO:
-- Solve the tyvar graph
 - Union vs union case
-- Get rid of GAnd, GOr, GBounded
-- Reconstruct struct defs with correct number of typars, and be smarter about
+- Get rid of GAnd, GOr
+
+- Array vs flow. 107.
+- Lower == upper, maybe except for typars. 108
+
+- Check that we reconstruct struct defs with correct number of typars, and be smarter about
   implicit typars. (31, 37, 54, ..., 103, 114, 127)
 */
 
@@ -447,6 +450,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -
 		Some(ustruct): {
 			// The struct as it appears in the union. Let us remap typars from the union to the struct
 			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
+		
 			// And then subtype with our struct
 			unifyAndRecurseGType(env, GSubType(left), istruct, onError);
 		}
@@ -468,7 +472,30 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 			});
 			// Now we make a struct with typar names that correspond to the unions
 			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
-			gtype = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+			gtype0 = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+	
+			// We might have to do implicit type-par promotion from the union
+			gtype = switch (gtype0) {
+				GSubType(st): {
+					switch (st) {
+						GNamed(gname, tps): {
+							// Extend the type parameters to match the number of parameters
+							ntps = concat(tps, generate(0, length(master.typars), \i -> {
+								GTypePar(strLeft("????????????", i + 1))
+							}));
+							GSubType(
+								GNamed(gname, subrange(uniq(ntps), 0, length(master.typars)))
+							);
+						}
+						default: gtype0;
+					}
+				}
+				default: gtype0;
+			}
+
+			if (env.verbose >= 4) {
+				printStay(env.env, "Constructed " + gtype2string(env, gtype) + " from " + gtype2string(env, GSubType(master)));
+			}
 
 			// Now, instantiate the typars in this gtype
 			gtypars = foldi(master.typars, makeTree(), \i, acc, tp -> {

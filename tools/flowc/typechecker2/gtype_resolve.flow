@@ -129,25 +129,20 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 				// We know that there is only one type that will work. This is also true in the future, even if we
 				// have lower tyvars that might be bound in the future, because if they conflict,
 				// type verification will catch it and there would not be any solution
-				solution0 = resolveGSubTypeToName(env, ltypenames[0], lower.subtypes);
-				if (solution0 == []) {
-					// OK, we know there is one type, but we could not find it,
-					// so we have to construct it, and unify our subtypes against it
-					solution = makeGNamedType(env, ltypenames[0]);
-					println("Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, lower));
-					[solution]
-				} else solution0;
+				solution = resolveGSubTypeToName(env, ltypenames[0], lower.subtypes);
+				if (env.verbose >= 3) {
+					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, lower));
+				};
+				[solution];
 			} else [];
 
 			utypenames = findPotentialGSubtypes(env, upper.subtypes);
 			utypes = if (length(utypenames) == 1) {
-				uresolved = resolveGSubTypeToName(env, utypenames[0], upper.subtypes) ;
-				if (uresolved == []) {
-					// OK, we could not find it directly, so make it
-					solution = makeGNamedType(env, utypenames[0]);
-					println("Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, upper));
-					[solution]
-				} else uresolved;
+				solution = resolveGSubTypeToName(env, utypenames[0], upper.subtypes) ;
+				if (env.verbose >= 3) {
+					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, upper));
+				};
+				[solution];
 			} else [];
 
 			if (lowerFree && !upperFree) {
@@ -160,9 +155,22 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 						unify(acc, solution, GSubType(st))
 					});
 				} else {
-					println("TODO: Upper should decide from " + gbounds2string(env, upper));
-					println(utypes);
-					env;
+					if (sizeSet(upper.subtypes) == 1) {
+						// A single named struct/union as the bound - we just take it
+						subtype = set2array(upper.subtypes)[0];
+						switch (subtype) {
+							GNamed(__, __): setGTyvars(env, \e, l, u -> unify(e, u, l), insertSet(lower.tyvars, tyvar), GSubType(subtype));
+							default: {
+								println("TODO: Upper should decide from " + gbounds2string(env, upper));
+								println(utypes);
+								env;
+							}
+						}
+					} else {
+						println("TODO: Upper should decide from " + gbounds2string(env, upper));
+						println(utypes);
+						env;
+					}
 				}
 			} else if (!lowerFree && upperFree) {
 				if (length(ltypes) == 1) {
@@ -175,6 +183,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 					});
 				} else {
 					if (sizeSet(lower.subtypes) == 1) {
+						// A single named struct/union as the bound - we just take it
 						subtype = set2array(lower.subtypes)[0];
 						switch (subtype) {
 							GNamed(__, __): setGTyvars(env, \e, l, u -> unify(e, u, l), insertSet(upper.tyvars, tyvar), GSubType(subtype));
@@ -191,6 +200,20 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 						env;
 					}
 				}
+			} else if (length(ltypenames) == 1 && ltypenames == utypenames) {
+				// OK, they agree on the type. Cosntruct it
+				solution = resolveGSubTypeToName(env, utypenames[0], mergeSets(lower.subtypes, upper.subtypes));
+
+				// And set ourselves to this
+				nenv = setGTyvars(env, unify, makeSet1(tyvar), solution);
+
+				// Also be sure to unify the result against all our top and lower subtypes to extract gold
+				nenv1 = foldSet(upper.subtypes, nenv, \acc, st -> {
+					unify(acc, solution, GSubType(st))
+				});
+				foldSet(lower.subtypes, nenv1, \acc, st -> {
+					unify(acc, GSubType(st), solution)
+				});
 			} else {
 				// TODO: Check the intersection and if that is unique
 				// without anything missing, we also solved it
@@ -317,7 +340,7 @@ findGSupertypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 // Given these constraints, what subtypes could meet all of these?
 findPotentialGSubtypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
 	foldi(set2array(exprs), [], \i, acc, expr -> {
-		supers = findGSupertypes(env, expr);
+		supers = findGSubtypes(env, expr);
 		if (i == 0) supers
 		else intersection(supers, acc)
 	});
@@ -357,15 +380,19 @@ findGSubtypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 }
 
 // Given these exprs, and a desired type name, extract it, if we directly have it.
-// If we do not, then we should construct the type ourselves, and unify all against
-// it to bind typars.
-resolveGSubTypeToName(env : GEnv, name : string, exprs : Set<GSubTypeExpr>) -> [GType] {
-	foldSet(exprs, [], \acc, expr -> {
+// If we do not, then we should construct the type ourselves with type-pars.
+resolveGSubTypeToName(env : GEnv, name : string, exprs : Set<GSubTypeExpr>) -> GType {
+	result = foldSet(exprs, [], \acc, expr -> {
 		switch (expr) {
 			GNamed(gname, __): if (gname == name) arrayPush(acc, GSubType(expr)) else acc;
 			default: acc;
 		}
 	});
+
+	if (result == []) {
+		// OK, we could not find it, so we have to construct it
+		makeGNamedType(env, name)
+	} else result[0];
 }
 
 // Build a type with this name, and empty typars
