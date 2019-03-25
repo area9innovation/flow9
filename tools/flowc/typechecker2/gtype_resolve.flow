@@ -79,33 +79,24 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 	if (!isEmptySet(fixed)) {
 		// OK, we have something fixed. Let us go with that
 
-		// What remains of the subtypes bounds once the fixed types are removed?
-		lowerMissing = differenceSets(mapSet(lower.subtypes, \s -> GSubType(s)), fixed);	
-		upperMissing = differenceSets(mapSet(upper.subtypes, \s -> GSubType(s)), fixed);	
+		// OK, some fixed type. If flow is there, we can ignore that
+		sansFlow = removeSet(fixed, GFlow());
+		nenv = if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
+			fixedTypes = if (sizeSet(sansFlow) == 1) sansFlow else fixed;
+			fixedType = set2array(fixedTypes)[0];
 
-		if (isEmptySet(lowerMissing) && isEmptySet(upperMissing)) {
-			// OK, some fixed type. If flow is there, we can ignore that
-			sansFlow = removeSet(fixed, GFlow());
-			if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
-				fixedTypes = if (sizeSet(sansFlow) == 1) sansFlow else fixed;
-				fixedType = set2array(fixedTypes)[0];
+			// OK, we have a unique, fixed type for the entire family
+			setGTyvars(env, unify, insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar), fixedType);
+		} else env;
 
-				// OK, we have a unique, fixed type
-				setGTyvars(env, unify, insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar), fixedType);
-			} else {
-				// It is not clear yet. Let us unify the lowers with the upppers in an attempt to
-				// uncover more constraints
-				foldSet(lower.fixedTypes, env, \acc, lt -> {
-					foldSet(upper.fixedTypes, acc, \acc2, ut -> {
-						unify(acc2, lt, ut)
-					})
-				})
-			}
-		} else {
-			// This is a mixed bag, so probably this is an error?
-			println("TODO: Can we do something about " + gbounds2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gbounds2string(env, upper));
-			env;
-		}
+		// Then make sure to unify the lowers with the uppers in an attempt to
+		// uncover more constraints
+		// TODO: Maybe this is too much
+		foldSet(lower.fixedTypes, nenv, \acc, lt -> {
+			foldSet(upper.fixedTypes, acc, \acc2, ut -> {
+				unify(acc2, lt, ut)
+			})
+		})
 	} else {
 		// OK, no fixed
 		lowerFree = isGBoundsUnconstrained(env, lower);
@@ -204,9 +195,14 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, low
 				}
 			} else {
 				shared = intersection(ltypenames, utypenames);
-				if (length(shared) == 1) {
-					// OK, lower and upper can agree on one type. Construct it
-					solution = resolveGSubTypeToName(env, shared[0], mergeSets(lower.subtypes, upper.subtypes));
+				if (length(shared) >= 1) {
+					// OK, pick the "smallest" type, prefering small structs to big unions
+					scored = map(shared, \name -> Pair(getGNamedSize(env, name), name));
+					cheapest = sort(scored);
+					winner = cheapest[0].second;
+
+					// OK, lower and upper can agree on at least one type. Construct it
+					solution = resolveGSubTypeToName(env, winner, mergeSets(lower.subtypes, upper.subtypes));
 
 					// And set ourselves to this
 					nenv = setGTyvars(env, unify, makeSet1(tyvar), solution);
@@ -420,6 +416,25 @@ makeGNamedType(env : GEnv, name : string) -> GType {
 			}))
 		}
 	})
+}
+
+// Get some kind of score for a name. Structs is the number of typars + fields. Unions is 10 * number of structs + number of fields in total
+getGNamedSize(env : GEnv, name : string) -> int {
+	mstruct = lookupTree(env.env.program.acc.names.structs, name);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(env.env.program.acc.names.unions, name);
+			switch (munion) {
+				None(): intMax;
+				Some(union): {
+					fold(union.typenames, 1 + length(union.typeparameters), \acc, tn -> {
+						acc + 10 * getGNamedSize(env, tn.name)
+					});
+				}
+			}
+		}
+		Some(structdef): 1 + length(structdef.typars) + length(structdef.args);
+	}
 }
 
 mkGTypeVar(env : GEnv) -> GTypeVar {
