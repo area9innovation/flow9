@@ -486,7 +486,7 @@ buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GB
 }
 
 addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
-	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, tt));
+	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
 	switch (tt) {
 		GBasicType(t): fixed();
 		GFlow(): fixed();
@@ -502,11 +502,43 @@ addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 				}
 				Some(type): {
 					// If the tyvar is defined, we should put it to fixedTypes
-					GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, type));
+					GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, type)));
 				}
 			}
 		}
-		GSubType(expr): GBounds(acc with subtypes = insertSet(acc.subtypes, expr));
+		GSubType(expr): GBounds(acc with subtypes = insertSet(acc.subtypes, resolveGSubExpr(env, expr)));
+	}
+}
+
+resolveGType(env : GEnv, tt : GType) -> GType {
+	switch (tt) {
+		GBasicType(t): tt;
+		GFlow(): tt;
+		GTypePar(id): tt;
+		GFunction(args, rt): GFunction(resolveGTypes(env, args), resolveGType(env, rt));
+		GArray(type): GArray(resolveGType(env, type));
+		GRef(type): GRef(resolveGType(env, type));
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): tt;
+				Some(type): resolveGType(env, type);
+			}
+		}
+		GSubType(expr): GSubType(resolveGSubExpr(env, expr));
+	}
+}
+
+resolveGTypes(env : GEnv, types : [GType]) -> [GType] {
+	map(types, \t -> resolveGType(env, t));
+}
+
+resolveGSubExpr(env : GEnv, expr : GSubTypeExpr) -> GSubTypeExpr {
+	switch (expr) {
+		GNamed(name, typars): GNamed(name, resolveGTypes(env, typars));
+		GField(name, type): GField(name, resolveGType(env, type));
+		GAnd(exprs): GAnd(map(exprs, \e -> resolveGSubExpr(env, e)));
+		GOr(exprs): GOr(map(exprs, \e -> resolveGSubExpr(env, e)));
 	}
 }
 
