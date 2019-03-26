@@ -1,7 +1,7 @@
 'use strict';
 
 import {
-	createConnection, ProposedFeatures, InitializeParams, VersionedTextDocumentIdentifier, WorkspaceFolder, Location, Range, Position
+	createConnection, ProposedFeatures, InitializeParams, VersionedTextDocumentIdentifier, WorkspaceFolder, Location, Range, Position, DocumentSymbol, SymbolKind
 } from 'vscode-languageserver';
 import * as path from 'path';
 import * as tools from './tools';
@@ -13,8 +13,6 @@ import { ChildProcess } from 'child_process';
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
-
-let flowServer : ChildProcess = null;
 
 connection.onInitialize((params: InitializeParams) => {
 	return {
@@ -35,7 +33,8 @@ connection.onInitialize((params: InitializeParams) => {
 					supported : true,
 					changeNotifications : true
 				}
-			}
+			},
+			documentSymbolProvider: true
 		}
 	}
 });
@@ -47,9 +46,6 @@ connection.onDidChangeConfiguration((params) => {
 })
 
 connection.onShutdown(() => {
-	if (null != flowServer) {
-		tools.shutdownFlowc();
-	}
 });
 
 connection.onDidChangeTextDocument(params => {
@@ -117,30 +113,77 @@ function extractToken(line: string, position: number): string {
 	return line.substring(start + 1, end);
 }
 
-function extractDefinition(compilerResult) {
+interface CompilerEntity {
+	file : string,
+	line : number,
+	column : number,
+	entity : string
+};
+
+function extractEntities(compilerResult): CompilerEntity[]  {
 	if (compilerResult.status == 0) {
 		const line_regexp = /^(.*):(\d+):(\d+):\s*(.*)\s*$/;
 		let lines = flatten(compilerResult.output.filter(x => x != null)
 											.map(x => x.split("\n")));
-		let locations: Location[] = []
+		let results: CompilerEntity[] = []
 		for (let l of lines) {
 			const matched = l.match(line_regexp);
 			if (matched) {
 				const line = Number.parseInt(matched[2]) - 1;
 				const start = Number.parseInt(matched[3]) - 1;
-				locations.push(Location.create(Uri.file(matched[1]).toString(), 
-					Range.create(line, start, line, 
-						matched.length > 4 ? start + matched[4].length : start)));
+				const result = { file : matched[1], line : line, column : start, 
+					entity : matched.length > 4 ? matched[4] : ""};
+				results.push(result);
 			}
 		}
 
-		return locations;
+		return results;
 	}
 
-	return undefined;
+	return [];
 }
 
-async function findObject(fileUri: string, lineNum: number, columnNum: number, operation: string, extra_args: string[]) {
+function entitiesToLocations(results: CompilerEntity[]): Location[] {
+	if (results.length > 0) {
+		return results.map(r => Location.create(Uri.file(r.file).toString(), 
+			Range.create(r.line, r.column, r.line, r.column + r.entity.length))
+		);
+	} else 
+		return undefined;
+}
+
+function parseSymbolKind(prefix: string): SymbolKind | undefined {
+	switch (prefix) {
+		case "struct": return SymbolKind.Struct;
+		case "union": return SymbolKind.Enum;
+		case "fundef": return SymbolKind.Function;
+		case "vardef": return SymbolKind.Variable;
+		case "natdef": return SymbolKind.Method;
+		default: return undefined;
+	}
+}
+
+function parseSymbol(ent: CompilerEntity): DocumentSymbol | undefined {
+	const entity = ent.entity.trim();
+	if (entity.length == 0)
+		return undefined;
+	const components = entity.split(" ");
+	if (components.length < 2)
+		return undefined;
+	
+	const kind = parseSymbolKind(components[0]);
+	if (kind) {
+		const range = Range.create(ent.line, ent.column + 1, ent.line, ent.column + entity.length + 1);
+		return DocumentSymbol.create(components[1], "", kind, range, range);
+	} else
+		return undefined;
+}
+
+function entitiesToSymbols(entities: CompilerEntity[]): DocumentSymbol[] {
+	return entities.map(parseSymbol).filter(t => t != undefined);
+}
+
+async function findEntities(fileUri: string, lineNum: number, columnNum: number, operation: string, extra_args: string[]) {
 	const paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), fileUri);
 	const file_lines = fs.readFileSync(path.join(paths.projectRoot, paths.documentPath), 
 		{ encoding: 'utf8'}).split("\n");
@@ -162,12 +205,13 @@ async function findObject(fileUri: string, lineNum: number, columnNum: number, o
 
 	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, flowcArgs);
 	
-	return extractDefinition(result);
+	return extractEntities(result);
 }
 
 connection.onDefinition(async (params) => {
-	var definitions = await findObject(params.textDocument.uri, params.position.line, params.position.character,
+	const results = await findEntities(params.textDocument.uri, params.position.line, params.position.character,
 		"find-defdecl=", []);
+	const definitions = entitiesToLocations(results);
 
 	// if we are already on definition, jump to declaration - allows to use F12 to jump back and forth
 	if (definitions && definitions.length > 1) {
@@ -186,33 +230,39 @@ connection.onTypeDefinition(async (params) => {
 		[paths.documentPath, "find-type=1", "exp-line=" + params.position.line, 
 			"exp-col=" + params.position.character]);
 
-	return extractDefinition(result);
+	return entitiesToLocations(extractEntities(result));
 });
 
 connection.onReferences(async (params) => {
-	return await findObject(params.textDocument.uri, params.position.line, params.position.character, 
+	const entities = await findEntities(params.textDocument.uri, params.position.line, params.position.character, 
 		"find-uses=", []);
+	return entitiesToLocations(entities);
 });
 
 connection.onImplementation(async (params) => {
-	return await findObject(params.textDocument.uri, params.position.line, params.position.character, 
+	const entities = await findEntities(params.textDocument.uri, params.position.line, params.position.character, 
 		"find-definition=", []);
+	return entitiesToLocations(entities);
 })
 
 connection.onRenameRequest(async (params) => {
-	const result = await findObject(params.textDocument.uri, params.position.line, params.position.character, 
+	const result = await findEntities(params.textDocument.uri, params.position.line, params.position.character, 
 		"rename=", ["to=" + params.newName]);
 
 	return undefined;
 })
 
-connection.onShutdown(async () => {
-	if (null != flowServer)
-		flowServer.kill();
+connection.onDocumentSymbol(async params => {
+	const paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), params.textDocument.uri);
+	const result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
+		[paths.documentPath, "print-outline=1"]);
+	const entities = extractEntities(result);
+	const symbols = entitiesToSymbols(entities);
+	return symbols;
 });
 
 connection.onCompletion(async (params) => {
-	const result = await findObject(params.textDocument.uri, params.position.line, params.position.character,
+	const result = await findEntities(params.textDocument.uri, params.position.line, params.position.character,
 		"completion=1", []);
 	return [];
 })
