@@ -10,13 +10,23 @@ export {
 	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
-
-// TODO: Introduce a structure to keep lower and upper bounds for each tyvar
-// along with a set of nodes we depend on, so we can more efficiently update
-// and only recalc what is required
-
 // TODO: findPotentialGSupertypes and findPotentialGSubtypes can be greatly optimized
 // by having a subtype graph of structs and unions
+
+// TODO: When we have loops in the deps, we have to unify the nodes. See test 59, where
+// α40001, α40008, α40005 form a loop, and we can collapse to be a single node, which
+// has inputs from TextSize and Selection.
+// Also α40002 and α40006 are in a loop with Selection, and they can be joined together.
+
+// TODO: Consider whether GBounds to have a bool for flow type, and GName separately 
+
+// TODO: Introduce a resolution stage, so we can implement a staged heuristic for
+// solving things.
+// 1. Resolve all unambigious cases
+// 2. If there is multiple solutions that might work, just pick one.
+// 3. If we only have unbound tyvars remaining as stoppers for making progress, just
+//    ignore those, and assume they will be fine
+// 4. Convert connected, unbound tyvars to type pars
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	doResolveGGraph(env, name, unify, false);
@@ -103,6 +113,15 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 	lower = req.lower;
 	upper = req.upper;
 
+	// Loop?
+	if (env.verbose >= 3) {
+		hasTyvarLoop = !isEmptySet(intersectSets(req.lower.tyvars, req.upper.tyvars));
+		if (hasTyvarLoop) {
+			// It is not exactly clear what to do in these cases. See test 59.
+			printStay(env.env, "This has a tyvar loop " + gtyvarReqs2string(env, req));
+		}
+	}
+
 	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
@@ -118,14 +137,23 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			// OK, we have a unique, fixed type for our guy
 			setGTyvar(env, unify, req, fixedType);
 		} else {
-			// OK, unify the entire thing against everything to uncover what we can
-			// TODO: This is a bit too much - we could only do half of these because of
-			// symmetry
-			foldSet(fixed, env, \acc, lt -> {
-				foldSet(fixed, acc, \acc2, ut -> {
-					unify(acc2, lt, ut)
-				})
-			});
+			if (makeTypars) {
+				// There are multiple solutions. We just pick one
+				fixedType = set2array(fixed)[0];
+				setGTyvar(env, unify, req, fixedType);
+			} else {
+				// OK, unify the entire thing against everything to uncover what we can
+				// TODO: This is a bit too much - we could only do half of these because of
+				// symmetry.
+				// Test59 makes it clear that this has to be smarter, since there we have
+				// some structs, which end up having to be handled by being merged to
+				// a union because of loops
+				foldSet(fixed, env, \acc, lt -> {
+					foldSet(fixed, acc, \acc2, ut -> {
+						unify(acc2, lt, ut)
+					})
+				});
+			}
 		}
 	} else {
 		// OK, no fixed
@@ -152,7 +180,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// type verification will catch it and there would not be any solution
 				solution = resolveGSubTypeToName(env, ltypenames[0], lower.subtypes);
 				if (env.verbose >= 3) {
-					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, lower));
+					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gtyvarReqs2string(env, req));
 				};
 				[solution];
 			} else [];
@@ -161,7 +189,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			utypes = if (length(utypenames) == 1) {
 				solution = resolveGSubTypeToName(env, utypenames[0], upper.subtypes) ;
 				if (env.verbose >= 3) {
-					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gbounds2string(env, upper));
+					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gtyvarReqs2string(env, req));
 				};
 				[solution];
 			} else [];
@@ -178,7 +206,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 						switch (subtype) {
 							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
 							default: {
-								println("TODO: Upper should decide from " + gbounds2string(env, upper));
+								println("TODO: Upper should decide from " + gtyvarReqs2string(env, req));
 								println(utypes);
 								env;
 							}
@@ -186,7 +214,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					} else {
 						// test 103 has a case
 						// { :  : Tree<string, FcGlobalVar<>>, Tree<string, α20003>}
-						println("TODO: Upper should decide from " + gbounds2string(env, upper));
+						println("TODO: Upper should decide from " + gtyvarReqs2string(env, req));
 						println(utypes);
 						env;
 					}
@@ -203,13 +231,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 						switch (subtype) {
 							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
 							default: {
-								println("TODO: Lower should decide from " + gbounds2string(env, lower));
+								println("TODO: Lower should decide from " + gtyvarReqs2string(env, req));
 								println(gtype2string(env, GSubType(subtype)));
 								env;
 							}
 						}
 					} else {
-						println("TODO: Lower should decide from " + gbounds2string(env, lower));
+						println("TODO: Lower should decide from " + gtyvarReqs2string(env, req));
 						println(ltypenames);
 						println(ltypes);
 						env;
@@ -234,7 +262,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					// If there are no tyvars in the upper one, then pick the
 					// smallest that still fits lower
 
-					println("TODO: Caught betwen two rocks: "  + gbounds2string(env, lower) + " c= α" + i2s(tyvar) + " c= " + gbounds2string(env, upper));
+					println("TODO: Caught betwen two rocks: " + gtyvarReqs2string(env, req));
 					println(shared);
 
 					// It is not clear yet. Let us unify the lowers with the upppers in an attempt to
@@ -276,9 +304,17 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 // Does this only contain unresolved tyvars?
 isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 	isEmptySet(node.fixedTypes) && isEmptySet(node.subtypes)
-	&& foldSet(node.tyvars, true, \acc, tv -> {
-		acc && !containsKeyTree(env.tyvars, tv)
-	})
+	&& 
+	if (false) {
+		isEmptySet(node.tyvars)
+	} else {
+		// This allows progress, but it is a heuristic
+		// since each tyvar can later be bound to something
+		// conflicting in some cases.
+		foldSet(node.tyvars, true, \acc, tv -> {
+			acc && !containsKeyTree(env.tyvars, tv)
+		})
+	}
 }
 
 // Set this tyvar to this resolved type
@@ -294,25 +330,22 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirem
 		tyvars = setTree(env.tyvars, tyvar, type),
 		unresolvedTyvars = removeSet(env.unresolvedTyvars, tyvar)
 	);
-	// Join with all fixed
-	nenv1 = foldSet(mergeSets(req.lower.fixedTypes, req.upper.fixedTypes), nenv0, \acc, t -> {
-		unify(acc, t, type)
-	});
+	// Join with all lower fixed
+	nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type));
+	// Join with all upper fixed
+	nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t));
+
 	// Unify with subs
-	nenv2 = foldSet(req.lower.subtypes, nenv1, \acc, st -> {
-		unify(acc, GSubType(st), type)
-	});
+	nenv3 = foldSet(req.lower.subtypes, nenv2, \acc, st -> unify(acc, GSubType(st), type));
 
 	// Unify with supers
-	nenv3 = foldSet(req.upper.subtypes, nenv2, \acc, st -> {
-		unify(acc, type, GSubType(st))
-	});
+	nenv4 = foldSet(req.upper.subtypes, nenv3, \acc, st -> unify(acc, type, GSubType(st)));
 
 	// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
-	tyvarsInType = extractGTypeVars(nenv3, type, makeSet());
+	tyvarsInType = extractGTypeVars(nenv4, type, makeSet());
 	GEnv(
-		nenv3 with
-		unresolvedTyvars = mergeSets(nenv3.unresolvedTyvars, tyvarsInType)
+		nenv4 with
+		unresolvedTyvars = mergeSets(nenv4.unresolvedTyvars, tyvarsInType)
 	);
 }
 
@@ -497,8 +530,8 @@ addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 					GBounds(acc with tyvars = insertSet(acc.tyvars, id));
 				}
 				Some(type): {
-					// If the tyvar is defined, we should put it to fixedTypes
-					GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, type)));
+					// If the tyvar is defined, resolve it, and place it where it needs to go
+					addGTypeToGBounds(env, acc, type);
 				}
 			}
 		}
@@ -549,4 +582,3 @@ gbounds2string(env : GEnv, g : GBounds) -> string {
 	+ " : " + superglue(set2array(g.subtypes), \st -> gtype2string(env, GSubType(st)), ", ")
 	+ "}"
 }
-
