@@ -111,22 +111,22 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 
 		// If flow is there, we can ignore that
 		sansFlow = removeSet(fixed, GFlow());
-		nenv = if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
+		if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
 			fixedTypes = if (sizeSet(sansFlow) == 1) sansFlow else fixed;
 			fixedType = set2array(fixedTypes)[0];
 
 			// OK, we have a unique, fixed type for our guy
-			setGTyvars(env, unify, tyvar, fixedType);
-		} else env;
-
-		// OK, unify the entire thing against everything to uncover what we can
-		// TODO: This is a bit too much - we could only do half of these because of
-		// symmetry
-		foldSet(fixed, nenv, \acc, lt -> {
-			foldSet(fixed, acc, \acc2, ut -> {
-				unify(acc2, lt, ut)
-			})
-		});
+			setGTyvar(env, unify, req, fixedType);
+		} else {
+			// OK, unify the entire thing against everything to uncover what we can
+			// TODO: This is a bit too much - we could only do half of these because of
+			// symmetry
+			foldSet(fixed, env, \acc, lt -> {
+				foldSet(fixed, acc, \acc2, ut -> {
+					unify(acc2, lt, ut)
+				})
+			});
+		}
 	} else {
 		// OK, no fixed
 		lowerFree = isGBoundsUnconstrained(env, lower);
@@ -170,17 +170,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				if (length(utypes) == 1) {
 					// Upper decides and is unique, so set all lower to the result
 					solution = utypes[0];
-					nenv = setGTyvars(env, unify, tyvar, solution);
-					// Also be sure to unify the result against all our top subtypes to extract gold
-					foldSet(upper.subtypes, nenv, \acc, st -> {
-						unify(acc, solution, GSubType(st))
-					});
+					setGTyvar(env, unify, req, solution);
 				} else {
 					if (sizeSet(upper.subtypes) == 1) {
 						// A single named struct/union as the bound - we just take it
 						subtype = set2array(upper.subtypes)[0];
 						switch (subtype) {
-							GNamed(__, __): setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, GSubType(subtype));
+							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
 							default: {
 								println("TODO: Upper should decide from " + gbounds2string(env, upper));
 								println(utypes);
@@ -199,17 +195,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				if (length(ltypes) == 1) {
 					// Lower decides. We just have to make sure we unify the result backwards
 					solution = ltypes[0];
-					nenv = setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, solution);
-					// Also be sure to unify the result against all our lower subtypes to extract gold
-					foldSet(lower.subtypes, nenv, \acc, st -> {
-						unify(acc, GSubType(st), solution)
-					});
+					setGTyvar(env, unify, req, solution);
 				} else {
 					if (sizeSet(lower.subtypes) == 1) {
 						// A single named struct/union as the bound - we just take it
 						subtype = set2array(lower.subtypes)[0];
 						switch (subtype) {
-							GNamed(__, __): setGTyvars(env, \e, l, u -> unify(e, u, l), tyvar, GSubType(subtype));
+							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
 							default: {
 								println("TODO: Lower should decide from " + gbounds2string(env, lower));
 								println(gtype2string(env, GSubType(subtype)));
@@ -235,15 +227,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					solution = resolveGSubTypeToName(env, winner, mergeSets(lower.subtypes, upper.subtypes));
 
 					// And set ourselves to this
-					nenv = setGTyvars(env, unify, tyvar, solution);
-
-					// Also be sure to unify the result against all our top and lower subtypes to extract gold
-					nenv1 = foldSet(upper.subtypes, nenv, \acc, st -> {
-						unify(acc, solution, GSubType(st))
-					});
-					foldSet(lower.subtypes, nenv1, \acc, st -> {
-						unify(acc, GSubType(st), solution)
-					});
+					setGTyvar(env, unify, req, solution);
 				} else {
 					// TODO: If there are no tyvars in the lower one, then
 					// pick the biggest that still fits upper
@@ -297,24 +281,38 @@ isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 	})
 }
 
-// Set all tyvars to this resolved type
-setGTyvars(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, type : GType) -> GEnv {
+// Set this tyvar to this resolved type
+setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, type : GType) -> GEnv {
+	tyvar = req.tyvar;
+
 	if (env.verbose >= 2) {
 		printStay(env.env, "α" + i2s(tyvar) + " = " + gtype2string(env, type));
 	}
 
-	nacc = GEnv(
+	nenv0 = GEnv(
 		env with
 		tyvars = setTree(env.tyvars, tyvar, type),
 		unresolvedTyvars = removeSet(env.unresolvedTyvars, tyvar)
 	);
-	nenv = unify(nacc, GTypeVar(tyvar), type);
+	// Join with all fixed
+	nenv1 = foldSet(mergeSets(req.lower.fixedTypes, req.upper.fixedTypes), nenv0, \acc, t -> {
+		unify(acc, t, type)
+	});
+	// Unify with subs
+	nenv2 = foldSet(req.lower.subtypes, nenv1, \acc, st -> {
+		unify(acc, GSubType(st), type)
+	});
+
+	// Unify with supers
+	nenv3 = foldSet(req.upper.subtypes, nenv2, \acc, st -> {
+		unify(acc, type, GSubType(st))
+	});
 
 	// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
-	tyvarsInType = extractGTypeVars(nenv, type, makeSet());
+	tyvarsInType = extractGTypeVars(nenv3, type, makeSet());
 	GEnv(
-		nenv with
-		unresolvedTyvars = mergeSets(nenv.unresolvedTyvars, tyvarsInType)
+		nenv3 with
+		unresolvedTyvars = mergeSets(nenv3.unresolvedTyvars, tyvarsInType)
 	);
 }
 
