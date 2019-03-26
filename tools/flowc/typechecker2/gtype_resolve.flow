@@ -7,76 +7,97 @@ import tools/flowc/type_helpers;
 
 export {
 	// Resolve the graph
-	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv;
+	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
-// TODO: We only have to do the reachableClosure on unbound tyvars in the graph 
-// TODO: We only have to recalc this when related part of the graph changes
+
 // TODO: Introduce a structure to keep lower and upper bounds for each tyvar
-// along with a set of nodes  we depend on, so we can more efficiently update
+// along with a set of nodes we depend on, so we can more efficiently update
 // and only recalc what is required
 
 // TODO: findPotentialGSupertypes and findPotentialGSubtypes can be greatly optimized
 // by having a subtype graph of structs and unions
 
-resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv {
+resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
+	doResolveGGraph(env, name, unify, false);
+}
+
+doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv {
 	if (env.verbose >= 2) {
-		println("Resolving tyvars: " + toString(set2array(env.unresolvedTyvars)) + " making typars: " + b2s(makeTypars));
+		printIndent(env.env, "Resolving tyvars: " + toString(set2array(env.unresolvedTyvars)) + " making typars: " + b2s(makeTypars) + " {");
 	}
+
 	graph = env.relations.graph;
-
-	// What nodes define the transitive upper bounds for each node?
-	upperBounds : Tree<int, Set<int>> = reachableClosure(graph);
-
-	// What nodes define the transitive lower bounds for each node?
-	reverseGraph = reverseEasyGraph(graph);
-	lowerBounds : Tree<int, Set<int>> = reachableClosure(reverseGraph);
-
-	// TODO: We could extract the dependent nodes this way instead of all of the nodes
-	// reachable = doDfs(graph, DfsAcc(makeSet(), []), from);
-
+	reverseGraph = ref reverseEasyGraph(graph);
 
 	unresolved = sizeSet(env.unresolvedTyvars);
-	nenv = foldTree(lowerBounds, env, \nodeid, lowerIds, acc -> {
-		mnode = lookupTree(graph.nodes, nodeid);
-		switch (mnode) {
-			None(): acc;
-			Some(node): {
-				type = node.data;
-				switch (type) {
-					GTypeVar(tyvarId): {
-						if (!containsKeyTree(acc.tyvars, tyvarId)) {
-							lower = buildGBounds(acc, graph, lowerIds);
-							upperIds = lookupTreeDef(upperBounds, nodeid, makeSet());
-							upper = buildGBounds(acc, graph, upperIds);
-							clarifyGTyvar(acc, unify, tyvarId, lower, upper, makeTypars);
-						} else {
-							acc;
-						}
-					}
-					default: {
-						acc;
-					}
-				}
-			}
-		}
-	});
 
-	if (sizeSet(nenv.unresolvedTyvars) != unresolved) {
-		resolveGGraph(nenv, name, unify, false)
+	nenv = foldSet(env.unresolvedTyvars, env, \acc, tv -> {
+		// During the llop, we can resolve stuff, no need to redo that
+		if (containsSet(acc.unresolvedTyvars, tv)) {
+			// We got new edges in the graph. We have to redo the reverse graph
+			if (acc.relations.graph.numberOfEdges != ^(reverseGraph).numberOfEdges) {
+				reverseGraph := reverseEasyGraph(acc.relations.graph);
+			}
+			reqs = buildGTyvarRequirement(acc, ^reverseGraph, tv);
+			printIndent(env.env, "Clarify " + gtyvarReqs2string(acc, reqs) + " {");
+			res = clarifyGTyvar(acc, unify, reqs, makeTypars);
+			printDedent(env.env, "}");
+			res;
+		} else acc;
+	});
+	
+	if (env.verbose >= 2) {
+		printDedent(env.env, "} Unresolved: " + toString(set2array(nenv.unresolvedTyvars)));
+	}	
+	remaining = sizeSet(nenv.unresolvedTyvars);
+
+	if (remaining != 0 && remaining != unresolved) {
+		doResolveGGraph(nenv, name, unify, false)
 	} else {
 		if (makeTypars) {
 			nenv;
 		} else {
 			// Do a final round where we make typars
-			resolveGGraph(nenv, name, unify, true)
+			doResolveGGraph(nenv, name, unify, true)
 		}
+	}
+}
+
+
+// The total set of requirements we know about for a given tyvar
+GTyvarRequirements(
+	tyvar : int, 
+	lower : GBounds, 
+	upper : GBounds, 
+);
+
+// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
+// The tyvars are all known to be unbound.
+GBounds(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
+
+buildGTyvarRequirement(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
+	nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
+	if (nodeid == -1) {
+		println("Could not find tyvar");
+		GTyvarRequirements(tyvarId, emptyGBounds(), emptyGBounds())
+	} else {
+		lowerIds = reachableClosureFromNode(reverseGraph, nodeid);
+		lower = buildGBounds(env, env.relations.graph, lowerIds);
+
+		upperIds = reachableClosureFromNode(env.relations.graph, nodeid);
+		upper = buildGBounds(env, env.relations.graph, upperIds);
+		GTyvarRequirements(tyvarId, lower, upper);
 	}
 }
 
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, tyvar : int, lower : GBounds, upper : GBounds, makeTypars : bool) -> GEnv {
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, makeTypars : bool) -> GEnv {
+	tyvar = req.tyvar;
+	lower = req.lower;
+	upper = req.lower;
+
 	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
@@ -252,7 +273,7 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 
 	// Now, set all tyvars to this typar		
 	foldSet(tyvars, env, \acc, tv -> {
-		if (env.verbose >= 3) {
+		if (env.verbose >= 2) {
 			printStay(env.env, "α" + i2s(tv) + " = " + gtype2string(env, typar));
 		}
 		GEnv(
@@ -484,19 +505,9 @@ addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 	}
 }
 
-// The total set of requirements we know about for a given tyvar
-GTyvarRequirements(
-	tyvar : int, 
-	lower : GBounds, 
-	upper : GBounds, 
-	// For dependency tracking, keep a score of what tyvars we depend on, so
-	// we have to redo when need info is added
-	dependsOnTyvars : Set<int>
-);
-
-// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
-// The tyvars are all known to be unbound.
-GBounds(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
+gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
+	gbounds2string(env, req.lower) + " c= α" + i2s(req.tyvar) + " c= " + gbounds2string(env, req.upper);
+}
 
 gbounds2string(env : GEnv, g : GBounds) -> string {
 	"{"
