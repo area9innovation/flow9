@@ -117,3 +117,7 @@
 
 ## 0.3.3
  - added debugging logging to language server
+
+## 0.3.4
+ - added support for outline
+ - flow server is managed by extension, not language server
