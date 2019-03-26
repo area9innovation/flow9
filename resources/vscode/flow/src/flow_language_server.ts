@@ -10,13 +10,6 @@ import Uri from 'vscode-uri';
 import * as flatten from 'arr-flatten';
 import { ChildProcess } from 'child_process';
 
-interface FlowSettings {
-	useCompilerServer : boolean
-}
-
-const defaultSettings : FlowSettings = { useCompilerServer : true };
-let globalSettings : FlowSettings = defaultSettings;
-
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
@@ -51,9 +44,6 @@ connection.onInitialized(() => {
 });
 
 connection.onDidChangeConfiguration((params) => {
-	globalSettings = <FlowSettings>(
-		params.settings.flow || defaultSettings
-	);
 })
 
 connection.onShutdown(() => {
@@ -69,12 +59,6 @@ connection.onDidChangeTextDocument(params => {
 connection.onDidOpenTextDocument(params => {
 	validateTextDocument(params.textDocument);
 });
-
-function spawnFlowcServer(projectRoot: string) {
-	if (null == flowServer && globalSettings.useCompilerServer) {
-		flowServer = tools.launchFlowc(projectRoot);
-	}
-}
 
 function getFsPath(uri: string): string {
 	return Uri.parse(uri).fsPath;
@@ -172,12 +156,7 @@ async function findObject(fileUri: string, lineNum: number, columnNum: number, o
 
     console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
 
-	// this will spawn a flowc server in the project root unless already spawned
-	spawnFlowcServer(paths.projectRoot);
-
-	let serverArgs = !globalSettings.useCompilerServer ? ["server=0"] : [];
-
-	let flowcArgs = serverArgs.concat([paths.documentPath, operation + token]).concat(extra_args);
+	let flowcArgs = [paths.documentPath, operation + token].concat(extra_args);
 	connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
 		"\n\t\t in folder: " + paths.projectRoot);
 
