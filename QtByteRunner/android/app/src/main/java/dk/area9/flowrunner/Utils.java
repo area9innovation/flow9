@@ -17,28 +17,27 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpResponse;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.entity.UrlEncodedFormEntity;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.client.params.HttpClientParams;
-import org.apache.http.client.protocol.ClientContext;
-import org.apache.http.conn.scheme.PlainSocketFactory;
-import org.apache.http.conn.scheme.Scheme;
-import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.impl.client.AbstractHttpClient;
-import org.apache.http.impl.client.BasicCookieStore;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
-import org.apache.http.message.BasicNameValuePair;
-import org.apache.http.params.BasicHttpParams;
-import org.apache.http.protocol.BasicHttpContext;
-import org.apache.http.protocol.HTTP;
+import com.amazonaws.org.apache.http.Consts;
+import com.amazonaws.org.apache.http.Header;
+import com.amazonaws.org.apache.http.HttpEntity;
+import com.amazonaws.org.apache.http.HttpResponse;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
+import com.amazonaws.org.apache.http.client.params.HttpClientParams;
+import com.amazonaws.org.apache.http.conn.scheme.PlainSocketFactory;
+import com.amazonaws.org.apache.http.conn.scheme.Scheme;
+import com.amazonaws.org.apache.http.conn.scheme.SchemeRegistry;
+import com.amazonaws.org.apache.http.conn.ssl.SSLSocketFactory;
+import com.amazonaws.org.apache.http.impl.client.AbstractHttpClient;
+import com.amazonaws.org.apache.http.impl.client.BasicCookieStore;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.impl.conn.BasicClientConnectionManager;
+import com.amazonaws.org.apache.http.params.BasicHttpParams;
+import com.amazonaws.org.apache.http.protocol.BasicHttpContext;
+import com.amazonaws.org.apache.http.protocol.HTTP;
 
 import android.app.Activity;
 import android.app.DownloadManager;
@@ -52,7 +51,6 @@ import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
-import android.net.http.AndroidHttpClient;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
@@ -74,11 +72,6 @@ public class Utils {
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
     public static final boolean isFileProviderRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
-
-    static {
-        BasicCookieStore cookieStore = new BasicCookieStore();
-        commonHttpContext.setAttribute(ClientContext.COOKIE_STORE, cookieStore);
-    }
     
     public static void setHttpProfiling(boolean onoff) {
         httpProfiling = onoff;
@@ -86,9 +79,9 @@ public class Utils {
     
     public static DefaultHttpClient createHttpClient() {
         SchemeRegistry registry = new SchemeRegistry();
-        registry.register(new Scheme("http", PlainSocketFactory.getSocketFactory(), 80));
-        registry.register(new Scheme("https", SSLSocketFactory.getSocketFactory(), 443));
-        ThreadSafeClientConnManager tscm = new ThreadSafeClientConnManager( new BasicHttpParams(), registry);
+        registry.register(new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
+        registry.register(new Scheme("https", 443, SSLSocketFactory.getSocketFactory()));
+        BasicClientConnectionManager tscm = new BasicClientConnectionManager(registry);
         return new DefaultHttpClient(tscm, new BasicHttpParams());
     }
     
@@ -167,8 +160,8 @@ public class Utils {
             }
 
             try {
-                key = URLDecoder.decode(key, HTTP.UTF_8);
-                val = URLDecoder.decode(val, HTTP.UTF_8);
+                key = URLDecoder.decode(key, "UTF-8");
+                val = URLDecoder.decode(val, "UTF-8");
             } catch (UnsupportedEncodingException e) {
                 Log.wtf(LOG_TAG, "decodeUrlQuery: " + e);
             }
@@ -178,14 +171,6 @@ public class Utils {
 
         return parameters;
     }
-    
-    // folds params
-    public static UrlEncodedFormEntity paramStringsToEntity(String[] params) throws UnsupportedEncodingException {
-        List<NameValuePair> args = new ArrayList<NameValuePair>(params.length/2);
-        for (int i = 0; i < params.length; i+=2)
-            args.add(new BasicNameValuePair(params[i], params[i+1]));
-        return new UrlEncodedFormEntity(args, HTTP.UTF_8);
-    }
 
     // makes query string from params
     public static String paramStringsToQuery(String[] params) throws UnsupportedEncodingException {
@@ -194,16 +179,16 @@ public class Utils {
         for (int i = 0; i < params.length; i+=2) {
             if (sb.length() > 0)
                 sb.append("&");
-            sb.append(URLEncoder.encode(params[i], HTTP.UTF_8));
+            sb.append(URLEncoder.encode(params[i], "UTF-8"));
             sb.append("=");
-            sb.append(URLEncoder.encode(params[i+1], HTTP.UTF_8));
+            sb.append(URLEncoder.encode(params[i+1], "UTF-8"));
         }
 
         return sb.toString();
     }
     
     public interface HttpLoadCallback extends CopyProgressCallback {
-        void httpFinished(boolean withData);
+        void httpFinished(int status, HashMap<String, String> headers, boolean withData);
         boolean httpStatus(int status);
         void httpError(String message);
         void httpAbort(String message);
@@ -212,9 +197,9 @@ public class Utils {
     
     public static class HttpLoadAdaptor implements HttpLoadCallback {
         /**
-         * Make sure you are invoking super.httpFinished(withData) when overriding this method!
+         * Make sure you are invoking super.httpFinished(withData, status, headers) when overriding this method!
          */
-        public void httpFinished(boolean withData) {
+        public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
             if (httpProfiling) {
                 long ctm = System.currentTimeMillis();                
                 Log.i(LOG_TAG, ">> Finished http request at {" + ctm + "}, took {" + (ctm - createdAt) + "} ms: {" + uriString + "}");
@@ -244,19 +229,23 @@ public class Utils {
     }
 
     public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, OutputStream output, HttpLoadCallback callback) throws IOException {
-        HttpClientParams.setRedirecting(httpclient.getParams(), true);
-        AndroidHttpClient.modifyRequestToAcceptGzipResponse(request);
+        httpclient.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
         HttpResponse response = httpclient.execute(request, commonHttpContext);
 
         int status = response.getStatusLine().getStatusCode();
         boolean ok = callback.httpStatus(status);
         boolean data_done = false;
 
+        HashMap<String, String> headers = new HashMap<>();
+        for (Header header : response.getAllHeaders()) {
+            headers.put(header.getName(), header.getValue());
+        }
+
         HttpEntity entity = response.getEntity();
         if (entity != null) {
             callback.httpContentLength(entity.getContentLength());
 
-            InputStream contentStream = AndroidHttpClient.getUngzippedContent(entity);
+            InputStream contentStream = entity.getContent();
             try {
                 if (ok) {
                     copyData(output, contentStream, callback);
@@ -264,12 +253,11 @@ public class Utils {
                 }
             } finally {
                 contentStream.close();
-                entity.consumeContent();
             }
         }
 
         if (ok)
-            callback.httpFinished(data_done);
+            callback.httpFinished(status, headers, data_done);
         else
             callback.httpError("HTTP " + status + " error");
     }
@@ -280,8 +268,8 @@ public class Utils {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
             loadHttp(httpclient, new HttpGet(link), buffer, new HttpLoadAdaptor(link) {
-                public void httpFinished(boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     ok[0] = withData;
                 }
             });
@@ -345,9 +333,10 @@ public class Utils {
             }
         };
         loadHttpAsync(http_client, request, buffer, new HttpLoadAdaptor(request.getURI().toString()) {
-            public void httpFinished(boolean withData) {
-                super.httpFinished(withData);
+            public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                super.httpFinished(status, headers, withData);
                 callback.deliverData(null, true);
+                callback.deliverDone(status, headers);
             }
             public boolean httpStatus(int status) {
                 callback.reportStatus(status);
@@ -470,7 +459,7 @@ public class Utils {
     
     public static void handleHardwareAcceleration(boolean initialized, Activity activity) {
         String haParam = Utils.getParam("ha");
-        boolean haSetting = haParam == null ? true : Utils.isParamTrue(haParam); // true by default
+        boolean haSetting = haParam == null || Utils.isParamTrue(haParam); // true by default
         if (!initialized) {
          // this could be executed only from main thread, not from LoadThread class
             activity.getWindow().setFlags(

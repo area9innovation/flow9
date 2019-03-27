@@ -16,10 +16,11 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.protocol.HTTP;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.client.methods.HttpRequestBase;
+import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.protocol.HTTP;
 
 import android.content.Context;
 import android.util.Base64;
@@ -42,7 +43,7 @@ public class ResourceCache {
 
     private HashMap<URI,List<Resolver>> pending_links = new HashMap<URI,List<Resolver>>();
     private HashMap<URI,List<URI>> pending_tries = new HashMap<URI,List<URI>>();
-    private HashMap<URI,HttpUriRequest> pending_requests = new HashMap<URI, HttpUriRequest>();
+    private HashMap<URI,HttpRequestBase> pending_requests = new HashMap<URI, HttpRequestBase>();
 
     public ResourceCache(Context context) {
         app_context = context;
@@ -255,7 +256,7 @@ public class ResourceCache {
             output = new FileOutputStream(tmp);
             final FileOutputStream foutput = output;
 
-            HttpUriRequest request = new HttpGet(link);
+            HttpRequestBase request = new HttpGet(link);
 
             pending_requests.put(link, request);
 
@@ -278,8 +279,8 @@ public class ResourceCache {
                     return status >= 200 && status < 300;
                 }
                 
-                public void httpFinished(boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                    super.httpFinished(status, headers, withData);
 
                     pending_requests.remove(link);
                     if (switched) return;
@@ -333,7 +334,7 @@ public class ResourceCache {
         try {
             // Create MD5 Hash
             MessageDigest digest = MessageDigest.getInstance("MD5");
-            digest.update(text.getBytes(HTTP.UTF_8));
+            digest.update(text.getBytes("UTF-8"));
             return String.format("%032x", new BigInteger(1, digest.digest()));
         } catch (NoSuchAlgorithmException e) {
             Log.wtf(Utils.LOG_TAG, "MD5 not supported?", e);

@@ -184,8 +184,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbWebClipHostCall, "(JLjava/lang/String;)V") \
     CALLBACK(cbSetWebClipZoomable, "(JZ)V") \
     CALLBACK(cbSetWebClipDomains, "(J[Ljava/lang/String;)V") \
-    CALLBACK(cbStartHttpRequest, "(ILjava/lang/String;Z[Ljava/lang/String;[Ljava/lang/String;)V") \
-    CALLBACK(cbSendHttpRequestWithAttachments, "(ILjava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V") \
+    CALLBACK(cbStartHttpRequest, "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)V") \
     CALLBACK(cbStartMediaPreload, "(ILjava/lang/String;)V") \
     CALLBACK(cbRemoveUrlFromCache, "(Ljava/lang/String;)V") \
     CALLBACK(cbBeginLoadSound, "(JLjava/lang/String;)V") \
@@ -507,6 +506,14 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverHttpError
   (JNIEnv *env, jobject obj, jlong ptr, jint id, jbyteArray data)
 {
     WRAPPER_FLUSH(getHttp()->deliverError(id, data));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverHttpResponse
+        (JNIEnv *env, jobject obj, jlong ptr, jint id, jint status, jobjectArray headers)
+{
+    AbstractHttpSupport::HeadersMap headersMap;
+    jni2unicode_map(env, &headersMap, headers);
+    WRAPPER_FLUSH(getHttp()->deliverResponse(id, status, headersMap));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverHttpData
@@ -1881,24 +1888,15 @@ void AndroidHttpSupport::doRequest(HttpRequest &rq)
     int id = rq.req_id;
     jstring url_str = string2jni(env, rq.url);
 
-    if (rq.is_media_preload)
-    {
+    if (rq.is_media_preload) {
         env->CallVoidMethod(owner->owner, cbStartMediaPreload, id, url_str);
-    }
-    else if (!rq.attachments.empty())
-    {
+    } else {
+        jstring method_str = string2jni(env, rq.method);
+        jstring payload_str = string2jni(env, rq.payload);
         jobjectArray header_arr = string_map2jni(env, rq.headers);
-        jobjectArray param_arr = string_map2jni(env, rq.params);
-        jobjectArray attachments_arr = string_map2jni(env, rq.attachments);
 
-        env->CallVoidMethod(owner->owner, cbSendHttpRequestWithAttachments, id, url_str, header_arr, param_arr, attachments_arr);
-    }
-    else
-    {
-        jobjectArray header_arr = string_map2jni(env, rq.headers);
-        jobjectArray param_arr = string_map2jni(env, rq.params);
-
-        env->CallVoidMethod(owner->owner, cbStartHttpRequest, id, url_str, rq.is_post, header_arr, param_arr);
+        env->CallVoidMethod(owner->owner, cbStartHttpRequest, id, url_str, method_str,
+                            header_arr, payload_str);
     }
 
     std::string msg;

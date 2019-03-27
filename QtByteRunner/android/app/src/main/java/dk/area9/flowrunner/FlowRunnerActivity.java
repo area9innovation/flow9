@@ -1,13 +1,16 @@
 package dk.area9.flowrunner;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -15,18 +18,23 @@ import java.util.HashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.http.HttpException;
-import org.apache.http.HttpHost;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpRequestInterceptor;
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpResponseInterceptor;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.params.CoreProtocolPNames;
-import org.apache.http.protocol.HttpContext;
+import com.amazonaws.org.apache.http.HttpEntity;
+import com.amazonaws.org.apache.http.HttpException;
+import com.amazonaws.org.apache.http.HttpHost;
+import com.amazonaws.org.apache.http.HttpRequest;
+import com.amazonaws.org.apache.http.HttpRequestInterceptor;
+import com.amazonaws.org.apache.http.HttpResponse;
+import com.amazonaws.org.apache.http.HttpResponseInterceptor;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.client.methods.HttpPost;
+import com.amazonaws.org.apache.http.client.methods.HttpPut;
+import com.amazonaws.org.apache.http.client.methods.HttpDelete;
+import com.amazonaws.org.apache.http.client.methods.HttpPatch;
+import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
+import com.amazonaws.org.apache.http.entity.BasicHttpEntity;
+import com.amazonaws.org.apache.http.entity.StringEntity;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.protocol.HttpContext;
 
 // this is only for checking hardware acceleration, probably could be refactored
 import android.app.AlertDialog;
@@ -35,6 +43,7 @@ import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Entity;
 import android.content.Intent;
 // for network state change
 import android.content.IntentFilter;
@@ -75,6 +84,8 @@ import android.widget.Toast;
 // this is only for checking hardware acceleration, probably could be refactored
 import android.Manifest.permission;
 // for network state change
+
+import com.amazonaws.org.apache.http.client.methods.HttpPatch;
 
 import dk.area9.flowrunner.FlowRunnerWrapper.HttpResolver;
 import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
@@ -174,7 +185,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         http_client = Utils.createHttpClient();
         String user_agent = "flow Android " + Build.VERSION.RELEASE + 
                 " dpi=" + metrics.densityDpi + " " + metrics.widthPixels + "x" + metrics.heightPixels;
-        http_client.getParams().setParameter(CoreProtocolPNames.USER_AGENT, user_agent);
+        http_client.getParams().setParameter("User-Agent", user_agent);
         
         Log.i(Utils.LOG_TAG, "Device info: " + Build.DEVICE + " OS: " + Build.VERSION.RELEASE);
         Log.i(Utils.LOG_TAG, "User agent for Http requests : " + user_agent);
@@ -202,8 +213,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         http_client.addRequestInterceptor(new HttpRequestInterceptor() {
             public void process(final HttpRequest request, final HttpContext context) throws HttpException, IOException {
                 if (php_session_id != null) {
-                    HttpHost target = (HttpHost) context.getAttribute(
-                            org.apache.http.protocol.ExecutionContext.HTTP_TARGET_HOST);
+                    HttpHost target = (HttpHost) context.getAttribute("Host");
                     if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
                 }
             }
@@ -272,19 +282,37 @@ public class FlowRunnerActivity extends FragmentActivity  {
         });
         
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
-            public void request(String url, boolean is_post, String[] headers,
-                    String[] params, HttpResolver callback) throws IOException 
+            public void request(String url, String method, String[] headers,
+                    String payload, HttpResolver callback) throws IOException
             {
                 HttpUriRequest request;
-                if (is_post) {
-                    HttpPost post = new HttpPost(loader_uri.resolve(url));
-                    if (params.length != 0)
-                        post.setEntity(Utils.paramStringsToEntity(params));
-                    request = post;
-                } else {
-                    if (params.length != 0)
-                        url += (url.indexOf('?') >= 0 ? "&" : "?") + Utils.paramStringsToQuery(params);
-                    request = new HttpGet(loader_uri.resolve(url));
+
+                BasicHttpEntity entity = new BasicHttpEntity();
+                entity.setContent(new ByteArrayInputStream(payload.getBytes(Charset.forName("UTF-8"))));
+
+                URI uri = loader_uri.resolve(url);
+                switch(method) {
+                    case "POST":
+                        HttpPost post = new HttpPost(uri);
+                        post.setEntity(entity);
+                        request = post;
+                        break;
+                    case "PUT":
+                        HttpPut put = new HttpPut(uri);
+                        put.setEntity(entity);
+                        request = put;
+                        break;
+                    case "DELETE":
+                        request = new HttpDelete(uri);
+                        break;
+                    case "PATCH":
+                        HttpPatch patch = new HttpPatch(uri);
+                        patch.setEntity(entity);
+                        request = patch;
+                        break;
+                    default:
+                        request = new HttpGet(uri);
+                        break;
                 }
 
                 for (int i = 0; i < headers.length; i+=2)
@@ -951,8 +979,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
                         updateProgress(bytes);
                     }
                 }
-                public void httpFinished(boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     ended[0] = withData; 
                 }
             };

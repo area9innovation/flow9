@@ -11,8 +11,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
@@ -192,8 +192,8 @@ public class LauncherActivity extends Activity {
                         }
                     });
                 }
-                public void httpFinished(final boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, final boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     runOnUiThread(new Runnable() {
                         public void run() {
                             DownloadingProgressDlg.dismiss();

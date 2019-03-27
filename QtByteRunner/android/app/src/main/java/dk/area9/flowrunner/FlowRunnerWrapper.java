@@ -514,6 +514,10 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     /* HTTP Requests */
     public interface HttpResolver {
         /**
+         * Report http request finished loading
+         */
+        void deliverDone(int status, HashMap<String, String> headers);
+        /**
          * Supply loaded http response data.
          */
         void deliverData(byte[] bmp, boolean last);
@@ -536,12 +540,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
          * Perform an HTTP request.
          * 
          * @param url Location of the picture.
-         * @param post Should the request be POST instead of GET
+         * @param method HTTP request method
          * @param callback Interface for supplying the data back to flow code.
          * @param headers A flattened map of HTTP headers to set.
-         * @param params A flattened map of HTTP query parameters. 
+         * @param payload A binary string sent to the server as request body
          */
-        void request(String url, boolean post, String[] headers, String[] params, HttpResolver callback) throws IOException;
+        void request(String url, String method, String[] headers, String payload, HttpResolver callback) throws IOException;
 
         /**
          * Preload a media object.
@@ -561,7 +565,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         http_loader = loader;
     }
     
-    private void cbStartHttpRequest(final int id, final String url, boolean is_post, String[] headers, String[] params) {
+    private void cbStartHttpRequest(final int id, final String url, final String method, String[] headers, final String payload) {
         if (http_loader == null) {
             deliverHttpError(id, "HttpLoader not set".getBytes());
             return;
@@ -569,6 +573,9 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
         try {
             HttpResolver cb = new HttpResolver() {
+                public void deliverDone(int status, HashMap<String, String> headers) {
+                    deliverHttpResponse(id, status, headers);
+                }
                 public void deliverData(byte[] bytes, boolean last) {
                     deliverHttpData(id, bytes, last);
                 }
@@ -583,7 +590,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
                 }
             };
 
-            http_loader.request(url, is_post, headers, params, cb);
+            http_loader.request(url, method, headers, payload, cb);
         } catch (IOException e) {
             String message = "I/O error: " + e.getMessage();
             deliverHttpError(id, message.getBytes());
@@ -641,28 +648,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         }
         return true;
     }
-    
-    private void cbSendHttpRequestWithAttachments(final int id, final String url, String[] headers, String[] params, String[] attachments) {
-        HttpResolver cb = new HttpResolver() {
-            public void deliverData(byte[] bytes, boolean last) {
-                deliverHttpData(id, bytes, last);
-            }
-            public void resolveError(String message) {
-                deliverHttpError(id, message.getBytes());
-            }
-            // ignored in FlowHttpRequestWithAttachments for now
-            public void reportStatus(int status) {
-                deliverHttpStatus(id, status);
-            }
-            // ignored in FlowHttpRequestWithAttachments for now
-            public void reportProgress(float loaded, float total) {
-                deliverHttpProgress(id, loaded, total);
-            }
-        };
-        
-        FlowHttpRequestWithAttachments asyncRq = new FlowHttpRequestWithAttachments(url, headers, params, attachments, cb);
-        asyncRq.execute();
-    }
 
     private synchronized void deliverHttpError(int id, byte[] error) {
         if (isValid())
@@ -676,6 +661,13 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             nDeliverHttpData(cPtr(), id, data, last);
     }
     
+    private native void nDeliverHttpResponse(long ptr, int id, int status, String[] headersArray);
+
+    private synchronized void deliverHttpResponse(int id, int status, HashMap<String, String> headers) {
+        if (isValid())
+            nDeliverHttpResponse(cPtr(), id, status, parseHashMapToArray(headers));
+    }
+
     private native void nDeliverHttpData(long ptr, int id, byte[] data, boolean last);
     
     private synchronized void deliverHttpProgress(final int id, final float loaded, final float total) {
@@ -1189,20 +1181,22 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nRequestPermissionLocalNotificationResult(long ptr, boolean result, int cb_root);
     private native void nExecuteNotificationCallbacks(long ptr, int notificationId, String notificationCallbackArgs);
 
+    private String[] parseHashMapToArray(HashMap<String, String> map) {
+        final String[] dataArray = new String[map.size() * 2];
+
+        int i = 0;
+        for (Entry<String, String> pair : map.entrySet()) {
+            dataArray[i++] = pair.getKey();
+            dataArray[i++] = pair.getValue();
+        }
+
+        return dataArray;
+    }
+
     public synchronized void DeliverFBMessage(String id, String body, String title, String from, long stamp, HashMap<String, String> data) {
         if (isValid()) {
-            final String[] dataArray = new String[data.size() * 2];
 
-            int i = 0;
-            Iterator it = data.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<String, String> pair = (Map.Entry)it.next();
-
-                dataArray[i++] = pair.getKey();
-                dataArray[i++] = pair.getValue();
-            }
-
-            nDeliverFBMessage(cPtr(), id, body, title, from, stamp, dataArray);
+            nDeliverFBMessage(cPtr(), id, body, title, from, stamp, parseHashMapToArray(data));
         }
     }
 
