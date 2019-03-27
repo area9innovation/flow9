@@ -3,7 +3,7 @@ import ds/easygraph_utils;
 import text/blueprint;
 import tools/flowc/typechecker2/gtype_util;
 import tools/flowc/typechecker2/gsubtype_graph;
-import tools/flowc/typechecker2/gtype_unify;
+// import tools/flowc/typechecker2/gtype_unify;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
 
@@ -12,12 +12,15 @@ export {
 	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
+// TODO: Replace unifyGSubTypeSiblings with finding the smallest (upper)/biggest (lower) type.
+
 // TODO: findPotentialGSubtypes can be greatly optimized by having a subtype graph of structs and unions
 
 // TODO: Consider whether GBounds to have GName separately 
 
 // Test 65: Polymorphism with an attitude. Not sure which way the resolution has to go. Hard to tell.
 //   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
+// Picking the biggest would be XmlEvent, and that works well enough.
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	doResolveGGraph(env, name, unify, GResolveSafeOnly());
@@ -277,16 +280,34 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					GResolveSafeButAmbiguous(): {
 						// OK, if we have multiple upper limits, which are
 						// subtypes of each others, we can unify them
-						// Test101:
-						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
-						env1 = unifyGSubTypeSiblings(env, unify, mapSet(lower.subtypes, \st -> GSubType(st)), true);
-						unifyGSubTypeSiblings(env1, unify, mapSet(upper.subtypes, \st -> GSubType(st)), false);
-					}
-					GResolveSpeculative(): {
-						// TODO:
+
 						// Test 65, 70 and such have
 						//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
 						//   Clarify {α1 :  : (.i:int), None<>, Some<>} c= α0 c= { :  : } {
+						// Test101:
+						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
+						sortLower = mergeSort(set2array(lower.subtypes), \st1, st2 -> compareGSubType(env.subtypes, st2, st1));
+						sortUpper = mergeSort(set2array(upper.subtypes), \st1, st2 -> compareGSubType(env.subtypes, st1, st2));
+
+						// TODO: Get rid of fields here, and only keep named.
+
+						decision = if (sortLower != [] && sortUpper == []) [sortLower[0]] 
+							else if (sortLower == [] && sortUpper != []) [sortUpper[0]] 
+							else if (sortLower != [] && sortUpper != []) {
+								if (sortLower[0] == sortUpper[0]) {
+									[sortLower[0]]
+								} else {
+									printStay(env.env, "We could not resolve req " + gtyvarReqs2string(env, req));
+									[];
+								}
+							} else [];
+
+						if (decision != []) {
+							setGTyvar(env, unify, req, GSubType(decision[0]));
+						} else env;
+					}
+					GResolveSpeculative(): {
+						// TODO:
 						printStay(env.env, "We could not manage " + toString(possible) + " from " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 						env;
 					}
@@ -590,6 +611,7 @@ resolveGSubExpr(env : GEnv, expr : GSubTypeExpr) -> GSubTypeExpr {
 	}
 }
 
+/*
 // OK, when we have a bunch of limits, they might have internal relation,
 // which we can use to extract information
 unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : Set<GType>, lower : bool) -> GEnv {
@@ -607,7 +629,7 @@ unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : 
 			gunifySiblings(acc2, unify, t1, t2, lower);
 		})
 	});
-}
+}*/
 
 // Extract the names we have
 getNamedExprs(exprs : Set<GSubTypeExpr>) -> Set<string> {
