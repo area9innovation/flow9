@@ -20,25 +20,13 @@ export {
 
 // TODO: Consider whether GBounds to have a bool for flow type, and GName separately 
 
-// TODO: Introduce a resolution stage, so we can implement a staged heuristic for
-// solving things.
-// 1. Resolve all unambigious cases
-// 2. If there is multiple solutions that might work, just pick one.
-// 3. If we only have unbound tyvars remaining as stoppers for making progress, just
-//    ignore those, and assume they will be fine
-// 4. Convert connected, unbound tyvars to type pars
-
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
-	doResolveGGraph(env, name, unify, false);
+	doResolveGGraph(env, name, unify, GResolveSafeOnly());
 }
 
-doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, makeTypars : bool) -> GEnv {
+doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, stage : GResolutionStage) -> GEnv {
 	if (env.verbose >= 2) {
-		if (makeTypars) {
-			printIndent(env.env, "Make typars: " + toString(set2array(env.unresolvedTyvars)) + " {");
-		} else {
-			printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " {");
-		}
+		printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " " +  toString(stage) + " {");
 	}
 
 	reverseGraph = ref makeEasyGraph();
@@ -53,7 +41,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv,
 			if (env.verbose >= 2) {
 				printIndent(env.env, "Clarify " + gtyvarReqs2string(acc, reqs) + " {");
 			}
-			res = clarifyGTyvar(acc, unify, reqs, makeTypars);
+			res = clarifyGTyvar(acc, unify, reqs, stage);
 			if (env.verbose >= 2) {
 				printDedent(env.env, "}");
 			}
@@ -66,23 +54,47 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv,
 	}	
 
 	if (sizeSet(nenv.unresolvedTyvars) != 0 && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
-		// There is more to do
-		doResolveGGraph(nenv, name, unify, false)
+		// There were changes in some of the tyvars, so go again in a safe
+		doResolveGGraph(nenv, name, unify, GResolveSafeOnly())
 	} else {
-		if (makeTypars) {
+		if (stage == GResolveTypars()) {
 			// OK, we are done
 			nenv;
 		} else {
+			nextStage = nextGResolutionStage(stage);
 			// Do a final round where we make typars
-			doResolveGGraph(nenv, name, unify, true)
+			doResolveGGraph(nenv, name, unify, nextStage)
 		}
 	}
 }
 
+// We implement a staged heuristic for solving things.
+GResolutionStage ::= GResolveSafeOnly, GResolveSafeButAmbiguous, GResolveSpeculative, GResolveTypars;
+	// 1. Resolve all unambigious cases
+	GResolveSafeOnly();
+
+	// 2. If there is multiple solutions that might work, just pick one.
+	GResolveSafeButAmbiguous();
+
+	// 3. If we only have unbound tyvars remaining as stoppers for making progress, just
+	//    ignore those, and assume they will be fine
+	GResolveSpeculative();
+
+	// 4. Convert connected, unbound tyvars to type pars
+	GResolveTypars();
+
+nextGResolutionStage(stage : GResolutionStage) -> GResolutionStage {
+	switch (stage) {
+		GResolveSafeOnly(): GResolveSafeButAmbiguous();
+		GResolveSafeButAmbiguous(): GResolveSpeculative();
+		GResolveSpeculative(): GResolveTypars();
+		GResolveTypars(): GResolveTypars();
+	}
+}
 
 // The total set of requirements we know about for a given tyvar
 GTyvarRequirements(
-	tyvar : int, 
+	tyvars : Set<int>, 
 	lower : GBounds, 
 	upper : GBounds, 
 );
@@ -92,35 +104,56 @@ GTyvarRequirements(
 GBounds(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
 
 buildGTyvarRequirement(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
+	reqs = buildGTyvarReqForOne(env, reverseGraph, tyvarId);
+
+	loopingTyvars = intersectSets(reqs.lower.tyvars, reqs.upper.tyvars);
+	res = if (!isEmptySet(loopingTyvars)) {
+		// OK, we have a loop of tyvars. In that case, we can
+		// collect the requirements for those tyvars as well, and join them up
+		foldSet(loopingTyvars, reqs, \acc, tv -> {
+			nreq = buildGTyvarReqForOne(env, reverseGraph, tv);
+			joinGTyvarRequirements(acc, nreq)
+		});
+	} else {
+		reqs
+	}
+
+	res;
+}
+
+buildGTyvarReqForOne(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
 	nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
 	if (nodeid == -1) {
 		// This is because there are no requirements in the graph, and this is fine
-		GTyvarRequirements(tyvarId, emptyGBounds(), emptyGBounds())
+		GTyvarRequirements(makeSet1(tyvarId), emptyGBounds(), emptyGBounds())
 	} else {
 		lowerIds = reachableClosureFromNode(reverseGraph, nodeid);
 		lower = buildGBounds(env, env.relations.graph, lowerIds);
 
 		upperIds = reachableClosureFromNode(env.relations.graph, nodeid);
 		upper = buildGBounds(env, env.relations.graph, upperIds);
-		GTyvarRequirements(tyvarId, lower, upper);
+
+		GTyvarRequirements(makeSet1(tyvarId), lower, upper);
 	}
 }
 
+joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
+
+	tyvars = mergeSets(left.tyvars, right.tyvars);
+
+	GTyvarRequirements(
+		tyvars, 
+		removeGBoundsTyvars(joinGBounds(left.lower, right.lower), tyvars),
+		removeGBoundsTyvars(joinGBounds(left.upper, right.upper), tyvars)
+	);
+}
+
+
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, makeTypars : bool) -> GEnv {
-	tyvar = req.tyvar;
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, stage : GResolutionStage) -> GEnv {
 	lower = req.lower;
 	upper = req.upper;
-
-	// Loop?
-	if (env.verbose >= 3) {
-		hasTyvarLoop = !isEmptySet(intersectSets(req.lower.tyvars, req.upper.tyvars));
-		if (hasTyvarLoop) {
-			// It is not exactly clear what to do in these cases. See test 59.
-			printStay(env.env, "This has a tyvar loop " + gtyvarReqs2string(env, req));
-		}
-	}
 
 	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
@@ -137,22 +170,19 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			// OK, we have a unique, fixed type for our guy
 			setGTyvar(env, unify, req, fixedType);
 		} else {
-			if (makeTypars) {
+			pick = switch (stage) {
+				GResolveSafeOnly(): false;
+				GResolveSafeButAmbiguous(): true;
+				GResolveSpeculative(): true;
+				GResolveTypars(): true;
+			}
+			if (pick) {
 				// There are multiple solutions. We just pick one
 				fixedType = set2array(fixed)[0];
 				setGTyvar(env, unify, req, fixedType);
 			} else {
-				// OK, unify the entire thing against everything to uncover what we can
-				// TODO: This is a bit too much - we could only do half of these because of
-				// symmetry.
-				// Test59 makes it clear that this has to be smarter, since there we have
-				// some structs, which end up having to be handled by being merged to
-				// a union because of loops
-				foldSet(fixed, env, \acc, lt -> {
-					foldSet(fixed, acc, \acc2, ut -> {
-						unify(acc2, lt, ut)
-					})
-				});
+				// Nothing to do
+				env;
 			}
 		}
 	} else {
@@ -161,15 +191,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 		upperFree = isGBoundsUnconstrained(env, upper);
 
 		if (lowerFree && upperFree) {
-			if (makeTypars) {
-				// No constraints. All of these tyvars are all identical and should be bound
-				// to the next free typar.
-				tyvars = insertSet(mergeSets(lower.tyvars, upper.tyvars), tyvar);
-				resolveGTypeVarToTyPar(env, tyvars);
-			} else {
-				// While we are working, do not pin these down since new contraints can appear
-				// witch lift them away from type par land. test 1 is an example.
-				env;
+			switch (stage) {
+				GResolveSafeOnly(): env;
+				GResolveSafeButAmbiguous(): env;
+				GResolveSpeculative(): env;
+				GResolveTypars(): {
+					// No constraints. All of these tyvars are all identical and should be bound
+					// to the next free typar.
+					tyvars = mergeSets(mergeSets(lower.tyvars, upper.tyvars), req.tyvars);
+					resolveGTypeVarToTyPar(env, tyvars);
+				}
 			}
 		} else {
 			// Subtypes only. Find any types that might be compatible
@@ -317,36 +348,38 @@ isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
 	}
 }
 
-// Set this tyvar to this resolved type
+// Set this group of tyvars to this resolved type
 setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, type : GType) -> GEnv {
-	tyvar = req.tyvar;
+	tyvars = req.tyvars;
 
 	if (env.verbose >= 2) {
-		printStay(env.env, "α" + i2s(tyvar) + " = " + gtype2string(env, type));
+		printStay(env.env, superglue(set2array(tyvars), \tv -> "α" + i2s(tv), ", ") + " = " + gtype2string(env, type));
 	}
 
-	nenv0 = GEnv(
-		env with
-		tyvars = setTree(env.tyvars, tyvar, type),
-		unresolvedTyvars = removeSet(env.unresolvedTyvars, tyvar)
-	);
-	// Join with all lower fixed
-	nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type));
-	// Join with all upper fixed
-	nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t));
+	foldSet(tyvars, env, \env0, tyvar -> {
+		nenv0 = GEnv(
+			env0 with
+			tyvars = setTree(env0.tyvars, tyvar, type),
+			unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
+		);
+		// Join with all lower fixed
+		nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type));
+		// Join with all upper fixed
+		nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t));
 
-	// Unify with subs
-	nenv3 = foldSet(req.lower.subtypes, nenv2, \acc, st -> unify(acc, GSubType(st), type));
+		// Unify with subs
+		nenv3 = foldSet(req.lower.subtypes, nenv2, \acc, st -> unify(acc, GSubType(st), type));
 
-	// Unify with supers
-	nenv4 = foldSet(req.upper.subtypes, nenv3, \acc, st -> unify(acc, type, GSubType(st)));
+		// Unify with supers
+		nenv4 = foldSet(req.upper.subtypes, nenv3, \acc, st -> unify(acc, type, GSubType(st)));
 
-	// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
-	tyvarsInType = extractGTypeVars(nenv4, type, makeSet());
-	GEnv(
-		nenv4 with
-		unresolvedTyvars = mergeSets(nenv4.unresolvedTyvars, tyvarsInType)
-	);
+		// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
+		tyvarsInType = extractGTypeVars(nenv4, type, makeSet());
+		GEnv(
+			nenv4 with
+			unresolvedTyvars = mergeSets(nenv4.unresolvedTyvars, tyvarsInType)
+		);
+	});
 }
 
 // Given these constraints, what supertypes could meet all of these?
@@ -514,6 +547,15 @@ buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GB
 	});
 }
 
+joinGBounds(left : GBounds, right : GBounds) -> GBounds {
+	GBounds(mergeSets(left.tyvars, right.tyvars), mergeSets(left.fixedTypes, right.fixedTypes), mergeSets(left.subtypes, right.subtypes))
+}
+
+removeGBoundsTyvars(g : GBounds, tyvars : Set<int>) -> GBounds {
+	GBounds(g with tyvars = differenceSets(g.tyvars, tyvars));
+}
+
+
 addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
 	switch (tt) {
@@ -572,7 +614,7 @@ resolveGSubExpr(env : GEnv, expr : GSubTypeExpr) -> GSubTypeExpr {
 }
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
-	gbounds2string(env, req.lower) + " c= α" + i2s(req.tyvar) + " c= " + gbounds2string(env, req.upper);
+	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
 }
 
 gbounds2string(env : GEnv, g : GBounds) -> string {
