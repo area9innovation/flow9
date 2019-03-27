@@ -3,6 +3,7 @@ import ds/easygraph_utils;
 import text/blueprint;
 import tools/flowc/typechecker2/gtype_util;
 import tools/flowc/typechecker2/gsubtype_graph;
+import tools/flowc/typechecker2/gtype_unify;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
 
@@ -16,6 +17,7 @@ export {
 // TODO: Consider whether GBounds to have GName separately 
 
 // Test 65: Polymorphism with an attitude. Not sure which way the resolution has to go. Hard to tell.
+//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	doResolveGGraph(env, name, unify, GResolveSafeOnly());
@@ -237,18 +239,19 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 
 			choice = if (length(possible) > 1 && pickIfAmbiguos) {
-				// OK, check if we have a single named type as a bound
+				// OK, extract the explicit names we have, which we prefer
 				subtypes = mergeSets(lower.subtypes, upper.subtypes);
-				singleNamed = getSingleNamedExpr(subtypes);
-				if (singleNamed != []) {
+				singleNamed = getNamedExprs(subtypes);
+
+				overlap = set2array(intersectSets(singleNamed, buildSet(possible)));
+
+				if (length(overlap) == 1) {
 					// If so, that is what we prefer. Test 22
-					singleNamed;
+					[overlap[0]];
 				} else {
 					// OK, pick the "smallest" type, prefering small structs to big unions
-					scored = map(possible, \name -> Pair(getGNamedSize(env, name), name));
+					scored = map(if (overlap != []) overlap else possible, \name -> Pair(getGNamedSize(env, name), name));
 					cheapest = sort(scored);
-					// In some tests, it is best to pick the big one, in others, the small one.
-					// TODO: Figure out how to solve this.
 					[cheapest[0].second];
 				}
 			} else {
@@ -269,9 +272,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 							foldSet(upper.subtypes, acc, \acc2, ust -> {
 								unify(acc2, GSubType(lst), GSubType(ust))
 							})
-						})
+						});
 					}
-					GResolveSafeButAmbiguous(): env;
+					GResolveSafeButAmbiguous(): {
+						// OK, if we have multiple upper limits, which are
+						// subtypes of each others, we can unify them
+						// Test101:
+						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
+						env1 = unifyGSubTypeSiblings(env, unify, mapSet(lower.subtypes, \st -> GSubType(st)), true);
+						unifyGSubTypeSiblings(env1, unify, mapSet(upper.subtypes, \st -> GSubType(st)), false);
+					}
 					GResolveSpeculative(): {
 						// TODO:
 						// Test 65, 70 and such have
@@ -580,14 +590,33 @@ resolveGSubExpr(env : GEnv, expr : GSubTypeExpr) -> GSubTypeExpr {
 	}
 }
 
-// If we have exactly one named entry, pick it
-getSingleNamedExpr(exprs : Set<GSubTypeExpr>) -> [string] {
-	if (sizeSet(exprs) == 1)  {
-		switch (set2array(exprs)[0]) {
-			GNamed(n, __): [n];
-			default: [];
+// OK, when we have a bunch of limits, they might have internal relation,
+// which we can use to extract information
+unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : Set<GType>, lower : bool) -> GEnv {
+	hasTyvars = filterSet(types, \t -> {
+		!isEmptySet(extractGTypeVars(env, t, makeSet()))
+	});
+
+	noTyvars = differenceSets(types, hasTyvars);
+
+	l = set2array(noTyvars);
+
+	// OK, we unify those with tyvars against those without
+	foldSet(noTyvars, env, \acc, t1 -> {
+		foldSet(hasTyvars, acc, \acc2, t2 -> {
+			gunifySiblings(acc2, unify, t1, t2, lower);
+		})
+	});
+}
+
+// Extract the names we have
+getNamedExprs(exprs : Set<GSubTypeExpr>) -> Set<string> {
+	foldSet(exprs, makeSet(), \acc, s -> {
+		switch (s) {
+			GNamed(n, __): insertSet(acc, n);
+			default: acc;
 		}
-	} else [];
+	});
 }
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {

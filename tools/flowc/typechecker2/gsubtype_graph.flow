@@ -10,6 +10,10 @@ export {
 	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
 
 	findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string];
+
+	// Is small a subtype of big?
+	isGSubType(graph : GSubtypeGraph, small : GType, big : GType) -> bool;
+	isGSubTypeExpr(graph : GSubtypeGraph, small : GSubTypeExpr, big : GSubTypeExpr) -> bool;
 }
 
 emptyGSubtypeGraph() -> GSubtypeGraph {
@@ -104,4 +108,120 @@ union2structnames(names : FcGlobalNames, name : string) -> [string] {
 			[name];
 		}
 	}
+}
+
+isGSubType(graph : GSubtypeGraph, small : GType, big : GType) -> bool {
+	switch (small) {
+		GBasicType(st): small == big || big == GFlow();
+		GFlow(): small == big || big == GFlow();
+		GTypePar(sid): small == big || big == GFlow();
+		GFunction(sargs, srt): {
+			switch (big) {
+				GTypeVar(id): true;	// We assume it is unbound, in which case this can be true
+				GFlow(): true;
+
+				GFunction(bargs, brt): {
+					isGSubType(graph, srt, brt)
+					&& areGSubTypes(graph, bargs, sargs)
+				}
+				GSubType(expr): false;
+				GBasicType(t): false;
+				GTypePar(id): false;
+				GArray(type): false;
+				GRef(type): false;
+			}
+		}
+		GArray(stype): switch (big) {
+			GTypeVar(id): true;	// We assume it is unbound, in which case this can be true
+			GFlow(): true;
+			GArray(btype): isGSubType(graph, stype, btype);
+
+			GBasicType(t): false;
+			GTypePar(id): false;
+			GRef(type): false;
+			GSubType(expr): false;
+			GFunction(bargs, brt): false;
+		}
+		GRef(stype): switch (big) {
+			GTypeVar(id): true;	// We assume it is unbound, in which case this can be true
+			GFlow(): true;
+			GRef(btype): isGSubType(graph, stype, btype);
+
+			GBasicType(t): false;
+			GTypePar(id): false;
+			GArray(type): false;
+			GSubType(expr): false;
+			GFunction(bargs, brt): false;
+		}
+		GTypeVar(sid): true;	// It is unbound, and this can make it true
+		GSubType(sexpr): switch (big) {
+			GTypeVar(id): true;	// We assume it is unbound, in which case this can be true
+			GFlow(): true;
+			GSubType(bexpr): isGSubTypeExpr(graph, sexpr, bexpr);
+
+			GBasicType(t): false;
+			GTypePar(id): false;
+			GArray(type): false;
+			GFunction(bargs, brt): false;
+			GRef(__): false;
+		}
+	}
+}
+
+areGSubTypes(graph : GSubtypeGraph, smalls : [GType], bigs : [GType]) -> bool {
+	length(smalls) == length(bigs) && forall(
+		mapi(smalls, \i, sarg -> {
+			isGSubType(graph, sarg, bigs[i])
+		}), idfn
+	)
+}
+
+isGSubTypeExpr(graph : GSubtypeGraph, small : GSubTypeExpr, big : GSubTypeExpr) -> bool {
+	todo = \ -> {
+		println("TODO: Check subtype");
+		println([small, big]);
+		false;
+	}
+	small == big
+	|| switch (small) {
+		GNamed(sname, stypars): {
+			switch (big) {
+				GNamed(bname, btypars): {
+					if (sname == bname) {
+						areGSubTypes(graph, stypars, btypars);
+					} else {
+						// TODO: We could probably also check typars here
+						isGNameSubType(graph, sname, bname)
+					}
+				}
+				GField(bname, type): {
+					isGNameSubType(graph, sname, "." + bname);
+				}
+				GAnd(exprs): todo();
+				GOr(exprs): todo();
+			}
+		}
+		GField(sname, stype): {
+			switch (big) {
+				GField(bname, btype): {
+					if (sname == bname && isGSubType(graph, stype, btype)) {
+						true;
+					} else {
+						todo();
+					}
+				}
+				GNamed(bname, btypars): {
+					isGNameSubType(graph, "." + sname, bname)
+				}
+				GAnd(exprs): todo();
+				GOr(exprs): todo();
+			}
+		}
+		GAnd(exprs): todo();
+		GOr(exprs): todo();
+	}
+}
+
+isGNameSubType(graph : GSubtypeGraph, small : string, big : string) -> bool {
+	contains(findGSupertypeFromName(graph, small), big)
 }
