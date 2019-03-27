@@ -16,7 +16,6 @@ export {
 // TODO: Consider whether GBounds to have GName separately 
 
 // Test 65: Polymorphism with an attitude. Not sure which way the resolution has to go. Hard to tell.
-//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
 	doResolveGGraph(env, name, unify, GResolveSafeOnly());
@@ -169,8 +168,8 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			fixedType = set2array(fixed)[0];
 			setGTyvar(env, unify, req, fixedType);
 		} else 
-		if (upper.hasFlow && sizeSet(fixed) > 1) {
-			// Multiple, which do not agree, so I guess we go flow
+		if (upper.hasFlow && sizeSet(fixed) != 1) {
+			// None or multiple, which do not agree, so I guess we go flow
 			setGTyvar(env, unify, req, GFlow());
 		} else {
 			// There are multiple solutions.
@@ -182,11 +181,17 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 			if (pick) {
 				// There are multiple solutions. We just pick one
-				fixedType = if (isEmptySet(fixed)) GFlow() else set2array(fixed)[0];
+				fixedType = set2array(fixed)[0];
 				setGTyvar(env, unify, req, fixedType);
 			} else {
-				// Nothing to do
-				env;
+				if (stage == GResolveSafeOnly()) {
+					// Nothing to do
+					foldSet(lower.fixedTypes, env, \acc, lst -> {
+						foldSet(upper.fixedTypes, acc, \acc2, ust -> {
+							unify(acc2, lst, ust)
+						})
+					})
+				} else env;
 			}
 		}
 	} else {
@@ -210,6 +215,8 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			// We have subtypes
 			ltypenames : [string] = findPotentialGSupertypes(env, lower.subtypes);
 			utypenames : [string] = findPotentialGSubtypes(env, upper.subtypes);
+
+			// printStay(env.env, "Review " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 
 			possible = if (isEmptySet(lower.subtypes)) utypenames
 				else if (isEmptySet(upper.subtypes)) ltypenames
@@ -256,10 +263,25 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// And set ourselves to this
 				setGTyvar(env, unify, req, solution);
 			} else {
-				if (stage == GResolveTypars()) {
-					printStay(env.env, "We could not manage " + toString(possible) + " from " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
+				switch (stage) {
+					GResolveSafeOnly(): {
+						foldSet(lower.subtypes, env, \acc, lst -> {
+							foldSet(upper.subtypes, acc, \acc2, ust -> {
+								unify(acc2, GSubType(lst), GSubType(ust))
+							})
+						})
+					}
+					GResolveSafeButAmbiguous(): env;
+					GResolveSpeculative(): {
+						// TODO:
+						// Test 65, 70 and such have
+						//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
+						//   Clarify {α1 :  : (.i:int), None<>, Some<>} c= α0 c= { :  : } {
+						printStay(env.env, "We could not manage " + toString(possible) + " from " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
+						env;
+					}
+					GResolveTypars(): env;
 				}
-				env;
 			}
 		}
 	}
@@ -567,7 +589,6 @@ getSingleNamedExpr(exprs : Set<GSubTypeExpr>) -> [string] {
 		}
 	} else [];
 }
-
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
