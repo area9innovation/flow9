@@ -521,7 +521,8 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
-			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point) != this) {
+
+			if (RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point, true, true) != this) {
 				e.preventDefault();
 			}
 		}

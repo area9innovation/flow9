@@ -361,6 +361,16 @@ class DisplayObjectHelper {
 		return bounds;
 	}
 
+	public static function getClipTreePosition(clip : DisplayObject) : Array<Int> {
+		if (clip.parent != null) {
+			var clipTreePosition = getClipTreePosition(clip.parent);
+			clipTreePosition.push(clip.parent.children.indexOf(clip));
+			return clipTreePosition;
+		} else {
+			return [];
+		}
+	}
+
 	// Get the first Graphics from the Pixi DisplayObjects tree
 	public static function getFirstGraphicsOrSprite(clip : Container) : Container {
 		if (untyped __instanceof__(clip, FlowGraphics) || untyped __instanceof__(clip, FlowSprite))

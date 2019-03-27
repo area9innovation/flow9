@@ -1427,15 +1427,15 @@ class RenderSupportJSPixi {
 		return addMouseWheelEventListener(clip, f);
 	}
 
-	public static function getMouseX(clip : DisplayObject) : Float {
-		if (clip == PixiStage)
+	public static function getMouseX(?clip : DisplayObject) : Float {
+		if (clip == null || clip == PixiStage)
 			return MousePos.x;
 		else
 			return clip.toLocal(MousePos).x;
 	}
 
-	public static function getMouseY(clip : DisplayObject) : Float {
-		if (clip == PixiStage)
+	public static function getMouseY(?clip : DisplayObject) : Float {
+		if (clip == null || clip == PixiStage)
 			return MousePos.y;
 		else
 			return clip.toLocal(MousePos).y;
@@ -1481,7 +1481,7 @@ class RenderSupportJSPixi {
 		}
 	}
 
-	private static function hittestGraphics(clip : FlowGraphics, point : Point) : Bool {
+	private static function hittestGraphics(clip : FlowGraphics, point : Point, ?checkAlpha : Bool = false) : Bool {
 		var graphicsData : Array<Dynamic> = clip.graphicsData;
 
 		if (graphicsData == null || graphicsData.length == 0) {
@@ -1490,7 +1490,7 @@ class RenderSupportJSPixi {
 
 		var data = graphicsData[0];
 
-		if (data.fill && data.shape != null) {
+		if (data.fill && data.shape != null && (!checkAlpha || data.fillAlpha > 0)) {
 			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
 
 			return data.shape.contains(local.x, local.y);
@@ -1503,7 +1503,7 @@ class RenderSupportJSPixi {
 		return getClipAt(clip, point, false) != null;
 	}
 
-	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true) : DisplayObject {
+	public static function getClipAt(clip : DisplayObject, point : Point, ?checkMask : Bool = true, ?checkAlpha : Bool = false) : DisplayObject {
 		if (!clip.getClipWorldVisible() || untyped clip.isMask) {
 			return null;
 		} else if (checkMask && !hittestMask(clip, point)) {
@@ -1512,32 +1512,31 @@ class RenderSupportJSPixi {
 			return null;
 		}
 
-		switch (Type.getClassName(Type.getClass(clip))) {
-			case "FlowContainer" : {
-				var children : Array<DisplayObject> = untyped clip.children;
+		if (untyped __instanceof__(clip, NativeWidgetClip) || untyped __instanceof__(clip, FlowSprite)) {
+			var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
+			var clipWidth = untyped clip.getWidth();
+			var clipHeight = untyped clip.getHeight();
 
-				for (child in children) {
-					var clipHit = getClipAt(child, point, false);
+			if (local.x >= 0.0 && local.y >= 0.0 && local.x <= clipWidth && local.y <= clipHeight) {
+				return clip;
+			}
+		} else if (untyped __instanceof__(clip, FlowContainer)) {
+			var children : Array<DisplayObject> = untyped clip.children;
+			var i = children.length - 1;
 
-					if (clipHit != null) {
-						return clipHit;
-					}
+			while (i >= 0) {
+				var child = children[i];
+				i--;
+
+				var clipHit = getClipAt(child, point, false, checkAlpha);
+
+				if (clipHit != null) {
+					return clipHit;
 				}
 			}
-			case "FlowGraphics" : {
-				if (hittestGraphics(untyped clip, point)) {
-					return clip;
-				}
-			}
-			case "FlowSprite" | "TextClip" | "NativeWidgetClip" | "VideoClip" | "WebClip" | "DropAreaClip" : {
-				var local : Point = untyped __js__('clip.toLocal(point, null, null, true)');
-
-				if (local.x >= 0.0 && local.y >= 0.0 && local.x <= untyped clip.getWidth() && local.y <= untyped clip.getHeight()) {
-					return clip;
-				}
-			}
-			case __ : {
-				trace("getClipAt error: No such clip type");
+		} else if (untyped __instanceof__(clip, FlowGraphics)) {
+			if (hittestGraphics(untyped clip, point, checkAlpha)) {
+				return clip;
 			}
 		}
 
