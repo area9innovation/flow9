@@ -230,8 +230,12 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// OK, pick the "smallest" type, prefering small structs to big unions
 				scored = map(possible, \name -> Pair(getGNamedSize(env, name), name));
 				cheapest = sort(scored);
+				// In some tests, it is best to pick the big one, in others, the small one.
+				// TODO: Figure out how to solve this.
 				[cheapest[0].second];
-			} else possible;
+			} else {
+				possible;
+			}
 
 			if (length(choice) == 1) {
 				// OK, lower and upper can agree on a type. Construct it
@@ -241,6 +245,9 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// And set ourselves to this
 				setGTyvar(env, unify, req, solution);
 			} else {
+				if (stage == GResolveTypars()) {
+					printStay(env.env, "We could not manage " + toString(possible) + " from " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
+				}
 				env;
 			}
 		}
@@ -278,7 +285,15 @@ isGBoundsOnlyTyvars(env : GEnv, node : GBounds) -> bool {
 // Is this bound known, considering super and subtypes?
 isGBoundsKnown(env : GEnv, bounds : GBounds) -> bool {
 	!isEmptySet(bounds.fixedTypes)
-	|| (isEmptySet(bounds.tyvars) && !isEmptySet(bounds.subtypes));
+	|| (isEmptySet(bounds.tyvars) 
+		// If the bound is a named type, we have better handle
+		&& !isEmptySet(bounds.subtypes) && forall(set2array(bounds.subtypes), \st -> switch (st) {
+			GNamed(__, __): true;
+			GField(__, __): false;
+			GAnd(__): false;
+			GOr(__): false;
+		})
+	);
 }
 
 // Set this group of tyvars to this resolved type
@@ -346,7 +361,10 @@ findGSupertypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 			}
 		}
 		GField(field, __): {
-			getTreeArrayValue(env.env.program.acc.names.field2structs, field);
+			structs = getTreeArrayValue(env.env.program.acc.names.field2structs, field);
+			// OK, we also have to find unions. See test 127
+			println("TODO: Find unions that have ." + field);
+			structs;
 		}
 		GAnd(exprs): {
 			findPotentialGSupertypes(env, buildSet(exprs));
