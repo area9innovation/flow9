@@ -13,7 +13,7 @@ export {
 
 // TODO: findPotentialGSubtypes can be greatly optimized by having a subtype graph of structs and unions
 
-// TODO: Consider whether GBounds to have a bool for flow type, and GName separately 
+// TODO: Consider whether GBounds to have GName separately 
 
 // Test 65: Polymorphism with an attitude. Not sure which way the resolution has to go. Hard to tell.
 //   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
@@ -100,6 +100,7 @@ GTyvarRequirements(
 // The total (lower or upper) bounds of a given tyvar. We can depend on three different things
 // The tyvars are all known to be unbound.
 GBounds(
+	hasFlow : bool,
 	tyvars : Set<int>, 
 	fixedTypes : Set<GType>, 
 	subtypes : Set<GSubTypeExpr>,
@@ -159,28 +160,29 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 	// OK, check if it is fixed
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
-	if (!isEmptySet(fixed)) {
+	if (lower.hasFlow) {
+		setGTyvar(env, unify, req, GFlow());
+	} else if (!isEmptySet(fixed) || upper.hasFlow) {
 		// OK, we have something fixed. Let us go with that
-
-		// If flow is there, we can ignore that
-		sansFlow = removeSet(fixed, GFlow());
-		if (sizeSet(sansFlow) == 1 || sizeSet(fixed) == 1) {
-			fixedTypes = if (sizeSet(sansFlow) == 1) sansFlow else fixed;
-			fixedType = set2array(fixedTypes)[0];
-
+		if (sizeSet(fixed) == 1 && !upper.hasFlow) {
 			// OK, we have a unique, fixed type for our guy
+			fixedType = set2array(fixed)[0];
 			setGTyvar(env, unify, req, fixedType);
+		} else 
+		if (upper.hasFlow && sizeSet(fixed) > 1) {
+			// Multiple, which do not agree, so I guess we go flow
+			setGTyvar(env, unify, req, GFlow());
 		} else {
 			// There are multiple solutions.
 			pick = switch (stage) {
 				GResolveSafeOnly(): false;
-				GResolveSafeButAmbiguous(): true;
+				GResolveSafeButAmbiguous(): false;
 				GResolveSpeculative(): true;
 				GResolveTypars(): true;
 			}
 			if (pick) {
 				// There are multiple solutions. We just pick one
-				fixedType = set2array(fixed)[0];
+				fixedType = if (isEmptySet(fixed)) GFlow() else set2array(fixed)[0];
 				setGTyvar(env, unify, req, fixedType);
 			} else {
 				// Nothing to do
@@ -287,13 +289,14 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 }
 
 // Does this only contain unresolved tyvars?
-isGBoundsOnlyTyvars(env : GEnv, node : GBounds) -> bool {
-	isEmptySet(node.fixedTypes) && isEmptySet(node.subtypes)
+isGBoundsOnlyTyvars(env : GEnv, bounds : GBounds) -> bool {
+	!bounds.hasFlow && isEmptySet(bounds.fixedTypes) && isEmptySet(bounds.subtypes)
 }
 
 // Is this bound known, considering super and subtypes?
 isGBoundsKnown(env : GEnv, bounds : GBounds) -> bool {
-	!isEmptySet(bounds.fixedTypes)
+	bounds.hasFlow
+	|| !isEmptySet(bounds.fixedTypes)
 	|| (isEmptySet(bounds.tyvars) 
 		// If the bound is a named type, we have better handle
 		&& !isEmptySet(bounds.subtypes) && forall(set2array(bounds.subtypes), \st -> switch (st) {
@@ -477,7 +480,7 @@ mkGTypeVar(env : GEnv) -> GTypeVar {
 }
 
 emptyGBounds() -> GBounds {
-	GBounds(makeSet(), makeSet(), makeSet())
+	GBounds(false, makeSet(), makeSet(), makeSet())
 }
 
 buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GBounds {
@@ -491,7 +494,7 @@ buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GB
 }
 
 joinGBounds(left : GBounds, right : GBounds) -> GBounds {
-	GBounds(mergeSets(left.tyvars, right.tyvars), mergeSets(left.fixedTypes, right.fixedTypes), mergeSets(left.subtypes, right.subtypes))
+	GBounds(left.hasFlow || right.hasFlow, mergeSets(left.tyvars, right.tyvars), mergeSets(left.fixedTypes, right.fixedTypes), mergeSets(left.subtypes, right.subtypes))
 }
 
 removeGBoundsTyvars(g : GBounds, tyvars : Set<int>) -> GBounds {
@@ -502,7 +505,7 @@ addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
 	switch (tt) {
 		GBasicType(t): fixed();
-		GFlow(): fixed();
+		GFlow(): GBounds(acc with hasFlow = true);
 		GTypePar(id): fixed();
 		GFunction(args, rt): fixed();
 		GArray(type): fixed();
@@ -572,6 +575,7 @@ gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 
 gbounds2string(env : GEnv, g : GBounds) -> string {
 	"{"
+	+ (if (g.hasFlow) " flow " else "")
 	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
 	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
 	+ " : " + superglue(set2array(g.subtypes), \st -> gtype2string(env, GSubType(st)), ", ")
