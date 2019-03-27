@@ -15,6 +15,7 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -57,8 +58,11 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.content.LocalBroadcastManager;
 import android.text.method.ScrollingMovementMethod;
@@ -87,9 +91,11 @@ import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
 
 public class FlowRunnerActivity extends FragmentActivity  {
 
-    public static final String DATA_PATH = "/sdcard/flow/";
+    public static final String DATA_PATH = Environment.getExternalStorageDirectory().getPath() + "/flow/";
+    @Nullable
     private static String local_substitute_url = "https://localhost/flow/flowswf.html";
     
+    @Nullable
     File tmp_dir;
     
     LinearLayout ContentView; 
@@ -102,6 +108,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     FlowSoundPlayer sound_player;
     View menu_anchor;
     
+    @Nullable
     URI loader_uri;
     
     boolean initialized = false;
@@ -110,17 +117,22 @@ public class FlowRunnerActivity extends FragmentActivity  {
     boolean ha_set = false;
     boolean lastConnected = true;
     
+    @Nullable
     String php_session_id = null;
+    @Nullable
     String php_session_domain = null;
 
+    @Nullable
     private Intent intentOnDestroy = null;
+    @Nullable
     private BroadcastReceiver inetStateReceiver;
 
+    @Nullable
     private IFlowGooglePlayServices flowGooglePlayServices = null;
 
     private SoftKeyboardHeightListener softKeyboardHeightListener;
 
-    private void browseUrl(final String url) {
+    private void browseUrl(@NonNull final String url) {
         try {
             if (url.startsWith(local_substitute_url)) {
                 intentOnDestroy = getIntent();
@@ -187,7 +199,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         // Workaround for weird rejection of PHPSESSID cookie
         http_client.addResponseInterceptor(new HttpResponseInterceptor() {
-            public void process(final HttpResponse response, final HttpContext context) {
+            public void process(@NonNull final HttpResponse response, final HttpContext context) {
                 if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
                     String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
                     if (set_cookie_header.startsWith("PHPSESSID")) { 
@@ -206,7 +218,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         });
     
         http_client.addRequestInterceptor(new HttpRequestInterceptor() {
-            public void process(final HttpRequest request, final HttpContext context) {
+            public void process(@NonNull final HttpRequest request, @NonNull final HttpContext context) {
                 if (php_session_id != null) {
                     HttpHost target = (HttpHost) context.getAttribute("Host");
                     if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
@@ -252,7 +264,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
 
         wrapper.setPictureLoader(new FlowRunnerWrapper.PictureLoader() {
-            public void load(String url, boolean cache, final PictureResolver callback) throws IOException {
+            public void load(@NonNull String url, boolean cache, @NonNull final PictureResolver callback) throws IOException {
                 /*// Replace swf with png
                 if (url.toLowerCase().endsWith(".swf")) {
                     String png_url = DATA_PATH + url.substring(0, url.length()-4) + ".png";
@@ -271,14 +283,14 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, callback);
             }
 
-            public void abortPictureLoad(String url) {
+            public void abortPictureLoad(@NonNull String url) {
                 ResourceCache.getInstance(FlowRunnerActivity.this).abortPendingRequest(loader_uri, url);
             }
         });
         
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
-            public void request(String url, String method, String[] headers,
-                    String payload, HttpResolver callback) {
+            public void request(@NonNull String url, String method, @NonNull String[] headers,
+                    String payload, @NonNull HttpResolver callback) {
                 HttpUriRequest request;
 
                 BasicHttpEntity entity = new BasicHttpEntity();
@@ -315,17 +327,17 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 Utils.loadHttpAsync(http_client, request, callback);
             }
 
-            public void preloadMedia(String url, ResourceCache.Resolver callback) throws IOException {
+            public void preloadMedia(@NonNull String url, @NonNull ResourceCache.Resolver callback) throws IOException {
                 ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, callback);
             }
             
-            public void removeCachedMedia(String url) throws IOException {
+            public void removeCachedMedia(@NonNull String url) throws IOException {
                 ResourceCache.getInstance(FlowRunnerActivity.this).removeCachedResource(loader_uri, url);
             }
         });
         
         wrapper.addListener(new FlowRunnerWrapper.ListenerAdapter() {
-            public boolean onFlowBrowseUrl(final String url, String target) {
+            public boolean onFlowBrowseUrl(@NonNull final String url, String target) {
                 Log.i(Utils.LOG_TAG, "url: " + url);
                 
                 runOnUiThread(new Runnable() {
@@ -387,7 +399,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         inetStateFilter.addAction("android.net.conn.CONNECTIVITY_CHANGE_IMMEDIATE"); // only higher versions? 5.0?
         inetStateReceiver = new BroadcastReceiver() {
             @Override
-            public void onReceive(Context context, Intent intent) {
+            public void onReceive(@NonNull Context context, @NonNull Intent intent) {
                 Log.i(Utils.LOG_TAG, "Received intent: " + intent.getAction());
                 ConnectivityManager cm =
                         (ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -434,11 +446,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
         );
     }
     
-    private boolean isAssociatedFileUrl(Uri uri) {
+    private boolean isAssociatedFileUrl(@Nullable Uri uri) {
         return uri != null && uri.getScheme().equalsIgnoreCase("content");
     }
     
-    @Override protected void onNewIntent(Intent intent) {
+    @Override protected void onNewIntent(@NonNull Intent intent) {
         Uri new_uri = intent.getData();
         if (new_uri != null && new_uri.equals(getIntent().getData()) && !new_uri.getScheme().equalsIgnoreCase("http") && !new_uri.getScheme().equalsIgnoreCase("https") && !new_uri.getScheme().equalsIgnoreCase("file"))
             return;
@@ -592,7 +604,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
            popup_menu.getMenuInflater().inflate(id, popup_menu.getMenu());
            popup_menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
                @Override
-               public boolean onMenuItemClick(MenuItem item) {
+               public boolean onMenuItemClick(@NonNull MenuItem item) {
                   if (item.getTitle().equals("Settings")) {
                       Intent settingsActivity = new Intent(getBaseContext(), FlowPreferenceActivity.class);
                       startActivity(settingsActivity);
@@ -763,6 +775,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         super.onDestroy();
     }
 
+    @NonNull
     private BroadcastReceiver mMessageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, final Intent intent) {
@@ -779,6 +792,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     };
 
+    @NonNull
     private BroadcastReceiver mTokenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -811,7 +825,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     {
         builder.setCancelable(false)
                .setPositiveButton(restart_btn, new DialogInterface.OnClickListener() {
-                   public void onClick(DialogInterface dialog, int id) {
+                   public void onClick(@NonNull DialogInterface dialog, int id) {
                        dialog.dismiss();
                        cur_dialog = 0;
                        loadWrapper();
@@ -824,8 +838,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
                });
     }
     
+    @Nullable
     private ProgressDialog download_progress = null;
 
+    @Nullable
     protected Dialog onCreateDialog(int id) {
         ProgressDialog progressDialog;
         AlertDialog.Builder builder;
@@ -867,6 +883,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     /**
      * Active bytecode loader thread.
      */
+    @Nullable
     private LoadThread loader = null;
     
     private class LoadThread extends Thread {
@@ -954,7 +971,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
             });
         }
 
-        private void downloadByteCodeFile(final URI link, final String file_name) {
+        private void downloadByteCodeFile(final URI link, @NonNull final String file_name) {
             // Actually retrieve the bytecode
             Log.i(Utils.LOG_TAG, "LOADING FROM URL: " + link.toString());
 
@@ -1136,7 +1153,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
         outState.putString(FlowCameraAPI.CAMERA_PHOTO_PATH, FlowCameraAPI.cameraAppPhotoFilePath);
         outState.putString(FlowCameraAPI.CAMERA_VIDEO_PATH, FlowCameraAPI.cameraAppVideoFilePath);
         outState.putString(FlowCameraAPI.CAMERA_APP_CALLBACK_ADDITIONAL_INFO, FlowCameraAPI.cameraAppCallbackAdditionalInfo);
@@ -1156,7 +1173,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
 
     @Override
-    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+    protected void onRestoreInstanceState(@NonNull Bundle savedInstanceState) {
         super.onRestoreInstanceState(savedInstanceState);
        
         FlowCameraAPI.cameraAppPhotoFilePath = savedInstanceState.getString(FlowCameraAPI.CAMERA_PHOTO_PATH);
@@ -1176,7 +1193,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, @NonNull Intent data) {
         if (wrapper.getStorePurchaseAPI() != null && data.getStringExtra("INAPP_PURCHASE_DATA") != null) {
             wrapper.getStorePurchaseAPI().callbackPurchase(resultCode, data);
         }
@@ -1200,9 +1217,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     }
     
+    @Nullable
     private onActivityResultArgs onActivityResultArgs = null;
     
-    private void handleImagePickerResult(final Uri uri, final boolean fromCamera) {
+    private void handleImagePickerResult(@NonNull final Uri uri, final boolean fromCamera) {
         final Context me = this;
         AsyncTask.execute(new Runnable() {
             @Override
@@ -1230,7 +1248,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
          });
     }
     
-    private void handleVideoPickerResult(final Uri uri, final boolean fromCamera) {
+    private void handleVideoPickerResult(@NonNull final Uri uri, final boolean fromCamera) {
         final Context me = this;
         AsyncTask.execute(new Runnable() {
             @Override
@@ -1310,7 +1328,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     }
     
-    private void safeOnActivityResult(int requestCode, int resultCode, final Intent data) {
+    private void safeOnActivityResult(int requestCode, int resultCode, @Nullable final Intent data) {
         if (resultCode != RESULT_OK) {
             // TODO: add some info about errors
             return;

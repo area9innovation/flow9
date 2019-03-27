@@ -1,5 +1,7 @@
 package dk.area9.flowrunner;
 
+import android.support.annotation.NonNull;
+
 import org.java_websocket.client.DefaultSSLWebSocketClientFactory;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
@@ -10,7 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import javax.net.ssl.SSLContext;
 
 public class FlowWebSocketClient extends WebSocketClient {
-    FlowWebSocketClient(URI serverURI) {
+    FlowWebSocketClient(@NonNull URI serverURI) {
         super(serverURI);
         if (serverURI.getScheme().equals("wss")) {
             try {

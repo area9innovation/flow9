@@ -10,6 +10,8 @@ import android.opengl.GLES20;
 import android.os.Handler;
 import android.os.Looper;
 import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -20,6 +22,7 @@ import android.widget.VideoView;
 import android.graphics.SurfaceTexture.OnFrameAvailableListener;
 
 class VideoWidget extends NativeWidget {
+    @Nullable
     private static Boolean useNativeVideo = null;
 
     static final int PlayStart = 0; // Loaded and/or start of video
@@ -32,20 +35,23 @@ class VideoWidget extends NativeWidget {
     static final int CtlFullScreen = 4;
     static final int CtlScrubber = 8;
 
+    @Nullable
     private String url, filename;
     private boolean playing, looping, mediaPlayerPrepared, PlayStartReported;
     int controls;
     float volume;
     boolean seek_pending;
     int seek_pos;
+    @Nullable
     private VideoView vview;
     private MediaController mediaController;
+    @Nullable
     private MediaPlayer mediaPlayer;
     private SurfaceTexture surfaceTexture;
     
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    public VideoWidget(FlowWidgetGroup group, long id) { 
+    public VideoWidget(@NonNull FlowWidgetGroup group, long id) {
         super(group, id);
         if (useNativeVideo == null) {
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(group.getContext());
@@ -53,6 +59,7 @@ class VideoWidget extends NativeWidget {
         }
     }
     
+    @NonNull
     protected View createView() {
         Context ctx = group.getContext();
         VideoView video = null;
@@ -65,7 +72,7 @@ class VideoWidget extends NativeWidget {
         }
 
         mediaController = new MediaController(ctx) {
-            public void setMediaPlayer(final MediaController.MediaPlayerControl player) {
+            public void setMediaPlayer(@NonNull final MediaController.MediaPlayerControl player) {
                 super.setMediaPlayer(new MediaController.MediaPlayerControl() {
                     // Delegate methods to the real interface:
                     public boolean canPause() { return player.canPause(); }
@@ -103,7 +110,7 @@ class VideoWidget extends NativeWidget {
 
         if (video != null) {
             video.setOnTouchListener(new View.OnTouchListener() {
-                public boolean onTouch(View v, MotionEvent event) {
+                public boolean onTouch(View v, @NonNull MotionEvent event) {
                     if (event.getAction() == MotionEvent.ACTION_UP) {
                         if (event.getEventTime() - event.getDownTime() > 500 ) { // Long Tap
                             toggleFullscreen();
@@ -269,6 +276,7 @@ class VideoWidget extends NativeWidget {
         }
     }
 
+    @Nullable
     private MediaPlayer.OnErrorListener errorListener = new MediaPlayer.OnErrorListener() {
         public boolean onError(MediaPlayer mp, int what, int extra) {
             Log.e(Utils.LOG_TAG, "Video error: " + what + " " + extra);
@@ -280,6 +288,7 @@ class VideoWidget extends NativeWidget {
         }
     };
 
+    @NonNull
     private MediaPlayer.OnSeekCompleteListener seekListener = new MediaPlayer.OnSeekCompleteListener() {
         @Override
         public void onSeekComplete(MediaPlayer mp) {
@@ -318,6 +327,7 @@ class VideoWidget extends NativeWidget {
         });
     }
 
+    @Nullable
     private MediaPlayer.OnPreparedListener preparedListener = new MediaPlayer.OnPreparedListener() {
         public void onPrepared(MediaPlayer mp) {
             if (mediaPlayer == null)
@@ -349,6 +359,7 @@ class VideoWidget extends NativeWidget {
         }
     };
 
+    @NonNull
     private MediaPlayer.OnCompletionListener completionListener = new MediaPlayer.OnCompletionListener() {
         public void onCompletion(MediaPlayer mp) {
             reportPosition(mediaPlayer.getDuration());
@@ -359,6 +370,7 @@ class VideoWidget extends NativeWidget {
         }
     };
 
+    @Nullable
     private Runnable createCallback = new Runnable() {
         public void run() {
                 if (id == 0) return;
@@ -378,6 +390,7 @@ class VideoWidget extends NativeWidget {
         }
     };
 
+    @Nullable
     private Runnable updateCallback = new Runnable() {
         public void run() {
             if (id == 0 || (mediaPlayer == null && vview == null)) return;
@@ -504,6 +517,7 @@ class VideoWidget extends NativeWidget {
         }
     }
 
+    @NonNull
     private Runnable renderVideoImage = new Runnable() {
         @Override
         public void run() {
@@ -518,6 +532,7 @@ class VideoWidget extends NativeWidget {
         }
     };
 
+    @NonNull
     private OnFrameAvailableListener frameAvailableListener = new OnFrameAvailableListener() {
         @Override
         public void onFrameAvailable(SurfaceTexture arg0) {

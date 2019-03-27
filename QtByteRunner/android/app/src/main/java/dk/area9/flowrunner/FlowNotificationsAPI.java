@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.ApplicationInfo;
+import android.support.annotation.Nullable;
 import android.util.Log;
 
 public class FlowNotificationsAPI {
@@ -159,7 +160,8 @@ public class FlowNotificationsAPI {
         editor.apply();
     }
     
-    public static FlowLocalNotificationInfo getNotificationInfo(Context context, int notificationId, boolean removeFromPreferences, HashSet<Integer> set) {
+    @Nullable
+    public static FlowLocalNotificationInfo getNotificationInfo(Context context, int notificationId, boolean removeFromPreferences, @Nullable HashSet<Integer> set) {
         SharedPreferences preferences = context.getSharedPreferences(context.getPackageName() + "_preferences", Context.MODE_PRIVATE);
         String keyPrefix = "notification_" + notificationId;
         double time = Utils.sharedPreferencesGetDouble(preferences, keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_TIME, -1.0);

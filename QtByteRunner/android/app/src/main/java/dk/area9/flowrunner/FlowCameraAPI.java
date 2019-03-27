@@ -10,6 +10,8 @@ import android.hardware.Camera;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.SurfaceHolder;
 
@@ -37,21 +39,27 @@ public class FlowCameraAPI {
     public static final String CAMERA_APP_VIDEO_QUALITY = "FLOW_CAMERA_APP_VIDEO_QUALITY";
 
 
+    @Nullable
     public static String cameraAppCallbackAdditionalInfo = "";
+    @Nullable
     public static String cameraAppDesiredFilename = "";
     // Settings for photo mode only
+    @Nullable
     public static String cameraAppPhotoFilePath = "";
     public static int cameraAppDesiredWidth = 1024;
     public static int cameraAppDesiredHeight = 1024;
     public static int cameraAppCompressQuality = 80;
     public static int cameraAppFitMode = BitmapUtils.FIT_CONTAIN;
     // Settings for video mode only
+    @Nullable
     public static String cameraAppVideoFilePath = "";
     public static int cameraAppDuration = 15;
     public static int cameraAppSize = 15728640;
     public static int cameraAppVideoQuality = 1;
 
+    @Nullable
     public static Runnable cameraAppOpenPhotoRunnable = null;
+    @Nullable
     public static Runnable cameraAppOpenVideoRunnable = null;
 
     private static final int DIALOG_FROM_CAMERA_ITEM = 0;
@@ -59,6 +67,7 @@ public class FlowCameraAPI {
     private static final int DIALOG_CANCEL_ITEM = 2;
 
     private Context context;
+    @Nullable
     private Camera camera = null;
     private volatile static FlowCameraAPI uniqueInstance;
     private boolean isCameraFree = true;
@@ -74,6 +83,7 @@ public class FlowCameraAPI {
         return Camera.getNumberOfCameras();
     }
 
+    @NonNull
     public String getCameraInfo(int id) {
         String res = "";
         int n = Camera.getNumberOfCameras();
@@ -113,6 +123,7 @@ public class FlowCameraAPI {
         return uniqueInstance;
     }
 
+    @Nullable
     public Camera openCamera(int id) {
         if (!isCameraFree) return null;
         try {
@@ -159,7 +170,7 @@ public class FlowCameraAPI {
         dialogBuilder.setTitle("Take a photo");
         dialogBuilder.setItems(dialogButtons, new DialogInterface.OnClickListener() {
             @Override
-            public void onClick(DialogInterface dialog, int item) {
+            public void onClick(@NonNull DialogInterface dialog, int item) {
                 if (item == DIALOG_FROM_CAMERA_ITEM) {
                     openCameraAppPhoto(cameraId, additionalInfo, desiredWidth, desiredHeight, compressQuality, fileName);
                 } else if (item == DIALOG_FROM_GALLERY_ITEM) {
@@ -179,7 +190,7 @@ public class FlowCameraAPI {
         dialogBuilder.setTitle("Take a video");
         dialogBuilder.setItems(dialogButtons, new DialogInterface.OnClickListener() {
             @Override
-            public void onClick(DialogInterface dialog, int item) {
+            public void onClick(@NonNull DialogInterface dialog, int item) {
                 if (item == DIALOG_FROM_CAMERA_ITEM) {
                     openCameraAppVideo(cameraId, additionalInfo, duration, size, quality, fileName);
                 } else if (item == DIALOG_FROM_GALLERY_ITEM) {

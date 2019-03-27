@@ -17,6 +17,8 @@ import android.graphics.Rect;
 import android.graphics.Region;
 import android.os.Build;
 import android.os.Handler;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -54,6 +56,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         return getContext();
     }
     
+    @Nullable
     private Timer accessibilityTimer;
     private void startAccessibilityTimer() {
         // Schedule an updating of elements for accessibility tools.
@@ -93,6 +96,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         resource_uri = uri;
     }
     
+    @NonNull
     public ArrayList<VideoWidget> getVideoWidgets() {
         return new ArrayList<VideoWidget>(videoWidgets.values());
     }
@@ -111,6 +115,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         return wrapper;
     }
 
+    @NonNull
     private FlowRunnerWrapper.Listener wrapper_cb = new FlowRunnerWrapper.ListenerAdapter() {
         public void onFlowReset(boolean post_destroy) {
             setBlockEvents(true);
@@ -170,10 +175,12 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
                       (int)Math.ceil(maxx), (int)Math.ceil(maxy), scale, alpha);
     }
 
+    @Nullable
     InputMethodManager getIMM() {
         return (InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
     }
 
+    @Nullable
     private EditWidget focused_edit = null;
 
     public void setFocus(EditWidget editWidget) {
@@ -188,11 +195,11 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         return focused_edit == editWidget;
     }
 
-    public void onFlowCreateTextWidget(long id, String text,
-            String font_name, float font_size, int font_color,
-            boolean multiline, boolean readonly, float line_spacing,
-            String text_input_type, String alignment,
-            int max_size, int cursor_pos, int sel_start, int sel_end) 
+    public void onFlowCreateTextWidget(long id, @NonNull String text,
+                                       String font_name, float font_size, int font_color,
+                                       boolean multiline, boolean readonly, float line_spacing,
+                                       @NonNull String text_input_type, String alignment,
+                                       int max_size, int cursor_pos, int sel_start, int sel_end)
     {
         EditWidget widget = (EditWidget)widgets.get(id);
         if (widget == null) {
@@ -207,8 +214,8 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
     }
     
     public void onFlowCreateVideoWidget(
-        long id, String url,
-        boolean playing, boolean looping, int controls, float volume) {
+            long id, @NonNull String url,
+            boolean playing, boolean looping, int controls, float volume) {
         
         VideoWidget widget = (VideoWidget)widgets.get(id);
         if (widget == null) {
@@ -285,7 +292,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         widget.configure(filename, record);
     }
 
-    public void onFlowSetInterfaceOrientation(String orientation) {
+    public void onFlowSetInterfaceOrientation(@NonNull String orientation) {
         Log.i(Utils.LOG_TAG, "onFlowSetInterfaceOrientation: " + orientation);
         Activity activity = (Activity)getContext();
         if (orientation.equals("landscape")) {
@@ -320,9 +327,10 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         }
     }
 
+    @NonNull
     private int[] mLocation = new int[2];
 
-    public boolean gatherTransparentRegion(Region region) {
+    public boolean gatherTransparentRegion(@NonNull Region region) {
         boolean opaque = super.gatherTransparentRegion(region);
 
         /* Work around a somewhat known bug in adjustPan.
@@ -360,7 +368,8 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
      *      TOUCH EVENT HANDLING      *
      * ****************************** */
     
-    private ScaleGestureDetector.OnScaleGestureListener scale_listener 
+    @NonNull
+    private ScaleGestureDetector.OnScaleGestureListener scale_listener
         = new ScaleGestureDetector.OnScaleGestureListener() 
     {
         private static final float STEP = 0.005f;
@@ -372,7 +381,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         private boolean scaling;
         private boolean first;
     
-        public boolean onScale(ScaleGestureDetector detector) {
+        public boolean onScale(@NonNull ScaleGestureDetector detector) {
             // First event: remember focus center.
             // The one in onScaleBegin is wrong if
             // finger enters from the border.
@@ -420,7 +429,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
             return accept;
         }
 
-        public boolean onScaleBegin(ScaleGestureDetector detector) {
+        public boolean onScaleBegin(@NonNull ScaleGestureDetector detector) {
             inScaleMode = true;
             scaling = false;
             first = true;
@@ -428,7 +437,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
             return true;
         }
 
-        public void onScaleEnd(ScaleGestureDetector detector) {
+        public void onScaleEnd(@NonNull ScaleGestureDetector detector) {
             surface.gestureListener.onScaleEnd(detector);
         }
     };
@@ -456,7 +465,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
         return inScaleMode;
     }
     
-    public boolean onTouchEvent(MotionEvent event) {
+    public boolean onTouchEvent(@NonNull MotionEvent event) {
         if (blockEvents)
             return true;
 
@@ -477,6 +486,7 @@ class FlowAccessibleClip {
     private String role;
     private String description;
     private Rect bounds;
+    @Nullable
     private View view; // Fake view to provide description and bounds for accessibility tools
     private ViewGroup group;
     
@@ -495,7 +505,7 @@ class FlowAccessibleClip {
         if (Build.VERSION.SDK_INT >= 14) {
             view.setAccessibilityDelegate(new AccessibilityDelegate() {
                 @Override
-                public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                public void onInitializeAccessibilityNodeInfo(View host, @NonNull AccessibilityNodeInfo info) {
                     super.onInitializeAccessibilityNodeInfo(host, info);
                     info.setText(role + ":" + description);
                 }

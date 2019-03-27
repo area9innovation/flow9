@@ -24,6 +24,8 @@ import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
 import android.os.Handler;
 import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.text.TextPaint;
 import android.util.Log;
 import android.content.Context;
@@ -59,6 +61,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     }
 
     /* Timers */
+    @NonNull
     private final Handler timer_engine;
     
     /**
@@ -201,7 +204,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     /**
      * Assign the url parameters for the bytecode from the map.
      */
-    public synchronized void setUrlParameters(String url, Map<String,String> string_map) {
+    public synchronized void setUrlParameters(String url, @Nullable Map<String,String> string_map) {
         if (string_map == null) {
             setUrlParameters(url);
             return;
@@ -224,7 +227,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
      * Assign the url parameters from an url-encoded query.
      * @param query Sequence of name=value pairs, joined using &.
      */
-    public synchronized void setUrlParameters(String url, String query) {
+    public synchronized void setUrlParameters(String url, @Nullable String query) {
         if (query == null) {
             setUrlParameters(url);
             return;
@@ -256,10 +259,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
      * 
      * @return error message, or null if no error
      */
+    @NonNull
     public synchronized String getRunnerError() {
         return nGetRunnerError(cPtr());
     }
 
+    @NonNull
     private native String nGetRunnerError(long ptr);
     
     /**
@@ -268,10 +273,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
      * 
      * @return error information, or null if no error
      */
+    @NonNull
     public synchronized String getRunnerErrorInfo() {
         return nGetRunnerErrorInfo(cPtr());
     }
 
+    @NonNull
     private native String nGetRunnerErrorInfo(long ptr);
 
     /**
@@ -439,6 +446,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         void abortPictureLoad(String url);
     }
     
+    @Nullable
     private PictureLoader picture_loader = null;
 
     public synchronized void setPictureLoader(PictureLoader loader) {
@@ -453,7 +461,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
         try {
             PictureResolver cb = new PictureResolver() {
-                public boolean resolveBitmap(Bitmap bmp) {
+                public boolean resolveBitmap(@NonNull Bitmap bmp) {
                     return resolvePictureBitmap(url, bmp, bmp.getWidth(), bmp.getHeight());
                 }
                 public void resolveFile(String filename) {
@@ -557,6 +565,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         void removeCachedMedia(String url) throws IOException;
     }
 
+    @Nullable
     private HttpLoader http_loader = null;
 
     public synchronized void setHttpLoader(HttpLoader loader) {
@@ -684,12 +693,14 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nDeliverHttpStatus(long ptr, int id, int status);
     
     /* Assets */
+    @Nullable
     private AssetManager assets = null;
     
     public void setAssets(AssetManager amgr) {
         assets = amgr;
     }
     
+    @Nullable
     private byte[] cbLoadAssetData(String name) {
         return Utils.loadAssetData(assets, name);
     }
@@ -772,6 +783,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         Context getWidgetHostContext();
     }
 
+    @Nullable
     private WidgetHost widget_host = null;
 
     public void setWidgetHost(WidgetHost host) {
@@ -868,10 +880,12 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     
     private native void nDeliverEditStateUpdate(long ptr, long id, int cursor, int sel_start, int sel_end, String text);
 
+    @NonNull
     public synchronized String textIsAcceptedByFlowFilters(long id, String text) {
         return nTextIsAcceptedByFlowFilters(cPtr(), id, text);
     }
     
+    @NonNull
     private native String nTextIsAcceptedByFlowFilters(long ptr, long id, String text);
 
     public synchronized boolean keyEventFilteredByFlowFilters
@@ -963,6 +977,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         float getLength(long channel_id);
     }
 
+    @Nullable
     private SoundPlayer sound_player = null;
     
     public void setSoundPlayer(SoundPlayer player) {
@@ -1033,6 +1048,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nDeliverSoundResolveError(long ptr, long sound, String msg);
     private native void nDeliverSoundNotifyDone(long ptr, long channel);
     
+    @Nullable
     private AndroidStorePurchase storePurchaseAPI = null;
     private boolean storePurchaseEnabled = false;
     
@@ -1040,6 +1056,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         this.storePurchaseAPI = storePurchaseAPI;
     }
     
+    @Nullable
     public AndroidStorePurchase getStorePurchaseAPI() {
         return this.storePurchaseAPI;
     }
@@ -1052,7 +1069,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         return this.storePurchaseEnabled;
     }
     
-    public void cbLoadPurchaseProductInfo(String[] pids) {
+    public void cbLoadPurchaseProductInfo(@NonNull String[] pids) {
         if (getStorePurchaseEnabled()) {
             ArrayList<String> list = new ArrayList<String>();
             for (int i = 0; i< pids.length; i++)
@@ -1094,6 +1111,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     public native void nCallbackPurchasePayment(long ptr, String id, String status, String errorMsg);
     public native void nCallbackPurchaseRestore(long ptr, String id, int count, String errorMsg);
 
+    @Nullable
     private FlowNotificationsAPI flowNotificationsAPI = null;
     private boolean localNotificationsEnabled = false;
 
@@ -1191,7 +1209,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         return dataArray;
     }
 
-    public synchronized void DeliverFBMessage(String id, String body, String title, String from, long stamp, HashMap<String, String> data) {
+    public synchronized void DeliverFBMessage(String id, String body, String title, String from, long stamp, @NonNull HashMap<String, String> data) {
         if (isValid()) {
 
             nDeliverFBMessage(cPtr(), id, body, title, from, stamp, parseHashMapToArray(data));
@@ -1207,6 +1225,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     private native void nDeliverFBMessage(long ptr, String id, String body, String title, String from, long stamp, String[] data);
     private native void nDeliverFBToken(long ptr, String token);
     
+    @Nullable
     private FlowGeolocationAPI flowGeolocationAPI = null;
     
     public void setFlowGeolocationAPI(FlowGeolocationAPI flowGeolocationAPI) {
@@ -1241,7 +1260,9 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             double accuracy, double altitudeAccuracy, double heading, double speed, double time);
     private native void nGeolocationExecuteOnErrorCallback(long ptr, int callbacksRoot, boolean removeAfterCall, int code, String message);
 
+    @Nullable
     private FlowCameraAPI flowCameraAPI = null;
+    @Nullable
     private FlowAudioCaptureAPI flowAudioCaptureAPI = null;
     
     public void setFlowCameraAPI(FlowCameraAPI flowCameraAPI) {
@@ -1256,6 +1277,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         return flowCameraAPI.getNumberOfCameras();
     }
 
+    @NonNull
     public String cbGetCameraInfo(int id)
     {
         return flowCameraAPI.getCameraInfo(id);
@@ -1310,6 +1332,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     
     private native void nNotifyCameraEventAudio(long ptr, int code, String message, String additionalInfo, int duration, int size);
 
+    @NonNull
     private HashMap<String,Typeface> fonts = new HashMap<String,Typeface>();
 
     private boolean cbLoadSystemFont(float[] metrics, String name, int tile_size)
@@ -1358,7 +1381,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         return true;
     }
 
-    private int[] cbLoadSystemGlyph(float[] metrics, String name, char[] codes, int tile_size, float em_size)
+    private int[] cbLoadSystemGlyph(float[] metrics, String name, @NonNull char[] codes, int tile_size, float em_size)
     {
         Typeface typeface = fonts.get(name);
         if (typeface == null)
@@ -1432,7 +1455,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     }
     
     private native void nNotifyCustomFileTypeOpened(long ptr, String path);
-    public synchronized void NotifyCustomFileTypeOpened(Uri uri) {
+    public synchronized void NotifyCustomFileTypeOpened(@NonNull Uri uri) {
         Context ctx = widget_host.getWidgetHostContext();
         String file_path = Utils.getPath(ctx, uri);
         if (file_path != null && !file_path.isEmpty()) {
@@ -1472,12 +1495,14 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         nDispatchKeyEvent(cPtr(), event, key, ctrl, shift, alt, meta, code);
     }
     
+    @NonNull
     private native FlowAccessibleClip[] nFetchAccessibleClips(long ptr);
+    @NonNull
     public synchronized FlowAccessibleClip[] FetchAccessibleClips() {
         return nFetchAccessibleClips(cPtr());
     }
     
-    private void cbTagLocalyticsEventWithAttributes(String event_name, String[] attributes) {
+    private void cbTagLocalyticsEventWithAttributes(String event_name, @NonNull String[] attributes) {
         try {            
             HashMap<String, String> attributes_map = new HashMap<String, String>();
             for (int i = 0; i < attributes.length / 2; ++i) {
@@ -1492,6 +1517,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         }
     }
 
+    @Nullable
     private FlowWebSocketSupport webSocketSupport = null;
 
     public void setFlowWebSocketSupport(FlowWebSocketSupport webSocketSupport) {

@@ -19,6 +19,7 @@ import android.app.ProgressDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
@@ -37,13 +38,16 @@ public class LauncherActivity extends Activity {
     private ListView BytecodeList;
     private EditText URLParametersField;
     
+    @NonNull
     private DefaultHttpClient Client = Utils.createHttpClient();
     
     private ArrayAdapter<String> ListAdapter;
     
     private URI BaseURI = URI.create("https://localhost/flow/");
+    @NonNull
     private String BytecodesDir = "bytecodes/";
     
+    @NonNull
     private Map<String, String> URLParametersMap = new HashMap<String, String>();
     
     @Override
@@ -100,7 +104,7 @@ public class LauncherActivity extends Activity {
               @Override
               public void beforeTextChanged(CharSequence arg0, int arg1, int arg2, int arg3) { }
               @Override
-              public void onTextChanged(CharSequence text, int arg1, int arg2, int arg3) {
+              public void onTextChanged(@NonNull CharSequence text, int arg1, int arg2, int arg3) {
                   int item_idx = BytecodeList.getCheckedItemPosition();
                   if (item_idx != AdapterView.INVALID_POSITION) {
                       URLParametersMap.put(ListAdapter.getItem(item_idx), text.toString());

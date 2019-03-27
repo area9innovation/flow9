@@ -47,6 +47,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.annotation.RequiresApi;
 import android.support.v4.content.FileProvider;
 import android.util.Log;
@@ -78,7 +80,8 @@ public class Utils {
         return new DefaultHttpClient(tscm, new BasicHttpParams());
     }
     
-    public static byte[] loadAssetData(AssetManager assets, String name) {
+    @Nullable
+    public static byte[] loadAssetData(@Nullable AssetManager assets, String name) {
         if (assets == null)
             return null;
 
@@ -92,7 +95,8 @@ public class Utils {
         }
     }
     
-    public static byte[] loadRawData(Resources resources, int id) {
+    @Nullable
+    public static byte[] loadRawData(@Nullable Resources resources, int id) {
         if (resources == null)
             return null;
         
@@ -110,7 +114,7 @@ public class Utils {
         void copyProgress(long bytes);
     }
         
-    public static void copyData(OutputStream output, InputStream input, CopyProgressCallback cb) throws IOException {
+    public static void copyData(@NonNull OutputStream output, InputStream input, @Nullable CopyProgressCallback cb) throws IOException {
         int nRead;
         long progress = 0;
         byte[] data = new byte[65536];
@@ -124,13 +128,13 @@ public class Utils {
         output.flush();
     }
     
-    public static byte[] readToByteBuffer(InputStream input) throws IOException {
+    public static byte[] readToByteBuffer(@NonNull InputStream input) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         copyData(buffer, input, null);
         return buffer.toByteArray();
     }
     
-    public static byte[] readToByteBufferAndClose(InputStream input) throws IOException {
+    public static byte[] readToByteBufferAndClose(@NonNull InputStream input) throws IOException {
         try {
             return readToByteBuffer(input);
         } finally {
@@ -139,6 +143,7 @@ public class Utils {
     }
     
     // fills HashMap with Keys and Values from query string
+    @NonNull
     public static HashMap<String,String> decodeUrlQuery(String query) {
         HashMap<String,String> parameters = new HashMap<String,String>();
         
@@ -221,7 +226,7 @@ public class Utils {
         
     }
 
-    public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, OutputStream output, HttpLoadCallback callback) throws IOException {
+    public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
         httpclient.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
         HttpResponse response = httpclient.execute(request, commonHttpContext);
 
@@ -255,7 +260,7 @@ public class Utils {
             callback.httpError("HTTP " + status + " error");
     }
 
-    public static byte[] loadHttpUrl(AbstractHttpClient httpclient, String link) {
+    public static byte[] loadHttpUrl(@NonNull AbstractHttpClient httpclient, String link) {
         try{
             final boolean[] ok = new boolean[] { false };
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
@@ -274,7 +279,7 @@ public class Utils {
         }
     }
 
-    public static boolean loadHttpFile(AbstractHttpClient httpclient, String link, String filename, HttpLoadCallback callback) {
+    public static boolean loadHttpFile(@NonNull AbstractHttpClient httpclient, String link, @NonNull String filename, @NonNull HttpLoadCallback callback) {
         try{
             FileOutputStream buffer = new FileOutputStream(filename);
             
@@ -291,7 +296,7 @@ public class Utils {
         }
     }
 
-    public static void loadHttpAsync(final AbstractHttpClient http_client, final HttpUriRequest request, final OutputStream output, final HttpLoadCallback callback) {
+    public static void loadHttpAsync(@NonNull final AbstractHttpClient http_client, @NonNull final HttpUriRequest request, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 try {
@@ -311,7 +316,7 @@ public class Utils {
         worker.start();
     }
 
-    public static void loadHttpAsync(AbstractHttpClient http_client, HttpUriRequest request, final HttpResolver callback) {
+    public static void loadHttpAsync(@NonNull AbstractHttpClient http_client, @NonNull HttpUriRequest request, @NonNull final HttpResolver callback) {
         final OutputStream buffer = new OutputStream() {
             public void write(byte[] data, int start, int length) {
                 byte[] buf = data;
@@ -348,7 +353,7 @@ public class Utils {
         });
     }
 
-    public static boolean urlHasExtension(URI link, String ext) {
+    public static boolean urlHasExtension(URI link, @NonNull String ext) {
         return link.getScheme() != null &&
                link.getRawAuthority() != null &&
                link.getRawPath() != null &&
@@ -370,6 +375,7 @@ public class Utils {
     }
 
     // retrieves meta-data strings from manifest file
+    @NonNull
     public static String getAppMetadata(Context ctx, String key) {
         try {
             ApplicationInfo ai = ctx.getPackageManager().getApplicationInfo(ctx.getPackageName(), PackageManager.GET_META_DATA);
@@ -391,11 +397,12 @@ public class Utils {
             return false;
         }
     }
-        
-    public static boolean isParamTrue(String param) {
+
+    public static boolean isParamTrue(@Nullable String param) {
         return param != null && (param.equalsIgnoreCase("true") || param.equalsIgnoreCase("1"));
     }
 
+    @NonNull
     public static HashMap<String,String> pref_url_parameters = new HashMap<String,String>(), manifest_url_params = new HashMap<String,String>();
     public static String getManifestParam(String key) {
         return manifest_url_params.get(key);
@@ -450,7 +457,7 @@ public class Utils {
         return false;
     }
     
-    public static void handleHardwareAcceleration(boolean initialized, Activity activity) {
+    public static void handleHardwareAcceleration(boolean initialized, @NonNull Activity activity) {
         String haParam = Utils.getParam("ha");
         boolean haSetting = haParam == null || Utils.isParamTrue(haParam); // true by default
         if (!initialized) {
@@ -505,7 +512,7 @@ public class Utils {
      * @return true if permissions are granted. otherwise returns false and requests permissions
      */
     @RequiresApi(api = Build.VERSION_CODES.M)
-    public static boolean checkAndRequestPermissions(Activity activity, String[] permissions, int requestCode) {
+    public static boolean checkAndRequestPermissions(@NonNull Activity activity, String[] permissions, int requestCode) {
         boolean granted = true;
         for(String permission : permissions) {
             if(activity.checkSelfPermission(permission) == PackageManager.PERMISSION_DENIED) {
@@ -527,7 +534,7 @@ public class Utils {
     
     // method to retrieve correct path from uri like: content://
     // More info here: http://stackoverflow.com/questions/19834842/android-gallery-on-kitkat-returns-different-uri-for-intent-action-get-content
-    public static String getPath(final Context context, final Uri uri) {
+    public static String getPath(@NonNull final Context context, @NonNull final Uri uri) {
         final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
         String result = uri + "";
         // DocumentProvider
@@ -562,7 +569,7 @@ public class Utils {
         return null;
     }
 
-    public static String getDataColumn(Context context, Uri uri, String selection, String[] selectionArgs) {
+    public static String getDataColumn(Context context, @NonNull Uri uri, String selection, String[] selectionArgs) {
         Cursor cursor = null;
         final String column = "_data";
         final String[] projection = {column};
@@ -582,7 +589,7 @@ public class Utils {
     
     // Based on ObjectSerializer from Apache pig
     // deserialize will fail, if we will not encode bytes from ByteArrayOutputStream
-    public static String serializeObjectToString(Serializable obj) {
+    public static String serializeObjectToString(@Nullable Serializable obj) {
         if (obj == null) return "";
         try {
             ByteArrayOutputStream serialObj = new ByteArrayOutputStream();
@@ -595,8 +602,8 @@ public class Utils {
         }
         return "";
     }
-    
-    public static Object deserializeStringToObject(String str) {
+
+    public static Object deserializeStringToObject(@Nullable String str) {
         if (str == null || str.length() == 0) return null;
         try {
             ByteArrayInputStream serialObj = new ByteArrayInputStream(decodeBytes(str));
@@ -617,6 +624,7 @@ public class Utils {
         return strBuf.toString();
     }
     
+    @NonNull
     private static byte[] decodeBytes(String str) {
         byte[] bytes = new byte[str.length() / 2];
         for (int i = 0; i < str.length(); i += 2) {

@@ -21,13 +21,17 @@ import com.amazonaws.org.apache.http.client.methods.HttpRequestBase;
 import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Base64;
 import android.util.Log;
 
 public class ResourceCache {
+    @Nullable
     private static ResourceCache instance = null;
 
-    public synchronized static ResourceCache getInstance(Context context) {
+    @Nullable
+    public synchronized static ResourceCache getInstance(@NonNull Context context) {
         if (instance == null)
             instance = new ResourceCache(context.getApplicationContext());
         return instance;
@@ -37,10 +41,14 @@ public class ResourceCache {
     private DefaultHttpClient http_client;
     
     private File cache_dir;
+    @Nullable
     private File ext_cache_dir;
 
+    @NonNull
     private HashMap<URI,List<Resolver>> pending_links = new HashMap<URI,List<Resolver>>();
+    @NonNull
     private HashMap<URI,List<URI>> pending_tries = new HashMap<URI,List<URI>>();
+    @NonNull
     private HashMap<URI,HttpRequestBase> pending_requests = new HashMap<URI, HttpRequestBase>();
 
     public ResourceCache(Context context) {
@@ -53,13 +61,13 @@ public class ResourceCache {
         void resolveError(String message);
     }
 
-    public synchronized boolean getCachedResource(URI base, String url, Resolver callback) throws IOException {
+    public synchronized boolean getCachedResource(@NonNull URI base, @NonNull String url, @NonNull Resolver callback) throws IOException {
         URI link = base.resolve(url.replace(" ", "%20"));
         Log.i(Utils.LOG_TAG, "load resource " + link);
         return getCachedResource(link, callback);
     }
 
-    public synchronized boolean getCachedResource(URI link, Resolver callback) throws IOException {
+    public synchronized boolean getCachedResource(@NonNull URI link, @NonNull Resolver callback) throws IOException {
         //Log.i(Utils.LOG_TAG, "Geting resource: " + link.toString());
         
         if ("file".equals(link.getScheme())) {
@@ -99,12 +107,12 @@ public class ResourceCache {
         return false;
     }
 
-    public synchronized void abortPendingRequest(URI base, String url) {
+    public synchronized void abortPendingRequest(@NonNull URI base, @NonNull String url) {
         URI link = base.resolve(url.replace(" ", "%20"));
         pending_requests.get(link).abort();
     }
     
-    public synchronized void removeCachedResource(URI base, String url) throws IOException {
+    public synchronized void removeCachedResource(@NonNull URI base, @NonNull String url) throws IOException {
         URI link = base.resolve(url.replace(" ", "%20"));
         String id = getStringHash(link.toString());
         updateCacheDirs();
@@ -114,7 +122,7 @@ public class ResourceCache {
         fn.delete();
     }
 
-    private void tryLocalFile(URI link, Resolver callback) {
+    private void tryLocalFile(URI link, @NonNull Resolver callback) {
         File dfile = new File(link.getPath());
         String apath = dfile.getAbsolutePath();
         if (dfile.isFile())
@@ -123,7 +131,7 @@ public class ResourceCache {
             callback.resolveError("File not found: " + apath);
     }
     
-    private boolean tryCachedFile(File dir, String id, Resolver callback) {
+    private boolean tryCachedFile(@Nullable File dir, @NonNull String id, @NonNull Resolver callback) {
         if (dir == null)
             return false;
 
@@ -150,7 +158,7 @@ public class ResourceCache {
                 ext_cache_dir = null;
     }
 
-    private void startDownload(File dir, String id, URI link, Resolver callback) throws IOException {
+    private void startDownload(File dir, @NonNull String id, @NonNull URI link, Resolver callback) throws IOException {
         List<URI> uris = new LinkedList<URI>();
         generateVariantURIs(uris, link);
         uris.add(link);
@@ -168,7 +176,7 @@ public class ResourceCache {
         }
     }
     
-    private void decodeBase64(File dir, String id, String base64String, Resolver callback) throws IOException {
+    private void decodeBase64(File dir, @NonNull String id, String base64String, Resolver callback) throws IOException {
         final File result = new File(dir, id);
         BufferedOutputStream output = new BufferedOutputStream(new FileOutputStream(result));
 
@@ -180,7 +188,7 @@ public class ResourceCache {
         callback.resolveFile(result.getAbsolutePath());
     }
 
-    private void generateVariantURIs(List<URI> uris, URI link) throws IOException {
+    private void generateVariantURIs(@NonNull List<URI> uris, @NonNull URI link) throws IOException {
         if (Utils.urlHasExtension(link, ".swf"))
             uris.add(Utils.urlWithExtension(link, 4, ".png"));
         if (Utils.urlHasExtension(link, ".flv"))
@@ -221,7 +229,7 @@ public class ResourceCache {
         return resolve(link);
     }
     
-    private void resolveAsFinished(URI link, File result, File tmp) {
+    private void resolveAsFinished(URI link, @NonNull File result, @NonNull File tmp) {
         List<Resolver> rsv = renameAndResolve(link, result, tmp);
         if (rsv == null) {
             resolveAsError(link, "Could not rename temporary file");
@@ -233,7 +241,7 @@ public class ResourceCache {
             rv.resolveFile(fn);
     }
 
-    private boolean startDownloadThread(final File dir, final String id, final URI base_link, FileOutputStream old_output) throws IOException {
+    private boolean startDownloadThread(final File dir, @NonNull final String id, final URI base_link, FileOutputStream old_output) throws IOException {
         List<URI> uris = pending_tries.get(base_link);
         if (uris == null || uris.isEmpty()) {
             pending_tries.remove(base_link);
@@ -318,7 +326,7 @@ public class ResourceCache {
         }
     }
 
-    private static void forceClose(OutputStream output, File tmp) {
+    private static void forceClose(@Nullable OutputStream output, @Nullable File tmp) {
         if (output != null) {
             try { 
                 output.close(); 

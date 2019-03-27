@@ -7,6 +7,7 @@ import android.app.IntentService;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.support.annotation.NonNull;
 
 // We use this service to run some operations after device boot, like:
 // - Recreating and rescheduling local notifications
@@ -18,7 +19,7 @@ public class FlowRunnerOnRebootService extends IntentService {
     }
 
     @Override
-    protected void onHandleIntent(Intent intent) {
+    protected void onHandleIntent(@NonNull Intent intent) {
         String intentType = intent.getExtras().getString(getPackageName() + "_SENDER");
         if(intentType == null || !intentType.equals("FlowRebootReceiver")) {
             return;
