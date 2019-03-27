@@ -170,6 +170,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			// OK, we have a unique, fixed type for our guy
 			setGTyvar(env, unify, req, fixedType);
 		} else {
+			// There are multiple solutions.
 			pick = switch (stage) {
 				GResolveSafeOnly(): false;
 				GResolveSafeButAmbiguous(): true;
@@ -186,11 +187,11 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 		}
 	} else {
-		// OK, no fixed
-		lowerFree = isGBoundsUnconstrained(env, lower);
-		upperFree = isGBoundsUnconstrained(env, upper);
+		// OK, no fixed. There can be tyvars and subtypes
+		lowerOnlyTyvars = isGBoundsOnlyTyvars(env, lower);
+		upperOnlyTyvars = isGBoundsOnlyTyvars(env, upper);
 
-		if (lowerFree && upperFree) {
+		if (lowerOnlyTyvars && upperOnlyTyvars) {
 			switch (stage) {
 				GResolveSafeOnly(): env;
 				GResolveSafeButAmbiguous(): env;
@@ -203,107 +204,44 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				}
 			}
 		} else {
-			// Subtypes only. Find any types that might be compatible
+			// We have subtypes
 			ltypenames : [string] = findPotentialGSupertypes(env, lower.subtypes);
-			ltypes = if (length(ltypenames) == 1) {
-				// We know that there is only one type that will work. This is also true in the future, even if we
-				// have lower tyvars that might be bound in the future, because if they conflict,
-				// type verification will catch it and there would not be any solution
-				solution = resolveGSubTypeToName(env, ltypenames[0], lower.subtypes);
-				if (env.verbose >= 3) {
-					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gtyvarReqs2string(env, req));
-				};
-				[solution];
-			} else [];
+			utypenames : [string] = findPotentialGSubtypes(env, upper.subtypes);
 
-			utypenames = findPotentialGSubtypes(env, upper.subtypes);
-			utypes = if (length(utypenames) == 1) {
-				solution = resolveGSubTypeToName(env, utypenames[0], upper.subtypes) ;
-				if (env.verbose >= 3) {
-					printStay(env.env, "Made " + gtype2string(env, solution) + " to meet " + gtyvarReqs2string(env, req));
-				};
-				[solution];
-			} else [];
+			possible = if (isEmptySet(lower.subtypes)) utypenames
+				else if (isEmptySet(upper.subtypes)) ltypenames
+				else intersection(ltypenames, utypenames);
 
-			if (lowerFree && !upperFree) {
-				if (length(utypes) == 1) {
-					// Upper decides and is unique, so set all lower to the result
-					solution = utypes[0];
-					setGTyvar(env, unify, req, solution);
-				} else {
-					if (sizeSet(upper.subtypes) == 1) {
-						// A single named struct/union as the bound - we just take it
-						subtype = set2array(upper.subtypes)[0];
-						switch (subtype) {
-							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
-							default: {
-								println("TODO: Upper should decide from " + gtyvarReqs2string(env, req));
-								println(utypes);
-								env;
-							}
-						}
-					} else {
-						// test 103 has a case
-						// { :  : Tree<string, FcGlobalVar<>>, Tree<string, α20003>}
-						println("TODO: Upper should decide from " + gtyvarReqs2string(env, req));
-						println(utypes);
-						env;
-					}
+			// In case it is ambigious, should we pick the smallest?
+			pickIfAmbiguos = switch (stage) {
+				GResolveSafeOnly(): false;
+				GResolveSafeButAmbiguous(): {
+					// If there are no tyvars in either end, it is safe to go
+					isGBoundsKnown(env, lower) && isGBoundsKnown(env, upper);
 				}
-			} else if (!lowerFree && upperFree) {
-				if (length(ltypes) == 1) {
-					// Lower decides. We just have to make sure we unify the result backwards
-					solution = ltypes[0];
-					setGTyvar(env, unify, req, solution);
-				} else {
-					if (sizeSet(lower.subtypes) == 1) {
-						// A single named struct/union as the bound - we just take it
-						subtype = set2array(lower.subtypes)[0];
-						switch (subtype) {
-							GNamed(__, __): setGTyvar(env, unify, req, GSubType(subtype));
-							default: {
-								println("TODO: Lower should decide from " + gtyvarReqs2string(env, req));
-								println(gtype2string(env, GSubType(subtype)));
-								env;
-							}
-						}
-					} else {
-						println("TODO: Lower should decide from " + gtyvarReqs2string(env, req));
-						println(ltypenames);
-						println(ltypes);
-						env;
-					}
+				GResolveSpeculative(): {
+					// OK, we have to make progress, so just take a chance
+					true;
 				}
+				GResolveTypars(): true;
+			}
+
+			choice = if (pickIfAmbiguos) {
+				// OK, pick the "smallest" type, prefering small structs to big unions
+				scored = map(possible, \name -> Pair(getGNamedSize(env, name), name));
+				cheapest = sort(scored);
+				[cheapest[0].second];
+			} else possible;
+
+			if (length(choice) == 1) {
+				// OK, lower and upper can agree on a type. Construct it
+				winner = choice[0];
+				solution = resolveGSubTypeToName(env, winner, mergeSets(lower.subtypes, upper.subtypes));
+
+				// And set ourselves to this
+				setGTyvar(env, unify, req, solution);
 			} else {
-				shared = intersection(ltypenames, utypenames);
-				if (length(shared) >= 1) {
-					// OK, pick the "smallest" type, prefering small structs to big unions
-					scored = map(shared, \name -> Pair(getGNamedSize(env, name), name));
-					cheapest = sort(scored);
-					winner = cheapest[0].second;
-
-					// OK, lower and upper can agree on at least one type. Construct it
-					solution = resolveGSubTypeToName(env, winner, mergeSets(lower.subtypes, upper.subtypes));
-
-					// And set ourselves to this
-					setGTyvar(env, unify, req, solution);
-				} else {
-					// TODO: If there are no tyvars in the lower one, then
-					// pick the biggest that still fits upper
-					// If there are no tyvars in the upper one, then pick the
-					// smallest that still fits lower
-
-					println("TODO: Caught betwen two rocks: " + gtyvarReqs2string(env, req));
-					println(shared);
-
-					// It is not clear yet. Let us unify the lowers with the upppers in an attempt to
-					// uncover more constraints
-					foldSet(lower.subtypes, env, \acc, lt -> {
-						foldSet(upper.subtypes, acc, \acc2, ut -> {
-							unify(acc2, GSubType(lt), GSubType(ut))
-						})
-					});
-				}
+				env;
 			}
 		}
 	}
@@ -333,19 +271,14 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 }
 
 // Does this only contain unresolved tyvars?
-isGBoundsUnconstrained(env : GEnv, node : GBounds) -> bool {
+isGBoundsOnlyTyvars(env : GEnv, node : GBounds) -> bool {
 	isEmptySet(node.fixedTypes) && isEmptySet(node.subtypes)
-	&& 
-	if (false) {
-		isEmptySet(node.tyvars)
-	} else {
-		// This allows progress, but it is a heuristic
-		// since each tyvar can later be bound to something
-		// conflicting in some cases.
-		foldSet(node.tyvars, true, \acc, tv -> {
-			acc && !containsKeyTree(env.tyvars, tv)
-		})
-	}
+}
+
+// Is this bound known, considering super and subtypes?
+isGBoundsKnown(env : GEnv, bounds : GBounds) -> bool {
+	!isEmptySet(bounds.fixedTypes)
+	|| (isEmptySet(bounds.tyvars) && !isEmptySet(bounds.subtypes));
 }
 
 // Set this group of tyvars to this resolved type
