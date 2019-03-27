@@ -96,7 +96,11 @@ GTyvarRequirements(
 
 // The total (lower or upper) bounds of a given tyvar. We can depend on three different things
 // The tyvars are all known to be unbound.
-GBounds(tyvars : Set<int>, fixedTypes : Set<GType>, subtypes : Set<GSubTypeExpr>);
+GBounds(
+	tyvars : Set<int>, 
+	fixedTypes : Set<GType>, 
+	subtypes : Set<GSubTypeExpr>,
+);
 
 buildGTyvarRequirement(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
 	reqs = buildGTyvarReqForOne(env, reverseGraph, tyvarId);
@@ -221,12 +225,20 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 
 			choice = if (length(possible) > 1 && pickIfAmbiguos) {
-				// OK, pick the "smallest" type, prefering small structs to big unions
-				scored = map(possible, \name -> Pair(getGNamedSize(env, name), name));
-				cheapest = sort(scored);
-				// In some tests, it is best to pick the big one, in others, the small one.
-				// TODO: Figure out how to solve this.
-				[cheapest[0].second];
+				// OK, check if we have a single named type as a bound
+				subtypes = mergeSets(lower.subtypes, upper.subtypes);
+				singleNamed = getSingleNamedExpr(subtypes);
+				if (singleNamed != []) {
+					// If so, that is what we prefer. Test 22
+					singleNamed;
+				} else {
+					// OK, pick the "smallest" type, prefering small structs to big unions
+					scored = map(possible, \name -> Pair(getGNamedSize(env, name), name));
+					cheapest = sort(scored);
+					// In some tests, it is best to pick the big one, in others, the small one.
+					// TODO: Figure out how to solve this.
+					[cheapest[0].second];
+				}
 			} else {
 				possible;
 			}
@@ -539,6 +551,17 @@ resolveGSubExpr(env : GEnv, expr : GSubTypeExpr) -> GSubTypeExpr {
 		GOr(exprs): GOr(map(exprs, \e -> resolveGSubExpr(env, e)));
 	}
 }
+
+// If we have exactly one named entry, pick it
+getSingleNamedExpr(exprs : Set<GSubTypeExpr>) -> [string] {
+	if (sizeSet(exprs) == 1)  {
+		switch (set2array(exprs)[0]) {
+			GNamed(n, __): [n];
+			default: [];
+		}
+	} else [];
+}
+
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
