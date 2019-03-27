@@ -152,8 +152,14 @@ export {
 		DCount(property : DPropertyU);
 
 
-	makeODataRequest(host : string, jwt : string, query : DQuery, onOK : (Json) -> void, onError : (string) -> void) -> void;
+	makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void;
+	// Calls onError if whole batch or at least one of subrequests has failed
 	makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void;
+	makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void;
+
+	DResponse ::= DGoodResponse, DBadResponse;
+		DGoodResponse(data : Json);
+		DBadResponse(data : Json);
 
 	specifyResource(resource : DCommonResourceU, value : DResourceValue) -> DSpecificResource;
 	makeODataBind(fieldName : string, resourceName : string, value : Json) -> Pair<string, Json>;
@@ -640,63 +646,108 @@ orderBy2string(values : [DOrderByValue<DPropertyU, bool>]) -> string {
 	)
 }
 
-makeODataRequest(host : string, jwt : string, query : DQuery, onOK : (Json) -> void, onError : (string) -> void) -> void {
-	q = buildODataQuery(query);
-	headers = ifArrayPush([], jwt != "", KeyValue("Authorization", "Bearer " + jwt));
-	url = host + q.resource;
-	makeODataRequest2(url, q.method, headers, q.data, onOK, onError)
-}
 
 makeODataBatchRequest(host : string, jwt : string, queries : [DQuery], onOK : ([Json]) -> void, onError : (string) -> void) -> void {
-	makeODataRequest(host, jwt, DBatchQuery(queries), \json -> onOK(getJsonArrayValue(json, [])), onError)
+	callback = \responses : [DResponse] -> {
+		errorM = findmap(responses, \response -> {
+			switch (response) {
+				DGoodResponse(__): None();
+				DBadResponse(v): Some(json2string(v));
+			}
+		});
+		eitherFn(
+			errorM,
+			onError,
+			\-> {
+				results = map(responses, \response -> {
+					switch (response) {
+						DGoodResponse(v): v;
+						DBadResponse(v): v;		// Should never happen
+					}
+				});
+				onOK(results)
+			}
+		)
+	}
+	makeODataBatchRequest2(host, jwt, queries, callback, onError)
 }
 
-makeODataRequest2(url : string, method : RequestMethod, headers : [KeyValue], data : RequestData, onOK : (Json) -> void, onError : (string) -> void) -> void {
-	body = switch (data) {
-		RequestPayload(body): body;
-		default: "";
-	};
-	isBatch = isSameStructType(method, POST()) && startsWith(body, "--");
+makeODataBatchRequest2(host : string, jwt : string, queries : [DQuery], callback : ([DResponse]) -> void, onError : (string) -> void) -> void {
+	callback2 = \data, headers -> callback(parseBatchResponse(data, headers));
+	makeODataRequest2(host, jwt, DBatchQuery(queries), callback2, onError)
+}
+
+makeODataRequest(host : string, jwt : string, query : DQuery, callback : (Json) -> void, onError : (string) -> void) -> void {
+	callback2 = \data, headers -> {
+		isBatch = isSameStructType(query, DBatchQuery([]));
+		result = if (isBatch) {
+			responses = parseBatchResponse(data, headers);
+			JsonArray(map(responses, \response -> {
+				switch (response) {
+					DGoodResponse(v): v;
+					DBadResponse(v): v;
+				}
+			}))
+		} else {
+			parseJson(data)
+		}
+		callback(result)
+	}
+	makeODataRequest2(host, jwt, query, callback2, onError)
+}
+
+makeODataRequest2(host : string, jwt : string, query : DQuery, callback : (string, [KeyValue]) -> void, onError : (string) -> void) -> void {
+	q = buildODataQuery(query);
+	method = q.method;
+	data = q.data;
+	isBatch = isSameStructType(query, DBatchQuery([]));
 	contentType = if (isBatch) {
+		body = switch (data) {
+			RequestPayload(body): body;
+			default: "";
+		};
 		boundary = substring(body, 2, strIndexOf(body, "\n") - 2);
-		"multipart/mixed;boundary=" + boundary;
-	} else "application/json";
+		"multipart/mixed;boundary=" + boundary
+	} else {
+		"application/json"
+	}
 	accept = if (isBatch) "multipart/mixed" else "application/json";
 
-	setHeaderIfNotExists = \arr : [KeyValue], kv : KeyValue -> ifArrayPush(arr, !exists(arr, \h -> kv.key == h.key), kv);
-
-	headers2 : [KeyValue] = headers
-		|> (\arr -> setHeaderIfNotExists(arr, KeyValue("Content-Type", contentType)))
-		|> (\arr -> setHeaderIfNotExists(arr, KeyValue("Accept", accept)));
-		// |> (\arr -> setHeaderIfNotExists(arr, KeyValue("If-Match", "*")));
+	headers : [KeyValue] = [
+		KeyValue("Accept", accept),
+		KeyValue("Authorization", "Bearer " + jwt),
+		KeyValue("Content-Type", contentType)
+	];
 
 	httpCustomRequest(
-		url,
-		method,
-		headers2,
+		host + q.resource,
+		q.method,
+		headers,
 		data,
 		\status, respData, respHeaders -> {
 			if (isErrorStatus(status)) {
 				onError(respData)
 			} else {
-				onOK(parseResponse(respData, respHeaders))
+				callback(respData, respHeaders)
 			}
 		},
 		true
 	)
 }
 
-parseResponse(response : string, respHeaders : [KeyValue]) -> Json {
+parseBatchResponse(response : string, respHeaders : [KeyValue]) -> [DResponse] {
 	contentType = findDef(respHeaders, \header -> toLowerCase(header.key) == "content-type", KeyValue("", "")).value;
-	if (startsWith(contentType, "multipart/mixed;")) {
-		boundary = "--"+ takeAfter(contentType, "boundary=", "");
-		chunks = strSplit(response, boundary);
-		responses = subrange(chunks, 1, length(chunks) - 2);
-		JsonArray(map(responses, \resp -> {
-			json = strRight(resp, strIndexOf(resp, "{"));
-			parseJson(json)
-		}));
-	} else {
-		parseJson(response)
-	}
+	boundary = "--"+ takeAfter(contentType, "boundary=", "");
+	chunks = strSplit(response, boundary);
+	responses = subrange(chunks, 1, length(chunks) - 2);
+	map(responses, \resp -> {
+		jsonS = strRight(resp, strIndexOf(resp, "{"));
+		json = parseJson(jsonS);
+		status = takeBetween(resp, "HTTP/1.1 ", " ", "");
+		if (isErrorStatus(s2i(status))) {
+			DBadResponse(json)
+		} else {
+			DGoodResponse(json)
+		}
+	})
 }

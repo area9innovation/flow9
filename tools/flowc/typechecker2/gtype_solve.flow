@@ -20,7 +20,8 @@ export {
 This works using a few passes algorithm:
 First, recursively deconstruct all relations based on the expectations and build a graph
 of requirements for each tyvar.
-Then, for each tyvar, figure out how to resolve it.
+Then, for each tyvar, figure out how to resolve it by taking all information about it
+into account.
 
 
 Run with something like
@@ -31,13 +32,20 @@ and then
 
 	mkdot
 
-to produce the graphviz relations.
+to produce the graphviz relations if you use verbose=2 or above.
 
 TODO:
-- Solve the tyvar graph
 - Union vs union case
-- Get rid of GAnd, GOr, GBounded
-- Reconstruct struct defs with correct number of typars, and be smarter about
+
+- Tyvars without any constraints do not enter the picture since they are not in the unresolved
+  tyvar thing
+
+- Get rid of GAnd, GOr
+
+- Array vs flow. 107.
+- Lower == upper, maybe except for typars. 108
+
+- Check that we reconstruct struct defs with correct number of typars, and be smarter about
   implicit typars. (31, 37, 54, ..., 103, 114, 127)
 */
 
@@ -82,7 +90,7 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		if (solveDebug) {
 			env.local.debugTyping := 1;
 		};
-		if (solveDebug || ge.verbose >= 2) {
+		if (solveDebug || ge.verbose >= 3) {
 			fcPrintln("\n// " + strReplace(fcExpect2string(acc.env, e), "\n", " "));
 		}
 
@@ -112,30 +120,13 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		re;
 	});
 
-	// OK, first remove cycles in the graph. We need the sources first
-	sources = findEGRoots(ge1.relations.graph);
-	loopFree = removeBackEGEdges(ge1.relations.graph, set2array(sources));
-	// Then reduce to smallest graph
-	reducedGraph = transitiveReduction(loopFree);
-	ge1b = GEnv(
-		ge1 with relations = SimpleGraph(ge1.relations with graph = reducedGraph)
-	);
 
-	// Now, we have loop-free graph with the same semantics as before, but fewer edges
-
-	// Make sure all unresolve tyvars are in the graph 
-	ge1c = GEnv(
-		ge1b with relations = foldSet(ge1b.unresolvedTyvars, ge1b.relations, \acc, tv -> {
-			if (containsKeyTree(ge1b.tyvars, tv)) {
-				acc;
-			} else {
-				addSimpleNode(acc, GTypeVar(tv))
-			}
-		})
-	);
+	if (ge1.verbose >= 3) {
+		saveGDot(ge1, name + "_orig");
+	}
 
 	// Go ahead and resolve it
-	ge2 = resolveGGraph(ge1c, name, \e, l, u -> {
+	ge2 = resolveGGraph(ge1, name, \e, l, u -> {
 		unifyGType(e, l, u, \err -> {
 			// TODO: We could keep a map from tyvar to position and use that for
 			// smarter error reporting based on tyvars
@@ -149,27 +140,17 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		acc;
 	});
 
+	if (!isEmptySet(ge2.unresolvedTyvars)) {
+		println("Error: Unresolved tyvars: " + toString(set2array(ge2.unresolvedTyvars)));
+	}
+
 	if (ge2.verbose >= 2) {
-		println("Tyvars: " + toString(set2array(ge2.unresolvedTyvars)));
+		saveGDot(ge2, name);
 
-		// Build the relation graph if there is one
-		mroot = popMinSet(ge2.unresolvedTyvars);
-		switch (mroot) {
-			None(): {}
-			Some(root): {
-				dot = simpleGraph2dot(ge2.relations, GTypeVar(root.value), [], 
-					\n -> [DotLabel(gtype2string(ge2, n))], 
-					\e -> []
-				);
-				setFileContent(name + ".dot", dot);
-
-				batch = getFileContent("mkdot.bat");
-				batch0 = batch + "dot "+ name + ".dot -Tsvg -o" + name + ".svg\n";
-				setFileContent("mkdot.bat", batch0);
-				{}
-			}
-		}
-
+		batch = getFileContent("mkdot.bat");
+		batch0 = batch + "dot "+ name + ".dot -Tsvg -o" + name + ".svg\n";
+		setFileContent("mkdot.bat", batch0);
+		{}
 	}
 
 	// Run the final checks
@@ -188,6 +169,15 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	ge2.env.local.checks := makeList();
 
 	ge2;
+}
+
+saveGDot(env : GEnv, name : string) -> void {
+	dot = simpleGraph2dot(env.relations, GTypeVar(0), [], 
+		\n -> [DotLabel(gtype2string(env, n))], 
+		\e -> []
+	);
+	setFileContent(name + ".dot", dot);
+	{}
 }
 
 unifyGType(env : GEnv, output : GType, input : GType, onError : (string) -> void) -> GEnv {
@@ -233,7 +223,15 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 
 	rest = \ -> {
 		switch (right) {
-			GTypeVar(rid): gunifyTyvar(env, left, right, onError);
+			GTypeVar(rid): {
+				// OK, if this is bound, we have to recurse into the beast
+				bound = lookupTree(env.tyvars, rid);
+				nenv = switch (bound) {
+					None(): env;
+					Some(btyvar): unifyGType(env, left, btyvar, onError);
+				}
+				gunifyTyvar(nenv, left, right, onError);
+			}
 			GFlow(): {
 				explicit_flow = isConfigParameterTrue(env.env.program.acc.config.config, "explicit-flow");
 				switch (left) {
@@ -346,7 +344,12 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 			}
 		}
 		GTypeVar(lid): {
-			gunifyTyvar(env, left, right, onError);
+			bound = lookupTree(env.tyvars, lid);
+			nenv = switch (bound) {
+				None(): env;
+				Some(btyvar): unifyGType(env, btyvar, right, onError);
+			}
+			gunifyTyvar(nenv, left, right, onError);
 		}
 		GSubType(lexp): {
 			switch (right) {
@@ -356,9 +359,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 				GFunction(args, rt): error();
 				GArray(type): error();
 				GRef(type): error();
-				GTypeVar(rid): {
-					gunifyTyvar(env, left, right, onError);
-				}
+				GTypeVar(rid): rest();
 				GSubType(rexp): {
 					gunifySubType(env, lexp, rexp, onError);
 				}
@@ -386,6 +387,9 @@ unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], onError : (int, strin
 
 gunifyTyvar(env : GEnv, left : GType, right : GType, onError : (string) -> void) -> GEnv {
 	addTyvars = \ut, t -> extractGTypeVars(env, t, ut);
+	if (env.verbose >= 3) {
+		printStay(env.env, "Adding edge between  " + gtype2string(env, left) + " and " + gtype2string(env, right));
+	}
 	GEnv(
 		env with 
 		unresolvedTyvars = addTyvars(addTyvars(env.unresolvedTyvars, left), right),
@@ -453,6 +457,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -
 		Some(ustruct): {
 			// The struct as it appears in the union. Let us remap typars from the union to the struct
 			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
+		
 			// And then subtype with our struct
 			unifyAndRecurseGType(env, GSubType(left), istruct, onError);
 		}
@@ -474,7 +479,30 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 			});
 			// Now we make a struct with typar names that correspond to the unions
 			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
-			gtype = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+			gtype0 = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+	
+			// We might have to do implicit type-par promotion from the union
+			gtype = switch (gtype0) {
+				GSubType(st): {
+					switch (st) {
+						GNamed(gname, tps): {
+							// Extend the type parameters to match the number of parameters
+							ntps = concat(tps, generate(0, length(master.typars), \i -> {
+								GTypePar(strLeft("????????????", i + 1))
+							}));
+							GSubType(
+								GNamed(gname, subrange(uniq(ntps), 0, length(master.typars)))
+							);
+						}
+						default: gtype0;
+					}
+				}
+				default: gtype0;
+			}
+
+			if (env.verbose >= 4) {
+				printStay(env.env, "Constructed " + gtype2string(env, gtype) + " from " + gtype2string(env, GSubType(master)));
+			}
 
 			// Now, instantiate the typars in this gtype
 			gtypars = foldi(master.typars, makeTree(), \i, acc, tp -> {

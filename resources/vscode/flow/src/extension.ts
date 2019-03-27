@@ -90,6 +90,9 @@ export function activate(context: vscode.ExtensionContext) {
 		documentSelector: [{scheme: 'file', language: 'flow'}],
 	}
 
+	// launch flowc server at startup
+	tools.launchFlowc(getFlowRoot());
+
 	// Create the language client and start the client.
 	client = new LanguageClient('flowLanguageServer', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
@@ -101,12 +104,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
+	// First, shutdown Flowc server
+	tools.shutdownFlowc();
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
-    });
+	});
 }
 
 export async function updateFlowRepo() {
