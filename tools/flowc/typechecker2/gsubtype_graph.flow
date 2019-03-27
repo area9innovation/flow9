@@ -1,0 +1,100 @@
+import tools/flowc/manipulation/simplegraph;
+import tools/flowc/typechecker2/gtype;
+import ds/easygraph_utils;
+import tools/flowc/flowcacc;
+
+export {
+	// Builds a graph for subtyping relations
+	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
+
+	findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string];
+}
+
+buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
+	supertypes0 = foldTree(names.unions, makeSimpleGraph(), \unionname : string, union : FcTypeUnion, acc -> {
+		fold(union.typenames, acc, \acc2, typename -> {
+			addSimpleEdge(acc2, typename.name, unionname, true, 1)
+		});
+	});
+
+	supertypes = foldTree(names.structs, supertypes0, \structname, struct : FcTypeStruct, acc -> {
+		addSimpleNode(acc, structname);
+	});
+
+
+	// Build a map from name to the fields it has
+	name2fields : Tree<string, [string]> = foldTree(names.structs, makeTree(), \structname, struct, acc -> {
+		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
+			treePushToArrayUnique(acc2, structname, arg.name);
+		});
+	});
+
+	fieldSupertypes0 = foldTree(names.structs, makeSimpleGraph(), \structname, struct : FcTypeStruct, acc -> {
+		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
+			// A link from the field to the struct name
+			addSimpleEdge(acc2, "." + arg.name, structname, true, 1)
+		});
+	});
+
+	fieldSupertypes = foldTree(names.unions, fieldSupertypes0, \unionname : string, union : FcTypeUnion, acc -> {
+		// Check what fields all members have
+		structs = union2structnames(names, unionname);
+		structFields = map(structs, \struct -> {
+			getTreeArrayValue(name2fields, struct);
+		});
+
+		// OK, we have to intersect all these arrays
+		shared = foldi(structFields, makeSet(), \i, acc0, sf : [string] -> {
+			if (i == 0) buildSet(sf)
+			else intersectSets(acc0, buildSet(sf))
+		});
+		foldSet(shared, acc, \acc0, field -> {
+			// A link from the field to the union
+			addSimpleEdge(acc0, "." + field, unionname, true, 1)
+		});
+	});
+
+	GSubtypeGraph(
+		supertypes,
+		fieldSupertypes,
+		reverseEasyGraph(supertypes.graph)
+	);
+}
+
+findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string] {
+	// Depending on whether we look for a field or a name, let us pick the right graph
+	supergraph = if (startsWith(name, ".")) {
+		graph.fieldSupertypes
+	} else {
+		graph.supertypes
+	};
+	node = getSimpleNodeId(supergraph, name);
+	reachable = reachableClosureFromNode(supergraph.graph, node);
+
+	names : Set<string> = mapSet(reachable, \id : int -> {
+		mnode = lookupTree(supergraph.graph.nodes, id);
+		switch (mnode) {
+			None(): "";
+			Some(n): n.data;
+		}
+	});
+	filter(set2array(names), \n -> n != "");
+}
+
+union2structnames(names : FcGlobalNames, name : string) -> [string] {
+	mstruct = lookupTree(names.structs, name);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(names.unions, name);
+			switch (munion) {
+				None(): [];
+				Some(union): {
+					concatA(map(union.typenames, \tn -> union2structnames(names, tn.name)));
+				}
+			}
+		}
+		Some(struct): {
+			[name];
+		}
+	}
+}

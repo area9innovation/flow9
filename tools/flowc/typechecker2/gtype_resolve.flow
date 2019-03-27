@@ -2,6 +2,7 @@ import tools/flowc/typechecker2/gtype;
 import ds/easygraph_utils;
 import text/blueprint;
 import tools/flowc/typechecker2/gtype_util;
+import tools/flowc/typechecker2/gsubtype_graph;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
 
@@ -10,13 +11,7 @@ export {
 	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
 }
 
-// TODO: findPotentialGSupertypes and findPotentialGSubtypes can be greatly optimized
-// by having a subtype graph of structs and unions
-
-// TODO: When we have loops in the deps, we have to unify the nodes. See test 59, where
-// α40001, α40008, α40005 form a loop, and we can collapse to be a single node, which
-// has inputs from TextSize and Selection.
-// Also α40002 and α40006 are in a loop with Selection, and they can be joined together.
+// TODO: findPotentialGSubtypes can be greatly optimized by having a subtype graph of structs and unions
 
 // TODO: Consider whether GBounds to have a bool for flow type, and GName separately 
 
@@ -138,7 +133,6 @@ buildGTyvarReqForOne(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId 
 }
 
 joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
-
 	tyvars = mergeSets(left.tyvars, right.tyvars);
 
 	GTyvarRequirements(
@@ -343,28 +337,11 @@ findPotentialGSupertypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
 findGSupertypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 	switch (expr) {
 		GNamed(name, __): {
-			mst = lookupTree(env.env.program.acc.names.structs, name);
-			switch (mst) {
-				None(): {
-					// A union: Expand to members
-					typenames : [FcTypeName] = union2typenames(env.env, name);
-					// And then do a recursive call on the members
-					supers : Set<GSubTypeExpr> = buildSet(map(typenames, \tn -> GNamed(tn.name, [])));
-					findPotentialGSupertypes(env, supers);
-				}
-				Some(st): {
-					arrayPush(
-						getTreeArrayValue(env.env.program.acc.names.struct2unions, name),
-						name
-					);
-				}
-			}
+			superset = findGSupertypeFromName(env.subtypes, name);
+			arrayPush(superset, name);
 		}
 		GField(field, __): {
-			structs = getTreeArrayValue(env.env.program.acc.names.field2structs, field);
-			// OK, we also have to find unions. See test 127
-			println("TODO: Find unions that have ." + field);
-			structs;
+			findGSupertypeFromName(env.subtypes, "." + field);
 		}
 		GAnd(exprs): {
 			findPotentialGSupertypes(env, buildSet(exprs));
@@ -505,7 +482,6 @@ joinGBounds(left : GBounds, right : GBounds) -> GBounds {
 removeGBoundsTyvars(g : GBounds, tyvars : Set<int>) -> GBounds {
 	GBounds(g with tyvars = differenceSets(g.tyvars, tyvars));
 }
-
 
 addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
 	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
