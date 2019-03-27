@@ -4,11 +4,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 
@@ -963,8 +961,8 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         void setVolume(long channel_id, float value);
         float getPosition(long channel_id);
         float getLength(long channel_id);
-    };
-    
+    }
+
     private SoundPlayer sound_player = null;
     
     public void setSoundPlayer(SoundPlayer player) {

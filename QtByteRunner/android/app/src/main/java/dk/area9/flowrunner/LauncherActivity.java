@@ -55,12 +55,12 @@ public class LauncherActivity extends Activity {
           setContentView(view_id);
           
           Class<?> id = Class.forName(getPackageName() + ".R$id");
-          BytecodeURLField = (EditText)findViewById((Integer)(id.getField("url_field").get(null)));
-          BytecodeList = (ListView)findViewById((Integer)(id.getField("downloaded_files").get(null)));
-          URLParametersField = (EditText)findViewById((Integer)(id.getField("url_parameters_field").get(null)));
+          BytecodeURLField = findViewById((Integer)(id.getField("url_field").get(null)));
+          BytecodeList = findViewById((Integer)(id.getField("downloaded_files").get(null)));
+          URLParametersField = findViewById((Integer)(id.getField("url_parameters_field").get(null)));
 
-          Button downloadButton = (Button)findViewById((Integer)(id.getField("download_button").get(null)));
-          Button runButton = (Button)findViewById((Integer)(id.getField("run_button").get(null)));
+          Button downloadButton = findViewById((Integer)(id.getField("download_button").get(null)));
+          Button runButton = findViewById((Integer)(id.getField("run_button").get(null)));
           
           downloadButton.setOnClickListener(new OnClickListener() {
               public void onClick(View view) {

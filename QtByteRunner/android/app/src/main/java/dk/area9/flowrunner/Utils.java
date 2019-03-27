@@ -15,29 +15,22 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
 
-import com.amazonaws.org.apache.http.Consts;
 import com.amazonaws.org.apache.http.Header;
 import com.amazonaws.org.apache.http.HttpEntity;
 import com.amazonaws.org.apache.http.HttpResponse;
 import com.amazonaws.org.apache.http.client.methods.HttpGet;
 import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
-import com.amazonaws.org.apache.http.client.params.HttpClientParams;
 import com.amazonaws.org.apache.http.conn.scheme.PlainSocketFactory;
 import com.amazonaws.org.apache.http.conn.scheme.Scheme;
 import com.amazonaws.org.apache.http.conn.scheme.SchemeRegistry;
 import com.amazonaws.org.apache.http.conn.ssl.SSLSocketFactory;
 import com.amazonaws.org.apache.http.impl.client.AbstractHttpClient;
-import com.amazonaws.org.apache.http.impl.client.BasicCookieStore;
 import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 import com.amazonaws.org.apache.http.impl.conn.BasicClientConnectionManager;
 import com.amazonaws.org.apache.http.params.BasicHttpParams;
 import com.amazonaws.org.apache.http.protocol.BasicHttpContext;
-import com.amazonaws.org.apache.http.protocol.HTTP;
 
 import android.app.Activity;
 import android.app.DownloadManager;
@@ -328,7 +321,7 @@ public class Utils {
                 }
                 callback.deliverData(buf, false);
             }
-            public void write(int oneByte) throws IOException {
+            public void write(int oneByte) {
                 callback.deliverData(new byte[] { (byte)oneByte }, false);
             }
         };
@@ -400,7 +393,7 @@ public class Utils {
     }
         
     public static boolean isParamTrue(String param) {
-        return param == null ? false : param.equalsIgnoreCase("true") || param.equalsIgnoreCase("1");
+        return param != null && (param.equalsIgnoreCase("true") || param.equalsIgnoreCase("1"));
     }
 
     public static HashMap<String,String> pref_url_parameters = new HashMap<String,String>(), manifest_url_params = new HashMap<String,String>();
@@ -589,7 +582,7 @@ public class Utils {
     
     // Based on ObjectSerializer from Apache pig
     // deserialize will fail, if we will not encode bytes from ByteArrayOutputStream
-    public static String serializeObjectToString(Serializable obj) throws IOException {
+    public static String serializeObjectToString(Serializable obj) {
         if (obj == null) return "";
         try {
             ByteArrayOutputStream serialObj = new ByteArrayOutputStream();
@@ -603,7 +596,7 @@ public class Utils {
         return "";
     }
     
-    public static Object deserializeStringToObject(String str) throws IOException {
+    public static Object deserializeStringToObject(String str) {
         if (str == null || str.length() == 0) return null;
         try {
             ByteArrayInputStream serialObj = new ByteArrayInputStream(decodeBytes(str));

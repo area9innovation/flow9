@@ -29,8 +29,8 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         String notificationTitle = intent.getExtras().getString(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_TITLE);
         String notificationText = intent.getExtras().getString(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_TEXT);
         int notificationId = intent.getExtras().getInt(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_ID);
-        PendingIntent onClickIntent = (PendingIntent)intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT);
-        PendingIntent onCancelIntent = (PendingIntent)intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CANCEL_INTENT);
+        PendingIntent onClickIntent = intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT);
+        PendingIntent onCancelIntent = intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CANCEL_INTENT);
         boolean withSound = intent.getExtras().getBoolean(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_WITH_SOUND);
         boolean pinNotification = intent.getExtras().getBoolean(pkgName + FlowNotificationsAPI.EXTRA_PINNED_NOTIFICATION);
 

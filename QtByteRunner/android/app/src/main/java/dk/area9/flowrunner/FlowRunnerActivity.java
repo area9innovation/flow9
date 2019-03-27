@@ -18,7 +18,6 @@ import java.util.HashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.amazonaws.org.apache.http.HttpEntity;
 import com.amazonaws.org.apache.http.HttpException;
 import com.amazonaws.org.apache.http.HttpHost;
 import com.amazonaws.org.apache.http.HttpRequest;
@@ -32,7 +31,6 @@ import com.amazonaws.org.apache.http.client.methods.HttpDelete;
 import com.amazonaws.org.apache.http.client.methods.HttpPatch;
 import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
 import com.amazonaws.org.apache.http.entity.BasicHttpEntity;
-import com.amazonaws.org.apache.http.entity.StringEntity;
 import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 import com.amazonaws.org.apache.http.protocol.HttpContext;
 
@@ -43,7 +41,6 @@ import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.content.Entity;
 import android.content.Intent;
 // for network state change
 import android.content.IntentFilter;
@@ -84,8 +81,6 @@ import android.widget.Toast;
 // this is only for checking hardware acceleration, probably could be refactored
 import android.Manifest.permission;
 // for network state change
-
-import com.amazonaws.org.apache.http.client.methods.HttpPatch;
 
 import dk.area9.flowrunner.FlowRunnerWrapper.HttpResolver;
 import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
@@ -192,7 +187,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         // Workaround for weird rejection of PHPSESSID cookie
         http_client.addResponseInterceptor(new HttpResponseInterceptor() {
-            public void process(final HttpResponse response, final HttpContext context) throws HttpException, IOException {
+            public void process(final HttpResponse response, final HttpContext context) {
                 if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
                     String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
                     if (set_cookie_header.startsWith("PHPSESSID")) { 
@@ -211,7 +206,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         });
     
         http_client.addRequestInterceptor(new HttpRequestInterceptor() {
-            public void process(final HttpRequest request, final HttpContext context) throws HttpException, IOException {
+            public void process(final HttpRequest request, final HttpContext context) {
                 if (php_session_id != null) {
                     HttpHost target = (HttpHost) context.getAttribute("Host");
                     if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
@@ -283,8 +278,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
             public void request(String url, String method, String[] headers,
-                    String payload, HttpResolver callback) throws IOException
-            {
+                    String payload, HttpResolver callback) {
                 HttpUriRequest request;
 
                 BasicHttpEntity entity = new BasicHttpEntity();
@@ -430,8 +424,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         Uri uri = intent.getData();
         if (uri == null) return true;
         if (uri.getScheme().equalsIgnoreCase("http") || uri.getScheme().equalsIgnoreCase("https") || uri.getScheme().equalsIgnoreCase("file") ) return false;
-        if (uri.getQuery() == null || uri.getQuery().equals("")) return true;
-        return false;
+        return uri.getQuery() == null || uri.getQuery().equals("");
     }
     
     private void callOnFlowNotificationClick(Intent intent) {
@@ -492,24 +485,24 @@ public class FlowRunnerActivity extends FragmentActivity  {
             ConsoleView.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 0.0f));
             
             Class<?> id = Class.forName(getPackageName() + ".R$id");
-            ConsoleTextView = (TextView)ConsoleView.findViewById((Integer)(id.getField("log_view").get(null)));
+            ConsoleTextView = ConsoleView.findViewById((Integer)(id.getField("log_view").get(null)));
             ConsoleTextView.setMovementMethod(new ScrollingMovementMethod());
 
-            Button update_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("update_log_button").get(null)));
+            Button update_log_button = ConsoleView.findViewById((Integer)(id.getField("update_log_button").get(null)));
             update_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     updateLogCatOutput();
                 }
             });
             
-            Button clear_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("clear_log_button").get(null)));
+            Button clear_log_button = ConsoleView.findViewById((Integer)(id.getField("clear_log_button").get(null)));
             clear_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     clearLogCatOutput(); updateLogCatOutput();
                 }
             });
             
-            final Button minimize_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("minimize_log_button").get(null)));
+            final Button minimize_log_button = ConsoleView.findViewById((Integer)(id.getField("minimize_log_button").get(null)));
             
             minimize_log_button.setOnClickListener(new OnClickListener() {
                 boolean isMinimized = false;
@@ -526,7 +519,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 }
             });
             
-            Button close_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("close_log_button").get(null)));
+            Button close_log_button = ConsoleView.findViewById((Integer)(id.getField("close_log_button").get(null)));
             close_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     hideConsoleView();

@@ -18,9 +18,7 @@ import java.util.List;
 
 import com.amazonaws.org.apache.http.client.methods.HttpGet;
 import com.amazonaws.org.apache.http.client.methods.HttpRequestBase;
-import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
 import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
-import com.amazonaws.org.apache.http.protocol.HTTP;
 
 import android.content.Context;
 import android.util.Base64;
@@ -324,7 +322,7 @@ public class ResourceCache {
         if (output != null) {
             try { 
                 output.close(); 
-            } catch (IOException e) {};
+            } catch (IOException e) {}
         }
         if (tmp != null)
             tmp.delete();
