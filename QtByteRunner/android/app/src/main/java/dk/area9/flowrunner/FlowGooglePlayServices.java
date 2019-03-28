@@ -3,6 +3,8 @@ package dk.area9.flowrunner;
 import android.location.Location;
 import android.os.Bundle;
 import android.os.Looper;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 
 import com.google.android.gms.common.ConnectionResult;
@@ -14,6 +16,7 @@ public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbac
         GoogleApiClient.OnConnectionFailedListener, IFlowGooglePlayServices {
 
     private boolean initSuccess = false;
+    @Nullable
     private GoogleApiClient googleApiClient = null;
     private FlowGooglePlayServicesLocationListener balancedListener;
     private FlowGooglePlayServicesLocationListener highAccuracyListener;
@@ -21,6 +24,7 @@ public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbac
     private FlowGooglePlayServicesLocationListener highAccuracyWatchListener;
 
     private FlowRunnerActivity activity;
+    @Nullable
     private FlowGeolocationAPI flowGeolocationAPI = null;
     
     public FlowGooglePlayServices(FlowRunnerActivity activity) {
@@ -95,6 +99,7 @@ public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbac
         }
     }
 
+    @Nullable
     @Override
     public Location getLastLocation() {
         Location result = null;
@@ -115,7 +120,7 @@ public class FlowGooglePlayServices implements GoogleApiClient.ConnectionCallbac
     }
 
     @Override
-    public void onConnectionFailed(ConnectionResult connectionResult) {
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
         Log.e(Utils.LOG_TAG, "GoogleApiClient connection failed. ErrorMessage: " + connectionResult.toString());
     }
 

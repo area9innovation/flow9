@@ -14,6 +14,7 @@ class iosHttpSupport;
     iosHttpSupport * Owner;
     long long ExpectedContentLength;
     long long DownloadedLength;
+    NSHTTPURLResponse* response;
 }
 
 - (id) initWithRequestId:(int)req_id owner: (iosHttpSupport *) ownr;
