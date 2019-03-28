@@ -1,0 +1,149 @@
+import tools/flowc/typechecker2/gtype;
+import ds/easygraph_utils;
+
+export {
+	// Extract all the known requirements for this tyvar id
+	buildGTyvarRequirement(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements;
+
+	// The total set of requirements we know about for a given tyvar
+	GTyvarRequirements(
+		tyvars : Set<int>, 
+		lower : GBounds, 
+		upper : GBounds, 
+	);
+
+	// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
+	// The tyvars are all known to be unbound.
+	GBounds(
+		hasFlow : bool,
+		tyvars : Set<int>, 
+		fixedTypes : Set<GType>, 
+		named : Set<GNamed>,
+		fields : Set<GField>
+	);
+}
+
+
+buildGTyvarRequirement(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
+	reqs = buildGTyvarReqForOne(env, reverseGraph, tyvarId);
+
+	loopingTyvars = intersectSets(reqs.lower.tyvars, reqs.upper.tyvars);
+	res = if (!isEmptySet(loopingTyvars)) {
+		// OK, we have a loop of tyvars. In that case, we can
+		// collect the requirements for those tyvars as well, and join them up
+		foldSet(loopingTyvars, reqs, \acc, tv -> {
+			nreq = buildGTyvarReqForOne(env, reverseGraph, tv);
+			joinGTyvarRequirements(acc, nreq)
+		});
+	} else {
+		reqs
+	}
+
+	res;
+}
+
+buildGTyvarReqForOne(env : GEnv, reverseGraph : EasyGraph<GType, bool>, tyvarId : int) -> GTyvarRequirements {
+	nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
+	if (nodeid == -1) {
+		// This is because there are no requirements in the graph, and this is fine
+		GTyvarRequirements(makeSet1(tyvarId), emptyGBounds(), emptyGBounds())
+	} else {
+		lowerIds = reachableClosureFromNode(reverseGraph, nodeid);
+		lower = buildGBounds(env, env.relations.graph, lowerIds);
+
+		upperIds = reachableClosureFromNode(env.relations.graph, nodeid);
+		upper = buildGBounds(env, env.relations.graph, upperIds);
+
+		GTyvarRequirements(makeSet1(tyvarId), lower, upper);
+	}
+}
+
+joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
+	tyvars = mergeSets(left.tyvars, right.tyvars);
+
+	GTyvarRequirements(
+		tyvars, 
+		removeGBoundsTyvars(joinGBounds(left.lower, right.lower), tyvars),
+		removeGBoundsTyvars(joinGBounds(left.upper, right.upper), tyvars)
+	);
+}
+
+
+emptyGBounds() -> GBounds {
+	GBounds(false, makeSet(), makeSet(), makeSet(), makeSet())
+}
+
+buildGBounds(env : GEnv, graph : EasyGraph<GType, bool>, nodes : Set<int>) -> GBounds {
+	foldSet(nodes, emptyGBounds(), \acc : GBounds, nodeid : int -> {
+		mnode = lookupTree(graph.nodes, nodeid);
+		switch (mnode) {
+			None(): acc; // Not supposed to happen
+			Some(node): addGTypeToGBounds(env, acc, node.data);
+		}
+	});
+}
+
+joinGBounds(left : GBounds, right : GBounds) -> GBounds {
+	GBounds(
+		left.hasFlow || right.hasFlow, 
+		mergeSets(left.tyvars, right.tyvars), 
+		mergeSets(left.fixedTypes, right.fixedTypes), 
+		mergeSets(left.named, right.named),
+		mergeSets(left.fields, right.fields),
+	)
+}
+
+removeGBoundsTyvars(g : GBounds, tyvars : Set<int>) -> GBounds {
+	GBounds(g with tyvars = differenceSets(g.tyvars, tyvars));
+}
+
+addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
+	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
+	switch (tt) {
+		GBasicType(t): fixed();
+		GFlow(): GBounds(acc with hasFlow = true);
+		GTypePar(id): fixed();
+		GFunction(args, rt): fixed();
+		GArray(type): fixed();
+		GRef(type): fixed();
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): {
+					GBounds(acc with tyvars = insertSet(acc.tyvars, id));
+				}
+				Some(type): {
+					// If the tyvar is defined, resolve it, and place it where it needs to go
+					addGTypeToGBounds(env, acc, type);
+				}
+			}
+		}
+		GNamed(name, tps): GBounds(acc with named = insertSet(acc.named, GNamed(name, resolveGTypes(env, tps))));
+		GField(name, ftype): GBounds(acc with fields = insertSet(acc.fields, GField(name, resolveGType(env, ftype))));
+	}
+}
+
+
+resolveGType(env : GEnv, tt : GType) -> GType {
+	switch (tt) {
+		GBasicType(t): tt;
+		GFlow(): tt;
+		GTypePar(id): tt;
+		GFunction(args, rt): GFunction(resolveGTypes(env, args), resolveGType(env, rt));
+		GArray(type): GArray(resolveGType(env, type));
+		GRef(type): GRef(resolveGType(env, type));
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): tt;
+				Some(type): resolveGType(env, type);
+			}
+		}
+		GNamed(name, typars): GNamed(name, resolveGTypes(env, typars));
+		GField(name, type): GField(name, resolveGType(env, type));
+	}
+}
+
+resolveGTypes(env : GEnv, types : [GType]) -> [GType] {
+	map(types, \t -> resolveGType(env, t));
+}

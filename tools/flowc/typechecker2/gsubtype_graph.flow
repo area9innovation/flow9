@@ -1,0 +1,206 @@
+import tools/flowc/manipulation/simplegraph;
+import tools/flowc/typechecker2/gtype;
+import ds/easygraph_utils;
+import tools/flowc/flowcacc;
+
+export {
+	emptyGSubtypeGraph() -> GSubtypeGraph;
+
+	// Builds a graph for subtyping relations
+	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
+
+	findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string];
+
+	// Which type is smaller?
+	compareGType(graph : GSubtypeGraph, small : GType, big : GType) -> int;
+}
+
+emptyGSubtypeGraph() -> GSubtypeGraph {
+	GSubtypeGraph(makeSimpleGraph(), makeSimpleGraph(), makeEasyGraph());
+}
+
+
+buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
+	supertypes0 = foldTree(names.unions, makeSimpleGraph(), \unionname : string, union : FcTypeUnion, acc -> {
+		fold(union.typenames, acc, \acc2, typename -> {
+			addSimpleEdge(acc2, typename.name, unionname, true, 1)
+		});
+	});
+
+	supertypes = foldTree(names.structs, supertypes0, \structname, struct : FcTypeStruct, acc -> {
+		addSimpleNode(acc, structname);
+	});
+
+
+	// Build a map from name to the fields it has
+	name2fields : Tree<string, [string]> = foldTree(names.structs, makeTree(), \structname, struct, acc -> {
+		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
+			treePushToArrayUnique(acc2, structname, arg.name);
+		});
+	});
+
+	fieldSupertypes0 = foldTree(names.structs, makeSimpleGraph(), \structname, struct : FcTypeStruct, acc -> {
+		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
+			// A link from the field to the struct name
+			addSimpleEdge(acc2, "." + arg.name, structname, true, 1)
+		});
+	});
+
+	fieldSupertypes = foldTree(names.unions, fieldSupertypes0, \unionname : string, union : FcTypeUnion, acc -> {
+		// Check what fields all members have
+		structs = union2structnames(names, unionname);
+		structFields = map(structs, \struct -> {
+			getTreeArrayValue(name2fields, struct);
+		});
+
+		// OK, we have to intersect all these arrays
+		shared = foldi(structFields, makeSet(), \i, acc0, sf : [string] -> {
+			if (i == 0) buildSet(sf)
+			else intersectSets(acc0, buildSet(sf))
+		});
+		foldSet(shared, acc, \acc0, field -> {
+			// A link from the field to the union
+			addSimpleEdge(acc0, "." + field, unionname, true, 1)
+		});
+	});
+
+	GSubtypeGraph(
+		supertypes,
+		fieldSupertypes,
+		reverseEasyGraph(supertypes.graph)
+	);
+}
+
+findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string] {
+	// Depending on whether we look for a field or a name, let us pick the right graph
+	supergraph = if (startsWith(name, ".")) {
+		graph.fieldSupertypes
+	} else {
+		graph.supertypes
+	};
+	node = getSimpleNodeId(supergraph, name);
+	reachable = reachableClosureFromNode(supergraph.graph, node);
+
+	names : Set<string> = mapSet(reachable, \id : int -> {
+		mnode = lookupTree(supergraph.graph.nodes, id);
+		switch (mnode) {
+			None(): "";
+			Some(n): n.data;
+		}
+	});
+	filter(set2array(names), \n -> n != "");
+}
+
+union2structnames(names : FcGlobalNames, name : string) -> [string] {
+	mstruct = lookupTree(names.structs, name);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(names.unions, name);
+			switch (munion) {
+				None(): [];
+				Some(union): {
+					concatA(map(union.typenames, \tn -> union2structnames(names, tn.name)));
+				}
+			}
+		}
+		Some(struct): {
+			[name];
+		}
+	}
+}
+
+// Order:
+// BasicType, TypePar, Array, Ref, Function, Subtype, Flow 
+compareGType(graph : GSubtypeGraph, small : GType, big : GType) -> int {
+	if (small == big) 0
+	else {
+		dif = \ -> genericCompare(getGTypeOrder(small), getGTypeOrder(big));
+		switch (small) {
+			GBasicType(st): switch (big) {
+				GBasicType(bt): genericCompare(st, bt);
+				default: 1; // This is almost smallest
+			}
+			GFlow(): -1; // This is almost biggest
+			GTypePar(sid): dif();
+			GFunction(sargs, srt): switch (big) {
+				GFunction(bargs, brt): {
+					compareGSubTypes(graph, 0, arrayPush(bargs, srt), arrayPush(sargs, brt));
+				}
+				default: dif();
+			}
+			GArray(stype): switch (big) {
+				GArray(btype): compareGType(graph, stype, btype);
+				default: dif();
+			}
+			GRef(stype): switch (big) {
+				GRef(btype): compareGType(graph, stype, btype);
+				default: dif();
+			}
+			GTypeVar(sid): switch (big) {
+				GTypeVar(bid): genericCompare(sid, bid);
+				default: dif();
+			}
+			GNamed(sname, stypars): {
+				switch (big) {
+					GNamed(bname, btypars): {
+						if (sname == bname) {
+							compareGSubTypes(graph, 0, stypars, btypars);
+						} else {
+							// TODO: We could probably also check typars here
+							smallest = isGNameSubType(graph, sname, bname);
+							if (smallest) -1 else 1;
+						}
+					}
+					GField(bname, type): {
+						smallest = isGNameSubType(graph, sname, "." + bname);
+						if (smallest) -1 else 1;
+					}
+					default: dif();
+				}
+			}
+			GField(sname, stype): {
+				switch (big) {
+					GField(bname, btype): {
+						if (sname == bname) {
+							compareGType(graph, stype, btype);
+						} else {
+							println("TODO: Compare ." + sname + " vs ." + bname);
+							0;
+						}
+					}
+					GNamed(bname, btypars): {
+						smallest = isGNameSubType(graph, "." + sname, bname);
+						if (smallest) -1 else 1;
+					}
+					default: dif();
+				}
+			}
+		}
+	}
+}
+
+getGTypeOrder(tt : GType) -> int {
+	switch (tt) {
+		GBasicType(t): 0;
+		GTypePar(id): 1;
+		GArray(type): 2;
+		GRef(type): 3;
+		GFunction(args, rt): 4;
+		GSubType(expr): 5;
+		GTypeVar(id): 6;
+		GFlow(): 7;
+	}
+}
+
+compareGSubTypes(graph : GSubtypeGraph, i : int, smalls : [GType], bigs : [GType]) -> int {
+	if (i < length(smalls) && i < length(bigs)) {
+		res = compareGType(graph, smalls[i], bigs[i]);
+		if (res == 0) {
+			compareGSubTypes(graph, i + 1, smalls, bigs)
+		} else res;
+	} else genericCompare(length(smalls), length(bigs));
+}
+
+isGNameSubType(graph : GSubtypeGraph, small : string, big : string) -> bool {
+	contains(findGSupertypeFromName(graph, small), big)
+}

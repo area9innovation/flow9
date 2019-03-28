@@ -7,6 +7,7 @@ import android.app.IntentService;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.support.annotation.NonNull;
 
 // We use this service to run some operations after device boot, like:
 // - Recreating and rescheduling local notifications
@@ -18,7 +19,7 @@ public class FlowRunnerOnRebootService extends IntentService {
     }
 
     @Override
-    protected void onHandleIntent(Intent intent) {
+    protected void onHandleIntent(@NonNull Intent intent) {
         String intentType = intent.getExtras().getString(getPackageName() + "_SENDER");
         if(intentType == null || !intentType.equals("FlowRebootReceiver")) {
             return;
@@ -30,17 +31,13 @@ public class FlowRunnerOnRebootService extends IntentService {
             public void execute() {
                 SharedPreferences preferences = getSharedPreferences(getPackageName() + "_preferences", Context.MODE_PRIVATE);
                 String idsList = preferences.getString("notification_id_list", "");
-                try {
-                    Object setCandidate = Utils.deserializeStringToObject(idsList);
-                    HashSet<Integer> set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
-                    for(Integer notificationId : set) {
-                        FlowLocalNotificationInfo info = FlowNotificationsAPI.getNotificationInfo(me, notificationId, false, null);
-                        if (info != null) {
-                            FlowRunnerServiceWrapper.getInstance().scheduleNotification(info.time, notificationId, info.notificationCallbackArgs, info.notificationTitle, info.notificationText, info.withSound, info.pinned, true);
-                        }
+                Object setCandidate = Utils.deserializeStringToObject(idsList);
+                HashSet<Integer> set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
+                for(Integer notificationId : set) {
+                    FlowLocalNotificationInfo info = FlowNotificationsAPI.getNotificationInfo(me, notificationId, false, null);
+                    if (info != null) {
+                        FlowRunnerServiceWrapper.getInstance().scheduleNotification(info.time, notificationId, info.notificationCallbackArgs, info.notificationTitle, info.notificationText, info.withSound, info.pinned, true);
                     }
-                } catch (IOException e) {
-                    //Log.e(Utils.LOG_TAG, "Failed to save notification ids list");
                 }
                 FlowRunnerServiceWrapper.getInstance().unbindService();
             }

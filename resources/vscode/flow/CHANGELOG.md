@@ -121,3 +121,8 @@
 ## 0.3.4
  - added support for outline
  - flow server is managed by extension, not language server
+
+## 0.3.5
+ - make an option to disable outline for performance reasons
+ - turn off server logging
+ - mark exported functions as Interfaces, and exported structs as Classes

@@ -13,6 +13,8 @@ import { ChildProcess } from 'child_process';
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
+let outlineEnabled = false;
+let logging = false;
 
 connection.onInitialize((params: InitializeParams) => {
 	return {
@@ -43,6 +45,10 @@ connection.onInitialized(() => {
 });
 
 connection.onDidChangeConfiguration((params) => {
+})
+
+connection.onNotification("outlineEnabled", enabled => {
+	outlineEnabled = enabled;
 })
 
 connection.onShutdown(() => {
@@ -152,18 +158,18 @@ function entitiesToLocations(results: CompilerEntity[]): Location[] {
 		return undefined;
 }
 
-function parseSymbolKind(prefix: string): SymbolKind | undefined {
+function parseSymbolKind(prefix: string, exported : boolean): SymbolKind | undefined {
 	switch (prefix) {
-		case "struct": return SymbolKind.Struct;
+		case "struct": return exported ? SymbolKind.Class : SymbolKind.Struct;
 		case "union": return SymbolKind.Enum;
-		case "fundef": return SymbolKind.Function;
+		case "fundef": return exported ? SymbolKind.Interface : SymbolKind.Function;
 		case "vardef": return SymbolKind.Variable;
 		case "natdef": return SymbolKind.Method;
 		default: return undefined;
 	}
 }
 
-function parseSymbol(ent: CompilerEntity): DocumentSymbol | undefined {
+function parseSymbol(ent: CompilerEntity) {
 	const entity = ent.entity.trim();
 	if (entity.length == 0)
 		return undefined;
@@ -171,16 +177,31 @@ function parseSymbol(ent: CompilerEntity): DocumentSymbol | undefined {
 	if (components.length < 2)
 		return undefined;
 	
-	const kind = parseSymbolKind(components[0]);
+	return { prefix : components[0], name : components[1] };
+}
+
+function convertSymbol(ent: CompilerEntity, exportHash : {}): DocumentSymbol | undefined {
+	const parsed = parseSymbol(ent);
+	if (!parsed)
+		return undefined;
+	const kind = parseSymbolKind(parsed.prefix, parsed.name in exportHash);
 	if (kind) {
-		const range = Range.create(ent.line, ent.column + 1, ent.line, ent.column + entity.length + 1);
-		return DocumentSymbol.create(components[1], "", kind, range, range);
+		const range = Range.create(ent.line, ent.column + 1, ent.line, ent.column + ent.entity.length + 1);
+		return DocumentSymbol.create(parsed.name, "", kind, range, range);
 	} else
 		return undefined;
 }
 
 function entitiesToSymbols(entities: CompilerEntity[]): DocumentSymbol[] {
-	return entities.map(parseSymbol).filter(t => t != undefined);
+	// sort to make sure exports are first
+	const sorted = entities.sort((a, b) => (a.entity == b.entity) ? 0 : (a.entity < b.entity ? -1 : 1));
+	const hash = sorted.reduce((acc, ent) => {
+		const parsed = parseSymbol(ent);
+		if (parsed && parsed.prefix == "export")
+			acc[parsed.name] = true;
+		return acc;
+	}, {});
+	return sorted.map(e => convertSymbol(e, hash)).filter(t => t != undefined);
 }
 
 async function findEntities(fileUri: string, lineNum: number, columnNum: number, operation: string, extra_args: string[]) {
@@ -197,11 +218,13 @@ async function findEntities(fileUri: string, lineNum: number, columnNum: number,
 	if (!token || token.length == 0)
 		return undefined;
 
-    console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
+	if (logging)
+    	console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
 
 	let flowcArgs = [paths.documentPath, operation + token].concat(extra_args);
-	connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
-		"\n\t\t in folder: " + paths.projectRoot);
+	if (logging)
+		connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
+			"\n\t\t in folder: " + paths.projectRoot);
 
 	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, flowcArgs);
 	
@@ -253,6 +276,9 @@ connection.onRenameRequest(async (params) => {
 })
 
 connection.onDocumentSymbol(async params => {
+	if (!outlineEnabled)
+		return [];
+
 	const paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), params.textDocument.uri);
 	const result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
 		[paths.documentPath, "print-outline=1"]);

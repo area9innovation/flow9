@@ -1,6 +1,7 @@
 package dk.area9.flowrunner;
 
 import android.location.Location;
+import android.support.annotation.Nullable;
 
 public interface IFlowGooglePlayServices {
     void connectGooglePlayServices();
@@ -9,6 +10,7 @@ public interface IFlowGooglePlayServices {
     void requestLocationWatch(boolean isHighAccuracy, int interval);
     void removeLocationWatch(boolean isHighAccuracy);
     void removeLocationUpdates(boolean isHighAccuracy);
+    @Nullable
     Location getLastLocation();
     void onLocationChanged(Location newLocation, boolean isHighAccuracy);
     void setFlowGeolocationAPI(FlowGeolocationAPI flowGeolocationAPI);

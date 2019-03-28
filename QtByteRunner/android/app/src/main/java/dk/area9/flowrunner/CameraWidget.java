@@ -2,6 +2,8 @@ package dk.area9.flowrunner;
 
 import android.content.Context;
 import android.os.Handler;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.View;
 import android.widget.RelativeLayout;
@@ -16,6 +18,7 @@ class CameraWidget extends NativeWidget {
         this.uiHandler = uiHandler;
     }
     
+    @NonNull
     protected View createView() {
         Log.d(Utils.LOG_TAG, "CameraWidget.createView start");
         context = group.getContext();
@@ -74,13 +77,14 @@ class CameraWidget extends NativeWidget {
         }
     }
     
-    private void updateStateFlags(CameraPreview camera) {
+    private void updateStateFlags(@NonNull CameraPreview camera) {
         if (record) 
             camera.startRecord(filename, camWidth, camHeight, camFps, recordMode);
         else
             camera.stopRecord();
     }
     
+    @NonNull
     private Runnable create_cb = new Runnable() {
         public void run() {
             Log.d(Utils.LOG_TAG, "create_cb");
@@ -88,6 +92,7 @@ class CameraWidget extends NativeWidget {
         }
     };
 
+    @NonNull
     private Runnable update_cb = new Runnable() {
         public void run() {
             Log.d(Utils.LOG_TAG, "update_cb");

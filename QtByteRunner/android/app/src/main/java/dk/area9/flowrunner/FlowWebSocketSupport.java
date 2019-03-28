@@ -1,5 +1,7 @@
 package dk.area9.flowrunner;
 
+import android.support.annotation.NonNull;
+
 import org.java_websocket.WebSocket;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
@@ -13,7 +15,8 @@ class FlowWebSocketSupport {
         wrapper = wrp;
     }
 
-    WebSocketClient open(String url, final int callbacksKey) {
+    @NonNull
+    WebSocketClient open(@NonNull String url, final int callbacksKey) {
         FlowWebSocketClient webSocketClient = new FlowWebSocketClient(URI.create(url)) {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
@@ -39,18 +42,18 @@ class FlowWebSocketSupport {
         return webSocketClient;
     }
 
-    boolean send(WebSocketClient webSocketClient, String message) {
+    boolean send(@NonNull WebSocketClient webSocketClient, String message) {
         boolean isConnected = webSocketClient.getReadyState() == WebSocket.READYSTATE.OPEN;
         if (isConnected)
             webSocketClient.send(message);
         return isConnected;
     }
 
-    boolean hasBufferedData(WebSocketClient webSocketClient) {
+    boolean hasBufferedData(@NonNull WebSocketClient webSocketClient) {
         return webSocketClient.getConnection().hasBufferedData();
     }
 
-    void close(WebSocketClient webSocketClient, int code, String reason) {
+    void close(@NonNull WebSocketClient webSocketClient, int code, String reason) {
         webSocketClient.getConnection().close(code, reason);
     }
 }

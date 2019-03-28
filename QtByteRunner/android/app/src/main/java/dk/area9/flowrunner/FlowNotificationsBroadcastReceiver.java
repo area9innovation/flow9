@@ -6,6 +6,7 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.support.annotation.NonNull;
 import android.support.v4.app.NotificationCompat;
 
 // We interact with NotificationManager in this receiver
@@ -13,7 +14,7 @@ import android.support.v4.app.NotificationCompat;
 public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
 
     @Override
-    public void onReceive(Context context, Intent intent) {
+    public void onReceive(@NonNull Context context, @NonNull Intent intent) {
         String action = intent.getAction();
         String pkgName = context.getPackageName();
         if (action.equals(pkgName + FlowNotificationsAPI.CREATE_NOTIFICATION)) {
@@ -29,8 +30,8 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         String notificationTitle = intent.getExtras().getString(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_TITLE);
         String notificationText = intent.getExtras().getString(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_TEXT);
         int notificationId = intent.getExtras().getInt(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_ID);
-        PendingIntent onClickIntent = (PendingIntent)intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT);
-        PendingIntent onCancelIntent = (PendingIntent)intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CANCEL_INTENT);
+        PendingIntent onClickIntent = intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CLICK_INTENT);
+        PendingIntent onCancelIntent = intent.getExtras().getParcelable(pkgName + FlowNotificationsAPI.EXTRA_ON_CANCEL_INTENT);
         boolean withSound = intent.getExtras().getBoolean(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_WITH_SOUND);
         boolean pinNotification = intent.getExtras().getBoolean(pkgName + FlowNotificationsAPI.EXTRA_PINNED_NOTIFICATION);
 
@@ -57,7 +58,7 @@ public class FlowNotificationsBroadcastReceiver extends BroadcastReceiver {
         notifyManager.notify(notificationId, mBuilder.build());
     }
     
-    private void cancelNotification(String pkgName, Context context, Intent intent) {
+    private void cancelNotification(String pkgName, @NonNull Context context, Intent intent) {
         int notificationId = intent.getExtras().getInt(pkgName + FlowNotificationsAPI.EXTRA_NOTIFICATION_ID);
         //LOG.e(Utils.LOG_TAG, "in cancelNotification. Trying to cancel notifiation with ID: " + notificationId);
         // false, because already removed from notification center
