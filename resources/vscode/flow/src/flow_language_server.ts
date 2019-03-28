@@ -13,6 +13,7 @@ import { ChildProcess } from 'child_process';
 // Create a connection for the server. The connection uses Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
+let outlineEnabled = false;
 
 connection.onInitialize((params: InitializeParams) => {
 	return {
@@ -43,6 +44,10 @@ connection.onInitialized(() => {
 });
 
 connection.onDidChangeConfiguration((params) => {
+})
+
+connection.onNotification("outlineEnabled", enabled => {
+	outlineEnabled = enabled;
 })
 
 connection.onShutdown(() => {
@@ -253,6 +258,9 @@ connection.onRenameRequest(async (params) => {
 })
 
 connection.onDocumentSymbol(async params => {
+	if (!outlineEnabled)
+		return undefined;
+		
 	const paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), params.textDocument.uri);
 	const result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
 		[paths.documentPath, "print-outline=1"]);
