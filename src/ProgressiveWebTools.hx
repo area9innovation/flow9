@@ -3,115 +3,119 @@ import js.Browser;
 #end
 
 class ProgressiveWebTools {
-    public function new() {}
+	public function new() {}
 
-    public static function __init__() {
-    }
+	public static function __init__() {
+	}
 
-    public static var globalRegistration : Dynamic = null;
-    public static var globalInstallPrompt : Dynamic = null;
-    public static var serviceWorkerFilePath : String = "js/sw.min.js";
+	public static var globalRegistration : Dynamic = null;
+	public static var globalInstallPrompt : Dynamic = null;
+	public static var serviceWorkerFileName : String = "sw.min.js";
+	public static var serviceWorkerFilePath : String = "js/" + serviceWorkerFileName;
 
-    public static function registerCacheServiceWorker(callback : Bool -> Void) : Void {
-        #if flash
-        callback(false);
-        #elseif js
-        if (untyped navigator.serviceWorker) {
-            untyped navigator.serviceWorker.register(serviceWorkerFilePath).then(function(registration) {
-                trace('ServiceWorker registration successful with scope: ', registration.scope);
+	public static function enableServiceWorkerCaching(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker) {
+			untyped navigator.serviceWorker.register(serviceWorkerFilePath).then(function(registration) {
+				trace('ServiceWorker registration successful with scope: ', registration.scope);
 
-                globalRegistration = registration;
-                callback(true);
-            }, function(err) {
-                trace('ServiceWorker registration failed: ', err);
-                callback(false);
-            });
-        }
-        #end
-    }
+				globalRegistration = registration;
+				callback(true);
+			}, function(err) {
+				trace('ServiceWorker registration failed: ', err);
+				callback(false);
+			});
+		}
+		#end
+	}
 
-    public static function unregisterCacheServiceWorker(callback : Bool -> Void) : Void {
-        #if flash
-        callback(false);
-        #elseif js
-        if (globalRegistration != null) {
-            untyped globalRegistration.unregister().then(function() {
-                callback(true);
-            }, function(err) {
-                callback(false);
-            });
-        }
-        #end
-    }
+	public static function disableServiceWorkerCaching(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null) {
+			untyped globalRegistration.unregister().then(function() {
+				callback(true);
+			}, function(err) {
+				callback(false);
+			});
+		}
+		#end
+	}
 
-    public static function checkCacheServiceWorkerRegistered(callback : Bool -> Void) : Void {
-        #if flash
-        callback(false);
-        #elseif js
-        if (globalRegistration != null) {
-            callback(true);
-            return;
-        }
+	public static function checkServiceWorkerCachingEnabled(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (globalRegistration != null) {
+			callback(true);
+			return;
+		}
 
-        if (untyped navigator.serviceWorker) {
-            untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                if (registrations.length == 0) {
-                    callback(false);
-                }
+		if (untyped navigator.serviceWorker) {
+			untyped navigator.serviceWorker.getRegistrations().then(function(registrations) {
+				if (registrations.length == 0) {
+					callback(false);
+				}
 
-                untyped Promise.race(untyped registrations.map(function(registration) {
-                    if (untyped registration.active == null) {
-                        return Promise.reject();
-                    }
+				untyped Promise.race(untyped registrations.map(function(registration) {
+					if (untyped registration.active == null) {
+						return Promise.reject();
+					}
 
-                    if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFilePath)) {
-                        globalRegistration = registration;
-                        return Promise.resolve();
-                    } else {
-                        return Promise.reject();
-                    }
-                })).then(function() {
-                    callback(true);
-                }, function() {
-                    callback(false);
-                });
-            }, function(err) {
-                callback(false);
-            });
-        }
-        #end
-    }
+					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFileName)) {
+						globalRegistration = registration;
+						return Promise.resolve();
+					} else {
+						return Promise.reject();
+					}
+				})).then(function() {
+					callback(true);
+				}, function() {
+					callback(false);
+				});
+			}, function(err) {
+				callback(false);
+			});
+		}
+		#end
+	}
 
-    public static function addProgressiveShortcutInstallAvailableListener(callback : Void -> Void) : Void -> Void {
-        #if js
-        var event = 'beforeinstallprompt';
-        var handler = function(e) {
-            e.preventDefaul();
-            globalInstallPrompt = e;
+	public static function addShortcutAvailableListener(callback : Void -> Void) : Void -> Void {
+		#if js
+		var event = 'beforeinstallprompt';
+		var handler = function(e) {
+			e.preventDefaul();
+			globalInstallPrompt = e;
 
-            callback();
-        };
+			callback();
+		};
 
-        Browser.window.addEventListener(event, handler);
+		Browser.window.addEventListener(event, handler);
 
-        return function() { Browser.window.removeEventListener(event, handler); }
-        #else
-        return function() {};
-        #end
-    }
+		return function() { Browser.window.removeEventListener(event, handler); }
+		#else
+		return function() {};
+		#end
+	}
 
-    public static function installProgressiveShortcut(callback : Bool -> Void) : Void {
-        if (globalInstallPrompt == null) {
-            Errors.warning("Progressive shortcut: You are not allowed to show install prompt until progressiveShortcutInstallAvailable listener fires.");
-            return;
-        }
+	public static function installShortcut(callback : Bool -> Void) : Void {
+		#if js
+		if (globalInstallPrompt == null) {
+			Errors.warning("Progressive shortcut: You are not allowed to show install prompt until progressiveShortcutInstallAvailable listener fires.");
+			return;
+		}
 
-        untyped globalInstallPrompt.prompt();
+		untyped globalInstallPrompt.prompt();
 
-        untyped globalInstallPrompt.userChoice.then(function(choiceResult) {
-            callback(untyped choiceResult.outcome == "accepted");
+		untyped globalInstallPrompt.userChoice.then(function(choiceResult) {
+			callback(untyped choiceResult.outcome == "accepted");
 
-            globalInstallPrompt = null;
-        });
-    }
+			globalInstallPrompt = null;
+		});
+		#else
+		#end
+	}
 }
