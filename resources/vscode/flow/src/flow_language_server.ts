@@ -158,18 +158,18 @@ function entitiesToLocations(results: CompilerEntity[]): Location[] {
 		return undefined;
 }
 
-function parseSymbolKind(prefix: string): SymbolKind | undefined {
+function parseSymbolKind(prefix: string, exported : boolean): SymbolKind | undefined {
 	switch (prefix) {
-		case "struct": return SymbolKind.Struct;
+		case "struct": return exported ? SymbolKind.Class : SymbolKind.Struct;
 		case "union": return SymbolKind.Enum;
-		case "fundef": return SymbolKind.Function;
+		case "fundef": return exported ? SymbolKind.Interface : SymbolKind.Function;
 		case "vardef": return SymbolKind.Variable;
 		case "natdef": return SymbolKind.Method;
 		default: return undefined;
 	}
 }
 
-function parseSymbol(ent: CompilerEntity): DocumentSymbol | undefined {
+function parseSymbol(ent: CompilerEntity) {
 	const entity = ent.entity.trim();
 	if (entity.length == 0)
 		return undefined;
@@ -177,16 +177,31 @@ function parseSymbol(ent: CompilerEntity): DocumentSymbol | undefined {
 	if (components.length < 2)
 		return undefined;
 	
-	const kind = parseSymbolKind(components[0]);
+	return { prefix : components[0], name : components[1] };
+}
+
+function convertSymbol(ent: CompilerEntity, exportHash : {}): DocumentSymbol | undefined {
+	const parsed = parseSymbol(ent);
+	if (!parsed)
+		return undefined;
+	const kind = parseSymbolKind(parsed.prefix, parsed.name in exportHash);
 	if (kind) {
-		const range = Range.create(ent.line, ent.column + 1, ent.line, ent.column + entity.length + 1);
-		return DocumentSymbol.create(components[1], "", kind, range, range);
+		const range = Range.create(ent.line, ent.column + 1, ent.line, ent.column + ent.entity.length + 1);
+		return DocumentSymbol.create(parsed.name, "", kind, range, range);
 	} else
 		return undefined;
 }
 
 function entitiesToSymbols(entities: CompilerEntity[]): DocumentSymbol[] {
-	return entities.map(parseSymbol).filter(t => t != undefined);
+	// sort to make sure exports are first
+	const sorted = entities.sort((a, b) => (a.entity == b.entity) ? 0 : (a.entity < b.entity ? -1 : 1));
+	const hash = sorted.reduce((acc, ent) => {
+		const parsed = parseSymbol(ent);
+		if (parsed && parsed.prefix == "export")
+			acc[parsed.name] = true;
+		return acc;
+	}, {});
+	return sorted.map(e => convertSymbol(e, hash)).filter(t => t != undefined);
 }
 
 async function findEntities(fileUri: string, lineNum: number, columnNum: number, operation: string, extra_args: string[]) {
