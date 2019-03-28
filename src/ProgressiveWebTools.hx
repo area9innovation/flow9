@@ -2,14 +2,15 @@
 import js.Browser;
 #end
 
-class ServiceWorkerCacheHx {
+class ProgressiveWebTools {
     public function new() {}
 
     public static function __init__() {
     }
 
     public static var globalRegistration : Dynamic = null;
-    public static var serviceWorkerFilePath : String = "sw.min.js";
+    public static var globalInstallPrompt : Dynamic = null;
+    public static var serviceWorkerFilePath : String = "js/sw.min.js";
 
     public static function registerCacheServiceWorker(callback : Bool -> Void) : Void {
         #if flash
@@ -79,5 +80,38 @@ class ServiceWorkerCacheHx {
             });
         }
         #end
+    }
+
+    public static function addProgressiveShortcutInstallAvailableListener(callback : Void -> Void) : Void -> Void {
+        #if js
+        var event = 'beforeinstallprompt';
+        var handler = function(e) {
+            e.preventDefaul();
+            globalInstallPrompt = e;
+
+            callback();
+        };
+
+        Browser.window.addEventListener(event, handler);
+
+        return function() { Browser.window.removeEventListener(event, handler); }
+        #else
+        return function() {};
+        #end
+    }
+
+    public static function installProgressiveShortcut(callback : Bool -> Void) : Void {
+        if (globalInstallPrompt == null) {
+            Errors.warning("Progressive shortcut: You are not allowed to show install prompt until progressiveShortcutInstallAvailable listener fires.");
+            return;
+        }
+
+        untyped globalInstallPrompt.prompt();
+
+        untyped globalInstallPrompt.userChoice.then(function(choiceResult) {
+            callback(untyped choiceResult.outcome == "accepted");
+
+            globalInstallPrompt = null;
+        });
     }
 }
