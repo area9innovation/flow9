@@ -14,6 +14,7 @@ import { ChildProcess } from 'child_process';
 // Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
 let outlineEnabled = false;
+let logging = false;
 
 connection.onInitialize((params: InitializeParams) => {
 	return {
@@ -202,11 +203,13 @@ async function findEntities(fileUri: string, lineNum: number, columnNum: number,
 	if (!token || token.length == 0)
 		return undefined;
 
-    console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
+	if (logging)
+    	console.log(`Looking at position ${columnNum} at line ${lineNum}, token: ${token}\n`);
 
 	let flowcArgs = [paths.documentPath, operation + token].concat(extra_args);
-	connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
-		"\n\t\t in folder: " + paths.projectRoot);
+	if (logging)
+		connection.console.log("Launching command: flowc1 " + flowcArgs.join(" ") + 
+			"\n\t\t in folder: " + paths.projectRoot);
 
 	let result = tools.run_cmd_sync("flowc1", paths.projectRoot, flowcArgs);
 	
@@ -259,8 +262,8 @@ connection.onRenameRequest(async (params) => {
 
 connection.onDocumentSymbol(async params => {
 	if (!outlineEnabled)
-		return undefined;
-		
+		return [];
+
 	const paths = getCompilerPaths(await connection.workspace.getWorkspaceFolders(), params.textDocument.uri);
 	const result = tools.run_cmd_sync("flowc1", paths.projectRoot, 
 		[paths.documentPath, "print-outline=1"]);
