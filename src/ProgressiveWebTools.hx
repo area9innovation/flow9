@@ -10,8 +10,7 @@ class ProgressiveWebTools {
 
 	public static var globalRegistration : Dynamic = null;
 	public static var globalInstallPrompt : Dynamic = null;
-	public static var serviceWorkerFileName : String = "sw.min.js";
-	public static var serviceWorkerFilePath : String = "js/" + serviceWorkerFileName;
+	public static var serviceWorkerFilePath : String = "sw.min.js";
 
 	public static function enableServiceWorkerCaching(callback : Bool -> Void) : Void {
 		#if flash
@@ -65,7 +64,7 @@ class ProgressiveWebTools {
 						return Promise.reject();
 					}
 
-					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFileName)) {
+					if (untyped registration.active.scriptURL == (registration.scope + serviceWorkerFilePath)) {
 						globalRegistration = registration;
 						return Promise.resolve();
 					} else {
