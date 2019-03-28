@@ -120,7 +120,7 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 			}
 			FcExpectField(field, ftype, struct, info, ex): {
 				st = fctype2gtype(env, tyvarIdGroup, struct);
-				gfield = GSubType(GField(field, fctype2gtype(env, tyvarIdGroup, ftype)));
+				gfield = GField(field, fctype2gtype(env, tyvarIdGroup, ftype));
 				if (false) {
 					// This one breaks in test 101
 					nacc = unifyGType(acc, gfield, st, \m -> onError(m, info, ""));
@@ -132,7 +132,7 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 			FcSetMutableField(stype, field, ftype, info): {
 				st = fctype2gtype(acc.env, tyvarIdGroup, stype);
 				ft = fctype2gtype(acc.env, tyvarIdGroup, ftype);
-				gfield = GSubType(GField(field, ft));
+				gfield = GField(field, ft);
 				unifyGType(acc, st, gfield, \m -> onError(m, info, "set mutable"));
 			}
 		}
@@ -397,7 +397,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 			}
 			gunifyTyvar(nenv, left, right, onError);
 		}
-		GSubType(lexp): {
+		GSubType(): {
 			switch (right) {
 				GBasicType(t): error();
 				GFlow(): rest();
@@ -406,8 +406,8 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, onError : (string)
 				GArray(type): error();
 				GRef(type): error();
 				GTypeVar(rid): rest();
-				GSubType(rexp): {
-					gunifySubType(env, lexp, rexp, onError);
+				GSubType(): {
+					gunifySubType(env, left, right, onError);
 				}
 			}
 		}
@@ -443,9 +443,9 @@ gunifyTyvar(env : GEnv, left : GType, right : GType, onError : (string) -> void)
 	)
 }
 
-gunifySubType(env : GEnv, left : GSubTypeExpr, right : GSubTypeExpr, onError : (string) -> void) -> GEnv {
+gunifySubType(env : GEnv, left : GSubType, right : GSubType, onError : (string) -> void) -> GEnv {
 	todo = \ -> {
-		printStay(env.env, "TODO: Subtype " + gtype2string(env, GSubType(left)) + " c= " + gtype2string(env, GSubType(right)));
+		printStay(env.env, "TODO: Subtype " + gtype2string(env, left) + " c= " + gtype2string(env, right));
 		env;
 	}
 	switch (left) {
@@ -494,7 +494,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -
 		None(): {
 			// TODO: It could be that the left is a union.
 			ltypenames : [FcTypeName] = union2typenames(env.env, right.name);
-			printStay(env.env, "TODO: Check if " + gtype2string(env, GSubType(left)) + " is part of " + gtype2string(env, GSubType(right)));
+			printStay(env.env, "TODO: Check if " + gtype2string(env, left) + " is part of " + gtype2string(env, right));
 			env;
 		}
 		Some(ustruct): {
@@ -502,7 +502,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -
 			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
 		
 			// And then subtype with our struct
-			unifyAndRecurseGType(env, GSubType(left), istruct, onError);
+			unifyAndRecurseGType(env, left, istruct, onError);
 		}
 	}
 }
@@ -513,7 +513,7 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 	switch (munion) {
 		None(): {
 			onError("Expected " + master.name + " to be a union");
-			GSubType(GNamed(ustruct.name, []));
+			GNamed(ustruct.name, []);
 		}
 		Some(union): {
 			// Take the union def and map the typars
@@ -526,25 +526,18 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 	
 			// We might have to do implicit type-par promotion from the union
 			gtype = switch (gtype0) {
-				GSubType(st): {
-					switch (st) {
-						GNamed(gname, tps): {
-							// Extend the type parameters to match the number of parameters
-							ntps = concat(tps, generate(0, length(master.typars), \i -> {
-								GTypePar(strLeft("????????????", i + 1))
-							}));
-							GSubType(
-								GNamed(gname, subrange(uniq(ntps), 0, length(master.typars)))
-							);
-						}
-						default: gtype0;
-					}
+				GNamed(gname, tps): {
+					// Extend the type parameters to match the number of parameters
+					ntps = concat(tps, generate(0, length(master.typars), \i -> {
+						GTypePar(strLeft("????????????", i + 1))
+					}));
+					GNamed(gname, subrange(uniq(ntps), 0, length(master.typars)))
 				}
 				default: gtype0;
 			}
 
 			if (env.verbose >= 4) {
-				printStay(env.env, "Constructed " + gtype2string(env, gtype) + " from " + gtype2string(env, GSubType(master)));
+				printStay(env.env, "Constructed " + gtype2string(env, gtype) + " from " + gtype2string(env, master));
 			}
 
 			// Now, instantiate the typars in this gtype
@@ -569,7 +562,7 @@ unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, onError : (st
 // Given a named structure, extract the instantiated type of a given field
 getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, onError : (string) -> void) -> GType {
 	error = \ -> {
-		onError("Expected " + gtype2string(env, GSubType(named)) + " to have ." + field);
+		onError("Expected " + gtype2string(env, named) + " to have ." + field);
 		GFlow();
 	}
 	mstruct = lookupTree(env.env.program.acc.names.structs, named.name);
@@ -585,12 +578,7 @@ getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, onError :
 					});
 					fields = map(instantiated, \i : GType -> {
 						switch (i) {
-							GSubType(st): {
-								switch (st) {
-									GNamed(__, __): getInstantiatedGNamedField(env, st, field, onError);
-									default: error();
-								}
-							}
+							GNamed(__, __): getInstantiatedGNamedField(env, i, field, onError);
 							default: error();
 						}
 					});

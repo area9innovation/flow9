@@ -213,7 +213,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					GResolveSafeOnly(): {
 						foldSet(lower.subtypes, env, \acc, lst -> {
 							foldSet(upper.subtypes, acc, \acc2, ust -> {
-								unify(acc2, GSubType(lst), GSubType(ust))
+								unify(acc2, lst, ust)
 							})
 						});
 					}
@@ -226,8 +226,8 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 						//   Clarify {α1 :  : (.i:int), None<>, Some<>} c= α0 c= { :  : } {
 						// Test101:
 						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
-						sortLower = mergeSort(set2array(lower.subtypes), \st1, st2 -> compareGSubType(env.subtypes, st2, st1));
-						sortUpper = mergeSort(set2array(upper.subtypes), \st1, st2 -> compareGSubType(env.subtypes, st1, st2));
+						sortLower = mergeSort(set2array(lower.subtypes), \st1, st2 -> compareGType(env.subtypes, st2, st1));
+						sortUpper = mergeSort(set2array(upper.subtypes), \st1, st2 -> compareGType(env.subtypes, st1, st2));
 
 						// TODO: Get rid of fields here, and only keep named.
 
@@ -243,7 +243,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 							} else [];
 
 						if (decision != []) {
-							setGTyvar(env, unify, req, GSubType(decision[0]));
+							setGTyvar(env, unify, req, decision[0]);
 						} else env;
 					}
 					GResolveSpeculative(): {
@@ -319,10 +319,10 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirem
 		nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t));
 
 		// Unify with subs
-		nenv3 = foldSet(req.lower.subtypes, nenv2, \acc, st -> unify(acc, GSubType(st), type));
+		nenv3 = foldSet(req.lower.subtypes, nenv2, \acc, st -> unify(acc, st, type));
 
 		// Unify with supers
-		nenv4 = foldSet(req.upper.subtypes, nenv3, \acc, st -> unify(acc, type, GSubType(st)));
+		nenv4 = foldSet(req.upper.subtypes, nenv3, \acc, st -> unify(acc, type, st));
 
 		// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
 		tyvarsInType = extractGTypeVars(nenv4, type, makeSet());
@@ -334,8 +334,8 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirem
 }
 
 // Given these constraints, what supertypes could meet all of these?
-findPotentialGSupertypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
-	foldi(set2array(exprs), [], \i, acc, expr -> {
+findPotentialGSupertypes(env : GEnv, types : Set<GSubType>) -> [string] {
+	foldi(set2array(types), [], \i, acc, expr -> {
 		supers = findGSupertypes(env, expr);
 		if (i == 0) supers
 		else intersection(supers, acc)
@@ -343,7 +343,7 @@ findPotentialGSupertypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
 }
 
 // Find all types which type can be dominated by, including itself
-findGSupertypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
+findGSupertypes(env : GEnv, expr : GSubType) -> [string] {
 	switch (expr) {
 		GNamed(name, __): {
 			superset = findGSupertypeFromName(env.subtypes, name);
@@ -356,8 +356,8 @@ findGSupertypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 }
 
 // Given these constraints, what subtypes could meet all of these?
-findPotentialGSubtypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
-	foldi(set2array(exprs), [], \i, acc, expr -> {
+findPotentialGSubtypes(env : GEnv, types : Set<GSubType>) -> [string] {
+	foldi(set2array(types), [], \i, acc, expr -> {
 		supers = findGSubtypes(env, expr);
 		if (i == 0) supers
 		else intersection(supers, acc)
@@ -366,7 +366,7 @@ findPotentialGSubtypes(env : GEnv, exprs : Set<GSubTypeExpr>) -> [string] {
 
 
 // Find all types which are subtypes of this constraint, including ourselves
-findGSubtypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
+findGSubtypes(env : GEnv, expr : GSubType) -> [string] {
 	switch (expr) {
 		GNamed(name, __): {
 			mun = lookupTree(env.env.program.acc.names.unions, name);
@@ -391,10 +391,10 @@ findGSubtypes(env : GEnv, expr : GSubTypeExpr) -> [string] {
 
 // Given these exprs, and a desired type name, extract it, if we directly have it.
 // If we do not, then we should construct the type ourselves with type-pars.
-resolveGSubTypeToName(env : GEnv, name : string, exprs : Set<GSubTypeExpr>) -> GType {
-	result = foldSet(exprs, [], \acc, expr -> {
+resolveGSubTypeToName(env : GEnv, name : string, types : Set<GSubType>) -> GType {
+	result = foldSet(types, [], \acc, expr -> {
 		switch (expr) {
-			GNamed(gname, __): if (gname == name) arrayPush(acc, GSubType(expr)) else acc;
+			GNamed(gname, __): if (gname == name) arrayPush(acc, expr) else acc;
 			default: acc;
 		}
 	});
@@ -408,7 +408,7 @@ resolveGSubTypeToName(env : GEnv, name : string, exprs : Set<GSubTypeExpr>) -> G
 // Build a type with this name, and empty typars
 makeGNamedType(env : GEnv, name : string) -> GType {
 	mstruct = lookupTree(env.env.program.acc.names.structs, name);
-	GSubType(switch (mstruct) {
+	switch (mstruct) {
 		None(): {
 			munion = lookupTree(env.env.program.acc.names.unions, name);
 			switch (munion) {
@@ -428,7 +428,7 @@ makeGNamedType(env : GEnv, name : string) -> GType {
 				mkGTypeVar(env)
 			}))
 		}
-	})
+	}
 }
 
 // Get some kind of score for a name. Structs is the number of typars + fields. Unions is 10 * number of structs + number of fields in total
@@ -475,8 +475,8 @@ unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : 
 }*/
 
 // Extract the names we have
-getNamedExprs(exprs : Set<GSubTypeExpr>) -> Set<string> {
-	foldSet(exprs, makeSet(), \acc, s -> {
+getNamedExprs(types : Set<GSubType>) -> Set<string> {
+	foldSet(types, makeSet(), \acc, s -> {
 		switch (s) {
 			GNamed(n, __): insertSet(acc, n);
 			default: acc;
@@ -493,6 +493,6 @@ gbounds2string(env : GEnv, g : GBounds) -> string {
 	+ (if (g.hasFlow) " flow " else "")
 	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
 	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
-	+ " : " + superglue(set2array(g.subtypes), \st -> gtype2string(env, GSubType(st)), ", ")
+	+ " : " + superglue(set2array(g.subtypes), \st -> gtype2string(env, st), ", ")
 	+ "}"
 }
