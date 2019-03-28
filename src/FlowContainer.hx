@@ -5,7 +5,7 @@ import pixi.core.display.DisplayObject;
 using DisplayObjectHelper;
 
 class FlowContainer extends Container {
-	private var scrollRect : FlowGraphics;
+	public var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 	public var transformChanged : Bool = true;

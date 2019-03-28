@@ -45,6 +45,7 @@ class TextClip extends NativeWidgetClip {
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
 	private var textClip : Text = null;
+	private var textClipChanged : Bool = false;
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
@@ -230,7 +231,7 @@ class TextClip extends NativeWidgetClip {
 			if (textClip != null) {
 				textClip.renderable = false;
 			}
-		} else if (styleChanged) {
+		} else if (textClipChanged) {
 			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
 			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
 
@@ -299,12 +300,7 @@ class TextClip extends NativeWidgetClip {
 			}
 
 			textClip.renderable = true;
-		}
-
-		if (isInput && accessWidget != null) {
-			accessWidget.updateTransform();
-		} else {
-			styleChanged = false;
+			textClipChanged = false;
 		}
 	}
 
@@ -318,6 +314,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function invalidateMetrics() : Void {
 		metrics = null;
+		textClipChanged = true;
 		invalidateStyle();
 	}
 

@@ -227,8 +227,8 @@ class DisplayObjectHelper {
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
-	public static inline function setScrollRect(clip : Container, left : Float, top : Float, width : Float, height : Float) : Void {
-		var scrollRect : FlowGraphics = untyped clip.scrollRect;
+	public static inline function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
 			setClipX(clip, clip.x + scrollRect.x * 2 - left);
@@ -239,8 +239,8 @@ class DisplayObjectHelper {
 			setClipX(clip, clip.x - left);
 			setClipY(clip, clip.y - top);
 
-			untyped clip.scrollRect = new FlowGraphics();
-			scrollRect = untyped clip.scrollRect;
+			clip.scrollRect = new FlowGraphics();
+			scrollRect = clip.scrollRect;
 			clip.addChild(scrollRect);
 			setClipMask(clip, scrollRect);
 		}
@@ -254,8 +254,8 @@ class DisplayObjectHelper {
 		invalidateStage(clip);
 	}
 
-	public static inline function removeScrollRect(clip : Container) : Void {
-		var scrollRect : FlowGraphics = untyped clip.scrollRect;
+	public static inline function removeScrollRect(clip : FlowContainer) : Void {
+		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
 			setClipX(clip, clip.x + scrollRect.x);
@@ -267,15 +267,15 @@ class DisplayObjectHelper {
 				clip.mask = null;
 			}
 
-			untyped clip.scrollRect = null;
+			clip.scrollRect = null;
 		}
 
 		invalidateStage(clip);
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
-	public static inline function setClipMask(clip : Container, maskContainer : Container) : Void {
-		if (maskContainer != untyped clip.scrollRect) {
+	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container) : Void {
+		if (maskContainer != clip.scrollRect) {
 			removeScrollRect(clip);
 		}
 
@@ -325,7 +325,7 @@ class DisplayObjectHelper {
 
 		if (untyped clip._mask != null) {
 			untyped clip._mask.renderable = true;
-			var maskBounds = untyped clip._mask.getBounds();
+			var maskBounds = untyped clip._mask.getBounds(true);
 
 			calculatedBounds.minX = maskBounds.x;
 			calculatedBounds.minY = maskBounds.y;
@@ -351,7 +351,7 @@ class DisplayObjectHelper {
 		}
 
 		var bounds = getMaskedBounds(clip);
-		var worldTransform = clip.worldTransform.invert();
+		var worldTransform = clip.worldTransform.clone().invert();
 
 		bounds.minX = bounds.minX * worldTransform.a + bounds.minY * worldTransform.c + worldTransform.tx;
 		bounds.minY = bounds.minX * worldTransform.b + bounds.minY * worldTransform.d + worldTransform.ty;

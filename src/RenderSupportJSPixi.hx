@@ -37,6 +37,7 @@ class RenderSupportJSPixi {
 	/* Antialiasing doesn't work correctly on mobile devices */
 	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
+	private static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
 	public static var DropCurrentFocusOnDown : Bool;
 	// Renders in a higher resolution backing store and then scales it down with css (e.g., ratio = 2 for retina displays)
@@ -144,8 +145,8 @@ class RenderSupportJSPixi {
 
 		var options = {
 			antialias : Antialias,
-			transparent : true,
-			backgroundColor : 0,
+			transparent : TransparentBackground,
+			backgroundColor : TransparentBackground ? 0 : 0xFFFFFF,
 			preserveDrawingBuffer : false,
 			resolution : backingStoreRatio,
 			roundPixels : RoundPixels,
@@ -733,7 +734,7 @@ class RenderSupportJSPixi {
 		AccessWidget.updateAccessTree();
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
-			PixiRenderer.render(PixiStage, null, null, null, !TransformChanged);
+			PixiRenderer.render(PixiStage, null, true, null, !TransformChanged);
 
 			emit("stagechanged", timestamp);
 

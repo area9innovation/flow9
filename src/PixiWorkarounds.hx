@@ -560,7 +560,7 @@ class PixiWorkarounds {
 					currentPosition += charWidth +
 						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
 					allWidth = tailWidth;
-			    } while (text != '');
+				} while (text != '');
 			}
 
 			PIXI.Text.prototype._renderCanvas = function(renderer)
@@ -568,12 +568,14 @@ class PixiWorkarounds {
 				const scaleX = this.worldTransform.a;
 				const scaleY = this.worldTransform.d;
 				const scaleFactor = Math.min(scaleX, scaleY);
+				const fontSize = scaleFactor * this.style.fontSize;
+				const scaleText = fontSize > 0.6;
 
-				if (scaleFactor > 0.0) {
+				if (scaleText) {
 					this.worldTransform.a = 1.0;
 					this.worldTransform.d = 1.0;
 
-					this.style.fontSize = this.style.fontSize * scaleFactor;
+					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
@@ -588,8 +590,8 @@ class PixiWorkarounds {
 				PIXI.Text.prototype.updateText.call(this, true);
 				PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 
-				if (scaleFactor > 0.0) {
-					this.style.fontSize = this.style.fontSize / scaleFactor;
+				if (scaleText) {
+					this.style.fontSize = fontSize / scaleFactor;
 					this.style.letterSpacing = this.style.letterSpacing / scaleFactor;
 					this.style.lineHeight = this.style.lineHeight / scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth / scaleFactor;
@@ -600,22 +602,25 @@ class PixiWorkarounds {
 			}
 
 			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				transformChanged = transformChanged || this.transformChanged;
+				const tempParent = this.parent == this._tempDisplayObjectParent;
+				this.transformChanged = transformChanged || this.transformChanged || tempParent;
 
-				if (transformChanged)
+				if (this.transformChanged)
 				{
 					this._boundsID++;
-
 					this.transform.updateTransform(this.parent.transform);
 
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
+				} else if (this.transform) {
+					const wt = this.worldTransform.clone();
+					this.transform.updateTransform(this.parent.transform);
+					const newWt = this.worldTransform.clone();
 
-					if (this.accessWidget) {
-						this.accessWidget.updateTransform();
+					if (wt.tx != newWt.tx || wt.ty != newWt.ty) {
+						console.log(wt);
+						console.log(newWt);
 					}
-
-					this.transformChanged = false;
 				}
 
 				for (let i = 0, j = this.children.length; i < j; ++i)
@@ -624,15 +629,67 @@ class PixiWorkarounds {
 
 					if (child.visible)
 					{
-						child.updateTransform(transformChanged);
+						child.updateTransform(this.transformChanged);
 					}
+				}
+
+				if (this.transformChanged && this.accessWidget) {
+					this.accessWidget.updateTransform();
+				}
+
+				if (!tempParent) {
+					this.transformChanged = false;
 				}
 			};
 
-			TextClip.prototype.updateTransform = function(transformChanged) {
-				transformChanged = transformChanged || this.transformChanged;
+			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
+				set : function(p) {
+					this.transformChanged = true;
+					if (this.visible) {
+						RenderSupportJSPixi.TransformChanged = true;
+						RenderSupportJSPixi.PixiStageChanged = true;
+					}
+					this.__parent = p;
+				},
+				get : function() {
+					return this.__parent;
+				}
+			});
 
-				if (transformChanged)
+			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged) {
+				this.transformChanged = transformChanged || this.transformChanged;
+
+				if (this.transformChanged)
+				{
+					this._boundsID++;
+
+					this.transform.updateTransform(this.parent.transform);
+
+					// TODO: check render flags, how to process stuff here
+					this.worldAlpha = this.alpha * this.parent.worldAlpha;
+				}
+
+				for (let i = 0, j = this.children.length; i < j; ++i)
+				{
+					const child = this.children[i];
+
+					if (child.visible)
+					{
+						child.updateTransform(this.transformChanged);
+					}
+				}
+
+				if (this.transformChanged && this.accessWidget) {
+					this.accessWidget.updateTransform();
+				}
+
+				this.transformChanged = false;
+			};
+
+			TextClip.prototype.updateTransform = function(transformChanged) {
+				this.transformChanged = transformChanged || this.transformChanged;
+
+				if (this.transformChanged)
 				{
 					this._boundsID++;
 
@@ -642,8 +699,6 @@ class PixiWorkarounds {
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
 
 					this.layoutText();
-
-					this.transformChanged = false;
 				}
 
 				for (let i = 0, j = this.children.length; i < j; ++i)
@@ -652,9 +707,15 @@ class PixiWorkarounds {
 
 					if (child.visible)
 					{
-						child.updateTransform(transformChanged);
+						child.updateTransform(this.transformChanged);
 					}
 				}
+
+				if (this.transformChanged && this.accessWidget) {
+					this.accessWidget.updateTransform();
+				}
+
+				this.transformChanged = false;
 			};
 		");
 	}
