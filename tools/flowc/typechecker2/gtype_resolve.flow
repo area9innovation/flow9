@@ -158,15 +158,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 		} else {
 			// We have subtypes
-			lsubtypes : Set<GSubType> = mergeSets(lower.named, lower.fields);
-			ltypenames : [string] = findPotentialGSupertypes(env, lsubtypes);
-			usubtypes : Set<GSubType> = mergeSets(upper.named, upper.fields);
-			utypenames : [string] = findPotentialGSubtypes(env, usubtypes);
+			ltypenames : [string] = findPotentialGSupertypes(env, lower.named);
+			utypenames : [string] = findPotentialGSubtypes(env, upper.named);
 
 			// printStay(env.env, "Review " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 
-			possible = if (isEmptySet(lsubtypes)) utypenames
-				else if (isEmptySet(usubtypes)) ltypenames
+			possible = if (isEmptySet(lower.named)) utypenames
+				else if (isEmptySet(upper.named)) ltypenames
 				else intersection(ltypenames, utypenames);
 
 			// In case it is ambigious, should we pick the smallest?
@@ -185,9 +183,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 
 			choice = if (length(possible) > 1 && pickIfAmbiguos) {
 				// OK, extract the explicit names we have, which we prefer
-				subtypes = mergeSets(lsubtypes, usubtypes);
-				singleNamed = getNamedExprs(subtypes);
-
+				singleNamed = mapSet(mergeSets(lower.named, upper.named), \n -> n.name);
 				overlap = set2array(intersectSets(singleNamed, buildSet(possible)));
 
 				if (length(overlap) == 1) {
@@ -206,15 +202,15 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			if (length(choice) == 1) {
 				// OK, lower and upper can agree on a type. Construct it
 				winner = choice[0];
-				solution = resolveGSubTypeToName(env, winner, mergeSets(lsubtypes, usubtypes));
+				solution = resolveGSubTypeToName(env, winner, mergeSets(lower.named, upper.named));
 
 				// And set ourselves to this
 				setGTyvar(env, unify, req, solution);
 			} else {
 				switch (stage) {
 					GResolveSafeOnly(): {
-						foldSet(lsubtypes, env, \acc, lst -> {
-							foldSet(usubtypes, acc, \acc2, ust -> {
+						foldSet(lower.named, env, \acc, lst -> {
+							foldSet(upper.named, acc, \acc2, ust -> {
 								unify(acc2, lst, ust)
 							})
 						});
@@ -228,8 +224,8 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 						//   Clarify {α1 :  : (.i:int), None<>, Some<>} c= α0 c= { :  : } {
 						// Test101:
 						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
-						sortLower = mergeSort(set2array(lsubtypes), \st1, st2 -> compareGType(env.subtypes, st2, st1));
-						sortUpper = mergeSort(set2array(usubtypes), \st1, st2 -> compareGType(env.subtypes, st1, st2));
+						sortLower = mergeSort(set2array(lower.named), \st1, st2 -> compareGType(env.subtypes, st2, st1));
+						sortUpper = mergeSort(set2array(upper.named), \st1, st2 -> compareGType(env.subtypes, st1, st2));
 
 						// TODO: Get rid of fields here, and only keep named.
 
@@ -338,7 +334,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirem
 }
 
 // Given these constraints, what supertypes could meet all of these?
-findPotentialGSupertypes(env : GEnv, types : Set<GSubType>) -> [string] {
+findPotentialGSupertypes(env : GEnv, types : Set<GNamed>) -> [string] {
 	foldi(set2array(types), [], \i, acc, expr -> {
 		supers = findGSupertypes(env, expr);
 		if (i == 0) supers
@@ -360,7 +356,7 @@ findGSupertypes(env : GEnv, expr : GSubType) -> [string] {
 }
 
 // Given these constraints, what subtypes could meet all of these?
-findPotentialGSubtypes(env : GEnv, types : Set<GSubType>) -> [string] {
+findPotentialGSubtypes(env : GEnv, types : Set<GNamed>) -> [string] {
 	foldi(set2array(types), [], \i, acc, expr -> {
 		supers = findGSubtypes(env, expr);
 		if (i == 0) supers
@@ -395,12 +391,9 @@ findGSubtypes(env : GEnv, expr : GSubType) -> [string] {
 
 // Given these exprs, and a desired type name, extract it, if we directly have it.
 // If we do not, then we should construct the type ourselves with type-pars.
-resolveGSubTypeToName(env : GEnv, name : string, types : Set<GSubType>) -> GType {
-	result = foldSet(types, [], \acc, expr -> {
-		switch (expr) {
-			GNamed(gname, __): if (gname == name) arrayPush(acc, expr) else acc;
-			default: acc;
-		}
+resolveGSubTypeToName(env : GEnv, name : string, types : Set<GNamed>) -> GType {
+	result = foldSet(types, [], \acc, named : GNamed -> {
+		if (named.name == name) arrayPush(acc, named) else acc;
 	});
 
 	if (result == []) {
@@ -477,16 +470,6 @@ unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : 
 		})
 	});
 }*/
-
-// Extract the names we have
-getNamedExprs(types : Set<GSubType>) -> Set<string> {
-	foldSet(types, makeSet(), \acc, s -> {
-		switch (s) {
-			GNamed(n, __): insertSet(acc, n);
-			default: acc;
-		}
-	});
-}
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
