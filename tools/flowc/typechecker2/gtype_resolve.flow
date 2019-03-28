@@ -145,6 +145,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 		upperOnlyTyvars = isGBoundsOnlyTyvars(env, upper);
 
 		if (lowerOnlyTyvars && upperOnlyTyvars) {
+			// Only tyvars.
 			switch (stage) {
 				GResolveSafeOnly(): env;
 				GResolveSafeButAmbiguous(): env;
@@ -156,8 +157,32 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					resolveGTypeVarToTyPar(env, tyvars);
 				}
 			}
+		} else if (isGBoundsKnownNames(env, lower) && isEmptySet(upper.named) && isEmptySet(upper.fields)) {
+			// A known lower limit
+			supertype = findSmallestGSuperType(env, lower.named);
+			switch (supertype) {
+				None(): {
+					printStay(env.env, "TODO: We should pick the smallest supertype for req " + gtyvarReqs2string(env, req));				
+					env;
+				}
+				Some(st): {
+					setGTyvar(env, unify, req, st);
+				}
+			}
+		} else if (isGBoundsKnownNames(env, upper) && isEmptySet(lower.named) && isEmptySet(lower.fields)) {
+			// A known upper limit
+			subtype = findBiggestGSubType(env, upper.named);
+			switch (subtype) {
+				None(): {
+					printStay(env.env, "TODO: We should pick the biggest subtype for req " + gtyvarReqs2string(env, req));				
+					env;
+				}
+				Some(st): {
+					setGTyvar(env, unify, req, st);
+				}
+			}
 		} else {
-			// We have subtypes
+			// We have subtypes, either named or fields
 			ltypenames : [string] = findPotentialGSupertypes(env, lower.named);
 			utypenames : [string] = findPotentialGSubtypes(env, upper.named);
 
@@ -171,8 +196,8 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			pickIfAmbiguos = switch (stage) {
 				GResolveSafeOnly(): false;
 				GResolveSafeButAmbiguous(): {
-					// If there are no tyvars in either end, it is safe to go
-					isGBoundsKnown(env, lower) && isGBoundsKnown(env, upper);
+					// If there are no tyvars nor fields in either end, it is safe to go
+					isGBoundsKnownNames(env, lower) && isGBoundsKnownNames(env, upper);
 				}
 				GResolveSpeculative(): {
 					// OK, we have to make progress, so just take a chance
@@ -226,8 +251,6 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
 						sortLower = mergeSort(set2array(lower.named), \st1, st2 -> compareGType(env.subtypes, st2, st1));
 						sortUpper = mergeSort(set2array(upper.named), \st1, st2 -> compareGType(env.subtypes, st1, st2));
-
-						// TODO: Get rid of fields here, and only keep named.
 
 						decision = if (sortLower != [] && sortUpper == []) [sortLower[0]] 
 							else if (sortLower == [] && sortUpper != []) [sortUpper[0]] 
@@ -284,15 +307,14 @@ isGBoundsOnlyTyvars(env : GEnv, bounds : GBounds) -> bool {
 	!bounds.hasFlow && isEmptySet(bounds.fixedTypes) && isEmptySet(bounds.named) && isEmptySet(bounds.fields)
 }
 
-// Is this bound known, considering super and subtypes?
-isGBoundsKnown(env : GEnv, bounds : GBounds) -> bool {
-	bounds.hasFlow
-	|| !isEmptySet(bounds.fixedTypes)
-	|| (isEmptySet(bounds.tyvars) 
-		// If the bound is a named type, we have better handle
-		&& !isEmptySet(bounds.named)
-		&& isEmptySet(bounds.fields)
-	)
+// Is this bound a set of only known names?
+isGBoundsKnownNames(env : GEnv, bounds : GBounds) -> bool {
+	!bounds.hasFlow
+	&& isEmptySet(bounds.fixedTypes)
+	&& isEmptySet(bounds.tyvars) 
+	// If the bound is a named type, we have better handle
+	&& !isEmptySet(bounds.named)
+	&& isEmptySet(bounds.fields)
 	;
 }
 
@@ -428,6 +450,50 @@ makeGNamedType(env : GEnv, name : string) -> GType {
 	}
 }
 
+findSmallestGSuperType(env : GEnv, names : Set<GNamed>) -> Maybe<GType> {
+	if (isEmptySet(names)) None()
+	else {
+		typeNames = mapSet(names, \s -> s.name);
+		if (sizeSet(typeNames) == 1) {
+			// They are all the same name, so pick any of them, prefing those without tyvars
+			preference = preferWithoutTyvars(env, names);
+			Some(preference[0])
+		} else {
+			ltypenames : [string] = findPotentialGSupertypes(env, names);
+			if (length(ltypenames) == 1) {
+				winner = ltypenames[0];
+				Some(resolveGSubTypeToName(env, winner, names));
+			} else {
+				// TODO: We could try to find the smallest supertype that covers all of these guys
+				None();
+			}
+		}
+	}
+}
+
+findBiggestGSubType(env : GEnv, names : Set<GNamed>) -> Maybe<GType> {
+	if (isEmptySet(names)) None()
+	else {
+		typeNames = mapSet(names, \s -> s.name);
+		if (sizeSet(typeNames) == 1) {
+			// They are all the same name, so pick any of them, prefing those without tyvars
+			preference = preferWithoutTyvars(env, names);
+			Some(preference[0])
+		} else {
+			ltypenames : [string] = findPotentialGSubtypes(env, names);
+			if (length(ltypenames) == 1) {
+				winner = ltypenames[0];
+				Some(resolveGSubTypeToName(env, winner, names));
+			} else {
+				// TODO: We could try to find the biggest subtype that covers all of these guys
+				None();
+			}
+		}
+	}
+}
+
+
+
 // Get some kind of score for a name. Structs is the number of typars + fields. Unions is 10 * number of structs + number of fields in total
 getGNamedSize(env : GEnv, name : string) -> int {
 	mstruct = lookupTree(env.env.program.acc.names.structs, name);
@@ -451,10 +517,8 @@ mkGTypeVar(env : GEnv) -> GTypeVar {
 	GTypeVar(nextUniqueId(env.tyvarIdGroup));
 }
 
-/*
-// OK, when we have a bunch of limits, they might have internal relation,
-// which we can use to extract information
-unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : Set<GType>, lower : bool) -> GEnv {
+// Given these types, filter those without tyvars, but otherwise, just give us what we have
+preferWithoutTyvars(env : GEnv, types : Set<GNamed>) -> [GNamed] {
 	hasTyvars = filterSet(types, \t -> {
 		!isEmptySet(extractGTypeVars(env, t, makeSet()))
 	});
@@ -462,14 +526,9 @@ unifyGSubTypeSiblings(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, types : 
 	noTyvars = differenceSets(types, hasTyvars);
 
 	l = set2array(noTyvars);
-
-	// OK, we unify those with tyvars against those without
-	foldSet(noTyvars, env, \acc, t1 -> {
-		foldSet(hasTyvars, acc, \acc2, t2 -> {
-			gunifySiblings(acc2, unify, t1, t2, lower);
-		})
-	});
-}*/
+	if (l != []) l
+	else set2array(hasTyvars)
+}
 
 gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
