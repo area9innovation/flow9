@@ -113,7 +113,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			fixedType = set2array(fixed)[0];
 			setGTyvar(env, unify, req, fixedType);
 		} else if (upper.hasFlow && sizeSet(fixed) != 1) {
-			// None or multiple, which do not agree, so I guess we go flow
+			// None or multiple, which do not agree, but we have flow, so I guess we go flow
 			setGTyvar(env, unify, req, GFlow());
 		} else {
 			// There are multiple solutions.
@@ -123,21 +123,35 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				GResolveSpeculative(): true;
 				GResolveTypars(): true;
 			}
+
+			penv = if (stage == GResolveSafeOnly()) {
+				// See if we can unpeel it
+				//   Clarify { : [TextSize<>], [α40001] :  : } c= α40004 c= { :  :  : } {
+				// is handled by setting α40004= [<tyvar>].
+				rtype = restructureGType(env, fixed);
+				switch (rtype) {
+					None(): env;
+					Some(rt): {
+						setGTyvar(env, unify, req, rt);
+					}
+				}
+			} else env;
+
 			if (pick) {
 				// There are multiple solutions. We just pick one
 				fixedType = set2array(fixed)[0];
 				// printStay(env.env, "Review: We picked " + gtype2string(env, fixedType) +
 				//	" pick the smallest " + gtyvarReqs2string(env, req) + "");
-				setGTyvar(env, unify, req, fixedType);
+				setGTyvar(penv, unify, req, fixedType);
 			} else {
 				if (stage == GResolveSafeOnly()) {
 					// Nothing to do
-					foldSet(lower.fixedTypes, env, \acc, lst -> {
+					foldSet(lower.fixedTypes, penv, \acc, lst -> {
 						foldSet(upper.fixedTypes, acc, \acc2, ust -> {
 							unify(acc2, lst, ust)
 						})
 					})
-				} else env;
+				} else penv;
 			}
 		}
 	} else {
@@ -487,6 +501,30 @@ findBiggestGSubTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 	}
 }
 
+// Extract a type of the correct shape to fit this monster
+restructureGType(env : GEnv, types : Set<GType>) -> Maybe<GType> {
+	foldSet(types, None(), \acc : Maybe<GType>, tt : GType -> {
+		switch (acc) {
+			None(): {
+				switch (tt) {
+					GFunction(args, rt): {
+						gtype : GType = GFunction(map(args, \__ -> mkGTypeVar(env)), mkGTypeVar(env));
+						Some(gtype)
+					}
+					GArray(atype): Some(GArray(mkGTypeVar(env)));
+					GRef(rtype): Some(GRef(mkGTypeVar(env)));
+					GBasicType(__): acc;
+					GFlow(): acc;
+					GTypePar(id): acc;
+					GTypeVar(id): acc;
+					GNamed(name, typars): acc;
+					GField(name, type): acc;
+				}
+			}
+			Some(t): acc;
+		}
+	})
+}
 
 
 // Get some kind of score for a name. Structs is the number of typars + fields. Unions is 10 * number of structs + number of fields in total
