@@ -116,6 +116,10 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			// None or multiple, which do not agree, but we have flow, so I guess we go flow
 			setGTyvar(env, unify, req, GFlow());
 		} else {
+			if (env.verbose >= 3) {
+				printIndent(env.env, "Fixed clarification: " + gtyvarReqs2string(env, req) + " {");
+			}	
+
 			// There are multiple solutions.
 			pick = switch (stage) {
 				GResolveSafeOnly(): false;
@@ -137,7 +141,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				}
 			} else env;
 
-			if (pick) {
+			renv = if (pick) {
 				// There are multiple solutions. We just pick one
 				fixedType = set2array(fixed)[0];
 				// printStay(env.env, "Review: We picked " + gtype2string(env, fixedType) +
@@ -153,6 +157,12 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					})
 				} else penv;
 			}
+
+			if (env.verbose >= 3) {
+				printDedent(env.env, "} Fixed clarification: " + gtyvarReqs2string(renv, req) + " {");
+			}
+
+			renv;
 		}
 	} else {
 		// OK, no fixed. There can be tyvars and subtypes
@@ -179,15 +189,21 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				printStay(env.env, "TODO: We should pick the smallest supertype for req " + gtyvarReqs2string(env, req));				
 				env;
 			} else {
+				if (env.verbose >= 3) {
+					printStay(env.env, "Known lower bound for: " + gtyvarReqs2string(env, req) + " {");
+				}
 				setGTyvar(env, unify, req, supertypes[0]);
 			}
 		} else if (isGBoundsKnownNames(env, upper) && isEmptySet(lower.named) && isEmptySet(lower.fields)) {
 			// A known upper limit
 			subtypes = findBiggestGSubTypes(env, upper.named);
 			if (length(subtypes) != 1) {
-				printStay(env.env, "TODO: We should pick the biggest subtype for req " + gtyvarReqs2string(env, req));				
+				printStay(env.env, "TODO: We should pick the biggest subtype for req " + gtyvarReqs2string(env, req));
 				env;
 			} else {
+				if (env.verbose >= 3) {
+					printStay(env.env, "Known upper bound for: " + gtyvarReqs2string(env, req) + " {");
+				}
 				setGTyvar(env, unify, req, subtypes[0]);
 			}
 		} else {
@@ -208,6 +224,9 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			});
 
 			utypenames : [string] = findPotentialGSubtypes(env, upperSet);
+
+			//				sortLower = findSmallestGSuperTypes(env, lower.named);
+			//				sortUpper = findBiggestGSubTypes(env, upper.named);
 
 			// printStay(env.env, "Review " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 
@@ -230,6 +249,10 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 
 			choice : [string] = if (length(possible) > 1 && pickIfAmbiguos) {
+				if (env.verbose >= 3) {
+					printStay(env.env, "Ambigious subtype for: " + gtyvarReqs2string(env, req) + " {");
+				}
+
 				// OK, extract the explicit names we have, which we prefer
 				singleNamed = mapSet(mergeSets(lower.named, upper.named), \n -> n.name);
 				overlap = set2array(intersectSets(singleNamed, buildSet(possible)));
@@ -253,9 +276,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// Make this type with the typars
 				winType = makeGNamedType(env, winner);
 
+				if (env.verbose >= 3) {
+					printStay(env.env, "Agreement : " + gtyvarReqs2string(env, req) + " {");
+				}
+
 				// And set ourselves to this
 				setGTyvar(env, unify, req, winType);
 			} else {
+				if (env.verbose >= 3) {
+					printStay(env.env, "Complicated subtype for: " + gtyvarReqs2string(env, req) + " {");
+				}
 				switch (stage) {
 					GResolveSafeOnly(): {
 						foldSet(lowerSet, env, \acc, lst -> {
@@ -264,33 +294,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 							})
 						});
 					}
-					GResolveSafeButAmbiguous(): {
-						// OK, if we have multiple upper limits, which are
-						// subtypes of each others, we can unify them
-
-						// Test 65, 70 and such have
-						//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
-						//   Clarify {α1 :  : (.i:int), None<>, Some<>} c= α0 c= { :  : } {
-						// Test101:
-						//   Clarify { :  : } c= α7350002 c= { :  : Tree<string, FcGlobalVar<>>, Tree<string, α7350001>} {
-						sortLower = findSmallestGSuperTypes(env, lower.named);
-						sortUpper = findBiggestGSubTypes(env, upper.named);
-
-						decision = if (sortLower != [] && sortUpper == []) [sortLower[0]] 
-							else if (sortLower == [] && sortUpper != []) [sortUpper[0]] 
-							else if (sortLower != [] && sortUpper != []) {
-								if (sortLower[0] == sortUpper[0]) {
-									[sortLower[0]]
-								} else {
-									printStay(env.env, "We could not resolve req " + gtyvarReqs2string(env, req));
-									[];
-								}
-							} else [];
-
-						if (decision != []) {
-							setGTyvar(env, unify, req, decision[0]);
-						} else env;
-					}
+					GResolveSafeButAmbiguous(): env;
 					GResolveSpeculative(): {
 						// TODO:
 						printStay(env.env, "We could not manage " + toString(possible) + " from " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
