@@ -126,3 +126,7 @@
  - make an option to disable outline for performance reasons
  - turn off server logging
  - mark exported functions as Interfaces, and exported structs as Classes
+
+## 0.3.6
+ - small crash in language server fixed
+ - fix syntax highlighting in strings with %
