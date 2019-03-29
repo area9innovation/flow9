@@ -1,7 +1,7 @@
 Wasm backend
 ------------
 
-This is an experimental backend for WASM.
+This is an experimental backend for WASM. It is beta quality - works on most examples, does not leak memory, but is 5-10x slower than native JS as of spring 2019.
 
 The idea is to compile flow to WASM.
 
@@ -39,26 +39,15 @@ at some point.
 
 
 TODO:
-- ref counting for locals, parameters. Deref counters when locals, parameters go out of
-  scope, except for the final values of all control flow constructs.
-
-- Support int/double to string cast
-
-- Stitch the JS-side runtime together somehow, rather than hardcode in fiWriteHostTemplateFile.
-  Consider to define some kind of DSL that allows us to reference and refine the haxe runtime,
-  and automatically build the bridge functions that connects the two worlds.
-
+- JS runtime
   Extend "decode_data(address :int, typedescriptor : int) -> Object" function in the JS world
   which reads memory and converts to JS value.
-  Write "convertJSToWasm(obj : Object, typedescriptor : int) -> int" functio nin the JS world,
+  Write "convertJSToWasm(obj : Object, typedescriptor : int) -> int" function nin the JS world,
   which allocates memory in Wasm, and writes the value there.
 
-- Implement polymorphism. At first, add implicit conversion to/from flow type when not already
-  flow
-
-- Improve memory allocator. Use fixed-size regions with bitmaps to mark usage
-
 - Optimize switch to not copy the body for default case
+
+- Fix fusion.flow - typing is very complex there, requires tricks to get done
 
 - Escape analysis to keep things on stack
 
@@ -158,11 +147,10 @@ At first, we are going for ref. counting. The implementation is as follows:
 * all heap values are ref counted
 * ref counts are INCREASED in the following cases:
 	* when assigning a new non-auto-generated-temp local variable - for the value
-	* when calling a function - for all arguments
 	* when returning from a function - for the result
 * ref counts are DECREASED in the following cases:
-	* when local variable scope ends (include temp's!)
-	* when function parameter scope ends
+	* when local variable scope ends (but NOT for function parameters - caller is responsible for those
+* all primitives (i.e. alloc a struct or an array) adhere to this - they return something with non-zero refcount (normally 1)
 * all compiler-generated code and standard library functions behave according
 to those items unless otherwise specified explicitly
 
@@ -173,13 +161,8 @@ or switch to GC.
 Polymorphism
 ------------
 
-- Specialize polymorphic functions by type-kind.
-  The basic operations we need to support for polymorphic functions can
-  maybe be limited to copying and comparisons, and struct operations. That 
-  implies that we can reuse code for polymorphic functions which share the 
-  same size of data as well as comparison code.
+Polymorphism is C++-like - we generate specialized versions of functions/structs. 
 
-After lambda lifting, the following is performed:
 1) Collect all polymorphic names in a map from name to polymorphic type. This includes
    functions, structs, natives, unions, global variables.
 
@@ -216,8 +199,13 @@ Currently the following classes of natives are implemented (defined by prefix in
 - `host_w.` - the same as simple 'host.' but in addition will be wrapped by another JS function which will take care about data packing/unpacking
 - `wasm_compiler.` - translate to compiler-computed values like heap initial offset
 
+Global variables
+----------------
+
 Global variables are immutable by default - however, to support certain compiler features, there is 
-a convention that variable whose name starts with `wasm_` and ends with `_mut` is declared as mutable: `(global $wasm_variable_mut (mut i32) i32.const 0)`.
+a convention that variable whose name starts with `wasm_` and ends with `_mut` is declared as mutable: `(global $wasm_variable_mut (mut i32) i32.const 0)`. 
+
+Initialization for simple types is inline, for complex we generate an init function per variable, and then call all of them in the `init_global_vars` function.
 
 Ideas for further development below:
 
