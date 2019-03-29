@@ -492,10 +492,16 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, onError : (string) -
 	mstruct = find(rtypenames, \tn -> tn.name == left.name);
 	switch (mstruct) {
 		None(): {
-			// TODO: It could be that the left is a union.
-			ltypenames : [FcTypeName] = union2typenames(env.env, right.name);
-			printStay(env.env, "TODO: Check if " + gtype2string(env, left) + " is part of " + gtype2string(env, right));
-			env;
+			// It could be that the left is a union.
+			ltypenames : [FcTypeName] = union2typenames(env.env, left.name);
+			if (ltypenames == []) {
+				onError("No overlap between " + gtype2string(env, left) + " and " + gtype2string(env, right));
+			}
+			// The unify against each struct in it
+			fold(ltypenames, env, \acc, tn -> {
+				istruct = ginstantiateStructFromUnion(acc, right, tn, onError);
+				unifyAndRecurseGType(acc, istruct, right, onError);
+			});
 		}
 		Some(ustruct): {
 			// The struct as it appears in the union. Let us remap typars from the union to the struct
@@ -512,8 +518,12 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 	munion = lookupTree(env.env.program.acc.names.unions, master.name);
 	switch (munion) {
 		None(): {
-			onError("Expected " + master.name + " to be a union");
-			GNamed(ustruct.name, []);
+			if (master.name == ustruct.name) {
+				master
+			} else {
+				onError("Expected " + master.name + " to be a union with " + ustruct.name);
+				GNamed(ustruct.name, []);
+			}
 		}
 		Some(union): {
 			// Take the union def and map the typars
@@ -550,17 +560,41 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 }
 
 unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, onError : (string) -> void) -> GEnv {
-	fieldType = getInstantiatedGNamedField(env, right, left.name, onError);
+	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
+	fieldType = getInstantiatedGNamedField(env, right, left.name, true, onError);
+	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
 	unifyAndRecurseGType(env, left.type, fieldType, onError);
 }
 
+// Does this name have this field?
+hasGNameField(env : GEnv, named : string, field : string) -> bool {
+	mstruct = lookupTree(env.env.program.acc.names.structs, named);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(env.env.program.acc.names.unions, named);
+			switch (munion) {
+				None(): false;
+				Some(union): {
+					typenames : [FcTypeName] = union2typenames(env.env, named);
+					forall(typenames, \tn -> hasGNameField(env, tn.name, field))
+				}
+			}
+		}
+		Some(struct): {
+			exists(struct.args, \a : FcStructArg -> {
+				a.name == field;
+			});
+		}
+	}
+}
+
 unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, onError : (string) -> void) -> GEnv {
-	fieldType = getInstantiatedGNamedField(env, left, right.name, onError);
+	fieldType = getInstantiatedGNamedField(env, left, right.name, false, onError);
 	unifyAndRecurseGType(env, fieldType, right.type, onError);
 }
 
 // Given a named structure, extract the instantiated type of a given field
-getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, onError : (string) -> void) -> GType {
+getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, existEnough : bool, onError : (string) -> void) -> GType {
 	error = \ -> {
 		onError("Expected " + gtype2string(env, named) + " to have ." + field);
 		GFlow();
@@ -573,13 +607,20 @@ getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, onError :
 				None(): error();
 				Some(union): {
 					typenames : [FcTypeName] = union2typenames(env.env, named.name);
-					instantiated = map(typenames, \tn -> {
+					withField = if (existEnough) filter(typenames, \tn -> hasGNameField(env, tn.name, field)) else typenames;
+					instantiated = map(withField, \tn -> {
 						ginstantiateStructFromUnion(env, named, tn, onError);
 					});
-					fields = map(instantiated, \i : GType -> {
+					fields = filtermap(instantiated, \i : GType -> {
 						switch (i) {
-							GNamed(__, __): getInstantiatedGNamedField(env, i, field, onError);
-							default: error();
+							GNamed(__, __): {
+
+								Some(getInstantiatedGNamedField(env, i, field, existEnough, onError));
+							}
+							default: {
+								error();
+								None();
+							}
 						}
 					});
 					shared = uniq(fields);
