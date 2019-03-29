@@ -11,7 +11,7 @@ unsigned int MIN_HEAP_SIZE = (256 * 1048576);
 
 
 #ifdef FLOW_EMBEDDED
-unsigned int MAX_HEAP_SIZE = (256 * 1048576);
+unsigned int MAX_HEAP_SIZE = (128 * 1048576);
 #else
 unsigned int MAX_HEAP_SIZE = (512 * 1048576);
 #endif
