@@ -310,7 +310,6 @@ class JsWriter {
 						|| cl == "Thread"
 						|| cl == "NotificationsSupport"
 						|| cl == "GeolocationSupport"
-						|| cl == "ServiceWorkerCache"
 						|| cl == "WebSocketSupport") { "Hx"; } else "";
 		ovl.nativeClasses.set(cla, true);
 		var renamed = cla + "." + parts[1];

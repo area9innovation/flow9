@@ -90,7 +90,7 @@ if (a === b) return true;
 ");
     return false;
 #else
-    compareByValue(a, b) == 0;
+    return compareByValue(a, b) == 0;
 #end
   }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {

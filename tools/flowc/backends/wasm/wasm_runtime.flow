@@ -7,9 +7,9 @@ export {
 	// JS natives
 
 	native js_free_native : (int) -> void = host.js_free_native;
-	native printi : (int) -> void = host.printi;
+	// native printi : (int) -> void = host.printi;
 	native printd : (double) -> void = host.printd;
-	native prints : (string) -> void = host.prints;
+	// native prints : (string) -> void = host.prints;
 	native printa : ([?], [?]) -> void = host.printa;
 	native wasm_dmod : (double, double) -> double = host.wasm_dmod;
 
@@ -363,7 +363,6 @@ wasm_make_ref_i32_ref(val : int) -> int {
 	// Reset ref counter
 	wasm_i32_store(address, 1); // initial refcnt 
 	wasm_i32_store(address + 4, val);
-	// do NOT increase refcnt on val to compensate on missing auto-decrement upon function exit
 	wasm_inc_refcnt(val);
 	address;
 }
@@ -397,9 +396,6 @@ wasm_set_ref_i32(reference : int, val : int, typeDescriptor : int) -> void {
 wasm_set_ref_i32_ref(reference : int, val : int, typeDescriptor : int) -> void {
 	// valDescriptor + 1 holds type descriptor for the value
 	old_val = wasm_i32_load(reference + 4);
-	// wasm_dec_refcnt(wasm_i32_load(reference + 4), typeDescriptor + 1);
-	// do NOT increase refcnt on val to compensate on missing auto-decrement upon function exit
-	wasm_inc_refcnt(val);
 	wasm_i32_store(reference + 4, val);
 	wasm_dec_refcnt(old_val, typeDescriptor + 1);
 }
@@ -415,9 +411,17 @@ wasm_free_ref(reference : int, typeDescriptor : int) -> void {
 }
 
 wasm_inc_refcnt(address : int) -> void {
+	if (address < 0 || address >= 65536 * wasm_memory_size()) {
+		printi(1952);
+		printi(address);
+	}
+	// printi(address);
 	counter = wasm_i32_load(address);
-	if (counter < 1)
+	if (counter < 1) {
+		printi(address);
+		printi(counter);
 		wasm_unreachable();
+	}
 	wasm_i32_store(address, counter + 1);
 }
 
@@ -466,13 +470,9 @@ wasm_dec_refcnt(address : int, typeDescriptor : int) -> void {
 		} else {
 			// TODO:
 			// 7: type parameter
-			// printi(tag);
-			//typeDescriptor + 1;
 		}
 
 		wasm_free(address);
-		// printi(555);
-		// printi(tag);
 	}
 }
 
@@ -483,9 +483,6 @@ wasm_print_refcnt_passthru(address : int) -> int {
 }
 
 wasm_get_refcnt(address : int, typeDescriptor : int) -> int {
-	// result = wasm_i32_load(address);
-	// wasm_dec_refcnt(address, typeDescriptor);
-	// result - 1; // to compensate for decrease above
 	wasm_i32_load(address);
 }
 
@@ -559,21 +556,17 @@ do_wasm_free_array(elementAddr : int, typeDescriptor : int, count : int) {
 
 wasm_set_array_i32(array_address : int, offset : int, val : int) -> int {
 	wasm_i32_store(array_address + offset, val);
-	// wasm_dec_refcnt(array_address); NOT decrementing refcnt - compiler does NOT generate calling increments
 	array_address;
 }
 
 wasm_set_array_i32_ref(array_address : int, offset : int, val : int) -> int {
-	// do NOT increase refcnt on val to compensate on missing auto-decrement upon function exit
 	wasm_inc_refcnt(val);
 	wasm_i32_store(array_address + offset, val);
-	//wasm_dec_refcnt(array_address); NOT decrementing refcnt - compiler does NOT generate calling increments
 	array_address;
 }
 
 wasm_set_array_f64(array_address : int, offset : int, val : double) -> int {
 	wasm_f64_store(array_address + offset, val);
-	//wasm_dec_refcnt(array_address); NOT decrementing refcnt - compiler does NOT generate calling increments
 	array_address;
 }
 
@@ -647,11 +640,8 @@ wasm_set_mutable_field_i32(struct_address : int, value : int, offset : int) -> v
 wasm_set_mutable_field_i32_ref(struct_address : int, value : int, offset : int, valTypeDescriptor : int) -> void {
 	typeDescriptor = wasm_i32_load(struct_address + 4);
 	old_val = wasm_i32_load(struct_address + offset);
-	// wasm_dec_refcnt(struct_address + offset, valTypeDescriptor);
 	wasm_i32_store(struct_address + offset, value);
 	wasm_inc_refcnt(value);
-	// wasm_inc_refcnt(struct_address + offset);
-
 	wasm_dec_refcnt(old_val, valTypeDescriptor);
 }
 
@@ -740,7 +730,6 @@ wasm_compare_struct_fields(address1 : int, address2 : int, field : int, nfields 
 }
 
 // With values of the given type at these address, compare these
-// TODO: refcount here
 wasm_compare_using_typedescriptor(address1 : int, address2 : int, typeDescriptor : int) -> int {
 	tag = wasm_i32_load8_u(typeDescriptor);
 	if (tag == 3) {
@@ -786,7 +775,6 @@ wasm_next_typedescriptor(typeDescriptor : int) -> int {
 	} else {
 		// TODO:
 		// 7: type parameter
-		// printi(tag);
 		typeDescriptor + 1;
 	}
 }
@@ -833,11 +821,9 @@ wasm_alloc_flow_f64(value : double, bytes : int, typeDescriptor : int) -> int {
 // TODO: wasm_alloc_i32_ref() is exactly the same as wasm_alloc_flow_i32(). Why?
 wasm_alloc_flow_i32_ref(value : int, bytes : int, typeDescriptor : int) -> int {
 	addr = wasm_alloc(bytes);
-	// Reset ref count to 1
-	wasm_i32_store(addr, 1);
+	wasm_i32_store(addr, 1); // Reset ref count to 1
 	wasm_i32_store(addr + 4, typeDescriptor);
 	wasm_i32_store(addr + 8, value);
-	// do NOT increase refcount for value to compensate for decrease at function exit
 	wasm_inc_refcnt(value);
 	addr;
 }
@@ -919,13 +905,6 @@ wasm_unbox_flow_i32_ref(address : int, typeDescriptor : int) -> int {
 	}
 	r = wasm_i32_load(address + 8);
 	td = wasm_i32_load(r + 4);
-	// if (td != type) {
-		// prints("wrong type, expected: ");
-		// printi(type);
-		// prints("but got: ");
-		// printi(td);
-		// wasm_unreachable();	// additional check of type of object. Might be wrong for some cases
-	// }
 	wasm_inc_refcnt(r);
 	r;
 }
