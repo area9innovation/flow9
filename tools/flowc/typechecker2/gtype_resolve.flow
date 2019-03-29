@@ -192,13 +192,27 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 		} else {
 			// We have subtypes, either named or fields
-			ltypenames : [string] = findPotentialGSupertypes(env, lower.named);
-			utypenames : [string] = findPotentialGSubtypes(env, upper.named);
+			lowerSet : Set<GSubType> = getGSubTypes(lower.named, switch (stage) {
+				GResolveSafeOnly(): makeSet();
+				GResolveSafeButAmbiguous(): makeSet();
+				GResolveSpeculative(): lower.fields;
+				GResolveTypars(): lower.fields;
+			});
+			ltypenames : [string] = findPotentialGSupertypes(env, lowerSet);
+
+			upperSet : Set<GSubType> = getGSubTypes(upper.named, switch (stage) {
+				GResolveSafeOnly(): makeSet();
+				GResolveSafeButAmbiguous(): makeSet();
+				GResolveSpeculative(): upper.fields;
+				GResolveTypars(): upper.fields;
+			});
+
+			utypenames : [string] = findPotentialGSubtypes(env, upperSet);
 
 			// printStay(env.env, "Review " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 
-			possible = if (isEmptySet(lower.named)) utypenames
-				else if (isEmptySet(upper.named)) ltypenames
+			possible = if (isEmptySet(lowerSet)) utypenames
+				else if (isEmptySet(upperSet)) ltypenames
 				else intersection(ltypenames, utypenames);
 
 			// In case it is ambigious, should we pick the smallest?
@@ -215,7 +229,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				GResolveTypars(): true;
 			}
 
-			choice = if (length(possible) > 1 && pickIfAmbiguos) {
+			choice : [string] = if (length(possible) > 1 && pickIfAmbiguos) {
 				// OK, extract the explicit names we have, which we prefer
 				singleNamed = mapSet(mergeSets(lower.named, upper.named), \n -> n.name);
 				overlap = set2array(intersectSets(singleNamed, buildSet(possible)));
@@ -234,17 +248,18 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			}
 
 			if (length(choice) == 1) {
-				// OK, lower and upper can agree on a type. Construct it
+				// OK, lower and upper can agree on a named type. Construct it
 				winner = choice[0];
-				solution = resolveGSubTypeToName(env, winner, mergeSets(lower.named, upper.named));
+				// Make this type with the typars
+				winType = makeGNamedType(env, winner);
 
 				// And set ourselves to this
-				setGTyvar(env, unify, req, solution);
+				setGTyvar(env, unify, req, winType);
 			} else {
 				switch (stage) {
 					GResolveSafeOnly(): {
-						foldSet(lower.named, env, \acc, lst -> {
-							foldSet(upper.named, acc, \acc2, ust -> {
+						foldSet(lowerSet, env, \acc, lst -> {
+							foldSet(upperSet, acc, \acc2, ust -> {
 								unify(acc2, lst, ust)
 							})
 						});
@@ -365,9 +380,9 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirem
 }
 
 // Given these constraints, what supertypes could meet all of these?
-findPotentialGSupertypes(env : GEnv, types : Set<GNamed>) -> [string] {
-	foldi(set2array(types), [], \i, acc, expr -> {
-		supers = findGSupertypes(env, expr);
+findPotentialGSupertypes(env : GEnv, types : Set<GSubType>) -> [string] {
+	foldi(set2array(types), [], \i, acc, st -> {
+		supers = findGSupertypes(env, st);
 		if (i == 0) supers
 		else intersection(supers, acc)
 	});
@@ -387,9 +402,9 @@ findGSupertypes(env : GEnv, expr : GSubType) -> [string] {
 }
 
 // Given these constraints, what subtypes could meet all of these?
-findPotentialGSubtypes(env : GEnv, types : Set<GNamed>) -> [string] {
-	foldi(set2array(types), [], \i, acc, expr -> {
-		supers = findGSubtypes(env, expr);
+findPotentialGSubtypes(env : GEnv, types : Set<GSubType>) -> [string] {
+	foldi(set2array(types), [], \i, acc, st -> {
+		supers = findGSubtypes(env, st);
 		if (i == 0) supers
 		else intersection(supers, acc)
 	});
@@ -415,6 +430,8 @@ findGSubtypes(env : GEnv, expr : GSubType) -> [string] {
 			}
 		}
 		GField(field, __): {
+			// TODO: OK, here we would like to filter the set to those names that appear in the
+			// environment
 			getTreeArrayValue(env.env.program.acc.names.field2structs, field);
 		}
 	}
@@ -430,7 +447,13 @@ resolveGSubTypeToName(env : GEnv, name : string, types : Set<GNamed>) -> GType {
 	if (result == []) {
 		// OK, we could not find it, so we have to construct it
 		makeGNamedType(env, name)
-	} else result[0];
+	} else {
+/*		if (length(result) > 1) {
+			printStay(env.env, "TODO: We need " + name + " and randomly pick the first here: " + toString(result));
+		}*/
+		// OK, pick one, but prefer one with some flesh on it
+		preferWithoutTyvars(env, buildSet(result))[0];
+	}
 }
 
 // Build a type with this name, and empty typars
@@ -467,7 +490,9 @@ findSmallestGSuperTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 			// They are all the same name, so pick any of them, prefing those without tyvars
 			[preferWithoutTyvars(env, names)[0]];
 		} else {
-			ltypenames : [string] = findPotentialGSupertypes(env, names);
+			// flow compiler is crazy, so we have to jump through hoops
+			st : Set<GSubType> = getGSubTypes(names, makeSet());
+			ltypenames : [string] = findPotentialGSupertypes(env, st);
 			if (length(ltypenames) == 1) {
 				winner = ltypenames[0];
 				[resolveGSubTypeToName(env, winner, names)];
@@ -488,7 +513,8 @@ findBiggestGSubTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 			// They are all the same name, so pick any of them, prefing those without tyvars
 			[preferWithoutTyvars(env, names)[0]];
 		} else {
-			ltypenames : [string] = findPotentialGSubtypes(env, names);
+			st : Set<GSubType> = getGSubTypes(names, makeSet());
+			ltypenames : [string] = findPotentialGSubtypes(env, st);
 			if (length(ltypenames) == 1) {
 				winner = ltypenames[0];
 				[resolveGSubTypeToName(env, winner, names)];
@@ -575,4 +601,9 @@ gbounds2string(env : GEnv, g : GBounds) -> string {
 	+ " : " + superglue(set2array(g.named), \st -> gtype2string(env, st), ", ")
 	+ " : " + superglue(set2array(g.fields), \st -> gtype2string(env, st), ", ")
 	+ "}"
+}
+
+getGSubTypes(names : Set<GNamed>, fields : Set<GField>) -> Set<GSubType> {
+	// Only to get flow to compile. This is basically just mergeSets
+	mergeSets(mapSet(names, \n : GSubType -> n), mapSet(fields, \f : GSubType -> f))
 }
