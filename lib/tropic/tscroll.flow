@@ -15,6 +15,8 @@ export {
 		// Provides ability to move to a specific place. (Does not reflect where it is placed)
 		TScrollSetPosition(position : Transform<Point>);
 
+			TTopLeft(top : Transform<double>, left : Transform<double>) -> TScrollSetPosition { TScrollSetPosition(fpoint(top, left)); };
+
 		// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
 		TScrollBound(x : Transform<bool>, y : Transform<bool>);
 
@@ -32,20 +34,69 @@ export {
 
 		TScrollDisableOutOfBounds(disable : Transform<bool>);
 		TScrollKeysEnabled(enabled : Transform<bool>);
+		TKeyFilter(fn : (key : KeyEvent) -> bool);
 		TScrollbarsVisible(x : DynamicBehaviour<bool>, y : DynamicBehaviour<bool>);
 
   		// true - show scrolls everywhere, false - hide srolls on mobile;
   		TShowScrollbars(showOnMobile : bool);
 
-		TScrollbarStyle(bar : Tropic, background : Tropic);
+			TScrollbarStyle(visible : Transform<bool>, thickness : Transform<double>, bar : Tropic, background : Tropic);
 
-			standardScrollBar = TScrollbarStyle(TRectangle([Fill(0xeeeeee)], TFillXH(if (mobile) 8. else 16.)), TRectangle([Fill(0x888888)], TFillXH(if (mobile) 8. else 16.)));
-			invisibleScrollBar = TScrollbarStyle(TEmpty(), TEmpty());
-			minimalScrollBarLight = TScrollbarStyle(TRectangle([Fill(0xeeeeee)], TFillXH(if (mobile) 8. else 16.)), TEmpty());
-			minimalScrollBarDark = TScrollbarStyle(TRectangle([Fill(0x101010)], TFillXH(if (mobile) 8. else 16.)), TEmpty());
-			materialScrollBar = TScrollbarStyle(TRectangle([Fill(0x888888), FillOpacity(0.9)], TFillWY(if (mobile) 4. else 6.)), TEmpty());
+			standardScrollBar =
+				TScrollbarStyle(
+					const(true),
+					const(if (mobile) 8. else 16.),
+					TRectangle([Fill(0xeeeeee)], TFillXY()),
+					TRectangle([Fill(0x888888)], TFillXY())
+				);
+			invisibleScrollBar =
+				TScrollbarStyle(
+					const(false),
+					zero,
+					TEmpty(),
+					TEmpty()
+				);
+			minimalScrollBarLight =
+				TScrollbarStyle(
+					const(true),
+					const(if (mobile) 8. else 16.),
+					TRectangle([Fill(0xeeeeee)], TFillXY()),
+					TEmpty()
+				);
+			minimalScrollBarDark =
+				TScrollbarStyle(
+					const(true),
+					const(if (mobile) 8. else 16.),
+					TRectangle([Fill(0x101010)], TFillXY()),
+					TEmpty()
+				);
+			materialScrollBar =
+				TScrollbarStyle(
+					const(true),
+					const(if (mobile) 6. else 16.),
+					TBorder4(
+						if (mobile) 2. else 4.,
+						TCreate(\ -> {
+							ins = make(false);
+							dwn = make(false);
+
+							TInteractive(
+								[TMouseInside(ins, false), TMouseDownGhost(dwn)],
+								TAlpha(fif(dwn, const(1.0), fif(ins, const(0.8), const(0.6))), TRoundedFull([Fill(0x888888)], TFillXY()))
+							)
+						})
+					),
+					TEmpty()
+				);
+
+			TScrollBarStyle(visible : Behaviour<bool>, thickness : double, fg : [TGraphicsStyle], bg : [TGraphicsStyle]) -> TScrollbarStyle {
+				TScrollbarStyle(visible, const(thickness), TRectangle(fg, TFillXY()), TRectangle(bg, TFillXY()));
+			};
 
 		TScrollbars(x : TScrollbarStyle, y : TScrollbarStyle);
+
+			TScrollBarsStyle(x : TScrollbarStyle, y : TScrollbarStyle) -> TScrollbars { TScrollbars(x, y); };
+
 		TExpandOnHover(expand : bool);
 
 		TScrollBarTop();
@@ -59,8 +110,6 @@ export {
 		TOnScrolledToBottom(event : () -> void);
 		TOnScrolledToSide(event : () -> void);
 
-		TScrollKeysEnabled(enabled : Transform<bool>);
-		TKeyFilter(fn : (key : KeyEvent) -> bool);
 		TScrollFadeContent(color : int, width : double);
 
 		TScrollMouseEnabled(enabled : Transform<bool>);
@@ -830,7 +879,7 @@ createTScrollBars(
 	tr : Tropic) -> Tropic {
 
 	// Expand scrollbars when on hover
-	expandOnHover = extractStruct(style, TExpandOnHover(true)).expand;
+	expandOnHover = extractStruct(style, TExpandOnHover(false)).expand;
 	barstyles = extractStruct(style, TScrollbars(materialScrollBar, materialScrollBar));
 	enabled = fand(extractStruct(style, TScrollEnabled(const(true))).enabled, extractStruct(style, TEnabled(const(true))).enabled);
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
@@ -839,7 +888,7 @@ createTScrollBars(
 		down = make(false);
 		point = make(zeroPoint);
 		hover = make(false);
-		barHeight = make(0.);
+		scrollbarLength = make(0.);
 		barGap = make(0.);
 
 		barStyle = if (horizontal) barstyles.x else barstyles.y;
@@ -866,7 +915,7 @@ createTScrollBars(
 			contentSz = fgetValue(contentSize);
 			boxSz = fgetValue(boxSize);
 			scl = fgetValue(scale);
-			height = getValue(barHeight);
+			height = getValue(scrollbarLength);
 			gap = getValue(barGap);
 
 			ncoord = (coord - height / 2.) / scl / (boxSz + gap) * boxSz;
@@ -876,15 +925,21 @@ createTScrollBars(
 		};
 
 		(\ ->
-			TShowLazy(fless(scale, const(1.)), \ -> {
+			TShowLazy(fand(fless(scale, const(1.)), barStyle.visible), \ -> {
 				translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
 					scl = fgetValue(scale);
 					coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
 				});
 
-				makeBox = \size : Transform<double> -> if (horizontal) TSizedWidthHeight(size, zero) else TSizedWidthHeight(zero, size);
+				thickness =
+					if (mobile || !expandOnHover)
+						barStyle.thickness
+					else
+						fmultiply(barStyle.thickness, fif(fOr(hover, down0), const(2.0), const(1.0)));
 
-				TAvailable(barStyle.bar, makeBox(barHeight))
+				makeScrollbarBox = \size : Transform<double> -> if (horizontal) TSizedWidthHeight(size, thickness) else TSizedWidthHeight(thickness, size);
+
+				TAvailable(barStyle.bar, makeScrollbarBox(scrollbarLength))
 				|> (\t ->
 					if (mobile)
 						t
@@ -894,12 +949,12 @@ createTScrollBars(
 				|> (\t -> TTranslate(translatePoint, t))
 				|> (\t ->
 					TGroup2(
-						TAvailable(barStyle.background, makeBox(boxSize))
+						TAvailable(barStyle.background, makeScrollbarBox(boxSize))
 						|> (\f -> TCursor(ArrowCursor(), f)),
 						t
 					)
 				)
-				|> (\t -> TCropSize(makeBox(boxSize), t))
+				|> (\t -> TCropSize(makeScrollbarBox(boxSize), t))
 				|> (\t ->
 					TConstruct(
 						[
@@ -908,31 +963,12 @@ createTScrollBars(
 									nextDistinct(barVisible, scl < 1.);
 									minBSize = min(24., boxSz / 2.);
 									bSize0 = boxSz * scl;
-									nextDistinct(barHeight, max(bSize0, minBSize));
+									nextDistinct(scrollbarLength, max(bSize0, minBSize));
 									nextDistinct(barGap, min(bSize0 - minBSize, 0.));
 								})
 						],
 						t
 					)
-				)
-				|> (\t ->
-					if (mobile || !expandOnHover)
-						t
-					else
-						TScale(
-							fselect(fOr(hover, down0), FLift(\h ->
-								if (h) {
-									if (horizontal) {
-										Factor(1., 2.)
-									} else {
-										Factor(2., 1.);
-									}
-								} else {
-									Factor(1., 1.);
-								}
-							)),
-							t
-						)
 				)
 			}
 		))
@@ -962,14 +998,14 @@ createTScrollBars(
 									updateScrollPosition(point2coord(getValue(point0)) + ^pointDelta)
 								} else {
 									nextDistinct(currentInteractive, None());
-									nextDistinct(point, coord2point(getValue(barHeight) / 2.));
+									nextDistinct(point, coord2point(getValue(scrollbarLength) / 2.));
 									deferred(\ -> next(hover, true));
 								}
 							}),
 							makeSubscribe2(down, \d ->
 								pointDelta :=
 									if (d)
-										getValue(barHeight) / 2. - point2coord(getValue(point))
+										getValue(scrollbarLength) / 2. - point2coord(getValue(point))
 									else
 										0.
 							)
