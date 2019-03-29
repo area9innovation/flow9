@@ -6,7 +6,7 @@ import sys/keycodes;
 export {
 	TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyle]) -> Tropic;
 
-	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TShowScrollbars,
+	TScrollStyle ::= TScrollSetPosition, TScrollBound, TScrollInspectVisible, TScrollEnabled, TScrollDontHandle, TScrollPersistent,
 		TScrollDisableMouseWheel, TReverseMouseWheel, TScrollDisableOutOfBounds, TScrollKeysEnabled, TScrollbarsVisible,
 		TScrollbars, TExpandOnHover, TScrollBarTop, TScrollBarLeft, TScrollCropByContent, TScrollOutOfBounds, TScrollWidthHeight, TEnabled,
 		TOnScrolledToBottom, TOnScrolledToSide, TScrollKeysEnabled, TKeyFilter, TScrollFadeContent, TScrollMouseEnabled, TScrollPosition,
@@ -21,24 +21,29 @@ export {
 		TScrollBound(x : Transform<bool>, y : Transform<bool>);
 
 		// Provide insight into what is currently visible.
-  		TScrollInspectVisible(topleft : DynamicBehaviour<Point>, widthHeight : DynamicBehaviour<WidthHeight>);
+		TScrollInspectVisible(topleft : DynamicBehaviour<Point>, widthHeight : DynamicBehaviour<WidthHeight>);
 
-  		TScrollEnabled(enabled : Transform<bool>);
+		TScrollEnabled(enabled : Transform<bool>);
 
-  		// Do not handle the mouse events, so they are also sent to stuff below
-  		TScrollDontHandle();
+		// Do not handle the mouse events, so they are also sent to stuff below
+		TScrollDontHandle();
 
-  		// Disables Mouse Wheel
-  		TScrollDisableMouseWheel();
-  		TReverseMouseWheel();
+		// Disables Mouse Wheel
+		TScrollDisableMouseWheel();
+		TReverseMouseWheel();
 
 		TScrollDisableOutOfBounds(disable : Transform<bool>);
 		TScrollKeysEnabled(enabled : Transform<bool>);
 		TKeyFilter(fn : (key : KeyEvent) -> bool);
 		TScrollbarsVisible(x : DynamicBehaviour<bool>, y : DynamicBehaviour<bool>);
 
-  		// true - show scrolls everywhere, false - hide srolls on mobile;
-  		TShowScrollbars(showOnMobile : bool);
+		// If false - hides scrollbars if no scroll is happening
+		// true by default
+		TScrollPersistent(persistent : Transform<bool>);
+
+			TShowScrollbars(show : bool) -> TScrollPersistent { TScrollPersistent(const(!mobile || show)); };
+
+		TScrollbars(x : TScrollbarStyle, y : TScrollbarStyle);
 
 			TScrollbarStyle(visible : Transform<bool>, thickness : Transform<double>, bar : Tropic, background : Tropic);
 
@@ -46,7 +51,10 @@ export {
 				TScrollbarStyle(
 					const(true),
 					const(if (mobile) 8. else 16.),
-					TRectangle([Fill(0xeeeeee)], TFillXY()),
+					TBorder4(
+						2.,
+						TRounded4(2., [Fill(0xeeeeee)], TFillXY())
+					),
 					TRectangle([Fill(0x888888)], TFillXY())
 				);
 			invisibleScrollBar =
@@ -73,7 +81,7 @@ export {
 			materialScrollBar =
 				TScrollbarStyle(
 					const(true),
-					const(if (mobile) 6. else 16.),
+					const(if (mobile) 8. else 16.),
 					TBorder4(
 						if (mobile) 2. else 4.,
 						TCreate(\ -> {
@@ -92,8 +100,6 @@ export {
 			TScrollBarStyle(visible : Behaviour<bool>, thickness : double, fg : [TGraphicsStyle], bg : [TGraphicsStyle]) -> TScrollbarStyle {
 				TScrollbarStyle(visible, const(thickness), TRectangle(fg, TFillXY()), TRectangle(bg, TFillXY()));
 			};
-
-		TScrollbars(x : TScrollbarStyle, y : TScrollbarStyle);
 
 			TScrollBarsStyle(x : TScrollbarStyle, y : TScrollbarStyle) -> TScrollbars { TScrollbars(x, y); };
 
@@ -428,11 +434,11 @@ TScroll(manager : TManager, content : Tropic, box : Tropic, style : [TScrollStyl
 						contentWH,
 						boxWH,
 						scrollPosition,
-						xMoving,
-						yMoving,
 						currentInteractive,
 						downXBar,
 						downYBar,
+						xMoving,
+						yMoving,
 						TRectangle(interactiveRectangleStyle, TSized(boxWH))
 					)
 				)
@@ -773,8 +779,10 @@ TScrollHandlePosition(scrollId : int, manager : TManager, style : [TScrollStyle]
 				TMouseWheelInteractive(
 					manager,
 					tr,
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, true),
-					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, false)
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+						deltaTimer, reverseWheel, speedX, speedY,xMoving, yMoving, true),
+					TScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos,
+						deltaTimer, reverseWheel, speedX, speedY, xMoving, yMoving, false)
 				)
 			])
 	)
@@ -803,6 +811,8 @@ TScrollMouseWheelCallback(
 	reverseWheel : bool,
 	speedX : ref [double],
 	speedY : ref [double],
+	xMoving : DynamicBehaviour<bool>,
+	yMoving : DynamicBehaviour<bool>,
 	horizontal : bool
 ) -> (double) -> bool {
 	uns = initUnsM();
@@ -848,11 +858,13 @@ TScrollMouseWheelCallback(
 					makeSubscribe2(easing.percent, \p -> updateScrollPosition(lerp(spV, newV, p)))(),
 					easing.stop,
 					\ -> updateScrollPosition(newV),
-					interruptibleTimer(floor(easingTransitionDuration * 1000.0), \ -> dispUnsM(uns))
+					interruptibleTimer(floor(easingTransitionDuration * 1000.0), \ -> dispUnsM(uns)),
+					\ -> next(if (horizontal) xMoving else yMoving, false)
 				]
 				|> (\u -> \ -> applyall(u))
 			);
 
+			next(if (horizontal) xMoving else yMoving, true);
 			easing.start();
 
 			true
@@ -871,18 +883,19 @@ createTScrollBars(
 	contentWH : Transform<WidthHeight>,
 	boxWH : Transform<WidthHeight>,
 	scrollPosition : DynamicBehaviour<Point>,
-	xMoving: DynamicBehaviour<bool>,
-	yMoving : DynamicBehaviour<bool>,
 	currentInteractive : DynamicBehaviour<Maybe<bool>>,
 	downXBar : DynamicBehaviour<bool>,
 	downYBar : DynamicBehaviour<bool>,
-	tr : Tropic) -> Tropic {
-
+	xMoving : DynamicBehaviour<bool>,
+	yMoving : DynamicBehaviour<bool>,
+	tr : Tropic
+) -> Tropic {
 	// Expand scrollbars when on hover
 	expandOnHover = extractStruct(style, TExpandOnHover(false)).expand;
-	barstyles = extractStruct(style, TScrollbars(materialScrollBar, materialScrollBar));
+	barstyles = extractStruct(style, TScrollbars(standardScrollBar, standardScrollBar));
 	enabled = fand(extractStruct(style, TScrollEnabled(const(true))).enabled, extractStruct(style, TEnabled(const(true))).enabled);
 	scrollBarsVisible = extractStruct(style, TScrollbarsVisible(make(false), make(false)));
+	scrollPersistent = extractStruct(style, TScrollPersistent(const(false))).persistent;
 
 	makeScrollBar =	\horizontal : bool -> {
 		down = make(false);
@@ -894,7 +907,6 @@ createTScrollBars(
 		barStyle = if (horizontal) barstyles.x else barstyles.y;
 		barVisible = if (horizontal) scrollBarsVisible.x else scrollBarsVisible.y;
 		down0 = if (horizontal) downXBar else downYBar;
-		moving = if (horizontal) xMoving else yMoving;
 
 		checkAlign =
 			if (horizontal)
@@ -937,7 +949,7 @@ createTScrollBars(
 					else
 						fmultiply(barStyle.thickness, fif(fOr(hover, down0), const(2.0), const(1.0)));
 
-				makeScrollbarBox = \size : Transform<double> -> if (horizontal) TSizedWidthHeight(size, thickness) else TSizedWidthHeight(thickness, size);
+				makeScrollbarBox = \size -> if (horizontal) TSizedWidthHeight(size, thickness) else TSizedWidthHeight(thickness, size);
 
 				TAvailable(barStyle.bar, makeScrollbarBox(scrollbarLength))
 				|> (\t ->
@@ -973,9 +985,9 @@ createTScrollBars(
 			}
 		))
 		|> (\makeBar ->
-			if (mobile)
-				TShowLazy(moving, makeBar)
-			else {
+			if (mobile) {
+				makeBar();
+			} else {
 				point0 = make(zeroPoint);
 				pointDelta = ref 0.;
 
@@ -1018,6 +1030,16 @@ createTScrollBars(
 		)
 		|> checkAlign
 		|> (\f2 -> TAvailable(f2, tr))
+		|> (\f2 ->
+			TFadeInOut(
+				manager,
+				fselectdelay(
+					fOr(fOr(hover, fIsSome(currentInteractive)), fOr(scrollPersistent, fOr(xMoving, yMoving))),
+					\m -> Pair(if (m) 0 else 300, m)
+				),
+				f2
+			)
+		)
 	};
 
 	TGroupWithoutMetrics([
@@ -1132,4 +1154,30 @@ TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -
 			)
 		)
 	}
+}
+
+TFadeInOut(manager : TManager, fadeIn : Transform<bool>, content : Tropic) -> Tropic {
+	TCreate(\ -> {
+		alpha = make(0.0);
+
+		TConstruct(
+			[
+				makeSubscribeUns(fadeIn, \fi -> {
+					if (equalDoubles(b2d(fi), getValue(alpha))) {
+						[]
+					} else {
+						e = makeTEasing(
+							if (fi) easingEnteringDuration else easingTransitionDuration,
+							if (fi) easingDecelerationCurve else easingAccelerationCurve,
+							manager.deltaTimer
+						);
+						e.start();
+
+						[fconnect(flerp(getValue(alpha), b2d(fi), e.percent), alpha)]
+					}
+				})
+			],
+			TAlpha(alpha, content)
+		)
+	})
 }
