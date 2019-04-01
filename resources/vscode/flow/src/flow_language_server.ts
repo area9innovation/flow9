@@ -150,7 +150,7 @@ function extractEntities(compilerResult): CompilerEntity[]  {
 }
 
 function entitiesToLocations(results: CompilerEntity[]): Location[] {
-	if (results.length > 0) {
+	if (results && results.length > 0) {
 		return results.map(r => Location.create(Uri.file(r.file).toString(), 
 			Range.create(r.line, r.column, r.line, r.column + r.entity.length))
 		);
@@ -193,6 +193,8 @@ function convertSymbol(ent: CompilerEntity, exportHash : {}): DocumentSymbol | u
 }
 
 function entitiesToSymbols(entities: CompilerEntity[]): DocumentSymbol[] {
+	if (!entities)
+		return [];
 	// sort to make sure exports are first
 	const sorted = entities.sort((a, b) => (a.entity == b.entity) ? 0 : (a.entity < b.entity ? -1 : 1));
 	const hash = sorted.reduce((acc, ent) => {
