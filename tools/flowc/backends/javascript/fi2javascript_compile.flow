@@ -51,7 +51,8 @@ export {
 		ctx  : FiJsToplevelContext,
 		arg1 : Pair<string, FiType>,
 		op : string,
-		arg2 : Pair<string, FiType>) -> string;
+		arg2 : Pair<string, FiType>,
+		needPars : bool) -> string;
 
 }
 
@@ -131,7 +132,7 @@ fiJsCompileToplevel(cfg : FiJsConfig, ctx : FiJsToplevelContext, decl : FiDeclar
 					if (isNoOtc) {
 						"function " + id1 + "(" + fparams + "){" + finl(cfg) +
 						// TAIL_CALL: changed to T:
-						"T:" + ctx.indent2 + "while (true){" + finl(cfg) +
+						"T:" + ctx.indent2 + "while(true){" + finl(cfg) +
 						(if (cfg.jsmode != STANDARD_JS) ctx.indent2 else "") + body + "}" + finl(cfg);
 
 					} else {
@@ -236,11 +237,14 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 		// TODO: Not declared
 		// FcForeign(a,b,c): fail0("FbForeign not supported");
 		FiVoid(__): "null";
-		FiBool(b, __): if (b) "true" else "false";
+		FiBool(b, __): if (cfg.debug) (if (b) "true" else "false") else (if (b) "t" else "f");
 
 		FiInt(v, __): {
 			// TODO: restore hex numbers
-			i2s(v)
+			if (v < 10000)
+				i2s(v)
+			else
+				"0x" + formatHex(v);
 
 			/*
 			// Simple heuristic:
@@ -392,10 +396,12 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 			isIf = length(cs) == 2;
 			rdbl = cfg.readable;
 			es6 = cfg.jsmode == STANDARD_ES6 || cfg.jsmode == NODEJS_MODE || cfg.jsmode == NWJS_MODE;
-			aVar = "("+fiJsCompileToExpr(cfg, ctx, e0, indent, false, false)+")." + (if (rdbl) "_name" else "_id");
+			switchexp0 = fiJsCompileToExpr(cfg, ctx, e0, indent, false, false);
+			switchexp = if (strIndexOf(switchexp0, ".") != -1) "(" + switchexp0 + ")" else switchexp0;
+			aVar = switchexp + "." + (if (rdbl) "_name" else "_id");
 
 			fnbraces = if (es6) "()=>" else "function()";
-			header = "(" + fnbraces + "{var $$ss;switch(" + aVar + "){" + finl(cfg) + indent;
+			header = "(" + fnbraces + "{var s$;switch(" + aVar + "){" + finl(cfg) + indent;
 			subindent = indent+ctx.indent2;
 			ifText = if (isIf) {
 					// This variable intended for corner cases, when default branch of switch
@@ -404,9 +410,9 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 					// branch as condition source.
 					isFirstBranchDefault = cs[0].struct == "default";
 					ifSelector = fiGetItemId(ctx, cs[if (isFirstBranchDefault) 1 else 0], rdbl);
-					trueBody = "$$ss=" + fiJsCompileToExpr(cfg, ctx, cs[0].body, indent+ctx.indent4, false, false);
-					falseBody = "$$ss=" + fiJsCompileToExpr(cfg, ctx, cs[1].body, indent+ctx.indent4, false, false);
-					"(" + fnbraces + "{var $$ss;if(" + aVar + (if (isFirstBranchDefault) "!=" else "==") + ifSelector + "){" + trueBody + "}else{" + falseBody;
+					trueBody = "s$=" + fiJsCompileToExpr(cfg, ctx, cs[0].body, indent+ctx.indent4, false, false);
+					falseBody = "s$=" + fiJsCompileToExpr(cfg, ctx, cs[1].body, indent+ctx.indent4, false, false);
+					"(" + fnbraces + "{var s$;if(" + aVar + (if (isFirstBranchDefault) "!=" else "==") + ifSelector + "){" + trueBody + "}else{" + falseBody;
 				} else "";
 			innerIf = Cons(ifText, EmptyList());
 			inner = if (isIf)
@@ -420,10 +426,10 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 							};
 						body = fiJsCompileToExpr(cfg, ctx, item.body, indent+ctx.indent4, false, false);
 						// TODO: If the body ends in a "return", we do not need this "break;" here
-						Cons(";break;}"+ finl(cfg)+indent, Cons(body, Cons(choice+":{$$ss=", acc)));
+						Cons(";break;}"+ finl(cfg)+indent, Cons(body, Cons(choice+":{s$=", acc)));
 					});
 
-			list2string(Cons("}return $$ss;}" + (if (es6) ")()" else "())"), inner));
+			list2string(Cons("}return s$;}" + (if (es6) ")()" else "())"), inner));
 		}
 
 		FiCast(e0, tFrom, tTo, __, __): {
@@ -459,12 +465,12 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 				FcOrPrim():	   pars(args[0].first + "||" + args[1].first);
 				FcAndPrim():   pars(args[0].first + "&&" + args[1].first);
 				FcNotPrim():   pars("!" + args[0].first);
-				FcEqPrim():    fiJsCompileCompare(cfg, ctx, args[0], "==", args[1]);
-				FcNePrim():    fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1]);
-				FcLePrim():    fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1]);
-				FcGePrim():    fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1]);
-				FcLtPrim():    fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1]);
-				FcGtPrim():    fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1]);
+				FcEqPrim():    fiJsCompileCompare(cfg, ctx, args[0], "==", args[1], false);
+				FcNePrim():    fiJsCompileCompare(cfg, ctx, args[0], "!=", args[1], false);
+				FcLePrim():    fiJsCompileCompare(cfg, ctx, args[0], "<=",  args[1], false);
+				FcGePrim():    fiJsCompileCompare(cfg, ctx, args[0], ">=",  args[1], false);
+				FcLtPrim():    fiJsCompileCompare(cfg, ctx, args[0], "<",   args[1], false);
+				FcGtPrim():    fiJsCompileCompare(cfg, ctx, args[0], ">",   args[1], false);
 				FcPlusPrim():  fiJsCompileMath(cfg, ctx, args[0], "+", args[1]);
 				FcMinusPrim(): fiJsCompileMath(cfg, ctx, args[0], "-", args[1]);
 				FcMulPrim():   fiJsCompileMath(cfg, ctx, args[0], "*", args[1]);
@@ -516,11 +522,11 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 						if (length(sinfo.struct.args) == 0) {
 							"st_" + if (cfg.readable) sinfo.struct.name else i2s(sinfo.id)
 						} else {
-							pars(foldi(map(args, \e->e.first), "new C" + i2s(sinfo.id) + "_(", \idx, acc, arg -> {
+							foldi(map(args, \e->e.first), "new c$" + formatId(sinfo.id) + "(", \idx, acc, arg -> {
 							n = sinfo.struct.args[idx].name;
 							fld = lookupTreeDef(ctx.ovl.fieldRenamings, n, n);
 							acc + (if (idx == 0) "" else ",") + /*fld + ":" + */ arg
-						}) + ")");}
+						}) + ")";}
 					}
 					None():
 					fail0("unknown struct " + structname);
@@ -532,14 +538,12 @@ fiJsCompileToExpr(cfg : FiJsConfig, ctx : FiJsToplevelContext, expr : FiExp, ind
 					else
 						"(HaxeRuntime._structnames_.get(" + args[0].first + "._id))";
 				} else {
-					pars(
 						// TODO: TS processing
 						//(if (params.tsProcess.typeBuffer == "")
 							args[0].first
 						//	else "(<" + params.tsProcess.typeBuffer + ">" + args[0].first + ")")
 						+
-						"." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name)
-					);
+						"." + lookupTreeDef(ctx.ovl.fieldRenamings, name, name);
 				}
 				FcSetMutablePrim(name):
 					pars(args[0].first + ("."+lookupTreeDef(ctx.ovl.fieldRenamings, name, name) + "=") + args[1].first);
@@ -921,9 +925,26 @@ fiJsCompileMath(cfg : FiJsConfig, ctx : FiJsToplevelContext, arg1 : Pair<string,
 }
 
 
-fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>) -> string {
+fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<string, FiType>, op : string, arg2 : Pair<string, FiType>, needPars : bool) -> string {
 	a1 = arg1.first;
 	a2 = arg2.first;
+
+	pars = \s -> if (needPars) "(" + s + ")" else s;
+
+	ep = Pair(-1, "");
+
+	// Extract structure being compared and return pair <id, name> for this struct.
+	singletonData = \t: FiType -> {
+		switch(t) {
+			FiTypeName(name, __) : {
+				switch (lookupTree(ctx.ovl.structs, name)) {
+					Some(info): if (info.struct.args == []) Pair(info.id, name) else ep;
+					None(): ep;
+				}
+			}
+			default: ep;
+		}
+	}
 
 	// Type checker ensures math types are equal, so we only need one type.
 	isSimpleType = switch (arg1.second) {
@@ -934,23 +955,67 @@ fiJsCompileCompare(cfg  : FiJsConfig, ctx  : FiJsToplevelContext, arg1 : Pair<st
 		default        : false;
 	}
 
+	isEmptyArray = (a1 == "[]" || a2 == "[]");
+	isSingleton  = (startsWith(a1, "st_") || startsWith(a2, "st_"));
+
+	cme = \ -> (if (cfg.modules != "") "R." else "") + "CME(" + a1 + "," + a2 + ")";
+	cmp = \ -> "(" + (if (cfg.modules != "") "R." else "") + "CMP(" + a1 + "," + a2 + ")" + op + "0)";
+
+	cma = \aeq ->
+		if (a1 == "[]") {
+			a2 + ".length" + (if (aeq) "===" else "!==") + "0"
+		} else if (a2 == "[]") {
+			a1 + ".length" + (if (aeq) "===" else "!==") + "0"
+		} else {
+			cme()
+		}
+
+	cms = \se -> {
+		s1 = singletonData(arg1.second);
+		s2 = singletonData(arg2.second);
+
+		if (startsWith(a1, "st_") && s1.first > 0) {
+			(if (strIndexOf(a2, ".") != -1) "(" + a2 + ")" else a2) +
+			"." + (if (cfg.readable) "_name" else "_id") + (if (se) "===" else "!==") + (if (cfg.readable) "'" + s1.second + "'" else i2s(s1.first))
+		} else if (startsWith(a2, "st_") && s2.first > 0) {
+			(if (strIndexOf(a1, ".") != -1) "(" + a1 + ")" else a1) +
+			"." + (if (cfg.readable) "_name" else "_id") + (if (se) "===" else "!==") + (if (cfg.readable) "'" + s2.second + "'" else i2s(s2.first))
+		} else {
+			cme();
+		}
+	}
+	/*
+	Comparison on JS side made specific for different situations.
+	- simple types compared directly, either for equality or for order;
+	- compound types compared for equality with separate fast function CME() = HaxeRuntime.compareEqual()
+	- comparison with empty array changed for length check for second argument.
+	- singletones compared by _id (_name with 'readable=1') directly without CME().
+	*/
 	if (op == "==") {
 		if (isSimpleType) {
-			"(" + a1 + "===" + a2 + ")"
+			pars(a1 + "===" + a2)
+		} else if (isEmptyArray) {
+			cma(true);
+		} else if (isSingleton) {
+			cms(true);
 		} else {
-			(if (cfg.modules != "") "R." else "") + "CME(" + a1 + "," + a2 + ")";
+			cme();
 		}
 	} else if (op == "!=") {
 		if (isSimpleType) {
-			"(" + a1 + "!==" + a2 + ")"
+			pars(a1 + "!==" + a2)
+		} else if (isEmptyArray) {
+			cma(false);
+		} else if (isSingleton) {
+			cms(false);
 		} else {
-			"(!" + (if (cfg.modules != "") "R." else "") + "CME(" + a1 + "," + a2 + "))";
+			pars("!" + cme());
 		}
 	} else {
 		if (isSimpleType) {
-			"(" + a1 + op + a2 + ")"
+			pars(a1 + op + a2)
 		} else {
-			"(" + (if (cfg.modules != "") "R." else "") + "CMP(" + a1 + "," + a2 + ")" + op + "0)";
+			cmp();
 		}
 	}
 

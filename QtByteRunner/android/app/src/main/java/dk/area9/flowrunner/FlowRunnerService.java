@@ -11,6 +11,7 @@ import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.os.Binder;
 import android.os.IBinder;
+import android.support.annotation.NonNull;
 import android.util.Log;
 
 // This Service should be in running state all the time
@@ -21,6 +22,7 @@ public class FlowRunnerService extends Service {
     private final IBinder mBinder = new FlowRunnerServiceBinder();
     
     public class FlowRunnerServiceBinder extends Binder {
+        @NonNull
         FlowRunnerService getService() {
             // Return this instance of FlowRunnerService so clients can call public methods
             return FlowRunnerService.this;
@@ -56,7 +58,7 @@ public class FlowRunnerService extends Service {
         cancelLocalNotification(this, notificationId, removeFromNotificationManager);
     }
     
-    public static void cancelLocalNotification(Context context, int notificationId, Boolean removeFromNotificationManager) {
+    public static void cancelLocalNotification(@NonNull Context context, int notificationId, Boolean removeFromNotificationManager) {
         FlowLocalNotificationInfo info = FlowNotificationsAPI.getNotificationInfo(context, notificationId, true, null);
         if (info != null) {
             FlowLocalNotificationIntents intents = FlowNotificationsAPI.getNotificationIntents(context, PendingIntent.FLAG_NO_CREATE, info.time, notificationId, info.notificationCallbackArgs, info.notificationTitle, info.notificationText, info.withSound, info.pinned);

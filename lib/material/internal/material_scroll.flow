@@ -4,62 +4,39 @@ import sys/keycodes;
 export {
 	MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
-	makeTScrollInspectVisible() -> TScrollInspectVisible;
 	extractMScrollStyle(style : [flow]) -> [MScrollStyle];
+	extractTScrollStyle(style : [flow]) -> [TScrollStyle];
 }
 
 //TODO: Add arrows to scrollbars
 MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	scrollId = makeTropicTag(manager);
-	// Current scroll offset
-	scrollPosition = make(zeroPoint);
-	cropByContent = contains(m.style, MScrollCropByContent());
-	inspectVisible = tryExtractStruct(m.style, makeTScrollInspectVisible());
-	topLeft = tryExtractStruct(m.style, TTopLeft(make(0.), make(0.)));
-	// Do we restrict dragging "out" of bounds? Setting to false will allow swiping content over of bound.
-	scrollBound = extractStruct(m.style, TScrollBound(true, true)) |> (\scrollBound -> extractStruct(m.style, MScrollBound(const(scrollBound.xbound), const(scrollBound.ybound))));
-	scrollOutOfBounds = tryExtractStruct(m.style, MScrollOutOfBounds(make(0.), make(0.)));
-	enabled = extractStruct(m.style, TScrollEnabled(const(true))).enabled;
-	wh = extractStruct(m.style, MScrollWidthHeight(makeWH(), makeWH()));
-	// Pass clicks to lower elements
-	scrollHandle = !contains(m.style, TScrollDontHandle());
-	currentInteractive = extractStruct(m.style, MCurrentInteractive(make(None()))).current;
-	mouseEnabled = extractStruct(m.style, MScrollMouseEnabled(const(true))).enabled;
 	scrollToFocusEnabled = extractStruct(m.style, MScrollToFocusEnabled(const(true))).enabled;
-	scrollBarsVisible = extractStruct(m.style, MScrollbarsVisible(make(false), make(false)));
-	scrollFadeContent = tryExtractStruct(m.style, MScrollFadeContent(0, 0.0));
-
-	onScrolledToBottom = tryExtractStruct(m.style, MOnScrolledToBottom(nop));
-	onScrolledToSide = tryExtractStruct(m.style, MOnScrolledToSide(nop));
-
-	// WidthHeight of content
-	contentWH = wh.content;
-	// WidthHeight of available box
-	boxWH0 = wh.box;
+	currentPoint : TMouseXY = extractStruct(m.style, TMouseXY(makePoint()));
+	scrollPosition : TScrollPosition = extractStruct(m.style, TScrollPosition(makePoint()));
+	moving : TScrollMoving = extractStruct(m.style, TScrollMoving(make(false)));
+	scrollWH : TScrollWidthHeight = extractStruct(m.style, TScrollWidthHeight(makeWH(), makeWH()));
+	persistent : TScrollPersistent = extractStruct(m.style, TScrollPersistent(const(!mobile)));
+	barstyles : TScrollbars = extractStruct(m.style, TScrollbars(materialScrollBar, materialScrollBar));
+	keyFilter : TKeyFilter =
+		tryExtractStruct(m.style, TKeyFilter(\__ -> true))
+		|> (\kf ->
+			extractStruct(
+				m.style,
+				TKeyFilter(\ke -> {
+					eitherMap(kf, \fn -> fn.fn(ke), true) &&
+					((ke.utf == "up" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) ||
+					(ke.utf == "down" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) ||
+					(ke.utf == "left" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) ||
+					(ke.utf == "right" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)))
+				})
+			)
+		);
 
 	// Maximum scroll offset (0 if content fits available box)
-	maxWH = fwhmax(fwhsubtract(contentWH, boxWH0), const(WidthHeight(0., 0.)));
-
-	// Is moving by axis
-	xMoving = make(false);
-	yMoving = make(false);
-	currentPoint = make(zeroPoint);
-	// Is mouse down and scroll is moving
-	moving = make(false);
-
-	// Mouse down of the bars
-	downXBar = make(false);
-	downYBar = make(false);
-
-	showScrolling =
-		fthrottleNextFrame(fselect2(contentWH, boxWH0, FLift2(\cwh, bwh ->
-			cwh.height > 0. && cwh.width > 0. && (dfloor(cwh.height) > bwh.height || dfloor(cwh.width) > bwh.width)
-		)));
+	maxWH = fwhmax(fwhsubtract(scrollWH.content, scrollWH.box), const(WidthHeight(0., 0.)));
 
 	uns = initUnsM();
-
 	subscribedToCurrent = ref false;
-
 	scrollToFocusBorder = 8.;
 
 	scrollContent = \newParent ->
@@ -74,8 +51,8 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 							uns,
 							makeSubscribe(fthrottle(getCurrentFocusedItemBehaviour(manager), 33), \currentMFocusM ->
 								maybeApply(currentMFocusM, \currentMFocus -> {
-									sp = getValue(scrollPosition);
-									bwh = getValue(boxWH0);
+									sp = getValue(scrollPosition.position);
+									bwh = getValue(scrollWH.box);
 									pos = newParent.position();
 									sfp = PositionScale2Point(pos);
 
@@ -86,18 +63,42 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 									realPosY = newScrollPosition.y - sfp.y;
 
 									nextDistinct(
-										scrollPosition,
+										scrollPosition.position,
 										Point(
 											if (realPosX < 0.)
-												max(min(sp.x + realPosX - scrollToFocusBorder, fgetValue(maxWH).width), 0.)
+												max(
+													min(
+														sp.x + realPosX - scrollToFocusBorder,
+														fgetValue(maxWH).width
+													),
+													0.
+												)
 											else if (realPosX + focusWH.width > bwh.width)
-												max(min(sp.x + realPosX + min(focusWH.width - bwh.width + scrollToFocusBorder, -scrollToFocusBorder), fgetValue(maxWH).width), 0.)
+												max(
+													min(
+														sp.x + realPosX + min(focusWH.width - bwh.width + scrollToFocusBorder, -scrollToFocusBorder),
+														fgetValue(maxWH).width
+													),
+													0.
+												)
 											else
 												sp.x,
 											if (realPosY < 0.)
-												max(min(sp.y + realPosY - scrollToFocusBorder, fgetValue(maxWH).height), 0.)
+												max(
+													min(
+														sp.y + realPosY - scrollToFocusBorder,
+														fgetValue(maxWH).height
+													),
+													0.
+												)
 											else if (realPosY + focusWH.height > bwh.height)
-												max(min(sp.y + realPosY + min(focusWH.height - bwh.height + scrollToFocusBorder, -scrollToFocusBorder), fgetValue(maxWH).height), 0.)
+												max(
+													min(
+														sp.y + realPosY + min(focusWH.height - bwh.height + scrollToFocusBorder, -scrollToFocusBorder),
+														fgetValue(maxWH).height
+													),
+													0.
+												)
 											else
 												sp.y,
 										)
@@ -116,863 +117,38 @@ MScroll2T(manager : MaterialManager, parent : MFocusGroup, m : MScroll, m2t : (M
 			m2t(m.content, newParent)
 		);
 
-	TransformTAcc2(\t2a -> {
-		boxWH =
-			if (cropByContent)
-				fwhmin(boxWH0, contentWH)
-			else
-				boxWH0;
-
-		b = TAttachBox(m2t(m.box, parent), boxWH0) |> t2a;
-
-		cAcc = ref zeroTAcc;
-		c0 = \newParent -> {
-			cont = 
-				TAvailableWidthHeight(
-					TAttachBox(scrollContent(newParent), contentWH),
-					b.metrics.width,
-					b.metrics.height
-				);
-
-			if (cropByContent)
-				TransformTAcc2(\t2a2 -> {
-					cAcc := cont |> t2a2;
-					^cAcc;
-				})
-			else
-				cont
-		}
-
-		c =
-			TGroupWithoutMetrics([
-				TShowLazy(
-					fand(showScrolling, enabled),
-					\ -> MScrollHandling2T(scrollId, manager, m.style, getLightBackground(parent), contentWH, boxWH, scrollPosition, maxWH,
-						currentPoint, xMoving, yMoving, inspectVisible, scrollBound, moving, currentInteractive, downXBar, downYBar,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH)))
-				),
-				TConstruct(
-					[
-						make3SubscribeTrigger(fnot(showScrolling), maxWH, scrollBound.x, scrollBound.y, \mwh, by, bx ->
-							nextDistinct(scrollPosition, boundScrollPosition(getValue(scrollPosition), mwh, by, bx))
-						)
-					]
-					|> (\f2 ->
-						eitherMap(
-							inspectVisible,
-							\iv ->
-								concat(
-									f2,
-									[
-										\ -> fconnect(scrollPosition, iv.topleft),
-										\ -> fconnect(boxWH, iv.widthHeight)
-									]
-								),
-							f2
-						)
-					)
-					|> (\f2 -> // Support for TTopLeft
-						eitherMap(
-							topLeft,
-							\tl ->
-								arrayPush(
-									f2,
-									makeSubscribe(
-										fpoint(tl.left, tl.top),
-										\p -> nextDistinct(scrollPosition, boundScrollPosition(p, fgetValue(maxWH), fgetValue(scrollBound.x), fgetValue(scrollBound.y)))
-									)
-								),
-							f2
-						)
-					)
-					|> (\f2 ->
-						eitherMap(
-							scrollOutOfBounds,
-							\soob ->
-								arrayPush(
-									f2,
-									make2Subscribe(scrollPosition, maxWH, \sp, mwh -> {
-										nextDistinct(soob.x, if (sp.x < 0.) sp.x else max(sp.x - mwh.width, 0.));
-										nextDistinct(soob.y, if (sp.y < 0.) sp.y else max(sp.y - mwh.height, 0.));
-									})
-								),
-							f2
-						)
-					)
-					|> (\f2 ->
-						arrayPush(
-							f2,
-							makeSubscribe(currentInteractive, \ci -> {
-								eitherFn(
-									ci,
-									\bl -> {
-										if (!bl) {
-											addInteractionItemId(manager, scrollId);
-										} else {
-											blockOtherInteractionItemIds(manager, scrollId);
-										}
-									},
-									\ -> {
-										removeInteractionItemId(manager, scrollId);
-										next(moving, false);
-										nextDistinct(downXBar, false);
-										nextDistinct(downYBar, false);
-									}
-								)
-							})
-						)
-					)
-					|> (\f2 ->
-						eitherMap(
-							tryExtractStruct(m.style, MScrollPosition(make(zeroPoint))),
-							\sp ->
-								arrayPush(
-									f2,
-									\ -> bidirectionalLink(
-										sp.position,
-										scrollPosition,
-										\p -> boundScrollPosition(p, fgetValue(maxWH), fgetValue(scrollBound.x), fgetValue(scrollBound.y)),
-										idfn
-									)
-								),
-							f2
-						)
-					),
-					MComponentGroup2T(
-						manager,
-						parent,
-						extractStruct(m.style, MFocusName("MScroll")).name,
-						concat(
-							extractMComponentGroupState(m.style),
-							[
-								IScriptBehaviour("point", currentPoint, ISInputValue([], serialize(getValue(currentPoint)), true)),
-								IScriptBehaviour("down", moving, ISInputValue([], serialize(getValue(moving)), true)),
-								IScriptBehaviour("position", scrollPosition, ISInputValue([], serialize(getValue(scrollPosition)), true)),
-								AccessRole("scroll")
-							]
-						),
-						\newParent ->
-							c0(newParent)
-							|> (\t -> if (isSome(onScrolledToBottom) || isSome(onScrolledToSide))
-									TransformTAcc2(\t2a2 -> {
-										c1 = t2a2(t);
-										disp =
-											concatA([
-												c1.disposers,
-												eitherMap(
-													onScrolledToBottom,
-													\onBottom ->
-													[
-														makeSubscribe(
-															fselect3(
-																b.metrics.height,
-																c1.metrics.height,
-																scrollPosition,
-																\bH, cH, sPos ->
-																	bH + sPos.y >= cH
-															),
-															\isBottom ->
-																if (isBottom)
-																	onBottom.event()
-														)()
-													],
-													[]
-												),
-												eitherMap(
-													onScrolledToSide,
-													\onSide ->
-													[
-														makeSubscribe(
-															if (getDefaultRtl())
-																fselect(
-																	scrollPosition,
-																	FLift(\sPos ->
-																		sPos.x <= 0.0
-																	)
-																)
-															else
-																fselect3(
-																	b.metrics.width,
-																	c1.metrics.width,
-																	scrollPosition,
-																	\bW, cW, sPos ->
-																		bW + sPos.x >= cW
-																),
-															\isSide ->
-																if (isSide)
-																	onSide.event()
-														)()
-													],
-													[]
-												)
-											]);
-
-										TAcc(c1 with disposers = disp)
-									})
-								else
-									t
-							)
-							|> (\t -> TCrop(scrollPosition, boxWH0, t))
-					)
-				),
-				eitherMap(
-					scrollFadeContent,
-					\sfc -> {
-						gradientPointsStart = [GradientPoint(sfc.color, 0.0, 1.0), GradientPoint(sfc.color, 1.0, 0.0)];
-						gradientPointsEnd = [GradientPoint(sfc.color, 0.0, 0.0), GradientPoint(sfc.color, 1.0, 1.0)];
-
-						makeGradientBorder = \vertical -> {
-							gradientBlock = \offset, gradientPoints -> 
-								TFrame(
-									0.0,
-									0.0,
-									[GradientFill(if (vertical) 90.0 else 0.0, gradientPoints)],
-									if (vertical) TFillXH(sfc.width) else TFillWY(sfc.width)
-								)
-								|> (\t -> TAlpha(fmin(fdivide(offset, const(sfc.width)), const(1.)), t));
-
-							[
-								gradientBlock(
-									if (vertical) fpointY(scrollPosition)
-									else fpointX(scrollPosition),
-									gradientPointsStart
-								),
-								if (vertical) TFillY() else TFillX(),
-								gradientBlock(
-									if (vertical) fsubtract(fheight(maxWH), fpointY(scrollPosition))
-									else fsubtract(fwidth(maxWH), fpointX(scrollPosition)),
-									gradientPointsEnd
-								)
-							]
-							|> if (vertical) TLines else TColsA;
-						}
-						TGroup2(
-							TShowLazy(
-								fgreater(fheight(maxWH), const(0.)),
-								\ -> makeGradientBorder(true)
-							),
-							TShowLazy(
-								fgreater(fwidth(maxWH), const(0.)),
-								\ -> makeGradientBorder(false)
-							)
-						)
-					},
-					TEmpty()
-				)
-				|> (\t -> TAvailable(t, TSized(boxWH))),
-				TInteractive(
-					[
-						MouseDown(\mi -> {
-							if (fgetValue(mouseEnabled) && fgetValue(showScrolling) && fgetValue(enabled) && mi.inside()) {
-								next(currentPoint, Point(mi.x, mi.y));
-								next(moving, true);
-								nextDistinct(currentInteractive, Some(false));
-								scrollHandle && (getValue(xMoving) || getValue(yMoving))
-							} else {
-								false
-							}
-						}),
-						MouseUp(\__ -> { nextDistinct(currentInteractive, None()); false })
-					],
-					TRectangle(interactiveRectangleStyle, TSized(boxWH))
-				),
-				TShowLazy(
-					showScrolling,
-					\ -> MScrollBars2T(
-						manager,
-						scrollId,
-						eitherMap(scrollFadeContent, \__ -> replaceStruct(m.style, scrollBarsVisible), m.style),
-						contentWH,
-						boxWH,
-						scrollPosition,
-						xMoving,
-						yMoving,
-						currentInteractive,
-						downXBar,
-						downYBar,
-						TRectangle(interactiveRectangleStyle, TSized(boxWH))
-					)
-				)
-			])
-			|> t2a;
-
-		if (cropByContent)
-			TAcc(
-				c.form,
-				minMetrics(b.metrics, ^cAcc.metrics),
-				fmin(b.minWidth, ^cAcc.minWidth),
-				fmin(b.minHeight, ^cAcc.minHeight),
-				b.maxWidth,
-				b.maxHeight,
-				b.xFillers,
-				b.yFillers,
-				const(false),
-				false,
-				false,
-				concat(b.disposers, c.disposers)
-			)
-		else
-			TAcc(
-				c.form,
-				b.metrics,
-				b.minWidth,
-				b.minHeight,
-				b.maxWidth,
-				b.maxHeight,
-				b.xFillers,
-				b.yFillers,
-				b.addFillers,
-				b.xConstant,
-				b.yConstant,
-				concat(b.disposers, c.disposers)
-			)
-	})
-}
-
-MScrollHandling2T(scrollId : int, manager : MaterialManager, style : [MScrollStyle], lightBackground : bool, contentWH : Transform<WidthHeight>,
-	boxWH : Transform<WidthHeight>, scrollPosition : DynamicBehaviour<Point>, maxWH : Transform<WidthHeight>, currentPoint : DynamicBehaviour<Point>,
-	xMoving: DynamicBehaviour<bool>, yMoving : DynamicBehaviour<bool>, inspectVisible : Maybe<TScrollInspectVisible>, scrollBound : MScrollBound,
-	moving : DynamicBehaviour<bool>, currentInteractive : DynamicBehaviour<Maybe<bool>>, downXBar : DynamicBehaviour<bool>, downYBar : DynamicBehaviour<bool>,
-	tr : Tropic) -> Tropic {
-	// Disable mouse wheel
-	disableWheel = contains(style, TScrollDisableMouseWheel());
-	// Reverse mouse wheel
-	reverseWheel = contains(style, MReverseMouseWheel());
-	disableOutOfBounds = extractStruct(style, MScrollDisableOutOfBounds(ref false)).disable;
-
-	keysEnabled = extractStruct(style, MScrollKeysEnabled(const(false))).enabled;
-
-	// Previous point on mouse down
-	startPoint = ref zeroPoint;
-
-	// last 10 velocities by axis
-	speedX : ref [double] = ref [];
-	speedY : ref [double] = ref [];
-
-	blocked = ref false;
-	frRate = 66;
-	deltaX = make(0.);
-	deltaY = make(0.);
-
-	// Speed of slowing down after mouse is released
-	slowingSpeedX = 1. - 7. / i2d(frRate);
-	slowingSpeedY = 1. - 7. / i2d(frRate);
-	borderSlowingSpeed = 0.3;
-	borderSlowingSpeed2 = borderSlowingSpeed * 33. / i2d(frRate);
-	borderAcceleration = 1. - borderSlowingSpeed2;
-
-	// Looks much smoother with twice the rate of deltaTimer in manager.
-	deltaTimer = manager.manager.deltaTimer;
-
-	uns = initUnsM();
-	draggingUns = initUnsM();
-
-	releasedFn = \p -> {
-		sp = getValue(scrollPosition);
-
-		sx = length(^speedX) |> (\f3 -> if (f3 > 0) dsum(^speedX) / i2d(f3) else 0.);
-		sy = length(^speedY) |> (\f3 -> if (f3 > 0) dsum(^speedY) / i2d(f3) else 0.);
-
-		newX =
-			(if (abs(sx) > 33.) {
-				nx = sp.x + sx * p;
-				speedX := [sx * slowingSpeedX *
-					(if (nx < 0. || nx > fgetValue(maxWH).width) borderSlowingSpeed2 else 1.)];
-				nx
-			} else if (sp.x < 0.) {
-				if (sp.x > -0.5) 0. else sp.x * borderAcceleration
-			} else if (sp.x > fgetValue(maxWH).width) {
-				if (sp.x < fgetValue(maxWH).width + 0.5) fgetValue(maxWH).width else fgetValue(maxWH).width + (sp.x - fgetValue(maxWH).width) * borderAcceleration
-			} else {
-				sp.x
-			})
-			|> (\f -> if (^disableOutOfBounds) min(max(0., f), fgetValue(maxWH).width) else f);
-
-		newY =
-			(if (abs(sy) > 33.) {
-				ny = sp.y + sy * p;
-				speedY := [sy * slowingSpeedY *
-					(if (ny < 0. || ny > fgetValue(maxWH).height) borderSlowingSpeed2 else 1.)];
-				ny
-			} else if (sp.y < 0.) {
-				if (sp.y > -0.5) 0. else sp.y * borderAcceleration
-			} else if (sp.y > fgetValue(maxWH).height) {
-				if (sp.y < fgetValue(maxWH).height + 0.5) fgetValue(maxWH).height else fgetValue(maxWH).height + (sp.y - fgetValue(maxWH).height) * borderAcceleration
-			} else {
-				sp.y
-			})
-			|> (\f -> if (^disableOutOfBounds) min(max(0., f), fgetValue(maxWH).height) else f);
-
-		xMoving0 = newX != sp.x;
-		yMoving0 = newY != sp.y;
-
-		nextDistinct(xMoving, xMoving0);
-		nextDistinct(yMoving, yMoving0);
-
-		nextDistinct(scrollPosition, Point(newX, newY));
-
-		if (!xMoving0 && !yMoving0)
-			dispUnsM(uns);
-	}
-
-	attachNewFn = \fn -> {
-		dispUnsM(uns);
-		deltaTimer.attach();
-
-		setUnsM(
-			uns,
-			subscribe(deltaTimer.timer, fn)
-			|> (\f -> \ -> {f(); deltaTimer.detach();})
-		);
-	}
-
-	movingFn = \p -> {
-		if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId) && getValue(manager.manager.dragging) == -1) {
-			sp = getValue(scrollPosition);
-
-			dx = ^startPoint.x - getValue(currentPoint).x;
-			nx = sp.x + dx;
-
-			dy = ^startPoint.y - getValue(currentPoint).y;
-			ny = sp.y + dy;
-
-			newX =
-				if (fgetValue(scrollBound.x)) {
-					if (fgetValue(maxWH).width == 0. || ^disableOutOfBounds) {
-						min(max(0., nx), fgetValue(maxWH).width)
-					} else if (nx < 0. || nx > fgetValue(maxWH).width) {
-						sp.x + dx * borderSlowingSpeed;
-					} else {
-						nx
-					}
-				} else {
-					nx
-				}
-
-			newY =
-				if (fgetValue(scrollBound.y)) {
-					if (fgetValue(maxWH).height == 0. || ^disableOutOfBounds) {
-						min(max(0., ny), fgetValue(maxWH).height)
-					} else if (ny < 0. || ny > fgetValue(maxWH).height) {
-						sp.y + dy * borderSlowingSpeed;
-					} else {
-						ny
-					}
-				} else {
-					ny
-				}
-
-			xMoving0 = newX != sp.x;
-			yMoving0 = newY != sp.y;
-
-			if (!^blocked && ((xMoving0 && abs(dx) > abs(dy)) || (yMoving0 && abs(dy) > abs(dx)))) {
-				blocked := true;
-
-				nextDistinct(currentInteractive, Some(true))
-			} else {
-				nextDistinct(scrollPosition, Point(newX, newY));
-
-				nextDistinct(xMoving, xMoving0);
-				nextDistinct(yMoving, yMoving0);
-			}
-
-			speedX := pushWithLimit(^speedX, (newX - sp.x) / p, 5);
-			speedY := pushWithLimit(^speedY, (newY - sp.y) / p, 5);
-
-			startPoint := getValue(currentPoint);
-		} else {
-			nextDistinct(currentInteractive, None());
-
-			attachNewFn(releasedFn);
-		}
-	}
-
-	updateContentAndBoxPosition = \content, box -> {
-		nextDistinct(scrollPosition, boundScrollPosition(getValue(scrollPosition), fgetValue(maxWH), fgetValue(scrollBound.x), fgetValue(scrollBound.y)));
-	}
-
-	startMoving = \xy -> {
-		blocked := false;
-		next(currentPoint, xy);
-		startPoint := xy;
-		next(moving, true);
-
-		attachNewFn(movingFn);
-
-		maybeApply(inspectVisible, \iv ->
-			if ((getValue(xMoving) || getValue(yMoving) && {sp = getValue(scrollPosition);
-				((fgetValue(maxWH).height == 0.) || sp.y > 0. && sp.y < fgetValue(maxWH).height) && ((fgetValue(maxWH).width == 0.) || sp.x > 0. && sp.x < fgetValue(maxWH).width)}))
-				next(iv.topleft, getValue(scrollPosition))
-		);
-
-		speedX := [];
-		speedY := [];
-	}
-
-	scrollStep = 20.;
-	changeDirection = \ke -> if (js) ke.shift else ke.alt;
-	inside = make(false);
-	mouseWheelPos = ref None();
-
-	// Interactives for mouse and keyboard handling
-	TInteractive(
-		[
-			TMouseInside(inside, false),
-			KeyDown2(\handled, ke -> {
-				if (fgetValue(keysEnabled) && !handled && !hasKeyboardFocus() && getValue(inside)) {
-					if (ke.utf == "up" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
-						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - scrollStep)));
-						true
-					} else if (ke.utf == "down" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.vertical), true)) {
-						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(sp.x, min(sp.y + scrollStep, fgetValue(maxWH).height)));
-						true
-					} else if (ke.utf == "left" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
-						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(max(0., sp.x - scrollStep), sp.y));
-						true
-					} else if (ke.utf == "right" && eitherMap(getCurrentFocusedItem(manager), \fc -> isNone(fc.parent.horizontal), true)) {
-						sp = getValue(scrollPosition);
-						nextDistinct(scrollPosition, Point(min(sp.x + scrollStep, fgetValue(maxWH).width), sp.y));
-						true
-					} else if (ke.keycode == KEY_PAGEUP) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(max(0., sp.x - fgetValue(boxWH).width), sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, max(0., sp.y - fgetValue(boxWH).height)));
-						true
-					} else if (ke.keycode == KEY_PAGEDOWN) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(min(sp.x + fgetValue(boxWH).width, fgetValue(maxWH).width), sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, min(sp.y + fgetValue(boxWH).height, fgetValue(maxWH).height)));
-						true
-					} else if (ke.keycode == KEY_HOME) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(0., sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, 0.));
-						true
-					} else if (ke.keycode == KEY_END) {
-						sp = getValue(scrollPosition);
-						if (changeDirection(ke))
-							nextDistinct(scrollPosition, Point(fgetValue(maxWH).width, sp.y))
-						else
-							nextDistinct(scrollPosition, Point(sp.x, fgetValue(maxWH).height));
-						true
-					} else {
-						false
-					}
-				} else {
-					false
-				}
-			}),
-			MouseDown2(\h, mi -> {
-				if (getValue(moving) && isCurrentInteractionItemId(manager, scrollId)) {
-					if (mi.inside()) {
-						startMoving(Point(mi.x, mi.y));
-					}
-				}
-				h
-			}),
-			MouseUp2(\__, mi -> {
-				if (getValue(moving)) {
-					nextDistinct(currentInteractive, None());
-
-					attachNewFn(releasedFn);
-				}
-
-				dispUnsM(draggingUns);
-
-				false
-			}),
-			IgnoreHitTest(MouseMove2(\h, mi -> {
-				if (getValue(moving)) {
-					next(currentPoint, mi() |> (\f -> Point(f.x, f.y)));
-				} else if (isSome(getValue(currentInteractive)) && !getValue(downXBar) && !getValue(downYBar)) {
-					startMoving(mi() |> (\f -> Point(f.x, f.y)))
-				} else if (getValue(manager.manager.dragging) != -1) {
-					p = mi() |> (\f -> Point(f.x, f.y));
-
-					updateScrollPositionOnDragging(scrollPosition, boxWH, maxWH, scrollBound, p, draggingUns);
-				}
-
-				h
-			})),
-		],
-		tr
-	)
-	|> (\f2 ->
-		if (disableWheel)
-			f2
-		else
-			TGroupWithoutMetrics([
-				f2,
-				materialMouseWheel(
-					manager,
-					tr,
-					MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, true),
-					MScrollMouseWheelCallback(scrollPosition, scrollBound, maxWH, mouseWheelPos, deltaTimer, reverseWheel, speedX, speedY, false)
-				)
-			])
-	)
-	|> (\f2 ->
-		TConstruct(
+	MComponentGroup2T(
+		manager,
+		parent,
+		extractStruct(m.style, MFocusName("MScroll")).name,
+		concat(
+			extractMComponentGroupState(m.style),
 			[
-				make2Subscribe(contentWH, boxWH, updateContentAndBoxPosition),
-				\ -> \ -> {
-					dispUnsM(uns);
-					dispUnsM(draggingUns);
-
-					updateContentAndBoxPosition(fgetValue(contentWH), fgetValue(boxWH))
-				}
-			],
-			f2
-		)
-	)
-}
-
-MScrollMouseWheelCallback(
-	scrollPosition : DynamicBehaviour<Point>,
-	scrollBound : MScrollBound,
-	maxWH : Transform<WidthHeight>,
-	mousePos : ref Maybe<Point>,
-	deltaTimer : LazyDeltaTimer,
-	reverseWheel : bool,
-	speedX : ref [double],
-	speedY : ref [double],
-	horizontal : bool
-) -> (double) -> bool {
-	uns = initUnsM();
-
-	\d -> {
-		dispUnsM(uns);
-		currentMousePos = Point(getMouseX(getStage()), getMouseY(getStage()));
-
-		speedX := [];
-		speedY := [];
-
-		sp = getValue(scrollPosition);
-		spV = if (horizontal) sp.x else sp.y;
-		bound = fgetValue(if (horizontal) scrollBound.y else scrollBound.x);
-
-		delta = -d * 100. * if (!reverseWheel) 1. else -1.;
-
-		newV =
-			if (bound)
-				min(
-					max(spV + delta, 0.),
-					if (horizontal)
-						fgetValue(maxWH).width
-					else
-						fgetValue(maxWH).height
+				IScriptBehaviour("point", currentPoint.point, ISInputValue([], serialize(getValue(currentPoint.point)), true)),
+				IScriptBehaviour("down", moving.moving, ISInputValue([], serialize(getValue(moving.moving)), true)),
+				IScriptBehaviour("position", scrollPosition.position, ISInputValue([], serialize(getValue(scrollPosition.position)), true)),
+				AccessRole("scroll")
+			]
+		),
+		\newParent ->
+			TScroll(
+				manager.manager,
+				scrollContent(newParent),
+				m2t(m.box, newParent),
+				replaceStructMany(
+					extractTScrollStyle(m.style),
+					[
+						currentPoint,
+						scrollPosition,
+						moving,
+						scrollWH,
+						persistent,
+						barstyles,
+						keyFilter
+					]
 				)
-			else
-				spV + delta;
-
-		updateScrollPosition =
-			if (horizontal)
-				\v -> nextDistinct(scrollPosition, Point(v, getValue(scrollPosition).y))
-			else
-				\v -> nextDistinct(scrollPosition, Point(getValue(scrollPosition).x, v));
-
-		if (newV != spV || eitherMap(^mousePos, \mp -> mp == currentMousePos, false)) {
-			mousePos := Some(currentMousePos);
-			easing = makeMEasing(mTransitionDuration, mStandartCurve, deltaTimer);
-
-			setUnsM(
-				uns,
-				[
-					makeSubscribe2(easing.percent, \p -> updateScrollPosition(lerp(spV, newV, p)))(),
-					easing.stop,
-					\ -> updateScrollPosition(newV),
-					interruptibleTimer(floor(mTransitionDuration * 1000.0), \ -> dispUnsM(uns))
-				]
-				|> (\u -> \ -> applyall(u))
-			);
-
-			easing.start();
-
-			true
-		} else {
-			mousePos := None();
-
-			false
-		}
-	}
-}
-
-MScrollBars2T(
-	manager : MaterialManager,
-	scrollId : int,
-	style : [MScrollStyle],
-	contentWH : Transform<WidthHeight>,
-	boxWH : Transform<WidthHeight>,
-	scrollPosition : DynamicBehaviour<Point>,
-	xMoving: DynamicBehaviour<bool>,
-	yMoving : DynamicBehaviour<bool>,
-	currentInteractive : DynamicBehaviour<Maybe<bool>>,
-	downXBar : DynamicBehaviour<bool>,
-	downYBar : DynamicBehaviour<bool>,
-	tr : Tropic) -> Tropic {
-
-	// Expand scrollbars when on hover
-	expandOnHover = extractStruct(style, MExpandOnHover(true)).expand;
-	barstyles0 = extractStruct(style, getMaterialScrollBar());
-	barstyles = extractStruct(style, MScrollbars(const(barstyles0.horz), const(barstyles0.vert)));
-	enabled = fand(extractStruct(style, TScrollEnabled(const(true))).enabled, extractStruct(style, MEnabled(const(true))).enabled);
-	scrollBarsVisible = extractStruct(style, MScrollbarsVisible(make(false), make(false)));
-
-	makeScrollBar =	\horizontal : bool -> {
-		down = make(false);
-		point = make(zeroPoint);
-		hover = make(false);
-		barHeight = make(0.);
-		barGap = make(0.);
-
-		barStyle = if (horizontal) barstyles.x else barstyles.y;
-		barVisible = if (horizontal) scrollBarsVisible.x else scrollBarsVisible.y;
-		down0 = if (horizontal) downXBar else downYBar;
-		moving = if (horizontal) xMoving else yMoving;
-
-		checkAlign =
-			if (horizontal)
-				\f2 -> if (contains(style, MScrollBarTop())) f2 else TLines2(TFillY(), f2)
-			else
-				\f2 -> if (changeBoolIfRTL(contains(style, MScrollBarLeft()))) f2 else TCols2(TFillX(), f2);
-
-		sizeFn = if (horizontal) fwidth else fheight;
-		coord2point = \c -> if (horizontal) Point(c, 0.) else Point(0., c);
-		point2coord = \p -> if (horizontal) p.x else p.y;
-		updatePoint = \p, c -> if (horizontal) Point(c, p.y) else Point(p.x, c);
-
-		boxSize = sizeFn(boxWH);
-		contentSize = sizeFn(contentWH);
-		scale = fdivide(boxSize, contentSize);
-
-		updateScrollPosition = \coord -> {
-			contentSz = fgetValue(contentSize);
-			boxSz = fgetValue(boxSize);
-			scl = fgetValue(scale);
-			height = getValue(barHeight);
-			gap = getValue(barGap);
-
-			ncoord = (coord - height / 2.) / scl / (boxSz + gap) * boxSz;
-			newCoord = max(0., min(ncoord, contentSz - boxSz));
-
-			nextDistinct(scrollPosition, updatePoint(getValue(scrollPosition), newCoord));
-		};
-
-		(\ ->
-			TShowLazy(fless(scale, const(1.)), \ ->
-				TSelect(barStyle, \bs -> {
-					translatePoint = fselect3(boxSize, scrollPosition, barGap, \boxSz, sp, gap -> {
-						scl = fgetValue(scale);
-						coord2point(if (boxSz > 0.) point2coord(sp) * scl * (boxSz + gap) / boxSz else 0.)
-					});
-
-					thickness =
-						if (mobile || !expandOnHover)
-							const(max(bs.thickness, 0.))
-						else
-							fselect(fOr(hover, down0), FLift(\thick -> bs.thickness * if (thick) 2. else 1.));
-
-					makeBox = \size : Transform<double> -> if (horizontal) TSizedWidthHeight(size, thickness) else TSizedWidthHeight(thickness, size);
-
-					TRectangle(bs.fg, makeBox(barHeight))
-					|> (\t ->
-						if (mobile)
-							t
-						else
-							TCopySize(t, \tr2 -> TInteractive([TMouseXY(point), TMouseDownGhost(down)], tr2), false)
-					)
-					|> (\t -> TTranslate(translatePoint, t))
-					|> (\t ->
-						TGroup2(
-							TRectangle(bs.bg, makeBox(boxSize))
-							|> (\f -> TCursor(ArrowCursor(), f)),
-							t
-						)
-					)
-					|> (\t -> TCropSize(makeBox(boxSize), t))
-					|> (\t -> TConstruct([
-							make2Subscribe(boxSize, contentWH, \boxSz, __ -> {
-								scl = fgetValue(scale);
-								nextDistinct(barVisible, scl < 1.);
-								minBSize = min(24., boxSz / 2.);
-								bSize0 = boxSz * scl;
-								nextDistinct(barHeight, max(bSize0, minBSize));
-								nextDistinct(barGap, min(bSize0 - minBSize, 0.));
-							})
-					], t))
-				})
-		))
-		|> (\makeBar ->
-			if (mobile)
-				TShowLazy(moving, makeBar)
-			else {
-				point0 = make(zeroPoint);
-				pointDelta = ref 0.;
-
-				TIf(enabled,
-					TCopySize(
-						makeBar(),
-						\tr2 -> TInteractive([TMouseDown(down0), TMouseXY(point0), TMouseInside(hover, true)], tr2),
-						false
-					)
-					|> (\f3 -> TConstruct(
-						[
-							makeSubscribe2(point0, \p ->
-								if (isCurrentInteractionItemId(manager, scrollId) && getValue(down0)) {
-									blockOtherInteractionItemIds(manager, scrollId);
-									updateScrollPosition(point2coord(p) + ^pointDelta)
-							}),
-							makeSubscribe2(down0, \d -> {
-								if (d) {
-									nextDistinct(currentInteractive, Some(false));
-									updateScrollPosition(point2coord(getValue(point0)) + ^pointDelta)
-								} else {
-									nextDistinct(currentInteractive, None());
-									nextDistinct(point, coord2point(getValue(barHeight) / 2.));
-									deferred(\ -> next(hover, true));
-								}
-							}),
-							makeSubscribe2(down, \d ->
-								pointDelta :=
-									if (d)
-										getValue(barHeight) / 2. - point2coord(getValue(point))
-									else
-										0.
-							)
-						],
-						f3
-					)),
-					TAlpha(const(0.5), makeBar())
-				)
-			}
-		)
-		|> checkAlign
-		|> (\f2 -> TAvailable(f2, tr))
-	};
-
-	TGroupWithoutMetrics([
-		// x scrollbar
-		makeScrollBar(true),
-		// y scrollbar
-		makeScrollBar(false)
-	])
-	|> (\f -> TDispose([\ -> next(scrollBarsVisible.x, false), \ -> next(scrollBarsVisible.y, false)], f))
-}
-
-makeTScrollInspectVisible() -> TScrollInspectVisible {
-	topleft = make(zeroPoint);
-	widthHeight = makeWH();
-
-	TScrollInspectVisible(topleft, widthHeight);
+			)
+	);
 }
 
 extractMScrollStyle(style : [flow]) -> [MScrollStyle] {
@@ -984,60 +160,11 @@ extractMScrollStyle(style : [flow]) -> [MScrollStyle] {
 	)
 }
 
-boundScrollPosition(scrollPosition : Point, maxWH : WidthHeight, xbound : bool, ybound : bool) -> Point {
-	if (xbound) {
-		if (ybound)
-			Point(
-				min(max(0., scrollPosition.x), maxWH.width),
-				min(max(0., scrollPosition.y), maxWH.height)
-			)
-		else
-			Point(
-				min(max(0., scrollPosition.x), maxWH.width),
-				scrollPosition.y
-			)
-	} else if (ybound) {
-		Point(
-			scrollPosition.x,
-			min(max(0., scrollPosition.y), maxWH.height)
-		)
-	} else {
-		scrollPosition
-	}
-}
-
-updateScrollPositionOnDragging(scrollPosition : DynamicBehaviour<Point>, boxWH : Transform<WidthHeight>, maxWH : Transform<WidthHeight>,
-	scrollBound : MScrollBound, p : Point, disposer : ref Maybe<() -> void>) -> void {
-	dispUnsM(disposer);
-
-	if (p.x > 0.0 && p.x < fgetValue(boxWH).width && p.y > 0.0 && p.y < fgetValue(boxWH).height) {
-		draggingGap = 40.0;
-		draggingDelta = 20.0;
-		draggingTimerDelta = 40;
-
-		goUp = p.y < draggingGap;
-		goDown = p.y > fgetValue(boxWH).height - draggingGap;
-		goLeft = p.x < draggingGap;
-		goRight = p.x > fgetValue(boxWH).width - draggingGap;
-
-		if (goUp || goDown || goLeft || goRight) {
-			nextDistinct(
-				scrollPosition,
-				boundScrollPosition(
-					Point(
-						getValue(scrollPosition).x + if (goLeft) -draggingDelta else if (goRight) draggingDelta else 0.0,
-						getValue(scrollPosition).y + if (goUp) -draggingDelta else if (goDown) draggingDelta else 0.0
-					),
-					fgetValue(maxWH),
-					fgetValue(scrollBound.x),
-					fgetValue(scrollBound.y)
-				)
-			);
-
-			setUnsM(
-				disposer,
-				interruptibleTimer(draggingTimerDelta, \ -> updateScrollPositionOnDragging(scrollPosition, boxWH, maxWH, scrollBound, p, disposer))
-			)
+extractTScrollStyle(style : [flow]) -> [TScrollStyle] {
+	filtermap(style, \st: flow ->
+		switch (st : flow) {
+			TScrollStyle(): {v : Maybe<TScrollStyle> = Some(st); v};
+			default: None();
 		}
-	}
+	)
 }

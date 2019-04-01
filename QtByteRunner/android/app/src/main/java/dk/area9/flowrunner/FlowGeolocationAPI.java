@@ -7,6 +7,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.location.Location;
 import android.provider.Settings;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 
 public class FlowGeolocationAPI {
@@ -23,8 +25,11 @@ public class FlowGeolocationAPI {
     private FlowLocationListener balancedListener;
     private FlowLocationListener highAccuracyListener;
 
+    @Nullable
     private String lastTurnOnGeolocationMessage = null;
+    @Nullable
     private String lastOkButtonText = null;
+    @Nullable
     private String lastCancelButtonText = null;
 
     public FlowGeolocationAPI(Context context, FlowRunnerWrapper wrapper, IFlowGooglePlayServices flowGooglePlayServices, boolean geolocationPermissionGranted) {
@@ -83,7 +88,7 @@ public class FlowGeolocationAPI {
         return !Settings.Secure.getString(context.getContentResolver(), Settings.Secure.LOCATION_PROVIDERS_ALLOWED).equals("");
     }
     
-    public void GeolocationExecuteOnOkCallback(int callbacksRoot, boolean removeAfterCall, Location location) {
+    public void GeolocationExecuteOnOkCallback(int callbacksRoot, boolean removeAfterCall, @NonNull Location location) {
         wrapper.GeolocationExecuteOnOkCallback(callbacksRoot, removeAfterCall, location.getLatitude(), location.getLongitude(),
                 location.getAltitude(), location.getAccuracy(), 0.0, location.getBearing(), location.getSpeed(), location.getTime());
     }

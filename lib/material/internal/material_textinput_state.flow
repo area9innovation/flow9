@@ -14,9 +14,9 @@ export {
 	makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MAutoCompleteStyle],
 		state : [MTextInputState]) -> MTextEditorIScriptBehaviours;
 
-	makeMTextEditorView(manager : MaterialManager, inputState : MInputState) -> Tropic;
+	makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 	makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState],
-		inputState : MInputState) -> Tropic;
+		inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MAutoCompleteStyle]) -> MCompletionFn;
 
@@ -126,7 +126,7 @@ export {
 	MInputErrorState(
 		text : Transform<Maybe<Pair<string, bool>>>,
 		lines : int,
-		height : double,
+		height : (MFocusGroup) -> double,
 		requiredField : bool,
 		color : Transform<MColor>,
 		style : Transform<[MTextStyle]>,
@@ -291,19 +291,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	mTextStyle =
 		extractMTextStyleDef(
 			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody() else MSubheading(), true)
+			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
 		|> (\f : Triple<MColor, MFontStyle, bool> ->
 			[firstOfTriple(f), secondOfTriple(f)]
 			|> (\f2 -> if (thirdOfTriple(f)) f2 else arrayPush(f2, MTextDisabled()))
 		);
 
-	textStyle : [CharacterStyle] = MTextStyle2CharacterStyle(mTextStyle, getLightBackground(parent));
+	textStyle : [CharacterStyle] = MTextStyle2CharacterStyle(parent, mTextStyle);
 
 	mTextStyleDisabled =
 		extractMTextStyleDef(
 			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody() else MSubheading(), false)
+			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), false)
 		)
 		|> (\f : Triple<MColor, MFontStyle, bool> ->
 			[firstOfTriple(f), secondOfTriple(f), MTextDisabled()]
@@ -458,7 +458,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			|> (\f2 -> if (f.third) f2 else arrayPush(f2, MTextDisabled()))
 		);
 
-	labelStyle = MTextStyle2CharacterStyle(mLabelStyle, getLightBackground(parent));
+	labelStyle = MTextStyle2CharacterStyle(parent, mLabelStyle);
 	labelSize = extractStruct(labelStyle, FontSize(12.)).size;
 	labelStyleB = make(labelStyle);
 
@@ -1099,7 +1099,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 					MInputErrorState(
 						ie.text,
 						errorLines,
-						i2d(errorLines) * (MFontStyle2MCustomFont(inputErrorFont, 0.87, 0.54).size + 4.),
+						\p -> i2d(errorLines) * (MFontStyle2MCustomFont(p, inputErrorFont, 0.87, 0.54).size + 4.),
 						contains(ie.style, MRequiredField()),
 						inputErrorColor,
 						fselect(inputErrorColor, FLift(\ec : MColor -> [inputErrorFont, ec])),
@@ -1224,10 +1224,10 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 	scrollStyle =
 		[
-			TScrollBarsStyle(
+			TScrollbars(
 				invisibleScrollBar,
 				if (multiline && linesCount != 0 && linesCount != -1)
-					getMaterialScrollBar().vert
+					getMaterialScrollBar().y
 				else
 					invisibleScrollBar
 			),
@@ -2031,7 +2031,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 	);
 }
 
-makeMTextEditorView(manager : MaterialManager, inputState : MInputState) -> Tropic {
+makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	editorState = makeMTextEditorState(inputState);
 
 	makeInputBox = \en : bool ->
@@ -2135,13 +2135,13 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState) -> Trop
 			TFillXHT(boxHeight),
 			editorState.scrollStyle
 		)
-		|> (\f2 -> MScroll2T(manager, inputState.parent, f2, dummyM2t))
+		|> (\f2 -> MScroll2T(manager, inputState.parent, f2, m2t))
 	})
 	|> (\f -> TConstruct(editorState.subs, f))
 }
 
-makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState) -> Tropic {
-	charStyle = MTextStyle2CharacterStyle(inputState.mTextStyle, true);
+makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	charStyle = MTextStyle2CharacterStyle(parent, inputState.mTextStyle);
 	fontSize = extractStruct(charStyle, FontSize(0.)).size;
 	interlineSpacing = fontSize * 1.2 - getTextSize("M", charStyle).height;
 
@@ -2346,9 +2346,9 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						else
 							TBaseAlignA(TDisplay("MTextInputText")),
 						TGhost("MTextInputSize"),
-						[MScrollbars(invisibleScrollBar |> const, getMaterialScrollBar().vert |> const)]
+						[TScrollbars(invisibleScrollBar, getMaterialScrollBar().y)]
 					),
-					dummyM2t
+					m2t
 				)
 			)
 		)
@@ -2467,7 +2467,7 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 	textStyle : [MTextStyle] =
 		extractMTextStyleDef(
 			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody() else MSubheading(), true)
+			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), true)
 		)
 		|> (\f : Triple<MColor, MFontStyle, bool> ->
 			[firstOfTriple(f), secondOfTriple(f)]
@@ -2494,32 +2494,40 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 
 	lineHeight = dceil((tTextMetrics.height + inputBorders.top + inputBorders.bottom - 3.) / 4.) * 4.;
 
-	MCompletionFn(\com, isSelected, setWordFn -> {
-		focusState = [MOnClick(\ -> setWordFn(com)), MRippleType(const(MRippleFill())), MFocusEnabled(const(false))];
+	MCompletionFn(\com, isSelected, setWordFn ->
+		MGetMaterial2Tropic(\m2t -> {
+			focusState = [MOnClick(\ -> setWordFn(com)), MRippleType(const(MRippleFill())), MFocusEnabled(const(false))];
 
-		face =
-			TLinesA([
-				TFillX(),
-				MEllipsisText2T(manager, parent, MEllipsisText(com.sentence, arrayPush(textStyle, MShowTooltip(const(true)))))
-				|> TCenterY
-			])
-			|> (\f ->
-				TBorderA(
-					inputBorders.start + (if (leftButton && isTextInputInPopup) custLeftButton.inputIndent else 0.) + (if (leftIcon) 72. else 0.),
-					0.,
-					inputBorders.end,
-					0.,
-					f
+			face =
+				TLinesA([
+					TFillX(),
+					MEllipsisText2T(manager, parent, MEllipsisText(com.sentence, arrayPush(textStyle, MShowTooltip(const(true)))), m2t)
+					|> TCenterY
+				])
+				|> (\f ->
+					TBorderA(
+						inputBorders.start + (if (leftButton && isTextInputInPopup) custLeftButton.inputIndent else 0.) + (if (leftIcon) 72. else 0.),
+						0.,
+						inputBorders.end,
+						0.,
+						f
+					)
+				)
+				|> (\f -> TAvailable(f, TFillXH(lineHeight)))
+				|> (\f -> TFixSize(f, TFillXH(lineHeight)));
+
+			MGetFocusGroup(\p ->
+				MComponent2T(
+					manager,
+					p,
+					"CompletionLine",
+					focusState,
+					\focus ->
+						makeTListLine(getLightBackground(p), face, focus, const(isSelected), const(true), [],
+							[MFill(getAccentColor(p)), FillOpacity(0.4)]),
+					m2t
 				)
 			)
-			|> (\f -> TAvailable(f, TFillXH(lineHeight)))
-			|> (\f -> TFixSize(f, TFillXH(lineHeight)));
-
-		MGetFocusGroup(\p ->
-			MComponent2T(manager, p, "CompletionLine", focusState, \focus ->
-				makeTListLine(getLightBackground(p), face, focus, const(isSelected), const(true), [],
-					[MFill(getAccentColor(p)), FillOpacity(0.4)])
-			)
-		)
-	})
+		})
+	)
 }

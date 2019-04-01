@@ -6,6 +6,8 @@ import com.android.vending.billing.IInAppBillingService;
 
 import android.os.IBinder;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.content.Context;
 import android.content.ComponentName;
@@ -21,12 +23,15 @@ public class AndroidStorePurchase {
     
     private FlowRunnerActivity runnerActivity;
     private FlowRunnerWrapper runnerWrapper;
+    @Nullable
     private IInAppBillingService mService = null;
     
     private boolean callRestoreOnInit = false;
     
+    @Nullable
     private ServiceConnection mServiceConnection;
     
+    @NonNull
     private ArrayList<String> awaitPids = new ArrayList<String>();
     
     public AndroidStorePurchase(FlowRunnerActivity activity, FlowRunnerWrapper wrapper) {
@@ -65,7 +70,7 @@ public class AndroidStorePurchase {
         }
     }
     
-    public void loadProductsInfo(ArrayList<String> pids) {
+    public void loadProductsInfo(@NonNull ArrayList<String> pids) {
         Log.i(Utils.LOG_TAG, "called loadProductsInfo: " + pids.size());
         awaitPids.addAll(pids);
         
@@ -104,7 +109,7 @@ public class AndroidStorePurchase {
                                        object.getString("price_currency_code"));
                            }
                        }
-                   } catch (final Exception ex) {
+                   } catch (@NonNull final Exception ex) {
                        Log.i(Utils.LOG_TAG, "Exception on gettin products info: " + ex.getMessage());
                        ex.printStackTrace();
                    }
@@ -144,7 +149,7 @@ public class AndroidStorePurchase {
         }
     }
     
-    public void callbackPurchase(int resultCode, Intent data) {
+    public void callbackPurchase(int resultCode, @NonNull Intent data) {
         String response = data.getStringExtra("INAPP_PURCHASE_DATA");
         try {
             JSONObject object = new JSONObject(response);

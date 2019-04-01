@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as PropertiesReader from 'properties-reader';
 import {
-	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic
+	LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Diagnostic, NotificationType0
 } from 'vscode-languageclient';
 import * as tools from "./tools";
 import * as updater from "./updater";
@@ -63,6 +63,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(flowcpp_command);
     context.subscriptions.push(getCompiler_command);
     context.subscriptions.push(compileNeko_command);
+    context.subscriptions.push(run_command);
+	context.subscriptions.push(updateFlow_command);
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => handleConfigurationUpdates(e)));
 
    	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(path.join('out', 'flow_language_server.js'));
@@ -82,23 +85,83 @@ export function activate(context: vscode.ExtensionContext) {
 		documentSelector: [{scheme: 'file', language: 'flow'}],
 	}
 
+	// launch flowc server at startup
+	tools.launchFlowc(getFlowRoot());
+
 	// Create the language client and start the client.
 	client = new LanguageClient('flowLanguageServer', 'Flow Language Server', serverOptions, clientOptions);
 	// Start the client. This will also launch the server
-    client.start();
+	client.start();
 
+	client.onReady().then(() => {
+		sendOutlineEnabledUpdate();
+	});
+	
     updater.checkForUpdate();
     updater.setupUpdateChecker();
 }
 
 // this method is called when your extension is deactivated
 export function deactivate() {
+	// First, shutdown Flowc server
+	tools.shutdownFlowc();
     // kill all child processed we launched
     childProcesses.forEach(child => { 
         child.kill('SIGKILL'); 
         if (os.platform() == "win32")
             spawn("taskkill", ["/pid", child.pid, '/f', '/t']);
-    });
+	});
+}
+
+export async function updateFlowRepo() {
+    if (null == flowRepoUpdateChannel) {
+        flowRepoUpdateChannel = vscode.window.createOutputChannel("Flow Update");
+    }
+    const flowRoot = getFlowRoot();
+    if (!fs.existsSync(flowRoot)) {
+        await vscode.window.showErrorMessage("Flow repository not found. Make sure flow.root parameter is set up correctly");
+        return;
+    }
+    const git = simplegit(flowRoot);
+    let status = await git.status();
+    if (status.current != "master") {
+        await vscode.window.showErrorMessage("Flow repository is not on master branch. Please switch to master to proceed.");
+        return;
+    }
+    if (status.modified.length > 0 || status.created.length > 0 || status.deleted.length > 0) {
+        await vscode.window.showErrorMessage("Flow repository has local changes. Please push or stash those before proceeding");
+        return;
+    }
+    flowRepoUpdateChannel.show(true);
+    flowRepoUpdateChannel.appendLine("Updating flow repository at " + flowRoot);
+    flowRepoUpdateChannel.append("Shutting down flowc server... ");
+    tools.shutdownFlowcSync();
+    flowRepoUpdateChannel.appendLine("Done.");
+    flowRepoUpdateChannel.appendLine("Starting git pull --rebase... ");
+    try {
+        const pullResult = await git.pull('origin', 'master', {'--rebase' : 'true'});
+        flowRepoUpdateChannel.appendLine(JSON.stringify(pullResult.summary));
+    } catch (e) {
+        flowRepoUpdateChannel.appendLine("Git pull failed:");
+        flowRepoUpdateChannel.appendLine(e);
+        vscode.window.showInformationMessage("Flow repository pull failed.");
+    }
+
+    flowRepoUpdateChannel.append("Starting flowc server... ");
+    tools.launchFlowc(getFlowRoot());
+    flowRepoUpdateChannel.appendLine("Done.");
+}
+
+function sendOutlineEnabledUpdate() {
+	let config = vscode.workspace.getConfiguration("flow");
+	const outlineEnabled = config.get("outline");
+	client.sendNotification("outlineEnabled", outlineEnabled);
+}
+
+function handleConfigurationUpdates(e: vscode.ConfigurationChangeEvent) {
+	if (e.affectsConfiguration("flow.outline")) {
+		sendOutlineEnabledUpdate();
+	}
 }
 
 function resolveProjectRoot(projectRoot: string, documentUri: vscode.Uri): string {

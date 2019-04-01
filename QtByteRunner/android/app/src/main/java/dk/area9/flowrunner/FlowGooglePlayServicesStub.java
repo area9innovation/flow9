@@ -1,6 +1,7 @@
 package dk.area9.flowrunner;
 
 import android.location.Location;
+import android.support.annotation.Nullable;
 
 public class FlowGooglePlayServicesStub implements IFlowGooglePlayServices {
     @Override
@@ -27,6 +28,7 @@ public class FlowGooglePlayServicesStub implements IFlowGooglePlayServices {
     public void removeLocationUpdates(boolean isHighAccuracy) {
     }
 
+    @Nullable
     @Override
     public Location getLastLocation() {
         return null;

@@ -20,6 +20,8 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -43,7 +45,7 @@ class FlowJSInterface {
     public FlowJSInterface(FlowRunnerWrapper w, long id, WebWidget widget) { wrapper = w; webview_id = id; web_widget = widget; }
     
     @JavascriptInterface
-    public void callflow(String[] args) {
+    public void callflow(@NonNull String[] args) {
         if (args.length > 0) {
             if (args[0].equals("setInnerDomainsWhiteList")) {
                 web_widget.setWhiteListDomains(Arrays.copyOfRange(args, 1, args.length));
@@ -63,8 +65,11 @@ class WebWidget extends NativeWidget {
 
     private boolean use_zoom = false;
 
+    @NonNull
     private Set<String> innerDomains = new HashSet<String>(); // Domains of all page frames
+    @NonNull
     private Set<String> whiteListDomains = new HashSet<String>();
+    @NonNull
     private Set<String> externalDocuments = new HashSet<String>();
     
     public WebWidget(FlowWidgetGroup group, long id) {
@@ -101,7 +106,7 @@ class WebWidget extends NativeWidget {
         private boolean pageLoaded = false;
         private boolean wasError = false;
 
-        private Uri removeQueryParameter(Uri uri, String paramName) {
+        private Uri removeQueryParameter(Uri uri, @NonNull String paramName) {
             Uri.Builder tempUri = uri.buildUpon();
             tempUri.clearQuery();
 
@@ -135,7 +140,7 @@ class WebWidget extends NativeWidget {
             group.getWrapper().NotifyWebViewError(id, description);
         }
  
-        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+        public boolean shouldOverrideUrlLoading(@NonNull WebView view, String url) {
             if (pageLoaded) {
                 Log.d(Utils.LOG_TAG, "shouldOverrideUrlLoading URL: " + url + " from view with URL: " + view.getUrl());
                 Uri uri = Uri.parse(url);
@@ -202,7 +207,7 @@ class WebWidget extends NativeWidget {
     }
     
     private class WebChromeClientImpl {
-        public boolean onJsAlert (WebView view, String url, String message, final android.webkit.JsResult result)
+        public boolean onJsAlert (WebView view, String url, String message, @NonNull final android.webkit.JsResult result)
         {
             Context ctx = group.getContext();
             new AlertDialog.Builder(ctx)
@@ -215,14 +220,14 @@ class WebWidget extends NativeWidget {
             return true;
         }
         
-        public boolean onConsoleMessage(ConsoleMessage cm) {
+        public boolean onConsoleMessage(@NonNull ConsoleMessage cm) {
             Log.d(Utils.LOG_TAG, "RealHTML JS: " + cm.message() + " -- From line "
                                  + cm.lineNumber() + " of "
                                  + cm.sourceId() );
             return true;
          }
 
-         public boolean onCreateWindow(WebView viewp, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+         public boolean onCreateWindow(WebView viewp, boolean isDialog, boolean isUserGesture, @NonNull Message resultMsg) {
             WebView newWebView = new WebView(group.getContext());
             
             newWebView.setWebViewClient(new WebViewClient() {
@@ -230,7 +235,7 @@ class WebWidget extends NativeWidget {
                 boolean pageStarted = false;
                 
                 @Override
-                public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                public void onPageStarted(@NonNull WebView view, String url, Bitmap favicon) {
                     if (!pageStarted) {
                         Intent browserIntent = new Intent(Intent.ACTION_VIEW);
                         browserIntent.setData(Uri.parse(url));
@@ -248,6 +253,7 @@ class WebWidget extends NativeWidget {
             return true;
          }
          
+         @Nullable
          private View mFullscreenView;
          public void onShowCustomView(View view, WebChromeClient.CustomViewCallback callback) {
              Log.d(Utils.LOG_TAG, "Entering Full Screen Mode!");
@@ -284,7 +290,7 @@ class WebWidget extends NativeWidget {
          }
     }
     
-    private void setCustomUserAgent(WebView web_view) {
+    private void setCustomUserAgent(@NonNull WebView web_view) {
         Context ctx = group.getContext();
         PackageManager pm = ctx.getPackageManager();
         String app_label = ctx.getApplicationInfo().loadLabel(pm).toString();
@@ -295,7 +301,7 @@ class WebWidget extends NativeWidget {
         Log.i(Utils.LOG_TAG, "WebView UserAgent = " + ua);
     }
     
-    private void setupCache(WebView web_view) {
+    private void setupCache(@NonNull WebView web_view) {
         Context ctx = group.getContext();
         java.io.File cache_dir = ctx.getCacheDir();
         if (!cache_dir.exists()) {
@@ -325,6 +331,7 @@ class WebWidget extends NativeWidget {
         }
     }
 
+    @Nullable
     @SuppressLint("SetJavaScriptEnabled")
 	protected View createView() {
         final Context ctx = group.getContext();
@@ -340,18 +347,19 @@ class WebWidget extends NativeWidget {
         };
 
         web_view.setWebChromeClient(new WebChromeClient() {
+            @NonNull
             private WebChromeClientImpl impl = new WebChromeClientImpl();
             // Show JS alert. (Otherwise JS "alert()" is ignored)
             @Override
-            public boolean onJsAlert (WebView view, String url, String message, final android.webkit.JsResult result) {
+            public boolean onJsAlert (WebView view, String url, String message, @NonNull final android.webkit.JsResult result) {
                 return impl.onJsAlert(view, url, message, result);
             }
             @Override
-            public boolean onConsoleMessage(ConsoleMessage cm) {
+            public boolean onConsoleMessage(@NonNull ConsoleMessage cm) {
                 return impl.onConsoleMessage(cm);
             }
             @Override
-            public boolean onCreateWindow(WebView viewp, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            public boolean onCreateWindow(WebView viewp, boolean isDialog, boolean isUserGesture, @NonNull Message resultMsg) {
                 return impl.onCreateWindow(viewp, isDialog, isUserGesture, resultMsg);
             }
             @Override
@@ -365,6 +373,7 @@ class WebWidget extends NativeWidget {
         });
 
         web_view.setWebViewClient(new WebViewClient() {
+            @NonNull
             private WebViewClientImpl impl = new WebViewClientImpl();
             @Override
             public void onPageStarted(WebView webView, String url, Bitmap favicon) {
@@ -379,7 +388,7 @@ class WebWidget extends NativeWidget {
                 impl.onReceivedError(view, errorCode, description, failingUrl);
             }
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            public boolean shouldOverrideUrlLoading(@NonNull WebView view, String url) {
                 return impl.shouldOverrideUrlLoading(view, url);
             }
         });
@@ -412,6 +421,7 @@ class WebWidget extends NativeWidget {
         return web_view;
     }
 
+    @Nullable
     private Runnable create_cb = new Runnable() {
         public void run() {
             if (id == 0 || url == null) return;

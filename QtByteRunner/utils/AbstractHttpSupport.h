@@ -98,6 +98,9 @@ protected:
     void deliverSelectCancel(int id);
     bool deliverSelectOK(int id, unicode_string name, int size);
 
+    void processAttachmentsAsMultipart(HttpRequest& request);
+    void processRequest(HttpRequest& request);
+
     virtual void doRequest(HttpRequest &rq) = 0;
     virtual bool doSelectFile(HttpRequest &) { return false; }
 

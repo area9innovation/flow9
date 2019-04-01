@@ -77,7 +77,8 @@ On Danish keyboard, ctrl+shift+½ will navigate to matching parenthesis.
     3. `flow.compilerBackend` - the backend to use for compiler. Acceptable values are `flowcpp`, `java`, `auto` (default, current best practice), `manual` (verbose command - as specified).
     4. `flow.userCompilerServer` - whether to use or not the compiler server. Only works with `flowc`
     compiler. Defaults to true.
-    4. `flow.projectRoot` - force IDE to use specified path as a project root and resolve all files to run against it when running `flowcpp` command. No need to change this. Use a workspace instead. But can be useful in multi-root workspaces. Meant to be used on workspace or workspace folder level. The value is one of the following:
+	5. `flow.outline` - enables or disables Outline feature
+    6. `flow.projectRoot` - force IDE to use specified path as a project root and resolve all files to run against it when running `flowcpp` command. No need to change this. Use a workspace instead. But can be useful in multi-root workspaces. Meant to be used on workspace or workspace folder level. The value is one of the following:
         * absolute path - use this path as project root
         * name of workspace folder in the workspace - always use specified workspace folder as a project root
         * relative path - treat as relative path to the first workspace folder, use as project root
