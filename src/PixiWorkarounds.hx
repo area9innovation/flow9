@@ -601,68 +601,28 @@ class PixiWorkarounds {
 				}
 			}
 
-			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				const tempParent = this.parent == this._tempDisplayObjectParent;
-				this.transformChanged = transformChanged || this.transformChanged || tempParent;
-
-				if (this.transformChanged)
-				{
-					this._boundsID++;
-					this.transform.updateTransform(this.parent.transform);
-
-					// TODO: check render flags, how to process stuff here
-					this.worldAlpha = this.alpha * this.parent.worldAlpha;
-				} else if (this.transform) {
-					const wt = this.worldTransform.clone();
-					this.transform.updateTransform(this.parent.transform);
-					const newWt = this.worldTransform.clone();
-
-					if (wt.tx != newWt.tx || wt.ty != newWt.ty) {
-						console.log(wt);
-						console.log(newWt);
-					}
-				}
-
-				for (let i = 0, j = this.children.length; i < j; ++i)
-				{
-					const child = this.children[i];
-
-					if (child.visible)
-					{
-						child.updateTransform(this.transformChanged);
-					}
-				}
-
-				if (this.transformChanged && this.accessWidget) {
-					this.accessWidget.updateTransform();
-				}
-
-				if (!tempParent) {
-					this.transformChanged = false;
-				}
-			};
-
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
 				set : function(p) {
 					this.transformChanged = true;
+
 					if (this.visible) {
 						RenderSupportJSPixi.TransformChanged = true;
 						RenderSupportJSPixi.PixiStageChanged = true;
 					}
-					this.__parent = p;
+
+					this._parent = p;
 				},
 				get : function() {
-					return this.__parent;
+					return this._parent;
 				}
 			});
 
-			PIXI.DisplayObject.prototype.updateTransform = function(transformChanged) {
+			PIXI.Container.prototype.updateTransform = function(transformChanged) {
 				this.transformChanged = transformChanged || this.transformChanged;
 
 				if (this.transformChanged)
 				{
 					this._boundsID++;
-
 					this.transform.updateTransform(this.parent.transform);
 
 					// TODO: check render flags, how to process stuff here
@@ -679,11 +639,13 @@ class PixiWorkarounds {
 					}
 				}
 
-				if (this.transformChanged && this.accessWidget) {
-					this.accessWidget.updateTransform();
-				}
+				if (this.transformChanged) {
+					if (this.accessWidget) {
+						this.accessWidget.updateTransform();
+					}
 
-				this.transformChanged = false;
+					this.transformChanged = false;
+				}
 			};
 
 			TextClip.prototype.updateTransform = function(transformChanged) {
@@ -711,11 +673,13 @@ class PixiWorkarounds {
 					}
 				}
 
-				if (this.transformChanged && this.accessWidget) {
-					this.accessWidget.updateTransform();
-				}
+				if (this.transformChanged) {
+					if (this.accessWidget) {
+						this.accessWidget.updateTransform();
+					}
 
-				this.transformChanged = false;
+					this.transformChanged = false;
+				}
 			};
 		");
 	}
