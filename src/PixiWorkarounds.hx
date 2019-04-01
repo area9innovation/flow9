@@ -617,6 +617,12 @@ class PixiWorkarounds {
 				}
 			});
 
+			Object.defineProperty(PIXI.DisplayObject.prototype, 'worldVisible', {
+				get : function() {
+					return this.clipVisible;
+				}
+			});
+
 			PIXI.Container.prototype.updateTransform = function(transformChanged) {
 				this.transformChanged = transformChanged || this.transformChanged;
 

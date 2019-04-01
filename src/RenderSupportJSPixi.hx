@@ -1432,14 +1432,14 @@ class RenderSupportJSPixi {
 		if (clip == null || clip == PixiStage)
 			return MousePos.x;
 		else
-			return clip.toLocal(MousePos).x;
+			return untyped __js__('clip.toLocal(RenderSupportJSPixi.MousePos, null, null, true).x');
 	}
 
 	public static function getMouseY(?clip : DisplayObject) : Float {
 		if (clip == null || clip == PixiStage)
 			return MousePos.y;
 		else
-			return clip.toLocal(MousePos).y;
+			return untyped __js__('clip.toLocal(RenderSupportJSPixi.MousePos, null, null, true).y');
 	}
 
 	public static function setMouseX(x : Float) {
