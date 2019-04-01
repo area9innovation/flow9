@@ -31,6 +31,8 @@ tables in JSON format into the specified file. Helps debugging code generation.
 Wasm memory size is 100 pages (each page is 64K) by default, to change that, use `wasm-memory=<size>`
 (i.e. `wasm-memory=1000` provides `65 536 000` available bytes).
 
+Additional option is 'wasminline=1' which will force to inline some comon functions (increase code size but increase perfomance as well)
+
 We might be able to run command line using something like
 
 https://github.com/WAVM/WAVM
@@ -39,12 +41,6 @@ at some point.
 
 
 TODO:
-- JS runtime
-  Extend "decode_data(address :int, typedescriptor : int) -> Object" function in the JS world
-  which reads memory and converts to JS value.
-  Write "convertJSToWasm(obj : Object, typedescriptor : int) -> int" function nin the JS world,
-  which allocates memory in Wasm, and writes the value there.
-
 - Optimize switch to not copy the body for default case
 
 - Fix fusion.flow - typing is very complex there, requires tricks to get done

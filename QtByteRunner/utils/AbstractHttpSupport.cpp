@@ -456,8 +456,7 @@ StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
 
-    rq.is_post = postMethod.GetBool();
-    if (rq.is_post) {
+    if (postMethod.GetBool()) {
         rq.method = parseUtf8("POST");
     } else {
         rq.method = parseUtf8("GET");
@@ -511,7 +510,6 @@ StackSlot AbstractHttpSupport::preloadMediaUrl(RUNNER_ARGS)
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
-    rq.is_post = false;
     rq.method = parseUtf8("GET");
     rq.is_media_preload = true;
     rq.done_cb = onDone;
@@ -531,7 +529,6 @@ StackSlot AbstractHttpSupport::downloadFile(RUNNER_ARGS)
 	
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
-    rq.is_post = false;
     rq.method = parseUtf8("GET");
     rq.url = RUNNER->GetString(url);
     rq.data_cb = onData;
@@ -556,7 +553,6 @@ StackSlot AbstractHttpSupport::uploadFile(RUNNER_ARGS)
     rq.req_id = id;
 
     rq.url = RUNNER->GetString(url);
-    rq.is_post = true;
     rq.method = parseUtf8("POST");
 
     rq.open_cb = onOpen;
@@ -627,7 +623,6 @@ StackSlot AbstractHttpSupport::sendHttpRequestWithAttachments(RUNNER_ARGS) {
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
-    rq.is_post = true;
     rq.method = parseUtf8("POST");
     rq.data_cb = onData;
     rq.error_cb = onError;

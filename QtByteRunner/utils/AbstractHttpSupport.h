@@ -9,7 +9,6 @@ struct HttpRequest {
     int req_id;
 
     unicode_string url;
-    bool is_post;
     unicode_string method;
     unicode_string payload;
     T_SMap headers, params, attachments;
