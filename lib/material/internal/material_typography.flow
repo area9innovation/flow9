@@ -12,11 +12,11 @@ export {
 
 	extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> Triple<MColor, MFontStyle, bool>;
 
-	MTextStyle2CharacterStyle(style : [MParagraphStyle], lightBackground : bool) -> [CharacterStyle];
-	MTextStyle2CharacterStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle];
+	MTextStyle2CharacterStyle(parent : MFocusGroup, style : [MParagraphStyle]) -> [CharacterStyle];
+	MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle];
 
 	MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle];
-	MFontStyle2MCustomFont(style : MFontStyle, pto: double, sto: double) -> MCustomFont;
+	MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double) -> MCustomFont;
 
 	style2MTextStyle(style : [?]) -> [MTextStyle];
 
@@ -25,7 +25,7 @@ export {
 
 	// Not recommended for using because fill opacity is affected by text color but not material theme.
 	// Use MTextStyle2CharacterStyle or MTextStyle2CharacterStyleDef instead.
-	MFontStyle2CharacterStyle(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
+	MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle];
 	primaryTextOpacityDark = 0.87;
 	primaryTextOpacity = 1.0;
 }
@@ -40,69 +40,18 @@ currentMLang = ref "";
 currentMLangFont = ref "";
 
 MText2T(parent : MFocusGroup, text : string, style : [MTextStyle]) -> Tropic {
-	TText(text, addMLangFontFamily(text, MTextStyle2CharacterStyleDef(style, Triple(getTextColor(parent), getFontStyle(parent), true))))
+	TText(text, addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, style, Triple(getTextColor(parent), getFontStyle(parent), true))))
 }
 
 MParagraph2T(parent : MFocusGroup, text : string, style : [MParagraphStyle]) -> Tropic {
 	mTextStyle = style2MTextStyle(style);
 	defStyle = Triple(getTextColor(parent), getFontStyle(parent), true);
 	fontStyle = extractMTextStyleDef(mTextStyle, defStyle);
-	characterStyle : [TCharacterStyle] = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(style, defStyle));
+	characterStyle : [TCharacterStyle] = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, style, defStyle));
 	mWidth = extractStruct(style, MWidth(-1.)).width;
 
-	interlineSpacing =
-		eitherFn(
-			tryExtractStruct(style, InterlineSpacing(0.)),
-			idfn,
-			\ ->
-				InterlineSpacing(switch (fontStyle.second) {
-					MDisplay2(): -5.;
-					MDisplay1(): -2.;
-					MDisplay1Medium(): -2.;
-					MHeadline(): 4.;
-					MSubheading(): 4.;
-					MTitle(): 4.;
-					MBody(): 2.;
-					MListBody(): 2.;
-					MBodyBold(): 2.;
-					MCaption(): 0.;
-					MButtonStyle(): 2.;
-					MSecondaryButtonStyle(): 2.;
-					MCaptionSolid(): 0.;
-					MCaptionColumn(): 0.;
-					MCaptionColumnSelected(): 0.;
-					MDataRow(): 2.;
-					MTooltipDesktop(): 0.;
-					MCustomFont(fs, __, __): if (fs <= 12.) 0. else if (fs < 16.) 2. else if (fs < 34.) 4. else if (fs < 45.) -2. else -5.;
-				})
-		);
-
-	paragraphMargin =
-		eitherFn(
-			tryExtractStruct(style, ParagraphMargin(0., 0.)),
-			idfn,
-			\ ->
-				switch (fontStyle.second) {
-					MDisplay2(): ParagraphMargin(0., 26.);
-					MDisplay1(): ParagraphMargin(0., 18.);
-					MDisplay1Medium(): ParagraphMargin(0., 18.);
-					MHeadline(): ParagraphMargin(0., 8.);
-					MSubheading(): ParagraphMargin(0., 8.);
-					MTitle(): ParagraphMargin(0., 4.);
-					MBody(): ParagraphMargin(0., 4.);
-					MListBody(): ParagraphMargin(0., 4.);
-					MBodyBold(): ParagraphMargin(0., 4.);
-					MCaption(): ParagraphMargin(0., 4.);
-					MButtonStyle(): ParagraphMargin(0., 4.);
-					MSecondaryButtonStyle(): ParagraphMargin(0., 4.);
-					MCaptionSolid(): ParagraphMargin(0., 4.);
-					MCaptionColumn(): ParagraphMargin(0., 4.);
-					MCaptionColumnSelected(): ParagraphMargin(0., 4.);
-					MDataRow(): ParagraphMargin(0., 4.);
-					MTooltipDesktop(): ParagraphMargin(0., 0.);
-					MCustomFont(fs, __, __): ParagraphMargin(0., if (fs <= 20.) 4. else if (fs < 34.) 8. else if (fs < 45.) 18. else 26.);
-				}
-		);
+	interlineSpacing = eitherFn(tryExtractStruct(style, InterlineSpacing(0.)), idfn, \ -> MFontStyle2InterlineSpacing(parent, fontStyle.second));
+	paragraphMargin = eitherFn(tryExtractStruct(style, ParagraphMargin(0., 0.)), idfn, \ -> MFontStyle2ParagraphMargin(parent, fontStyle.second));
 
 	cropLongWords = extractStructMany(style, CropWords(true));
 
@@ -124,16 +73,16 @@ extractMTextStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle,
 	)
 }
 
-MTextStyle2CharacterStyle(style : [MParagraphStyle], lightBackground : bool) -> [CharacterStyle] {
-	MTextStyle2CharacterStyleDef(style, Triple(if (lightBackground) MBlack() else MWhite(), MBody(), true))
+MTextStyle2CharacterStyle(parent : MFocusGroup, style : [MParagraphStyle]) -> [CharacterStyle] {
+	MTextStyle2CharacterStyleDef(parent, style, Triple(if (getLightBackground(parent)) MBlack() else MWhite(), MBody(), true))
 }
 
-MTextStyle2CharacterStyleDef(style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle] {
+MTextStyle2CharacterStyleDef(parent : MFocusGroup, style : [MParagraphStyle], def : Triple<MColor, MFontStyle, bool>) -> [CharacterStyle] {
 	extractMTextStyleDef(style, def)
 	|> (\fontStyle -> Triple(MColor2int(firstOfTriple(fontStyle)), secondOfTriple(fontStyle), thirdOfTriple(fontStyle)))
 	|> (\fontStyle : Triple<int, MFontStyle, bool> ->
 		arrayPush(
-			MFontStyle2CharacterStyle(secondOfTriple(fontStyle), firstOfTriple(fontStyle) == black)
+			MFontStyle2CharacterStyle(parent, secondOfTriple(fontStyle), firstOfTriple(fontStyle) == black)
 			|> (\characterStyle ->
 				if (thirdOfTriple(fontStyle))
 					characterStyle
@@ -182,10 +131,10 @@ MCustomFont2CharacterStyle(mcf: MCustomFont) -> [BasicCharacterStyle] {
 }
 
 // https://material.io/guidelines/style/color.html#color-text-background-colors
-MFontStyle2CharacterStyle(style : MFontStyle, darkText : bool) -> [BasicCharacterStyle] {
+MFontStyle2CharacterStyle(parent : MFocusGroup, style : MFontStyle, darkText : bool) -> [BasicCharacterStyle] {
 	pto = if (darkText) primaryTextOpacityDark else primaryTextOpacity;
 	sto = if (darkText) secondaryTextOpacityDark else secondaryTextOpacity;
-	MCustomFont2CharacterStyle(MFontStyle2MCustomFont(style, pto, sto));
+	MCustomFont2CharacterStyle(MFontStyle2MCustomFont(parent, style, pto, sto));
 }
 
 // Reverse function for special cases
@@ -208,14 +157,19 @@ MCharacterStyle2MTextStyle(style : [CharacterStyle]) -> [MTextStyle] {
 	[MCustomColor(^fill), MCustomFont(^fontSize, ^fontFamily, ^fillOpacity)]
 }
 
-MFontStyle2MCustomFont(style : MFontStyle, pto: double, sto: double) -> MCustomFont {
-	switch (style) {
+MFontStyle2MCustomFont(parent : MFocusGroup, style : MFontStyle, pto: double, sto: double) -> MCustomFont {
+	switch (style : MFontStyle) {
+		MDisplay5(): MCustomFont(96.0, "Roboto", pto);
+		MDisplay4(): MCustomFont(60.0, "Roboto", pto);
+		MDisplay3(): MCustomFont(48.0, "Roboto", pto);
 		MDisplay2(): MCustomFont(45.0, "Roboto", sto);
 		MDisplay1(): MCustomFont(34.0, "Roboto", sto);
 		MDisplay1Medium(): MCustomFont(34.0, "RobotoMedium", sto);
 		MHeadline(): MCustomFont(24.0, "Roboto", pto);
-		MSubheading(): MCustomFont(16.0, "Roboto", pto);
 		MTitle(): MCustomFont(20.0, "Roboto", pto);
+		MSubheading(): MCustomFont(16.0, "Roboto", pto);
+		MSubtitle(): MCustomFont(14.0, "Roboto", pto);
+		MBodyPrimary(): MCustomFont(16.0, "Roboto", pto);
 		MBody(): MCustomFont(14.0, "Roboto", pto);
 		MListBody(): MCustomFont(14.0, "Roboto", sto);
 		MBodyBold(): MCustomFont(14.0, "RobotoMedium", pto);
@@ -227,7 +181,68 @@ MFontStyle2MCustomFont(style : MFontStyle, pto: double, sto: double) -> MCustomF
 		MCaptionColumnSelected(): MCustomFont(12.0, "RobotoMedium", pto);
 		MDataRow(): MCustomFont(13.0, "Roboto", pto);
 		MTooltipDesktop(): MCustomFont(12.0, "RobotoMedium", pto);
+		MOverline(): MCustomFont(10.0, "Roboto", pto);
 		MCustomFont(size, family, opacity): MCustomFont(size, family, opacity);
+		MaterialType(): MFontStyle2MCustomFont(parent, MaterialType2MFontStyle(parent, style), pto, sto);
+	}
+}
+MFontStyle2ParagraphMargin(parent : MFocusGroup, style : MFontStyle) -> ParagraphMargin {
+	switch (style : MFontStyle) {
+		MDisplay5(): ParagraphMargin(0., 26.);
+		MDisplay4(): ParagraphMargin(0., 26.);
+		MDisplay3(): ParagraphMargin(0., 26.);
+		MDisplay2(): ParagraphMargin(0., 26.);
+		MDisplay1(): ParagraphMargin(0., 18.);
+		MDisplay1Medium(): ParagraphMargin(0., 18.);
+		MHeadline(): ParagraphMargin(0., 8.);
+		MTitle(): ParagraphMargin(0., 4.);
+		MSubheading(): ParagraphMargin(0., 8.);
+		MSubtitle(): ParagraphMargin(0., 4.);
+		MBodyPrimary(): ParagraphMargin(0., 4.);
+		MBody(): ParagraphMargin(0., 4.);
+		MListBody(): ParagraphMargin(0., 4.);
+		MBodyBold(): ParagraphMargin(0., 4.);
+		MCaption(): ParagraphMargin(0., 4.);
+		MButtonStyle(): ParagraphMargin(0., 4.);
+		MSecondaryButtonStyle(): ParagraphMargin(0., 4.);
+		MCaptionSolid(): ParagraphMargin(0., 4.);
+		MCaptionColumn(): ParagraphMargin(0., 4.);
+		MCaptionColumnSelected(): ParagraphMargin(0., 4.);
+		MDataRow(): ParagraphMargin(0., 4.);
+		MTooltipDesktop(): ParagraphMargin(0., 0.);
+		MOverline(): ParagraphMargin(0., 0.);
+		MCustomFont(fs, __, __): ParagraphMargin(0., if (fs <= 20.) 4. else if (fs < 34.) 8. else if (fs < 45.) 18. else 26.);
+		MaterialType(): MFontStyle2ParagraphMargin(parent, MaterialType2MFontStyle(parent, style));
+	}
+}
+
+MFontStyle2InterlineSpacing(parent : MFocusGroup, style : MFontStyle) -> InterlineSpacing {
+	switch (style : MFontStyle) {
+		MDisplay5(): InterlineSpacing(-5.);
+		MDisplay4(): InterlineSpacing(-5.);
+		MDisplay3(): InterlineSpacing(-5.);
+		MDisplay2(): InterlineSpacing(-5.);
+		MDisplay1(): InterlineSpacing(-2.);
+		MDisplay1Medium(): InterlineSpacing(-2.);
+		MHeadline(): InterlineSpacing(4.);
+		MTitle(): InterlineSpacing(4.);
+		MSubheading(): InterlineSpacing(4.);
+		MSubtitle(): InterlineSpacing(4.);
+		MBodyPrimary(): InterlineSpacing(4.);
+		MBody(): InterlineSpacing(2.);
+		MListBody(): InterlineSpacing(2.);
+		MBodyBold(): InterlineSpacing(2.);
+		MCaption(): InterlineSpacing(0.);
+		MButtonStyle(): InterlineSpacing(2.);
+		MSecondaryButtonStyle(): InterlineSpacing(2.);
+		MCaptionSolid(): InterlineSpacing(0.);
+		MCaptionColumn(): InterlineSpacing(0.);
+		MCaptionColumnSelected(): InterlineSpacing(0.);
+		MDataRow(): InterlineSpacing(2.);
+		MTooltipDesktop(): InterlineSpacing(0.);
+		MOverline(): InterlineSpacing(0.);
+		MCustomFont(fs, __, __): InterlineSpacing(if (fs <= 12.) 0. else if (fs < 16.) 2. else if (fs < 34.) 4. else if (fs < 45.) -2. else -5.);
+		MaterialType(): MFontStyle2InterlineSpacing(parent, MaterialType2MFontStyle(parent, style));
 	}
 }
 
@@ -235,11 +250,16 @@ style2MTextStyle(style : [?]) -> [MTextStyle] {
 	concatA([
 		extractStructMany(style, MWhite()),
 		extractStructMany(style, MBody()),
+		extractStructMany(style, MBodyPrimary()),
 		extractStructMany(style, MListBody()),
 		extractStructMany(style, MHeadline()),
 		extractStructMany(style, MTitle()),
+		extractStructMany(style, MDisplay5()),
+		extractStructMany(style, MDisplay4()),
+		extractStructMany(style, MDisplay3()),
 		extractStructMany(style, MDisplay2()),
 		extractStructMany(style, MSubheading()),
+		extractStructMany(style, MSubtitle()),
 		extractStructMany(style, MBodyBold()),
 		extractStructMany(style, MButtonStyle()),
 		extractStructMany(style, MCaption()),
@@ -249,7 +269,20 @@ style2MTextStyle(style : [?]) -> [MTextStyle] {
 		extractStructMany(style, MCaptionColumn()),
 		extractStructMany(style, MCaptionColumnSelected()),
 		extractStructMany(style, MDataRow()),
-		extractStructMany(style, MTooltipDesktop()),
+		extractStructMany(style, MOverline()),
+		extractStructMany(style, MH1()),
+		extractStructMany(style, MH2()),
+		extractStructMany(style, MH3()),
+		extractStructMany(style, MH4()),
+		extractStructMany(style, MH5()),
+		extractStructMany(style, MH6()),
+		extractStructMany(style, MSubtitle1()),
+		extractStructMany(style, MSubtitle2()),
+		extractStructMany(style, MBody1()),
+		extractStructMany(style, MBody2()),
+		extractStructMany(style, MButton1()),
+		extractStructMany(style, MCaption1()),
+		extractStructMany(style, MOverline1()),
 		extractStructMany(style, MCustomFont(0., "", 0.)),
 		extractStructMany(style, MTextDisabled()),
 		extractStructMany(style, Underlined([])),

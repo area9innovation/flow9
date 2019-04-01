@@ -6,6 +6,7 @@ export {
 	fmapi(v : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]>;
 	fsubmap(v : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]>;
 	fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]>;
+	ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(v : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
 	ffiltermapi(v : Transform<[??]>, fn : (int, ??) -> Maybe<?>) -> Transform<[?]>;
 	flength(v : Transform<[?]>) -> Transform<int>;
@@ -66,6 +67,7 @@ export {
 	fsubmaybeMap(b : Transform<Maybe<?>>, fn : (?) -> Transform<??>) -> Transform<Maybe<??>>;
 
 	forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]>;
+	fdeorder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]>;
 
 	fpprint(title : string) -> (Transform<?>) -> Transform<?>;
 
@@ -73,6 +75,7 @@ export {
 	applyallsubs(array : [() -> () -> void]) -> [() -> void];
 
 	fselectdelay(b : Transform<?>, fn : (?) -> Pair<int, ??>) -> Transform<??>;
+	flerp(start : double, end : double, t : Transform<double>) -> Transform<double>;
 
 	// Advised dispose helpers
 	initUnsM() -> ref Maybe<() -> void>;
@@ -151,6 +154,24 @@ fsubmapi(v : Transform<[??]>, fn : (int, ??) -> Transform<?>) -> Transform<[?]> 
 			)
 		)
 		|> fmerge
+	}))
+}
+
+ffilter(v : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]> {
+	prevV : ref Tree<?, bool> = ref makeTree();
+
+	fselect(v, FLift(\v0 -> {
+		filter(v0, \val ->
+			eitherFn(
+				lookupTree(^prevV, val),
+				idfn,
+				\ -> {
+					pVal = fn(val);
+					prevV := setTree(^prevV, val, pVal);
+					pVal
+				}
+			)
+		)
 	}))
 }
 
@@ -454,6 +475,17 @@ forder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
 	fselect2(b, order, FLift2(\v, o -> fold(o, [], \acc, i -> if (i >= 0 && i < length(v)) arrayPush(acc, v[i]) else acc)))
 }
 
+fdeorder(b : Transform<[?]>, order : Transform<[int]>) -> Transform<[?]> {
+	fselect2(b, order, FLift2(\v, o -> foldi(v, [], \i, acc, it -> {
+		id = findiDef(o, \oi -> oi == i, -1);
+
+		if (id >= 0 && id < length(v))
+			arrayPush(acc, v[id])
+		else
+			acc;
+	})))
+}
+
 ffuse(t : Transform<?>) -> Pair<Behaviour<?>, [() -> () -> void]> {
 	switch (t) {
 		ConstBehaviour(v): Pair(t, []);
@@ -498,6 +530,10 @@ fselectdelay(b : Transform<?>, fn : (?) -> Pair<int, ??>) -> Transform<??> {
 	}))
 }
 
+flerp(start : double, end : double, t : Transform<double>) -> Transform<double> {
+	fselect(t, FLift(\v -> (1.0 - v) * start + v * end));
+}
+
 initUnsM() -> ref Maybe<() -> void> {
 	ref None()
 }
@@ -521,7 +557,7 @@ dispUnsM(uns : ref Maybe<() -> void>) -> void {
 
 fpprint(title : string) -> (Transform<?>) -> Transform<?> {
 	\tr -> {
-		fsubscribe(tr, \v -> pprint(title)(v) |> ignore);
+		fsubscribe(tr, \v -> pprint(title + " : ")(v) |> ignore);
 		tr
 	}
 }

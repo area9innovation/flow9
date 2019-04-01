@@ -15,30 +15,22 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpResponse;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.entity.UrlEncodedFormEntity;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.client.params.HttpClientParams;
-import org.apache.http.client.protocol.ClientContext;
-import org.apache.http.conn.scheme.PlainSocketFactory;
-import org.apache.http.conn.scheme.Scheme;
-import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.impl.client.AbstractHttpClient;
-import org.apache.http.impl.client.BasicCookieStore;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
-import org.apache.http.message.BasicNameValuePair;
-import org.apache.http.params.BasicHttpParams;
-import org.apache.http.protocol.BasicHttpContext;
-import org.apache.http.protocol.HTTP;
+import com.amazonaws.org.apache.http.Header;
+import com.amazonaws.org.apache.http.HttpEntity;
+import com.amazonaws.org.apache.http.HttpResponse;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
+import com.amazonaws.org.apache.http.conn.scheme.PlainSocketFactory;
+import com.amazonaws.org.apache.http.conn.scheme.Scheme;
+import com.amazonaws.org.apache.http.conn.scheme.SchemeRegistry;
+import com.amazonaws.org.apache.http.conn.ssl.SSLSocketFactory;
+import com.amazonaws.org.apache.http.impl.client.AbstractHttpClient;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.impl.conn.BasicClientConnectionManager;
+import com.amazonaws.org.apache.http.params.BasicHttpParams;
+import com.amazonaws.org.apache.http.protocol.BasicHttpContext;
 
 import android.app.Activity;
 import android.app.DownloadManager;
@@ -52,10 +44,11 @@ import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
-import android.net.http.AndroidHttpClient;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.annotation.RequiresApi;
 import android.support.v4.content.FileProvider;
 import android.util.Log;
@@ -74,11 +67,6 @@ public class Utils {
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
     public static final boolean isFileProviderRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
-
-    static {
-        BasicCookieStore cookieStore = new BasicCookieStore();
-        commonHttpContext.setAttribute(ClientContext.COOKIE_STORE, cookieStore);
-    }
     
     public static void setHttpProfiling(boolean onoff) {
         httpProfiling = onoff;
@@ -86,13 +74,14 @@ public class Utils {
     
     public static DefaultHttpClient createHttpClient() {
         SchemeRegistry registry = new SchemeRegistry();
-        registry.register(new Scheme("http", PlainSocketFactory.getSocketFactory(), 80));
-        registry.register(new Scheme("https", SSLSocketFactory.getSocketFactory(), 443));
-        ThreadSafeClientConnManager tscm = new ThreadSafeClientConnManager( new BasicHttpParams(), registry);
+        registry.register(new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
+        registry.register(new Scheme("https", 443, SSLSocketFactory.getSocketFactory()));
+        BasicClientConnectionManager tscm = new BasicClientConnectionManager(registry);
         return new DefaultHttpClient(tscm, new BasicHttpParams());
     }
     
-    public static byte[] loadAssetData(AssetManager assets, String name) {
+    @Nullable
+    public static byte[] loadAssetData(@Nullable AssetManager assets, String name) {
         if (assets == null)
             return null;
 
@@ -106,7 +95,8 @@ public class Utils {
         }
     }
     
-    public static byte[] loadRawData(Resources resources, int id) {
+    @Nullable
+    public static byte[] loadRawData(@Nullable Resources resources, int id) {
         if (resources == null)
             return null;
         
@@ -124,7 +114,7 @@ public class Utils {
         void copyProgress(long bytes);
     }
         
-    public static void copyData(OutputStream output, InputStream input, CopyProgressCallback cb) throws IOException {
+    public static void copyData(@NonNull OutputStream output, InputStream input, @Nullable CopyProgressCallback cb) throws IOException {
         int nRead;
         long progress = 0;
         byte[] data = new byte[65536];
@@ -138,13 +128,13 @@ public class Utils {
         output.flush();
     }
     
-    public static byte[] readToByteBuffer(InputStream input) throws IOException {
+    public static byte[] readToByteBuffer(@NonNull InputStream input) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         copyData(buffer, input, null);
         return buffer.toByteArray();
     }
     
-    public static byte[] readToByteBufferAndClose(InputStream input) throws IOException {
+    public static byte[] readToByteBufferAndClose(@NonNull InputStream input) throws IOException {
         try {
             return readToByteBuffer(input);
         } finally {
@@ -153,6 +143,7 @@ public class Utils {
     }
     
     // fills HashMap with Keys and Values from query string
+    @NonNull
     public static HashMap<String,String> decodeUrlQuery(String query) {
         HashMap<String,String> parameters = new HashMap<String,String>();
         
@@ -167,8 +158,8 @@ public class Utils {
             }
 
             try {
-                key = URLDecoder.decode(key, HTTP.UTF_8);
-                val = URLDecoder.decode(val, HTTP.UTF_8);
+                key = URLDecoder.decode(key, "UTF-8");
+                val = URLDecoder.decode(val, "UTF-8");
             } catch (UnsupportedEncodingException e) {
                 Log.wtf(LOG_TAG, "decodeUrlQuery: " + e);
             }
@@ -178,14 +169,6 @@ public class Utils {
 
         return parameters;
     }
-    
-    // folds params
-    public static UrlEncodedFormEntity paramStringsToEntity(String[] params) throws UnsupportedEncodingException {
-        List<NameValuePair> args = new ArrayList<NameValuePair>(params.length/2);
-        for (int i = 0; i < params.length; i+=2)
-            args.add(new BasicNameValuePair(params[i], params[i+1]));
-        return new UrlEncodedFormEntity(args, HTTP.UTF_8);
-    }
 
     // makes query string from params
     public static String paramStringsToQuery(String[] params) throws UnsupportedEncodingException {
@@ -194,16 +177,16 @@ public class Utils {
         for (int i = 0; i < params.length; i+=2) {
             if (sb.length() > 0)
                 sb.append("&");
-            sb.append(URLEncoder.encode(params[i], HTTP.UTF_8));
+            sb.append(URLEncoder.encode(params[i], "UTF-8"));
             sb.append("=");
-            sb.append(URLEncoder.encode(params[i+1], HTTP.UTF_8));
+            sb.append(URLEncoder.encode(params[i+1], "UTF-8"));
         }
 
         return sb.toString();
     }
     
     public interface HttpLoadCallback extends CopyProgressCallback {
-        void httpFinished(boolean withData);
+        void httpFinished(int status, HashMap<String, String> headers, boolean withData);
         boolean httpStatus(int status);
         void httpError(String message);
         void httpAbort(String message);
@@ -212,9 +195,9 @@ public class Utils {
     
     public static class HttpLoadAdaptor implements HttpLoadCallback {
         /**
-         * Make sure you are invoking super.httpFinished(withData) when overriding this method!
+         * Make sure you are invoking super.httpFinished(withData, status, headers) when overriding this method!
          */
-        public void httpFinished(boolean withData) {
+        public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
             if (httpProfiling) {
                 long ctm = System.currentTimeMillis();                
                 Log.i(LOG_TAG, ">> Finished http request at {" + ctm + "}, took {" + (ctm - createdAt) + "} ms: {" + uriString + "}");
@@ -243,20 +226,24 @@ public class Utils {
         
     }
 
-    public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, OutputStream output, HttpLoadCallback callback) throws IOException {
-        HttpClientParams.setRedirecting(httpclient.getParams(), true);
-        AndroidHttpClient.modifyRequestToAcceptGzipResponse(request);
+    public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
+        httpclient.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
         HttpResponse response = httpclient.execute(request, commonHttpContext);
 
         int status = response.getStatusLine().getStatusCode();
         boolean ok = callback.httpStatus(status);
         boolean data_done = false;
 
+        HashMap<String, String> headers = new HashMap<>();
+        for (Header header : response.getAllHeaders()) {
+            headers.put(header.getName(), header.getValue());
+        }
+
         HttpEntity entity = response.getEntity();
         if (entity != null) {
             callback.httpContentLength(entity.getContentLength());
 
-            InputStream contentStream = AndroidHttpClient.getUngzippedContent(entity);
+            InputStream contentStream = entity.getContent();
             try {
                 if (ok) {
                     copyData(output, contentStream, callback);
@@ -264,24 +251,23 @@ public class Utils {
                 }
             } finally {
                 contentStream.close();
-                entity.consumeContent();
             }
         }
 
         if (ok)
-            callback.httpFinished(data_done);
+            callback.httpFinished(status, headers, data_done);
         else
             callback.httpError("HTTP " + status + " error");
     }
 
-    public static byte[] loadHttpUrl(AbstractHttpClient httpclient, String link) {
+    public static byte[] loadHttpUrl(@NonNull AbstractHttpClient httpclient, String link) {
         try{
             final boolean[] ok = new boolean[] { false };
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
             loadHttp(httpclient, new HttpGet(link), buffer, new HttpLoadAdaptor(link) {
-                public void httpFinished(boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     ok[0] = withData;
                 }
             });
@@ -293,7 +279,7 @@ public class Utils {
         }
     }
 
-    public static boolean loadHttpFile(AbstractHttpClient httpclient, String link, String filename, HttpLoadCallback callback) {
+    public static boolean loadHttpFile(@NonNull AbstractHttpClient httpclient, String link, @NonNull String filename, @NonNull HttpLoadCallback callback) {
         try{
             FileOutputStream buffer = new FileOutputStream(filename);
             
@@ -310,7 +296,7 @@ public class Utils {
         }
     }
 
-    public static void loadHttpAsync(final AbstractHttpClient http_client, final HttpUriRequest request, final OutputStream output, final HttpLoadCallback callback) {
+    public static void loadHttpAsync(@NonNull final AbstractHttpClient http_client, @NonNull final HttpUriRequest request, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 try {
@@ -330,7 +316,7 @@ public class Utils {
         worker.start();
     }
 
-    public static void loadHttpAsync(AbstractHttpClient http_client, HttpUriRequest request, final HttpResolver callback) {
+    public static void loadHttpAsync(@NonNull AbstractHttpClient http_client, @NonNull HttpUriRequest request, @NonNull final HttpResolver callback) {
         final OutputStream buffer = new OutputStream() {
             public void write(byte[] data, int start, int length) {
                 byte[] buf = data;
@@ -340,14 +326,15 @@ public class Utils {
                 }
                 callback.deliverData(buf, false);
             }
-            public void write(int oneByte) throws IOException {
+            public void write(int oneByte) {
                 callback.deliverData(new byte[] { (byte)oneByte }, false);
             }
         };
         loadHttpAsync(http_client, request, buffer, new HttpLoadAdaptor(request.getURI().toString()) {
-            public void httpFinished(boolean withData) {
-                super.httpFinished(withData);
+            public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                super.httpFinished(status, headers, withData);
                 callback.deliverData(null, true);
+                callback.deliverDone(status, headers);
             }
             public boolean httpStatus(int status) {
                 callback.reportStatus(status);
@@ -366,7 +353,7 @@ public class Utils {
         });
     }
 
-    public static boolean urlHasExtension(URI link, String ext) {
+    public static boolean urlHasExtension(URI link, @NonNull String ext) {
         return link.getScheme() != null &&
                link.getRawAuthority() != null &&
                link.getRawPath() != null &&
@@ -388,6 +375,7 @@ public class Utils {
     }
 
     // retrieves meta-data strings from manifest file
+    @NonNull
     public static String getAppMetadata(Context ctx, String key) {
         try {
             ApplicationInfo ai = ctx.getPackageManager().getApplicationInfo(ctx.getPackageName(), PackageManager.GET_META_DATA);
@@ -409,11 +397,12 @@ public class Utils {
             return false;
         }
     }
-        
-    public static boolean isParamTrue(String param) {
-        return param == null ? false : param.equalsIgnoreCase("true") || param.equalsIgnoreCase("1");
+
+    public static boolean isParamTrue(@Nullable String param) {
+        return param != null && (param.equalsIgnoreCase("true") || param.equalsIgnoreCase("1"));
     }
 
+    @NonNull
     public static HashMap<String,String> pref_url_parameters = new HashMap<String,String>(), manifest_url_params = new HashMap<String,String>();
     public static String getManifestParam(String key) {
         return manifest_url_params.get(key);
@@ -468,9 +457,9 @@ public class Utils {
         return false;
     }
     
-    public static void handleHardwareAcceleration(boolean initialized, Activity activity) {
+    public static void handleHardwareAcceleration(boolean initialized, @NonNull Activity activity) {
         String haParam = Utils.getParam("ha");
-        boolean haSetting = haParam == null ? true : Utils.isParamTrue(haParam); // true by default
+        boolean haSetting = haParam == null || Utils.isParamTrue(haParam); // true by default
         if (!initialized) {
          // this could be executed only from main thread, not from LoadThread class
             activity.getWindow().setFlags(
@@ -523,7 +512,7 @@ public class Utils {
      * @return true if permissions are granted. otherwise returns false and requests permissions
      */
     @RequiresApi(api = Build.VERSION_CODES.M)
-    public static boolean checkAndRequestPermissions(Activity activity, String[] permissions, int requestCode) {
+    public static boolean checkAndRequestPermissions(@NonNull Activity activity, String[] permissions, int requestCode) {
         boolean granted = true;
         for(String permission : permissions) {
             if(activity.checkSelfPermission(permission) == PackageManager.PERMISSION_DENIED) {
@@ -545,7 +534,7 @@ public class Utils {
     
     // method to retrieve correct path from uri like: content://
     // More info here: http://stackoverflow.com/questions/19834842/android-gallery-on-kitkat-returns-different-uri-for-intent-action-get-content
-    public static String getPath(final Context context, final Uri uri) {
+    public static String getPath(@NonNull final Context context, @NonNull final Uri uri) {
         final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
         String result = uri + "";
         // DocumentProvider
@@ -580,7 +569,7 @@ public class Utils {
         return null;
     }
 
-    public static String getDataColumn(Context context, Uri uri, String selection, String[] selectionArgs) {
+    public static String getDataColumn(Context context, @NonNull Uri uri, String selection, String[] selectionArgs) {
         Cursor cursor = null;
         final String column = "_data";
         final String[] projection = {column};
@@ -600,7 +589,7 @@ public class Utils {
     
     // Based on ObjectSerializer from Apache pig
     // deserialize will fail, if we will not encode bytes from ByteArrayOutputStream
-    public static String serializeObjectToString(Serializable obj) throws IOException {
+    public static String serializeObjectToString(@Nullable Serializable obj) {
         if (obj == null) return "";
         try {
             ByteArrayOutputStream serialObj = new ByteArrayOutputStream();
@@ -613,8 +602,8 @@ public class Utils {
         }
         return "";
     }
-    
-    public static Object deserializeStringToObject(String str) throws IOException {
+
+    public static Object deserializeStringToObject(@Nullable String str) {
         if (str == null || str.length() == 0) return null;
         try {
             ByteArrayInputStream serialObj = new ByteArrayInputStream(decodeBytes(str));
@@ -635,6 +624,7 @@ public class Utils {
         return strBuf.toString();
     }
     
+    @NonNull
     private static byte[] decodeBytes(String str) {
         byte[] bytes = new byte[str.length() / 2];
         for (int i = 0; i < str.length(); i += 2) {

@@ -8,6 +8,9 @@ import tools/flowc/incremental/fc2fi;
 import tools/flowc/flowc_typeverify;
 import ds/treeutils;
 
+import tools/flowc/typechecker2/gtype_solve;
+
+
 export {
 	typecheckFcModule(env : FcTypeEnv, module : FcModule) -> FcTypecheckResult;
 
@@ -49,15 +52,9 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 
 	// Use updated onModuleError callback in typing environment
 	env = FcTypeEnv(
-		env0.global,
-		FcTypeEnvProgram(
-			env0.program.acc,
-			env0.program.types,
-			onModuleError,
-			env0.program.errors,
-			env0.program.union2typenamesCache
-		),
-		env0.local,
+		env0 with program = FcTypeEnvProgram(
+			env0.program with printError = onModuleError
+		)
 	);
 
 	// Check that polymorphic unions are sufficiently marked as such
@@ -166,6 +163,11 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 		)
 	});
 
+	subtype = if (isUrlParameterTrue("gtype")) {
+		buildGSubtypeGraph(env.program.acc.names);
+	} else {
+		emptyGSubtypeGraph();
+	}
 
 	// If we are running a test, or unittests, we might produce the expected outputs
 	test = getConfigParameter(env.program.acc.config.config, "test");
@@ -177,7 +179,7 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 	ret = fold(initOrder0, envTyping, \acc, os -> {
 		tasks = map(os, \o -> {
 			tyvarIdGroup = makeIdGroup(env.program.acc.tyvarIdFactory);
-			\ -> typecheckToplevel(acc.first, module, tyvarIdGroup, outfolder, o, onModuleError);
+			\ -> typecheckToplevel(acc.first, subtype, module, tyvarIdGroup, outfolder, o, onModuleError);
 		});
 		results = sequential(false, tasks);
 		// OK, append the outputs in the correct order
@@ -230,7 +232,7 @@ typecheckFcModule(env0 : FcTypeEnv, module : FcModule) -> FcTypecheckResult {
 
 TypecheckResult(name : string, type : Maybe<FcType>, output : string);
 
-typecheckToplevel(env : FcTypeEnv, module : FcModule, tyvarIdGroup : IdGroup, outfolder : string, o : string, onModuleError : (FcError) -> void) -> TypecheckResult {
+typecheckToplevel(env : FcTypeEnv, subtype : GSubtypeGraph, module : FcModule, tyvarIdGroup : IdGroup, outfolder : string, o : string, onModuleError : (FcError) -> void) -> TypecheckResult {
 	if (env.program.acc.config.verbose >= 2 || ^(env.local.debugTyping) > 0)  {
 		fcPrintln("\nType checking " + o + " from " + i2s(getGroupId(tyvarIdGroup)));
 		{}
@@ -307,8 +309,13 @@ typecheckToplevel(env : FcTypeEnv, module : FcModule, tyvarIdGroup : IdGroup, ou
 
 							pos = FcPosition(module.fileinfo.flowfile, fnlam.info.start, fnlam.info.end);
 
-							fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
-							ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+
+							if (isUrlParameterTrue("gtype")) {
+								genv = gtypeSolve(o, tyvarIdGroup, pos, env, subtype);
+							} else {
+								fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
+								ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+							}
 
 							env.local.typars := makeTree();
 
@@ -401,8 +408,12 @@ typecheckToplevel(env : FcTypeEnv, module : FcModule, tyvarIdGroup : IdGroup, ou
 					pos = FcPosition(module.fileinfo.flowfile, gv.declInfo.start, gv.declInfo.end);
 
 					// Solve all the collected constraints
-					fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
-					ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+					if (isUrlParameterTrue("gtype")) {
+						genv = gtypeSolve(o, tyvarIdGroup, pos, env, subtype);
+					} else {
+						fenv = ftypeSolve(o, tyvarIdGroup, pos, env);
+						ftypeFinalize(o, pos, 0, env, fenv, unifyType);
+					}
 
 					rvt = getResolvedFcType(env, vt);
 
@@ -665,7 +676,13 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 				}
 				Some(tt): {
 					// The type of the variable needs to request any declared type, implicitly or explicitly
-					checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, xtype, "switch var", ci, e));
+					if (isUrlParameterTrue("gtype")) {
+						// We like to be strict here
+						checkOrRecordTypeExpect(acc, FcVerifyType(tt, xtype, ci));
+					} else {
+						checkOrRecordTypeExpect(acc, FcLessOrEqual(tt, xtype, "switch var", ci, e));
+					}
+				
 					tt;
 				}
 			}
@@ -719,11 +736,19 @@ typecheckFcExp(acc : FcTypeEnv, tyvarIdGroup : IdGroup, flowfile : string, e : F
 										} else acc2;
 									});
 
-									// Keep the union distinct by making tyvars for the parameters
-									ntv = fold(tns, 0, \acc2, tn -> max(acc2, length(tn.typeparameters)));
-									un = FcTypeUnion("", generate(0, ntv, \__ -> makeFcTyVar2(tyvarIdGroup, ci)), tns, ci);
-									expect = FcLessOrEqual(un, unionType, "cases in switch", ci, e);
-									checkOrRecordTypeExpect(acc, expect);
+									if (isUrlParameterTrue("gtype")) {
+										// We just go one by one in this situation
+										iter(tns, \tn -> {
+											expect = FcLessOrEqual(tn, unionType, "cases in switch", ci, e);
+											checkOrRecordTypeExpect(acc, expect);
+										});
+									} else {
+										// Keep the union distinct by making tyvars for the parameters
+										ntv = fold(tns, 0, \acc2, tn -> max(acc2, length(tn.typeparameters)));
+										un = FcTypeUnion("", generate(0, ntv, \__ -> makeFcTyVar2(tyvarIdGroup, ci)), tns, ci);
+										expect = FcLessOrEqual(un, unionType, "cases in switch", ci, e);
+										checkOrRecordTypeExpect(acc, expect);
+									};
 
 									[];
 								}

@@ -15,12 +15,6 @@ export {
 
 	mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t : Tropic) -> Tropic;
 
-	materialMouseWheel(manager : MaterialManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic;
-
-	disableMouseWheelBelow(content : Tropic) -> Tropic;
-	disableMMouseWheelBelow(content : Material) -> Material;
-	disableInteractivesBelow(content : Tropic) -> Tropic;
-	disableMInteractivesBelow(content : Material) -> Material;
 	disableScrollInside(manager : MaterialManager, content : Tropic) -> Tropic;
 	disableScrollInsideEnabled(manager : MaterialManager, content : Tropic, enabled : Transform<bool>) -> Tropic;
 	disableMScrollInside(manager : MaterialManager, content : Material) -> Material;
@@ -37,51 +31,54 @@ export {
 
 mouseDownAround(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>, hover : DynamicBehaviour<bool>,
 	onClick : () -> void, t : Tropic) -> Tropic {
-	zorder = ref getValue(manager.currentZorder);
 	state =
 		concat(
-			if (isSome(point)) [MMousePosition(either(point, make(zeroPoint)))] else [],
+			eitherMap(point, \p -> [MMousePosition(p)], []),
 			[
 				MOnClick(onClick),
 				TPressed(down),
 				THovering(hover),
-				MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
 			]
 		);
 
-	TConstruct(
-		[
-			\ -> {
-				zorder := getValue(manager.currentZorder);
-				nop
-			}
-		],
-		mouseOnDownAround(manager, state,  t)
-	)
+	mouseOnDownAroundCommon(manager, state, t)
 }
 
 mouseDownAroundPassClicks(manager : MaterialManager, point : Maybe<DynamicBehaviour<Point>>, down : DynamicBehaviour<bool>,
 	hover : DynamicBehaviour<bool>, onClick : () -> void, t : Tropic) -> Tropic {
-	zorder = ref getValue(manager.currentZorder);
+
 	state =
 		concat(
-			if (isSome(point)) [MMousePosition(either(point, make(zeroPoint)))] else [],
+			eitherMap(point, \p -> [MMousePosition(p)], []),
 			[
 				MPassClicks(),
 				MOnClick(onClick),
 				TPressed(down),
 				THovering(hover),
-				MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
 			]
 		);
 
+	mouseOnDownAroundCommon(manager, state, t)
+}
+
+downMask(manager : MaterialManager, box : Tropic, onDown : (point : Point, inside : bool) -> void) -> Tropic {
+	state = [
+		MPassClicks(),
+		MOnMouseDown(onDown),
+	];
+
+	mouseOnDownAroundCommon(manager, state, box)
+}
+
+mouseOnDownAroundCommon(manager : MaterialManager, state0 : [MouseOnDownAroundState], t : Tropic) -> Tropic {
+	zorder = ref getValue(manager.manager.zorder);
+	state =
+		arrayPush(state0,
+			MEnabled(fselect(manager.manager.zorder, FLift(\cz -> ^zorder >= cz)))
+		);
+
 	TConstruct(
-		[
-			\ -> {
-				zorder := getValue(manager.currentZorder);
-				nop
-			}
-		],
+		[\ -> { zorder := getValue(manager.manager.zorder); nop }],
 		mouseOnDownAround(manager, state,  t)
 	)
 }
@@ -131,8 +128,8 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 	mobileForceHover = contains(state, MMobileForceHover());
 	clickEnabled = make(true);
 	enabled =
-		fmin(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled)
-		|> (\enabled -> if (isSome(onClickAsync)) fmin(enabled, clickEnabled) else enabled);
+		fand(extractStruct(state, MEnabled(const(true))).enabled, extractStruct(state, TEnabled(const(true))).enabled)
+		|> (\enabled -> if (isSome(onClickAsync)) fand(enabled, clickEnabled) else enabled);
 	onDown = tryExtractStruct(state, MOnMouseDown(nop2));
 	onUp = tryExtractStruct(state, MOnMouseUp(nop2));
 
@@ -172,7 +169,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 		if (debugMaterialClicks)
 			println("hold " + i2s(interactionId));
 		dispUnsM(uns);
-		addInteractionItemId(manager, interactionId);
+		addMInteractionItemId(manager, interactionId);
 		if (!mobile || mobileForceHover) nextDistinct(hover, true);
 		nextDistinct(down, true);
 		wasDown := true;
@@ -180,7 +177,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 		setUnsM(
 			uns,
 			[
-				makeSubscribe(manager.currentInteractionItemID, \ii -> if (!contains(ii, interactionId)) deferred(release))(),
+				makeSubscribe(manager.manager.currentInteractionItemID, \ii -> if (!contains(ii, interactionId)) deferred(release))(),
 			]
 			|> (\f ->
 				// TODO: Dispose on hover false
@@ -189,13 +186,13 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 					\lt -> {
 						setUnsM(
 							longUns,
-							interruptibleTimer(500, \ -> { blockOtherInteractionItemIds(manager, interactionId); lt.touch(); })
+							interruptibleTimer(500, \ -> { blockOtherMInteractionItemIds(manager, interactionId); lt.touch(); })
 						);
 						arrayPush(f, \ -> dispUnsM(longUns));
 					},
 					\ ->
 						if (blockClicks)
-							arrayPush(f, interruptibleTimer(510, \ -> blockOtherInteractionItemIds(manager, interactionId)))
+							arrayPush(f, interruptibleTimer(510, \ -> blockOtherMInteractionItemIds(manager, interactionId)))
 						else
 							f
 				)
@@ -205,7 +202,7 @@ mouseOnDownAround(manager : MaterialManager, state : [MouseOnDownAroundState], t
 					onTouch,
 					\ot -> {
 						longUns1 = either(^longUns, nop);
-						longUns2 = interruptibleTimer(ot.delay, \ -> {blockOtherInteractionItemIds(manager, interactionId); ot.touch();});
+						longUns2 = interruptibleTimer(ot.delay, \ -> {blockOtherMInteractionItemIds(manager, interactionId); ot.touch();});
 						setUnsM(
 							longUns,
 							\ -> {
@@ -571,134 +568,12 @@ clickableDownHover(manager : MaterialManager, parent : MFocusGroup, t : Tropic, 
 	)
 }
 
-downMask(manager : MaterialManager, box : Tropic, onDown : (point : Point, inside : bool) -> void) -> Tropic {
-	zorder = ref getValue(manager.currentZorder);
-	state =
-		[
-			MPassClicks(),
-			MOnMouseDown(onDown),
-			MEnabled(fselect(manager.currentZorder, FLift(\cz -> ^zorder >= cz)))
-		];
-
-	TConstruct(
-		[
-			\ -> {
-				zorder := getValue(manager.currentZorder);
-				nop
-			}
-		],
-		mouseOnDownAround(manager, state, box)
-	)
-}
-
-materialMouseWheel(manager : MaterialManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic {
-	// Qt target on OSX returns the scroll in pixels, so we scale it by 80.
-	scrollScale = if (qt && macosx()) 80. else 1.;
-
-	if (mobile)
-		content
-	else {
-		zorder = ref getValue(manager.currentZorder);
-
-		TConstruct(
-			[
-				\ -> {
-					zorder := getValue(manager.currentZorder);
-					nop
-				}
-			],
-			TInteractive(
-				[
-					FineGrainMouseWheel2(\h, mi ->
-						if (!h && ^zorder >= getValue(manager.currentZorder)) {
-							m = mi();
-
-							if (m.inside && (m.dx != 0. || m.dy != 0.)) {
-								dx = deltaX(m.dx / scrollScale);
-								dy = deltaY(m.dy / scrollScale);
-
-								dx || dy
-							} else {
-								h
-							}
-						} else
-							h
-					)
-				],
-				content
-			)
-		)
-	}
-}
-
-disableMouseWheelBelow(content : Tropic) -> Tropic {
-	if (mobile)
-		content
-	else {
-		TInteractive(
-			[
-				FineGrainMouseWheel2(\__, mi -> mi().inside)
-			],
-			content
-		)
-	}
-}
-
-disableMMouseWheelBelow(content : Material) -> Material {
-	if (mobile)
-		content
-	else {
-		MInteractive(
-			[
-				FineGrainMouseWheel2(\__, mi -> mi().inside)
-			],
-			content
-		)
-	}
-}
-
-disableInteractivesBelow(content : Tropic) -> Tropic {
-	TCopySize(
-		content,
-		\tr ->
-			TInteractive(
-				[
-					MouseDown(\mi -> mi.inside()),
-					MouseUp(\mi -> mi().inside),
-					MouseMove(\mi -> mi().inside),
-					RollOver(nop1),
-					RollOut(nop1)
-				],
-				TRectangle(interactiveRectangleStyle, tr)
-			),
-		false
-	)
-}
-
-disableMInteractivesBelow(content : Material) -> Material {
-	MCopySize(
-		content,
-		\tr ->
-			MInteractive(
-				[
-					MouseDown(\mi -> mi.inside()),
-					MouseUp(\mi -> mi().inside),
-					MouseMove(\mi -> mi().inside),
-					RollOver(nop1),
-					RollOut(nop1)
-				],
-				TRectangle(interactiveRectangleStyle, tr)
-			),
-		false
-	)
-}
-
 disableScrollInside(manager : MaterialManager, content : Tropic) -> Tropic {
 	interactiveId = makeTropicTag(manager);
 	down = make(false);
 
 	TCopySize(content, \t -> TInteractive([TMouseDownGhost(down)], t), true)
-	|> (\f -> TConstruct([makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))], f))
+	|> (\f -> TConstruct([makeSubscribe2(down, \__ -> blockOtherMInteractionItemIds(manager, interactiveId))], f))
 }
 
 disableScrollInsideEnabled(manager : MaterialManager, content : Tropic, enabled : Transform<bool>) -> Tropic {
@@ -714,7 +589,7 @@ disableScrollInsideEnabled(manager : MaterialManager, content : Tropic, enabled 
 
 					TConstruct(
 						[
-							makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))
+							makeSubscribe2(down, \__ -> blockOtherMInteractionItemIds(manager, interactiveId))
 						],
 						TInteractive([TMouseDownGhost(down)], TRectangle([Fill(black), FillOpacity(0.)], TSized(wh)))
 					)
@@ -730,7 +605,7 @@ disableMScrollInside(manager : MaterialManager, content : Material) -> Material 
 	down = make(false);
 
 	MCopySize(content, \t -> MInteractive([TMouseDownGhost(down)], t), true)
-	|> (\f -> MConstruct([makeSubscribe2(down, \__ -> blockOtherInteractionItemIds(manager, interactiveId))], f))
+	|> (\f -> MConstruct([makeSubscribe2(down, \__ -> blockOtherMInteractionItemIds(manager, interactiveId))], f))
 }
 
 MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
@@ -786,7 +661,7 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 		lastMouseXY := Point(-1., -1.);
 		swipeAction := -1;
 		nextDistinct(down, false);
-		removeInteractionItemId(manager, swipeId);
+		removeMInteractionItemId(manager, swipeId);
 	}
 
 	TCopySize(
@@ -797,7 +672,7 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 				TInteractive(
 					[
 						MouseMove(\mi0 -> {
-							if (getValue(down) && isCurrentInteractionItemId(manager, swipeId)) {
+							if (getValue(down) && isCurrentMInteractionItemId(manager, swipeId)) {
 								mi = mi0();
 
 								if (mi.inside) {
@@ -833,10 +708,10 @@ MSwipe2T(manager : MaterialManager, parent : MFocusGroup, m : MSwipe, m2t : (Mat
 									\bl -> {
 										if (!bl) {
 											nextDistinct(down, true);
-											addInteractionItemId(manager, swipeId);
+											addMInteractionItemId(manager, swipeId);
 										} else {
 											nextDistinct(down, true);
-											blockOtherInteractionItemIds(manager, swipeId);
+											blockOtherMInteractionItemIds(manager, swipeId);
 										}
 									},
 									releaseFn

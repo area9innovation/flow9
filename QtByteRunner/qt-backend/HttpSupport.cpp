@@ -169,8 +169,6 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     QString method = unicode2qt(rq.method);
     QString payload = unicode2qt(rq.payload);
 
-    bool isMultipartRequest = rq.attachments.size() != 0;
-
     QNetworkRequest request(url);
 
     // Set headers for HTTP request
@@ -179,46 +177,7 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     if (getFlowRunner()->NotifyStubs)
         getFlowRunner()->flow_err << "Requesting URL: " << url.toString().toUtf8().data() << std::endl;
 
-    QNetworkReply *reply;
-    if (!payload.isEmpty()) {
-        reply = manager->sendCustomRequest(request, method.toLatin1(), payload.toLatin1());
-    } else if (isMultipartRequest) {
-        QHttpMultiPart *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
-
-        // build parameters for request
-        setHttpParametersPart(multiPart, rq.params);
-
-        // Setup attachments for HTTP request
-        setHttpAttachmentsPart(multiPart, rq.attachments);
-
-        reply = manager->sendCustomRequest(request, method.toLatin1(), multiPart);
-        multiPart->setParent(reply);
-    } else {
-        // quiry item for GET request g
-        QUrlQuery query(url.query());
-
-        // Setup url query for GET request
-        setQueryParameters(query, rq.params);
-
-        if (method == "GET") {
-            url.setQuery(query);
-            request.setUrl(url);
-        } else {
-            payload = query.query(QUrl::FullyEncoded);
-
-            HttpRequest::T_SMap::iterator contentTypeI = rq.headers.find(parseUtf8("Content-Type"));
-            unicode_string contentType = contentTypeI != rq.headers.end() ? contentTypeI->second : unicode_string();
-            if (contentType != parseUtf8("application/x-www-form-urlencoded")) {
-                request.setRawHeader("Content-Type", "application/x-www-form-urlencoded");
-            }
-        }
-
-    #ifdef DEBUG_FLOW
-        getFlowRunner()->flow_err << method.toStdString() << " data to " << url.toEncoded().data();
-    #endif
-
-        reply = manager->sendCustomRequest(request, method.toLatin1(), payload.toLatin1());
-    }
+    QNetworkReply *reply = manager->sendCustomRequest(request, method.toLatin1(), QByteArray(payload.toStdString().c_str()));
 
     connect(reply, SIGNAL(downloadProgress(qint64,qint64)), this, SLOT(downloadProgress(qint64,qint64)));
 
@@ -376,6 +335,7 @@ void QtHttpSupport::selectAccepted()
 
         if (deliverSelectOK(id, qt2unicode(name), int(size))) {
             rq->attachments[qt2unicode(info.fileName())] = qt2unicode(info.filePath());
+            processRequest(*rq);
             doRequest(*rq);
         }
     }

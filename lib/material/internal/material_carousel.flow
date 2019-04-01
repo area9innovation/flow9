@@ -5,40 +5,39 @@ export {
 }
 
 goldenRatio = (1. + sqrt(5.)) / 2.;
+contentZoomDef = MCarouselContentZoom(1., 1., 0.);
 
 MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	state = makeMCarouselState(manager, m);
 
 	if (state.contentsLength > 0)
 		(\p -> {
-			TAttach(TFillXY(), \fm ->
-				mapi(state.contents, \i, c -> MCarouselContent2T(manager, p, c, i, m.style, state, m2t))
-				|> TCols
-				|> (\f -> TTranslate(fselect(state.tx, FLift(\t -> Point(t, 0.))), f))
-				|> (\f -> TCropSize(TDisplay("MCarouselBox"), f))
-				|> (\f ->
-					TConstruct(
-						[
-							makeSubscribe(
-								fselect2(fm.width, fm.height,
-									FLift2(\w, h ->
-										WidthHeight(
-											if (w < 120.) {if (h < 120.) 120. else h * goldenRatio} else w,
-											if (h < 120.) {if (w < 120.) 120. else w / goldenRatio} else h
-										)
-									)
-								), \wh -> {
-									nextDistinct(state.wh, wh);
-									nextDistinct(state.tx, -wh.width * i2d(getValue(state.activeIdx)));
-									next(state.activeIdx, getValue(state.activeIdx));
-								}
-							)
-						],
-						f
-					)
+			boxWH = makeWH();
+
+			mapi(m.contents, \i, c -> MCarouselContent2T(manager, p, c, i, m.style, state, m2t))
+			|> TCols
+			|> (\f -> TTranslate(fpoint(state.tx, const(0.)), f))
+			|> (\f -> TCrop(const(zeroPoint), state.wh, f))
+			|> (\f ->
+				TConstruct(
+					[
+						makeSubscribe(
+							fselect(boxWH, FLift(\wh ->
+								WidthHeight(
+									if (wh.width < 120.) {if (wh.height < 120.) 120. else wh.height * goldenRatio} else wh.width,
+									if (wh.height < 120.) {if (wh.width < 120.) 120. else wh.width / goldenRatio} else wh.height
+								)
+							)),	\wh -> {
+								nextDistinct(state.wh, wh);
+								nextDistinct(state.tx, -wh.width * i2d(getValue(state.activeIdx)));
+								next(state.activeIdx, getValue(state.activeIdx)); // in order to trigger the animation
+							}
+						)
+					],
+					f
 				)
 			)
-			|> (\f -> TLet("MCarouselBox", TSized(state.wh), f))
+			|> (\t -> TAttachAvailable(t, boxWH))
 			|> (\f ->
 				if (state.contentsLength > state.itemsSpan)
 					MSwipe2T(
@@ -47,13 +46,16 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 						MSwipe(
 							f,
 							[
-								MOnSwipeLeft(state.swipeFn), MOnSwipeRight(state.swipeFn), TPressed(state.down), MCurrentInteractive(state.swipeInteractive),
+								MOnSwipeLeft(state.swipeFn),
+								MOnSwipeRight(state.swipeFn),
+								TPressed(state.down),
+								MCurrentInteractive(state.swipeInteractive),
 								MEnabled(
 									eitherMap(
 										state.maximize,
 										\mx ->
 											if (contains(mx.style, MDisableSwipe()))
-												fmin(state.enabled, fnot(mx.maximized))
+												fand(state.enabled, fnot(mx.maximized))
 											else
 												state.enabled,
 										state.enabled
@@ -61,14 +63,14 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 								)
 							]
 						),
-						dummyM2t
+						m2t
 					)
 				else
 					f
 			)
 			|> (\f ->
 				if (state.enableChevrons)
-					MCarouselChevrons(manager, p, f, state)
+					MCarouselChevrons(manager, p, f, state, m2t)
 					|> (\f2 ->
 						eitherMap(
 							state.maximize,
@@ -84,8 +86,8 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 					f
 			)
 			|> (\f ->
-				if (state.enableProgress)
-					MCarouselAddProgress(manager, p, f, state)
+				if (isSome(state.progress))
+					MCarouselProgress(manager, p, f, state)
 					|> (\f2 ->
 						eitherMap(
 							state.maximize,
@@ -102,19 +104,17 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 			)
 			|> (\f ->
 				[
-					(\cz, vis0 -> {
+					(\cz : MCarouselContentZoom, vis0 : bool -> {
 						vis =
 							eitherMap(
 								state.maximize,
-								\mx -> {
+								\mx ->
 									eitherFn(
 										tryExtractStruct(mx.style, cz),
 										\mxCz -> {
 											fselect(mx.maximized, FLift(\mxd -> {
-												if (mxd)
-													nextDistinct(state.zoomScale, max(min(1., mxCz.max), mxCz.min))
-												else
-													nextDistinct(state.zoomScale, max(min(1., cz.max), cz.min));
+												zoom = if (mxd) mxCz else cz;
+												nextDistinct(state.zoomScale, max(min(1., zoom.max), zoom.min));
 												vis0 || mxd
 											}))
 										},
@@ -127,18 +127,16 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 												}))
 											else
 												const(false)
-									)
-								},
+									),
 								const(vis0)
 							);
 
-						if (vis == const(false)) {
-							[]
-						} else {
-							czStep =
+						if (vis == const(false)) []
+						else {
+							czStep : () -> double =
 								eitherMap(
 									state.maximize,
-									\mx -> {
+									\mx ->
 										eitherMap(
 											tryExtractStruct(mx.style, cz),
 											\mxCz -> \ ->
@@ -146,49 +144,25 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 													mxCz.step
 												else
 													cz.step,
-											\ ->
-												cz.step
-										)
-									},
-									\ ->
-										cz.step
+											\ -> cz.step
+										),
+									\ -> cz.step
 								);
 
 							[
-								MIconButton2T(
-									manager,
-									p,
-									MIconButton(
-										"zoom_in",
-										\ -> state.addToContentZoom(czStep()),
-										[state.buttonsColor, MIconButtonBorder(8.), MElevation(const(2.))],
-										[MEnabled(state.enabled)]
-									)
-								)
-								|> (\f2 -> TShow(vis, f2))
-								|> (\f2 -> TBorder(0., 8., 8., 8., f2)),
-								MIconButton2T(
-									manager,
-									p,
-									MIconButton(
-										"zoom_out",
-										\ -> state.addToContentZoom(-czStep()),
-										[state.buttonsColor, MIconButtonBorder(8.), MElevation(const(2.))],
-										[MEnabled(state.enabled)]
-									)
-								)
-								|> (\f2 -> TShow(vis, f2))
-								|> (\f2 -> TBorder(0., 8., 8., 8., f2))
+								MCarouselZoomButton(manager, parent, m2t, state, "zoom_in", vis, \ -> state.addToContentZoom(czStep())),
+								MCarouselZoomButton(manager, parent, m2t, state, "zoom_out", vis, \ -> state.addToContentZoom(-czStep())),
 							]
 						}
 					})
-					|> (\f2 ->
+					|> (\makeZoomButtons ->
 						eitherMap(
 							state.contentZoom,
-							\cz -> f2(cz, true),
-							f2(MCarouselContentZoom(1., 1., 0.), false)
+							\cz -> makeZoomButtons(cz, true),
+							makeZoomButtons(contentZoomDef, false)
 						)
 					),
+
 					eitherMap(
 						state.maximize,
 						\mx ->
@@ -203,39 +177,40 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 											MToggleFalseIcon("fullscreen", [state.buttonsColor, MElevation(const(2.))])
 										],
 										[MEnabled(state.enabled), MToggleValue(mx.maximized)]
-									)
+									),
+									m2t
 								)
 								|> (\f2 -> TBorder(0., 8., 8., 8., f2))
 							],
 						[]
-					),
+					)
 				]
 				|> concatA
-				|> (\f2 ->
-					if (length(f2) > 0)
+				|> (\buttons ->
+					if (length(buttons) > 0)
 						TCopySize(
 							f,
-							\tr ->
-								TTweak(
-									[TAlign(const(b2d(!getDefaultRtl())), const(1.))],
-									TBaselineColsA(f2)
-									|> (\f3 -> TBorder(8., 0., 8., 0., f3))
-									|> (\f3 ->
-										TTranslate(
-											eitherMap(
-												state.maximize,
-												\mx ->
-													if (!contains(mx.style, MShowTextOverlay()))
-														fif(fnot(mx.maximized), const(Point(0., -state.bottomMargin)), const(zeroPoint))
-													else
-														const(Point(0., -state.bottomMargin)),
-												const(Point(0., -state.bottomMargin))
-											),
-											f3
-										)
-									),
-									tr
-								),
+							\tr -> {
+								defTranslation = const(Point(0., -state.bottomMargin));
+
+								TBaselineColsA(buttons)
+								|> TBorderLeftRight(8.)
+								|> (\f3 ->
+									TTranslate(
+										eitherMap(
+											state.maximize,
+											\mx ->
+												if (contains(mx.style, MShowTextOverlay()))
+													defTranslation
+												else
+													fif(fnot(mx.maximized), defTranslation, const(zeroPoint)),
+											defTranslation
+										),
+										f3
+									)
+								)
+								|> (\f3 -> TTweak([TAlign(const(b2d(!getDefaultRtl())), const(1.))], f3, tr))
+							},
 							true
 						)
 					else
@@ -255,15 +230,17 @@ MCarousel2T(manager : MaterialManager, parent : MFocusGroup, m : MCarousel, m2t 
 			)
 			|> (\f -> TConstruct(state.subs, f))
 		})
-		|> (\f -> MComponentGroup2T(manager, parent, "MCarousel", [/*IScriptBehaviour("active", m.activeIdx, MInputValue(generate(0, length(m.contents), idfn))), */
-			IScriptBehaviour("tx", state.tx, ISAppearanceEvent()), IScriptBehaviour("scale", state.zoomScale, ISAppearanceEvent())
-			/*, IScriptBehaviour("swipe_down", state.down)*/], f))
+		|> (\f -> MComponentGroup2T(manager, parent, "MCarousel", [
+					// IScriptBehaviour("active", m.activeIdx, MInputValue(generate(0, length(m.contents), idfn))),
+					IScriptBehaviour("tx", state.tx, ISAppearanceEvent()),
+					IScriptBehaviour("scale", state.zoomScale, ISAppearanceEvent())
+					// , IScriptBehaviour("swipe_down", state.down)
+				], f))
 	else
 		TEmpty()
 }
 
 MCarouselState(
-	contents : [MCarouselContent],
 	contentsLength : int,
 	wh : DynamicBehaviour<WidthHeight>,
 	itemWidth : Transform<double>,
@@ -272,8 +249,6 @@ MCarouselState(
 	enabled : Transform<bool>,
 	activeIdx : DynamicBehaviour<int>,
 	activeI : DynamicBehaviour<int>,
-	hasPrev : ref bool,
-	hasNext : ref bool,
 	goToPrev : () -> void,
 	goToNext : () -> void,
 	swipeInteractive : DynamicBehaviour<Maybe<bool>>,
@@ -286,58 +261,63 @@ MCarouselState(
 	endlessScroll : bool,
 	enableArrows : bool,
 	enableChevrons : bool,
-	enableProgress : bool,
-	progressAtBottom : bool,
-	progressActiveColor : MColor,
-	progressInactiveColor : MColor,
+	progress : Maybe<MCarouselProgressState>,
 	bottomMargin : double,
 	buttonsColor : MColor,
 	iconSize : double,
 	subs : [() -> () -> void]
 );
 
+MCarouselProgressState(
+	bottom : bool,
+	activeColor : MColor,
+	inactiveColor : MColor
+);
+
 makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	customPanning = extractStruct(m.style, MCarouselCustomPanning(make(0.), make(false)));
 	duration = extractStruct(m.style, MAnimationDuration(0.5)).seconds;
-	enableArrows = contains(m.style, MCarouselEnableArrows());
-	uns = initUnsM();
-	targetTx = make(0.);
+	endlessScroll = contains(m.style, MLoopScroll());
 
 	// Group carousel items by N elements
 	itemsSpan = max(extractStruct(m.style, MCarouselItemSpan(1)).span, 1);
-	endlessScroll = contains(m.style, MLoopScroll());
-	contents = m.contents;
 	contentsLength =
 		if (!endlessScroll)
 			floor(i2d(length(m.contents)) / i2d(itemsSpan)) * itemsSpan
 		else
 			length(m.contents);
+
+	enableArrows = contains(m.style, MCarouselEnableArrows());
 	enableChevrons = !contains(m.style, MNoChevrons()) && contentsLength > itemsSpan;
 	enableProgress = !contains(m.style, MNoProgress()) && contentsLength > itemsSpan;
-	progressAtBottom = contains(m.style, MProgressAtBottom());
+
 	wh = makeWH();
 	itemWidth = fselect(wh, FLift(\v -> v.width / i2d(itemsSpan)));
+	uns = initUnsM();
+	targetTx = make(0.);
 	tx = customPanning.shiftX;
 	down = customPanning.mousedown;
 	enabled = extractStruct(m.style, MEnabled(const(true))).enabled;
 	activeIdx = m.activeIdx;
 	activeI = make(0);
 	fs = make(false);
+
 	hasPrev = ref false;
 	hasNext = ref false;
 	goToPrev = \ -> if (^hasPrev) next(activeIdx, getValue(activeIdx) - 1) else next(activeIdx, contentsLength - 1);
 	goToNext = \ -> if (^hasNext) next(activeIdx, getValue(activeIdx) + 1) else next(activeIdx, 0);
+
 	swipeInteractive = extractStruct(m.style, MCurrentInteractive(make(None()))).current;
 	carouselMaximize = tryExtractStruct(m.style, MCarouselMaximize(make(false), []));
-	contentZoom = tryExtractStruct(m.style, MCarouselContentZoom(1., 1., 0.));
+	contentZoom = tryExtractStruct(m.style, contentZoomDef);
 	zoomScale = make(1.);
-	addToContentZoom =
-		(\cz ->
+	addToContentZoom : (double) -> void =
+		(\cz : (double) -> void ->
 			eitherMap(
 				carouselMaximize,
 				\mx ->
 					eitherMap(
-						tryExtractStruct(mx.style, MCarouselContentZoom(1., 1., 0.)),
+						tryExtractStruct(mx.style, contentZoomDef),
 						\mxCz ->
 							\ad -> {
 								if (getValue(mx.maximized))
@@ -370,9 +350,19 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		else
 			0.;
 	buttonsColor = extractStruct(m.style, MCarouselButtonsColor(MWhite())).color;
-	progressColors = extractStruct(m.style, MProgressColors(buttonsColor, MGrey(500)));
-	progressActiveColor = progressColors.active;
-	progressInactiveColor = progressColors.inactive;
+
+	progress =
+		if (enableProgress) {
+			progressColors = extractStruct(m.style, MProgressColors(buttonsColor, MGrey(500)));
+			Some(
+				MCarouselProgressState(
+					contains(m.style, MProgressAtBottom()),
+					progressColors.active,
+					progressColors.inactive
+				)
+			)
+		} else None();
+
 	iconSize = extractStruct(m.style, MIconSize(36.)).size;
 
 	updatePanning = \delta -> {
@@ -418,7 +408,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 				startTx = getValue(tx);
 				dispUnsM(uns);
 
-				easing = makeEasing(duration, mStandartCurve, manager.manager.deltaTimer, nop);
+				easing = makeEasing(duration, easingStandartCurve, manager.manager.deltaTimer, nop);
 
 				setUnsM(
 					uns,
@@ -439,7 +429,13 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 				hasPrev := endlessScroll || idx > 0;
 				hasNext := endlessScroll || idx < contentsLength - 1;
 
-				nextDistinct(activeI, if (idx >= 0) idx % contentsLength else contentsLength - 1 + ((idx + 1) % contentsLength));
+				aI =
+					if (idx >= 0)
+						idx % contentsLength
+					else
+						(idx + 1) % contentsLength + contentsLength - 1;
+
+				nextDistinct(activeI, aI);
 				next(targetTx, -fgetValue(itemWidth) * i2d(idx));
 			}),
 			\ -> subscribe2(activeI, \i -> {
@@ -451,7 +447,6 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		];
 
 	MCarouselState(
-		contents,
 		contentsLength,
 		wh,
 		itemWidth,
@@ -460,8 +455,6 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		enabled,
 		activeIdx,
 		activeI,
-		hasPrev,
-		hasNext,
 		goToPrev,
 		goToNext,
 		swipeInteractive,
@@ -474,10 +467,7 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 		endlessScroll,
 		enableArrows,
 		enableChevrons,
-		enableProgress,
-		progressAtBottom,
-		progressActiveColor,
-		progressInactiveColor,
+		progress,
 		bottomMargin,
 		buttonsColor,
 		iconSize,
@@ -485,82 +475,80 @@ makeMCarouselState(manager : MaterialManager, m : MCarousel) -> MCarouselState {
 	)
 }
 
-MCarouselAddProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState) -> Tropic {
-	TCopySize(
-		content,
-		\tr ->
-			generate(0, state.contentsLength, \i ->
-				TIf(
-					feq(state.activeI, i),
-					TShadowShape(parent, const(4.), TCircle(4., [MFill(state.progressActiveColor)]), RoundShape())
-					|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f)),
-					TCircle(4., [MFill(state.progressInactiveColor)])
-					|> (\f -> TShadowShape(parent, const(2.), f, RoundShape()))
-					|> (\f ->
-						TIf(state.enabled,
-							mouseDownAround(manager, None(), make(false), make(false), \ -> next(state.activeI, i), f)
-							|> (\f2 -> TCursor(FingerCursor(), f2)),
-							TAlpha(const(0.5), f)
+MCarouselProgress(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState) -> Tropic {
+	eitherMap(
+		state.progress, \pr ->
+		TCopySize(
+			content,
+			\tr ->
+				generate(0, state.contentsLength, \i ->
+					TIf(
+						feq(state.activeI, i),
+						TShadowShape(parent, const(4.), TCircle(4., [MFill(pr.activeColor)]), RoundShape())
+						|> (\f -> TAlpha(fif(state.enabled, const(1.), const(0.5)), f)),
+
+						TShadowShape(parent, const(2.), TCircle(4., [MFill(pr.inactiveColor)]), RoundShape())
+						|> (\f ->
+							TIf(state.enabled,
+								mouseDownAround(manager, None(), make(false), make(false), \ -> next(state.activeI, i), f)
+								|> (\f2 -> TCursor(FingerCursor(), f2)),
+								TAlpha(const(0.5), f)
+							)
 						)
 					)
+					|> (\f -> TBorder(2., 16., 2., 16., f))
 				)
-				|> (\f -> TBorder(2., 16., 2., 16., f))
-			)
-			|> (\f -> if (state.progressAtBottom) TLines2(TFillY(), TCols(f)) else TCols(f))
-			|> (\f -> TCenterXIn(f, tr)),
-		true
+				|> TCols
+				|> (\f -> if (pr.bottom) TLines2(TFillY(), f) else f)
+				|> (\f -> TCenterXIn(f, tr)),
+			true
+		),
+		content
 	)
 }
 
-
-MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState) -> Tropic {
+MCarouselChevrons(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MCarouselState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	leftFocused = make(false);
 	rightFocused = make(false);
 
-	TCols([
-		TCenterYIn(
-			MIconButton2T(
-				manager,
-				parent,
-				MIconButton(
-					"chevron_left",
-					state.goToPrev,
-					[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.), MElevation(const(2.))],
-					[MEnabled(state.enabled)]
-					|> (\f ->
-						if (state.enableArrows)
-							concat(f, [MFocused(leftFocused), MShortcutFilter(\foc, k -> (k.keycode == 37 && (foc || fgetValue(rightFocused)))
-								|> (\f2 -> {if (f2) state.goToPrev(); f2}))])
-						else
-							f
-					)
+	makeChevron = \isLeft -> {
+		focused = make(false);
+		onClick = if (isLeft) state.goToPrev else state.goToNext;
+		selfFocused = if (isLeft) leftFocused else rightFocused;
+		otherFocused = if (isLeft) rightFocused else leftFocused;
+
+		MIconButton2T(
+			manager,
+			parent,
+			MIconButton(
+				if (isLeft) "chevron_left" else "chevron_right",
+				onClick,
+				[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.), MElevation(const(2.))],
+				[MEnabled(state.enabled)]
+				|> (\f ->
+					if (state.enableArrows)
+						concat(f, [
+							MFocused(selfFocused),
+							MShortcutFilter(\foc, k -> {
+								filtered = k.keycode == (if (isLeft) 37 else 39) && (foc || fgetValue(otherFocused));
+								if (filtered) onClick();
+								filtered
+							})
+						])
+					else
+						f
 				)
-			)
-			|> (\f -> TBorder(8., 8., 8., 8., f)),
-			TFillY()
-		),
-		TFillX(),
-		TCenterYIn(
-			MIconButton2T(
-				manager,
-				parent,
-				MIconButton(
-					"chevron_right",
-					state.goToNext,
-					[state.buttonsColor, MIconSize(state.iconSize), MIconButtonBorder(8.), MElevation(const(2.))],
-					[MEnabled(state.enabled)]
-					|> (\f ->
-						if (state.enableArrows)
-							concat(f, [MFocused(rightFocused), MShortcutFilter(\foc, k -> (k.keycode == 39 && (foc || fgetValue(leftFocused)))
-								|> (\f2 -> {if (f2) state.goToNext(); f2}))])
-						else
-							f
-					)
-				)
-			)
-			|> (\f -> TBorder(8., 8., 8., 8., f)),
-			TFillY()
+			),
+			m2t
 		)
+		|> (\f -> TBorder4(8., f))
+		|> (\t -> TCenterYIn(t, TFillY()))
+	}
+
+	TCols([
+		makeChevron(true),
+		TFillX(),
+		makeChevron(false)
 	])
 	|> (\f ->
 		TCopySize(
@@ -577,104 +565,103 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	textColor = extractStruct(style, MCarouselTextColor(MWhite())).color;
 	contentScaling = !contains(style, MCarouselNoContentScaling());
 	bgStyle = extractStruct(style, MBackgroundStyle([MFill(MBackgroundColor(!getLightBackground(parent)))])).style;
+
 	carouselBox =
-		TScale(
-			const(Factor(
-				1. / i2d(state.itemsSpan),
-				1.
-			)),
-			TGhost("MCarouselBox")
+		TSizedWidthHeight(
+			fdivide(fwidth(state.wh), const(i2d(state.itemsSpan))),
+			fheight(state.wh)
 		);
 
-	(\p -> (\p2 -> if (contentScaling) // Crop content to the size of the box
-		TTweak([TFillZoom(true)], m2t(c.content, p2), carouselBox)
-	else
-		TCropSize(carouselBox, m2t(c.content, p2)))
-	|> (\f ->
-		if (isSome(state.contentZoom) ||
-			eitherMap(state.maximize, \mx -> length(extractStructMany(mx.style, MCarouselContentZoom(1., 1., 0.))) > 0, false)) {
-			currentInteractive = make(None());
-			xOfBounds = make(0.);
-			disableOutOfBounds = ref false;
-			zoomScale = make(1.);
-			uns = initUnsM();
+	makeTitle = \text, font : MFontStyle ->
+		if (text != "")
+			MEllipsisText2T(manager, parent, MEllipsisText(text, [font, textColor, MShowTooltip(const(true))]), m2t)
+		else
+			TEmpty();
 
-			TConstruct(
-				[
-					make2Subscribe2(currentInteractive, state.swipeInteractive, \ci, si -> {
-						if (isSome(ci) && isSome(si)) {
-							disableOutOfBounds := false;
-							nextDistinct(state.swipeInteractive, None());
-							nextDistinct(currentInteractive, Some(false));
-						} else if (isNone(ci) && isNone(si)) {
-							dispUnsM(uns);
-						}
-					}),
-					make2Subscribe(currentInteractive, xOfBounds, \ci, xob -> {
-						if (xob != 0. && isSome(ci)) {
-							disableOutOfBounds := true;
-							nextDistinct(currentInteractive, None());
-							nextDistinct(state.swipeInteractive, Some(false));
+	(\p ->
+		(\p2 ->
+			if (contentScaling) // Crop content to the size of the box
+				TTweak([TFillZoom(true)], m2t(c.content, p2), carouselBox)
+			else
+				TCropSize(carouselBox, m2t(c.content, p2))
+		)
+		|> (\f ->
+			if (isSome(state.contentZoom) ||
+				eitherMap(state.maximize, \mx -> containsStruct(mx.style, contentZoomDef), false)) {
 
-							prevTx = getValue(state.tx);
-							dispUnsM(uns);
-							setUnsM(
-								uns,
-								makeSubscribe2(state.tx, \tx -> {
-									if (if (xob > 0.) tx > prevTx + 1. else tx < prevTx - 1.) {
-										disableOutOfBounds := false;
-										nextDistinct(state.swipeInteractive, None());
-										nextDistinct(currentInteractive, Some(false));
-									}
-								})()
-							);
-						}
-					}),
-					make2Subscribe(state.activeI, state.zoomScale, \activeI, zs -> {
-						if (activeI == i)
-							nextDistinct(zoomScale, zs)
-						else
-							nextDistinct(zoomScale, 1.)
-					}),
-					\ -> \ -> dispUnsM(uns)
-				],
-				m2t(
-					MZoomMaterial(
-						MGetFocusGroup(f),
-						zoomScale,
-						[
-							MCurrentInteractive(currentInteractive), MScrollOutOfBounds(xOfBounds, make(0.)),
-							MScrollDisableOutOfBounds(disableOutOfBounds), MEnabled(state.enabled)
-						]
-					),
-					p
+				currentInteractive = make(None());
+				xOfBounds = make(0.);
+				disableOutOfBounds = make(false);
+				zoomScale = make(1.);
+				uns = initUnsM();
+
+				TConstruct(
+					[
+						make2Subscribe2(currentInteractive, state.swipeInteractive, \ci, si -> {
+							if (isSome(ci) && isSome(si)) {
+								next(disableOutOfBounds, false);
+								nextDistinct(state.swipeInteractive, None());
+								nextDistinct(currentInteractive, Some(false));
+							} else if (isNone(ci) && isNone(si)) {
+								dispUnsM(uns);
+							}
+						}),
+						make2Subscribe(currentInteractive, xOfBounds, \ci, xob -> {
+							if (xob != 0. && isSome(ci)) {
+								next(disableOutOfBounds, true);
+								nextDistinct(currentInteractive, None());
+								nextDistinct(state.swipeInteractive, Some(false));
+
+								prevTx = getValue(state.tx);
+								dispUnsM(uns);
+								setUnsM(
+									uns,
+									makeSubscribe2(state.tx, \tx -> {
+										if (if (xob > 0.) tx > prevTx + 1. else tx < prevTx - 1.) {
+											next(disableOutOfBounds, false);
+											nextDistinct(state.swipeInteractive, None());
+											nextDistinct(currentInteractive, Some(false));
+										}
+									})()
+								);
+							}
+						}),
+						make2Subscribe(state.activeI, state.zoomScale, \activeI, zs ->
+							nextDistinct(zoomScale, if (activeI == i) zs else 1.)
+						),
+						\ -> \ -> dispUnsM(uns)
+					],
+					m2t(
+						MZoomMaterial(
+							MGetFocusGroup(f),
+							zoomScale,
+							[
+								MCurrentInteractive(currentInteractive),
+								MScrollOutOfBounds(xOfBounds, make(0.)),
+								MScrollDisableOutOfBounds(disableOutOfBounds),
+								MEnabled(state.enabled)
+							]
+						),
+						p
+					)
 				)
-			)
-		} else
-			f(p)
-	)
-	|> (\f ->
-		if (state.bottomMargin != 0.) { // Add text overlay and place it at the bottom
-			text = extractStruct(c.style, MCarouselText("", ""));
-			footerColor = extractStruct(style, MCarouselFooterColor(MGrey(900))).color;
-			footerOpacity = extractStruct(style, MCarouselFooterOpacity(0.8)).opacity;
+			} else
+				f(p)
+		)
+		|> (\f ->
+			if (state.bottomMargin != 0.) { // Add text overlay and place it at the bottom
+				text = extractStruct(c.style, MCarouselText("", ""));
+				footerColor = extractStruct(style, MCarouselFooterColor(MGrey(900))).color;
+				footerOpacity = extractStruct(style, MCarouselFooterOpacity(0.8)).opacity;
 
-			TCopySize(
-				f,
-				\tr ->
-					TTweak(
-						[TAlign(const(0.), const(1.))],
+				TCopySize(
+					f,
+					\tr ->
 						TLines2(
-							if (text.title != "")
-								MEllipsisText2T(manager, parent, MEllipsisText(text.title, [MSubheading(), textColor, MShowTooltip(const(true))]))
-							else
-								TEmpty(),
-							if (text.subtitle != "")
-								MEllipsisText2T(manager, parent, MEllipsisText(text.subtitle, [MCaption(), textColor, MShowTooltip(const(true))]))
-							else
-								TEmpty()
+							makeTitle(text.title, MSubheading()),
+							makeTitle(text.subtitle, MCaption())
 						)
-						|> (\f2 -> TBorder(16., 16., 16., 16., f2))
+						|> (\f2 -> TBorder4(16., f2))
 						|> (\f2 -> TGroup2(TFillX(), f2))
 						|> (\f2 -> TFixSize(f2, TFillXH(state.bottomMargin)))
 						|> (\f2 -> TFrame(0., 0., [MFill(footerColor), FillOpacity(footerOpacity)], f2))
@@ -689,22 +676,27 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 										TShow(fnot(mx.maximized), f2),
 								f2
 							)
-						),
-						tr
-					),
-				true
-			)
-		} else
-			f
-	))
+						)
+						|> (\f2 -> TTweak([TAlign(const(0.), const(1.))], f2, tr)),
+					true
+				)
+			} else
+				f
+		)
+	)
 	|> (\f -> // Add OnClick
 		eitherFn(
 			tryExtractStruct(c.style, MOnClick(nop)),
 			\oc ->
 				TIf(
 					state.enabled,
-					MComponent2T(manager, parent, "MCarouselClickable", [MOnClick(oc.click), MFocusEnabled(const(false)), MAddFocusGroup(true)],
-						\focus -> f(focus.parent)
+					MComponent2T(
+						manager,
+						parent,
+						"MCarouselClickable",
+						[MOnClick(oc.click), MFocusEnabled(const(false)), MAddFocusGroup(true)],
+						\focus -> f(focus.parent),
+						m2t
 					),
 					f(parent)
 				),
@@ -725,22 +717,46 @@ MCarouselContent2T(manager : MaterialManager, parent : MFocusGroup, c : MCarouse
 	|> (\f ->
 			if (state.endlessScroll)
 				TTranslate(
-					fselect2(state.tx, state.itemWidth, FLift2(\tx0, wd -> {
+					fselect2(state.tx, state.itemWidth, FLift2(\tx0, wd ->
 						if (wd > 0.) {
-							fullWidth = wd * i2d(state.contentsLength);
+							len = i2d(state.contentsLength);
+							fullWidth = wd * len;
 							currentIndex = dceil(-tx0 / wd);
 							currentWidth = currentIndex * wd;
-							currentPage = (currentIndex + i2d(state.contentsLength) / 2. - i2d(i)) / i2d(state.contentsLength);
+							currentPage = (currentIndex + len / 2. - i2d(i)) / len;
 							currentTranslate = dfloor(if (currentPage < 0.) currentPage - 1. else currentPage) * fullWidth;
 
 							Point(currentTranslate, 0.)
-						} else {
+						} else
 							zeroPoint
-						}
-					})),
+					)),
 					f
 				)
 			else
 				f
 	)
+}
+
+MCarouselZoomButton(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	state : MCarouselState,
+	name : string,
+	visible : Transform<bool>,
+	onClick : () -> void) -> Tropic {
+
+	MIconButton2T(
+		manager,
+		parent,
+		MIconButton(
+			name,
+			onClick,
+			[state.buttonsColor, MIconButtonBorder(8.), MElevation(const(2.))],
+			[MEnabled(state.enabled)]
+		),
+		m2t
+	)
+	|> (\f2 -> TShow(visible, f2))
+	|> (\f2 -> TBorder(0., 8., 8., 8., f2))
 }

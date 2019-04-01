@@ -21,10 +21,30 @@ export {
 	// Special cases to inspect
 	MAttachBoxThrottle(m : Material, box : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Material;
 
+	MThrottleMetrics(m : Material, maxDelta : int) -> Material;
+
 	// Helpers to set available for only width, only height, or both
 	MAvailableWidth(m : Material, available : Transform<double>) -> Material;
 	MAvailableHeight(m : Material, available : Transform<double>) -> Material;
 	MAvailableWidthHeight(m : Material, width : Transform<double>, height : Transform<double>) -> Material;
+
+	// MAlign helpers
+
+	MAlignStart(m : Material) -> Material; // Align left if LTR, align right if RTL
+	MAlignEnd(m : Material) -> Material;   // Align right if LTR, align left if RTL
+	MAlignLeft(m : Material) -> Material;
+	MAlignTop(m : Material) -> Material;
+	MAlignRight(m : Material) -> Material;
+	MAlignBottom(m : Material) -> Material;
+
+	MAlignTopLeft(m : Material) -> Material;
+	MAlignTopCenter(m : Material) -> Material;
+	MAlignTopRight(m : Material) -> Material;
+	MAlignCenterRight(m : Material) -> Material;
+	MAlignBottomRight(m : Material) -> Material;
+	MAlignBottomCenter(m : Material) -> Material;
+	MAlignBottomLeft(m : Material) -> Material;
+	MAlignCenterLeft(m : Material) -> Material;
 
 	// MBorder helpers
 
@@ -122,16 +142,16 @@ export {
 	MBaseline(baseline : Transform<double>, m : Material) -> Material;
 
 	// Dynamic version of MFrame
-	MFrameT(margin : Transform<double>, radius : double, style : [TGraphicsStyle], box : Material) -> Material;
+	MFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Material) -> Material;
 
 	// Helper for dynamic text
 	MDynamicText(text : Transform<string>, style : [MTextStyle]) -> Material;
 
+	// Show text and progressbar below
+ 	MLoading(text : string) -> Material;
+
 	// Simplified version of MTransformTAcc
 	MTransformTAcc2(fn : ((Material) -> TAcc) -> TAcc) -> Material;
-
-	// Helper for creating dashed or dotted circle
-	MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material;
 
 	// Hide tropic if available size is less than material metrics
 	MIfFits(m : Material) -> Material;
@@ -142,6 +162,10 @@ export {
 	MZoomMaxWidth(m : Material, maxWidth : Transform<double>) -> Material;
 	// Zoom material if its height is bigger than maxHeight
 	MZoomMaxHeight(m : Material, maxHeight : Transform<double>) -> Material;
+
+	// Helpers to make Material not transparent for events
+	disableMMouseWheelBelow(content : Material) -> Material;
+	disableMInteractivesBelow(content : Material) -> Material;
 }
 
 // Inner helpers
@@ -275,6 +299,10 @@ MAttachBoxThrottle(m : Material, box : DynamicBehaviour<WidthHeight>, maxDelta :
 	Material2Tropic(m, \tr -> TAttachBoxThrottle(tr, box, maxDelta));
 }
 
+MThrottleMetrics(m : Material, maxDelta : int) -> Material {
+	Material2Tropic(m, \tr -> TThrottleMetrics(tr, maxDelta));
+}
+
 MProportionGrid(c : [[Pair<Transform<Factor>, Material>]]) -> Material {
 	MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t -> TProportionGrid(map(c, \r -> map(r, \pr -> Pair(pr.first, m2t(pr.second, p)))))))
 }
@@ -364,39 +392,22 @@ MAvailableWidthHeight(m : Material, width : Transform<double>, height : Transfor
 }
 
 MZoomToFit(content : Material, box : Material) -> Material {
-	MTransformTAcc2(\t2a -> {
-		cont = content |> t2a;
-		bx = box |> t2a;
+	cwh = makeWH();
+	bwh = makeWH();
+	scale = fselect2(cwh, bwh, FLift2(\c, b ->
+		if (c.width <= b.width && c.height <= b.height)
+			Factor(1.0, 1.0)
+		else if (c.width == 0.0 || c.height == 0.0)
+			Factor(0.0, 0.0)
+		else
+			min(b.width / c.width, b.height / c.height)
+			|> (\fc -> Factor(fc, fc))
+	));
 
-		zoom = fselect4(cont.metrics.width, cont.metrics.height, bx.metrics.width, bx.metrics.height,
-			\width, height, maxWidth, maxHeight -> {
-				if (width <= maxWidth && height <= maxHeight)
-					1.0
-				else if (width == 0.0 || height == 0.0)
-					0.0
-				else min(maxWidth / width, maxHeight / height);
-			}
-		);
-
-		TAcc(
-			FScale(zoom, zoom, cont.form),
-			TFormMetrics(
-				fmultiply(cont.metrics.width, zoom),
-				fmultiply(cont.metrics.height, zoom),
-				fmultiply(cont.metrics.baseline, zoom)
-			),
-			fmultiply(cont.minWidth, zoom),
-			fmultiply(cont.minHeight, zoom),
-			fmultiply(cont.maxWidth, zoom),
-			fmultiply(cont.maxHeight, zoom),
-			cont.xFillers,
-			cont.yFillers,
-			cont.addFillers,
-			cont.xConstant && bx.xConstant && cont.yConstant && bx.yConstant,
-			cont.xConstant && bx.xConstant && cont.yConstant && bx.yConstant,
-			concat(cont.disposers, bx.disposers)
-		);
-	});
+	MGroup2(
+		MScale(scale, MInspect([ISize(cwh)], content)),
+		MFixSize(MInspect([ISize(bwh)], MVisible(make(false), box)), TEmpty())
+	)
 }
 
 MScaleXY(factor : double) -> (Material) -> Material {
@@ -425,6 +436,62 @@ MRemoveMinMetrics(content : Material) -> Material {
 	})
 }
 
+MAlignStart(m : Material) -> Material {
+	if (getDefaultRtl()) MAlignRight(m) else m
+}
+
+MAlignEnd(m : Material) -> Material {
+	if (!getDefaultRtl()) MAlignRight(m) else m
+}
+
+MAlignLeft(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(0.0))], m, TFillX())
+}
+
+MAlignTop(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(0.0))], m, TFillY())
+}
+
+MAlignRight(m : Material) -> Material {
+	MTweak([TAlign(const(1.0), const(0.0))], m, TFillX())
+}
+
+MAlignBottom(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(1.0))], m, TFillY())
+}
+
+MAlignTopLeft(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(0.0))], m, TFillXY())
+}
+
+MAlignTopCenter(m : Material) -> Material {
+	MTweak([TAlign(const(0.5), const(0.0))], m, TFillXY())
+}
+
+MAlignTopRight(m : Material) -> Material {
+	MTweak([TAlign(const(1.0), const(0.0))], m, TFillXY())
+}
+
+MAlignCenterRight(m : Material) -> Material {
+	MTweak([TAlign(const(1.0), const(0.5))], m, TFillXY())
+}
+
+MAlignBottomRight(m : Material) -> Material {
+	MTweak([TAlign(const(1.0), const(1.0))], m, TFillXY())
+}
+
+MAlignBottomCenter(m : Material) -> Material {
+	MTweak([TAlign(const(0.5), const(1.0))], m, TFillXY())
+}
+
+MAlignBottomLeft(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(1.0))], m, TFillXY())
+}
+
+MAlignCenterLeft(m : Material) -> Material {
+	MTweak([TAlign(const(0.0), const(0.5))], m, TFillXY())
+}
+
 MBorderTop(border : double) -> (Material) -> Material {
 	\m -> MBorder(0., border, 0., 0., m)
 }
@@ -442,7 +509,7 @@ MBorderRight(border : double) -> (Material) -> Material {
 }
 
 MBorderStart(border : double) -> (Material) -> Material {
-	\m -> MBorderA(0., 0., border, 0., m)
+	\m -> MBorderA(border, 0., 0., 0., m)
 }
 
 MBorderEnd(border : double) -> (Material) -> Material {
@@ -491,12 +558,27 @@ MBorderT(left : Transform<double>, top : Transform<double>, right : Transform<do
 	Material2Tropic(m, \tr -> TBorderT(left, top, right, bottom, tr))
 }
 
-MFrameT(margin : Transform<double>, radius : double, style : [TGraphicsStyle], box : Material) -> Material {
+MFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Material) -> Material {
 	Material2Tropic(box, \tr -> TFrameT(margin, radius, style, tr))
 }
 
 MDynamicText(text : Transform<string>, style : [MTextStyle]) -> Material {
 	MSelect(text, \txt -> if (txt == "") TEmpty() else MText(txt, style))
+}
+
+MLoading(text : string) -> Material {
+	label = MText(text, [])
+		|> MCenterX
+		|> MBorderLeftRight(8.);
+
+	MAvailable(
+		MGroup2(
+			MZoomToFill(MProgressBar([MBlue(200), MProgressBackgroundColor(MWhite()), WidthHeight(100.0, 10.0)]), TFillXY(), false) |> MCenterX,
+			TDisplay("Label") |> MCenterX
+		),
+		TGhost("Label")
+	)
+	|> (\m -> MLet("Label", label, m))
 }
 
 MDebugMetrics(c : int, m : Material) -> Material {
@@ -527,18 +609,6 @@ MRotate90Left(m : Material) -> Material {
 	Material2Tropic(m, TRotate90Left)
 }
 
-MDashedCircle(radius : double, dashNumber : int, color : MColor) -> Material {
-	stepSize = 180. / i2d(dashNumber);
-
-	TGraphics(
-		generate(0, dashNumber, \i ->
-			SectorPath(radius, radius, radius, stepSize * i2d(i) * 2., stepSize * (i2d(i) * 2. + 1.), false, false, true)
-		)
-		|> concatA,
-		[MStroke(color)]
-	)
-}
-
 MIfFits(m : Material) -> Material {
 	Material2Tropic(m, \tr -> TIfFits(tr))
 }
@@ -553,4 +623,12 @@ MZoomMaxWidth(m : Material, maxWidth : Transform<double>) -> Material {
 
 MZoomMaxHeight(m : Material, maxHeight : Transform<double>) -> Material {
 	Material2Tropic(m, \tr -> TZoomMaxHeight(tr, maxHeight))
+}
+
+disableMMouseWheelBelow(m : Material) -> Material {
+	Material2Tropic(m, disableMouseWheelBelow)
+}
+
+disableMInteractivesBelow(m : Material) -> Material {
+	Material2Tropic(m, disableInteractivesBelow)
 }

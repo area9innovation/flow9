@@ -11,6 +11,7 @@ import android.media.MediaRecorder;
 import android.media.MediaRecorder.OnInfoListener;
 import android.net.Uri;
 import android.os.Build;
+import android.support.annotation.Nullable;
 import android.util.Log;
 
 @TargetApi(Build.VERSION_CODES.GINGERBREAD_MR1)
@@ -20,13 +21,17 @@ public class FlowAudioCaptureAPI {
     public static final String AUDIO_APP_DESIRED_FILENAME = "FLOW_AUDIO_APP_DESIRED_FILENAME";
     public static final String AUDIO_APP_DURATION = "FLOW_AUDIO_APP_DURATION";
 
+    @Nullable
     public static String audioAppCallbackAdditionalInfo = "";
+    @Nullable
     public static String audioAppDesiredFilename = "";
     public static int audioAppDuration = -1;
 
     private Context context;
     private FlowRunnerWrapper wrapper;
+    @Nullable
     private MediaRecorder mediaRecorder = null;
+    @Nullable
     private File audioFile = null;
     private volatile static FlowAudioCaptureAPI uniqueInstance;
     private boolean isRecording = false;
