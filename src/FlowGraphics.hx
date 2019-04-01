@@ -139,47 +139,94 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function drawRect(x : Float, y : Float, width : Float, height : Float) : Graphics {
-		var newGraphics = super.drawRect(x, y, width, height);
+		if (width < 0) {
+			x = x + width;
+			width = Math.abs(width);
+		}
 
-		localBounds.addPoint(new Point(x, y));
-		localBounds.addPoint(new Point(x + width, y + height));
+		if (height < 0) {
+			y = y + height;
+			height = Math.abs(height);
+		}
 
-		endFill();
+		if (width > 0 && height > 0) {
+			var newGraphics = super.drawRect(x, y, width, height);
 
-		return newGraphics;
+			localBounds.addPoint(new Point(x, y));
+			localBounds.addPoint(new Point(x + width, y + height));
+
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
 	}
 
 	public override function drawRoundedRect(x : Float, y : Float, width : Float, height : Float, radius : Float) : Graphics {
-		var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
+		if (width < 0) {
+			x = x + width;
+			width = Math.abs(width);
+		}
 
-		localBounds.addPoint(new Point(x, y));
-		localBounds.addPoint(new Point(x + width, y + height));
+		if (height < 0) {
+			y = y + height;
+			height = Math.abs(height);
+		}
 
-		endFill();
+		if (width > 0 && height > 0) {
+			radius = Math.abs(radius);
 
-		return newGraphics;
+			if (radius > 0) {
+				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
+
+				localBounds.addPoint(new Point(x, y));
+				localBounds.addPoint(new Point(x + width, y + height));
+
+				endFill();
+
+				return newGraphics;
+			} else {
+				return drawRect(x, y, width, height);
+			}
+		} else {
+			return this;
+		}
 	}
 
 	public override function drawEllipse(x : Float, y : Float, width : Float, height : Float) : Graphics {
-		var newGraphics = super.drawEllipse(x, y, width, height);
+		width = Math.abs(width);
+		height = Math.abs(height);
 
-		localBounds.addPoint(new Point(x - width, y - height));
-		localBounds.addPoint(new Point(x + width, y + height));
+		if (width > 0 && height > 0) {
+			var newGraphics = super.drawEllipse(x, y, width, height);
 
-		endFill();
+			localBounds.addPoint(new Point(x - width, y - height));
+			localBounds.addPoint(new Point(x + width, y + height));
 
-		return newGraphics;
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
 	}
 
 	public override function drawCircle(x : Float, y : Float, radius : Float) : Graphics {
-		var newGraphics = super.drawCircle(x, y, radius);
+		radius = Math.abs(radius);
 
-		localBounds.addPoint(new Point(x - radius, y - radius));
-		localBounds.addPoint(new Point(x + radius, y + radius));
+		if (radius > 0) {
+			var newGraphics = super.drawCircle(x, y, radius);
 
-		endFill();
+			localBounds.addPoint(new Point(x - radius, y - radius));
+			localBounds.addPoint(new Point(x + radius, y + radius));
 
-		return newGraphics;
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
 	}
 
 	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
