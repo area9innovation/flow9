@@ -615,7 +615,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 					[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
 				} else {
-					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, addFillers);
+					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
 					ah = fmax(ba1.maxHeight, ba2.maxHeight);
 
@@ -729,7 +729,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 					[]
 				} else {
-					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, addFillers);
+					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
 					ah = fmax(ba1.maxHeight, ba2.maxHeight);
 
@@ -835,7 +835,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 					[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
 				} else {
-					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, addFillers);
+					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
 					aw = fmax(ba1.maxWidth, ba2.maxWidth);
 
@@ -933,7 +933,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 					[]
 				} else {
-					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, addFillers);
+					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
 					aw = fmax(ba1.maxWidth, ba2.maxWidth);
 
@@ -3237,54 +3237,53 @@ returnTAcc(bf : TAcc, fform : () -> FForm, metricsOnly : bool) -> TAcc {
 		TAcc(bf with form = fform())
 }
 
+
 // Given asks for a budget, as well as a minimum, allocate the budget we have fairly
 distributeAsks(
-	fillers1 : Transform<double>, fillers2 : Transform<double>,
-	min1 : Transform<double>, min2 : Transform<double>,
-	max1 : Transform<double>, max2 : Transform<double>,
-	maximum : Transform<double>,
-	addFillers : Transform<bool>) -> Pair<Transform<double>, Transform<double>> {
+	fillers1 : Transform<double>,
+	fillers2 : Transform<double>,
+	min1 : Transform<double>,
+	min2 : Transform<double>,
+	max1 : Transform<double>,
+	max2 : Transform<double>,
+	av : Transform<double>,
+	addFillers1 : Transform<bool>,
+	addFillers2 : Transform<bool>
+) -> Pair<Transform<double>, Transform<double>> {
+	fselect9(fillers1, fillers2, min1, min2, max1, max2, av, addFillers1, addFillers2, \f1, f2, mn1, mn2, mx1, mx2, a, af1, af2 -> {
+		mn = mn1 + mn2;
 
-	// The principle is simple:
-	//if addFillers: Equal linear scaling from min to max,
-	//if not: Equal scaling from zero to max while not less than min
+		if (mn >= a || f1 + f2 <= 0.0) { // If minimum is more than available or there are no fillers then use min values
+			Pair(mn1, mn2);
+		} else if (f1 <= 0.0) {
+			if (f2 <= 0.0) {
+				Pair(mn1, mn2);
+			} else {
+				Pair(mn1, max(min(a - mn1, mx2), mn2));
+			}
+		} else if (f2 <= 0.0) {
+			Pair(max(min(a - mn2, mx1), mn1), mn2);
+		} else {
+			mx = mx1 + mx2;
 
+			if (mx <= a || mn >= mx) { // If maximum is less than available or max equals min then use max values
+				Pair(mx1, mx2);
+			} else {
+				ad = a - (if (af1) mn1 else 0.0) - (if (af2) mn2 else 0.0);
+				s1 = max(min(ad * f1 / (f1 + f2) + (if (af1) mn1 else 0.0), mx1), mn1);
+				s2 = a - s1;
 
-	min12 = faddition(min1, min2);
-
-	totalAsk = faddition(fillers1, fillers2);
-
-	factor = \af -> fdivide(if (af) fsubtract(maximum, min12) else maximum, totalAsk);
-
-	scaled1 = \af -> fmultiply(fillers1, factor(af));
-	scaled2 = \af -> fmultiply(fillers2, factor(af));
-
-	fairallocation1 = fif(addFillers, faddition(min1, scaled1(true)), fmax(min1, fsubtract(scaled1(false), fmax(fsubtract(min2, scaled2(false)), zero))));
-	fairallocation2 = fif(addFillers, faddition(min2, scaled2(true)), fmax(min2, fsubtract(scaled2(false), fmax(fsubtract(min1, scaled1(false)), zero))));
-
-	maxallocation1 = fmin(fairallocation1, max1);
-	maxallocation2 = fmin(fairallocation2, max2);
-
-	// If we exceed the maximum for one, the surplus is granted the other filler
-	overallocation1 = fsubtract(fairallocation1, maxallocation1);
-	overallocation2 = fsubtract(fairallocation2, maxallocation2);
-
-	// Now, it might be that we exceed both fillers this way, but we hope that the total max is correct so it does not happen
-	allocation1 = faddition(maxallocation1, overallocation2);
-	allocation2 = faddition(maxallocation2, overallocation1);
-
-	// If there is no request for any fillers, it is trivial
-	left = fif(feq(totalAsk, 0.0), min1, fmax(allocation1, zero));
-	right = fif(feq(totalAsk, 0.0), min2, fmax(allocation2, zero));
-
-	/*println("Distribute max: " + transform2string(maximum)
-			+ " 1:" + transform2string(min1) + " - " + transform2string(max2)
-			+ " 2:" + transform2string(min2) + " - " + transform2string(max2));
-	println("to " + transform2string(fillers1) + " + " + transform2string(fillers2));
-	println("each filler getting " + transform2string(factor));
-	println("gives fair shares " + transform2string(fairallocation1) + " + " + transform2string(fairallocation2));
-	println("gives final shares " + transform2string(allocation1) + " + " + transform2string(allocation2));*/
-	Pair(left, right);
+				if (s2 < mn2) {
+					Pair(max(a - mn2, mn1), mn2);
+				} else if (s2 > mx2) {
+					Pair(min(a - mx2, mx1), mx2);
+				} else {
+					Pair(s1, s2);
+				}
+			}
+		}
+	})
+	|> (\f -> Pair(fFirstOfPair(f), fSecondOfPair(f)))
 }
 
 // TDynamicGroup tools
