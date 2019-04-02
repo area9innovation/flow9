@@ -10,7 +10,6 @@ export {
 // TODO:
 // - When joining texts, wait with calculating the new metrics until all texts have been joined up
 // - Unsubscribe when reflowing
-// - Implement LinePart breaking
 
 /*
 To render a paragraph, we first collect individual words which need to stay together on the same line.
@@ -217,7 +216,6 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 	}
 	switch (w : ParaAtomic) {
 		NewLine(): ParaWord(w, const(zeroMetrics), Empty(), Empty());
-		// We choose the middle part
 		LinePart(f, p, e): getDynamicFormSize(p) |> s2w;
 		Space(s): {
 			dynFormSizePair = getDynamicFormSize2(s, true);
@@ -229,12 +227,16 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 			getDynamicFormSize(line) |> s2w;
 		}
 		InspectElement(i, x, y, wh, lh, ln, e): {
+			makeWord = \word, form -> ParaWord(word, const(getStaticFormSize(form)), CoordinateInspectElement(i, x, y, wh, lh, form), Empty());
 			switch (e : InspectableElement) {
 				Text(t, s): {
-					ParaWord(e, const(getStaticFormSize(e)), CoordinateInspectElement(i, x, y, wh, lh, e), Empty());
+					makeWord(e, e);
+				}
+				LinePart(f, m, l): {
+					makeWord(LinePart(f, m, l), m);
 				}
 				Space(t): {
-					ParaWord(Space(t), const(getStaticFormSize(t)), CoordinateInspectElement(i, x, y, wh, lh, t), Empty());
+					makeWord(Space(t), t);
 				}
 				default: {
 					s = getDynamicFormSize(cast(e : InspectableElement -> Form));
@@ -302,13 +304,13 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 			f : Form = switch(w : ParaAtomic) {
 				ParaOneWord(__): Empty();
 				InspectElement(__, __, __, __, __, __, __): Empty();
-				LinePart(first, inline, last): Empty();
+				LinePart(first, inline, last): inline;
 				Space(s): s;
 				default: cast(w : ParaAtomic -> Form);
 			};
 			f
 		};
-		getWordGhosted = \word1 -> {
+		getWordGhostedForm = \word1 -> {
 			g = word1.ghosted;
 			switch (g : Ghosted) {
 				Empty(): extractParaAtomicForm(word1);
@@ -317,22 +319,59 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 				CoordinateInspectElement(index, x, y, wh, lh, fm): g;
 			}
 		};
+		makeParaWord2 = \word2, form2 -> {
+			g = word2.ghosted;
+			replaceWordGhosted = \-> {
+				switch (g : Ghosted) {
+					Empty(): Empty();
+					Ghost(xc, yc, __): Ghost(xc, yc, form2);
+					InspectGhost(xc, yc, wh, lh, ln, __): InspectGhost(xc, yc, wh, lh, ln, form2);
+					CoordinateInspectElement(index, x, y, wh, lh, __): CoordinateInspectElement(index, x, y, wh, lh, form2);
+				}
+			};
 
+			ghosted = replaceWordGhosted();
+			ghostedForm = {
+				switch (g : Ghosted) {
+					Empty(): extractParaAtomicForm(word2);
+					default: replaceWordGhosted();
+				};
+			};
+			ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm);
+		};
+
+		getWordWidth = \word1 -> {
+			m : Behaviour<FormMetrics> = word1.metrics;
+			getValue(m).width;
+		};
 		switch (word.word : ParaAtomic) {
 			NewLine(): {
 				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 			}
 			LinePart(f, p, e): {
-				// TODO: If the middle part does not fit, try the first part, and if that fits, put the third part on a new line
-				reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
+				width = getWordWidth(word);
+				nextWordWidth = if (rest != []) getWordWidth(rest[0]) else 0.0;
+
+				if (currentWords == []) {
+					// If it is the first item on the line
+					paraword = makeParaWord2(word, f);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+				} else if (width + nextWordWidth < remaining) {
+					// If it is the middle item on the line
+					paraword = makeParaWord2(word, p);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, paraword), lines, paraIndent);
+				} else {
+					// If it is the last item on the line
+					paraword = makeParaWord2(word, e);
+					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(arrayPush(currentWords, paraword), lineIndent), paraIndent);
+				}
 			}
 			Space(s): {
 				// LSTSBU-454
 				// Spaces at the beginning of a line had been dropped before, but this block has been removed in order to have identical view in wigi editor and preview
-				m : Behaviour<FormMetrics> = word.metrics;
-				width = getValue(m).width;
+				width = getWordWidth(word);
 				if (width < remaining) {
-					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhosted(word))), lines, paraIndent);
+					reflowParaWords2(rest, availableWidth, remaining - width, arrayPush(currentWords, setWordForm(word, getWordGhostedForm(word))), lines, paraIndent);
 				} else {
 					reflowParaWords2(rest, nextLineWidth, nextLineWidth, [], addLine(currentWords, lineIndent), paraIndent);
 				}
@@ -373,7 +412,7 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 						};
 					});
 				} else {
-					width := getValue(word.metrics).width;
+					width := getWordWidth(word);
 					1;
 				};
 
@@ -384,7 +423,7 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 					newCurrentWords = fold(_words, currentWords, \acc, _word -> {
 						arrayPush(acc, setWordForm(
 							_word,
-							getWordGhosted(_word)
+							getWordGhostedForm(_word)
 						));
 					});
 
