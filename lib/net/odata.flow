@@ -15,13 +15,12 @@ import date;
 */
 
 export {
-	DQuery ::= DSelectQuery, DInsertQuery, DUpdateQuery, DDeleteQuery, DCountQuery, DApplyQuery, DBatchQuery;
+	DQuery ::= DSelectQuery, DInsertQuery, DUpdateQuery, DDeleteQuery, DCountQuery, DBatchQuery;
 		DSelectQuery(resource : DResource, parameters : [DParameter]);
 		DInsertQuery(resource : DCommonResourceU, entity : Json, parameters : [DParameter]);
 		DUpdateQuery(resource : DSpecificResource, value : Json);
 		DDeleteQuery(resource : DSpecificResource);
 		DCountQuery(resource : DCommonResourceU, parameters : [DParameter]);
-		DApplyQuery(resource : DCommonResourceU, expression : DApplyExpression);
 		DBatchQuery(queries : [DQuery]);
 
 	DResource ::= DCommonResourceU, DSpecificResource, DFunction;
@@ -34,22 +33,7 @@ export {
 		DFunction(resource : DResource, parameters : [DFunctionParameter]);
 			DFunctionParameter(name : string, value : DResourceValue);
 
-	DApplyExpression ::= DAggregate, DGroupByU;
-		DAggregate(expressions : [DAggregateExpressionU]);
-			DAggregateExpressionU ::= DAggregateExpression, DAggregateWithResource;
-				DAggregateExpression(property : DExpression, method : DAggregateMethod, alias : string);
-					DAggregateMethod ::= DSum, DMin, DMax, DAverage, DCountDistinct;
-						DSum();
-						DMin();
-						DMax();
-						DAverage();
-						DCountDistinct();
-				DAggregateWithResource(resource : DPropertyU, expressions : [DAggregateExpressionU]);
-		DGroupByU ::= DGroupBy, DGroupByAggregate;
-			DGroupBy(properties : [DPropertyU]);
-			DGroupByAggregate(properties : [DPropertyU], aggregation : DAggregate);
-
-	DParameter ::= DExpand, DSelect, DFilter, DOrderBy, DSkip, DTop, DCompute;
+	DParameter ::= DExpand, DSelect, DFilter, DOrderBy, DSkip, DTop, DCompute, DApply;
 		DExpand(values : [DExpandValueU]);
 			DExpandValueU ::= DExpandValue, DCount;
 				DExpandValue(resource : string, parameters : [DExpandParameterU]);
@@ -66,6 +50,22 @@ export {
 		DSkip(val : int);
 		DTop(val: int);
 		DCompute(expression : DExpression, alias : string);
+		DApply(expression : DApplyExpression);
+			DApplyExpression ::= DAggregate, DGroupByU;
+				DAggregate(expressions : [DAggregateExpressionU]);
+					DAggregateExpressionU ::= DAggregateExpression, DAggregateWithResource;
+						DAggregateExpression(property : DExpression, method : DAggregateMethod, alias : string);
+							DAggregateMethod ::= DSum, DMin, DMax, DAverage, DCountDistinct;
+								DSum();
+								DMin();
+								DMax();
+								DAverage();
+								DCountDistinct();
+						DAggregateWithResource(resource : DPropertyU, expressions : [DAggregateExpressionU]);
+				DGroupByU ::= DGroupBy, DGroupByAggregate;
+					DGroupBy(properties : [DPropertyU]);
+					DGroupByAggregate(properties : [DPropertyU], aggregation : DAggregate);
+
 
 	DResourceValue ::= DInt, DString, DDouble, DBool, DDate, DDateTime, DNull;
 		DInt(val : int);
@@ -289,46 +289,52 @@ export {
 
 		---------------------------------------------------
 		GET ~/Sales?$apply=aggregate(Amount with sum as Total,Amount with max as MxA)
-		DApplyQuery(
+		DSelectQuery(
 			DCommonResource("Sales"),
-			DAggregate([
-				DAggregateExpression(DProperty("Amount"), DSum(), "Total"),
-				DAggregateExpression(DProperty("Amount"), DMax(), "MxA")
-			])
+			[DApply(
+				DAggregate([
+					DAggregateExpression(DProperty("Amount"), DSum(), "Total"),
+					DAggregateExpression(DProperty("Amount"), DMax(), "MxA")
+				])
+			)]
 		)
 
 		---------------------------------------------------
 		GET ~/Products?$apply=aggregate(Sales(Amount with sum as Tax))
-		DApplyQuery(
+		DSelectQuery(
 			DCommonResource("Products"),
-			DAggregate([
-				DAggregateWithResource(
-					DProperty("Sales"),
-					[DAggregateExpression(DProperty("Amount"), DSum(), "Tax")]
-				)
-			])
+			[DApply(
+				DAggregate([
+					DAggregateWithResource(
+						DProperty("Sales"),
+						[DAggregateExpression(DProperty("Amount"), DSum(), "Tax")]
+					)
+				])
+			)]
 		)
 
 		---------------------------------------------------
 		GET ~/Customers?$apply=groupby((Name))
-		DApplyQuery(
+		DSelectQuery(
 			DCommonResource("Customers"),
-			DGroupBy([DProperty("Name")])
+			[DApply(DGroupBy([DProperty("Name")]))]
 		)
 
 		---------------------------------------------------
 		GET ~/Products?$apply=groupby((Name,Sales/Currency/Code),aggregate(Sales/Amount with sum as Total))
-		DApplyQuery(
+		DSelectQuery(
 			DCommonResource("Products"),
-			DGroupByAggregate(
-				[
-					DProperty("Name"),
-					DProperty2("Code", DProperty2("Currency", DProperty("Sales")))
-				],
-				DAggregate([
-					DAggregateExpression(DProperty2("Amount", DProperty("Sales")), DSum(), "Total"),
-				])
-			)
+			[DApply(
+				DGroupByAggregate(
+					[
+						DProperty("Name"),
+						DProperty2("Code", DProperty2("Currency", DProperty("Sales")))
+					],
+					DAggregate([
+						DAggregateExpression(DProperty2("Amount", DProperty("Sales")), DSum(), "Total"),
+					])
+				)
+			)]
 		)
 
 		---------------------------------------------------
@@ -383,11 +389,6 @@ buildODataQuery(query : DQuery) -> ODataQuery {
 		DUpdateQuery(resource, value): ODataQuery(PATCH(), RequestPayload(json2string(value)), resource2string(resource));
 		DDeleteQuery(resource): ODataQuery(DELETE(), RequestParameters([]), resource2string(resource));
 		DBatchQuery(queries): buildBatchQuery(queries);
-		DApplyQuery(resource, expression): {
-			expr = applyExpression2string(expression);
-			res = resource2string(resource) + "?$apply=" + expr;
-			ODataQuery(GET(), RequestParameters([]), res)
-		}
 		DCountQuery(resource, parameters): {
 			paramsStr = if (length(parameters) > 0) "?" + parameters2string(parameters, "&") else "";
 			res = resource2string(resource) + "/$count" + paramsStr;
@@ -525,6 +526,7 @@ parameters2string(parameters : [DExpandParameterU], separator : string) -> strin
 					"$levels=" + levelsValueS
 				}
 				DCompute(expression, alias): "$compute=" + expression2string(expression) + " as " + alias;
+				DApply(expression): "$apply=" + applyExpression2string(expression);
 			}
 		},
 		separator
