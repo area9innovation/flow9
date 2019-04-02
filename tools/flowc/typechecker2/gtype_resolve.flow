@@ -175,30 +175,6 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 					resolveGTypeVarToTyPar(env, tyvars);
 				}
 			}
-		} else if (false && isGBoundsKnownNames(env, lower) && isEmptySet(upper.named) && isEmptySet(upper.fields)) {
-			// A known lower limit
-			supertypes = findSmallestGSuperTypes(env, lower.named);
-			if (length(supertypes) != 1) {
-				printStay(env.env, "TODO: We should pick the smallest supertype for req " + gtyvarReqs2string(env, req));				
-				env;
-			} else {
-				if (env.verbose >= 3) {
-					printStay(env.env, "Known lower bound for: " + gtyvarReqs2string(env, req) + " {");
-				}
-				setGTyvar(env, unify, req, supertypes[0]);
-			}
-		} else if (false && isGBoundsKnownNames(env, upper) && isEmptySet(lower.named) && isEmptySet(lower.fields)) {
-			// A known upper limit
-			subtypes = findBiggestGSubTypes(env, upper.named);
-			if (length(subtypes) != 1) {
-				printStay(env.env, "TODO: We should pick the biggest subtype for req " + gtyvarReqs2string(env, req));
-				env;
-			} else {
-				if (env.verbose >= 3) {
-					printStay(env.env, "Known upper bound for: " + gtyvarReqs2string(env, req) + " {");
-				}
-				setGTyvar(env, unify, req, subtypes[0]);
-			}
 		} else {
 			// We have subtypes, either named or fields
 			lowerSet : Set<GSubType> = getGSubTypes(lower.named, switch (stage) {
@@ -217,16 +193,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 			});
 
 			// Something seems to imply that we should do union here. Test 148 as an example
-			utypenames : [string] = findPotentialGSubtypes(env, upperSet);
+			utypenames1 : [string] = findPotentialGSubtypes(env, upperSet);
 
-			//				sortLower = findSmallestGSuperTypes(env, lower.named);
-			//				sortUpper = findBiggestGSubTypes(env, upper.named);
+			// If there is no subtypes, see if we can find a supertype. See test106.
+			utypenames = if (stage == GResolveSpeculative() && utypenames1 == []) findPotentialGSupertypes(env, upperSet) else utypenames1;
 
-			// printStay(env.env, "Review " + toString(ltypenames) + " and " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
-
-			possible = if (isEmptySet(lowerSet)) utypenames
+ 			possible = if (isEmptySet(lowerSet)) utypenames
 				else if (isEmptySet(upperSet)) ltypenames
 				else intersection(ltypenames, utypenames);
+
+			// printStay(env.env, "Review " + toString(possible) + " l: " + toString(ltypenames) +" u: " + toString(utypenames) + " from req " + gtyvarReqs2string(env, req));
 
 			// In case it is ambigious, should we pick the smallest?
 			pickIfAmbiguos = switch (stage) {
@@ -255,12 +231,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				if (length(overlap) == 1) {
 					// If so, that is what we prefer. Test 22
 					[overlap[0]];
-				} else {
+				} else if (overlap != [] || stage == GResolveSpeculative()) {
+					// println("Choose between " + i2s(length(overlap)) + " for " + gtyvarReqs2string(env, req));
 					// OK, pick the "smallest" type, prefering small structs to big unions
 					scored = map(if (overlap != []) overlap else possible, \name -> Pair(getGNamedSize(env, name), name));
 					cheapest = sort(scored);
 					[cheapest[0].second];
-				}
+				} else possible;
 			} else {
 				possible;
 			}
@@ -279,10 +256,6 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				setGTyvar(env, unify, req, winType);
 			} else {
 				if (env.verbose >= 3) {
-					printStay(env.env, "TODO: Can we do something about complicated subtype for: " + gtyvarReqs2string(env, req) + " ");
-					// Test 148 shows that refs can mean that the upper bound contains lower-bound elements
-					// which is probably wrong.
-					println([ltypenames, utypenames]);
 				}
 				env;
 			}
@@ -391,9 +364,10 @@ findGSupertypes(env : GEnv, expr : GSubType) -> [string] {
 // Given these constraints, what subtypes could meet all of these?
 findPotentialGSubtypes(env : GEnv, types : Set<GSubType>) -> [string] {
 	foldi(set2array(types), [], \i, acc, st -> {
-		supers = findGSubtypes(env, st);
-		if (i == 0) supers
-		else intersection(supers, acc)
+		subs = findGSubtypes(env, st);
+		// println(gtype2string(env, st) + ": " + toString(subs));
+		if (i == 0) subs
+		else intersection(subs, acc)
 	});
 }
 
@@ -469,6 +443,17 @@ makeGNamedType(env : GEnv, name : string) -> GType {
 	}
 }
 
+findSmallestGSuperTypes2(env : GEnv, names : [string]) -> [string] {
+	if (length(names) <= 1) names
+	else {
+		foldi(names, [], \i, acc, st -> {
+			supers = arrayPush(findGSupertypeFromName(env.subtypes, st), st);
+			if (i == 0) supers
+			else intersection(supers, acc)
+		});
+	}
+}
+
 findSmallestGSuperTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 	if (isEmptySet(names)) []
 	else {
@@ -491,6 +476,19 @@ findSmallestGSuperTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 		}
 	}
 }
+
+findBiggestGSubTypes2(env : GEnv, names : [string]) -> [string] {
+	if (length(names) <= 1) names
+	else {
+		foldi(names, [], \i, acc, st -> {
+			subs = findGSubtypes(env, GNamed(st, []));
+			// println(st + ": " + toString(subs));
+			if (i == 0) subs
+			else intersection(subs, acc)
+		});
+	}
+}
+
 
 findBiggestGSubTypes(env : GEnv, names : Set<GNamed>) -> [GType] {
 	if (isEmptySet(names)) []
