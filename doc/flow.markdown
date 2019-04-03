@@ -386,16 +386,14 @@ default "none" value for all types. Examples: `findDef`, `firstElement`,
 In *flow*, all variables are immutable. To support imperative programming, you
 have to use references, similar to ML:
 
-	r : ref double;
-	r = ref 1.0;
+	r : ref double = ref 1.0;
 
 	old = ^r; // Dereference
 	r := 2.0; // Destructive update
 	assert(old == 1.0, "Error: Assignment by copy");
 	assert(^r == 2.0, "Error: Reference is not updated");
 
-	dr : ref flow;
-	dr = ref 1.0;
+	dr : ref flow = ref 1.0;
 	dr := "Strange";
 	assert(^dr == "Strange", "Error: Flow is wild");
 	dr := 1; // OK
