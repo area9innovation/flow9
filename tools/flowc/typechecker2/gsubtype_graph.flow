@@ -10,10 +10,7 @@ export {
 	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
 
 	// All supertypes (not including the name itself)
-	findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string];
-
-	// Which type is smaller?
-	compareGType(graph : GSubtypeGraph, small : GType, big : GType) -> int;
+	findGSupertypeFromName(env : GEnv, name : string) -> [string];
 }
 
 emptyGSubtypeGraph() -> GSubtypeGraph {
@@ -72,7 +69,8 @@ buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
 	);
 }
 
-findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string] {
+findGSupertypeFromName(env : GEnv, name : string) -> [string] {
+	graph = env.subtypes;
 	// Depending on whether we look for a field or a name, let us pick the right graph
 	supergraph = if (startsWith(name, ".")) {
 		graph.fieldSupertypes
@@ -89,7 +87,7 @@ findGSupertypeFromName(graph : GSubtypeGraph, name : string) -> [string] {
 			Some(n): n.data;
 		}
 	});
-	filter(set2array(names), \n -> n != "");
+	filter(set2array(names), \n -> n != "" && containsSet(env.namesSeen, n));
 }
 
 union2structnames(names : FcGlobalNames, name : string) -> [string] {
@@ -110,98 +108,3 @@ union2structnames(names : FcGlobalNames, name : string) -> [string] {
 	}
 }
 
-// Order:
-// BasicType, TypePar, Array, Ref, Function, Subtype, Flow 
-compareGType(graph : GSubtypeGraph, small : GType, big : GType) -> int {
-	if (small == big) 0
-	else {
-		dif = \ -> genericCompare(getGTypeOrder(small), getGTypeOrder(big));
-		switch (small) {
-			GBasicType(st): switch (big) {
-				GBasicType(bt): genericCompare(st, bt);
-				default: 1; // This is almost smallest
-			}
-			GFlow(): -1; // This is almost biggest
-			GTypePar(sid): dif();
-			GFunction(sargs, srt): switch (big) {
-				GFunction(bargs, brt): {
-					compareGSubTypes(graph, 0, arrayPush(bargs, srt), arrayPush(sargs, brt));
-				}
-				default: dif();
-			}
-			GArray(stype): switch (big) {
-				GArray(btype): compareGType(graph, stype, btype);
-				default: dif();
-			}
-			GRef(stype): switch (big) {
-				GRef(btype): compareGType(graph, stype, btype);
-				default: dif();
-			}
-			GTypeVar(sid): switch (big) {
-				GTypeVar(bid): genericCompare(sid, bid);
-				default: dif();
-			}
-			GNamed(sname, stypars): {
-				switch (big) {
-					GNamed(bname, btypars): {
-						if (sname == bname) {
-							compareGSubTypes(graph, 0, stypars, btypars);
-						} else {
-							// TODO: We could probably also check typars here
-							smallest = isGNameSubType(graph, sname, bname);
-							if (smallest) -1 else 1;
-						}
-					}
-					GField(bname, type): {
-						smallest = isGNameSubType(graph, sname, "." + bname);
-						if (smallest) -1 else 1;
-					}
-					default: dif();
-				}
-			}
-			GField(sname, stype): {
-				switch (big) {
-					GField(bname, btype): {
-						if (sname == bname) {
-							compareGType(graph, stype, btype);
-						} else {
-							println("TODO: Compare ." + sname + " vs ." + bname);
-							0;
-						}
-					}
-					GNamed(bname, btypars): {
-						smallest = isGNameSubType(graph, "." + sname, bname);
-						if (smallest) -1 else 1;
-					}
-					default: dif();
-				}
-			}
-		}
-	}
-}
-
-getGTypeOrder(tt : GType) -> int {
-	switch (tt) {
-		GBasicType(t): 0;
-		GTypePar(id): 1;
-		GArray(type): 2;
-		GRef(type): 3;
-		GFunction(args, rt): 4;
-		GSubType(expr): 5;
-		GTypeVar(id): 6;
-		GFlow(): 7;
-	}
-}
-
-compareGSubTypes(graph : GSubtypeGraph, i : int, smalls : [GType], bigs : [GType]) -> int {
-	if (i < length(smalls) && i < length(bigs)) {
-		res = compareGType(graph, smalls[i], bigs[i]);
-		if (res == 0) {
-			compareGSubTypes(graph, i + 1, smalls, bigs)
-		} else res;
-	} else genericCompare(length(smalls), length(bigs));
-}
-
-isGNameSubType(graph : GSubtypeGraph, small : string, big : string) -> bool {
-	contains(findGSupertypeFromName(graph, small), big)
-}

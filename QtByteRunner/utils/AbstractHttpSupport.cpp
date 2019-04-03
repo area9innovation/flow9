@@ -397,7 +397,9 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
 }
 
 void AbstractHttpSupport::processRequest(HttpRequest &rq) {
-    if (!rq.attachments.empty() && rq.payload.empty()) {
+    std::map<unicode_string,unicode_string>::iterator found = rq.headers.find(parseUtf8("Content-Type"));
+    bool useMultipart = found != rq.headers.end() && encodeUtf8(found->second).find("multipart/form-data") == 0;
+    if ((!rq.attachments.empty() || useMultipart) && rq.payload.empty()) {
         processAttachmentsAsMultipart(rq);
     } else {
         std::string url = encodeUtf8(rq.url);

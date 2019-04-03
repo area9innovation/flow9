@@ -288,8 +288,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TPositionScale(pos, t): {
 			bf = tropic2Acc(t, parent, sheet, metricsOnly);
 
-			disp =
-				arrayPush(bf.disposers, fconnectSelect(parent.transformMatrix, pos, \p -> getTransformPositionScale(p)));
+			disp = arrayPush(bf.disposers, fconnectSelect(parent.transformMatrix, pos, \p -> getTransformPositionScale(p)));
 
 			TAcc(bf with disposers = disp)
 		}
@@ -3279,20 +3278,58 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TInspect(inspectors, tr) : {
 			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
 
-			av = isSome(tryExtractStruct(inspectors, IAvailable(makeWH())));
-			avW = av || isSome(tryExtractStruct(inspectors, AvailableWidth(make(0.))));
-			avH = av || isSome(tryExtractStruct(inspectors, AvailableHeight(make(0.))));
+			avW = ref false;
+			avH = ref false;
 
 			disposers =
 				map(inspectors, \insp ->
 					switch (insp : TInspector) {
-						Width(w) : fconnect(bf.metrics.width, w);
-						Height(h) : fconnect(bf.metrics.height, h);
-						AvailableWidth(w) : fconnect(parent.maxX, w);
-						AvailableHeight(h) : fconnect(parent.maxY, h);
-						ISize(wh) : fconnect2Select(bf.metrics.width, bf.metrics.height, wh, \w, h -> WidthHeight(w, h));
-						IAvailable(wh) : fconnect2Select(parent.maxX, parent.maxY, wh, \w, h -> WidthHeight(w, h));
-						IBaseline(baseline) : fconnect(bf.metrics.baseline, baseline);
+						Width(w) : {
+							fconnect(bf.metrics.width, w);
+						}
+						Height(h) : {
+							fconnect(bf.metrics.height, h);
+						}
+						AvailableWidth(w) : {
+							avW := true;
+
+							fconnect(parent.maxX, w);
+						}
+						AvailableHeight(h) : {
+							avH := true;
+
+							fconnect(parent.maxY, h);
+						}
+						IAvailable(wh) : {
+							avW := true;
+							avH := true;
+
+							fconnect(fwh(parent.maxX, parent.maxY), wh);
+						}
+						ISize(wh) : {
+							fconnect(fwh(bf.metrics.width, bf.metrics.height), wh);
+						}
+						IBaseline(baseline) : {
+							fconnect(bf.metrics.baseline, baseline);
+						}
+						IMinWidth(w) : {
+							fconnect(bf.minWidth, w);
+						}
+						IMinHeight(h) : {
+							fconnect(bf.minHeight, h);
+						}
+						IMaxWidth(w) : {
+							fconnect(bf.maxWidth, w);
+						}
+						IMaxHeight(h) : {
+							fconnect(bf.maxHeight, h);
+						}
+						IMinSize(wh) : {
+							fconnect(fwh(bf.minWidth, bf.minHeight), wh);
+						}
+						IMaxSize(wh) : {
+							fconnect(fwh(bf.maxWidth, bf.maxHeight), wh);
+						}
 					}
 				)
 				|> (\arr -> concat(arr, bf.disposers));
@@ -3300,16 +3337,90 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			TAcc(
 				if (metricsOnly) FEmpty() else bf.form,
 				bf.metrics,
-				if (!avW || bf.xConstant) bf.minWidth else zero,
-				if (!avH || bf.yConstant) bf.minHeight else zero,
-				if (!avW || bf.xConstant) bf.maxWidth else const(^tropicFillersMax),
-				if (!avH || bf.yConstant) bf.maxHeight else const(^tropicFillersMax),
-				if (avW) const(b2d(!bf.xConstant)) else bf.xFillers,
-				if (avH) const(b2d(!bf.yConstant)) else bf.yFillers,
+				if (!^avW || bf.xConstant) bf.minWidth else zero,
+				if (!^avH || bf.yConstant) bf.minHeight else zero,
+				if (!^avW || bf.xConstant) bf.maxWidth else const(^tropicFillersMax),
+				if (!^avH || bf.yConstant) bf.maxHeight else const(^tropicFillersMax),
+				if (^avW) const(b2d(!bf.xConstant)) else bf.xFillers,
+				if (^avH) const(b2d(!bf.yConstant)) else bf.yFillers,
 				bf.addFillers,
 				bf.xConstant,
 				bf.yConstant,
 				disposers
+			)
+		}
+		TOverride(overriders, tr) : {
+			available =
+				extractStruct(
+					overriders,
+					OAvailable(
+						fwh(
+							extractStruct(overriders, OAvailableWidth(parent.maxX)).width,
+							extractStruct(overriders, OAvailableHeight(parent.maxY)).height
+						)
+					)
+				).widthHeight;
+
+			bf =
+				tropic2Acc(
+					tr,
+					TParentInfo(parent with maxX = fwidth(available), maxY = fheight(available)),
+					sheet,
+					metricsOnly
+				);
+
+			size =
+				extractStruct(
+					overriders,
+					OSize(
+						fwh(
+							extractStruct(overriders, OWidth(bf.metrics.width)).width,
+							extractStruct(overriders, OHeight(bf.metrics.height)).height
+						)
+					)
+				).widthHeight;
+
+			baseline = extractStruct(overriders, OBaseline(bf.metrics.baseline)).baseline;
+
+			minSize =
+				extractStruct(
+					overriders,
+					OMinSize(
+						fwh(
+							extractStruct(overriders, OMinWidth(bf.minWidth)).width,
+							extractStruct(overriders, OMinHeight(bf.minHeight)).height
+						)
+					)
+				).widthHeight;
+
+			maxSize =
+				extractStruct(
+					overriders,
+					OMaxSize(
+						fwh(
+							extractStruct(overriders, OMaxWidth(bf.maxWidth)).width,
+							extractStruct(overriders, OMaxHeight(bf.maxHeight)).height
+						)
+					)
+				).widthHeight;
+
+			TAcc(
+				if (metricsOnly) FEmpty() else bf.form,
+				TFormMetrics(
+					fwidth(size),
+					fheight(size),
+					baseline,
+				),
+				fwidth(minSize),
+				fheight(minSize),
+				fwidth(maxSize),
+				fheight(maxSize),
+				bf.xFillers,
+				bf.yFillers,
+				bf.addFillers,
+				isFConst(fwidth(size)) && bf.xConstant,
+				isFConst(fheight(size)) && isFConst(baseline) && bf.yConstant,
+				bf.disposers
 			)
 		}
 		TCssBlock(style, tr) : {
