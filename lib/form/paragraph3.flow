@@ -22,12 +22,13 @@ possible, and because rendering words in the same sprite improves the interword 
 
 
 // Intermediately used typed as a union of ParagraphElement and WrapElement and ParaOneWord
-ParaElement ::= ParagraphElement, ParaOneWord, TextElement;
+ParaElement ::= ParagraphElement, ParaOneWord, TextElement, InteractiveParaAtomic;
 
 // After expanding elements to words
-ParaAtomic ::= Form, ParaOneWord, TextElement;
+ParaAtomic ::= Form, ParaOneWord, TextElement, InteractiveParaAtomic;
 	// A range of elements that need to be on the same line
 	ParaOneWord(elements : [Form]);
+	InteractiveParaAtomic(elem : ParaAtomic, interactivityId : int);
 
 GhostForm ::= Form, Ghost, CoordinateInspectElement, InspectGhost;
 	Ghost(xc : DynamicBehaviour<double>, yc : DynamicBehaviour<double>, form : Form);
@@ -45,7 +46,13 @@ Ghosted ::= Empty, Ghost, CoordinateInspectElement, InspectGhost;
 	);
 
 // Each word to be placed in the paragraph, including the metrics and as well as any ghost constructed
-ParaWord(word : ParaAtomic, metrics : Behaviour<FormMetrics>, ghosted : Ghosted, form: GhostForm);
+ParaWord(
+	word : ParaAtomic,
+	metrics : Behaviour<FormMetrics>,
+	ghosted : Ghosted,
+	form: GhostForm,
+	interactivityIdM : Maybe<int>
+);
 
 renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 
@@ -59,6 +66,8 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 			default: acc;
 		};
 	});
+
+	interactiveStyles = extractStruct(s, ParagraphInteractiveStyleTree(makeTree())).styleTree;
 
 	interlineSpacing = extractStruct(s, InterlineSpacing(0.0)).d;
 
@@ -75,14 +84,20 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
 
 	// Expand elements into word-units
+	println("this is p");
+	println(p);
 	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
+	println("this is glued");
+	println(glued);
 	// Construct our ParaWords
 	words : [ParaWord] = map(list2array(glued), makeParaWord);
 
 	aw = make(0.0);
 	update = make(0);
 	lines : DynamicBehaviour<[ParaLine]> = make([]);
-	nonDynamic = Select(lines, \l -> renderParaLines(getValue(aw), l, tightWidth, alignment, interlineSpacing, topLineBaseline));
+	nonDynamic = Select(lines, \l -> renderParaLines(
+		getValue(aw), l, tightWidth, alignment, interlineSpacing, topLineBaseline, interactiveStyles
+	));
 	paragraphBorder = extractStruct(s, ParagraphBorder(0.0, 0.0));
 
 	// If there is less or equal then upper limit of dynamic elements, we do not need to postpone updates
@@ -148,16 +163,23 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 }
 
 // Introduce a ParaOneWord that group the words together, so that we do not have to worry about joins
-expandGlueFragments(elements : [ParaElement], glueNext : bool, running : List<ParaAtomic>,
-		acc : List<ParaAtomic>, runLength : int) -> List<ParaAtomic> {
+expandGlueFragments(
+	elements : [ParaElement],
+	glueNext : bool,
+	running : List<ParaAtomic>,
+	acc : List<ParaAtomic>,
+	runLength : int,
+) -> List<ParaAtomic> {
 
 	flush = \ -> {
+		println("flushhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
 		if (runLength == 0) {
 			acc;
 		} else if (runLength == 1) {
 			Cons(headList(running, Empty()), acc);
 		} else {
 			wds = foldList(running, makeList(), \acc2, ra : ParaAtomic -> {
+				println("this is never called");
 				switch (ra : ParaAtomic) {
 					ParaOneWord(wds): acc2;
 					NewLine(): acc2;
@@ -170,20 +192,23 @@ expandGlueFragments(elements : [ParaElement], glueNext : bool, running : List<Pa
 							default: Cons(cast(e : InspectableElement -> Form), acc2);
 						}
 					}
+					InteractiveParaAtomic(ia, id) : {
+						Cons(cast(ia : ParaAtomic -> Form), acc2);
+					}
 					default: {
 						Cons(cast(ra : ParaAtomic -> Form), acc2);
 					}
 				}
 			});
 			Cons(ParaOneWord(list2array(reverseList(wds))), acc)
-		}
+		};
 	};
 
 	n = length(elements);
 	if (n == 0) {
 		flush();
 	} else {
-		rest = subrange(elements, 1, n - 1);
+		rest = tail(elements);
 		e = elements[0];
 		switch (e : ParaElement) {
 			GlueFragments(): expandGlueFragments(rest, true, running, acc, runLength);
@@ -191,10 +216,14 @@ expandGlueFragments(elements : [ParaElement], glueNext : bool, running : List<Pa
 				p : [WrapElement] = list2array(parts);
 				expandGlueFragments(concat(p, rest), glueNext, running, acc, runLength);
 			}
-
 			// TODO rewrite via switch subunion syntax when implemented.
 			default: {
-				en = cast(e : ParaElement -> ParaAtomic);
+				en = switch (e : ParaElement) {
+					TextElementInteractive(wElem, id): {
+						InteractiveParaAtomic(cast(wElem : WrapElement -> ParaAtomic), id)
+					}
+					default: cast(e : ParaElement -> ParaAtomic);
+				} 
 				if (glueNext) {
 					expandGlueFragments(rest, false, Cons(en, running), acc, runLength + 1);
 				} else {
@@ -205,23 +234,23 @@ expandGlueFragments(elements : [ParaElement], glueNext : bool, running : List<Pa
 	}
 }
 
-makeParaWord(w : ParaAtomic) -> ParaWord {
+makeInteractiveParaWord(w : ParaAtomic, interactivityIdM : Maybe<int>) -> ParaWord {
 	s2w = \s : Pair<Form, Behaviour<FormMetrics>> -> {
 		if (!isGhostable(s.first)) {
-			ParaWord(s.first, s.second, Empty(), Empty());
+			ParaWord(s.first, s.second, Empty(), Empty(), interactivityIdM);
 		} else {
 			x = make(0.0);
 			y = make(0.0);
-			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty());
+			ParaWord(Empty(), s.second, Ghost(x, y, s.first), Empty(), interactivityIdM);
 		}
 	}
 	switch (w : ParaAtomic) {
-		NewLine(): ParaWord(w, const(zeroMetrics), Empty(), Empty());
+		NewLine(): ParaWord(w, const(zeroMetrics), Empty(), Empty(), interactivityIdM);
 		// We choose the middle part
 		LinePart(f, p, e): getDynamicFormSize(p) |> s2w;
 		Space(s): {
 			dynFormSizePair = getDynamicFormSize2(s, true);
-			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty());
+			ParaWord(Space(dynFormSizePair.first), dynFormSizePair.second, Empty(), Empty(), interactivityIdM);
 		}
 		ParaOneWord(wd): {
 			oc = optimizeCols(wd);
@@ -231,18 +260,26 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 		InspectElement(i, x, y, wh, lh, ln, e): {
 			switch (e : InspectableElement) {
 				Text(t, s): {
-					ParaWord(e, const(getStaticFormSize(e)), CoordinateInspectElement(i, x, y, wh, lh, e), Empty());
+					ParaWord(
+						e, const(getStaticFormSize(e)), CoordinateInspectElement(i, x, y, wh, lh, e),
+						Empty(), interactivityIdM
+					);
 				}
 				Space(t): {
-					ParaWord(Space(t), const(getStaticFormSize(t)), CoordinateInspectElement(i, x, y, wh, lh, t), Empty());
+					ParaWord(
+						Space(t), const(getStaticFormSize(t)), CoordinateInspectElement(i, x, y, wh, lh, t),
+						Empty(), interactivityIdM
+					);
 				}
 				default: {
 					s = getDynamicFormSize(cast(e : InspectableElement -> Form));
-					ParaWord(Empty(), s.second, InspectGhost(x, y, wh, lh, ln, s.first), Empty());
+					ParaWord(Empty(), s.second, InspectGhost(x, y, wh, lh, ln, s.first), Empty(), interactivityIdM);
 				}
 			}
 		}
-
+		InteractiveParaAtomic(word, id) : {
+			makeInteractiveParaWord(word, Some(id));
+		}
 		default: {
 			opt = optimizeForm(cast(w : ParaAtomic -> Form));
 			getDynamicFormSize(opt) |> s2w;
@@ -250,6 +287,12 @@ makeParaWord(w : ParaAtomic) -> ParaWord {
 	}
 }
 
+makeParaWord(w : ParaAtomic) -> ParaWord {
+	switch (w) {
+		InteractiveParaAtomic(word, id): makeInteractiveParaWord(word, Some(id));
+		default : makeInteractiveParaWord(w, None());
+	}
+}
 
 isGhostable(f : Form) -> bool {
 	switch (f) {
@@ -449,8 +492,15 @@ paraLineAlignmentIsStart(align: ParaLineAlignment) -> bool {
 	}
 }
 
-renderParaLines(availableWidth : double, lines : [ParaLine], tightWidth : bool, alignment: ParaLineAlignment, interlineSpacing : double, topLineBaseline : bool) -> Form {
-	//println("Render lines " + d2s(availableWidth));
+renderParaLines(
+	availableWidth : double,
+	lines : [ParaLine],
+	tightWidth : bool,
+	alignment: ParaLineAlignment,
+	interlineSpacing : double,
+	topLineBaseline : bool,
+	styleTree : Tree<int, [ParaElementInteractiveStyle]>
+) -> Form {
 	lasti = length(lines) - 1;
 	singleLine = length(lines) == 1;
 
@@ -478,7 +528,7 @@ renderParaLines(availableWidth : double, lines : [ParaLine], tightWidth : bool, 
 			} else {
 				alignment;
 			}
-		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i);
+		f = RenderLine(acc.y, line.words, width, tightWidth, lineAlignment, line.indent, i, styleTree);
 		nwidth = max(acc.width, f.width);
 		// For interline spacing, it turns out that the old paragraph had crazy behaviour, so we have to double it
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
@@ -494,17 +544,26 @@ renderParaLines(availableWidth : double, lines : [ParaLine], tightWidth : bool, 
 
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Pair<GhostForm, Behaviour<FormMetrics>>]{
+getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>]{
 	if (!isBiDiEnabled() && alignment != Justify()) {
 		optimizeLine(words);
 	} else {
-		map(words, \w -> Pair(w.form, w.metrics));
+		map(words, \w -> Triple(w.form, w.metrics, w.interactivityIdM));
 	};
 }
 
 // Aligns all elements to the baseline, as well as calculates the height and the baseline
 // Send out the result, width, height
-RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, alignment : ParaLineAlignment, lineIndent: double, lineNumber : int) -> ParaLineResult {
+RenderLine(
+	y : double,
+	words : [ParaWord],
+	width : double,
+	tightWidth : bool,
+	alignment : ParaLineAlignment,
+	lineIndent: double,
+	lineNumber : int,
+	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>
+) -> ParaLineResult {
 	optimizedLine = getOptimizedLine(words, alignment);
 	metrics = map(optimizedLine, \p -> getValue(p.second));
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
@@ -532,8 +591,9 @@ RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, al
 	} else 0.0;
 
 	// The width and the individual forms
-	lo : [Form] = filtermapi(optimizedLine, \i : int, pair : Pair<GhostForm, Behaviour<FormMetrics>> -> {
-		f = pair.first;
+	lo : [Form] = filtermapi(optimizedLine, \i : int, triple : Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>> -> {
+		f = triple.first;
+		intIdM = triple.third;
 		m = metrics[i];
 		dy = max(lineAsc - m.baseline, 0.0);
 		if (f == Empty()) {
@@ -563,7 +623,11 @@ RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, al
 					Some(fo);
 				}
 				default: {
-					fo = Translate(const(^alignmentOffset), const(y + dy), cast(f : GhostForm -> Form));
+					println(f);
+					fo = Group([
+						Translate(const(^alignmentOffset), const(y), Rectangle(m.width + interWord, lineHeight, [Fill(red)])),
+						Translate(const(^alignmentOffset), const(y + dy), cast(f : GhostForm -> Form))
+					]);
 					Some(fo);
 				}
 			}
@@ -576,33 +640,34 @@ RenderLine(y : double, words : [ParaWord], width : double, tightWidth : bool, al
 
 
 // Joins texts together to a single text element, along with the new metrics
-optimizeLine(words : [ParaWord]) -> [Pair<GhostForm, Behaviour<FormMetrics>>] {
-	fold(words, makeList(), \acc : List<Pair<GhostForm, Behaviour<FormMetrics>>>, word : ParaWord -> {
+optimizeLine(words : [ParaWord]) -> [Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>] {
+	fold(words, makeList(), \acc : List<Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>>, word : ParaWord -> {
 		f = word.form;
 		metrics = word.metrics;
+		intIdM = word.interactivityIdM;
 		switch(acc){
-			EmptyList(): Cons(Pair(f, metrics), acc);
+			EmptyList(): Cons(Triple(f, metrics, intIdM), acc);
 			Cons(p, tail_): {
 				switch (p.first : GhostForm) {
 					Text(t1, s1): {
 						switch (f : GhostForm) {
 							Text(t2, s2): {
 								join = joinText(t1, s1, t2, s2);
-								if (length(join) == 1) {
+								if (length(join) == 1 && intIdM == p.third) {
 									t : Form = join[0];
 									// TODO: Do not do this until at the end of the joining fest
 									m = getStaticFormSize(t);
 									// println("Joined " + t1 + t2);
 									// Replace the last element with the newly joined
-									Cons(Pair(t, const(m)), tail_)
-								} else Cons(Pair(f, metrics), acc);
+									Cons(Triple(t, const(m), intIdM), tail_)
+								} else Cons(Triple(f, metrics, intIdM), acc);
 							}
 							default: {
-								Cons(Pair(f, metrics), acc);
+								Cons(Triple(f, metrics, intIdM), acc);
 							}
 						}
 					}
-					default: Cons(Pair(f, metrics), acc);
+					default: Cons(Triple(f, metrics, intIdM), acc);
 				}
 			}
 		}
@@ -649,12 +714,13 @@ setWordText(w: ParaWord, t: string) -> ParaWord {
 				CoordinateInspectElement(index, xc, yc, wh, lineHeight, form): CoordinateInspectElement(index, xc, yc, wh, lineHeight, Text(t, getFormTextStyle(form)));
 				Text(__, fs): Text(t, fs);
 				default: w.form;
-			}
+			},
+			w.interactivityIdM
 		);
 		default: w;
 	};
 }
 
 setWordForm(word: ParaWord, form: GhostForm) -> ParaWord {
-	ParaWord(word.word, word.metrics, word.ghosted, form);
+	ParaWord(word.word, word.metrics, word.ghosted, form, word.interactivityIdM);
 };
