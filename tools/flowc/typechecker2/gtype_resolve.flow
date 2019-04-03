@@ -8,7 +8,7 @@ import tools/flowc/type_helpers;
 
 export {
 	// Resolve the graph
-	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv;
+	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv;
 }
 
 // TODO: Use lca to resolve bounds
@@ -22,11 +22,11 @@ export {
 //   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
 // Picking the biggest would be XmlEvent, and that works well enough.
 
-resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv) -> GEnv {
-	doResolveGGraph(env, name, unify, GResolveSafeOnly());
+resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv {
+	doResolveGGraph(env, name, unify, GResolveSafeOnly(), onError);
 }
 
-doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, stage : GResolutionStage) -> GEnv {
+doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv, stage : GResolutionStage, onError : (string, Set<int>) -> void) -> GEnv {
 	if (env.verbose >= 2) {
 		printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " " +  toString(stage) + " {");
 	}
@@ -43,7 +43,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv,
 			if (env.verbose >= 2) {
 				printIndent(env.env, "Clarify " + gtyvarReqs2string(acc, reqs) + " {");
 			}
-			res = clarifyGTyvar(acc, unify, reqs, stage);
+			res = clarifyGTyvar(acc, unify, reqs, stage, onError);
 			if (env.verbose >= 2) {
 				printDedent(env.env, "}");
 			}
@@ -57,7 +57,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv,
 
 	if (sizeSet(nenv.unresolvedTyvars) != 0 && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
 		// There were changes in some of the tyvars, so go again in a safe
-		doResolveGGraph(nenv, name, unify, GResolveSafeOnly())
+		doResolveGGraph(nenv, name, unify, GResolveSafeOnly(), onError)
 	} else {
 		if (stage == GResolveTypars()) {
 			// OK, we are done
@@ -65,7 +65,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType) -> GEnv,
 		} else {
 			nextStage = nextGResolutionStage(stage);
 			// Do a final round where we make typars
-			doResolveGGraph(nenv, name, unify, nextStage)
+			doResolveGGraph(nenv, name, unify, nextStage, onError)
 		}
 	}
 }
@@ -97,7 +97,7 @@ nextGResolutionStage(stage : GResolutionStage) -> GResolutionStage {
 
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, stage : GResolutionStage) -> GEnv {
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequirements, stage : GResolutionStage, onError : (string, Set<int>) -> void) -> GEnv {
 	lower = req.lower;
 	upper = req.upper;
 
@@ -254,8 +254,9 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType) -> GEnv, req : GTyvarRequ
 				// And set ourselves to this
 				setGTyvar(env, unify, req, winType);
 			} else {
-				if (env.verbose >= 3) {
-					printStay(env.env, "Choices we considered " + toString(choice) + " from " + gtyvarReqs2string(env, req) + " {");
+				if ((choice == [] && stage == GResolveTypars())) {
+					onError("Could not resolve " + gtyvarReqs2stringNice(env, req), req.starts);
+					// printStay(env.env, "Choices we considered " + toString(choice) + " from " + gtyvarReqs2string(env, req) + " {" + toString(stage));
 				}
 				env;
 			}
@@ -578,6 +579,14 @@ gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
 }
 
+gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
+	lb = gbounds2stringNice(env, req.lower);
+	ub = gbounds2stringNice(env, req.upper);
+	(if (lb == "") lb else "lower bound " + lb)
+	+ (if (lb != "" && ub != "") " and " else "")
+	+ (if (ub == "") ub else "upper bound " + ub)
+}
+
 gbounds2string(env : GEnv, g : GBounds) -> string {
 	"{"
 	+ (if (g.hasFlow) " flow " else "")
@@ -587,6 +596,17 @@ gbounds2string(env : GEnv, g : GBounds) -> string {
 	+ " : " + superglue(set2array(g.fields), \st -> gtype2string(env, st), ", ")
 	+ "}"
 }
+
+gbounds2stringNice(env : GEnv, g : GBounds) -> string {
+	strGlue(concatA([
+		if (g.hasFlow) ["flow"] else [],
+		map(set2array(g.fixedTypes), \t -> gtype2string(env, t)),
+		map(set2array(g.named), \st -> gtype2string(env, st)),
+		map(set2array(g.fields), \st -> gtype2string(env, st))
+		]
+	), ", ")
+}
+
 
 getGSubTypes(names : Set<GNamed>, fields : Set<GField>) -> Set<GSubType> {
 	// Only to get flow to compile. This is basically just mergeSets
