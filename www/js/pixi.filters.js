@@ -280,7 +280,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 	var filters = this._canvasFilters;
 
-	if (((filters == null || filters.length == 0) && this._alphaMask == null))
+	if ((filters == null || filters.length == 0) && this._alphaMask == null)
 	{
 		return this._CF_originalRenderCanvas(renderer);
 	}
