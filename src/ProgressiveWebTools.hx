@@ -86,7 +86,7 @@ class ProgressiveWebTools {
 		#if js
 		var event = 'beforeinstallprompt';
 		var handler = function(e) {
-			e.preventDefaul();
+			e.preventDefault();
 			globalInstallPrompt = e;
 
 			callback();
