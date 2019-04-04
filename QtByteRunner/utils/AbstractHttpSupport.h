@@ -64,6 +64,7 @@ class AbstractHttpSupport : public NativeMethodHost {
     void cancelRequest(int id);
 
     unicode_string parseDataBytes(const void * buffer, size_t count);
+    unicode_string urlencode(const unicode_string &s);
 
     friend class QFileSystemInterface;
 
