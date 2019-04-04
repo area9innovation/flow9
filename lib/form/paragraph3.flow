@@ -84,11 +84,7 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 	indent = extractStruct(s, FirstLineIndent(0.0)).indent;
 
 	// Expand elements into word-units
-	println("this is p");
-	println(p);
 	glued : List<ParaAtomic> = expandGlueFragments(p, false, makeList(), makeList(), 0);
-	println("this is glued");
-	println(glued);
 	// Construct our ParaWords
 	words : [ParaWord] = map(list2array(glued), makeParaWord);
 
@@ -172,14 +168,12 @@ expandGlueFragments(
 ) -> List<ParaAtomic> {
 
 	flush = \ -> {
-		println("flushhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
 		if (runLength == 0) {
 			acc;
 		} else if (runLength == 1) {
 			Cons(headList(running, Empty()), acc);
 		} else {
 			wds = foldList(running, makeList(), \acc2, ra : ParaAtomic -> {
-				println("this is never called");
 				switch (ra : ParaAtomic) {
 					ParaOneWord(wds): acc2;
 					NewLine(): acc2;
@@ -593,7 +587,11 @@ RenderLine(
 	// The width and the individual forms
 	lo : [Form] = filtermapi(optimizedLine, \i : int, triple : Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>> -> {
 		f = triple.first;
-		intIdM = triple.third;
+		unitInteractiveStyle = eitherMap(
+			triple.third,
+			\id -> lookupTreeDef(interactiveStyles, id, []),
+			[]
+		);
 		m = metrics[i];
 		dy = max(lineAsc - m.baseline, 0.0);
 		if (f == Empty()) {
@@ -615,7 +613,16 @@ RenderLine(
 					None();
 				}
 				CoordinateInspectElement(in, xc, yc, wh, lh, fm): {
-					fo = Translate(const(^alignmentOffset), const(y + dy), fm);
+					fo = applyIntStylesAndHighlighting(
+						fm,
+						unitInteractiveStyle,
+						^alignmentOffset,
+						y,
+						dy,
+						m.width,
+						lineHeight,
+						interWord
+					);
 					nextDistinct(xc, ^alignmentOffset);
 					nextDistinct(yc, y + dy);
 					nextDistinct(wh, WidthHeight(m.width, m.height));
@@ -623,11 +630,16 @@ RenderLine(
 					Some(fo);
 				}
 				default: {
-					println(f);
-					fo = Group([
-						Translate(const(^alignmentOffset), const(y), Rectangle(m.width + interWord, lineHeight, [Fill(red)])),
-						Translate(const(^alignmentOffset), const(y + dy), cast(f : GhostForm -> Form))
-					]);
+					fo = applyIntStylesAndHighlighting(
+						cast(f : GhostForm -> Form),
+						unitInteractiveStyle,
+						^alignmentOffset,
+						y,
+						dy,
+						m.width,
+						lineHeight,
+						interWord
+					);
 					Some(fo);
 				}
 			}
@@ -636,6 +648,78 @@ RenderLine(
 		}
 	});
 	ParaLineResult(Group(lo), lineWidth, lineHeight, y + lineAsc);
+}
+
+applyIntStylesAndHighlighting(
+	form : Form,
+	styles : [ParaElementInteractiveStyle],
+	xOffset : double,
+	yOffset : double,
+	baselineShift : double,
+	width : double,
+	height : double,
+	interWord : double,
+) -> Form {
+	println("this is interWord" + toString(interWord));
+
+	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
+		tryExtractStruct(s, BackgroundFill(white)),
+		\backFill -> [
+			Fill(backFill.color),
+			FillOpacity(extractStruct(s, BackgroundFillOpacity(1.0)).opacity)
+		],
+		[]
+	);
+
+	dynamicCharStyleB = extractStruct(styles, DynamicCharStyle(make([]))).styleB;
+
+	textAndBackPair = switch(form) {
+		Text(txt, txtStyle) : {
+			defBackStyle = getStyleForBackgroundFromCharStyle(txtStyle);
+			// We draw custom highlighting to fix gaps for cases of justifying alignment
+			// And to have more straght highlighting.
+			backRectangle = Select(dynamicCharStyleB, \chStyle -> Rectangle(
+				width + interWord / 2.,
+				height,
+				replaceStructMany(defBackStyle, getStyleForBackgroundFromCharStyle(chStyle))
+			));
+			dynamicText = Select(dynamicCharStyleB, \chStyle -> Text(
+				txt,
+				removeAllStructs(
+					replaceStructMany(txtStyle, chStyle),
+					[BackgroundFill(0), BackgroundFillOpacity(0.0)]
+				)
+			));
+			Pair(dynamicText, backRectangle);
+		}
+		default : Pair(
+			form,
+			Select(dynamicCharStyleB, \chStyle -> Rectangle(
+				width + interWord / 2.,
+				height,
+				getStyleForBackgroundFromCharStyle(chStyle)
+			))
+		);
+	}
+
+	eventListenersM = tryExtractStruct(styles, EventListeners([]));
+	interactiveForm = eitherMap(
+		eventListenersM,
+		\el -> Interactive(el.listeners, textAndBackPair.first),
+		textAndBackPair.first
+	);
+
+	formModifiersM = tryExtractStruct(styles, FormModifiers([]));
+	modifiedForm = eitherMap(
+		formModifiersM,
+		\modifiers -> fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc)),
+		interactiveForm
+	);
+
+	Group([
+		Translate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
+		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm)
+	]);
 }
 
 
