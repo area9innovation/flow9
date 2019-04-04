@@ -11,16 +11,7 @@ export {
 	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv;
 }
 
-// TODO: Use lca to resolve bounds
-
-// TODO: For fields, find all named types in the graph which has the field as a heuristic
-// to avoid introducing crazy structs
-
 // TODO: findPotentialGSubtypes can be greatly optimized by having a subtype graph of structs and unions
-
-// Test 65: Polymorphism with an attitude. Not sure which way the resolution has to go. Hard to tell.
-//   Clarify { :  : (.tag:string), XmlElementEnd<>, XmlEvent<>} c= α30001 c= { :  : } {
-// Picking the biggest would be XmlEvent, and that works well enough.
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv {
 	doResolveGGraph(env, name, unify, GResolveSafeOnly(), onError);
@@ -31,15 +22,10 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 		printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " " +  toString(stage) + " {");
 	}
 
-	reverseGraph = ref makeEasyGraph();
 	nenv = foldSet(env.unresolvedTyvars, env, \acc, tv -> {
 		// During the loop, we can resolve stuff, no need to redo that
 		if (containsSet(acc.unresolvedTyvars, tv)) {
-			if (acc.relations.graph.numberOfEdges != ^(reverseGraph).numberOfEdges) {
-				// We got new edges in the graph. We have to redo the reverse graph
-				reverseGraph := reverseEasyGraph(acc.relations.graph);
-			}
-			reqs = buildGTyvarRequirement(acc, ^reverseGraph, tv);
+			reqs = buildGTyvarRequirement(acc, tv);
 			if (env.verbose >= 2) {
 				printIndent(env.env, "Clarify " + gtyvarReqs2string(acc, reqs) + " {");
 			}
@@ -55,11 +41,11 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 		printDedent(env.env, "} Unresolved: " + toString(set2array(nenv.unresolvedTyvars)));
 	}	
 
-	if (sizeSet(nenv.unresolvedTyvars) != 0 && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
+	if (!isEmptySet(nenv.unresolvedTyvars) && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
 		// There were changes in some of the tyvars, so go again in a safe
 		doResolveGGraph(nenv, name, unify, GResolveSafeOnly(), onError)
 	} else {
-		if (stage == GResolveTypars()) {
+		if (isEmptySet(nenv.unresolvedTyvars) || stage == GResolveTypars()) {
 			// OK, we are done
 			nenv;
 		} else {
@@ -179,7 +165,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 			// We have subtypes, either named or fields
 			lowerSet : Set<GSubType> = getGSubTypes(lower.named, switch (stage) {
 				GResolveSafeOnly(): makeSet();
-				GResolveSafeButAmbiguous(): makeSet();
+				GResolveSafeButAmbiguous(): lower.fields;
 				GResolveSpeculative(): lower.fields;
 				GResolveTypars(): lower.fields;
 			});
@@ -187,16 +173,13 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 
 			upperSet : Set<GSubType> = getGSubTypes(upper.named, switch (stage) {
 				GResolveSafeOnly(): makeSet();
-				GResolveSafeButAmbiguous(): makeSet();
+				GResolveSafeButAmbiguous(): upper.fields;
 				GResolveSpeculative(): upper.fields;
 				GResolveTypars(): upper.fields;
 			});
 
 			// Something seems to imply that we should do union here. Test 148 as an example
-			utypenames1 : [string] = findPotentialGSubtypes(env, upperSet);
-
-			// If there is no subtypes, see if we can find a supertype. See test106.
-			utypenames = if (stage == GResolveSpeculative() && utypenames1 == []) findPotentialGSupertypes(env, upperSet) else utypenames1;
+			utypenames : [string] = findPotentialGSubtypes(env, upperSet);
 
  			possible = if (isEmptySet(lowerSet)) utypenames
 				else if (isEmptySet(upperSet)) ltypenames
@@ -222,7 +205,6 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				if (env.verbose >= 3) {
 					printStay(env.env, "Ambigious subtype for: " + gtyvarReqs2string(env, req) + " {");
 				}
-
 				// OK, extract the explicit names we have, which we prefer
 				singleNamed = mapSet(mergeSets(lower.named, upper.named), \n -> n.name);
 				overlap = set2array(intersectSets(singleNamed, buildSet(possible)));
@@ -230,12 +212,18 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				if (length(overlap) == 1) {
 					// If so, that is what we prefer. Test 22
 					[overlap[0]];
-				} else if (overlap != [] || stage == GResolveSpeculative()) {
+				} else if (overlap != []) {
 					// println("Choose between " + i2s(length(overlap)) + " for " + gtyvarReqs2string(env, req));
 					// OK, pick the "smallest" type, prefering small structs to big unions
-					scored = map(if (overlap != []) overlap else possible, \name -> Pair(getGNamedSize(env, name), name));
-					cheapest = sort(scored);
-					[cheapest[0].second];
+					// scored = map(overlap, \name -> Pair(getGNamedSize(env, name), name));
+					// cheapest = sort(scored);
+					// [cheapest[0].second];
+					[overlap[0]];
+				} else if (stage == GResolveSpeculative()) {
+					// println("Choose between " + i2s(length(possible)) + " for " + gtyvarReqs2string(env, req));
+					// We might as well pick any random one.
+					// println(possible);
+					[possible[0]];
 				} else possible;
 			} else {
 				possible;
@@ -255,7 +243,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				setGTyvar(env, unify, req, winType);
 			} else {
 				if ((choice == [] && stage == GResolveTypars())) {
-					onError("Could not resolve " + gtyvarReqs2stringNice(env, req), req.starts);
+					onError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req) + " ", req.starts);
 					// printStay(env.env, "Choices we considered " + toString(choice) + " from " + gtyvarReqs2string(env, req) + " {" + toString(stage));
 				}
 				env;
@@ -353,11 +341,11 @@ findPotentialGSupertypes(env : GEnv, types : Set<GSubType>) -> [string] {
 findGSupertypes(env : GEnv, expr : GSubType) -> [string] {
 	switch (expr) {
 		GNamed(name, __): {
-			superset = findGSupertypeFromName(env.subtypes, name);
+			superset = findGSupertypeFromName(env, name);
 			arrayPush(superset, name);
 		}
 		GField(field, __): {
-			findGSupertypeFromName(env.subtypes, "." + field);
+			findGSupertypeFromName(env, "." + field);
 		}
 	}
 }
@@ -392,9 +380,11 @@ findGSubtypes(env : GEnv, expr : GSubType) -> [string] {
 			}
 		}
 		GField(field, __): {
-			// TODO: OK, here we would like to filter the set to those names that appear in the
-			// environment
-			getTreeArrayValue(env.env.program.acc.names.field2structs, field);
+			// OK, here we filter the set to those names that appear in the environment
+			possible = getTreeArrayValue(env.env.program.acc.names.field2structs, field);
+			filtered = filter(possible, \p -> containsSet(env.namesSeen, p));
+			// If the filter looses all, we do not filter after all
+			if (filtered == []) possible else filtered;
 		}
 	}
 }
@@ -448,7 +438,7 @@ findSmallestGSuperTypes2(env : GEnv, names : [string]) -> [string] {
 	if (length(names) <= 1) names
 	else {
 		foldi(names, [], \i, acc, st -> {
-			supers = arrayPush(findGSupertypeFromName(env.subtypes, st), st);
+			supers = arrayPush(findGSupertypeFromName(env, st), st);
 			if (i == 0) supers
 			else intersection(supers, acc)
 		});
@@ -582,9 +572,9 @@ gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
 	lb = gbounds2stringNice(env, req.lower);
 	ub = gbounds2stringNice(env, req.upper);
-	(if (lb == "") lb else "lower bound " + lb)
+	(if (lb == "") lb else "union of " + lb)
 	+ (if (lb != "" && ub != "") " and " else "")
-	+ (if (ub == "") ub else "upper bound " + ub)
+	+ (if (ub == "") ub else "subtype for " + ub)
 }
 
 gbounds2string(env : GEnv, g : GBounds) -> string {

@@ -288,8 +288,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TPositionScale(pos, t): {
 			bf = tropic2Acc(t, parent, sheet, metricsOnly);
 
-			disp =
-				arrayPush(bf.disposers, fconnectSelect(parent.transformMatrix, pos, \p -> getTransformPositionScale(p)));
+			disp = arrayPush(bf.disposers, fconnectSelect(parent.transformMatrix, pos, \p -> getTransformPositionScale(p)));
 
 			TAcc(bf with disposers = disp)
 		}
@@ -572,19 +571,25 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ex2 = make(0.0);
 			yfill = make(0.0);
 
+			ba1worldVisible = make(false);
+
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = ex1,
-						maxY = yfill
+						maxY = yfill,
+						worldVisible = ba1worldVisible
 					),
 					sheet,
 					metricsOnly
 				);
 
+			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
+			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
+
 			ba2transform = fworldtransform(parent.transformMatrix, fx2transform(ba1.metrics.width));
-			ba2worldVisible = make(true);
+			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -601,11 +606,22 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					metricsOnly
 				);
 
+			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
+			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
+
+			minWidth = faddition(ba1.minWidth, ba2.minWidth);
+			minHeight = fmax(ba1.minHeight, ba2.minHeight);
+
+			maxWidth = faddition(ba1.maxWidth, ba2.maxWidth);
+			maxHeight = fmax(ba1.maxHeight, ba2.maxHeight);
+
+			xFillers = faddition(ba1.xFillers, ba2.xFillers);
+			yFillers = fmax(ba1.yFillers, ba2.yFillers);
+
 			addFillers = fmax(ba1.addFillers, ba2.addFillers);
 
-			secondWH = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			appliedTransform = fapplytransform(secondWH, ba2transform);
-			boundsOverlap = fboundsoverlap(appliedTransform, parent.viewBounds);
+			xConstant = ba1.xConstant && ba2.xConstant;
+			yConstant = ba1.yConstant && ba2.yConstant;
 
 			un =
 				if (ba1.xConstant && ba2.xConstant && ba1.yConstant && ba2.yConstant) {
@@ -613,18 +629,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ex2, fgetValue(ba2.metrics.width));
 					nextDistinct(yfill, max(fgetValue(ba1.metrics.height), fgetValue(ba2.metrics.height)));
 
-					[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
+					[
+						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+					]
 				} else {
 					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
-					ah = fmax(ba1.maxHeight, ba2.maxHeight);
-
-					cth = fmin(ah, parent.maxY);
-
-					// Find the tallest child
-					tallest = fmax(ba1.minHeight, ba2.minHeight);
 					// Find out how much we then have available
-					availYFill = fmax(tallest, cth);
+					availYFill = fmax(minHeight, fmin(maxHeight, parent.maxY));
 
 					concatA([
 						if (ba1.xConstant) {
@@ -639,8 +652,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							[]
 						} else
 							[fconnect(allocation.second, ex2)],
-						[fconnect(availYFill, yfill)],
-						[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
+						[
+							fconnect(availYFill, yfill),
+							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+						]
 					])
 				}
 
@@ -649,7 +665,10 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						ba1.form,
+						FRenderable(
+							ba1worldVisible,
+							ba1.form
+						),
 						FRenderable(
 							ba2worldVisible,
 							FTranslate(ba1.metrics.width, zero, ba2.form)
@@ -661,15 +680,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					fmax(ba1.metrics.height, ba2.metrics.height),
 					fmax(ba1.metrics.baseline, ba2.metrics.baseline)
 				),
-				faddition(ba1.minWidth, ba2.minWidth),
-				fmax(ba1.minHeight, ba2.minHeight),
-				faddition(ba1.maxWidth, ba2.maxWidth),
-				fmax(ba1.maxHeight, ba2.maxHeight),
-				faddition(ba1.xFillers, ba2.xFillers),
-				fmax(ba1.yFillers, ba2.yFillers),
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
+				xFillers,
+				yFillers,
 				addFillers,
-				ba1.xConstant && ba2.xConstant,
-				ba1.yConstant && ba2.yConstant,
+				xConstant,
+				yConstant,
 				concatA([ba1.disposers, ba2.disposers, un]),
 			)
 		}
@@ -680,6 +699,9 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			bsln2 = make(0.);
 			yfill = make(0.);
 
+			ba1transform = fworldtransform(parent.transformMatrix, fy2transform(bsln1));
+			ba1worldVisible = make(false);
+
 			ba1 =
 				tropic2Acc(
 					t1,
@@ -687,13 +709,19 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex1,
 						yfill,
 						parent.environment,
-						fworldtransform(parent.transformMatrix, fy2transform(bsln1)),
-						parent.worldVisible,
+						ba1transform,
+						ba1worldVisible,
 						parent.viewBounds
 					),
 					sheet,
 					metricsOnly
 				);
+
+			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
+			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, ba1transform), parent.viewBounds);
+
+			ba2transform = fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ba1.metrics.width, bsln2)));
+			ba2worldVisible = make(false);
 
 			ba2 =
 				tropic2Acc(
@@ -702,15 +730,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ex2,
 						yfill,
 						parent.environment,
-						fworldtransform(parent.transformMatrix, fpoint2transform(fpoint(ba1.metrics.width, bsln2))),
-						parent.worldVisible,
+						ba2transform,
+						ba2worldVisible,
 						parent.viewBounds
 					),
 					sheet,
 					metricsOnly
 				);
 
-			addFillers = fmax(ba1.addFillers, ba2.addFillers);
+			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
+			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
 
 			baseline = fmax(ba1.metrics.baseline, ba2.metrics.baseline);
 			baseline1 = fsubtract(baseline, ba1.metrics.baseline);
@@ -718,6 +747,20 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			height1 = faddition(ba1.metrics.height, baseline1);
 			height2 = faddition(ba2.metrics.height, baseline2);
+
+			minWidth = faddition(ba1.minWidth, ba2.minWidth);
+			minHeight = fmax(faddition(ba1.minHeight, baseline1), faddition(ba2.minHeight, baseline2));
+
+			maxWidth = faddition(ba1.maxWidth, ba2.maxWidth);
+			maxHeight = fmax(faddition(ba1.maxHeight, baseline1), faddition(ba2.maxHeight, baseline2));
+
+			xFillers = faddition(ba1.xFillers, ba2.xFillers);
+			yFillers = fmax(ba1.yFillers, ba2.yFillers);
+
+			addFillers = fmax(ba1.addFillers, ba2.addFillers);
+
+			xConstant = ba1.xConstant && ba2.xConstant;
+			yConstant = ba1.yConstant && ba2.yConstant;
 
 			un =
 				if (ba1.xConstant && ba2.xConstant && ba1.yConstant && ba2.yConstant) {
@@ -727,18 +770,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ex2, fgetValue(ba2.metrics.width));
 					nextDistinct(yfill, max(fgetValue(ba1.metrics.height), fgetValue(ba2.metrics.height)));
 
-					[]
+					[
+						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+					]
 				} else {
 					allocation = distributeAsks(ba1.xFillers, ba2.xFillers, ba1.minWidth, ba2.minWidth, ba1.maxWidth, ba2.maxWidth, parent.maxX, ba1.addFillers, ba2.addFillers);
 
-					ah = fmax(ba1.maxHeight, ba2.maxHeight);
-
-					cth = fmin(ah, parent.maxY);
-
-					// Find the tallest child
-					tallest = fmax(ba1.minHeight, ba2.minHeight);
 					// Find out how much we then have available
-					availYFill = fmax(tallest, cth);
+					availYFill = fmax(minHeight, fmin(maxHeight, parent.maxY));
 
 					concatA([
 						if (ba1.xConstant) {
@@ -756,7 +796,9 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						[
 							fconnect(availYFill, yfill),
 							fconnect(baseline1, bsln1),
-							fconnect(baseline2, bsln2)
+							fconnect(baseline2, bsln2),
+							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
 						]
 					])
 				}
@@ -766,8 +808,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						FTranslate(zero, baseline1, ba1.form),
-						FTranslate(ba1.metrics.width, baseline2, ba2.form),
+						FRenderable(
+							ba1worldVisible,
+							FTranslate(zero, baseline1, ba1.form)
+						),
+						FRenderable(
+							ba2worldVisible,
+							FTranslate(ba1.metrics.width, baseline2, ba2.form)
+						),
 						true
 					),
 				TFormMetrics(
@@ -775,15 +823,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					fmax(height1, height2),
 					baseline
 				),
-				faddition(ba1.minWidth, ba2.minWidth),
-				fmax(faddition(ba1.minHeight, baseline1), faddition(ba2.minHeight, baseline2)),
-				faddition(ba1.maxWidth, ba2.maxWidth),
-				fmax(faddition(ba1.maxHeight, baseline1), faddition(ba2.maxHeight, baseline2)),
-				faddition(ba1.xFillers, ba2.xFillers),
-				fmax(ba1.yFillers, ba2.yFillers),
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
+				xFillers,
+				yFillers,
 				addFillers,
-				ba1.xConstant && ba2.xConstant,
-				ba1.yConstant && ba2.yConstant,
+				xConstant,
+				yConstant,
 				concatA([ba1.disposers, ba2.disposers, un])
 			)
 		}
@@ -792,16 +840,22 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ey1 = make(0.0);
 			ey2 = make(0.0);
 
+			ba1worldVisible = make(false);
+
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = xfill,
 						maxY = ey1,
+						worldVisible = ba1worldVisible
 					),
 					sheet,
 					metricsOnly
 				);
+
+			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
+			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
 
 			ba2transform = fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height));
 			ba2worldVisible = make(false);
@@ -821,30 +875,38 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					metricsOnly
 				);
 
+			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
+			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
+
+			minWidth = fmax(ba1.minWidth, ba2.minWidth);
+			minHeight = faddition(ba1.minHeight, ba2.minHeight);
+
+			maxWidth = fmax(ba1.maxWidth, ba2.maxWidth);
+			maxHeight = faddition(ba1.maxHeight, ba2.maxHeight);
+
+			xFillers = fmax(ba1.xFillers, ba2.xFillers);
+			yFillers = faddition(ba1.yFillers, ba2.yFillers);
+
 			addFillers = fmax(ba1.addFillers, ba2.addFillers);
 
-			secondWH = fwidthheight(ba2.metrics.width, ba2.metrics.height);
-			appliedTransform = fapplytransform(secondWH, ba2transform);
-			boundsOverlap = fboundsoverlap(appliedTransform, parent.viewBounds);
+			xConstant = ba1.xConstant && ba2.xConstant;
+			yConstant = ba1.yConstant && ba2.yConstant;
 
 			un =
-				if (ba1.xConstant && ba2.xConstant && ba1.yConstant && ba2.yConstant) {
+				if (xConstant && yConstant) {
 					nextDistinct(ey1, fgetValue(ba1.metrics.height));
 					nextDistinct(ey2, fgetValue(ba2.metrics.height));
 					nextDistinct(xfill, max(fgetValue(ba1.metrics.width), fgetValue(ba2.metrics.width)));
 
-					[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
+					[
+						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+					]
 				} else {
 					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
-					aw = fmax(ba1.maxWidth, ba2.maxWidth);
-
-					ctw = fmin(aw, parent.maxX);
-
-					// Find the widest child
-					widest = fmax(ba1.minWidth, ba2.minWidth);
 					// Find out how much we then have available
-					availXFill = fmax(widest, ctw);
+					availXFill = fmax(minWidth, fmin(maxWidth, parent.maxX));
 
 					concatA([
 						if (ba1.yConstant) {
@@ -859,8 +921,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							[]
 						} else
 							[fconnect(allocation.second, ey2)],
-						[fconnect(availXFill, xfill)],
-						[fconnect(fand(parent.worldVisible, boundsOverlap), ba2worldVisible)]
+						[
+							fconnect(availXFill, xfill),
+							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+						]
 					])
 				}
 
@@ -869,7 +934,10 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						ba1.form,
+						FRenderable(
+							ba1worldVisible,
+							ba1.form
+						),
 						FRenderable(
 							ba2worldVisible,
 							FTranslate(zero, ba1.metrics.height, ba2.form)
@@ -881,15 +949,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					faddition(ba1.metrics.height, ba2.metrics.height),
 					faddition(ba1.metrics.height, ba2.metrics.baseline)
 				),
-				fmax(ba1.minWidth, ba2.minWidth),
-				faddition(ba1.minHeight, ba2.minHeight),
-				fmax(ba1.maxWidth, ba2.maxWidth),
-				faddition(ba1.maxHeight, ba2.maxHeight),
-				fmax(ba1.xFillers, ba2.xFillers),
-				faddition(ba1.yFillers, ba2.yFillers),
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
+				xFillers,
+				yFillers,
 				addFillers,
-				ba1.xConstant && ba2.xConstant,
-				ba1.yConstant && ba2.yConstant,
+				xConstant,
+				yConstant,
 				concatA([ba1.disposers, ba2.disposers, un])
 			)
 		}
@@ -898,16 +966,26 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			ey1 = make(0.0);
 			ey2 = make(0.0);
 
+			ba1worldVisible = make(false);
+
 			ba1 =
 				tropic2Acc(
 					t1,
 					TParentInfo(parent with
 						maxX = xfill,
-						maxY = ey1
+						maxY = ey1,
+						worldVisible = ba1worldVisible
 					),
 					sheet,
 					metricsOnly
 				);
+
+			ba1wh = fwidthheight(ba1.metrics.width, ba1.metrics.height);
+			ba1overlap = fboundsoverlap(fapplytransform(ba1wh, parent.transformMatrix), parent.viewBounds);
+
+			ba2transform = fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height));
+			ba2worldVisible = make(false);
+
 			ba2 =
 				tropic2Acc(
 					t2,
@@ -915,15 +993,30 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						xfill,
 						ey2,
 						parent.environment,
-						fworldtransform(parent.transformMatrix, fy2transform(ba1.metrics.height)),
-						parent.worldVisible,
+						ba2transform,
+						ba2worldVisible,
 						parent.viewBounds
 					),
 					sheet,
 					metricsOnly
 				);
 
+			ba2wh = fwidthheight(ba2.metrics.width, ba2.metrics.height);
+			ba2overlap = fboundsoverlap(fapplytransform(ba2wh, ba2transform), parent.viewBounds);
+
+			minWidth = fmax(ba1.minWidth, ba2.minWidth);
+			minHeight = faddition(ba1.minHeight, ba2.minHeight);
+
+			maxWidth = fmax(ba1.maxWidth, ba2.maxWidth);
+			maxHeight = faddition(ba1.maxHeight, ba2.maxHeight);
+
+			xFillers = fmax(ba1.xFillers, ba2.xFillers);
+			yFillers = faddition(ba1.yFillers, ba2.yFillers);
+
 			addFillers = fmax(ba1.addFillers, ba2.addFillers);
+
+			xConstant = ba1.xConstant && ba2.xConstant;
+			yConstant = ba1.yConstant && ba2.yConstant;
 
 			un =
 				if (ba1.xConstant && ba2.xConstant && ba1.yConstant && ba2.yConstant) {
@@ -931,18 +1024,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					nextDistinct(ey2, fgetValue(ba2.metrics.height));
 					nextDistinct(xfill, max(fgetValue(ba1.metrics.width), fgetValue(ba2.metrics.width)));
 
-					[]
+					[
+						fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+						fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+					]
 				} else {
 					allocation = distributeAsks(ba1.yFillers, ba2.yFillers, ba1.minHeight, ba2.minHeight, ba1.maxHeight, ba2.maxHeight, parent.maxY, ba1.addFillers, ba2.addFillers);
 
-					aw = fmax(ba1.maxWidth, ba2.maxWidth);
-
-					ctw = fmin(aw, parent.maxX);
-
-					// Find the widest child
-					widest = fmax(ba1.minWidth, ba2.minWidth);
 					// Find out how much we then have available
-					availXFill = fmax(widest, ctw);
+					availXFill = fmax(minWidth, fmin(maxWidth, parent.maxX));
 
 					concatA([
 						if (ba1.yConstant) {
@@ -957,7 +1047,11 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 							[]
 						} else
 							[fconnect(allocation.second, ey2)],
-						[fconnect(availXFill, xfill)]
+						[
+							fconnect(availXFill, xfill),
+							fconnect(fand(parent.worldVisible, ba1overlap), ba1worldVisible),
+							fconnect(fand(parent.worldVisible, ba2overlap), ba2worldVisible)
+						]
 					])
 				}
 
@@ -966,8 +1060,14 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					FEmpty()
 				else
 					FGroup2(
-						ba1.form,
-						FTranslate(zero, ba1.metrics.height, ba2.form),
+						FRenderable(
+							ba1worldVisible,
+							ba1.form
+						),
+						FRenderable(
+							ba2worldVisible,
+							FTranslate(zero, ba1.metrics.height, ba2.form)
+						),
 						true
 					),
 				TFormMetrics(
@@ -975,15 +1075,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					faddition(ba1.metrics.height, ba2.metrics.height),
 					ba1.metrics.baseline
 				),
-				fmax(ba1.minWidth, ba2.minWidth),
-				faddition(ba1.minHeight, ba2.minHeight),
-				fmax(ba1.maxWidth, ba2.maxWidth),
-				faddition(ba1.maxHeight, ba2.maxHeight),
-				fmax(ba1.xFillers, ba2.xFillers),
-				faddition(ba1.yFillers, ba2.yFillers),
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
+				xFillers,
+				yFillers,
 				addFillers,
-				ba1.xConstant && ba2.xConstant,
-				ba1.yConstant && ba2.yConstant,
+				xConstant,
+				yConstant,
 				concatA([ba1.disposers, ba2.disposers, un])
 			)
 		}
@@ -1576,16 +1676,9 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			fm = \ ->
 					(\w : double, h : double -> {
-						maxround = min(w / 2., h / 2.);
+						maxround = min(abs(w) / 2., abs(h) / 2.);
 
-						(if (maxround == 0. || (nw == 0. && ne == 0. && lw == 0. && le == 0.)) {
-							FRectangle(w, h, gstyle)
-						} else {
-							if (nw == ne && ne == lw && lw == le)
-								FGraphics(perfectRoundedRect(w, h, nw), gstyle)
-							else
-								customFRoundedRect(w, h, min(maxround, nw), min(maxround, ne), min(maxround, lw), min(maxround, le), gstyle)
-						})
+						customFRoundedRect(w, h, min(maxround, nw), min(maxround, ne), min(maxround, lw), min(maxround, le), gstyle);
 					})
 					|> (\fn : (double, double) -> FForm ->
 						if (ba1.xConstant && ba1.yConstant) {
@@ -2693,7 +2786,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FRealHTML(url, wh, style),
+					FRealHTML(url, wh, arrayPush(style, ViewBounds(flocalbounds(parent.viewBounds, parent.transformMatrix)))),
 				TFormMetrics(
 					wd,
 					hgt,
@@ -3185,20 +3278,58 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		TInspect(inspectors, tr) : {
 			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
 
-			av = isSome(tryExtractStruct(inspectors, IAvailable(makeWH())));
-			avW = av || isSome(tryExtractStruct(inspectors, AvailableWidth(make(0.))));
-			avH = av || isSome(tryExtractStruct(inspectors, AvailableHeight(make(0.))));
+			avW = ref false;
+			avH = ref false;
 
 			disposers =
 				map(inspectors, \insp ->
 					switch (insp : TInspector) {
-						Width(w) : fconnect(bf.metrics.width, w);
-						Height(h) : fconnect(bf.metrics.height, h);
-						AvailableWidth(w) : fconnect(parent.maxX, w);
-						AvailableHeight(h) : fconnect(parent.maxY, h);
-						ISize(wh) : fconnect2Select(bf.metrics.width, bf.metrics.height, wh, \w, h -> WidthHeight(w, h));
-						IAvailable(wh) : fconnect2Select(parent.maxX, parent.maxY, wh, \w, h -> WidthHeight(w, h));
-						IBaseline(baseline) : fconnect(bf.metrics.baseline, baseline);
+						Width(w) : {
+							fconnect(bf.metrics.width, w);
+						}
+						Height(h) : {
+							fconnect(bf.metrics.height, h);
+						}
+						AvailableWidth(w) : {
+							avW := true;
+
+							fconnect(parent.maxX, w);
+						}
+						AvailableHeight(h) : {
+							avH := true;
+
+							fconnect(parent.maxY, h);
+						}
+						IAvailable(wh) : {
+							avW := true;
+							avH := true;
+
+							fconnect(fwh(parent.maxX, parent.maxY), wh);
+						}
+						ISize(wh) : {
+							fconnect(fwh(bf.metrics.width, bf.metrics.height), wh);
+						}
+						IBaseline(baseline) : {
+							fconnect(bf.metrics.baseline, baseline);
+						}
+						IMinWidth(w) : {
+							fconnect(bf.minWidth, w);
+						}
+						IMinHeight(h) : {
+							fconnect(bf.minHeight, h);
+						}
+						IMaxWidth(w) : {
+							fconnect(bf.maxWidth, w);
+						}
+						IMaxHeight(h) : {
+							fconnect(bf.maxHeight, h);
+						}
+						IMinSize(wh) : {
+							fconnect(fwh(bf.minWidth, bf.minHeight), wh);
+						}
+						IMaxSize(wh) : {
+							fconnect(fwh(bf.maxWidth, bf.maxHeight), wh);
+						}
 					}
 				)
 				|> (\arr -> concat(arr, bf.disposers));
@@ -3206,16 +3337,90 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			TAcc(
 				if (metricsOnly) FEmpty() else bf.form,
 				bf.metrics,
-				if (!avW || bf.xConstant) bf.minWidth else zero,
-				if (!avH || bf.yConstant) bf.minHeight else zero,
-				if (!avW || bf.xConstant) bf.maxWidth else const(^tropicFillersMax),
-				if (!avH || bf.yConstant) bf.maxHeight else const(^tropicFillersMax),
-				if (avW) const(b2d(!bf.xConstant)) else bf.xFillers,
-				if (avH) const(b2d(!bf.yConstant)) else bf.yFillers,
+				if (!^avW || bf.xConstant) bf.minWidth else zero,
+				if (!^avH || bf.yConstant) bf.minHeight else zero,
+				if (!^avW || bf.xConstant) bf.maxWidth else const(^tropicFillersMax),
+				if (!^avH || bf.yConstant) bf.maxHeight else const(^tropicFillersMax),
+				if (^avW) const(b2d(!bf.xConstant)) else bf.xFillers,
+				if (^avH) const(b2d(!bf.yConstant)) else bf.yFillers,
 				bf.addFillers,
 				bf.xConstant,
 				bf.yConstant,
 				disposers
+			)
+		}
+		TOverride(overriders, tr) : {
+			available =
+				extractStruct(
+					overriders,
+					OAvailable(
+						fwh(
+							extractStruct(overriders, OAvailableWidth(parent.maxX)).width,
+							extractStruct(overriders, OAvailableHeight(parent.maxY)).height
+						)
+					)
+				).widthHeight;
+
+			bf =
+				tropic2Acc(
+					tr,
+					TParentInfo(parent with maxX = fwidth(available), maxY = fheight(available)),
+					sheet,
+					metricsOnly
+				);
+
+			size =
+				extractStruct(
+					overriders,
+					OSize(
+						fwh(
+							extractStruct(overriders, OWidth(bf.metrics.width)).width,
+							extractStruct(overriders, OHeight(bf.metrics.height)).height
+						)
+					)
+				).widthHeight;
+
+			baseline = extractStruct(overriders, OBaseline(bf.metrics.baseline)).baseline;
+
+			minSize =
+				extractStruct(
+					overriders,
+					OMinSize(
+						fwh(
+							extractStruct(overriders, OMinWidth(bf.minWidth)).width,
+							extractStruct(overriders, OMinHeight(bf.minHeight)).height
+						)
+					)
+				).widthHeight;
+
+			maxSize =
+				extractStruct(
+					overriders,
+					OMaxSize(
+						fwh(
+							extractStruct(overriders, OMaxWidth(bf.maxWidth)).width,
+							extractStruct(overriders, OMaxHeight(bf.maxHeight)).height
+						)
+					)
+				).widthHeight;
+
+			TAcc(
+				if (metricsOnly) FEmpty() else bf.form,
+				TFormMetrics(
+					fwidth(size),
+					fheight(size),
+					baseline,
+				),
+				fwidth(minSize),
+				fheight(minSize),
+				fwidth(maxSize),
+				fheight(maxSize),
+				bf.xFillers,
+				bf.yFillers,
+				bf.addFillers,
+				isFConst(fwidth(size)) && bf.xConstant,
+				isFConst(fheight(size)) && isFConst(baseline) && bf.yConstant,
+				bf.disposers
 			)
 		}
 		TCssBlock(style, tr) : {

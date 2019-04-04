@@ -78,7 +78,9 @@ class WebClip extends NativeWidgetClip {
 
 		nativeWidget.appendChild(iframe);
 
-		if (reloadBlock) appendReloadBlock();
+		if (reloadBlock) {
+			appendReloadBlock();
+		}
 
 		iframe.onload = function() {
 			try {
@@ -96,10 +98,17 @@ class WebClip extends NativeWidgetClip {
 				}
 
 				ondone("OK");
-				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) iframe.scrolling = "no";
+
+				if (Platform.isIOS && (url.indexOf("flowjs") >= 0 || url.indexOf("lslti_provider") >= 0)) {
+					iframe.scrolling = "no";
+				}
 				iframe.contentWindow.callflow = cb;
-				if (iframe.contentWindow.pushCallflowBuffer) iframe.contentWindow.pushCallflowBuffer();
-				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) iframe.scrolling = "no"; // Obviousely it is flow page.
+				if (iframe.contentWindow.pushCallflowBuffer) {
+					iframe.contentWindow.pushCallflowBuffer();
+				}
+				if (Platform.isIOS && iframe.contentWindow.setSplashScreen != null) {
+					iframe.scrolling = "no"; // Obviousely it is flow page.
+				}
 			} catch(e : Dynamic) { Errors.report(e); }
 		};
 	}
@@ -139,33 +148,8 @@ class WebClip extends NativeWidgetClip {
 		}
 	}
 
-	public override function updateNativeWidget() {
-		if (getClipVisible()) {
-			var transform = nativeWidget.parentNode.style.transform != "" && nativeWidget.parentNode.clip != null ?
-				worldTransform.clone().append(nativeWidget.parentNode.clip.worldTransform.clone().invert()) : worldTransform;
-
-			var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
-			var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
-
-			if (Platform.isIE) {
-				nativeWidget.style.transform = "matrix(" + 1 + "," + transform.b + "," + transform.c + "," + 1 + ","
-					+ 0 + "," + 0 + ")";
-
-				nativeWidget.style.left = untyped "" + tx + "px";
-				nativeWidget.style.top = untyped "" + ty + "px";
-			} else {
-				nativeWidget.style.transform = "matrix(" + 1 + "," + transform.b + "," + transform.c + "," + 1 + ","
-					+ tx + "," + ty + ")";
-			}
-
-			nativeWidget.style.width = untyped "" + getWidth() * transform.a + "px";
-			nativeWidget.style.height = untyped "" + getHeight() * transform.d + "px";
-
-			nativeWidget.style.opacity = worldAlpha;
-			nativeWidget.style.display = "block";
-		} else {
-			nativeWidget.style.display = "none";
-		}
+	public override function updateNativeWidgetStyle() {
+		super.updateNativeWidgetStyle();
 
 		if (nativeWidget.getAttribute("tabindex") != null) {
 			iframe.setAttribute("tabindex", nativeWidget.getAttribute("tabindex")); // Needed to the correct tab order of iframe elements
@@ -189,9 +173,6 @@ class WebClip extends NativeWidgetClip {
 	public function getDescription() : String {
 		return 'WebClip (url = ${iframe.src})';
 	}
-
-	private override function getWidth() : Float { return 100.0; }
-	private override function getHeight() : Float { return 100.0; }
 
 	public function hostCall(name : String, args : Array<String>) : String {
 		try {

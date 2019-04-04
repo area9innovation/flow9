@@ -242,6 +242,7 @@ export {
 	TAvailableHeight(tr : Tropic, available : Transform<double>) -> Tropic;
 	TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : Transform<double>) -> Tropic;
 
+	TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic;
 	TAlignStart(t : Tropic) -> Tropic; // Align left if LTR, align right if RTL
 	TAlignEnd(t : Tropic) -> Tropic;   // Align right if LTR, align left if RTL
 	TAlignLeft(t : Tropic) -> Tropic;
@@ -287,6 +288,8 @@ export {
 
 	TEvenGrid(content : [[Tropic]]) -> Tropic;
 
+	TConstructRenderable(constructors : [() -> () -> void], content : Tropic) -> Tropic;
+
 	wh2Tropic(wh : WidthHeight) -> Tropic;
 
 	// Zoom tropic if its metrics are bigger than maxWH
@@ -331,7 +334,7 @@ TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 }
 
 TCircle(radius : double, style : [TGraphicsStyle]) -> Tropic {
-	TRounded(radius, radius, radius, radius, style, TFixed(radius*2.0, radius*2.0))
+	TGraphics([GCircle(radius, radius, radius)], style);
 }
 
 TGroup(c : [Tropic]) -> Tropic {
@@ -579,10 +582,12 @@ TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic)
 
 			makeFGraphics = \w, h ->
 				FGraphics(
-					if (radius == 0.)
-						rectangle(0., 0., w, h)
+					if (equalDoubles(radius, 0.))
+						[GRect(0.0, 0.0, w, h)]
+					else if (equalDoubles(w, h) && equalDoubles(radius, w / 2.0))
+						[GCircle(radius, radius, radius)]
 					else
-						perfectRoundedRect(w, h, radius),
+						[GRoundedRect(0.0, 0.0, w, h, radius)],
 					gstyle
 				);
 
@@ -1194,7 +1199,7 @@ TCopySize2(content : Tropic, copyFn : (Tropic, Tropic) -> Tropic) -> Tropic {
 
 			b1 = t2a(content, parentInfo, sheet, mo);
 			tr = TAcc2Size(b1);
-				
+
 			t2a(
 				copyFn(
 					tr,
@@ -1373,7 +1378,7 @@ TAttachBox2(t : Tropic, box : DynamicBehaviour<WidthHeight>, content : Tropic) -
 		b1 = t |> t2a;
 		b2 = content |> t2a;
 
-		disp = 
+		disp =
 			concat(arrayPush(b1.disposers, fconnect(fwidthheight(b1.metrics.width, b1.metrics.height), box)), b2.disposers);
 
 		TAcc(b1 with form = b2.form, disposers = disp)
@@ -1556,6 +1561,16 @@ TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : 
 	TransformTAcc(\t2a, pi, st, mo ->
 		t2a(tr, TParentInfo(pi with maxX = availableW, maxY = availableH), st, mo)
 	)
+}
+
+TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic {
+	switch (align : CommonAlignment) {
+		StartAlign() : TAlignStart;
+		EndAlign() : TAlignEnd;
+		LeftAlign() : TAlignLeft;
+		RightAlign() : TAlignRight;
+		CenterAlign() : \t -> TTweak([TAlign(const(0.5), const(0.0))], t, TFillX());
+	}
 }
 
 TAlignStart(t : Tropic) -> Tropic {
@@ -1997,6 +2012,33 @@ distributeSizesEvenly2(minWidths : [double], maxWidths : [double], columnWidths0
 		}
 	} else
 		columnWidths0
+}
+
+TConstructRenderable(constructors : [() -> () -> void], tr : Tropic) -> Tropic {
+	TransformTAcc(\t2a, pi, ss, mo -> {
+		b = t2a(tr, pi, ss, mo);
+
+		TAcc(
+			FDecorator(
+				b.form,
+				[
+					Pair(pi.worldVisible, \ -> FConstruct(constructors, FEmpty()))
+				],
+				true
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
 }
 
 wh2Tropic(wh : WidthHeight) -> Tropic {

@@ -1,20 +1,26 @@
 import js.Browser;
+
+import pixi.core.display.Bounds;
+import pixi.core.math.shapes.Rectangle;
+import pixi.core.math.Point;
 import pixi.core.graphics.Graphics;
+import pixi.core.graphics.GraphicsData;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 
 using DisplayObjectHelper;
 
 class FlowGraphics extends Graphics {
-	public var penX : Float = 0.0;
-	public var penY : Float = 0.0;
+	private var scrollRect : FlowGraphics;
+	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+	private var transformChanged : Bool = true;
+
+	private var pen = new Point(0.0, 0.0);
+	private var localBounds = new Bounds();
 
 	private var fillGradient : Dynamic;
 	private var strokeGradient : Dynamic;
-
-	private var scrollRect : FlowGraphics;
-
-	private var _visible : Bool = true;
 
 	private static inline function trimFloat(f : Float, min : Float, max : Float) : Float {
 		return f < min ? min : (f > max ? max : f);
@@ -42,28 +48,31 @@ class FlowGraphics extends Graphics {
 
 	public override function moveTo(x : Float, y : Float) : Graphics {
 		var newGraphics = super.moveTo(x, y);
-		penX = x;
-		penY = y;
+		pen.x = x;
+		pen.y = y;
+		localBounds.addPoint(pen);
 
 		return newGraphics;
 	}
 
 	public override function lineTo(x : Float, y : Float) : Graphics {
 		var newGraphics = super.lineTo(x, y);
-		penX = x;
-		penY = y;
+		pen.x = x;
+		pen.y = y;
+		localBounds.addPoint(pen);
 
 		return super.lineTo(x, y);
 	}
 
 	public override function quadraticCurveTo(cx : Float, cy : Float, x : Float, y : Float) : Graphics {
-		var dx = x - penX;
-		var dy = y - penY;
+		var dx = x - pen.x;
+		var dy = y - pen.y;
 
 		if (Math.sqrt(dx * dx + dy * dy) / lineWidth > 3) {
 			var newGraphics = super.quadraticCurveTo(cx, cy, x, y);
-			penX = x;
-			penY = y;
+			pen.x = x;
+			pen.y = y;
+			localBounds.addPoint(pen);
 
 			return newGraphics;
 		} else {
@@ -116,6 +125,7 @@ class FlowGraphics extends Graphics {
 			mask.graphicsData = graphicsData.map(function (gd) { return gd.clone(); });
 			sprite.mask = mask;
 			untyped sprite._visible = true;
+			untyped sprite.clipVisible = true;
 
 			for (gd in graphicsData) {
 				gd.fillAlpha = 0.0;
@@ -129,12 +139,115 @@ class FlowGraphics extends Graphics {
 	}
 
 	public override function drawRect(x : Float, y : Float, width : Float, height : Float) : Graphics {
-		var newGraphics = super.drawRect(x, y, width, height);
+		if (width < 0) {
+			x = x + width;
+			width = Math.abs(width);
+		}
 
-		return newGraphics;
-	};
+		if (height < 0) {
+			y = y + height;
+			height = Math.abs(height);
+		}
+
+		if (width > 0 && height > 0) {
+			var newGraphics = super.drawRect(x, y, width, height);
+
+			localBounds.addPoint(new Point(x, y));
+			localBounds.addPoint(new Point(x + width, y + height));
+
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
+	}
+
+	public override function drawRoundedRect(x : Float, y : Float, width : Float, height : Float, radius : Float) : Graphics {
+		if (width < 0) {
+			x = x + width;
+			width = Math.abs(width);
+		}
+
+		if (height < 0) {
+			y = y + height;
+			height = Math.abs(height);
+		}
+
+		if (width > 0 && height > 0) {
+			radius = Math.abs(radius);
+
+			if (radius > 0) {
+				var newGraphics = super.drawRoundedRect(x, y, width, height, radius);
+
+				localBounds.addPoint(new Point(x, y));
+				localBounds.addPoint(new Point(x + width, y + height));
+
+				endFill();
+
+				return newGraphics;
+			} else {
+				return drawRect(x, y, width, height);
+			}
+		} else {
+			return this;
+		}
+	}
+
+	public override function drawEllipse(x : Float, y : Float, width : Float, height : Float) : Graphics {
+		width = Math.abs(width);
+		height = Math.abs(height);
+
+		if (width > 0 && height > 0) {
+			var newGraphics = super.drawEllipse(x, y, width, height);
+
+			localBounds.addPoint(new Point(x - width, y - height));
+			localBounds.addPoint(new Point(x + width, y + height));
+
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
+	}
+
+	public override function drawCircle(x : Float, y : Float, radius : Float) : Graphics {
+		radius = Math.abs(radius);
+
+		if (radius > 0) {
+			var newGraphics = super.drawCircle(x, y, radius);
+
+			localBounds.addPoint(new Point(x - radius, y - radius));
+			localBounds.addPoint(new Point(x + radius, y + radius));
+
+			endFill();
+
+			return newGraphics;
+		} else {
+			return this;
+		}
+	}
+
+	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+		return localBounds.getRectangle(rect);
+	}
+
+	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
+		var bounds = new Bounds();
+
+		bounds.minX = localBounds.minX * worldTransform.a + localBounds.minY * worldTransform.c + worldTransform.tx;
+		bounds.minY = localBounds.minX * worldTransform.b + localBounds.minY * worldTransform.d + worldTransform.ty;
+		bounds.maxX = localBounds.maxX * worldTransform.a + localBounds.maxY * worldTransform.c + worldTransform.tx;
+		bounds.maxY = localBounds.maxX * worldTransform.b + localBounds.maxY * worldTransform.d + worldTransform.ty;
+
+		return bounds.getRectangle(rect);
+	}
 
 	public override function clear() : Graphics {
+		pen = new Point();
+		localBounds = new Bounds();
+
 		return super.clear();
 	};
 }

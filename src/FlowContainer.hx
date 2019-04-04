@@ -1,17 +1,21 @@
+import js.Browser;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
 
 using DisplayObjectHelper;
 
 class FlowContainer extends Container {
-	private var scrollRect : FlowGraphics;
+	public var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+	public var transformChanged : Bool = true;
+	private var childrenChanged : Bool = true;
 
 	public function new(?worldVisible : Bool = false) {
 		super();
 
-		_visible = true;
 		visible = worldVisible;
+		clipVisible = worldVisible;
 		interactiveChildren = false;
 	}
 
@@ -21,11 +25,12 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
 
-			if (getClipWorldVisible()) {
+			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
-				RenderSupportJSPixi.InvalidateStage();
+				newChild.invalidateStage();
 			}
 
+			childrenChanged = true;
 			emitEvent("childrenchanged");
 		}
 
@@ -38,11 +43,12 @@ class FlowContainer extends Container {
 		if (newChild != null) {
 			newChild.updateClipInteractive(interactiveChildren);
 
-			if (getClipWorldVisible()) {
+			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
-				RenderSupportJSPixi.InvalidateStage();
+				newChild.invalidateStage();
 			}
 
+			childrenChanged = true;
 			emitEvent("childrenchanged");
 		}
 
@@ -54,10 +60,10 @@ class FlowContainer extends Container {
 
 		if (oldChild != null) {
 			updateClipInteractive();
-			oldChild.updateClipWorldVisible();
 
-			InvalidateStage();
+			invalidateStage();
 
+			childrenChanged = true;
 			emitEvent("childrenchanged");
 		}
 

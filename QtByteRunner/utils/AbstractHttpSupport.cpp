@@ -396,11 +396,42 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
     rq.payload = parseUtf8(body.str());
 }
 
+unicode_string AbstractHttpSupport::urlencode(const unicode_string &s)
+{
+    static const char lookup[]= "0123456789abcdef";
+    std::stringstream e;
+    for(int i=0, ix=s.length(); i<ix; i++)
+    {
+        const char& c = s[i];
+        if ( (48 <= c && c <= 57) ||//0-9
+             (65 <= c && c <= 90) ||//abc...xyz
+             (97 <= c && c <= 122) || //ABC...XYZ
+             (c=='-' || c=='_' || c=='.' || c=='~')
+        )
+        {
+            e << c;
+        }
+        else
+        {
+            e << '%';
+            e << lookup[ (c&0xF0)>>4 ];
+            e << lookup[ (c&0x0F) ];
+        }
+    }
+    return parseUtf8(e.str());
+}
+
 void AbstractHttpSupport::processRequest(HttpRequest &rq) {
-    if (!rq.attachments.empty() && rq.payload.empty()) {
+    std::map<unicode_string,unicode_string>::iterator found = rq.headers.find(parseUtf8("Content-Type"));
+    bool useMultipart = found != rq.headers.end() && encodeUtf8(found->second).find("multipart/form-data") == 0;
+    if ((!rq.attachments.empty() || useMultipart) && rq.payload.empty()) {
         processAttachmentsAsMultipart(rq);
     } else {
         std::string url = encodeUtf8(rq.url);
+
+        for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it) {
+            rq.params[it->first] = urlencode(it->second);
+        }
 
         // Map url query parameters to rq.params
         size_t queryPos = url.find_first_of('?');
