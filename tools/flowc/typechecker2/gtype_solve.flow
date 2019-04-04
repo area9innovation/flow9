@@ -36,7 +36,11 @@ and then
 to produce the graphviz relations if you use verbose=2 or above.
 
 TODO:
-- Build subtypes graph more globally
+- Consider a special graph type for our relations, which allows easy reversal
+  and faster reachableClosure (which is the bottleneck)
+- Consider to only recalculate tyvar bounds when edges are added to related
+  nodes for a tyvar. I.e. keep tyvar bounds up-to-date.
+- Field against union needs to check the type of the field as well
 */
 
 gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv, subtype : GSubtypeGraph) -> GEnv {
@@ -269,11 +273,6 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 		printIndent(env.env, "Unify  " + gtype2string(env, left) + " c= " + gtype2string(env, right));
 	}
 
-	todo = \ -> {
-		printStay(env.env, "TODO: " + gtype2string(env, left) + " c= " + gtype2string(env, right));
-		env;
-	}
-
 	error = \ -> {
 		onError(gtype2string(env, left) + " != " + gtype2string(env, right));
 		env;
@@ -310,7 +309,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 					GTypePar(id): if (explicit_flow) error() else env;
 					GFunction(args, rt): if (explicit_flow) error() else env;
 					GRef(type): if (explicit_flow) error() else env;
-					GTypeVar(id): todo();
+					GTypeVar(id): error();
 				}
 			}
 			default: {
@@ -481,10 +480,6 @@ gunifyTyvar(env : GEnv, left : GType, right : GType, pos : int, onError : (strin
 }
 
 gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError : (string) -> void) -> GEnv {
-	todo = \ -> {
-		printStay(env.env, "TODO: Subtype " + gtype2string(env, left) + " c= " + gtype2string(env, right));
-		env;
-	}
 	switch (left) {
 		GNamed(lname, ltypars): {
 			switch (right) {
@@ -515,7 +510,8 @@ gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError 
 					unifyGFieldAgainstName(env, left, right, pos, onError);
 				}
 				default: {
-					todo();
+					onError("TODO: Subtype " + gtype2string(env, left) + " c= " + gtype2string(env, right));
+					env;
 				}
 			}
 		}
@@ -537,7 +533,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 			// The unify against each struct in it
 			fold(ltypenames, env, \acc, tn -> {
 				istruct = ginstantiateStructFromUnion(acc, right, tn, onError);
-				unifyAndRecurseGType(acc, istruct, right, pos, onError);
+				unifyGType(acc, istruct, right, pos, onError);
 			});
 		}
 		Some(ustruct): {
@@ -545,7 +541,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
 		
 			// And then subtype with our struct
-			unifyAndRecurseGType(env, left, istruct, pos, onError);
+			unifyGType(env, left, istruct, pos, onError);
 		}
 	}
 }
@@ -600,7 +596,7 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
 	fieldType = getInstantiatedGNamedField(env, right, left.name, true, onError);
 	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
-	unifyAndRecurseGType(env, left.type, fieldType, pos, onError);
+	unifyGType(env, left.type, fieldType, pos, onError);
 }
 
 // Does this name have this field?
@@ -627,7 +623,7 @@ hasGNameField(env : GEnv, named : string, field : string) -> bool {
 
 unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
 	fieldType = getInstantiatedGNamedField(env, left, right.name, false, onError);
-	unifyAndRecurseGType(env, fieldType, right.type, pos, onError);
+	unifyGType(env, fieldType, right.type, pos, onError);
 }
 
 // Given a named structure, extract the instantiated type of a given field
