@@ -169,6 +169,13 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     QString method = unicode2qt(rq.method);
     QString payload = unicode2qt(rq.payload);
 
+    if (rq.payload.empty() && encodeUtf8(rq.method) != "GET") {
+        QUrlQuery query(url.query());
+        rq.headers[parseUtf8("Content-Type")] = parseUtf8("application/x-www-form-urlencoded");
+        setQueryParameters(query, rq.params);
+        payload = query.query(QUrl::FullyEncoded).toLatin1();
+    }
+
     QNetworkRequest request(url);
 
     // Set headers for HTTP request

@@ -401,7 +401,7 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
     bool useMultipart = found != rq.headers.end() && encodeUtf8(found->second).find("multipart/form-data") == 0;
     if ((!rq.attachments.empty() || useMultipart) && rq.payload.empty()) {
         processAttachmentsAsMultipart(rq);
-    } else {
+    } else if (encodeUtf8(rq.method) == "GET") {
         std::string url = encodeUtf8(rq.url);
 
         // Map url query parameters to rq.params
@@ -434,14 +434,9 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
             params += it->first + unicode_string(1, '=') + it->second;
         }
 
-        if (encodeUtf8(rq.method) == "GET") {
-            std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
+        std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
 
-            rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
-        } else if (rq.payload.empty()) {
-            rq.payload = params;
-            rq.headers[parseUtf8("Content-Type")] = parseUtf8("application/x-www-form-urlencoded");
-        }
+        rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
     }
 }
 
