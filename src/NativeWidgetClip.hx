@@ -31,8 +31,8 @@ class NativeWidgetClip extends FlowContainer {
 	public function updateNativeWidget() : Void {
 		var transform = getTransform();
 
-		var tx = getClipWorldVisible() ? transform.tx : RenderSupportJSPixi.PixiRenderer.width;
-		var ty = getClipWorldVisible() ? transform.ty : RenderSupportJSPixi.PixiRenderer.height;
+		var tx = getClipWorldVisible() ? transform.tx : -widgetWidth;
+		var ty = getClipWorldVisible() ? transform.ty : -widgetHeight;
 
 		if (Platform.isIE) {
 			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
@@ -92,6 +92,12 @@ class NativeWidgetClip extends FlowContainer {
 		} else {
 			once('added', addNativeWidget);
 		}
+
+		invalidateStyle();
+
+		if (!getClipWorldVisible() && parent != null) {
+			updateNativeWidget();
+		}
 	}
 
 	private function deleteNativeWidget() : Void {
@@ -142,6 +148,10 @@ class NativeWidgetClip extends FlowContainer {
 			this.widgetWidth = widgetWidth;
 
 			invalidateStyle();
+
+			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
+				updateNativeWidget();
+			}
 		}
 	}
 
@@ -150,6 +160,10 @@ class NativeWidgetClip extends FlowContainer {
 			this.widgetHeight = widgetHeight;
 
 			invalidateStyle();
+
+			if (nativeWidget != null && !getClipWorldVisible() && parent != null) {
+				updateNativeWidget();
+			}
 		}
 	}
 
