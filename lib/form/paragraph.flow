@@ -527,10 +527,11 @@ applyAlignment(line : [Form], alignment : ParagraphAlignment, width : double,
 }
 
 
-SymbolAtPositionType ::= PositionSpace, PositionLineBreak, PositionAllowBreakAfter, PositionCharCat;
+SymbolAtPositionType ::= PositionSpace, PositionLineBreak, PositionAllowBreakAfter, PositionAllowSoftBreakAfter, PositionCharCat;
 	PositionSpace : ();
 	PositionLineBreak : ();
 	PositionAllowBreakAfter : ();
+	PositionAllowSoftBreakAfter : ();
 
 	// When splitting occurs based on complex conditions, such as (but not only):
 	//    • punctuation,
@@ -585,7 +586,7 @@ breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool
 	space1Pos = ref -1;                                        // next pos of space char
 	space2Pos = ref -1;                                        // next pos of zero-width space char
 	newLinePos = ref -1;                                       // next pos of newline symbol
-	hyphenPos = ref -1;                                        // next pos of hyphen
+	hyphenPos = ref Pair(-1, false);                           // pair of next pos of hyphen and soft sign
 	chrCatPos = ref (if (isBiDiEnabled()) -1 else textLen);    // next pos of split in respect of characters' categories
 
 	remapMinusOne = \p -> if (p >= 0) p else textLen;
@@ -604,12 +605,14 @@ breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool
 			if (^chrCatPos > ^space2Pos) space2Pos := remapMinusOne(strRangeIndexOf(text, "\u200b", ^chrCatPos, textLen));  // \u200b is zero-width space
 			if (^chrCatPos > ^newLinePos) newLinePos := remapMinusOne(strRangeIndexOf(text, "\n", ^chrCatPos, textLen));
 
-			if (^chrCatPos >= ^hyphenPos) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
+			if (^chrCatPos >= ^hyphenPos.first) {  // soft inequality because we want to keep hyphenPos greater than ^chrCatPos (findBreakAfterAllowPos2 returns at least ^chrCatPos+1)
 				hyphenPos := {
 					if (!allowBreaksAfterHyphen)
-						textLen
-					else
-						remapMinusOne(findBreakAfterAllowPos2(text, ^chrCatPos, moreLineBreaks));
+						Pair(textLen, false)
+					else {
+						posAndSoft = findBreakAfterAllowPos2(text, ^chrCatPos, moreLineBreaks);
+						Pair(remapMinusOne(posAndSoft.first), posAndSoft.second);
+					}
 				};
 			}
 
@@ -618,7 +621,13 @@ breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool
 				Pair(^space1Pos, PositionSpace()),
 				Pair(^space2Pos, PositionSpace()),
 				Pair(^newLinePos, PositionLineBreak()),
-				Pair(^hyphenPos, PositionAllowBreakAfter()),
+				Pair(^hyphenPos.first,
+					if (^hyphenPos.second) {
+						PositionAllowSoftBreakAfter()
+					} else {
+						PositionAllowBreakAfter()
+					}
+				)
 			];
 			positions = if (isBiDiEnabled())
 				arrayPush(noBiDiPositions, Pair(^chrCatPos, PositionCharCat()))
@@ -659,7 +668,21 @@ breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool
 							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, space)
 						}
 						PositionAllowBreakAfter() : {
-							toInspectingElementIfNecessary(indexing, indexing + keyPosRelative, makeSpace(getCharAt(text, keyPos), style))
+							toInspectingElementIfNecessary(indexing,
+								indexing + keyPosRelative,
+								makeSpace(getCharAt(text, keyPos),
+									style
+								)
+							);
+						}
+						PositionAllowSoftBreakAfter() : {
+							toInspectingElementIfNecessary(indexing,
+								indexing + keyPosRelative,
+								LinePart(Empty(),
+									Empty(),
+									Text(getCharAt(text, keyPos), style)
+								)
+							)
 						}
 						PositionCharCat(): {
 							// Used only for case break happens immediately after current position
@@ -698,9 +721,7 @@ breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool
 						Cons(keyFragment, Cons(makeTextFn(indexing, word), acc));
 						//to make the function tail recursive
 					} else {
-						//In hyphen case we do not cut off the symbol at position.
-						//keyFragment is Space(Empty()) that only allows breaking after the hyphen.
-						doNotSkipSymbolDelta = if (/*posType == PositionAllowBreakAfter() ||*/ posType == PositionCharCat()) 1 else 0;
+						doNotSkipSymbolDelta = if (posType == PositionCharCat()) 1 else 0;
 						word = substring(text, i, keyPos - i + doNotSkipSymbolDelta); //println("word:" + word);
 						^loop1(
 							keyPos + 1, indexing + keyPosRelative + 1,
