@@ -1417,7 +1417,8 @@ void GLDrawSurface::pushCropRect(const GLTransform &matrix, const GLBoundingBox 
     crop.bbox = bbox;
 
     crop.clipbox = matrix * bbox;
-    crop.clipbox.roundOut();
+    crop.clipbox.min_pt = glm::floor(crop.clipbox.min_pt);
+    crop.clipbox.max_pt = glm::floor(crop.clipbox.max_pt);
     crop.bbox.max_pt += vec2(1.0f);
 
     if (!crop_stack.empty())
