@@ -567,3 +567,54 @@ It's better to do this way:
 		find(availableVoices, \v -> strContains(v.name, p))
 	})
 
+#### Not using tail recursion when it is possible
+
+You should writing code in a manner which would allow compiler to perform tails recursion optimisations. Ignoring this optimisation may lead to stack overflow.
+See example below. While collect2 might look nicer - it will not be converted into cycle by compiler and would lead to stack overflow.
+
+	import runtime;
+	import ds/tree;
+	import material/material;
+	import material/material2tropic;
+
+	SomeStruct : (id : int, name : string, children : [SomeStruct]);
+
+	// This one supports tail recursion optimisation and will not crash
+	collect1(data : [SomeStruct], acc : Tree<int, [SomeStruct]>) -> Tree<int, [SomeStruct]> {
+		if (data == []) {
+			acc;
+		} else {
+			data0 = data[0];
+			collect1(
+				concat(tail(data), data0.children),
+				treePushToArrayValue(acc, data0.id, data0)
+			);
+		}
+	}
+
+	// This one won't be optimised and would lead to a crash
+	collect2(data : SomeStruct, acc : Tree<int, [SomeStruct]>) -> Tree<int, [SomeStruct]> {
+		fold(
+			data.children,
+			treePushToArrayValue(acc, data.id, data),
+			\acc2, child -> collect2(child, acc2)
+		);
+	}
+
+	main() {
+		namePrefix = "SomeLongPrefixToSimulateDataInsideTheStructSomeLongPrefixToSimulateDataInsideTheStructSomeLongPrefixToSimulateDataInsideTheStruct";
+		maxId = 10000;
+		recursiveStruct = ref SomeStruct(maxId, namePrefix + i2s(maxId), []);
+		fori(0, maxId, \idx -> {
+			recursiveStruct := SomeStruct(idx, namePrefix + i2s(idx), [^recursiveStruct]);
+		});
+
+		mrender(
+			makeMaterialManager([]),
+			true,
+			MLines2(
+				MTextButton("collect1", \-> println(sizeTree(collect1([^recursiveStruct], makeTree()))), [], []),
+				MTextButton("collect2", \-> println(sizeTree(collect2(^recursiveStruct, makeTree()))), [], []),
+			)
+		);
+	}
