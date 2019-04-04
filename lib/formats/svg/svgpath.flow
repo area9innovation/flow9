@@ -22,9 +22,9 @@ endpointToCenterArcParams(p1 : V2, p2 : V2, r : V2, xAngle : double, flagA : boo
 	x1ps = x1p * x1p;
 	y1ps = y1p * y1p;
 	// check if the radius is too small `pq < 0`, when `dq > rxs * rys` (see below)
-	// cr is the ratio (dq : rxs * rys) 
+	// cr is the ratio (dq : rxs * rys)
 	cr = x1ps / _rxs + y1ps / _rys;
-	
+
 	//scale up rX,rY equally so cr == 1
 	s = sqrt(cr);
 
@@ -32,7 +32,7 @@ endpointToCenterArcParams(p1 : V2, p2 : V2, r : V2, xAngle : double, flagA : boo
 	rY = if (cr > 1.0) s * _rY else _rY;
 	rxs = rX * rX;
 	rys = rY * rY;
-   
+
 	dq = (rxs * y1ps + rys * x1ps);
 	pq = (rxs * rys - dq) / dq;
 	_q = sqrt( max(0.0, pq) );
@@ -49,7 +49,7 @@ endpointToCenterArcParams(p1 : V2, p2 : V2, r : V2, xAngle : double, flagA : boo
 		v = V2(vx, vy);
 		dot = v2ScalarMul(u,v);
 		len = v2Len(u) * v2Len(v);
-		clamp = \x, a, b -> if (x < a) a else if (x > b) b else x; 
+		clamp = \x, a, b -> if (x < a) a else if (x > b) b else x;
 		ang = acos( clamp(dot / len, -1.0, 1.0) );
 		if ( (u.x * v.y - u.y * v.x) < 0.0) -ang else ang;
 	}
@@ -69,7 +69,7 @@ ellipseArcToBezierCurves(arc : EllipseArc, endP : V2) {
 	arr = map( enumFromTo(0, num_curves), \e ->{
 		x = arc.c.x + arc.rx * cos(arc.ang0 + seg * i2d(e));
 		y = arc.c.y + arc.ry * sin(arc.ang1 + seg * i2d(e));
-		// TO DO : better control points 
+		// TO DO : better control points
 		cpx = arc.c.x + arc.rx * 1.01 * cos(arc.ang0 + seg * (i2d(e) - 0.5) );
 		cpy = arc.c.y + arc.ry * 1.01 * sin(arc.ang1 + seg * (i2d(e) - 0.5) );
 		QuadraticBezierTo(x, y, cpx, cpy);
@@ -78,7 +78,7 @@ ellipseArcToBezierCurves(arc : EllipseArc, endP : V2) {
 }
 
 
-// Fixed MidPoint approximation of cubic curve: 
+// Fixed MidPoint approximation of cubic curve:
 quadraticBezierApproximation(p0, p1, p2, p3) {
 	innerPoint = \P0, P1, ratio -> v2Add(P0, v2Mul(v2Sub(P1, P0), ratio));
 
@@ -92,48 +92,56 @@ quadraticBezierApproximation(p0, p1, p2, p3) {
 	pc_2 =  v2Sub(innerPoint(pA, pB, 3.0/8.0), d);
 	pc_3 = v2Add(innerPoint(pB, pA, 3.0/8.0), d);
 	pc_4 = innerPoint(p3, p2, 3.0/8.0);
-	
+
 	// Anchors:
 	pa_1 = innerPoint(pc_1, pc_2, 0.5);
 	pa_2 = innerPoint(pA, pB, 0.5);
 	pa_3 = innerPoint(pc_3, pc_4, 0.5);
 
-	[ QuadraticBezierTo(pa_1.x, pa_1.y, pc_1.x, pc_1.y), 
+	[ QuadraticBezierTo(pa_1.x, pa_1.y, pc_1.x, pc_1.y),
 		QuadraticBezierTo(pa_2.x, pa_2.y, pc_2.x, pc_2.y),
 		QuadraticBezierTo(pa_3.x, pa_3.y, pc_3.x, pc_3.y),
 		QuadraticBezierTo(p3.x, p3.y, pc_4.x, pc_4.y) ]
 }
 
-getGraphicsRegion(path : [StaticGraphicOp]) {
-	fold(path, Quadruple(doubleMax, doubleMax, doubleMin, doubleMin), \q, op -> {
-			p = switch(op : StaticGraphicOp) {
-				MoveTo(x, y) : V2(x, y);
-				LineTo(x, y) : V2(x, y);
-				CubicBezierTo(x, y, cx, cy): V2(x, y);
-				QuadraticBezierTo(x, y, cx, cy): V2(x, y);
-				ClosePath(): V2(q.first, q.second);
-			};
-			Quadruple(min(q.first, p.x), min(q.second, p.y), max(q.third, p.x), max(q.fourth, p.y));
+getGraphicsRegion(path : [StaticGraphicOp]) -> Quadruple<double, double, double, double> {
+	fold(path, Quadruple(doubleMax, doubleMax, doubleMin, doubleMin), \q : Quadruple<double, double, double, double>, op : StaticGraphicOp -> {
+			addVector = \p : V2 -> Quadruple(min(q.first, p.x), min(q.second, p.y), max(q.third, p.x), max(q.fourth, p.y));
+			addRect = \p : GRect -> Quadruple(min(q.first, p.x), min(q.second, p.y), max(q.third, p.x + p.width), max(q.fourth, p.y + p.height));
+			addEllipse = \p : GEllipse -> Quadruple(min(q.first, p.x - p.width), min(q.second, p.y - p.height),
+				max(q.third, p.x + p.width), max(q.fourth, p.y + p.height));
+
+			switch (op : StaticGraphicOp) {
+				MoveTo(x, y) : V2(x, y) |> addVector;
+				LineTo(x, y) : V2(x, y) |> addVector;
+				CubicBezierTo(x, y, cx, cy): V2(x, y) |> addVector;
+				QuadraticBezierTo(x, y, cx, cy): V2(x, y) |> addVector;
+				ClosePath(): V2(q.first, q.second) |> addVector;
+				GRect(x, y, width, height): op |> addRect;
+				GRoundedRect(x, y, width, height, radius): GRect(x, y, width, height) |> addRect;
+				GEllipse(x, y, width, height): op |> addEllipse;
+				GCircle(x, y, radius): GEllipse(x, y, radius, radius) |> addEllipse;
+			}
 		}
 	);
 }
 
-regionContains(r : Quadruple, r1 : Quadruple) {
+regionContains(r : Quadruple<double, double, double, double>, r1 : Quadruple<double, double, double, double>) {
 	r.first < r1.first && r.second < r1.second && r.third > r1.third && r.fourth > r1.fourth
 }
 
 // Topological sort with layers:
-getLayers2(group : [Pair<[StaticGraphicOp], Quadruple>]) ->  [[Pair<[StaticGraphicOp], Quadruple>]] {
+getLayers2(group : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]) ->  [[Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]] {
 	if (group == []) {
 		[]
 	} else {
-		layer : [Pair<[StaticGraphicOp], Quadruple>] = filter(group, \graphics -> forall(group, \g -> !regionContains(g.second, graphics.second) ) );
+		layer : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>] = filter(group, \graphics -> forall(group, \g -> !regionContains(g.second, graphics.second) ) );
 		arrayPush( getLayers2(subtractA(group, layer)), layer);
 	}
 }
 
 getLayers(group : [[StaticGraphicOp]]) -> [[[StaticGraphicOp]]] {
-	group_with_regions = map(group, \g -> Pair(g, getGraphicsRegion(g)));
+	group_with_regions : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>] = map(group, \g -> Pair(g, getGraphicsRegion(g)));
 	layers_with_regions = getLayers2(group_with_regions);
 	map(layers_with_regions, \layer -> map(layer, \p -> p.first))
 }
@@ -145,7 +153,7 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 	moveRel = \a, offs -> { pen := v2Add(^pen, V2(a[offs], a[offs + 1])); MoveTo(^pen.x, ^pen.y) };
 	line = \a, offs -> { pen := V2(a[offs], a[offs + 1]); LineTo(^pen.x, ^pen.y) };
 	lineRel = \a, offs -> { pen := v2Add(^pen, V2(a[offs], a[offs + 1])); LineTo(^pen.x, ^pen.y) };
-	
+
 	h = \a, offs -> { pen := V2(a[offs], ^pen.y); LineTo(^pen.x, ^pen.y) };
 	hRel = \a, offs -> { pen := V2(^pen.x + a[offs], ^pen.y); LineTo(^pen.x, ^pen.y) };
 	v = \a, offs -> { pen := V2(^pen.x, a[offs]); LineTo(^pen.x, ^pen.y) };
@@ -178,7 +186,7 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 
 	smoothQuadBezier = \args, offs, rel -> {
 		last_cp := v2Add(^pen, v2Sub(^pen, ^last_cp));
-		pen := if (rel) v2Add(^pen, V2(args[offs], args[offs + 1])) else V2(args[offs], args[offs + 1]); 
+		pen := if (rel) v2Add(^pen, V2(args[offs], args[offs + 1])) else V2(args[offs], args[offs + 1]);
 		QuadraticBezierTo(^pen.x, ^pen.y, ^last_cp.x, ^last_cp.y)
 	}
 
@@ -238,7 +246,7 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 		 		else if (c == "A") concatA(getGrOps(7, arc, false))
 	 			else [];
 	 	}
- 	});	
+ 	});
 
 	state.first := ^pen;
 	state.second := ^last_cp;
@@ -248,7 +256,7 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 getSvgSubPaths(path : string) -> [string] {
 	parts = strSplit2(path, ["m", "M", "z", "Z"]);
 	filter(mapi(parts, \i, p -> if (i > 0 && toUpperCase(parts[i-1]) == "M") parts[i-1] + p else if (i < length(parts) - 1 && toUpperCase(parts[i + 1]) == "Z") p + parts[i+1] else p ),
-		\s -> s != "m" && s != "M" && s != "z" && s != "Z");	
+		\s -> s != "m" && s != "M" && s != "z" && s != "Z");
 }
 
 // Without lingo:

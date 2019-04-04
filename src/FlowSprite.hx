@@ -5,7 +5,10 @@ import pixi.core.textures.BaseTexture;
 using DisplayObjectHelper;
 
 class FlowSprite extends Sprite {
+	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+	private var transformChanged : Bool = true;
 
 	private var url : String = "";
 	private var loaded : Bool = false;
@@ -17,6 +20,14 @@ class FlowSprite extends Sprite {
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
+
+	public function getWidth() : Float {
+		return texture != null ? texture.width : 0;
+	}
+
+	public function getHeight() : Float {
+		return texture != null ? texture.height : 0;
+	}
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
 		super();
@@ -139,7 +150,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		InvalidateStage();
+		invalidateStage();
 	}
 
 	private function onError() : Void {
@@ -155,7 +166,7 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			InvalidateStage();
+			invalidateStage();
 
 			renderable = true;
 			loaded = true;
