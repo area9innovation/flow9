@@ -4,50 +4,57 @@ import ds/easygraph_utils;
 import tools/flowc/flowcacc;
 
 export {
-	emptyGSubtypeGraph() -> GSubtypeGraph;
-
 	// Builds a graph for subtyping relations
 	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
+
+	addFcModuleToGSubtypeGraph(graph : GSubtypeGraph, names : FcGlobalNames, module : FcModule) -> GSubtypeGraph;
 
 	// All supertypes (not including the name itself)
 	findGSupertypeFromName(env : GEnv, name : string) -> [string];
 }
 
-emptyGSubtypeGraph() -> GSubtypeGraph {
-	GSubtypeGraph(makeSimpleGraph(), makeSimpleGraph(), makeEasyGraph());
+buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
+	addStructsAndUnionsToGSubtypeGraph(emptyGSubtypeGraph(), names, names.structs, names.unions);
+}		
+
+addFcModuleToGSubtypeGraph(graph : GSubtypeGraph, names : FcGlobalNames, module : FcModule) -> GSubtypeGraph {
+	addStructsAndUnionsToGSubtypeGraph(graph, names, module.structs, module.unions);
 }
 
+addStructsAndUnionsToGSubtypeGraph(
+	graph : GSubtypeGraph, 
+	names : FcGlobalNames,
+	structs : Tree<string, FcTypeStruct>,
+	unions : Tree<string, FcTypeUnion>) -> GSubtypeGraph {
 
-buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
-	supertypes0 = foldTree(names.unions, makeSimpleGraph(), \unionname : string, union : FcTypeUnion, acc -> {
+	supertypes0 = foldTree(unions, graph.supertypes, \unionname : string, union : FcTypeUnion, acc -> {
 		fold(union.typenames, acc, \acc2, typename -> {
 			addSimpleEdge(acc2, typename.name, unionname, true, 1)
 		});
 	});
 
-	supertypes = foldTree(names.structs, supertypes0, \structname, struct : FcTypeStruct, acc -> {
+	supertypes = foldTree(structs, supertypes0, \structname, struct : FcTypeStruct, acc -> {
 		addSimpleNode(acc, structname);
 	});
 
-
 	// Build a map from name to the fields it has
-	name2fields : Tree<string, [string]> = foldTree(names.structs, makeTree(), \structname, struct, acc -> {
+	name2fields : Tree<string, [string]> = foldTree(structs, makeTree(), \structname, struct, acc -> {
 		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
 			treePushToArrayUnique(acc2, structname, arg.name);
 		});
 	});
 
-	fieldSupertypes0 = foldTree(names.structs, makeSimpleGraph(), \structname, struct : FcTypeStruct, acc -> {
+	fieldSupertypes0 = foldTree(structs, graph.fieldSupertypes, \structname, struct : FcTypeStruct, acc -> {
 		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
 			// A link from the field to the struct name
 			addSimpleEdge(acc2, "." + arg.name, structname, true, 1)
 		});
 	});
 
-	fieldSupertypes = foldTree(names.unions, fieldSupertypes0, \unionname : string, union : FcTypeUnion, acc -> {
+	fieldSupertypes = foldTree(unions, fieldSupertypes0, \unionname : string, union : FcTypeUnion, acc -> {
 		// Check what fields all members have
-		structs = union2structnames(names, unionname);
-		structFields = map(structs, \struct -> {
+		ustructs = union2structnames(names, unionname);
+		structFields = map(ustructs, \struct -> {
 			getTreeArrayValue(name2fields, struct);
 		});
 
@@ -87,7 +94,9 @@ findGSupertypeFromName(env : GEnv, name : string) -> [string] {
 			Some(n): n.data;
 		}
 	});
-	filter(set2array(names), \n -> n != "" && containsSet(env.namesSeen, n));
+	useful = filter(set2array(names), \n -> n != "");
+	known = filter(useful, \n -> containsSet(env.namesSeen, n));
+	if (known != []) known else useful
 }
 
 union2structnames(names : FcGlobalNames, name : string) -> [string] {
