@@ -161,18 +161,31 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	public override function getLocalBounds(?rect:Rectangle) : Rectangle {
-		if (rect == null) {
-			rect = new Rectangle();
+	#if (pixijs < "4.7.0")
+		public override function getLocalBounds() : Rectangle {
+			var rect = new Rectangle();
+
+			rect.x = 0;
+			rect.y = 0;
+			rect.width = getWidth();
+			rect.height = getHeight();
+
+			return rect;
 		}
+	#else
+		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
+			if (rect == null) {
+				rect = new Rectangle();
+			}
 
-		rect.x = 0;
-		rect.y = 0;
-		rect.width = getWidth();
-		rect.height = getHeight();
+			rect.x = 0;
+			rect.y = 0;
+			rect.width = getWidth();
+			rect.height = getHeight();
 
-		return rect;
-	}
+			return rect;
+		}
+	#end
 
 	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
 		if (rect == null) {
