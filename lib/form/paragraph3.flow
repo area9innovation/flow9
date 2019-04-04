@@ -587,65 +587,50 @@ RenderLine(
 	// The width and the individual forms
 	lo : [Form] = filtermapi(optimizedLine, \i : int, triple : Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>> -> {
 		f = triple.first;
-		unitInteractiveStyle = eitherMap(
-			triple.third,
-			\id -> lookupTreeDef(interactiveStyles, id, []),
-			[]
-		);
 		m = metrics[i];
 		dy = max(lineAsc - m.baseline, 0.0);
-		if (f == Empty()) {
-			None();
-		} else {
-			r = switch (f : GhostForm) {
-				Empty(): None();
-				Ghost(xc, yc, fm): {
-					nextDistinct(xc, ^alignmentOffset);
-					nextDistinct(yc, y + dy);
-					None();
-				}
-				InspectGhost(xc, yc, wh, lh, ln,  fm): {
-					nextDistinct(xc, ^alignmentOffset);
-					nextDistinct(yc, y + dy);
-					nextDistinct(wh, WidthHeight(m.width, m.height));
-					nextDistinct(lh, lineHeight);
-					nextDistinct(ln, lineNumber);
-					None();
-				}
-				CoordinateInspectElement(in, xc, yc, wh, lh, fm): {
-					fo = applyIntStylesAndHighlighting(
-						fm,
-						unitInteractiveStyle,
-						^alignmentOffset,
-						y,
-						dy,
-						m.width,
-						lineHeight,
-						interWord
-					);
-					nextDistinct(xc, ^alignmentOffset);
-					nextDistinct(yc, y + dy);
-					nextDistinct(wh, WidthHeight(m.width, m.height));
-					nextDistinct(lh, lineHeight);
-					Some(fo);
-				}
-				default: {
-					fo = applyIntStylesAndHighlighting(
-						cast(f : GhostForm -> Form),
-						unitInteractiveStyle,
-						^alignmentOffset,
-						y,
-						dy,
-						m.width,
-						lineHeight,
-						interWord
-					);
-					Some(fo);
-				}
+		applyStylesAndOffset = \fm : Form -> eitherMap(
+			triple.third,
+			\id -> applyIntStylesAndHighlighting(
+				fm,
+				lookupTreeDef(interactiveStyles, id, []),
+				^alignmentOffset,
+				y,
+				dy,
+				m.width,
+				lineHeight,
+				interWord
+			),
+			Translate(const(^alignmentOffset), const(y + dy), fm)
+		);
+
+		r = switch (f : GhostForm) {
+			Empty(): None();
+			Ghost(xc, yc, fm): {
+				nextDistinct(xc, ^alignmentOffset);
+				nextDistinct(yc, y + dy);
+				None();
 			}
-			alignmentOffset := ^alignmentOffset + m.width + interWord;
-			r;
+			InspectGhost(xc, yc, wh, lh, ln,  fm): {
+				nextDistinct(xc, ^alignmentOffset);
+				nextDistinct(yc, y + dy);
+				nextDistinct(wh, WidthHeight(m.width, m.height));
+				nextDistinct(lh, lineHeight);
+				nextDistinct(ln, lineNumber);
+				None();
+			}
+			CoordinateInspectElement(in, xc, yc, wh, lh, fm): {
+				fo = applyStylesAndOffset(fm);
+				nextDistinct(xc, ^alignmentOffset);
+				nextDistinct(yc, y + dy);
+				nextDistinct(wh, WidthHeight(m.width, m.height));
+				nextDistinct(lh, lineHeight);
+				Some(fo);
+			}
+			default: Some(applyStylesAndOffset(cast(f : GhostForm -> Form)))
 		}
+			alignmentOffset := ^alignmentOffset + if (m.width > 0.0) m.width + interWord else 0.0;
+			r;
 	});
 	ParaLineResult(Group(lo), lineWidth, lineHeight, y + lineAsc);
 }
@@ -660,7 +645,6 @@ applyIntStylesAndHighlighting(
 	height : double,
 	interWord : double,
 ) -> Form {
-	println("this is interWord" + toString(interWord));
 
 	getStyleForBackgroundFromCharStyle = \s -> eitherMap(
 		tryExtractStruct(s, BackgroundFill(white)),
@@ -679,13 +663,13 @@ applyIntStylesAndHighlighting(
 			// We draw custom highlighting to fix gaps for cases of justifying alignment
 			// And to have more straght highlighting.
 			backRectangle = Select(dynamicCharStyleB, \chStyle -> Rectangle(
-				width + interWord / 2.,
+				width + interWord,
 				height,
 				replaceStructMany(defBackStyle, getStyleForBackgroundFromCharStyle(chStyle))
 			));
 			dynamicText = Select(dynamicCharStyleB, \chStyle -> Text(
 				txt,
-				removeAllStructs(
+				removeAllStructsMany(
 					replaceStructMany(txtStyle, chStyle),
 					[BackgroundFill(0), BackgroundFillOpacity(0.0)]
 				)
@@ -695,7 +679,7 @@ applyIntStylesAndHighlighting(
 		default : Pair(
 			form,
 			Select(dynamicCharStyleB, \chStyle -> Rectangle(
-				width + interWord / 2.,
+				width + interWord,
 				height,
 				getStyleForBackgroundFromCharStyle(chStyle)
 			))
@@ -718,7 +702,7 @@ applyIntStylesAndHighlighting(
 
 	Group([
 		Translate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
-		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm)
+		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
 	]);
 }
 
@@ -741,7 +725,6 @@ optimizeLine(words : [ParaWord]) -> [Triple<GhostForm, Behaviour<FormMetrics>, M
 									t : Form = join[0];
 									// TODO: Do not do this until at the end of the joining fest
 									m = getStaticFormSize(t);
-									// println("Joined " + t1 + t2);
 									// Replace the last element with the newly joined
 									Cons(Triple(t, const(m), intIdM), tail_)
 								} else Cons(Triple(f, metrics, intIdM), acc);
