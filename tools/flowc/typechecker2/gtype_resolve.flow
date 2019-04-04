@@ -9,16 +9,20 @@ import loop;
 
 export {
 	// Resolve the graph
-	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv;
+	resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, onError : (string, Set<int>) -> void, onError2 : (GEnv, FcError) -> void) -> GEnv;
 }
 
 // TODO: findPotentialGSubtypes can be greatly optimized by having a subtype graph of structs and unions
+// TODO: When doing field vs. union, we could potentially do prolog-style and check then for real instead
+// of trying to filter
 
-resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>) -> GEnv, onError : (string, Set<int>) -> void) -> GEnv {
-	doResolveGGraph(env, name, unify, GResolveSafeOnly(), onError);
+resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
+		onError : (string, Set<int>) -> void, onError2 : (GEnv, FcError) -> void) -> GEnv {
+	doResolveGGraph(env, name, unify, GResolveSafeOnly(), onError, onError2);
 }
 
-doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>) -> GEnv, stage : GResolutionStage, onError : (string, Set<int>) -> void) -> GEnv {
+doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
+	stage : GResolutionStage, onError : (string, Set<int>) -> void, onError2 : (GEnv, FcError) -> void) -> GEnv {
 	if (env.verbose >= 2) {
 		printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " " +  toString(stage) + " {");
 	}
@@ -30,7 +34,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 			if (env.verbose >= 2) {
 				printIndent(env.env, "Clarify " + gtyvarReqs2string(acc, reqs) + " {");
 			}
-			res = clarifyGTyvar(acc, unify, reqs, stage, onError);
+			res = clarifyGTyvar(acc, unify, reqs, stage, onError, onError2);
 			if (env.verbose >= 2) {
 				printDedent(env.env, "}");
 			}
@@ -44,7 +48,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 
 	if (!isEmptySet(nenv.unresolvedTyvars) && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
 		// There were changes in some of the tyvars, so go again in a safe
-		doResolveGGraph(nenv, name, unify, GResolveSafeOnly(), onError)
+		doResolveGGraph(nenv, name, unify, GResolveSafeOnly(), onError, onError2)
 	} else {
 		if (isEmptySet(nenv.unresolvedTyvars) || stage == GResolveTypars()) {
 			// OK, we are done
@@ -52,7 +56,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 		} else {
 			nextStage = nextGResolutionStage(stage);
 			// Do a final round where we make typars
-			doResolveGGraph(nenv, name, unify, nextStage, onError)
+			doResolveGGraph(nenv, name, unify, nextStage, onError, onError2)
 		}
 	}
 }
@@ -84,7 +88,8 @@ nextGResolutionStage(stage : GResolutionStage) -> GResolutionStage {
 
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : GTyvarRequirements, stage : GResolutionStage, onError : (string, Set<int>) -> void) -> GEnv {
+clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
+	req : GTyvarRequirements, stage : GResolutionStage, onError : (string, Set<int>) -> void, onError2 : (GEnv, FcError) -> void) -> GEnv {
 	lower = req.lower;
 	upper = req.upper;
 
@@ -92,16 +97,16 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 	fixed = mergeSets(lower.fixedTypes, upper.fixedTypes);
 
 	if (lower.hasFlow) {
-		setGTyvar(env, unify, req, GFlow());
+		setGTyvar(env, unify, req, GFlow(), onError2);
 	} else if (!isEmptySet(fixed) || upper.hasFlow) {
 		// OK, we have something fixed. Let us go with that
 		if (sizeSet(fixed) == 1 && !upper.hasFlow) {
 			// OK, we have a unique, fixed type for our guy
 			fixedType = set2array(fixed)[0];
-			setGTyvar(env, unify, req, fixedType);
+			setGTyvar(env, unify, req, fixedType, onError2);
 		} else if (upper.hasFlow && sizeSet(fixed) != 1) {
 			// None or multiple, which do not agree, but we have flow, so I guess we go flow
-			setGTyvar(env, unify, req, GFlow());
+			setGTyvar(env, unify, req, GFlow(), onError2);
 		} else {
 			if (env.verbose >= 3) {
 				printIndent(env.env, "Fixed clarification: " + gtyvarReqs2string(env, req) + " {");
@@ -123,7 +128,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				switch (rtype) {
 					None(): env;
 					Some(rt): {
-						setGTyvar(env, unify, req, rt);
+						setGTyvar(env, unify, req, rt, onError2);
 					}
 				}
 			} else env;
@@ -133,7 +138,7 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				fixedType = set2array(fixed)[0];
 				// printStay(env.env, "Review: We picked " + gtype2string(env, fixedType) +
 				//	" pick the smallest " + gtyvarReqs2string(env, req) + "");
-				setGTyvar(penv, unify, req, fixedType);
+				setGTyvar(penv, unify, req, fixedType, onError2);
 			} else {
 				penv;
 			}
@@ -243,12 +248,11 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				}
 
 				// And set ourselves to this
-				setGTyvar(env, unify, req, winType);
+				setGTyvar(env, unify, req, winType, onError2);
 			} else {
 				if (useProlog && stage == GResolveSpeculative()) {
 					// Here we do prolog!
-					noerrors = ^(env.env.program.errors);
-					findErrorFreeCandidate(env, noerrors, possible, req, unify);
+					findErrorFreeCandidate(env, possible, req, unify, onError2);
 				} else {
 					if (stage == GResolveSpeculative()) {
 						onError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req) + " ", req.starts);
@@ -260,21 +264,26 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 	}
 }
 
-findErrorFreeCandidate(env : GEnv, errors : int, candidates : [string], req, unify) -> GEnv {
+findErrorFreeCandidate(env : GEnv, candidates : [string], req : GTyvarRequirements, unify, onError : (GEnv, FcError) -> void) -> GEnv {
 	if (candidates == []) env else {
 		type = makeGNamedType(env, candidates[0]);
-		nenv = setGTyvar(env, unify, req, type);
-		if (^(nenv.env.program.errors) == errors) {
+		errors = ref 0;
+		// println("Speculating with " + candidates[0]);
+		nenv = setGTyvar(env, unify, req, type, \__, __ -> {
+			errors := ^errors + 1;
+		});
+		if (^errors == 0) {
+			// println("Success with " + candidates[0]);
 			// println("candidate " + candidates[0] + " worked");
-			nenv;
+			setGTyvar(env, unify, req, type, onError);
 		} else {
+			//  println("Failure with " + candidates[0]);
 			// OK, did not work. Let us try the next.
 			// TODO: We have to retract the errors
-			findErrorFreeCandidate(env, errors, tail(candidates), req, unify);
+			findErrorFreeCandidate(env, tail(candidates), req, unify, onError);
 		}
 	}
 }
-
 
 // Set all these tyvars to the next free typar
 resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
@@ -316,7 +325,7 @@ isGBoundsKnownNames(env : GEnv, bounds : GBounds) -> bool {
 }
 
 // Set this group of tyvars to this resolved type
-setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : GTyvarRequirements, type : GType) -> GEnv {
+setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> void) -> GEnv, req : GTyvarRequirements, type : GType, onError : (GEnv, FcError) -> void) -> GEnv {
 	tyvars = req.tyvars;
 
 	if (env.verbose >= 2) {
@@ -330,17 +339,17 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : GTyv
 			unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
 		);
 		// Join with all lower fixed
-		nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type, req.starts));
+		nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type, req.starts, onError));
 		// Join with all upper fixed
-		nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t, req.starts));
+		nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t, req.starts, onError));
 
 		// Unify with subs
-		nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts));
-		nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts));
+		nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts, onError));
+		nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError));
 
 		// Unify with supers
-		nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts));
-		nenv6 = foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts));
+		nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts, onError));
+		nenv6 = foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError));
 
 		// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
 		tyvarsInType = extractGTypeVars(nenv6, type, makeSet());
