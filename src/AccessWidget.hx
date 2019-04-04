@@ -215,25 +215,27 @@ class AccessWidgetTree extends EventEmitter {
 			var nativeWidget : Dynamic = accessWidget.element;
 			var clip : DisplayObject = accessWidget.clip;
 
-			if (DebugAccessOrder) {
-				nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
-				nativeWidget.setAttribute("zorder", '${zorder}');
-				nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
-			}
+			if (nativeWidget != null) {
+				if (DebugAccessOrder) {
+					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
+					nativeWidget.setAttribute("zorder", '${zorder}');
+					nativeWidget.setAttribute("nodeindex", '${accessWidget.nodeindex}');
+				}
 
-			if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
-				nativeWidget.style.display = "block";
-				nativeWidget.style.opacity = clip.worldAlpha;
-			} else {
-				nativeWidget.style.display = "none";
-				return;
-			}
+				if (getZorder() >= AccessWidget.tree.zorder && clip.getClipVisible()) {
+					nativeWidget.style.display = "block";
+					nativeWidget.style.opacity = clip.worldAlpha;
+				} else {
+					nativeWidget.style.display = "none";
+					return;
+				}
 
-			if (untyped clip.nativeWidget != null) {
-				untyped clip.updateNativeWidget();
+				if (untyped clip.nativeWidget != null) {
+					untyped clip.updateNativeWidget();
 
-				if (untyped clip.styleChanged || untyped clip.viewBounds == null) {
-					untyped clip.updateNativeWidgetStyle();
+					if (untyped clip.styleChanged || untyped clip.viewBounds == null) {
+						untyped clip.updateNativeWidgetStyle();
+					}
 				}
 			}
 		}
