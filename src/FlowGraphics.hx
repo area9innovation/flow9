@@ -231,7 +231,7 @@ class FlowGraphics extends Graphics {
 
 	#if (pixijs < "4.7.0")
 		public override function getLocalBounds() : Rectangle {
-			return localBounds.getRectangle();
+			return localBounds.getRectangle(new Rectangle());
 		}
 	#else
 		public override function getLocalBounds(?rect : Rectangle) : Rectangle {
