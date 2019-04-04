@@ -9,7 +9,6 @@ import tools/flowc/debug;
 import tools/flowc/type_helpers;
 import tools/flowc/typechecker/type_expect_helpers;
 import ds/easygraph_utils;
-
 import tools/flowc/typechecker/solve_expectations;
 
 export {
@@ -79,8 +78,6 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		subtype,
 		extractNamesFromExpectations(expects)
 	);
-
-	// println(set2array(ge.namesSeen));
 
 	if (ge.verbose >= 2)  {
 		fcPrintln("\nType " + name);
@@ -593,44 +590,63 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 }
 
 unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onError : (string) -> void) -> GEnv {
-	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
-	fieldType = getInstantiatedGNamedField(env, right, left.name, true, onError);
-	// printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
-	unifyGType(env, left.type, fieldType, pos, onError);
+	//printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
+	fieldTypes = getInstantiatedGNamedFields(env, right, left.name, left.type, true, onError);
+	if (env.verbose >= 3) {
+		printStay(env.env, "Subtyping field " + left.name + " against " + right.name + " gave field types " + toString(fieldTypes));
+	}
+	fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(acc, left.type, ft, pos, onError);
+	});
 }
 
-// Does this name have this field?
-hasGNameField(env : GEnv, named : string, field : string) -> bool {
+// Does this name have this field? If so, what type is it?
+getGNameField(env : GEnv, named : string, field : string) -> Maybe<GType> {
 	mstruct = lookupTree(env.env.program.acc.names.structs, named);
 	switch (mstruct) {
 		None(): {
 			munion = lookupTree(env.env.program.acc.names.unions, named);
 			switch (munion) {
-				None(): false;
+				None(): None();
 				Some(union): {
 					typenames : [FcTypeName] = union2typenames(env.env, named);
-					forall(typenames, \tn -> hasGNameField(env, tn.name, field))
+					fieldTypes = filtermap(typenames, \tn -> getGNameField(env, tn.name, field));
+					if (length(fieldTypes) != length(typenames)) {
+						// Not all had it
+						None()
+					} else {
+						unique = uniq(fieldTypes);
+						if (length(unique) != 1) {
+							None();
+						} else Some(unique[0]);
+					}
 				}
 			}
 		}
 		Some(struct): {
-			exists(struct.args, \a : FcStructArg -> {
+			sa = find(struct.args, \a : FcStructArg -> {
 				a.name == field;
 			});
+			switch (sa) {
+				None(): None();
+				Some(sar): Some(fctype2gtype(env.env, env.tyvarIdGroup, sar.type));
+			}
 		}
 	}
 }
 
 unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
-	fieldType = getInstantiatedGNamedField(env, left, right.name, false, onError);
-	unifyGType(env, fieldType, right.type, pos, onError);
+	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
+	fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(env, ft, right.type, pos, onError);
+	})
 }
 
 // Given a named structure, extract the instantiated type of a given field
-getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, existEnough : bool, onError : (string) -> void) -> GType {
+getInstantiatedGNamedFields(env : GEnv, named : GNamed, field : string, expectFieldType : GType, existEnough : bool, onError : (string) -> void) -> [GType] {
 	error = \ -> {
 		onError("Expected " + gtype2string(env, named) + " to have ." + field);
-		GFlow();
+		[];
 	}
 	mstruct = lookupTree(env.env.program.acc.names.structs, named.name);
 	switch (mstruct) {
@@ -640,26 +656,34 @@ getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, existEnou
 				None(): error();
 				Some(union): {
 					typenames : [FcTypeName] = union2typenames(env.env, named.name);
-					withField = if (existEnough) filter(typenames, \tn -> hasGNameField(env, tn.name, field)) else typenames;
+					withField = if (existEnough) filter(typenames, \tn -> {
+						fieldType = getGNameField(env, tn.name, field);
+						switch (fieldType) {
+							None(): false;
+							Some(ft): {
+								isGTypeCompatible(env, ft, expectFieldType)
+							}
+						}
+					}) else typenames;
 					instantiated = map(withField, \tn -> {
 						ginstantiateStructFromUnion(env, named, tn, onError);
 					});
-					fields = filtermap(instantiated, \i : GType -> {
+					fields = map(instantiated, \i : GType -> {
 						switch (i) {
 							GNamed(__, __): {
-								Some(getInstantiatedGNamedField(env, i, field, existEnough, onError));
+								getInstantiatedGNamedFields(env, i, field, expectFieldType, existEnough, onError);
 							}
 							default: {
 								error();
-								None();
+								[];
 							}
 						}
 					});
-					shared = uniq(fields);
-					if ((existEnough && shared != []) || length(shared) == 1) {
-						shared[0];
-					} else {
+					shared = uniq(concatA(fields));
+					if (shared == []) {
 						error();
+					} else {
+						shared;
 					}
 				}
 			}
@@ -676,9 +700,58 @@ getInstantiatedGNamedField(env : GEnv, named : GNamed, field : string, existEnou
 						setTree(acc, strLeft("????????????", i + 1), tp)
 					});
 					gfield = fctype2gtype(env.env, env.tyvarIdGroup, stfield.type);
-					instantiateGTypePars(env, gtypars, gfield, onError);
+					[instantiateGTypePars(env, gtypars, gfield, onError)];
 				}
 			}
 		}
 	}
+}
+
+isGTypeCompatible(env : GEnv, left : GType, right : GType) -> bool {
+	todo = \ -> {
+		println("TODO: Are " + gtype2string(env, left) + " and " + gtype2string(env, right) + " compatible?");
+		false;
+	}
+
+	left == right || right == GFlow() || switch (left) {
+		GBasicType(t):  switch (right) {
+			GTypeVar(rid): true;
+			default: false;
+		}
+		GFlow(): true;
+		GTypePar(lid): switch (right) {
+			GTypePar(rid): true;
+			GTypeVar(rid): true;
+			default: false;
+		}
+		GFunction(args, rt): todo();
+		GArray(ltype): switch (right) {
+			GArray(rtype): isGTypeCompatible(env, ltype, rtype);
+			GTypeVar(rid): true;
+			default: false;
+		};
+		GRef(ltype): switch (right) {
+			GRef(rtype): isGTypeCompatible(env, ltype, rtype);
+			GTypeVar(rid): true;
+			default: false;
+		};
+		GTypeVar(id): true;
+		GNamed(lname, ltypars): switch (right) {
+			GNamed(rname, rtypars): {
+				if (lname == rname) {
+					areGTypesCompatible(env, ltypars, rtypars);
+				} else {
+					todo();
+				}
+			}
+			GTypeVar(rid): true;
+			default: false;
+		};
+		GField(name, type): todo();
+	}
+}
+
+areGTypesCompatible(env : GEnv, left : [GType], right : [GType]) -> bool {
+	length(left) == length(right)
+	&& forall(mapi(left, \i, l -> isGTypeCompatible(env, l, right[i])), idfn)
 }
