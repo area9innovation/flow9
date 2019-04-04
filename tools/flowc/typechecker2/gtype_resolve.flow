@@ -5,6 +5,7 @@ import tools/flowc/typechecker2/gsubtype_graph;
 import tools/flowc/typechecker2/gbounds;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
+import loop;
 
 export {
 	// Resolve the graph
@@ -201,7 +202,9 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				GResolveTypars(): true;
 			}
 
-			choice : [string] = if (length(possible) > 1 && pickIfAmbiguos) {
+			useProlog = true;
+
+			choice : [string] = if (!useProlog && length(possible) > 1 && pickIfAmbiguos) {
 				if (env.verbose >= 3) {
 					printStay(env.env, "Ambigious subtype for: " + gtyvarReqs2string(env, req) + " {");
 				}
@@ -242,15 +245,36 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : 
 				// And set ourselves to this
 				setGTyvar(env, unify, req, winType);
 			} else {
-				if ((choice == [] && stage == GResolveTypars())) {
-					onError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req) + " ", req.starts);
-					// printStay(env.env, "Choices we considered " + toString(choice) + " from " + gtyvarReqs2string(env, req) + " {" + toString(stage));
+				if (useProlog && stage == GResolveSpeculative()) {
+					// Here we do prolog!
+					noerrors = ^(env.env.program.errors);
+					findErrorFreeCandidate(env, noerrors, possible, req, unify);
+				} else {
+					if (stage == GResolveSpeculative()) {
+						onError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req) + " ", req.starts);
+					}
+					env;
 				}
-				env;
 			}
 		}
 	}
 }
+
+findErrorFreeCandidate(env : GEnv, errors : int, candidates : [string], req, unify) -> GEnv {
+	if (candidates == []) env else {
+		type = makeGNamedType(env, candidates[0]);
+		nenv = setGTyvar(env, unify, req, type);
+		if (^(nenv.env.program.errors) == errors) {
+			// println("candidate " + candidates[0] + " worked");
+			nenv;
+		} else {
+			// OK, did not work. Let us try the next.
+			// TODO: We have to retract the errors
+			findErrorFreeCandidate(env, errors, tail(candidates), req, unify);
+		}
+	}
+}
+
 
 // Set all these tyvars to the next free typar
 resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
@@ -313,7 +337,6 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>) -> GEnv, req : GTyv
 		// Unify with subs
 		nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts));
 		nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts));
-
 
 		// Unify with supers
 		nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts));
