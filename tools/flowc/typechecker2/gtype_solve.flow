@@ -12,8 +12,26 @@ import ds/easygraph_utils;
 import tools/flowc/typechecker/solve_expectations;
 
 export {
+	// Set of a GEnv for solving constraints
+	makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GEnv;
+
 	// This resolves the constraints for the named function or var
-	gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv, subtype : GSubtypeGraph) -> GEnv;
+	gtypeSolve(env : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition) -> GEnv;
+}
+
+makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GEnv {
+	GEnv(
+		env, 
+		tyvarIdGroup,
+		env.program.acc.config.verbose, 
+		makeTree(),
+		makeSet(), 
+		makeSet(),
+		makeSimpleGraph(),
+		makeSimpleGraph(),
+		subtype,
+		makeSet()
+	);
 }
 
 /*
@@ -42,15 +60,16 @@ TODO:
 - Field against union needs to check the type of the field as well
 */
 
-gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv, subtype : GSubtypeGraph) -> GEnv {
+gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition) -> GEnv {
+	env = oenv.env;
 	if (false) {
-		dot = simpleGraph2dot(subtype.supertypes, "", [], 
+		dot = simpleGraph2dot(oenv.subtypes.supertypes, "", [], 
 			\n -> [DotLabel(n)], 
 			\e -> []
 		);
 		setFileContent(name + "-subtypes.dot", dot);
 
-		dot2 = simpleGraph2dot(subtype.fieldSupertypes, "", [], 
+		dot2 = simpleGraph2dot(oenv.subtypes.fieldSupertypes, "", [], 
 			\n -> [DotLabel(n)], 
 			\e -> []
 		);
@@ -75,7 +94,7 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 		makeSet(),
 		makeSimpleGraph(),
 		makeSimpleGraph(),
-		subtype,
+		oenv.subtypes,
 		extractNamesFromExpectations(expects)
 	);
 
@@ -89,8 +108,8 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	};
 
 	gunify = \genv : GEnv, output : FcType, input : FcType, info : FcInfo2, description : () -> string -> {
-		ot = fctype2gtype(genv.env, tyvarIdGroup, output);
-		it = fctype2gtype(genv.env, tyvarIdGroup, input);
+		ot = fctype2gtype(genv.env, output);
+		it = fctype2gtype(genv.env, input);
 		unifyGType(genv, ot, it, info.start, \m -> onError(m, info, description()));
 	}
 
@@ -113,13 +132,13 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 				gunify(et1, e2, e1, info, \ -> "");
 			}
 			FcExpectField(field, ftype, struct, info, ex): {
-				st = fctype2gtype(env, tyvarIdGroup, struct);
-				gfield = GField(field, fctype2gtype(env, tyvarIdGroup, ftype));
+				st = fctype2gtype(env, struct);
+				gfield = GField(field, fctype2gtype(env, ftype));
 				unifyGType(acc, gfield, st, info.start, \m -> onError(m, info, ""));
 			}
 			FcSetMutableField(stype, field, ftype, info): {
-				st = fctype2gtype(acc.env, tyvarIdGroup, stype);
-				ft = fctype2gtype(acc.env, tyvarIdGroup, ftype);
+				st = fctype2gtype(acc.env, stype);
+				ft = fctype2gtype(acc.env, ftype);
 				gfield = GField(field, ft);
 				unifyGType(acc, st, gfield, info.start, \m -> onError(m, info, "set mutable"));
 			}
@@ -564,7 +583,7 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 			});
 			// Now we make a struct with typar names that correspond to the unions
 			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
-			gtype0 = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+			gtype0 = fctype2gtype(env.env, instantiated);
 	
 			// We might have to do implicit type-par promotion from the union
 			gtype = switch (gtype0) {
@@ -631,7 +650,7 @@ getGNameField(env : GEnv, named : string, field : string) -> Maybe<GType> {
 			});
 			switch (sa) {
 				None(): None();
-				Some(sar): Some(fctype2gtype(env.env, env.tyvarIdGroup, sar.type));
+				Some(sar): Some(fctype2gtype(env.env, sar.type));
 			}
 		}
 	}
@@ -701,7 +720,7 @@ getInstantiatedGNamedFields(env : GEnv, named : GNamed, field : string, expectFi
 					gtypars = foldi(named.typars, makeTree(), \i, acc, tp -> {
 						setTree(acc, strLeft("????????????", i + 1), tp)
 					});
-					gfield = fctype2gtype(env.env, env.tyvarIdGroup, stfield.type);
+					gfield = fctype2gtype(env.env, stfield.type);
 					[instantiateGTypePars(env, gtypars, gfield, onError)];
 				}
 			}
