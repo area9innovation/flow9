@@ -539,14 +539,22 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 		None(): {
 			// It could be that the left is a union.
 			ltypenames : [FcTypeName] = union2typenames(env.env, left.name);
-			if (ltypenames == []) {
-				onError("No overlap between " + gtype2string(env, left) + " and " + gtype2string(env, right));
-			}
+
+			// Instead of reporting errors for each participant, just check and if there is a mistake, report at the end
+			error = ref false;
 			// The unify against each struct in it
-			fold(ltypenames, env, \acc, tn -> {
-				istruct = ginstantiateStructFromUnion(acc, right, tn, onError);
-				unifyGType(acc, istruct, right, pos, onError);
+			nenv = fold(ltypenames, env, \acc, tn -> {
+				istruct = ginstantiateStructFromUnion(acc, right, tn, \__ -> {
+					error := true;
+				});
+				unifyGType(acc, istruct, right, pos, \__ -> {
+					error := true;
+				});
 			});
+			if (ltypenames == [] || ^error) {
+				onError("Expected " + gtype2string(env, left) + ", got " + gtype2string(env, right));
+			}
+			nenv;
 		}
 		Some(ustruct): {
 			// The struct as it appears in the union. Let us remap typars from the union to the struct
@@ -610,17 +618,37 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 	if (env.verbose >= 3) {
 		printStay(env.env, "Subtyping field " + left.name + " against " + right.name + " gave field types " + toString(fieldTypes));
 	}
+	errors = ref false;
 	// We do not want to report a bunch of errors, so just detect if there is a problem
 	nenv = fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(acc, left.type, ft, pos, 
-			\__ -> {
-				errors := ^errors + 1;
+		unifyGType(acc, left.type, ft, pos, \__ -> {
+				errors := true;
 			}
 		);
 	});
-	if (^errors != 0) {
+	if (^errors) {
 		// There was a problem, so a single error message is best
 		onError("Field ." + left.name + " : " + gtype2string(env, left.type) + " not found in " + gtype2string(env, right))
+	}
+	nenv;
+}
+
+
+unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
+	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
+
+	// Instead of multiple errors, we just want one against the union
+	errors = ref false;
+	nenv = fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(env, ft, right.type, pos, \__ -> {
+			errors := true;
+		});
+	});
+
+	if (^errors) {
+		// There was a problem, so a single error message is best
+		onError("Expected field ." + right.name + " : " + gtype2string(env, right.type) + " in " + gtype2string(env, left))
+
 	}
 	nenv;
 }
@@ -658,13 +686,6 @@ getGNameField(env : GEnv, named : string, field : string) -> Maybe<GType> {
 			}
 		}
 	}
-}
-
-unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
-	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
-	fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(env, ft, right.type, pos, onError);
-	})
 }
 
 // Given a named structure, extract the instantiated type of a given field
