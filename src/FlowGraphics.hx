@@ -229,9 +229,15 @@ class FlowGraphics extends Graphics {
 		}
 	}
 
-	public override function getLocalBounds(?rect : Rectangle) : Rectangle {
-		return localBounds.getRectangle(rect);
-	}
+	#if (pixijs < "4.7.0")
+		public override function getLocalBounds() : Rectangle {
+			return localBounds.getRectangle(new Rectangle());
+		}
+	#else
+		public override function getLocalBounds(?rect : Rectangle) : Rectangle {
+			return localBounds.getRectangle(rect);
+		}
+	#end
 
 	public override function getBounds(?skipUpdate : Bool, ?rect : Rectangle) : Rectangle {
 		var bounds = new Bounds();

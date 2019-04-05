@@ -146,7 +146,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format
-haxelib install pixijs 4.5.4 #(or a newer 4.5.x edition)
+haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might

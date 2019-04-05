@@ -12,8 +12,26 @@ import ds/easygraph_utils;
 import tools/flowc/typechecker/solve_expectations;
 
 export {
+	// Set of a GEnv for solving constraints
+	makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GEnv;
+
 	// This resolves the constraints for the named function or var
-	gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv, subtype : GSubtypeGraph) -> GEnv;
+	gtypeSolve(env : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition) -> GEnv;
+}
+
+makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GEnv {
+	GEnv(
+		env, 
+		tyvarIdGroup,
+		env.program.acc.config.verbose, 
+		makeTree(),
+		makeSet(), 
+		makeSet(),
+		makeSimpleGraph(),
+		makeSimpleGraph(),
+		subtype,
+		makeSet()
+	);
 }
 
 /*
@@ -42,15 +60,16 @@ TODO:
 - Field against union needs to check the type of the field as well
 */
 
-gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcTypeEnv, subtype : GSubtypeGraph) -> GEnv {
+gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition) -> GEnv {
+	env = oenv.env;
 	if (false) {
-		dot = simpleGraph2dot(subtype.supertypes, "", [], 
+		dot = simpleGraph2dot(oenv.subtypes.supertypes, "", [], 
 			\n -> [DotLabel(n)], 
 			\e -> []
 		);
 		setFileContent(name + "-subtypes.dot", dot);
 
-		dot2 = simpleGraph2dot(subtype.fieldSupertypes, "", [], 
+		dot2 = simpleGraph2dot(oenv.subtypes.fieldSupertypes, "", [], 
 			\n -> [DotLabel(n)], 
 			\e -> []
 		);
@@ -61,22 +80,16 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	expects = ^(env.local.expects);
 
 	// Build a map from tyvar to typar
-	typars : Tree<int, GType> = foldTree(^(env.local.typars), makeTree(), \typar, tyvar, acc : Tree<int, GType> -> {
+	typars : Tree<int, GType> = foldTree(^(env.local.typars), oenv.tyvars, \typar, tyvar, acc : Tree<int, GType> -> {
 		setTree(acc, tyvar.id, GTypePar(typar));
 	});
 
 	ge = GEnv(
-		env, 
-		tyvarIdGroup, 
-		// While debugging, let us do this
-		if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else env.program.acc.config.verbose, 
-		typars, 
-		makeSet(), 
-		makeSet(),
-		makeSimpleGraph(),
-		makeSimpleGraph(),
-		subtype,
-		extractNamesFromExpectations(expects)
+		oenv with
+		tyvarIdGroup = tyvarIdGroup,
+		verbose = if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else oenv.verbose,
+		tyvars = typars,
+		namesSeen = extractNamesFromExpectations(oenv.namesSeen, expects)
 	);
 
 	if (ge.verbose >= 2)  {
@@ -89,8 +102,8 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	};
 
 	gunify = \genv : GEnv, output : FcType, input : FcType, info : FcInfo2, description : () -> string -> {
-		ot = fctype2gtype(genv.env, tyvarIdGroup, output);
-		it = fctype2gtype(genv.env, tyvarIdGroup, input);
+		ot = fctype2gtype(genv.env, output);
+		it = fctype2gtype(genv.env, input);
 		unifyGType(genv, ot, it, info.start, \m -> onError(m, info, description()));
 	}
 
@@ -113,13 +126,13 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 				gunify(et1, e2, e1, info, \ -> "");
 			}
 			FcExpectField(field, ftype, struct, info, ex): {
-				st = fctype2gtype(env, tyvarIdGroup, struct);
-				gfield = GField(field, fctype2gtype(env, tyvarIdGroup, ftype));
+				st = fctype2gtype(env, struct);
+				gfield = GField(field, fctype2gtype(env, ftype));
 				unifyGType(acc, gfield, st, info.start, \m -> onError(m, info, ""));
 			}
 			FcSetMutableField(stype, field, ftype, info): {
-				st = fctype2gtype(acc.env, tyvarIdGroup, stype);
-				ft = fctype2gtype(acc.env, tyvarIdGroup, ftype);
+				st = fctype2gtype(acc.env, stype);
+				ft = fctype2gtype(acc.env, ftype);
 				gfield = GField(field, ft);
 				unifyGType(acc, st, gfield, info.start, \m -> onError(m, info, "set mutable"));
 			}
@@ -136,15 +149,17 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	}
 
 	// Go ahead and resolve it
-	ge2 = resolveGGraph(ge1, name, \e, l, u, ps -> {
+	ge2 = resolveGGraph(ge1, name, \e, l, u, ps, onFError : (GEnv, FcError) -> void -> {
 		fpos = if (isEmptySet(ps)) pos.start else set2array(ps)[0];
 		unifyGType(e, l, u, fpos, \err -> {
 			poss = mapSet(ps, \start -> FcPosition(pos.file, start, start));
-			addFcTypeError(env.program, FcError(name + ": " + err, set2array(poss)));
+			onFError(e, FcError(name + ": " + err, set2array(poss)));
 		})
-	}, \err, starts -> {
+	}, \err : string, starts -> {
 		poss = mapSet(starts, \start -> FcPosition(pos.file, start, start));
-		addFcTypeError(env.program, FcError(name + ": " + err, set2array(poss)));
+		FcError(name + ": " + err, set2array(poss));
+	}, \tenv : GEnv, error -> {
+		addFcTypeError(tenv.env.program, error);
 	});
 
 	// Now, set the tyvars in the environment
@@ -180,8 +195,8 @@ gtypeSolve(name : string, tyvarIdGroup : IdGroup, pos : FcPosition, env : FcType
 	ge2;
 }
 
-extractNamesFromExpectations(expectations : List<FcTypeExpect>) -> Set<string> {
-	foldList(expectations, makeSet(), \acc, expect -> {
+extractNamesFromExpectations(names : Set<string>, expectations : List<FcTypeExpect>) -> Set<string> {
+	foldList(expectations, names, \acc, expect -> {
 		switch (expect) {
 			FcLessOrEqual(output, input, description, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, output), input);
 			FcExpectField(field, fieldType, t, info, e): extractNamesFromFcType(acc, fieldType);
@@ -483,9 +498,11 @@ gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError 
 				GNamed(rname, rtypars): {
 					if (lname == rname) {
 						// Do the typars
-						// TODO: We could extend based on implicit polymorphism
-						// See test1.
-						unifyGTypes(env, ltypars, rtypars, pos, \i, e -> {
+						// We extend based on implicit polymorphism. See test1 and 149
+						implicitTyparsLeft = addImplicitTypars(env, lname, ltypars);
+						implicitTyparsRight = addImplicitTypars(env, rname, rtypars);
+
+						unifyGTypes(env, implicitTyparsLeft, implicitTyparsRight, pos, \i, e -> {
 							if (i == -1) {
 								onError(e + " type parameters")
 							} else {
@@ -515,6 +532,26 @@ gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError 
 	}
 }
 
+addImplicitTypars(env : GEnv, named : string, typars : [GType]) -> [GType] {
+	mstruct = lookupTree(env.env.program.acc.names.structs, named);
+	req = switch (mstruct) {
+		None(): {
+			munion = lookupTree(env.env.program.acc.names.unions, named);
+			switch (munion) {
+				None(): 0;
+				Some(mu): {
+					length(mu.typeparameters);
+				}
+			}
+		}
+		Some(sd): length(sd.typars);
+	}
+
+	concat(typars, generate(0, req - length(typars), \i -> {
+		mkGTypeVar(env)
+	}));
+}
+
 // We know the names are different, and that the right name is supposed to be a union.
 gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError : (string) -> void) -> GEnv {
 	// From the name of a union to the structs, uninstantiated
@@ -524,14 +561,22 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 		None(): {
 			// It could be that the left is a union.
 			ltypenames : [FcTypeName] = union2typenames(env.env, left.name);
-			if (ltypenames == []) {
-				onError("No overlap between " + gtype2string(env, left) + " and " + gtype2string(env, right));
-			}
+
+			// Instead of reporting errors for each participant, just check and if there is a mistake, report at the end
+			error = ref false;
 			// The unify against each struct in it
-			fold(ltypenames, env, \acc, tn -> {
-				istruct = ginstantiateStructFromUnion(acc, right, tn, onError);
-				unifyGType(acc, istruct, right, pos, onError);
+			nenv = fold(ltypenames, env, \acc, tn -> {
+				istruct = ginstantiateStructFromUnion(acc, right, tn, \__ -> {
+					error := true;
+				});
+				unifyGType(acc, istruct, right, pos, \__ -> {
+					error := true;
+				});
 			});
+			if (ltypenames == [] || ^error) {
+				onError("Expected " + gtype2string(env, left) + ", got " + gtype2string(env, right));
+			}
+			nenv;
 		}
 		Some(ustruct): {
 			// The struct as it appears in the union. Let us remap typars from the union to the struct
@@ -562,7 +607,7 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 			});
 			// Now we make a struct with typar names that correspond to the unions
 			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
-			gtype0 = fctype2gtype(env.env, env.tyvarIdGroup, instantiated);
+			gtype0 = fctype2gtype(env.env, instantiated);
 	
 			// We might have to do implicit type-par promotion from the union
 			gtype = switch (gtype0) {
@@ -595,9 +640,39 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 	if (env.verbose >= 3) {
 		printStay(env.env, "Subtyping field " + left.name + " against " + right.name + " gave field types " + toString(fieldTypes));
 	}
-	fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(acc, left.type, ft, pos, onError);
+	errors = ref false;
+	// We do not want to report a bunch of errors, so just detect if there is a problem
+	nenv = fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(acc, left.type, ft, pos, \__ -> {
+				errors := true;
+			}
+		);
 	});
+	if (^errors) {
+		// There was a problem, so a single error message is best
+		onError("Field ." + left.name + " : " + gtype2string(env, left.type) + " not found in " + gtype2string(env, right))
+	}
+	nenv;
+}
+
+
+unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
+	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
+
+	// Instead of multiple errors, we just want one against the union
+	errors = ref false;
+	nenv = fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(env, ft, right.type, pos, \__ -> {
+			errors := true;
+		});
+	});
+
+	if (^errors) {
+		// There was a problem, so a single error message is best
+		onError("Expected field ." + right.name + " : " + gtype2string(env, right.type) + " in " + gtype2string(env, left))
+
+	}
+	nenv;
 }
 
 // Does this name have this field? If so, what type is it?
@@ -629,17 +704,10 @@ getGNameField(env : GEnv, named : string, field : string) -> Maybe<GType> {
 			});
 			switch (sa) {
 				None(): None();
-				Some(sar): Some(fctype2gtype(env.env, env.tyvarIdGroup, sar.type));
+				Some(sar): Some(fctype2gtype(env.env, sar.type));
 			}
 		}
 	}
-}
-
-unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
-	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
-	fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(env, ft, right.type, pos, onError);
-	})
 }
 
 // Given a named structure, extract the instantiated type of a given field
@@ -699,7 +767,7 @@ getInstantiatedGNamedFields(env : GEnv, named : GNamed, field : string, expectFi
 					gtypars = foldi(named.typars, makeTree(), \i, acc, tp -> {
 						setTree(acc, strLeft("????????????", i + 1), tp)
 					});
-					gfield = fctype2gtype(env.env, env.tyvarIdGroup, stfield.type);
+					gfield = fctype2gtype(env.env, stfield.type);
 					[instantiateGTypePars(env, gtypars, gfield, onError)];
 				}
 			}
@@ -724,24 +792,30 @@ isGTypeCompatible(env : GEnv, left : GType, right : GType) -> bool {
 			GTypeVar(rid): true;
 			default: false;
 		}
-		GFunction(args, rt): todo();
+		GFunction(largs, lrt): switch (right) {
+			GFunction(rargs, rrt): isGTypeCompatible(env, lrt, rrt) && areGTypesCompatible(env, rargs, largs);
+			GTypeVar(rid): true;
+			default: false;
+		}
 		GArray(ltype): switch (right) {
 			GArray(rtype): isGTypeCompatible(env, ltype, rtype);
 			GTypeVar(rid): true;
 			default: false;
-		};
+		}
 		GRef(ltype): switch (right) {
 			GRef(rtype): isGTypeCompatible(env, ltype, rtype);
 			GTypeVar(rid): true;
 			default: false;
-		};
+		}
 		GTypeVar(id): true;
 		GNamed(lname, ltypars): switch (right) {
 			GNamed(rname, rtypars): {
 				if (lname == rname) {
 					areGTypesCompatible(env, ltypars, rtypars);
 				} else {
-					todo();
+					lsupers = findGSupertypeFromName(env, lname);
+					rsupers = findGSupertypeFromName(env, rname);
+					isIntersecting(lsupers, rsupers)
 				}
 			}
 			GTypeVar(rid): true;
