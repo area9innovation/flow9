@@ -89,7 +89,7 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 		tyvarIdGroup = tyvarIdGroup,
 		verbose = if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else oenv.verbose,
 		tyvars = typars,
-		namesSeen = extractNamesFromExpectations(expects)
+		namesSeen = extractNamesFromExpectations(oenv.namesSeen, expects)
 	);
 
 	if (ge.verbose >= 2)  {
@@ -195,8 +195,8 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	ge2;
 }
 
-extractNamesFromExpectations(expectations : List<FcTypeExpect>) -> Set<string> {
-	foldList(expectations, makeSet(), \acc, expect -> {
+extractNamesFromExpectations(names : Set<string>, expectations : List<FcTypeExpect>) -> Set<string> {
+	foldList(expectations, names, \acc, expect -> {
 		switch (expect) {
 			FcLessOrEqual(output, input, description, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, output), input);
 			FcExpectField(field, fieldType, t, info, e): extractNamesFromFcType(acc, fieldType);
@@ -610,9 +610,19 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 	if (env.verbose >= 3) {
 		printStay(env.env, "Subtyping field " + left.name + " against " + right.name + " gave field types " + toString(fieldTypes));
 	}
-	fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(acc, left.type, ft, pos, onError);
+	// We do not want to report a bunch of errors, so just detect if there is a problem
+	nenv = fold(fieldTypes, env, \acc, ft -> {
+		unifyGType(acc, left.type, ft, pos, 
+			\__ -> {
+				errors := ^errors + 1;
+			}
+		);
 	});
+	if (^errors != 0) {
+		// There was a problem, so a single error message is best
+		onError("Field ." + left.name + " : " + gtype2string(env, left.type) + " not found in " + gtype2string(env, right))
+	}
+	nenv;
 }
 
 // Does this name have this field? If so, what type is it?
