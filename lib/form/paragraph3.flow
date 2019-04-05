@@ -212,7 +212,7 @@ expandGlueFragments(
 			// TODO rewrite via switch subunion syntax when implemented.
 			default: {
 				en = switch (e : ParaElement) {
-					TextElementInteractive(wElem, id): {
+					WordWrapInteractive(wElem, id): {
 						InteractiveParaAtomic(cast(wElem : WrapElement -> ParaAtomic), id)
 					}
 					default: cast(e : ParaElement -> ParaAtomic);
@@ -374,7 +374,7 @@ reflowParaWords2(words : [ParaWord], availableWidth : double, remaining : double
 					default: replaceWordGhosted();
 				};
 			};
-			ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm);
+			ParaWord(word2.word, const(getStaticFormSize(form2)), ghosted, ghostedForm, word2.interactivityIdM);
 		};
 
 		getWordWidth = \word1 -> {
@@ -514,7 +514,7 @@ keepFormTogether(form : Form) -> bool {
 	};
 }
 
-ParaLineAcc(lines : [Form], width : double, y : double, baseline : double);
+ParaLineAcc(lines : List<Form>, width : double, y : double, baseline : double);
 
 paraLineAlignmentIsStart(align: ParaLineAlignment) -> bool {
 	switch (align) {
@@ -542,7 +542,7 @@ renderParaLines(
 	width = if (tightWidth && !singleLine && !paraLineAlignmentIsStart(alignment)) {
 		fold(lines, 0.0, \acc : double, line : ParaLine -> {
 			optimizedLine = getOptimizedLine(line.words, alignment);
-			metrics = map(optimizedLine, \p -> getValue(p.second));
+			metrics = map(optimizedLine, \p -> getValue(p.metrics));
 			lw = line.indent + fold(metrics, 0.0, \ac, m -> ac + m.width);
 			max(acc, lw);
 		});
@@ -550,7 +550,7 @@ renderParaLines(
 		availableWidth
 	}
 
-	a : ParaLineAcc = foldi(lines, ParaLineAcc([], 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
+	a : ParaLineAcc = foldi(lines, ParaLineAcc(EmptyList(), 0.0, 0.0, 0.0), \i : int, acc : ParaLineAcc, line : ParaLine -> {
 		// TODO: IF the line ends with NewLine (which we do not track here), we should consider it a last line and not justify
 		lastLine = i == lasti;
 		// On the last line, we do not justify.
@@ -567,21 +567,27 @@ renderParaLines(
 		// to prevent especially label games with explicitly placed things from breaking - REMOVED, NOT NECESSARY
 		nheight = acc.y + f.height + if (lastLine) 0.0 else interlineSpacing;
 		nbaseline = f.baseline;
-		ParaLineAcc(arrayPush(acc.lines, Size2(const(zeroWH), f.form)), nwidth, nheight, if (i == 0 || !topLineBaseline) nbaseline else acc.baseline);
+		ParaLineAcc(
+			Cons(Size2(const(zeroWH), f.form), acc.lines),
+			nwidth,
+			nheight,
+			if (i == 0 || !topLineBaseline) nbaseline else acc.baseline
+		);
 	});
 
 	Baseline(const(a.baseline), Size2(const(if (tightWidth) WidthHeight(a.width, a.y) else WidthHeight(max(width, a.width), a.y)),
-		Group(a.lines)
+		Group(list2array(a.lines))
 	));
 }
 
 ParaLineResult(form : Form, width : double, height : double, baseline : double);
+OptimizedLineElement(f : GhostForm, metrics : Behaviour<FormMetrics>, interactivityIdM : Maybe<int>);
 
-getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>]{
+getOptimizedLine(words : [ParaWord], alignment : ParaLineAlignment) -> [OptimizedLineElement]{
 	if (!isBiDiEnabled() && alignment != Justify()) {
 		optimizeLine(words);
 	} else {
-		map(words, \w -> Triple(w.form, w.metrics, w.interactivityIdM));
+		map(words, \w -> OptimizedLineElement(w.form, w.metrics, w.interactivityIdM));
 	};
 }
 
@@ -598,7 +604,7 @@ RenderLine(
 	interactiveStyles : Tree<int, [ParaElementInteractiveStyle]>
 ) -> ParaLineResult {
 	optimizedLine = getOptimizedLine(words, alignment);
-	metrics = map(optimizedLine, \p -> getValue(p.second));
+	metrics = map(optimizedLine, \p -> getValue(p.metrics));
 	lineWidth = lineIndent + fold(metrics, 0.0, \ac, m -> ac + m.width); // TODO: This is not required in TightWidth and LeftAlign alignment cases. Just use p.first in resultWidth instead
 	lineAsc = fold(metrics, 0.0, \ac, m -> max(ac, m.baseline));
 	lineHeight = fold(metrics, 0.0, \ac, m -> max(ac, lineAsc + m.height - m.baseline));
@@ -624,12 +630,12 @@ RenderLine(
 	} else 0.0;
 
 	// The width and the individual forms
-	lo : [Form] = filtermapi(optimizedLine, \i : int, triple : Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>> -> {
-		f = triple.first;
-		m = metrics[i];
+	lo : [Form] = filtermapi(optimizedLine, \i : int, elem : OptimizedLineElement -> {
+		f = elem.f;
+		m = getValue(elem.metrics);
 		dy = max(lineAsc - m.baseline, 0.0);
 		applyStylesAndOffset = \fm : Form -> eitherMap(
-			triple.third,
+			elem.interactivityIdM,
 			\id -> applyIntStylesAndHighlighting(
 				fm,
 				lookupTreeDef(interactiveStyles, id, []),
@@ -747,33 +753,33 @@ applyIntStylesAndHighlighting(
 
 
 // Joins texts together to a single text element, along with the new metrics
-optimizeLine(words : [ParaWord]) -> [Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>] {
-	fold(words, makeList(), \acc : List<Triple<GhostForm, Behaviour<FormMetrics>, Maybe<int>>>, word : ParaWord -> {
+optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
+	fold(words, makeList(), \acc : List<OptimizedLineElement>, word : ParaWord -> {
 		f = word.form;
 		metrics = word.metrics;
 		intIdM = word.interactivityIdM;
 		switch(acc){
-			EmptyList(): Cons(Triple(f, metrics, intIdM), acc);
+			EmptyList(): Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 			Cons(p, tail_): {
-				switch (p.first : GhostForm) {
+				switch (p.f : GhostForm) {
 					Text(t1, s1): {
 						switch (f : GhostForm) {
 							Text(t2, s2): {
 								join = joinText(t1, s1, t2, s2);
-								if (length(join) == 1 && intIdM == p.third) {
+								if (length(join) == 1 && intIdM == p.interactivityIdM) {
 									t : Form = join[0];
 									// TODO: Do not do this until at the end of the joining fest
 									m = getStaticFormSize(t);
 									// Replace the last element with the newly joined
-									Cons(Triple(t, const(m), intIdM), tail_)
-								} else Cons(Triple(f, metrics, intIdM), acc);
+									Cons(OptimizedLineElement(t, const(m), intIdM), tail_)
+								} else Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 							}
 							default: {
-								Cons(Triple(f, metrics, intIdM), acc);
+								Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 							}
 						}
 					}
-					default: Cons(Triple(f, metrics, intIdM), acc);
+					default: Cons(OptimizedLineElement(f, metrics, intIdM), acc);
 				}
 			}
 		}
