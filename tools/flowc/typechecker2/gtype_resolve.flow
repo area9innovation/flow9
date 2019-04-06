@@ -351,32 +351,90 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		printStay(env.env, superglue(set2array(tyvars), \tv -> "α" + i2s(tv), ", ") + " = " + gtype2string(env, type));
 	}
 
-	foldSet(tyvars, env, \env0, tyvar -> {
-		nenv0 = GEnv(
-			env0 with
-			tyvars = setTree(env0.tyvars, tyvar, type),
-			unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
+	if (true) {
+		// Set our friends
+		nenv0 = foldSet(tyvars, env, \env0, tyvar -> {
+			GEnv(
+				env0 with
+				tyvars = setTree(env0.tyvars, tyvar, type),
+				unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
+			);
+		});
+
+		// Add the new unresolved
+		tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
+		nenv1 = GEnv(
+			nenv0 with
+			unresolvedTyvars = mergeSets(nenv0.unresolvedTyvars, tyvarsInType)
 		);
-		// Join with all lower fixed
-		nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type, req.starts, onError));
-		// Join with all upper fixed
-		nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t, req.starts, onError));
 
-		// Unify with subs
-		nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts, onError));
-		nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError));
+		// Then unify with relations
+		foldSet(tyvars, nenv1, \nenv2, tyvar -> {
+			nodeid = getSimpleNodeId(nenv2.relations, GTypeVar(tyvar));
+			upperEdges = getAdjacentEGNodes(nenv2.relations.graph, nodeid);
+			nenv3 = fold(upperEdges, nenv2, \nenv4, ueid -> {
+				mupperNode = lookupTree(nenv2.relations.graph.nodes, ueid);
+				switch (mupperNode) {
+					None(): nenv4;
+					Some(upperNode): {
+						if (!isGTypeVars(tyvars, upperNode.data)) {
+							unify(nenv4, type, upperNode.data, req.starts, onError)
+						} else nenv4;
+					}
+				}
+			});
 
-		// Unify with supers
-		nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts, onError));
-		nenv6 = foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError));
+			rnodeid = getSimpleNodeId(nenv3.reverseRelations, GTypeVar(tyvar));
+			lowerEdges = getAdjacentEGNodes(nenv3.reverseRelations.graph, rnodeid);
 
-		// Extract any new, unbound tyvars in the type and add them to the pool that has to be resolved
-		tyvarsInType = extractGTypeVars(nenv6, type, makeSet());
-		GEnv(
-			nenv6 with
-			unresolvedTyvars = mergeSets(nenv6.unresolvedTyvars, tyvarsInType)
-		);
-	});
+			fold(lowerEdges, nenv3, \nenv5, ueid -> {
+				mlowerNode = lookupTree(nenv3.reverseRelations.graph.nodes, ueid);
+				// printStay(nenv2.env, "For tyvar " + i2s(tyvar) + " we have " + i2s(rnodeid) + " with " + toString(mlowerNode));
+
+				switch (mlowerNode) {
+					None(): nenv5;
+					Some(lowerNode): {
+						if (!isGTypeVars(tyvars, lowerNode.data)) {
+							unify(nenv5, lowerNode.data, type, req.starts, onError)
+						} else nenv5;
+					}
+				}
+			});
+		});
+	} else {
+		foldSet(tyvars, env, \env0, tyvar -> {
+			nenv0 = GEnv(
+				env0 with
+				tyvars = setTree(env0.tyvars, tyvar, type),
+				unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
+			);
+			// Join with all lower fixed
+			nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type, req.starts, onError));
+			// Join with all upper fixed
+			nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t, req.starts, onError));
+
+			// Unify with subs
+			nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts, onError));
+			nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError));
+
+			// Unify with supers
+			nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts, onError));
+			nenv6 = foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError));
+
+			tyvarsInType = extractGTypeVars(nenv6, type, makeSet());
+			GEnv(
+				nenv6 with
+				unresolvedTyvars = mergeSets(nenv6.unresolvedTyvars, tyvarsInType)
+			);
+		});
+	}
+}
+
+isGTypeVars(tyvars : Set<int>, type : GType) -> bool {
+	switch (type) {
+		GTypeVar(id): containsSet(tyvars, id);
+		default: false;
+	}
 }
 
 // Given these constraints, what supertypes could meet all of these?
