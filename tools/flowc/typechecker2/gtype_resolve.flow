@@ -20,15 +20,14 @@ export {
 
 resolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
 		makeFcError : (string, Set<int>) -> FcError, onError : (GEnv, FcError) -> void) -> GEnv {
-	doResolveGGraph(env, name, unify, GResolveSafeOnly(), makeFcError, onError);
+	doResolveGGraph(env, name, unify, 0, GResolveSafeOnly(), makeFcError, onError);
 }
 
 doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
-	stage : GResolutionStage, makeFcError : (string, Set<int>) -> FcError, onError : (GEnv, FcError) -> void) -> GEnv {
+	iteration : int, stage : GResolutionStage, makeFcError : (string, Set<int>) -> FcError, onError : (GEnv, FcError) -> void) -> GEnv {
 	if (env.verbose >= 2) {
 		printIndent(env.env, "Resolve tyvars: " + toString(set2array(env.unresolvedTyvars)) + " " +  toString(stage) + " {");
 	}
-
 	nenv = foldSet(env.unresolvedTyvars, env, \acc, tv -> {
 		// During the loop, we can resolve stuff, no need to redo that
 		if (containsSet(acc.unresolvedTyvars, tv)) {
@@ -43,14 +42,18 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 			res;
 		} else acc;
 	});
-	
+
+	if (env.verbose >= 3) {
+		saveGDot(nenv, name + "_" + i2s(iteration));
+	}
+
 	if (env.verbose >= 2) {
 		printDedent(env.env, "} Unresolved: " + toString(set2array(nenv.unresolvedTyvars)));
 	}	
 
 	if (!isEmptySet(nenv.unresolvedTyvars) && !equalSet(env.unresolvedTyvars, nenv.unresolvedTyvars)) {
 		// There were changes in some of the tyvars, so go again in a safe
-		doResolveGGraph(nenv, name, unify, GResolveSafeOnly(), makeFcError, onError)
+		doResolveGGraph(nenv, name, unify, iteration + 1, GResolveSafeOnly(), makeFcError, onError)
 	} else {
 		if (isEmptySet(nenv.unresolvedTyvars) || stage == GResolveTypars()) {
 			// OK, we are done
@@ -58,7 +61,7 @@ doResolveGGraph(env : GEnv, name : string, unify : (GEnv, GType, GType, Set<int>
 		} else {
 			nextStage = nextGResolutionStage(stage);
 			// Do a final round where we make typars
-			doResolveGGraph(nenv, name, unify, nextStage, makeFcError, onError)
+			doResolveGGraph(nenv, name, unify, iteration + 1, nextStage, makeFcError, onError)
 		}
 	}
 }
@@ -270,9 +273,9 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv
 					// The priorized order: Known names in smallest first, then smallest unknown names
 					cheapest = concat(dosort(overlap), dosort(remaining));
 
-					findErrorFreeCandidate(env, cheapest, req, unify, onError);
+					findErrorFreeCandidate(env, cheapest, req, unify, makeFcError, onError);
 				} else {
-					if (stage == GResolveSpeculative()) {
+					if ((useProlog && stage == GResolveTypars()) || stage == GResolveSpeculative()) {
 						error = makeFcError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req), req.starts);
 						onError(env, error);
 					}
@@ -283,8 +286,12 @@ clarifyGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, onError : (GEnv
 	}
 }
 
-findErrorFreeCandidate(env : GEnv, candidates : [string], req : GTyvarRequirements, unify, onError : (GEnv, FcError) -> void) -> GEnv {
-	if (candidates == []) env else {
+findErrorFreeCandidate(env : GEnv, candidates : [string], req : GTyvarRequirements, unify, makeFcError : (string, Set<int>) -> FcError, onError : (GEnv, FcError) -> void) -> GEnv {
+	if (candidates == []) {
+		error = makeFcError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(env, req), req.starts);
+		onError(env, error);
+		env 
+	} else {
 		type = makeGNamedType(env, candidates[0]);
 		errors = ref 0;
 		// println("Speculating with " + candidates[0]);
@@ -298,8 +305,7 @@ findErrorFreeCandidate(env : GEnv, candidates : [string], req : GTyvarRequiremen
 		} else {
 			//  println("Failure with " + candidates[0]);
 			// OK, did not work. Let us try the next.
-			// TODO: We have to retract the errors
-			findErrorFreeCandidate(env, tail(candidates), req, unify, onError);
+			findErrorFreeCandidate(env, tail(candidates), req, unify, makeFcError, onError);
 		}
 	}
 }
