@@ -26,7 +26,7 @@ import android.view.View.OnFocusChangeListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 
 class EditWidget extends NativeWidget {
-    public EditWidget(FlowWidgetGroup group, long id) { super(group, id); }
+    EditWidget(FlowWidgetGroup group, long id) { super(group, id); }
     
     @NonNull
     public TextView getText() {
