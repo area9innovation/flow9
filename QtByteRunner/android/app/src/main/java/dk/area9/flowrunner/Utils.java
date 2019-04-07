@@ -26,7 +26,6 @@ import com.amazonaws.org.apache.http.conn.scheme.PlainSocketFactory;
 import com.amazonaws.org.apache.http.conn.scheme.Scheme;
 import com.amazonaws.org.apache.http.conn.scheme.SchemeRegistry;
 import com.amazonaws.org.apache.http.conn.ssl.SSLSocketFactory;
-import com.amazonaws.org.apache.http.impl.client.AbstractHttpClient;
 import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 import com.amazonaws.org.apache.http.impl.conn.BasicClientConnectionManager;
 import com.amazonaws.org.apache.http.params.BasicHttpParams;
@@ -226,9 +225,10 @@ public class Utils {
         
     }
 
-    public static void loadHttp(AbstractHttpClient httpclient, HttpUriRequest request, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
-        httpclient.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
-        HttpResponse response = httpclient.execute(request, commonHttpContext);
+    public static void loadHttp(HttpUriRequest request, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
+        DefaultHttpClient client = Utils.createHttpClient();
+        client.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
+        HttpResponse response = client.execute(request, commonHttpContext);
 
         int status = response.getStatusLine().getStatusCode();
         boolean ok = callback.httpStatus(status);
@@ -260,12 +260,12 @@ public class Utils {
             callback.httpError("HTTP " + status + " error");
     }
 
-    public static byte[] loadHttpUrl(@NonNull AbstractHttpClient httpclient, String link) {
+    public static byte[] loadHttpUrl(String link) {
         try{
             final boolean[] ok = new boolean[] { false };
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
-            loadHttp(httpclient, new HttpGet(link), buffer, new HttpLoadAdaptor(link) {
+            loadHttp(new HttpGet(link), buffer, new HttpLoadAdaptor(link) {
                 public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
                     super.httpFinished(status, headers, withData);
                     ok[0] = withData;
@@ -279,12 +279,12 @@ public class Utils {
         }
     }
 
-    public static boolean loadHttpFile(@NonNull AbstractHttpClient httpclient, String link, @NonNull String filename, @NonNull HttpLoadCallback callback) {
+    public static boolean loadHttpFile(String link, @NonNull String filename, @NonNull HttpLoadCallback callback) {
         try{
             FileOutputStream buffer = new FileOutputStream(filename);
             
             try {
-                loadHttp(httpclient, new HttpGet(link), buffer, callback);
+                loadHttp(new HttpGet(link), buffer, callback);
             } finally {
                 buffer.close();
             }
@@ -296,11 +296,11 @@ public class Utils {
         }
     }
 
-    public static void loadHttpAsync(@NonNull final AbstractHttpClient http_client, @NonNull final HttpUriRequest request, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
+    public static void loadHttpAsync(@NonNull final HttpUriRequest request, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 try {
-                    loadHttp(http_client, request, output, callback);
+                    loadHttp(request, output, callback);
 
                 } catch (IOException e) {
                     if(request.isAborted())
@@ -316,7 +316,7 @@ public class Utils {
         worker.start();
     }
 
-    public static void loadHttpAsync(@NonNull AbstractHttpClient http_client, @NonNull HttpUriRequest request, @NonNull final HttpResolver callback) {
+    public static void loadHttpAsync(@NonNull HttpUriRequest request, @NonNull final HttpResolver callback) {
         final OutputStream buffer = new OutputStream() {
             public void write(byte[] data, int start, int length) {
                 byte[] buf = data;
@@ -330,7 +330,7 @@ public class Utils {
                 callback.deliverData(new byte[] { (byte)oneByte }, false);
             }
         };
-        loadHttpAsync(http_client, request, buffer, new HttpLoadAdaptor(request.getURI().toString()) {
+        loadHttpAsync(request, buffer, new HttpLoadAdaptor(request.getURI().toString()) {
             public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
                 super.httpFinished(status, headers, withData);
                 callback.deliverData(null, true);
