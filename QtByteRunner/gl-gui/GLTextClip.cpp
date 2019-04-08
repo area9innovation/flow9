@@ -264,6 +264,7 @@ void GLTextClip::layoutTextWrapLines()
         // FIXME: memory consuming, maybe redo via iterators.
         unicode_string ctext = GLTextLayout::getLigatured(extent->text);
         GLFont::Ptr font = extent->format.font;
+        if (!font) continue;
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
         bool already_split = false;
