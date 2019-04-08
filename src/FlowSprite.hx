@@ -49,6 +49,15 @@ class FlowSprite extends Sprite {
 		once("added", onAdded);
 	}
 
+	private static function clearUrlTextureCache(url : String) : Void {
+		cachedImagesUrls.remove(url);
+		var texture = Texture.removeFromCache(url);
+		var baseTexture = untyped BaseTexture.removeFromCache(url);
+
+		untyped __js__("delete baseTexture");
+		untyped __js__("delete texture");
+	}
+
 	private static function pushTextureToCache(texture : Texture) : Void {
 		if (texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
 			var url = texture.baseTexture.imageUrl;
@@ -62,12 +71,7 @@ class FlowSprite extends Sprite {
 					if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
 						for (k in cachedImagesUrls.keys()) {
 							if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-								cachedImagesUrls.remove(k);
-								Texture.removeFromCache(url);
-								var baseTexture = untyped BaseTexture.removeFromCache(url);
-
-								untyped __js__("delete texture");
-								untyped __js__("delete baseTexture");
+								clearUrlTextureCache(k);
 							} else {
 								return;
 							}
@@ -83,17 +87,12 @@ class FlowSprite extends Sprite {
 			var url = texture.baseTexture.imageUrl;
 
 			if (url != null) {
-				if (cachedImagesUrls.exists(url) && (cachedImagesUrls.get(url) > 1 || untyped texture.baseTexture.hasLoaded && texture.width * texture.height < 500 * 500)) {
+				if (cachedImagesUrls.exists(url) && cachedImagesUrls.get(url) > 1) {
 					cachedImagesUrls.set(url, cachedImagesUrls[url] - 1);
 
 					return cachedImagesUrls.get(url) == 0;
 				} else {
-					cachedImagesUrls.remove(url);
-					Texture.removeFromCache(url);
-					var baseTexture = untyped BaseTexture.removeFromCache(url);
-
-					untyped __js__("delete texture");
-					untyped __js__("delete baseTexture");
+					clearUrlTextureCache(url);
 
 					return true;
 				}
