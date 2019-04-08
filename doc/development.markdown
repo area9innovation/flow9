@@ -99,7 +99,7 @@ Chrome on Macs, which seem to have the smallest call stacks of all targets. If y
 case, then you can simulate a small call stack using the c++ debugger. Set a break point at the start of 
 main, and start the program. Then type `set call-stack-limit 2048` in the GDB window. If your program 
 uses a deeper stack than this, you will get a "Call stack depth trap in function ..." error. The way to 
-avoid deep stacks is to use tail calls.
+avoid deep stacks is to use tail calls. See more information about it [here](./faq.markdown#why-we-must-use-tail-recursions)
 
 If you experience any crash problems due to resource exhaustion, see below to learn how to profile your program.
 You can also try to run the program in the C++ target or JavaScript target.
