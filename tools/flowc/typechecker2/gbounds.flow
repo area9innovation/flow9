@@ -1,5 +1,5 @@
 import tools/flowc/typechecker2/gtype;
-import ds/easygraph_utils;
+import tools/flowc/typechecker2/grelations;
 
 export {
 	// Extract all the known requirements for this tyvar id
@@ -43,28 +43,19 @@ buildGTyvarRequirement(env : GEnv, tyvarId : int) -> GTyvarRequirements {
 }
 
 buildGTyvarReqForOne(env : GEnv, tyvarId : int) -> GTyvarRequirements {
-	nodeid = getSimpleNodeId(env.relations, GTypeVar(tyvarId));
-	if (nodeid == -1) {
-		// This is because there are no requirements in the graph, and this is fine
-		GTyvarRequirements(makeSet1(tyvarId), emptyGBounds(), emptyGBounds(), makeSet())
-	} else {
-		rnodeid = getSimpleNodeId(env.reverseRelations, GTypeVar(tyvarId));
-		lowerIds = reachableClosureFromNode(env.reverseRelations.graph, rnodeid);
-		lower = buildGBounds(env, env.reverseRelations.graph, lowerIds);
+	type = GTypeVar(tyvarId);
+	lowers = transitiveGLowerRelations(env.grelations, type, makeSet());
+	uppers = transitiveGUpperRelations(env.grelations, type, makeSet());
+	positions = getGRelationPositions(env.grelations, type);
 
-		upperIds = reachableClosureFromNode(env.relations.graph, nodeid);
-		upper = buildGBounds(env, env.relations.graph, upperIds);
+	lowerBounds = foldSet(lowers, emptyGBounds(), \acc : GBounds, gtype : GType -> {
+		addGTypeToGBounds(env, acc, gtype);
+	});
+	upperBounds = foldSet(uppers, emptyGBounds(), \acc : GBounds, gtype : GType -> {
+		addGTypeToGBounds(env, acc, gtype);
+	});
 
-		startEdges1 = getTreeArrayValue(env.relations.graph.edges, nodeid);
-		startIds1 = map(startEdges1, \e -> e.data);
-
-		startEdges2 = getTreeArrayValue(env.reverseRelations.graph.edges, rnodeid);
-		startIds2 = map(startEdges2, \e -> e.data);
-
-		startIds = mergeSets(buildSet(startIds1), buildSet(startIds2));
-
-		GTyvarRequirements(makeSet1(tyvarId), lower, upper, startIds);
-	}
+	GTyvarRequirements(makeSet1(tyvarId), lowerBounds, upperBounds, buildSet(positions));
 }
 
 joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
@@ -81,16 +72,6 @@ joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) ->
 
 emptyGBounds() -> GBounds {
 	GBounds(false, makeSet(), makeSet(), makeSet(), makeSet())
-}
-
-buildGBounds(env : GEnv, graph : EasyGraph<GType, int>, nodes : Set<int>) -> GBounds {
-	foldSet(nodes, emptyGBounds(), \acc : GBounds, nodeid : int -> {
-		mnode = lookupTree(graph.nodes, nodeid);
-		switch (mnode) {
-			None(): acc; // Not supposed to happen
-			Some(node): addGTypeToGBounds(env, acc, node.data);
-		}
-	});
 }
 
 joinGBounds(left : GBounds, right : GBounds) -> GBounds {

@@ -104,7 +104,6 @@ public class FlowRunnerActivity extends FragmentActivity  {
     LinearLayout ConsoleView;
     
     FlowRunnerWrapper wrapper;
-    DefaultHttpClient http_client;
     FlowSoundPlayer sound_player;
     View menu_anchor;
     
@@ -189,42 +188,42 @@ public class FlowRunnerActivity extends FragmentActivity  {
         DisplayMetrics metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(metrics);
    
-        http_client = Utils.createHttpClient();
+//        http_client = Utils.createHttpClient();
         String user_agent = "flow Android " + Build.VERSION.RELEASE + 
                 " dpi=" + metrics.densityDpi + " " + metrics.widthPixels + "x" + metrics.heightPixels;
-        http_client.getParams().setParameter("User-Agent", user_agent);
+//        http_client.getParams().setParameter("User-Agent", user_agent);
         
         Log.i(Utils.LOG_TAG, "Device info: " + Build.DEVICE + " OS: " + Build.VERSION.RELEASE);
         Log.i(Utils.LOG_TAG, "User agent for Http requests : " + user_agent);
         
         // Workaround for weird rejection of PHPSESSID cookie
-        http_client.addResponseInterceptor(new HttpResponseInterceptor() {
-            public void process(@NonNull final HttpResponse response, final HttpContext context) {
-                if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
-                    String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
-                    if (set_cookie_header.startsWith("PHPSESSID")) { 
-                        String[] cookie_items = set_cookie_header.split(";");
-                        for (String item : cookie_items) {
-                            int pos = item.indexOf("domain=");
-                            if (pos != -1) {
-                                php_session_domain = item.substring(pos + 7);
-                                php_session_id = set_cookie_header;
-                                Log.i(Utils.LOG_TAG, "PHPSESSID received in SetCookie: " + php_session_id);
-                            }
-                        }
-                    } 
-                }
-            }
-        });
-    
-        http_client.addRequestInterceptor(new HttpRequestInterceptor() {
-            public void process(@NonNull final HttpRequest request, @NonNull final HttpContext context) {
-                if (php_session_id != null) {
-                    HttpHost target = (HttpHost) context.getAttribute("Host");
-                    if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
-                }
-            }
-        });
+//        http_client.addResponseInterceptor(new HttpResponseInterceptor() {
+//            public void process(@NonNull final HttpResponse response, final HttpContext context) {
+//                if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
+//                    String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
+//                    if (set_cookie_header.startsWith("PHPSESSID")) {
+//                        String[] cookie_items = set_cookie_header.split(";");
+//                        for (String item : cookie_items) {
+//                            int pos = item.indexOf("domain=");
+//                            if (pos != -1) {
+//                                php_session_domain = item.substring(pos + 7);
+//                                php_session_id = set_cookie_header;
+//                                Log.i(Utils.LOG_TAG, "PHPSESSID received in SetCookie: " + php_session_id);
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        });
+//
+//        http_client.addRequestInterceptor(new HttpRequestInterceptor() {
+//            public void process(@NonNull final HttpRequest request, @NonNull final HttpContext context) {
+//                if (php_session_id != null) {
+//                    HttpHost target = (HttpHost) context.getAttribute("Host");
+//                    if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
+//                }
+//            }
+//        });
         
         wrapper = new FlowRunnerWrapper();
         
@@ -324,7 +323,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 for (int i = 0; i < headers.length; i+=2)
                     request.addHeader(headers[i], headers[i+1]);
                 
-                Utils.loadHttpAsync(http_client, request, callback);
+                Utils.loadHttpAsync(request, callback);
             }
 
             public void preloadMedia(@NonNull String url, @NonNull ResourceCache.Resolver callback) throws IOException {
@@ -994,7 +993,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                     ended[0] = withData; 
                 }
             };
-            dl_ok = Utils.loadHttpFile(http_client, link.toString(), file_name, callback);
+            dl_ok = Utils.loadHttpFile(link.toString(), file_name, callback);
             if (!ended[0])
                 dl_ok = false;
 

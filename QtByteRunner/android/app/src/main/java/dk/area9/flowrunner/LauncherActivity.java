@@ -12,7 +12,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.amazonaws.org.apache.http.client.methods.HttpGet;
-import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
@@ -37,9 +36,6 @@ public class LauncherActivity extends Activity {
     private EditText BytecodeURLField;
     private ListView BytecodeList;
     private EditText URLParametersField;
-    
-    @NonNull
-    private DefaultHttpClient Client = Utils.createHttpClient();
     
     private ArrayAdapter<String> ListAdapter;
     
@@ -212,7 +208,7 @@ public class LauncherActivity extends Activity {
             };
             
             
-            Utils.loadHttpAsync(Client, new HttpGet(full_uri), file_stream, download_callback);
+            Utils.loadHttpAsync(new HttpGet(full_uri), file_stream, download_callback);
             showDownloadingProgressBar();
         } else {
             showErrorMessage("Empty bytecode name");

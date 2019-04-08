@@ -396,23 +396,22 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
     rq.payload = parseUtf8(body.str());
 }
 
-unicode_string AbstractHttpSupport::urlencode(const unicode_string &s)
+unicode_string AbstractHttpSupport::urlencode(const unicode_string &url)
 {
-    static const char lookup[]= "0123456789abcdef";
+    static const char lookup[]= "0123456789ABCDEF";
     std::stringstream e;
-    for(int i=0, ix=s.length(); i<ix; i++)
+    const std::string &s = encodeUtf8(url);
+    for(size_t i = 0, ix = s.length(); i < ix; i++)
     {
         const char& c = s[i];
+
         if ( (48 <= c && c <= 57) ||//0-9
              (65 <= c && c <= 90) ||//abc...xyz
              (97 <= c && c <= 122) || //ABC...XYZ
              (c=='-' || c=='_' || c=='.' || c=='~')
-        )
-        {
+        ) {
             e << c;
-        }
-        else
-        {
+        } else {
             e << '%';
             e << lookup[ (c&0xF0)>>4 ];
             e << lookup[ (c&0x0F) ];

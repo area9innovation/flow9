@@ -1719,7 +1719,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
-		return new DropShadowFilter(90 - angle, distance, radius, color, alpha);
+		return new DropShadowFilter(angle, distance, radius, color, alpha);
 	}
 
 	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {

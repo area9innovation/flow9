@@ -567,3 +567,7 @@ It's better to do this way:
 		find(availableVoices, \v -> strContains(v.name, p))
 	})
 
+#### Why we must use tail recursions
+
+You should writing code in a manner which would allow compiler to perform tail recursion optimisations. Ignoring this optimisation may lead to stack overflow.
+See [tests/tail_recursion_example.flow](../tests/tail_recursion_example.flow) as an example. While collect2 method in this file might look nicer - it will not be converted into cycle by compiler and would lead to stack overflow.

@@ -1292,9 +1292,6 @@ void GLClip::setAccessRole(std::string role)
 void GLClip::setAccessEnabled(bool enabled)
 {
     access_enabled = enabled;
-
-    if (!accessFocusEnabled())
-        setFocus(false);
 }
 
 bool GLClip::accessFocusEnabled()
