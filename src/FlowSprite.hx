@@ -64,7 +64,10 @@ class FlowSprite extends Sprite {
 							if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
 								cachedImagesUrls.remove(k);
 								Texture.removeFromCache(url);
-								untyped BaseTexture.removeFromCache(url);
+								var baseTexture = untyped BaseTexture.removeFromCache(url);
+
+								untyped __js__("delete texture");
+								untyped __js__("delete baseTexture");
 							} else {
 								return;
 							}
@@ -87,7 +90,10 @@ class FlowSprite extends Sprite {
 				} else {
 					cachedImagesUrls.remove(url);
 					Texture.removeFromCache(url);
-					untyped BaseTexture.removeFromCache(url);
+					var baseTexture = untyped BaseTexture.removeFromCache(url);
+
+					untyped __js__("delete texture");
+					untyped __js__("delete baseTexture");
 
 					return true;
 				}
