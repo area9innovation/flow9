@@ -339,6 +339,17 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 	}
 }
 
+fcLogOutput(message : string) -> void {
+	message_with_limestamp = "[" + time2string(timestamp()) + "] " + message;
+	log_file = if (fileExists("flowc_server.log")) getFileContent("flowc_server.log") else "";
+	log_lines = strSplit(log_file, "\n");
+	log_lines_cut = if (length(log_lines) > 128) tailFrom(log_lines, 16) else log_lines;
+	updated_log_lines = concat(log_lines_cut, [message_with_limestamp]);
+	updated_log_file = strGlue(updated_log_lines, "\n");
+	setFileContent("flowc_server.log", updated_log_file);
+	{}
+}
+
 main() {
 	fcPrintln("Flow compiler (3rd generation)");
 	fcPrintln("");
@@ -378,11 +389,15 @@ main() {
 				port = s2i(getConfigParameter(config.config, "server-port"));
 				server = ref nop;
 				server := createHttpServer(port,
-					\-> fcPrintln("Server started."),
+					\-> {
+						fcLogOutput("Server started.");
+						fcPrintln("Server started.")
+					},
 					\request, response -> {
 						clearFcOutput();
 						cf = deserialize(request.body, IllegalStruct());
 						if (cf == IllegalStruct()) {
+							fcLogOutput("WARNING: Illegal compilation config.");
 							fcPrintln("WARNING: Illegal compilation config.");
 							response(HttpResponse(400, fcOutput(), []));
 						} else {
@@ -395,11 +410,22 @@ main() {
 								fcPrintln("Server stopped.");
 								HttpResponse(200, fcOutput(), []) |> response;
 								//^server();  // TODO: why calling ^server(); causes freezing of flowc?
-								timer(100, \-> quit(0));
+								timer(200, \-> {
+									fcLogOutput("Server stopped.");
+									quit(0)
+								});
 							} else {
 								code = ref 0;
+								start_time = timestamp();
+								conf_str = foldTree(compilerConfigToTree(conf), "",
+									\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
+								);
+								fcLogOutput("Processing request: <" + conf_str + " >");
 								fcPrintln("Processing '" + conf.flowfile + "' on server.");
-								runConfigLocally(conf, globalEnv, \c -> code := c);
+								runConfigLocally(conf, globalEnv, \c -> {
+									fcLogOutput("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
+									code := c
+								});
 								HttpResponse(200 + ^code, fcOutput(), []) |> response;
 							}
 						}
