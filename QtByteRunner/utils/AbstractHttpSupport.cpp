@@ -388,11 +388,6 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
 
     body << boundaryDataLine;
 
-    body.seekp(0, std::ios::end);
-    std::ostringstream sslength;
-    sslength << body.tellp();
-    rq.headers[parseUtf8("Content-Length")] = parseUtf8(sslength.str());
-
     rq.payload = parseUtf8(body.str());
 }
 
@@ -470,6 +465,12 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
             rq.payload = params;
             rq.headers[parseUtf8("Content-Type")] = parseUtf8("application/x-www-form-urlencoded");
         }
+    }
+
+    if (!rq.payload.empty()) {
+        std::ostringstream contentlength;
+        contentlength << rq.payload.size();
+        rq.headers[parseUtf8("Content-Length")] = parseUtf8(contentlength.str());
     }
 }
 
