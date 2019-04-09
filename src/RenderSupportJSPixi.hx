@@ -1382,10 +1382,14 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
-		var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
+		if (Platform.isMobile) {
+			return function() { };
+		} else {
+			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
-		clip.addChild(dropArea);
-		return function() { clip.removeChild(dropArea); };
+			clip.addChild(dropArea);
+			return function() { clip.removeChild(dropArea); };
+		}
 	}
 
 	public static function addVirtualKeyboardHeightListener(fn : Float -> Void) : Void -> Void {
