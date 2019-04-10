@@ -7,6 +7,37 @@ import tools/flowc/debug;
 import tools/flowc/type_helpers;
 import loop;
 
+
+/*
+
+While unifying, we are building a graph, and can keep track of tyvars
+which are unresolved.
+We can also keep track of tyvars which are updated, due to new nodes.
+
+	queue : Tree<priority : ResolutionPriority, tyvarid : int>
+
+So the loop should be:
+
+- Pick next tyvar, based on the priority.
+    Priority should be based on the stage, whether it is fixed, has fields or not
+    or something like that.
+
+- Then resolve that. Once we resolve it, other tyvars has new info, and are
+  reevaluated.
+
+- For tyvars where there are multiple solutions, we should probably record a
+  stack of alternative bindings, with the environment for each.
+
+So for each tyvar, we should keep track of the stage:
+
+-  Stage, priority
+
+Whenever there is a change in the environment for a tyvar, it is bumped back to
+the initial stage.
+
+*/
+
+
 export {
 	// Resolve the graph
 	resolveGGraph(
@@ -55,67 +86,99 @@ GResolutionEnv(
 );
 
 doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
-	if (grenv.env.verbose >= 2) {
-		printStay(grenv.env.env, "\nResolve tyvars: " + toString(set2array(grenv.env.unresolvedTyvars)) + " iteration " + i2s(grenv.iteration) + " in stage " + toString(grenv.stage) + " speculation depth " + i2s(grenv.speculation) + "\n");
-	}
-	nrenv = foldSet(grenv.env.unresolvedTyvars, grenv, \acc : GResolutionEnv, tv -> {
-		// During the loop, we can resolve stuff, no need to redo that
-		if (!acc.abort && containsSet(acc.env.unresolvedTyvars, tv)) {
-			reqs = buildGTyvarRequirement(acc.env, tv);
-			if (acc.env.verbose >= 2) {
-				printIndent(acc.env.env, "Clarify " + gtyvarReqs2string(acc.env, reqs) + " {");
+	if (false) {
+		nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
+		switch (nextTyvar) {
+			PopResult(priority, tyvarid, rest): {
+				reqs = buildGTyvarRequirement(grenv.env, tyvarid);
+				if (grenv.env.verbose >= 2) {
+					printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at priority " + i2s(priority) + " {");
+				}
+				acc = GResolutionEnv(grenv 
+					with env = GEnv(
+						grenv.env
+						with grelations = GRelations(
+							grenv.env.grelations with
+							tyvarQueue = rest
+						)
+					)
+				);
+				res = clarifyGTyvar(acc, reqs);
+				if (res.env.verbose >= 2) {
+					printDedent(res.env.env, "}");
+				}
+				// TODO: In case we are not resolved, we should be added back to the queue with the next stage.
+				// Also, stage should not be part of the GResolutionEnv
+				doResolveGGraph(res);
 			}
-			res = clarifyGTyvar(acc, reqs);
-			if (res.env.verbose >= 2) {
-				printDedent(res.env.env, "}");
+			EmptyPopResult(): {
+				// OK, we are done.
+				grenv;
 			}
-			res;
-		} else acc;
-	});
-
-	if (nrenv.abort) {
-		if (nrenv.env.verbose >= 4) {
-			printStay(nrenv.env.env, "Aborted tyvars: " + toString(set2array(nrenv.env.unresolvedTyvars)) + " " +  toString(nrenv.stage));
 		}
-		nrenv
 	} else {
-		if (nrenv.env.verbose >= 4) {
-			saveGDot(nrenv.env, nrenv.name + "_" + i2s(nrenv.iteration));
+		if (grenv.env.verbose >= 2) {
+			printStay(grenv.env.env, "\nResolve tyvars: " + toString(set2array(grenv.env.unresolvedTyvars)) + " iteration " + i2s(grenv.iteration) + " in stage " + toString(grenv.stage) + " speculation depth " + i2s(grenv.speculation) + "\n");
 		}
+		nrenv = foldSet(grenv.env.unresolvedTyvars, grenv, \acc : GResolutionEnv, tv -> {
+			// During the loop, we can resolve stuff, no need to redo that
+			if (!acc.abort && containsSet(acc.env.unresolvedTyvars, tv)) {
+				reqs = buildGTyvarRequirement(acc.env, tv);
+				if (acc.env.verbose >= 2) {
+					printIndent(acc.env.env, "Clarify " + gtyvarReqs2string(acc.env, reqs) + " {");
+				}
+				res = clarifyGTyvar(acc, reqs);
+				if (res.env.verbose >= 2) {
+					printDedent(res.env.env, "}");
+				}
+				res;
+			} else acc;
+		});
 
-		if (!isEmptySet(nrenv.env.unresolvedTyvars) && !equalSet(grenv.env.unresolvedTyvars, nrenv.env.unresolvedTyvars)) {
-			// There were changes in some of the tyvars, so go again in a safe
-			grnenv = GResolutionEnv(nrenv with 
-				iteration = nrenv.iteration + 1,
-				stage = GResolveSafeOnly()
-			);
-			doResolveGGraph(grnenv)
+		if (nrenv.abort) {
+			if (nrenv.env.verbose >= 4) {
+				printStay(nrenv.env.env, "Aborted tyvars: " + toString(set2array(nrenv.env.unresolvedTyvars)) + " " +  toString(nrenv.stage));
+			}
+			nrenv
 		} else {
-			if (isEmptySet(nrenv.env.unresolvedTyvars) || nrenv.stage == GResolveTypars()) {
-				// OK, we are done
-				nrenv
-			} else {
-				// Do one more round
+			if (nrenv.env.verbose >= 4) {
+				saveGDot(nrenv.env, nrenv.name + "_" + i2s(nrenv.iteration));
+			}
+
+			if (!isEmptySet(nrenv.env.unresolvedTyvars) && !equalSet(grenv.env.unresolvedTyvars, nrenv.env.unresolvedTyvars)) {
+				// There were changes in some of the tyvars, so go again in a safe
 				grnenv = GResolutionEnv(nrenv with 
 					iteration = nrenv.iteration + 1,
-					stage = nextGResolutionStage(nrenv.stage)
+					stage = GResolveSafeOnly()
 				);
 				doResolveGGraph(grnenv)
+			} else {
+				if (isEmptySet(nrenv.env.unresolvedTyvars) || nrenv.stage == GResolveTypars()) {
+					// OK, we are done
+					nrenv
+				} else {
+					// Do one more round
+					grnenv = GResolutionEnv(nrenv with 
+						iteration = nrenv.iteration + 1,
+						stage = nextGResolutionStage(nrenv.stage)
+					);
+					doResolveGGraph(grnenv)
+				}
 			}
 		}
+
 	}
 }
 
 // We implement a staged heuristic for solving things.
 GResolutionStage ::= GResolveSafeOnly, GResolveSafeButAmbiguous, GResolveSpeculative, GResolveTypars;
-	// 1. Resolve all unambigious cases
+	// 1. Resolve all unambigious cases, not considering fields. We restructured fixed ones in this stage only
 	GResolveSafeOnly();
 
-	// 2. If there is multiple solutions that might work, just pick one.
+	// 2. Also resovle unambigious cases, but consider field constraints as well.
 	GResolveSafeButAmbiguous();
 
-	// 3. If we only have unbound tyvars remaining as stoppers for making progress, just
-	//    ignore those, and assume they will be fine
+	// 3. Here we do prolog-style search of all allowed results, and check if they pan out
 	GResolveSpeculative();
 
 	// 4. Convert connected, unbound tyvars to type pars
@@ -390,7 +453,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		printStay(env.env, superglue(set2array(tyvars), \tv -> "α" + i2s(tv), ", ") + " = " + gtype2string(env, type));
 	}
 
-	if (true) {
+	env1 = if (true) {
 		// Set our friends
 		nenv0 = foldSet(tyvars, env, \env0, tyvar -> {
 			GEnv(
@@ -425,8 +488,14 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 				} else nenv5;
 			});
 		});
+	} else env;
+
+	doFields = false;
+
+	if (false) {
+		env1
 	} else {
-		foldSet(tyvars, env, \env0, tyvar -> {
+		foldSet(tyvars, env1, \env0, tyvar -> {
 			nenv0 = GEnv(
 				env0 with
 				tyvars = setTree(env0.tyvars, tyvar, type),
@@ -439,11 +508,11 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 
 			// Unify with subs
 			nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts, onError));
-			nenv4 = foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError));
+			nenv4 = if (doFields) foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError)) else nenv3;
 
 			// Unify with supers
 			nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts, onError));
-			nenv6 = foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError));
+			nenv6 = if (doFields) foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError)) else nenv4;
 
 			tyvarsInType = extractGTypeVars(nenv6, type, makeSet());
 			GEnv(
