@@ -61,8 +61,19 @@ resolveGGraph(
 		makeFcError : (string, Set<int>) -> FcError, 
 		onError : (GEnv, FcError) -> void
 	) -> GEnv {
+
+	nenv = GEnv(env
+		with grelations = GRelations(
+			env.grelations
+			with tyvarQueue = foldSet(env.unresolvedTyvars, env.grelations.tyvarQueue, \acc, tyvar -> {
+			// OK, make sure we have all tyvars in the queue
+				setTree(acc, GQueueItem(0, tyvar), tyvar)
+			})
+		)
+	);
+
 	grenv = GResolutionEnv(
-		env, name, unify, makeFcError, onError, 0, false, 0
+		nenv, name, unify, makeFcError, onError, 0, false, 0
 	);
 	doResolveGGraph(grenv).env;
 }
@@ -84,37 +95,50 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 	nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
 	switch (nextTyvar) {
 		PopResult(item, tyvarid, rest): {
-			stage = [
-				GResolveSafeOnly(),
-				GResolveSafeButAmbiguous(),
-				GResolveSpeculative(),
-				GResolveTypars(),
-			][item.stage];
-
-			reqs = buildGTyvarRequirement(grenv.env, tyvarid);
-			if (grenv.env.verbose >= 2) {
-				printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
-			}
-			if (grenv.env.verbose >= 3) {
-				remaining = getTreeValues(rest);
-				printStay(grenv.env.env, "Remaining in queue: " + toString(remaining));
-			}
-
-			acc = GResolutionEnv(grenv 
-				with env = GEnv(
-					grenv.env
-					with grelations = GRelations(
-						grenv.env.grelations with
-						tyvarQueue = rest
+			if (containsKeyTree(grenv.env.tyvars, tyvarid)) {
+				// Already solved. We can ignore
+				acc = GResolutionEnv(grenv 
+					with env = GEnv(
+						grenv.env
+						with grelations = GRelations(
+							grenv.env.grelations with tyvarQueue = rest
+						)
 					)
-				)
-			);
+				);
+				doResolveGGraph(acc);
+			} else {
+				stage = [
+					GResolveSafeOnly(),
+					GResolveSafeButAmbiguous(),
+					GResolveSpeculative(),
+					GResolveTypars(),
+				][item.stage];
 
-			res = clarifyGTyvar(acc, reqs, stage);
-			if (res.env.verbose >= 2) {
-				printDedent(res.env.env, "}");
+				reqs = buildGTyvarRequirement(grenv.env, tyvarid);
+				if (grenv.env.verbose >= 2) {
+					printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
+				}
+				if (grenv.env.verbose >= 3) {
+					remaining = getTreeValues(rest);
+					printStay(grenv.env.env, "Remaining in queue: " + toString(remaining));
+				}
+
+				acc = GResolutionEnv(grenv 
+					with env = GEnv(
+						grenv.env
+						with grelations = GRelations(
+							grenv.env.grelations with
+							tyvarQueue = rest
+						)
+					)
+				);
+
+				res = clarifyGTyvar(acc, reqs, stage);
+				if (res.env.verbose >= 2) {
+					printDedent(res.env.env, "}");
+				}
+				doResolveGGraph(res);
 			}
-			doResolveGGraph(res);
 		}
 		EmptyPopResult(): {
 			// OK, we are done.
@@ -161,9 +185,10 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 	// In case we could not resolve, we requeue at the next stage
 	requeue = \ -> {
 		nextStageId = gresolutionStage2int(nextGResolutionStage(stage));
-		newQueue = foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
-			setTree(acc, GQueueItem(nextStageId, tyvar), tyvar)
-		});
+		newQueue = if (stage == GResolveTypars()) grenv.env.grelations.tyvarQueue else
+			foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
+				setTree(acc, GQueueItem(nextStageId, tyvar), tyvar)
+			});
 
 		GResolutionEnv(grenv 
 			with env = GEnv(
