@@ -3454,7 +3454,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
 {
     if (NativeValueBudget < 0) {
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
         flow_err << "Full GC forced by native budget." << endl;
 #endif
         full = true;
@@ -3465,7 +3465,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
     unsigned pdelta = hp - ProfileMemBarrier;
 #endif
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
 #endif
 
@@ -3486,7 +3486,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
         NativeValueBudget = gc.ComputeNativeBudget();
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (!fast_ok)
         flow_err << "FULL ";
     flow_err << "GC performed: " << (GetCurrentTime() - start_time) << " (generation " << NumFullGCs << ")" << endl;
