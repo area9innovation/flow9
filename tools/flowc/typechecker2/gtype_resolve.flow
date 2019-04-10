@@ -86,13 +86,20 @@ GResolutionEnv(
 );
 
 doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
-	if (false) {
+	if (true) {
 		nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
 		switch (nextTyvar) {
 			PopResult(priority, tyvarid, rest): {
+				stage = [
+					GResolveSafeOnly(),
+					GResolveSafeButAmbiguous(),
+					GResolveSpeculative(),
+					GResolveTypars(),
+				][priority];
+
 				reqs = buildGTyvarRequirement(grenv.env, tyvarid);
 				if (grenv.env.verbose >= 2) {
-					printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at priority " + i2s(priority) + " {");
+					printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
 				}
 				acc = GResolutionEnv(grenv 
 					with env = GEnv(
@@ -103,12 +110,11 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 						)
 					)
 				);
-				res = clarifyGTyvar(acc, reqs);
+
+				res = clarifyGTyvar(acc, reqs, stage);
 				if (res.env.verbose >= 2) {
 					printDedent(res.env.env, "}");
 				}
-				// TODO: In case we are not resolved, we should be added back to the queue with the next stage.
-				// Also, stage should not be part of the GResolutionEnv
 				doResolveGGraph(res);
 			}
 			EmptyPopResult(): {
@@ -127,7 +133,7 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 				if (acc.env.verbose >= 2) {
 					printIndent(acc.env.env, "Clarify " + gtyvarReqs2string(acc.env, reqs) + " {");
 				}
-				res = clarifyGTyvar(acc, reqs);
+				res = clarifyGTyvar(acc, reqs, grenv.stage);
 				if (res.env.verbose >= 2) {
 					printDedent(res.env.env, "}");
 				}
@@ -193,10 +199,35 @@ nextGResolutionStage(stage : GResolutionStage) -> GResolutionStage {
 	}
 }
 
+gresolutionStage2int(stage : GResolutionStage) -> int {
+	switch (stage) {
+		GResolveSafeOnly(): 0;
+		GResolveSafeButAmbiguous(): 1;
+		GResolveSpeculative(): 2;
+		GResolveTypars(): 3;
+	}
+}
 
 // We know this tyvar is unbound, and we know about all the bounds.
 // See if we can solve it
-clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEnv {
+clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolutionStage) -> GResolutionEnv {
+	// In case we could not resolve, we requeue at the next stage
+	requeue = \ -> {
+		nextStageId = gresolutionStage2int(nextGResolutionStage(stage));
+		newQueue = foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
+			setTree(acc, nextStageId, tyvar)
+		});
+
+		GResolutionEnv(grenv 
+			with env = GEnv(
+				grenv.env
+				with grelations = GRelations(
+					grenv.env.grelations with tyvarQueue = newQueue
+				)
+			)
+		);
+	}
+
 	lower = req.lower;
 	upper = req.upper;
 
@@ -220,14 +251,14 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 			}	
 
 			// There are multiple solutions.
-			pick = switch (grenv.stage) {
+			pick = switch (stage) {
 				GResolveSafeOnly(): false;
 				GResolveSafeButAmbiguous(): false;
 				GResolveSpeculative(): true;
 				GResolveTypars(): true;
 			}
 
-			penv = if (grenv.stage == GResolveSafeOnly()) {
+			penv = if (stage == GResolveSafeOnly()) {
 				// See if we can unpeel it
 				//   Clarify { : [TextSize<>], [α40001] :  : } c= α40004 c= { :  :  : } {
 				// is handled by setting α40004= [<tyvar>].
@@ -254,7 +285,11 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 				printDedent(renv.env, "} Fixed clarification: " + gtyvarReqs2string(renv, req) + " {");
 			}
 
-			GResolutionEnv(grenv with env = renv);
+			grenv0 = GResolutionEnv(grenv with env = renv);
+			if (grenv0 == grenv) {
+				// TODO: This can probably be tweaked
+				requeue();
+			} else grenv0
 		}
 	} else {
 		// OK, no fixed. There can be tyvars and subtypes
@@ -263,10 +298,10 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 
 		if (lowerOnlyTyvars && upperOnlyTyvars) {
 			// Only tyvars.
-			switch (grenv.stage) {
-				GResolveSafeOnly(): grenv;
-				GResolveSafeButAmbiguous(): grenv;
-				GResolveSpeculative(): grenv;
+			switch (stage) {
+				GResolveSafeOnly(): requeue();
+				GResolveSafeButAmbiguous(): requeue();
+				GResolveSpeculative(): requeue();
 				GResolveTypars(): {
 					// No constraints. All of these tyvars are all identical and should be bound
 					// to the next free typar.
@@ -276,7 +311,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 			}
 		} else {
 			// We have subtypes, either named or fields
-			lowerSet : Set<GSubType> = getGSubTypes(lower.named, switch (grenv.stage) {
+			lowerSet : Set<GSubType> = getGSubTypes(lower.named, switch (stage) {
 				GResolveSafeOnly(): makeSet();
 				GResolveSafeButAmbiguous(): lower.fields;
 				GResolveSpeculative(): lower.fields;
@@ -284,7 +319,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 			});
 			ltypenames : [string] = findPotentialGSupertypes(grenv.env, lowerSet);
 
-			upperSet : Set<GSubType> = getGSubTypes(upper.named, switch (grenv.stage) {
+			upperSet : Set<GSubType> = getGSubTypes(upper.named, switch (stage) {
 				GResolveSafeOnly(): makeSet();
 				GResolveSafeButAmbiguous(): upper.fields;
 				GResolveSpeculative(): upper.fields;
@@ -313,7 +348,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 				// And set ourselves to this
 				GResolutionEnv(grenv with env = setGTyvar(grenv.env, grenv.unify, req, winType, grenv.onError));
 			} else {
-				if (grenv.stage == GResolveSpeculative()) {
+				if (stage == GResolveSpeculative()) {
 					// Here we do prolog!
 
 					// Find the best order. First, go by explicit names
@@ -343,11 +378,11 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements) -> GResolutionEn
 
 					senv;
 				} else {
-					if (grenv.stage == GResolveTypars()) {
+					if (stage == GResolveTypars()) {
 						error = grenv.makeFcError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
 						grenv.onError(grenv.env, error);
 					}
-					grenv;
+					requeue();
 				}
 			}
 		}
