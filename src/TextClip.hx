@@ -229,7 +229,7 @@ class TextClip extends NativeWidgetClip {
 	private function layoutText() : Void {
 		if (isFocused || text == '') {
 			if (textClip != null) {
-				textClip.renderable = false;
+				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
 			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
@@ -299,7 +299,7 @@ class TextClip extends NativeWidgetClip {
 				setScrollRect(0, 0, getWidth(), getHeight());
 			}
 
-			textClip.renderable = true;
+			textClip.setClipRenderable(true);
 			textClipChanged = false;
 		}
 	}

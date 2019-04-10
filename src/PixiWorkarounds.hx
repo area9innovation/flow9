@@ -604,12 +604,6 @@ class PixiWorkarounds {
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
 				set : function(p) {
 					this.transformChanged = true;
-
-					if (this.visible) {
-						RenderSupportJSPixi.TransformChanged = true;
-						RenderSupportJSPixi.PixiStageChanged = true;
-					}
-
 					this._parent = p;
 				},
 				get : function() {

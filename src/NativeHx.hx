@@ -560,10 +560,12 @@ class NativeHx {
 	private static var DeferQueue : Array< Void -> Void > = new Array();
 	private static function defer(cb : Void -> Void) : Void {
 		if (DeferQueue.length == 0) {
-			haxe.Timer.delay(function() {
+			var fn = function() {
 				for (f in DeferQueue) f();
 				DeferQueue = [];
-			}, 0);
+			}
+
+			untyped __js__("setTimeout(fn, 0);");
 		}
 
 		DeferQueue.push(cb);
@@ -600,8 +602,8 @@ class NativeHx {
 		}
 		#end
 
-		var t = haxe.Timer.delay(fn, ms);
-		return t.stop;
+		var t = untyped __js__("setTimeout(fn, ms);");
+		return function() { untyped __js__("clearTimeout(t);"); };
 		#else
 		cb();
 		return function() {};
