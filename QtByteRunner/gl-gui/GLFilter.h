@@ -19,7 +19,7 @@ protected:
     float getBlurSigma(const GLTransform &transform);
 
     bool needsSeparateBlur(float sigma) {
-        return sigma >= 1.25f - std::min(3.0f,blur_quality)*0.1f;
+        return sigma >= 1.25f - std::min(3.0f, blur_quality) * 0.1f;
     }
 
     void renderBigBlur(GLRenderer *renderer, GLDrawSurface *input, GLDrawSurface *output, float sigma, bool drop_input = false);
@@ -34,11 +34,7 @@ public:
 
     DEFINE_FLOW_NATIVE_OBJECT(GLFilter, FlowNativeObject);
 
-#ifndef FLOW_EMBEDDED
     virtual bool needsBlurNode() { return true; }
-#else
-    virtual bool needsBlurNode() { return false; }
-#endif
 
     virtual void updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox);
     virtual void render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur) = 0;

@@ -25,12 +25,12 @@ bool GLFilter::flowDestroyObject()
     return true;
 }
 
-float GLFilter::getBlurSigma(const GLTransform &/*transform*/)
+float GLFilter::getBlurSigma(const GLTransform &transform)
 {
     if (blur_radius <= 0)
         return -1;
 
-    float radius = 0.5 * blur_radius;// * transform.getScale();
+    float radius = 0.5 * blur_radius * transform.getScale();
     float quality = std::min(3.0f, blur_quality);
     return sqrtf(quality*radius*(radius+1)/3);
 }
@@ -54,23 +54,21 @@ void GLFilter::computeBlurCoeffs(std::vector<float> *coeffs, std::vector<float> 
 {
     std::vector<float> raw_coeffs;
 
-
-
     float c1 = 1.0f/sqrtf(2*M_PI)/sigma;
     float c2 = -0.5f/sigma/sigma;
 
     float base_coeff = c1;
     float csum = base_coeff;
 
-    for (int i = 1; i <= 8; i++) {
+    int i = 1;
+    do {
         float c = c1 * exp(i*i*c2);
 
         raw_coeffs.push_back(c);
         csum += c*2;
 
-        if ((i%2) == 0 && (1.0f - csum) <= margin)
-            break;
-    }
+        i++;
+    } while (((i%2) != 1 || (1.0f - csum) > margin) && i <= 32);
 
     float correction = 1.0f/csum;
     coeffs->push_back(base_coeff * correction);
@@ -88,7 +86,7 @@ void GLFilter::renderBigBlur(GLRenderer *renderer, GLDrawSurface *input, GLDrawS
     GLDrawSurface tmp(renderer, input->getBBox(), output->getFlowStack());
 
     std::vector<float> coeffs, deltas;
-    computeBlurCoeffs(&coeffs, &deltas, sigma, 0.25f / std::min(blur_quality,3.0f));
+    computeBlurCoeffs(&coeffs, &deltas, sigma, 0.25f / std::min(3.0f,blur_quality));
 
     tmp.makeCurrent();
     renderer->renderBigBlur(input, false, coeffs[0], deltas.size(), &deltas[0], &coeffs[1]);

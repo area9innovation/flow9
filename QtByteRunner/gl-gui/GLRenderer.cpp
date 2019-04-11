@@ -418,48 +418,29 @@ void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
 
 void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs)
 {
-    vec4 coeff_vec;
-
     beginFilter(input, NULL);
-
-    switch (steps) {
-    case 1:
-        setProgram(ProgGauss5x5);
-        coeff_vec = vec4(coeffs[0], base_coeff, 0.0f, 0.0f);
-        break;
-
-    case 2:
-        setProgram(ProgGauss9x9);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[1], base_coeff);
-        break;
-
-    case 3:
-        setProgram(ProgGauss13x13);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[2], base_coeff);
-        break;
-
-    case 4:
-        setProgram(ProgGauss17x17);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[2], coeffs[3]);
-        glUniform1f(programs[cur_program].u_gauss_base_coeff, base_coeff);
-        break;
-
-    default:
-        assert(false);
-    }
-
-    glUniform4fv(programs[cur_program].u_gauss_shift_coeff, 1, glm::value_ptr(coeff_vec));
-
-    float shifts[2 * 4] = { 0.0f };
-
+    
+    setProgram(ProgGauss);
+    
+    float gauss_coeffs[steps];
+    for (int i = 0; i < steps; i++)
+        gauss_coeffs[i] = coeffs[i];
+    
+    float v_shifts[2 * steps];
+    for (int i = 0; i < 2 * steps; i++)
+        v_shifts[i] = 0.0;
+    
     if (vertical)
         for (int i = 0; i < steps; i++)
-            shifts[2*i+1] = deltas[i];
+            v_shifts[2*i+1] = deltas[i] * u_in_pixel_size.y;
     else
         for (int i = 0; i < steps; i++)
-            shifts[2*i] = deltas[i];
+            v_shifts[2*i] = deltas[i] * u_in_pixel_size.x;
 
-    glUniform2fv(programs[cur_program].u_tex_shifts, steps, shifts);
+    glUniform1i(programs[cur_program].u_gauss_steps, steps);
+    glUniform1f(programs[cur_program].u_gauss_base_coeff, base_coeff);
+    glUniform1fv(programs[cur_program].u_gauss_shift_coeff, steps, gauss_coeffs);
+    glUniform2fv(programs[cur_program].u_gauss_shifts, steps, v_shifts);
 
     endFilter(input, NULL);
 }
@@ -593,32 +574,13 @@ void GLRenderer::compileShaders()
                       1, AttrVertexPos, "a_VertexPos");
 
     pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 1\n");
     pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss5x5, SHADER_filter_vert, SHADER_gauss_frag, pfix,
+    compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                       1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 2\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss9x9, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                      1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 3\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss13x13, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                      1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 4\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    ok = doCompileShaderPair(ProgGauss17x17, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                             1, AttrVertexPos, "a_VertexPos");
 
     if (!ok) {
         pfix.push_back("#define USE_SWIZZLE_SHIFT\n");
-        compileShaderPair(ProgGauss17x17, SHADER_filter_vert, SHADER_gauss_frag, pfix,
+        compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                           1, AttrVertexPos, "a_VertexPos");
     }
 
