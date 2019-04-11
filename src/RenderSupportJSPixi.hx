@@ -767,18 +767,6 @@ class RenderSupportJSPixi {
 		return false;
 	}
 
-	private static function addAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
-		if (clip.accessWidget == null) return;
-
-		var attributesMap = new Map<String, String>();
-
-		for (kv in attributes) {
-			attributesMap.set(kv[0], kv[1]);
-		}
-
-		clip.accessWidget.addAccessAttributes(attributesMap);
-	}
-
 	public static function setAccessibilityEnabled(enabled : Bool) : Void {
 		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
 	}
@@ -787,17 +775,26 @@ class RenderSupportJSPixi {
 		EnableFocusFrame = show;
 	}
 
-	public static function setAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
-		if (AccessibilityEnabled && clip.accessWidget == null) {
+	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
+		if (clip.accessWidget == null) return;
+
+		var attributesMap = new Map<String, String>();
+
+		for (kv in attributes) {
+			attributesMap.set(kv[0], kv[1]);
+		}
+
+		if ((AccessibilityEnabled && clip.accessWidget == null) || attributesMap.get("role") == "form") {
 			// Create DOM node for access. properties
 			if (clip.nativeWidget != null) {
 				clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
-				addAccessAttributes(clip, attributes);
+
+				clip.accessWidget.addAccessAttributes(attributesMap);
 			} else {
-				AccessWidget.createAccessWidget(clip, attributes);
+				AccessWidget.createAccessWidget(clip, attributesMap);
 			}
 		} else {
-			addAccessAttributes(clip, attributes);
+			clip.accessWidget.addAccessAttributes(attributesMap);
 		}
 	}
 
@@ -806,8 +803,6 @@ class RenderSupportJSPixi {
 			AccessWidget.removeAccessWidget(clip.accessWidget);
 		}
 	}
-
-
 
 	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
 		clip.accessCallback = callback;
