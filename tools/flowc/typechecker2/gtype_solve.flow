@@ -11,6 +11,7 @@ import tools/flowc/type_helpers;
 import tools/flowc/typechecker/type_expect_helpers;
 import ds/easygraph_utils;
 import tools/flowc/typechecker/solve_expectations;
+import math/stringmath;
 
 export {
 	// Set of a GEnv for solving constraints
@@ -148,10 +149,12 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 		saveGDot(ge1, name + "_orig");
 	}
 
+	startTime = timestamp();
+
 	// Go ahead and resolve it
 	ge2 = resolveGGraph(ge1, name, \e, l, u, ps, onFError : (GEnv, FcError) -> void -> {
 		fpos = if (isEmptySet(ps)) pos.start else set2array(ps)[0];
-		unifyGType(e, l, u, fpos, \err -> {
+		unifyGType(e, l, u, fpos, \err : string -> {
 			poss = mapSet(ps, \start -> FcPosition(pos.file, start, start));
 			onFError(e, FcError(name + ": " + err, set2array(poss)));
 		})
@@ -161,6 +164,13 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	}, \tenv : GEnv, error -> {
 		addFcTypeError(tenv.env.program, error);
 	});
+
+	endTime = timestamp();
+	timeSpent = (endTime - startTime) / 1000.0;
+	if (ge1.verbose >= 1 || timeSpent > 1.0) {
+		printStay(ge1.env, "Time to resolve " + name + ": " + d2st(timeSpent, 2) + "s");
+		printStay(ge2.env, "Number of nodes in the graph: " + i2s(sizeTree(ge2.grelations.positions)));
+	}
 
 	// Now, set the tyvars in the environment
 	foldTree(ge2.tyvars, env, \tv, type, acc -> {
@@ -239,18 +249,31 @@ unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (stri
 	if (output == input) {
 		env;
 	} else {
-		tr = Pair(output, input);
-		if (containsSet(env.seen, tr)) {
-			env;
+		if (false) {
+			tr = Pair(output, input);
+			if (containsSet(env.seen, tr)) {
+				env;
+			} else {
+				// We set an entry in the cache to avoid infinite recursion
+				seen = insertSet(env.seen, tr);
+				if (env.verbose >= 3)  {
+					pt = \t -> gtype2string(env, t);
+					printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
+				}
+				env2 = GEnv(env with seen = seen);
+				env3 = unifyAndRecurseGType(env2, output, input, pos, onError);
+
+				if (env.verbose >= 3)  {
+					printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
+				}
+				env3;
+			}
 		} else {
-			// We set an entry in the cache to avoid infinite recursion
-			seen = insertSet(env.seen, tr);
 			if (env.verbose >= 3)  {
 				pt = \t -> gtype2string(env, t);
 				printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
 			}
-			env2 = GEnv(env with seen = seen);
-			env3 = unifyAndRecurseGType(env2, output, input, pos, onError);
+			env3 = unifyAndRecurseGType(env, output, input, pos, onError);
 
 			if (env.verbose >= 3)  {
 				printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));

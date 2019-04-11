@@ -235,7 +235,7 @@ static bool MapFileToMemory(void *where, size_t length, std::string filename, si
     }
     else
     {
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
         cerr << "MapFile(" << std::hex << where << "," << length << std::dec << ",\"" << filename << "\")" << endl;
 #endif
         fclose(file);
@@ -344,7 +344,7 @@ StaticBuffer::Data::~Data()
     else
         total_mem -= size;
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     cerr << "StaticBuffer " << (mapped?"unmap":"free")
          << "; total " << total_mem << " heap, " << total_maps << " mmap." << endl;
 #endif
@@ -418,7 +418,7 @@ bool StaticBuffer::load_file(const std::string &fname, size_t size)
             free(ptr);
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (ok)
         cerr << "StaticBuffer load; total " << total_mem << " heap, " << total_maps << " mmap." << endl;
 #endif
@@ -462,7 +462,7 @@ bool StaticBuffer::allocate(size_t size, bool use_tmpfile)
             fclose(file);
             unlink(fname.c_str());
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
             cerr << "StaticBuffer tmpalloc; total " << total_mem << " heap, " << total_maps << " mmap." << endl;
 #endif
 
@@ -472,7 +472,7 @@ bool StaticBuffer::allocate(size_t size, bool use_tmpfile)
 
     p = shared_ptr<Data>(new Data((uint8_t*)malloc(size), size, false));
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     cerr << "StaticBuffer alloc; total " << total_mem << " heap, " << total_maps << " mmap." << endl;
 #endif
 

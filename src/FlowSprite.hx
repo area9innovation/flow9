@@ -68,14 +68,11 @@ class FlowSprite extends Sprite {
 				} else {
 					cachedImagesUrls.set(url, 1);
 
-					if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-						for (k in cachedImagesUrls.keys()) {
-							if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-								clearUrlTextureCache(k);
-							} else {
-								return;
-							}
-						}
+					var cachedImagesKeys = cachedImagesUrls.keys();
+					var cachedImagesCount = Lambda.count(cachedImagesUrls);
+					while (cachedImagesCount > MAX_CHACHED_IMAGES) {
+						clearUrlTextureCache(cachedImagesKeys.next());
+						cachedImagesCount--;
 					}
 				}
 			}

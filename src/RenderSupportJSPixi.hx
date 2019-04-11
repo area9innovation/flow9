@@ -45,7 +45,7 @@ class RenderSupportJSPixi {
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
 
-	// In fact that is needed only for android to have dimentions without
+	// In fact that is needed only for android to have dimensions without
 	// screen keyboard
 	private static var WindowTopHeight : Int;
 	private static var RenderSupportJSPixiInitialised : Bool = init();
@@ -767,18 +767,6 @@ class RenderSupportJSPixi {
 		return false;
 	}
 
-	private static function addAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
-		if (clip.accessWidget == null) return;
-
-		var attributesMap = new Map<String, String>();
-
-		for (kv in attributes) {
-			attributesMap.set(kv[0], kv[1]);
-		}
-
-		clip.accessWidget.addAccessAttributes(attributesMap);
-	}
-
 	public static function setAccessibilityEnabled(enabled : Bool) : Void {
 		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
 	}
@@ -787,17 +775,26 @@ class RenderSupportJSPixi {
 		EnableFocusFrame = show;
 	}
 
-	public static function setAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
-		if (AccessibilityEnabled && clip.accessWidget == null) {
-			// Create DOM node for access. properties
-			if (clip.nativeWidget != null) {
-				clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
-				addAccessAttributes(clip, attributes);
-			} else {
-				AccessWidget.createAccessWidget(clip, attributes);
+	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
+		var attributesMap = new Map<String, String>();
+
+		for (kv in attributes) {
+			attributesMap.set(kv[0], kv[1]);
+		}
+
+		if (clip.accessWidget == null) {
+			if (AccessibilityEnabled || attributesMap.get("tag") == "form") {
+				// Create DOM node for access. properties
+				if (clip.nativeWidget != null) {
+					clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
+
+					clip.accessWidget.addAccessAttributes(attributesMap);
+				} else {
+					AccessWidget.createAccessWidget(clip, attributesMap);
+				}
 			}
 		} else {
-			addAccessAttributes(clip, attributes);
+			clip.accessWidget.addAccessAttributes(attributesMap);
 		}
 	}
 
@@ -806,8 +803,6 @@ class RenderSupportJSPixi {
 			AccessWidget.removeAccessWidget(clip.accessWidget);
 		}
 	}
-
-
 
 	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
 		clip.accessCallback = callback;
@@ -1382,10 +1377,14 @@ class RenderSupportJSPixi {
 	}
 
 	public static function addFileDropListener(clip : Dynamic, maxFilesCount : Int, mimeTypeRegExpFilter : String, onDone : Array<Dynamic> -> Void) : Void -> Void {
-		var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
+		if (Platform.isMobile) {
+			return function() { };
+		} else {
+			var dropArea = new DropAreaClip(maxFilesCount, mimeTypeRegExpFilter, onDone);
 
-		clip.addChild(dropArea);
-		return function() { clip.removeChild(dropArea); };
+			clip.addChild(dropArea);
+			return function() { clip.removeChild(dropArea); };
+		}
 	}
 
 	public static function addVirtualKeyboardHeightListener(fn : Float -> Void) : Void -> Void {
@@ -1689,6 +1688,34 @@ class RenderSupportJSPixi {
 				if (untyped __instanceof__(f, DropShadowFilter)) {
 					dropShadowPadding = Math.max(untyped f.padding, dropShadowPadding);
 					dropShadowCount++;
+				} else {
+					if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
+						var fn = function () {
+							if (f.uniforms.time != null) {
+								f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
+							}
+
+							if (f.uniforms.seed != null) {
+								f.uniforms.seed = Math.random();
+							}
+
+							if (f.uniforms.bounds != null) {
+								var bounds = clip.getBounds(true);
+
+								f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
+							}
+
+							if (clip.getClipWorldVisible()) {
+								InvalidateStage();
+							}
+						};
+
+						clip.onAdded(function () {
+							PixiStage.on("drawframe", fn);
+
+							return function () { PixiStage.off("drawframe", fn); };
+						});
+					}
 				}
 
 				return f != null;
@@ -1724,6 +1751,13 @@ class RenderSupportJSPixi {
 
 	public static function makeGlow(radius : Float, spread : Float, color : Int, alpha : Float, inside : Bool) : Dynamic {
 		return null;
+	}
+
+	public static function makeShader(vertexSrc : String, fragmentSrc : String, uniforms : String) : Filter {
+		var uniformsSrc = uniforms == "" ? null : haxe.Json.parse(uniforms);
+		var shader = new Filter(vertexSrc == "" ? null : vertexSrc, fragmentSrc == "" ? null : fragmentSrc, uniformsSrc);
+
+		return shader;
 	}
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {

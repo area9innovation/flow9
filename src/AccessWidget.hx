@@ -386,21 +386,15 @@ class AccessWidget extends EventEmitter {
 		});
 	}
 
-	public static inline function createAccessWidget(clip : DisplayObject, attributes : Array<Array<String>>) : Void {
+	public static inline function createAccessWidget(clip : DisplayObject, attributes : Map<String, String>) : Void {
 		if (untyped clip.accessWidget != null) {
 			removeAccessWidget(untyped clip.accessWidget);
 		}
 
-		var attributesMap = new Map<String, String>();
-
-		for (kv in attributes) {
-			attributesMap.set(kv[0], kv[1]);
-		}
-
-		var tagName = attributesMap.get("tag");
+		var tagName = attributes.get("tag");
 
 		if (tagName == null) {
-			tagName = accessRoleMap.get(attributesMap.get("role"));
+			tagName = accessRoleMap.get(attributes.get("role"));
 		}
 
 		if (tagName == null) {
@@ -408,7 +402,7 @@ class AccessWidget extends EventEmitter {
 		}
 
 		untyped clip.accessWidget = new AccessWidget(clip, Browser.document.createElement(tagName));
-		untyped clip.accessWidget.addAccessAttributes(attributesMap);
+		untyped clip.accessWidget.addAccessAttributes(attributes);
 	}
 
 	public function get_element() : Element {

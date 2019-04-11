@@ -41,9 +41,12 @@ export {
 	*/
 	TextFragment(text : string, charStyle : [CharacterStyle]) -> TextFragments;
 	TextFragmentExt(text : string, charStyle : [CharacterStyle], styles : [TextFragmentStyle]) -> TextFragments;
-		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild;
+		TextFragmentStyle ::= TextFragmentMoreLineBreaks, TextFragmentLastChild, ParaElemIdx;
 			TextFragmentMoreLineBreaks();
 			TextFragmentLastChild();
+			// Index of current paragraph element the fragment belongs to.
+			// Needed to handle features that belong to whole paragraph element. 
+			ParaElemIdx(index : int);
 
 	replaceDoubleNL(s : string) -> string {
 		if (strIndexOf(s, "\n\n") >= 0)
@@ -59,7 +62,15 @@ export {
 
 	// If indexing is >= 0, we produce the indexes into the string of each wrap element. If not, send -100000
 	// moreLineBreaks allows line breaks after hyphen in number-number
-	breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool, indexingInit : int, init : List<WrapElement>, isLastChild : bool) -> List<WrapElement>;
+	breakTextFragment(
+		text : string,
+		style : [CharacterStyle],
+		moreLineBreaks : bool,
+		indexingInit : int,
+		init : List<WrapElement>,
+		isLastChild : bool,
+		paraElementIndexM : Maybe<int>
+	) -> List<WrapElement>;
 	// for text like "some text\n\n", we have to insert special InspectElement between NewLines in order to be able to position into such line
 	// also we have to add such element after the last \n in the last child text element of the paragraph
 	// makeEmptyLineInspectElement take index and style of the text and returns InspectElement with form with width=0., height={height of the Text with passed style}
@@ -274,7 +285,8 @@ TextFragmentExt(text, charStyle, style) {
 			containsStruct(style, TextFragmentMoreLineBreaks()),
 			-100000,
 			makeList(),
-			containsStruct(style, TextFragmentLastChild())
+			containsStruct(style, TextFragmentLastChild()),
+			maybeMap(tryExtractStruct(style, ParaElemIdx(-1)), \pIdx -> pIdx.index)
 		)
 	)
 }
@@ -562,14 +574,23 @@ applyRelativeScale(tx: Text) -> Text {
 	}))
 }
 
-breakTextFragment(text : string, style : [CharacterStyle], moreLineBreaks : bool, indexingInit : int, init : List<WrapElement>, isLastChild : bool) -> List<WrapElement> {
+breakTextFragment(
+	text : string,
+	style : [CharacterStyle],
+	moreLineBreaks : bool,
+	indexingInit : int,
+	init : List<WrapElement>,
+	isLastChild : bool,
+	paraElementIndexM : Maybe<int>
+) -> List<WrapElement> {
 
 	toInspectingElementIfNecessary : (int, int, InspectableElement) -> WrapElement = \indexing, offset, f -> {
-		if (0 <= indexing) {
+		wElem = if (0 <= indexing) {
 			InspectElement(offset, make(0.0), make(0.0), makeWH(), make(0.0), make(-1), f)
 		} else {
 			f
 		}
+		eitherMap(paraElementIndexM, \idx -> WordWrapInteractive(wElem, idx), wElem);
 	};
 
 	// Text with LetterSpacing honors spacing between characters only (JS, CPP)
