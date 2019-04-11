@@ -2759,13 +2759,13 @@ StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
 
     BinaryDeserializer worker(RUNNER);
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
 #endif
 
     StackSlot rv = worker.deserialize(value, defval, fixups);
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     RUNNER->flow_err << "Deserialized in " << (GetCurrentTime() - start_time) << " seconds." << endl;
 #endif
 

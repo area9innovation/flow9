@@ -3,6 +3,7 @@ import text/blueprint;
 import tools/flowc/typechecker2/gtype_util;
 import tools/flowc/typechecker2/gsubtype_graph;
 import tools/flowc/typechecker2/gbounds;
+import tools/flowc/typechecker2/gresolution_stage;
 import tools/flowc/debug;
 import tools/flowc/type_helpers;
 import loop;
@@ -10,28 +11,33 @@ import loop;
 
 /*
 While unifying, we are building a graph, and can keep track of tyvars
-which are unresolved.
-We can also keep track of tyvars which are updated, due to new nodes.
+which are unresolved with what stage of resolution they are in:
 
-	queue : Tree<stage : int (GResolutionStage), tyvarid : int>
+	tyvarsQueue : Tree<GQueueItem(stage, tyvarid), tyvarid : int>
 
 So the loop is:
 
-- Pick next tyvar, based on the priority.
-    Priority should be based on the stage, whether it is fixed, has fields or not
-    or something like that.
+- Pick next tyvar from the queue. TODO: We could attempt to prioritize these
+  based on constraints like fixed, names, fields, or something.
 
-- Then resolve that. Once we resolve it, other tyvars has new info, and are
-  reevaluated.
+- Then resolve the tyvar. Once we resolve it, other tyvars has new info, and are reset in stage.
 
-- For tyvars where there are multiple solutions, we try a stack of alternative 
-  bindings to find one that works.
+- For tyvars where there are multiple solutions, we try each to find one that works.
 
-- If we can not clarify a tyvar in a given iteration, we push it to the next
-  resolution stage
+- If we can not clarify a tyvar in a given iteration, we push it to the next resolution stage
 
-Whenever there is a change in the environment for a tyvar, it is bumped back to
+Whenever there is a change in the transitive bounds for a tyvar, it is bumped back to
 the initial stage.
+
+Types:
+- We should consider to convert types to ints, and use bitvectors for the type sets?
+
+GTyvarStage(
+	stage : int,
+	reqs : GTyvarRequirements,
+	options : [GType]
+);
+
 */
 
 export {
@@ -75,7 +81,8 @@ resolveGGraph(
 	grenv = GResolutionEnv(
 		nenv, name, unify, makeFcError, onError, 0, false, 0
 	);
-	doResolveGGraph(grenv).env;
+	gresolution = doResolveGGraph(grenv);
+	gresolution.env;
 }
 
 // When we are resolving the graph, we keep track of the progress with this structure
@@ -92,90 +99,57 @@ GResolutionEnv(
 );
 
 doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
-	nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
-	switch (nextTyvar) {
-		PopResult(item, tyvarid, rest): {
-			if (containsKeyTree(grenv.env.tyvars, tyvarid)) {
-				// Already solved. We can ignore
-				acc = GResolutionEnv(grenv 
-					with env = GEnv(
-						grenv.env
-						with grelations = GRelations(
-							grenv.env.grelations with tyvarQueue = rest
+	if (grenv.abort) {
+		grenv;
+	} else {
+		nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
+		switch (nextTyvar) {
+			PopResult(item, tyvarid, rest): {
+				if (containsKeyTree(grenv.env.tyvars, tyvarid)) {
+					// Already solved. We can ignore
+					acc = GResolutionEnv(grenv 
+						with env = GEnv(
+							grenv.env
+							with grelations = GRelations(
+								grenv.env.grelations with tyvarQueue = rest
+							)
 						)
-					)
-				);
-				doResolveGGraph(acc);
-			} else {
-				stage = [
-					GResolveSafeOnly(),
-					GResolveSafeButAmbiguous(),
-					GResolveSpeculative(),
-					GResolveTypars(),
-				][item.stage];
+					);
+					doResolveGGraph(acc);
+				} else {
+					stage = int2gresolutionStage(item.stage);
 
-				reqs = buildGTyvarRequirement(grenv.env, tyvarid);
-				if (grenv.env.verbose >= 2) {
-					printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
-				}
-				if (grenv.env.verbose >= 3) {
-					remaining = getTreeValues(rest);
-					printStay(grenv.env.env, "Remaining in queue: " + toString(remaining));
-				}
+					reqs = buildGTyvarRequirement(grenv.env, tyvarid);
+					if (grenv.env.verbose >= 2) {
+						printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
+					}
+					if (grenv.env.verbose >= 3) {
+						remaining = getTreeValues(rest);
+						printStay(grenv.env.env, "Remaining in queue: " + toString(remaining));
+					}
 
-				acc = GResolutionEnv(grenv 
-					with env = GEnv(
-						grenv.env
-						with grelations = GRelations(
-							grenv.env.grelations with
-							tyvarQueue = rest
+					acc = GResolutionEnv(grenv 
+						with env = GEnv(
+							grenv.env
+							with grelations = GRelations(
+								grenv.env.grelations with
+								tyvarQueue = rest
+							)
 						)
-					)
-				);
+					);
 
-				res = clarifyGTyvar(acc, reqs, stage);
-				if (res.env.verbose >= 2) {
-					printDedent(res.env.env, "}");
+					res = clarifyGTyvar(acc, reqs, stage);
+					if (res.env.verbose >= 2) {
+						printDedent(res.env.env, "}");
+					}
+					doResolveGGraph(res);
 				}
-				doResolveGGraph(res);
+			}
+			EmptyPopResult(): {
+				// OK, we are done.
+				grenv;
 			}
 		}
-		EmptyPopResult(): {
-			// OK, we are done.
-			grenv;
-		}
-	}
-}
-
-// We implement a staged heuristic for solving things.
-GResolutionStage ::= GResolveSafeOnly, GResolveSafeButAmbiguous, GResolveSpeculative, GResolveTypars;
-	// 1. Resolve all unambigious cases, not considering fields. We restructured fixed ones in this stage only
-	GResolveSafeOnly();
-
-	// 2. Also resovle unambigious cases, but consider field constraints as well.
-	GResolveSafeButAmbiguous();
-
-	// 3. Here we do prolog-style search of all allowed results, and check if they pan out
-	GResolveSpeculative();
-
-	// 4. Convert connected, unbound tyvars to type pars
-	GResolveTypars();
-
-nextGResolutionStage(stage : GResolutionStage) -> GResolutionStage {
-	switch (stage) {
-		GResolveSafeOnly(): GResolveSafeButAmbiguous();
-		GResolveSafeButAmbiguous(): GResolveSpeculative();
-		GResolveSpeculative(): GResolveTypars();
-		GResolveTypars(): GResolveTypars();
-	}
-}
-
-gresolutionStage2int(stage : GResolutionStage) -> int {
-	switch (stage) {
-		GResolveSafeOnly(): 0;
-		GResolveSafeButAmbiguous(): 1;
-		GResolveSpeculative(): 2;
-		GResolveTypars(): 3;
 	}
 }
 
@@ -369,15 +343,24 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 	} else {
 		type = makeGNamedType(grenv.env, candidates[0]);
 		errors = ref false;
-		// println("Speculating with " + candidates[0]);
+		if (grenv.env.verbose >= 4) {
+			printIndent(grenv.env.env, "Trying " + candidates[0]);
+		}
 		nenv = setGTyvar(grenv.env, grenv.unify, req, type, \__, __ -> {
 			errors := true;
 		});
+		if (grenv.env.verbose >= 4) {
+			printDedent(grenv.env.env, "Tried " + candidates[0] + " with error: " + b2s(^errors));
+		}
 
 		if (!^errors) {
-			if (true) {
+			// We limit the speculation to 5 levels
+			if (grenv.speculation < 5) {
 				// OK, run the rest of the algorithm against this one
 				// to check if it works out
+				if (grenv.env.verbose >= 4) {
+					printIndent(grenv.env.env, "Recursively speculating with " + candidates[0] + " {");
+				}
 				renv = doResolveGGraph(
 					GResolutionEnv(
 						grenv with env = nenv,
@@ -387,6 +370,9 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 						speculation = grenv.speculation + 1
 					)
 				);
+				if (grenv.env.verbose >= 4) {
+					printDedent(grenv.env.env, "} recursively speculated with " + candidates[0] + " with error: " + b2s(^errors));
+				}
 				
 				if (!^errors) {
 					if (renv.env.verbose >= 4) {
