@@ -767,15 +767,7 @@ class RenderSupportJSPixi {
 		return false;
 	}
 
-	public static function setAccessibilityEnabled(enabled : Bool) : Void {
-		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
-	}
-
-	public static function setEnableFocusFrame(show : Bool) : Void {
-		EnableFocusFrame = show;
-	}
-
-	public static function setAccessAttributes(clip : Dynamic, attributes : Array<Array<String>>) : Void {
+	private static function addAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
 		if (clip.accessWidget == null) return;
 
 		var attributesMap = new Map<String, String>();
@@ -784,17 +776,28 @@ class RenderSupportJSPixi {
 			attributesMap.set(kv[0], kv[1]);
 		}
 
-		if ((AccessibilityEnabled && clip.accessWidget == null) || attributesMap.get("role") == "form") {
+		clip.accessWidget.addAccessAttributes(attributesMap);
+	}
+
+	public static function setAccessibilityEnabled(enabled : Bool) : Void {
+		AccessibilityEnabled = enabled && Platform.AccessiblityAllowed;
+	}
+
+	public static function setEnableFocusFrame(show : Bool) : Void {
+		EnableFocusFrame = show;
+	}
+
+	public static function setAccessAttributes(clip : Dynamic, attributes : Array< Array<String> >) : Void {
+		if (AccessibilityEnabled && clip.accessWidget == null) {
 			// Create DOM node for access. properties
 			if (clip.nativeWidget != null) {
 				clip.accessWidget = new AccessWidget(clip, clip.nativeWidget);
-
-				clip.accessWidget.addAccessAttributes(attributesMap);
+				addAccessAttributes(clip, attributes);
 			} else {
-				AccessWidget.createAccessWidget(clip, attributesMap);
+				AccessWidget.createAccessWidget(clip, attributes);
 			}
 		} else {
-			clip.accessWidget.addAccessAttributes(attributesMap);
+			addAccessAttributes(clip, attributes);
 		}
 	}
 
@@ -803,6 +806,8 @@ class RenderSupportJSPixi {
 			AccessWidget.removeAccessWidget(clip.accessWidget);
 		}
 	}
+
+
 
 	public static function setAccessCallback(clip : Dynamic, callback : Void -> Void) : Void {
 		clip.accessCallback = callback;
