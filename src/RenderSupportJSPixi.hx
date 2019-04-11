@@ -964,6 +964,10 @@ class RenderSupportJSPixi {
 		clip.setTextInputType(type);
 	}
 
+	public static function setTextInputAutoCompleteType(clip : TextClip, type : String) : Void {
+		clip.setTextInputAutoCompleteType(type);
+	}
+
 	public static function setTextInputStep(clip : TextClip, step : Float) : Void {
 		clip.setTextInputStep(step);
 	}
