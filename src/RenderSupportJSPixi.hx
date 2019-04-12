@@ -361,6 +361,9 @@ class RenderSupportJSPixi {
 		PixiStage.transformChanged = true;
 		PixiStage.invalidateStage();
 
+		// TODO: Remove
+		PixiStage.addChild(new ThreeJSStage());
+
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
 	}
