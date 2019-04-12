@@ -36,7 +36,7 @@
     }
     
     statusBarVisible = YES;
-    self.modalPresentationCapturesStatusBarAppearance = YES;
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void) viewDidAppear:(BOOL)animated {
