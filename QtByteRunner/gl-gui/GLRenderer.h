@@ -18,6 +18,8 @@
     UNIFORM(u_useTexture) \
     UNIFORM(u_swizzleRB) \
     UNIFORM(u_tex_shifts) \
+    UNIFORM(u_gauss_shifts) \
+    UNIFORM(u_gauss_steps) \
     UNIFORM(u_gauss_base_coeff) \
     UNIFORM(u_gauss_shift_coeff) \
     UNIFORM(u_local_blur_shift) \
@@ -49,10 +51,7 @@ class GLRenderer
         ProgFilterBevel,
         ProgFilterBevelBlur,
         ProgGauss3x3,
-        ProgGauss5x5,
-        ProgGauss9x9,
-        ProgGauss13x13,
-        ProgGauss17x17,
+        ProgGauss,
         ProgLAST
     };
 
