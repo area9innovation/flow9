@@ -16,7 +16,7 @@ protected:
     float blur_radius; // <=0: no blur
     float blur_quality;
 
-    float getBlurSigma(const GLTransform &transform);
+    float getBlurSigma(const GLTransform &transform, float radius = -1.0);
 
     bool needsSeparateBlur(float sigma) {
         return sigma >= 1.25f - std::min(3.0f, blur_quality) * 0.1f;

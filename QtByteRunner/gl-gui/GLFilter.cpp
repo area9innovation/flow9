@@ -25,14 +25,19 @@ bool GLFilter::flowDestroyObject()
     return true;
 }
 
-float GLFilter::getBlurSigma(const GLTransform &transform)
+float GLFilter::getBlurSigma(const GLTransform &transform, float radius)
 {
-    if (blur_radius <= 0)
-        return -1;
+    if (radius <= 0.0) {
+        radius = blur_radius;
+    }
 
-    float radius = 0.5 * blur_radius * transform.getScale();
-    float quality = std::min(3.0f, blur_quality);
-    return sqrtf(quality*radius*(radius+1)/3);
+    if (radius <= 0.0) {
+        return -1;
+    }
+
+    float r = 0.5 * radius * transform.getScale();
+    float q = std::min(3.0f, blur_quality);
+    return sqrtf(q*r*(r+1)/3);
 }
 
 vec2 GLFilter::transformFilterShift(GLClip * /*clip*/, vec2 shift)
@@ -102,8 +107,40 @@ void GLFilter::renderBlurNode(GLClip *clip, GLRenderer *renderer, GLDrawSurface 
 {
     float sigma = getBlurSigma(clip->getGlobalTransform());
 
-    if (needsSeparateBlur(sigma))
+    if (!needsSeparateBlur(sigma)) {
+        return;
+    }
+
+    if (blur_radius <= 30.0f) {
         renderBigBlur(renderer, input, output, sigma);
+    } else {
+        int blur_steps = (int) ceil(blur_radius / 30.0f);
+        GLDrawSurface input2 = *input;
+        GLDrawSurface output2 = *output;
+
+        for (int i = 0; i < blur_steps; i++) {
+            float radius = -1;
+
+            if (i == blur_steps - 1) {
+                radius = blur_radius - (blur_steps - 1.0f) * 30.0f;
+            } else {
+                radius = 30.0f;
+            }
+
+            sigma = getBlurSigma(clip->getGlobalTransform(), radius);
+
+            if (i == blur_steps -1) {
+                renderBigBlur(renderer, &input2, output, sigma);
+            } else {
+                renderBigBlur(renderer, &input2, &output2, sigma);
+
+                input2 = *(&output2);
+                output2 = *output;
+            }
+        }
+    }
+
+
 }
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLBlurFilter, GLFilter);
@@ -119,9 +156,11 @@ void GLBlurFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *out
 {
     float sigma = getBlurSigma(clip->getGlobalTransform());
 
-    if (needsSeparateBlur(sigma))
+    if (needsSeparateBlur(sigma)) {
+        qDebug() << "render";
         renderBigBlur(renderer, input, output, sigma, true);
-    else {
+        renderBigBlur(renderer, output, output, sigma, true);
+    } else {
         output->makeCurrent();
         renderer->renderLocalBlur(input, sigma);
     }

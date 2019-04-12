@@ -421,12 +421,12 @@ void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_c
     beginFilter(input, NULL);
     
     setProgram(ProgGauss);
-    
-    float gauss_coeffs[steps];
+
+    float* gauss_coeffs = new float[steps];
     for (int i = 0; i < steps; i++)
         gauss_coeffs[i] = coeffs[i];
-    
-    float v_shifts[2 * steps];
+
+    float* v_shifts = new float[2 * steps];
     for (int i = 0; i < 2 * steps; i++)
         v_shifts[i] = 0.0;
     
@@ -436,6 +436,8 @@ void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_c
     else
         for (int i = 0; i < steps; i++)
             v_shifts[2*i] = deltas[i] * u_in_pixel_size.x;
+
+    cout << steps << endl;
 
     glUniform1i(programs[cur_program].u_gauss_steps, steps);
     glUniform1f(programs[cur_program].u_gauss_base_coeff, base_coeff);
