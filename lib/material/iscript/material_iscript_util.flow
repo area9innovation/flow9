@@ -564,20 +564,19 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 	);
 
 	if (countList(getValue(manager.iscript.requests)) > 0) {
-		setHttpRequestCallback(\url, post, headers, params2 -> {
-			params = filter(params2, \p -> p.key != "t" && p.key != "jwt");
+		setHttpRequestCallback(\url, post, headers2, params2 -> {
+			headers = filterRequestRecordHeaders(headers2);
+			params = filterRequestRecordParams(params2);
+			received = IScriptRequestRecord(url, post, headers, params, 0., IScriptRequestOk(""));
+			compareFns : HttpRequestResponseCompareFns = getHttpRequestResponseCompareFns(received);
+
 			eitherFn(
 				foldList(getValue(manager.iscript.requests), None(), \acc, r -> {
 					if (isNone(acc)) {
 						rec = r.second;
-
 						switch (rec : IScriptRecord) {
 							IScriptRequestRecord(_url, _post, _headers, _params, delay, response): {
-								eitherMap(
-									getHttpRequestCompareFn(),
-									\fn -> fn(IScriptRequestRecord(url, post, headers, params, delay, response), rec),
-									(_url == url && _post == post && _headers == headers && _params == params)
-								)
+								compareFns.requestsCompareFn(received, rec)
 								|> (\v -> if (v) Some(rec) else acc)
 							}
 							default: acc;
@@ -589,11 +588,7 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 				\rq : IScriptRequestRecord -> {
 					HttpRequestCallbacks(
 						\data -> {
-							eitherMap(
-								getHttpResponseOkCompareFn(),
-								\fn -> fn(rq, IScriptRequestOk(data)),
-								rq.response == IScriptRequestOk(data)
-							)
+							compareFns.responseCompareFn(IScriptRequestOk(data), rq.response)
 							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
 							}
@@ -602,11 +597,7 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 							})
 						},
 						\error -> {
-							eitherMap(
-								getHttpResponseErrorCompareFn(),
-								\fn -> fn(rq, IScriptRequestError(error)),
-								rq.response == IScriptRequestError(error)
-							)
+							compareFns.responseCompareFn(IScriptRequestError(error), rq.response)
 							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
 							}
@@ -628,10 +619,10 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 				\ -> {
 					HttpRequestCallbacks(
 						\data -> {
-							iScriptError(manager, "Request error " + url + " : unknown request", None());
+							iScriptError(manager, "Request error " + url + " " + toString(params2) + " : unknown request", None());
 						},
 						\error -> {
-							iScriptError(manager, "Request error " + url + " : unknown request", None());
+							iScriptError(manager, "Request error " + url + " " + toString(params2) + " : unknown request", None());
 						},
 						\status -> {
 							// println("Unknown request");
@@ -647,6 +638,9 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 	\ -> {
 		clearHttpRequestCallback();
 		if (countList(getValue(manager.iscript.requests)) > 0) {
+			if (getUrlParameter(UP_ISCRIPTTEST) != "") {
+				iter(list2array(getValue(manager.iscript.requests)), \v -> println(v))
+			}
 			iScriptError(manager, "Requests error : " + i2s(countList(getValue(manager.iscript.requests))) + " requests left in queue", None());
 			next(manager.iscript.requests, makeList());
 		}

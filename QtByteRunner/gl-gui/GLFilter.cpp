@@ -25,14 +25,19 @@ bool GLFilter::flowDestroyObject()
     return true;
 }
 
-float GLFilter::getBlurSigma(const GLTransform &/*transform*/)
+float GLFilter::getBlurSigma(const GLTransform &transform, float radius)
 {
-    if (blur_radius <= 0)
-        return -1;
+    if (radius <= 0.0) {
+        radius = blur_radius;
+    }
 
-    float radius = 0.5 * blur_radius;// * transform.getScale();
-    float quality = std::min(3.0f, blur_quality);
-    return sqrtf(quality*radius*(radius+1)/3);
+    if (radius <= 0.0) {
+        return -1;
+    }
+
+    float r = 0.5 * radius;
+    float q = std::min(3.0f, blur_quality);
+    return sqrtf(q*r*(r+1)/3);
 }
 
 vec2 GLFilter::transformFilterShift(GLClip * /*clip*/, vec2 shift)
@@ -54,20 +59,18 @@ void GLFilter::computeBlurCoeffs(std::vector<float> *coeffs, std::vector<float> 
 {
     std::vector<float> raw_coeffs;
 
-
-
     float c1 = 1.0f/sqrtf(2*M_PI)/sigma;
     float c2 = -0.5f/sigma/sigma;
 
     float base_coeff = c1;
     float csum = base_coeff;
 
-    for (int i = 1; i <= 8; i++) {
+    for (int i = 1; i <= 32; i++) {
         float c = c1 * exp(i*i*c2);
 
         raw_coeffs.push_back(c);
         csum += c*2;
-
+        
         if ((i%2) == 0 && (1.0f - csum) <= margin)
             break;
     }
@@ -88,7 +91,7 @@ void GLFilter::renderBigBlur(GLRenderer *renderer, GLDrawSurface *input, GLDrawS
     GLDrawSurface tmp(renderer, input->getBBox(), output->getFlowStack());
 
     std::vector<float> coeffs, deltas;
-    computeBlurCoeffs(&coeffs, &deltas, sigma, 0.25f / std::min(blur_quality,3.0f));
+    computeBlurCoeffs(&coeffs, &deltas, sigma, 0.25f / std::min(3.0f,blur_quality));
 
     tmp.makeCurrent();
     renderer->renderBigBlur(input, false, coeffs[0], deltas.size(), &deltas[0], &coeffs[1]);
@@ -104,8 +107,40 @@ void GLFilter::renderBlurNode(GLClip *clip, GLRenderer *renderer, GLDrawSurface 
 {
     float sigma = getBlurSigma(clip->getGlobalTransform());
 
-    if (needsSeparateBlur(sigma))
+    if (!needsSeparateBlur(sigma)) {
+        return;
+    }
+
+    if (blur_radius <= 30.0f) {
         renderBigBlur(renderer, input, output, sigma);
+    } else {
+        int blur_steps = (int) ceil(blur_radius / 30.0f);
+        GLDrawSurface input2 = *input;
+        GLDrawSurface output2 = *output;
+
+        for (int i = 0; i < blur_steps; i++) {
+            float radius = -1;
+
+            if (i == blur_steps - 1) {
+                radius = blur_radius - (blur_steps - 1.0f) * 30.0f;
+            } else {
+                radius = 30.0f;
+            }
+
+            sigma = getBlurSigma(clip->getGlobalTransform(), radius);
+
+            if (i == blur_steps -1) {
+                renderBigBlur(renderer, &input2, output, sigma);
+            } else {
+                renderBigBlur(renderer, &input2, &output2, sigma);
+
+                input2 = *(&output2);
+                output2 = *output;
+            }
+        }
+    }
+
+
 }
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLBlurFilter, GLFilter);
@@ -121,9 +156,9 @@ void GLBlurFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *out
 {
     float sigma = getBlurSigma(clip->getGlobalTransform());
 
-    if (needsSeparateBlur(sigma))
+    if (needsSeparateBlur(sigma)) {
         renderBigBlur(renderer, input, output, sigma, true);
-    else {
+    } else {
         output->makeCurrent();
         renderer->renderLocalBlur(input, sigma);
     }

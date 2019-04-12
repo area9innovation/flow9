@@ -5,7 +5,10 @@ import pixi.core.textures.BaseTexture;
 using DisplayObjectHelper;
 
 class FlowSprite extends Sprite {
+	private var scrollRect : FlowGraphics;
 	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+	private var transformChanged : Bool = true;
 
 	private var url : String = "";
 	private var loaded : Bool = false;
@@ -17,6 +20,14 @@ class FlowSprite extends Sprite {
 
 	private static inline var MAX_CHACHED_IMAGES : Int = 50;
 	private static var cachedImagesUrls : Map<String, Int> = new Map<String, Int>();
+
+	public function getWidth() : Float {
+		return texture != null ? texture.width : 0;
+	}
+
+	public function getHeight() : Float {
+		return texture != null ? texture.height : 0;
+	}
 
 	public function new(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) {
 		super();
@@ -38,6 +49,15 @@ class FlowSprite extends Sprite {
 		once("added", onAdded);
 	}
 
+	private static function clearUrlTextureCache(url : String) : Void {
+		cachedImagesUrls.remove(url);
+		var texture = Texture.removeFromCache(url);
+		var baseTexture = untyped BaseTexture.removeFromCache(url);
+
+		untyped __js__("delete baseTexture");
+		untyped __js__("delete texture");
+	}
+
 	private static function pushTextureToCache(texture : Texture) : Void {
 		if (texture != null && texture.baseTexture != null && texture.baseTexture.imageUrl != null) {
 			var url = texture.baseTexture.imageUrl;
@@ -48,16 +68,11 @@ class FlowSprite extends Sprite {
 				} else {
 					cachedImagesUrls.set(url, 1);
 
-					if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-						for (k in cachedImagesUrls.keys()) {
-							if (Lambda.count(cachedImagesUrls) > MAX_CHACHED_IMAGES) {
-								cachedImagesUrls.remove(k);
-								Texture.removeFromCache(url);
-								untyped BaseTexture.removeFromCache(url);
-							} else {
-								return;
-							}
-						}
+					var cachedImagesKeys = cachedImagesUrls.keys();
+					var cachedImagesCount = Lambda.count(cachedImagesUrls);
+					while (cachedImagesCount > MAX_CHACHED_IMAGES) {
+						clearUrlTextureCache(cachedImagesKeys.next());
+						cachedImagesCount--;
 					}
 				}
 			}
@@ -69,14 +84,12 @@ class FlowSprite extends Sprite {
 			var url = texture.baseTexture.imageUrl;
 
 			if (url != null) {
-				if (cachedImagesUrls.exists(url) && (cachedImagesUrls.get(url) > 1 || untyped texture.baseTexture.hasLoaded && texture.width * texture.height < 500 * 500)) {
+				if (cachedImagesUrls.exists(url) && cachedImagesUrls.get(url) > 1) {
 					cachedImagesUrls.set(url, cachedImagesUrls[url] - 1);
 
 					return cachedImagesUrls.get(url) == 0;
 				} else {
-					cachedImagesUrls.remove(url);
-					Texture.removeFromCache(url);
-					untyped BaseTexture.removeFromCache(url);
+					clearUrlTextureCache(url);
 
 					return true;
 				}
@@ -139,7 +152,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		InvalidateStage();
+		invalidateStage();
 	}
 
 	private function onError() : Void {
@@ -155,7 +168,7 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			InvalidateStage();
+			invalidateStage();
 
 			renderable = true;
 			loaded = true;

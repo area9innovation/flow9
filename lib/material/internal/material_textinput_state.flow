@@ -23,6 +23,7 @@ export {
 	MTextEditorIScriptBehaviours(
 		content : DynamicBehaviour<string>,
 		inputType : InputType,
+		autoCompleteType : Maybe<AutoCompleteType>,
 		label : string,
 		dynamicSize : bool,
 		focus : DynamicBehaviour<bool>,
@@ -43,6 +44,7 @@ export {
 		parent : MFocusGroup,
 		content : DynamicBehaviour<string>,
 		inputType : InputType,
+		autoCompleteType : Maybe<AutoCompleteType>,
 		mfocus : MFocus,
 		focus : DynamicBehaviour<bool>,
 		position : DynamicBehaviour<int>,
@@ -260,6 +262,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	parent = mfocus.parent;
 	content = iScriptBehaviours.content;
 	inputType = iScriptBehaviours.inputType;
+	autoCompleteType = iScriptBehaviours.autoCompleteType;
 	readOnly = iScriptBehaviours.readOnly;
 	numeric = iScriptBehaviours.numeric;
 	numericStep = if (numeric) tryExtractStruct(style, MNumericStep(const(1.))) else None();
@@ -572,7 +575,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 						if (length(f) > 0)
 							MCompletionFn(f[0].fn)
 						else
-							extractStruct(style, defaultCompletionFn(manager, parent, style))
+							eitherFn(
+								tryExtractStruct(style, MCompletionFn(\__, __, __ -> TEmpty())),
+								idfn,
+								\ -> defaultCompletionFn(manager, parent, style)
+							)
 					),
 					make([]),
 					make(-1),
@@ -1007,6 +1014,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		parent,
 		content,
 		showPasswordFallbackType,
+		autoCompleteType,
 		mfocus,
 		focus,
 		position,
@@ -1076,6 +1084,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 	);
 	readOnly = extractStruct(style, ReadOnly(false)).readOnly;
 	inputType = extractStruct(style, TextInputType(TextType())).inputType;
+	autoCompleteType = tryExtractStruct(style, AutoCompleteType(ACUserName()));
 	numeric = inputType == NumericType();
 	isTextInputInPopup = !contains(style, MTextInputOutOfPopup());
 	useNativeInput = extractStruct(style, MNativeInput(^nativeInputs && !readOnly && isTextInputInPopup)).useNativeInput || mobile || macosx();
@@ -1114,6 +1123,7 @@ makeMTextEditorIScriptBehaviours(content : DynamicBehaviour<string>, style : [MA
 	MTextEditorIScriptBehaviours(
 		content,
 		inputType,
+		autoCompleteType,
 		label,
 		dynamicSize,
 		focus,
@@ -2141,9 +2151,11 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 }
 
 makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	charStyle = MTextStyle2CharacterStyle(parent, inputState.mTextStyle);
-	fontSize = extractStruct(charStyle, FontSize(0.)).size;
-	interlineSpacing = fontSize * 1.2 - getTextSize("M", charStyle).height;
+	interlineSpacing = if (inputState.multiline) {
+		charStyle = MTextStyle2CharacterStyle(parent, inputState.mTextStyle);
+		fontSize = extractStruct(charStyle, FontSize(0.)).size;
+		fontSize * 1.2 - getTextSize("M", charStyle).height;
+	} else 0.;
 
 	inputFlexibleSize =
 		if (mobile && ios())
@@ -2203,101 +2215,115 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	inpWH = makeWH();
 
 	textInput = \ ->
-		TFForm(
-			FTextInput(
-				inputState.content,
-				inpWH,
-				concatA([
-					cast(inputState.textStyle : [CharacterStyle] -> [FTextInputStyle]),
-					[
-						FWordWrap(const(inputState.wordWrap)),
-						FMultiline(const(inputState.multiline)),
-						FInputType(eitherFn(
-							inputState.password,
-							\ps ->
-								fif(ps.showPassword, const(inputState.inputType), const(PasswordType())),
-							\ ->
-								const(if (inputState.numeric) NumericType() else inputState.inputType)
-						)),
-						FReadOnly(const(inputState.readOnly)),
-						FMaxChars(const(inputState.maxChars)),
-						FAutoAlign(const(inputState.align)),
-						FFocus(inputState.focus),
-						FPosition(inputState.position),
-						FSelection(inputState.selection),
-						FCursorColor(const(MColor2int(inputState.color))),
-						FCursorOpacity(const(1.)),
-						FCursorWidth(const(2.)),
-						FInputKeyFilter(\name, ke -> {
-							filterKey =
-								eitherMap(inputState.processedKeyDown, \pk -> pk.fn(ke), true) &&
-								(js || (inputState.multiline && !ke.shift) || (ke.keycode != 9 && ke.keycode != 16777218)) &&
-								eitherMap(
-									inputState.autocomplete,
-									\ac -> (ke.keycode != 13 || getValue(ac.selected) < 0),
-									true
-								);
+		TransformTAcc(\t2a, pi, ss, mo ->
+			t2a(
+				TFForm(
+					FTextInput(
+						inputState.content,
+						inpWH,
+						concatA([
+							cast(inputState.textStyle : [CharacterStyle] -> [FTextInputStyle]),
+							[
+								FWordWrap(const(inputState.wordWrap)),
+								FMultiline(const(inputState.multiline)),
+								FInputType(eitherFn(
+									inputState.password,
+									\ps ->
+										fif(ps.showPassword, const(inputState.inputType), const(PasswordType())),
+									\ ->
+										const(if (inputState.numeric) NumericType() else inputState.inputType)
+								)),
+								FReadOnly(const(inputState.readOnly)),
+								FMaxChars(const(inputState.maxChars)),
+								FAutoAlign(const(inputState.align)),
+								FFocus(inputState.focus),
+								FPosition(inputState.position),
+								FSelection(inputState.selection),
+								FCursorColor(const(MColor2int(inputState.color))),
+								FCursorOpacity(const(1.)),
+								FCursorWidth(const(2.)),
+								FInputKeyFilter(\name, ke -> {
+									filterKey =
+										eitherMap(inputState.processedKeyDown, \pk -> pk.fn(ke), true) &&
+										(js || (inputState.multiline && !ke.shift) || (ke.keycode != 9 && ke.keycode != 16777218)) &&
+										eitherMap(
+											inputState.autocomplete,
+											\ac -> (ke.keycode != 13 || getValue(ac.selected) < 0),
+											true
+										);
 
-							if (filterKey && checkIScriptCaptureOption(manager, IScriptCaptureKeyEvents())) {
-								addIScriptBehaviourRecord(
-									manager,
-									inputState.mfocus.name,
-									name,
-									KeyEventRecord(ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode),
-									makeList(),
-									ISKeyEvent(),
-									getCallstackIfNeeded(manager)
-								)
-							}
+									if (filterKey && checkIScriptCaptureOption(manager, IScriptCaptureKeyEvents())) {
+										addIScriptBehaviourRecord(
+											manager,
+											inputState.mfocus.name,
+											name,
+											KeyEventRecord(ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode),
+											makeList(),
+											ISKeyEvent(),
+											getCallstackIfNeeded(manager)
+										)
+									}
 
-							filterKey;
-						})
-					],
-					eitherMap(
-						inputState.numericStep,
-						\st ->
-							[FNumericStep(st.step)],
-						[]
-					),
-					eitherMap(
-						inputState.filterFn,
-						\fn ->
-							[FInputFilter(\str -> fn.fn(str, getValue(inputState.focus)))],
-						[]
+									filterKey;
+								}),
+								ViewBounds(fboundsapplytransform(pi.viewBounds, finverttransform(pi.transformMatrix)))
+							],
+							eitherMap(
+								inputState.autoCompleteType,
+								\ac ->
+									[FAutoCompleteType(const(ac.type))],
+								[]
+							),
+							eitherMap(
+								inputState.numericStep,
+								\st ->
+									[FNumericStep(st.step)],
+								[]
+							),
+							eitherMap(
+								inputState.filterFn,
+								\fn ->
+									[FInputFilter(\str -> fn.fn(str, getValue(inputState.focus)))],
+								[]
+							)
+						])
 					)
-				])
-			)
-			|> (\f ->
-				if ((^fAccessibilityEnabled || cpp) && !mobile) {
-					accessProperties = extractStructMany(state, FAccessAttribute("", const("")));
+					|> (\f ->
+						if ((^fAccessibilityEnabled || cpp) && !mobile) {
+							accessProperties = extractStructMany(state, FAccessAttribute("", const("")));
 
-					if (fgetValue(parent.id) != -2)
-						FAccess(
-							concat(
-								accessProperties,
-								[
-									FAccessTabOrder(fselect(parent.tabOrder, FLift(\to -> arrayPush(to, -1)))),
-									FAccessEnabled(inputState.mfocus.focusEnabled),
-									FAccessZorder(parent.zorder)
-								]
-							),
+							if (fgetValue(parent.id) != -2)
+								FAccess(
+									concat(
+										accessProperties,
+										[
+											FAccessTabOrder(fselect(parent.tabOrder, FLift(\to -> arrayPush(to, -1)))),
+											FAccessEnabled(inputState.mfocus.focusEnabled),
+											FAccessZorder(parent.zorder)
+										]
+									),
+									f
+								)
+							else
+								FAccess(
+									concat(
+										accessProperties,
+										[
+											FAccessZorder(parent.zorder)
+										]
+									),
+									f
+								)
+						} else {
 							f
-						)
-					else
-						FAccess(
-							concat(
-								accessProperties,
-								[
-									FAccessZorder(parent.zorder)
-								]
-							),
-							f
-						)
-				} else {
-					f
-				}
-			),
-			zeroTMetrics
+						}
+					),
+					zeroTMetrics
+				),
+				pi,
+				ss,
+				mo
+			)
 		)
 		|> (\f -> TFixSize(f, TGhost("MTextInputSize")))
 		|> (\f -> disableScrollInsideEnabled(manager, f, inputState.mfocus.focused))
@@ -2330,7 +2356,6 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	TVisibleLazy(inputState.mfocus.focusEnabled, textInput)
 	|> (\f ->
 		TGroup2WithoutMetrics(
-			f,
 			TVisible(
 				fnot(inputState.mfocus.focused),
 				MScroll2T(
@@ -2344,13 +2369,14 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						else if (inputState.align == AutoAlignLeft())
 							TDisplay("MTextInputText")
 						else
-							TBaseAlignA(TDisplay("MTextInputText")),
+							TAlignStart(TDisplay("MTextInputText")),
 						TGhost("MTextInputSize"),
 						[TScrollbars(invisibleScrollBar, getMaterialScrollBar().y)]
 					),
 					m2t
 				)
-			)
+			),
+			f
 		)
 	)
 	|> (\f -> TGroup2SameMetrics(TDisplay("MTextInputSize"), f))
@@ -2403,62 +2429,6 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 			),
 			f
 		)
-	)
-	|> (\f ->
-		if (!mobile)
-			eitherMap(
-				inputState.processedKeyDown,
-				\pk -> {
-					prevC = ref fgetValue(inputState.content);
-
-					TConstruct(
-						[
-							makeSubscribeUns(inputState.mfocus.focused, \fc ->
-								if (fc) {
-									uns = ref None();
-
-									[
-										interruptibleTimer(
-											10,
-											\ -> {
-												uns := Some(trender(
-													TInteractive(
-														[
-															KeyDown2(\h, k -> {
-																c = fgetValue(inputState.content);
-
-																if (!pk.fn(k) && (js || ^prevC != fgetValue(inputState.content))) {
-																	if (js)
-																		deferred(\ -> next(inputState.content, c));
-
-																	next(inputState.content, ^prevC);
-																}
-
-																prevC := fgetValue(inputState.content);
-
-																h
-															})
-														],
-														TRectangle(interactiveRectangleStyle, TFillXY())
-													),
-													inputState.manager.manager.renderStyle
-												))
-											}
-										),
-										\ -> dispUnsM(uns)
-									]
-								} else {
-									[]
-								}
-							)
-						],
-						f
-					)
-				},
-				f
-			)
-		else
-			f
 	)
 }
 

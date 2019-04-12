@@ -38,7 +38,7 @@ public class ResourceCache {
     }
 
     private Context app_context;
-    private DefaultHttpClient http_client;
+
     
     private File cache_dir;
     @Nullable
@@ -53,7 +53,6 @@ public class ResourceCache {
 
     public ResourceCache(Context context) {
         app_context = context;
-        http_client = Utils.createHttpClient();
     }
 
     public interface Resolver {
@@ -266,7 +265,7 @@ public class ResourceCache {
 
             pending_requests.put(link, request);
 
-            Utils.loadHttpAsync(http_client, request, output, new Utils.HttpLoadAdaptor(link.toString()) {
+            Utils.loadHttpAsync(request, output, new Utils.HttpLoadAdaptor(link.toString()) {
                 boolean switched = false;
                 
                 public boolean httpStatus(int status) {

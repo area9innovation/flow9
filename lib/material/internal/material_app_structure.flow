@@ -11,11 +11,13 @@ MAppState(
 	appBar : Maybe<MAppBarState>,
 	leftNav : Maybe<MAppNav>,
 	rightNav : Maybe<MAppNav>,
+	bottomSheet : Maybe<MBottomSheetState>,
 	flexible : Maybe<MAppFlexibleState>,
 	point : DynamicBehaviour<Point>,
 	down : DynamicBehaviour<bool>,
 	wh : DynamicBehaviour<WidthHeight>,
 	scrollInspect : TScrollInspectVisible,
+	scrollParent : DynamicBehaviour<Maybe<MFocusGroup>>,
 	state : [MComponentGroupState],
 );
 
@@ -44,71 +46,83 @@ MExtendedAppBarState(
 	style : [MExtendedToolbarStyle]
 );
 
+MBottomSheetState(
+	content : (expanded : Transform<bool>) -> Material,
+	expanding : Maybe<MExpandingBottomSheet>,
+	style : [MBottomSheetStyle]
+);
+
+sideNavStandardWidth = 320.;
+
 MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructure, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 		state = makeMAppState(manager, m);
 
-		TCols([
-			if (isSome(state.leftNav))
-				[TDisplay("MAppLeftPanelSize")]
-			else
-				[],
-			[TGroup2(TDisplay("MAppContent"), TDisplay("MAppFloatingContent"))],
-			if (isSome(state.rightNav))
-				[TDisplay("MAppRightPanelSize")]
-			else
-				[]
-		] |> concatA)
+		TDisplay("MAppContent")
+		|> (\t -> eitherMap(state.flexible,
+				\__ -> TCols2(t, TGhost("MAppSideSheet")),
+				t)
+			)
+		|> restrictSizeBySideNavs(state)
 		|> (\f ->
 			eitherMap(state.appBar, \ab -> {
 				scrollEnabled = eitherMap(ab.extendToolbar, \eab -> fnot(eab.trigger), const(true));
-				TLines2(TGhost("MAppBar"), f)
+				scrollStyle = [
+					[
+						state.scrollInspect,
+						TScrollPosition(ab.scrollPosition),
+						TScrollKeysEnabled(const(true)),
+						TScrollMouseEnabled(scrollEnabled)
+					],
+					if (isSome(ab.floatingToolbar) || isSome(ab.extendToolbar)) [
+						TScrollDisableOutOfBounds(const(true)),
+						TScrollbars(invisibleScrollBar, invisibleScrollBar),
+					]
+					else []
+				]
+				|> concatA;
+
+				(if (isSome(ab.floatingToolbar)) TLines2(THeight(TGhost("MAppBar")), f) else f)
+				|> wrapContentByScroll(manager, parent, state.scrollParent, m2t, m.style, scrollStyle)
+				|> (\t -> if (isNone(ab.floatingToolbar)) TLines2(THeight(TGhost("MAppBar")), t) else t)
+				|> (\t -> TGroup2SameMetrics(t, TDisplay("MAppBar")))
 				|> (\t ->
-					TGroup2SameMetrics(
-						if (isSome(ab.floatingToolbar) || isSome(ab.extendToolbar))
-							MScroll2T(
-								manager,
-								parent,
-								MScroll(
-									t,
-									TFillXY(),
-									[
-										state.scrollInspect,
-										MScrollPosition(ab.scrollPosition),
-										MScrollKeysEnabled(const(true)),
-										MScrollDisableOutOfBounds(const(true)),
-										TScrollbars(invisibleScrollBar, invisibleScrollBar),
-										MScrollMouseEnabled(scrollEnabled)
-									]
-								),
-								m2t
-							)
-						else
-							t,
-						TDisplay("MAppBar")
-					))
+					eitherMap(ab.extendToolbar, \eab ->
+						MSwipe2T(manager, parent, MSwipe(t, [
+							MOnSwipeUp(\p, delta -> {
+								nextDistinct(eab.trigger, false);
+								false;
+							}),
+							MOnSwipeDown(\p, delta -> {
+								if (getValue(ab.scrollPosition) == zeroPoint) nextDistinct(eab.trigger, true);
+								false;
+							})
+						]), m2t),
+					t))
 				},
-				f
+				wrapContentByScroll(manager, parent, state.scrollParent, m2t, m.style, [
+					state.scrollInspect,
+					TScrollKeysEnabled(const(true)),
+				])(f)
 			)
 		)
-		|> (\f -> eitherMap(state.appBar, \ab -> eitherMap(ab.extendToolbar, \eab ->
-				MSwipe2T(manager, parent, MSwipe(f, [
-					MOnSwipeUp(\p, delta -> {
-						nextDistinct(eab.trigger, false);
-						true
-					}),
-					MOnSwipeDown(\p, delta -> {
-						if (getValue(ab.scrollPosition) == zeroPoint) nextDistinct(eab.trigger, true);
-						true
-					})
-				]), m2t),
-			f), f))
+		|> (\t -> eitherMap(
+				state.bottomSheet,
+				\bs -> eitherMap(bs.expanding, \__ -> t, TLines2(t, TGhost("MAppBottomSheet"))),
+				t
+			))
+		|> (\t -> TGroup([
+				t,
+				TDisplay("MAppBottomSheet") |> TAlignBottom,
+				TDisplay("MAppFloatingContent")
+			]))
+		|> (\t -> eitherMap(state.flexible,
+				\__ -> TGroup2(t, TCols([TFillX(), TDisplay("MAppSideSheet"), TGhost("MAppRightPanelSize")])),
+				t)
+			)
 		|> (\f ->
 			TGroup2SameMetrics(
 				f,
-				(if (isSome(state.leftNav))
-					TDisplay("MAppLeftPanel")
-				else
-					TEmpty())
+				eitherMap(state.leftNav, \__ ->	TDisplay("MAppLeftPanel"), TEmpty())
 				|> (\f2 ->
 					eitherMap(state.rightNav,
 						\rn ->
@@ -124,10 +138,173 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 		)
 		|> (\f -> letAppBar(manager, parent, f, state, m2t))
 		|> (\f -> letContentAndSize(manager, parent, f, m.style, state, m2t))
+		|> (\f -> letBottomSheet(manager, parent, f, state, m2t))
+		|> (\f -> letSideSheet(manager, parent, f, state, m2t))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, false))
 		|> (\f -> letExpander(manager, parent, f, state, m2t, true))
 		|> (\f -> letFloatingContent(manager, parent, f, state, m2t))
 		|> (\f -> letFlextibleApp(f, state))
+}
+
+letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherMap(
+		state.bottomSheet,
+		\bottom -> {
+			minBottomSheetHeight = 56.;
+			gapThreshold = extractStruct(bottom.style, MSwipeGap(24.)).gap;
+			expanded = extractStruct(bottom.style, MExpanded(make(false))).expanded;
+			swipeDownEnabled = extractStruct(bottom.style, MSwipeDownEnabled(const(true))).enabled;
+
+			bottomSheetMaxCollapsed = fdivide(fheight(state.wh), const(2.)); // TODO : consider to use manager.stageWH in order to fix size bugs in cpp.
+			collapsedHeight0 = extractStruct(bottom.style, MCollapsedHeight(const(minBottomSheetHeight))).height;
+			collapsedHeight = 
+				eitherMap(
+					bottom.expanding,
+					\__ -> const(minBottomSheetHeight),
+					fmin(fmax(collapsedHeight0, const(minBottomSheetHeight)), bottomSheetMaxCollapsed)
+				);
+
+			bottomSheetHeight0 = make(0.);
+			bottomSheetHeight = fmin(fmax(bottomSheetHeight0, collapsedHeight), fheight(state.wh));
+
+			startPointY = ref 0.;
+			startAvail = ref 0.;
+			mouseInside = make(false);
+			mouseDown = make(false);
+
+			enabled =
+				fand(
+					mouseDown,
+					fOr(swipeDownEnabled, fnot(expanded))
+				);
+
+			expandingProgress = make(0.);
+
+			expanding2tropic = \bottomContent0 -> \e -> {
+				radius = 24.;
+				icon = tryExtractStruct(e.style, MExpandingBottomSheetIcon(""));
+				additionalItems = extractStruct(e.style, MExpandingBottomSheetAdditional([])).items;
+				bgColor = extractStruct(e.style, parent.theme.palette.accent);
+
+				bottomContent =
+					TGroup2(
+						TRectangle([MFill(MWhite())], TFillXY()),
+						TAlpha(expandingProgress, bottomContent0)
+					);
+
+				[
+					[
+						MIconButton("keyboard_arrow_down", \ -> next(expanded, false), [], [])
+						|> (\m -> MScale(ffactor2(expandingProgress), m))
+					],
+					eitherMap(icon, \ic -> [MBorder4(8., MIcon(ic.icon, []))], []),
+					[
+						MDynamicText(e.title, []),
+						MScaleAvailable(ffactor2(fmin(fmultiply(expandingProgress, const(2.)), const(1.))), TFillX())
+					],
+					additionalItems
+				]
+				|> concatA
+				|> MBaselineColsA
+				|> (\m -> MExplicitTheme(m, const(isLightMColor(bgColor)), []))
+				|> (\m -> m2t(m, parent))
+				|> TBorderLeftRight(8.)
+				|> (\t -> TCenterYIn(t, TFixed(0., minBottomSheetHeight)))
+				|> (\t -> TCopySize(t, \tr -> TRounded(radius, 0., 0., 0., [MFill(bgColor)], tr), false))
+				|> (\t -> clickable(manager, parent, t, \ -> next(expanded, true)))
+				|> (\t -> TGroup2(TAlpha(expandingProgress, TRectangle([MFill(bgColor)], TFixed(radius, radius))), t))
+				|> TAlignEnd
+				|> (\t -> TLines2(t, bottomContent))
+			};
+			
+
+			m2t(bottom.content(expanded), parent)
+			|> (\t -> TInteractive([TMouseDownGhost(mouseDown)], t))
+			|> disableInteractivesBelow
+			|> (\t -> eitherMap(bottom.expanding, expanding2tropic(t), t))
+			|> (\t ->
+				MScroll2T(manager, parent,
+					MScroll(
+						t,
+						TFillXHT(bottomSheetHeight),
+						[
+							TScrollCropByContent(),
+							TScrollDisableOutOfBounds(const(true)),
+							TEnabled(const(false)),
+							TScrollEnabled(const(false)),
+							TScrollbars(invisibleScrollBar, invisibleScrollBar)
+						]
+					),
+					m2t
+				)
+			)
+			|> (\t2 -> TGroup2(TFillXH(minBottomSheetHeight), t2))
+			|> (\m ->
+					MEasingAnimation(
+						manager,
+						parent,
+						const(0.3),
+						const(easingFastOutSlowIn),
+						fpair(mouseDown, expanded),
+						\trigger ->
+							if (trigger.first) None()
+							else {
+								from = fgetValue(bottomSheetHeight);
+								to = if (fgetValue(expanded)) fgetValue(state.wh).height else 0.;
+								if (from == to) None() else Some(Pair(from, to))
+							},
+						\coord, prc -> {
+							nextDistinct(expandingProgress, if (coord.first < coord.second) prc else 1. - prc);			
+							nextDistinct(bottomSheetHeight0, lerp(coord.first, coord.second, prc))
+						},
+						[],
+						m
+					))
+			|> (\t -> TConstruct([
+					makeSubscribe2(mouseDown, \d -> 
+						if (d) {
+							startPointY := getValue(state.point).y;
+							startAvail := fgetValue(bottomSheetHeight);
+						} else if (fgetValue(enabled)) {
+							gap = ^startPointY - getValue(state.point).y;
+							next(expanded, gap > gapThreshold);
+						}
+						),
+					makeSubscribe2(
+						ftransistor(enabled, state.point),
+						\p -> nextDistinct(bottomSheetHeight0, ^startAvail + (^startPointY - p.y))
+					)
+				], t))
+			|> restrictSizeBySideNavs(state)
+			|> (\t -> eitherMap(state.flexible,
+					\fl -> TShow(fnot(fl.persistent), t),
+					t
+				))
+		},
+		TEmpty()
+	)
+	|> (\t -> TLet("MAppBottomSheet", t, content))
+}
+
+letSideSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherMap(
+		state.bottomSheet,
+		\bottom -> {
+			sideSheet = \ ->
+				m2t(bottom.content(const(true)), parent)
+				|> disableInteractivesBelow
+				|> (\t -> TAvailable(t, TFillWY(sideNavStandardWidth)))
+				|> (\t -> TLines2(THeight(TGhost("MAppBar")), t));
+
+			eitherMap(
+				state.flexible,
+				\fl -> TShowLazy(fl.persistent, sideSheet),
+				TEmpty()
+			)
+		},
+		TEmpty()
+	)
+	|> (\t -> TLet("MAppSideSheet", t, content))
 }
 
 makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
@@ -157,14 +334,14 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 
 	tryExtractNav = \left : bool ->
 		maybeMap(
-			tryExtractStruct(m.parts, if (changeBoolIfRTL(left)) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
+			tryExtractStruct(m.parts, if (left) MLeftNav(TEmpty(), make(false), []) else MRightNav(TEmpty(), make(false), [])),
 			\nav : MNav -> {
 				navMini = contains(nav.style, MSideNavMini());
 				navMiniWidth = extractStruct(nav.style, MListMinimizedWidth(72.)).width;
 				navSwipe : MSwipeLeftOrRight =
 					extractStruct(
 						m.style,
-						if (changeBoolIfRTL(left))
+						if (left)
 							MSwipeLeft(const(if (navMini) navMiniWidth else 16.), const(mobile))
 						else
 							MSwipeRight(const(if (navMini) navMiniWidth else 16.), const(mobile))
@@ -181,7 +358,10 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 						\flx -> fOr(navPersistent, flx.persistent),
 						navPersistent
 					),
-					extractStruct(nav.style, MSideNavWidth(if (getStageWidth() > 360. || cpp) 320. else getStageWidth() / 9. * 8.)).width,
+					extractStruct(
+						nav.style,
+						MSideNavWidth(if (getStageWidth() > 360. || cpp) sideNavStandardWidth else getStageWidth() / 9. * 8.)
+					).width,
 					navMiniWidth,
 					navSwipe.gapLength,
 					navSwipe.enabled,
@@ -190,8 +370,8 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 			}
 		);
 
-	leftNav = tryExtractNav(true);
-	rightNav = tryExtractNav(false);
+	leftNav = tryExtractNav(changeBoolIfRTL(true));
+	rightNav = tryExtractNav(changeBoolIfRTL(false));
 	content =
 		Pair(
 			extractStruct(m.parts, MContent(TEmpty())).content,
@@ -220,7 +400,7 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 							MExtendedAppBarState(
 								make(false),
 								tryExtractStruct(eab.style, MBackgroundImage("", false)),
-								{filtermap(eab.style, \st -> switch (st) {
+								{filtermap(eab.style, \st -> switch (st : MExtendedAppBarStyle) {
 									MExtendedToolbarStyle() : Some(st);
 									default : None()
 								})}
@@ -266,6 +446,12 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 			}
 		);
 
+	bottomSheet =
+		maybeMap(
+			tryExtractStruct(m.parts, MBottomSheet(\__ -> TEmpty(), [])),
+			\bs -> MBottomSheetState(bs.content, tryExtractStruct(bs.style, MExpandingBottomSheet(const(""), [])), bs.style)
+		);
+
 	MAppState(
 		makeTropicTag(manager),
 		content,
@@ -273,11 +459,13 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		appBar,
 		leftNav,
 		rightNav,
+		bottomSheet,
 		flexible,
 		make(zeroPoint),
 		mouseDown,
 		appWH,
 		scrollInspect,
+		make(None()),
 		extractMComponentGroupState(m.style),
 	);
 }
@@ -285,60 +473,35 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tropic, style : [MAppStyle], state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
+	mainContent =
+		MComponentGroup2T(
+			manager,
+			parent,
+			"MAppContent",
+			concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document"), MSetParent(state.scrollParent)]),
+			\p ->
+				state.content.first
+				|> (\m -> m2t(m, p))
+				|> TAlignStart
+				|> (\t ->
+					if (contains(style, MNoContentBorder()))
+						t
+					else
+						TBorder4(8., t)
+				)
+				|> (\t -> eitherMap(tryExtractStruct(style, MContentMaxWidth(zero)), \mw -> TZoomMaxWidth(t, mw.maxWidth), t))
+		);
+
 	TGroup2(
 		TAttachBox(TDisplay("MAppSize"), state.wh),
 		TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
 	)
 	|> (\t -> TLet("MAppSize", content, t))
-	|> (\f ->
-		TLet(
-			"MAppContent",
-			MComponentGroup2T(
-				manager,
-				parent,
-				"MAppContent",
-				concat(state.state, [MFocusEnabled(state.content.second), MFocusId(const(2)), AccessRole("document")]),
-				\p ->
-					(\p2 -> state.content.first
-					|> (\m -> m2t(m, p2))
-					|> TBaseAlignA
-					|> (\t ->
-						if (contains(style, MNoContentBorder()))
-							t
-						else
-							TBorder4(8., t))
-					)
-					|> (\t ->
-						if (contains(style, MNoScroll()))
-							TCenterXIn(t(p), TFillXY())
-						else if (eitherMap(state.appBar, \ab -> isSome(ab.floatingToolbar) || isSome(ab.extendToolbar), false))
-							t(p)
-						else
-							MScroll2T(
-								manager,
-								p,
-								MScroll(
-									MGetFocusGroup(t),
-									TFillXY(),
-									[
-										state.scrollInspect,
-										MScrollKeysEnabled(const(true)),
-									]
-									|> (\st -> arrayPushMaybe(st, maybeMap(state.appBar, \ab -> MScrollPosition(ab.scrollPosition))))
-								),
-								m2t
-							)
-					)
-					|> (\t -> eitherMap(tryExtractStruct(style, MContentMaxWidth(zero)), \mw -> TZoomMaxWidth(t, mw.maxWidth), t))
-			),
-			f
-		)
-	)
+	|> (\t -> TLet("MAppContent", mainContent, t))
 }
 
 letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-
-	makeAppBar = \ab -> {
+	makeAppBar = \ab : MAppBarState -> {
 		extTool =
 			eitherMap(
 				ab.extendToolbar,
@@ -420,37 +583,41 @@ letAppBar(manager : MaterialManager, parent : MFocusGroup, content : Tropic, sta
 
 	eitherMap(
 		state.appBar,
-		\ab ->
+		\ab : MAppBarState ->
 			TLet("MAppBar", makeAppBar(ab), content),
 		content
 	)
 }
 
-letFloatingContent(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	TLet(
+letFloatingContent(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState,
+	m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	MComponentGroup2T(
+		manager,
+		parent,
 		"MAppFloatingContent",
-		MComponentGroup2T(
-			manager,
-			parent,
-			"MAppFloatingContent",
-			[
-				MFocusEnabled(state.floatingContent.second),
-				MFocusId(const(4)),
-				AccessRole("presentation")
-			],
-			\p ->
-				m2t(
-					MLines2(
-						state.floatingContent.first,
-						MSelect(manager.floatingActions, \fac : [flow] -> MLinesA(
-							map(fac, \l : flow -> cast(l : flow -> Material))
-						))
-					),
-					p
-				)
-		),
-		content
+		[
+			MFocusEnabled(state.floatingContent.second),
+			MFocusId(const(4)),
+			AccessRole("presentation")
+		],
+		\p ->
+			m2t(
+				MLines2(
+					state.floatingContent.first,
+					MSelect(manager.floatingActions, \fac : [flow] -> MLinesA(
+						map(fac, \l : flow -> cast(l : flow -> Material))
+					))
+				),
+				p
+			)
 	)
+	|> (\t -> eitherMap(state.flexible,
+		\__ -> TCols2(t, TGhost("MAppSideSheet")),
+		t)
+	)
+	|> restrictSizeBySideNavs(state)
+	|> (\t -> TLines2(t, TGhost("MAppBottomSheet")))
+	|> (\t -> TLet("MAppFloatingContent", t, content))
 }
 
 letFlextibleApp(content : Tropic, state : MAppState) -> Tropic {
@@ -472,9 +639,17 @@ letFlextibleApp(content : Tropic, state : MAppState) -> Tropic {
 
 letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState,
 	m2t : (Material, MFocusGroup) -> Tropic, left : bool) -> Tropic {
-	eitherFn(
+	eitherMap(
 		if (left) state.leftNav else state.rightNav,
-		\nav -> {
+		\nav : MAppNav -> {
+			sideNavWidth = make(0.);
+			
+			scaleX = fif(
+				fand(nav.persistent, nav.expander),
+				const(1.),
+				const(if (nav.mini) nav.miniWidth / nav.width else 0.)
+			);
+
 			eContent =
 				switch (nav.content) {
 					MSideNav(h, l, ex, st): {
@@ -509,35 +684,56 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 			panelName = if (left) "MAppLeftPanel" else "MAppRightPanel";
 			bgAlpha =
 				if (nav.width != 0.)
-					fselect(ePointX, FLift(\ep -> lerp(0., 0.6, 1. - ep / expander2Point(false))))
+					flerp(0., 0.6, fselect(ePointX, FLift(\ep -> 1. - ep / expander2Point(false))))
 				else
 					const(0.6);
 
-			TGroup2(
-				(\ -> TRectangle([Fill(black)], TGhost("MAppSize"))
-				|> (\f -> TAlpha(bgAlpha, f))
-				|> (\f -> mouseDownAround(manager, None(), bgMouseDown, make(false), nop, f))
-				|> disableInteractivesBelow
-				|> disableMouseWheelBelow
-				|> (\f -> TCursor(FingerCursor(), f)))
-				|> (\f -> TShowLazy(fand(fnot(nav.persistent), showPanel), f)),
-				(if (!nav.mini)
-					(\ -> TTranslate(
-						fselect(ePointX, FLift(\ep -> Point(ep, 0.))),
-						TDisplay(panelName + "Inner")
+			sideNav =
+				MComponentGroup2T(
+					manager,
+					parent,
+					panelName,
+					[
+						MFocusEnabled(nav.focusEnabled),
+						MFocusId(const(if (left) 1 else 3)),
+						AccessRole("list"),
+						IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false))
+					],
+					\p -> m2t(eContent, p)
+				)
+				|> (\t -> TAttachWidth(t, sideNavWidth))
+				|> (\t ->
+					if (nav.mini)
+						TCropSize(
+							TFillWYT(
+								fselect(ePointX, FLift(\ep ->
+									max(nav.width - abs(ep), nav.miniWidth)
+								))
+							),
+							t
+						)
 						|> (\f -> TShadow(parent, const(2.), f))
-					))
-					|> (\f -> TRenderOnce(showPanel, f))
-				else
-					TCropSize(
-						TScale(
-							fselect(ePointX, FLift(\ep -> Factor(max(nav.width - abs(ep), nav.miniWidth) / nav.width, 1.))),
-							TFillWY(nav.width)
-						),
-						TDisplay(panelName + "Inner")
-					)
-					|> (\f -> TShadow(parent, const(2.), f)))
-				|> (\f -> if (left) f else TCols2(TFillX(), f))
+					else
+						TRenderOnce(showPanel, \ -> 
+							t
+							|> (\f -> TShadow(parent, const(2.), f))
+							|> (\f -> TTranslate(fselect(ePointX, FLift(\ep -> Point(ep, 0.))), f))
+						)
+				)
+				|> (\f -> if (left) f else TCols2(TFillX(), f));
+
+			TGroup2(
+				(
+					\ -> TRectangle([Fill(black)], TGhost("MAppSize"))
+					|> (\f -> TAlpha(bgAlpha, f))
+					|> (\f -> mouseDownAround(manager, None(), bgMouseDown, make(false), nop, f))
+					|> disableInteractivesBelow
+					|> disableMouseWheelBelow
+					|> (\f -> TCursor(FingerCursor(), f))
+				)
+				|> (\f -> TShowLazy(fand(fnot(nav.persistent), showPanel), f)),
+
+				sideNav
 			)
 			|> (\f ->
 				MEasingAnimation(
@@ -575,11 +771,18 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 						makeSubscribe2(state.point, \pt ->
 							if (^mouseDown && fgetValue(state.down) && isCurrentMInteractionItemId(manager, state.interactionId)) {
 								// Block other interaction items if panel is being moved
-								if (abs(pt.x - ^startingPoint.x) >= 3.)
-									blockOtherMInteractionItemIds(manager, state.interactionId);
+								dx = abs(pt.x - ^startingPoint.x);
+								dy = abs(pt.y - ^startingPoint.y);
 
 								// Update panel point
 								next(ePointX, delta2Point(pt.x - ^startingPoint.x));
+
+								if (dx > dy && dx > 4.) {
+									blockOtherMInteractionItemIds(manager, state.interactionId);
+								} else if (dy > dx && dy > 4.) {
+									removeMInteractionItemId(manager, state.interactionId);
+									next(nav.expander, getValue(nav.expander));
+								}
 							}
 						),
 						makeSubscribe2(state.down, \d ->
@@ -613,47 +816,33 @@ letExpander(manager : MaterialManager, parent : MFocusGroup, content : Tropic, s
 				)
 			)
 			|> (\f -> TLet(panelName, f, content))
-			|> (\f ->
-				TLet(
-					panelName + "Size",
-					TIf(
-						nav.persistent,
-						TScale(
-							fif(
-								nav.expander,
-								const(Factor(1., 1.)),
-								const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.))
-							),
-							TGhost(panelName + "Inner")
-						),
-						if (nav.mini)
-							TScale(const(Factor(if (nav.mini) nav.miniWidth / nav.width else 0., 1.)), TGhost(panelName + "Inner"))
-						else
-							TEmpty()
-					),
-					f
-				)
-			)
-			|> (\f ->
-				TLet(
-					panelName + "Inner",
-					MComponentGroup2T(
-						manager,
-						parent,
-						panelName,
-						[
-							MFocusEnabled(nav.focusEnabled),
-							MFocusId(const(if (left) 1 else 3)),
-							AccessRole("list"),
-							IScriptBehaviour("expander", nav.expander, ISInputValue([], "bool", false))
-						],
-						\p -> m2t(eContent, p)
-					),
-					f
-				)
-			)
+			|> (\f -> TLet(panelName + "Size", TSizedWidth(fmultiply(sideNavWidth, scaleX), 0.), f))
 		},
-		\ ->
-			content
+		content
 	)
+}
+
+restrictSizeBySideNavs(state : MAppState) -> (Tropic) -> Tropic {
+	\t ->
+		concat3(
+			eitherMap(state.leftNav, \__ ->	[TDisplay("MAppLeftPanelSize")], []),
+			[t],
+			eitherMap(state.rightNav, \__ -> [TDisplay("MAppRightPanelSize")], []),
+		)
+		|> TCols
+}
+
+wrapContentByScroll(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	scrollParent : DynamicBehaviour<Maybe<MFocusGroup>>,
+	m2t : (Material, MFocusGroup) -> Tropic,
+	appStyle : [MAppStyle],
+	style : [TScrollStyle]) -> (Tropic) -> Tropic {
+
+	\t ->
+		if (contains(appStyle, MNoScroll()))
+			TCenterXIn(t, TFillXY())
+		else
+			MScroll2T(manager, parent, MScroll(t, TFillXY(), arrayPush(style, MGetParent(scrollParent))), m2t)
 }
