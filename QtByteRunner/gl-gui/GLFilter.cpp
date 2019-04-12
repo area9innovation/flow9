@@ -115,8 +115,8 @@ void GLFilter::renderBlurNode(GLClip *clip, GLRenderer *renderer, GLDrawSurface 
         renderBigBlur(renderer, input, output, sigma);
     } else {
         int blur_steps = (int) ceil(blur_radius / 30.0f);
-        GLDrawSurface input2 = *input;
-        GLDrawSurface output2 = *output;
+        GLDrawSurface *input2 = input;
+        GLDrawSurface *output2 = new GLDrawSurface(renderer, output->getBBox());
 
         for (int i = 0; i < blur_steps; i++) {
             float radius = -1;
@@ -130,12 +130,17 @@ void GLFilter::renderBlurNode(GLClip *clip, GLRenderer *renderer, GLDrawSurface 
             sigma = getBlurSigma(clip->getGlobalTransform(), radius);
 
             if (i == blur_steps -1) {
-                renderBigBlur(renderer, &input2, output, sigma);
+                delete output2;
+                renderBigBlur(renderer, input2, output, sigma);
+                delete input2;
             } else {
-                renderBigBlur(renderer, &input2, &output2, sigma);
+                renderBigBlur(renderer, input2, output2, sigma);
+                
+                if (input != input2)
+                    delete input2;
 
-                input2 = *(&output2);
-                output2 = *output;
+                input2 = output2;
+                output2 = new GLDrawSurface(renderer, output->getBBox());
             }
         }
     }
