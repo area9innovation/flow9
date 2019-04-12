@@ -276,6 +276,10 @@ private:
     DECLARE_NATIVE_METHOD(isFullScreen);
     DECLARE_NATIVE_METHOD(onFullScreen);
     DECLARE_NATIVE_METHOD(hostCall); // Override
+    
+    DECLARE_NATIVE_METHOD(setBackgroundColor);
+    DECLARE_NATIVE_METHOD(setStatusBarColor);
+    DECLARE_NATIVE_METHOD(setStatusBarVisible);
 };
 
 #endif // IOSGLRENDERSUPPORT_H
