@@ -35,7 +35,7 @@ float GLFilter::getBlurSigma(const GLTransform &transform, float radius)
         return -1;
     }
 
-    float r = 0.5 * radius * transform.getScale();
+    float r = 0.5 * radius;
     float q = std::min(3.0f, blur_quality);
     return sqrtf(q*r*(r+1)/3);
 }
@@ -157,9 +157,7 @@ void GLBlurFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *out
     float sigma = getBlurSigma(clip->getGlobalTransform());
 
     if (needsSeparateBlur(sigma)) {
-        qDebug() << "render";
         renderBigBlur(renderer, input, output, sigma, true);
-        renderBigBlur(renderer, output, output, sigma, true);
     } else {
         output->makeCurrent();
         renderer->renderLocalBlur(input, sigma);
