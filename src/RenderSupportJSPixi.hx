@@ -898,6 +898,10 @@ class RenderSupportJSPixi {
 		return clip.getCurrentTime();
 	}
 
+	public static function getVideoCurrentFrame(clip : VideoClip) : String {
+		return clip.getCurrentFrame();
+	}
+
 	public static function pauseVideo(clip : VideoClip) : Void {
 		clip.pauseVideo();
 	}
@@ -962,6 +966,10 @@ class RenderSupportJSPixi {
 
 	public static function setTextInputType(clip : TextClip, type : String) : Void {
 		clip.setTextInputType(type);
+	}
+
+	public static function setTextInputAutoCompleteType(clip : TextClip, type : String) : Void {
+		clip.setTextInputAutoCompleteType(type);
 	}
 
 	public static function setTextInputStep(clip : TextClip, step : Float) : Void {

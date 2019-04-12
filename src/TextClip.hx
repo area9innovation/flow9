@@ -22,6 +22,7 @@ class TextClip extends NativeWidgetClip {
 	private var style : TextStyle = new TextStyle();
 
 	private var type : String = 'text';
+	private var autocomplete : String = '';
 	private var step : Float = 1.0;
 	private var wordWrap : Bool = false;
 	private var cropWords : Bool = false;
@@ -110,11 +111,7 @@ class TextClip extends NativeWidgetClip {
 			nativeWidget.step = step;
 		}
 
-		if (accessWidget != null && accessWidget.autocomplete != null && accessWidget.autocomplete != '') {
-			nativeWidget.autocomplete = accessWidget.autocomplete;
-		} else if (type == 'password' && nativeWidget.autocomplete == '') {
-			nativeWidget.autocomplete = 'new-password';
-		}
+		nativeWidget.autocomplete = autocomplete;
 
 		if (maxChars >= 0) {
 			nativeWidget.maxLength = maxChars;
@@ -338,6 +335,14 @@ class TextClip extends NativeWidgetClip {
 	public function setTextInputType(type : String) : Void {
 		if (this.type != type) {
 			this.type = type;
+
+			invalidateStyle();
+		}
+	}
+
+	public function setTextInputAutoCompleteType(type : String) : Void {
+		if (this.autocomplete != type) {
+			this.autocomplete = type;
 
 			invalidateStyle();
 		}
