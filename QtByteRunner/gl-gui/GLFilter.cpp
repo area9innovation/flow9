@@ -130,13 +130,14 @@ void GLFilter::renderBlurNode(GLClip *clip, GLRenderer *renderer, GLDrawSurface 
             sigma = getBlurSigma(clip->getGlobalTransform(), radius);
 
             if (i == blur_steps -1) {
-                delete output2;
                 renderBigBlur(renderer, input2, output, sigma);
+                
                 delete input2;
+                delete output2;
             } else {
                 renderBigBlur(renderer, input2, output2, sigma);
                 
-                if (input != input2)
+                if (i != 0)
                     delete input2;
 
                 input2 = output2;
