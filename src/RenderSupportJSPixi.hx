@@ -898,6 +898,10 @@ class RenderSupportJSPixi {
 		return clip.getCurrentTime();
 	}
 
+	public static function getVideoCurrentFrame(clip : VideoClip) : String {
+		return clip.getCurrentFrame();
+	}
+
 	public static function pauseVideo(clip : VideoClip) : Void {
 		clip.pauseVideo();
 	}

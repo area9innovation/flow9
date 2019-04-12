@@ -2,6 +2,7 @@ import js.Browser;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
+import pixi.core.renderers.canvas.CanvasRenderer;
 
 using DisplayObjectHelper;
 
@@ -387,6 +388,24 @@ class VideoClip extends FlowContainer {
 			nativeWidget.removeEventListener('fullscreenchange', onFullScreen);
 			nativeWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
 			nativeWidget.removeEventListener('mozfullscreenchange', onFullScreen);
+		}
+	}
+
+	public function getCurrentFrame() : String {
+		try {
+			if (textField != null && textField.visible) {
+				textField.visible = false;
+				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+				textField.visible = true;
+
+				return data;
+			} else {
+				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+
+				return data;
+			}
+		} catch (e : Dynamic) {
+			return "error";
 		}
 	}
 }
