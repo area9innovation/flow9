@@ -60,7 +60,6 @@ void GLFilter::computeBlurCoeffs(std::vector<float> *coeffs, std::vector<float> 
     float base_coeff = c1;
     float csum = base_coeff;
 
-    int i = 1;
     for (int i = 1; i <= 32; i++) {
         float c = c1 * exp(i*i*c2);
 
