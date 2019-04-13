@@ -12,9 +12,6 @@ export {
 	getGLowerRelations(r : GRelations, from : GType) -> Set<GType>;
 	getGRelationPositions(r : GRelations, from : GType) -> Set<int>;
 
-	getGUpperTransitiveRelations(r : GRelations, from : GType) -> Set<GType>;
-	getGLowerTransitiveRelations(r : GRelations, from : GType) -> Set<GType>;
-
 	transitiveGUpperRelations(r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
 	transitiveGLowerRelations(r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
 
@@ -23,68 +20,18 @@ export {
 }
 
 makeGRelations() -> GRelations {
-	GRelations(makeTree(), makeTree(), makeTree(), makeTree(), makeTree(), makeTree());
+	GRelations(makeTree(), makeTree(), makeTree(), makeTree());
 }
  
 addGRelation(r : GRelations, from : GType, to : GType, pos : int) -> GRelations {
 	if (containsMultimap(r.uppers, from, to)) r
 	else {
-		//
-		// Calculate the transitive closure for the uppers
-		//
-
-		// What new upper nodes do we get access to with this node?
-		newUppers = insertSet(
-			lookupMultimap(r.uppersTransitive, to),
-			to
-		);
-
-		// What do we already know, and what is truly new?
-		knownUppers = lookupMultimap(r.uppersTransitive, from);
-		trulyNewUppers = differenceSets(newUppers, knownUppers);
-
-		// What types are dependent on us, and have to get the new upper nodes?
-		lowersAndUsToUpdate = insertSet(lookupMultimap(r.lowersTransitive, from), from);
-
-		upperTransitives = if (isEmptySet(trulyNewUppers)) {
-			// There are no real new ones, so we are good
-			r.uppersTransitive
-		} else {
-			foldSet(lowersAndUsToUpdate, r.uppersTransitive, \acc, toUpdate -> {
-				upTrans0 = lookupMultimap(r.uppersTransitive, toUpdate);
-				upTrans = mergeSets(upTrans0, trulyNewUppers);
-				setTree(acc, toUpdate, upTrans);
-			});
-		}
-
-		//
-		// Calculate the transitive closure for the lowers
-		//
-
-		// What new lower nodes do we get access to with this node?
-		newLowers = insertSet(
-			lookupMultimap(r.lowersTransitive, from),
-			from
-		);
-
-		// What do we already know, and what is truly new?
-		knownLowers = lookupMultimap(r.lowersTransitive, to);
-		trulyNewLowers = differenceSets(newLowers, knownLowers);
-
-		// What types are dependent on us, and have to get the new upper nodes?
-		uppersAndUsToUpdate = insertSet(lookupMultimap(r.uppersTransitive, to), to);
-		lowerTransitives = if (isEmptySet(trulyNewLowers)) {
-			// We are good
-			r.lowersTransitive
-		} else {
-			foldSet(uppersAndUsToUpdate, r.lowersTransitive, \acc, toUpdate -> {
-				upTrans = lookupMultimap(r.lowersTransitive, toUpdate);
-				setTree(acc, toUpdate, mergeSets(upTrans, trulyNewLowers));
-			});
-		}
-
 		// Reset the queue for these guys
-		totalUpdates = mergeSets(lowersAndUsToUpdate, uppersAndUsToUpdate);
+		// OK, here we have to transitively visit all of these people
+		// and let them know they have to be updated in the queue
+		uppers = transitiveGUpperRelations(r, to, makeSet());
+		lowers = transitiveGLowerRelations(r, from, uppers);
+		totalUpdates = insertSet(insertSet(mergeSets(lowers, uppers), from), to);
 		queue = foldSet(totalUpdates, r.tyvarQueue, \acc, type -> {
 			switch (type) {
 				GTypeVar(tyvarid): {
@@ -99,8 +46,6 @@ addGRelation(r : GRelations, from : GType, to : GType, pos : int) -> GRelations 
 		GRelations(
 			insertMultimap(r.uppers, from, to),
 			insertMultimap(r.lowers, to, from),
-			upperTransitives,
-			lowerTransitives,
 			insertMultimap(
 				insertMultimap(r.positions, to, pos),
 				from, pos
@@ -116,14 +61,6 @@ getGUpperRelations(r : GRelations, from : GType) -> Set<GType> {
 
 getGLowerRelations(r : GRelations, from : GType) -> Set<GType> {
 	lookupMultimap(r.lowers, from);
-}
-
-getGUpperTransitiveRelations(r : GRelations, from : GType) -> Set<GType> {
-	lookupMultimap(r.uppersTransitive, from);
-}
-
-getGLowerTransitiveRelations(r : GRelations, from : GType) -> Set<GType> {
-	lookupMultimap(r.lowersTransitive, from);
 }
 
 getGRelationPositions(r : GRelations, from : GType) -> Set<int> {
@@ -172,16 +109,9 @@ grelations2dot(env : GEnv, g : GRelations) -> string {
 		text = type2node(type);
 		acc + text + " [label=" + text + "];\n"
 	});
-	edgesDump0 = foldTree(g.uppers, "", \from, tos, acc -> {
+	edgesDump = foldTree(g.uppers, "", \from, tos, acc -> {
 		foldSet(tos, acc, \acc1, to -> {
 			acc1 + type2node(from) + " -> " + type2node(to) + ";\n"
-		});
-	});
-
-	edgesDump = if (true) edgesDump0 else foldTree(g.lowersTransitive, edgesDump0, \from, tos, acc -> {
-		text = type2node(from);
-		foldSet(tos, acc, \acc1, to -> {
-			acc1 + type2node(to) + " -> " + type2node(from) + " [color=grey label=" + text +  "];\n"
 		});
 	});
 
