@@ -320,8 +320,12 @@ public class FlowRunnerActivity extends FragmentActivity  {
                         break;
                 }
 
-                for (int i = 0; i < headers.length; i+=2)
-                    request.addHeader(headers[i], headers[i+1]);
+                for (int i = 0; i < headers.length; i+=2) {
+                    if (headers[i].equals("Content-Length")) {
+                        continue;
+                    }
+                    request.addHeader(headers[i], headers[i + 1]);
+                }
                 
                 Utils.loadHttpAsync(request, callback);
             }
