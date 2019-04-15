@@ -55,7 +55,7 @@ sudo mysql --user="root" --execute="ALTER USER 'root'@'localhost' IDENTIFIED WIT
 Configure MySQL-server mode:
 ```bash
 printf '[mysqld]
-sql-mode=STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION\n' | sudo tee -a /etc/mysql/my.cnf
+sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
 More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
@@ -146,7 +146,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format
-haxelib install pixijs 4.5.4 #(or a newer 4.5.x edition)
+haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might

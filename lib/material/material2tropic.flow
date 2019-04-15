@@ -18,7 +18,7 @@ import material/iscript/material_iscript;
 import material/iscript/material_subscribers_panel;
 
 import tropic/tropic_profile;
-import sys/serviceworkercache;
+import sys/progressivewebtools;
 
 export {
 	// Use this if you render multiple materials with single MaterialManager
@@ -30,10 +30,6 @@ export {
 	material2tropicWithParent(manager : MaterialManager, parent : MFocusGroup, m : Material) -> Tropic;
 
 	material2nativeForm(manager : MaterialManager, m : Material) -> Form;
-
-	// Set true to enable service worker for your js app by default
-	// Read more about service worker in lib\serviceworkercache.flow
-	serviceWorkerEnabled = ref isUrlParameterTrue("sw");
 }
 
 // You can have more than one render counter only if you have dialogs opened.
@@ -42,11 +38,6 @@ renderCounterRef = ref 0;
 
 mrender(manager : MaterialManager, captureKeys : bool, m : Material) -> () -> void {
 	mrenderInit = timestamp();
-
-	if (^serviceWorkerEnabled)
-		checkServiceWorkerCachingEnabled(\en -> if (!en) enableServiceWorkerCaching(\r -> println(if (r) "Service Worker Enabled" else "Service Worker Error")))
-	else
-		checkServiceWorkerCachingEnabled(\en -> if (en) disableServiceWorkerCaching(\r -> println(if (r) "Service Worker Disabled" else "Service Worker Error")));
 
 	renderCounterRef := ^renderCounterRef + 1;
 
@@ -295,7 +286,7 @@ material2tropic(manager : MaterialManager, m : Material) -> Tropic {
 					updateMaterialTheme(manager, MLightTheme(manager.theme, w))
 				}
 			}),
-			makeSubscribe2(feq(getLangB(), "ar"), \__ -> reverseBehaviour(manager.forceRender)), // TODO : Rerender for all RTL languages, not for arabic only.
+			makeSubscribe2(getDefaultRtlB(), \__ -> reverseBehaviour(manager.forceRender))
 		],
 		TSelect(
 			manager.forceRender,
@@ -344,19 +335,19 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MAvatar2T(parent, imageurl, style)
 		}
 		MTextButton(__, __, __, __): {
-			MTextButton2T(rend.manager, parent, m,)
+			MTextButton2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MTextClickable(__, __, __, __): {
-			MTextClickable2T(rend.manager, parent, m)
+			MTextClickable2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MIconButton(__, __, __, __): {
-			MIconButton2T(rend.manager, parent, m)
+			MIconButton2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MIconToggle(__, __, __): {
-			MIconToggle2T(rend.manager, parent, m)
+			MIconToggle2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MFloatingButton(__, __, __): {
-			MFloatingButton2T(rend.manager, parent, m)
+			MFloatingButton2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MProgressBar(__): {
 			MProgressBar2T(rend.manager, parent, m)
@@ -377,16 +368,16 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MRippleOnDownDefault2T(rend.manager, parent, doMaterial2tropic(rend, mat, parent), const(MRippleCenter()))
 		}
 		MTimePicker(__, __): {
-			MTimePicker2T(rend.manager, parent, m)
+			MTimePicker2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MDatePicker(__, __): {
-			MDatePicker2T(rend.manager, parent, m)
+			MDatePicker2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MColorPicker(colorB, style): {
-			MColorPicker2T(rend.manager, parent, colorB, style, None())
+			MColorPicker2T(rend.manager, parent, colorB, style, None(), \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MColorPickerMultiSelect(colorSetB, style) : {
-			MColorPicker2T(rend.manager, parent, make(MBlack()), style, Some(colorSetB))
+			MColorPicker2T(rend.manager, parent, make(MBlack()), style, Some(colorSetB), \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MCheckBox(__, __, __): {
 			MCheckBox2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
@@ -398,7 +389,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			MRadio2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MSwitchControl(__, __): {
-			MSwitchControl2T(rend.manager, parent, m)
+			MSwitchControl2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MSlider(__, __): {
 			MSlider2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
@@ -441,7 +432,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		}
 
 		MChart(__, __): {
-			MChart2T(rend.manager, parent, m, \mat -> doMaterial2tropic(rend, mat, parent));
+			MChart2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
 		MGridList(__, __): {
@@ -489,15 +480,11 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 			|> TSetMinSize(if (horizontal) TFixed(size, 1.) else TFixed(1., size))
 		}
 
-		MTextCard(title, text, style, state): {
-			doMaterial2tropic(rend, MCard([MPrimaryTextBlock(title, text, [])], style, state), parent);
-		}
-
 		MBaselineCols(cs): TBaselineCols(map(cs, \c -> doMaterial2tropic(rend, c, parent)));
 		MBaselineLines(cs): TBaselineLines(map(cs, \c -> doMaterial2tropic(rend, c, parent)));
 
 		MEllipsis(__, __, __): MEllipsis2T(m, \mat -> doMaterial2tropic(rend, mat, parent));
-		MEllipsisText(__, __): MEllipsisText2T(rend.manager, parent, m);
+		MEllipsisText(__, __): MEllipsisText2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		MShadow(z, mat) : TShadow(parent, z, doMaterial2tropic(rend, mat, parent));
 		MShadowShape(z, mat, shape) : TShadowShape(parent, z, doMaterial2tropic(rend, mat, parent), shape);
 
@@ -551,7 +538,6 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MCursor(kind, mat): TCursor(kind, doMaterial2tropic(rend, mat, parent));
 		MFilter(filters, mat): TFilter(filters, doMaterial2tropic(rend, mat, parent));
 		MTranslate(p, mat): TTranslate(p, doMaterial2tropic(rend, mat, parent));
-		MOffset(x, y, mat): TTranslate(const(Point(x, y)), doMaterial2tropic(rend, mat, parent));
 		MRotate(degree, mat) : TRotate(degree, doMaterial2tropic(rend, mat, parent));
 		MCenter(mat): TCenter(doMaterial2tropic(rend, mat, parent));
 		MCenterIn(mat, f): TCenterIn(doMaterial2tropic(rend, mat, parent), doMaterial2tropic(rend, f, parent));
@@ -566,7 +552,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MFullWindow(fw, f): TFullWindow(fw, doMaterial2tropic(rend, f, parent));
 		MFullScreen(fs, f): TFullScreen(fs, doMaterial2tropic(rend, f, parent));
 		MRawButton(__, __, __, __, __, __, __): {
-			MRawButton2T(rend.manager, parent, m, \mat -> doMaterial2tropic(rend, mat, parent))
+			MRawButton2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 		MTextInput(__, __, __): {
 			MTextInput2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
@@ -641,7 +627,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		}
 
 		MChip(__, __): {
-			MChip2T(rend.manager, parent, m)
+			MChip2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p))
 		}
 
 		MClickable(mat, onClick): clickable(rend.manager, parent, doMaterial2tropic(rend, mat, parent), onClick);
@@ -650,7 +636,7 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MComponent(state, fn): {
 			focusState = replaceStruct(state, extractStruct(state, MAddFocusGroup(true)));
 
-			MComponent2T(rend.manager, parent, "MComponent", focusState, \focus -> doMaterial2tropic(rend, fn(focus), parent));
+			MComponent2T(rend.manager, parent, "MComponent", focusState, \focus -> doMaterial2tropic(rend, fn(focus), parent), \mat, p -> doMaterial2tropic(rend, mat, p));
 		}
 
 		MSwipe(__, __):
@@ -664,7 +650,6 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MAnimatedExpander(__, __, __): MAnimatedExpander2T(rend.manager, parent, m, \mat, p -> doMaterial2tropic(rend, mat, p));
 		MDebug(c, content): TDebug(c, doMaterial2tropic(rend, content, parent));
 		MTweak(style, c, s): TTweak(style, doMaterial2tropic(rend, c, parent), doMaterial2tropic(rend, s, parent));
-		MPad(x, y, c): TPad(x, y, doMaterial2tropic(rend, c, parent));
 		MMask(content, mask) : {
 			m2t = \mat -> doMaterial2tropic(rend, mat, parent);
 			TMask(m2t(content), m2t(mask));
@@ -737,8 +722,6 @@ doMaterial2tropic(rend : MaterialRender, m : Material, parent : MFocusGroup) -> 
 		MInspect(inspectors, mat) : {
 			TInspect(inspectors, doMaterial2tropic(rend, mat, parent))
 		}
-
-		MEmpty(): TEmpty();
 
 		default: cast(m : Material -> Tropic);
 	}

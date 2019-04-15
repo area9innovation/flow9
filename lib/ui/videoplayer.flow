@@ -415,7 +415,7 @@ makeVideoPlayer(path, options, controls, onVideoLoaded) {
 makeVideoPlayer3(path, options, controls, onVideoLoaded, scale) {
 	if (isTest()) {
 		makeVideoPlayerStub()
-	} else if (targetVideoControls()) {
+	} else if (targetVideoControls() && isNone(getVimeoURL(path)) && isNone(getYouTubeURL(path))) {
 		makeNativeVideo(path, options, controls, onVideoLoaded);
 	} else {
 		startOffset = either(
@@ -986,44 +986,53 @@ makeVideoPlayer2(path:string, options: [PlayerOption], controls: [PlayerControl]
 	_warn = Available(frameWidth, frameHeight, Center(Mutable(warning)));
 	_vid = Inspect(
 		[Width(vw), Height(vh)],
-		Scale(const(scale), const(scale), Video(
-			path,
-			^params,
-			concat(^events, [
-				StreamStatus(\code -> {
-					if (code == "NetStream.Play.Start") {
-						next(movieLoaded, true);
-						onVideoLoaded(true);
-						// because seek doesn't work until rendering:
-						if (needToRememberPosition && ^needToAdjust) {
-							needToAdjust:= false;
-							//Workaround. Video length is updated when video position is 0.0;
-							deferUntilRender(\ -> {
-								duration = getValue(videoDuration);
-								seek = getValue(seekPosition);
-								newPosition = if (duration > 0.0) {
-									min(seek, duration);
-								} else {
-									seek
+		Scale(const(scale), const(scale), 
+			eitherFn2(
+				getYouTubeURL(path),
+				getVimeoURL(path),
+				\url, __ -> RealHTML2(url, const(extractStruct(^params, PlayerSize(600.0, 400.0)) |> (\sz -> WidthHeight(sz.width, sz.height))), []),
+				\url -> RealHTML2(url, const(extractStruct(^params, PlayerSize(600.0, 400.0)) |> (\sz -> WidthHeight(sz.width, sz.height))), []),
+				\ ->
+					Video(
+						path,
+						^params,
+						concat(^events, [
+							StreamStatus(\code -> {
+								if (code == "NetStream.Play.Start") {
+									next(movieLoaded, true);
+									onVideoLoaded(true);
+									// because seek doesn't work until rendering:
+									if (needToRememberPosition && ^needToAdjust) {
+										needToAdjust:= false;
+										//Workaround. Video length is updated when video position is 0.0;
+										deferUntilRender(\ -> {
+											duration = getValue(videoDuration);
+											seek = getValue(seekPosition);
+											newPosition = if (duration > 0.0) {
+												min(seek, duration);
+											} else {
+												seek
+											}
+											next(seekPosition, newPosition);
+										})
+									}
 								}
-								next(seekPosition, newPosition);
-							})
-						}
-					}
-				}),
-				SynchroCalls(
-					\ -> { ^onStartSignal(); },
-					\ -> { StopPlayback(^isRewind); }
-				),
-				PlayerLength(videoDuration),
-				PlayerPosition(curPlayedTime, 100),
-			]),
-			[
-				PlayerSeek(seekPosition),
-				PlayerPause(isPaused),
-				PlayerVolume(currentVolume),
-			]
-		))
+							}),
+							SynchroCalls(
+								\ -> { ^onStartSignal(); },
+								\ -> { StopPlayback(^isRewind); }
+							),
+							PlayerLength(videoDuration),
+							PlayerPosition(curPlayedTime, 100),
+						]),
+						[
+							PlayerSeek(seekPosition),
+							PlayerPause(isPaused),
+							PlayerVolume(currentVolume),
+						]
+					)
+			)
+		)
 	);
 
 	videoForm2 = Interactive(listeners, Group([_vid, _warn, ^captionsForm]));

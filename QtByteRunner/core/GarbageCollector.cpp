@@ -225,7 +225,7 @@ int GarbageCollector::ComputeLiveBytes()
     live_bytes += NumStructBytes;
 #endif
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     cerr << "Live bytes: " << live_bytes << "; "
          << NumRefs << " refs, " << NumSlots << " slots, "
          << NumLongStrings << " long strings, " << NumObjects << " objects, "
@@ -320,7 +320,7 @@ bool GarbageCollector::DoubleHeap()
     if (size >= MAX_HEAP_SIZE)
         return false;
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     Runner->flow_err << "Doubling flow heap to " << size*2 << " bytes." << endl;
 #endif
 
@@ -794,7 +794,7 @@ void GarbageCollector::ProcessFastRoots()
         }
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (TouchedRefs > 0)
     {
         cerr << "Scanned " << TouchedRefs << " of "
@@ -813,7 +813,7 @@ void GarbageCollector::ProcessFastRoots()
         ProcessVector((StackSlot*)Memory->GetRawPointer(start, size, true), size/STACK_SLOT_SIZE);
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (!Runner->SlotWriteSet.empty())
         cerr << "Scanned " << Runner->SlotWriteSet.getTotalSize()/STACK_SLOT_SIZE << " slots modified by natives." << endl;
 #endif
@@ -834,7 +834,7 @@ void GarbageCollector::ProcessFastRoots()
 
     FlushArrays();
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (!Runner->StructWriteSet.empty())
         cerr << "Scanned " << Runner->StructWriteSet.size() << " structs modified by natives." << endl;
 #endif

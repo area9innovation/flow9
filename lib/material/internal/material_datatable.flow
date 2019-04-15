@@ -109,13 +109,28 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 								secondOfPair
 							)
 					)
-				else [];
+				else enumFromTo(0, length(rws) - 1);
 			listSortedCallback(sorted);
 			sorted
 		})
 	)));
 
 	rowsCountB = flength(rows);
+
+	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
+
+	page = make(Pair(0, 0));
+
+	updatePageNumber = \newPageNumber ->
+		nextDistinct(page, Pair(newPageNumber, getValue(page).second));
+
+	updateRowsPerPage = \newRowsPerPage ->
+		nextDistinct(page, Pair(getValue(page).first, newRowsPerPage));
+
+	pageNumber = fFirstOfPair(page);
+	rowsPerPage = fSecondOfPair(page);
+
+	pageNumberB = make(0);
 
 	// Width handling
 
@@ -133,7 +148,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		fselect(rowsCountB, FLift(\rc ->
 			generate(0, rc + b2i(isSome(fixedRow)), \__ ->
 				generate(0, columnsCount, \i ->
-					make(0.)
+					if (!widthByContent && !contains(columns[i].style, MWidthByContent())) make(0.)
+					else if (isSome(checkboxSelection) && i == 0) make(checkboxColumnWidth)
+					else make(^tropicFillersMax)
 				)
 			)
 		));
@@ -142,7 +159,26 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		generate(0, columnsCount, \i ->
 			if (widthByContent || contains(columns[i].style, MWidthByContent()))
 				fsubselect(cellWs, FLift(\cWs ->
-					faddition(fmaxA(map(cWs, \row -> row[i]), i2d(columns[i].width)), const(border))
+					fsubselect(page, FLift(\pg ->
+						fsubselect(sortingResult, FLift(\srt ->	{
+							currentRows =
+								eitherMap(
+									fixedRow,
+									\__ -> concat([firstElement(cWs, [])],
+										map(subrange(srt, pg.first, pg.second), \idx -> elementAt(tail(cWs), idx, []))
+									),
+									map(subrange(srt, pg.first, pg.second), \idx -> elementAt(cWs, idx, []))
+								);
+
+							faddition(
+								fmaxA(
+									map(currentRows, \row -> elementAt(row, i, make(0.))),
+									i2d(columns[i].width)
+								),
+								const(border)
+							)
+						}))
+					))
 				))
 			else if (fullWidth)
 				make(minWidths[i])
@@ -238,21 +274,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				splitByNumber(cells, er),
 			TLines);
 
-	fixPaginationCurrent = \current -> forceRange(current, 0, length(pagination.rowsPerPage) - 1);
-
-	page = make(Pair(0, 0));
-
-	updatePageNumber = \newPageNumber ->
-		nextDistinct(page, Pair(newPageNumber, getValue(page).second));
-
-	updateRowsPerPage = \newRowsPerPage ->
-		nextDistinct(page, Pair(getValue(page).first, newRowsPerPage));
-
-	pageNumber = fFirstOfPair(page);
-	rowsPerPage = fSecondOfPair(page);
-
-	pageNumberB = make(0);
-
 	// Header
 
 	tableHeader = \p -> if (replaceHeader) TEmpty() else
@@ -271,7 +292,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						MEllipsisText(
 							header,
 							eitherMap(headerStyle, \hs -> hs.textStyle, [if (isSelected) MCaptionColumnSelected() else MCaptionColumn()])
-						)
+						),
+						m2t
 					)
 				);
 
@@ -419,17 +441,20 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		if (anyTypePagination)
 			MSelect2T(manager, p, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
 				makeFooterButton = \title : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
-					MIconButton2T(manager, p2,
+					MIconButton2T(
+						manager,
+						p2,
 						MIconButton(
 							title,
 							\ -> updatePageNumber(makeUpdatedRow(getValue(page))),
 							[],
 							[MEnabled(fselect(page, FLift(makeEnabled)))]
-						)
+						),
+						m2t
 					)
-						|> TCenterY;
+					|> TCenterY;
 
-				hideFooter = rowsCount < either(minA(pagination.rowsPerPage), fgetValue(rowsPerPage));
+				hideFooter = eitherMap(minA(pagination.rowsPerPage), \rpp -> rowsCount < rpp, false);
 
 				if (!isEmptyPagination) {
 					selectedRowsPerPage = fixPaginationCurrent(getValue(pagination.current));
@@ -667,8 +692,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 										),
 										[selection, selectionEnabled, onClick, MListReorder(listSort, const(false)), scrollPosition, TScrollEnabled(scrollEnabled),
 											MScrollbars(
-												fif(scrollEnabled, getMaterialScrollBar().horz |> const, invisibleScrollBar |> const),
-												fif(scrollEnabled, getMaterialScrollBar().vert |> const, invisibleScrollBar |> const)
+												TScrollbarStyle(getMaterialScrollBar().x with visible = scrollEnabled),
+												TScrollbarStyle(getMaterialScrollBar().y with visible = scrollEnabled)
 											), hoverEnabled, MScrollBound(scrollEnabled, scrollEnabled)]
 									),
 									m2t
@@ -954,7 +979,7 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 			MSmallEditDialog2T(manager, parent, c, m2t)
 		}
 		MSwitchControl(__, __): {
-			TBorder(-4.0, -8., -4.0, -8., MSwitchControl2T(manager, parent, c))
+			TBorder(-4.0, -8., -4.0, -8., MSwitchControl2T(manager, parent, c, m2t))
 		}
 		MDropDown(__, __, __, __): {
 			TBorder(-24., 0., -24., 0., MDropDown2T(manager, parent, c, m2t))
@@ -963,10 +988,10 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 			TBorder(-24., 0., -24., 0., MDropDownMenu2T(manager, parent, c, m2t))
 		}
 		MText(text, style): {
-			MEllipsisText2T(manager, parent, MEllipsisText(text, replaceStructMany(style, [MShowTooltip(const(true))])))
+			MEllipsisText2T(manager, parent, MEllipsisText(text, replaceStructMany(style, [MShowTooltip(const(true))])), m2t)
 		}
 		MIconButton(name, onClick, style, state): {
-			MIconButton2T(manager, parent, MCellIconButton(name, onClick, style, state, rowHeight))
+			MIconButton2T(manager, parent, MCellIconButton(name, onClick, style, state, rowHeight), m2t)
 		}
 		MTooltip(cont, tooltip, st): {
 			MTooltip2T(manager, parent, MTooltip(wrapCellContent(cont), tooltip, st), m2t)
@@ -1015,6 +1040,12 @@ MCellContent2T(manager : MaterialManager, parent : MFocusGroup, c : Material, ro
 		}
 		MBorder(l, t, r, b, m): {
 			TBorder(l, t, r, b, wrapCellContent(m))
+		}
+		MClickable(m, onClick): {
+			clickable(manager, parent, wrapCellContent(m), onClick)
+		}
+		MInspect(inspectors, m): {
+			TInspect(inspectors, wrapCellContent(m))
 		}
 		MMenu(button, items, style): {
 			switch (button) {

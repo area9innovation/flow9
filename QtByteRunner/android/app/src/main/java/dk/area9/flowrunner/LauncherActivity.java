@@ -11,14 +11,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
@@ -37,13 +37,13 @@ public class LauncherActivity extends Activity {
     private ListView BytecodeList;
     private EditText URLParametersField;
     
-    private DefaultHttpClient Client = Utils.createHttpClient();
-    
     private ArrayAdapter<String> ListAdapter;
     
     private URI BaseURI = URI.create("https://localhost/flow/");
+    @NonNull
     private String BytecodesDir = "bytecodes/";
     
+    @NonNull
     private Map<String, String> URLParametersMap = new HashMap<String, String>();
     
     @Override
@@ -55,12 +55,12 @@ public class LauncherActivity extends Activity {
           setContentView(view_id);
           
           Class<?> id = Class.forName(getPackageName() + ".R$id");
-          BytecodeURLField = (EditText)findViewById((Integer)(id.getField("url_field").get(null)));
-          BytecodeList = (ListView)findViewById((Integer)(id.getField("downloaded_files").get(null)));
-          URLParametersField = (EditText)findViewById((Integer)(id.getField("url_parameters_field").get(null)));
+          BytecodeURLField = findViewById((Integer)(id.getField("url_field").get(null)));
+          BytecodeList = findViewById((Integer)(id.getField("downloaded_files").get(null)));
+          URLParametersField = findViewById((Integer)(id.getField("url_parameters_field").get(null)));
 
-          Button downloadButton = (Button)findViewById((Integer)(id.getField("download_button").get(null)));
-          Button runButton = (Button)findViewById((Integer)(id.getField("run_button").get(null)));
+          Button downloadButton = findViewById((Integer)(id.getField("download_button").get(null)));
+          Button runButton = findViewById((Integer)(id.getField("run_button").get(null)));
           
           downloadButton.setOnClickListener(new OnClickListener() {
               public void onClick(View view) {
@@ -100,7 +100,7 @@ public class LauncherActivity extends Activity {
               @Override
               public void beforeTextChanged(CharSequence arg0, int arg1, int arg2, int arg3) { }
               @Override
-              public void onTextChanged(CharSequence text, int arg1, int arg2, int arg3) {
+              public void onTextChanged(@NonNull CharSequence text, int arg1, int arg2, int arg3) {
                   int item_idx = BytecodeList.getCheckedItemPosition();
                   if (item_idx != AdapterView.INVALID_POSITION) {
                       URLParametersMap.put(ListAdapter.getItem(item_idx), text.toString());
@@ -192,8 +192,8 @@ public class LauncherActivity extends Activity {
                         }
                     });
                 }
-                public void httpFinished(final boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, final boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     runOnUiThread(new Runnable() {
                         public void run() {
                             DownloadingProgressDlg.dismiss();
@@ -208,7 +208,7 @@ public class LauncherActivity extends Activity {
             };
             
             
-            Utils.loadHttpAsync(Client, new HttpGet(full_uri), file_stream, download_callback);
+            Utils.loadHttpAsync(new HttpGet(full_uri), file_stream, download_callback);
             showDownloadingProgressBar();
         } else {
             showErrorMessage("Empty bytecode name");

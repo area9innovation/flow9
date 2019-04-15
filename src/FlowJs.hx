@@ -5,7 +5,6 @@ import HttpSupport;
 import HtmlSupport;
 import FlowFileSystem;
 import NotificationsSupport;
-import ServiceWorkerCache;
 import GeolocationSupport;
 
 class FlowJs {

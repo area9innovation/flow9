@@ -260,6 +260,7 @@ void GLTextClip::layoutTextWrapLines()
 
         unicode_string ctext = extent->text;
         GLFont::Ptr font = extent->format.font;
+        if (!font) continue;
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
         bool already_split = false;

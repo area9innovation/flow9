@@ -377,8 +377,8 @@ Compiling flow compiled to c++
 
 For a server-based program like reports.serverbc:
 
-1) plop the output of generation into QtByteRunner/flowcpp
-2) qmake CONFIG+=no_gui CONFIG+=flowcpp QtByteRunner.pro (or qmake-qt5 - not tested)
+1) plop the output of generation into QtByteRunner/flowgen
+2) qmake CONFIG+=no_gui CONFIG+=native_build QtByteRunner.pro (or qmake-qt5 - not tested)
 3) nice make clean all
 
 Profiling contexts

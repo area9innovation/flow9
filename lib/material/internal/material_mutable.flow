@@ -146,14 +146,19 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 		zorder = eitherMap(tryExtractStruct(state, MZorder(const(0))), \zo -> Some(zo.zorder), None());
 		parentTheme = extractStruct(state, parent.theme);
 		lightBackground = extractStruct(state, MLightBackground(parentTheme.palette.light)).light;
-		theme = MLightTheme(parentTheme, lightBackground);
+		lightTheme = MLightTheme(parentTheme, lightBackground);
+		theme = extractStruct(state, UpdateMaterialTheme(idfn)).fn(lightTheme);
 		active = extractStruct(state, MActive(make(false))).active;
 		childActive = tryExtractStruct(state, MChildActive(make(false)));
+		setParent = tryExtractStruct(state, MSetParent(const(None())));
+		getParent = tryExtractStruct(state, MGetParent(make(None())));
 
-		addMaterialFocusGroupId(
-			manager, parent, name, vertical, horizontal, focused, active, enabled, focusEnabled,
+		(\p -> addMaterialFocusGroupId(
+			manager, p, name, vertical, horizontal, focused, active, enabled, focusEnabled,
 			monitorBehaviours, monitorEnabled, clickEnabled, iScriptId, tabOrder, zorder, theme,
-			\f ->
+			\f -> {
+				maybeApply(getParent, \p2 -> next(p2.parent, Some(f)));
+
 				MComponent2TAccessibility(manager, content(f), f, None(), accessRole, "",
 					eitherMap(tryExtractStruct(state, MAccessOneWayConnection(false)), \owc -> Some(owc.focusedPopup), None()),
 					extractStructMany(state, FAccessAttribute("", const("")))
@@ -172,15 +177,13 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 							TConstruct(
 								[
 									\ -> fconnect(
-										fselectdelay(fselect3(
+										fselectdelay(fselect2(
 											getCurrentFocusedItemBehaviour2(f),
-											getCurrentPressedItemBehaviour2(f),
 											getCurrentActiveItemBehaviour2(f),
-											\foc, pres, act -> {
+											FLift2(\foc, act -> {
 												isSome(foc) ||
-												isSome(pres) ||
 												isSome(act)
-											}
+											})
 										), \v -> Pair(if (v || isSome(getCurrentFocusedItem(manager))) 0 else 33, v)),
 										ac.active
 									)
@@ -189,10 +192,13 @@ MComponentGroup2T(manager : MaterialManager, parent : MFocusGroup, name : string
 							),
 						f2
 					)
-				)
-		)
-	} else
+				);
+			}
+		))
+		|> (\f -> eitherFn(setParent, \p -> TSelect(p.parent, \p2 -> eitherFn(p2, f, \ -> f(parent))), \ -> f(parent)))
+	} else {
 		content(parent)
+	}
 }
 
 extractDynamicBehaviours(v : Transform<?>, name : string, type : IScriptRecordType) -> [IScriptBehaviour] {

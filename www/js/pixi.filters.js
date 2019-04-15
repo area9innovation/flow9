@@ -271,23 +271,18 @@ PIXI.Container.prototype._calculateFilterBounds = function ()
 	}
 }
 
-PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender)
+PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 {
-	skipRender = skipRender !== undefined ? skipRender : true;
-
 	if (!this.visible || this.alpha <= 0 || !this.renderable)
 	{
-		this.skipRender = true;
 		return;
 	}
 
-	skipRender = skipRender && this.skipRender;
-
 	var filters = this._canvasFilters;
 
-	if (((filters == null || filters.length == 0) && this._alphaMask == null) || skipRender)
+	if ((filters == null || filters.length == 0) && this._alphaMask == null)
 	{
-		return this._CF_originalRenderCanvas(renderer, skipRender);
+		return this._CF_originalRenderCanvas(renderer);
 	}
 
 	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
@@ -308,7 +303,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender)
 		ctx.shadowBlur = filter.blur * 2 * res;
 		ctx.shadowOffsetX = Math.cos(angle) * dist * res;
 		ctx.shadowOffsetY = Math.sin(angle) * dist * res;
-		this._CF_originalRenderCanvas(renderer, skipRender);
+		this._CF_originalRenderCanvas(renderer);
 		ctx.restore();
 
 		return;

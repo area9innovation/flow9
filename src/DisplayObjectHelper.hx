@@ -1,10 +1,49 @@
 import pixi.core.display.DisplayObject;
 import pixi.core.display.Container;
+import pixi.core.display.Bounds;
 
 class DisplayObjectHelper {
-	public static inline function InvalidateStage(clip : DisplayObject) : Void {
+	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
+
+	public static inline function invalidateStage(clip : DisplayObject) : Void {
 		if (getClipWorldVisible(clip)) {
+			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
+				var updateGraphics = new FlowGraphics();
+
+				if (untyped clip.updateGraphics == null) {
+					untyped clip.updateGraphics = updateGraphics;
+					updateGraphics.beginFill(0x0000FF, 0.2);
+					updateGraphics.drawRect(0, 0, 100, 100);
+				} else {
+					updateGraphics = untyped clip.updateGraphics;
+				}
+
+				untyped updateGraphics._visible = true;
+				untyped updateGraphics.visible = true;
+				untyped updateGraphics.clipVisible = true;
+				untyped updateGraphics.renderable = true;
+
+				untyped __js__("PIXI.Container.prototype.addChild.call({0}, {1})", clip, updateGraphics);
+
+				NativeHx.timer(100, function () {
+					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
+					RenderSupportJSPixi.InvalidateStage();
+				});
+			}
+
 			RenderSupportJSPixi.InvalidateStage();
+		}
+	}
+
+	public static inline function invalidateTransform(clip : DisplayObject) : Void {
+		untyped clip.transformChanged = true;
+		invalidateStage(clip);
+	}
+
+	public static inline function invalidateTransformByParent(clip : DisplayObject) : Void {
+		untyped clip.transformChanged = true;
+		if (clip.parent != null) {
+			invalidateStage(clip.parent);
 		}
 	}
 
@@ -15,8 +54,7 @@ class DisplayObjectHelper {
 
 		if (clip.x != x) {
 			clip.x = x;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
@@ -27,40 +65,35 @@ class DisplayObjectHelper {
 
 		if (clip.y != y) {
 			clip.y = y;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
 	public static inline function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.x != scale) {
 			clip.scale.x = scale;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
 	public static inline function setClipScaleY(clip : DisplayObject, scale : Float) : Void {
 		if (clip.scale.y != scale) {
 			clip.scale.y = scale;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
 	public static inline function setClipRotation(clip : DisplayObject, rotation : Float) : Void {
 		if (clip.rotation != rotation) {
 			clip.rotation = rotation;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
 	public static inline function setClipAlpha(clip : DisplayObject, alpha : Float) : Void {
 		if (clip.alpha != alpha) {
 			clip.alpha = alpha;
-
-			InvalidateStage(clip);
+			invalidateTransform(clip);
 		}
 	}
 
@@ -68,36 +101,40 @@ class DisplayObjectHelper {
 		if (untyped clip._visible != visible) {
 			untyped clip._visible = visible;
 
-			if (RenderSupportJSPixi.AccessibilityEnabled) {
-				RenderSupportJSPixi.updateAccessDisplay(clip);
-			}
-
 			if (clip.parent != null && getClipVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixi.InvalidateStage();
 			}
+
+			invalidateTransformByParent(clip);
 		}
 	}
 
-	public static inline function updateClipWorldVisible(clip : DisplayObject) : Void {
-		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (untyped clip._visible && clip.renderable));
+	public static inline function updateClipWorldVisible(clip : DisplayObject, ?updateAccess : Bool = true) : Void {
+		untyped clip.clipVisible = clip.parent != null && untyped clip._visible && getClipVisible(clip.parent);
+		clip.visible = clip.parent != null && getClipWorldVisible(clip.parent) && (untyped clip.isMask || (getClipVisible(clip) && clip.renderable));
 
 		if (clip.interactive && !getClipWorldVisible(clip)) {
 			clip.emit("pointerout");
 		}
 
+		var updateAccessWidget = updateAccess && untyped clip.accessWidget != null;
+
 		var children : Array<Dynamic> = untyped clip.children;
 		if (children != null) {
 			for (c in children) {
-				if (getClipWorldVisible(c) != getClipWorldVisible(clip)) {
-					updateClipWorldVisible(c);
+				if (getClipWorldVisible(c) != getClipWorldVisible(clip) || getClipVisible(c) != getClipVisible(clip)) {
+					updateClipWorldVisible(c, updateAccess && !updateAccessWidget);
 				}
 			}
 		}
+
+		if (updateAccessWidget) {
+			untyped clip.accessWidget.updateDisplay();
+ 		}
 	}
 
 	public static inline function getClipVisible(clip : DisplayObject) : Bool {
-		return untyped clip._visible && (getClipWorldVisible(clip) || (clip.parent != null && getClipVisible(clip.parent)));
+		return untyped clip.clipVisible;
 	}
 
 	public static inline function setClipRenderable(clip : DisplayObject, renderable : Bool) : Void {
@@ -106,16 +143,40 @@ class DisplayObjectHelper {
 
 			if (clip.parent != null && getClipWorldVisible(clip.parent)) {
 				updateClipWorldVisible(clip);
-				RenderSupportJSPixi.InvalidateStage();
 			}
+
+			invalidateTransformByParent(clip);
 		}
 	}
 
-	public static inline function forceUpdateTransform(clip : DisplayObject) : Void {
-		if (clip.parent != null && !clip.visible) {
-			forceUpdateTransform(clip.parent);
-			clip.updateTransform();
+	public static function setClipFocus(clip : DisplayObject, focus : Bool) : Bool {
+		var accessWidget = untyped clip.accessWidget;
+
+		if (untyped clip.setFocus != null && clip.setFocus(focus)) {
+			return true;
+		} else if (accessWidget != null && accessWidget.element != null && accessWidget.element.parentNode != null && accessWidget.element.tabIndex != null) {
+			if (focus && accessWidget.element.focus != null) {
+				accessWidget.element.focus();
+
+				return true;
+			} else if (!focus && accessWidget.element.blur != null) {
+				accessWidget.element.blur();
+
+				return true;
+			}
 		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+
+		if (children != null) {
+			for (c in children) {
+				if (setClipFocus(c, focus)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	public static inline function getClipWorldVisible(clip : DisplayObject) : Bool {
@@ -166,8 +227,8 @@ class DisplayObjectHelper {
 	}
 
 	// setScrollRect cancels setClipMask and vice versa
-	public static inline function setScrollRect(clip : Container, left : Float, top : Float, width : Float, height : Float) : Void {
-		var scrollRect : FlowGraphics = untyped clip.scrollRect;
+	public static inline function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
+		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
 			setClipX(clip, clip.x + scrollRect.x * 2 - left);
@@ -178,8 +239,8 @@ class DisplayObjectHelper {
 			setClipX(clip, clip.x - left);
 			setClipY(clip, clip.y - top);
 
-			untyped clip.scrollRect = new FlowGraphics();
-			scrollRect = untyped clip.scrollRect;
+			clip.scrollRect = new FlowGraphics();
+			scrollRect = clip.scrollRect;
 			clip.addChild(scrollRect);
 			setClipMask(clip, scrollRect);
 		}
@@ -190,11 +251,11 @@ class DisplayObjectHelper {
 		setClipX(scrollRect, left);
 		setClipY(scrollRect, top);
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
 	}
 
-	public static inline function removeScrollRect(clip : Container) : Void {
-		var scrollRect : FlowGraphics = untyped clip.scrollRect;
+	public static inline function removeScrollRect(clip : FlowContainer) : Void {
+		var scrollRect : FlowGraphics = clip.scrollRect;
 
 		if (scrollRect != null) {
 			setClipX(clip, clip.x + scrollRect.x);
@@ -206,15 +267,15 @@ class DisplayObjectHelper {
 				clip.mask = null;
 			}
 
-			untyped clip.scrollRect = null;
+			clip.scrollRect = null;
 		}
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
 	}
 
 	// setClipMask cancels setScrollRect and vice versa
-	public static inline function setClipMask(clip : Container, maskContainer : Container) : Void {
-		if (maskContainer != untyped clip.scrollRect) {
+	public static inline function setClipMask(clip : FlowContainer, maskContainer : Container) : Void {
+		if (maskContainer != clip.scrollRect) {
 			removeScrollRect(clip);
 		}
 
@@ -249,7 +310,65 @@ class DisplayObjectHelper {
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
 		clip.emit("graphicschanged");
 
-		InvalidateStage(clip);
+		invalidateStage(clip);
+	}
+
+	public static function getMaskedBounds(clip : DisplayObject) : Bounds {
+		var calculatedBounds = new Bounds();
+
+		calculatedBounds.minX = Math.NEGATIVE_INFINITY;
+		calculatedBounds.minY = Math.NEGATIVE_INFINITY;
+		calculatedBounds.maxX = Math.POSITIVE_INFINITY;
+		calculatedBounds.maxY = Math.POSITIVE_INFINITY;
+
+		var parentBounds = clip.parent != null ? getMaskedBounds(clip.parent) : null;
+
+		if (untyped clip._mask != null) {
+			untyped clip._mask.renderable = true;
+			var maskBounds = untyped clip._mask.getBounds(true);
+
+			calculatedBounds.minX = maskBounds.x;
+			calculatedBounds.minY = maskBounds.y;
+			calculatedBounds.maxX = calculatedBounds.minX + maskBounds.width;
+			calculatedBounds.maxY = calculatedBounds.minY + maskBounds.height;
+
+			untyped clip._mask.renderable = false;
+		}
+
+		if (parentBounds != null) {
+			calculatedBounds.minX = parentBounds.minX > calculatedBounds.minX ? parentBounds.minX : calculatedBounds.minX;
+			calculatedBounds.minY = parentBounds.minY > calculatedBounds.minY ? parentBounds.minY : calculatedBounds.minY;
+			calculatedBounds.maxX = parentBounds.maxX < calculatedBounds.maxX ? parentBounds.maxX : calculatedBounds.maxX;
+			calculatedBounds.maxY = parentBounds.maxY < calculatedBounds.maxY ? parentBounds.maxY : calculatedBounds.maxY;
+		}
+
+		return calculatedBounds;
+	}
+
+	public static function getMaskedLocalBounds(clip : DisplayObject) : Bounds {
+		if (untyped clip.viewBounds != null) {
+			return untyped clip.viewBounds;
+		}
+
+		var bounds = getMaskedBounds(clip);
+		var worldTransform = clip.worldTransform.clone().invert();
+
+		bounds.minX = bounds.minX * worldTransform.a + bounds.minY * worldTransform.c + worldTransform.tx;
+		bounds.minY = bounds.minX * worldTransform.b + bounds.minY * worldTransform.d + worldTransform.ty;
+		bounds.maxX = bounds.maxX * worldTransform.a + bounds.maxY * worldTransform.c + worldTransform.tx;
+		bounds.maxY = bounds.maxX * worldTransform.b + bounds.maxY * worldTransform.d + worldTransform.ty;
+
+		return bounds;
+	}
+
+	public static function getClipTreePosition(clip : DisplayObject) : Array<Int> {
+		if (clip.parent != null) {
+			var clipTreePosition = getClipTreePosition(clip.parent);
+			clipTreePosition.push(clip.parent.children.indexOf(clip));
+			return clipTreePosition;
+		} else {
+			return [];
+		}
 	}
 
 	// Get the first Graphics from the Pixi DisplayObjects tree

@@ -41,11 +41,11 @@ MProgressBarDeterm2T(manager : MaterialManager, parent : MFocusGroup, m : MProgr
 			manager,
 			parent,
 			const(1.),
-			const(mStandartCurve),
+			const(easingStandartCurve),
 			percent,
 			\newPercent -> Some(Pair(getValue(progress), newPercent)),
 			\newPercent, t -> nextDistinct(progress, lerp(newPercent.first, newPercent.second, t)),
-			[MForceAnimation()],
+			[MForceAnimation(), MStopOffScreen(true)],
 			f
 		)
 	)
@@ -91,7 +91,7 @@ MProgressBar2T(manager : MaterialManager, parent : MFocusGroup, m : MProgressBar
 	)
 	|> (\progressBar ->
 		if (^mProgressEnabled)
-			TConstruct(
+			TConstructRenderable(
 				[
 					\ -> {
 						manager.manager.deltaTimer.attach();
@@ -184,7 +184,7 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 	|> (\progressCircle -> TTranslate(const(Point(size / 2., size / 2.)), progressCircle))
 	|> (\progressCircle ->
 		if (^mProgressEnabled)
-			MEasingAnimation(manager, parent, const(duration), const(mStandartCurve), tick,
+			MEasingAnimation(manager, parent, const(duration), const(easingStandartCurve), tick,
 				\tr -> {
 					beforeFn(tr);
 
@@ -201,8 +201,8 @@ MProgressCircle2T(manager : MaterialManager, parent : MFocusGroup, m : MProgress
 						next(to, prog + arcMax * p)
 					}
 				},
-				[MAutoStart(), MLoop(\tr -> {beforeFn(!tr); Some(!tr)}), MForceAnimation()],
-				TConstruct(
+				[MAutoStart(), MLoop(\tr -> {beforeFn(!tr); Some(!tr)}), MForceAnimation(), MStopOffScreen(true)],
+				TConstructRenderable(
 					[
 						\ -> {deltaTimer.attach(); \ -> deltaTimer.detach()},
 						\ -> subscribe2(deltaTimer.timer, \dt -> deferred(\ -> {
@@ -248,50 +248,51 @@ ProgressCircleWithArrow(parent : MFocusGroup, from : Transform<double>, to : Tra
 MPicture2T(manager : MaterialManager, parent : MFocusGroup, m : MPicture, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	showLoading = extractStruct(m.style, MPictureShowLoading(true)).show;
 	customLoading = tryExtractStruct(m.style, MPictureCustomLoading(TEmpty()));
+	tstyle = MPictureStyle2TPictureStyle(m.style);
 
 	if (showLoading || isSome(customLoading)) {
 		bgColor = MBackgroundColor(getLightBackground(parent));
 		itemsColor = MTextMColor(bgColor);
 		onPicLoaded = extractStruct(m.style, OnLoaded(nop)).fn;
-		picSize = extractStruct(m.style, WidthHeight(-1., -1.));
 		picLoading = make(false);
 		uns = interruptibleTimer(100, \ -> next(picLoading, true));
 
-		style = replaceStruct(m.style, OnLoaded(\ -> {uns(); onPicLoaded(); nextDistinct(picLoading, false);}));
+		picSize =
+			eitherMap(
+				tryExtractStruct(tstyle, TPictureSize(const(WidthHeight(0., 0.)))),
+				\ds -> Some(ds.size),
+				maybeMap(
+					tryExtractStruct(tstyle, WidthHeight(-1.0, -1.0)),
+					\cs -> const(cs)
+				)
+			);
+
+		pstyle = replaceStruct(tstyle, OnLoaded(\ -> {uns(); onPicLoaded(); nextDistinct(picLoading, false);}));
 
 		TCopySize(
-			TPicture(m.picURL, MPictureStyle2TPictureStyle(style)),
-			\tr -> {
+			TPicture(m.picURL, pstyle),
+			\tr ->
 				TShowLazy(picLoading, \ ->
 					eitherMap(customLoading, \cl ->
 						m2t(cl.loading, parent),
 						MProgressCircle2T(manager, parent, MProgressCircle([itemsColor]))
 					)
 					|> (\f -> TAlpha(const(0.72), f))
-					|> (\f -> TCenterIn(f, TFillXY()))
 					|> (\f -> TFrame(0., 0., [MFill(bgColor)], f))
-					|> (\f -> if (picSize != WidthHeight(-1., -1.)) TAvailable(f, TSized(const(picSize))) else f)
-				)
-			},
+					|> (\f -> TCenterIn(f, eitherMap(picSize, \ps -> TSized(ps), TFillXY())))
+				),
 			true
 		)
 	} else {
-		TPicture(m.picURL, MPictureStyle2TPictureStyle(m.style))
+		TPicture(m.picURL, tstyle)
 	}
 }
 
 MPictureStyle2TPictureStyle(style : [MPictureStyle]) -> [TPictureStyle] {
-	fold(style, [], \acc, st -> {
-		switch (st) {
-			TStyle(__) : arrayPush(acc, st);
-			TStyleWithSelector(__, __) : arrayPush(acc, st);
-			WidthHeight(__, __) : arrayPush(acc, st);
-			TIgnoreCachedPictureSize() : arrayPush(acc, st);
-			DontCache() : arrayPush(acc, st);
-			OnlyDownloadToCache() : arrayPush(acc, st);
-			OnLoadingError(__) : arrayPush(acc, st);
-			OnLoaded(__) : arrayPush(acc, st);
-			default : acc;
-		}
-	})
+	filtermap(style, \s -> switch (s) {
+		MPictureSize(wh) : Some(TPictureSize(wh));
+		TPictureStyle() : {a : Maybe<TPictureStyle> = Some(s); a};
+		InspectRealSize(__) : {a : Maybe<TPictureStyle> = Some(s); a};
+		default : None();
+	});
 }

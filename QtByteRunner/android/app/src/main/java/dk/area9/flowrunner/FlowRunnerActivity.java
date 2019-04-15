@@ -1,32 +1,39 @@
 package dk.area9.flowrunner;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.http.HttpException;
-import org.apache.http.HttpHost;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpRequestInterceptor;
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpResponseInterceptor;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.params.CoreProtocolPNames;
-import org.apache.http.protocol.HttpContext;
+import com.amazonaws.org.apache.http.HttpException;
+import com.amazonaws.org.apache.http.HttpHost;
+import com.amazonaws.org.apache.http.HttpRequest;
+import com.amazonaws.org.apache.http.HttpRequestInterceptor;
+import com.amazonaws.org.apache.http.HttpResponse;
+import com.amazonaws.org.apache.http.HttpResponseInterceptor;
+import com.amazonaws.org.apache.http.client.methods.HttpGet;
+import com.amazonaws.org.apache.http.client.methods.HttpPost;
+import com.amazonaws.org.apache.http.client.methods.HttpPut;
+import com.amazonaws.org.apache.http.client.methods.HttpDelete;
+import com.amazonaws.org.apache.http.client.methods.HttpPatch;
+import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
+import com.amazonaws.org.apache.http.entity.BasicHttpEntity;
+import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import com.amazonaws.org.apache.http.protocol.HttpContext;
 
 // this is only for checking hardware acceleration, probably could be refactored
 import android.app.AlertDialog;
@@ -51,8 +58,11 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.content.LocalBroadcastManager;
 import android.text.method.ScrollingMovementMethod;
@@ -81,9 +91,11 @@ import dk.area9.flowrunner.FlowRunnerWrapper.PictureResolver;
 
 public class FlowRunnerActivity extends FragmentActivity  {
 
-    public static final String DATA_PATH = "/sdcard/flow/";
+    public static final String DATA_PATH = Environment.getExternalStorageDirectory().getPath() + "/flow/";
+    @Nullable
     private static String local_substitute_url = "https://localhost/flow/flowswf.html";
     
+    @Nullable
     File tmp_dir;
     
     LinearLayout ContentView; 
@@ -92,10 +104,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
     LinearLayout ConsoleView;
     
     FlowRunnerWrapper wrapper;
-    DefaultHttpClient http_client;
     FlowSoundPlayer sound_player;
     View menu_anchor;
     
+    @Nullable
     URI loader_uri;
     
     boolean initialized = false;
@@ -104,17 +116,22 @@ public class FlowRunnerActivity extends FragmentActivity  {
     boolean ha_set = false;
     boolean lastConnected = true;
     
+    @Nullable
     String php_session_id = null;
+    @Nullable
     String php_session_domain = null;
 
+    @Nullable
     private Intent intentOnDestroy = null;
+    @Nullable
     private BroadcastReceiver inetStateReceiver;
 
+    @Nullable
     private IFlowGooglePlayServices flowGooglePlayServices = null;
 
     private SoftKeyboardHeightListener softKeyboardHeightListener;
 
-    private void browseUrl(final String url) {
+    private void browseUrl(@NonNull final String url) {
         try {
             if (url.startsWith(local_substitute_url)) {
                 intentOnDestroy = getIntent();
@@ -171,43 +188,42 @@ public class FlowRunnerActivity extends FragmentActivity  {
         DisplayMetrics metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(metrics);
    
-        http_client = Utils.createHttpClient();
+//        http_client = Utils.createHttpClient();
         String user_agent = "flow Android " + Build.VERSION.RELEASE + 
                 " dpi=" + metrics.densityDpi + " " + metrics.widthPixels + "x" + metrics.heightPixels;
-        http_client.getParams().setParameter(CoreProtocolPNames.USER_AGENT, user_agent);
+//        http_client.getParams().setParameter("User-Agent", user_agent);
         
         Log.i(Utils.LOG_TAG, "Device info: " + Build.DEVICE + " OS: " + Build.VERSION.RELEASE);
         Log.i(Utils.LOG_TAG, "User agent for Http requests : " + user_agent);
         
         // Workaround for weird rejection of PHPSESSID cookie
-        http_client.addResponseInterceptor(new HttpResponseInterceptor() {
-            public void process(final HttpResponse response, final HttpContext context) throws HttpException, IOException {
-                if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
-                    String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
-                    if (set_cookie_header.startsWith("PHPSESSID")) { 
-                        String[] cookie_items = set_cookie_header.split(";");
-                        for (String item : cookie_items) {
-                            int pos = item.indexOf("domain=");
-                            if (pos != -1) {
-                                php_session_domain = item.substring(pos + 7);
-                                php_session_id = set_cookie_header;
-                                Log.i(Utils.LOG_TAG, "PHPSESSID received in SetCookie: " + php_session_id);
-                            }
-                        }
-                    } 
-                }
-            }
-        });
-    
-        http_client.addRequestInterceptor(new HttpRequestInterceptor() {
-            public void process(final HttpRequest request, final HttpContext context) throws HttpException, IOException {
-                if (php_session_id != null) {
-                    HttpHost target = (HttpHost) context.getAttribute(
-                            org.apache.http.protocol.ExecutionContext.HTTP_TARGET_HOST);
-                    if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
-                }
-            }
-        });
+//        http_client.addResponseInterceptor(new HttpResponseInterceptor() {
+//            public void process(@NonNull final HttpResponse response, final HttpContext context) {
+//                if (php_session_id == null && response.containsHeader("Set-Cookie") ) {
+//                    String set_cookie_header = response.getFirstHeader("Set-Cookie").getValue();
+//                    if (set_cookie_header.startsWith("PHPSESSID")) {
+//                        String[] cookie_items = set_cookie_header.split(";");
+//                        for (String item : cookie_items) {
+//                            int pos = item.indexOf("domain=");
+//                            if (pos != -1) {
+//                                php_session_domain = item.substring(pos + 7);
+//                                php_session_id = set_cookie_header;
+//                                Log.i(Utils.LOG_TAG, "PHPSESSID received in SetCookie: " + php_session_id);
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        });
+//
+//        http_client.addRequestInterceptor(new HttpRequestInterceptor() {
+//            public void process(@NonNull final HttpRequest request, @NonNull final HttpContext context) {
+//                if (php_session_id != null) {
+//                    HttpHost target = (HttpHost) context.getAttribute("Host");
+//                    if (target.getHostName().endsWith(php_session_domain) ) request.setHeader("Cookie", php_session_id);
+//                }
+//            }
+//        });
         
         wrapper = new FlowRunnerWrapper();
         
@@ -247,7 +263,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
 
         wrapper.setPictureLoader(new FlowRunnerWrapper.PictureLoader() {
-            public void load(String url, boolean cache, final PictureResolver callback) throws IOException {
+            public void load(@NonNull String url, boolean cache, @NonNull final PictureResolver callback) throws IOException {
                 /*// Replace swf with png
                 if (url.toLowerCase().endsWith(".swf")) {
                     String png_url = DATA_PATH + url.substring(0, url.length()-4) + ".png";
@@ -266,44 +282,61 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, callback);
             }
 
-            public void abortPictureLoad(String url) {
+            public void abortPictureLoad(@NonNull String url) {
                 ResourceCache.getInstance(FlowRunnerActivity.this).abortPendingRequest(loader_uri, url);
             }
         });
         
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
-            public void request(String url, boolean is_post, String[] headers,
-                    String[] params, HttpResolver callback) throws IOException 
-            {
+            public void request(@NonNull String url, String method, @NonNull String[] headers,
+                    String payload, @NonNull HttpResolver callback) {
                 HttpUriRequest request;
-                if (is_post) {
-                    HttpPost post = new HttpPost(loader_uri.resolve(url));
-                    if (params.length != 0)
-                        post.setEntity(Utils.paramStringsToEntity(params));
-                    request = post;
-                } else {
-                    if (params.length != 0)
-                        url += (url.indexOf('?') >= 0 ? "&" : "?") + Utils.paramStringsToQuery(params);
-                    request = new HttpGet(loader_uri.resolve(url));
+
+                BasicHttpEntity entity = new BasicHttpEntity();
+                entity.setContent(new ByteArrayInputStream(payload.getBytes(Charset.forName("UTF-8"))));
+
+                URI uri = loader_uri.resolve(url);
+                switch(method) {
+                    case "POST":
+                        HttpPost post = new HttpPost(uri);
+                        post.setEntity(entity);
+                        request = post;
+                        break;
+                    case "PUT":
+                        HttpPut put = new HttpPut(uri);
+                        put.setEntity(entity);
+                        request = put;
+                        break;
+                    case "DELETE":
+                        request = new HttpDelete(uri);
+                        break;
+                    case "PATCH":
+                        HttpPatch patch = new HttpPatch(uri);
+                        patch.setEntity(entity);
+                        request = patch;
+                        break;
+                    default:
+                        request = new HttpGet(uri);
+                        break;
                 }
 
                 for (int i = 0; i < headers.length; i+=2)
                     request.addHeader(headers[i], headers[i+1]);
                 
-                Utils.loadHttpAsync(http_client, request, callback);
+                Utils.loadHttpAsync(request, callback);
             }
 
-            public void preloadMedia(String url, ResourceCache.Resolver callback) throws IOException {
+            public void preloadMedia(@NonNull String url, @NonNull ResourceCache.Resolver callback) throws IOException {
                 ResourceCache.getInstance(FlowRunnerActivity.this).getCachedResource(loader_uri, url, callback);
             }
             
-            public void removeCachedMedia(String url) throws IOException {
+            public void removeCachedMedia(@NonNull String url) throws IOException {
                 ResourceCache.getInstance(FlowRunnerActivity.this).removeCachedResource(loader_uri, url);
             }
         });
         
         wrapper.addListener(new FlowRunnerWrapper.ListenerAdapter() {
-            public boolean onFlowBrowseUrl(final String url, String target) {
+            public boolean onFlowBrowseUrl(@NonNull final String url, String target) {
                 Log.i(Utils.LOG_TAG, "url: " + url);
                 
                 runOnUiThread(new Runnable() {
@@ -365,7 +398,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         inetStateFilter.addAction("android.net.conn.CONNECTIVITY_CHANGE_IMMEDIATE"); // only higher versions? 5.0?
         inetStateReceiver = new BroadcastReceiver() {
             @Override
-            public void onReceive(Context context, Intent intent) {
+            public void onReceive(@NonNull Context context, @NonNull Intent intent) {
                 Log.i(Utils.LOG_TAG, "Received intent: " + intent.getAction());
                 ConnectivityManager cm =
                         (ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -402,8 +435,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         Uri uri = intent.getData();
         if (uri == null) return true;
         if (uri.getScheme().equalsIgnoreCase("http") || uri.getScheme().equalsIgnoreCase("https") || uri.getScheme().equalsIgnoreCase("file") ) return false;
-        if (uri.getQuery() == null || uri.getQuery().equals("")) return true;
-        return false;
+        return uri.getQuery() == null || uri.getQuery().equals("");
     }
     
     private void callOnFlowNotificationClick(Intent intent) {
@@ -413,11 +445,11 @@ public class FlowRunnerActivity extends FragmentActivity  {
         );
     }
     
-    private boolean isAssociatedFileUrl(Uri uri) {
+    private boolean isAssociatedFileUrl(@Nullable Uri uri) {
         return uri != null && uri.getScheme().equalsIgnoreCase("content");
     }
     
-    @Override protected void onNewIntent(Intent intent) {
+    @Override protected void onNewIntent(@NonNull Intent intent) {
         Uri new_uri = intent.getData();
         if (new_uri != null && new_uri.equals(getIntent().getData()) && !new_uri.getScheme().equalsIgnoreCase("http") && !new_uri.getScheme().equalsIgnoreCase("https") && !new_uri.getScheme().equalsIgnoreCase("file"))
             return;
@@ -464,24 +496,24 @@ public class FlowRunnerActivity extends FragmentActivity  {
             ConsoleView.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 0.0f));
             
             Class<?> id = Class.forName(getPackageName() + ".R$id");
-            ConsoleTextView = (TextView)ConsoleView.findViewById((Integer)(id.getField("log_view").get(null)));
+            ConsoleTextView = ConsoleView.findViewById((Integer)(id.getField("log_view").get(null)));
             ConsoleTextView.setMovementMethod(new ScrollingMovementMethod());
 
-            Button update_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("update_log_button").get(null)));
+            Button update_log_button = ConsoleView.findViewById((Integer)(id.getField("update_log_button").get(null)));
             update_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     updateLogCatOutput();
                 }
             });
             
-            Button clear_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("clear_log_button").get(null)));
+            Button clear_log_button = ConsoleView.findViewById((Integer)(id.getField("clear_log_button").get(null)));
             clear_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     clearLogCatOutput(); updateLogCatOutput();
                 }
             });
             
-            final Button minimize_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("minimize_log_button").get(null)));
+            final Button minimize_log_button = ConsoleView.findViewById((Integer)(id.getField("minimize_log_button").get(null)));
             
             minimize_log_button.setOnClickListener(new OnClickListener() {
                 boolean isMinimized = false;
@@ -498,7 +530,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                 }
             });
             
-            Button close_log_button = (Button)ConsoleView.findViewById((Integer)(id.getField("close_log_button").get(null)));
+            Button close_log_button = ConsoleView.findViewById((Integer)(id.getField("close_log_button").get(null)));
             close_log_button.setOnClickListener(new OnClickListener() {
                 public void onClick(View view) {
                     hideConsoleView();
@@ -571,7 +603,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
            popup_menu.getMenuInflater().inflate(id, popup_menu.getMenu());
            popup_menu.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
                @Override
-               public boolean onMenuItemClick(MenuItem item) {
+               public boolean onMenuItemClick(@NonNull MenuItem item) {
                   if (item.getTitle().equals("Settings")) {
                       Intent settingsActivity = new Intent(getBaseContext(), FlowPreferenceActivity.class);
                       startActivity(settingsActivity);
@@ -742,6 +774,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         super.onDestroy();
     }
 
+    @NonNull
     private BroadcastReceiver mMessageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, final Intent intent) {
@@ -758,6 +791,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     };
 
+    @NonNull
     private BroadcastReceiver mTokenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -790,7 +824,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     {
         builder.setCancelable(false)
                .setPositiveButton(restart_btn, new DialogInterface.OnClickListener() {
-                   public void onClick(DialogInterface dialog, int id) {
+                   public void onClick(@NonNull DialogInterface dialog, int id) {
                        dialog.dismiss();
                        cur_dialog = 0;
                        loadWrapper();
@@ -803,8 +837,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
                });
     }
     
+    @Nullable
     private ProgressDialog download_progress = null;
 
+    @Nullable
     protected Dialog onCreateDialog(int id) {
         ProgressDialog progressDialog;
         AlertDialog.Builder builder;
@@ -846,6 +882,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     /**
      * Active bytecode loader thread.
      */
+    @Nullable
     private LoadThread loader = null;
     
     private class LoadThread extends Thread {
@@ -933,7 +970,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
             });
         }
 
-        private void downloadByteCodeFile(final URI link, final String file_name) {
+        private void downloadByteCodeFile(final URI link, @NonNull final String file_name) {
             // Actually retrieve the bytecode
             Log.i(Utils.LOG_TAG, "LOADING FROM URL: " + link.toString());
 
@@ -951,12 +988,12 @@ public class FlowRunnerActivity extends FragmentActivity  {
                         updateProgress(bytes);
                     }
                 }
-                public void httpFinished(boolean withData) {
-                    super.httpFinished(withData);
+                public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
+                    super.httpFinished(status, headers, withData);
                     ended[0] = withData; 
                 }
             };
-            dl_ok = Utils.loadHttpFile(http_client, link.toString(), file_name, callback);
+            dl_ok = Utils.loadHttpFile(link.toString(), file_name, callback);
             if (!ended[0])
                 dl_ok = false;
 
@@ -1115,7 +1152,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
         outState.putString(FlowCameraAPI.CAMERA_PHOTO_PATH, FlowCameraAPI.cameraAppPhotoFilePath);
         outState.putString(FlowCameraAPI.CAMERA_VIDEO_PATH, FlowCameraAPI.cameraAppVideoFilePath);
         outState.putString(FlowCameraAPI.CAMERA_APP_CALLBACK_ADDITIONAL_INFO, FlowCameraAPI.cameraAppCallbackAdditionalInfo);
@@ -1135,7 +1172,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
 
     @Override
-    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+    protected void onRestoreInstanceState(@NonNull Bundle savedInstanceState) {
         super.onRestoreInstanceState(savedInstanceState);
        
         FlowCameraAPI.cameraAppPhotoFilePath = savedInstanceState.getString(FlowCameraAPI.CAMERA_PHOTO_PATH);
@@ -1155,7 +1192,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, @NonNull Intent data) {
         if (wrapper.getStorePurchaseAPI() != null && data.getStringExtra("INAPP_PURCHASE_DATA") != null) {
             wrapper.getStorePurchaseAPI().callbackPurchase(resultCode, data);
         }
@@ -1179,9 +1216,10 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     }
     
+    @Nullable
     private onActivityResultArgs onActivityResultArgs = null;
     
-    private void handleImagePickerResult(final Uri uri, final boolean fromCamera) {
+    private void handleImagePickerResult(@NonNull final Uri uri, final boolean fromCamera) {
         final Context me = this;
         AsyncTask.execute(new Runnable() {
             @Override
@@ -1209,7 +1247,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
          });
     }
     
-    private void handleVideoPickerResult(final Uri uri, final boolean fromCamera) {
+    private void handleVideoPickerResult(@NonNull final Uri uri, final boolean fromCamera) {
         final Context me = this;
         AsyncTask.execute(new Runnable() {
             @Override
@@ -1289,7 +1327,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
         }
     }
     
-    private void safeOnActivityResult(int requestCode, int resultCode, final Intent data) {
+    private void safeOnActivityResult(int requestCode, int resultCode, @Nullable final Intent data) {
         if (resultCode != RESULT_OK) {
             // TODO: add some info about errors
             return;

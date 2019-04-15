@@ -1,6 +1,7 @@
 package dk.area9.flowrunner;
 
 import android.app.Activity;
+import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,6 +22,7 @@ public class SoftKeyboardHeightListener {
 
     private KeyBoardHeightListener listener;
 
+    @NonNull
     private ViewTreeObserver.OnGlobalLayoutListener keyboardLayoutListener = new ViewTreeObserver.OnGlobalLayoutListener() {
         @Override
         public void onGlobalLayout() {
