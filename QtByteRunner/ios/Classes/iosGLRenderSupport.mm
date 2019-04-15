@@ -1671,6 +1671,9 @@ NativeFunction *iosGLRenderSupport::MakeNativeFunction(const char *name, int num
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setFullScreenRectangle, 4);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, isFullScreen, 0);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, onFullScreen, 1);
+    TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setStatusBarVisible, 1);
+    TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setStatusBarColor, 1);
+    TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setBackgroundColor, 1);
     
     return GLRenderSupport::MakeNativeFunction(name, num_args);
 }
@@ -1719,6 +1722,40 @@ StackSlot iosGLRenderSupport::hostCall(RUNNER_ARGS)
     {
         [UIScreen mainScreen].brightness = RUNNER->GetArraySlot(args, 0).GetDouble();
     }
+    
+    RETVOID;
+}
+
+#define UIColorFromRGB(rgbValue) [UIColor colorWithRed:((float)((rgbValue & 0xFF0000) >> 16))/255.0 green:((float)((rgbValue & 0xFF00) >> 8))/255.0 blue:((float)(rgbValue & 0xFF))/255.0 alpha:1.0];
+
+StackSlot iosGLRenderSupport::setBackgroundColor(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(bgColor);
+    RUNNER_CheckTag1(TInt, bgColor);
+    
+    GLViewController.view.backgroundColor = UIColorFromRGB(bgColor.GetInt());
+    
+    RETVOID;
+}
+
+StackSlot iosGLRenderSupport::setStatusBarColor(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(sbColor);
+    RUNNER_CheckTag1(TInt, sbColor);
+    
+    UIView *bar = [[UIApplication sharedApplication] valueForKeyPath:@"statusBarWindow.statusBar"];
+    
+    bar.backgroundColor = UIColorFromRGB(sbColor.GetInt());
+    
+    RETVOID;
+}
+
+StackSlot iosGLRenderSupport::setStatusBarVisible(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(visible);
+    RUNNER_CheckTag1(TBool, visible);
+    
+    [GLViewController setStatusBarVisible: visible.GetBool()];
     
     RETVOID;
 }
