@@ -457,6 +457,7 @@ private:
     DECLARE_NATIVE_METHOD(makeBevel)
     DECLARE_NATIVE_METHOD(makeDropShadow)
     DECLARE_NATIVE_METHOD(makeGlow)
+    DECLARE_NATIVE_METHOD(makeShader)
 
     DECLARE_NATIVE_METHOD(getStage)
     DECLARE_NATIVE_METHOD(getStageWidth)

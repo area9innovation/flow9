@@ -32,7 +32,7 @@ private:
 public:
     GLFilter(GLRenderSupport *owner);
 
-    DEFINE_FLOW_NATIVE_OBJECT(GLFilter, FlowNativeObject);
+    DEFINE_FLOW_NATIVE_OBJECT(GLFilter, FlowNativeObject)
 
     virtual bool needsBlurNode() { return true; }
 
@@ -47,7 +47,7 @@ class GLBlurFilter : public GLFilter
 public:
     GLBlurFilter(GLRenderSupport *owner, float radius, float quality);
 
-    DEFINE_FLOW_NATIVE_OBJECT(GLBlurFilter, GLFilter);
+    DEFINE_FLOW_NATIVE_OBJECT(GLBlurFilter, GLFilter)
 
     virtual bool needsBlurNode() { return false; }
 
@@ -63,7 +63,7 @@ class GLDropShadowFilter : public GLFilter
 public:
     GLDropShadowFilter(GLRenderSupport *owner, vec2 shift, vec4 color, bool inner, float radius, float quality);
 
-    DEFINE_FLOW_NATIVE_OBJECT(GLDropShadowFilter, GLFilter);
+    DEFINE_FLOW_NATIVE_OBJECT(GLDropShadowFilter, GLFilter)
 
     virtual void updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox);
     virtual void render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur);
@@ -78,7 +78,23 @@ class GLBevelFilter : public GLFilter
 public:
     GLBevelFilter(GLRenderSupport *owner, vec2 shift, vec4 color1, vec4 color2, bool inner, float radius, float quality);
 
-    DEFINE_FLOW_NATIVE_OBJECT(GLBevelFilter, GLFilter);
+    DEFINE_FLOW_NATIVE_OBJECT(GLBevelFilter, GLFilter)
+
+    virtual void updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox);
+    virtual void render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur);
+};
+
+class GLShaderFilter : public GLFilter
+{
+    unicode_string vertex, fragment, uniform;
+    static int program_id_counter;
+    int program_id;
+    bool compiled;
+
+public:
+    GLShaderFilter(GLRenderSupport *owner, unicode_string vertex, unicode_string fragment, unicode_string uniform);
+
+    DEFINE_FLOW_NATIVE_OBJECT(GLShaderFilter, GLFilter)
 
     virtual void updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox);
     virtual void render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur);

@@ -405,6 +405,15 @@ void GLRenderer::renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shif
     endFilter(main, mask);
 }
 
+void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, int program_id)
+{
+    beginFilter(main, mask);
+
+    setProgram((ProgramId) program_id);
+
+    endFilter(main, mask);
+}
+
 void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
 {
     vec2 nullshift(0.0f, 0.0f);

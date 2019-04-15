@@ -1014,6 +1014,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeBevel, 9);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeDropShadow, 7);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeGlow, 5);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeShader, 3);
 
     TRY_USE_NATIVE_METHOD(GLRenderSupport, getCursor, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, setCursor, 1);
@@ -1563,6 +1564,17 @@ StackSlot GLRenderSupport::makeGlow(RUNNER_ARGS)
                                                    inner.GetBool(), radius.GetDouble(), spread.GetDouble());
     return RUNNER->AllocNative(f);
 }
+
+StackSlot GLRenderSupport::makeShader(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(vertex, fragment, uniform);
+    RUNNER_CheckTag3(TString, vertex, fragment, uniform);
+
+    // Experiments have shown that glow is identical to shadow with zero offset.
+    GLShaderFilter *f = new GLShaderFilter(this, RUNNER->GetString(vertex), RUNNER->GetString(fragment), RUNNER->GetString(uniform));
+    return RUNNER->AllocNative(f);
+}
+
 
 StackSlot GLRenderSupport::getCursor(RUNNER_ARGS)
 {

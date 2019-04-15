@@ -40,6 +40,8 @@ class GLRenderer
 
     /* SHADERS */
 
+public:
+
     enum ProgramId {
         ProgDrawSimple = 0,
         ProgDrawFancy,
@@ -54,6 +56,11 @@ class GLRenderer
         ProgGauss,
         ProgLAST
     };
+
+    void compileShaderPair(ProgramId id, const char **vlist , const char **flist,
+                           const std::vector<std::string> &prefix, int nattrs, ...);
+
+private:
 
     struct ProgramInfo {
         GLuint program_id;
@@ -72,9 +79,6 @@ class GLRenderer
     bool vdoCompileShaderPair(ProgramId id, const char **vlist, const char **flist,
                               const std::vector<std::string> &prefix,
                               int nattrs, va_list attrList);
-
-    void compileShaderPair(ProgramId id, const char **vlist , const char **flist,
-                           const std::vector<std::string> &prefix, int nattrs, ...);
     void vcompileShaderPair(ProgramId id, const char **vlist , const char **flist,
                             const std::vector<std::string> &prefix,
                             int nattrs, va_list attrList);
@@ -250,6 +254,7 @@ public:
 
     void renderShadow(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color, bool inner, float sigma = -1);
     void renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color1, vec4 color2, bool inner, float sigma = -1);
+    void renderShader(GLDrawSurface *main, GLDrawSurface *mask, int program_id);
 
     void renderLocalBlur(GLDrawSurface *input, float sigma);
     void renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs);

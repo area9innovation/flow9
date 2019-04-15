@@ -246,3 +246,57 @@ void GLBevelFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *ou
         renderer->renderBevel(input, input, shift, bevel_color1, bevel_color2, bevel_inner, sigma);
     }
 }
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(GLShaderFilter, GLFilter);
+
+int GLShaderFilter::program_id_counter = 20;
+
+GLShaderFilter::GLShaderFilter(GLRenderSupport *owner, unicode_string vertex, unicode_string fragment, unicode_string uniform) :
+    GLFilter(owner)
+{
+    this->vertex = vertex;
+    this->fragment = fragment;
+    this->uniform = uniform;
+    this->program_id = program_id_counter;
+    this->compiled = false;
+    program_id_counter++;
+}
+
+void GLShaderFilter::updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox)
+{
+    GLFilter::updateBBox(clip, own_bbox, full_bbox);
+}
+
+const char** split_string(const unicode_string& str, const unicode_string& delimiter)
+{
+    std::vector<const char*> strings;
+
+    std::string::size_type pos = 0;
+    std::string::size_type prev = 0;
+    while ((pos = str.find(delimiter, prev)) != std::string::npos)
+    {
+        strings.push_back((const char*) str.substr(prev, pos - prev + 1).c_str());
+        prev = pos + 1;
+    }
+
+    // To get the last substring (or only, if delimiter is not found)
+    strings.push_back((const char*) str.substr(prev + 1).c_str());
+
+    return (const char**) strings.data();
+}
+
+void GLShaderFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur)
+{
+    if (!compiled) {
+        std::vector<std::string> pfix;
+        pfix.clear();
+
+        renderer->compileShaderPair((GLRenderer::ProgramId) program_id, split_string(vertex, parseUtf8("\n")), split_string(fragment, parseUtf8("\n")), pfix, 0);
+
+        compiled = true;
+    }
+
+    output->makeCurrent();
+
+//    renderer->renderShader(input, output, program_id);
+}
