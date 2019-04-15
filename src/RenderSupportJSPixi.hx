@@ -914,8 +914,8 @@ class RenderSupportJSPixi {
 		// NOP for this target
 	}
 
-	public static function getTextFieldCharXPosition(textfield : TextField, charIdx: Int) : Float {
-		return textfield.getCharXPosition(charIdx);
+	public static function getTextFieldCharXPosition(clip : TextClip, charIdx: Int) : Float {
+		return clip.getCharXPosition(charIdx);
 	}
 
 	public static function findTextFieldCharByPosition(textfield : TextField, x: Float, y: Float) : Int {

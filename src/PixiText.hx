@@ -228,7 +228,7 @@ class PixiText extends TextField {
 	}
 
 	public override function getCharXPosition(charIdx: Int) : Float {
-		var pos = -1.0;
+		/*var pos = -1.0;
 
 		layoutText();
 
@@ -250,7 +250,7 @@ class PixiText extends TextField {
 				}
 				return result;
 			}
-		}
+		}/*
 		return -1.0;
 	}
 
