@@ -67,19 +67,8 @@ resolveGGraph(
 		makeFcError : (string, Set<int>) -> FcError, 
 		onError : (GEnv, FcError) -> void
 	) -> GEnv {
-
-	nenv = GEnv(env
-		with grelations = GRelations(
-			env.grelations
-			with tyvarQueue = foldSet(env.unresolvedTyvars, env.grelations.tyvarQueue, \acc, tyvar -> {
-			// OK, make sure we have all tyvars in the queue
-				setTree(acc, GQueueItem(0, tyvar), tyvar)
-			})
-		)
-	);
-
 	grenv = GResolutionEnv(
-		nenv, name, unify, makeFcError, onError, 0, false, 0
+		env, name, unify, makeFcError, onError, 0, false, 0
 	);
 	gresolution = doResolveGGraph(grenv);
 	gresolution.env;
@@ -102,16 +91,17 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 	if (grenv.abort) {
 		grenv;
 	} else {
-		nextTyvar = popmin(grenv.env.grelations.tyvarQueue);
+		nextTyvar : Maybe<PopSetResult<GQueueItem>> = popMinSet(grenv.env.grelations.tyvarQueue);
 		switch (nextTyvar) {
-			PopResult(item, tyvarid, rest): {
-				if (containsKeyTree(grenv.env.tyvars, tyvarid)) {
+			Some(pop): {
+				item = pop.value;
+				if (containsKeyTree(grenv.env.tyvars, item.tyvar)) {
 					// Already solved. We can ignore
 					acc = GResolutionEnv(grenv 
 						with env = GEnv(
 							grenv.env
 							with grelations = GRelations(
-								grenv.env.grelations with tyvarQueue = rest
+								grenv.env.grelations with tyvarQueue = pop.rest
 							)
 						)
 					);
@@ -119,13 +109,9 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 				} else {
 					stage = int2gresolutionStage(item.stage);
 
-					reqs = buildGTyvarRequirement(grenv.env, tyvarid);
+					reqs = buildGTyvarRequirement(grenv.env, item.tyvar);
 					if (grenv.env.verbose >= 2) {
 						printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
-					}
-					if (grenv.env.verbose >= 3) {
-						remaining = getTreeValues(rest);
-						printStay(grenv.env.env, "Remaining in queue: " + toString(remaining));
 					}
 
 					acc = GResolutionEnv(grenv 
@@ -133,7 +119,7 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 							grenv.env
 							with grelations = GRelations(
 								grenv.env.grelations with
-								tyvarQueue = rest
+								tyvarQueue = pop.rest
 							)
 						)
 					);
@@ -145,7 +131,7 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 					doResolveGGraph(res);
 				}
 			}
-			EmptyPopResult(): {
+			None(): {
 				// OK, we are done.
 				grenv;
 			}
@@ -161,7 +147,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 		nextStageId = gresolutionStage2int(nextGResolutionStage(stage));
 		newQueue = if (stage == GResolveTypars()) grenv.env.grelations.tyvarQueue else
 			foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
-				setTree(acc, GQueueItem(nextStageId, tyvar), tyvar)
+				insertSet(acc, GQueueItem(nextStageId, tyvar))
 			});
 
 		GResolutionEnv(grenv 
@@ -312,13 +298,13 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					// The priorized order: Known names in smallest first, then smallest unknown names
 					cheapest = concat(dosort(overlap), dosort(remaining));
 
-					if (grenv.env.verbose >= 4) {
-						printIndent(grenv.env.env, "Speculation with " + toString(cheapest) + " {");
+					if (grenv.env.verbose >= 2) {
+						printIndent(grenv.env.env, "Speculation " + i2s(grenv.speculation) + " with " + toString(cheapest) + " { " + gtyvarReqs2string(grenv.env, req));
 					}
 
 					senv = findErrorFreeCandidate(grenv, cheapest, req);
 
-					if (senv.env.verbose >= 4) {
+					if (senv.env.verbose >= 2) {
 						printDedent(senv.env.env, "} speculation " + if (senv.abort) " failed" else " succeeded");
 					}
 
@@ -355,7 +341,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 
 		if (!^errors) {
 			// We limit the speculation to 5 levels
-			if (grenv.speculation < 5) {
+			if (grenv.speculation < 3) {
 				// OK, run the rest of the algorithm against this one
 				// to check if it works out
 				if (grenv.env.verbose >= 4) {
@@ -416,8 +402,7 @@ resolveGTypeVarToTyPar(env : GEnv, tyvars : Set<int>) -> GEnv {
 		}
 		GEnv(
 			acc with
-			tyvars = setTree(acc.tyvars, tv, typar),
-			unresolvedTyvars = removeSet(acc.unresolvedTyvars, tv)
+			tyvars = setTree(acc.tyvars, tv, typar)
 		);
 	});
 }
@@ -442,16 +427,21 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 			GEnv(
 				env0 with
 				tyvars = setTree(env0.tyvars, tyvar, type),
-				unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar),
 			);
 		});
 
 		// Add the new unresolved
 		tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
-		nenv1 = GEnv(
-			nenv0 with
-			unresolvedTyvars = mergeSets(nenv0.unresolvedTyvars, tyvarsInType)
-		);
+		// The neko compiler can not figure this out, so we have to help it
+		grels : GRelations = nenv0.grelations;
+		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, enqueueGTyvarQueue);
+		nenv1 = 
+			GEnv(
+				nenv0 with 
+				grelations = GRelations(
+					grels with tyvarQueue = tyvarQueue
+				)
+			);
 
 		// Then unify with relations
 		foldSet(tyvars, nenv1, \nenv2, tyvar -> {
@@ -475,35 +465,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 
 	doFields = false;
 
-	if (false) {
-		env1
-	} else {
-		foldSet(tyvars, env1, \env0, tyvar -> {
-			nenv0 = GEnv(
-				env0 with
-				tyvars = setTree(env0.tyvars, tyvar, type),
-				unresolvedTyvars = removeSet(env0.unresolvedTyvars, tyvar)
-			);
-			// Join with all lower fixed
-			nenv1 = foldSet(req.lower.fixedTypes, nenv0, \acc, t -> unify(acc, t, type, req.starts, onError));
-			// Join with all upper fixed
-			nenv2 = foldSet(req.upper.fixedTypes, nenv1, \acc, t -> unify(acc, type, t, req.starts, onError));
-
-			// Unify with subs
-			nenv3 = foldSet(req.lower.named, nenv2, \acc, st -> unify(acc, st, type, req.starts, onError));
-			nenv4 = if (doFields) foldSet(req.lower.fields, nenv3, \acc, st -> unify(acc, st, type, req.starts, onError)) else nenv3;
-
-			// Unify with supers
-			nenv5 = foldSet(req.upper.named, nenv4, \acc, st -> unify(acc, type, st, req.starts, onError));
-			nenv6 = if (doFields) foldSet(req.upper.fields, nenv5, \acc, st -> unify(acc, type, st, req.starts, onError)) else nenv4;
-
-			tyvarsInType = extractGTypeVars(nenv6, type, makeSet());
-			GEnv(
-				nenv6 with
-				unresolvedTyvars = mergeSets(nenv6.unresolvedTyvars, tyvarsInType)
-			);
-		});
-	}
+	env1
 }
 
 isGTypeVars(tyvars : Set<int>, type : GType) -> bool {

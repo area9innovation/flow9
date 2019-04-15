@@ -1576,6 +1576,8 @@ class NativeHx {
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
 
+				mouseMoveActiveFn();
+
 				return function() {
 					untyped __js__("clearTimeout(timeoutActiveId)");
 					Browser.window.removeEventListener("mousemove", mouseMoveActiveFn);

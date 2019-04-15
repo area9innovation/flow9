@@ -285,6 +285,32 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 		return this._CF_originalRenderCanvas(renderer);
 	}
 
+	if (this.glShaders) {
+		const bounds = this.getBounds(true);
+
+		const x = bounds.x - this.filterPadding;
+		const y = bounds.y - this.filterPadding;
+
+		const wd = bounds.width + this.filterPadding * 2.0;
+		const hgt = bounds.height + this.filterPadding * 2.0;
+
+		if (renderer.width != renderer.gl.width || renderer.height != renderer.gl.height) {
+			renderer.gl.resize(renderer.width, renderer.height);
+		}
+
+		renderer.gl.render(this, null, true, null, true);
+
+		const ctx = renderer.context;
+
+		ctx.save();
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.drawImage(renderer.gl.view, x, y, wd, hgt, x, y, wd, hgt);
+		ctx.restore();
+
+		return;
+	}
+
 	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
 		(this.children != null && this.children.length == 1 &&
 		(this.children[0].graphicsData != null || (this.children[0].children != null && this.children[0].children.length > 0 && this.children[0].children[0].graphicsData != null))) &&

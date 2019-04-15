@@ -761,7 +761,7 @@ class BytecodeWriter {
 			var done = false;
 			switch (fields) {
 			case TStruct(structname, cargs, max):
-				var index = fieldIndex(fields, name);
+				var index = fieldIndex(fields, name, pos);
 				writeOpcode(output, opcode_id);
 				output.writeInt31_8(index, FIELDS_IN_A_STRUCT);
 				return;
@@ -772,7 +772,7 @@ class BytecodeWriter {
 					var same = true;
 					var i = -1;
 					for (m in max) {
-						var i2 = fieldIndex(m, name);
+						var i2 = fieldIndex(m, name, pos);
 						if (i == -1 || i2 == i) {
 							i = i2;
 						} else {
@@ -1103,7 +1103,7 @@ class BytecodeWriter {
 		}
 	}
 
-	function fieldIndex(struct : FlowType, name : String) : Int {
+	function fieldIndex(struct : FlowType, name : String, pos : Position) : Int {
 		switch (struct) {
 			case TStruct(structname, cargs, max): {
 				var index = 0;
@@ -1116,7 +1116,7 @@ class BytecodeWriter {
 			}
 			default:
 		}
-		throw "Can not find the field " + name + " in " + Prettyprint.prettyprintType(struct);
+		throw "Can not find the field " + name + " in " + Prettyprint.prettyprintType(struct) + " at " + Prettyprint.position(pos);
 		return 0;
 	}
 

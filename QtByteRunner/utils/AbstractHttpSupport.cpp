@@ -423,8 +423,9 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
     } else {
         std::string url = encodeUtf8(rq.url);
 
+        HttpRequest::T_SMap paramsEncoded;
         for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it) {
-            rq.params[it->first] = urlencode(it->second);
+            paramsEncoded[urlencode(it->first)] = urlencode(it->second);
         }
 
         // Map url query parameters to rq.params
@@ -443,15 +444,15 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
 
                 unicode_string key = parseUtf8(query.substr(pos, equalPos - pos));
                 unicode_string value = parseUtf8(query.substr(equalPos + 1, ampPos - equalPos - 1));
-                rq.params[key] = value;
+                paramsEncoded[key] = value;
 
                 pos = ampPos != std::string::npos ? ampPos + 1 : querySize;
             }
         }
 
         unicode_string params;
-        for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it) {
-            if (it != rq.params.begin())
+        for (HttpRequest::T_SMap::iterator it = paramsEncoded.begin(); it != paramsEncoded.end(); ++it) {
+            if (it != paramsEncoded.begin())
                 params += unicode_string(1, '&');
 
             params += it->first + unicode_string(1, '=') + it->second;

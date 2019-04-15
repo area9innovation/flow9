@@ -28,7 +28,6 @@ makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GE
 		env.program.acc.config.verbose, 
 		makeTree(),
 		makeSet(), 
-		makeSet(),
 		makeGRelations(),
 		subtype,
 		makeSet()
@@ -68,7 +67,13 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 			\n -> [DotLabel(n)], 
 			\e -> []
 		);
-		setFileContent(name + "-subtypes.dot", dot);
+		setFileContent(name + "-supertypes.dot", dot);
+
+		dot1 = simpleGraph2dot(oenv.subtypes.subtypes, "", [], 
+			\n -> [DotLabel(n)], 
+			\e -> []
+		);
+		setFileContent(name + "-subtypes.dot", dot1);
 
 		dot2 = simpleGraph2dot(oenv.subtypes.fieldSupertypes, "", [], 
 			\n -> [DotLabel(n)], 
@@ -88,7 +93,7 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	ge = GEnv(
 		oenv with
 		tyvarIdGroup = tyvarIdGroup,
-		verbose = if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 3 else oenv.verbose,
+		verbose = if (^(env.local.debugTyping) > 0 || getConfigParameter(env.program.acc.config.config, "verbose") == name) 2 else oenv.verbose,
 		tyvars = typars,
 		namesSeen = extractNamesFromExpectations(oenv.namesSeen, expects)
 	);
@@ -150,6 +155,8 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	}
 
 	startTime = timestamp();
+
+	// printStay(ge1.env, "Solving " + name);
 
 	// Go ahead and resolve it
 	ge2 = resolveGGraph(ge1, name, \e, l, u, ps, onFError : (GEnv, FcError) -> void -> {
@@ -269,16 +276,21 @@ unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (stri
 				env3;
 			}
 		} else {
-			if (env.verbose >= 3)  {
-				pt = \t -> gtype2string(env, t);
-				printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
-			}
-			env3 = unifyAndRecurseGType(env, output, input, pos, onError);
+			existingTos = lookupMultimap(env.grelations.uppers, output);
+			if (containsSet(existingTos, input)) {
+				env;
+			} else {
+				if (env.verbose >= 3)  {
+					pt = \t -> gtype2string(env, t);
+					printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
+				}
+				env3 = unifyAndRecurseGType(env, output, input, pos, onError);
 
-			if (env.verbose >= 3)  {
-				printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
+				if (env.verbose >= 3)  {
+					printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
+				}
+				env3;
 			}
-			env3;
 		}
 	}
 }
@@ -481,14 +493,20 @@ unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], pos : int, onError : 
 }
 
 gunifyTyvar(env : GEnv, left : GType, right : GType, pos : int, onError : (string) -> void) -> GEnv {
-	addTyvars = \ut, t -> extractGTypeVars(env, t, ut);
+	addTyvars = \queue : Set<GQueueItem>, t : GType -> {
+		tvs = extractGTypeVars(env, t, makeSet());
+		foldSet(tvs, queue, enqueueGTyvarQueue);
+	}
 	if (env.verbose >= 3) {
 		printStay(env.env, "Adding edge between  " + gtype2string(env, left) + " and " + gtype2string(env, right));
 	}
+	relations = addGRelation(env.grelations, left, right, pos);
 	GEnv(
 		env with 
-		unresolvedTyvars = addTyvars(addTyvars(env.unresolvedTyvars, left), right),
-		grelations = addGRelation(env.grelations, left, right, pos)
+		grelations = GRelations(
+			relations with
+			tyvarQueue = addTyvars(addTyvars(relations.tyvarQueue, left), right),
+		)
 	)
 }
 
