@@ -27,8 +27,16 @@ class HaxeRuntime {
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
 	static public inline function setref__<T>(r : Dynamic, v : T) : Void { r.__v = v; }
 	static public inline function _s_(v : Dynamic) : Dynamic { return v; }
-
 	static public function initStruct(id : Int, name : String, args : Array<String>, atypes: Array<RuntimeType>) {
+#if (js)
+	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
+
+#if (readable)
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._name=\"'+name+'\";'+a+'return this;')}");
+#else
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._id='+id.toString()+';'+a+'return this;')}");
+#end
+#end
 		_structnames_.set(id, name);
 		_structids_.set(name, id);
 		_structargs_.set(id, args);
