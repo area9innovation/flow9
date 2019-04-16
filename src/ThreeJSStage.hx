@@ -1,48 +1,52 @@
 import js.Browser;
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
+import pixi.core.math.shapes.Rectangle;
+import pixi.core.math.Point;
 
+import js.three.Camera;
 import js.three.PerspectiveCamera;
 import js.three.Scene;
 import js.three.WebGLRenderer;
 
-import js.three.BoxGeometry;
-import js.three.Mesh;
-import js.three.MeshNormalMaterial;
-
 using DisplayObjectHelper;
 
 class ThreeJSStage extends DisplayObject {
-	public var camera : PerspectiveCamera;
+	public var camera : Camera;
 	public var scene : Scene;
 	public var renderer : WebGLRenderer;
 
-	public function new() {
+	private var _visible : Bool = true;
+	private var clipVisible : Bool = false;
+
+	public function new(width : Float, height : Float) {
 		super();
 
-		camera = new PerspectiveCamera(70, Browser.window.innerWidth / Browser.window.innerHeight, 0.01, 10);
-		camera.position.z = 1;
+		this.camera = new PerspectiveCamera(45.0, 1.0, 0.1, 1000.0);
+		this.scene = new Scene();
+		this.renderer = new WebGLRenderer({antialias: true});
 
-		scene = new Scene();
-		renderer = new WebGLRenderer({antialias: true});
+		renderer.setSize(width, height);
 
-		renderer.setSize(Browser.window.innerWidth, Browser.window.innerHeight);
-
-		var geometry = new BoxGeometry(0.2, 0.2, 0.2);
-		var material = new MeshNormalMaterial();
-
-		var mesh = new Mesh(geometry, material);
-		scene.add(mesh);
+		// Chrome Inspect Three.js extension support
+		untyped __js__("window.THREE = THREE;");
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
-		// if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
-		// {
-		// 	return;
-		// }
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+		{
+			return;
+		}
 
 		this.renderer.render(scene, camera);
-		untyped renderer.context.drawImage(this.renderer.domElement, 0, 0);
+
+		var ctx : Dynamic = untyped renderer.context;
+
+		ctx.save();
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx, worldTransform.ty);
+		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth(), getHeight());
+		ctx.restore();
 	}
 
 	private function getWidth() : Float { return renderer.getSize().width; }
@@ -50,4 +54,46 @@ class ThreeJSStage extends DisplayObject {
 
 	private function setWidth(width : Float) : Void { renderer.setSize(width, getHeight()); }
 	private function setHeight(height : Float) : Void { renderer.setSize(getWidth(), height); }
+
+	#if (pixijs < "4.7.0")
+		public override function getLocalBounds() : Rectangle {
+			var rect = new Rectangle();
+
+			rect.x = 0;
+			rect.y = 0;
+			rect.width = getWidth();
+			rect.height = getHeight();
+
+			return rect;
+		}
+	#else
+		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
+			if (rect == null) {
+				rect = new Rectangle();
+			}
+
+			rect.x = 0;
+			rect.y = 0;
+			rect.width = getWidth();
+			rect.height = getHeight();
+
+			return rect;
+		}
+	#end
+
+	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
+		if (rect == null) {
+			rect = new Rectangle();
+		}
+
+		var lt = toGlobal(new Point(0.0, 0.0));
+		var rb = toGlobal(new Point(getWidth(), getHeight()));
+
+		rect.x = lt.x;
+		rect.y = lt.y;
+		rect.width = rb.x - lt.x;
+		rect.height = rb.y - lt.y;
+
+		return rect;
+	}
 }

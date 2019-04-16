@@ -13,6 +13,21 @@ import pixi.core.math.Point;
 
 import pixi.loaders.Loader;
 
+import js.three.Scene;
+import js.three.Camera;
+import js.three.PerspectiveCamera;
+import js.three.Object3D;
+import js.three.Mesh;
+
+import js.three.Geometry;
+import js.three.BoxGeometry;
+import js.three.CircleGeometry;
+import js.three.ConeGeometry;
+import js.three.CylinderGeometry;
+
+import js.three.Material;
+import js.three.MeshBasicMaterial;
+
 import MacroUtils;
 import Platform;
 
@@ -385,9 +400,6 @@ class RenderSupportJSPixi {
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
 		PixiStage.transformChanged = true;
 		PixiStage.invalidateStage();
-
-		// TODO: Remove
-		PixiStage.addChild(new ThreeJSStage());
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -1085,16 +1097,244 @@ class RenderSupportJSPixi {
 			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
+	// 3D
+
+	public static function make3DStage(width : Float, height : Float) : ThreeJSStage {
+		return new ThreeJSStage(width, height);
+	}
+
+	public static function make3DScene() : Scene {
+		var scene = new Scene();
+		scene.background = new js.three.Color(0xcccccc);
+		return scene;
+	}
+
+	public static function make3DPerspectiveCamera(fov : Float, aspect : Float, near : Float, far : Float) : PerspectiveCamera {
+		return new PerspectiveCamera(fov, aspect, near, far);
+	}
+
+
+	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
+		new ThreeJSLoader(objUrl, mtlUrl, onLoad);
+	}
+
+
+	public static function set3DCamera(stage : ThreeJSStage, camera : Camera) : Void {
+		stage.camera = camera;
+		PixiStage.invalidateStage();
+	}
+
+	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {
+		stage.scene = scene;
+
+		// Chrome Inspect Three.js extension support
+		untyped __js__("window.scene = scene;");
+
+		PixiStage.invalidateStage();
+	}
+
+
+	public static function get3DObjectX(object : Object3D) : Float {
+		return object.position.x;
+	}
+
+	public static function get3DObjectY(object : Object3D) : Float {
+		return object.position.y;
+	}
+
+	public static function get3DObjectZ(object : Object3D) : Float {
+		return object.position.z;
+	}
+
+	public static function set3DObjectX(object : Object3D, x : Float) : Void {
+		if (object.position.x != x) {
+			object.position.x = x;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectY(object : Object3D, y : Float) : Void {
+		if (object.position.y != y) {
+			object.position.y = y;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectZ(object : Object3D, z : Float) : Void {
+		if (object.position.z != z) {
+			object.position.z = z;
+			PixiStage.invalidateStage();
+		}
+	}
+
+
+
+	public static function get3DObjectRotationX(object : Object3D) : Float {
+		return object.rotation.x / 0.0174532925 /*degrees*/;
+	}
+
+	public static function get3DObjectRotationY(object : Object3D) : Float {
+		return object.rotation.y / 0.0174532925 /*degrees*/;
+	}
+
+	public static function get3DObjectRotationZ(object : Object3D) : Float {
+		return object.rotation.z / 0.0174532925 /*degrees*/;
+	}
+
+	public static function set3DObjectRotationX(object : Object3D, x : Float) : Void {
+		x = x * 0.0174532925 /*radians*/;
+
+		if (object.rotation.x != x) {
+			object.rotation.x = x;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectRotationY(object : Object3D, y : Float) : Void {
+		y = y * 0.0174532925 /*radians*/;
+
+		if (object.rotation.y != y) {
+			object.rotation.y = y;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectRotationZ(object : Object3D, z : Float) : Void {
+		z = z * 0.0174532925 /*radians*/;
+
+		if (object.rotation.z != z) {
+			object.rotation.z = z;
+			PixiStage.invalidateStage();
+		}
+	}
+
+
+
+	public static function get3DObjectScaleX(object : Object3D) : Float {
+		return object.scale.x;
+	}
+
+	public static function get3DObjectScaleY(object : Object3D) : Float {
+		return object.scale.y;
+	}
+
+	public static function get3DObjectScaleZ(object : Object3D) : Float {
+		return object.scale.z;
+	}
+
+	public static function set3DObjectScaleX(object : Object3D, x : Float) : Void {
+		if (object.scale.x != x) {
+			object.scale.x = x;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectScaleY(object : Object3D, y : Float) : Void {
+		if (object.scale.y != y) {
+			object.scale.y = y;
+			PixiStage.invalidateStage();
+		}
+	}
+
+	public static function set3DObjectScaleZ(object : Object3D, z : Float) : Void {
+		if (object.scale.z != z) {
+			object.scale.z = z;
+			PixiStage.invalidateStage();
+		}
+	}
+
+
+
+	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
+		object.lookAt(new js.three.Vector3(x, y, z));
+		PixiStage.invalidateStage();
+	}
+
+
+
+	public static function set3DCameraFov(camera : PerspectiveCamera, fov : Float) : Void {
+		camera.fov = fov;
+	}
+
+	public static function set3DCameraAspect(camera : PerspectiveCamera, aspect : Float) : Void {
+		camera.aspect = aspect;
+	}
+
+	public static function set3DCameraNear(camera : PerspectiveCamera, near : Float) : Void {
+		camera.near = near;
+	}
+
+	public static function set3DCameraFar(camera : PerspectiveCamera, far : Float) : Void {
+		camera.far = far;
+	}
+
+	public static function get3DCameraFov(camera : PerspectiveCamera) : Float {
+		return camera.fov;
+	}
+
+	public static function get3DCameraAspect(camera : PerspectiveCamera) : Float {
+		return camera.aspect;
+	}
+
+	public static function get3DCameraNear(camera : PerspectiveCamera) : Float {
+		return camera.near;
+	}
+
+	public static function get3DCameraFar(camera : PerspectiveCamera) : Float {
+		return camera.far;
+	}
+
+
+	public static function make3DBoxGeometry(width : Float, height : Float, depth : Float, widthSegments : Int, heightSegments : Int, depthSegments : Int) : Geometry {
+		return new BoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+	}
+
+	public static function make3DCircleGeometry(radius : Float, segments : Int, thetaStart : Float, thetaLength : Float) : Geometry {
+		return new CircleGeometry(radius, segments, thetaStart, thetaLength);
+	}
+
+	public static function make3DConeGeometry(radius : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float) : Geometry {
+		return new ConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+	}
+
+	public static function make3DCylinderGeometry(radiusTop : Float, radiusBottom : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float) : Geometry {
+		return new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+	}
+
+	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		return new MeshBasicMaterial({color : color});
+	}
+
+
+	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
+		return new Mesh(geometry, material);
+	}
+
+
+	// 2D
+
 	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.addChild(child);
+		if (parent.addChild != null) {
+			parent.addChild(child);
+		} else {
+			untyped parent.add(child);
+		}
 	}
 
 	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
-		parent.addChildAt(child, id);
+		if (parent.addChildAt != null) {
+			parent.addChildAt(child, id);
+		} else {
+			untyped parent.add(child);
+		}
 	}
 
 	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.removeChild(child);
+		if (parent.removeChild != null) {
+			parent.removeChild(child);
+		} else {
+			untyped parent.remove(child);
+		}
 	}
 
 	public static function makeClip() : FlowContainer {
@@ -1647,8 +1887,6 @@ class RenderSupportJSPixi {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
-	// errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
 	}
