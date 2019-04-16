@@ -36,10 +36,14 @@ Todo:
   last error position should be reported.
 
 Ideas:
-- Prioritize the queue. Might affect speculation performance?
+- Fine-tune the queue priorities.
+  - Invent some metric to see how we can improve. Test 103 is solved by the priorities
 
 - Figure out the relation between speculative rules. Some are "inside" other rules, so a 
-  different order might help
+  different order might help.
+
+  For a given tyvar, we could find the recursively dependent tyvars inside, and build a graph
+  of these, so we can see what tyvars are part of what.
 
 - Reduce size of speculation set:
 	- Limit the number of types to test when speculating? Does not help much to speculate on Form.
@@ -47,6 +51,9 @@ Ideas:
 	- Split speculation into two stages?: One with known types, and another with all.
 
 - Track the speculation statistics so we can follow improvements in priorities, other things
+
+- When speculating, should we consider to reset the queue, and only try to solve "related"
+  tyvars instead of the full graph?
 
 - Have special relation which is tight at the top, but directed below. Struct construction:
   We know what the top-level type is, but the typars/args can be subtyped.
@@ -65,10 +72,8 @@ Ideas:
 
 Failing test cases:
 
-Test 98: Succeeds at spec 5, fails at 4 and below.
-  This is the one to analyze.
-
-Test 40, 74, test_lib: Fails at spec 5. Might succeeds at higher spec? but takes more than 2 minutes
+101: spec 1
+test_lib: spec 1
 */
 
 export {
@@ -178,7 +183,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 		nextStageId = gresolutionStage2int(nextGResolutionStage(stage));
 		newQueue = if (stage == GResolveTypars()) grenv.env.grelations.tyvarQueue else
 			foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
-				insertSet(acc, GQueueItem(nextStageId, tyvar))
+				enqueueGTyvarAtStage(grenv.env, acc, tyvar, nextStageId)
 			});
 
 		GResolutionEnv(grenv 
@@ -467,7 +472,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
 		// The neko compiler can not figure this out, so we have to help it
 		grels : GRelations = nenv0.grelations;
-		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, enqueueGTyvar);
+		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, \acc, tv -> enqueueGTyvar(nenv0, acc, tv));
 		nenv1 = 
 			GEnv(
 				nenv0 with 
@@ -642,38 +647,6 @@ getGNamedSize(env : GEnv, name : string) -> int {
 		}
 		Some(structdef): 1 + length(structdef.typars) + length(structdef.args);
 	}
-}
-
-gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
-	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") + " c= " + gbounds2string(env, req.upper);
-}
-
-gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
-	lb = gbounds2stringNice(env, req.lower);
-	ub = gbounds2stringNice(env, req.upper);
-	(if (lb == "") lb else "has " + lb)
-	+ (if (lb != "" && ub != "") " and " else "")
-	+ (if (ub == "") ub else "is subtype of " + ub)
-}
-
-gbounds2string(env : GEnv, g : GBounds) -> string {
-	"{"
-	+ (if (g.hasFlow) " flow " else "")
-	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
-	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
-	+ " : " + superglue(set2array(g.named), \st -> gtype2string(env, st), ", ")
-	+ " : " + superglue(set2array(g.fields), \st -> gtype2string(env, st), ", ")
-	+ "}"
-}
-
-gbounds2stringNice(env : GEnv, g : GBounds) -> string {
-	strGlue(concatA([
-		if (g.hasFlow) ["flow"] else [],
-		map(set2array(g.fixedTypes), \t -> gtype2string(env, t)),
-		map(set2array(g.named), \st -> gtype2string(env, st)),
-		map(set2array(g.fields), \st -> gtype2string(env, st))
-		]
-	), ", ")
 }
 
 getGSubTypes(names : Set<GNamed>, fields : Set<GField>) -> Set<GSubType> {
