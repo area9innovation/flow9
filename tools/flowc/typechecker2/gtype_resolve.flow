@@ -13,7 +13,7 @@ import loop;
 While unifying, we are building a graph, and can keep track of tyvars
 which are unresolved with what stage of resolution they are in:
 
-	tyvarsQueue : Tree<GQueueItem(stage, tyvarid), tyvarid : int>
+	tyvarsQueue : Set<GQueueItem(stage, tyvarid)>
 
 So the loop is:
 
@@ -26,17 +26,44 @@ So the loop is:
 
 - If we can not clarify a tyvar in a given iteration, we push it to the next resolution stage
 
-Whenever there is a change in the transitive bounds for a tyvar, it is bumped back to
+Whenever there is a change in the bounds for a tyvar, it is bumped back to
 the initial stage.
 
 Types:
 - We should consider to convert types to ints, and use bitvectors for the type sets?
 
-GTyvarStage(
-	stage : int,
-	reqs : GTyvarRequirements,
-	options : [GType]
-);
+Ideas:
+- Track the speculation statistics so we can follow improvements in priorities, other things
+
+- Prioritize the queue. 
+
+- Limit the number of types to test when speculating? Does not help much to speculate on Form
+
+- Have special relation which is tight at the top, but directed below. Struct construction:
+  We know what the top-level type is, but the typars/args can be subtyped.
+
+- When speculating, but all types share the same supertype, we can indeed unify the typars
+  even if we do not know the specific type. That is the case when we have just one named
+  restriction
+
+- Split speculation into two stages: One with known types, and another with all.
+
+- Run unittest without speculation to get easier test cases to work with
+
+- Do lazy speculation. I.e. save alternatives in a stack, but do not backtrack at the top,
+  but from the bottom. The question is whther this effectively is the same as we do, is it not?
+  It could be different if we do not speculate in the same order, but that is tricky, since we
+  have to identify "independent" speculations
+
+- Figure out the relation between speculative rules. Some are "inside" other rules, so a 
+  different order might help
+
+- Include source code in .dot
+
+Failing test cases:
+Spec 1: 40, 74, test_lib
+Spec 2: 40, 74, test_lib
+Spec 3: 
 
 */
 
@@ -282,21 +309,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 			} else {
 				if (stage == GResolveSpeculative()) {
 					// Here we do prolog!
-
-					// Find the best order. First, go by explicit names
-					singleNamed = mapSet(mergeSets(lower.named, upper.named), \n -> n.name);
-					posset = buildSet(possible);
-					overlap = intersectSets(singleNamed, posset);
-
-					remaining = differenceSets(posset, overlap);
-
-					dosort = \s : Set<string> -> {
-						scored = map(set2array(s), \sname -> Pair(getGNamedSize(grenv.env, sname), sname));
-						map(sort(scored), secondOfPair);
-					}
-
-					// The priorized order: Known names in smallest first, then smallest unknown names
-					cheapest = concat(dosort(overlap), dosort(remaining));
+					cheapest = sortGCandidates(grenv, possible, req);
 
 					if (grenv.env.verbose >= 2) {
 						printIndent(grenv.env.env, "Speculation " + i2s(grenv.speculation) + " with " + toString(cheapest) + " { " + gtyvarReqs2string(grenv.env, req));
@@ -311,7 +324,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					senv;
 				} else {
 					if (stage == GResolveTypars()) {
-						error = grenv.makeFcError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+						error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
 						grenv.onError(grenv.env, error);
 					}
 					requeue();
@@ -321,9 +334,22 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 	}
 }
 
+sortGCandidates(env : GResolutionEnv, candidates : [string], req : GTyvarRequirements) -> [string] {
+	lowers = mapSet(req.lower.named, \n -> n.name);
+	uppers = mapSet(req.upper.named, \n -> n.name);
+
+	sortCustom(candidates, \name -> {
+		rank = if (containsSet(uppers, name)) 0
+			else if (containsSet(lowers, name)) 1
+			else if (containsSet(env.env.namesSeen, name)) 2
+			else 3;
+		Pair(rank, getGNamedSize(env.env, name));
+	}, true);
+}
+
 findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyvarRequirements) -> GResolutionEnv {
 	if (candidates == []) {
-		error = grenv.makeFcError("Add type annotation. Can not find type that is " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+		error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
 		grenv.onError(grenv.env, error);
 		GResolutionEnv(grenv with abort = true);
 	} else {
@@ -341,7 +367,9 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 
 		if (!^errors) {
 			// We limit the speculation to 5 levels
-			if (grenv.speculation < 3) {
+			speclimit = getUrlParameter("speculation");
+			limit = if (speclimit == "") 3 else s2i(speclimit);
+			if (grenv.speculation < limit) {
 				// OK, run the rest of the algorithm against this one
 				// to check if it works out
 				if (grenv.env.verbose >= 4) {
@@ -434,7 +462,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
 		// The neko compiler can not figure this out, so we have to help it
 		grels : GRelations = nenv0.grelations;
-		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, enqueueGTyvarQueue);
+		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, enqueueGTyvar);
 		nenv1 = 
 			GEnv(
 				nenv0 with 
@@ -529,9 +557,13 @@ findGSubtypes(env : GEnv, expr : GSubType) -> [string] {
 		GField(field, __): {
 			// OK, here we filter the set to those names that appear in the environment
 			possible = getTreeArrayValue(env.env.program.acc.names.field2structs, field);
-			filtered = filter(possible, \p -> containsSet(env.namesSeen, p));
-			// If the filter looses all, we do not filter after all
-			if (filtered == []) possible else filtered;
+			if (false) {
+				filtered = filter(possible, \p -> containsSet(env.namesSeen, p));
+				// If the filter looses all, we do not filter after all
+				if (filtered == []) possible else filtered;
+			} else {
+				possible;
+			}
 		}
 	}
 }
@@ -614,9 +646,9 @@ gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
 gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
 	lb = gbounds2stringNice(env, req.lower);
 	ub = gbounds2stringNice(env, req.upper);
-	(if (lb == "") lb else "union of " + lb)
+	(if (lb == "") lb else "has " + lb)
 	+ (if (lb != "" && ub != "") " and " else "")
-	+ (if (ub == "") ub else "subtype for " + ub)
+	+ (if (ub == "") ub else "is subtype of " + ub)
 }
 
 gbounds2string(env : GEnv, g : GBounds) -> string {
