@@ -255,50 +255,33 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 			// None or multiple, which do not agree, but we have flow, so I guess we go flow
 			GResolutionEnv(grenv with env = setGTyvar(grenv.env, grenv.unify, req, GFlow(), grenv.onError));
 		} else {
-			if (grenv.env.verbose >= 3) {
-				printIndent(grenv.env.env, "Fixed clarification: " + gtyvarReqs2string(grenv.env, req) + " {");
-			}	
-
+			// We know fixed size > 1
 			// There are multiple solutions.
-			pick = switch (stage) {
-				GResolveSafeOnly(): false;
-				GResolveSafeButAmbiguous(): false;
-				GResolveSpeculative(): true;
-				GResolveTypars(): true;
-			}
-
-			penv = if (stage == GResolveSafeOnly()) {
-				// See if we can unpeel it
-				//   Clarify { : [TextSize<>], [α40001] :  : } c= α40004 c= { :  :  : } {
-				// is handled by setting α40004= [<tyvar>].
-				rtype = restructureGType(grenv.env, fixed);
-				switch (rtype) {
-					None(): grenv.env;
-					Some(rt): {
-						setGTyvar(grenv.env, grenv.unify, req, rt, grenv.onError);
+			switch (stage) {
+				GResolveSafeOnly(): {
+					// See if we need to make a type with the correct structure to solve it
+					rtype = restructureGType(grenv.env, fixed);
+					switch (rtype) {
+						None(): requeue();
+						Some(rt): {
+							renv = setGTyvar(grenv.env, grenv.unify, req, rt, grenv.onError);
+							GResolutionEnv(grenv with env = renv);
+						}
 					}
 				}
-			} else grenv.env;
-
-			renv = if (pick) {
-				// There are multiple solutions. We just pick one
-				fixedType = set2array(fixed)[0];
-				// printStay(env.env, "Review: We picked " + gtype2string(env, fixedType) +
-				//	" pick the smallest " + gtyvarReqs2string(env, req) + "");
-				setGTyvar(penv, grenv.unify, req, fixedType, grenv.onError);
-			} else {
-				penv;
+				GResolveSafeButAmbiguous(): {
+					// OK, we just pick the first of the type
+					fixedType = set2array(fixed)[0];
+					// printStay(env.env, "Review: We picked " + gtype2string(env, fixedType) +
+					//	" pick the smallest " + gtyvarReqs2string(env, req) + "");
+					nenv = setGTyvar(grenv.env, grenv.unify, req, fixedType, grenv.onError);
+					GResolutionEnv(grenv with env = nenv);
+				}
+				GResolveSpeculative(): {
+					requeue();
+				}
+				GResolveTypars(): requeue();
 			}
-
-			if (renv.verbose >= 3) {
-				printDedent(renv.env, "} Fixed clarification: " + gtyvarReqs2string(renv, req) + " {");
-			}
-
-			grenv0 = GResolutionEnv(grenv with env = renv);
-			if (grenv0 == grenv) {
-				// TODO: This can probably be tweaked
-				requeue();
-			} else grenv0
 		}
 	} else {
 		// OK, no fixed. There can be tyvars and subtypes
