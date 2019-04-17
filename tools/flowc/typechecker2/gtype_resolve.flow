@@ -33,7 +33,7 @@ Types:
 
 Todo:
 - When there is a speculative error, the error is not placed on the right place. I.e. the
-  last error position should be reported. We could recould the speculative assignments
+  last error position should be reported. We could record the speculative assignments
   we made without speculative recursive check and use those when we fail.
 
 
@@ -405,7 +405,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 		if (!^errors) {
 			// We limit the speculation to 3 levels
 			speclimit = getUrlParameter("speculation");
-			limit = if (speclimit == "") 3 else s2i(speclimit);
+			limit = if (speclimit == "") 0 else s2i(speclimit);
 			if (grenv.speculation < limit) {
 				// OK, run the rest of the algorithm against this one
 				// to check if it works out
@@ -414,11 +414,12 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 				}
 				renv = doResolveGGraph(
 					GResolutionEnv(
-						grenv with env = nenv,
-						onError = \__, __ -> {
-							errors := true;
-						},
-						speculation = grenv.speculation + 1
+						grenv with 
+							env = nenv,
+							onError = \__, __ -> {
+								errors := true;
+							},
+							speculation = grenv.speculation + 1
 					)
 				);
 				if (grenv.env.verbose >= 4) {
@@ -439,12 +440,44 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 				}
 			} else {
 				// OK, we accept it
-				if (false) {
-					// We set it with the real onError function
-					GResolutionEnv(
-						grenv with env =
-							setGTyvar(grenv.env, grenv.unify, req, type, grenv.onError)
+				if (true) {
+
+					if (grenv.env.verbose >= 4) {
+						printIndent(grenv.env.env, "Recursively limited speculating with " + candidates[index] + " {");
+					}
+					// OK, above the limit, so just do the tyvars in the vicinity
+					clearQueue = GEnv(grenv.env with
+						grelations = GRelations(
+							grenv.env.grelations with
+							tyvarQueue = makeSet()
+						)
 					);
+
+					// Now set the var here, and we get a small queue I hope
+					recEnv = setGTyvar(clearQueue, grenv.unify, req, type, grenv.onError);
+
+					renv = doResolveGGraph(
+						GResolutionEnv(
+							grenv with 
+								env = recEnv,
+								onError = \__, __ -> {
+									errors := true;
+								},
+								speculation = grenv.speculation + 1
+						)
+					);
+					if (grenv.env.verbose >= 4) {
+						printDedent(grenv.env.env, "} recursively limited speculated with " + candidates[index] + " with error: " + b2s(^errors));
+					}
+					if (!^errors) {
+						// OK, it works
+						GResolutionEnv(
+							grenv with env = nenv
+						)
+					} else {
+						// OK, did not work recursively. Let us try the next.
+						findErrorFreeCandidate(grenv, candidates, index + 1, req);
+					}
 				} else {
 					// OK, we just accept this one
 					GResolutionEnv(
