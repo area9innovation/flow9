@@ -23,6 +23,8 @@ import js.three.MeshBasicMaterial;
 import js.three.Light;
 import js.three.PointLight;
 
+import js.three.TextureLoader;
+
 using DisplayObjectHelper;
 using Object3DHelper;
 
@@ -71,6 +73,11 @@ class RenderSupport3D {
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		new ThreeJSLoader(objUrl, mtlUrl, onLoad);
+	}
+
+	public static function load3DTexture(object : Material, url : String) : Material {
+		untyped object.map = new TextureLoader().load(url);
+		return object;
 	}
 
 
@@ -244,11 +251,7 @@ class RenderSupport3D {
 
 
 	public static function make3DPointLight(color : Int, intensity : Float, distance : Float, decay : Float) : Light {
-		var light = new PointLight(color, intensity, distance, decay);
-
-		trace(light);
-
-		return light;
+		return new PointLight(color, intensity, distance, decay);
 	}
 
 	public static function set3DLightColor(object : Light, color : Int) : Void {

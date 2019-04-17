@@ -24,7 +24,7 @@ class ThreeJSStage extends DisplayObject {
 
 		this.camera = new PerspectiveCamera(45.0, 1.0, 0.1, 1000.0);
 		this.scene = new Scene();
-		this.renderer = new WebGLRenderer({antialias: true});
+		this.renderer = new WebGLRenderer({antialias: true, alpha : true});
 
 		renderer.setSize(width, height);
 
