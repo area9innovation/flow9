@@ -129,6 +129,11 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 	if (grenv.abort) {
 		grenv;
 	} else {
+		if (false) {
+			printIndent(grenv.env.env, "Queue is {");
+			dumpGTyvarQueue(grenv, grenv.env.grelations.tyvarQueue);
+			printDedent(grenv.env.env, "}");
+		}
 		nextTyvar : Maybe<PopSetResult<GQueueItem>> = popMinSet(grenv.env.grelations.tyvarQueue);
 		switch (nextTyvar) {
 			Some(pop): {
@@ -145,34 +150,66 @@ doResolveGGraph(grenv : GResolutionEnv) -> GResolutionEnv {
 					);
 					doResolveGGraph(acc);
 				} else {
-					stage = int2gresolutionStage(item.stage);
+					itemNow = makeGQueueItem(grenv.env, item.tyvar, item.stage);
+					if (itemNow == item) {
+						stage = int2gresolutionStage(item.stage);
 
-					reqs = buildGTyvarRequirement(grenv.env, item.tyvar);
-					if (grenv.env.verbose >= 2) {
-						printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) + " {");
-					}
+						reqs = buildGTyvarRequirement(grenv.env, item.tyvar);
+						if (grenv.env.verbose >= 2) {
+							printIndent(grenv.env.env, "Clarify " + gtyvarReqs2string(grenv.env, reqs) + " at stage " + toString(stage) 
+								+ " " + gpriority2string(item.priority) + " {");
+						}
 
-					acc = GResolutionEnv(grenv 
-						with env = GEnv(
-							grenv.env
-							with grelations = GRelations(
-								grenv.env.grelations with
-								tyvarQueue = pop.rest
+						acc = GResolutionEnv(grenv 
+							with env = GEnv(
+								grenv.env
+								with grelations = GRelations(
+									grenv.env.grelations with
+									tyvarQueue = pop.rest
+								)
 							)
-						)
-					);
+						);
 
-					res = clarifyGTyvar(acc, reqs, stage);
-					if (res.env.verbose >= 2) {
-						printDedent(res.env.env, "}");
+						res = clarifyGTyvar(acc, reqs, stage);
+						if (res.env.verbose >= 2) {
+							printDedent(res.env.env, "}");
+						}
+						doResolveGGraph(res);
+					} else {
+						// The priority has changed, so we should requeue it, and retry
+						if (grenv.env.verbose >= 2) {
+							printStay(grenv.env.env, "Requeuing α" + i2s(itemNow.tyvar));
+						}
+						acc = GResolutionEnv(grenv 
+							with env = GEnv(
+								grenv.env
+								with grelations = GRelations(
+									grenv.env.grelations with
+									tyvarQueue = insertSet(pop.rest, itemNow)
+								)
+							)
+						);
+						doResolveGGraph(acc);
 					}
-					doResolveGGraph(res);
 				}
 			}
 			None(): {
 				// OK, we are done.
 				grenv;
 			}
+		}
+	}
+}
+
+dumpGTyvarQueue(grenv : GResolutionEnv, queue : Set<GQueueItem>) -> void {
+	nextTyvar : Maybe<PopSetResult<GQueueItem>> = popMinSet(queue);
+	switch (nextTyvar) {
+		None(): {}
+		Some(pop): {
+			item = pop.value;
+			printStay(grenv.env.env, i2s(item.tyvar) + " at stage " + toString(item.stage) 
+				+ " " + gpriority2string(item.priority));
+			dumpGTyvarQueue(grenv, pop.rest);
 		}
 	}
 }
@@ -318,7 +355,11 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 				// And set ourselves to this
 				GResolutionEnv(grenv with env = setGTyvar(grenv.env, grenv.unify, req, winType, grenv.onError));
 			} else {
-				if (stage == GResolveSpeculative()) {
+				if (stage == GResolveSpeculative() && possible == []) {
+					error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+					grenv.onError(grenv.env, error);
+					requeue();
+				} else if (stage == GResolveSpeculative()) {
 					// Here we do prolog!
 					cheapest = sortGCandidates(grenv, possible, req);
 
@@ -326,7 +367,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 						printIndent(grenv.env.env, "Speculation " + i2s(grenv.speculation) + " with " + toString(cheapest) + " { " + gtyvarReqs2string(grenv.env, req));
 					}
 
-					senv = findErrorFreeCandidate(grenv, cheapest, req);
+					senv = findErrorFreeCandidate(grenv, cheapest, 0, req);
 
 					if (senv.env.verbose >= 2) {
 						printDedent(senv.env.env, "} speculation " + if (senv.abort) " failed" else " succeeded");
@@ -358,22 +399,22 @@ sortGCandidates(env : GResolutionEnv, candidates : [string], req : GTyvarRequire
 	}, true);
 }
 
-findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyvarRequirements) -> GResolutionEnv {
-	if (candidates == []) {
-		error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : int, req : GTyvarRequirements) -> GResolutionEnv {
+	if (index >= length(candidates)) {
+		error = grenv.makeFcError("Add type annotation. Tried " + strGlue(candidates, ", ") + ", but none worked. We sought type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
 		grenv.onError(grenv.env, error);
 		GResolutionEnv(grenv with abort = true);
 	} else {
-		type = makeGNamedType(grenv.env, candidates[0]);
+		type = makeGNamedType(grenv.env, candidates[index]);
 		errors = ref false;
 		if (grenv.env.verbose >= 4) {
-			printIndent(grenv.env.env, "Trying " + candidates[0]);
+			printIndent(grenv.env.env, "Trying " + candidates[index]);
 		}
 		nenv = setGTyvar(grenv.env, grenv.unify, req, type, \__, __ -> {
 			errors := true;
 		});
 		if (grenv.env.verbose >= 4) {
-			printDedent(grenv.env.env, "Tried " + candidates[0] + " with error: " + b2s(^errors));
+			printDedent(grenv.env.env, "Tried " + candidates[index] + " with error: " + b2s(^errors));
 		}
 
 		if (!^errors) {
@@ -384,7 +425,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 				// OK, run the rest of the algorithm against this one
 				// to check if it works out
 				if (grenv.env.verbose >= 4) {
-					printIndent(grenv.env.env, "Recursively speculating with " + candidates[0] + " {");
+					printIndent(grenv.env.env, "Recursively speculating with " + candidates[index] + " {");
 				}
 				renv = doResolveGGraph(
 					GResolutionEnv(
@@ -396,12 +437,12 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 					)
 				);
 				if (grenv.env.verbose >= 4) {
-					printDedent(grenv.env.env, "} recursively speculated with " + candidates[0] + " with error: " + b2s(^errors));
+					printDedent(grenv.env.env, "} recursively speculated with " + candidates[index] + " with error: " + b2s(^errors));
 				}
 				
 				if (!^errors) {
 					if (renv.env.verbose >= 4) {
-						printStay(renv.env.env, "Success with " + candidates[0]);
+						printStay(renv.env.env, "Success with " + candidates[index]);
 					}
 					GResolutionEnv(
 						renv with
@@ -409,18 +450,27 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], req : GTyv
 					);
 				} else {
 					// OK, did not work recursively. Let us try the next.
-					findErrorFreeCandidate(grenv, tail(candidates), req);
+					findErrorFreeCandidate(grenv, candidates, index + 1, req);
 				}
 			} else {
-				// OK, we just accept this one
-				GResolutionEnv(
-					grenv with env = nenv
-				)
+				// OK, we accept it
+				if (false) {
+					// We set it with the real onError function
+					GResolutionEnv(
+						grenv with env =
+							setGTyvar(grenv.env, grenv.unify, req, type, grenv.onError)
+					);
+				} else {
+					// OK, we just accept this one
+					GResolutionEnv(
+						grenv with env = nenv
+					)
+				}
 			}
 		} else {
 			//  println("Failure with " + candidates[0]);
 			// OK, did not work. Let us try the next.
-			findErrorFreeCandidate(grenv, tail(candidates), req);
+			findErrorFreeCandidate(grenv, candidates, index + 1, req);
 		}
 	}
 }
@@ -461,51 +511,46 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		printStay(env.env, superglue(set2array(tyvars), \tv -> "α" + i2s(tv), ", ") + " = " + gtype2string(env, type));
 	}
 
-	env1 = if (true) {
-		// Set our friends
-		nenv0 = foldSet(tyvars, env, \env0, tyvar -> {
-			GEnv(
-				env0 with
-				tyvars = setTree(env0.tyvars, tyvar, type),
-			);
+	// Set our friends
+	nenv0 = foldSet(tyvars, env, \env0, tyvar -> {
+		GEnv(
+			env0 with
+			tyvars = setTree(env0.tyvars, tyvar, type),
+			tyvarOrder = arrayPush(env0.tyvarOrder, tyvar)
+		);
+	});
+
+	// Add the new unresolved
+	tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
+	// The neko compiler can not figure this out, so we have to help it
+	grels : GRelations = nenv0.grelations;
+	tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, \acc, tv -> enqueueGTyvar(nenv0, acc, tv));
+	nenv1 = 
+		GEnv(
+			nenv0 with 
+			grelations = GRelations(
+				grels with tyvarQueue = tyvarQueue
+			)
+		);
+
+	// Then unify with relations
+	foldSet(tyvars, nenv1, \nenv2, tyvar -> {
+		gtype = GTypeVar(tyvar);
+
+		uppers = getGUpperRelations(nenv2.grelations, gtype);
+		nenv3 = foldSet(uppers, nenv2, \nenv4, to -> {
+			if (!isGTypeVars(tyvars, to)) {
+				unify(nenv4, type, to, req.starts, onError)
+			} else nenv4;		
 		});
 
-		// Add the new unresolved
-		tyvarsInType = extractGTypeVars(nenv0, type, makeSet());
-		// The neko compiler can not figure this out, so we have to help it
-		grels : GRelations = nenv0.grelations;
-		tyvarQueue = foldSet(tyvarsInType, grels.tyvarQueue, \acc, tv -> enqueueGTyvar(nenv0, acc, tv));
-		nenv1 = 
-			GEnv(
-				nenv0 with 
-				grelations = GRelations(
-					grels with tyvarQueue = tyvarQueue
-				)
-			);
-
-		// Then unify with relations
-		foldSet(tyvars, nenv1, \nenv2, tyvar -> {
-			gtype = GTypeVar(tyvar);
-
-			uppers = getGUpperRelations(nenv2.grelations, gtype);
-			nenv3 = foldSet(uppers, nenv2, \nenv4, to -> {
-				if (!isGTypeVars(tyvars, to)) {
-					unify(nenv4, type, to, req.starts, onError)
-				} else nenv4;		
-			});
-
-			lowers = getGLowerRelations(nenv3.grelations, gtype);
-			foldSet(lowers, nenv3, \nenv5, to -> {
-				if (!isGTypeVars(tyvars, to)) {
-					unify(nenv5, to, type, req.starts, onError)
-				} else nenv5;
-			});
+		lowers = getGLowerRelations(nenv3.grelations, gtype);
+		foldSet(lowers, nenv3, \nenv5, to -> {
+			if (!isGTypeVars(tyvars, to)) {
+				unify(nenv5, to, type, req.starts, onError)
+			} else nenv5;
 		});
-	} else env;
-
-	doFields = false;
-
-	env1
+	});
 }
 
 isGTypeVars(tyvars : Set<int>, type : GType) -> bool {

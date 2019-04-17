@@ -20,6 +20,8 @@ export {
 
 	makeGQueueItem(env : GEnv, tyvarid : int, stage : int) -> GQueueItem;
 
+	gpriority2string(p : GPriority) -> string;
+
 	// Add .dot output to help debug these graphs
 	saveGDot(env : GEnv, name : string) -> void;
 
@@ -115,23 +117,33 @@ makeGQueueItem(env : GEnv, tyvarid : int, stage : int) -> GQueueItem {
 
 addGtypePriority(env : GEnv, acc : GPriority, type : GType) -> GPriority {
 	switch (type) {
-		GBasicType(t): GPriority(acc with fixed = acc.fixed - 1);
-		GTypePar(id): GPriority(acc with fixed = acc.fixed - 1);
-		GFunction(args, rt): GPriority(acc with fixed = acc.fixed - 1);
-		GArray(__): GPriority(acc with fixed = acc.fixed - 1);
-		GRef(__): GPriority(acc with fixed = acc.fixed - 1);
-		GFlow(): GPriority(acc with flows = acc.flows - 1);
+		GBasicType(t): GPriority(acc with fixed = acc.fixed + 1);
+		GTypePar(id): GPriority(acc with fixed = acc.fixed + 1);
+		GFunction(args, rt): GPriority(acc with fixed = acc.fixed + 1);
+		GArray(__): GPriority(acc with fixed = acc.fixed + 1);
+		GRef(__): GPriority(acc with fixed = acc.fixed + 1);
+		GFlow(): GPriority(acc with flows = acc.flows + 1);
 		GTypeVar(id): {
 			bound = lookupTree(env.tyvars, id);
 			switch (bound) {
-				None(): GPriority(acc with unbound = acc.unbound - 1);
+				None(): GPriority(acc with unbound = acc.unbound + 1);
 				Some(bt): addGtypePriority(env, acc, bt);
 			}
 		}
-		GNamed(name, typars): GPriority(acc with named = acc.named - 1);
-		GField(name, __): GPriority(acc with fields = acc.fields - 1);
+		GNamed(name, typars): GPriority(acc with named = acc.named + 1);
+		GField(name, __): GPriority(acc with fields = acc.fields + 1);
 	}
 }
+
+gpriority2string(p : GPriority) -> string {
+	disp = \s, i -> s + ": " + i2s(i) + " ";
+	disp("unbound", p.unbound)
+	+ disp("fields", p.fields)
+	+ disp("named", p.named)
+	+ disp("flows", p.flows)
+	+ disp("fixed", p.fixed)
+}
+
 
 saveGDot(env : GEnv, name : string) -> void {
 	dot = grelations2dot(env, env.grelations);
@@ -141,19 +153,30 @@ saveGDot(env : GEnv, name : string) -> void {
 }
 
 grelations2dot(env : GEnv, g : GRelations) -> string {
-	type2node = \type -> {
-		"\"" + gtype2string(env, type) + "\""
+	order = foldi(env.tyvarOrder, makeTree(), \i, acc, tv -> {
+		setTree(acc, tv, i)
+	});
+
+	type2node = \type, extra -> {
+		"\"" + gtype2string(env, type) + extra + "\""
 	}
 	types = foldTree(g.uppers, makeSet(), \k, v, acc -> {
 		insertSet(acc, k);
 	});
 	nodesDump = foldSet(types, "", \acc, type -> {
-		text = type2node(type);
-		acc + text + " [label=" + text + "];\n"
+		tvorder = switch (type) {
+			GTypeVar(id): lookupTreeDef(order, id, -1);
+			default: -1;
+		}
+		extra = (if (tvorder != -1) " " + i2s(tvorder) else "");
+		
+		text0 = type2node(type, "");
+		text1 = type2node(type, extra);
+		acc + text0 + " [label=" + text1 + "];\n"
 	});
 	edgesDump = foldTree(g.uppers, "", \from, tos, acc -> {
 		foldSet(tos, acc, \acc1, to -> {
-			acc1 + type2node(from) + " -> " + type2node(to) + ";\n"
+			acc1 + type2node(from, "") + " -> " + type2node(to, "") + ";\n"
 		});
 	});
 
