@@ -4,15 +4,15 @@
  * @author angelxuanchang
  */
 
-THREE.MTLLoader = function ( manager ) {
+MTLLoader = function ( manager ) {
 
 	this.manager = ( manager !== undefined ) ? manager : THREE.DefaultLoadingManager;
 
 };
 
-THREE.MTLLoader.prototype = {
+MTLLoader.prototype = {
 
-	constructor: THREE.MTLLoader,
+	constructor: MTLLoader,
 
 	/**
 	 * Loads and parses a MTL asset from a URL.
@@ -49,7 +49,7 @@ THREE.MTLLoader.prototype = {
 	 *
 	 * @see setResourcePath
 	 * @param {String} path
-	 * @return {THREE.MTLLoader}
+	 * @return {MTLLoader}
 	 *
 	 * @example
 	 *     mtlLoader.setPath( 'assets/obj/' );
@@ -67,7 +67,7 @@ THREE.MTLLoader.prototype = {
 	 *
 	 * @see setPath
 	 * @param {String} path
-	 * @return {THREE.MTLLoader}
+	 * @return {MTLLoader}
 	 *
 	 * @example
 	 *     mtlLoader.setPath( 'assets/obj/' );
@@ -83,7 +83,7 @@ THREE.MTLLoader.prototype = {
 
 	setTexturePath: function ( path ) {
 
-		console.warn( 'THREE.MTLLoader: .setTexturePath() has been renamed to .setResourcePath().' );
+		console.warn( 'MTLLoader: .setTexturePath() has been renamed to .setResourcePath().' );
 		return this.setResourcePath( path );
 
 	},
@@ -106,7 +106,7 @@ THREE.MTLLoader.prototype = {
 	 * Parses a MTL file.
 	 *
 	 * @param {String} text - Content of MTL file
-	 * @return {THREE.MTLLoader.MaterialCreator}
+	 * @return {MTLLoader.MaterialCreator}
 	 *
 	 * @see setPath setResourcePath
 	 *
@@ -164,7 +164,7 @@ THREE.MTLLoader.prototype = {
 
 		}
 
-		var materialCreator = new THREE.MTLLoader.MaterialCreator( this.resourcePath || path, this.materialOptions );
+		var materialCreator = new MTLLoader.MaterialCreator( this.resourcePath || path, this.materialOptions );
 		materialCreator.setCrossOrigin( this.crossOrigin );
 		materialCreator.setManager( this.manager );
 		materialCreator.setMaterials( materialsInfo );
@@ -189,7 +189,7 @@ THREE.MTLLoader.prototype = {
  * @constructor
  */
 
-THREE.MTLLoader.MaterialCreator = function ( baseUrl, options ) {
+MTLLoader.MaterialCreator = function ( baseUrl, options ) {
 
 	this.baseUrl = baseUrl || '';
 	this.options = options;
@@ -203,9 +203,9 @@ THREE.MTLLoader.MaterialCreator = function ( baseUrl, options ) {
 
 };
 
-THREE.MTLLoader.MaterialCreator.prototype = {
+MTLLoader.MaterialCreator.prototype = {
 
-	constructor: THREE.MTLLoader.MaterialCreator,
+	constructor: MTLLoader.MaterialCreator,
 
 	crossOrigin: 'anonymous',
 

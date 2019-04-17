@@ -28,11 +28,11 @@ class ThreeJSLoader {
 		// }
 
 		untyped __js__("
-			new THREE.MTLLoader()
+			new MTLLoader()
 				.load(mtlUrl, function (materials) {
 					materials.preload();
 
-					new THREE.OBJLoader()
+					new OBJLoader()
 						.setMaterials(materials)
 						.load(objUrl, onLoad);
 				});
