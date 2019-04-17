@@ -1,4 +1,5 @@
 var CACHE_NAME = 'flow-cache';
+var rangeResourceCache = 'flow-range-cache';
 
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
@@ -134,10 +135,68 @@ self.addEventListener('fetch', function(event) {
     }
   };
 
-  event.respondWith(buildResponse());
+  function buildRangeResponse() {
+    return caches
+      .open(rangeResourceCache)
+      .then(function(cache) {
+        return cache.match(event.request.url);
+      })
+      .then(function(res) {
+        if (!res) {
+          return fetch(event.request)
+            .then(function(res) {
+              var clonedRes = res.clone();
+              return caches
+                .open(rangeResourceCache)
+                .then(function(cache) {
+                  return cache.put(event.request, clonedRes);
+                })
+                .then(function() {
+                  return res;
+                });
+            });
+        }
+        return res;
+      }).then(function(response) {
+        return response
+          .arrayBuffer()
+          .then(function(arrayBuffer) {
+            var bytes = /^bytes\=(\d+)\-(\d+)?$/g.exec(event.request.headers.get('range'));
+            if (bytes) {
+              var start = Number(bytes[1]);
+              var end = Number(bytes[2]) || arrayBuffer.byteLength - 1;
+
+              return new Response(arrayBuffer.slice(start, end + 1), {
+                status: 206,
+                statusText: 'Partial Content',
+                headers: [
+                  ['Content-type', response.headers.get('Content-type')],
+                  ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
+                ]
+              });
+            } else {
+              return new Response(null, {
+                status: 416,
+                statusText: 'Range Not Satisfiable',
+                headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
+              });
+            }
+        });
+    });
+  }
+
+  if (event.request.headers.get('range')) {
+    event.respondWith(buildRangeResponse());
+  } else {
+    event.respondWith(buildResponse());
+  }
 });
 
 self.addEventListener('activate', function(event) {
+  // this cache is only for session
+  caches.delete(rangeResourceCache);
+  console.log("cache cleared", rangeResourceCache);
+
   caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
       if (CACHE_NAME != key) {
