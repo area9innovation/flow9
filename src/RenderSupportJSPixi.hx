@@ -13,6 +13,8 @@ import pixi.core.math.Point;
 
 import pixi.loaders.Loader;
 
+import PixiText.Text;
+
 import MacroUtils;
 import Platform;
 
@@ -35,7 +37,7 @@ class RenderSupportJSPixi {
 	public static var AccessibilityEnabled : Bool = Util.getParameter("accessenabled") == "1";
 	private static var EnableFocusFrame : Bool = false;
 	/* Antialiasing doesn't work correctly on mobile devices */
-	private static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
+	public static var Antialias : Bool = Util.getParameter("antialias") != null ? Util.getParameter("antialias") == "1" : !NativeHx.isTouchScreen() && (RendererType != "webgl" || detectExternalVideoCard());
 	private static var RoundPixels : Bool = Util.getParameter("roundpixels") != null ? Util.getParameter("roundpixels") != "0" : true;
 	private static var TransparentBackground : Bool = Util.getParameter("transparentbackground") == "1";
 
@@ -914,35 +916,41 @@ class RenderSupportJSPixi {
 		// NOP for this target
 	}
 
-	public static function getTextFieldCharXPosition(clip : TextClip, charIdx: Int) : Float {
+	public static function getTextFieldCharXPosition(clip : TextField, charIdx: Int) : Float {
 		return clip.getCharXPosition(charIdx);
 	}
 
 	public static function findTextFieldCharByPosition(textfield : TextField, x: Float, y: Float) : Int {
 		/* Assuming exact glyph codes used to form each clip's text. */
 		var EPSILON = 0.1; // Why not, pixel precision assumed.
-		var clip = getClipAt(new Point(x, y), untyped textfield);
+		var rawclip = getClipAt(textfield, new Point(x, y), true, true);
+		var clip: Text = null;
+		try {
+			clip = cast(rawclip, Text);
+		} catch( __ : String ) {}
 		if (clip == null) return -1;
 		var leftVal: Float = 0;
-		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clip.text, clip.style);
+		var clipText = clip.getContent();
+		var clipStyle = clip.getStyle();
+		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipText, clipStyle);
 		var rightVal: Float = mtx.width;
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
 		var localX = x - org.x;
-		if (TextField.getStringDirection(clip.text) == "RTL") localX = rightVal - localX;
+		if (TextField.getStringDirection(clipText) == "RTL") localX = rightVal - localX;
 		var leftPos: Float = 0;
-		var rightPos: Float = clip.text.length;
+		var rightPos: Float = clipText.length;
 		var midVal: Float = -1.0;
 		var midPos: Float = -1;
 		var oldPos: Float = rightPos;
 		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
 			oldPos = midPos;
 			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
-			mtx = pixi.core.text.TextMetrics.measureText(clip.text.substr(Math.floor(leftPos), Math.ceil(leftPos)), clip.style);
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.ceil(leftPos)), clipStyle);
 			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
-			mtx = pixi.core.text.TextMetrics.measureText(clip.text.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clip.style);
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
 			midVal += mtx.width;
-			mtx = pixi.core.text.TextMetrics.measureText(clip.text.substr(Math.floor(midPos), Math.ceil(midPos)), clip.style);
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(midPos), Math.ceil(midPos)), clipStyle);
 			midVal += mtx.width * (midPos - Math.floor(midPos));
 			leftPos = midPos;
 			leftVal = midVal;

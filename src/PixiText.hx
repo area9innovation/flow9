@@ -228,7 +228,7 @@ class PixiText extends TextField {
 	}
 
 	public override function getCharXPosition(charIdx: Int) : Float {
-		/*var pos = -1.0;
+		var pos = -1.0;
 
 		layoutText();
 
@@ -250,7 +250,7 @@ class PixiText extends TextField {
 				}
 				return result;
 			}
-		}/*
+		}
 		return -1.0;
 	}
 
@@ -365,7 +365,7 @@ class PixiText extends TextField {
 		// and make it invisible.
 		// On Firefox, the equivalent css property (-moz-osx-font-smoothing = grayscale) seems to
 		// have no effect on the canvas element.
-		if (RenderSupportJSPixi.AntialiasFont && (Platform.isChrome || Platform.isSafari)) {
+		if (RenderSupportJSPixi.Antialias && (Platform.isChrome || Platform.isSafari)) {
 			untyped textClip.canvas.style.webkitFontSmoothing = "antialiased";
 			textClip.canvas.style.display = "none";
 			Browser.document.body.appendChild(textClip.canvas);

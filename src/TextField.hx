@@ -113,7 +113,7 @@ class TextField extends NativeWidgetClip {
 	private var TextInputKeyDownFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
-	public var accessWidget : Dynamic = null;
+//	public var accessWidget : Dynamic = null;
 	private var preFocus : Bool = false;
 
 	private function preOnFocus() { // Workaround for IE inputs readonly attribute
@@ -174,6 +174,8 @@ class TextField extends NativeWidgetClip {
 		}
 	}
 
+	public function getStyle() { return style; }
+
 	public function setTextAndStyle(
 		text : String, fontFamily : String, fontSize : Float, fontWeight: Int, fontSlope: String, fillColor : Int, fillOpacity : Float, letterSpacing : Float,
 		backgroundColor : Int, backgroundOpacity : Float
@@ -204,7 +206,7 @@ class TextField extends NativeWidgetClip {
 				nativeWidget.autocomplete = "new-password";
 			nativeWidget.value = text;
 			nativeWidget.style.color = RenderSupportJSPixi.makeCSSColor(fillColor, fillOpacity);
-			nativeWidget.style.letterSpacing = (RenderSupportJSPixi.UseDFont ? letterSpacing + 0.022 : letterSpacing) + "px";
+			nativeWidget.style.letterSpacing = letterSpacing + "px";
 			nativeWidget.style.fontFamily = fontStyle.family;
 			nativeWidget.style.fontWeight = fontWeight != 400 ? fontWeight : fontStyle.weight;
 			nativeWidget.style.fontStyle = fontSlope != "" ? fontSlope : fontStyle.style;
@@ -567,7 +569,7 @@ class TextField extends NativeWidgetClip {
 			RenderSupportJSPixi.provideEvent(e);
 		} else {
 			var point = e.touches != null && e.touches.length > 0 ? new Point(e.touches[0].pageX, e.touches[0].pageY) : new Point(e.pageX, e.pageY);
-			nativeWidget.readOnly = shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(point) != this;
+			nativeWidget.readOnly = shouldPreventFromFocus = RenderSupportJSPixi.getClipAt(RenderSupportJSPixi.PixiStage, point, true, true) != this;
 
 			if (shouldPreventFromFocus) {
 				e.preventDefault();
