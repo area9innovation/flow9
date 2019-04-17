@@ -1,0 +1,181 @@
+import form/gui;
+
+
+	SForm ::= BaseSForm, ControlSForm, NamedForm, NamedFormModificator;
+		BaseSForm ::= Text, Graphics, Picture, FixedSForm;
+			FixedSForm : (width : double, height : double);
+
+		ControlSForm ::= ResizeCell, OverlapCell, ConditionalForm;
+
+			// Resize the content to the available space, as well as optional alignment
+			ResizeCell : (resizeToWidth : bool, resizeToHeight : bool, preserveAspectRatio : bool, alignX : double, alignY : double, content : BaseSForm);
+
+			// Extend the cell outwards the given number of pixels
+			OverlapCell(left : double, top : double, right : double, bottom : double, sform : SForm);
+
+			ConditionalForm : (form : SForm);
+
+		// z-order of NamedForms depends of its names, but not from declaration order — it will be sort in alphabetical order (NamedForm("b") will overlap NamedForm("a") in any cases)
+		NamedForm : (name : string);
+		NamedFormModificator : (modificators : [NamedFormModifier], namedForm : NamedForm);
+			NamedFormModifier ::= NamedFormScale, NamedFormAlign;
+				NamedFormScale : (xScale : Behaviour<double>, yScale : Behaviour<double>);
+				NamedFormAlign : (xAlign : Behaviour<double>, yAlign : Behaviour<double>);
+
+
+	NamedFormDescription : (
+		form : Form,
+		visible : Behaviour<bool>, stayVisible : ref bool, resetModifiers : ref bool,
+		x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, awh : DynamicBehaviour<WidthHeight>,
+		xAlign : DynamicBehaviour<double>, yAlign : DynamicBehaviour<double>,
+		xScale : DynamicBehaviour<double>, yScale : DynamicBehaviour<double>,
+		size : DynamicBehaviour<WidthHeight>);
+	Coordinates(x : Behaviour<double>, y : Behaviour<double>, awh : Behaviour<WidthHeight>);
+
+SkinEnvironment();
+
+sform2form(namedForms : Tree<string, NamedFormDescription>, coordinates : Coordinates, environment : SkinEnvironment, sform : SForm, outSize : DynamicBehaviour<WidthHeight>) -> Form {
+	addInspector = \form : Form-> Inspect([ISize(outSize)], form);
+	passSizeOutAndReturn = \width, height -> \form -> {
+		next(outSize, WidthHeight(width, height));
+		form
+	};
+
+	makeConstructorForNamedForm = \stubForm : Form, n : string, createConstructorFn : (NamedFormDescription) -> () -> () -> void -> {
+		switch (lookupTree(namedForms, n)) {
+			None(): {
+				assert(false, "Assert: NamedForm '" + n + "'' descriptor is not found");
+				Empty()
+			}
+			Some(nfd): {
+				Constructor(stubForm, createConstructorFn(nfd));
+			}
+		}
+	}
+
+	connectBehavioursArray = \connects -> {
+		\ -> {
+			uns = map(connects, executefn);
+			\ -> applyall(uns)
+		}
+	}
+
+	switch (sform : SForm) {
+		ResizeCell(toW, toH, preserveAspect, alignX, alignY, content) : {
+			awh = coordinates.awh;
+			size = makeWH();
+			form = sform2form(namedForms, coordinates, environment, content, size);
+			wResize = toW;
+			hResize = toH;
+			innerForm = if (wResize || hResize) {
+				scaleX = if (wResize) select2(awh, size, \wh, sz -> if (sz.width > 0.0) wh.width / sz.width else 1.0) else const(1.0);
+				scaleY = if (hResize) select2(awh, size, \wh, sz -> if (sz.height > 0.0) wh.height / sz.height else 1.0) else const(1.0);
+				if (wResize && hResize && preserveAspect) {
+					scale = select2(scaleX, scaleY, min);
+					Scale(scale, scale, form)
+				} else {
+					Scale(scaleX, scaleY, form)
+				}
+			} else {
+				form
+			}
+			// If row/column of constant size contains only resize to width/height items resulting width/hight is 0.0.
+			resultSize = select(size, \sz -> WidthHeight(if (wResize) 0.0 else sz.width, if (hResize) 0.0 else sz.height));
+			result = if (alignX != 0.0 || alignY != 0.0) {
+				Align2(alignX, alignY, innerForm)
+			} else {
+				innerForm
+			};
+			Constructor(result, \ -> connect(resultSize, outSize))
+		}
+		OverlapCell(left, top, right, bottom, content) : {
+			awh = coordinates.awh;
+			realSize = makeWH();
+			size = makeWH();
+			newAWH = select(awh, \wh -> WidthHeight(wh.width + left + right, wh.height + top + bottom));
+			result = Size2(
+				realSize,
+				Offset(
+					-left, -top,
+					Available2(
+						newAWH,
+						Inspect(
+							[ISize(realSize)],
+							sform2form(
+								namedForms,
+								Coordinates(
+									select(coordinates.x, \x -> x - left),
+									select(coordinates.y, \y -> y - top),
+									newAWH
+								),
+								environment,
+								content,
+								size
+							)
+						)
+					)
+				)
+			);
+			resultSize = select2(
+				awh, size,
+				\wh1, wh2 -> WidthHeight(
+					min(wh1.width, wh2.width),
+					min(wh1.height, wh2.height)
+				)
+			);
+			Constructor(result, \ -> connect(resultSize, outSize))
+		}
+		ConditionalForm(content) : {
+			if (true) {
+				sform2form(namedForms, coordinates, environment, content, outSize)
+			} else {
+				Empty() |> passSizeOutAndReturn(0.0, 0.0)
+			}
+		}
+		FixedSForm(width, height) : Fixed(width, height) |> passSizeOutAndReturn(width, height);
+		Text(text, style) : Text(text, style) |> addInspector;
+		Graphics(path, style) : Graphics(path, style) |> addInspector;
+		Picture(path, style) : Picture(path, style) |> addInspector;
+		NamedForm(n): {
+			makeConstructorForNamedForm(
+				Empty(),
+				n,
+				\nfd -> {
+					nfd.stayVisible := true;
+					connectBehavioursArray([
+						\ -> connect(coordinates.x, nfd.x),
+						\ -> connect(coordinates.y, nfd.y),
+						\ -> connect(coordinates.awh, nfd.awh),
+						\ -> connect(nfd.size, outSize)
+					])
+				}
+			)
+		}
+		NamedFormModificator(m, f) : {
+			makeConstructorForNamedForm(
+				sform2form(namedForms, coordinates, environment, f, outSize),
+				f.name,
+				\nfd -> {
+					nfd.resetModifiers := false;
+					fold(m, [], \acc, modifier -> {
+						addToAcc = \newPairs -> concat(acc, newPairs);
+						switch(modifier:NamedFormModifier) {
+							NamedFormAlign(xAlign, yAlign) : {
+								[
+									\ -> connect(xAlign, nfd.xAlign),
+									\ -> connect(yAlign, nfd.yAlign)
+								] |> addToAcc
+							}
+							NamedFormScale(xScale, yScale)  : {
+								[
+									\ -> connect(xScale, nfd.xScale),
+									\ -> connect(yScale, nfd.yScale)
+								] |> addToAcc
+							}
+						}
+					}) |> connectBehavioursArray
+				}
+			)
+		}
+	}
+}
