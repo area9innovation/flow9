@@ -47,7 +47,7 @@ public Q_SLOTS:
     void slotLookupUses();
     void slotRename();
     void slotCompleteRename();
-    void slotOutline();
+    void slotOutline(KTextEditor::View* view);
 
 private Q_SLOTS:
     void slotCompileError(QProcess::ProcessError err);
