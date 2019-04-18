@@ -211,6 +211,12 @@ class RenderSupport3D {
 	}
 
 
+	public static function getObject3DBoundingBox(object : Object3D) : Array<Array<Float>> {
+		var box = object.getBoundingBox();
+		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
+	}
+
+
 
 	public static function make3DPerspectiveCamera(fov : Float, aspect : Float, near : Float, far : Float) : PerspectiveCamera {
 		return new PerspectiveCamera(fov, aspect, near, far);
