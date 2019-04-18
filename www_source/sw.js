@@ -145,43 +145,51 @@ self.addEventListener('fetch', function(event) {
         if (!res) {
           return fetch(event.request)
             .then(function(res) {
-              var clonedRes = res.clone();
-              return caches
-                .open(rangeResourceCache)
-                .then(function(cache) {
-                  return cache.put(event.request, clonedRes);
-                })
-                .then(function() {
-                  return res;
-                });
+              if (res.status == 200) {
+                var clonedRes = res.clone();
+                return caches
+                  .open(rangeResourceCache)
+                  .then(function(cache) {
+                    return cache.put(event.request, clonedRes);
+                  })
+                  .then(function() {
+                    return res;
+                  });
+              } else {
+                return res;
+              }
             });
         }
         return res;
       }).then(function(response) {
-        return response
-          .arrayBuffer()
-          .then(function(arrayBuffer) {
-            var bytes = /^bytes\=(\d+)\-(\d+)?$/g.exec(event.request.headers.get('range'));
-            if (bytes) {
-              var start = Number(bytes[1]);
-              var end = Number(bytes[2]) || arrayBuffer.byteLength - 1;
+        if (response.status == 200) {
+          return response
+      .arrayBuffer()
+      .then(function(arrayBuffer) {
+        var bytes = /^bytes\=(\d+)\-(\d+)?$/g.exec(event.request.headers.get('range'));
+        if (bytes) {
+        var start = Number(bytes[1]);
+        var end = Number(bytes[2]) || arrayBuffer.byteLength - 1;
 
-              return new Response(arrayBuffer.slice(start, end + 1), {
-                status: 206,
-                statusText: 'Partial Content',
-                headers: [
-                  ['Content-Type', response.headers.get('Content-Type')],
-                  ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
-                ]
-              });
-            } else {
-              return new Response(null, {
-                status: 416,
-                statusText: 'Range Not Satisfiable',
-                headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
-              });
-            }
+        return new Response(arrayBuffer.slice(start, end + 1), {
+          status: 206,
+          statusText: 'Partial Content',
+          headers: [
+          ['Content-Type', response.headers.get('Content-Type')],
+          ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
+          ]
         });
+        } else {
+        return new Response(null, {
+          status: 416,
+          statusText: 'Range Not Satisfiable',
+          headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
+        });
+        }
+      });
+        } else {
+        return response;
+        }
     });
   }
 
