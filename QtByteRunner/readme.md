@@ -200,7 +200,7 @@ and
 
 Install.
 
-Install Microsoft Visual Studio (2015 or 2013) Express from
+Install Microsoft Visual Studio (2017 or 2015) Express from
 
 https://www.visualstudio.com/vs/visual-studio-express/
 
