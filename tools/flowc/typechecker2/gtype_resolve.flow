@@ -53,31 +53,30 @@ Ideas:
 	- Limit the number of types to test when speculating? Does not help much to speculate on Form.
 	Might affect correctness?
 	- Split speculation into two stages?: One with known types, and another with all.
+    - Split speculation based on how many types are correct. It might be that multiple types
+	  work right now, but later decisions which we do not know about, could make one of them
+	  invalid. So maybe do speculation for all types, and if more than one exist, wait until
+	  a later stage to resolve this one. Test 32 can demonstrate if buildGTyparRelations is turned
+	  off.
 
 - Track the speculation statistics so we can follow improvements in priorities, other things
-
-- When speculating, should we consider to reset the queue, and only try to solve "related"
-  tyvars instead of the full graph?
 
 - Have special relation which is tight at the top, but directed below. Struct construction:
   We know what the top-level type is, but the typars/args can be subtyped.
 
-- When ambigous, but all types share the same supertype, we can indeed unify the typars
-  even if we do not know the specific type. That is the case when we have just one named
-  restriction in the upper bound, and the typar mapping is trivial. Very special case,
-  but could be helpful. "Maybe" is prime example.
-
-- Do lazy speculation. I.e. save alternatives in a stack, but do not backtrack at the top,
-  but from the bottom. The question is whther this effectively is the same as we do, is it not?
-  It could be different if we do not speculate in the same order, but that is tricky, since we
-  have to identify "independent" speculations
+- Generalize buildGTyparRelations. When ambigous, but all types share the same supertype, we 
+  can indeed unify the typars even if we do not know the specific type. "Maybe" vs "Some" is 
+  prime example where we can unify the typars.
 
 - Include source code in .dot
 
 Failing test cases:
 
-101: spec 1
-test_lib: spec 1
+Test 32:
+Clarify { :  :  : } c= α8, α80001 c= { :  : Behaviour<FixedSForm>, Behaviour<WidthHeight> : } at stage GResolveSpeculative() unbound: 2 fields: 0 named: 1 flows: 0 fixed: 0  {
+- Notice tyvar loops and avoid those in the priorities. We should be able to approximate that by collecting inbound
+  and outbound tyvars, and if they agree, they are not unbound
+
 */
 
 export {
@@ -220,18 +219,18 @@ dumpGTyvarQueue(grenv : GResolutionEnv, queue : Set<GQueueItem>) -> void {
 // See if we can solve it
 clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolutionStage) -> GResolutionEnv {
 	// In case we could not resolve, we requeue at the next stage
-	requeue = \ -> {
+	requeue = \ge -> {
 		nextStageId = gresolutionStage2int(nextGResolutionStage(stage));
-		newQueue = if (stage == GResolveTypars()) grenv.env.grelations.tyvarQueue else
-			foldSet(req.tyvars, grenv.env.grelations.tyvarQueue, \acc, tyvar -> {
-				enqueueGTyvarAtStage(grenv.env, acc, tyvar, nextStageId)
+		newQueue = if (stage == GResolveTypars()) ge.env.grelations.tyvarQueue else
+			foldSet(req.tyvars, ge.env.grelations.tyvarQueue, \acc, tyvar -> {
+				enqueueGTyvarAtStage(ge.env, acc, tyvar, nextStageId)
 			});
 
-		GResolutionEnv(grenv 
+		GResolutionEnv(ge 
 			with env = GEnv(
-				grenv.env
+				ge.env
 				with grelations = GRelations(
-					grenv.env.grelations with tyvarQueue = newQueue
+					ge.env.grelations with tyvarQueue = newQueue
 				)
 			)
 		);
@@ -262,7 +261,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					// See if we need to make a type with the correct structure to solve it
 					rtype = restructureGType(grenv.env, fixed);
 					switch (rtype) {
-						None(): requeue();
+						None(): requeue(grenv);
 						Some(rt): {
 							renv = setGTyvar(grenv.env, grenv.unify, req, rt, grenv.onError);
 							GResolutionEnv(grenv with env = renv);
@@ -278,9 +277,9 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					GResolutionEnv(grenv with env = nenv);
 				}
 				GResolveSpeculative(): {
-					requeue();
+					requeue(grenv);
 				}
-				GResolveTypars(): requeue();
+				GResolveTypars(): requeue(grenv);
 			}
 		}
 	} else {
@@ -291,9 +290,9 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 		if (lowerOnlyTyvars && upperOnlyTyvars) {
 			// Only tyvars.
 			switch (stage) {
-				GResolveSafeOnly(): requeue();
-				GResolveSafeButAmbiguous(): requeue();
-				GResolveSpeculative(): requeue();
+				GResolveSafeOnly(): requeue(grenv);
+				GResolveSafeButAmbiguous(): requeue(grenv);
+				GResolveSpeculative(): requeue(grenv);
 				GResolveTypars(): {
 					// No constraints. All of these tyvars are all identical and should be bound
 					// to the next free typar.
@@ -340,35 +339,100 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 				// And set ourselves to this
 				GResolutionEnv(grenv with env = setGTyvar(grenv.env, grenv.unify, req, winType, grenv.onError));
 			} else {
-				if (stage == GResolveSpeculative() && possible == []) {
-					error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
-					grenv.onError(grenv.env, error);
-					requeue();
-				} else if (stage == GResolveSpeculative()) {
-					// Here we do prolog!
-					cheapest = sortGCandidates(grenv, possible, req);
-
-					if (grenv.env.verbose >= 2) {
-						printIndent(grenv.env.env, "Speculation " + i2s(grenv.speculation) + " with " + toString(cheapest) + " { " + gtyvarReqs2string(grenv.env, req));
+				switch (stage) {
+					GResolveSafeOnly(): {
+						requeue(grenv);
 					}
-
-					senv = findErrorFreeCandidate(grenv, cheapest, 0, req);
-
-					if (senv.env.verbose >= 2) {
-						printDedent(senv.env.env, "} speculation " + if (senv.abort) " failed" else " succeeded");
+					GResolveSafeButAmbiguous(): {
+						// Test 32 demonstrates that we sometimes have
+						// { :  :  : } c= α8 c= { :  : Behaviour<FixedSForm>, Behaviour<α1> : }
+						// where we can infer a relations between α10 <= FixedSForm, α1
+						uenv = buildGTyparRelations(grenv, possible, req, upper.named, false);
+						nenv = buildGTyparRelations(uenv, possible, req, lower.named, true);
+						requeue(nenv);
 					}
+					GResolveSpeculative(): {
+						if (possible == []) {
+							error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+							grenv.onError(grenv.env, error);
+							requeue(grenv);
+						} else {
+							// Here we do prolog!
+							cheapest = sortGCandidates(grenv, possible, req);
 
-					senv;
-				} else {
-					if (stage == GResolveTypars()) {
+							if (grenv.env.verbose >= 2) {
+								printIndent(grenv.env.env, "Speculation " + i2s(grenv.speculation) + " with " + toString(cheapest) + " { " + gtyvarReqs2string(grenv.env, req));
+							}
+
+							senv = findErrorFreeCandidate(grenv, cheapest, 0, req);
+
+							if (senv.env.verbose >= 2) {
+								printDedent(senv.env.env, "} speculation " + if (senv.abort) " failed" else " succeeded");
+							}
+
+							senv;
+						}
+					}
+					GResolveTypars(): {
 						error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
 						grenv.onError(grenv.env, error);
+						grenv;
 					}
-					requeue();
 				}
 			}
 		}
 	}
+}
+
+// When we have
+// { :  :  : } c= α8 c= { :  : Behaviour<FixedSForm>, Behaviour<α1> : }
+// we can infer a relations between α10 <= FixedSForm, α1
+buildGTyparRelations(env : GResolutionEnv, possible : [string], req : GTyvarRequirements, named : Set<GNamed>, lower : bool) -> GResolutionEnv {
+	partititions : Tree<string, [GNamed]> = foldSet(named, makeTree(), \acc, name -> {
+		if (contains(possible, name.name)) {
+			treePushToArrayValue(acc, name.name, name)
+		} else acc;
+	});
+	foldTree(partititions, env, \name, types, acc -> {
+		if (length(types) >= 2) {
+			foldRange(0, length(types[0].typars) - 1, acc, \acc2, typarIndex -> {
+				// OK, see if any of the typars already have a tyvar
+				mtyvar = fold(types, None(), \acc0 : Maybe<GType>, type -> {
+					switch (acc0) {
+						None(): {
+							typar = type.typars[typarIndex];
+							existing = (if (lower) getGUpperRelations else getGLowerRelations)(acc2.env.grelations, typar);
+							foldSet(existing, None(), \acc1, et -> {
+								switch (et) {
+									GTypeVar(__): Some(et);
+									default: acc1;
+								}
+							});
+						}
+						Some(__): acc0;
+					}
+				});
+				tyvar = switch (mtyvar) {
+					None(): mkGTypeVar(acc.env);
+					Some(tv): tv;
+				}
+				
+				fold(types, acc2, \acc3, type -> {
+					typar = type.typars[typarIndex];
+					nenv = acc3.unify(
+						acc3.env, 
+						if (lower) typar else tyvar, 
+						if (lower) tyvar else typar,
+						req.starts, 
+						acc3.onError
+					);
+					GResolutionEnv(acc3 with env = nenv);
+				})
+			});
+		} else {
+			acc;
+		}
+	});
 }
 
 sortGCandidates(env : GResolutionEnv, candidates : [string], req : GTyvarRequirements) -> [string] {
