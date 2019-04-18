@@ -176,15 +176,15 @@ self.addEventListener('fetch', function(event) {
                   status: 206,
                   statusText: 'Partial Content',
                   headers: [
-                  ['Content-Type', response.headers.get('Content-Type')],
-                  ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
+                    ['Content-Type', response.headers.get('Content-Type')],
+                    ['Content-Range', 'bytes ' + start + '-' + end + '/' + arrayBuffer.byteLength]
                   ]
                 });
               } else {
                 return new Response(null, {
                   status: 416,
                   statusText: 'Range Not Satisfiable',
-                  headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
+                  headers: [['Content-Range', '*/' + arrayBuffer.byteLength]]
                 });
               }
             });
