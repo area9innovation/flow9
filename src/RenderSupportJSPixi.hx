@@ -1778,9 +1778,36 @@ class RenderSupportJSPixi {
 		return null;
 	}
 
-	public static function makeShader(vertexSrc : String, fragmentSrc : String, uniforms : String) : Filter {
-		var uniformsSrc = uniforms == "" ? null : haxe.Json.parse(uniforms);
-		var shader = new Filter(vertexSrc == "" ? null : vertexSrc, fragmentSrc == "" ? null : fragmentSrc, uniformsSrc);
+	public static function makeShader(vertexSrc : Array<String>, fragmentSrc : Array<String>, uniformsSrc : Array<String>) : Filter {
+		var v = StringTools.replace(vertexSrc.join(""), "a_VertexPos", "aVertexPosition");
+		v = StringTools.replace(v, "a_TextureCoord", "aTextureCoord");
+		v = StringTools.replace(v, "v_texCoord", "vTextureCoord");
+		v = StringTools.replace(v, "u_cmatrix", "projectionMatrix");
+		v = StringTools.replace(v, "s_tex", "uSampler");
+
+		trace(v);
+
+		var f = StringTools.replace(fragmentSrc.join(""), "a_VertexPos", "aVertexPosition");
+		f = StringTools.replace(f, "a_TextureCoord", "aTextureCoord");
+		f = StringTools.replace(f, "v_texCoord", "vTextureCoord");
+		f = StringTools.replace(f, "u_cmatrix", "projectionMatrix");
+		f = StringTools.replace(f, "s_tex", "uSampler");
+
+		trace(f);
+
+		var u = haxe.Json.parse(uniformsSrc.join(""));
+		u.u_out_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
+		u.u_out_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
+
+		trace(u);
+
+		var shader = new Filter(v, f, u);
 
 		return shader;
 	}

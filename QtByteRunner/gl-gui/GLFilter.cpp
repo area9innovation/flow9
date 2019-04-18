@@ -249,40 +249,41 @@ void GLBevelFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *ou
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(GLShaderFilter, GLFilter);
 
-int GLShaderFilter::program_id_counter = 20;
+unsigned GLShaderFilter::program_id_counter = 21;
 
-GLShaderFilter::GLShaderFilter(GLRenderSupport *owner, unicode_string vertex, unicode_string fragment, unicode_string uniform) :
+std::vector<const char*> get_pointer_vector(const std::vector<std::string> &str)
+{
+    std::vector<const char*> pointer_vector;
+
+    for (unsigned i = 0; i < str.size(); i++)
+    {
+        pointer_vector.push_back(str[i].c_str());
+    }
+
+    pointer_vector.push_back(NULL);
+
+    return pointer_vector;
+}
+
+GLShaderFilter::GLShaderFilter(GLRenderSupport *owner, std::vector<std::string> vertex, std::vector<std::string> fragment, std::vector<std::string> uniform) :
     GLFilter(owner)
 {
+    fragment.insert(fragment.begin(), "out frag_highp vec4 fragColor;\n");
+    fragment.insert(fragment.begin(), "#endif\n");
+    fragment.insert(fragment.begin(), "#ifndef GL_ES\n");
+
     this->vertex = vertex;
     this->fragment = fragment;
     this->uniform = uniform;
     this->program_id = program_id_counter;
     this->compiled = false;
-    program_id_counter++;
+
+    program_id_counter += 2;
 }
 
 void GLShaderFilter::updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox)
 {
     GLFilter::updateBBox(clip, own_bbox, full_bbox);
-}
-
-const char** split_string(const unicode_string& str, const unicode_string& delimiter)
-{
-    std::vector<const char*> strings;
-
-    std::string::size_type pos = 0;
-    std::string::size_type prev = 0;
-    while ((pos = str.find(delimiter, prev)) != std::string::npos)
-    {
-        strings.push_back((const char*) str.substr(prev, pos - prev + 1).c_str());
-        prev = pos + 1;
-    }
-
-    // To get the last substring (or only, if delimiter is not found)
-    strings.push_back((const char*) str.substr(prev + 1).c_str());
-
-    return (const char**) strings.data();
 }
 
 void GLShaderFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface *blur)
@@ -291,12 +292,17 @@ void GLShaderFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *o
         std::vector<std::string> pfix;
         pfix.clear();
 
-        renderer->compileShaderPair((GLRenderer::ProgramId) program_id, split_string(vertex, parseUtf8("\n")), split_string(fragment, parseUtf8("\n")), pfix, 0);
+        std::vector<const char *> vertex_vector = get_pointer_vector(vertex);
+        std::vector<const char *> fragment_vector = get_pointer_vector(fragment);
+
+        renderer->compileShaderPair((GLRenderer::ProgramId) program_id, vertex_vector.data(), fragment_vector.data(), pfix,
+                                    1, GLRenderer::AttrVertexPos, "a_VertexPos");
 
         compiled = true;
     }
 
     output->makeCurrent();
 
-//    renderer->renderShader(input, output, program_id);
+    renderer->setCurMatrix(mat3(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f));
+    renderer->renderShader(input, output, program_id);
 }

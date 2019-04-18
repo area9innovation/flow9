@@ -226,7 +226,7 @@ void GLRenderer::setProgram(ProgramId prog)
         if (programs[prog].u_cmatrix >= 0)
             glUniformMatrix3fv(programs[prog].u_cmatrix, 1, GL_FALSE, glm::value_ptr(u_cmatrix));
         program_u_cmatrix_set |= bit;
-    }    
+    }
 
     if ((program_in_dim_set & bit) == 0)
     {
@@ -428,7 +428,7 @@ void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
 void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs)
 {
     beginFilter(input, NULL);
-    
+
     setProgram(ProgGauss);
 
     float* gauss_coeffs = new float[steps];
@@ -438,7 +438,7 @@ void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_c
     float* v_shifts = new float[2 * steps];
     for (int i = 0; i < 2 * steps; i++)
         v_shifts[i] = 0.0;
-    
+
     if (vertical)
         for (int i = 0; i < steps; i++)
             v_shifts[2*i+1] = deltas[i] * u_in_pixel_size.y;
@@ -603,7 +603,7 @@ void GLRenderer::reportGLErrors(const char *where)
     GLenum err;
     while ((err = glGetError()) != GL_NO_ERROR) {
 #ifdef FLOW_EMBEDDED
-    	const char *msg = "?";
+        const char *msg = "?";
 #else
         const char *msg = (const char*)gluErrorString(err);
 #endif
@@ -694,6 +694,10 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     p = list;
     while (*p)
         data.push_back(*p++);
+
+    for (int i = 0; i < data.size(); i++) {
+        std::cout << data[i];
+    }
 
     glShaderSource(shader, data.size(), &data[0], NULL);
     glCompileShader(shader);
@@ -1440,13 +1444,13 @@ void GLRenderer::allocTexture(GLTextureImage *tximg)
     textures.insert(tximg);
 
     if (tximg->target == GL_TEXTURE_2D) {
-		glGenTextures(1, &tximg->texture_id);
-		glBindTexture(GL_TEXTURE_2D, tximg->texture_id);
+        glGenTextures(1, &tximg->texture_id);
+        glBindTexture(GL_TEXTURE_2D, tximg->texture_id);
 
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 }
 
@@ -1614,7 +1618,7 @@ void GLTextureBitmap::loadData()
         cerr << "GLTextureBitmap::loadData called on a stub." << endl;
         return;
     }
-    
+
     if (format == GL_UNSIGNED_SHORT_5_5_5_1)
         loadTextureData(GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1, data.data());
     else if (format == GL_UNSIGNED_SHORT_5_6_5)
@@ -1671,7 +1675,7 @@ void GLTextureBitmap::compress()
 {
     unsigned pixels = getSize().x * getSize().y;
     uint8_t * pixel_data = data.writable_data();
-    
+
     if (format == GL_RGB) {
         format = GL_UNSIGNED_SHORT_5_6_5;
         for (unsigned i = 0; i < pixels; ++i) {
@@ -1692,7 +1696,7 @@ void GLTextureBitmap::compress()
     } else {
         return;
     }
-    
+
     bytes_per_pixel = getBytesPerPixel(format);
     reallocate(pixels * bytes_per_pixel);
 }

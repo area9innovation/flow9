@@ -1568,10 +1568,37 @@ StackSlot GLRenderSupport::makeGlow(RUNNER_ARGS)
 StackSlot GLRenderSupport::makeShader(RUNNER_ARGS)
 {
     RUNNER_PopArgs3(vertex, fragment, uniform);
-    RUNNER_CheckTag3(TString, vertex, fragment, uniform);
+    RUNNER_CheckTag3(TArray, vertex, fragment, uniform);
+
+    std::vector<std::string> vertex_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(vertex); i++) {
+        const StackSlot &vertex_slot = RUNNER->GetArraySlot(vertex, i);
+        RUNNER_CheckTag(TString, vertex_slot);
+
+        vertex_vector.push_back(encodeUtf8(RUNNER->GetString(vertex_slot)));
+    }
+
+    std::vector<std::string> fragment_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(fragment); i++) {
+        const StackSlot &fragment_slot = RUNNER->GetArraySlot(fragment, i);
+        RUNNER_CheckTag(TString, fragment_slot);
+
+        fragment_vector.push_back(encodeUtf8(RUNNER->GetString(fragment_slot)));
+    }
+
+    std::vector<std::string> uniform_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(uniform); i++) {
+        const StackSlot &uniform_slot = RUNNER->GetArraySlot(uniform, i);
+        RUNNER_CheckTag(TString, uniform_slot);
+
+        uniform_vector.push_back(encodeUtf8(RUNNER->GetString(uniform_slot)));
+    }
 
     // Experiments have shown that glow is identical to shadow with zero offset.
-    GLShaderFilter *f = new GLShaderFilter(this, RUNNER->GetString(vertex), RUNNER->GetString(fragment), RUNNER->GetString(uniform));
+    GLShaderFilter *f = new GLShaderFilter(this, vertex_vector, fragment_vector, uniform_vector);
     return RUNNER->AllocNative(f);
 }
 
