@@ -170,7 +170,7 @@ self.addEventListener('fetch', function(event) {
                 status: 206,
                 statusText: 'Partial Content',
                 headers: [
-                  ['Content-type', response.headers.get('Content-type')],
+                  ['Content-Type', response.headers.get('Content-Type')],
                   ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
                 ]
               });
