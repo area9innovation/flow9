@@ -161,7 +161,8 @@ self.addEventListener('fetch', function(event) {
             });
         }
         return res;
-      }).then(function(response) {
+      })
+      .then(function(response) {
         if (response.status == 200) {
           return response
             .arrayBuffer()
@@ -190,7 +191,7 @@ self.addEventListener('fetch', function(event) {
         } else {
           return response;
         }
-    });
+      });
   }
 
   if (event.request.headers.get('range')) {
