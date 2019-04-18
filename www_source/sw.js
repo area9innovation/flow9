@@ -164,31 +164,31 @@ self.addEventListener('fetch', function(event) {
       }).then(function(response) {
         if (response.status == 200) {
           return response
-      .arrayBuffer()
-      .then(function(arrayBuffer) {
-        var bytes = /^bytes\=(\d+)\-(\d+)?$/g.exec(event.request.headers.get('range'));
-        if (bytes) {
-        var start = Number(bytes[1]);
-        var end = Number(bytes[2]) || arrayBuffer.byteLength - 1;
+            .arrayBuffer()
+            .then(function(arrayBuffer) {
+              var bytes = /^bytes\=(\d+)\-(\d+)?$/g.exec(event.request.headers.get('range'));
+              if (bytes) {
+                var start = Number(bytes[1]);
+                var end = Number(bytes[2]) || arrayBuffer.byteLength - 1;
 
-        return new Response(arrayBuffer.slice(start, end + 1), {
-          status: 206,
-          statusText: 'Partial Content',
-          headers: [
-          ['Content-Type', response.headers.get('Content-Type')],
-          ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
-          ]
-        });
+                return new Response(arrayBuffer.slice(start, end + 1), {
+                  status: 206,
+                  statusText: 'Partial Content',
+                  headers: [
+                  ['Content-Type', response.headers.get('Content-Type')],
+                  ['Content-Range', `bytes ${start}-${end}/${arrayBuffer.byteLength}`]
+                  ]
+                });
+              } else {
+                return new Response(null, {
+                  status: 416,
+                  statusText: 'Range Not Satisfiable',
+                  headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
+                });
+              }
+            });
         } else {
-        return new Response(null, {
-          status: 416,
-          statusText: 'Range Not Satisfiable',
-          headers: [['Content-Range', `*/${arrayBuffer.byteLength}`]]
-        });
-        }
-      });
-        } else {
-        return response;
+          return response;
         }
     });
   }
