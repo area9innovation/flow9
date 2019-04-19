@@ -16,6 +16,7 @@ MAppState(
 	point : DynamicBehaviour<Point>,
 	down : DynamicBehaviour<bool>,
 	wh : DynamicBehaviour<WidthHeight>,
+	availWH : DynamicBehaviour<WidthHeight>,
 	scrollInspect : TScrollInspectVisible,
 	scrollParent : DynamicBehaviour<Maybe<MFocusGroup>>,
 	state : [MComponentGroupState],
@@ -49,7 +50,25 @@ MExtendedAppBarState(
 MBottomSheetState(
 	content : (expanded : Transform<bool>) -> Material,
 	expanding : Maybe<MExpandingBottomSheet>,
+	modal : Maybe<MModalBottomSheetState>,
 	style : [MBottomSheetStyle]
+);
+
+MModalBottomSheetState(
+	show : DynamicBehaviour<bool>,
+	progress : DynamicBehaviour<double>
+);
+
+MBottomSheetAnimationTrigger(
+	mouseDown : bool,
+	expanded : bool,
+	screenHeight : double
+);
+
+MBottomSheetAnimationStartState(
+	pointY : double,
+	boxHeight : double,
+	scrollPositionY : double
 );
 
 sideNavStandardWidth = 320.;
@@ -110,8 +129,9 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 				\bs -> eitherMap(bs.expanding, \__ -> t, TLines2(t, TGhost("MAppBottomSheet"))),
 				t
 			))
-		|> (\t -> TGroup([
+		|> (\t -> TGroupSameMetrics([
 				t,
+				TDisplay("MModalBottomSheetBackground"),
 				TDisplay("MAppBottomSheet") |> TAlignBottom,
 				TDisplay("MAppFloatingContent")
 			]))
@@ -147,39 +167,78 @@ MAppStructure2T(manager : MaterialManager, parent : MFocusGroup, m : MAppStructu
 }
 
 letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	
+	bgLayer =
+		eitherMap(
+			state.bottomSheet,
+			\bottom ->
+				eitherMap(bottom.modal, \mdl -> {
+					down = make(false);
+					alpha = fmultiply(mdl.progress, const(0.6));
+
+					TRectangle([MFill(MBlack())], TGhost("MAppSize"))
+					|> (\t -> TAlpha(alpha, t))
+					|> (\t -> TInteractive([TMouseDown(down)], t))
+					|> (\t -> TConstruct([makeSubscribe2(down, \d -> if (!d) nextDistinct(mdl.show, false))], t))
+					|> disableInteractivesBelow
+					|> (\t -> TShow(fneq(mdl.progress, 0.), t))
+				},
+				TEmpty()
+			),
+			TEmpty()
+		);
+
 	eitherMap(
 		state.bottomSheet,
 		\bottom -> {
-			minBottomSheetHeight = 56.;
+			minBottomSheetHeight = eitherMap(bottom.modal, \__ -> 0., 56.);
 			gapThreshold = extractStruct(bottom.style, MSwipeGap(24.)).gap;
 			expanded = extractStruct(bottom.style, MExpanded(make(false))).expanded;
 			swipeDownEnabled = extractStruct(bottom.style, MSwipeDownEnabled(const(true))).enabled;
 
-			bottomSheetMaxCollapsed = fdivide(fheight(state.wh), const(2.)); // TODO : consider to use manager.stageWH in order to fix size bugs in cpp.
-			collapsedHeight0 = extractStruct(bottom.style, MCollapsedHeight(const(minBottomSheetHeight))).height;
+			screenHeight = fheight(state.availWH);
+
+			bottomSheetMaxCollapsed = fdivide(screenHeight, const(2.)); 
+			collapsedHeight0 =
+				extractStruct(
+					bottom.style,
+					MCollapsedHeight(eitherMap(bottom.modal, \__ -> bottomSheetMaxCollapsed, const(minBottomSheetHeight)))
+				).height;
 			collapsedHeight = 
 				eitherMap(
 					bottom.expanding,
 					\__ -> const(minBottomSheetHeight),
-					fmin(fmax(collapsedHeight0, const(minBottomSheetHeight)), bottomSheetMaxCollapsed)
+					eitherMap(
+						bottom.modal,
+						\__ -> collapsedHeight0,
+						fmin(
+							fmax(collapsedHeight0, const(minBottomSheetHeight)),
+							bottomSheetMaxCollapsed
+						)
+					)
 				);
 
 			bottomSheetHeight0 = make(0.);
-			bottomSheetHeight = fmin(fmax(bottomSheetHeight0, collapsedHeight), fheight(state.wh));
-
-			startPointY = ref 0.;
-			startAvail = ref 0.;
-			mouseInside = make(false);
-			mouseDown = make(false);
-
-			enabled =
-				fand(
-					mouseDown,
-					fOr(swipeDownEnabled, fnot(expanded))
+			bottomSheetHeight =
+				fmin(
+					screenHeight,
+					eitherMap(
+						bottom.modal,
+						\__ -> bottomSheetHeight0,
+						fmax(bottomSheetHeight0, collapsedHeight)
+					)
 				);
 
-			expandingProgress = make(0.);
+			startState = ref MBottomSheetAnimationStartState(0., 0., 0.);
+			mouseDown = make(false);
+			closeOnClick = isSome(bottom.modal);
+			scrollPosition = make(zeroPoint);
+			scrollBarStyle = TScrollbarStyle(materialScrollBar with visible = expanded);
 
+			blockSwiping = make(false);
+			swipeEnabled = fand(fnot(blockSwiping), fOr(swipeDownEnabled, fnot(expanded)));
+
+			expandingProgress = make(0.);
 			expanding2tropic = \bottomContent0 -> \e -> {
 				radius = 24.;
 				icon = tryExtractStruct(e.style, MExpandingBottomSheetIcon(""));
@@ -216,10 +275,14 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 				|> TAlignEnd
 				|> (\t -> TLines2(t, bottomContent))
 			};
-			
+
+			animationTrigger = fselect3(mouseDown, expanded, screenHeight, \d, e, h -> MBottomSheetAnimationTrigger(d, e, h));
+			animationFreeze = make(false);
 
 			m2t(bottom.content(expanded), parent)
-			|> (\t -> TInteractive([TMouseDownGhost(mouseDown)], t))
+			|> addTBackground(MWhite())
+			|> (\t -> eitherMap(bottom.modal, \mdl -> TAnimatedExpander(manager, parent, t, mdl.show, [MExpandFromStart(), MExpanderProgress(mdl.progress)]), t))
+			|> (\t -> TCopySize(t, \tr -> TInteractive([TMouseDownGhost(mouseDown)], tr), true))
 			|> disableInteractivesBelow
 			|> (\t -> eitherMap(bottom.expanding, expanding2tropic(t), t))
 			|> (\t ->
@@ -230,51 +293,83 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 						[
 							TScrollCropByContent(),
 							TScrollDisableOutOfBounds(const(true)),
-							TEnabled(const(false)),
-							TScrollEnabled(const(false)),
-							TScrollbars(invisibleScrollBar, invisibleScrollBar)
+							TScrollEnabled(expanded),
+							TScrollbars(scrollBarStyle, scrollBarStyle),
+							TScrollPosition(scrollPosition)
 						]
 					),
 					m2t
 				)
 			)
-			|> (\t2 -> TGroup2(TFillXH(minBottomSheetHeight), t2))
+			|> (\t -> TGroup2(TFillXH(minBottomSheetHeight), t))
 			|> (\m ->
 					MEasingAnimation(
 						manager,
 						parent,
 						const(0.3),
 						const(easingFastOutSlowIn),
-						fpair(mouseDown, expanded),
+						animationTrigger,
 						\trigger ->
-							if (trigger.first) None()
+							if (trigger.mouseDown || getValue(blockSwiping)) None()
 							else {
 								from = fgetValue(bottomSheetHeight);
-								to = if (fgetValue(expanded)) fgetValue(state.wh).height else 0.;
+								to = if (trigger.expanded) trigger.screenHeight else fgetValue(collapsedHeight);
+
+								maybeApply(bottom.modal, \mdl ->
+									if (from <= fgetValue(collapsedHeight)) nextDistinct(mdl.show, false)
+								);
+
 								if (from == to) None() else Some(Pair(from, to))
 							},
 						\coord, prc -> {
 							nextDistinct(expandingProgress, if (coord.first < coord.second) prc else 1. - prc);			
 							nextDistinct(bottomSheetHeight0, lerp(coord.first, coord.second, prc))
 						},
-						[],
+						[MFreezeAnimation(animationFreeze), MAutoStart()],
 						m
-					))
-			|> (\t -> TConstruct([
-					makeSubscribe2(mouseDown, \d -> 
-						if (d) {
-							startPointY := getValue(state.point).y;
-							startAvail := fgetValue(bottomSheetHeight);
-						} else if (fgetValue(enabled)) {
-							gap = ^startPointY - getValue(state.point).y;
-							next(expanded, gap > gapThreshold);
-						}
-						),
-					makeSubscribe2(
-						ftransistor(enabled, state.point),
-						\p -> nextDistinct(bottomSheetHeight0, ^startAvail + (^startPointY - p.y))
 					)
-				], t))
+				)
+			|> (\t -> eitherMap(bottom.expanding, \__ -> t, TShadowShape(parent, const(16.), t, RectangleShape("MBottomSheet"))))
+			|> (\t -> TConstruct([
+					[
+						makeSubscribe2(mouseDown, \d -> {
+							if (d)
+								startState :=
+									MBottomSheetAnimationStartState(
+										getValue(state.point).y,
+										fgetValue(bottomSheetHeight),
+										fgetValue(scrollPosition).y
+									)
+							else {
+								gap = ^startState.pointY - getValue(state.point).y;
+								allowStateChange = if (gap == 0.) closeOnClick else fgetValue(swipeEnabled);
+
+								if (allowStateChange) {
+									newExpanded = gap > if (fgetValue(expanded)) 0. else gapThreshold;
+									nextDistinct(expanded, newExpanded);
+									if (!newExpanded) {
+										maybeApply(bottom.modal, \mdl -> if (gap == 0.) nextDistinct(mdl.show, false));
+										nextDistinct(scrollPosition, zeroPoint)
+									};
+								}
+							}
+							nextDistinct(blockSwiping, false);
+						}),
+						makeSubscribe2(
+							ftransistor(fand(mouseDown, swipeEnabled), state.point),
+							\p -> if (^startState.scrollPositionY == 0.)
+									nextDistinct(bottomSheetHeight0, ^startState.boxHeight + (^startState.pointY - p.y))
+						),
+						makeSubscribe2(scrollPosition, \__ -> nextDistinct(blockSwiping, true)),
+					],
+					eitherMap(bottom.modal, \mdl -> [
+						makeSubscribe2(mdl.show, \s -> if (!s) {
+							nextDistinct(animationFreeze, true);
+							nextDistinct(expanded, false)
+						}),
+						makeSubscribe2(mdl.progress, \pr -> if (pr == 0.) nextDistinct(animationFreeze, false))
+					], [])
+				] |> concatA, t))
 			|> restrictSizeBySideNavs(state)
 			|> (\t -> eitherMap(state.flexible,
 					\fl -> TShow(fnot(fl.persistent), t),
@@ -284,12 +379,13 @@ letBottomSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 		TEmpty()
 	)
 	|> (\t -> TLet("MAppBottomSheet", t, content))
+	|> (\t -> TLet("MModalBottomSheetBackground", bgLayer, t))
 }
 
 letSideSheet(manager : MaterialManager, parent : MFocusGroup, content : Tropic, state : MAppState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	eitherMap(
 		state.bottomSheet,
-		\bottom -> {
+		\bottom -> if (isSome(bottom.modal)) TEmpty() else {
 			sideSheet = \ ->
 				m2t(bottom.content(const(true)), parent)
 				|> disableInteractivesBelow
@@ -449,7 +545,17 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 	bottomSheet =
 		maybeMap(
 			tryExtractStruct(m.parts, MBottomSheet(\__ -> TEmpty(), [])),
-			\bs -> MBottomSheetState(bs.content, tryExtractStruct(bs.style, MExpandingBottomSheet(const(""), [])), bs.style)
+			\bs -> MBottomSheetState(
+				bs.content,
+				tryExtractStruct(bs.style, MExpandingBottomSheet(const(""), [])),
+				if (mobile)
+					maybeMap(
+						tryExtractStruct(bs.style, MModalBottomSheet(make(false))),
+						\mdl -> MModalBottomSheetState(mdl.show, make(0.))
+					)
+				else None(),
+				bs.style
+			)
 		);
 
 	MAppState(
@@ -464,6 +570,7 @@ makeMAppState(manager : MaterialManager, m : MAppStructure) -> MAppState {
 		make(zeroPoint),
 		mouseDown,
 		appWH,
+		makeWH(),
 		scrollInspect,
 		make(None()),
 		extractMComponentGroupState(m.style),
@@ -496,6 +603,7 @@ letContentAndSize(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		TAttachBox(TDisplay("MAppSize"), state.wh),
 		TInteractive([TMouseDownGhost(state.down), TMouseXY(state.point)], TRectangle(interactiveRectangleStyle, TGhost("MAppSize")))
 	)
+	|> (\t -> TAttachAvailable(t, state.availWH))
 	|> (\t -> TLet("MAppSize", content, t))
 	|> (\t -> TLet("MAppContent", mainContent, t))
 }
