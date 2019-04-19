@@ -75,7 +75,7 @@ printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
      Options Indexes
      AllowOverride All
-     Require all granted
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
