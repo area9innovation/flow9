@@ -73,7 +73,7 @@ Install and configure apache2:
 sudo apt install apache2
 printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
+     Options Indexes
      AllowOverride All
      Require all granted
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
