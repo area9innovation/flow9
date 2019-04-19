@@ -71,22 +71,15 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
-<Directory /home/'$USER'/flow9/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
-</Directory>
-Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
+printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
+     AllowOverride All
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
 ```
-Note, that todoapp is name for application in exercise 9, you can rename it as you wish.
+Note that todoapp is name for application in exercise 9, you can rename it as you wish.
 # Clone the repositories
 If you haven't installed git yet, enter next commands:
 ```bash
