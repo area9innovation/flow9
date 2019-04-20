@@ -19,62 +19,167 @@ inline float ftToFloat(int v) {
 }
 
 
-void LigatureUtf32Iter::yield() {
+PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
+    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
+{
+    ++*nx;
+}
+PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
+    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
+{
+    ++*nx;
+}
+
+ucs4_char PasswordUtf32Iter::operator *() {
+    return *cur == *end? 0: 0x2022;
+}
+
+ucs4_char_tracer PasswordUtf32Iter::traceCurrent() {
+    ucs4_char_tracer(cur->position(), nx->position(), **this);
+}
+
+PasswordUtf32Iter& PasswordUtf32Iter::next() {
+    cur = nx;
+    nx = nx->clone();
+    ++*nx;
+    return *this;
+}
+
+shared_ptr<Utf32InputIterator> PasswordUtf32Iter::clone() {
+    shared_ptr<Utf32InputIterator> r(new PasswordUtf32Iter(*this->org, *this->end, *this->cur));
+    return r;
+}
+
+shared_ptr<Utf32InputIterator> PasswordUtf32Iter::cloneReversed() {
+    shared_ptr<Utf32InputIterator> r(new PasswordUtf32Iter(*this->org->cloneReversed(), *this->end->cloneReversed(), *this->cur->cloneReversed()));
+    return r;
+}
+
+void LigatureUtf32Iter::yieldSelf() {
+    yieldedChar = yield(&*cur, &*end, &nx, &ligalen);
+}
+
+ucs4_char LigatureUtf32Iter::yield(
+    Utf32InputIterator *cur, Utf32InputIterator *end,
+    shared_ptr<Utf32InputIterator> *nx, size_t *ligalen
+) {
     if (*cur == *end) {
-        ligalen = 1;
-        yieldedChar = **org;
-        return;
+        *ligalen = 1;
+        *nx = cur->clone();
+        ++**nx;
+        return **end;
     }
     int ligacnt = (sizeof LIGATURES)/(sizeof *LIGATURES);
-    std::vector<int> matchlengths(ligacnt, 0);
+    std::vector<size_t> matchlengths(ligacnt, 0);
     int ligai;
-    ligalen = 0;
+    *ligalen = 0;
     bool anyCandidate = true;
-    shared_ptr<Utf32InputIterator> aux(cur->clone());
-    for (*aux; anyCandidate && *aux!=*end; ++*aux, ++ligalen) {
+    *nx = cur->clone();
+    for (**nx; anyCandidate && **nx!=*end; ++**nx, ++*ligalen) {
         anyCandidate = false;
         for (ligai=0; ligai<ligacnt; ++ligai) {
-            if (matchlengths[ligai] != ligalen) continue;
+            if (matchlengths[ligai] != *ligalen) continue;
             anyCandidate = true;
-            if (**aux == LIGATURES[ligai].meaning[matchlengths[ligai]])
+            if (***nx == LIGATURES[ligai].meaning[matchlengths[ligai]])
                 ++matchlengths[ligai];
             if (!LIGATURES[ligai].meaning[matchlengths[ligai]]) {
-                cur = aux;
-                yieldedChar = LIGATURES[ligai].form;
-                return;
+                ++**nx;
+                return LIGATURES[ligai].form;
             }
         }
     }
     // No ligature match
-    ligalen = 1;
-    yieldedChar = **cur;
+    *ligalen = 1;
+    *nx = cur->clone();
+    ++**nx;
+    return **cur;
 }
 
 LigatureUtf32Iter& LigatureUtf32Iter::next() {
-    ++*cur;
-    yield();
+    cur = nx;
+    yieldSelf();
     return *this;
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
-    org(org.clone()), cur(org.clone()), end(end.clone())
+    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
 {
-    yield();
+    yieldSelf();
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
-    org(org.clone()), cur(cur.clone()), end(end.clone())
+    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
 {
-    yield();
+    yieldSelf();
+}
+
+void LigatureUtf32Iter::buildReverseMap() {
+    if (reverseMap.size()) return;
+    shared_ptr<LigatureUtf32Iter> passer;
+    passer.reset(new LigatureUtf32Iter(*this->org, *this->end));
+    shared_ptr<Utf32InputIterator> probe;
+    while (*passer->cur != *this->end) {
+        probe = passer->cur->clone();
+        ++*probe;
+        if (*probe != *passer->nx) reverseMap[passer->nx->position()] = passer->cur->position();
+        ++*passer;
+    }
+
+    // Just any valid key-value pair to make map non-empty.
+    if (!reverseMap.size())
+        reverseMap[org->position()] = end->position();
 }
 
 ucs4_char LigatureUtf32Iter::operator *() {
     return yieldedChar;
 }
+
+ucs4_char_tracer LigatureUtf32Iter::traceCurrent() {
+    ucs4_char_tracer(cur->position(), nx->position(), yieldedChar);
+}
+
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::clone() {
     shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter(*this->org, *this->end, *this->cur));
-   return r;
+    return r;
 }
+
+shared_ptr<Utf32InputIterator> LigatureUtf32Iter::cloneReversed() {
+    buildReverseMap();
+    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(this));
+    return r;
+}
+
+LigatureUtf32Iter::Reversed& LigatureUtf32Iter::Reversed::next() {
+    size_t2size_t::iterator mappedNx = master->reverseMap.find(cur->position());
+    ++*cur;
+    if (mappedNx != master->reverseMap.end())
+        while (*cur != *master->end && mappedNx->second != cur->position()) ++*cur;
+    return *this;
+}
+
+LigatureUtf32Iter::Reversed::Reversed(LigatureUtf32Iter *master):master(master) {
+    cur = master->cur->cloneReversed();
+}
+
+ucs4_char LigatureUtf32Iter::Reversed::operator *() {
+    size_t ligalen;
+    return master->yield(&*cur->cloneReversed(), &*master->end, &masterNx, &ligalen);
+}
+
+ucs4_char_tracer LigatureUtf32Iter::Reversed::traceCurrent() {
+    ucs4_char r = **this;
+    return ucs4_char_tracer(cur->position(), masterNx->position(), r);
+}
+
+shared_ptr<Utf32InputIterator> LigatureUtf32Iter::Reversed::clone() {
+    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(master));
+    ((LigatureUtf32Iter::Reversed *)&*r)->cur = cur->clone();
+    return r;
+}
+shared_ptr<Utf32InputIterator> LigatureUtf32Iter::Reversed::cloneReversed() {
+    return shared_ptr<Utf32InputIterator>(new LigatureUtf32Iter(*master->org, *master->end, *cur->cloneReversed()));
+}
+
 
 GLFontLibrary::GLFontLibrary(GLRenderSupport *owner) : owner(owner)
 {
@@ -489,8 +594,8 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
     const uint8_t *ppix = pixels.data();
     unsigned char *pgrid = current_glyph_grid->getDataPtr() + yoff + xoff;
 
-    for (unsigned y = 0; y < font_header->tile_size * scale; y++, pgrid += bytesSizeScale * scale * font_header->grid_px_size)
-        for (unsigned x = 0; x < bytesSizeScale * scale * font_header->tile_size; x++)
+    for (int y = 0; y < font_header->tile_size * scale; y++, pgrid += bytesSizeScale * scale * font_header->grid_px_size)
+        for (int x = 0; x < bytesSizeScale * scale * font_header->tile_size; x++)
             pgrid[x] = *ppix++;
 
     current_glyph_grid->invalidate();
@@ -638,10 +743,20 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 }
 #endif
 
-GLTextLayout::Ptr GLFont::layoutTextLine(unicode_string str, float size, float width_limit, float spacing, bool crop_long_words, bool rtl)
+int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
+    typename std::map<size_t, size_t>::const_iterator it = char_to_glyph_index.find( charidx );
+    if ( it == char_to_glyph_index.end() ) {
+       return -1;
+    }
+    else {
+       return it->second;
+    }
+}
+
+GLTextLayout::Ptr GLFont::layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit, float spacing, bool crop_long_words, bool rtl)
 {
     GLTextLayout::Ptr layout(new GLTextLayout(self.lock(), size));
-    layout->buildLayout(str, width_limit, spacing, crop_long_words, rtl);
+    layout->buildLayout(strb, stre, width_limit, spacing, crop_long_words, rtl);
     return layout;
 }
 
@@ -653,22 +768,27 @@ GLTextLayout::GLTextLayout(GLFont::Ptr font, float size) :
     pass_origin = pass_adj_origin = vec2(-1e+6);
 }
 
-void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spacing, bool crop_long_words, bool rtl)
+void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &end, float width_limit, float spacing, bool crop_long_words, bool rtl)
 {
     float cursor = 0.0f;
 
     this->spacing = spacing;
 
-    text.reserve(str.size());
-    glyphs.reserve(str.size());
-    positions.reserve(str.size()+1);
+    {
+        size_t elemcount = end.position() - begin.position();
+        char_indices.reserve(elemcount+1);
+        char_to_glyph_index.clear();
+        glyphs.reserve(elemcount);
+        positions.reserve(elemcount+1);
+    }
 
     GLFont::GlyphInfo *info = NULL, *prev = NULL;
-    DecodeUtf16toUtf32 decoder(str);
-    shared_ptr<Utf32ReversibleInputIterator> strIter(decoder.begin().cloneDirect());
-    shared_ptr<Utf32ReversibleInputIterator> strEnd(decoder.end().cloneDirect());
-    shared_ptr<Utf32ReversibleInputIterator> strRevStart(decoder.end().cloneDirect());
-    shared_ptr<Utf32ReversibleInputIterator> strRevEnd(decoder.end().cloneDirect());
+    shared_ptr<Utf32InputIterator> strIter;
+    shared_ptr<Utf32InputIterator> strEnd;
+    shared_ptr<Utf32InputIterator> strRevStart(begin.cloneReversed());
+    shared_ptr<Utf32InputIterator> strRevEnd(begin.cloneReversed());
+    strRevStart->seekEnd();
+    strRevEnd->seekEnd();
     bool (*isReverse)(ucs4_char code) = rtl? isLtrChar : isRtlChar;
     bool (*isDirect)(ucs4_char code) = rtl? isRtlChar : isLtrChar;
 
@@ -678,29 +798,30 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
 	// so, leftmost character is first for LTR, and last for RTL.
     GLTextLayout::GLYPH_VARIANT gv = GLTextLayout::GV_ISOLATED;
     if (rtl) {
-        strIter = decoder.rbegin().cloneDirect();
-        strEnd = decoder.rend().cloneDirect();
+        strIter = begin.cloneReversed();
+        strIter->seekBegin();
+        strEnd = begin.cloneReversed();
     } else {
-        strIter = decoder.begin().cloneDirect();
-        strEnd = decoder.end().cloneDirect();
+        strIter = begin.clone();
+        strEnd = begin.clone();
     }
+    strEnd->seekEnd();
 
-    shared_ptr<Utf32ReversibleInputIterator> leftPos(strEnd->cloneDirect()); // Setting to End state, so connecting algo won't connect left.
-    shared_ptr<Utf32ReversibleInputIterator> rightPos(strIter->cloneDirect());
-    shared_ptr<Utf32ReversibleInputIterator> strProc(strIter->cloneDirect());
+    shared_ptr<Utf32InputIterator> leftPos(strEnd->clone()); // Setting to End state, so connecting algo won't connect left.
+    shared_ptr<Utf32InputIterator> rightPos(strIter->clone());
+    shared_ptr<Utf32InputIterator> strProc(strIter->clone());
 
     for (*strIter; *strIter != *strEnd; prev = info) {
-        unicode_char charUTF16[2];
-        char charLen;
         ucs4_char chr;
+        size_t chrIdx;
+        chrIdx = strIter->position();
         chr = **strIter;
         if (*strRevStart == *strEnd) {
             if (isReverse(chr)) {
                 strRevStart = leftPos;
                 leftPos = rightPos;
                 rightPos = strRevStart;
-                strRevStart = strIter->cloneDirect();
-                //rightPos = strIter->cloneDirect();
+                strRevStart = strIter->clone();
                 strRevEnd = strProc = strEnd;  // *strProc == *strEnd — no character processing
             } else {
                 strProc = strIter;  // character processing goes on from strProc
@@ -724,7 +845,7 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
                         chr = **strRevEnd;
                     }
                     strProc = strRevEnd->cloneReversed();
-                    strRevEnd = strProc->cloneDirect();
+                    strRevEnd = strProc->clone();
                     ++*strRevEnd;
                     while (isCharCombining(chr) && (*strRevEnd != *strEnd)) {
                         ++*strRevEnd;
@@ -733,13 +854,15 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
                     }
                     leftPos = strProc->cloneReversed();
                     strRevEnd = strProc->cloneReversed();
-                    rightPos = strRevEnd->cloneDirect();
+                    rightPos = strRevEnd->clone();
                     ++*rightPos;
-                    strProc = strRevEnd->cloneDirect();
+                    strProc = strRevEnd->clone();
                 }
+                chrIdx = strProc->position();
                 chr = **strProc;
             } else {
                 ++*rightPos;
+                chrIdx = strProc->position();
                 chr = **strProc;
                 ++*strIter;
                 ++*leftPos;
@@ -762,14 +885,14 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
 
             // Keep behind current iterator, stay until non-combining
             // character met to determine connection.
-            if (!isCharCombining(**strProc)) leftPos = strProc->cloneDirect();
+            if (!isCharCombining(**strProc)) leftPos = strProc->clone();
 
             if (*strProc == *strRevStart && *strRevStart != *strEnd) {
                 // Reversed sequence processed, prepare to the direct back.
                 strRevStart = strEnd;
                 strIter = strRevEnd->cloneReversed();
                 ++*strIter;
-                rightPos = strIter->cloneDirect();
+                rightPos = strIter->clone();
             } else ++*strProc;
             ++*rightPos;
 
@@ -786,11 +909,13 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
             // We shouldn't add spacing after the last char in the string
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
-            if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' '))
-                break;
+            if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) {
+                strIter = strProc;
+                break;  // This quits layout cycle.
+            }
 
-            charLen = encodeCharUtf32toUtf16(chr, charUTF16);
-            for (int j = 0; j < charLen; ++j) text.push_back(charUTF16[j]);
+            char_to_glyph_index[chrIdx] = char_indices.size();
+            char_indices.push_back(chrIdx);
             glyphs.push_back(info);
             positions.push_back(pos);
 
@@ -804,6 +929,8 @@ void GLTextLayout::buildLayout(unicode_string str, float width_limit, float spac
     }
 
     positions.push_back(cursor);
+    char_indices.push_back(strIter->position());
+    endpos = strIter->clone();
 
     if (!glyphs.empty()) {
         bbox |= vec2(0.0f);

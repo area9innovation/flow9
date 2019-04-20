@@ -78,7 +78,7 @@ protected:
     T_lines text_lines;
     T_index text_line_index; // y end -> line_idx
     T_extents text_real_extents;
-    T_int_index text_char_index; // char_idx -> idx
+    T_int_index text_char_index; // char_idx -> text_real_extents idx
     vec2 text_size, ui_size;
     float justify_width, interline_spacing, cursor_width;
 
@@ -109,7 +109,11 @@ protected:
     std::string parseHtmlRec(const unicode_string &str, unsigned &pos, const FormatRec &format, std::set<std::string> &open_tags);
 
     void invalidateLayout();
-
+    static void applyProcessing(
+        std::string input_type,
+        Utf32InputIterator &inputBegin, Utf32InputIterator &inputEnd,
+        shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
+    );
     void layoutText();
     void layoutTextWrapLines();
     void layoutTextSpaceLines();
@@ -204,6 +208,8 @@ public:
 
     DECLARE_NATIVE_METHOD(getTextFieldWidth)
     DECLARE_NATIVE_METHOD(getTextFieldHeight)
+    DECLARE_NATIVE_METHOD(getTextFieldCharXPosition)
+    DECLARE_NATIVE_METHOD(findTextFieldCharByPosition)
     DECLARE_NATIVE_METHOD(setTextFieldWidth)
     DECLARE_NATIVE_METHOD(setTextFieldHeight)
     DECLARE_NATIVE_METHOD(setTextFieldCropWords)
