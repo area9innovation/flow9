@@ -3,7 +3,7 @@ import js.html.MediaRecorder;
 import js.html.MediaStream;
 import js.html.WebSocket;
 
-class MediaRecorderSupportHx {
+class MediaRecorderSupport {
 
 	public static function startRecording(recorder : Dynamic, timeslice : Int) : Void {
 	#if (js && !flow_nodejs)

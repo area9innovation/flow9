@@ -12,6 +12,7 @@
 #include "qt-backend/QWebSocketSupport.h"
 
 #ifdef FLOW_MEDIARECORDER
+#include "qt-backend/QMediaStreamSupport.h"
 #include "qt-backend/QMediaRecorderSupport.h"
 #endif
 
@@ -461,6 +462,7 @@ int main(int argc, char *argv[])
     DatabaseSupport DbManager(&FlowRunner);
     StartProcess ProcStarter(&FlowRunner);
 #ifdef FLOW_MEDIARECORDER
+    QMediaStreamSupport MediaStream(&FlowRunner, app->applicationDirPath());
     QMediaRecorderSupport MediaRecorder(&FlowRunner, app->applicationDirPath());
 #endif
 

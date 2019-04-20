@@ -2,7 +2,7 @@
 #define VIDEODEVICESCONTROL_H
 
 #include <QList>
-#include "qt-backend/QMediaRecorderSupport.h"
+#include "qt-backend/QMediaStreamSupport.h"
 
 class VideoDevicesControl
 {

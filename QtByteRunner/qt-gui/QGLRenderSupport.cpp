@@ -33,6 +33,7 @@
 #include "VideoWidget.h"
 
 #ifdef FLOW_MEDIARECORDER
+#include "QMediaStreamSupport.h"
 #include "QMediaRecorderSupport.h"
 #endif
 
@@ -536,12 +537,12 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
     }
     if (video_clip->useMediaStream()) {
 #ifdef FLOW_MEDIARECORDER
-        QMediaRecorderSupport::FlowNativeVideoSurface *p = getFlowRunner()->GetNative<QMediaRecorderSupport::FlowNativeVideoSurface*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
+        QMediaStreamSupport::FlowNativeMediaStream *mediaStream = getFlowRunner()->GetNative<QMediaStreamSupport::FlowNativeMediaStream*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
 
         widget = videoWidget = new VideoWidget(this);
-        p->videoSurface = videoWidget->videoSurface();
+        mediaStream->videoSurface = videoWidget->videoSurface();
 
-        video_clip->notify(GLVideoClip::SizeChange, p->width, p->height);
+        video_clip->notify(GLVideoClip::SizeChange, mediaStream->width, mediaStream->height);
 
         GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
         video_clip->setVideoTextureImage(texture_bitmap);

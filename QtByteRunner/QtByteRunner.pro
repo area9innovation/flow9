@@ -157,7 +157,8 @@ SOURCES += \
     qt-backend/RunParallel.cpp \
     utils/AbstractWebSocketSupport.cpp \
     qt-backend/QWebSocketSupport.cpp \
-    qt-gui/mainwindow.cpp
+    qt-gui/mainwindow.cpp \
+    utils/WebRTCSupport.cpp
 
 HEADERS  += \
     core/ByteCodeRunner.h \
@@ -189,20 +190,21 @@ HEADERS  += \
     qt-backend/RunParallel.h \
     utils/AbstractWebSocketSupport.h \
     qt-backend/QWebSocketSupport.h \
-    qt-gui/mainwindow.h
+    qt-gui/mainwindow.h \
+    utils/WebRTCSupport.h
 
 # Asmjit
 
 CONFIG(use_jit) {
-	DEFINES += FLOW_JIT
-	DEFINES += ASMJIT_STATIC
-	DEFINES += ASMJIT_DISABLE_COMPILER
+        DEFINES += FLOW_JIT
+        DEFINES += ASMJIT_STATIC
+        DEFINES += ASMJIT_DISABLE_COMPILER
 
-	SOURCES += core/JitProgram.cpp
-	HEADERS += core/JitProgram.h
+        SOURCES += core/JitProgram.cpp
+        HEADERS += core/JitProgram.h
 
-	SOURCES += $$files(asmjit/src/asmjit/base/*.cpp) $$files(asmjit/src/asmjit/x86/*.cpp)
-	HEADERS += $$files(asmjit/src/asmjit/*.h) $$files(asmjit/src/asmjit/base/*.h) $$files(asmjit/src/asmjit/x86/*.h)
+        SOURCES += $$files(asmjit/src/asmjit/base/*.cpp) $$files(asmjit/src/asmjit/x86/*.cpp)
+        HEADERS += $$files(asmjit/src/asmjit/*.h) $$files(asmjit/src/asmjit/base/*.h) $$files(asmjit/src/asmjit/x86/*.h)
 }
 
 # Non-gui
@@ -312,29 +314,39 @@ if(true) { # true to put MediaRecorder on
     DEFINES += FLOW_MEDIARECORDER
 
     SOURCES+= utils/MediaRecorderSupport.cpp \
-        qt-backend/QMediaRecorderSupport.cpp
+        utils/MediaStreamSupport.cpp \
+        qt-backend/QMediaRecorderSupport.cpp \
+        qt-backend/QMediaStreamSupport.cpp
+
 
     HEADERS += utils/MediaRecorderSupport.h \
-        qt-backend/QMediaRecorderSupport.h
+        utils/MediaStreamSupport.h \
+        qt-backend/QMediaRecorderSupport.h \
+        qt-backend/QMediaStreamSupport.h
 
     macx {
         SOURCES += qt-backend/macos/VideoDevicesControl.mm
         HEADERS += qt-backend/macos/VideoDevicesControl.h
 
-        INCLUDEPATH += /System/Library/Frameworks/AVFoundation.framework/Headers \
-                    /System/Library/Frameworks/CoreMedia.framework/Headers
-        LIBS += -F/System/Library/Frameworks \
+        FRAMEWORKS_FOLDER = /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks
+        INCLUDEPATH += $${FRAMEWORKS_FOLDER}/AVFoundation.framework/Headers \
+                    $${FRAMEWORKS_FOLDER}/CoreMedia.framework/Headers
+        LIBS += -F$${FRAMEWORKS_FOLDER} \
                 -framework AVFoundation \
                 -framework CoreMedia \
                 -framework Cocoa
+
         INCLUDEPATH += /Library/Frameworks/GStreamer.framework/Headers
         LIBS += -F/Library/Frameworks -framework GStreamer
         exists($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks/GStreamer.framework) {}
         else {
-            QMAKE_POST_LINK += & $$shell_quote($$shell_path($${PWD}/mediarecorder.sh))
+            exists($$shell_quote($$shell_path($${PWD}/GeneratedFiles/GStreamer.framework))) {}
+            else {
+                QMAKE_POST_LINK += & sh $$shell_quote($$shell_path($${PWD}/mediarecorder.sh))
+            }
             QMAKE_POST_LINK += & mkdir -p $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks/GStreamer.framework))
-            QMAKE_POST_LINK += & cp -a $$shell_quote($$shell_path($${PWD}/GeneratedFiles/GStreamer.framework/)) \
-                                $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks/GStreamer.framework/))
+            QMAKE_POST_LINK += & cp -a $$shell_quote($$shell_path($${PWD}/GeneratedFiles/GStreamer.framework)) \
+                                $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks))
 
         }
         QMAKE_POST_LINK += & install_name_tool -change \

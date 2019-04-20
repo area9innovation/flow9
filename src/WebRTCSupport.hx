@@ -66,8 +66,8 @@ class WebRTCSupport {
 
 			socket.on('message', function(m) {
 				var clientId : String = m.clientId;
-				var message : Dynamic = m.message;
-				if (message == 'new_user') {
+				var message : Dynamic = m.content;
+				if (message.type == 'new_user') {
 					peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, onNewParticipant, onParticipantLeave);
 					peerConnections[clientId].createOffer(onError);
 				} else if (message.type == 'offer') {
@@ -84,13 +84,15 @@ class WebRTCSupport {
 						candidate: message.candidate
 					};
 					peerConnections[clientId].addIceCandidate(candidate);
-				} else if (message == 'disconnect') {
+				} else if (message.type == 'disconnect') {
 					peerConnections[clientId].stop();
 				}
 			});
 
 			socket.emit("message", {
-				content : "new_user"
+				content : {
+					type : "new_user"
+				}
 			});
 
 			var mediaSender = {
@@ -111,7 +113,9 @@ class WebRTCSupport {
 		if (mediaSender) {
 			if (mediaSender.socket) {
 				mediaSender.socket.emit("message", {
-					content: "disconnect"
+					content: {
+						type : "disconnect"
+					}
 				});
 				mediaSender.socket.close();
 				mediaSender.socket = null;
@@ -147,12 +151,6 @@ class PeerConnection {
 			this.connection.onaddstream = handleRemoteStreamAdded;
 			this.connection.addStream(localStream);
 		}
-	}
-
-	private function sendMessage(content : String) {
-		this.socket.emit("message", {
-			content: content
-		});
 	}
 
 	private function sendMessageTo(to : String, content : Dynamic) {
