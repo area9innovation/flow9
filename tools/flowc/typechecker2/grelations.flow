@@ -28,7 +28,7 @@ export {
 }
 
 makeGRelations() -> GRelations {
-	GRelations(makeTree(), makeTree(), makeTree(), makeSet());
+	GRelations(makeTree(), makeTree(), makeTree(), makeSet(), makeTree());
 }
  
 addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, pos : int) -> GRelations {
@@ -47,6 +47,15 @@ addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, pos : int) ->
 			}
 		});
 
+		updateDeps = \deps : Tree<int, Set<GType>>, type : GType -> {
+			childTyvars = collectChildGTyvars(env, type, makeSet());
+			foldSet(childTyvars, deps, \acc, tv -> {
+				insertMultimap(acc, tv, type)
+			})
+		}
+		fromDeps = updateDeps(r.parentDeps, from);
+		toDeps = updateDeps(fromDeps, to);
+
 		GRelations(
 			insertMultimap(r.uppers, from, to),
 			insertMultimap(r.lowers, to, from),
@@ -54,8 +63,46 @@ addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, pos : int) ->
 				insertMultimap(r.positions, to, pos),
 				from, pos
 			),
-			queue
+			queue,
+			toDeps
 		);
+	}
+}
+
+
+collectChildGTyvars(env : GEnv, gtype : GType, acc : Set<int>) -> Set<int> {
+	switch (gtype) {
+		GBasicType(t): acc;
+		GFlow(): acc;
+		GTypePar(id): acc;
+		GFunction(args, rt): {
+			extractImmediateGTypeVars(env, arrayPush(args, rt), acc);
+		}
+		GArray(type): extractImmediateGTypeVar(env, type, acc);
+		GRef(type): extractImmediateGTypeVar(env, type, acc);
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): acc;
+				Some(t): collectChildGTyvars(env, t, acc);
+			}
+		}
+		GNamed(name, typars): extractImmediateGTypeVars(env, typars, acc);
+		GField(name, type): extractImmediateGTypeVar(env, type, acc);
+	}
+}
+
+extractImmediateGTypeVars(env : GEnv, types : [GType], acc: Set<int>) -> Set<int> {
+	fold(types, acc, \acc2, type -> extractImmediateGTypeVar(env, type, acc2))
+}
+
+extractImmediateGTypeVar(env : GEnv, type : GType, acc : Set<int>) -> Set<int> {
+	switch (type) {
+		GTypeVar(tv): {
+			if (containsKeyTree(env.tyvars, tv)) acc
+			else insertSet(acc, tv)
+		}
+		default: acc;
 	}
 }
 
@@ -174,7 +221,15 @@ grelations2dot(env : GEnv, g : GRelations) -> string {
 		text1 = type2node(type, extra);
 		acc + text0 + " [label=" + text1 + "];\n"
 	});
-	edgesDump = foldTree(g.uppers, "", \from, tos, acc -> {
+
+	// Tyvar deps
+	tyvarDeps = foldTree(g.parentDeps, "", \from : int, tos : Set<GType>, acc -> {
+		foldSet(tos, acc, \acc1, to -> {
+			acc1 + type2node(GTypeVar(from), "") + " -> " + type2node(to, "") + " [color=grey];\n" 
+		})
+	});
+
+	edgesDump = foldTree(g.uppers, tyvarDeps, \from, tos, acc -> {
 		foldSet(tos, acc, \acc1, to -> {
 			acc1 + type2node(from, "") + " -> " + type2node(to, "") + ";\n"
 		});
