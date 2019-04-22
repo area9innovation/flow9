@@ -279,7 +279,10 @@ class DisplayObjectHelper {
 			removeScrollRect(clip);
 		}
 
-		clip.mask = null;
+		if (clip.mask != null) {
+			untyped clip.mask.child = null;
+			clip.mask = null;
+		}
 
 		if (RenderSupportJSPixi.RendererType == "webgl") {
 			clip.mask = getFirstGraphics(maskContainer);
@@ -301,10 +304,12 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
+			untyped clip.mask.child = clip;
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
 			untyped maskContainer.isMask = true;
+			untyped maskContainer.child = clip;
 		}
 
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });

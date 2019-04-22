@@ -759,12 +759,17 @@ class RenderSupportJSPixi {
 		AccessWidget.updateAccessTree();
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
-			PixiRenderer.render(PixiStage, null, true, null, !TransformChanged);
+			PixiStageChanged = false;
+
+			if (TransformChanged) {
+				TransformChanged = false;
+
+				PixiRenderer.render(PixiStage, null, true, null, false);
+			} else {
+				PixiRenderer.render(PixiStage, null, true, null, true);
+			}
 
 			emit("stagechanged", timestamp);
-
-			TransformChanged = false;
-			PixiStageChanged = false;
 		}
 
 		requestAnimationFrame();
