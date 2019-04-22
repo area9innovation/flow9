@@ -1888,6 +1888,8 @@ void AndroidHttpSupport::doRequest(HttpRequest &rq)
     int id = rq.req_id;
     jstring url_str = string2jni(env, rq.url);
 
+    rq.headers.erase(parseUtf8("Content-Length"));
+
     if (rq.is_media_preload) {
         env->CallVoidMethod(owner->owner, cbStartMediaPreload, id, url_str);
     } else {
