@@ -457,18 +457,18 @@ void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned
         glUniform1f(loc, time);
     }
 
-//    loc = glGetUniformLocation(info->program_id, "u_cmatrix");
+    loc = glGetUniformLocation(info->program_id, "u_cmatrix");
 
-//    if (loc >= 0) {
-//        mat3 cmatrix =
-//            mat3(
-//                u_out_pixel_size.x, 0.0f, u_out_offset.x,
-//                0.0f, u_out_pixel_size.y, -u_out_offset.y,
-//                0.0f, 0.0f, 1.0f
-//            );
+    if (loc >= 0) {
+        mat3 cmatrix =
+            mat3(
+                u_out_pixel_size.x, 0.0f, 0.0f,
+                0.0f, u_out_pixel_size.y, 0.0f,
+                -u_out_offset.x * u_out_pixel_size.x, -u_out_offset.y * u_out_pixel_size.y, 1.0f
+            );
 
-//        glUniformMatrix3fv(info->u_cmatrix, 1, GL_FALSE, glm::value_ptr(cmatrix));
-//    }
+        glUniformMatrix3fv(info->u_cmatrix, 1, GL_FALSE, glm::value_ptr(cmatrix));
+    }
 
     loc = glGetUniformLocation(info->program_id, "seed");
 
