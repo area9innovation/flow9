@@ -1778,38 +1778,54 @@ class RenderSupportJSPixi {
 		return null;
 	}
 
-	public static function makeShader(vertexSrc : Array<String>, fragmentSrc : Array<String>, uniformsSrc : Array<String>) : Filter {
-		var v = StringTools.replace(vertexSrc.join(""), "a_VertexPos", "aVertexPosition");
-		v = StringTools.replace(v, "a_TextureCoord", "aTextureCoord");
+	public static function makeShader(vertex : Array<String>, fragment : Array<String>, uniforms : Array<Array<String>>) : Filter {
+		var v = StringTools.replace(vertex.join(""), "a_VertexPos", "aVertexPosition");
+		v = StringTools.replace(v, "a_VertexTexCoord", "aTextureCoord");
 		v = StringTools.replace(v, "v_texCoord", "vTextureCoord");
 		v = StringTools.replace(v, "u_cmatrix", "projectionMatrix");
 		v = StringTools.replace(v, "s_tex", "uSampler");
+		v = StringTools.replace(v, "texture(", "texture2D(");
+		v = StringTools.replace(v, "in ", "varying ");
+		v = StringTools.replace(v, "out ", "varying ");
+		v = StringTools.replace(v, "frag_highp", "highp");
 
-		trace(v);
-
-		var f = StringTools.replace(fragmentSrc.join(""), "a_VertexPos", "aVertexPosition");
-		f = StringTools.replace(f, "a_TextureCoord", "aTextureCoord");
+		var f = StringTools.replace(fragment.join(""), "a_VertexPos", "aVertexPosition");
+		f = StringTools.replace(f, "a_VertexTexCoord", "aTextureCoord");
 		f = StringTools.replace(f, "v_texCoord", "vTextureCoord");
 		f = StringTools.replace(f, "u_cmatrix", "projectionMatrix");
 		f = StringTools.replace(f, "s_tex", "uSampler");
+		f = StringTools.replace(f, "texture(", "texture2D(");
+		f = StringTools.replace(f, "in ", "varying ");
+		f = StringTools.replace(f, "out ", "varying ");
+		f = StringTools.replace(f, "frag_highp", "highp");
 
-		trace(f);
+		var u : Dynamic = {};
 
-		var u = haxe.Json.parse(uniformsSrc.join(""));
+		for (uniform in uniforms) {
+			untyped __js__("u[uniform[0]] = { type : uniform[1], value : JSON.parse(uniform[2]) }");
+		}
+
 		u.u_out_pixel_size = {
 			type : "vec2",
 			value : [1, 1]
 		};
+
 		u.u_out_offset = {
 			type : "vec2",
 			value : [0, 0]
 		};
 
-		trace(u);
+		u.u_in_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
 
-		var shader = new Filter(v, f, u);
+		u.u_in_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
 
-		return shader;
+		return new Filter(v, f, u);
 	}
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {

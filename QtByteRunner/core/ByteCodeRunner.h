@@ -147,8 +147,8 @@ public:
 
     void SetExtendedDebugInfo(ExtendedDebugInfo *dinfo);
 
-    bool Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPtr position, int size);
-    void Disassemble(ostream &out, FlowPtr position, int size);
+    bool Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPtr position, unsigned size);
+    void Disassemble(ostream &out, FlowPtr position, unsigned size);
 
     void enableGCStressTest();
 
@@ -386,7 +386,7 @@ private:
 
     // GC write barrier notification
     void RegisterWrite(FlowPtr slot);
-    void RegisterWrite(FlowPtr start, int count);
+    void RegisterWrite(FlowPtr start, unsigned count);
 
     // Next id value for a ref object
     int NextRefId;
@@ -478,8 +478,8 @@ private:
     struct AllocationInfo {
         FlowPtr alloc_addr;
         std::string stack_buf;
-        int size, generation;
-        AllocationInfo(FlowPtr alloc, int size, int generation) :
+        unsigned size, generation;
+        AllocationInfo(FlowPtr alloc, unsigned size, int generation) :
             alloc_addr(alloc), size(size), generation(generation)
         {}
     };
@@ -498,7 +498,7 @@ private:
 
 #ifdef FLOW_INSTRUCTION_PROFILING
     void DoClaimInstructionsSpent(int amount, int special);
-    void ProfileMemEvent(int size, bool big = false);
+    void ProfileMemEvent(unsigned size, bool big = false);
 #endif
 
 #if defined(FLOW_TIME_PROFILING) || defined(FLOW_DEBUGGER)
@@ -520,21 +520,21 @@ private:
     }
 
     void DoNativeCall(const StackSlot &arg);
-	_INLINE_FORCE(void DoCall());
-	_INLINE_FORCE(bool DoTailCall(int locals));
-	_INLINE_FORCE(void DoReturn(bool closure));
-	_INLINE_FORCE(void DoEqual());
-	_INLINE_FORCE(void DoLessThan());
-	_INLINE_FORCE(void DoLessEqual());
-	_INLINE_FORCE(void DoNot());
-	_INLINE_FORCE(void DoArrayGet());
-	_INLINE_FORCE(void DoRefTo());
-	_INLINE_FORCE(void DoDeref());
-	_INLINE_FORCE(void DoSetRef());
+    _INLINE_FORCE(void DoCall());
+    _INLINE_FORCE(bool DoTailCall(int locals));
+    _INLINE_FORCE(void DoReturn(bool closure));
+    _INLINE_FORCE(void DoEqual());
+    _INLINE_FORCE(void DoLessThan());
+    _INLINE_FORCE(void DoLessEqual());
+    _INLINE_FORCE(void DoNot());
+    _INLINE_FORCE(void DoArrayGet());
+    _INLINE_FORCE(void DoRefTo());
+    _INLINE_FORCE(void DoDeref());
+    _INLINE_FORCE(void DoSetRef());
     _INLINE_FORCE(void DoInt2Double());
     _INLINE_FORCE(void DoDouble2Int());
-	_INLINE_FORCE(void DoField(int i));
-	_INLINE_FORCE(void DoSetMutable(int i));
+    _INLINE_FORCE(void DoField(int i));
+    _INLINE_FORCE(void DoSetMutable(int i));
     int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, short *idx, StructDef **pdef);
     void DoFieldName(char const * n, int length, short *idx);
     void DoSetMutableName(char const * n, int length, short *idx);
@@ -559,7 +559,7 @@ public:
 
     bool CompareByRef(const StackSlot &slot1, const StackSlot &slot2);
 
-    bool DoSubstring(StackSlot *pdata, int idx, int size);
+    bool DoSubstring(StackSlot *pdata, int idx, unsigned size);
 
 private:
     bool is_raw_bytecode;
@@ -610,8 +610,8 @@ public:
     bool NotifyPlatformEvent(PlatformEvent event);
     void NotifyCustomFileTypeOpened(unicode_string path);
     void NotifyCameraEvent(int code, std::string message, std::string additionalInfo, int width, int height);
-    void NotifyCameraEventVideo(int code, std::string message, std::string additionalInfo, int width, int height, int duration, int size);
-    void NotifyCameraEventAudio(int code, std::string message, std::string additionalInfo, int duration, int size);
+    void NotifyCameraEventVideo(int code, std::string message, std::string additionalInfo, int width, int height, int duration, unsigned size);
+    void NotifyCameraEventAudio(int code, std::string message, std::string additionalInfo, int duration, unsigned size);
 private:
     friend class BinaryDeserializer;
 
@@ -649,10 +649,10 @@ private:
     std::map<std::string, StackSlot> MappedFiles;
 #endif
 
-    FlowPtr AllocateInner(int size); // called if out of heap
+    FlowPtr AllocateInner(unsigned size); // called if out of heap
 
     // Heap allocation
-    FlowPtr Allocate(int size)
+    FlowPtr Allocate(unsigned size)
     {
         //if (rand() % 30 == 0) ForceGC(0, rand()%3 == 0); // GC stress testing
         FlowPtr nhp = FlowPtrAlignDown(hp - size, 4);
@@ -672,7 +672,7 @@ private:
     }
 
     FlowPtr AllocateClosureBuffer(int code, unsigned short length, StackSlot *data);
-    StackSlot AllocateKnownStruct(const char *name, int size, int id, StackSlot *data);
+    StackSlot AllocateKnownStruct(const char *name, unsigned size, int id, StackSlot *data);
 
     unicode_char *AllocateStringBuffer(StackSlot *out, unsigned length);
     FlowPtr *AllocateStringRef(StackSlot *out, unsigned length);
@@ -734,7 +734,7 @@ public:
 
     StackSlot AllocateRef(const StackSlot &value);
     StackSlot AllocateArray(int length, StackSlot *data = NULL);
-    StackSlot AllocateStruct(const char *name, int size);
+    StackSlot AllocateStruct(const char *name, unsigned size);
 
     unsigned GetStringSize(const StackSlot &str) {
         assert(str.IsString());
@@ -762,7 +762,7 @@ public:
 #endif
 
 private:
-    StackSlot *GetMemorySlotWritePtr(FlowPtr ptr, int count) {
+    StackSlot *GetMemorySlotWritePtr(FlowPtr ptr, unsigned count) {
         if (ptr >= hp_big_pos) RegisterWrite(ptr, count);
         return (StackSlot*)Memory.GetRawPointer(ptr, count*STACK_SLOT_SIZE, true);
     }
@@ -776,26 +776,26 @@ private:
     }
 
 public:
-    const StackSlot *GetArraySlotPtr(const StackSlot &arr, int count) {
+    const StackSlot *GetArraySlotPtr(const StackSlot &arr, unsigned count) {
         return (StackSlot*)Memory.GetRawPointer(arr.GetInternalArrayPtr(), count*STACK_SLOT_SIZE, false);
     }
-    const StackSlot &GetArraySlot(const StackSlot &arr, int index) {
+    const StackSlot &GetArraySlot(const StackSlot &arr, unsigned index) {
         return Memory.GetStackSlot(arr.GetInternalArrayPtr() + index*STACK_SLOT_SIZE);
     }
-    StackSlot *GetArrayWritePtr(const StackSlot &arr, int count) {
+    StackSlot *GetArrayWritePtr(const StackSlot &arr, unsigned count) {
         return GetMemorySlotWritePtr(arr.GetInternalArrayPtr(), count);
     }
     void SetArraySlot(const StackSlot &arr, int index, const StackSlot &val) {
         SetMemorySlot(arr.GetInternalArrayPtr(), index, val);
     }
 
-    const StackSlot *GetClosureSlotPtr(const StackSlot &arr, int count) {
+    const StackSlot *GetClosureSlotPtr(const StackSlot &arr, unsigned count) {
         return (StackSlot*)Memory.GetRawPointer(arr.GetClosureDataPtr(), count*STACK_SLOT_SIZE, false);
     }
     const StackSlot &GetClosureSlot(const StackSlot &arr, int index) {
         return Memory.GetStackSlot(arr.GetClosureDataPtr() + index*STACK_SLOT_SIZE);
     }
-    StackSlot *GetClosureWritePtr(const StackSlot &arr, int count) {
+    StackSlot *GetClosureWritePtr(const StackSlot &arr, unsigned count) {
         return GetMemorySlotWritePtr(arr.GetClosureDataPtr(), count);
     }
     void SetClosureSlot(const StackSlot &arr, int index, const StackSlot &val) {
@@ -808,23 +808,23 @@ public:
     void SetRefTarget(const StackSlot &ref, const StackSlot &val) {
         SetMemorySlot(ref.GetRawRefPtr(), 0, val);
     }
-    int GetRefId(const StackSlot &ref) {
+    unsigned GetRefId(const StackSlot &ref) {
         assert(ref.IsRefTo());
         return GetSplitAuxValue(ref);
     }
 
-    void CopySlots(FlowPtr target, FlowPtr src, int count) {
+    void CopySlots(FlowPtr target, FlowPtr src, unsigned count) {
         Memory.Copy(src, target, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
-    void CopySlots(FlowPtr target, const StackSlot *src, int count) {
+    void CopySlots(FlowPtr target, const StackSlot *src, unsigned count) {
         Memory.SetBytes(target, src, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
-    void CopyArraySlots(const StackSlot &target, int toff, const StackSlot &src, int soff, int count) {
+    void CopyArraySlots(const StackSlot &target, int toff, const StackSlot &src, int soff, unsigned count) {
         CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src.GetInternalArrayPtr() + soff*STACK_SLOT_SIZE, count);
     }
-    void CopyArraySlots(const StackSlot &target, int toff, const StackSlot *src, int count) {
+    void CopyArraySlots(const StackSlot &target, int toff, const StackSlot *src, unsigned count) {
         CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src, count);
     }
 
@@ -833,7 +833,7 @@ public:
         FlowPtr ptr = arr.GetClosureDataPtr();
         return ptr != MakeFlowPtr(0) ? Memory.GetInt32(ptr - 4) : 0;
     }
-    inline int GetArraySize(const StackSlot &arr) {
+    inline unsigned GetArraySize(const StackSlot &arr) {
         assert(arr.IsArray());
         return GetSplitAuxValue(arr);
     }
@@ -862,10 +862,10 @@ public:
     void SetStructSlot(const StackSlot &str, int index, const StackSlot &val) {
         SetArraySlot(str, index, val);
     }
-    void StructSlotPack(const StackSlot &str, const StackSlot *src, int start, int count) {
+    void StructSlotPack(const StackSlot &str, const StackSlot *src, int start, unsigned count) {
         CopyArraySlots(str, start, src, count);
     }
-    void StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, int count) {
+    void StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, unsigned count) {
         memcpy(tgt, GetArraySlotPtr(str, count) + start, count*STACK_SLOT_SIZE);
     }
 #else
@@ -892,8 +892,8 @@ public:
         else if (unlikely(ph->GC_Tag))
             RegisterWrite(ph, str.GetRawStructPtr());
     }
-    void StructSlotPack(const StackSlot &str, const StackSlot *src, int start, int count);
-    void StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, int count);
+    void StructSlotPack(const StackSlot &str, const StackSlot *src, int start, unsigned count);
+    void StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, unsigned count);
 #endif
 
     inline const std::string & GetStructName(const StackSlot &strct) {
@@ -934,7 +934,7 @@ private:
     inline void PushDataStackSlot(int offset);
 
     FlowPtr MoveStackToHeap(int num_slots, bool with_size);
-    void MoveStructToStack(StackSlot str, int count);
+    void MoveStructToStack(StackSlot str, unsigned count);
 
 protected:
     const StackSlot &GetStackSlotRef(int offset) {

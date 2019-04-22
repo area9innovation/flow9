@@ -405,13 +405,95 @@ void GLRenderer::renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shif
     endFilter(main, mask);
 }
 
-void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, int program_id)
+std::vector<std::string> split_string(const std::string &str, const std::string &delimiter)
 {
-    beginFilter(main, mask);
+    std::vector<std::string> strings;
+
+    std::string::size_type pos = 0;
+    std::string::size_type prev = 0;
+    while ((pos = str.find(delimiter, prev)) != std::string::npos)
+    {
+        strings.push_back(str.substr(prev, pos - prev));
+        prev = pos + 1;
+    }
+
+    if (prev > 0) {
+        // To get the last substring (or only, if delimiter is not found)
+        strings.push_back(str.substr(prev + 1));
+    } else {
+        strings.push_back(str);
+    }
+
+    return strings;
+}
+
+void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned program_id, float &time, float &seed)
+{
+    beginFilter(main, NULL);
+
+    ProgramInfo *info = &programs[program_id];
 
     setProgram((ProgramId) program_id);
 
-    endFilter(main, mask);
+    vec2 tex[2] = {
+        (main->bbox.min_pt - u_in_offset) * vec2(u_in_pixel_size.x, -u_in_pixel_size.y),
+        vec2(1.0f, 1.0f) + (main->bbox.min_pt - u_in_offset) * vec2(-u_in_pixel_size.x, u_in_pixel_size.y)
+    };
+
+    float coords[4*2] = {
+        tex[0].x, tex[1].y,
+        tex[1].x, tex[1].y,
+        tex[0].x, tex[0].y,
+        tex[1].x, tex[0].y
+    };
+
+    glEnableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
+    glVertexAttribPointer(GLRenderer::AttrVertexTexCoord, 2, GL_FLOAT, GL_FALSE, 0, coords);
+
+    int loc = glGetUniformLocation(info->program_id, "time");
+
+    if (loc >= 0) {
+        time = time + 0.1f;
+        glUniform1f(loc, time);
+    }
+
+//    loc = glGetUniformLocation(info->program_id, "u_cmatrix");
+
+//    if (loc >= 0) {
+//        mat3 cmatrix =
+//            mat3(
+//                u_out_pixel_size.x, 0.0f, u_out_offset.x,
+//                0.0f, u_out_pixel_size.y, -u_out_offset.y,
+//                0.0f, 0.0f, 1.0f
+//            );
+
+//        glUniformMatrix3fv(info->u_cmatrix, 1, GL_FALSE, glm::value_ptr(cmatrix));
+//    }
+
+    loc = glGetUniformLocation(info->program_id, "seed");
+
+    if (loc >= 0) {
+        seed = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        glUniform1f(loc, seed);
+    }
+
+    loc = glGetUniformLocation(info->program_id, "bounds");
+
+    if (loc >= 0) {
+        vec4 bounds = vec4(main->bbox.min_pt.x, main->bbox.min_pt.y, main->bbox.max_pt.x - main->bbox.min_pt.x, main->bbox.max_pt.y - main->bbox.min_pt.y);
+        glUniform4fv(loc, 1, glm::value_ptr(bounds));
+    }
+
+    loc = glGetUniformLocation(info->program_id, "filterArea");
+
+    if (loc >= 0) {
+        vec4 filterArea = vec4(main->size.x, main->size.y, u_in_offset.x, u_in_offset.y);
+        glUniform4fv(loc, 1, glm::value_ptr(filterArea));
+    }
+
+    endFilter(main, NULL);
+
+    glDisableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
 }
 
 void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
@@ -695,10 +777,6 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     while (*p)
         data.push_back(*p++);
 
-    for (int i = 0; i < data.size(); i++) {
-        std::cout << data[i];
-    }
-
     glShaderSource(shader, data.size(), &data[0], NULL);
     glCompileShader(shader);
 
@@ -719,9 +797,37 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     return (status == GL_TRUE);
 }
 
+void GLRenderer::initUniforms(ProgramId id, std::vector<ShaderUniform> uniforms)
+{
+    ProgramInfo *info = &programs[id];
+
+    for (unsigned i = 0; i < uniforms.size(); i++) {
+        ShaderUniform uniform = uniforms[i];
+
+        if (uniform.type == "1f" || uniform.type == "2f" || uniform.type == "3f" || uniform.type == "4f") {
+            int loc = glGetUniformLocation(info->program_id, uniform.name.c_str());
+
+            if (loc >= 0) {
+                if (uniform.type == "1f") {
+                    glUniform1f(loc, atof(uniform.value.c_str()));
+                } else if (uniform.type == "2f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform2f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()));
+                } else if (uniform.type == "3f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform3f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()), atof(value_split[2].c_str()));
+                } else if (uniform.type == "4f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform4f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()), atof(value_split[2].c_str()), atof(value_split[3].c_str()));
+                }
+            }
+        }
+    }
+}
+
 void GLRenderer::compileShaderPair(ProgramId id, const char **vlist, const char **flist,
                                    const std::vector<std::string> &prefix,
-                                   int nattrs, ...)
+                                   unsigned nattrs, ...)
 {
     va_list args;
     va_start(args, nattrs);

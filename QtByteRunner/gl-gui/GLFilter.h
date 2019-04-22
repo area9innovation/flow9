@@ -86,13 +86,16 @@ public:
 
 class GLShaderFilter : public GLFilter
 {
-    std::vector<std::string> vertex, fragment, uniform;
     static unsigned program_id_counter;
+
+    std::vector<std::string> vertex, fragment;
+    std::vector<ShaderUniform> uniforms;
     unsigned program_id;
     bool compiled;
+    float time, seed;
 
 public:
-    GLShaderFilter(GLRenderSupport *owner, std::vector<std::string> vertex, std::vector<std::string> fragment, std::vector<std::string> uniform);
+    GLShaderFilter(GLRenderSupport *owner, std::vector<std::string> vertex, std::vector<std::string> fragment, std::vector<ShaderUniform> uniform);
 
     DEFINE_FLOW_NATIVE_OBJECT(GLShaderFilter, GLFilter)
 

@@ -58,7 +58,9 @@ public:
     };
 
     void compileShaderPair(ProgramId id, const char **vlist , const char **flist,
-                           const std::vector<std::string> &prefix, int nattrs, ...);
+                           const std::vector<std::string> &prefix, unsigned nattrs, ...);
+
+    void initUniforms(ProgramId id, std::vector<ShaderUniform> uniforms);
 
 private:
 
@@ -254,7 +256,7 @@ public:
 
     void renderShadow(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color, bool inner, float sigma = -1);
     void renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color1, vec4 color2, bool inner, float sigma = -1);
-    void renderShader(GLDrawSurface *main, GLDrawSurface *mask, int program_id);
+    void renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned program_id, float &time, float &seed);
 
     void renderLocalBlur(GLDrawSurface *input, float sigma);
     void renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs);

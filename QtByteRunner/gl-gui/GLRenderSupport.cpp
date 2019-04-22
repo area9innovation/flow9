@@ -1588,13 +1588,19 @@ StackSlot GLRenderSupport::makeShader(RUNNER_ARGS)
         fragment_vector.push_back(encodeUtf8(RUNNER->GetString(fragment_slot)));
     }
 
-    std::vector<std::string> uniform_vector;
+    std::vector<ShaderUniform> uniform_vector;
 
     for (unsigned i = 0; i < RUNNER->GetArraySize(uniform); i++) {
         const StackSlot &uniform_slot = RUNNER->GetArraySlot(uniform, i);
-        RUNNER_CheckTag(TString, uniform_slot);
+        RUNNER_CheckTag(TArray, uniform_slot);
 
-        uniform_vector.push_back(encodeUtf8(RUNNER->GetString(uniform_slot)));
+        uniform_vector.push_back(
+            ShaderUniform(
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 0))),
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 1))),
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 2)))
+            )
+        );
     }
 
     // Experiments have shown that glow is identical to shadow with zero offset.
@@ -1659,7 +1665,7 @@ StackSlot GLRenderSupport::enableResize(RUNNER_ARGS)
 
 StackSlot GLRenderSupport::makeWebClip(RUNNER_ARGS)
 {
-    RUNNER_PopArgs7(url, domain, use_cache, reload_block, cb, ondone, shrinkToFit);
+    RUNNER_PopArgs6(url, domain, use_cache, reload_block, cb, ondone);
     RUNNER_CheckTag2(TString, url, domain);
     RUNNER_CheckTag2(TBool, use_cache, reload_block);
     return RUNNER->AllocNative(new GLWebClip(this, ivec2(100, 100), RUNNER->GetString(url), use_cache.GetBool(), cb, ondone));

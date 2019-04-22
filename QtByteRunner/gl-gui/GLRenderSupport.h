@@ -395,7 +395,7 @@ protected:
 
     virtual bool loadPicture(unicode_string url, bool cache) = 0;
 
-    virtual void abortPictureLoading(unicode_string url) {}
+    virtual void abortPictureLoading(unicode_string /*url*/) {}
 
     virtual void onTextClipStateChanged(GLTextClip* /*clip*/) = 0;
 
@@ -406,11 +406,11 @@ protected:
     virtual void doUpdateVideoFocus(GLVideoClip * /*clip*/, bool /*focus*/) {}
 
     virtual int doGetNumberOfCameras() {return 0;}
-    virtual std::string doGetCameraInfo(int id) { return std::string(""); }
-    virtual void doUpdateCameraState(GLCamera* clip) {}
-    virtual void doCameraTakePhoto(int cameraId, std::string additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, std::string fileName, int fitMode) {}
-    virtual void doCameraTakeVideo(int cameraId, std::string additionalInfo, int duration, int size, int quality, std::string fileName) {}
-    virtual void doStartRecordAudio(std::string additionalInfo, std::string fileName, int duration) {}
+    virtual std::string doGetCameraInfo(int /*id*/) { return std::string(""); }
+    virtual void doUpdateCameraState(GLCamera* /*clip*/) {}
+    virtual void doCameraTakePhoto(int /*cameraId*/, std::string /*additionalInfo*/, int /*desiredWidth*/, int /*desiredHeight*/, int /*compressQuality*/, std::string /*fileName*/, int /*fitMode*/) {}
+    virtual void doCameraTakeVideo(int /*cameraId*/, std::string /*additionalInfo*/, int /*duration*/, int /*size*/, int /*quality*/, std::string /*fileName*/) {}
+    virtual void doStartRecordAudio(std::string /*additionalInfo*/, std::string /*fileName*/, int /*duration*/) {}
     virtual void doStopRecordAudio() {}
     virtual void doTakeAudioRecord() {}
 
