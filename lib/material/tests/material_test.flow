@@ -13,6 +13,9 @@ import sys/platformevent;
 Person(name: string, subtitle: string, imageurl : string);
 Painting(name : string, artist : string, imageurl : string);
 
+Point3D(x : double, y : double, z : double);
+Point3DSpherical(r : double, theta : double, phi : double);
+
 main() {
 	setLocalFilesystemExtAPI();
 
@@ -541,16 +544,97 @@ Zweigelt";
 								], [MOnListClick(const(true), \i -> println("Help " + i2s(i))), MMenuIndent()]),
 						], []),
 						{
-							down3d = make(false);
-							point3d = make(zeroPoint);
+							cartesian2spherical = \p : Point3D -> {
+								r = sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
 
-							cameraX = make(0.);
+								Point3DSpherical(
+									r,
+									atan2(p.y, p.x),
+									acos(p.z / r)
+								)
+							}
+
+							spherical2cartesian = \p : Point3DSpherical -> {
+								Point3D(
+									p.r * cos(p.theta) * sin(p.phi),
+									p.r * sin(p.theta) * sin(p.phi),
+									p.r * cos(p.phi),
+								)
+							}
+
+							rotatePointAroundOrigin = \origin : Point3D, point : Point3D, dx : double, dy : double, dz : double -> {
+								xAxisX = Point3D(1.0, 0.0, 0.0);
+								yAxisX = Point3D(0.0, cos(dx), sin(dx));
+								zAxisX = Point3D(0.0, -sin(dx), cos(dx));
+
+								xAxisY = Point3D(cos(dy), 0.0, sin(dy));
+								yAxisY = Point3D(0.0, 1.0, 0.0);
+								zAxisY = Point3D(-sin(dy), 0.0, cos(dy));
+
+								xAxisZ = Point3D(cos(dz), sin(dz), 0.0);
+								yAxisZ = Point3D(-sin(dz), cos(dz), 0.0);
+								zAxisZ = Point3D(0.0, 0.0, 1.0);
+
+								xAxisXY =
+									Point3D(
+										xAxisX.x * xAxisY.x + xAxisX.y * yAxisY.x + xAxisX.z * zAxisY.x,
+										xAxisX.x * xAxisY.y + xAxisX.y * yAxisY.y + xAxisX.z * zAxisY.y,
+										xAxisX.x * xAxisY.z + xAxisX.y * yAxisY.z + xAxisX.z * zAxisY.z
+									);
+
+								yAxisXY =
+									Point3D(
+										yAxisX.x * xAxisY.x + yAxisX.y * yAxisY.x + yAxisX.z * zAxisY.x,
+										yAxisX.x * xAxisY.y + yAxisX.y * yAxisY.y + yAxisX.z * zAxisY.y,
+										yAxisX.x * xAxisY.z + yAxisX.y * yAxisY.z + yAxisX.z * zAxisY.z
+									);
+
+								zAxisXY =
+									Point3D(
+										zAxisX.x * xAxisY.x + zAxisX.y * yAxisY.x + zAxisX.z * zAxisY.x,
+										zAxisX.x * xAxisY.y + zAxisX.y * yAxisY.y + zAxisX.z * zAxisY.y,
+										zAxisX.x * xAxisY.z + zAxisX.y * yAxisY.z + zAxisX.z * zAxisY.z
+									);
+
+								xAxis =
+									Point3D(
+										xAxisZ.x * xAxisY.x + xAxisZ.y * yAxisXY.x + xAxisZ.z * zAxisXY.x,
+										xAxisZ.x * xAxisY.y + xAxisZ.y * yAxisXY.y + xAxisZ.z * zAxisXY.y,
+										xAxisZ.x * xAxisY.z + xAxisZ.y * yAxisXY.z + xAxisZ.z * zAxisXY.z
+									);
+
+								yAxis =
+									Point3D(
+										yAxisZ.x * xAxisXY.x + yAxisZ.y * yAxisXY.x + yAxisZ.z * zAxisXY.x,
+										yAxisZ.x * xAxisXY.y + yAxisZ.y * yAxisXY.y + yAxisZ.z * zAxisXY.y,
+										yAxisZ.x * xAxisXY.z + yAxisZ.y * yAxisXY.z + yAxisZ.z * zAxisXY.z
+									);
+
+								zAxis =
+									Point3D(
+										zAxisZ.x * xAxisXY.x + zAxisZ.y * yAxisXY.x + zAxisZ.z * zAxisXY.x,
+										zAxisZ.x * xAxisXY.y + zAxisZ.y * yAxisXY.y + zAxisZ.z * zAxisXY.y,
+										zAxisZ.x * xAxisXY.z + zAxisZ.y * yAxisXY.z + zAxisZ.z * zAxisXY.z
+									);
+
+								Point3D(
+									point.x * xAxis.x + point.y * yAxis.x + point.z * zAxis.x + origin.x,
+									point.x * xAxis.y + point.y * yAxis.y + point.z * zAxis.y + origin.y,
+									point.x * xAxis.z + point.y * yAxis.z + point.z * zAxis.z + origin.z
+								);
+							}
+
+							mouseDown = make(false);
+							mousePosition = make(zeroPoint);
+							spherePoint = make(Point3DSpherical(1000.0, PI, PI / 2.0));
+
+							cameraX = make(1000.);
 							cameraY = make(0.);
 							cameraZ = make(0.);
 
-							// cameraRotationX = make(0.);
-							// cameraRotationY = make(0.);
-							// cameraRotationZ = make(0.);
+							cameraRotationX = make(0.);
+							cameraRotationY = make(0.);
+							cameraRotationZ = make(0.);
 
 							meshX = make(0.);
 							meshY = make(0.);
@@ -565,16 +649,8 @@ Zweigelt";
 							camera =
 								F3DPerspectiveCamera(const(50.0), const(1.0), const(0.01), const(10000.0))
 								|> (\c -> F3DLookAt(c, meshX, meshY, meshZ, updateLookAt))
-								// |> (\c -> F3DRotation(c, cameraRotationX, cameraRotationY, cameraRotationZ))
+								|> (\c -> F3DInspectRotation(c, cameraRotationX, cameraRotationY, cameraRotationZ, updateLookAt))
 								|> (\c -> F3DPosition(c, cameraX, cameraY, cameraZ));
-
-							mesh =
-								F3DMesh(
-									F3DBoxGeometry(100.0, 100.0, 100.0, 1, 1, 1),
-									F3DMeshBasicMaterial(blue, makeTree())
-								)
-								|> (\c -> F3DRotation(c, meshRotationX, meshRotationY, meshRotationZ))
-								|> (\c -> F3DPosition(c, meshX, meshY, meshZ));
 
 							light =
 								F3DPointLight(const(white), const(1.0), const(0.0), const(1.0))
@@ -585,23 +661,17 @@ Zweigelt";
 							scene =
 								F3DScene(
 									const([
-										mesh,
-										F3DInspectBoundingSphereMax(
-											F3DInspectBoundingSphereCenter(
-												F3DLoader("images/material_test/room.obj", "images/material_test/room.obj.mtl"),
-												meshX,
-												meshY,
-												meshZ,
-												updateLookAt
-											),
-											cameraX,
-											cameraY,
-											cameraZ,
-											make(false)
+										F3DInspectBoundingSphereCenter(
+											F3DLoader("images/material_test/room.obj", "images/material_test/room.obj.mtl"),
+											meshX,
+											meshY,
+											meshZ,
+											updateLookAt
 										),
 										F3DLoader("images/material_test/table.obj", "images/material_test/table.obj.mtl"),
 										F3DLoader("images/material_test/ph_can.obj", "images/material_test/ph_can.obj.mtl"),
 										F3DLoader("images/material_test/hands.obj", "images/material_test/hands.obj.mtl"),
+										F3DLoader("images/material_test/digital_weight.obj", "images/material_test/digital_weight.obj.mtl"),
 										light
 									])
 								);
@@ -624,7 +694,21 @@ Zweigelt";
 									TFrame(0., 0., interactiveRectangleStyle, f),
 									\dx -> false,
 									\dy -> {
-										next(cameraZ, getValue(cameraZ) - dy * 100.0);
+										next(
+											spherePoint,
+											Point3DSpherical(
+												max(0.0, getValue(spherePoint).r - dy * 100.0),
+												getValue(spherePoint).theta,
+												getValue(spherePoint).phi
+											)
+										);
+
+										camPoint = spherical2cartesian(getValue(spherePoint));
+
+										next(cameraX, camPoint.x + getValue(meshX));
+										next(cameraY, camPoint.y + getValue(meshY));
+										next(cameraZ, camPoint.z + getValue(meshZ));
+
 										reverseBehaviour(updateLookAt);
 
 										true;
@@ -636,8 +720,8 @@ Zweigelt";
 									[
 										MouseMiddleDown(\mi -> {
 											if (mi.inside()) {
-												next(down3d, true);
-												next(point3d, Point(mi.x, mi.y));
+												next(mouseDown, true);
+												next(mousePosition, Point(mi.x, mi.y));
 
 												true;
 											} else {
@@ -645,21 +729,42 @@ Zweigelt";
 											}
 										}),
 										MouseMiddleUp(\m -> {
-											nextDistinct(down3d, false);
+											nextDistinct(mouseDown, false);
 
 											false;
 										}),
 										MouseMove(\m -> {
 											mi = m();
 
-											if (getValue(down3d) && mi.inside) {
-												dx = mi.x - getValue(point3d).x;
-												dy = mi.y - getValue(point3d).y;
+											if (getValue(mouseDown) && mi.inside) {
+												mdx = mi.x - getValue(mousePosition).x;
+												mdy = mi.y - getValue(mousePosition).y;
 
-												next(point3d, Point(mi.x, mi.y));
+												next(mousePosition, Point(mi.x, mi.y));
 
-												next(cameraX, getValue(cameraX) - dx);
-												next(cameraY, getValue(cameraY) - dy);
+												rotation = Point3D(getValue(cameraRotationX), getValue(cameraRotationY), getValue(cameraRotationZ));
+
+												point =
+													Point3D(
+														getValue(cameraX) - getValue(meshX),
+														getValue(cameraY) - getValue(meshY),
+														getValue(cameraZ) - getValue(meshZ)
+													);
+
+												dx = 0.0;
+												dz = mdy / -100.0;
+												dy = mdx / 100.0;
+
+												origin = Point3D(getValue(meshX), getValue(meshY), getValue(meshZ));
+
+												println(point);
+												println(rotation);
+
+												camPoint = rotatePointAroundOrigin(origin, point, dx, dy, dz);
+
+												next(cameraX, camPoint.x);
+												next(cameraY, camPoint.y);
+												next(cameraZ, camPoint.z);
 
 												reverseBehaviour(updateLookAt);
 

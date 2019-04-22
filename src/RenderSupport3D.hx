@@ -34,7 +34,7 @@ class RenderSupport3D {
 
 		var node = Browser.document.createElement('script');
 		node.setAttribute("type","text/javascript");
-		node.setAttribute("src", 'js/three.min.js');
+		node.setAttribute("src", 'js/threejs/three.min.js');
 		head.appendChild(node);
 
 		node = Browser.document.createElement('script');
@@ -211,7 +211,7 @@ class RenderSupport3D {
 	}
 
 
-	public static function getObject3DBoundingBox(object : Object3D) : Array<Array<Float>> {
+	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
 		var box = object.getBoundingBox();
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
 	}
