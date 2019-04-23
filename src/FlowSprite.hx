@@ -120,7 +120,7 @@ class FlowSprite extends Sprite {
 	}
 
 	private function onRemoved() : Void {
-		if (removeTextureFromCache(texture) && !loaded) {
+		if (!loaded) {
 			var nativeWidget = texture.baseTexture.source;
 
 			nativeWidget.removeAttribute('src');
