@@ -42,7 +42,7 @@ Hello world
 Installation
 ------------
 
-Add `flow9\bin` to your path. Requires 64-bit Java Runtime.
+Add `flow9\bin` to your path. Requires 64-bit Java Runtime and Python in your path.
 
 Compile and run the first program:
 
