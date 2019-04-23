@@ -15,6 +15,15 @@ flow has production quality targets for:
 - Android
 - Windows, Mac, Linux
 
+Hello world
+-----------
+
+    import runtime;
+
+    main() {
+    	println("Hello world");
+    }
+
 Meet flow
 ---------
 
@@ -30,15 +39,6 @@ Meet flow
 - Extensive UI toolkit based on Google Material Design guidelines
 - UI toolkit based on Functional Reactive Programming
 
-Hello world
------------
-
-    import runtime;
-
-    main() {
-    	println("Hello world");
-    }
-
 Installation
 ------------
 
@@ -53,7 +53,7 @@ You have to reclone the flow9 repository after installing Git LFS, or use `git l
 
 See `demos/demos.flow` to read the code for this example.
 
-See `doc/index.html` for further documentation about the language and platform.
+See [doc/index.html](doc/index.html) for further documentation about the language and platform.
 
 Community
 ---------
