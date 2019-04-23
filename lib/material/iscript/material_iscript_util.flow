@@ -43,7 +43,7 @@ ContiniousTimer(
 	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, onFinished : (bool) -> void) -> ContiniousTimer {
+continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
 	isFinished = ref true;
 	delays = ref [];
 	maxDelay = ref 0.0;
@@ -51,7 +51,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, onFinished 
 	started = ref 0.0;
 	uns = ref [];
 
-	timeoutFns : ref DList<Pair<double, ()-> bool>> = ref makeDList();
+	timeoutFns : ref DList<Triple<double, () -> bool, int>> = ref makeDList();
 
 	startFn = \ -> {
 		started := timestamp() - either(minA(^delays), 0.0);
@@ -87,7 +87,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, onFinished 
 									\fn -> if (!fn()) {
 										// Add to timeout elements
 										println("*** Timeout Fn");
-										pushDList(^timeoutFns, Pair(d + timeout, fn)) |> ignore;
+										pushDList(^timeoutFns, Triple(d + timeout, fn, 0)) |> ignore;
 									}
 								)
 							);
@@ -99,9 +99,16 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, onFinished 
 									if (emptyDList(^timeoutFns))
 										true
 									else {
-										el = popFirstDListDef(^timeoutFns, Pair(-1.0, \->true));
+										el = popFirstDListDef(^timeoutFns, Triple(-1.0, \->true,0));
 										if (el.first > 0.0 && el.first < d) {
-											if (!(el.second)()) dispUnsA(uns);
+											if (!(el.second)()) {
+												if (el.third > maxRepeats) {
+													dispUnsA(uns)
+												} else {
+													println("*** Timeout Fn: " + i2s(el.third + 1));
+													pushDList(^timeoutFns, Triple(el.first + timeout, el.second, el.third + 1)) |> ignore;
+												}
+											}
 											false;
 										} else {
 											unshiftDList(^timeoutFns, el);
@@ -138,6 +145,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, onFinished 
 replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
 	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
+	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
@@ -146,7 +154,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
 		)
 	)
-	|> (\t -> continiousTimer(t, defaultTimeout, onFinished))
+	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));
