@@ -1,7 +1,7 @@
 import js.Browser;
 import js.html.MouseEvent;
 import js.html.Event;
-import pixi.core.text.Text;
+import pixi.core.text.Text in PixiCoreText;
 import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
 import pixi.core.math.shapes.Rectangle;
@@ -10,6 +10,13 @@ import pixi.core.math.Point;
 import FlowFontStyle;
 
 using DisplayObjectHelper;
+
+class Text extends PixiCoreText {
+	public var charIdx : Int = 0;
+	public var orgCharIdxStart : Int = 0;
+	public var orgCharIdxEnd : Int = 0;
+	public var difPositionMapping : Array<Int>;
+}
 
 class TextMappedModification {
 	public var modified: String;
