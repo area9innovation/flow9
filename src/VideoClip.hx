@@ -129,7 +129,7 @@ class VideoClip extends FlowContainer {
 		createStreamStatusListeners();
 		createFullScreenListeners();
 
-		if (!startPaused && !CanAutoPlay)
+		if (!startPaused || !CanAutoPlay)
 			playFn(false);
 	}
 
