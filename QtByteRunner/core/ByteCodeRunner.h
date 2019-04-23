@@ -1278,6 +1278,7 @@ private:
     static StackSlot strContainsAt(ByteCodeRunner*,StackSlot*);
     static StackSlot strRangeIndexOf(ByteCodeRunner*,StackSlot*);
     static StackSlot substring(ByteCodeRunner*,StackSlot*);
+	static StackSlot strGlue(ByteCodeRunner*,StackSlot*);
     static StackSlot concat(ByteCodeRunner*,StackSlot*);
     static StackSlot replace(ByteCodeRunner*,StackSlot*);
     static StackSlot s2a(ByteCodeRunner*,StackSlot*);

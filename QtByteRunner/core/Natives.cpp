@@ -709,6 +709,46 @@ bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, int len)
     return true;
 }
 
+StackSlot ByteCodeRunner::strGlue(RUNNER_ARGS)
+{
+	RUNNER_PopArgs2(arr, sep);
+	RUNNER_CheckTag1(TArray, arr);
+	RUNNER_CheckTag1(TString, sep);
+
+	const int arr_len = RUNNER->GetArraySize(arr);
+	const int sep_len = RUNNER->GetStringSize(sep);
+	const unicode_char *sep_src = RUNNER->GetStringPtr(sep);
+	uint64_t total_len = sep_len * (arr_len - 1);
+
+	for (int i = 0; i < arr_len; i++) {
+		const StackSlot str = RUNNER->GetArraySlot(arr, i);
+		total_len += RUNNER->GetStringSize(str);
+	}
+
+	StackSlot rval;
+	unicode_char *dst = RUNNER->AllocateStringBuffer(&rval, total_len);
+
+	if (unlikely(RUNNER->IsErrorReported()))
+		return StackSlot::MakeVoid();
+
+	for (int i = 0; i < arr_len - 1; i++) {
+		const StackSlot str = RUNNER->GetArraySlot(arr, i);
+		const int len = RUNNER->GetStringSize(str);
+		const unicode_char *src = RUNNER->GetStringPtr(str);
+		memcpy(dst, src, sizeof(unicode_char) * len);
+		dst += len;
+		memcpy(dst, sep_src, sizeof(unicode_char) * sep_len);
+		dst += sep_len;
+	}
+
+	const StackSlot str = RUNNER->GetArraySlot(arr, arr_len - 1);
+	const int len = RUNNER->GetStringSize(str);
+	const unicode_char *src = RUNNER->GetStringPtr(str);
+	memcpy(dst, src, sizeof(unicode_char) * len);
+
+	return rval;
+}
+
 static STL_HASH_MAP<unicode_string, unicode_string> KeyValueMap;
 
 StackSlot ByteCodeRunner::setKeyValue(RUNNER_ARGS)
