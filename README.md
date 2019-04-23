@@ -53,7 +53,8 @@ You have to reclone the flow9 repository after installing Git LFS, or use `git l
 
 See `demos/demos.flow` to read the code for this example.
 
-See [doc/index.markdown](doc/index.markdown) for further documentation about the language and platform.
+See [doc/index.markdown](doc/index.markdown) for further documentation about the language 
+and platform, including more details on how to get started.
 
 Community
 ---------
