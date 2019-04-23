@@ -82,9 +82,7 @@ self.addEventListener('fetch', function(event) {
   };
 
   var fetchResource = function() {
-    return fetch(event.request, {
-      credentials: 'include'
-    }).then(function(response) {
+    return fetch(event.request).then(function(response) {
       // Automatically cache uncached resources
       if (CacheMode.CacheStaticContent && response.status == 200 && response.type == "basic") {
         var url = new URL(event.request.url);
