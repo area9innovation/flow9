@@ -10,7 +10,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.URI;
-import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -289,11 +288,12 @@ public class FlowRunnerActivity extends FragmentActivity  {
         
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
             public void request(@NonNull String url, String method, @NonNull String[] headers,
-                    String payload, @NonNull HttpResolver callback) {
+                    byte[] payload, @NonNull HttpResolver callback) {
                 HttpUriRequest request;
 
                 BasicHttpEntity entity = new BasicHttpEntity();
-                entity.setContent(new ByteArrayInputStream(payload.getBytes(Charset.forName("UTF-8"))));
+
+                entity.setContent(new ByteArrayInputStream(payload));
 
                 URI uri = loader_uri.resolve(url);
                 switch(method) {
@@ -1239,7 +1239,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                         (new File(uri.getPath())).delete();
                     }
                     // Notify flow about photo capture event
-                    wrapper.NotifyCameraEvent(0, Uri.fromFile(privateImageFile).toString(), FlowCameraAPI.cameraAppCallbackAdditionalInfo, bitmap.getWidth(), bitmap.getHeight());
+                    wrapper.NotifyCameraEvent(0, privateImageFile.getAbsolutePath(), FlowCameraAPI.cameraAppCallbackAdditionalInfo, bitmap.getWidth(), bitmap.getHeight());
                 } catch (IOException e) {
                     wrapper.NotifyCameraEvent(1, "ERROR: failed to save image file", FlowCameraAPI.cameraAppCallbackAdditionalInfo, -1, -1);
                 }
@@ -1283,7 +1283,7 @@ public class FlowRunnerActivity extends FragmentActivity  {
                             (new File(uri.getPath())).delete();
                         }
                         // Notify flow about video capture event
-                        wrapper.NotifyCameraEventVideo(0, Uri.fromFile(privateVideoFile).toString(), FlowCameraAPI.cameraAppCallbackAdditionalInfo, width, height, timeInSec, size);
+                        wrapper.NotifyCameraEventVideo(0, privateVideoFile.getAbsolutePath(), FlowCameraAPI.cameraAppCallbackAdditionalInfo, width, height, timeInSec, size);
                     } else {
                         retriever.release();
                         wrapper.NotifyCameraEventVideo(1, "ERROR: non video file chosen", FlowCameraAPI.cameraAppCallbackAdditionalInfo, -1, -1, -1, -1);
