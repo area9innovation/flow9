@@ -7,6 +7,8 @@ import js.three.Color;
 
 import js.three.Object3D;
 import js.three.Mesh;
+import js.three.AxisHelper;
+import js.three.GridHelper;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
@@ -78,6 +80,14 @@ class RenderSupport3D {
 	public static function load3DTexture(object : Material, url : String) : Material {
 		untyped object.map = new TextureLoader().load(url);
 		return object;
+	}
+
+	public static function make3DAxesHelper(size : Float) : Object3D {
+		return new AxisHelper(size);
+	}
+
+	public static function make3DGridHelper(size : Float, divisions : Int, colorCenterLine : Int, colorGrid : Int) : Object3D {
+		return new GridHelper(size, divisions, new Color(colorCenterLine), new Color(colorGrid));
 	}
 
 
