@@ -1149,7 +1149,7 @@ public:
 
         RUNNER->DeferredActionQueue.remove(cb);
 
-        return StackSlot::MakeVoid();
+        return cb;
     }
 
     double DeferredQueueTimeout; // <= 0 - no timeout

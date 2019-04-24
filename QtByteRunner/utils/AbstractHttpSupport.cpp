@@ -386,9 +386,10 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
         body << fileData << "\r\n";
     }
 
-    body << boundaryDataLine;
+    body << "--" + boundary + "--\r\n";
 
-    rq.payload = parseUtf8(body.str());
+    std::string body_str = body.str();
+    rq.payload = std::vector<uint8_t>(body_str.begin(), body_str.end());
 }
 
 unicode_string AbstractHttpSupport::urlencode(const unicode_string &url)
@@ -463,7 +464,8 @@ void AbstractHttpSupport::processRequest(HttpRequest &rq) {
 
             rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
         } else if (rq.payload.empty()) {
-            rq.payload = params;
+            std::string params_str = encodeUtf8(params);
+            rq.payload = std::vector<uint8_t>(params_str.begin(), params_str.end());
             rq.headers[parseUtf8("Content-Type")] = parseUtf8("application/x-www-form-urlencoded");
         }
     }
@@ -520,7 +522,8 @@ StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
     rq.method = RUNNER->GetString(method);
-    rq.payload = RUNNER->GetString(data);
+    std::string payload_string = encodeUtf8(RUNNER->GetString(data));
+    rq.payload = std::vector<uint8_t>(payload_string.begin(), payload_string.end());
     rq.response_cb = onResponse;
 
     decodeMap(RUNNER, &rq.headers, headers);

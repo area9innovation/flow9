@@ -581,7 +581,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
         NSString * fileName = [NSString stringWithFormat: @"%@.jpg", self.desiredFileName];
         NSURL * photoURL = [NSURL URLWithString: fileName relativeToURL: documentsURL];
         if ([imgData writeToURL: photoURL atomically: NO] == YES) {
-            owner->notifyCameraEvent(0, [[photoURL absoluteString] UTF8String], resizedImage.size.width, resizedImage.size.height);
+            owner->notifyCameraEvent(0, [[photoURL path] UTF8String], resizedImage.size.width, resizedImage.size.height);
         } else {
             owner->notifyCameraEvent(1, "failed to save image file", -1, -1);
         }
@@ -619,7 +619,7 @@ void webView_implement_UIResponderStandardEditActions(id self, SEL selector, id 
         NSURL * newVideoURL = [NSURL URLWithString: fileName relativeToURL: documentsURL];
 
         if ([videoData writeToURL: newVideoURL atomically: NO] == YES) {
-            owner->notifyCameraEventVideo(0, [[videoURL absoluteString] UTF8String], self.desiredWidth, self.desiredHeight, self.duration, self.size);
+            owner->notifyCameraEventVideo(0, [[videoURL path] UTF8String], self.desiredWidth, self.desiredHeight, self.duration, self.size);
         } else {
             owner->notifyCameraEventVideo(1, "failed to save video file", -1, -1, -1, -1);
         }
@@ -2273,7 +2273,7 @@ void iosGLRenderSupport::doTakeAudioRecord() {
         commonAudioRecordControllerDelegate.duration = ceil(sec);
 
         if ([audioData writeToURL: audioURL atomically: NO] == YES) {
-            getFlowRunner()->NotifyCameraEventAudio(0, [[audioURL absoluteString] UTF8String], 
+            getFlowRunner()->NotifyCameraEventAudio(0, [[audioURL path] UTF8String], 
                 lastCameraAdditionalArgs, commonAudioRecordControllerDelegate.duration, commonAudioRecordControllerDelegate.size);
             [fileManager removeItemAtPath: audioURL.path error: nil];
         } else {

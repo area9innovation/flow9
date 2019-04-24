@@ -10,7 +10,7 @@ struct HttpRequest {
 
     unicode_string url;
     unicode_string method;
-    unicode_string payload;
+    std::vector<uint8_t> payload;
     T_SMap headers, params, attachments;
 
     bool is_media_preload;

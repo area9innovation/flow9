@@ -167,7 +167,6 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     QUrl url = base.resolved(QUrl(unicode2qt(rq.url)));
 
     QString method = unicode2qt(rq.method);
-    QString payload = unicode2qt(rq.payload);
 
     QNetworkRequest request(url);
 
@@ -177,7 +176,7 @@ void QtHttpSupport::doRequest(HttpRequest &rq)
     if (getFlowRunner()->NotifyStubs)
         getFlowRunner()->flow_err << "Requesting URL: " << url.toString().toUtf8().data() << std::endl;
 
-    QNetworkReply *reply = manager->sendCustomRequest(request, method.toLatin1(), QByteArray(payload.toStdString().c_str()));
+    QNetworkReply *reply = manager->sendCustomRequest(request, method.toLatin1(), QByteArray(reinterpret_cast<const char*>(rq.payload.data()), rq.payload.size()));
 
     connect(reply, SIGNAL(downloadProgress(qint64,qint64)), this, SLOT(downloadProgress(qint64,qint64)));
 

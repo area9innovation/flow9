@@ -15,6 +15,15 @@ flow has production quality targets for:
 - Android
 - Windows, Mac, Linux
 
+Hello world
+-----------
+
+    import runtime;
+
+    main() {
+    	println("Hello world");
+    }
+
 Meet flow
 ---------
 
@@ -30,19 +39,10 @@ Meet flow
 - Extensive UI toolkit based on Google Material Design guidelines
 - UI toolkit based on Functional Reactive Programming
 
-Hello world
------------
-
-    import runtime;
-
-    main() {
-    	println("Hello world");
-    }
-
 Installation
 ------------
 
-Add `flow9\bin` to your path. Requires 64-bit Java Runtime.
+Add `flow9\bin` to your path. Requires 64-bit Java Runtime and Python in your path.
 
 Compile and run the first program:
 
@@ -53,7 +53,11 @@ You have to reclone the flow9 repository after installing Git LFS, or use `git l
 
 See `demos/demos.flow` to read the code for this example.
 
-See `doc/index.html` for further documentation about the language and platform.
+Documentation
+-------------
+
+See [doc/readme.markdown](doc/readme.markdown) for further documentation about the language 
+and platform, including more details on how to get started.
 
 Community
 ---------
