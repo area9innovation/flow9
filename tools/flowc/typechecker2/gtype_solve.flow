@@ -31,7 +31,6 @@ makeGEnv(env : FcTypeEnv, tyvarIdGroup : IdGroup, subtype : GSubtypeGraph) -> GE
 		makeGRelations(),
 		subtype,
 		makeSet(),
-		[]
 	);
 }
 
@@ -54,16 +53,19 @@ and then
 to produce the graphviz relations if you use verbose=2 or above.
 
 TODO:
-- Consider a special graph type for our relations, which allows easy reversal
-  and faster reachableClosure (which is the bottleneck)
-- Consider to only recalculate tyvar bounds when edges are added to related
-  nodes for a tyvar. I.e. keep tyvar bounds up-to-date.
+- Debug error positions. 
+  
+- Include verbose output of the code in the vicinity of an error with the inferred types
+
+- Fix error message for when an implicit union is missing. MDropDownMenu2T before MNonSpecifiedLine
+  was part of MDropDownMenuLine instead of expanded
+
 - Field against union needs to check the type of the field as well
 */
 
 gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition) -> GEnv {
 	env = oenv.env;
-	if (false) {
+	if (getConfigParameter(env.program.acc.config.config, "verbose") == name) {
 		dot = simpleGraph2dot(oenv.subtypes.supertypes, "", [], 
 			\n -> [DotLabel(n)], 
 			\e -> []
@@ -103,15 +105,15 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 		fcPrintln("\nType " + name);
 	}
 
-	onError = \m, info, description -> {
+	onError = \m, info  -> {
 		poss = FcPosition(pos.file, info.start, info.end);
-		addFcTypeError(env.program, FcError(name + ": " + (if (description != "") description + ": " else "") + m, [poss]));
+		addFcTypeError(env.program, FcError(name + ": " + m, [poss]));
 	};
 
 	gunify = \genv : GEnv, output : FcType, input : FcType, info : FcInfo2, description : () -> string -> {
 		ot = fctype2gtype(genv.env, output);
 		it = fctype2gtype(genv.env, input);
-		unifyGType(genv, ot, it, info.start, \m -> onError(m, info, description()));
+		unifyGType(genv, ot, it, makeSet1(GErrorInfo(info.start, description)), \m -> onError(m, info));
 	}
 
 	ge1 = foldList(expects, ge, \acc, e -> {
@@ -128,20 +130,20 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 			FcLessOrEqual(e1, e2, d, info, ex): {
 				gunify(acc, e1, e2, info, \ -> d + ": " + fcexpDescription(ex));
 			}
-			FcVerifyType(e1, e2, info): {
-				et1 = gunify(acc, e1, e2, info, \ -> "");
-				gunify(et1, e2, e1, info, \ -> "");
+			FcVerifyType(e1, e2, d, info, ex): {
+				et1 = gunify(acc, e1, e2, info, \ -> d + " " + fcexpDescription(ex));
+				gunify(et1, e2, e1, info, \ -> d + " " + fcexpDescription(ex));
 			}
 			FcExpectField(field, ftype, struct, info, ex): {
 				st = fctype2gtype(env, struct);
 				gfield = GField(field, fctype2gtype(env, ftype));
-				unifyGType(acc, gfield, st, info.start, \m -> onError(m, info, ""));
+				unifyGType(acc, gfield, st, makeSet1(GErrorInfo(info.start, \ -> "field ." + field)), \m -> onError(m, info));
 			}
 			FcSetMutableField(stype, field, ftype, info): {
 				st = fctype2gtype(acc.env, stype);
 				ft = fctype2gtype(acc.env, ftype);
 				gfield = GField(field, ft);
-				unifyGType(acc, st, gfield, info.start, \m -> onError(m, info, "set mutable"));
+				unifyGType(acc, st, gfield, makeSet1(GErrorInfo(info.start, \ -> "set mutable ." + field)), \m -> onError(m, info));
 			}
 		}
 		if (solveDebug) {
@@ -160,24 +162,34 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	// printStay(ge1.env, "Solving " + name);
 
 	// Go ahead and resolve it
-	ge2 = resolveGGraph(ge1, name, \e, l, u, ps, onFError : (GEnv, FcError) -> void -> {
-		fpos = if (isEmptySet(ps)) pos.start else set2array(ps)[0];
-		unifyGType(e, l, u, fpos, \err : string -> {
-			poss = mapSet(ps, \start -> FcPosition(pos.file, start, start));
-			onFError(e, FcError(name + ": " + err, set2array(poss)));
+	ge2 = resolveGGraph(ge1, name, \e, l, u, eis : Set<GErrorInfo>, onFError : (GEnv, string, Set<GErrorInfo>) -> void -> {
+		unifyGType(e, l, u, eis, \err : string -> {
+			onFError(e, name + ": " + err, eis);
 		})
-	}, \err : string, starts -> {
-		poss = mapSet(starts, \start -> FcPosition(pos.file, start, start));
-		FcError(name + ": " + err, set2array(poss));
-	}, \tenv : GEnv, error -> {
-		addFcTypeError(tenv.env.program, error);
+	}, \tenv : GEnv, err : string, errorInfos : Set<GErrorInfo> -> {
+		if (isEmptySet(errorInfos)) {
+			fpos = FcPosition(pos.file, pos.start, pos.start);
+			error = FcError(name + ": " + err, [fpos]);
+			addFcTypeError(tenv.env.program, error);
+		} else {
+			// Instantiate so we can remove duplicates
+			errorPairs = mapSet(errorInfos, \errorInfo -> Pair(errorInfo.pos, errorInfo.description()));
+
+			errMess = ref err;
+			iterSet(errorPairs, \errorPair -> {
+				fpos = FcPosition(pos.file, errorPair.first, errorPair.first);
+				desc = errorPair.second;
+				error = FcError(name + ": " + desc + (if (desc != "") ": " else "") + ^errMess, [fpos]);
+				errMess := "and here";
+				addFcTypeError(tenv.env.program, error);
+			});
+		}
 	});
 
 	endTime = timestamp();
 	timeSpent = (endTime - startTime) / 1000.0;
 	if (ge1.verbose >= 1 || timeSpent > 1.0) {
-		printStay(ge1.env, "Time to resolve " + name + ": " + d2st(timeSpent, 2) + "s");
-		printStay(ge2.env, "Number of nodes in the graph: " + i2s(sizeTree(ge2.grelations.positions)));
+		printStay(ge1.env, "Time to resolve " + name + ": " + d2st(timeSpent, 2) + "s" + ". Number of nodes in the graph: " + i2s(sizeTree(ge2.grelations.errorInfos)));
 	}
 
 	// Now, set the tyvars in the environment
@@ -218,7 +230,7 @@ extractNamesFromExpectations(names : Set<string>, expectations : List<FcTypeExpe
 		switch (expect) {
 			FcLessOrEqual(output, input, description, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, output), input);
 			FcExpectField(field, fieldType, t, info, e): extractNamesFromFcType(acc, fieldType);
-			FcVerifyType(type, declared, info): extractNamesFromFcType(extractNamesFromFcType(acc, type), declared);
+			FcVerifyType(type, declared, d, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, type), declared);
 			FcSetMutableField(struct, field, ftype, info): extractNamesFromFcType(extractNamesFromFcType(acc, struct), ftype);
 		}
 	});
@@ -253,7 +265,7 @@ extractNamesFromFcTypes(acc : Set<string>, types : [FcType]) -> Set<string> {
 
 // Extract constraints against this left and right hand side.
 // The pos is for error positions.
-unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (string) -> void) -> GEnv {
+unifyGType(env : GEnv, output : GType, input : GType, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	if (output == input) {
 		env;
 	} else {
@@ -269,7 +281,7 @@ unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (stri
 					printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
 				}
 				env2 = GEnv(env with seen = seen);
-				env3 = unifyAndRecurseGType(env2, output, input, pos, onError);
+				env3 = unifyAndRecurseGType(env2, output, input, errorInfos, onError);
 
 				if (env.verbose >= 3)  {
 					printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
@@ -285,7 +297,7 @@ unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (stri
 					pt = \t -> gtype2string(env, t);
 					printIndent(env.env, "Unify " + gtype2string(env, output) + " c= " + gtype2string(env, input));
 				}
-				env3 = unifyAndRecurseGType(env, output, input, pos, onError);
+				env3 = unifyAndRecurseGType(env, output, input, errorInfos, onError);
 
 				if (env.verbose >= 3)  {
 					printDedent(env.env, "Done " + gtype2string(env3, output) + " c= " + gtype2string(env3, input));
@@ -297,7 +309,7 @@ unifyGType(env : GEnv, output : GType, input : GType, pos : int, onError : (stri
 }
 
 // Alright, these GTypes meet. We have to recursively spiral down on these guys
-unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError : (string) -> void) -> GEnv {
+unifyAndRecurseGType(env : GEnv, left : GType, right : GType, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	if (env.verbose >= 4)  {
 		printIndent(env.env, "Unify  " + gtype2string(env, left) + " c= " + gtype2string(env, right));
 	}
@@ -313,8 +325,8 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 				// OK, if this is bound, we have to recurse into the beast
 				bound = lookupTree(env.tyvars, rid);
 				switch (bound) {
-					None(): gunifyTyvar(env, left, right, pos, onError);
-					Some(btyvar): unifyGType(env, left, btyvar, pos, onError);
+					None(): gunifyTyvar(env, left, right, errorInfos, onError);
+					Some(btyvar): unifyGType(env, left, btyvar, errorInfos, onError);
 				}
 			}
 			GFlow(): {
@@ -424,14 +436,14 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 		GFunction(largs, lrt): {
 			switch (right) {
 				GFunction(rargs, rrt): {
-					nenv = unifyGTypes(env, rargs, largs, pos, \i, e -> {
+					nenv = unifyGTypes(env, rargs, largs, errorInfos, \i, e -> {
 						if (i == -1) {
 							onError(e + " function args")
 						} else {
 							onError("Arg #" + i2s(i) + ": " + e)
 						}
 					});
-					unifyGType(nenv, lrt, rrt, pos, onError);
+					unifyGType(nenv, lrt, rrt, errorInfos, onError);
 				}
 				default: rest();
 			}
@@ -439,7 +451,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 		GArray(ltype): {
 			switch (right) {
 				GArray(rtype): {
-					unifyGType(env, ltype, rtype, pos, onError);
+					unifyGType(env, ltype, rtype, errorInfos, onError);
 				}
 				default: rest();
 			}
@@ -447,7 +459,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 		GRef(ltype): {
 			switch (right) {
 				GRef(rtype): {
-					unifyGType(env, ltype, rtype, pos, onError);
+					unifyGType(env, ltype, rtype, errorInfos, onError);
 				}
 				default: rest();
 			}
@@ -455,8 +467,8 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 		GTypeVar(lid): {
 			bound = lookupTree(env.tyvars, lid);
 			switch (bound) {
-				None(): gunifyTyvar(env, left, right, pos, onError);
-				Some(btyvar): unifyGType(env, btyvar, right, pos, onError);
+				None(): gunifyTyvar(env, left, right, errorInfos, onError);
+				Some(btyvar): unifyGType(env, btyvar, right, errorInfos, onError);
 			}
 		}
 		GSubType(): {
@@ -469,7 +481,7 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 				GRef(type): error();
 				GTypeVar(rid): rest();
 				GSubType(): {
-					gunifySubType(env, left, right, pos, onError);
+					gunifySubType(env, left, right, errorInfos, onError);
 				}
 			}
 		}
@@ -482,18 +494,18 @@ unifyAndRecurseGType(env : GEnv, left : GType, right : GType, pos : int, onError
 	nenv;
 }
 
-unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], pos : int, onError : (int, string) -> void) -> GEnv {
+unifyGTypes(env : GEnv, lefts : [GType], rights : [GType], errorInfos : Set<GErrorInfo>, onError : (int, string) -> void) -> GEnv {
 	if (length(lefts) != length(rights)) {
 		onError(-1, "Got " + i2s(length(lefts)) + ", but expected " + i2s(length(rights)));
 		env;
 	} else {
 		foldi(lefts, env, \i, acc, l -> {
-			unifyGType(acc, l, rights[i], pos, \e -> onError(i + 1, e))
+			unifyGType(acc, l, rights[i], errorInfos, \e -> onError(i + 1, e))
 		})
 	}
 }
 
-gunifyTyvar(env : GEnv, left : GType, right : GType, pos : int, onError : (string) -> void) -> GEnv {
+gunifyTyvar(env : GEnv, left : GType, right : GType, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	addTyvars = \queue : Set<GQueueItem>, t : GType -> {
 		tvs = extractGTypeVars(env, t, makeSet());
 		foldSet(tvs, queue, \acc, tv -> enqueueGTyvar(env, acc, tv));
@@ -501,7 +513,7 @@ gunifyTyvar(env : GEnv, left : GType, right : GType, pos : int, onError : (strin
 	if (env.verbose >= 3) {
 		printStay(env.env, "Adding edge between  " + gtype2string(env, left) + " and " + gtype2string(env, right));
 	}
-	relations = addGRelation(env, env.grelations, left, right, pos);
+	relations = addGRelation(env, env.grelations, left, right, errorInfos);
 	GEnv(
 		env with 
 		grelations = GRelations(
@@ -511,7 +523,7 @@ gunifyTyvar(env : GEnv, left : GType, right : GType, pos : int, onError : (strin
 	)
 }
 
-gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError : (string) -> void) -> GEnv {
+gunifySubType(env : GEnv, left : GSubType, right : GSubType, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	switch (left) {
 		GNamed(lname, ltypars): {
 			switch (right) {
@@ -522,7 +534,7 @@ gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError 
 						implicitTyparsLeft = addImplicitTypars(env, lname, ltypars);
 						implicitTyparsRight = addImplicitTypars(env, rname, rtypars);
 
-						unifyGTypes(env, implicitTyparsLeft, implicitTyparsRight, pos, \i, e -> {
+						unifyGTypes(env, implicitTyparsLeft, implicitTyparsRight, errorInfos, \i, e -> {
 							if (i == -1) {
 								onError(e + " type parameters")
 							} else {
@@ -530,18 +542,18 @@ gunifySubType(env : GEnv, left : GSubType, right : GSubType, pos : int, onError 
 							}
 						});
 					} else {
-						gunifyNamedTypes(env, left, right, pos, onError);
+						gunifyNamedTypes(env, left, right, errorInfos, onError);
 					}
 				}
 				GField(rname, rtype): {
-					unifyGNamedAgainstField(env, left, right, pos, onError);
+					unifyGNamedAgainstField(env, left, right, errorInfos, onError);
 				}
 			}
 		}
 		GField(lname, ltype): {
 			switch (right) {
 				GNamed(rname, rtypars): {
-					unifyGFieldAgainstName(env, left, right, pos, onError);
+					unifyGFieldAgainstName(env, left, right, errorInfos, onError);
 				}
 				default: {
 					onError("TODO: Subtype " + gtype2string(env, left) + " c= " + gtype2string(env, right));
@@ -573,7 +585,7 @@ addImplicitTypars(env : GEnv, named : string, typars : [GType]) -> [GType] {
 }
 
 // We know the names are different, and that the right name is supposed to be a union.
-gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError : (string) -> void) -> GEnv {
+gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	// From the name of a union to the structs, uninstantiated
 	rtypenames : [FcTypeName] = union2typenames(env.env, right.name);
 	mstruct = find(rtypenames, \tn -> tn.name == left.name);
@@ -589,12 +601,12 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 				istruct = ginstantiateStructFromUnion(acc, right, tn, \__ -> {
 					error := true;
 				});
-				unifyGType(acc, istruct, right, pos, \__ -> {
+				unifyGType(acc, istruct, right, errorInfos, \__ -> {
 					error := true;
 				});
 			});
 			if (ltypenames == [] || ^error) {
-				onError("Expected " + gtype2string(env, left) + ", got " + gtype2string(env, right));
+				onError("Expected " + gtype2string(env, right) + ", got " + gtype2string(env, left));
 			}
 			nenv;
 		}
@@ -603,7 +615,7 @@ gunifyNamedTypes(env : GEnv, left : GNamed, right : GNamed, pos : int, onError :
 			istruct = ginstantiateStructFromUnion(env, right, ustruct, onError);
 		
 			// And then subtype with our struct
-			unifyGType(env, left, istruct, pos, onError);
+			unifyGType(env, left, istruct, errorInfos, onError);
 		}
 	}
 }
@@ -626,7 +638,7 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 				setTree(acc, strLeft("????????????", i + 1), tp)
 			});
 			// Now we make a struct with typar names that correspond to the unions
-			instantiated = instantiateTyParsToTypes(env.env, typars, ustruct, onError);
+			instantiated = instantiateTyParsToTypes(env.env.local, typars, ustruct, onError);
 			gtype0 = fctype2gtype(env.env, instantiated);
 	
 			// We might have to do implicit type-par promotion from the union
@@ -654,7 +666,7 @@ ginstantiateStructFromUnion(env : GEnv, master : GNamed, ustruct : FcTypeName, o
 	}
 }
 
-unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onError : (string) -> void) -> GEnv {
+unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	//printStay(env.env, "Subtyping field " + left.name + " against " + right.name);
 	fieldTypes = getInstantiatedGNamedFields(env, right, left.name, left.type, true, onError);
 	if (env.verbose >= 3) {
@@ -663,7 +675,7 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 	errors = ref false;
 	// We do not want to report a bunch of errors, so just detect if there is a problem
 	nenv = fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(acc, left.type, ft, pos, \__ -> {
+		unifyGType(acc, left.type, ft, errorInfos, \__ -> {
 				errors := true;
 			}
 		);
@@ -676,13 +688,13 @@ unifyGFieldAgainstName(env : GEnv, left : GField, right : GNamed, pos : int, onE
 }
 
 
-unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, pos : int, onError : (string) -> void) -> GEnv {
+unifyGNamedAgainstField(env : GEnv, left : GNamed, right : GField, errorInfos : Set<GErrorInfo>, onError : (string) -> void) -> GEnv {
 	fieldTypes = getInstantiatedGNamedFields(env, left, right.name, right.type, false, onError);
 
 	// Instead of multiple errors, we just want one against the union
 	errors = ref false;
 	nenv = fold(fieldTypes, env, \acc, ft -> {
-		unifyGType(env, ft, right.type, pos, \__ -> {
+		unifyGType(env, ft, right.type, errorInfos, \__ -> {
 			errors := true;
 		});
 	});

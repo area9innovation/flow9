@@ -48,6 +48,7 @@ void LocalsManager::createItem(T* parent, const QString& name, FlowValue& value)
 		}
 		break;
     }
+    default: break;
     }
 }
 

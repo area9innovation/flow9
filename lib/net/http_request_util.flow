@@ -48,14 +48,19 @@ export {
 
 	getHttpRequestResponseCompareFns(r : IScriptRequestRecord) -> HttpRequestResponseCompareFns;
 
-	dummyHttpRequestCompareFn(received : IScriptRequestRecord, stored : IScriptRequestRecord) -> bool;
+	setDummyHttpRequestCompareRules(rules : [HttpRequestsCompareRule]) -> void;
+	getDummyHttpRequestCompareRules() -> [HttpRequestsCompareRule];
+	isDummyHttpRequestCompareRulesSet() -> bool;
 
+	setDummyHttpResponseHandleRule(rule : HttpResponseHandleRule) -> void;
+	getDummyHttpResponseHandleRule() -> HttpResponseHandleRule;
+	isDummyHttpResponseHandleRuleSet() -> bool;
+
+	dummyHttpRequestCompareFn(received : IScriptRequestRecord, stored : IScriptRequestRecord) -> bool;
 	dummyHttpResponseCompareFn(left : IScriptRequestRespose, right : IScriptRequestRespose) -> bool;
 
 	setHttpRequestHandleRules(rules : [ HttpRequestRecordHandleRule ]) -> void;
-
 	getHttpRequestHandleRules() -> [ HttpRequestRecordHandleRule ];
-
 	isHttpRequestHandleRulesSet() -> bool;
 
 	filterRequestRecordHeaders(headers : [KeyValue]) -> [KeyValue];
@@ -64,6 +69,40 @@ export {
 }
 
 httpRequestHandleRules : ref Maybe<[ HttpRequestRecordHandleRule ]> = ref None();
+
+dummyHttpRequestCompareRules : ref Maybe<[HttpRequestsCompareRule]> = ref None();
+
+dummyHttpResponseHandleRule : ref Maybe<HttpResponseHandleRule> = ref None();
+
+setDummyHttpRequestCompareRules(rules : [HttpRequestsCompareRule]) -> void {
+	dummyHttpRequestCompareRules := Some(rules);
+}
+
+getDummyHttpRequestCompareRules() -> [HttpRequestsCompareRule] {
+	either(
+		^dummyHttpRequestCompareRules,
+		[]
+	)
+}
+
+isDummyHttpRequestCompareRulesSet() -> bool {
+	isSome(^dummyHttpRequestCompareRules)
+}
+
+setDummyHttpResponseHandleRule(rule : HttpResponseHandleRule) -> void {
+	dummyHttpResponseHandleRule := Some(rule);
+}
+
+getDummyHttpResponseHandleRule() -> HttpResponseHandleRule {
+	either(
+		^dummyHttpResponseHandleRule,
+		HRHResponseCheckAll()
+	)
+}
+
+isDummyHttpResponseHandleRuleSet() -> bool {
+	isSome(^dummyHttpResponseHandleRule)
+}
 
 filterRequestRecordHeaders(headers : [KeyValue]) -> [KeyValue] {
 	filter(headers, \p -> !(p.key == "Authorization" && startsWith(p.value, "Bearer ")))
@@ -98,11 +137,106 @@ filterRequestRecord(record : IScriptRequestRecord, options : [HttpRequestPrepare
 dummyHttpRequestCompareFn(received2 : IScriptRequestRecord, stored2 : IScriptRequestRecord) -> bool {
 	received = filterRequestRecord(received2, []);
 	stored = filterRequestRecord(stored2, []);
-	(received.url == stored.url && received.post == stored.post && received.headers == stored.headers && received.params == stored.params);
+	if (isDummyHttpRequestCompareRulesSet()) {
+		compareRequestsWithRules(received, stored, getDummyHttpRequestCompareRules())
+	} else {
+		(received.url == stored.url && received.post == stored.post && received.headers == stored.headers && received.params == stored.params);
+	}
 }
 
 dummyHttpResponseCompareFn(left : IScriptRequestRespose, right : IScriptRequestRespose) -> bool {
-	left == right
+	if (isDummyHttpResponseHandleRuleSet()) {
+		handleResponseWithRule(left, right, getDummyHttpResponseHandleRule())
+	} else {
+		left == right
+	}
+}
+
+compareRequestsWithRules(req1 : IScriptRequestRecord, req2 : IScriptRequestRecord, rules : [HttpRequestsCompareRule]) -> bool {
+	fold(rules, true, \acc, rcr -> {
+		if (acc) {
+			switch (rcr : HttpRequestsCompareRule) {
+				HRCRCompareAll() : {
+					req1.url == req2.url && req1.post == req2.post &&
+						req1.headers == req2.headers && req1.params == req2.params
+				}
+				HRCRCompareURL() : req1.url == req2.url;
+				HRCRComparePost() : req1.post == req2.post;
+				HRCRCompareHeader() : req1.headers == req2.headers;
+				HRCRCompareHeaderValues(keys) : {
+					fold(keys, true, \acc2, kcv ->
+						eitherMap(
+							find(req1.headers, \v2 -> v2.key == kcv),
+							\v3 -> eitherMap(find(req2.headers, \v2 -> v2.key == kcv), \v4 -> v3 == v4, false),
+							false
+						)
+					)
+				}
+				HRCRCompareParam() : req1.params == req2.params;
+				HRCRCompareParamValues(keys) : {
+					fold(keys, true, \acc2, kcv ->
+						eitherMap(
+							find(req1.params, \v2 -> v2.key == kcv),
+							\v3 -> eitherMap(find(req2.params, \v2 -> v2.key == kcv), \v4 -> v3 == v4, false),
+							false
+						)
+					)
+				}
+			}
+		} else acc
+	})
+}
+
+handleResponseWithRule(res1 : IScriptRequestRespose, res2 : IScriptRequestRespose, rule : HttpResponseHandleRule) -> bool {
+	switch (rule : HttpResponseHandleRule) {
+		HRHResponseAcceptWithoutChecking() : true;
+		HRHResponseCheckType() : {
+			switch (res1 : IScriptRequestRespose) {
+				IScriptRequestOk(__) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestOk(__): true;
+						default: false;
+					}
+				}
+				IScriptRequestError(__) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestError(__): true;
+						default: false;
+					}
+				}
+				IScriptRequestStatus(__) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestStatus(__): true;
+						default: false;
+					}
+				}
+			}
+		};
+		HRHResponseCheckTypeAndStatus() : {
+			switch (res1 : IScriptRequestRespose) {
+				IScriptRequestOk(data) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestOk(_data): strLeft(data, strIndexOf(data, "\n")) == strLeft(_data, strIndexOf(_data, "\n"));
+						default: false;
+					}
+				}
+				IScriptRequestError(error) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestError(_error): strLeft(error, strIndexOf(error, "\n")) == strLeft(_error, strIndexOf(_error, "\n"));
+						default: false;
+					}
+				}
+				IScriptRequestStatus(status) : {
+					switch (res2 : IScriptRequestRespose) {
+						IScriptRequestStatus(_status): status == res2.status;
+						default: false;
+					}
+				}
+			}
+		};
+		HRHResponseCheckAll() : res1 == res2;
+		HRHResponseReject() : false;
+	}
 }
 
 getHttpRequestResponseCompareFns(requestRecord : IScriptRequestRecord) -> HttpRequestResponseCompareFns {
@@ -154,92 +288,13 @@ getHttpRequestResponseCompareFns(requestRecord : IScriptRequestRecord) -> HttpRe
 					\received2 : IScriptRequestRecord, stored2 : IScriptRequestRecord -> {
 						received = filterRequestRecord(received2, rule.requestPrepareOptions);
 						stored = filterRequestRecord(stored2, rule.requestPrepareOptions);
-						fold(rule.requestsCompareRules, true, \acc, rcr -> {
-							if (acc) {
-								switch (rcr : HttpRequestsCompareRule) {
-									HRCRCompareAll() : {
-										received.url == stored.url && received.post == stored.post &&
-											received.headers == stored.headers && received.params == stored.params
-									}
-									HRCRCompareURL() : received.url == stored.url;
-									HRCRComparePost() : received.post == stored.post;
-									HRCRCompareHeader() : received.headers == stored.headers;
-									HRCRCompareHeaderValues(keys) : {
-										fold(keys, true, \acc2, kcv ->
-											eitherMap(
-												find(received.headers, \v2 -> v2.key == kcv),
-												\v3 -> eitherMap(find(stored.headers, \v2 -> v2.key == kcv), \v4 -> v3 == v4, false),
-												false
-											)
-										)
-									}
-									HRCRCompareParam() : received.params == stored.params;
-									HRCRCompareParamValues(keys) : {
-										fold(keys, true, \acc2, kcv ->
-											eitherMap(
-												find(received.params, \v2 -> v2.key == kcv),
-												\v3 -> eitherMap(find(stored.params, \v2 -> v2.key == kcv), \v4 -> v3 == v4, false),
-												false
-											)
-										)
-									}
-								}
-							} else acc
-						})
+						compareRequestsWithRules(received, stored, rule.requestsCompareRules)
 					}
-					} else dummyHttpRequestCompareFn;
+				} else dummyHttpRequestCompareFn;
 
 				// Response compare
 				responseCompareFn = \received : IScriptRequestRespose, stored : IScriptRequestRespose -> {
-					switch (rule.responseHandleRule : HttpResponseHandleRule) {
-						HRHResponseAcceptWithoutChecking() : true;
-						HRHResponseCheckType() : {
-							switch (received : IScriptRequestRespose) {
-								IScriptRequestOk(__) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestOk(__): true;
-										default: false;
-									}
-								}
-								IScriptRequestError(__) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestError(__): true;
-										default: false;
-									}
-								}
-								IScriptRequestStatus(__) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestStatus(__): true;
-										default: false;
-									}
-								}
-							}
-						};
-						HRHResponseCheckTypeAndStatus() : {
-							switch (received : IScriptRequestRespose) {
-								IScriptRequestOk(data) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestOk(_data): strLeft(data, strIndexOf(data, "\n")) == strLeft(_data, strIndexOf(_data, "\n"));
-										default: false;
-									}
-								}
-								IScriptRequestError(error) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestError(_error): strLeft(error, strIndexOf(error, "\n")) == strLeft(_error, strIndexOf(_error, "\n"));
-										default: false;
-									}
-								}
-								IScriptRequestStatus(status) : {
-									switch (stored : IScriptRequestRespose) {
-										IScriptRequestStatus(_status): status == stored.status;
-										default: false;
-									}
-								}
-							}
-						};
-						HRHResponseCheckAll() : received == stored;
-						HRHResponseReject() : false;
-					}
+					handleResponseWithRule(received, stored, rule.responseHandleRule)
 				}
 				HttpRequestResponseCompareFns(
 					requestCompareFn,

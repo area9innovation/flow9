@@ -55,9 +55,13 @@ Outline::Outline(KTextEditor::MainWindow* window, FlowView* view) :
 }
 Outline::~Outline() { }
 
+void Outline::refresh(KTextEditor::View* view) {
+	if (!view || !toolView_->isVisible()) return;
+	view_->flowManager_->slotOutline(view);
+}
+
 void Outline::refresh() {
-	if (!window_->activeView() || !toolView_->isVisible()) return;
-	view_->flowManager_->slotOutline();
+	refresh(window_->activeView());
 }
 
 static QIcon selectIcon(const QString& kind) {

@@ -49,7 +49,7 @@ FlowView::FlowView(KatePluginFlow* plugin, KTextEditor::MainWindow* mainWin) :
     debugView_->slotReloadLaunchConfigs();
     slotReloadLaunchConfigs();
     connect(flowOutput_.ui.compilerOutTextEdit, SIGNAL(signalCompilerError(QString, int, int)), this, SLOT(slotGotoLocation(QString, int, int)));
-    connect (mainWindow_, SIGNAL(viewChanged(KTextEditor::View*)), outline_, SLOT(refresh()));
+    connect (mainWindow_, SIGNAL(viewChanged(KTextEditor::View*)), outline_, SLOT(refresh(KTextEditor::View*)));
 
     mainWindow_->guiFactory()->addClient(this);
     if (flowConfig_.ui.serverAutostartCheckBox->isChecked()) {
