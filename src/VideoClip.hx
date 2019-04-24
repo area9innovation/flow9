@@ -130,10 +130,11 @@ class VideoClip extends FlowContainer {
 			return;
 		}
 
+		var resolution = renderer.resolution;
 		var ctx : Dynamic = untyped renderer.context;
 
 		ctx.globalAlpha = this.worldAlpha;
-		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx, worldTransform.ty);
+		ctx.setTransform(worldTransform.a * resolution, worldTransform.b * resolution, worldTransform.c * resolution, worldTransform.d * resolution, worldTransform.tx * resolution, worldTransform.ty * resolution);
 		ctx.drawImage(nativeWidget, 0, 0, nativeWidget.width, nativeWidget.height, 0, 0, nativeWidget.width, nativeWidget.height);
 
 		untyped super.renderCanvas(renderer);
