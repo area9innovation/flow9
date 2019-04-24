@@ -91,9 +91,9 @@ export {
 		// The name of the function we are resolving (for debugging)
 		name : string, 
 		// Unify left vs. right for these positions
-		unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
+		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
 		// Given this error message and these positions, construct an FcError
-		makeFcError : (string, Set<int>) -> FcError, 
+		makeFcError : (string, Set<GErrorInfo>) -> FcError, 
 		// When we see an error, report it like this
 		onError : (GEnv, FcError) -> void
 	) -> GEnv;
@@ -107,8 +107,8 @@ export {
 resolveGGraph(
 		env : GEnv, 
 		name : string, 
-		unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
-		makeFcError : (string, Set<int>) -> FcError, 
+		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
+		makeFcError : (string, Set<GErrorInfo>) -> FcError, 
 		onError : (GEnv, FcError) -> void
 	) -> GEnv {
 	grenv = GResolutionEnv(
@@ -122,8 +122,8 @@ resolveGGraph(
 GResolutionEnv(
 	env : GEnv, 
 	name : string, 
-	unify : (GEnv, GType, GType, Set<int>, onError : (GEnv, FcError) -> void) -> GEnv, 
-	makeFcError : (string, Set<int>) -> FcError, 
+	unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
+	makeFcError : (string, Set<GErrorInfo>) -> FcError, 
 	onError : (GEnv, FcError) -> void,
 	iteration : int,
 	// If this is set, we stop
@@ -362,7 +362,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					}
 					GResolveSpeculative(): {
 						if (possible == []) {
-							error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+							error = grenv.makeFcError("Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
 							grenv.onError(grenv.env, error);
 							requeue(grenv);
 						} else {
@@ -383,7 +383,7 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 						}
 					}
 					GResolveTypars(): {
-						error = grenv.makeFcError("Add type annotation. Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+						error = grenv.makeFcError("Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
 						grenv.onError(grenv.env, error);
 						grenv;
 					}
@@ -438,7 +438,7 @@ buildGTyparRelations(env : GResolutionEnv, possible : [string], req : GTyvarRequ
 						acc3.env, 
 						if (lower) typar else tyvar, 
 						if (lower) tyvar else typar,
-						req.starts, 
+						req.errorInfos, 
 						acc3.onError
 					);
 					GResolutionEnv(acc3 with env = nenv);
@@ -465,7 +465,7 @@ sortGCandidates(env : GResolutionEnv, candidates : [string], req : GTyvarRequire
 
 findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : int, req : GTyvarRequirements) -> GResolutionEnv {
 	if (index >= length(candidates)) {
-		error = grenv.makeFcError("Add type annotation. Tried " + strGlue(candidates, ", ") + ", but none worked. We sought type that " + gtyvarReqs2stringNice(grenv.env, req), req.starts);
+		error = grenv.makeFcError("Tried " + strGlue(candidates, ", ") + ", but none worked. We sought type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
 		grenv.onError(grenv.env, error);
 		GResolutionEnv(grenv with abort = true);
 	} else {
@@ -600,7 +600,7 @@ isGBoundsOnlyTyvars(env : GEnv, bounds : GBounds) -> bool {
 }
 
 // Set this group of tyvars to this resolved type
-setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> void) -> GEnv, req : GTyvarRequirements, 
+setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<GErrorInfo>, (GEnv, FcError) -> void) -> GEnv, req : GTyvarRequirements, 
 		type : GType, onError : (GEnv, FcError) -> void) -> GEnv {
 	tyvars = req.tyvars;
 
@@ -612,8 +612,7 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 	nenv0 = foldSet(tyvars, env, \env0, tyvar -> {
 		GEnv(
 			env0 with
-			tyvars = setTree(env0.tyvars, tyvar, type),
-			tyvarOrder = arrayPush(env0.tyvarOrder, tyvar)
+			tyvars = setTree(env0.tyvars, tyvar, type)
 		);
 	});
 
@@ -637,14 +636,14 @@ setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<int>, (GEnv, FcError) -> 
 		uppers = getGUpperRelations(nenv2.grelations, gtype);
 		nenv3 = foldSet(uppers, nenv2, \nenv4, to -> {
 			if (!isGTypeVars(tyvars, to)) {
-				unify(nenv4, type, to, req.starts, onError)
+				unify(nenv4, type, to, req.errorInfos, onError)
 			} else nenv4;		
 		});
 
 		lowers = getGLowerRelations(nenv3.grelations, gtype);
 		foldSet(lowers, nenv3, \nenv5, to -> {
 			if (!isGTypeVars(tyvars, to)) {
-				unify(nenv5, to, type, req.starts, onError)
+				unify(nenv5, to, type, req.errorInfos, onError)
 			} else nenv5;
 		});
 	});
