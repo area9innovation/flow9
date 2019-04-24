@@ -443,19 +443,7 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 								\p -> {
 									argType = p.first.type;
 									expType = fiExpType(p.second);
-									argType == expType || 
-									switch (argType) {
-										FiTypeName(argName1, typars1): {
-											switch (expType) {
-												FiTypeName(expName1, typars2): {
-													length(typars1) == 0 && length(typars2) == 0 &&
-													typeverifyIsSubtype(env, expName1, argName1, onError, start)
-												}
-												default: false;
-											}
-										}
-										default: false;
-									}
+									argType == expType || isFiSubType(env.module.global.acc.names, argType, expType, false)
 								}
 							)
 						}
@@ -690,128 +678,81 @@ typeverifyNumberOfStructArgs(env : TypeVerifyEnv, typename : string) -> int {
 	}
 }
 
-//isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool) -> bool;
-//fctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, t : FcType) -> FiType
-
 consistentInstantiationOfFcTypeWithFiType(env : TypeVerifyEnv, t1 : FiType, t2 : FcType, onError : (FcError) -> void, start : int) -> bool {
-	//t2i = fctype2fi(FcTypeEnv(FcTypeEnvGlobal(ref makeTree()), env.module.global, initFcTypeEnvLocal()), \__,__ -> {}, t2);
-	//ret = isFiSubType(env.module.global.acc.names, t1, t2i, true);
+	t2i = fctype2fi(initFcTypeEnvLocal(), \__,__ -> {}, t2);
+	consistentInstantiationOfFiTypeWithFiType(env, t1, t2i, onError, start);
+}
+
+consistentInstantiationOfFiTypeWithFiType(env : TypeVerifyEnv, t1 : FiType, t2 : FiType, onError : (FcError) -> void, start : int) -> bool {
 	ret = switch (t2) {
-		FcTypeParameter(n, __): {
+		FiTypeParameter(n): {
 			switch (lookupTree(^(env.local.typarsInst), n)) {
-				Some(t1_inst): {
-					switch (t1_inst) {
-						FiTypeParameter(n1_inst):
+				Some(t2_inst): {
+					switch (t2_inst) {
+						FiTypeParameter(n2_inst):
 							switch (t1) {
-								FiTypeFlow(): true; 
-								FiTypeParameter(n1): n1_inst == n1 || typeverifyIsSubtype(env, n1, n1_inst, onError, start);
+								FiTypeFlow(): true;
+								FiTypeParameter(n1): n2_inst == n1;
 								default: {
 									env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1);
 									true;
 								}
 							}
-						default: switch (t1) { FiTypeFlow(): true; default: t1 == t1_inst; }
+						default:
+							if (t1 == FiTypeFlow()) true else t1 == t2_inst;
 					}
 				}
-				None(): { env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1); true; }
+				None(): {
+					env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1); 
+					true; 
+				}
 			}
 		}
-		FcTypeVar(id, __):
-			switch (lookupTree(^(env.local.tyvarsInst), id)) {
-				Some(t1_inst): switch (t1) { FiTypeFlow(): true; default: t1 == t1_inst; }
-				None(): { env.local.tyvarsInst := setTree(^(env.local.tyvarsInst), id, t1); true; }
-			}
-		FcTypeArray(t2_arr, __): switch (t1) { FiTypeFlow(): true; FiTypeArray(t1_arr): consistentInstantiationOfFcTypeWithFiType(env, t1_arr, t2_arr, onError, start); default: false; }
-		FcTypeRef(t2_ref, __):   switch (t1) { FiTypeFlow(): true; FiTypeRef(t1_ref):   consistentInstantiationOfFcTypeWithFiType(env, t1_ref, t2_ref, onError, start); default: false; }
-		FcTypeFunction(t2_at, t2_rt, __):
+		FiTypeArray(t2_arr):
 			switch (t1) {
-				FiTypeFlow(): true; 
+				FiTypeFlow(): true;
+				FiTypeArray(t1_arr): consistentInstantiationOfFiTypeWithFiType(env, t1_arr, t2_arr, onError, start);
+				default: false;
+			}
+		FiTypeRef(t2_ref):
+			switch (t1) {
+				FiTypeFlow(): true;
+				FiTypeRef(t1_ref): consistentInstantiationOfFiTypeWithFiType(env, t1_ref, t2_ref, onError, start);
+				default: false;
+			}
+		FiTypeFunction(t2_at, t2_rt):
+			switch (t1) {
+				FiTypeFlow(): true;
 				FiTypeFunction(t1_at, t1_rt):
-					consistentInstantiationOfFcTypeWithFiType(env, t1_rt, t2_rt, onError, start) &&
+					consistentInstantiationOfFiTypeWithFiType(env, t1_rt, t2_rt, onError, start) &&
 					length(t1_at) == length(t2_at) &&
-					foldi(t1_at, true, \i, ok, a -> ok && consistentInstantiationOfFcTypeWithFiType(env, a.type, t2_at[i].type, onError, start));
+					foldi(t1_at, true, \i, ok, a -> ok && consistentInstantiationOfFiTypeWithFiType(env, a.type, t2_at[i].type, onError, start));
 				default: false;
 			}
-		FcTypeBool(__):        switch (t1) { FiTypeFlow(): true; FiTypeBool():   true; default: false; }
-		FcTypeInt(__):         switch (t1) { FiTypeFlow(): true; FiTypeInt():    true; default: false; }
-		FcTypeDouble(__):      switch (t1) { FiTypeFlow(): true; FiTypeDouble(): true; default: false; }
-		FcTypeString(__):      switch (t1) { FiTypeFlow(): true; FiTypeString(): true; default: false; }
-		FcTypeFlow(__):        true;
-		FcTypeVoid(__):        switch (t1) { FiTypeFlow(): true; FiTypeVoid():   true; default: false; }
-		FcTypeNative(__):      switch (t1) { FiTypeFlow(): true; FiTypeNative(): true; default: false; }
-		FcTypeName(n2, typars2, __):
+		FiTypeBool():        switch (t1) { FiTypeFlow(): true; FiTypeBool():   true; default: false; }
+		FiTypeInt():         switch (t1) { FiTypeFlow(): true; FiTypeInt():    true; default: false; }
+		FiTypeDouble():      switch (t1) { FiTypeFlow(): true; FiTypeDouble(): true; default: false; }
+		FiTypeString():      switch (t1) { FiTypeFlow(): true; FiTypeString(): true; default: false; }
+		FiTypeFlow():        true;
+		FiTypeVoid():        switch (t1) { FiTypeFlow(): true; FiTypeVoid():   true; default: false; }
+		FiTypeNative():      switch (t1) { FiTypeFlow(): true; FiTypeNative(): true; default: false; }
+		FiTypeName(n2, typars2):
 			switch (t1) {
 				FiTypeFlow(): true; 
 				FiTypeName(n1, typars1):
-					(n1 == n2 || typeverifyIsSubtype(env, n2, n1, onError, start)) &&
+					(n1 == n2 || isFiSubType(env.module.global.acc.names, t2, t1, true)) &&
 					length(typars1) == length(typars2) &&
-					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
-				default: false;
-			}
-		FcTypeStruct(n2, typars2, __, __):
-			switch (t1) {
-				FiTypeFlow(): true; 
-				FiTypeName(n1, typars1):
-					n1 == n2 &&
-					length(typars1) == length(typars2) &&
-					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
-				default: false;
-			}
-		FcTypeUnion(n2, typars2, __, __):
-			switch (t1) {
-				FiTypeFlow(): true; 
-				FiTypeName(n1, typars1):
-					(n1 == n2 || typeverifyIsSubtype(env, n2, n1, onError, start)) &&
-					length(typars1) == length(typars2) &&
-					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFcTypeWithFiType(env, tp1, typars2[i], onError, start));
+					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFiTypeWithFiType(env, tp1, typars2[i], onError, start));
 				default: false;
 			}
 	}
 	if (!ret) {
 		onError(FcError(
-			"type '" + prettyFcType(dummyPretty, t2, makeSet()) + "' cannot be substituted with '" + prettyFiType(dummyPretty, t1, makeSet()) + "'", 
+			"type '" + prettyFiType(dummyPretty, t2, makeSet()) + "' cannot be substituted with '" + prettyFiType(dummyPretty, t1, makeSet()) + "'", 
 			[FcPosition(env.module.name, start, start)]
 		));
 	}
 	ret
-}
-
-typeverifyIsSubtype(env : TypeVerifyEnv, supertype_name : string, subtype_name, onError : (FcError) -> void, start : int) -> bool {
-	diff_tree = \s1, s2 -> 
-		foldTree(s1, makeTree(), \x, s, acc -> if (containsKeyTree(s2, x)) acc else setTree(acc, x, s));
-	full_diff = diff_tree(
-		typeVerifyName2structs(env, subtype_name, makeTree()),
-		typeVerifyName2structs(env, supertype_name, makeTree())
-	);
-	if (sizeTree(full_diff) > 0) {
-		super_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, supertype_name));
-		sub_start = startOfStructOrUnion(typeverifyName2StructOrUnion(env, subtype_name));
-		onError(FcError("The type '" + subtype_name + "' is not a subtype of '" + supertype_name + "'",
-				[FcPosition(env.module.name, start, start)]
-			)
-		);
-		onError(FcError("  Subtype '" + subtype_name + "' is defined here", 
-			[
-				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, subtype_name), sub_start, sub_start)
-			])
-		);
-		onError(FcError("  Supertype '" + supertype_name + "' is defined here", 
-			[
-				FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, supertype_name), super_start, super_start),
-			])
-		);
-		cutoff_diff = cutoffTree(full_diff, 3);
-		onError(FcError(
-			"  These structs from '" + subtype_name + "' are absent in '" + supertype_name + "': " + 
-			strGlueTreeKeysWithCutoff(full_diff, 3),
-			foldTree(cutoff_diff, [], 
-				\name, s, acc -> 
-					concat(acc, [FcPosition(moduleWhereNameIsDefined(env.module.global.acc.names, name), s, s)])
-				)
-			)
-		);
-		false;
-	} else true;
 }
 
 startOfStructOrUnion(msu : Maybe<FcFiStructOrUnion>) -> int {
@@ -824,39 +765,4 @@ startOfStructOrUnion(msu : Maybe<FcFiStructOrUnion>) -> int {
 		},
 		-1
 	)
-}
-
-// Take at most 'max_size' elements from 'set'
-cutoffSet(set : Set<?>, max_size : int) -> Set<?> {
-	foldSet(set, Pair(makeSet(), 0), \acc, x -> 
-		if (acc.second < max_size)
-			Pair(insertSet(acc.first, x), acc.second + 1)
-		else
-			acc
-	).first
-}
-
-// Take at most 'max_size' elements from 'tree'
-cutoffTree(tree : Tree<?, ??>, max_size : int) -> Tree<?, ??> {
-	foldTree(tree, Pair(makeTree(), 0), \x, y, acc -> 
-		if (acc.second < max_size)
-			Pair(setTree(acc.first, x, y), acc.second + 1)
-		else
-			acc
-	).first
-}
-
-cutoffString(str : string, max_size : int) -> string {
-	str1 = strReplace(str, "\n", "");
-	if (strlen(str1) <= max_size) str1 else substring(str1, 0, max_size) + "..."
-}
-
-strGlueTreeKeysWithCutoff(tree : Tree<string, ?>, max_size : int) -> string {
-	cutoff_tree = cutoffTree(tree, max_size);
-	strGlue(getTreeKeys(cutoff_tree), ", ") + (if (sizeTree(cutoff_tree) < sizeTree(tree)) " ..." else "")
-}
-
-strGlueSetWithCutoff(set : Set<string>, max_size : int) -> string {
-	cutoff_set = cutoffSet(set, max_size);
-	strGlue(set2array(cutoff_set), ", ") + (if (sizeSet(cutoff_set) < sizeSet(set)) " ..." else "")
 }
