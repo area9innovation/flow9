@@ -195,6 +195,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 	addBorders : (Tropic, MFocusGroup) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 
 	isTextInputInPopup = eitherMap(inputState.autocomplete, \ac -> ac.isTextInputInPopup, true);
+	onTop = eitherMap(inputState.autocomplete, \ac -> ac.onTop, false);
 
 	popupItems =
 		eitherMap(
@@ -281,6 +282,7 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 						\p -> TShowLazy(fneq(ac.sentences, []), \ -> m2t(MSeparator(true), p)),
 						f
 					]
+					|> (if (onTop) reverseA else idfn)
 				)
 			},
 			[]
@@ -307,33 +309,41 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 		else
 			makeTextInput(inputState.parent);
 
-	offsetX = if (inputState.smallEdit) -24. else if (!isTextInputInPopup) eitherMap(inputState.leftButton, \lb -> lb.inputIndent, 0.) else 0.;
-	offsetY = if (inputState.smallEdit) -8. else if (!isTextInputInPopup) 48. else 0.;
+	offsetX = if (inputState.smallEdit) -24. else if (isTextInputInPopup) 0. else eitherMap(inputState.leftButton, \lb -> lb.inputIndent, 0.);
+	offsetY = if (inputState.smallEdit) -8. else 0.;
+
+	positionScale =
+		if (onTop == isTextInputInPopup)
+			fselect2(popupState.positionScale, fheight(popupState.inputWH), FLift2(\ps, ih ->
+				PositionScale(
+					Point(ps.pos.x, ps.pos.y + ih),
+					ps.scale
+				)
+			))
+		else
+			popupState.positionScale;
 
 	TConstruct(
 		[
-			makeSubscribe(popupState.openMenu.opened, \op -> {
+			makeSubscribe(popupState.openMenu.opened, \op ->
 				if (op)
 					RenderMPopup(
 						inputState.manager,
 						inputState.parent,
 						MPopup(
-							concatA([
+							[
 								if (isTextInputInPopup)
 									[[
 										MGetFocusGroup(makeTextInput)
-										|> (\f ->
-											if (inputState.smallEdit)
-												MBorder(24., 0., 24., 0., f)
-											else
-												f
-										)
+										|> (if (inputState.smallEdit) MBorderLeftRight(24.) else idfn)
 									]]
 								else
 									[[]],
 								map(popupItems, \it -> [MGetFocusGroup(it)])
-							]),
-							popupState.positionScale,
+							]
+							|> (if (onTop) reverseA else idfn)
+							|> concatA,
+							positionScale,
 							[
 								popupState.openMenu,
 								RMWidth(fselect(popupState.inputWH, FLift(\bwh -> bwh.width + (if (inputState.smallEdit) 48. else 0.) - offsetX))),
@@ -344,28 +354,24 @@ MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, mak
 								MElevation(popupState.elevation),
 								RMOffset(const(Pair(WidthHeight(offsetX, offsetY), 0.))),
 								RMHeight(0., popupState.maxHeight),
-								MFixPosition(),
-								MScrollWidthHeight(popupState.contentWH, popupState.boxWH),
+								MFixPosition(!onTop),
+								TScrollWidthHeight(popupState.contentWH, popupState.boxWH),
 								MBackgroundStyle(inputState.backgroundStyle.focused),
 								MRippleShape("MMenu"),
 								MActive(make(true))
 							]
-							|> (\f ->
+							|> (\arr ->
 								if (popupItems != [])
-									concat(
-										f,
-										[
-											RMScrollArea(2, 3),
-											MScrollPosition(popupState.scrollPosition)
-										]
-									)
-								else
-									f
-							)
+									concat(arr, [
+										if (onTop) RMScrollArea(0, 1) else RMScrollArea(2, 3),
+										MScrollPosition(popupState.scrollPosition)
+									])
+								else arr
+							),
 						),
 						m2t
 					)
-			}),
+			),
 			\ -> \ -> next(popupState.openMenu.opened, false)
 		],
 		content
