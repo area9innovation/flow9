@@ -21,7 +21,7 @@ handy.
 
 <h3>VS Code</h3>
 
-See [resources/vscode/flow/README.md](../resources/vscode/readme.md) for instructions on how to install all the
+See [resources/vscode/flow/README.md](../resources/vscode/flow/README.md) for instructions on how to install all the
 *flow* support we have. This is the best editor at this point.
 
 <h3>Sublime Text 3</h3>
