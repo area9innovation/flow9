@@ -51,7 +51,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 	started = ref 0.0;
 	uns = ref [];
 
-	timeoutFns : ref DList<Triple<double, () -> bool, int>> = ref makeDList();
+	deferredFnsTree : ref Tree<double, [Pair<() -> bool, int>]> = ref makeTree();
 
 	startFn = \ -> {
 		started := timestamp() - either(minA(^delays), 0.0);
@@ -87,37 +87,40 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 									\fn -> if (!fn()) {
 										// Add to timeout elements
 										println("*** Timeout Fn");
-										pushDList(^timeoutFns, Triple(d + timeout, fn, 0)) |> ignore;
+										deferredFnsTree := treePushToArrayValue(^deferredFnsTree, d + timeout, Pair(fn, 1));
 									}
 								)
 							);
 							delays := subrange(^delays, 1, length(^delays));
 
 							// check timeout elements
-							if (!emptyDList(^timeoutFns)) {
-								repeatUntil(\ -> {
-									if (emptyDList(^timeoutFns))
-										true
-									else {
-										el = popFirstDListDef(^timeoutFns, Triple(-1.0, \->true,0));
-										if (el.first > 0.0 && el.first < d) {
-											if (!(el.second)()) {
-												if (el.third > maxRepeats) {
-													dispUnsA(uns)
-												} else {
-													println("*** Timeout Fn: " + i2s(el.third + 1));
-													pushDList(^timeoutFns, Triple(el.first + timeout, el.second, el.third + 1)) |> ignore;
-												}
-											}
-											false;
-										} else {
-											unshiftDList(^timeoutFns, el);
-											true;
-										}
-									}
-								});
-							}
+							if (^deferredFnsTree != TreeEmpty()) {
+								delays2 = filter(getTreeKeys(^deferredFnsTree), \v -> v <= d);
 
+								iteriUntil(delays2, \idx, v -> {
+									deferredFns = getTreeArrayValue(^deferredFnsTree, v);
+									// println("#### delay: " + d2s(v));
+									lastIdx = iteriUntil(deferredFns, \idx0, v0 -> {
+										// println("#### " + i2s(v0.second) + " : " + i2s(maxRepeats));
+										if (v0.second > maxRepeats) {
+											dispUnsA(uns);
+											true
+										} else {
+											if (!(v0.first)()) {
+												println("*** Timeout Fn: " + i2s(v0.second + 1));
+												deferredFnsTree := treePushToArrayValue(^deferredFnsTree, v + timeout, Pair(v0.first, v0.second + 1));
+											}
+											false
+										}
+									});
+									if (lastIdx != length(deferredFns)) {
+										true
+									} else {
+										deferredFnsTree := removeFromTree(^deferredFnsTree, v);
+										false
+									}
+								}) |> ignore;
+							}
 							Some(t)
 						} else {
 							None()
