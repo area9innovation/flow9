@@ -53,6 +53,9 @@ You have to reclone the flow9 repository after installing Git LFS, or use `git l
 
 See `demos/demos.flow` to read the code for this example.
 
+Documentation
+-------------
+
 See [doc/readme.markdown](doc/readme.markdown) for further documentation about the language 
 and platform, including more details on how to get started.
 
