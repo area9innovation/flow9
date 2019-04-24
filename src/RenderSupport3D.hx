@@ -31,23 +31,38 @@ using DisplayObjectHelper;
 using Object3DHelper;
 
 class RenderSupport3D {
-	public static function __init__() {
-		var head = Browser.document.getElementsByTagName('head')[0];
+	public static function load3DLibraries(cb : Void -> Void) : Void {
+		if (untyped __js__("typeof THREE === 'undefined'")) {
+			var head = Browser.document.getElementsByTagName('head')[0];
+			var jscounter = 0;
+			var onloadFn = function() {
+				jscounter++;
 
-		var node = Browser.document.createElement('script');
-		node.setAttribute("type","text/javascript");
-		node.setAttribute("src", 'js/threejs/three.min.js');
-		head.appendChild(node);
+				if (jscounter > 2) {
+					cb();
+				}
+			}
 
-		node = Browser.document.createElement('script');
-		node.setAttribute("type","text/javascript");
-		node.setAttribute("src", 'js/threejs/MTLLoader.js');
-		head.appendChild(node);
+			var node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/threejs/three.min.js');
+			node.onload = onloadFn;
+			head.appendChild(node);
 
-		node = Browser.document.createElement('script');
-		node.setAttribute("type","text/javascript");
-		node.setAttribute("src", 'js/threejs/OBJLoader.js');
-		head.appendChild(node);
+			node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/threejs/MTLLoader.js');
+			node.onload = onloadFn;
+			head.appendChild(node);
+
+			node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/threejs/OBJLoader.js');
+			node.onload = onloadFn;
+			head.appendChild(node);
+		} else {
+			cb();
+		}
 	}
 
 	public static function add3DChild(parent : Object3D, child : Object3D) : Void {

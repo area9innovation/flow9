@@ -49,7 +49,6 @@ class RenderSupportJSPixi {
 	// screen keyboard
 	private static var WindowTopHeight : Int;
 	private static var RenderSupportJSPixiInitialised : Bool = init();
-	private static var RequestAnimationFrameId : Int = -1;
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
 	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
