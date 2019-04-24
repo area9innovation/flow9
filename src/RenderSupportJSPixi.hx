@@ -18,6 +18,10 @@ import Platform;
 
 using DisplayObjectHelper;
 
+import js.three.Object3D;
+
+using Object3DHelper;
+
 class RenderSupportJSPixi {
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);
@@ -1087,16 +1091,28 @@ class RenderSupportJSPixi {
 			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
-	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.addChild(child);
+	public static function addChild(parent : Dynamic, child : Dynamic) : Void {
+		if (parent.addChild != null) {
+			cast(parent, FlowContainer).addChild(child);
+		} else {
+			cast(parent, Object3D).add(child);
+		}
 	}
 
-	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
-		parent.addChildAt(child, id);
+	public static function addChildAt(parent : Dynamic, child : Dynamic, id : Int) : Void {
+		if (parent.addChildAt != null) {
+			cast(parent, FlowContainer).addChildAt(child, id);
+		} else {
+			cast(parent, Object3D).add(child);
+		}
 	}
 
-	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.removeChild(child);
+	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
+		if (parent.removeChild != null) {
+			cast(parent, FlowContainer).removeChild(child);
+		} else {
+			cast(parent, Object3D).remove(child);
+		}
 	}
 
 	public static function makeClip() : FlowContainer {
@@ -1649,8 +1665,6 @@ class RenderSupportJSPixi {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
-	// errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
 	}
