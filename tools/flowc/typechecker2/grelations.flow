@@ -6,11 +6,11 @@ export {
 	// This exposes the unifications we need to consider
 	makeGRelations() -> GRelations;
 
-	addGRelation(env : GEnv, r : GRelations, lower : GType, upper : GType, pos : int) -> GRelations;
+	addGRelation(env : GEnv, r : GRelations, lower : GType, upper : GType, errorInfos : Set<GErrorInfo>) -> GRelations;
 
 	getGUpperRelations(r : GRelations, from : GType) -> Set<GType>;
 	getGLowerRelations(r : GRelations, from : GType) -> Set<GType>;
-	getGRelationPositions(r : GRelations, from : GType) -> Set<int>;
+	getGErrorInfos(r : GRelations, from : GType) -> Set<GErrorInfo>;
 
 	transitiveGUpperRelations(env : GEnv, r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
 	transitiveGLowerRelations(env : GEnv, r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
@@ -34,7 +34,7 @@ makeGRelations() -> GRelations {
 	GRelations(makeTree(), makeTree(), makeTree(), makeSet(), makeTree());
 }
  
-addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, pos : int) -> GRelations {
+addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, errorInfos : Set<GErrorInfo>) -> GRelations {
 	if (containsMultimap(r.uppers, from, to)) r
 	else {
 		// Reset the queue for these guys
@@ -62,9 +62,9 @@ addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, pos : int) ->
 		GRelations(
 			insertMultimap(r.uppers, from, to),
 			insertMultimap(r.lowers, to, from),
-			insertMultimap(
-				insertMultimap(r.positions, to, pos),
-				from, pos
+			insertMultipleMultimap(
+				insertMultipleMultimap(r.errorInfos, to, errorInfos),
+				from, errorInfos
 			),
 			queue,
 			toDeps
@@ -128,8 +128,17 @@ getGLowerRelations(r : GRelations, from : GType) -> Set<GType> {
 	lookupMultimap(r.lowers, from);
 }
 
-getGRelationPositions(r : GRelations, from : GType) -> Set<int> {
-	lookupMultimap(r.positions, from);
+getGErrorInfos(r : GRelations, from : GType) -> Set<GErrorInfo> {
+	errorInfos = lookupMultimap(r.errorInfos, from);
+	if (isEmptySet(errorInfos)) {
+		// OK, go and pick our uppers or lowers
+		neighbours = mergeSets(getGUpperRelations(r, from), getGLowerRelations(r, from));
+		foldSet(neighbours, makeSet(), \acc, s -> {
+			println(s);
+			eis = lookupMultimap(r.errorInfos, s);
+			mergeSets(acc, eis);
+		});
+	} else errorInfos
 }
 
 transitiveGUpperRelations(env : GEnv, r : GRelations, from : GType, acc : Set<GType>) -> Set<GType> {
@@ -250,10 +259,6 @@ saveGDot(env : GEnv, name : string) -> void {
 }
 
 grelations2dot(env : GEnv, g : GRelations) -> string {
-	order = foldi(env.tyvarOrder, makeTree(), \i, acc, tv -> {
-		setTree(acc, tv, i)
-	});
-
 	type2node = \type, extra -> {
 		"\"" + gtype2string(env, type) + extra + "\""
 	}
@@ -261,11 +266,8 @@ grelations2dot(env : GEnv, g : GRelations) -> string {
 		insertSet(acc, k);
 	});
 	nodesDump = foldSet(types, "", \acc, type -> {
-		tvorder = switch (type) {
-			GTypeVar(id): lookupTreeDef(order, id, -1);
-			default: -1;
-		}
-		extra = (if (tvorder != -1) " " + i2s(tvorder) else "");
+		descriptions = getGDescriptions(getGErrorInfos(g, type));
+		extra = if (descriptions != "") "\\n" + descriptions else "";
 		
 		text0 = type2node(type, "");
 		text1 = type2node(type, extra);
