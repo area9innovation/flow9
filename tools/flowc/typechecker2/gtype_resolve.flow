@@ -91,11 +91,9 @@ export {
 		// The name of the function we are resolving (for debugging)
 		name : string, 
 		// Unify left vs. right for these positions
-		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
-		// Given this error message and these positions, construct an FcError
-		makeFcError : (string, Set<GErrorInfo>) -> FcError, 
+		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, string, Set<GErrorInfo>) -> void) -> GEnv, 
 		// When we see an error, report it like this
-		onError : (GEnv, FcError) -> void
+		onError : (GEnv, string, Set<GErrorInfo>) -> void
 	) -> GEnv;
 }
 
@@ -107,12 +105,11 @@ export {
 resolveGGraph(
 		env : GEnv, 
 		name : string, 
-		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
-		makeFcError : (string, Set<GErrorInfo>) -> FcError, 
-		onError : (GEnv, FcError) -> void
+		unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, string, Set<GErrorInfo>) -> void) -> GEnv, 
+		onError : (GEnv, string, Set<GErrorInfo>) -> void
 	) -> GEnv {
 	grenv = GResolutionEnv(
-		env, name, unify, makeFcError, onError, 0, false, 0
+		env, name, unify, onError, 0, false, 0
 	);
 	gresolution = doResolveGGraph(grenv);
 	gresolution.env;
@@ -122,9 +119,8 @@ resolveGGraph(
 GResolutionEnv(
 	env : GEnv, 
 	name : string, 
-	unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, FcError) -> void) -> GEnv, 
-	makeFcError : (string, Set<GErrorInfo>) -> FcError, 
-	onError : (GEnv, FcError) -> void,
+	unify : (GEnv, GType, GType, Set<GErrorInfo>, onError : (GEnv, string, Set<GErrorInfo>) -> void) -> GEnv, 
+	onError : (GEnv, string, Set<GErrorInfo>) -> void,
 	iteration : int,
 	// If this is set, we stop
 	abort : bool,
@@ -362,8 +358,8 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 					}
 					GResolveSpeculative(): {
 						if (possible == []) {
-							error = grenv.makeFcError("Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
-							grenv.onError(grenv.env, error);
+							error = "Can not find type that " + gtyvarReqs2stringNice(grenv.env, req);
+							grenv.onError(grenv.env, error, req.errorInfos);
 							requeue(grenv);
 						} else {
 							// Here we do prolog!
@@ -383,8 +379,8 @@ clarifyGTyvar(grenv : GResolutionEnv, req : GTyvarRequirements, stage : GResolut
 						}
 					}
 					GResolveTypars(): {
-						error = grenv.makeFcError("Can not find type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
-						grenv.onError(grenv.env, error);
+						error = "Can not find type that " + gtyvarReqs2stringNice(grenv.env, req);
+						grenv.onError(grenv.env, error, req.errorInfos);
 						grenv;
 					}
 				}
@@ -465,8 +461,8 @@ sortGCandidates(env : GResolutionEnv, candidates : [string], req : GTyvarRequire
 
 findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : int, req : GTyvarRequirements) -> GResolutionEnv {
 	if (index >= length(candidates)) {
-		error = grenv.makeFcError("Tried " + strGlue(candidates, ", ") + ", but none worked. We sought type that " + gtyvarReqs2stringNice(grenv.env, req), req.errorInfos);
-		grenv.onError(grenv.env, error);
+		error = "Tried " + strGlue(candidates, ", ") + ", but none worked. We sought type that " + gtyvarReqs2stringNice(grenv.env, req);
+		grenv.onError(grenv.env, error, req.errorInfos);
 		GResolutionEnv(grenv with abort = true);
 	} else {
 		type = makeGNamedType(grenv.env, candidates[index]);
@@ -474,7 +470,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 		if (grenv.env.verbose >= 4) {
 			printIndent(grenv.env.env, "Trying " + candidates[index]);
 		}
-		nenv = setGTyvar(grenv.env, grenv.unify, req, type, \__, __ -> {
+		nenv = setGTyvar(grenv.env, grenv.unify, req, type, \__, __, __ -> {
 			errors := true;
 		});
 		if (grenv.env.verbose >= 4) {
@@ -495,7 +491,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 					GResolutionEnv(
 						grenv with 
 							env = nenv,
-							onError = \__, __ -> {
+							onError = \__, __, __ -> {
 								errors := true;
 							},
 							speculation = grenv.speculation + 1
@@ -539,7 +535,7 @@ findErrorFreeCandidate(grenv : GResolutionEnv, candidates : [string], index : in
 						GResolutionEnv(
 							grenv with 
 								env = recEnv,
-								onError = \__, __ -> {
+								onError = \__, __, __ -> {
 									errors := true;
 								},
 								speculation = grenv.speculation + 1
@@ -600,8 +596,8 @@ isGBoundsOnlyTyvars(env : GEnv, bounds : GBounds) -> bool {
 }
 
 // Set this group of tyvars to this resolved type
-setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<GErrorInfo>, (GEnv, FcError) -> void) -> GEnv, req : GTyvarRequirements, 
-		type : GType, onError : (GEnv, FcError) -> void) -> GEnv {
+setGTyvar(env : GEnv, unify : (GEnv, GType, GType, Set<GErrorInfo>, (GEnv, string, Set<GErrorInfo>) -> void) -> GEnv, req : GTyvarRequirements, 
+		type : GType, onError : (GEnv, string, Set<GErrorInfo>) -> void) -> GEnv {
 	tyvars = req.tyvars;
 
 	if (env.verbose >= 2) {

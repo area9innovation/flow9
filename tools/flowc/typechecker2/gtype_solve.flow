@@ -130,9 +130,9 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 			FcLessOrEqual(e1, e2, d, info, ex): {
 				gunify(acc, e1, e2, info, \ -> d + ": " + fcexpDescription(ex));
 			}
-			FcVerifyType(e1, e2, info): {
-				et1 = gunify(acc, e1, e2, info, \ -> "");
-				gunify(et1, e2, e1, info, \ -> "");
+			FcVerifyType(e1, e2, d, info, ex): {
+				et1 = gunify(acc, e1, e2, info, \ -> d + " " + fcexpDescription(ex));
+				gunify(et1, e2, e1, info, \ -> d + " " + fcexpDescription(ex));
 			}
 			FcExpectField(field, ftype, struct, info, ex): {
 				st = fctype2gtype(env, struct);
@@ -162,20 +162,28 @@ gtypeSolve(oenv : GEnv, name : string, tyvarIdGroup : IdGroup, pos : FcPosition)
 	// printStay(ge1.env, "Solving " + name);
 
 	// Go ahead and resolve it
-	ge2 = resolveGGraph(ge1, name, \e, l, u, eis : Set<GErrorInfo>, onFError : (GEnv, FcError) -> void -> {
-		errorInfo = if (isEmptySet(eis)) GErrorInfo(pos.start, \ -> "") else set2array(eis)[0];
+	ge2 = resolveGGraph(ge1, name, \e, l, u, eis : Set<GErrorInfo>, onFError : (GEnv, string, Set<GErrorInfo>) -> void -> {
+		errorInfo = if (isEmptySet(eis)) {
+			GErrorInfo(pos.start, \ -> "") 
+		} else set2array(eis)[0];
 		unifyGType(e, l, u, errorInfo, \err : string -> {
-			poss = mapSet(eis, \ei -> FcPosition(pos.file, ei.pos, ei.pos));
-			// TODO: Should we also collect the descriptions?
-			onFError(e, FcError(name + ": " + err, set2array(poss)));
+			onFError(e, name + ": " + err, eis);
 		})
-	}, \err : string, errorInfos : Set<GErrorInfo> -> {
-		poss = set2array(mapSet(errorInfos, \errorInfo -> FcPosition(pos.file, errorInfo.pos, errorInfo.pos)));
-		fpos = if (poss == []) [FcPosition(pos.file, pos.start, pos.start)] else poss;
-		desc = getGDescriptions(errorInfos);
-		FcError(name + ": " + desc + (if (desc != "") ": " else "") + err, fpos);
-	}, \tenv : GEnv, error -> {
-		addFcTypeError(tenv.env.program, error);
+	}, \tenv : GEnv, err : string, errorInfos : Set<GErrorInfo> -> {
+		if (isEmptySet(errorInfos)) {
+			fpos = FcPosition(pos.file, pos.start, pos.start);
+			error = FcError(name + ": " + err, [fpos]);
+			addFcTypeError(tenv.env.program, error);
+		} else {
+			errMess = ref err;
+			iterSet(errorInfos, \errorInfo -> {
+				fpos = FcPosition(pos.file, errorInfo.pos, errorInfo.pos);
+				desc = errorInfo.description();
+				error = FcError(name + ": " + desc + (if (desc != "") ": " else "") + ^errMess, [fpos]);
+				errMess := "and here";
+				addFcTypeError(tenv.env.program, error);
+			});
+		}
 	});
 
 	endTime = timestamp();
@@ -222,7 +230,7 @@ extractNamesFromExpectations(names : Set<string>, expectations : List<FcTypeExpe
 		switch (expect) {
 			FcLessOrEqual(output, input, description, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, output), input);
 			FcExpectField(field, fieldType, t, info, e): extractNamesFromFcType(acc, fieldType);
-			FcVerifyType(type, declared, info): extractNamesFromFcType(extractNamesFromFcType(acc, type), declared);
+			FcVerifyType(type, declared, d, info, e): extractNamesFromFcType(extractNamesFromFcType(acc, type), declared);
 			FcSetMutableField(struct, field, ftype, info): extractNamesFromFcType(extractNamesFromFcType(acc, struct), ftype);
 		}
 	});
