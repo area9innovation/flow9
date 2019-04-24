@@ -8,11 +8,14 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 import android.location.Location;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 
 public class FlowLocationListener {
     
     private FlowGeolocationAPI flowGeolocationApi;
     private IFlowGooglePlayServices flowGooglePlayServices;
+    @Nullable
     private Timer timer = null;
     // HashMap used to be able to easy handle unsubscribe process
     private HashMap<Integer, FlowGeolocationWatcher> singleTimeWatchers;
@@ -126,7 +129,7 @@ public class FlowLocationListener {
     }
     
 
-    public synchronized void onLocationChanged(Location newLocation) {
+    public synchronized void onLocationChanged(@NonNull Location newLocation) {
         executeOnOkCallbacks(newLocation);
     }
     
@@ -145,7 +148,7 @@ public class FlowLocationListener {
        }
     }
     
-    private void executeOnOkCallbacks(Location location) {
+    private void executeOnOkCallbacks(@NonNull Location location) {
         // Pause timeout timer tasks
         cancelTimer();
         // callOnOK for single time watchers

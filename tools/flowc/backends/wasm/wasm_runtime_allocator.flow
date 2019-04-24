@@ -6,6 +6,10 @@ import tools/flowc/backends/wasm/wasm_opcodes;
  *  - uses first-fit approach to find the right one
  */
 export {
+	native prints : (string) -> void = host.prints;
+	native printi : (int) -> void = host.printi;
+	
+	
 	wasm_init_allocator() -> void;
 
 	// Allocates this amount of bytes. Returns a memory address
@@ -18,6 +22,8 @@ export {
 	
 	// For debugging
 	wasm_read_head() -> int;
+	wasm_available_memory() -> int;
+	wasm_free_memory() -> int;
 }
 
 // flow structs are not yet available, so malloc cannot use them 
@@ -78,6 +84,29 @@ wasm_set_prev_block(address: int, prev_block_offset: int) {
 	wasm_i32_store(wasm_get_prev_field(address), prev_block_offset);
 }
 
+wasm_set_block_size(address: int, size: int) {
+	wasm_i32_store(wasm_get_size_field(address), size);
+}
+
+// return result block for address. i.e. if blocks was merged then return prev otherwise return address
+wasm_merge_block(prev : int, address : int) {
+	if (prev > 0 && address > 0) {
+		sz = wasm_get_block_size(prev);
+		if (prev + sz + wasm_header_size == address) {
+			// just increase size of previous block
+			next = wasm_get_next_block(address);
+			wasm_set_block_size(prev, sz + wasm_header_size + wasm_get_block_size(address));
+			wasm_set_next_block(prev, next);
+			if (next > 0) wasm_set_prev_block(next, prev);
+			prev;
+		} else {
+			address;
+		}
+	} else {
+		address;
+	}
+}
+
 // linked list management
 // insert between prev and next linking to them directly
 wasm_list_insert(prev: int, next: int, address: int) {
@@ -92,18 +121,24 @@ wasm_list_insert(prev: int, next: int, address: int) {
 		wasm_set_prev_block(next, address);
 	}
 	wasm_set_next_block(address, next);
+
+	// try to merge current block with prev then with next
+	wasm_merge_block(wasm_merge_block(prev, address), next);
+	{}
 }
 
 // remove item from the list
 wasm_list_remove(address: int) {
-	if (wasm_get_prev_block(address) > 0) {
-		wasm_set_next_block(wasm_get_prev_block(address), wasm_get_next_block(address));
+	prev = wasm_get_prev_block(address);
+	next = wasm_get_next_block(address);
+	if (prev > 0) {
+		wasm_set_next_block(prev, next);
 	} else {
-		wasm_write_head(wasm_get_next_block(address));
+		wasm_write_head(next);
 	}
 
-	if (wasm_get_next_block(address) > 0) {
-		wasm_set_prev_block(wasm_get_next_block(address), wasm_get_prev_block(address));
+	if (next > 0) {
+		wasm_set_prev_block(next, prev);
 	}
 }
 
@@ -113,16 +148,15 @@ wasm_split_or_use_block(size: int, address: int) {
 		next = wasm_get_next_block(address);
 		prev = wasm_get_prev_block(address);
 		// create a new block and 
-		non_aligned = address + wasm_header_size + size;
-		next_free_block = 
+		next_free_block = address + wasm_header_size + size;
+		/*next_free_block = 
 			if (non_aligned % 4 == 0)
 				non_aligned
 			else
-				(non_aligned + 4) / 4 * 4;
+				(non_aligned + 4) / 4 * 4;*/
 
 		// write its header and put pointers to prev and next
-		wasm_write_header(next_free_block, next, prev,
-			wasm_get_block_size(address) - (next_free_block - address));
+		wasm_write_header(next_free_block, next, prev, wasm_get_block_size(address) - (next_free_block - address));
 
 		wasm_list_insert(prev, next, next_free_block);
 
@@ -155,21 +189,72 @@ wasm_free_tail(address: int, startAt: int) {
 }
 
 wasm_alloc(size: int) {
-	allocated = wasm_alloc_tail(size, wasm_read_head());
-	if (allocated > 0) allocated + wasm_header_size else -1;
+	// printi(1000000 + size);
+	if (size <= 16) {
+		start = wasm_smallobject_buffer_start();
+		top = wasm_i32_load(start);
+		next = wasm_i32_load(top);
+		wasm_i32_store(start, next);
+		top
+	} else {
+		allocated = wasm_alloc_tail((size + 3) / 4 * 4, wasm_read_head());
+		if (allocated > 0) allocated + wasm_header_size else -1;
+	}
 }
+
 wasm_free(address: int) {
-	if (wasm_read_head() < 0) {
-		wasm_write_head(address);
-		wasm_set_next_block(address, -1);
-		wasm_set_prev_block(address, -1);
-	} else
-		wasm_free_tail(address - wasm_header_size, wasm_read_head());
+	start = wasm_smallobject_buffer_start();
+	if (address >= start) {
+		top = wasm_i32_load(start);
+		wasm_i32_store(address, top);
+		// wasm_i32_store(address + 4, 0xdeadbeaf);
+		// wasm_i32_store(address + 8, 0xdeadbeaf);
+		// wasm_i32_store(address + 12, 0xdeadbeaf);
+		wasm_i32_store(start, address);
+	} else {
+		if (wasm_read_head() < 0) {
+			wasm_write_head(address);
+			wasm_set_next_block(address, -1);
+			wasm_set_prev_block(address, -1);
+		} else
+			wasm_free_tail(address - wasm_header_size, wasm_read_head());
+	}
 }
 
 wasm_init_allocator() {
+	printi(111111);
+	printi(wasm_smallobject_buffer_start());
+	printi(wasm_smallobject_buffer_size());
+	printi(wasm_smallobject_buffer_start() + wasm_smallobject_buffer_size());
+	wasm_smallobject_buffer_init(wasm_smallobject_buffer_start() + 4, wasm_smallobject_buffer_size() - 4);
+	wasm_i32_store(wasm_smallobject_buffer_start(), wasm_smallobject_buffer_start() + 4);
+	printi(wasm_available_memory());
 	wasm_write_head(wasm_heap_start() + 4); // real memory starts from wasm_heap_start + 4
     // count for header size for the first block plus constant storage plus 4 for head storage 
-    available_size = 65536 * wasm_memory_size() - wasm_header_size - wasm_heap_start() - 4;
-	wasm_write_header(wasm_read_head(), -1, -1, available_size);
+	wasm_write_header(wasm_read_head(), -1, -1, wasm_available_memory());
+}
+
+// a bit dangerous - here may be a situation when this size greater or close to total memory available for program
+wasm_smallobject_buffer_size() { 512 * 1024 }
+wasm_smallobject_buffer_start() { 65536 * wasm_memory_size() - wasm_smallobject_buffer_size() }
+
+wasm_smallobject_buffer_init(cur : int, left : int) {
+	next = if (left == 16) 0 else cur + 16;
+	wasm_i32_store(cur, next);
+	if (left > 16) wasm_smallobject_buffer_init(next, left - 16);
+}
+
+wasm_available_memory() {
+	65536 * wasm_memory_size() - wasm_header_size - wasm_heap_start() - 4 - wasm_smallobject_buffer_size();
+}
+
+wasm_free_memory() -> int {
+	wasm_do_free_memory(wasm_read_head(), 0);
+}
+
+wasm_do_free_memory(block, acc) -> int {
+	next = wasm_get_next_block(block);
+	nextAcc = wasm_get_block_size(block) + acc + wasm_header_size;
+
+	if (next > 0) wasm_do_free_memory(next, nextAcc) else nextAcc;
 }

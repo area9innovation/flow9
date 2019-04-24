@@ -55,7 +55,7 @@ sudo mysql --user="root" --execute="ALTER USER 'root'@'localhost' IDENTIFIED WIT
 Configure MySQL-server mode:
 ```bash
 printf '[mysqld]
-sql-mode=STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION\n' | sudo tee -a /etc/mysql/my.cnf
+sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
 More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
@@ -71,22 +71,15 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
-<Directory /home/'$USER'/flow9/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
-</Directory>
-Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
+printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
+     AllowOverride All
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
 ```
-Note, that todoapp is name for application in exercise 9, you can rename it as you wish.
+Note that todoapp is name for application in exercise 9, you can rename it as you wish.
 # Clone the repositories
 If you haven't installed git yet, enter next commands:
 ```bash
@@ -146,7 +139,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format
-haxelib install pixijs 4.5.4 #(or a newer 4.5.x edition)
+haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might

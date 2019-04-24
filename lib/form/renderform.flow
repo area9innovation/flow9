@@ -28,9 +28,6 @@ export {
 
 	zeroSize : ConstBehaviour<WidthHeight>;
 
-	addKeyboardShortcut(shortcut : string, description : string) -> () -> void;
-	getKeyboardShortcuts() -> string;
-
 	//must be in target.flow, but need access to getStage_, so placed here
 	isPhoneScreen : () -> bool;
 
@@ -49,7 +46,7 @@ export {
 	globalRenderCount = ref 0;
 
 	downloadPictures = !isUrlParameterFalse("download_pictures");
-	showRedraw = isUrlParameterTrue("redraw");
+	showRedraw = !js && isUrlParameterTrue("redraw");
 
 	makeGlobalCursorListeners(shape : CursorShape2, zorder : [int]) -> Pair<[EventHandler], () -> void>;
 
@@ -85,20 +82,6 @@ allClipCapabilities = ClipCapabilities(true, true, true, true, true);
 zeroSize = const(zeroWH);
 
 emptyRenderResult = RenderResult([], zeroSize, const(0.0), const(0), [], allClipCapabilities);
-
-KeyboardShortcut(keys : string, description : string);
-keyboardShortcuts : ref [KeyboardShortcut] = ref [];
-
-addKeyboardShortcut(shortcut : string, description : string) -> () -> void {
-	sc = KeyboardShortcut(shortcut, description);
-	keyboardShortcuts := arrayPush(^keyboardShortcuts, sc);
-	\ -> keyboardShortcuts := removeFirst(^keyboardShortcuts, sc);
-}
-
-getKeyboardShortcuts() {
-	default_shortcuts = if (js) "Ctrl+Up : Zoom in\nCtrl+Dn : Zoom out\n" else "";
-	fold(^keyboardShortcuts, default_shortcuts, \in, sc -> in + sc.keys + " : " + sc.description + "\n");
-}
 
 isPicturesDownloadingEnabled() {
 	downloadPictures
@@ -288,6 +271,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 			onlydl = ref false;
 			errhndlr = ref \e -> {};
 			onLoaded = ref nop;
+			realSizeFn = ref nop1;
 			iter(style, \s -> switch(s : PictureStyle) {
 				DontCache(): cache := false;
 				OnlyDownloadToCache(): onlydl := true;
@@ -299,6 +283,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						fn();
 					}
 				};
+				InspectRealSize(fn): realSizeFn := fn;
 			});
 			widthHeight = make(zeroWH);
 			baseline = make(0.0);
@@ -312,6 +297,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				nextDistinct(baseline, h);
 				decreaseFilesCount(alreadyDecreased, loadingContentFilesCount);
 				nextDistinct(pending, 0);
+				^realSizeFn(WidthHeight(w, h));
 				^onLoaded();
 			}, \e -> {
 				CachedPicturesSizes := setTree(^CachedPicturesSizes, url, zeroWH);
@@ -1238,6 +1224,9 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						});
 						makeGlow(^radius, ^spread, ^color, ^alpha, ^inner);
 					}
+					Shader(vertex, fragment, uniform) : {
+						makeShader(vertex, fragment, uniform);
+					}
 				});
 				setClipCallstack(clip, stack);
 				addFilters(clip, fils);
@@ -1289,7 +1278,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		});
 
 		d = renderForm(form, available, zorder, tabOrder);
-		widthHeight = d.widthHeight;
+		widthHeight : Behaviour<WidthHeight> = d.widthHeight;
 		unsubs2 = filtermap(inspectors, \i -> switch (i : Inspector) {
 			Width(w): Some(subscribe(widthHeight, \wh -> nextDistinct(w, wh.width)));
 			Height(h): Some(subscribe(widthHeight, \wh -> nextDistinct(h, wh.height)));
@@ -1516,7 +1505,6 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						[subscribe2(to, \to0 -> setAccessAttributes(clip, [["nodeindex", strGlue(map(to0, i2s), " ")]]))]
 					},
 					\ -> {
-						refArrayPush(attributes, ["nodeindex", strGlue(map(ownTabOrder, i2s), " ")]);
 						[]
 					}
 				);
@@ -1529,8 +1517,6 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 						[subscribe2(cz, \zo -> setAccessAttributes(clip, [["zorder", toString(zo)]]))]
 					},
 					\ -> {
-						if (!skipMakingElement || isSome(^access_child_selected_fn))
-							refArrayPush(attributes, ["zorder", toString(either(^forceZorder, zorder[0]))]);
 						[]
 					}
 				);
@@ -1604,6 +1590,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		sandbox = ref None();
 		whitelist_domains = ref [];
 		shrink2fit = ref false;
+		viewBounds = ref None();
 
 		iter(style, \s -> {
 			switch (s : RealHTMLStyle) {
@@ -1629,6 +1616,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 				);
 				WhitelistDomains(domains) : whitelist_domains := domains;
 				RealHtmlShrink2Fit(): shrink2fit := true;
+				ViewBounds(bounds): viewBounds := Some(bounds);
 			}
 		});
 
@@ -1655,14 +1643,15 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 
 		u2 = subscribe(^zoom_enabled, \zoom -> setWebClipZoomable(bridge_clip, zoom));
 		u3 = subscribe(^mouse_disabled, \disabled -> setWebClipDisabled(bridge_clip, disabled));
+		u4 = eitherMap(^viewBounds, \vb -> makeSubscribe(vb, \b -> setClipViewBounds(bridge_clip, b.minX, b.minY, b.maxX, b.maxY))(), nop);
 
 		baseline = make(0.0);
 		u1 = subscribe(wh, \whv -> {
 				nextDistinct(baseline, whv.height);
-				setClipScaleX(bridge_clip, whv.width / 100.0 /* default width */);
-				setClipScaleY(bridge_clip, whv.height / 100.0 /* default height */);
+				setClipWidth(bridge_clip, whv.width);
+				setClipHeight(bridge_clip, whv.height);
 			});
-		RenderResult([bridge_clip], wh, baseline, const(0), [\ -> { u1(); u2(); u3(); deleteNative(bridge_clip); }],
+		RenderResult([bridge_clip], wh, baseline, const(0), [\ -> { u1(); u2(); u3(); u4(); deleteNative(bridge_clip); }],
 			ClipCapabilities(true, false, true, false, true)
 		);
 	}
@@ -2062,6 +2051,14 @@ defineTextInputState(textfield : native, state : [TextInputState], wh : DynamicB
 				PasswordType(): {setTextInputType(textfield, "password")}
 			}
 		}
+		AutoCompleteType(type) : {
+			switch (type : ACType) {
+				ACUserName(): setTextInputAutoCompleteType(textfield, "username");
+				ACNewPassword(): setTextInputAutoCompleteType(textfield, "new-password");
+				ACCurrentPassword(): setTextInputAutoCompleteType(textfield, "current-password");
+				ACOneTimeCode(): setTextInputAutoCompleteType(textfield, "one-time-code");
+			}
+		}
 		TextInputFilter(f) : {
 			prevStr = ref getContent(textfield);
 			refArrayPush(disposers, addTextInputFilter(textfield, \str -> {if (f(str)) prevStr := str; ^prevStr;}));
@@ -2226,7 +2223,7 @@ renderGrid(cells : [[Form]], zorder : [int], tabOrder : [int]) -> RenderResult {
 					ri = (r.rowInfo)[x];
 					// Here, we throttle small changes to avoid excessive infinite small updates
 					// that cause stack problems
-					mwh = select2u(^w, ri.widthHeight, \lw, rwh -> {
+					mwh = select2u(^w, ri.widthHeight, \lw : double, rwh : WidthHeight -> {
 						max(lw, rwh.width)
 					});
 					mw = untilChangedu(mwh.first, 0.5);

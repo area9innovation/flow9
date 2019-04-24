@@ -3,6 +3,8 @@
 #include "core/RunnerMacros.h"
 
 #include <stdlib.h>
+#include <fstream>
+#include <sstream>
 
 AbstractHttpSupport::AbstractHttpSupport(ByteCodeRunner *owner) : NativeMethodHost(owner)
 {
@@ -210,10 +212,11 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             const unsigned char* pdata = (const unsigned char*)rq->tmp_buffer.data();
             size_t count = rq->tmp_buffer.size();
 
-            if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) // UTF-16 BOM
+            if (count >= 2 && pdata[0] == 0xFF && pdata[1] == 0xFE) { // UTF-16 BOM
                 data = RUNNER->AllocateString((unicode_char*)(pdata+2), (count-2)/2);
-            else
+            } else {
                 data = RUNNER->AllocateString(parseUtf8((const char*)pdata, count));
+            }
         }
 
         int i = 0;
@@ -344,6 +347,134 @@ void AbstractHttpSupport::decodeMap(RUNNER_VAR, HttpRequest::T_SMap *pmap, const
     }
 }
 
+void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
+    std::ostringstream body;
+
+    // based on this code: https://gist.github.com/mombrea/8467128
+    std::string boundary("*****");
+    std::string boundaryDataLine = "--" + boundary + "\r\n";
+
+    rq.headers[parseUtf8("Content-Type")] = parseUtf8("multipart/form-data; boundary=" + boundary);
+    rq.headers[parseUtf8("Connection")] = parseUtf8("Keep-Alive");
+
+    // loop for params
+    for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it)
+    {
+        body << boundaryDataLine;
+        body << "Content-Disposition: form-data; name=\"" << encodeUtf8(it->first)
+             << "\"\r\n\r\n" << encodeUtf8(it->second) << "\r\n";
+    }
+
+    // loop for attachments
+    for (HttpRequest::T_SMap::iterator it = rq.attachments.begin(); it != rq.attachments.end(); ++it)
+    {
+        std::ifstream t(encodeUtf8(it->second).c_str());
+        std::string fileData;
+
+        if (t.peek() == std::ifstream::traits_type::eof())
+            continue;
+
+        t.seekg(0, std::ios::end);
+        fileData.reserve(t.tellg());
+        t.seekg(0, std::ios::beg);
+
+        fileData.assign((std::istreambuf_iterator<char>(t)),
+                   std::istreambuf_iterator<char>());
+
+        body << boundaryDataLine;
+        body << "Content-Disposition: form-data; name=\"" << encodeUtf8(it->first) << "\";filename=\"" << encodeUtf8(it->second) << "\"\r\n\r\n";
+        body << fileData << "\r\n";
+    }
+
+    body << boundaryDataLine;
+
+    rq.payload = parseUtf8(body.str());
+}
+
+unicode_string AbstractHttpSupport::urlencode(const unicode_string &url)
+{
+    static const char lookup[]= "0123456789ABCDEF";
+    std::stringstream e;
+    const std::string &s = encodeUtf8(url);
+    for(size_t i = 0, ix = s.length(); i < ix; i++)
+    {
+        const char& c = s[i];
+
+        if ( (48 <= c && c <= 57) ||//0-9
+             (65 <= c && c <= 90) ||//abc...xyz
+             (97 <= c && c <= 122) || //ABC...XYZ
+             (c=='-' || c=='_' || c=='.' || c=='~')
+        ) {
+            e << c;
+        } else {
+            e << '%';
+            e << lookup[ (c&0xF0)>>4 ];
+            e << lookup[ (c&0x0F) ];
+        }
+    }
+    return parseUtf8(e.str());
+}
+
+void AbstractHttpSupport::processRequest(HttpRequest &rq) {
+    std::map<unicode_string,unicode_string>::iterator found = rq.headers.find(parseUtf8("Content-Type"));
+    bool useMultipart = found != rq.headers.end() && encodeUtf8(found->second).find("multipart/form-data") == 0;
+    if ((!rq.attachments.empty() || useMultipart) && rq.payload.empty()) {
+        processAttachmentsAsMultipart(rq);
+    } else {
+        std::string url = encodeUtf8(rq.url);
+
+        HttpRequest::T_SMap paramsEncoded;
+        for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it) {
+            paramsEncoded[urlencode(it->first)] = urlencode(it->second);
+        }
+
+        // Map url query parameters to rq.params
+        size_t queryPos = url.find_first_of('?');
+        size_t dashPos = url.find_first_of('#');
+
+        if (queryPos != std::string::npos) {
+            size_t querySize = dashPos == std::string::npos ? dashPos : dashPos - queryPos - 1;
+
+            std::string query = url.substr(queryPos + 1, querySize);
+
+            size_t pos = 0;
+            while(pos < querySize) {
+                size_t equalPos = query.find_first_of('=', pos);
+                size_t ampPos = query.find_first_of('&', pos);
+
+                unicode_string key = parseUtf8(query.substr(pos, equalPos - pos));
+                unicode_string value = parseUtf8(query.substr(equalPos + 1, ampPos - equalPos - 1));
+                paramsEncoded[key] = value;
+
+                pos = ampPos != std::string::npos ? ampPos + 1 : querySize;
+            }
+        }
+
+        unicode_string params;
+        for (HttpRequest::T_SMap::iterator it = paramsEncoded.begin(); it != paramsEncoded.end(); ++it) {
+            if (it != paramsEncoded.begin())
+                params += unicode_string(1, '&');
+
+            params += it->first + unicode_string(1, '=') + it->second;
+        }
+
+        if (encodeUtf8(rq.method) == "GET") {
+            std::string dash = dashPos != std::string::npos ? url.substr(dashPos, url.size() - dashPos) : "";
+
+            rq.url = parseUtf8(url.substr(0, queryPos)) + unicode_char('?') + params + parseUtf8(dash);
+        } else if (rq.payload.empty()) {
+            rq.payload = params;
+            rq.headers[parseUtf8("Content-Type")] = parseUtf8("application/x-www-form-urlencoded");
+        }
+    }
+
+    if (!rq.payload.empty()) {
+        std::ostringstream contentlength;
+        contentlength << rq.payload.size();
+        rq.headers[parseUtf8("Content-Length")] = parseUtf8(contentlength.str());
+    }
+}
+
 StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
 {
     RUNNER_PopArgs7(url, postMethod, headers, params, onData, onError, onStatus);
@@ -357,8 +488,7 @@ StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
 
-    rq.is_post = postMethod.GetBool();
-    if (rq.is_post) {
+    if (postMethod.GetBool()) {
         rq.method = parseUtf8("POST");
     } else {
         rq.method = parseUtf8("GET");
@@ -371,6 +501,7 @@ StackSlot AbstractHttpSupport::httpRequest(RUNNER_ARGS)
     decodeMap(RUNNER, &rq.headers, headers);
     decodeMap(RUNNER, &rq.params, params);
 
+    processRequest(rq);
     doRequest(rq);
 
     RETVOID;
@@ -395,6 +526,7 @@ StackSlot AbstractHttpSupport::httpCustomRequestNative(RUNNER_ARGS)
     decodeMap(RUNNER, &rq.headers, headers);
     decodeMap(RUNNER, &rq.params, params);
 
+    processRequest(rq);
     doRequest(rq);
 
     RETVOID;
@@ -410,7 +542,6 @@ StackSlot AbstractHttpSupport::preloadMediaUrl(RUNNER_ARGS)
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
-    rq.is_post = false;
     rq.method = parseUtf8("GET");
     rq.is_media_preload = true;
     rq.done_cb = onDone;
@@ -430,13 +561,13 @@ StackSlot AbstractHttpSupport::downloadFile(RUNNER_ARGS)
 	
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
-    rq.is_post = false;
     rq.method = parseUtf8("GET");
     rq.url = RUNNER->GetString(url);
     rq.data_cb = onData;
     rq.error_cb = onError;
     rq.progress_cb = onProgress;
-	
+
+    processRequest(rq);
     doRequest(rq);
 	
     RETVOID;
@@ -454,7 +585,6 @@ StackSlot AbstractHttpSupport::uploadFile(RUNNER_ARGS)
     rq.req_id = id;
 
     rq.url = RUNNER->GetString(url);
-    rq.is_post = true;
     rq.method = parseUtf8("POST");
 
     rq.open_cb = onOpen;
@@ -525,7 +655,6 @@ StackSlot AbstractHttpSupport::sendHttpRequestWithAttachments(RUNNER_ARGS) {
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
     rq.url = RUNNER->GetString(url);
-    rq.is_post = true;
     rq.method = parseUtf8("POST");
     rq.data_cb = onData;
     rq.error_cb = onError;
@@ -534,6 +663,7 @@ StackSlot AbstractHttpSupport::sendHttpRequestWithAttachments(RUNNER_ARGS) {
     decodeMap(RUNNER, &rq.params, params);
     decodeMap(RUNNER, &rq.attachments, attachments);
 
+    processRequest(rq);
     doRequest(rq);
 
     RETVOID;

@@ -9,6 +9,7 @@ export {
 	findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) -> void;
 	// Find unused exports and unused functions
 	findUnusedExports(prog : FiProgram, findUnusedFunctions : bool, onError : (FcError) -> void) -> void;
+	findUnusedLocalsExpSet(expr : FiExp, bound : Set<string>, arguments : bool, acc : Set<string>) -> Set<string>;
 }
 
 findUnusedLocals(prog : FiProgram, findUnusedArguments : bool, onError : (FcError) -> void) {
@@ -58,6 +59,51 @@ findUnusedLocalsExp(expr : FiExp, bound : Set<string>, flowfile : string, argume
 		FiInt(__, __):    { }
 		FiRequire(__, e, __, __): rec(e);
 		FiUnsafe(__, fb, __, __): rec(fb);
+	}
+}
+
+findUnusedLocalsExpSet(expr : FiExp, bound : Set<string>, arguments : bool, acc : Set<string>) -> Set<string> {
+	rec = \acc0, e -> findUnusedLocalsExpSet(e, bound, arguments, acc0);
+	switch (expr) {
+		FiLambda(args, body, __, start): {
+			r0 = rec(acc, body);
+			if (arguments) {
+				fold(args, r0, \acc1, a -> {
+					if (a.name != "__" && !containsSet(fifreevars(body), a.name)) {
+							insertSet(acc1, a.name);
+						} else {
+							acc1
+						}
+				})
+			} else {
+				r0;
+			}
+		}
+		FiCall(f, args, __, __): { r0 = rec(acc, f); fold(args, r0, rec); }
+		FiVar(__, __, __): acc;
+		FiLet(x, __, e1, e2, __, start): {
+			r0 = rec(acc, e1); r1 = rec(r0, e2);
+			if (!containsSet(bound, x) && !containsSet(fifreevars(e2), x)) {
+					insertSet(r1, x);
+				} else {
+					r1;
+				}
+		}
+		FiIf(e1, e2, e3, __, __): { r0 = rec(acc, e1); r1 = rec(r0, e2); rec(r1, e3); }
+		FiSwitch(e, __, cs, __, __): {
+			r0 = rec(acc, e);
+			fold(cs, r0, \acc1, c -> findUnusedLocalsExpSet(c.body, mergeSets(bound, buildSet(c.argNames)), arguments, acc));
+		}
+		FiCast(e, __, __, __, __):  rec(acc, e);
+		FiSeq(es, __, __):          fold(es, acc, rec);
+		FiCallPrim(__, es, __, __): fold(es, acc, rec);
+		FiString(__, __): acc;
+		FiBool(__, __):   acc;
+		FiDouble(__, __): acc;
+		FiVoid(__):       acc;
+		FiInt(__, __):    acc;
+		FiRequire(__, e, __, __): rec(acc, e);
+		FiUnsafe(__, fb, __, __): rec(acc, fb);
 	}
 }
 

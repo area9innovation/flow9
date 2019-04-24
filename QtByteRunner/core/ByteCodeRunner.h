@@ -1148,6 +1148,7 @@ public:
         const StackSlot &cb = pRunnerArgs__[0];
 
         RUNNER->DeferredActionQueue.remove(cb);
+        return cb;
     }
 
     double DeferredQueueTimeout; // <= 0 - no timeout

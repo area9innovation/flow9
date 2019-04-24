@@ -34,6 +34,9 @@
         [[NSNotificationCenter defaultCenter] addObserver: self selector:@selector(keyboardDidShow:) name: UIKeyboardDidShowNotification object: nil];
         [[NSNotificationCenter defaultCenter] addObserver: self selector:@selector(keyboardWillHide:) name: UIKeyboardWillHideNotification object: nil];
     }
+    
+    statusBarVisible = YES;
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void) viewDidAppear:(BOOL)animated {
@@ -230,6 +233,19 @@ static bool gestureBeingHandledByFlow = false;
 
 - (void) hideActivityIndicator {
     [ActivityIndicator stopAnimating];
+}
+
+- (UIViewController *)childViewControllerForStatusBarHidden {
+    return nil; // or viewControllers.first
+}
+
+- (BOOL)prefersStatusBarHidden {
+    return !statusBarVisible;
+}
+
+- (void) setStatusBarVisible: (BOOL)visible {
+    statusBarVisible = visible;
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 #pragma mark Debug console methods

@@ -38,6 +38,8 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.*;
 import java.util.Arrays;
+import java.text.SimpleDateFormat;
+import java.text.ParseException;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
@@ -912,14 +914,19 @@ public class Native extends NativeHost {
 		return 0;
 	}
 
+	static private final SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
+
 	public final String time2string(double time) {
-		// TODO
-		return "";
+		return dateFormat.format(new Date((new Double(time)).longValue()));
 	}
 
 	public final double string2time(String tv) {
-		// TODO
-		return 0;
+		try {
+			return dateFormat.parse(tv).getTime();
+		} catch (ParseException e) {
+			System.err.println(e.toString());
+			return 0;
+		}
 	}
 
 	public final String getUrl(String u, String t) {

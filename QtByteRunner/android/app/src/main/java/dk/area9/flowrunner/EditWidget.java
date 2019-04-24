@@ -4,6 +4,8 @@ import java.util.ArrayList;
 
 import android.content.Context;
 import android.os.Handler;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Spanned;
@@ -24,8 +26,9 @@ import android.view.View.OnFocusChangeListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 
 class EditWidget extends NativeWidget {
-    public EditWidget(FlowWidgetGroup group, long id) { super(group, id); }
+    EditWidget(FlowWidgetGroup group, long id) { super(group, id); }
     
+    @NonNull
     public TextView getText() {
         return (TextView)view;
     }
@@ -62,7 +65,7 @@ class EditWidget extends NativeWidget {
             reportChange(null);
         }
         
-        protected void onTextChanged (CharSequence text, int start, int before, int after) {
+        protected void onTextChanged (@NonNull CharSequence text, int start, int before, int after) {
             reportChange(text.toString());
         }
         
@@ -159,6 +162,7 @@ class EditWidget extends NativeWidget {
     private int alignment;
 
     private boolean multiline, readonly;
+    @NonNull
     private ArrayList<InputFilter> filters = new ArrayList<InputFilter>();
     private int input_type;
     private int ime_options;
@@ -201,6 +205,7 @@ class EditWidget extends NativeWidget {
         group.getWrapper().deliverEditStateUpdate(idv, cursor, start, end, text);        
     }
     
+    @NonNull
     private Runnable create_cb = new Runnable() {
         public void run() {
             if (id == 0) return;
@@ -228,7 +233,7 @@ class EditWidget extends NativeWidget {
 
                         textView.setOnTouchListener(new View.OnTouchListener() {
                             @Override
-                            public boolean onTouch(View view, MotionEvent motionEvent) {
+                            public boolean onTouch(@NonNull View view, @NonNull MotionEvent motionEvent) {
 
                                 view.getParent().requestDisallowInterceptTouchEvent(true);
                                 if ((motionEvent.getAction() & MotionEvent.ACTION_UP) != 0 && (motionEvent.getActionMasked() & MotionEvent.ACTION_UP) != 0)
@@ -245,6 +250,7 @@ class EditWidget extends NativeWidget {
                     }
 
                 textView.setOnFocusChangeListener(new OnFocusChangeListener() {
+                    @NonNull
                     ViewTreeObserver.OnGlobalLayoutListener layoutListener = new OnGlobalLayoutListener() {
                         float shift = 0.0f;
                         final Handler hdlr = new Handler();
@@ -286,10 +292,10 @@ class EditWidget extends NativeWidget {
     };
     
     public void configure(
-        String text, float font_size, int font_color,
-        boolean multiline, boolean readonly, float line_spacing,
-        String text_input_type, String alignment,
-        int max_size, int cursor_pos, int nsel_start, int nsel_end
+            @NonNull String text, float font_size, int font_color,
+            boolean multiline, boolean readonly, float line_spacing,
+            @NonNull String text_input_type, String alignment,
+            int max_size, int cursor_pos, int nsel_start, int nsel_end
     ) {
         this.text = text;
         this.native_font_size = font_size;
@@ -315,9 +321,10 @@ class EditWidget extends NativeWidget {
         
         filters.add(
                 new InputFilter() {
+                    @Nullable
                     @Override
-                    public CharSequence filter(CharSequence source, int start,
-                            int end, Spanned dest, int dstart, int dend) {
+                    public CharSequence filter(@NonNull CharSequence source, int start,
+                                               int end, @NonNull Spanned dest, int dstart, int dend) {
                         if (in_change) return null;
 
                         // Exit here to avoid crashes connected with focus change on keyboard Done button press

@@ -5,6 +5,8 @@ set(CMAKE_CXX_FLAGS "-O0 -ggdb3")
 set(CXXFLAGS "-O0 -ggdb3")
 set(CPPFLAGS "-O0 -ggdb3")
 
+add_definitions(-DDEBUG=1)
+
 add_subdirectory(syntax)
 
 set(kateflowplugin_SRCS
@@ -20,6 +22,7 @@ set(kateflowplugin_SRCS
     LocalsManager.cpp
     StackManager.cpp
     MiParser.cpp
+    Outline.cpp
     FlowValueParser.cpp
     DebugSymbols.cpp
     CompilerTextEdit.cpp

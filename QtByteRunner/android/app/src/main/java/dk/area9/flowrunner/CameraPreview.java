@@ -13,6 +13,7 @@ import android.media.MediaRecorder;
 import android.media.CamcorderProfile;
 import android.os.Build;
 import android.os.Environment;
+import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.Display;
 import android.view.Surface;
@@ -32,7 +33,7 @@ public class CameraPreview extends SurfaceView implements SurfaceHolder.Callback
     private boolean recordRunning = false;
     private FlowCameraAPI flowCameraAPI = FlowCameraAPI.getInstance();
 
-	public CameraPreview(Context context, CameraWidget owner, int camID) {
+	public CameraPreview(Context context, @NonNull CameraWidget owner, int camID) {
         super(context);
         this.context = context;
         this.owner = owner;
@@ -130,21 +131,21 @@ public class CameraPreview extends SurfaceView implements SurfaceHolder.Callback
             if (width > height)
                 ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
             else
-                ((Activity) context).setRequestedOrientation(9/* reversePortait */);
+                ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT);
             break;
         case Surface.ROTATION_180:
             if (height > width)
-                ((Activity) context).setRequestedOrientation(9/* reversePortait */);
+                ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT);
             else
-                ((Activity) context).setRequestedOrientation(8/* reverseLandscape */);
+                ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
             break;          
         case Surface.ROTATION_270:
             if (width > height)
-                ((Activity) context).setRequestedOrientation(8/* reverseLandscape */);
+                ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
             else
                 ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             break;
-        default :
+        case Surface.ROTATION_0:
             if (height > width)
                 ((Activity) context).setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             else

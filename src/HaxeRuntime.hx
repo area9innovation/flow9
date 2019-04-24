@@ -27,14 +27,80 @@ class HaxeRuntime {
 	static public inline function deref__<T>(val : Dynamic) : T { return val.__v; }
 	static public inline function setref__<T>(r : Dynamic, v : T) : Void { r.__v = v; }
 	static public inline function _s_(v : Dynamic) : Dynamic { return v; }
-
 	static public function initStruct(id : Int, name : String, args : Array<String>, atypes: Array<RuntimeType>) {
+#if (js)
+	untyped __js__("var j='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';var l=j.length;function f(i){var c=j[i%l|0];var r=i/l|0;return r>0?c+f(r-1):c;}");
+
+#if (readable)
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._name=\"'+name+'\";'+a+'return this;')}");
+#else
+	untyped __js__ ("if(args!=[]){var a='';for(var i=0;i<args.length;i++)a+=('this.'+args[i]+'='+args[i]+';');$global['c$'+f(id)]=new Function(args.join(','),'this._id='+id.toString()+';'+a+'return this;')}");
+#end
+#end
 		_structnames_.set(id, name);
 		_structids_.set(name, id);
 		_structargs_.set(id, args);
 		_structargtypes_.set(id, atypes);
 	}
 
+  static public function compareEqual(a : Dynamic, b : Dynamic) : Bool {
+    // Modelled after https://github.com/epoberezkin/fast-deep-equal/blob/master/index.js
+#if (js)
+    untyped __js__("
+if (a === b) return true;
+    var isArray = Array.isArray;
+    var keyList = Object.keys;
+    var hasProp = Object.prototype.hasOwnProperty;
+
+    if (a && b && typeof a == 'object' && typeof b == 'object') {
+        var arrA = isArray(a)
+          , arrB = isArray(b)
+          , i
+          , length
+          , key;
+
+    if (arrA && arrB) {
+      length = a.length;
+      if (length != b.length) return false;
+      for (i = length; i-- !== 0;)
+        if (!HaxeRuntime.compareEqual(a[i], b[i])) return false;
+      return true;
+    }
+
+    if (arrA != arrB) return false;
+");
+#if (readable)
+    untyped __js__("
+    if (hasProp.call(a, '_name') && hasProp.call(b, '_name')) {
+        if (a._name !== b._name) return false
+");
+#else
+    untyped __js__("
+    if (hasProp.call(a, '_id') && hasProp.call(b, '_id')) {
+        if (a._id !== b._id) return false
+");
+#end
+    untyped __js__("
+        var keys = keyList(a);
+        length = keys.length;
+
+        for (i = 1; i < length; i++) {
+            key = keys[i];
+            if (!HaxeRuntime.compareEqual(a[key], b[key])) return false;
+        }
+    }
+
+    if (hasProp.call(a, '__v') && hasProp.call(b, '__v')) {
+        return false;
+    }
+    return true;
+}
+");
+    return false;
+#else
+    return compareByValue(a, b) == 0;
+#end
+  }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
 		#if (js)
 			untyped __js__("if (o1 === o2) return 0;");

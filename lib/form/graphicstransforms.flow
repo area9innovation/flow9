@@ -6,7 +6,7 @@ export {
 	apply2dPointTransform(p : Point, matrix : [[double]]) -> Point;
 	apply2dPathTransform(path : [StaticGraphicOp], matrix : [[double]]) -> [StaticGraphicOp];
 	apply2dTransform(g : Graphics, matrix : [[double]]) -> Graphics;
-	
+
 	make2dTransform_nop() -> [[double]];
 	make2dTransform_translate(dx : double, dy : double) -> [[double]];
 	make2dTransform_scale(sx : double, sy : double) -> [[double]]; // NOTE: negative scales allowed
@@ -14,6 +14,8 @@ export {
 	make2dTransform_rotate2(degrees : double, axisX : double, axisY : double) -> [[double]];
 
 	// To combine matrices use multiplyMatrices() function from matrix.flow
+
+	deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp];
 }
 
 apply2dPointTransform(p : Point, matrix : [[double]]) -> Point {
@@ -25,12 +27,13 @@ apply2dPointTransform(p : Point, matrix : [[double]]) -> Point {
 }
 
 apply2dPathTransform(path : [StaticGraphicOp], matrix : [[double]]) -> [StaticGraphicOp] {
-	map(path, \op -> switch(op) {
+	map(path |> deconstructGraphicsPath, \op -> switch (op) {
 		MoveTo(x, y): { p = apply2dPointTransform(Point(x,y), matrix); MoveTo(p.x, p.y) }
 		LineTo(x, y): { p = apply2dPointTransform(Point(x,y), matrix); LineTo(p.x, p.y) }
 		CubicBezierTo(x, y, cx, cy): { p = apply2dPointTransform(Point(x,y), matrix); cp = apply2dPointTransform(Point(cx,cy), matrix); CubicBezierTo(p.x, p.y, cp.x, cp.y) }
 		QuadraticBezierTo(x, y, cx, cy): { p = apply2dPointTransform(Point(x,y), matrix); cp = apply2dPointTransform(Point(cx,cy), matrix); QuadraticBezierTo(p.x, p.y, cp.x, cp.y) }
 		ClosePath(): op;
+		default: op;
 	})
 }
 
@@ -79,4 +82,86 @@ make2dTransform_rotate2(degrees, axisX, axisY) {
 	t2 = make2dTransform_rotate(degrees);
 	t3 = make2dTransform_translate(axisX, axisY);
 	multiplyMatrices(multiplyMatrices(t1, t2), t3)
+}
+
+deconstructGraphicsPath(path : [StaticGraphicOp]) -> [StaticGraphicOp] {
+	deconstructGEllipse = \acc, x, y, wd, hgt -> {
+		segs = 8;
+		angleStep = 45.0;
+		angleStepR = PI / 4.0;
+
+		currAngleR = ref 0.0;
+		angleMidR = ref 0.0;
+
+		graphicsPathInit = [MoveTo(x, y - hgt)];
+
+		lastX = ref 0.0;
+		lastY = ref 0.0;
+
+		concat(
+			acc,
+			for(graphicsPathInit, \gp -> (length(gp) < segs + length(graphicsPathInit)), \gp -> {
+				currAngleR := min(^currAngleR + angleStepR, 2.0 * PI);
+				angleMidR := ^currAngleR - angleStepR * 0.5;
+
+				lastX := x + sin(^currAngleR) * wd;
+				lastY := y - cos(^currAngleR) * hgt;
+
+				arrayPush(
+					gp,
+					CubicBezierTo(
+						^lastX,
+						^lastY,
+						x + sin(^angleMidR) * wd / cos(angleStepR * 0.5),
+						y - cos(^angleMidR) * hgt / cos(angleStepR * 0.5)
+					)
+				)
+			})
+		)
+	};
+
+	fold(path, [], \acc : [StaticGraphicOp], p ->
+		switch (p : StaticGraphicOp) {
+			GRect(x, y, wd, hgt): {
+				concat(
+					acc,
+					[
+						MoveTo(x, y),
+						LineTo(x + wd, y),
+						LineTo(x + wd, y + hgt),
+						LineTo(x, y + hgt),
+						ClosePath()
+					]
+				)
+			}
+			GRoundedRect(x, y, wd, hgt, r): {
+				concat(
+					acc,
+					[
+						MoveTo(r + x, y),
+						LineTo(wd - r + x, y),
+						CubicBezierTo(wd + x, r + y, wd + x, y),
+						LineTo(wd + x, r + y),
+						LineTo(wd + x, hgt - r + y),
+						CubicBezierTo(wd - r + x, hgt + y, wd + x, hgt + y),
+						LineTo(wd - r + x, hgt + y),
+						LineTo(r + x, hgt + y),
+						CubicBezierTo(x, hgt - r + y, x, hgt + y),
+						LineTo(x, hgt - r + y),
+						LineTo(x, r + y),
+						CubicBezierTo(r + x, y, x, y),
+						LineTo(r + x, y),
+						ClosePath()
+					]
+				)
+			}
+			GEllipse(x, y, wd, hgt): {
+				deconstructGEllipse(acc, x, y, wd, hgt);
+			}
+			GCircle(x, y, r): {
+				deconstructGEllipse(acc, x, y, r, r);
+			}
+			default : arrayPush(acc, p);
+		}
+	)
 }

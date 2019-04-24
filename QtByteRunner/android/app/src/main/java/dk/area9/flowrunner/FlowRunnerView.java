@@ -11,6 +11,8 @@ import javax.microedition.khronos.opengles.GL10;
 
 import android.graphics.PixelFormat;
 import android.opengl.GLSurfaceView;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.GestureDetector.SimpleOnGestureListener;
@@ -44,7 +46,9 @@ class FlowRunnerView extends GLSurfaceView {
     
     // private static String TAG = "GL2JNIView";
     
+    @NonNull
     private final GestureDetector gestureDetector;
+    @NonNull
     public final FlowGestureListener gestureListener;
 
     public FlowRunnerView(FlowWidgetGroup group) {
@@ -97,17 +101,19 @@ class FlowRunnerView extends GLSurfaceView {
         wrapper.addListener(wrapper_cb);
     }
 
+    @NonNull
     private FlowRunnerWrapper.Listener wrapper_cb = new FlowRunnerWrapper.ListenerAdapter() {
         public void onFlowNeedsRepaint() {
             requestRender();
         }
     };
     
+    @NonNull
     private Renderer renderer = new Renderer() {
         boolean changed = false, created = false;
         int width, height;
 
-        public void onDrawFrame(GL10 gl) {
+        public void onDrawFrame(@NonNull GL10 gl) {
             if (group.getBlockEvents()) {
                 gl.glClearColor(1, 1, 1, 1);
                 gl.glClear(GL10.GL_COLOR_BUFFER_BIT);
@@ -150,7 +156,7 @@ class FlowRunnerView extends GLSurfaceView {
     
     private static class ContextFactory implements GLSurfaceView.EGLContextFactory {
         private static int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
-        public EGLContext createContext(EGL10 egl, EGLDisplay display, EGLConfig eglConfig) {
+        public EGLContext createContext(@NonNull EGL10 egl, EGLDisplay display, EGLConfig eglConfig) {
             Log.w(Utils.LOG_TAG, "creating OpenGL ES 2.0 context");
             checkEglError("Before eglCreateContext", egl);
             int[] attrib_list = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL10.EGL_NONE };
@@ -159,7 +165,7 @@ class FlowRunnerView extends GLSurfaceView {
             return context;
         }
 
-        public void destroyContext(EGL10 egl, EGLDisplay display, EGLContext context) {
+        public void destroyContext(@NonNull EGL10 egl, EGLDisplay display, EGLContext context) {
             egl.eglDestroyContext(display, context);
         }
     }
@@ -198,6 +204,7 @@ class FlowRunnerView extends GLSurfaceView {
          * perform actual matching in chooseConfig() below.
          */
         private static int EGL_OPENGL_ES2_BIT = 4;
+        @NonNull
         private static int[] s_configAttribs2 =
         {
             EGL10.EGL_RED_SIZE, 4,
@@ -207,7 +214,8 @@ class FlowRunnerView extends GLSurfaceView {
             EGL10.EGL_NONE
         };
 
-        public EGLConfig chooseConfig(EGL10 egl, EGLDisplay display) {
+        @Nullable
+        public EGLConfig chooseConfig(@NonNull EGL10 egl, EGLDisplay display) {
 
             /* Get the number of minimally matching EGL configurations
              */
@@ -230,8 +238,9 @@ class FlowRunnerView extends GLSurfaceView {
             return chooseConfig(egl, display, configs);
         }
 
-        public EGLConfig chooseConfig(EGL10 egl, EGLDisplay display,
-                EGLConfig[] configs) {
+        @Nullable
+        public EGLConfig chooseConfig(@NonNull EGL10 egl, EGLDisplay display,
+                                      @NonNull EGLConfig[] configs) {
             for(EGLConfig config : configs) {
                 int d = findConfigAttrib(egl, display, config,
                         EGL10.EGL_DEPTH_SIZE, 0);
@@ -274,6 +283,7 @@ class FlowRunnerView extends GLSurfaceView {
         protected int mAlphaSize;
         protected int mDepthSize;
         protected int mStencilSize;
+        @NonNull
         private int[] mValue = new int[1];
     }
     
@@ -285,7 +295,7 @@ class FlowRunnerView extends GLSurfaceView {
     private int touch_start_y = -1;
     private final int TOUCH_MOVE_THRESHOLD = 10;
     
-    public boolean onTouchEvent(MotionEvent event) {        
+    public boolean onTouchEvent(@NonNull MotionEvent event) {
         int x = Math.round(event.getX());
         int y = Math.round(event.getY());
         
@@ -346,7 +356,7 @@ class FlowRunnerView extends GLSurfaceView {
         
         public boolean isFlowGestureInProgress() { return scrollHandledByFlow || scaleHandledByFlow; }
         
-        public void onTouchEvent(MotionEvent event) {
+        public void onTouchEvent(@NonNull MotionEvent event) {
             int action = event.getActionMasked();
             
             if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_UP) {
@@ -370,7 +380,7 @@ class FlowRunnerView extends GLSurfaceView {
         }
         
         @Override
-        public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY)
+        public boolean onScroll(@NonNull MotionEvent e1, @NonNull MotionEvent e2, float distanceX, float distanceY)
         {
             if (e2.getPointerCount() == 1) {
                 if (!scrollInProgress) {
@@ -388,13 +398,13 @@ class FlowRunnerView extends GLSurfaceView {
         private boolean scaleHandledByFlow = false;
         private float totalScaleFactor = 1.0f;
         
-        public boolean onScaleBegin(ScaleGestureDetector d) { 
+        public boolean onScaleBegin(@NonNull ScaleGestureDetector d) {
             totalScaleFactor = 1.0f;
             scaleHandledByFlow = wrapper.deliverGestureEvent(FlowRunnerWrapper.EVENT_GESTURE_PINCH, FlowRunnerWrapper.GESTURE_STATE_BEGIN, d.getFocusX(), d.getFocusY(), 1.0f, 0.0f); 
             return scaleHandledByFlow;
         }
         
-        public boolean onScale(ScaleGestureDetector d) { 
+        public boolean onScale(@NonNull ScaleGestureDetector d) {
             if (scaleHandledByFlow) {
                 totalScaleFactor *= d.getScaleFactor();
                 wrapper.deliverGestureEvent(FlowRunnerWrapper.EVENT_GESTURE_PINCH, FlowRunnerWrapper.GESTURE_STATE_PROGRESS, d.getFocusX(), d.getFocusY(), totalScaleFactor, 0.0f);
@@ -402,7 +412,7 @@ class FlowRunnerView extends GLSurfaceView {
             
             return scaleHandledByFlow;
         }
-        public void onScaleEnd(ScaleGestureDetector d) {
+        public void onScaleEnd(@NonNull ScaleGestureDetector d) {
             wrapper.deliverGestureEvent(FlowRunnerWrapper.EVENT_GESTURE_PINCH, FlowRunnerWrapper.GESTURE_STATE_END, d.getFocusX(), d.getFocusY(), totalScaleFactor, 0.0f);
             scaleHandledByFlow = false;
         }

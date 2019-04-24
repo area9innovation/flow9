@@ -160,7 +160,9 @@ static void sigsegv_handler(int)
 
 NativeProgram *load_native_program();
 
+#ifdef FLOW_JIT
 FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file);
+#endif
 
 int main(int argc, char *argv[])
 {

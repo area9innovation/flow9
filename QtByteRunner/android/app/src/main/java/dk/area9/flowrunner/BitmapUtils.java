@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.support.annotation.NonNull;
 
 public class BitmapUtils {
     public static final int FIT_CONTAIN = 0;
@@ -27,7 +28,7 @@ public class BitmapUtils {
      * @return Bitmap image results
      * @throws IOException
      */
-    public static Bitmap handleSamplingAndRotationBitmap(Context context, Uri selectedImage, int desiredWidth, int desiredHeight, int fitMode) throws IOException {
+    public static Bitmap handleSamplingAndRotationBitmap(Context context, @NonNull Uri selectedImage, int desiredWidth, int desiredHeight, int fitMode) throws IOException {
         // NOTICE: Because this method use context.getContentResolver().openInputStream, better to run this method in background thread
         // First decode with inJustDecodeBounds=true to check dimensions
         final BitmapFactory.Options options = new BitmapFactory.Options();
@@ -129,7 +130,7 @@ public class BitmapUtils {
      * @param selectedImage Image URI
      * @return The resulted Bitmap after manipulation
      */
-    private static Bitmap rotateImageIfRequired(Context context, Bitmap img, Uri selectedImage) throws IOException {
+    private static Bitmap rotateImageIfRequired(@NonNull Context context, @NonNull Bitmap img, @NonNull Uri selectedImage) throws IOException {
         String path = Utils.getPath(context, selectedImage);
         if (path == null) {
             return img;
@@ -149,7 +150,7 @@ public class BitmapUtils {
         }
     }
     
-    private static int getImageOrientation(Context context, Uri selectedImage) throws IOException {
+    private static int getImageOrientation(@NonNull Context context, @NonNull Uri selectedImage) throws IOException {
         String path = Utils.getPath(context, selectedImage);
         if (path == null) {
             return 0; // TODO: we can't give info about orientation, may be we should inform about that?
@@ -169,7 +170,7 @@ public class BitmapUtils {
         }
     }
     
-    private static Bitmap rotateImage(Bitmap img, int degree) {
+    private static Bitmap rotateImage(@NonNull Bitmap img, int degree) {
         Matrix matrix = new Matrix();
         matrix.postRotate(degree);
         Bitmap rotatedImg = Bitmap.createBitmap(img, 0, 0, img.getWidth(), img.getHeight(), matrix, true);
