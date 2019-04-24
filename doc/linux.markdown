@@ -346,6 +346,6 @@ They can be run directly using `flow9/bin/lint.sh`.
 These tools are also used by the Sublime Text and Emacs integrations.
 (The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
-The instructions in [development.html](development.html) for using the
+The instructions in [development.markdown](development.markdown) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
 installed.
