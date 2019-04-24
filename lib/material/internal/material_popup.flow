@@ -61,21 +61,30 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 
 	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
 	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
-	fixPosition = contains(style, MFixPosition());
+	fixPosition = tryExtractStruct(style, MFixPosition(true));
 	scrollArea = extractStruct(style, RMScrollArea(0, 0));
 	borders = extractStruct(style, RMBorders(16.)).borders;
 	additionalBorder = extractStruct(style, RMOutterBorder(8.0)).border;
 	mHeight = extractStruct(style, RMHeight(-1., -1.)) |> (\f -> RMHeight(f.min - borders * 2., f.max - borders * 2.));
-	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale ->
-		(wh.height / ps.scale.y - borders * 2. - if (fixPosition) (ps.pos.y / ps.scale.y + offs.y) else 0.)
-		|> (\h ->
-			if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
-				min(mHeight.max, max(max(mHeight.min, 0.), h))
-			else if (mHeight.min > 0.)
-				max(mHeight.min, h)
-			else
-				h
-		);
+	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale -> {
+		hgt0 = wh.height / ps.scale.y - borders * 2.;
+
+		hgt =
+			eitherMap(fixPosition,
+				\fp ->
+					if (fp.top) {if (ps.pos.y > 0.) hgt0 - (ps.pos.y / ps.scale.y + offs.y) else hgt0}
+					else max(ps.pos.y, 0.),
+				hgt0
+			);
+		
+		if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
+			min(mHeight.max, max(max(mHeight.min, 0.), hgt))
+		else if (mHeight.min > 0.)
+			max(mHeight.min, hgt)
+		else
+			hgt
+	};
+
 	selected = extractStruct(style, RMSelected(-1)).selected;
 	inspectVisible = extractStruct(style, makeTScrollInspectVisible());
 	scrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
@@ -120,19 +129,26 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 
 	startingOffset = make(zeroPoint);
 	startingPosition =
-		if (fixPosition)
-			fselect2(
-				startingOffset,
-				positionDpiScale,
-				FLift2(\so : Point, ps : PositionScale -> Point(ps.pos.x + so.x, ps.pos.y + so.y))
-			)
-		else
+		eitherMap(
+			fixPosition, 
+			\fp ->
+				if (fp.top)
+					fselect2(startingOffset, positionDpiScale, FLift2(\so : Point, ps : PositionScale ->
+						Point(ps.pos.x + so.x, ps.pos.y + so.y)
+					))
+				else
+					fselect3(startingOffset, positionDpiScale, contentWH, \so : Point, ps : PositionScale, cWH ->
+						Point(ps.pos.x + so.x, ps.pos.y + so.y - cWH.height)
+					),
 			fselect4(
 				startingOffset,
 				positionDpiScale,
 				stageWH,
 				contentWH,
-				\so : Point, ps : PositionScale, sWH : WidthHeight, cWH : WidthHeight ->
+				\so : Point, ps : PositionScale, sWH : WidthHeight, cWH : WidthHeight -> {
+					wd = additionalBorder + cWH.width * ps.scale.x;
+					hgt = additionalBorder + (cWH.height + borders * 2.) * ps.scale.y;
+
 					Point(
 						min(
 							if (ps.pos.x + so.x < 0.) {
@@ -143,8 +159,8 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							} else
 								ps.pos.x + so.x,
 							max(
-								sWH.width - additionalBorder - cWH.width * ps.scale.x,
-								ps.pos.x - additionalBorder - cWH.width * ps.scale.x
+								sWH.width - wd,
+								ps.pos.x - wd
 							)
 						),
 						min(
@@ -156,12 +172,13 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							} else
 								ps.pos.y + so.y,
 							max(
-								sWH.height - additionalBorder - (cWH.height + borders * 2.) * ps.scale.y,
-								ps.pos.y - additionalBorder - (cWH.height + borders * 2.) * ps.scale.y
+								sWH.height - hgt,
+								ps.pos.y - hgt
 							)
 						)
 					)
-			);
+			})
+		);
 
 	availableForm = make(TEmpty());
 
