@@ -1,0 +1,320 @@
+import rendersupport3d;
+import fform/fform;
+
+export {
+	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> FForm;
+
+	F3DObject ::= F3DScene, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
+		F3DInspectRotation, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin, F3DInspectBoundingSphereMax,
+		F3DCamera, F3DLight, F3DMesh, F3DLoader, F3DAxesHelper, F3DGridHelper;
+
+		F3DScene(objects : Transform<[F3DObject]>);
+
+		F3DPosition(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
+		F3DRotation(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
+		F3DScale(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
+		F3DLookAt(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>, update : DynamicBehaviour<bool>);
+
+		F3DInspectRotation(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+		F3DInspectBoundingSphereCenter(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+		F3DInspectBoundingSphereMin(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+		F3DInspectBoundingSphereMax(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+
+		F3DLoader(objUrl : string, mtlUrl : string);
+
+		F3DAxesHelper(size : double);
+		F3DGridHelper(size : double, divisions : int, colorCenterLine : int, colorGrid : int);
+
+		F3DLight ::= F3DPointLight;
+			F3DPointLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, decay : Transform<double>);
+
+		F3DCamera ::= F3DPerspectiveCamera;
+			F3DPerspectiveCamera(fov : Transform<double>, aspect : Transform<double>, near : Transform<double>, far : Transform<double>);
+
+		F3DMesh(geometry : F3DGeometry, material : F3DMaterial);
+			F3DGeometry ::= F3DBoxGeometry, F3DCircleGeometry, F3DConeGeometry, F3DCylinderGeometry;
+				F3DBoxGeometry(width : double, height : double, depth : double, widthSegments : int, heightSegments : int, depthSegments : int);
+				F3DCircleGeometry(radius : double, segments : int, thetaStart : double, thetaLength : double);
+				F3DConeGeometry(radius : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
+				F3DCylinderGeometry(radiusTop : double, radiusBottom : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
+
+			F3DMaterial ::= F3DMeshBasicMaterial, F3DTextureLoader;
+				F3DMeshBasicMaterial(color : int, parameters : Tree<string, string>);
+				F3DTextureLoader(material : F3DMaterial, url : string);
+}
+
+F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> FForm {
+	if (js) {
+		metrics = make(FormMetrics(0., 0., 0., 0.));
+
+		FNativeForm(
+			FEmpty(),
+			metrics,
+			\ -> FEmpty(),
+			\__, __, __ -> {
+				clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
+
+				NativeRenderResult(
+					[clip],
+					concat3(
+						[
+							makeSubscribe(wh, \v -> {
+								setClipWidth(clip, v.width);
+								setClipHeight(clip, v.height);
+								nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
+							})()
+						],
+						render3dform(camera, \c -> { set3DCamera(clip, c); [] }),
+						render3dform(scene, \s -> { set3DScene(clip, s); [] })
+					)
+					|> (\f -> \ -> applyall(f))
+				)
+			}
+		);
+	} else {
+		FEmpty();
+	}
+}
+
+render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> void] {
+	switch (object : F3DObject) {
+		F3DScene(objects) : {
+			clip = make3DScene();
+
+			concat(
+				onLoad(clip),
+				[
+					makeSubscribeUns(objects, \ob ->
+						map(ob, \o -> render3dform(o, \c -> { add3DChild(clip, c); [\ -> remove3DChild(clip, c)] }))
+						|> concatA
+					)()
+				]
+			)
+		}
+		F3DPosition(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip -> {
+					concat(
+						onLoad(clip),
+						[
+							makeSubscribe(x, \v -> set3DObjectX(clip, v))(),
+							makeSubscribe(y, \v -> set3DObjectY(clip, v))(),
+							makeSubscribe(z, \v -> set3DObjectZ(clip, v))()
+						]
+					)
+				}
+			);
+
+			r;
+		}
+		F3DRotation(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							makeSubscribe(x, \v -> set3DObjectRotationX(clip, v))(),
+							makeSubscribe(y, \v -> set3DObjectRotationY(clip, v))(),
+							makeSubscribe(z, \v -> set3DObjectRotationZ(clip, v))()
+						]
+					)
+			);
+
+			r;
+		}
+		F3DScale(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							makeSubscribe(x, \v -> set3DObjectScaleX(clip, v))(),
+							makeSubscribe(y, \v -> set3DObjectScaleY(clip, v))(),
+							makeSubscribe(z, \v -> set3DObjectScaleZ(clip, v))()
+						]
+					)
+			);
+
+			r;
+		}
+		F3DLookAt(innerObject, x, y, z, update) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							make4Subscribe(x, y, z, update, \v1, v2, v3, __ -> set3DObjectLookAt(clip, v1, v2, v3))()
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectRotation(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectRotationListener(clip, \xyz -> {
+								nextDistinct(x, xyz[0]);
+								nextDistinct(y, xyz[1]);
+								nextDistinct(z, xyz[2]);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectBoundingSphereCenter(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectBoundingBoxListener(clip, \box -> {
+								nextDistinct(x, (box[0][0] + box[1][0]) / 2.0);
+								nextDistinct(y, (box[0][1] + box[1][1]) / 2.0);
+								nextDistinct(z, (box[0][2] + box[1][2]) / 2.0);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectBoundingSphereMin(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectBoundingBoxListener(clip, \box -> {
+								nextDistinct(x, box[0][0]);
+								nextDistinct(y, box[0][1]);
+								nextDistinct(z, box[0][2]);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectBoundingSphereMax(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectBoundingBoxListener(clip, \box -> {
+								nextDistinct(x, box[1][0]);
+								nextDistinct(y, box[1][1]);
+								nextDistinct(z, box[1][2]);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DLight() : {
+			renderF3DLight(object, onLoad);
+		}
+		F3DCamera() : {
+			renderF3DCamera(object, onLoad);
+		}
+		F3DMesh(geometry, material) : {
+			onLoad(make3DMesh(renderF3DGeometry(geometry), renderF3DMaterial(material)));
+		}
+		F3DLoader(objUrl, mtlUrl) : {
+			uns = ref [];
+
+			load3DObject(objUrl, mtlUrl, \obj -> {
+				uns := onLoad(obj);
+			});
+
+			[
+				\ -> dispUnsA(uns)
+			]
+		}
+		F3DAxesHelper(size) : {
+			onLoad(make3DAxesHelper(size));
+		}
+		F3DGridHelper(size, divisions, colorCenterLine, colorGrid) : {
+			onLoad(make3DGridHelper(size, divisions, colorCenterLine, colorGrid));
+		}
+	}
+}
+
+renderF3DCamera(camera : F3DCamera, onLoad : (native) -> [() -> void]) -> [() -> void] {
+	switch (camera : F3DCamera) {
+		F3DPerspectiveCamera(fov, aspect, near, far): {
+			clip = make3DPerspectiveCamera(fgetValue(fov), fgetValue(aspect), fgetValue(near), fgetValue(far));
+
+			concat(
+				onLoad(clip),
+				[
+					makeSubscribe2(fov, \v -> set3DCameraFov(clip, v))(),
+					makeSubscribe2(aspect, \v -> set3DCameraAspect(clip, v))(),
+					makeSubscribe2(near, \v -> set3DCameraNear(clip, v))(),
+					makeSubscribe2(far, \v -> set3DCameraFar(clip, v))()
+				]
+			)
+		}
+	}
+}
+
+renderF3DLight(light : F3DLight, onLoad : (native) -> [() -> void]) -> [() -> void] {
+	switch (light : F3DLight) {
+		F3DPointLight(color, intensity, distance, decay): {
+			clip = make3DPointLight(fgetValue(color), fgetValue(intensity), fgetValue(distance), fgetValue(decay));
+
+			concat(
+				onLoad(clip),
+				[
+					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
+					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
+					makeSubscribe2(distance, \v -> set3DLightDistance(clip, v))(),
+					makeSubscribe2(decay, \v -> set3DLightDecay(clip, v))()
+				]
+			)
+		}
+	}
+}
+
+renderF3DGeometry(geometry : F3DGeometry) -> native {
+	switch (geometry : F3DGeometry) {
+		F3DBoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments) : {
+			make3DBoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+		}
+		F3DCircleGeometry(radius, segments, thetaStart, thetaLength) : {
+			make3DCircleGeometry(radius, segments, thetaStart, thetaLength);
+		}
+		F3DConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength) : {
+			make3DConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+		}
+		F3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength) : {
+			make3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+		}
+	}
+}
+
+renderF3DMaterial(material : F3DMaterial) -> native {
+	switch (material : F3DMaterial) {
+		F3DMeshBasicMaterial(color, parameters) : {
+			make3DMeshBasicMaterial(color, parameters |> tree2pairs |> (\p -> map(p, \v -> [v.first, v.second])));
+		}
+		F3DTextureLoader(innerMaterial, url) : {
+			load3DTexture(renderF3DMaterial(innerMaterial), url);
+		}
+	}
+}
