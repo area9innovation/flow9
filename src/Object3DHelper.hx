@@ -26,4 +26,39 @@ class Object3DHelper {
 
 		return completeBoundingBox;
 	}
+
+	public static function broadcastEvent(parent : Object3D, event : String) : Void {
+		parent.dispatchEvent({ type : event });
+
+		var children : Array<Dynamic> = untyped parent.children;
+		if (children != null) {
+			for (c in children) {
+				broadcastEvent(c, event);
+			}
+		}
+	}
+
+	public static function emitEvent(parent : Object3D, event : String) : Void {
+		parent.dispatchEvent({ type : event });
+
+		if (parent.parent != null) {
+			emitEvent(parent.parent, event);
+		}
+	}
+
+	public static function add(parent : Object3D, child : Object3D) : Void {
+		parent.add(child);
+
+		emitEvent(parent, "box");
+
+		broadcastEvent(child, "position");
+		broadcastEvent(child, "scale");
+		broadcastEvent(child, "rotation");
+	}
+
+	public static function remove(parent : Object3D, child : Object3D) : Void {
+		parent.remove(child);
+
+		emitEvent(parent, "box");
+	}
 }

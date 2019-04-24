@@ -121,6 +121,9 @@ class RenderSupport3D {
 	public static function set3DObjectX(object : Object3D, x : Float) : Void {
 		if (object.position.x != x) {
 			object.position.x = x;
+
+			object.broadcastEvent("position");
+
 			object.invalidateStage();
 		}
 	}
@@ -128,6 +131,9 @@ class RenderSupport3D {
 	public static function set3DObjectY(object : Object3D, y : Float) : Void {
 		if (object.position.y != y) {
 			object.position.y = y;
+
+			object.broadcastEvent("position");
+
 			object.invalidateStage();
 		}
 	}
@@ -135,6 +141,9 @@ class RenderSupport3D {
 	public static function set3DObjectZ(object : Object3D, z : Float) : Void {
 		if (object.position.z != z) {
 			object.position.z = z;
+
+			object.broadcastEvent("position");
+
 			object.invalidateStage();
 		}
 	}
@@ -158,6 +167,10 @@ class RenderSupport3D {
 
 		if (object.rotation.x != x) {
 			object.rotation.x = x;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("rotation");
+
 			object.invalidateStage();
 		}
 	}
@@ -167,6 +180,10 @@ class RenderSupport3D {
 
 		if (object.rotation.y != y) {
 			object.rotation.y = y;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("rotation");
+
 			object.invalidateStage();
 		}
 	}
@@ -176,6 +193,10 @@ class RenderSupport3D {
 
 		if (object.rotation.z != z) {
 			object.rotation.z = z;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("rotation");
+
 			object.invalidateStage();
 		}
 	}
@@ -197,6 +218,10 @@ class RenderSupport3D {
 	public static function set3DObjectScaleX(object : Object3D, x : Float) : Void {
 		if (object.scale.x != x) {
 			object.scale.x = x;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("scale");
+
 			object.invalidateStage();
 		}
 	}
@@ -204,6 +229,10 @@ class RenderSupport3D {
 	public static function set3DObjectScaleY(object : Object3D, y : Float) : Void {
 		if (object.scale.y != y) {
 			object.scale.y = y;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("scale");
+
 			object.invalidateStage();
 		}
 	}
@@ -211,6 +240,10 @@ class RenderSupport3D {
 	public static function set3DObjectScaleZ(object : Object3D, z : Float) : Void {
 		if (object.scale.z != z) {
 			object.scale.z = z;
+
+			object.broadcastEvent("position");
+			object.broadcastEvent("scale");
+
 			object.invalidateStage();
 		}
 	}
@@ -224,6 +257,50 @@ class RenderSupport3D {
 	public static function get3DObjectBoundingBox(object : Object3D) : Array<Array<Float>> {
 		var box = object.getBoundingBox();
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
+	}
+
+	public static function add3DObjectPositionListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb([get3DObjectX(object), get3DObjectY(object), get3DObjectZ(object)]);
+		};
+
+		fn(0);
+
+		object.addEventListener("position", fn);
+		return function() { object.removeEventListener("position", fn); };
+	}
+
+	public static function add3DObjectRotationListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb([get3DObjectRotationX(object), get3DObjectRotationY(object), get3DObjectRotationZ(object)]);
+		};
+
+		fn(0);
+
+		object.addEventListener("rotation", fn);
+		return function() { object.removeEventListener("rotation", fn); };
+	}
+
+	public static function add3DObjectScaleListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb([get3DObjectScaleX(object), get3DObjectScaleY(object), get3DObjectScaleZ(object)]);
+		};
+
+		fn(0);
+
+		object.addEventListener("scale", fn);
+		return function() { object.removeEventListener("scale", fn); };
+	}
+
+	public static function add3DObjectBoundingBoxListener(object : Object3D, cb : (Array<Array<Float>>) -> Void) : Void -> Void {
+		var fn = function(e : Dynamic) {
+			cb(get3DObjectBoundingBox(object));
+		};
+
+		fn(0);
+
+		object.addEventListener("box", fn);
+		return function() { object.removeEventListener("box", fn); };
 	}
 
 

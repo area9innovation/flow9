@@ -18,6 +18,10 @@ import Platform;
 
 using DisplayObjectHelper;
 
+import js.three.Object3D;
+
+using Object3DHelper;
+
 class RenderSupportJSPixi {
 	public static var PixiView : Dynamic;
 	public static var PixiStage = new FlowContainer(true);
@@ -1082,27 +1086,27 @@ class RenderSupportJSPixi {
 			return clip.addTextInputKeyUpEventFilter(filter);
 	}
 
-	public static function addChild(parent : FlowContainer, child : Dynamic) : Void {
+	public static function addChild(parent : Dynamic, child : Dynamic) : Void {
 		if (parent.addChild != null) {
-			parent.addChild(child);
+			cast(parent, FlowContainer).addChild(child);
 		} else {
-			untyped parent.add(child);
+			cast(parent, Object3D).add(child);
 		}
 	}
 
-	public static function addChildAt(parent : FlowContainer, child : Dynamic, id : Int) : Void {
+	public static function addChildAt(parent : Dynamic, child : Dynamic, id : Int) : Void {
 		if (parent.addChildAt != null) {
-			parent.addChildAt(child, id);
+			cast(parent, FlowContainer).addChildAt(child, id);
 		} else {
-			untyped parent.add(child);
+			cast(parent, Object3D).add(child);
 		}
 	}
 
-	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
+	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
 		if (parent.removeChild != null) {
-			parent.removeChild(child);
+			cast(parent, FlowContainer).removeChild(child);
 		} else {
-			untyped parent.remove(child);
+			cast(parent, Object3D).remove(child);
 		}
 	}
 
