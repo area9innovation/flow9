@@ -18,8 +18,6 @@ class VideoClip extends FlowContainer {
 	private var startTime : Float = 0;
 	private var endTime : Float = 0;
 
-	private var videoSprite : Sprite;
-	private var videoTexture : Texture;
 	private var fontFamily : String = '';
 	private var textField : TextClip;
 	private var loaded : Bool = false;
@@ -116,13 +114,6 @@ class VideoClip extends FlowContainer {
 			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 
-		videoTexture = Texture.fromVideo(nativeWidget);
-		untyped videoTexture.baseTexture.autoPlay = !startPaused;
-		untyped videoTexture.baseTexture.autoUpdate = false;
-		videoSprite = new Sprite(videoTexture);
-		untyped videoSprite._visible = true;
-		addChild(videoSprite);
-
 		RenderSupportJSPixi.on("drawframe", updateNativeWidget);
 		once("removed", deleteVideoClip);
 
@@ -131,6 +122,21 @@ class VideoClip extends FlowContainer {
 
 		if (!startPaused && !CanAutoPlay)
 			playFn(false);
+	}
+
+	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+		{
+			return;
+		}
+
+		var ctx : Dynamic = untyped renderer.context;
+
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx, worldTransform.ty);
+		ctx.drawImage(nativeWidget, 0, 0, nativeWidget.width, nativeWidget.height, 0, 0, nativeWidget.width, nativeWidget.height);
+
+		untyped super.renderCanvas(renderer);
 	}
 
 	private function deleteVideoClip() : Void {
@@ -144,7 +150,6 @@ class VideoClip extends FlowContainer {
 
 			RenderSupportJSPixi.off("drawframe", updateNativeWidget);
 
-			deleteVideoSprite();
 			deleteSubtitlesClip();
 
 			destroyStreamStatusListeners();
@@ -240,19 +245,6 @@ class VideoClip extends FlowContainer {
 		textField = null;
 	}
 
-	private function deleteVideoSprite() : Void {
-		if (videoSprite != null) {
-			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
-			removeChild(videoSprite);
-			videoSprite = null;
-		}
-
-		if (videoTexture != null) {
-			videoTexture.destroy(true);
-			videoTexture = null;
-		}
-	}
-
 	public function getCurrentTime() : Float {
 		return nativeWidget != null ? nativeWidget.currentTime : 0;
 	}
@@ -285,7 +277,6 @@ class VideoClip extends FlowContainer {
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 
 		if (textField != null) {
-			swapChildren(videoSprite, textField);
 			updateSubtitlesClip();
 		};
 
