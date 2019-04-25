@@ -12,7 +12,10 @@ namespace flow {
 typedef QMap<QString, QDateTime> ProgTimestamps;
 typedef QMap<QString, QString> ConfigFile;
 
-QString curIdentifier(KTextEditor::MainWindow* mainWindow);
+QString curIdentifier(KTextEditor::View* activeView);
+inline QString curIdentifier(KTextEditor::MainWindow*  mainWindow) {
+	return curIdentifier(mainWindow->activeView());
+}
 QString curFile(KTextEditor::MainWindow* mainWindow);
 QString stripQuotes(const QString&);
 QTableWidgetItem* setNotEditable(QTableWidgetItem* item);

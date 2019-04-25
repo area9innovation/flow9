@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import socket
+import time
 
 # Prevent full stack trace when user press Ctrl-C
 sys.tracebacklimit=0
@@ -53,20 +54,37 @@ def run_flowc1(args):
 	proc.communicate()
 	return proc.returncode
 
+def write_server_log(log_name, msg):
+	ts = time.strftime("[%d-%m-%Y %H:%M:%S]", time.localtime())
+	log_file_name = "./.log/flowc1_server_" + log_name + ".log"
+	log_file = ""
+	if (os.path.isfile(log_file_name)):
+		log_file = open(log_file_name, 'r').read()
+	log_lines = log_file.split("\n")
+	if len(log_lines) > 128:
+		log_lines = log_lines[16:]
+	log_lines.append(ts + " " + msg)
+	log_file = '\n'.join(log_lines)
+	open(log_file_name, 'w').write(log_file)
+
+def run_server(input_port, server_port):
+	dock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	dock_socket.bind(('', input_port))
+	dock_socket.listen(5)
+	while True:
+		client_socket = dock_socket.accept()[0]
+		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		server_socket.connect(('localhost', server_port))
+		thread.start_new_thread(forward_request, (client_socket, server_socket))
+		thread.start_new_thread(forward_response, (server_socket, client_socket))
+		write_server_log('server', 'forward/response threads are started')
+
 def server(input_port, server_port):
 	try:
-		dock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		dock_socket.bind(('', input_port))
-		dock_socket.listen(5)
-		while True:
-			client_socket = dock_socket.accept()[0]
-			server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			server_socket.connect(('localhost', server_port))
-			thread.start_new_thread(forward_request, (client_socket, server_socket))
-			thread.start_new_thread(forward_response, (server_socket, client_socket))
-
-	except:
-		print("Couldn't start server via proxy")
+		run_server(input_port, server_port)
+	except Exception as ex:
+		print("Couldn't start server via proxy: " + str(ex))
+		write_server_log('server', "Couldn't start server via proxy: " + str(ex))
 		sys.exit(1)
 
 request_sent = False
@@ -74,6 +92,7 @@ request_sent = False
 def forward_request(source, destination):
 	global request_sent
 	if request_sent:
+		write_server_log('request', 'HTTP/1.1 503 Server is busy')
 		source.sendall('HTTP/1.1 503 Server is busy.\r\n\r\n'.encode())
 	else:
 		request_sent = True
@@ -81,13 +100,16 @@ def forward_request(source, destination):
 		while string:
 			try:
 				string = source.recv(1024)
-			except:
+			except Exception as ex:
 				string = False
+				write_server_log('request', 'exception: ' + str(ex))
 			if string:
 				destination.sendall(string)
+				write_server_log('request', 'message of size ' + str(len(string)) + ' forwarded')
 			else:
 				source.shutdown(socket.SHUT_RD)
 				destination.shutdown(socket.SHUT_WR)
+				write_server_log('request', 'destination shutdown')
 
 def forward_response(source, destination):
 	global request_sent
@@ -95,13 +117,27 @@ def forward_response(source, destination):
 	while string:
 		try:
 			string = source.recv(1024)
-		except:
+		except Exception as ex:
 			string = False
+			write_server_log('request', 'exception: ' + str(ex))
 		if string:
 			destination.sendall(string)
+			write_server_log('response', 'message of size ' + str(len(string)) + ' forwarded')
 		else:
 			request_sent = False
 			destination.shutdown(socket.SHUT_WR)
+			write_server_log('response', 'destination shutdown')
+
+def port_is_used(port):
+	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	try:
+		s.bind(("", port))
+	except Exception as ex:
+		print("Port: " + str(port) + " cannot be used: " + str(ex))
+		write_server_log('server', 'port ' + str(port) + ' cannot be open ' + str(ex))
+		return True
+	s.close()
+	return False
 
 def main():
 	args = sys.argv[1:]
@@ -121,8 +157,11 @@ def main():
 				server_args += [arg]
 		if not port_explicitly_set:
 			server_args += ["server-port=" + str(server_port)]
-		thread.start_new_thread(server, (input_port, server_port))
-		return run_flowc1(server_args)
+		if not port_is_used(server_port):
+			if not os.path.exists('./.log'):
+				os.makedirs('./.log')
+			thread.start_new_thread(server, (input_port, server_port))
+			return run_flowc1(server_args)
 	else:
 		return run_flowc1(args)
 

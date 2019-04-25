@@ -184,7 +184,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbWebClipHostCall, "(JLjava/lang/String;)V") \
     CALLBACK(cbSetWebClipZoomable, "(JZ)V") \
     CALLBACK(cbSetWebClipDomains, "(J[Ljava/lang/String;)V") \
-    CALLBACK(cbStartHttpRequest, "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)V") \
+    CALLBACK(cbStartHttpRequest, "(ILjava/lang/String;Ljava/lang/String;[Ljava/lang/String;[B)V") \
     CALLBACK(cbStartMediaPreload, "(ILjava/lang/String;)V") \
     CALLBACK(cbRemoveUrlFromCache, "(Ljava/lang/String;)V") \
     CALLBACK(cbBeginLoadSound, "(JLjava/lang/String;)V") \
@@ -1888,15 +1888,20 @@ void AndroidHttpSupport::doRequest(HttpRequest &rq)
     int id = rq.req_id;
     jstring url_str = string2jni(env, rq.url);
 
+    rq.headers.erase(parseUtf8("Content-Length"));
+
     if (rq.is_media_preload) {
         env->CallVoidMethod(owner->owner, cbStartMediaPreload, id, url_str);
     } else {
         jstring method_str = string2jni(env, rq.method);
-        jstring payload_str = string2jni(env, rq.payload);
+
+        jbyteArray payload = env->NewByteArray(rq.payload.size());
+        env->SetByteArrayRegion(payload, 0, rq.payload.size(), reinterpret_cast<jbyte*>(rq.payload.data()));
+
         jobjectArray header_arr = string_map2jni(env, rq.headers);
 
         env->CallVoidMethod(owner->owner, cbStartHttpRequest, id, url_str, method_str,
-                            header_arr, payload_str);
+                            header_arr, payload);
     }
 
     std::string msg;

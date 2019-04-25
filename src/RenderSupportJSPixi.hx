@@ -49,7 +49,6 @@ class RenderSupportJSPixi {
 	// screen keyboard
 	private static var WindowTopHeight : Int;
 	private static var RenderSupportJSPixiInitialised : Bool = init();
-	private static var RequestAnimationFrameId : Int = -1;
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
 	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
@@ -140,6 +139,10 @@ class RenderSupportJSPixi {
 		backingStoreRatio = getBackingStoreRatio();
 
 		if (PixiRenderer != null) {
+			if (untyped PixiRenderer.gl != null) {
+				untyped PixiRenderer.gl.destroy();
+			}
+
 			PixiRenderer.destroy();
 		}
 
@@ -175,6 +178,27 @@ class RenderSupportJSPixi {
 			PixiRenderer = new CanvasRenderer(Browser.window.innerWidth + 1, Browser.window.innerHeight + 1, options);
 
 			RendererType = "canvas";
+		}
+
+		if (RendererType == "canvas") {
+			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
+					transparent : true,
+					autoResize : false,
+					antialias : Antialias,
+					roundPixels : RoundPixels
+				});
+
+			if (untyped PixiRenderer.gl.plugins != null) {
+				untyped PixiRenderer.gl.plugins.accessibility.destroy();
+				untyped PixiRenderer.gl.plugins.prepare.destroy();
+				untyped PixiRenderer.gl.plugins.interaction.destroy();
+				untyped PixiRenderer.gl.plugins.extract.destroy();
+
+				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.accessibility");
+				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.prepare");
+				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.interaction");
+				untyped __js__("delete RenderSupportJSPixi.PixiRenderer.gl.plugins.extract");
+			}
 		}
 
 		// Disable Pixi's accessibility manager plugin.
@@ -213,7 +237,7 @@ class RenderSupportJSPixi {
 		PixiWorkarounds.workaroundTextMetrics();
 
 		// Required for MaterialIcons measurements
-		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█'");
+		untyped __js__("PIXI.TextMetrics.METRICS_STRING = '|Éq█Å'");
 		PixiWorkarounds.workaroundRendererDestroy();
 		PixiWorkarounds.workaroundProcessInteractive();
 
@@ -734,12 +758,17 @@ class RenderSupportJSPixi {
 		AccessWidget.updateAccessTree();
 
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
-			PixiRenderer.render(PixiStage, null, true, null, !TransformChanged);
+			PixiStageChanged = false;
+
+			if (TransformChanged) {
+				TransformChanged = false;
+
+				PixiRenderer.render(PixiStage, null, true, null, false);
+			} else {
+				PixiRenderer.render(PixiStage, null, true, null, true);
+			}
 
 			emit("stagechanged", timestamp);
-
-			TransformChanged = false;
-			PixiStageChanged = false;
 		}
 
 		requestAnimationFrame();
@@ -1661,8 +1690,6 @@ class RenderSupportJSPixi {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
-	// errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
 	}
@@ -1720,69 +1747,61 @@ class RenderSupportJSPixi {
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
 		clip.invalidateStage();
+		untyped clip.filterPadding = 0.0;
+		untyped clip.glShaders = false;
 
-		if (RendererType == "canvas") {
-			filters = filters.filter(function(f) {
-				return f != null && untyped (
-					__instanceof__(f, DropShadowFilter) ||
-					__instanceof__(f, BlurFilter)
-				);
-			});
-			untyped clip.canvasFilters = filters;
-		} else {
-			var dropShadowPadding = 0.0;
-			var dropShadowCount = 0;
+		var dropShadowCount = 0;
 
-			// Get rid of null filters (Bevel is not implemented)
-			filters = filters.filter(function(f) {
-				if (untyped __instanceof__(f, DropShadowFilter)) {
-					dropShadowPadding = Math.max(untyped f.padding, dropShadowPadding);
-					dropShadowCount++;
-				} else {
-					if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
-						var fn = function () {
-							if (f.uniforms.time != null) {
-								f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
-							}
+		filters = filters.filter(function(f) {
+			if (f == null) {
+				return false;
+			}
 
-							if (f.uniforms.seed != null) {
-								f.uniforms.seed = Math.random();
-							}
+			if (f.padding != null) {
+				untyped clip.filterPadding = Math.max(f.padding, untyped clip.filterPadding);
+				dropShadowCount++;
+			}
 
-							if (f.uniforms.bounds != null) {
-								var bounds = clip.getBounds(true);
-
-								f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
-							}
-
-							if (clip.getClipWorldVisible()) {
-								InvalidateStage();
-							}
-						};
-
-						clip.onAdded(function () {
-							PixiStage.on("drawframe", fn);
-
-							return function () { PixiStage.off("drawframe", fn); };
-						});
-					}
-				}
-
-				return f != null;
-			});
-
-			// Increase padding in case we have multiple DropShadowFilters
-			if (dropShadowCount > 1) {
-				filters = filters.filter(function(f) {
-					if (untyped __instanceof__(f, DropShadowFilter)) {
-						f.padding = dropShadowPadding * dropShadowCount;
+			if (f.uniforms != null && (f.uniforms.time != null || f.uniforms.seed != null || f.uniforms.bounds != null)) {
+				var fn = function () {
+					if (f.uniforms.time != null) {
+						f.uniforms.time = f.uniforms.time == null ? 0.0 : f.uniforms.time + 0.01;
 					}
 
-					return f != null;
+					if (f.uniforms.seed != null) {
+						f.uniforms.seed = Math.random();
+					}
+
+					if (f.uniforms.bounds != null) {
+						var bounds = clip.getBounds(true);
+
+						f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
+					}
+
+					if (clip.getClipWorldVisible()) {
+						InvalidateStage();
+					}
+				};
+
+				clip.onAdded(function () {
+					PixiStage.on("drawframe", fn);
+
+					return function () { PixiStage.off("drawframe", fn); };
 				});
 			}
 
-			clip.filters = filters.length > 0 ? filters : null;
+			if (untyped !__instanceof__(f, DropShadowFilter) && untyped !__instanceof__(f, BlurFilter)) {
+				untyped clip.glShaders = true;
+			}
+
+			return true;
+		});
+
+		untyped clip.filterPadding = clip.filterPadding * dropShadowCount;
+		clip.filters = filters.length > 0 ? filters : null;
+
+		if (RendererType == "canvas") {
+			untyped clip.canvasFilters = clip.filters;
 		}
 	}
 

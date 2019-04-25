@@ -5,24 +5,39 @@ export {
 }
 
 fcPrintOutline(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int) -> void) -> void {
-
-	prog = parseAndTypecheckFlowFile(config, globEnv, config.flowfile).first;
-	module = lookupTreeDef(prog.modules, config.flowfile, dummyFiModule);
-
-	exportedPos = \exported : string ->
-		switch (lookupTree(prog.names.toplevel, exported)) {
-		Some(decl):
-			switch(decl) {
-				FiFunctionDec(__,__,__,declStart,__): declStart;
-				FiGlobalVar(__,__,__,declStart,__): declStart;
-				FiNativeDec(__,__,__,__,__,declStart,__): declStart;
+	parsed = parseFlowFileOrLoadCached(config, globEnv, config.flowfile, "", 0, 0);
+	fcacc = prepareInitialFlowcAcc(config);
+	if (parsed.second == dummyFcError) {
+		switch (parsed.first) {
+			FcParsed(fileinfo, syntaxtree, __, __, __): {
+				fcmodule = desugarFcModule(fcacc, initFcTypeEnvLocal(), fileinfo, syntaxtree);
+				fcPrintOutlineOfFcModule(config, fcmodule);
 			}
-		None(): -1;
-	};
+			FcLoaded(fimodule, __): {
+				fcPrintOutlineOfFiModule(config, fimodule);
+			}
+		}
+	} else {
+		printFcError(fcacc, parsed.second);
+	}
+	showStopper(0)
+}
 
+fcPrintOutlineOfFiModule(config : CompilerConfig, module : FiModule) -> void {
+	declStarts =
+	fold(module.functions,
+		fold(module.globalVars,
+			fold(module.natives,
+				makeTree(),
+				\acc, nat -> setTree(acc, nat.name, nat.declStart)
+			),
+			\acc, var -> setTree(acc, var.name, var.declStart)
+		),
+		\acc, fun -> setTree(acc, fun.name, fun.declStart)
+	);
 	iter(module.imports, \imp -> printLocation(config, module.fileinfo.fullpath, imp.start, "import " + imp.flowfile));
 	iter(module.forbids, \fbd -> printLocation(config, module.fileinfo.fullpath, fbd.start, "forbid " + fbd.flowfile));
-	iter(module.exports, \ex -> printLocation(config, module.fileinfo.fullpath, exportedPos(ex), "export " + ex));
+	iter(module.exports, \ex -> printLocation(config, module.fileinfo.fullpath, lookupTreeDef(declStarts, ex, -1), "export " + ex));
 	iter(module.structs, \str -> printLocation(config, module.fileinfo.fullpath, str.start, "struct " + str.name));
 	iter(module.unions, \uni -> printLocation(config, module.fileinfo.fullpath, uni.start, "union " + uni.name));
 
@@ -46,5 +61,47 @@ fcPrintOutline(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper :
 			printLocation(config, module.fileinfo.fullpath, nat.declStart, "natdecl " + nat.name);
 		}
 	});
-	showStopper(0)
+}
+
+fcPrintOutlineOfFcModule(config : CompilerConfig, module : FcModule) -> void {
+	declStarts =
+	foldTree(module.functions,
+		foldTree(module.globalVars,
+			foldTree(module.natives,
+				makeTree(),
+				\name, nat, acc -> setTree(acc, name, nat.info.start)
+			),
+			\name, var, acc -> setTree(acc, name, var.declInfo.start)
+		),
+		\name, fun, acc -> setTree(acc, name, fun.declInfo.start)
+	);
+	iter(module.imports, \imp -> printLocation(config, module.fileinfo.fullpath, imp.start, "import " + imp.flowfile));
+	iter(module.forbids, \fbd -> printLocation(config, module.fileinfo.fullpath, fbd.start, "forbid " + fbd.flowfile));
+	iterSet(module.exports, \ex -> printLocation(config, module.fileinfo.fullpath, lookupTreeDef(declStarts, ex, -1), "export " + ex));
+	traverseInOrder(module.structs, \name, str -> printLocation(config, module.fileinfo.fullpath, str.info.start, "struct " + name));
+	traverseInOrder(module.unions, \name, uni -> printLocation(config, module.fileinfo.fullpath, uni.info.start, "union " + name));
+
+	traverseInOrder(module.functions, \name, fun -> {
+		printLocation(config, module.fileinfo.fullpath, fun.defiInfo.start, "fundef " + name);
+		if (fun.declInfo.start != fun.defiInfo.start) {
+			printLocation(config, module.fileinfo.fullpath, fun.declInfo.start, "fundecl " + name);
+		}
+	});
+
+	traverseInOrder(module.globalVars, \name, var -> {
+		printLocation(config, module.fileinfo.fullpath, var.bodyInfo.start, "vardef " + name);
+		if (var.declInfo.start != var.bodyInfo.start) {
+			printLocation(config, module.fileinfo.fullpath, var.declInfo.start, "vardecl " + name);
+		}
+	});
+
+	traverseInOrder(module.natives, \name, nat -> {
+		printLocation(config, module.fileinfo.fullpath, nat.info.start, "natdecl " + name);
+		switch (nat.flowfallback) {
+			Some(func): {
+				printLocation(config, module.fileinfo.fullpath, func.defiInfo.start, "natdef " + name);
+			}
+			None(): { }
+		}
+	});
 }

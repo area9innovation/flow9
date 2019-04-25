@@ -604,6 +604,7 @@ class TextClip extends NativeWidgetClip {
 	public override function setWidth(widgetWidth : Float) : Void {
 		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
 		super.setWidth(widgetWidth);
+		invalidateMetrics();
 	}
 
 	public function setCropWords(cropWords : Bool) : Void {

@@ -39,16 +39,19 @@ replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic
 ContiniousTimer(
 	start : () -> void,
 	stop : () -> void,
-	pause : () -> void
+	pause : () -> void,
+	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) -> ContiniousTimer {
+continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
 	isFinished = ref true;
 	delays = ref [];
 	maxDelay = ref 0.0;
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
+
+	deferredFnsTree : ref Tree<double, [Pair<() -> bool, int>]> = ref makeTree();
 
 	startFn = \ -> {
 		started := timestamp() - either(minA(^delays), 0.0);
@@ -78,9 +81,47 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 
 					foldWhile(^delays, ts - ^started, \t, d -> {
 						if (d < t) {
-							maybeApply(lookupTree(tree, d), \records -> iter(records, \fn -> if (!fn()) dispUnsA(uns)));
+							maybeApply(
+								lookupTree(tree, d),
+								\records -> iter(records,
+									\fn -> if (!fn()) {
+										// Add to timeout elements
+										println("*** Timeout Fn");
+										deferredFnsTree := treePushToArrayValue(^deferredFnsTree, d + timeout, Pair(fn, 1));
+									}
+								)
+							);
 							delays := subrange(^delays, 1, length(^delays));
 
+							// check timeout elements
+							if (^deferredFnsTree != TreeEmpty()) {
+								delays2 = filter(getTreeKeys(^deferredFnsTree), \v -> v <= d);
+
+								lastDelayIdx = iteriUntil(delays2, \idx, v -> {
+									deferredFns = getTreeArrayValue(^deferredFnsTree, v);
+									// println("#### delay: " + d2s(v));
+									lastFnIdx = iteriUntil(deferredFns, \idx0, v0 -> {
+										// println("#### " + i2s(v0.second) + " : " + i2s(maxRepeats));
+										if (v0.second > maxRepeats) {
+											true
+										} else {
+											if (!(v0.first)()) {
+												println("*** Timeout Fn: " + i2s(v0.second + 1));
+												deferredFnsTree := treePushToArrayValue(^deferredFnsTree, v + timeout, Pair(v0.first, v0.second + 1));
+											}
+											false
+										}
+									});
+									if (lastFnIdx != length(deferredFns)) {
+										true
+									} else {
+										deferredFnsTree := removeFromTree(^deferredFnsTree, v);
+										false
+									}
+								});
+								if (lastDelayIdx != length(delays2))
+									dispUnsA(uns);
+							}
 							Some(t)
 						} else {
 							None()
@@ -100,12 +141,15 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 			startFn();
 		},
 		stopFn,
-		pauseFn
+		pauseFn,
+		timeout
 	)
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
+	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
+	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
@@ -114,7 +158,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
 		)
 	)
-	|> (\t -> continiousTimer(t, onFinished))
+	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));

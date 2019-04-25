@@ -6,52 +6,117 @@ export {
 	// This exposes the unifications we need to consider
 	makeGRelations() -> GRelations;
 
-	addGRelation(r : GRelations, lower : GType, upper : GType, pos : int) -> GRelations;
+	addGRelation(env : GEnv, r : GRelations, lower : GType, upper : GType, errorInfos : Set<GErrorInfo>) -> GRelations;
 
 	getGUpperRelations(r : GRelations, from : GType) -> Set<GType>;
 	getGLowerRelations(r : GRelations, from : GType) -> Set<GType>;
-	getGRelationPositions(r : GRelations, from : GType) -> Set<int>;
+	getGErrorInfos(r : GRelations, from : GType) -> Set<GErrorInfo>;
 
-	transitiveGUpperRelations(r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
-	transitiveGLowerRelations(r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
+	transitiveGUpperRelations(env : GEnv, r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
+	transitiveGLowerRelations(env : GEnv, r : GRelations, from : GType, seen : Set<GType>) ->  Set<GType>;
+
+	enqueueGTyvar(env : GEnv, q : Set<GQueueItem>, tyvarid : int) -> Set<GQueueItem>;
+	enqueueGTyvarAtStage(env : GEnv, q : Set<GQueueItem>, tyvarid : int, stage : int) -> Set<GQueueItem>;
+
+	makeGQueueItem(env : GEnv, tyvarid : int, stage : int) -> GQueueItem;
+
+	// We have some types. Requeue all tyvars connected to those types
+	enqueueAdjacentGTyvars(env : GEnv, types : Set<GType>) -> GEnv;
+
+	gpriority2string(p : GPriority) -> string;
 
 	// Add .dot output to help debug these graphs
 	saveGDot(env : GEnv, name : string) -> void;
+
 }
 
 makeGRelations() -> GRelations {
-	GRelations(makeTree(), makeTree(), makeTree(), makeTree());
+	GRelations(makeTree(), makeTree(), makeTree(), makeSet(), makeTree());
 }
  
-addGRelation(r : GRelations, from : GType, to : GType, pos : int) -> GRelations {
+addGRelation(env : GEnv, r : GRelations, from : GType, to : GType, errorInfos : Set<GErrorInfo>) -> GRelations {
 	if (containsMultimap(r.uppers, from, to)) r
 	else {
 		// Reset the queue for these guys
 		// OK, here we have to transitively visit all of these people
 		// and let them know they have to be updated in the queue
-		uppers = transitiveGUpperRelations(r, to, makeSet());
-		lowers = transitiveGLowerRelations(r, from, uppers);
-		totalUpdates = insertSet(insertSet(mergeSets(lowers, uppers), from), to);
-		queue = foldSet(totalUpdates, r.tyvarQueue, \acc, type -> {
+		queue = fold([from, to], r.tyvarQueue, \acc, type -> {
 			switch (type) {
 				GTypeVar(tyvarid): {
 					// This tyvar is reset back to priority 0
-					// println("Redo tyvar " + i2s(tyvarid));
-					setTree(acc, GQueueItem(0, tyvarid), tyvarid);
+					enqueueGTyvar(env, acc, tyvarid)
 				}
 				default: acc;
 			}
 		});
 
+		updateDeps = \deps : Tree<int, Set<GType>>, type : GType -> {
+			childTyvars = collectChildGTyvars(env, type, makeSet());
+			foldSet(childTyvars, deps, \acc, tv -> {
+				insertMultimap(acc, tv, type)
+			})
+		}
+		fromDeps = updateDeps(r.parentDeps, from);
+		toDeps = updateDeps(fromDeps, to);
+
 		GRelations(
 			insertMultimap(r.uppers, from, to),
 			insertMultimap(r.lowers, to, from),
-			insertMultimap(
-				insertMultimap(r.positions, to, pos),
-				from, pos
+			insertMultipleMultimap(
+				insertMultipleMultimap(r.errorInfos, to, errorInfos),
+				from, errorInfos
 			),
-			queue
+			queue,
+			toDeps
 		);
+	}
+}
+
+
+collectChildGTyvars(env : GEnv, gtype : GType, acc : Set<int>) -> Set<int> {
+	onlyFields = true;
+	switch (gtype) {
+		GBasicType(t): acc;
+		GFlow(): acc;
+		GTypePar(id): acc;
+		GFunction(args, rt): {
+			if (onlyFields) acc
+			else extractImmediateGTypeVars(env, arrayPush(args, rt), acc);
+		}
+		GArray(type): {
+			if (onlyFields) acc
+			else extractImmediateGTypeVar(env, type, acc);
+		}
+		GRef(type): {
+			if (onlyFields) acc
+			else extractImmediateGTypeVar(env, type, acc);
+		}
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): acc;
+				Some(t): collectChildGTyvars(env, t, acc);
+			}
+		}
+		GNamed(name, typars): {
+			if (onlyFields) acc
+			else extractImmediateGTypeVars(env, typars, acc);
+		}
+		GField(name, type): extractImmediateGTypeVar(env, type, acc);
+	}
+}
+
+extractImmediateGTypeVars(env : GEnv, types : [GType], acc: Set<int>) -> Set<int> {
+	fold(types, acc, \acc2, type -> extractImmediateGTypeVar(env, type, acc2))
+}
+
+extractImmediateGTypeVar(env : GEnv, type : GType, acc : Set<int>) -> Set<int> {
+	switch (type) {
+		GTypeVar(tv): {
+			if (containsKeyTree(env.tyvars, tv)) acc
+			else insertSet(acc, tv)
+		}
+		default: acc;
 	}
 }
 
@@ -63,33 +128,128 @@ getGLowerRelations(r : GRelations, from : GType) -> Set<GType> {
 	lookupMultimap(r.lowers, from);
 }
 
-getGRelationPositions(r : GRelations, from : GType) -> Set<int> {
-	lookupMultimap(r.positions, from);
+getGErrorInfos(r : GRelations, from : GType) -> Set<GErrorInfo> {
+	errorInfos = lookupMultimap(r.errorInfos, from);
+	if (isEmptySet(errorInfos)) {
+		// OK, go and pick our uppers or lowers
+		neighbours = mergeSets(getGUpperRelations(r, from), getGLowerRelations(r, from));
+		foldSet(neighbours, makeSet(), \acc, s -> {
+			println(s);
+			eis = lookupMultimap(r.errorInfos, s);
+			mergeSets(acc, eis);
+		});
+	} else errorInfos
 }
 
-transitiveGUpperRelations(r : GRelations, from : GType, acc : Set<GType>) -> Set<GType> {
+transitiveGUpperRelations(env : GEnv, r : GRelations, from : GType, acc : Set<GType>) -> Set<GType> {
 	if (containsSet(acc, from)) {
 		acc
 	} else {
-		uppers = getGUpperRelations(r, from);
-		foldSet(uppers, acc, \acc2, edge -> {
-			nacc = insertSet(acc2, edge);
-			transitiveGUpperRelations(r, edge, nacc)
-		});
+		nacc = insertSet(acc, from);
+		if (isGTypeDecided(env, from, true)) {
+			// No need to continue
+			nacc;
+		} else {
+			uppers = getGUpperRelations(r, from);
+			foldSet(uppers, nacc, \acc2, edge -> {
+				transitiveGUpperRelations(env, r, edge, acc2)
+			});
+		}
 	}
 }
 
-transitiveGLowerRelations(r : GRelations, from : GType, acc : Set<GType>) -> Set<GType> {
+transitiveGLowerRelations(env : GEnv, r : GRelations, from : GType, acc : Set<GType>) -> Set<GType> {
 	if (containsSet(acc, from)) {
 		acc
 	} else {
-		uppers = getGLowerRelations(r, from);
-		foldSet(uppers, acc, \acc2, edge -> {
-			nacc = insertSet(acc2, edge);
-			transitiveGLowerRelations(r, edge, nacc)
-		});
+		nacc = insertSet(acc, from);
+		if (isGTypeDecided(env, from, true)) {
+			// No need to continue
+			nacc;
+		} else {
+			lowers = getGLowerRelations(r, from);
+			foldSet(lowers, nacc, \acc2, edge -> {
+				transitiveGLowerRelations(env, r, edge, acc2)
+			});
+		}
 	}
 }
+
+enqueueGTyvar(env : GEnv, q : Set<GQueueItem>, tyvarid : int) -> Set<GQueueItem> {
+	insertSet(q, makeGQueueItem(env, tyvarid, 0));
+}
+
+enqueueGTyvarAtStage(env : GEnv, q : Set<GQueueItem>, tyvarid : int, stage : int) -> Set<GQueueItem> {
+	insertSet(q, makeGQueueItem(env, tyvarid, stage));
+}
+
+makeGQueueItem(env : GEnv, tyvarid : int, stage : int) -> GQueueItem {
+	type = GTypeVar(tyvarid);
+	lowers = lookupMultimap(env.grelations.lowers, type);
+	uppers = lookupMultimap(env.grelations.uppers, type);
+
+	prio = GPriority(0, 0, 0, 0, 0);
+	lowerPrio = foldSet(lowers, prio, \acc, lt -> addGtypePriority(env, acc, lt));
+	upperPrio = foldSet(uppers, lowerPrio, \acc, lt -> addGtypePriority(env, acc, lt));
+
+	GQueueItem(stage, upperPrio, tyvarid);
+}
+
+enqueueAdjacentGTyvars(env : GEnv, types : Set<GType>) -> GEnv {
+	nqueue = foldSet(types, env.grelations.tyvarQueue, \acc, type -> {
+		ups = getGUpperRelations(env.grelations, type);
+		lows = getGLowerRelations(env.grelations, type);
+		neighbours = mergeSets(ups, lows);
+		foldSet(neighbours, acc, \acc2, t -> {
+			switch (t) {
+				GTypeVar(tv): {
+					if (containsKeyTree(env.tyvars, tv)) acc2
+					else {
+						enqueueGTyvar(env, acc2, tv)
+					}
+				}
+				default: acc2;
+			}
+		});
+	});
+	GEnv(
+		env with
+		grelations =
+			GRelations(env.grelations with
+				tyvarQueue = nqueue
+			)
+	);
+}
+
+addGtypePriority(env : GEnv, acc : GPriority, type : GType) -> GPriority {
+	switch (type) {
+		GBasicType(t): GPriority(acc with fixed = acc.fixed + 1);
+		GTypePar(id): GPriority(acc with fixed = acc.fixed + 1);
+		GFunction(args, rt): GPriority(acc with fixed = acc.fixed + 1);
+		GArray(__): GPriority(acc with fixed = acc.fixed + 1);
+		GRef(__): GPriority(acc with fixed = acc.fixed + 1);
+		GFlow(): GPriority(acc with flows = acc.flows + 1);
+		GTypeVar(id): {
+			bound = lookupTree(env.tyvars, id);
+			switch (bound) {
+				None(): GPriority(acc with unbound = acc.unbound + 1);
+				Some(bt): addGtypePriority(env, acc, bt);
+			}
+		}
+		GNamed(name, typars): GPriority(acc with named = acc.named + 1);
+		GField(name, __): GPriority(acc with fields = acc.fields + 1);
+	}
+}
+
+gpriority2string(p : GPriority) -> string {
+	disp = \s, i -> s + ": " + i2s(i) + " ";
+	disp("unbound", p.unbound)
+	+ disp("fields", p.fields)
+	+ disp("named", p.named)
+	+ disp("flows", p.flows)
+	+ disp("fixed", p.fixed)
+}
+
 
 saveGDot(env : GEnv, name : string) -> void {
 	dot = grelations2dot(env, env.grelations);
@@ -99,19 +259,31 @@ saveGDot(env : GEnv, name : string) -> void {
 }
 
 grelations2dot(env : GEnv, g : GRelations) -> string {
-	type2node = \type -> {
-		"\"" + gtype2string(env, type) + "\""
+	type2node = \type, extra -> {
+		"\"" + gtype2string(env, type) + extra + "\""
 	}
 	types = foldTree(g.uppers, makeSet(), \k, v, acc -> {
 		insertSet(acc, k);
 	});
 	nodesDump = foldSet(types, "", \acc, type -> {
-		text = type2node(type);
-		acc + text + " [label=" + text + "];\n"
+		descriptions = getGDescriptions(getGErrorInfos(g, type));
+		extra = if (descriptions != "") "\\n" + descriptions else "";
+		
+		text0 = type2node(type, "");
+		text1 = type2node(type, extra);
+		acc + text0 + " [label=" + text1 + "];\n"
 	});
-	edgesDump = foldTree(g.uppers, "", \from, tos, acc -> {
+
+	// Tyvar deps
+	tyvarDeps = foldTree(g.parentDeps, "", \from : int, tos : Set<GType>, acc -> {
 		foldSet(tos, acc, \acc1, to -> {
-			acc1 + type2node(from) + " -> " + type2node(to) + ";\n"
+			acc1 + type2node(GTypeVar(from), "") + " -> " + type2node(to, "") + " [color=grey];\n" 
+		})
+	});
+
+	edgesDump = foldTree(g.uppers, tyvarDeps, \from, tos, acc -> {
+		foldSet(tos, acc, \acc1, to -> {
+			acc1 + type2node(from, "") + " -> " + type2node(to, "") + ";\n"
 		});
 	});
 
@@ -120,3 +292,4 @@ grelations2dot(env : GEnv, g : GRelations) -> string {
 		edgesDump + "\n" +
 	"}"
 }
+

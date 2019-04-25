@@ -572,8 +572,8 @@ class PixiWorkarounds {
 				const scaleText = fontSize > 0.6;
 
 				if (scaleText) {
-					this.worldTransform.a = 1.0;
-					this.worldTransform.d = 1.0;
+					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
+					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
 
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
@@ -618,10 +618,12 @@ class PixiWorkarounds {
 			});
 
 			PIXI.Container.prototype.updateTransform = function(transformChanged) {
-				this.transformChanged = transformChanged || this.transformChanged;
+				var transformChanged = transformChanged || this.transformChanged;
 
-				if (this.transformChanged)
+				if (transformChanged)
 				{
+					this.transformChanged = false;
+
 					this._boundsID++;
 					this.transform.updateTransform(this.parent.transform);
 
@@ -635,24 +637,31 @@ class PixiWorkarounds {
 
 					if (child.visible)
 					{
-						child.updateTransform(this.transformChanged);
+						child.updateTransform(transformChanged);
 					}
 				}
 
-				if (this.transformChanged) {
+				if (transformChanged) {
+					if (this.child && !this.child.transformChanged) {
+						this.child.transformChanged = true;
+
+						RenderSupportJSPixi.PixiStageChanged = true;
+						RenderSupportJSPixi.TransformChanged = true;
+					}
+
 					if (this.accessWidget) {
 						this.accessWidget.updateTransform();
 					}
-
-					this.transformChanged = false;
 				}
 			};
 
 			TextClip.prototype.updateTransform = function(transformChanged) {
-				this.transformChanged = transformChanged || this.transformChanged;
+				var transformChanged = transformChanged || this.transformChanged;
 
-				if (this.transformChanged)
+				if (transformChanged)
 				{
+					this.transformChanged = false;
+
 					this._boundsID++;
 
 					this.transform.updateTransform(this.parent.transform);
@@ -669,16 +678,14 @@ class PixiWorkarounds {
 
 					if (child.visible)
 					{
-						child.updateTransform(this.transformChanged);
+						child.updateTransform(transformChanged);
 					}
 				}
 
-				if (this.transformChanged) {
+				if (transformChanged) {
 					if (this.accessWidget) {
 						this.accessWidget.updateTransform();
 					}
-
-					this.transformChanged = false;
 				}
 			};
 		");

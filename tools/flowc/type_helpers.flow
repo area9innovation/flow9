@@ -33,22 +33,22 @@ export {
 	fillTypes(acc : FcTypeEnv, t1 : Maybe<FcType>, t2 : Maybe<FcType>, error : (string, type1 : FcType, type2 : FcType) -> void) -> Maybe<FcType>;
 
 	// Instantiate all typars to tyvars
-	instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType;
+	instantiateTypeTyPars(acc : FcTypeEnvLocal, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType;
 
 	// Find the typars in this type
-	collectTypars(acc : FcTypeEnv, t : FcType, typars : Set<string>) -> Set<string>;
+	collectTypars(acc : FcTypeEnvLocal, t : FcType, typars : Set<string>) -> Set<string>;
 
 	// Find typars using global typing environment
 	collectTyparsGlobal(env : FcTypeEnvProgram, type : FcType, acc : Set<string>) -> Set<string>;
 
 	// Follow tyvar and typars to find the underlying type
-	getResolvedFcType(acc : FcTypeEnv, type : FcType) -> FcType;
+	getResolvedFcType(acc : FcTypeEnvLocal, type : FcType) -> FcType;
 
 	// What tyvars does this type contain?
-	collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int>;
+	collectFcTyvars(env : FcTypeEnvLocal, type : FcType, acc : Set<int>) -> Set<int>;
 
 	// Given a typename, and the type (struct/union) it corresponds to, instantiate any typeparameters in it
-	instantiateTypename(env : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType;
+	instantiateTypename(env : FcTypeEnvLocal, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType;
 
 	// Checks that all typename references have the correct number of type parameters
 	checkSufficientPolymorphism(env : FcTypeEnv, type : FcType, onError : (string) -> void) -> void;
@@ -79,7 +79,7 @@ export {
 	// Checks consistency of two function types: arity and types of arguments and return value.
 	fcTypeFunctionsAreConsistent(dec_1 : FcTypeFunction2, dec_2 : FcTypeFunction2) -> bool;
 
-	instantiateTyParsToTypes(acc : FcTypeEnv, typars : Tree<string, FcType>, t : FcType, onError : (string) -> void) -> FcType;
+	instantiateTyParsToTypes(acc : FcTypeEnvLocal, typars : Tree<string, FcType>, t : FcType, onError : (string) -> void) -> FcType;
 }
 
 addFcTypeError(acc : FcTypeEnvProgram, err : FcError) -> void {
@@ -404,17 +404,17 @@ fillTypes(acc : FcTypeEnv, t1 : Maybe<FcType>, t2 : Maybe<FcType>, error : (stri
 	}
 }
 
-getResolvedFcType(acc : FcTypeEnv, type : FcType) -> FcType {
+getResolvedFcType(acc : FcTypeEnvLocal, type : FcType) -> FcType {
 	doGetResolvedFcType(acc, type, makeTree())
 }
 
-doGetResolvedFcType(acc : FcTypeEnv, type : FcType, seen : Tree<int, FcType>) -> FcType {
+doGetResolvedFcType(acc : FcTypeEnvLocal, type : FcType, seen : Tree<int, FcType>) -> FcType {
 	switch (type) {
 		FcTypeVar(vid, vi):
 			switch (lookupTree(seen, vid)) {
 				Some(t): t;
 				None(): {
-					tv = lookupTree(^(acc.local.tyvars), vid);
+					tv = lookupTree(^(acc.tyvars), vid);
 					switch (tv) {
 						None(): type;
 						Some(ttv): doGetResolvedFcType(acc, ttv, setTree(seen, vid, ttv));
@@ -422,7 +422,7 @@ doGetResolvedFcType(acc : FcTypeEnv, type : FcType, seen : Tree<int, FcType>) ->
 				}
 			};
 		FcTypeParameter(pid, pi): {
-			pv = lookupTree(^(acc.local.typars), pid);
+			pv = lookupTree(^(acc.typars), pid);
 			switch (pv) {
 				None(): type;
 				Some(ptv): doGetResolvedFcType(acc, ptv, seen);
@@ -475,7 +475,7 @@ doGetResolvedFcType(acc : FcTypeEnv, type : FcType, seen : Tree<int, FcType>) ->
 	}
 }
 
-instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType {
+instantiateTypeTyPars(acc : FcTypeEnvLocal, tyvarIdGroup : IdGroup, typars : ref Tree<string, FcTypeVar>, t : FcType) -> FcType {
 	switch (t) {
 		FcTypeVoid(__): t;
 		FcTypeBool(__): t;
@@ -485,7 +485,7 @@ instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree
 		FcTypeFlow(__): t;
 		FcTypeNative(__): t;
 		FcTypeVar(tid, __): {
-			tv = lookupTree(^(acc.local.tyvars), tid);
+			tv = lookupTree(^(acc.tyvars), tid);
 			switch (tv) {
 				None(): t;
 				Some(ttv): instantiateTypeTyPars(acc, tyvarIdGroup, typars, ttv);
@@ -541,7 +541,7 @@ instantiateTypeTyPars(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typars : ref Tree
 	}
 }
 
-collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int> { 
+collectFcTyvars(env : FcTypeEnvLocal, type : FcType, acc : Set<int>) -> Set<int> { 
 	switch (type) {
 		FcTypeVoid(__): acc;
 		FcTypeBool(__): acc;
@@ -552,7 +552,7 @@ collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int> {
 		FcTypeNative(__): acc;
 		FcTypeVar(tid, __): insertSet(acc, tid);
 		FcTypeParameter(n, __): {
-			tv = lookupTree(^(env.local.typars), n);
+			tv = lookupTree(^(env.typars), n);
 			switch (tv) {
 				None(): acc;
 				Some(ttv): collectFcTyvars(env, ttv, acc);
@@ -576,7 +576,7 @@ collectFcTyvars(env : FcTypeEnv, type : FcType, acc : Set<int>) -> Set<int> {
 	}
 }
 
-collectTypars(env : FcTypeEnv, type : FcType, acc : Set<string>) -> Set<string> {
+collectTypars(env : FcTypeEnvLocal, type : FcType, acc : Set<string>) -> Set<string> {
 	switch (type) {
 		FcTypeVoid(__): acc;
 		FcTypeBool(__): acc;
@@ -586,7 +586,7 @@ collectTypars(env : FcTypeEnv, type : FcType, acc : Set<string>) -> Set<string> 
 		FcTypeFlow(__): acc;
 		FcTypeNative(__): acc;
 		FcTypeVar(tid, __): {
-			tv = lookupTree(^(env.local.tyvars), tid);
+			tv = lookupTree(^(env.tyvars), tid);
 			switch (tv) {
 				None(): acc;
 				Some(ttv): collectTypars(env, ttv, acc);
@@ -660,18 +660,18 @@ getFcNamedTypeError(acc : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeNa
 					typename
 				}
 				Some(union): {
-					instantiateTypename(acc, tyvarIdGroup, typename, union, onError);
+					instantiateTypename(acc.local, tyvarIdGroup, typename, union, onError);
 				}
 			}
 		}
 		Some(structdef): {
-			instantiateTypename(acc, tyvarIdGroup, typename, structdef, onError);
+			instantiateTypename(acc.local, tyvarIdGroup, typename, structdef, onError);
 		}
 	}
 }
 
 
-instantiateTypename(env : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType {
+instantiateTypename(env : FcTypeEnvLocal, tyvarIdGroup : IdGroup, typename : FcTypeName, type : FcType, error : (string) -> void) -> FcType {
 	mkpars = \n, firstTypar : int -> {
 		tn = length(typename.typeparameters);
 		parsRightLength = if (tn < n) {
@@ -744,7 +744,7 @@ instantiateTypename(env : FcTypeEnv, tyvarIdGroup : IdGroup, typename : FcTypeNa
 }
 
 
-instantiateTyParsToTypes(acc : FcTypeEnv, typars : Tree<string, FcType>, t : FcType, onError : (string) -> void) -> FcType {
+instantiateTyParsToTypes(acc : FcTypeEnvLocal, typars : Tree<string, FcType>, t : FcType, onError : (string) -> void) -> FcType {
 	switch (t) {
 		FcTypeVoid(__): t;
 		FcTypeBool(__): t;
@@ -754,7 +754,7 @@ instantiateTyParsToTypes(acc : FcTypeEnv, typars : Tree<string, FcType>, t : FcT
 		FcTypeFlow(__): t;
 		FcTypeNative(__): t;
 		FcTypeVar(tid, __): {
-			tv = lookupTree(^(acc.local.tyvars), tid);
+			tv = lookupTree(^(acc.tyvars), tid);
 			switch (tv) {
 				None(): t;
 				Some(ttv): instantiateTyParsToTypes(acc, typars, ttv, onError);
@@ -917,7 +917,7 @@ union2instantiatedStructs(env : FcTypeEnv, union : FcTypeUnion) -> [FcTypeStruct
 			}
 			Some(struct): {
 				cast(
-					instantiateTypename(env, 
+					instantiateTypename(env.local, 
 						env.program.acc.tyvarIdGroup,
 						FcTypeName(union.name, union.typeparameters, union.info), 
 						struct, \e -> {

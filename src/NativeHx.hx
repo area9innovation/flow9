@@ -1,5 +1,6 @@
 import HaxeRuntime;
 import NativeTime;
+import haxe.ds.Vector;
 
 #if js
 import js.Browser;
@@ -272,6 +273,26 @@ class NativeHx {
 			return [];
 		else
 			return arr.slice(start, start + len);
+	}
+
+	public static inline function removeIndex<T>(src : Vector<T>, index : Int) : Vector<T> {
+		if (index >= 0 && index < src.length) {
+			var dst = new Vector(src.length - 1);
+			var i = 0;
+
+			while (i < index) {
+				dst[i] = src[i];
+				i++;
+			}
+			while (i < dst.length) {
+				dst[i] = src[i + 1];
+				i++;
+			}
+
+			return dst;
+		} else {
+			return src;
+		}
 	}
 
 	public static function isArray(a : Dynamic) : Bool {
@@ -1575,6 +1596,8 @@ class NativeHx {
 				Browser.window.addEventListener("videoplaying", mouseMoveActiveFn);
 				Browser.window.addEventListener("focus", mouseMoveActiveFn);
 				Browser.window.addEventListener("blur", mouseMoveActiveFn);
+
+				mouseMoveActiveFn();
 
 				return function() {
 					untyped __js__("clearTimeout(timeoutActiveId)");

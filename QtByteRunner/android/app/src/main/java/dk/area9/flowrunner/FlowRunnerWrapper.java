@@ -551,7 +551,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
          * @param headers A flattened map of HTTP headers to set.
          * @param payload A binary string sent to the server as request body
          */
-        void request(String url, String method, String[] headers, String payload, HttpResolver callback) throws IOException;
+        void request(String url, String method, String[] headers, byte[] payload, HttpResolver callback) throws IOException;
 
         /**
          * Preload a media object.
@@ -572,7 +572,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         http_loader = loader;
     }
     
-    private void cbStartHttpRequest(final int id, final String url, final String method, String[] headers, final String payload) {
+    private void cbStartHttpRequest(final int id, final String url, final String method, String[] headers, final byte[] payload) {
         if (http_loader == null) {
             deliverHttpError(id, "HttpLoader not set".getBytes());
             return;
