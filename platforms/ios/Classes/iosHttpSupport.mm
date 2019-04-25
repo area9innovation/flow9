@@ -164,7 +164,7 @@ void iosHttpSupport::doRequest(HttpRequest &rq)
     
     [request setHTTPMethod: UNICODE2NS(rq.method)];
     [request setURL: [NSURL URLWithString: url_string relativeToURL: [URLLoader getBaseURL]]];
-    [request setHTTPBody: [UNICODE2NS(rq.payload) dataUsingEncoding: NSUTF8StringEncoding]];
+    [request setHTTPBody: [NSData dataWithBytesNoCopy:rq.payload.data() length:rq.payload.size() freeWhenDone:YES]];
     
     LogI(@"Starting HTTP request %@", [[request URL] absoluteString]);
     

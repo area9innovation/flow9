@@ -173,7 +173,7 @@ int main(int argc, char *argv[])
     int garbage_stack = 5;
     bool disassemble = false;
     bool verbose = false;
-    int flowCompiler = 0;
+    int flowCompiler = 2;
     bool use_jit = true;
 #ifdef FLOW_DEBUGGER
     bool debug = false, gdbmi = false;

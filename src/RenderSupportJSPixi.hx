@@ -49,7 +49,6 @@ class RenderSupportJSPixi {
 	// screen keyboard
 	private static var WindowTopHeight : Int;
 	private static var RenderSupportJSPixiInitialised : Bool = init();
-	private static var RequestAnimationFrameId : Int = -1;
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
 	public static inline function on(event : String, fn : Void -> Void, ?context : Dynamic) : Void {
@@ -1649,8 +1648,6 @@ class RenderSupportJSPixi {
 		graphics.drawCircle(x, y, radius);
 	}
 
-	// native makePicture : (url : string, cache : bool, metricsFn : (width : double, height : double) -> void,
-	// errorFn : (string) -> void, onlyDownload : bool) -> native = RenderSupport.makePicture;
 	public static function makePicture(url : String, cache : Bool, metricsFn : Float -> Float -> Void, errorFn : String -> Void, onlyDownload : Bool) : Dynamic {
 		return new FlowSprite(url, cache, metricsFn, errorFn, onlyDownload);
 	}

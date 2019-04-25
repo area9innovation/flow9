@@ -917,7 +917,7 @@ public class Native extends NativeHost {
 	static private final SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
 
 	public final String time2string(double time) {
-		return dateFormat.format(new Date((new Double(time)).longValue()));
+		return dateFormat.format(new Date((Double.valueOf(time)).longValue()));
 	}
 
 	public final double string2time(String tv) {
