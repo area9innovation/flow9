@@ -427,8 +427,9 @@ int main(int argc, char *argv[])
         flowdir = QCoreApplication::applicationDirPath();
 #if __APPLE__
         // Also need to move out of the app bundle directory structure on Mac OS
-        flowdir.cd("../../../../../../");
+        flowdir.cd("../../../../../../../");
 #else
+        flowdir.cdUp();
         flowdir.cdUp();
         flowdir.cdUp();
         if (!flowdir.path().endsWith("flow9"))

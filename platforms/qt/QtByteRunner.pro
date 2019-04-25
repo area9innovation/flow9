@@ -85,7 +85,7 @@ TEMPLATE = app
 
 PRECOMPILED_HEADER = pcheader.h
 
-INCLUDEPATH += ../cpp ../cpp/include qt-gui qt-backend asmjit/src
+INCLUDEPATH += ../common/cpp ../common/cpp/include qt-gui qt-backend ../common/cpp/asmjit/src
 
 CONFIG          += console
 
@@ -133,24 +133,24 @@ macx {
 # Core
 
 SOURCES += \
-    ../cpp/core/ByteCodeRunner.cpp \
-    ../cpp/core/ByteMemory.cpp \
-    ../cpp/core/CodeMemory.cpp \
-    ../cpp/core/MemoryArea.cpp \
-    ../cpp/core/GarbageCollector.cpp \
-    ../cpp/core/HeapWalker.cpp \
-    ../cpp/core/Natives.cpp \
-    ../cpp/core/Utf8.cpp \
-    ../cpp/core/Utf32.cpp \
-    ../cpp/core/md5.cpp \
-    ../cpp/utils/AbstractHttpSupport.cpp \
-    ../cpp/utils/AbstractSoundSupport.cpp \
-    ../cpp/utils/FileLocalStore.cpp \
-    ../cpp/utils/FileSystemInterface.cpp \
-    ../cpp/utils/AbstractNotificationsSupport.cpp \
-    ../cpp/utils/AbstractGeolocationSupport.cpp \
-    ../cpp/utils/flowfilestruct.cpp \
-    ../cpp/utils/AbstractWebSocketSupport.cpp \
+    ../common/cpp/core/ByteCodeRunner.cpp \
+    ../common/cpp/core/ByteMemory.cpp \
+    ../common/cpp/core/CodeMemory.cpp \
+    ../common/cpp/core/MemoryArea.cpp \
+    ../common/cpp/core/GarbageCollector.cpp \
+    ../common/cpp/core/HeapWalker.cpp \
+    ../common/cpp/core/Natives.cpp \
+    ../common/cpp/core/Utf8.cpp \
+    ../common/cpp/core/Utf32.cpp \
+    ../common/cpp/core/md5.cpp \
+    ../common/cpp/utils/AbstractHttpSupport.cpp \
+    ../common/cpp/utils/AbstractSoundSupport.cpp \
+    ../common/cpp/utils/FileLocalStore.cpp \
+    ../common/cpp/utils/FileSystemInterface.cpp \
+    ../common/cpp/utils/AbstractNotificationsSupport.cpp \
+    ../common/cpp/utils/AbstractGeolocationSupport.cpp \
+    ../common/cpp/utils/flowfilestruct.cpp \
+    ../common/cpp/utils/AbstractWebSocketSupport.cpp \
     qt-backend/NotificationsSupport.cpp \
     qt-backend/QtGeolocationSupport.cpp \
     qt-backend/qfilesysteminterface.cpp \
@@ -161,27 +161,27 @@ SOURCES += \
 
 HEADERS  += \
     pcheader.h \
-    ../cpp/core/ByteCodeRunner.h \
-    ../cpp/core/CommonTypes.h \
-    ../cpp/core/nativefunction.h \
-    ../cpp/core/ByteMemory.h \
-    ../cpp/core/CodeMemory.h \
-    ../cpp/core/MemoryArea.h \
-    ../cpp/core/GarbageCollector.h \
-    ../cpp/core/HeapWalker.h \
-    ../cpp/core/opcodes.h \
-    ../cpp/core/RunnerMacros.h \
-    ../cpp/core/STLHelpers.h \
-    ../cpp/core/md5.h \
-    ../cpp/utils/AbstractHttpSupport.h \
-    ../cpp/utils/AbstractSoundSupport.h \
-    ../cpp/utils/FileLocalStore.h \
-    ../cpp/core/NativeProgram.h \
-    ../cpp/utils/FileSystemInterface.h \
-    ../cpp/utils/AbstractNotificationsSupport.h \
-    ../cpp/utils/AbstractGeolocationSupport.h \
-    ../cpp/utils/flowfilestruct.h \
-    ../cpp/utils/AbstractWebSocketSupport.h \
+    ../common/cpp/core/ByteCodeRunner.h \
+    ../common/cpp/core/CommonTypes.h \
+    ../common/cpp/core/nativefunction.h \
+    ../common/cpp/core/ByteMemory.h \
+    ../common/cpp/core/CodeMemory.h \
+    ../common/cpp/core/MemoryArea.h \
+    ../common/cpp/core/GarbageCollector.h \
+    ../common/cpp/core/HeapWalker.h \
+    ../common/cpp/core/opcodes.h \
+    ../common/cpp/core/RunnerMacros.h \
+    ../common/cpp/core/STLHelpers.h \
+    ../common/cpp/core/md5.h \
+    ../common/cpp/utils/AbstractHttpSupport.h \
+    ../common/cpp/utils/AbstractSoundSupport.h \
+    ../common/cpp/utils/FileLocalStore.h \
+    ../common/cpp/core/NativeProgram.h \
+    ../common/cpp/utils/FileSystemInterface.h \
+    ../common/cpp/utils/AbstractNotificationsSupport.h \
+    ../common/cpp/utils/AbstractGeolocationSupport.h \
+    ../common/cpp/utils/flowfilestruct.h \
+    ../common/cpp/utils/AbstractWebSocketSupport.h \
     qt-backend/NotificationsSupport.h \
     qt-backend/QtGeolocationSupport.h \
     qt-backend/qfilesysteminterface.h \
@@ -198,11 +198,11 @@ CONFIG(use_jit) {
 	DEFINES += ASMJIT_STATIC
 	DEFINES += ASMJIT_DISABLE_COMPILER
 
-        SOURCES += ../cpp/core/JitProgram.cpp
-        HEADERS += ../cpp/core/JitProgram.h
+        SOURCES += ../common/cpp/core/JitProgram.cpp
+        HEADERS += ../common/cpp/core/JitProgram.h
 
-        SOURCES += $$files(../cpp/asmjit/src/asmjit/base/*.cpp) $$files(../cpp/asmjit/src/asmjit/x86/*.cpp)
-        HEADERS += $$files(../cpp/asmjit/src/asmjit/*.h) $$files(../cpp/asmjit/src/asmjit/base/*.h) $$files(../cpp/asmjit/src/asmjit/x86/*.h)
+        SOURCES += $$files(../common/cpp/asmjit/src/asmjit/base/*.cpp) $$files(../common/cpp/asmjit/src/asmjit/x86/*.cpp)
+        HEADERS += $$files(../common/cpp/asmjit/src/asmjit/*.h) $$files(../common/cpp/asmjit/src/asmjit/base/*.h) $$files(../common/cpp/asmjit/src/asmjit/x86/*.h)
 }
 
 # Non-gui
@@ -248,20 +248,20 @@ CONFIG(use_gui) {
         qt-gui/QGLWebPage.cpp \
         qt-gui/QGLClipTreeModel.cpp \
         qt-gui/QGLClipTreeBrowser.cpp \
-        ../cpp/gl-gui/GLRenderSupport.cpp \
-        ../cpp/gl-gui/GLRenderer.cpp \
-        ../cpp/gl-gui/GLUtils.cpp \
-        ../cpp/gl-gui/GLClip.cpp \
-        ../cpp/gl-gui/GLGraphics.cpp \
-        ../cpp/gl-gui/GLPictureClip.cpp \
-        ../cpp/gl-gui/GLVideoClip.cpp \
-        ../cpp/gl-gui/GLTextClip.cpp \
-        ../cpp/gl-gui/GLWebClip.cpp \
-        ../cpp/gl-gui/GLFont.cpp \
-        ../cpp/gl-gui/GLFilter.cpp \
-        ../cpp/gl-gui/GLSchedule.cpp \
-        ../cpp/gl-gui/GLCamera.cpp \
-        ../cpp/gl-gui/ImageLoader.cpp
+        ../common/cpp/gl-gui/GLRenderSupport.cpp \
+        ../common/cpp/gl-gui/GLRenderer.cpp \
+        ../common/cpp/gl-gui/GLUtils.cpp \
+        ../common/cpp/gl-gui/GLClip.cpp \
+        ../common/cpp/gl-gui/GLGraphics.cpp \
+        ../common/cpp/gl-gui/GLPictureClip.cpp \
+        ../common/cpp/gl-gui/GLVideoClip.cpp \
+        ../common/cpp/gl-gui/GLTextClip.cpp \
+        ../common/cpp/gl-gui/GLWebClip.cpp \
+        ../common/cpp/gl-gui/GLFont.cpp \
+        ../common/cpp/gl-gui/GLFilter.cpp \
+        ../common/cpp/gl-gui/GLSchedule.cpp \
+        ../common/cpp/gl-gui/GLCamera.cpp \
+        ../common/cpp/gl-gui/ImageLoader.cpp
 
     HEADERS  += \
         swfloader.h \
@@ -275,22 +275,22 @@ CONFIG(use_gui) {
         qt-gui/QGLWebPage.h  \
         qt-gui/QGLClipTreeModel.h \
         qt-gui/QGLClipTreeBrowser.h \
-        ../cpp/gl-gui/GLRenderSupport.h \
-        ../cpp/gl-gui/shaders/code.inc \
-        ../cpp/gl-gui/GLRenderer.h \
-        ../cpp/gl-gui/GLUtils.h \
-        ../cpp/gl-gui/GLClip.h \
-        ../cpp/gl-gui/GLGraphics.h \
-        ../cpp/gl-gui/GLPictureClip.h \
-        ../cpp/gl-gui/GLVideoClip.h \
-        ../cpp/gl-gui/GLTextClip.h \
-        ../cpp/gl-gui/GLWebClip.h \
-        ../cpp/gl-gui/GLFont.h \
-        ../cpp/gl-gui/GLFilter.h \
-        ../cpp/gl-gui/GLSchedule.h \
-        ../cpp/gl-gui/GLCamera.h \
-        ../cpp/gl-gui/ImageLoader.h \
-        ../cpp/font/Headers.h
+        ../common/cpp/gl-gui/GLRenderSupport.h \
+        ../common/cpp/gl-gui/shaders/code.inc \
+        ../common/cpp/gl-gui/GLRenderer.h \
+        ../common/cpp/gl-gui/GLUtils.h \
+        ../common/cpp/gl-gui/GLClip.h \
+        ../common/cpp/gl-gui/GLGraphics.h \
+        ../common/cpp/gl-gui/GLPictureClip.h \
+        ../common/cpp/gl-gui/GLVideoClip.h \
+        ../common/cpp/gl-gui/GLTextClip.h \
+        ../common/cpp/gl-gui/GLWebClip.h \
+        ../common/cpp/gl-gui/GLFont.h \
+        ../common/cpp/gl-gui/GLFilter.h \
+        ../common/cpp/gl-gui/GLSchedule.h \
+        ../common/cpp/gl-gui/GLCamera.h \
+        ../common/cpp/gl-gui/ImageLoader.h \
+        ../common/cpp/font/Headers.h
 
     RESOURCES += \
         QtByteRunnerRes.qrc

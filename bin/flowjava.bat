@@ -33,7 +33,7 @@ set JAVAC=%JAVA_HOME%\bin\javac
 
 
 rem The runtime
-cd %~dp0..\src\java 
+cd %~dp0..\platforms\java 
 "%JAVAC%" -d build -g com/area9innovation/flow/*.java com/area9innovation/flow/javafx/*.java
 popd
 
@@ -43,8 +43,8 @@ call %~dp0/flow --java %~dp0/../javagen %*
 cd %~dp0..
 
 rem Compile the generated code
-"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp src/java/build/ javagen/*.java
+"%JAVAC%" -Xlint:unchecked -encoding UTF-8 -cp platforms/java/build/ javagen/*.java
 
 rem Run the program!
-java -cp src/java/build;. com.area9innovation.flow.javafx.FxLoader %*
+java -cp platforms/java/build;. com.area9innovation.flow.javafx.FxLoader %*
 popd
