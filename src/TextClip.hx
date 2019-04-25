@@ -264,6 +264,33 @@ class TextClip extends NativeWidgetClip {
 			text.length > 0 ? [text] : [];
 	}
 
+	public function getCharXPosition(charIdx: Int) : Float {
+		var pos = -1.0;
+
+		layoutText();
+
+		for (child in children) {
+			var c : Dynamic = child;
+			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
+				var text = "";
+				var chridx : Int = c.orgCharIdxStart;
+				for (i in 0...c.text.length) {
+					if (chridx >= charIdx) break;
+					chridx += 1 + Math.round(c.difPositionMapping[i]);
+					text += c.text.substr(i, 1);
+				}
+				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
+				var result = c.x + mtx.width;
+				if (TextClip.getStringDirection(c.text) == "RTL") {
+					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
+					return c.width - result;
+				}
+				return result;
+			}
+		}
+		return -1.0;
+	}
+
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
@@ -420,12 +447,22 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput() && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
-			var text = modificaiton.modified;
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var text = modification.modified;
+			var chrIdx: Int = 0;
 			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
-				textClip = createTextClip(texts[0][0], style);
+				textClip = createTextClip(
+					new TextMappedModification(
+						texts[0][0],
+						modification.difPositionMapping.slice(0, texts[0][0].length)
+					),
+					chrIdx, style
+				);
+				textClip.orgCharIdxStart = chrIdx;
+				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
+				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
 			}
 
@@ -457,7 +494,12 @@ class TextClip extends NativeWidgetClip {
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
-							var newTextClip = createTextClip(text, style);
+							var newTextClip = createTextClip(
+								new TextMappedModification(
+									txt, modification.difPositionMapping.slice(chrIdx, txt.length)
+								),
+								chrIdx, style
+							);
 
 							newTextClip.setClipX(currentWidth);
 							newTextClip.setClipY(currentHeight);
@@ -467,6 +509,7 @@ class TextClip extends NativeWidgetClip {
 							currentWidth += newTextClip.getLocalBounds().width;
 							lineHeight = Math.max(lineHeight, newTextClip.getLocalBounds().height);
 						}
+						chrIdx += txt.length;
 					}
 
 					currentHeight += lineHeight;
@@ -862,6 +905,10 @@ class TextClip extends NativeWidgetClip {
 
 	public function getContent() : String {
 		return text;
+	}
+
+	public function getStyle() : TextStyle {
+		return style;
 	}
 
 	public function getCursorPosition() : Int {
