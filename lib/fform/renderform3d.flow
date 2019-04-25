@@ -6,7 +6,7 @@ export {
 
 	F3DObject ::= F3DScene, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
 		F3DInspectRotation, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin, F3DInspectBoundingSphereMax,
-		F3DCamera, F3DLight, F3DMesh, F3DLoader, F3DAxesHelper, F3DGridHelper;
+		F3DCamera, F3DLight, F3DMesh, F3DLoader, F3DSceneLoader, F3DAxesHelper, F3DGridHelper;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 
@@ -21,12 +21,13 @@ export {
 		F3DInspectBoundingSphereMax(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 
 		F3DLoader(objUrl : string, mtlUrl : string);
+		F3DSceneLoader(url : string);
 
 		F3DAxesHelper(size : double);
 		F3DGridHelper(size : double, divisions : int, colorCenterLine : int, colorGrid : int);
 
 		F3DLight ::= F3DPointLight;
-			F3DPointLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, decay : Transform<double>);
+			F3DPointLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, decayAmount : Transform<double>);
 
 		F3DCamera ::= F3DPerspectiveCamera;
 			F3DPerspectiveCamera(fov : Transform<double>, aspect : Transform<double>, near : Transform<double>, far : Transform<double>);
@@ -45,32 +46,41 @@ export {
 
 F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> FForm {
 	if (js) {
-		metrics = make(FormMetrics(0., 0., 0., 0.));
+		container = make(FEmpty());
 
-		FNativeForm(
-			FEmpty(),
-			metrics,
-			\ -> FEmpty(),
-			\__, __, __ -> {
-				clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
+		load3DLibraries(\ -> {
+			metrics = make(FormMetrics(0., 0., 0., 0.));
 
-				NativeRenderResult(
-					[clip],
-					concat3(
-						[
-							makeSubscribe(wh, \v -> {
-								setClipWidth(clip, v.width);
-								setClipHeight(clip, v.height);
-								nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
-							})()
-						],
-						render3dform(camera, \c -> { set3DCamera(clip, c); [] }),
-						render3dform(scene, \s -> { set3DScene(clip, s); [] })
-					)
-					|> (\f -> \ -> applyall(f))
+			next(
+				container,
+				FNativeForm(
+					FEmpty(),
+					metrics,
+					\ -> FEmpty(),
+					\__, __, __ -> {
+						clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
+
+						NativeRenderResult(
+							[clip],
+							concat3(
+								[
+									makeSubscribe(wh, \v -> {
+										setClipWidth(clip, v.width);
+										setClipHeight(clip, v.height);
+										nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
+									})()
+								],
+								render3dform(camera, \c -> { set3DCamera(clip, c); [] }),
+								render3dform(scene, \s -> { set3DScene(clip, s); [] })
+							)
+							|> (\f -> \ -> applyall(f))
+						)
+					}
 				)
-			}
-		);
+			);
+		});
+
+		FMutable(container);
 	} else {
 		FEmpty();
 	}
@@ -246,6 +256,17 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 				\ -> dispUnsA(uns)
 			]
 		}
+		F3DSceneLoader(url) : {
+			uns = ref [];
+
+			load3DScene(url, \obj -> {
+				uns := onLoad(obj);
+			});
+
+			[
+				\ -> dispUnsA(uns)
+			]
+		}
 		F3DAxesHelper(size) : {
 			onLoad(make3DAxesHelper(size));
 		}
@@ -275,8 +296,8 @@ renderF3DCamera(camera : F3DCamera, onLoad : (native) -> [() -> void]) -> [() ->
 
 renderF3DLight(light : F3DLight, onLoad : (native) -> [() -> void]) -> [() -> void] {
 	switch (light : F3DLight) {
-		F3DPointLight(color, intensity, distance, decay): {
-			clip = make3DPointLight(fgetValue(color), fgetValue(intensity), fgetValue(distance), fgetValue(decay));
+		F3DPointLight(color, intensity, distance, decayAmount): {
+			clip = make3DPointLight(fgetValue(color), fgetValue(intensity), fgetValue(distance), fgetValue(decayAmount));
 
 			concat(
 				onLoad(clip),
@@ -284,7 +305,7 @@ renderF3DLight(light : F3DLight, onLoad : (native) -> [() -> void]) -> [() -> vo
 					makeSubscribe2(color, \v -> set3DLightColor(clip, v))(),
 					makeSubscribe2(intensity, \v -> set3DLightIntensity(clip, v))(),
 					makeSubscribe2(distance, \v -> set3DLightDistance(clip, v))(),
-					makeSubscribe2(decay, \v -> set3DLightDecay(clip, v))()
+					makeSubscribe2(decayAmount, \v -> set3DLightDecay(clip, v))()
 				]
 			)
 		}

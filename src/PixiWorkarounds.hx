@@ -572,8 +572,8 @@ class PixiWorkarounds {
 				const scaleText = fontSize > 0.6;
 
 				if (scaleText) {
-					this.worldTransform.a = 1.0;
-					this.worldTransform.d = 1.0;
+					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
+					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
 
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;

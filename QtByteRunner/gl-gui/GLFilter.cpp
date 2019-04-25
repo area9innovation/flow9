@@ -246,3 +246,75 @@ void GLBevelFilter::render(GLClip *clip, GLRenderer *renderer, GLDrawSurface *ou
         renderer->renderBevel(input, input, shift, bevel_color1, bevel_color2, bevel_inner, sigma);
     }
 }
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(GLShaderFilter, GLFilter);
+
+unsigned GLShaderFilter::program_id_counter = 21;
+
+std::vector<const char*> get_pointer_vector(const std::vector<std::string> &str)
+{
+    std::vector<const char*> pointer_vector;
+
+    for (unsigned i = 0; i < str.size(); i++)
+    {
+        pointer_vector.push_back(str[i].c_str());
+    }
+
+    pointer_vector.push_back(NULL);
+
+    return pointer_vector;
+}
+
+GLShaderFilter::GLShaderFilter(GLRenderSupport *owner, std::vector<std::string> vertex, std::vector<std::string> fragment, std::vector<ShaderUniform> uniforms) :
+    GLFilter(owner)
+{
+    fragment.insert(fragment.begin(), "out frag_highp vec4 fragColor;\n");
+    fragment.insert(fragment.begin(), "#endif\n");
+    fragment.insert(fragment.begin(), "#ifndef GL_ES\n");
+
+    this->vertex = vertex;
+    this->fragment = fragment;
+    this->uniforms = uniforms;
+    this->program_id = program_id_counter;
+    this->compiled = false;
+    this->time = 0.0f;
+    this->seed = -1.0f;
+
+    program_id_counter += 2;
+}
+
+void GLShaderFilter::updateBBox(GLClip *clip, const GLBoundingBox &own_bbox, GLBoundingBox *full_bbox)
+{
+    GLFilter::updateBBox(clip, own_bbox, full_bbox);
+}
+
+void GLShaderFilter::render(GLClip* clip, GLRenderer *renderer, GLDrawSurface *output, GLDrawSurface *input, GLDrawSurface* /*blur*/)
+{
+    clip->prepareRenderTransforms();
+
+    if (!compiled) {
+        std::vector<std::string> pfix;
+        pfix.clear();
+
+        std::vector<const char *> vertex_vector = get_pointer_vector(vertex);
+        std::vector<const char *> fragment_vector = get_pointer_vector(fragment);
+
+        renderer->compileShaderPair((GLRenderer::ProgramId) program_id, vertex_vector.data(), fragment_vector.data(), pfix,
+                                    3,
+                                    GLRenderer::AttrVertexPos, "a_VertexPos",
+                                    GLRenderer::AttrVertexColor, "a_VertexColor",
+                                    GLRenderer::AttrVertexTexCoord, "a_VertexTexCoord");
+
+        renderer->initUniforms((GLRenderer::ProgramId) program_id, uniforms);
+
+        compiled = true;
+    }
+
+    output->makeCurrent();
+
+    renderer->renderShader(input, input, program_id, time, seed);
+
+    if (time > 0.0f || seed >= 0.0f) {
+        clip->wipeFlags(GLClip::WipeChildChanged);
+    }
+}

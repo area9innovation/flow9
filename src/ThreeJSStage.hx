@@ -41,12 +41,11 @@ class ThreeJSStage extends DisplayObject {
 		this.renderer.render(scene, camera);
 
 		var ctx : Dynamic = untyped renderer.context;
+		var resolution = renderer.resolution;
 
-		ctx.save();
 		ctx.globalAlpha = this.worldAlpha;
-		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx, worldTransform.ty);
-		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth(), getHeight());
-		ctx.restore();
+		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
+		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
 	private function getWidth() : Float { return renderer.getSize().width; }

@@ -4,6 +4,7 @@ flow
 flow is a platform for safe, easy and productive programming of complex, multi-platform apps with a modern user interface.
 
 The flow platform includes
+
 - The flow programming language, a safe, functional strongly-typed programming language
 - The flowc compiler, an incremental compiler for multiple targets
 - The flow runtime & standard library, which provides a complete cross-platform library including mature UI components
@@ -42,9 +43,15 @@ Meet flow
 Installation
 ------------
 
-Add `flow9\bin` to your path. Requires 64-bit Java Runtime and Python in your path.
+1. Make sure you have [Git LFS](https://git-lfs.github.com) installed.
 
-Compile and run the first program:
+2.  Check out this repository with something like
+
+	git clone https://github.com/area9innovation/flow9
+
+3. Add `flow9\bin` to your path. We also require 64-bit Java Runtime and Python in your path.
+
+4. Cd into the flow9 directory and compile and run the first program:
 
     c:/flow9> flowcpp demos/demos.flow
 
