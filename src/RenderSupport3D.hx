@@ -26,6 +26,7 @@ import js.three.Light;
 import js.three.PointLight;
 
 import js.three.TextureLoader;
+import js.three.ObjectLoader;
 
 using DisplayObjectHelper;
 using Object3DHelper;
@@ -98,6 +99,10 @@ class RenderSupport3D {
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
 		new ThreeJSLoader(objUrl, mtlUrl, onLoad);
+	}
+
+	public static function load3DScene(url : String, onLoad : Dynamic -> Void) : Void {
+		new ObjectLoader().load(url, onLoad);
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
