@@ -25,16 +25,12 @@ target (which has been allowed to bitrot as that platform has died). This is pro
 software written in flow can made to work well on new platforms as they come, and get the 
 benefits of those without having to rewrite all the code in flow.
 
-We are working on a new target for WebAssembly. This is a level of control we can not easily 
-get with other languages, which are typically much bigger than flow, and thus harder to port
-to other platforms.
-
 #### What about WebAssembly?
 
-This is a great future target to add, but it is still early days. There is no
-GC nor interface with the DOM yet in WebAssembly, so it will require a lot of
-work. We do have an alpha-stage backend in `tools/flowc/backens/wasm` and work
-is ongoing towards running on this target.
+We do have an alpha-stage backend in `tools/flowc/backens/wasm` and it can run a lot of
+code. However, our benchmarks show that WebAssembly is currently around 5 times slower 
+than JS, even on integer-only code. So work has paused on this until browsers are able 
+to run WebAssembly at least as fast as JS.
 
 #### Why can I not `switch` on ints or strings?
 
@@ -66,10 +62,16 @@ we prefer:
 		Unused25(): def();
 	}
 
+or
+
+	Unused ::= Unused1, Unused2, ..., Unused25;
+	switch (foo) {
+		Special(): ...do whatever...;
+		Unused(): ...common path...;
+	}
+
 The reason is that when we add `Whatever26`, then we get a compile error, and actively have to
-consider whether the `def()` is correct in that case as well. You can also switch on a union,
-but notice that the body will be copied for each struct in that union behind the scenes,
-potentially bloating the binary.
+consider whether the common path is correct in that case as well.
 
 #### Why is there no support for recursive local functions, or lambas? ####
 
@@ -159,8 +161,7 @@ collapse it to a `string` in one operation:
 	l = fold(items, makeList(), \acc, item, Cons(item2string(item), acc) );
 	list2string(l);
 
-This will produce much less garbage in memory and take linear time. For small strings, however, the overhead
-of the `List` dwarfs these benefits, and then the shorter and simpler code can be best.
+This will produce much less garbage in memory and take linear time.
 
 In this particular case, the best option is arguably to use the `concatStrings` function from `string.flow`:
 
@@ -187,8 +188,8 @@ constructed types.
 
 Since the implementation of behaviours contain a `DList` of subscribers,
 which is a self-recursive structure, you can not print them. `toString` of a
-DList simply goes into an infinite loop following the back and forward pointers
-forever.
+DList with subscriptions needs to following the back and forward pointers
+forever, and that is not possible.
 
 So just avoid serializing behaviours. If you really need to do it, then you
 have to make sure all your behaviours are "clean" without any subscribers, but
@@ -196,7 +197,7 @@ we do not recommend this.
 
 #### Too many heap sections
 
-When I try to compile bigger programs, I get this error message. What to do?
+When I try to compile bigger programs using "flow", I get this error message. What to do?
 
 See `flow9/resources/neko/1.8.2 - 2.0.0/unlimited/`
 
@@ -215,7 +216,7 @@ useful names in the generated JS.
 
 #### I've been told to make sure my code can be translated to other languages. How do I do this?
 
-Wrap constant strings using the _() function:
+Wrap constant strings using the _() function from `translation.flow` in a way similar to gettext:
 
 	println(_("This should be translated"));
 
@@ -281,7 +282,7 @@ translate these lines to better understand the context and provide a better tran
 #### Does flow have threads?
 
 See [concurrent.flow](https://github.com/area9innovation/flow9/blob/master/lib/concurrent.flow). Due to big 
-differences in our targets, the APIs for parallel are very different from target to target.
+differences in our targets, the APIs for parallel code are very different from target to target.
 
 #### How can I do asynchronous call?
 
@@ -386,15 +387,13 @@ error case if at least one promise failed
 
 #### What data structures are available?
 
-binarytree, set, easygraph, datastream, dlist, list, inttree, inttrie, trie, iterator, ntree, quadtree,
-sentence_matching, ds/limitedheap.
-
-Using `Set` is superior to calling `uniq`, which frankly has terrible performance on long arrays.
+See the "ds" folder where there are things like binarytree, set, easygraph, datastream, dlist, list, 
+inttree, inttrie, trie, iterator, ntree, quadtree, sentence_matching, limitedheap.
 
 #### Should I avoid using refs?
 
 Using refs can come in handy in rare cases or may help to improve performance,
-but in general using refs instroduce side effects, make code harder to change
+but in general using refs introduce side effects, make code harder to change
 and easier to make a mistake.
 
 For example, this is a wrong usage of refs:
@@ -567,3 +566,10 @@ It's better to do this way:
 		find(availableVoices, \v -> strContains(v.name, p))
 	})
 
+#### Why we must use tail recursions
+
+You should writing code in a manner which would allow compiler to perform tail recursion 
+optimisations. Ignoring this optimisation may lead to stack overflow.
+See [tests/tail_recursion_example.flow](../tests/tail_recursion_example.flow) as an example. 
+While collect2 method in this file might look nicer - it will not be converted into cycle 
+by compiler and would lead to stack overflow.

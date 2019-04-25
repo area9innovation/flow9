@@ -7,19 +7,26 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import dk.area9.flowrunner.FlowRunnerService.FlowRunnerServiceBinder;
 
 // Responsible for FlowRunnerService start and bind/unbind from FlowRunner to FlowRunnerService
 public class FlowRunnerServiceWrapper {
 
+    @Nullable
     private Context context = null;
+    @Nullable
     private volatile static FlowRunnerServiceWrapper uniqueInstance = null;
+    @Nullable
     private FlowRunnerService flowRunnerService = null;
     private boolean serviceBound = false;
     private boolean serviceAlarmSet = false;
+    @Nullable
     private FlowRunnerOnRebootCallback lastOnBindCallback = null;
     
+    @NonNull
     private ServiceConnection serviceConnection = new ServiceConnection() {
 
         @Override
@@ -48,6 +55,7 @@ public class FlowRunnerServiceWrapper {
     private FlowRunnerServiceWrapper() {
     }
 
+    @Nullable
     public static FlowRunnerServiceWrapper getInstance() {
         if (uniqueInstance == null) {
             uniqueInstance = new FlowRunnerServiceWrapper();

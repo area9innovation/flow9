@@ -1,4 +1,4 @@
-// © Copyright 2011 Area9 Innovation. All rights reserved
+// © Copyright 2011 Area9 Technologies.
 
 import runtime;
 import ds/tuples;
@@ -22,8 +22,12 @@ export {
 	// Maybe<> version of strIndexOf.
 	strIndexOfM : (string, string) -> Maybe<int>;
 
-	// returns all positions of substr in str
+	// returns all positions of substr in str (for empty substring we returns empty array)
 	multipleStrIndexOf(str : string, substr : string) -> [int];
+	// version of multipleStrIndexOf that allows substring superposition (for example
+	// multipleSuperpositionStrIndexOf("lololol", "lol", false) == [0, 4], but
+	// multipleSuperpositionStrIndexOf("lololol", "lol", true) == [0, 2, 4] ).
+	multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperposition : bool) -> [int];
 
 	// Whether string contains a substring
 	strContains: (str: string, substr: string) -> bool;
@@ -45,7 +49,8 @@ export {
 	// Find one of these chars. -1 if none is found. Considering the string as UCS-2
 	strFindFirstOf(s : string, charsToFind : string) -> int;
 
-	// find first occurrence of any string given. Returns the position and the index of the found string
+	// Finds first occurrence of any string given. Returns the position and the index of the found string.
+	// Ignores empty strings in stringsToFind array
 	strFindFirstOfStrings(s : string, stringsToFind : [string]) -> Maybe<Pair<int, int>>;
 
 	// Maybe<> version of strLastIndexOf
@@ -382,18 +387,35 @@ strLastIndexOf(s, p) {
 	}
 }
 
+multipleSuperpositionStrIndexOf(str : string, substr : string, allowSuperposition : bool) -> [int] {
+	if (substr == "") { // main part do not support empty subsrt
+		[]
+	} else {
+		result = ref [];
+		subsrtLenght = strlen(substr);
+		step = if (allowSuperposition && strlen(str) > subsrtLenght) {
+			firstCharCode = getCharCodeAt(substr, 0);
+			stepM = stringFoldi(substr, None(), \i, acc, c -> {
+				// i == 0 is trivial case with zero gap, so we ignore it
+				if (isNone(acc) && c == firstCharCode && i > 0 && startsWith(substr, substring(substr, i, subsrtLenght - i))) Some(i) else acc
+			});
+			either(stepM, subsrtLenght);
+		} else subsrtLenght;
+		for(0, \i -> i < strlen(str), \i -> {
+			pos = strRangeIndexOf(str, substr, i, strlen(str));
+			if (pos < 0) {
+				2147483647 // intMax // break loop
+			} else {
+				refArrayPush(result, pos);
+				pos + step
+			}
+		});
+		^result
+	}
+}
+
 multipleStrIndexOf(str : string, substr : string) -> [int] {
-	result = ref [];
-	for(0, \i -> i < strlen(str), \i -> {
-		pos = strRangeIndexOf(str, substr, i, strlen(str));
-		if (pos < 0) {
-			2147483647 // intMax // break loop
-		} else {
-			refArrayPush(result, pos);
-			pos + strlen(substr)
-		}
-	});
-	^result
+	multipleSuperpositionStrIndexOf(str, substr, false)
 }
 
 strCountOf(text : string, substr : string) -> int {
@@ -411,32 +433,39 @@ strCountOfHelper(text : string, substr : string, index : int, count : int) -> in
 	}
 }
 
-
-doStrReplace(prefix : string, suffix : string, old : string, new : string) -> string {
-	if (old == "") {
-		prefix + suffix
-	} else {
-		// assuming prefix is part with replacement done
-		i = strIndexOf(suffix, old);
-		if (i >= 0) {
-			l = strlen(suffix);
-			oldLen = strlen(old);
-			doStrReplace(prefix + substring(suffix, 0, i) + new, substring(suffix, i + oldLen, l - i - oldLen), old, new);
-		} else {
-			prefix + suffix
-		}
-	}
+strReplace(s : string, old : string, new : string) -> string {
+	if (old == "") s
+	else if (strlen(s) > 500) list2string(doStrReplace(s, 0, old, new, makeList()))
+	else doStrReplace2("", s, old, new);
 }
 
-strReplace(s, old, new) {
-	doStrReplace("", s, old, new);
+doStrReplace(s : string, i : int, old : string, new : string, acc : List<string>) -> List<string> {
+	n = strlen(s);
+	if (i < n) {
+		hit = strRangeIndexOf(s, old, i, n);
+		if (hit >= 0) {
+			before = substring(s, i, hit - i);
+			nacc = Cons(new, Cons(before, acc));
+			doStrReplace(s, hit + strlen(old), old, new, nacc)
+		} else Cons(strRight(s, i), acc);
+	} else acc;
+}
+
+doStrReplace2(prefix : string, suffix : string, old : string, new : string) -> string {
+	i = strIndexOf(suffix, old);
+	if (i >= 0) {
+		l = strlen(suffix);
+		oldLen = strlen(old);
+		doStrReplace2(prefix + substring(suffix, 0, i) + new, substring(suffix, i + oldLen, l - i - oldLen), old, new);
+	} else {
+		prefix + suffix
+	}
 }
 
 strReplaces(s, oldnew) {
 	n = length(oldnew);
 	if (n < 2) s else strReplaces(strReplace(s, oldnew[0], oldnew[1]), subrange(oldnew, 2, n - 2));
 }
-
 
 strReplaceCustomRec(prefix : string, suffix : string, old : string, new : string, charBeforeFn : Maybe<(string) -> bool>, charAfterFn : Maybe<(string) -> bool>) -> string {
 	if (old == "") {
@@ -918,11 +947,15 @@ strIsFirst(s : string, charsToFind : string) -> bool {
 
 strFindFirstOfStrings(s, strings) {
 	foldi(strings, None(), \i, acc : Maybe<Pair<int, int>>, st -> {
-		p = strIndexOf(s, st);
-		if (p == -1) acc else {
-			switch (acc) {
-				None(): Some(Pair(p, i));
-				Some(pa): if (p < pa.first) Some(Pair(p, i)) else acc;
+		if (st == "") {
+			acc
+		} else {
+			p = strIndexOf(s, st);
+			if (p == -1) acc else {
+				switch (acc) {
+					None(): Some(Pair(p, i));
+					Some(pa): if (p < pa.first) Some(Pair(p, i)) else acc;
+				}
 			}
 		}
 	});

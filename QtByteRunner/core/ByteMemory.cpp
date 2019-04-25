@@ -53,7 +53,7 @@ void ByteMemory::CommitRange(FlowPtr start, FlowPtr end)
         abort();
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     cerr << "Commit(" << std::hex << soff << ".." << eoff << std::dec << ")" << endl;
 #endif
     
@@ -68,7 +68,7 @@ void ByteMemory::DecommitRange(FlowPtr start, FlowPtr end)
     if (eoff > MAX_MEMORY_SIZE)
         eoff = MAX_MEMORY_SIZE;
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     cerr << "Decommit(" << std::hex << soff << ".." << eoff << std::dec << ")" << endl;
 #endif
 

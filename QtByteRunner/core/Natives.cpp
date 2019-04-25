@@ -89,7 +89,7 @@ NativeMethodHost::~NativeMethodHost() {
 
 /* Utilities */
 
-static void ClipLenToRange(int pidx, int *plen, int size) {
+static void ClipLenToRange(int pidx, unsigned *plen, unsigned size) {
     // Range too long, or overflow even?
     int end = pidx + *plen;
     if (end > size || end < 0)
@@ -563,8 +563,8 @@ StackSlot ByteCodeRunner::subrange(RUNNER_ARGS)
     RUNNER_CheckTag(TArray, arr);
     RUNNER_CheckTag2(TInt, idx, len);
 
-    int arr_len = RUNNER->GetArraySize(arr);
-    int len_int = len.GetInt();
+    unsigned arr_len = RUNNER->GetArraySize(arr);
+    unsigned len_int = len.GetInt();
 
     if (unlikely(idx.GetInt() < 0 || len_int < 1) || idx.GetInt() >= arr_len) {
         return StackSlot::MakeEmptyArray();
@@ -696,7 +696,7 @@ StackSlot ByteCodeRunner::substring(RUNNER_ARGS)
     return str;
 }
 
-bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, int len)
+bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, unsigned len)
 {
     ClipLenToRange(idx, &len, GetStringSize(*pdata));
 
@@ -2759,13 +2759,13 @@ StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
 
     BinaryDeserializer worker(RUNNER);
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
 #endif
 
     StackSlot rv = worker.deserialize(value, defval, fixups);
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     RUNNER->flow_err << "Deserialized in " << (GetCurrentTime() - start_time) << " seconds." << endl;
 #endif
 
@@ -3072,7 +3072,7 @@ void ByteCodeRunner::NotifyCameraEvent(int code, std::string message, std::strin
     }
 }
 
-void ByteCodeRunner::NotifyCameraEventVideo(int code, std::string message, std::string additionalInfo, int width, int height, int duration, int size)
+void ByteCodeRunner::NotifyCameraEventVideo(int code, std::string message, std::string additionalInfo, int width, int height, int duration, unsigned size)
 {
     const StackSlot &code_arg = StackSlot::MakeInt(code);
     const StackSlot &message_arg = AllocateString(parseUtf8(message));
@@ -3088,7 +3088,7 @@ void ByteCodeRunner::NotifyCameraEventVideo(int code, std::string message, std::
     }
 }
 
-void ByteCodeRunner::NotifyCameraEventAudio(int code, std::string message, std::string additionalInfo, int duration, int size)
+void ByteCodeRunner::NotifyCameraEventAudio(int code, std::string message, std::string additionalInfo, int duration, unsigned size)
 {
     const StackSlot &code_arg = StackSlot::MakeInt(code);
     const StackSlot &message_arg = AllocateString(parseUtf8(message));

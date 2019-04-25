@@ -51,6 +51,18 @@ BEGIN_STL_HASH_NAMESPACE
     };
 END_STL_HASH_NAMESPACE
 
+struct ShaderUniform {
+    std::string name;
+    std::string type;
+    std::string value;
+
+    ShaderUniform(std::string name, std::string type, std::string value) {
+        this->name = name;
+        this->type = type;
+        this->value = value;
+    }
+};
+
 inline bool is_pow2(unsigned value) { return (value & (value-1)) == 0; }
 
 vec4 flowToColor(const StackSlot &color, const StackSlot &alpha, bool premultiplied = true);
@@ -142,7 +154,7 @@ struct GLBoundingBox {
     void roundOut() {
         if (!isEmpty) {
             min_pt = glm::floor(min_pt);
-            max_pt = glm::floor(max_pt);
+            max_pt = glm::ceil(max_pt);
         }
     }
 

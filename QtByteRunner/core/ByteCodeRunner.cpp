@@ -256,7 +256,7 @@ void ByteCodeRunner::ReloadBytecode()
         BreakpointOpcodeBackup.clear();
 #endif
 
-        int size = Code.GetSize() - 1;
+        unsigned size = Code.GetSize() - 1;
         std::string buffer(size, '\0');
         memcpy(&buffer[0], Memory.GetRawPointer(MakeFlowPtr(0), size, false), size);
 
@@ -598,7 +598,7 @@ void ByteCodeRunner::SetExtendedDebugInfo(ExtendedDebugInfo *dinfo)
 
 HeapLimits ByteCodeRunner::GetHeapLimits(bool high)
 {
-    int size = HeapEnd - HeapStart;
+    unsigned size = HeapEnd - HeapStart;
     FlowPtr m = HeapStart + size / 2;
     HeapLimits ret;
     ret.Start = high ? HeapEnd : m;
@@ -810,7 +810,7 @@ void ByteCodeRunner::RegisterStructDef(unsigned id, const StructDef &sd)
 
             bool has_gc = true;
             FlowStructFieldGCDef gcdef;
-            int size = 4;
+            unsigned size = 4;
 
             switch (def.FieldTypes[i][0]) {
             case FTBool:
@@ -1096,7 +1096,7 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
 /*
  * Perform allocation of a big object, or when the fast heap runs out.
  */
-FlowPtr ByteCodeRunner::AllocateInner(int size) {
+FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
     if (unlikely(unsigned(size) >= MIN_HEAP_SIZE / 2)) {
         ReportError(InvalidArgument, "Allocation size too large: %d bytes.", size);
         return HeapEnd;
@@ -1407,7 +1407,7 @@ StackSlot ByteCodeRunner::AllocateRawStruct(StructDef &def, bool clear)
 }
 
 #ifdef FLOW_COMPACT_STRUCTS
-void ByteCodeRunner::StructSlotPack(const StackSlot &str, const StackSlot *src, int start, int count)
+void ByteCodeRunner::StructSlotPack(const StackSlot &str, const StackSlot *src, int start, unsigned count)
 {
     StructDef &def = StructDefs[str.GetStructId()];
     FlowStructHeader *ph = Memory.GetStructPointer(str.GetRawStructPtr(), true);
@@ -1427,7 +1427,7 @@ void ByteCodeRunner::StructSlotPack(const StackSlot &str, const StackSlot *src, 
         RegisterWrite(ph, str.GetRawStructPtr());
 }
 
-void ByteCodeRunner::StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, int count)
+void ByteCodeRunner::StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int start, unsigned count)
 {
     StructDef &def = StructDefs[str.GetStructId()];
     FlowStructHeader *ph = Memory.GetStructPointer(str.GetRawStructPtr(), false);
@@ -1440,7 +1440,7 @@ void ByteCodeRunner::StructSlotUnpack(const StackSlot &str, StackSlot *tgt, int 
 }
 #endif
 
-StackSlot ByteCodeRunner::AllocateStruct(const char *name, int size)
+StackSlot ByteCodeRunner::AllocateStruct(const char *name, unsigned size)
 {
     T_StructNameIds::iterator it = StructNameIds.find(std::string(name));
 
@@ -1460,7 +1460,7 @@ StackSlot ByteCodeRunner::AllocateStruct(const char *name, int size)
     return AllocateRawStruct(*def);
 }
 
-StackSlot ByteCodeRunner::AllocateKnownStruct(const char *name, int size, int id, StackSlot *data)
+StackSlot ByteCodeRunner::AllocateKnownStruct(const char *name, unsigned size, int id, StackSlot *data)
 {
     if (unlikely(id < 0))
     {
@@ -1526,7 +1526,7 @@ FlowPtr ByteCodeRunner::MoveStackToHeap(int num_slots, bool with_size)
     return ptr;
 }
 
-void ByteCodeRunner::MoveStructToStack(StackSlot str, int count)
+void ByteCodeRunner::MoveStructToStack(StackSlot str, unsigned count)
 {
     if (unlikely(MAX_DATA_STACK - DataStack.size() < unsigned(count))) {
         ReportError(DatastackFull, "Cannot push %d items to the data stack.", count);
@@ -1538,7 +1538,7 @@ void ByteCodeRunner::MoveStructToStack(StackSlot str, int count)
 
 // Disassembly
 
-bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPtr start_position, int size)
+bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPtr start_position, unsigned size)
 {
     FlowPtr old_pos = Code.GetPosition();
     Code.SetPosition(start_position);
@@ -1603,7 +1603,7 @@ bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPt
     return true;
 }
 
-void ByteCodeRunner::Disassemble(ostream &flow_out, FlowPtr start_position, int size)
+void ByteCodeRunner::Disassemble(ostream &flow_out, FlowPtr start_position, unsigned size)
 {
     FlowInstruction::Map table;
 
@@ -1955,7 +1955,7 @@ inline void ByteCodeRunner::DoDeref() {
 /*
  * Register updates to old generation objects for fast GC.
  */
-void ByteCodeRunner::RegisterWrite(FlowPtr slot, int count) {
+void ByteCodeRunner::RegisterWrite(FlowPtr slot, unsigned count) {
     if (slot >= hp_big_pos)
         SlotWriteSet.addInterval(slot, slot + count*STACK_SLOT_SIZE);
 }
@@ -2041,7 +2041,7 @@ inline void ByteCodeRunner::DoField(int i) {
     RUNNER_RefArgsRet1(struct_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
-    int size = GetStructSize(struct_ref);
+    unsigned size = GetStructSize(struct_ref);
     if (likely(i >= 0 && i < size))
         struct_ref = GetStructSlot(struct_ref, i);
     else
@@ -2052,7 +2052,7 @@ inline void ByteCodeRunner::DoSetMutable(int i) {
     RUNNER_RefArgsRet2(struct_ref, val_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
-    int size = GetStructSize(struct_ref);
+    unsigned size = GetStructSize(struct_ref);
     if (likely(i >= 0 && i < size))
     {
         StructDef &def = StructDefs[struct_ref.GetStructId()];
@@ -3454,7 +3454,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
 {
     if (NativeValueBudget < 0) {
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
         flow_err << "Full GC forced by native budget." << endl;
 #endif
         full = true;
@@ -3465,7 +3465,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
     unsigned pdelta = hp - ProfileMemBarrier;
 #endif
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
 #endif
 
@@ -3486,7 +3486,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
         NativeValueBudget = gc.ComputeNativeBudget();
     }
 
-#if defined(DEBUG_FLOW) || defined(FLOW_EMBEDDED)
+#ifdef DEBUG_FLOW
     if (!fast_ok)
         flow_err << "FULL ";
     flow_err << "GC performed: " << (GetCurrentTime() - start_time) << " (generation " << NumFullGCs << ")" << endl;
@@ -4388,7 +4388,7 @@ void ByteCodeRunner::DoClaimInstructionsSpent(int amount, int special)
     }
 }
 
-void ByteCodeRunner::ProfileMemEvent(int size, bool big)
+void ByteCodeRunner::ProfileMemEvent(unsigned size, bool big)
 {
     if (ProfileMemStep > 0) {
 #ifdef FLOW_GARBAGE_PROFILING

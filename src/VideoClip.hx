@@ -2,6 +2,7 @@ import js.Browser;
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
+import pixi.core.renderers.canvas.CanvasRenderer;
 
 using DisplayObjectHelper;
 
@@ -17,18 +18,24 @@ class VideoClip extends FlowContainer {
 	private var startTime : Float = 0;
 	private var endTime : Float = 0;
 
-	private var videoSprite : Sprite;
-	private var videoTexture : Texture;
 	private var fontFamily : String = '';
-	private var textField : TextField;
+	private var textField : TextClip;
 	private var loaded : Bool = false;
 
-	private static var playingVideos : Int = 0;
+	private static var playingVideos : Array<VideoClip> = new Array<VideoClip>();
 
 	public static var CanAutoPlay = false;
 
+	public function getWidth() : Float {
+		return nativeWidget != null ? nativeWidget.width : 0;
+	}
+
+	public function getHeight() : Float {
+		return nativeWidget != null ? nativeWidget.height : 0;
+	}
+
 	public static inline function NeedsDrawing() : Bool {
-		if (playingVideos != 0) {
+		if (playingVideos.filter(function (v) { return v.getClipWorldVisible(); }).length > 0) {
 			Browser.window.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent('videoplaying')") : new js.html.Event('videoplaying'));
 			return true;
 		}
@@ -104,17 +111,10 @@ class VideoClip extends FlowContainer {
 		nativeWidget.setAttribute('playsinline', true);
 
 		if (nativeWidget.autoplay) {
-			playingVideos++;
+			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 
-		videoTexture = Texture.fromVideo(nativeWidget);
-		untyped videoTexture.baseTexture.autoPlay = !startPaused;
-		untyped videoTexture.baseTexture.autoUpdate = false;
-		videoSprite = new Sprite(videoTexture);
-		untyped videoSprite._visible = true;
-		addChild(videoSprite);
-
-		RenderSupportJSPixi.PixiStage.on("drawframe", updateNativeWidget);
+		RenderSupportJSPixi.on("drawframe", updateNativeWidget);
 		once("removed", deleteVideoClip);
 
 		createStreamStatusListeners();
@@ -122,6 +122,22 @@ class VideoClip extends FlowContainer {
 
 		if (!startPaused && !CanAutoPlay)
 			playFn(false);
+	}
+
+	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+		{
+			return;
+		}
+
+		var resolution = renderer.resolution;
+		var ctx : Dynamic = untyped renderer.context;
+
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(worldTransform.a, worldTransform.b, worldTransform.c, worldTransform.d, worldTransform.tx * resolution, worldTransform.ty * resolution);
+		ctx.drawImage(nativeWidget, 0, 0, nativeWidget.width, nativeWidget.height, 0, 0, nativeWidget.width * resolution, nativeWidget.height * resolution);
+
+		untyped super.renderCanvas(renderer);
 	}
 
 	private function deleteVideoClip() : Void {
@@ -133,9 +149,8 @@ class VideoClip extends FlowContainer {
 			nativeWidget.removeAttribute('src');
 			nativeWidget.load();
 
-			RenderSupportJSPixi.PixiStage.off("drawframe", updateNativeWidget);
+			RenderSupportJSPixi.off("drawframe", updateNativeWidget);
 
-			deleteVideoSprite();
 			deleteSubtitlesClip();
 
 			destroyStreamStatusListeners();
@@ -214,34 +229,21 @@ class VideoClip extends FlowContainer {
 
 	private function createSubtitlesClip() : Void {
 		if (textField == null) {
-			textField = RenderSupportJSPixi.makeTextField(fontFamily);
+			textField = new TextClip();
 			addChild(textField);
 		};
 	}
 
 	private function updateSubtitlesClip() : Void {
 		if (nativeWidget != null) {
-			textField.x = (nativeWidget.width - textField.getWidth()) / 2;
-			textField.y = (nativeWidget.height - textField.getHeight()) - 2;
+			textField.setClipX((nativeWidget.width - textField.getWidth()) / 2.0);
+			textField.setClipY(nativeWidget.height - textField.getHeight() - 2.0);
 		}
 	}
 
 	private function deleteSubtitlesClip() : Void {
 		removeChild(textField);
 		textField = null;
-	}
-
-	private function deleteVideoSprite() : Void {
-		if (videoSprite != null) {
-			videoSprite.destroy({ children: true, texture: true, baseTexture: true });
-			removeChild(videoSprite);
-			videoSprite = null;
-		}
-
-		if (videoTexture != null) {
-			videoTexture.destroy(true);
-			videoTexture = null;
-		}
 	}
 
 	public function getCurrentTime() : Float {
@@ -251,14 +253,14 @@ class VideoClip extends FlowContainer {
 	public function pauseVideo() : Void {
 		if (loaded && !nativeWidget.paused) {
 		 	nativeWidget.pause();
-			playingVideos--;
+			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 	}
 
 	public function resumeVideo() : Void {
 		if (loaded && nativeWidget.paused) {
 			nativeWidget.play();
-			playingVideos++;
+			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
 		}
 	}
 
@@ -271,12 +273,11 @@ class VideoClip extends FlowContainer {
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
-		InvalidateStage(); // Update the widget
+		invalidateStage(); // Update the widget
 
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 
 		if (textField != null) {
-			swapChildren(videoSprite, textField);
 			updateSubtitlesClip();
 		};
 
@@ -289,7 +290,7 @@ class VideoClip extends FlowContainer {
 
 	private function onStreamEnded() : Void {
 		if (!nativeWidget.autoplay) {
-			playingVideos--;
+			if (playingVideos.indexOf(this) >= 0) playingVideos.remove(this);
 		}
 
 		streamStatusListener.map(function (l) { l("NetStream.Play.Stop"); });
@@ -379,6 +380,24 @@ class VideoClip extends FlowContainer {
 			nativeWidget.removeEventListener('fullscreenchange', onFullScreen);
 			nativeWidget.removeEventListener('webkitfullscreenchange', onFullScreen);
 			nativeWidget.removeEventListener('mozfullscreenchange', onFullScreen);
+		}
+	}
+
+	public function getCurrentFrame() : String {
+		try {
+			if (textField != null && textField.visible) {
+				textField.visible = false;
+				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+				textField.visible = true;
+
+				return data;
+			} else {
+				var data = RenderSupportJSPixi.PixiRenderer.plugins.extract.base64(this);
+
+				return data;
+			}
+		} catch (e : Dynamic) {
+			return "error";
 		}
 	}
 }

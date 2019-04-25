@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.ApplicationInfo;
+import android.support.annotation.Nullable;
 import android.util.Log;
 
 public class FlowNotificationsAPI {
@@ -77,7 +78,7 @@ public class FlowNotificationsAPI {
 
             Class<?> appOpsClass = Class.forName(APP_OPS_MANAGER);
             Method checkOpNoThrowMethod = appOpsClass.getMethod(CHECK_OP_NO_THROW, Integer.TYPE, Integer.TYPE, String.class);
-            return (((Integer)checkOpNoThrowMethod.invoke(mAppOps, OP_POST_NOTIFICATION, uid, pkg)).intValue() == MODE_ALLOWED);
+            return (((Integer)checkOpNoThrowMethod.invoke(mAppOps, OP_POST_NOTIFICATION, uid, pkg)) == MODE_ALLOWED);
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         } catch (NoSuchMethodException e) {
@@ -152,21 +153,15 @@ public class FlowNotificationsAPI {
         editor.putBoolean(keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_WITH_SOUND, withSound);
         editor.putBoolean(keyPrefix + FlowNotificationsAPI.EXTRA_PINNED_NOTIFICATION, pinNotification);
         String idsList = preferences.getString("notification_id_list", "");
-        try {
-            Object setCandidate = Utils.deserializeStringToObject(idsList);
-            if (setCandidate == null && !idsList.equalsIgnoreCase("")) {
-                //Log.e(Utils.LOG_TAG, "Failed deserialize HashSet with notification ids");
-            }
-            HashSet<Integer> set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
-            set.add(Integer.valueOf(notificationId));
-            editor.putString("notification_id_list", Utils.serializeObjectToString(set));
-        } catch (IOException e) {
-            //Log.e(Utils.LOG_TAG, "Failed to save notification ids list");
-        }
-        editor.commit();
+        Object setCandidate = Utils.deserializeStringToObject(idsList);
+        HashSet<Integer> set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
+        set.add(notificationId);
+        editor.putString("notification_id_list", Utils.serializeObjectToString(set));
+        editor.apply();
     }
     
-    public static FlowLocalNotificationInfo getNotificationInfo(Context context, int notificationId, boolean removeFromPreferences, HashSet<Integer> set) {
+    @Nullable
+    public static FlowLocalNotificationInfo getNotificationInfo(Context context, int notificationId, boolean removeFromPreferences, @Nullable HashSet<Integer> set) {
         SharedPreferences preferences = context.getSharedPreferences(context.getPackageName() + "_preferences", Context.MODE_PRIVATE);
         String keyPrefix = "notification_" + notificationId;
         double time = Utils.sharedPreferencesGetDouble(preferences, keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_TIME, -1.0);
@@ -179,17 +174,13 @@ public class FlowNotificationsAPI {
         FlowLocalNotificationInfo result = null;
         if (set == null) {
             String idsList = preferences.getString("notification_id_list", "");
-            try {
-                Object setCandidate = Utils.deserializeStringToObject(idsList);
-                set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
-                if (set.contains(Integer.valueOf(notificationId))) {
-                    result = new FlowLocalNotificationInfo(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
-                }
-            } catch (IOException e) {
-                //Log.e(Utils.LOG_TAG, "Failed to save notification ids list");
+            Object setCandidate = Utils.deserializeStringToObject(idsList);
+            set = (setCandidate == null) ? new HashSet<Integer>() : (HashSet<Integer>)setCandidate;
+            if (set.contains(notificationId)) {
+                result = new FlowLocalNotificationInfo(time, notificationId, notificationCallbackArgs, notificationTitle, notificationText, withSound, pinNotification);
             }
         }
-        if (removeFromPreferences && set != null) {
+        if (removeFromPreferences) {
             Editor editor = preferences.edit();
             editor.remove(keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_TIME);
             editor.remove(keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_CALLBACK_ARGS);
@@ -197,13 +188,9 @@ public class FlowNotificationsAPI {
             editor.remove(keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_TEXT);
             editor.remove(keyPrefix + FlowNotificationsAPI.EXTRA_NOTIFICATION_WITH_SOUND);
             editor.remove(keyPrefix + FlowNotificationsAPI.EXTRA_PINNED_NOTIFICATION);
-            set.remove(Integer.valueOf(notificationId));
-            try {
-                editor.putString("notification_id_list", Utils.serializeObjectToString(set));
-            } catch (IOException e) {
-                //Log.e(Utils.LOG_TAG, "Failed to save notification ids list");
-            }
-            editor.commit();
+            set.remove(notificationId);
+            editor.putString("notification_id_list", Utils.serializeObjectToString(set));
+            editor.apply();
         }
         return result;
     }

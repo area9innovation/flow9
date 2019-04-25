@@ -3,6 +3,9 @@
 #import "URLLoader.h"
 #include "utils.h"
 
+#include <fstream>
+#include <streambuf>
+
 //#define IGNORE_MEDIA_PRELOAD
 
 @implementation ConnectionDelegate
@@ -30,9 +33,20 @@
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection
 {
+    AbstractHttpSupport::HeadersMap headers = AbstractHttpSupport::HeadersMap();
+    NSDictionary* headersDict = [response allHeaderFields];
+    
+    NSArray* keys = [headersDict allKeys];
+    for (size_t i = 0; i < keys.count; i++) {
+        headers[NS2UNICODE(keys[i])] = NS2UNICODE([headersDict valueForKey:keys[i]]);
+    }
+    
     Owner->deliverPartialData(RequestId, "", 0, true);
+    Owner->deliverResponse(RequestId, (int)response.statusCode, headers);
     Owner->removeActiveConnection(connection);
+    
     [connection release];
+    [response release];
 }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
@@ -41,8 +55,11 @@
     unicode_string message = parseUtf8([[error localizedDescription] UTF8String]);
     Owner->deliverError(RequestId, message.data(), message.size());
     Owner->getFlowRunner()->RunDeferredActions();
+    
     Owner->removeActiveConnection(connection);
+    
     [connection release];
+    [response release];
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
@@ -52,7 +69,8 @@
     
     if ([response isKindOfClass: [NSHTTPURLResponse class] ])
     {
-        int statusCode = [((NSHTTPURLResponse *)response) statusCode];
+        self->response = [((NSHTTPURLResponse *)response) retain];
+        int statusCode = (int)self->response.statusCode;
         
         LogI(@"Response status %d for %@", statusCode, response.URL);
         
@@ -106,7 +124,7 @@ void iosHttpSupport::removeActiveConnection(NSURLConnection *c)
 
 void iosHttpSupport::doRequest(HttpRequest &rq)
 {
-    NSString * url_string = UNICODE2NS( rq.url );
+    NSString * url_string = [UNICODE2NS(rq.url) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
     
     if (rq.is_media_preload) {
 #if !defined(IGNORE_MEDIA_PRELOAD)
@@ -142,79 +160,11 @@ void iosHttpSupport::doRequest(HttpRequest &rq)
     
     // Setting up headers
     for (HttpRequest::T_SMap::iterator it = rq.headers.begin(); it != rq.headers.end(); ++it)
-        [request setValue: UNICODE2NS(it->second) forHTTPHeaderField: UNICODE2NS( it->first ) ];
+        [request setValue: UNICODE2NS(it->second) forHTTPHeaderField: UNICODE2NS(it->first)];
     
-    if (!rq.attachments.empty()) {
-        // based on this code: https://gist.github.com/mombrea/8467128
-        [request setURL: [NSURL URLWithString: url_string relativeToURL: [URLLoader getBaseURL]] ];
-        [request setHTTPMethod:@"POST"];
-        //NSString * lineEnd = @"\r\n";
-        //NSString * twoHyphens = @"--";
-        NSString * boundary = @"*****";
-        
-        NSString * contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary];
-        [request setValue: contentType forHTTPHeaderField: @"Content-Type"];
-        [request setValue: @"Keep-Alive" forHTTPHeaderField: @"Connection"];
-        
-        NSMutableData * body = [NSMutableData data];
-        // loop for params
-        for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it)
-        {
-            [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding: NSUTF8StringEncoding]];
-            [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n%@\r\n", UNICODE2NS(it->first), UNICODE2NS(it->second)] dataUsingEncoding: NSUTF8StringEncoding]];
-        }
-        
-        // loop for attachments
-        for (HttpRequest::T_SMap::iterator it = rq.attachments.begin(); it != rq.attachments.end(); ++it)
-        {
-            NSData * fileData = nil;
-            NSString * attachmentPath = UNICODE2NS(it->second);
-            NSURL * localFileUrl = [NSURL URLWithString: attachmentPath];
-            if ([[NSFileManager defaultManager] fileExistsAtPath: [localFileUrl path]]) {
-                fileData = [[NSFileManager defaultManager] contentsAtPath:[localFileUrl path]];
-            } else if ([[NSFileManager defaultManager] fileExistsAtPath: attachmentPath]) {
-                fileData = [[NSFileManager defaultManager] contentsAtPath: attachmentPath];
-            }
-            if (fileData == nil) {
-                continue;
-            }
-            
-            [body appendData:[[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding: NSUTF8StringEncoding]];
-            [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\";filename=\"%@\"\r\n\r\n", UNICODE2NS(it->first), UNICODE2NS(it->first)] dataUsingEncoding: NSUTF8StringEncoding]];
-            [body appendData: fileData];
-            [body appendData:[[NSString stringWithFormat:@"\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
-        }
-        
-        [body appendData:[[NSString stringWithFormat:@"--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-        
-        [request setHTTPBody:body];
-        NSString *postLength = [NSString stringWithFormat:@"%d", [body length]];
-        [request setValue:postLength forHTTPHeaderField:@"Content-Length"];
-    } else {
-        NSMutableString * parameters = [NSMutableString stringWithString:@""];
-        
-        // The same looping for params, as for headers
-        for (HttpRequest::T_SMap::iterator it = rq.params.begin(); it != rq.params.end(); ++it)
-        {
-            [parameters appendFormat:@"%@=%@&",
-             ESC_URL_QUERY_ITEM(UNICODE2NS(it->first)),
-             ESC_URL_QUERY_ITEM(UNICODE2NS(it->second))];
-        }
-        
-        if (rq.is_post)
-        {
-            [request setURL: [NSURL URLWithString: url_string relativeToURL: [URLLoader getBaseURL]] ];
-            [request setHTTPMethod:@"POST"];
-            [request setHTTPBody: [parameters dataUsingEncoding: NSUTF8StringEncoding] ];
-        }
-        else
-        {
-            [request setURL: [NSURL URLWithString: [url_string stringByAppendingFormat: ([parameters length] > 0 ? @"?%@" : @"%@"), parameters] relativeToURL: [URLLoader getBaseURL]] ];
-            [request setHTTPMethod:@"GET"];
-        }
-    }
-    
-    //[request setTimeoutInterval: 20.0];
+    [request setHTTPMethod: UNICODE2NS(rq.method)];
+    [request setURL: [NSURL URLWithString: url_string relativeToURL: [URLLoader getBaseURL]]];
+    [request setHTTPBody: [NSData dataWithBytesNoCopy:rq.payload.data() length:rq.payload.size() freeWhenDone:YES]];
     
     LogI(@"Starting HTTP request %@", [[request URL] absoluteString]);
     

@@ -18,6 +18,8 @@
     UNIFORM(u_useTexture) \
     UNIFORM(u_swizzleRB) \
     UNIFORM(u_tex_shifts) \
+    UNIFORM(u_gauss_shifts) \
+    UNIFORM(u_gauss_steps) \
     UNIFORM(u_gauss_base_coeff) \
     UNIFORM(u_gauss_shift_coeff) \
     UNIFORM(u_local_blur_shift) \
@@ -38,6 +40,8 @@ class GLRenderer
 
     /* SHADERS */
 
+public:
+
     enum ProgramId {
         ProgDrawSimple = 0,
         ProgDrawFancy,
@@ -49,12 +53,16 @@ class GLRenderer
         ProgFilterBevel,
         ProgFilterBevelBlur,
         ProgGauss3x3,
-        ProgGauss5x5,
-        ProgGauss9x9,
-        ProgGauss13x13,
-        ProgGauss17x17,
+        ProgGauss,
         ProgLAST
     };
+
+    void compileShaderPair(ProgramId id, const char **vlist , const char **flist,
+                           const std::vector<std::string> &prefix, unsigned nattrs, ...);
+
+    void initUniforms(ProgramId id, std::vector<ShaderUniform> uniforms);
+
+private:
 
     struct ProgramInfo {
         GLuint program_id;
@@ -73,9 +81,6 @@ class GLRenderer
     bool vdoCompileShaderPair(ProgramId id, const char **vlist, const char **flist,
                               const std::vector<std::string> &prefix,
                               int nattrs, va_list attrList);
-
-    void compileShaderPair(ProgramId id, const char **vlist , const char **flist,
-                           const std::vector<std::string> &prefix, int nattrs, ...);
     void vcompileShaderPair(ProgramId id, const char **vlist , const char **flist,
                             const std::vector<std::string> &prefix,
                             int nattrs, va_list attrList);
@@ -251,6 +256,7 @@ public:
 
     void renderShadow(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color, bool inner, float sigma = -1);
     void renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shift, vec4 color1, vec4 color2, bool inner, float sigma = -1);
+    void renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned program_id, float &time, float &seed);
 
     void renderLocalBlur(GLDrawSurface *input, float sigma);
     void renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs);

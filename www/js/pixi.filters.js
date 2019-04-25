@@ -271,23 +271,47 @@ PIXI.Container.prototype._calculateFilterBounds = function ()
 	}
 }
 
-PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender)
+PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 {
-	skipRender = skipRender !== undefined ? skipRender : true;
-
 	if (!this.visible || this.alpha <= 0 || !this.renderable)
 	{
-		this.skipRender = true;
 		return;
 	}
 
-	skipRender = skipRender && this.skipRender;
-
 	var filters = this._canvasFilters;
 
-	if (((filters == null || filters.length == 0) && this._alphaMask == null) || skipRender)
+	if ((filters == null || filters.length == 0) && this._alphaMask == null)
 	{
-		return this._CF_originalRenderCanvas(renderer, skipRender);
+		return this._CF_originalRenderCanvas(renderer);
+	}
+
+	if (this.glShaders) {
+		const bounds = this.getBounds(true);
+		const resolution = renderer.resolution;
+
+		const x = bounds.x - this.filterPadding;
+		const y = bounds.y - this.filterPadding;
+
+		const wd = bounds.width + this.filterPadding * 2.0;
+		const hgt = bounds.height + this.filterPadding * 2.0;
+
+		if (renderer.width != renderer.gl.width || renderer.height != renderer.gl.height) {
+			renderer.gl.resize(renderer.width, renderer.height);
+		}
+
+		if (resolution != renderer.gl.resolution) {
+			renderer.gl.resolution = resolution;
+		}
+
+		renderer.gl.render(this, null, true, null, true);
+
+		const ctx = renderer.context;
+
+		ctx.globalAlpha = this.worldAlpha;
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.drawImage(renderer.gl.view, x, y, wd, hgt, x * resolution, y * resolution, wd * resolution, hgt * resolution);
+
+		return;
 	}
 
 	if ((this.graphicsData != null && (this.children == null || this.children.length == 0)) ||
@@ -308,7 +332,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer, skipRender)
 		ctx.shadowBlur = filter.blur * 2 * res;
 		ctx.shadowOffsetX = Math.cos(angle) * dist * res;
 		ctx.shadowOffsetY = Math.sin(angle) * dist * res;
-		this._CF_originalRenderCanvas(renderer, skipRender);
+		this._CF_originalRenderCanvas(renderer);
 		ctx.restore();
 
 		return;

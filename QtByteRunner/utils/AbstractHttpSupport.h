@@ -9,9 +9,8 @@ struct HttpRequest {
     int req_id;
 
     unicode_string url;
-    bool is_post;
     unicode_string method;
-    unicode_string payload;
+    std::vector<uint8_t> payload;
     T_SMap headers, params, attachments;
 
     bool is_media_preload;
@@ -65,6 +64,7 @@ class AbstractHttpSupport : public NativeMethodHost {
     void cancelRequest(int id);
 
     unicode_string parseDataBytes(const void * buffer, size_t count);
+    unicode_string urlencode(const unicode_string &url);
 
     friend class QFileSystemInterface;
 
@@ -97,6 +97,9 @@ protected:
 
     void deliverSelectCancel(int id);
     bool deliverSelectOK(int id, unicode_string name, int size);
+
+    void processAttachmentsAsMultipart(HttpRequest& request);
+    void processRequest(HttpRequest& request);
 
     virtual void doRequest(HttpRequest &rq) = 0;
     virtual bool doSelectFile(HttpRequest &) { return false; }

@@ -8,6 +8,8 @@ import java.util.HashMap;
 import android.content.Context;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 
 class FlowSoundPlayer implements FlowRunnerWrapper.SoundPlayer {
     private Context context;
@@ -32,17 +34,19 @@ class FlowSoundPlayer implements FlowRunnerWrapper.SoundPlayer {
     }
 
     /* Cache preloading */
+    @NonNull
     private HashMap<String, String> uri_cache = new HashMap<String,String>();
-    private HashMap<String, Integer> soundUrlDurations = new HashMap<String, Integer>(); 
+    @NonNull
+    private HashMap<String, Integer> soundUrlDurations = new HashMap<String, Integer>();
     
-    public void preloadSound(final String url, final FlowRunnerWrapper.SoundLoadResolver rsv) throws IOException {
+    public void preloadSound(@NonNull final String url, @NonNull final FlowRunnerWrapper.SoundLoadResolver rsv) throws IOException {
         if (uri_cache.get(url) != null) {
             rsv.resolveReady();
             return;
         }
 
         ResourceCache.getInstance(context).getCachedResource(loader_uri, url, new ResourceCache.Resolver() {
-            public void resolveFile(String filename) {
+            public void resolveFile(@NonNull String filename) {
                 uri_cache.put(url, filename);
                 MediaPlayer mp = MediaPlayer.create(context, Uri.fromFile(new File(filename))); 
                 soundUrlDurations.put(url, mp.getDuration());
@@ -65,6 +69,7 @@ class FlowSoundPlayer implements FlowRunnerWrapper.SoundPlayer {
     /* Playback */
     private class Channel {
         final long id;
+        @Nullable
         MediaPlayer player;
         
         Channel(long id) {
@@ -137,6 +142,7 @@ class FlowSoundPlayer implements FlowRunnerWrapper.SoundPlayer {
         }
 }
     
+    @NonNull
     private HashMap<Long,Channel> channels = new HashMap<Long,Channel>();
     
     public void reset() {

@@ -23,6 +23,7 @@ public:
 	void update(const QString& data);
 
 public Q_SLOTS:
+	void refresh(KTextEditor::View*);
 	void refresh();
 
 	void pushShowAll();

@@ -226,7 +226,7 @@ void GLRenderer::setProgram(ProgramId prog)
         if (programs[prog].u_cmatrix >= 0)
             glUniformMatrix3fv(programs[prog].u_cmatrix, 1, GL_FALSE, glm::value_ptr(u_cmatrix));
         program_u_cmatrix_set |= bit;
-    }    
+    }
 
     if ((program_in_dim_set & bit) == 0)
     {
@@ -405,6 +405,97 @@ void GLRenderer::renderBevel(GLDrawSurface *main, GLDrawSurface *mask, vec2 shif
     endFilter(main, mask);
 }
 
+std::vector<std::string> split_string(const std::string &str, const std::string &delimiter)
+{
+    std::vector<std::string> strings;
+
+    std::string::size_type pos = 0;
+    std::string::size_type prev = 0;
+    while ((pos = str.find(delimiter, prev)) != std::string::npos)
+    {
+        strings.push_back(str.substr(prev, pos - prev));
+        prev = pos + 1;
+    }
+
+    if (prev > 0) {
+        // To get the last substring (or only, if delimiter is not found)
+        strings.push_back(str.substr(prev + 1));
+    } else {
+        strings.push_back(str);
+    }
+
+    return strings;
+}
+
+void GLRenderer::renderShader(GLDrawSurface *main, GLDrawSurface *mask, unsigned program_id, float &time, float &seed)
+{
+    beginFilter(main, NULL);
+
+    ProgramInfo *info = &programs[program_id];
+
+    setProgram((ProgramId) program_id);
+
+    vec2 tex[2] = {
+        (main->bbox.min_pt - u_in_offset) * vec2(u_in_pixel_size.x, -u_in_pixel_size.y),
+        vec2(1.0f, 1.0f) + (main->bbox.min_pt - u_in_offset) * vec2(-u_in_pixel_size.x, u_in_pixel_size.y)
+    };
+
+    float coords[4*2] = {
+        tex[0].x, tex[1].y,
+        tex[1].x, tex[1].y,
+        tex[0].x, tex[0].y,
+        tex[1].x, tex[0].y
+    };
+
+    glEnableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
+    glVertexAttribPointer(GLRenderer::AttrVertexTexCoord, 2, GL_FLOAT, GL_FALSE, 0, coords);
+
+    int loc = glGetUniformLocation(info->program_id, "time");
+
+    if (loc >= 0) {
+        time = time + 0.1f;
+        glUniform1f(loc, time);
+    }
+
+    loc = glGetUniformLocation(info->program_id, "u_cmatrix");
+
+    if (loc >= 0) {
+        mat3 cmatrix =
+            mat3(
+                u_out_pixel_size.x, 0.0f, 0.0f,
+                0.0f, u_out_pixel_size.y, 0.0f,
+                -u_out_offset.x * u_out_pixel_size.x, -u_out_offset.y * u_out_pixel_size.y, 1.0f
+            );
+
+        glUniformMatrix3fv(info->u_cmatrix, 1, GL_FALSE, glm::value_ptr(cmatrix));
+    }
+
+    loc = glGetUniformLocation(info->program_id, "seed");
+
+    if (loc >= 0) {
+        seed = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        glUniform1f(loc, seed);
+    }
+
+    loc = glGetUniformLocation(info->program_id, "bounds");
+
+    if (loc >= 0) {
+        vec4 bounds = vec4(main->bbox.min_pt.x, main->bbox.min_pt.y, main->bbox.max_pt.x - main->bbox.min_pt.x, main->bbox.max_pt.y - main->bbox.min_pt.y);
+        glUniform4fv(loc, 1, glm::value_ptr(bounds));
+    }
+
+    loc = glGetUniformLocation(info->program_id, "filterArea");
+
+    if (loc >= 0) {
+        vec4 filterArea = vec4(main->size.x, main->size.y, u_in_offset.x, u_in_offset.y);
+        glUniform4fv(loc, 1, glm::value_ptr(filterArea));
+    }
+
+    endFilter(main, NULL);
+
+    glDisableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
+}
+
 void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
 {
     vec2 nullshift(0.0f, 0.0f);
@@ -418,48 +509,29 @@ void GLRenderer::renderLocalBlur(GLDrawSurface *input, float sigma)
 
 void GLRenderer::renderBigBlur(GLDrawSurface *input, bool vertical, float base_coeff, int steps, float *deltas, float *coeffs)
 {
-    vec4 coeff_vec;
-
     beginFilter(input, NULL);
 
-    switch (steps) {
-    case 1:
-        setProgram(ProgGauss5x5);
-        coeff_vec = vec4(coeffs[0], base_coeff, 0.0f, 0.0f);
-        break;
+    setProgram(ProgGauss);
 
-    case 2:
-        setProgram(ProgGauss9x9);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[1], base_coeff);
-        break;
+    float* gauss_coeffs = new float[steps];
+    for (int i = 0; i < steps; i++)
+        gauss_coeffs[i] = coeffs[i];
 
-    case 3:
-        setProgram(ProgGauss13x13);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[2], base_coeff);
-        break;
-
-    case 4:
-        setProgram(ProgGauss17x17);
-        coeff_vec = vec4(coeffs[0], coeffs[1], coeffs[2], coeffs[3]);
-        glUniform1f(programs[cur_program].u_gauss_base_coeff, base_coeff);
-        break;
-
-    default:
-        assert(false);
-    }
-
-    glUniform4fv(programs[cur_program].u_gauss_shift_coeff, 1, glm::value_ptr(coeff_vec));
-
-    float shifts[2 * 4] = { 0.0f };
+    float* v_shifts = new float[2 * steps];
+    for (int i = 0; i < 2 * steps; i++)
+        v_shifts[i] = 0.0;
 
     if (vertical)
         for (int i = 0; i < steps; i++)
-            shifts[2*i+1] = deltas[i];
+            v_shifts[2*i+1] = deltas[i] * u_in_pixel_size.y;
     else
         for (int i = 0; i < steps; i++)
-            shifts[2*i] = deltas[i];
+            v_shifts[2*i] = deltas[i] * u_in_pixel_size.x;
 
-    glUniform2fv(programs[cur_program].u_tex_shifts, steps, shifts);
+    glUniform1i(programs[cur_program].u_gauss_steps, steps);
+    glUniform1f(programs[cur_program].u_gauss_base_coeff, base_coeff);
+    glUniform1fv(programs[cur_program].u_gauss_shift_coeff, steps, gauss_coeffs);
+    glUniform2fv(programs[cur_program].u_gauss_shifts, steps, v_shifts);
 
     endFilter(input, NULL);
 }
@@ -593,32 +665,13 @@ void GLRenderer::compileShaders()
                       1, AttrVertexPos, "a_VertexPos");
 
     pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 1\n");
     pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss5x5, SHADER_filter_vert, SHADER_gauss_frag, pfix,
+    compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                       1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 2\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss9x9, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                      1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 3\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    compileShaderPair(ProgGauss13x13, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                      1, AttrVertexPos, "a_VertexPos");
-
-    pfix.clear();
-    pfix.push_back("#define TEX_SHIFTS 4\n");
-    pfix.push_back("#define USE_MASK_B\n");
-    ok = doCompileShaderPair(ProgGauss17x17, SHADER_filter_vert, SHADER_gauss_frag, pfix,
-                             1, AttrVertexPos, "a_VertexPos");
 
     if (!ok) {
         pfix.push_back("#define USE_SWIZZLE_SHIFT\n");
-        compileShaderPair(ProgGauss17x17, SHADER_filter_vert, SHADER_gauss_frag, pfix,
+        compileShaderPair(ProgGauss, SHADER_filter_vert, SHADER_gauss_frag, pfix,
                           1, AttrVertexPos, "a_VertexPos");
     }
 
@@ -632,7 +685,7 @@ void GLRenderer::reportGLErrors(const char *where)
     GLenum err;
     while ((err = glGetError()) != GL_NO_ERROR) {
 #ifdef FLOW_EMBEDDED
-    	const char *msg = "?";
+        const char *msg = "?";
 #else
         const char *msg = (const char*)gluErrorString(err);
 #endif
@@ -744,9 +797,37 @@ bool GLRenderer::compileShader(GLuint shader, const std::vector<std::string> &pr
     return (status == GL_TRUE);
 }
 
+void GLRenderer::initUniforms(ProgramId id, std::vector<ShaderUniform> uniforms)
+{
+    ProgramInfo *info = &programs[id];
+
+    for (unsigned i = 0; i < uniforms.size(); i++) {
+        ShaderUniform uniform = uniforms[i];
+
+        if (uniform.type == "1f" || uniform.type == "2f" || uniform.type == "3f" || uniform.type == "4f") {
+            int loc = glGetUniformLocation(info->program_id, uniform.name.c_str());
+
+            if (loc >= 0) {
+                if (uniform.type == "1f") {
+                    glUniform1f(loc, atof(uniform.value.c_str()));
+                } else if (uniform.type == "2f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform2f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()));
+                } else if (uniform.type == "3f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform3f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()), atof(value_split[2].c_str()));
+                } else if (uniform.type == "4f") {
+                    std::vector<std::string> value_split = split_string(uniform.value.substr(1, uniform.value.length() - 2), ",");
+                    glUniform4f(loc, atof(value_split[0].c_str()), atof(value_split[1].c_str()), atof(value_split[2].c_str()), atof(value_split[3].c_str()));
+                }
+            }
+        }
+    }
+}
+
 void GLRenderer::compileShaderPair(ProgramId id, const char **vlist, const char **flist,
                                    const std::vector<std::string> &prefix,
-                                   int nattrs, ...)
+                                   unsigned nattrs, ...)
 {
     va_list args;
     va_start(args, nattrs);
@@ -1417,7 +1498,8 @@ void GLDrawSurface::pushCropRect(const GLTransform &matrix, const GLBoundingBox 
     crop.bbox = bbox;
 
     crop.clipbox = matrix * bbox;
-    crop.clipbox.roundOut();
+    crop.clipbox.min_pt = glm::floor(crop.clipbox.min_pt);
+    crop.clipbox.max_pt = glm::floor(crop.clipbox.max_pt);
     crop.bbox.max_pt += vec2(1.0f);
 
     if (!crop_stack.empty())
@@ -1468,13 +1550,13 @@ void GLRenderer::allocTexture(GLTextureImage *tximg)
     textures.insert(tximg);
 
     if (tximg->target == GL_TEXTURE_2D) {
-		glGenTextures(1, &tximg->texture_id);
-		glBindTexture(GL_TEXTURE_2D, tximg->texture_id);
+        glGenTextures(1, &tximg->texture_id);
+        glBindTexture(GL_TEXTURE_2D, tximg->texture_id);
 
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 }
 
@@ -1642,7 +1724,7 @@ void GLTextureBitmap::loadData()
         cerr << "GLTextureBitmap::loadData called on a stub." << endl;
         return;
     }
-    
+
     if (format == GL_UNSIGNED_SHORT_5_5_5_1)
         loadTextureData(GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1, data.data());
     else if (format == GL_UNSIGNED_SHORT_5_6_5)
@@ -1699,7 +1781,7 @@ void GLTextureBitmap::compress()
 {
     unsigned pixels = getSize().x * getSize().y;
     uint8_t * pixel_data = data.writable_data();
-    
+
     if (format == GL_RGB) {
         format = GL_UNSIGNED_SHORT_5_6_5;
         for (unsigned i = 0; i < pixels; ++i) {
@@ -1720,7 +1802,7 @@ void GLTextureBitmap::compress()
     } else {
         return;
     }
-    
+
     bytes_per_pixel = getBytesPerPixel(format);
     reallocate(pixels * bytes_per_pixel);
 }

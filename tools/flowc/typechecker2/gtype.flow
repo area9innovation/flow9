@@ -1,5 +1,5 @@
 import tools/flowc/fctypeenv;
-import tools/flowc/manipulation/simplegraph;
+import tools/flowc/typechecker2/gsubtype_graph_type;
 
 export {
 	GType ::=
@@ -14,11 +14,7 @@ export {
 		GRef(type : GType);
 		GTypeVar(id : int);
 
-		// Some named type, which we might know or might not know, but we
-		// have a type expression that captures the requirements
-		GSubType(expr : GSubTypeExpr);
-
-	GSubTypeExpr ::= GNamed, GField, GAnd, GOr;
+	GSubType ::= GNamed, GField;
 
 		// A struct type S<T> is represented as "S" with T
 		// A union type U<T> is represented as "U" with T
@@ -26,16 +22,6 @@ export {
 
 		// We know there is a field with a given type
 		GField(name : string, type : GType);
-
-		// TODO: We do not want GAnd, GOr
-		// When converting from FcType with unnamed unions and multiple fields,
-		// we should expand to multiple unifications.
-
-		// A type that has to satisfy all these subtypes (aka fields in a struct)
-		GAnd(exprs : [GSubTypeExpr]);
-
-		// A type which can be either of these subtypes (aka union)
-		GOr(exprs : [GSubTypeExpr]);
 
 	GEnv(
 		// The normal environment
@@ -53,15 +39,42 @@ export {
 		// The subtyping relations we have seen to avoid infinite loops
 		seen : Set<Pair<GType, GType>>,
 
-		// The tyvars we have not resolved yet
-		unresolvedTyvars : Set<int>,
-
-		// Relations between tyvars we have seen
-		relations : SimpleGraph<GType, bool>,
+		// Our unification relations graph
+		grelations : GRelations,
 
 		// A "static" graph of named subtypes, disregarding polymorphism.
 		// We have a node between subtype and supertypes. The edge is true
 		// if it is equivalence, like in U ::= S;
-		subtypes : SimpleGraph<string, bool>
+		subtypes : GSubtypeGraph,
+
+		// The names we have seen in types, to help figure out what .field can resolve to
+		namesSeen : Set<string>,
 	);
+
+	GRelations(
+		uppers : Tree<GType, Set<GType>>,
+		lowers : Tree<GType, Set<GType>>,
+		// What positions are we related to? (Both directions)
+		errorInfos : Tree<GType, Set<GErrorInfo>>,
+		// The queue of tyvars to be resolved.
+		tyvarQueue : Set<GQueueItem>,
+		// A set of types this tyvar is an immediate child of. 
+		// I.e. [α1] would mean we have an edge from 1 to [α1].
+		// This is useful when we have a type for α1 and want to check that it works in all contexts
+		parentDeps : Tree<int, Set<GType>>
+	);
+
+	// To make these guys unique, we have to include the tyvar id in the key
+	GQueueItem(stage : int, priority : GPriority, tyvar : int);
+
+		GPriority(
+			unbound : int,
+			fields : int, 
+			named : int, 
+			flows : int, 
+			fixed : int, 
+		);
+
+	// To track where problems come from
+	GErrorInfo(pos : int, description : () -> string);
 }

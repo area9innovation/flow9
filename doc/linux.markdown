@@ -71,22 +71,15 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
-<Directory /home/'$USER'/flow9/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
-</Directory>
-Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
+printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
+     AllowOverride All
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
 ```
-Note, that todoapp is name for application in exercise 9, you can rename it as you wish.
+Note that todoapp is name for application in exercise 9, you can rename it as you wish.
 # Clone the repositories
 If you haven't installed git yet, enter next commands:
 ```bash
@@ -146,7 +139,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format
-haxelib install pixijs 4.5.4 #(or a newer 4.5.x edition)
+haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might
@@ -353,6 +346,6 @@ They can be run directly using `flow9/bin/lint.sh`.
 These tools are also used by the Sublime Text and Emacs integrations.
 (The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
-The instructions in [development.html](development.html) for using the
+The instructions in [development.markdown](development.markdown) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
 installed.

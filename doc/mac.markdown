@@ -1,7 +1,7 @@
 # Flow: getting started (on Mac OS X)
 
 For more details on all of the ways Flow code can be compiled and run,
-including options not mentioned below, see `flow/doc/runtimes.html`.
+including options not mentioned below, see `doc/runtimes.markdown`.
 
 If these instructions prove incorrect or incomplete, please fix it
 and commit your changes to the repository.
@@ -120,8 +120,8 @@ You will be prompted to enter the desired haxelib path. Please sepcify the haxel
 Then install the required libraries:
 
     haxelib install format
-    haxelib install pixijs 4.5.4
-    (or a newer 4.5.x edition)
+    haxelib install pixijs 4.7.1
+    (or a newer edition)
 
 ## Install Neko 2.0.0
 
@@ -348,6 +348,6 @@ Consider committing them to version control.
 
 ## Profiling
 
-The instructions in [development.html](development.html) for
+The instructions in [development.markdown](development.markdown) for
 using the Flow profiler should work fine on Mac as long as
 you have Java 8 installed.

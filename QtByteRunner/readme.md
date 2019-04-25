@@ -147,7 +147,7 @@ https://www.qt.io/download/
 
 Download and execute online installer.
 Choose 
-- Qt/Qt 5.10.0
+- Qt/Qt 5.12.0
 and 
 - Tools
 Install.
@@ -192,15 +192,15 @@ https://www.qt.io/download/
 
 Download and execute online installer.
 Choose 
-- Qt/Qt 5.10.0/msvc(2015 or 2013) 64bit
+- Qt/Qt 5.12.0/msvc(2017 or 2015) 64bit
 and
-- Qt/Qt 5.10.0/msvc(2015 or 2013) 32bit
+- Qt/Qt 5.12.0/msvc(2017 or 2015) 32bit
 and
-- Qt/Qt 5.10.0/Qt WebEngine
+- Qt/Qt 5.12.0/Qt WebEngine
 
 Install.
 
-Install Microsoft Visual Studio (2015 or 2013) Express from
+Install Microsoft Visual Studio (2017 or 2015) Express from
 
 https://www.visualstudio.com/vs/visual-studio-express/
 
@@ -209,7 +209,7 @@ Run Qt Creator.
 
 Open the project `flow9/QtByteRunner/QtByteRunner.pro`
 
-Configure it to use the kit `Qt 5.10.0 + MSVC %2015|2013% 64bit` and `Qt 5.10.0 + MSVC %2015|2013% 32bit`
+Configure it to use the kit `Qt 5.12.0 + MSVC %2017|2015% 64bit` and `Qt 5.12.0 + MSVC %2017|2015% 32bit`
 
 For both configurations add special build step with parameters:
 Command: `windeployqt`
@@ -226,11 +226,11 @@ Running from IDE on Windows
 ---------------------------
 
 For 64 bit build be sure to copy .dlls from win32-libs\bin64 to the
-build-QtByteRunner-Desktop_Qt_5_7_0_MSVC2015_64bit-Release/release  (or <...>-Debug/debug) directory where the
+build-QtByteRunner-Desktop_Qt_5_12_0_MSVC2017_64bit-Release/release  (or <...>-Debug/debug) directory where the
 QtByteRunner.exe resides.
 
 For 32bit be sure to copy .dlls from win32-libs\bin to the
-build-QtByteRunner-Desktop_Qt_5_7_0_MSVC2015_32bit-Release/release  (or <...>-Debug/debug) directory where the
+build-QtByteRunner-Desktop_Qt_5_12_0_MSVC2017_32bit-Release/release  (or <...>-Debug/debug) directory where the
 QtByteRunner.exe resides.
 
 
@@ -377,8 +377,8 @@ Compiling flow compiled to c++
 
 For a server-based program like reports.serverbc:
 
-1) plop the output of generation into QtByteRunner/flowcpp
-2) qmake CONFIG+=no_gui CONFIG+=flowcpp QtByteRunner.pro (or qmake-qt5 - not tested)
+1) plop the output of generation into QtByteRunner/flowgen
+2) qmake CONFIG+=no_gui CONFIG+=native_build QtByteRunner.pro (or qmake-qt5 - not tested)
 3) nice make clean all
 
 Profiling contexts

@@ -9,7 +9,6 @@ import HttpSupport;
 import Extractor;
 import HtmlSupport;
 import NotificationsSupport;
-import ServiceWorkerCache;
 import GeolocationSupport;
 import SwfWriter;
 import Refactor;

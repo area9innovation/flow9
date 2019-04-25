@@ -264,11 +264,9 @@ void FlowManager::slotLookupUses() {
 	}
 }
 
-void FlowManager::slotOutline() {
-	QString file = curFile(mainWindow_);
-	QString id = curIdentifier(mainWindow_);
-	if (!id.isEmpty() && state_.start(OUTLINE, file)) {
-		mainWindow_->activeView()->document()->documentSave();
+void FlowManager::slotOutline(KTextEditor::View* view) {
+	QString file = view->document()->url().toLocalFile();
+	if (state_.start(OUTLINE, file)) {
 		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
 		Compiler compiler(file, flowdir);
 		QStringList args;
