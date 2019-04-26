@@ -39,6 +39,9 @@ export {
 		isTextInputInPopup : bool
 	);
 
+	MTextInputSkin ::= MFilled, MOutlined, MTextInputPlain;
+		MTextInputPlain();
+
 	MInputState(
 		manager : MaterialManager,
 		parent : MFocusGroup,
@@ -69,7 +72,7 @@ export {
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
-		leftIcon : Maybe<DynamicBehaviour<Tropic>>,
+		leftIcon : string,
 		leftButton : Maybe<MLeftCustomButton>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
 		rightButton : Maybe<Transform<string>>,
@@ -95,7 +98,9 @@ export {
 		goToPrev : () -> void,
 		subs : [() -> () -> void],
 		shift : Transform<double>,
-		useNativeInput : bool
+		useNativeInput : bool,
+		condensed : bool,
+		skin : MTextInputSkin
 	);
 
 	MInputAutocompleteState(
@@ -161,6 +166,7 @@ export {
 		aboveLabel : double,
 		betweenLabels : double,
 		showFloatingLabel : DynamicBehaviour<bool>,
+		progress : DynamicBehaviour<double>
 	);
 
 	passwordFilter = \state : [MTextInputState] -> {
@@ -292,6 +298,20 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	textInputCursorShape = make(DefaultCursor());
 	noLeftBorder = contains(style, MInputNoLeftBorder());
 
+	// For testing purposes
+	defaultSkin =
+		if (getUrlParameter("inputSkin") == "filled" && !smallEdit) MFilled()
+		else if (getUrlParameter("inputSkin") == "outlined" && !smallEdit) MOutlined()
+		else MTextInputPlain();
+	skin =
+		fold(style, defaultSkin, \acc, st ->
+			switch (st) {
+				MFilled(): st;
+				MOutlined(): st;
+				default: acc;
+			}
+		);
+
 	//Text Style
 	mTextStyle =
 		extractMTextStyleDef(
@@ -318,14 +338,46 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	prev = ref getValue(content);
 
+	sideBorder =
+		switch (skin : MTextInputSkin) {
+			MTextInputPlain(): {
+				if (isPopup && !noLeftBorder && !smallEdit) 8. else 0.;
+			}
+			MFilled(): {
+				12.;
+			}
+			MOutlined(): {
+				12.;
+			}
+		}
 	inputBorders =
 		extractStruct(
 			style,
 			MInputBorders(
-				if (isPopup && !noLeftBorder && !smallEdit) 8. else 0.,
-				if (hasFloatingLabel) {if (condensed) 20. else 28.} else {if (condensed) 12. else 16.},
-				if (isPopup && !smallEdit) 8. else 0.,
-				if (condensed) 12. else 16.
+				sideBorder,
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): {
+						if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
+					}
+					MFilled(): {
+						if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
+					}
+					MOutlined(): {
+						if (!hasFloatingLabel && condensed) 10. else 18.;
+					}
+				},
+				sideBorder,
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): {
+						if (condensed) 12. else 16.;
+					}
+					MFilled(): {
+						if (hasFloatingLabel) (if (condensed) 8. else 10.) else if (condensed) 10. else 17.;
+					}
+					MOutlined(): {
+						if (!hasFloatingLabel && condensed) 12. else 17.;
+					}
+				}
 			)
 		);
 
@@ -374,16 +426,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		} else
 			None();
 
+	backgroundDefaultColor = contrastingColor(parent);
 	backgroundFill =
 		extractStruct(
 			style,
-			if (!isPopup)
+			if (skin == MFilled() && width > 0.0)
+				MInputBackgroundStyle([Fill(backgroundDefaultColor), FillOpacity(0.06)], [Fill(backgroundDefaultColor), FillOpacity(0.12)])
+			else if (!isPopup)
 				MInputBackgroundStyle([], [])
 			else
 				MInputBackgroundStyle([], [MFill(MDialogColor(getLightBackground(parent)))])
 		);
 
-	//Icons
+	// Icons
 	iconSize = MIconSize(if (condensed) 20. else 24.).size;
 	iconBorders = 8.;
 	showDropDownArrow = !readOnly && extractStruct(style, MShowDropDownArrow(false)).show;
@@ -391,17 +446,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover) && !readOnly;
 
 	// Left icon
-	leftIconName = tryExtractStruct(style, MLeftIcon(""));
-	leftIcon =
-		maybeMap(
-			leftIconName,
-			\li -> make(
-				if (li.icon != "")
-					MIcon2T(parent, if (isMaterialIcon(li.icon)) li.icon else "subject", [MIconSize(iconSize)])
-				else
-					TEmpty()
-			)
-		);
+	leftIconName = extractStruct(style, MLeftIcon("")).icon;
 
 	// Left Button
 	leftButtonDef =
@@ -475,8 +520,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel) {
 			fSize = if (condensed) 13. else 16.;
 			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
-			betweenFLabels = if (condensed) 4. else 8.;
-			aFlabel = inputBorders.top - fSizeFocused - betweenFLabels;
+			betweenFLabels =
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): if (condensed) 4.0 else 8.0;
+					MFilled(): -2.0;
+					MOutlined(): if (!hasFloatingLabel && condensed) 8.0 else 13.0;
+				}
+			aFlabel =
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): inputBorders.top - fSizeFocused - betweenFLabels;
+					MFilled(): 8.0;
+					MOutlined(): inputBorders.top - fSizeFocused - betweenFLabels;
+				}
+			showFLabel = fgetValue(mfocus.focused) || getValue(content) != "";
 
 			Some(
 				MInputFloatingLabelState(
@@ -484,7 +540,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					fSizeFocused,
 					aFlabel,
 					betweenFLabels,
-					make(fgetValue(mfocus.focused) || getValue(content) != "")
+					make(showFLabel),
+					make(if (showFLabel) 0.0 else 1.0)
 				)
 			)
 		} else {
@@ -804,23 +861,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeApply(password, \pw ->
 				nextDistinct(pw.style, [MIconDisabled()])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[MIconDisabled(), MIconSize(iconSize)])
-					else
-						TEmpty()
-				)
-			});
 		} else if (secondOfPair(^currentError) != defaultStyle) {
 			cFill = extractStruct(secondOfPair(^currentError), MErrorColor());
-			iconStyle = if (foc) [cFill, FillOpacity(1.)] else [cFill];
 
 			nextDistinct(labelStyleB, replaceStruct(errorTextStyle, MFill(cFill)));
 
@@ -834,23 +876,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, iconStyle)
+				nextDistinct(pw.style, if (foc) [cFill, FillOpacity(1.)] else [cFill])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							arrayPush(iconStyle, MIconSize(iconSize))
-						)
-					else
-						TEmpty()
-				)
-			});
 		} else if (foc) {
 			nextDistinct(labelStyleB, pressedStyle);
 
@@ -864,22 +891,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, [FillOpacity(secondaryOpacity)]));
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[color, FillOpacity(1.), MIconSize(iconSize)]
-						)
-					else
-						TEmpty()
-				)
-			});
+				nextDistinct(pw.style, [FillOpacity(secondaryOpacity)])
+			);
 		} else {
 			nextDistinct(labelStyleB, disabledStyle);
 
@@ -895,21 +908,6 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeApply(password, \pw ->
 				nextDistinct(pw.style, [FillOpacity(disabledOpacity)])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[MIconSize(iconSize)]
-						)
-					else
-						TEmpty()
-				)
-			});
 		}
 	}
 
@@ -1041,7 +1039,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		align,
 		iconSize,
 		iconBorders,
-		leftIcon,
+		leftIconName,
 		leftButton,
 		editIcon,
 		rightButton,
@@ -1067,7 +1065,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		goToPrev,
 		subs,
 		shift,
-		useNativeInput
+		useNativeInput,
+		condensed,
+		skin
 	)
 }
 
@@ -2048,10 +2048,15 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 
 	makeInputBox = \en : bool ->
 		TSelect2(editorState.lines, editorState.width, \lns, wd ->
-			MText2T(
-				inputState.parent,
-				fold(lns, "", \acc, s -> acc + s.visibleText),
-				if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+			TLines(
+				map(lns, \l ->
+					MText2T(
+						inputState.parent,
+						l.visibleText,
+						if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+					)
+					|> TFixHeight(TFixed(0., editorState.textHeight))
+				)
 			)
 			|> (\f -> TAttachBox(f, editorState.contentWH))
 			|> TSetMinWidth(TFixed(wd, 0.))

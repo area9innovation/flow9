@@ -1014,6 +1014,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeBevel, 9);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeDropShadow, 7);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, makeGlow, 5);
+    TRY_USE_NATIVE_METHOD(GLRenderSupport, makeShader, 3);
 
     TRY_USE_NATIVE_METHOD(GLRenderSupport, getCursor, 0);
     TRY_USE_NATIVE_METHOD(GLRenderSupport, setCursor, 1);
@@ -1564,6 +1565,50 @@ StackSlot GLRenderSupport::makeGlow(RUNNER_ARGS)
     return RUNNER->AllocNative(f);
 }
 
+StackSlot GLRenderSupport::makeShader(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(vertex, fragment, uniform);
+    RUNNER_CheckTag3(TArray, vertex, fragment, uniform);
+
+    std::vector<std::string> vertex_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(vertex); i++) {
+        const StackSlot &vertex_slot = RUNNER->GetArraySlot(vertex, i);
+        RUNNER_CheckTag(TString, vertex_slot);
+
+        vertex_vector.push_back(encodeUtf8(RUNNER->GetString(vertex_slot)));
+    }
+
+    std::vector<std::string> fragment_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(fragment); i++) {
+        const StackSlot &fragment_slot = RUNNER->GetArraySlot(fragment, i);
+        RUNNER_CheckTag(TString, fragment_slot);
+
+        fragment_vector.push_back(encodeUtf8(RUNNER->GetString(fragment_slot)));
+    }
+
+    std::vector<ShaderUniform> uniform_vector;
+
+    for (unsigned i = 0; i < RUNNER->GetArraySize(uniform); i++) {
+        const StackSlot &uniform_slot = RUNNER->GetArraySlot(uniform, i);
+        RUNNER_CheckTag(TArray, uniform_slot);
+
+        uniform_vector.push_back(
+            ShaderUniform(
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 0))),
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 1))),
+                encodeUtf8(RUNNER->GetString(RUNNER->GetArraySlot(uniform_slot, 2)))
+            )
+        );
+    }
+
+    // Experiments have shown that glow is identical to shadow with zero offset.
+    GLShaderFilter *f = new GLShaderFilter(this, vertex_vector, fragment_vector, uniform_vector);
+    return RUNNER->AllocNative(f);
+}
+
+
 StackSlot GLRenderSupport::getCursor(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
@@ -1620,7 +1665,7 @@ StackSlot GLRenderSupport::enableResize(RUNNER_ARGS)
 
 StackSlot GLRenderSupport::makeWebClip(RUNNER_ARGS)
 {
-    RUNNER_PopArgs7(url, domain, use_cache, reload_block, cb, ondone, shrinkToFit);
+    RUNNER_PopArgs6(url, domain, use_cache, reload_block, cb, ondone);
     RUNNER_CheckTag2(TString, url, domain);
     RUNNER_CheckTag2(TBool, use_cache, reload_block);
     return RUNNER->AllocNative(new GLWebClip(this, ivec2(100, 100), RUNNER->GetString(url), use_cache.GetBool(), cb, ondone));

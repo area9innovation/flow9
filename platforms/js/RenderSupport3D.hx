@@ -28,6 +28,10 @@ import js.three.PointLight;
 import js.three.TextureLoader;
 import js.three.ObjectLoader;
 
+import js.three.AnimationClip;
+import js.three.AnimationMixer;
+import js.three.Clock;
+
 using DisplayObjectHelper;
 using Object3DHelper;
 
@@ -47,19 +51,25 @@ class RenderSupport3D {
 			var node = Browser.document.createElement('script');
 			node.setAttribute("type","text/javascript");
 			node.setAttribute("src", 'js/threejs/three.min.js');
-			node.onload = onloadFn;
-			head.appendChild(node);
+			node.onload = function() {
+				var node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/MTLLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
 
-			node = Browser.document.createElement('script');
-			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/MTLLoader.js');
-			node.onload = onloadFn;
-			head.appendChild(node);
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/OBJLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
 
-			node = Browser.document.createElement('script');
-			node.setAttribute("type","text/javascript");
-			node.setAttribute("src", 'js/threejs/OBJLoader.js');
-			node.onload = onloadFn;
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/GLTFLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+			};
 			head.appendChild(node);
 		} else {
 			cb();
@@ -67,11 +77,11 @@ class RenderSupport3D {
 	}
 
 	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
-		parent.add(child);
+		parent.add3DChild(child);
 	}
 
 	public static function remove3DChild(parent : Object3D, child : Object3D) : Void {
-		parent.remove(child);
+		parent.remove3DChild(child);
 	}
 
 	public static function make3DStage(width : Float, height : Float) : ThreeJSStage {
@@ -98,7 +108,31 @@ class RenderSupport3D {
 
 
 	public static function load3DObject(objUrl : String, mtlUrl : String, onLoad : Dynamic -> Void) : Void {
-		new ThreeJSLoader(objUrl, mtlUrl, onLoad);
+		untyped __js__("
+			new THREE.MTLLoader()
+				.load(mtlUrl, function (materials) {
+					materials.preload();
+
+					new THREE.OBJLoader()
+						.setMaterials(materials)
+						.load(objUrl, onLoad);
+				});
+		");
+	}
+
+	public static function load3DGLTFObject(url : String, onLoad : Array<Dynamic> -> Dynamic -> Array<Dynamic> -> Array<Dynamic> -> Dynamic -> Void) : Void {
+		untyped __js__("
+			new THREE.GLTFLoader()
+				.load(url, function (gltf) {
+					onLoad(
+						gltf.animations, // Array<THREE.AnimationClip>
+						gltf.scene, // THREE.Scene
+						gltf.scenes, // Array<THREE.Scene>
+						gltf.cameras, // Array<THREE.Camera>
+						gltf.asset // Object
+					);
+				});
+		");
 	}
 
 	public static function load3DScene(url : String, onLoad : Dynamic -> Void) : Void {
@@ -287,9 +321,9 @@ class RenderSupport3D {
 		return [[box.min.x, box.min.y, box.min.z], [box.max.x, box.max.y, box.max.z]];
 	}
 
-	public static function add3DObjectPositionListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+	public static function add3DObjectPositionListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb([get3DObjectX(object), get3DObjectY(object), get3DObjectZ(object)]);
+			cb(get3DObjectX(object), get3DObjectY(object), get3DObjectZ(object));
 		};
 
 		fn(0);
@@ -298,9 +332,9 @@ class RenderSupport3D {
 		return function() { object.removeEventListener("position", fn); };
 	}
 
-	public static function add3DObjectRotationListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+	public static function add3DObjectRotationListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb([get3DObjectRotationX(object), get3DObjectRotationY(object), get3DObjectRotationZ(object)]);
+			cb(get3DObjectRotationX(object), get3DObjectRotationY(object), get3DObjectRotationZ(object));
 		};
 
 		fn(0);
@@ -309,9 +343,9 @@ class RenderSupport3D {
 		return function() { object.removeEventListener("rotation", fn); };
 	}
 
-	public static function add3DObjectScaleListener(object : Object3D, cb : (Array<Float>) -> Void) : Void -> Void {
+	public static function add3DObjectScaleListener(object : Object3D, cb : Float -> Float -> Float -> Void) : Void -> Void {
 		var fn = function(e : Dynamic) {
-			cb([get3DObjectScaleX(object), get3DObjectScaleY(object), get3DObjectScaleZ(object)]);
+			cb(get3DObjectScaleX(object), get3DObjectScaleY(object), get3DObjectScaleZ(object));
 		};
 
 		fn(0);
@@ -436,5 +470,36 @@ class RenderSupport3D {
 
 	public static function make3DMesh(geometry : Geometry, material : Material) : Mesh {
 		return new Mesh(geometry, material);
+	}
+
+
+	public static function set3DAnimationDuration(animation : AnimationClip, duration : Float) : Void {
+		animation.duration = duration;
+	}
+
+	public static function get3DAnimationDuration(animation : AnimationClip) : Float {
+		return animation.duration;
+	}
+
+	public static function create3DAnimationMixer(object : Object3D) : AnimationMixer {
+		var mixer : Dynamic = untyped __js__("new THREE.AnimationMixer(object)");
+		mixer.clock = new Clock();
+		return mixer;
+	}
+
+	public static function start3DAnimationMixer(mixer : AnimationMixer, animation : AnimationClip) : Void -> Void {
+		var action = mixer.clipAction(animation);
+		var drawFrameFn = function() {
+			mixer.update(untyped mixer.clock.getDelta());
+			RenderSupportJSPixi.InvalidateStage();
+		};
+
+		action.play();
+		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+
+		return function() {
+			action.stop();
+			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+		}
 	}
 }

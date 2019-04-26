@@ -45,16 +45,17 @@ ContiniousTimer(
 
 continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
 	isFinished = ref true;
-	delays = ref [];
-	maxDelay = ref 0.0;
+	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
-	deferredFnsTree : ref Tree<double, [Pair<() -> bool, int>]> = ref makeTree();
+	deferredFns = ref [];
+	deferredTime = ref 0.0;
+	currentRepeat = ref 0;
 
 	startFn = \ -> {
-		started := timestamp() - either(minA(^delays), 0.0);
+		started := timestamp() - either(minA(map(^delays, \v -> v.first)), 0.0);
 		r.start();
 	};
 	stopFn = \ -> {
@@ -65,7 +66,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 	};
 	initFn = \ -> {
 		isFinished := false;
-		delays := getTreeKeys(tree);
+		delays := map(getTreeKeys(tree), \v -> Pair(v, v)); // Pair(current replaying time with timeouts, recorded time)
 
 		uns :=
 			[
@@ -79,55 +80,52 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 						dispUnsA(uns);
 					}
 
-					foldWhile(^delays, ts - ^started, \t, d -> {
-						if (d < t) {
-							maybeApply(
-								lookupTree(tree, d),
-								\records -> iter(records,
-									\fn -> if (!fn()) {
-										// Add to timeout elements
-										println("*** Timeout Fn");
-										deferredFnsTree := treePushToArrayValue(^deferredFnsTree, d + timeout, Pair(fn, 1));
-									}
-								)
-							);
-							delays := subrange(^delays, 1, length(^delays));
-
-							// check timeout elements
-							if (^deferredFnsTree != TreeEmpty()) {
-								delays2 = filter(getTreeKeys(^deferredFnsTree), \v -> v <= d);
-
-								lastDelayIdx = iteriUntil(delays2, \idx, v -> {
-									deferredFns = getTreeArrayValue(^deferredFnsTree, v);
-									// println("#### delay: " + d2s(v));
-									lastFnIdx = iteriUntil(deferredFns, \idx0, v0 -> {
-										// println("#### " + i2s(v0.second) + " : " + i2s(maxRepeats));
-										if (v0.second > maxRepeats) {
-											true
-										} else {
-											if (!(v0.first)()) {
-												println("*** Timeout Fn: " + i2s(v0.second + 1));
-												deferredFnsTree := treePushToArrayValue(^deferredFnsTree, v + timeout, Pair(v0.first, v0.second + 1));
-											}
-											false
-										}
-									});
-									if (lastFnIdx != length(deferredFns)) {
-										true
-									} else {
-										deferredFnsTree := removeFromTree(^deferredFnsTree, v);
-										false
-									}
-								});
-								if (lastDelayIdx != length(delays2))
-									dispUnsA(uns);
-							}
-							Some(t)
+					// check timeouted elements
+					if (^deferredFns != []) {
+						if (^currentRepeat > maxRepeats) {
+							deferredFns := [];
+							currentRepeat := 0;
+							dispUnsA(uns);
 						} else {
-							None()
+							if (^deferredTime < ts - ^started) {
+								// repeat all fns
+								deferredFns := mapConcat(^deferredFns, \fn -> if (!fn()) [fn] else []);
+
+								if (^deferredFns != []) {
+									// repeat was unsuccessful
+									currentRepeat := ^currentRepeat + 1;
+									deferredTime := ^deferredTime + timeout;
+								} else {
+									// repeat was successful - shift all delay.first values to the current timeout
+									delays := map(^delays, \v -> Pair(v.first + timeout * i2d(^currentRepeat), v.second));
+								}
+							}
 						}
-					})
-					|> ignore
+					} else {
+						foldWhile(^delays, ts - ^started, \t, d -> {
+							if (d.first < t) {
+								deferredFns := [];
+
+								maybeApply(
+									lookupTree(tree, d.second),
+									\records -> iter(records,
+										\fn -> if (!fn()) {
+											// Add to timeout elements
+											println("*** Timeout Fn");
+											deferredFns := arrayPush(^deferredFns, fn);
+											deferredTime := d.first + timeout;
+											currentRepeat := 1;
+										}
+									)
+								);
+								delays := subrange(^delays, 1, length(^delays));
+								Some(t)
+							} else {
+								None()
+							}
+						})
+						|> ignore
+					}
 				})()
 			];
 	}

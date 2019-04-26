@@ -249,7 +249,7 @@ class RenderSupportJSPixi {
 		createPixiRenderer();
 
 		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.appendChild(PixiRenderer.view);
+		Browser.document.body.insertBefore(PixiRenderer.view, Browser.document.body.firstChild);
 
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
@@ -1401,10 +1401,10 @@ class RenderSupportJSPixi {
 		} else if (event == "change") {
 			clip.on("input", fn);
 			return function() { clip.off("input", fn); };
-		} else if ( event == "focusin" ) {
+		} else if (event == "focusin") {
 			clip.on("focus", fn);
 			return function() { clip.off("focus", fn); };
-		} else if ( event == "focusout" ) {
+		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
 		} else {
@@ -1780,11 +1780,54 @@ class RenderSupportJSPixi {
 		return null;
 	}
 
-	public static function makeShader(vertexSrc : String, fragmentSrc : String, uniforms : String) : Filter {
-		var uniformsSrc = uniforms == "" ? null : haxe.Json.parse(uniforms);
-		var shader = new Filter(vertexSrc == "" ? null : vertexSrc, fragmentSrc == "" ? null : fragmentSrc, uniformsSrc);
+	public static function makeShader(vertex : Array<String>, fragment : Array<String>, uniforms : Array<Array<String>>) : Filter {
+		var v = StringTools.replace(vertex.join(""), "a_VertexPos", "aVertexPosition");
+		v = StringTools.replace(v, "a_VertexTexCoord", "aTextureCoord");
+		v = StringTools.replace(v, "v_texCoord", "vTextureCoord");
+		v = StringTools.replace(v, "u_cmatrix", "projectionMatrix");
+		v = StringTools.replace(v, "s_tex", "uSampler");
+		v = StringTools.replace(v, "texture(", "texture2D(");
+		v = StringTools.replace(v, "in ", "varying ");
+		v = StringTools.replace(v, "out ", "varying ");
+		v = StringTools.replace(v, "frag_highp", "highp");
 
-		return shader;
+		var f = StringTools.replace(fragment.join(""), "a_VertexPos", "aVertexPosition");
+		f = StringTools.replace(f, "a_VertexTexCoord", "aTextureCoord");
+		f = StringTools.replace(f, "v_texCoord", "vTextureCoord");
+		f = StringTools.replace(f, "u_cmatrix", "projectionMatrix");
+		f = StringTools.replace(f, "s_tex", "uSampler");
+		f = StringTools.replace(f, "texture(", "texture2D(");
+		f = StringTools.replace(f, "in ", "varying ");
+		f = StringTools.replace(f, "out ", "varying ");
+		f = StringTools.replace(f, "frag_highp", "highp");
+
+		var u : Dynamic = {};
+
+		for (uniform in uniforms) {
+			untyped __js__("u[uniform[0]] = { type : uniform[1], value : JSON.parse(uniform[2]) }");
+		}
+
+		u.u_out_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
+
+		u.u_out_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
+
+		u.u_in_pixel_size = {
+			type : "vec2",
+			value : [1, 1]
+		};
+
+		u.u_in_offset = {
+			type : "vec2",
+			value : [0, 0]
+		};
+
+		return new Filter(v, f, u);
 	}
 
 	public static function setScrollRect(clip : FlowContainer, left : Float, top : Float, width : Float, height : Float) : Void {
