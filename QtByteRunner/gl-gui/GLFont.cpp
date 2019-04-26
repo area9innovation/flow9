@@ -135,7 +135,7 @@ ucs4_char LigatureUtf32Iter::operator *() {
 }
 
 ucs4_char_tracer LigatureUtf32Iter::traceCurrent() {
-    ucs4_char_tracer(cur->position(), nx->position(), yieldedChar);
+    return ucs4_char_tracer(cur->position(), nx->position(), yieldedChar);
 }
 
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::clone() {
