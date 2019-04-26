@@ -203,6 +203,16 @@ shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::ReversedIterator::clone() {
     return r;
 }
 
+shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::DirectIterator::cloneReversed() {
+    shared_ptr<Utf32InputIterator> r(new ReversedIterator(this->parent, this->pos));
+    return r;
+}
+
+shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::ReversedIterator::cloneReversed() {
+    shared_ptr<Utf32InputIterator> r(new DirectIterator(this->parent, this->pos));
+    return r;
+}
+
 DecodeUtf16toUtf32::DirectIterator DecodeUtf16toUtf32::begin() {
     DecodeUtf16toUtf32::DirectIterator r(this, 0);
     return r;

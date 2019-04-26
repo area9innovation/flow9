@@ -78,6 +78,7 @@ class UnicodeTranslation {
 
 class TextClip extends NativeWidgetClip {
 	private var text : String = '';
+	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;

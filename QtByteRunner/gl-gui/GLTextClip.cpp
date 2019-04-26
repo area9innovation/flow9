@@ -1053,7 +1053,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
-    return StackSlot::MakeDouble(extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)]);
+    return StackSlot::MakeDouble(extent?extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)]:-1.0);
 }
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)

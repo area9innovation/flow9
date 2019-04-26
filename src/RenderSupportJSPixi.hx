@@ -10,6 +10,7 @@ import pixi.core.renderers.canvas.CanvasRenderer;
 import pixi.core.renderers.webgl.WebGLRenderer;
 import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
+import pixi.core.text.TextStyle;
 
 import pixi.loaders.Loader;
 
