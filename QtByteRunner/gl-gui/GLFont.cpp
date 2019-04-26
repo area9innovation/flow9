@@ -35,7 +35,7 @@ ucs4_char PasswordUtf32Iter::operator *() {
 }
 
 ucs4_char_tracer PasswordUtf32Iter::traceCurrent() {
-    ucs4_char_tracer(cur->position(), nx->position(), **this);
+    return ucs4_char_tracer(cur->position(), nx->position(), **this);
 }
 
 PasswordUtf32Iter& PasswordUtf32Iter::next() {
