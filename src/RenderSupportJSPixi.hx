@@ -249,7 +249,7 @@ class RenderSupportJSPixi {
 		createPixiRenderer();
 
 		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.appendChild(PixiRenderer.view);
+		Browser.document.body.insertBefore(PixiRenderer.view, Browser.document.body.firstChild);
 
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
@@ -1401,10 +1401,10 @@ class RenderSupportJSPixi {
 		} else if (event == "change") {
 			clip.on("input", fn);
 			return function() { clip.off("input", fn); };
-		} else if ( event == "focusin" ) {
+		} else if (event == "focusin") {
 			clip.on("focus", fn);
 			return function() { clip.off("focus", fn); };
-		} else if ( event == "focusout" ) {
+		} else if (event == "focusout") {
 			clip.on("blur", fn);
 			return function() { clip.off("blur", fn); };
 		} else {
