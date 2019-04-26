@@ -495,9 +495,10 @@ class RenderSupport3D {
 		};
 
 		action.play();
-
 		RenderSupportJSPixi.on('drawframe', drawFrameFn);
+
 		return function() {
+			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
 		}
 	}
