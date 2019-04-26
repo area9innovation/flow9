@@ -350,8 +350,10 @@ public class Native extends NativeHost {
 	}
 
 	public final int strRangeIndexOf(String str, String substr, Integer start, Integer end) {
-		if (start < 0)
-			start = 0;
+		if (str == "" || start < 0)
+			return -1;
+		end = (end > str.length() || end < 0) ? str.length() : end;
+
 		if (end >= str.length())
 			return str.indexOf(substr, start);
 
