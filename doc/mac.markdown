@@ -228,7 +228,7 @@ Unless you're hacking on the C++ source code for the bytecode
 runner, you shouldn't need to rebuild it. You can just use
 the binary that's already in the repository.
 
-But if you need to build a new binary, see `QtByteRunner/readme.txt`.
+But if you need to build a new binary, see `platforms/qt/readme.txt`.
 
 More info on compiling flow in js or running it on apache can be found in linux doc.
 

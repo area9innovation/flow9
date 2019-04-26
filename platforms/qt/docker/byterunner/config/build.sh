@@ -1,8 +1,8 @@
 #!/bin/bash
-cd /flow
+cd /flow9/platforms/qt
 
 # Generate the shaders include file
-pushd gl-gui/shaders && ./pack.pl
+pushd ../common/cpp/gl-gui/shaders && ./pack.pl
 popd
 
 cd bin/linux

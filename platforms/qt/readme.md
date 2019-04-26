@@ -95,7 +95,7 @@ into QtByteRunner folder first.
 On Linux and Mac, you can build the binary using the `build.sh`
 script in this directory.
 
-The new binary will be in `QtByteRunner/bin/mac/QtByteRunner.app`,
+The new binary will be in `platforms/qt/bin/mac/QtByteRunner.app`,
 or a slightly different path if you're on Linux.  Consider committing
 it to version control.
 
@@ -114,7 +114,7 @@ Linux runner is provided without the libraries and used in CI pipelines.
 So committing it with different rpath will break things.
 
 * To get rpath of byte runner you can do
-readelf -d QtByteRunner/bin/linux/QtByteRunner | grep rpath
+readelf -d platforms/qt/bin/linux/QtByteRunner | grep rpath
 inside flow9 repo.
 
 * Evidently, required version of QT is 5.12.0, and it can be installed with
@@ -161,10 +161,10 @@ brew install freetype
 
 Once you get libs installed run Qt Creator.
 
-Open the project QtByteRunner/QtByteRunner.pro
+Open the project platforms/qt/QtByteRunner.pro
 Press Projects on the left panel
 
-Configure it's build directory to QtByteRunner/bin/mac
+Configure it's build directory to platforms/qt/bin/mac
 
 Build either Release or Debug version.
 
@@ -172,7 +172,7 @@ Running from IDE on Mac
 ---------------------------
 
 Open Qt Creator.
-Then open the project QtByteRunner/QtByteRunner.pro
+Then open the project platforms/qt/QtByteRunner.pro
 
 Once you get the project opened choose Projects in the left panel
 Choose Run tab.
@@ -207,7 +207,7 @@ https://www.visualstudio.com/vs/visual-studio-express/
 
 Run Qt Creator.
 
-Open the project `flow9/QtByteRunner/QtByteRunner.pro`
+Open the project `flow9/platforms/qt/QtByteRunner.pro`
 
 Configure it to use the kit `Qt 5.12.0 + MSVC %2017|2015% 64bit` and `Qt 5.12.0 + MSVC %2017|2015% 32bit`
 
@@ -219,8 +219,8 @@ Arguments:
 
 Build either Release or Debug version.
 
-Copy the 64bit release executable to flow9/QtByteRunner/bin/windows to deploy.
-Copy the 32bit release executable to flow9/QtByteRunner/bin/windows32 to deploy.
+Copy the 64bit release executable to flow9/platforms/qt/bin/windows to deploy.
+Copy the 32bit release executable to flow9/platforms/qt/bin/windows32 to deploy.
 
 Running from IDE on Windows
 ---------------------------
@@ -242,7 +242,7 @@ Running on Mac
     -Then (re)install QT with MySQL support (could take 10+minutes):
     brew remove qt4
     brew install qt4 --with-mysql
-    cd $FLOW/QtByteRunner/bin/mac/QtByteRunner.app/Contents/PlugIns/sqldrivers/
+    cd $FLOW/platforms/qt/bin/mac/QtByteRunner.app/Contents/PlugIns/sqldrivers/
     cp /usr/local/Cellar/qt/4.8.7/plugins/sqldrivers/libqsql* .
 
 2) Getting such messages:
@@ -312,14 +312,14 @@ File /etc/apache2/mods-enabled/fcgid.conf should look like this:
     </IfModule>
 
     where PATH_TO_CGI_BYTERUNNER is substituted for path to QtByteRunner.fcgi,
-    e.g. /home/user/code/flow9/QtByteRunner/bin/cgi/linux/QtByteRunner.fcgi
+    e.g. /home/user/code/flow9/platforms/qt/bin/cgi/linux/QtByteRunner.fcgi
 
 To compile QtByteRunner.fcgi use QtByteRunnerCgi.pro product.
 
 Configuring fast-cgi on Windows
 -------------------------------
 
-For windows we have a precompiled x32 version: flow9/QtByteRunner/bin/windows32/QtByteRunner.fcgi.exe
+For windows we have a precompiled x32 version: flow9/platforms/qt/bin/windows32/QtByteRunner.fcgi.exe
 Flow repository already contains compiled version of fcgi.lib and libfcgi.dll (compiled with msvc 2015, win32 target). If you want to build it by yourself, use source code from here: https://github.com/FastCGI-Archives/fcgi2
 QtByteRunnerCgi implements FastCGI mode. Apache must be configured to support this mode.
 
@@ -356,7 +356,7 @@ LoadModule fcgid_module modules/mod_fcgid.so
   <Files ~ "\.serverbc$">
     Options +ExecCGI +Indexes +MultiViews
     AddHandler fcgid-script .serverbc
-    FcgidWrapper C:/flow9/QtByteRunner/bin/cgi/windows32/QtByteRunner.fcgi.exe .serverbc
+    FcgidWrapper C:/flow9/platforms/qt/bin/cgi/windows32/QtByteRunner.fcgi.exe .serverbc
   </Files>
 
 </IfModule>
@@ -377,7 +377,7 @@ Compiling flow compiled to c++
 
 For a server-based program like reports.serverbc:
 
-1) plop the output of generation into QtByteRunner/flowgen
+1) plop the output of generation into platforms/qt/flowgen
 2) qmake CONFIG+=no_gui CONFIG+=native_build QtByteRunner.pro (or qmake-qt5 - not tested)
 3) nice make clean all
 

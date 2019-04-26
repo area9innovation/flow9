@@ -9,7 +9,7 @@ if [ -z "$FLOW" ]; then
     exit 1
 fi
 
-echo "Goind to use ${FLOW}/QtByteRunner/bin/linux/QtByteRunner"
+echo "Goind to use ${FLOW}/platforms/qt/bin/linux/QtByteRunner"
 echo 
 
 # Consecutive docker cp creates weird folder structure if some files already exist.
@@ -21,9 +21,9 @@ if [ -e flow ]; then
   rm -rI flow
 fi
 
-mkdir -p flow/QtByteRunner/bin/linux
+mkdir -p flow/platforms/qt/bin/linux
 mkdir -p flow/bin
-cp ${FLOW}/QtByteRunner/bin/linux/QtByteRunner flow/QtByteRunner/bin/linux/QtByteRunner
+cp ${FLOW}/platforms/qt/bin/linux/QtByteRunner flow/platforms/qt/bin/linux/QtByteRunner
 cp ${FLOW}/bin flow/ -r
 
 sed "s|%QT_VERSION%|${QT_VERSION}|" Dockerfile.template > Dockerfile
