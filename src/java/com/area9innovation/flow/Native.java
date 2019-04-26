@@ -353,7 +353,7 @@ public class Native extends NativeHost {
 		return s.replace(old, _new);
 	}
 
-	public final int strRangeIndexOf(String str, String substr, Integer start, Integer end) {
+	public final Integer strRangeIndexOf(String str, String substr, Integer start, Integer end) {
 		if (start < 0)
 			start = 0;
 		if (end >= str.length())
