@@ -79,6 +79,10 @@ https://groups.io/g/flow
 
 Your first message requires moderation approval to avoid spam.
 
+There is a blog about flow here:
+
+https://area9innovation.github.io/flow_blog/
+
 Tooling
 -------
 
