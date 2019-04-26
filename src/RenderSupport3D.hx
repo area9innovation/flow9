@@ -67,11 +67,11 @@ class RenderSupport3D {
 	}
 
 	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
-		parent.add(child);
+		parent.add3DChild(child);
 	}
 
 	public static function remove3DChild(parent : Object3D, child : Object3D) : Void {
-		parent.remove(child);
+		parent.remove3DChild(child);
 	}
 
 	public static function make3DStage(width : Float, height : Float) : ThreeJSStage {

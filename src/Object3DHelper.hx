@@ -46,7 +46,7 @@ class Object3DHelper {
 		}
 	}
 
-	public static function add(parent : Object3D, child : Object3D) : Void {
+	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
 		parent.add(child);
 
 		emitEvent(parent, "box");
@@ -54,11 +54,15 @@ class Object3DHelper {
 		broadcastEvent(child, "position");
 		broadcastEvent(child, "scale");
 		broadcastEvent(child, "rotation");
+
+		invalidateStage(parent);
 	}
 
-	public static function remove(parent : Object3D, child : Object3D) : Void {
+	public static function remove3DChild(parent : Object3D, child : Object3D) : Void {
 		parent.remove(child);
 
 		emitEvent(parent, "box");
+
+		invalidateStage(parent);
 	}
 }
