@@ -349,6 +349,10 @@ public class Native extends NativeHost {
 		return str.indexOf(substr);
 	}
 
+	public final String strReplace(String s, String old, String _new) {
+		return s.replace(old, _new);
+	}
+
 	public final int strRangeIndexOf(String str, String substr, Integer start, Integer end) {
 		if (str == "" || start < 0)
 			return -1;
