@@ -69,6 +69,10 @@ and platform, including more details on how to get started.
 Community
 ---------
 
+There is a blog about flow here:
+
+https://flow9.org/
+
 There is a chat in Telegram for discussions about flow:
 
 https://t.me/joinchat/LhUedxYVLN25Eu9XNo93yQ
@@ -78,10 +82,6 @@ There is a mailing list group in groups.io about flow as well:
 https://groups.io/g/flow
 
 Your first message requires moderation approval to avoid spam.
-
-There is a blog about flow here:
-
-http://flow9.org/
 
 Tooling
 -------
