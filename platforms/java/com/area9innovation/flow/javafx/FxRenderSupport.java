@@ -619,7 +619,6 @@ public class FxRenderSupport extends RenderSupport {
 		else if ("mouseup".equals(event))
 			return addEvent(event_mouseup, fn);
 		else if ("mouseenter".equals(event) || "rollover".equals(event)) {
-			System.out.println("ENTER");
 			if (cl.event_mouseenter == null) {
 				cl.event_mouseenter = new TreeMap<>();
 				cl.getTop().setOnMouseEntered(e -> {
@@ -930,12 +929,6 @@ public class FxRenderSupport extends RenderSupport {
 			textField.textProperty().bindBidirectional(this.text);
 
 			textField.setMouseTransparent(false);
-
-			EventHandler<MouseEvent> test = event -> {
-				System.out.println(event.toString());
-			};
-			textField.addEventFilter(MouseEvent.ANY, test);
-			container.addEventFilter(MouseEvent.ANY, test);
 		}
 
 		@Override

@@ -374,4 +374,13 @@ public class RenderSupport extends NativeHost {
     public Integer getNumberOfCameras() {
 	return -1;
     }
+    public Object makeShader(Object[] vertex, Object[] fragment, Object[] uniform) {
+    	 return null;
+    }
+    public Object setClipViewBounds(Object cl, double minX, double minY, double maxX, double maxY) {
+    	return null;
+    }
+    public String getVideoCurrentFrame(Object cl) {
+    	return "";
+    }
 }
