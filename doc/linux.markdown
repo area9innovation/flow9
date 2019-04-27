@@ -252,17 +252,17 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 git clone ssh://git@github.com/angavrilov/asmjit.git
 cd asmjit
 git checkout next
 ```
 Build QtByteRunner:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 ./build.sh # it can return with error 127, but that's expected
 ```
-New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
+New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
@@ -335,7 +335,7 @@ browser and see:
 ```
 
 # Try it (Executed via apache, in browser)
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 # Tools
 The auxiliary tools for Flow include a linter, a code formatter, and a
