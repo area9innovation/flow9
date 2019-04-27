@@ -9,7 +9,7 @@
 using namespace asmjit;
 using namespace asmjit::x86;
 
-const unsigned MAX_CODE_MEMORY = 128*1024*1024;
+const unsigned MAX_CODE_MEMORY = 256*1024*1024;
 
 // Registers used by the C++ calling convention
 
