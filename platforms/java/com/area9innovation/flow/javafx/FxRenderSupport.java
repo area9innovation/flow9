@@ -1444,6 +1444,7 @@ public class FxRenderSupport extends RenderSupport {
 			this.owner = owner;
 			path = new Path();
 			path.setStroke(null);
+			owner.container.setMouseTransparent(true);
 			owner.container.getChildren().add(0,path);
 		}
 		boolean hittest(double x, double y) {
@@ -1463,6 +1464,7 @@ public class FxRenderSupport extends RenderSupport {
 	public Object beginFill(Object gr,int color,double alpha) {
 		Graphics g = (Graphics)gr;
 		g.path.setFill(mkColor(color, alpha));
+		g.owner.container.setMouseTransparent(alpha == 0.0); 
 		return null;
 	}
 	@Override
