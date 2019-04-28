@@ -90,7 +90,7 @@ Building (command line)
 -----------------------
 
 You'll have to clone asmjit (https://github.com/area9innovation/asmjit.git)
-into platforms/cpp/common folder first.
+into platforms/common/cpp folder first.
 
 On Linux and Mac, you can build the binary using the `build.sh`
 script in this directory.
