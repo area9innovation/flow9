@@ -24,6 +24,6 @@ qmake $PLATFORM_OPTS -o Makefile ../../QtByteRunner.pro
 if [ `uname` == Darwin ]; then
 	make && macdeployqt QtByteRunner.app
 else
-	make
+	make $FLOWCPP_MAKE_OPTS
 fi
 
