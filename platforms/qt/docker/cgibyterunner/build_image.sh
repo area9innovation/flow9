@@ -1,10 +1,16 @@
 #!/bin/bash
+set -e
+
 export QT_VERSION=5.12.0
+export QT="$FLOW/platforms/qt"
+export SRC="$FLOW/platforms/common"
 
 rm -rf qbr/
-rsync -art ../../../QtByteRunner/ qbr/ --exclude bin --exclude docker --exclude ios
+mkdir -p qbr/platforms
+rsync -art "$QT/" "qbr/platforms/qt/" --exclude bin --exclude docker
+rsync -art "$SRC/" "qbr/platforms/common/" --exclude haxe
 # we've excluded bin above to speed things up, so creating it manually here
-mkdir -p qbr/bin/cgi/linux
+mkdir -p qbr/platforms/qt/bin/cgi/linux
 
 sed "s|%QT_VERSION%|${QT_VERSION}|" Dockerfile.template > Dockerfile
 docker build \

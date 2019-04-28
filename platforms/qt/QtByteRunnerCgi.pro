@@ -9,7 +9,7 @@ QT       += core sql network
 QT       -= gui
 
 TARGET = QtByteRunner.fcgi
-CONFIG   += console
+CONFIG   += console c++11
 CONFIG   -= app_bundle
 
 unix {
@@ -29,7 +29,7 @@ unix:contains(QMAKE_HOST.arch,x86_64) {
 # takes longer than running bytecode through cgi.
 CONFIG -= use_jit
 
-INCLUDEPATH += core qt-backend asmjit/src
+INCLUDEPATH += ../common/cpp qt-backend asmjit/src
 
 INCLUDEPATH += $$PWD/include/fcgi
 
@@ -57,39 +57,39 @@ DEFINES += FASTCGI
 TEMPLATE = app
 
 SOURCES += \
-    core/ByteCodeRunner.cpp \
-    core/ByteMemory.cpp \
-    core/CodeMemory.cpp \
-    core/MemoryArea.cpp \
-    core/GarbageCollector.cpp \
-    core/Natives.cpp \
-    core/Utf8.cpp \
-    core/Utf32.cpp \
-    core/md5.cpp \
-    utils/AbstractHttpSupport.cpp \
-    utils/AbstractSoundSupport.cpp \
-    utils/FileLocalStore.cpp \
-    utils/FileSystemInterface.cpp \
-    utils/flowfilestruct.cpp
+    ../common/cpp/core/ByteCodeRunner.cpp \
+    ../common/cpp/core/ByteMemory.cpp \
+    ../common/cpp/core/CodeMemory.cpp \
+    ../common/cpp/core/MemoryArea.cpp \
+    ../common/cpp/core/GarbageCollector.cpp \
+    ../common/cpp/core/Natives.cpp \
+    ../common/cpp/core/Utf8.cpp \
+    ../common/cpp/core/Utf32.cpp \
+    ../common/cpp/core/md5.cpp \
+    ../common/cpp/utils/AbstractHttpSupport.cpp \
+    ../common/cpp/utils/AbstractSoundSupport.cpp \
+    ../common/cpp/utils/FileLocalStore.cpp \
+    ../common/cpp/utils/FileSystemInterface.cpp \
+    ../common/cpp/utils/flowfilestruct.cpp
 
 HEADERS  += \
-    core/ByteCodeRunner.h \
-    core/CommonTypes.h \
-    core/nativefunction.h \
-    core/ByteMemory.h \
-    core/CodeMemory.h \
-    core/MemoryArea.h \
-    core/GarbageCollector.h \
-    core/opcodes.h \
-    core/RunnerMacros.h \
-    core/STLHelpers.h \
-    core/md5.h \
     pcheader.h \
-    utils/AbstractHttpSupport.h \
-    utils/AbstractSoundSupport.h \
-    utils/FileLocalStore.h \
-    utils/FileSystemInterface.h \
-    utils/flowfilestruct.h
+    ../common/cpp/core/ByteCodeRunner.h \
+    ../common/cpp/core/CommonTypes.h \
+    ../common/cpp/core/nativefunction.h \
+    ../common/cpp/core/ByteMemory.h \
+    ../common/cpp/core/CodeMemory.h \
+    ../common/cpp/core/MemoryArea.h \
+    ../common/cpp/core/GarbageCollector.h \
+    ../common/cpp/core/opcodes.h \
+    ../common/cpp/core/RunnerMacros.h \
+    ../common/cpp/core/STLHelpers.h \
+    ../common/cpp/core/md5.h \
+    ../common/cpp/utils/AbstractHttpSupport.h \
+    ../common/cpp/utils/AbstractSoundSupport.h \
+    ../common/cpp/utils/FileLocalStore.h \
+    ../common/cpp/utils/FileSystemInterface.h \
+    ../common/cpp/utils/flowfilestruct.h
 
 # Asmjit
 
@@ -98,11 +98,11 @@ CONFIG(use_jit) {
     DEFINES += ASMJIT_STATIC
     DEFINES += ASMJIT_DISABLE_COMPILER
 
-    SOURCES += core/JitProgram.cpp
-    HEADERS += core/JitProgram.h
+    SOURCES += ../common/cpp/core/JitProgram.cpp
+    HEADERS += ../common/cpp/core/JitProgram.h
 
-    SOURCES += $$files(asmjit/src/asmjit/base/*.cpp) $$files(asmjit/src/asmjit/x86/*.cpp)
-    HEADERS += $$files(asmjit/src/asmjit/*.h) $$files(asmjit/src/asmjit/base/*.h) $$files(asmjit/src/asmjit/x86/*.h)
+    SOURCES += $$files(../common/cpp/asmjit/src/asmjit/base/*.cpp) $$files(../common/cpp/asmjit/src/asmjit/x86/*.cpp)
+    HEADERS += $$files(../common/cpp/asmjit/src/asmjit/*.h) $$files(../common/cpp/asmjit/src/asmjit/base/*.h) $$files(../common/cpp/asmjit/src/asmjit/x86/*.h)
 }
 
 
