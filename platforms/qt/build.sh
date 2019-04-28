@@ -15,7 +15,7 @@ SCRIPT_FN=`$READLINK -e "$0"`
 SCRIPT_DIR=`dirname "$SCRIPT_FN"`
 
 # Generate the shaders include file
-pushd gl-gui/shaders && ./pack.pl
+pushd ../common/cpp/gl-gui/shaders && ./pack.pl
 popd
 
 cd "$SCRIPT_DIR/bin/$PLATFORM"
@@ -26,3 +26,4 @@ if [ `uname` == Darwin ]; then
 else
 	make
 fi
+
