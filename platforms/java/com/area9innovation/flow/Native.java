@@ -542,18 +542,24 @@ public class Native extends NativeHost {
 
 	public final String list2string(Struct list) {
 		String rv = "";
-		StringBuilder sb = new StringBuilder();
+		LinkedList<String> ll = new LinkedList<String>();
+		int len = 0;
 		for (Struct cur = list;;) {
 			Object[] data = cur.getFields();
-			if (data.length == 0)
-				break;
+			if (data.length == 0) break;
+
 			rv = ((String)data[0]);
-			// This line + return statement is equivalent of
-			// rv = ((String)data[0]) + rv;
-			sb.append(new StringBuilder(rv).reverse().toString());
+			len += rv.length();
+			ll.add(rv);
 			cur = (Struct)data[1];
 		}
-		return sb.reverse().toString();
+		StringBuilder sb = new StringBuilder(len);
+		// Load data from Cons'es to String builder in direct order
+		for (Iterator i = ll.descendingIterator(); i.hasNext();) {
+		    String x = (String)i.next();
+		    sb.append(x);
+		}
+		return sb.toString();
 	}
 
 	public final Object headList(Struct list, Object _default) {
