@@ -22,11 +22,13 @@ struct FlowGdbMemoryLayout {
 };
 
 class FlowJitProgram : protected asmjit::ErrorHandler {
-    ostream &err;
+	ostream &err;
 
     // Memory space for generating code
     MemoryArea code_buffer;
     unsigned next_code_off;
+	uint64_t memoryLimit;
+
 
     // Memory layout data for the gdb script
     FlowGdbMemoryLayout layout_info;
@@ -250,7 +252,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
         bool needs_flush();
     };
 
-    bool compile();
+	std::tuple<bool, uint64_t> compile();
     bool disassemble();
 
     bool find_functions();
@@ -385,10 +387,12 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
     virtual bool handleError(asmjit::Error err, const char* message, asmjit::CodeEmitter* origin);
 
 public:
-    FlowJitProgram(ostream &err, const std::string &log_name = std::string());
+	FlowJitProgram(ostream &err, const std::string &log_name = std::string(), uint64_t memoryLimit = MAX_CODE_MEMORY);
     ~FlowJitProgram();
 
-    bool Load(const std::string &bytecode_file);
+	static const unsigned MAX_CODE_MEMORY = 256*1024*1024;
+
+	std::tuple<bool, uint64_t> Load(const std::string &bytecode_file);
 
     void InitRunner(ByteCodeRunner *runner);
     void ResetRunner(ByteCodeRunner *runner);

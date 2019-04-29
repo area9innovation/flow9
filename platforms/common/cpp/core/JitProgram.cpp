@@ -5,11 +5,10 @@
 
 #include <iomanip>
 #include <sstream>
+#include <tuple>
 
 using namespace asmjit;
 using namespace asmjit::x86;
-
-const unsigned MAX_CODE_MEMORY = 256*1024*1024;
 
 // Registers used by the C++ calling convention
 
@@ -138,16 +137,31 @@ uint64_t flow_gdb_memory_layout_version = 0;
  */
 #define STATE(field) FIELD_ACCESS(rState, ByteCodeRunner, field)
 
-
+static FlowJitProgram* doLoadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, uint64_t memoryLimit);
 
 FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file)
 {
-    FlowJitProgram *program = new FlowJitProgram(e, log_file);
-    if (program->Load(bytecode_file))
-        return program;
+	return doLoadJitProgram(e, bytecode_file, log_file, FlowJitProgram::MAX_CODE_MEMORY);
+}
 
-    delete program;
-    return NULL;
+FlowJitProgram* doLoadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, uint64_t memoryLimit)
+{
+	FlowJitProgram *program = new FlowJitProgram(e, log_file, memoryLimit);
+	auto res = program->Load(bytecode_file);
+
+	if (std::get<0>(res)) {
+		return program;
+	} else {
+		auto diff = std::get<1>(res);
+		delete program;
+
+		if (diff > 0) {
+			auto pageSize = MemoryArea::page_size();
+			diff = align_up(diff, pageSize) + pageSize;
+			return doLoadJitProgram(e, bytecode_file, log_file, memoryLimit + diff);// Recompile because initial limit wasn't enough, diff keeps size of the overlapped memory piece
+		} else
+			return NULL;
+	}
 }
 
 void deleteJitProgram(FlowJitProgram *program)
@@ -155,7 +169,7 @@ void deleteJitProgram(FlowJitProgram *program)
     delete program;
 }
 
-FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn) : err(e), log_filename(log_fn)
+FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn, uint64_t memoryLimit) : err(e), log_filename(log_fn), memoryLimit(memoryLimit)
 {
     layout_info.start = layout_info.end = layout_info.num_symbols = 0;
     layout_info.next = flow_gdb_memory_layout;
@@ -199,15 +213,15 @@ bool FlowJitProgram::handleError(Error, const char* message, CodeEmitter*)
     throw JitError();
 }
 
-bool FlowJitProgram::Load(const std::string &bytecode_file)
+std::tuple<bool, uint64_t> FlowJitProgram::Load(const std::string &bytecode_file)
 {
     if (!flow_code.load_file(bytecode_file))
-        return false;
+        return std::make_tuple(false, 0);
 
     try {
         return compile();
     } catch (JitError) {
-        return false;
+        return std::make_tuple(false, 0);
     }
 }
 
@@ -359,27 +373,27 @@ StackSlot FlowJitProgram::GetMainFunction()
     return StackSlot::MakeNativeFn(0);
 }
 
-bool FlowJitProgram::compile()
+std::tuple<bool, uint64_t> FlowJitProgram::compile()
 {
     // Parse bytecode
     if (!disassemble())
-        return false;
+        return std::make_tuple(false, 0);
 
     if (!find_functions())
-        return false;
+        return std::make_tuple(false, 0);
 
     if (!find_structs())
-        return false;
+        return std::make_tuple(false, 0);
 
     if (!find_global_inits())
-        return false;
+        return std::make_tuple(false, 0);
 
     // Initialize generation
     next_code_off = 0;
-    next_data_off = committed_data_off = MAX_CODE_MEMORY;
+	next_data_off = committed_data_off = memoryLimit;
 
     if (!code_buffer.reserve(next_data_off))
-        return false;
+        return std::make_tuple(false, 0);
 
     layout_info.start = (uint64_t)code_buffer.data();
     layout_info.end = layout_info.start + next_data_off;
@@ -414,7 +428,7 @@ bool FlowJitProgram::compile()
             err << "  L" << i << std::endl;
         }
 
-        return false;
+        return std::make_tuple(false, 0);
     }
 
     // Emit code to the output buffer
@@ -425,6 +439,11 @@ bool FlowJitProgram::compile()
     code_buffer.executable(next_code_off, next_code_off + real_size);
 
     next_code_off += real_size;
+
+	if (next_code_off > next_data_off) {
+		return std::make_tuple(false, next_code_off - next_data_off);
+	}
+
     finalize_label_addrs(base);
     finalize_jumptables(base);
     link_struct_tables();
@@ -442,7 +461,7 @@ bool FlowJitProgram::compile()
     entry_thunk_ptr = NativeFunctionPtr(entry_thunk.addr);
     invalid_native_ptr = (void*)invalid_native_fn.addr;
     generic_native_ptr = (void*)generic_native_fn.addr;
-    return true;
+    return std::make_tuple(true, 0);
 }
 
 bool FlowJitProgram::disassemble()
