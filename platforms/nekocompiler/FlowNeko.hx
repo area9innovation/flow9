@@ -669,7 +669,7 @@ class FlowNeko extends Options {
 		var args = [];
 		if (root != '.') {
 			args.push('-cp');
-			args.push(root+'/platforms/nekocompiler');
+			args.push(root+'/platforms/js');
 			args.push('-cp');
 			args.push(root+'/platforms/common/haxe');
 		}
