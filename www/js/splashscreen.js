@@ -8,7 +8,8 @@ function setSplashScreen() {
 			splashSrc: 'images/splash/Area9_innovation_splash.png',
 			splashWidth: 630,
 			splashHeight: 440,
-			progressSrc: 'images/splash/innovation_loader.gif',
+			progressSrc: 'images/splash/innovation_loader.webm',
+			progressSrcAlternative: 'images/splash/innovation_loader.gif',
 			progressTop: '137px',
 			progressBottom: 'unset',
 			progressLeft: '50%',
@@ -32,9 +33,17 @@ function setSplashScreen() {
 	s.style.position = 'absolute';
 	c.appendChild(s);
 	if (g('progressShown')) {
-		var p = document.createElement('img');
+		var p = document.createElement('video');
+		if (p.canPlayType('video/webm; codecs="vp8, vorbis"')) {
+			p.src = g('progressSrc');
+			p.loop = 'true';
+			p.autoplay = 'true';
+			p.muted = 'true';
+		} else {
+			var p = document.createElement('img');
+			p.src = g('progressSrcAlternative');
+		}
 		p.id = 'loading';
-		p.src = g('progressSrc');
 		p.alt = 'loading';
 		p.style.cssText = "position: absolute; transform: translateX(-50%)"
 			+"; width: "+g('progressWidth')

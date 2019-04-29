@@ -4,6 +4,7 @@ flow
 flow is a platform for safe, easy and productive programming of complex, multi-platform apps with a modern user interface.
 
 The flow platform includes
+
 - The flow programming language, a safe, functional strongly-typed programming language
 - The flowc compiler, an incremental compiler for multiple targets
 - The flow runtime & standard library, which provides a complete cross-platform library including mature UI components
@@ -14,6 +15,15 @@ flow has production quality targets for:
 - iOS
 - Android
 - Windows, Mac, Linux
+
+Hello world
+-----------
+
+    import runtime;
+
+    main() {
+    	println("Hello world");
+    }
 
 Meet flow
 ---------
@@ -30,21 +40,18 @@ Meet flow
 - Extensive UI toolkit based on Google Material Design guidelines
 - UI toolkit based on Functional Reactive Programming
 
-Hello world
------------
-
-    import runtime;
-
-    main() {
-    	println("Hello world");
-    }
-
 Installation
 ------------
 
-Add `flow9\bin` to your path. Requires 64-bit Java Runtime.
+1. Make sure you have [Git LFS](https://git-lfs.github.com) installed.
 
-Compile and run the first program:
+2.  Check out this repository with something like
+
+	git clone https://github.com/area9innovation/flow9
+
+3. Add `flow9\bin` to your path. We also require 64-bit Java Runtime and Python in your path.
+
+4. Cd into the flow9 directory and compile and run the first program:
 
     c:/flow9> flowcpp demos/demos.flow
 
@@ -53,10 +60,18 @@ You have to reclone the flow9 repository after installing Git LFS, or use `git l
 
 See `demos/demos.flow` to read the code for this example.
 
-See `doc/index.html` for further documentation about the language and platform.
+Documentation
+-------------
+
+See [doc/readme.markdown](doc/readme.markdown) for further documentation about the language 
+and platform, including more details on how to get started.
 
 Community
 ---------
+
+There is a blog about flow here:
+
+https://flow9.org/
 
 There is a chat in Telegram for discussions about flow:
 

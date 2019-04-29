@@ -14,9 +14,8 @@ a `.flow` file) it will check for its updates by looking at package.json in flow
 and prompt user to update. It will also monitor this file for changes. The update procedure 
 itself is automatic as well.
 
-Configure the flow root folder under File->Preferences-Settings, and then "Flow configuration" 
-and change `flow.root` to 
-point to the root of Flow repo (typically `c:\flow9`).
+Configure the flow root folder under File->Preferences->Settings->Extensions->Flow configuration 
+and change `flow.root` to point to the root of the Flow repo (typically `c:\flow9`).
 
 # Useful coding font
 

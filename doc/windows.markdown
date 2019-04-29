@@ -174,7 +174,7 @@ If it is commented, uncomment it and append the full path of the downloaded file
 
 ## Compiling and running flow bytecode as CGI scripts in apache
 
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 
 # Memory exhaustion problems

@@ -5,6 +5,7 @@ import sys/fullscreen;
 import ui/fontmapping;
 import fusion_utils;
 import fform/renderfform;
+import tropic/tropic_manager;
 
 export {
 	// A fixed size, empty block
@@ -307,6 +308,22 @@ export {
 	TCheckeredRectangle(style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], content : Tropic) -> Tropic;
 	TCheckeredRounded(nw : double, ne : double, lw : double, le : double, style1 : [TGraphicsStyle],
 		style2 : [TGraphicsStyle], content : Tropic) -> Tropic;
+
+	TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic;
+
+	T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> Tropic;
+	T3DOrbitControls(
+		manager : TManager,
+		wh : Transform<WidthHeight>,
+		scene : F3DObject,
+		camera : F3DObject,
+		light : F3DPointLight,
+		style : [OrbitControlsStyle]
+	) -> Tropic;
+
+		OrbitControlsStyle ::= CameraPosition, SceneRotation;
+			CameraPosition(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+			SceneRotation(x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -2141,7 +2158,15 @@ TCheckeredRectangle(style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], conten
 	);
 }
 
-TCheckeredRounded(nw : double, ne : double, lw : double, le : double, style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], content : Tropic) -> Tropic {
+TCheckeredRounded(
+	nw : double,
+	ne : double,
+	lw : double,
+	le : double,
+	style1 : [TGraphicsStyle],
+	style2 : [TGraphicsStyle],
+	content : Tropic
+) -> Tropic {
 	size = makeWH();
 
 	TGroup2(
@@ -2167,4 +2192,176 @@ TCheckeredRounded(nw : double, ne : double, lw : double, le : double, style1 : [
 			TRounded(nw, ne, lw, le, [Fill(white)], TSized(size))
 		)
 	);
+}
+
+TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic {
+	// Qt target on OSX returns the scroll in pixels, so we scale it by 80.
+	scrollScale = if (qt && macosx()) 80. else 1.;
+
+	if (mobile)
+		content
+	else {
+		zorder = ref getValue(manager.zorder);
+
+		TConstruct(
+			[
+				\ -> {
+					zorder := getValue(manager.zorder);
+					nop
+				}
+			],
+			TInteractive(
+				[
+					FineGrainMouseWheel2(\h, mi ->
+						if (!h && ^zorder >= getValue(manager.zorder)) {
+							m = mi();
+
+							if (m.inside && (m.dx != 0. || m.dy != 0.)) {
+								dx = deltaX(m.dx / scrollScale);
+								dy = deltaY(m.dy / scrollScale);
+
+								dx || dy
+							} else {
+								h
+							}
+						} else
+							h
+					)
+				],
+				content
+			)
+		)
+	}
+}
+
+T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> Tropic {
+	TFForm(
+		F3DStage(
+			wh,
+			scene,
+			camera
+		),
+		TFormMetrics(
+			fwidth(wh),
+			fheight(wh),
+			fheight(wh)
+		)
+	);
+}
+
+T3DOrbitControls(
+	manager : TManager,
+	wh : Transform<WidthHeight>,
+	scene : F3DObject,
+	camera : F3DObject,
+	light : F3DPointLight,
+	style : [OrbitControlsStyle]
+) -> Tropic {
+	mouseDown = make(false);
+	mouseMiddleDown = make(false);
+	mousePosition = make(zeroPoint);
+
+	// boundsCamera = extractStruct(style, CameraPosition(make(0.0), make(1000.0), make(0.0)));
+
+	initCamera = extractStruct(style, CameraPosition(make(0.0), make(1000.0), make(0.0)));
+	initScene = extractStruct(style, SceneRotation(make(0.0), make(0.0), make(0.0)));
+
+	cameraX = initCamera.x;
+	cameraY = initCamera.y;
+	cameraZ = initCamera.z;
+
+	sceneRotationX = initScene.x;
+	sceneRotationY = initScene.y;
+	sceneRotationZ = initScene.z;
+
+	updateLookAt = make(false);
+
+	T3DStage(
+		wh,
+		F3DScene(
+			const([
+				light
+				|> (\l -> F3DPosition(l, cameraX, cameraY, cameraZ)),
+				F3DRotation(scene, sceneRotationX, sceneRotationY, sceneRotationZ)
+			])
+		),
+		camera
+		|> (\c -> F3DLookAt(c, cameraX, const(0.0), cameraZ, updateLookAt))
+		|> (\c -> F3DPosition(c, cameraX, cameraY, cameraZ))
+	)
+	|> (\f ->
+		TMouseWheelInteractive(
+			manager,
+			TFrame(0., 0., interactiveRectangleStyle, f),
+			\dx -> false,
+			\dy -> {
+				next(cameraY, min(max(getValue(cameraY) - dy * 100., 0.0), 3000.0));
+
+				reverseBehaviour(updateLookAt);
+
+				true;
+			}
+		)
+	)
+	|> (\f ->
+		TInteractive(
+			[
+				MouseDown(\mi -> {
+					if (mi.inside()) {
+						next(mouseDown, true);
+						next(mousePosition, Point(mi.x, mi.y));
+
+						true;
+					} else {
+						false;
+					}
+				}),
+				MouseUp(\m -> {
+					nextDistinct(mouseDown, false);
+
+					false;
+				}),
+				MouseMiddleDown(\mi -> {
+					if (mi.inside()) {
+						next(mouseMiddleDown, true);
+						next(mousePosition, Point(mi.x, mi.y));
+
+						true;
+					} else {
+						false;
+					}
+				}),
+				MouseMiddleUp(\m -> {
+					nextDistinct(mouseMiddleDown, false);
+
+					false;
+				}),
+				MouseMove(\m -> {
+					mi = m();
+
+					if ((getValue(mouseDown) || getValue(mouseMiddleDown)) && mi.inside) {
+						mdx = (mi.x - getValue(mousePosition).x) / 10.0;
+						mdy = (mi.y - getValue(mousePosition).y) / 10.0;
+
+						next(mousePosition, Point(mi.x, mi.y));
+
+						if (getValue(mouseDown)) {
+							nextDistinct(sceneRotationX, getValue(sceneRotationX) + mdy);
+							nextDistinct(sceneRotationY, getValue(sceneRotationY) + mdx);
+						} else {
+							nextDistinct(cameraX, getValue(cameraX) - mdx * getValue(cameraY) / 100.0);
+							nextDistinct(cameraZ, getValue(cameraZ) - mdy * getValue(cameraY) / 100.0);
+						}
+
+						reverseBehaviour(updateLookAt);
+
+						true;
+					} else {
+						false;
+					}
+				})
+			],
+			f
+		)
+	)
 }

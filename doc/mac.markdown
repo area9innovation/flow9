@@ -1,7 +1,7 @@
 # Flow: getting started (on Mac OS X)
 
 For more details on all of the ways Flow code can be compiled and run,
-including options not mentioned below, see `flow/doc/runtimes.html`.
+including options not mentioned below, see `doc/runtimes.markdown`.
 
 If these instructions prove incorrect or incomplete, please fix it
 and commit your changes to the repository.
@@ -228,7 +228,7 @@ Unless you're hacking on the C++ source code for the bytecode
 runner, you shouldn't need to rebuild it. You can just use
 the binary that's already in the repository.
 
-But if you need to build a new binary, see `QtByteRunner/readme.txt`.
+But if you need to build a new binary, see `platforms/qt/readme.txt`.
 
 More info on compiling flow in js or running it on apache can be found in linux doc.
 
@@ -348,6 +348,6 @@ Consider committing them to version control.
 
 ## Profiling
 
-The instructions in [development.html](development.html) for
+The instructions in [development.markdown](development.markdown) for
 using the Flow profiler should work fine on Mac as long as
 you have Java 8 installed.

@@ -39,19 +39,23 @@ replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic
 ContiniousTimer(
 	start : () -> void,
 	stop : () -> void,
-	pause : () -> void
+	pause : () -> void,
+	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) -> ContiniousTimer {
+continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
 	isFinished = ref true;
-	delays = ref [];
-	maxDelay = ref 0.0;
+	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
+	deferredFns = ref [];
+	deferredTime = ref 0.0;
+	currentRepeat = ref 0;
+
 	startFn = \ -> {
-		started := timestamp() - either(minA(^delays), 0.0);
+		started := timestamp() - either(minA(map(^delays, \v -> v.first)), 0.0);
 		r.start();
 	};
 	stopFn = \ -> {
@@ -62,7 +66,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 	};
 	initFn = \ -> {
 		isFinished := false;
-		delays := getTreeKeys(tree);
+		delays := map(getTreeKeys(tree), \v -> Pair(v, v)); // Pair(current replaying time with timeouts, recorded time)
 
 		uns :=
 			[
@@ -76,17 +80,52 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 						dispUnsA(uns);
 					}
 
-					foldWhile(^delays, ts - ^started, \t, d -> {
-						if (d < t) {
-							maybeApply(lookupTree(tree, d), \records -> iter(records, \fn -> if (!fn()) dispUnsA(uns)));
-							delays := subrange(^delays, 1, length(^delays));
-
-							Some(t)
+					// check timeouted elements
+					if (^deferredFns != []) {
+						if (^currentRepeat > maxRepeats) {
+							deferredFns := [];
+							currentRepeat := 0;
+							dispUnsA(uns);
 						} else {
-							None()
+							if (^deferredTime < ts - ^started) {
+								// repeat all fns
+								deferredFns := mapConcat(^deferredFns, \fn -> if (!fn()) [fn] else []);
+
+								if (^deferredFns != []) {
+									// repeat was unsuccessful
+									currentRepeat := ^currentRepeat + 1;
+									deferredTime := ^deferredTime + timeout;
+								} else {
+									// repeat was successful - shift all delay.first values to the current timeout
+									delays := map(^delays, \v -> Pair(v.first + timeout * i2d(^currentRepeat), v.second));
+								}
+							}
 						}
-					})
-					|> ignore
+					} else {
+						foldWhile(^delays, ts - ^started, \t, d -> {
+							if (d.first < t) {
+								deferredFns := [];
+
+								maybeApply(
+									lookupTree(tree, d.second),
+									\records -> iter(records,
+										\fn -> if (!fn()) {
+											// Add to timeout elements
+											println("*** Timeout Fn");
+											deferredFns := arrayPush(^deferredFns, fn);
+											deferredTime := d.first + timeout;
+											currentRepeat := 1;
+										}
+									)
+								);
+								delays := subrange(^delays, 1, length(^delays));
+								Some(t)
+							} else {
+								None()
+							}
+						})
+						|> ignore
+					}
 				})()
 			];
 	}
@@ -100,12 +139,15 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 			startFn();
 		},
 		stopFn,
-		pauseFn
+		pauseFn,
+		timeout
 	)
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
+	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
+	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
@@ -114,7 +156,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
 		)
 	)
-	|> (\t -> continiousTimer(t, onFinished))
+	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));

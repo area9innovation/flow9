@@ -212,7 +212,7 @@ flow.config in order the tests to be compiled correctly (done for tools\flowc\te
 
 To build a test manually with g++ from command line please use following arguments:
 
-	g++ -std=c++1z -I<path to flow> -I<path to flow>/QtByteRunner/core/ -o <executable name> -O3 -fno-exceptions <path to test*.cpp> -lstdc++fs
+	g++ -std=c++1z -I<path to flow> -I<path to flow>/platforms/common/cpp/core/ -o <executable name> -O3 -fno-exceptions <path to test*.cpp> -lstdc++fs
 
 Add "-D NDEBUG" to command line to remove asserts when measuring performance.
 

@@ -488,7 +488,7 @@ working. So normally, you will not be using `tropic2form`, but rather `trender` 
 
 The second parameter of `trender` is an array of TRenderStyle union elements. TRender style 
 includes a `Stylesheet` structure. Setting `Stylesheet` in trender gives ability to use CSS stylesheets to 
-skin Tropic user interfaces. See `doc/css.html` for more information.
+skin Tropic user interfaces. See `doc/css.markdown` for more information.
 
 Making two tropics the same size without scaling
 ------------------------------------------------

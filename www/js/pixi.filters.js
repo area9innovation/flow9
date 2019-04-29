@@ -287,6 +287,7 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 
 	if (this.glShaders) {
 		const bounds = this.getBounds(true);
+		const resolution = renderer.resolution;
 
 		const x = bounds.x - this.filterPadding;
 		const y = bounds.y - this.filterPadding;
@@ -298,15 +299,17 @@ PIXI.Container.prototype._renderFilterCanvas = function (renderer)
 			renderer.gl.resize(renderer.width, renderer.height);
 		}
 
+		if (resolution != renderer.gl.resolution) {
+			renderer.gl.resolution = resolution;
+		}
+
 		renderer.gl.render(this, null, true, null, true);
 
 		const ctx = renderer.context;
 
-		ctx.save();
 		ctx.globalAlpha = this.worldAlpha;
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
-		ctx.drawImage(renderer.gl.view, x, y, wd, hgt, x, y, wd, hgt);
-		ctx.restore();
+		ctx.drawImage(renderer.gl.view, x, y, wd, hgt, x * resolution, y * resolution, wd * resolution, hgt * resolution);
 
 		return;
 	}

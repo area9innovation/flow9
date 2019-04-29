@@ -10,7 +10,7 @@ export {
 		tyvars : Set<int>, 
 		lower : GBounds, 
 		upper : GBounds, 
-		starts : Set<int>
+		errorInfos : Set<GErrorInfo>
 	);
 
 	// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
@@ -22,33 +22,30 @@ export {
 		named : Set<GNamed>,
 		fields : Set<GField>
 	);
+
+	gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string;
+	gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string;
 }
 
 buildGTyvarRequirement(env : GEnv, tyvarId : int) -> GTyvarRequirements {
 	reqs = buildGTyvarReqForOne(env, tyvarId);
 
 	loopingTyvars = intersectSets(reqs.lower.tyvars, reqs.upper.tyvars);
-	res = if (!isEmptySet(loopingTyvars)) {
-		// OK, we have a loop of tyvars. In that case, we can
-		// collect the requirements for those tyvars as well, and join them up
-		foldSet(loopingTyvars, reqs, \acc, tv -> {
-			nreq = buildGTyvarReqForOne(env, tv);
-			joinGTyvarRequirements(acc, nreq)
-		});
-	} else {
-		reqs
-	}
 
-	res;
+	// OK, we have a loop of tyvars. In that case, we can
+	// collect the requirements for those tyvars as well, and join them up
+	foldSet(loopingTyvars, reqs, \acc, tv -> {
+		joinGTyvarRequirements(acc, buildGTyvarReqForOne(env, tv))
+	});
 }
 
 buildGTyvarReqForOne(env : GEnv, tyvarId : int) -> GTyvarRequirements {
 	type = GTypeVar(tyvarId);
 
-	lowers = transitiveGLowerRelations(env.grelations, type, makeSet());
-	uppers = transitiveGUpperRelations(env.grelations, type, makeSet());
+	lowers = transitiveGLowerRelations(env, env.grelations, type, makeSet());
+	uppers = transitiveGUpperRelations(env, env.grelations, type, makeSet());
 
-	positions = getGRelationPositions(env.grelations, type);
+	errorInfos = getGErrorInfos(env.grelations, type);
 
 	lowerBounds = foldSet(lowers, emptyGBounds(), \acc : GBounds, gtype : GType -> {
 		addGTypeToGBounds(env, acc, gtype);
@@ -57,7 +54,7 @@ buildGTyvarReqForOne(env : GEnv, tyvarId : int) -> GTyvarRequirements {
 		addGTypeToGBounds(env, acc, gtype);
 	});
 
-	GTyvarRequirements(makeSet1(tyvarId), lowerBounds, upperBounds, positions);
+	GTyvarRequirements(makeSet1(tyvarId), lowerBounds, upperBounds, errorInfos);
 }
 
 joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
@@ -67,7 +64,7 @@ joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) ->
 		tyvars, 
 		removeGBoundsTyvars(joinGBounds(left.lower, right.lower), tyvars),
 		removeGBoundsTyvars(joinGBounds(left.upper, right.upper), tyvars),
-		mergeSets(left.starts, right.starts)
+		mergeSets(left.errorInfos, right.errorInfos)
 	);
 }
 
@@ -139,4 +136,41 @@ resolveGType(env : GEnv, tt : GType) -> GType {
 
 resolveGTypes(env : GEnv, types : [GType]) -> [GType] {
 	map(types, \t -> resolveGType(env, t));
+}
+
+gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
+	deps = foldSet(req.tyvars, makeSet(), \acc, tv -> {
+		mergeSets(acc, lookupMultimap(env.grelations.parentDeps, tv))
+	});
+	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") 
+	+ " c= " + gbounds2string(env, req.upper)
+	+ " (parent: " + superglue(set2array(deps), \t -> gtype2string(env, t), ",") + ")"
+}
+
+gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
+	lb = gbounds2stringNice(env, req.lower);
+	ub = gbounds2stringNice(env, req.upper);
+	(if (lb == "") lb else "has " + lb)
+	+ (if (lb != "" && ub != "") " and " else "")
+	+ (if (ub == "") ub else "is subtype of " + ub)
+}
+
+gbounds2string(env : GEnv, g : GBounds) -> string {
+	"{"
+	+ (if (g.hasFlow) " flow " else "")
+	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
+	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
+	+ " : " + superglue(set2array(g.named), \st -> gtype2string(env, st), ", ")
+	+ " : " + superglue(set2array(g.fields), \st -> gtype2string(env, st), ", ")
+	+ "}"
+}
+
+gbounds2stringNice(env : GEnv, g : GBounds) -> string {
+	strGlue(concatA([
+		if (g.hasFlow) ["flow"] else [],
+		map(set2array(g.fixedTypes), \t -> gtype2string(env, t)),
+		map(set2array(g.named), \st -> gtype2string(env, st)),
+		map(set2array(g.fields), \st -> gtype2string(env, st))
+		]
+	), ", ")
 }

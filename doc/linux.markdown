@@ -71,22 +71,15 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
-<Directory /home/'$USER'/flow9/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
-</Directory>
-Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
+printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
+     AllowOverride All
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
 ```
-Note, that todoapp is name for application in exercise 9, you can rename it as you wish.
+Note that todoapp is name for application in exercise 9, you can rename it as you wish.
 # Clone the repositories
 If you haven't installed git yet, enter next commands:
 ```bash
@@ -259,17 +252,17 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 git clone ssh://git@github.com/angavrilov/asmjit.git
 cd asmjit
 git checkout next
 ```
 Build QtByteRunner:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 ./build.sh # it can return with error 127, but that's expected
 ```
-New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
+New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
@@ -342,7 +335,7 @@ browser and see:
 ```
 
 # Try it (Executed via apache, in browser)
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 # Tools
 The auxiliary tools for Flow include a linter, a code formatter, and a
@@ -353,6 +346,6 @@ They can be run directly using `flow9/bin/lint.sh`.
 These tools are also used by the Sublime Text and Emacs integrations.
 (The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
-The instructions in [development.html](development.html) for using the
+The instructions in [development.markdown](development.markdown) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
 installed.
