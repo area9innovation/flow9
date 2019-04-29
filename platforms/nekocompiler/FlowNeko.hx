@@ -720,14 +720,6 @@ class FlowNeko extends Options {
 				Errors.report("Warning: Empty dfonts field in font config file");
 			}
 
-			// Embed the dfont index files
-			#if sys
-			for (dfont in fontconfig.dfonts) {
-				if (dfont.embed)
-					embedDFont(dfont, args, tmpfiles);
-			}
-			#end
-
 		} else {
 			Errors.report("Warning: Missing font configuration file");
 		}
