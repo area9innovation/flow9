@@ -605,7 +605,9 @@ class FlowNeko extends Options {
 		var args = ["-main", "FlowProgram"];
 		if (root != '.') {
 			args.push('-cp');
-			args.push(root+'/src');
+			args.push(root+'/platforms/nekocompiler');
+			args.push('-cp');
+			args.push(root+'/platforms/common/haxe');
 		}
 		if (StringTools.endsWith(haxe_target, ".n")) {
 			args.push("-neko");
@@ -667,7 +669,9 @@ class FlowNeko extends Options {
 		var args = [];
 		if (root != '.') {
 			args.push('-cp');
-			args.push(root+'/src');
+			args.push(root+'/platforms/nekocompiler');
+			args.push('-cp');
+			args.push(root+'/platforms/common/haxe');
 		}
 		if (debug > 0) {
 			args.push("-debug");
@@ -913,7 +917,7 @@ class FlowNeko extends Options {
 			          "-swf-lib", resourceFile, 
 			          "-resource",  fontNames + "@fontnames",
 			          "-swf-header", "1024:600:30:FFFFFF", "-D", "jsruntime",
-			          '-cp', root+'/src', '-cp', root, '-cp', '.'
+			          '-cp', root+'/platforms/nekocompiler', '-cp', root, '-cp', '.'
 			          ];
 			if (debug > 0) {
 				args.push("-debug");
