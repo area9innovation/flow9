@@ -1,6 +1,7 @@
 import HaxeRuntime;
 import NativeTime;
 import haxe.ds.Vector;
+import haxe.CallStack;
 
 #if js
 import js.Browser;
@@ -472,8 +473,12 @@ class Native {
 	public static var useConcatForPush : Bool = #if js Platform.isChrome || Platform.isSafari; #else false; #end
 
 	public static function replace<T>(arr : Array<T>, i : Int, v : T) : Array<T> {
-		if (arr == null || i < 0) {
+		if (arr == null) {
 			return new Array();
+		} else if (i < 0 || i > arr.length) {
+			println("replace: array index is out of bounds: " + toString(i) + " of " + toString(arr.length));
+			println(CallStack.toString(CallStack.callStack()));
+			return arr;
 		} else if (i == arr.length && useConcatForPush) {
 			return arr.concat([v]);
 		} else {
