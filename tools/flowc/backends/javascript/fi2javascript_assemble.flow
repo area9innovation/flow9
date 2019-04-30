@@ -29,7 +29,7 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 		rt = "import HaxeRuntime;\n";
 
 		imports = foldSet(ovl.nativeClasses, "",  \acc, e -> {
-			importName = if (e == "RenderSupportHx" && (cfg.jsmode == NODEJS_MODE || !isEmptySet(cfg.jslibrary))) {
+			importName = if (e == "RenderSupport" && (cfg.jsmode == NODEJS_MODE || !isEmptySet(cfg.jslibrary))) {
 				"RenderSupportNodeJs" 
 			} else {
 				e
@@ -50,27 +50,28 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 				HaxeRuntime._structargtypes_ = new haxe.ds.IntMap<Array<RuntimeType>>();
 				";
 
-		rs = if (containsSet(ovl.nativeClasses, "RenderSupportHx")) {
-				"  new RenderSupportHx();\n";
+		rs = if (containsSet(ovl.nativeClasses, "RenderSupport")) {
+				"  new RenderSupport();\n";
 			} else {
 				""
 			}
 
 		fin = "  }\n}\n";
 		saveFileContent(hx, rt + imports + cls + rs + fin);
-		srcDir = getFlowDir() + "src";
+		srcDir = getFlowDir() + "platforms/js";
+		commonSrcDir = getFlowDir() + "platforms/common/haxe";
 		hxparams =
 			if (cfg.jsmode == NODEJS_MODE && cfg.webmodule)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D flow_webmodule", "-D js-classic", "-lib node-express"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D flow_webmodule", "-D js-classic", "-lib node-express"]
 			else if (cfg.jsmode == NODEJS_MODE)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D js-classic"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D flow_nodejs", "-D js-classic"]
 			else if (cfg.jsmode == NWJS_MODE)
-				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-lib hxnodejs", "-D nwjs", "-D js-classic"]
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-lib hxnodejs", "-D nwjs", "-D js-classic"]
 			else
-				["-js " + jsfile, hx, "-cp " + srcDir, "-D jsruntime", "-D js-classic"];
+				["-js " + jsfile, hx, "-cp " + srcDir, "-cp", commonSrcDir, "-D jsruntime", "-D js-classic"];
 
 		tmpfiles = ref [];
-		hxparams1 = if (containsSet(ovl.nativeClasses, "RenderSupportHx") && cfg.jsmode != NODEJS_MODE) {
+		hxparams1 = if (containsSet(ovl.nativeClasses, "RenderSupport") && cfg.jsmode != NODEJS_MODE) {
 				p = fiPrepareWebFonts(cfg);
 				tmpfiles := p.first;
 				fontparams = p.second;
@@ -105,20 +106,25 @@ fiLinkRuntime(cfg : FiJsConfig, program : FiProgram, ovl : FiJsOverlayGroup, cod
 			} else {
 				hxparams3
 			}
-		//fcPrintln("HIA: hxparams3 = " + toString(hxparams3));
+
 		buildFile = "haxe_build.hxml";
 		fcVerbose(cfg, 1, "Call 'haxe " + buildFile + "'");
 
 		setFileContent(buildFile, strGlue(hxparams3, "\n"));
 		startProcess("haxe", [buildFile], ".", "",
 			\c, o, e -> {
-				fcVerbose(cfg, 1, "Haxe succseeded");
-				r = getFileContent(jsfile);
-				if (c != 0) {
-					fcPrintln(e);
-					fcPrintln(o);
-					fcPrintln(i2s(c));
-				}
+				r0 = getFileContent(jsfile);
+				r = if (c != 0) {
+						println("Haxe failed with message:");
+						fcPrintln(e);
+						fcPrintln(o);
+						fcPrintln(i2s(c));
+						deleteFile(cfg.outputfile);
+						""
+					} else {
+						fcVerbose(cfg, 1, "Haxe succseeded.");
+						r0
+					}
 				if (!cfg.code) {
 					delfile(jsfile);
 					delfile(hx);
@@ -138,8 +144,8 @@ fcAssembleMandatoryModules(cfg : FiJsConfig, ovl : FiJsOverlayGroup, runtimeCont
 	haxeRuntimeModule =
 		"define('haxeruntime', [], function() {\n" + fcJsStrict(cfg) +
 	(if (cfg.jsmode == TS_MODE) runtimeContent
-		// Due to moduling. Otherwise, with return{RenderSupportHx:RenderSupportHx} haxeruntime.RenderSupportHx != haxeruntime.RenderSupportJSPixi
-		else strReplace(runtimeContent, "window.RenderSupportHx = window.RenderSupportJSPixi;", "RenderSupportHx = RenderSupportJSPixi;")) +
+		// Due to moduling. Otherwise, with return{RenderSupport:RenderSupport} haxeruntime.RenderSupport != haxeruntime.RenderSupportJSPixi
+		else strReplace(runtimeContent, "window.RenderSupport = window.RenderSupportJSPixi;", "RenderSupport = RenderSupportJSPixi;")) +
 	"\n  return {\n" +
 	"    RuntimeType: RuntimeType,\n"+
 	"    HaxeRuntime: HaxeRuntime,\n"+
@@ -277,7 +283,7 @@ fiAssembleJsFile(program, cfg, ovl, headerCode, runtimeContent, code) {
 			)),
 			"};\n"
 		])
-	} else if (!containsSet(ovl.nativeClasses, "RenderSupportHx") && cfg.callMain) {
+	} else if (!containsSet(ovl.nativeClasses, "RenderSupport") && cfg.callMain) {
 		mainfn + "();"
 	} else {
 		""
@@ -377,10 +383,10 @@ fiAssembleSeparatedModule(cfg : FiJsConfig, ovl : FiJsOverlayGroup, r : List<str
 			tsModuleWrap(imports, strsubsmart(getImports([am.flowfile], true), 2, 0), 1),
 			\topW, bottomW ->
 				topW +
-			// "OTC is not defined", CMP, RenderSupportHx, etc due to moduling therefore
+			// "OTC is not defined", CMP, RenderSupport, etc due to moduling therefore
 			"var OTC=R.OTC;\nvar CMP=R.CMP;\n" +
-			(if (!contains(set2array(ovl.nativeClasses), "RenderSupportHx") || params.node) ""
-				else "var RenderSupportHx=R.RenderSupportHx;\n") +
+			(if (!contains(set2array(ovl.nativeClasses), "RenderSupport") || params.node) ""
+				else "var RenderSupport=R.RenderSupport;\n") +
 			generated + "\n" +
 			(if (flowfile == am.flowfile) "try {main();}catch (err) {if (err) console.log(err.stack);};"
 				else "") +

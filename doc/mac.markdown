@@ -115,7 +115,7 @@ Set up your Haxe library directory:
     mkdir -p haxelib/lib
     haxelib setup
 
-You will be prompted to enter the desired haxelib path. Please sepcify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
+You will be prompted to enter the desired haxelib path. Please specify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
 
 Then install the required libraries:
 
@@ -228,7 +228,7 @@ Unless you're hacking on the C++ source code for the bytecode
 runner, you shouldn't need to rebuild it. You can just use
 the binary that's already in the repository.
 
-But if you need to build a new binary, see `QtByteRunner/readme.txt`.
+But if you need to build a new binary, see `platforms/qt/readme.txt`.
 
 More info on compiling flow in js or running it on apache can be found in linux doc.
 
@@ -300,7 +300,7 @@ works right.
 
 Apache should be already available: sudo httpd
 
-It has PHP module, but for some flow apps PHP needs mcrypt extention.
+It has PHP module, but for some flow apps PHP needs mcrypt extension.
 Install PHP 7.1 Homebrew package:
 
     brew install php@7.1

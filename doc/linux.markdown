@@ -22,7 +22,7 @@ choice.
 12. [Tools](#tools)
 13. [Profiling](#profiling)
 ## Sample install script
-The `.travis.yml` file at the root level of the Flow repository isused
+The `.travis.yml` file at the root level of the Flow repository is used
 on Travis-CI integration to install and configure Flow’s dependencies,
 build the Flow compiler, and run the flowunit tests suite, all on Ubuntu
 Linux. The commands in this file may be a useful guide for making the
@@ -252,17 +252,17 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 git clone ssh://git@github.com/angavrilov/asmjit.git
 cd asmjit
 git checkout next
 ```
 Build QtByteRunner:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 ./build.sh # it can return with error 127, but that's expected
 ```
-New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
+New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
@@ -335,7 +335,7 @@ browser and see:
 ```
 
 # Try it (Executed via apache, in browser)
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 # Tools
 The auxiliary tools for Flow include a linter, a code formatter, and a
