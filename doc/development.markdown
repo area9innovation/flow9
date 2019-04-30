@@ -270,7 +270,7 @@ If you do not have Sublimetext, you can do the same manually:
 		flowcpp --profile-bytecode 2000 path/foo.flow
 
   Use this to attribute significant extra cost to natives that manipulate GUI clips
-  (useful to detect reduntant clip tree rebuilds):
+  (useful to detect redundant clip tree rebuilds):
 
 		flowcpp --profile-bytecode 2000 --profile-gui-cost 500 path/foo.flow
 

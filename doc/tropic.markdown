@@ -422,7 +422,7 @@ Notice again the `TGhost` element, which is a real, but invisible, `Tropic` with
 
 It is important that you use `TDisplay` at some point in the scope of the `TLet`, otherwise `TGhost` will not work. The reason is that the size of the ghost is only defined once the value is displayed.
 
-You can display a let-bound tropic multiple times. In this case, the TGhost will refer to the last occurence, but it is probably not a good style to rely on this.
+You can display a let-bound tropic multiple times. In this case, the TGhost will refer to the last occurrence, but it is probably not a good style to rely on this.
 
 Notice you have to display any `TDisplay` and `TGhost` at the same rendering point in time as the `TLet` binding happens. I.e. you can not have a `TLet` with a TSelect in the scope with `TDisplay` inside, since the scope might be executed much later, and then the binding is not valid anymore.
 

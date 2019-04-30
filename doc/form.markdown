@@ -608,7 +608,7 @@ simpler ones are:
 	Offset(x : double, y : double, form : Form) -> Form;
 
 We also have a more or less complete set of widgets. Although `Material` is the recommended
-toolkit, if you need custom designs, widgest  in `Form` can be helpful. See the ui/ folder and 
+toolkit, if you need custom designs, widgets in `Form` can be helpful. See the ui/ folder and 
 you can find things like:
 
 	CheckBox(caption: Form, value: DynamicBehaviour<bool>, size : double) -> Form;

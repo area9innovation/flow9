@@ -115,7 +115,7 @@ Set up your Haxe library directory:
     mkdir -p haxelib/lib
     haxelib setup
 
-You will be prompted to enter the desired haxelib path. Please sepcify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
+You will be prompted to enter the desired haxelib path. Please specify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
 
 Then install the required libraries:
 
@@ -300,7 +300,7 @@ works right.
 
 Apache should be already available: sudo httpd
 
-It has PHP module, but for some flow apps PHP needs mcrypt extention.
+It has PHP module, but for some flow apps PHP needs mcrypt extension.
 Install PHP 7.1 Homebrew package:
 
     brew install php@7.1
