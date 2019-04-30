@@ -200,7 +200,7 @@ then add `result=1`:
 The output for the files above would be:
 
 	Running grammar on sandbox/testcase.txt
-	PARSE OF TEST SUCCESFUL
+	PARSE OF TEST SUCCESSFUL
 	Time to parse: 0.00010302734375
 	Result:
 	ParseResult(5, Some(Add(Int(11), Int(15))))
@@ -295,7 +295,7 @@ The result is something like this:
 	PARSE OF TEST SUCCESSFUL
 	Time to parse: 0.0156240234375
 
-For each succesful matched rule, the name of the rule is printed, with the result of the rule after that.
+For each successful matched rule, the name of the rule is printed, with the result of the rule after that.
 Thus, the first line shows the `ws` rule matched the empty string. The next shows that `letter` matched 
 'a'. The third line shows that the "id" rule gave the semantic result "a", and so on.
 
@@ -308,7 +308,7 @@ which results in this:
 	Running grammar on 'a=1'
 	Debug: ["Unknown var: atom", FaInt(1, 2, 3)]
 	Debug: ["Unknown var: exp", FaInt(1, 2, 3)]
-	PARSE OF TEST SUCCESFUL
+	PARSE OF TEST SUCCESSFUL
 	Time to parse: 0
 
 Caching
