@@ -2,11 +2,14 @@ import rendersupport3d;
 import fform/fform;
 
 export {
-	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> FForm;
+	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
+		F3DStageStyle ::= IgnoreMouseEvents;
+			IgnoreMouseEvents();
 
 	F3DObject ::= F3DScene, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
 		F3DInspectRotation, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin, F3DInspectBoundingSphereMax,
-		F3DCamera, F3DLight, F3DMesh, F3DLoader, F3DGLTFLoader, F3DSceneLoader, F3DAxesHelper, F3DGridHelper;
+		F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader, F3DChildren, F3DNativeObject,
+		F3DAxesHelper, F3DGridHelper, F3DInteractive;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 
@@ -20,14 +23,23 @@ export {
 		F3DInspectBoundingSphereMin(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 		F3DInspectBoundingSphereMax(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 
+		F3DTransformControls(object : F3DObject);
+
 		F3DLoader(objUrl : string, mtlUrl : string);
 		F3DGLTFLoader(url : string, onAnimation : ([F3DAnimation]) -> void);
 			F3DAnimation(start : () -> void, stop : () -> void, duration : DynamicBehaviour<double>);
 
 		F3DSceneLoader(url : string);
+		F3DChildren(object : F3DObject, fn : (F3DObject) -> F3DObject);
+		F3DNativeObject(object : native);
 
 		F3DAxesHelper(size : double);
 		F3DGridHelper(size : double, divisions : int, colorCenterLine : int, colorGrid : int);
+
+		F3DInteractive(object : F3DObject, listeners : [F3DEventHandler]);
+			F3DEventHandler ::= F3DMouseDown, F3DMouseUp;
+				F3DMouseDown(fn : () -> void);
+				F3DMouseUp(fn : () -> void);
 
 		F3DLight ::= F3DPointLight;
 			F3DPointLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, decayAmount : Transform<double>);
@@ -36,23 +48,26 @@ export {
 			F3DPerspectiveCamera(fov : Transform<double>, aspect : Transform<double>, near : Transform<double>, far : Transform<double>);
 
 		F3DMesh(geometry : F3DGeometry, material : F3DMaterial);
-			F3DGeometry ::= F3DBoxGeometry, F3DCircleGeometry, F3DConeGeometry, F3DCylinderGeometry;
+			F3DGeometry ::= F3DBoxGeometry, F3DCircleGeometry, F3DConeGeometry, F3DCylinderGeometry, F3DNativeGeometry;
 				F3DBoxGeometry(width : double, height : double, depth : double, widthSegments : int, heightSegments : int, depthSegments : int);
 				F3DCircleGeometry(radius : double, segments : int, thetaStart : double, thetaLength : double);
 				F3DConeGeometry(radius : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
 				F3DCylinderGeometry(radiusTop : double, radiusBottom : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
+				F3DNativeGeometry(geometry : native);
 
-			F3DMaterial ::= F3DMeshBasicMaterial, F3DTextureLoader;
+			F3DMaterial ::= F3DMeshBasicMaterial, F3DTextureLoader, F3DNativeMaterials;
 				F3DMeshBasicMaterial(color : int, parameters : Tree<string, string>);
 				F3DTextureLoader(material : F3DMaterial, url : string);
+				F3DNativeMaterials(materials : native);
 }
 
-F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> FForm {
+F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm {
 	if (js) {
 		container = make(FEmpty());
 
 		load3DLibraries(\ -> {
 			metrics = make(FormMetrics(0., 0., 0., 0.));
+			emitMouseEventFn : ref (string, double, double) -> void = ref \__, __, __ -> {};
 
 			next(
 				container,
@@ -65,7 +80,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> 
 
 						NativeRenderResult(
 							[clip],
-							concat3(
+							concat(
 								[
 									makeSubscribe(wh, \v -> {
 										setClipWidth(clip, v.width);
@@ -73,11 +88,62 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject) -> 
 										nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
 									})()
 								],
-								render3dform(camera, \c -> { set3DCamera(clip, c); [] }),
-								render3dform(scene, \s -> { set3DScene(clip, s); [] })
+								render3dform(camera, \c -> {
+									set3DCamera(clip, c);
+
+									render3dform(scene, \s -> {
+										set3DScene(clip, s);
+
+										emitMouseEventFn := \e, x, y ->
+											emit3DMouseEvent(
+												s,
+												c,
+												e,
+												(x / fgetValue(wh).width) * 2.0 - 1.0,
+												-(y / fgetValue(wh).height) * 2.0 + 1.0
+											);
+
+										[];
+									});
+								})
 							)
 							|> (\f -> \ -> applyall(f))
 						)
+					}
+				)
+				|> (\f ->
+					if (!contains(style, IgnoreMouseEvents())) {
+						mouseDown = make(false);
+
+						FGroup2(
+							FInteractive(
+								[
+									MouseDown(\mi -> {
+										if (mi.inside()) {
+											next(mouseDown, true);
+											^emitMouseEventFn("mousedown", mi.x, mi.y);
+										}
+
+										false;
+									}),
+									MouseUp(\mi -> {
+										if (getValue(mouseDown)) {
+											next(mouseDown, false);
+											^emitMouseEventFn("mouseup", mi().x, mi().y);
+										}
+
+										false;
+									})
+								],
+								FMutable(fselect(wh, FLift(\v ->
+									FGraphics([GRect(0.0, 0.0, v.width, v.height)], [Fill(0x000000), FillOpacity(0.0)])
+								))),
+							),
+							f,
+							false
+						);
+					} else {
+						f;
 					}
 				)
 			);
@@ -239,6 +305,14 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 
 			r;
 		}
+		F3DTransformControls(innerObject) : {
+			r = render3dform(
+				innerObject,
+				\clip -> onLoad(add3DTransformControls(clip))
+			);
+
+			r;
+		}
 		F3DLight() : {
 			renderF3DLight(object, onLoad);
 		}
@@ -311,11 +385,47 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 				\ -> dispUnsA(uns)
 			]
 		}
+		F3DChildren(innerObject, fn) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					render3dform(
+						fn(parseF3DNativeObject(clip)),
+						onLoad
+					)
+			);
+
+			r;
+		}
+		F3DNativeObject(nativeObject) : {
+			onLoad(nativeObject);
+		}
 		F3DAxesHelper(size) : {
 			onLoad(make3DAxesHelper(size));
 		}
 		F3DGridHelper(size, divisions, colorCenterLine, colorGrid) : {
 			onLoad(make3DGridHelper(size, divisions, colorCenterLine, colorGrid));
+		}
+		F3DInteractive(innerObject, listeners) : {
+			r = render3dform(
+				innerObject,
+				\clip ->
+					concat(
+						onLoad(clip),
+						map(listeners, \l -> {
+							switch (l : F3DEventHandler) {
+								F3DMouseDown(fn): {
+									add3DEventListener(clip, "mousedown", fn);
+								}
+								F3DMouseUp(fn): {
+									add3DEventListener(clip, "mousedown", fn);
+								}
+							}
+						})
+					)
+			);
+
+			r;
 		}
 	}
 }
@@ -370,6 +480,9 @@ renderF3DGeometry(geometry : F3DGeometry) -> native {
 		F3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength) : {
 			make3DCylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
 		}
+		F3DNativeGeometry(innerGeometry) : {
+			innerGeometry;
+		}
 	}
 }
 
@@ -381,5 +494,18 @@ renderF3DMaterial(material : F3DMaterial) -> native {
 		F3DTextureLoader(innerMaterial, url) : {
 			load3DTexture(renderF3DMaterial(innerMaterial), url);
 		}
+		F3DNativeMaterials(innerMaterials) : {
+			innerMaterials;
+		}
+	}
+}
+
+parseF3DNativeObject(object : native) -> F3DObject {
+	children = get3DObjectChildren(object);
+
+	if (length(children) > 0) {
+		F3DScene(const(map(children, parseF3DNativeObject)));
+	} else {
+		F3DNativeObject(object);
 	}
 }

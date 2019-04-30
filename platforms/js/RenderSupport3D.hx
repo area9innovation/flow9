@@ -4,11 +4,14 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
+import js.three.Vector2;
+import js.three.Vector3;
 
 import js.three.Object3D;
 import js.three.Mesh;
 import js.three.AxisHelper;
 import js.three.GridHelper;
+import js.three.TransformControls;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
@@ -24,6 +27,8 @@ import js.three.MeshBasicMaterial;
 
 import js.three.Light;
 import js.three.PointLight;
+
+import js.three.Raycaster;
 
 import js.three.TextureLoader;
 import js.three.ObjectLoader;
@@ -84,6 +89,41 @@ class RenderSupport3D {
 		parent.remove3DChild(child);
 	}
 
+	public static function get3DObjectChildren(object : Object3D) : Array<Object3D> {
+		return object.children;
+	}
+
+	public static function get3DObjectJSON(object : Object3D) : String {
+		return haxe.Json.stringify(object.toJSON());
+	}
+
+	public static function make3DObjectFromJSON(json : Dynamic) : Object3D {
+		json = haxe.Json.parse(json);
+		return new ObjectLoader().parse(json);
+	}
+
+	public static function make3DGeometryFromJSON(json : Dynamic) : Object3D {
+		json = haxe.Json.parse(json);
+		var geometry : Object3D = untyped __js__("new THREE.ObjectLoader().parseGeometries(json)");
+
+		if (haxe.Json.stringify(geometry) == "{}") {
+			return untyped __js__("new THREE.ObjectLoader().parse(json).geometry");
+		} else {
+			return geometry;
+		}
+	}
+
+	public static function make3DMaterialsFromJSON(json : Dynamic) : Object3D {
+		json = haxe.Json.parse(json);
+		var materials : Object3D = untyped __js__("new THREE.ObjectLoader().parseMaterials(json)");
+
+		if (haxe.Json.stringify(materials) == "{}") {
+			return untyped __js__("new THREE.ObjectLoader().parse(json).material");
+		} else {
+			return materials;
+		}
+	}
+
 	public static function make3DStage(width : Float, height : Float) : ThreeJSStage {
 		return new ThreeJSStage(width, height);
 	}
@@ -140,7 +180,7 @@ class RenderSupport3D {
 	}
 
 	public static function load3DTexture(object : Material, url : String) : Material {
-		untyped object.map = new TextureLoader().load(url);
+		untyped object.map = new TextureLoader().load(url, untyped RenderSupportJSPixi.InvalidateStage);
 		return object;
 	}
 
@@ -167,6 +207,40 @@ class RenderSupport3D {
 		stage.invalidateStage();
 	}
 
+
+	static function add3DEventListener(object : Object3D, event : String, cb : Void -> Void) : Void -> Void {
+		object.addEventListener(event, untyped cb);
+
+		return function() {
+			object.removeEventListener(event, untyped cb);
+		};
+	}
+
+	static function emit3DMouseEvent(object : Object3D, camera : Camera, event : String, x : Float, y : Float, ?handledObjects : Array<Dynamic>) : Void {
+		if (handledObjects == null) {
+			handledObjects = new Array<Dynamic>();
+		}
+
+		var raycaster = new Raycaster();
+		raycaster.setFromCamera(new Vector2(x, y), camera);
+
+		for (ob in raycaster.intersectObjects(object.children)) {
+			var object = ob.object;
+
+			if (handledObjects.indexOf(object) == -1) {
+				handledObjects.push(object);
+				object.emitEvent(event);
+			}
+		};
+
+		for (child in object.children) {
+			emit3DMouseEvent(child, camera, event, x, y, handledObjects);
+		};
+	}
+
+	public static function add3DTransformControls(object : Object3D) : Object3D {
+		return object;
+	}
 
 	public static function get3DObjectX(object : Object3D) : Float {
 		return object.position.x;
@@ -311,7 +385,7 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
-		object.lookAt(new js.three.Vector3(x, y, z));
+		object.lookAt(new Vector3(x, y, z));
 		object.invalidateStage();
 	}
 
