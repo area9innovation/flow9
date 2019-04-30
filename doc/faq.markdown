@@ -520,7 +520,7 @@ like this doesn't look good:
 		material
 	)
 
-That's why we added `makeSubscribe` at [fusion.flow](https://github.com/area9innovation/flow/blob/master/lib/fusion.flow). It has a more convenient syntax
+That's why we added `makeSubscribe` at [fusion.flow](https://github.com/area9innovation/flow9/blob/master/lib/fusion.flow). It has a more convenient syntax
 for using inside `MConstruct` (but all these guys from fusion are distinctive,
 be careful and read a comment at makeSubscribe declaration). So now we can do
 like this:
