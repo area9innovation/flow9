@@ -22,7 +22,7 @@ choice.
 12. [Tools](#tools)
 13. [Profiling](#profiling)
 ## Sample install script
-The `.travis.yml` file at the root level of the Flow repository isused
+The `.travis.yml` file at the root level of the Flow repository is used
 on Travis-CI integration to install and configure Flow’s dependencies,
 build the Flow compiler, and run the flowunit tests suite, all on Ubuntu
 Linux. The commands in this file may be a useful guide for making the
