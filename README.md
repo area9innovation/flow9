@@ -103,10 +103,9 @@ Folders
 - demos - a demo program showing how the UI library can be used
 - doc - documentation of the language and libraries
 - lib - the flow standard library
-- QtByteRunner - the bytecode runner used on Windows, Mac, Linux
+- platforms - the flow runtime platforms source code
 - resources - integrations with VS code (recommended), Sublimetext and more
 - sandbox - contains hello world
-- src - the source code for the original haxe-based compiler, as well as the runtime
 - tools - the compiler and processor for rendering fonts
 - www - required files to be exposed by the web-server for running flow programs online
 - www_source - the source files of some of the files in the www folder
