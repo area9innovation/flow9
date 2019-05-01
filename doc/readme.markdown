@@ -31,4 +31,4 @@ Be sure to also check out `readme.txt` in various places, like
 
 * [resources/vscode/flow/readme.md](../resources/vscode/flow/readme.md) - how to set up the extension for Visual Code
 * [resources/sublimetext/readme.md](../resources/sublimetext/readme.md) - how to set up plugin for Sublime Text 3
-* [platforms/qt/readme.txt](../platforms/qt/readme.md) - information about the C++ runner, including profiling and debugging and CGI mode
+* [platforms/qt/readme.md](../platforms/qt/readme.md) - information about the C++ runner, including profiling and debugging and CGI mode
