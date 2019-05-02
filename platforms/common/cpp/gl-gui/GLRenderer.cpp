@@ -608,13 +608,11 @@ void GLRenderer::compileShaders()
                       AttrVertexColor, "a_VertexColor",
                       AttrVertexTexCoord, "a_VertexTexCoord");
 
-#ifdef FLOW_DFIELD_FONTS
     compileShaderPair(ProgDrawFont, SHADER_draw_vert, SHADER_font_frag, pfix,
                       3,
                       AttrVertexPos, "a_VertexPos",
                       AttrVertexColor, "a_VertexColor",
                       AttrVertexTexCoord, "a_VertexTexCoord");
-#endif
 
     if (all_extensions.find("GL_OES_EGL_image_external") != std::string::npos) {
         pfix.clear();

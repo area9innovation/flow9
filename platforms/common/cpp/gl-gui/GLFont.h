@@ -1,12 +1,7 @@
 #ifndef GLFONT_H
 #define GLFONT_H
 
-#ifdef FLOW_DFIELD_FONTS
 #include "font/Headers.h"
-#else
-#include <ft2build.h>
-#include FT_FREETYPE_H
-#endif
 
 #include "GLRenderer.h"
 #include "GLRenderSupport.h"
@@ -111,23 +106,6 @@ class GLFontLibrary
 
     GLRenderSupport *owner;
 
-#ifndef FLOW_DFIELD_FONTS
-    FT_Library library;
-
-    static void GLFontLibrary::reportError(FT_Error code)
-    {
-        switch (code) {
-        case 0: break;
-        case FT_Err_Unknown_File_Format:
-            cerr << "Unknown font file format." << endl;
-            break;
-
-        default:
-            cerr << "FreeType error " << code << endl;
-        }
-    }
-#endif
-
     int max_texture_size;
 
     GLFontLibrary(GLRenderSupport *owner);
@@ -139,21 +117,9 @@ public:
 
     static Ptr Load(GLRenderSupport *owner)
     {
-    #ifndef FLOW_DFIELD_FONTS
-        FT_Library library;
-        FT_Error error = FT_Init_FreeType(&library);
-
-        if (error) {
-            reportError(error);
-            return Ptr();
-        }
-    #endif
 
         Ptr ptr(new GLFontLibrary(owner));
         ptr->self = ptr;
-    #ifndef FLOW_DFIELD_FONTS
-        ptr->library = library;
-    #endif
         return ptr;
     }
 
@@ -207,9 +173,6 @@ class GLFont
 
     GLFontLibrary::Ptr library;
 
-#ifndef FLOW_DFIELD_FONTS
-    FT_Face face;
-#else
     bool is_system;
     bool is_fallback;
     std::string filename;
@@ -227,7 +190,6 @@ class GLFont
     std::vector<GLTextureImage::Ptr> glyph_grids, emoji_grids;
     vec2 tex_tile_step, tex_active_tile, tex_origin;
     vec2 active_tile_size;
-#endif
 
     float em_size_factor;
     float ascender, descender;
@@ -243,49 +205,8 @@ class GLFont
         GlyphInfo(uint32_t id, unsigned tile_id) : id(id), tile_id(tile_id) {}
     };
 
-#ifndef FLOW_DFIELD_FONTS
-    struct GlyphBitmap {
-        vec2 bearing;
-        float advance;
-        GLCompoundTexture::Item::Ptr bitmap;
-        GlyphBitmap(vec2 bearing, float advance, GLCompoundTexture::Item::Ptr bitmap)
-            : bearing(bearing), advance(advance), bitmap(bitmap) {}
-    };
-#endif
-
     typedef STL_HASH_MAP<ucs4_char, GlyphInfo*> T_glyphs;
     T_glyphs glyphs;
-
-#ifndef FLOW_DFIELD_FONTS
-    struct Size {
-        typedef shared_ptr<Size> Ptr;
-
-        GLFont *font;
-
-        const int pixels;
-        FT_Size face_size;
-
-        float ascender, descender;
-        float line_height, max_advance;
-
-        int texture_size;
-        std::vector<GLCompoundTexture::Ptr> textures;
-
-        typedef STL_HASH_MAP<ucs4_char, GlyphBitmap*> T_glyph_bitmaps;
-        T_glyph_bitmaps glyph_bitmaps;
-
-        Size(GLFont *font, int sz, FT_Size face_size);
-        ~Size();
-
-        GlyphBitmap *getGlyphBitmap(GlyphInfo *info);
-
-    private:
-        GlyphBitmap *loadGlyphBitmap(uint32_t id);
-        GLCompoundTexture::Item::Ptr cacheBitmap(FT_Bitmap &bitmap);
-    };
-
-    std::map<uint32_t, Size::Ptr> sizes;
-#endif
 
     std::string family_name;
     std::string style_name;
@@ -296,21 +217,13 @@ class GLFont
     GlyphInfo *getGlyphByChar(ucs4_char char_code);
     float getKerning(GlyphInfo *prev, GlyphInfo *cur);
 
-#ifndef FLOW_DFIELD_FONTS
-    Size::Ptr getSize(uint32_t size);
-#else
     GLTextureImage::Ptr getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *tcoord1, vec2 *tcoord2);
     GLTextureImage::Ptr loadGlyphGrid(unsigned grid_id);
-#endif
 
-#ifndef FLOW_DFIELD_FONTS
-    GLFont(GLFontLibrary::Ptr library, FT_Face face);
-#else
     GLFont(GLFontLibrary::Ptr library, StaticBuffer &data);
     GLFont(GLFontLibrary::Ptr library, const FontHeader &data);
 
     void initHeader();
-#endif
 
 public:
     typedef shared_ptr<GLFont> Ptr;
