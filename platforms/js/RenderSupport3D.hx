@@ -275,15 +275,21 @@ class RenderSupport3D {
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
-		if (stage.transformControls != null) {
-			if (stage.transformControls.object != null) {
-				stage.transformControls.object.dispatchEvent({ type : "detached" });
-			}
+		 if (stage.transformControls != null) {
+		 	if (untyped object.transformControls != null) {
+		 		if (untyped object.transformControls.object != null) {
+		 			detach3DTransformControls(stage, untyped object.transformControls.object);
+		 		}
+			} else {
+				if (stage.transformControls.object != null) {
+					stage.transformControls.object.dispatchEvent({ type : "detached" });
+				}
 
-			stage.transformControls.attach(object);
+				stage.transformControls.attach(object);
 
-			if (stage.transformControls.object != null) {
-				stage.transformControls.object.dispatchEvent({ type : "attached" });
+				if (stage.transformControls.object != null) {
+					stage.transformControls.object.dispatchEvent({ type : "attached" });
+				}
 			}
 		}
 	}
@@ -295,6 +301,17 @@ class RenderSupport3D {
 				stage.transformControls.object = null;
 			}
 		}
+	}
+
+	public static function clear3DTransformControls(stage : ThreeJSStage) : Void {
+		if (stage.transformControls != null && stage.transformControls.object != null && (stage.orbitControls == null || stage.orbitControls.enabled)) {
+			stage.transformControls.object.dispatchEvent({ type : "detached" });
+			stage.transformControls.detach();
+		}
+	}
+
+	public static function get3DObjectType(object : Object3D) : String {
+		return object.type;
 	}
 
 	public static function get3DObjectX(object : Object3D) : Float {

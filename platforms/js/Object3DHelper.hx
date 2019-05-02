@@ -50,6 +50,7 @@ class Object3DHelper {
 		parent.add(child);
 
 		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
 
 		broadcastEvent(child, "position");
 		broadcastEvent(child, "scale");
@@ -62,6 +63,7 @@ class Object3DHelper {
 		parent.remove(child);
 
 		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
 
 		invalidateStage(parent);
 	}

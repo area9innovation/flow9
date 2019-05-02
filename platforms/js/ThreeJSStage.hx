@@ -64,15 +64,16 @@ class ThreeJSStage extends DisplayObject {
 
 	private function createTransformControls() {
 		if (scene != null && transformControls != null) {
-			scene.remove(transformControls);
+			untyped scene.transformControls = null;
 		}
 
 		if (camera != null) {
 			transformControls = new TransformControls(camera, renderer.domElement);
+			untyped transformControls.transformControls = transformControls;
 		}
 
 		if (scene != null) {
-			scene.add(transformControls);
+			untyped scene.transformControls = transformControls;
 		}
 
 		transformControls.addEventListener('dragging-changed', function (event) {
@@ -103,10 +104,14 @@ class ThreeJSStage extends DisplayObject {
 	}
 
 	public function setScene(scene : Scene) {
+		if (scene != null && transformControls != null) {
+			untyped scene.transformControls = null;
+		}
+
 		this.scene = scene;
 
 		if (transformControls != null) {
-			scene.add(transformControls);
+			untyped scene.transformControls = transformControls;
 		}
 
 		// Chrome Inspect Three.js extension support
@@ -126,10 +131,15 @@ class ThreeJSStage extends DisplayObject {
 		}
 
 		if (transformControls != null) {
+			scene.add(transformControls);
 			transformControls.update();
 		}
 
 		this.renderer.render(scene, camera);
+
+		if (transformControls != null) {
+			scene.remove(transformControls);
+		}
 
 		var ctx : Dynamic = untyped renderer.context;
 		var resolution = renderer.resolution;
