@@ -134,4 +134,4 @@ History
 - January 2016: Material guidelines implemented
 - November 2016: JIT for x64 was added
 - May 2018: Self-hosted compiler written in flow itself
-- 2019: Initial open source release
+- April 2019: Initial open source release
