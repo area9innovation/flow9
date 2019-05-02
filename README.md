@@ -86,14 +86,14 @@ Your first message requires moderation approval to avoid spam.
 Tooling
 -------
 
-- `flowc` is the current compiler, written in flow itself. See tools/flowc. Can work as a compile server.
-- `flow` is the original compiler, written in haxe. See src/
-- Single-step debugger using gdb protocol (see QtByterunner/)
+- `flowc` is the current compiler, written in flow itself. See [tools/flowc](tools/flowc). Can work as a compile server.
+- `flow` is the original compiler, written in haxe. See [tools/flow](tools/flow)
+- Single-step debugger using gdb protocol (see [platforms/qt](platforms/qt))
 - Profiler for time, instructions, memory, garbage collection
 - JIT (just-in-time) compiler for x64, interpreter for ARM and others
 - Compiles to C++ and Java for performance-critical code, typically server side
 - Visual Code, Sublime Text, Kate & Emacs integrations with syntax coloring, find def. etc
-- Mature PEG parser generator. See doc/lingo.html
+- Mature PEG parser generator. See [doc/lingo.markdown](doc/lingo.markdown)
 
 Folders
 -------
