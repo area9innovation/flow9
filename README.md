@@ -92,7 +92,7 @@ Tooling
 - Profiler for time, instructions, memory, garbage collection
 - JIT (just-in-time) compiler for x64, interpreter for ARM and others
 - Compiles to C++ and Java for performance-critical code, typically server side
-- Visual Code, Sublime Text, Kate & Emacs integrations with syntax coloring, find def. etc
+- IDE/Code editor support for [VSCode](https://github.com/area9innovation/flow9/tree/master/resources/vscode/flow), [Sublime Text](https://github.com/area9innovation/flow9/tree/master/resources/sublimetext), [Kate](https://github.com/area9innovation/flow9/tree/master/resources/kate) & [Others](https://github.com/area9innovation/flow9/tree/master/resources)
 - Mature PEG parser generator. See doc/lingo.html
 
 Folders
