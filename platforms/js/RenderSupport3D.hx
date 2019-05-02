@@ -4,17 +4,17 @@ import js.three.Scene;
 import js.three.Fog;
 
 import js.three.Color;
-import js.three.Vector2;
 import js.three.Vector3;
 
 import js.three.Object3D;
 import js.three.Mesh;
 import js.three.AxisHelper;
 import js.three.GridHelper;
-import js.three.TransformControls;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
+import js.three.OrbitControls;
+import js.three.TransformControls;
 
 import js.three.Geometry;
 import js.three.BoxGeometry;
@@ -27,8 +27,6 @@ import js.three.MeshBasicMaterial;
 
 import js.three.Light;
 import js.three.PointLight;
-
-import js.three.Raycaster;
 
 import js.three.TextureLoader;
 import js.three.ObjectLoader;
@@ -48,7 +46,7 @@ class RenderSupport3D {
 			var onloadFn = function() {
 				jscounter++;
 
-				if (jscounter > 2) {
+				if (jscounter > 4) {
 					cb();
 				}
 			}
@@ -72,6 +70,18 @@ class RenderSupport3D {
 				node = Browser.document.createElement('script');
 				node.setAttribute("type","text/javascript");
 				node.setAttribute("src", 'js/threejs/GLTFLoader.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/OrbitControls.js');
+				node.onload = onloadFn;
+				head.appendChild(node);
+
+				node = Browser.document.createElement('script');
+				node.setAttribute("type","text/javascript");
+				node.setAttribute("src", 'js/threejs/TransformControls.js');
 				node.onload = onloadFn;
 				head.appendChild(node);
 			};
@@ -194,17 +204,11 @@ class RenderSupport3D {
 
 
 	public static function set3DCamera(stage : ThreeJSStage, camera : Camera) : Void {
-		stage.camera = camera;
-		stage.invalidateStage();
+		stage.setCamera(camera);
 	}
 
 	public static function set3DScene(stage : ThreeJSStage, scene : Scene) : Void {
-		stage.scene = scene;
-
-		// Chrome Inspect Three.js extension support
-		untyped __js__("window.scene = scene;");
-
-		stage.invalidateStage();
+		stage.setScene(scene);
 	}
 
 
@@ -216,30 +220,81 @@ class RenderSupport3D {
 		};
 	}
 
-	static function emit3DMouseEvent(object : Object3D, camera : Camera, event : String, x : Float, y : Float, ?handledObjects : Array<Dynamic>) : Void {
-		if (handledObjects == null) {
-			handledObjects = new Array<Dynamic>();
+	static function emit3DMouseEvent(stage : ThreeJSStage, event : String, x : Float, y : Float) : Void {
+		var ev : Dynamic = null;
+
+		if (event == "mousemiddledown" || event == "mousemiddleup") {
+			ev = new js.html.Event(event == "mousemiddledown" ? "mousedown" : "mouseup");
+
+			untyped ev.button = 1;
+		} else if (event == "mouserightdown" || event == "mouserightup") {
+			ev = new js.html.Event(event == "mouserightdown" ? "mousedown" : "mouseup");
+
+			untyped ev.button = 2;
+		} else {
+			ev = new js.html.Event(event);
+
+			if (event == "mousedown" || event == "mouseup") {
+				untyped ev.button = 0;
+			}
 		}
 
-		var raycaster = new Raycaster();
-		raycaster.setFromCamera(new Vector2(x, y), camera);
+		if (stage.ctrlKey) {
+			ev.ctrlKey == true;
+		}
 
-		for (ob in raycaster.intersectObjects(object.children)) {
-			var object = ob.object;
+		if (stage.metaKey) {
+			ev.metaKey == true;
+		}
 
-			if (handledObjects.indexOf(object) == -1) {
-				handledObjects.push(object);
-				object.emitEvent(event);
-			}
-		};
+		if (stage.shiftKey) {
+			ev.shiftKey == true;
+		}
 
-		for (child in object.children) {
-			emit3DMouseEvent(child, camera, event, x, y, handledObjects);
-		};
+		if (event == "wheel") {
+			untyped ev.deltaX = x;
+			untyped ev.deltaY = y;
+		} else {
+			untyped ev.pageX = x;
+			untyped ev.pageY = y;
+		}
+
+		stage.renderer.domElement.dispatchEvent(ev);
+		stage.scene.invalidateStage();
 	}
 
-	public static function add3DTransformControls(object : Object3D) : Object3D {
-		return object;
+	static function emit3DKeyEvent(stage : ThreeJSStage, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
+		var ke = {key : key, ctrlKey : ctrl, shiftKey : shift, altKey : alt, metaKey : meta, keyCode : keyCode};
+
+		stage.ctrlKey = ctrl;
+		stage.shiftKey = shift;
+		stage.metaKey = meta;
+
+		stage.renderer.domElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+		stage.scene.invalidateStage();
+	}
+
+	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
+		if (stage.transformControls != null) {
+			if (stage.transformControls.object != null) {
+				stage.transformControls.object.dispatchEvent({ type : "detached" });
+			}
+
+			stage.transformControls.attach(object);
+
+			if (stage.transformControls.object != null) {
+				stage.transformControls.object.dispatchEvent({ type : "attached" });
+			}
+		}
+	}
+
+	public static function detach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
+		if (stage.transformControls != null) {
+			if (stage.transformControls.object == object) {
+				stage.transformControls.object.dispatchEvent({ type : "detached" });
+				stage.transformControls.object = null;
+			}
+		}
 	}
 
 	public static function get3DObjectX(object : Object3D) : Float {

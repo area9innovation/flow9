@@ -4,38 +4,129 @@ import pixi.core.display.DisplayObject;
 import pixi.core.math.shapes.Rectangle;
 import pixi.core.math.Point;
 
+import js.three.Object3D;
+import js.three.Vector2;
+
 import js.three.Camera;
 import js.three.PerspectiveCamera;
+
+import js.three.OrbitControls;
+import js.three.TransformControls;
+
 import js.three.Scene;
+import js.three.Raycaster;
 import js.three.WebGLRenderer;
 
+
 using DisplayObjectHelper;
+using Object3DHelper;
 
 class ThreeJSStage extends DisplayObject {
 	public var camera : Camera;
 	public var scene : Scene;
 	public var renderer : WebGLRenderer;
+	public var orbitControls : OrbitControls;
+	public var transformControls : TransformControls;
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 
+	public var ctrlKey : Bool = false;
+	public var shiftKey : Bool = false;
+	public var metaKey : Bool = false;
+
 	public function new(width : Float, height : Float) {
 		super();
 
-		this.camera = new PerspectiveCamera(45.0, 1.0, 0.1, 1000.0);
-		this.scene = new Scene();
 		this.renderer = new WebGLRenderer({antialias: true, alpha : true});
-
 		renderer.setSize(width, height);
 
 		// Chrome Inspect Three.js extension support
 		untyped __js__("window.THREE = THREE;");
 	}
 
+	private function addEventListeners() {
+		renderer.domElement.removeEventListener("mousedown", onMouseEvent);
+		renderer.domElement.addEventListener("mousedown", onMouseEvent);
+
+		renderer.domElement.removeEventListener("mouseup", onMouseEvent);
+		renderer.domElement.addEventListener("mouseup", onMouseEvent);
+
+		renderer.domElement.removeEventListener("mousemove", onMouseEvent);
+		renderer.domElement.addEventListener("mousemove", onMouseEvent);
+
+		renderer.domElement.removeEventListener("keydown", onKeyEvent);
+		renderer.domElement.addEventListener("keydown", onKeyEvent);
+
+		renderer.domElement.removeEventListener("keyup", onKeyEvent);
+		renderer.domElement.addEventListener("keyup", onKeyEvent);
+	}
+
+	private function createTransformControls() {
+		if (scene != null && transformControls != null) {
+			scene.remove(transformControls);
+		}
+
+		if (camera != null) {
+			transformControls = new TransformControls(camera, renderer.domElement);
+		}
+
+		if (scene != null) {
+			scene.add(transformControls);
+		}
+
+		transformControls.addEventListener('dragging-changed', function (event) {
+			if (orbitControls != null) {
+				untyped orbitControls.enabled = !event.value;
+			}
+		});
+
+		invalidateStage();
+	}
+
+	private function createOrbitControls() {
+		if (camera != null) {
+			orbitControls = new OrbitControls(camera, renderer.domElement);
+		}
+
+		invalidateStage();
+	}
+
+	public function setCamera(camera : Camera) {
+		this.camera = camera;
+
+		createOrbitControls();
+		createTransformControls();
+		addEventListeners();
+
+		invalidateStage();
+	}
+
+	public function setScene(scene : Scene) {
+		this.scene = scene;
+
+		if (transformControls != null) {
+			scene.add(transformControls);
+		}
+
+		// Chrome Inspect Three.js extension support
+		untyped __js__("window.scene = scene;");
+
+		invalidateStage();
+	}
+
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
-		if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
+		if (!this.visible || this.worldAlpha <= 0 || !this.renderable || camera == null || scene == null)
 		{
 			return;
+		}
+
+		if (orbitControls != null) {
+			orbitControls.update();
+		}
+
+		if (transformControls != null) {
+			transformControls.update();
 		}
 
 		this.renderer.render(scene, camera);
@@ -48,11 +139,21 @@ class ThreeJSStage extends DisplayObject {
 		ctx.drawImage(this.renderer.domElement, 0, 0, getWidth(), getHeight(), 0, 0, getWidth() * resolution, getHeight() * resolution);
 	}
 
-	private function getWidth() : Float { return renderer.getSize().width; }
-	private function getHeight() : Float { return renderer.getSize().height; }
+	private function getWidth() : Float {
+		return renderer.getSize().width;
+	}
 
-	private function setWidth(width : Float) : Void { renderer.setSize(width, getHeight()); }
-	private function setHeight(height : Float) : Void { renderer.setSize(getWidth(), height); }
+	private function getHeight() : Float {
+		return renderer.getSize().height;
+	}
+
+	private function setWidth(width : Float) : Void {
+		renderer.setSize(width, getHeight());
+	}
+
+	private function setHeight(height : Float) : Void {
+		renderer.setSize(getWidth(), height);
+	}
 
 	#if (pixijs < "4.7.0")
 		public override function getLocalBounds() : Rectangle {
@@ -69,7 +170,7 @@ class ThreeJSStage extends DisplayObject {
 		public override function getLocalBounds(?rect:Rectangle) : Rectangle {
 			if (rect == null) {
 				rect = new Rectangle();
-			}
+			};
 
 			rect.x = 0;
 			rect.y = 0;
@@ -83,7 +184,7 @@ class ThreeJSStage extends DisplayObject {
 	public override function getBounds(?skipUpdate: Bool, ?rect: Rectangle) : Rectangle {
 		if (rect == null) {
 			rect = new Rectangle();
-		}
+		};
 
 		var lt = toGlobal(new Point(0.0, 0.0));
 		var rb = toGlobal(new Point(getWidth(), getHeight()));
@@ -94,5 +195,93 @@ class ThreeJSStage extends DisplayObject {
 		rect.height = rb.y - lt.y;
 
 		return rect;
+	}
+
+	public function onMouseEvent(event : Dynamic, ?object : Object3D, ?handledObjects : Array<Dynamic>) : Void {
+		if (orbitControls != null && !orbitControls.enabled) {
+			return;
+		}
+
+		if (object == null) {
+			if (scene == null) {
+				return;
+			}
+
+			object = scene;
+		};
+
+		if (handledObjects == null) {
+			handledObjects = new Array<Dynamic>();
+		};
+
+		var raycaster = new Raycaster();
+		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
+
+		for (ob in raycaster.intersectObjects(object.children)) {
+			var object = ob.object;
+
+			if (handledObjects.indexOf(object) == -1) {
+				handledObjects.push(object);
+				object.emitEvent(event.type);
+			}
+		};
+
+		for (child in object.children) {
+			onMouseEvent(event, child, handledObjects);
+		};
+	}
+
+	public function onKeyEvent(event : Dynamic) : Void {
+		if (transformControls == null) {
+			return;
+		};
+
+		if (event.type == "keydown") {
+			switch (event.keyCode) {
+				case 81: {// Q
+					transformControls.setSpace(untyped transformControls.space == "local" ? "world" : "local");
+				}
+				case 17: {// Ctrl
+					untyped transformControls.setTranslationSnap(100);
+					untyped transformControls.setRotationSnap(js.three.Math.degToRad(15));
+				}
+				case 87: {// W
+					transformControls.setMode("translate");
+				}
+				case 69: {// E
+					transformControls.setMode("rotate");
+				}
+				case 82: {// R
+					transformControls.setMode("scale");
+				}
+				// case 187: {}
+				case 107: {// +, =, num+
+					transformControls.setSize(untyped transformControls.size + 0.1);
+				}
+				// case 189: {}
+				case 109: {// -, _, num-
+					transformControls.setSize(Math.max(untyped transformControls.size - 0.1, 0.1));
+				}
+				case 88: {// X
+					untyped transformControls.showX = !transformControls.showX;
+				}
+				case 89: {// Y
+					untyped transformControls.showY = !transformControls.showY;
+				}
+				case 90: {// Z
+					untyped transformControls.showZ = !transformControls.showZ;
+				}
+				case 32: {// Spacebar
+					untyped transformControls.enabled = !transformControls.enabled;
+				}
+			}
+		} else {
+			switch (event.keyCode) {
+				case 17: {// Ctrl
+					untyped transformControls.setTranslationSnap(null);
+					untyped transformControls.setRotationSnap(null);
+				}
+			}
+		};
 	}
 }
