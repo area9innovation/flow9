@@ -252,8 +252,8 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/platforms/qt
-git clone ssh://git@github.com/angavrilov/asmjit.git
+cd $FLOW/platforms/common/cpp
+git clone ssh://git@github.com/area9innovation/asmjit.git
 cd asmjit
 git checkout next
 ```
