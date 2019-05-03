@@ -671,8 +671,9 @@ std::string GLTextClip::parseHtmlRec(const unicode_string &str, unsigned &pos, c
             FormatRec new_format = format;
 
             if (tag == "font") {
-                if (attrs.count("face"))
-                    new_format.font = owner->lookupFont(attrs["face"]);
+//                TODO: Implement
+//                if (attrs.count("face"))
+//                    new_format.font = owner->lookupFont(attrs["face"]);
                 if (attrs.count("size"))
                     new_format.size = atof(encodeUtf8(attrs["size"]).c_str());
                 if (attrs.count("color") && attrs["color"][0] == '#') {
@@ -793,20 +794,16 @@ static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-// HACK due to unable remake builtin fonts
-unicode_string recognizeBuiltinFont(unicode_string name) {
-    size_t tpos = name.rfind((unicode_char)'/');
-    if (tpos == (size_t)-1) tpos = name.size(); else ++tpos;
-    unicode_string r(name);
-    if (startsWith(name, parseUtf8("Material Icons"))) {
-        r = parseUtf8("MaterialIcons");
+static TextStyle textStyleByName(unicode_string slopeName) {
+    std::string slope = encodeUtf8(slopeName);
+    slope[0] = (char)toupper(slope[0]);
+    if (slope.compare("Italic")) {
+        return TextStyle::Italic;
+    } else if (!slope.compare("Oblique")) {
+        return TextStyle::Oblique;
+    } else {
+        return TextStyle::Normal;
     }
-    else {
-        unicode_string tail = name.substr(tpos);
-        if (startsWith(name, parseUtf8("Franklin Gothic"))) r = tail;
-        else if (name == parseUtf8("Roboto")) r = parseUtf8("Roboto")+tail;
-    }
-    return r;
 }
 
 StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
@@ -819,21 +816,68 @@ StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
     #undef SIZE
 }
 
-// Almostly all fonts don't have all 9 weights, so, maybe skipping to nearest weight might be desired feature
-const unicode_string GLTextClip::intFontWeight2StrSuffix(int w) {
-    if (w<=500) {
-        if (w<=300) {
-            if (w<=100) return parseUtf8("Thin");
-            else if (w<=200) return parseUtf8("Ultra Light");
-            else return parseUtf8("Light");
-        } else
-            if (w<=400) return parseUtf8("");  // "Book"
-            else return parseUtf8("Medium");
-    } else if (w<=700) {
-        if (w<=600) return parseUtf8("Semi Bold");
-        else return parseUtf8("Bold");
-    } else if (w<=800) return parseUtf8("Extra Bold");
-    else return parseUtf8("Black");
+static std::string chop(std::string  text, size_t count) {
+    return text.substr(0, text.size() - count);
+}
+
+static bool endsWith(std::string const& text, std::string const& suffix) {
+    if (text.length() < suffix.length()) return false;
+    return (0 == text.compare(text.length() - suffix.length(), suffix.length(), suffix));
+}
+
+TextFont GLTextClip::textFontByFontParameters(unicode_string family, int weight, unicode_string slope) {
+    TextFont font = TextFont();
+    font.weight = (TextWeight)weight;
+    font.style = textStyleByName(slope);
+
+    std::string fontfamily = encodeUtf8(family);
+    while (true) {
+        size_t chopSize = 0;
+        if (endsWith(fontfamily, "Thin")) {
+            font.weight = TextWeight::Thin;
+            chopSize = 4;
+        } else if (endsWith(fontfamily, "UltraLight")) {
+            font.weight = TextWeight::UltraLight;
+            chopSize = 10;
+        } else if (endsWith(fontfamily, "Light")) {
+            font.weight = TextWeight::Light;
+            chopSize = 5;
+        } else if (endsWith(fontfamily, "Regular")) {
+            font.weight = TextWeight::Regular;
+            chopSize = 7;
+        } else if (endsWith(fontfamily, "Normal")) {
+            font.weight = TextWeight::Regular;
+            chopSize = 6;
+        } else if (endsWith(fontfamily, "Medium")) {
+            font.weight = TextWeight::Medium;
+            chopSize = 6;
+        } else if (endsWith(fontfamily, "SemiBold")) {
+            font.weight = TextWeight::SemiBold;
+            chopSize = 8;
+        } else if (endsWith(fontfamily, "Bold")) {
+            font.weight = TextWeight::Bold;
+            chopSize = 4;
+        } else if (endsWith(fontfamily, "ExtraBold")) {
+            font.weight = TextWeight::ExtraBold;
+            chopSize = 9;
+        } else if (endsWith(fontfamily, "Black")) {
+            font.weight = TextWeight::Black;
+            chopSize = 5;
+        } else if (endsWith(fontfamily, "Italic")) {
+            font.style = TextStyle::Italic;
+            chopSize = 6;
+        } else if (endsWith(fontfamily, "Oblique")) {
+            font.style = TextStyle::Oblique;
+            chopSize = 7;
+        } else {
+            break;
+        }
+
+        fontfamily = chop(fontfamily, chopSize);
+    }
+
+    font.family = fontfamily;
+    return font;
 }
 
 StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
@@ -847,22 +891,12 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
     getFlowRunner()->ClaimInstructionsSpent(owner->ProfilingInsnCost*5, 110);
 #endif
 
-    base_font_weight = font_weight.GetInt();
     unicode_string font_slope = RUNNER->GetString(font_slope_str);
     base_font_name = RUNNER->GetString(font_str);
 
-    base_font_name = base_font_name + intFontWeight2StrSuffix(base_font_weight);
-
     base_format.color = flowToColor(font_color_i, opacity);
-
-    if (font_slope.length()) {
-        font_slope[0] = toupper(font_slope[0]);
-        if (font_slope.compare(parseUtf8("Normal")) && font_slope.compare(parseUtf8("Regular")))
-            base_font_name = base_font_name + parseUtf8("/") + font_slope;
-    }
-
-    base_font_name = recognizeBuiltinFont(base_font_name);
-    base_format.font = owner->lookupFont(base_font_name);
+    base_format.text_font = textFontByFontParameters(base_font_name, font_weight.GetInt(), font_slope);
+    base_format.font = owner->lookupFont(base_format.text_font);
 
     base_format.size = font_size.GetDouble();
     base_format.spacing = spacing.GetDouble();

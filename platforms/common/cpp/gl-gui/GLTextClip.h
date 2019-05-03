@@ -17,6 +17,8 @@ public:
 protected:
     struct FormatRec {
         GLFont::Ptr font;
+        TextFont text_font;
+
         vec4 color;
         float size, spacing;
         bool underline;
@@ -68,7 +70,6 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
-    int base_font_weight;
     FormatRec base_format;
 
     bool has_urls;
@@ -134,7 +135,7 @@ protected:
     bool flowDestroyObject();
     void flowGCObject(GarbageCollectorFn);
     void stateChanged();
-    static const unicode_string intFontWeight2StrSuffix(int w);
+
 
 public:
     GLTextClip(GLRenderSupport *owner);
@@ -160,6 +161,8 @@ public:
 
     unicode_string getFontName() { return base_font_name; }
 
+    TextFont getTextFont() { return base_format.text_font; }
+
     float getFontSize() { return base_format.size; }
     vec4 getFontColor() { return base_format.color; }
     vec4 getBackgroundColor() { return bg_color; }
@@ -182,6 +185,8 @@ public:
     
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
     const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
+
+    static TextFont textFontByFontParameters(unicode_string family, int weight, unicode_string style);
 
 public:
     DECLARE_NATIVE_METHOD(setTextInput)

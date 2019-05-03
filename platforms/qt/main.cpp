@@ -107,18 +107,6 @@ static void shift_args(int &argc, char *argv[], int cnt)
     memmove(argv+1, argv+1+cnt, sizeof(char*)*(argc-1));
 }
 
-static void loadFonts(QGLRenderSupport *pRenderer, QDir media_dir) {
-    media_dir.setFilter(QDir::Dirs);
-
-    QStringList fontFolders = media_dir.entryList();
-    for (int i = 0; i < fontFolders.size(); ++i) {
-         QString folder = fontFolders.at(i);
-         if (folder != "." && folder != "..") {
-             pRenderer->LoadFont(folder.toStdString(), "resources/dfont/" + folder);
-         }
-    }
-}
-
 #ifdef QT_GUI_LIB
 //TODO: remove it after update to Qt 5.7
 void customMessageOutputHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)

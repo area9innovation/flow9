@@ -252,7 +252,8 @@ CONFIG(use_gui) {
         ../common/cpp/gl-gui/GLFilter.cpp \
         ../common/cpp/gl-gui/GLSchedule.cpp \
         ../common/cpp/gl-gui/GLCamera.cpp \
-        ../common/cpp/gl-gui/ImageLoader.cpp
+        ../common/cpp/gl-gui/ImageLoader.cpp \
+        ../common/cpp/font/TextFont.cpp
 
     HEADERS  += \
         swfloader.h \
@@ -281,7 +282,8 @@ CONFIG(use_gui) {
         ../common/cpp/gl-gui/GLSchedule.h \
         ../common/cpp/gl-gui/GLCamera.h \
         ../common/cpp/gl-gui/ImageLoader.h \
-        ../common/cpp/font/Headers.h
+        ../common/cpp/font/Headers.h \
+        ../common/cpp/font/TextFont.h
 
     RESOURCES += \
         QtByteRunnerRes.qrc

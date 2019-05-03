@@ -102,6 +102,8 @@ class GLFontLibrary
 {
     friend class GLFont;
 
+    STL_HASH_MAP<unicode_string, shared_ptr<GLFont>> Fonts;
+
     weak_ptr<GLFontLibrary> self;
 
     GLRenderSupport *owner;
@@ -125,7 +127,7 @@ public:
 
     void setMaxTextureSize(int max_size) { max_texture_size = max_size; }
 
-    shared_ptr<GLFont> loadFont(std::string file);
+    shared_ptr<GLFont> loadFont(TextFont textFont);
 };
 
 class GLTextLayout;
@@ -175,7 +177,7 @@ class GLFont
 
     bool is_system;
     bool is_fallback;
-    std::string filename;
+    TextFont text_font;
     StaticBuffer index_dat;
 
     const FontHeader *font_header;
