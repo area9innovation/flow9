@@ -3,12 +3,12 @@
 set -e
 
 if [ `uname` == Darwin ]; then
-	READLINK=greadlink
-	PLATFORM=mac
+    READLINK=greadlink
+    PLATFORM=mac
 else
-	READLINK=readlink
-	PLATFORM=linux
-	PLATFORM_OPTS=
+    READLINK=readlink
+    PLATFORM=linux
+    PLATFORM_OPTS=
 fi
 
 SCRIPT_FN=`$READLINK -e "$0"`
@@ -22,8 +22,8 @@ cd "$SCRIPT_DIR/bin/$PLATFORM"
 qmake $PLATFORM_OPTS -o Makefile ../../QtByteRunner.pro
 
 if [ `uname` == Darwin ]; then
-	make && macdeployqt QtByteRunner.app
+    make && macdeployqt QtByteRunner.app
 else
-	make $FLOWCPP_MAKE_OPTS
+    make $FLOWCPP_MAKE_OPTS
 fi
 

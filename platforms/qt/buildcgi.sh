@@ -3,13 +3,13 @@
 set -e
 
 if [ `uname` == Darwin ]; then
-	READLINK=greadlink
-	PLATFORM=mac
-	PLATFORM_OPTS="-spec macx-g++"
+    READLINK=greadlink
+    PLATFORM=mac
+    PLATFORM_OPTS="-spec macx-g++"
 else
-	READLINK=readlink
-	PLATFORM=linux
-	PLATFORM_OPTS=
+    READLINK=readlink
+    PLATFORM=linux
+    PLATFORM_OPTS=
 fi
 
 SCRIPT_FN=`$READLINK -e "$0"`

@@ -147,7 +147,7 @@ No issues to report at the moment.
 ## Check out Flow repository
 
 You should have [Git LFS](https://git-lfs.github.com) installed.
-Reclone the flow9 repository after installing Git LFS, or use 
+Reclone the flow9 repository after installing Git LFS, or use
 ```bash
 git lfs pull
 ```
@@ -288,7 +288,7 @@ You can leave the web server running for now, or kill it with:
 
      kill %
 
-Notice that while this works for quick checks, you should work to 
+Notice that while this works for quick checks, you should work to
 setup a local web browser to serve the flow/www folder as "flow",
 so the link
 
