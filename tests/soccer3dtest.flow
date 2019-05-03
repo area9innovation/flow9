@@ -8,6 +8,11 @@ printF3DChildren(id : string, object : F3DObject) -> F3DObject {
 
 			F3DScene(fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
 		}
+		F3DNativeScene(clip, items): {
+			println(id + " " + get3DObjectType(clip));
+
+			F3DNativeScene(clip, fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
+		}
 		F3DNativeObject(clip): {
 			println(id + " " + get3DObjectType(clip));
 
@@ -24,17 +29,97 @@ printF3DChildren(id : string, object : F3DObject) -> F3DObject {
 	}
 }
 
+makeF3DTreeNode(
+	manager : MaterialManager,
+	id : string,
+	name : string,
+	attachFn : ref (native, bool) -> void,
+	clip : Maybe<native>,
+	children : Transform<[MTreeNode]>
+) -> MTreeNode {
+	sel = make(false);
+
+	MTreeNode(
+		makeTropicTag(manager),
+		\__ ->
+			MCols2(
+				MText(id + "  ", [MCaptionSolid()]),
+				MIf(
+					sel,
+					MText(name, [MCaptionSolid(), getPrimaryColor(manager)]),
+					MText(name, [MCaption1()])
+				)
+			)
+			|> (\f ->
+				eitherMap(
+					clip,
+					\c ->
+						MConstruct(
+							[
+								\ -> add3DEventListener(c, "attached", \ -> nextDistinct(sel, true)),
+								\ -> add3DEventListener(c, "detached", \ -> nextDistinct(sel, false)),
+								makeSubscribe2(sel, \sl -> ^attachFn(c, sl))
+							],
+							f
+						),
+					f
+				)
+			),
+		children,
+		[MExpanded(make(true)), MHighlightOnSelect(const(false)), MSelected(sel)]
+	)
+}
+
+makeF3DTree(manager : MaterialManager, id : string, object : F3DObject, attachFn : ref (native, bool) -> void) -> Transform<MTreeNode> {
+	println(object.structname);
+
+	switch (object : F3DObject) {
+		F3DScene(items): {
+			const(makeF3DTreeNode(manager, id, "Group", attachFn, None(),
+				fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it, attachFn))));
+		}
+		F3DNativeScene(clip, items): {
+			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip),
+				fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it, attachFn))));
+		}
+		F3DNativeObject(clip): {
+			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip), const([])));
+		}
+		F3DMutable(innerObject): {
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(manager, id, it, attachFn)));
+		}
+		default : {
+			const(makeF3DTreeNode(manager, id, object.structname, attachFn, None(), const([])));
+		}
+	}
+}
+
 main() {
-	manager = makeMaterialManager([]);
+	manager = makeMaterialManager([makeMaterialTheme(true, MPurpleA(700), MLightGreenA(700))]);
 
 	currentScene = make([F3DSceneLoader("images/3d/soccer/soc_field.json")]);
-
-	scene = F3DChildren(F3DScene(currentScene), \c -> printF3DChildren("", c));
-	camera = F3DPosition(F3DPerspectiveCamera(const(50.0), const(1.0), const(0.01), const(6000.0)), make(0.0), make(0.0), make(1000.0));
+	currentTree : DynamicBehaviour<Transform<[MTreeNode]>> = make(const([]));
+	stageAvailable = makeWH();
 
 	exportFn = ref \ -> "";
+	attachFn = ref nop2;
 
-	MLines2(
+	scene =
+		F3DChildren(
+			F3DScene(currentScene),
+			\c -> {
+				next(currentTree, farray(makeF3DTree(manager, "", c, attachFn)));
+
+				printF3DChildren("", c);
+			}
+		);
+	camera =
+		F3DPosition(
+			F3DPerspectiveCamera(const(50.0), fdivide(fwidth(stageAvailable), fheight(stageAvailable)), const(0.01), const(6000.0)),
+			make(0.0), make(0.0), make(1000.0)
+		);
+
+	MLines2ReverseZorder(
 		MMenuPanel(
 			[
 				MMenu(
@@ -65,7 +150,7 @@ main() {
 							"Save Scene",
 							[
 								MPrimaryAction(MIcon("save", [])),
-								MOnClick(\ -> {saveFile("scene.json", ^exportFn(), "text")})
+								MOnClick(\ -> {saveFileClient("scene.json", ^exportFn(), "text")})
 							]
 						)
 					],
@@ -75,20 +160,40 @@ main() {
 				)
 			],
 			[]
-		)
-		|> (\f -> MAvailableWidth(f, const(608.0))),
-		M3DStage(
-			const(WidthHeight(600.0, 600.0)),
-			scene,
-			camera,
-			[
-				F3DExportScene(exportFn),
-				F3DTransformControlsEnabled(const(true))
-			]
-		)
-		|> (\f -> MFrame(0.0, 4.0, [MStroke(getPrimaryColor(manager)), StrokeWidth(2.0)], f))
-		|> (\f -> MBorder4(4.0, f))
+		),
+		MProportionCols([
+			MInspect(
+				[
+					IAvailable(stageAvailable)
+				],
+				M3DStage(
+					stageAvailable,
+					F3DScene(const([
+						F3DAxesHelper(2500.0),
+						F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff),
+						scene
+					])),
+					camera,
+					[
+						F3DExportScene(exportFn),
+						F3DTransformControlsEnabled(const(true)),
+						F3DAttachTransformControls(attachFn)
+					]
+				)
+				|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
+			)
+			|> (\f -> Pair(const(0.7), f)),
+			MTree(fsubselect(currentTree, idfn |> FLift), [MTreeHideSeparators()])
+			|> (\f -> Pair(const(0.3), f))
+		])
 	)
 	|> MCenterX
 	|> (\f -> mrender(manager, true, f))
+}
+
+MLines2ReverseZorder(c1 : Material, c2 : Material) -> Material {
+	MCopySize2(
+		c1,
+		\sz, c -> MGroup2(MLines2(sz, c2), c)
+	)
 }

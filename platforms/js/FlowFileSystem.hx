@@ -420,7 +420,7 @@ class FlowFileSystem {
 		#end
 	}
 
-	public static function saveFile(filename : String, data : Dynamic, type : String) {
+	public static function saveFileClient(filename : String, data : Dynamic, type : String) {
 		#if (js && !flow_nodejs)
 			untyped __js__("
 				var file = new Blob([data], {type: type});

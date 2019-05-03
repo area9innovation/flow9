@@ -221,6 +221,10 @@ class RenderSupport3D {
 	}
 
 	static function emit3DMouseEvent(stage : ThreeJSStage, event : String, x : Float, y : Float) : Void {
+		if (stage.scene == null) {
+			return;
+		}
+
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
@@ -282,7 +286,11 @@ class RenderSupport3D {
 		 		}
 			} else {
 				if (stage.transformControls.object != null) {
-					stage.transformControls.object.dispatchEvent({ type : "detached" });
+					if (stage.transformControls.object == object) {
+						return;
+					} else {
+						stage.transformControls.object.dispatchEvent({ type : "detached" });
+					}
 				}
 
 				stage.transformControls.attach(object);
@@ -298,7 +306,7 @@ class RenderSupport3D {
 		if (stage.transformControls != null) {
 			if (stage.transformControls.object == object) {
 				stage.transformControls.object.dispatchEvent({ type : "detached" });
-				stage.transformControls.object = null;
+				stage.transformControls.detach();
 			}
 		}
 	}
@@ -308,6 +316,10 @@ class RenderSupport3D {
 			stage.transformControls.object.dispatchEvent({ type : "detached" });
 			stage.transformControls.detach();
 		}
+	}
+
+	public static function get3DObjectId(object : Object3D) : String {
+		return object.uuid;
 	}
 
 	public static function get3DObjectType(object : Object3D) : String {
@@ -519,18 +531,22 @@ class RenderSupport3D {
 
 	public static function set3DCameraFov(camera : PerspectiveCamera, fov : Float) : Void {
 		camera.fov = fov;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraAspect(camera : PerspectiveCamera, aspect : Float) : Void {
 		camera.aspect = aspect;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraNear(camera : PerspectiveCamera, near : Float) : Void {
 		camera.near = near;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraFar(camera : PerspectiveCamera, far : Float) : Void {
 		camera.far = far;
+		camera.invalidateStage();
 	}
 
 	public static function get3DCameraFov(camera : PerspectiveCamera) : Float {

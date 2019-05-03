@@ -3,6 +3,10 @@ import js.three.Box3;
 
 class Object3DHelper {
 	public static inline function invalidateStage(object : Object3D) : Void {
+		if (untyped object.updateProjectionMatrix != null) {
+			untyped object.updateProjectionMatrix();
+		}
+
 		if (getClipWorldVisible(object)) {
 			RenderSupportJSPixi.InvalidateStage();
 		}

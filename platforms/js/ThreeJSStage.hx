@@ -35,8 +35,14 @@ class ThreeJSStage extends DisplayObject {
 	public var shiftKey : Bool = false;
 	public var metaKey : Bool = false;
 
+	private var widgetWidth : Float = 0.0;
+	private var widgetHeight : Float = 0.0;
+
 	public function new(width : Float, height : Float) {
 		super();
+
+		widgetWidth = width;
+		widgetHeight = height;
 
 		this.renderer = new WebGLRenderer({antialias: true, alpha : true});
 		renderer.setSize(width, height);
@@ -132,7 +138,6 @@ class ThreeJSStage extends DisplayObject {
 
 		if (transformControls != null) {
 			scene.add(transformControls);
-			transformControls.update();
 		}
 
 		this.renderer.render(scene, camera);
@@ -150,19 +155,27 @@ class ThreeJSStage extends DisplayObject {
 	}
 
 	private function getWidth() : Float {
-		return renderer.getSize().width;
+		return widgetWidth;
 	}
 
 	private function getHeight() : Float {
-		return renderer.getSize().height;
+		return widgetHeight;
 	}
 
 	private function setWidth(width : Float) : Void {
-		renderer.setSize(width, getHeight());
+		if (widgetWidth != width) {
+			widgetWidth = width;
+			renderer.setSize(width, getHeight());
+			invalidateStage();
+		}
 	}
 
 	private function setHeight(height : Float) : Void {
-		renderer.setSize(getWidth(), height);
+		if (widgetHeight != height) {
+			widgetHeight = height;
+			renderer.setSize(getWidth(), height);
+			invalidateStage();
+		}
 	}
 
 	#if (pixijs < "4.7.0")
