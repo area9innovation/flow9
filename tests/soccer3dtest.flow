@@ -1,18 +1,25 @@
 import material/material_ui;
+import material/extra/filebrowser/material_filebrowser;
 
-add3DMouseListeners(id : string, object : F3DObject) {
+printF3DChildren(id : string, object : F3DObject) -> F3DObject {
 	switch (object : F3DObject) {
 		F3DScene(items): {
-			F3DScene(fmapi(items, \i, it -> add3DMouseListeners(id + " " + i2s(i), it)));
+			println(id + " Group");
+
+			F3DScene(fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
+		}
+		F3DNativeObject(clip): {
+			println(id + " " + get3DObjectType(clip));
+
+			object;
+		}
+		F3DMutable(innerObject): {
+			F3DMutable(fselect(innerObject, FLift(\it -> printF3DChildren(id, it))));
 		}
 		default : {
-			F3DInteractive(
-				object,
-				[
-					F3DMouseDown(\ -> println("down" + id)),
-					F3DMouseDown(\ -> println("up" + id))
-				]
-			)
+			println(id + " " + object.structname);
+
+			object;
 		}
 	}
 }
@@ -20,45 +27,68 @@ add3DMouseListeners(id : string, object : F3DObject) {
 main() {
 	manager = makeMaterialManager([]);
 
-	scene =
-		F3DChildren(F3DSceneLoader("images/3d/soccer/soc_field.json"), \c -> add3DMouseListeners("", c));
-		// F3DScene(
-		// 	const([
-		// 		F3DInteractive(
-		// 			F3DLoader("images/3d/soccer/Web3D_Field.obj", "images/3d/soccer/Web3D_Field.mtl"),
-		// 			[
-		// 				F3DMouseDown(\ -> println("down")),
-		// 				F3DMouseDown(\ -> println("up"))
-		// 			]
-		// 		),
-		// 		F3DTransformControls(
-		// 			F3DInteractive(
-		// 				F3DLoader("images/3d/soccer/Web3D_Ball_null.obj", "images/3d/soccer/Web3D_Ball_null.mtl"),
-		// 				[
-		// 					F3DMouseDown(\ -> println("down ball")),
-		// 					F3DMouseDown(\ -> println("up ball"))
-		// 				]
-		// 			)
-		// 		),
-		// 		F3DLoader("images/3d/soccer/Web3D_Blue_null.obj", "images/3d/soccer/Web3D_Blue_null.mtl"),
-		// 		F3DLoader("images/3d/soccer/Web3D_Red_null.obj", "images/3d/soccer/Web3D_Red_null.mtl"),
-		// 		F3DLoader("images/3d/soccer/Web3D_soccer.obj", "images/3d/soccer/Web3D_soccer.mtl"),
-		// 	])
-		// );
-	camera = F3DPerspectiveCamera(const(50.0), const(1.0), const(0.01), const(6000.0));
-	light = F3DPointLight(const(white), const(2.0), const(0.0), const(1.0));
+	currentScene = make([F3DSceneLoader("images/3d/soccer/soc_field.json")]);
 
-	M3DOrbitControls(
-		const(WidthHeight(1000.0, 1000.0)),
-		scene,
-		camera,
-		light,
-		[
-			CameraPosition(make(0.0), make(2000.0), make(0.0)),
-			SceneRotation(make(-45.0), make(0.0), make(0.0))
-		]
+	scene = F3DChildren(F3DScene(currentScene), \c -> printF3DChildren("", c));
+	camera = F3DPosition(F3DPerspectiveCamera(const(50.0), const(1.0), const(0.01), const(6000.0)), make(0.0), make(0.0), make(1000.0));
+
+	exportFn = ref \ -> "";
+
+	MLines2(
+		MMenuPanel(
+			[
+				MMenu(
+					MTextButton("File", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Open Scene",
+							[
+								MPrimaryAction(MIcon("folder_open", [])),
+								MOnClick(\ ->
+									openFileDialog(1, ["*.txt", "*.json"], \ff ->
+										iter(ff, \f ->
+											readFileClient(
+												f,
+												"text",
+												\s -> {
+													next(currentScene, [F3DScene(const([]))]);
+													next(currentScene, [F3DJsonObject(s)]);
+												},
+												println
+											)
+										)
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Save Scene",
+							[
+								MPrimaryAction(MIcon("save", [])),
+								MOnClick(\ -> {saveFile("scene.json", ^exportFn(), "text")})
+							]
+						)
+					],
+					[
+						MMenuIndent()
+					]
+				)
+			],
+			[]
+		)
+		|> (\f -> MAvailableWidth(f, const(608.0))),
+		M3DStage(
+			const(WidthHeight(600.0, 600.0)),
+			scene,
+			camera,
+			[
+				F3DExportScene(exportFn),
+				F3DTransformControlsEnabled(const(true))
+			]
+		)
+		|> (\f -> MFrame(0.0, 4.0, [MStroke(getPrimaryColor(manager)), StrokeWidth(2.0)], f))
+		|> (\f -> MBorder4(4.0, f))
 	)
-	|> (\f -> MFrame(0.0, 4.0, [MStroke(getPrimaryColor(manager)), StrokeWidth(2.0)], f))
-	|> (\f -> MBorder4(4.0, f))
+	|> MCenterX
 	|> (\f -> mrender(manager, true, f))
 }

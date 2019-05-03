@@ -207,12 +207,12 @@ You can also run command-line-only stuff with it, and avoid
 initializing the GUI subsystem, using `--batch`:
 
     cd ~/flow9
-    flowcpp --batch sandbox/helloworld.flow
+    flowcpp --batch sandbox/hello.flow
 
 You should see:
 
-    "neko flow.n  --compile helloworld.bytecode --debuginfo helloworld.debug sandbox/helloworld.flow
-    Compiling sandbox/helloworld.flow ...
+    "neko flow.n  --compile hello.bytecode --debuginfo hello.debug sandbox/hello.flow
+    Compiling sandbox/hello.flow ...
     "
     Hello world
 

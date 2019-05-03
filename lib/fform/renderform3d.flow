@@ -3,15 +3,18 @@ import fform/fform;
 
 export {
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
-		F3DStageStyle ::= IgnoreMouseEvents;
-			IgnoreMouseEvents();
+		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled;
+			F3DIgnoreMouseEvents();
+			F3DExportScene(fn : ref () -> string);
+			F3DTransformControlsEnabled(enabled : Transform<bool>); // const(false) by default, doesn't affect F3DTransformControls
 
-	F3DObject ::= F3DScene, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
+	F3DObject ::= F3DScene, F3DMutable, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
 		F3DInspectRotation, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin, F3DInspectBoundingSphereMax,
 		F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader, F3DChildren, F3DNativeObject,
-		F3DAxesHelper, F3DGridHelper, F3DInteractive;
+		F3DJsonObject, F3DAxesHelper, F3DGridHelper, F3DInteractive;
 
 		F3DScene(objects : Transform<[F3DObject]>);
+		F3DMutable(object : Transform<F3DObject>);
 
 		F3DPosition(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DRotation(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
@@ -23,7 +26,7 @@ export {
 		F3DInspectBoundingSphereMin(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 		F3DInspectBoundingSphereMax(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 
-		F3DTransformControls(object : F3DObject);
+		F3DTransformControls(object : F3DObject, enabled : DynamicBehaviour<bool>);
 
 		F3DLoader(objUrl : string, mtlUrl : string);
 		F3DGLTFLoader(url : string, onAnimation : ([F3DAnimation]) -> void);
@@ -32,14 +35,15 @@ export {
 		F3DSceneLoader(url : string);
 		F3DChildren(object : F3DObject, fn : (F3DObject) -> F3DObject);
 		F3DNativeObject(object : native);
+		F3DJsonObject(json : string);
 
 		F3DAxesHelper(size : double);
 		F3DGridHelper(size : double, divisions : int, colorCenterLine : int, colorGrid : int);
 
 		F3DInteractive(object : F3DObject, listeners : [F3DEventHandler]);
 			F3DEventHandler ::= F3DMouseDown, F3DMouseUp;
-				F3DMouseDown(fn : () -> void);
-				F3DMouseUp(fn : () -> void);
+				F3DMouseDown(fn : (handled : bool) -> bool);
+				F3DMouseUp(fn : (handled : bool) -> bool);
 
 		F3DLight ::= F3DPointLight;
 			F3DPointLight(color : Transform<int>, intensity : Transform<double>, distance : Transform<double>, decayAmount : Transform<double>);
@@ -61,13 +65,17 @@ export {
 				F3DNativeMaterials(materials : native);
 }
 
+handled3DMouseDown : ref bool = ref false;
+handled3DMouseUp : ref bool = ref false;
+
 F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm {
 	if (js) {
 		container = make(FEmpty());
 
 		load3DLibraries(\ -> {
 			metrics = make(FormMetrics(0., 0., 0., 0.));
-			emitMouseEventFn : ref (string, double, double) -> void = ref \__, __, __ -> {};
+			clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
+			transformControlsEnabled = extractStruct(style, F3DTransformControlsEnabled(const(false))).enabled;
 
 			next(
 				container,
@@ -75,12 +83,10 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 					FEmpty(),
 					metrics,
 					\ -> FEmpty(),
-					\__, __, __ -> {
-						clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
-
+					\__, __, __ ->
 						NativeRenderResult(
 							[clip],
-							concat(
+							concat3(
 								[
 									makeSubscribe(wh, \v -> {
 										setClipWidth(clip, v.width);
@@ -88,31 +94,25 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 										nextDistinct(metrics, FormMetrics(v.width, v.height, v.height, v.height));
 									})()
 								],
-								render3dform(camera, \c -> {
-									set3DCamera(clip, c);
-
-									render3dform(scene, \s -> {
-										set3DScene(clip, s);
-
-										emitMouseEventFn := \e, x, y ->
-											emit3DMouseEvent(
-												s,
-												c,
-												e,
-												(x / fgetValue(wh).width) * 2.0 - 1.0,
-												-(y / fgetValue(wh).height) * 2.0 + 1.0
-											);
+								render3dform(camera, clip, const(false), \c -> {
+										set3DCamera(clip, c);
 
 										[];
-									});
+									}
+								),
+								render3dform(scene, clip, transformControlsEnabled, \s -> {
+									set3DScene(clip, s);
+
+									maybeApply(tryExtractStruct(style, F3DExportScene(ref \ -> "")), \es -> es.fn := \ -> get3DObjectJSON(s));
+
+									addF3DMouseListeners(clip, s, transformControlsEnabled);
 								})
 							)
 							|> (\f -> \ -> applyall(f))
 						)
-					}
 				)
 				|> (\f ->
-					if (!contains(style, IgnoreMouseEvents())) {
+					if (!contains(style, F3DIgnoreMouseEvents())) {
 						mouseDown = make(false);
 
 						FGroup2(
@@ -120,19 +120,117 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 								[
 									MouseDown(\mi -> {
 										if (mi.inside()) {
-											next(mouseDown, true);
-											^emitMouseEventFn("mousedown", mi.x, mi.y);
+											emit3DMouseEvent(
+												clip,
+												"mousedown",
+												mi.x,
+												mi.y
+											);
+										}
+
+										if (!^handled3DMouseDown) {
+											clear3DTransformControls(clip);
 										}
 
 										false;
 									}),
 									MouseUp(\mi -> {
-										if (getValue(mouseDown)) {
-											next(mouseDown, false);
-											^emitMouseEventFn("mouseup", mi().x, mi().y);
+										emit3DMouseEvent(
+											clip,
+											"mouseup",
+											mi().x,
+											mi().y
+										);
+
+										false;
+									}),
+									MouseMiddleDown(\mi -> {
+										if (mi.inside()) {
+											emit3DMouseEvent(
+												clip,
+												"mousemiddledown",
+												mi.x,
+												mi.y
+											);
 										}
 
 										false;
+									}),
+									MouseMiddleUp(\mi -> {
+										emit3DMouseEvent(
+											clip,
+											"mousemiddleup",
+											mi().x,
+											mi().y
+										);
+
+										false;
+									}),
+									MouseRightDown(\mi -> {
+										if (mi.inside()) {
+											emit3DMouseEvent(
+												clip,
+												"mouserightdown",
+												mi.x,
+												mi.y
+											);
+										}
+
+										false;
+									}),
+									MouseRightUp(\mi -> {
+										emit3DMouseEvent(
+											clip,
+											"mouserightup",
+											mi().x,
+											mi().y
+										);
+
+										false;
+									}),
+									MouseMove(\mi -> {
+										emit3DMouseEvent(
+											clip,
+											"mousemove",
+											mi().x,
+											mi().y
+										);
+
+										false;
+									}),
+									KeyDown(\ke -> {
+										emit3DKeyEvent(
+											clip,
+											"keydown",
+											ke.utf,
+											ke.ctrl,
+											ke.shift,
+											ke.alt,
+											ke.meta,
+											ke.keycode
+										);
+									}),
+									KeyUp(\ke -> {
+										emit3DKeyEvent(
+											clip,
+											"keyup",
+											ke.utf,
+											ke.ctrl,
+											ke.shift,
+											ke.alt,
+											ke.meta,
+											ke.keycode
+										);
+									}),
+									FineGrainMouseWheel(\mi -> {
+										if (mi.inside) {
+											emit3DMouseEvent(
+												clip,
+												"wheel",
+												-mi.dx,
+												-mi.dy
+											);
+										}
 									})
 								],
 								FMutable(fselect(wh, FLift(\v ->
@@ -155,7 +253,7 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 	}
 }
 
-render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> void] {
+render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onLoad : (native) -> [() -> void]) -> [() -> void] {
 	switch (object : F3DObject) {
 		F3DScene(objects) : {
 			clip = make3DScene();
@@ -164,15 +262,43 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 				onLoad(clip),
 				[
 					makeSubscribeUns(objects, \ob ->
-						map(ob, \o -> render3dform(o, \c -> { add3DChild(clip, c); [\ -> remove3DChild(clip, c)] }))
+						map(ob, \o ->
+							render3dform(
+								o,
+								stage,
+								transformControlsEnabled,
+								\c -> {
+									add3DChild(clip, c);
+
+									arrayPush(
+										addF3DMouseListeners(stage, c, transformControlsEnabled),
+										\ -> remove3DChild(clip, c)
+									)
+								}
+							)
+						)
 						|> concatA
 					)()
 				]
 			)
 		}
+		F3DMutable(innerObject) : {
+			[
+				makeSubscribeUns(innerObject, \obj ->
+					render3dform(
+						obj,
+						stage,
+						transformControlsEnabled,
+						onLoad
+					)
+				)()
+			]
+		}
 		F3DPosition(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip -> {
 					concat(
 						onLoad(clip),
@@ -190,6 +316,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DRotation(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -206,6 +334,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DScale(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -222,6 +352,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DLookAt(innerObject, x, y, z, update) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -236,6 +368,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DInspectRotation(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -254,6 +388,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DInspectBoundingSphereCenter(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -272,6 +408,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DInspectBoundingSphereMin(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -290,6 +428,8 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DInspectBoundingSphereMax(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
@@ -305,10 +445,25 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 
 			r;
 		}
-		F3DTransformControls(innerObject) : {
+		F3DTransformControls(innerObject, enabled) : {
 			r = render3dform(
 				innerObject,
-				\clip -> onLoad(add3DTransformControls(clip))
+				stage,
+				transformControlsEnabled,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DEventListener(clip, "detached", \ -> nextDistinct(enabled, false)),
+							add3DEventListener(clip, "attached", \ -> nextDistinct(enabled, true)),
+							makeSubscribe(enabled, \en ->
+								if (en)
+									attach3DTransformControls(stage, clip)
+								else
+									detach3DTransformControls(stage, clip)
+							)()
+						]
+					)
 			);
 
 			r;
@@ -388,17 +543,30 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DChildren(innerObject, fn) : {
 			r = render3dform(
 				innerObject,
-				\clip ->
-					render3dform(
-						fn(parseF3DNativeObject(clip)),
-						onLoad
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					parsedClip = parseF3DNativeObject(clip);
+
+					concat(
+						parsedClip.second,
+						render3dform(
+							fn(parsedClip.first),
+							stage,
+							transformControlsEnabled,
+							onLoad
+						)
 					)
+				}
 			);
 
 			r;
 		}
 		F3DNativeObject(nativeObject) : {
 			onLoad(nativeObject);
+		}
+		F3DJsonObject(json) : {
+			onLoad(make3DObjectFromJSON(json));
 		}
 		F3DAxesHelper(size) : {
 			onLoad(make3DAxesHelper(size));
@@ -409,16 +577,31 @@ render3dform(object : F3DObject, onLoad : (native) -> [() -> void]) -> [() -> vo
 		F3DInteractive(innerObject, listeners) : {
 			r = render3dform(
 				innerObject,
+				stage,
+				transformControlsEnabled,
 				\clip ->
 					concat(
 						onLoad(clip),
 						map(listeners, \l -> {
 							switch (l : F3DEventHandler) {
 								F3DMouseDown(fn): {
-									add3DEventListener(clip, "mousedown", fn);
+									add3DEventListener(clip, "mousedown", \ -> {
+										handled3DMouseDown := fn(^handled3DMouseDown);
+
+										if (^handled3DMouseDown) {
+											deferred(\ -> handled3DMouseDown := false);
+										}
+
+									});
 								}
 								F3DMouseUp(fn): {
-									add3DEventListener(clip, "mousedown", fn);
+									add3DEventListener(clip, "mouseup", \ -> {
+										handled3DMouseUp := fn(^handled3DMouseUp);
+
+										if (^handled3DMouseUp) {
+											deferred(\ -> handled3DMouseUp := false);
+										}
+									});
 								}
 							}
 						})
@@ -500,12 +683,64 @@ renderF3DMaterial(material : F3DMaterial) -> native {
 	}
 }
 
-parseF3DNativeObject(object : native) -> F3DObject {
-	children = get3DObjectChildren(object);
+parseF3DNativeObject(object : native) -> Pair<F3DObject, [() -> void]> {
+	children = make(get3DObjectChildren(object));
+	uns = ref [];
 
-	if (length(children) > 0) {
-		F3DScene(const(map(children, parseF3DNativeObject)));
+	Pair(
+		F3DMutable(fselect(children, FLift(\ch -> {
+			dispUnsA(uns);
+
+			if (length(ch) > 0) {
+				parsedChildren =
+					fold(ch, Pair([], []), \acc, c -> {
+						cc = parseF3DNativeObject(c);
+
+						Pair(arrayPush(acc.first, cc.first), concat(acc.second, cc.second));
+					});
+
+				uns := parsedChildren.second;
+
+				F3DScene(const(parsedChildren.first));
+			} else {
+				F3DNativeObject(object);
+			}
+		}))),
+		[
+			add3DEventListener(object, "childrenchanged", \ -> {
+				next(children, get3DObjectChildren(object));
+			}),
+			\ -> dispUnsA(uns)
+		]
+	)
+}
+
+addF3DMouseListeners(stage : native, object : native, transformControlsEnabled : Transform<bool>) -> [() -> void] {
+	if (transformControlsEnabled != const(false)) {
+		children = get3DObjectChildren(object);
+
+		if (length(children) > 0) {
+			concatA(map(children, \c -> addF3DMouseListeners(stage, c, transformControlsEnabled)))
+		} else {
+			[
+				makeSubscribeUns(transformControlsEnabled, \en ->
+					if (en)
+						[
+							add3DEventListener(object, "mousedown", \ -> {
+								if (!^handled3DMouseDown) {
+									handled3DMouseDown := true;
+									deferred(\ -> handled3DMouseDown := false);
+
+									attach3DTransformControls(stage, object);
+								}
+							})
+						]
+					else
+						[]
+				)()
+			]
+		}
 	} else {
-		F3DNativeObject(object);
+		[]
 	}
 }
