@@ -3,15 +3,13 @@
 set -e
 
 if [ `uname` == Darwin ]; then
-    READLINK=greadlink
     PLATFORM=mac
 else
-    READLINK=readlink
     PLATFORM=linux
     PLATFORM_OPTS=
 fi
 
-SCRIPT_DIR=$(dirname "$($READLINK -e "$0")")
+SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
 
 # Generate the shaders include file
 pushd ../common/cpp/gl-gui/shaders && ./pack.pl

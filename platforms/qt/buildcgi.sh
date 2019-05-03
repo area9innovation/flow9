@@ -3,16 +3,14 @@
 set -e
 
 if [ `uname` == Darwin ]; then
-    READLINK=greadlink
     PLATFORM=mac
     PLATFORM_OPTS="-spec macx-g++"
 else
-    READLINK=readlink
     PLATFORM=linux
     PLATFORM_OPTS=
 fi
 
-SCRIPT_DIR=$(dirname "$($READLINK -e "$0")")
+SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
 
 qmake $PLATFORM_OPTS -o Makefile QtByteRunnerCgi.pro
 make
