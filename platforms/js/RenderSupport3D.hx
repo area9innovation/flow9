@@ -8,7 +8,6 @@ import js.three.Vector3;
 
 import js.three.Object3D;
 import js.three.Mesh;
-import js.three.AxisHelper;
 import js.three.GridHelper;
 
 import js.three.Camera;
@@ -195,7 +194,7 @@ class RenderSupport3D {
 	}
 
 	public static function make3DAxesHelper(size : Float) : Object3D {
-		return new AxisHelper(size);
+		return untyped __js__("new THREE.AxesHelper(size)");
 	}
 
 	public static function make3DGridHelper(size : Float, divisions : Int, colorCenterLine : Int, colorGrid : Int) : Object3D {
@@ -324,6 +323,20 @@ class RenderSupport3D {
 
 	public static function get3DObjectType(object : Object3D) : String {
 		return object.type;
+	}
+
+	public static function get3DObjectVisible(object : Object3D) : Bool {
+		return object.visible;
+	}
+
+	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
+		if (object.visible != visible) {
+			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+
+			object.invalidateStage();
+		}
 	}
 
 	public static function get3DObjectX(object : Object3D) : Float {
