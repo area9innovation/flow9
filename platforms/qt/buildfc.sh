@@ -17,8 +17,7 @@ else
     PLATFORM_OPTS=
 fi
 
-SCRIPT_FN=`$READLINK -e "$0"`
-SCRIPT_DIR=`dirname "$SCRIPT_FN"`
+SCRIPT_DIR=$(dirname "$($READLINK -e "$0")")
 
 cd "$SCRIPT_DIR/bin/$PLATFORM"
 qmake $PLATFORM_OPTS -o Makefile ../../FontConvertor.pro

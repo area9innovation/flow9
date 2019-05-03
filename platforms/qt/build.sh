@@ -11,8 +11,7 @@ else
     PLATFORM_OPTS=
 fi
 
-SCRIPT_FN=`$READLINK -e "$0"`
-SCRIPT_DIR=`dirname "$SCRIPT_FN"`
+SCRIPT_DIR=$(dirname "$($READLINK -e "$0")")
 
 # Generate the shaders include file
 pushd ../common/cpp/gl-gui/shaders && ./pack.pl
@@ -26,4 +25,3 @@ if [ `uname` == Darwin ]; then
 else
     make $FLOWCPP_MAKE_OPTS
 fi
-

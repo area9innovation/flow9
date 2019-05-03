@@ -12,8 +12,7 @@ else
     PLATFORM_OPTS=
 fi
 
-SCRIPT_FN=`$READLINK -e "$0"`
-SCRIPT_DIR=`dirname "$SCRIPT_FN"`
+SCRIPT_DIR=$(dirname "$($READLINK -e "$0")")
 
 qmake $PLATFORM_OPTS -o Makefile QtByteRunnerCgi.pro
 make
