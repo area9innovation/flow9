@@ -76,7 +76,7 @@ class TextClip extends NativeWidgetClip {
 	public override function updateNativeWidgetStyle() : Void {
 		super.updateNativeWidgetStyle();
 
-		nativeWidget.type = type;
+		nativeWidget.setAttribute("type", type);
 		nativeWidget.value = text;
 		nativeWidget.style.color = style.fill;
 		nativeWidget.style.letterSpacing = '${style.letterSpacing}px';

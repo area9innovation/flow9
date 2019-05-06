@@ -54,8 +54,8 @@ class FlowSprite extends Sprite {
 		var texture = Texture.removeFromCache(url);
 		var baseTexture = untyped BaseTexture.removeFromCache(url);
 
-		untyped __js__("delete baseTexture");
-		untyped __js__("delete texture");
+		untyped __js__("delete this.baseTexture");
+		untyped __js__("delete this.texture");
 	}
 
 	private static function pushTextureToCache(texture : Texture) : Void {
