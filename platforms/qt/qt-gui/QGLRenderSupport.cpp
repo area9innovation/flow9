@@ -94,12 +94,20 @@ static QFont::Weight qFontWeightByTextWeight(TextWeight weight) {
     }
 }
 
+static QFont::Style qFontStyleByTextStyle(TextStyle style) {
+    switch (style) {
+    case TextStyle::Normal: return QFont::StyleNormal;
+    case TextStyle::Italic: return QFont::StyleItalic;
+    case TextStyle::Oblique: return QFont::StyleOblique;
+    }
+}
+
 bool QGLRenderSupport::loadSystemFont(FontHeader *header, TextFont textFont)
 {
     QString family(textFont.family.c_str());
 
     QFont font(family, -1, qFontWeightByTextWeight(textFont.weight), false);
-    font.setStyle(QFont::StyleNormal);
+    font.setStyle(qFontStyleByTextStyle(textFont.style));
 
     if (!font.exactMatch())
         return false;

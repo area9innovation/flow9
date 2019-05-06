@@ -797,7 +797,7 @@ static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
 static TextStyle textStyleByName(unicode_string slopeName) {
     std::string slope = encodeUtf8(slopeName);
     slope[0] = (char)toupper(slope[0]);
-    if (slope.compare("Italic")) {
+    if (!slope.compare("Italic")) {
         return TextStyle::Italic;
     } else if (!slope.compare("Oblique")) {
         return TextStyle::Oblique;
