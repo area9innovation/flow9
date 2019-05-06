@@ -71,6 +71,24 @@ export {
 	) -> Material;
 
 	MAddShortcutDialog(manager : MaterialManager) -> () -> void;
+
+	MDropDownOrAutoComplete(
+		items : [string],
+		selected : DynamicBehaviour<[int]>,
+		style : [MDropDownOrAutoCompleteStyle],
+	) -> Material;
+
+	// MRequiredField, MLabel replace corresponding inner autocomplete styles
+	MDropDownOrAutoCompleteStyle ::= StyleMDropDown, StyleMMultiSelectDropDown, StyleMAutoComplete, StateMAutoComplete,
+		ItemsLimit, MRequiredField, MLabel;
+
+		StyleMDropDown(style : [MDropDownStyle]);
+		StyleMMultiSelectDropDown(style : [MMultiSelectDropDownStyle]);
+		StyleMAutoComplete(style : [MAutoCompleteStyle]);
+		StateMAutoComplete(state : [MTextInputState]);
+		ItemsLimit(limit : int);
+
+	MRequiredMessage(msg : string) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -616,4 +634,114 @@ MAddShortcutDialog(manager : MaterialManager) -> () -> void {
 	} else {
 		nop;
 	}
+}
+
+MDropDownOrAutoComplete(
+	items : [string],
+	selected : DynamicBehaviour<[int]>,
+	style : [MDropDownOrAutoCompleteStyle],
+) -> Material {
+	limit = extractStruct(style, ItemsLimit(15)).limit;
+	isRequired = containsStruct(style, MRequiredField());
+	labelM = tryExtractStruct(style, MLabel(""));
+	if (length(items) > limit) {
+		autoCompleteStyle = extractStruct(style, StyleMAutoComplete([])).style
+		|> (\styleAutoComplete -> {
+			if (isRequired) {
+				error = fselect(selected, FLift(\selectedArr ->
+					if (length(selectedArr) == 0) {
+						Some(Pair("", true))
+					} else {
+						None()
+					}
+				));
+				replaceStruct(styleAutoComplete, MInputError(error, []));
+			} else {
+				styleAutoComplete
+			}
+		})
+		|> (\styleAutoComplete -> {
+			eitherMap(
+				labelM,
+				\labelStyle -> replaceStruct(styleAutoComplete, MLabel(labelStyle.label)),
+				styleAutoComplete
+			)
+		});
+		autoCompleteState = extractStruct(style, StateMAutoComplete([])).state;
+		
+		makeMAutoCompleteControl(items, selected, autoCompleteStyle, autoCompleteState)
+	} else {
+		dropDownStyle = extractStruct(style, StyleMDropDown([])).style;
+		eitherMap(
+			tryExtractStruct(style, StyleMMultiSelectDropDown([])),
+			\multiSelect -> makeMMultiSelectDropDownControl(items, selected, multiSelect.style),
+			makeMDropDownControl(items, selected, dropDownStyle)
+		) |> (\m ->	eitherMap(
+			labelM,
+			\labelStyle -> MLines2(
+				MText(labelStyle.label, [MCaption()]) |> MBorderBottom(-4.0),
+				m
+			),
+			m
+		)) |> (\m -> MLines2(
+			m,
+			MVisible(
+				fOr(feq(selected, []), feq(selected, [-1])),
+				MRequiredMessage("Required field") |> MBorderTop(-4.0)
+			)
+		))
+	}
+}
+
+makeMAutoCompleteControl(
+	items : [string],
+	selected : DynamicBehaviour<[int]>,
+	style : [MAutoCompleteStyle],
+	state : [MTextInputState]
+) -> Material {
+	idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, "")), ", ");
+	string2idxs = \str -> filtermap(
+		strSplit2WithoutLeave(str, [",", ";"]),
+		\sel -> {
+			trimStr = \s -> trim(s) |> toLowerCase;
+			findi(items, \item -> trimStr(item) == trimStr(sel))
+		}
+	);
+
+	selectedStrB = make(idxs2string(getValue(selected)));
+
+	MConstruct(
+		[\-> bidirectionalLink(selectedStrB, selected, string2idxs, idxs2string)],
+		MAutoComplete(selectedStrB, items, style, state)
+	);
+}
+
+makeMMultiSelectDropDownControl(
+	items : [string],
+	selected : DynamicBehaviour<[int]>,
+	style : [MMultiSelectDropDownStyle]
+) -> Material {
+	MBaselineCols2(
+		MMultiSelectDropDown(selected, items, arrayPush(style, MAddDoneButton())),
+		MVisible(
+			fneq(selected, []),
+			MIconButton("clear", \-> nextDistinct(selected, []), [], [])
+		)
+	)
+}
+
+makeMDropDownControl(
+	items : [string],
+	selected : DynamicBehaviour<[int]>,
+	style : [MDropDownStyle]
+) -> Material {
+	singleSelected = make(firstElement(getValue(selected), -1));
+	MConstruct(
+		[\-> connectSelectDistinctu(singleSelected, selected, \sel : int -> [sel])],
+		MDropDown(singleSelected, "", items, style)
+	)
+}
+
+MRequiredMessage(msg : string) -> Material {
+	MText(msg, [MErrorColor(), MCustomFont(12.0, "Roboto", 1.0)]);
 }
