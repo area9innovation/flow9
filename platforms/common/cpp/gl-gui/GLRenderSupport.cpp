@@ -1174,6 +1174,7 @@ void GLRenderSupport::GetTargetTokens(std::set<std::string> &tokens)
     tokens.insert("gui");
     tokens.insert("opengl");
     tokens.insert(stl_sprintf("dpi=%d", DisplayDPI));
+    tokens.insert(stl_sprintf("density=%f", DisplayDensity));
     if (NoHoverMouse)
         tokens.insert("mobile");
 }
