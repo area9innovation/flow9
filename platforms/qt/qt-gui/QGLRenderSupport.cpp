@@ -912,7 +912,10 @@ void QGLRenderSupport::abortPictureLoading(unicode_string url){
     foreach (QNetworkReply *reply, request_map.keys()) {
         if (request_map.value(reply) == url) {
             reply->abort();
-            getFlowRunner()->flow_err << "Aborted download of image: " << encodeUtf8(url) << endl;
+            const auto encoded = encodeUtf8(url);
+            const auto pos = encoded.find('\n');
+            const auto cropped = pos == std::string::npos ? encoded : encoded.substr(0, pos);
+            getFlowRunner()->flow_err << "Aborted download of image: " << cropped << endl;
             break;
         }
     }
