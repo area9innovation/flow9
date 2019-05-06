@@ -19,8 +19,11 @@ export {
 }
 
 playIScriptFromLocalFile(manager : MaterialManager, fileName : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
-	iScriptFromLocalFile(manager, fileName);
-	setIScriptState(manager, IScriptReplaying(onFinish));
+	onLoadSuccess = \ -> setIScriptState(manager, IScriptReplaying(onFinish));
+
+	onLoadError = \ -> iScriptError(manager, "Error loading local iscript.", None());
+
+	loadIScriptFile(manager, fileName, onLoadSuccess, onLoadError) |> ignore;
 }
 
 playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScriptReplayStyles], onFinish : ([IScriptReplayResult]) -> void) -> void {
@@ -104,8 +107,11 @@ playIScriptIfNeededWithStylesOnFinish(manager : MaterialManager, styles : [IScri
 }
 
 playScenarioFromLocalFile(manager : MaterialManager, scenarioPath : string, onFinish : ([IScriptReplayResult]) -> void) -> void {
-	iScriptScenarioFromLocalFile(manager, scenarioPath);
-	setIScriptState(manager, IScriptScenarioReplaying(onFinish));
+	onLoadSuccess = \ -> setIScriptState(manager, IScriptScenarioReplaying(onFinish));
+
+	onLoadError = \ -> iScriptError(manager, "Error loading local iscript scenario.", None());
+
+	loadIScriptScenarioFile(manager, scenarioPath, onLoadSuccess, onLoadError) |> ignore;
 }
 
 updateIScriptFile(
@@ -113,7 +119,7 @@ updateIScriptFile(
 	currentScriptFilepath : string,
 	updateFn : (storedIScript : StoredIScript) -> StoredIScript) -> void {
 
-	if (startsWith(currentScriptFilepath, "DB:/")) {
+	if (isIScriptDBPath(currentScriptFilepath)) {
 		storeCurrentAndSetIScriptDBPartition(manager);
 
 		iScriptFromDB2(manager, currentScriptFilepath,
@@ -172,6 +178,44 @@ loadIScriptFile(manager : MaterialManager, name : string, onSuccess : () -> void
 	} else {
 		interruptibleDeferUntilNextFrameRendered(\ -> {
 			iScriptFromLocalFile(manager, name);
+			onSuccess();
+		});
+	}
+}
+
+loadIScriptScenarioFile(manager : MaterialManager, scenarioPath : string, onSuccess : () -> void, onError : () -> void) -> () -> void {
+	if (isIScriptDBPath(scenarioPath)) {
+		storeCurrentAndSetIScriptDBPartition(manager);
+		disposed = ref false;
+
+		getFilesystemExtAPI().fileExists(
+			scenarioPath,
+			\b -> if (b) {
+				iScriptScenarioFromDB2(manager, scenarioPath,
+					\scenario : IScriptScenario -> {
+						next(manager.iscript.scenario.pathB, scenarioPath);
+						next(manager.iscript.scenario.descriptionB, getValue(scenario.descriptionB));
+						next(manager.iscript.scenario.scriptsB, getValue(scenario.scriptsB));
+						nextDistinct(manager.iscript.scenario.scenarioChangedB, false);
+						nextDistinct(manager.iscript.scenario.runningIScriptIdxB, -1);
+						restoreCurrentDBPartition(manager);
+
+						onSuccess();
+					},
+					\err_msg -> {
+						restoreCurrentDBPartition(manager);
+						iScriptError(manager, err_msg, None());
+
+						onError();
+					}
+				)
+			}
+		)
+
+		\ -> disposed := true;
+	} else {
+		interruptibleDeferUntilNextFrameRendered(\ -> {
+			iScriptScenarioFromLocalFile(manager, scenarioPath);
 			onSuccess();
 		});
 	}
