@@ -826,11 +826,13 @@ static bool endsWith(std::string const& text, std::string const& suffix) {
 }
 
 TextFont GLTextClip::textFontByFontParameters(unicode_string family, int weight, unicode_string slope) {
+    std::string fontfamily = encodeUtf8(family);
+
     TextFont font = TextFont();
+    font.family = fontfamily;
     font.weight = (TextWeight)weight;
     font.style = textStyleByName(slope);
 
-    std::string fontfamily = encodeUtf8(family);
     while (true) {
         size_t chopSize = 0;
         if (endsWith(fontfamily, "Thin")) {
@@ -873,10 +875,10 @@ TextFont GLTextClip::textFontByFontParameters(unicode_string family, int weight,
             break;
         }
 
+        font.family = chop(fontfamily, chopSize) + " " + fontfamily.substr(chopSize, fontfamily.size() - chopSize);
         fontfamily = chop(fontfamily, chopSize);
     }
 
-    font.family = fontfamily;
     return font;
 }
 
