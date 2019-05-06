@@ -1,2 +1,10 @@
 #!/bin/bash
-java -Xms128m -Xmx768m -classpath clojure-1.2.0.jar:clojure-contrib-1.2.0.jar:. clojure.main $@
+
+set -e
+
+SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
+
+BASE_DIR=$( cd "$( dirname "$SCRIPT_DIR" )" && pwd -P )
+DEBUG=$BASE_DIR/debug
+
+exec java -Xms128m -Xmx768m -classpath "$DEBUG/clojure-1.2.0.jar:$DEBUG/clojure-contrib-1.2.0.jar:$DEBUG" clojure.main "$@"
