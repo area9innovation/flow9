@@ -1,4 +1,4 @@
-import material/material;
+import material/material_gui;
 import ui/animate/easing;
 
 export {
@@ -8,7 +8,7 @@ export {
 		percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Material) -> Material;
 
 		MEasingAnimationStyle<?> ::=
-			MLoop, MAutoStart, MContinueOnNone, MForceAnimation, MDelay, MFreezeAnimation;
+			MLoop, MAutoStart, MContinueOnNone, MForceAnimation, MDelay, MFreezeAnimation, MStopOffScreen;
 
 			MLoop(beforeLoop : (?) -> Maybe<?>);
 			MAutoStart();
@@ -19,6 +19,8 @@ export {
 			//   it doesn't react to either trigger or timer changes. When
 			//   unfreezed, animation starts from same point it finished at
 			MFreezeAnimation(freeze : Transform<bool>);
+			// Stop if form is off-screen
+			MStopOffScreen(stop : bool);
 
 	MEasing(
 		start : () -> void,
@@ -31,33 +33,30 @@ export {
 	MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
 	MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic) -> Tropic;
 
-	mLeavingDuration = if (mobile) 0.195 else 0.15;
-	mEnteringDuration = if (mobile) 0.225 else 0.16;
-	mTransitionDuration = if (mobile) 0.375 else 0.2;
-	mStepOf5TransitionDuration = \step : int -> mTransitionDuration * i2d(step) / 5.;
-
-	mStandartCurve = CubicBezierEasing(0.4, 0., 0.2, 1.);
-	mDecelerationCurve = CubicBezierEasing(0., 0., 0.2, 1.);
-	mAccelerationCurve = CubicBezierEasing(0.4, 0., 1., 1.);
-	mSharpCurve = CubicBezierEasing(0.4, 0., 0.6, 1.);
-
-	// Transform version of lerp
-	flerp(start : double, end : double, percent : Transform<double>) -> Transform<double>;
+	mStepOf5TransitionDuration = \step : int -> easingTransitionDuration * i2d(step) / 5.;
 }
 
 MEasingAnimation(manager : MaterialManager, parent : MFocusGroup, duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
 	percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Tropic) -> Tropic {
 	animFn = makeMEasingAnimationFn(manager, parent, duration, bezier, trigger, beforeEach, percent, style);
+	stopOffScreen = extractStruct(style, MStopOffScreen(false)).stop;
 
-	TConstruct([animFn], t)
+	if (stopOffScreen)
+		TConstructRenderable([animFn], t)
+	else
+		TConstruct([animFn], t)
 }
 
 MMEasingAnimation(duration : Transform<double>, bezier : Transform<CubicBezierEasing>, trigger : Transform<?>, beforeEach : (?) -> Maybe<??>,
 	percent : (??, double) -> void, style : [MEasingAnimationStyle<??>], t : Material) -> Material {
 	MGetManager(\manager -> MGetFocusGroup(\parent -> {
 		animFn = makeMEasingAnimationFn(manager, parent, duration, bezier, trigger, beforeEach, percent, style);
+		stopOffScreen = extractStruct(style, MStopOffScreen(false)).stop;
 
-		MConstruct([animFn], t)
+		if (stopOffScreen)
+			MConstructRenderable([animFn], t)
+		else
+			MConstruct([animFn], t)
 	}))
 }
 
@@ -224,12 +223,12 @@ makeMEasing(duration : double, bezier : CubicBezierEasing, deltaTimer : LazyDelt
 			deltaTimer.attach();
 
 			uns := {
-                us = subscribe(deltaTimer.timer, \dt -> fn(^passed + dt));
-                \ -> {
-                    us();
-                    deltaTimer.detach();
-                }
-            }
+				us = subscribe(deltaTimer.timer, \dt -> fn(^passed + dt));
+				\ -> {
+					us();
+					deltaTimer.detach();
+				}
+			}
 		},
 		\ -> {
 			dispUns(uns);
@@ -248,8 +247,8 @@ MGrabAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tropic
 	MEasingAnimation(
 		manager,
 		parent,
-		const(mEnteringDuration),
-		fif(trigger, const(mDecelerationCurve), const(mAccelerationCurve)),
+		const(easingEnteringDuration),
+		fif(trigger, const(easingDecelerationCurve), const(easingAccelerationCurve)),
 		trigger,
 		\tr ->
 			Some(tr),
@@ -279,7 +278,7 @@ MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tro
 		manager,
 		parent,
 		const(0.5),
-		const(mSharpCurve),
+		const(easingSharpCurve),
 		make(true),
 		\tr -> Some(tr),
 		\tr, v -> nextDistinct(transformation, v),
@@ -291,8 +290,4 @@ MFadeOutAnimation(manager : MaterialManager, parent : MFocusGroup, content : Tro
 			TAlpha(fselect(transformation, FLift(\tr -> lerp(0.75, 0., tr))), content)
 		)
 	)
-}
-
-flerp(start : double, end : double, percent : Transform<double>) -> Transform<double> {
-	fselect(percent, FLift(\prc -> lerp(start, end, prc)))
 }

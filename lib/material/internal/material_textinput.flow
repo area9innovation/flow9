@@ -45,7 +45,8 @@ MTextInput2T(manager : MaterialManager, parent : MFocusGroup, m : MTextInput, m2
 				m.state,
 				iBehs,
 				m2t
-			)
+			),
+		m2t
 	)
 	|> checkInputStatic(m.style, m.state)
 }
@@ -73,7 +74,8 @@ MSmallEditDialog2T(manager : MaterialManager, parent : MFocusGroup, m : MSmallEd
 				m.state,
 				iBehs,
 				m2t,
-			)
+			),
+		m2t
 	)
 	|> checkInputStatic(m.style, m.state)
 }
@@ -108,7 +110,8 @@ MAutoComplete2T(manager : MaterialManager, parent : MFocusGroup, m : MAutoComple
 				m.state,
 				iBehs,
 				m2t
-			)
+			),
+		m2t
 	)
 	|> checkInputStatic(m.style, m.state)
 }
@@ -137,507 +140,318 @@ MTextInputField(manager : MaterialManager, content : DynamicBehaviour<string>, m
 
 	textError =
 		if (isSome(inputState.helperText) || isSome(inputState.error) || isSome(inputState.limitError))
-			MTextInputError(inputState)
+			MTextInputError(inputState, m2t)
 		else
 			TEmpty();
-	textLabel = MTextInputLabel(inputState);
-	textUnderline = MTextInputUnderline(inputState);
-	icons = MTextInputIcons(inputState, m2t);
+	textLabel = MTextInputLabel(inputState, m2t);
+	hasFloatingLabel = isSome(inputState.floatingLabel);
 
-	addBorders = \input : Tropic, p : MFocusGroup ->
-		TBorder(if (inputState.noLeftBorder) 8. else 0., inputState.inputBorders.top, 0., 0., input)
-		|> (\f -> TGroup2(textLabel, f))
-		|> (\f ->
-			if (inputState.dynamicSize)
-				eitherMap(
-					inputState.floatingLabel,
-					\fls ->
-						TBorderT(
-							const(0.),
-							fif(fls.showFloatingLabel, const(inputState.inputBorders.top - inputState.inputBorders.bottom), const(0.)),
-							const(0.),
-							const(0.),
-							f
-						),
-					f
+	addMTextInputBackground = \rotateTrigger -> \t ->
+		inputState.backgroundStyle
+		|> (\bs : MInputBackgroundStyle -> {
+			if (bs.normal != [] || bs.focused != [])
+				TCopySize(
+					t,
+					\tr ->
+						TIfLazy2(inputState.focus, \foc -> MShape(inputState.parent, if (foc) bs.focused else bs.normal, tr, "filled text field"), true)
+						|> TRotate180(rotateTrigger, tr),
+					false
 				)
 			else
+				t
+		});
+
+	addBorders = \input : Tropic ->
+		TBorder(if (inputState.noLeftBorder) 8. else 0., inputState.inputBorders.top, 0., 0., input)
+		|> (\f -> TGroup2(textLabel, f))
+		|> (\f -> switch (inputState.skin) {
+			MFilled(): {
+				height = if (!inputState.condensed) 54.0 else if (hasFloatingLabel) 50.0 else 38.0;
+				size = makeWH();
+
+				unfocusedColor = contrastingColor(inputState.parent);
+				unfocusedOpacity = if (getLightBackground(inputState.parent)) 0.38 else 0.5;
+
+				disabledStroke = 0.0;
+				unfocusedStroke = 1.0;
+				focusedStroke = 2.0;
+
+				graphicsState =
+					eitherFn(
+						inputState.error,
+						\errorState ->
+							fselect4(inputState.mfocus.enabled, inputState.mfocus.focused, errorState.text, errorState.color, \e, fc, t, c ->
+								if (!e) {
+									if (inputState.width > 0.0) MTextInputGraphicsState(disabledStroke, unfocusedColor, 0.0, false)
+									else MTextInputGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity / 2.0, false);
+								} else if (isSome(t)) {
+									MTextInputGraphicsState(if (fc) focusedStroke else unfocusedStroke, MColor2int(c), 1.0, false);
+								} else if (fc) {
+									MTextInputGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+								}  else {
+									MTextInputGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
+								}
+							),
+						\ ->
+							fselect2(inputState.mfocus.enabled, inputState.mfocus.focused, FLift2(\e, fc ->
+								if (!e) {
+									if (inputState.width > 0.0) MTextInputGraphicsState(disabledStroke, unfocusedColor, 0.0, false)
+									else MTextInputGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity / 2.0, false);
+								} else if (fc) {
+									MTextInputGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+								} else {
+									MTextInputGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
+								}
+							))
+					);
+
+				TColsA([
+					TFixed(0.0, height),
+					eitherMap(
+						makeLeftIcon(inputState),
+						\leftIcons ->
+							TCenterYIn(TBorder(0.0, 0.0, 12.0, 0.0, leftIcons), TFixed(0.0, height)),
+						TEmpty()
+					),
+					TBorder(0.0, 0.0, 0.0, inputState.inputBorders.bottom, f),
+					eitherMap(
+						makeRightIcons(inputState, m2t),
+						\rightIcons ->
+							TCenterYIn(TBorder(12.0, 0.0, 0.0, 0.0, rightIcons), TFixed(0.0, height)),
+						TEmpty()
+					)
+				])
+					|> (\f2 -> TBorderA(inputState.inputBorders.start, 0., inputState.inputBorders.end, 0., f2))
+					|> (\f2 -> TAttachBox(f2, size))
+					|> (\f2 -> TBaselineLines([
+						f2,
+						makeTextInputUnderline(
+							inputState.manager,
+							inputState.parent,
+							size,
+							graphicsState
+						)
+					]))
+					|> addMTextInputBackground(const(false))
+					|> (\f2 -> TBaselineLines([f2, TBorder(12.0, 4.0, 12.0, 0.0, textError)]));
+			}
+			MOutlined(): {
+				height = if (!inputState.condensed) 54.0 else if (hasFloatingLabel) 50.0 else 38.0;
+				size = makeWH();
+				labelWidth =
+					getTWordMetrics(
+						TText(inputState.label, MTextStyle2CharacterStyle(inputState.parent, [MCaption()])),
+						makeTree()
+					).width + 8.0;
+				labelGap =
+					eitherMap(
+						inputState.floatingLabel,
+						\fls -> fmultiply(fsubtract(const(1.0), fls.progress), const(labelWidth)),
+						const(0.0)
+					);
+
+				unfocusedColor = contrastingColor(inputState.parent);
+				unfocusedOpacity = if (getLightBackground(inputState.parent)) 0.38 else 0.5;
+
+				disabledStroke = 1.0;
+				unfocusedStroke = 1.0;
+				focusedStroke = 2.0;
+
+				graphicsState =
+					eitherFn(
+						inputState.error,
+						\errorState ->
+							fselect4(inputState.mfocus.enabled, inputState.mfocus.focused, errorState.text, errorState.color, \e, fc, t, c ->
+								if (!e) {
+									MTextInputGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity / 2.0, false);
+								} else if (isSome(t)) {
+									MTextInputGraphicsState(if (fc) focusedStroke else unfocusedStroke, MColor2int(c), 1.0, false);
+								} else if (fc) {
+									MTextInputGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+								}  else {
+									MTextInputGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
+								}
+							),
+						\ ->
+							fselect2(inputState.mfocus.enabled, inputState.mfocus.focused, FLift2(\e, fc ->
+								if (!e) {
+									MTextInputGraphicsState(disabledStroke, unfocusedColor, unfocusedOpacity / 2.0, false);
+								} else if (fc) {
+									MTextInputGraphicsState(focusedStroke, MColor2int(inputState.color), 1.0, true);
+								} else {
+									MTextInputGraphicsState(unfocusedStroke, unfocusedColor, unfocusedOpacity, false);
+								}
+							))
+					);
+
+				TColsA([
+					TFixed(0.0, height),
+					eitherMap(
+						makeLeftIcon(inputState),
+						\leftIcon ->
+							TCenterYIn(TBorder(0.0, 0.0, 12.0, 0.0, leftIcon), TFixed(0.0, height)),
+						TEmpty()
+					),
+					TBorder(0.0, 0.0, 0.0, inputState.inputBorders.bottom, f),
+					eitherMap(
+						makeRightIcons(inputState, m2t),
+						\rightIcons ->
+							TCenterYIn(TBorder(12.0, 0.0, 0.0, 0.0, rightIcons), TFixed(0.0, height)),
+						TEmpty()
+					)
+				])
+					|> (\f2 -> TBorderA(inputState.inputBorders.start, 0., inputState.inputBorders.end, 0., f2))
+					|> (\f2 -> TAttachBox(f2, size))
+					|> (\f2 -> TCopySize(
+						f2,
+						\tr ->
+							makeTextInputOutline(
+								inputState.manager,
+								inputState.parent,
+								size,
+								labelWidth,
+								labelGap,
+								graphicsState
+							),
+						false
+					))
+					|> (\f2 -> TBaselineLines([f2, TBorder(12.0, 4.0, 12.0, 0.0, textError)]));
+			}
+			MTextInputPlain(): {
 				f
-		)
-		|> (\f -> if (icons.second == \__ -> TEmpty()) f else TBaselineCols2A(f, icons.second(p)))
-		|> (\t -> TBaselineLines([t, textUnderline,	textError]))
-		|> (\f -> if (icons.first == \__ -> TEmpty()) f else TBaselineCols2A(icons.first(p), f))
-		|> (\f -> TBorderA(inputState.inputBorders.start, 0., inputState.inputBorders.end, 0., f))
-		|> (\f -> MTextInputHandleKeys(manager, f, inputState));
+					|> (\f2 ->
+						if (inputState.dynamicSize)
+							eitherMap(
+								inputState.floatingLabel,
+								\fls ->
+									TBorderT(
+										const(0.),
+										fif(fls.showFloatingLabel, const(inputState.inputBorders.top - inputState.inputBorders.bottom), const(0.)),
+										const(0.),
+										const(0.),
+										f2
+									),
+								f2
+							)
+						else
+							f2
+					)
+					|> (\f2 -> eitherMap(
+						makeRightIcons(inputState, m2t),
+						\rightIcons ->
+							TBaselineCols2A(f2, rightIcons),
+						f2
+					))
+					|> (\f2 -> TBaselineLines([f2, MTextInputUnderline(inputState), textError]))
+					|> (\f2 -> eitherMap(
+						makeLeftIcons(inputState, m2t),
+						\leftIcons ->
+							TBaselineCols2A(leftIcons, f2),
+						f2
+					))
+
+					|> (\f2 -> TBorderA(inputState.inputBorders.start, 0., inputState.inputBorders.end, 0., f2))
+					|> (\f2 ->
+						inputState.backgroundStyle
+						|> (\bs : MInputBackgroundStyle -> {
+							if (bs.normal != [] || bs.focused != [])
+								TCopySize(
+									f2,
+									\tr ->
+										TIfLazy2(inputState.focus, \foc -> MShape(inputState.parent, if (foc) bs.focused else bs.normal, tr, "outlined text field"), true),
+									false
+								)
+							else
+								f2
+						})
+					)
+			}
+		})
+		|> (\f2 -> MTextInputHandleKeys(manager, f2, inputState));
 
 	makeTextInput = \p : MFocusGroup ->
 		(if (inputState.useNativeInput)
-			makeNativeEditorView(manager, p, state, inputState)
+			makeNativeEditorView(manager, p, state, inputState, m2t)
 		else
-			makeMTextEditorView(manager, inputState))
-		|> TBaseAlignA
+			makeMTextEditorView(manager, inputState, m2t))
+		|> TAlignStart
 		|> (\f -> TCursor(DynamicCursor(inputState.cursorShape), f))
-		|> (\f -> addBorders(f, p));
+		|> addBorders;
 
 	eitherFn(
 		inputState.popup,
-		\ps -> MTextInputWithPopup(inputState, ps, makeTextInput, addBorders, m2t),
+		\ps -> MTextInputWithPopup(inputState, ps, makeTextInput, addBorders, addMTextInputBackground, m2t),
 		\ -> makeTextInput(inputState.parent)
 	)
 	|> (\t -> if (inputState.width > 0.) TAvailableWidth(t, const(inputState.width)) else t)
 	|> (\f -> TConstruct(inputState.subs, f))
 }
 
-MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, makeTextInput : (MFocusGroup) -> Tropic,
-	addBorders : (Tropic, MFocusGroup) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+makeLeftIcon(inputState : MInputState) -> Maybe<Tropic> {
+	iconName = inputState.leftIcon;
 
-	isTextInputInPopup = eitherMap(inputState.autocomplete, \ac -> ac.isTextInputInPopup, true);
+	if (iconName != "") {
+		iconSize = MIconSize(if (inputState.condensed) 20. else 24.).size;
 
-	popupItems =
-		eitherMap(
-			inputState.autocomplete,
-			\ac -> {
-				lineHeight =
-					getTWordMetrics(
-						m2t(
-							ac.completionFn.fn(
-								SentenceHit(
-									SentenceMatcher([], makeTrie(), makeTree(), makeTree(), makeTree(),),
-									"111",
-									0.,
-									makeSet()
-								),
-								false,
-								nop1
-							),
-							inputState.parent
-						),
-						makeTree()
-					).height;
-
-				(\p -> MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], ac.sentences, \compl, p2 -> {
-					next(ac.selected, -1);
-
-					items =
-						mapi(compl, \i, com ->
-							MIfLazy2T(
-								inputState.manager,
-								p2,
-								feq(ac.selected, i),
-								\sel, p3 ->
-									m2t(
-										ac.completionFn.fn(
-											com,
-											sel,
-											\w -> {
-												ac.setWord(compl, w);
-												inputState.filterAction(getValue(inputState.content))
-											}
-										),
-										p3
-									),
-								false
-							)
-						);
-
-					if (ac.autoSelect && length(items) > 0)
-						next(ac.selected, 0);
-
-					TLines(items)
-				})
-				|> (\f -> TCopySize(f, \tr -> TRounded(0., 0., 2., 2., ac.fill, tr), false))
-				|> (\f ->
-					TConstruct(
-						[
-							makeSubscribe(ac.selected, \sel -> {
-								if (sel >= 0) {
-									scrollHeight = max(0., getValue(popupState.contentWH).height - getValue(popupState.boxWH).height);
-
-									if (scrollHeight > 0.) {
-										minSelHeight = max(0., lineHeight * i2d(max(sel, 0)));
-										maxSelHeight = max(0., minSelHeight + lineHeight - getValue(popupState.boxWH).height);
-
-										if (getValue(popupState.scrollPosition).y < maxSelHeight) {
-											next(popupState.scrollPosition, Point(0., maxSelHeight))
-										} else if (getValue(popupState.scrollPosition).y > minSelHeight) {
-											next(popupState.scrollPosition, Point(0., minSelHeight))
-										}
-									} else {
-										nextDistinct(popupState.scrollPosition, zeroPoint)
-									}
-								} else {
-									nextDistinct(popupState.scrollPosition, zeroPoint)
+		Some(switch (inputState.skin) {
+			MTextInputPlain(): {
+				iconStyle =
+					eitherFn(
+						inputState.error,
+						\errorState ->
+							fselect4(inputState.mfocus.enabled, inputState.mfocus.focused, errorState.text, errorState.color, \e, fc, t, c ->
+								if (!e) {
+									[MIconDisabled(), MIconSize(iconSize)];
+								} else if (isSome(t)) {
+									[c, FillOpacity(1.0), MIconSize(iconSize)];
+								} else if (fc) {
+									[inputState.color, FillOpacity(1.0), MIconSize(iconSize)];
+								}  else {
+									[MIconSize(iconSize)];
 								}
-							})
-						],
-						f
-					)
-				))
-				|> (\f ->
-					[
-						\p -> TShowLazy(fneq(ac.sentences, []), \ -> m2t(MSeparator(true), p)),
-						f
-					]
-				)
-			},
-			[]
-		);
+							),
+						\ ->
+							fselect2(inputState.mfocus.enabled, inputState.mfocus.focused, FLift2(\e, fc ->
+								if (!e) {
+									[MIconDisabled(), MIconSize(iconSize)];
+								} else if (fc) {
+									[inputState.color, FillOpacity(1.0), MIconSize(iconSize)];
+								} else {
+									[MIconSize(iconSize)];
+								}
+							))
+					);
 
-	content =
-		if (isTextInputInPopup)
-			TSelect2(inputState.content, inputState.mfocus.enabled, \val, en ->
-				MEllipsisText2T(
-					inputState.manager,
-					inputState.parent,
-					MEllipsisText(
-						val + (generate(0, max(inputState.linesCount - strCountOf(val, "\n") - 1, 0), \__ -> "\n") |> concatStrings)
-						|> (\f -> if (endsWith(f, "\n") || f == "") f + "  " else if (endsWith(f, "\n ")) f + " " else f),
-						concat(if (en) inputState.mTextStyle else inputState.mTextStyleDisabled, [MMaxLines(inputState.linesCount)])
-					)
-				)
-			)
-			|> TBaseAlignA
-			|> (\f -> TGroup2(TFillX(), f))
-			|> (\f -> addBorders(f, inputState.parent))
-			|> (\f -> inputState.backgroundStyle.normal |> (\fl -> if (fl != []) TFrame(0.0, 2.0, fl, f) else f))
-		else
-			makeTextInput(inputState.parent);
-
-	offsetX = if (inputState.smallEdit) -24. else if (!isTextInputInPopup) eitherMap(inputState.leftButton, \lb -> lb.inputIndent, 0.) else 0.;
-	offsetY = if (inputState.smallEdit) -8. else if (!isTextInputInPopup) 48. else 0.;
-
-	TConstruct(
-		[
-			makeSubscribe(popupState.openMenu.opened, \op -> {
-				if (op)
-					RenderMPopup(
-						inputState.manager,
+				TSelect(iconStyle, \st ->
+					MIcon2T(
 						inputState.parent,
-						MPopup(
-							concatA([
-								if (isTextInputInPopup)
-									[[
-										MGetFocusGroup(makeTextInput)
-										|> (\f ->
-											if (inputState.smallEdit)
-												MBorder(24., 0., 24., 0., f)
-											else
-												f
-										)
-									]]
-								else
-									[[]],
-								map(popupItems, \it -> [MGetFocusGroup(it)])
-							]),
-							popupState.positionScale,
-							[
-								popupState.openMenu,
-								RMWidth(fselect(popupState.inputWH, FLift(\bwh -> bwh.width + (if (inputState.smallEdit) 48. else 0.) - offsetX))),
-								MSameZorder(true),
-								RMBorders(if (inputState.smallEdit) 8. else 0.),
-								RMClickOutToClose(),
-								RMSameFocus(inputState.mfocus),
-								MElevation(popupState.elevation),
-								RMOffset(const(Pair(WidthHeight(offsetX, offsetY), 0.))),
-								RMHeight(0., popupState.maxHeight),
-								MFixPosition(),
-								MScrollWidthHeight(popupState.contentWH, popupState.boxWH),
-								MBackgroundStyle(inputState.backgroundStyle.focused),
-								MRippleShape("MMenu"),
-								MActive(make(true))
-							]
-							|> (\f ->
-								if (popupItems != [])
-									concat(
-										f,
-										[
-											RMScrollArea(2, 3),
-											MScrollPosition(popupState.scrollPosition)
-										]
-									)
-								else
-									f
-							)
-						),
-						m2t
+						if (isMaterialIcon(iconName)) iconName else "subject",
+						st
 					)
-			}),
-			\ -> \ -> next(popupState.openMenu.opened, false)
-		],
-		content
-		|> (\f -> MPositionScaleAttachBox(popupState.positionScale, popupState.inputWH, f, popupState.openMenu.opened))
-	)
+				);
+			}
+			default: 
+				TSelect(inputState.mfocus.enabled, \e ->
+					MIcon2T(
+						inputState.parent,
+						if (isMaterialIcon(iconName)) iconName else "subject",
+						if (e) [MIconSize(iconSize)] else [MIconDisabled(), MIconSize(iconSize)]
+					)
+				);
+		});
+	} else {
+		None();
+	}
 }
 
-MTextInputError(inputState : MInputState) -> Tropic {
-	helperText =
-		eitherFn(
-			inputState.helperText,
-			\hs ->
-				\ -> TSelect(hs.helper, \ht : Pair<string, [MTextStyle]> -> {
-					if (ht.first == "")
-						TFillX()
-					else
-						(if (hs.height <= 0.)
-							MParagraph2T(inputState.parent, ht.first, concat(ht.second, [MWidth(-1.)]))
-						else
-							MEllipsisText2T(
-								inputState.manager,
-								inputState.parent,
-								MEllipsisText(
-									ht.first,
-									concat(ht.second, [MMaxLines(hs.lines), MShowTooltip(const(true))])
-								)
-							)
-						)
-						|> TBaseAlignA
-						|> (\f -> if (inputState.dynamicSize || hs.height <= 0.) f else TFixSize(f, TFillXH(hs.height)))
-				}),
-			\ -> if (isSome(inputState.limitError))
-				\ -> TFillX()
-			else
-				\ -> TEmpty()
-		);
-
-	TCols2A(
-		eitherFn(
-			inputState.error,
-			\es ->
-				TSelect(es.error, \et : Pair<string, [MTextStyle]> -> {
-					if (et.first == "")
-						helperText()
-					else
-						(if (es.height <= 0.)
-							MParagraph2T(inputState.parent, et.first, concat(et.second, [MWidth(-1.)]))
-						else
-							MEllipsisText2T(
-								inputState.manager,
-								inputState.parent,
-								MEllipsisText(
-									et.first,
-									concat(et.second, [MMaxLines(es.lines), MShowTooltip(const(true))])
-								)
-							)
-						)
-						|> (\f -> if (et.first == " ") TGroup2(f, helperText()) else f)
-						|> TBaseAlignA
-						|> (\f -> if (inputState.dynamicSize || es.height <= 0.) TBorderA(0., 0., 0., 4., f) else TFixSize(f, TFillXH(es.height)))
-				}),
-			helperText
-		),
-		eitherFn(
-			inputState.limitError,
-			\le ->
-				TSelect(le.limit, \let ->
-					if (let.first == "")
-						TEmpty()
-					else
-						MText2T(
-							inputState.parent,
-							let.first,
-							let.second
-						)
-						|> (\f2 ->
-							TransformTAcc2(\t2a -> {
-								acc = f2 |> t2a;
-
-								TAcc(
-									acc.form,
-									TFormMetrics(
-										acc.metrics.width,
-										if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
-										zero
-									),
-									acc.metrics.width,
-									if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
-									acc.metrics.width,
-									if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
-									zero,
-									zero,
-									acc.addFillers,
-									true,
-									true,
-									acc.disposers
-								)
-							})
-						)
-				),
-			\ -> TEmpty()
-		)
-	)
-	|> (\f2 ->
-		TransformTAcc2(\t2a -> {
-			acc = f2 |> t2a;
-
-			TAcc(
-				acc.form,
-				TFormMetrics(
-					zero,
-					acc.metrics.height,
-					acc.metrics.baseline
-				),
-				zero,
-				acc.minHeight,
-				zero,
-				acc.maxHeight,
-				zero,
-				if (inputState.dynamicSize && !acc.yConstant)
-					const(1.)
-				else
-					acc.yFillers,
-				acc.addFillers,
-				true,
-				acc.yConstant,
-				acc.disposers
-			)
-		})
-	)
-}
-
-MTextInputLabel(inputState : MInputState) -> Tropic {
-	eitherFn(
-		inputState.floatingLabel,
-		\fls -> {
-			percent = make(if (getValue(fls.showFloatingLabel)) 0. else 1.);
-
-			styleChanged = fselect2(percent, inputState.labelStyle, FLift2(\prc, labelStyle ->
-				replaceStructMany(
-					labelStyle,
-					[
-						FontSize(lerp(fls.labelSizeFocused, fls.labelSize, prc))
-					]
-				)
-			));
-
-			MEasingAnimation(
-				inputState.manager,
-				inputState.parent,
-				const(mTransitionDuration),
-				const(mStandartCurve),
-				fls.showFloatingLabel,
-				\showLabel -> {
-					perc = getValue(percent);
-
-					if ((showLabel && perc == 0.) || (!showLabel && perc == 1.))
-						None()
-					else
-						Some(showLabel)
-				},
-				\showLabel, val -> next(percent, if (showLabel) 1. - val else val),
-				[MAutoStart()],
-				TSelect(styleChanged, \labelStyle ->
-					(\ ->
-						MEllipsisText2T(
-							inputState.manager,
-							inputState.parent,
-							MEllipsisText(
-								inputState.label,
-								labelStyle
-								|> MCharacterStyle2MTextStyle
-							)
-						)
-					)
-					|> (\f ->
-						eitherFn(
-							inputState.error,
-							\es ->
-								if (es.requiredField)
-									TCols2(
-										f(),
-										TIfLazy2(inputState.mfocus.focused, \foc ->
-											TText(" *",	if (foc) replaceStructMany(labelStyle, [MFill(MErrorColor())]) else labelStyle),
-											true
-										)
-									)
-								else
-									f(),
-							f
-						)
-					)
-				)
-				|> (\t -> TBorderT(zero, faddition(fmultiply(percent, const(fls.betweenLabels + fls.labelSizeFocused)), const(fls.aboveLabel)), zero, zero, t))
-			)
-		},
-		\ ->
-			TShowLazy(
-				feq(inputState.content, ""),
-				\ -> TSelect(inputState.labelStyle, \labelStyle ->
-						MEllipsisText2T(
-							inputState.manager,
-							inputState.parent,
-							MEllipsisText(
-								eitherFn(
-									inputState.error,
-									\es -> if (es.requiredField) inputState.label + " *" else inputState.label,
-									\ -> inputState.label
-								),
-								labelStyle
-								|> MCharacterStyle2MTextStyle
-							)
-						)
-					)
-			)
-			|> (\t -> TBorder(0., inputState.inputBorders.top, 0., 0., t))
-	)
-	|> (\f ->
-		if (inputState.align == AutoAlignCenter())
-			TCenterXIn(f, TFillXY())
-		else if (changeBoolIfRTL(inputState.align == AutoAlignRight()))
-			TTweak([TAlign(const(1.), zero)], f, TFillXY())
-		else
-			f
-	)
-	|> (\f -> TFixSize(f, TEmpty()))
-}
-
-MTextInputUnderline(inputState : MInputState) -> Tropic {
-	area = TFillXH(2.);
-
-	eitherFn(
-		inputState.underline,
-		\us ->
-			TSelect(
-				us,
-				\pr ->
-					if (pr.second == 0.)
-						TAttach(area, \wh ->
-							TSelect(wh.width, \wd ->
-								TGraphics(
-									generate(0, floor(wd / 4.), \i ->
-										[MoveTo(i2d(i) * 4., 0.), LineTo(i2d(i) * 4. + 1., 0.)]
-									)
-									|> concatA,
-									pr.first
-								)
-							)
-						)
-						|> (\f -> TCenterYIn(f, TFillXH(2.)))
-					else
-						TRectangle(pr.first, TFillXH(pr.second))
-						|> (\f -> TBorder(0., 1. - pr.second / 2., 0., 1. - pr.second / 2., f))
-			),
-		\ -> area
-	)
-	|> (\f -> TFixSize(f, area))
-	|> (\f ->
-		TBorder(
-			0.,
-			forceRange(inputState.inputBorders.bottom - 2., 0., 7.),
-			0.,
-			max(inputState.inputBorders.bottom - 9., 0.),
-			f
-		)
-	)
-}
-
-MTextInputIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Pair<(MFocusGroup) -> Tropic, (MFocusGroup) -> Tropic> {
+makeLeftIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Maybe<Tropic> {
 	leftIcons = \p0 ->
 		concatA([
 			eitherMap(
-				inputState.leftIcon,
+				makeLeftIcon(inputState),
 				\leftIcon ->
 					[
-						TMutable(leftIcon)
+						leftIcon
 						|> (\f2 ->
 							TransformTAcc2(\t2a -> {
 								acc = f2 |> t2a;
@@ -714,7 +528,8 @@ MTextInputIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 													)
 												],
 												tr
-											)
+											),
+										m2t
 									),
 								true
 							)
@@ -769,142 +584,55 @@ MTextInputIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 			)
 		]);
 
+	if (inputState.leftIcon != "" && isNone(inputState.leftButton))
+		None()
+	else
+		Some(MComponentGroup2T(
+			inputState.manager,
+			inputState.parent,
+			"MTextInputLeftIcons",
+			[MEnabled(inputState.mfocus.enabled), MFocusEnabled(const(false))],
+			\p -> TBaselineColsA(leftIcons(p))
+		));
+}
+
+makeRightIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Maybe<Tropic> {
 	rightIcons = \p0 ->
-		concatA([
-			eitherMap(
-				inputState.editIcon,
-				\showEditIcon ->
-					[
-						(\p ->
-							MIconButton2T(
-								inputState.manager,
-								p,
-								MIconButton(
-									"create",
-									\ -> nextDistinct(inputState.mfocus.focused, true),
-									[
-
-										MIconSize(inputState.iconSize - 4.),
-										MIconButtonBorder(inputState.iconBorders + 2.)
-									],
-									[]
-								)
-							)
-							|> (\f2 ->
-								TransformTAcc2(\t2a -> {
-									acc = f2 |> t2a;
-
-									wd = inputState.iconSize + inputState.iconBorders;
-
-									TAcc(
-										FTranslate(const(-inputState.iconBorders / 2.), fnegate(acc.metrics.baseline), acc.form),
-										TFormMetrics(
-											const(wd),
-											zero,
-											zero
-										),
-										const(wd),
-										zero,
-										const(wd),
-										zero,
-										zero,
-										zero,
-										acc.addFillers,
-										true,
-										true,
-										acc.disposers
-									)
-								})
-							)
-						)
-						|> (\f2 -> MShow2(inputState.manager, p0, showEditIcon, f2))
-					],
-				[]
-			),
-			eitherMap(
-				inputState.rightButton,
-				\rightButton ->
-					[
-						MSelect2T(
-							inputState.manager,
-							p0,
-							"MTextInputRightButton",
-							[],
-							rightButton,
-							\ic, p ->
-								if (ic == "")
-									TEmpty()
-								else {
-									pressed = make(false);
-
-									onClick =
-										\ ->
-											if (ic == "clear")
-												inputState.clearContent(true)
-											else if (ic == "arrow_drop_down")
-												nextDistinct(inputState.mfocus.focused, true)
-											else
-												nextDistinct(inputState.mfocus.focused, false);
-
-									(if (ic == "clear")
-										TBorder4(
-											inputState.iconBorders,
-											MIconButton2T(
-												inputState.manager,
-												p,
-												MIconButton(
-													ic,
-													onClick,
-													[
-														MIconSize(inputState.iconSize / 3. * 2.),
-														MIconButtonBorder(0.),
-														MCircleBackground(MGrey(400), inputState.iconSize)
-													],
-													[TPressed(pressed), MPassClicks()]
-												)
-											)
-										)
-									else
-										MIconButton2T(
-											inputState.manager,
-											p,
-											MIconButton(
-												ic,
-												onClick,
-												[
-													MIconSize(inputState.iconSize),
-													MIconButtonBorder(inputState.iconBorders)
-												],
-												[TPressed(pressed), MPassClicks()]
-											)
-										)
-									)
-									|> (\f2 ->
-										TConstruct(
+		switch (inputState.skin) {
+			MTextInputPlain():
+				concatA([
+					eitherMap(
+						inputState.editIcon,
+						\showEditIcon ->
+							[
+								(\p ->
+									MIconButton2T(
+										inputState.manager,
+										p,
+										MIconButton(
+											"create",
+											\ -> nextDistinct(inputState.mfocus.focused, true),
 											[
-												makeSubscribe2(pressed, \pr -> if (pr) {
-													(inputState.manager).downInsideFocus ::= Some(inputState.mfocus);
-													deferred(\ -> (inputState.manager).downInsideFocus ::= None())
-												})
+
+												MIconSize(inputState.iconSize - 4.),
+												MIconButtonBorder(inputState.iconBorders + 2.)
 											],
-											f2
-										)
+											[]
+										),
+										m2t
 									)
 									|> (\f2 ->
 										TransformTAcc2(\t2a -> {
 											acc = f2 |> t2a;
+
 											wd = inputState.iconSize + inputState.iconBorders;
 
 											TAcc(
-												FTranslate(
-													const(-inputState.iconBorders / 2.),
-													zero,
-													acc.form
-												),
+												FTranslate(const(-inputState.iconBorders / 2.), fnegate(acc.metrics.baseline), acc.form),
 												TFormMetrics(
 													const(wd),
 													zero,
-													fselect(acc.metrics.height, FLift(\hgt -> hgt * 0.72 - inputState.iconBorders * 0.375))
+													zero
 												),
 												const(wd),
 												zero,
@@ -919,59 +647,918 @@ MTextInputIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 											)
 										})
 									)
-								}
+								)
+								|> (\f2 -> MShow2(inputState.manager, p0, showEditIcon, f2))
+							],
+						[]
+					),
+					eitherMap(
+						inputState.rightButton,
+						\rightButton ->
+							[
+								MSelect2T(
+									inputState.manager,
+									p0,
+									"MTextInputRightButton",
+									[],
+									rightButton,
+									\ic, p ->
+										if (ic == "")
+											TEmpty()
+										else {
+											pressed = make(false);
+
+											onClick =
+												\ ->
+													if (ic == "clear")
+														inputState.clearContent(true)
+													else if (ic == "arrow_drop_down")
+														nextDistinct(inputState.mfocus.focused, true)
+													else
+														nextDistinct(inputState.mfocus.focused, false);
+
+											(if (ic == "clear")
+												TBorder4(
+													inputState.iconBorders,
+													MIconButton2T(
+														inputState.manager,
+														p,
+														MIconButton(
+															ic,
+															onClick,
+															[
+																MIconSize(inputState.iconSize / 3. * 2.),
+																MIconButtonBorder(0.),
+																MCircleBackground(MGrey(400), inputState.iconSize)
+															],
+															[TPressed(pressed), MPassClicks()]
+														),
+														m2t
+													)
+												)
+											else
+												MIconButton2T(
+													inputState.manager,
+													p,
+													MIconButton(
+														ic,
+														onClick,
+														[
+															MIconSize(inputState.iconSize),
+															MIconButtonBorder(inputState.iconBorders)
+														],
+														[TPressed(pressed), MPassClicks()]
+													),
+													m2t
+												)
+											)
+											|> (\f2 ->
+												TConstruct(
+													[
+														makeSubscribe2(pressed, \pr -> if (pr) {
+															(inputState.manager).downInsideFocus ::= Some(inputState.mfocus);
+															deferred(\ -> (inputState.manager).downInsideFocus ::= None())
+														})
+													],
+													f2
+												)
+											)
+											|> (\f2 ->
+												TransformTAcc2(\t2a -> {
+													acc = f2 |> t2a;
+													wd = inputState.iconSize + inputState.iconBorders;
+
+													TAcc(
+														FTranslate(
+															const(-inputState.iconBorders / 2.),
+															zero,
+															acc.form
+														),
+														TFormMetrics(
+															const(wd),
+															zero,
+															fselect(acc.metrics.height, FLift(\hgt -> hgt * 0.72 - inputState.iconBorders * 0.375))
+														),
+														const(wd),
+														zero,
+														const(wd),
+														zero,
+														zero,
+														zero,
+														acc.addFillers,
+														true,
+														true,
+														acc.disposers
+													)
+												})
+											)
+										}
+								)
+							]
+						,
+						[]
+					),
+					eitherMap(
+						inputState.password,
+						\ps ->
+							[
+								MSelect2T(
+									inputState.manager,
+									p0,
+									"MTextInputVisibilityButton",
+									[],
+									ps.style,
+									\col : [MIconStyle], p ->
+										MIconToggle2T(
+											inputState.manager,
+											p,
+											MIconToggle(
+												"visibility",
+												[
+													MIconButtonBorder(inputState.iconBorders),
+													MIconSize(inputState.iconSize),
+													MToggleFalseIcon("visibility_off", [MIconSize(inputState.iconSize)] |> (\f -> concat(f, col)))
+												]
+												|> (\f -> concat(f, col)),
+												[
+													MPassClicks(),
+													MFocusEnabled(const(false)),
+													MToggleValue(ps.showPassword)
+												]
+											),
+											m2t
+										)
+								)
+								|> (\f2 ->
+									TransformTAcc2(\t2a -> {
+										acc = f2 |> t2a;
+
+										wd = inputState.iconSize + inputState.iconBorders;
+
+										TAcc(
+											FTranslate(const(-inputState.iconBorders / 2.), fnegate(acc.metrics.baseline), acc.form),
+											TFormMetrics(
+												const(wd),
+												zero,
+												zero
+											),
+											const(wd),
+											zero,
+											const(wd),
+											zero,
+											zero,
+											zero,
+											acc.addFillers,
+											true,
+											true,
+											acc.disposers
+										)
+									})
+								)
+							],
+						[]
+					)
+				]);
+			default: {
+				concatA([
+					eitherMap(
+						inputState.rightButton,
+						\rightButton ->
+							[
+								MSelect2T(
+									inputState.manager,
+									p0,
+									"MTextInputRightButton",
+									[],
+									rightButton,
+									\ic, p ->
+										if (ic == "")
+											TEmpty()
+										else {
+											pressed = make(false);
+
+											onClick =
+												\ ->
+													if (ic == "clear")
+														inputState.clearContent(true)
+													else if (ic == "arrow_drop_down")
+														nextDistinct(inputState.mfocus.focused, true)
+													else
+														nextDistinct(inputState.mfocus.focused, false);
+
+											(if (ic == "clear")
+												TBorder4(
+													inputState.iconBorders,
+													MIconButton2T(
+														inputState.manager,
+														p,
+														MIconButton(
+															ic,
+															onClick,
+															[
+																MIconSize(inputState.iconSize / 3. * 2.),
+																MIconButtonBorder(0.),
+																MCircleBackground(MGrey(400), inputState.iconSize)
+															],
+															[TPressed(pressed), MPassClicks()]
+														),
+														m2t
+													)
+												)
+											else
+												MIcon2T(
+													p,
+													ic,
+													[
+														MIconSize(inputState.iconSize)
+													]
+												)
+											)
+											|> (\f2 ->
+												TConstruct(
+													[
+														makeSubscribe2(pressed, \pr -> if (pr) {
+															(inputState.manager).downInsideFocus ::= Some(inputState.mfocus);
+															deferred(\ -> (inputState.manager).downInsideFocus ::= None())
+														})
+													],
+													f2
+												)
+											)
+										}
+								)
+							]
+						,
+						[]
+					),
+					eitherMap(
+						inputState.password,
+						\ps ->
+							[
+								MSelect2T(
+									inputState.manager,
+									p0,
+									"MTextInputVisibilityButton",
+									[],
+									ps.style,
+									\col : [MIconStyle], p ->
+										MIconToggle2T(
+											inputState.manager,
+											p,
+											MIconToggle(
+												"visibility",
+												[
+													MIconButtonBorder(inputState.iconBorders),
+													MIconSize(inputState.iconSize),
+													MToggleFalseIcon("visibility_off", [MIconSize(inputState.iconSize)] |> (\f -> concat(f, col)))
+												]
+												|> (\f -> concat(f, col)),
+												[
+													MPassClicks(),
+													MFocusEnabled(const(false)),
+													MToggleValue(ps.showPassword)
+												]
+											),
+											m2t
+										)
+								)
+							],
+						[]
+					)
+				]);
+			}
+		}
+
+	if (isNone(inputState.editIcon) && isNone(inputState.rightButton) && isNone(inputState.password))
+		None()
+	else
+		Some(MComponentGroup2T(
+			inputState.manager,
+			inputState.parent,
+			"MTextInputRightIcons",
+			[MEnabled(inputState.mfocus.enabled), MFocusEnabled(const(false))],
+			\p -> TBaselineColsA(rightIcons(p))
+		));
+}
+
+MTextInputGraphicsState : (
+	strokeWidth : double,
+	color : int,
+	opacity : double,
+	ripple : bool
+);
+
+colorLerp(prev : int, current : int, percent : double) -> int {
+	prevRgb = int2rgb(prev);
+	currentRgb = int2rgb(current);
+
+	rgb2int(
+		RGB(
+			round((1.0 - percent) * i2d(prevRgb.r) + percent * i2d(currentRgb.r)),
+			round((1.0 - percent) * i2d(prevRgb.g) + percent * i2d(currentRgb.g)),
+			round((1.0 - percent) * i2d(prevRgb.b) + percent * i2d(currentRgb.b))
+		)
+	);
+}
+
+graphicsStateLerp(
+	prev : MTextInputGraphicsState,
+	current : MTextInputGraphicsState,
+	percent : double) -> MTextInputGraphicsState {
+
+	MTextInputGraphicsState(
+		lerp(prev.strokeWidth, current.strokeWidth, percent),
+		colorLerp(prev.color, current.color, percent),
+		lerp(prev.opacity, current.opacity, percent),
+		current.ripple
+	);
+}
+
+makeTextInputOutline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	size : Transform<WidthHeight>,
+	labelWidth : double,
+	labelGap : Transform<double>,
+	graphicsState : Transform<MTextInputGraphicsState>) -> Tropic {
+
+	outlineState = make(fgetValue(graphicsState));
+
+	stateWithLast =
+		fselectWithLast(
+			graphicsState,
+			FLift2(\prev, curr -> Pair(prev, curr))
+		);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(easingTransitionDuration),
+		const(easingStandartCurve),
+		stateWithLast,
+		\st -> Some(st),
+		\st, percent -> {
+			prev = st.first;
+			curr = st.second;
+			next(outlineState, graphicsStateLerp(prev, curr, percent));
+		},
+		[],
+		TSelect3(outlineState, labelGap, size, \st, gap, wh ->
+			makeStaticOutline(
+				parent,
+				st,
+				labelWidth,
+				gap,
+				wh
+			)
+		)
+	);
+}
+
+parseMaterialShapeCorner_(corner : MaterialShapeCorner) -> (WidthHeight) -> Pair<double, bool> {
+	switch (corner : MaterialShapeCorner) {
+		RoundedCorner(radius) : \__ -> Pair(radius, true);
+		CutCorner(radius) : \__ -> Pair(radius, false);
+		RoundedCornerPercent(percent) : \wh -> Pair(min(wh.width, wh.height) * percent, true);
+		CutCornerPercent(percent) : \wh -> Pair(min(wh.width, wh.height) * percent, false);
+	}
+}
+
+makeStaticOutline(
+	parent : MFocusGroup,
+	st : MTextInputGraphicsState,
+	labelWidth : double,
+	labelGap : double,
+	size : WidthHeight) -> Tropic {
+
+	w = size.width;
+	h = size.height;
+	gapOffset = 8.0 + (labelWidth - labelGap) / 2.0;
+	style = [Stroke(st.color), StrokeWidth(st.strokeWidth), StrokeOpacity(st.opacity)];
+
+	shape = getShapeByComponent(parent, "outlined text field");
+
+	topLeft = parseMaterialShapeCorner_(shape.defaultShape.tl);
+	topRight = parseMaterialShapeCorner_(shape.defaultShape.tr);
+	bottomRight = parseMaterialShapeCorner_(shape.defaultShape.br);
+	bottomLeft = parseMaterialShapeCorner_(shape.defaultShape.bl);
+
+	if (w == 0.0 || h == 0.0) {
+		TEmpty();
+	} else {
+		topLeftR = topLeft(size);
+		topRightR = topRight(size);
+		bottomRightR = bottomRight(size);
+		bottomLeftR = bottomLeft(size);
+
+		r1 = topLeftR.first;
+		r2 = topRightR.first;
+		r3 = bottomRightR.first;
+		r4 = bottomLeftR.first;
+
+		sqrt2 = sqrt(2.0);
+		n1 = 1.0 / sqrt2;
+		n2 = sqrt2 - 1.0;
+
+		TGraphics(
+			concatA([
+				[
+					MoveTo(r1, 0.0)
+				],
+				if (labelGap == 0.0) {
+					[];
+				} else {
+					[
+						LineTo(gapOffset, 0.0),
+						MoveTo(gapOffset + labelGap, 0.0)
+					];
+				},
+				[
+					LineTo(w - r2, 0.0)
+				],
+				if (topRightR.second && r2 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r2) + w - r2,
+							(-n1 * r2) + r2,
+							(n2 * r2) + w - r2,
+							(-r2)  + r2
+						),
+						CubicBezierTo(
+							w,
+							r2,
+							w,
+							-n2 * r2 + r2
+						)
+
+					]
+				else
+					[
+						LineTo(w, r2)
+					],
+				[
+					LineTo(w, h - r3)
+				],
+				if (bottomRightR.second && r3 > 0.0)
+					[
+						CubicBezierTo(
+							(n1 * r3) + w - r3,
+							(n1 * r3) + h - r3,
+							w,
+							(n2 * r3) + h - r3,
+						),
+						CubicBezierTo(
+							w - r3,
+							h,
+							(n2 * r3) + w - r3,
+							h
 						)
 					]
-				,
-				[]
-			),
-			eitherMap(
-				inputState.password,
-				\ps ->
+				else
 					[
-						MSelect2T(
-							inputState.manager,
-							p0,
-							"MTextInputVisibilityButton",
-							[],
-							ps.style,
-							\col : [MIconStyle], p ->
-								MIconToggle2T(
-									inputState.manager,
-									p,
-									MIconToggle(
-										"visibility",
-										[
-											MIconButtonBorder(inputState.iconBorders),
-											MIconSize(inputState.iconSize),
-											MToggleFalseIcon("visibility_off", [MIconSize(inputState.iconSize)] |> (\f -> concat(f, col)))
-										]
-										|> (\f -> concat(f, col)),
-										[
-											MPassClicks(),
-											MFocusEnabled(const(false)),
-											MToggleValue(ps.showPassword)
-										]
+						LineTo(w - r3, h)
+					],
+				[
+					LineTo(r4, h)
+				],
+				if (bottomLeftR.second && r4 > 0.0)
+					[
+						CubicBezierTo(
+							-n1 * r4 + r4,
+							n1 * r4 + h - r4,
+							(-n2 * r4) + r4,
+							h
+						),
+						CubicBezierTo(
+							0.0,
+							h - r4,
+							0.0,
+							(n2 * r4) + h - r4,
+						)
+					]
+				else
+					[
+						LineTo(0.0, h - r4)
+					],
+				[
+					LineTo(0.0, r1)
+				],
+				if (topLeftR.second && r1 > 0.0)
+					[
+						CubicBezierTo(
+							(-n1 * r1) + r1,
+							(-n1 * r1) + r1,
+							0.0,
+							(-n2 * r1) + r1
+						),
+						CubicBezierTo(
+							r1,
+							0.0,
+							(-n2 * r1) + r1,
+							0.0
+						)
+					]
+				else
+					[
+						LineTo(r1, 0.0)
+					]
+			]),
+			style
+		)
+	}
+}
+
+makeTextInputUnderline(
+	manager : MaterialManager,
+	parent : MFocusGroup,
+	size : Transform<WidthHeight>,
+	graphicsState : Transform<MTextInputGraphicsState>) -> Tropic {
+
+	initState       = fgetValue(graphicsState);
+	backgroundState = make(initState);
+	rippleState     = make(None());
+	rippleTrigger   = make(false);
+
+	stateWithLast =
+		fselectWithLast(
+			graphicsState,
+			FLift2(\prev, curr -> Pair(prev, curr))
+		);
+
+	MEasingAnimation(
+		manager,
+		parent,
+		const(easingTransitionDuration),
+		const(easingStandartCurve),
+		stateWithLast,
+		\st -> {
+			// Swap buffers
+			maybeApply(getValue(rippleState), \s -> {
+				next(backgroundState, s);
+				next(rippleState, None());
+				next(rippleTrigger, false);
+			});
+
+			if (st.second.ripple) {
+				next(rippleState, Some(st.second));
+				deferred(\ -> next(rippleTrigger, true));
+				None();
+			} else {
+				Some(st);
+			}
+		},
+		\st, percent -> {
+			prev = st.first;
+			curr = st.second;
+			next(backgroundState, graphicsStateLerp(prev, curr, percent));
+		},
+		[],
+		TGroup2(
+			TSelect(backgroundState, \st -> if (st.opacity == 0.0) {
+				TEmpty();
+			} else if (st.strokeWidth == 0.0) {
+				TSelect(size, \wh ->
+					TGraphics(
+						generate(0, floor(wh.width / 4.0), \i ->
+							[MoveTo(i2d(i) * 4.0, 0.0), LineTo(i2d(i) * 4.0 + 1.0, 0.0)]
+						)
+						|> concatA,
+						[Stroke(st.color), StrokeOpacity(st.opacity)]
+					)
+				);
+			} else {
+				TRectangle(
+					[Fill(st.color), FillOpacity(st.opacity)],
+					TFillXH(st.strokeWidth)
+				);
+			})
+				|> (\f -> TTweak([TAlign(const(0.0), const(1.0))], f, TFixed(0.0, 2.0))),
+			TSelect(rippleState, \st ->
+				eitherMap(
+					st,
+					\s ->
+						MRipple2T(
+							manager,
+							parent,
+							TFillXH(s.strokeWidth),
+							rippleTrigger,
+							[
+								MRippleColor(const(MCustomColor(s.color))),
+								MRippleOpacity(const(1.0)),
+								MRippleType(const(MRippleFill())),
+								MRipplePosition(fselect(
+									size,
+									FLift(\wh ->
+										Point(wh.width / 2.0, s.strokeWidth / 2.0)
 									)
-								)
+								))
+							]
+						),
+					TEmpty()
+				)
+			)
+		)
+	);
+}
+
+MTextInputWithPopup(inputState : MInputState, popupState : MInputPopupState, makeTextInput : (MFocusGroup) -> Tropic,
+	addBorders : (Tropic) -> Tropic, addMTextInputBackground : (Transform<bool>) -> (Tropic) -> Tropic, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+
+	isTextInputInPopup = eitherMap(inputState.autocomplete, \ac -> ac.isTextInputInPopup, true);
+
+	lineHeight =
+		eitherMap(inputState.autocomplete, \ac ->
+			getTWordMetrics(
+				m2t(
+					ac.completionFn.fn(
+						SentenceHit(
+							SentenceMatcher([], makeTrie(), makeTree(), makeTree(), makeTree(),),
+							"111",
+							0.,
+							makeSet()
+						),
+						false,
+						nop1
+					),
+					inputState.parent
+				),
+				makeTree()
+			).height,
+			0.
+		);
+
+	directionChangeLinesThreshold = 2;
+	directionChangeThreshold = i2d(directionChangeLinesThreshold) * lineHeight;
+
+	onTop0 = eitherMap(inputState.autocomplete, \ac -> ac.onTop, false);
+	onTop =
+		if (onTop0) fselect(popupState.positionScale, FLift(\ps : PositionScale -> ps.pos.y > directionChangeThreshold))
+		else fselect3(popupState.positionScale, fheight(popupState.inputWH), fheight(inputState.manager.stageWH), \ps, iH, sH ->
+			sH - iH - ps.pos.y < directionChangeThreshold
+		);
+
+	popupItems =
+		eitherMap(
+			inputState.autocomplete,
+			\ac -> {
+				(\p -> MSelect2T(inputState.manager, p, "MTextInputCompletionItems", [MFocusEnabled(const(false))], ac.sentences, \compl, p2 -> {
+					next(ac.selected, -1);
+
+					items =
+						mapi(compl, \i, com ->
+							MIfLazy2T(
+								inputState.manager,
+								p2,
+								feq(ac.selected, i),
+								\sel, p3 ->
+									m2t(
+										ac.completionFn.fn(
+											com,
+											sel,
+											\w -> {
+												ac.setWord(compl, w);
+												inputState.filterAction(getValue(inputState.content))
+											}
+										),
+										p3
+									),
+								false
+							)
+						);
+
+					if (ac.autoSelect && length(items) > 0)
+						next(ac.selected, 0);
+
+					TLines(items)
+				})
+				|> (\f -> TCopySize(f, \tr ->
+						MShape(p, ac.fill, tr, "MAutoComplete")
+						|> TRotate180(fnot(onTop), tr),
+						false
+					)
+				)
+				|> (\f ->
+					TConstruct(
+						[
+							makeSubscribe(ac.selected, \sel -> {
+								if (sel >= 0) {
+									scrollHeight = max(0., getValue(popupState.contentWH).height - getValue(popupState.boxWH).height);
+
+									if (scrollHeight > 0.) {
+										minSelHeight = max(0., lineHeight * i2d(max(sel, 0)));
+										maxSelHeight = max(0., minSelHeight + lineHeight - getValue(popupState.boxWH).height);
+
+										if (getValue(popupState.scrollPosition).y < maxSelHeight) {
+											next(popupState.scrollPosition, Point(0., maxSelHeight))
+										} else if (getValue(popupState.scrollPosition).y > minSelHeight) {
+											next(popupState.scrollPosition, Point(0., minSelHeight))
+										}
+									} else {
+										nextDistinct(popupState.scrollPosition, zeroPoint)
+									}
+								} else {
+									nextDistinct(popupState.scrollPosition, zeroPoint)
+								}
+							})
+						],
+						f
+					)
+				))
+				|> (\f ->
+					[
+						\p -> TShowLazy(fneq(ac.sentences, []), \ -> m2t(MSeparator(true), p)),
+						f
+					]
+				)
+			},
+			[]
+		);
+
+	content =
+		if (isTextInputInPopup)
+			TSelect2(inputState.content, inputState.mfocus.enabled, \val, en ->
+				MEllipsisText2T(
+					inputState.manager,
+					inputState.parent,
+					MEllipsisText(
+						val + (generate(0, max(inputState.linesCount - strCountOf(val, "\n") - 1, 0), \__ -> "\n") |> concatStrings)
+						|> (\f -> if (endsWith(f, "\n") || f == "") f + "  " else if (endsWith(f, "\n ")) f + " " else f),
+						concat(if (en) inputState.mTextStyle else inputState.mTextStyleDisabled, [MMaxLines(inputState.linesCount)])
+					),
+					m2t
+				)
+			)
+			|> TAlignStart
+			|> (\f -> TGroup2(TFillX(), f))
+			|> addBorders
+		else
+			makeTextInput(inputState.parent)
+			|> addMTextInputBackground(onTop);
+
+	offsetX = if (inputState.smallEdit) -24. else if (isTextInputInPopup) 0. else eitherMap(inputState.leftButton, \lb -> lb.inputIndent, 0.);
+	offsetY = if (inputState.smallEdit) -8. else 0.;
+
+	positionScale = 
+		fif(
+			feq(onTop, isTextInputInPopup),
+			fselect2(popupState.positionScale, fheight(popupState.inputWH), FLift2(\ps : PositionScale, ih ->
+				PositionScale(
+					Point(ps.pos.x, ps.pos.y + ih),
+					ps.scale
+				)
+			)),
+			popupState.positionScale
+	);
+
+	TConstruct(
+		[
+			makeSubscribe2(onTop, \__ ->
+				if (fgetValue(popupState.openMenu.opened)) {
+					nextDistinct(popupState.openMenu.opened, false);
+					nextDistinct(popupState.openMenu.opened, true);
+					nextDistinct(inputState.mfocus.focused, true);
+			}),
+			makeSubscribe(popupState.openMenu.opened, \op ->
+				if (op) {
+					ontop = fgetValue(onTop);
+					RenderMPopup(
+						inputState.manager,
+						inputState.parent,
+						MPopup(
+							[
+								if (isTextInputInPopup)
+									[[
+										MGetFocusGroup(makeTextInput)
+										|> (if (inputState.smallEdit) MBorderLeftRight(24.) else idfn)
+									]]
+								else
+									[[TFixed(0., 0.01)]], // workaround for non-visible separator bug
+								map(popupItems, \it -> [MGetFocusGroup(it)])
+								|> (if (ontop) reverseA else idfn)
+							]
+							|> (if (ontop) reverseA else idfn)
+							|> concatA,
+							positionScale,
+							[
+								popupState.openMenu,
+								RMWidth(fselect(popupState.inputWH, FLift(\bwh -> bwh.width + (if (inputState.smallEdit) 48. else 0.) - offsetX))),
+								MSameZorder(true),
+								RMBorders(if (inputState.smallEdit) 8. else 0.),
+								RMClickOutToClose(),
+								RMSameFocus(inputState.mfocus),
+								MElevation(popupState.elevation),
+								RMOffset(const(Pair(WidthHeight(offsetX, offsetY), 0.))),
+								RMHeight(0., popupState.maxHeight),
+								MFixPosition(!ontop),
+								TScrollWidthHeight(popupState.contentWH, popupState.boxWH),
+								MBackgroundStyle(inputState.backgroundStyle.focused),
+								MRippleShape("MMenu"),
+								MActive(make(true))
+							]
+							|> (\arr ->
+								if (popupItems != [])
+									concat(arr, [
+										if (ontop) RMScrollArea(0, 1) else RMScrollArea(2, 3),
+										MScrollPosition(popupState.scrollPosition)
+									])
+								else arr
+							),
+						),
+						m2t
+					)
+			}),
+			\ -> \ -> next(popupState.openMenu.opened, false)
+		],
+		content
+		|> (\f -> MPositionScaleAttachBox(popupState.positionScale, popupState.inputWH, f, popupState.openMenu.opened))
+	)
+}
+
+MTextInputError(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	helperText =
+		eitherFn(
+			inputState.helperText,
+			\hs ->
+				\ -> TSelect(hs.helper, \ht : Pair<string, [MTextStyle]> -> {
+					if (ht.first == "")
+						TFillX()
+					else
+						(if (hs.height <= 0.)
+							MParagraph2T(inputState.parent, ht.first, concat(ht.second, [MWidth(-1.)]))
+						else
+							MEllipsisText2T(
+								inputState.manager,
+								inputState.parent,
+								MEllipsisText(
+									ht.first,
+									concat(ht.second, [MMaxLines(hs.lines), MShowTooltip(const(true))])
+								),
+								m2t
+							)
+						)
+						|> TAlignStart
+						|> (\f -> if (inputState.dynamicSize || hs.height <= 0.) f else TFixSize(f, TFillXH(hs.height)))
+				}),
+			\ -> if (isSome(inputState.limitError))
+				\ -> TFillX()
+			else
+				\ -> TEmpty()
+		);
+
+	TCols2A(
+		eitherFn(
+			inputState.error,
+			\es ->
+				TSelect(es.error, \et : Pair<string, [MTextStyle]> -> {
+					if (et.first == "")
+						helperText()
+					else
+						(if (es.height(inputState.parent) <= 0.)
+							MParagraph2T(inputState.parent, et.first, concat(et.second, [MWidth(-1.)]))
+						else
+							MEllipsisText2T(
+								inputState.manager,
+								inputState.parent,
+								MEllipsisText(
+									et.first,
+									concat(et.second, [MMaxLines(es.lines), MShowTooltip(const(true))])
+								),
+								m2t
+							)
+						)
+						|> (\f -> if (et.first == " ") TGroup2(f, helperText()) else f)
+						|> TAlignStart
+						|> (\f -> if (inputState.dynamicSize || es.height(inputState.parent) <= 0.) TBorderA(0., 0., 0., 4., f) else TFixSize(f, TFillXH(es.height(inputState.parent))))
+				}),
+			helperText
+		),
+		eitherFn(
+			inputState.limitError,
+			\le ->
+				TSelect(le.limit, \let ->
+					if (let.first == "")
+						TEmpty()
+					else
+						MText2T(
+							inputState.parent,
+							let.first,
+							let.second
 						)
 						|> (\f2 ->
 							TransformTAcc2(\t2a -> {
 								acc = f2 |> t2a;
 
-								wd = inputState.iconSize + inputState.iconBorders;
-
 								TAcc(
-									FTranslate(const(-inputState.iconBorders / 2.), fnegate(acc.metrics.baseline), acc.form),
+									acc.form,
 									TFormMetrics(
-										const(wd),
-										zero,
+										acc.metrics.width,
+										if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
 										zero
 									),
-									const(wd),
-									zero,
-									const(wd),
-									zero,
+									acc.metrics.width,
+									if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
+									acc.metrics.width,
+									if (inputState.dynamicSize && le.height > 0.) const(le.height) else acc.metrics.height,
 									zero,
 									zero,
 									acc.addFillers,
@@ -981,33 +1568,185 @@ MTextInputIcons(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropi
 								)
 							})
 						)
-					],
-				[]
-			)
-		]);
+				),
+			\ -> TEmpty()
+		)
+	)
+	|> (\f2 ->
+		TransformTAcc2(\t2a -> {
+			acc = f2 |> t2a;
 
-	Pair(
-		if (!isSome(inputState.leftIcon) && !isSome(inputState.leftButton))
-			\__ -> TEmpty()
-		else
-			\p0 -> MComponentGroup2T(
+			TAcc(
+				acc.form,
+				TFormMetrics(
+					zero,
+					acc.metrics.height,
+					acc.metrics.baseline
+				),
+				zero,
+				acc.minHeight,
+				zero,
+				acc.maxHeight,
+				zero,
+				if (inputState.dynamicSize && !acc.yConstant)
+					const(1.)
+				else
+					acc.yFillers,
+				acc.addFillers,
+				true,
+				acc.yConstant,
+				acc.disposers
+			)
+		})
+	)
+}
+
+MTextInputLabel(inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	eitherFn(
+		inputState.floatingLabel,
+		\fls -> {
+			percent = fls.progress;
+			xOffset =
+				if (inputState.skin != MOutlined() || inputState.leftIcon == "") 0.0
+				else if (inputState.condensed) -32.0
+				else -36.0;
+
+			styleChanged = fselect2(percent, inputState.labelStyle, FLift2(\prc, labelStyle ->
+				replaceStructMany(
+					labelStyle,
+					[
+						FontSize(lerp(fls.labelSizeFocused, fls.labelSize, prc))
+					]
+				)
+			));
+
+			MEasingAnimation(
 				inputState.manager,
-				p0,
-				"MTextInputLeftIcons",
-				[MEnabled(inputState.mfocus.enabled), MFocusEnabled(const(false))],
-				\p -> TBaselineColsA(leftIcons(p))
-			),
-		if (!isSome(inputState.editIcon) && !isSome(inputState.rightButton) && !isSome(inputState.password))
-			\__ -> TEmpty()
+				inputState.parent,
+				const(easingTransitionDuration),
+				const(easingStandartCurve),
+				fls.showFloatingLabel,
+				\showLabel -> {
+					perc = getValue(percent);
+
+					if ((showLabel && perc == 0.) || (!showLabel && perc == 1.))
+						None()
+					else
+						Some(showLabel)
+				},
+				\showLabel, val -> next(percent, if (showLabel) 1. - val else val),
+				[MAutoStart()],
+				TSelect(styleChanged, \labelStyle ->
+					(\ ->
+						MEllipsisText2T(
+							inputState.manager,
+							inputState.parent,
+							MEllipsisText(
+								inputState.label,
+								labelStyle
+								|> MCharacterStyle2MTextStyle
+							),
+							m2t
+						)
+					)
+					|> (\f ->
+						eitherFn(
+							inputState.error,
+							\es ->
+								if (es.requiredField)
+									TCols2(
+										f(),
+										TIfLazy2(inputState.mfocus.focused, \foc ->
+											TText(" *",	if (foc) replaceStructMany(labelStyle, [MFill(MErrorColor())]) else labelStyle),
+											true
+										)
+									)
+								else
+									f(),
+							f
+						)
+					)
+				)
+				|> (\t -> TBorderT(
+					if (xOffset == 0.0) zero else fmultiply(fsubtract(const(1.0), percent), const(xOffset)),
+					faddition(fmultiply(percent, const(fls.betweenLabels + fls.labelSizeFocused)), const(fls.aboveLabel)),
+					zero,
+					zero,
+					t
+				))
+			)
+		},
+		\ ->
+			TShowLazy(
+				feq(inputState.content, ""),
+				\ -> TSelect(inputState.labelStyle, \labelStyle ->
+						MEllipsisText2T(
+							inputState.manager,
+							inputState.parent,
+							MEllipsisText(
+								eitherFn(
+									inputState.error,
+									\es -> if (es.requiredField) inputState.label + " *" else inputState.label,
+									\ -> inputState.label
+								),
+								labelStyle
+								|> MCharacterStyle2MTextStyle
+							),
+							m2t
+						)
+					)
+			)
+			|> (\t -> TBorder(0., inputState.inputBorders.top, 0., 0., t))
+	)
+	|> (\f ->
+		if (inputState.align == AutoAlignCenter())
+			TCenterXIn(f, TFillXY())
+		else if (changeBoolIfRTL(inputState.align == AutoAlignRight()))
+			TTweak([TAlign(const(1.), zero)], f, TFillXY())
 		else
-			\p0 -> MComponentGroup2T(
-				inputState.manager,
-				p0,
-				"MTextInputRightIcons",
-				[MEnabled(inputState.mfocus.enabled), MFocusEnabled(const(false))],
-				\p -> TBaselineColsA(rightIcons(p))
+			f
+	)
+	|> (\f -> TFixSize(f, TEmpty()))
+}
+
+MTextInputUnderline(inputState : MInputState) -> Tropic {
+	area = TFillXH(2.);
+
+	eitherFn(
+		inputState.underline,
+		\us ->
+			TSelect(
+				us,
+				\pr ->
+					if (pr.second == 0.)
+						TAttach(area, \wh ->
+							TSelect(wh.width, \wd ->
+								TGraphics(
+									generate(0, floor(wd / 4.), \i ->
+										[MoveTo(i2d(i) * 4., 0.), LineTo(i2d(i) * 4. + 1., 0.)]
+									)
+									|> concatA,
+									pr.first
+								)
+							)
+						)
+						|> (\f -> TCenterYIn(f, TFillXH(2.)))
+					else
+						TRectangle(pr.first, TFillXH(pr.second))
+						|> (\f -> TBorder(0., 1. - pr.second / 2., 0., 1. - pr.second / 2., f))
 			),
-	);
+		\ -> area
+	)
+	|> (\f -> TFixSize(f, area))
+	|> (\f ->
+		TBorder(
+			0.,
+			forceRange(inputState.inputBorders.bottom - 2., 0., 7.),
+			0.,
+			max(inputState.inputBorders.bottom - 9., 0.),
+			f
+		)
+	)
 }
 
 MTextInputHandleKeys(manager : MaterialManager, textInput : Tropic, inputState : MInputState) -> Tropic {
@@ -1101,20 +1840,6 @@ MTextInputHandleKeys(manager : MaterialManager, textInput : Tropic, inputState :
 	} else {
 		textInput
 	})
-	|> (\f ->
-		inputState.backgroundStyle
-		|> (\bs : MInputBackgroundStyle -> {
-			if (bs.normal != [] || bs.focused != [])
-				TCopySize(
-					f,
-					\tr ->
-						TIfLazy2(focus, \foc -> TRounded(2., 2., 2., 2., if (foc) bs.focused else bs.normal, tr), true),
-					false
-				)
-			else
-				f
-		})
-	)
 }
 
 // MTextInputHandleTemplate(style : [MTextInputStyle], mfocus : MFocus, inputState : MInputState) -> [() -> () -> void] {

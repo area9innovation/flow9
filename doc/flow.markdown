@@ -47,7 +47,7 @@ building complicated UIs. That is the field where it starts shining and shows it
 Worth keeping in mind when working with it.
 
 The main flow compiler is implemented in flow itself. The compiler produces a simple bytecode, 
-native JavaScript, Java and other targets. See the [runtimes.html](runtimes.html) document for 
+native JavaScript, Java and other targets. See the [runtimes.markdown](runtimes.markdown) document for 
 an overview of the targets.
 
 <h2 id=modules>Modules, imports, exports, and main</h2>
@@ -95,7 +95,7 @@ the C++ runner that compiles and then calls `main` in the `helloworld` module:
 
 Run from the root of your flow installation, such as `c:\flow9\` on Windows.
 
-See `windows.html`, `mac.html`, `linux.html` to learn how to use other targets.
+See `windows.markdown`, `mac.markdown`, `linux.markdown` to learn how to use other targets.
 
 
 <h2 id=decls>Declarations</h2>
@@ -386,16 +386,14 @@ default "none" value for all types. Examples: `findDef`, `firstElement`,
 In *flow*, all variables are immutable. To support imperative programming, you
 have to use references, similar to ML:
 
-	r : ref double;
-	r = ref 1.0;
+	r : ref double = ref 1.0;
 
 	old = ^r; // Dereference
 	r := 2.0; // Destructive update
 	assert(old == 1.0, "Error: Assignment by copy");
 	assert(^r == 2.0, "Error: Reference is not updated");
 
-	dr : ref flow;
-	dr = ref 1.0;
+	dr : ref flow = ref 1.0;
 	dr := "Strange";
 	assert(^dr == "Strange", "Error: Flow is wild");
 	dr := 1; // OK

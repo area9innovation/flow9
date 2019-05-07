@@ -1,0 +1,76 @@
+import devmode;
+
+export {
+	// A service worker is a script which your browser runs in the background, separate from a web page, opening the door to features that don't need a web page or user interaction.
+
+	// Browsers support map: http://caniuse.com/#search=service%20worker
+	// EXAMPLE: flow/sandbox/serviceworker.flow
+	// LIVE EXAMPLE: https://tech.area9innovation.com/sw/flowjs.html?name=test_sw
+
+	// Functionality contained in this file is intended to manipulate implemented Service Worker for controlling FlowJS cache.
+	// NOTE: Service Worker influences over all static resources with scope matching to files located lower than flowjs.html.
+	// CAUTION: Service Worker keeps running behind the scene, despite of launches.
+	// CAUTION: Service Worker runs only for pages served over HTTPS protocol.
+
+	// Service Worker caches each launch request to static resources (all extensions, except .php & .serverbc).
+	// Such way helps us to keep actual responses inside cache storage.
+	// EXCEPTION: Only one particular php request is cached - it's the request to /php/stamp.php?file=<application>.js.
+	// We do this to respond with the latest timestamp for <application>.js file in offline mode.
+
+	// Once static resource request fails (user is offline, etc.) we respond to a client with previously cached resource.
+
+	// Registers the Service Worker for a web page.
+	// Once called the Service Worker will be run until disableServiceWorkerCaching called.
+	native enableServiceWorkerCaching : io (callback : (success : bool) -> void) -> void = ProgressiveWebTools.enableServiceWorkerCaching;
+
+	// Unregisters the Service Worker from a web page.
+	// Make sure to call after enableServiceWorkerCaching or checkServiceWorkerCachingEnabled callback called with true.
+	// Disables Service Worker once any ongoing operation will be finished.
+	native disableServiceWorkerCaching : io (callback : (success : bool) -> void) -> void = ProgressiveWebTools.disableServiceWorkerCaching;
+
+
+	// Check whether we already registered a Service Worker
+	native checkServiceWorkerCachingEnabled : io (callback : (enabled : bool) -> void) -> void = ProgressiveWebTools.checkServiceWorkerCachingEnabled;
+
+	// Fires when all progressive web app requirements are abided: https, web app manifest, service worker registered
+	native addShortcutAvailableListener : io (callback : () -> void) -> (() -> void) = ProgressiveWebTools.addShortcutAvailableListener;
+
+	// Prompts user to install shortcut
+	// IMPORTANT: Call it only after shortcut available listener fired
+	native installShortcut : io (callback : (bool) -> void) -> void = ProgressiveWebTools.installShortcut;
+
+
+	addShortcutDialog() -> () -> void;
+	setServiceWorkerEnabled(enabled : bool) -> void;
+}
+
+enableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
+disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
+checkServiceWorkerCachingEnabled(callback : (bool) -> void) { callback(false) }
+
+addShortcutDialog() -> () -> void {
+	uns = ref None();
+
+	dispose = \ -> {
+		maybeApply(^uns, \u -> { u(); uns := None(); });
+	}
+
+	uns :=
+		addShortcutAvailableListener(\ -> {
+			installShortcut(\accepted -> devtrace("User " + (if (accepted) "accepted" else "dismissed") + " shortcut installation!"));
+			deferred(dispose);
+		})
+		|> Some;
+
+	dispose;
+}
+
+setServiceWorkerEnabled(enable : bool) -> void {
+	doEnable = enable && isUrlParameterTrue("sw");
+	checkServiceWorkerCachingEnabled(\enabled -> {
+		if (!enabled && doEnable)
+			enableServiceWorkerCaching(\r -> devtrace(if (r) "Service Worker Enabled" else "Service Worker Error"))
+		else if (enabled && !doEnable)
+			disableServiceWorkerCaching(\r -> devtrace(if (r) "Service Worker Disabled" else "Service Worker Error"));
+	});
+}

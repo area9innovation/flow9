@@ -5,6 +5,7 @@ import sys/fullscreen;
 import ui/fontmapping;
 import fusion_utils;
 import fform/renderfform;
+import tropic/tropic_manager;
 
 export {
 	// A fixed size, empty block
@@ -20,8 +21,8 @@ export {
 	TSizedHeight(width : double, height : Transform<double>) -> Tropic;
 	TSizedWidthHeight(width : Transform<double>, height : Transform<double>) -> Tropic;
 
-	// Bunch of helpers to inspect sizes
-	
+	// Bunch of helpers to inspect sizes. Consider using TInspect also.
+
 	TAttachBox(t : Tropic, box : DynamicBehaviour<WidthHeight>) -> Tropic;
 	TAttachWidth(t : Tropic, width : DynamicBehaviour<double>) -> Tropic;
 	TAttachHeight(t : Tropic, height : DynamicBehaviour<double>) -> Tropic;
@@ -41,6 +42,8 @@ export {
 	TAttachMinWidth(t : Tropic, minWidth : DynamicBehaviour<double>) -> Tropic;
 	TAttachBoxThrottle(t : Tropic, box : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Tropic;
 	TAttachHeightTrigger(t : Tropic, height : DynamicBehaviour<double>, trigger : Transform<bool>) -> Tropic;
+
+	TThrottleMetrics(t : Tropic, maxDelta : int) -> Tropic;
 
 	// A rectangle that expands to the given size
 	TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic;
@@ -67,11 +70,6 @@ export {
 	TPadA(x : double, y : double, t : Tropic) -> Tropic;
 	TColsYCenterA(cols : [Tropic]) -> Tropic;
 
-	// Align left if LTR, align right if RTL
-	TBaseAlignA(t : Tropic) -> Tropic;
-	// Align right if LTR, align left if RTL
-	TEndAlignA(t : Tropic) -> Tropic;
-
 	// TGroup with zero metrics
 	// Useful inside complicated components with lots of layers, metrics of which aren't used
 	TGroupWithoutMetrics(g : [Tropic]) -> Tropic;
@@ -93,9 +91,13 @@ export {
 
 	// Add a rounded frame behind the given box
 	TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic) -> Tropic;
-	TFrameT(margin : Transform<double>, radius : double, style : [TGraphicsStyle], box : Tropic) -> Tropic;
+	TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Tropic) -> Tropic;
 	TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double, trRounded : bool, r : double,
 		br : double, brRounded : bool, b : double, bl : double, blRounded : bool, style : [TGraphicsStyle], box : Tropic) -> Tropic;
+
+	// Round rectangle corners to maximum possible radius
+	TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic;
+	TRounded4(radius : double, style : [TGraphicsStyle], size : Tropic) -> Tropic;
 
 	// Resizes the form to fill the target metrics
 	TZoom(content : Tropic, container : Tropic, keepAspect : bool) -> Tropic;
@@ -176,6 +178,8 @@ export {
 	TRotate90(tropic : Tropic) -> Tropic;
 	// Rotate 90 degrees counter-clockwise, including the sizes
 	TRotate90Left(tropic : Tropic) -> Tropic;
+	// Rotate 180 degrees and translate by size
+	TRotate180(enabled : Transform<bool>, size : Tropic) -> (Tropic) -> Tropic;
 
 	// The tropic is actually destroyed/reconstructed when 'show' becomes false/true, in contrast
 	// to TVisible. This is an exact alias to the common TIf(show, tropic, TEmpty) construct.
@@ -205,10 +209,6 @@ export {
 	// Converts TAcc to Tropic with empty form and same size
 	// Doesn't dispose TAcc disposers
 	TAcc2Size(acc : TAcc) -> Tropic;
-	// Same as TAcc2Size only updates wh from TAcc metrics
-	TAcc2SizeAttach(acc : TAcc, wh : DynamicBehaviour<WidthHeight>) -> Tropic;
-	// Same as TAcc2SizeAttach only updates wh when metrics change not more often than maxDelta ms.
-	TAcc2SizeAttachThrottle(acc : TAcc, wh : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Tropic;
 
 	// Copies size of content to copyFn, copyFn result has no effect on overall metrics
 	// If above is true result of copyFn is placed on top of content
@@ -245,6 +245,23 @@ export {
 	TAvailableHeight(tr : Tropic, available : Transform<double>) -> Tropic;
 	TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : Transform<double>) -> Tropic;
 
+	TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic;
+	TAlignStart(t : Tropic) -> Tropic; // Align left if LTR, align right if RTL
+	TAlignEnd(t : Tropic) -> Tropic;   // Align right if LTR, align left if RTL
+	TAlignLeft(t : Tropic) -> Tropic;
+	TAlignTop(t : Tropic) -> Tropic;
+	TAlignRight(t : Tropic) -> Tropic;
+	TAlignBottom(t : Tropic) -> Tropic;
+
+	TAlignTopLeft(t : Tropic) -> Tropic;
+	TAlignTopCenter(t : Tropic) -> Tropic;
+	TAlignTopRight(t : Tropic) -> Tropic;
+	TAlignCenterRight(t : Tropic) -> Tropic;
+	TAlignBottomRight(t : Tropic) -> Tropic;
+	TAlignBottomCenter(t : Tropic) -> Tropic;
+	TAlignBottomLeft(t : Tropic) -> Tropic;
+	TAlignCenterLeft(t : Tropic) -> Tropic;
+
 	TBorderTop(border : double) -> (Tropic) -> Tropic;
 	TBorderBottom(border : double) -> (Tropic) -> Tropic;
 	TBorderLeft(border : double) -> (Tropic) -> Tropic;
@@ -274,7 +291,29 @@ export {
 
 	TEvenGrid(content : [[Tropic]]) -> Tropic;
 
+	TConstructRenderable(constructors : [() -> () -> void], content : Tropic) -> Tropic;
+
 	wh2Tropic(wh : WidthHeight) -> Tropic;
+
+	// Zoom tropic if its metrics are bigger than maxWH
+	TZoomMax(tr : Tropic, maxWH : Transform<WidthHeight>) -> Tropic;
+	// Zoom tropic if its width is bigger than maxWidth
+	TZoomMaxWidth(tr : Tropic, maxWidth : Transform<double>) -> Tropic;
+	// Zoom tropic if its height is bigger than maxHeight
+	TZoomMaxHeight(tr : Tropic, maxHeight : Transform<double>) -> Tropic;
+
+	// Helpers to make Tropic not transparent for events
+	disableMouseWheelBelow(content : Tropic) -> Tropic;
+	disableInteractivesBelow(content : Tropic) -> Tropic;
+
+	// Helpers to make checkered graphics
+	TCheckeredRectangle(style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], content : Tropic) -> Tropic;
+	TCheckeredRounded(nw : double, ne : double, lw : double, le : double, style1 : [TGraphicsStyle],
+		style2 : [TGraphicsStyle], content : Tropic) -> Tropic;
+
+	TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic;
+
+	T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -307,7 +346,7 @@ TRectangle(style : [TGraphicsStyle], size : Tropic) -> Tropic {
 }
 
 TCircle(radius : double, style : [TGraphicsStyle]) -> Tropic {
-	TRounded(radius, radius, radius, radius, style, TFixed(radius*2.0, radius*2.0))
+	TGraphics([GCircle(radius, radius, radius)], style);
 }
 
 TGroup(c : [Tropic]) -> Tropic {
@@ -436,31 +475,19 @@ linesToLinesRTL(ls : [Tropic]) -> [Tropic] {
 		\i, l -> TransformTAcc2(\t2a -> {
 			b1 = t2a(l);
 
-			TAcc(
-				FTranslate(
-					fsubtract(maxWidth, b1.metrics.width),
-					const(0.0),
-					b1.form
-				),
-				TFormMetrics(
-					b1.metrics.width,
-					b1.metrics.height,
-					b1.metrics.baseline
-				),
-				b1.minWidth,
-				b1.minHeight,
-				b1.maxWidth,
-				b1.maxHeight,
-				b1.xFillers,
-				b1.yFillers,
-				b1.addFillers,
-				b1.xConstant,
-				b1.yConstant,
+			form = FTranslate(
+				fsubtract(maxWidth, b1.metrics.width),
+				const(0.0),
+				b1.form
+			);
+
+			disp =
 				arrayPush(
 					b1.disposers,
 					fconnect(b1.metrics.width, widths[i])
-				)
-			);
+				);
+
+			TAcc(b1 with form = form, disposers = disp)
 		})
 	);
 }
@@ -479,16 +506,6 @@ TBaselineLinesA(arr : [Tropic]) -> Tropic {
 
 TBaselineLines2A(t1 : Tropic, t2 : Tropic) -> Tropic {
 	TBaselineLinesA([t1, t2])
-}
-
-TBaseAlignA(t : Tropic) -> Tropic {
-	if (getDefaultRtl()) TTweak([TAlign(const(1.0), const(0.0))], t, TFillX())
-	else t;
-}
-
-TEndAlignA(t : Tropic) -> Tropic {
-	if (!getDefaultRtl()) TTweak([TAlign(const(1.0), const(0.0))], t, TFillX())
-	else t;
 }
 
 TColsYCenter(cols : [Tropic]) -> Tropic {
@@ -577,39 +594,30 @@ TFrame(margin : double, radius : double, style : [TGraphicsStyle], box : Tropic)
 
 			makeFGraphics = \w, h ->
 				FGraphics(
-					if (radius == 0.)
-						rectangle(0., 0., w, h)
+					if (equalDoubles(radius, 0.))
+						[GRect(0.0, 0.0, w, h)]
+					else if (equalDoubles(w, h) && equalDoubles(radius, w / 2.0))
+						[GCircle(radius, radius, radius)]
 					else
-						perfectRoundedRect(w, h, radius),
+						[GRoundedRect(0.0, 0.0, w, h, radius)],
 					gstyle
 				);
 
-			TAcc(
+			TAcc(b1 with form =
 				FGroup([
 					if (b1.xConstant && b1.yConstant)
 						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
 					else
 						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
 					b1.form
-				], false),
-				b1.metrics,
-				b1.minWidth,
-				b1.minHeight,
-				b1.maxWidth,
-				b1.maxHeight,
-				b1.xFillers,
-				b1.yFillers,
-				b1.addFillers,
-				b1.xConstant,
-				b1.yConstant,
-				b1.disposers
+				], false)
 			)
 		})
 	else
 		borderedBox
 }
 
-TFrameT(margin : Transform<double>, radius : double, style : [TGraphicsStyle], box : Tropic) -> Tropic {
+TFrameT(margin : Transform<double>, radius : Transform<double>, style : [TGraphicsStyle], box : Tropic) -> Tropic {
 	borderedBox = TBorderT(margin, margin, margin, margin, box);
 
 	if (style != [])
@@ -619,33 +627,24 @@ TFrameT(margin : Transform<double>, radius : double, style : [TGraphicsStyle], b
 			gstyle = tgraphicsStyle2graphicsStyle(style);
 
 			makeFGraphics = \w, h ->
-				FGraphics(
-					if (radius == 0.)
-						rectangle(0., 0., w, h)
-					else
-						perfectRoundedRect(w, h, radius),
-					gstyle
-				);
+				FMutable(fselect(radius, FLift(\r ->
+					FGraphics(
+						if (r == 0.)
+							rectangle(0., 0., w, h)
+						else
+							perfectRoundedRect(w, h, r),
+						gstyle
+					)
+				)));
 
-			TAcc(
+			TAcc(b1 with form =
 				FGroup([
 					if (b1.xConstant && b1.yConstant)
 						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
 					else
 						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
 					b1.form
-				], false),
-				b1.metrics,
-				b1.minWidth,
-				b1.minHeight,
-				b1.maxWidth,
-				b1.maxHeight,
-				b1.xFillers,
-				b1.yFillers,
-				b1.addFillers,
-				b1.xConstant,
-				b1.yConstant,
-				b1.disposers
+				], false)
 			)
 		})
 	else
@@ -666,25 +665,14 @@ TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double,
 						gstyle
 					);
 
-				TAcc(
+				TAcc(b1 with form =
 					FGroup([
 						if (b1.xConstant && b1.yConstant)
 							makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
 						else
 							FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
 						b1.form
-					], false),
-					b1.metrics,
-					b1.minWidth,
-					b1.minHeight,
-					b1.maxWidth,
-					b1.maxHeight,
-					b1.xFillers,
-					b1.yFillers,
-					b1.addFillers,
-					b1.xConstant,
-					b1.yConstant,
-					b1.disposers
+					], false)
 				)
 			}
 		)
@@ -692,6 +680,41 @@ TFrameCustom(l : double, tl : double, tlRounded : bool, t : double, tr : double,
 		TBorder(r, t, l, b, box)
 	else
 		box
+}
+
+TRoundedFull(style : [TGraphicsStyle], size : Tropic) -> Tropic {
+	TransformTAcc(\tac, pi, ss, mo -> {
+		b1 = tac(size, pi, ss, true);
+
+		if (style != []) {
+			gstyle = tgraphicsStyle2graphicsStyle(style);
+
+			makeFGraphics = \w, h -> {
+				r = min(w, h) / 2.0;
+
+				if (r > 0.)
+					FGraphics(perfectRoundedRect(w, h, r), gstyle)
+				else
+					FEmpty()
+			};
+
+			TAcc(b1 with form =
+				FGroup([
+					if (b1.xConstant && b1.yConstant)
+						makeFGraphics(fgetValue(b1.metrics.width), fgetValue(b1.metrics.height))
+					else
+						FMutable(fselect2(b1.metrics.width, b1.metrics.height, FLift2(makeFGraphics))),
+					b1.form
+				], false)
+			)
+		} else {
+			b1;
+		}
+	})
+}
+
+TRounded4(radius : double, style : [TGraphicsStyle], size : Tropic) -> Tropic {
+	TRounded(radius, radius, radius, radius, style, size);
 }
 
 TScrollableWithBars(content : Tropic, maxbox : Tropic, style : ScrollableStyle, state : [TScrollableState]) -> Tropic {
@@ -771,23 +794,12 @@ TMinimumMetrics(content : Tropic) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = content |> t2a;
 
-		TAcc(
-			b1.form,
+		TAcc(b1 with metrics =
 			TFormMetrics(
 				b1.minWidth,
 				b1.minHeight,
 				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			b1.disposers
+			)
 		)
 	})
 }
@@ -1115,6 +1127,14 @@ TRotate90Left(tropic: Tropic) -> Tropic {
 	})
 }
 
+TRotate180(enabled : Transform<bool>, size : Tropic) -> (Tropic) -> Tropic {
+	\t ->
+		TShift(
+			TRotate(fif(enabled, const(180.), const(0.)), t),
+			TScale(const(Factor(-1., -1.)), TShow(enabled, size))
+		)
+}
+
 TShow(show : Transform<bool>, tropic : Tropic) -> Tropic {
 	TIf(show, tropic, TEmpty());
 }
@@ -1154,106 +1174,32 @@ TCropSizeY(content : Tropic, height : Tropic) -> Tropic {
 
 TAcc2Size(acc : TAcc) -> Tropic {
 	TNative(\__, __ -> {
-		form = make(FEmpty());
-
-		TAcc(
-			FMutable(form),
-			acc.metrics,
-			acc.minWidth,
-			acc.minHeight,
-			acc.maxWidth,
-			acc.maxHeight,
-			acc.xFillers,
-			acc.yFillers,
-			acc.addFillers,
-			acc.xConstant,
-			acc.yConstant,
-			[
-				fconnect2Select(acc.metrics.width, acc.metrics.height, form, \wd, hgt ->
+		f =
+			FMutable(
+				fselect2(acc.metrics.width, acc.metrics.height, FLift2(\wd, hgt ->
 					FRectangle(wd, hgt, interactiveRectangleStyle)
-				)
-			]
-		)
-	})
-}
+				))
+			);
 
-TAcc2SizeAttach(acc : TAcc, wh : DynamicBehaviour<WidthHeight>) -> Tropic {
-	TNative(\__, __ -> {
-		form = make(FEmpty());
-
-		TAcc(
-			FMutable(form),
-			acc.metrics,
-			acc.minWidth,
-			acc.minHeight,
-			acc.maxWidth,
-			acc.maxHeight,
-			acc.xFillers,
-			acc.yFillers,
-			acc.addFillers,
-			acc.xConstant,
-			acc.yConstant,
-			[
-				make2Subscribe(acc.metrics.width, acc.metrics.height, \wd, hgt -> {
-					nextDistinct(wh, WidthHeight(wd, hgt));
-					nextDistinct(form, FRectangle(wd, hgt, interactiveRectangleStyle))
-				})()
-			]
-		)
-	})
-}
-
-TAcc2SizeAttachThrottle(acc : TAcc, wh : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Tropic {
-	TNative(\__, __ -> {
-		form = make(FEmpty());
-
-		TAcc(
-			FMutable(form),
-			acc.metrics,
-			acc.minWidth,
-			acc.minHeight,
-			acc.maxWidth,
-			acc.maxHeight,
-			acc.xFillers,
-			acc.yFillers,
-			acc.addFillers,
-			acc.xConstant,
-			acc.yConstant,
-			[
-				makeSubscribe(fthrottle2(fwidthheight(acc.metrics.width, acc.metrics.height), maxDelta), \met -> {
-					nextDistinct(wh, met);
-					nextDistinct(form, FRectangle(met.width, met.height, interactiveRectangleStyle))
-				})()
-			]
-		)
+		TAcc(acc with form = f, disposers = [])
 	})
 }
 
 TCopySize(content : Tropic, copyFn : (Tropic) -> Tropic, above : bool) -> Tropic {
 	TransformTAcc2(\t2a -> {
-			b1 = content |> t2a;
-			tr = TAcc2Size(b1);
-			b2 = copyFn(tr) |> t2a;
+		b1 = content |> t2a;
+		tr = TAcc2Size(b1);
+		b2 = copyFn(tr) |> t2a;
 
-			TAcc(
-				FGroup([
-					b1.form,
-					b2.form
-				] |> (\f : [FForm] -> if (above) f else reverseA(f)), true),
-				b1.metrics,
-				b1.minWidth,
-				b1.minHeight,
-				b1.maxWidth,
-				b1.maxHeight,
-				b1.xFillers,
-				b1.yFillers,
-				b1.addFillers,
-				b1.xConstant,
-				b1.yConstant,
-				concat(b1.disposers, b2.disposers)
-			)
-		}
-	)
+		TAcc(b1 with
+			form = FGroup([
+				b1.form,
+				b2.form
+			] |> (\f : [FForm] -> if (above) f else reverseA(f)),
+			true),
+			disposers = concat(b1.disposers, b2.disposers)
+		)
+	})
 }
 
 TCopySize2(content : Tropic, copyFn : (Tropic, Tropic) -> Tropic) -> Tropic {
@@ -1273,34 +1219,19 @@ TCopySize2(content : Tropic, copyFn : (Tropic, Tropic) -> Tropic) -> Tropic {
 
 			b1 = t2a(content, parentInfo, sheet, mo);
 			tr = TAcc2Size(b1);
-			b2 =
-				t2a(
-					copyFn(
-						tr,
-						TransformTAcc(\t2a2, pi2, sheet2, mo2 -> {
-							next(innerParentInfo, pi2);
 
-							b1;
-						})
-					),
-					pi,
-					sheet,
-					mo
-				);
+			t2a(
+				copyFn(
+					tr,
+					TransformTAcc(\t2a2, pi2, sheet2, mo2 -> {
+						next(innerParentInfo, pi2);
 
-			TAcc(
-				b2.form,
-				b2.metrics,
-				b2.minWidth,
-				b2.minHeight,
-				b2.maxWidth,
-				b2.maxHeight,
-				b2.xFillers,
-				b2.yFillers,
-				b2.addFillers,
-				b2.xConstant,
-				b2.yConstant,
-				b2.disposers
+						b1;
+					})
+				),
+				pi,
+				sheet,
+				mo
 			)
 		}
 	)
@@ -1335,6 +1266,14 @@ TBaseline(baseline : Transform<double>, content : Tropic) -> Tropic {
 TFullScreen(fs : DynamicBehaviour<bool>, tr : Tropic) -> Tropic {
 	fw = make(false);
 
+	changeFullscreen = \fsc -> {
+		toggleFullScreen(fsc);
+
+		// For targets without fullscreen available
+		if (targetNoFullscreen())
+			nextDistinct(fw, fsc);
+	}
+
 	TConstruct(
 		[
 			\ -> \ -> if (getValue(fs)) {
@@ -1344,13 +1283,11 @@ TFullScreen(fs : DynamicBehaviour<bool>, tr : Tropic) -> Tropic {
 				nextDistinct(fs, change);
 				nextDistinct(fw, change);
 			}),
-			\ -> subscribe(fs, \fsc -> {
-				toggleFullScreen(fsc);
-
-				// For targets without fullscreen available
-				if (targetNoFullscreen())
-					nextDistinct(fw, fsc);
-			})
+			\ -> {
+				if (getValue(fs)) changeFullscreen(true);
+				nop;
+			},
+			\ -> subscribe2(fs, changeFullscreen)
 		],
 		TFullWindow(fw, tr)
 	);
@@ -1461,149 +1398,40 @@ TAttachBox2(t : Tropic, box : DynamicBehaviour<WidthHeight>, content : Tropic) -
 		b1 = t |> t2a;
 		b2 = content |> t2a;
 
-		TAcc(
-			b2.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			concat(arrayPush(b1.disposers, fconnect(fwidthheight(b1.metrics.width, b1.metrics.height), box)), b2.disposers)
-		)
+		disp =
+			concat(arrayPush(b1.disposers, fconnect(fwidthheight(b1.metrics.width, b1.metrics.height), box)), b2.disposers);
+
+		TAcc(b1 with form = b2.form, disposers = disp)
 	})
 }
 
 TAttachBox(t : Tropic, box : DynamicBehaviour<WidthHeight>) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b1 = t |> t2a;
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			concatA([
-				b1.disposers, [
-					fconnectSelect(b1.metrics.width, box, \w -> WidthHeight(w, getValue(box).height)),
-					fconnectSelect(b1.metrics.height, box, \h -> WidthHeight(getValue(box).width, h))
-				]])
-		)
-	})
+	TInspect([ISize(box)], t)
 }
 
 TAttachWidth(t : Tropic, width : DynamicBehaviour<double>) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b1 = t |> t2a;
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(b1.metrics.width, width))
-		)
-	})
+	TInspect([Width(width)], t)
 }
 
 TAttachMinWidth(t : Tropic, minWidth : DynamicBehaviour<double>) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = t |> t2a;
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(b1.minWidth, minWidth))
-		)
+		disp = arrayPush(b1.disposers, fconnect(b1.minWidth, minWidth));
+		TAcc(b1 with disposers = disp)
 	})
 }
 
 TAttachHeight(t : Tropic, height : DynamicBehaviour<double>) -> Tropic {
-	TransformTAcc2(\t2a -> {
-		b1 = t |> t2a;
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(b1.metrics.height, height))
-		)
-	})
+	TInspect([Height(height)], t)
 }
 
 TAttachHeightTrigger(t : Tropic, height : DynamicBehaviour<double>, trigger : Transform<bool>) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = t |> t2a;
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, makeSubscribeTrigger(trigger, b1.metrics.height, \h -> nextDistinct(height, h))())
-		)
+		disp =
+			arrayPush(b1.disposers, makeSubscribeTrigger(trigger, b1.metrics.height, \h -> nextDistinct(height, h))());
+
+		TAcc(b1 with disposers = disp)
 	})
 }
 
@@ -1612,140 +1440,55 @@ TAttachWidthHeight(
 	width : DynamicBehaviour<double>,
 	height : DynamicBehaviour<double>) -> Tropic {
 
-	TransformTAcc2(\t2a -> {
-		b1 = t |> t2a;
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			concatA([
-				b1.disposers,
-				[
-					fconnect(b1.metrics.width, width),
-					fconnect(b1.metrics.height, height)
-				]
-			])
-		)
-	})
+	TInspect([Width(width), Height(height)], t)
 }
 
 TAttachBoxThrottle(t : Tropic, box : DynamicBehaviour<WidthHeight>, maxDelta : int) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b1 = t |> t2a;
 
+		disp =
+			arrayPush(b1.disposers, fconnect(fthrottle2(fwidthheight(b1.metrics.width, b1.metrics.height), maxDelta), box));
+
+		TAcc(b1 with disposers = disp)
+	})
+}
+
+TThrottleMetrics(t : Tropic, maxDelta : int) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b1 = t |> t2a;
+
 		TAcc(
 			b1.form,
 			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
+				fthrottle2(b1.metrics.width, maxDelta),
+				fthrottle2(b1.metrics.height, maxDelta),
+				fthrottle2(b1.metrics.baseline, maxDelta)
 			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
+			fthrottle2(b1.minWidth, maxDelta),
+			fthrottle2(b1.minHeight, maxDelta),
+			fthrottle2(b1.maxWidth, maxDelta),
+			fthrottle2(b1.maxHeight, maxDelta),
+			fthrottle2(b1.xFillers, maxDelta),
+			fthrottle2(b1.yFillers, maxDelta),
+			fthrottle2(b1.addFillers, maxDelta),
 			b1.xConstant,
 			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(fthrottle2(fwidthheight(b1.metrics.width, b1.metrics.height), maxDelta), box))
+			b1.disposers
 		)
 	})
 }
 
 TAttachAvailable(t : Tropic, box : DynamicBehaviour<WidthHeight>) -> Tropic {
-	TransformTAcc(\t2a, p, st, m -> {
-		b1 = t2a(t, p, st, m);
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			if (b1.xConstant) b1.maxWidth else const(^tropicFillersMax),
-			if (b1.yConstant) b1.maxHeight else const(^tropicFillersMax),
-			const(b2d(!b1.xConstant)),
-			const(b2d(!b1.yConstant)),
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			concatA([
-				b1.disposers,
-				[
-					fconnectSelect(p.maxX, box, \x -> WidthHeight(x, getValue(box).height)),
-					fconnectSelect(p.maxY, box, \y -> WidthHeight(getValue(box).width, y))
-				]
-			])
-		)
-	})
+	TInspect([IAvailable(box)], t)
 }
 
 TAttachAvailableWidth(t : Tropic, width : DynamicBehaviour<double>) -> Tropic {
-	TransformTAcc(\t2a, p, st, mo -> {
-		b1 = t2a(t, p, st, mo);
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			if (b1.xConstant) b1.minWidth else zero,
-			b1.minHeight,
-			if (b1.xConstant) b1.maxWidth else const(^tropicFillersMax),
-			b1.maxHeight,
-			const(b2d(!b1.xConstant)),
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(p.maxX, width))
-		)
-	})
+	TInspect([AvailableWidth(width)], t)
 }
 
 TAttachAvailableHeight(t : Tropic, height : DynamicBehaviour<double>) -> Tropic {
-	TransformTAcc(\t2a, p, st, mo -> {
-		b1 = t2a(t, p, st, mo);
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			if (b1.yConstant) b1.minHeight else zero,
-			b1.maxWidth,
-			if (b1.yConstant) b1.maxHeight else const(^tropicFillersMax),
-			b1.xFillers,
-			const(b2d(!b1.yConstant)),
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			arrayPush(b1.disposers, fconnect(p.maxY, height))
-		)
-	})
+	TInspect([AvailableHeight(height)], t)
 }
 
 TAttachAvailableWidthHeight(
@@ -1753,34 +1496,7 @@ TAttachAvailableWidthHeight(
 	width : DynamicBehaviour<double> ,
 	height : DynamicBehaviour<double>) -> Tropic {
 
-	TransformTAcc(\t2a, p, st, mo -> {
-		b1 = t2a(t, p, st, mo);
-
-		TAcc(
-			b1.form,
-			TFormMetrics(
-				b1.metrics.width,
-				b1.metrics.height,
-				b1.metrics.baseline
-			),
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			if (b1.yConstant) b1.maxHeight else const(^tropicFillersMax),
-			b1.xFillers,
-			const(b2d(!b1.yConstant)),
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			concatA([
-				b1.disposers,
-				[
-					fconnect(p.maxX, width),
-					fconnect(p.maxY, height)
-				]
-			])
-		)
-	})
+	TInspect([AvailableWidth(width), AvailableHeight(height)], t)
 }
 
 TProportionGrid(c : [[Pair<Transform<Factor>, Tropic>]]) -> Tropic {
@@ -1789,23 +1505,10 @@ TProportionGrid(c : [[Pair<Transform<Factor>, Tropic>]]) -> Tropic {
 			TransformTAcc2(\t2a -> {
 					b1 = t.second |> t2a;
 
-					TAcc(
-						b1.form,
-						TFormMetrics(
-							b1.metrics.width,
-							b1.metrics.height,
-							b1.metrics.baseline
-						),
-						b1.minWidth,
-						b1.minHeight,
-						b1.maxWidth,
-						b1.maxHeight,
-						fselect(t.first, FLift(\fc -> fc.x)),
-						fselect(t.first, FLift(\fc -> fc.y)),
-						const(false),
-						b1.xConstant,
-						b1.yConstant,
-						b1.disposers
+					TAcc(b1 with
+						xFillers = ffactorX(t.first),
+						yFillers = ffactorY(t.first),
+						addFillers = const(false),
 					)
 				}
 			)
@@ -1819,23 +1522,10 @@ TProportionLines(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
 		TransformTAcc2(\t2a -> {
 				b1 = t.second |> t2a;
 
-				TAcc(
-					b1.form,
-					TFormMetrics(
-						b1.metrics.width,
-						b1.metrics.height,
-						b1.metrics.baseline
-					),
-					b1.minWidth,
-					b1.minHeight,
-					b1.maxWidth,
-					b1.maxHeight,
-					b1.xFillers,
-					t.first,
-					const(false),
-					false,
-					b1.yConstant,
-					b1.disposers
+				TAcc(b1 with
+					yFillers = t.first,
+					addFillers = const(false),
+					xConstant = false,
 				)
 			}
 		)
@@ -1848,23 +1538,10 @@ TProportionCols(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
 		TransformTAcc2(\t2a -> {
 				b1 = t.second |> t2a;
 
-				TAcc(
-					b1.form,
-					TFormMetrics(
-						b1.metrics.width,
-						b1.metrics.height,
-						b1.metrics.baseline
-					),
-					b1.minWidth,
-					b1.minHeight,
-					b1.maxWidth,
-					b1.maxHeight,
-					t.first,
-					b1.yFillers,
-					const(false),
-					false,
-					b1.yConstant,
-					b1.disposers
+				TAcc(b1 with
+					xFillers = t.first,
+					addFillers = const(false),
+					xConstant = false,
 				)
 			}
 		)
@@ -1877,23 +1554,10 @@ TProportionColsA(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
 		TransformTAcc2(\t2a -> {
 				b1 = t.second |> t2a;
 
-				TAcc(
-					b1.form,
-					TFormMetrics(
-						b1.metrics.width,
-						b1.metrics.height,
-						b1.metrics.baseline
-					),
-					b1.minWidth,
-					b1.minHeight,
-					b1.maxWidth,
-					b1.maxHeight,
-					t.first,
-					b1.yFillers,
-					const(false),
-					false,
-					b1.yConstant,
-					b1.disposers
+				TAcc(b1 with
+					xFillers = t.first,
+					addFillers = const(false),
+					xConstant = false,
 				)
 			}
 		)
@@ -1902,66 +1566,87 @@ TProportionColsA(c : [Pair<Transform<double>, Tropic>]) -> Tropic {
 }
 
 TAvailableWidth(tr : Tropic, available : Transform<double>) -> Tropic {
-	TransformTAcc(\t2a, pi, st, mo -> {
-		b = t2a(tr, TParentInfo(available, pi.maxY, pi.environment, pi.transformMatrix, pi.worldVisible, pi.viewBounds), st, mo);
-
-		TAcc(
-			b.form,
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
-		)
-	})
+	TransformTAcc(\t2a, pi, st, mo ->
+		t2a(tr, TParentInfo(pi with maxX = available), st, mo)
+	)
 }
 
 TAvailableHeight(tr : Tropic, available : Transform<double>) -> Tropic {
-	TransformTAcc(\t2a, pi, st, mo -> {
-		b = t2a(tr, TParentInfo(pi.maxX, available, pi.environment, pi.transformMatrix, pi.worldVisible, pi.viewBounds), st, mo);
-
-		TAcc(
-			b.form,
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
-		)
-	})
+	TransformTAcc(\t2a, pi, st, mo ->
+		t2a(tr, TParentInfo(pi with maxY = available), st, mo)
+	)
 }
 
 TAvailableWidthHeight(tr : Tropic, availableW : Transform<double>, availableH : Transform<double>) -> Tropic {
-	TransformTAcc(\t2a, pi, st, mo -> {
-		b = t2a(tr, TParentInfo(availableW, availableH, pi.environment, pi.transformMatrix, pi.worldVisible, pi.viewBounds), st, mo);
+	TransformTAcc(\t2a, pi, st, mo ->
+		t2a(tr, TParentInfo(pi with maxX = availableW, maxY = availableH), st, mo)
+	)
+}
 
-		TAcc(
-			b.form,
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
-		)
-	})
+TAlignHorizontal(align : CommonAlignment) -> (Tropic) -> Tropic {
+	switch (align : CommonAlignment) {
+		StartAlign() : TAlignStart;
+		EndAlign() : TAlignEnd;
+		LeftAlign() : TAlignLeft;
+		RightAlign() : TAlignRight;
+		CenterAlign() : \t -> TTweak([TAlign(const(0.5), const(0.0))], t, TFillX());
+	}
+}
+
+TAlignStart(t : Tropic) -> Tropic {
+	if (getDefaultRtl()) TAlignRight(t) else t
+}
+
+TAlignEnd(t : Tropic) -> Tropic {
+	if (!getDefaultRtl()) TAlignRight(t) else t
+}
+
+TAlignLeft(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(0.0))], t, TFillX())
+}
+
+TAlignTop(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(0.0))], t, TFillY())
+}
+
+TAlignRight(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(1.0), const(0.0))], t, TFillX())
+}
+
+TAlignBottom(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(1.0))], t, TFillY())
+}
+
+TAlignTopLeft(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(0.0))], t, TFillXY())
+}
+
+TAlignTopCenter(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.5), const(0.0))], t, TFillXY())
+}
+
+TAlignTopRight(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(1.0), const(0.0))], t, TFillXY())
+}
+
+TAlignCenterRight(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(1.0), const(0.5))], t, TFillXY())
+}
+
+TAlignBottomRight(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(1.0), const(1.0))], t, TFillXY())
+}
+
+TAlignBottomCenter(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.5), const(1.0))], t, TFillXY())
+}
+
+TAlignBottomLeft(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(1.0))], t, TFillXY())
+}
+
+TAlignCenterLeft(t : Tropic) -> Tropic {
+	TTweak([TAlign(const(0.0), const(0.5))], t, TFillXY())
 }
 
 TBorderTop(border : double) -> (Tropic) -> Tropic {
@@ -2036,7 +1721,7 @@ TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeig
 		b1 = tr |> t2a;
 		wh = fwidthheight(b1.metrics.width, b1.metrics.height);
 
-		TAcc(
+		TAcc(b1 with form =
 			FDecorator(
 				b1.form,
 				map(decorators, \d -> {
@@ -2046,18 +1731,7 @@ TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeig
 					)
 				}),
 				above
-			),
-			b1.metrics,
-			b1.minWidth,
-			b1.minHeight,
-			b1.maxWidth,
-			b1.maxHeight,
-			b1.xFillers,
-			b1.yFillers,
-			b1.addFillers,
-			b1.xConstant,
-			b1.yConstant,
-			b1.disposers
+			)
 		)
 	})
 }
@@ -2072,23 +1746,12 @@ TDebugMetrics(c : int, tr : Tropic) -> Tropic {
 	TransformTAcc2(\t2a -> {
 		b = TDebug(c, tr) |> t2a;
 
-		TAcc(
+		TAcc(b with form =
 			FGroup2(
 				FMutable(fselect2(b.metrics.width, b.metrics.height, FLift2(\wd, hgt -> FText(d2s(wd) + "x" + d2s(hgt), [])))),
 				b.form,
 				false
-			),
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
+			)
 		)
 	})
 }
@@ -2097,7 +1760,7 @@ TDebugPositionScale(c : int, tr : Tropic) -> Tropic {
 	TransformTAcc(\t2a, pi, ss, mo -> {
 		b = t2a(TDebug(c, tr), pi, ss, mo);
 
-		TAcc(
+		TAcc(b with form =
 			FConstructor(
 				b.form,
 				makeSubscribeUns(fapplytransform(fwidthheight(b.metrics.width, b.metrics.height), pi.transformMatrix), \vb -> {
@@ -2112,18 +1775,7 @@ TDebugPositionScale(c : int, tr : Tropic) -> Tropic {
 						)
 					]
 				})
-			),
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
+			)
 		)
 	})
 }
@@ -2132,7 +1784,7 @@ TDebugViewBounds(c : int, tr : Tropic) -> Tropic {
 	TransformTAcc(\t2a, pi, ss, mo -> {
 		b = t2a(tr, pi, ss, mo);
 
-		TAcc(
+		TAcc(b with form =
 			FConstructor(
 				b.form,
 				makeSubscribeUns(pi.viewBounds, \vb -> {
@@ -2147,18 +1799,7 @@ TDebugViewBounds(c : int, tr : Tropic) -> Tropic {
 						)
 					]
 				})
-			),
-			b.metrics,
-			b.minWidth,
-			b.minHeight,
-			b.maxWidth,
-			b.maxHeight,
-			b.xFillers,
-			b.yFillers,
-			b.addFillers,
-			b.xConstant,
-			b.yConstant,
-			b.disposers
+			)
 		)
 	})
 }
@@ -2393,6 +2034,33 @@ distributeSizesEvenly2(minWidths : [double], maxWidths : [double], columnWidths0
 		columnWidths0
 }
 
+TConstructRenderable(constructors : [() -> () -> void], tr : Tropic) -> Tropic {
+	TransformTAcc(\t2a, pi, ss, mo -> {
+		b = t2a(tr, pi, ss, mo);
+
+		TAcc(
+			FDecorator(
+				b.form,
+				[
+					Pair(pi.worldVisible, \ -> FConstruct(constructors, FEmpty()))
+				],
+				true
+			),
+			b.metrics,
+			b.minWidth,
+			b.minHeight,
+			b.maxWidth,
+			b.maxHeight,
+			b.xFillers,
+			b.yFillers,
+			b.addFillers,
+			b.xConstant,
+			b.yConstant,
+			b.disposers
+		)
+	})
+}
+
 wh2Tropic(wh : WidthHeight) -> Tropic {
 	if (wh.width >= 0.) {
 		if (wh.height >= 0.)
@@ -2403,4 +2071,179 @@ wh2Tropic(wh : WidthHeight) -> Tropic {
 		TFillXH(wh.height)
 	else
 		TFillXY();
+}
+
+TZoomMax(tr : Tropic, maxWH : Transform<WidthHeight>) -> Tropic {
+	availableWH = makeWH();
+	scaleFactor = fselect2(availableWH, maxWH, FLift2(\awh, mwh -> max3(awh.width / mwh.width, awh.height / mwh.height, 1.0)));
+
+	TScale(ffactor2(scaleFactor), tr)
+	|> (\f -> TAttachAvailable(f, availableWH))
+}
+
+TZoomMaxWidth(tr : Tropic, maxWidth : Transform<double>) -> Tropic {
+	availableX = make(0.0);
+	scaleFactor = fmax(fdivide(availableX, maxWidth), const(1.0));
+
+	TScale(ffactor2(scaleFactor), tr)
+	|> (\f -> TAttachAvailableWidth(f, availableX))
+}
+
+TZoomMaxHeight(tr : Tropic, maxHeight : Transform<double>) -> Tropic {
+	availableY = make(0.0);
+	scaleFactor = fmax(fdivide(availableY, maxHeight), const(1.0));
+
+	TScale(ffactor2(scaleFactor), tr)
+	|> (\f -> TAttachAvailableHeight(f, availableY))
+}
+
+disableMouseWheelBelow(content : Tropic) -> Tropic {
+	if (mobile)
+		content
+	else {
+		TInteractive(
+			[
+				FineGrainMouseWheel2(\__, mi -> mi().inside)
+			],
+			content
+		)
+	}
+}
+
+disableInteractivesBelow(content : Tropic) -> Tropic {
+	TCopySize(
+		content,
+		\tr ->
+			TInteractive(
+				[
+					MouseDown(\mi -> mi.inside()),
+					MouseUp(\mi -> mi().inside),
+					MouseMove(\mi -> mi().inside),
+					RollOver(nop1),
+					RollOut(nop1)
+				],
+				TRectangle(interactiveRectangleStyle, tr)
+			),
+		false
+	)
+}
+
+TCheckeredRectangle(style1 : [TGraphicsStyle], style2 : [TGraphicsStyle], content : Tropic) -> Tropic {
+	size = makeWH();
+
+	TGroup2(
+		TInspect([ISize(size)], content),
+		TCropSize(
+			TSized(size),
+			TFrame(
+				0.,
+				0.,
+				style1,
+				TSelect(size, \s -> {
+					generate(0, ceil(s.width / 10.0), \i -> {
+						generate(0, ceil(s.height / 10.0), \j -> {
+							if ((i + j) % 2 == 0)
+								TGraphics([GRect(i2d(i * 10), i2d(j * 10), 10.0, 10.0)], style2)
+							else
+								TEmpty()
+						})
+					})
+					|> concatA
+					|> TGroup
+				})
+			)
+		)
+	);
+}
+
+TCheckeredRounded(
+	nw : double,
+	ne : double,
+	lw : double,
+	le : double,
+	style1 : [TGraphicsStyle],
+	style2 : [TGraphicsStyle],
+	content : Tropic
+) -> Tropic {
+	size = makeWH();
+
+	TGroup2(
+		TInspect([ISize(size)], content),
+		TMask(
+			TFrame(
+				0.,
+				0.,
+				style1,
+				TSelect(size, \s -> {
+					generate(0, ceil(s.width / 10.0), \i -> {
+						generate(0, ceil(s.height / 10.0), \j -> {
+							if ((i + j) % 2 == 0)
+								TGraphics([GRect(i2d(i * 10), i2d(j * 10), 10.0, 10.0)], style2)
+							else
+								TEmpty()
+						})
+					})
+					|> concatA
+					|> TGroup
+				})
+			),
+			TRounded(nw, ne, lw, le, [Fill(white)], TSized(size))
+		)
+	);
+}
+
+TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic {
+	// Qt target on OSX returns the scroll in pixels, so we scale it by 80.
+	scrollScale = if (qt && macosx()) 80. else 1.;
+
+	if (mobile)
+		content
+	else {
+		zorder = ref getValue(manager.zorder);
+
+		TConstruct(
+			[
+				\ -> {
+					zorder := getValue(manager.zorder);
+					nop
+				}
+			],
+			TInteractive(
+				[
+					FineGrainMouseWheel2(\h, mi ->
+						if (!h && ^zorder >= getValue(manager.zorder)) {
+							m = mi();
+
+							if (m.inside && (m.dx != 0. || m.dy != 0.)) {
+								dx = deltaX(m.dx / scrollScale);
+								dy = deltaY(m.dy / scrollScale);
+
+								dx || dy
+							} else {
+								h
+							}
+						} else
+							h
+					)
+				],
+				content
+			)
+		)
+	}
+}
+
+T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> Tropic {
+	TFForm(
+		F3DStage(
+			wh,
+			scene,
+			camera,
+			style
+		),
+		TFormMetrics(
+			fwidth(wh),
+			fheight(wh),
+			fheight(wh)
+		)
+	);
 }

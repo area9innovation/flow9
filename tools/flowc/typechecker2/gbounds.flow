@@ -1,0 +1,176 @@
+import tools/flowc/typechecker2/gtype;
+import tools/flowc/typechecker2/grelations;
+
+export {
+	// Extract all the known requirements for this tyvar id
+	buildGTyvarRequirement(env : GEnv, tyvarId : int) -> GTyvarRequirements;
+
+	// The total set of requirements we know about for a given tyvar
+	GTyvarRequirements(
+		tyvars : Set<int>, 
+		lower : GBounds, 
+		upper : GBounds, 
+		errorInfos : Set<GErrorInfo>
+	);
+
+	// The total (lower or upper) bounds of a given tyvar. We can depend on three different things
+	// The tyvars are all known to be unbound.
+	GBounds(
+		hasFlow : bool,
+		tyvars : Set<int>, 
+		fixedTypes : Set<GType>, 
+		named : Set<GNamed>,
+		fields : Set<GField>
+	);
+
+	gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string;
+	gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string;
+}
+
+buildGTyvarRequirement(env : GEnv, tyvarId : int) -> GTyvarRequirements {
+	reqs = buildGTyvarReqForOne(env, tyvarId);
+
+	loopingTyvars = intersectSets(reqs.lower.tyvars, reqs.upper.tyvars);
+
+	// OK, we have a loop of tyvars. In that case, we can
+	// collect the requirements for those tyvars as well, and join them up
+	foldSet(loopingTyvars, reqs, \acc, tv -> {
+		joinGTyvarRequirements(acc, buildGTyvarReqForOne(env, tv))
+	});
+}
+
+buildGTyvarReqForOne(env : GEnv, tyvarId : int) -> GTyvarRequirements {
+	type = GTypeVar(tyvarId);
+
+	lowers = transitiveGLowerRelations(env, env.grelations, type, makeSet());
+	uppers = transitiveGUpperRelations(env, env.grelations, type, makeSet());
+
+	errorInfos = getGErrorInfos(env.grelations, type);
+
+	lowerBounds = foldSet(lowers, emptyGBounds(), \acc : GBounds, gtype : GType -> {
+		addGTypeToGBounds(env, acc, gtype);
+	});
+	upperBounds = foldSet(uppers, emptyGBounds(), \acc : GBounds, gtype : GType -> {
+		addGTypeToGBounds(env, acc, gtype);
+	});
+
+	GTyvarRequirements(makeSet1(tyvarId), lowerBounds, upperBounds, errorInfos);
+}
+
+joinGTyvarRequirements(left : GTyvarRequirements, right : GTyvarRequirements) -> GTyvarRequirements {
+	tyvars = mergeSets(left.tyvars, right.tyvars);
+
+	GTyvarRequirements(
+		tyvars, 
+		removeGBoundsTyvars(joinGBounds(left.lower, right.lower), tyvars),
+		removeGBoundsTyvars(joinGBounds(left.upper, right.upper), tyvars),
+		mergeSets(left.errorInfos, right.errorInfos)
+	);
+}
+
+
+emptyGBounds() -> GBounds {
+	GBounds(false, makeSet(), makeSet(), makeSet(), makeSet())
+}
+
+joinGBounds(left : GBounds, right : GBounds) -> GBounds {
+	GBounds(
+		left.hasFlow || right.hasFlow, 
+		mergeSets(left.tyvars, right.tyvars), 
+		mergeSets(left.fixedTypes, right.fixedTypes), 
+		mergeSets(left.named, right.named),
+		mergeSets(left.fields, right.fields),
+	)
+}
+
+removeGBoundsTyvars(g : GBounds, tyvars : Set<int>) -> GBounds {
+	GBounds(g with tyvars = differenceSets(g.tyvars, tyvars));
+}
+
+addGTypeToGBounds(env : GEnv, acc : GBounds, tt : GType) -> GBounds {
+	fixed = \ -> GBounds(acc with fixedTypes = insertSet(acc.fixedTypes, resolveGType(env, tt)));
+	switch (tt) {
+		GBasicType(t): fixed();
+		GFlow(): GBounds(acc with hasFlow = true);
+		GTypePar(id): fixed();
+		GFunction(args, rt): fixed();
+		GArray(type): fixed();
+		GRef(type): fixed();
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): {
+					GBounds(acc with tyvars = insertSet(acc.tyvars, id));
+				}
+				Some(type): {
+					// If the tyvar is defined, resolve it, and place it where it needs to go
+					addGTypeToGBounds(env, acc, type);
+				}
+			}
+		}
+		GNamed(name, tps): GBounds(acc with named = insertSet(acc.named, GNamed(name, resolveGTypes(env, tps))));
+		GField(name, ftype): GBounds(acc with fields = insertSet(acc.fields, GField(name, resolveGType(env, ftype))));
+	}
+}
+
+
+resolveGType(env : GEnv, tt : GType) -> GType {
+	switch (tt) {
+		GBasicType(t): tt;
+		GFlow(): tt;
+		GTypePar(id): tt;
+		GFunction(args, rt): GFunction(resolveGTypes(env, args), resolveGType(env, rt));
+		GArray(type): GArray(resolveGType(env, type));
+		GRef(type): GRef(resolveGType(env, type));
+		GTypeVar(id): {
+			mtype = lookupTree(env.tyvars, id);
+			switch (mtype) {
+				None(): tt;
+				Some(type): resolveGType(env, type);
+			}
+		}
+		GNamed(name, typars): GNamed(name, resolveGTypes(env, typars));
+		GField(name, type): GField(name, resolveGType(env, type));
+	}
+}
+
+resolveGTypes(env : GEnv, types : [GType]) -> [GType] {
+	map(types, \t -> resolveGType(env, t));
+}
+
+gtyvarReqs2string(env : GEnv, req : GTyvarRequirements) -> string {
+	deps = foldSet(req.tyvars, makeSet(), \acc, tv -> {
+		mergeSets(acc, lookupMultimap(env.grelations.parentDeps, tv))
+	});
+	gbounds2string(env, req.lower) + " c= " + superglue(set2array(req.tyvars), \tyvar -> "α" + i2s(tyvar), ", ") 
+	+ " c= " + gbounds2string(env, req.upper)
+	+ " (parent: " + superglue(set2array(deps), \t -> gtype2string(env, t), ",") + ")"
+}
+
+gtyvarReqs2stringNice(env : GEnv, req : GTyvarRequirements) -> string {
+	lb = gbounds2stringNice(env, req.lower);
+	ub = gbounds2stringNice(env, req.upper);
+	(if (lb == "") lb else "has " + lb)
+	+ (if (lb != "" && ub != "") " and " else "")
+	+ (if (ub == "") ub else "is subtype of " + ub)
+}
+
+gbounds2string(env : GEnv, g : GBounds) -> string {
+	"{"
+	+ (if (g.hasFlow) " flow " else "")
+	+ superglue(set2array(g.tyvars), \tv -> "α" + i2s(tv), ", ")
+	+ " : " + superglue(set2array(g.fixedTypes), \t -> gtype2string(env, t), ", ")
+	+ " : " + superglue(set2array(g.named), \st -> gtype2string(env, st), ", ")
+	+ " : " + superglue(set2array(g.fields), \st -> gtype2string(env, st), ", ")
+	+ "}"
+}
+
+gbounds2stringNice(env : GEnv, g : GBounds) -> string {
+	strGlue(concatA([
+		if (g.hasFlow) ["flow"] else [],
+		map(set2array(g.fixedTypes), \t -> gtype2string(env, t)),
+		map(set2array(g.named), \st -> gtype2string(env, st)),
+		map(set2array(g.fields), \st -> gtype2string(env, st))
+		]
+	), ", ")
+}

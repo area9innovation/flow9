@@ -8,6 +8,7 @@ import tools/flowc/flowc_find;
 import tools/flowc/flowc_usage;
 import tools/flowc/flowc_version;
 import tools/flowc/flowc_rename;
+import tools/flowc/flowc_outline;
 import tools/flowc/backends/build;
 import tools/flowc/manipulation/deadcode;
 import tools/flowc/manipulation/find_unused;
@@ -15,6 +16,7 @@ import tools/flowc/manipulation/cse;
 import tools/flowc/manipulation/cse_global;
 import tools/flowc/manipulation/lint;
 import tools/flowc/manipulation/xliff;
+import tools/common/logging;
 
 // We do not want that old peg compiler
 forbid lingo/pegcode/grammar2code;
@@ -30,7 +32,9 @@ fcCompileUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : 
 		fcPrintln("Testing " + file);
 		starttime = timestamp();
 
-		fcCompile(updateJsConfig(config, file), globEnv, file, \e -> {
+		config1 = CompilerConfig(updateJsConfig(config, file) with flowfile = file);
+
+		fcCompile(config1, globEnv, \e -> {
 			fcPrintln(d2st((timestamp() - starttime) / 1000.0, 2) + "s\n");
 		});
 	}
@@ -54,7 +58,7 @@ fcCompileUnittests(config : CompilerConfig, globEnv : FcTypeEnvGlobal, folder : 
 	showStopper(0);
 }
 
-fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, inputFile : string, showStopper : (int) -> void) -> void {
+fcCompile(config : CompilerConfig, globEnv : FcTypeEnvGlobal, showStopper : (int) -> void) -> void {
 	forceBuild = isConfigParameterTrue(config.config, "force-build");
 	ensureIncrementalDirectoryExists(config);
 	parsedAndChecked = parseAndTypecheckFlowFile(config, globEnv, config.flowfile);
@@ -239,8 +243,12 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 		if (file == "") {
 			unittests = getConfigParameter(config.config, "unittests");
 			if (unittests == "") {
-				printUsage(config);
-				showStopper(2);
+				if (!isConfigParameterTrue(config.config, "server-shutdown")) {
+					printUsage(config);
+					showStopper(2);
+				} else {
+					fcPrintln("no flowc server is running");
+				}
 			} else {
 				ut = if (unittests == "1") "tools/flowc/tests" else unittests;
 				fcCompileUnittests(config, globalEnv, ut, showStopper);
@@ -264,8 +272,10 @@ runConfigLocally(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComp
 				findUses = getConfigParameter(config.config, "find-uses");
 				if (findUses != "") {
 					fcFindUses(config, globalEnv, findUses, showStopper);
+				} else if (isConfigParameterTrue(config.config, "print-outline")) {
+					fcPrintOutline(config, globalEnv, showStopper);
 				} else {
-					fcCompile(config, globalEnv, file, showStopper);
+					fcCompile(config, globalEnv, showStopper);
 				}
 			}
 		}
@@ -330,6 +340,10 @@ runConfig(config : CompilerConfig, globalEnv : FcTypeEnvGlobal, onRunComplete : 
 	}
 }
 
+fcServerLog(message : string) -> void {
+	writeLogMessage(message, "flowc_server.log", 128)
+}
+
 main() {
 	fcPrintln("Flow compiler (3rd generation)");
 	fcPrintln("");
@@ -369,11 +383,15 @@ main() {
 				port = s2i(getConfigParameter(config.config, "server-port"));
 				server = ref nop;
 				server := createHttpServer(port,
-					\-> fcPrintln("Server started."),
+					\-> {
+						fcServerLog("Server started.");
+						fcPrintln("Server started.")
+					},
 					\request, response -> {
 						clearFcOutput();
 						cf = deserialize(request.body, IllegalStruct());
 						if (cf == IllegalStruct()) {
+							fcServerLog("WARNING: Illegal compilation config.");
 							fcPrintln("WARNING: Illegal compilation config.");
 							response(HttpResponse(400, fcOutput(), []));
 						} else {
@@ -386,11 +404,22 @@ main() {
 								fcPrintln("Server stopped.");
 								HttpResponse(200, fcOutput(), []) |> response;
 								//^server();  // TODO: why calling ^server(); causes freezing of flowc?
-								timer(100, \-> quit(0));
+								timer(200, \-> {
+									fcServerLog("Server stopped.");
+									quit(0)
+								});
 							} else {
 								code = ref 0;
+								start_time = timestamp();
+								conf_str = foldTree(compilerConfigToTree(conf), "",
+									\key, val, acc -> acc + " " + key + (if (val != "") "=" + val else "")
+								);
+								fcServerLog("Processing request: <" + conf_str + " >");
 								fcPrintln("Processing '" + conf.flowfile + "' on server.");
-								runConfigLocally(conf, globalEnv, \c -> code := c);
+								runConfigLocally(conf, globalEnv, \c -> {
+									fcServerLog("Request processing finished in " + d2st((timestamp() - start_time) / 1000.0, 2) + " s.");
+									code := c
+								});
 								HttpResponse(200 + ^code, fcOutput(), []) |> response;
 							}
 						}

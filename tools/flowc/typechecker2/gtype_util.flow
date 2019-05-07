@@ -1,0 +1,147 @@
+import tools/flowc/typechecker2/gtype;
+import tools/flowc/prettyprint;
+
+export {
+	mkGTypeVar(env : GEnv) -> GTypeVar;
+	
+	gtype2string(env : GEnv, type : GType) -> string;
+
+	instantiateGTypePars(env : GEnv, typars : Tree<string, GType>, type : GType, onError : (string) -> void) -> GType;
+
+	extractGTypePars(env : GEnv, type : GType, acc : Set<string>) -> Set<string>;
+
+	// Is this unique? fields are not considered decided. namedDecided determines whether a name is decided or not
+	isGTypeDecided(env : GEnv, type : GType, namedDecided : bool) -> bool;
+
+	// Extract unbound typevars
+	extractGTypeVars(env : GEnv, type : GType, acc : Set<int>) -> Set<int>;
+
+	getGDescriptions(errorInfos : Set<GErrorInfo>) -> string;
+}
+
+mkGTypeVar(env : GEnv) -> GTypeVar {
+	GTypeVar(nextUniqueId(env.tyvarIdGroup));
+}
+
+gtype2string(env : GEnv, type : GType) -> string {
+	doGtype2string(env, type, makeSet());
+}
+
+doGtype2string(env : GEnv, type : GType, seen : Set<int>) -> string {
+	pt = \t -> prettyFcType(FcPretty(false, false, ^(env.env.local.tyvars), ^(env.env.local.typars)), t, makeSet());
+	switch (type) {
+		GFlow(): "flow";
+		GTypeVar(id): {
+			alpha = "α" + i2s(id);
+			if (containsSet(seen, id)) alpha
+			else {
+				switch (lookupTree(env.tyvars, id)) {
+					None(): alpha;
+					Some(rt): if (env.verbose > 1) alpha + " (=" + doGtype2string(env, rt, insertSet(seen, id)) + ")" else doGtype2string(env, rt, insertSet(seen, id));
+				}
+			};
+		}
+		GTypePar(id): id;
+		GFunction(args, rt): {
+			"(" + superglue(args, \a -> doGtype2string(env, a, seen), ", ") + ") -> " + doGtype2string(env, rt, seen);
+		}
+		GArray(at): {
+			 "[" + doGtype2string(env, at, seen) + "]";
+		}
+		GRef(read): {
+			 "ref " + doGtype2string(env, read, seen);
+		}
+		GBasicType(tt): pt(tt);
+		GNamed(name, tps): {
+			name + (if (tps == []) "" else "<" + superglue(tps, \a -> doGtype2string(env, a, seen), ", ") + ">");
+		}
+		GField(name, ftype): "(." + name + ":" + doGtype2string(env, ftype, seen) + ")";
+	}
+}
+
+instantiateGTypePars(env : GEnv, typars : Tree<string, GType>, type : GType, onError : (string) -> void) -> GType {
+	switch (type) {
+		GBasicType(t): type;
+		GFlow(): type;
+		GTypePar(id): lookupTreeDef(typars, id, type);
+		GFunction(args, rt): {
+			GFunction(instantiateGTypesPars(env, typars, args, onError), instantiateGTypePars(env, typars, rt, onError))
+		}
+		GArray(atype): GArray(instantiateGTypePars(env, typars, atype, onError));
+		GRef(rtype): GRef(instantiateGTypePars(env, typars, rtype, onError));
+		GTypeVar(id): type;
+		GNamed(name, ntypars): GNamed(name, instantiateGTypesPars(env, typars, ntypars, onError));
+		GField(name, ftype): GField(name, instantiateGTypePars(env, typars, ftype, onError));
+	}
+}
+
+instantiateGTypesPars(env : GEnv, typars : Tree<string, GType>, types : [GType], onError : (string) -> void) -> [GType] {
+	map(types, \t -> {
+		instantiateGTypePars(env, typars, t, onError)
+	})
+}
+
+extractGTypePars(env : GEnv, type : GType, acc : Set<string>) -> Set<string> {
+	switch (type) {
+		GBasicType(t): acc;
+		GFlow(): acc;
+		GTypePar(id): insertSet(acc, id);
+		GFunction(args, rt): extractGTypePars2(env, args, extractGTypePars(env, rt, acc));
+		GArray(atype): extractGTypePars(env, atype, acc);
+		GRef(atype): extractGTypePars(env, atype, acc);
+		GTypeVar(id): acc;
+		GNamed(name, typars): extractGTypePars2(env, typars, acc);
+		GField(name, ftype): extractGTypePars(env, ftype, acc);
+	}
+}
+
+extractGTypePars2(env : GEnv, types : [GType], acc : Set<string>) -> Set<string> {
+	fold(types, acc, \acc2, t -> extractGTypePars(env, t, acc2))
+}
+
+extractGTypeVars(env : GEnv, type : GType, acc : Set<int>) -> Set<int> {
+	switch (type) {
+		GBasicType(t): acc;
+		GFlow(): acc;
+		GTypePar(id): acc;
+		GFunction(args, rt): extractGTypeVars2(env, args, extractGTypeVars(env, rt, acc));
+		GArray(atype): extractGTypeVars(env, atype, acc);
+		GRef(atype): extractGTypeVars(env, atype, acc);
+		GTypeVar(id): {
+			if (!containsKeyTree(env.tyvars, id)) {
+				insertSet(acc, id);
+			} else acc;
+		}
+		GNamed(name, typars): extractGTypeVars2(env, typars, acc);
+		GField(name, ftype): extractGTypeVars(env, ftype, acc);
+	}
+}
+
+extractGTypeVars2(env : GEnv, types : [GType], acc : Set<int>) -> Set<int> {
+	fold(types, acc, \acc2, t -> extractGTypeVars(env, t, acc2))
+}
+
+isGTypeDecided(env : GEnv, type : GType, namedDecided : bool) -> bool {
+	switch (type) {
+		GBasicType(t): true;
+		GFlow(): true;
+		GTypePar(id): true;
+		GFunction(args, rt): forall(args, \a -> isGTypeDecided(env, a, namedDecided)) && isGTypeDecided(env, rt, namedDecided);
+		GArray(atype): isGTypeDecided(env, atype, namedDecided);
+		GRef(atype): isGTypeDecided(env, atype, namedDecided);
+		GTypeVar(id): {
+			bt = lookupTree(env.tyvars, id);
+			switch (bt) {
+				None(): false;
+				Some(t): isGTypeDecided(env, t, namedDecided);
+			}
+		}
+		GNamed(name, typars): namedDecided;
+		GField(name, ftype): false;
+	}
+}
+
+getGDescriptions(errorInfos : Set<GErrorInfo>) -> string {
+	descriptions = mapSet(errorInfos, \ei -> ei.description());
+	superglue(set2array(descriptions), idfn, "; ");
+}

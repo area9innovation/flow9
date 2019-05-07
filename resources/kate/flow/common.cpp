@@ -14,8 +14,7 @@ QString curFile(KTextEditor::MainWindow* mainWindow) {
 	return mainWindow->activeView()->document()->url().toLocalFile();
 }
 
-QString curIdentifier(KTextEditor::MainWindow*  mainWindow) {
-	KTextEditor::View* activeView = mainWindow->activeView();
+QString curIdentifier(KTextEditor::View* activeView) {
 	if (!activeView || !activeView->cursorPosition().isValid()) {
 		return QString();
 	}

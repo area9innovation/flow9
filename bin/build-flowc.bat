@@ -36,14 +36,19 @@ goto endif
 
 set JAVAC=%JAVA_HOME%\bin\javac
 set JAR=%JAVA_HOME%\bin\jar
+set JAVA=%JAVA_HOME%\bin\java
 
+set BASE_DIR=%~dp0..\
+
+if exist %BASE_DIR%\tools\flowc\flowc.jar (
+	echo * Stop running flowc server
+	"%JAVA%" -jar %BASE_DIR%\tools\flowc\flowc.jar server-shutdown=1
+)
 
 echo.
 echo Compiling 'Flowc'
 echo =================
 echo.
-
-set BASE_DIR=%~dp0..\
 
 echo * Preparing version information
 echo   -----------------------------

@@ -14,22 +14,24 @@ a `.flow` file) it will check for its updates by looking at package.json in flow
 and prompt user to update. It will also monitor this file for changes. The update procedure 
 itself is automatic as well.
 
-Configure the flow root folder under File->Preferences-Settings, and then "Flow configuration" 
-and change `flow.root` to 
-point to the root of Flow repo (typically `c:\flow9`).
+Configure the flow root folder under File->Preferences->Settings->Extensions->Flow configuration 
+and change `flow.root` to point to the root of the Flow repo (typically `c:\flow9`).
+
+# Useful coding font
 
 Consider to download and install the font "Fira code". Then go to File -> Preferences -> Settings
-Text Editor, Font, change the Font family
-to "Fira code" and make sure "Font Ligatures" is checked.
+Text Editor, Font, change the Font family to "Fira code" and make sure "Font Ligatures" is checked.
 
 https://github.com/tonsky/FiraCode/releases
+
+# Useful extensions
 
 Install these extensions by clicking extentions in the sidebar, and typing these names:
 
 - GitLens
 - Bracket Pair Colorizer 2
 
-Be sure to click the "Spaces: 4" area in the bottom and change to use indentation by Tabs with size 4.
+# Useful settings
 
 To change the tabs and line endings globally, use the following settings:
 ```
@@ -38,7 +40,10 @@ To change the tabs and line endings globally, use the following settings:
         "files.eol": "\n" 
 ```
 You can put it to your user settings (File -> Preferences -> Settings), or to workspace settings.
-Using VS Code Settings UI has the same effect.
+
+You can also consider to turn off File Preview, where files open with italics in the tab, and are lost again
+when another file opens. This is called "Workbench -> Editor -> Enable Preview" in setting, and can be turned
+off if you do not like that behavior.
 
 ## COMMON USAGE
 
@@ -52,7 +57,7 @@ Ctrl+p to open file.
 
 Ctrl+click on compile errors to open at that point.
 
-Double click the name of the file in the file tab to make it stay open.
+Double click the name of the file in the file tab to make it stay open (or turn Preview off).
 
 Ctrl+k o to open the current file in a new window.
 
@@ -73,7 +78,8 @@ A lot of tips: https://medium.freecodecamp.org/here-are-some-super-secret-vs-cod
     3. `flow.compilerBackend` - the backend to use for compiler. Acceptable values are `flowcpp`, `java`, `auto` (default, current best practice), `manual` (verbose command - as specified).
     4. `flow.userCompilerServer` - whether to use or not the compiler server. Only works with `flowc`
     compiler. Defaults to true.
-    4. `flow.projectRoot` - force IDE to use specified path as a project root and resolve all files to run against it when running `flowcpp` command. No need to change this. Use a workspace instead. But can be useful in multi-root workspaces. Meant to be used on workspace or workspace folder level. The value is one of the following:
+	5. `flow.outline` - enables or disables Outline feature
+    6. `flow.projectRoot` - force IDE to use specified path as a project root and resolve all files to run against it when running `flowcpp` command. No need to change this. Use a workspace instead. But can be useful in multi-root workspaces. Meant to be used on workspace or workspace folder level. The value is one of the following:
         * absolute path - use this path as project root
         * name of workspace folder in the workspace - always use specified workspace folder as a project root
         * relative path - treat as relative path to the first workspace folder, use as project root

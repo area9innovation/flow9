@@ -43,7 +43,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Mater
 	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
 	multiSelection = tryExtractStruct(m.style, MMultiSelection(make(makeSet())));
 	itemsLength = tryExtractStruct(m.style, MItemsLength(make(0)));
-	showSeparators = !containsStruct(m.style, MTreeHideSeparators());
+	showSeparators = !contains(m.style, MTreeHideSeparators());
 
 	state =
 		MTreeState(
@@ -152,6 +152,31 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Mater
 	)
 }
 
+hightlightFnDef(short : bool) -> (Transform<WidthHeight>) -> Material {
+	\wh ->
+		if (short)
+			TPadA(16.0, 0.0,
+				TRectangle([MFill(MGrey(200))], TSized(fwidthsubtract(wh, const(32.))))
+			)
+		else
+			TRectangle([MFill(MGrey(200))], TSized(fheightaddition(wh, const(1.5))))
+}
+
+buildIconFnDef(isExpandedB : DynamicBehaviour<bool>, color : MColor) -> Material {
+	MIconToggle(
+		"remove_circle",
+		[MIconSize(16.), FillOpacity(1.), color, MToggleFalseIcon("add_circle", [MIconSize(16.), FillOpacity(1.), color])],
+		[MToggleValue(isExpandedB)]
+	)
+}
+
+buildLineFnDef(contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor) -> Material {
+	TRectangle([MFill(color)], TFillWY(2.))
+	|> (\t -> TBorderA(15., 0., 0., 6., t))
+	|> TAlignStart
+	|> (\t -> TTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), t))
+}
+
 MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState, m : MTreeNode<?>, treeIndex : Transform<[int]>,
 	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
 	children = ffuseinit(m.children, make([]));
@@ -160,32 +185,12 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 	selected = extractStruct(m.style, MSelected(make(false))).selected;
 	focused = extractStruct(m.style, MFocused(make(false))).focused;
 	childSelected = tryExtractStruct(m.style, MChildSelected(make(false)));
+	highlightOnSelect = extractStruct(m.style, MHighlightOnSelect(const(true))).enabled;
 	shortHighlighter = contains(m.style, MShortHighlighter());
-	defaultHightlightFn = \wh -> {
-		if (shortHighlighter)
-			TPadA(16.0, 0.0,
-				TRectangle([MFill(MGrey(200))], TSizedWidthHeight(fsubtract(fwidth(wh), const(32.)), fheight(wh)))
-			)
-		else
-			TRectangle([MFill(MGrey(200))], TSizedWidthHeight(fwidth(wh), faddition(fheight(wh), const(1.5))))
-	}
-	highlightFn = extractStruct(m.style, MTreeNodeCustomHighlighter(defaultHightlightFn)).fn;
 
-	buildDefaultIconFn = \isExpandedB : DynamicBehaviour<bool>, color ->
-		MIconToggle(
-			"remove_circle",
-			[MIconSize(16.), FillOpacity(1.), color, MToggleFalseIcon("add_circle", [MIconSize(16.), FillOpacity(1.), color])],
-			[MToggleValue(isExpandedB)]
-		);
-	buildIconFn = extractStruct(m.style, MTreeNodeCustomIcon(buildDefaultIconFn)).fn;
-
-	buildDefaultLineFn = \contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor ->
-		TRectangle([MFill(color)], TFillWY(2.))
-		|> (\t -> TBorderA(15., 0., 0., 6., t))
-		|> TBaseAlignA
-		|> (\t -> TTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), t));
-
-	buildLineFn = extractStruct(m.style, MTreeNodeCustomLine(buildDefaultLineFn)).fn;
+	highlightFn = extractStruct(m.style, MTreeNodeCustomHighlighter(hightlightFnDef(shortHighlighter))).fn;
+	buildIconFn = extractStruct(m.style, MTreeNodeCustomIcon(buildIconFnDef)).fn;
+	buildLineFn = extractStruct(m.style, MTreeNodeCustomLine(buildLineFnDef)).fn;
 
 	focusState =
 		replaceStructMany(
@@ -201,32 +206,38 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 		);
 
 	contentBoxB = makeWH();
-	
+
 	TLinesA([
-		MComponent2T(manager, parent, "MTreeNode", focusState, \focus ->
-			TDecorator(
-				TAvailable(
-					TColsYCenterA([
-						TVisible(
-							fneq(childrenLength, 0),
-							m2t(buildIconFn(expanded, state.color), focus.parent)
-						),
-						TAttachBox(m2t(m.content2material(m.content), focus.parent), contentBoxB)
-					]),
-					TFillX()
-				),
-				concat(
-					eitherMap(
-						tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
-						\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
-						[]
+		MComponent2T(
+			manager,
+			parent,
+			"MTreeNode",
+			focusState,
+			\focus ->
+				TColsYCenterA([
+					TVisible(
+						fneq(childrenLength, 0),
+						m2t(buildIconFn(expanded, state.color), focus.parent)
 					),
-					[Pair(selected, \wh -> m2t(highlightFn(wh), focus.parent))]
+					TAttachBox(TGroup2(TFillX(), m2t(m.content2material(m.content), focus.parent)), contentBoxB)
+				])
+				|> (\t -> TAvailableHeight(t, const(0.)))
+				|> (\t ->
+					TDecorator(
+						t,
+						concat(
+							eitherMap(
+								tryExtractStruct(m.style, MTreeNodeCustomHighlighterOnHover(\__ -> TEmpty())),
+								\highlightOnHover -> [Pair(focus.hover, \wh -> m2t(highlightOnHover.fn(wh), focus.parent))],
+								[]
+							),
+							[Pair(fand(highlightOnSelect, selected), \wh -> m2t(highlightFn(wh), focus.parent))]
+						),
+						false
+					)
 				),
-				false
-			)
+				m2t
 		),
-		
 		TShowLazy(
 			fand(fneq(childrenLength, 0), expanded),
 			\ ->
@@ -255,15 +266,15 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 						TAvailable(m2t(buildLineFn(contentBoxB, state.color), parent), tr),
 						true
 					))
-				|> (\t -> TAvailable(t, TFillX()))
+				|> (\t -> TAvailableHeight(t, const(0.)))
 		),
 
 		MSeparator2T(manager, parent, true)
 		|> TBorderLeftRight(16.)
 		|> (\t -> TShow(addVerticalSeparator, t))
-		|> TBaseAlignA
+		|> TAlignStart
 	])
-	|> (\treeNode -> TBorderA(if (length(fgetValue(treeIndex)) > 1) 24. else 0., 0., 0., 0., treeNode))
+	|> (\treeNode -> if (length(fgetValue(treeIndex)) > 1) TBorderA(24., 0., 0., 0., treeNode) else treeNode)
 	|> (\treeNode ->
 		TConstruct(
 			[
@@ -334,24 +345,14 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState,
 							nextDistinct(state.selected, removeSet(getValue(state.selected), fgetValue(treeIndex)));
 						}
 				}
-			],
-			treeNode
-		)
-	)
-	|> (\treeNode ->
-		eitherMap(
-			childSelected,
-			\cs ->
-				TConstruct(
-					[
-						\ -> fconnect(
-							fselect2(state.selected, treeIndex, FLift2(\s, i ->
-								foldSet(s, false, \acc, si -> acc || (length(si) > length(i) && subrange(si, 0, length(i)) == i)))),
-							cs.selected
-						)
-					],
-					treeNode
-				),
+			]
+			|> (\arr -> arrayPushMaybe(arr, maybeMap(childSelected, \cs ->
+					\ -> fconnect(
+						fselect2(state.selected, treeIndex, FLift2(\s, i ->
+							foldSet(s, false, \acc, si -> acc || (length(si) > length(i) && subrange(si, 0, length(i)) == i)))),
+						cs.selected
+					)
+				))),
 			treeNode
 		)
 	)

@@ -22,7 +22,7 @@ choice.
 12. [Tools](#tools)
 13. [Profiling](#profiling)
 ## Sample install script
-The `.travis.yml` file at the root level of the Flow repository isused
+The `.travis.yml` file at the root level of the Flow repository is used
 on Travis-CI integration to install and configure Flow’s dependencies,
 build the Flow compiler, and run the flowunit tests suite, all on Ubuntu
 Linux. The commands in this file may be a useful guide for making the
@@ -55,7 +55,7 @@ sudo mysql --user="root" --execute="ALTER USER 'root'@'localhost' IDENTIFIED WIT
 Configure MySQL-server mode:
 ```bash
 printf '[mysqld]
-sql-mode=STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION\n' | sudo tee -a /etc/mysql/my.cnf
+sql-mode=STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER\n' | sudo tee -a /etc/mysql/my.cnf
 ```
 More details on mysql setup can be found in `flow9/doc/mysql.markdown`
 
@@ -71,22 +71,15 @@ sudo update-alternatives --config php
 Install and configure apache2:
 ```bash
 sudo apt install apache2
-printf 'Alias "/flow/" "/home/'$USER'/flow9/www/"
-<Directory /home/'$USER'/flow9/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
-</Directory>
-Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
+printf 'Alias "/todoapp" "/home/'$USER'/area9/todoapp/www2/"
 <Directory /home/'$USER'/area9/todoapp/www2/>
-     Options Indexes FollowSymLinks
-     AllowOverride None
-     Require all granted
+     AllowOverride All
+     Require local
 </Directory>\n' | sudo tee /etc/apache2/conf-available/area9.conf
 sudo a2enconf area9
 sudo service apache2 restart
 ```
-Note, that todoapp is name for application in exercise 9, you can rename it as you wish.
+Note that todoapp is name for application in exercise 9, you can rename it as you wish.
 # Clone the repositories
 If you haven't installed git yet, enter next commands:
 ```bash
@@ -146,7 +139,7 @@ haxelib setup ~/haxelib/lib
 Then install the required libraries:
 ```bash
 haxelib install format
-haxelib install pixijs 4.5.4 #(or a newer 4.5.x edition)
+haxelib install pixijs 4.7.1 #(or a newer edition)
 ```
 # Install `Neko`
 Our build servers use haxe 3.2.1 and neko 2.0.0. Newer versions might
@@ -259,17 +252,17 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/QtByteRunner
-git clone ssh://git@github.com/angavrilov/asmjit.git
+cd $FLOW/platforms/common/cpp
+git clone ssh://git@github.com/area9innovation/asmjit.git
 cd asmjit
 git checkout next
 ```
 Build QtByteRunner:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 ./build.sh # it can return with error 127, but that's expected
 ```
-New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
+New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
@@ -342,7 +335,7 @@ browser and see:
 ```
 
 # Try it (Executed via apache, in browser)
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 # Tools
 The auxiliary tools for Flow include a linter, a code formatter, and a
@@ -353,6 +346,6 @@ They can be run directly using `flow9/bin/lint.sh`.
 These tools are also used by the Sublime Text and Emacs integrations.
 (The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
-The instructions in [development.html](development.html) for using the
+The instructions in [development.markdown](development.markdown) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
 installed.

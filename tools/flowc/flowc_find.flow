@@ -215,7 +215,8 @@ findDefDecl(config : CompilerConfig, globEnv : FcTypeEnvGlobal, file : string, s
 		prepareInitialFlowcAcc(config),
 		makeTree(),
 		\err -> refArrayPush(errors, err),
-		ref 0, ref makeTree()
+		ref 0, ref makeTree(), 
+		emptyGSubtypeGraph()
 	);
 	modules = preloadModules(config, globEnv, file, \err -> refArrayPush(errors, err)); // Skip error messages
 	tenv2 = findDefinitionInFcModules(tenv1, globEnv, modules, symbol, file);
@@ -296,13 +297,13 @@ findDefDeclInFlowcAcc(prog : FlowcAcc, flowfile : string, definition : string) -
 
 			switch (lookupTree(prog.names.structs, definition)) {
 				Some(struct): {
-					printLocation(config, module, struct.info.start, pt(struct)); 
+					printLocation(config, module.fileinfo.fullpath, struct.info.start, pt(struct)); 
 					true
 				}
 				None(): {
 					switch (lookupTree(prog.names.unions, definition)) {
 						Some(union): {
-							printLocation(config, module, union.info.start, pt(union)); 
+							printLocation(config, module.fileinfo.fullpath, union.info.start, pt(union)); 
 							true
 						}
 						None(): 
@@ -317,13 +318,13 @@ findDefDeclInFlowcAcc(prog : FlowcAcc, flowfile : string, definition : string) -
 printDefDeclLocation(config : CompilerConfig, module : FiModule, symbol : string, declInfo : FcInfo, defiInfo : FcInfo, details : string) -> void {
 	typeMessage = nameAndFcType(symbol, either(^(defiInfo.type), either(^(declInfo.type), dummyType))) + details;
 	if (getConfigParameter(config.config, "find-definition") != "") {
-		printLocation(config, module, defiInfo.start, typeMessage);
+		printLocation(config, module.fileinfo.fullpath, defiInfo.start, typeMessage);
 	} else if (getConfigParameter(config.config, "find-declaration") != "") {
-		printLocation(config, module, declInfo.start, typeMessage);
+		printLocation(config, module.fileinfo.fullpath, declInfo.start, typeMessage);
 	} else if (getConfigParameter(config.config, "find-defdecl") != "") {
-		printLocation(config, module, defiInfo.start, typeMessage);
+		printLocation(config, module.fileinfo.fullpath, defiInfo.start, typeMessage);
 		if (defiInfo.start != declInfo.start) {
-			printLocation(config, module, declInfo.start, typeMessage);
+			printLocation(config, module.fileinfo.fullpath, declInfo.start, typeMessage);
 		}
 	} else { 
 		fcPrintln("Something went wrong: this should never happen");
@@ -337,27 +338,15 @@ addFictiveFiModuleFromFcModule(env : FcTypeEnvProgram, module : FcModule) -> FcT
 	acc = env.acc;
 	info = module.fileinfo;
 	FcTypeEnvProgram(
-		FlowcAcc(
-			acc.dependency,
-			acc.preloaded,
-			setTree(acc.modules, module.fileinfo.flowfile, 
-				FiModule(
-					FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, info.filesize, timestamp()), 
-					[], [], [], [], [], [], [], [], [], [], -1, -1
+		env with acc = FlowcAcc(
+			acc with modules = 
+				setTree(acc.modules, module.fileinfo.flowfile, 
+					FiModule(
+						FiFileInfo(info.flowfile, info.trampstamp, info.fullpath, info.md5sum, info.filesize, timestamp()), 
+						[], [], [], [], [], [], [], [], [], [], -1, -1
+					)
 				)
-			),
-			acc.file2flowfile,
-			acc.traversal,
-			acc.names,
-			acc.config, 
-			acc.tyvarIdFactory,
-			acc.tyvarIdGroup,
-			acc.tracer
-		),
-		env.types,
-		env.printError,
-		env.errors,
-		env.union2typenamesCache
+		)
 	)
 }
 
@@ -458,7 +447,7 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 				processed = foldTree(findOccurencesInFiProgram(prog, symbol, kind, ac.first), ac, \module, occurrences, a ->
 					if (containsSet(a.first, module.fileinfo.flowfile)) a else {
 						locations = foldSet(occurrences, a.second, \aa, occ -> 
-							insertSet(aa, makeLocation(config, module, occ, ""))
+							insertSet(aa, makeLocation(config, module.fileinfo.fullpath, occ))
 						);
 						Pair(insertSet(a.first, module.fileinfo.flowfile), locations)
 					}
@@ -467,7 +456,7 @@ fcFindGlobalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 			}
 		}
 	).second;
-	iterSet(locations, \location -> fcPrintln(location));
+	iterSet(locations, \location -> fcPrintln(location + " uses " + symbol));
 }
 
 fcFindModuleUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : string, kind : FcSymbolKind) -> void {
@@ -476,7 +465,7 @@ fcFindModuleUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : st
 	error = prog_error.second;
 	if (error == 0) {
 		traverseInOrder(findOccurencesInFiProgram(prog, symbol, kind, makeSet()), \module, occurrences -> 
-			iterSet(occurrences, \occ -> printLocation(config, module, occ, " uses " + symbol))
+			iterSet(occurrences, \occ -> printLocation(config, module.fileinfo.fullpath, occ, " uses " + symbol))
 		);
 		{}
 	}
@@ -501,7 +490,7 @@ fcFindLocalUses(config : CompilerConfig, globEnv : FcTypeEnvGlobal, symbol : str
 					resolver = makeLineResolver(code);
 					switch (fcFindLocalOccurrences(prog, file, line, col, symbol, kind)) {
 						Some(occurrences): {
-							iterSet(occurrences, \occ -> printLocation(config, module, occ, " uses " + symbol));
+							iterSet(occurrences, \occ -> printLocation(config, module.fileinfo.fullpath, occ, " uses " + symbol));
 						}
 						None(): { }
 					}

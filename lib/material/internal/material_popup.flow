@@ -8,8 +8,8 @@ export {
 		RMLeftAnimation, RMHeight, RMClickOutToClose, RMTranslateAnimation, RMScaleAnimation,
 		RMAlphaAnimation, MSameZorder, RMSameFocus, RMScrollArea, MFixPosition,
 		MBackgroundStyle, // Transparency only works in combination with RMNoShadow
-		RMNoScrollbars, MScrollPosition, RMCurrentHeight, RMCurrentWidth, RMDontHandle, RMNoSnapSize,
-		RMNoShadow, MScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive;
+		RMNoScrollbars, TScrollPosition, RMCurrentHeight, RMCurrentWidth, RMDontHandle, RMNoSnapSize,
+		RMNoShadow, TScrollWidthHeight, MCustomScale, MComponentGroupState, MFocusOnPrevious, MBlockClicks, MRippleShape, MActive;
 
 		RMWidth(width : Transform<double>);
 		RMOffset(offset : Transform<Pair<WidthHeight, double>>);
@@ -47,6 +47,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	items = if (getDefaultRtl()) map(m.items, reverseA) else m.items;
 	style = m.style;
 	positionScale0 = m.positionScale;
+	stageWH = makeWH();
 
 	dpiScale = extractStruct(manager.manager.renderStyle, TInspectDpiFactor(make(Factor(1.0, 1.0)))).factor;
 	elevation = extractStruct(style, MElevation(const(8.))).elevation;
@@ -54,31 +55,36 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	positionScale = eitherMap(customScale, \cus -> fselect2(positionScale0, cus.factor, FLift2(\ps, cs ->
 		PositionScale(ps.pos, Point(cs.x, cs.y)))), positionScale0);
 
-	stageWH = makeWH();
-	itemsWH = makeWH();
-	contentWH = makeWH();
-	maxWH = makeWH();
-
 	offset = extractStruct(style, RMOffset(const(Pair(WidthHeight(0., 0.), 0.)))).offset;
 	mWidth = extractStruct(style, RMWidth(const(-1.))).width;
-	fixPosition = contains(style, MFixPosition());
+	fixPosition = tryExtractStruct(style, MFixPosition(true));
 	scrollArea = extractStruct(style, RMScrollArea(0, 0));
 	borders = extractStruct(style, RMBorders(16.)).borders;
 	additionalBorder = extractStruct(style, RMOutterBorder(8.0)).border;
+
 	mHeight = extractStruct(style, RMHeight(-1., -1.)) |> (\f -> RMHeight(f.min - borders * 2., f.max - borders * 2.));
-	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale ->
-		(wh.height / ps.scale.y - borders * 2. - if (fixPosition) (ps.pos.y / ps.scale.y + offs.y) else 0.)
-		|> (\h ->
-			if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
-				min(mHeight.max, max(max(mHeight.min, 0.), h))
-			else if (mHeight.min > 0.)
-				max(mHeight.min, h)
-			else
-				h
-		);
+	maxHeight = \wh : WidthHeight, offs : Point, ps : PositionScale -> {
+		hgt0 = wh.height / ps.scale.y - borders * 2.;
+
+		hgt =
+			eitherMap(fixPosition,
+				\fp ->
+					if (fp.top) {if (ps.pos.y > 0.) hgt0 - (ps.pos.y / ps.scale.y + offs.y) else hgt0}
+					else max(ps.pos.y, 0.),
+				hgt0
+			);
+		
+		if (mHeight.max > 0. && scrollArea.from < scrollArea.to)
+			min(mHeight.max, max(max(mHeight.min, 0.), hgt))
+		else if (mHeight.min > 0.)
+			max(mHeight.min, hgt)
+		else
+			hgt
+	};
+
 	selected = extractStruct(style, RMSelected(-1)).selected;
 	inspectVisible = extractStruct(style, makeTScrollInspectVisible());
-	scrollPosition : MScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
+	scrollPosition : TScrollPosition = extractStruct(style, MScrollPosition(make(zeroPoint)));
 	menuOpened = extractStruct(style, MOpenMenu(make(false))).opened;
 	leftAnimation = extractStruct(style, RMLeftAnimation(true)).leftAnimation;
 	sameZorder = extractStruct(style, MSameZorder(false)).same;
@@ -90,7 +96,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 	blockClicks = contains(style, MBlockClicks());
 	shape = extractStruct(style, MRippleShape("")).component;
 
-	zorder = getValue(manager.currentZorder);
+	zorder = getValue(manager.manager.zorder);
 	newZorder = zorder + 1;
 	previousFocus =
 		if (contains(style, MFocusOnPrevious())) {
@@ -103,36 +109,43 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			None();
 		};
 
-	if (!sameZorder) nextDistinct(manager.currentZorder, newZorder);
+	if (!sameZorder) nextDistinct(manager.manager.zorder, newZorder);
 
 	uns = initUnsM();
-	down = make(false);
-	downInside = make(false);
 	beginAnimation = make(false);
 	nextDistinct(menuOpened, true);
 
 	sizes : [[DynamicBehaviour<WidthHeight>]] = generate(0, length(items), \i -> generate(0, length(items[i]), \__ -> makeWH()));
 
 	sizesB = fmerge(map(sizes, \s -> fold(s, const(WidthHeight(0., 0.)), \acc : Transform<WidthHeight>, s2 : Transform<WidthHeight> ->
-		fselect2(acc, s2, FLift2(\wh1, wh2 -> WidthHeight(wh1.width + wh2.width, max(wh1.height, wh2.height)))))));
+		fselect2(acc, s2, FLift2(\wh1, wh2 -> WidthHeight(wh1.width + wh2.width, max(wh1.height, wh2.height))))
+	)));
 	positionDpiScale = fselect2(positionScale, dpiScale, FLift2(\psc : PositionScale, dsc : Factor ->
 		PositionScale(Point(psc.pos.x / dsc.x, psc.pos.y / dsc.y), Point(psc.scale.x / dsc.x, psc.scale.y / dsc.y))));
 
 	startingOffset = make(zeroPoint);
 	startingPosition =
-		if (fixPosition)
-			fselect2(
-				startingOffset,
-				positionDpiScale,
-				FLift2(\so : Point, ps : PositionScale -> Point(ps.pos.x + so.x, ps.pos.y + so.y))
-			)
-		else
-			fselect4(
+		eitherMap(
+			fixPosition, 
+			\fp ->
+				if (fp.top)
+					fselect2(startingOffset, positionDpiScale, FLift2(\so : Point, ps : PositionScale ->
+						Point(ps.pos.x + so.x, ps.pos.y + so.y)
+					))
+				else
+					fselect3(startingOffset, positionDpiScale, currentHeight, \so : Point, ps : PositionScale, curH ->
+						Point(ps.pos.x + so.x, ps.pos.y + so.y - curH)
+					),
+			fselect5(
 				startingOffset,
 				positionDpiScale,
 				stageWH,
-				contentWH,
-				\so : Point, ps : PositionScale, sWH : WidthHeight, cWH : WidthHeight ->
+				currentWidth,
+				currentHeight,
+				\so : Point, ps : PositionScale, sWH : WidthHeight, curW, curH -> {
+					wd = additionalBorder + curW * ps.scale.x;
+					hgt = additionalBorder + (curH + borders * 2.) * ps.scale.y;
+
 					Point(
 						min(
 							if (ps.pos.x + so.x < 0.) {
@@ -143,8 +156,8 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							} else
 								ps.pos.x + so.x,
 							max(
-								sWH.width - additionalBorder - cWH.width * ps.scale.x,
-								ps.pos.x - additionalBorder - cWH.width * ps.scale.x
+								sWH.width - wd,
+								ps.pos.x - wd
 							)
 						),
 						min(
@@ -156,14 +169,13 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							} else
 								ps.pos.y + so.y,
 							max(
-								sWH.height - additionalBorder - (cWH.height + borders * 2.) * ps.scale.y,
-								ps.pos.y - additionalBorder - (cWH.height + borders * 2.) * ps.scale.y
+								sWH.height - hgt,
+								ps.pos.y - hgt
 							)
 						)
 					)
-			);
-
-	availableForm = make(TEmpty());
+			})
+		);
 
 	popupDownFn = \h, mi : MouseDownInfo -> {
 			if (mi.inside()) {
@@ -187,30 +199,44 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 
 			h || blockClicks
 		};
+
+	contentWH =
+		fselect2(sizesB, mWidth, FLift2(\szs, w ->
+			fold(szs, WidthHeight(0., 0.), \acc, sz ->
+				WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height)
+			)
+			|> (\wh ->
+				WidthHeight(
+					if (contains(style, RMNoSnapSize()) || w > 0.)
+						wh.width
+					else
+						(if (mobile) 56. else 64.)
+						|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
+					wh.height
+				)
+			)
+		));
+
+	popupPart = \par, start, end ->
+		TEvenGrid(
+			generate(start, end, \i ->
+				mapi(items[i], \j, it -> TAttachBox(m2t(it, par), sizes[i][j]))
+			)
+		)
+		|> (\f -> TGroup2(f, TFillX()));
+
 	(\p ->
 		TLines(
 			[
 				if (scrollArea.from > 0)
-					[
-						TEvenGrid(generate(0, min(scrollArea.from, length(items)), \i -> mapi(items[i], \j, it ->
-							TAttachBox(m2t(it, p), sizes[i][j]))))
-						|> (\f -> TGroup2(f, TFillX()))
-						// |> (\f -> TAvailable(f, TFillX()))
-					]
+					[popupPart(p, 0, min(scrollArea.from, length(items)))]
 				else
 					[],
 				if (scrollArea.from < scrollArea.to)
 					[
-						MGetFocusGroup(\p3 ->
-							TEvenGrid(
-								generate(max(scrollArea.from, 0), min(scrollArea.to, length(items)),
-									\i ->
-										mapi(items[i], \j, it -> TAttachBox(m2t(it, p3), sizes[i][j]))
-								)
-							)
-							|> (\f -> TGroup2(f, TFillX()))
+						MGetFocusGroup(\p2 ->
+							popupPart(p2, max(scrollArea.from, 0), min(scrollArea.to, length(items)))
 						)
-						// |> (\f -> TAvailable(f, TFillX()))
 						|> (\f ->
 							MScroll2T(
 								manager,
@@ -219,11 +245,11 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 									f,
 									TFillXY(),
 									[scrollPosition, inspectVisible, scrollWH]
-									|> (\f2 ->
+									|> (\st ->
 										if (contains(style, RMNoScrollbars()))
-											concat(f2, [TScrollEnabled(const(false)), TScrollBarsStyle(invisibleScrollBar, invisibleScrollBar)])
+											concat(st, [TScrollEnabled(const(false)), TScrollbars(invisibleScrollBar, invisibleScrollBar)])
 										else
-											f2
+											st
 									)
 								),
 								m2t
@@ -233,40 +259,18 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 				else
 					[],
 				if (scrollArea.to < length(items))
-					[
-						TEvenGrid(generate(max(scrollArea.to, 0), length(items), \i -> mapi(items[i], \j, it ->
-							TAttachBox(m2t(it, p), sizes[i][j]))))
-						|> (\f -> TGroup2(f, TFillX()))
-						// |> (\f -> TAvailable(f, TFillX()))
-					]
+					[popupPart(p, max(scrollArea.to, 0), length(items))]
 				else
 					[]
 			]
 			|> concatA
 		)
-		|> (\f -> TAvailable(f, TMutable(availableForm)))
+		|> (\t -> TAvailableWidthHeight(t, currentWidth, currentHeight))
 		|> (\f ->
 			TConstruct(
 				[
 					make4Subscribe(
-						fselect2(
-							sizesB,
-							mWidth,
-							FLift2(\szs, w ->
-								fold(szs, WidthHeight(0., 0.), \acc, sz ->
-									WidthHeight(if (w > 0.) w else max(sz.width, acc.width), sz.height + acc.height))
-								|> (\wh ->
-									WidthHeight(
-										if (contains(style, RMNoSnapSize()) || w > 0.)
-											wh.width
-										else
-											(if (mobile) 56. else 64.)
-											|> (\snappingSize -> dceil(wh.width / snappingSize) * snappingSize),
-										wh.height
-									)
-								)
-							)
-						),
+						contentWH,
 						stageWH,
 						offset,
 						positionDpiScale,
@@ -287,47 +291,43 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 							wd = min(realSize.width, maxSize.width);
 							hgt = min(realSize.height, maxSize.height);
 
-							nextDistinct(currentHeight, hgt);
 							nextDistinct(currentWidth, wd);
-							nextDistinct(itemsWH, realSize);
-							nextDistinct(maxWH, maxSize);
-							nextDistinct(contentWH, WidthHeight(wd, hgt));
-							nextDistinct(
-								startingOffset,
-								Point(
-									(if (!leftAnimation)
-										offs.first.width - wd
-									else
-										offs.first.width) * ps.scale.x,
-									(if (selected >= 0) {
-										szs = fgetValue(sizesB);
-										offsY = dsum(map(subrange(szs, 0, selected), \sz -> sz.height));
+							nextDistinct(currentHeight, hgt);
 
-										if (scrollArea.from < scrollArea.to)
-											nextDistinct(
-												scrollPosition.position,
-												Point(
-													0.,
-													if (realSize.height > maxSize.height && maxSize.height > 0.)
-														max(
-															0.,
-															min(
-																offsY - (hgt - szs[selected].height) / 2.,
-																realSize.height - maxSize.height
-															)
-														)
-													else
-														0.
+							offsetX =
+								if (!leftAnimation)
+									offs.first.width - wd
+								else
+									offs.first.width;
+
+							szs = fgetValue(sizesB);
+							offsY = dsum(map(subrange(szs, 0, selected), \sz -> sz.height));
+
+							offsetY =
+								if (selected >= 0)
+									offs.second - offsY - borders + getValue(scrollPosition.position).y
+								else
+									offs.second + offs.first.height;
+
+							if (selected >= 0 && scrollArea.from < scrollArea.to)
+								nextDistinct(
+									scrollPosition.position,
+									Point(
+										0.,
+										if (realSize.height > maxSize.height && maxSize.height > 0.)
+											max(
+												0.,
+												min(
+													offsY - (hgt - szs[selected].height) / 2.,
+													realSize.height - maxSize.height
 												)
-											);
+											)
+										else
+											0.
+									)
+								);
 
-										offs.second - offsY - borders + getValue(scrollPosition.position).y
-									} else
-										offs.first.height + offs.second) * ps.scale.y
-								)
-							);
-
-							nextDistinct(availableForm, TFixed(wd, hgt))
+							nextDistinct(startingOffset, Point(offsetX * ps.scale.x, offsetY * ps.scale.y))
 						}
 					)
 				],
@@ -399,7 +399,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 			f
 		)
 	)
-	|> (\f -> TGroup2SameMetrics(f, TAttachBox(TFillXY(), stageWH)))
+	|> (\t -> TAttachAvailable(t, stageWH))
 	|> (\f -> {
 		tUns = ref Some(trender(f, manager.manager.renderStyle));
 
@@ -414,7 +414,7 @@ RenderMPopup(manager : MaterialManager, parent : MFocusGroup, m : MPopup, m2t : 
 				fwUns();
 				dispUnsM(tUns);
 				if (!sameZorder) {
-					nextDistinct(manager.currentZorder, zorder);
+					nextDistinct(manager.manager.zorder, zorder);
 				};
 
 				maybeApply(previousFocus, \pf -> {
@@ -446,7 +446,7 @@ MPopupAlphaAnimation(manager : MaterialManager, parent : MFocusGroup, content : 
 			manager,
 			parent,
 			const(duration),
-			const(mStandartCurve),
+			const(easingStandartCurve),
 			beginAnimation,
 			\v -> {
 				if (v)
@@ -478,7 +478,7 @@ MPopupScaleAnimation(manager : MaterialManager, parent : MFocusGroup,
 		\f -> if ( contains(style, RMNoShadow()) ) {
 			f;
 		} else {
-			TShadow(parent, elevation, f);
+			TShadowShape(parent, elevation, f, RectangleShape("MDialog"));
 		};
 
 	if (parent.theme.enableAnimations && contains(style, RMScaleAnimation())) {
@@ -489,7 +489,7 @@ MPopupScaleAnimation(manager : MaterialManager, parent : MFocusGroup,
 				manager,
 				parent,
 				const(widthDuration),
-				const(mStandartCurve),
+				const(easingStandartCurve),
 				beginAnimation,
 				\v -> {
 					if (v)
@@ -506,7 +506,7 @@ MPopupScaleAnimation(manager : MaterialManager, parent : MFocusGroup,
 					manager,
 					parent,
 					const(heightDuration),
-					const(mStandartCurve),
+					const(easingStandartCurve),
 					beginAnimation,
 					\v -> {
 						if (v)
@@ -537,7 +537,7 @@ MPopupScaleAnimation(manager : MaterialManager, parent : MFocusGroup,
 	}
 }
 
-translateDuration = mTransitionDuration;
+translateDuration = easingTransitionDuration;
 translateStart = -48.0;
 translateFinish = 0.;
 
@@ -545,13 +545,13 @@ MPopupTranslateAnimation(manager : MaterialManager, parent : MFocusGroup, conten
 	startingB : Transform<Point>) -> Tropic {
 	if (parent.theme.enableAnimations && contains(style, RMTranslateAnimation())) {
 		translateAnimation = make(Point(0., if (contains(style, RMTranslateAnimation())) translateStart else translateFinish));
-		xyB = fselect2(startingB, translateAnimation, FLift2(\st, ta -> Point(st.x + ta.x, st.y + ta.y)));
+		xyB = fpointaddition(startingB, translateAnimation);
 
 		MEasingAnimation(
 			manager,
 			parent,
 			const(translateDuration),
-			const(mStandartCurve),
+			const(easingStandartCurve),
 			beginAnimation,
 			\v -> {
 				if (v)

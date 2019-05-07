@@ -1,0 +1,211 @@
+import material/material_ui;
+import material/extra/filebrowser/material_filebrowser;
+
+printF3DChildren(id : string, object : F3DNative) -> F3DNative {
+	switch (object : F3DNative) {
+		F3DNativeScene(clip, items): {
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip));
+
+			F3DNativeScene(clip, fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
+		}
+		F3DNativeObject(clip): {
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip));
+
+			object;
+		}
+		F3DNativeMutable(innerObject): {
+			F3DNativeMutable(fselect(innerObject, FLift(\it -> printF3DChildren(id, it))));
+		}
+	}
+}
+
+makeF3DTreeNode(
+	manager : MaterialManager,
+	id : string,
+	name : string,
+	attachFn : ref (native, bool) -> void,
+	clip : Maybe<native>,
+	children : Transform<[MTreeNode]>
+) -> MTreeNode {
+	sel = make(false);
+
+	MTreeNode(
+		makeTropicTag(manager),
+		\__ ->
+			MBaselineCols([
+				MText(id, [MCaptionSolid()]),
+				eitherMap(
+					clip,
+					\c ->
+						MConstruct(
+							[
+								\ -> add3DEventListener(c, "attached", \ -> nextDistinct(sel, true)),
+								\ -> add3DEventListener(c, "detached", \ -> nextDistinct(sel, false)),
+								makeSubscribe2(sel, \sl -> ^attachFn(c, sl))
+							],
+							MCheckBox(
+								TEmpty(),
+								make(get3DObjectVisible(c)),
+								[
+									MIconButtonBorder(4.0),
+									MIconSize(16.0),
+									MOnNewValue(\v -> set3DObjectVisible(c, v))
+								]
+							)
+						),
+					TEmpty()
+				),
+				MIf(
+					sel,
+					MText(name, [MCaptionSolid(), getPrimaryColor(manager)]),
+					MText(name, [MCaption1()])
+				)
+			]),
+		children,
+		[MExpanded(make(true)), MHighlightOnSelect(const(false)), MSelected(sel)]
+	)
+}
+
+makeF3DTree(manager : MaterialManager, id : string, object : F3DNative, attachFn : ref (native, bool) -> void) -> Transform<MTreeNode> {
+	switch (object : F3DNative) {
+		F3DNativeScene(clip, items): {
+			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip),
+				fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it, attachFn))));
+		}
+		F3DNativeObject(clip): {
+			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip), const([])));
+		}
+		F3DNativeMutable(innerObject): {
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(manager, id, it, attachFn)));
+		}
+	}
+}
+
+main() {
+	manager = makeMaterialManager([makeMaterialTheme(true, MPurpleA(700), MLightGreenA(700))]);
+
+	currentScene = make([F3DSceneLoader("images/3d/soccer/soc_field.json")]);
+	currentTree : DynamicBehaviour<Transform<[MTreeNode]>> = make(const([]));
+	stageAvailable = makeWH();
+
+	exportFn = ref \ -> "";
+	attachFn = ref nop2;
+
+	axesVisible = make(false);
+	gridVisible = make(false);
+
+	scene =
+		F3DChildren(
+			F3DScene(currentScene),
+			\c -> {
+				next(currentTree, farray(makeF3DTree(manager, "0", c, attachFn)));
+
+				printF3DChildren("0", c);
+			}
+		);
+	camera =
+		F3DPosition(
+			F3DPerspectiveCamera(const(50.0), fdivide(fwidth(stageAvailable), fheight(stageAvailable)), const(0.01), const(6000.0)),
+			make(0.0), make(0.0), make(1000.0)
+		);
+
+	MLines2ReverseZorder(
+		MMenuPanel(
+			[
+				MMenu(
+					MTextButton("File", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Open Scene",
+							[
+								MPrimaryAction(MIcon("folder_open", [])),
+								MOnClick(\ ->
+									openFileDialog(1, ["*.txt", "*.json"], \ff ->
+										iter(ff, \f ->
+											readFileClient(
+												f,
+												"text",
+												\s -> {
+													next(currentScene, [F3DScene(const([]))]);
+													next(currentScene, [F3DJsonObject(s)]);
+												},
+												println
+											)
+										)
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Save Scene",
+							[
+								MPrimaryAction(MIcon("save", [])),
+								MOnClick(\ -> {saveFileClient("scene.json", ^exportFn(), "text")})
+							]
+						)
+					],
+					[
+						MMenuIndent()
+					]
+				),
+				MMenu(
+					MTextButton("View", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Axes",
+							[
+								MPrimaryAction(MIf(axesVisible, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> reverseBehaviour(axesVisible))
+							]
+						),
+						MMenuSingleLine(
+							"Grid",
+							[
+								MPrimaryAction(MIf(gridVisible, MIcon("grid_on", []), MIcon("grid_off", []))),
+								MOnClick(\ -> reverseBehaviour(gridVisible))
+							]
+						)
+					],
+					[
+						MMenuIndent()
+					]
+				)
+			],
+			[]
+		),
+		MProportionCols([
+			MInspect(
+				[
+					IAvailable(stageAvailable)
+				],
+				M3DStage(
+					stageAvailable,
+					F3DScene(const([
+						F3DVisible(F3DAxesHelper(2500.0), axesVisible),
+						F3DVisible(F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff), gridVisible),
+						scene
+					])),
+					camera,
+					[
+						F3DExportScene(exportFn),
+						F3DTransformControlsEnabled(const(true)),
+						F3DAttachTransformControls(attachFn)
+					]
+				)
+				|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
+			)
+			|> (\f -> Pair(const(0.7), f)),
+			MTree(fsubselect(currentTree, idfn |> FLift), [MTreeHideSeparators()])
+			|> (\f -> Pair(const(0.3), f))
+		])
+	)
+	|> MCenterX
+	|> (\f -> mrender(manager, true, f))
+}
+
+MLines2ReverseZorder(c1 : Material, c2 : Material) -> Material {
+	MCopySize2(
+		c1,
+		\sz, c -> MGroup2(MLines2(sz, c2), c)
+	)
+}

@@ -16,9 +16,12 @@ export {
 	fcfileinfo2fi(f : FcFileInfo) -> FiFileInfo;
 
 	// Converts this module to an fimodule. Returns non-dummy FiModule even with errors, errors are handled with onError
-	fcmodule2fiWithErrorHandler(e : FcTypeEnv, m : FcModule, onError : (string, FcInfo2) -> void) -> FiModule;
+	fcmodule2fiWithErrorHandler(e : FcTypeEnvLocal, m : FcModule, onError : (string, FcInfo2) -> void) -> FiModule;
 
-    fctypestruct2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcTypeStruct) -> FiTypeStruct;
+    fctypestruct2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, f : FcTypeStruct) -> FiTypeStruct;
+
+	// If typenames is true, we prefer to use typenames, rather than unions or structs
+	fctype2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, t : FcType) -> FiType;
 }
 
 fctypeenv2fi(global : FcTypeEnvProgram) -> FiProgram {
@@ -51,7 +54,7 @@ fctypeenv2fi(global : FcTypeEnvProgram) -> FiProgram {
 	)
 }
 
-fcdeclaration2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, d : FcDeclaration) -> FiDeclaration {
+fcdeclaration2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, d : FcDeclaration) -> FiDeclaration {
 	switch (d) {
 		FcFunctionDec(__, __, __, __, __): fcfunctiondec2fi(e, onError, d);
 		FcGlobalVar(__, __, __, __): fcglobalvar2fi(e, onError, d);
@@ -71,7 +74,7 @@ fcmodule2fi(e : FcTypeEnv, m : FcModule) -> FiModule {
 		);
 	}
 
-	r = fcmodule2fiWithErrorHandler(e, m, onError);
+	r = fcmodule2fiWithErrorHandler(e.local, m, onError);
 	if (^errors) {
 		fcPrintln("Could not type " + m.fileinfo.flowfile);
 		FiModule(FiFileInfo(m.fileinfo.flowfile, 0.0, "", "", 0.0, -1.0), [], [], [], [], [], [], [], [], [], [], 0, 0)
@@ -80,7 +83,7 @@ fcmodule2fi(e : FcTypeEnv, m : FcModule) -> FiModule {
 	}
 }
 
-fcmodule2fiWithErrorHandler(e : FcTypeEnv, m : FcModule, onError : (string, FcInfo2) -> void) -> FiModule {
+fcmodule2fiWithErrorHandler(e : FcTypeEnvLocal, m : FcModule, onError : (string, FcInfo2) -> void) -> FiModule {
 	FiModule(
 		fcfileinfo2fi(m.fileinfo),
 		map(m.imports, fcimport2fi),
@@ -111,7 +114,7 @@ fcforbid2fi(f : FcForbid) -> FiForbid {
 }
 
 
-fcfunctiondec2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcFunctionDec) -> FiFunctionDec {
+fcfunctiondec2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, f : FcFunctionDec) -> FiFunctionDec {
 	if (false) {
 		fcPrintln(f.name);
 	}
@@ -134,7 +137,7 @@ fcfunctiondec2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcFunct
 	FiFunctionDec(f.name, fclambda2fi(e, onError, lambda), ftype, f.declInfo.start, f.defiInfo.start);
 }
 
-fcglobalvar2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, v : FcGlobalVar) -> FiGlobalVar {
+fcglobalvar2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, v : FcGlobalVar) -> FiGlobalVar {
 	if (false) {
 		fcPrintln(v.name);
 	}
@@ -148,16 +151,16 @@ fcglobalvar2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, v : FcGlobalV
 	FiGlobalVar(v.name, fcexp2fi(e, onError, ex), mfctype2fi(e, onError, ^(v.bodyInfo.type)), v.declInfo.start, v.bodyInfo.start);
 }
 
-fcnative2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, n : FcNativeDec) -> FiNativeDec {
+fcnative2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, n : FcNativeDec) -> FiNativeDec {
 	ifn = eitherMap(n.flowfallback, \fn -> fcfunctiondec2fi(e, onError, fn).lambda, FiVoid(0));
 	FiNativeDec(n.name, n.io, fctype2fi(e, onError, n.type), n.nativeName, ifn, n.info.start, eitherMap(n.flowfallback, \fn -> fn.defiInfo.start, -1));
 }
 
-fcexps2fi(env : FcTypeEnv, onError : (string, FcInfo2) -> void, es : [FcExp]) -> [FiExp] {
+fcexps2fi(env : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, es : [FcExp]) -> [FiExp] {
 	map(es, \e -> fcexp2fi(env, onError, e));
 }
 
-fcexp2fi(env : FcTypeEnv, onError : (string, FcInfo2) -> void, e : FcExp) -> FiExp {
+fcexp2fi(env : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, e : FcExp) -> FiExp {
 	switch (e) {
 		FcVoid(info): FiVoid(info.start);
 		FcBool(b, info): FiBool(b, info.start);
@@ -192,20 +195,28 @@ fcexp2fi(env : FcTypeEnv, onError : (string, FcInfo2) -> void, e : FcExp) -> FiE
 	}
 }
 
-fcvar2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, v : FcVar) -> FiVar {
+fcvar2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, v : FcVar) -> FiVar {
 	FiVar(v.name, mfctype2fi(e, onError, ^(v.info.type)), v.info.start);
 }
 
-fclambda2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, lambda : FcLambda) -> FiLambda {
-	FiLambda(map(lambda.args, \a -> FiFunArg(a.name, fctype2fi(e, onError, a.type))), fcexp2fi(e, onError, lambda.body), mfctype2fi(e, onError, ^(lambda.info.type)), lambda.info.start);
+fclambda2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, lambda : FcLambda) -> FiLambda {
+	type = mfctype2fi(e, onError, ^(lambda.info.type));
+	ftype = switch (type) {
+		FiTypeFunction(__, __): type;
+		default: {
+			onError("Expected function type", copyFcInfo2(lambda.info));
+			FiTypeFunction([], type);
+		}
+	}
+	FiLambda(map(lambda.args, \a -> FiFunArg(a.name, fctype2fi(e, onError, a.type))), fcexp2fi(e, onError, lambda.body), ftype, lambda.info.start);
 }
 
-fctypes2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, types : [FcType]) -> [FiType] {
+fctypes2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, types : [FcType]) -> [FiType] {
 	map(types, \t -> fctype2fi(e, onError, t));
 }
 
 // If typenames is true, we prefer to use typenames, rather than unions or structs
-fctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, t : FcType) -> FiType {
+fctype2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, t : FcType) -> FiType {
 	switch (t) {
 		FcTypeVoid(__): FiTypeVoid();
 		FcTypeBool(__): FiTypeBool();
@@ -221,10 +232,12 @@ fctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, t : FcType) -> FiT
 		FcTypeName(n, tps, __): fctypename2fi(e, onError, t);
 		FcTypeArray(at, __): FiTypeArray(fctype2fi(e, onError, at));
 		FcTypeRef(at, __): FiTypeRef(fctype2fi(e, onError, at));
-		FcTypeVar(__, i): {
+		FcTypeVar(tv_, i): {
 			tv = getResolvedFcType(e, t);
 			if (tv == t) {
-				onError("Could not resolve tyvar", i);
+				if (!isUrlParameterTrue("gtype")) {
+					onError("Could not resolve tyvar " + i2s(tv_), i);
+				}
 				FiTypeFlow();
 			} else {
 				fctype2fi(e, onError, tv);
@@ -233,7 +246,7 @@ fctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, t : FcType) -> FiT
 	}
 }
 
-mfctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, m : Maybe<FcType>) -> FiType {
+mfctype2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, m : Maybe<FcType>) -> FiType {
 	switch (m) {
 		None(): {
 			onError("Expression typing failed", FcInfo2(0, 0));
@@ -243,7 +256,7 @@ mfctype2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, m : Maybe<FcType>
 	}
 }
 
-fctypestruct2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcTypeStruct) -> FiTypeStruct {
+fctypestruct2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, f : FcTypeStruct) -> FiTypeStruct {
 	FiTypeStruct(
 		f.name,
 		fctypes2fi(e, onError, f.typars),
@@ -252,7 +265,7 @@ fctypestruct2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcTypeSt
 	);
 }
 
-fctypeunion2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, u : FcTypeUnion) -> FiTypeUnion {
+fctypeunion2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, u : FcTypeUnion) -> FiTypeUnion {
 	FiTypeUnion(
 		u.name,
 		fctypes2fi(e, onError, u.typeparameters),
@@ -261,10 +274,10 @@ fctypeunion2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, u : FcTypeUni
 	);
 }
 
-fctypename2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, t : FcTypeName) -> FiTypeName {
+fctypename2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, t : FcTypeName) -> FiTypeName {
 	FiTypeName(t.name, fctypes2fi(e, onError, t.typeparameters))
 }
 
-fctypefunction2fi(e : FcTypeEnv, onError : (string, FcInfo2) -> void, f : FcTypeFunction) -> FiTypeFunction {
+fctypefunction2fi(e : FcTypeEnvLocal, onError : (string, FcInfo2) -> void, f : FcTypeFunction) -> FiTypeFunction {
 	FiTypeFunction(map(f.args, \a -> FiFunArg(a.name, fctype2fi(e, onError, a.type))), fctype2fi(e, onError, f.returnType));
 }

@@ -39,19 +39,23 @@ replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic
 ContiniousTimer(
 	start : () -> void,
 	stop : () -> void,
-	pause : () -> void
+	pause : () -> void,
+	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) -> ContiniousTimer {
+continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
 	isFinished = ref true;
-	delays = ref [];
-	maxDelay = ref 0.0;
+	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
+	deferredFns = ref [];
+	deferredTime = ref 0.0;
+	currentRepeat = ref 0;
+
 	startFn = \ -> {
-		started := timestamp() - either(minA(^delays), 0.0);
+		started := timestamp() - either(minA(map(^delays, \v -> v.first)), 0.0);
 		r.start();
 	};
 	stopFn = \ -> {
@@ -62,7 +66,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 	};
 	initFn = \ -> {
 		isFinished := false;
-		delays := getTreeKeys(tree);
+		delays := map(getTreeKeys(tree), \v -> Pair(v, v)); // Pair(current replaying time with timeouts, recorded time)
 
 		uns :=
 			[
@@ -76,17 +80,52 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 						dispUnsA(uns);
 					}
 
-					foldWhile(^delays, ts - ^started, \t, d -> {
-						if (d < t) {
-							maybeApply(lookupTree(tree, d), \records -> iter(records, \fn -> if (!fn()) dispUnsA(uns)));
-							delays := subrange(^delays, 1, length(^delays));
-
-							Some(t)
+					// check timeouted elements
+					if (^deferredFns != []) {
+						if (^currentRepeat > maxRepeats) {
+							deferredFns := [];
+							currentRepeat := 0;
+							dispUnsA(uns);
 						} else {
-							None()
+							if (^deferredTime < ts - ^started) {
+								// repeat all fns
+								deferredFns := mapConcat(^deferredFns, \fn -> if (!fn()) [fn] else []);
+
+								if (^deferredFns != []) {
+									// repeat was unsuccessful
+									currentRepeat := ^currentRepeat + 1;
+									deferredTime := ^deferredTime + timeout;
+								} else {
+									// repeat was successful - shift all delay.first values to the current timeout
+									delays := map(^delays, \v -> Pair(v.first + timeout * i2d(^currentRepeat), v.second));
+								}
+							}
 						}
-					})
-					|> ignore
+					} else {
+						foldWhile(^delays, ts - ^started, \t, d -> {
+							if (d.first < t) {
+								deferredFns := [];
+
+								maybeApply(
+									lookupTree(tree, d.second),
+									\records -> iter(records,
+										\fn -> if (!fn()) {
+											// Add to timeout elements
+											println("*** Timeout Fn");
+											deferredFns := arrayPush(^deferredFns, fn);
+											deferredTime := d.first + timeout;
+											currentRepeat := 1;
+										}
+									)
+								);
+								delays := subrange(^delays, 1, length(^delays));
+								Some(t)
+							} else {
+								None()
+							}
+						})
+						|> ignore
+					}
 				})()
 			];
 	}
@@ -100,12 +139,15 @@ continiousTimer(tree : Tree<double, [() -> bool]>, onFinished : (bool) -> void) 
 			startFn();
 		},
 		stopFn,
-		pauseFn
+		pauseFn,
+		timeout
 	)
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
+	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
+	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
 	foldTree(iScript.stack, makeTree(), \delay, records, acc ->
 		setTree(
@@ -114,10 +156,17 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
 		)
 	)
-	|> (\t -> continiousTimer(t, onFinished))
+	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
 	|> (\t -> {
+		if (getValue(manager.iscript.settings.replayProfile)) {
+			startProfile(getValue(manager.iscript.currentFileNameB));
+		}
 		t.start();
-		t.stop;
+
+		\ -> {
+			t.stop();
+			endProfile();
+		}
 	})
 }
 
@@ -557,20 +606,19 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 	);
 
 	if (countList(getValue(manager.iscript.requests)) > 0) {
-		setHttpRequestCallback(\url, post, headers, params2 -> {
-			params = filter(params2, \p -> p.key != "t" && p.key != "jwt");
+		setHttpRequestCallback(\url, post, headers2, params2 -> {
+			headers = filterRequestRecordHeaders(headers2);
+			params = filterRequestRecordParams(params2);
+			received = IScriptRequestRecord(url, post, headers, params, 0., IScriptRequestOk(""));
+			compareFns : HttpRequestResponseCompareFns = getHttpRequestResponseCompareFns(received);
+
 			eitherFn(
 				foldList(getValue(manager.iscript.requests), None(), \acc, r -> {
 					if (isNone(acc)) {
 						rec = r.second;
-
 						switch (rec : IScriptRecord) {
 							IScriptRequestRecord(_url, _post, _headers, _params, delay, response): {
-								eitherMap(
-									getHttpRequestCompareFn(),
-									\fn -> fn(IScriptRequestRecord(url, post, headers, params, delay, response), rec),
-									(_url == url && _post == post && _headers == headers && _params == params)
-								)
+								compareFns.requestsCompareFn(received, rec)
 								|> (\v -> if (v) Some(rec) else acc)
 							}
 							default: acc;
@@ -582,11 +630,7 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 				\rq : IScriptRequestRecord -> {
 					HttpRequestCallbacks(
 						\data -> {
-							eitherMap(
-								getHttpResponseOkCompareFn(),
-								\fn -> fn(rq, IScriptRequestOk(data)),
-								rq.response == IScriptRequestOk(data)
-							)
+							compareFns.responseCompareFn(IScriptRequestOk(data), rq.response)
 							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
 							}
@@ -595,11 +639,7 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 							})
 						},
 						\error -> {
-							eitherMap(
-								getHttpResponseErrorCompareFn(),
-								\fn -> fn(rq, IScriptRequestError(error)),
-								rq.response == IScriptRequestError(error)
-							)
+							compareFns.responseCompareFn(IScriptRequestError(error), rq.response)
 							|> (\v -> if (v) {
 								next(manager.iscript.requests, filterList(getValue(manager.iscript.requests), \r -> r.second != rq));
 							}
@@ -621,10 +661,10 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 				\ -> {
 					HttpRequestCallbacks(
 						\data -> {
-							iScriptError(manager, "Request error " + url + " : unknown request", None());
+							iScriptError(manager, "Request error " + url + " " + toString(params2) + " : unknown request", None());
 						},
 						\error -> {
-							iScriptError(manager, "Request error " + url + " : unknown request", None());
+							iScriptError(manager, "Request error " + url + " " + toString(params2) + " : unknown request", None());
 						},
 						\status -> {
 							// println("Unknown request");
@@ -640,6 +680,9 @@ substituteHttpRequest(manager : MaterialManager) -> () -> void {
 	\ -> {
 		clearHttpRequestCallback();
 		if (countList(getValue(manager.iscript.requests)) > 0) {
+			if (getUrlParameter(UP_ISCRIPTTEST) != "") {
+				iter(list2array(getValue(manager.iscript.requests)), \v -> println(v))
+			}
 			iScriptError(manager, "Requests error : " + i2s(countList(getValue(manager.iscript.requests))) + " requests left in queue", None());
 			next(manager.iscript.requests, makeList());
 		}
@@ -933,16 +976,18 @@ startIScriptScenarioReplaying(
 		stopScenarioReplay = \ -> {
 			onFinish(^scenarioTestResults);
 		};
-
 		[
 			makeSubscribeUns(
-				fselect2(manager.iscript.scenario.scriptsB, manager.iscript.scenario.runningIScriptIdxB, FLift2(\scriptRecords, id -> {
-					if (id >= 0 && id < length(scriptRecords)) {
-						Some(scriptRecords[id])
-					} else {
-						None()
-					}
-				})),
+				fselect2(
+					manager.iscript.scenario.scriptsB,
+					manager.iscript.scenario.runningIScriptIdxB,
+					FLift2(\scriptRecords, id ->
+						if (id >= 0 && id < length(scriptRecords))
+							Some(scriptRecords[id])
+						else
+							None()
+					)
+				),
 				\scriptRecordM -> {
 					eitherFn(
 						scriptRecordM,
@@ -955,11 +1000,13 @@ startIScriptScenarioReplaying(
 
 							iScriptInfo(manager, "Replaying " + scriptPath, None());
 
+							next(manager.iscript.currentFileNameB, scriptPath);
+
 							onSuccess = \ -> {
 								showIScriptReplayCursor(manager);
 
-								uns := [
-									substituteHttpRequest(manager),
+								(manager.iscript).httpRequestDisposer ::= Some(substituteHttpRequest(manager));
+								[
 									replayIScript(manager, m2t,
 										\b -> {
 											hideIScriptReplayCursor(manager);
@@ -1002,25 +1049,34 @@ startIScriptScenarioReplaying(
 									),
 									\ -> nextDistinct(stageWidthHeight, tempStageWidthHeight)
 								]
+								|> (\d -> \ -> applyall(d))
+								|> (\f -> (manager.iscript).replayDisposer ::= Some(f))
 							};
 
 							onError = \ -> {
+								disposeIScriptHandler(manager);
 								next(manager.iscript.scenario.runningIScriptIdxB, getValue(manager.iscript.scenario.runningIScriptIdxB) + 1);
 							};
 
-							uns := [loadIScriptFile(manager, scriptPath, onSuccess, onError)];
+							uns := [
+								\ -> disposeIScriptHandler(manager),
+								\ -> clearIScriptAdditionalInfo(manager),
+								loadIScriptFile(manager, scriptPath, onSuccess, onError)
+							];
 
 							[\ -> dispUnsA(uns)];
 						},
 						\ -> {
 							stopScenarioReplay();
-
 							[];
 						}
 					);
 				}
 			)()
 		]
+		|> (\d -> \ -> applyall(d))
+		|> (\f -> (manager.iscript).replayScenarioDisposer ::= Some(f));
+		[]
 	} else {
 		[]
 	}
@@ -1031,6 +1087,11 @@ disposeIScriptHandler(manager : MaterialManager) -> void {
 	(manager.iscript).httpRequestDisposer ::= None();
 	maybeApply((manager.iscript).replayDisposer, apply0);
 	(manager.iscript).replayDisposer ::= None();
+}
+
+disposeIScriptScenarioHandler(manager : MaterialManager) -> void {
+	maybeApply((manager.iscript).replayScenarioDisposer, apply0);
+	(manager.iscript).replayScenarioDisposer ::= None();
 }
 
 handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void {
@@ -1048,19 +1109,19 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 				startIScriptReplaying(manager, m2t, onFinish);
 			}
 			IScriptReplayingPaused(): {
-				disposeIScriptHandler(manager);
 				[]
 			}
 			IScriptScenarioReplaying(onFinish): {
 				disposeIScriptHandler(manager);
+				disposeIScriptScenarioHandler(manager);
 				startIScriptScenarioReplaying(manager, m2t, onFinish);
 			}
 			IScriptScenarioReplayingPaused(): {
-				disposeIScriptHandler(manager);
 				[]
 			}
 			IScriptStopped(): {
 				disposeIScriptHandler(manager);
+				disposeIScriptScenarioHandler(manager);
 				[]
 			}
 			IScriptAddMFocusRecord(addDialog): {
@@ -1161,6 +1222,8 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 
 		if (countA(b, \v -> v.isReplaySuccessful) < length(b)) {
 			iScriptError(manager, "IScript replay finished with errors", None());
+		} else {
+			iScriptInfo(manager, "IScript replay completed successfully", None());
 		}
 
 		outputValues = map(getValue(manager.iscript.output), \ov : IScriptOutputValue -> Pair(ov.name, ov.value));
@@ -1174,13 +1237,15 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 		// If there was a run with the parameter "playiscript", then we exit with the result return.
 		if (length(b) > 1) {
 			iScriptInfo(manager, "=== End Scenario ===", None());
-			if (getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "") quit(countA(b, \v -> !v.isReplaySuccessful));
-
-			compareDialog(b);
+			if (getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
+				quit(countA(b, \v -> !v.isReplaySuccessful))
+			else
+				compareDialog(b);
 		} else {
-			if (getUrlParameter(UP_ISCRIPTPLAY) != "") quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)));
-
-			compareDialog(b);
+			if (getUrlParameter(UP_ISCRIPTPLAY) != "")
+				quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)))
+			else
+				compareDialog(b);
 		}
 	}
 }

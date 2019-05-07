@@ -1,16 +1,25 @@
-import tropic/tropic_gui;
-import tropic/trender;
+import tropic/tropic;
 import formats/css/stylesheet;
-
+import ui/animate/spring;
+import sys/interactive;
 
 export {
-	// Prepare a manager for dragging, tooltips 
+	TRenderStyle ::= Stylesheet, TDpif, TStageWH, TInspectStageWH, TInspectDpiFactor, TGrabSnapshot;
+		TDpif(dpif : double);
+		TStageWH(width : double, height : double);
+		TInspectDpiFactor(factor : DynamicBehaviour<Factor>);
+		TInspectStageWH(wh : DynamicBehaviour<WidthHeight>);
+		//Call back with grab snapshot function. This can be used to get a snapshot of what is currently on the screen.
+		//Return a disposer. Call this when tropic is destroyed(when called disposer).
+		TGrabSnapshot(grabFn : (() -> Tropic) -> () -> void);
+
+	// Prepare a manager for dragging, tooltips
 	// - with a default value for when nothing is being dragged or no tooltips rendered
 	makeTManager(none : int, style : [TRenderStyle]) -> TManager;
 
 	TManager(
 		// What id is dragging at this point?
-		dragging : DynamicBehaviour<int>, 
+		dragging : DynamicBehaviour<int>,
 
 		// Whenever we drop, this is updated
 		drop : DynamicBehaviour<int>,
@@ -19,13 +28,13 @@ export {
 		none : int,
 
 		// Gets a global coordinates of the mouse. Also used for tooltips positions
-		xy : () -> Point, 
+		xy : () -> Point,
 
 		// Internal: Which drop spot is being hovered?
 		hovering : DynamicBehaviour<int>,
 
 		// Internal: The draggables communicate drops with this function
-		onDrop : (int) -> bool, 
+		onDrop : (int) -> bool,
 
 		// Internal for numbering the dragabbles to be able to find their place on the screen
 		nextTagId : ref int,
@@ -37,13 +46,21 @@ export {
 
 		renderStyle : [TRenderStyle],
 
-		deltaTimer : LazyDeltaTimer
+		deltaTimer : LazyDeltaTimer,
+
+		currentInteractionItemID : DynamicBehaviour<[int]>,
+
+		zorder : DynamicBehaviour<int>
 	);
 
-	// Render the given tropic, setting up the drag/tooltips handling. Drag/tooltips support does not work unless you use this!
-	trenderManager(manager : TManager, t : Tropic) -> () -> void;	
-
 	dummyTFinder(i : int) -> PositionScale;
+
+	makeTagId(manager : TManager) -> int;
+
+	addInteractionItemId(manager : TManager, itemId : int) -> void;
+	removeInteractionItemId(manager : TManager, itemId : int) -> void;
+	blockOtherInteractionItemIds(manager : TManager, itemId : int) -> void;
+	isCurrentInteractionItemId(manager : TManager, itemId : int) -> bool;
 }
 
 makeTManager(none : int, style : [TRenderStyle]) -> TManager {
@@ -51,7 +68,7 @@ makeTManager(none : int, style : [TRenderStyle]) -> TManager {
 
 	draggingId = make(none);
 	dropId = make(none);
-	newStyle = 
+	newStyle =
 		if (length(extractStructMany(style, TInspectDpiFactor(make(Factor(1.0, 1.0))))) > 0)
 			style
 		else
@@ -83,7 +100,9 @@ makeTManager(none : int, style : [TRenderStyle]) -> TManager {
 		ref dummyTFinder,
 		sheet,
 		newStyle,
-		lazyDeltaTimer
+		lazyDeltaTimer,
+		make([]),
+		make(0)
 	);
 }
 
@@ -93,12 +112,30 @@ dummyTFinder(i : int) -> PositionScale {
 	PositionScale(Point(0.0, 0.0), Point(1.0, 1.0));
 }
 
-trenderManager(manager : TManager, t : Tropic) -> () -> void {
-	r = trender2(t, manager.renderStyle);
-	if (^(manager.findPositionScaleFn) == dummyTFinder) {
-		manager.findPositionScaleFn := r.second;
-	} else {
-		println("Warning: New call of trenderManager would overwrite findPositionScaleFn");
-	}
-	r.first;
+makeTagId(manager : TManager) -> int {
+	id = ^(manager.nextTagId);
+	manager.nextTagId := id + 1;
+	id;
+}
+
+addInteractionItemId(manager : TManager, itemId : int) -> void {
+	interactionItemIds = getValue(manager.currentInteractionItemID);
+
+	if (!contains(interactionItemIds, itemId))
+		next(manager.currentInteractionItemID, arrayPush(interactionItemIds, itemId));
+}
+
+removeInteractionItemId(manager : TManager, itemId : int) -> void {
+	interactionItemIds = getValue(manager.currentInteractionItemID);
+
+	if (contains(interactionItemIds, itemId))
+		next(manager.currentInteractionItemID, removeAll(interactionItemIds, itemId));
+}
+
+blockOtherInteractionItemIds(manager : TManager, itemId : int) -> void {
+	nextDistinct(manager.currentInteractionItemID, [itemId]);
+}
+
+isCurrentInteractionItemId(manager : TManager, itemId : int) -> bool {
+	contains(getValue(manager.currentInteractionItemID), itemId)
 }

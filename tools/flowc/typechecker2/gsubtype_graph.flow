@@ -1,0 +1,146 @@
+import ds/simplegraph;
+import tools/flowc/typechecker2/gtype;
+import ds/easygraph_utils;
+import tools/flowc/flowcacc;
+
+export {
+	// Builds a graph for subtyping relations
+	buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph;
+
+	addFcModuleToGSubtypeGraph(graph : GSubtypeGraph, names : FcGlobalNames, module : FcModule) -> GSubtypeGraph;
+
+	// All supertypes (not including the name itself)
+	findGSupertypeFromName(env : GEnv, name : string) -> [string];
+}
+
+buildGSubtypeGraph(names : FcGlobalNames) -> GSubtypeGraph {
+	addStructsAndUnionsToGSubtypeGraph(emptyGSubtypeGraph(), names, names.structs, names.unions);
+}		
+
+addFcModuleToGSubtypeGraph(graph : GSubtypeGraph, names : FcGlobalNames, module : FcModule) -> GSubtypeGraph {
+	addStructsAndUnionsToGSubtypeGraph(graph, names, module.structs, module.unions);
+}
+
+addStructsAndUnionsToGSubtypeGraph(
+	graph : GSubtypeGraph, 
+	names : FcGlobalNames,
+	structs : Tree<string, FcTypeStruct>,
+	unions : Tree<string, FcTypeUnion>) -> GSubtypeGraph {
+
+	// From struct to unions
+	supertypes0 = foldTree(unions, graph.supertypes, \unionname : string, union : FcTypeUnion, acc -> {
+		// Special case: If the union has only one struct, these struct is also a supertype of the union
+		nacc = if (length(union.typenames) == 1) {
+			fold(union.typenames, acc, \acc2, typename -> {
+				addSimpleEdge(acc2, unionname, typename.name, true, 1)
+			});
+		} else acc;
+
+		fold(union.typenames, nacc, \acc2, typename -> {
+			addSimpleEdge(acc2, typename.name, unionname, true, 1)
+		});
+	});
+
+	supertypes = foldTree(structs, supertypes0, \structname, struct : FcTypeStruct, acc -> {
+		addSimpleNode(acc, structname);
+	});
+
+	// From unions to structs
+	subtypes0 = foldTree(unions, graph.subtypes, \unionname : string, union : FcTypeUnion, acc -> {
+		// Special case: If the union has only one struct, these struct is also a supertype of the union
+		nacc = if (length(union.typenames) == 1) {
+			fold(union.typenames, acc, \acc2, typename -> {
+				addSimpleEdge(acc2, typename.name, unionname, true, 1)
+			});
+		} else acc;
+		fold(union.typenames, nacc, \acc2, typename -> {
+			addSimpleEdge(acc2, unionname, typename.name, true, 1)
+		});
+	});
+	subtypes = foldTree(structs, subtypes0, \structname, struct : FcTypeStruct, acc -> {
+		addSimpleNode(acc, structname);
+	});
+
+	fieldSupertypes0 = foldTree(structs, graph.fieldSupertypes, \structname, struct : FcTypeStruct, acc -> {
+		fold(struct.args, acc, \acc2, arg : FcStructArg -> {
+			// A link from the field to the struct name
+			addSimpleEdge(acc2, "." + arg.name, structname, true, 1)
+		});
+	});
+
+	fieldSupertypes = foldTree(unions, fieldSupertypes0, \unionname : string, union : FcTypeUnion, acc -> {
+		// Check what fields all members have
+		ustructs = union2structnames(names, unionname);
+		structFields = map(ustructs, \struct -> {
+			mstructdef = lookupTree(names.structs, struct);
+			switch (mstructdef) {
+				None(): [];
+				Some(structdef): {
+					map(structdef.args, \a -> a.name)
+				}
+			}
+		});
+
+		// OK, we have to intersect all these arrays
+		shared = foldi(structFields, makeSet(), \i, acc0, sf : [string] -> {
+			if (i == 0) buildSet(sf)
+			else intersectSets(acc0, buildSet(sf))
+		});
+		foldSet(shared, acc, \acc0, field -> {
+			// A link from the field to the union
+			addSimpleEdge(acc0, "." + field, unionname, true, 1)
+		});
+	});
+
+	GSubtypeGraph(
+		supertypes,
+		fieldSupertypes,
+		subtypes
+	);
+}
+
+findGSupertypeFromName(env : GEnv, name : string) -> [string] {
+	graph = env.subtypes;
+	// Depending on whether we look for a field or a name, let us pick the right graph
+	supergraph = if (startsWith(name, ".")) {
+		graph.fieldSupertypes
+	} else {
+		graph.supertypes
+	};
+	node = getSimpleNodeId(supergraph, name);
+	reachable = reachableClosureFromNode(supergraph.graph, node);
+
+	names : Set<string> = mapSet(reachable, \id : int -> {
+		mnode = lookupTree(supergraph.graph.nodes, id);
+		switch (mnode) {
+			None(): "";
+			Some(n): n.data;
+		}
+	});
+	useful = filter(set2array(names), \n -> n != "");
+	if (true) {
+		useful
+	} else {
+		known = filter(useful, \n -> containsSet(env.namesSeen, n));
+		if (known != []) known else useful
+	}
+}
+
+union2structnames(names : FcGlobalNames, name : string) -> [string] {
+	mstruct = lookupTree(names.structs, name);
+	switch (mstruct) {
+		None(): {
+			munion = lookupTree(names.unions, name);
+			switch (munion) {
+				None(): [];
+				Some(union): {
+					concatA(map(union.typenames, \tn -> union2structnames(names, tn.name)));
+				}
+			}
+		}
+		Some(struct): {
+			[name];
+		}
+	}
+}
+
