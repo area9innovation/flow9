@@ -333,7 +333,7 @@ protected:
 
     float PixelsPerCm;
     int DisplayDPI;
-    double DisplayDensity = 1.0;
+    double DisplayDensity;
     void setDPI(int dpi) { DisplayDPI = dpi; PixelsPerCm = dpi/2.54f; }
 
     bool isScreenRotated() { return (ScreenRotation&1) != 0; }
