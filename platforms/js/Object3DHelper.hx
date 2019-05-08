@@ -31,6 +31,18 @@ class Object3DHelper {
 		return completeBoundingBox;
 	}
 
+	public static inline function getStage(object : Object3D) : Array<ThreeJSStage> {
+		if (object.parent == null) {
+			if (untyped object.stage != null) {
+				return [untyped object.stage];
+			} else {
+				return [];
+			}
+		} else {
+			return getStage(object.parent);
+		}
+	}
+
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
 		parent.dispatchEvent({ type : event });
 

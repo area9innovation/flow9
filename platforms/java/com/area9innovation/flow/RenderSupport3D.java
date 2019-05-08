@@ -97,11 +97,31 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object attach3DBoxHelper(Object stage, Object object) {
+		return null;
+	}
+	public Object detach3DBoxHelper(Object stage, Object object) {
+		return null;
+	}
+	public Object clear3DBoxHelpers(Object object) {
+		return null;
+	}
+
 	public String get3DObjectId(Object object) {
 		return "";
 	}
 	public String get3DObjectType(Object object) {
 		return "";
+	}
+	public Object get3DObjectStage(Object object) {
+		return null;
+	}
+
+	public String get3DObjectName(Object object) {
+		return "";
+	}
+	public Object set3DObjectName(Object object, String name) {
+		return null;
 	}
 
 	public Boolean get3DObjectVisible(Object object) {
