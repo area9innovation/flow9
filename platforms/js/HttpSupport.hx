@@ -1,5 +1,5 @@
 #if js
-#if flow_nodejs
+#if (flow_nodejs || nwjs) 
 import js.node.Http;
 import js.node.Https;
 import js.node.http.IncomingMessage;
@@ -18,7 +18,7 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 600000;	// Ten minutes in ms
 
-	#if (js && !flow_nodejs)
+	#if (js && !flow_nodejs && !nwjs)
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
 	private static function overrideXMLHttpRequest() {
@@ -86,7 +86,7 @@ class HttpSupport {
 		Native.println("=======");
 	}
 
-	#if (js && flow_nodejs)
+	#if (js && (flow_nodejs || nwjs))
 	private static function parseUrlToNodeOptions(url : String) : HttpsRequestOptions {
 		var options = Url.parse(url);
 
@@ -118,7 +118,7 @@ class HttpSupport {
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
 		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void) : Void {
-		#if flow_nodejs
+		#if (flow_nodejs || nwjs)
 
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
@@ -183,7 +183,7 @@ class HttpSupport {
 		request.write(queryString);
 		request.end();
 		#else
-		#if js
+		#if (js && !flow_nodejs && !nwjs)
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
 		if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
@@ -291,7 +291,7 @@ class HttpSupport {
 			headers.push(["If-Match", "*"]);
 		}
 
-		#if flow_nodejs
+		#if (flow_nodejs || nwjs)
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
 		options.method = method;
@@ -379,7 +379,7 @@ class HttpSupport {
 			http.setPostData(data);
 		}
 
-		#if js
+		#if (js && !flow_nodejs && !nwjs)
 
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
@@ -522,13 +522,13 @@ class HttpSupport {
 		} );
 		loader.load(new flash.net.URLRequest(url));
 
-		#elseif (js && nwjs)
+		#elseif (js && !nwjs && !flow_nodejs)
 			if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
 				doBinflowHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			} else {
 				doBinaryHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			}
-		#elseif (js && flow_nodejs)
+		#elseif (js && (flow_nodejs) || nwjs)
 		// TO DO: Implement
 
 		#elseif js
@@ -631,7 +631,7 @@ class HttpSupport {
 
 		fileReference.browse([new flash.net.FileFilter(fTypes, fTypes)]);
 
-		#elseif (js && !flow_nodejs)
+		#elseif (js && !flow_nodejs && !nwjs)
 
 		// Remove element before trying to create.
 		// If we don't do that, file open dialog opens only first time.
