@@ -15,6 +15,22 @@ public class RenderSupport3D extends NativeHost {
 	public Object remove3DChild(Object parent, Object child) {
 		return null;
 	}
+	public Object[] get3DObjectChildren(Object object) {
+		return new Object[0];
+	}
+	public String get3DObjectJSON(Object object) {
+		return "";
+	}
+
+	public Object make3DObjectFromJSON(String json) {
+		return null;
+	}
+	public Object make3DGeometryFromJSON(String json) {
+		return null;
+	}
+	public Object make3DMaterialsFromJSON(String json) {
+		return null;
+	}
 
 	public Object make3DStage(Double width, Double height) {
 		return null;
