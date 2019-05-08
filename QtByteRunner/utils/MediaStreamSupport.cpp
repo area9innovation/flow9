@@ -2,7 +2,7 @@
 
 #include "core/RunnerMacros.h"
 
-MediaStreamSupport::MediaStreamSupport(ByteCodeRunner *Runner, QString dirPath) : NativeMethodHost(Runner)
+MediaStreamSupport::MediaStreamSupport(ByteCodeRunner *Runner) : NativeMethodHost(Runner)
 {
 }
 

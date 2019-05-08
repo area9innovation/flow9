@@ -6,7 +6,7 @@
 class MediaStreamSupport : public NativeMethodHost
 {
 public:
-    MediaStreamSupport(ByteCodeRunner *Runner, QString dirPath);
+    MediaStreamSupport(ByteCodeRunner *Runner);
 protected:
     NativeFunction *MakeNativeFunction(const char *name, int num_args);
 private:

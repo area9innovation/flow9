@@ -6,7 +6,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -15,16 +14,9 @@ import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.amazonaws.org.apache.http.HttpException;
-import com.amazonaws.org.apache.http.HttpHost;
-import com.amazonaws.org.apache.http.HttpRequest;
-import com.amazonaws.org.apache.http.HttpRequestInterceptor;
-import com.amazonaws.org.apache.http.HttpResponse;
-import com.amazonaws.org.apache.http.HttpResponseInterceptor;
 import com.amazonaws.org.apache.http.client.methods.HttpGet;
 import com.amazonaws.org.apache.http.client.methods.HttpPost;
 import com.amazonaws.org.apache.http.client.methods.HttpPut;
@@ -32,8 +24,6 @@ import com.amazonaws.org.apache.http.client.methods.HttpDelete;
 import com.amazonaws.org.apache.http.client.methods.HttpPatch;
 import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
 import com.amazonaws.org.apache.http.entity.BasicHttpEntity;
-import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
-import com.amazonaws.org.apache.http.protocol.HttpContext;
 
 // this is only for checking hardware acceleration, probably could be refactored
 import android.app.AlertDialog;
@@ -383,8 +373,12 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
 
-        if (Utils.MediaRecorderIsCamera2Supported) {
-            FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(this, wrapper);
+        FlowMediaStreamSupport flowMediaStreamSupport = new FlowMediaStreamSupport(this, wrapper);
+        wrapper.setFlowMediaStreamSupport(flowMediaStreamSupport);
+        FlowWebRTCSupport flowWebRTCSupport = new FlowWebRTCSupport(wrapper);
+        wrapper.setFlowWebRTCSupport(flowWebRTCSupport);
+        if (Utils.isMediaRecorderSupported) {
+            FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(wrapper);
             wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
         }
 

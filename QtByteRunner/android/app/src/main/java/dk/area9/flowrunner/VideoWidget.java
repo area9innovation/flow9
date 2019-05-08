@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.SurfaceTexture;
 import android.graphics.SurfaceTexture.OnFrameAvailableListener;
-import android.hardware.display.DisplayManager;
 import android.media.MediaPlayer;
 import android.opengl.GLES20;
 import android.os.Handler;
@@ -20,12 +19,18 @@ import android.widget.MediaController;
 import android.widget.RelativeLayout;
 import android.widget.VideoView;
 
+import org.webrtc.AudioTrack;
+import org.webrtc.EglBase;
+import org.webrtc.EglRenderer;
+import org.webrtc.GlRectDrawer;
+import org.webrtc.RendererCommon;
+import org.webrtc.SurfaceEglRenderer;
+
 import java.io.IOException;
 
 class VideoWidget extends NativeWidget {
     @Nullable
     private static Boolean useNativeVideo = null;
-    private static boolean displayManagerSupported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
 
     static final int PlayStart = 0; // Loaded and/or start of video
     static final int PlayEnd = 1;   // End of video
@@ -52,9 +57,8 @@ class VideoWidget extends NativeWidget {
     private SurfaceTexture surfaceTexture;
 
     private boolean useMediaStream;
-    private FlowMediaRecorderSupport.FlowMediaStreamObject mediaStreamObject;
-    private DisplayManager displayManager;
-    private DisplayManager.DisplayListener mDisplayListener;
+    private FlowMediaStreamSupport.FlowMediaStreamObject mediaStreamObject;
+    private EglRenderer eglRenderer;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -64,11 +68,8 @@ class VideoWidget extends NativeWidget {
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(group.getContext());
             useNativeVideo = !prefs.getBoolean("opengl_video", true);
         }
-
-        if (VideoWidget.displayManagerSupported)
-            displayManager = (DisplayManager) group.getWidgetHostContext().getSystemService(Context.DISPLAY_SERVICE);
     }
-    
+
     @NonNull
     protected View createView() {
         Context ctx = group.getContext();
@@ -196,8 +197,19 @@ class VideoWidget extends NativeWidget {
             mediaPlayer = null;
         }
 
-        if (useMediaStream && VideoWidget.displayManagerSupported)
-            displayManager.unregisterDisplayListener(mDisplayListener);
+        if (useMediaStream) {
+            if (eglRenderer != null) {
+                if (mediaStreamObject.mediaStream != null && !mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
+                    mediaStreamObject.mediaStream.videoTracks.get(0).removeSink(eglRenderer);
+                }
+
+                eglRenderer.release();
+            }
+
+            if (surfaceTexture != null) {
+                surfaceTexture.release();
+            }
+        }
 
         super.destroy();
     }
@@ -312,6 +324,12 @@ class VideoWidget extends NativeWidget {
                 // There is rare and weird IllegalStateException on setLooping although
                 // MP is prepared.
                 Log.e(Utils.LOG_TAG, "IllegalStateException for MediaPlayer updateStateFlags");
+            }
+        }
+
+        if (mediaStreamObject != null) {
+            for (AudioTrack audiotrack : mediaStreamObject.mediaStream.audioTracks) {
+                audiotrack.setVolume(linearVolume() * 10);
             }
         }
     }
@@ -433,7 +451,8 @@ class VideoWidget extends NativeWidget {
     @Nullable
     private Runnable updateCallback = new Runnable() {
         public void run() {
-            if (id == 0 || (mediaPlayer == null && vview == null)) return;
+            if (id == 0 || (mediaPlayer == null && vview == null && mediaStreamObject == null))
+                return;
             updateStateFlags();
         }
     };
@@ -519,27 +538,44 @@ class VideoWidget extends NativeWidget {
         }
     }
 
-    public void init(FlowMediaRecorderSupport.FlowMediaStreamObject mediaStreamObject) {
+    public void init(FlowMediaStreamSupport.FlowMediaStreamObject mediaStreamObject) {
         this.useMediaStream = true;
-        this.surfaceTexture = mediaStreamObject.surfaceTexture;
         this.mediaStreamObject = mediaStreamObject;
 
-        if (VideoWidget.displayManagerSupported) {
-            mDisplayListener = new DisplayManager.DisplayListener() {
-                @Override
-                public void onDisplayAdded(int displayId) {
-                }
+        this.surfaceTexture = new SurfaceTexture(0);
+        this.surfaceTexture.detachFromGLContext();
+        this.surfaceTexture.setDefaultBufferSize(mediaStreamObject.width, mediaStreamObject.height);
 
-                @Override
-                public void onDisplayChanged(int displayId) {
-                    updateVideoTexture();
-                }
+        SurfaceEglRenderer eglRenderer = new SurfaceEglRenderer("VideoTrackRenderer" + this.id);
+        eglRenderer.init(FlowMediaStreamSupport.getRootEglBase().getEglBaseContext(), new RendererCommon.RendererEvents() {
+            @Override
+            public void onFirstFrameRendered() {
 
-                @Override
-                public void onDisplayRemoved(int displayId) {
+            }
+
+            @Override
+            public void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
+                if (rotation % 180 != 0) {
+                    int temp = videoHeight;
+                    videoHeight = videoWidth;
+                    videoWidth = temp;
                 }
-            };
+                mediaStreamObject.width = videoWidth;
+                mediaStreamObject.height = videoHeight;
+                reportSize(mediaStreamObject.width, mediaStreamObject.height);
+            }
+        }, EglBase.CONFIG_RGBA, new GlRectDrawer());
+
+        eglRenderer.createEglSurface(this.surfaceTexture);
+        if (mediaStreamObject.isCameraFrontFacing) {
+            eglRenderer.setMirror(true);
         }
+
+        if (!mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
+            mediaStreamObject.mediaStream.videoTracks.get(0).addSink(eglRenderer);
+        }
+
+        this.eglRenderer = eglRenderer;
 
         handler.post(createCallback);
     }
@@ -571,8 +607,6 @@ class VideoWidget extends NativeWidget {
     public void destroySurface() {
         if (mediaPlayer != null)
             mediaPlayer.setSurface(null);
-        if (useMediaStream && VideoWidget.displayManagerSupported)
-                displayManager.unregisterDisplayListener(mDisplayListener);
     }
 
     public void createSurface() {
@@ -621,33 +655,6 @@ class VideoWidget extends NativeWidget {
         return GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE;
     }
 
-    private void updateVideoTexture() {
-        if (VideoWidget.displayManagerSupported) {
-            int displayRotation = group.getDisplay().getRotation();
-            boolean swappedDimensions = false;
-            switch (displayRotation) {
-                case Surface.ROTATION_0:
-                case Surface.ROTATION_180:
-                    if (mediaStreamObject.sensorOrientation == 90 || mediaStreamObject.sensorOrientation == 270) {
-                        swappedDimensions = true;
-                    }
-                    break;
-                case Surface.ROTATION_90:
-                case Surface.ROTATION_270:
-                    if (mediaStreamObject.sensorOrientation == 0 || mediaStreamObject.sensorOrientation == 180) {
-                        swappedDimensions = true;
-                    }
-                    break;
-            }
-            if (swappedDimensions) {
-                reportSize(mediaStreamObject.height, mediaStreamObject.width);
-            } else {
-                reportSize(mediaStreamObject.width, mediaStreamObject.height);
-            }
-            group.getWrapper().setVideoRotation(id, FlowMediaRecorderSupport.getOrientation(mediaStreamObject.isFacingFront, mediaStreamObject.sensorOrientation, displayRotation));
-        }
-    }
-
     public void createVideoTexture() {
         group.getFlowRunnerView().queueEvent(new Runnable() {
             @Override
@@ -690,11 +697,9 @@ class VideoWidget extends NativeWidget {
 
                     if (useMediaStream) {
                         surfaceTexture.updateTexImage();
-                        updateVideoTexture();
+                        reportSize(mediaStreamObject.width, mediaStreamObject.height);
+                        reportDuration(1);
                         reportStatusEvent(PlayStart);
-                        if (VideoWidget.displayManagerSupported) {
-                            displayManager.registerDisplayListener(mDisplayListener, handler);
-                        }
                     }
                 }
             }

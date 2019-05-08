@@ -12,6 +12,8 @@
 #include "utils/AbstractGeolocationSupport.h"
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
+#include "utils/MediaStreamSupport.h"
+#include "utils/WebRTCSupport.h"
 #include "utils/MediaRecorderSupport.h"
 #include "utils/AbstractWebSocketSupport.h"
 
@@ -237,6 +239,74 @@ private:
     virtual void afterWatchDispose(int callbacksRoot);
 };
 
+class AndroidMediaStreamSupport : public MediaStreamSupport {
+    AndroidRunnerWrapper *owner;
+
+public:
+    AndroidMediaStreamSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeMediaStream : public FlowNativeObject
+    {
+        AndroidRunnerWrapper *owner;
+    public:
+
+        FlowNativeMediaStream(AndroidRunnerWrapper* owner);
+        ~FlowNativeMediaStream();
+
+        jobject mediaStream;
+
+        jint width;
+        jint height;
+
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
+    };
+
+    void deliverInitializeDeviceInfoCallback(jint cb_root);
+    void deliverDevices(jint cb_root, jobjectArray ids, jobjectArray names);
+    void deliverMediaStream(jint cb_root, jobject mediaStream);
+    void deliverError(jint cb_root, jstring error);
+
+private:
+    virtual void initializeDeviceInfo(int callbackRoot);
+    virtual void getAudioInputDevices(int callbackRoot);
+    virtual void getVideoInputDevices(int callbackRoot);
+
+    virtual void makeStream(bool recordAudio, bool recordVideo, unicode_string audioDeviceId, unicode_string videoDeviceId, int onReadyRoot, int onErrorRoot);
+    virtual void stopStream(StackSlot mediaStream);
+
+};
+
+class AndroidWebRTCSupport : public WebRTCSupport {
+    AndroidRunnerWrapper *owner;
+
+public:
+    AndroidWebRTCSupport(AndroidRunnerWrapper *owner);
+
+    class FlowNativeMediaSender : public FlowNativeObject
+    {
+        AndroidWebRTCSupport *owner;
+    public:
+
+        FlowNativeMediaSender(AndroidWebRTCSupport* owner);
+        ~FlowNativeMediaSender();
+
+        jobject mediaSender;
+
+        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaSender, FlowNativeObject)
+    };
+
+    void deliverOnMediaSenderReadyCallback(jint cb_root, jobject sender);
+    void deliverOnNewParticipantCallback(jint cb_root, jstring id, jobject mediaStream);
+    void deliverOnParticipantLeaveCallback(jint cb_root, jstring id);
+    void deliverOnErrorCallback(jint cb_root, jstring error);
+
+private:
+    virtual void makeSenderFromStream(unicode_string serverUrl, unicode_string roomId, std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string> > turnServers,
+                                                       StackSlot stream, int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot);
+    virtual void stopSender(StackSlot sender);
+
+};
+
 class AndroidMediaRecorderSupport : public MediaRecorderSupport {
     AndroidRunnerWrapper *owner;
 
@@ -256,38 +326,10 @@ public:
         DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaRecorder, FlowNativeObject)
     };
 
-    class FlowNativeMediaStream : public FlowNativeObject
-    {
-        AndroidMediaRecorderSupport *owner;
-    public:
-
-        FlowNativeMediaStream(AndroidMediaRecorderSupport* owner);
-        ~FlowNativeMediaStream();
-
-        jobject mediaStream;
-
-        jint width;
-        jint height;
-
-        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
-    };
-
-    void deliverInitializeDeviceInfoCallback(jint cb_root);
-    void deliverAudioDevices(jint cb_root, jobjectArray ids, jobjectArray names);
-    void deliverVideoDevices(jint cb_root, jobjectArray ids, jobjectArray names);
     void deliverMediaRecorder(jint cb_root, jobject recorder);
-    void deliverMediaStream(jint cb_root, jobject mediaStream);
     void deliverError(jint cb_root, jstring error);
 private:
-    virtual void recordMedia(unicode_string websocketUri, unicode_string filePath, int timeslice, unicode_string videoMimeType,
-                            bool recordAudio, bool recordVideo, unicode_string videoDeviceId, unicode_string audioDeviceId,
-                            int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
-                            int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot);
-
-    virtual void initializeDeviceInfo(int callbackRoot);
-    virtual void getAudioInputDevices(int callbackRoot);
-    virtual void getVideoInputDevices(int callbackRoot);
-
+    virtual void makeMediaRecorder(unicode_string websocketUri, unicode_string filePath, StackSlot mediaStream, int timeslice, int onReadyRoot, int onErrorRoot);
     virtual void startMediaRecorder(StackSlot recorder, int timeslice);
     virtual void resumeMediaRecorder(StackSlot recorder);
     virtual void pauseMediaRecorder(StackSlot recorder);
@@ -330,6 +372,8 @@ class AndroidRunnerWrapper {
     friend class AndroidLocalyticsSupport;
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
+    friend class AndroidMediaStreamSupport;
+    friend class AndroidWebRTCSupport;
     friend class AndroidMediaRecorderSupport;
     friend class AndroidWebSocketSupport;
 
@@ -348,6 +392,8 @@ class AndroidRunnerWrapper {
     AndroidNotificationsSupport notifications;
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
+    AndroidMediaStreamSupport mediaStream;
+    AndroidWebRTCSupport webrtcSupport;
     AndroidMediaRecorderSupport mediaRecorder;
     AndroidWebSocketSupport websockets;
     FileLocalStore store;
@@ -378,6 +424,8 @@ public:
     AndroidInAppPurchase *getInAppPurchase() { return &purchase; }
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
+    AndroidMediaStreamSupport *getMediaStream() { return &mediaStream; }
+    AndroidWebRTCSupport *getWebRTCSupport() { return &webrtcSupport; }
     AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
     AndroidWebSocketSupport *getWebSockets() { return &websockets; }
 

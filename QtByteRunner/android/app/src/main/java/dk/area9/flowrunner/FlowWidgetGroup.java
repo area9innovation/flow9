@@ -227,7 +227,7 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
     }
 
     public void onFlowCreateVideoWidgetFromMediaStream(
-            long id, FlowMediaRecorderSupport.FlowMediaStreamObject flowMediaStream) {
+            long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
 
         VideoWidget widget = (VideoWidget)widgets.get(id);
         if (widget == null) {

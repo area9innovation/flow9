@@ -13,11 +13,11 @@ protected:
     NativeFunction *MakeNativeFunction(const char *name, int num_args);
 private:
 
-    virtual void makeMediaSenderFromStream(unicode_string serverUrl, unicode_string roomId, std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string>> turnServers,
+    virtual void makeSenderFromStream(unicode_string serverUrl, unicode_string roomId, std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string> > turnServers,
                                            StackSlot stream, int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot) {}
     virtual void stopSender(StackSlot sender) {}
 
-    DECLARE_NATIVE_METHOD(makeMediaSenderFromStreamNative)
+    DECLARE_NATIVE_METHOD(makeMediaSenderFromStream)
     DECLARE_NATIVE_METHOD(stopMediaSender)
 };
 

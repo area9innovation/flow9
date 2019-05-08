@@ -8,7 +8,7 @@
 
 CameraInfo::CameraInfo(QString id, QString name, int width, int height) : id(id), name(name), max_width(width), max_height(height) {}
 
-QMediaStreamSupport::QMediaStreamSupport(ByteCodeRunner *Runner, QString dirPath) : MediaStreamSupport(Runner, dirPath), owner(Runner)
+QMediaStreamSupport::QMediaStreamSupport(ByteCodeRunner *Runner, QString dirPath) : MediaStreamSupport(Runner), owner(Runner)
 {
 #ifdef TARGET_OS_MAC
 

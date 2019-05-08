@@ -101,6 +101,21 @@ jobjectArray string_map2jni(JNIEnv *env, const T &pmap)
     return rv;
 }
 
+template<class T>
+jobjectArray string_array2jni(JNIEnv *env, const T &array)
+{
+    jobjectArray rv = env->NewObjectArray(array.size(), cString, NULL);
+
+    int i = 0;
+    for (typename T::const_iterator it = array.begin(); it != array.end(); ++it, ++i) {
+        jstring val = string2jni(env, *it);
+        env->SetObjectArrayElement(rv, i, val);
+        env->DeleteLocalRef(val);
+    }
+
+    return rv;
+}
+
 static void jni2bytes(JNIEnv *env, std::vector<uint8_t> *buffer, jbyteArray arr, bool auto_size = true)
 {
     size_t size = (size_t) (arr ? env->GetArrayLength(arr) : 0);
@@ -177,7 +192,7 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbResizeWidget, "(JZFFFFFF)V") \
     CALLBACK(cbCreateTextWidget, "(JLjava/lang/String;Ljava/lang/String;FIZZFLjava/lang/String;Ljava/lang/String;IIII)V") \
     CALLBACK(cbCreateVideoWidget, "(JLjava/lang/String;ZZIF)V") \
-    CALLBACK(cbCreateVideoWidgetFromMediaStream, "(JLdk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaStreamObject;)V") \
+    CALLBACK(cbCreateVideoWidgetFromMediaStream, "(JLdk/area9/flowrunner/FlowMediaStreamSupport$FlowMediaStreamObject;)V") \
     CALLBACK(cbUpdateVideoPlay, "(JZ)V") \
     CALLBACK(cbUpdateVideoPosition, "(JJ)V") \
     CALLBACK(cbUpdateVideoVolume, "(JF)V") \
@@ -224,7 +239,11 @@ static jfieldID c_ptr_field = NULL;
     CALLBACK(cbDeviceInfoUpdated, "(I)V") \
     CALLBACK(cbGetAudioDevices, "(I)V") \
     CALLBACK(cbGetVideoDevices, "(I)V") \
-    CALLBACK(cbRecordMedia, "(Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;ZZLjava/lang/String;Ljava/lang/String;IIII)V") \
+    CALLBACK(cbMakeMediaStream, "(ZZLjava/lang/String;Ljava/lang/String;II)V") \
+    CALLBACK(cbStopMediaStream, "(Ldk/area9/flowrunner/FlowMediaStreamSupport$FlowMediaStreamObject;)V") \
+    CALLBACK(cbMakeMediaSender, "(Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;[[Ljava/lang/String;Ldk/area9/flowrunner/FlowMediaStreamSupport$FlowMediaStreamObject;IIII)V") \
+    CALLBACK(cbStopMediaSender, "(Ldk/area9/flowrunner/FlowWebRTCSupport$FlowMediaSenderObject;)V") \
+    CALLBACK(cbMakeMediaRecorder, "(Ljava/lang/String;Ljava/lang/String;Ldk/area9/flowrunner/FlowMediaStreamSupport$FlowMediaStreamObject;III)V") \
     CALLBACK(cbStartMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
     CALLBACK(cbResumeMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
     CALLBACK(cbPauseMediaRecorder, "(Ldk/area9/flowrunner/FlowMediaRecorderSupport$FlowMediaRecorderObject;)V") \
@@ -805,31 +824,49 @@ NATIVE(bool) Java_dk_area9_flowrunner_FlowRunnerWrapper_nIsVirtualKeyboardListen
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeviceInfoUpdated
         (JNIEnv *env, jobject obj, jlong ptr, jint cb_root)
 {
-    WRAPPER(getMediaRecorder()->deliverInitializeDeviceInfoCallback(cb_root));
+    WRAPPER(getMediaStream()->deliverInitializeDeviceInfoCallback(cb_root));
 }
 
-NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGetAudioDevices
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGetMediaDevices
         (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobjectArray ids, jobjectArray names)
 {
-    WRAPPER(getMediaRecorder()->deliverAudioDevices(cb_root, ids, names));
+    WRAPPER(getMediaStream()->deliverDevices(cb_root, ids, names));
 }
 
-NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nGetVideoDevices
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobjectArray ids, jobjectArray names)
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaStreamReady
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject mediaStream)
 {
-    WRAPPER(getMediaRecorder()->deliverVideoDevices(cb_root, ids, names));
+    WRAPPER(getMediaStream()->deliverMediaStream(cb_root, mediaStream));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaSenderReady
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject sender)
+{
+    WRAPPER(getWebRTCSupport()->deliverOnMediaSenderReadyCallback(cb_root, sender));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaSenderNewParticipant
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring id, jobject mediaStream)
+{
+    WRAPPER(getWebRTCSupport()->deliverOnNewParticipantCallback(cb_root, id, mediaStream));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaSenderParticipantLeave
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring id)
+{
+    WRAPPER(getWebRTCSupport()->deliverOnParticipantLeaveCallback(cb_root, id));
+}
+
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaSenderError
+        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jstring error)
+{
+    WRAPPER(getWebRTCSupport()->deliverOnErrorCallback(cb_root, error));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnRecorderReady
         (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject recorder)
 {
     WRAPPER(getMediaRecorder()->deliverMediaRecorder(cb_root, recorder));
-}
-
-NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnMediaStreamReady
-        (JNIEnv *env, jobject obj, jlong ptr, jint cb_root, jobject mediaStream)
-{
-    WRAPPER(getMediaRecorder()->deliverMediaStream(cb_root, mediaStream));
 }
 
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nOnRecorderError
@@ -865,7 +902,7 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnOpen
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
-      geolocation(this), fsinterface(&runner), mediaRecorder(this), websockets(this)
+      geolocation(this), fsinterface(&runner), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
 {
     bytecode_ok = main_ok = false;
     flow_time_profiling_enabled = false;
@@ -1463,7 +1500,7 @@ bool AndroidRenderSupport::doCreateNativeWidget(GLClip* clip, bool neww)
         return !owner->eatExceptions();
     } else if (GLVideoClip *video_clip = flow_native_cast<GLVideoClip>(clip)) {
         if (video_clip->useMediaStream()) {
-            AndroidMediaRecorderSupport::FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<AndroidMediaRecorderSupport::FlowNativeMediaStream*>(
+            AndroidMediaStreamSupport::FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<AndroidMediaStreamSupport::FlowNativeMediaStream*>(
                 getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
             env->CallVoidMethod(
                 owner->owner, cbCreateVideoWidgetFromMediaStream,
@@ -2230,6 +2267,175 @@ void AndroidGeolocationSupport::afterWatchDispose(int callbacksRoot)
     owner->eatExceptions();
 }
 
+
+AndroidMediaStreamSupport::AndroidMediaStreamSupport(AndroidRunnerWrapper *owner)
+    : MediaStreamSupport(&owner->runner), owner(owner)
+{
+}
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(AndroidMediaStreamSupport::FlowNativeMediaStream, FlowNativeObject)
+
+AndroidMediaStreamSupport::FlowNativeMediaStream::FlowNativeMediaStream(AndroidRunnerWrapper *owner) : owner(owner), FlowNativeObject(owner->getRunner()) {}
+
+AndroidMediaStreamSupport::FlowNativeMediaStream::~FlowNativeMediaStream()
+{
+    owner->env->DeleteGlobalRef(mediaStream);
+}
+
+void AndroidMediaStreamSupport::initializeDeviceInfo(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbDeviceInfoUpdated, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaStreamSupport::getAudioInputDevices(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbGetAudioDevices, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaStreamSupport::getVideoInputDevices(int callbackRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbGetVideoDevices, callbackRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaStreamSupport::deliverInitializeDeviceInfoCallback(jint cb_root)
+{
+     getFlowRunner()->EvalFunction(getFlowRunner()->LookupRoot(cb_root), 0);
+}
+
+void AndroidMediaStreamSupport::deliverDevices(jint cb_root, jobjectArray ids, jobjectArray names)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    int length = env->GetArrayLength(ids);
+    StackSlot devicesArray = RUNNER->AllocateArray(length);
+    for (int i = 0; i < length; i++) {
+        jstring id = (jstring)env->GetObjectArrayElement(ids, i);
+        jstring name = (jstring)env->GetObjectArrayElement(names, i);
+
+        StackSlot device = RUNNER->AllocateArray(2);
+        RUNNER->SetArraySlot(device, 0, RUNNER->AllocateString(jni2unicode(env, id)));
+        RUNNER->SetArraySlot(device, 1, RUNNER->AllocateString(jni2unicode(env, name)));
+
+        RUNNER->SetArraySlot(devicesArray, i, device);
+    }
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, devicesArray);
+}
+
+void AndroidMediaStreamSupport::makeStream(bool recordAudio, bool recordVideo, unicode_string audioDeviceId, unicode_string videoDeviceId, int onReadyRoot, int onErrorRoot)
+{
+    owner->env->CallVoidMethod(owner->owner, cbMakeMediaStream, recordAudio, recordVideo, string2jni(owner->env, videoDeviceId), string2jni(owner->env, audioDeviceId),
+        onReadyRoot, onErrorRoot);
+    owner->eatExceptions();
+}
+
+void AndroidMediaStreamSupport::stopStream(StackSlot mediaStream)
+{
+    FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<FlowNativeMediaStream*>(mediaStream);
+    owner->env->CallVoidMethod(owner->owner, cbStopMediaStream, flowMediaStream->mediaStream);
+    owner->eatExceptions();
+}
+
+void AndroidMediaStreamSupport::deliverMediaStream(jint cb_root, jobject mediaStream)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    FlowNativeMediaStream* flowMediaStream = new FlowNativeMediaStream(owner);
+    flowMediaStream->mediaStream = (jobject)env->NewGlobalRef(mediaStream);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowMediaStream->getFlowValue());
+}
+
+void AndroidMediaStreamSupport::deliverError(jint cb_root, jstring error)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(jni2unicode(env, error)));
+}
+
+AndroidWebRTCSupport::AndroidWebRTCSupport(AndroidRunnerWrapper *owner)
+    : WebRTCSupport(&owner->runner), owner(owner)
+{
+}
+
+IMPLEMENT_FLOW_NATIVE_OBJECT(AndroidWebRTCSupport::FlowNativeMediaSender, FlowNativeObject)
+
+AndroidWebRTCSupport::FlowNativeMediaSender::FlowNativeMediaSender(AndroidWebRTCSupport *owner) : owner(owner), FlowNativeObject(owner->getFlowRunner()) {}
+
+AndroidWebRTCSupport::FlowNativeMediaSender::~FlowNativeMediaSender()
+{
+    owner->owner->env->DeleteGlobalRef(mediaSender);
+}
+
+void AndroidWebRTCSupport::makeSenderFromStream(unicode_string serverUrl, unicode_string roomId,
+    std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string> > turnServers,
+    StackSlot stream, int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot)
+{
+
+    jobjectArray stun = string_array2jni(owner->env, stunUrls);
+
+    jobjectArray turn = owner->env->NewObjectArray(turnServers.size(), owner->env->GetObjectClass(stun), NULL);
+
+    for (int i = 0; i < turnServers.size(); i++) {
+        jobjectArray server = string_array2jni(owner->env, turnServers[i]);
+        owner->env->SetObjectArrayElement(turn, i, server);
+        owner->env->DeleteLocalRef(server);
+    }
+
+    AndroidMediaStreamSupport::FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<AndroidMediaStreamSupport::FlowNativeMediaStream*>(stream);
+
+    owner->env->CallVoidMethod(owner->owner, cbMakeMediaSender, string2jni(owner->env, serverUrl), string2jni(owner->env, roomId),
+        stun, turn, flowMediaStream->mediaStream, onMediaSenderReadyRoot, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
+    owner->eatExceptions();
+}
+
+void AndroidWebRTCSupport::stopSender(StackSlot sender)
+{
+    FlowNativeMediaSender* flowSender = getFlowRunner()->GetNative<FlowNativeMediaSender*>(sender);
+    owner->env->CallVoidMethod(owner->owner, cbStopMediaSender, flowSender->mediaSender);
+    owner->eatExceptions();
+}
+
+void AndroidWebRTCSupport::deliverOnMediaSenderReadyCallback(jint cb_root, jobject sender)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    FlowNativeMediaSender* flowMediaSender = new FlowNativeMediaSender(this);
+    flowMediaSender->mediaSender = (jobject)env->NewGlobalRef(sender);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowMediaSender->getFlowValue());
+}
+
+void AndroidWebRTCSupport::deliverOnNewParticipantCallback(jint cb_root, jstring id, jobject mediaStream)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+
+    AndroidMediaStreamSupport::FlowNativeMediaStream* flowMediaStream = new AndroidMediaStreamSupport::FlowNativeMediaStream(owner);
+    flowMediaStream->mediaStream = (jobject)env->NewGlobalRef(mediaStream);
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, RUNNER->AllocateString(jni2unicode(env, id)), flowMediaStream->getFlowValue());
+}
+
+void AndroidWebRTCSupport::deliverOnParticipantLeaveCallback(jint cb_root, jstring id)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(jni2unicode(env, id)));
+}
+
+void AndroidWebRTCSupport::deliverOnErrorCallback(jint cb_root, jstring error)
+{
+    JNIEnv *env = owner->env;
+    RUNNER_VAR = getFlowRunner();
+    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(jni2unicode(env, error)));
+}
+
 AndroidMediaRecorderSupport::AndroidMediaRecorderSupport(AndroidRunnerWrapper *owner)
     : MediaRecorderSupport(&owner->runner), owner(owner)
 {
@@ -2244,41 +2450,11 @@ AndroidMediaRecorderSupport::FlowNativeMediaRecorder::~FlowNativeMediaRecorder()
     owner->owner->env->DeleteGlobalRef(mediaRecorder);
 }
 
-IMPLEMENT_FLOW_NATIVE_OBJECT(AndroidMediaRecorderSupport::FlowNativeMediaStream, FlowNativeObject)
-
-AndroidMediaRecorderSupport::FlowNativeMediaStream::FlowNativeMediaStream(AndroidMediaRecorderSupport *owner) : owner(owner), FlowNativeObject(owner->getFlowRunner()) {}
-
-AndroidMediaRecorderSupport::FlowNativeMediaStream::~FlowNativeMediaStream()
+void AndroidMediaRecorderSupport::makeMediaRecorder(unicode_string websocketUri, unicode_string filePath, StackSlot mediaStream, int timeslice, int onReadyRoot, int onErrorRoot)
 {
-    owner->owner->env->DeleteGlobalRef(mediaStream);
-}
-
-void AndroidMediaRecorderSupport::recordMedia(unicode_string websocketUri, unicode_string filePath, int timeslice, unicode_string videoMimeType,
-                        bool recordAudio, bool recordVideo, unicode_string videoDeviceId, unicode_string audioDeviceId,
-                        int cbOnWebsocketErrorRoot, int cbOnRecorderReadyRoot,
-                        int cbOnMediaStreamReadyRoot, int cbOnRecorderErrorRoot)
-{
-    owner->env->CallVoidMethod(owner->owner, cbRecordMedia, string2jni(owner->env, websocketUri), string2jni(owner->env, filePath), timeslice,
-        string2jni(owner->env, videoMimeType), recordAudio, recordVideo, string2jni(owner->env, videoDeviceId), string2jni(owner->env, audioDeviceId),
-        cbOnWebsocketErrorRoot, cbOnRecorderReadyRoot, cbOnMediaStreamReadyRoot, cbOnRecorderErrorRoot);
-    owner->eatExceptions();
-}
-
-void AndroidMediaRecorderSupport::initializeDeviceInfo(int callbackRoot)
-{
-    owner->env->CallVoidMethod(owner->owner, cbDeviceInfoUpdated, callbackRoot);
-    owner->eatExceptions();
-}
-
-void AndroidMediaRecorderSupport::getAudioInputDevices(int callbackRoot)
-{
-    owner->env->CallVoidMethod(owner->owner, cbGetAudioDevices, callbackRoot);
-    owner->eatExceptions();
-}
-
-void AndroidMediaRecorderSupport::getVideoInputDevices(int callbackRoot)
-{
-    owner->env->CallVoidMethod(owner->owner, cbGetVideoDevices, callbackRoot);
+    AndroidMediaStreamSupport::FlowNativeMediaStream* flowMediaStream = getFlowRunner()->GetNative<AndroidMediaStreamSupport::FlowNativeMediaStream*>(mediaStream);
+    owner->env->CallVoidMethod(owner->owner, cbMakeMediaRecorder, string2jni(owner->env, websocketUri), string2jni(owner->env, filePath), flowMediaStream->mediaStream,
+        timeslice, onReadyRoot, onErrorRoot);
     owner->eatExceptions();
 }
 
@@ -2310,35 +2486,6 @@ void AndroidMediaRecorderSupport::stopMediaRecorder(StackSlot recorder)
     owner->eatExceptions();
 }
 
-void AndroidMediaRecorderSupport::deliverInitializeDeviceInfoCallback(jint cb_root)
-{
-     getFlowRunner()->EvalFunction(getFlowRunner()->LookupRoot(cb_root), 0);
-}
-
-void AndroidMediaRecorderSupport::deliverAudioDevices(jint cb_root, jobjectArray ids, jobjectArray names)
-{
-    JNIEnv *env = owner->env;
-    RUNNER_VAR = getFlowRunner();
-
-    int length = env->GetArrayLength(ids);
-    RUNNER_DefSlots2(deviceIds, labels);
-    deviceIds = RUNNER->AllocateArray(length);
-    labels = RUNNER->AllocateArray(length);
-
-    for (int i = 0; i < length; i++) {
-        jstring id = (jstring)env->GetObjectArrayElement(ids, i);
-        jstring name = (jstring)env->GetObjectArrayElement(names, i);
-
-        RUNNER->SetArraySlot(deviceIds, i, RUNNER->AllocateString(jni2unicode(env, id)));
-        RUNNER->SetArraySlot(labels, i, RUNNER->AllocateString(jni2unicode(env, name)));
-
-        env->DeleteLocalRef(id);
-        env->DeleteLocalRef(name);
-    }
-
-    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, deviceIds, labels);
-}
-
 void AndroidMediaRecorderSupport::deliverMediaRecorder(jint cb_root, jobject recorder)
 {
     JNIEnv *env = owner->env;
@@ -2351,48 +2498,11 @@ void AndroidMediaRecorderSupport::deliverMediaRecorder(jint cb_root, jobject rec
     RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowRecorder->getFlowValue());
 }
 
-void AndroidMediaRecorderSupport::deliverMediaStream(jint cb_root, jobject mediaStream)
-{
-    JNIEnv *env = owner->env;
-    RUNNER_VAR = getFlowRunner();
-
-    FlowNativeMediaStream* flowMediaStream = new FlowNativeMediaStream(this);
-
-    flowMediaStream->mediaStream = (jobject)env->NewGlobalRef(mediaStream);
-
-    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, flowMediaStream->getFlowValue());
-}
-
 void AndroidMediaRecorderSupport::deliverError(jint cb_root, jstring error)
 {
     JNIEnv *env = owner->env;
     RUNNER_VAR = getFlowRunner();
     RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 1, RUNNER->AllocateString(jni2unicode(env, error)));
-}
-
-void AndroidMediaRecorderSupport::deliverVideoDevices(jint cb_root, jobjectArray ids, jobjectArray names)
-{
-    JNIEnv *env = owner->env;
-    RUNNER_VAR = getFlowRunner();
-
-    int length = env->GetArrayLength(ids);
-
-    RUNNER_DefSlots2(deviceIds, labels);
-    deviceIds = RUNNER->AllocateArray(length);
-    labels = RUNNER->AllocateArray(length);
-
-    for (int i = 0; i < length; i++) {
-        jstring id = (jstring)env->GetObjectArrayElement(ids, i);
-        jstring name = (jstring)env->GetObjectArrayElement(names, i);
-
-        RUNNER->SetArraySlot(deviceIds, i, RUNNER->AllocateString(jni2unicode(env, id)));
-        RUNNER->SetArraySlot(labels, i, RUNNER->AllocateString(jni2unicode(env, name)));
-
-        env->DeleteLocalRef(id);
-        env->DeleteLocalRef(name);
-    }
-
-    RUNNER->EvalFunction(RUNNER->LookupRoot(cb_root), 2, deviceIds, labels);
 }
 
 AndroidWebSocketSupport::AndroidWebSocketSupport(AndroidRunnerWrapper *owner) : AbstractWebSocketSupport(&owner->runner), owner(owner)
