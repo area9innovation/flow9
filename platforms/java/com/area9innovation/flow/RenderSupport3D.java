@@ -61,6 +61,40 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Func0<Object> add3DEventListener(Object stage, String event, Func0<Object> cb) {
+		return no_op;
+	}
+	public Object emit3DMouseEvent(Object stage, String event, Double x, Double y) {
+		return null;
+	}
+	public Object emit3DKeyEvent(Object stage, String event, String utf, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer keycode) {
+		return null;
+	}
+
+	public Object attach3DTransformControls(Object stage, Object object) {
+		return null;
+	}
+	public Object detach3DTransformControls(Object stage, Object object) {
+		return null;
+	}
+	public Object clear3DTransformControls(Object object) {
+		return null;
+	}
+
+	public String get3DObjectId(Object object) {
+		return "";
+	}
+	public String get3DObjectType(Object object) {
+		return "";
+	}
+
+	public Boolean get3DObjectVisible(Object object) {
+		return false;
+	}
+	public Object set3DObjectVisible(Object object, Boolean visible) {
+		return null;
+	}
+
 	public Double get3DObjectX(Object object) {
 		return 0.0;
 	}
