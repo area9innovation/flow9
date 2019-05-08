@@ -58,7 +58,7 @@ class WebRTCSupport {
 
 			var localStream = mediaStream;
 			var socket : Dynamic = untyped io(serverUrl).connect();
-			var peerConnections : Map<String, PeerConnection> = new Map<String, PeerConnection>();
+			var peerConnections : Map<String, PeerConnectionManager> = new Map<String, PeerConnectionManager>();
 
 			if (roomId != '') {
 				socket.emit('join', roomId);
@@ -68,11 +68,11 @@ class WebRTCSupport {
 				var clientId : String = m.clientId;
 				var message : Dynamic = m.content;
 				if (message.type == 'new_user') {
-					peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, onNewParticipant, onParticipantLeave);
+					peerConnections[clientId] = new PeerConnectionManager(pcConfig, clientId, localStream, sendMessageTo.bind(socket), onNewParticipant, onParticipantLeave);
 					peerConnections[clientId].createOffer(onError);
 				} else if (message.type == 'offer') {
 					if (peerConnections[clientId] == null) {
-						peerConnections[clientId] = new PeerConnection(socket, pcConfig, clientId, localStream, onNewParticipant, onParticipantLeave);
+						peerConnections[clientId] = new PeerConnectionManager(pcConfig, clientId, localStream, sendMessageTo.bind(socket), onNewParticipant, onParticipantLeave);
 						peerConnections[clientId].setRemoteDescription(message);
 						peerConnections[clientId].createAnswer(onError);
 					}
@@ -108,6 +108,13 @@ class WebRTCSupport {
 	#end
 	}
 
+	private static function sendMessageTo(socket : Dynamic, to : String, content : Dynamic) : Void {
+		socket.emit("message", {
+			to : to,
+			content: content
+		});
+	}
+
 	public static function stopMediaSender(mediaSender : Dynamic) : Void {
 	#if (js && !flow_nodejs)
 		if (mediaSender) {
@@ -120,7 +127,7 @@ class WebRTCSupport {
 				mediaSender.socket.close();
 				mediaSender.socket = null;
 			}
-			var peerConnections : Map<String, PeerConnection> = mediaSender.peerConnections;
+			var peerConnections : Map<String, PeerConnectionManager> = mediaSender.peerConnections;
 			for (peerConnection in peerConnections) {
 				peerConnection.stop();
 			}
@@ -130,19 +137,20 @@ class WebRTCSupport {
 	}
 }
 
-class PeerConnection {
+class PeerConnectionManager {
 	private var clientId : String = "";
 	private var connection : Dynamic = null;
 	private var onNewParticipant: String->Dynamic->Void;
 	private var onParticipantLeave: String->Void;
-	private var socket : Dynamic;
+	private var sendHandshakeMessage : String->Dynamic->Void;
 
-	public function new(socket : Dynamic, pcConfig : Dynamic, clientId : String, localStream : Dynamic,
+	public function new(pcConfig : Dynamic, clientId : String, localStream : Dynamic,
+		sendHandshakeMessage : String->Dynamic->Void,
 		onNewParticipant : String->Dynamic->Void,
 		onParticipantLeave : String -> Void) {
 		if (localStream) {
-			this.socket = socket;
 			this.clientId = clientId;
+			this.sendHandshakeMessage = sendHandshakeMessage;
 			this.onNewParticipant = onNewParticipant;
 			this.onParticipantLeave = onParticipantLeave;
 
@@ -153,16 +161,9 @@ class PeerConnection {
 		}
 	}
 
-	private function sendMessageTo(to : String, content : Dynamic) {
-		this.socket.emit("message", {
-			to : to,
-			content: content
-		});
-	}
-
 	private function updateLocalDescription(sessionDescription : Dynamic) {
 		this.connection.setLocalDescription(sessionDescription);
-		sendMessageTo(this.clientId, sessionDescription);
+		this.sendHandshakeMessage(this.clientId, sessionDescription);
 	}
 
 	public function createOffer(onError : String -> Void) {
@@ -197,7 +198,7 @@ class PeerConnection {
 
 	public function handleIceCandidate(event : Dynamic) {
 		if (event.candidate) {
-			sendMessageTo(this.clientId, {
+			this.sendHandshakeMessage(this.clientId, {
 				type: 'candidate',
 				label: event.candidate.sdpMLineIndex,
 				id: event.candidate.sdpMid,
