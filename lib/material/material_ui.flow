@@ -74,7 +74,7 @@ export {
 
 	MDropDownOrAutoComplete(
 		items : [string],
-		selected : DynamicBehaviour<[int]>,
+		selected : DynamicBehaviour<int>,
 		style : [MDropDownOrAutoCompleteStyle],
 	) -> Material;
 
@@ -83,7 +83,7 @@ export {
 		ItemsLimit, MRequiredField, MLabel;
 
 		StyleMDropDown(style : [MDropDownStyle]);
-		StyleMMultiSelectDropDown(style : [MMultiSelectDropDownStyle]);
+		StyleMMultiSelectDropDown(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
 		StyleMAutoComplete(style : [MAutoCompleteStyle]);
 		StateMAutoComplete(state : [MTextInputState]);
 		ItemsLimit(limit : int);
@@ -636,29 +636,38 @@ MAddShortcutDialog(manager : MaterialManager) -> () -> void {
 
 MDropDownOrAutoComplete(
 	items : [string],
-	selected : DynamicBehaviour<[int]>,
+	selected : DynamicBehaviour<int>,
 	style : [MDropDownOrAutoCompleteStyle]
 ) -> Material {
 
 	limit = extractStruct(style, ItemsLimit(15)).limit;
 	isRequired = contains(style, MRequiredField());
 	labelM = tryExtractStruct(style, MLabel(""));
+	multiSelection = tryExtractStruct(style, StyleMMultiSelectDropDown(make([]), []));
 
-	multiSelection = tryExtractStruct(style, StyleMMultiSelectDropDown([])); 
+	isError =
+		eitherMap(
+			multiSelection,
+			\ms -> fOr(feq(ms.selected, []), feq(ms.selected, [-1])),
+			feq(selected, -1)
+		);
 
 	makeMAutoCompleteControl = \ -> {
-		trimStr = \s -> trim(s) |> toLowerCase;
 		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, "")), ", ");
-		string2idxs =
-			if (isSome(multiSelection))
-				\str ->
-					filtermap(strSplit2WithoutLeave(str, [",", ";"]), \sel ->
-						findi(items, \item -> trimStr(item) == trimStr(sel))
-					)
-			else
-				\str -> [findiDef(items, \item -> trimStr(item) == trimStr(str), -1)];
 
-		selectedStrB = make(idxs2string(getValue(selected)));
+		trimStr = \s -> trim(s) |> toLowerCase;
+		string2idxsMulti = \str ->
+			filtermap(strSplit2WithoutLeave(str, [",", ";"]), \sel ->
+				findi(items, \item -> trimStr(item) == trimStr(sel))
+			);
+		string2idxs = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+
+		selectedStrB =
+			eitherMap(multiSelection,
+				\ms -> idxs2string(getValue(ms.selected)),	
+				idxs2string([getValue(selected)])
+			)
+			|> make;
 
 		autoCompleteStyle =
 			extractStruct(style, StyleMAutoComplete([])).style
@@ -670,34 +679,30 @@ MDropDownOrAutoComplete(
 			extractStruct(style, StateMAutoComplete([])).state
 			|> (\st ->
 				if (isRequired) {
-					error = fif(feq(flength(selected), 0), const(Some(Pair("Required field", true))), const(None()));
+					error = fif(isError, const(Some(Pair("Required field", true))), const(None()));
 					replaceStruct(st, MInputError(error, [MRequiredField()]));
 				} else
 					st
 			);
 
 		MConstruct(
-			[\-> bidirectionalLink(selectedStrB, selected, string2idxs, idxs2string)],
+			[\ -> 
+				eitherMap(multiSelection,
+					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
+					bidirectionalLink(selectedStrB, selected, string2idxs, \idx -> idxs2string([idx]))
+				)
+			],
 			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
-		)
-	}
-
-	makeMDropDownControl = \ -> {
-		singleSelected = make(firstElement(getValue(selected), -1));
-		dropDownStyle = extractStruct(style, StyleMDropDown([])).style;
-		MConstruct(
-			[\-> bidirectionalLink(singleSelected, selected, v2a, \sel -> if (sel == []) -1 else sel[0])],
-			MDropDown(singleSelected, "", items, dropDownStyle)
 		)
 	}
 
 	if (length(items) > limit)		
 		makeMAutoCompleteControl()
 	else
-		eitherFn(
+		eitherMap(
 			multiSelection,
-			\multiSelect -> MMultiSelectDropDown(selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
-			makeMDropDownControl
+			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+			MDropDown(selected, "", items, extractStruct(style, StyleMDropDown([])).style)
 		)
 		|> (\m -> eitherMap(labelM,	\labelStyle ->
 			MLines2(
@@ -710,7 +715,7 @@ MDropDownOrAutoComplete(
 			MLines2(
 				m,
 				MText("Required field", [MErrorColor(), MCaptionSolid()])
-				|> (\m2 -> MVisible(fOr(feq(selected, []), feq(selected, [-1])), m2))
+				|> (\m2 -> MVisible(isError, m2))
 				|> MBorderTop(4.0)
 			)
 			else m
