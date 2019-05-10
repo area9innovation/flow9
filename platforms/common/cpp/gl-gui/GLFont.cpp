@@ -753,7 +753,7 @@ int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
     }
 }
 
-GLTextLayout::Ptr GLFont::layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit, float {
+GLTextLayout::Ptr GLFont::layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit, float spacing, bool crop_long_words, bool rtl) {
     GLTextLayout::Ptr layout(new GLTextLayout(self.lock(), size));
     layout->buildLayout(strb, stre, width_limit, spacing, crop_long_words, rtl);
     return layout;
@@ -767,7 +767,7 @@ GLTextLayout::GLTextLayout(GLFont::Ptr font, float size) :
     pass_origin = pass_adj_origin = vec2(-1e+6);
 }
 
-void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &end, float width_limit, float spacing, bool {
+void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &end, float width_limit, float spacing, bool crop_long_words, bool rtl) {
     float cursor = 0.0f;
 
     this->spacing = spacing;

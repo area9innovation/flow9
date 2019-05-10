@@ -193,6 +193,7 @@ typedef uint16_t unicode_char;
 typedef uint32_t ucs4_char;
 typedef std::basic_string<unicode_char> unicode_string;
 typedef std::basic_string<ucs4_char> utf32_string;
+typedef std::tuple<size_t, size_t, ucs4_char> ucs4_char_tracer;
 
 #if !defined(_MSC_VER)
 BEGIN_STL_HASH_NAMESPACE

@@ -396,7 +396,7 @@ protected:
 
     GLTextLayout(GLFont::Ptr font, float size);
 
-    void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool
+    void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
     struct RenderPass {
         GLRectStrip pcoords;
