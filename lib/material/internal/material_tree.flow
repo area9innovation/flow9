@@ -2,13 +2,14 @@ import material/internal/selectmarray;
 import material/internal/material_component;
 
 export {
-	MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
+	MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 }
 
 MTreeState(
 	items : Behaviour<[[int]]>,
 	selected : DynamicBehaviour<Set<[int]>>,
 	expanded : DynamicBehaviour<Set<[int]>>,
+	order : DynamicBehaviour<[MTreeOrderNode<?>]>,
 	color : MColor,
 	multiSelection : bool,
 	showSeparators : bool
@@ -36,8 +37,87 @@ fItemsLength2(children : Transform<[MTreeNode<?>]>) -> Transform<int> {
 	fadditioni(fselect(fsubmap(children, \c -> fItemsLength2(c.children)), sum |> FLift), const(1))
 }
 
-MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	children = ffuseinit(m.children, make([]));
+MTreeNodes2MTreeOrderNodes(nodes : [MTreeNode<?>]) -> [MTreeOrderNode<?>] {
+	map(nodes, MTreeNode2MTreeOrderNode);
+}
+
+MTreeNode2MTreeOrderNode(node : MTreeNode<?>) -> MTreeOrderNode<?> {
+	MTreeOrderNode(node.content, map(fgetValue(node.children), MTreeNode2MTreeOrderNode));
+}
+
+concatTrees(t1 : Tree<?, [??]>, t2 : Tree<?, [??]>) -> Tree<?, [??]> {
+	foldTree(t2, t1, \k, v, t -> setTree(t, k, concat(lookupTreeDef(t, k, []), v)))
+}
+
+removeFirstFromTree(t : Tree<?, [??]>, k : ?) -> Tree<?, [??]> {
+	eitherMap(
+		lookupTree(t, k),
+		\v ->
+			if (length(v) > 1)
+				setTree(t, k, tail(v))
+			else
+				removeFromTree(t, k),
+		t
+	)
+}
+
+fnodes2tree(nodes : Transform<[MTreeNode<?>]>) -> Transform<Tree<?, [MTreeNode<?>]>> {
+	fsubselect(
+		nodes,
+		FLift(\n : [MTreeNode<?>] ->
+			fold(
+				n,
+				const(makeTree()),
+				\acc : Transform<Tree<?, [MTreeNode<?>]>>, nn : MTreeNode<?> ->
+					fselect2(
+						acc,
+						fnodes2tree(nn.children),
+						FLift2(\a : Tree<?, [MTreeNode<?>]>, c : Tree<?, [MTreeNode<?>]> ->
+							concatTrees(
+								a,
+								concatTrees(
+									c,
+									makeTree1(nn.content, [nn])
+								)
+							)
+						)
+					)
+			)
+		)
+	)
+}
+
+MTreeOrder2MTreeNodes(nodes : Transform<[MTreeNode<?>]>, order : Transform<[MTreeOrderNode<?>]>) -> Transform<[MTreeNode<?>]> {
+	fselect2(
+		fnodes2tree(nodes),
+		order,
+		FLift2(\tr, o ->
+			filtermap(o, \c -> MTreeOrderNode2MTreeNode(c, tr))
+		)
+	)
+}
+
+MTreeOrderNode2MTreeNode(node : MTreeOrderNode<?>, tree : Tree<?, [MTreeNode<?>]>) -> Maybe<MTreeNode<?>> {
+	treeNode = lookupTree(tree, node.content);
+
+	eitherMap(
+		treeNode,
+		\n ->
+			Some(
+				MTreeNode(
+					n[0].content,
+					n[0].content2material,
+					const(filtermap(node.children, \c -> MTreeOrderNode2MTreeNode(c, removeFirstFromTree(tree, node.content)))),
+					n[0].style
+				)
+			),
+		None()
+	);
+}
+
+MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
+	order = extractStruct(m.style, MTreeOrder(make(MTreeNodes2MTreeOrderNodes(fgetValue(m.children))))).order;
+	children = ffuseinit(MTreeOrder2MTreeNodes(m.children, order), make([]));
 	selIndexes = ffuseinit(fSelectionIndexes(children.first), make([[]]));
 
 	singleSelection = tryExtractStruct(m.style, MSingleSelection(make(-1)));
@@ -50,6 +130,7 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Mater
 			selIndexes.first,
 			extractStruct(m.style, MTreeSelection(make(makeSet()))).selected,
 			extractStruct(m.style, MTreeExpanded(make(makeSet()))).expanded,
+			order,
 			extractStruct(m.style, getPrimaryColor(parent)),
 			isSome(multiSelection),
 			showSeparators
@@ -137,7 +218,14 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree, m2t : (Mater
 		)
 	)
 	|> (\mtree ->
-		TConstruct([children.second, selIndexes.second], mtree)
+		TConstruct(
+			[
+				children.second,
+				selIndexes.second,
+				makeSubscribe(fSelectionIndexes(m.children), \i -> nextDistinct(state.order, MTreeNodes2MTreeOrderNodes(fgetValue(m.children))))
+			],
+			mtree
+		)
 	)
 	|> (\mtree ->
 		eitherMap(
@@ -177,7 +265,7 @@ buildLineFnDef(contentBoxB : DynamicBehaviour<WidthHeight>, color : MColor) -> M
 	|> (\t -> TTranslate(fselect(contentBoxB, FLift(\ch -> Point(0., 6.0 - 0.5 * ch.height))), t))
 }
 
-MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState, m : MTreeNode<?>, treeIndex : Transform<[int]>,
+MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<?>, m : MTreeNode<?>, treeIndex : Transform<[int]>,
 	m2t : (Material, MFocusGroup) -> Tropic, addVerticalSeparator : Transform<bool>) -> Tropic {
 	children = ffuseinit(m.children, make([]));
 	childrenLength = fselect(children.first, length |> FLift);

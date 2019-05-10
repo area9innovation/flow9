@@ -8,7 +8,6 @@ import js.three.Vector3;
 
 import js.three.Object3D;
 import js.three.Mesh;
-import js.three.GridHelper;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
@@ -27,6 +26,11 @@ import js.three.MeshBasicMaterial;
 
 import js.three.Light;
 import js.three.PointLight;
+import js.three.SpotLight;
+
+import js.three.GridHelper;
+import js.three.PointLightHelper;
+import js.three.SpotLightHelper;
 
 import js.three.TextureLoader;
 import js.three.ObjectLoader;
@@ -320,19 +324,34 @@ class RenderSupport3D {
 
 	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
 		if (untyped object.boxHelper == null) {
-			var boxHelper = new BoxHelper();
-			var fn = function(a, b, c) {
-				untyped boxHelper.setFromObject(object);
-			};
-			untyped boxHelper.disposers =
-				[
-					add3DObjectPositionListener(object, fn),
-					add3DObjectScaleListener(object, fn),
-					add3DObjectRotationListener(object, fn)
-				];
+			if (untyped __instanceof__(object, PointLight)) {
+				var boxHelper = new PointLightHelper(untyped object, untyped object.distance);
+				trace(untyped object.distance);
+				untyped boxHelper.disposers = [];
 
-			stage.boxHelpers.push(boxHelper);
-			untyped object.boxHelper = boxHelper;
+				stage.boxHelpers.push(boxHelper);
+				untyped object.boxHelper = boxHelper;
+			} else if (untyped __instanceof__(object, SpotLight)) {
+				var boxHelper = new SpotLightHelper(untyped object);
+				untyped boxHelper.disposers = [];
+
+				stage.boxHelpers.push(boxHelper);
+				untyped object.boxHelper = boxHelper;
+			} else {
+				var boxHelper = new BoxHelper();
+				var fn = function(a, b, c) {
+					untyped boxHelper.setFromObject(object);
+				};
+				untyped boxHelper.disposers =
+					[
+						add3DObjectPositionListener(object, fn),
+						add3DObjectScaleListener(object, fn),
+						add3DObjectRotationListener(object, fn)
+					];
+
+				stage.boxHelpers.push(boxHelper);
+				untyped object.boxHelper = boxHelper;
+			}
 		}
 	}
 
@@ -358,7 +377,7 @@ class RenderSupport3D {
 			}
 		}
 
-		stage.boxHelpers = new Array<BoxHelper>();
+		stage.boxHelpers = new Array<Object3D>();
 	}
 
 	public static function get3DObjectId(object : Object3D) : String {
@@ -390,6 +409,48 @@ class RenderSupport3D {
 			object.visible = visible;
 
 			object.broadcastEvent("visiblechanged");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectCastShadow(object : Object3D) : Bool {
+		return object.castShadow;
+	}
+
+	public static function set3DObjectCastShadow(object : Object3D, castShadow : Bool) : Void {
+		if (object.castShadow != castShadow) {
+			object.castShadow = castShadow;
+
+			object.broadcastEvent("shadowchanged");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectReceiveShadow(object : Object3D) : Bool {
+		return object.receiveShadow;
+	}
+
+	public static function set3DObjectReceiveShadow(object : Object3D, receiveShadow : Bool) : Void {
+		if (object.receiveShadow != receiveShadow) {
+			object.receiveShadow = receiveShadow;
+
+			object.broadcastEvent("shadowchanged");
+
+			object.invalidateStage();
+		}
+	}
+
+	public static function get3DObjectFrustumCulled(object : Object3D) : Bool {
+		return object.frustumCulled;
+	}
+
+	public static function set3DObjectFrustumCulled(object : Object3D, frustumCulled : Bool) : Void {
+		if (object.frustumCulled != frustumCulled) {
+			object.frustumCulled = frustumCulled;
+
+			object.broadcastEvent("frustumchanged");
 
 			object.invalidateStage();
 		}

@@ -28,7 +28,7 @@ class ThreeJSStage extends DisplayObject {
 	public var renderer : WebGLRenderer;
 	public var orbitControls : OrbitControls;
 	public var transformControls : TransformControls;
-	public var boxHelpers : Array<BoxHelper> = new Array<BoxHelper>();
+	public var boxHelpers : Array<Object3D> = new Array<Object3D>();
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;

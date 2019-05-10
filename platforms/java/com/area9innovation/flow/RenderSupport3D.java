@@ -131,6 +131,27 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Boolean get3DObjectCastShadow(Object object) {
+		return false;
+	}
+	public Object set3DObjectCastShadow(Object object, Boolean castShadow) {
+		return null;
+	}
+
+	public Boolean get3DObjectReceiveShadow(Object object) {
+		return false;
+	}
+	public Object set3DObjectReceiveShadow(Object object, Boolean receiveShadow) {
+		return null;
+	}
+
+	public Boolean get3DObjectFrustumCulled(Object object) {
+		return false;
+	}
+	public Object set3DObjectFrustumCulled(Object object, Boolean frustumCulled) {
+		return null;
+	}
+
 	public Double get3DObjectX(Object object) {
 		return 0.0;
 	}

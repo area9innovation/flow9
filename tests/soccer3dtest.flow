@@ -1,6 +1,40 @@
 import material/material_ui;
 import material/extra/filebrowser/material_filebrowser;
 
+F3DEditorState(
+	manager : MaterialManager,
+	wh : DynamicBehaviour<WidthHeight>,
+	scene : DynamicBehaviour<F3DObject>,
+	tree : DynamicBehaviour<Transform<[MTreeNode<int>]>>,
+	selected : DynamicBehaviour<Maybe<native>>,
+	axes : DynamicBehaviour<bool>,
+	grid : DynamicBehaviour<bool>,
+	boxes : DynamicBehaviour<bool>
+);
+
+makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
+	stageWH = makeWH();
+	currentScene = make(F3DSceneLoader("images/3d/soccer/soc_field.json"));
+	currentTree = make(const([]));
+	currentObject : DynamicBehaviour<Maybe<native>> = make(None());
+
+	axesVisible = make(false);
+	gridVisible = make(false);
+	boxesVisible = make(false);
+
+
+	F3DEditorState(
+		manager,
+		stageWH,
+		currentScene,
+		currentTree,
+		currentObject,
+		axesVisible,
+		gridVisible,
+		boxesVisible
+	)
+}
+
 printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
@@ -20,7 +54,7 @@ printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 }
 
 makeF3DTreeNode(
-	manager : MaterialManager,
+	state : F3DEditorState,
 	id : string,
 	clip : native,
 	children : Transform<[MTreeNode]>
@@ -28,7 +62,7 @@ makeF3DTreeNode(
 	sel = make(false);
 
 	MTreeNode(
-		makeTropicTag(manager),
+		makeTropicTag(state.manager),
 		\__ ->
 			MBaselineCols([
 				MText(id, [MCaptionSolid()]),
@@ -36,30 +70,34 @@ makeF3DTreeNode(
 					[
 						\ -> add3DEventListener(clip, "attached", \ -> nextDistinct(sel, true)),
 						\ -> add3DEventListener(clip, "detached", \ -> nextDistinct(sel, false)),
-						makeSubscribe2(sel, \sl -> {
+						make2Subscribe(sel, state.boxes, \sl, boxes -> {
 							iter(get3DObjectStage(clip), \s -> {
 								if (sl) {
 									attach3DTransformControls(s, clip);
-
-									if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
-										attach3DBoxHelper(s, clip);
-									}
+									next(state.selected, Some(clip));
 								} else {
 									detach3DTransformControls(s, clip);
 
-									if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
-										detach3DBoxHelper(s, clip);
+									if (getValue(state.selected) == Some(clip)) {
+										next(state.selected, None());
 									}
+								}
+
+								if (sl && boxes) {
+									attach3DBoxHelper(s, clip);
+								} else {
+									detach3DBoxHelper(s, clip);
 								}
 							});
 						}),
 						\ -> \ -> {
 							iter(get3DObjectStage(clip), \s -> {
-								detach3DTransformControls(s, clip);
-
-								if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
-									detach3DBoxHelper(s, clip);
+								if (getValue(state.selected) == Some(clip)) {
+									next(state.selected, None());
 								}
+
+								detach3DTransformControls(s, clip);
+								detach3DBoxHelper(s, clip);
 							});
 						}
 					],
@@ -76,33 +114,29 @@ makeF3DTreeNode(
 				MText(get3DObjectType(clip) + "  ", [MCaptionSolid()]),
 				MIf(
 					sel,
-					MCreate(\ -> MText(get3DObjectName(clip), [MCaptionSolid(), getPrimaryColor(manager)])),
+					MCreate(\ -> MText(get3DObjectName(clip), [MCaptionSolid(), getPrimaryColor(state.manager)])),
 					MCreate(\ -> MText(get3DObjectName(clip), [MCaption1()]))
 				)
-				|> MBorderTop(8.0)
-				|> MBorderBottom(8.0)
-			])
-			|> (\c ->
-				MLines2(
-					c,
-					MShow(sel, F3DObjectProperties(clip))
-				)
-			),
+			]),
 		children,
 		[MExpanded(make(true)), MHighlightOnSelect(const(false)), MSelected(sel)]
 	)
 }
 
-makeF3DTree(manager : MaterialManager, id : string, object : F3DNative) -> Transform<MTreeNode> {
+makeF3DTree(
+	state : F3DEditorState,
+	id : string,
+	object : F3DNative
+) -> Transform<MTreeNode> {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
-			const(makeF3DTreeNode(manager, id, clip, fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it))));
+			const(makeF3DTreeNode(state, id, clip, fsubmapi(items, \i, it -> makeF3DTree(state, i2s(i), it))));
 		}
 		F3DNativeObject(clip): {
-			const(makeF3DTreeNode(manager, id, clip, const([])));
+			const(makeF3DTreeNode(state, id, clip, const([])));
 		}
 		F3DNativeMutable(innerObject): {
-			fsubselect(innerObject, FLift(\it -> makeF3DTree(manager, id, it)));
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, id, it)));
 		}
 	}
 }
@@ -150,7 +184,7 @@ F3DObjectProperties(object : native) -> Material {
 								nextDistinct(z, nz |> d2s);
 							})
 						],
-						MCols([
+						MBaselineCols([
 							MTextInput(
 								x,
 								[MCondensed(true)],
@@ -214,7 +248,7 @@ F3DObjectProperties(object : native) -> Material {
 								nextDistinct(z, nz |> d2s);
 							})
 						],
-						MCols([
+						MBaselineCols([
 							MTextInput(
 								x,
 								[MCondensed(true)],
@@ -278,7 +312,7 @@ F3DObjectProperties(object : native) -> Material {
 								nextDistinct(z, nz |> d2s);
 							})
 						],
-						MCols([
+						MBaselineCols([
 							MTextInput(
 								x,
 								[MCondensed(true)],
@@ -326,6 +360,52 @@ F3DObjectProperties(object : native) -> Material {
 						])
 					);
 				}
+			),
+			Pair(
+				"Shadow",
+				MBaselineCols([
+					MCheckBox(
+						MText("Cast", []),
+						make(get3DObjectCastShadow(object)),
+						[
+							MOnNewValue(\v -> set3DObjectCastShadow(object, v))
+						]
+					),
+					MCheckBox(
+						MText("Recieve", []),
+						make(get3DObjectReceiveShadow(object)),
+						[
+							MOnNewValue(\v -> set3DObjectReceiveShadow(object, v))
+						]
+					),
+					TFillX()
+				])
+			),
+			Pair(
+				"Visible",
+				MBaselineCols([
+					MCheckBox(
+						TEmpty(),
+						make(get3DObjectVisible(object)),
+						[
+							MOnNewValue(\v -> set3DObjectVisible(object, v))
+						]
+					),
+					TFillX()
+				])
+			),
+			Pair(
+				"Frustum Cull",
+				MBaselineCols([
+					MCheckBox(
+						TEmpty(),
+						make(get3DObjectFrustumCulled(object)),
+						[
+							MOnNewValue(\v -> set3DObjectFrustumCulled(object, v))
+						]
+					),
+					TFillX()
+				])
 			)
 		],
 		\p ->
@@ -335,34 +415,26 @@ F3DObjectProperties(object : native) -> Material {
 			])
 	)
 	|> MLinesYCenter
-	|> MBorderLeft(8.0)
-	|> MBorderRight(24.0)
 }
 
 main() {
 	manager = makeMaterialManager([makeMaterialTheme(true, MPurpleA(700), MLightGreenA(700))]);
-
-	currentScene = make([F3DSceneLoader("images/3d/soccer/soc_field.json")]);
-	currentTree : DynamicBehaviour<Transform<[MTreeNode]>> = make(const([]));
-	stageAvailable = makeWH();
+	state = makeF3DEditorState(manager);
 
 	exportFn = ref \ -> "";
 
-	axesVisible = make(false);
-	gridVisible = make(false);
-
 	scene =
 		F3DChildren(
-			F3DScene(currentScene),
+			F3DScene(farray(state.scene)),
 			\c -> {
-				next(currentTree, farray(makeF3DTree(manager, "0", c)));
+				next(state.tree, farray(makeF3DTree(state, "0", c)));
 
 				printF3DChildren("0", c);
 			}
 		);
 	camera =
 		F3DPosition(
-			F3DPerspectiveCamera(const(50.0), fdivide(fwidth(stageAvailable), fheight(stageAvailable)), const(0.01), const(6000.0)),
+			F3DPerspectiveCamera(const(50.0), fdivide(fwidth(state.wh), fheight(state.wh)), const(0.01), const(6000.0)),
 			make(0.0), make(0.0), make(1000.0)
 		);
 
@@ -383,8 +455,8 @@ main() {
 												f,
 												"text",
 												\s -> {
-													next(currentScene, [F3DScene(const([]))]);
-													next(currentScene, [F3DJsonObject(s)]);
+													next(state.scene, F3DScene(const([])));
+													next(state.scene, F3DJsonObject(s));
 												},
 												println
 											)
@@ -411,15 +483,22 @@ main() {
 						MMenuSingleLine(
 							"Axes",
 							[
-								MPrimaryAction(MIf(axesVisible, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
-								MOnClick(\ -> reverseBehaviour(axesVisible))
+								MPrimaryAction(MIf(state.axes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> reverseBehaviour(state.axes))
 							]
 						),
 						MMenuSingleLine(
 							"Grid",
 							[
-								MPrimaryAction(MIf(gridVisible, MIcon("grid_on", []), MIcon("grid_off", []))),
-								MOnClick(\ -> reverseBehaviour(gridVisible))
+								MPrimaryAction(MIf(state.grid, MIcon("grid_on", []), MIcon("grid_off", []))),
+								MOnClick(\ -> reverseBehaviour(state.grid))
+							]
+						),
+						MMenuSingleLine(
+							"Boxes",
+							[
+								MPrimaryAction(MIf(state.boxes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> reverseBehaviour(state.boxes))
 							]
 						)
 					],
@@ -430,31 +509,33 @@ main() {
 			],
 			[]
 		),
-		MProportionCols([
-			MInspect(
+		MSplitter(
+			M3DStage(
+				F3DScene(const([
+					F3DVisible(F3DAxesHelper(2500.0), state.axes),
+					F3DVisible(F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff), state.grid),
+					scene
+				])),
+				camera,
+				TFillXY(),
 				[
-					IAvailable(stageAvailable)
-				],
-				M3DStage(
-					stageAvailable,
-					F3DScene(const([
-						F3DVisible(F3DAxesHelper(2500.0), axesVisible),
-						F3DVisible(F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff), gridVisible),
-						scene
-					])),
-					camera,
-					[
-						F3DExportScene(exportFn),
-						F3DTransformControlsEnabled(const(true))
-					]
-				)
-				|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
+					F3DExportScene(exportFn),
+					F3DTransformControlsEnabled(const(true))
+				]
 			)
-			|> (\f -> Pair(const(0.7), f)),
-			MTree(fsubselect(currentTree, idfn |> FLift), [MTreeHideSeparators()])
-			|> MScrollBox
-			|> (\f -> Pair(const(0.3), f))
-		])
+			|> (\f -> MInspect([ISize(state.wh)], f))
+			|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f)),
+			MSplitter(
+				MTree(fsubselect(state.tree, idfn |> FLift), [MTreeHideSeparators()])
+				|> (\f -> MBorder(8.0, 8.0, 16.0, 8.0, f)),
+				MSelect(state.selected, \o -> eitherMap(o, \c -> F3DObjectProperties(c), TEmpty()))
+				|> (\f -> MBorder(24.0, 8.0, 24.0, 8.0, f)),
+				TFillXY(),
+				[MSplitterValue(make(0.5)), MSplitterHorizontal(), MEnabled(fneq(state.selected, None()))]
+			),
+			TFillXY(),
+			[MSplitterValue(make(0.8))]
+		)
 	)
 	|> MCenterX
 	|> (\f -> mrender(manager, true, f))
