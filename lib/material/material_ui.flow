@@ -80,13 +80,14 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= StyleMDropDown, StyleMMultiSelectDropDown, StyleMAutoComplete, StateMAutoComplete,
-		ItemsLimit, MRequiredField, MLabel;
+		ItemsLimit, MRequiredField, MLabel, MShowAnyItem;
 
 		StyleMDropDown(style : [MDropDownStyle]);
 		StyleMMultiSelectDropDown(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
 		StyleMAutoComplete(style : [MAutoCompleteStyle]);
 		StateMAutoComplete(state : [MTextInputState]);
 		ItemsLimit(limit : int);
+		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -635,7 +636,7 @@ MAddShortcutDialog(manager : MaterialManager) -> () -> void {
 }
 
 MDropDownOrAutoComplete(
-	items : [string],
+	items0 : [string],
 	selected : DynamicBehaviour<int>,
 	style : [MDropDownOrAutoCompleteStyle]
 ) -> Material {
@@ -645,6 +646,9 @@ MDropDownOrAutoComplete(
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, StyleMMultiSelectDropDown(make([]), []));
 
+	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
+	items = concat(if (showAnyItem) ["Any"] else [], items0);
+
 	isError =
 		eitherMap(
 			multiSelection,
@@ -653,7 +657,7 @@ MDropDownOrAutoComplete(
 		);
 
 	makeMAutoCompleteControl = \ -> {
-		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, "")), ", ");
+		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
 
 		trimStr = \s -> trim(s) |> toLowerCase;
 		string2idxsMulti = \str ->
@@ -696,13 +700,16 @@ MDropDownOrAutoComplete(
 		)
 	}
 
-	if (length(items) > limit)		
+	if (length(items0) > limit)
 		makeMAutoCompleteControl()
 	else
 		eitherMap(
 			multiSelection,
 			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
-			MDropDown(selected, "", items, extractStruct(style, StyleMDropDown([])).style)
+			MConstruct(
+				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
+				MDropDown(selected, "", items, extractStruct(style, StyleMDropDown([])).style)
+			)
 		)
 		|> (\m -> eitherMap(labelM,	\labelStyle ->
 			MLines2(
