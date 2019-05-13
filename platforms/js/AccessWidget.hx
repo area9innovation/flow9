@@ -414,7 +414,7 @@ class AccessWidget extends EventEmitter {
 			if (this.element != null && this.element.parentNode != null) {
 				this.element.parentNode.removeChild(this.element);
 
-				untyped __js__("delete element;");
+				untyped __js__("delete this.element;");
 			}
 
 			this.element = element;

@@ -61,15 +61,15 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	isAnyIcon = fselect(m.tabs, FLift(\tabs -> fold(tabs, false, \acc, t -> acc || isSome(tryExtractStruct(t.style, MTabIcon(TEmpty()))))));
 
 	extractMinWidth = \st -> extractStruct(st, tabWidth0).minWidth;
-	addBordersGap = \mw : double -> floor(mw + bordersGap);
+	addBordersGap = \mw : double -> mw + bordersGap;
 
-	tabsMinWidth = make(map(fgetValue(m.tabs), \tb -> addBordersGap(extractMinWidth(tb.style))));
+	tabsMinWidth : DynamicBehaviour<[double]> = make(map(fgetValue(m.tabs), \tb -> addBordersGap(extractMinWidth(tb.style))));
 
 	inspectScroll = makeTScrollInspectVisible();
 	scrollPosition = make(zeroPoint);
 	stageWidth = make(0.);
 	tabWidth = tryExtractStruct(m.style, MWidth(0.0));
-	tabsWidths : DynamicBehaviour<[int]> = make(generate(0, length(fgetValue(m.tabs)), \i -> getValue(tabsMinWidth)[i]));
+	tabsWidths : DynamicBehaviour<[double]> = make(generate(0, length(fgetValue(m.tabs)), \i -> getValue(tabsMinWidth)[i]));
 
 	oldTabs : ref [MTab] = ref fgetValue(m.tabs);
 
@@ -80,7 +80,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 				tbsLength = length(tbs);
 
 				sel = ref getValue(m.selected);
-				tbsMinWidth : ref [int] = ref getValue(tabsMinWidth);
+				tbsMinWidth : ref [double] = ref getValue(tabsMinWidth);
 				replaced = ref [];
 
 	 			iter(protocol, \op -> switch (op : ArrayOperation<MTab>) {
@@ -145,20 +145,22 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						if (txt != "")
 							MTabsText(manager, p2, txt, tabMinWidth, showTooltip, tabsFontStyle, itemsColor, m2t)
 							|> (\t -> TBorder(0., 2., 0., 2., t))
-						else
-							TEmpty()
+						else if (leftAlignIcon) TFillX()
+						else TEmpty()
 					)
-					|> TSetMinWidth2(const(tabMinWidth))
+					|> (if (leftAlignIcon) idfn else TSetMinWidth2(const(tabMinWidth)))
 					|> (\t -> eitherMap(tabIcon, \ti ->
-						TLines2(
 							m2t(ti.icon, p2)
-							|> (\t2 -> if (leftAlignIcon) t2 else TCenterX(t2))
-							|> (\t2 -> TBorder(0., 2., 0., 2., t2)),
-							t
-						), t
+							|> (if (leftAlignIcon)
+									TBorderLeftRight(2.)
+								else
+									\t2 -> TCenterX(t2) |> TBorderTopBottom(2.)
+							)
+							|> (\t2 -> if (leftAlignIcon) TCols2(t2, t) else TLines2(t2, t)),
+						t
 					))
 					|> (\t -> TBorder(bordersGap / 2., 0., bordersGap / 2., 0., t))
-					|> (\t -> if (leftAlignIcon) t else TCenter(t))
+					|> (if (leftAlignIcon) TCenterY else TCenter)
 					|> (\t ->
 						MComponent2T(
 							manager,
@@ -187,7 +189,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							TLines2(t, TSelect(color, \col -> TRectangle([MFill(col)], TFillXH(separator.height))))
 						}, t))
 					|> (\t -> eitherMap(verticalSeparators, \separator ->
-						TCols2(t, TRectangle([MFill(separator.color)], TFillWY(separator.width))), t))
+						if (i != length(tbs) - 1) TCols2(t, TRectangle([MFill(separator.color)], TFillWY(separator.width))) else t, t))
 					|> (\t ->
 						TransformTAcc2(\t2a -> {
 							bf = t |> t2a;
@@ -200,14 +202,14 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 									lenTabsMinWidth = length(tabsMinWidth0);
 									nextDistinct(tabsMinWidth,
 										if (i < lenTabsMinWidth)
-											replace(tabsMinWidth0, i, floor(mwi))
+											replace(tabsMinWidth0, i, mwi)
 										else
 											concat3(
 												tabsMinWidth0,
 												generate(0, i - lenTabsMinWidth, \i2 ->
 													addBordersGap(extractMinWidth(tabs0[i2 + lenTabsMinWidth].style))
 												),
-												[floor(mwi)]
+												[mwi]
 											)
 										);
 								}
@@ -234,7 +236,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						})
 						|> (\t2 -> TAvailableWidth(t2, fselect(tabsWidths, FLift(\tw ->
 									if (i < length(tw))
-										i2d(tw[i])
+										tw[i]
 									else if (i < length(fgetValue(m.tabs)))
 										extractMinWidth(fgetValue(m.tabs)[i].style) + bordersGap
 									else
@@ -275,39 +277,28 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 			|> (\t ->
 				TConstruct(
 					[
-						make2Subscribe(stageWidth, tabsMinWidth, \sw : double, minWidths : [int] -> {
-							lt = length(fgetValue(m.tabs));
+						make2Subscribe(stageWidth, tabsMinWidth, \sw : double, minWidths : [double] -> {
 							lenMW = length(minWidths);
-							tabsWidths0 = getValue(tabsWidths);
-							lenW = length(tabsWidths0);
 
-							widths : [Triple<int, int, DynamicBehaviour<int>>] = generate(0, lt, \i -> {
+							widths : Pair<[double], [double]> = generate(0, length(fgetValue(m.tabs)), \i -> {
 								tabWidthStyle = extractStruct(fgetValue(m.tabs)[i].style, tabWidth0);
-								Triple(
+								Pair(
 									if (i < lenMW)
 										minWidths[i]
 									else
 										addBordersGap(tabWidthStyle.minWidth),
 
-									addBordersGap(tabWidthStyle.maxWidth),
-
-									make(if (i < lenW) tabsWidths0[i] else addBordersGap(tabWidth0.minWidth))
+									if (tabWidthStyle.maxWidth == -1.) -1. else addBordersGap(tabWidthStyle.maxWidth)
 								)
-							});
+							}) |> unzipA;
 
-							tabsWidthsD = map(widths, thirdOfTriple);
-
-							distributeSizesEvenly(
-								map(widths, firstOfTriple),
-								map(widths, secondOfTriple),
-								tabsWidthsD,
-								floor(sw)
-							);
-
-							next(tabsWidths, map(tabsWidthsD, getValue));
+							newWidths = distributeSizesEvenly(widths.first, widths.second, sw);
+							next(tabsWidths, newWidths);
 						}),
 
-						\ -> fconnectSelect(isAnyIcon, tabsHeight, \b -> max(getValue(tabsHeight), if (b) tabsPanelHeightWithIcons else tabsPanelHeight))
+						\ -> fconnectSelect(isAnyIcon, tabsHeight, \b ->
+							max(getValue(tabsHeight), if (b && !leftAlignIcon) tabsPanelHeightWithIcons else tabsPanelHeight)
+						)
 					],
 					t
 				)
@@ -466,11 +457,11 @@ MTabAnimation(
 
 MTabsBottomLineInfo(
 	width : double,
-	tabsWidths : [int],
+	tabsWidths : [double],
 	selected : int,
 	order : [int]);
 
-MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[int]>, selected : Transform<int>, order : Maybe<MListReorder>,
+MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : DynamicBehaviour<[double]>, selected : Transform<int>, order : Maybe<MListReorder>,
 	scrollPosition : DynamicBehaviour<Point>, inspectScroll : TScrollInspectVisible, tabsHeight : DynamicBehaviour<double>,
 	indicatorColor : MColor, indicatorAbove : bool
 ) -> Tropic {
@@ -519,13 +510,12 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 				prevTropW := getValue(tropW);
 				prevScroll := getValue(scrollPosition).x;
 
-				fullW = sum(wds) |> i2d;
+				fullW = dsum(wds);
 				nTransWidth = generate(0, ord, \i ->
 					wds[elementAt(info.order, i, i)]
 				)
-				|> sum
-				|> i2d;
-				nTrop = wds[ord] |> i2d;
+				|> dsum;
+				nTrop = wds[ord];
 
 				tAnim = MTabAnimation(
 					Point(nTransWidth, 0.),

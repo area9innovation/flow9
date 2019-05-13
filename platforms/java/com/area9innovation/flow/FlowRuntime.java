@@ -5,8 +5,8 @@ import java.util.Locale;
 
 public abstract class FlowRuntime {
 	private IHostFactory host_factory;
-	private Struct[] struct_prototypes;
-	private Hashtable<String,Integer> struct_ids;
+	public Struct[] struct_prototypes;
+	public Hashtable<String,Integer> struct_ids;
 	private Hashtable<Class,NativeHost> hosts;
 
 	private String[] str_args;
