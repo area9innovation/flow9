@@ -8,6 +8,7 @@ import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.math.BigInteger;
 import java.net.URI;
+import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -16,9 +17,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 
-import com.amazonaws.org.apache.http.client.methods.HttpGet;
-import com.amazonaws.org.apache.http.client.methods.HttpRequestBase;
-import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
+import java.net.HttpURLConnection;
 
 import android.content.Context;
 import android.support.annotation.NonNull;
@@ -49,7 +48,7 @@ public class ResourceCache {
     @NonNull
     private HashMap<URI,List<URI>> pending_tries = new HashMap<URI,List<URI>>();
     @NonNull
-    private HashMap<URI,HttpRequestBase> pending_requests = new HashMap<URI, HttpRequestBase>();
+    private HashMap<URI,HttpURLConnection> pending_requests = new HashMap<>();
 
     public ResourceCache(Context context) {
         app_context = context;
@@ -108,7 +107,7 @@ public class ResourceCache {
 
     public synchronized void abortPendingRequest(@NonNull URI base, @NonNull String url) {
         URI link = base.resolve(url.replace(" ", "%20"));
-        pending_requests.get(link).abort();
+        pending_requests.get(link).disconnect();
     }
     
     public synchronized void removeCachedResource(@NonNull URI base, @NonNull String url) throws IOException {
@@ -260,12 +259,8 @@ public class ResourceCache {
 
             output = new FileOutputStream(tmp);
             final FileOutputStream foutput = output;
-
-            HttpRequestBase request = new HttpGet(link);
-
-            pending_requests.put(link, request);
-
-            Utils.loadHttpAsync(request, output, new Utils.HttpLoadAdaptor(link.toString()) {
+            URL url = new URL(link.toString());
+            Utils.loadHttpAsync(url, null, null, null, output, new Utils.HttpLoadAdaptor(link.toString()) {
                 boolean switched = false;
                 
                 public boolean httpStatus(int status) {
@@ -282,6 +277,10 @@ public class ResourceCache {
                     }
 
                     return status >= 200 && status < 300;
+                }
+
+                public void httpOpened(HttpURLConnection connection) {
+                    pending_requests.put(link, connection);
                 }
                 
                 public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {

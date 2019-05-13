@@ -1,5 +1,6 @@
 package dk.area9.flowrunner;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -17,19 +18,10 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.util.HashMap;
 
-import com.amazonaws.org.apache.http.Header;
-import com.amazonaws.org.apache.http.HttpEntity;
-import com.amazonaws.org.apache.http.HttpResponse;
-import com.amazonaws.org.apache.http.client.methods.HttpGet;
-import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
-import com.amazonaws.org.apache.http.conn.scheme.PlainSocketFactory;
-import com.amazonaws.org.apache.http.conn.scheme.Scheme;
-import com.amazonaws.org.apache.http.conn.scheme.SchemeRegistry;
-import com.amazonaws.org.apache.http.conn.ssl.SSLSocketFactory;
-import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
-import com.amazonaws.org.apache.http.impl.conn.BasicClientConnectionManager;
-import com.amazonaws.org.apache.http.params.BasicHttpParams;
-import com.amazonaws.org.apache.http.protocol.BasicHttpContext;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.List;
+import java.util.Map;
 
 import android.app.Activity;
 import android.app.DownloadManager;
@@ -46,6 +38,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.renderscript.ScriptGroup;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.annotation.RequiresApi;
@@ -61,7 +54,6 @@ public class Utils {
     // if you want to make another tag for logging, please make it the same at the beginning, i.e. dk.area9.newtag
     // it will be easier to filter with adb or in Eclipse
     public static final String LOG_TAG = "dk.area9.flowrunner";
-    private static final BasicHttpContext commonHttpContext = new BasicHttpContext();
     protected static boolean httpProfiling = false;
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
@@ -69,14 +61,6 @@ public class Utils {
     
     public static void setHttpProfiling(boolean onoff) {
         httpProfiling = onoff;
-    }
-    
-    public static DefaultHttpClient createHttpClient() {
-        SchemeRegistry registry = new SchemeRegistry();
-        registry.register(new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
-        registry.register(new Scheme("https", 443, SSLSocketFactory.getSocketFactory()));
-        BasicClientConnectionManager tscm = new BasicClientConnectionManager(registry);
-        return new DefaultHttpClient(tscm, new BasicHttpParams());
     }
     
     @Nullable
@@ -186,6 +170,7 @@ public class Utils {
     
     public interface HttpLoadCallback extends CopyProgressCallback {
         void httpFinished(int status, HashMap<String, String> headers, boolean withData);
+        void httpOpened(HttpURLConnection connection);
         boolean httpStatus(int status);
         void httpError(String message);
         void httpAbort(String message);
@@ -202,6 +187,7 @@ public class Utils {
                 Log.i(LOG_TAG, ">> Finished http request at {" + ctm + "}, took {" + (ctm - createdAt) + "} ms: {" + uriString + "}");
             }
         }
+        public void httpOpened(HttpURLConnection connection) {}
         public boolean httpStatus(int status) { return status >= 200 && status < 300; }
         public void httpError(String message) {}
         public void httpAbort(String message) {}
@@ -225,33 +211,30 @@ public class Utils {
         
     }
 
-    public static void loadHttp(HttpUriRequest request, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
-        DefaultHttpClient client = Utils.createHttpClient();
-        client.getParams().setBooleanParameter("http.protocol.handle-redirects", true);
-        HttpResponse response = client.execute(request, commonHttpContext);
-
-        int status = response.getStatusLine().getStatusCode();
+    public static void loadHttp(HttpURLConnection connection, @NonNull OutputStream output, HttpLoadCallback callback) throws IOException {
+        int status = connection.getResponseCode();
         boolean ok = callback.httpStatus(status);
         boolean data_done = false;
 
+        connection.connect();
+
         HashMap<String, String> headers = new HashMap<>();
-        for (Header header : response.getAllHeaders()) {
-            headers.put(header.getName(), header.getValue());
+        Map<String, List<String>> rawHeaders = connection.getHeaderFields();
+        for (String headerName : rawHeaders.keySet()) {
+            headers.put(headerName, rawHeaders.get(headerName).get(0));
         }
 
-        HttpEntity entity = response.getEntity();
-        if (entity != null) {
-            callback.httpContentLength(entity.getContentLength());
+        InputStream contentStream = new BufferedInputStream(connection.getInputStream());
+        int contentLength = contentStream.available();
 
-            InputStream contentStream = entity.getContent();
-            try {
-                if (ok) {
-                    copyData(output, contentStream, callback);
-                    data_done = true;
-                }
-            } finally {
-                contentStream.close();
+        callback.httpContentLength(contentLength);
+        try {
+            if (ok) {
+                copyData(output, contentStream, callback);
+                data_done = true;
             }
+        } finally {
+            contentStream.close();
         }
 
         if (ok)
@@ -265,7 +248,7 @@ public class Utils {
             final boolean[] ok = new boolean[] { false };
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
-            loadHttp(new HttpGet(link), buffer, new HttpLoadAdaptor(link) {
+            loadHttp((HttpURLConnection)new URL(link).openConnection(), buffer, new HttpLoadAdaptor(link) {
                 public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
                     super.httpFinished(status, headers, withData);
                     ok[0] = withData;
@@ -284,7 +267,7 @@ public class Utils {
             FileOutputStream buffer = new FileOutputStream(filename);
             
             try {
-                loadHttp(new HttpGet(link), buffer, callback);
+                loadHttp((HttpURLConnection) new URL(link).openConnection(), buffer, callback);
             } finally {
                 buffer.close();
             }
@@ -296,17 +279,30 @@ public class Utils {
         }
     }
 
-    public static void loadHttpAsync(@NonNull final HttpUriRequest request, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
+    public static void loadHttpAsync(@NonNull final URL url, @Nullable final String method, @Nullable final Map<String, String> headers, @Nullable final byte[]  payload, @NonNull final OutputStream output, @NonNull final HttpLoadCallback callback) {
         Thread worker = new Thread(new Runnable() {
             public void run() {
                 try {
-                    loadHttp(request, output, callback);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    if (method != null)
+                        connection.setRequestMethod(method);
 
+                    if (headers != null)
+                        for (String headerName : headers.keySet())
+                            connection.setRequestProperty(headerName, headers.get(headerName));
+
+                    if (payload != null && payload.length != 0 && method != null && method.equals("POST")) {
+                        connection.setDoOutput(true);
+                        connection.getOutputStream().write(payload);
+                    }
+
+                    connection.setInstanceFollowRedirects(true);
+
+                    callback.httpOpened(connection);
+
+                    loadHttp(connection, output, callback);
                 } catch (IOException e) {
-                    if(request.isAborted())
-                        callback.httpAbort(e.getMessage());
-                    else
-                        callback.httpError("I/O error: " + e.getMessage());
+                    callback.httpError("I/O error: " + e.getMessage());
                 } catch (Exception e) {
                     callback.httpError(e.getMessage());
                 }
@@ -316,7 +312,7 @@ public class Utils {
         worker.start();
     }
 
-    public static void loadHttpAsync(@NonNull HttpUriRequest request, @NonNull final HttpResolver callback) {
+    public static void loadHttpAsync(@NonNull final URL url, @Nullable final String method, @Nullable final Map<String, String> headers, @Nullable final byte[]  payload, @NonNull final HttpResolver callback) {
         final OutputStream buffer = new OutputStream() {
             public void write(byte[] data, int start, int length) {
                 byte[] buf = data;
@@ -330,7 +326,7 @@ public class Utils {
                 callback.deliverData(new byte[] { (byte)oneByte }, false);
             }
         };
-        loadHttpAsync(request, buffer, new HttpLoadAdaptor(request.getURI().toString()) {
+        loadHttpAsync(url, method, headers, payload, buffer, new HttpLoadAdaptor(url.toString()) {
             public void httpFinished(int status, HashMap<String, String> headers, boolean withData) {
                 super.httpFinished(status, headers, withData);
                 callback.deliverData(null, true);

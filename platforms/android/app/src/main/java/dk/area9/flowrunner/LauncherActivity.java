@@ -4,14 +4,16 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
-
-import com.amazonaws.org.apache.http.client.methods.HttpGet;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
@@ -207,8 +209,11 @@ public class LauncherActivity extends Activity {
                 }
             };
             
-            
-            Utils.loadHttpAsync(new HttpGet(full_uri), file_stream, download_callback);
+            try {
+                Utils.loadHttpAsync(new URL(full_uri.toString()), null, null, null, file_stream, download_callback);
+            } catch (IOException exception) {
+                System.out.println("I/O error: " + full_uri.toString());
+            }
             showDownloadingProgressBar();
         } else {
             showErrorMessage("Empty bytecode name");
