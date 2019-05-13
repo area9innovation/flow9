@@ -239,7 +239,10 @@ Download and setup QT 5.12.0 (or later):
 wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
 chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
-**Install into `<path to your home directory>/Qt/5.12.0` and be sure to select all items to install!**
+**Install into `/opt/Qt5.12.0` and be sure to select all items to install!**
+You might want to install into a different folder but it's important to create
+a symlink to the folder mentioned above and build with libraries statically
+linked from it if you plan on committing your QT byte runner to this repo.
 ```bash
 ./qt-opensource-linux-x64-5.12.0.run
 rm qt-opensource-linux-x64-5.12.0.run
