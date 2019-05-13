@@ -4,12 +4,12 @@ import material/extra/filebrowser/material_filebrowser;
 printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
-			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip));
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip) + " " + get3DObjectName(clip));
 
 			F3DNativeScene(clip, fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
 		}
 		F3DNativeObject(clip): {
-			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip));
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip) + " " + get3DObjectName(clip));
 
 			object;
 		}
@@ -22,9 +22,7 @@ printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 makeF3DTreeNode(
 	manager : MaterialManager,
 	id : string,
-	name : string,
-	attachFn : ref (native, bool) -> void,
-	clip : Maybe<native>,
+	clip : native,
 	children : Transform<[MTreeNode]>
 ) -> MTreeNode {
 	sel = make(false);
@@ -34,51 +32,311 @@ makeF3DTreeNode(
 		\__ ->
 			MBaselineCols([
 				MText(id, [MCaptionSolid()]),
-				eitherMap(
-					clip,
-					\c ->
-						MConstruct(
-							[
-								\ -> add3DEventListener(c, "attached", \ -> nextDistinct(sel, true)),
-								\ -> add3DEventListener(c, "detached", \ -> nextDistinct(sel, false)),
-								makeSubscribe2(sel, \sl -> ^attachFn(c, sl))
-							],
-							MCheckBox(
-								TEmpty(),
-								make(get3DObjectVisible(c)),
-								[
-									MIconButtonBorder(4.0),
-									MIconSize(16.0),
-									MOnNewValue(\v -> set3DObjectVisible(c, v))
-								]
-							)
-						),
-					TEmpty()
+				MConstruct(
+					[
+						\ -> add3DEventListener(clip, "attached", \ -> nextDistinct(sel, true)),
+						\ -> add3DEventListener(clip, "detached", \ -> nextDistinct(sel, false)),
+						makeSubscribe2(sel, \sl -> {
+							iter(get3DObjectStage(clip), \s -> {
+								if (sl) {
+									attach3DTransformControls(s, clip);
+
+									if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
+										attach3DBoxHelper(s, clip);
+									}
+								} else {
+									detach3DTransformControls(s, clip);
+
+									if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
+										detach3DBoxHelper(s, clip);
+									}
+								}
+							});
+						}),
+						\ -> \ -> {
+							iter(get3DObjectStage(clip), \s -> {
+								detach3DTransformControls(s, clip);
+
+								if (!strContains(toLowerCase(get3DObjectType(clip)), "light")) {
+									detach3DBoxHelper(s, clip);
+								}
+							});
+						}
+					],
+					MCheckBox(
+						TEmpty(),
+						make(get3DObjectVisible(clip)),
+						[
+							MIconButtonBorder(6.0),
+							MIconSize(16.0),
+							MOnNewValue(\v -> set3DObjectVisible(clip, v))
+						]
+					)
 				),
+				MText(get3DObjectType(clip) + "  ", [MCaptionSolid()]),
 				MIf(
 					sel,
-					MText(name, [MCaptionSolid(), getPrimaryColor(manager)]),
-					MText(name, [MCaption1()])
+					MCreate(\ -> MText(get3DObjectName(clip), [MCaptionSolid(), getPrimaryColor(manager)])),
+					MCreate(\ -> MText(get3DObjectName(clip), [MCaption1()]))
 				)
-			]),
+				|> MBorderTop(8.0)
+				|> MBorderBottom(8.0)
+			])
+			|> (\c ->
+				MLines2(
+					c,
+					MShow(sel, F3DObjectProperties(clip))
+				)
+			),
 		children,
 		[MExpanded(make(true)), MHighlightOnSelect(const(false)), MSelected(sel)]
 	)
 }
 
-makeF3DTree(manager : MaterialManager, id : string, object : F3DNative, attachFn : ref (native, bool) -> void) -> Transform<MTreeNode> {
+makeF3DTree(manager : MaterialManager, id : string, object : F3DNative) -> Transform<MTreeNode> {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
-			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip),
-				fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it, attachFn))));
+			const(makeF3DTreeNode(manager, id, clip, fsubmapi(items, \i, it -> makeF3DTree(manager, i2s(i), it))));
 		}
 		F3DNativeObject(clip): {
-			const(makeF3DTreeNode(manager, id, get3DObjectType(clip), attachFn, Some(clip), const([])));
+			const(makeF3DTreeNode(manager, id, clip, const([])));
 		}
 		F3DNativeMutable(innerObject): {
-			fsubselect(innerObject, FLift(\it -> makeF3DTree(manager, id, it, attachFn)));
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(manager, id, it)));
 		}
 	}
+}
+
+F3DObjectProperties(object : native) -> Material {
+	map(
+		[
+			Pair(
+				"Type",
+				MTextInput(make(get3DObjectType(object)), [MCondensed(true), ReadOnly(true)], [])
+			),
+			Pair(
+				"UUID",
+				MTextInput(make(get3DObjectId(object)), [MCondensed(true), ReadOnly(true)], [])
+			),
+			Pair(
+				"Name",
+				MTextInput(
+					make(get3DObjectName(object)),
+					[MCondensed(true)],
+					[
+						MInputFilter(\c, f -> {
+							if (!f) {
+								set3DObjectName(object, c);
+								get3DObjectName(object);
+							} else {
+								c;
+							}
+						})
+					]
+				),
+			),
+			Pair(
+				"Position",
+				{
+					x = make(d2s(get3DObjectX(object)));
+					y = make(d2s(get3DObjectY(object)));
+					z = make(d2s(get3DObjectZ(object)));
+
+					MConstruct(
+						[
+							\ -> add3DObjectPositionListener(object, \nx, ny, nz -> {
+								nextDistinct(x, nx |> d2s);
+								nextDistinct(y, ny |> d2s);
+								nextDistinct(z, nz |> d2s);
+							})
+						],
+						MCols([
+							MTextInput(
+								x,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectX(object, s2d(c));
+											get3DObjectX(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								y,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectY(object, s2d(c));
+											get3DObjectY(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								z,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectZ(object, s2d(c));
+											get3DObjectZ(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+						])
+					);
+				}
+			),
+			Pair(
+				"Rotation",
+				{
+					x = make(d2s(get3DObjectRotationX(object)));
+					y = make(d2s(get3DObjectRotationY(object)));
+					z = make(d2s(get3DObjectRotationZ(object)));
+
+					MConstruct(
+						[
+							\ -> add3DObjectRotationListener(object, \nx, ny, nz -> {
+								nextDistinct(x, nx |> d2s);
+								nextDistinct(y, ny |> d2s);
+								nextDistinct(z, nz |> d2s);
+							})
+						],
+						MCols([
+							MTextInput(
+								x,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectRotationX(object, s2d(c));
+											get3DObjectRotationX(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								y,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectRotationY(object, s2d(c));
+											get3DObjectRotationY(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								z,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectRotationZ(object, s2d(c));
+											get3DObjectRotationZ(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+						])
+					);
+				}
+			),
+			Pair(
+				"Scale",
+				{
+					x = make(d2s(get3DObjectScaleX(object)));
+					y = make(d2s(get3DObjectScaleY(object)));
+					z = make(d2s(get3DObjectScaleZ(object)));
+
+					MConstruct(
+						[
+							\ -> add3DObjectScaleListener(object, \nx, ny, nz -> {
+								nextDistinct(x, nx |> d2s);
+								nextDistinct(y, ny |> d2s);
+								nextDistinct(z, nz |> d2s);
+							})
+						],
+						MCols([
+							MTextInput(
+								x,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectScaleX(object, s2d(c));
+											get3DObjectScaleX(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								y,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectScaleY(object, s2d(c));
+											get3DObjectScaleY(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+							MFixedX(16.0),
+							MTextInput(
+								z,
+								[MCondensed(true)],
+								[
+									MInputFilter(\c, f -> {
+										if (!f) {
+											set3DObjectScaleZ(object, s2d(c));
+											get3DObjectScaleZ(object) |> d2s;
+										} else {
+											c;
+										}
+									})
+								]
+							),
+						])
+					);
+				}
+			)
+		],
+		\p ->
+			MProportionBaselineCols([
+				Pair(const(0.25), MGroup2(TFillX(), MText(p.first + ": ", []))),
+				Pair(const(0.75), p.second)
+			])
+	)
+	|> MLinesYCenter
+	|> MBorderLeft(8.0)
+	|> MBorderRight(24.0)
 }
 
 main() {
@@ -89,7 +347,6 @@ main() {
 	stageAvailable = makeWH();
 
 	exportFn = ref \ -> "";
-	attachFn = ref nop2;
 
 	axesVisible = make(false);
 	gridVisible = make(false);
@@ -98,7 +355,7 @@ main() {
 		F3DChildren(
 			F3DScene(currentScene),
 			\c -> {
-				next(currentTree, farray(makeF3DTree(manager, "0", c, attachFn)));
+				next(currentTree, farray(makeF3DTree(manager, "0", c)));
 
 				printF3DChildren("0", c);
 			}
@@ -188,14 +445,14 @@ main() {
 					camera,
 					[
 						F3DExportScene(exportFn),
-						F3DTransformControlsEnabled(const(true)),
-						F3DAttachTransformControls(attachFn)
+						F3DTransformControlsEnabled(const(true))
 					]
 				)
 				|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
 			)
 			|> (\f -> Pair(const(0.7), f)),
 			MTree(fsubselect(currentTree, idfn |> FLift), [MTreeHideSeparators()])
+			|> MScrollBox
 			|> (\f -> Pair(const(0.3), f))
 		])
 	)

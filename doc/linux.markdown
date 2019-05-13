@@ -216,7 +216,7 @@ but the system can now find libraries on that path nonetheless.
 # Compile Flow itself
 Neko version of flow from the repo should be fine but if you wish to compile your own, do:
 ```bash
-cd ~/flow9/src
+cd ~/area9/flow9/tools/flow
 haxe FlowNeko.hxml
 ```
 This should take a few seconds. If it takes more than a minute, very likely something is going wrong.
