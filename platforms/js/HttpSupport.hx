@@ -1,5 +1,5 @@
 #if js
-#if (flow_nodejs || nwjs) 
+#if flow_nodejs
 import js.node.Http;
 import js.node.Https;
 import js.node.http.IncomingMessage;
@@ -18,7 +18,7 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 600000;	// Ten minutes in ms
 
-	#if js
+	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
 	private static function overrideXMLHttpRequest() {
@@ -86,7 +86,7 @@ class HttpSupport {
 		Native.println("=======");
 	}
 
-	#if (js && (flow_nodejs || nwjs))
+	#if (js && flow_nodejs)
 	private static function parseUrlToNodeOptions(url : String) : HttpsRequestOptions {
 		var options = Url.parse(url);
 
@@ -118,7 +118,7 @@ class HttpSupport {
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
 		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void) : Void {
-		#if (flow_nodejs || nwjs)
+		#if flow_nodejs
 
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
@@ -183,7 +183,7 @@ class HttpSupport {
 		request.write(queryString);
 		request.end();
 		#else
-		#if (js && !flow_nodejs && !nwjs)
+		#if js
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
 		if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
@@ -291,7 +291,7 @@ class HttpSupport {
 			headers.push(["If-Match", "*"]);
 		}
 
-		#if (flow_nodejs || nwjs)
+		#if flow_nodejs
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
 		options.method = method;
@@ -379,7 +379,7 @@ class HttpSupport {
 			http.setPostData(data);
 		}
 
-		#if (js && !flow_nodejs && !nwjs)
+		#if js
 
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
@@ -631,7 +631,7 @@ class HttpSupport {
 
 		fileReference.browse([new flash.net.FileFilter(fTypes, fTypes)]);
 
-		#elseif (js && !flow_nodejs && !nwjs)
+		#elseif (js && !flow_nodejs)
 
 		// Remove element before trying to create.
 		// If we don't do that, file open dialog opens only first time.
