@@ -18,7 +18,7 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 600000;	// Ten minutes in ms
 
-	#if (js && !flow_nodejs && !nwjs)
+	#if js
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
 	private static function overrideXMLHttpRequest() {
@@ -522,13 +522,13 @@ class HttpSupport {
 		} );
 		loader.load(new flash.net.URLRequest(url));
 
-		#elseif (js && !nwjs && !flow_nodejs)
+		#elseif (js && nwjs)
 			if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
 				doBinflowHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			} else {
 				doBinaryHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			}
-		#elseif (js && (flow_nodejs) || nwjs)
+		#elseif (js && flow_nodejs)
 		// TO DO: Implement
 
 		#elseif js
