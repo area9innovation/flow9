@@ -1,5 +1,5 @@
 #if js
-#if (flow_nodejs || nwjs) 
+#if (flow_nodejs || nwjs)
 import js.node.Http;
 import js.node.Https;
 import js.node.http.IncomingMessage;
@@ -7,9 +7,11 @@ import js.node.http.IncomingMessage;
 import js.node.Url;
 import js.node.Querystring;
 #else
-import js.Browser;
 import js.html.XMLHttpRequest;
 import HttpCustom;
+#end
+#if !flow_nodejs
+import js.Browser;
 #end
 import JSBinflowBuffer;
 import js.html.Uint8Array;
@@ -18,7 +20,7 @@ import js.html.Uint8Array;
 class HttpSupport {
 	static var TimeoutInterval = 600000;	// Ten minutes in ms
 
-	#if (js && !flow_nodejs && !nwjs)
+	#if (js && !flow_nodejs)
 	private static var XMLHttpRequestOverriden : Bool = false;
 	private static var CORSCredentialsEnabled = true;
 	private static function overrideXMLHttpRequest() {
@@ -118,7 +120,7 @@ class HttpSupport {
 
 	public static function httpRequest(url : String, post : Bool, headers : Array<Array<String>>,
 		params : Array<Array<String>>, onDataFn : String -> Void, onErrorFn : String -> Void, onStatusFn : Int -> Void) : Void {
-		#if (flow_nodejs || nwjs)
+		#if flow_nodejs
 
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
@@ -183,7 +185,7 @@ class HttpSupport {
 		request.write(queryString);
 		request.end();
 		#else
-		#if (js && !flow_nodejs && !nwjs)
+		#if js
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
 		if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
@@ -276,7 +278,7 @@ class HttpSupport {
 			http.setHeader(header[0], header[1]);
 		}
 
-		#if js
+		#if (js && !nwjs)
 		http.async = true;
 		#end
 
@@ -369,7 +371,7 @@ class HttpSupport {
 		}
 		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
 
-		#if js
+		#if (js && !nwjs)
 		var http = new HttpCustom(url, method);
 		#else
 		var http = new HttpCustom(url);
@@ -379,7 +381,7 @@ class HttpSupport {
 			http.setPostData(data);
 		}
 
-		#if (js && !flow_nodejs && !nwjs)
+		#if js
 
 		if (!XMLHttpRequestOverriden) overrideXMLHttpRequest();
 
@@ -405,7 +407,7 @@ class HttpSupport {
 		}
 		#end
 
-		#if js
+		#if (js && !nwjs)
 		http.onResponse = function (status: Int, data: String, headers: Array<Array<String>>) {
 			if (!handled) {
 				handled = true;
@@ -489,7 +491,7 @@ class HttpSupport {
 			http.setHeader(header[0], header[1]);
 		}
 
-		#if js
+		#if (js && !nwjs)
 		http.async = async;
 		#end
 
@@ -522,13 +524,13 @@ class HttpSupport {
 		} );
 		loader.load(new flash.net.URLRequest(url));
 
-		#elseif (js && !nwjs && !flow_nodejs)
+		#elseif (js && nwjs)
 			if (isBinflow(url) && Util.getParameter("arraybuffer") != "0") {
 				doBinflowHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			} else {
 				doBinaryHttpRequest(url, onDataFn, onErrorFn, onProgressFn, null);
 			}
-		#elseif (js && (flow_nodejs) || nwjs)
+		#elseif (js && flow_nodejs)
 		// TO DO: Implement
 
 		#elseif js
@@ -631,7 +633,7 @@ class HttpSupport {
 
 		fileReference.browse([new flash.net.FileFilter(fTypes, fTypes)]);
 
-		#elseif (js && !flow_nodejs && !nwjs)
+		#elseif (js && !flow_nodejs)
 
 		// Remove element before trying to create.
 		// If we don't do that, file open dialog opens only first time.
