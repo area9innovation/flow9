@@ -1,6 +1,6 @@
 class HttpCustom extends haxe.Http {
 	
-	#if js
+	#if (js && !nwjs)
 	var method : String;
 	var availableMethods = ['GET', 'POST', 'DELETE', 'PATCH', 'PUT'];
 
