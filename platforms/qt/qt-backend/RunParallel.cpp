@@ -204,7 +204,10 @@ StackSlot RunParallelHost::loadBytecode(RUNNER_ARGS)
 
     LoadedBytecode *data = new LoadedBytecode(this, bcode);
 
-    data->load();
+	if (!data->load()) {
+		delete data;
+		return StackSlot::MakeVoid();
+	}
 
     return RUNNER->AllocNative(data);
 }
