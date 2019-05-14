@@ -362,6 +362,13 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 	)
 }
 
+SampleStates(
+	length : [DynamicBehaviour<double>], 
+	position : [DynamicBehaviour<double>], 
+	isPlay : [DynamicBehaviour<bool>], 
+	isReady : [DynamicBehaviour<bool>]
+);
+
 MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
  	amount = length(filenames);
 
@@ -379,23 +386,21 @@ MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
  	currIndexB = make(0);
 
   	// init properties for each audio
- 	states = map(filenames, \__ ->
- 		Quadruple(
- 			make(0.),		// first: length
- 			make(0.),		// second: position
- 			make(false),	// third: is play
- 			make(false)		// fourth: is ready
- 		)
- 	) |> unzipA4;
+ 	states = SampleStates(
+ 		map(filenames, \__ -> make(0.0)),
+ 		map(filenames, \__ -> make(0.0)),
+ 		map(filenames, \__ -> make(false)),
+ 		map(filenames, \__ -> make(false)),
+ 	);
 
   	synchrocalls = mapi(filenames, \i, __ ->
  		SynchroCalls(
  			// set ready
- 			\-> nextDistinct(states.fourth[i], true),
+ 			\-> nextDistinct(states.isReady[i], true),
  			// play next or stop in the end
  			\-> {
  				// reset position (for js)
- 				nextDistinct(states.second[i], 0.);
+ 				nextDistinct(states.position[i], 0.);
  				// if last audio
  				if (i == amount - 1) {
  					if (!fgetValue(loopEx)) {
@@ -416,9 +421,9 @@ MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
  			make(WidthHeight(-1., -1.)),		// not to draw
  			replaceStructMany(style,
  				[
- 					FVideoLength(states.first[i]),
- 					FVideoPosition(states.second[i]),
- 					FVideoPlay(states.third[i]),
+ 					FVideoLength(states.length[i]),
+ 					FVideoPosition(states.position[i]),
+ 					FVideoPlay(states.isPlay[i]),
  					synchrocalls[i],
  				]
  			)
@@ -426,21 +431,21 @@ MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
  	);
 
   	changeAudioPlaying = \index, isPlay -> {
- 		nextDistinct(states.third[index], isPlay);
+ 		nextDistinct(states.isPlay[index], isPlay);
  	}
 
   	playerPos = fsubselect(
  		currIndexB,
  		FLift(\index ->
  			faddition(
- 				fsum(subrange(states.first, 0, index)),	// sum of previous lengths
- 				states.second[index]					// current possition
+ 				fsum(subrange(states.length, 0, index)),	// sum of previous lengths
+ 				states.position[index]					// current possition
  			)
  		)
  	);
  	playerPosChange = \pos -> nextDistinct(posEx, pos);
  	userPosChange = \pos -> {
- 		allLength = fgetValue(fmerge(states.first));
+ 		allLength = fgetValue(fmerge(states.length));
  		// last index ; length sum of previous audio
  		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
  			newEnd = acc.second + len;
@@ -452,10 +457,10 @@ MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
   		// reset current player
  		currIndex = getValue(currIndexB);
  		changeAudioPlaying(currIndex, false);
- 		nextDistinct(states.second[currIndex], 0.);
+ 		nextDistinct(states.position[currIndex], 0.);
  		// start new player
  		newIndex = lastEnd.first + 1;
- 		nextDistinct(states.second[newIndex], pos - lastEnd.second);
+ 		nextDistinct(states.position[newIndex], pos - lastEnd.second);
  		// next need when index has not changed (continue playing)
  		next(currIndexB, newIndex);
  	}
@@ -466,11 +471,11 @@ MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
  		MConstruct(
  			[
  				// when all audios ready
- 				makeSubscribe(fands(states.fourth, false), \isReady ->
+ 				makeSubscribe(fands(states.isReady, false), \isReady ->
  					if (isReady) synchrocallEx.onStart()
  				),
  				// sum all audio lengths
- 				\-> fconnect(fsum(states.first), lenEx),
+ 				\-> fconnect(fsum(states.length), lenEx),
  				// set possition
  				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
  				// not make2Subscribe due to looping in 1-element array
