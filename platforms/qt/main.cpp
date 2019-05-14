@@ -24,6 +24,7 @@
 #include <QApplication>
 #include <QScrollArea>
 #include <QDesktopWidget>
+#include <QScreen>
 
 #include <qt-gui/mainwindow.h>
 #include <qt-gui/testopengl.h>
@@ -534,6 +535,9 @@ int main(int argc, char *argv[])
 
         pRenderer = new QGLRenderSupport(Window, &FlowRunner, fake_touch, transparent);
         pRenderer->setDPI(fake_dpi);
+        double real_density = QApplication::screens().at(QApplication::desktop()->screenNumber())->logicalDotsPerInch();
+
+        pRenderer->setDisplayDensity(real_density / fake_dpi);
         pRenderer->no_qglfb = no_qglfb;
         pRenderer->ProfilingInsnCost = gui_prof_cost;
 

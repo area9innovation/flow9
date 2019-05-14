@@ -73,7 +73,7 @@ or
 The reason is that when we add `Whatever26`, then we get a compile error, and actively have to
 consider whether the common path is correct in that case as well.
 
-#### Why is there no support for recursive local functions, or lambas? ####
+#### Why is there no support for recursive local functions, or lambdas? ####
 
 This is a known limitation, but experience has shown that top-level function most often are
 more clear anyways. This is because each function becomes relatively limited in length when
@@ -443,7 +443,7 @@ make` the first thing you pay attention is `y` which is not important for
 understanding type of `x`.
 
 There is even more strange way of using pipe syntax. It's when developer
-invents artificial labmda. For example: `x |> \m -> MBorder(...., m)` makes no
+invents artificial lambda. For example: `x |> \m -> MBorder(...., m)` makes no
 sense as it's clearly more complicated to read than just `MBorder(..., x)`. It
 gets even more worse if you have a wrapper around it, something like this: ```
 MLines([   MText(...) |> \m -> MBorder(..., m)   ... ]) ``` Here logic is even
@@ -505,7 +505,7 @@ Antipatterns
 
 #### In the beginning was the Subscribe
 
-Don't make code more comlicated than it could be. We have a core function to
+Don't make code more complicated than it could be. We have a core function to
 react on some behaviours changes, it's `subscribe` at [behaviour.flow](https:/
 /github.com/area9innovation/flow9/blob/master/lib/behaviour.flow). Then
 Material was invented. And there is a MConstruct with such syntax
@@ -520,8 +520,7 @@ like this doesn't look good:
 		material
 	)
 
-That's why we added `makeSubscribe` at [fusion.flow](https://github.com/area9i
-nnovation/flow/blob/master/lib/fusion.flow). It has a more convenient syntax
+That's why we added `makeSubscribe` at [fusion.flow](https://github.com/area9innovation/flow9/blob/master/lib/fusion.flow). It has a more convenient syntax
 for using inside `MConstruct` (but all these guys from fusion are distinctive,
 be careful and read a comment at makeSubscribe declaration). So now we can do
 like this:

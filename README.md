@@ -86,14 +86,14 @@ Your first message requires moderation approval to avoid spam.
 Tooling
 -------
 
-- `flowc` is the current compiler, written in flow itself. See tools/flowc. Can work as a compile server.
-- `flow` is the original compiler, written in haxe. See src/
-- Single-step debugger using gdb protocol (see QtByterunner/)
+- `flowc` is the current compiler, written in flow itself. See [tools/flowc](tools/flowc). Can work as a compile server.
+- `flow` is the original compiler, written in haxe. See [tools/flow](tools/flow)
+- Single-step debugger using gdb protocol (see [platforms/qt](platforms/qt))
 - Profiler for time, instructions, memory, garbage collection
 - JIT (just-in-time) compiler for x64, interpreter for ARM and others
 - Compiles to C++ and Java for performance-critical code, typically server side
-- Visual Code, Sublime Text, Kate & Emacs integrations with syntax coloring, find def. etc
-- Mature PEG parser generator. See doc/lingo.html
+- IDE/Code editor support for [VSCode](https://github.com/area9innovation/flow9/tree/master/resources/vscode/flow), [Sublime Text](https://github.com/area9innovation/flow9/tree/master/resources/sublimetext), [Kate](https://github.com/area9innovation/flow9/tree/master/resources/kate) & [others](https://github.com/area9innovation/flow9/tree/master/resources)
+- Mature PEG parser generator. See [doc/lingo.markdown](doc/lingo.markdown)
 
 Folders
 -------
@@ -103,10 +103,9 @@ Folders
 - demos - a demo program showing how the UI library can be used
 - doc - documentation of the language and libraries
 - lib - the flow standard library
-- QtByteRunner - the bytecode runner used on Windows, Mac, Linux
+- platforms - the flow runtime platforms source code
 - resources - integrations with VS code (recommended), Sublimetext and more
 - sandbox - contains hello world
-- src - the source code for the original haxe-based compiler, as well as the runtime
 - tools - the compiler and processor for rendering fonts
 - www - required files to be exposed by the web-server for running flow programs online
 - www_source - the source files of some of the files in the www folder
@@ -135,4 +134,4 @@ History
 - January 2016: Material guidelines implemented
 - November 2016: JIT for x64 was added
 - May 2018: Self-hosted compiler written in flow itself
-- 2019: Initial open source release
+- April 2019: Initial open source release

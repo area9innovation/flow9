@@ -3,6 +3,10 @@ import js.three.Box3;
 
 class Object3DHelper {
 	public static inline function invalidateStage(object : Object3D) : Void {
+		if (untyped object.updateProjectionMatrix != null) {
+			untyped object.updateProjectionMatrix();
+		}
+
 		if (getClipWorldVisible(object)) {
 			RenderSupportJSPixi.InvalidateStage();
 		}
@@ -25,6 +29,18 @@ class Object3DHelper {
 		}
 
 		return completeBoundingBox;
+	}
+
+	public static inline function getStage(object : Object3D) : Array<ThreeJSStage> {
+		if (object.parent == null) {
+			if (untyped object.stage != null) {
+				return [untyped object.stage];
+			} else {
+				return [];
+			}
+		} else {
+			return getStage(object.parent);
+		}
 	}
 
 	public static function broadcastEvent(parent : Object3D, event : String) : Void {
@@ -50,6 +66,7 @@ class Object3DHelper {
 		parent.add(child);
 
 		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
 
 		broadcastEvent(child, "position");
 		broadcastEvent(child, "scale");
@@ -62,6 +79,7 @@ class Object3DHelper {
 		parent.remove(child);
 
 		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
 
 		invalidateStage(parent);
 	}
