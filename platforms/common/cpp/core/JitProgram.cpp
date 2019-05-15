@@ -9,6 +9,8 @@
 using namespace asmjit;
 using namespace asmjit::x86;
 
+const unsigned long MAX_JIT_MEMORY = 256*1024*1024;
+
 // Registers used by the C++ calling convention
 
 #ifndef _MSC_VER
@@ -374,7 +376,7 @@ bool FlowJitProgram::compile()
 
     // Initialize generation
     next_code_off = 0;
-	next_data_off = committed_data_off = std::max(memory_limit, (unsigned long)flow_code.size() * 25);
+	next_data_off = committed_data_off = std::max(std::max(memory_limit, MAX_JIT_MEMORY), (unsigned long)flow_code.size() * 25);
 
     if (!code_buffer.reserve(next_data_off))
         return false;

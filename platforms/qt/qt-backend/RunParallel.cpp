@@ -16,7 +16,6 @@ IMPLEMENT_FLOW_NATIVE_OBJECT(LoadedBytecode, FlowNativeObject)
 IMPLEMENT_FLOW_NATIVE_OBJECT(FlowRunnerThreadRef, FlowNativeObject)
 
 #ifdef FLOW_JIT
-const unsigned MAX_CODE_MEMORY = 128*1024*1024;
 FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, const unsigned long memory_limit = 0);
 void deleteJitProgram(FlowJitProgram *program);
 #endif
@@ -102,7 +101,7 @@ bool LoadedBytecode::load()
 #ifdef FLOW_JIT
     if (true)
     {
-		bytecode->jit_program = loadJitProgram(getFlowRunner()->flow_err, bytecode->filename, "", MAX_CODE_MEMORY);
+		bytecode->jit_program = loadJitProgram(getFlowRunner()->flow_err, bytecode->filename, "");
 
         if (!bytecode->jit_program)
             return false;
