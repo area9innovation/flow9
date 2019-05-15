@@ -28,7 +28,7 @@ DEFINES += FLOW_COMPACT_STRUCTS
 CONFIG(use_gui) {
     QT += gui opengl multimedia multimediawidgets
 
-    CONFIG += c++11
+    CONFIG += c++11 dfield_fonts
 
     QT += opengl
     QT += widgets gui
@@ -62,7 +62,16 @@ CONFIG(use_gui) {
         LIBS += -lGLU
     }
 
-    LIBS += -lz -ljpeg -lpng
+    CONFIG(dfield_fonts) {
+        DEFINES += FLOW_DFIELD_FONTS
+        LIBS += -lz
+    } else {
+        INCLUDEPATH += /usr/include/freetype2
+        INCLUDEPATH += /usr/local/include/freetype2
+        LIBS += -lfreetype
+    }
+
+    LIBS += -ljpeg -lpng
 } else {
     QT -= gui opengl
 }

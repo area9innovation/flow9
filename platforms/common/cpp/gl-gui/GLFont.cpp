@@ -2,7 +2,13 @@
 #include "GLRenderSupport.h"
 #include "core/CommonTypes.h"
 
+#ifndef FLOW_DFIELD_FONTS
+#include FT_SIZES_H
+#include FT_GLYPH_H
+#else
 #include <zlib.h>
+#endif
+
 #include <deque>
 #include <stdio.h>
 
@@ -77,10 +83,31 @@ GLFontLibrary::GLFontLibrary(GLRenderSupport *owner) : owner(owner)
 
 GLFontLibrary::~GLFontLibrary()
 {
+#ifndef FLOW_DFIELD_FONTS
+    FT_Done_FreeType(library);
+#endif
 }
 
 GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 {
+#ifndef FLOW_DFIELD_FONTS
+    FT_Face face;
+    FT_Error error = FT_New_Face(library, file.c_str(), 0, &face);
+
+    if (error) {
+        cerr << "Couldn't load " << file << endl;
+        reportError(error);
+        return GLFont::Ptr();
+    }
+
+    if (!FT_IS_SCALABLE(face)) {
+        cerr << "Not a scalable font - unsupported: " << file << endl;
+        FT_Done_Face(face);
+        return GLFont::Ptr();
+    }
+
+    GLFont::Ptr ptr(new GLFont(self.lock(), face));
+#else
     StaticBuffer data;
     GLFont::Ptr ptr;
 
@@ -186,6 +213,26 @@ void GLCompoundTexture::resize(int new_size)
 }
 
 // FONT
+
+#ifndef FLOW_DFIELD_FONTS
+GLFont::GLFont(GLFontLibrary::Ptr library, FT_Face face) :
+    library(library), face(face)
+{
+    family_name = std::string(face->family_name);
+    style_name = std::string(face->style_name);
+
+    em_size_factor = 1.0f / face->units_per_EM;
+    ascender = face->ascender * em_size_factor;
+    descender = face->descender * em_size_factor;
+    line_height = face->height * em_size_factor;
+    max_advance = face->max_advance_width * em_size_factor;
+
+    underline_position = face->underline_position * em_size_factor;
+    underline_thickness = face->underline_thickness * em_size_factor;
+
+    has_kerning = FT_HAS_KERNING(face);
+}
+#else
 void GLFont::initHeader()
 {
     em_size_factor = 1.0f;
@@ -256,13 +303,138 @@ GLFont::GLFont(GLFontLibrary::Ptr library, const FontHeader &header) :
 
     default_glyph = 0;
 }
+#endif
 
 GLFont::~GLFont()
 {
     for (T_glyphs::iterator it = glyphs.begin(); it != glyphs.end(); ++it)
         delete it->second;
+
+#ifndef FLOW_DFIELD_FONTS
+    sizes.clear();
+
+    FT_Done_Face(face);
+#endif
 }
 
+#ifndef FLOW_DFIELD_FONTS
+GLFont::Size::Size(GLFont *font, int sz, FT_Size face_size) :
+    font(font), pixels(sz), face_size(face_size)
+{
+    ascender = ftToFloat(face_size->metrics.ascender);
+    descender = ftToFloat(face_size->metrics.descender);
+    line_height = ftToFloat(face_size->metrics.height);
+    max_advance = ftToFloat(face_size->metrics.max_advance);
+
+    texture_size = std::min(512, font->library->max_texture_size);
+    while (((texture_size-1) / (sz + 1)) > 16)
+        texture_size /= 2;
+}
+
+GLFont::Size::~Size()
+{
+    for (T_glyph_bitmaps::iterator it = glyph_bitmaps.begin(); it != glyph_bitmaps.end(); ++it)
+        delete it->second;
+
+    FT_Done_Size(face_size);
+}
+
+GLFont::GlyphBitmap *GLFont::Size::getGlyphBitmap(GLFont::GlyphInfo *info)
+{
+    if (!info) return NULL;
+
+    if ((info->id & FALLBACK_FLAG) && !is_fallback && font->library->owner->FallbackFont) {
+       return font->library->owner->FallbackFont->getGlyphBitmap(info);
+    }
+
+    const uint32_t id = info->id & ~FALLBACK_FLAG;
+
+    T_glyph_bitmaps::iterator it = glyph_bitmaps.find(id);
+    if (it != glyph_bitmaps.end())
+        return it->second;
+
+    GLFont::GlyphBitmap *&obj = glyph_bitmaps[id];
+    if (!obj)
+        obj = loadGlyphBitmap(id);
+    return obj;
+}
+
+GLFont::GlyphBitmap *GLFont::Size::loadGlyphBitmap(uint32_t id)
+{
+    FT_Error error;
+    FT_Face face = font->face;
+
+    FT_Activate_Size(face_size);
+
+    error = FT_Load_Glyph(face, id, FT_LOAD_RENDER);
+    if (error) {
+        GLFontLibrary::reportError(error);
+        return NULL;
+    }
+
+    float advance = ftToFloat(face->glyph->metrics.horiAdvance);
+    vec2 bearing(face->glyph->bitmap_left, -face->glyph->bitmap_top);
+
+    return new GlyphBitmap(bearing, advance, cacheBitmap(face->glyph->bitmap));
+}
+
+GLCompoundTexture::Item::Ptr GLFont::Size::cacheBitmap(FT_Bitmap &bitmap)
+{
+    assert (bitmap.pixel_mode == FT_PIXEL_MODE_GRAY);
+
+    ivec2 size = glm::min(ivec2(bitmap.width, bitmap.rows), ivec2(texture_size-2));
+
+    GLCompoundTexture::Item::Ptr item;
+
+    for (unsigned i = 0; i < textures.size(); i++) {
+        item = textures[i]->allocItem(size);
+        if (item)
+            break;
+    }
+
+    if (!item) {
+        textures.push_back(GLCompoundTexture::Make(texture_size, GL_ALPHA));
+        item = textures.back()->allocItem(size);
+        assert(item);
+    }
+
+    GLCompoundTexture::Ptr ptr = item->texture;
+
+    unsigned char *data = ptr->getDataPtr() + item->pos.x + item->pos.y * texture_size;
+    unsigned char *input = bitmap.buffer;
+
+    for (int y = 0; y < item->size.y; y++) {
+        for (int x = 0; x < item->size.x; x++)
+            data[x] = input[x]*255/(bitmap.num_grays-1);
+        data += texture_size;
+        input += bitmap.pitch;
+    }
+
+    ptr->invalidate();
+    return item;
+}
+
+GLFont::Size::Ptr GLFont::getSize(int px_size)
+{
+    Size::Ptr &ptr = sizes[px_size];
+    if (ptr)
+        return ptr;
+
+    FT_Size size;
+    FT_New_Size(face, &size);
+    FT_Activate_Size(size);
+
+    FT_Error error = FT_Set_Pixel_Sizes(face, px_size, px_size);
+    if (error) {
+        GLFontLibrary::reportError(error);
+        return Size::Ptr();
+    }
+
+    return ptr = Size::Ptr(new Size(this, px_size, size));
+}
+#endif
+
+#ifdef FLOW_DFIELD_FONTS
 unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
 {
     StaticBuffer pixels;
@@ -327,9 +499,13 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
 
     return unicode_charmap[char_code] = idx+1;
 }
+#endif
 
 GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
 {
+#ifndef FLOW_DFIELD_FONTS
+    int idx = FT_Get_Char_Index(face, char_code);
+#else
     int idx = unicode_charmap[char_code];
     if (!idx && is_system)
         idx = loadSystemGlyph(char_code, false);
@@ -354,9 +530,19 @@ GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
         char_code = UNICODE_INVALID_CHAR;
     }
     idx--;
+#endif
 
     GlyphInfo *&ptr = glyphs[idx];
     if (!ptr) {
+#ifndef FLOW_DFIELD_FONTS
+        FT_Error error = FT_Load_Glyph(face, idx, FT_LOAD_NO_SCALE);
+        if (error) {
+            GLFontLibrary::reportError(error);
+            return NULL;
+        }
+
+        FT_Glyph_Metrics &metrics = face->glyph->metrics;
+#endif
         bool isUtf32Glyph = glyph_headers[idx].unicode_char > 0xFFFF;
         unsigned tile_id = is_system ?
                                 ((
@@ -367,9 +553,15 @@ GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
                                 : idx;
         ptr = new GlyphInfo(idx, tile_id);
 
+#ifndef FLOW_DFIELD_FONTS
+        ptr->bearing = vec2(metrics.horiBearingX, -metrics.horiBearingY) * em_size_factor;
+        ptr->size = vec2(metrics.width,metrics.height) * em_size_factor;
+        ptr->advance = metrics.horiAdvance * em_size_factor;
+#else
         ptr->bearing = vec2(glyph_headers[idx].bearing_x, glyph_headers[idx].bearing_y);
         ptr->size = vec2(glyph_headers[idx].size_x, glyph_headers[idx].size_y);
         ptr->advance = glyph_headers[idx].advance;
+#endif
     }
 
     return ptr;
@@ -377,9 +569,20 @@ GLFont::GlyphInfo *GLFont::getGlyphByChar(ucs4_char char_code)
 
 float GLFont::getKerning(GlyphInfo *prev, GlyphInfo *cur)
 {
+#ifndef FLOW_DFIELD_FONTS
+    if (!has_kerning || !prev || !cur)
+        return 0.0f;
+
+    FT_Vector delta;
+    FT_Get_Kerning(face, prev->id, cur->id, FT_KERNING_UNSCALED, &delta);
+
+    return delta.x * em_size_factor;
+#else
     return 0.0f;
+#endif
 }
 
+#ifdef FLOW_DFIELD_FONTS
 GLTextureImage::Ptr GLFont::loadGlyphGrid(unsigned grid_id)
 {
     GLTextureBitmap::Ptr bmp(new GLTextureBitmap(ivec2(font_header->grid_px_size), GL_ALPHA, false));
@@ -432,6 +635,7 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 
     return tex;
 }
+#endif
 
 GLTextLayout::Ptr GLFont::layoutTextLine(unicode_string str, float size, float width_limit, float spacing, bool crop_long_words, bool rtl)
 {
@@ -683,6 +887,63 @@ ucs4_char GLTextLayout::tryMirrorChar(ucs4_char code) {
     #undef PAIRS_COUNT
 }
 
+#ifndef FLOW_DFIELD_FONTS
+void GLTextLayout::computePasses(const GLTransform &transform, vec2 /*origin*/, vec2 adj_origin)
+{
+    float pixel_size = transform.getScaleRev();
+    float pixel_div = transform.getScale();
+
+    if (pixel_div == pass_scale && adj_origin == pass_adj_origin && !passes.empty())
+        return;
+
+    pass_scale = pixel_div;
+    pass_adj_origin = adj_origin;
+    passes.clear();
+
+    int i_size = floorf(size * pixel_div + 0.3);
+    float sfactor = pixel_size;
+
+    if (i_size > 50) {
+        sfactor *= i_size / 50.0f;
+        i_size = 50;
+    }
+
+    GLFont::Size::Ptr fsize = font->getSize(i_size);
+
+    // Compute bitmaps
+    std::vector<GLFont::GlyphBitmap*> bitmaps(glyphs.size(), NULL);
+
+    for (unsigned i = 0; i < glyphs.size(); i++) {
+        GLFont::GlyphInfo *info = glyphs[i];
+        GLFont::GlyphBitmap *bmp = fsize->getGlyphBitmap(info);
+
+        if (bmp && bmp->bitmap) {
+            bitmaps[i] = bmp;
+        }
+    }
+
+    // Arrange bitmaps into triangle strips
+    for (unsigned i = 0; i < glyphs.size(); i++)
+    {
+        GLFont::GlyphInfo *info = glyphs[i];
+        GLFont::GlyphBitmap *bmp = bitmaps[i];
+
+        if (!bmp) continue;
+
+        float size_diff = 0.5f*(bmp->bitmap->size.x*sfactor - info->size.x*size);
+        float fpos_raw = positions[i] + info->bearing.x*size - size_diff;
+        float fpos = pixel_size * roundf(fpos_raw * pixel_div);
+
+        vec2 pos1 = adj_origin + vec2(fpos,bmp->bearing.y*sfactor);
+        vec2 pos2 = pos1 + vec2(bmp->bitmap->size)*sfactor;
+
+        RenderPass &pass = passes[static_pointer_cast<GLTextureImage>(bmp->bitmap->texture)];
+        pass.reserve(glyphs.size());
+        pass.pcoords.addRect(pos1, pos2);
+        pass.tcoords.addRect(bmp->bitmap->tex_points[0], bmp->bitmap->tex_points[1]);
+    }
+}
+#else
 void GLTextLayout::computePasses(const GLTransform &/*transform*/, vec2 /*origin*/, vec2 adj_origin)
 {
     if (adj_origin == pass_adj_origin && !passes.empty())
@@ -709,13 +970,18 @@ void GLTextLayout::computePasses(const GLTransform &/*transform*/, vec2 /*origin
         pass.tcoords.addRect(tex1, tex2);
     }
 }
+#endif
 
 void GLTextLayout::render(GLRenderer *renderer, const GLTransform &transform,
                           vec2 origin, vec2 adj_origin, vec4 color, float alpha, bool underline)
 {
+#ifndef FLOW_DFIELD_FONTS
+    renderer->beginDrawFancy(vec4(1,1,1,1), true);
+#else
     float pixel_size = transform.getScaleRev();
     float fct = pixel_size / size * font->font_header->render_em_size;
     float r = 0.8f * fct * font->font_header->dist_scale;
+#endif
 
     // Build the layout structure
     computePasses(transform, origin, adj_origin);
