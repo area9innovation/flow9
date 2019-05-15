@@ -71,6 +71,23 @@ export {
 	) -> Material;
 
 	MAddShortcutDialog(manager : MaterialManager) -> () -> void;
+
+	MDropDownOrAutoComplete(
+		items : [string],
+		selected : DynamicBehaviour<int>,
+		style : [MDropDownOrAutoCompleteStyle],
+	) -> Material;
+
+	// MRequiredField, MLabel replace corresponding inner autocomplete styles
+	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem;
+
+		MDropDownStyles(style : [MDropDownStyle]);
+		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
+		MAutoCompleteStyles(style : [MAutoCompleteStyle]);
+		MAutoCompleteState(state : [MTextInputState]);
+		MItemsLimit(limit : int);
+		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -616,4 +633,98 @@ MAddShortcutDialog(manager : MaterialManager) -> () -> void {
 	} else {
 		nop;
 	}
+}
+
+MDropDownOrAutoComplete(
+	items0 : [string],
+	selected : DynamicBehaviour<int>,
+	style : [MDropDownOrAutoCompleteStyle]
+) -> Material {
+
+	limit = extractStruct(style, MItemsLimit(15)).limit;
+	isRequired = contains(style, MRequiredField());
+	labelM = tryExtractStruct(style, MLabel(""));
+	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
+
+	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
+	items = concat(if (showAnyItem) ["Any"] else [], items0);
+
+	isError =
+		eitherMap(
+			multiSelection,
+			\ms -> fOr(feq(ms.selected, []), feq(ms.selected, [-1])),
+			feq(selected, -1)
+		);
+
+	makeMAutoCompleteControl = \ -> {
+		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
+
+		trimStr = \s -> trim(s) |> toLowerCase;
+		string2idxsMulti = \str ->
+			filtermap(strSplit2WithoutLeave(str, [",", ";"]), \sel ->
+				findi(items, \item -> trimStr(item) == trimStr(sel))
+			);
+		string2idxs = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+
+		selectedStrB =
+			eitherMap(multiSelection,
+				\ms -> idxs2string(getValue(ms.selected)),	
+				idxs2string([getValue(selected)])
+			)
+			|> make;
+
+		autoCompleteStyle =
+			extractStruct(style, MAutoCompleteStyles([])).style
+			|> (\st -> eitherMap(labelM,
+				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
+				st
+			));
+		autoCompleteState =
+			extractStruct(style, MAutoCompleteState([])).state
+			|> (\st ->
+				if (isRequired) {
+					error = fif(isError, const(Some(Pair("Required field", true))), const(None()));
+					replaceStruct(st, MInputError(error, [MRequiredField()]));
+				} else
+					st
+			);
+
+		MConstruct(
+			[\ -> 
+				eitherMap(multiSelection,
+					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
+					bidirectionalLink(selectedStrB, selected, string2idxs, \idx -> idxs2string([idx]))
+				)
+			],
+			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+		)
+	}
+
+	if (length(items0) > limit)
+		makeMAutoCompleteControl()
+	else
+		eitherMap(
+			multiSelection,
+			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+			MConstruct(
+				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
+				MDropDown(selected, "", items, extractStruct(style, MDropDownStyles([])).style)
+			)
+		)
+		|> (\m -> eitherMap(labelM,	\labelStyle ->
+			MLines2(
+				MText(labelStyle.label, [MCaption()]) |> MBorderBottom(4.0),
+				m
+			),
+			m
+		))
+		|> (\m -> if (isRequired)
+			MLines2(
+				m,
+				MText("Required field", [MErrorColor(), MCaptionSolid()])
+				|> (\m2 -> MVisible(isError, m2))
+				|> MBorderTop(4.0)
+			)
+			else m
+		)
 }
