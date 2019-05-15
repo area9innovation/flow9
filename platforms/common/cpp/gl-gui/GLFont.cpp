@@ -19,14 +19,18 @@ inline float ftToFloat(int v) {
 }
 
 
-PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
-    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
-{
+PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end) {
+    this->org = org.clone();
+    this->cur = org.clone();
+    this->nx = org.clone();
+    this->end = end.clone();
     ++*nx;
 }
-PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
-    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
-{
+PasswordUtf32Iter::PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur) {
+    this->org = org.clone();
+    this->cur = cur.clone();
+    this->nx = cur.clone();
+    this->end = end.clone();
     ++*nx;
 }
 
@@ -56,7 +60,7 @@ shared_ptr<Utf32InputIterator> PasswordUtf32Iter::cloneReversed() {
 }
 
 void LigatureUtf32Iter::yieldSelf() {
-    yieldedChar = yield(&*cur, &*end, &nx, &ligalen);
+    yieldedChar = yield(&*cur, &*shared->end, &nx, &ligalen);
 }
 
 ucs4_char LigatureUtf32Iter::yield(
@@ -101,33 +105,42 @@ LigatureUtf32Iter& LigatureUtf32Iter::next() {
     return *this;
 }
 
-LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
-    org(org.clone()), cur(org.clone()), nx(org.clone()), end(end.clone())
+LigatureUtf32Iter::LigatureUtf32Iter(shared_ptr<Shared> shared, shared_ptr<Utf32InputIterator> cur):
+    shared(shared), cur(cur), nx(cur->clone())
 {
+    yieldSelf();
+}
+LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end):
+    shared(new LigatureUtf32Iter::Shared()), cur(org.clone()), nx(org.clone())
+{
+    shared->org = org.clone();
+    shared->end = end.clone();
     yieldSelf();
 }
 
 LigatureUtf32Iter::LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur):
-    org(org.clone()), cur(cur.clone()), nx(cur.clone()), end(end.clone())
+    shared(new LigatureUtf32Iter::Shared()), cur(cur.clone()), nx(cur.clone())
 {
+    shared->org = org.clone();
+    shared->end = end.clone();
     yieldSelf();
 }
 
 void LigatureUtf32Iter::buildReverseMap() {
-    if (reverseMap.size()) return;
+    if (shared->reverseMap.size()) return;
     shared_ptr<LigatureUtf32Iter> passer;
-    passer.reset(new LigatureUtf32Iter(*this->org, *this->end));
+    passer.reset(new LigatureUtf32Iter(*this->shared->org, *this->shared->end));
     shared_ptr<Utf32InputIterator> probe;
-    while (*passer->cur != *this->end) {
+    while (*passer->cur != *this->shared->end) {
         probe = passer->cur->clone();
         ++*probe;
-        if (*probe != *passer->nx) reverseMap[passer->nx->position()] = passer->cur->position();
+        if (*probe != *passer->nx) shared->reverseMap[passer->nx->position()] = passer->cur->position();
         ++*passer;
     }
 
     // Just any valid key-value pair to make map non-empty.
-    if (!reverseMap.size())
-        reverseMap[org->position()] = end->position();
+    if (!shared->reverseMap.size())
+        shared->reverseMap[shared->org->position()] = shared->end->position();
 }
 
 ucs4_char LigatureUtf32Iter::operator *() {
@@ -139,13 +152,13 @@ ucs4_char_tracer LigatureUtf32Iter::traceCurrent() {
 }
 
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::clone() {
-    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter(*this->org, *this->end, *this->cur));
+    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter(shared, cur->clone()));
     return r;
 }
 
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::cloneReversed() {
     buildReverseMap();
-    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(this));
+    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(shared, cur->cloneReversed()));
     return r;
 }
 
@@ -157,13 +170,14 @@ LigatureUtf32Iter::Reversed& LigatureUtf32Iter::Reversed::next() {
     return *this;
 }
 
-LigatureUtf32Iter::Reversed::Reversed(LigatureUtf32Iter *master):master(master) {
-    cur = master->cur->cloneReversed();
+LigatureUtf32Iter::Reversed::Reversed(shared_ptr<Shared> master, shared_ptr<Utf32InputIterator> cur) {
+    this->master = master;
+    this->cur = cur;
 }
 
 ucs4_char LigatureUtf32Iter::Reversed::operator *() {
     size_t ligalen;
-    return master->yield(&*cur->cloneReversed(), &*master->end, &masterNx, &ligalen);
+    return LigatureUtf32Iter::yield(&*cur->cloneReversed(), &*master->end, &masterNx, &ligalen);
 }
 
 ucs4_char_tracer LigatureUtf32Iter::Reversed::traceCurrent() {
@@ -172,8 +186,7 @@ ucs4_char_tracer LigatureUtf32Iter::Reversed::traceCurrent() {
 }
 
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::Reversed::clone() {
-    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(master));
-    ((LigatureUtf32Iter::Reversed *)&*r)->cur = cur->clone();
+    shared_ptr<Utf32InputIterator> r(new LigatureUtf32Iter::Reversed(master, cur->clone()));
     return r;
 }
 shared_ptr<Utf32InputIterator> LigatureUtf32Iter::Reversed::cloneReversed() {
@@ -771,7 +784,6 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     float cursor = 0.0f;
 
     this->spacing = spacing;
-
     {
         size_t elemcount = end.position() - begin.position();
         char_indices.reserve(elemcount+1);
@@ -852,9 +864,9 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
                     }
                     leftPos = strProc->cloneReversed();
                     strRevEnd = strProc->cloneReversed();
+                    strProc = strRevEnd->clone();
                     rightPos = strRevEnd->clone();
                     ++*rightPos;
-                    strProc = strRevEnd->clone();
                 }
                 chrIdx = strProc->position();
                 chr = **strProc;

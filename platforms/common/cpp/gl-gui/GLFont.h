@@ -104,29 +104,41 @@ public:
 
 class LigatureUtf32Iter: public Utf32InputIterator {
 protected:
-    shared_ptr<Utf32InputIterator> org, cur, nx, end;
+    typedef struct {
+        shared_ptr<Utf32InputIterator> org, end;
+
+        // There's way to optimize memory consuming
+        // making this field static and adding mapping by org->data and usage counter.
+        // This will keep single size_t->size_t map per origin, not per
+        // LigatureUtf32Iter instance. Not forget to remove org->data key on last
+        // LigatureUtf32Iter instance disposal.
+        size_t2size_t reverseMap;
+
+        virtual void *data() {return org->data();}
+    } Shared;
+
+    shared_ptr<Utf32InputIterator> cur, nx;
     size_t ligalen;  // input characters decoded count
     ucs4_char yieldedChar;
+
+    LigatureUtf32Iter(shared_ptr<Shared> shared, shared_ptr<Utf32InputIterator> cur);
 
     void yieldSelf();
     LigatureUtf32Iter& next();
 
-    // There's way to optimize memory consuming
-    // making this field static and adding mapping by org->data and usage counter.
-    // This will keep single size_t->size_t map per origin, not per
-    // LigatureUtf32Iter instance. Not forget to remove org->data key on last
-    // LigatureUtf32Iter instance disposal.
-    size_t2size_t reverseMap;
     void buildReverseMap();
 
+    shared_ptr<Shared> shared;
+
     class Reversed: public Utf32InputIterator {
+        friend class LigatureUtf32Iter;
     protected:
-        LigatureUtf32Iter *master;
+        shared_ptr<Shared> master;
         shared_ptr<Utf32InputIterator> cur, masterNx;
 
+        Reversed(shared_ptr<Shared> master, shared_ptr<Utf32InputIterator> cur);
         Reversed& next();
     public:
-        Reversed(LigatureUtf32Iter *master);
         virtual size_t position() {return cur->position();}
         virtual void *data() {return master->data();}
         virtual ucs4_char operator *();
@@ -137,6 +149,8 @@ protected:
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
         bool isEnd() {return *cur==*master->end;}
         virtual void seekEnd() { cur = master->end->cloneReversed(); };
+
+        virtual ~Reversed(){};
     };
 
 
@@ -144,7 +158,7 @@ public:
     LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
     LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur);
     virtual size_t position() {return cur->position();}
-    virtual void *data() {return org->data();}
+    virtual void *data() {return shared->data();}
     virtual ucs4_char operator *();
     virtual ucs4_char_tracer traceCurrent();
     static ucs4_char yield(Utf32InputIterator *cur, Utf32InputIterator *end, shared_ptr<Utf32InputIterator> *nx, size_t *ligalen);
@@ -152,9 +166,9 @@ public:
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
     virtual shared_ptr<Utf32InputIterator> cloneReversed();
-    bool isEnd() {return *cur==*end;}
-    virtual void seekBegin() { cur = org->clone(); yieldSelf(); };
-    virtual void seekEnd() { cur = end->clone(); yieldSelf(); };
+    bool isEnd() {return *cur==*shared->end;}
+    virtual void seekBegin() { cur = shared->org->clone(); yieldSelf(); };
+    virtual void seekEnd() { cur = shared->end->clone(); yieldSelf(); };
 };
 
 
