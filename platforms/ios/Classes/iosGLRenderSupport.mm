@@ -1895,7 +1895,7 @@ bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *
     CGFloat ascent, descent, leading;
     const double t_width = CTRunGetTypographicBounds(run, CFRangeMake(0, 1), &ascent, &descent, &leading);
     
-    CGContextSetTextPosition(context, lineOrigin.x, render_size - ascent);
+    CGContextSetTextPosition(context, 0.0, render_size - ascent);
     CTRunDraw(run, context, CFRangeMake(0,1));
     
     CGRect rect = CTRunGetImageBounds(run, context, CFRangeMake(0, 1));
