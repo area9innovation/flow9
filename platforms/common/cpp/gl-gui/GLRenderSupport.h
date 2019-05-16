@@ -327,6 +327,8 @@ protected:
     void resizeGLContext(int w, int h);
     void paintGLContext(unsigned ad_hoc_fb = 0);
 
+    void loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default = false);
+
     bool NoHoverMouse, DrawMouseRect;
     float MouseRadius; // Degree of confidence radius
 

@@ -689,9 +689,8 @@ std::string GLTextClip::parseHtmlRec(const unicode_string &str, unsigned &pos, c
             FormatRec new_format = format;
 
             if (tag == "font") {
-//                TODO: Implement
-//                if (attrs.count("face"))
-//                    new_format.font = owner->lookupFont(attrs["face"]);
+                if (attrs.count("face"))
+                    new_format.font = owner->lookupFont(TextFont::makeWithFamily(encodeUtf8(attrs["face"])));
                 if (attrs.count("size"))
                     new_format.size = atof(encodeUtf8(attrs["size"]).c_str());
                 if (attrs.count("color") && attrs["color"][0] == '#') {
@@ -812,18 +811,6 @@ static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-static TextStyle textStyleByName(unicode_string slopeName) {
-    std::string slope = encodeUtf8(slopeName);
-    slope[0] = (char)toupper(slope[0]);
-    if (!slope.compare("Italic")) {
-        return TextStyle::Italic;
-    } else if (!slope.compare("Oblique")) {
-        return TextStyle::Oblique;
-    } else {
-        return TextStyle::Normal;
-    }
-}
-
 StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
 {
     #define SIZE 8
@@ -832,72 +819,6 @@ StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
     newargs[SIZE+1] = StackSlot::MakeDouble(0);
     return setTextAndStyle(RUNNER, newargs);
     #undef SIZE
-}
-
-static std::string chop(std::string  text, size_t count) {
-    return text.substr(0, text.size() - count);
-}
-
-static bool endsWith(std::string const& text, std::string const& suffix) {
-    if (text.length() < suffix.length()) return false;
-    return (0 == text.compare(text.length() - suffix.length(), suffix.length(), suffix));
-}
-
-TextFont GLTextClip::textFontByFontParameters(unicode_string family, int weight, unicode_string slope) {
-    std::string fontfamily = encodeUtf8(family);
-
-    TextFont font = TextFont();
-    font.family = fontfamily;
-    font.weight = (TextWeight)weight;
-    font.style = textStyleByName(slope);
-
-    while (true) {
-        size_t chopSize = 0;
-        if (endsWith(fontfamily, "Thin")) {
-            font.weight = TextWeight::Thin;
-            chopSize = 4;
-        } else if (endsWith(fontfamily, "UltraLight")) {
-            font.weight = TextWeight::UltraLight;
-            chopSize = 10;
-        } else if (endsWith(fontfamily, "Light")) {
-            font.weight = TextWeight::Light;
-            chopSize = 5;
-        } else if (endsWith(fontfamily, "Regular")) {
-            font.weight = TextWeight::Regular;
-            chopSize = 7;
-        } else if (endsWith(fontfamily, "Normal")) {
-            font.weight = TextWeight::Regular;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "Medium")) {
-            font.weight = TextWeight::Medium;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "SemiBold")) {
-            font.weight = TextWeight::SemiBold;
-            chopSize = 8;
-        } else if (endsWith(fontfamily, "Bold")) {
-            font.weight = TextWeight::Bold;
-            chopSize = 4;
-        } else if (endsWith(fontfamily, "ExtraBold")) {
-            font.weight = TextWeight::ExtraBold;
-            chopSize = 9;
-        } else if (endsWith(fontfamily, "Black")) {
-            font.weight = TextWeight::Black;
-            chopSize = 5;
-        } else if (endsWith(fontfamily, "Italic")) {
-            font.style = TextStyle::Italic;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "Oblique")) {
-            font.style = TextStyle::Oblique;
-            chopSize = 7;
-        } else {
-            break;
-        }
-
-        font.family = chop(fontfamily, chopSize) + " " + fontfamily.substr(chopSize, fontfamily.size() - chopSize);
-        fontfamily = chop(fontfamily, chopSize);
-    }
-
-    return font;
 }
 
 StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
@@ -915,7 +836,7 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
     base_font_name = RUNNER->GetString(font_str);
 
     base_format.color = flowToColor(font_color_i, opacity);
-    base_format.text_font = textFontByFontParameters(base_font_name, font_weight.GetInt(), font_slope);
+    base_format.text_font = TextFont::makeWithParameters(encodeUtf8(base_font_name), font_weight.GetInt(), encodeUtf8(font_slope));
     base_format.font = owner->lookupFont(base_format.text_font);
 
     base_format.size = font_size.GetDouble();

@@ -168,8 +168,8 @@ public:
     bool sendPanGestureEvent(UIGestureRecognizerState state, CGPoint position, CGPoint translation);
     bool sendSwipeGestureEvent(CGPoint position, CGPoint velocity);
     
-    bool loadSystemFont(FontHeader *header, std::string name);
-    bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code);
+    bool loadSystemFont(FontHeader *header, TextFont textFont);
+    bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code);
     
     void resizeGLSurface();
     

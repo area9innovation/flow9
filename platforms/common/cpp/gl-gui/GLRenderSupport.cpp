@@ -107,7 +107,7 @@ GLFont::Ptr GLRenderSupport::lookupFont(TextFont textFont)
 bool GLRenderSupport::setFallbackFont(unicode_string name) {
     if (!FallbackFont) {
 
-        FallbackFont = lookupFont(GLTextClip::textFontByFontParameters(name, TextWeight::Regular, unicode_string()));
+        FallbackFont = lookupFont(TextFont::makeWithFamily(encodeUtf8(name)));
         FallbackFont->is_fallback = true;
     } else {
         // Some GlyphInfo might have id & FALLBACK_FONT instead of id.
@@ -115,6 +115,25 @@ bool GLRenderSupport::setFallbackFont(unicode_string name) {
         cerr << "Error: FallbackFont should be set only once" << endl;
     }
     return DefaultFont && FallbackFont != DefaultFont;
+}
+
+void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string> aliases, bool set_default)
+{
+    if (!FontLibrary) return;
+
+    TextFont textFont = TextFont::makeWithFamily(filename);
+    GLFont::Ptr font = FontLibrary->loadFont(textFont);
+    if (font) {
+        if (!DefaultFont || set_default)
+            DefaultFont = font;
+
+        Fonts[textFont] = font;
+
+        for (unsigned i = 0; i < aliases.size(); i++)
+            Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
+    } else {
+         cerr << "Cannot load font : " << filename << endl;
+    }
 }
 
 bool GLRenderSupport::loadAssetData(StaticBuffer *buffer, std::string name, size_t size)

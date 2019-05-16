@@ -105,9 +105,16 @@ static QFont::Style qFontStyleByTextStyle(TextStyle style) {
 bool QGLRenderSupport::loadSystemFont(FontHeader *header, TextFont textFont)
 {
     QString family(textFont.family.c_str());
+    QFont::Weight weight = qFontWeightByTextWeight(textFont.weight);
+    QFont::Style style = qFontStyleByTextStyle(textFont.style);
 
-    QFont font(family, -1, qFontWeightByTextWeight(textFont.weight), false);
-    font.setStyle(qFontStyleByTextStyle(textFont.style));
+    QFont font(family, -1, weight, false);
+    font.setStyle(style);
+
+    if (!font.exactMatch()) {
+        font = QFont(family + " " + QString(textFont.suffix().c_str()), weight, false);
+        font.setStyle(style);
+    }
 
     if (!font.exactMatch())
         return false;
@@ -259,6 +266,14 @@ void QGLRenderSupport::bytecodeDownloadFinished()
         QApplication::quit();
     }
 }
+
+void QGLRenderSupport::LoadFont(std::string code, QString name)
+{
+    std::vector<unicode_string> aliases;
+    aliases.push_back(parseUtf8(code));
+    loadFont(encodeUtf8(qt2unicode(name)), aliases);
+}
+
 bool QGLRenderSupport::loadAssetData(StaticBuffer *buffer, std::string name, size_t size)
 {
     return GLRenderSupport::loadAssetData(buffer, encodeUtf8(qt2unicode(getFullResourcePath(QString::fromStdString(name)))), size);

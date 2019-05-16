@@ -186,8 +186,6 @@ public:
     const unicode_string textFilteredByFlowFilters(const unicode_string &str);
     const bool keyEventFilteredByFlowFilters(const FlowKeyEvent &flowKeyEvent);
 
-    static TextFont textFontByFontParameters(unicode_string family, int weight, unicode_string style);
-
 public:
     DECLARE_NATIVE_METHOD(setTextInput)
     DECLARE_NATIVE_METHOD(setTextAndStyle)

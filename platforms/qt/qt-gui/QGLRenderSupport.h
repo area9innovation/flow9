@@ -88,6 +88,7 @@ public:
 
     void SetResourceBase(QString path) { ResourceBase = path; loadFontsFromFolder(path); }
     void SetFlowBase(QString path) { FlowBase = path; loadFontsFromFolder(path); }
+    void LoadFont(std::string code, QString name);
 
     void StartBytecodeDownload(QUrl url);
 

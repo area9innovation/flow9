@@ -88,6 +88,10 @@ GLFontLibrary::~GLFontLibrary()
 #endif
 }
 
+GLFont::Ptr GLFontLibrary::loadFont(std::string file) {
+    return loadFont(TextFont(file, TextWeight::Regular, TextStyle::Normal));
+}
+
 GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 {
 #ifndef FLOW_DFIELD_FONTS
@@ -111,7 +115,7 @@ GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
     StaticBuffer data;
     GLFont::Ptr ptr;
 
-    if (owner->loadAssetData(&data, textFont.family + "/index.dat", StaticBuffer::AUTO_SIZE)) {
+    if (owner->loadAssetData(&data, textFont.family + textFont.suffix() + "/index.dat", StaticBuffer::AUTO_SIZE)) {
         FontHeader *header = (FontHeader*)data.data();
 
         if (header->magic != FontHeader::MAGIC ||
@@ -134,6 +138,7 @@ GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 
         ptr = GLFont::Ptr(new GLFont(self.lock(), header));
     }
+#endif
 
     ptr->text_font = textFont;
 
@@ -589,7 +594,7 @@ GLTextureImage::Ptr GLFont::loadGlyphGrid(unsigned grid_id)
 
     StaticBuffer data;
 
-    if (!library->owner->loadAssetData(&data, text_font.family + stl_sprintf("/%02d.xmf", grid_id), StaticBuffer::AUTO_SIZE)) {
+    if (!library->owner->loadAssetData(&data, text_font.family + text_font.suffix() + stl_sprintf("/%02d.xmf", grid_id), StaticBuffer::AUTO_SIZE)) {
         cerr << "Could not load grid #" << grid_id << " of font " << text_font.family << endl;
     } else {
         uLongf len = bmp->getDataSize();
