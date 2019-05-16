@@ -181,6 +181,7 @@ class TextClip extends NativeWidgetClip {
 
 	private static function getBulletsString(t : String) : TextMappedModification {
 		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
+ 		var bullet = String.fromCharCode(8226);
 		var i = 0;
 		var ret = "";
 		var positionsDiff : Array<Int> = [];
@@ -419,8 +420,8 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput() && type == "password" ? getBulletsString(text) :
-			var text = modificaiton.modified;
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var text = modification.modified;
 			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {

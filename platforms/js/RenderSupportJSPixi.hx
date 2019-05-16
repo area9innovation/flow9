@@ -943,11 +943,11 @@ class RenderSupportJSPixi {
 		// NOP for this target
 	}
 
-	public static function getTextFieldCharXPosition(textfield : TextField, charIdx: Int) : Float {
-		return textfield.getCharXPosition(charIdx);
+	public static function getTextFieldCharXPosition(textclip : TextClip, charIdx: Int) : Float {
+		return textclip.getCharXPosition(charIdx);
 	}
 
-	public static function findTextFieldCharByPosition(textfield : TextField, x: Float, y: Float) : Int {
+	public static function findTextFieldCharByPosition(textclip : TextClip, x: Float, y: Float) : Int {
 		/* Assuming exact glyph codes used to form each clip's text. */
 		var EPSILON = 0.1; // Why not, pixel precision assumed.
 		var clip = getClipAt(new Point(x, y), untyped textfield);
@@ -958,7 +958,7 @@ class RenderSupportJSPixi {
 		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
 		var org = clip.toGlobal(new Point(0.0, 0.0));
 		var localX = x - org.x;
-		if (TextField.getStringDirection(clip.text) == "RTL") localX = rightVal - localX;
+		if (TextClip.getStringDirection(clip.text) == "RTL") localX = rightVal - localX;
 		var leftPos: Float = 0;
 		var rightPos: Float = clip.text.length;
 		var midVal: Float = -1.0;
