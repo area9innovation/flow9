@@ -8,13 +8,13 @@ import js.three.Vector3;
 
 import js.three.Object3D;
 import js.three.Mesh;
-import js.three.AxisHelper;
 import js.three.GridHelper;
 
 import js.three.Camera;
 import js.three.PerspectiveCamera;
 import js.three.OrbitControls;
 import js.three.TransformControls;
+import js.three.BoxHelper;
 
 import js.three.Geometry;
 import js.three.BoxGeometry;
@@ -195,7 +195,7 @@ class RenderSupport3D {
 	}
 
 	public static function make3DAxesHelper(size : Float) : Object3D {
-		return new AxisHelper(size);
+		return untyped __js__("new THREE.AxesHelper(size)");
 	}
 
 	public static function make3DGridHelper(size : Float, divisions : Int, colorCenterLine : Int, colorGrid : Int) : Object3D {
@@ -221,6 +221,10 @@ class RenderSupport3D {
 	}
 
 	static function emit3DMouseEvent(stage : ThreeJSStage, event : String, x : Float, y : Float) : Void {
+		if (stage.scene == null) {
+			return;
+		}
+
 		var ev : Dynamic = null;
 
 		if (event == "mousemiddledown" || event == "mousemiddleup") {
@@ -282,7 +286,11 @@ class RenderSupport3D {
 		 		}
 			} else {
 				if (stage.transformControls.object != null) {
-					stage.transformControls.object.dispatchEvent({ type : "detached" });
+					if (stage.transformControls.object == object) {
+						return;
+					} else {
+						stage.transformControls.object.dispatchEvent({ type : "detached" });
+					}
 				}
 
 				stage.transformControls.attach(object);
@@ -298,7 +306,7 @@ class RenderSupport3D {
 		if (stage.transformControls != null) {
 			if (stage.transformControls.object == object) {
 				stage.transformControls.object.dispatchEvent({ type : "detached" });
-				stage.transformControls.object = null;
+				stage.transformControls.detach();
 			}
 		}
 	}
@@ -310,8 +318,81 @@ class RenderSupport3D {
 		}
 	}
 
+	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
+		if (untyped object.boxHelper == null) {
+			var boxHelper = new BoxHelper();
+			var fn = function(a, b, c) {
+				untyped boxHelper.setFromObject(object);
+			};
+			untyped boxHelper.disposers =
+				[
+					add3DObjectPositionListener(object, fn),
+					add3DObjectScaleListener(object, fn),
+					add3DObjectRotationListener(object, fn)
+				];
+
+			stage.boxHelpers.push(boxHelper);
+			untyped object.boxHelper = boxHelper;
+		}
+	}
+
+	public static function detach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
+		if (untyped object.boxHelper != null) {
+			var disposers : Array<Void -> Void> = untyped object.boxHelper.disposers;
+
+			for (d in disposers) {
+				d();
+			}
+
+			stage.boxHelpers.remove(untyped object.boxHelper);
+			untyped object.boxHelper = null;
+		}
+	}
+
+	public static function clear3DBoxHelpers(stage : ThreeJSStage) : Void {
+		for (bh in stage.boxHelpers) {
+			var disposers : Array<Void -> Void> = untyped bh.disposers;
+
+			for (d in disposers) {
+				d();
+			}
+		}
+
+		stage.boxHelpers = new Array<BoxHelper>();
+	}
+
+	public static function get3DObjectId(object : Object3D) : String {
+		return object.uuid;
+	}
+
 	public static function get3DObjectType(object : Object3D) : String {
 		return object.type;
+	}
+
+	public static function get3DObjectStage(object : Object3D) : Array<ThreeJSStage> {
+		return object.getStage();
+	}
+
+	public static function get3DObjectName(object : Object3D) : String {
+		return object.name;
+	}
+
+	public static function set3DObjectName(object : Object3D, name : String) : Void {
+		object.name = name;
+	}
+
+	public static function get3DObjectVisible(object : Object3D) : Bool {
+		return object.visible;
+	}
+
+	public static function set3DObjectVisible(object : Object3D, visible : Bool) : Void {
+		if (object.visible != visible) {
+			object.visible = visible;
+
+			object.broadcastEvent("visiblechanged");
+
+			object.invalidateStage();
+		}
 	}
 
 	public static function get3DObjectX(object : Object3D) : Float {
@@ -519,18 +600,22 @@ class RenderSupport3D {
 
 	public static function set3DCameraFov(camera : PerspectiveCamera, fov : Float) : Void {
 		camera.fov = fov;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraAspect(camera : PerspectiveCamera, aspect : Float) : Void {
 		camera.aspect = aspect;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraNear(camera : PerspectiveCamera, near : Float) : Void {
 		camera.near = near;
+		camera.invalidateStage();
 	}
 
 	public static function set3DCameraFar(camera : PerspectiveCamera, far : Float) : Void {
 		camera.far = far;
+		camera.invalidateStage();
 	}
 
 	public static function get3DCameraFov(camera : PerspectiveCamera) : Float {

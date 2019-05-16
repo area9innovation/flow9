@@ -1,5 +1,5 @@
 #if js
-#if flow_nodejs
+#if (flow_nodejs || nwjs)
 import js.node.Http;
 import js.node.Https;
 import js.node.http.IncomingMessage;
@@ -7,9 +7,11 @@ import js.node.http.IncomingMessage;
 import js.node.Url;
 import js.node.Querystring;
 #else
-import js.Browser;
 import js.html.XMLHttpRequest;
 import HttpCustom;
+#end
+#if !flow_nodejs
+import js.Browser;
 #end
 import JSBinflowBuffer;
 import js.html.Uint8Array;
@@ -86,7 +88,7 @@ class HttpSupport {
 		Native.println("=======");
 	}
 
-	#if (js && flow_nodejs)
+	#if (js && (flow_nodejs || nwjs))
 	private static function parseUrlToNodeOptions(url : String) : HttpsRequestOptions {
 		var options = Url.parse(url);
 
@@ -276,7 +278,7 @@ class HttpSupport {
 			http.setHeader(header[0], header[1]);
 		}
 
-		#if js
+		#if (js && !nwjs)
 		http.async = true;
 		#end
 
@@ -291,7 +293,7 @@ class HttpSupport {
 			headers.push(["If-Match", "*"]);
 		}
 
-		#if flow_nodejs
+		#if (flow_nodejs || nwjs)
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
 		options.method = method;
@@ -369,7 +371,7 @@ class HttpSupport {
 		}
 		var timeoutInspector = haxe.Timer.delay(checkTimeout, TimeoutInterval);
 
-		#if js
+		#if (js && !nwjs)
 		var http = new HttpCustom(url, method);
 		#else
 		var http = new HttpCustom(url);
@@ -405,7 +407,7 @@ class HttpSupport {
 		}
 		#end
 
-		#if js
+		#if (js && !nwjs)
 		http.onResponse = function (status: Int, data: String, headers: Array<Array<String>>) {
 			if (!handled) {
 				handled = true;
@@ -489,7 +491,7 @@ class HttpSupport {
 			http.setHeader(header[0], header[1]);
 		}
 
-		#if js
+		#if (js && !nwjs)
 		http.async = async;
 		#end
 

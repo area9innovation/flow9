@@ -999,7 +999,7 @@ void GLGraphics::endContour()
     std::vector<Element> &elements = cur_contour->elements;
 
     // Close the loop with a line if doing a fill
-    if (fill_active && !elements.empty() && elements.back().pt != elements.front().pt)
+    if (draw_fill && fill_active && !elements.empty() && elements.back().pt != elements.front().pt)
         elements.push_back(Element(Element::LineTo, elements.front().pt));
 
     cur_contour->is_filled = fill_active;

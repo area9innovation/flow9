@@ -7,6 +7,12 @@
 namespace flow {
 
 Compiler::Compiler(QString file, QString flowdir) : type_(DEFAULT), file_(file), flowdir_(flowdir) {
+	if (!QFileInfo(file).exists()) {
+		throw std::runtime_error("file '" + file.toStdString() + "' doesn't exist");
+	}
+	if (!QDir(flowdir).exists()) {
+		throw std::runtime_error("directory '" + flowdir.toStdString() + "' doesn't exist");
+	}
 	if (flowdir_.endsWith(QLatin1Char('/'))) {
 		flowdir_ = flowdir_.mid(0, flowdir_.length() - 1);
 	}

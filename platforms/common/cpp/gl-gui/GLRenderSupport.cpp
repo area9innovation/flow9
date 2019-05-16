@@ -62,6 +62,7 @@ GLRenderSupport::GLRenderSupport(ByteCodeRunner *owner) :
     ScaleCenterX = ScaleCenterY = 0.5;
     ScaleFactor = 1.0f;
     lastUserAction = -1;
+    DisplayDensity = 1.0;
 
     FontLibrary = GLFontLibrary::Load(this);
 
@@ -1157,8 +1158,12 @@ void GLRenderSupport::GetTargetTokens(std::set<std::string> &tokens)
     tokens.insert("gui");
     tokens.insert("opengl");
     tokens.insert(stl_sprintf("dpi=%d", DisplayDPI));
-    if (NoHoverMouse)
+
+    if (NoHoverMouse) {
         tokens.insert("mobile");
+    } else {
+        tokens.insert(stl_sprintf("density=%f", DisplayDensity));
+    }
 }
 
 StackSlot GLRenderSupport::NativeGetUrl(RUNNER_ARGS)

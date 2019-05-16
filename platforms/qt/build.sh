@@ -3,16 +3,13 @@
 set -e
 
 if [ `uname` == Darwin ]; then
-	READLINK=greadlink
-	PLATFORM=mac
+    PLATFORM=mac
 else
-	READLINK=readlink
-	PLATFORM=linux
-	PLATFORM_OPTS=
+    PLATFORM=linux
+    PLATFORM_OPTS=
 fi
 
-SCRIPT_FN=`$READLINK -e "$0"`
-SCRIPT_DIR=`dirname "$SCRIPT_FN"`
+SCRIPT_DIR=$( cd "$( dirname "$0" )" && pwd -P )
 
 # Generate the shaders include file
 pushd ../common/cpp/gl-gui/shaders && ./pack.pl
@@ -22,8 +19,7 @@ cd "$SCRIPT_DIR/bin/$PLATFORM"
 qmake $PLATFORM_OPTS -o Makefile ../../QtByteRunner.pro
 
 if [ `uname` == Darwin ]; then
-	make && macdeployqt QtByteRunner.app
+    make && macdeployqt QtByteRunner.app
 else
-	make $FLOWCPP_MAKE_OPTS
+    make $FLOWCPP_MAKE_OPTS
 fi
-

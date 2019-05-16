@@ -694,7 +694,8 @@ bool QGLRenderSupport::doCreateWebWidget(QWidget *&widget, GLWebClip *web_clip) 
     } else {
         QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
         QUrl rq_url = base.resolved(QUrl(path));
-        getFlowRunner()->flow_err << "HTML URL: " << encodeUtf8(qt2unicode(rq_url.toString())) << std::endl;
+        if (getFlowRunner()->NotifyStubs)
+            getFlowRunner()->flow_err << "HTML URL: " << encodeUtf8(qt2unicode(rq_url.toString())) << std::endl;
         web_view->load(rq_url);
     }
 
@@ -863,7 +864,8 @@ void QGLRenderSupport::abortPictureLoading(unicode_string url){
     foreach (QNetworkReply *reply, request_map.keys()) {
         if (request_map.value(reply) == url) {
             reply->abort();
-            getFlowRunner()->flow_err << "Aborted download of image: " << encodeUtf8(url) << endl;
+            if (getFlowRunner()->NotifyStubs)
+                getFlowRunner()->flow_err << "Aborted download of image: " << encodeUtf8(url) << endl;
             break;
         }
     }

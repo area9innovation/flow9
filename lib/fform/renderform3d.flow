@@ -3,25 +3,30 @@ import fform/fform;
 
 export {
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
-		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled;
+		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls;
 			F3DIgnoreMouseEvents();
 			F3DExportScene(fn : ref () -> string);
 			F3DTransformControlsEnabled(enabled : Transform<bool>); // const(false) by default, doesn't affect F3DTransformControls
+			F3DAttachTransformControls(fn : ref (clip : native, attach : bool) -> void);
 
-	F3DObject ::= F3DScene, F3DMutable, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
-		F3DInspectRotation, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin, F3DInspectBoundingSphereMax,
-		F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader, F3DChildren, F3DNativeObject,
-		F3DJsonObject, F3DAxesHelper, F3DGridHelper, F3DInteractive;
+	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
+		F3DInspectRotation, F3DInspectPosition, F3DInspectScale, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin,
+		F3DInspectBoundingSphereMax, F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader,
+		F3DChildren, F3DNative, F3DJsonObject, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 		F3DMutable(object : Transform<F3DObject>);
 
+		F3DVisible(object : F3DObject, visible : Transform<bool>);
 		F3DPosition(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DRotation(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DScale(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DLookAt(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>, update : DynamicBehaviour<bool>);
 
 		F3DInspectRotation(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+		F3DInspectPosition(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+		F3DInspectScale(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
+
 		F3DInspectBoundingSphereCenter(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 		F3DInspectBoundingSphereMin(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 		F3DInspectBoundingSphereMax(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
@@ -33,10 +38,16 @@ export {
 			F3DAnimation(start : () -> void, stop : () -> void, duration : DynamicBehaviour<double>);
 
 		F3DSceneLoader(url : string);
-		F3DChildren(object : F3DObject, fn : (F3DObject) -> F3DObject);
-		F3DNativeObject(object : native);
+		F3DChildren(object : F3DObject, fn : (F3DNative) -> F3DNative);
+
+		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable;
+			F3DNativeObject(object : native);
+			F3DNativeScene(scene : native, objects : Transform<[F3DNative]>);
+			F3DNativeMutable(object : Transform<F3DNative>);
+
 		F3DJsonObject(json : string);
 
+		F3DBoxHelper(object : F3DObject, enabled : DynamicBehaviour<bool>);
 		F3DAxesHelper(size : double);
 		F3DGridHelper(size : double, divisions : int, colorCenterLine : int, colorGrid : int);
 
@@ -76,6 +87,10 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 			metrics = make(FormMetrics(0., 0., 0., 0.));
 			clip = make3DStage(fgetValue(fwidth(wh)), fgetValue(fheight(wh)));
 			transformControlsEnabled = extractStruct(style, F3DTransformControlsEnabled(const(false))).enabled;
+			maybeApply(
+				tryExtractStruct(style, F3DAttachTransformControls(ref nop2)),
+				\es -> es.fn := \c, b -> if (b) attach3DTransformControls(clip, c) else detach3DTransformControls(clip, c)
+			);
 
 			next(
 				container,
@@ -294,6 +309,35 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				)()
 			]
 		}
+		F3DNativeMutable(innerObject) : {
+			[
+				makeSubscribeUns(innerObject, \obj ->
+					render3dform(
+						obj,
+						stage,
+						transformControlsEnabled,
+						onLoad
+					)
+				)()
+			]
+		}
+		F3DVisible(innerObject, visible) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					concat(
+						onLoad(clip),
+						[
+							makeSubscribe(visible, \v -> set3DObjectVisible(clip, v))(),
+						]
+					)
+				}
+			);
+
+			r;
+		}
 		F3DPosition(innerObject, x, y, z) : {
 			r = render3dform(
 				innerObject,
@@ -375,6 +419,46 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 						onLoad(clip),
 						[
 							add3DObjectRotationListener(clip, \nx, ny, nz -> {
+								nextDistinct(x, nx);
+								nextDistinct(y, ny);
+								nextDistinct(z, nz);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectPosition(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectPositionListener(clip, \nx, ny, nz -> {
+								nextDistinct(x, nx);
+								nextDistinct(y, ny);
+								nextDistinct(z, nz);
+							})
+						]
+					)
+			);
+
+			r;
+		}
+		F3DInspectScale(innerObject, x, y, z) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							add3DObjectScaleListener(clip, \nx, ny, nz -> {
 								nextDistinct(x, nx);
 								nextDistinct(y, ny);
 								nextDistinct(z, nz);
@@ -565,8 +649,58 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 		F3DNativeObject(nativeObject) : {
 			onLoad(nativeObject);
 		}
+		F3DNativeScene(scene, objects) : {
+			concat(
+				onLoad(scene),
+				[
+					makeSubscribeUns(objects, \ob ->
+						map(ob, \o ->
+							render3dform(
+								o,
+								stage,
+								transformControlsEnabled,
+								\c -> {
+									if (!contains(get3DObjectChildren(scene), c)) {
+										add3DChild(scene, c);
+
+										arrayPush(
+											addF3DMouseListeners(stage, c, transformControlsEnabled),
+											\ -> remove3DChild(scene, c)
+										)
+									} else {
+										[]
+									}
+								}
+							)
+						)
+						|> concatA
+					)()
+				]
+			)
+		}
 		F3DJsonObject(json) : {
 			onLoad(make3DObjectFromJSON(json));
+		}
+		F3DBoxHelper(innerObject, enabled) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip ->
+					concat(
+						onLoad(clip),
+						[
+							makeSubscribe(enabled, \en ->
+								if (en)
+									attach3DBoxHelper(stage, clip)
+								else
+									detach3DBoxHelper(stage, clip)
+							)()
+						]
+					)
+			);
+
+			r;
 		}
 		F3DAxesHelper(size) : {
 			onLoad(make3DAxesHelper(size));
@@ -683,12 +817,12 @@ renderF3DMaterial(material : F3DMaterial) -> native {
 	}
 }
 
-parseF3DNativeObject(object : native) -> Pair<F3DObject, [() -> void]> {
+parseF3DNativeObject(object : native) -> Pair<F3DNative, [() -> void]> {
 	children = make(get3DObjectChildren(object));
 	uns = ref [];
 
 	Pair(
-		F3DMutable(fselect(children, FLift(\ch -> {
+		F3DNativeMutable(fselect(children, FLift(\ch -> {
 			dispUnsA(uns);
 
 			if (length(ch) > 0) {
@@ -701,7 +835,7 @@ parseF3DNativeObject(object : native) -> Pair<F3DObject, [() -> void]> {
 
 				uns := parsedChildren.second;
 
-				F3DScene(const(parsedChildren.first));
+				F3DNativeScene(object, const(parsedChildren.first));
 			} else {
 				F3DNativeObject(object);
 			}

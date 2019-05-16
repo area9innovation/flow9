@@ -395,6 +395,8 @@ THREE.TransformControls = function ( camera, domElement ) {
 
 			}
 
+			Object3DHelper.broadcastEvent(object, "position");
+
 		} else if ( mode === 'scale' ) {
 
 			if ( axis.search( 'XYZ' ) !== -1 ) {
@@ -430,6 +432,8 @@ THREE.TransformControls = function ( camera, domElement ) {
 			// Apply scale
 
 			object.scale.copy( scaleStart ).multiply( _tempVector2 );
+
+			Object3DHelper.broadcastEvent(object, "scale");
 
 		} else if ( mode === 'rotate' ) {
 
@@ -485,6 +489,8 @@ THREE.TransformControls = function ( camera, domElement ) {
 				object.quaternion.multiply( quaternionStart ).normalize();
 
 			}
+
+			Object3DHelper.broadcastEvent(object, "rotation");
 
 		}
 

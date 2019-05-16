@@ -6,7 +6,7 @@ export {
 	MDialogStyle ::= MDialogTitle, MDialogCustomTitle, MDialogActions, MDialogUseFrame, MDialogCustomFrame, MDialogNoCenter, MDialogScroll, MDialogCloseButton,
 		MDialogNoAnimation, MDialogFullScreen, MDialogKeyEventBlock, MDialogClickOutToClose, MDialogClickOutToCancel, MDialogDraggable,
 		MDialogResizable, MDialogResizableWithInitialSize, MDialogPopupStyle, MDialogHide, MDialogFocusOnPrevious, MFloatingContent,
-		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose;
+		MComponentGroupState, MButtonTitles, MDialogNonModal, MDialogOnClose, MSameZorder, MDialogActionsNoEndAlign;
 
 		// These are very commonly recommended
 		MDialogTitle(title : string);
@@ -37,6 +37,7 @@ export {
 		MDialogNonModal();
 		// Allow to run callback every time the dialog is getting closed
 		MDialogOnClose(onClose : () -> void);
+		MDialogActionsNoEndAlign();
 
 		MDialogPopupStyle ::= MDialogPopupCanClose, MDialogPopupSaveEnabled, MDialogPopupNotResize, MDialogPopupOnClose, MDialogPopupFullScreen;
 			MDialogPopupCanClose(canCloseCheck : () -> bool);
@@ -103,7 +104,8 @@ renderMDialog2(
 	noCenter = contains(style, MDialogNoCenter());
 	floatingContent = tryExtractStruct(style, MFloatingContent(TEmpty()));
 	nonModal = contains(style, MDialogNonModal());
-	zUns = if (nonModal) nop else pushZorder(manager);
+	sameZorder = extractStruct(style, MSameZorder(false)).same || nonModal;
+	zUns = if (sameZorder) nop else pushZorder(manager);
 
 	onClose = extractStruct(style, MDialogOnClose(nop)).onClose;
 	name = "MDialog";
@@ -135,7 +137,7 @@ renderMDialog2(
 	pressedOutsideB = fand(down, fnot(insideDialogB));
 	noAnimation = noCenter || isSome(draggable) || contains(style, MDialogNoAnimation()) || !manager.theme.enableAnimations;
 	easing = if (noAnimation) EasingAnimation(nop, const(1.)) else makeEasing(0.6, easingStandartCurve, managerTimer(manager), nop);
-	disableBelow = \f : Tropic -> if (nonModal) f else f |> disableInteractivesBelow |> disableMouseWheelBelow;
+	disableBelow = \en -> \f : Tropic -> if (en) f |> disableInteractivesBelow |> disableMouseWheelBelow |> (\t -> TCursor(ArrowCursor(), t)) else f;
 
 	dialogResizableMinSize = 24.;
 	actionsW = make(0.);
@@ -250,9 +252,10 @@ renderMDialog2(
 							eitherMap(customFrame, \cf -> const(if (fullScreen) max(cf.end + cf.start - 8.0, 0.0) else cf.start), zero)
 						);
 					actionsBox = makeWH();
+					actionsLeftAlign = contains(act.actions, TFillX()) || contains(style, MDialogActionsNoEndAlign());
 
 					MCols2A(
-						if (contains(act.actions, TFillX())) TFixed(16.0, 0.0) else TFillX(),
+						if (actionsLeftAlign) TFixed(16.0, 0.0) else TFillX(),
 						map(act.actions, \ac ->
 							MBorderA(0., 0., 8., 0., ac)
 						)
@@ -339,6 +342,7 @@ renderMDialog2(
 				t
 			)
 		)
+		|> disableBelow(sameZorder)
 		|> (\t ->
 			if (resizable)
 				MResizable2T(
@@ -461,7 +465,7 @@ renderMDialog2(
 							t2
 					)
 				)
-				|> disableBelow, // Disable all other mouse events except handled
+				|> disableBelow(!nonModal), // Disable all other mouse events except handled
 
 				t
 			)
@@ -472,7 +476,7 @@ renderMDialog2(
 
 				TConstruct(
 					[
-						makeSubscribe(hideDialog, \hd -> if (hd && !nonModal) setUnsM(unsZord, popZorder(manager)) else dispUnsM(unsZord)),
+						makeSubscribe(hideDialog, \hd -> if (hd && !sameZorder) setUnsM(unsZord, popZorder(manager)) else dispUnsM(unsZord)),
 						\ -> \ -> dispUnsM(unsZord)
 					],
 					TVisible(fnot(hideDialog), t)
@@ -499,7 +503,7 @@ renderMDialog2(
 		if (noAnimation || nonModal)
 			t
 		else
-			TGroup2(t, TVisible(fneq(easing.percent, 1.), TFillXY() |> disableBelow))) // blocks clicks while animation
+			TGroup2(t, TVisible(fneq(easing.percent, 1.), TFillXY() |> disableBelow(!nonModal)))) // blocks clicks while animation
 	|> (\t ->
 		if (true || !fullScreen || resizable)
 			t

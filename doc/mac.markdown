@@ -81,20 +81,6 @@ Finally, add the following lines to ~/.inputrc (create the file if necessary). T
 
 You will need to restart your terminal to benefit from those changes and enable bash completion.
 
-## Install `greadlink`
-
-This command will install the GNU version of `readlink`, and a bunch
-of other GNU utilities.
-
-    brew install coreutils
-
-The GNU versions names' have a `g` prepended, e.g. `greadlink`, so
-having them around won't conflict with your Mac's built-in versions.
-
-`greadlink` is needed because the scripts for running Flow assume the
-GNU semantics, so they won't work with the standard Mac `readlink`.
-(Note that fixing that wouldn't actually be very hard.)
-
 ## Install Haxe 3
 
 Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work, but you'll have to manually roll back neko version to 2.0.0. The simplest way is to get haxe 3.2.1.
@@ -147,7 +133,7 @@ No issues to report at the moment.
 ## Check out Flow repository
 
 You should have [Git LFS](https://git-lfs.github.com) installed.
-Reclone the flow9 repository after installing Git LFS, or use 
+Reclone the flow9 repository after installing Git LFS, or use
 ```bash
 git lfs pull
 ```
@@ -288,7 +274,7 @@ You can leave the web server running for now, or kill it with:
 
      kill %
 
-Notice that while this works for quick checks, you should work to 
+Notice that while this works for quick checks, you should work to
 setup a local web browser to serve the flow/www folder as "flow",
 so the link
 

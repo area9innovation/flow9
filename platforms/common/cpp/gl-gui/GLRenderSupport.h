@@ -316,6 +316,8 @@ public:
 
     //true if font_alias was found, false - DefaultFont is used
     bool setFallbackFont(unicode_string name);
+
+    void setDisplayDensity(double density) { DisplayDensity = density; }
 protected:
     GLRenderer *getRenderer() { return Renderer; }
 
@@ -330,6 +332,7 @@ protected:
 
     float PixelsPerCm;
     int DisplayDPI;
+    double DisplayDensity;
     void setDPI(int dpi) { DisplayDPI = dpi; PixelsPerCm = dpi/2.54f; }
 
     bool isScreenRotated() { return (ScreenRotation&1) != 0; }
