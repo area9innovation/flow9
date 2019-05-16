@@ -2,6 +2,7 @@
  * jdmarker.c
  *
  * Copyright (C) 1991-1998, Thomas G. Lane.
+ * Modified 2009 by Guido Vollbeding.
  * This file is part of the Independent JPEG Group's software.
  * For conditions of distribution and use, see the accompanying README file.
  *
@@ -234,7 +235,8 @@ get_soi (j_decompress_ptr cinfo)
 
 
 LOCAL(boolean)
-get_sof (j_decompress_ptr cinfo, boolean is_prog, boolean is_arith)
+get_sof (j_decompress_ptr cinfo, boolean is_baseline, boolean is_prog,
+	 boolean is_arith)
 /* Process a SOFn marker */
 {
   INT32 length;
@@ -242,6 +244,7 @@ get_sof (j_decompress_ptr cinfo, boolean is_prog, boolean is_arith)
   jpeg_component_info * compptr;
   INPUT_VARS(cinfo);
 
+  cinfo->is_baseline = is_baseline;
   cinfo->progressive_mode = is_prog;
   cinfo->arith_code = is_arith;
 
@@ -302,7 +305,7 @@ get_sos (j_decompress_ptr cinfo)
 /* Process a SOS marker */
 {
   INT32 length;
-  int i, ci, n, c, cc, pi;
+  int i, ci, n, c, cc;
   jpeg_component_info * compptr;
   INPUT_VARS(cinfo);
 
@@ -315,7 +318,9 @@ get_sos (j_decompress_ptr cinfo)
 
   TRACEMS1(cinfo, 1, JTRC_SOS, n);
 
-  if (length != (n * 2 + 6) || n < 1 || n > MAX_COMPS_IN_SCAN)
+  if (length != (n * 2 + 6) || n > MAX_COMPS_IN_SCAN ||
+      (n == 0 && !cinfo->progressive_mode))
+      /* pseudo SOS marker only allowed in progressive mode */
     ERREXIT(cinfo, JERR_BAD_LENGTH);
 
   cinfo->comps_in_scan = n;
@@ -342,12 +347,6 @@ get_sos (j_decompress_ptr cinfo)
     
     TRACEMS3(cinfo, 1, JTRC_SOS_COMPONENT, cc,
 	     compptr->dc_tbl_no, compptr->ac_tbl_no);
-
-    /* This CSi (cc) should differ from the previous CSi */
-    for (pi = 0; pi < i; pi++) {
-      if (cinfo->cur_comp_info[pi] == compptr)
-        ERREXIT1(cinfo, JERR_BAD_COMPONENT_ID, cc);
-    }
   }
 
   /* Collect the additional scan parameters Ss, Se, Ah/Al. */
@@ -365,8 +364,8 @@ get_sos (j_decompress_ptr cinfo)
   /* Prepare to scan data & restart markers */
   cinfo->marker->next_restart_num = 0;
 
-  /* Count another SOS marker */
-  cinfo->input_scan_number++;
+  /* Count another (non-pseudo) SOS marker */
+  if (n) cinfo->input_scan_number++;
 
   INPUT_SYNC(cinfo);
   return TRUE;
@@ -465,8 +464,6 @@ get_dht (j_decompress_ptr cinfo)
     for (i = 0; i < count; i++)
       INPUT_BYTE(cinfo, huffval[i], return FALSE);
 
-    MEMZERO(&huffval[count], (256 - count) * SIZEOF(UINT8));
-
     length -= count;
 
     if (index & 0x10) {		/* AC table definition */
@@ -498,16 +495,18 @@ LOCAL(boolean)
 get_dqt (j_decompress_ptr cinfo)
 /* Process a DQT marker */
 {
-  INT32 length;
-  int n, i, prec;
+  INT32 length, count, i;
+  int n, prec;
   unsigned int tmp;
   JQUANT_TBL *quant_ptr;
+  const int *natural_order;
   INPUT_VARS(cinfo);
 
   INPUT_2BYTES(cinfo, length, return FALSE);
   length -= 2;
 
   while (length > 0) {
+    length--;
     INPUT_BYTE(cinfo, n, return FALSE);
     prec = n >> 4;
     n &= 0x0F;
@@ -521,13 +520,43 @@ get_dqt (j_decompress_ptr cinfo)
       cinfo->quant_tbl_ptrs[n] = jpeg_alloc_quant_table((j_common_ptr) cinfo);
     quant_ptr = cinfo->quant_tbl_ptrs[n];
 
-    for (i = 0; i < DCTSIZE2; i++) {
+    if (prec) {
+      if (length < DCTSIZE2 * 2) {
+	/* Initialize full table for safety. */
+	for (i = 0; i < DCTSIZE2; i++) {
+	  quant_ptr->quantval[i] = 1;
+	}
+	count = length >> 1;
+      } else
+	count = DCTSIZE2;
+    } else {
+      if (length < DCTSIZE2) {
+	/* Initialize full table for safety. */
+	for (i = 0; i < DCTSIZE2; i++) {
+	  quant_ptr->quantval[i] = 1;
+	}
+	count = length;
+      } else
+	count = DCTSIZE2;
+    }
+
+    switch (count) {
+    case (2*2): natural_order = jpeg_natural_order2; break;
+    case (3*3): natural_order = jpeg_natural_order3; break;
+    case (4*4): natural_order = jpeg_natural_order4; break;
+    case (5*5): natural_order = jpeg_natural_order5; break;
+    case (6*6): natural_order = jpeg_natural_order6; break;
+    case (7*7): natural_order = jpeg_natural_order7; break;
+    default:    natural_order = jpeg_natural_order;  break;
+    }
+
+    for (i = 0; i < count; i++) {
       if (prec)
 	INPUT_2BYTES(cinfo, tmp, return FALSE);
       else
 	INPUT_BYTE(cinfo, tmp, return FALSE);
       /* We convert the zigzag-order table to natural array order. */
-      quant_ptr->quantval[jpeg_natural_order[i]] = (UINT16) tmp;
+      quant_ptr->quantval[natural_order[i]] = (UINT16) tmp;
     }
 
     if (cinfo->err->trace_level >= 2) {
@@ -540,8 +569,8 @@ get_dqt (j_decompress_ptr cinfo)
       }
     }
 
-    length -= DCTSIZE2+1;
-    if (prec) length -= DCTSIZE2;
+    length -= count;
+    if (prec) length -= count;
   }
 
   if (length != 0)
@@ -954,6 +983,11 @@ first_marker (j_decompress_ptr cinfo)
  *
  * Returns same codes as are defined for jpeg_consume_input:
  * JPEG_SUSPENDED, JPEG_REACHED_SOS, or JPEG_REACHED_EOI.
+ *
+ * Note: This function may return a pseudo SOS marker (with zero
+ * component number) for treat by input controller's consume_input.
+ * consume_input itself should filter out (skip) the pseudo marker
+ * after processing for the caller.
  */
 
 METHODDEF(int)
@@ -972,14 +1006,6 @@ read_markers (j_decompress_ptr cinfo)
 	  return JPEG_SUSPENDED;
       }
     }
-
-    /*
-     * Save the position of the fist marker after SOF.
-     */
-    if (cinfo->marker->current_sos_marker_position == -1)
-      cinfo->marker->current_sos_marker_position =
-          jget_input_stream_position(cinfo) - 2;
-
     /* At this point cinfo->unread_marker contains the marker code and the
      * input point is just past the marker proper, but before any parameters.
      * A suspension will cause us to return with this state still true.
@@ -991,24 +1017,27 @@ read_markers (j_decompress_ptr cinfo)
       break;
 
     case M_SOF0:		/* Baseline */
+      if (! get_sof(cinfo, TRUE, FALSE, FALSE))
+	return JPEG_SUSPENDED;
+      break;
+
     case M_SOF1:		/* Extended sequential, Huffman */
-      if (! get_sof(cinfo, FALSE, FALSE))
+      if (! get_sof(cinfo, FALSE, FALSE, FALSE))
 	return JPEG_SUSPENDED;
       break;
 
     case M_SOF2:		/* Progressive, Huffman */
-      cinfo->marker->current_sos_marker_position = -1;
-      if (! get_sof(cinfo, TRUE, FALSE))
+      if (! get_sof(cinfo, FALSE, TRUE, FALSE))
 	return JPEG_SUSPENDED;
       break;
 
     case M_SOF9:		/* Extended sequential, arithmetic */
-      if (! get_sof(cinfo, FALSE, TRUE))
+      if (! get_sof(cinfo, FALSE, FALSE, TRUE))
 	return JPEG_SUSPENDED;
       break;
 
     case M_SOF10:		/* Progressive, arithmetic */
-      if (! get_sof(cinfo, TRUE, TRUE))
+      if (! get_sof(cinfo, FALSE, TRUE, TRUE))
 	return JPEG_SUSPENDED;
       break;
 
@@ -1250,33 +1279,6 @@ jpeg_resync_to_restart (j_decompress_ptr cinfo, int desired)
   } /* end loop */
 }
 
-/*
- * Get the position for all SOS markers in the image.
- */
-
-METHODDEF(void)
-get_sos_marker_position(j_decompress_ptr cinfo, huffman_index *index)
-{
-  unsigned char *head;
-  int count = 0;
-  int retcode = JPEG_REACHED_SOS;
-
-  while (cinfo->src->bytes_in_buffer > 0) {
-    if (retcode == JPEG_REACHED_SOS) {
-      jpeg_configure_huffman_index_scan(cinfo, index, count++,
-              cinfo->marker->current_sos_marker_position);
-      // Skips scan content to the next non-RST JPEG marker.
-      while(next_marker(cinfo) &&
-              cinfo->unread_marker >= M_RST0 && cinfo->unread_marker <= M_RST7)
-          ;
-      cinfo->marker->current_sos_marker_position =
-        jget_input_stream_position(cinfo) - 2;
-      retcode = read_markers(cinfo);
-    } else {
-      break;
-    }
-  }
-}
 
 /*
  * Reset marker processing state to begin a fresh datastream.
@@ -1317,12 +1319,6 @@ jinit_marker_reader (j_decompress_ptr cinfo)
   marker->pub.reset_marker_reader = reset_marker_reader;
   marker->pub.read_markers = read_markers;
   marker->pub.read_restart_marker = read_restart_marker;
-  marker->pub.get_sos_marker_position = get_sos_marker_position;
-
-  // Initialize the SOS marker position to avoid underdefined behavior due to
-  // using a undefined field.
-  marker->pub.current_sos_marker_position = 0;
-
   /* Initialize COM/APPn processing.
    * By default, we examine and then discard APP0 and APP14,
    * but simply discard COM and all other APPn.
