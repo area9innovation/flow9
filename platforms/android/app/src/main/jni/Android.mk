@@ -41,7 +41,8 @@ LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/include \
 	$(LOCAL_PATH)/freetype/include \
 	$(LOCAL_PATH)/jpeg \
-	$(LOCAL_PATH)/libpng
+	$(LOCAL_PATH)/libpng \
+	$(LOCAL_PATH)/font
 
 LOCAL_MODULE    := libflowrunner
 LOCAL_CFLAGS    := -DFLOW_EMBEDDED $(MY_PROF_FLAGS) $(MY_GEN_FLAGS)
@@ -74,7 +75,8 @@ LOCAL_SRC_FILES += \
     utils/AbstractGeolocationSupport.cpp \
     utils/FileLocalStore.cpp \
     utils/FileSystemInterface.cpp \
-    utils/AbstractWebSocketSupport.cpp
+    utils/AbstractWebSocketSupport.cpp \
+    font/TextFont.cpp
 
 LOCAL_STATIC_LIBRARIES := librunnercore $(MY_PROF_LIB) $(MY_GEN_LIB)
 

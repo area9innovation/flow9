@@ -1339,21 +1339,31 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     {
         int mode = Typeface.NORMAL;
         String family = name;
+        String suffix = "";
+
+        int dashIndex = family.lastIndexOf("-");
+        if (dashIndex > 0) {
+            family = name.substring(0, dashIndex);
+            Log.i(Utils.LOG_TAG, family);
+            suffix = name.substring(dashIndex + 1);
+            Log.i(Utils.LOG_TAG, suffix);
+        }
+
 
         for (;;) {
-            if (family.endsWith("/Bold")) {
+            if (suffix.endsWith("Bold")) {
                 mode |= Typeface.BOLD;
-                family = family.substring(0, family.length()-5);
-            } else if (family.endsWith("/Italic")) {
+                suffix = suffix.substring(0, suffix.length() - 4);
+            } else if (family.endsWith("Italic")) {
                 mode |= Typeface.ITALIC;
-                family = family.substring(0, family.length()-7);
+                suffix = suffix.substring(0, suffix.length() - 6);
             } else {
                 break;
             }
         }
 
         Typeface font = Typeface.create(family, mode);
-        if (font == null)
+        if (font.getStyle() != mode)
             return false;
 
         fonts.put(name, font);
