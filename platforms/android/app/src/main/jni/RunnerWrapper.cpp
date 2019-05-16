@@ -1788,7 +1788,9 @@ bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader
     env->ReleaseFloatArrayElements(rvdata, data, 0);
 
     double tv2 = GetCurrentTime();
-    cout << "Glyph generated in " << (tv2-tv) << endl;
+
+    if (getFlowRunner()->NotifyStubs)
+        cout << "Glyph generated in " << (tv2-tv) << endl;
 
     jint *img = env->GetIntArrayElements(rvimg, 0);
 
@@ -1826,7 +1828,8 @@ bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader
 
         smoothFontBitmap(header, pixels, bytes.data(), scale);
 
-        cout << "Glyph smoothed in " << (GetCurrentTime()-tv2) << endl;
+        if (getFlowRunner()->NotifyStubs)
+            cout << "Glyph smoothed in " << (GetCurrentTime()-tv2) << endl;
     }
 
     env->ReleaseIntArrayElements(rvimg, img, 0);

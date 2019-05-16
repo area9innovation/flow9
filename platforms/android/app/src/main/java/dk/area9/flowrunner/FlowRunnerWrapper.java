@@ -1344,9 +1344,7 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         int dashIndex = family.lastIndexOf("-");
         if (dashIndex > 0) {
             family = name.substring(0, dashIndex);
-            Log.i(Utils.LOG_TAG, family);
             suffix = name.substring(dashIndex + 1);
-            Log.i(Utils.LOG_TAG, suffix);
         }
 
 
