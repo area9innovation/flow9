@@ -88,10 +88,6 @@ GLFontLibrary::~GLFontLibrary()
 #endif
 }
 
-GLFont::Ptr GLFontLibrary::loadFont(std::string file) {
-    return loadFont(TextFont(file, TextWeight::Regular, TextStyle::Normal));
-}
-
 GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 {
 #ifndef FLOW_DFIELD_FONTS

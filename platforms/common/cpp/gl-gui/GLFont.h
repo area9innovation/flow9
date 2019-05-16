@@ -162,7 +162,6 @@ public:
     void setMaxTextureSize(int max_size) { max_texture_size = max_size; }
 
     shared_ptr<GLFont> loadFont(TextFont textFont);
-    shared_ptr<GLFont> loadFont(std::string file);
 };
 
 class GLTextLayout;
