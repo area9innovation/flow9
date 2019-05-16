@@ -1,4 +1,5 @@
 #include <sstream>
+#include <stdexcept>
 
 #include <QPair>
 #include <QSettings>
@@ -35,120 +36,144 @@ FlowManager::FlowManager(KTextEditor::MainWindow* mainWin, FlowView& view) :
     connect(&launchProcess_, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(slotLaunchFinished(int, QProcess::ExitStatus)));
 
     connect(flowView_.flowOutput_.ui.terminateCompilerButton, SIGNAL(clicked()), &compileProcess_, SLOT(kill()));
-    connect(flowView_.flowOutput_.ui.terminateLaunchButton, SIGNAL(clicked()), &compileProcess_, SLOT(kill()));
+    connect(flowView_.flowOutput_.ui.terminateLaunchButton, SIGNAL(clicked()), &launchProcess_, SLOT(kill()));
 }
 
 FlowManager::~FlowManager() { }
 
 void FlowManager::slotCompile() {
-	QString file = curFile(mainWindow_);
-	if (state_.start(COMPILING, file)) {
-		mainWindow_->activeView()->document()->documentSave();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		QStringList args;
-		args << compiler.includeArgs();
-		args << compiler.compileArgs(file);
+	try {
+		QString file = curFile(mainWindow_);
+		if (state_.start(COMPILING, file)) {
+			mainWindow_->activeView()->document()->documentSave();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			QStringList args;
+			args << compiler.includeArgs();
+			args << compiler.compileArgs(file);
 #ifdef DEBUG
-		QTextStream(stdout) << "COMPILE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+			QTextStream(stdout) << "COMPILE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
 #endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
 		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::slotRun(int row) {
-	QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-	QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
-	QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
-	QString progArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
-	QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
-	QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-	Runner runner(prog, targ, flowdir);
-	if (flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(runner.target()).isFile()) {
-		build(row, RUNNING);
-	} else if (state_.start(RUNNING, row)) {
-		QString invocation = runner.invocation();
-		if (invocation.isEmpty()) {
-			state_.stop();
-			return;
+	try {
+		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+		QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
+		QString progArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
+		QString execArgs = flowView_.flowConfig_.ui.launchTableWidget->item(row, 6)->text();
+		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+		Runner runner(prog, targ, flowdir);
+		if (flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(runner.target()).isFile()) {
+			build(row, RUNNING);
+		} else if (state_.start(RUNNING, row)) {
+			QString invocation = runner.invocation();
+			if (invocation.isEmpty()) {
+				state_.stop();
+				return;
+			}
+			QStringList args = runner.args(execArgs, progArgs);
+	#ifdef DEBUG
+			QTextStream(stdout) << "RUN: " << invocation << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.launchOutTextEdit->clear();
+			}
+			launchProcess_.setWorkingDirectory(dir);
+			launchProcess_.start(runner.invocation(), args);
+			flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(true);
 		}
-		QStringList args = runner.args(execArgs, progArgs);
-#ifdef DEBUG
-		QTextStream(stdout) << "RUN: " << invocation << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
-		}
-		launchProcess_.setWorkingDirectory(dir);
-		launchProcess_.start(runner.invocation(), args);
-		flowView_.flowOutput_.ui.terminateLaunchButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		launchProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::slotDebug(int row) {
-	if (flowView_.flowConfig_.progTimestampsChanged(row)) {
-		build(row, DEBUGGING);
-	} else {
-		// At first we neew to dump executable ids
-		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-		QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(prog, flowdir);
-		if (compiler.type() == Compiler::FLOWC1) {
-			if (state_.start(DUMPING_IDS, QString::number(row) + QLatin1String(":") + prog)) {
-				mainWindow_->activeView()->document()->documentSave();
-				QStringList args;
-				args << compiler.includeArgs();
-				args << QLatin1String("dump-ids=") + prog + QLatin1String(".ids");
-				args << QLatin1String("dump-ids-all=1");
-				args << prog;
-#ifdef DEBUG
-				QTextStream(stdout) << "DUMP_IDS: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
-				compileProcess_.setWorkingDirectory(dir);
-				compileProcess_.start(compiler.invocation(), args);
-				flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	try {
+		if (flowView_.flowConfig_.progTimestampsChanged(row)) {
+			build(row, DEBUGGING);
+		} else {
+			// At first we neew to dump executable ids
+			QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+			QString dir  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(prog, flowdir);
+			if (compiler.type() == Compiler::FLOWC1) {
+				if (state_.start(DUMPING_IDS, QString::number(row) + QLatin1String(":") + prog)) {
+					mainWindow_->activeView()->document()->documentSave();
+					QStringList args;
+					args << compiler.includeArgs();
+					args << QLatin1String("dump-ids=") + prog + QLatin1String(".ids");
+					args << QLatin1String("dump-ids-all=1");
+					args << prog;
+	#ifdef DEBUG
+					QTextStream(stdout) << "DUMP_IDS: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+					flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+					compileProcess_.setWorkingDirectory(dir);
+					compileProcess_.start(compiler.invocation(), args);
+					flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+				}
+			} else if (compiler.type() == Compiler::FLOW) {
+				//flowView_.debugView_->symbols().loadIdFile(prog + QLatin1String(".ids"));
+				flowView_.debugView_->manager()->slotDebug(row);
 			}
-		} else if (compiler.type() == Compiler::FLOW) {
-			//flowView_.debugView_->symbols().loadIdFile(prog + QLatin1String(".ids"));
-			flowView_.debugView_->manager()->slotDebug(row);
 		}
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::build(int row, State nextState, bool force) {
-	QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-	QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
-	QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
-	//QString astr = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
-	QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-	Builder builder(prog, targ, flowdir);
-	if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(builder.runner().target()).isFile()) {
-		if (state_.start(BUILDING, QString::number(row) + QLatin1String(":") + QString::number(static_cast<int>(nextState)))) {
-			QStringList args = builder.args(opts);
-#ifdef DEBUG
-			QTextStream(stdout) << "BUILD: " << builder.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-			//QTextStream(stdout) << "NEXT_STATE: " << nextState << "\n";
+	try {
+		QString prog = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+		QString targ = flowView_.flowConfig_.ui.launchTableWidget->item(row, 3)->text();
+		QString opts = flowView_.flowConfig_.ui.launchTableWidget->item(row, 4)->text();
+		//QString astr = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
+		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+		Builder builder(prog, targ, flowdir);
+		if (force || flowView_.flowConfig_.progTimestampsChanged(row) || !QFileInfo(builder.runner().target()).isFile()) {
+			if (state_.start(BUILDING, QString::number(row) + QLatin1String(":") + QString::number(static_cast<int>(nextState)))) {
+				QStringList args = builder.args(opts);
+	#ifdef DEBUG
+				QTextStream(stdout) << "BUILD: " << builder.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+				//QTextStream(stdout) << "NEXT_STATE: " << nextState << "\n";
+				if (state_.peek().showCompilerOutput()) {
+					flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+				}
+				compileProcess_.setWorkingDirectory(builder.compiler().confdir());
+				compileProcess_.start(builder.invocation(), args);
+				flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+			}
+		} else {
 			if (state_.peek().showCompilerOutput()) {
 				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
 			}
-			compileProcess_.setWorkingDirectory(builder.compiler().confdir());
-			compileProcess_.start(builder.invocation(), args);
-			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+			flowView_.flowOutput_.ui.compilerOutTextEdit->insertPlainText(QLatin1String("Program is already built."));
+			flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
 		}
-	} else {
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
-		}
-		flowView_.flowOutput_.ui.compilerOutTextEdit->insertPlainText(QLatin1String("Program is already built."));
-		flowView_.flowOutput_.ui.tabWidget->setCurrentIndex(0);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
@@ -161,133 +186,157 @@ void FlowManager::slotForceBuild(int row) {
 }
 
 void FlowManager::slotLookupDefinition() {
-	QString file = curFile(mainWindow_);
-	QString id = curIdentifier(mainWindow_);
-	if (!id.isEmpty() && state_.start(LOOKUP_DEF, file + QLatin1String(":") + id)) {
-		mainWindow_->activeView()->document()->documentSave();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		QStringList args;
-		args << compiler.includeArgs();
-		if (compiler.type() == Compiler::FLOWC1) {
-			args << QLatin1String("legacy-format=1");
-			args << QLatin1String("incremental-priority=1");
-			args << QLatin1String("find-definition=") + id;
-		} else if (compiler.type() == Compiler::FLOW) {
-			args << QLatin1String("--find-definition");
-			args << id;
-		} else {
-			state_.stop();
-			return;
+	try {
+		QString file = curFile(mainWindow_);
+		QString id = curIdentifier(mainWindow_);
+		if (!id.isEmpty() && state_.start(LOOKUP_DEF, file + QLatin1String(":") + id)) {
+			mainWindow_->activeView()->document()->documentSave();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			QStringList args;
+			args << compiler.includeArgs();
+			if (compiler.type() == Compiler::FLOWC1) {
+				args << QLatin1String("legacy-format=1");
+				args << QLatin1String("incremental-priority=1");
+				args << QLatin1String("find-definition=") + id;
+			} else if (compiler.type() == Compiler::FLOW) {
+				args << QLatin1String("--find-definition");
+				args << id;
+			} else {
+				state_.stop();
+				return;
+			}
+			args << file;
+	#ifdef DEBUG
+			QTextStream(stdout) << "LOOKUP: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
 		}
-		args << file;
-#ifdef DEBUG
-		QTextStream(stdout) << "LOOKUP: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
-		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::slotLookupType() {
-	KTextEditor::View* activeView = mainWindow_->activeView();
-	if (!activeView || !activeView->cursorPosition().isValid()) {
-		return;
-	}
-	QString file = curFile(mainWindow_);
-	QString line = QString::number(activeView->cursorPosition().line() + 1);
-	QString col = QString::number(activeView->cursorPosition().column() + 1);
-	if (state_.start(LOOKUP_TYPE, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
-		mainWindow_->activeView()->document()->documentSave();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		if (compiler.type() != Compiler::FLOWC1) {
-			KMessageBox::sorry(0, i18n("Only flowc compiler allows type lookup"));
-			state_.stop();
+	try {
+		KTextEditor::View* activeView = mainWindow_->activeView();
+		if (!activeView || !activeView->cursorPosition().isValid()) {
 			return;
 		}
-		QStringList args;
-		args << compiler.includeArgs();
-		args << QLatin1String("find-type=1");
-		args << QLatin1String("exp-line=") + line;
-		args << QLatin1String("exp-column=") + col;
-		args << file;
-#ifdef DEBUG
-		QTextStream(stdout) << "LOOKUP TYPE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+		QString file = curFile(mainWindow_);
+		QString line = QString::number(activeView->cursorPosition().line() + 1);
+		QString col = QString::number(activeView->cursorPosition().column() + 1);
+		if (state_.start(LOOKUP_TYPE, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
+			mainWindow_->activeView()->document()->documentSave();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			if (compiler.type() != Compiler::FLOWC1) {
+				KMessageBox::sorry(0, i18n("Only flowc compiler allows type lookup"));
+				state_.stop();
+				return;
+			}
+			QStringList args;
+			args << compiler.includeArgs();
+			args << QLatin1String("find-type=1");
+			args << QLatin1String("exp-line=") + line;
+			args << QLatin1String("exp-column=") + col;
+			args << file;
+	#ifdef DEBUG
+			QTextStream(stdout) << "LOOKUP TYPE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
 		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::slotLookupUses() {
-	KTextEditor::View* activeView = mainWindow_->activeView();
-	if (!activeView || !activeView->cursorPosition().isValid()) {
-		return;
-	}
-	QString id = curIdentifier(mainWindow_);
-	QString file = curFile(mainWindow_);
-	QString line = QString::number(activeView->cursorPosition().line() + 1);
-	QString col = QString::number(activeView->cursorPosition().column() + 1);
-	if (state_.start(LOOKUP_USES, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
-		mainWindow_->activeView()->document()->documentSave();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		if (compiler.type() != Compiler::FLOWC1) {
-			KMessageBox::sorry(0, i18n("Only flowc compiler allows uses lookup"));
-			state_.stop();
+	try {
+		KTextEditor::View* activeView = mainWindow_->activeView();
+		if (!activeView || !activeView->cursorPosition().isValid()) {
 			return;
 		}
-		QStringList args;
-		args << compiler.includeArgs();
-		args << QLatin1String("find-uses=") + id;
-		args << QLatin1String("exp-line=") + line;
-		args << QLatin1String("exp-column=") + col;
-		args << file;
-#ifdef DEBUG
-		QTextStream(stdout) << "FIND ALL USES: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+		QString id = curIdentifier(mainWindow_);
+		QString file = curFile(mainWindow_);
+		QString line = QString::number(activeView->cursorPosition().line() + 1);
+		QString col = QString::number(activeView->cursorPosition().column() + 1);
+		if (state_.start(LOOKUP_USES, file + QLatin1String(":") + line + QLatin1String(":") + col)) {
+			mainWindow_->activeView()->document()->documentSave();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			if (compiler.type() != Compiler::FLOWC1) {
+				KMessageBox::sorry(0, i18n("Only flowc compiler allows uses lookup"));
+				state_.stop();
+				return;
+			}
+			QStringList args;
+			args << compiler.includeArgs();
+			args << QLatin1String("find-uses=") + id;
+			args << QLatin1String("exp-line=") + line;
+			args << QLatin1String("exp-column=") + col;
+			args << file;
+	#ifdef DEBUG
+			QTextStream(stdout) << "FIND ALL USES: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
 		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
 void FlowManager::slotOutline(KTextEditor::View* view) {
-	QString file = view->document()->url().toLocalFile();
-	if (state_.start(OUTLINE, file)) {
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		QStringList args;
-		args << compiler.includeArgs();
-		if (compiler.type() == Compiler::FLOWC1) {
-			args << QLatin1String("incremental-priority=1");
-			args << QLatin1String("print-outline=1");
-		} else {
-			state_.stop();
-			return;
+	try {
+		QString file = view->document()->url().toLocalFile();
+		if (state_.start(OUTLINE, file)) {
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			QStringList args;
+			args << compiler.includeArgs();
+			if (compiler.type() == Compiler::FLOWC1) {
+				args << QLatin1String("incremental-priority=1");
+				args << QLatin1String("print-outline=1");
+			} else {
+				state_.stop();
+				return;
+			}
+			args << file;
+	#ifdef DEBUG
+			QTextStream(stdout) << "OUTLINE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
 		}
-		args << file;
-#ifdef DEBUG
-		QTextStream(stdout) << "OUTLINE: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
-		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
@@ -311,48 +360,54 @@ void FlowManager::slotRename() {
 }
 
 void FlowManager::slotCompleteRename() {
-	KTextEditor::View* activeView = mainWindow_->activeView();
-	if (!activeView || !activeView->cursorPosition().isValid()) {
-		return;
-	}
-	QString file = curFile(mainWindow_);
-	QString id = curIdentifier(mainWindow_);
-	QString root = findFlowRoot(file);
-	bool configCreated = makeGlobalConfig(root);
-
-	QString renamed = renameDialog_.renameLineEdit->text();
-	mainWindow_->deleteViewBar(activeView);
-
-	QString line = QString::number(activeView->cursorPosition().line());
-	QString col = QString::number(activeView->cursorPosition().column());
-
-	QString stateString;
-	stateString += file + QLatin1String(":");
-	stateString += id + QLatin1String(":");
-	stateString += renamed + QLatin1String(":");
-	stateString += root + QLatin1String(":");
-	stateString += configCreated ? QLatin1String("YES") : QLatin1String("NO");
-
-	if (!id.isEmpty() && !renamed.isEmpty() && id != renamed && state_.start(RENAMING, stateString)) {
-		mainWindow_->activeView()->document()->documentSave();
-		QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
-		Compiler compiler(file, flowdir);
-		QStringList args;
-		args << compiler.includeArgs();
-		args << QLatin1String("rename=") + id;
-		args << QLatin1String("to=") + renamed;
-		args << QLatin1String("exp-line=") + line;
-		args << QLatin1String("exp-column=") + col;
-		args << file;
-#ifdef DEBUG
-		QTextStream(stdout) << "RENAME: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
-#endif
-		if (state_.peek().showCompilerOutput()) {
-			flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+	try {
+		KTextEditor::View* activeView = mainWindow_->activeView();
+		if (!activeView || !activeView->cursorPosition().isValid()) {
+			return;
 		}
-		compileProcess_.setWorkingDirectory(compiler.confdir());
-		compileProcess_.start(compiler.invocation(), args);
-		flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+		QString file = curFile(mainWindow_);
+		QString id = curIdentifier(mainWindow_);
+		QString root = findFlowRoot(file);
+		bool configCreated = makeGlobalConfig(root);
+
+		QString renamed = renameDialog_.renameLineEdit->text();
+		mainWindow_->deleteViewBar(activeView);
+
+		QString line = QString::number(activeView->cursorPosition().line());
+		QString col = QString::number(activeView->cursorPosition().column());
+
+		QString stateString;
+		stateString += file + QLatin1String(":");
+		stateString += id + QLatin1String(":");
+		stateString += renamed + QLatin1String(":");
+		stateString += root + QLatin1String(":");
+		stateString += configCreated ? QLatin1String("YES") : QLatin1String("NO");
+
+		if (!id.isEmpty() && !renamed.isEmpty() && id != renamed && state_.start(RENAMING, stateString)) {
+			mainWindow_->activeView()->document()->documentSave();
+			QString flowdir = flowView_.flowConfig_.ui.flowdirLineEdit->text();
+			Compiler compiler(file, flowdir);
+			QStringList args;
+			args << compiler.includeArgs();
+			args << QLatin1String("rename=") + id;
+			args << QLatin1String("to=") + renamed;
+			args << QLatin1String("exp-line=") + line;
+			args << QLatin1String("exp-column=") + col;
+			args << file;
+	#ifdef DEBUG
+			QTextStream(stdout) << "RENAME: " << compiler.invocation() << " " << args.join(QLatin1Char(' ')) << "\n";
+	#endif
+			if (state_.peek().showCompilerOutput()) {
+				flowView_.flowOutput_.ui.compilerOutTextEdit->clear();
+			}
+			compileProcess_.setWorkingDirectory(compiler.confdir());
+			compileProcess_.start(compiler.invocation(), args);
+			flowView_.flowOutput_.ui.terminateCompilerButton->setEnabled(true);
+		}
+	} catch (std::exception& ex) {
+		compileProcess_.kill();
+		state_.stop();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
 	}
 }
 
