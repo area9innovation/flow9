@@ -301,6 +301,8 @@ public class Utils {
                     callback.httpOpened(connection);
 
                     loadHttp(connection, output, callback);
+
+                    connection.disconnect();
                 } catch (IOException e) {
                     callback.httpError("I/O error: " + e.getMessage());
                 } catch (Exception e) {

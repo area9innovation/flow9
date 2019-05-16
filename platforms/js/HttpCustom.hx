@@ -1,6 +1,6 @@
 class HttpCustom extends haxe.Http {
 	
-	#if js
+	#if (js && !nwjs)
 	var method : String;
 	var availableMethods = ['GET', 'POST', 'DELETE', 'PATCH', 'PUT'];
 
@@ -48,7 +48,7 @@ class HttpCustom extends haxe.Http {
 						return header.split(":").map(StringTools.ltrim);
 					});
 
-			me.onResponse(s, me.responseData = r.responseText, me.responseHeaders);
+			me.onResponse(s, me.responseData, me.responseHeaders);
 		};
 		if( async )
 			r.onreadystatechange = onreadystatechange;

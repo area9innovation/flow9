@@ -1866,8 +1866,8 @@ bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *
     NSMutableAttributedString * atext = [[NSMutableAttributedString alloc] initWithString: [[NSString alloc] initWithBytes:&code
                                                                                             length:4
                                                                                             encoding:NSUTF32LittleEndianStringEncoding]];
-    const float font_size_pt = pxs2pts(header->render_em_size * scale);
-    CTFontRef ct_font = CTFontCreateWithName((CFStringRef) [NSString stringWithUTF8String: name.c_str()], font_size_pt, NULL);
+    const float font_size = header->render_em_size * scale;
+    CTFontRef ct_font = CTFontCreateWithName((CFStringRef) [NSString stringWithUTF8String: name.c_str()], font_size, NULL);
     [atext addAttribute:(NSString*)kCTFontAttributeName value: (id)ct_font range: NSMakeRange(0, utf16Count)];
     [atext addAttribute:(NSString*)kCTForegroundColorAttributeName value: (id)[UIColor colorWithWhite: 1.0f alpha: 1.0f].CGColor range: NSMakeRange(0, utf16Count)];
 
@@ -1895,7 +1895,7 @@ bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *
     CGFloat ascent, descent, leading;
     const double t_width = CTRunGetTypographicBounds(run, CFRangeMake(0, 1), &ascent, &descent, &leading);
     
-    CGContextSetTextPosition(context, lineOrigin.x, render_size - ascent);
+    CGContextSetTextPosition(context, 0.0, render_size - ascent);
     CTRunDraw(run, context, CFRangeMake(0,1));
     
     CGRect rect = CTRunGetImageBounds(run, context, CFRangeMake(0, 1));
