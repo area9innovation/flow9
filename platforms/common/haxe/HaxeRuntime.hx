@@ -198,7 +198,7 @@ if (a === b) return true;
 		#end
 	}
 
-	public static function toString(value : Dynamic) : String {
+	public static function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
 		if (value == null) return "{}";
 
 /*
@@ -286,13 +286,26 @@ if (a === b) return true;
 		if (Reflect.isFunction(value)) {
 			return "<function>";
 		}
-		// OK, it is a string
-		var s : String = value;
-		s = StringTools.replace(s, "\\", "\\\\");
-		s = StringTools.replace(s, "\"", "\\\"");
-		s = StringTools.replace(s, "\n", "\\n");
-		s = StringTools.replace(s, "\t", "\\t");
-		return "\"" + s + "\"";
+
+		try {
+			// OK, it is a string
+			var s : String = value;
+
+			if (!keepStringEscapes) {
+				s = StringTools.replace(s, "\\", "\\\\");
+				s = StringTools.replace(s, "\"", "\\\"");
+				s = StringTools.replace(s, "\n", "\\n");
+				s = StringTools.replace(s, "\t", "\\t");
+
+				return "\"" + s + "\"";
+			} else {
+				StringTools.replace(s, "\\", "\\\\"); // Check if realy a string
+
+				return s;
+			}
+		} catch(e : Dynamic) {
+			return "<native>";//haxe.Json.stringify(value);
+		}
 	}
 
     #if (!neko && !cpp)

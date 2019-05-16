@@ -12,14 +12,24 @@ public class RenderSupport3D extends NativeHost {
 	public Object add3DChild(Object parent, Object child) {
 		return null;
 	}
+	public Object add3DChildAt(Object parent, Object child, Object child, Integer index) {
+		return null;
+	}
 	public Object remove3DChild(Object parent, Object child) {
 		return null;
 	}
+	public Object remove3DChildren(Object parent) {
+		return null;
+	}
+
 	public Object[] get3DObjectChildren(Object object) {
 		return new Object[0];
 	}
 	public String get3DObjectJSON(Object object) {
 		return "";
+	}
+	public Object[] get3DObjectById(Object stage, String id) {
+		return new Object[0];
 	}
 
 	public Object make3DObjectFromJSON(String json) {

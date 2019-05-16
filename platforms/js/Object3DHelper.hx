@@ -63,7 +63,29 @@ class Object3DHelper {
 	}
 
 	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
+		if (child.parent != null) {
+			child.parent.remove(child);
+		}
+
 		parent.add(child);
+
+		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
+
+		broadcastEvent(child, "position");
+		broadcastEvent(child, "scale");
+		broadcastEvent(child, "rotation");
+
+		invalidateStage(parent);
+	}
+
+	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int) : Void {
+		if (child.parent != null) {
+			child.parent.remove(child);
+		}
+
+		parent.children.insert(index, child);
+		child.parent = parent;
 
 		emitEvent(parent, "box");
 		emitEvent(parent, "childrenchanged");
@@ -82,5 +104,30 @@ class Object3DHelper {
 		emitEvent(parent, "childrenchanged");
 
 		invalidateStage(parent);
+	}
+
+	public static function remove3DChildren(parent : Object3D) : Void {
+		for (child in parent.children) {
+			parent.remove(child);
+		}
+
+		emitEvent(parent, "box");
+		emitEvent(parent, "childrenchanged");
+
+		invalidateStage(parent);
+	}
+
+	public static function get3DObjectByUUID(parent : Object3D, id : String) : Array<Object3D> {
+		if (parent.uuid == id) {
+			return [parent];
+		} else for (child in parent.children) {
+			var object = get3DObjectByUUID(child, id);
+
+			if (object.length > 0) {
+				return object;
+			}
+		}
+
+		return [];
 	}
 }

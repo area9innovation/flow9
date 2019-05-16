@@ -99,12 +99,20 @@ class RenderSupport3D {
 		parent.add3DChild(child);
 	}
 
+	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int) : Void {
+		parent.add3DChildAt(child, index);
+	}
+
 	public static function remove3DChild(parent : Object3D, child : Object3D) : Void {
 		parent.remove3DChild(child);
 	}
 
+	public static function remove3DChildren(parent : Object3D) : Void {
+		parent.remove3DChildren();
+	}
+
 	public static function get3DObjectChildren(object : Object3D) : Array<Object3D> {
-		return object.children;
+		return object.children.copy();
 	}
 
 	public static function get3DObjectJSON(object : Object3D) : String {
@@ -382,6 +390,14 @@ class RenderSupport3D {
 
 	public static function get3DObjectId(object : Object3D) : String {
 		return object.uuid;
+	}
+
+	public static function get3DObjectById(stage : ThreeJSStage, id : String) : Array<Object3D> {
+		if (stage.scene != null) {
+			return stage.scene.get3DObjectByUUID(id);
+		} else {
+			return [];
+		}
 	}
 
 	public static function get3DObjectType(object : Object3D) : String {

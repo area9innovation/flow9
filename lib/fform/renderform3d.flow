@@ -12,7 +12,7 @@ export {
 	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
 		F3DInspectRotation, F3DInspectPosition, F3DInspectScale, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin,
 		F3DInspectBoundingSphereMax, F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader,
-		F3DChildren, F3DNative, F3DJsonObject, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
+		F3DChildren, F3DNative, F3DJsonObject, F3DObject2Json, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 		F3DMutable(object : Transform<F3DObject>);
@@ -46,6 +46,7 @@ export {
 			F3DNativeMutable(object : Transform<F3DNative>);
 
 		F3DJsonObject(json : string);
+		F3DObject2Json(object : F3DObject, jsonFn : ref () -> string);
 
 		F3DBoxHelper(object : F3DObject, enabled : DynamicBehaviour<bool>);
 		F3DAxesHelper(size : double);
@@ -277,13 +278,13 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 				onLoad(clip),
 				[
 					makeSubscribeUns(objects, \ob ->
-						map(ob, \o ->
+						mapi(ob, \i, o ->
 							render3dform(
 								o,
 								stage,
 								transformControlsEnabled,
 								\c -> {
-									add3DChild(clip, c);
+									add3DChildAt(clip, c, i);
 
 									arrayPush(
 										addF3DMouseListeners(stage, c, transformControlsEnabled),
@@ -653,15 +654,29 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 			concat(
 				onLoad(scene),
 				[
-					makeSubscribeUns(objects, \ob ->
-						map(ob, \o ->
+					makeSubscribeUns(objects, \ob -> {
+						newChildren = ref [];
+
+						mapi(ob, \i, o ->
 							render3dform(
 								o,
 								stage,
 								transformControlsEnabled,
 								\c -> {
-									if (!contains(get3DObjectChildren(scene), c)) {
-										add3DChild(scene, c);
+									currentChildren = map(get3DObjectChildren(scene), get3DObjectId);
+
+									refArrayPush(newChildren, get3DObjectId(c));
+
+									if (length(^newChildren) == length(ob) && length(ob) != length(currentChildren) + 1) {
+										iter(get3DObjectChildren(scene), \cc ->
+											if (!contains(^newChildren, get3DObjectId(cc))) {
+												remove3DChild(scene, cc)
+											}
+										);
+									}
+
+									if (!contains(currentChildren, get3DObjectId(c))) {
+										add3DChildAt(scene, c, i);
 
 										arrayPush(
 											addF3DMouseListeners(stage, c, transformControlsEnabled),
@@ -674,12 +689,26 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 							)
 						)
 						|> concatA
-					)()
+					})()
 				]
 			)
 		}
 		F3DJsonObject(json) : {
 			onLoad(make3DObjectFromJSON(json));
+		}
+		F3DObject2Json(innerObject, jsonFn) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					jsonFn := \ -> get3DObjectJSON(clip);
+
+					onLoad(clip);
+				}
+			);
+
+			r;
 		}
 		F3DBoxHelper(innerObject, enabled) : {
 			r = render3dform(
@@ -842,7 +871,11 @@ parseF3DNativeObject(object : native) -> Pair<F3DNative, [() -> void]> {
 		}))),
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
-				next(children, get3DObjectChildren(object));
+				newChildren = get3DObjectChildren(object);
+
+				if (map(getValue(children), get3DObjectId) != map(newChildren, get3DObjectId)) {
+					next(children, newChildren);
+				}
 			}),
 			\ -> dispUnsA(uns)
 		]

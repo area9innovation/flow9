@@ -4,8 +4,10 @@ import material/extra/filebrowser/material_filebrowser;
 F3DEditorState(
 	manager : MaterialManager,
 	wh : DynamicBehaviour<WidthHeight>,
-	scene : DynamicBehaviour<F3DObject>,
-	tree : DynamicBehaviour<Transform<[MTreeNode<int>]>>,
+	mutable stage : native,
+	scene : DynamicBehaviour<[F3DObject]>,
+	tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>,
+	treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>,
 	selected : DynamicBehaviour<Maybe<native>>,
 	axes : DynamicBehaviour<bool>,
 	grid : DynamicBehaviour<bool>,
@@ -14,7 +16,7 @@ F3DEditorState(
 
 makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
 	stageWH = makeWH();
-	currentScene = make(F3DSceneLoader("images/3d/soccer/soc_field.json"));
+	currentScene = make([F3DSceneLoader("images/3d/soccer/scene.json")]);
 	currentTree = make(const([]));
 	currentObject : DynamicBehaviour<Maybe<native>> = make(None());
 
@@ -22,12 +24,13 @@ makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
 	gridVisible = make(false);
 	boxesVisible = make(false);
 
-
 	F3DEditorState(
 		manager,
 		stageWH,
+		makeClip(),
 		currentScene,
 		currentTree,
+		make([]),
 		currentObject,
 		axesVisible,
 		gridVisible,
@@ -62,7 +65,7 @@ makeF3DTreeNode(
 	sel = make(false);
 
 	MTreeNode(
-		makeTropicTag(state.manager),
+		get3DObjectId(clip),
 		\__ ->
 			MBaselineCols([
 				MText(id, [MCaptionSolid()]),
@@ -116,6 +119,20 @@ makeF3DTreeNode(
 					sel,
 					MCreate(\ -> MText(get3DObjectName(clip), [MCaptionSolid(), getPrimaryColor(state.manager)])),
 					MCreate(\ -> MText(get3DObjectName(clip), [MCaption1()]))
+				),
+				MShow(
+					sel,
+					MIconButton(
+						"delete",
+						\ -> {
+							removeF3DSceneId(state.treeOrder, get3DObjectId(clip));
+						},
+						[
+							MIconButtonBorder(6.0),
+							MIconSize(16.0)
+						],
+						[]
+					)
 				)
 			]),
 		children,
@@ -130,15 +147,40 @@ makeF3DTree(
 ) -> Transform<MTreeNode> {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
+			map(get3DObjectStage(clip), \s -> state.stage ::= s);
+
 			const(makeF3DTreeNode(state, id, clip, fsubmapi(items, \i, it -> makeF3DTree(state, i2s(i), it))));
 		}
 		F3DNativeObject(clip): {
+			map(get3DObjectStage(clip), \s -> state.stage ::= s);
+
 			const(makeF3DTreeNode(state, id, clip, const([])));
 		}
 		F3DNativeMutable(innerObject): {
 			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, id, it)));
 		}
 	}
+}
+
+makeF3DScene(state : F3DEditorState, node : MTreeOrderNode<string>) -> F3DNative {
+	children = fgetValue(node.children);
+	clip = get3DObjectById(state.stage, node.content)[0];
+
+	if (length(children) > 0) {
+		F3DNativeScene(clip, const(map(children, \c -> makeF3DScene(state, c))));
+	} else {
+		F3DNativeObject(clip);
+	}
+}
+
+removeF3DSceneId(nodes : DynamicBehaviour<[MTreeOrderNode<string>]>, id : string) -> void {
+	nextDistinct(
+		nodes,
+		filter(getValue(nodes), \n -> {
+			removeF3DSceneId(n.children, id);
+			n.content != id;
+		})
+	);
 }
 
 F3DObjectProperties(object : native) -> Material {
@@ -425,7 +467,7 @@ main() {
 
 	scene =
 		F3DChildren(
-			F3DScene(farray(state.scene)),
+			F3DScene(fmap(state.scene, \c -> F3DObject2Json(c, exportFn))),
 			\c -> {
 				next(state.tree, farray(makeF3DTree(state, "0", c)));
 
@@ -455,8 +497,8 @@ main() {
 												f,
 												"text",
 												\s -> {
-													next(state.scene, F3DScene(const([])));
-													next(state.scene, F3DJsonObject(s));
+													next(state.scene, []);
+													next(state.scene, [F3DJsonObject(s)]);
 												},
 												println
 											)
@@ -519,14 +561,24 @@ main() {
 				camera,
 				TFillXY(),
 				[
-					F3DExportScene(exportFn),
 					F3DTransformControlsEnabled(const(true))
 				]
 			)
 			|> (\f -> MInspect([ISize(state.wh)], f))
 			|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f)),
 			MSplitter(
-				MTree(fsubselect(state.tree, idfn |> FLift), [MTreeHideSeparators(), MTreeOrder(make([]))])
+				MTree(
+					fsubselect(state.tree, idfn |> FLift),
+					[
+						MTreeHideSeparators(),
+						MTreeOrder(state.treeOrder),
+						MTreeOnOrderChange(\t -> {
+							if (length(t) > 0 && length(getValue(t[0].children)) > 0) {
+								next(state.scene, map(getValue(t[0].children), \c -> makeF3DScene(state, c)));
+							}
+						})
+					]
+				)
 				|> (\f -> MBorder(8.0, 8.0, 16.0, 8.0, f)),
 				MSelect(state.selected, \o -> eitherMap(o, \c -> F3DObjectProperties(c), TEmpty()))
 				|> (\f -> MBorder(24.0, 8.0, 24.0, 8.0, f)),
