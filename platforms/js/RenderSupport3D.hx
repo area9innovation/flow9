@@ -16,13 +16,17 @@ import js.three.TransformControls;
 import js.three.BoxHelper;
 
 import js.three.Geometry;
+import js.three.PlaneGeometry;
 import js.three.BoxGeometry;
 import js.three.CircleGeometry;
+import js.three.RingGeometry;
 import js.three.ConeGeometry;
 import js.three.CylinderGeometry;
+import js.three.SphereGeometry;
 
 import js.three.Material;
 import js.three.MeshBasicMaterial;
+import js.three.MeshStandardMaterial;
 
 import js.three.Light;
 import js.three.PointLight;
@@ -328,6 +332,14 @@ class RenderSupport3D {
 			stage.transformControls.object.dispatchEvent({ type : "detached" });
 			stage.transformControls.detach();
 		}
+	}
+
+	public static function is3DTransformControlsAttached(stage : ThreeJSStage, object : Object3D) : Bool {
+		if (stage.transformControls != null) {
+			return stage.transformControls.object == object;
+		}
+
+		return false;
 	}
 
 	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
@@ -717,6 +729,11 @@ class RenderSupport3D {
 		return new PointLight(color, intensity, distance, decay);
 	}
 
+	public static function make3DSpotLight(color : Int, intensity : Float, distance : Float, angle : Float, penumbra : Float, decay : Float) : Light {
+		return new SpotLight(color, intensity, distance, angle, penumbra, decay);
+	}
+
+
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
 		object.invalidateStage();
@@ -753,7 +770,9 @@ class RenderSupport3D {
 		return object.decay;
 	}
 
-
+	public static function make3DPlaneGeometry(width : Float, height : Float, widthSegments : Int, heightSegments : Int) : Geometry {
+		return new PlaneGeometry(width, height, widthSegments, heightSegments);
+	}
 
 	public static function make3DBoxGeometry(width : Float, height : Float, depth : Float, widthSegments : Int, heightSegments : Int, depthSegments : Int) : Geometry {
 		return new BoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
@@ -761,6 +780,10 @@ class RenderSupport3D {
 
 	public static function make3DCircleGeometry(radius : Float, segments : Int, thetaStart : Float, thetaLength : Float) : Geometry {
 		return new CircleGeometry(radius, segments, thetaStart, thetaLength);
+	}
+
+	public static function make3DRingGeometry(innerRadius : Float, outerRadius : Float, segments : Int, thetaStart : Float, thetaLength : Float) : Geometry {
+		return new RingGeometry(innerRadius, outerRadius, segments, thetaStart, thetaLength);
 	}
 
 	public static function make3DConeGeometry(radius : Float, height : Float, radialSegments : Int, heightSegments : Int, openEnded : Bool, thetaStart : Float, thetaLength : Float) : Geometry {
@@ -771,8 +794,28 @@ class RenderSupport3D {
 		return new CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
 	}
 
+	public static function make3DSphereGeometry(radius : Float, widthSegments : Int, heightSegments : Int, phiStart : Float, phiLength : Float, thetaStart : Float, thetaLength : Float) : Geometry {
+		return new SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+	}
+
 	public static function make3DMeshBasicMaterial(color : Int, parameters : Array<Array<String>>) : Material {
-		return new MeshBasicMaterial({color : color});
+		var materialParameters : Dynamic = {color : new Color(color)};
+
+		for (par in parameters) {
+			untyped materialParameters[par[0]] = par[1];
+		}
+
+		return new MeshBasicMaterial(materialParameters);
+	}
+
+	public static function make3DMeshStandardMaterial(color : Int, parameters : Array<Array<String>>) : Material {
+		var materialParameters : Dynamic = {color : new Color(color)};
+
+		for (par in parameters) {
+			untyped materialParameters[par[0]] = par[1];
+		}
+
+		return new MeshStandardMaterial(materialParameters);
 	}
 
 
