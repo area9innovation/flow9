@@ -134,9 +134,9 @@ GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 
         ptr = GLFont::Ptr(new GLFont(self.lock(), header));
     }
-#endif
 
     ptr->text_font = textFont;
+#endif
 
     ptr->self = ptr;
     return ptr;
