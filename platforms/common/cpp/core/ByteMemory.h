@@ -93,7 +93,7 @@ public:
 
     unicode_char GetChar(FlowPtr addr)         { return *(unicode_char*)VerifyAccess(addr, sizeof(unicode_char), false); }
 
-    unsigned short GetUInt16(FlowPtr addr)     { return *(unsigned short*)VerifyAccess(addr, sizeof(short), false); }
+    unsigned short GetUInt16(FlowPtr addr)           { return *(unsigned short*)VerifyAccess(addr, sizeof(short), false); }
 
     int GetInt32(FlowPtr addr)                 { return *(int*)VerifyAccess(addr, sizeof(int), false); }
     void SetInt32(FlowPtr addr, int val)       { *(int*)VerifyAccess(addr, sizeof(int), true) = val; }
