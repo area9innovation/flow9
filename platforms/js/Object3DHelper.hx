@@ -62,59 +62,102 @@ class Object3DHelper {
 		}
 	}
 
-	public static function add3DChild(parent : Object3D, child : Object3D) : Void {
-		if (child.parent != null) {
-			child.parent.remove(child);
+	public static function get3DChildrenMap(parent : Object3D) : Map<Int, Object3D> {
+		if (untyped parent.childrenMap == null) {
+			untyped parent.childrenMap = new Map<Int, Object3D>();
 		}
 
-		parent.add(child);
-
-		emitEvent(parent, "box");
-		emitEvent(parent, "childrenchanged");
-
-		broadcastEvent(child, "position");
-		broadcastEvent(child, "scale");
-		broadcastEvent(child, "rotation");
-
-		invalidateStage(parent);
+		return untyped parent.childrenMap;
 	}
 
-	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int) : Void {
+	public static function add3DChild(parent : Object3D, child : Object3D, ?invalidate : Bool = true) : Void {
+		var childrenMap = get3DChildrenMap(parent);
+
 		if (child.parent != null) {
-			child.parent.remove(child);
+			if (child.parent == parent) {
+				return;
+			}
+
+			remove3DChild(child.parent, child, false);
 		}
 
-		parent.children.insert(index, child);
-		child.parent = parent;
+		var index = 0;
 
-		emitEvent(parent, "box");
-		emitEvent(parent, "childrenchanged");
+		for (k in childrenMap.keys()) {
+			if (k >= index) {
+				index = k + 1;
+			}
+		}
 
-		broadcastEvent(child, "position");
-		broadcastEvent(child, "scale");
-		broadcastEvent(child, "rotation");
-
-		invalidateStage(parent);
+		add3DChildAt(parent, child, index, invalidate);
 	}
 
-	public static function remove3DChild(parent : Object3D, child : Object3D) : Void {
+	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int, ?invalidate : Bool = true) : Void {
+		if (child.parent != null) {
+			if (child.parent == parent) {
+				invalidate = false;
+			}
+
+			remove3DChild(child.parent, child, false);
+		}
+
+		var childrenMap = get3DChildrenMap(parent);
+
+		if (childrenMap.get(index) != child) {
+			if (childrenMap.get(index) != null) {
+				remove3DChild(parent, childrenMap.get(index), false);
+			}
+
+			childrenMap.set(index, child);
+			child.parent = parent;
+
+			for (k in childrenMap.keys()) {
+				parent.children[k] = childrenMap.get(k);
+			}
+
+			if (invalidate) {
+				emitEvent(parent, "box");
+				emitEvent(parent, "childrenchanged");
+
+				broadcastEvent(child, "position");
+				broadcastEvent(child, "scale");
+				broadcastEvent(child, "rotation");
+
+				invalidateStage(parent);
+			}
+		}
+	}
+
+	public static function remove3DChild(parent : Object3D, child : Object3D, ?invalidate : Bool = true) : Void {
+		var childrenMap = get3DChildrenMap(parent);
+
+		for (k in childrenMap.keys()) {
+			if (childrenMap.get(k) == child) {
+				childrenMap.remove(k);
+			}
+		}
+
 		parent.remove(child);
 
-		emitEvent(parent, "box");
-		emitEvent(parent, "childrenchanged");
+		if (invalidate) {
+			emitEvent(parent, "box");
+			emitEvent(parent, "childrenchanged");
 
-		invalidateStage(parent);
+			invalidateStage(parent);
+		}
 	}
 
-	public static function remove3DChildren(parent : Object3D) : Void {
+	public static function remove3DChildren(parent : Object3D, ?invalidate : Bool = true) : Void {
 		for (child in parent.children) {
-			parent.remove(child);
+			remove3DChild(parent, child, false);
 		}
 
-		emitEvent(parent, "box");
-		emitEvent(parent, "childrenchanged");
+		if (invalidate) {
+			emitEvent(parent, "box");
+			emitEvent(parent, "childrenchanged");
 
-		invalidateStage(parent);
+			invalidateStage(parent);
+		}
 	}
 
 	public static function get3DObjectByUUID(parent : Object3D, id : String) : Array<Object3D> {
