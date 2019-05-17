@@ -1368,6 +1368,10 @@ class RenderSupportJSPixi {
 		return clip.addStreamStatusListener(fn);
 	}
 
+	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
+		clip.addVideoSource(src, type);
+	}
+
 	public static function addEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
 		if (event == "resize") {
 			on("resize", fn);
