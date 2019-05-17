@@ -280,6 +280,7 @@ private:
     DECLARE_NATIVE_METHOD(setBackgroundColor);
     DECLARE_NATIVE_METHOD(setStatusBarColor);
     DECLARE_NATIVE_METHOD(setStatusBarVisible);
+    DECLARE_NATIVE_METHOD(setStatusBarIconsTheme);
 };
 
 #endif // IOSGLRENDERSUPPORT_H

@@ -21,7 +21,7 @@ class iosGLRenderSupport;
     CADisplayLink * DisplayLink;
     CGPoint currentTouchPos;
     
-    BOOL statusBarVisible;
+    BOOL statusBarVisible, statusBarIconsTheme;
     
     IBOutlet UIActivityIndicatorView * ActivityIndicator;
     IBOutlet NSLayoutConstraint * DebugViewHeight;
@@ -44,4 +44,5 @@ class iosGLRenderSupport;
 - (void) showActivityIndicator;
 - (void) hideActivityIndicator;
 - (void) setStatusBarVisible: (BOOL)visible;
+- (void) setStatusBarIconsTheme: (BOOL)light;
 @end
