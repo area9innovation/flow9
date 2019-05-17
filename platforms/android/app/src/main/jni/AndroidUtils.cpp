@@ -1,6 +1,7 @@
 #include "AndroidUtils.h"
 
 #include <android/log.h>
+#include <cstring>
 
 ostream log_info(new AndroidLogStreambuf(ANDROID_LOG_INFO, RUNNER_PACKAGE));
 ostream log_error(new AndroidLogStreambuf(ANDROID_LOG_ERROR, RUNNER_PACKAGE));

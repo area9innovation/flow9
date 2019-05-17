@@ -1672,6 +1672,7 @@ NativeFunction *iosGLRenderSupport::MakeNativeFunction(const char *name, int num
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, isFullScreen, 0);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, onFullScreen, 1);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setStatusBarVisible, 1);
+    TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setStatusBarIconsTheme, 1);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setStatusBarColor, 1);
     TRY_USE_NATIVE_METHOD(iosGLRenderSupport, setBackgroundColor, 1);
     
@@ -1756,6 +1757,15 @@ StackSlot iosGLRenderSupport::setStatusBarVisible(RUNNER_ARGS)
     RUNNER_CheckTag1(TBool, visible);
     
     [GLViewController setStatusBarVisible: visible.GetBool()];
+    
+    RETVOID;
+}
+
+StackSlot iosGLRenderSupport::setStatusBarIconsTheme(RUNNER_ARGS) {
+    RUNNER_PopArgs1(light);
+    RUNNER_CheckTag1(TBool, light);
+    
+    [GLViewController setStatusBarIconsTheme: light.GetBool()];
     
     RETVOID;
 }

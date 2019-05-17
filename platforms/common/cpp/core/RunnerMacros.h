@@ -58,7 +58,7 @@
 #ifdef _MSC_VER
     #define _INLINE_WRAP(content) __forceinline content
 #else
-    #define _INLINE_WRAP(content) content __attribute__((always_inline))
+    #define _INLINE_WRAP(content) inline content __attribute__((always_inline))
 #endif
 
 #define RUNNER pRunner__
