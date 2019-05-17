@@ -53,7 +53,11 @@ export {
 		MAudioPlayerStyle ::= MVideoPlayerStyle, MWidth;
 
 	// FVideoTimeRange style disabled
- 	MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material;
+ 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
+ 		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist;
+
+ 		// to switch files (samples) in multiplayer
+		IndexInPlaylist(index : DynamicBehaviour<int>);
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -386,127 +390,143 @@ SampleStates(
 	isReady : [DynamicBehaviour<bool>]
 );
 
-MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
+MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material {
  	amount = length(filenames);
 
-  	style = removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.)));
+ 	if (amount > 0) {
+	  	style = filtermap(removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.))), \st ->
+			switch (st) {
+				FVideoStyle() : {a : Maybe<FVideoStyle> = Some(st); a};
+				default : None()
+			}
+		);
 
-  	// properties from external style
- 	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
- 	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
- 	playEx = extractStruct(style, FVideoPlay(make(false))).play;
+	  	// properties from external style
+	 	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
+	 	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
+	 	playEx = extractStruct(style, FVideoPlay(make(false))).play;
 
-  	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
- 	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
+	  	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
+	 	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
 
-  	// playing audio
- 	currIndexB = make(0);
+	  	// playing audio
+	 	currIndexB = extractStruct(style, IndexInPlaylist(make(0))).index;
 
-  	// init properties for each audio
- 	states = SampleStates(
- 		map(filenames, \__ -> make(0.0)),
- 		map(filenames, \__ -> make(0.0)),
- 		map(filenames, \__ -> make(false)),
- 		map(filenames, \__ -> make(false)),
- 	);
+	  	// init properties for each audio
+	 	states = SampleStates(
+	 		map(filenames, \__ -> make(0.0)),
+	 		map(filenames, \__ -> make(0.0)),
+	 		map(filenames, \__ -> make(false)),
+	 		map(filenames, \__ -> make(false)),
+	 	);
 
-  	synchrocalls = mapi(filenames, \i, __ ->
- 		SynchroCalls(
- 			// set ready
- 			\-> nextDistinct(states.isReady[i], true),
- 			// play next or stop in the end
- 			\-> {
- 				// reset position (for js)
- 				nextDistinct(states.position[i], 0.);
- 				// if last audio
- 				if (i == amount - 1) {
- 					if (!fgetValue(loopEx)) {
- 						// if not looping
- 						nextDistinct(playEx, false);
- 						synchrocallEx.onStop();
- 					}
- 				}
- 				// next for case with length == 1
- 				next(currIndexB, (i + 1) % amount);
- 			}
- 		)
- 	);
+	  	synchrocalls = mapi(filenames, \i, __ ->
+	 		SynchroCalls(
+	 			// set ready
+	 			\-> nextDistinct(states.isReady[i], true),
+	 			// play next or stop in the end
+	 			\-> {
+	 				// reset position (for js)
+	 				nextDistinct(states.position[i], 0.);
+	 				// if last audio
+	 				if (i == amount - 1) {
+	 					if (!fgetValue(loopEx)) {
+	 						// if not looping
+	 						nextDistinct(playEx, false);
+	 						synchrocallEx.onStop();
+	 					}
+	 				}
+	 				// next for case with length == 1
+	 				next(currIndexB, (i + 1) % amount);
+	 			}
+	 		)
+	 	);
 
-  	players = mapi(filenames, \i, url ->
- 		TVideo(
- 			url,
- 			make(WidthHeight(-1., -1.)),		// not to draw
- 			replaceStructMany(style,
- 				[
- 					FVideoLength(states.length[i]),
- 					FVideoPosition(states.position[i]),
- 					FVideoPlay(states.isPlay[i]),
- 					synchrocalls[i],
- 				]
- 			)
- 		)
- 	);
+	  	players = mapi(filenames, \i, url ->
+	 		TVideo(
+	 			url,
+	 			make(WidthHeight(-1., -1.)),		// not to draw
+	 			replaceStructMany(style,
+	 				[
+	 					FVideoLength(states.length[i]),
+	 					FVideoPosition(states.position[i]),
+	 					FVideoPlay(states.isPlay[i]),
+	 					synchrocalls[i],
+	 				]
+	 			)
+	 		)
+	 	);
 
-  	changeAudioPlaying = \index, isPlay -> {
- 		nextDistinct(states.isPlay[index], isPlay);
- 	}
+	  	changeAudioPlaying = \index, isPlay -> {
+	 		nextDistinct(states.isPlay[index], isPlay);
+	 	}
 
-  	playerPos = fsubselect(
- 		currIndexB,
- 		FLift(\index ->
- 			faddition(
- 				fsum(subrange(states.length, 0, index)),	// sum of previous lengths
- 				states.position[index]					// current possition
- 			)
- 		)
- 	);
- 	playerPosChange = \pos -> nextDistinct(posEx, pos);
- 	userPosChange = \pos -> {
- 		allLength = fgetValue(fmerge(states.length));
- 		// last index ; length sum of previous audio
- 		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
- 			newEnd = acc.second + len;
- 			isNext = (acc.first + 1 == i);
- 			if (isNext && newEnd < pos) Pair(i, newEnd)
- 			else acc;
- 		});
+	  	playerPos = fsubselect(
+	 		currIndexB,
+	 		FLift(\index ->
+	 			faddition(
+	 				fsum(subrange(states.length, 0, index)),	// sum of previous lengths
+	 				states.position[index]					// current possition
+	 			)
+	 		)
+	 	);
+	 	playerPosChange = \pos -> nextDistinct(posEx, pos);
+	 	userPosChange = \pos -> {
+	 		allLength = fgetValue(fmerge(states.length));
+	 		// last index ; length sum of previous audio
+	 		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
+	 			newEnd = acc.second + len;
+	 			isNext = (acc.first + 1 == i);
+	 			if (isNext && newEnd < pos) Pair(i, newEnd)
+	 			else acc;
+	 		});
 
-  		// reset current player
- 		currIndex = getValue(currIndexB);
- 		changeAudioPlaying(currIndex, false);
- 		nextDistinct(states.position[currIndex], 0.);
- 		// start new player
- 		newIndex = lastEnd.first + 1;
- 		nextDistinct(states.position[newIndex], pos - lastEnd.second);
- 		// next need when index has not changed (continue playing)
- 		next(currIndexB, newIndex);
- 	}
+	 		currIndex = getValue(currIndexB);
+	 		newIndex = lastEnd.first + 1;
+	 		if (newIndex != currIndex) {
+		  		// reset current player
+		 		changeAudioPlaying(currIndex, false);
+		 		nextDistinct(states.position[currIndex], 0.);
+		 		// start new player
+		 		nextDistinct(states.position[newIndex], pos - lastEnd.second);
+		 		nextDistinct(currIndexB, newIndex);
+	 		} else {
+	 			nextDistinct(states.position[newIndex], pos - lastEnd.second);
+	 		}
+	 	}
 
-  	MShow(
- 		const(i2b(amount)),
- 		// rendering (empty)
- 		MConstruct(
- 			[
- 				// when all audios ready
- 				makeSubscribe(fands(states.isReady, false), \isReady ->
- 					if (isReady) synchrocallEx.onStart()
- 				),
- 				// sum all audio lengths
- 				\-> fconnect(fsum(states.length), lenEx),
- 				// set possition
- 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
- 				// not make2Subscribe due to looping in 1-element array
- 				\-> subscribe(currIndexB, \index ->
- 					changeAudioPlaying(index, getValue(playEx))
- 				),
- 				\-> subscribe(playEx, \isPlay ->
- 					changeAudioPlaying(getValue(currIndexB), isPlay)
- 				)
- 			],
- 			MGroup(players)
- 		)
- 	)
- }
+		// rendering (empty)
+		MConstruct(
+			[
+				// when all audios ready
+				makeSubscribe(fands(states.isReady, false), \isReady ->
+					if (isReady) synchrocallEx.onStart()
+				),
+				// sum all audio lengths
+				\-> fconnect(fsum(states.length), lenEx),
+				// set possition
+				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
+				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
+				makeSubscribe(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
+					unpair(oldAndNewIndexes, \oldIndex, newIndex -> {
+						if (oldIndex != newIndex) {
+							// reset current player before switching
+							nextDistinct(states.isPlay[oldIndex], false);
+							nextDistinct(states.position[oldIndex], 0.0);
+						}
+						changeAudioPlaying(newIndex, getValue(playEx));
+					})
+				),
+				\-> subscribe(playEx, \isPlay -> {
+					changeAudioPlaying(getValue(currIndexB), isPlay);
+				})
+			],
+			MGroup(players)
+		)
+	} else {
+		MEmpty();
+	}
+}
 
 MInlinePopup(
 	manager : MaterialManager,
