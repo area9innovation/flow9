@@ -30,50 +30,60 @@ DebugManager::~DebugManager() {
 }
 
 void DebugManager::runDebugger(const DebugConf &conf) {
-    debugConf_ = conf;
-    if (debugProcess_.state() == QProcess::NotRunning) {
-        connect(&debugProcess_, SIGNAL(error(QProcess::ProcessError)), this, SLOT(slotError(QProcess::ProcessError)));
-        connect(&debugProcess_, SIGNAL(readyReadStandardError()), this, SLOT(slotReadDebugStdErr()));
-        connect(&debugProcess_, SIGNAL(readyReadStandardOutput()), this, SLOT(slotReadDebugStdOut()));
-        connect(&debugProcess_, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(slotDebugFinished(int, QProcess::ExitStatus)));
-        connect(flowView_.flowOutput_.ui.terminateCompilerButton, SIGNAL(clicked()), &debugProcess_, SLOT(terminate()));
+	try {
+		debugConf_ = conf;
+		if (debugProcess_.state() == QProcess::NotRunning) {
+			connect(&debugProcess_, SIGNAL(error(QProcess::ProcessError)), this, SLOT(slotError(QProcess::ProcessError)));
+			connect(&debugProcess_, SIGNAL(readyReadStandardError()), this, SLOT(slotReadDebugStdErr()));
+			connect(&debugProcess_, SIGNAL(readyReadStandardOutput()), this, SLOT(slotReadDebugStdOut()));
+			connect(&debugProcess_, SIGNAL(finished(int, QProcess::ExitStatus)), this, SLOT(slotDebugFinished(int, QProcess::ExitStatus)));
+			connect(flowView_.flowOutput_.ui.terminateCompilerButton, SIGNAL(clicked()), &debugProcess_, SLOT(terminate()));
 
-        QStringList args;
-        args << QLatin1String("--debug-mi");
-        args << debugConf_.executable;
-        args << debugConf_.debuginfo;
-        args << QLatin1String("--");
-        args << debugConf_.arguments.split(QLatin1Char(' '));
+			QStringList args;
+			args << QLatin1String("--debug-mi");
+			args << debugConf_.executable;
+			args << debugConf_.debuginfo;
+			args << QLatin1String("--");
+			args << debugConf_.arguments.split(QLatin1Char(' '));
 
-        QTextStream(stdout) << "DEBUG: " << debugConf_.fdbCmd.trimmed() << " " << args.join(QLatin1Char(' ')) << "\n";
+			QTextStream(stdout) << "DEBUG: " << debugConf_.fdbCmd.trimmed() << " " << args.join(QLatin1Char(' ')) << "\n";
 
-        flowView_.flowOutput_.ui.launchOutTextEdit->clear();
-        flowView_.flowOutput_.ui.debugOutTextEdit->clear();
+			flowView_.flowOutput_.ui.launchOutTextEdit->clear();
+			flowView_.flowOutput_.ui.debugOutTextEdit->clear();
 
-        debugProcess_.setWorkingDirectory(debugConf_.workDir);
-        debugProcess_.start(debugConf_.fdbCmd.trimmed(), args);
-        flowView_.flowOutput_.ui.terminateDebugButton->setEnabled(true);
-    } else {
-        // On startup the fdb prompt will trigger the "nextCommands",
-        // here we have to trigger it manually.
-        QTimer::singleShot(0, this, SLOT(slotIssueNextCommand()));
-    }
-    for (auto bp : breakPointList_) {
-    	nextCommands_ << QStringLiteral("-break-insert %1:%2").arg(bp.file.path()).arg(bp.line);
-    }
-    nextCommands_ << QLatin1String("-exec-run");
+			debugProcess_.setWorkingDirectory(debugConf_.workDir);
+			debugProcess_.start(debugConf_.fdbCmd.trimmed(), args);
+			flowView_.flowOutput_.ui.terminateDebugButton->setEnabled(true);
+		} else {
+			// On startup the fdb prompt will trigger the "nextCommands",
+			// here we have to trigger it manually.
+			QTimer::singleShot(0, this, SLOT(slotIssueNextCommand()));
+		}
+		for (auto bp : breakPointList_) {
+			nextCommands_ << QStringLiteral("-break-insert %1:%2").arg(bp.file.path()).arg(bp.line);
+		}
+		nextCommands_ << QLatin1String("-exec-run");
+	} catch (std::exception& ex) {
+		debugProcess_.kill();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
+	}
 }
 
 void DebugManager::slotDebug(int row) {
-	DebugConf debugConf;
-	debugConf.executable = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
-	debugConf.workDir    = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
-	debugConf.arguments  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
-	debugConf.fdbCmd     = QFileInfo(QLatin1String("flowcpp")).absoluteFilePath();
-	QFileInfo info(debugConf.executable);
-	debugConf.executable = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".bytecode");
-	debugConf.debuginfo = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".debug");
-	runDebugger(debugConf);
+	try {
+		DebugConf debugConf;
+		debugConf.executable = flowView_.flowConfig_.ui.launchTableWidget->item(row, 1)->text();
+		debugConf.workDir    = flowView_.flowConfig_.ui.launchTableWidget->item(row, 2)->text();
+		debugConf.arguments  = flowView_.flowConfig_.ui.launchTableWidget->item(row, 5)->text();
+		debugConf.fdbCmd     = QFileInfo(QLatin1String("flowcpp")).absoluteFilePath();
+		QFileInfo info(debugConf.executable);
+		debugConf.executable = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".bytecode");
+		debugConf.debuginfo = info.dir().path() + QDir::separator() + info.baseName() + QLatin1String(".debug");
+		runDebugger(debugConf);
+	} catch (std::exception& ex) {
+		debugProcess_.kill();
+		KMessageBox::sorry(0, QLatin1String(ex.what()));
+	}
 }
 
 bool DebugManager::hasBreakpoint(const QUrl& url, int line) const {
