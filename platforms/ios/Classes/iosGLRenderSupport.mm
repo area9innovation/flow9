@@ -1827,15 +1827,18 @@ void iosGLRenderSupport::GetTargetTokens(std::set<std::string>& tokens)
     if (![FlowAVPlayerView useOpenGLVideo]) tokens.insert("nativevideo");
 }
 
-static float pxs_per_pnt = 1.0f;
-#define pxs2pts(x) ( x / pxs_per_pnt)
-bool iosGLRenderSupport::loadSystemFont(FontHeader *header, std::string name) {
+bool iosGLRenderSupport::loadSystemFont(FontHeader *header, TextFont textFont) {
     header->tile_size = 64;
     header->grid_size = 4;
     header->render_em_size = header->tile_size * 0.875f;
     header->active_tile_size = (header->tile_size - 2) / header->render_em_size;
     
-    NSString * font_name = [NSString stringWithUTF8String: name.c_str()];
+    NSString * font_name = [NSString stringWithUTF8String: textFont.family.c_str()];
+    NSString * font_suffix = [NSString stringWithUTF8String: textFont.suffix().c_str()];
+    if ([font_suffix length] != 0) {
+        font_name = [font_name stringByAppendingFormat:@"-%@", font_suffix];
+    }
+    
     UIFont * font = [UIFont fontWithName: font_name size: header->render_em_size];
     
     if(![font_name isEqualToString: font.fontName]) return false;
@@ -1843,10 +1846,6 @@ bool iosGLRenderSupport::loadSystemFont(FontHeader *header, std::string name) {
     float coeff = 1.0f / header->render_em_size;
     
     CGSize m_size = [@"M" sizeWithAttributes: @{NSFontAttributeName: font}];
-    
-    if (pxs_per_pnt == 1.0f) {
-        pxs_per_pnt = m_size.height / header->render_em_size;
-    }
     
     header->dist_scale = 1.0f / ( header->tile_size * 0.25 );
     header->ascender = font.ascender * coeff;
@@ -1859,7 +1858,7 @@ bool iosGLRenderSupport::loadSystemFont(FontHeader *header, std::string name) {
     return true;
 }
 
-bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code) {
+bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code) {
     const unsigned scale = 3;
     const unsigned render_size = header->tile_size * scale;
     const unsigned utf16Count = (code > 0xFFFF) + 1;
@@ -1876,8 +1875,15 @@ bool iosGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *
     NSMutableAttributedString * atext = [[NSMutableAttributedString alloc] initWithString: [[NSString alloc] initWithBytes:&code
                                                                                             length:4
                                                                                             encoding:NSUTF32LittleEndianStringEncoding]];
+    
+    NSString * font_name = [NSString stringWithUTF8String: textFont.family.c_str()];
+    NSString * font_suffix = [NSString stringWithUTF8String: textFont.suffix().c_str()];
+    if ([font_suffix length] != 0) {
+        font_name = [font_name stringByAppendingFormat:@"-%@", font_suffix];
+    }
     const float font_size = header->render_em_size * scale;
-    CTFontRef ct_font = CTFontCreateWithName((CFStringRef) [NSString stringWithUTF8String: name.c_str()], font_size, NULL);
+    
+    CTFontRef ct_font = CTFontCreateWithName((CFStringRef) font_name, font_size, NULL);
     [atext addAttribute:(NSString*)kCTFontAttributeName value: (id)ct_font range: NSMakeRange(0, utf16Count)];
     [atext addAttribute:(NSString*)kCTForegroundColorAttributeName value: (id)[UIColor colorWithWhite: 1.0f alpha: 1.0f].CGColor range: NSMakeRange(0, utf16Count)];
 

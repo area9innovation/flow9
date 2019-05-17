@@ -2,6 +2,7 @@
 #define GLRENDERSUPPORT_H
 
 #include "core/ByteCodeRunner.h"
+#include "font/TextFont.h"
 
 #include <set>
 #ifdef linux
@@ -278,9 +279,9 @@ private:
 
     shared_ptr<GLFont> FallbackFont;
     shared_ptr<GLFont> DefaultFont;
-    STL_HASH_MAP<unicode_string, shared_ptr<GLFont> > Fonts;
+    STL_HASH_MAP<TextFont, shared_ptr<GLFont> > Fonts;
 
-    shared_ptr<GLFont> lookupFont(unicode_string name);
+    shared_ptr<GLFont> lookupFont(TextFont textFont);
 
     void doUpdateAccessibleClips(GLClip * clip, std::vector<GLClip*> & accessible_clips, bool parent_enabled);
 
@@ -299,8 +300,8 @@ public:
     // Read a resource bundled with the program
     virtual bool loadAssetData(StaticBuffer *buffer, std::string name, size_t size);
 
-    virtual bool loadSystemFont(FontHeader* /*header*/, std::string /*name*/) { return false; }
-    virtual bool loadSystemGlyph(const FontHeader* /*header*/, GlyphHeader* /*info*/, StaticBuffer* /*pixels*/, std::string /*name*/, ucs4_char /*code*/) { return false; }
+    virtual bool loadSystemFont(FontHeader* /*header*/, TextFont /*textFont*/) { return false; }
+    virtual bool loadSystemGlyph(const FontHeader* /*header*/, GlyphHeader* /*info*/, StaticBuffer* /*pixels*/, TextFont /*textFont*/, ucs4_char /*code*/) { return false; }
 
     void setDebugHighlight(GLClip *clip);
 
