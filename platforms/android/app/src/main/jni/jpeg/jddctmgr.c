@@ -2,6 +2,7 @@
  * jddctmgr.c
  *
  * Copyright (C) 1994-1996, Thomas G. Lane.
+ * Modified 2002-2010 by Guido Vollbeding.
  * This file is part of the Independent JPEG Group's software.
  * For conditions of distribution and use, see the accompanying README file.
  *
@@ -20,38 +21,6 @@
 #include "jpeglib.h"
 #include "jdct.h"		/* Private declarations for DCT subsystem */
 
-#if defined(NV_ARM_NEON) || defined(__aarch64__)
-#include "jsimd_neon.h"
-#endif
-
-#ifdef ANDROID_ARMV6_IDCT
-
-/* Intentionally declare the prototype with arguments of primitive types instead
- * of type-defined ones. This will at least generate some warnings if jmorecfg.h
- * is changed and becomes incompatible with the assembly code.
- */
-extern void armv6_idct(short *coefs, int *quans, unsigned char **rows, int col);
-
-void jpeg_idct_armv6 (j_decompress_ptr cinfo, jpeg_component_info * compptr,
-		 JCOEFPTR coef_block,
-		 JSAMPARRAY output_buf, JDIMENSION output_col)
-{
-  IFAST_MULT_TYPE *dct_table = (IFAST_MULT_TYPE *)compptr->dct_table;
-  armv6_idct(coef_block, dct_table, output_buf, output_col);
-}
-
-#endif
-
-#ifdef ANDROID_INTELSSE2_IDCT
-extern short __attribute__((aligned(16))) quantptrSSE[DCTSIZE2];
-extern void jpeg_idct_intelsse (j_decompress_ptr cinfo, jpeg_component_info * compptr,
-		JCOEFPTR coef_block,
-		JSAMPARRAY output_buf, JDIMENSION output_col);
-#endif
-
-#ifdef ANDROID_MIPS_IDCT
-extern void jpeg_idct_mips(j_decompress_ptr, jpeg_component_info *, JCOEFPTR, JSAMPARRAY, JDIMENSION);
-#endif
 
 /*
  * The decompressor input side (jdinput.c) saves away the appropriate
@@ -130,88 +99,147 @@ start_pass (j_decompress_ptr cinfo)
   for (ci = 0, compptr = cinfo->comp_info; ci < cinfo->num_components;
        ci++, compptr++) {
     /* Select the proper IDCT routine for this component's scaling */
-    switch (compptr->DCT_scaled_size) {
+    switch ((compptr->DCT_h_scaled_size << 8) + compptr->DCT_v_scaled_size) {
 #ifdef IDCT_SCALING_SUPPORTED
-    case 1:
+    case ((1 << 8) + 1):
       method_ptr = jpeg_idct_1x1;
-      method = JDCT_ISLOW;	/* jidctred uses islow-style table */
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
       break;
-    case 2:
-#if (defined(NV_ARM_NEON) && defined(__ARM_HAVE_NEON)) || defined(__aarch64__)
-      if (cap_neon_idct_2x2()) {
-        method_ptr = jsimd_idct_2x2;
-      } else {
-        method_ptr = jpeg_idct_2x2;
-      }
-#else
+    case ((2 << 8) + 2):
       method_ptr = jpeg_idct_2x2;
-#endif
-      method = JDCT_ISLOW;	/* jidctred uses islow-style table */
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
       break;
-    case 4:
-#if (defined(NV_ARM_NEON) && defined(__ARM_HAVE_NEON)) || defined(__aarch64__)
-	  if (cap_neon_idct_4x4()) {
-        method_ptr = jsimd_idct_4x4;
-      } else {
-        method_ptr = jpeg_idct_4x4;
-      }
-#else
+    case ((3 << 8) + 3):
+      method_ptr = jpeg_idct_3x3;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((4 << 8) + 4):
       method_ptr = jpeg_idct_4x4;
-#endif
-      method = JDCT_ISLOW;	/* jidctred uses islow-style table */
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((5 << 8) + 5):
+      method_ptr = jpeg_idct_5x5;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((6 << 8) + 6):
+      method_ptr = jpeg_idct_6x6;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((7 << 8) + 7):
+      method_ptr = jpeg_idct_7x7;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((9 << 8) + 9):
+      method_ptr = jpeg_idct_9x9;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((10 << 8) + 10):
+      method_ptr = jpeg_idct_10x10;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((11 << 8) + 11):
+      method_ptr = jpeg_idct_11x11;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((12 << 8) + 12):
+      method_ptr = jpeg_idct_12x12;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((13 << 8) + 13):
+      method_ptr = jpeg_idct_13x13;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((14 << 8) + 14):
+      method_ptr = jpeg_idct_14x14;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((15 << 8) + 15):
+      method_ptr = jpeg_idct_15x15;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((16 << 8) + 16):
+      method_ptr = jpeg_idct_16x16;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((16 << 8) + 8):
+      method_ptr = jpeg_idct_16x8;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((14 << 8) + 7):
+      method_ptr = jpeg_idct_14x7;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((12 << 8) + 6):
+      method_ptr = jpeg_idct_12x6;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((10 << 8) + 5):
+      method_ptr = jpeg_idct_10x5;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((8 << 8) + 4):
+      method_ptr = jpeg_idct_8x4;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((6 << 8) + 3):
+      method_ptr = jpeg_idct_6x3;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((4 << 8) + 2):
+      method_ptr = jpeg_idct_4x2;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((2 << 8) + 1):
+      method_ptr = jpeg_idct_2x1;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((8 << 8) + 16):
+      method_ptr = jpeg_idct_8x16;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((7 << 8) + 14):
+      method_ptr = jpeg_idct_7x14;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((6 << 8) + 12):
+      method_ptr = jpeg_idct_6x12;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((5 << 8) + 10):
+      method_ptr = jpeg_idct_5x10;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((4 << 8) + 8):
+      method_ptr = jpeg_idct_4x8;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((3 << 8) + 6):
+      method_ptr = jpeg_idct_3x6;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((2 << 8) + 4):
+      method_ptr = jpeg_idct_2x4;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+      break;
+    case ((1 << 8) + 2):
+      method_ptr = jpeg_idct_1x2;
+      method = JDCT_ISLOW;	/* jidctint uses islow-style table */
       break;
 #endif
-    case DCTSIZE:
+    case ((DCTSIZE << 8) + DCTSIZE):
       switch (cinfo->dct_method) {
-#ifdef ANDROID_ARMV6_IDCT
-      case JDCT_ISLOW:
-      case JDCT_IFAST:
-	method_ptr = jpeg_idct_armv6;
-	method = JDCT_IFAST;
-	break;
-#else /* ANDROID_ARMV6_IDCT */
-#ifdef ANDROID_INTELSSE2_IDCT
-      case JDCT_ISLOW:
-      case JDCT_IFAST:
-	method_ptr = jpeg_idct_intelsse;
-	method = JDCT_ISLOW; /* Use quant table of ISLOW.*/
-	break;
-#else /* ANDROID_INTELSSE2_IDCT */
-#ifdef ANDROID_MIPS_IDCT
-      case JDCT_ISLOW:
-      case JDCT_IFAST:
-	method_ptr = jpeg_idct_mips;
-	method = JDCT_IFAST;
-	break;
-#else /* ANDROID_MIPS_IDCT */
 #ifdef DCT_ISLOW_SUPPORTED
       case JDCT_ISLOW:
-#if defined(__aarch64__)
-        if (cap_neon_idct_islow())
-          method_ptr = jsimd_idct_islow;
-        else
-#endif
 	method_ptr = jpeg_idct_islow;
 	method = JDCT_ISLOW;
 	break;
 #endif
 #ifdef DCT_IFAST_SUPPORTED
       case JDCT_IFAST:
-#if (defined(NV_ARM_NEON) && defined(__ARM_HAVE_NEON)) || defined(__aarch64__)
-        if (cap_neon_idct_ifast()) {
-          method_ptr = jsimd_idct_ifast;
-        } else {
-          method_ptr = jpeg_idct_ifast;
-        }
-#else
-        method_ptr = jpeg_idct_ifast;
-#endif
+	method_ptr = jpeg_idct_ifast;
 	method = JDCT_IFAST;
 	break;
 #endif
-#endif /* ANDROID_MIPS_IDCT */
-#endif /* ANDROID_INTELSSE2_IDCT*/
-#endif /* ANDROID_ARMV6_IDCT */
 #ifdef DCT_FLOAT_SUPPORTED
       case JDCT_FLOAT:
 	method_ptr = jpeg_idct_float;
@@ -224,7 +252,8 @@ start_pass (j_decompress_ptr cinfo)
       }
       break;
     default:
-      ERREXIT1(cinfo, JERR_BAD_DCTSIZE, compptr->DCT_scaled_size);
+      ERREXIT2(cinfo, JERR_BAD_DCTSIZE,
+	       compptr->DCT_h_scaled_size, compptr->DCT_v_scaled_size);
       break;
     }
     idct->pub.inverse_DCT[ci] = method_ptr;
@@ -266,27 +295,6 @@ start_pass (j_decompress_ptr cinfo)
 	 * IFAST_SCALE_BITS.
 	 */
 	IFAST_MULT_TYPE * ifmtbl = (IFAST_MULT_TYPE *) compptr->dct_table;
-#ifdef ANDROID_ARMV6_IDCT
-	/* Precomputed values scaled up by 15 bits. */
-	static const unsigned short scales[DCTSIZE2] = {
-	  32768, 45451, 42813, 38531, 32768, 25746, 17734,  9041,
-	  45451, 63042, 59384, 53444, 45451, 35710, 24598, 12540,
-	  42813, 59384, 55938, 50343, 42813, 33638, 23170, 11812,
-	  38531, 53444, 50343, 45308, 38531, 30274, 20853, 10631,
-	  32768, 45451, 42813, 38531, 32768, 25746, 17734,  9041,
-	  25746, 35710, 33638, 30274, 25746, 20228, 13933,  7103,
-	  17734, 24598, 23170, 20853, 17734, 13933,  9598,  4893,
-	   9041, 12540, 11812, 10631,  9041,  7103,  4893,  2494,
-	};
-	/* Inverse map of [7, 5, 1, 3, 0, 2, 4, 6]. */
-	static const char orders[DCTSIZE] = {4, 2, 5, 3, 6, 1, 7, 0};
-	/* Reorder the columns after transposing. */
-	for (i = 0; i < DCTSIZE2; ++i) {
-	  int j = ((i & 7) << 3) + orders[i >> 3];
-	  ifmtbl[j] = (qtbl->quantval[i] * scales[i] + 2) >> 2;
-	}
-#else /* ANDROID_ARMV6_IDCT */
-
 #define CONST_BITS 14
 	static const INT16 aanscales[DCTSIZE2] = {
 	  /* precomputed values scaled up by 14 bits */
@@ -307,7 +315,6 @@ start_pass (j_decompress_ptr cinfo)
 				  (INT32) aanscales[i]),
 		    CONST_BITS-IFAST_SCALE_BITS);
 	}
-#endif /* ANDROID_ARMV6_IDCT */
       }
       break;
 #endif
@@ -318,6 +325,7 @@ start_pass (j_decompress_ptr cinfo)
 	 * coefficients scaled by scalefactor[row]*scalefactor[col], where
 	 *   scalefactor[0] = 1
 	 *   scalefactor[k] = cos(k*PI/16) * sqrt(2)    for k=1..7
+	 * We apply a further scale factor of 1/8.
 	 */
 	FLOAT_MULT_TYPE * fmtbl = (FLOAT_MULT_TYPE *) compptr->dct_table;
 	int row, col;
@@ -331,7 +339,7 @@ start_pass (j_decompress_ptr cinfo)
 	  for (col = 0; col < DCTSIZE; col++) {
 	    fmtbl[i] = (FLOAT_MULT_TYPE)
 	      ((double) qtbl->quantval[i] *
-	       aanscalefactor[row] * aanscalefactor[col]);
+	       aanscalefactor[row] * aanscalefactor[col] * 0.125);
 	    i++;
 	  }
 	}
