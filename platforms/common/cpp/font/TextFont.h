@@ -1,6 +1,8 @@
 #ifndef TEXTFONT_H
 #define TEXTFONT_H
 
+#include "core/STLHelpers.h"
+
 #include <string>
 
 enum TextStyle {
@@ -42,10 +44,10 @@ private:
 
 };
 
-namespace std {
+BEGIN_STL_HASH_NAMESPACE
     template<> struct hash<TextFont> {
         std::size_t operator()(const TextFont& tf) const;
     };
-}
+END_STL_HASH_NAMESPACE
 
 #endif
