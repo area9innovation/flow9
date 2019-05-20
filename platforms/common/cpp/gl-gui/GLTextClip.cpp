@@ -1077,7 +1077,7 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
 
             char_idx = char_indices[glyph_idx];
             // Range check
-            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 && interp_dir<0)) {
+            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 || interp_dir<0)) {
                 int alt_char_idx = char_indices[glyph_idx+interp_dir];
                 int char_delta = alt_char_idx-char_idx;
                 if (abs(char_delta)>1) {
