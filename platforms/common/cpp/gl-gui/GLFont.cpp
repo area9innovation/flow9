@@ -206,7 +206,7 @@ GLFontLibrary::~GLFontLibrary()
 #endif
 }
 
-GLFont::Ptr GLFontLibrary::loadFont(std::string file)
+GLFont::Ptr GLFontLibrary::loadFont(TextFont textFont)
 {
 #ifndef FLOW_DFIELD_FONTS
     FT_Face face;
@@ -229,14 +229,14 @@ GLFont::Ptr GLFontLibrary::loadFont(std::string file)
     StaticBuffer data;
     GLFont::Ptr ptr;
 
-    if (owner->loadAssetData(&data, file + "/index.dat", StaticBuffer::AUTO_SIZE)) {
+    if (owner->loadAssetData(&data, textFont.family + textFont.suffix() + "/index.dat", StaticBuffer::AUTO_SIZE)) {
         FontHeader *header = (FontHeader*)data.data();
 
         if (header->magic != FontHeader::MAGIC ||
             header->hdr_size != sizeof(FontHeader) ||
             header->glyph_hdr_size != sizeof(GlyphHeader))
         {
-            cerr << "Invalid font format: " << file << endl;
+            cerr << "Invalid font format: " << textFont.family << endl;
             return GLFont::Ptr();
         }
 
@@ -245,15 +245,15 @@ GLFont::Ptr GLFontLibrary::loadFont(std::string file)
         FontHeader header;
         memset(&header, 0, sizeof(header));
 
-        if (!owner->loadSystemFont(&header, file)) {
-            cerr << "Couldn't load " << file << endl;
+        if (!owner->loadSystemFont(&header, textFont)) {
+            cerr << "Couldn't load " << textFont.family << endl;
             return GLFont::Ptr();
         }
 
         ptr = GLFont::Ptr(new GLFont(self.lock(), header));
     }
 
-    ptr->filename = file;
+    ptr->text_font = textFont;
 #endif
 
     ptr->self = ptr;
@@ -561,7 +561,7 @@ unsigned GLFont::loadSystemGlyph(ucs4_char char_code, bool force)
     memset(&header, 0, sizeof(header));
 
     unsigned size = font_header->tile_size*font_header->tile_size;
-    bool ok = library->owner->loadSystemGlyph(font_header, &header, &pixels, filename, char_code);
+    bool ok = library->owner->loadSystemGlyph(font_header, &header, &pixels, text_font, char_code);
 
     bool isUtf32Glyph = header.unicode_char > 0xFFFF;
     short scale = isUtf32Glyph ? 3 : 1;
@@ -708,12 +708,12 @@ GLTextureImage::Ptr GLFont::loadGlyphGrid(unsigned grid_id)
 
     StaticBuffer data;
 
-    if (!library->owner->loadAssetData(&data, filename + stl_sprintf("/%02d.xmf", grid_id), StaticBuffer::AUTO_SIZE)) {
-        cerr << "Could not load grid #" << grid_id << " of font " << filename << endl;
+    if (!library->owner->loadAssetData(&data, text_font.family + text_font.suffix() + stl_sprintf("/%02d.xmf", grid_id), StaticBuffer::AUTO_SIZE)) {
+        cerr << "Could not load grid #" << grid_id << " of font " << text_font.family << endl;
     } else {
         uLongf len = bmp->getDataSize();
         if (uncompress(bmp->getDataPtr(), &len, data.data(), data.size()) != Z_OK) {
-            cerr << "Could not uncompress grid #" << grid_id << " of font " << filename << endl;
+            cerr << "Could not uncompress grid #" << grid_id << " of font " << text_font.family << endl;
         }
     }
 

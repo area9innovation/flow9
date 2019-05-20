@@ -15,6 +15,22 @@ public class RenderSupport3D extends NativeHost {
 	public Object remove3DChild(Object parent, Object child) {
 		return null;
 	}
+	public Object[] get3DObjectChildren(Object object) {
+		return new Object[0];
+	}
+	public String get3DObjectJSON(Object object) {
+		return "";
+	}
+
+	public Object make3DObjectFromJSON(String json) {
+		return null;
+	}
+	public Object make3DGeometryFromJSON(String json) {
+		return null;
+	}
+	public Object make3DMaterialsFromJSON(String json) {
+		return null;
+	}
 
 	public Object make3DStage(Double width, Double height) {
 		return null;
@@ -58,6 +74,60 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 	public Object set3DScene(Object stage, Object scene) {
+		return null;
+	}
+
+	public Func0<Object> add3DEventListener(Object stage, String event, Func0<Object> cb) {
+		return no_op;
+	}
+	public Object emit3DMouseEvent(Object stage, String event, Double x, Double y) {
+		return null;
+	}
+	public Object emit3DKeyEvent(Object stage, String event, String utf, Boolean ctrl, Boolean shift, Boolean alt, Boolean meta, Integer keycode) {
+		return null;
+	}
+
+	public Object attach3DTransformControls(Object stage, Object object) {
+		return null;
+	}
+	public Object detach3DTransformControls(Object stage, Object object) {
+		return null;
+	}
+	public Object clear3DTransformControls(Object object) {
+		return null;
+	}
+
+	public Object attach3DBoxHelper(Object stage, Object object) {
+		return null;
+	}
+	public Object detach3DBoxHelper(Object stage, Object object) {
+		return null;
+	}
+	public Object clear3DBoxHelpers(Object object) {
+		return null;
+	}
+
+	public String get3DObjectId(Object object) {
+		return "";
+	}
+	public String get3DObjectType(Object object) {
+		return "";
+	}
+	public Object get3DObjectStage(Object object) {
+		return null;
+	}
+
+	public String get3DObjectName(Object object) {
+		return "";
+	}
+	public Object set3DObjectName(Object object, String name) {
+		return null;
+	}
+
+	public Boolean get3DObjectVisible(Object object) {
+		return false;
+	}
+	public Object set3DObjectVisible(Object object, Boolean visible) {
 		return null;
 	}
 

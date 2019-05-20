@@ -711,7 +711,7 @@ std::string GLTextClip::parseHtmlRec(const unicode_string &str, unsigned &pos, c
 
             if (tag == "font") {
                 if (attrs.count("face"))
-                    new_format.font = owner->lookupFont(attrs["face"]);
+                    new_format.font = owner->lookupFont(TextFont::makeWithFamily(encodeUtf8(attrs["face"])));
                 if (attrs.count("size"))
                     new_format.size = atof(encodeUtf8(attrs["size"]).c_str());
                 if (attrs.count("color") && attrs["color"][0] == '#') {
@@ -832,22 +832,6 @@ static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-// HACK due to unable remake builtin fonts
-unicode_string recognizeBuiltinFont(unicode_string name) {
-    size_t tpos = name.rfind((unicode_char)'/');
-    if (tpos == (size_t)-1) tpos = name.size(); else ++tpos;
-    unicode_string r(name);
-    if (startsWith(name, parseUtf8("Material Icons"))) {
-        r = parseUtf8("MaterialIcons");
-    }
-    else {
-        unicode_string tail = name.substr(tpos);
-        if (startsWith(name, parseUtf8("Franklin Gothic"))) r = tail;
-        else if (name == parseUtf8("Roboto")) r = parseUtf8("Roboto")+tail;
-    }
-    return r;
-}
-
 StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
 {
     #define SIZE 8
@@ -856,23 +840,6 @@ StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
     newargs[SIZE+1] = StackSlot::MakeDouble(0);
     return setTextAndStyle(RUNNER, newargs);
     #undef SIZE
-}
-
-// Almostly all fonts don't have all 9 weights, so, maybe skipping to nearest weight might be desired feature
-const unicode_string GLTextClip::intFontWeight2StrSuffix(int w) {
-    if (w<=500) {
-        if (w<=300) {
-            if (w<=100) return parseUtf8("Thin");
-            else if (w<=200) return parseUtf8("Ultra Light");
-            else return parseUtf8("Light");
-        } else
-            if (w<=400) return parseUtf8("");  // "Book"
-            else return parseUtf8("Medium");
-    } else if (w<=700) {
-        if (w<=600) return parseUtf8("Semi Bold");
-        else return parseUtf8("Bold");
-    } else if (w<=800) return parseUtf8("Extra Bold");
-    else return parseUtf8("Black");
 }
 
 StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
@@ -886,22 +853,12 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
     getFlowRunner()->ClaimInstructionsSpent(owner->ProfilingInsnCost*5, 110);
 #endif
 
-    base_font_weight = font_weight.GetInt();
     unicode_string font_slope = RUNNER->GetString(font_slope_str);
     base_font_name = RUNNER->GetString(font_str);
 
-    base_font_name = base_font_name + intFontWeight2StrSuffix(base_font_weight);
-
     base_format.color = flowToColor(font_color_i, opacity);
-
-    if (font_slope.length()) {
-        font_slope[0] = toupper(font_slope[0]);
-        if (font_slope.compare(parseUtf8("Normal")) && font_slope.compare(parseUtf8("Regular")))
-            base_font_name = base_font_name + parseUtf8("/") + font_slope;
-    }
-
-    base_font_name = recognizeBuiltinFont(base_font_name);
-    base_format.font = owner->lookupFont(base_font_name);
+    base_format.text_font = TextFont::makeWithParameters(encodeUtf8(base_font_name), font_weight.GetInt(), encodeUtf8(font_slope));
+    base_format.font = owner->lookupFont(base_format.text_font);
 
     base_format.size = font_size.GetDouble();
     base_format.spacing = spacing.GetDouble();

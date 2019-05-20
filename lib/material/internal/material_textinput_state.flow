@@ -19,6 +19,7 @@ export {
 		inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MAutoCompleteStyle]) -> MCompletionFn;
+	addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic;
 
 	MTextEditorIScriptBehaviours(
 		content : DynamicBehaviour<string>,
@@ -69,6 +70,7 @@ export {
 		readOnly : bool,
 		color : MColor,
 		width : double,
+		textWidth : DynamicBehaviour<double>,
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
@@ -115,9 +117,15 @@ export {
 		includeSpaces : bool,
 		currentMatches : Maybe<MCurrentMatches>,
 		fill : [TGraphicsStyle],
-		setWord : (matches : [SentenceMatch], match : SentenceMatch) -> void,
+		setWord : (word : string) -> void,
 		isTextInputInPopup : bool,
-		onTop : bool
+		onTop : bool,
+		inLine : Maybe<MAutoCompleteInLineState>
+	);
+
+	MAutoCompleteInLineState(
+		bestSuggestion : Transform<Maybe<Pair<string, string>>>,
+		showPopup : bool
 	);
 
 	MInputPopupState(
@@ -287,6 +295,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	condensed = extractStruct(style, MCondensed(false)).condensed;
 	color = extractStruct(style, getAccentColor(parent));
 	width = extractStruct(style, MWidth(-1.)).width;
+	textWidth = make(0.);
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
 	fontPadding = extractStruct(style, MInputFontPadding(0.)).padding;
 	filterAction = iScriptBehaviours.filterAction;
@@ -613,11 +622,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (matchers != []) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
 
-			setWord = \matches : [SentenceMatch], match : SentenceMatch -> {
+			setWord = \word : string -> {
 					nextDistinct(mfocus.focused, false);
 
-					w = match.sentence;
-					newContent = composeContentFn(w, getValue(content), getValue(position));
+					newContent = composeContentFn(word, getValue(content), getValue(position));
 					next(content, newContent);
 
 					if (multiline) nextDistinct(mfocus.focused, true);
@@ -625,6 +633,24 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					cw = getCurrentWordPosition(getValue(content), getValue(position), [newContent]);
 					nextDistinct(position, forceRange(firstOfPair(cw) + strlen(newContent), 0, strlen(getValue(content))));
 			}
+
+			sentences = make([]);
+
+			inLine =
+				maybeMap(
+					tryExtractStruct(style, MSuggestionInLine(false)),
+					\inline -> MAutoCompleteInLineState(
+						fselect(sentences, FLift(\sent -> {
+							cont = getValue(content);
+							findmap(sent, \s ->
+								if (startsWith(toLowerCase(s.sentence), toLowerCase(cont)))
+									Some(Pair(s.sentence, strRight(s.sentence, strlen(cont))))
+								else None()
+							)
+						})),
+						inline.showPopup
+					)
+				);
 
 			Some(
 				MInputAutocompleteState(
@@ -641,7 +667,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								\ -> defaultCompletionFn(manager, parent, style)
 							)
 					),
-					make([]),
+					sentences,
 					make(-1),
 					contains(style, MShowAllOnEmpty()),
 					extractStruct(style, MMaxResults(10)).results,
@@ -651,7 +677,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
 					iScriptBehaviours.isTextInputInPopup,
-					contains(style, MSuggestionsOnTop())
+					contains(style, MSuggestionsOnTop()),
+					inLine
 				)
 			)
 		} else
@@ -1038,6 +1065,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		readOnly,
 		color,
 		width,
+		textWidth,
 		align,
 		iconSize,
 		iconBorders,
@@ -2061,6 +2089,7 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 				)
 			)
 			|> (\f -> TAttachBox(f, editorState.contentWH))
+			|> (\t -> TAttachWidth(t, inputState.textWidth))
 			|> TSetMinWidth(TFixed(wd, 0.))
 			|> TFixHeight(TFixed(0., i2d(length(lns)) * editorState.textHeight))
 		);
@@ -2127,14 +2156,13 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 	)
 	|> (\f ->
 		if (inputState.align == AutoAlignCenter())
-			TCenterXIn(TFixSize(f, TSized(editorState.contentWH)), TFillXY())
+			TFixSize(f, TSized(editorState.contentWH)) |> TCenterX
 		else if (inputState.align == AutoAlignRight())
-			TTweak([TAlign(const(1.), zero)], TFixSize(f, TSized(editorState.contentWH)), TFillXY())
+			TFixSize(f, TSized(editorState.contentWH)) |> TAlignTopRight
 		else
 			f
 	)
 	|> (\f -> TAttachWidth2(TFillX(), editorState.width, f))
-
 	|> (\f -> {
 		boxHeight =
 			if (inputState.linesCount > 0)
@@ -2435,7 +2463,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 					\pw -> TSelect3(inputState.content, inputState.mfocus.enabled, pw.showPassword, f2),
 					TSelect2(inputState.content, inputState.mfocus.enabled, \c, en -> f2(c, en, true))
 				)
-			),
+			)
+			|> (\t -> TAttachWidth(t, inputState.textWidth)),
 			f
 		)
 	)
@@ -2509,4 +2538,25 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 			)
 		})
 	)
+}
+
+addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic {
+	dh = if (!inputState.useNativeInput) 0. else if (js) -1. else 1.; // workaround for better text alignment
+
+	\t ->
+		eitherMap(inputState.autocomplete, \ac ->
+			eitherMap(ac.inLine, \inline ->
+				TSelect(inline.bestSuggestion, \best ->
+					eitherMap(best,	\sg ->
+						MText2T(inputState.parent, sg.second, inputState.mTextStyleDisabled)
+						|> (\t2 -> TTranslate(fselect(inputState.textWidth, FLift(\tw -> Point(tw, dh))), t2)),
+						TEmpty()
+					)
+				)
+				|> (\sg -> TShow(inputState.focus, sg))
+				|> (\sg -> TGroup2SameMetrics(t, sg)),
+				t
+			),
+			t
+		)
 }

@@ -1660,12 +1660,18 @@ void AndroidRenderSupport::notifyPageError(jlong clip, jstring msg)
     dispatchPageError((GLClip*)clip, msg_str);
 }
 
-bool AndroidRenderSupport::loadSystemFont(FontHeader *header, std::string name)
+bool AndroidRenderSupport::loadSystemFont(FontHeader *header, TextFont textFont)
 {
     JNIEnv *env = owner->env;
 
+    std::string fontFamily = textFont.family;
+    std::string fontSuffix = textFont.suffix();
+    if (fontSuffix.size() != 0) {
+        fontFamily = fontFamily + "-" + fontSuffix;
+    }
+
     jfloatArray rvdata = env->NewFloatArray(8);
-    jstring jname = string2jni(env, name);
+    jstring jname = string2jni(env, fontFamily);
 
     header->tile_size = 64;
     header->grid_size = 4;
@@ -1701,9 +1707,15 @@ bool AndroidRenderSupport::loadSystemFont(FontHeader *header, std::string name)
 
 double GetCurrentTime();
 
-bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code)
+bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code)
 {
     JNIEnv *env = owner->env;
+
+    std::string fontFamily = textFont.family;
+    std::string fontSuffix = textFont.suffix();
+    if (fontSuffix.size() != 0) {
+        fontFamily = fontFamily + "-" + fontSuffix;
+    }
 
     if (env->PushLocalFrame(10) < 0) {
         cerr << "Cannot allocate local frame for glyph generation" << endl;
@@ -1715,7 +1727,7 @@ bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader
     bool isUtf32Glyph = code > 0xFFFF;
 
     jfloatArray rvdata = env->NewFloatArray(7);
-    jstring jname = string2jni(env, name);
+    jstring jname = string2jni(env, fontFamily);
 
     jcharArray codes = env->NewCharArray(1 + isUtf32Glyph);
     jchar* _codes = env->GetCharArrayElements(codes, 0);
@@ -1776,7 +1788,9 @@ bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader
     env->ReleaseFloatArrayElements(rvdata, data, 0);
 
     double tv2 = GetCurrentTime();
-    cout << "Glyph generated in " << (tv2-tv) << endl;
+
+    if (getFlowRunner()->NotifyStubs)
+        cout << "Glyph generated in " << (tv2-tv) << endl;
 
     jint *img = env->GetIntArrayElements(rvimg, 0);
 
@@ -1814,7 +1828,8 @@ bool AndroidRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader
 
         smoothFontBitmap(header, pixels, bytes.data(), scale);
 
-        cout << "Glyph smoothed in " << (GetCurrentTime()-tv2) << endl;
+        if (getFlowRunner()->NotifyStubs)
+            cout << "Glyph smoothed in " << (GetCurrentTime()-tv2) << endl;
     }
 
     env->ReleaseIntArrayElements(rvimg, img, 0);

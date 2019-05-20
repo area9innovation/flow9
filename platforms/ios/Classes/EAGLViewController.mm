@@ -36,6 +36,7 @@
     }
     
     statusBarVisible = YES;
+    statusBarIconsTheme = NO;
     [self setNeedsStatusBarAppearanceUpdate];
 }
 
@@ -243,11 +244,19 @@ static bool gestureBeingHandledByFlow = false;
     return !statusBarVisible;
 }
 
+- (UIStatusBarStyle)preferredStatusBarStyle {
+    return statusBarIconsTheme ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
+}
+
 - (void) setStatusBarVisible: (BOOL)visible {
     statusBarVisible = visible;
     [self setNeedsStatusBarAppearanceUpdate];
 }
 
+- (void) setStatusBarIconsTheme: (BOOL)light {
+    statusBarIconsTheme = light;
+    [self setNeedsStatusBarAppearanceUpdate];
+}
 #pragma mark Debug console methods
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return [DebugLog sharedLog].LogMessages.count;

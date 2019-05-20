@@ -12,6 +12,7 @@ import js.three.PerspectiveCamera;
 
 import js.three.OrbitControls;
 import js.three.TransformControls;
+import js.three.BoxHelper;
 
 import js.three.Scene;
 import js.three.Raycaster;
@@ -27,6 +28,7 @@ class ThreeJSStage extends DisplayObject {
 	public var renderer : WebGLRenderer;
 	public var orbitControls : OrbitControls;
 	public var transformControls : TransformControls;
+	public var boxHelpers : Array<BoxHelper> = new Array<BoxHelper>();
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
@@ -110,11 +112,16 @@ class ThreeJSStage extends DisplayObject {
 	}
 
 	public function setScene(scene : Scene) {
-		if (scene != null && transformControls != null) {
-			untyped scene.transformControls = null;
+		if (scene != null) {
+			if (transformControls != null) {
+				untyped scene.transformControls = null;
+			}
+
+			untyped scene.stage = null;
 		}
 
 		this.scene = scene;
+		untyped this.scene.stage = this;
 
 		if (transformControls != null) {
 			untyped scene.transformControls = transformControls;
@@ -140,7 +147,15 @@ class ThreeJSStage extends DisplayObject {
 			scene.add(transformControls);
 		}
 
+		for (b in boxHelpers) {
+			scene.add(b);
+		}
+
 		this.renderer.render(scene, camera);
+
+		for (b in boxHelpers) {
+			scene.remove(b);
+		}
 
 		if (transformControls != null) {
 			scene.remove(transformControls);

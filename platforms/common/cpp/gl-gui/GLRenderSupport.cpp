@@ -92,12 +92,12 @@ void GLRenderSupport::flowGCObject(GarbageCollectorFn ref)
     ref << DebugHighlightClip;
 }
 
-GLFont::Ptr GLRenderSupport::lookupFont(unicode_string name)
+GLFont::Ptr GLRenderSupport::lookupFont(TextFont textFont)
 {
-    GLFont::Ptr &ptr = Fonts[name];
+    GLFont::Ptr &ptr = Fonts[textFont];
     if (!ptr)
     {
-        ptr = FontLibrary->loadFont(encodeUtf8(name));
+        ptr = FontLibrary->loadFont(textFont);
         if (!ptr)
             ptr = DefaultFont;
     }
@@ -106,7 +106,8 @@ GLFont::Ptr GLRenderSupport::lookupFont(unicode_string name)
 
 bool GLRenderSupport::setFallbackFont(unicode_string name) {
     if (!FallbackFont) {
-        FallbackFont = lookupFont(name);
+
+        FallbackFont = lookupFont(TextFont::makeWithFamily(encodeUtf8(name)));
         FallbackFont->is_fallback = true;
     } else {
         // Some GlyphInfo might have id & FALLBACK_FONT instead of id.
@@ -120,15 +121,16 @@ void GLRenderSupport::loadFont(std::string filename, std::vector<unicode_string>
 {
     if (!FontLibrary) return;
 
-    GLFont::Ptr font = FontLibrary->loadFont(filename);
+    TextFont textFont = TextFont::makeWithFamily(filename);
+    GLFont::Ptr font = FontLibrary->loadFont(textFont);
     if (font) {
         if (!DefaultFont || set_default)
             DefaultFont = font;
 
-        Fonts[parseUtf8(font->getFamilyName() + " " + font->getStyleName())] = font;
+        Fonts[textFont] = font;
 
         for (unsigned i = 0; i < aliases.size(); i++)
-            Fonts[aliases[i]] = font;
+            Fonts[TextFont::makeWithFamily(encodeUtf8(aliases[i]))] = font;
     } else {
          cerr << "Cannot load font : " << filename << endl;
     }
