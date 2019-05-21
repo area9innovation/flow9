@@ -16,7 +16,7 @@ IMPLEMENT_FLOW_NATIVE_OBJECT(LoadedBytecode, FlowNativeObject)
 IMPLEMENT_FLOW_NATIVE_OBJECT(FlowRunnerThreadRef, FlowNativeObject)
 
 #ifdef FLOW_JIT
-FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file);
+FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, const unsigned long memory_limit = 0);
 void deleteJitProgram(FlowJitProgram *program);
 #endif
 
@@ -101,7 +101,7 @@ bool LoadedBytecode::load()
 #ifdef FLOW_JIT
     if (true)
     {
-        bytecode->jit_program = loadJitProgram(getFlowRunner()->flow_err, bytecode->filename, "");
+		bytecode->jit_program = loadJitProgram(getFlowRunner()->flow_err, bytecode->filename, "");
 
         if (!bytecode->jit_program)
             return false;
@@ -203,7 +203,10 @@ StackSlot RunParallelHost::loadBytecode(RUNNER_ARGS)
 
     LoadedBytecode *data = new LoadedBytecode(this, bcode);
 
-    data->load();
+	if (!data->load()) {
+		delete data;
+		return StackSlot::MakeVoid();
+	}
 
     return RUNNER->AllocNative(data);
 }
