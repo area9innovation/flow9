@@ -123,6 +123,8 @@ class Object3DHelper {
 				broadcastEvent(child, "scale");
 				broadcastEvent(child, "rotation");
 
+				emitEvent(parent, "change");
+
 				invalidateStage(parent);
 			}
 		}
@@ -143,6 +145,8 @@ class Object3DHelper {
 			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
 
+			emitEvent(parent, "change");
+
 			invalidateStage(parent);
 		}
 	}
@@ -155,6 +159,8 @@ class Object3DHelper {
 		if (invalidate) {
 			emitEvent(parent, "box");
 			emitEvent(parent, "childrenchanged");
+
+			emitEvent(parent, "change");
 
 			invalidateStage(parent);
 		}

@@ -9,6 +9,7 @@ F3DEditorState(
 	tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>,
 	treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>,
 	selected : DynamicBehaviour<Maybe<native>>,
+	undoStack : DynamicBehaviour<[string]>,
 	axes : DynamicBehaviour<bool>,
 	grid : DynamicBehaviour<bool>,
 	boxes : DynamicBehaviour<bool>
@@ -32,6 +33,7 @@ makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
 		currentTree,
 		make([]),
 		currentObject,
+		make([]),
 		axesVisible,
 		gridVisible,
 		boxesVisible
@@ -52,6 +54,9 @@ printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 		}
 		F3DNativeMutable(innerObject): {
 			F3DNativeMutable(fselect(innerObject, FLift(\it -> printF3DChildren(id, it))));
+		}
+		default: {
+			object;
 		}
 	}
 }
@@ -77,7 +82,10 @@ makeF3DTreeNode(
 						make2Subscribe(sel, state.boxes, \sl, boxes -> {
 							iter(get3DObjectStage(clip), \s -> {
 								if (sl) {
+									clear3DTransformControls(s);
+									appendF3DUndo(state);
 									attach3DTransformControls(s, clip);
+
 									next(state.selected, Some(clip));
 								} else {
 									detach3DTransformControls(s, clip);
@@ -111,7 +119,10 @@ makeF3DTreeNode(
 						[
 							MIconButtonBorder(6.0),
 							MIconSize(16.0),
-							MOnNewValue(\v -> set3DObjectVisible(clip, v))
+							MOnNewValue(\v -> {
+								appendF3DUndo(state);
+								set3DObjectVisible(clip, v);
+							})
 						]
 					)
 				),
@@ -134,7 +145,8 @@ makeF3DTreeNode(
 									} else {
 										c;
 									}
-								})
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
 							]
 						)
 					),
@@ -146,6 +158,7 @@ makeF3DTreeNode(
 					MIconButton(
 						"delete",
 						\ -> {
+							appendF3DUndo(state);
 							removeF3DSceneId(state.treeOrder, get3DObjectId(clip));
 						},
 						[
@@ -180,18 +193,47 @@ makeF3DTree(
 		F3DNativeMutable(innerObject): {
 			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, id, it)));
 		}
+		F3DNativeOnLoad(innerObject, onLoad): {
+			makeF3DTree(state, id, innerObject)
+		}
 	}
 }
+
+Point3D(x : double, y : double, z : double);
 
 makeF3DScene(state : F3DEditorState, node : MTreeOrderNode<string>) -> F3DNative {
 	children = fgetValue(node.children);
 	clip = get3DObjectById(state.stage, node.content)[0];
 
-	if (length(children) > 0) {
-		F3DNativeScene(clip, const(map(children, \c -> makeF3DScene(state, c))));
-	} else {
-		F3DNativeObject(clip);
-	}
+	position = Point3D(get3DObjectWorldX(clip), get3DObjectWorldY(clip), get3DObjectWorldZ(clip));
+	rotation = Point3D(get3DObjectWorldRotationX(clip), get3DObjectWorldRotationY(clip), get3DObjectWorldRotationZ(clip));
+	scale = Point3D(get3DObjectWorldScaleX(clip), get3DObjectWorldScaleY(clip), get3DObjectWorldScaleZ(clip));
+
+	// println("---");
+	// println(position);
+	// println(rotation);
+	// println(scale);
+
+	F3DNativeOnLoad(
+		if (length(children) > 0) {
+			F3DNativeScene(clip, const(map(children, \c -> makeF3DScene(state, c))));
+		} else {
+			F3DNativeObject(clip);
+		},
+		\object -> {
+			set3DObjectWorldX(object, position.x);
+			set3DObjectWorldY(object, position.y);
+			set3DObjectWorldZ(object, position.z);
+
+			set3DObjectWorldRotationX(object, rotation.x);
+			set3DObjectWorldRotationY(object, rotation.y);
+			set3DObjectWorldRotationZ(object, rotation.z);
+
+			set3DObjectWorldScaleX(object, scale.x);
+			set3DObjectWorldScaleY(object, scale.y);
+			set3DObjectWorldScaleZ(object, scale.z);
+		}
+	)
 }
 
 addF3DNativeObject(state : F3DEditorState, clip : native, name : string) -> void {
@@ -205,14 +247,6 @@ addF3DNativeObject(state : F3DEditorState, clip : native, name : string) -> void
 		children = fgetValue(node.children);
 		sceneClip = get3DObjectById(state.stage, node.content)[0];
 
-		timer(100, \ -> iter(get3DObjectStage(clip), \s -> {
-			attach3DTransformControls(s, clip);
-
-			if (fgetValue(state.boxes)) {
-				attach3DBoxHelper(s, clip);
-			}
-		}));
-
 		next(
 			state.scene,
 			[
@@ -221,7 +255,18 @@ addF3DNativeObject(state : F3DEditorState, clip : native, name : string) -> void
 					const(
 						arrayPush(
 							map(children, \c -> makeF3DScene(state, c)),
-							F3DNativeObject(clip)
+							F3DNativeOnLoad(
+								F3DNativeObject(clip),
+								\object -> {
+									iter(get3DObjectStage(object), \s -> {
+										attach3DTransformControls(s, object);
+
+										if (fgetValue(state.boxes)) {
+											attach3DBoxHelper(s, object);
+										}
+									});
+								}
+							)
 						)
 					)
 				)
@@ -240,7 +285,7 @@ removeF3DSceneId(nodes : DynamicBehaviour<[MTreeOrderNode<string>]>, id : string
 	);
 }
 
-F3DObjectProperties(object : native) -> Material {
+F3DObjectProperties(state : F3DEditorState, object : native) -> Material {
 	map(
 		[
 			Pair(
@@ -295,7 +340,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -310,7 +356,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -325,7 +372,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 						])
@@ -359,7 +407,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -374,7 +423,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -389,7 +439,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 						])
@@ -423,7 +474,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -438,7 +490,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 							MFixedX(16.0),
@@ -453,7 +506,8 @@ F3DObjectProperties(object : native) -> Material {
 										} else {
 											c;
 										}
-									})
+									}),
+									MOnFocus(\__ -> appendF3DUndo(state))
 								]
 							),
 						])
@@ -467,14 +521,20 @@ F3DObjectProperties(object : native) -> Material {
 						MText("Cast", []),
 						make(get3DObjectCastShadow(object)),
 						[
-							MOnNewValue(\v -> set3DObjectCastShadow(object, v))
+							MOnNewValue(\v -> {
+								appendF3DUndo(state);
+								set3DObjectCastShadow(object, v);
+							})
 						]
 					),
 					MCheckBox(
 						MText("Recieve", []),
 						make(get3DObjectReceiveShadow(object)),
 						[
-							MOnNewValue(\v -> set3DObjectReceiveShadow(object, v))
+							MOnNewValue(\v -> {
+								appendF3DUndo(state);
+								set3DObjectReceiveShadow(object, v);
+							})
 						]
 					),
 					TFillX()
@@ -500,7 +560,10 @@ F3DObjectProperties(object : native) -> Material {
 						TEmpty(),
 						make(get3DObjectFrustumCulled(object)),
 						[
-							MOnNewValue(\v -> set3DObjectFrustumCulled(object, v))
+							MOnNewValue(\v -> {
+								appendF3DUndo(state);
+								set3DObjectFrustumCulled(object, v);
+							})
 						]
 					),
 					TFillX()
@@ -514,6 +577,30 @@ F3DObjectProperties(object : native) -> Material {
 			])
 	)
 	|> MLinesYCenter
+}
+
+appendF3DUndo(state : F3DEditorState) -> void {
+	iter(get3DStageScene(state.stage), \scene -> {
+		undo = get3DObjectState(scene);
+		stack = getValue(state.undoStack);
+
+		if (length(stack) == 0 || undo != stack[length(stack) - 1]) {
+			next(state.undoStack, arrayPush(stack, undo));
+		}
+	});
+}
+
+applyF3DUndo(state : F3DEditorState) -> void {
+	stack = getValue(state.undoStack);
+
+	if (length(stack) > 0) {
+		undo = stack[length(stack) - 1];
+		iter(get3DStageScene(state.stage), \scene -> {
+			apply3DObjectState(scene, undo);
+		});
+
+		next(state.undoStack, subrange(stack, 0, length(stack) - 1));
+	}
 }
 
 main() {
@@ -575,6 +662,41 @@ main() {
 					],
 					[
 						MMenuIndent()
+					]
+				),
+				MMenu(
+					MTextButton("Edit", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Undo",
+							[
+								// MPrimaryAction(MIf(state.axes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> applyF3DUndo(state)),
+								MAdditionalText("Ctrl+Z"),
+								MShortcut("Ctrl+Z"),
+								MEnabled(fneq(flength(state.undoStack), 0))
+							]
+						),
+						MMenuSingleLine(
+							"Redo",
+							[
+								// MPrimaryAction(MIf(state.grid, MIcon("grid_on", []), MIcon("grid_off", []))),
+								// MOnClick(\ -> reverseBehaviour(state.grid)),
+								MAdditionalText("Ctrl+Shift+Z"),
+								MShortcut("Ctrl+Shift+Z"),
+								MEnabled(const(false))
+							]
+						),
+						// MMenuSingleLine(
+						// 	"Boxes",
+						// 	[
+						// 		MPrimaryAction(MIf(state.boxes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+						// 		MOnClick(\ -> reverseBehaviour(state.boxes))
+						// 	]
+						// )
+					],
+					[
+						// MMenuIndent()
 					]
 				),
 				MMenu(
@@ -782,13 +904,15 @@ main() {
 						MTreeOrder(state.treeOrder),
 						MTreeOnOrderChange(\t -> {
 							if (length(t) > 0 && length(getValue(t[0].children)) > 0) {
+								appendF3DUndo(state);
+
 								next(state.scene, [makeF3DScene(state, getValue(t[0].children)[0])]);
 							}
 						})
 					]
 				)
 				|> (\f -> MBorder(8.0, 8.0, 16.0, 8.0, f)),
-				MSelect(state.selected, \o -> eitherMap(o, \c -> F3DObjectProperties(c), TEmpty()))
+				MSelect(state.selected, \o -> eitherMap(o, \c -> F3DObjectProperties(state, c), TEmpty()))
 				|> (\f -> MBorder(24.0, 8.0, 24.0, 8.0, f)),
 				TFillXY(),
 				[

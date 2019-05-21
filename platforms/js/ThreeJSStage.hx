@@ -121,16 +121,19 @@ class ThreeJSStage extends DisplayObject {
 		}
 
 		this.scene = scene;
-		untyped this.scene.stage = this;
 
-		if (transformControls != null) {
-			untyped scene.transformControls = transformControls;
+		if (this.scene != null) {
+			untyped this.scene.stage = this;
+
+			if (transformControls != null) {
+				untyped scene.transformControls = transformControls;
+			}
+
+			// Chrome Inspect Three.js extension support
+			untyped __js__("window.scene = scene;");
+
+			invalidateStage();
 		}
-
-		// Chrome Inspect Three.js extension support
-		untyped __js__("window.scene = scene;");
-
-		invalidateStage();
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {

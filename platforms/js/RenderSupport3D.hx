@@ -5,6 +5,8 @@ import js.three.Fog;
 
 import js.three.Color;
 import js.three.Vector3;
+import js.three.Euler;
+import js.three.Quaternion;
 
 import js.three.Object3D;
 import js.three.Mesh;
@@ -121,6 +123,82 @@ class RenderSupport3D {
 
 	public static function get3DObjectJSON(object : Object3D) : String {
 		return haxe.Json.stringify(object.toJSON());
+	}
+
+	public static function get3DObjectState(object : Object3D) : String {
+		var obj : Dynamic = {};
+
+		untyped __js__("
+			for (var property in object) {
+				if (!(object[property] instanceof Function) && property != 'children' && property != 'geometry' && property != 'childrenMap'
+					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
+					&& property != 'material') {
+
+					obj[property] = object[property];
+				}
+			}
+		");
+
+		obj.childrenMap = new Array<Array<Dynamic>>();
+
+		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
+		var objChildren : Array<Array<Dynamic>> = obj.childrenMap;
+
+		for (key in objectChildren.keys()) {
+			objChildren.push([key, get3DObjectState(objectChildren.get(key))]);
+		}
+
+		return haxe.Json.stringify(obj);
+	}
+
+	public static function apply3DObjectState(object : Object3D, state : String) : Void {
+		var obj = haxe.Json.parse(state);
+
+		apply3DObjectStateFromObject(object, obj);
+	}
+
+	private static function apply3DObjectStateFromObject(object : Object3D, obj : Dynamic) : Void {
+		var stage = object.getStage();
+
+		if (stage.length == 0) {
+			return;
+		}
+
+		untyped __js__("
+			for (var property in obj) {
+				if (property != 'childrenMap') {
+					RenderSupport3D.copyObjectProperties(obj[property], object[property]);
+				}
+			}
+		");
+
+		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
+		var objChildren : Array<Array<Dynamic>> = obj.childrenMap.map(function(child) {
+			var childObj = haxe.Json.parse(child[1]);
+
+			return untyped [child[0], childObj, get3DObjectById(stage[0], get3DObjectId(childObj))[0]];
+		});
+
+		for (child in objChildren) {
+			if (child[1] != null) {
+				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1]);
+				object.add3DChildAt(child[2], child[0]);
+			}
+		}
+	}
+
+	private static function copyObjectProperties(object1 : Dynamic, object2 : Dynamic) : Void {
+		untyped __js__("
+			for (var property in object1) {
+				if (object2[property]) {
+					if (typeof object1[property] != 'object' && typeof object1[property] != 'function') {
+						object2[property] = object1[property];
+					} else {
+						RenderSupport3D.copyObjectProperties(object1[property], object2[property]);
+					}
+				}
+			}
+		");
 	}
 
 	public static function make3DObjectFromJSON(json : Dynamic) : Object3D {
@@ -346,7 +424,6 @@ class RenderSupport3D {
 		if (untyped object.boxHelper == null) {
 			if (untyped __instanceof__(object, PointLight)) {
 				var boxHelper = new PointLightHelper(untyped object, untyped object.distance);
-				trace(untyped object.distance);
 				untyped boxHelper.disposers = [];
 
 				stage.boxHelpers.push(boxHelper);
@@ -420,6 +497,10 @@ class RenderSupport3D {
 		return object.getStage();
 	}
 
+	public static function get3DStageScene(stage : ThreeJSStage) : Array<Scene> {
+		return stage.scene != null ? [stage.scene] : [];
+	}
+
 	public static function get3DObjectName(object : Object3D) : String {
 		return object.name;
 	}
@@ -437,6 +518,7 @@ class RenderSupport3D {
 			object.visible = visible;
 
 			object.broadcastEvent("visiblechanged");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -451,6 +533,7 @@ class RenderSupport3D {
 			object.castShadow = castShadow;
 
 			object.broadcastEvent("shadowchanged");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -465,6 +548,7 @@ class RenderSupport3D {
 			object.receiveShadow = receiveShadow;
 
 			object.broadcastEvent("shadowchanged");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -479,6 +563,7 @@ class RenderSupport3D {
 			object.frustumCulled = frustumCulled;
 
 			object.broadcastEvent("frustumchanged");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -501,6 +586,7 @@ class RenderSupport3D {
 			object.position.x = x;
 
 			object.broadcastEvent("position");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -511,6 +597,7 @@ class RenderSupport3D {
 			object.position.y = y;
 
 			object.broadcastEvent("position");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -521,6 +608,7 @@ class RenderSupport3D {
 			object.position.z = z;
 
 			object.broadcastEvent("position");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -548,6 +636,7 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("rotation");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -561,6 +650,7 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("rotation");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -574,6 +664,7 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("rotation");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -599,6 +690,7 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("scale");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -610,6 +702,7 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("scale");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
@@ -621,10 +714,100 @@ class RenderSupport3D {
 
 			object.broadcastEvent("position");
 			object.broadcastEvent("scale");
+			object.emitEvent("change");
 
 			object.invalidateStage();
 		}
 	}
+
+
+
+	public static function get3DObjectWorldX(object : Object3D) : Float {
+		return object.getWorldPosition(new Vector3()).x;
+	}
+
+	public static function get3DObjectWorldY(object : Object3D) : Float {
+		return object.getWorldPosition(new Vector3()).y;
+	}
+
+	public static function get3DObjectWorldZ(object : Object3D) : Float {
+		return object.getWorldPosition(new Vector3()).z;
+	}
+
+	public static function set3DObjectWorldX(object : Object3D, x : Float) : Void {
+		set3DObjectX(object, object.parent != null ? x - get3DObjectWorldX(object.parent) : x);
+	}
+
+	public static function set3DObjectWorldY(object : Object3D, y : Float) : Void {
+		set3DObjectY(object, object.parent != null ? y - get3DObjectWorldY(object.parent) : y);
+	}
+
+	public static function set3DObjectWorldZ(object : Object3D, z : Float) : Void {
+		set3DObjectZ(object, object.parent != null ? z - get3DObjectWorldZ(object.parent) : z);
+	}
+
+
+
+	public static function get3DObjectWorldRotationX(object : Object3D) : Float {
+		var euler = new Euler();
+		euler.setFromQuaternion(object.getWorldQuaternion(new Quaternion()));
+
+		return euler.x / 0.0174532925 /*degrees*/;
+	}
+
+	public static function get3DObjectWorldRotationY(object : Object3D) : Float {
+		var euler = new Euler();
+		euler.setFromQuaternion(object.getWorldQuaternion(new Quaternion()));
+
+		return euler.y / 0.0174532925 /*degrees*/;
+	}
+
+	public static function get3DObjectWorldRotationZ(object : Object3D) : Float {
+		var euler = new Euler();
+		euler.setFromQuaternion(object.getWorldQuaternion(new Quaternion()));
+
+		return euler.z / 0.0174532925 /*degrees*/;
+	}
+
+	public static function set3DObjectWorldRotationX(object : Object3D, x : Float) : Void {
+		set3DObjectRotationX(object, object.parent != null ? x - get3DObjectWorldRotationX(object.parent) : x);
+	}
+
+	public static function set3DObjectWorldRotationY(object : Object3D, y : Float) : Void {
+		set3DObjectRotationY(object, object.parent != null ? y - get3DObjectWorldRotationY(object.parent) : y);
+	}
+
+	public static function set3DObjectWorldRotationZ(object : Object3D, z : Float) : Void {
+		set3DObjectRotationZ(object, object.parent != null ? z - get3DObjectWorldRotationZ(object.parent) : z);
+	}
+
+
+
+	public static function get3DObjectWorldScaleX(object : Object3D) : Float {
+		return object.getWorldScale(new Vector3()).x;
+	}
+
+	public static function get3DObjectWorldScaleY(object : Object3D) : Float {
+		return object.getWorldScale(new Vector3()).y;
+	}
+
+	public static function get3DObjectWorldScaleZ(object : Object3D) : Float {
+		return object.getWorldScale(new Vector3()).z;
+	}
+
+	public static function set3DObjectWorldScaleX(object : Object3D, x : Float) : Void {
+		set3DObjectScaleX(object, object.parent != null ? x / get3DObjectWorldScaleX(object.parent) : x);
+	}
+
+	public static function set3DObjectWorldScaleY(object : Object3D, y : Float) : Void {
+		set3DObjectScaleY(object, object.parent != null ? y / get3DObjectWorldScaleY(object.parent) : y);
+	}
+
+	public static function set3DObjectWorldScaleZ(object : Object3D, z : Float) : Void {
+		set3DObjectScaleZ(object, object.parent != null ? z / get3DObjectWorldScaleZ(object.parent) : z);
+	}
+
+
 
 	public static function set3DObjectLookAt(object : Object3D, x : Float, y : Float, z : Float) : Void {
 		object.lookAt(new Vector3(x, y, z));
