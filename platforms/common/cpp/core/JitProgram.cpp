@@ -9,7 +9,7 @@
 using namespace asmjit;
 using namespace asmjit::x86;
 
-const unsigned MAX_CODE_MEMORY = 256*1024*1024;
+const unsigned long MAX_JIT_MEMORY = 256*1024*1024;
 
 // Registers used by the C++ calling convention
 
@@ -140,9 +140,9 @@ uint64_t flow_gdb_memory_layout_version = 0;
 
 
 
-FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file)
+FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, const unsigned long memory_limit)
 {
-    FlowJitProgram *program = new FlowJitProgram(e, log_file);
+	FlowJitProgram *program = new FlowJitProgram(e, log_file, memory_limit);
     if (program->Load(bytecode_file))
         return program;
 
@@ -155,7 +155,7 @@ void deleteJitProgram(FlowJitProgram *program)
     delete program;
 }
 
-FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn) : err(e), log_filename(log_fn)
+FlowJitProgram::FlowJitProgram(ostream &e, const std::string &log_fn, const unsigned long memory_limit) : err(e), log_filename(log_fn), memory_limit(memory_limit)
 {
     layout_info.start = layout_info.end = layout_info.num_symbols = 0;
     layout_info.next = flow_gdb_memory_layout;
@@ -376,7 +376,7 @@ bool FlowJitProgram::compile()
 
     // Initialize generation
     next_code_off = 0;
-    next_data_off = committed_data_off = MAX_CODE_MEMORY;
+	next_data_off = committed_data_off = std::max(std::max(memory_limit, MAX_JIT_MEMORY), (unsigned long)flow_code.size() * 25);
 
     if (!code_buffer.reserve(next_data_off))
         return false;
@@ -425,6 +425,18 @@ bool FlowJitProgram::compile()
     code_buffer.executable(next_code_off, next_code_off + real_size);
 
     next_code_off += real_size;
+
+	if (next_code_off > next_data_off) {
+		const auto pageSize = MemoryArea::page_size();
+		const auto suggestedLimit = (align_up(code_buffer.size() + (next_code_off - next_data_off), pageSize) + pageSize) / 1048576 + 1;
+		err << "Warning! JIT code memory overlaps JIT data memory! Please set the limit equal or higher than "
+			 << suggestedLimit
+			 << " MBytes by passing --jit-memory-limit key!"
+			 << std::endl;
+
+		return false;
+	}
+
     finalize_label_addrs(base);
     finalize_jumptables(base);
     link_struct_tables();

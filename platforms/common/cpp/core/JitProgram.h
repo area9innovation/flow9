@@ -27,6 +27,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
     // Memory space for generating code
     MemoryArea code_buffer;
     unsigned next_code_off;
+	unsigned long memory_limit;
 
     // Memory layout data for the gdb script
     FlowGdbMemoryLayout layout_info;
@@ -385,7 +386,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
     virtual bool handleError(asmjit::Error err, const char* message, asmjit::CodeEmitter* origin);
 
 public:
-    FlowJitProgram(ostream &err, const std::string &log_name = std::string());
+	FlowJitProgram(ostream &err, const std::string &log_name = std::string(), const unsigned long memory_limit = 0);
     ~FlowJitProgram();
 
     bool Load(const std::string &bytecode_file);
