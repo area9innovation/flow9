@@ -23,6 +23,8 @@ class DatabaseConnection : public FlowNativeObject {
 
     int last_insert_id;
 
+    QString last_error;
+
 protected:
     void flowFinalizeObject();
 
