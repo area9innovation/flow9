@@ -30,6 +30,12 @@ jar cf fcgi.jar -C ../platforms/java com/area9innovation/flow/
 jar feu fcgi.jar com.area9innovation.flow.Main -C fcgi com/area9innovation/flow
 
 echo ""
-echo "Done."
+echo "Compilation done."
+echo ""
+
+echo ""
+echo "* Starting FastCGI server"
+echo "  -----------------------"
+echo ""
 
 java -jar fcgi.jar
