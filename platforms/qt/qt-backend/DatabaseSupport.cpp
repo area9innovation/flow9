@@ -84,7 +84,7 @@ StackSlot DatabaseSupport::connectDb(RUNNER_ARGS) {
 /*********** CONNECTION ************/
 
 DatabaseConnection::DatabaseConnection(DatabaseSupport *phost, int id)
-    : FlowNativeObject(phost->getFlowRunner()), host(phost), last_result(NULL)
+    : FlowNativeObject(phost->getFlowRunner()), host(phost), last_result(NULL), last_error(QString())
 {
     name = QString(stl_sprintf("flow_conn_%d", id).c_str());
     db = QSqlDatabase::addDatabase("QMYSQL", name);
@@ -169,6 +169,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
     last_result = result;
 
     query->exec();
+    last_error = query->lastError().text().trimmed();
 
     return RUNNER->AllocNative(result);
 }
@@ -177,7 +178,14 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
     RUNNER_PopArgs1(result);
     RUNNER_CheckTag(TNative, result);
 
-    return RUNNER->AllocateString(db.lastError().text().trimmed());
+    QString msg;
+    if (last_error.length()) {
+        msg = last_error;
+    } else {
+        msg = db.lastError().text().trimmed();
+    }
+
+    return RUNNER->AllocateString(msg);
 }
 
 StackSlot DatabaseConnection::lastInsertIdDb(RUNNER_ARGS) {
