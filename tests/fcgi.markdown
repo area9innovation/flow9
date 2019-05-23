@@ -11,7 +11,7 @@ Please see [build-fcgi.sh](build-fcgi.sh)([build-fcgi.bat](build-fcgi.bat))
 
 Next, you have to enable FastCGI in web server. It depends on server, of course.
 
-In Apache2 you have to add something like this into config file:
+In Apache2 you have to add something like this into config file (for use mod_fastcgi):
 
 ```
 
@@ -22,6 +22,25 @@ In Apache2 you have to add something like this into config file:
 </IfModule>
 
 ```
+
+if you use mod_fcgid then you you have to add something like:
+
+```
+
+<IfModule fcgid_module>
+    <Location /ttt>
+        SetHandler "proxy:fcgi://127.0.0.1:9000#"
+    	Order allow,deny
+        Allow from all
+    </Location>
+</IfModule>
+
+```
+
+Also add or uncomment:
+LoadModule proxy_module modules/mod_proxy.so
+LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so
+
 
 `/Application/MAMP/htdocs/` path must exist, according to (documentation)[https://github.com/FastCGI-Archives/mod_fastcgi/blob/master/CONFIG.md#FastCgiExternalServer],
 but `app.sh` doesn't.
