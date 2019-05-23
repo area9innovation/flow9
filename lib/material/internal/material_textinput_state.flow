@@ -19,6 +19,7 @@ export {
 		inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic;
 
 	defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MAutoCompleteStyle]) -> MCompletionFn;
+	addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic;
 
 	MTextEditorIScriptBehaviours(
 		content : DynamicBehaviour<string>,
@@ -38,6 +39,9 @@ export {
 		useNativeInput : bool,
 		isTextInputInPopup : bool
 	);
+
+	MTextInputSkin ::= MFilled, MOutlined, MTextInputPlain;
+		MTextInputPlain();
 
 	MInputState(
 		manager : MaterialManager,
@@ -66,10 +70,11 @@ export {
 		readOnly : bool,
 		color : MColor,
 		width : double,
+		textWidth : DynamicBehaviour<double>,
 		align : AutoAlignType,
 		iconSize : double,
 		iconBorders : double,
-		leftIcon : Maybe<DynamicBehaviour<Tropic>>,
+		leftIcon : string,
 		leftButton : Maybe<MLeftCustomButton>,
 		editIcon : Maybe<DynamicBehaviour<bool>>,
 		rightButton : Maybe<Transform<string>>,
@@ -95,7 +100,9 @@ export {
 		goToPrev : () -> void,
 		subs : [() -> () -> void],
 		shift : Transform<double>,
-		useNativeInput : bool
+		useNativeInput : bool,
+		condensed : bool,
+		skin : MTextInputSkin
 	);
 
 	MInputAutocompleteState(
@@ -110,8 +117,15 @@ export {
 		includeSpaces : bool,
 		currentMatches : Maybe<MCurrentMatches>,
 		fill : [TGraphicsStyle],
-		setWord : (matches : [SentenceMatch], match : SentenceMatch) -> void,
-		isTextInputInPopup : bool
+		setWord : (word : string) -> void,
+		isTextInputInPopup : bool,
+		onTop : bool,
+		inLine : Maybe<MAutoCompleteInLineState>
+	);
+
+	MAutoCompleteInLineState(
+		bestSuggestion : Transform<Maybe<Pair<string, string>>>,
+		showPopup : bool
 	);
 
 	MInputPopupState(
@@ -161,6 +175,7 @@ export {
 		aboveLabel : double,
 		betweenLabels : double,
 		showFloatingLabel : DynamicBehaviour<bool>,
+		progress : DynamicBehaviour<double>
 	);
 
 	passwordFilter = \state : [MTextInputState] -> {
@@ -280,6 +295,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	condensed = extractStruct(style, MCondensed(false)).condensed;
 	color = extractStruct(style, getAccentColor(parent));
 	width = extractStruct(style, MWidth(-1.)).width;
+	textWidth = make(0.);
 	align = extractStruct(style, AutoAlign(AutoAlignNone())).autoalign;
 	fontPadding = extractStruct(style, MInputFontPadding(0.)).padding;
 	filterAction = iScriptBehaviours.filterAction;
@@ -291,6 +307,20 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	filterFn = tryExtractStruct(state, MInputFilter(\c, __ -> c));
 	textInputCursorShape = make(DefaultCursor());
 	noLeftBorder = contains(style, MInputNoLeftBorder());
+
+	// For testing purposes
+	defaultSkin =
+		if (getUrlParameter("inputSkin") == "filled" && !smallEdit) MFilled()
+		else if (getUrlParameter("inputSkin") == "outlined" && !smallEdit) MOutlined()
+		else MTextInputPlain();
+	skin =
+		fold(style, defaultSkin, \acc, st ->
+			switch (st) {
+				MFilled(): st;
+				MOutlined(): st;
+				default: acc;
+			}
+		);
 
 	//Text Style
 	mTextStyle =
@@ -318,14 +348,46 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 
 	prev = ref getValue(content);
 
+	sideBorder =
+		switch (skin : MTextInputSkin) {
+			MTextInputPlain(): {
+				if (isPopup && !noLeftBorder && !smallEdit) 8. else 0.;
+			}
+			MFilled(): {
+				12.;
+			}
+			MOutlined(): {
+				12.;
+			}
+		}
 	inputBorders =
 		extractStruct(
 			style,
 			MInputBorders(
-				if (isPopup && !noLeftBorder && !smallEdit) 8. else 0.,
-				if (hasFloatingLabel) {if (condensed) 20. else 28.} else {if (condensed) 12. else 16.},
-				if (isPopup && !smallEdit) 8. else 0.,
-				if (condensed) 12. else 16.
+				sideBorder,
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): {
+						if (hasFloatingLabel) (if (condensed) 20. else 28.) else if (condensed) 12. else 16.;
+					}
+					MFilled(): {
+						if (hasFloatingLabel) 25.else if (condensed) 11. else 18.;
+					}
+					MOutlined(): {
+						if (!hasFloatingLabel && condensed) 10. else 18.;
+					}
+				},
+				sideBorder,
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): {
+						if (condensed) 12. else 16.;
+					}
+					MFilled(): {
+						if (hasFloatingLabel) (if (condensed) 8. else 10.) else if (condensed) 10. else 17.;
+					}
+					MOutlined(): {
+						if (!hasFloatingLabel && condensed) 12. else 17.;
+					}
+				}
 			)
 		);
 
@@ -374,16 +436,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		} else
 			None();
 
+	backgroundDefaultColor = contrastingColor(parent);
 	backgroundFill =
 		extractStruct(
 			style,
-			if (!isPopup)
+			if (skin == MFilled() && width > 0.0)
+				MInputBackgroundStyle([Fill(backgroundDefaultColor), FillOpacity(0.06)], [Fill(backgroundDefaultColor), FillOpacity(0.12)])
+			else if (!isPopup)
 				MInputBackgroundStyle([], [])
 			else
 				MInputBackgroundStyle([], [MFill(MDialogColor(getLightBackground(parent)))])
 		);
 
-	//Icons
+	// Icons
 	iconSize = MIconSize(if (condensed) 20. else 24.).size;
 	iconBorders = 8.;
 	showDropDownArrow = !readOnly && extractStruct(style, MShowDropDownArrow(false)).show;
@@ -391,17 +456,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 	showClearIcon = (mClearIcon.onFocus || mClearIcon.onHover) && !readOnly;
 
 	// Left icon
-	leftIconName = tryExtractStruct(style, MLeftIcon(""));
-	leftIcon =
-		maybeMap(
-			leftIconName,
-			\li -> make(
-				if (li.icon != "")
-					MIcon2T(parent, if (isMaterialIcon(li.icon)) li.icon else "subject", [MIconSize(iconSize)])
-				else
-					TEmpty()
-			)
-		);
+	leftIconName = extractStruct(style, MLeftIcon("")).icon;
 
 	// Left Button
 	leftButtonDef =
@@ -475,8 +530,19 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel) {
 			fSize = if (condensed) 13. else 16.;
 			fSizeFocused = forceRange(labelSize, 0., inputBorders.top);
-			betweenFLabels = if (condensed) 4. else 8.;
-			aFlabel = inputBorders.top - fSizeFocused - betweenFLabels;
+			betweenFLabels =
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): if (condensed) 4.0 else 8.0;
+					MFilled(): -2.0;
+					MOutlined(): if (!hasFloatingLabel && condensed) 8.0 else 13.0;
+				}
+			aFlabel =
+				switch (skin : MTextInputSkin) {
+					MTextInputPlain(): inputBorders.top - fSizeFocused - betweenFLabels;
+					MFilled(): 8.0;
+					MOutlined(): inputBorders.top - fSizeFocused - betweenFLabels;
+				}
+			showFLabel = fgetValue(mfocus.focused) || getValue(content) != "";
 
 			Some(
 				MInputFloatingLabelState(
@@ -484,7 +550,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					fSizeFocused,
 					aFlabel,
 					betweenFLabels,
-					make(fgetValue(mfocus.focused) || getValue(content) != "")
+					make(showFLabel),
+					make(if (showFLabel) 0.0 else 1.0)
 				)
 			)
 		} else {
@@ -555,11 +622,10 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (matchers != []) {
 			composeContentFn = extractStruct(style, TMatchedHandler(\m1, __, __ -> m1)).fn;
 
-			setWord = \matches : [SentenceMatch], match : SentenceMatch -> {
+			setWord = \word : string -> {
 					nextDistinct(mfocus.focused, false);
 
-					w = match.sentence;
-					newContent = composeContentFn(w, getValue(content), getValue(position));
+					newContent = composeContentFn(word, getValue(content), getValue(position));
 					next(content, newContent);
 
 					if (multiline) nextDistinct(mfocus.focused, true);
@@ -567,6 +633,24 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					cw = getCurrentWordPosition(getValue(content), getValue(position), [newContent]);
 					nextDistinct(position, forceRange(firstOfPair(cw) + strlen(newContent), 0, strlen(getValue(content))));
 			}
+
+			sentences = make([]);
+
+			inLine =
+				maybeMap(
+					tryExtractStruct(style, MSuggestionInLine(false)),
+					\inline -> MAutoCompleteInLineState(
+						fselect(sentences, FLift(\sent -> {
+							cont = getValue(content);
+							findmap(sent, \s ->
+								if (startsWith(toLowerCase(s.sentence), toLowerCase(cont)))
+									Some(Pair(s.sentence, strRight(s.sentence, strlen(cont))))
+								else None()
+							)
+						})),
+						inline.showPopup
+					)
+				);
 
 			Some(
 				MInputAutocompleteState(
@@ -583,7 +667,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 								\ -> defaultCompletionFn(manager, parent, style)
 							)
 					),
-					make([]),
+					sentences,
 					make(-1),
 					contains(style, MShowAllOnEmpty()),
 					extractStruct(style, MMaxResults(10)).results,
@@ -592,7 +676,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 					tryExtractStruct(style, MCurrentMatches(nop1)),
 					extractStruct(style, MSuggestionsBackgroundStyle(backgroundFill.focused)).style,
 					setWord,
-					iScriptBehaviours.isTextInputInPopup
+					iScriptBehaviours.isTextInputInPopup,
+					contains(style, MSuggestionsOnTop()),
+					inLine
 				)
 			)
 		} else
@@ -804,23 +890,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeApply(password, \pw ->
 				nextDistinct(pw.style, [MIconDisabled()])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[MIconDisabled(), MIconSize(iconSize)])
-					else
-						TEmpty()
-				)
-			});
 		} else if (secondOfPair(^currentError) != defaultStyle) {
 			cFill = extractStruct(secondOfPair(^currentError), MErrorColor());
-			iconStyle = if (foc) [cFill, FillOpacity(1.)] else [cFill];
 
 			nextDistinct(labelStyleB, replaceStruct(errorTextStyle, MFill(cFill)));
 
@@ -834,23 +905,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, iconStyle)
+				nextDistinct(pw.style, if (foc) [cFill, FillOpacity(1.)] else [cFill])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							arrayPush(iconStyle, MIconSize(iconSize))
-						)
-					else
-						TEmpty()
-				)
-			});
 		} else if (foc) {
 			nextDistinct(labelStyleB, pressedStyle);
 
@@ -864,22 +920,8 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 				)
 			);
 			maybeApply(password, \pw ->
-				nextDistinct(pw.style, [FillOpacity(secondaryOpacity)]));
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[color, FillOpacity(1.), MIconSize(iconSize)]
-						)
-					else
-						TEmpty()
-				)
-			});
+				nextDistinct(pw.style, [FillOpacity(secondaryOpacity)])
+			);
 		} else {
 			nextDistinct(labelStyleB, disabledStyle);
 
@@ -895,21 +937,6 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			maybeApply(password, \pw ->
 				nextDistinct(pw.style, [FillOpacity(disabledOpacity)])
 			);
-			maybeApply(leftIcon, \li -> {
-				iconName = either(leftIconName, MLeftIcon("")).icon;
-
-				nextDistinct(
-					li,
-					if (getValue(li) != TEmpty())
-						MIcon2T(
-							parent,
-							if (isMaterialIcon(iconName)) iconName else "subject",
-							[MIconSize(iconSize)]
-						)
-					else
-						TEmpty()
-				)
-			});
 		}
 	}
 
@@ -1038,10 +1065,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		readOnly,
 		color,
 		width,
+		textWidth,
 		align,
 		iconSize,
 		iconBorders,
-		leftIcon,
+		leftIconName,
 		leftButton,
 		editIcon,
 		rightButton,
@@ -1067,7 +1095,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		goToPrev,
 		subs,
 		shift,
-		useNativeInput
+		useNativeInput,
+		condensed,
+		skin
 	)
 }
 
@@ -1662,7 +1692,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 
 			if (curs.symbol > 0 || curs.line > 0) {
 				concatStrings([
-					fold(subrange(lns, 0, curs.line - 1), "", \acc, s -> acc + s.realText + newLineSymbol(s)),
+					fold(subrange(lns, 0, max(curs.line - 1, 0)), "", \acc, s -> acc + s.realText + newLineSymbol(s)),
 					foldi(
 						subrange(lns, max(curs.line - 1, 0), if (curs.line == 0) 1 else 2),
 						"",
@@ -2048,12 +2078,18 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 
 	makeInputBox = \en : bool ->
 		TSelect2(editorState.lines, editorState.width, \lns, wd ->
-			MText2T(
-				inputState.parent,
-				fold(lns, "", \acc, s -> acc + s.visibleText),
-				if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+			TLines(
+				map(lns, \l ->
+					MText2T(
+						inputState.parent,
+						l.visibleText,
+						if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+					)
+					|> TFixHeight(TFixed(0., editorState.textHeight))
+				)
 			)
 			|> (\f -> TAttachBox(f, editorState.contentWH))
+			|> (\t -> TAttachWidth(t, inputState.textWidth))
 			|> TSetMinWidth(TFixed(wd, 0.))
 			|> TFixHeight(TFixed(0., i2d(length(lns)) * editorState.textHeight))
 		);
@@ -2120,14 +2156,13 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 	)
 	|> (\f ->
 		if (inputState.align == AutoAlignCenter())
-			TCenterXIn(TFixSize(f, TSized(editorState.contentWH)), TFillXY())
+			TFixSize(f, TSized(editorState.contentWH)) |> TCenterX
 		else if (inputState.align == AutoAlignRight())
-			TTweak([TAlign(const(1.), zero)], TFixSize(f, TSized(editorState.contentWH)), TFillXY())
+			TFixSize(f, TSized(editorState.contentWH)) |> TAlignTopRight
 		else
 			f
 	)
 	|> (\f -> TAttachWidth2(TFillX(), editorState.width, f))
-
 	|> (\f -> {
 		boxHeight =
 			if (inputState.linesCount > 0)
@@ -2428,7 +2463,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 					\pw -> TSelect3(inputState.content, inputState.mfocus.enabled, pw.showPassword, f2),
 					TSelect2(inputState.content, inputState.mfocus.enabled, \c, en -> f2(c, en, true))
 				)
-			),
+			)
+			|> (\t -> TAttachWidth(t, inputState.textWidth)),
 			f
 		)
 	)
@@ -2502,4 +2538,25 @@ defaultCompletionFn(manager : MaterialManager, parent : MFocusGroup, style : [MA
 			)
 		})
 	)
+}
+
+addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic {
+	dh = if (!inputState.useNativeInput) 0. else if (js) -1. else 1.; // workaround for better text alignment
+
+	\t ->
+		eitherMap(inputState.autocomplete, \ac ->
+			eitherMap(ac.inLine, \inline ->
+				TSelect(inline.bestSuggestion, \best ->
+					eitherMap(best,	\sg ->
+						MText2T(inputState.parent, sg.second, inputState.mTextStyleDisabled)
+						|> (\t2 -> TTranslate(fselect(inputState.textWidth, FLift(\tw -> Point(tw, dh))), t2)),
+						TEmpty()
+					)
+				)
+				|> (\sg -> TShow(inputState.focus, sg))
+				|> (\sg -> TGroup2SameMetrics(t, sg)),
+				t
+			),
+			t
+		)
 }

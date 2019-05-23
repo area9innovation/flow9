@@ -22,7 +22,7 @@ choice.
 12. [Tools](#tools)
 13. [Profiling](#profiling)
 ## Sample install script
-The `.travis.yml` file at the root level of the Flow repository isused
+The `.travis.yml` file at the root level of the Flow repository is used
 on Travis-CI integration to install and configure Flow’s dependencies,
 build the Flow compiler, and run the flowunit tests suite, all on Ubuntu
 Linux. The commands in this file may be a useful guide for making the
@@ -216,7 +216,7 @@ but the system can now find libraries on that path nonetheless.
 # Compile Flow itself
 Neko version of flow from the repo should be fine but if you wish to compile your own, do:
 ```bash
-cd ~/flow9/src
+cd ~/area9/flow9/tools/flow
 haxe FlowNeko.hxml
 ```
 This should take a few seconds. If it takes more than a minute, very likely something is going wrong.
@@ -239,7 +239,10 @@ Download and setup QT 5.12.0 (or later):
 wget https://download.qt.io/archive/qt/5.12/5.12.0/qt-opensource-linux-x64-5.12.0.run
 chmod +x qt-opensource-linux-x64-5.12.0.run
 ```
-**Install into `<path to your home directory>/Qt/5.12.0` and be sure to select all items to install!**
+**Install into `/opt/Qt5.12.0` and be sure to select all items to install!**
+You might want to install into a different folder but it's important to create
+a symlink to the folder mentioned above and build with libraries statically
+linked from it if you plan on committing your QT byte runner to this repo.
 ```bash
 ./qt-opensource-linux-x64-5.12.0.run
 rm qt-opensource-linux-x64-5.12.0.run
@@ -252,17 +255,17 @@ echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
 Clone asmjit repo:
 ```bash
-cd $FLOW/QtByteRunner
-git clone ssh://git@github.com/angavrilov/asmjit.git
+cd $FLOW/platforms/common/cpp
+git clone ssh://git@github.com/area9innovation/asmjit.git
 cd asmjit
 git checkout next
 ```
 Build QtByteRunner:
 ```bash
-cd $FLOW/QtByteRunner
+cd $FLOW/platforms/qt
 ./build.sh # it can return with error 127, but that's expected
 ```
-New QtByteRunner binary will appear in $FLOW/QtByteRunner/bin/linux folder
+New QtByteRunner binary will appear in $FLOW/platforms/qt/bin/linux folder
 
 Now you can run hello.flow using flowcpp:
 ```
@@ -335,7 +338,7 @@ browser and see:
 ```
 
 # Try it (Executed via apache, in browser)
-Information on this topic can be found in QtByteRunner/readme.md
+Information on this topic can be found in platforms/qt/readme.md
 in section "Enabling fast-cgi in apache"
 # Tools
 The auxiliary tools for Flow include a linter, a code formatter, and a
@@ -346,6 +349,6 @@ They can be run directly using `flow9/bin/lint.sh`.
 These tools are also used by the Sublime Text and Emacs integrations.
 (The editors also use `flow9/bin/autocomplete.sh` for autocompletion.)
 # Profiling
-The instructions in [development.html](development.html) for using the
+The instructions in [development.markdown](development.markdown) for using the
 Flow profiler should work fine on Mac as long as you have Java 8
 installed.

@@ -1,7 +1,7 @@
 # Flow: getting started (on Mac OS X)
 
 For more details on all of the ways Flow code can be compiled and run,
-including options not mentioned below, see `flow/doc/runtimes.html`.
+including options not mentioned below, see `doc/runtimes.markdown`.
 
 If these instructions prove incorrect or incomplete, please fix it
 and commit your changes to the repository.
@@ -81,20 +81,6 @@ Finally, add the following lines to ~/.inputrc (create the file if necessary). T
 
 You will need to restart your terminal to benefit from those changes and enable bash completion.
 
-## Install `greadlink`
-
-This command will install the GNU version of `readlink`, and a bunch
-of other GNU utilities.
-
-    brew install coreutils
-
-The GNU versions names' have a `g` prepended, e.g. `greadlink`, so
-having them around won't conflict with your Mac's built-in versions.
-
-`greadlink` is needed because the scripts for running Flow assume the
-GNU semantics, so they won't work with the standard Mac `readlink`.
-(Note that fixing that wouldn't actually be very hard.)
-
 ## Install Haxe 3
 
 Our build servers use haxe 3.2.1 and neko 2.0.0. Haxe 3.4.* should work, but you'll have to manually roll back neko version to 2.0.0. The simplest way is to get haxe 3.2.1.
@@ -115,7 +101,7 @@ Set up your Haxe library directory:
     mkdir -p haxelib/lib
     haxelib setup
 
-You will be prompted to enter the desired haxelib path. Please sepcify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
+You will be prompted to enter the desired haxelib path. Please specify the haxelib location you just created, e.g. `/Users/mathieu_perceau/haxelib/lib`.
 
 Then install the required libraries:
 
@@ -147,7 +133,7 @@ No issues to report at the moment.
 ## Check out Flow repository
 
 You should have [Git LFS](https://git-lfs.github.com) installed.
-Reclone the flow9 repository after installing Git LFS, or use 
+Reclone the flow9 repository after installing Git LFS, or use
 ```bash
 git lfs pull
 ```
@@ -207,12 +193,12 @@ You can also run command-line-only stuff with it, and avoid
 initializing the GUI subsystem, using `--batch`:
 
     cd ~/flow9
-    flowcpp --batch sandbox/helloworld.flow
+    flowcpp --batch sandbox/hello.flow
 
 You should see:
 
-    "neko flow.n  --compile helloworld.bytecode --debuginfo helloworld.debug sandbox/helloworld.flow
-    Compiling sandbox/helloworld.flow ...
+    "neko flow.n  --compile hello.bytecode --debuginfo hello.debug sandbox/hello.flow
+    Compiling sandbox/hello.flow ...
     "
     Hello world
 
@@ -228,7 +214,7 @@ Unless you're hacking on the C++ source code for the bytecode
 runner, you shouldn't need to rebuild it. You can just use
 the binary that's already in the repository.
 
-But if you need to build a new binary, see `QtByteRunner/readme.txt`.
+But if you need to build a new binary, see `platforms/qt/readme.txt`.
 
 More info on compiling flow in js or running it on apache can be found in linux doc.
 
@@ -288,7 +274,7 @@ You can leave the web server running for now, or kill it with:
 
      kill %
 
-Notice that while this works for quick checks, you should work to 
+Notice that while this works for quick checks, you should work to
 setup a local web browser to serve the flow/www folder as "flow",
 so the link
 
@@ -300,7 +286,7 @@ works right.
 
 Apache should be already available: sudo httpd
 
-It has PHP module, but for some flow apps PHP needs mcrypt extention.
+It has PHP module, but for some flow apps PHP needs mcrypt extension.
 Install PHP 7.1 Homebrew package:
 
     brew install php@7.1
@@ -348,6 +334,6 @@ Consider committing them to version control.
 
 ## Profiling
 
-The instructions in [development.html](development.html) for
+The instructions in [development.markdown](development.markdown) for
 using the Flow profiler should work fine on Mac as long as
 you have Java 8 installed.

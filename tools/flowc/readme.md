@@ -14,34 +14,25 @@ Use
 Install Java Runtime 1.8 or later in a 64-bit version and python 3.
 Python 3 is necessary to run the flowc1 launching script. Then use
 
-  flowc1
+	flowc1
 
 to see usage information, and use
 
-  flowc1 sandbox/fun.flow
+	flowc1 sandbox/fun.flow
 
-to parse and typecheck a file. By default, compilation is incremental 
-and parallel.
+to parse and typecheck a file. By default, compilation is incremental and parallel.
 
 When working on the compiler itself, you can also invoke flowc using
 
-  flowc sandbox/fun.flow
+	flowc sandbox/fun.flow
 
 but this is typically much slower.
 
-You can add a line like
+flowcpp will automatically use flowc1 when invoked with a .flow file:
 
-  flowcompiler=flowc
+	flowcpp sandbox/fun.flow
 
-to a `flow.config` file in your project root to make the flowc compiler
-the default. When this is done, it means that Sublime Text, Visual Code
-and flowcpp will automatically use flowc:
-
-  flowcpp sandbox/fun.flow
-
-On *nix based OS you can use flow as a scripting language. To do it,
-place a link to the bin/flows script into /usr/bin. Then it is sufficient
-to provide a shebang-header to the file like
+On *nix based OS, you can use flow as a scripting language. To do it, place a link to the bin/flows script into /usr/bin. Then it is sufficient to provide a shebang-header to the file like
 
   #!/usr/bin/flows
 
@@ -58,14 +49,13 @@ but flowc does not. You have to write
 
   a = Empty();
 
-There is a script, which can help fix these problems. To use this, first
-compile and pipe the output to a file called `out.flow`:
+There is a script, which can help fix these problems. To use this, first compile your program and pipe the output to a file called `out.flow`:
 
-  flowc foo/bar.flow >out.flow
+	flowc1 foo/bar.flow >out.flow
 
 Then run
 
-  fixstructs
+	fixstructs
 
 and this program will use the error messages from the `out.flow` file
 to automatically apply structs. Compile again, and repeat until there are
@@ -82,7 +72,7 @@ surprising.
 Since `Maybe<?>` is polymorphic, flowc implicitly promotes `None` to also be
 polymorphic. There are good theoretical reasons for this, and in most code,
 it is not a problem. It does mean, however, that you can not "reuse" `None`
-in another union, which differens in the number of polymorphic arguments:
+in another union, which differs in the number of polymorphic arguments:
 
    Foo ::= None, Bar;
        Bar();
@@ -132,9 +122,9 @@ Phases and representations
 
    g. We can run type verification on the FiModule representation. This is
       done when dependent code is changed, and we have to check that the
-	  current module is still correct.
+    module is still correct.
 
-4. Code generation. Bytecode works, JS works, others are in progress.
+4. Code generation. Bytecode, JS, Java, others are in progress.
 
 You can inspect the process of type checking in detail, including the 
 resolution of types and constraints using "verbose=2":
@@ -181,27 +171,35 @@ final file will ALWAYS be the input file, and it will always be processed alone.
 Testing
 -------
 
-  flowc unittests=1 outfolder=1 >out.flow
+	flowc unittests=1 outfolder=1 >out.flow
 
 runs a bunch of unit tests (in tools/flowc/tests/) and saves the output for 
 direct comparison against a bunch of baselines.
 
-  flowc unittests=tools/flowcompiler/unittests >out.flow
+	flowc unittests=tools/flowcompiler/unittests >out.flow
 
 runs a varied set of tests that exercise relatively big parts of the compiler.
 
-  flowc unittests=tools/flowc/tests/errors >out.flow
-  flowc unittests=lib/lingo/flow/test >out.flow
+	flowc unittests=tools/flowc/tests/errors >out.flow
+	flowc unittests=lib/lingo/flow/test >out.flow
 
 runs another bunch of tests, which tests a bunch of errors that the
 compiler should report.
 
 There is also the normal flow unit tests:
 
-  flowc file=flowunit/flowunit_flash.flow bytecode=flowunit debug=1 >out.flow
-  flowcpp flowunit.bytecode flowunit.debug
+	flowc file=flowunit/flowunit_flash.flow bytecode=flowunit debug=1 >out.flow
+	flowcpp flowunit.bytecode flowunit.debug
 
 which currently fails due to some math rounding problems.
+
+WebAssembly
+-----------
+
+We have a beta backend for this. See `tools/flowc/backends/wasm/readme.md`. Unfortunately,
+all speed tests show that JS is faster, even for integer-only code. WebAssembly has to be
+considered a young technology. Maybe it will be faster in the future.
+
 
 Testing C++ backend
 -------------------
@@ -212,7 +210,7 @@ flow.config in order the tests to be compiled correctly (done for tools\flowc\te
 
 To build a test manually with g++ from command line please use following arguments:
 
-	g++ -std=c++1z -I<path to flow> -I<path to flow>/QtByteRunner/core/ -o <executable name> -O3 -fno-exceptions <path to test*.cpp> -lstdc++fs
+	g++ -std=c++1z -I<path to flow> -I<path to flow>/platforms/common/cpp/core/ -o <executable name> -O3 -fno-exceptions <path to test*.cpp> -lstdc++fs
 
 Add "-D NDEBUG" to command line to remove asserts when measuring performance.
 
@@ -287,6 +285,9 @@ The basic technique is similar to the one used in the haXe compiler. We keep bou
 tyvars used in the constraints. These bounds are iteratively refined as information
 about the types is propagated according to data flow of the program.
 
+There is a new type checker called "gtype", which uses another method, with less heuristics. It is almost ready for production. Try by using the "gtype=1" parameter:
+
+	flowc1 demos/demos.flow gtype=1 incremental=0 server=0
 
 Todos
 -----
@@ -328,18 +329,13 @@ Performance:
 - Consider postponing call/struct construct disambiguation until typechecking
 
 
-WebAssembly
------------
-
-We have a beta backend for this. See `tools/flowc/backends/wasm/readme.md`. Unfortunately,
-all speed tests show that JS is faster, even for integer-only code. WebAssembly has to be
-considered a young technology. Maybe it will be faster in the future.
-
-
 <h3 id=require>Restricted scope and dynamic linking</h3>
 
-This feature is only available in the new compiler called `flowcompiler`. It allows more 
-fine-grained control of the scope of imported code through a new `require` 
+This feature is only available in an obsolete compiler called `flowcompiler`. 
+
+We would like to add this to the flowc compiler as well, but it is not done.
+
+It allows more fine-grained control of the scope of imported code through a new `require` 
 construct. This construct also allows dynamic linking of code in JS 
 backend. That allows required modules to only load when needed instead of 
 at startup. To declare the intent of restricting the scope (dynamically 

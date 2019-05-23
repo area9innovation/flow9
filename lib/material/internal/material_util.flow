@@ -28,7 +28,8 @@ export {
 		[Fill(if (lightBackground) 0x000000 else 0xffffff), FillOpacity(if (lightBackground) 0.26 else 0.3)]
 	};
 
-	distributeSizesEvenly(minWidths : [int], maxWidths : [int], columnWidths : [DynamicBehaviour<int>], availableWidth : int) -> void;
+	distributeSizesEvenlyInt(minWidths : [int], maxWidths : [int], columnWidths : [DynamicBehaviour<int>], availableWidth : int) -> void;
+	distributeSizesEvenly(minWidths : [double], maxWidths : [double], availableWidth : double) -> [double];
 
 	selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void>;
 		MDirection ::= MRight, MLeft, MUp, MDown;
@@ -173,7 +174,7 @@ addStyleIfAbsent(a : [?], st : ?) -> [?] {
 	)
 }
 
-distributeSizesEvenly(minWidths : [int], maxWidths : [int], columnWidths0 : [DynamicBehaviour<int>], availableWidth : int) -> void {
+distributeSizesEvenlyInt(minWidths : [int], maxWidths : [int], columnWidths0 : [DynamicBehaviour<int>], availableWidth : int) -> void {
 	columnsCount = either(minA([length(minWidths), length(maxWidths), length(columnWidths0)]), 0);
 
 	additionThreshold = 0;
@@ -252,6 +253,42 @@ distributeSizesEvenly(minWidths : [int], maxWidths : [int], columnWidths0 : [Dyn
 			fori(0, columnsCount - 1, \i -> nextDistinct(columnWidths0[i], columnWidths[i]))
 		}
 	}
+}
+
+distributeSizesEvenly(
+	minWidths : [double],
+	maxWidths : [double], // -1. for no limits
+	availableWidth : double) -> [double] {
+
+	currentSum = dsum(minWidths);
+
+	newWidths =
+		mapi(minWidths, \i, w -> {
+			newWidth = w / currentSum * availableWidth;
+			if (maxWidths[i] != -1. && newWidth > maxWidths[i])
+				Pair(maxWidths[i], true)
+			else if (newWidth < minWidths[i])
+				Pair(minWidths[i], false)
+			else
+				Pair(newWidth, false)
+		});
+
+	exceedLimits = map(newWidths, secondOfPair);
+
+	if (any(exceedLimits) && !(all(exceedLimits))) {
+		filterFixed = \arr -> mapi(arr, \i, item -> if (newWidths[i].second) 0. else item);
+		newAvailableWidth = availableWidth - fold(newWidths, 0., \acc, item -> acc + if (item.second) item.first else 0.);
+
+		innerNewSizes =
+			distributeSizesEvenly(
+				filterFixed(minWidths),
+				filterFixed(maxWidths),
+				newAvailableWidth
+			);
+
+		mapi(newWidths, \i, item -> if (item.second) item.first else innerNewSizes[i])
+	} else
+		map(newWidths, firstOfPair);
 }
 
 selectableCells(cells : Transform<[[?]]>, currentCell : DynamicBehaviour<?>) -> Pair<(MDirection) -> void, () -> void> {
@@ -594,6 +631,7 @@ TAnimatedExpander(
 	expandFromStart = contains(style, MExpandFromStart());
 	progress = tryExtractStruct(style, MExpanderProgress(make(0.)));
 	duration = extractStruct(style, MAnimationDuration(const(0.3))).seconds;
+	crop = !contains(style, MNoCrop());
 
 	size = TGhost("TAnimatedExpanderContent");
 	startFactor = b2d(fgetValue(expanded));
@@ -606,7 +644,7 @@ TAnimatedExpander(
 	TDisplay("TAnimatedExpanderContent")
 	|> (\t -> TAlpha(alpha, t))
 	|> (\t -> if (expandFromStart) t else TShift(t, offset))
-	|> (\t -> TCropSize(box, t))
+	|> (\t -> if (crop) TCropSize(box, t) else TFixSize(t, box))
 	|> (\t ->
 			MEasingAnimation(
 				manager,

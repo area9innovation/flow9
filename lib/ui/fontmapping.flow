@@ -168,7 +168,7 @@ arabicFontParams : Triple<string, string, double> = {
 			Triple("Amiri", "Amiri", 18.0 / 14.0)
 		}
 	} else if (android()) {
-		Triple("Roboto", "Roboto", 1.0)
+		Triple("Tahoma", "Tahoma", if (js) 0.95 else 1.0)
 	} else if (linux()) {
 		Triple("DejaVu Sans", "DejaVu Sans", 0.835)
 	} else if (ios()) {
@@ -256,10 +256,11 @@ setLangCore(lang0 : string) -> void{
 		if (!cgi) {
 			println("setting language to " + toString(lang));
 		}
-		next(currentLang, lang);
 		cjkLang := isChinese(lang) || lang == "ja" || lang == "ko" || lang == "ar" || lang == "he" || lang == "yi";
-		updateFontMappingFunction();
+		updateFontMappingFunction(Some(lang));
+		next(currentLang, lang);
 	}
+	bidiSupport := None();
 }
 
 getDefaultRtl() -> bool {
@@ -273,7 +274,6 @@ getDefaultRtlB() -> Transform<bool> {
 isBiDiEnabled() -> bool {
 	onlyOnce(bidiSupport, \-> getDefaultRtl() || getAnyUrlParameter("bidi") == "1");
 }
-
 
 // function defining font mapping for non-CJK languages
 defaultFontMappingFn : ref (string, double) -> Pair<string, double> = ref \family, size -> Pair(family, size);
@@ -299,7 +299,7 @@ setDefaultFontMappingFnHelper(mapping : [Pair<string, string>]) -> (string, doub
 
 setDefaultFontMappingFn2(mappingFn : (string, double) -> Pair<string, double>) -> void {
 	defaultFontMappingFn := mappingFn;
-	updateFontMappingFunction();
+	updateFontMappingFunction(None());
 }
 
 setDefaultFontMappingFn(mapping : [Pair<string, string>]) -> void {
@@ -317,9 +317,23 @@ cjkFontMappingFn(family : string, size : double) -> Pair<string, double> {
 			koreanFontParams
 		else if (isChinese(lang))
 			chineseFontParams
-		else if (lang == "ar")
-			^defaultFontMappingFn(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams.third))
-		else
+		else if (lang == "ar") { // enable font mapping for arabic
+			font = arabicFontParams.first;
+			fontMedium = font + "Medium";
+			fontItalic = font + "Italic";
+			fontBold = font + "Bold";
+			mapper = setDefaultFontMappingFnHelper([
+				Pair("Roboto", font),
+				Pair("RobotoMedium", fontBold),
+				Pair("RobotoItalic", fontItalic),
+				Pair("RobotoBold", fontBold),
+				Pair("Book", font),
+				Pair("Medium", fontBold),
+				Pair("MediumItalic", fontItalic),
+				Pair("Italic", fontItalic),
+			]);
+			mapper(family, size) |> (\fm -> Triple(fm.first, fm.first, arabicFontParams.third))
+		} else
 			^defaultFontMappingFn(family, size) |> (\fm -> Triple(fm.first, fm.first, fm.second / size));
 	};
 	Pair(fontParams.first, roundFontSize(size * fontParams.third))
@@ -339,9 +353,9 @@ applyFontOverriding = {
 			m = if (length(tt) > 1) s2d(tt[1]) else 1.0;
 			if (m < 0.01 || m > 100.0) 1.0 else m
 		};
-		\fontMappingFn -> {
+		\fontOverrideMappingFn -> {
 			\family : string, size : double -> {
-				mapped_FamilySize : Pair<string, double> = fontMappingFn(family, size);
+				mapped_FamilySize : Pair<string, double> = fontOverrideMappingFn(family, size);
 				Pair(
 					if (overridden_family != "") overridden_family else mapped_FamilySize.first,
 					mapped_FamilySize.second * size_multiplier
@@ -425,37 +439,20 @@ getNativeLangFromBCP(bcpLang : string) -> string {
 	}
 }
 
-updateFontMappingFunction() {
-	lang = getValue(currentLang);
-	getMappedFontFn := if (lang == "ar") { // enable font mapping for arabic
-		font = arabicFontParams.first;
-		fontMedium = font + "Medium";
-		fontItalic = font + "Italic";
-		fontBold = font + "Bold";
-		mapper = setDefaultFontMappingFnHelper([
-			Pair("Roboto", font),
-			Pair("RobotoMedium", fontBold),
-			Pair("RobotoItalic", fontItalic),
-			Pair("RobotoBold", fontBold),
-			Pair("Book", font),
-			Pair("Medium", fontBold),
-			Pair("MediumItalic", fontItalic),
-			Pair("Italic", fontItalic),
-		]);
-		defaultFontMappingFn := mapper;
-
-		cjkFontMappingFn
-	} else if (isCJKLang()) {
-		cjkFontMappingFn
-	} else {
-		^defaultFontMappingFn
+updateFontMappingFunction(langM : Maybe<string>) -> void {
+	lang = either(langM, getValue(currentLang));
+	getMappedFontFn := {
+		if (isCJKLang())
+			cjkFontMappingFn
+		else
+			^defaultFontMappingFn
 	} |> applyFontOverriding;
 	getMappedFont_cache_key := Pair("", -1.0); // flush getMappedFont cache
 }
 
 
 _fontmapping_boot_ = {
-	updateFontMappingFunction();
+	updateFontMappingFunction(None());
 	0;
 };
 

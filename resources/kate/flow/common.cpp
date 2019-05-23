@@ -1,3 +1,5 @@
+#include <stdexcept>
+
 #include <QFile>
 #include <QFileInfo>
 #include <QDateTime>
@@ -68,6 +70,9 @@ QTableWidgetItem* setNotEditable(QTableWidgetItem* item) {
 
 QString findConfig(const QString& file) {
 	QFileInfo fileInfo(file);
+	if (!fileInfo.exists()) {
+		throw std::runtime_error("file '" + file.toStdString() + "' doesn't exist");
+	}
 	QDir dir = fileInfo.dir();
 	while (true) {
 		QFileInfoList conf = dir.entryInfoList(QStringList(QLatin1String("flow.config")));
@@ -83,6 +88,9 @@ QString findConfig(const QString& file) {
 }
 
 ConfigFile parseConfig(const QString& confName) {
+	if (!QFileInfo(confName).exists()) {
+		throw std::runtime_error("file '" + confName.toStdString() + "' doesn't exist");
+	}
 	QFile confFile(confName);
 	QMap<QString, QString> ret;
 	if (confFile.open(QIODevice::ReadOnly)) {

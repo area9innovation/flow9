@@ -6,6 +6,14 @@ namespace flow {
 
 Runner::Runner(QString prog, QString targ, QString flowdir) :
 	type_(DEFAULT), target_(targ), info_(prog), flowdir_(flowdir) {
+
+	if (!info_.exists()) {
+		throw std::runtime_error("program '" + prog.toStdString() + "' doesn't exist");
+	}
+	if (!QDir(flowdir).exists()) {
+		throw std::runtime_error("directory '" + flowdir.toStdString() + "' doesn't exist");
+	}
+
 	if (targ == QLatin1String("js")) {
 		type_ = NODEJS;
 	} else if (targ == QLatin1String("bytecode") || targ == QLatin1String("bc")) {

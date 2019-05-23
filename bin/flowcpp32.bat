@@ -1,2 +1,2 @@
 @echo off
-@%~dp0..\QtByteRunner\bin\windows32\QtByteRunner.exe %*
+@%~dp0..\platforms\qt\bin\windows32\QtByteRunner.exe %*

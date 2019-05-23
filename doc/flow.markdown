@@ -47,7 +47,7 @@ building complicated UIs. That is the field where it starts shining and shows it
 Worth keeping in mind when working with it.
 
 The main flow compiler is implemented in flow itself. The compiler produces a simple bytecode, 
-native JavaScript, Java and other targets. See the [runtimes.html](runtimes.html) document for 
+native JavaScript, Java and other targets. See the [runtimes.markdown](runtimes.markdown) document for 
 an overview of the targets.
 
 <h2 id=modules>Modules, imports, exports, and main</h2>
@@ -95,7 +95,7 @@ the C++ runner that compiles and then calls `main` in the `helloworld` module:
 
 Run from the root of your flow installation, such as `c:\flow9\` on Windows.
 
-See `windows.html`, `mac.html`, `linux.html` to learn how to use other targets.
+See `windows.markdown`, `mac.markdown`, `linux.markdown` to learn how to use other targets.
 
 
 <h2 id=decls>Declarations</h2>

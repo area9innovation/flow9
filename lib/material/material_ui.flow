@@ -53,7 +53,11 @@ export {
 		MAudioPlayerStyle ::= MVideoPlayerStyle, MWidth;
 
 	// FVideoTimeRange style disabled
- 	MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material;
+ 	MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material;
+ 		MMultiAudioPlayerStyle ::= FVideoStyle, IndexInPlaylist;
+
+ 		// to switch files (samples) in multiplayer
+		IndexInPlaylist(index : DynamicBehaviour<int>);
 
 	// use to place material on top of placeholder over other elements
 	MInlinePopup(
@@ -71,6 +75,23 @@ export {
 	) -> Material;
 
 	MAddShortcutDialog(manager : MaterialManager) -> () -> void;
+
+	MDropDownOrAutoComplete(
+		items : [string],
+		selected : DynamicBehaviour<int>,
+		style : [MDropDownOrAutoCompleteStyle],
+	) -> Material;
+
+	// MRequiredField, MLabel replace corresponding inner autocomplete styles
+	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem;
+
+		MDropDownStyles(style : [MDropDownStyle]);
+		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
+		MAutoCompleteStyles(style : [MAutoCompleteStyle]);
+		MAutoCompleteState(state : [MTextInputState]);
+		MItemsLimit(limit : int);
+		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -337,6 +358,14 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 				st
 			)
 		)
+		|> (\st ->
+			eitherMap(
+				tryExtractStruct(st, MPlayerControls([])),
+				\pc -> replaceStruct(st, MPlayerControls(removeAllStructs(pc.controls, FullScreenPlayer()))),
+				st
+			)
+		)
+		|> (\st -> removeAllStructs(st, MPlayerPanelAutoHide()))
 	)
 	|> (\audioPlayer ->
 		if (mWidth > 0.)
@@ -354,129 +383,149 @@ MAudioPlayer(filename : string, style : [MAudioPlayerStyle]) -> Material {
 	)
 }
 
-MMultiAudioPlayer(filenames : [string], mstyle : [FVideoStyle]) -> Material {
+SampleStates(
+	length : [DynamicBehaviour<double>], 
+	position : [DynamicBehaviour<double>], 
+	isPlay : [DynamicBehaviour<bool>], 
+	isReady : [DynamicBehaviour<bool>]
+);
+
+MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Material {
  	amount = length(filenames);
 
-  	style = removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.)));
+ 	if (amount > 0) {
+	  	fvStyle = filtermap(removeAllStructs(mStyle, FVideoTimeRange(const(0.), const(0.))), \st ->
+			switch (st) {
+				FVideoStyle() : {a : Maybe<FVideoStyle> = Some(st); a};
+				default : None()
+			}
+		);
 
-  	// properties from external style
- 	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
- 	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
- 	playEx = extractStruct(style, FVideoPlay(make(false))).play;
+	  	// FVideoStyle properties
+	 	lenEx = extractStruct(fvStyle, FVideoLength(make(0.))).length;
+	 	posEx = extractStruct(fvStyle, FVideoPosition(make(0.))).position;
+	 	playEx = extractStruct(fvStyle, FVideoPlay(make(false))).play;
+	 	loopEx = extractStruct(fvStyle, FVideoLoop(make(false))).loop;
+	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
 
-  	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
- 	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
+	  	// MMultiAudioPlayerStyle properties
+	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
 
-  	// playing audio
- 	currIndexB = make(0);
+	  	// init properties for each audio
+	 	states = SampleStates(
+	 		map(filenames, \__ -> make(0.0)),
+	 		map(filenames, \__ -> make(0.0)),
+	 		map(filenames, \__ -> make(false)),
+	 		map(filenames, \__ -> make(false)),
+	 	);
 
-  	// init properties for each audio
- 	states = map(filenames, \__ ->
- 		Quadruple(
- 			make(0.),		// first: length
- 			make(0.),		// second: position
- 			make(false),	// third: is play
- 			make(false)		// fourth: is ready
- 		)
- 	) |> unzipA4;
+	  	synchrocalls = mapi(filenames, \i, __ ->
+	 		SynchroCalls(
+	 			// set ready
+	 			\-> nextDistinct(states.isReady[i], true),
+	 			// play next or stop in the end
+	 			\-> {
+	 				// reset position (for js)
+	 				nextDistinct(states.position[i], 0.);
+	 				// if last audio
+	 				if (i == amount - 1) {
+	 					if (!fgetValue(loopEx)) {
+	 						// if not looping
+	 						nextDistinct(playEx, false);
+	 						synchrocallEx.onStop();
+	 					}
+	 				}
+	 				// next for case with length == 1
+	 				next(currIndexB, (i + 1) % amount);
+	 			}
+	 		)
+	 	);
 
-  	synchrocalls = mapi(filenames, \i, __ ->
- 		SynchroCalls(
- 			// set ready
- 			\-> nextDistinct(states.fourth[i], true),
- 			// play next or stop in the end
- 			\-> {
- 				// reset position (for js)
- 				nextDistinct(states.second[i], 0.);
- 				// if last audio
- 				if (i == amount - 1) {
- 					if (!fgetValue(loopEx)) {
- 						// if not looping
- 						nextDistinct(playEx, false);
- 						synchrocallEx.onStop();
- 					}
- 				}
- 				// next for case with length == 1
- 				next(currIndexB, (i + 1) % amount);
- 			}
- 		)
- 	);
+	  	players = mapi(filenames, \i, url ->
+	 		TVideo(
+	 			url,
+	 			make(WidthHeight(-1., -1.)),		// not to draw
+	 			replaceStructMany(fvStyle,
+	 				[
+	 					FVideoLength(states.length[i]),
+	 					FVideoPosition(states.position[i]),
+	 					FVideoPlay(states.isPlay[i]),
+	 					synchrocalls[i],
+	 				]
+	 			)
+	 		)
+	 	);
 
-  	players = mapi(filenames, \i, url ->
- 		TVideo(
- 			url,
- 			make(WidthHeight(-1., -1.)),		// not to draw
- 			replaceStructMany(style,
- 				[
- 					FVideoLength(states.first[i]),
- 					FVideoPosition(states.second[i]),
- 					FVideoPlay(states.third[i]),
- 					synchrocalls[i],
- 				]
- 			)
- 		)
- 	);
+	  	changeAudioPlaying = \index, isPlay -> {
+	 		nextDistinct(states.isPlay[index], isPlay);
+	 	}
 
-  	changeAudioPlaying = \index, isPlay -> {
- 		nextDistinct(states.third[index], isPlay);
- 	}
+	  	playerPos = fsubselect(
+	 		currIndexB,
+	 		FLift(\index ->
+	 			faddition(
+	 				fsum(subrange(states.length, 0, index)),	// sum of previous lengths
+	 				states.position[index]					// current possition
+	 			)
+	 		)
+	 	);
+	 	playerPosChange = \pos -> nextDistinct(posEx, pos);
+	 	userPosChange = \pos -> {
+	 		allLength = fgetValue(fmerge(states.length));
+	 		// last index ; length sum of previous audio
+	 		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
+	 			newEnd = acc.second + len;
+	 			isNext = (acc.first + 1 == i);
+	 			if (isNext && newEnd < pos) Pair(i, newEnd)
+	 			else acc;
+	 		});
 
-  	playerPos = fsubselect(
- 		currIndexB,
- 		FLift(\index ->
- 			faddition(
- 				fsum(subrange(states.first, 0, index)),	// sum of previous lengths
- 				states.second[index]					// current possition
- 			)
- 		)
- 	);
- 	playerPosChange = \pos -> nextDistinct(posEx, pos);
- 	userPosChange = \pos -> {
- 		allLength = fgetValue(fmerge(states.first));
- 		// last index ; length sum of previous audio
- 		lastEnd = foldi(allLength, Pair(-1, 0.), \i, acc, len -> {
- 			newEnd = acc.second + len;
- 			isNext = (acc.first + 1 == i);
- 			if (isNext && newEnd < pos) Pair(i, newEnd)
- 			else acc;
- 		});
+	 		currIndex = getValue(currIndexB);
+	 		newIndex = lastEnd.first + 1;
+	 		if (newIndex != currIndex) {
+		  		// reset current player
+		 		changeAudioPlaying(currIndex, false);
+		 		nextDistinct(states.position[currIndex], 0.);
+		 		// start new player
+		 		nextDistinct(states.position[newIndex], pos - lastEnd.second);
+		 		nextDistinct(currIndexB, newIndex);
+	 		} else {
+	 			nextDistinct(states.position[newIndex], pos - lastEnd.second);
+	 		}
+	 	}
 
-  		// reset current player
- 		currIndex = getValue(currIndexB);
- 		changeAudioPlaying(currIndex, false);
- 		nextDistinct(states.second[currIndex], 0.);
- 		// start new player
- 		newIndex = lastEnd.first + 1;
- 		nextDistinct(states.second[newIndex], pos - lastEnd.second);
- 		// next need when index has not changed (continue playing)
- 		next(currIndexB, newIndex);
- 	}
-
-  	MShow(
- 		const(i2b(amount)),
- 		// rendering (empty)
- 		MConstruct(
- 			[
- 				// when all audios ready
- 				makeSubscribe(fands(states.fourth, false), \isReady ->
- 					if (isReady) synchrocallEx.onStart()
- 				),
- 				// sum all audio lengths
- 				\-> fconnect(fsum(states.first), lenEx),
- 				// set possition
- 				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
- 				// not make2Subscribe due to looping in 1-element array
- 				\-> subscribe(currIndexB, \index ->
- 					changeAudioPlaying(index, getValue(playEx))
- 				),
- 				\-> subscribe(playEx, \isPlay ->
- 					changeAudioPlaying(getValue(currIndexB), isPlay)
- 				)
- 			],
- 			MGroup(players)
- 		)
- 	)
- }
+		// rendering (empty)
+		MConstruct(
+			[
+				// when all audios ready
+				makeSubscribe(fands(states.isReady, false), \isReady ->
+					if (isReady) synchrocallEx.onStart()
+				),
+				// sum all audio lengths
+				\-> fconnect(fsum(states.length), lenEx),
+				// set possition
+				\-> fBidirectionalLink(playerPos, posEx, playerPosChange, userPosChange),
+				// not make2Subscribe(currIndexB, playEx) due to looping in 1-element array
+				makeSubscribe(fselectWithLast(currIndexB, FLift2(\old, new -> Pair(old, new))), \oldAndNewIndexes ->
+					unpair(oldAndNewIndexes, \oldIndex, newIndex -> {
+						if (oldIndex != newIndex) {
+							// reset current player before switching
+							nextDistinct(states.isPlay[oldIndex], false);
+							nextDistinct(states.position[oldIndex], 0.0);
+						}
+						changeAudioPlaying(newIndex, getValue(playEx));
+					})
+				),
+				\-> subscribe(playEx, \isPlay -> {
+					changeAudioPlaying(getValue(currIndexB), isPlay);
+				})
+			],
+			MGroup(players)
+		)
+	} else {
+		MEmpty();
+	}
+}
 
 MInlinePopup(
 	manager : MaterialManager,
@@ -608,4 +657,98 @@ MAddShortcutDialog(manager : MaterialManager) -> () -> void {
 	} else {
 		nop;
 	}
+}
+
+MDropDownOrAutoComplete(
+	items0 : [string],
+	selected : DynamicBehaviour<int>,
+	style : [MDropDownOrAutoCompleteStyle]
+) -> Material {
+
+	limit = extractStruct(style, MItemsLimit(15)).limit;
+	isRequired = contains(style, MRequiredField());
+	labelM = tryExtractStruct(style, MLabel(""));
+	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
+
+	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
+	items = concat(if (showAnyItem) ["Any"] else [], items0);
+
+	isError =
+		eitherMap(
+			multiSelection,
+			\ms -> fOr(feq(ms.selected, []), feq(ms.selected, [-1])),
+			feq(selected, -1)
+		);
+
+	makeMAutoCompleteControl = \ -> {
+		idxs2string = \idxs -> strGlue(map(idxs, \idx -> elementAt(items, idx, if (showAnyItem) items[0] else "")), ", ");
+
+		trimStr = \s -> trim(s) |> toLowerCase;
+		string2idxsMulti = \str ->
+			filtermap(strSplit2WithoutLeave(str, [",", ";"]), \sel ->
+				findi(items, \item -> trimStr(item) == trimStr(sel))
+			);
+		string2idxs = \str -> findiDef(items, \item -> trimStr(item) == trimStr(str), -1);
+
+		selectedStrB =
+			eitherMap(multiSelection,
+				\ms -> idxs2string(getValue(ms.selected)),	
+				idxs2string([getValue(selected)])
+			)
+			|> make;
+
+		autoCompleteStyle =
+			extractStruct(style, MAutoCompleteStyles([])).style
+			|> (\st -> eitherMap(labelM,
+				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
+				st
+			));
+		autoCompleteState =
+			extractStruct(style, MAutoCompleteState([])).state
+			|> (\st ->
+				if (isRequired) {
+					error = fif(isError, const(Some(Pair("Required field", true))), const(None()));
+					replaceStruct(st, MInputError(error, [MRequiredField()]));
+				} else
+					st
+			);
+
+		MConstruct(
+			[\ -> 
+				eitherMap(multiSelection,
+					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
+					bidirectionalLink(selectedStrB, selected, string2idxs, \idx -> idxs2string([idx]))
+				)
+			],
+			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
+		)
+	}
+
+	if (length(items0) > limit)
+		makeMAutoCompleteControl()
+	else
+		eitherMap(
+			multiSelection,
+			\multiSelect -> MMultiSelectDropDown(multiSelect.selected, items, concat(multiSelect.style, [MAddDoneButton(), MAddClearButton()])),
+			MConstruct(
+				[makeSubscribe(selected, \i -> if (showAnyItem && i == 0) nextDistinct(selected, -1))],
+				MDropDown(selected, "", items, extractStruct(style, MDropDownStyles([])).style)
+			)
+		)
+		|> (\m -> eitherMap(labelM,	\labelStyle ->
+			MLines2(
+				MText(labelStyle.label, [MCaption()]) |> MBorderBottom(4.0),
+				m
+			),
+			m
+		))
+		|> (\m -> if (isRequired)
+			MLines2(
+				m,
+				MText("Required field", [MErrorColor(), MCaptionSolid()])
+				|> (\m2 -> MVisible(isError, m2))
+				|> MBorderTop(4.0)
+			)
+			else m
+		)
 }
