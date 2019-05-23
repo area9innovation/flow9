@@ -30,7 +30,7 @@ if you use mod_fcgid then you you have to add something like:
 <IfModule fcgid_module>
     <Location /ttt>
         SetHandler "proxy:fcgi://127.0.0.1:9000#"
-	Order allow,deny
+    	Order allow,deny
         Allow from all
     </Location>
 </IfModule>
