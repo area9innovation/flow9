@@ -5,23 +5,22 @@
 
 @implementation FlowRTCVideoRenderer
 
-static CIContext *renderingContext = [CIContext contextWithOptions:nil];
-
 - (id) initWithFrameListener:(void (^)(RTCVideoFrame*)) frameListener {
     self = [super init];
     self.frameListener = frameListener;
+    self.renderingContext = [CIContext contextWithOptions:nil];
     return self;
 }
 
-- (void)setSize:(CGSize)size {
+- (void) setSize:(CGSize) size {
     
 }
 
-- (void)renderFrame:(RTCVideoFrame *)frame {
+- (void) renderFrame:(RTCVideoFrame *) frame {
     self.frameListener(frame);
 }
 
-+ (CGImageRef) convertVideoFrame:(RTCVideoFrame*) frame {
+- (CGImageRef) convertVideoFrame:(RTCVideoFrame*) frame {
     int rotatedWidth = frame.width;
     int rotatedHeight = frame.height;
     if(frame.rotation % 180 != 0) {
@@ -40,11 +39,17 @@ static CIContext *renderingContext = [CIContext contextWithOptions:nil];
         case RTCVideoRotation_270: orientation = kCGImagePropertyOrientationLeft; break;
     }
     ciImage = [ciImage imageByApplyingOrientation:orientation];
-    CGImageRef cgImage = [renderingContext
+    CGImageRef cgImage = [self.renderingContext
                           createCGImage:ciImage
                           fromRect:CGRectMake(0,0, rotatedWidth, rotatedHeight)];
     return cgImage;
 }
+
+-(void) dealloc {
+    [self.renderingContext release];
+    [super dealloc];
+}
+
 @end
 
 IMPLEMENT_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
@@ -52,8 +57,8 @@ IMPLEMENT_FLOW_NATIVE_OBJECT(FlowNativeMediaStream, FlowNativeObject)
 FlowNativeMediaStream::FlowNativeMediaStream(NativeMethodHost *owner) : FlowNativeObject(owner->getFlowRunner())
 {
     isLocalStream = false;
-    width = 800;
-    height = 600;
+    width = 640;
+    height = 480;
     peerConnectionFactory = nil;
     videoCapturer = nil;
     mediaStream = nil;

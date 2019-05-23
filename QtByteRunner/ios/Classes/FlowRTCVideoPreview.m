@@ -15,7 +15,7 @@
         if ([[flowMediaStream->mediaStream videoTracks] count] != 0) {
             self.videoRenderer = [[FlowRTCVideoRenderer alloc] initWithFrameListener:^void(RTCVideoFrame *frame) {
                 RUN_IN_MAIN_THREAD(^{
-                    CGImageRef cgImage = [FlowRTCVideoRenderer convertVideoFrame:frame];
+                    CGImageRef cgImage = [self.videoRenderer convertVideoFrame:frame];
                     int width = CGImageGetWidth(cgImage);
                     int height = CGImageGetHeight(cgImage);
                     if(self.width != width || self.height != height) {

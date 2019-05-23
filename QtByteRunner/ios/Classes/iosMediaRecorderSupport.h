@@ -5,7 +5,6 @@
 #include "MediaRecorderSupport.h"
 #include "iosMediaStreamSupport.h"
 
-
 class iosMediaRecorderSupport : public MediaRecorderSupport
 {
     ByteCodeRunner *owner;

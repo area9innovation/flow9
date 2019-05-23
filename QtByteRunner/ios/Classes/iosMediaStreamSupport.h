@@ -11,11 +11,14 @@ class iosMediaStreamSupport;
 
 @interface FlowRTCVideoRenderer : NSObject<RTCVideoRenderer> {
 }
+@property(retain) CIContext *renderingContext;
 @property(readwrite, copy) void (^frameListener)(RTCVideoFrame*);
+
 - (id) initWithFrameListener:(void (^)(RTCVideoFrame*)) frameListener;
-- (void)setSize:(CGSize)size;
-- (void)renderFrame:(RTCVideoFrame *)frame;
-+ (CGImageRef) convertVideoFrame:(RTCVideoFrame*) frame;
+- (void) setSize:(CGSize) size;
+- (void) renderFrame:(RTCVideoFrame*) frame;
+- (CGImageRef) convertVideoFrame:(RTCVideoFrame*) frame;
+
 @end
 
 class FlowNativeMediaStream : public FlowNativeObject
