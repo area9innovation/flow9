@@ -81,94 +81,25 @@ static const LIGATURE LIGATURES[] = {
 
 class GLFont;
 class GLRenderSupport;
-typedef std::map<size_t, size_t> size_t2size_t;
-
-class PasswordUtf32Iter: public Utf32InputIterator {
-protected:
-    shared_ptr<Utf32InputIterator> org, cur, nx, end;
-    PasswordUtf32Iter& next();
-public:
-    PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
-    PasswordUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur);
-    virtual size_t position() {return cur->position();}
-    virtual void *data() {return org->data();}
-    virtual ucs4_char operator *();
-    virtual ucs4_char_tracer traceCurrent();
-    virtual Utf32InputIterator &operator ++() {return next();}
-    virtual Utf32InputIterator &operator ++(int _)  {return next();}
-    virtual shared_ptr<Utf32InputIterator> clone();
-    virtual shared_ptr<Utf32InputIterator> cloneReversed();
-    virtual void seekBegin() { cur = org->clone(); nx = org->clone(); ++*nx; };
-    virtual void seekEnd() { cur = end->clone(); nx = org->clone(); };
-};
 
 class LigatureUtf32Iter: public Utf32InputIterator {
 protected:
-    typedef struct {
-        shared_ptr<Utf32InputIterator> org, end;
-
-        // There's way to optimize memory consuming
-        // making this field static and adding mapping by org->data and usage counter.
-        // This will keep single size_t->size_t map per origin, not per
-        // LigatureUtf32Iter instance. Not forget to remove org->data key on last
-        // LigatureUtf32Iter instance disposal.
-        size_t2size_t reverseMap;
-
-        virtual void *data() {return org->data();}
-    } Shared;
-
-    shared_ptr<Utf32InputIterator> cur, nx;
+    shared_ptr<Utf32InputIterator> org, cur, end;
+    void yield();
+    LigatureUtf32Iter& next();
     size_t ligalen;  // input characters decoded count
     ucs4_char yieldedChar;
-
-    LigatureUtf32Iter(shared_ptr<Shared> shared, shared_ptr<Utf32InputIterator> cur);
-
-    void yieldSelf();
-    LigatureUtf32Iter& next();
-
-    void buildReverseMap();
-
-    shared_ptr<Shared> shared;
-
-    class Reversed: public Utf32InputIterator {
-        friend class LigatureUtf32Iter;
-    protected:
-        shared_ptr<Shared> master;
-        shared_ptr<Utf32InputIterator> cur, masterNx;
-
-        Reversed(shared_ptr<Shared> master, shared_ptr<Utf32InputIterator> cur);
-        Reversed& next();
-    public:
-        virtual size_t position() {return cur->position();}
-        virtual void *data() {return master->data();}
-        virtual ucs4_char operator *();
-        virtual ucs4_char_tracer traceCurrent();
-        virtual Utf32InputIterator &operator ++() {return next();}
-        virtual Utf32InputIterator &operator ++(int _)  {return next();}
-        virtual shared_ptr<Utf32InputIterator> clone();
-        virtual shared_ptr<Utf32InputIterator> cloneReversed();
-        bool isEnd() {return *cur==*master->end;}
-        virtual void seekEnd() { cur = master->end->cloneReversed(); };
-
-        virtual ~Reversed(){};
-    };
-
 
 public:
     LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end);
     LigatureUtf32Iter(Utf32InputIterator &org, Utf32InputIterator &end, Utf32InputIterator &cur);
     virtual size_t position() {return cur->position();}
-    virtual void *data() {return shared->data();}
+    virtual void *data() {return org->data();}
     virtual ucs4_char operator *();
-    virtual ucs4_char_tracer traceCurrent();
-    static ucs4_char yield(Utf32InputIterator *cur, Utf32InputIterator *end, shared_ptr<Utf32InputIterator> *nx, size_t *ligalen);
     virtual Utf32InputIterator &operator ++() {return next();}
     virtual Utf32InputIterator &operator ++(int _)  {return next();}
     virtual shared_ptr<Utf32InputIterator> clone();
-    virtual shared_ptr<Utf32InputIterator> cloneReversed();
-    bool isEnd() {return *cur==*shared->end;}
-    virtual void seekBegin() { cur = shared->org->clone(); yieldSelf(); };
-    virtual void seekEnd() { cur = shared->end->clone(); yieldSelf(); };
+    bool isEnd() {return *cur==*end;}
 };
 
 
@@ -388,7 +319,7 @@ public:
 
     ~GLFont();
 
-    shared_ptr<GLTextLayout> layoutTextLine(Utf32InputIterator &strb, Utf32InputIterator &stre, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
+    shared_ptr<GLTextLayout> layoutTextLine(unicode_string str, float size, float width_limit = -1.0f, float spacing = 0.0f, bool crop_long_words = true, bool rtl = false);
 
     std::string getFamilyName() { return family_name; }
     std::string getStyleName() { return style_name; }
@@ -404,15 +335,13 @@ protected:
     float size, spacing;
     GLBoundingBox bbox;
 
-    std::vector<size_t> char_indices;
-    std::map<size_t, size_t> char_to_glyph_index;
+    unicode_string text;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
-    shared_ptr<Utf32InputIterator> endpos;
 
     GLTextLayout(GLFont::Ptr font, float size);
 
-    void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
+    void buildLayout(unicode_string str, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
     struct RenderPass {
         GLRectStrip pcoords;
@@ -463,10 +392,8 @@ public:
     float getLineHeight() { return ceilf(font->line_height * size); }
     float getWidth() { return bbox.size().x; }
 
-    shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
+    const unicode_string &getText() { return text; }
     const std::vector<float> &getPositions() { return positions; }
-    const std::vector<size_t> &getCharIndices() { return char_indices; }
-    int getCharGlyphPositionIdx(int charidx);
 
     const GLBoundingBox &getBoundingBox() { return bbox; }
 
@@ -513,6 +440,25 @@ public:
         if (0==((mask >> tr_gv) & 1)) tr_gv &= -3;
         if (0==((mask >> tr_gv) & 1)) tr_gv &= -2;
         return TRANSLATION[idx].form + tr_gv;
+    }
+
+    static unicode_string getLigatured(unicode_string str) {
+        int ligacnt = (sizeof LIGATURES)/(sizeof *LIGATURES);
+        unicode_string result;
+        result.reserve(str.size());
+        std::vector<int> matchlengths(ligacnt, 0);
+        DecodeUtf16toUtf32 decoder(str);
+        shared_ptr<Utf32InputIterator> begin = decoder.begin().clone();
+        shared_ptr<Utf32InputIterator> end = decoder.end().clone();
+        LigatureUtf32Iter iend(*begin, *end, *end);
+        LigatureUtf32Iter i(*begin, *end);
+        for (i; i != iend; ++i) {
+            unicode_char outbuf[2];
+            char len;
+            len = encodeCharUtf32toUtf16(*i, outbuf);
+            for(char j=0; j<len; ++j) result.push_back(outbuf[j]);
+        }
+        return result;
     }
 
     int findIndexByPos(float x, bool nearest = false);
