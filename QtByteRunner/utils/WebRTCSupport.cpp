@@ -66,6 +66,6 @@ StackSlot WebRTCSupport::stopMediaSender(RUNNER_ARGS)
     StackSlot &mediaSender = RUNNER_ARG(0);
     RUNNER_CheckTag1(TNative, mediaSender);
     stopSender(mediaSender);
-
+    RUNNER->DeleteNative(mediaSender);
     RETVOID;
 }

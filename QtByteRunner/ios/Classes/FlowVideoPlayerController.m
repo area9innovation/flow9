@@ -6,13 +6,13 @@
 //
 //
 
-#import "AVPlayerController.h"
+#import "FlowVideoPlayerController.h"
 
-@interface FlowAVPlayerController ()
+@interface FlowVideoPlayerController ()
 
 @end
 
-@implementation FlowAVPlayerController
+@implementation FlowVideoPlayerController
 
 - (void)viewDidLoad {
     [super viewDidLoad];

@@ -1,6 +1,6 @@
 #import <UIKit/UIKit.h>
 
-@interface FlowAVPlayerController : UIViewController {
+@interface FlowVideoPlayerController : UIViewController {
     IBOutlet UILabel * SubtitleText;
     IBOutlet UIImageView * PlayButtonImage;
 }

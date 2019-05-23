@@ -11,9 +11,10 @@
 #import <MediaPlayer/MediaPlayer.h>
 #import <WebKit/WebKit.h>
 #import "CordovaViewController.h"
-#import "AVPlayerController.h"
+#import "FlowVideoPlayerController.h"
 
 #import "FlowAVPlayerView.h"
+#import "FlowRTCVideoPreview.h"
 
 #import "GLRenderer.h"
 
@@ -137,7 +138,7 @@ public:
     std::map<UIView*, GLClip*> NativeWidgetClips;
     
     std::map<UIView*, CordovaViewController *> CDVViewControllers;
-    std::map<UIView*, FlowAVPlayerController *> FlowAVPlayerControllers;
+    std::map<UIView*, FlowVideoPlayerController *> FlowVideoPlayerControllers;
     
     FlowUITextView * activeTextWidget;
     

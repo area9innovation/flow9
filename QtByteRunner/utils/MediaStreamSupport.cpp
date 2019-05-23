@@ -71,6 +71,6 @@ StackSlot MediaStreamSupport::stopMediaStream(RUNNER_ARGS)
     RUNNER_CheckTag1(TNative, mediaStream);
 
     stopStream(mediaStream);
-
+    RUNNER->DeleteNative(mediaStream);
     RETVOID;
 }
