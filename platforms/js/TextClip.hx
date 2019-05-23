@@ -467,9 +467,6 @@ class TextClip extends NativeWidgetClip {
 				addChild(textClip);
 			}
 
-			//text = bidiDecorate(texts[0][0]);
-			//textClip.text = text;
-
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -487,16 +484,14 @@ class TextClip extends NativeWidgetClip {
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						text = txt;//text = bidiDecorate(txt);
-
 						if (txt == texts[0][0]) {
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
 							var newTextClip = createTextClip(
 								new TextMappedModification(
-									text,
-									modification.difPositionMapping.slice(chrIdx, chrIdx+text.length)
+									txt,
+									modification.difPositionMapping.slice(chrIdx, chrIdx+txt.length)
 								),
 								chrIdx, style
 							);
