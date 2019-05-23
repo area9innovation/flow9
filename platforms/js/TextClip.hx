@@ -47,7 +47,10 @@ class UnicodeTranslation {
 		var found = "";
 		for (found in map) break;
 		if (found != "") {
+			// Glyphs start here.
 			var rangeStart : Int = 0xFE81;
+			// Packed values, bit per character. How many glyphs
+			// present for a character, 4 if bit is set, else 2.
 			var flags : Int = 0x1FE1F50;
 			for (i in 0x622...0x63B) {
 				var is4range: Int = flags & 1;
@@ -55,7 +58,7 @@ class UnicodeTranslation {
 				map[String.fromCharCode(i)] = new UnicodeTranslation(rangeStart, 3 + 12*is4range);
 				rangeStart += 2 + is4range*2;
 			}
-			flags = 0x27F;
+			flags = 0x27F; // As above.
 			for (i in 0x641...0x64B) {
 				var is4range: Int = flags & 1;
 				flags = flags >> 1;
@@ -119,10 +122,10 @@ class TextClip extends NativeWidgetClip {
 
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
-		return (code >= 0x590 && code < 0x900)
-			|| (code >= 0xFB1D && code < 0xFDD0)
-			|| (code >= 0xFDF0 && code < 0xFE00)
-			|| (code >= 0xFE70 && code < 0xFF00)
+		return (code >= 0x590 && code < 0x900)    // Hebrew, arabic and some other RTL.
+			|| (code >= 0xFB1D && code < 0xFDD0)  // Hebrew, arabic and some other RTL (presentations).
+			|| (code >= 0xFDF0 && code < 0xFE00)  // Arabic ideographics.
+			|| (code >= 0xFE70 && code < 0xFF00)  // Arabic presentations.
 			// TODO treat also UCS-2 misencoded characters
 			/*|| (code >= 0x10800 && code < 0x11000)
 			|| (code >= 0x1E800 && code < 0x1F000)*/;
@@ -130,19 +133,19 @@ class TextClip extends NativeWidgetClip {
 
 	public static function isLtrChar(ch: String) {
 		var code = ch.charCodeAt(0);
-		return (code >= 0x30 && code < 0x3A)
-			|| (code >= 0x41 && code < 0x5B)
-			|| (code >= 0x61 && code < 0x7B)
-			|| (code >= 0xA0 && code < 0x590)
-			|| (code >= 0x700 && code < 0x2000)
-			|| (code >= 0x2100 && code < 0x2190)
-			|| (code >= 0x2460 && code < 0x2500)
-			|| (code >= 0x2800 && code < 0x2900)
-			|| (code >= 0x2E80 && code < 0x3000)
-			|| (code >= 0x3040 && code < 0xD800)
-			|| (code >= 0xF900 && code < 0xFB1D)
-			|| (code >= 0xFE20 && code < 0xFE70)
-			|| (code >= 0xFF00 && code < 0xFFF0)
+		return (code >= 0x30 && code < 0x3A)      // Decimals.
+			|| (code >= 0x41 && code < 0x5B)      // Capital basic latin.
+			|| (code >= 0x61 && code < 0x7B)      // Small basic latin.
+			|| (code >= 0xA0 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
+			|| (code >= 0x700 && code < 0x2000)   // Extended latin and greek, other LTR alphabet letters, also symbols.
+			|| (code >= 0x2100 && code < 0x2190)  // Punctuation, subscripts and superscripts, letterlikes, numerics, diacritics.
+			|| (code >= 0x2460 && code < 0x2500)  // Enclosed alphanums.
+			|| (code >= 0x2800 && code < 0x2900)  // Braille's.
+			|| (code >= 0x2E80 && code < 0x3000)  // Hieroglyphs: CJK, Kangxi, etc.
+			|| (code >= 0x3040 && code < 0xD800)  // Hieroglyphs.
+			|| (code >= 0xF900 && code < 0xFB1D)  // Hieroglyphs, some latin ligatures.
+			|| (code >= 0xFE20 && code < 0xFE70)  // Combinings, CJK compats, small forms.
+			|| (code >= 0xFF00 && code < 0xFFF0)  // Halfwidth and fullwidth forms.
 			// TODO treat also UCS-2 misencoded characters
 			/*|| (code >= 0x1D300 && code < 0x1D800)
 			|| (code >= 0x20000 && code < 0x2FA20)*/;
