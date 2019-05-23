@@ -58,13 +58,13 @@ using std::flush;
 # define IOSCPP11 0
 #endif
 
-#if defined(__cplusplus) && (__cplusplus != 1 && _cpluspus >= 201103L || IOSCPP11)
+#if (defined(__cplusplus) && (__cplusplus != 1 && _cpluspus >= 201103L || IOSCPP11)) || defined(_MSC_VER)
 # define C11 1
 #else
 # define C11 0
 #endif
 
-#if defined(_MSC_VER) || C11
+#if C11
 #include <memory>
 #include <unordered_set>
 #include <unordered_map>
@@ -106,7 +106,7 @@ using std::tr1::static_pointer_cast;
 #define STL_HASH_MAP STL_HASH_NAMESPACE::unordered_map
 #define STL_HASH_SET STL_HASH_NAMESPACE::unordered_set
 
-#if _MSC_VER || C11
+#if C11
 #  define BEGIN_STL_HASH_NAMESPACE namespace std {
 #  define END_STL_HASH_NAMESPACE }
 
