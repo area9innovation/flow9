@@ -1,9 +1,10 @@
+import math/hash;
 import tools/flowc/backends/common;
 import tools/flowc/backends/java/fi2java_defines;
 
 export {
 	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
-	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct>;
+	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool>;
 	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
 	generateJavaStructList(gctx : JavaGlobalContext) -> string;
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
@@ -84,24 +85,51 @@ chooseJavaIdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string
 	}
 }
 
-indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct> {
+indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool> {
 	// Order all structs by name
 	struct_list = foldTree(modules, makeTree(), \name, javaModule, acc ->
 		fold(javaModule.module.structs, acc, \acc2, struct ->
 			setTree(acc2, struct.name, Pair(javaModule, struct))
 		)
 	);
-	// Assign id values
-	init = Pair(0, makeTree());
-	res = foldTree(struct_list, init, \name, pair, acc -> {
-		id = acc.first;
-		javaModule = pair.first;
-		struct = pair.second;
-		fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
-		data = JavaStruct(id, name, javaModule, fields);
-		Pair(id + 1, setTree(acc.second, name, data));
-	});
-	res.second;
+	hashed = foldTree(
+		struct_list, 
+		makeTree(),
+		\name, struct, acc -> {
+			hash = fastHashString(name);
+			switch (lookupTree(acc, hash)) {
+				Some(structs): setTree(acc, hash, insertSet(structs, name));
+				None(): setTree(acc, hash, makeSet1(name));
+			}
+		}
+	);
+	hashCollisions = foldTree(hashed,
+		false,
+		\hash, names, acc -> acc || sizeSet(names) > 1
+	);
+	if (hashCollisions) {
+		// Assign id values
+		init = Pair(0, makeTree());
+		res = foldTree(struct_list, init, \name, pair, acc -> {
+			id = acc.first;
+			javaModule = pair.first;
+			struct = pair.second;
+			fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
+			data = JavaStruct(id, name, javaModule, fields);
+			Pair(id + 1, setTree(acc.second, name, data));
+		});
+		Pair(res.second, true);
+	} else {
+		Pair(
+			foldTree(struct_list, makeTree(), \name, pair, acc -> {
+				javaModule = pair.first;
+				struct = pair.second;
+				fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
+				setTree(acc, name, JavaStruct(fastHashString(name), name, javaModule, fields));
+			}),
+			false
+		);
+	}
 }
 
 indexJavaGlobals(gctx : JavaGlobalContext) -> void {
