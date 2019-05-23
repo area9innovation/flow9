@@ -56,9 +56,8 @@ class FlowWebRTCSupport {
             PeerConnection.RTCConfiguration configuration = createRTCConfiguration(stunUrls, turnServers);
 
             Socket serverSocket = IO.socket(serverUrl);
-            serverSocket.connect();
 
-            serverSocket.emit("join", roomId);
+            PeerConnectionManager peerConnectionManager = new PeerConnectionManager(stream.peerConnectionFactory, configuration, stream.mediaStream, serverSocket, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
 
             serverSocket.on("message", args -> {
                 JSONObject data = (JSONObject) args[0];
@@ -66,35 +65,44 @@ class FlowWebRTCSupport {
                     String clientId = data.getString("clientId");
                     JSONObject message = data.getJSONObject("content");
                     String type = message.getString("type");
-                    if (type.equals("new_user")) {
-                        PeerConnectionManager peerConnection = new PeerConnectionManager(stream.peerConnectionFactory, configuration, stream.mediaStream, serverSocket, clientId, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
-                        peerConnection.createOffer();
-                        mediaSenderObject.peerConnections.put(clientId, peerConnection);
-                    } else if (type.equals("offer")) {
-                        PeerConnectionManager peerConnection = new PeerConnectionManager(stream.peerConnectionFactory, configuration, stream.mediaStream, serverSocket, clientId, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
-                        peerConnection.setRemoteDescription(new SessionDescription(SessionDescription.Type.OFFER, message.getString("sdp")));
-                        peerConnection.createAnswer();
-                        mediaSenderObject.peerConnections.put(clientId, peerConnection);
-                    } else if (type.equals("answer")) {
-                        mediaSenderObject.peerConnections.get(clientId)
-                                .setRemoteDescription(new SessionDescription(SessionDescription.Type.fromCanonicalForm(message.getString("type").toLowerCase()), message.getString("sdp")));
-                    } else if (type.equals("candidate")) {
-                        mediaSenderObject.peerConnections.get(clientId).addIceCandidate(new IceCandidate(message.getString("id"), message.getInt("label"), message.getString("candidate")));
-                    } else if (type.equals("disconnect")) {
-                        wrapper.cbOnMediaSenderParticipantLeave(onParticipantLeaveRoot, clientId);
-                        mediaSenderObject.peerConnections.get(clientId).close();
+                    switch (type) {
+                        case "new_user":
+                            peerConnectionManager.createPeerConnection(clientId);
+                            peerConnectionManager.createOffer(clientId);
+                            break;
+                        case "offer":
+                            peerConnectionManager.createPeerConnection(clientId);
+                            peerConnectionManager.setRemoteDescription(clientId, new SessionDescription(SessionDescription.Type.OFFER, message.getString("sdp")));
+                            peerConnectionManager.createAnswer(clientId);
+                            break;
+                        case "answer":
+                            peerConnectionManager
+                                    .setRemoteDescription(clientId, new SessionDescription(SessionDescription.Type.ANSWER, message.getString("sdp")));
+                            break;
+                        case "candidate":
+                            peerConnectionManager
+                                    .addIceCandidate(clientId, new IceCandidate(message.getString("id"), message.getInt("label"), message.getString("candidate")));
+                            break;
+                        case "disconnect":
+                            wrapper.cbOnMediaSenderParticipantLeave(onParticipantLeaveRoot, clientId);
+                            peerConnectionManager.close(clientId);
+                            break;
                     }
                 } catch (JSONException e) {
                     wrapper.cbOnMediaSenderError(onErrorRoot, e.getLocalizedMessage());
                 }
             });
 
+            serverSocket.connect();
+
+            serverSocket.emit("join", roomId);
             serverSocket.emit("message", new JSONObject()
                     .put("content", new JSONObject()
                             .put("type", "new_user")
                     )
             );
 
+            mediaSenderObject.peerConnectionManager = peerConnectionManager;
             mediaSenderObject.serverSocket = serverSocket;
             wrapper.cbOnMediaSenderReady(onMediaSenderReadyRoot, mediaSenderObject);
 
@@ -113,11 +121,8 @@ class FlowWebRTCSupport {
         } catch (JSONException e) {
             e.printStackTrace();
         }
+        mediaSender.peerConnectionManager.close();
         mediaSender.serverSocket.close();
-
-        for (Map.Entry<String, PeerConnectionManager> entry : mediaSender.peerConnections.entrySet()) {
-            entry.getValue().close();
-        }
     }
 
     private PeerConnection.RTCConfiguration createRTCConfiguration(String[] stunUrls, String[][] turnServers) {
@@ -137,46 +142,47 @@ class FlowWebRTCSupport {
 
 
     class PeerConnectionManager {
-        Socket serverSocket;
-        String clientId;
-        PeerConnection peerConnection;
+        PeerConnectionFactory peerConnectionFactory;
+        PeerConnection.RTCConfiguration peerConnectionConfiguration;
         MediaConstraints sdpConstraints;
+        MediaStream localStream;
+
+        Socket serverSocket;
 
         int onNewParticipantRoot;
         int onParticipantLeaveRoot;
         int onErrorRoot;
 
-        SdpObserver updateLocalDescriptionObserver = new CustomSdpObserver() {
-            @Override
-            public void onCreateSuccess(SessionDescription sessionDescription) {
-                peerConnection.setLocalDescription(new CustomSdpObserver(), sessionDescription);
-                try {
-                    serverSocket.emit("message", new JSONObject()
-                            .put("to", clientId)
-                            .put("content", sessionDescription2JSON(sessionDescription))
-                    );
-                } catch (JSONException e) {
-                    wrapper.cbOnMediaSenderError(onErrorRoot, e.getLocalizedMessage());
-                }
-            }
-        };
+        Map<String, PeerConnectionWrapper> peerConnections = new HashMap<>();
 
-        PeerConnectionManager(PeerConnectionFactory peerConnectionFactory, PeerConnection.RTCConfiguration configuration, MediaStream localStream, Socket serverSocket, String clientId, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot) {
-            this.serverSocket = serverSocket;
-            this.clientId = clientId;
+        class PeerConnectionWrapper {
+            PeerConnection peerConnection;
+            SdpObserver updateLocalDescriptionObserver;
+        }
+
+        PeerConnectionManager(PeerConnectionFactory peerConnectionFactory, PeerConnection.RTCConfiguration configuration, MediaStream localStream, Socket serverSocket, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot) {
+            this.peerConnectionFactory = peerConnectionFactory;
+            this.peerConnectionConfiguration = configuration;
 
             this.sdpConstraints = new MediaConstraints();
             this.sdpConstraints.mandatory.add(new MediaConstraints.KeyValuePair("OfferToReceiveAudio", Boolean.toString(!localStream.audioTracks.isEmpty())));
             this.sdpConstraints.mandatory.add(new MediaConstraints.KeyValuePair("OfferToReceiveVideo", Boolean.toString(!localStream.videoTracks.isEmpty())));
 
+            this.localStream = localStream;
+
+            this.serverSocket = serverSocket;
+
             this.onNewParticipantRoot = onNewParticipantRoot;
             this.onParticipantLeaveRoot = onParticipantLeaveRoot;
             this.onErrorRoot = onErrorRoot;
+        }
 
-            this.peerConnection = peerConnectionFactory.createPeerConnection(configuration, new CustomPeerConnectionObserver() {
+        void createPeerConnection(final String clientId) {
+            PeerConnectionWrapper connectionWrapper = new PeerConnectionWrapper();
+            connectionWrapper.peerConnection = peerConnectionFactory.createPeerConnection(peerConnectionConfiguration, new CustomPeerConnectionObserver() {
                 @Override
                 public void onIceCandidate(IceCandidate iceCandidate) {
-                    sendMessage(iceCandidate2JSON(iceCandidate));
+                    sendMessage(clientId, iceCandidate2JSON(iceCandidate));
                 }
 
                 @Override
@@ -192,31 +198,47 @@ class FlowWebRTCSupport {
                     wrapper.cbOnMediaSenderParticipantLeave(onParticipantLeaveRoot, clientId);
                 }
             });
-            peerConnection.addStream(localStream);
+            connectionWrapper.peerConnection.addStream(localStream);
+            connectionWrapper.updateLocalDescriptionObserver = new CustomSdpObserver() {
+                @Override
+                public void onCreateSuccess(SessionDescription sessionDescription) {
+                    connectionWrapper.peerConnection.setLocalDescription(new CustomSdpObserver(), sessionDescription);
+                    sendMessage(clientId, sessionDescription2JSON(sessionDescription));
+                }
+            };
+            peerConnections.put(clientId, connectionWrapper);
         }
 
-        void setRemoteDescription(SessionDescription sessionDescription) {
-            peerConnection.setRemoteDescription(new CustomSdpObserver(), sessionDescription);
+        void setRemoteDescription(String clientId, SessionDescription sessionDescription) {
+            peerConnections.get(clientId).peerConnection.setRemoteDescription(new CustomSdpObserver(), sessionDescription);
         }
 
-        void createOffer() {
-            peerConnection.createOffer(updateLocalDescriptionObserver, sdpConstraints);
+        void createOffer(String clientId) {
+            PeerConnectionWrapper connectionWrapper = peerConnections.get(clientId);
+            connectionWrapper.peerConnection.createOffer(connectionWrapper.updateLocalDescriptionObserver, sdpConstraints);
         }
 
-        void createAnswer() {
-            peerConnection.createAnswer(updateLocalDescriptionObserver, sdpConstraints);
+        void createAnswer(String clientId) {
+            PeerConnectionWrapper connectionWrapper = peerConnections.get(clientId);
+            connectionWrapper.peerConnection.createAnswer(connectionWrapper.updateLocalDescriptionObserver, sdpConstraints);
         }
 
-        void addIceCandidate(IceCandidate iceCandidate) {
-            peerConnection.addIceCandidate(iceCandidate);
+        void addIceCandidate(String clientId, IceCandidate iceCandidate) {
+            peerConnections.get(clientId).peerConnection.addIceCandidate(iceCandidate);
+        }
+
+        public void close(String clientId) {
+            wrapper.cbOnMediaSenderParticipantLeave(onParticipantLeaveRoot, clientId);
+            peerConnections.get(clientId).peerConnection.close();
         }
 
         public void close() {
-            wrapper.cbOnMediaSenderParticipantLeave(onParticipantLeaveRoot, clientId);
-            peerConnection.close();
+            for (Map.Entry<String, PeerConnectionWrapper> entry : peerConnections.entrySet()) {
+                close(entry.getKey());
+            }
         }
 
-        private void sendMessage(JSONObject content) {
+        private void sendMessage(String clientId, JSONObject content) {
             try {
                 serverSocket.emit("message", new JSONObject()
                         .put("to", clientId)
@@ -252,7 +274,7 @@ class FlowWebRTCSupport {
     }
 
     class FlowMediaSenderObject {
-        Map<String, PeerConnectionManager> peerConnections = new HashMap<>();
+        PeerConnectionManager peerConnectionManager;
         Socket serverSocket;
 
         FlowMediaSenderObject() {

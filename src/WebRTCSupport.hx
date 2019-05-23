@@ -58,7 +58,7 @@ class WebRTCSupport {
 
 			var localStream = mediaStream;
 			var socket : Dynamic = untyped io(serverUrl).connect();
-			var peerConnections : Map<String, PeerConnectionManager> = new Map<String, PeerConnectionManager>();
+			var peerConnectionManager : PeerConnectionManager = new PeerConnectionManager(pcConfig, localStream, sendMessageTo.bind(socket), onNewParticipant, onParticipantLeave, onError);
 
 			if (roomId != '') {
 				socket.emit('join', roomId);
@@ -68,24 +68,22 @@ class WebRTCSupport {
 				var clientId : String = m.clientId;
 				var message : Dynamic = m.content;
 				if (message.type == 'new_user') {
-					peerConnections[clientId] = new PeerConnectionManager(pcConfig, clientId, localStream, sendMessageTo.bind(socket), onNewParticipant, onParticipantLeave);
-					peerConnections[clientId].createOffer(onError);
+					peerConnectionManager.createPeerConnection(clientId);
+					peerConnectionManager.createOffer(clientId);
 				} else if (message.type == 'offer') {
-					if (peerConnections[clientId] == null) {
-						peerConnections[clientId] = new PeerConnectionManager(pcConfig, clientId, localStream, sendMessageTo.bind(socket), onNewParticipant, onParticipantLeave);
-						peerConnections[clientId].setRemoteDescription(message);
-						peerConnections[clientId].createAnswer(onError);
-					}
+					peerConnectionManager.createPeerConnection(clientId);
+					peerConnectionManager.setRemoteDescription(clientId, message);
+					peerConnectionManager.createAnswer(clientId);
 				} else if (message.type == 'answer') {
-					peerConnections[clientId].setRemoteDescription(message);
+					peerConnectionManager.setRemoteDescription(clientId, message);
 				} else if (message.type == 'candidate') {
 					var candidate = {
 						sdpMLineIndex: message.label,
 						candidate: message.candidate
 					};
-					peerConnections[clientId].addIceCandidate(candidate);
+					peerConnectionManager.addIceCandidate(clientId, candidate);
 				} else if (message.type == 'disconnect') {
-					peerConnections[clientId].stop();
+					peerConnectionManager.stop(clientId);
 				}
 			});
 
@@ -97,7 +95,7 @@ class WebRTCSupport {
 
 			var mediaSender = {
 				socket : socket,
-				peerConnections : peerConnections
+				peerConnectionManager : peerConnectionManager
 			};
 
 			Browser.window.addEventListener("beforeunload", function() {
@@ -127,10 +125,7 @@ class WebRTCSupport {
 				mediaSender.socket.close();
 				mediaSender.socket = null;
 			}
-			var peerConnections : Map<String, PeerConnectionManager> = mediaSender.peerConnections;
-			for (peerConnection in peerConnections) {
-				peerConnection.stop();
-			}
+			mediaSender.peerConnectionManager.close();
 			mediaSender = null;
 		}
 	#end
@@ -138,67 +133,78 @@ class WebRTCSupport {
 }
 
 class PeerConnectionManager {
-	private var clientId : String = "";
-	private var connection : Dynamic = null;
+	private var peerConnections : Map<String, Dynamic>;
+
+	private var pcConfig : Dynamic;
+	private var localStream : Dynamic;
 	private var onNewParticipant: String->Dynamic->Void;
 	private var onParticipantLeave: String->Void;
+	private var onError: String->Void;
 	private var sendHandshakeMessage : String->Dynamic->Void;
 
-	public function new(pcConfig : Dynamic, clientId : String, localStream : Dynamic,
+	public function new(pcConfig : Dynamic, localStream : Dynamic,
 		sendHandshakeMessage : String->Dynamic->Void,
 		onNewParticipant : String->Dynamic->Void,
-		onParticipantLeave : String -> Void) {
+		onParticipantLeave : String -> Void,
+		onError: String->Void) {
 		if (localStream) {
-			this.clientId = clientId;
+			this.peerConnections = new Map<String, Dynamic>();
+			this.pcConfig = pcConfig;
+			this.localStream = localStream;
 			this.sendHandshakeMessage = sendHandshakeMessage;
 			this.onNewParticipant = onNewParticipant;
 			this.onParticipantLeave = onParticipantLeave;
-
-			this.connection = untyped __js__("new RTCPeerConnection(pcConfig)");
-			this.connection.onicecandidate = handleIceCandidate;
-			this.connection.onaddstream = handleRemoteStreamAdded;
-			this.connection.addStream(localStream);
+			this.onError = onError;
 		}
 	}
 
-	private function updateLocalDescription(sessionDescription : Dynamic) {
-		this.connection.setLocalDescription(sessionDescription);
-		this.sendHandshakeMessage(this.clientId, sessionDescription);
+	public function createPeerConnection(clientId : String) {
+		var connection : Dynamic = untyped __js__("new RTCPeerConnection(this.pcConfig)");
+		connection.onicecandidate = handleIceCandidate.bind(clientId);
+		connection.onaddstream = handleRemoteStreamAdded.bind(clientId);
+		connection.addStream(this.localStream);
+
+		peerConnections[clientId] = connection;
 	}
 
-	public function createOffer(onError : String -> Void) {
-		this.connection.createOffer().then(
-			updateLocalDescription,
+	private function updateLocalDescription(clientId : String, sessionDescription : Dynamic) {
+		setLocalDescription(clientId, sessionDescription);
+		this.sendHandshakeMessage(clientId, sessionDescription);
+	}
+
+	public function createOffer(clientId : String) {
+		peerConnections[clientId].createOffer().then(
+			updateLocalDescription.bind(clientId),
 			function(error) {
-				onError(error.message);
+				this.onError(error.message);
 			}
 		);
 	}
 
-	public function createAnswer(onError : String -> Void) {
-		this.connection.createAnswer().then(
-			updateLocalDescription,
+	public function createAnswer(clientId : String) {
+		peerConnections[clientId].createAnswer().then(
+			updateLocalDescription.bind(clientId),
 			function(error) {
-				onError(error.message);
+				this.onError(error.message);
 			}
 		);
 	}
 
-	public function setLocalDescription(description : Dynamic) {
-		this.connection.setLocalDescription(untyped __js__("new RTCSessionDescription(description)"));
+	public function setLocalDescription(clientId : String, description : Dynamic) {
+		peerConnections[clientId].setLocalDescription(untyped __js__("new RTCSessionDescription(description)"));
 	}
 
-	public function setRemoteDescription(description : Dynamic) {
-		this.connection.setRemoteDescription(untyped __js__("new RTCSessionDescription(description)"));
+	public function setRemoteDescription(clientId : String, description : Dynamic) {
+		peerConnections[clientId].setRemoteDescription(untyped __js__("new RTCSessionDescription(description)"));
 	}
 
-	public function addIceCandidate(candidate : Dynamic) {
-		this.connection.addIceCandidate(untyped __js__("new RTCIceCandidate(candidate)"));
+	public function addIceCandidate(clientId : String, candidate : Dynamic) {
+		peerConnections[clientId].addIceCandidate(untyped __js__("new RTCIceCandidate(candidate)"));
 	}
 
-	public function handleIceCandidate(event : Dynamic) {
+	public function handleIceCandidate(clientId : String, event : Dynamic) {
 		if (event.candidate) {
-			this.sendHandshakeMessage(this.clientId, {
+			this.sendHandshakeMessage(clientId, {
 				type: 'candidate',
 				label: event.candidate.sdpMLineIndex,
 				id: event.candidate.sdpMid,
@@ -207,15 +213,21 @@ class PeerConnectionManager {
 		}
 	}
 
-	public function handleRemoteStreamAdded(event : Dynamic) {
-		this.onNewParticipant(this.clientId, event.stream);
+	public function handleRemoteStreamAdded(clientId : String, event : Dynamic) {
+		this.onNewParticipant(clientId, event.stream);
 	}
 
-	public function stop() {
-		this.onParticipantLeave(this.clientId);
-		if (this.connection) {
-			this.connection.close();
-			this.connection = null;
+	public function stop(clientId : String) {
+		this.onParticipantLeave(clientId);
+		if (peerConnections[clientId]) {
+			peerConnections[clientId].close();
+			peerConnections[clientId] = null;
+		}
+	}
+
+	public function close() {
+		for(clientId in this.peerConnections.keys()) {
+			stop(clientId);
 		}
 	}
 }

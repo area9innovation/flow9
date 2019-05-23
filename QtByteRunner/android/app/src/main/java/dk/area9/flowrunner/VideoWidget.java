@@ -547,37 +547,40 @@ class VideoWidget extends NativeWidget {
         this.surfaceTexture.setDefaultBufferSize(mediaStreamObject.width, mediaStreamObject.height);
 
         SurfaceEglRenderer eglRenderer = new SurfaceEglRenderer("VideoTrackRenderer" + this.id);
-        eglRenderer.init(FlowMediaStreamSupport.getRootEglBase().getEglBaseContext(), new RendererCommon.RendererEvents() {
-            @Override
-            public void onFirstFrameRendered() {
+        handler.post(() -> {
 
-            }
+            eglRenderer.init(FlowMediaStreamSupport.getRootEglBase().getEglBaseContext(), new RendererCommon.RendererEvents() {
+                @Override
+                public void onFirstFrameRendered() {
 
-            @Override
-            public void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
-                if (rotation % 180 != 0) {
-                    int temp = videoHeight;
-                    videoHeight = videoWidth;
-                    videoWidth = temp;
                 }
-                mediaStreamObject.width = videoWidth;
-                mediaStreamObject.height = videoHeight;
-                reportSize(mediaStreamObject.width, mediaStreamObject.height);
+
+                @Override
+                public void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
+                    if (rotation % 180 != 0) {
+                        int temp = videoHeight;
+                        videoHeight = videoWidth;
+                        videoWidth = temp;
+                    }
+                    mediaStreamObject.width = videoWidth;
+                    mediaStreamObject.height = videoHeight;
+                    reportSize(mediaStreamObject.width, mediaStreamObject.height);
+                }
+            }, EglBase.CONFIG_RGBA, new GlRectDrawer());
+
+            eglRenderer.createEglSurface(this.surfaceTexture);
+            if (mediaStreamObject.isCameraFrontFacing) {
+                eglRenderer.setMirror(true);
             }
-        }, EglBase.CONFIG_RGBA, new GlRectDrawer());
 
-        eglRenderer.createEglSurface(this.surfaceTexture);
-        if (mediaStreamObject.isCameraFrontFacing) {
-            eglRenderer.setMirror(true);
-        }
+            if (!mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
+                mediaStreamObject.mediaStream.videoTracks.get(0).addSink(eglRenderer);
+            }
 
-        if (!mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
-            mediaStreamObject.mediaStream.videoTracks.get(0).addSink(eglRenderer);
-        }
+            this.eglRenderer = eglRenderer;
+            handler.post(createCallback);
+        });
 
-        this.eglRenderer = eglRenderer;
-
-        handler.post(createCallback);
     }
 
     public void setPlaying(boolean playing) {
