@@ -40,8 +40,7 @@ class WebRTCSupport {
 	#if (js && !flow_nodejs)
 		if (serverUrl != "") {
 			var pcConfig : Dynamic = {
-				iceServers: [],
-				iceTransportPolicy: 'relay'
+				iceServers: []
 			};
 			for (url in stunUrls) {
 				pcConfig.iceServers.push({
