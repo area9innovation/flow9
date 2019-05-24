@@ -201,12 +201,16 @@ class RenderSupport3D {
 		");
 	}
 
-	public static function make3DObjectFromJSON(json : Dynamic) : Object3D {
+	public static function make3DObjectFromJSON(json : String) : Object3D {
 		json = haxe.Json.parse(json);
 		return new ObjectLoader().parse(json);
 	}
 
-	public static function make3DGeometryFromJSON(json : Dynamic) : Object3D {
+	public static function make3DObjectFromObj(obj : String, mtl : String) : Object3D {
+		return untyped __js__("new THREE.OBJLoader().setMaterials(new THREE.MTLLoader().parse(mtl)).parse(obj)");
+	}
+
+	public static function make3DGeometryFromJSON(json : String) : Object3D {
 		json = haxe.Json.parse(json);
 		var geometry : Object3D = untyped __js__("new THREE.ObjectLoader().parseGeometries(json)");
 
@@ -217,7 +221,7 @@ class RenderSupport3D {
 		}
 	}
 
-	public static function make3DMaterialsFromJSON(json : Dynamic) : Object3D {
+	public static function make3DMaterialsFromJSON(json : String) : Object3D {
 		json = haxe.Json.parse(json);
 		var materials : Object3D = untyped __js__("new THREE.ObjectLoader().parseMaterials(json)");
 
@@ -420,6 +424,98 @@ class RenderSupport3D {
 		return false;
 	}
 
+
+	public static function set3DTransformControlsSpace(stage : ThreeJSStage, local : Bool) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.setSpace(local ? "local" : "world");
+		}
+	}
+
+	public static function is3DTransformControlsSpaceLocal(stage : ThreeJSStage) : Bool {
+		return stage.transformControls != null ? stage.transformControls.space == "local" : false;
+	}
+
+	public static function set3DTransformControlsMode(stage : ThreeJSStage, mode : String) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.setMode(mode);
+		}
+	}
+
+	public static function get3DTransformControlsMode(stage : ThreeJSStage) : String {
+		return stage.transformControls != null ? stage.transformControls.mode : "";
+	}
+
+	public static function set3DTransformControlsTranslationSnap(stage : ThreeJSStage, snap : Float) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.setTranslationSnap(snap);
+		}
+	}
+
+	public static function get3DTransformControlsTranslationSnap(stage : ThreeJSStage) : Float {
+		return stage.transformControls != null ? stage.transformControls.translationSnap : -1.0;
+	}
+
+	public static function set3DTransformControlsRotationSnap(stage : ThreeJSStage, snap : Float) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.setRotationSnap(js.three.Math.degToRad(snap));
+		}
+	}
+
+	public static function get3DTransformControlsRotationSnap(stage : ThreeJSStage) : Float {
+		return stage.transformControls != null ? stage.transformControls.rotationSnap : -1.0;
+	}
+
+	public static function set3DTransformControlsSize(stage : ThreeJSStage, size : Float) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.setSize(size);
+		}
+	}
+
+	public static function get3DTransformControlsSize(stage : ThreeJSStage) : Float {
+		return stage.transformControls != null ? stage.transformControls.size : -1.0;
+	}
+
+	public static function set3DTransformControlsShowX(stage : ThreeJSStage, show : Bool) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.showX = show;
+		}
+	}
+
+	public static function get3DTransformControlsShowX(stage : ThreeJSStage) : Bool {
+		return stage.transformControls != null ? stage.transformControls.showX : false;
+	}
+
+	public static function set3DTransformControlsShowY(stage : ThreeJSStage, show : Bool) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.showY = show;
+		}
+	}
+
+	public static function get3DTransformControlsShowY(stage : ThreeJSStage) : Bool {
+		return stage.transformControls != null ? stage.transformControls.showY : false;
+	}
+
+	public static function set3DTransformControlsShowZ(stage : ThreeJSStage, show : Bool) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.showZ = show;
+		}
+	}
+
+	public static function get3DTransformControlsShowZ(stage : ThreeJSStage) : Bool {
+		return stage.transformControls != null ? stage.transformControls.showZ : false;
+	}
+
+	public static function set3DTransformControlsEnabled(stage : ThreeJSStage, enabled : Bool) : Void {
+		if (stage.transformControls != null) {
+			stage.transformControls.enabled = enabled;
+		}
+	}
+
+	public static function get3DTransformControlsEnabled(stage : ThreeJSStage) : Bool {
+		return stage.transformControls != null ? stage.transformControls.enabled : false;
+	}
+
+
 	public static function attach3DBoxHelper(stage : ThreeJSStage, object : Object3D) : Void {
 		if (untyped object.boxHelper == null) {
 			if (untyped __instanceof__(object, PointLight)) {
@@ -506,7 +602,11 @@ class RenderSupport3D {
 	}
 
 	public static function set3DObjectName(object : Object3D, name : String) : Void {
-		object.name = name;
+		if (object.name != name) {
+			object.name = name;
+
+			object.emitEvent("namechange");
+		}
 	}
 
 	public static function get3DObjectVisible(object : Object3D) : Bool {

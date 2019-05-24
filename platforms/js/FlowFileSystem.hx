@@ -164,9 +164,6 @@ class FlowFileSystem {
 		return d;
 	}
 
-	#if js
-	private static var JSFileInput : Dynamic = null;
-	#end
 	public static function openFileDialog(maxFiles : Int, fileTypes : Array<String>, callback : Array<Dynamic> -> Void) : Void {
 		#if flash
 
@@ -187,20 +184,13 @@ class FlowFileSystem {
 
 		#elseif (js && !flow_nodejs)
 
-		// Remove element before trying to create.
-		// If we don't do that, file open dialog opens only first time.
-		if (JSFileInput) {
-			js.Browser.document.body.removeChild(JSFileInput);
-			JSFileInput = null;
-		}
 		// Appending JSFileInput element to the DOM need only for Safari 5.1.7 & IE11 browsers.
 		// If we don't append it, calling function 'click()' failed on these browsers.
-		if (!JSFileInput) {
-			JSFileInput = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
- 			JSFileInput.type = "file";
-			JSFileInput.style.visibility = "hidden";
-			if (maxFiles != 1)
-				JSFileInput.multiple = true;
+		var jsFileInput : Dynamic = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
+		jsFileInput.type = "file";
+		jsFileInput.style.visibility = "hidden";
+		if (maxFiles != 1) {
+			jsFileInput.multiple = true;
 		}
 
 
@@ -212,13 +202,13 @@ class FlowFileSystem {
 			fTypes += fType + ",";
 		}
 
-		JSFileInput.accept = fTypes;
-		JSFileInput.value = ""; // force onchange event for the same path
+		jsFileInput.accept = fTypes;
+		jsFileInput.value = ""; // force onchange event for the same path
 
-		JSFileInput.onchange = function(e : Dynamic) {
-			JSFileInput.onchange = null;
+		jsFileInput.onchange = function(e : Dynamic) {
+			jsFileInput.onchange = null;
 
-			var files : js.html.FileList = JSFileInput.files;
+			var files : js.html.FileList = jsFileInput.files;
 
 			var fls : Array<js.html.File> = [];
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
@@ -226,28 +216,29 @@ class FlowFileSystem {
 			}
 
 			callback(fls);
+			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
 		//workaround for case when cancel was pressed and onchange isn't fired
 		var onFocus : Dynamic = null;
-		onFocus = function(e : Dynamic) {			
+		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
 
-			//onfocus is fired before the change of JSFileInput value
+			//onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
-				JSFileInput.dispatchEvent(new js.html.Event("change"));
+				jsFileInput.dispatchEvent(new js.html.Event("change"));
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
 
-		JSFileInput.click();
+		jsFileInput.click();
 		#end
 	}
 
 	public static function uploadNativeFile(
-			file : FlowFile, 
-			url : String, 
-			params: Array<Array<String>>, 
+			file : FlowFile,
+			url : String,
+			params: Array<Array<String>>,
 			onOpenFn: Void -> Void,
 			onDataFn: String -> Void,
 			onErrorFn: String -> Void,
