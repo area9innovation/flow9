@@ -1,4 +1,6 @@
 import js.Browser;
+import js.html.Element;
+
 import pixi.core.sprites.Sprite;
 import pixi.core.textures.Texture;
 import pixi.core.textures.BaseTexture;
@@ -14,6 +16,7 @@ class VideoClip extends FlowContainer {
 	private var durationFn : Float -> Void;
 	private var positionFn : Float -> Void;
 	private var streamStatusListener : Array<String -> Void> = new Array<String -> Void>();
+	private var sources : Array<Element> = new Array<Element>();
 
 	private var startTime : Float = 0;
 	private var endTime : Float = 0;
@@ -106,11 +109,16 @@ class VideoClip extends FlowContainer {
 	private function createVideoClip(filename : String, startPaused : Bool) : Void {
 		deleteVideoClip();
 
+		addVideoSource(filename, "");
+
 		nativeWidget = Browser.document.createElement("video");
 		nativeWidget.crossorigin = determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
-		nativeWidget.src = filename;
 		nativeWidget.setAttribute('playsinline', true);
+
+		for (source in sources) {
+			nativeWidget.appendChild(source);
+		}
 
 		if (nativeWidget.autoplay) {
 			if (playingVideos.indexOf(this) < 0) playingVideos.push(this);
@@ -139,7 +147,9 @@ class VideoClip extends FlowContainer {
 			pauseVideo();
 
 			// Force video unload
-			nativeWidget.removeAttribute('src');
+			for (source in sources) {
+				nativeWidget.removeChild(source);
+			}
 			nativeWidget.load();
 
 			RenderSupportJSPixi.off("drawframe", updateNativeWidget);
@@ -341,6 +351,21 @@ class VideoClip extends FlowContainer {
 	public function addStreamStatusListener(fn : String -> Void) : Void -> Void {
 		streamStatusListener.push(fn);
 		return function () { streamStatusListener.remove(fn); };
+	}
+
+	public function addVideoSource(src : String, type : String) : Void {
+		var source = Browser.document.createElement('source');
+
+		untyped source.src = src;
+		if (type != "") {
+			untyped source.type = type;
+		}
+
+		sources.push(source);
+
+		if (nativeWidget != null) {
+			nativeWidget.appendChild(source);
+		}
 	}
 
 	private function createStreamStatusListeners() {

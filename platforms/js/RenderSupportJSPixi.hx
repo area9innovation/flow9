@@ -246,6 +246,8 @@ class RenderSupportJSPixi {
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
 
+		PixiWorkarounds.workaroundRenderSpriteRoundPixels();
+
 		createPixiRenderer();
 
 		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
@@ -1366,6 +1368,10 @@ class RenderSupportJSPixi {
 
 	public static function addStreamStatusListener(clip : VideoClip, fn : String -> Void) : Void -> Void {
 		return clip.addStreamStatusListener(fn);
+	}
+
+	public static function addVideoSource(clip : VideoClip, src : String, type : String) : Void {
+		clip.addVideoSource(src, type);
 	}
 
 	public static function addEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {

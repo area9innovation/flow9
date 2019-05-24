@@ -2,6 +2,7 @@
 #define QGLRENDERSUPPORT_H
 
 #include "gl-gui/GLRenderSupport.h"
+#include "font/Headers.h"
 
 #include <qmediaplayer.h>
 
@@ -43,6 +44,7 @@ public:
     static StackSlot readChunk_native(ByteCodeRunner*, StackSlot*, void*);
 };
 */
+
 class QGLRenderSupport : public QOpenGLWidget, public GLRenderSupport
 {
     Q_OBJECT
@@ -63,7 +65,7 @@ class QGLRenderSupport : public QOpenGLWidget, public GLRenderSupport
     QProgressDialog *bc_download_progress;
     QNetworkReply *bc_reply;
 
-    QHash<QString, QFont*> FontsMap;
+    STL_HASH_MAP<TextFont, QFont*> FontsMap;
 
     // We can't get the QVideoWidget from the QVideoPlayer, so keep track of the mappings
     // QHash<QMediaPlayer*, QVideoWidget*> VideoPlayerMap;
@@ -92,8 +94,8 @@ public:
 
     virtual bool loadAssetData(StaticBuffer *buffer, std::string name, size_t size);
 
-    virtual bool loadSystemFont(FontHeader *header, std::string name);
-    virtual bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code);
+    virtual bool loadSystemFont(FontHeader *header, TextFont textFont);
+    virtual bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code);
 
     FlowKeyEvent keyEventToFlowKeyEvent(FlowEvent event, QKeyEvent *info);
     void translateKeyEvent(FlowEvent event, QKeyEvent *info);
@@ -147,7 +149,6 @@ protected:
     void resizeGL(int w, int h);
     void paintGL();
 
-    void initFontsMap();
     void loadFontsFromFolder(QString dir);
 
     bool loadPicture(unicode_string url, bool cache);
