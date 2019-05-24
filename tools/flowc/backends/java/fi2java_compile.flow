@@ -20,7 +20,7 @@ javaKnownNatives = fold([
 	// increase performance.
 	//	"Native.strRangeIndexOf"
 ], makeTree(), \a,v -> setTree(a,v,true));
-
+// 
 indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]> {
 	init = Triple(makeTree(), makeTree(), []);
 
@@ -212,58 +212,63 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 	pushistr = \s -> rlistPush(gctx.init_code, s);
 
 	iter(gctx.csm_list, \csm -> {
-		module_text = gctx.header_generator();
-		pushstr = \s -> rlistPush(module_text, s);
+		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
+		if (!csm.module.incremental || !fileExists(module_path) || true) {
+			if (gctx.program.config.verbose > 0) {
+				fcPrintln("Generating java module '" + module_path + "'");
+			}
+			module_text = gctx.header_generator();
+			pushstr = \s -> rlistPush(module_text, s);
 
-		// pushstr("/* "+csm.module.fullpath+" */\n");
-		pushstr("@SuppressWarnings(\"unchecked\")\n");
-		pushstr("final class Module_" + csm.id + " {\n");
-		pushstr("\tfinal Main runtime;\n");
-		pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
-		pushstr("\t\tthis.runtime = runtime;\n");
-		pushstr("\t}\n");
+			// pushstr("/* "+csm.module.fullpath+" */\n");
+			pushstr("@SuppressWarnings(\"unchecked\")\n");
+			pushstr("final class Module_" + csm.id + " {\n");
+			pushstr("\tfinal Main runtime;\n");
+			pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
+			pushstr("\t\tthis.runtime = runtime;\n");
+			pushstr("\t}\n");
 
-		pushstr(javaList2String(csm.vars, ""));
+			pushstr(javaList2String(csm.vars, ""));
 
-		iter(csm.decl_order, \decl -> {
-			switch (decl : FiDeclaration) {
-				FiFunctionDec(name, lambda, type, __, __): {
-					code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
-					pushstr(code);
-				}
-				FiGlobalVar(name, expr, type, __, __): {
-					local_counter = ref 0;
-					fctx = JavaFunctionContext(
-						gctx, csm, None(), ref makeList(), local_counter,
-						javaStatementPullContext(local_counter),
-						"", false, []
-					);
-					ctx = JavaScopeContext(fctx, "\t\t", makeTree());
-					tstr = type2javaObjType(gctx, type, true, false);
-					emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
-					body = javaList2String(fctx.text, "");
-					pushstr("\tpublic void init_" + name + "() {\n");
-					pushstr(body);
-					pushstr("\t}\n");
-					pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
-				}
-				FiNativeDec(name, io, type, nname, fallback,__,__): {
-					fbexp = checkJavaKnownNative(fallback, -1, nname);
-					switch (fbexp) {
-						FiLambda(xs, body, __, __): {
-							funcType = cast(type: FiType -> FiTypeFunction);
-							code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
-							pushstr(code);
+			iter(csm.decl_order, \decl -> {
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(name, lambda, type, __, __): {
+						code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						pushstr(code);
+					}
+					FiGlobalVar(name, expr, type, __, __): {
+						local_counter = ref 0;
+						fctx = JavaFunctionContext(
+							gctx, csm, None(), ref makeList(), local_counter,
+							javaStatementPullContext(local_counter),
+							"", false, []
+						);
+						ctx = JavaScopeContext(fctx, "\t\t", makeTree());
+						tstr = type2javaObjType(gctx, type, true, false);
+						emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
+						body = javaList2String(fctx.text, "");
+						pushstr("\tpublic void init_" + name + "() {\n");
+						pushstr(body);
+						pushstr("\t}\n");
+						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+					}
+					FiNativeDec(name, io, type, nname, fallback,__,__): {
+						fbexp = checkJavaKnownNative(fallback, -1, nname);
+						switch (fbexp) {
+							FiLambda(xs, body, __, __): {
+								funcType = cast(type: FiType -> FiTypeFunction);
+								code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
+								pushstr(code);
+							}
+							default: {}
 						}
-						default: {}
 					}
 				}
-			}
-		});
+			});
 
-		fname = pathCombine(output_dir, "Module_" + csm.id + ".java");
-		setFileContent(fname, javaList2String(module_text, "}\n"));
-		{}
+			setFileContent(module_path, javaList2String(module_text, "}\n"));
+			{}
+		}
 	});
 }
 
