@@ -29,6 +29,7 @@ class ThreeJSStage extends DisplayObject {
 	public var orbitControls : OrbitControls;
 	public var transformControls : Dynamic;
 	public var boxHelpers : Array<Object3D> = new Array<Object3D>();
+	public var objectCache : Array<Object3D> = new Array<Object3D>();
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;

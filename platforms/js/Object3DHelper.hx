@@ -139,7 +139,14 @@ class Object3DHelper {
 			}
 		}
 
+		var stage = getStage(child);
+
+		if (stage.length > 0) {
+			untyped stage[0].objectCache.push(child);
+		}
+
 		parent.remove(child);
+		child.parent = null;
 
 		if (invalidate) {
 			emitEvent(parent, "box");
@@ -169,7 +176,21 @@ class Object3DHelper {
 	public static function get3DObjectByUUID(parent : Object3D, id : String) : Array<Object3D> {
 		if (parent.uuid == id) {
 			return [parent];
-		} else for (child in parent.children) {
+		}
+
+		if (untyped parent.stage != null) {
+			var objectCache : Array<Object3D> = untyped parent.stage.objectCache;
+
+			for (child in objectCache) {
+				var object = get3DObjectByUUID(child, id);
+
+				if (object.length > 0) {
+					return object;
+				}
+			}
+		}
+
+		for (child in parent.children) {
 			var object = get3DObjectByUUID(child, id);
 
 			if (object.length > 0) {
