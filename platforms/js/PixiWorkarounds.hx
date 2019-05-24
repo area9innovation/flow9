@@ -749,10 +749,6 @@ class PixiWorkarounds {
 		            dx -= width / 2;
 		            dy -= height / 2;
 
-		            console.log('dxy: ' + dx + ' ' + dy);
-		            console.log(wt.ty);
-		            console.log((wt.ty * renderer.resolution) | 0);
-
 		            // Allow for pixel rounding
 		            if (renderer.roundPixels)
 		            {
