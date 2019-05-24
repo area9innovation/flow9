@@ -17,6 +17,8 @@ public:
 protected:
     struct FormatRec {
         GLFont::Ptr font;
+        TextFont text_font;
+
         vec4 color;
         float size, spacing;
         bool underline;
@@ -68,7 +70,6 @@ protected:
     unicode_string html_text, plain_text;
     unicode_string base_font_name;
     TextDirection textDirection;
-    int base_font_weight;
     FormatRec base_format;
 
     bool has_urls;
@@ -78,7 +79,7 @@ protected:
     T_lines text_lines;
     T_index text_line_index; // y end -> line_idx
     T_extents text_real_extents;
-    T_int_index text_char_index; // char_idx -> idx
+    T_int_index text_char_index; // char_idx -> text_real_extents idx
     vec2 text_size, ui_size;
     float justify_width, interline_spacing, cursor_width;
 
@@ -109,7 +110,11 @@ protected:
     std::string parseHtmlRec(const unicode_string &str, unsigned &pos, const FormatRec &format, std::set<std::string> &open_tags);
 
     void invalidateLayout();
-
+    static void applyProcessing(
+        std::string input_type,
+        Utf32InputIterator &inputBegin, Utf32InputIterator &inputEnd,
+        shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
+    );
     void layoutText();
     void layoutTextWrapLines();
     void layoutTextSpaceLines();
@@ -134,7 +139,7 @@ protected:
     bool flowDestroyObject();
     void flowGCObject(GarbageCollectorFn);
     void stateChanged();
-    static const unicode_string intFontWeight2StrSuffix(int w);
+
 
 public:
     GLTextClip(GLRenderSupport *owner);
@@ -159,6 +164,8 @@ public:
     vec2 getExplicitSize() { return explicit_size; }
 
     unicode_string getFontName() { return base_font_name; }
+
+    TextFont getTextFont() { return base_format.text_font; }
 
     float getFontSize() { return base_format.size; }
     vec4 getFontColor() { return base_format.color; }

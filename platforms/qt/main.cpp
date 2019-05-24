@@ -157,7 +157,7 @@ static void sigsegv_handler(int)
 NativeProgram *load_native_program();
 
 #ifdef FLOW_JIT
-FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file);
+FlowJitProgram *loadJitProgram(ostream &e, const std::string &bytecode_file, const std::string &log_file, const unsigned long memory_limit = 0);
 #endif
 
 int main(int argc, char *argv[])
@@ -176,6 +176,7 @@ int main(int argc, char *argv[])
     bool verbose = false;
     int flowCompiler = 2;
     bool use_jit = true;
+	unsigned long jit_memory_limit = 0;
 #ifdef FLOW_DEBUGGER
     bool debug = false, gdbmi = false;
 #endif
@@ -316,6 +317,9 @@ int main(int argc, char *argv[])
         } else if (!strcmp(argv[1], "--no-jit")) {
             use_jit = false;
             shift_args(argc, argv, 1);
+		} else if (!strcmp(argv[1], "--jit-memory-limit")) {
+			jit_memory_limit = strtoul(argv[2], NULL, 10) * 1048576;
+			shift_args(argc, argv, 2);
 #ifdef FLOW_DEBUGGER
         } else if (!strcmp(argv[1], "--debug")) {
             debug = true;
@@ -644,7 +648,7 @@ int main(int argc, char *argv[])
 #ifdef FLOW_JIT
         if (use_jit)
         {
-            FlowJitProgram *jit = loadJitProgram(cerr, bytecodeFile.toStdString(), verbose ? "flowjit" : "");
+			FlowJitProgram *jit = loadJitProgram(cerr, bytecodeFile.toStdString(), verbose ? "flowjit" : "", jit_memory_limit);
             if (!jit)
                 return 1;
 
@@ -742,6 +746,8 @@ int main(int argc, char *argv[])
 #endif
 #endif
 #ifdef QT_GUI_LIB
+					   "--no-jit               Disable JIT compilation\n"
+					   "--jit-memory-limit     Set memory amount available for JIT in mega-bytes\n"
                        "--touch                Enable a fake touchscreen mode in the GUI engine.\n"
                        "--dpi <value>          Report this screen DPI to the flow code.\n"
                        "--screenpos <x> <y>    Open the window at these screen position.\n"

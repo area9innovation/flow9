@@ -1107,11 +1107,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipX(clip : DisplayObject, x : Float) : Void {
-		clip.setClipX(x);
+		clip.setClipX(RoundPixels ? Math.round(x) : x);
 	}
 
 	public static function setClipY(clip : DisplayObject, y : Float) : Void {
-		clip.setClipY(y);
+		clip.setClipY(RoundPixels ? Math.round(y) : y);
 	}
 
 	public static function setClipScaleX(clip : DisplayObject, scale : Float) : Void {

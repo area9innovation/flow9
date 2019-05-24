@@ -59,29 +59,7 @@ QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool 
 
     EmulatePanGesture = false;
 
-    initFontsMap();
-
     connect(request_manager, SIGNAL(finished(QNetworkReply*)), this, SLOT(handleFinished(QNetworkReply*)));
-}
-
-void QGLRenderSupport::initFontsMap()
-{
-    FontsMap["Book"] = new QFont("Franklin Gothic Book");
-    FontsMap["Italic"] = new QFont("Franklin Gothic Book", -1, -1, true);
-    FontsMap["Medium"] = new QFont("Franklin Gothic Medium");
-    FontsMap["DejaVuSans"] = new QFont("DejaVu Sans");
-    FontsMap["FeltTipRoman"] = new QFont("Felt Tip Roman");
-    FontsMap["Minion"] = new QFont("Minion Pro");
-    FontsMap["MinionItalics"] = new QFont("Minion Pro", -1, -1, true);
-
-    for (QHash<QString, QFont*>::Iterator it = FontsMap.begin(); it != FontsMap.end(); ++it) {
-        const QString & font_name = it.key();
-        QFont * font = it.value();
-        if (!font->exactMatch() && getFlowRunner()->NotifyStubs) {
-            getFlowRunner()->flow_err << "No exact match for textbox font " << font_name.toStdString() <<
-                ". Actual family used: " << QFontInfo(*font).family().toStdString() << std::endl;
-        }
-    }
 }
 
 void QGLRenderSupport::loadFontsFromFolder(QString base) {
@@ -100,55 +78,43 @@ void QGLRenderSupport::loadFontsFromFolder(QString base) {
         if (font.endsWith("ttf") || font.endsWith("otf"))
             QFontDatabase::addApplicationFont(font);
     }
+}
 
-    if (!FontsMap["Book"]->exactMatch() && QDir(base).exists("resources/fonts/frabk.ttf")) {
-        FontsMap["Book"] = new QFont(base + "resources/fonts/frabk.ttf");
-    }
-
-    if (!FontsMap["Italic"]->exactMatch() && QDir(base).exists("resources/fonts/frabkit.ttf")) {
-        FontsMap["Italic"] = new QFont(base + "resources/fonts/frabkit.ttf", -1, -1, true);
-    }
-
-    if (!FontsMap["Medium"]->exactMatch() && QDir(base).exists("resources/fonts/framd.ttf")) {
-        FontsMap["Medium"] = new QFont(base + "resources/fonts/framd.ttf");
-    }
-
-    if (!FontsMap["DejaVuSans"]->exactMatch() && QDir(base).exists("resources/fonts/DejaVuSans.ttf")) {
-        FontsMap["DejaVuSans"] = new QFont(base + "resources/fonts/DejaVuSans.ttf");
+static QFont::Weight qFontWeightByTextWeight(TextWeight weight) {
+    switch (weight) {
+    case TextWeight::Thin: return QFont::Thin;
+    case TextWeight::UltraLight: return QFont::ExtraLight;
+    case TextWeight::Light: return QFont::Light;
+    case TextWeight::Regular: return QFont::Normal;
+    case TextWeight::Medium: return QFont::Medium;
+    case TextWeight::SemiBold: return QFont::DemiBold;
+    case TextWeight::Bold: return QFont::Bold;
+    case TextWeight::ExtraBold: return QFont::ExtraBold;
+    case TextWeight::Black: return QFont::Black;
     }
 }
 
-bool QGLRenderSupport::loadSystemFont(FontHeader *header, std::string name)
-{
-    QString family(name.c_str());
-    QFont::Style style = QFont::StyleNormal;
-    int weight = -1;
-    bool italic = false;
-
-    for (;;) {
-        if (family.endsWith("Bold")) {
-            weight = QFont::Bold;
-            family.chop(4);
-        } else if (family.endsWith("Medium")) {
-            weight = QFont::Medium;
-            family.chop(6);
-        } else if (family.endsWith("Italic")) {
-            italic = true;
-            style = QFont::StyleItalic;
-            family.chop(6);
-        } else if (family.endsWith("Oblique")) {
-            italic = true;
-            style = QFont::StyleOblique;
-            family.chop(7);
-        } else {
-            break;
-        }
-
-        family = family.trimmed();
+static QFont::Style qFontStyleByTextStyle(TextStyle style) {
+    switch (style) {
+    case TextStyle::Normal: return QFont::StyleNormal;
+    case TextStyle::Italic: return QFont::StyleItalic;
+    case TextStyle::Oblique: return QFont::StyleOblique;
     }
+}
+
+bool QGLRenderSupport::loadSystemFont(FontHeader *header, TextFont textFont)
+{
+    QString family(textFont.family.c_str());
+    QFont::Weight weight = qFontWeightByTextWeight(textFont.weight);
+    QFont::Style style = qFontStyleByTextStyle(textFont.style);
 
     QFont font(family, -1, weight, false);
     font.setStyle(style);
+
+    if (!font.exactMatch()) {
+        font = QFont(family + " " + QString(textFont.suffix().c_str()), weight, false);
+        font.setStyle(style);
+    }
 
     if (!font.exactMatch())
         return false;
@@ -174,13 +140,13 @@ bool QGLRenderSupport::loadSystemFont(FontHeader *header, std::string name)
     header->underline_position = metrics.underlinePos() * coeff;
     header->underline_thickness = coeff;
 
-    FontsMap[name.c_str()] = new QFont(font);
+    FontsMap[textFont] = new QFont(font);
     return true;
 }
 
-bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code)
+bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code)
 {
-    QFont *pfont = FontsMap[name.c_str()];
+    QFont *pfont = FontsMap[textFont];
     QFontMetrics metrics(*pfont);
 
     QString qchar = QString::fromUcs4(&code, 1);
@@ -431,9 +397,9 @@ void QGLRenderSupport::doReshapeNativeWidget(GLClip* clip, const GLBoundingBox &
 
             if (GLTextClip* text_clip = flow_native_cast<GLTextClip>(clip)) {
                 QGLTextEdit* edit = qobject_cast<QGLTextEdit*>(widget);
-                const QString &font_family = unicode2qt(text_clip->getFontName());
+                TextFont textFont = text_clip->getTextFont();
 
-                QFont font = FontsMap.contains(font_family) ? QFont(*FontsMap[font_family]) : QFont(font_family);
+                QFont font = FontsMap[textFont] ? QFont(*FontsMap[textFont]) : QFont(QString(textFont.family.c_str()));
                 int pixelSize = (int)(scale * text_clip->getFontSize());
                 font.setPixelSize(pixelSize == 0 ? 1 : pixelSize);
 

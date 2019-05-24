@@ -6,6 +6,8 @@ import js.node.http.IncomingMessage;
 
 import js.node.Url;
 import js.node.Querystring;
+
+import js.node.Fs;
 #else
 import js.html.XMLHttpRequest;
 import HttpCustom;
@@ -99,11 +101,11 @@ class HttpSupport {
 			port = protocol == "https:" ? 443 : 80;
 		}
 
-		if (protocol == null) {
+		if (protocol == null && untyped request != undefined) {
 			protocol = untyped request.protocol + ":";
 		}
 
-		if (hostname == null) {
+		if (hostname == null && untyped request != undefined) {
 			hostname = untyped request.hostname;
 		}
 
@@ -294,6 +296,16 @@ class HttpSupport {
 		}
 
 		#if (flow_nodejs || nwjs)
+
+		if (StringTools.startsWith(url, "file://") && method == "GET") {
+			Fs.readFile(url.substring(7, url.length), function(err, data) {
+				var status = err != null ? 0 : 200;
+				var data = err != null ? err.message : data.toString();
+				onResponseFn(status, data, []);
+			});
+			return;
+		}
+
 		var options : HttpsRequestOptions = parseUrlToNodeOptions(url);
 
 		options.method = method;
