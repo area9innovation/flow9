@@ -35,7 +35,7 @@ StackSlot WebRTCSupport::makeMediaSenderFromStream(RUNNER_ARGS)
     int onErrorRoot = RUNNER->RegisterRoot(RUNNER_ARG(8));
 
     int stunLength = RUNNER->GetArraySize(stunUrls);
-    std::vector<unicode_string> stun(stunLength);
+    std::vector<unicode_string> stun;
     for (int i = 0; i < stunLength; i++)
     {
         slotvalue1 = RUNNER->GetArraySlot(stunUrls, i);
