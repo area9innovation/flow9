@@ -246,6 +246,8 @@ class RenderSupportJSPixi {
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
 
+		PixiWorkarounds.workaroundRenderSpriteRoundPixels();
+
 		createPixiRenderer();
 
 		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
@@ -1107,11 +1109,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipX(clip : DisplayObject, x : Float) : Void {
-		clip.setClipX(RoundPixels ? Math.round(x) : x);
+		clip.setClipX(x);
 	}
 
 	public static function setClipY(clip : DisplayObject, y : Float) : Void {
-		clip.setClipY(RoundPixels ? Math.round(y) : y);
+		clip.setClipY(y);
 	}
 
 	public static function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
