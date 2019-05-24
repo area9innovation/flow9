@@ -213,10 +213,29 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 
 	iter(gctx.csm_list, \csm -> {
 		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
-		if (csm.module.incremental && fileExists(module_path) && false) {
+		if (csm.module.incremental && fileExists(module_path)) {
 			if (gctx.program.config.verbose > 0) {
 				fcPrintln("Java module '" + module_path + "' is already generated - keeping it");
 			}
+			iter(csm.decl_order, \decl ->
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(__, lambda, __, __, __):
+						addJavaExpressionWrappers(gctx, lambda);
+					FiGlobalVar(name, value, __, __, __): {
+						addJavaExpressionWrappers(gctx, value);
+						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+					}
+					FiNativeDec(__,__,__, nname, fallback,__,__): {
+						fbexp = checkJavaKnownNative(fallback, -1, nname);
+						switch (fbexp) {
+							FiLambda(xs, body, __, __): {
+								addJavaExpressionWrappers(gctx, body);
+							}
+							default: {}
+						}
+					}
+				}
+			);
 		} else {
 			if (gctx.program.config.verbose > 0) {
 				fcPrintln("Generating java module '" + module_path + "'");
@@ -1487,3 +1506,77 @@ javaNewLocalName(counter : ref int, name : string) {
 	counter := id + 1;
 	"l" + i2s(id) + "_" + name;
 }
+
+
+
+addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
+	switch (expcode) {
+		FiConst(__): { }
+		FiSeq(es, __, __):
+			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
+		FiVar(name, __, __):
+			switch (lookupTree(gctx.globals, name)) {
+				Some(__): { }
+				None():
+					switch (lookupTree(gctx.globalFuncs, name)) {
+						Some(finfo): {
+							ftype = cast(finfo.type : FiType -> FiTypeFunction);
+							id = "gfw_" + name;
+							wrapper_t = emitJavaFnWrapper(
+								gctx, finfo.csmodule, ftype, "\t",
+								\args, rt -> {
+									"return "+
+										(if (finfo.global_scope) "" else "m_" + finfo.csmodule.id + ".")
+										+ finfo.name + "(" + args + ");"
+								}
+							);
+							tstr = wrapper_t.second;
+							rlistPush(gctx.wrapper_code, "\tfinal " + tstr + " " + id + " = " + wrapper_t.first + ";\n");
+							fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
+							gctx.globals ::= setTree(gctx.globals, name, fglobal);
+						}
+						None(): { }
+					}
+			}
+		FiCall(f, es, __, __): {
+			global = switch (f) {
+				FiVar(fname, tp, __): {
+					switch (lookupTree(gctx.globals, fname)) {
+						Some(__): None();
+						None(): lookupTree(gctx.globalFuncs, fname);
+					}
+				}
+				default: None();
+			};
+			iter(es, \expr -> addJavaExpressionWrappers(gctx, expr));
+			switch (global) {
+				Some(__): { }
+				None(): addJavaExpressionWrappers(gctx, f);
+			}
+		}
+		FiIf(cond, ethen, eelse, __, __): {
+			addJavaExpressionWrappers(gctx, cond);
+			addJavaExpressionWrappers(gctx, ethen);
+			addJavaExpressionWrappers(gctx, eelse);
+		}
+		FiCast(e, __,__,__,__):
+			addJavaExpressionWrappers(gctx, e);
+		FiCallPrim(__, es, __, __):
+			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
+		FiLet(__, __, e1, e2, __, __): {
+			addJavaExpressionWrappers(gctx, e1);
+			addJavaExpressionWrappers(gctx, e2);
+		}
+		FiSwitch(x, __, cases, __,__): {
+			addJavaExpressionWrappers(gctx, x);
+			iter(cases, \c -> addJavaExpressionWrappers(gctx, c.body));
+		}
+		FiRequire(__, e, __,__):
+			addJavaExpressionWrappers(gctx, e);
+		FiUnsafe(__, fallback, __,__):
+			addJavaExpressionWrappers(gctx, fallback);
+		FiLambda(__, body, __,__):
+			addJavaExpressionWrappers(gctx, body);
+	}
+}
+
