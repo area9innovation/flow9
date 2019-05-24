@@ -236,7 +236,7 @@ void GLTextClip::layoutTextWrapLines()
 
     text_char_index.clear();
 
-    int cur_char = 0;
+    size_t cur_char;
     bool prev_newline = false;
     T_index::iterator idx_it = text_lines.back().extent_index.begin();
     T_int_index::iterator cidx_it = text_char_index.begin();
@@ -258,22 +258,29 @@ void GLTextClip::layoutTextWrapLines()
 
         assert(extent->newline || !extent->text.empty() || (i == text_extents.size()-1));
 
-        extent->char_idx = cur_char;
-        extent->layout.reset();
-
-        // FIXME: memory consuming, maybe redo via iterators.
-        unicode_string ctext = GLTextLayout::getLigatured(extent->text);
+        unicode_string ctext = extent->text;
         GLFont::Ptr font = extent->format.font;
         if (!font) continue;
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
         bool already_split = false;
+        shared_ptr<Utf32InputIterator> ctexti;
 
-        if (input_type == "password")
-            ctext = unicode_string(ctext.length(), 0x2022);
+        DecodeUtf16toUtf32 decoder(extent->text);
+
+        // TODO linkage to DecodeUtf16toUtf32 via shared_ptr to make it automatically disposable when all iterators gone.
+        shared_ptr<Utf32InputIterator> strBegin, strEnd;
+        strBegin = decoder.begin().clone();
+        strEnd = decoder.end().clone();
+        applyProcessing(input_type, *strBegin, *strEnd, &strBegin, &strEnd);
+        ctexti = strBegin->clone();
+        cur_char = extent->char_idx = ctexti->position();
+        extent->layout.reset();
 
         // Word-wrapping loop:
         do {
+            cur_char = ctexti->position();
+
             if (already_split || prev_newline) {
                 text_lines.push_back(Line());
                 idx_it = text_lines.back().extent_index.begin();
@@ -282,51 +289,49 @@ void GLTextClip::layoutTextWrapLines()
             Line &line = text_lines.back();
             float limit = ((wordwrap && (!is_input || multiline)) ? explicit_size.x - line.width : -1.0f);
 
-            GLTextLayout::Ptr layout = font->layoutTextLine(ctext, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
-            unicode_string layout_text = layout->getText();
+            GLTextLayout::Ptr layout = font->layoutTextLine(*ctexti, *strEnd, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
 
             // Wrapping splits
-            if (layout_text.size() < ctext.size()) {
-                unsigned lsize = 0;
+            if (*layout->getEndPos() != *strEnd) {
+                shared_ptr<Utf32InputIterator> wpos = layout->getEndPos()->cloneReversed();
                 bool on_new_line = line.extents.empty();
 
                 already_split = true;
 
-                if (layout_text.size() > 0) {
-                    int wpos = layout_text.size()-1;
-                    for (; wpos >= 0; --wpos) {
-                        unicode_char c = layout_text[wpos];
+                if (*layout->getEndPos() != *ctexti) {
+                    ++*wpos;
+                    for (; *wpos != *ctexti; ++*wpos) {
+                        ucs4_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
                     }
+                    wpos = wpos->cloneReversed();
 
-                    if (wpos >= 0)
-                        lsize = wpos+1;
+                    if (*wpos != *ctexti)
+                    	++*wpos;
                     else if (on_new_line)
-                        lsize = layout_text.size();
+                    	wpos = layout->getEndPos();
                 } else if (on_new_line) {
-                    lsize = 1;
+                    wpos = ctexti->clone();
+                    ++*wpos;
                 }
 
                 // If doesn't fit && not immediately after a newline,
                 // then insert one and retry. Insertion is caused by
                 // setting already_split to true earlier.
-                if (!lsize)
+                if (*wpos == *strBegin)
                     continue;
 
-                unicode_string new_text = ctext.substr(0, lsize);
-                ctext = ctext.substr(lsize);
-
-                if (lsize != layout_text.size())
-                    layout = font->layoutTextLine(new_text, fsize, -1.0f, fspacing, (!is_input || multiline) && crop_words, rtl);
+                if (*ctexti != *wpos)
+                    layout = font->layoutTextLine(*ctexti, *wpos, fsize, -1.0f, fspacing, (!is_input || multiline) && crop_words, rtl);
+                ctexti = wpos;
             } else {
-                ctext.clear();
+                ctexti = strEnd;
             }
 
             Extent::Ptr real_extent = extent;
             if (already_split) {
                 real_extent = Extent::Ptr(new Extent(extent));
-                real_extent->text = layout->getText();
                 real_extent->newline = extent->newline && ctext.empty();
             }
 
@@ -353,9 +358,10 @@ void GLTextClip::layoutTextWrapLines()
             cidx_it = text_char_index.insert(cidx_it, char_ref);
 
             cur_char += real_extent->text.size() + (real_extent->newline ? 1 : 0);
-        } while (!ctext.empty());
+        } while (*ctexti != *strEnd);
 
         prev_newline = extent->newline;
+        cur_char = strEnd->position();
     }
 
     T_int_index::value_type char_ref(cur_char, text_real_extents.size());
@@ -456,6 +462,21 @@ void GLTextClip::layoutText()
         ui_size = text_size;
 
     layout_ready = true;
+}
+
+void GLTextClip::applyProcessing(
+    std::string input_type,
+    Utf32InputIterator &inputBegin, Utf32InputIterator &inputEnd,
+    shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
+) {
+    shared_ptr<Utf32InputIterator> processor;
+    if (input_type == "password")
+        processor.reset(new PasswordUtf32Iter(inputBegin, inputEnd));
+    else
+        processor.reset(new LigatureUtf32Iter(inputBegin, inputEnd));
+    *outputBegin = processor;
+    *outputEnd = processor->clone();
+    (*outputEnd)->seekEnd();
 }
 
 std::pair<GLTextClip::Extent::Ptr,float> GLTextClip::findExtentByPos(vec2 pos, bool nearest)
@@ -690,7 +711,7 @@ std::string GLTextClip::parseHtmlRec(const unicode_string &str, unsigned &pos, c
 
             if (tag == "font") {
                 if (attrs.count("face"))
-                    new_format.font = owner->lookupFont(attrs["face"]);
+                    new_format.font = owner->lookupFont(TextFont::makeWithFamily(encodeUtf8(attrs["face"])));
                 if (attrs.count("size"))
                     new_format.size = atof(encodeUtf8(attrs["size"]).c_str());
                 if (attrs.count("color") && attrs["color"][0] == '#') {
@@ -811,22 +832,6 @@ static bool startsWith(const unicode_string& s, const unicode_string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-// HACK due to unable remake builtin fonts
-unicode_string recognizeBuiltinFont(unicode_string name) {
-    size_t tpos = name.rfind((unicode_char)'/');
-    if (tpos == (size_t)-1) tpos = name.size(); else ++tpos;
-    unicode_string r(name);
-    if (startsWith(name, parseUtf8("Material Icons"))) {
-        r = parseUtf8("MaterialIcons");
-    }
-    else {
-        unicode_string tail = name.substr(tpos);
-        if (startsWith(name, parseUtf8("Franklin Gothic"))) r = tail;
-        else if (name == parseUtf8("Roboto")) r = parseUtf8("Roboto")+tail;
-    }
-    return r;
-}
-
 StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
 {
     #define SIZE 8
@@ -835,23 +840,6 @@ StackSlot GLTextClip::setTextAndStyle9(RUNNER_ARGS)
     newargs[SIZE+1] = StackSlot::MakeDouble(0);
     return setTextAndStyle(RUNNER, newargs);
     #undef SIZE
-}
-
-// Almostly all fonts don't have all 9 weights, so, maybe skipping to nearest weight might be desired feature
-const unicode_string GLTextClip::intFontWeight2StrSuffix(int w) {
-    if (w<=500) {
-        if (w<=300) {
-            if (w<=100) return parseUtf8("Thin");
-            else if (w<=200) return parseUtf8("Ultra Light");
-            else return parseUtf8("Light");
-        } else
-            if (w<=400) return parseUtf8("");  // "Book"
-            else return parseUtf8("Medium");
-    } else if (w<=700) {
-        if (w<=600) return parseUtf8("Semi Bold");
-        else return parseUtf8("Bold");
-    } else if (w<=800) return parseUtf8("Extra Bold");
-    else return parseUtf8("Black");
 }
 
 StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
@@ -865,22 +853,12 @@ StackSlot GLTextClip::setTextAndStyle(RUNNER_ARGS)
     getFlowRunner()->ClaimInstructionsSpent(owner->ProfilingInsnCost*5, 110);
 #endif
 
-    base_font_weight = font_weight.GetInt();
     unicode_string font_slope = RUNNER->GetString(font_slope_str);
     base_font_name = RUNNER->GetString(font_str);
 
-    base_font_name = base_font_name + intFontWeight2StrSuffix(base_font_weight);
-
     base_format.color = flowToColor(font_color_i, opacity);
-
-    if (font_slope.length()) {
-        font_slope[0] = toupper(font_slope[0]);
-        if (font_slope.compare(parseUtf8("Normal")) && font_slope.compare(parseUtf8("Regular")))
-            base_font_name = base_font_name + parseUtf8("/") + font_slope;
-    }
-
-    base_font_name = recognizeBuiltinFont(base_font_name);
-    base_format.font = owner->lookupFont(base_font_name);
+    base_format.text_font = TextFont::makeWithParameters(encodeUtf8(base_font_name), font_weight.GetInt(), encodeUtf8(font_slope));
+    base_format.font = owner->lookupFont(base_format.text_font);
 
     base_format.size = font_size.GetDouble();
     base_format.spacing = spacing.GetDouble();

@@ -1,12 +1,4 @@
-The roboto-glyphs.txt file is taken from SIL ViewGlyph in the Options -> View CMap dialog, selecting
-everything and pasting it.
+The folder is a container for .ttf files. 
+Notice a font should be redistributable (licensed with Apache License 2.0 or SIL Open Font 1.1).
 
-The program extractcodepoints.flow can convert that to the format used in the resourceroboto.xml
-file.
-
-The fonts.bat file in the root will prepare all fonts.
-
-The fonts themselves come from here:
-
-https://github.com/google/material-design-icons/tree/master/iconfont
-
+Google WebFonts could be simply downloaded with https://google-webfonts-helper.herokuapp.com/fonts/

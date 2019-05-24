@@ -108,8 +108,8 @@ public:
     void notifyPageLoaded(jlong clip);
     void notifyPageError(jlong clip, jstring msg);
 
-    bool loadSystemFont(FontHeader *header, std::string name);
-    bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, std::string name, ucs4_char code);
+    bool loadSystemFont(FontHeader *header, TextFont textFont);
+    bool loadSystemGlyph(const FontHeader *header, GlyphHeader *info, StaticBuffer *pixels, TextFont textFont, ucs4_char code);
 
     jobjectArray fetchAccessibleClips();
 protected:

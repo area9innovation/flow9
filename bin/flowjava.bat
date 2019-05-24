@@ -34,7 +34,7 @@ set JAVAC=%JAVA_HOME%\bin\javac
 
 rem The runtime
 cd %~dp0..\platforms\java 
-"%JAVAC%" -d build -g com/area9innovation/flow/*.java com/area9innovation/flow/javafx/*.java
+"%JAVAC%" -d build -g com/area9innovation/flow/*.java javafx/com/area9innovation/flow/javafx/*.java
 popd
 
 rem Generate the Java for our program

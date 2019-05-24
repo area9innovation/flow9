@@ -36,29 +36,12 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 	leftAlignIcon = contains(m.style, MTabsIconLeftAlign());
 	grabDelay = extractStructMany(m.style, MGrabDelay(0));
 
-	tabsFontStyle = fold(m.style, MButton1(), \res, st -> switch(st) {
-		MDisplay2() : st;
-		MDisplay1() : st;
-		MDisplay1Medium() : st;
-		MHeadline() : st;
-		MSubheading() : st;
-		MTitle() : st;
-		MBody() : st;
-		MListBody() : st;
-		MBodyBold() : st;
-		MCaption() : st;
-		MButtonStyle() : st;
-		MSecondaryButtonStyle() : st;
-		MCaptionSolid() : st;
-		MCaptionColumn() : st;
-		MCaptionColumnSelected() : st;
-		MDataRow() : st;
-		MTooltipDesktop() : st;
-		MCustomFont(__,__,__) : st;
-		default : res;
+	tabsFontStyle = fold(m.style, MButton1(), \acc, st -> switch(st) {
+		MFontStyle() : st;
+		default : acc;
 	});
 
-	isAnyIcon = fselect(m.tabs, FLift(\tabs -> fold(tabs, false, \acc, t -> acc || isSome(tryExtractStruct(t.style, MTabIcon(TEmpty()))))));
+	isAnyIcon = fselect(m.tabs, FLift(\tabs -> exists(tabs, \t -> containsStruct(t.style, MTabIcon(TEmpty())))));
 
 	extractMinWidth = \st -> extractStruct(st, tabWidth0).minWidth;
 	addBordersGap = \mw : double -> mw + bordersGap;
@@ -120,7 +103,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 
 				oldTabs := tbs;
 
-				mapi(tbs, \i, tb -> {
+				tabHeader2T = \i, tb -> {
 					tabMinWidth = extractMinWidth(tb.style);
 
 					onClick =
@@ -128,7 +111,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						|> (\onClk -> MOnClick(\ -> {
 							onClk();
 							selectedIndex = getValue(m.selected);
-							confirm = if (selectedIndex >=0 && selectedIndex < length(tbs) && selectedIndex != i) {
+							confirm = if (selectedIndex >=0 && selectedIndex < tbsLength && selectedIndex != i) {
 								extractStruct(tbs[selectedIndex].style, MTabConfirmSwitch(\cb -> cb(true))).confirm;
 							} else {
 								\cb -> cb(true)
@@ -144,7 +127,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 					TSelect(tb.text, \txt ->
 						if (txt != "")
 							MTabsText(manager, p2, txt, tabMinWidth, showTooltip, tabsFontStyle, itemsColor, m2t)
-							|> (\t -> TBorder(0., 2., 0., 2., t))
+							|> TBorderTopBottom(2.)
 						else if (leftAlignIcon) TFillX()
 						else TEmpty()
 					)
@@ -159,7 +142,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 							|> (\t2 -> if (leftAlignIcon) TCols2(t2, t) else TLines2(t2, t)),
 						t
 					))
-					|> (\t -> TBorder(bordersGap / 2., 0., bordersGap / 2., 0., t))
+					|> TBorderLeftRight(bordersGap / 2.)
 					|> (if (leftAlignIcon) TCenterY else TCenter)
 					|> (\t ->
 						MComponent2T(
@@ -172,8 +155,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 									{
 										if (noDimming) t
 										else TAlpha(
-											fselect(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false),
-												FLift(\s -> if (s) 1. else 0.6)),
+											fif(fmaxA([feq(m.selected, i), focus.down, focus.focused, focus.hover], false), const(1.), const(0.6)),
 											t
 										)
 									}
@@ -185,11 +167,13 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 						)
 					)
 					|> (\t -> eitherMap(horizontalSeparators, \separator -> {
-							color = fif(feq(m.selected, i), const(separator.selectedColor), const(separator.notSelectedColor));
-							TLines2(t, TSelect(color, \col -> TRectangle([MFill(col)], TFillXH(separator.height))))
+							TLines2(t, TIfLazy2(feq(m.selected, i), \slctd -> {
+								col = if (slctd) separator.selectedColor else separator.notSelectedColor;
+								TRectangle([MFill(col)], TFillXH(separator.height))
+							}, true))
 						}, t))
 					|> (\t -> eitherMap(verticalSeparators, \separator ->
-						if (i != length(tbs) - 1) TCols2(t, TRectangle([MFill(separator.color)], TFillWY(separator.width))) else t, t))
+						if (i != tbsLength - 1) TCols2(t, TRectangle([MFill(separator.color)], TFillWY(separator.width))) else t, t))
 					|> (\t ->
 						TransformTAcc2(\t2a -> {
 							bf = t |> t2a;
@@ -219,20 +203,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 								nextDistinct(tabsHeight, max(getValue(tabsHeight), h))
 							)();
 
-							TAcc(
-								bf.form,
-								bf.metrics,
-								bf.minWidth,
-								bf.minHeight,
-								bf.maxWidth,
-								bf.maxHeight,
-								bf.xFillers,
-								bf.yFillers,
-								bf.addFillers,
-								bf.xConstant,
-								bf.yConstant,
-								concat(bf.disposers, [uns1, uns2])
-							)
+							TAcc(bf with disposers = concat(bf.disposers, [uns1, uns2]))
 						})
 						|> (\t2 -> TAvailableWidth(t2, fselect(tabsWidths, FLift(\tw ->
 									if (i < length(tw))
@@ -244,7 +215,9 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 								))))
 						|> (\t2 -> TAvailableHeight(t2, tabsHeight))
 					)
-				})
+				}
+
+				mapi(tbs, tabHeader2T)
 				// TODO : Maybe MReorderTemplate here
 				|> (\t ->
 					eitherFn(
@@ -321,26 +294,14 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 		|> (\makeTabsHeader ->
 			eitherFn(
 				itemsColor,
-				\ic ->
+				\ic -> 
 					MComponentGroup2T(
 						manager,
 						p0,
 						"MTabs",
 						[
-							MaterialTheme(
-								MaterialPalette(
-									getLightBackground(p0),
-									ic,
-									getAccentColor(p0),
-									ic,
-									ic,
-									ic,
-									ic
-								),
-								p0.theme.shape,
-								p0.theme.type,
-								p0.theme.enableAnimations,
-								p0.theme.enableRipple,
+							MaterialTheme(p0.theme with palette = 
+								MaterialPalette(getLightBackground(p0), ic, getAccentColor(p0), ic, ic, ic, ic)
 							)
 						],
 						makeTabsHeader
@@ -352,7 +313,7 @@ MDynamicTabs2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicTabs
 		|> (\t -> TLines2(
 				t,
 				SelectMGroup2T(manager, p0, m.tabs, \i, id, tab, p2 -> {
-					tabEn = fselect2(m.selected, i, FLift2(\s, i0 -> s == i0));
+					tabEn = feq2(m.selected, i);
 
 					(\ -> MComponentGroup2T(manager, p2, "MTabsContent", [MEnabled(tabEn), MFocusEnabled(tabEn), MFocusId(const(id))], \p3 ->
 						TAlignStart(m2t(tab.content, p3))
@@ -396,37 +357,35 @@ MTabsText(
 	itemsColor : Maybe<MColor>,
 	m2t : (Material, MFocusGroup) -> Tropic
 ) -> Tropic {
-	leng = strlen(text);
-	style0 : [MTextStyle] = [tabsFontStyle];
-	style1 = eitherMap(itemsColor, \ic -> arrayPush(style0, ic), style0);
+	textLen = strlen(text);
+	style : [MTextStyle] = maybeArrayPush([tabsFontStyle], itemsColor);
 
-	(if (leng < floor(minWidth / 14.)) {
-		TCenterX(MText2T(parent, toUpperCase(text), style1))
-	} else {
+	if (textLen < floor(minWidth / 14.))
+		TCenterX(MText2T(parent, toUpperCase(text), style))
+	else {
 		newText = splitText(toUpperCase(text));
 
 		if (newText.second != "") {
-			style2 : [MTextStyle] = [MCaptionColumnSelected()];
-			style3 = eitherMap(itemsColor, \ic -> arrayPush(style2, ic), style2);
+			newTextStyle : [MTextStyle] = maybeArrayPush([MCaptionColumnSelected()], itemsColor);
+
 			TLines2(
-				TCenterX(MText2T(parent, newText.first, style3)),
-				(if (leng < floor(minWidth / 7.)) {
-					MText2T(parent, newText.second, style3)
-				} else {
-					style4 : [MEllipsisTextStyle] = style3;
+				MText2T(parent, newText.first, newTextStyle)
+				|> TCenterX,
+				(if (textLen < floor(minWidth / 7.))
+					MText2T(parent, newText.second, newTextStyle)
+				else
 					MEllipsisText2T(
 						manager,
 						parent,
-						MEllipsisText(toUpperCase(newText.second), arrayPush(style4, showTooltip)),
+						MEllipsisText(toUpperCase(newText.second), arrayPush(newTextStyle, showTooltip)),
 						m2t
 					)
-				}) |> TCenterX
+				) |> TCenterX
 			)
-		} else {
-			style5 : [MEllipsisTextStyle] = style1;
-			TCenterX(MEllipsisText2T(manager, parent, MEllipsisText(toUpperCase(text), arrayPush(style5, showTooltip)), m2t))
-		}
-	})
+		} else
+			MEllipsisText2T(manager, parent, MEllipsisText(toUpperCase(text), arrayPush(style, showTooltip)), m2t)
+			|> TCenterX
+	}
 }
 
 splitText(text : string) -> Pair<string, string> {
@@ -483,11 +442,11 @@ MTabsBottomLine(manager : MaterialManager, parent : MFocusGroup, tabsWidths : Dy
 				order,
 				\__ -> selected,
 				\ -> if (getDefaultRtl())
-						fsubtracti(fsubtracti(fselect(orderedTabsWidths, FLift(length)), selected), const(1))
+						fsubtracti(fsubtracti(flength(orderedTabsWidths), selected), const(1))
 					else
 						selected
 			),
-			eitherFn(order, \or -> if (getDefaultRtl()) fselect(or.order, FLift(reverseA)) else or.order, \ -> const([])),
+			eitherMap(order, \or -> fselect(or.order, FLift(arrayRTL)), const([])),
 			\wd, twds, sel, ord -> MTabsBottomLineInfo(wd, twds, sel, ord)
 		);
 

@@ -111,7 +111,7 @@ END_STL_HASH_NAMESPACE
 #else
 typedef unsigned FlowPtr;
 #define MakeFlowPtr(x) FlowPtr(x)
-#define FlowPtrToInt(x) unsigned(x)
+#define FlowPtrToInt(x) (unsigned)(x)
 #endif
 
 inline FlowPtr FlowPtrAlignDown(FlowPtr x, int size) {
@@ -376,13 +376,13 @@ public:
     static StackSlot MakeNativeFn(int id) {
         StackSlot s; s.slot_private.IntValue = id; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_NATIVEFN,0); return s;
     }
-    static StackSlot InternalMakeNativeClosure(FlowPtr p, unsigned len) {
+    static StackSlot InternalMakeNativeClosure(FlowPtr p, unsigned short len) {
         return InternalMakeSlot(p, len, TAG_NATIVEFN|TAG_SIGN);
     }
     static StackSlot MakeCodePointer(FlowPtr code) {
         StackSlot s; s.slot_private.PtrValue = code; s.slot_private.Ints[1] = MAKE_TAG_AUX_INT(TAG_FLOWCODE,0); return s;
     }
-    static StackSlot InternalMakeClosurePointer(FlowPtr p, unsigned len) {
+    static StackSlot InternalMakeClosurePointer(FlowPtr p, unsigned short len) {
         return InternalMakeSlot(p, len, TAG_FLOWCODE|TAG_SIGN);
     }
     static StackSlot MakeStruct(FlowPtr p, unsigned short id) {
@@ -391,7 +391,7 @@ public:
     static StackSlot &SetStruct(StackSlot &s, FlowPtr p, unsigned short id) {
         return InternalSetSlot(s, p, id, TAG_STRUCT);
     }
-    static StackSlot InternalMakeCapturedFrame(FlowPtr pcode, unsigned subid) {
+    static StackSlot InternalMakeCapturedFrame(FlowPtr pcode, unsigned short subid) {
         return InternalMakeSlot(pcode, subid, TAG_CAPFRAME);
     }
     static StackSlot InternalMakeSlot(FlowPtr ptr, unsigned short aux, unsigned short tag) {

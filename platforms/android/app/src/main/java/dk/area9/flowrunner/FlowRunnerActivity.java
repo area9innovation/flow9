@@ -9,30 +9,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import com.amazonaws.org.apache.http.HttpException;
-import com.amazonaws.org.apache.http.HttpHost;
-import com.amazonaws.org.apache.http.HttpRequest;
-import com.amazonaws.org.apache.http.HttpRequestInterceptor;
-import com.amazonaws.org.apache.http.HttpResponse;
-import com.amazonaws.org.apache.http.HttpResponseInterceptor;
-import com.amazonaws.org.apache.http.client.methods.HttpGet;
-import com.amazonaws.org.apache.http.client.methods.HttpPost;
-import com.amazonaws.org.apache.http.client.methods.HttpPut;
-import com.amazonaws.org.apache.http.client.methods.HttpDelete;
-import com.amazonaws.org.apache.http.client.methods.HttpPatch;
-import com.amazonaws.org.apache.http.client.methods.HttpUriRequest;
-import com.amazonaws.org.apache.http.entity.BasicHttpEntity;
-import com.amazonaws.org.apache.http.impl.client.DefaultHttpClient;
-import com.amazonaws.org.apache.http.protocol.HttpContext;
 
 // this is only for checking hardware acceleration, probably could be refactored
 import android.app.AlertDialog;
@@ -289,41 +277,17 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.setHttpLoader(new FlowRunnerWrapper.HttpLoader() {
             public void request(@NonNull String url, String method, @NonNull String[] headers,
                     byte[] payload, @NonNull HttpResolver callback) {
-                HttpUriRequest request;
+                try {
+                    URL uri = new URL(loader_uri.resolve(url).toString());
 
-                BasicHttpEntity entity = new BasicHttpEntity();
+                    Map<String, String> rawHeaders = new HashMap<>();
+                    for (int i = 0; i < headers.length; i+=2)
+                        rawHeaders.put(headers[i], headers[i+1]);
 
-                entity.setContent(new ByteArrayInputStream(payload));
-
-                URI uri = loader_uri.resolve(url);
-                switch(method) {
-                    case "POST":
-                        HttpPost post = new HttpPost(uri);
-                        post.setEntity(entity);
-                        request = post;
-                        break;
-                    case "PUT":
-                        HttpPut put = new HttpPut(uri);
-                        put.setEntity(entity);
-                        request = put;
-                        break;
-                    case "DELETE":
-                        request = new HttpDelete(uri);
-                        break;
-                    case "PATCH":
-                        HttpPatch patch = new HttpPatch(uri);
-                        patch.setEntity(entity);
-                        request = patch;
-                        break;
-                    default:
-                        request = new HttpGet(uri);
-                        break;
+                    Utils.loadHttpAsync(uri, method, rawHeaders, payload, callback);
+                } catch (IOException exception) {
+                    System.out.println("I/O error: " + url);
                 }
-
-                for (int i = 0; i < headers.length; i+=2)
-                    request.addHeader(headers[i], headers[i+1]);
-                
-                Utils.loadHttpAsync(request, callback);
             }
 
             public void preloadMedia(@NonNull String url, @NonNull ResourceCache.Resolver callback) throws IOException {
