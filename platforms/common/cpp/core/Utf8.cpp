@@ -11,6 +11,7 @@
 #endif
 
 #include <sstream>
+#include <cstring>
 
 #ifdef IOS
 #import <UIKit/UIKit.h>

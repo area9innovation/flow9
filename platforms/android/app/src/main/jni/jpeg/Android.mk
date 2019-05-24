@@ -4,13 +4,13 @@ include $(CLEAR_VARS)
 LOCAL_ARM_MODE := arm
 
 LOCAL_SRC_FILES := \
-    jcapimin.c jcapistd.c jccoefct.c jccolor.c jcdctmgr.c jchuff.c \
-    jcinit.c jcmainct.c jcmarker.c jcmaster.c jcomapi.c jcparam.c \
-    jcphuff.c jcprepct.c jcsample.c jctrans.c jdapimin.c jdapistd.c \
+    jaricom.c jcapimin.c jcapistd.c jccoefct.c jccolor.c jcdctmgr.c jchuff.c \
+    jcarith.c jcinit.c jcmainct.c jcmarker.c jcmaster.c jcomapi.c jcparam.c \
+    jdarith.c jcprepct.c jcsample.c jctrans.c jdapimin.c jdapistd.c \
     jdatadst.c jdatasrc.c jdcoefct.c jdcolor.c jddctmgr.c jdhuff.c \
-    jdinput.c jdmainct.c jdmarker.c jdmaster.c jdmerge.c jdphuff.c \
+    jdinput.c jdmainct.c jdmarker.c jdmaster.c jdmerge.c \
     jdpostct.c jdsample.c jdtrans.c jerror.c jfdctflt.c jfdctfst.c \
-    jfdctint.c jidctflt.c jidctfst.c jidctint.c jidctred.c jquant1.c \
+    jfdctint.c jidctflt.c jidctfst.c jidctint.c jquant1.c \
     jquant2.c jutils.c jmemmgr.c jmemnobs.c
 
 LOCAL_SRC_FILES_arm += armv6_idct.S
@@ -29,7 +29,6 @@ LOCAL_CFLAGS += -DANDROID_TILE_BASED_DECODE
 
 ifeq ($(TARGET_ARCH),x86)
   LOCAL_CFLAGS += -DANDROID_INTELSSE2_IDCT
-  LOCAL_SRC_FILES += jidctintelsse.c
 endif
 
 LOCAL_SRC_FILES_arm64 += \
