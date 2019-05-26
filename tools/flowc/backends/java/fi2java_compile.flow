@@ -220,7 +220,7 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 			}
 			class_path = pathCombine(output_dir, "Module_" + csm.id + ".class");
 			if (!fileExists(class_path)) {
-				rlistPush(gctx.to_compile, module_path);
+				rlistPush(gctx.to_compile, module_path + "\n");
 			}
 			iter(csm.decl_order, \decl ->
 				switch (decl : FiDeclaration) {
@@ -368,104 +368,113 @@ javaList2String(lst : ref List<string>, endstr : string) -> string {
 }
 
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
-	foldTree(gctx.cstructs, 0, \sname, sdata : JavaStruct, acc -> {
+	traverseInOrder(gctx.cstructs, \sname, sdata : JavaStruct -> {
 		if (length(sdata.fields) > 0) {
-			str_data = gctx.header_generator(timestamp());
-			pushstr = \s -> str_data := Cons(s, ^str_data);
-
-			fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
-				Quadruple(
-					n, type2javaObjType(gctx, f.type, true, false),
-					f.type, type2javaObjType(gctx, f.type, false, false)
-				)
-			);
-			accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
-
-			fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
-			
-			pushstr(
-				"class Struct_" + sname + " extends Struct" +
-				(if (fieldstr != "") " implements " + fieldstr else "") +
-				" {\n"
-			);
-
-			// fields
-			iter(fnametypes, \f -> 
-				pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
-			);
-
-			// constructor
-			pushstr("\n\tpublic Struct_" + sname + "() {}\n");
-			pushstr(
-				"\tpublic Struct_" + sname + "(" +
-				strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
-				") {\n"
-			);
-			iter(fnametypes, \f ->
-				pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
-			);
-			pushstr("\t}\n");
-
-			// accessors
-			iter(accessor_flds, \f -> {
-				name = f.first;
-				pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
-				pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
-			});
-
-			// metadata
-			pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
-			pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
-
-			pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
-			pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
-
-			pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
-			pushstr(strGlue(map(sdata.fields,\f -> type2javaRuntimeType(f.type)), ", "));
-
-			pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
-			pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
-
-			// generic field access
-			pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
-			pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
-			pushstr("\n\t\t};\n\t}\n");
-
-			pushstr("\t@SuppressWarnings(\"unchecked\")\n");
-			pushstr("\tpublic void setFields(Object[] values) {\n");
-			pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
-			pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
-			iteri(fnametypes, \i, f ->
-				pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
-			);
-			pushstr("\t}\n\n");
-
-			// comparison
-			pushstr("\tpublic int compareTo(Struct other_gen) {\n");
-			pushstr("\t\tif (other_gen == this) return 0;\n");
-			pushstr("\t\tint tmp = other_gen.getTypeId();\n");
-			pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
-			pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
-
-			tmp = fold(fnametypes, false, \tmp, f -> {
-				if (tmp) {
-					pushstr("\t\tif (tmp != 0) return tmp;\n");
-				}
-				emitJavaComparison(pushstr, f.first, f.third);
-			});
-			if (tmp)
-				pushstr("\t\treturn tmp;\n\t}\n")
-			else
-				pushstr("\t\treturn 0;\n\t}\n");
-
 			fname = pathCombine(output_dir, "Struct_" + sname + ".java");
-			writeJavaSource(gctx, fname, javaList2String(str_data, "}\n"));
+			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".java");
+			if (usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
+				if (gctx.program.config.verbose > 0) {
+					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it");
+				}
+				class_path = pathCombine(output_dir, "Struct_" + sname + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gctx.to_compile, fname + "\n");
+				}
+			} else {
+				if (gctx.program.config.verbose > 0) {
+					fcPrintln("Generating java struct module '" + fname + "'");
+				}
+				str_data = gctx.header_generator(timestamp());
+				pushstr = \s -> str_data := Cons(s, ^str_data);
+
+				fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
+					Quadruple(
+						n, type2javaObjType(gctx, f.type, true, false),
+						f.type, type2javaObjType(gctx, f.type, false, false)
+					)
+				);
+				accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
+
+				fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
+
+				pushstr(
+					"class Struct_" + sname + " extends Struct" +
+					(if (fieldstr != "") " implements " + fieldstr else "") +
+					" {\n"
+				);
+
+				// fields
+				iter(fnametypes, \f -> 
+					pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
+				);
+
+				// constructor
+				pushstr("\n\tpublic Struct_" + sname + "() {}\n");
+				pushstr(
+					"\tpublic Struct_" + sname + "(" +
+					strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
+					") {\n"
+				);
+				iter(fnametypes, \f ->
+					pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
+				);
+				pushstr("\t}\n");
+
+				// accessors
+				iter(accessor_flds, \f -> {
+					name = f.first;
+					pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
+					pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
+				});
+
+				// metadata
+				pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
+				pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
+
+				pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
+
+				pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
+				pushstr(strGlue(map(sdata.fields,\f -> type2javaRuntimeType(f.type)), ", "));
+
+				pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
+				pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
+
+				// generic field access
+				pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
+				pushstr("\n\t\t};\n\t}\n");
+
+				pushstr("\t@SuppressWarnings(\"unchecked\")\n");
+				pushstr("\tpublic void setFields(Object[] values) {\n");
+				pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
+				pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
+				iteri(fnametypes, \i, f ->
+					pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
+				);
+				pushstr("\t}\n\n");
+
+				// comparison
+				pushstr("\tpublic int compareTo(Struct other_gen) {\n");
+				pushstr("\t\tif (other_gen == this) return 0;\n");
+				pushstr("\t\tint tmp = other_gen.getTypeId();\n");
+				pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
+				pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
+
+				tmp = fold(fnametypes, false, \tmp, f -> {
+					if (tmp) {
+						pushstr("\t\tif (tmp != 0) return tmp;\n");
+					}
+					emitJavaComparison(pushstr, f.first, f.third);
+				});
+				if (tmp)
+					pushstr("\t\treturn tmp;\n\t}\n")
+				else
+					pushstr("\t\treturn 0;\n\t}\n");
+				writeJavaSource(gctx, fname, javaList2String(str_data, "}\n"));
+			}
 		}
-
-		0;
 	});
-
-	{}
 }
 
 emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, tree : FiLambda, parent : Maybe<JavaScopeContext>, indent0 : string, type : FiTypeFunction) -> string {
@@ -1599,12 +1608,12 @@ addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
 }
 
 usePreviouslyGeneratedModules(gctx : JavaGlobalContext, module : FiModule, path : string) -> bool {
-		if (!gctx.hash_collisions && module.incremental && fileExists(path)) {
-			collision_and_time = getCollisionAndTimestampOfFile(path);
-			!collision_and_time.first && collision_and_time.second == d2s(module.fileinfo.trampstamp)
-		} else {
-			false
-		}
+	if (!gctx.hash_collisions && module.incremental && fileExists(path)) {
+		collision_and_time = getCollisionAndTimestampOfFile(path);
+		!collision_and_time.first && collision_and_time.second == d2s(module.fileinfo.trampstamp);
+	} else {
+		false
+	}
 }
 
 writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void {
