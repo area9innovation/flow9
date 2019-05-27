@@ -752,28 +752,8 @@ class PixiWorkarounds {
 		            // Allow for pixel rounding
 		            if (renderer.roundPixels)
 		            {
-		            	renderer.context.setTransform(
-		                    wt.a,
-		                    wt.b,
-		                    wt.c,
-		                    wt.d,
-		                    (wt.tx * renderer.resolution + 0.5) | 0,
-		                    (wt.ty * renderer.resolution + 0.5) | 0
-		                );
-
 		                dx = dx | 0;
 		                dy = dy | 0;
-		            }
-		            else
-		            {
-		            	renderer.context.setTransform(
-		                    wt.a,
-		                    wt.b,
-		                    wt.c,
-		                    wt.d,
-		                    wt.tx * renderer.resolution,
-		                    wt.ty * renderer.resolution
-		                );
 		            }
 		            
 	                renderer.context.setTransform(
