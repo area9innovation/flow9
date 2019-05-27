@@ -246,6 +246,8 @@ class RenderSupportJSPixi {
 			PixiWorkarounds.workaroundIECustomEvent();
 		}
 
+		PixiWorkarounds.workaroundRenderSpriteRoundPixels();
+
 		createPixiRenderer();
 
 		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
