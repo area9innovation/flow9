@@ -137,30 +137,37 @@ processCSEGAcc(prog : FiProgram, worthIt : Tree<int, [FvValue]>, counters : CSEG
 }
 
 csegFiModule(acc : CSEGAcc, toplevel : Tree<string, FiDeclaration>, mo : FiModule) -> Pair<FiModule, Tree<string, FiDeclaration>> {
+	has_changes = ref false;
+	optimized_funcs = map(mo.functions, \fn -> {
+			nexp = csegReplaceFiExps(acc, fn.lambda);
+			nl = switch (nexp) {
+				FiLambda(__, __, __, __): nexp;
+				default: fn.lambda
+			}
+			has_changes := ^has_changes || nl != fn.lambda;
+			FiFunctionDec(fn.name, nl, fn.type, fn.declStart, fn.defiStart)
+		}
+	);
+	optimized_vars = map(mo.globalVars, \gv -> {
+			nexp = csegReplaceFiExps(acc, gv.value);
+			has_changes := ^has_changes || nexp != gv.value;
+			FiGlobalVar(gv.name, nexp, gv.type, gv.declStart, gv.defiStart);
+		}
+	);
+
 	module = FiModule(
 		mo.fileinfo, 
 		mo.imports, mo.forbids,
 		mo.exports,
 		mo.structs, mo.unions,
-		map(mo.functions, \fn -> {
-				nexp = csegReplaceFiExps(acc, fn.lambda);
-				nl = switch (nexp) {
-					FiLambda(__, __, __, __): nexp;
-					default: fn.lambda
-				}
-				FiFunctionDec(fn.name, nl, fn.type, fn.declStart, fn.defiStart)
-			}
-		), 
-		map(mo.globalVars, \gv -> {
-				nexp = csegReplaceFiExps(acc, gv.value);
-				FiGlobalVar(gv.name, nexp, gv.type, gv.declStart, gv.defiStart);
-			}
-		),
+		optimized_funcs,
+		optimized_vars,
 		mo.natives,
 		mo.initOrder,
 		mo.stringIncludes,
 		mo.start,
-		mo.end
+		mo.end,
+		if (^has_changes) false else mo.incremental
 	);
 	// Update the top-level decs with latest functions and globals with the CSE applied
 	new_toplevel = 
@@ -186,7 +193,7 @@ csegCreateGlobalsModule(acc : CSEGAcc, toplevel : Tree<string, FiDeclaration>) -
 			globals, 
 			[],
 			list2array(acc.newInits),
-			[], 0,  0
+			[], 0,  0, false
 		),
 		fold(globals, toplevel, \acc1, gvar -> 
 			setTree(acc1, gvar.name, gvar)
