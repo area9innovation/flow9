@@ -200,4 +200,14 @@ class Object3DHelper {
 
 		return [];
 	}
+
+	public static function get3DObjectAllChildren(parent : Object3D) : Array<Object3D> {
+		var children = parent.children.copy();
+
+		for (child in parent.children) {
+			children = children.concat(get3DObjectAllChildren(child));
+		}
+
+		return children;
+	}
 }

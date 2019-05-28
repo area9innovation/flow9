@@ -233,37 +233,23 @@ class ThreeJSStage extends DisplayObject {
 		return rect;
 	}
 
-	public function onMouseEvent(event : Dynamic, ?object : Object3D, ?handledObjects : Array<Dynamic>) : Void {
+	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
 		if (orbitControls != null && !orbitControls.enabled) {
 			return;
 		}
 
-		if (object == null) {
-			if (scene == null) {
-				return;
-			}
-
-			object = scene;
-		};
-
-		if (handledObjects == null) {
-			handledObjects = new Array<Dynamic>();
-		};
+		var handledObjects = new Array<Dynamic>();
 
 		var raycaster = new Raycaster();
 		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
 
-		for (ob in raycaster.intersectObjects(object.children)) {
+		for (ob in raycaster.intersectObjects(scene.get3DObjectAllChildren())) {
 			var object = ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {
 				handledObjects.push(object);
 				object.emitEvent(event.type);
 			}
-		};
-
-		for (child in object.children) {
-			onMouseEvent(event, child, handledObjects);
 		};
 	}
 }

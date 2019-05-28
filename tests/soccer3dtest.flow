@@ -12,7 +12,8 @@ F3DEditorState(
 	undoStack : DynamicBehaviour<[string]>,
 	axes : DynamicBehaviour<bool>,
 	grid : DynamicBehaviour<bool>,
-	boxes : DynamicBehaviour<bool>
+	boxes : DynamicBehaviour<bool>,
+	mutable ignoreUndo : bool
 );
 
 makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
@@ -36,7 +37,8 @@ makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
 		make([]),
 		axesVisible,
 		gridVisible,
-		boxesVisible
+		boxesVisible,
+		false
 	)
 }
 
@@ -582,26 +584,38 @@ F3DObjectProperties(state : F3DEditorState, object : native) -> Material {
 }
 
 appendF3DUndo(state : F3DEditorState) -> void {
-	iter(get3DStageScene(state.stage), \scene -> {
-		undo = get3DObjectState(scene);
-		stack = getValue(state.undoStack);
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
 
-		if (length(stack) == 0 || undo != stack[length(stack) - 1]) {
-			next(state.undoStack, arrayPush(stack, undo));
-		}
-	});
+		iter(get3DStageScene(state.stage), \scene -> {
+			undo = get3DObjectState(scene);
+			stack = getValue(state.undoStack);
+
+			if (length(stack) == 0 || undo != stack[length(stack) - 1]) {
+				next(state.undoStack, arrayPush(stack, undo));
+			}
+		});
+
+		deferred(\ -> state.ignoreUndo ::= false);
+	}
 }
 
 applyF3DUndo(state : F3DEditorState) -> void {
-	stack = getValue(state.undoStack);
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
 
-	if (length(stack) > 0) {
-		undo = stack[length(stack) - 1];
-		iter(get3DStageScene(state.stage), \scene -> {
-			apply3DObjectState(scene, undo);
-		});
+		stack = getValue(state.undoStack);
 
-		next(state.undoStack, subrange(stack, 0, length(stack) - 1));
+		if (length(stack) > 0) {
+			undo = stack[length(stack) - 1];
+			iter(get3DStageScene(state.stage), \scene -> {
+				apply3DObjectState(scene, undo);
+			});
+
+			next(state.undoStack, subrange(stack, 0, length(stack) - 1));
+		}
+
+		deferred(\ -> state.ignoreUndo ::= false);
 	}
 }
 
