@@ -58,12 +58,7 @@ public class Utils {
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
     public static final boolean isFileProviderRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
-
-    //Camera2 is supported starting from API Level 21, but Camera2Enumerator(WebRTC) causes crashes on devices with API Level 21
-    public static boolean isCamera2Supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1;
-    public static boolean isMediaRecorderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
-    public static boolean isMediaRecorderPauseResumeSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
-
+    
     public static void setHttpProfiling(boolean onoff) {
         httpProfiling = onoff;
     }

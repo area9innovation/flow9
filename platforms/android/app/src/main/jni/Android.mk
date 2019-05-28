@@ -75,9 +75,6 @@ LOCAL_SRC_FILES += \
     utils/AbstractGeolocationSupport.cpp \
     utils/FileLocalStore.cpp \
     utils/FileSystemInterface.cpp \
-    utils/MediaStreamSupport.cpp \
-    utils/WebRTCSupport.cpp \
-    utils/MediaRecorderSupport.cpp \
     utils/AbstractWebSocketSupport.cpp \
     font/TextFont.cpp
 

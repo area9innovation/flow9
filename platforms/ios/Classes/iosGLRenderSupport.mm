@@ -15,7 +15,6 @@
 #import "EAGLViewController.h"
 #import <CoreText/CoreText.h>
 #import "DeviceInfo.h"
-#import "iosMediaStreamSupport.h"
 
 @interface FixedWebView : UIWebView // This subclass is to fix Apple bug with invalid cut/copy... targets
 @end
@@ -1134,7 +1133,7 @@ void iosGLRenderSupport::doDestroyNativeWidget(GLClip *clip)
         if (flow_native_cast<GLVideoClip>(clip)) {
             [widget removeFromSuperview];
             
-            FlowVideoPlayerControllers.erase(widget);
+            FlowAVPlayerControllers.erase(widget);
         } else if (flow_native_cast<GLTextClip>(clip)) {
             widget.hidden = YES;
             [widget removeFromSuperview];
@@ -1166,7 +1165,7 @@ void iosGLRenderSupport::doReshapeNativeWidget(GLClip* clip, const GLBoundingBox
 {
     UIView* widget = NativeWidgets[clip];
     
-    if ([FlowAVPlayerView useOpenGLVideo] && [widget isKindOfClass: [FlowVideoPlayerView class]]) return;
+    if ([FlowAVPlayerView useOpenGLVideo] && [widget isKindOfClass: [FlowAVPlayerView class]]) return;
    
     if (widget) {
         bool wasVisible = !widget.hidden;
@@ -1186,7 +1185,6 @@ void iosGLRenderSupport::doReshapeNativeWidget(GLClip* clip, const GLBoundingBox
             vec2 size = box.size();
             widget.frame = [GLView convertRect: CGRectMake(bbox.min_pt.x / ScreenScale, bbox.min_pt.y / ScreenScale,
                             size.x / ScreenScale, size.y / ScreenScale) toView: WidgetsView];
-            
             widget.hidden = false;
             
             // Handle masking
@@ -1365,112 +1363,89 @@ bool iosGLRenderSupport::doCreateVideoWidget(UIView* &widget, GLVideoClip* video
     LogI(@"Will create player for video %@", [videoURL absoluteString]);
     
     UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"Generic" bundle: nil];
-    FlowVideoPlayerController *vc = (FlowVideoPlayerController*)[storyboard instantiateViewControllerWithIdentifier:@"FlowVideoPlayerController"];
+    FlowAVPlayerController *vc = (FlowAVPlayerController*)[storyboard instantiateViewControllerWithIdentifier:@"FlowAVPlayerController"];
+
+    FlowAVPlayerView * view = (FlowAVPlayerView*)vc.view;
+    FlowAVPlayerControllers[view] = vc;
+    view.looping = video_clip->isLooping();
     
-    if (video_clip->useMediaStream()) {
-        FlowNativeMediaStream *mediaStream = getFlowRunner()->GetNative<FlowNativeMediaStream*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
-        FlowRTCVideoPreview *view = [[FlowRTCVideoPreview alloc] init];
-        __block FlowRTCVideoPreview *bView = view;
-        [view loadVideoFromRTCMediaStream:mediaStream onSuccess:^(int width, int height) {
+    __block FlowAVPlayerView *bView = view;
+    __block FlowAVPlayerController *bController = vc;
+    
+#define CHECK_CLIP_ALIVE(c) if (NativeWidgets.find(c) == NativeWidgets.end()) return;
+    [view loadVideo: videoURL
+        onResolutionReceived: ^void(float width, float height) {
+            CHECK_CLIP_ALIVE(video_clip); // It looks like loadValuesAsynchronouslyForKeys cannot be cancelled so check
+            // clip is still actual here
             dispatchVideoSize(video_clip, width, height);
-            dispatchVideoDuration(video_clip, 0);
+            
             if ([FlowAVPlayerView useOpenGLVideo]) {
                 GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
                 video_clip->setVideoTextureImage(texture_bitmap);
                 [bView setTargetVideoTexture: texture_bitmap];
                 bView.hidden = YES;
             }
-            dispatchVideoPlayStatus(video_clip, GLVideoClip::PlayStart);
-        } onDimensionsChanged:^(int width, int height) {
-            dispatchVideoSize(video_clip, width, height);
-        } onFrameReady:^{
-            needsDrawingGL = YES;
-        }];
-        widget = view;
-    } else {
-        FlowAVPlayerView *view = [[FlowAVPlayerView alloc] init];
-
-        view.looping = video_clip->isLooping();
-        
-        __block FlowAVPlayerView *bView = view;
-        __block FlowVideoPlayerController *bController = vc;
-#define CHECK_CLIP_ALIVE(c) if (NativeWidgets.find(c) == NativeWidgets.end()) return;
-        [view loadVideo: videoURL
-            onResolutionReceived: ^void(float width, float height) {
-               CHECK_CLIP_ALIVE(video_clip); // It looks like loadValuesAsynchronouslyForKeys cannot be cancelled so check
-               // clip is still actual here
-               dispatchVideoSize(video_clip, width, height);
-               
-               if ([FlowAVPlayerView useOpenGLVideo]) {
-                   GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
-                   video_clip->setVideoTextureImage(texture_bitmap);
-                   [bView setTargetVideoTexture: texture_bitmap];
-                   bView.hidden = YES;
-               }
-            }
-            onSuccess: ^void(float duration) {
-              CHECK_CLIP_ALIVE(video_clip); // It looks like loadValuesAsynchronouslyForKeys cannot be cancelled so check
-              // clip is still actual here
-              dispatchVideoDuration(video_clip, duration * 1000);
-              dispatchVideoPlayStatus(video_clip, GLVideoClip::PlayStart);
-              
-              if (video_clip->isPlaying()) {
-                  [bView playVideo];
-              } else {
-                  [bView pauseVideo];
-                  [vc showPlayButton];
-              }
-              
-            }
-            onError: ^void() {
-                CHECK_CLIP_ALIVE(video_clip);
-                video_clip->notifyNotFound();
-            }
-            onFrameReady: ^void(CMTime time) {
-               needsDrawingGL = YES;
-               dispatchVideoPosition(video_clip, CMTimeGetSeconds(time) * 1000);
-            }
-         ];
-#undef CHECK_CLIP_ALIVE
-        
-        view.OnUserResume = ^void() {
-            dispatchVideoPlayStatus(video_clip, GLVideoClip::UserResume);
-            if (![FlowAVPlayerView useOpenGLVideo]) {
-                [bController hidePlayButton];
-                [bView playVideo];
-            }
-        };
-        
-        view.OnUserPause = ^void() {
-            dispatchVideoPlayStatus(video_clip, GLVideoClip::UserPause);
-            if (![FlowAVPlayerView useOpenGLVideo]) {
-                [bController showPlayButton];
-                [bView pauseVideo];
-            }
-        };
-        
-        view.OnPlayEnd = ^void() {
-            dispatchVideoPlayStatus(video_clip, GLVideoClip::PlayEnd);
-            if (![FlowAVPlayerView useOpenGLVideo]) {
-                [bController showPlayButton];
-                [bView pauseVideo];
-            }
-            bView.looping = video_clip->isLooping();
-        };
-        
-        widget = view;
     }
+        onSuccess: ^void(float duration) {
+            CHECK_CLIP_ALIVE(video_clip); // It looks like loadValuesAsynchronouslyForKeys cannot be cancelled so check
+            // clip is still actual here
+            dispatchVideoDuration(video_clip, duration * 1000);
+            dispatchVideoPlayStatus(video_clip, GLVideoClip::PlayStart);
+            
+            if (video_clip->isPlaying()) {
+                [bView playVideo];
+            } else {
+                [bView pauseVideo];
+                [vc showPlayButton];
+            }
+            
+    }
+        onError: ^void() {
+            CHECK_CLIP_ALIVE(video_clip);
+            video_clip->notifyNotFound();
+    }
+        onFrameReady: ^void(CMTime time) {
+            needsDrawingGL = YES;
+            dispatchVideoPosition(video_clip, CMTimeGetSeconds(time) * 1000);
+    }
+     ];
     
-    FlowVideoPlayerControllers[widget] = vc;
-    [vc.view addSubview:widget];
-    [WidgetsView addSubview:widget];
+#undef CHECK_CLIP_ALIVE
+    view.OnUserResume = ^void() {
+        dispatchVideoPlayStatus(video_clip, GLVideoClip::UserResume);
+        if (![FlowAVPlayerView useOpenGLVideo]) {
+            [bController hidePlayButton];
+            [bView playVideo];
+        }
+    };
+    
+    view.OnUserPause = ^void() {
+        dispatchVideoPlayStatus(video_clip, GLVideoClip::UserPause);
+        if (![FlowAVPlayerView useOpenGLVideo]) {
+            [bController showPlayButton];
+            [bView pauseVideo];
+        }
+    };
+    
+    view.OnPlayEnd = ^void() {
+        dispatchVideoPlayStatus(video_clip, GLVideoClip::PlayEnd);
+        if (![FlowAVPlayerView useOpenGLVideo]) {
+            [bController showPlayButton];
+            [bView pauseVideo];
+        }
+        bView.looping = video_clip->isLooping();
+    };
+    
+    widget = view;
+    
+    [WidgetsView addSubview:view];
     
     return true;
 }
 
 void iosGLRenderSupport::doUpdateVideoPlay(GLVideoClip *video_clip)
 {
-    FlowVideoPlayerView* widget = (FlowVideoPlayerView*)NativeWidgets[video_clip];
+    FlowAVPlayerView* widget = (FlowAVPlayerView*)NativeWidgets[video_clip];
     
     if (video_clip->isPlaying())
         [widget playVideo];
@@ -1480,22 +1455,22 @@ void iosGLRenderSupport::doUpdateVideoPlay(GLVideoClip *video_clip)
 
 void iosGLRenderSupport::doUpdateVideoPosition(GLVideoClip *video_clip)
 {
-    FlowVideoPlayerView* widget = (FlowVideoPlayerView*)NativeWidgets[video_clip];
+    FlowAVPlayerView* widget = (FlowAVPlayerView*)NativeWidgets[video_clip];
     [widget seekTo: video_clip->getPosition()];
 }
 
 void iosGLRenderSupport::doUpdateVideoVolume(GLVideoClip *video_clip)
 {
-    FlowVideoPlayerView* widget = (FlowVideoPlayerView*)NativeWidgets[video_clip];
+    FlowAVPlayerView* widget = (FlowAVPlayerView*)NativeWidgets[video_clip];
     
-    [widget setVolume:video_clip->getVolume()];
+    [widget.player setVolume:video_clip->getVolume()];
 }
 
 void iosGLRenderSupport::doUpdateVideoPlaybackRate(GLVideoClip *video_clip)
 {
-    FlowVideoPlayerView* widget = (FlowVideoPlayerView*)NativeWidgets[video_clip];
+    FlowAVPlayerView* widget = (FlowAVPlayerView*)NativeWidgets[video_clip];
     
-    [widget setRate:(float)video_clip->getPlaybackRate()];
+    [widget.player setRate:(float)video_clip->getPlaybackRate()];
 }
 
 bool iosGLRenderSupport::doCreateWebWidget(UIView *&widget, GLWebClip *web_clip) {

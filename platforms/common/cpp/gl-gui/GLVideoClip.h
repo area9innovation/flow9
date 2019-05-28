@@ -39,11 +39,7 @@ protected:
     GLTextureImage::Ptr texture_image;
 
     ivec2 size;
-    vec2 rotation_offset;
-
     unicode_string name;
-    int media_stream_id;
-    bool use_media_stream;
 
     int64_t position, lastPosition, duration, start, end;
     bool playing, failed, looping, loaded;
@@ -95,10 +91,7 @@ public:
         CtlScrubber = 8
     };
 
-    const GLTransform &getLocalTransform();
-    bool useMediaStream() { return use_media_stream; }
     const unicode_string &getName() { return name; }
-    int getMediaStreamId() { return media_stream_id; }
 
     bool isPlaying() { return playing; }
     bool isLooping() { return looping; }
@@ -119,13 +112,10 @@ public:
 
     void setFocus(bool focus);
 
-    void setRotation(FlowScreenRotation rotation);
-
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
 public:
     DECLARE_NATIVE_METHOD(playVideo)
-    DECLARE_NATIVE_METHOD(playVideoFromMediaStream)
     DECLARE_NATIVE_METHOD(playVideo2)
     DECLARE_NATIVE_METHOD(seekVideo)
     DECLARE_NATIVE_METHOD(pauseVideo)

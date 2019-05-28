@@ -1,9 +1,10 @@
 package dk.area9.flowrunner;
 
+import java.io.IOException;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.SurfaceTexture;
-import android.graphics.SurfaceTexture.OnFrameAvailableListener;
 import android.media.MediaPlayer;
 import android.opengl.GLES20;
 import android.os.Handler;
@@ -18,15 +19,7 @@ import android.view.View;
 import android.widget.MediaController;
 import android.widget.RelativeLayout;
 import android.widget.VideoView;
-
-import org.webrtc.AudioTrack;
-import org.webrtc.EglBase;
-import org.webrtc.EglRenderer;
-import org.webrtc.GlRectDrawer;
-import org.webrtc.RendererCommon;
-import org.webrtc.SurfaceEglRenderer;
-
-import java.io.IOException;
+import android.graphics.SurfaceTexture.OnFrameAvailableListener;
 
 class VideoWidget extends NativeWidget {
     @Nullable
@@ -55,11 +48,7 @@ class VideoWidget extends NativeWidget {
     @Nullable
     private MediaPlayer mediaPlayer;
     private SurfaceTexture surfaceTexture;
-
-    private boolean useMediaStream;
-    private FlowMediaStreamSupport.FlowMediaStreamObject mediaStreamObject;
-    private EglRenderer eglRenderer;
-
+    
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     public VideoWidget(@NonNull FlowWidgetGroup group, long id) {
@@ -69,114 +58,87 @@ class VideoWidget extends NativeWidget {
             useNativeVideo = !prefs.getBoolean("opengl_video", true);
         }
     }
-
+    
     @NonNull
     protected View createView() {
         Context ctx = group.getContext();
         VideoView video = null;
         MediaPlayer player = null;
+        
+        if (useNativeVideo) {
+            video = new VideoView(ctx);
+        } else {
+            player = new MediaPlayer();
+        }
 
-        if (!useMediaStream) {
-            if (useNativeVideo) {
-                video = new VideoView(ctx);
-            } else {
-                player = new MediaPlayer();
-            }
-
-            mediaController = new MediaController(ctx) {
-                public void setMediaPlayer(final MediaController.MediaPlayerControl player) {
-                    super.setMediaPlayer(new MediaController.MediaPlayerControl() {
-                        // Delegate methods to the real interface:
-                        public boolean canPause() {
-                            return player.canPause();
-                        }
-
-                        public boolean canSeekBackward() {
-                            return player.canSeekBackward();
-                        }
-
-                        public boolean canSeekForward() {
-                            return player.canSeekForward();
-                        }
-
-                        public int getBufferPercentage() {
-                            return player.getBufferPercentage();
-                        }
-
-                        public int getCurrentPosition() {
-                            return player.getCurrentPosition();
-                        }
-
-                        public int getDuration() {
-                            return player.getDuration();
-                        }
-
-                        public boolean isPlaying() {
-                            return player.isPlaying();
-                        }
-
-                        // But also note some events and report them to flow:
-                        public void pause() {
-                            player.pause();
-                            reportStatusEvent(UserPause);
-                        }
-
-                        public void seekTo(int pos) {
-                            player.seekTo(pos);
-                            reportStatusEvent(UserSeek);
-                        }
-
-                        public void start() {
-                            player.start();
-                            reportStatusEvent(UserResume);
-                        }
-
-                        @Override
-                        public int getAudioSessionId() {
-                            // TODO Auto-generated method stub
-                            return 0;
-                        }
-                    });
-                }
-
-                public void setAnchorView(View view) {
-                    super.setAnchorView(group);
-                }
-            };
-
-            if (video != null) {
-                video.setOnTouchListener(new View.OnTouchListener() {
-                    public boolean onTouch(View v, @NonNull MotionEvent event) {
-                        if (event.getAction() == MotionEvent.ACTION_UP) {
-                            if (event.getEventTime() - event.getDownTime() > 500) { // Long Tap
-                                toggleFullscreen();
-                            } else {
-                                toggleMediaController();
-                            }
-                        }
-
-                        return true;
+        mediaController = new MediaController(ctx) {
+            public void setMediaPlayer(@NonNull final MediaController.MediaPlayerControl player) {
+                super.setMediaPlayer(new MediaController.MediaPlayerControl() {
+                    // Delegate methods to the real interface:
+                    public boolean canPause() { return player.canPause(); }
+                    public boolean canSeekBackward() { return player.canSeekBackward(); }
+                    public boolean canSeekForward() { return player.canSeekForward(); }
+                    public int getBufferPercentage() { return player.getBufferPercentage(); }
+                    public int getCurrentPosition() { return player.getCurrentPosition(); }
+                    public int getDuration() { return player.getDuration(); }
+                    public boolean isPlaying() { return player.isPlaying(); }
+                    // But also note some events and report them to flow:
+                    public void pause() {
+                        player.pause();
+                        reportStatusEvent(UserPause);
+                    }
+                    public void seekTo(int pos) {
+                        player.seekTo(pos);
+                        reportStatusEvent(UserSeek);
+                    }
+                    public void start() {
+                        player.start();
+                        reportStatusEvent(UserResume);
+                    }
+                    @Override
+                    public int getAudioSessionId() {
+                        // TODO Auto-generated method stub
+                        return 0;
                     }
                 });
-
-                video.setZOrderMediaOverlay(true);
-                vview = video;
-            }
-            if (player != null) {
-                mediaPlayer = player;
-                createVideoTexture();
             }
 
-            mediaPlayerPrepared = false;
-        } else {
+            public void setAnchorView(View view) {
+                super.setAnchorView(group);
+            }
+        };
+
+        if (video != null) {
+            video.setOnTouchListener(new View.OnTouchListener() {
+                public boolean onTouch(View v, @NonNull MotionEvent event) {
+                    if (event.getAction() == MotionEvent.ACTION_UP) {
+                        if (event.getEventTime() - event.getDownTime() > 500 ) { // Long Tap
+                            toggleFullscreen();
+                        } else {
+                            toggleMediaController();
+                        }
+                    }
+    
+                    return true;
+                }
+            });
+            
+            video.setZOrderMediaOverlay(true);
+            vview = video;
+        }
+        if (player != null) {
+            mediaPlayer = player;
             createVideoTexture();
         }
+        
+        mediaPlayerPrepared = false;
+        
         int fill = RelativeLayout.LayoutParams.FILL_PARENT;
         final RelativeLayout grp = new RelativeLayout(ctx);
 
-        RelativeLayout.LayoutParams vparams = new RelativeLayout.LayoutParams(fill, fill);
-        vparams.addRule(RelativeLayout.ALIGN_PARENT_TOP, -1);
-        vparams.addRule(RelativeLayout.ALIGN_PARENT_LEFT, -1);
+        RelativeLayout.LayoutParams vparams = new RelativeLayout.LayoutParams(fill,fill);
+        vparams.addRule(RelativeLayout.ALIGN_PARENT_TOP,-1);
+        vparams.addRule(RelativeLayout.ALIGN_PARENT_LEFT,-1);
         if (vview != null)
             grp.addView(vview, vparams);
 
@@ -197,20 +159,6 @@ class VideoWidget extends NativeWidget {
             mediaPlayer = null;
         }
 
-        if (useMediaStream) {
-            if (eglRenderer != null) {
-                if (mediaStreamObject.mediaStream != null && !mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
-                    mediaStreamObject.mediaStream.videoTracks.get(0).removeSink(eglRenderer);
-                }
-
-                eglRenderer.release();
-            }
-
-            if (surfaceTexture != null) {
-                surfaceTexture.release();
-            }
-        }
-
         super.destroy();
     }
 
@@ -228,7 +176,7 @@ class VideoWidget extends NativeWidget {
     }
 
     private void toggleMediaController() {
-        if (mediaController.isShown()) {
+        if ( mediaController.isShown() ) {
             mediaController.hide();
         } else {
             if (!isControllerEnabled())
@@ -237,22 +185,22 @@ class VideoWidget extends NativeWidget {
             mediaController.show();
         }
     }
-
+    
     private boolean fullscreen = false;
-
+    
     private void toggleFullscreen() {
         if ((controls & CtlFullScreen) == 0 && !fullscreen)
             return;
 
         fullscreen = !fullscreen;
-
+        
         view.requestLayout();
     }
 
     protected void doRequestLayout() {
         if (vview != null)
             vview.setVisibility(visible ? FlowWidgetGroup.VISIBLE : FlowWidgetGroup.INVISIBLE);
-
+     
         super.doRequestLayout();
     }
 
@@ -261,7 +209,7 @@ class VideoWidget extends NativeWidget {
 
         //Log.d(Utils.LOG_TAG, "VIDEO LAYOUT " + (maxx-minx) + "x" + (maxy-miny));
 
-        if (fullscreen && view != null)
+       if (fullscreen && view != null)
             view.layout(0, 0, group.getRight(), group.getBottom());
     }
 
@@ -274,18 +222,18 @@ class VideoWidget extends NativeWidget {
         // update the window in the compositing manager.
         //
         // This bug is present in android 2.2.1, and may still be in 4.1.1.
-        if (nmaxx <= nminx || nmaxy <= nminy) {
-            nminx++;
-            nminy++;
-            nmaxx = Math.max(nminx + 1, nmaxx);
-            nmaxy = Math.max(nminy + 1, nmaxy);
+        if (nmaxx <= nminx || nmaxy <= nminy)
+        {
+            nminx++; nminy++;
+            nmaxx = Math.max(nminx+1,nmaxx);
+            nmaxy = Math.max(nminy+1,nmaxy);
         }
 
         //Log.d(Utils.LOG_TAG, "VIDEO RESIZE " + (nmaxx-nminx) + "x" + (nmaxy-nminy));
 
         super.resize(nvisible, nminx, nminy, nmaxx, nmaxy, nscale, nalpha);
     }
-
+    
     private boolean isKitKatOrLower() {
         return android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.KITKAT;
     }
@@ -321,15 +269,9 @@ class VideoWidget extends NativeWidget {
                 float vv = linearVolume();
                 mediaPlayer.setVolume(vv, vv);
             } catch (IllegalStateException e) {
-                // There is rare and weird IllegalStateException on setLooping although
+                // There is rare and weird IllegalStateException on setLooping although 
                 // MP is prepared.
                 Log.e(Utils.LOG_TAG, "IllegalStateException for MediaPlayer updateStateFlags");
-            }
-        }
-
-        if (mediaStreamObject != null) {
-            for (AudioTrack audiotrack : mediaStreamObject.mediaStream.audioTracks) {
-                audiotrack.setVolume(linearVolume() * 10);
             }
         }
     }
@@ -431,8 +373,8 @@ class VideoWidget extends NativeWidget {
     @Nullable
     private Runnable createCallback = new Runnable() {
         public void run() {
-            if (id == 0) return;
-            getOrCreateView();
+                if (id == 0) return;
+                getOrCreateView();
 
             if (vview != null) {
                 vview.setOnErrorListener(errorListener);
@@ -451,32 +393,35 @@ class VideoWidget extends NativeWidget {
     @Nullable
     private Runnable updateCallback = new Runnable() {
         public void run() {
-            if (id == 0 || (mediaPlayer == null && vview == null && mediaStreamObject == null))
-                return;
+            if (id == 0 || (mediaPlayer == null && vview == null)) return;
             updateStateFlags();
         }
     };
 
-    private long getReportId() {
+    private long getReportId()
+    {
         if (id == 0) return 0;
         if (group.getBlockEvents()) return 0;
         return id;
     }
 
-    private void reportFailure() {
+    private void reportFailure()
+    {
         long idv = getReportId();
         if (idv != 0)
             group.getWrapper().deliverVideoNotFound(idv);
     }
 
-    private void reportSize(int width, int height) {
+    private void reportSize(int width, int height)
+    {
         Log.d(Utils.LOG_TAG, "VIDEO SIZE " + width + "x" + height);
         long idv = getReportId();
         if (idv != 0)
             group.getWrapper().deliverVideoSize(idv, width, height);
     }
-
-    private void reportDuration(long duration) {
+    
+    private void reportDuration(long duration)
+    {
         Log.d(Utils.LOG_TAG, "VIDEO DURATION " + duration);
         long idv = getReportId();
         if (idv != 0)
@@ -489,7 +434,8 @@ class VideoWidget extends NativeWidget {
             group.getWrapper().deliverVideoPosition(idv, position);
     }
 
-    private void reportStatusEvent(final int event) {
+    private void reportStatusEvent(final int event)
+    {
         if (event == PlayStart)
             if (PlayStartReported)
                 return;
@@ -506,7 +452,8 @@ class VideoWidget extends NativeWidget {
         });
     }
 
-    public void init(final String url, boolean playing, boolean looping, int controls, float volume) {
+    public void init(final String url, boolean playing, boolean looping, int controls, float volume)
+    {
         this.url = url;
         this.filename = null;
         this.playing = playing;
@@ -538,82 +485,34 @@ class VideoWidget extends NativeWidget {
         }
     }
 
-    public void init(FlowMediaStreamSupport.FlowMediaStreamObject mediaStreamObject) {
-        this.useMediaStream = true;
-        this.mediaStreamObject = mediaStreamObject;
-
-        this.surfaceTexture = new SurfaceTexture(0);
-        this.surfaceTexture.detachFromGLContext();
-        this.surfaceTexture.setDefaultBufferSize(mediaStreamObject.width, mediaStreamObject.height);
-
-        SurfaceEglRenderer eglRenderer = new SurfaceEglRenderer("VideoTrackRenderer" + this.id);
-        handler.post(() -> {
-
-            eglRenderer.init(FlowMediaStreamSupport.getRootEglBase().getEglBaseContext(), new RendererCommon.RendererEvents() {
-                @Override
-                public void onFirstFrameRendered() {
-
-                }
-
-                @Override
-                public void onFrameResolutionChanged(int videoWidth, int videoHeight, int rotation) {
-                    if (rotation % 180 != 0) {
-                        int temp = videoHeight;
-                        videoHeight = videoWidth;
-                        videoWidth = temp;
-                    }
-                    mediaStreamObject.width = videoWidth;
-                    mediaStreamObject.height = videoHeight;
-                    reportSize(mediaStreamObject.width, mediaStreamObject.height);
-                }
-            }, EglBase.CONFIG_RGBA, new GlRectDrawer());
-
-            eglRenderer.createEglSurface(this.surfaceTexture);
-            if (mediaStreamObject.isCameraFrontFacing) {
-                eglRenderer.setMirror(true);
-            }
-
-            if (!mediaStreamObject.mediaStream.videoTracks.isEmpty()) {
-                mediaStreamObject.mediaStream.videoTracks.get(0).addSink(eglRenderer);
-            }
-
-            this.eglRenderer = eglRenderer;
-            handler.post(createCallback);
-        });
-
-    }
-
-    public void setPlaying(boolean playing) {
+    public void setPlaying(boolean playing)
+    {
         this.playing = playing;
 
         handler.post(updateCallback);
     }
 
-    public void setPosition(long position) {
-        this.seek_pos = (int) position;
+    public void setPosition(long position)
+    {
+        this.seek_pos = (int)position;
         this.seek_pending = true;
 
         handler.post(updateCallback);
     }
 
-    public void setVolume(float volume) {
+    public void setVolume(float volume)
+    {
         this.volume = volume;
 
         handler.post(updateCallback);
     }
-
-    public void onPause() {
-        if (useMediaStream)
-            group.getFlowRunnerView().queueEvent(() -> surfaceTexture.detachFromGLContext());
-    }
-
+    
     public void destroySurface() {
-        if (mediaPlayer != null)
-            mediaPlayer.setSurface(null);
+        mediaPlayer.setSurface(null);
     }
-
+    
     public void createSurface() {
-        if (mediaPlayerPrepared || useMediaStream) {
+        if (mediaPlayerPrepared) {
             createVideoTexture();
         }
     }
@@ -637,27 +536,25 @@ class VideoWidget extends NativeWidget {
     private OnFrameAvailableListener frameAvailableListener = new OnFrameAvailableListener() {
         @Override
         public void onFrameAvailable(SurfaceTexture arg0) {
-            if (mediaPlayer != null) {
-                if (!mediaPlayerPrepared)
-                    return;
+            if (!mediaPlayerPrepared)
+                return;
 
-                // Hack to have a initial image
-                if (mediaPlayer.isPlaying() && !playing && isKitKatOrLower()) {
-                    updateStateFlags();
-                }
-
-                reportPosition(mediaPlayer.getCurrentPosition());
+            // Hack to have a initial image
+            if (mediaPlayer != null && mediaPlayer.isPlaying() && !playing && isKitKatOrLower()) {
+                updateStateFlags();
             }
+
+            reportPosition(mediaPlayer.getCurrentPosition());
 
             group.getFlowRunnerView().queueEvent(renderVideoImage);
         }
     };
-
+    
     // Should be called only from GL thread
     private boolean isValidGLESFramebuffer() {
         return GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE;
     }
-
+    
     public void createVideoTexture() {
         group.getFlowRunnerView().queueEvent(new Runnable() {
             @Override
@@ -672,38 +569,27 @@ class VideoWidget extends NativeWidget {
                 GLES20.glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST);
                 GLES20.glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
 
-                if (!useMediaStream) {
-                    surfaceTexture = new SurfaceTexture(texture_id);
-                    Surface surface = new Surface(surfaceTexture);
-                    try {
-                        mediaPlayer.setSurface(surface);
+                surfaceTexture = new SurfaceTexture(texture_id);
+                Surface surface = new Surface(surfaceTexture);
 
-                        if (!mediaPlayerPrepared) {
-                            mediaPlayer.setDataSource(filename);
-                            mediaPlayer.prepareAsync();
-                        } else {
-                            mediaPlayer.seekTo(mediaPlayer.getCurrentPosition());
-                        }
+                try {
+                    mediaPlayer.setSurface(surface);
 
-                    } catch (Exception e1) {
-                        e1.printStackTrace();
-                        reportFailure();
+                    if (!mediaPlayerPrepared) {
+                        mediaPlayer.setDataSource(filename);
+                        mediaPlayer.prepareAsync();
+                    } else {
+                        mediaPlayer.seekTo(mediaPlayer.getCurrentPosition());
                     }
-                } else {
-                    surfaceTexture.attachToGLContext(texture_id);
-                }
 
-                surfaceTexture.setOnFrameAvailableListener(frameAvailableListener);
+                    surfaceTexture.setOnFrameAvailableListener(frameAvailableListener);
 
-                if (id != 0) { // Widget may be already destroyed at this point
-                    group.getWrapper().setVideoExternalTextureId(id, texture_id);
+                    if (id != 0) // Widget may be already destroyed at this point
+                        group.getWrapper().setVideoExternalTextureId(id, texture_id);
 
-                    if (useMediaStream) {
-                        surfaceTexture.updateTexImage();
-                        reportSize(mediaStreamObject.width, mediaStreamObject.height);
-                        reportDuration(1);
-                        reportStatusEvent(PlayStart);
-                    }
+                } catch (Exception e1) {
+                    e1.printStackTrace();
+                    reportFailure();
                 }
             }
         });

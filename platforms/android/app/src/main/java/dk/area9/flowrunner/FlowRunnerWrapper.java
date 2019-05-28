@@ -769,7 +769,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             int max_size, int cursor_pos, int sel_start, int sel_end
         );
         void onFlowCreateVideoWidget(long id, String url, boolean playing, boolean looping, int controls, float volume);
-        void onFlowCreateVideoWidgetFromMediaStream(long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream);
         void onFlowCreateWebWidget(long id, String url);
         void onFlowWebClipHostCall(long id, String js);
         void onFlowSetWebClipZoomable(long id, boolean zoomable);
@@ -824,11 +823,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
             widget_host.onFlowCreateVideoWidget(id, url, playing, looping, controls, volume);
     }
     
-    private void cbCreateVideoWidgetFromMediaStream(long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
-        if (widget_host != null)
-            widget_host.onFlowCreateVideoWidgetFromMediaStream(id, flowMediaStream);
-    }
-
     private void cbUpdateVideoPlay(long id, boolean playing) {
         if (widget_host != null)
             widget_host.onFlowUpdateVideoPlay(id, playing);
@@ -935,12 +929,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
 
     private native void nDeliverVideoPosition(long ptr, long id, long position);
     
-    public synchronized void setVideoRotation(long id, int angle) {
-        nSetVideoRotation(cPtr(), id, angle);
-    }
-
-    private native void nSetVideoRotation(long ptr, long id, long angle);
-
     public synchronized void setVideoExternalTextureId(long id, int texture_id) {
         nSetVideoExternalTextureId(cPtr(), id, texture_id);
     }
@@ -1535,143 +1523,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         } catch (Exception e) {
             Log.e(Utils.LOG_TAG, "Were not able to call Localytics.tagEvent.");
         }
-    }
-
-    private FlowMediaStreamSupport mediaStreamSupport = null;
-
-    public void setFlowMediaStreamSupport(FlowMediaStreamSupport mediaStreamSupport) {
-        this.mediaStreamSupport = mediaStreamSupport;
-    }
-
-    private native void nDeviceInfoUpdated(long ptr, int id);
-
-    private synchronized void cbDeviceInfoUpdated(int cb) {
-        mediaStreamSupport.initializeDeviceInfo();
-        nDeviceInfoUpdated(cPtr(), cb);
-    }
-
-    private native void nGetMediaDevices(long ptr, int id, String[] ids, String[] names);
-
-    private void getMediaDevices(int cb, Map<String, String> devices) {
-        ArrayList<String> ids = new ArrayList<>();
-        ArrayList<String> names = new ArrayList<>();
-        for (Entry<String, String> item : devices.entrySet()) {
-            ids.add(item.getKey());
-            names.add(item.getValue());
-        }
-        nGetMediaDevices(cPtr(), cb, ids.toArray(new String[0]), names.toArray(new String[0]));
-    }
-
-    private synchronized void cbGetAudioDevices(int cb) {
-        getMediaDevices(cb, mediaStreamSupport.getAudioDevices());
-    }
-
-    private synchronized void cbGetVideoDevices(int cb) {
-        getMediaDevices(cb, mediaStreamSupport.getVideoDevices());
-    }
-
-    private synchronized void cbMakeMediaStream(boolean recordAudio, boolean recordVideo, String videoDeviceId, String audioDeviceId,
-                                            int cbOnReadyRoot, int cbOnErrorRoot) {
-        mediaStreamSupport.makeMediaStream(recordAudio, recordVideo, videoDeviceId, audioDeviceId, cbOnReadyRoot, cbOnErrorRoot);
-    }
-
-    private synchronized void cbStopMediaStream(FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
-        mediaStreamSupport.stopMediaStream(flowMediaStream);
-    }
-
-    private native void nOnMediaStreamReady(long ptr, int id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream);
-
-    synchronized void cbOnMediaStreamReady(int id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
-        nOnMediaStreamReady(cPtr(), id, flowMediaStream);
-    }
-
-    private native void nOnMediaStreamError(long ptr, int id, String error);
-
-    synchronized void cbOnMediaStreamError(int id, String error) {
-        nOnMediaStreamError(cPtr(), id, error);
-    }
-
-    private FlowWebRTCSupport webRTCSupport = null;
-
-    public void setFlowWebRTCSupport(FlowWebRTCSupport webRTCSupport) {
-        this.webRTCSupport = webRTCSupport;
-    }
-
-    private synchronized void cbMakeMediaSender(String serverUrl, String roomId, String[] stunUrls, String[][] turnServers,
-                                                FlowMediaStreamSupport.FlowMediaStreamObject stream,
-                                                int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot) {
-        webRTCSupport.makeMediaSender(serverUrl, roomId, stunUrls, turnServers, stream, onMediaSenderReadyRoot, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
-    }
-
-    private synchronized void cbStopMediaSender(FlowWebRTCSupport.FlowMediaSenderObject mediaSender) {
-        webRTCSupport.stopMediaSender(mediaSender);
-    }
-
-    private native void nOnMediaSenderReady(long ptr, int id, FlowWebRTCSupport.FlowMediaSenderObject flowMediaSender);
-
-    synchronized void cbOnMediaSenderReady(int id, FlowWebRTCSupport.FlowMediaSenderObject flowMediaSender) {
-        nOnMediaSenderReady(cPtr(), id, flowMediaSender);
-    }
-
-    private native void nOnMediaSenderNewParticipant(long ptr, int id, String participant_id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream);
-
-    synchronized void cbOnMediaSenderNewParticipant(int id, String participant_id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
-        nOnMediaSenderNewParticipant(cPtr(), id, participant_id, flowMediaStream);
-    }
-
-    private native void nOnMediaSenderParticipantLeave(long ptr, int id, String participant_id);
-
-    synchronized void cbOnMediaSenderParticipantLeave(int id, String participant_id) {
-        nOnMediaSenderParticipantLeave(cPtr(), id, participant_id);
-    }
-
-    private native void nOnMediaSenderError(long ptr, int id, String error);
-
-    synchronized void cbOnMediaSenderError(int id, String error) {
-        nOnMediaStreamError(cPtr(), id, error);
-    }
-
-    private FlowMediaRecorderSupport mediaRecorderSupport = null;
-
-    public void setFlowMediaRecorderSupport(FlowMediaRecorderSupport mediaRecorderSupport) {
-        this.mediaRecorderSupport = mediaRecorderSupport;
-    }
-
-    private native void nOnRecorderReady(long ptr, int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder);
-
-    synchronized void cbOnRecorderReady(int id, FlowMediaRecorderSupport.FlowMediaRecorderObject flowRecorder) {
-        nOnRecorderReady(cPtr(), id, flowRecorder);
-    }
-
-    private native void nOnRecorderError(long ptr, int id, String error);
-
-    synchronized void cbOnRecorderError(int id, String error) {
-        nOnRecorderError(cPtr(), id, error);
-    }
-
-    private synchronized void cbMakeMediaRecorder(String websocketUri, String filePath, FlowMediaStreamSupport.FlowMediaStreamObject mediaStream, int timeslice, int cbOnReadyRoot, int cbOnErrorRoot) {
-        if (Utils.isMediaRecorderSupported)
-            mediaRecorderSupport.makeMediaRecorder(websocketUri, filePath, mediaStream, timeslice, cbOnReadyRoot, cbOnErrorRoot);
-    }
-
-    private synchronized void cbStartMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (Utils.isMediaRecorderSupported)
-            mediaRecorderSupport.startMediaRecorder(recorder);
-    }
-
-    private synchronized void cbResumeMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (Utils.isMediaRecorderPauseResumeSupported)
-            mediaRecorderSupport.resumeMediaRecorder(recorder);
-    }
-
-    private synchronized void cbPauseMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (Utils.isMediaRecorderPauseResumeSupported)
-            mediaRecorderSupport.pauseMediaRecorder(recorder);
-    }
-
-    private synchronized void cbStopMediaRecorder(FlowMediaRecorderSupport.FlowMediaRecorderObject recorder) {
-        if (Utils.isMediaRecorderSupported)
-            mediaRecorderSupport.stopMediaRecorder(recorder);
     }
 
     @Nullable

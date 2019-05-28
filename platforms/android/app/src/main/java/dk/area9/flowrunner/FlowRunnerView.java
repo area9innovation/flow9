@@ -61,14 +61,6 @@ class FlowRunnerView extends GLSurfaceView {
         init(false, 0, 8);
     }
 
-    @Override
-    public void onPause() {
-        for(final VideoWidget v : group.getVideoWidgets()) {
-            v.onPause();
-        }
-        super.onPause();
-    }
-
     private void init(boolean translucent, int depth, int stencil) {
 
         /* By default, GLSurfaceView() creates a RGB_565 opaque surface.

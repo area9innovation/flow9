@@ -10,13 +10,11 @@ VideoWidget::VideoWidget(QWidget *parent)
 
 VideoWidget::~VideoWidget()
 {
-    if (this->hasFocus()) {
+    if(this->hasFocus()) {
         this->previousInFocusChain()->setFocus();
     }
-    if (m_mediaObject) {
-        m_mediaObject->stop();
-        m_mediaObject->deleteLater();
-    }
+    m_mediaObject->stop();
+    m_mediaObject->deleteLater();
     m_videoSurface->deleteLater();
     m_videoSurface->setVideoClip(NULL);
 }
@@ -126,7 +124,6 @@ bool VideoSurface::present(const QVideoFrame &frame)
         videoFrame.unmap();
     }
 
-    emit frameUpdate();
 	return true;
 }
 

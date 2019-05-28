@@ -23,6 +23,11 @@ static BOOL UseOpenGLVideo = NO;
 }
 
 - (void) dealloc {
+    if (RenderingContext != nil) {
+        CGContextRelease(RenderingContext);
+        [CoreImageContext release];
+    }
+    
     if (self.playerItem != nil) {
         [self.player removeTimeObserver: self.timeObserver];
     
@@ -86,14 +91,6 @@ static BOOL UseOpenGLVideo = NO;
             self.OnFrame(time);
         }
     }];
-}
-
-- (void) setVolume: (float) volume {
-    [self.player setVolume:volume];
-}
-
-- (void) setRate: (float) rate {
-    [self.player setRate:rate];
 }
 
 - (BOOL) isPlaying {
@@ -211,7 +208,7 @@ static BOOL UseOpenGLVideo = NO;
                     
                     AVAsset *asset = blockSelf.playerItem.asset;
                     
-                    blockSelf.OnResolutionReceived(asset.naturalSize.width, asset.naturalSize.height);
+                    blockSelf.OnResolutionReceived(asset.naturalSize.width,  asset.naturalSize.height);
                     blockSelf.OnSuccess(CMTimeGetSeconds(asset.duration));
                     // Make an empty function here to call OnSuccess and OnResolutionReceived only once
                     blockSelf.OnResolutionReceived = ^(float width, float height) {};
@@ -243,6 +240,12 @@ static BOOL UseOpenGLVideo = NO;
     }
 }
 
+- (void) renderFrameImage: (CGImageRef) cgi {
+    CGRect text_rect = CGRectMake(0, 0, CGBitmapContextGetWidth(RenderingContext), CGBitmapContextGetHeight(RenderingContext));
+    CGContextDrawImage(RenderingContext, text_rect, cgi);
+    VideoTextureBitmap->invalidate();
+}
+
 - (void) renderFrame: (CMTime) cur_time {
     if ([self.playerItem.outputs count] != 1 ||
         self.playerItem.outputs[0] == nil ||
@@ -265,5 +268,25 @@ static BOOL UseOpenGLVideo = NO;
             CVBufferRelease(buffer);
         }
     }
+}
+
+- (void) removeFromSuperview {
+    [self pauseVideo];
+    
+    [super removeFromSuperview];
+}
+
+- (void) setTargetVideoTexture: (GLTextureBitmap::Ptr) video_texture {
+    VideoTextureBitmap = video_texture;
+    ivec2 size = VideoTextureBitmap->getSize();
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    RenderingContext = CGBitmapContextCreate(VideoTextureBitmap->getDataPtr(), size.x, size.y, 8, 4 * size.x, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    CGContextSetInterpolationQuality(RenderingContext, kCGInterpolationNone);
+    
+    CGContextSetRGBFillColor(RenderingContext, 0, 0, 0, 1);
+    CGContextFillRect(RenderingContext, CGRectMake(0, 0, size.x, size.y));
+    
+    VideoTextureBitmap->invalidate();
 }
 @end

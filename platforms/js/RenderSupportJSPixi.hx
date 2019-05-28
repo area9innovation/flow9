@@ -919,10 +919,6 @@ class RenderSupportJSPixi {
 		vc.playVideo(filename, startPaused);
 	}
 
-	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
-		vc.playVideoFromMediaStream(mediaStream, startPaused);
-	}
-
 	public static function seekVideo(clip : VideoClip, seek : Float) : Void {
 		clip.setCurrentTime(seek);
 	}

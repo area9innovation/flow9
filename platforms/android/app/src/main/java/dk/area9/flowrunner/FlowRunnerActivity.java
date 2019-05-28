@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
@@ -345,15 +346,6 @@ public class FlowRunnerActivity extends FragmentActivity  {
         FlowGeolocationAPI flowGeolocation = new FlowGeolocationAPI(this, wrapper, flowGooglePlayServices, gelocationPermissionGranted);
         wrapper.setFlowGeolocationAPI(flowGeolocation);
         flowGooglePlayServices.setFlowGeolocationAPI(flowGeolocation);
-
-        FlowMediaStreamSupport flowMediaStreamSupport = new FlowMediaStreamSupport(this, wrapper);
-        wrapper.setFlowMediaStreamSupport(flowMediaStreamSupport);
-        FlowWebRTCSupport flowWebRTCSupport = new FlowWebRTCSupport(wrapper);
-        wrapper.setFlowWebRTCSupport(flowWebRTCSupport);
-        if (Utils.isMediaRecorderSupported) {
-            FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(wrapper);
-            wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
-        }
 
         FlowWebSocketSupport flowWebSocketSupport = new FlowWebSocketSupport(wrapper);
         wrapper.setFlowWebSocketSupport(flowWebSocketSupport);

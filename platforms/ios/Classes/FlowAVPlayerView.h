@@ -3,14 +3,16 @@
 #import "utils.h"
 #import "GLRenderer.h"
 #import "GLVideoClip.h"
-#import "FlowVideoPlayerView.h"
 
 typedef void (^VoidBlock)();
 typedef void (^SuccessBlock)(float);
 typedef void (^ResolutionBlock)(float, float);
 typedef void (^PositionBlock)(CMTime);
 
-@interface FlowAVPlayerView : FlowVideoPlayerView {
+@interface FlowAVPlayerView : UIView {
+    CGContextRef RenderingContext;
+    GLTextureBitmap::Ptr VideoTextureBitmap;
+    CIContext * CoreImageContext;
 }
 
 @property (nonatomic, retain) AVPlayer *player;
@@ -29,11 +31,12 @@ typedef void (^PositionBlock)(CMTime);
 - (void) loadVideo: (NSURL*) videoUrl onResolutionReceived: (void (^)(float width, float height)) on_resolution_received
         onSuccess: (void (^)(float duration)) on_success
         onError: (void (^)()) on_error onFrameReady: (void (^)(CMTime)) on_frame;
+- (void) renderFrameImage: (CGImageRef) cgi;
 - (void) renderFrame: (CMTime) cur_time;
+- (void) setTargetVideoTexture: (GLTextureBitmap::Ptr) video_texture;
 - (void) playVideo;
 - (void) pauseVideo;
-- (void) seekTo: (int64_t) offset;
-- (void) setVolume: (float) volume;
-- (void) setRate: (float) rate;
+- (void) seekTo: (int64_t)offset;
+- (void) removeFromSuperview;
 + (BOOL) useOpenGLVideo;
 @end
