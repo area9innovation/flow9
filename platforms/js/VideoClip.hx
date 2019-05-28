@@ -82,6 +82,9 @@ class VideoClip extends FlowContainer {
 	public function updateNativeWidget() {
 		if (!nativeWidget.paused) {
 			checkTimeRange(nativeWidget.currentTime, true);
+			if (nativeWidget.width != nativeWidget.videoWidth || nativeWidget.height != nativeWidget.videoHeight) {
+				nativeWidget.dispatchEvent(new js.html.Event("resize"));
+			}
 		}
 	}
 
@@ -194,6 +197,11 @@ class VideoClip extends FlowContainer {
 		createVideoClip(filename, startPaused);
 	}
 
+	public function playVideoFromMediaStream(mediaStream : js.html.MediaStream, startPaused : Bool) : Void {
+		createVideoClip("", startPaused);
+		nativeWidget.srcObject = mediaStream;
+	}
+
 	public function setTimeRange(start : Float, end : Float) : Void {
 		startTime = start >= 0 ? start : 0;
 		endTime = end > startTime ? end : nativeWidget.duration;
@@ -284,9 +292,7 @@ class VideoClip extends FlowContainer {
 	private function onMetadataLoaded() {
 		durationFn(nativeWidget.duration);
 
-		nativeWidget.width = nativeWidget.videoWidth;
-		nativeWidget.height = nativeWidget.videoHeight;
-		metricsFn(nativeWidget.width, nativeWidget.height);
+		updateVideoMetrics();
 
 		checkTimeRange(nativeWidget.currentTime, true);
 
@@ -300,6 +306,13 @@ class VideoClip extends FlowContainer {
 		};
 
 		loaded = true;
+	}
+
+	private function updateVideoMetrics() {
+		nativeWidget.width = nativeWidget.videoWidth;
+		nativeWidget.height = nativeWidget.videoHeight;
+		videoTexture.update();
+		metricsFn(nativeWidget.videoWidth, nativeWidget.videoHeight);
 	}
 
 	private function onStreamLoaded() : Void {
@@ -371,6 +384,7 @@ class VideoClip extends FlowContainer {
 	private function createStreamStatusListeners() {
 		if (nativeWidget != null) {
 			nativeWidget.addEventListener('loadedmetadata', onMetadataLoaded, false);
+			nativeWidget.addEventListener('resize', updateVideoMetrics, false);
 			nativeWidget.addEventListener("loadeddata", onStreamLoaded, false);
 			nativeWidget.addEventListener("ended", onStreamEnded, false);
 			nativeWidget.addEventListener("error", onStreamError, false);
@@ -382,6 +396,7 @@ class VideoClip extends FlowContainer {
 	private function destroyStreamStatusListeners() {
 		if (nativeWidget != null) {
 			nativeWidget.removeEventListener('loadedmetadata', onMetadataLoaded);
+			nativeWidget.removeEventListener('resize', updateVideoMetrics);
 			nativeWidget.removeEventListener("loadeddata", onStreamLoaded);
 			nativeWidget.removeEventListener("ended", onStreamEnded);
 			nativeWidget.removeEventListener("error", onStreamError);

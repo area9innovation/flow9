@@ -21,6 +21,7 @@
 #include <QLabel>
 #include <QWebEngineSettings>
 #include <QWebEngineProfile>
+#include <QVideoSurfaceFormat>
 
 #include <sstream>
 
@@ -30,6 +31,11 @@
 #include "utils/flowfilestruct.h"
 
 #include "VideoWidget.h"
+
+#ifdef FLOW_MEDIARECORDER
+#include "QMediaStreamSupport.h"
+#include "QMediaRecorderSupport.h"
+#endif
 
 QGLRenderSupport::QGLRenderSupport(QWidget *parent, ByteCodeRunner *owner, bool fake_touch, bool transparent) :
     QOpenGLWidget(parent),
@@ -495,48 +501,68 @@ bool QGLRenderSupport::doCreateVideoWidget(QWidget* &widget, GLVideoClip* video_
         }
         delete videoWidget;
     }
+    if (video_clip->useMediaStream()) {
+#ifdef FLOW_MEDIARECORDER
+        QMediaStreamSupport::FlowNativeMediaStream *mediaStream = getFlowRunner()->GetNative<QMediaStreamSupport::FlowNativeMediaStream*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
 
-    // Media player does the video decoding and hands us new frames
-    QMediaPlayer* player = new QMediaPlayer(0, QMediaPlayer::VideoSurface);
-    connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
-    connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
-    connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
-    connect(player, SIGNAL(error(QMediaPlayer::Error)), this, SLOT(handleVideoError()));
+        widget = videoWidget = new VideoWidget(this);
+        mediaStream->videoSurface = videoWidget->videoSurface();
 
-    widget = videoWidget = new VideoWidget(this);
-    VideoPlayerMap[player] = videoWidget;
+        video_clip->notify(GLVideoClip::SizeChange, mediaStream->width, mediaStream->height);
 
-    videoWidget->hide();
-    player->setVideoOutput(videoWidget->videoSurface());
-    player->setNotifyInterval(10);
-    videoWidget->setMediaPlayer(player);
+        GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
+        video_clip->setVideoTextureImage(texture_bitmap);
+        videoWidget->setTargetVideoTexture(texture_bitmap);
+        videoWidget->setVideoClip(video_clip);
 
-    // We pass the frames from Qt to our OpenGL video renderer through a texture
-    GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
-    video_clip->setVideoTextureImage(texture_bitmap);
-    videoWidget->setTargetVideoTexture(texture_bitmap);
-    videoWidget->setVideoClip(video_clip);
-
-    // Load the video file and start playing the video
-
-    QString name = unicode2qt(video_clip->getName());
-    QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
-    QString full_path = getFullResourcePath(name);
-    QUrl rq_url = base.resolved(QUrl(name));
-
-    if (QFile::exists(full_path))
-        player->setMedia(QUrl::fromLocalFile(full_path));
-    else if (QFile::exists(name))
-        player->setMedia(QUrl::fromLocalFile(name));
-    else
-        player->setMedia(rq_url);
-
-    if (video_clip->isPlaying()) {
-        player->play();
+        connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, [this, videoWidget, video_clip](){
+            video_clip->notifyEvent(GLVideoClip::PlayStart);
+            disconnect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, 0, 0);
+            connect(videoWidget->videoSurface(), &VideoSurface::frameUpdate, this, &QGLRenderSupport::doRequestRedraw);
+        });
+#endif
     } else {
-        player->pause();
-    }
+        // Media player does the video decoding and hands us new frames
+        QMediaPlayer* player = new QMediaPlayer(0, QMediaPlayer::VideoSurface);
+        connect(player, &QMediaPlayer::stateChanged, this, &QGLRenderSupport::videoStateChanged);
+        connect(player, &QMediaPlayer::mediaStatusChanged, this, &QGLRenderSupport::mediaStatusChanged);
+        connect(player, &QMediaPlayer::positionChanged, this, &QGLRenderSupport::videoPositionChanged);
+        connect(player, SIGNAL(error(QMediaPlayer::Error)), this, SLOT(handleVideoError()));
 
+        widget = videoWidget = new VideoWidget(this);
+        VideoPlayerMap[player] = videoWidget;
+
+        videoWidget->hide();
+        player->setVideoOutput(videoWidget->videoSurface());
+        player->setNotifyInterval(10);
+        videoWidget->setMediaPlayer(player);
+
+        // We pass the frames from Qt to our OpenGL video renderer through a texture
+        GLTextureBitmap::Ptr texture_bitmap(new GLTextureBitmap(video_clip->getSize(), GL_RGBA));
+        video_clip->setVideoTextureImage(texture_bitmap);
+        videoWidget->setTargetVideoTexture(texture_bitmap);
+        videoWidget->setVideoClip(video_clip);
+
+        // Load the video file and start playing the video
+
+        QString name = unicode2qt(video_clip->getName());
+        QUrl base(unicode2qt(getFlowRunner()->getUrlString()));
+        QString full_path = getFullResourcePath(name);
+        QUrl rq_url = base.resolved(QUrl(name));
+
+        if (QFile::exists(full_path))
+            player->setMedia(QUrl::fromLocalFile(full_path));
+        else if (QFile::exists(name))
+            player->setMedia(QUrl::fromLocalFile(name));
+        else
+            player->setMedia(rq_url);
+
+        if (video_clip->isPlaying()) {
+            player->play();
+        } else {
+            player->pause();
+        }
+    }
     return true;
 }
 
