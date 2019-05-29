@@ -378,37 +378,74 @@ class FlowFileSystem {
 	}
 
 	public static function readFile(file : FlowFile, readAs : String, onData : String -> Void, onError : String -> Void) : Void {
-		#if flash
-		file.load();
+		readFileEnc(file, readAs, "UTF8", onData, onError);
+	}
 
-		file.addEventListener(flash.events.Event.COMPLETE, function (e : flash.events.Event) {
+	public static function readFileEnc(file : FlowFile, readAs : String, encoding: String, onData : String -> Void, onError : String -> Void) : Void {
+		if (readAs=="text" && encoding=="auto") {
+			var ENCODINGS: Array<String> = ["UTF8", "CP1252"];
+			var INVALID_CHARACTER: String = "�";
+			var aggD: Array<Array<String>> = [];
+			var aggE: Array<Array<String>> = [];
+			for (enc in ENCODINGS) {
+				function checkFinish() {
+					if (aggD.length + aggE.length == ENCODINGS.length) {
+						for (d in aggD) {
+							if (d[1].indexOf(INVALID_CHARACTER)==-1) {
+								onData(d[1]);
+								return;
+							}
+						}
+						if (aggE.length > 0) {
+							onError(aggE[0][1]);
+							return;
+						}
+						if (aggD.length > 0) {
+							onData(aggD[0][1]);
+							return;
+						}
+						onError("Something strange happened: no data nor error callbacks triggered.");
+					}
+				}
+				function onD(d: String) {aggD.push([enc, d]); checkFinish();}
+				function onE(e: String) {aggE.push([enc, e]); checkFinish();}
+				readFileEnc(file, readAs, enc, onD, onE);
+			}
+		} else {
+			#if flash
+			file.load();
+
+			file.addEventListener(flash.events.Event.COMPLETE, function (e : flash.events.Event) {
+				switch (readAs : String) {
+					case "data": onData(file.data.toString());
+					case "uri":  onData(file.data.toString()); // Data URI building is not supported in flash
+					
+					// TODO add support for other encodings for flash target if needed.
+					default: onData(file.data.readUTF());
+				}
+			});
+
+			#elseif (js && !flow_nodejs)
+			var reader : js.html.FileReader = new js.html.FileReader();
+
+			reader.onerror = function (e : js.html.ProgressEvent) {
+				if (e.type == "error")
+					onError("Cannot read given file: " + reader.error.name);
+			}
+
+			reader.onloadend = function () {
+				if (reader.result != null) {
+					onData(reader.result);
+				}
+			}
+
 			switch (readAs : String) {
-				case "data": onData(file.data.toString());
-				case "uri":  onData(file.data.toString()); // Data URI building is not supported in flash
-				default: onData(file.data.readUTF());
+				case "data": reader.readAsBinaryString(file);
+				case "uri":  reader.readAsDataURL(file);
+				default:     reader.readAsText(file, encoding);
 			}
-		});
-
-		#elseif (js && !flow_nodejs)
-		var reader : js.html.FileReader = new js.html.FileReader();
-
-		reader.onerror = function (e : js.html.ProgressEvent) {
-			if (e.type == "error")
-				onError("Cannot read given file: " + reader.error.name);
+			#end
 		}
-
-		reader.onloadend = function () {
-			if (reader.result != null) {
-				onData(reader.result);
-			}
-		}
-
-		switch (readAs : String) {
-			case "data": reader.readAsBinaryString(file);
-			case "uri":  reader.readAsDataURL(file);
-			default: 	 reader.readAsText(file);
-		}
-		#end
 	}
 
 	public static function saveFileClient(filename : String, data : Dynamic, type : String) {

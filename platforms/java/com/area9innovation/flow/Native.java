@@ -734,9 +734,7 @@ public class Native extends NativeHost {
 			public void run() {
 				invokeCallback(new Runnable() {
 					public void run() {
-						synchronized (runtime) {
-							cb.invoke();
-						}
+						cb.invoke();
 					}
 				});
 			}
@@ -744,6 +742,29 @@ public class Native extends NativeHost {
 		timer_obj.schedule(task, ms);
 
 		return null;
+	}
+
+	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+		if (timer_obj == null)
+			timer_obj = new Timer(true);
+
+		TimerTask task = new TimerTask() {
+			public void run() {
+				invokeCallback(new Runnable() {
+					public void run() {
+						cb.invoke();
+					}
+				});
+			}
+		};
+		timer_obj.schedule(task, ms);
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				timer_obj.cancel();
+				return null;
+			}
+		};
 	}
 
 	public final double sin(double a) {

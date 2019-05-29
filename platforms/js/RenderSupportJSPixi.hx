@@ -254,6 +254,7 @@ class RenderSupportJSPixi {
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
+		initMessageListener();
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
@@ -280,7 +281,6 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('message', receiveWindowMessage); // Messages from crossdomaid iframes
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
 	}
 
@@ -309,6 +309,10 @@ class RenderSupportJSPixi {
 		Browser.document.addEventListener('paste', handler, false);
 	}
 
+	private static inline function initMessageListener() {
+		Browser.window.addEventListener('message', receiveWindowMessage, false);
+	}
+
 	private static inline function initFullScreenEventListeners() {
 		for (e in ['fullscreenchange', 'mozfullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
 			Browser.document.addEventListener(e, fullScreenTrigger, false);
@@ -316,6 +320,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function receiveWindowMessage(e : Dynamic) {
+		emit("message", e.data);
+
 		var hasNestedWindow : Dynamic = null;
 		hasNestedWindow = function(iframe : IFrameElement, win : js.html.Window) {
 			try {
@@ -783,6 +789,11 @@ class RenderSupportJSPixi {
 		return function() { off("paste", fn); };
 	}
 
+	public static function addMessageEventListener(fn : String -> Void) : Void -> Void {
+		on("message", fn);
+		return function() { off("message", fn); };
+	}
+
 	public static inline function InvalidateStage() : Void {
 		TransformChanged = true;
 		PixiStageChanged = true;
@@ -1107,11 +1118,11 @@ class RenderSupportJSPixi {
 	}
 
 	public static function setClipX(clip : DisplayObject, x : Float) : Void {
-		clip.setClipX(RoundPixels ? Math.round(x) : x);
+		clip.setClipX(x);
 	}
 
 	public static function setClipY(clip : DisplayObject, y : Float) : Void {
-		clip.setClipY(RoundPixels ? Math.round(y) : y);
+		clip.setClipY(y);
 	}
 
 	public static function setClipScaleX(clip : DisplayObject, scale : Float) : Void {
