@@ -143,6 +143,10 @@ class Object3DHelper {
 
 		if (stage.length > 0) {
 			untyped stage[0].objectCache.push(child);
+
+			if (invalidate) { // Do no lose transform controls if it isn't the last operation
+				RenderSupport3D.detach3DTransformControls(stage[0], child);
+			}
 		}
 
 		parent.remove(child);

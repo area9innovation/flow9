@@ -18,7 +18,7 @@ export {
 	style2characterStyle(s : [?]) -> [CharacterStyle];
 
 	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
-	renderFText(text : string, style : [CharacterStyle]) -> FRenderResult;
+	renderFText(text : string, style : [FTextStyle]) -> FRenderResult;
 	renderFTexts(texts : [Text]) -> FRenderResult;
 	renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult;
 	renderFParagraphs(texts : [Text]) -> FRenderResult;
@@ -75,7 +75,7 @@ isConvertableForm(form : Form) -> bool {
 
 fform2form(fform : FForm) -> Form {
 	switch (fform) {
-		FText(text, style) : Text(text, style);
+		FText(text, style) : Text(text, style2characterStyle(style));
 		FParagraph(__, __) : FParagraph2Form(fform);
 		FGraphics(path, style) : Graphics(path, style);
 		FTranslate(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Translate(x0, y0, fform2form(form))));
@@ -892,9 +892,11 @@ renderFTexts(texts : [Text]) -> FRenderResult {
 	FRenderResult(clips, disposers, caps);
 }
 
-renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
-	textfield = makeTextfield(getFontFamily(style));
-	defineTextStyle(textfield, text, style);
+renderFText(text : string, style : [FTextStyle]) -> FRenderResult {
+	characterStyle = style2characterStyle(style);
+	textfield = makeTextfield(getFontFamily(characterStyle));
+	defineTextStyle(textfield, text, characterStyle);
+
 	if (getDefaultRtl()) {
 		setTextDirection(textfield, "rtl");
 	} else {
@@ -912,8 +914,22 @@ renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
 
 	caps = FClipCapabilities(true, false, true, false, true);
 
+	maybeApply(tryExtractStruct(style, FReplaceText(ref \__ -> FormMetrics(0.0, 0.0, 0.0, 0.0))), \rt ->
+		rt.fn := \newText -> {
+			defineTextStyle(textfield, newText, characterStyle);
+
+			FormMetrics(
+				getTextFieldWidth(textfield),
+				getTextFieldHeight(textfield),
+				getTextMetrics(textfield)[0],
+				getTextFieldHeight(textfield)
+			);
+		}
+	);
+
+
 	eitherFn(
-		tryExtractStruct(style, Underlined([])),
+		tryExtractStruct(characterStyle, Underlined([])),
 		\undr -> {
 			uStyle = undr.style;
 			wd = getTextFieldWidth(textfield);
@@ -928,7 +944,7 @@ renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
 					if (uStyle != [])
 						uStyle
 					else
-						[Stroke(extractStruct(style, Fill(0x000000)).color)]
+						[Stroke(extractStruct(characterStyle, Fill(0x000000)).color)]
 				);
 
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), caps)

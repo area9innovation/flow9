@@ -377,7 +377,7 @@ class RenderSupport3D {
 	}
 
 	public static function attach3DTransformControls(stage : ThreeJSStage, object : Object3D) : Void {
-		 if (stage.transformControls != null) {
+		if (stage.transformControls != null) {
 		 	if (untyped object.transformControls != null) {
 		 		if (untyped object.transformControls.object != null) {
 		 			detach3DTransformControls(stage, untyped object.transformControls.object);
@@ -405,6 +405,8 @@ class RenderSupport3D {
 			if (stage.transformControls.object == object) {
 				stage.transformControls.object.dispatchEvent({ type : "detached" });
 				stage.transformControls.detach();
+			} else for (child in object.children) {
+				detach3DTransformControls(stage, child);
 			}
 		}
 	}
