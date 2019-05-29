@@ -310,7 +310,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function initMessageListener() {
-		Browser.document.addEventListener('message', receiveWindowMessage, false);
+		Browser.window.addEventListener('message', receiveWindowMessage, false);
 	}
 
 	private static inline function initFullScreenEventListeners() {
