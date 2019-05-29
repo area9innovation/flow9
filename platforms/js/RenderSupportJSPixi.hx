@@ -791,7 +791,7 @@ class RenderSupportJSPixi {
 
 	public static function addMessageEventListener(fn : String -> Void) : Void -> Void {
 		on("message", fn);
-		return function() { off("message, fn"); };
+		return function() { off("message", fn); };
 	}
 
 	public static inline function InvalidateStage() : Void {
