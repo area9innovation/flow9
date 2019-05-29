@@ -1021,21 +1021,49 @@ class RenderSupport3D {
 
 	public static function set3DLightColor(object : Light, color : Int) : Void {
 		object.color = new Color(color);
+
+		object.broadcastEvent("change"); // TODO:
+
 		object.invalidateStage();
 	}
 
 	public static function set3DLightIntensity(object : Light, intensity : Float) : Void {
 		object.intensity = intensity;
+
+		object.broadcastEvent("change"); // TODO:
+
 		object.invalidateStage();
 	}
 
 	public static function set3DLightDistance(object : PointLight, distance : Float) : Void {
 		object.distance = distance;
+
+		object.broadcastEvent("change"); // TODO:
+
+		object.invalidateStage();
+	}
+
+	public static function set3DLightAngle(object : SpotLight, angle : Float) : Void {
+		object.angle = angle * 0.0174532925 /*radians*/;
+
+		object.broadcastEvent("change"); // TODO:
+
+		object.invalidateStage();
+	}
+
+	public static function set3DLightPenumbra(object : SpotLight, penumbra : Float) : Void {
+		object.penumbra = penumbra;
+
+		object.broadcastEvent("change"); // TODO:
+
 		object.invalidateStage();
 	}
 
 	public static function set3DLightDecay(object : PointLight, decay : Float) : Void {
 		object.decay = decay;
+
+		object.broadcastEvent("change"); // TODO:
+
 		object.invalidateStage();
 	}
 
@@ -1049,6 +1077,14 @@ class RenderSupport3D {
 
 	public static function get3DLightDistance(object : PointLight) : Float {
 		return object.distance;
+	}
+
+	public static function get3DLightAngle(object : SpotLight) : Float {
+		return object.angle / 0.0174532925 /*degrees*/;
+	}
+
+	public static function get3DLightPenumbra(object : SpotLight) : Float {
+		return object.penumbra;
 	}
 
 	public static function get3DLightDecay(object : PointLight) : Float {
