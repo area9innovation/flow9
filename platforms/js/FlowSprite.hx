@@ -160,6 +160,11 @@ class FlowSprite extends Sprite {
 		loaded = false;
 
 		texture = Texture.EMPTY;
+
+		if (parent == null) {
+			return;
+		}
+
 		errorFn("Can not load " + url);
 	}
 
