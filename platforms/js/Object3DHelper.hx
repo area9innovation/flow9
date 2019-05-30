@@ -1,5 +1,6 @@
 import js.three.Object3D;
 import js.three.Box3;
+import js.three.Camera;
 
 class Object3DHelper {
 	public static inline function invalidateStage(object : Object3D) : Void {
@@ -113,6 +114,26 @@ class Object3DHelper {
 
 			for (k in childrenMap.keys()) {
 				parent.children[k] = childrenMap.get(k);
+			}
+
+			var stage = getStage(parent);
+
+			if (stage.length > 0) {
+				for (subChild in child.children) {
+					if (untyped __instanceof__(subChild, Camera)) {
+						stage[0].setCamera(cast(subChild, Camera));
+						remove3DChild(child, subChild, false);
+					}
+				}
+			}
+
+			if (child.children.length > 0 && untyped __instanceof__(child.children[child.children.length - 1], Camera)) {
+				var stage = getStage(parent);
+
+				if (stage.length > 0) {
+					stage[0].setCamera(cast(child.children[child.children.length - 1], Camera));
+					remove3DChild(child, child.children[child.children.length - 1], false);
+				}
 			}
 
 			if (invalidate) {

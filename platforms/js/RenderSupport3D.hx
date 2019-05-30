@@ -121,7 +121,27 @@ class RenderSupport3D {
 		return object.children.copy();
 	}
 
-	public static function get3DObjectJSON(object : Object3D) : String {
+	public static function get3DObjectJSON(object : Object3D, includeCamera : Bool) : String {
+		if (includeCamera) {
+			var stage = get3DObjectStage(object);
+
+			if (stage.length > 0) {
+				var camera = stage[0].camera;
+
+				if (camera != null) {
+					object.add3DChild(camera, false);
+				}
+
+				var json = haxe.Json.stringify(object.toJSON());
+
+				if (camera != null) {
+					object.remove3DChild(camera, false);
+				}
+
+				return json;
+			}
+		}
+
 		return haxe.Json.stringify(object.toJSON());
 	}
 
