@@ -11,6 +11,9 @@
 #import "iosNotificationsSupport.h"
 #import "iosGeolocationSupport.h"
 #import "iosWebSocketSupport.h"
+#import "iosMediaStreamSupport.h"
+#import "iosWebRTCSupport.h"
+#import "iosMediaRecorderSupport.h"
 #ifdef BYTECODE_FILE
 #import "AppleStorePurchase.h"
 #endif
@@ -36,6 +39,9 @@ class iosGLRenderSupport;
     iosGeolocationSupport * GeolocationSupport;
 #endif
     iosWebSocketSupport * WebSocketSupport;
+    iosMediaStreamSupport * MediaStream;
+    iosWebRTCSupport * WebRTC;
+    iosMediaRecorderSupport * MediaRecorder;
     FileLocalStore     * LocalStore;
     FileSystemInterface * FSInterface;
     
