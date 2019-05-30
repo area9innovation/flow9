@@ -5,34 +5,32 @@
 
 @implementation WebSocketDelegate
         
-- (id) init: (iosWebSocketSupport *) ownr callbacksKey:(int)cbKey
+- (void) onOpen:(void (^)())on_open onMessage:(void (^)(NSString*)) on_message onError:(void (^)(NSError*)) on_error onClose:(void (^)(NSInteger, NSString*, BOOL)) on_close
 {
-    self = [super init];
-    if (self) {
-        owner = ownr;
-        callbacksKey = cbKey;
-    }
-    return self;
+    self.onOpen = on_open;
+    self.onMessage = on_message;
+    self.onError = on_error;
+    self.onClose = on_close;
 }
     
 - (void)webSocket:(SRWebSocket *)webSocket didReceiveMessage:(id)message
 {
-    owner->onMessage(callbacksKey, NS2UNICODE((NSString*)message));
+    self.onMessage((NSString*)message);
 }
 
 - (void)webSocketDidOpen:(SRWebSocket *)webSocket
 {
-    owner->onOpen(callbacksKey);
+    self.onOpen();
 }
     
 - (void)webSocket:(SRWebSocket *)webSocket didFailWithError:(NSError *)error
 {
-    owner->onError(callbacksKey, NS2UNICODE([error localizedDescription]));
+    self.onError(error);
 }
 
 - (void)webSocket:(SRWebSocket *)webSocket didCloseWithCode:(NSInteger)code reason:(NSString *)reason wasClean:(BOOL)wasClean
 {
-    owner->onClose(callbacksKey, code, NS2UNICODE(reason), wasClean);
+   self.onClose(code, reason, wasClean);
 }
 
 @end
@@ -53,11 +51,24 @@ iosWebSocketSupport::iosWebSocketSupport(ByteCodeRunner *runner) : AbstractWebSo
 StackSlot iosWebSocketSupport::doOpen(unicode_string url, int callbacksKey)
 {
     FlowNativeWebSocket *websocketNative = new FlowNativeWebSocket(this);
-    websocketNative->webSocket = [[SRWebSocket alloc] initWithURL:[NSURL URLWithString:UNICODE2NS(url)]];
-    websocketNative->webSocket.delegate = [[WebSocketDelegate alloc] init:this callbacksKey:callbacksKey];
+    WebSocketDelegate *delegate = [[WebSocketDelegate alloc] init];
+    [delegate
+     onOpen:^{
+         onOpen(callbacksKey);
+     }
+     onMessage:^(NSString *message) {
+         onMessage(callbacksKey, NS2UNICODE(message));
+     }
+     onError:^(NSError *error) {
+         onError(callbacksKey, NS2UNICODE([error localizedDescription]));
+     }
+     onClose:^(NSInteger code, NSString *reason, BOOL wasClean) {
+         onClose(callbacksKey, code, NS2UNICODE(reason), wasClean);
+     }];
+    
+    websocketNative->webSocket = init(UNICODE2NS(url), delegate);
     
     [websocketNative->webSocket open];
-    
     return websocketNative->getFlowValue();
 }
 
@@ -65,20 +76,44 @@ StackSlot iosWebSocketSupport::doSend(StackSlot websocket, unicode_string messag
 {
     RUNNER_VAR = owner;
     FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
-    bool isValid = [websocketNative->webSocket readyState] == SR_OPEN;
-    if (isValid)
-        [websocketNative->webSocket send:UNICODE2NS(message)];
-    return StackSlot::MakeBool(isValid);
+    return StackSlot::MakeBool(send(websocketNative->webSocket, UNICODE2NS(message)));
 }
 
 StackSlot iosWebSocketSupport::doHasBufferedData(StackSlot websocket)
 {
-    return StackSlot::MakeBool(false);
+    RUNNER_VAR = owner;
+    FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
+    return StackSlot::MakeBool(hasBufferedData(websocketNative->webSocket));
 }
 
 void iosWebSocketSupport::doClose(StackSlot websocket, int code, unicode_string reason)
 {
     RUNNER_VAR = owner;
     FlowNativeWebSocket *websocketNative = RUNNER->GetNative<FlowNativeWebSocket*>(websocket);
-    [websocketNative->webSocket closeWithCode:code reason:UNICODE2NS(reason)];
+    close(websocketNative->webSocket, code, UNICODE2NS(reason));
+}
+
+SRWebSocket* iosWebSocketSupport::init(NSString *url, WebSocketDelegate *delegate)
+{
+    SRWebSocket *webSocket = [[SRWebSocket alloc] initWithURL:[NSURL URLWithString:url]];
+    webSocket.delegate = delegate;
+    return webSocket;
+}
+
+BOOL iosWebSocketSupport::send(SRWebSocket *websocket, id message)
+{
+    bool isValid = [websocket readyState] == SR_OPEN;
+    if (isValid)
+        [websocket send:message];
+    return isValid;
+}
+
+BOOL iosWebSocketSupport::hasBufferedData(SRWebSocket *websocket)
+{
+    return NO;
+}
+
+void iosWebSocketSupport::close(SRWebSocket *websocket, int code, NSString *reason)
+{
+    [websocket closeWithCode:code reason:reason];
 }

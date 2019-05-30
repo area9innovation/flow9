@@ -68,6 +68,9 @@ public:
 	void setVideoClip(GLVideoClip *videoClip);
 	GLVideoClip *videoClip() const;
 
+Q_SIGNALS:
+	void frameUpdate();
+
 protected:
 	bool needsSwizzling(const QVideoSurfaceFormat &format) const;
 

@@ -320,7 +320,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function receiveWindowMessage(e : Dynamic) {
-		emit("message", e.data);
+		emit("message", e);
 
 		var hasNestedWindow : Dynamic = null;
 		hasNestedWindow = function(iframe : IFrameElement, win : js.html.Window) {
@@ -789,9 +789,14 @@ class RenderSupportJSPixi {
 		return function() { off("paste", fn); };
 	}
 
-	public static function addMessageEventListener(fn : String -> Void) : Void -> Void {
-		on("message", fn);
-		return function() { off("message", fn); };
+	public static function addMessageEventListener(fn : String -> String -> Void) : Void -> Void {
+		var handler = function(e) {
+			if (untyped __js__('typeof e.data == "string"'))
+				fn(e.data, e.origin);
+		};
+		
+		on("message", handler);
+		return function() { off("message", handler); };
 	}
 
 	public static inline function InvalidateStage() : Void {
@@ -928,6 +933,10 @@ class RenderSupportJSPixi {
 
 	public static function playVideo(vc : VideoClip, filename : String, startPaused : Bool) : Void {
 		vc.playVideo(filename, startPaused);
+	}
+
+	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
+		vc.playVideoFromMediaStream(mediaStream, startPaused);
 	}
 
 	public static function seekVideo(clip : VideoClip, seek : Float) : Void {
