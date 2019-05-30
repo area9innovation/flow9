@@ -44,6 +44,9 @@ However, `flower` lacks certain features which are present in older `flow` plugi
 
     Use *Linux repos* if you're on linux, instead of tarballs.
 
+    Note for ubuntu users: if started from thumbnail, sublime might ignore env variables.
+    To fix that, add them to `~/.pam_environment`, or flow binary might be missing from `PATH`
+
 3. Install [**Package Control**](https://packagecontrol.io/installation)
 
 4. Install **SublimeGDB** & **SublimeLinter** packages (`Package Control: Install Package`)

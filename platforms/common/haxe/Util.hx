@@ -13,6 +13,10 @@ import js.Node.process;
 import nw.Gui;
 #end
 
+#if (js && !flow_nodejs)
+import js.Browser;
+#end
+
 class Util
 {
 	static public function getParameter(name : String) : String {
@@ -172,4 +176,28 @@ class Util
 			return String.fromCharCode(code);
 		#end
 	}
+
+#if (js && !flow_nodejs)
+	public static inline function determineCrossOrigin(url : String) {
+		// data: and javascript: urls are considered same-origin
+		if (url.indexOf('data:') == 0)
+			return '';
+
+		// default is window.location
+		var loc = Browser.window.location;
+
+		var tempAnchor : Dynamic = Browser.document.createElement('a');
+
+		tempAnchor.href = url;
+
+		var samePort = (!tempAnchor.port && loc.port == '') || (tempAnchor.port == loc.port);
+
+		// if cross origin
+		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol) {
+			return 'anonymous';
+		}
+
+		return '';
+	}
+#end
 }

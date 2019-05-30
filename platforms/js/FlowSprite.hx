@@ -182,7 +182,7 @@ class FlowSprite extends Sprite {
 
 	private function loadTexture() : Void {
 		retries++;
-		texture = Texture.fromImage(url);
+		texture = Texture.fromImage(url, Util.determineCrossOrigin(url) != '');
 		pushTextureToCache(texture);
 
 		if (texture.baseTexture == null) {
