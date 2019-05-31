@@ -12,13 +12,10 @@ public class RenderSupport3D extends NativeHost {
 	public Object add3DChild(Object parent, Object child) {
 		return null;
 	}
-	public Object add3DChildAt(Object parent, Object child, Object child, Integer index) {
+	public Object add3DChildAt(Object parent, Object child, Integer index) {
 		return null;
 	}
 	public Object remove3DChild(Object parent, Object child) {
-		return null;
-	}
-	public Object remove3DChildren(Object parent) {
 		return null;
 	}
 
@@ -28,11 +25,18 @@ public class RenderSupport3D extends NativeHost {
 	public String get3DObjectJSON(Object object) {
 		return "";
 	}
-	public Object[] get3DObjectById(Object stage, String id) {
-		return new Object[0];
+
+	public String get3DObjectState(Object object) {
+		return "";
+	}
+	public Object apply3DObjectState(Object object, String state) {
+		return null;
 	}
 
 	public Object make3DObjectFromJSON(String json) {
+		return null;
+	}
+	public Object make3DObjectFromObj(String obj, String mtl) {
 		return null;
 	}
 	public Object make3DGeometryFromJSON(String json) {
@@ -106,6 +110,66 @@ public class RenderSupport3D extends NativeHost {
 	public Object clear3DTransformControls(Object object) {
 		return null;
 	}
+	public Boolean is3DTransformControlsAttached(Object stage, Object object) {
+		return false;
+	}
+
+
+	public Object set3DTransformControlsMode(Object stage, String mode) {
+		return null;
+	}
+	public String get3DTransformControlsMode(Object stage) {
+		return "";
+	}
+
+	public Object set3DTransformControlsTranslationSnap(Object stage, Double snap) {
+		return null;
+	}
+	public Double get3DTransformControlsTranslationSnap(Object stage) {
+		return 0.0;
+	}
+
+	public Object set3DTransformControlsRotationSnap(Object stage, Double snap) {
+		return null;
+	}
+	public Double get3DTransformControlsRotationSnap(Object stage) {
+		return 0.0;
+	}
+
+	public Object set3DTransformControlsSize(Object stage, Double size) {
+		return null;
+	}
+	public Double get3DTransformControlsSize(Object stage) {
+		return 0.0;
+	}
+
+	public Object set3DTransformControlsShowX(Object stage, Boolean show) {
+		return null;
+	}
+	public Boolean get3DTransformControlsShowX(Object stage) {
+		return false;
+	}
+
+	public Object set3DTransformControlsShowY(Object stage, Boolean show) {
+		return null;
+	}
+	public Boolean get3DTransformControlsShowY(Object stage) {
+		return false;
+	}
+
+	public Object set3DTransformControlsShowZ(Object stage, Boolean show) {
+		return null;
+	}
+	public Boolean get3DTransformControlsShowZ(Object stage) {
+		return false;
+	}
+
+	public Object set3DTransformControlsEnabled(Object stage, Boolean enabled) {
+		return null;
+	}
+	public Boolean get3DTransformControlsEnabled(Object stage) {
+		return false;
+	}
 
 	public Object attach3DBoxHelper(Object stage, Object object) {
 		return null;
@@ -120,10 +184,16 @@ public class RenderSupport3D extends NativeHost {
 	public String get3DObjectId(Object object) {
 		return "";
 	}
+	public Object[] get3DObjectById(Object stage, String id) {
+		return new Object[0];
+	}
 	public String get3DObjectType(Object object) {
 		return "";
 	}
 	public Object get3DObjectStage(Object object) {
+		return null;
+	}
+	public Object get3DStageScene(Object stage) {
 		return null;
 	}
 
@@ -222,6 +292,66 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Double get3DObjectWorldX(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldY(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldZ(Object object) {
+		return 0.0;
+	}
+
+	public Object set3DObjectWorldX(Object object, Double x) {
+		return null;
+	}
+	public Object set3DObjectWorldY(Object object, Double y) {
+		return null;
+	}
+	public Object set3DObjectWorldZ(Object object, Double z) {
+		return null;
+	}
+
+	public Double get3DObjectWorldRotationX(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldRotationY(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldRotationZ(Object object) {
+		return 0.0;
+	}
+
+	public Object set3DObjectWorldRotationX(Object object, Double x) {
+		return null;
+	}
+	public Object set3DObjectWorldRotationY(Object object, Double y) {
+		return null;
+	}
+	public Object set3DObjectWorldRotationZ(Object object, Double z) {
+		return null;
+	}
+
+	public Double get3DObjectWorldScaleX(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldScaleY(Object object) {
+		return 0.0;
+	}
+	public Double get3DObjectWorldScaleZ(Object object) {
+		return 0.0;
+	}
+
+	public Object set3DObjectWorldScaleX(Object object, Double x) {
+		return null;
+	}
+	public Object set3DObjectWorldScaleY(Object object, Double y) {
+		return null;
+	}
+	public Object set3DObjectWorldScaleZ(Object object, Double z) {
+		return null;
+	}
+
 	public Object set3DObjectLookAt(Object object, Double x, Double y, Double z) {
 		return null;
 	}
@@ -278,6 +408,10 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DSpotLight(Integer color, Double intensity, Double distance, Double angle, Double penumbra, Double decayAmount) {
+		return null;
+	}
+
 	public Object set3DLightColor(Object object, Integer color) {
 		return null;
 	}
@@ -285,6 +419,12 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 	public Object set3DLightDistance(Object object, Double distance) {
+		return null;
+	}
+	public Object set3DLightAngle(Object object, Double angle) {
+		return null;
+	}
+	public Object set3DLightPenumbra(Object object, Double penumbra) {
 		return null;
 	}
 	public Object set3DLightDecay(Object object, Double decayAmount) {
@@ -300,10 +440,21 @@ public class RenderSupport3D extends NativeHost {
 	public Double get3DLightDistance(Object object) {
 		return 0.0;
 	}
+	public Double get3DLightAngle(Object object) {
+		return 0.0;
+	}
+	public Double get3DLightPenumbra(Object object) {
+		return 0.0;
+	}
 	public Double get3DLightDecay(Object object) {
 		return 0.0;
 	}
 
+
+	public Object make3DPlaneGeometry(Double width, Double height, Double depth,
+		Integer widthSegments, Integer heightSegments) {
+		return null;
+	}
 
 	public Object make3DBoxGeometry(Double width, Double height, Double depth,
 		Integer widthSegments, Integer heightSegments, Integer depthSegments) {
@@ -311,6 +462,11 @@ public class RenderSupport3D extends NativeHost {
 	}
 
 	public Object make3DCircleGeometry(Double radius, Integer segments,
+		Double thetaStart, Double thetaLength) {
+		return null;
+	}
+
+	public Object make3DRingGeometry(Double innerRadius, Double outerRadius, Integer segments,
 		Double thetaStart, Double thetaLength) {
 		return null;
 	}
@@ -325,7 +481,16 @@ public class RenderSupport3D extends NativeHost {
 		return null;
 	}
 
+	public Object make3DSphereGeometry(Double radius, Integer widthSegments, Integer heightSegments,
+		Double phiStart, Double phiLength, Double thetaStart, Double thetaLength) {
+		return null;
+	}
+
 	public Object make3DMeshBasicMaterial(Integer color, Object[] parameters) {
+		return null;
+	}
+
+	public Object make3DMeshStandardMaterial(Integer color, Object[] parameters) {
 		return null;
 	}
 
