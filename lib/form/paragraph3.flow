@@ -103,7 +103,7 @@ renderParagraph(p : [ParagraphElement], s : [ParagraphStyle]) -> Form {
 
 	contentGroup = Group(concat(
 		[if (fill != []) Background(fill, nonDynamic) else nonDynamic],
-		constructDynamicParaForms(words)
+		constructDynamicParaForms(words, interactiveStyles)
 	));
 
 	Constructor(
@@ -753,24 +753,30 @@ applyIntStylesAndHighlighting(
 		);
 	}
 
-	eventListenersM = tryExtractStruct(styles, EventListeners([]));
-	interactiveForm = eitherMap(
-		eventListenersM,
-		\el -> Interactive(el.listeners, textAndBackPair.first),
-		textAndBackPair.first
-	);
-
-	formModifiersM = tryExtractStruct(styles, FormModifiers([]));
-	modifiedForm = eitherMap(
-		formModifiersM,
-		\modifiers -> fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc)),
-		interactiveForm
-	);
+	modifiedForm = applyListenersAndModifiers(styles, textAndBackPair.first);
 
 	Group([
 		Translate(const(xOffset - interWord / 2.), const(yOffset), textAndBackPair.second),
 		Translate(const(xOffset), const(yOffset + baselineShift), modifiedForm),
 	]);
+}
+
+applyListenersAndModifiers(styles : [ParaElementInteractiveStyle], form : Form) -> Form {
+	if (form == Empty()) form else {
+		eventListenersM = tryExtractStruct(styles, EventListeners([]));
+		interactiveForm = eitherMap(
+			eventListenersM,
+			\el -> Interactive(el.listeners, form),
+			form
+		);
+
+		formModifiersM = tryExtractStruct(styles, FormModifiers([]));
+		eitherMap(
+			formModifiersM,
+			\modifiers -> fold(modifiers.fns, interactiveForm, \acc, fn -> fn(acc)),
+			interactiveForm
+		);
+	}
 }
 
 
@@ -809,12 +815,17 @@ optimizeLine(words : [ParaWord]) -> [OptimizedLineElement] {
 }
 
 
-constructDynamicParaForms(words : [ParaWord]) -> [Form] {
+constructDynamicParaForms(
+	words : [ParaWord],
+	styleTree : Tree<int, [ParaElementInteractiveStyle]>
+) -> [Form] {
 	filtermap(words, \word -> {
+		styles = lookupTreeDef(styleTree, either(word.interactivityIdM, -1), []);
+		applyStyles = \form -> applyListenersAndModifiers(styles, form);
 		switch (word.ghosted : Ghosted) {
 			Empty(): None();
-			Ghost(x, y, f): Some(Translate(x, y, f));
-			InspectGhost(xc, yc, __, __, __, f): Some(Translate(xc, yc, f));
+			Ghost(x, y, f): Some(Translate(x, y, applyStyles(f)));
+			InspectGhost(xc, yc, __, __, __, f): Some(Translate(xc, yc, applyStyles(f)));
 			CoordinateInspectElement(i, x, y, wh, lh, f): None();
 		}
 	})

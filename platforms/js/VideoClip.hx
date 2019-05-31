@@ -57,28 +57,6 @@ class VideoClip extends FlowContainer {
 		this.positionFn = positionFn;
 	}
 
-	private static inline function determineCrossOrigin(url : String) {
-		// data: and javascript: urls are considered same-origin
-		if (url.indexOf('data:') == 0)
-			return '';
-
-		// default is window.location
-		var loc = Browser.window.location;
-
-		var tempAnchor : Dynamic = Browser.document.createElement('a');
-
-		tempAnchor.href = url;
-
-		var samePort = (!tempAnchor.port && loc.port == '') || (tempAnchor.port == loc.port);
-
-		// if cross origin
-		if (tempAnchor.hostname != loc.hostname || !samePort || tempAnchor.protocol != loc.protocol) {
-			return 'anonymous';
-		}
-
-		return '';
-	}
-
 	public function updateNativeWidget() {
 		if (!nativeWidget.paused) {
 			checkTimeRange(nativeWidget.currentTime, true);
@@ -115,7 +93,7 @@ class VideoClip extends FlowContainer {
 		addVideoSource(filename, "");
 
 		nativeWidget = Browser.document.createElement("video");
-		nativeWidget.crossorigin = determineCrossOrigin(filename);
+		nativeWidget.crossorigin = Util.determineCrossOrigin(filename);
 		nativeWidget.autoplay = !startPaused;
 		nativeWidget.setAttribute('playsinline', true);
 

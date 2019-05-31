@@ -10,6 +10,36 @@
 #include <QFileInfo>
 #include <QFileDialog>
 
+
+class TextCodec {
+    static const char *ENC_UTF8;
+    static const char *ENC_CP1252;
+public:
+    static const char *SUPPORTED_ENCODINGS[2];
+    static QString decode(QByteArray blob, std::string encoding) {
+        QString r("");
+        if (encoding=="auto") {
+            for (signed char i=sizeof(SUPPORTED_ENCODINGS)/sizeof(SUPPORTED_ENCODINGS[0])-1; i>=0; --i) {
+                std::string enc(SUPPORTED_ENCODINGS[i]);
+                r = decode(blob, enc);
+                if (-1 == r.indexOf(QChar::ReplacementCharacter)) return r;
+            }
+            return r;
+        }
+
+        // Put each decoding line to separate func and hash mapping when more encodings support added.
+        if (encoding==ENC_UTF8) return QString(blob);
+        if (encoding==ENC_CP1252) return QString::fromLatin1(blob).toUtf8().data();
+
+        return r;
+    }
+};
+
+const char *TextCodec::ENC_UTF8 = "UTF8";
+const char *TextCodec::ENC_CP1252 = "CP1252";
+const char *TextCodec::SUPPORTED_ENCODINGS[2] = {TextCodec::ENC_UTF8, TextCodec::ENC_CP1252};
+
+
 char* QFileSystemInterface::doResolveRelativePath(std::string &filename, char* buffer) {
   QString s(filename.c_str());
   QFileInfo fi(s);
@@ -187,7 +217,7 @@ StackSlot QFileSystemInterface::doFileSlice(const StackSlot &file, int offset, i
     return RUNNER->AllocNative(chunkFlowFile);
 }
 
-void QFileSystemInterface::doFileRead(const StackSlot &file, std::string readAs, const StackSlot &onData, const StackSlot &onError)
+void QFileSystemInterface::doFileRead(const StackSlot &file, std::string readAs, std::string readEncoding, const StackSlot &onData, const StackSlot &onError)
 {
     RUNNER_VAR = owner;
     WITH_RUNNER_LOCK_DEFERRED(RUNNER);
@@ -214,7 +244,7 @@ void QFileSystemInterface::doFileRead(const StackSlot &file, std::string readAs,
         QString dataUrl = "data:" + QString::fromStdString(doFileType(file)) + ";base64," + blob.toBase64(QByteArray::Base64Encoding);
         RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(dataUrl));
     } else {
-        RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(QString(blob)));
+        RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(TextCodec::decode(blob, readEncoding)));
     }
 
     flowFile->getFile()->close();

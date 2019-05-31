@@ -5,6 +5,10 @@ import java.nio.charset.Charset;
 
 @SuppressWarnings("unchecked")
 public class RenderSupport extends NativeHost {
+	private Func0<Object> no_op = new Func0<Object>() {
+		public Object invoke() { return null; }
+	};
+
 	public Object getStage() {
 		return null;
 	}
@@ -382,5 +386,9 @@ public class RenderSupport extends NativeHost {
     }
     public String getVideoCurrentFrame(Object cl) {
     	return "";
+    }
+
+    public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
+    	return no_op;
     }
 }

@@ -1,16 +1,17 @@
+import math/hash;
 import tools/flowc/backends/common;
 import tools/flowc/backends/java/fi2java_defines;
 
 export {
 	indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]>;
-	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct>;
+	indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool>;
 	indexJavaGlobals(gctx : JavaGlobalContext) -> void;
 	generateJavaStructList(gctx : JavaGlobalContext) -> string;
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void;
-	javaFileStringList(package_name : string) -> ref List<string>;
 	javaList2String(lst : ref List<string>, endstr : string) -> string;
+	writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void;
 }
 
 javaKnownNatives = fold([
@@ -84,24 +85,54 @@ chooseJavaIdIndex(stem : string, idx : int, known : Tree<string,bool>) -> string
 	}
 }
 
-indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Tree<string, JavaStruct> {
+indexJavaStructs(program : FiProgram, modules : Tree<string, JavaModule>) -> Pair<Tree<string, JavaStruct>, bool> {
 	// Order all structs by name
 	struct_list = foldTree(modules, makeTree(), \name, javaModule, acc ->
 		fold(javaModule.module.structs, acc, \acc2, struct ->
 			setTree(acc2, struct.name, Pair(javaModule, struct))
 		)
 	);
-	// Assign id values
-	init = Pair(0, makeTree());
-	res = foldTree(struct_list, init, \name, pair, acc -> {
-		id = acc.first;
-		javaModule = pair.first;
-		struct = pair.second;
-		fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
-		data = JavaStruct(id, name, javaModule, fields);
-		Pair(id + 1, setTree(acc.second, name, data));
-	});
-	res.second;
+	hashed = foldTree(
+		struct_list, 
+		makeTree(),
+		\name, struct, acc -> {
+			hash = fastHashString(name);
+			switch (lookupTree(acc, hash)) {
+				Some(structs): setTree(acc, hash, insertSet(structs, name));
+				None(): setTree(acc, hash, makeSet1(name));
+			}
+		}
+	);
+	emptyArray : [Set<string>] = [];
+	hashCollisions = foldTree(hashed,
+		emptyArray,
+		\hash, names, acc -> if (sizeSet(names) > 1) concat(acc, [names]) else acc
+	);
+	if (length(hashCollisions) > 0) {
+		fcPrintln("Struct names hases have collisions:");
+		iter(hashCollisions, \collision -> fcPrintln("\t" + strGlue(set2array(collision), ",")));
+		// Assign id values
+		init = Pair(0, makeTree());
+		res = foldTree(struct_list, init, \name, pair, acc -> {
+			id = acc.first;
+			javaModule = pair.first;
+			struct = pair.second;
+			fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
+			data = JavaStruct(id, name, javaModule, fields);
+			Pair(id + 1, setTree(acc.second, name, data));
+		});
+		Pair(res.second, true);
+	} else {
+		Pair(
+			foldTree(struct_list, makeTree(), \name, pair, acc -> {
+				javaModule = pair.first;
+				struct = pair.second;
+				fields = map(struct.args, \arg -> JavaStructField(arg.name, arg.type, arg.ismutable));
+				setTree(acc, name, JavaStruct(fastHashString(name), name, javaModule, fields));
+			}),
+			false
+		);
+	}
 }
 
 indexJavaGlobals(gctx : JavaGlobalContext) -> void {
@@ -182,58 +213,88 @@ generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void {
 	pushistr = \s -> rlistPush(gctx.init_code, s);
 
 	iter(gctx.csm_list, \csm -> {
-		module_text = javaFileStringList(gctx.package_name);
-		pushstr = \s -> rlistPush(module_text, s);
-
-		// pushstr("/* "+csm.module.fullpath+" */\n");
-		pushstr("@SuppressWarnings(\"unchecked\")\n");
-		pushstr("final class Module_" + csm.id + " {\n");
-		pushstr("\tfinal Main runtime;\n");
-		pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
-		pushstr("\t\tthis.runtime = runtime;\n");
-		pushstr("\t}\n");
-
-		pushstr(javaList2String(csm.vars, ""));
-
-		iter(csm.decl_order, \decl -> {
-			switch (decl : FiDeclaration) {
-				FiFunctionDec(name, lambda, type, __, __): {
-					code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
-					pushstr(code);
-				}
-				FiGlobalVar(name, expr, type, __, __): {
-					local_counter = ref 0;
-					fctx = JavaFunctionContext(
-						gctx, csm, None(), ref makeList(), local_counter,
-						javaStatementPullContext(local_counter),
-						"", false, []
-					);
-					ctx = JavaScopeContext(fctx, "\t\t", makeTree());
-					tstr = type2javaObjType(gctx, type, true, false);
-					emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
-					body = javaList2String(fctx.text, "");
-					pushstr("\tpublic void init_" + name + "() {\n");
-					pushstr(body);
-					pushstr("\t}\n");
-					pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
-				}
-				FiNativeDec(name, io, type, nname, fallback,__,__): {
-					fbexp = checkJavaKnownNative(fallback, -1, nname);
-					switch (fbexp) {
-						FiLambda(xs, body, __, __): {
-							funcType = cast(type: FiType -> FiTypeFunction);
-							code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
-							pushstr(code);
+		module_path = pathCombine(output_dir, "Module_" + csm.id + ".java");
+		if (usePreviouslyGeneratedModules(gctx, csm.module, module_path)) {
+			if (gctx.program.config.verbose > 1) {
+				fcPrintln("Java module '" + module_path + "' is already generated - keeping it");
+			}
+			class_path = pathCombine(output_dir, "Module_" + csm.id + ".class");
+			if (!fileExists(class_path)) {
+				rlistPush(gctx.to_compile, module_path + "\n");
+			}
+			iter(csm.decl_order, \decl ->
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(__, lambda, __, __, __):
+						addJavaExpressionWrappers(gctx, lambda);
+					FiGlobalVar(name, value, __, __, __): {
+						addJavaExpressionWrappers(gctx, value);
+						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+					}
+					FiNativeDec(__,__,__, nname, fallback,__,__): {
+						fbexp = checkJavaKnownNative(fallback, -1, nname);
+						switch (fbexp) {
+							FiLambda(xs, body, __, __): {
+								addJavaExpressionWrappers(gctx, body);
+							}
+							default: {}
 						}
-						default: {}
 					}
 				}
+			);
+		} else {
+			if (gctx.program.config.verbose > 0) {
+				fcPrintln("Generating java module '" + module_path + "'");
 			}
-		});
+			module_text = gctx.header_generator(csm.module.fileinfo.trampstamp);
+			pushstr = \s -> rlistPush(module_text, s);
 
-		fname = pathCombine(output_dir, "Module_" + csm.id + ".java");
-		setFileContentIfChanged(fname, javaList2String(module_text, "}\n"));
-		{}
+			// pushstr("/* "+csm.module.fullpath+" */\n");
+			pushstr("@SuppressWarnings(\"unchecked\")\n");
+			pushstr("final class Module_" + csm.id + " {\n");
+			pushstr("\tfinal Main runtime;\n");
+			pushstr("\tModule_" + csm.id + "(Main runtime) {\n");
+			pushstr("\t\tthis.runtime = runtime;\n");
+			pushstr("\t}\n");
+
+			pushstr(javaList2String(csm.vars, ""));
+
+			iter(csm.decl_order, \decl -> {
+				switch (decl : FiDeclaration) {
+					FiFunctionDec(name, lambda, type, __, __): {
+						code = emitJavaFunction(gctx, csm, name, "f_" + name, lambda, None(), "\t", type);
+						pushstr(code);
+					}
+					FiGlobalVar(name, expr, type, __, __): {
+						local_counter = ref 0;
+						fctx = JavaFunctionContext(
+							gctx, csm, None(), ref makeList(), local_counter,
+							javaStatementPullContext(local_counter),
+							"", false, []
+						);
+						ctx = JavaScopeContext(fctx, "\t\t", makeTree());
+						tstr = type2javaObjType(gctx, type, true, false);
+						emitJavaStatement(ctx, expr, JavaReturnLocal("g_" + name, tstr));
+						body = javaList2String(fctx.text, "");
+						pushstr("\tpublic void init_" + name + "() {\n");
+						pushstr(body);
+						pushstr("\t}\n");
+						pushistr("\t\tm_" + csm.id + ".init_" + name + "();\n");
+					}
+					FiNativeDec(name, io, type, nname, fallback,__,__): {
+						fbexp = checkJavaKnownNative(fallback, -1, nname);
+						switch (fbexp) {
+							FiLambda(xs, body, __, __): {
+								funcType = cast(type: FiType -> FiTypeFunction);
+								code = emitJavaFunction(gctx, csm, name, "nf_" + name, fbexp, None(), "\t", funcType);
+								pushstr(code);
+							}
+							default: {}
+						}
+					}
+				}
+			});
+			writeJavaSource(gctx, module_path, javaList2String(module_text, "}\n"));
+		}
 	});
 }
 
@@ -299,13 +360,6 @@ generateJavaInitCode(gctx : JavaGlobalContext, struct_list : string) -> void {
 	pushstr("\t}\n");
 }
 
-javaFileStringList(package_name : string) -> ref List<string> {
-	header =
-		"package " + package_name + ";\n\n" +
-		"import com.area9innovation.flow.*;\n\n";
-	ref Cons(header, makeList())
-}
-
 javaList2String(lst : ref List<string>, endstr : string) -> string {
 	// convert to single string and free old list data for gc
 	str = list2string(Cons(endstr, ^lst));
@@ -314,105 +368,113 @@ javaList2String(lst : ref List<string>, endstr : string) -> string {
 }
 
 generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
-	foldTree(gctx.cstructs, 0, \sname, sdata : JavaStruct, acc -> {
+	traverseInOrder(gctx.cstructs, \sname, sdata : JavaStruct -> {
 		if (length(sdata.fields) > 0) {
-			str_data = javaFileStringList(gctx.package_name);
-			pushstr = \s -> str_data := Cons(s, ^str_data);
-
-			fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
-				Quadruple(
-					n, type2javaObjType(gctx, f.type, true, false),
-					f.type, type2javaObjType(gctx, f.type, false, false)
-				)
-			);
-			accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
-
-			fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
-			
-			pushstr(
-				"class Struct_" + sname + " extends Struct" +
-				(if (fieldstr != "") " implements " + fieldstr else "") +
-				" {\n"
-			);
-
-			// fields
-			iter(fnametypes, \f -> 
-				pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
-			);
-
-			// constructor
-			pushstr("\n\tpublic Struct_" + sname + "() {}\n");
-			pushstr(
-				"\tpublic Struct_" + sname + "(" +
-				strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
-				") {\n"
-			);
-			iter(fnametypes, \f ->
-				pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
-			);
-			pushstr("\t}\n");
-
-			// accessors
-			iter(accessor_flds, \f -> {
-				name = f.first;
-				pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
-				pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
-			});
-
-			// metadata
-			pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
-			pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
-
-			pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
-			pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
-
-			pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
-			pushstr(strGlue(map(sdata.fields,\f -> type2javaRuntimeType(f.type)), ", "));
-
-			pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
-			pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
-
-			// generic field access
-			pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
-			pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
-			pushstr("\n\t\t};\n\t}\n");
-
-			pushstr("\t@SuppressWarnings(\"unchecked\")\n");
-			pushstr("\tpublic void setFields(Object[] values) {\n");
-			pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
-			pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
-			iteri(fnametypes, \i, f ->
-				pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
-			);
-			pushstr("\t}\n\n");
-
-			// comparison
-			pushstr("\tpublic int compareTo(Struct other_gen) {\n");
-			pushstr("\t\tif (other_gen == this) return 0;\n");
-			pushstr("\t\tint tmp = other_gen.getTypeId();\n");
-			pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
-			pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
-
-			tmp = fold(fnametypes, false, \tmp, f -> {
-				if (tmp) {
-					pushstr("\t\tif (tmp != 0) return tmp;\n");
-				}
-				emitJavaComparison(pushstr, f.first, f.third);
-			});
-			if (tmp)
-				pushstr("\t\treturn tmp;\n\t}\n")
-			else
-				pushstr("\t\treturn 0;\n\t}\n");
-
 			fname = pathCombine(output_dir, "Struct_" + sname + ".java");
-			setFileContent(fname, javaList2String(str_data, "}\n"));
-			{}
+			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".java");
+			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
+				if (gctx.program.config.verbose > 1) {
+					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it");
+				}
+				class_path = pathCombine(output_dir, "Struct_" + sname + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gctx.to_compile, fname + "\n");
+				}
+			} else {
+				if (gctx.program.config.verbose > 0) {
+					fcPrintln("Generating java struct module '" + fname + "'");
+				}
+				str_data = gctx.header_generator(timestamp());
+				pushstr = \s -> str_data := Cons(s, ^str_data);
+
+				fnametypes = zipWith(map(sdata.fields, \f -> f.name), sdata.fields, \n, f ->
+					Quadruple(
+						n, type2javaObjType(gctx, f.type, true, false),
+						f.type, type2javaObjType(gctx, f.type, false, false)
+					)
+				);
+				accessor_flds = filter(fnametypes, \f -> lookupTreeDef(gctx.has_field_accessor, f.first, false));
+
+				fieldstr = strGlue(map(accessor_flds, \f -> "Field_" + f.first + "<" + f.fourth + ">"), ", ");
+
+				pushstr(
+					"class Struct_" + sname + " extends Struct" +
+					(if (fieldstr != "") " implements " + fieldstr else "") +
+					" {\n"
+				);
+
+				// fields
+				iter(fnametypes, \f -> 
+					pushstr("\tpublic " + f.second + " f_" + f.first + ";\n")
+				);
+
+				// constructor
+				pushstr("\n\tpublic Struct_" + sname + "() {}\n");
+				pushstr(
+					"\tpublic Struct_" + sname + "(" +
+					strGlue(map(fnametypes, \f -> f.second + " a_" + f.first), ", ") +
+					") {\n"
+				);
+				iter(fnametypes, \f ->
+					pushstr("\t\tf_" + f.first + " = a_" + f.first + ";\n")
+				);
+				pushstr("\t}\n");
+
+				// accessors
+				iter(accessor_flds, \f -> {
+					name = f.first;
+					pushstr("\tpublic " + f.fourth + " get_" + name + "() { return f_" + name + "; }\n");
+					pushstr("\tpublic void set_" + name + "(" + f.fourth + " value) { f_" + name + " = value; }\n");
+				});
+
+				// metadata
+				pushstr("\n\tpublic int getTypeId() { return " + i2s(sdata.id) + "; }\n");
+				pushstr("\tpublic String getTypeName() { return \"" + sname + "\"; }\n");
+
+				pushstr("\n\tprivate static final String[] field_names = new String[] {\n\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "\"" + f.first + "\""), ", "));
+
+				pushstr("\n\t};\n\tprivate static final RuntimeType[] field_types = new RuntimeType[] {\n\t\t");
+				pushstr(strGlue(map(sdata.fields,\f -> type2javaRuntimeType(f.type)), ", "));
+
+				pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
+				pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
+
+				// generic field access
+				pushstr("\n\tpublic Object[] getFields() {\n\t\treturn new Object[] {\n\t\t\t");
+				pushstr(strGlue(map(fnametypes,\f -> "f_" + f.first), ", "));
+				pushstr("\n\t\t};\n\t}\n");
+
+				pushstr("\t@SuppressWarnings(\"unchecked\")\n");
+				pushstr("\tpublic void setFields(Object[] values) {\n");
+				pushstr("\t\tif (values.length != "+i2s(length(fnametypes))+")\n");
+				pushstr("\t\t\tthrow new IndexOutOfBoundsException(\"Invalid field count in " + sname + "\");\n");
+				iteri(fnametypes, \i, f ->
+					pushstr("\t\tf_" + f.first + " = (" + f.fourth + ")values[" + i2s(i) + "];\n")
+				);
+				pushstr("\t}\n\n");
+
+				// comparison
+				pushstr("\tpublic int compareTo(Struct other_gen) {\n");
+				pushstr("\t\tif (other_gen == this) return 0;\n");
+				pushstr("\t\tint tmp = other_gen.getTypeId();\n");
+				pushstr("\t\tif (tmp != " + i2s(sdata.id) + ") return " + i2s(sdata.id) + "-tmp;\n");
+				pushstr("\t\tStruct_" + sname + " other = (Struct_" + sname + ")other_gen;\n");
+
+				tmp = fold(fnametypes, false, \tmp, f -> {
+					if (tmp) {
+						pushstr("\t\tif (tmp != 0) return tmp;\n");
+					}
+					emitJavaComparison(pushstr, f.first, f.third);
+				});
+				if (tmp)
+					pushstr("\t\treturn tmp;\n\t}\n")
+				else
+					pushstr("\t\treturn 0;\n\t}\n");
+				writeJavaSource(gctx, fname, javaList2String(str_data, "}\n"));
+			}
 		}
-
-		0;
 	});
-
-	{}
 }
 
 emitJavaFunction(gctx : JavaGlobalContext, csm : JavaModule, global : string, name : string, tree : FiLambda, parent : Maybe<JavaScopeContext>, indent0 : string, type : FiTypeFunction) -> string {
@@ -1455,3 +1517,108 @@ javaNewLocalName(counter : ref int, name : string) {
 	counter := id + 1;
 	"l" + i2s(id) + "_" + name;
 }
+
+addJavaExpressionWrappers(gctx : JavaGlobalContext, expcode : FiExp) -> void {
+	switch (expcode) {
+		FiConst(__): { }
+		FiSeq(es, __, __):
+			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
+		FiVar(name, __, __):
+			switch (lookupTree(gctx.globals, name)) {
+				Some(__): { }
+				None():
+					switch (lookupTree(gctx.globalFuncs, name)) {
+						Some(finfo): {
+							ftype = cast(finfo.type : FiType -> FiTypeFunction);
+							id = "gfw_" + name;
+							wrapper_t = emitJavaFnWrapper(
+								gctx, finfo.csmodule, ftype, "\t",
+								\args, rt -> {
+									"return "+
+										(if (finfo.global_scope) "" else "m_" + finfo.csmodule.id + ".")
+										+ finfo.name + "(" + args + ");"
+								}
+							);
+							tstr = wrapper_t.second;
+							rlistPush(gctx.wrapper_code, "\tfinal " + tstr + " " + id + " = " + wrapper_t.first + ";\n");
+							fglobal = JavaGlobalInfo(id, finfo.csmodule, finfo.type, true);
+							gctx.globals ::= setTree(gctx.globals, name, fglobal);
+						}
+						None(): { }
+					}
+			}
+		FiCall(f, es, __, __): {
+			global = switch (f) {
+				FiVar(fname, tp, __): {
+					switch (lookupTree(gctx.globals, fname)) {
+						Some(__): None();
+						None(): lookupTree(gctx.globalFuncs, fname);
+					}
+				}
+				default: None();
+			};
+			iter(es, \expr -> addJavaExpressionWrappers(gctx, expr));
+			switch (global) {
+				Some(__): { }
+				None(): addJavaExpressionWrappers(gctx, f);
+			}
+		}
+		FiIf(cond, ethen, eelse, __, __): {
+			addJavaExpressionWrappers(gctx, cond);
+			addJavaExpressionWrappers(gctx, ethen);
+			addJavaExpressionWrappers(gctx, eelse);
+		}
+		FiCast(e, __,__,__,__):
+			addJavaExpressionWrappers(gctx, e);
+		FiCallPrim(op, es, type, __): {
+			iter(es, \e -> addJavaExpressionWrappers(gctx, e));
+			switch (op) {
+				FcFieldPrim(field): {
+					if (field != "structname") {
+						switch (type2javaStruct(gctx, fiExpType(es[0]))) {
+							Some(__): { }
+							None(): javaRequireAccessor(gctx, field);
+						}
+					}
+				}
+				FcSetMutablePrim(field): {
+					switch (type2javaStruct(gctx, type)) {
+						Some(__): { }
+						None(): javaRequireAccessor(gctx, field);
+					}
+				}
+				default: { }
+			}
+        }
+		FiLet(__, __, e1, e2, __, __): {
+			addJavaExpressionWrappers(gctx, e1);
+			addJavaExpressionWrappers(gctx, e2);
+		}
+		FiSwitch(x, __, cases, __,__): {
+			addJavaExpressionWrappers(gctx, x);
+			iter(cases, \c -> addJavaExpressionWrappers(gctx, c.body));
+		}
+		FiRequire(__, e, __,__):
+			addJavaExpressionWrappers(gctx, e);
+		FiUnsafe(__, fallback, __,__):
+			addJavaExpressionWrappers(gctx, fallback);
+		FiLambda(__, body, __,__):
+			addJavaExpressionWrappers(gctx, body);
+	}
+}
+
+usePreviouslyGeneratedModules(gctx : JavaGlobalContext, module : FiModule, path : string) -> bool {
+	if (!gctx.hash_collisions && module.incremental && fileExists(path)) {
+		collision_and_time = getCollisionAndTimestampOfFile(path);
+		!collision_and_time.first && collision_and_time.second == d2s(module.fileinfo.trampstamp);
+	} else {
+		false
+	}
+}
+
+writeJavaSource(gctx : JavaGlobalContext, path : string, src : string) -> void {
+	rlistPush(gctx.to_compile, path + "\n");
+	setFileContent(path, src);
+	{}
+}
+

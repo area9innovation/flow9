@@ -22,7 +22,7 @@ protected:
     virtual double doFileSizeNative(const StackSlot& /*file*/) { return 0.0; }
     virtual double doFileModifiedNative(const StackSlot& /*file*/) { return 0.0; }
     virtual StackSlot doFileSlice(const StackSlot &file, int /*offset*/, int /*end*/) { return file; }
-    virtual void doFileRead(const StackSlot& /*file*/, std::string /*readAs*/, const StackSlot& /*onData*/, const StackSlot& /*onError*/) { }
+    virtual void doFileRead(const StackSlot& /*file*/, std::string /*readAs*/, std::string /*readEncoding*/, const StackSlot& /*onData*/, const StackSlot& /*onError*/) { }
     virtual char* doResolveRelativePath(std::string& /*filename*/, char* /*buffer*/);
 
     static StackSlot cbCancel(ByteCodeRunner*, StackSlot*, void *ptr);
@@ -50,6 +50,7 @@ private:
     DECLARE_NATIVE_METHOD(fileModifiedNative)
     DECLARE_NATIVE_METHOD(fileSlice)
     DECLARE_NATIVE_METHOD(readFile)
+    DECLARE_NATIVE_METHOD(readFileEnc)
 };
 
 #endif // FILESYSTEMINTERFACE_H
