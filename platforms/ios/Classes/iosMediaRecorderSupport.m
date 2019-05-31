@@ -114,6 +114,7 @@ void iosMediaRecorderSupport::addAudioInput(FlowNativeMediaRecorder *flowRecorde
                                          [ NSNumber numberWithFloat: 44100.0 ], AVSampleRateKey,
                                          nil];
     AVAssetWriterInput *audioWriterInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:audioOutputSettings];
+    [audioWriterInput setExpectsMediaDataInRealTime:YES];
     AVCaptureSession *audioSession = [[AVCaptureSession alloc] init];
     addDeviceToSession(audioSession, AVMediaTypeAudio);
     FlowCaptureMediaDataDelegate *audioDelegate = [[FlowCaptureMediaDataDelegate alloc] initWithSampleBufferListener:^(CMSampleBufferRef sampleBuffer) {
@@ -148,7 +149,7 @@ void iosMediaRecorderSupport::addVideoInput(FlowNativeMediaRecorder *flowRecorde
                                    [NSNumber numberWithInt:height], AVVideoHeightKey,
                                    nil];
     AVAssetWriterInput *videoWriterInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
-    [videoWriterInput setExpectsMediaDataInRealTime:@YES];
+    [videoWriterInput setExpectsMediaDataInRealTime:YES];
     AVAssetWriterInputPixelBufferAdaptor *videoWriterAdaptor = [[AVAssetWriterInputPixelBufferAdaptor alloc] initWithAssetWriterInput:videoWriterInput sourcePixelBufferAttributes:nil];
     flowRecorder->videoRenderer = [[FlowRTCVideoRenderer alloc] initWithFrameListener:^void(RTCVideoFrame *frame) {
         [frame initWithBuffer:[frame buffer] rotation:flowRecorder->videoFrameRotation timeStampNs:[frame timeStampNs]];
@@ -269,4 +270,5 @@ void iosMediaRecorderSupport::stopMediaRecorder(StackSlot recorder)
             [flowRecorder->websocket open];
         }
     }];
+    flowRecorder->release();
 }

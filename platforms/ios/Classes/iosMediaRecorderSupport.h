@@ -7,7 +7,6 @@
 #include "iosMediaStreamSupport.h"
 
 #import <AVFoundation/AVFoundation.h>
-#import <Accelerate/Accelerate.h>
 
 class iosMediaRecorderSupport;
 
