@@ -17,6 +17,7 @@ GLVideoClip::GLVideoClip(GLRenderSupport *owner, const StackSlot &size_cb, const
     if (!pos_cb.IsVoid())
         addEventCallback(FlowVideoPositionNotify, pos_cb);
 
+    use_media_stream = false;
     start = end = duration = 0;
     failed = looping = loaded = playing = false;
     subtitle = new GLTextClip(owner);
@@ -48,10 +49,56 @@ void GLVideoClip::renderInner(GLRenderer *renderer, GLDrawSurface *surface, cons
             renderer->beginDrawFancyExternalTexture(vec4(0,0,0,0));
 
         glVertexAttrib4f(GLRenderer::AttrVertexColor, global_alpha, global_alpha, global_alpha, global_alpha);
-        texture_image->drawRect(renderer, vec2(0,0), vec2(size));
+
+        if ((int)local_transform_raw.angle % 180) {
+            texture_image->drawRect(renderer, vec2(0,0), vec2(size.y, size.x));
+        } else {
+            texture_image->drawRect(renderer, vec2(0,0), vec2(size));
+        }
+
     }
 
     GLClip::renderInner(renderer, surface, clip_box);
+}
+
+const GLTransform &GLVideoClip::getLocalTransform()
+{
+    if (!checkFlag(LocalTransformReady)) {
+        setFlags(LocalTransformReady);
+        GLUnpackedTransform temp = local_transform_raw;
+        temp.x += rotation_offset.x;
+        temp.y += rotation_offset.y;
+        local_transform = temp.toMatrixForm();
+    }
+
+    return local_transform;
+}
+
+void GLVideoClip::setRotation(FlowScreenRotation rotation)
+{
+    switch (rotation) {
+    case FlowRotation0:
+        local_transform_raw.angle = 0.0f;
+        rotation_offset = vec2(0.0f);
+        break;
+
+    case FlowRotation90:
+        local_transform_raw.angle = 90.0f;
+        rotation_offset = vec2(size.x * local_transform_raw.sx, 0.0f);
+        break;
+
+    case FlowRotation180:
+        local_transform_raw.angle = 180.0f;
+        rotation_offset = vec2(size.x * local_transform_raw.sx, size.y * local_transform_raw.sy);
+        break;
+
+    case FlowRotation270:
+        local_transform_raw.angle = 270.0f;
+        rotation_offset = vec2(0.0f, size.y * local_transform_raw.sy);
+        break;
+    }
+
+    wipeFlags(WipeLocalTransformChanged);
 }
 
 void GLVideoClip::notify(GLVideoClip::StateChangeEvent event, int64_t value, int64_t secondary_value)
@@ -431,6 +478,22 @@ StackSlot GLVideoClip::playVideo(RUNNER_ARGS)
     failed = false;
     playing = !start_paused.GetBool();
 
+    if (!owner->createNativeWidget(this))
+        notifyNotFound();
+
+    RETVOID;
+}
+
+StackSlot GLVideoClip::playVideoFromMediaStream(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(mediaStream, start_paused);
+    RUNNER_CheckTag1(TNative, mediaStream);
+    RUNNER_CheckTag1(TBool, start_paused);
+
+    use_media_stream = true;
+    media_stream_id = RUNNER->RegisterRoot(mediaStream);
+    failed = false;
+    playing = !start_paused.GetBool();
     if (!owner->createNativeWidget(this))
         notifyNotFound();
 
