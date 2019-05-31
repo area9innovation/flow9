@@ -11,12 +11,22 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 
 	package_path = pathCombineMany(concat([cfg.outputdir], strSplit(cfg.packageName, ".")));
 	ensureDirectoryExists(package_path);
+	main_fname = pathCombine(package_path, "Main.java");
+	prev_build_has_collisions = getCollisionAndTimestampOfFile(main_fname).first;
 	cmodules_info = indexJavaModules(program);
-	cstructs = indexJavaStructs(program, cmodules_info.first);
+	cstructs_collisions = indexJavaStructs(program, cmodules_info.first);
+	header_generator = \time ->  {
+		header =
+			"// HASH COLLISIONS: " + if (cstructs_collisions.second) "YES" else "NO" + "\n" +
+			"// timestamp: " + d2s(time) + "\n\n" +
+			"package " + cfg.packageName + ";\n\n" +
+			"import com.area9innovation.flow.*;\n\n";
+		ref Cons(header, makeList())
+	};
 
 	gcontext = JavaGlobalContext(
 		program, cfg.packageName,
-		cmodules_info.first, cmodules_info.second, cstructs,
+		cmodules_info.first, cmodules_info.second, cstructs_collisions.first,
 
 		// globals, globalFuncs
 		makeTree(), makeTree(),
@@ -35,7 +45,10 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 		// wrapper_code
 		ref makeList(),
 		// main_file_text
-		javaFileStringList(cfg.packageName),
+		header_generator(timestamp()),
+		header_generator,
+		cstructs_collisions.second || prev_build_has_collisions,
+		ref makeList(),
 	);
 
 	rlistPush(gcontext.main_file_text, "@SuppressWarnings(\"unchecked\")\npublic final class Main extends FlowRuntime {\n");
@@ -50,40 +63,57 @@ fi2java(program : FiProgram, cfg : FiJavaConfig, callback : () -> void) -> void 
 
 	traverseInOrder(gcontext.has_field_accessor, \name, has -> {
 		if (has) {
-			ftext = javaFileStringList(cfg.packageName);
-			text = "interface Field_" + name + "<T> {\n" +
-				"\tT get_" + name + "();\n" +
-				"\tvoid set_" + name + "(T value);\n" +
-			"}\n";
-			rlistPush(ftext, text);
 			field_fname = pathCombine(package_path, "Field_" + name + ".java");
-			setFileContent(field_fname, javaList2String(ftext, ""));
-			{}
+			if (fileExists(field_fname)) {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Java field module '" + field_fname + "' is already generated - keeping it");
+				}
+				class_path = pathCombine(package_path, "Field_" + name + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gcontext.to_compile, field_fname + "\n");
+				}
+			} else {
+				ftext = gcontext.header_generator(timestamp());
+				text = "interface Field_" + name + "<T> {\n" +
+					"\tT get_" + name + "();\n" +
+					"\tvoid set_" + name + "(T value);\n" +
+				"}\n";
+				rlistPush(ftext, text);
+				writeJavaSource(gcontext, field_fname, javaList2String(ftext, ""));
+			}
 		}
 	});
 
-	traverseInOrder(gcontext.has_func_def, \nargs,has -> {
+	traverseInOrder(gcontext.has_func_def, \nargs, has -> {
 		if (nargs > 11 && has) {
-			ftext = javaFileStringList(cfg.packageName);
-
-			rlistPush(ftext,
-				"interface Func"+i2s(nargs) + "<RT," +
-				strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
-			);
-			rlistPush(ftext,
-				"\tRT invoke(" +
-				strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
-				");\n"
-			);
-
 			func_fname = pathCombine(package_path, "Func" + i2s(nargs) + ".java");
-			setFileContent(func_fname, javaList2String(ftext, "}\n"));
-			{}
+			if (fileExists(func_fname)) {
+				if (gcontext.program.config.verbose > 1) {
+					fcPrintln("Java struct module '" + func_fname + "' is already generated - keeping it");
+				}
+				class_path = pathCombine(package_path, "Func" + i2s(nargs) + ".class");
+				if (!fileExists(class_path)) {
+					rlistPush(gcontext.to_compile, func_fname + "\n");
+				}
+			} else {
+				ftext = gcontext.header_generator(timestamp());
+				rlistPush(ftext,
+					"interface Func" + i2s(nargs) + "<RT," +
+					strGlue(map(enumFromTo(0, nargs - 1), \i -> "A" + i2s(i)), ", ") + "> {\n"
+				);
+				rlistPush(ftext,
+					"\tRT invoke(" +
+					strGlue(map(enumFromTo(0,nargs - 1), \i -> "A" + i2s(i) + " a" + i2s(i)), ", ") +
+					");\n"
+				);
+				writeJavaSource(gcontext, func_fname, javaList2String(ftext, "}\n"));
+			}
 		}
 	});
 
-	main_fname = pathCombine(package_path, "Main.java");
-	setFileContent(main_fname, javaList2String(gcontext.main_file_text, "}\n"));
+	writeJavaSource(gcontext, main_fname, javaList2String(gcontext.main_file_text, "}\n"));
+	sources_list_file = pathCombine(package_path, "sources");
+	setFileContent(sources_list_file, javaList2String(gcontext.to_compile, ""));
 
 	callback();
 }

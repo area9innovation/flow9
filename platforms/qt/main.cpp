@@ -11,6 +11,11 @@
 #include "qt-backend/RunParallel.h"
 #include "qt-backend/QWebSocketSupport.h"
 
+#ifdef FLOW_MEDIARECORDER
+#include "qt-backend/QMediaStreamSupport.h"
+#include "qt-backend/QMediaRecorderSupport.h"
+#endif
+
 #include "utils/FileLocalStore.h"
 
 #ifdef FLOW_DEBUGGER
@@ -464,6 +469,10 @@ int main(int argc, char *argv[])
     FileLocalStore LocalStore(&FlowRunner);
     DatabaseSupport DbManager(&FlowRunner);
     StartProcess ProcStarter(&FlowRunner);
+#ifdef FLOW_MEDIARECORDER
+    QMediaStreamSupport MediaStream(&FlowRunner, app->applicationDirPath());
+    QMediaRecorderSupport MediaRecorder(&FlowRunner, app->applicationDirPath());
+#endif
 
 #ifdef HANDLE_SIGSEGV
     main_runner = &FlowRunner;

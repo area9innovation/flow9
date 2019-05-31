@@ -140,15 +140,15 @@ public final class FastCgi extends NativeHost {
 	    return null;
 	}
     }
-    private static String[] emptyarr = new String[0];
+    private static String[][] emptyarr = new String[0][];
     private static String processRequest(byte[] data,
 					 HashMap<String, String> properties,
 					 Func5<String, String, String, String, String, Object[]> callback,
 					 Func0<String> onError) throws IOException {
 
-	ArrayList<String> callbackParams = new ArrayList<String>();
+	ArrayList<String[]> callbackParams = new ArrayList<String[]>();
 
-	String[] props = null;
+	String[][] props = null;
 	
         if (properties == null) {
 	    return onError.invoke();
@@ -165,8 +165,7 @@ public final class FastCgi extends NativeHost {
 
             for (Map.Entry<String, String> stringStringEntry : properties.entrySet()) {
 
-		callbackParams.add(stringStringEntry.getKey());
-		callbackParams.add(stringStringEntry.getValue());
+		callbackParams.add(new String[] {stringStringEntry.getKey(), stringStringEntry.getValue()});
             }
 
 	    props = callbackParams.toArray(emptyarr);

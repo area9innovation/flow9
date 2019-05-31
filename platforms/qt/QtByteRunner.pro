@@ -120,9 +120,9 @@ win32 {
     QMAKE_POST_LINK = windeployqt $${DEPLOY_TARGET}
 
     contains(QMAKE_TARGET.arch, x86_64) {
-        QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${PWD}/win32-libs/bin64/*)) $${DEPLOY_DIR};
+        QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${PWD}/win32-libs/bin64/*)) $${DEPLOY_DIR}
     } else {
-        QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${PWD}/win32-libs/bin/*)) $${DEPLOY_DIR};
+        QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${PWD}/win32-libs/bin/*)) $${DEPLOY_DIR}
     }
 }
 
@@ -194,9 +194,9 @@ HEADERS  += \
 # Asmjit
 
 CONFIG(use_jit) {
-	DEFINES += FLOW_JIT
-	DEFINES += ASMJIT_STATIC
-	DEFINES += ASMJIT_DISABLE_COMPILER
+        DEFINES += FLOW_JIT
+        DEFINES += ASMJIT_STATIC
+        DEFINES += ASMJIT_DISABLE_COMPILER
 
         SOURCES += ../common/cpp/core/JitProgram.cpp
         HEADERS += ../common/cpp/core/JitProgram.h
@@ -308,3 +308,100 @@ CONFIG(use_gui) {
 OTHER_FILES += \
     QtByteRunner.pro.user \
     readme.txt
+
+# MediaRecorder
+if(false) { # true to put MediaRecorder on
+    DEFINES += FLOW_MEDIARECORDER
+
+    SOURCES+= ../common/cpp/utils/MediaRecorderSupport.cpp \
+        ../common/cpp/utils/MediaStreamSupport.cpp \
+        ../common/cpp/utils/WebRTCSupport.cpp \
+        qt-backend/QMediaRecorderSupport.cpp \
+        qt-backend/QMediaStreamSupport.cpp
+
+
+    HEADERS += ../common/cpp/utils/MediaRecorderSupport.h \
+        ../common/cpp/utils/MediaStreamSupport.h \
+        ../common/cpp/utils/WebRTCSupport.h \
+        qt-backend/QMediaRecorderSupport.h \
+        qt-backend/QMediaStreamSupport.h
+
+    macx {
+        SOURCES += qt-backend/macos/VideoDevicesControl.mm
+        HEADERS += qt-backend/macos/VideoDevicesControl.h
+
+        FRAMEWORKS_FOLDER = /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks
+        INCLUDEPATH += $${FRAMEWORKS_FOLDER}/AVFoundation.framework/Headers \
+                    $${FRAMEWORKS_FOLDER}/CoreMedia.framework/Headers
+        LIBS += -F$${FRAMEWORKS_FOLDER} \
+                -framework AVFoundation \
+                -framework CoreMedia \
+                -framework Cocoa
+
+        INCLUDEPATH += /Library/Frameworks/GStreamer.framework/Headers
+        LIBS += -F/Library/Frameworks -framework GStreamer
+        exists($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks/GStreamer.framework) {}
+        else {
+            exists($$shell_quote($$shell_path($${PWD}/GeneratedFiles/GStreamer.framework))) {}
+            else {
+                QMAKE_POST_LINK += & sh $$shell_quote($$shell_path($${PWD}/mediarecorder.sh))
+            }
+            QMAKE_POST_LINK += & mkdir -p $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks/GStreamer.framework))
+            QMAKE_POST_LINK += & cp -a $$shell_quote($$shell_path($${PWD}/GeneratedFiles/GStreamer.framework)) \
+                                $$shell_quote($$shell_path($${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/Frameworks))
+
+        }
+        QMAKE_POST_LINK += & install_name_tool -change \
+                       /Library/Frameworks/GStreamer.framework/Versions/1.0/lib/GStreamer \
+                        @executable_path/../Frameworks/GStreamer.framework/Versions/1.0/lib/GStreamer \
+                        $${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}/Contents/MacOS/$${TARGET}
+    }
+
+    win32 {
+        contains(QMAKE_TARGET.arch, x86_64) {
+            GstreamerDir=$$(GSTREAMER_1_0_ROOT_X86_64)
+        } else {
+            GstreamerDir=$$(GSTREAMER_1_0_ROOT_X86)
+        }
+
+        INCLUDEPATH += $${GstreamerDir}include/gstreamer-1.0
+        INCLUDEPATH += $${GstreamerDir}include/glib-2.0
+        INCLUDEPATH += $${GstreamerDir}lib/glib-2.0/include
+        INCLUDEPATH += $${GstreamerDir}lib/gstreamer-1.0/include
+
+        LIBS += -L$${GstreamerDir}lib/ -lgstreamer-1.0 -lgstapp-1.0 -lgstbase-1.0 -lgstvideo-1.0 -lgobject-2.0 -lglib-2.0
+
+        PLUGINS_DIR = $${DEPLOY_DIR}/gst-plugins
+        exists(PLUGINS_DIR) {}
+        else {
+            QMAKE_POST_LINK += & mkdir $$shell_quote($$shell_path($${PLUGINS_DIR}))
+        }
+
+        GST_PLUGINS = app \
+            audioconvert \
+            coreelements \
+            directsoundsrc \
+            isomp4 \
+            openh264 \
+            videoconvert \
+            videoparsersbad \
+            voaacenc \
+            winks
+        for(plugin, GST_PLUGINS) {
+            QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${GstreamerDir}/lib/gstreamer-1.0/libgst$${plugin}.dll)) $$shell_quote($$shell_path($${PLUGINS_DIR}))
+        }
+
+        GST_LIBS = libgstreamer-1.0-0.dll \
+            libgstapp-1.0-0.dll \
+            libgstbase-1.0-0.dll \
+            libwinpthread-1.dll \
+            libintl-8.dll \
+            libgmodule-2.0-0.dll \
+            libgobject-2.0-0.dll \
+            libffi-7.dll \
+            libglib-2.0-0.dll
+        for(filename, GST_LIBS) {
+            QMAKE_POST_LINK += & copy $$shell_quote($$shell_path($${GstreamerDir}lib/$${filename})) $$shell_quote($$shell_path($${DEPLOY_DIR}))
+        }
+    }
+}

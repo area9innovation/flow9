@@ -526,7 +526,7 @@ order using a special semantic action `buildSub` (we'll define it later):
 
 	exp = int:i sub*:is {buildSub(:i, :is)};
 	sub = '-' int:t { :t };
-	int = digit-$d { Int(s2i($d)) };
+	int = digit+$d { Int(s2i($d)) };
 	digit = '0'-'9';
 
 Let's see how it will parse the same input. The first integer is parsed in the same way:

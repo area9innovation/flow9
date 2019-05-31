@@ -300,19 +300,19 @@ void GLTextClip::layoutTextWrapLines()
 
                 if (*layout->getEndPos() != *ctexti) {
                     ++*wpos;
-                    for (; *wpos != *strEnd; ++*wpos) {
+                    for (; *wpos != *ctexti; ++*wpos) {
                         ucs4_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
                     }
                     wpos = wpos->cloneReversed();
 
-                    if (*wpos != *strEnd)
-                        ++*wpos;
+                    if (*wpos != *ctexti)
+                    	++*wpos;
                     else if (on_new_line)
-                        wpos = layout->getEndPos();
+                    	wpos = layout->getEndPos();
                 } else if (on_new_line) {
-                    wpos = strBegin->clone();
+                    wpos = ctexti->clone();
                     ++*wpos;
                 }
 

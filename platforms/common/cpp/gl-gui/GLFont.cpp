@@ -795,10 +795,8 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     GLFont::GlyphInfo *info = NULL, *prev = NULL;
     shared_ptr<Utf32InputIterator> strIter;
     shared_ptr<Utf32InputIterator> strEnd;
-    shared_ptr<Utf32InputIterator> strRevStart(begin.cloneReversed());
-    shared_ptr<Utf32InputIterator> strRevEnd(begin.cloneReversed());
-    strRevStart->seekEnd();
-    strRevEnd->seekEnd();
+    shared_ptr<Utf32InputIterator> strRevStart(end.cloneReversed());
+    shared_ptr<Utf32InputIterator> strRevEnd(end.cloneReversed());
     bool (*isReverse)(ucs4_char code) = rtl? isLtrChar : isRtlChar;
     bool (*isDirect)(ucs4_char code) = rtl? isRtlChar : isLtrChar;
 
@@ -810,12 +808,11 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
     if (rtl) {
         strIter = begin.cloneReversed();
         strIter->seekBegin();
-        strEnd = begin.cloneReversed();
+        strEnd = end.cloneReversed();
     } else {
         strIter = begin.clone();
-        strEnd = begin.clone();
+        strEnd = end.clone();
     }
-    strEnd->seekEnd();
 
     shared_ptr<Utf32InputIterator> leftPos(strEnd->clone()); // Setting to End state, so connecting algo won't connect left.
     shared_ptr<Utf32InputIterator> rightPos(strIter->clone());
@@ -920,7 +917,10 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             float new_cursor = std::max(pos + g_size + spacing * (*strProc != *strEnd), cursor);
 
             if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) {
-                strIter = strProc;
+                // Step back hence this char overflows.
+                strIter = strProc->cloneReversed();
+                ++*strIter;
+                strIter = strIter->cloneReversed();
                 break;  // This quits layout cycle.
             }
 
