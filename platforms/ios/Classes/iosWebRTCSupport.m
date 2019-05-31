@@ -205,7 +205,7 @@ void iosWebRTCSupport::makeSenderFromStream(unicode_string serverUrl, unicode_st
     FlowNativeMediaStream* flowMediaStream = RUNNER->GetNative<FlowNativeMediaStream*>(stream);
     
     NSURL *url = [[NSURL alloc] initWithString:UNICODE2NS(serverUrl)];
-    SocketManager *manager = [[SocketManager alloc] initWithSocketURL:url config:@{@"log": @YES, @"compress": @YES}];
+    SocketManager *manager = [[SocketManager alloc] initWithSocketURL:url config:@{@"log": @NO, @"compress": @YES}];
     SocketIOClient *socket = manager.defaultSocket;
     
     RTCPeerConnectionManager *peerConnectionManager = [[RTCPeerConnectionManager alloc]

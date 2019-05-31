@@ -10,17 +10,20 @@
     self.flowMediaStream = flowMediaStream;
     self.flowMediaStream->retain();
     
+    CoreImageContext = [[CIContext contextWithOptions: nil] retain];
+    
     RUN_IN_MAIN_THREAD(^{
         on_success(self.width, self.height);
         if ([[flowMediaStream->mediaStream videoTracks] count] != 0) {
             self.videoRenderer = [[FlowRTCVideoRenderer alloc] initWithFrameListener:^void(RTCVideoFrame *frame) {
                 RUN_IN_MAIN_THREAD(^{
-                    CGImageRef cgImage = [self.videoRenderer convertVideoFrame:frame];
-                    int width = CGImageGetWidth(cgImage);
-                    int height = CGImageGetHeight(cgImage);
-                    if(self.width != width || self.height != height) {
-                        self.width = width;
-                        self.height = height;
+                    CGSize rotatedSize = [FlowRTCVideoRenderer getRotatedFrameSize:frame];
+                    
+                    CGImageRef cgImage = [CoreImageContext createCGImage:[FlowRTCVideoRenderer videoFrame2CIImage:frame]
+                                                                fromRect:CGRectMake(0, 0, rotatedSize.width, rotatedSize.height)];
+                    if(self.width != rotatedSize.width || self.height != rotatedSize.height) {
+                        self.width = rotatedSize.width;
+                        self.height = rotatedSize.height;
                         on_dimensions_changed(self.width, self.height);
                     }
                     
