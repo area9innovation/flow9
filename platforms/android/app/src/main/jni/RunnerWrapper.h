@@ -96,7 +96,6 @@ public:
     void deliverVideoDuration(jlong clip, jlong duration);
     void deliverVideoPosition(jlong clip, jlong length);
     void deliverVideoPlayStatus(jlong clip, jint event);
-    void setVideoRotation(jlong clip, jint angle);
     void setVideoExternalTextureId(jlong clip, jint id);
 
     void deliverCameraError(jlong clip_id);
