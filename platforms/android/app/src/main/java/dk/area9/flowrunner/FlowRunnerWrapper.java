@@ -934,12 +934,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     }
 
     private native void nDeliverVideoPosition(long ptr, long id, long position);
-    
-    public synchronized void setVideoRotation(long id, int angle) {
-        nSetVideoRotation(cPtr(), id, angle);
-    }
-
-    private native void nSetVideoRotation(long ptr, long id, long angle);
 
     public synchronized void setVideoExternalTextureId(long id, int texture_id) {
         nSetVideoExternalTextureId(cPtr(), id, texture_id);

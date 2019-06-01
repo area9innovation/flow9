@@ -640,12 +640,6 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverVideoPlayStatus
     WRAPPER(getRenderer()->deliverVideoPlayStatus(id, event));
 }
 
-NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetVideoRotation
-  (JNIEnv *env, jobject obj, jlong ptr, jlong id, jint angle)
-{
-    WRAPPER(getRenderer()->setVideoRotation(id, angle));
-}
-
 NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nSetVideoExternalTextureId
   (JNIEnv *env, jobject obj, jlong ptr, jlong id, jint texture_id)
 {
@@ -1417,19 +1411,6 @@ void AndroidRenderSupport::deliverVideoPosition(jlong clip_id, jlong position)
 void AndroidRenderSupport::deliverVideoPlayStatus(jlong clip_id, jint event)
 {
     dispatchVideoPlayStatus((GLClip*)clip_id, event);
-}
-
-void AndroidRenderSupport::setVideoRotation(jlong clip_id, jint angle)
-{
-	GLVideoClip * clip = (GLVideoClip*)clip_id;
-    FlowScreenRotation rotate = FlowRotation0;
-    switch(angle) {
-        case 0 : rotate = FlowRotation0; break;
-        case 90 : rotate = FlowRotation90; break;
-        case 180 : rotate = FlowRotation180; break;
-        case 270 : rotate = FlowRotation270; break;
-    }
-	clip->setRotation(rotate);
 }
 
 void AndroidRenderSupport::setVideoExternalTextureId(jlong clip_id, jint texture_id)

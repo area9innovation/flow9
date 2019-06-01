@@ -32,13 +32,12 @@
 - (void) dealloc {
     if (RenderingContext != nil) {
         CGContextRelease(RenderingContext);
-        [CoreImageContext release];
     }
+    [CoreImageContext release];
     [super dealloc];
 }
 
 - (void) renderFrameImage: (CGImageRef) cgi {
-    
     CGRect text_rect = CGRectMake(0, 0, CGBitmapContextGetWidth(RenderingContext), CGBitmapContextGetHeight(RenderingContext));
     CGContextDrawImage(RenderingContext, text_rect, cgi);
     VideoTextureBitmap->invalidate();

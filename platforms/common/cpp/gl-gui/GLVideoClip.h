@@ -39,7 +39,6 @@ protected:
     GLTextureImage::Ptr texture_image;
 
     ivec2 size;
-    vec2 rotation_offset;
 
     unicode_string name;
     int media_stream_id;
@@ -118,8 +117,6 @@ public:
     void setVideoTextureImage(GLTextureImage::Ptr image);
 
     void setFocus(bool focus);
-
-    void setRotation(FlowScreenRotation rotation);
 
     DEFINE_FLOW_NATIVE_OBJECT(GLVideoClip, GLClip)
 
