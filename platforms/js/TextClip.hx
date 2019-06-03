@@ -470,6 +470,8 @@ class TextClip extends NativeWidgetClip {
 				addChild(textClip);
 			}
 
+			textClip.text = texts[0][0];
+			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
