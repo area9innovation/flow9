@@ -7,9 +7,9 @@ export {
 }
 
 fimodule2flowsrc(m : FiModule) -> string {
-	toplevel = fold(m.functions, 
+	toplevel = fold(m.natives, 
 		 fold(m.globalVars, 
-			fold(m.natives, 
+			fold(m.functions, 
 				fold(m.structs, 
 					fold(m.unions, 
 						makeTree(), 
@@ -17,11 +17,11 @@ fimodule2flowsrc(m : FiModule) -> string {
 					),
 					\acc, s : FiToplevel -> setTree(acc, s.name, s)
 				),
-				\acc, n : FiToplevel -> setTree(acc, n.name, n)
+				\acc, f : FiToplevel -> setTree(acc, f.name, f)
 			),
 			\acc, v : FiToplevel -> setTree(acc, v.name, v)
 		), 
-		\acc, f : FiToplevel -> setTree(acc, f.name, f)
+		\acc, n : FiToplevel -> setTree(acc, n.name, n)
 	);
 	exports_set = buildSet(m.exports);
 
@@ -50,19 +50,13 @@ fitoplevel2flowsrc(name : string, toplevel : Tree<string, FiToplevel>) -> string
 					name + fitype2flowsrc(type, true) + " {\n" + 
 						indentLines(fiexp2flowsrc(lambda.body, makeSet()), 1) + 
 					"\n}\n";
-				FiGlobalVar(__, value, __, __, __):
-					name + " = " + fiexp2flowsrc(value, makeSet()) + ";\n";
+				FiGlobalVar(__, value, type, __, __):
+					name + " : " + fitype2flowsrc(type, false) + " = " + fiexp2flowsrc(value, makeSet()) + ";\n";
 				FiNativeDec(__, io, type, nativeName, __, __, __):
 					"native " + name + " : " + (if (io) "io " else "") + fitype2flowsrc(type, true) + " = " + nativeName + ";\n";
 				FiTypeStruct(__, typars, args, __): {
-					header = name /*+ 
-						if (length(typars) > 0) 
-							"<" + 
-								strGlue(map(typars, \typar -> fitype2flowsrc(typar, false)), ", ") 
-							+ ">" 
-						else ""*/;
 					if (length(args) > 1) {
-						header + "(\n" + 
+						name + "(\n" + 
 						strGlue(
 							map(args,
 								\arg ->
@@ -72,11 +66,11 @@ fitoplevel2flowsrc(name : string, toplevel : Tree<string, FiToplevel>) -> string
 							",\n"
 						) + "\n);\n";
 					} else if (length(args) == 1) {
-						header + "(" + (if (args[0].ismutable) "mutable " else "") + 
+						name + "(" + (if (args[0].ismutable) "mutable " else "") + 
 							args[0].name + " : " + fitype2flowsrc(args[0].type, true)
 						+ ");\n"
 					} else {
-						header + "();\n"
+						name + "();\n"
 					}
 				}
 				FiTypeUnion(__, typars, typenames, __): {
@@ -95,7 +89,11 @@ fitoplevel2flowsrc(name : string, toplevel : Tree<string, FiToplevel>) -> string
 }
 
 fiexp2flowsrc(e : FiExp, switch_vars : Set<string>) -> string {
-	wrapper = \s -> if (strContains(s, ";")) "{\n" + indentLines(s, 1) + "\n}" else s;
+	wrapper = \s -> if (strContains(s, ";")) {
+		if (!(startsWith(s, "{") && endsWith(s, "}"))) {
+			"{\n" + indentLines(s, 1) + "\n}"
+		} else s;
+	} else s;
 	args_src = \args -> {
 		args_src = map(args, \arg -> wrapper(fiexp2flowsrc(arg, switch_vars)));
 		if (exists(args_src, \arg_src -> strContains(arg_src, ";"))) {
@@ -131,7 +129,9 @@ fiexp2flowsrc(e : FiExp, switch_vars : Set<string>) -> string {
 				), 1) + 
 			"\n}";
 		FiLambda(args, body, __, __): 
-			"\\" + strGlue(map(args, \arg -> arg.name + " : " + fitype2flowsrc(arg.type, false)), ", ") + " -> " + wrapper(fiexp2flowsrc(body, switch_vars));
+			"(\\" + strGlue(map(args, \arg -> arg.name + (if (isPrimitiveType(arg.type)) " : " + fitype2flowsrc(arg.type, false) else "")), ", ") + 
+			" -> " + wrapper(fiexp2flowsrc(body, switch_vars)) + 
+			")";
 		FiLet(name, t, e1, e2, __, __): {
 			let_stat = if (name == "__" || containsSet(switch_vars, name)) "" else 
 			name + " : " + fitype2flowsrc(t, false) + " = " + removeNewLine(wrapper(fiexp2flowsrc(e1, switch_vars))) + ";\n";
@@ -163,12 +163,12 @@ fiexp2flowsrc(e : FiExp, switch_vars : Set<string>) -> string {
 				FcRefPrim():   "(ref " + fiexp2flowsrc(es[0], switch_vars) + ")";
 				FcStructPrim(struct_name): 
 					struct_name + "(" + args_src(es) + ")";
-				FcFieldPrim(name): fiexp2flowsrc(es[0], switch_vars) + "." + name;
+				FcFieldPrim(name):  fiexp2flowsrc(es[0], switch_vars) + "." + name;
 				FcSetMutablePrim(name):
-					"(" + fiexp2flowsrc(es[0], switch_vars) + "." + name + " := " + fiexp2flowsrc(es[1], switch_vars) + ")";
+					"(" + fiexp2flowsrc(es[0], switch_vars) + ")." + name + " ::= " + fiexp2flowsrc(es[1], switch_vars);
 				FcCreateClosurePrim(structName, functionName): "??..."; // TODO
-				FcQuote():   "@" + fiexp2flowsrc(es[0], switch_vars); // TODO
-				FcUnquote(): "$" + fiexp2flowsrc(es[0], switch_vars); // TODO
+				FcQuote():   "(@" + fiexp2flowsrc(es[0], switch_vars) + ")"; // TODO
+				FcUnquote(): "($" + fiexp2flowsrc(es[0], switch_vars) + ")"; // TODO
 			}
 		FiVar(name, __, __): name;
 		FiRequire(flowfile, ex, type, start): "require " + flowfile;
@@ -176,6 +176,18 @@ fiexp2flowsrc(e : FiExp, switch_vars : Set<string>) -> string {
 	}
 }
 
+isPrimitiveType(t : FiType) -> bool {
+	switch (t) {
+		FiTypeVoid():   true;
+		FiTypeBool():   true;
+		FiTypeInt():    true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+		FiTypeFlow():   true;
+		FiTypeNative(): true;
+		default:        false;
+	}
+}
 
 double2flowsrc(d : double) -> string {
 	s = d2s(d);
@@ -238,8 +250,7 @@ fitype2flowsrc(t : FiType, in_decl : bool) -> string {
 			}
 		}
 		FiTypeArray(arr_tp): "[" + fitype2flowsrc(arr_tp, in_decl) + "]";
-		FiTypeRef(ref_tp): 
-			"ref " + fitype2flowsrc(ref_tp, in_decl)
+		FiTypeRef(ref_tp):   "ref " + fitype2flowsrc(ref_tp, in_decl);
 	}
 }
 
