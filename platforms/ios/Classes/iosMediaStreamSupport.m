@@ -8,7 +8,6 @@
 - (id) initWithFrameListener:(void (^)(RTCVideoFrame*)) frameListener {
     self = [super init];
     self.frameListener = frameListener;
-    self.renderingContext = [CIContext contextWithOptions:nil];
     return self;
 }
 
@@ -20,14 +19,17 @@
     self.frameListener(frame);
 }
 
-- (CGImageRef) convertVideoFrame:(RTCVideoFrame*) frame {
++ (CGSize) getRotatedFrameSize:(RTCVideoFrame*) frame {
     int rotatedWidth = frame.width;
     int rotatedHeight = frame.height;
     if(frame.rotation % 180 != 0) {
         rotatedWidth = frame.height;
         rotatedHeight = frame.width;
     }
-    
+    return CGSizeMake(rotatedWidth, rotatedHeight);
+}
+
++ (CIImage*) videoFrame2CIImage:(RTCVideoFrame*) frame {
     RTCCVPixelBuffer* remotePixelBuffer = (RTCCVPixelBuffer *)frame.buffer;
     CVPixelBufferRef pixelBuffer = remotePixelBuffer.pixelBuffer;
     CIImage *ciImage = [CIImage imageWithCVPixelBuffer:pixelBuffer];
@@ -39,15 +41,8 @@
         case RTCVideoRotation_270: orientation = kCGImagePropertyOrientationLeft; break;
     }
     ciImage = [ciImage imageByApplyingOrientation:orientation];
-    CGImageRef cgImage = [self.renderingContext
-                          createCGImage:ciImage
-                          fromRect:CGRectMake(0,0, rotatedWidth, rotatedHeight)];
-    return cgImage;
-}
-
--(void) dealloc {
-    [self.renderingContext release];
-    [super dealloc];
+    
+    return ciImage;
 }
 
 @end
