@@ -44,61 +44,73 @@ class HaxeRuntime {
 	}
 
   static public function compareEqual(a : Dynamic, b : Dynamic) : Bool {
-    // Modelled after https://github.com/epoberezkin/fast-deep-equal/blob/master/index.js
+	// Modelled after https://github.com/epoberezkin/fast-deep-equal/blob/master/index.js
 #if (js)
-    untyped __js__("
+	untyped __js__("
 if (a === b) return true;
-    var isArray = Array.isArray;
-    var keyList = Object.keys;
-    var hasProp = Object.prototype.hasOwnProperty;
 
-    if (a && b && typeof a == 'object' && typeof b == 'object') {
-        var arrA = isArray(a)
-          , arrB = isArray(b)
-          , i
-          , length
-          , key;
+	var isArray = Array.isArray;
+	var keyList = Object.keys;
+	var hasProp = Object.prototype.hasOwnProperty;
 
-    if (arrA && arrB) {
-      length = a.length;
-      if (length != b.length) return false;
-      for (i = length; i-- !== 0;)
-        if (!HaxeRuntime.compareEqual(a[i], b[i])) return false;
-      return true;
-    }
+	if (a && b && typeof a == 'object' && typeof b == 'object') {
+		var arrA = isArray(a)
+		  , arrB = isArray(b)
+		  , i
+		  , length
+		  , key;
 
-    if (arrA != arrB) return false;
+	if (arrA && arrB) {
+	  length = a.length;
+	  if (length != b.length) return false;
+	  for (i = length; i-- !== 0;)
+		if (!HaxeRuntime.compareEqual(a[i], b[i])) return false;
+	  return true;
+	}
+
+	if (arrA != arrB) return false;
+
+	var result = false;
 ");
 #if (readable)
-    untyped __js__("
-    if (hasProp.call(a, '_name') && hasProp.call(b, '_name')) {
-        if (a._name !== b._name) return false
+	untyped __js__("
+	if (hasProp.call(a, '_name') && hasProp.call(b, '_name')) {
+		if (a._name !== b._name) {
+			return false;
+		} else {
+			result = true;
+		}
 ");
 #else
-    untyped __js__("
-    if (hasProp.call(a, '_id') && hasProp.call(b, '_id')) {
-        if (a._id !== b._id) return false
+	untyped __js__("
+	if (hasProp.call(a, '_id') && hasProp.call(b, '_id')) {
+		if (a._id !== b._id) {
+			return false;
+		} else {
+			result = true;
+		}
 ");
 #end
-    untyped __js__("
-        var keys = keyList(a);
-        length = keys.length;
+	untyped __js__("
+		var keys = keyList(a);
+		length = keys.length;
 
-        for (i = 1; i < length; i++) {
-            key = keys[i];
-            if (!HaxeRuntime.compareEqual(a[key], b[key])) return false;
-        }
-    }
+		for (i = 1; i < length; i++) {
+			key = keys[i];
+			if (!HaxeRuntime.compareEqual(a[key], b[key])) return false;
+		}
+	}
 
-    if (hasProp.call(a, '__v') && hasProp.call(b, '__v')) {
-        return false;
-    }
-    return true;
+	if (hasProp.call(a, '__v') && hasProp.call(b, '__v')) {
+		return false;
+	}
+
+	return result;
 }
 ");
-    return false;
+	return false;
 #else
-    return compareByValue(a, b) == 0;
+	return compareByValue(a, b) == 0;
 #end
   }
 	static public function compareByValue(o1 : Dynamic, o2 : Dynamic) : Int {
@@ -187,14 +199,14 @@ if (a === b) return true;
 	public static inline function isSameStructType(o1 : Dynamic, o2 : Dynamic) : Bool {
 		#if (js && readable)
 		  return !isArray(o1) && !isArray(o2) &&
-		       Reflect.hasField(o1, "_name") &&
-		       Reflect.hasField(o2, "_name") &&
-		       o1._name == o2._name;
+			   Reflect.hasField(o1, "_name") &&
+			   Reflect.hasField(o2, "_name") &&
+			   o1._name == o2._name;
 		#else
 		  return !isArray(o1) && !isArray(o2) &&
-		       Reflect.hasField(o1, "_id") &&
-		       Reflect.hasField(o2, "_id") &&
-		       o1._id == o2._id;
+			   Reflect.hasField(o1, "_id") &&
+			   Reflect.hasField(o2, "_id") &&
+			   o1._id == o2._id;
 		#end
 	}
 
@@ -308,7 +320,7 @@ if (a === b) return true;
 		}
 	}
 
-    #if (!neko && !cpp)
+	#if (!neko && !cpp)
 	private static function isValueFitInType(type : RuntimeType, value : Dynamic) {
 		switch (type) {
 			case RTArray(arrtype): {
@@ -369,7 +381,7 @@ if (a === b) return true;
 	#end
 	}
 
-    #if (!neko && !cpp)
+	#if (!neko && !cpp)
 	public static function typeOf(value : Dynamic) : RuntimeType {
 		if (value == null)
 			return RTVoid;
@@ -413,10 +425,10 @@ if (a === b) return true;
 
 	#if js
 	public static function mul_32(a, b) {
-	    var ah = (a >> 16) & 0xffff, al = a & 0xffff;
-	    var bh = (b >> 16) & 0xffff, bl = b & 0xffff;
-	    var high = ((ah * bl) + (al * bh)) & 0xffff;
-	    return 0xffffffff & ((high << 16) + (al * bl));
+		var ah = (a >> 16) & 0xffff, al = a & 0xffff;
+		var bh = (b >> 16) & 0xffff, bl = b & 0xffff;
+		var high = ((ah * bl) + (al * bh)) & 0xffff;
+		return 0xffffffff & ((high << 16) + (al * bl));
 	}
 	#end
 

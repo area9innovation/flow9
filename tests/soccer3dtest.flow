@@ -13,7 +13,8 @@ F3DEditorState(
 	axes : DynamicBehaviour<bool>,
 	grid : DynamicBehaviour<bool>,
 	boxes : DynamicBehaviour<bool>,
-	mutable ignoreUndo : bool
+	mutable ignoreUndo : bool,
+	mutable updateScene : bool
 );
 
 makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
@@ -38,7 +39,8 @@ makeF3DEditorState(manager : MaterialManager) -> F3DEditorState {
 		axesVisible,
 		gridVisible,
 		boxesVisible,
-		false
+		false,
+		true
 	)
 }
 
@@ -65,18 +67,18 @@ printF3DChildren(id : string, object : F3DNative) -> F3DNative {
 
 makeF3DTreeNode(
 	state : F3DEditorState,
-	id : string,
 	clip : native,
 	children : Transform<[MTreeNode]>
 ) -> MTreeNode {
 	sel = make(is3DTransformControlsAttached(state.stage, clip));
 	name = make(get3DObjectName(clip));
 
+	// println("makeF3DTreeNode");
+
 	MTreeNode(
 		get3DObjectId(clip),
 		\__ ->
 			MBaselineCols([
-				MText(id, [MCaptionSolid()]),
 				MConstruct(
 					[
 						\ -> add3DEventListener(clip, "attached", \ -> nextDistinct(sel, true)),
@@ -163,25 +165,24 @@ makeF3DTreeNode(
 
 makeF3DTree(
 	state : F3DEditorState,
-	id : string,
 	object : F3DNative
 ) -> Transform<MTreeNode> {
 	switch (object : F3DNative) {
 		F3DNativeScene(clip, items): {
 			map(get3DObjectStage(clip), \s -> state.stage ::= s);
 
-			const(makeF3DTreeNode(state, id, clip, fsubmapi(items, \i, it -> makeF3DTree(state, i2s(i), it))));
+			const(makeF3DTreeNode(state, clip, fsubmap(items, \it -> makeF3DTree(state, it))));
 		}
 		F3DNativeObject(clip): {
 			map(get3DObjectStage(clip), \s -> state.stage ::= s);
 
-			const(makeF3DTreeNode(state, id, clip, const([])));
+			const(makeF3DTreeNode(state, clip, const([])));
 		}
 		F3DNativeMutable(innerObject): {
-			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, id, it)));
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, it)));
 		}
 		F3DNativeOnLoad(innerObject, onLoad): {
-			makeF3DTree(state, id, innerObject)
+			makeF3DTree(state, innerObject)
 		}
 	}
 }
@@ -189,33 +190,9 @@ makeF3DTree(
 Point3D(x : double, y : double, z : double);
 
 makeF3DScene(state : F3DEditorState, node : MTreeOrderNode<string>) -> F3DNative {
-	children = fgetValue(node.children);
-	clip = get3DObjectById(state.stage, node.content)[0];
+	clips = get3DObjectById(state.stage, node.content);
 
-	position = Point3D(get3DObjectWorldX(clip), get3DObjectWorldY(clip), get3DObjectWorldZ(clip));
-	rotation = Point3D(get3DObjectWorldRotationX(clip), get3DObjectWorldRotationY(clip), get3DObjectWorldRotationZ(clip));
-	scale = Point3D(get3DObjectWorldScaleX(clip), get3DObjectWorldScaleY(clip), get3DObjectWorldScaleZ(clip));
-
-	F3DNativeOnLoad(
-		if (length(children) > 0) {
-			F3DNativeScene(clip, const(map(children, \c -> makeF3DScene(state, c))));
-		} else {
-			F3DNativeObject(clip);
-		},
-		\object -> {
-			set3DObjectWorldX(object, position.x);
-			set3DObjectWorldY(object, position.y);
-			set3DObjectWorldZ(object, position.z);
-
-			set3DObjectWorldRotationX(object, rotation.x);
-			set3DObjectWorldRotationY(object, rotation.y);
-			set3DObjectWorldRotationZ(object, rotation.z);
-
-			set3DObjectWorldScaleX(object, scale.x);
-			set3DObjectWorldScaleY(object, scale.y);
-			set3DObjectWorldScaleZ(object, scale.z);
-		}
-	)
+	F3DNativeScene(clips[0], fmap(node.children, \c -> makeF3DScene(state, c)))
 }
 
 addF3DNativeObject(state : F3DEditorState, clip : native, name : string) -> void {
@@ -225,33 +202,15 @@ addF3DNativeObject(state : F3DEditorState, clip : native, name : string) -> void
 		set3DObjectName(clip, name);
 
 		node = getValue(t[0].children)[0];
+		scene = get3DObjectById(state.stage, node.content)[0];
 
-		children = fgetValue(node.children);
-		sceneClip = get3DObjectById(state.stage, node.content)[0];
+		add3DChild(scene, clip);
 
-		next(
-			state.scene,
-			[
-				F3DNativeScene(
-					sceneClip,
-					const(
-						arrayPush(
-							map(children, \c -> makeF3DScene(state, c)),
-							F3DNativeOnLoad(
-								F3DNativeObject(clip),
-								\object -> {
-									attach3DTransformControls(state.stage, object);
+		attach3DTransformControls(state.stage, clip);
 
-									if (fgetValue(state.boxes)) {
-										attach3DBoxHelper(state.stage, object);
-									}
-								}
-							)
-						)
-					)
-				)
-			]
-		);
+		if (fgetValue(state.boxes)) {
+			attach3DBoxHelper(state.stage, clip);
+		}
 	}
 }
 
@@ -919,7 +878,7 @@ main() {
 		F3DChildren(
 			F3DScene(fmap(state.scene, \c -> F3DObject2Json(c, exportFn))),
 			\c -> {
-				next(state.tree, farray(makeF3DTree(state, "0", c)));
+				next(state.tree, farray(makeF3DTree(state, c)));
 
 				// printF3DChildren("0", c);
 				c;
@@ -949,6 +908,7 @@ main() {
 												"text",
 												\s -> {
 													next(state.scene, []);
+													state.updateScene ::= true;
 													next(state.scene, [F3DJsonObject(s)]);
 												},
 												println
@@ -1289,10 +1249,21 @@ main() {
 						MTreeHideSeparators(),
 						MTreeOrder(state.treeOrder),
 						MTreeOnOrderChange(\t -> {
-							if (length(t) > 0 && length(getValue(t[0].children)) > 0) {
+							// println(MTreeOrder2s(t));
+							// printCallstack();
+
+							if (state.updateScene && length(t) > 0 && length(getValue(t[0].children)) > 0) {
+								state.updateScene ::= false;
 								appendF3DUndo(state);
 
-								next(state.scene, [makeF3DScene(state, getValue(t[0].children)[0])]);
+								next(
+									state.scene,
+									[
+										F3DNativeMutable(fsubselect(state.treeOrder, FLift(\to -> {
+											fselect(to[0].children, FLift(\ch -> makeF3DScene(state, ch[0])))
+										})))
+									]
+								);
 							}
 						})
 					]

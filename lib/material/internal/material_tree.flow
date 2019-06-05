@@ -74,14 +74,14 @@ MTreeDragDropState(
 );
 
 fSelectionIndexes(children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
-	fsubmapi(children, \i, c -> fSelectionIndexes2(const([i]), c.children)) |> fconcatA
+	fsubmapi(children, \i, c -> fSelectionIndexes2(farray(i), c.children)) |> fconcatA
 }
 
 fSelectionIndexes2(index : Transform<[int]>, children : Transform<[MTreeNode<?>]>) -> Transform<[[int]]> {
 	fconcat(
 		farray(index),
 		fsubmapi(children, \i, c ->
-			fSelectionIndexes2(fselect(index, FLift(\id -> arrayPush(id, i))), c.children)
+			fSelectionIndexes2(farrayPush(index, i), c.children)
 		)
 		|> fconcatA
 	)
@@ -96,80 +96,22 @@ fItemsLength2(children : Transform<[MTreeNode<?>]>) -> Transform<int> {
 }
 
 MTreeNodes2MTreeOrderNodes(nodes : Transform<[MTreeNode<?>]>) -> Pair<Behaviour<[MTreeOrderNode<?>]>, () -> () -> void> {
-	subs = ref [];
-	disps = ref [];
-	created = ref false;
-
 	children = make([]);
-
-	subs :=
-		[
-			\ ->
-				fconnect(
-					fmap(nodes, \c -> {
-						s = MTreeNode2MTreeOrderNode(c);
-
-						if (^created) {
-							disps := arrayPush(^disps, s.second())
-						}
-
-						subs := arrayPush(^subs, s.second);
-						s.first;
-					}),
-					children
-				)
-		];
 
 	Pair(
 		children,
-		\ -> {
-			created := true;
-			disps := map(^subs, \s -> s());
-
-			\ -> {
-				applyall(^disps);
-				disps := [];
-				created := false;
-			}
-		}
+		\ -> fconnect(fmapu(nodes, MTreeNode2MTreeOrderNode), children)
 	)
 }
 
-MTreeNode2MTreeOrderNode(node : MTreeNode<?>) -> Pair<MTreeOrderNode<?>, () -> () -> void> {
-	subs = ref [];
-	disps = ref [];
-	created = ref false;
-
+MTreeNode2MTreeOrderNode(node : MTreeNode<?>) -> Pair<MTreeOrderNode<?>, [() -> void]> {
 	children = make([]);
-
-	subs :=
-		[
-			\ ->
-				fconnect(
-					fmap(node.children, \c -> {
-						s = MTreeNode2MTreeOrderNode(c);
-						if (^created) {
-							disps := arrayPush(^disps, s.second())
-						}
-						subs := arrayPush(^subs, s.second);
-						s.first;
-					}),
-					children
-				)
-		];
 
 	Pair(
 		MTreeOrderNode(node.content, children),
-		\ -> {
-			created := true;
-			disps := map(^subs, \s -> s());
-
-			\ -> {
-				applyall(^disps);
-				disps := [];
-				created := false;
-			}
-		}
+		[
+			fconnect(fmapu(node.children, MTreeNode2MTreeOrderNode), children)
+		]
 	)
 }
 
@@ -410,24 +352,18 @@ MTree2T(manager : MaterialManager, parent : MFocusGroup, m : MTree<?>, m2t : (Ma
 		parent,
 		fmap(children.first, \c -> c.content),
 		\index, __, __, p -> {
-			TSelect(
-				fselect2(children.first, index, FLift2(\c, i -> if (i >= 0 && length(c) > i) Some(c[i]) else None())),
-				\c ->
-					eitherMap(
-						c,
-						\cc ->
-							MTreeNode2T(
-								manager,
-								p,
-								state,
-								cc,
-								farray(index),
-								m2t,
-								const(showSeparators)
-							),
-						TEmpty()
-					)
-			);
+
+			TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
+				MTreeNode2T(
+					manager,
+					p,
+					state,
+					c,
+					farray(index),
+					m2t,
+					const(showSeparators)
+				)
+			});
 		}
 	)
 	|> TBorderBottom(1.)
@@ -786,27 +722,20 @@ MTreeNode2T(manager : MaterialManager, parent : MFocusGroup, state : MTreeState<
 					\index, __, __, p -> {
 						nextDistinct(expanded, true);
 
-						TSelect(
-							fselect2(children.first, index, FLift2(\c, i -> if (i >= 0 && length(c) > i) Some(c[i]) else None())),
-							\c ->
-								eitherMap(
-									c,
-									\cc ->
-										MTreeNode2T(
-											manager,
-											p,
-											state,
-											cc,
-											farrayPush(treeIndex, index),
-											m2t,
-											if (state.showSeparators)
-												flessi(index, fadditioni(childrenLength, const(-1)))
-											else
-												const(false)
-										),
-									TEmpty()
-								)
-						);
+						TSelect(fthrottle2(felementAt(children.first, index, const(getValue(children.first)[fgetValue(index)])), 33), \c -> {
+							MTreeNode2T(
+								manager,
+								p,
+								state,
+								c,
+								farrayPush(treeIndex, index),
+								m2t,
+								if (state.showSeparators)
+									flessi(index, fadditioni(childrenLength, const(-1)))
+								else
+									const(false)
+							)
+						});
 					}
 				)
 				|> (\t ->

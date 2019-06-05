@@ -1,5 +1,6 @@
 import rendersupport3d;
 import fform/fform;
+import fusion_utils;
 
 export {
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
@@ -280,29 +281,26 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onLoad : (native) -> [() -> void]) -> [() -> void] {
 	switch (object : F3DObject) {
 		F3DScene(objects) : {
-			clip = make3DScene();
+			scene = make3DScene();
 
 			concat(
-				onLoad(clip),
+				onLoad(scene),
 				[
-					makeSubscribeUns(objects, \ob ->
-						mapi(ob, \i, o ->
-							render3dform(
-								o,
-								stage,
-								transformControlsEnabled,
-								\c -> {
-									add3DChildAt(clip, c, i);
-
-									arrayPush(
-										addF3DMouseListeners(stage, c, transformControlsEnabled),
-										\ -> remove3DChild(clip, c)
-									)
-								}
-							)
+					fiteriu(objects, \index, o -> {
+						render3dform(
+							o,
+							stage,
+							transformControlsEnabled,
+							\c ->
+								concat(
+									addF3DMouseListeners(stage, c, transformControlsEnabled),
+									[
+										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
+										\ -> remove3DChild(scene, c)
+									]
+								)
 						)
-						|> concatA
-					)()
+					})
 				]
 			)
 		}
@@ -690,44 +688,21 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 			concat(
 				onLoad(scene),
 				[
-					makeSubscribeUns(objects, \ob -> {
-						newChildren = ref [];
-
-						mapi(ob, \i, o ->
-							render3dform(
-								o,
-								stage,
-								transformControlsEnabled,
-								\c -> {
-									currentChildren = map(get3DObjectChildren(scene), get3DObjectId);
-
-									refArrayPush(newChildren, get3DObjectId(c));
-
-									if (length(^newChildren) == length(ob) && length(ob) != length(currentChildren) + 1) {
-										iter(get3DObjectChildren(scene), \cc ->
-											if (!contains(^newChildren, get3DObjectId(cc))) {
-												remove3DChild(scene, cc)
-											}
-										);
-									}
-
-									if (!contains(currentChildren, get3DObjectId(c))) {
-										add3DChildAt(scene, c, i);
-
-										arrayPush(
-											addF3DMouseListeners(stage, c, transformControlsEnabled),
-											\ -> remove3DChild(scene, c)
-										)
-									} else {
-										add3DChildAt(scene, c, i);
-
-										[]
-									}
-								}
-							)
+					fiteriu(objects, \index, o -> {
+						render3dform(
+							o,
+							stage,
+							transformControlsEnabled,
+							\c ->
+								concat(
+									addF3DMouseListeners(stage, c, transformControlsEnabled),
+									[
+										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
+										// \ -> remove3DChild(scene, c) TODO:
+									]
+								)
 						)
-						|> concatA
-					})()
+					})
 				]
 			)
 		}
@@ -889,36 +864,20 @@ renderF3DMaterial(material : F3DMaterial) -> native {
 
 parseF3DNativeObject(object : native) -> Pair<F3DNative, [() -> void]> {
 	children = make(get3DObjectChildren(object));
-	uns = ref [];
+	uns = ref nop;
 
 	Pair(
-		F3DNativeMutable(fselect(children, FLift(\ch -> {
-			dispUnsA(uns);
-
-			if (length(ch) > 0) {
-				parsedChildren =
-					fold(ch, Pair([], []), \acc, c -> {
-						cc = parseF3DNativeObject(c);
-
-						Pair(arrayPush(acc.first, cc.first), concat(acc.second, cc.second));
-					});
-
-				uns := parsedChildren.second;
-
-				F3DNativeScene(object, const(parsedChildren.first));
-			} else {
-				F3DNativeObject(object);
-			}
-		}))),
+		F3DNativeScene(object, fmapu(children, parseF3DNativeObject)),
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
+				^uns();
 				newChildren = get3DObjectChildren(object);
 
 				if (map(getValue(children), get3DObjectId) != map(newChildren, get3DObjectId)) {
-					next(children, newChildren);
+					uns := interruptibleTimer(33, \ -> next(children, newChildren));
 				}
 			}),
-			\ -> dispUnsA(uns)
+			\ -> ^uns()
 		]
 	)
 }

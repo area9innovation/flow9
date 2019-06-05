@@ -71,6 +71,12 @@ class Object3DHelper {
 		return untyped parent.childrenMap;
 	}
 
+	public static function update3DChildren(parent : Object3D) : Void {
+		var childrenMap = get3DChildrenMap(parent);
+
+		parent.children = [for (value in childrenMap.iterator()) value];
+	}
+
 	public static function add3DChild(parent : Object3D, child : Object3D, ?invalidate : Bool = true) : Void {
 		var childrenMap = get3DChildrenMap(parent);
 
@@ -95,10 +101,6 @@ class Object3DHelper {
 
 	public static function add3DChildAt(parent : Object3D, child : Object3D, index : Int, ?invalidate : Bool = true) : Void {
 		if (child.parent != null) {
-			if (child.parent == parent) {
-				invalidate = false;
-			}
-
 			remove3DChild(child.parent, child, false);
 		}
 
@@ -112,9 +114,21 @@ class Object3DHelper {
 			childrenMap.set(index, child);
 			child.parent = parent;
 
-			for (k in childrenMap.keys()) {
-				parent.children[k] = childrenMap.get(k);
-			}
+			// Apply object world transform while adding to new parent
+
+			RenderSupport3D.set3DObjectWorldX(child, RenderSupport3D.get3DObjectX(child));
+			RenderSupport3D.set3DObjectWorldY(child, RenderSupport3D.get3DObjectY(child));
+			RenderSupport3D.set3DObjectWorldZ(child, RenderSupport3D.get3DObjectZ(child));
+
+			RenderSupport3D.set3DObjectWorldScaleX(child, RenderSupport3D.get3DObjectScaleX(child));
+			RenderSupport3D.set3DObjectWorldScaleY(child, RenderSupport3D.get3DObjectScaleY(child));
+			RenderSupport3D.set3DObjectWorldScaleZ(child, RenderSupport3D.get3DObjectScaleZ(child));
+
+			RenderSupport3D.set3DObjectWorldRotationX(child, RenderSupport3D.get3DObjectRotationX(child));
+			RenderSupport3D.set3DObjectWorldRotationY(child, RenderSupport3D.get3DObjectRotationY(child));
+			RenderSupport3D.set3DObjectWorldRotationZ(child, RenderSupport3D.get3DObjectRotationZ(child));
+
+			update3DChildren(parent);
 
 			var stage = getStage(parent);
 
@@ -122,17 +136,9 @@ class Object3DHelper {
 				for (subChild in child.children) {
 					if (untyped __instanceof__(subChild, Camera)) {
 						stage[0].setCamera(cast(subChild, Camera));
-						remove3DChild(child, subChild, false);
+						child.remove(subChild);
+						subChild.parent = null;
 					}
-				}
-			}
-
-			if (child.children.length > 0 && untyped __instanceof__(child.children[child.children.length - 1], Camera)) {
-				var stage = getStage(parent);
-
-				if (stage.length > 0) {
-					stage[0].setCamera(cast(child.children[child.children.length - 1], Camera));
-					remove3DChild(child, child.children[child.children.length - 1], false);
 				}
 			}
 
@@ -152,15 +158,11 @@ class Object3DHelper {
 	}
 
 	public static function remove3DChild(parent : Object3D, child : Object3D, ?invalidate : Bool = true) : Void {
-		var childrenMap = get3DChildrenMap(parent);
-
-		for (k in childrenMap.keys()) {
-			if (childrenMap.get(k) == child) {
-				childrenMap.remove(k);
-			}
+		if (child.parent != parent) {
+			return;
 		}
 
-		var stage = getStage(child);
+		var stage = getStage(parent);
 
 		if (stage.length > 0) {
 			untyped stage[0].objectCache.push(child);
@@ -170,8 +172,32 @@ class Object3DHelper {
 			}
 		}
 
+		var childrenMap = get3DChildrenMap(parent);
+
+		for (k in childrenMap.keys()) {
+			if (childrenMap.get(k) == child) {
+				childrenMap.remove(k);
+			}
+		}
+
+		// Save object world transform while removing from parent
+
+		RenderSupport3D.set3DObjectX(child, RenderSupport3D.get3DObjectWorldX(child));
+		RenderSupport3D.set3DObjectY(child, RenderSupport3D.get3DObjectWorldY(child));
+		RenderSupport3D.set3DObjectZ(child, RenderSupport3D.get3DObjectWorldZ(child));
+
+		RenderSupport3D.set3DObjectScaleX(child, RenderSupport3D.get3DObjectWorldScaleX(child));
+		RenderSupport3D.set3DObjectScaleY(child, RenderSupport3D.get3DObjectWorldScaleY(child));
+		RenderSupport3D.set3DObjectScaleZ(child, RenderSupport3D.get3DObjectWorldScaleZ(child));
+
+		RenderSupport3D.set3DObjectRotationX(child, RenderSupport3D.get3DObjectWorldRotationX(child));
+		RenderSupport3D.set3DObjectRotationY(child, RenderSupport3D.get3DObjectWorldRotationY(child));
+		RenderSupport3D.set3DObjectRotationZ(child, RenderSupport3D.get3DObjectWorldRotationZ(child));
+
 		parent.remove(child);
 		child.parent = null;
+
+		update3DChildren(parent);
 
 		if (invalidate) {
 			emitEvent(parent, "box");
@@ -198,25 +224,29 @@ class Object3DHelper {
 		}
 	}
 
-	public static function get3DObjectByUUID(parent : Object3D, id : String) : Array<Object3D> {
+	public static function get3DObjectByUUID(parent : Object3D, id : String, ?checkObjectCache : Bool = true) : Array<Object3D> {
 		if (parent.uuid == id) {
 			return [parent];
 		}
 
-		if (untyped parent.stage != null) {
-			var objectCache : Array<Object3D> = untyped parent.stage.objectCache;
+		if (checkObjectCache) {
+			var stage = getStage(parent);
 
-			for (child in objectCache) {
-				var object = get3DObjectByUUID(child, id);
+			if (stage.length > 0) {
+				var objectCache : Array<Object3D> = untyped stage[0].objectCache;
 
-				if (object.length > 0) {
-					return object;
+				for (child in objectCache) {
+					var object = get3DObjectByUUID(child, id, false);
+
+					if (object.length > 0) {
+						return object;
+					}
 				}
 			}
 		}
 
 		for (child in parent.children) {
-			var object = get3DObjectByUUID(child, id);
+			var object = get3DObjectByUUID(child, id, false);
 
 			if (object.length > 0) {
 				return object;
