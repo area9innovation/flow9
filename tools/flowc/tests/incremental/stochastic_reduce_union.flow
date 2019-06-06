@@ -43,15 +43,29 @@ reduceAUnionInModule(env : GenEnv, union : FiTypeUnion, removed_type : string, m
 		new_lambda = reduceAUnionInExp(env, union, removed_type, func.lambda);
 		if (func.lambda == new_lambda) false else {
 			println("\tmodule: " + m.fileinfo.flowfile + " changed");
-			modref := FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]);
+			new_func = FiFunctionDec(func with 
+				lambda = cast(new_lambda : FiExp -> FiLambda),
+				type = cast(fiExpType(new_lambda) : FiType -> FiTypeFunction)
+			);
+			modref := FiModule(m with 
+				functions = [new_func],
+				imports = generateImports(env, new_func)
+			);
 			true
 		}
 	} else if (length(m.globalVars) > 0) {
 		var = m.globalVars[0];
-		new_value = reduceAUnionInExp(env, union, removed_type, var.value);
+		new_value = reduceAUnionInExp1(env, union, removed_type, var.value, isUnion(var.type, union.name));
 		if (var.value == new_value) false else {
 			println("\tmodule: " + m.fileinfo.flowfile + " changed");
-			modref := FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]);
+			new_var = FiGlobalVar(var with 
+				value = new_value, 
+				type = fiExpType(new_value)
+			);
+			modref := FiModule(m with 
+				globalVars = [new_var],
+				imports = generateImports(env, new_var)
+			);
 			true
 		}
 	} else {
@@ -60,20 +74,37 @@ reduceAUnionInModule(env : GenEnv, union : FiTypeUnion, removed_type : string, m
 }
 
 reduceAUnionInExp(env : GenEnv, union : FiTypeUnion, removed_type : string, ex : FiExp) -> FiExp {
+	reduceAUnionInExp1(env, union, removed_type, ex, false)
+}
+
+reduceAUnionInExp1(env : GenEnv, union : FiTypeUnion, removed_type : string, ex : FiExp, union_caller : bool) -> FiExp {
+	is_union = \t -> isUnion(t, union.name);
 	switch(ex) {
-		FiLambda(__, body, __, __):
-			FiLambda(ex with body = reduceAUnionInExp(env, union, removed_type, body));
-		FiCall(f, args, __,__): 
-			FiCall(ex with
-				f = reduceAUnionInExp(env, union, removed_type, f),
-				args = map(args, \arg -> reduceAUnionInExp(env, union, removed_type, arg))
+		FiLambda(__, body, tp, __): {
+			new_body = reduceAUnionInExp1(env, union, removed_type, body, is_union(tp));
+			FiLambda(ex with 
+				body = new_body, 
+				type = FiTypeFunction(tp with returnType = fiExpType(new_body))
 			);
+		}
+		FiCall(f, args, __,__): {
+			new_f = reduceAUnionInExp1(env, union, removed_type, f, false);
+			FiCall(ex with
+				f = new_f,
+				args = map(args, \arg -> 
+					reduceAUnionInExp1(env, union, removed_type, arg, is_union(fiExpType(arg)))
+				),
+				type = cast(fiExpType(new_f) : FiType -> FiTypeFunction).returnType
+			);
+		}
 		FiVar(__, __,__): ex;
-		FiCallPrim(op, es, __,__): {
-			ret = FiCallPrim(ex with es = map(es, \e -> reduceAUnionInExp(env, union, removed_type, e)));
+		FiCallPrim(op, es, tp,__): {
+			ret = FiCallPrim(ex with 
+				es = map(es, \e -> reduceAUnionInExp1(env, union, removed_type, e, is_union(fiExpType(e))))
+			);
 			switch (op) {
 				FcStructPrim(name): {
-					if (name == removed_type) {
+					if (name == removed_type && (is_union(tp) || union_caller)) {
 						generateConstExpr(env, FiTypeName(union.name, []));
 					} else {
 						ret;
@@ -83,13 +114,25 @@ reduceAUnionInExp(env : GenEnv, union : FiTypeUnion, removed_type : string, ex :
 					ret;
 			}
 		}
-		FiLet(__, t, e1, e2, __,__): 
+		FiLet(__, t1, e1, e2, t2,__): {
+			new_e1 = reduceAUnionInExp1(env, union, removed_type, e1, is_union(t1));
+			new_e2 = reduceAUnionInExp1(env, union, removed_type, e2, is_union(t2));
 			FiLet(ex with 
-				e1 = reduceAUnionInExp(env, union, removed_type, e1),
-				e2 = reduceAUnionInExp(env, union, removed_type, e2),
+				e1 = new_e1,
+				e2 = new_e2,
+				type = fiExpType(new_e1),
+				type2 = fiExpType(new_e2)
 			);
+		}
 		default: {
 			ex;
 		}
 	}
+}
+
+isUnion(t : FiType, name : string) -> bool {
+	switch (t) {
+		FiTypeName(n, __): n == name;
+		default: false;
+	};
 }
