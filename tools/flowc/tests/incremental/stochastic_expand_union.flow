@@ -1,0 +1,66 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	expandAUnion(i : int, union : FiTypeUnion, generated : GenModules) -> [int];
+}
+
+expandAUnion(i : int, union : FiTypeUnion, generated : GenModules) -> [int] {
+	switch (generateTypeName(^(generated.env), i)) {
+		Some(new_type): {
+			if (exists(union.typenames, \typename -> typename.name == new_type.name)) [] else {
+				println("\ttype " + new_type.name + " is added to union " + union.name);
+				orig_module = ^(generated.modules[i]);
+				new_union = FiTypeUnion(union with typenames = concat(union.typenames, [new_type]));
+				generated.modules[i] := FiModule(orig_module with 
+					unions = [new_union],
+					imports = generateImports(^(generated.env), new_union)
+				);
+				generated.env := GenEnv(^(generated.env) with unions = setTree(^(generated.env).unions, union.name, new_union));
+				foldi(generated.modules, [i],
+					\j, acc, m -> {
+						if (expandAUnionInModule(^(generated.env), union.name, new_type, m)) {
+							concat(acc, [j])
+						} else {
+							acc
+						}
+					}
+				)
+			}
+		}
+		None(): [];
+	}
+}
+
+expandAUnionInModule(env : GenEnv, union : string, new_type : FiTypeName, modref : ref FiModule) -> bool {
+	m = ^modref;
+	if (length(m.structs) > 0) {
+		false
+	} else if (length(m.unions) > 0) {
+		false
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = expandAUnionInExp(env, union, new_type, func.lambda);
+		if (func.lambda == new_lambda) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]);
+			true
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = expandAUnionInExp(env, union, new_type, var.value);
+		if (var.value == new_value) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]);
+			true
+		}
+	} else {
+		false
+	}
+}
+
+expandAUnionInExp(env : GenEnv, union : string, new_type : FiTypeName, ex : FiExp) -> FiExp {
+	//TODO: a stub.
+	ex
+}
