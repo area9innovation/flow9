@@ -1,0 +1,66 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	renameAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> [int];
+}
+
+renameAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> [int] {
+	if (length(struct.args) == 0) [] else {
+		field_ind = randomInt(length(struct.args));
+		to_rename = struct.args[field_ind];
+		renamed = FiStructArg("f" + to_rename.name, to_rename.type, false);
+		println("\tfield " + to_rename.name + " of type " + prettyFiType(dummyPretty, to_rename.type, makeSet()) + " from struct " + struct.name + " is renamed to " + renamed.name);
+		new_struct = FiTypeStruct(
+			struct.name, [], 
+			fold(struct.args, [], \acc, arg -> if (arg == to_rename) concat(acc, [renamed]) else concat(acc, [arg])), -1
+		);
+		orig_module = ^(generated.modules[i]);
+		generated.modules[i] := FiModule(orig_module with 
+			structs = [new_struct],
+			imports = generateImports(^(generated.env), new_struct)
+		);
+		generated.env := GenEnv(^(generated.env) with structs = setTree(^(generated.env).structs, struct.name, new_struct));
+		foldi(generated.modules, [i],
+			\j, acc, m -> {
+				if (renameAStructFieldInModule(^(generated.env), struct.name, field_ind, renamed, m)) {
+					concat(acc, [j])
+				} else {
+					acc
+				}
+			}
+		)
+	}
+}
+
+renameAStructFieldInModule(env : GenEnv, struct : string, field_ind : int, renamed : FiStructArg, modref : ref FiModule) -> bool {
+	m = ^modref;
+	if (length(m.structs) > 0) {
+		false
+	} else if (length(m.unions) > 0) {
+		false
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = renameAStructFieldInExp(env, struct, field_ind, renamed, func.lambda);
+		if (func.lambda == new_lambda) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]);
+			true
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = renameAStructFieldInExp(env, struct, field_ind, renamed, var.value);
+		if (var.value == new_value) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]);
+			true
+		}
+	} else {
+		false
+	}
+}
+
+renameAStructFieldInExp(env : GenEnv, struct : string, field_ind : int, renamed : FiStructArg, ex : FiExp) -> FiExp {
+	ex
+}
