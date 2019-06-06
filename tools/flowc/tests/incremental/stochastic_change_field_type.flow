@@ -1,0 +1,109 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	changeAStructFieldType(i : int, struct : FiTypeStruct, generated : GenModules) -> [int];
+}
+
+changeAStructFieldType(i : int, struct : FiTypeStruct, generated : GenModules) -> [int] {
+	if (length(struct.args) == 0) [] else {
+		field_ind = randomInt(length(struct.args));
+		old_field = struct.args[field_ind];
+		new_field = FiStructArg(old_field.name, generateType(^(generated.env), i), false);
+		println("\tfield " + 
+			old_field.name + " of type " + prettyFiType(dummyPretty, old_field.type, makeSet()) + 
+			" in struct " + struct.name + " changes type to " +
+			prettyFiType(dummyPretty, new_field.type, makeSet())
+		);
+		new_struct = FiTypeStruct(
+			struct.name, [], 
+			fold(struct.args, [], \acc, arg -> concat(acc, [if (arg == old_field) new_field else arg])), -1
+		);
+		orig_module = ^(generated.modules[i]);
+		generated.modules[i] := FiModule(orig_module with 
+			structs = [new_struct],
+			imports = generateImports(^(generated.env), new_struct)
+		);
+		generated.env := GenEnv(^(generated.env) with structs = setTree(^(generated.env).structs, struct.name, new_struct));
+		foldi(generated.modules, [i],
+			\j, acc, m -> {
+				if (changeAStructFieldTypeInModule(^(generated.env), struct.name, field_ind, new_field, m)) {
+					concat(acc, [j])
+				} else {
+					acc
+				}
+			}
+		)
+	}
+}
+
+changeAStructFieldTypeInModule(env : GenEnv, struct : string, field_ind : int, new_field : FiStructArg, modref : ref FiModule) -> bool {
+	m = ^modref;
+	if (length(m.structs) > 0) {
+		false
+	} else if (length(m.unions) > 0) {
+		false
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, func.lambda);
+		if (func.lambda == new_lambda) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]);
+			true
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, var.value);
+		if (var.value == new_value) false else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			modref := FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]);
+			true
+		}
+	} else {
+		false
+	}
+}
+
+changeAStructFieldTypeInExp(env : GenEnv, struct : string, field_ind : int, new_field : FiStructArg, ex : FiExp) -> FiExp {
+	switch(ex) {
+		FiLambda(__, body, __, __):
+			FiLambda(ex with body = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, body));
+		FiCall(f, args, __,__): 
+			FiCall(ex with
+				f = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, f),
+				args = map(args, \arg -> changeAStructFieldTypeInExp(env, struct, field_ind, new_field, arg))
+			);
+		FiVar(__, __,__): ex;
+		FiCallPrim(op, es, __,__): {
+			es1 = map(es, \e -> changeAStructFieldTypeInExp(env, struct, field_ind, new_field, e));
+			new_es = switch (op) {
+				FcStructPrim(name): {
+					if (name == struct) {
+						foldi(es1, [], \i, acc, e -> 
+							concat(acc,[
+								if (i == field_ind) 
+									generateConstExpr(env, new_field.type)
+								else 
+									changeAStructFieldTypeInExp(env, struct, field_ind, new_field, e)
+							])
+						)
+					} else {
+						es1;
+					}
+				}
+				default: 
+					es1;
+			}
+			FiCallPrim(ex with es = new_es);
+		}
+		FiLet(__, t, e1, e2, __,__): 
+			FiLet(ex with 
+				e1 = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, e1),
+				e2 = changeAStructFieldTypeInExp(env, struct, field_ind, new_field, e2),
+			);
+		default: {
+			ex;
+		}
+	}
+}
