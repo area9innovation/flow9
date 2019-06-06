@@ -35,7 +35,9 @@ $absoluteFile = $root . '/' . trim($file, '/');
 
 $timestamp = time();
 
-if (strpos($file, '..') === false && file_exists($absoluteFile)) {
+// supress warnings in file_exists because we may be probed with bogus paths
+// and php complains in that case
+if (strpos($file, '..') === false && @file_exists($absoluteFile)) {
 	// just to be safe let's ignore paths with returns
 	$timestamp = filemtime($absoluteFile);
 }
@@ -66,4 +68,4 @@ if ($isJson) {
 		echo $timestamp;
 	}
 }
-?>
+

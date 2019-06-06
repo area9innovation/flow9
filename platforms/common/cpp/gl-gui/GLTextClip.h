@@ -211,6 +211,8 @@ public:
 
     DECLARE_NATIVE_METHOD(getTextFieldWidth)
     DECLARE_NATIVE_METHOD(getTextFieldHeight)
+    DECLARE_NATIVE_METHOD(getTextFieldCharXPosition)
+    DECLARE_NATIVE_METHOD(findTextFieldCharByPosition)
     DECLARE_NATIVE_METHOD(setTextFieldWidth)
     DECLARE_NATIVE_METHOD(setTextFieldHeight)
     DECLARE_NATIVE_METHOD(setTextFieldCropWords)
