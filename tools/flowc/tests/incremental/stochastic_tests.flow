@@ -4,8 +4,17 @@ import tools/flowc/incremental/fi2flowsrc;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fi_helpers;
 
-GenEnv(
+GenItems(
 	toplevel : List<FiToplevel>,
+	env : GenEnv,
+);
+
+GenModules(
+	modules : [ref FiModule],
+	env : ref GenEnv
+);
+
+GenEnv(
 	structs : Tree<string, FiTypeStruct>,
 	unions : Tree<string, FiTypeUnion>,
 	funcs : Tree<string, FiFunctionDec>,
@@ -24,62 +33,57 @@ randomString(len : int) -> string {
 	a2s2(generate(0, len, \__ -> randomInt(122 - 97) + 97), "", fromCharCode)
 }
 
-generateItems(env : GenEnv, i : int) -> GenEnv {
+generateItems(env : GenItems, i : int) -> GenItems {
 	if (i == 0) env else generateItems(generateItem(env), i - 1)
 }
 
-generateItem(env : GenEnv) -> GenEnv {
+generateItem(items : GenItems) -> GenItems {
 	choice = randomInt(4);
 	if (choice == 0) {
-		struct = generateStruct(env);
-		GenEnv(
-			Cons(struct, env.toplevel), 
-			setTree(env.structs, struct.name, struct),
-			env.unions,
-			env.funcs,
-			env.vars,
+		struct = generateStruct(items.env);
+		GenItems(
+			Cons(struct, items.toplevel), 
+			GenEnv(
+				items.env with structs = setTree(items.env.structs, struct.name, struct)
+			)
 		)
 	} else if (choice == 1) {
-		switch (generateUnion(env)) {
+		switch (generateUnion(items.env)) {
 			Some(union):
-				GenEnv(
-					Cons(union, env.toplevel), 
-					env.structs,
-					setTree(env.unions, union.name, union),
-					env.funcs,
-					env.vars,
+				GenItems(
+					Cons(union, items.toplevel), 
+					GenEnv(
+						items.env with unions = setTree(items.env.unions, union.name, union)
+					)
 				);
 			None(): {
-				struct = generateStruct(env);
-				GenEnv(
-					Cons(struct, env.toplevel), 
-					setTree(env.structs, struct.name, struct),
-					env.unions,
-					env.funcs,
-					env.vars,
+				struct = generateStruct(items.env);
+				GenItems(
+					Cons(struct, items.toplevel), 
+					GenEnv(
+						items.env with structs = setTree(items.env.structs, struct.name, struct)
+					)
 				);
 			}
 		}
 	} else if (choice == 2) {
-		func = generateFunc(env);
-		GenEnv(
-			Cons(func, env.toplevel), 
-			env.structs,
-			env.unions,
-			setTree(env.funcs, func.name, func),
-			env.vars,
+		func = generateFunc(items.env);
+		GenItems(
+			Cons(func, items.toplevel), 
+			GenEnv(
+				items.env with funcs = setTree(items.env.funcs, func.name, func)
+			),
 		)
 	} else if (choice == 3) {
-		var = generateGlobalVar(env);
-		GenEnv(
-			Cons(var, env.toplevel), 
-			env.structs,
-			env.unions,
-			env.funcs,
-			setTree(env.vars, var.name, var),
+		var = generateGlobalVar(items.env);
+		GenItems(
+			Cons(var, items.toplevel), 
+			GenEnv(
+				items.env with vars = setTree(items.env.vars, var.name, var)
+			),
 		)
 	} else {
-		env // Never happens
+		items // Never happens
 	}
 }
 
@@ -349,19 +353,19 @@ exprDeps(acc : Set<string>, ex : FiExp) -> Set<string> {
 }
 
 generateIncrementalTestModule(item_count : int) -> FiModule {
-	env = generateItems(
-		GenEnv(makeList(), makeTree(), makeTree(), makeTree(), makeTree()),
+	items = generateItems(
+		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree())),
 		item_count
 	);
 	module = FiModule(
 		FiFileInfo("randomly_generated", 0.0, "./randomly_generated.flow", "", 0.0, 0.0),
 		[], [], [],
-		foldTree(env.structs, [], \__, str, acc -> concat(acc, [str])),
-		foldTree(env.unions, [], \__, un, acc -> concat(acc, [un])),
-		foldTree(env.funcs, [], \__, fn, acc -> concat(acc, [fn])),
-		foldTree(env.vars, [], \__, gv, acc -> concat(acc, [gv])),
+		foldTree(items.env.structs, [], \__, str, acc -> concat(acc, [str])),
+		foldTree(items.env.unions, [], \__, un, acc -> concat(acc, [un])),
+		foldTree(items.env.funcs, [], \__, fn, acc -> concat(acc, [fn])),
+		foldTree(items.env.vars, [], \__, gv, acc -> concat(acc, [gv])),
 		[],
-		foldList(env.toplevel, [], \acc, tl -> {
+		foldList(items.toplevel, [], \acc, tl -> {
 			switch (tl) {
 				FiTypeStruct(__,__,__,__): acc;
 				FiTypeUnion(__,__,__,__): acc;
@@ -376,17 +380,17 @@ generateIncrementalTestModule(item_count : int) -> FiModule {
 	module
 }
 
-generateIncrementalTestModules(mod_count : int) -> [ref FiModule] {
-	env = generateItems(
-		GenEnv(makeList(), makeTree(), makeTree(), makeTree(), makeTree()),
+generateIncrementalTestModules(mod_count : int) -> GenModules {
+	items = generateItems(
+		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree())),
 		mod_count
 	);
-	toplevel = reverseList(env.toplevel);
+	toplevel = reverseList(items.toplevel);
 	mods = foldList(toplevel, [], \acc, item -> {
 		name = "gen/" + item.name + ".flow";
 		m = FiModule(
 			FiFileInfo("gen/" + item.name, 0.0, "./gen/" + item.name + ".flow", "", 0.0, 0.0),
-			generateImports(env, item), [], [item.name],
+			generateImports(items.env, item), [], [item.name],
 			switch (item) {
 				FiTypeStruct(__,__,__,__): [item];
 				default: [];
@@ -410,20 +414,76 @@ generateIncrementalTestModules(mod_count : int) -> [ref FiModule] {
 		);
 		concat(acc, [ref m])
 	})
-	concat(mods,
-		[ref FiModule(
-			FiFileInfo("gen/main", 0.0, "./gen/main.flow", "", 0.0, 0.0),
-			foldList(toplevel, [], \acc, item -> concat(acc, [FiImport("gen/" + item.name, false, -1)])), 
-			[], [], [], [], [], [], [], [], [], -1, -1, false
-		)]
+	GenModules(
+		concat(mods,
+			[ref FiModule(
+				FiFileInfo("gen/main", 0.0, "./gen/main.flow", "", 0.0, 0.0),
+				foldList(toplevel, [], \acc, item -> concat(acc, [FiImport("gen/" + item.name, false, -1)])), 
+				[], [], [], [], [], [], [], [], [], -1, -1, false
+			)]
+		),
+		ref items.env
 	)
 }
 
-mutateModuleCorrectly(module : ref FiModule) -> void {
+mutateModulesCorrectly(generated : GenModules) -> void {
+	ind = randomInt(length(generated.modules));
+	module = ^(generated.modules[ind]);
+	if (length(module.structs) > 0) {
+		// A struct module
+		struct = module.structs[0];
+		choice = randomInt(4);
+		if (choice == 0) {
+			// add a field
+			addAStructField(ind, struct, generated);
+		} else if (choice == 1) {
+			// delete a field 
+		} else if (choice == 2) {
+			// rename a field
+		} else if (choice == 3) {
+			// change field type
+		}
+	} else if (length(module.unions) > 0) {
+		// A union module
+		choice = randomInt(2);
+		if (choice == 0) {
+			// Add a random struct to the union
+			
+		} else if (choice == 1) {
+			// Remove a random struct from the union
+			
+			
+		}
+	} else if (length(module.functions) > 0) {
 	
+	} else if (length(module.globalVars) > 0) {
+	
+	}
+	writeModule(^(generated.modules[ind]));
 }
 
-testCorrectMutation(modules : [ref FiModule], i : int) -> void {
+//FiTypeStruct(name : string, typars : [FiType], args : [FiStructArg], start : int);
+//		FiStructArg(name : string, type : FiType, ismutable : bool);
+//	FiTypeUnion(name : string, typeparameters : [FiType], typenames : [FiTypeName], start : int);
+
+addAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> void {
+	new_field = FiStructArg("f_" + i2s(length(struct.args)), genRandomType(^(generated.env)), false);
+	new_struct = FiTypeStruct(
+		struct.name, [], 
+		concat(struct.args, [new_field]), -1
+	);
+	orig_module = ^(generated.modules[i]);
+	generated.modules[i] := FiModule(orig_module with structs = [new_struct]);
+	modified_inds = foldi(generated.modules, [i],
+		\j, acc, modref -> {
+			m = ^modref;
+			concat(acc, [j])
+		}
+	)
+	iter(modified_inds, \j -> writeModule(^(generated.modules[j])))
+}
+
+testCorrectMutation(generated : GenModules, i : int) -> void {
 	if (i == 0) {
 		println("All tests pass successfully");
 		quit(0);
@@ -437,10 +497,8 @@ testCorrectMutation(modules : [ref FiModule], i : int) -> void {
 				quit(-1);
 			} else {
 				println("test iteration: " + i2s(i) + " passed successfully");
-				ind = cast(random() * cast(length(modules) : int -> double) : double -> int);
-				mutateModuleCorrectly(modules[ind]);
-				writeModule(^(modules[ind]));
-				testCorrectMutation(modules, i - 1);
+				mutateModulesCorrectly(generated);
+				testCorrectMutation(generated, i - 1);
 			}
 		});
 	}
@@ -461,15 +519,15 @@ main() {
 	
 	item_count = s2i(getUrlParameterDef("items", "100"));
 	mod_count = s2i(getUrlParameterDef("modules", "100"));
+	iterations = s2i(getUrlParameterDef("iterations", "10"));
 	
 	//m = generateIncrementalTestModule(mod_count);
 	//writeModule(m);
 	//println("module '" + m.fileinfo.fullpath + "' is written");
 	
-	modules = generateIncrementalTestModules(mod_count);
-	iter(modules, \module -> writeModule(^module));
-	
-	iterations = s2i(getUrlParameterDef("iterations", "10"));
+	generated = generateIncrementalTestModules(mod_count);
+	iter(generated.modules, \module -> writeModule(^module));
+
 	fcPrintln("correct mutations...");
-	testCorrectMutation(modules, iterations);
+	testCorrectMutation(generated, iterations);
 }
