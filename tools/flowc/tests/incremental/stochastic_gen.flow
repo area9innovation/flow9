@@ -2,11 +2,14 @@ import tools/flowc/incremental/fi_helpers;
 import tools/flowc/tests/incremental/stochastic_env;
 
 export {
-	generateType(env : GenEnv) -> FiType;
-	generateItem(items : GenItems) -> GenItems;
-	generateExpr(env : GenEnv, retType : FiType, i : int) -> FiExp;
-	generateStatement(env : GenEnv) -> FiExp;
+	generateType(env : GenEnv, max_ind : int) -> FiType;
+	generateExpr(env : GenEnv, retType : FiType, i : int, max_ind : int) -> FiExp;
+	generateConstExpr(env : GenEnv, retType : FiType) -> FiExp;
+	generateStatement(env : GenEnv, max_ind : int) -> FiExp;
+	generateImports(env : GenEnv, item : FiToplevel) -> [FiImport];
 	generateIncrementalTestModules(mod_count : int) -> GenModules;
+	generateIncrementalTestModule(item_count : int) -> FiModule;
+
 	randomInt(upper_bound : int) -> int;
 	randomDouble(upper_bound : int) -> double;
 	randomString(len : int) -> string;
@@ -30,47 +33,53 @@ generateItems(env : GenItems, i : int) -> GenItems {
 
 generateItem(items : GenItems) -> GenItems {
 	choice = randomInt(4);
+	max_ind = countList(items.toplevel);
 	if (choice == 0) {
-		struct = generateStruct(items.env);
+		struct = generateStruct(items.env, max_ind);
 		GenItems(
 			Cons(struct, items.toplevel), 
-			GenEnv(
-				items.env with structs = setTree(items.env.structs, struct.name, struct)
+			GenEnv(items.env with 
+				structs = setTree(items.env.structs, struct.name, struct),
+				inds = setTree(items.env.inds, struct.name, max_ind)
 			)
 		)
 	} else if (choice == 1) {
-		switch (generateUnion(items.env)) {
+		switch (generateUnion(items.env, max_ind)) {
 			Some(union):
 				GenItems(
 					Cons(union, items.toplevel), 
-					GenEnv(
-						items.env with unions = setTree(items.env.unions, union.name, union)
+					GenEnv(items.env with 
+						unions = setTree(items.env.unions, union.name, union),
+						inds = setTree(items.env.inds, union.name, max_ind)
 					)
 				);
 			None(): {
-				struct = generateStruct(items.env);
+				struct = generateStruct(items.env, max_ind);
 				GenItems(
 					Cons(struct, items.toplevel), 
-					GenEnv(
-						items.env with structs = setTree(items.env.structs, struct.name, struct)
+					GenEnv(items.env with 
+						structs = setTree(items.env.structs, struct.name, struct),
+						inds = setTree(items.env.inds, struct.name, max_ind)
 					)
 				);
 			}
 		}
 	} else if (choice == 2) {
-		func = generateFunc(items.env);
+		func = generateFunc(items.env, max_ind);
 		GenItems(
 			Cons(func, items.toplevel), 
-			GenEnv(
-				items.env with funcs = setTree(items.env.funcs, func.name, func)
+			GenEnv(items.env with 
+				funcs = setTree(items.env.funcs, func.name, func),
+				inds = setTree(items.env.inds, func.name, max_ind)
 			),
 		)
 	} else if (choice == 3) {
-		var = generateGlobalVar(items.env);
+		var = generateGlobalVar(items.env, max_ind);
 		GenItems(
 			Cons(var, items.toplevel), 
-			GenEnv(
-				items.env with vars = setTree(items.env.vars, var.name, var)
+			GenEnv(items.env with 
+				vars = setTree(items.env.vars, var.name, var),
+				inds = setTree(items.env.inds, var.name, max_ind)
 			),
 		)
 	} else {
@@ -78,13 +87,13 @@ generateItem(items : GenItems) -> GenItems {
 	}
 }
 
-generateStruct(env : GenEnv) -> FiTypeStruct {
+generateStruct(env : GenEnv, max_ind : int) -> FiTypeStruct {
 	name = "Str_" + i2s(sizeTree(env.structs));
 	arity = randomInt(3);
-	FiTypeStruct(name, [], generate(0, arity, \i -> FiStructArg("f_" + i2s(i), generateType(env), false)), -1)
+	FiTypeStruct(name, [], generate(0, arity, \i -> FiStructArg("f_" + i2s(i), generateType(env, max_ind), false)), -1)
 }
 
-generateUnion(env : GenEnv) -> Maybe<FiTypeUnion> {
+generateUnion(env : GenEnv, max_ind : int) -> Maybe<FiTypeUnion> {
 	name = "Un_" + i2s(sizeTree(env.unions));
 	arity = randomInt(5);
 	mtypes = fold(
@@ -93,7 +102,7 @@ generateUnion(env : GenEnv) -> Maybe<FiTypeUnion> {
 		\acc, i -> {
 			switch (acc) {
 				Some(types):
-					switch (generateTypeName(env)) {
+					switch (generateTypeName(env, max_ind)) {
 						Some(typeName): {
 							if (exists(types, \tp -> tp.name == typeName.name)) {
 								acc 
@@ -119,40 +128,40 @@ generateUnion(env : GenEnv) -> Maybe<FiTypeUnion> {
 	}
 }
 
-generateFunc(env : GenEnv) -> FiFunctionDec {
+generateFunc(env : GenEnv, max_ind : int) -> FiFunctionDec {
 	name = "fn_" + i2s(sizeTree(env.funcs));
 	arity = randomInt(3);
 	type = FiTypeFunction(
-		generate(0, arity, \i -> FiFunArg("a_" + i2s(i), generateType(env))), 
-		generateType(env)
+		generate(0, arity, \i -> FiFunArg("a_" + i2s(i), generateType(env, max_ind))), 
+		generateType(env, max_ind)
 	);
-	lambda = FiLambda(type.args, generateExpr(env, type.returnType, randomInt(5)), type, -1);
+	lambda = FiLambda(type.args, generateExpr(env, type.returnType, randomInt(5), max_ind), type, -1);
 	FiFunctionDec(name, lambda, type, -1, -1)
 }
 
-generateGlobalVar(env : GenEnv) -> FiGlobalVar {
+generateGlobalVar(env : GenEnv, max_ind : int) -> FiGlobalVar {
 	name = "gv_" + i2s(sizeTree(env.vars));
-	type = generateType(env);
+	type = generateType(env, max_ind);
 	FiGlobalVar(name, generateConstExpr(env, type), type, -1, -1)
 }
 
-generateExpr(env : GenEnv, retType : FiType, i : int) -> FiExp {
+generateExpr(env : GenEnv, retType : FiType, i : int, max_ind : int) -> FiExp {
 	if (i == 0) generateConstExpr(env, retType) else {
-		stat = generateStatement(env);
+		stat = generateStatement(env, max_ind);
 		FiLet("v_" + i2s(i),
 			fiExpType(stat),
 			stat,
-			generateExpr(env, retType, i - 1),
+			generateExpr(env, retType, i - 1, max_ind),
 			retType,
 			-1
 		)
 	}
 }
 
-generateStatement(env : GenEnv) -> FiExp {
+generateStatement(env : GenEnv, max_ind : int) -> FiExp {
 	choice = randomInt(3);
 	if (choice == 0) {
-		if (sizeTree(env.funcs) == 0) generateStatement(env) else {
+		if (sizeTree(env.funcs) == 0) generateStatement(env, max_ind) else {
 			ind = randomInt(sizeTree(env.funcs));
 			switch (lookupTree(env.funcs, "fn_" + i2s(ind))) {
 				Some(func): {
@@ -167,7 +176,7 @@ generateStatement(env : GenEnv) -> FiExp {
 			}
 		}
 	} else if (choice == 1) {
-		if (sizeTree(env.vars) == 0) generateStatement(env) else {
+		if (sizeTree(env.vars) == 0) generateStatement(env, max_ind) else {
 			ind = randomInt(sizeTree(env.vars));
 			switch (lookupTree(env.vars, "gv_" + i2s(ind))) {
 				Some(var): {
@@ -177,7 +186,7 @@ generateStatement(env : GenEnv) -> FiExp {
 			}
 		}
 	} else if (choice == 2) {
-		generateConstExpr(env, generateType(env));
+		generateConstExpr(env, generateType(env, max_ind));
 	} else {
 		FiVoid(-1) // Never happens
 	}
@@ -221,7 +230,7 @@ generateConstExpr(env : GenEnv, retType : FiType) -> FiExp {
 	}
 }
 
-generateType(env : GenEnv) -> FiType {
+generateType(env : GenEnv, max_ind : int) -> FiType {
 	kind_choice = randomInt(3);
 	if (kind_choice == 0) {
 		// Random primitive type 
@@ -243,30 +252,45 @@ generateType(env : GenEnv) -> FiType {
 		// Random struct
 		size = sizeTree(env.structs);
 		if (size > 0) {
-			FiTypeName("Str_" + i2s(randomInt(size)), []);
+			name = "Str_" + i2s(randomInt(size));
+			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
+				FiTypeName(name, []);
+			} else {
+				generateType(env, max_ind)
+			}
 		} else {
-			generateType(env)
+			generateType(env, max_ind)
 		}
 	} else if (kind_choice == 2) {
 		// Random union
 		size = sizeTree(env.unions);
 		if (size > 0) {
-			FiTypeName("Un_" + i2s(randomInt(sizeTree(env.unions))), []);
+			name = "Un_" + i2s(randomInt(size));
+			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
+				FiTypeName(name, []);
+			} else {
+				generateType(env, max_ind)
+			}
 		} else {
-			generateType(env)
+			generateType(env, max_ind)
 		}
 	} else {
 		FiTypeVoid() // Never happens
 	}
 }
 
-generateTypeName(env : GenEnv) -> Maybe<FiTypeName> {
+generateTypeName(env : GenEnv, max_ind : int) -> Maybe<FiTypeName> {
 	kind_choice = randomInt(2);
 	if (kind_choice == 0) {
 		// Random struct
 		size = sizeTree(env.structs);
 		if (size > 0) {
-			Some(FiTypeName("Str_" + i2s(randomInt(size)), []));
+			name = "Str_" + i2s(randomInt(size));
+			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
+				Some(FiTypeName(name, []));
+			} else {
+				generateTypeName(env, max_ind)
+			}
 		} else {
 			None();
 		}
@@ -274,12 +298,22 @@ generateTypeName(env : GenEnv) -> Maybe<FiTypeName> {
 		// Random union
 		size_un = sizeTree(env.unions);
 		if (size_un > 0) {
-			Some(FiTypeName("Un_" + i2s(randomInt(size_un)), []));
+			name = "Un_" + i2s(randomInt(size_un));
+			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
+				Some(FiTypeName(name, []));
+			} else {
+				generateTypeName(env, max_ind)
+			}
 		} else {
 			// Try to find random struct
 			size = sizeTree(env.structs);
 			if (size > 0) {
-				Some(FiTypeName("Str_" + i2s(randomInt(size)), []));
+				name = "Str_" + i2s(randomInt(size));
+				if (lookupTreeDef(env.inds, name, -1) < max_ind) {
+					Some(FiTypeName(name, []));
+				} else {
+					generateTypeName(env, max_ind)
+				}
 			} else {
 				None();
 			}
@@ -307,7 +341,7 @@ generateImports(env : GenEnv, item : FiToplevel) -> [FiImport] {
 		default: makeSet();
 	};
 	foldSet(dependencies, [], \acc, dep_name ->
-		concat(acc, [FiImport("gen/" + dep_name, false, -1)])
+		concat(acc, [FiImport("flowgen/" + dep_name, false, -1)])
 	);
 }
 
@@ -345,7 +379,7 @@ exprDeps(acc : Set<string>, ex : FiExp) -> Set<string> {
 
 generateIncrementalTestModule(item_count : int) -> FiModule {
 	items = generateItems(
-		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree())),
+		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
 		item_count
 	);
 	module = FiModule(
@@ -373,14 +407,13 @@ generateIncrementalTestModule(item_count : int) -> FiModule {
 
 generateIncrementalTestModules(mod_count : int) -> GenModules {
 	items = generateItems(
-		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree())),
+		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
 		mod_count
 	);
 	toplevel = reverseList(items.toplevel);
 	mods = foldList(toplevel, [], \acc, item -> {
-		name = "gen/" + item.name + ".flow";
 		m = FiModule(
-			FiFileInfo("gen/" + item.name, 0.0, "./gen/" + item.name + ".flow", "", 0.0, 0.0),
+			FiFileInfo("flowgen/" + item.name, 0.0, "./flowgen/" + item.name + ".flow", "", 0.0, 0.0),
 			generateImports(items.env, item), [], [item.name],
 			switch (item) {
 				FiTypeStruct(__,__,__,__): [item];
@@ -408,8 +441,8 @@ generateIncrementalTestModules(mod_count : int) -> GenModules {
 	GenModules(
 		concat(mods,
 			[ref FiModule(
-				FiFileInfo("gen/main", 0.0, "./gen/main.flow", "", 0.0, 0.0),
-				foldList(toplevel, [], \acc, item -> concat(acc, [FiImport("gen/" + item.name, false, -1)])), 
+				FiFileInfo("flowgen/main", 0.0, "./flowgen/main.flow", "", 0.0, 0.0),
+				foldList(toplevel, [], \acc, item -> concat(acc, [FiImport("flowgen/" + item.name, false, -1)])), 
 				[], [], [], [], [], [], [], [], [], -1, -1, false
 			)]
 		),
