@@ -720,6 +720,15 @@ public class Native extends NativeHost {
 		return Math.random();
 	}
 
+	public final Func0<Double> randomGenerator(long seed) {
+		return new Func0<Double>() {
+			Random generator = new Random(seed);
+			public Double invoke() {
+				return generator.nextDouble();
+			}
+		};
+	}
+
 	private Timer timer_obj = null;
 
 	public void invokeCallback(Runnable cb) {
