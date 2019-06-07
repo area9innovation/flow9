@@ -5,21 +5,23 @@ IScript is an UI scripting system, which can be useful for automating some UI ac
 
 ## Usage ##
 
-To be able to record IScript, application should be run with command-line parameter "recordiscript=true" or "recordiscript=1".
+To be able to record IScript, application should be run with command-line parameter `recordiscript=true` or `recordiscript=1`.
 After run there will be the IScript panel on the upper side of the screen. It allows to record script, run it,
 save it in file, restore from file (replace current or concatenate both scripts), open a directory of test files (batch test files)
 for their sequential execution. Also it allows to modify current script with some actions, like writing some predefined value
 into some input instead of recorded, or output particular behaviour value at some moment into file.
 
 Script from file could be replayed just at the moment of application run, which is useful for UI tests.
-This can be achieved by adding the command-line parameter "playiscript=file_name".
+This can be achieved by adding the command-line parameter `playiscript=file_name`.
 After the end of the repetition, the application closes and returns the execution status - 0 if the script was executed
 without errors and 1 if errors occurred during the execution of the script.
 
-In addition, for automated testing, all script files from the same directory can be executed sequentially after the application is started.
-This can be achieved by adding the command-line parameter "playbatchiscript=directory_name".
-After running all the scripts., the application closes and returns the execution status - 0 if the all scripts were executed
-without errors and the number of failed tests otherwise.
+Scripts can be grouped in scenarios. Scenario will sequentially execute list of scripts.
+Scenario also can be launched with `playiscriptscenario=scenario_name` command-line parameter. In this case exit status will represent a number of failed scripts.
+
+There is possible to run script by passing it with JS messages. You can do this by calling `postMessage` with `{"iscript":"urlencoded script"}`. It can be obtained with corresponding save option. There are two parameters that can be used here: `callid` will be returned with response and `iscriptcheckerrors` for more checks during replay and more verbose errors in response.
+Full call will look like this: `window.postMessage('{"callid":"someid","iscriptcheckerrors":true,"iscript":"urlencoded script"}', "*")`.
+After replay iscript will send response with `postMessage`, so it can be recieved with `window.addEventListener("message", somefunction)`. Response has the following format: `{"callid":"someid", "status":"OK/ERROR", "errors":"array of errors, if any"}`.
 
 "Save" and "Open" actions work with any available directory. This option works on CPP target only.
 
