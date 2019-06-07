@@ -1121,14 +1121,14 @@ public class Native extends NativeHost {
 		String line;
 		String sout = new String("");
 		while ((line = brCleanUp.readLine ()) != null) {
-		    sout = sout + line;
+		    sout = sout + line + "\n";
 		}
 		brCleanUp.close();
 
 		brCleanUp = new BufferedReader (new InputStreamReader (stderr));
 		String serr = new String("");
 		while ((line = brCleanUp.readLine ()) != null) {
-		    serr = serr + line;
+		    serr = serr + line + "\n";
 		}
 		brCleanUp.close();
 
