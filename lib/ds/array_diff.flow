@@ -8,6 +8,14 @@ export {
 	arrayDiff(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>];
 	arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>];
 
+	applyProtocol(
+		source : [?],
+		protocol : [ArrayOperation<?>],
+		insertFn : (newValue : ?) -> ?, //
+		replaceFn : (oldValue : ?, newValue : ?) -> ?,
+		removeFn : (oldValue : ?) -> Maybe<?> // if None() then element will be removed, if Some - replaced
+	) -> [?];
+
 	ArrayOperation<?> ::= ArrayNop, ArrayInsert<?>, ArrayReplace<?>, ArrayRemove;
 		ArrayNop(oldindex : int, newindex : int);
 		ArrayInsert(oldindex : int, newindex : int, value : ?);
@@ -100,6 +108,140 @@ makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc
 	}
 }
 
+// ArrayNop is used as ArrayMove
+// Isn't replaceable with arrayDiff since has a bit different logic
+arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>] {
+	// println("arrayDiffFast");
+	// println(old);
+	// println(new);
+
+	// t = timestamp();
+
+	removeOp : ref Tree<int, ArrayOperation> = ref makeTree();
+	insertOp : ref Tree<int, ArrayInsert> = ref makeTree();
+	moveOp : ref Tree<int, ArrayOperation> = ref makeTree();
+	replaceOp : ref Tree<int, ArrayOperation> = ref makeTree();
+
+	newTree = foldi(new, makeTree(), \i, acc, n -> eitherFn(lookupTree(acc, n), \v -> setTree(acc, n, arrayPush(v, i)), \ -> setTree(acc, n, [i])));
+
+	removeCounter = ref 0;
+
+	newFilteredTree = foldi(old, newTree, \k, acc, o -> {
+		eitherFn(
+			lookupTree(acc, o),
+			\a -> {
+				n = fold(tail(a), a[0], \n, v -> if (iabs(v - k) < iabs(n - k)) v else n);
+				moveOp := setTree(^moveOp, k, ArrayNop(k, n));
+
+				if (length(a) > 1) {
+					setTree(acc, o, removeFirst(a, n));
+				} else {
+					removeFromTree(acc, o);
+				}
+			},
+			\ -> {
+				i = k - ^removeCounter;
+				removeCounter := ^removeCounter + 1;
+
+				removeOp := setTree(^removeOp, k, ArrayRemove(i, i));
+
+				acc
+			}
+		)
+	});
+
+	traverseInOrder(newFilteredTree, \k, v -> {
+		iter(v, \i -> {
+			insertOp := setTree(^insertOp, i, ArrayInsert(i, i, k));
+		});
+	});
+
+	i = ref -1;
+
+	newMoveOp = ref makeTree();
+
+	traverseInOrder(^moveOp, \k, v -> {
+		i := ^i + 1;
+		newMoveOp := setTree(^newMoveOp, v.newindex, ArrayNop(^i, v.newindex));
+	});
+
+	i := -1;
+
+	moveOp := makeTree();
+
+	traverseInOrder(^newMoveOp, \k, v -> {
+		i := ^i + 1;
+		moveOp := setTree(^moveOp, ^i, ArrayNop(v.oldindex, ^i));
+	});
+
+	map(getTreeKeys(^moveOp), \k -> {
+		maybeApply(lookupTree(^moveOp, k), \m : ArrayOperation<?> -> {
+			if (m.newindex > m.oldindex) {
+				moveOp := mapTree(^moveOp, \m2 -> {
+					if (m2.newindex > m.newindex && m2.oldindex > m.oldindex && m2.oldindex <= m.newindex)
+						ArrayNop(m2.oldindex - 1, m2.newindex)
+					else
+						m2
+				});
+			} else if (m.newindex < m.oldindex) {
+				moveOp := mapTree(^moveOp, \m2 -> {
+					if (m2.newindex > m.newindex && m2.oldindex >= m.newindex && m2.oldindex < m.oldindex)
+						ArrayNop(m2.oldindex + 1, m2.newindex)
+					else
+						m2
+				});
+			}
+		});
+	});
+
+	concat3(
+		concat(
+			getTreeValues(^removeOp),
+			getTreeValues(^replaceOp)
+		),
+		filter(getTreeValues(^moveOp), \m -> m.oldindex != m.newindex),
+		getTreeValues(^insertOp)
+	);
+
+	// println(timestamp() - t);
+
+	// println(length(old));
+	// println(length(new));
+	// println(sizeTree(^removeOp));
+	// println(sizeTree(^insertOp));
+
+	// r;
+}
+
+applyProtocol(
+	source : [?],
+	protocol : [ArrayOperation<?>],
+	insertFn : (?) -> ?,
+	replaceFn : (?, ?) -> ?,
+	removeFn : (?) -> Maybe<?>
+) -> [?] {
+	fold(protocol, source, \acc, op -> {
+		switch (op : ArrayOperation) {
+			ArrayNop(__, __): acc;
+			ArrayInsert(__, __, __): insertArray(acc, op.oldindex, insertFn(op.value));
+			ArrayReplace(i, j, v): replace(acc, op.oldindex, replaceFn(acc[op.oldindex], op.value));
+			ArrayRemove(i, j): {
+				eitherFn(
+					removeFn(acc[op.oldindex]),
+					\newVal -> replace(acc, op.oldindex, newVal),
+					\ -> removeIndex(acc, op.oldindex)
+				)
+			}
+		}
+	});
+}
+
+// Test cases.
+// printInfo(title : string, arr : [?]) -> void {
+// 	println(title + ":");
+// 	iteri(arr, \i, a : ? -> println("  " + lpad(i2s(i), " ", 3) + " " + toString(a)));
+// }
+
 // main() {
 // 	fullProtocol = false;
 // 	assertEquals(arrayDiff([], [], fullProtocol), []);
@@ -127,10 +269,62 @@ makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc
 // 	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5], fullProtocol), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
 // 	assertEquals(arrayDiff([0,1,2,3,4], [1,2,3,5,6], fullProtocol), [ArrayReplace(4,4,6), ArrayInsert(4,3,5), ArrayRemove(0,0)]);
 
+// 	applyProtocolWithChange = \theSource, theProtocol ->
+// 		applyProtocol(theSource, theProtocol,
+// 			\newValue ->  {//insertFn
+// 				"INS[" + newValue + "]"
+// 			},
+// 			\oldValue, newValue -> { // replaceFn
+// 				"REPLACE[" + oldValue + " -> " + newValue + "]"
+// 			},
+// 			\oldValue -> { // removeFn
+// 				Some("DEL[" + oldValue + "]")
+// 			}
+// 		);
+
+// 	applyProtocolClean = \theSource, theProtocol ->
+// 		applyProtocol(theSource, theProtocol,
+// 			idfn,
+// 			\__, newValue -> newValue,
+// 			\__ -> None()
+// 		);
+
+// 	testData : [Pair<[string], [string]>] = [
+// 		Pair(
+// 			["The", " ", "boy", " ", "walked", " ", "down", " ", "the", " ", "street", "." ],
+// 			["The", " ", "boy", " ", "is", " ", "walks", " ", "down", " ", "the", " ", "street", "." ]
+// 		),
+// 		Pair(
+// 			["The", " ", "boy walked", " ", "down", " ", "the", " ", "street", "."],
+// 			["The", " ", "boy is walks down", " ", "the", " ", "street", "."]
+// 		)
+// 	];
+
+// 	iteri(testData, \i, t -> {
+// 		source = t.first;
+// 		target = t.second;
+// 		println("==============" + i2s(i+1) + "=============");
+// 		printInfo("source", source);
+// 		printInfo("target", target);
+
+// 		protocol = arrayDiff(source, target, false);
+// 		printInfo("protocol", protocol);
+
+// 		printInfo("targetWithChanges", applyProtocolWithChange(source, protocol));
+
+// 		restoredTarget = applyProtocolClean(source, protocol);
+// 		printInfo("restoredTarget", restoredTarget);
+// 		println("Comparing restoredTarget with target...");
+// 		assertEquals(target, restoredTarget);
+// 		println("   - OK");
+
+// 		println("===========================");
+// 	});
+
 // 	quit(0);
 // }
 
-
+// Old test cases
 // main() {
 // 	// assertEquals(arrayDiffFast([], []), []);
 // 	// assertEquals(arrayDiffFast([0], [0]), []);
@@ -255,108 +449,3 @@ makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc
 
 // 	assertEquals(a2, a3);
 // }
-
-// ArrayNop is used as ArrayMove
-// Isn't replaceable with arrayDiff since has a bit different logic
-arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>] {
-	// println("arrayDiffFast");
-	// println(old);
-	// println(new);
-
-	// t = timestamp();
-
-	removeOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	insertOp : ref Tree<int, ArrayInsert> = ref makeTree();
-	moveOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	replaceOp : ref Tree<int, ArrayOperation> = ref makeTree();
-
-	newTree = foldi(new, makeTree(), \i, acc, n -> eitherFn(lookupTree(acc, n), \v -> setTree(acc, n, arrayPush(v, i)), \ -> setTree(acc, n, [i])));
-
-	removeCounter = ref 0;
-
-	newFilteredTree = foldi(old, newTree, \k, acc, o -> {
-		eitherFn(
-			lookupTree(acc, o),
-			\a -> {
-				n = fold(tail(a), a[0], \n, v -> if (iabs(v - k) < iabs(n - k)) v else n);
-				moveOp := setTree(^moveOp, k, ArrayNop(k, n));
-
-				if (length(a) > 1) {
-					setTree(acc, o, removeFirst(a, n));
-				} else {
-					removeFromTree(acc, o);
-				}
-			},
-			\ -> {
-				i = k - ^removeCounter;
-				removeCounter := ^removeCounter + 1;
-
-				removeOp := setTree(^removeOp, k, ArrayRemove(i, i));
-
-				acc
-			}
-		)
-	});
-
-	traverseInOrder(newFilteredTree, \k, v -> {
-		iter(v, \i -> {
-			insertOp := setTree(^insertOp, i, ArrayInsert(i, i, k));
-		});
-	});
-
-	i = ref -1;
-
-	newMoveOp = ref makeTree();
-
-	traverseInOrder(^moveOp, \k, v -> {
-		i := ^i + 1;
-		newMoveOp := setTree(^newMoveOp, v.newindex, ArrayNop(^i, v.newindex));
-	});
-
-	i := -1;
-
-	moveOp := makeTree();
-
-	traverseInOrder(^newMoveOp, \k, v -> {
-		i := ^i + 1;
-		moveOp := setTree(^moveOp, ^i, ArrayNop(v.oldindex, ^i));
-	});
-
-	map(getTreeKeys(^moveOp), \k -> {
-		maybeApply(lookupTree(^moveOp, k), \m : ArrayOperation<?> -> {
-			if (m.newindex > m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex > m.oldindex && m2.oldindex <= m.newindex)
-						ArrayNop(m2.oldindex - 1, m2.newindex)
-					else
-						m2
-				});
-			} else if (m.newindex < m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex >= m.newindex && m2.oldindex < m.oldindex)
-						ArrayNop(m2.oldindex + 1, m2.newindex)
-					else
-						m2
-				});
-			}
-		});
-	});
-
-	concat3(
-		concat(
-			getTreeValues(^removeOp),
-			getTreeValues(^replaceOp)
-		),
-		filter(getTreeValues(^moveOp), \m -> m.oldindex != m.newindex),
-		getTreeValues(^insertOp)
-	);
-
-	// println(timestamp() - t);
-
-	// println(length(old));
-	// println(length(new));
-	// println(sizeTree(^removeOp));
-	// println(sizeTree(^insertOp));
-
-	// r;
-}
