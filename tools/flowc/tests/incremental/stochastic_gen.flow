@@ -9,26 +9,26 @@ export {
 	generateConstExpr(env : GenEnv, retType : FiType) -> FiExp;
 	generateStatement(env : GenEnv, max_ind : int) -> FiExp;
 	generateImports(env : GenEnv, item : FiToplevel) -> [FiImport];
-	generateIncrementalTestModules(mod_count : int) -> GenModules;
-	generateIncrementalTestModule(item_count : int) -> FiModule;
+	generateIncrementalTestModules(mod_count : int, seed : int) -> GenModules;
+	generateIncrementalTestModule(item_count : int, seed : int) -> FiModule;
 
-	randomInt(upper_bound : int) -> int;
-	randomDouble(upper_bound : int) -> double;
-	randomString(len : int) -> string;
+	randomInt(gen : () -> double, upper_bound : int) -> int;
+	randomDouble(gen : () -> double, upper_bound : int) -> double;
+	randomString(gen : () -> double, len : int) -> string;
 
 	writeModule(module : FiModule) -> void;
 }
 
-randomInt(upper_bound : int) -> int {
-	cast(randomDouble(upper_bound) : double -> int);
+randomInt(gen : () -> double, upper_bound : int) -> int {
+	cast(randomDouble(gen, upper_bound) : double -> int);
 }
 
-randomDouble(upper_bound : int) -> double {
-	random() * cast(upper_bound : int -> double);
+randomDouble(gen : () -> double, upper_bound : int) -> double {
+	gen() * cast(upper_bound : int -> double);
 }
 
-randomString(len : int) -> string {
-	a2s2(generate(0, len, \__ -> randomInt(122 - 97) + 97), "", fromCharCode)
+randomString(gen : () -> double, len : int) -> string {
+	a2s2(generate(0, len, \__ -> randomInt(gen, 122 - 97) + 97), "", fromCharCode)
 }
 
 generateItems(env : GenItems, i : int) -> GenItems {
@@ -36,7 +36,7 @@ generateItems(env : GenItems, i : int) -> GenItems {
 }
 
 generateItem(items : GenItems) -> GenItems {
-	choice = randomInt(4);
+	choice = randomInt(items.env.rand, 4);
 	max_ind = countList(items.toplevel);
 	if (choice == 0) {
 		struct = generateStruct(items.env, max_ind);
@@ -93,13 +93,13 @@ generateItem(items : GenItems) -> GenItems {
 
 generateStruct(env : GenEnv, max_ind : int) -> FiTypeStruct {
 	name = "Str_" + i2s(sizeTree(env.structs));
-	arity = randomInt(3);
+	arity = randomInt(env.rand, 3);
 	FiTypeStruct(name, [], generate(0, arity, \i -> FiStructArg("f_" + i2s(i), generateType(env, max_ind), false)), -1)
 }
 
 generateUnion(env : GenEnv, max_ind : int) -> Maybe<FiTypeUnion> {
 	name = "Un_" + i2s(sizeTree(env.unions));
-	arity = randomInt(5);
+	arity = randomInt(env.rand, 5);
 	mtypes = fold(
 		enumFromTo(0, arity),
 		Some([]),
@@ -134,12 +134,12 @@ generateUnion(env : GenEnv, max_ind : int) -> Maybe<FiTypeUnion> {
 
 generateFunc(env : GenEnv, max_ind : int) -> FiFunctionDec {
 	name = "fn_" + i2s(sizeTree(env.funcs));
-	arity = randomInt(3);
+	arity = randomInt(env.rand, 3);
 	type = FiTypeFunction(
 		generate(0, arity, \i -> FiFunArg("a_" + i2s(i), generateType(env, max_ind))), 
 		generateType(env, max_ind)
 	);
-	lambda = FiLambda(type.args, generateExpr(env, type.returnType, randomInt(5), max_ind), type, -1);
+	lambda = FiLambda(type.args, generateExpr(env, type.returnType, randomInt(env.rand, 5), max_ind), type, -1);
 	FiFunctionDec(name, lambda, type, -1, -1)
 }
 
@@ -163,10 +163,10 @@ generateExpr(env : GenEnv, retType : FiType, i : int, max_ind : int) -> FiExp {
 }
 
 generateStatement(env : GenEnv, max_ind : int) -> FiExp {
-	choice = randomInt(3);
+	choice = randomInt(env.rand, 3);
 	if (choice == 0) {
 		if (sizeTree(env.funcs) == 0) generateStatement(env, max_ind) else {
-			ind = randomInt(sizeTree(env.funcs));
+			ind = randomInt(env.rand, sizeTree(env.funcs));
 			switch (lookupTree(env.funcs, "fn_" + i2s(ind))) {
 				Some(func): {
 					FiCall(
@@ -181,7 +181,7 @@ generateStatement(env : GenEnv, max_ind : int) -> FiExp {
 		}
 	} else if (choice == 1) {
 		if (sizeTree(env.vars) == 0) generateStatement(env, max_ind) else {
-			ind = randomInt(sizeTree(env.vars));
+			ind = randomInt(env.rand, sizeTree(env.vars));
 			switch (lookupTree(env.vars, "gv_" + i2s(ind))) {
 				Some(var): {
 					FiVar(var.name, var.type, -1);
@@ -202,10 +202,10 @@ generateConstExpr(env : GenEnv, retType : FiType) -> FiExp {
 
 generateConstExpr1(env : GenEnv, retType : FiType, actType : FiType) -> FiExp {
 	switch (actType) {
-		FiTypeBool():   FiBool(if (randomInt(2) == 0) false else true, -1);
-		FiTypeInt():    FiInt(randomInt(1000), -1);
-		FiTypeDouble(): FiDouble(randomDouble(1000), -1);
-		FiTypeString(): FiString(randomString(16), -1);
+		FiTypeBool():   FiBool(if (randomInt(env.rand, 2) == 0) false else true, -1);
+		FiTypeInt():    FiInt(randomInt(env.rand, 1000), -1);
+		FiTypeDouble(): FiDouble(randomDouble(env.rand, 1000), -1);
+		FiTypeString(): FiString(randomString(env.rand, 16), -1);
 		FiTypeName(name, __): {
 			if (startsWith(name, "Str_")) {
 				switch (lookupTree(env.structs, name)) {
@@ -223,7 +223,7 @@ generateConstExpr1(env : GenEnv, retType : FiType, actType : FiType) -> FiExp {
 			} else if (startsWith(name, "Un_")) {
 				switch (lookupTree(env.unions, name)) {
 					Some(union): {
-						ind = randomInt(length(union.typenames));
+						ind = randomInt(env.rand, length(union.typenames));
 						generateConstExpr1(env, retType, union.typenames[ind]);
 					}
 					None(): FiVoid(-1); // Never happens
@@ -239,10 +239,10 @@ generateConstExpr1(env : GenEnv, retType : FiType, actType : FiType) -> FiExp {
 }
 
 generateType(env : GenEnv, max_ind : int) -> FiType {
-	kind_choice = randomInt(3);
+	kind_choice = randomInt(env.rand, 3);
 	if (kind_choice == 0) {
 		// Random primitive type 
-		choice = randomInt(4);
+		choice = randomInt(env.rand, 4);
 		if (choice == 0) {
 			FiTypeBool();
 		} else if (choice == 1) {
@@ -260,7 +260,7 @@ generateType(env : GenEnv, max_ind : int) -> FiType {
 		// Random struct
 		size = sizeTree(env.structs);
 		if (size > 0) {
-			name = "Str_" + i2s(randomInt(size));
+			name = "Str_" + i2s(randomInt(env.rand, size));
 			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
 				FiTypeName(name, []);
 			} else {
@@ -273,7 +273,7 @@ generateType(env : GenEnv, max_ind : int) -> FiType {
 		// Random union
 		size = sizeTree(env.unions);
 		if (size > 0) {
-			name = "Un_" + i2s(randomInt(size));
+			name = "Un_" + i2s(randomInt(env.rand, size));
 			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
 				FiTypeName(name, []);
 			} else {
@@ -288,12 +288,12 @@ generateType(env : GenEnv, max_ind : int) -> FiType {
 }
 
 generateTypeName(env : GenEnv, max_ind : int) -> Maybe<FiTypeName> {
-	kind_choice = randomInt(2);
+	kind_choice = randomInt(env.rand, 2);
 	if (kind_choice == 0) {
 		// Random struct
 		size = sizeTree(env.structs);
 		if (size > 0) {
-			name = "Str_" + i2s(randomInt(size));
+			name = "Str_" + i2s(randomInt(env.rand, size));
 			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
 				Some(FiTypeName(name, []));
 			} else {
@@ -306,7 +306,7 @@ generateTypeName(env : GenEnv, max_ind : int) -> Maybe<FiTypeName> {
 		// Random union
 		size_un = sizeTree(env.unions);
 		if (size_un > 0) {
-			name = "Un_" + i2s(randomInt(size_un));
+			name = "Un_" + i2s(randomInt(env.rand, size_un));
 			if (lookupTreeDef(env.inds, name, -1) < max_ind) {
 				Some(FiTypeName(name, []));
 			} else {
@@ -316,7 +316,7 @@ generateTypeName(env : GenEnv, max_ind : int) -> Maybe<FiTypeName> {
 			// Try to find random struct
 			size = sizeTree(env.structs);
 			if (size > 0) {
-				name = "Str_" + i2s(randomInt(size));
+				name = "Str_" + i2s(randomInt(env.rand, size));
 				if (lookupTreeDef(env.inds, name, -1) < max_ind) {
 					Some(FiTypeName(name, []));
 				} else {
@@ -385,9 +385,9 @@ exprDeps(acc : Set<string>, ex : FiExp) -> Set<string> {
 	}
 }
 
-generateIncrementalTestModule(item_count : int) -> FiModule {
+generateIncrementalTestModule(item_count : int, seed : int) -> FiModule {
 	items = generateItems(
-		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
+		GenItems(makeList(), GenEnv(randomGenerator(seed), makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
 		item_count
 	);
 	module = FiModule(
@@ -413,9 +413,9 @@ generateIncrementalTestModule(item_count : int) -> FiModule {
 	module
 }
 
-generateIncrementalTestModules(mod_count : int) -> GenModules {
+generateIncrementalTestModules(mod_count : int, seed : int) -> GenModules {
 	items = generateItems(
-		GenItems(makeList(), GenEnv(makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
+		GenItems(makeList(), GenEnv(randomGenerator(seed), makeTree(), makeTree(), makeTree(), makeTree(), makeTree())),
 		mod_count
 	);
 	toplevel = reverseList(items.toplevel);
