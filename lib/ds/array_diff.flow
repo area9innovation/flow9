@@ -6,10 +6,6 @@ import math/math;
 export {
 	// Compares two arrays, and returns a list of operations to apply to change the old to the new
 	arrayDiff(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>];
-	arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>];
-
-	// reverse protocol, for backward compatibility
-	arrayDiffReversed(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>];
 
 	applyProtocol(
 		source : [?],
@@ -97,10 +93,6 @@ arrayDiff(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperation<?>] {
 	makeArrayDiffOps(d, m, n, [], fullProtocol);
 }
 
-arrayDiffReversed(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>] {
-	reverseA(arrayDiff(old, new, fullProtocol))
-}
-
 makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc : [ArrayOperation<?>], fullProtocol : bool) -> [ArrayOperation<?>] {
 	c = ^(d[y][x]);
 	// println(i2s(y) + "," + i2s(x) + ": " + toString(c));
@@ -114,111 +106,6 @@ makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc
 		};
 		makeArrayDiffOps(d, c.second.oldindex, c.second.newindex, nacc, fullProtocol)
 	}
-}
-
-// ArrayNop is used as ArrayMove
-// Isn't replaceable with arrayDiff since has a bit different logic
-arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>] {
-	// println("arrayDiffFast");
-	// println(old);
-	// println(new);
-
-	// t = timestamp();
-
-	removeOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	insertOp : ref Tree<int, ArrayInsert> = ref makeTree();
-	moveOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	replaceOp : ref Tree<int, ArrayOperation> = ref makeTree();
-
-	newTree = foldi(new, makeTree(), \i, acc, n -> eitherFn(lookupTree(acc, n), \v -> setTree(acc, n, arrayPush(v, i)), \ -> setTree(acc, n, [i])));
-
-	removeCounter = ref 0;
-
-	newFilteredTree = foldi(old, newTree, \k, acc, o -> {
-		eitherFn(
-			lookupTree(acc, o),
-			\a -> {
-				n = fold(tail(a), a[0], \n, v -> if (iabs(v - k) < iabs(n - k)) v else n);
-				moveOp := setTree(^moveOp, k, ArrayNop(k, n));
-
-				if (length(a) > 1) {
-					setTree(acc, o, removeFirst(a, n));
-				} else {
-					removeFromTree(acc, o);
-				}
-			},
-			\ -> {
-				i = k - ^removeCounter;
-				removeCounter := ^removeCounter + 1;
-
-				removeOp := setTree(^removeOp, k, ArrayRemove(i, i));
-
-				acc
-			}
-		)
-	});
-
-	traverseInOrder(newFilteredTree, \k, v -> {
-		iter(v, \i -> {
-			insertOp := setTree(^insertOp, i, ArrayInsert(i, i, k));
-		});
-	});
-
-	i = ref -1;
-
-	newMoveOp = ref makeTree();
-
-	traverseInOrder(^moveOp, \k, v -> {
-		i := ^i + 1;
-		newMoveOp := setTree(^newMoveOp, v.newindex, ArrayNop(^i, v.newindex));
-	});
-
-	i := -1;
-
-	moveOp := makeTree();
-
-	traverseInOrder(^newMoveOp, \k, v -> {
-		i := ^i + 1;
-		moveOp := setTree(^moveOp, ^i, ArrayNop(v.oldindex, ^i));
-	});
-
-	map(getTreeKeys(^moveOp), \k -> {
-		maybeApply(lookupTree(^moveOp, k), \m : ArrayOperation<?> -> {
-			if (m.newindex > m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex > m.oldindex && m2.oldindex <= m.newindex)
-						ArrayNop(m2.oldindex - 1, m2.newindex)
-					else
-						m2
-				});
-			} else if (m.newindex < m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex >= m.newindex && m2.oldindex < m.oldindex)
-						ArrayNop(m2.oldindex + 1, m2.newindex)
-					else
-						m2
-				});
-			}
-		});
-	});
-
-	concat3(
-		concat(
-			getTreeValues(^removeOp),
-			getTreeValues(^replaceOp)
-		),
-		filter(getTreeValues(^moveOp), \m -> m.oldindex != m.newindex),
-		getTreeValues(^insertOp)
-	);
-
-	// println(timestamp() - t);
-
-	// println(length(old));
-	// println(length(new));
-	// println(sizeTree(^removeOp));
-	// println(sizeTree(^insertOp));
-
-	// r;
 }
 
 applyProtocol(
