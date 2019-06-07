@@ -795,14 +795,17 @@ class RenderSupportJSPixi {
 			if (untyped __js__('typeof e.data == "string"'))
 				fn(e.data, e.origin);
 		};
-		
+
 		on("message", handler);
 		return function() { off("message", handler); };
 	}
 
-	public static inline function InvalidateStage() : Void {
-		TransformChanged = true;
+	public static function InvalidateStage() : Void {
 		PixiStageChanged = true;
+	}
+
+	public static function InvalidateTransform() : Void {
+		TransformChanged = true;
 	}
 
 	public static function getPixelsPerCm() : Float {
@@ -1771,7 +1774,6 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
-		clip.invalidateStage();
 		untyped clip.filterPadding = 0.0;
 		untyped clip.glShaders = false;
 

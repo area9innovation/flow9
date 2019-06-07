@@ -151,7 +151,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		invalidateStage();
+		RenderSupportJSPixi.InvalidateStage();
 	}
 
 	private function onError() : Void {
@@ -172,7 +172,7 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			invalidateStage();
+			RenderSupportJSPixi.InvalidateStage();
 
 			renderable = true;
 			loaded = true;
