@@ -6,7 +6,15 @@ import math/math;
 export {
 	// Compares two arrays, and returns a list of operations to apply to change the old to the new
 	arrayDiff(old : [?], new : [?], fullProtocol : bool) -> [ArrayOperation<?>];
-	arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>];
+
+	applyProtocol(
+		source : [?],
+		protocol : [ArrayOperation<?>],
+		insertFn : (newValue : ?) -> ?, //
+		replaceFn : (oldValue : ?, newValue : ?) -> ?,
+		removeFn : (oldValue : ?) -> Maybe<?> // if None() then element will be removed, if Some - replaced
+	) -> [?];
+	applyProtocolInvariant(source : [?], protocol : [ArrayOperation<?>]) -> [?];
 
 	ArrayOperation<?> ::= ArrayNop, ArrayInsert<?>, ArrayReplace<?>, ArrayRemove;
 		ArrayNop(oldindex : int, newindex : int);
@@ -82,7 +90,7 @@ arrayDiff(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperation<?>] {
 		}));
 	});*/
 
-	reverseA(makeArrayDiffOps(d, m, n, [], fullProtocol));
+	makeArrayDiffOps(d, m, n, [], fullProtocol);
 }
 
 makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc : [ArrayOperation<?>], fullProtocol : bool) -> [ArrayOperation<?>] {
@@ -100,35 +108,143 @@ makeArrayDiffOps(d : [[ref Pair<int, ArrayOperation<?>>]], y : int, x : int, acc
 	}
 }
 
-/*
-main() {
-	assertEquals(arrayDiff([], []), []);
-	assertEquals(arrayDiff([0], [0]), []);
-	assertEquals(arrayDiff([0,1], [0,1]), []);
-
-	assertEquals(arrayDiff([], [0]), [ArrayInsert(0,0,0)]);
-	assertEquals(arrayDiff([], [0,1]), [ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
-	assertEquals(arrayDiff([], [0,1,2]), [ArrayInsert(0,2,2), ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
-
-	assertEquals(arrayDiff([0], [0,1,2]), [ArrayInsert(1,2,2), ArrayInsert(1,1,1)]);
-	assertEquals(arrayDiff([1], [0,1,2]), [ArrayInsert(1,2,2), ArrayInsert(0,0,0)]);
-
-	assertEquals(arrayDiff([0], []), [ArrayRemove(0,0)]);
-	assertEquals(arrayDiff([0,1], [0]), [ArrayRemove(1,1)]);
-	assertEquals(arrayDiff([0,1], [1]), [ArrayRemove(0,0)]);
-
-	assertEquals(arrayDiff([0], [1]), [ArrayReplace(0,0,1)]);
-	assertEquals(arrayDiff([0,1,2], [2,1,0]), [ArrayReplace(2,2,0), ArrayReplace(0,0,2)]);
-	assertEquals(arrayDiff([0,1,2], [2,2,2]), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
-	assertEquals(arrayDiff([0,1,2], [2,2,2]), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
-
-	assertEquals(arrayDiff([0,1,2,3], [0,2,4]), [ArrayReplace(3,2,4), ArrayRemove(1,1)]);
-	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5]), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
-	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5]), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
-	assertEquals(arrayDiff([0,1,2,3,4], [1,2,3,5,6]), [ArrayReplace(4,4,6), ArrayInsert(4,3,5), ArrayRemove(0,0)]);
+applyProtocol(
+	source : [?],
+	protocol : [ArrayOperation<?>],
+	insertFn : (?) -> ?,
+	replaceFn : (?, ?) -> ?,
+	removeFn : (?) -> Maybe<?>
+) -> [?] {
+	fold(protocol, source, \acc, op -> {
+		switch (op : ArrayOperation) {
+			ArrayNop(__, __): acc;
+			ArrayInsert(__, __, __): insertArray(acc, op.oldindex, insertFn(op.value));
+			ArrayReplace(i, j, v): replace(acc, op.oldindex, replaceFn(acc[op.oldindex], op.value));
+			ArrayRemove(i, j): {
+				eitherFn(
+					removeFn(acc[op.oldindex]),
+					\newVal -> replace(acc, op.oldindex, newVal),
+					\ -> removeIndex(acc, op.oldindex)
+				)
+			}
+		}
+	});
 }
-*/
 
+applyProtocolInvariant(source : [?], protocol : [ArrayOperation<?>]) -> [?] {
+	applyProtocol(source, protocol,
+		idfn,
+		\__, newValue -> newValue,
+		\__ -> None()
+	);
+}
+
+// Test cases.
+// printInfo(title : string, arr : [?]) -> void {
+// 	println(title + ":");
+// 	iteri(arr, \i, a : ? -> println("  " + lpad(i2s(i), " ", 3) + " " + toString(a)));
+// }
+
+// main() {
+// 	fullProtocol = false;
+// 	assertEquals(arrayDiff([], [], fullProtocol), []);
+// 	assertEquals(arrayDiff([0], [0], fullProtocol), []);
+// 	assertEquals(arrayDiff([0,1], [0,1], fullProtocol), []);
+
+// 	assertEquals(arrayDiff([], [0], fullProtocol), [ArrayInsert(0,0,0)]);
+// 	assertEquals(arrayDiff([], [0,1], fullProtocol), [ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
+// 	assertEquals(arrayDiff([], [0,1,2], fullProtocol), [ArrayInsert(0,2,2), ArrayInsert(0,1,1), ArrayInsert(0,0,0)]);
+
+// 	assertEquals(arrayDiff([0], [0,1,2], fullProtocol), [ArrayInsert(1,2,2), ArrayInsert(1,1,1)]);
+// 	assertEquals(arrayDiff([1], [0,1,2], fullProtocol), [ArrayInsert(1,2,2), ArrayInsert(0,0,0)]);
+
+// 	assertEquals(arrayDiff([0], [], fullProtocol), [ArrayRemove(0,0)]);
+// 	assertEquals(arrayDiff([0,1], [0], fullProtocol), [ArrayRemove(1,1)]);
+// 	assertEquals(arrayDiff([0,1], [1], fullProtocol), [ArrayRemove(0,0)]);
+
+// 	assertEquals(arrayDiff([0], [1], fullProtocol), [ArrayReplace(0,0,1)]);
+// 	assertEquals(arrayDiff([0,1,2], [2,1,0], fullProtocol), [ArrayReplace(2,2,0), ArrayReplace(0,0,2)]);
+// 	assertEquals(arrayDiff([0,1,2], [2,2,2], fullProtocol), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
+// 	assertEquals(arrayDiff([0,1,2], [2,2,2], fullProtocol), [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]);
+
+// 	assertEquals(arrayDiff([0,1,2,3], [0,2,4], fullProtocol), [ArrayReplace(3,2,4), ArrayRemove(1,1)]);
+// 	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5], fullProtocol), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
+// 	assertEquals(arrayDiff([0,1,2,3], [0,2,2,3,5], fullProtocol), [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]);
+// 	assertEquals(arrayDiff([0,1,2,3,4], [1,2,3,5,6], fullProtocol), [ArrayReplace(4,4,6), ArrayInsert(4,3,5), ArrayRemove(0,0)]);
+
+// 	applyProtocolWithChange = \theSource, theProtocol ->
+// 		applyProtocol(theSource, theProtocol,
+// 			\newValue ->  {//insertFn
+// 				"INS[" + newValue + "]"
+// 			},
+// 			\oldValue, newValue -> { // replaceFn
+// 				"REPLACE[" + oldValue + " -> " + newValue + "]"
+// 			},
+// 			\oldValue -> { // removeFn
+// 				Some("DEL[" + oldValue + "]")
+// 			}
+// 		);
+
+// 	a2s = \a -> map(a, toString);
+
+// 	testData : [Pair<[string], [string]>] = [
+// 		Pair(
+// 			["The", " ", "boy", " ", "walked", " ", "down", " ", "the", " ", "street", "." ],
+// 			["The", " ", "boy", " ", "is", " ", "walks", " ", "down", " ", "the", " ", "street", "." ]
+// 		),
+// 		Pair(
+// 			["The", " ", "boy walked", " ", "down", " ", "the", " ", "street", "."],
+// 			["The", " ", "boy is walks down", " ", "the", " ", "street", "."]
+// 		),
+// 		Pair(
+// 			[0, 1, 2, 1, 4,  1, 6,        1, 8, 1, 10, 11, 12] |> a2s,
+// 			[0, 1, 2, 1, 21, 1, 22, 1, 6, 1, 8, 1, 10, 11, 12] |> a2s
+// 		)
+// 	];
+
+// 	randomInt = \upto : int-> {
+// 		floor(random() * i2d(upto))
+// 	}
+// 	minLength = 5;
+// 	maxLength = 50;
+
+// 	randomTestData : [Pair<[string], [string]>] =
+// 		generate(0, 1000, \__ -> {
+// 			Pair(
+// 				generate(0, minLength + randomInt(maxLength), \i -> i2s(randomInt(i))),
+// 				generate(0, minLength + randomInt(maxLength), \i -> i2s(randomInt(i)))
+// 			)
+// 		}
+// 	);
+
+// 	tests = concat(testData, randomTestData);
+
+// 	iteri(tests, \i, t -> {
+// 		source = t.first;
+// 		target = t.second;
+// 		protocol = arrayDiff(source, target, false);
+
+// 		restoredTarget = applyProtocolInvariant(source, protocol);
+// 		targetWithChanges = applyProtocolWithChange(source, protocol);
+
+// 		if (target != restoredTarget) {
+// 			println("== " + i2s(i+1));
+// 			println("Target != restoredTarget");
+// 			printInfo("source", source);
+// 			printInfo("target", target);
+// 			printInfo("protocol", protocol);
+// 			printInfo("targetWithChanges", targetWithChanges);
+// 			printInfo("restoredTarget", restoredTarget);
+// 			fail("Test failed.");
+// 		}
+// 	});
+
+// 	println("All " + i2s(length(tests)) + " test passed successfully");
+
+// 	quit(0);
+// }
+
+// Old test cases
 // main() {
 // 	// assertEquals(arrayDiffFast([], []), []);
 // 	// assertEquals(arrayDiffFast([0], [0]), []);
@@ -253,108 +369,3 @@ main() {
 
 // 	assertEquals(a2, a3);
 // }
-
-// ArrayNop is used as ArrayMove
-// Isn't replaceable with arrayDiff since has a bit different logic
-arrayDiffFast(old : [?], new : [?]) -> [ArrayOperation<?>] {
-	// println("arrayDiffFast");
-	// println(old);
-	// println(new);
-
-	// t = timestamp();
-
-	removeOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	insertOp : ref Tree<int, ArrayInsert> = ref makeTree();
-	moveOp : ref Tree<int, ArrayOperation> = ref makeTree();
-	replaceOp : ref Tree<int, ArrayOperation> = ref makeTree();
-
-	newTree = foldi(new, makeTree(), \i, acc, n -> eitherFn(lookupTree(acc, n), \v -> setTree(acc, n, arrayPush(v, i)), \ -> setTree(acc, n, [i])));
-
-	removeCounter = ref 0;
-
-	newFilteredTree = foldi(old, newTree, \k, acc, o -> {
-		eitherFn(
-			lookupTree(acc, o),
-			\a -> {
-				n = fold(tail(a), a[0], \n, v -> if (iabs(v - k) < iabs(n - k)) v else n);
-				moveOp := setTree(^moveOp, k, ArrayNop(k, n));
-
-				if (length(a) > 1) {
-					setTree(acc, o, removeFirst(a, n));
-				} else {
-					removeFromTree(acc, o);
-				}
-			},
-			\ -> {
-				i = k - ^removeCounter;
-				removeCounter := ^removeCounter + 1;
-
-				removeOp := setTree(^removeOp, k, ArrayRemove(i, i));
-
-				acc
-			}
-		)
-	});
-
-	traverseInOrder(newFilteredTree, \k, v -> {
-		iter(v, \i -> {
-			insertOp := setTree(^insertOp, i, ArrayInsert(i, i, k));
-		});
-	});
-
-	i = ref -1;
-
-	newMoveOp = ref makeTree();
-
-	traverseInOrder(^moveOp, \k, v -> {
-		i := ^i + 1;
-		newMoveOp := setTree(^newMoveOp, v.newindex, ArrayNop(^i, v.newindex));
-	});
-
-	i := -1;
-
-	moveOp := makeTree();
-
-	traverseInOrder(^newMoveOp, \k, v -> {
-		i := ^i + 1;
-		moveOp := setTree(^moveOp, ^i, ArrayNop(v.oldindex, ^i));
-	});
-
-	map(getTreeKeys(^moveOp), \k -> {
-		maybeApply(lookupTree(^moveOp, k), \m : ArrayOperation<?> -> {
-			if (m.newindex > m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex > m.oldindex && m2.oldindex <= m.newindex)
-						ArrayNop(m2.oldindex - 1, m2.newindex)
-					else
-						m2
-				});
-			} else if (m.newindex < m.oldindex) {
-				moveOp := mapTree(^moveOp, \m2 -> {
-					if (m2.newindex > m.newindex && m2.oldindex >= m.newindex && m2.oldindex < m.oldindex)
-						ArrayNop(m2.oldindex + 1, m2.newindex)
-					else
-						m2
-				});
-			}
-		});
-	});
-
-	concat3(
-		concat(
-			getTreeValues(^removeOp),
-			getTreeValues(^replaceOp)
-		),
-		filter(getTreeValues(^moveOp), \m -> m.oldindex != m.newindex),
-		getTreeValues(^insertOp)
-	);
-
-	// println(timestamp() - t);
-
-	// println(length(old));
-	// println(length(new));
-	// println(sizeTree(^removeOp));
-	// println(sizeTree(^insertOp));
-
-	// r;
-}
