@@ -3,11 +3,11 @@ import tools/flowc/tests/incremental/stochastic_gen;
 
 export {
 	// Returns an array of indexes of changed modules
-	renameAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> [int];
+	renameAStructField(i : int, struct : FiTypeStruct, gen : GenModules) -> GenModules;
 }
 
-renameAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> [int] {
-	if (length(struct.args) == 0) [] else {
+renameAStructField(i : int, struct : FiTypeStruct, gen : GenModules) -> GenModules {
+	if (length(struct.args) == 0) gen else {
 		field_ind = randomInt(length(struct.args));
 		to_rename = struct.args[field_ind];
 		renamed = FiStructArg("f" + to_rename.name, to_rename.type, false);
@@ -16,48 +16,53 @@ renameAStructField(i : int, struct : FiTypeStruct, generated : GenModules) -> [i
 			struct.name, [], 
 			fold(struct.args, [], \acc, arg -> concat(acc, [if (arg == to_rename) renamed else arg])), -1
 		);
-		orig_module = ^(generated.modules[i]);
-		generated.modules[i] := FiModule(orig_module with 
+		orig_module = gen.modules[i];
+		new_module = FiModule(orig_module with 
 			structs = [new_struct],
-			imports = generateImports(^(generated.env), new_struct)
+			imports = generateImports(gen.env, new_struct)
 		);
-		generated.env := GenEnv(^(generated.env) with structs = setTree(^(generated.env).structs, struct.name, new_struct));
-		foldi(generated.modules, [i],
+		new_env = GenEnv(gen.env with structs = setTree(gen.env.structs, struct.name, new_struct));
+		new_modules = foldi(gen.modules, [],
 			\j, acc, m -> {
-				if (renameAStructFieldInModule(^(generated.env), struct.name, field_ind, renamed, m)) {
-					concat(acc, [j])
+				if (i == j) {
+					writeModule(new_module);
+					concat(acc, [new_module])
 				} else {
-					acc
+					switch (renameAStructFieldInModule(gen.env, struct.name, field_ind, renamed, m)) {
+						Some(new_m): {
+							writeModule(new_m);
+							concat(acc, [new_m])
+						}
+						None(): concat(acc, [m]);
+					}
 				}
 			}
 		)
+		GenModules(new_modules, new_env)
 	}
 }
 
-renameAStructFieldInModule(env : GenEnv, struct : string, field_ind : int, renamed : FiStructArg, modref : ref FiModule) -> bool {
-	m = ^modref;
+renameAStructFieldInModule(env : GenEnv, struct : string, field_ind : int, renamed : FiStructArg, m : FiModule) -> Maybe<FiModule> {
 	if (length(m.structs) > 0) {
-		false
+		None()
 	} else if (length(m.unions) > 0) {
-		false
+		None()
 	} else if (length(m.functions) > 0) {
 		func = m.functions[0];
 		new_lambda = renameAStructFieldInExp(env, struct, field_ind, renamed, func.lambda);
-		if (func.lambda == new_lambda) false else {
+		if (func.lambda == new_lambda) None() else {
 			println("\tmodule: " + m.fileinfo.flowfile + " changed");
-			modref := FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]);
-			true
+			Some(FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]))
 		}
 	} else if (length(m.globalVars) > 0) {
 		var = m.globalVars[0];
 		new_value = renameAStructFieldInExp(env, struct, field_ind, renamed, var.value);
-		if (var.value == new_value) false else {
+		if (var.value == new_value) None() else {
 			println("\tmodule: " + m.fileinfo.flowfile + " changed");
-			modref := FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]);
-			true
+			Some(FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]))
 		}
 	} else {
-		false
+		None()
 	}
 }
 
