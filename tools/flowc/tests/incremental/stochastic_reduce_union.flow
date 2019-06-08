@@ -1,0 +1,143 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	reduceAUnion(i : int, union : FiTypeUnion, gen : GenModules) -> GenModules;
+}
+
+reduceAUnion(i : int, union : FiTypeUnion, gen : GenModules) -> GenModules {
+	if (length(union.typenames) == 1) gen else {
+		type_ind = randomInt(gen.env.rand, length(union.typenames));
+		removed_type = union.typenames[type_ind];
+		println("\ttype " + removed_type.name + " is removed from the union " + union.name);
+		orig_module = gen.modules[i];
+		new_union = FiTypeUnion(union with 
+			typenames = fold(union.typenames, [], \acc, tp -> if (tp == removed_type) acc else concat(acc, [tp]))
+		);
+		new_module = FiModule(orig_module with 
+			unions = [new_union],
+			imports = generateImports(gen.env, new_union)
+		);
+		new_env = GenEnv(gen.env with unions = setTree(gen.env.unions, union.name, new_union));
+		new_modules = foldi(gen.modules, [],
+			\j, acc, m -> {
+				if (i == j) {
+					writeModule(new_module);
+					concat(acc, [new_module])
+				} else {
+					switch (reduceAUnionInModule(gen.env, union, removed_type.name, m)) {
+						Some(new_m): {
+							writeModule(new_m);
+							concat(acc, [new_m]);
+						}
+						None(): concat(acc, [m]);
+					}
+				}
+			}
+		);
+		GenModules(new_modules, new_env)
+	}
+}
+
+reduceAUnionInModule(env : GenEnv, union : FiTypeUnion, removed_type : string, m : FiModule) -> Maybe<FiModule> {
+	if (length(m.structs) > 0) {
+		None()
+	} else if (length(m.unions) > 0) {
+		None()
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = reduceAUnionInExp(env, union, removed_type, func.lambda);
+		if (func.lambda == new_lambda) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			new_func = FiFunctionDec(func with 
+				lambda = cast(new_lambda : FiExp -> FiLambda),
+				type = cast(fiExpType(new_lambda) : FiType -> FiTypeFunction)
+			);
+			Some(FiModule(m with 
+				functions = [new_func],
+				imports = generateImports(env, new_func)
+			))
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = reduceAUnionInExp1(env, union, removed_type, var.value, isUnion(var.type, union.name));
+		if (var.value == new_value) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			new_var = FiGlobalVar(var with 
+				value = new_value, 
+				type = fiExpType(new_value)
+			);
+			Some(FiModule(m with 
+				globalVars = [new_var],
+				imports = generateImports(env, new_var)
+			))
+		}
+	} else {
+		None()
+	}
+}
+
+reduceAUnionInExp(env : GenEnv, union : FiTypeUnion, removed_type : string, ex : FiExp) -> FiExp {
+	reduceAUnionInExp1(env, union, removed_type, ex, false)
+}
+
+reduceAUnionInExp1(env : GenEnv, union : FiTypeUnion, removed_type : string, ex : FiExp, union_caller : bool) -> FiExp {
+	is_union = \t -> isUnion(t, union.name);
+	switch(ex) {
+		FiLambda(__, body, tp, __): {
+			new_body = reduceAUnionInExp1(env, union, removed_type, body, is_union(tp));
+			FiLambda(ex with 
+				body = new_body, 
+				type = FiTypeFunction(tp with returnType = fiExpType(new_body))
+			);
+		}
+		FiCall(f, args, __,__): {
+			new_f = reduceAUnionInExp1(env, union, removed_type, f, false);
+			FiCall(ex with
+				f = new_f,
+				args = map(args, \arg -> 
+					reduceAUnionInExp1(env, union, removed_type, arg, is_union(fiExpType(arg)))
+				),
+				type = cast(fiExpType(new_f) : FiType -> FiTypeFunction).returnType
+			);
+		}
+		FiVar(__, __,__): ex;
+		FiCallPrim(op, es, tp,__): {
+			ret = FiCallPrim(ex with 
+				es = map(es, \e -> reduceAUnionInExp1(env, union, removed_type, e, is_union(fiExpType(e))))
+			);
+			switch (op) {
+				FcStructPrim(name): {
+					if (name == removed_type && (is_union(tp) || union_caller)) {
+						generateConstExpr(env, FiTypeName(union.name, []));
+					} else {
+						ret;
+					}
+				}
+				default: 
+					ret;
+			}
+		}
+		FiLet(__, t1, e1, e2, t2,__): {
+			new_e1 = reduceAUnionInExp1(env, union, removed_type, e1, is_union(t1));
+			new_e2 = reduceAUnionInExp1(env, union, removed_type, e2, is_union(t2));
+			FiLet(ex with 
+				e1 = new_e1,
+				e2 = new_e2,
+				type = fiExpType(new_e1),
+				type2 = fiExpType(new_e2)
+			);
+		}
+		default: {
+			ex;
+		}
+	}
+}
+
+isUnion(t : FiType, name : string) -> bool {
+	switch (t) {
+		FiTypeName(n, __): n == name;
+		default: false;
+	};
+}

@@ -15,6 +15,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Rect;
 import android.graphics.Region;
+import android.graphics.SurfaceTexture;
 import android.os.Build;
 import android.os.Handler;
 import android.support.annotation.NonNull;
@@ -222,6 +223,17 @@ public class FlowWidgetGroup extends ViewGroup implements FlowRunnerWrapper.Widg
             widgets.put(id, widget = new VideoWidget(this, id));
             videoWidgets.put(id, widget);
             widget.init( resource_uri.resolve(url).toString(), playing, looping, controls, volume );
+        }
+    }
+
+    public void onFlowCreateVideoWidgetFromMediaStream(
+            long id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
+
+        VideoWidget widget = (VideoWidget)widgets.get(id);
+        if (widget == null) {
+            widgets.put(id, widget = new VideoWidget(this, id));
+            videoWidgets.put(id, widget);
+            widget.init(flowMediaStream);
         }
     }
 

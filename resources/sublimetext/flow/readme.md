@@ -20,6 +20,9 @@ Install Sublime Text 3.
     http://www.sublimetext.com/3
 
 
+Note for ubuntu users: if started from thumbnail, sublime might ignore env variables.
+To fix that, add them to `~/.pam_environment`, or flow binary might be missing from `PATH`
+
 ### Set Unix line endings as default
 
 Even on Windows, we want to use Unix line endings, so make sure to use something like this in

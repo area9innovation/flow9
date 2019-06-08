@@ -998,6 +998,55 @@ StackSlot GLTextClip::setScrollV(RUNNER_ARGS)
 }
 
 
+StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(idx);
+    RUNNER_CheckTag1(TInt, idx);
+    double pos = -1;
+    int i, idx_v = idx.GetInt();
+
+    layoutText();
+    Extent::Ptr extent;
+    for (i = text_real_extents.size()-1; i>=0; --i) {
+        extent = text_real_extents[i];
+        if (extent->char_idx <= idx_v) break;
+    }
+    return StackSlot::MakeDouble(extent? extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)] : -1);
+}
+
+StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(posx, posy);
+    RUNNER_CheckTag2(TDouble, posx, posy);
+    int char_idx = -1;
+
+    std::pair<GLTextClip::Extent::Ptr,float> ext = findExtentByPos(vec2(posx.GetDouble(), posy.GetDouble()), true);
+    if (ext.first) {
+        int eidx = ext.first->layout->findIndexByPos(ext.second, true);
+        if (eidx >= 0) {
+            const std::vector<float> &positions = ext.first->layout->getPositions();
+            const std::vector<size_t> &char_indices = ext.first->layout->getCharIndices();
+            int glyph_idx = ext.first->char_idx + eidx;
+
+            // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
+            int interp_dir = glyph_idx>0? -1 : 1;
+            if ((positions[glyph_idx]-ext.second)*(positions[glyph_idx+interp_dir]-ext.second) > 0) interp_dir = -interp_dir;
+
+            char_idx = char_indices[glyph_idx];
+            // Range check
+            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 || interp_dir<0)) {
+                int alt_char_idx = char_indices[glyph_idx+interp_dir];
+                int char_delta = alt_char_idx-char_idx;
+                if (abs(char_delta)>1) {
+                    double pos = positions[glyph_idx];
+                    double alt_pos = positions[glyph_idx+interp_dir];
+                    char_idx = floor(char_delta*(alt_pos-pos)/(ext.second-pos)+0.5);
+                }
+            }
+        }
+    }
+    return StackSlot::MakeInt(char_idx);
+}
 
 StackSlot GLTextClip::getTextFieldWidth(RUNNER_ARGS)
 {

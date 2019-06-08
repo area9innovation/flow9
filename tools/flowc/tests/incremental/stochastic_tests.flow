@@ -1,0 +1,73 @@
+import sys/system;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/tests/incremental/stochastic_mutators;
+
+testMutations(prev : GenModules, curr : GenModules, i : int, count : int) -> void {
+	if (i == 0) {
+		println("All " + i2s(count) + " test iterations pass successfully");
+		quit(0);
+	} else {
+		remove_last_lines = \s -> {
+			lines = strSplit(s, "\n");
+			strGlue(take(lines, length(lines) - 3), "\n")
+		}
+		startProcess("flowc1", ["./flowgen/main.flow"], "./", "", \errcode1, stdout1, stderr1 ->
+			startProcess("flowc1", ["incremental=0", "./flowgen/main.flow"], "./", "", \errcode2, stdout2, stderr2 ->
+				if (errcode1 != errcode2 || stderr1 != stderr2) {
+					println("test iteration: " + i2s(count - i) + " FAILS:");
+					if (errcode1 != errcode2) {
+						println("different error codes: " + i2s(errcode1) + " != " + i2s(errcode2));
+					}
+					if (remove_last_lines(stdout1) != remove_last_lines(stdout2)) {
+						println("different stdout: \nincremental=1\n" + 
+							indentLines(remove_last_lines(stdout1), 1) + 
+							"\n != \nincremental=0" + 
+							indentLines(remove_last_lines(stdout2), 1)
+						);
+					}
+					if (stderr1 != stderr2) {
+						println("different stderr: \n" + stderr1 + "\n != \n" + stderr2);
+					}
+					quit(-1);
+				} else {
+					if (errcode1 == 0) {
+						println("test iteration " + i2s(count - i) + " passed successfully, both are OK");
+						next = mutateModules(curr);
+						testMutations(curr, next, i - 1, count);
+					} else {
+						println("test iteration " + i2s(count - i) + " passed successfully, both FAIL");
+						// Now we need to reset compilation failure
+						iter(prev.modules, \m -> writeModule(m));
+						startProcess("flowc1", ["./flowgen/main.flow"], "./", "", \errcode, __,__->
+							if (errcode != 0) {
+								println("something wrong, must be a successfull compilation");
+								quit(-1);
+							} else {
+								next = mutateModules(prev);
+								testMutations(prev, next, i - 1, count);
+							}
+						)
+					}
+				}
+			)
+		)
+	}
+}
+
+main() {
+	println("Stochastic tests of incremental compilation");
+	println("");
+	
+	deleteDirectory("./flowgen");
+	
+	item_count = s2i(getUrlParameterDef("items", "100"));
+	iterations = s2i(getUrlParameterDef("iterations", "100"));
+	seed = s2i(getUrlParameterDef("seed", i2s(cast(timestamp() / 1000.0 : double -> int))));
+	
+	generated = generateIncrementalTestModules(item_count, seed);
+	iter(generated.modules, \module -> writeModule(module));
+
+	println("Random seed: " + i2s(seed));
+	println("Start mutations...");
+	testMutations(generated, generated, iterations, iterations);
+}

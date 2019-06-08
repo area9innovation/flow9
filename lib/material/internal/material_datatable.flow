@@ -45,10 +45,12 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	clickEnabled : MClickEnabled = extractStruct(style, MClickEnabled(const(true)));
 
 	rowHeight = extractStruct(style, MRowHeight(if (extractStruct(style, MCondensed(false)).condensed) 32. else 48.)).height;
+	headerRowHeight = extractStruct(style, MHeaderRowHeight(rowHeight)).height;
+	lineHeight = \isHeader -> if (isHeader) headerRowHeight else rowHeight;
 	checkboxSelection = tryExtractStruct(style, MCheckBoxSelection([]));
 	checkboxColor = eitherMap(checkboxSelection, \cs -> extractStruct(cs.style, getPrimaryColor(parent)), getPrimaryColor(parent));
-	checkboxBorder = forceRange((rowHeight - 24.) / 2., 0., 12.);
-	checkboxColumnWidth = checkboxBorder * 3. / 2. + standardIconSize;
+	checkboxBorder = \rh -> forceRange((rh - 24.) / 2., 0., 12.);
+	checkboxColumnWidth = checkboxBorder(rowHeight) * 3. / 2. + standardIconSize;
 
 	headerStyle = tryExtractStruct(style, MHeaderStyle([], [], []));
 	rowBackgroundStyle = tryExtractStruct(style, MRowBackgroundStyle(\__ -> []));
@@ -239,32 +241,35 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	// Helpers
 
-	makeChkbox = \p, trigger, en, onClk ->
+	makeChkbox = \p, trigger, en, onClk, h -> {
+		lh = lineHeight(h);
 		MCheckBox2T(
 			manager,
 			p,
-			MCheckBox(TEmpty(), trigger, [MIconButtonBorder(checkboxBorder), checkboxColor, MEnabled(en), MOnClick(onClk)]),
+			MCheckBox(TEmpty(), trigger, [MIconButtonBorder(checkboxBorder(lh)), checkboxColor, MEnabled(en), MOnClick(onClk)]),
 			m2t
 		)
-		|> (\t -> TBorderA(-checkboxBorder / 2., 0., 0., 0., t))
-		|> (\t -> TCenterYIn(t, TFixed(0., rowHeight)));
+		|> (\t -> TBorderA(-checkboxBorder(lh) / 2., 0., 0., 0., t))
+		|> (\t -> TCenterYIn(t, TFixed(0., lh)))
+	}
 
-	addCellBorder = \t, size ->
-		TBorderA(8., 0., 8., 1., TAvailable(t, TBorderA(-16., 0., 0., -1., size)));
+	cellBox = \i, h -> TSizedWidth(columnWidths[i], lineHeight(h));
 
-	cellBox = \i -> TSizedWidth(columnWidths[i], rowHeight);
-
-	alignCellContent = \right : bool, center : bool, i : int, content : Tropic ->
-		TCopySize(
-			cellBox(i),
-			\tr ->
-				TTweak(
-					[TAlign(const(if (center) 0.5 else if (right) 1. else 0.), const(0.5))],
-					addCellBorder(content, tr),
-					tr
-				),
-			false
-		);
+	alignCellContent = \colstyle : [MColumnStyle], box : Tropic ->
+		\content : Tropic -> {
+			right = changeBoolIfRTL(contains(colstyle, RightAlign()));
+			center = contains(colstyle, CenterAlign());
+			TCopySize(
+				box,
+				\tr ->
+					TTweak(
+						[TAlign(const(if (center) 0.5 else if (right) 1. else 0.), const(0.5))],
+						TBorderA(8., 0., 8., 1., TAvailable(content, TBorderA(-16., 0., 0., -1., tr))),
+						tr
+					),
+				false
+			)
+		}
 
 	expandContent = \cells : [Tropic], er : int ->
 		map(
@@ -277,9 +282,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	// Header
 
 	tableHeader = \p -> if (replaceHeader) TEmpty() else
-		mapi(columns0, \i0, c -> {
+		mapi(columns0, \i0, c : MColumnDynamic -> {
 			rightAlign = changeBoolIfRTL(contains(c.style, RightAlign()));
-			centerAlign = contains(c.style, CenterAlign());
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
 			sortable = isNone(reorderList) && (hasExtOrderBy || contains(c.style, MAutoSort()));
 			i = i0 - b2i(showRowNumbers);
@@ -349,7 +353,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				makeHeaderTitle(false)
 			)
 			|> (\f2 -> MTooltip2T(manager, p, MTooltip(f2, MDynamicText(c.tooltip, [MTooltipDesktop(), sameLightMColor(p)]), []), m2t))
-			|> (\f2 -> alignCellContent(rightAlign, centerAlign, i0 + b2i(isSome(checkboxSelection)), f2))
+			|> alignCellContent(c.style, cellBox(i0 + b2i(isSome(checkboxSelection)), true))
 		})
 		|> (\headers : [Tropic] -> {
 
@@ -381,7 +385,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									concat(getValue(selection.selected), fgetValue(selPage)) |> uniq
 								else
 									filter(getValue(selection.selected), \x -> !contains(fgetValue(selPage), x))
-							)
+							),
+							true
 						)
 							|> (\t ->
 								if (selection.multiple) {
@@ -466,7 +471,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						[TFillX()],
 						if (length(pagination.rowsPerPage) > 1)
 							[
-								MText2T(p2, "Rows per page:", [MCaption()])
+								MText2T(p2, "Rows per Page:", [MCaption()])
 								|> TCenterY
 								|> (\t -> TBorder(8., 0., 16., 0., t)),
 								MDropDown2T(
@@ -488,7 +493,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									], f2)
 								)
 								|> TCenterY
-								|> (\t -> TBorder(0., 0., 16., 0., t))
+								|> TBorderRight(16.)
 							]
 						else
 							[],
@@ -572,7 +577,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 											else if (selection.toggle)
 												nextDistinct(selection.selected, [])
 										}
-									}
+									},
+									false
 								)
 								|> (\t -> TConstruct(
 										[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j0))], t
@@ -591,30 +597,19 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 								TEmpty()
 							else {
 								colStyle = columns[i].style;
-								rightAlign = changeBoolIfRTL(contains(colStyle, RightAlign()));
-								centerAlign = contains(colStyle, CenterAlign());
-								widthByContentCol = contains(colStyle, MWidthByContent());
-
+								box = cellBox(i, false);
 								// TODO : improve
 								// Hotfix : rerender content in the column if rowsCountB changed. 
 								content = 
-									if (widthByContentCol)
+									if (contains(colStyle, MWidthByContent()))
 										MSelect(cellWs, \cws ->
 											MAttachWidth(cell, elementAt(elementAt(cws, j, []), i, make(0.0)))
 										)
 									else
 										cell;
 
-								MCellContent2T(
-									manager,
-									p3,
-									content,
-									rowHeight,
-									cellBox(i),
-									crop,
-									m2t
-								)
-								|> (\t -> alignCellContent(rightAlign, centerAlign, i, t))
+								MCellContent2T(manager, p3,	content, rowHeight,	box, crop, m2t)
+								|> alignCellContent(colStyle, box)
 							}
 						})
 							|> (\cells -> expandContent(cells, er))

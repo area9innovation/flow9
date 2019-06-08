@@ -160,6 +160,11 @@ class FlowSprite extends Sprite {
 		loaded = false;
 
 		texture = Texture.EMPTY;
+
+		if (parent == null) {
+			return;
+		}
+
 		errorFn("Can not load " + url);
 	}
 
@@ -182,7 +187,7 @@ class FlowSprite extends Sprite {
 
 	private function loadTexture() : Void {
 		retries++;
-		texture = Texture.fromImage(url);
+		texture = Texture.fromImage(url, Util.determineCrossOrigin(url) != '');
 		pushTextureToCache(texture);
 
 		if (texture.baseTexture == null) {
