@@ -150,6 +150,9 @@ class FlowFileSystem {
 			#if sys
 			return sys.FileSystem.fullPath(dir);
 			#elseif (js && (flow_nodejs || nwjs))
+			if (StringTools.startsWith(dir, "~"))
+				return js.node.Os.homedir() + dir.substr(1);
+
 			return Fs.realpathSync(dir);
 			#else
 			return dir;
