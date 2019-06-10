@@ -336,20 +336,23 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					if (combiner == TGroupCombiner()) {
 						tropic
 					} else {
+						disp =
+							fconnect(
+								fsubselect(
+									previousItem,
+									FLift(\prevItem ->
+										positionTDynamicGroupItem(
+											prevItem,
+											combiner
+										)
+									)
+								),
+								itemPosition
+							);
+
 						TConstruct(
 							[
-								\ -> fconnect(
-									fsubselect(
-										previousItem,
-										FLift(\prevItem ->
-											positionTDynamicGroupItem(
-												prevItem,
-												combiner
-											)
-										)
-									),
-									itemPosition
-								)
+								\ -> disp
 							],
 							TTranslate(itemPosition, tropic)
 						);
@@ -2191,14 +2194,15 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			);
 		}
 		TConstruct(cs, tr): {
-			ds = map(cs, \fn -> fn());
 			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
 
 			returnTAcc(
 				bf,
 				\ -> FConstructor(
 					bf.form,
-					\ -> \ -> applyall(ds)
+					\ ->
+						map(cs, \fn -> fn())
+						|> (\disp -> \ -> applyall(disp))
 				),
 				metricsOnly
 			)
@@ -2431,32 +2435,50 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 		// Simple forms
 		TEmpty(): zeroTAcc;
 		TText(t, s): {
+			charStyle = tcharacterStyle2charStyle(s);
+
 			eitherFn(
 				tryExtractStruct(s, FReplaceText(ref None())),
 				\rt -> {
-					charStyle = tcharacterStyle2charStyle(s);
-					wh = make(getStaticFormSize2(Text(t, charStyle), false));
+					metrics = make(FormMetrics(0., 0., 0., 0.));
+
+					wd = fselect(metrics, FLift(\met -> met.width));
+					hgt = fselect(metrics, FLift(\met -> met.height));
+					bsln = fselect(metrics, FLift(\met -> met.baseline));
+
 					replaceTextFn = ref None();
+					tempText = ref t;
 
 					rt.fn := Some(\newText -> {
-						maybeApply(^replaceTextFn, \fn -> next(wh, fn(newText)));
-						getValue(wh);
+						tempText := newText;
+						maybeApply(^replaceTextFn, \fn -> fn(newText));
 					});
 
 					TAcc(
 						if (metricsOnly)
 							FEmpty()
 						else
-							FText(t, replaceStruct(tcharacterStyle2ftextStyle(s), FReplaceText(replaceTextFn))),
+							FCreate(\ ->
+								FParagraph(
+									^tempText,
+									concat(
+										charStyle,
+										[
+											FReplaceText(replaceTextFn),
+											ParagraphMetrics(\met -> nextDistinct(metrics, met))
+										]
+									)
+								)
+							),
 						TFormMetrics(
-							fselect(wh, FLift(\v -> v.width)),
-							fselect(wh, FLift(\v -> v.height)),
-							fselect(wh, FLift(\v -> v.baseline))
+							wd,
+							hgt,
+							bsln
 						),
-						fselect(wh, FLift(\v -> v.width)),
-						fselect(wh, FLift(\v -> v.height)),
-						fselect(wh, FLift(\v -> v.width)),
-						fselect(wh, FLift(\v -> v.height)),
+						wd,
+						hgt,
+						wd,
+						hgt,
 						zero,
 						zero,
 						const(true),
@@ -2466,14 +2488,13 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					)
 				},
 				\ -> {
-					charStyle = tcharacterStyle2charStyle(s);
 					wh = getStaticFormSize2(Text(t, charStyle), false);
 
 					TAcc(
 						if (metricsOnly)
 							FEmpty()
 						else
-							FText(t, tcharacterStyle2ftextStyle(s)),
+							FText(t, charStyle),
 						TFormMetrics(
 							const(wh.width),
 							const(wh.height),

@@ -18,7 +18,7 @@ export {
 	style2characterStyle(s : [?]) -> [CharacterStyle];
 
 	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
-	renderFText(text : string, style : [FTextStyle]) -> FRenderResult;
+	renderFText(text : string, style : [CharacterStyle]) -> FRenderResult;
 	renderFTexts(texts : [Text]) -> FRenderResult;
 	renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult;
 	renderFParagraphs(texts : [Text]) -> FRenderResult;
@@ -892,10 +892,9 @@ renderFTexts(texts : [Text]) -> FRenderResult {
 	FRenderResult(clips, disposers, caps);
 }
 
-renderFText(text : string, style : [FTextStyle]) -> FRenderResult {
-	characterStyle = style2characterStyle(style);
-	textfield = makeTextfield(getFontFamily(characterStyle));
-	defineTextStyle(textfield, text, characterStyle);
+renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
+	textfield = makeTextfield(getFontFamily(style));
+	defineTextStyle(textfield, text, style);
 
 	if (getDefaultRtl()) {
 		setTextDirection(textfield, "rtl");
@@ -914,22 +913,8 @@ renderFText(text : string, style : [FTextStyle]) -> FRenderResult {
 
 	caps = FClipCapabilities(true, false, true, false, true);
 
-	maybeApply(tryExtractStruct(style, FReplaceText(ref None())), \rt ->
-		rt.fn := Some(\newText -> {
-			defineTextStyle(textfield, newText, characterStyle);
-
-			FormMetrics(
-				getTextFieldWidth(textfield),
-				getTextFieldHeight(textfield),
-				getTextMetrics(textfield)[0],
-				getTextFieldHeight(textfield)
-			);
-		})
-	);
-
-
 	eitherFn(
-		tryExtractStruct(characterStyle, Underlined([])),
+		tryExtractStruct(style, Underlined([])),
 		\undr -> {
 			uStyle = undr.style;
 			wd = getTextFieldWidth(textfield);
@@ -944,7 +929,7 @@ renderFText(text : string, style : [FTextStyle]) -> FRenderResult {
 					if (uStyle != [])
 						uStyle
 					else
-						[Stroke(extractStruct(characterStyle, Fill(0x000000)).color)]
+						[Stroke(extractStruct(style, Fill(0x000000)).color)]
 				);
 
 			FRenderResult(arrayPush(urr.clips, textfield), arrayPush(urr.disposers, disposer), caps)
@@ -965,7 +950,8 @@ renderFParagraphs(texts : [Text]) -> FRenderResult {
 }
 
 renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
-	d = renderFText(text, style2characterStyle(style));
+	charStyle = style2characterStyle(style);
+	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
 	disposers = ref [];
 
@@ -985,6 +971,13 @@ renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
 				),
 			nop
 		);
+
+	maybeApply(
+		tryExtractStruct(style, FReplaceText(ref None())),
+		\rt -> {
+			rt.fn := Some(\newText -> defineTextStyle(d.clips[0], newText, charStyle));
+		}
+	);
 
 	maybeApply(
 		tryExtractStruct(style, InterlineSpacing(0.)),
@@ -1007,6 +1000,7 @@ renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
 		\width -> {
 			setWordWrap(textfield, true);
+
 			refArrayPush(
 				disposers,
 				makeSubscribe(width.width, \wd -> {
