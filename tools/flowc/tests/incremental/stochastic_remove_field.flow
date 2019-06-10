@@ -1,0 +1,104 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	removeAStructField(i : int, struct : FiTypeStruct, gen : GenModules) -> GenModules;
+}
+
+removeAStructField(i : int, struct : FiTypeStruct, gen : GenModules) -> GenModules {
+	if (length(struct.args) == 0) gen else {
+		removed_ind = randomInt(gen.env.rand, length(struct.args));
+		removed = struct.args[removed_ind];
+		println("\tfield " + removed.name + " of type " + prettyFiType(dummyPretty, removed.type, makeSet()) + " is removed from struct " + struct.name);
+		new_struct = FiTypeStruct(
+			struct.name, [], 
+			fold(struct.args, [], \acc, arg -> if (arg == removed) acc else concat(acc, [arg])), -1
+		);
+		orig_module = gen.modules[i];
+		new_module = FiModule(orig_module with 
+			structs = [new_struct],
+			imports = generateImports(gen.env, new_struct)
+		);
+		new_env = GenEnv(gen.env with structs = setTree(gen.env.structs, struct.name, new_struct));
+		new_modules = foldi(gen.modules, [],
+			\j, acc, m -> {
+				if (i == j) {
+					writeModule(new_module);
+					concat(acc, [new_module])
+				} else {
+					switch (removeAStructFieldInModule(gen.env, struct.name, removed_ind, m)) {
+						Some(new_m): {
+							writeModule(new_m);
+							concat(acc, [new_m])
+						}
+						None(): concat(acc, [m]);
+					}
+				}
+			}
+		)
+		GenModules(new_modules, new_env)
+	}
+}
+
+removeAStructFieldInModule(env : GenEnv, struct : string, removed_ind : int, m : FiModule) -> Maybe<FiModule> {
+	if (length(m.structs) > 0) {
+		None()
+	} else if (length(m.unions) > 0) {
+		None()
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = removeAStructFieldInExp(env, struct, removed_ind, func.lambda);
+		if (func.lambda == new_lambda) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			Some(FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]))
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = removeAStructFieldInExp(env, struct, removed_ind, var.value);
+		if (var.value == new_value) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			Some(FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]))
+		}
+	} else {
+		None()
+	}
+}
+
+removeAStructFieldInExp(env : GenEnv, struct : string, removed_ind : int, ex : FiExp) -> FiExp {
+	switch(ex) {
+		FiLambda(__, body, __, __):
+			FiLambda(ex with body = removeAStructFieldInExp(env, struct, removed_ind, body));
+		FiCall(f, args, __,__): 
+			FiCall(ex with
+				f = removeAStructFieldInExp(env, struct, removed_ind, f),
+				args = map(args, \arg -> removeAStructFieldInExp(env, struct, removed_ind, arg))
+			);
+		FiVar(__, __,__): ex;
+		FiCallPrim(op, es, __,__): {
+			es1 = map(es, \e -> removeAStructFieldInExp(env, struct, removed_ind, e));
+			new_es = switch (op) {
+				FcStructPrim(name): {
+					if (name == struct) {
+						foldi(es1, [], \i, acc, e -> if (i == removed_ind) acc else 
+							concat(acc, [removeAStructFieldInExp(env, struct, removed_ind, e)])
+						)
+					} else {
+						es1;
+					}
+				}
+				default: 
+					es1;
+			}
+			FiCallPrim(ex with es = new_es);
+		}
+		FiLet(__, t, e1, e2, __,__): 
+			FiLet(ex with 
+				e1 = removeAStructFieldInExp(env, struct, removed_ind, e1),
+				e2 = removeAStructFieldInExp(env, struct, removed_ind, e2),
+			);
+		default: {
+			ex;
+		}
+	}
+}

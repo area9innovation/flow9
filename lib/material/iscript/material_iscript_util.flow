@@ -5,6 +5,7 @@ import material/iscript/material_iscript_filesystem;
 import material/iscript/material_iscript_config;
 import net/http_request_callback;
 import net/http_request_util;
+import formats/base64;
 
 export {
 	replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
@@ -1234,15 +1235,28 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 
 		nextDistinct(manager.iscript.state, IScriptStopped());
 
+		if (getUrlParameter(UP_ISCRIPTGENERATESCREENSHOTS) != "") {
+			iter(b, \result -> writeIScriptScreenshot(
+				getIScriptScreenshotName(result.filepath, Some(getIScriptScenarioFileName(manager)), None()), 
+				result.afterReplayVisualScreenshot.screenshot
+			) |> ignore);
+		}
+
 		// If there was a run with the parameter "playiscript", then we exit with the result return.
 		if (length(b) > 1) {
 			iScriptInfo(manager, "=== End Scenario ===", None());
+			if (getUrlParameter(UP_ISCRIPTGENERATESCENARIOHTMLREPORT) != "") {
+				writeIScriptReport(
+					getIScriptReportName(getIScriptScenarioFileName(manager)), 
+					getIscriptReportResults(b)
+				) |> ignore;
+			}
 			if (getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
 				quit(countA(b, \v -> !v.isReplaySuccessful))
 			else
 				compareDialog(b);
 		} else {
-			if (getUrlParameter(UP_ISCRIPTPLAY) != "")
+			if (getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != "")
 				quit(b2i(countA(b, \v -> v.isReplaySuccessful) < length(b)))
 			else
 				compareDialog(b);
@@ -1255,3 +1269,50 @@ isIScriptUrlParamsSet() -> bool {
 	getUrlParameter(UP_ISCRIPTPLAY) != "" || getUrlParameter(UP_ISCRIPTPLAYSCENARIO) != ""
 }
 
+getIScriptScenarioFileName(manager : MaterialManager) -> string {
+	scenarioPath = getValue(manager.iscript.scenario.pathB);
+	strRight(scenarioPath, strLastIndexOf(scenarioPath, "/") + 1);
+}
+
+getIScriptReportName(scenarioName : string) -> string {
+	"iscripts/report_" + scenarioName + ".html"
+}
+
+getIScriptScreenshotName(scriptPath : string, scenarioNameM : Maybe<string>, indexM : Maybe<int>) -> string {
+	scenarioName = eitherMap(scenarioNameM, \sn -> sn + "_", "");
+	index = eitherMap(indexM, \i -> i2s(i) + "_", "");
+	"iscripts/screenshot_after_" + scenarioName + index + strRight(scriptPath, strLastIndexOf(scriptPath, "/") + 1) + ".png";
+}
+
+writeIScriptScreenshot(path : string, content : string) -> bool {
+	setFileContentBytes(
+		path, 
+		decodeBase64(
+			strRight(content, 22)
+		)
+	);
+}
+
+writeIScriptReport(path : string, content : string) -> bool {
+	setFileContent(
+		path,
+		"<html><head></head><body>" + content + "</body></html>"
+	);
+}
+
+getIscriptReportResults(results : [IScriptReplayResult]) -> string {
+	strGlue(map(results, \result -> {
+		savedScreenshoot = eitherMap(result.iscriptVisualScreenshotM, \ivs -> ivs.screenshot, "");
+		formatString(
+			"<h2>%1 with result %2</h2><img src=\"%3\">%4", 
+			[
+				result.filepath, 
+				b2s(result.isReplaySuccessful),
+				result.afterReplayVisualScreenshot.screenshot,
+				if (!result.isReplaySuccessful && savedScreenshoot != "")
+					formatString("<p>but was</p><img src=\"%1\">", [savedScreenshoot])
+				else ""
+			]
+		)
+	}), "\n")
+}
