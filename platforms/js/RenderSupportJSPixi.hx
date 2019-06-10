@@ -1043,6 +1043,10 @@ class RenderSupportJSPixi {
 		clip.setCursorWidth(width);
 	}
 
+	public static function setTextEllipsis(clip : TextClip, lines : Int) : Void {
+		clip.setEllipsis(lines);
+	}
+
 	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
 		clip.setInterlineSpacing(spacing);
 	}
