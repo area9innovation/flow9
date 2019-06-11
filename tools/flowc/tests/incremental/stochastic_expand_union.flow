@@ -1,0 +1,71 @@
+import tools/flowc/incremental/fi2flowsrc;
+import tools/flowc/tests/incremental/stochastic_gen;
+
+export {
+	// Returns an array of indexes of changed modules
+	expandAUnion(i : int, union : FiTypeUnion, gen : GenModules) -> GenModules;
+}
+
+expandAUnion(i : int, union : FiTypeUnion, gen : GenModules) -> GenModules {
+	switch (generateTypeName(gen.env, i)) {
+		Some(new_type): {
+			if (exists(union.typenames, \typename -> typename.name == new_type.name)) gen else {
+				println("\ttype " + new_type.name + " is added to union " + union.name);
+				orig_module = gen.modules[i];
+				new_union = FiTypeUnion(union with typenames = concat(union.typenames, [new_type]));
+				new_module = FiModule(orig_module with 
+					unions = [new_union],
+					imports = generateImports(gen.env, new_union)
+				);
+				new_env = GenEnv(gen.env with unions = setTree(gen.env.unions, union.name, new_union));
+				new_modules = foldi(gen.modules, [],
+					\j, acc, m -> {
+						if (i == j) {
+							writeModule(new_module);
+							concat(acc, [new_module]);
+						} else {
+							switch (expandAUnionInModule(gen.env, union.name, new_type, m)) {
+								Some(new_m): {
+									writeModule(new_m);
+									concat(acc, [new_m]);
+								}
+								None(): concat(acc, [m]);
+							}
+						}
+					}
+				)
+				GenModules(new_modules, new_env)
+			}
+		}
+		None(): gen;
+	}
+}
+
+expandAUnionInModule(env : GenEnv, union : string, new_type : FiTypeName, m : FiModule) -> Maybe<FiModule> {
+	if (length(m.structs) > 0) {
+		None()
+	} else if (length(m.unions) > 0) {
+		None()
+	} else if (length(m.functions) > 0) {
+		func = m.functions[0];
+		new_lambda = expandAUnionInExp(env, union, new_type, func.lambda);
+		if (func.lambda == new_lambda) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			Some(FiModule(m with functions = [FiFunctionDec(func with lambda = cast(new_lambda : FiExp -> FiLambda))]))
+		}
+	} else if (length(m.globalVars) > 0) {
+		var = m.globalVars[0];
+		new_value = expandAUnionInExp(env, union, new_type, var.value);
+		if (var.value == new_value) None() else {
+			println("\tmodule: " + m.fileinfo.flowfile + " changed");
+			Some(FiModule(m with globalVars = [FiGlobalVar(var with value = new_value)]))
+		}
+	} else {
+		None()
+	}
+}
+
+expandAUnionInExp(env : GenEnv, union : string, new_type : FiTypeName, ex : FiExp) -> FiExp {
+	//TODO: a stub.
+	ex
+}

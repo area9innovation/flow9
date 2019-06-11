@@ -64,6 +64,7 @@ NativeFunction *FileSystemInterface::MakeNativeFunction(const char *name, int nu
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileModifiedNative, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileSlice, 3);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, readFile, 4);
+    TRY_USE_NATIVE_METHOD(FileSystemInterface, readFileEnc, 5);
 
     return NULL;
 }
@@ -340,7 +341,17 @@ StackSlot FileSystemInterface::readFile(RUNNER_ARGS)
     RUNNER_PopArgs4(file, as, onDone, onError);
     RUNNER_CheckTag1(TString, as);
 
-    doFileRead(file, encodeUtf8(RUNNER->GetString(as)), onDone, onError);
+    doFileRead(file, encodeUtf8(RUNNER->GetString(as)), "UTF8", onDone, onError);
+
+    RETVOID;
+}
+
+StackSlot FileSystemInterface::readFileEnc(RUNNER_ARGS)
+{
+    RUNNER_PopArgs5(file, as, en, onDone, onError);
+    RUNNER_CheckTag2(TString, as, en);
+
+    doFileRead(file, encodeUtf8(RUNNER->GetString(as)), encodeUtf8(RUNNER->GetString(en)), onDone, onError);
 
     RETVOID;
 }

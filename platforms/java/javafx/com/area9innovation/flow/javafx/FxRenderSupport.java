@@ -7,6 +7,7 @@ import java.util.List;
 import com.area9innovation.flow.*;
 
 import javafx.application.Platform;
+import javafx.animation.AnimationTimer;
 import javafx.beans.property.StringProperty;
 import javafx.beans.property.StringPropertyBase;
 import javafx.event.EventHandler;
@@ -255,6 +256,11 @@ public class FxRenderSupport extends RenderSupport {
 
 		scene.setOnKeyPressed(keyEventHandler);
 		scene.setOnKeyReleased(keyEventHandler);
+		scene.setOnMouseExited(e -> {
+			if (isMouseDown) {
+				mouseUpHandler.handle(e);
+			}
+		});
 	}
 
 	private void handleKeyEvent(KeyEvent event) {
@@ -706,12 +712,15 @@ public class FxRenderSupport extends RenderSupport {
 			}
 		};
 
+		Boolean wordWrap;
 		String font, slope;
 		Integer weight, fill, backgroundColor;
-		Double size, fillOpacity, letterspacing, backgroundOpacity;
+		Double size, fillOpacity, letterspacing, backgroundOpacity, wrappingWidth, interlineSpacing;
 
 		TextClip() {
 			super();
+
+			interlineSpacing = 0.0;
 
 			textClip = new Text(text.getValue());
 			container.getChildren().add(textClip);
@@ -731,6 +740,7 @@ public class FxRenderSupport extends RenderSupport {
 			String style = "-fx-font-weight: " + weight + ";\n";
 			style += "-fx-letterspacing: " + letterspacing + "px;\n";
 			style += "background-color: " + makeCssColor(backgroundColor, backgroundOpacity) + ";\n";
+			style += "-fx-line-spacing: " + Math.round(interlineSpacing) + "px;\n";
 			style += "-fx-font-family: \"" + font + "\";\n";
 			style += "-fx-font-size: " + size + "px;\n";
 
@@ -773,6 +783,25 @@ public class FxRenderSupport extends RenderSupport {
 		public Double getHeight() {
 			return textClip.getLayoutBounds().getHeight();
 		}
+
+		void setWidth(Double width) {
+			this.wrappingWidth = width;
+
+			textClip.setWrappingWidth(width);
+		}
+
+		void setHeight(Double height) {}
+
+		void setWordWrap(Boolean wordWrap) {
+			this.wordWrap = wordWrap;
+
+			updateWidgetTextStyle();
+		}
+
+		void setInterlineSpacing(Double spacing) {
+			this.interlineSpacing = spacing;
+			updateWidgetTextStyle();
+		}
 	}
 
 	private class TextInput extends TextClip {
@@ -780,7 +809,7 @@ public class FxRenderSupport extends RenderSupport {
 
 		private Boolean multiline, wordWrap, readOnly;
 		private String type, textDirection, autoAlign;
-		private Double width, height, interlineSpacing;
+		private Double width, height;
 		private Integer tabIndex, maxChars;
 
 		TextInput() {
@@ -820,7 +849,6 @@ public class FxRenderSupport extends RenderSupport {
 			String style = super.getCssStyle();
 			style += "-fx-text-fill: " + makeCssColor(fill, fillOpacity) + ";\n";
 			style += "-fx-wrap-text: " + wordWrap + ";\n";
-			style += "-fx-line-spacing: " + Math.abs(size * 1.1 + interlineSpacing) + "px;\n";
 			style += "text-alignment: " + makeCssAlignment(autoAlign) + ";\n";
 			style += "direction: " + textDirection + ";\n";
 
@@ -845,12 +873,6 @@ public class FxRenderSupport extends RenderSupport {
 				setTextInput();
 		}
 
-		void setWordWrap(Boolean wordWrap) {
-			this.wordWrap = wordWrap;
-
-			updateWidgetTextStyle();
-		}
-
 		void setMultiline(Boolean multiline) {
 			this.multiline = multiline;
 
@@ -858,14 +880,18 @@ public class FxRenderSupport extends RenderSupport {
 				setTextInput();
 		}
 
+		@Override
 		void setWidth(Double width) {
 			this.width = width;
 
 			if (textField != null) {
 				textField.setPrefWidth(width);
+			} else {
+				super.setWidth(width);
 			}
 		}
 
+		@Override
 		void setHeight(Double height) {
 			this.height = height;
 
@@ -876,11 +902,6 @@ public class FxRenderSupport extends RenderSupport {
 
 		void requestFocus() {
 			textField.requestFocus();
-		}
-
-		void setInterlineSpacing(Double spacing) {
-			this.interlineSpacing = spacing;
-			updateWidgetTextStyle();
 		}
 
 		void setTextDirection(String direction) {
@@ -1029,14 +1050,14 @@ public class FxRenderSupport extends RenderSupport {
 	}
 	@Override
 	public Object setTextFieldWidth(Object stg, double val) {
-		TextInput ti = (TextInput)stg;
-		ti.setWidth(val);
+		TextClip tc = (TextClip)stg;
+		tc.setWidth(val);
 		return null;
 	}
 	@Override
 	public Object setTextFieldHeight(Object stg, double val) {
-		TextInput ti = (TextInput)stg;
-		ti.setHeight(val);
+		TextClip tc = (TextClip)stg;
+		tc.setHeight(val);
 		return null;
 	}
 	@Override
@@ -1464,7 +1485,7 @@ public class FxRenderSupport extends RenderSupport {
 	public Object beginFill(Object gr,int color,double alpha) {
 		Graphics g = (Graphics)gr;
 		g.path.setFill(mkColor(color, alpha));
-		g.owner.container.setMouseTransparent(alpha == 0.0); 
+		g.owner.container.setMouseTransparent(alpha < 0.1); 
 		return null;
 	}
 	@Override
@@ -1548,4 +1569,35 @@ public class FxRenderSupport extends RenderSupport {
 	public Object endFill(Object gr) {
 		return null;
 	}
+
+	private AnimationTimer animation = new AnimationTimer() {
+		public void handle(long now) {
+			callbackDrawFrame(now / 1000000.0);
+		}
+	};
+
+	private HashSet<Func1<Object,Double>> animationCallbacks = new HashSet<>();
+
+	private void callbackDrawFrame(double now) {
+		for (Func1<Object,Double> cb : animationCallbacks) {
+			cb.invoke(now);
+		}
+	}
+
+	@Override
+	public Func0<Object> addDrawFrameEventListener(final Func1<Object,Double> cb) {
+		animationCallbacks.add(cb);
+		if (animationCallbacks.size() == 1)
+			animation.start();
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				animationCallbacks.remove(cb);
+				if (animationCallbacks.size() == 0)
+					animation.stop();
+
+				return null;
+			}
+		};
+    }
 }

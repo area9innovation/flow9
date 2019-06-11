@@ -253,5 +253,5 @@ unicode_string iosSoundSupport::doGetAudioSessionCategory() {
 }
 
 void iosSoundSupport::doSetAudioSessionCategory(unicode_string category) {
-    [[AVAudioSession sharedInstance] setCategory:getAudioSessionCategoryNative(UNICODE2NS(category)) error:nil];
+    [[AVAudioSession sharedInstance] setCategory:getAudioSessionCategoryNative(UNICODE2NS(category)) mode:AVAudioSessionModeMoviePlayback options:AVAudioSessionCategoryOptionDuckOthers error:nil];
 }

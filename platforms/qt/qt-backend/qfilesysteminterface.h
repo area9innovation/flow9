@@ -37,7 +37,7 @@ protected:
     double doFileModifiedNative(const StackSlot &file);
 
     StackSlot doFileSlice(const StackSlot &file, int offset, int end);
-    void doFileRead(const StackSlot &file, std::string readAs, const StackSlot &onData, const StackSlot &onError);
+    void doFileRead(const StackSlot &file, std::string readAs, std::string readEncoding, const StackSlot &onData, const StackSlot &onError);
     char* doResolveRelativePath(std::string &filename, char* buffer);
 
 private slots:

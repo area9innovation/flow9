@@ -720,6 +720,15 @@ public class Native extends NativeHost {
 		return Math.random();
 	}
 
+	public final Func0<Double> randomGenerator(long seed) {
+		return new Func0<Double>() {
+			Random generator = new Random(seed);
+			public Double invoke() {
+				return generator.nextDouble();
+			}
+		};
+	}
+
 	private Timer timer_obj = null;
 
 	public void invokeCallback(Runnable cb) {
@@ -734,9 +743,7 @@ public class Native extends NativeHost {
 			public void run() {
 				invokeCallback(new Runnable() {
 					public void run() {
-						synchronized (runtime) {
-							cb.invoke();
-						}
+						cb.invoke();
 					}
 				});
 			}
@@ -744,6 +751,29 @@ public class Native extends NativeHost {
 		timer_obj.schedule(task, ms);
 
 		return null;
+	}
+
+	public final Func0<Object> interruptibleTimer(int ms, final Func0<Object> cb) {
+		if (timer_obj == null)
+			timer_obj = new Timer(true);
+
+		TimerTask task = new TimerTask() {
+			public void run() {
+				invokeCallback(new Runnable() {
+					public void run() {
+						cb.invoke();
+					}
+				});
+			}
+		};
+		timer_obj.schedule(task, ms);
+
+		return new Func0<Object>() {
+			public Object invoke() {
+				timer_obj.cancel();
+				return null;
+			}
+		};
 	}
 
 	public final double sin(double a) {
@@ -1100,14 +1130,14 @@ public class Native extends NativeHost {
 		String line;
 		String sout = new String("");
 		while ((line = brCleanUp.readLine ()) != null) {
-		    sout = sout + line;
+		    sout = sout + line + "\n";
 		}
 		brCleanUp.close();
 
 		brCleanUp = new BufferedReader (new InputStreamReader (stderr));
 		String serr = new String("");
 		while ((line = brCleanUp.readLine ()) != null) {
-		    serr = serr + line;
+		    serr = serr + line + "\n";
 		}
 		brCleanUp.close();
 

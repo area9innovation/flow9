@@ -1,0 +1,288 @@
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/type_helpers;
+
+export {
+	// Generates a flow source for the corresponding module.	
+	fimodule2flowsrc(m : FiModule) -> string;
+}
+
+fimodule2flowsrc(m : FiModule) -> string {
+	toplevel = fold(m.natives, 
+		 fold(m.globalVars, 
+			fold(m.functions, 
+				fold(m.structs, 
+					fold(m.unions, 
+						makeTree(), 
+						\acc, u : FiToplevel -> setTree(acc, u.name, u)
+					),
+					\acc, s : FiToplevel -> setTree(acc, s.name, s)
+				),
+				\acc, f : FiToplevel -> setTree(acc, f.name, f)
+			),
+			\acc, v : FiToplevel -> setTree(acc, v.name, v)
+		), 
+		\acc, n : FiToplevel -> setTree(acc, n.name, n)
+	);
+	exports_set = buildSet(m.exports);
+
+	imports = if (m.imports != []) strGlue(map(m.imports, \i -> "import " + i.flowfile + ";"), "\n") + "\n" else "";
+	forbids = if (m.forbids != []) strGlue(map(m.forbids, \f -> "forbid " + f.flowfile + ";"), "\n") + "\n" else "";
+	
+	exports = if (isEmptySet(exports_set)) "" else {
+		"export {\n" +
+			indentLines(strGlue(map(m.exports, \name -> fitoplevel2flowsrc(name, toplevel)), "\n"), 1) +
+		"}\n\n"
+	};
+	
+	internal = if (sizeTree(toplevel) == 0) "" else 
+	foldTree(toplevel, "",
+		\name, decl, acc -> 
+			if (containsSet(exports_set, name)) acc 
+			else acc + "\n" + fitoplevel2flowsrc(name, toplevel)
+	) + "\n";
+	imports + forbids + exports + internal
+}
+
+fitoplevel2flowsrc(name : string, toplevel : Tree<string, FiToplevel>) -> string {
+	switch (lookupTree(toplevel, name)) {
+		Some(decl):
+			switch (decl) {
+				FiFunctionDec(__, lambda, type, __, __): 
+					name + fitype2flowsrc(type, true) + " " + 
+						flowSrcBraceWrapper(fiexp2flowsrc(lambda.body, makeSet())) + 
+					"\n";
+				FiGlobalVar(__, value, type, __, __):
+					name + " : " + fitype2flowsrc(type, false) + " = " + fiexp2flowsrc(value, makeSet()) + ";\n";
+				FiNativeDec(__, io, type, nativeName, __, __, __):
+					"native " + name + " : " + (if (io) "io " else "") + fitype2flowsrc(type, true) + " = " + nativeName + ";\n";
+				FiTypeStruct(__, typars, args, __): {
+					if (length(args) > 1) {
+						name + "(\n" + 
+						strGlue(
+							map(args,
+								\arg ->
+									"\t" + (if (arg.ismutable) "mutable " else "") + 
+									arg.name + " : " + fitype2flowsrc(arg.type, true)
+							), 
+							",\n"
+						) + "\n);\n";
+					} else if (length(args) == 1) {
+						name + "(" + (if (args[0].ismutable) "mutable " else "") + 
+							args[0].name + " : " + fitype2flowsrc(args[0].type, true)
+						+ ");\n"
+					} else {
+						name + "();\n"
+					}
+				}
+				FiTypeUnion(__, typars, typenames, __): {
+					header = name + 
+						if (length(typars) > 0) 
+							"<" + 
+								strGlue(map(typars, \typar -> fitype2flowsrc(typar, false)), ", ") 
+							+ ">" 
+						else "";
+					types = strGlue(map(typenames, \t -> fitype2flowsrc(t, true)), ", ");
+					header + " ::= " + types + ";\n"
+				}
+			}
+		None(): "";
+	}
+}
+
+fiexp2flowsrc(e : FiExp, switch_vars : Set<string>) -> string {
+	args_src = \args -> {
+		args_src = map(args, \arg -> flowStatementBraceWrapper(fiexp2flowsrc(arg, switch_vars)));
+		if (exists(args_src, \arg_src -> strContains(arg_src, ";"))) {
+			"\n" + indentLines(strGlue(args_src, ",\n"), 1) + "\n"
+		} else {
+			strGlue(args_src, ", ")
+		}
+	}
+
+	switch (e) {
+		FiVoid(__):      "{}";
+		FiBool(b, __):   if (b) "true" else "false";
+		FiInt(i, __):    i2s(i);
+		FiDouble(d, __): double2flowsrc(d);
+		FiString(s, __): "\"" + escapeSpecialChars(s) + "\"";
+		FiSeq(es, __, __):
+			flowStatementBraceWrapper(strGlue(map(es, \ex -> removeNewLine(fiexp2flowsrc(ex, switch_vars))), ";\n"));
+		FiCast(ex, tFrom, tTo, __, __): 
+			"cast(" + fiexp2flowsrc(ex, switch_vars) + " : " + fitype2flowsrc(tFrom, false) + " -> " + fitype2flowsrc(tTo, false) + ")";
+		FiCall(f, args, type, start): 
+			fiexp2flowsrc(f, switch_vars) + "(" + args_src(args) + ")";
+		FiSwitch(x, __, cases, __, __):
+			"switch (" + fiexp2flowsrc(x, switch_vars) + ") {\n" +
+				indentLines(fold(cases, "", \acc, case -> {
+						new_switch_vars = fold(case.argNames, switch_vars, \ac, name -> insertSet(ac, name));
+						body_src = flowStatementBraceWrapper(fiexp2flowsrc(case.body, new_switch_vars));
+						body_src1 = if (!endsWith(body_src, "}")) body_src + ";" else body_src;
+						acc + 
+						case.struct + "(" + strGlue(case.argNames, ", ") + "):\n" + 
+							indentLines(body_src1, 1) + 
+						"\n"
+					}
+				), 1) + 
+			"\n}";
+		FiLambda(args, body, __, __): 
+			"(\\" + strGlue(map(args, \arg -> arg.name + " : " + fitype2flowsrc(arg.type, false)), ", ") + 
+			" -> " + flowStatementBraceWrapper(fiexp2flowsrc(body, switch_vars)) + 
+			")";
+		FiLet(name, t, e1, e2, __, __): {
+			let_stat = if (name == "__" || containsSet(switch_vars, name)) "" else 
+			name + " : " + fitype2flowsrc(t, false) + " = " + removeNewLine(flowStatementBraceWrapper(fiexp2flowsrc(e1, switch_vars))) + ";\n";
+			flowStatementBraceWrapper(let_stat + fiexp2flowsrc(e2, switch_vars))
+		}
+		FiIf(e1, e2, e3, type, start):
+			"if (" + fiexp2flowsrc(e1, switch_vars) + ") " + flowStatementBraceWrapper(fiexp2flowsrc(e2, switch_vars)) + " else " + flowStatementBraceWrapper(fiexp2flowsrc(e3, switch_vars));
+		FiCallPrim(op, es, type, start): 
+			switch (op) {
+				FcOrPrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " || " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcAndPrim():   "(" + fiexp2flowsrc(es[0], switch_vars) + " && " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcNotPrim():   "!" + fiexp2flowsrc(es[0], switch_vars);
+				FcEqPrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " == " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcNePrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " != " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcLePrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " <= " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcGePrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " >= " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcLtPrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " < " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcGtPrim():    "(" + fiexp2flowsrc(es[0], switch_vars) + " > " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcPlusPrim():  "(" + fiexp2flowsrc(es[0], switch_vars) + " + " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcMinusPrim(): "(" + fiexp2flowsrc(es[0], switch_vars) + " - " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcMulPrim():   "(" + fiexp2flowsrc(es[0], switch_vars) + " * " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcDivPrim():   "(" + fiexp2flowsrc(es[0], switch_vars) + " / " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcModPrim():   "(" + fiexp2flowsrc(es[0], switch_vars) + " % " + fiexp2flowsrc(es[1], switch_vars) + ")";
+				FcNegPrim():   "-" + fiexp2flowsrc(es[0], switch_vars);
+				FcArrayPrim(): "[" + args_src(es) + "]";
+				FcIndexPrim(): fiexp2flowsrc(es[0], switch_vars) + "[" + fiexp2flowsrc(es[1], switch_vars) + "]";
+				FcDerefPrim(): "^(" + fiexp2flowsrc(es[0], switch_vars) + ")";
+				FcAssignPrim(): "(" + fiexp2flowsrc(es[0], switch_vars) + " := " + fiexp2flowsrc(es[1], switch_vars) + ")"; 
+				FcRefPrim():   "(ref " + fiexp2flowsrc(es[0], switch_vars) + ")";
+				FcStructPrim(struct_name): 
+					struct_name + "(" + args_src(es) + ")";
+				FcFieldPrim(name):  fiexp2flowsrc(es[0], switch_vars) + "." + name;
+				FcSetMutablePrim(name):
+					"(" + fiexp2flowsrc(es[0], switch_vars) + ")." + name + " ::= " + fiexp2flowsrc(es[1], switch_vars);
+				FcCreateClosurePrim(structName, functionName): "??..."; // TODO
+				FcQuote():   "(@" + fiexp2flowsrc(es[0], switch_vars) + ")"; // TODO
+				FcUnquote(): "($" + fiexp2flowsrc(es[0], switch_vars) + ")"; // TODO
+			}
+		FiVar(name, __, __): name;
+		FiRequire(flowfile, ex, type, start): "require " + flowfile; // TODO
+		FiUnsafe(name, fallback, type, start): "unsafe " + name; // TODO
+	}
+}
+
+double2flowsrc(d : double) -> string {
+	s = d2s(d);
+	d_str = if (strContains(s, ".")) s else s + ".0";
+	if (!strContains(d_str, "E")) d_str else {
+		exp_pos = strFindFirstOf(d_str, "E");
+		degree = s2i(substring(d_str, exp_pos + 1, strlen(d_str) - (exp_pos + 1)));
+		dot_pos = strFindFirstOf(d_str, ".");
+		int_part = substring(d_str, 0, dot_pos);
+		fract_part = substring(d_str, dot_pos + 1, exp_pos - (dot_pos + 1));
+		double2flowsrcMovePoint(int_part, fract_part, degree)
+	}
+}
+
+double2flowsrcMovePoint(int_part : string, fract_part : string, deg : int) -> string {
+	if (deg == 0) {
+		(if (strlen(int_part) > 0) int_part else "0") + "." + (if (strlen(fract_part) > 0) fract_part else "0")
+	} else {
+		if (deg > 0) {
+			digit = if (strlen(fract_part) > 0) getCharAt(fract_part, 0) else "0";
+			next_fract = substring(fract_part, 1, strlen(fract_part) - 1);
+			next_int = int_part + digit;
+			double2flowsrcMovePoint(next_int, next_fract, deg - 1);
+		} else {
+			digit = if (strlen(int_part) > 0) getCharAt(int_part, strlen(int_part) - 1) else "0";
+			next_int = substring(int_part, 0, strlen(int_part) - 1);
+			next_fract = digit + fract_part;
+			double2flowsrcMovePoint(next_int, next_fract, deg + 1);
+		}
+	}
+}
+
+fitype2flowsrc(t : FiType, in_decl : bool) -> string {
+	switch (t) {
+		FiTypeVoid():   "void";
+		FiTypeBool():   "bool";
+		FiTypeInt():    "int";
+		FiTypeDouble(): "double";
+		FiTypeString(): "string";
+		FiTypeFlow():   "flow";
+		FiTypeNative(): "native";
+		FiTypeParameter(tp): tp;
+		FiTypeFunction(args, ret_tp): {
+			if (in_decl) {
+				"(" + 
+					strGlue(
+						map(args, \arg -> (if (arg.name == "") "" else arg.name + " : ") + fitype2flowsrc(arg.type, in_decl)), 
+						", "
+					) 
+				+ ") -> " + fitype2flowsrc(ret_tp, in_decl);
+			} else {
+				"(" + strGlue(map(args, \arg -> fitype2flowsrc(arg.type, in_decl)), ", ") + ") -> " + fitype2flowsrc(ret_tp, in_decl);
+			}
+		}
+		FiTypeName(name, typars): {
+			if (length(typars) > 0) {
+				name + "<" + strGlue(map(typars, \tp -> fitype2flowsrc(tp, false)), ", ") + ">"
+			} else {
+				name;
+			}
+		}
+		FiTypeArray(arr_tp): "[" + fitype2flowsrc(arr_tp, in_decl) + "]";
+		FiTypeRef(ref_tp):   "ref " + fitype2flowsrc(ref_tp, in_decl);
+	}
+}
+
+escapeSpecialChars(s : string) -> string {
+	slash = "\\";
+	strReplaceCustom2(
+		strReplaceCustom2(
+			strReplaceCustom2(
+				strReplaceCustom2(
+					strReplaceCustom2(s, "\\", 
+						\start, __ -> if (!isEscapeSlash(s, start - 1)) Some(slash + slash) else None()
+					),
+					"\r", \start, __ -> if (!isEscapeSlash(s, start - 1)) Some(slash + "r") else  None()
+				), 
+				"\t", \start, __ -> if (!isEscapeSlash(s, start - 1)) Some(slash + "t") else None()
+			), 
+			"\n", \start, __ -> if (!isEscapeSlash(s, start - 1)) Some(slash + "n") else  None()
+		),
+		"\"", \start , __ -> if (!isEscapeSlash(s, start - 1)) Some(slash + "\"")  else None()
+	)
+}
+
+isEscapeSlash(s : string, i : int) -> bool {
+	if (i >= 0 && getCharAt(s, i) == "\\") {
+		if (i == 0) true else {
+			if (getCharAt(s, i - 1) != "\\") true else {
+				!isEscapeSlash(s, i - 1);
+			}
+		}
+	} else false;
+}
+
+
+addNewLine(s : string) -> string {
+	if (endsWith(s, "\n")) s else s + "\n";
+}
+
+removeNewLine(s : string) -> string {
+	if (endsWith(s, "\n")) substring(s, 0, strlen(s) - 1) else s;
+}
+
+flowStatementBraceWrapper(s : string) -> string {
+	if (strContains(s, ";")) {
+		flowSrcBraceWrapper(s);
+	} else s;
+}
+
+flowSrcBraceWrapper(s : string) -> string {
+	if (!(startsWith(s, "{") && endsWith(s, "}"))) {
+		"{\n" + indentLines(s, 1) + "\n}"
+	} else s;
+}
