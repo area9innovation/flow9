@@ -107,7 +107,7 @@ class FlowSprite extends Sprite {
 					svgXhr.overrideMimeType('image/svg+xml');
 
 				svgXhr.onload = function () {
-					url = "data:image/svg+xml;utf8," + svgXhr.response;
+					url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
 					loadTexture();
 				};
 
