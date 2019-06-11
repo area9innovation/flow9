@@ -566,6 +566,10 @@ class PixiWorkarounds {
 
 						lines += PIXI.TextMetrics.addLine(line, false);
 
+						if (style.truncateCallback) {
+							style.truncateCallback(true);
+						}
+
 						return true;
 					}
 					else
@@ -727,6 +731,10 @@ class PixiWorkarounds {
 				}
 
 				addLine(false);
+
+				if (style.truncateCallback) {
+					style.truncateCallback(false);
+				}
 
 				return lines;
 			}

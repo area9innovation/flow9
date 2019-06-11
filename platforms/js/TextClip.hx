@@ -633,12 +633,11 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	public function setEllipsis(lines : Int) : Void {
-		if (untyped this.style.truncate != lines) {
-			untyped this.style.truncate = lines;
+	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
+		untyped this.style.truncate = lines;
+		untyped this.style.truncateCallback = cb;
 
-			invalidateMetrics();
-		}
+		invalidateMetrics();
 	}
 
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {

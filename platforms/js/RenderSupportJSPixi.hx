@@ -800,11 +800,11 @@ class RenderSupportJSPixi {
 		return function() { off("message", handler); };
 	}
 
-	public static function InvalidateStage() : Void {
+	public static inline function InvalidateStage() : Void {
 		PixiStageChanged = true;
 	}
 
-	public static function InvalidateTransform() : Void {
+	public static inline function InvalidateTransform() : Void {
 		TransformChanged = true;
 	}
 
@@ -1043,8 +1043,8 @@ class RenderSupportJSPixi {
 		clip.setCursorWidth(width);
 	}
 
-	public static function setTextEllipsis(clip : TextClip, lines : Int) : Void {
-		clip.setEllipsis(lines);
+	public static function setTextEllipsis(clip : TextClip, lines : Int, cb : Bool -> Void) : Void {
+		clip.setEllipsis(lines, cb);
 	}
 
 	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
