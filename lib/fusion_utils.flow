@@ -13,6 +13,8 @@ export {
 	fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]>;
 	fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Transform<[?]>;
 
+	ffold(a : Transform<[??]>, def : Transform<?>, fn : (?, ??) -> ?) -> Transform<?>;
+
 	ffilter(a : Transform<[?]>, fn : (?) -> bool) -> Transform<[?]>;
 	ffiltermap(a : Transform<[??]>, fn : (??) -> Maybe<?>) -> Transform<[?]>;
 	ffiltermapi(a : Transform<[??]>, fn : (int, ??) -> Maybe<?>) -> Transform<[?]>;
@@ -525,6 +527,75 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 			}
 
 			output;
+		})),
+		\ -> {
+			nested := true;
+			applyall(^disposers);
+
+			input := [];
+			next(output, []);
+			disposers := [];
+			indexes := [];
+			nested := false;
+		}
+	);
+}
+
+ffold(a : Transform<[??]>, def : Transform<?>, fn : (?, ??) -> ?) -> Transform<?> {
+	nested = ref false;
+	input = ref [];
+	output : DynamicBehaviour<[Transform<?>]> = make([def]);
+	disposers = ref [];
+	indexes = ref [];
+
+	fdisposable(
+		fsubselect(a, FLift(\a0 -> {
+			if (!^nested) {
+				nested := true;
+				diff = arrayDiff(^input, a0, false) |> reverseA;
+
+				iter(diff, \op ->
+					switch (op : ArrayOperation) {
+						ArrayNop(x, y): {}
+						ArrayInsert(x, y, v): {
+							index = make(y);
+
+							indexes := insertArray(^indexes, y, index);
+							next(
+								output,
+								insertArray(
+									getValue(output),
+									y + 1,
+									fsubselect(felementAt(output, index, const(def)), FLift(\el -> fselect(el, FLift(\e -> fn(e, v)))))
+								)
+							);
+						}
+						ArrayReplace(x, y, v): {
+							index = ^indexes[y];
+
+							next(
+								output,
+								replace(
+									getValue(output),
+									y + 1,
+									fsubselect(felementAt(output, index, const(def)), FLift(\el -> fselect(el, FLift(\e -> fn(e, v)))))
+								)
+							);
+						}
+						ArrayRemove(x, y): {
+							indexes := removeIndex(^indexes, y);
+							next(output, removeIndex(getValue(output), y + 1));
+						}
+					}
+				);
+
+				iteri(^indexes, \i, ii -> nextDistinct(ii, i));
+
+				input := a0;
+				nested := false;
+			}
+
+			fsubselect(felementAt(output, const(length(getValue(output)) - 1), const(def)), idfn |> FLift);
 		})),
 		\ -> {
 			nested := true;
