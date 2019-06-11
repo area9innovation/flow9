@@ -547,20 +547,22 @@ class PixiWorkarounds {
 
 				let addLine = function(newLine = true)
 				{
-					if (newLine && linesCount == truncate - 1)
+					if (linesCount == truncate - 1)
 					{
-						line += token;
-						const threeDotWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context);
-						let lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+						if (newLine) {
+							line += token;
 
-						while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || line.endsWith(' ')))
-						{
-							line = line.substring(0, line.length - 1);
-							lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+							const threeDotWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context);
+							let lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+
+							while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || line.endsWith(' ') || line.endsWith('\\n')))
+							{
+								line = line.substring(0, line.length - 1);
+								lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+							}
+
+							line += '…';
 						}
-
-						line += '…';
-						token = '';
 
 						lines += PIXI.TextMetrics.addLine(line, false);
 
