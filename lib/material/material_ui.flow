@@ -84,7 +84,7 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -92,6 +92,7 @@ export {
 		MAutoCompleteState(state : [MTextInputState]);
 		MItemsLimit(limit : int);
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
+		MChangeOnClick(); // Changes selected only when click on autocomplete item.
 
 	MCollapsingBox(
 		content : Material,
@@ -676,6 +677,7 @@ MDropDownOrAutoComplete(
 	isRequired = contains(style, MRequiredField());
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
+	changeOnClick = contains(style, MChangeOnClick());
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	items = concat(if (showAnyItem) ["Any"] else [], items0);
@@ -709,7 +711,13 @@ MDropDownOrAutoComplete(
 			|> (\st -> eitherMap(labelM,
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
-			));
+			))
+			|> (\st -> ifArrayPush(st, changeOnClick, MCompletionFn(\com, isSelected, setWordFn ->
+					MGetManager(\manager -> MGetFocusGroup(\parent -> {
+						wrapSetWordFn = \sm -> {nextDistinct(selected, string2idxs(getValue(selectedStrB))); setWordFn(sm)};
+						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
+					}))
+			)));
 		autoCompleteState =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -724,7 +732,7 @@ MDropDownOrAutoComplete(
 			[\ -> 
 				eitherMap(multiSelection,
 					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
-					bidirectionalLink(selectedStrB, selected, string2idxs, \idx -> idxs2string([idx]))
+					bidirectionalLink(selectedStrB, selected, \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str), \idx -> idxs2string([idx]))
 				)
 			],
 			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
