@@ -1,3 +1,5 @@
+#ifdef FLOW_MEDIASTREAM
+
 #import "FlowRTCVideoPreview.h"
 #import "utils.h"
 
@@ -60,3 +62,4 @@
 }
 
 @end
+#endif

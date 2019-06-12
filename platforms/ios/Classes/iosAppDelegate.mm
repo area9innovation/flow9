@@ -423,9 +423,11 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     InAppPurchases = new AppleStorePurchase(Runner);
 #endif
     WebSocketSupport = new iosWebSocketSupport(Runner);
+#ifdef FLOW_MEDIASTREAM
     MediaStream = new iosMediaStreamSupport(Runner);
     WebRTC = new iosWebRTCSupport(Runner);
     MediaRecorder = new iosMediaRecorderSupport(Runner, WebSocketSupport);
+#endif
     FSInterface = new FileSystemInterface(Runner);
    
     NSString * resources_path = [[[NSProcessInfo processInfo] environment] valueForKey:@"MEDIA_PATH"];
@@ -537,6 +539,11 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     delete NotificationsSupport; NotificationsSupport = NULL;
 #ifdef NSLOCATION_WHEN_IN_USE_USAGE_DESCRIPTION
     delete GeolocationSupport; GeolocationSupport = NULL;
+#endif
+#ifdef FLOW_MEDIASTREAM
+    delete MediaStream; MediaStream = NULL;
+    delete WebRTC; WebRTC = NULL;
+    delete MediaRecorder; MediaRecorder = NULL;
 #endif
 }
 
