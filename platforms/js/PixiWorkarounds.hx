@@ -564,11 +564,11 @@ class PixiWorkarounds {
 							line += '…';
 						}
 
-						lines += PIXI.TextMetrics.addLine(line, false);
-
 						if (style.truncateCallback) {
-							style.truncateCallback(true);
+							style.truncateCallback(newLine);
 						}
+
+						lines += PIXI.TextMetrics.addLine(line, false);
 
 						return true;
 					}
