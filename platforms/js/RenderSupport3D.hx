@@ -148,16 +148,7 @@ class RenderSupport3D {
 	public static function get3DObjectState(object : Object3D) : String {
 		var obj : Dynamic = {};
 
-		untyped __js__("
-			for (var property in object) {
-				if (!(object[property] instanceof Function) && property != 'children' && property != 'geometry' && property != 'childrenMap'
-					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
-					&& property != 'material') {
-
-					obj[property] = object[property];
-				}
-			}
-		");
+		copyObjectProperties(object, obj);
 
 		obj.childrenMap = new Array<Array<Dynamic>>();
 
@@ -175,22 +166,19 @@ class RenderSupport3D {
 		var obj = haxe.Json.parse(state);
 
 		apply3DObjectStateFromObject(object, obj);
+		object.invalidateStage();
 	}
 
-	private static function apply3DObjectStateFromObject(object : Object3D, obj : Dynamic) : Void {
-		var stage = object.getStage();
+	private static function apply3DObjectStateFromObject(object : Object3D, obj : Dynamic, ?stage : Dynamic) : Void {
+		if (stage == null) {
+			stage = object.getStage();
+		}
 
 		if (stage.length == 0) {
 			return;
 		}
 
-		untyped __js__("
-			for (var property in obj) {
-				if (property != 'childrenMap') {
-					RenderSupport3D.copyObjectProperties(obj[property], object[property]);
-				}
-			}
-		");
+		copyObjectProperties(obj, object);
 
 		var objectChildren : Map<Int, Object3D> = object.get3DChildrenMap();
 		var objChildren : Array<Array<Dynamic>> = obj.childrenMap.map(function(child) {
@@ -201,7 +189,7 @@ class RenderSupport3D {
 
 		for (child in objChildren) {
 			if (child[1] != null) {
-				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1]);
+				RenderSupport3D.apply3DObjectStateFromObject(child[2], child[1], stage);
 				object.add3DChildAt(child[2], child[0]);
 			}
 		}
@@ -210,10 +198,20 @@ class RenderSupport3D {
 	private static function copyObjectProperties(object1 : Dynamic, object2 : Dynamic) : Void {
 		untyped __js__("
 			for (var property in object1) {
-				if (object2[property]) {
-					if (typeof object1[property] != 'object' && typeof object1[property] != 'function') {
+				if (typeof object1[property] != 'undefined' && typeof object1[property] != 'function'
+					&& property != 'children' && property != 'geometry' && property != 'childrenMap'
+					&& property != 'stage' && property != 'transformControls' && property != 'parent' && property != '_listeners'
+					&& property != 'material') {
+
+					if (Array.isArray(object1[property]) || object1[property] instanceof String) {
+						object2[property] = object1[property];
+					} else if (typeof object1[property] != 'object' && typeof object2[property] != 'object') {
 						object2[property] = object1[property];
 					} else {
+						if (typeof object2[property] == 'undefined') {
+							object2[property] = new Object();
+						}
+
 						RenderSupport3D.copyObjectProperties(object1[property], object2[property]);
 					}
 				}
@@ -1192,6 +1190,12 @@ class RenderSupport3D {
 		return function() {
 			action.stop();
 			RenderSupportJSPixi.off('drawframe', drawFrameFn);
+		}
+	}
+
+	public static function clear3DStageObjectCache(stage : ThreeJSStage) : Void {
+		if (stage.objectCache != null) {
+			stage.objectCache = new Array<Object3D>();
 		}
 	}
 }

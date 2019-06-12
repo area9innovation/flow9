@@ -45,6 +45,7 @@ M3DEditorState(
 	treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>,
 	selected : DynamicBehaviour<Maybe<native>>,
 	undoStack : DynamicBehaviour<[string]>,
+	redoStack : DynamicBehaviour<[string]>,
 	axes : DynamicBehaviour<bool>,
 	grid : DynamicBehaviour<bool>,
 	boxes : DynamicBehaviour<bool>,
@@ -123,6 +124,7 @@ makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEd
 		treeOrder,
 		selected,
 		make([]),
+		make([]),
 		axesVisible,
 		gridVisible,
 		boxesVisible,
@@ -174,7 +176,13 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 								MOnClick(\ ->
 									state.loadFn(\s -> {
 										next(state.scene, None());
+
+										clear3DStageObjectCache(state.stage);
 										state.updateScene ::= true;
+
+										next(state.undoStack, []);
+										next(state.redoStack, []);
+
 										next(state.scene, Some(F3DJsonObject(s)));
 									})
 								)
@@ -207,9 +215,10 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 						MMenuSingleLine(
 							"Redo",
 							[
+								MOnClick(\ -> applyF3DRedo(state)),
 								MAdditionalText("Ctrl+Shift+Z"),
 								MShortcut("Ctrl+Shift+Z"),
-								MEnabled(const(false))
+								MEnabled(fneq(flength(state.redoStack), 0))
 							]
 						)
 					],
@@ -481,7 +490,6 @@ makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor 
 				MTreeOnOrderChange(\t -> {
 					if (state.updateScene && length(t) > 0 && length(getValue(t[0].children)) > 0) {
 						state.updateScene ::= false;
-						appendF3DUndo(state);
 
 						next(
 							state.scene,
@@ -587,7 +595,10 @@ makeF3DTreeNode(
 							MIconButtonBorder(6.0),
 							MIconSize(16.0),
 							MOnNewValue(\v -> {
-								appendF3DUndo(state);
+								if (v != get3DObjectVisible(clip)) {
+									appendF3DUndo(state);
+								}
+
 								set3DObjectVisible(clip, v);
 							})
 						]
@@ -1311,6 +1322,7 @@ appendF3DUndo(state : M3DEditorState) -> void {
 
 			if (length(stack) == 0 || undo != stack[length(stack) - 1]) {
 				next(state.undoStack, arrayPush(stack, undo));
+				next(state.redoStack, []);
 			}
 		});
 
@@ -1322,16 +1334,43 @@ applyF3DUndo(state : M3DEditorState) -> void {
 	if (!state.ignoreUndo) {
 		state.ignoreUndo ::= true;
 
-		stack = getValue(state.undoStack);
+		iter(get3DStageScene(state.stage), \scene -> {
+			undoStack = getValue(state.undoStack);
+			redoStack = getValue(state.redoStack);
 
-		if (length(stack) > 0) {
-			undo = stack[length(stack) - 1];
-			iter(get3DStageScene(state.stage), \scene -> {
+			if (length(undoStack) > 0) {
+				undo = undoStack[length(undoStack) - 1];
+				redo = get3DObjectState(scene);
+
+				next(state.redoStack, arrayPush(redoStack, redo));
+				next(state.undoStack, subrange(undoStack, 0, length(undoStack) - 1));
+
 				apply3DObjectState(scene, undo);
-			});
+			}
+		});
 
-			next(state.undoStack, subrange(stack, 0, length(stack) - 1));
-		}
+		deferred(\ -> state.ignoreUndo ::= false);
+	}
+}
+
+applyF3DRedo(state : M3DEditorState) -> void {
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
+
+		iter(get3DStageScene(state.stage), \scene -> {
+			undoStack = getValue(state.undoStack);
+			redoStack = getValue(state.redoStack);
+
+			if (length(redoStack) > 0) {
+				undo = get3DObjectState(scene);
+				redo = redoStack[length(redoStack) - 1];
+
+				next(state.undoStack, arrayPush(undoStack, undo));
+				next(state.redoStack, subrange(redoStack, 0, length(redoStack) - 1));
+
+				apply3DObjectState(scene, redo);
+			}
+		});
 
 		deferred(\ -> state.ignoreUndo ::= false);
 	}

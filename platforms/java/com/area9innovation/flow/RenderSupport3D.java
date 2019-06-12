@@ -512,4 +512,8 @@ public class RenderSupport3D extends NativeHost {
 	public Func0<Object> start3DAnimationMixer(Object mixer, Object animation) {
 		return no_op;
 	}
+
+	public Object clear3DStageObjectCache(Object stage) {
+		return null;
+	}
 }
