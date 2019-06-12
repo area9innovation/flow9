@@ -1,3 +1,5 @@
+#ifdef FLOW_MEDIASTREAM
+
 #include "iosMediaRecorderSupport.h"
 
 #include "RunnerMacros.h"
@@ -272,3 +274,5 @@ void iosMediaRecorderSupport::stopMediaRecorder(StackSlot recorder)
     }];
     flowRecorder->release();
 }
+
+#endif /* FLOW_MEDIASTREAM */

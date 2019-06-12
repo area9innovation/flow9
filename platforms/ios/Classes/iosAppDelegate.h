@@ -39,9 +39,11 @@ class iosGLRenderSupport;
     iosGeolocationSupport * GeolocationSupport;
 #endif
     iosWebSocketSupport * WebSocketSupport;
+#ifdef FLOW_MEDIASTREAM
     iosMediaStreamSupport * MediaStream;
     iosWebRTCSupport * WebRTC;
     iosMediaRecorderSupport * MediaRecorder;
+#endif
     FileLocalStore     * LocalStore;
     FileSystemInterface * FSInterface;
     
