@@ -1,3 +1,5 @@
+#ifdef FLOW_MEDIASTREAM
+
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import "utils.h"
@@ -15,3 +17,4 @@
 
 - (void) loadVideoFromRTCMediaStream: (FlowNativeMediaStream*) flowMediaStream onSuccess: (void (^)(int width, int height)) on_success onDimensionsChanged: (void (^)(int width, int height)) on_dimensions_changed onFrameReady: (void (^)()) on_frame;
 @end
+#endif

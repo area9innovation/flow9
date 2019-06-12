@@ -1368,6 +1368,7 @@ bool iosGLRenderSupport::doCreateVideoWidget(UIView* &widget, GLVideoClip* video
     FlowVideoPlayerController *vc = (FlowVideoPlayerController*)[storyboard instantiateViewControllerWithIdentifier:@"FlowVideoPlayerController"];
     
     if (video_clip->useMediaStream()) {
+    #ifdef FLOW_MEDIASTREAM
         FlowNativeMediaStream *mediaStream = getFlowRunner()->GetNative<FlowNativeMediaStream*>(getFlowRunner()->LookupRoot(video_clip->getMediaStreamId()));
         FlowRTCVideoPreview *view = [[FlowRTCVideoPreview alloc] init];
         __block FlowRTCVideoPreview *bView = view;
@@ -1387,6 +1388,7 @@ bool iosGLRenderSupport::doCreateVideoWidget(UIView* &widget, GLVideoClip* video
             needsDrawingGL = YES;
         }];
         widget = view;
+    #endif
     } else {
         FlowAVPlayerView *view = [[FlowAVPlayerView alloc] init];
 
