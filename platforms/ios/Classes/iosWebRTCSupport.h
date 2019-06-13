@@ -1,6 +1,8 @@
 #ifndef iosWebRTCSupport_h
 #define iosWebRTCSupport_h
 
+#ifdef FLOW_MEDIASTREAM
+
 #include "ByteCodeRunner.h"
 #include "WebRTCSupport.h"
 #include "iosMediaStreamSupport.h"
@@ -72,5 +74,7 @@ protected:
 private:
     RTCConfiguration* createRTCConfiguration(std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string> > turnServers);
 };
+
+#endif /* FLOW_MEDIASTREAM */
 
 #endif /* iosWebRTCSupport_h */
