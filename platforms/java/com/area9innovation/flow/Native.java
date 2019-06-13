@@ -720,7 +720,7 @@ public class Native extends NativeHost {
 		return Math.random();
 	}
 
-	public final Func0<Double> randomGenerator(long seed) {
+	public final Func0<Double> randomGenerator(Integer seed) {
 		return new Func0<Double>() {
 			Random generator = new Random(seed);
 			public Double invoke() {
