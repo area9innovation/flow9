@@ -341,7 +341,7 @@ StackSlot FileSystemInterface::fileSizeNative(RUNNER_ARGS)
 
     FlowFile *flowFile = owner->GetNative<FlowFile*>(file);
 
-    return StackSlot::MakeDouble(flowFile->getFileSize());
+    return StackSlot::MakeDouble(flowFile->getSliceSize());
 }
 
 StackSlot FileSystemInterface::fileModifiedNative(RUNNER_ARGS)

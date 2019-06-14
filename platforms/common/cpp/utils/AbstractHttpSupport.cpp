@@ -544,7 +544,15 @@ StackSlot AbstractHttpSupport::uploadNativeFile(RUNNER_ARGS)
     decodeMap(RUNNER, &rq.headers, headers);
     decodeMap(RUNNER, &rq.params, params);
 
-    rq.attachments[parseUtf8(flowFile->getFilename())] = flowFile;
+    unicode_string filename = parseUtf8(flowFile->getFilename());
+
+    HttpRequest::T_SMap::iterator customNameField = rq.params.find(parseUtf8("uploadDataFieldName"));
+    if(customNameField != rq.params.end()) {
+        filename = customNameField->second;
+        rq.params.erase(customNameField);
+    }
+
+    rq.attachments[filename] = flowFile;
 
     processRequest(rq);
     doRequest(rq);
