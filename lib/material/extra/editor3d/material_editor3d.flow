@@ -1,0 +1,1377 @@
+import material/material_ui;
+import material/extra/filebrowser/material_filebrowser;
+
+export {
+	makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor;
+
+		M3DEditorStyle ::= M3DEditorCamera, M3DEditorStageSize, M3DEditorScene, M3DEditorTree, M3DEditorTreeOrder, M3DEditorSelected,
+			M3DEditorAxesVisible, M3DEditorGridVisible, M3DEditorBoxesVisible, M3DEditorTransformControlsEnabled,
+			M3DEditorLoadFn, M3DEditorSaveFn, M3DEditorExportFn, M3DEditorPropertiesFn, M3DEditorParseFn;
+
+			M3DEditorCamera(camera : F3DObject); // Editor initial camera
+			M3DEditorStageSize(wh : DynamicBehaviour<WidthHeight>); // Inspect stage size
+			M3DEditorScene(scene : DynamicBehaviour<Maybe<F3DObject>>); // Inspect or update currently loaded scene
+			M3DEditorTree(tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>); // Inspect MTree created for currently loaded scene
+			M3DEditorTreeOrder(treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>); // Inspect MTree order created for currently loaded scene
+			M3DEditorSelected(selected : DynamicBehaviour<Maybe<native>>); // Inspect or update currently selected 3d object
+
+			M3DEditorAxesVisible(visible : DynamicBehaviour<bool>); // Inspect or update guide axes visibility
+			M3DEditorGridVisible(visible : DynamicBehaviour<bool>); // Inspect or update guide grid visibility
+			M3DEditorBoxesVisible(visible : DynamicBehaviour<bool>); // Inspect or update guide bounding boxes visibility
+			M3DEditorTransformControlsEnabled(enabled : Transform<bool>); // Enable or disable transform controls
+
+			M3DEditorLoadFn(fn : ((sceneJson : string) -> void) -> void); // Fn called in "Open Scene" menu item, default is openFileDialog
+			M3DEditorSaveFn(fn : (sceneJson : string) -> void); // Fn called in "Save Scene" menu item, default is saveFileClient
+			M3DEditorExportFn(fn : ref Maybe<(includeCamera : bool) -> string>); // Fn to obtain current scene Json
+			M3DEditorPropertiesFn(fn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>); // Fn to obtain properties for any 3d object
+			M3DEditorParseFn(fn : (scene : F3DNativeObject) -> F3DNativeObject); // Fn called after parsing currently loaded scene
+
+	M3DEditor(
+		menu : MMenuPanel,
+		stage : Material,
+		tree : MTree,
+		properties : Material
+	);
+
+	Point3D(x : double, y : double, z : double);
+}
+
+M3DEditorState(
+	manager : MaterialManager,
+	wh : DynamicBehaviour<WidthHeight>,
+	mutable stage : native,
+	scene : DynamicBehaviour<Maybe<F3DObject>>,
+	tree : DynamicBehaviour<Transform<[MTreeNode<string>]>>,
+	treeOrder : DynamicBehaviour<[MTreeOrderNode<string>]>,
+	selected : DynamicBehaviour<Maybe<native>>,
+	undoStack : DynamicBehaviour<[string]>,
+	redoStack : DynamicBehaviour<[string]>,
+	axes : DynamicBehaviour<bool>,
+	grid : DynamicBehaviour<bool>,
+	boxes : DynamicBehaviour<bool>,
+	loadFn : ((sceneJson : string) -> void) -> void,
+	saveFn : (sceneJson : string) -> void,
+	exportFn : ref Maybe<(includeCamera : bool) -> string>,
+	propertiesFn : ref Maybe<(object3d : native) -> [Pair<string, Material>]>,
+	parseFn : (F3DNativeObject) -> F3DNativeObject,
+	mutable ignoreUndo : bool,
+	mutable updateScene : bool
+);
+
+makeM3DEditorState(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditorState {
+	wh = extractStruct(style, M3DEditorStageSize(makeWH())).wh;
+	stage = makeClip();
+	scene = extractStruct(style, M3DEditorScene(make(None()))).scene;
+	tree = extractStruct(style, M3DEditorTree(make(const([])))).tree;
+	treeOrder = extractStruct(style, M3DEditorTreeOrder(make([]))).treeOrder;
+	selected = extractStruct(style, M3DEditorSelected(make(None()))).selected;
+
+	loadFn =
+		extractStruct(
+			style,
+			M3DEditorLoadFn(
+				\cb ->
+					openFileDialog(1, ["*.txt", "*.json"], \ff ->
+						iter(ff, \f ->
+							readFileClient(
+								f,
+								"text",
+								\s -> cb(s),
+								println
+							)
+						)
+					)
+			)
+		).fn;
+
+	saveFn =
+		extractStruct(
+			style,
+			M3DEditorSaveFn(
+				\obj ->
+					saveFileClient("scene.json", obj, "text")
+			)
+		).fn;
+
+	exportFn =
+		extractStruct(
+			style,
+			M3DEditorExportFn(ref None())
+		).fn;
+
+	propertiesFn =
+		extractStruct(
+			style,
+			M3DEditorPropertiesFn(ref None())
+		).fn;
+
+	parseFn =
+		extractStruct(
+			style,
+			M3DEditorParseFn(idfn)
+		).fn;
+
+	axesVisible = extractStruct(style, M3DEditorAxesVisible(make(false))).visible;
+	gridVisible = extractStruct(style, M3DEditorGridVisible(make(false))).visible;
+	boxesVisible = extractStruct(style, M3DEditorBoxesVisible(make(false))).visible;
+
+	M3DEditorState(
+		manager,
+		wh,
+		stage,
+		scene,
+		tree,
+		treeOrder,
+		selected,
+		make([]),
+		make([]),
+		axesVisible,
+		gridVisible,
+		boxesVisible,
+		loadFn,
+		saveFn,
+		exportFn,
+		propertiesFn,
+		parseFn,
+		false,
+		true
+	)
+}
+
+makeM3DEditor(manager : MaterialManager, style : [M3DEditorStyle]) -> M3DEditor {
+	state = makeM3DEditorState(manager, style);
+	state.propertiesFn := Some(\obj -> F3DObjectProperties(state, obj));
+
+	scene =
+		F3DChildren(
+			F3DScene(feitherMap(state.scene, \c -> [F3DObject2Json(c, state.exportFn)], const([]))),
+			\c -> {
+				next(state.tree, farray(makeF3DTree(state, c)));
+
+				state.parseFn(c);
+			}
+		);
+
+	camera =
+		extractStruct(
+			style,
+			M3DEditorCamera(
+				F3DPosition(
+					F3DPerspectiveCamera(const(50.0), fdivide(fwidth(state.wh), fheight(state.wh)), const(0.01), const(6000.0)),
+					make(0.0), make(0.0), make(1000.0)
+				)
+			)
+		).camera;
+
+	menu =
+		MMenuPanel(
+			[
+				MMenu(
+					MTextButton("File", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Open Scene",
+							[
+								MPrimaryAction(MIcon("folder_open", [])),
+								MOnClick(\ ->
+									state.loadFn(\s -> {
+										next(state.scene, None());
+
+										clear3DStageObjectCache(state.stage);
+										state.updateScene ::= true;
+
+										next(state.undoStack, []);
+										next(state.redoStack, []);
+
+										next(state.scene, Some(F3DJsonObject(s)));
+									})
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Save Scene",
+							[
+								MPrimaryAction(MIcon("save", [])),
+								MOnClick(\ -> maybeApply(^(state.exportFn), \fn -> state.saveFn(fn(true))))
+							]
+						)
+					],
+					[
+						MMenuIndent()
+					]
+				),
+				MMenu(
+					MTextButton("Edit", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Undo",
+							[
+								MOnClick(\ -> applyF3DUndo(state)),
+								MAdditionalText("Ctrl+Z"),
+								MShortcut("Ctrl+Z"),
+								MEnabled(fneq(flength(state.undoStack), 0))
+							]
+						),
+						MMenuSingleLine(
+							"Redo",
+							[
+								MOnClick(\ -> applyF3DRedo(state)),
+								MAdditionalText("Ctrl+Shift+Z"),
+								MShortcut("Ctrl+Shift+Z"),
+								MEnabled(fneq(flength(state.redoStack), 0))
+							]
+						)
+					],
+					[]
+				),
+				MMenu(
+					MTextButton("View", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Axes",
+							[
+								MPrimaryAction(MIf(state.axes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> reverseBehaviour(state.axes)),
+								MAdditionalText("A"),
+								MShortcut("A")
+							]
+						),
+						MMenuSingleLine(
+							"Grid",
+							[
+								MPrimaryAction(MIf(state.grid, MIcon("grid_on", []), MIcon("grid_off", []))),
+								MOnClick(\ -> reverseBehaviour(state.grid)),
+								MAdditionalText("G"),
+								MShortcut("G")
+							]
+						),
+						MMenuSingleLine(
+							"Boxes",
+							[
+								MPrimaryAction(MIf(state.boxes, MIcon("check_box", []), MIcon("check_box_outline_blank", []))),
+								MOnClick(\ -> reverseBehaviour(state.boxes)),
+								MAdditionalText("B"),
+								MShortcut("B")
+							]
+						)
+					],
+					[
+						MMenuIndent()
+					]
+				),
+				MMenu(
+					MTextButton("Add", nop, [], []),
+					[
+						MMenuSingleLine(
+							"Group",
+							[
+								MOnClick(\ -> addF3DNativeObject(state, make3DScene(), "Group"))
+							]
+						),
+						MSeparatorLine(),
+						MMenuSingleLine(
+							"Plane",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DPlaneGeometry(1.0, 1.0, 1, 1),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Plane"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Box",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DBoxGeometry(1.0, 1.0, 1.0, 1, 1, 1),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Box"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Circle",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DCircleGeometry(1.0, 8, 0.0, 2.0 * PI),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Circle"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Ring",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DRingGeometry(0.5, 1.0, 8, 0.0, 2.0 * PI),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Ring"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Cylinder",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DCylinderGeometry(1.0, 1.0, 1.0, 8, 1, false, 0.0, 2.0 * PI),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Cylinder"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Sphere",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DMesh(
+											make3DSphereGeometry(1.0, 8, 6, 0.0, 2.0 * PI, 0.0, PI),
+											make3DMeshStandardMaterial(white, [])
+										),
+										"Sphere"
+									)
+								)
+							]
+						),
+						MSeparatorLine(),
+						MMenuSingleLine(
+							"Point Light",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DPointLight(white, 1.0, 0.0, 1.0),
+										"Point Light"
+									)
+								)
+							]
+						),
+						MMenuSingleLine(
+							"Spot Light",
+							[
+								MOnClick(\ ->
+									addF3DNativeObject(
+										state,
+										make3DSpotLight(white, 1.0, 0.0, 0.314, 0.0, 1.0),
+										"Spot Light"
+									)
+								)
+							]
+						),
+						MSeparatorLine(),
+						MMenuSingleLine(
+							"External Object",
+							[
+								MOnClick(\ ->
+									openFileDialog(1, ["*.obj"], \ff ->
+										iter(ff, \f ->
+											readFileClient(
+												f,
+												"text",
+												\s -> {
+													openFileDialog(1, ["*.mtl"], \ff2 ->
+														iter(ff2, \f2 ->
+															readFileClient(
+																f2,
+																"text",
+																\s2 -> {
+																	addF3DNativeObject(
+																		state,
+																		make3DObjectFromObj(s, s2),
+																		"Object"
+																	);
+																},
+																println
+															)
+														)
+													);
+												},
+												println
+											)
+										)
+									)
+								)
+							]
+						)
+					],
+					[]
+				)
+			],
+			[]
+		);
+
+	stage =
+		M3DStage(
+			F3DScene(const([
+				F3DVisible(F3DAxesHelper(2500.0), state.axes),
+				F3DVisible(F3DGridHelper(5000.0, 50, 0xaaaaaa, 0xffffff), state.grid),
+				scene
+			])),
+			camera,
+			TFillXY(),
+			[
+				F3DTransformControlsEnabled(extractStruct(style, M3DEditorTransformControlsEnabled(const(true))).enabled)
+			]
+		)
+		|> (\f -> MInspect([ISize(state.wh)], f))
+		|> (\f -> MFrame(0.0, 0.0, [MFill(MGrey(200))], f))
+		|> (\f ->
+			MInteractive(
+				[
+					KeyDown(\ke -> {
+						if (ke.keycode == 81) { // Q
+							set3DTransformControlsSpace(state.stage, !is3DTransformControlsSpaceLocal(state.stage));
+						} else if (ke.keycode == 17) { // Ctrl
+							set3DTransformControlsTranslationSnap(state.stage, 100.0);
+							set3DTransformControlsRotationSnap(state.stage, 15.0);
+						} else if (ke.keycode == 87) { // W
+							set3DTransformControlsMode(state.stage, "translate");
+						} else if (ke.keycode == 69) { // E
+							set3DTransformControlsMode(state.stage, "rotate");
+						} else if (ke.keycode == 82) { // R
+							set3DTransformControlsMode(state.stage, "scale");
+						} else if (ke.keycode == 107) { // +, =, num+
+							set3DTransformControlsSize(state.stage, get3DTransformControlsSize(state.stage) + 0.1);
+						} else if (ke.keycode == 109) { // -, _, num-
+							set3DTransformControlsSize(state.stage, max(get3DTransformControlsSize(state.stage) - 0.1, 0.1));
+						} else if (ke.keycode == 88) { // X
+							set3DTransformControlsShowX(state.stage, !get3DTransformControlsShowX(state.stage));
+						} else if (ke.keycode == 89) { // Y
+							set3DTransformControlsShowY(state.stage, !get3DTransformControlsShowY(state.stage));
+						} else if (ke.keycode == 90 && !ke.ctrl && !ke.shift) { // Z
+							set3DTransformControlsShowZ(state.stage, !get3DTransformControlsShowZ(state.stage));
+						} else if (ke.keycode == 32) { // Spacebar
+							set3DTransformControlsEnabled(state.stage, !get3DTransformControlsEnabled(state.stage));
+						}
+					}),
+					KeyUp(\ke -> {
+						if (ke.keycode == 17) { // Ctrl
+							set3DTransformControlsTranslationSnap(state.stage, 0.0);
+							set3DTransformControlsRotationSnap(state.stage, 0.0);
+						}
+					}),
+				],
+				f
+			)
+		);
+
+	tree =
+		MTree(
+			fsubselect(state.tree, idfn |> FLift),
+			[
+				MTreeHideSeparators(),
+				MTreeOrder(state.treeOrder),
+				MTreeOnOrderChange(\t -> {
+					if (state.updateScene && length(t) > 0 && length(getValue(t[0].children)) > 0) {
+						state.updateScene ::= false;
+
+						next(
+							state.scene,
+							Some(
+								F3DNativeMutable(fsubselect(state.treeOrder, FLift(\to -> {
+									fselect(to[0].children, FLift(\ch -> makeF3DScene(state, ch[0])))
+								})))
+							)
+						);
+					}
+				})
+			]
+		);
+
+	properties =
+		MSelect(state.selected, \o ->
+			eitherMap(
+				o,
+				\c ->
+					eitherMap(
+						^(state.propertiesFn),
+						\fn ->
+							map(fn(c), \p ->
+								MProportionBaselineCols([
+									Pair(const(0.25), MGroup2(TFillX(), MText(p.first + ": ", []))),
+									Pair(const(0.75), p.second)
+								])
+							)
+							|> MLinesYCenter,
+						TEmpty()
+					),
+				TEmpty()
+			)
+		);
+
+	M3DEditor(
+		menu,
+		stage,
+		tree,
+		properties
+	);
+}
+
+printF3DChildren(id : string, object : F3DNative) -> F3DNative {
+	switch (object : F3DNative) {
+		F3DNativeScene(clip, items): {
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip) + " " + get3DObjectName(clip));
+
+			F3DNativeScene(clip, fmapi(items, \i, it -> printF3DChildren(id + (if (strlen(id) > 0) " " else "") + i2s(i), it)));
+		}
+		F3DNativeObject(clip): {
+			println(id + (if (strlen(id) > 0) " " else "") + get3DObjectType(clip) + " " + get3DObjectName(clip));
+
+			object;
+		}
+		F3DNativeMutable(innerObject): {
+			F3DNativeMutable(fselect(innerObject, FLift(\it -> printF3DChildren(id, it))));
+		}
+		default: {
+			object;
+		}
+	}
+}
+
+makeF3DTreeNode(
+	state : M3DEditorState,
+	clip : native,
+	children : Transform<[MTreeNode]>
+) -> MTreeNode {
+	sel = make(is3DTransformControlsAttached(state.stage, clip));
+	name = make(get3DObjectName(clip));
+
+	MTreeNode(
+		get3DObjectId(clip),
+		\__ ->
+			MBaselineCols([
+				MConstruct(
+					[
+						\ -> add3DEventListener(clip, "attached", \ -> nextDistinct(sel, true)),
+						\ -> add3DEventListener(clip, "detached", \ -> nextDistinct(sel, false)),
+						\ -> add3DEventListener(clip, "namechanged", \ -> nextDistinct(name, get3DObjectName(clip))),
+						make2Subscribe(sel, state.boxes, \sl, boxes -> {
+							if (sl) {
+								appendF3DUndo(state);
+								attach3DTransformControls(state.stage, clip);
+
+								next(state.selected, Some(clip));
+							} else {
+								if (getValue(state.selected) == Some(clip)) {
+									next(state.selected, None());
+								}
+							}
+
+							if (sl && boxes) {
+								attach3DBoxHelper(state.stage, clip);
+							}
+						})
+					],
+					MCheckBox(
+						TEmpty(),
+						make(get3DObjectVisible(clip)),
+						[
+							MIconButtonBorder(6.0),
+							MIconSize(16.0),
+							MOnNewValue(\v -> {
+								if (v != get3DObjectVisible(clip)) {
+									appendF3DUndo(state);
+								}
+
+								set3DObjectVisible(clip, v);
+							})
+						]
+					)
+				),
+				MIf(
+					sel,
+					MTextInput(
+						name,
+						[
+							MCondensed(true),
+							MCustomTextStyle([MCaptionSolid()]),
+							MInputBorders(0., 0., 0., 4.)
+						],
+						[
+							MInputFilter(\c, f -> {
+								if (!f) {
+									set3DObjectName(clip, c);
+									get3DObjectName(clip);
+								} else {
+									c;
+								}
+							}),
+							MOnFocus(\__ -> appendF3DUndo(state))
+						]
+					),
+					MGroup2(TFillX(), MDynamicText(name, [MCaptionSolid()]))
+				),
+				MFixedX(8.0),
+				MText(get3DObjectType(clip), [MCaption1()]),
+				MFixedX(4.0),
+				MVisible(
+					sel,
+					MIconButton(
+						"delete",
+						\ -> {
+							appendF3DUndo(state);
+							removeF3DSceneId(state.treeOrder, get3DObjectId(clip));
+						},
+						[
+							MIconButtonBorder(6.0),
+							MIconSize(16.0)
+						],
+						[
+							MEnabled(sel)
+						]
+					)
+				)
+			]),
+		children,
+		[MExpanded(make(true)), MTreeNodeCustomHighlighter(\wh -> TFrame(0., 4., [MFill(MGrey(300))], TSized(wh))), MSelected(sel)]
+	)
+}
+
+makeF3DTree(
+	state : M3DEditorState,
+	object : F3DNative
+) -> Transform<MTreeNode> {
+	switch (object : F3DNative) {
+		F3DNativeScene(clip, items): {
+			map(get3DObjectStage(clip), \s -> state.stage ::= s);
+
+			const(makeF3DTreeNode(state, clip, fsubmap(items, \it -> makeF3DTree(state, it))));
+		}
+		F3DNativeObject(clip): {
+			map(get3DObjectStage(clip), \s -> state.stage ::= s);
+
+			const(makeF3DTreeNode(state, clip, const([])));
+		}
+		F3DNativeMutable(innerObject): {
+			fsubselect(innerObject, FLift(\it -> makeF3DTree(state, it)));
+		}
+		F3DNativeOnLoad(innerObject, onLoad): {
+			makeF3DTree(state, innerObject)
+		}
+	}
+}
+
+makeF3DScene(state : M3DEditorState, node : MTreeOrderNode<string>) -> F3DNative {
+	clips = get3DObjectById(state.stage, node.content);
+
+	F3DNativeScene(clips[0], fmap(node.children, \c -> makeF3DScene(state, c)))
+}
+
+addF3DNativeObject(state : M3DEditorState, clip : native, name : string) -> void {
+	t = getValue(state.treeOrder);
+
+	if (length(t) > 0 && length(getValue(t[0].children)) > 0) {
+		set3DObjectName(clip, name);
+
+		node = getValue(t[0].children)[0];
+		scene = get3DObjectById(state.stage, node.content)[0];
+
+		add3DChild(scene, clip);
+
+		attach3DTransformControls(state.stage, clip);
+
+		if (fgetValue(state.boxes)) {
+			attach3DBoxHelper(state.stage, clip);
+		}
+	}
+}
+
+removeF3DSceneId(nodes : DynamicBehaviour<[MTreeOrderNode<string>]>, id : string) -> void {
+	nextDistinct(
+		nodes,
+		filter(getValue(nodes), \n -> {
+			removeF3DSceneId(n.children, id);
+			n.content != id;
+		})
+	);
+}
+
+F3DObjectProperties(state : M3DEditorState, object : native) -> [Pair<string, Material>] {
+	type = get3DObjectType(object);
+
+	[
+		Pair(
+			"Type",
+			MTextInput(make(type), [MCondensed(true), ReadOnly(true)], [])
+		),
+		Pair(
+			"UUID",
+			MTextInput(make(get3DObjectId(object)), [MCondensed(true), ReadOnly(true)], [])
+		),
+		Pair(
+			"Position",
+			{
+				x = make(d2s(get3DObjectX(object)));
+				y = make(d2s(get3DObjectY(object)));
+				z = make(d2s(get3DObjectZ(object)));
+
+				MConstruct(
+					[
+						\ -> add3DObjectPositionListener(object, \nx, ny, nz -> {
+							nextDistinct(x, nx |> d2s);
+							nextDistinct(y, ny |> d2s);
+							nextDistinct(z, nz |> d2s);
+						})
+					],
+					MBaselineCols([
+						MTextInput(
+							x,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectX(object, s2d(c));
+										get3DObjectX(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							y,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectY(object, s2d(c));
+										get3DObjectY(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							z,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectZ(object, s2d(c));
+										get3DObjectZ(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+					])
+				);
+			}
+		),
+		Pair(
+			"Rotation",
+			{
+				x = make(d2s(get3DObjectRotationX(object)));
+				y = make(d2s(get3DObjectRotationY(object)));
+				z = make(d2s(get3DObjectRotationZ(object)));
+
+				MConstruct(
+					[
+						\ -> add3DObjectRotationListener(object, \nx, ny, nz -> {
+							nextDistinct(x, nx |> d2s);
+							nextDistinct(y, ny |> d2s);
+							nextDistinct(z, nz |> d2s);
+						})
+					],
+					MBaselineCols([
+						MTextInput(
+							x,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectRotationX(object, s2d(c));
+										get3DObjectRotationX(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							y,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectRotationY(object, s2d(c));
+										get3DObjectRotationY(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							z,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectRotationZ(object, s2d(c));
+										get3DObjectRotationZ(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+					])
+				);
+			}
+		),
+		Pair(
+			"Scale",
+			{
+				x = make(d2s(get3DObjectScaleX(object)));
+				y = make(d2s(get3DObjectScaleY(object)));
+				z = make(d2s(get3DObjectScaleZ(object)));
+
+				MConstruct(
+					[
+						\ -> add3DObjectScaleListener(object, \nx, ny, nz -> {
+							nextDistinct(x, nx |> d2s);
+							nextDistinct(y, ny |> d2s);
+							nextDistinct(z, nz |> d2s);
+						})
+					],
+					MBaselineCols([
+						MTextInput(
+							x,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectScaleX(object, s2d(c));
+										get3DObjectScaleX(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							y,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectScaleY(object, s2d(c));
+										get3DObjectScaleY(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+						MFixedX(16.0),
+						MTextInput(
+							z,
+							[MCondensed(true)],
+							[
+								MInputFilter(\c, f -> {
+									if (!f) {
+										set3DObjectScaleZ(object, s2d(c));
+										get3DObjectScaleZ(object) |> d2s;
+									} else {
+										c;
+									}
+								}),
+								MOnFocus(\__ -> appendF3DUndo(state))
+							]
+						),
+					])
+				);
+			}
+		),
+		Pair(
+			"Shadow",
+			MBaselineCols([
+				MCheckBox(
+					MText("Cast", []),
+					make(get3DObjectCastShadow(object)),
+					[
+						MOnNewValue(\v -> {
+							appendF3DUndo(state);
+							set3DObjectCastShadow(object, v);
+						})
+					]
+				),
+				MCheckBox(
+					MText("Recieve", []),
+					make(get3DObjectReceiveShadow(object)),
+					[
+						MOnNewValue(\v -> {
+							appendF3DUndo(state);
+							set3DObjectReceiveShadow(object, v);
+						})
+					]
+				),
+				TFillX()
+			])
+		),
+		Pair(
+			"Frustum Cull",
+			MBaselineCols([
+				MCheckBox(
+					TEmpty(),
+					make(get3DObjectFrustumCulled(object)),
+					[
+						MOnNewValue(\v -> {
+							appendF3DUndo(state);
+							set3DObjectFrustumCulled(object, v);
+						})
+					]
+				),
+				TFillX()
+			])
+		)
+	]
+	|> (\a ->
+		if (type == "PointLight")
+			concat(
+				a,
+				[
+					Pair(
+						"Color",
+						{
+							color = make(MCustomColor(get3DLightColor(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(color, MCustomColor(get3DLightColor(object)));
+									})
+								],
+								MGroup2(
+									TFillX(),
+									MSelect(color, \c ->
+										MTextButton(
+											"PICK",
+											\ -> {
+												close = make(false);
+
+												ShowMDialog(
+													state.manager,
+													close,
+													[MDialogClickOutToCancel(color)],
+													MColorPicker(
+														color,
+														[
+															MaterialColorPicker(),
+															MDialogButtons([
+																MButtonOk("", \ -> set3DLightColor(object, MColor2int(getValue(color)))),
+																MButtonCancel("esc", \ -> next(close, true))
+															])
+														]
+													)
+												)
+											},
+											[
+												c,
+												MButtonPaddings(8.0, 4.0, 8.0, 4.0),
+												MButtonRaised()
+											],
+											[]
+										)
+									)
+								)
+							);
+						}
+					),
+					Pair(
+						"Intensity",
+						{
+							intensity = make(d2s(get3DLightIntensity(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(intensity, d2s(get3DLightIntensity(object)));
+									})
+								],
+								MTextInput(
+									intensity,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightIntensity(object, s2d(c));
+												get3DLightIntensity(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Distance",
+						{
+							distance = make(d2s(get3DLightDistance(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(distance, d2s(get3DLightDistance(object)));
+									})
+								],
+								MTextInput(
+									distance,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightDistance(object, s2d(c));
+												get3DLightDistance(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Decay",
+						{
+							decayAmount = make(d2s(get3DLightDecay(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(decayAmount, d2s(get3DLightDecay(object)));
+									})
+								],
+								MTextInput(
+									decayAmount,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightDecay(object, s2d(c));
+												get3DLightDecay(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					)
+				]
+			)
+		else if (type == "SpotLight")
+			concat(
+				a,
+				[
+					Pair(
+						"Color",
+						{
+							color = make(MCustomColor(get3DLightColor(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(color, MCustomColor(get3DLightColor(object)));
+									})
+								],
+								MGroup2(
+									TFillX(),
+									MSelect(color, \c ->
+										MTextButton(
+											"PICK",
+											\ -> {
+												close = make(false);
+
+												ShowMDialog(
+													state.manager,
+													close,
+													[MDialogClickOutToCancel(color)],
+													MColorPicker(
+														color,
+														[
+															MaterialColorPicker(),
+															MDialogButtons([
+																MButtonOk("", \ -> set3DLightColor(object, MColor2int(getValue(color)))),
+																MButtonCancel("esc", \ -> next(close, true))
+															])
+														]
+													)
+												)
+											},
+											[
+												c,
+												MButtonPaddings(8.0, 4.0, 8.0, 4.0),
+												MButtonRaised()
+											],
+											[]
+										)
+									)
+								)
+							);
+						}
+					),
+					Pair(
+						"Intensity",
+						{
+							intensity = make(d2s(get3DLightIntensity(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(intensity, d2s(get3DLightIntensity(object)));
+									})
+								],
+								MTextInput(
+									intensity,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightIntensity(object, s2d(c));
+												get3DLightIntensity(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Distance",
+						{
+							distance = make(d2s(get3DLightDistance(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(distance, d2s(get3DLightDistance(object)));
+									})
+								],
+								MTextInput(
+									distance,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightDistance(object, s2d(c));
+												get3DLightDistance(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Angle",
+						{
+							angle = make(d2s(get3DLightAngle(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(angle, d2s(get3DLightAngle(object)));
+									})
+								],
+								MTextInput(
+									angle,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightAngle(object, s2d(c));
+												get3DLightAngle(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Penumbra",
+						{
+							penumbra = make(d2s(get3DLightPenumbra(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(penumbra, d2s(get3DLightPenumbra(object)));
+									})
+								],
+								MTextInput(
+									penumbra,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightPenumbra(object, s2d(c));
+												get3DLightPenumbra(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					),
+					Pair(
+						"Decay",
+						{
+							decayAmount = make(d2s(get3DLightDecay(object)));
+
+							MConstruct(
+								[
+									\ -> add3DEventListener(object, "change", \ -> {
+										next(decayAmount, d2s(get3DLightDecay(object)));
+									})
+								],
+								MTextInput(
+									decayAmount,
+									[MCondensed(true)],
+									[
+										MInputFilter(\c, f -> {
+											if (!f) {
+												set3DLightDecay(object, s2d(c));
+												get3DLightDecay(object) |> d2s;
+											} else {
+												c;
+											}
+										}),
+										MOnFocus(\__ -> appendF3DUndo(state))
+									]
+								)
+							);
+						}
+					)
+				]
+			)
+		else
+			a
+	)
+}
+
+appendF3DUndo(state : M3DEditorState) -> void {
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
+
+		iter(get3DStageScene(state.stage), \scene -> {
+			undo = get3DObjectState(scene);
+			stack = getValue(state.undoStack);
+
+			if (length(stack) == 0 || undo != stack[length(stack) - 1]) {
+				next(state.undoStack, arrayPush(stack, undo));
+				next(state.redoStack, []);
+			}
+		});
+
+		deferred(\ -> state.ignoreUndo ::= false);
+	}
+}
+
+applyF3DUndo(state : M3DEditorState) -> void {
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
+
+		iter(get3DStageScene(state.stage), \scene -> {
+			undoStack = getValue(state.undoStack);
+			redoStack = getValue(state.redoStack);
+
+			if (length(undoStack) > 0) {
+				undo = undoStack[length(undoStack) - 1];
+				redo = get3DObjectState(scene);
+
+				next(state.redoStack, arrayPush(redoStack, redo));
+				next(state.undoStack, subrange(undoStack, 0, length(undoStack) - 1));
+
+				apply3DObjectState(scene, undo);
+			}
+		});
+
+		deferred(\ -> state.ignoreUndo ::= false);
+	}
+}
+
+applyF3DRedo(state : M3DEditorState) -> void {
+	if (!state.ignoreUndo) {
+		state.ignoreUndo ::= true;
+
+		iter(get3DStageScene(state.stage), \scene -> {
+			undoStack = getValue(state.undoStack);
+			redoStack = getValue(state.redoStack);
+
+			if (length(redoStack) > 0) {
+				undo = get3DObjectState(scene);
+				redo = redoStack[length(redoStack) - 1];
+
+				next(state.undoStack, arrayPush(undoStack, undo));
+				next(state.redoStack, subrange(redoStack, 0, length(redoStack) - 1));
+
+				apply3DObjectState(scene, redo);
+			}
+		});
+
+		deferred(\ -> state.ignoreUndo ::= false);
+	}
+}

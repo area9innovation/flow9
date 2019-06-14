@@ -396,6 +396,7 @@ THREE.TransformControls = function ( camera, domElement ) {
 			}
 
 			Object3DHelper.broadcastEvent(object, "position");
+			Object3DHelper.emitEvent(object, "change");
 
 		} else if ( mode === 'scale' ) {
 
@@ -434,6 +435,7 @@ THREE.TransformControls = function ( camera, domElement ) {
 			object.scale.copy( scaleStart ).multiply( _tempVector2 );
 
 			Object3DHelper.broadcastEvent(object, "scale");
+			Object3DHelper.emitEvent(object, "change");
 
 		} else if ( mode === 'rotate' ) {
 
@@ -491,6 +493,7 @@ THREE.TransformControls = function ( camera, domElement ) {
 			}
 
 			Object3DHelper.broadcastEvent(object, "rotation");
+			Object3DHelper.emitEvent(object, "change");
 
 		}
 
