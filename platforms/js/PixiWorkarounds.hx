@@ -555,7 +555,7 @@ class PixiWorkarounds {
 							const threeDotWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context);
 							let lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
 
-							while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || line.endsWith(' ') || line.endsWith('\\n')))
+							while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || PIXI.TextMetrics.isNewline(line[line.length - 1]) || line.endsWith('\\n')))
 							{
 								line = line.substring(0, line.length - 1);
 								lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
