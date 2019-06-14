@@ -17,13 +17,21 @@ public class FlowFileSystem extends NativeHost {
 			return "Security exception when making " + path;
 		}
 	}
-	public String deleteDirectory(String path) {
-		File file = new File(path);
-		if (file.delete()) {
-			return "";
-		} else {
-			return "Could not delete " + path;
+	private List<String> deleteRecursively(File path) {
+		List<String> ret = new ArrayList<String>();
+		if (path.isDirectory()) {
+			for (File file : path.listFiles()) {
+				ret.addAll(deleteRecursively(file));
+			}
 		}
+		if (!path.delete()) {
+			ret.add("Could not delete " + path);
+		}
+		return ret;
+	}
+	public String deleteDirectory(String dir) {
+		List<String> errors = deleteRecursively(new File(dir));
+		return String.join("\n", errors);
 	}
 	public String deleteFile(String path) {
 		File file = new File(path);
