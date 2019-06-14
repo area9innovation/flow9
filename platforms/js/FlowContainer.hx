@@ -61,7 +61,7 @@ class FlowContainer extends Container {
 		if (oldChild != null) {
 			updateClipInteractive();
 
-			invalidateStage();
+			RenderSupportJSPixi.InvalidateStage();
 
 			childrenChanged = true;
 			emitEvent("childrenchanged");

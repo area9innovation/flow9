@@ -1,6 +1,8 @@
 #ifndef iosMediaStreamSupport_h
 #define iosMediaStreamSupport_h
 
+#ifdef FLOW_MEDIASTREAM
+
 #include "ByteCodeRunner.h"
 #include "MediaStreamSupport.h"
 
@@ -63,5 +65,7 @@ protected:
 private:
     void returnDevices(int callbackRoot, NSArray<AVCaptureDevice*>  *devices);
 };
+
+#endif /* FLOW_MEDIASTREAM */
 
 #endif /* iosMediaStreamSupport_h */

@@ -1,4 +1,5 @@
 import material/internal/material_tooltip;
+import material/internal/tropic_size_util;
 
 export {
 	MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) -> Tropic;
@@ -98,39 +99,62 @@ MEllipsis2T(m : MEllipsis, m2t : (Material) -> Tropic) {
 MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisText, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
 	text = m.text;
 	mTextStyle = style2MTextStyle(m.style);
-	charStyle = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, mTextStyle, Triple(getTextColor(parent), getFontStyle(parent), true)));
-	textT = TText(text, charStyle);
-	fullWidth = getTWordMetrics(textT, makeTree()).width;
 	minWidth = extractStruct(m.style, MMinWidth(-1.)).width;
 	tooltipMaxWidth = extractStruct(m.style, MTooltipMaxWidth(400.0)).width;
 	lines = extractStruct(m.style, MMaxLines(1)).lines;
 	rightAlign = contains(m.style, RightAlign());
 	truncateFromStart = contains(m.style, MTruncateFromStart());
-	isTruncated = maybeMap(tryExtractStruct(m.style, MTextIsTruncated(make(false))), \tr -> tr.isTruncated);
-	setIsTruncated = \v -> maybeApply(isTruncated, \tr -> nextDistinct(tr, v));
+	isTruncated = extractStruct(m.style, MTextIsTruncated(make(false))).isTruncated;
+	setIsTruncated = \v -> nextDistinct(isTruncated, v);
 	isFullWidth = contains(m.style, MFullWidth());
+
+	charStyle = addMLangFontFamily(text, MTextStyle2CharacterStyleDef(parent, mTextStyle, Triple(getTextColor(parent), getFontStyle(parent), true)));
+	textT = TText(text, charStyle);
+	fullWidth = getTWordMetrics(textT, makeTree()).width;
 
 	if (minWidth > 0. && minWidth >= fullWidth && strCountOf(text, "\n") < lines) {
 		setIsTruncated(false);
 		TText(text, charStyle);
 	} else {
-		currentText = make(text);
 		availableWidth = make(fullWidth);
 		disableOnDragging = contains(m.style, MDisableOnDragging());
 		showTooltip0 = extractStruct(m.style, MShowTooltip(const(false))).show;
-		showTooltip =
-			fand(
-				showTooltip0,
-				fOr(
-					const((strCountOf(text, "\n") - b2i(endsWith(text, "\n"))) >= lines),
-					fand(
-						fless(availableWidth, const(fullWidth)),
-						fselect(currentText, FLift(\ct -> endsWith(ct, threeDots)))
-					)
-				)
-			);
+		showTooltip = fand(showTooltip0, isTruncated);
 
-		TDynamicText(currentText, charStyle)
+		(if (js && !truncateFromStart) {
+			TParagraph(
+				const(text),
+				concat(
+					charStyle,
+					[
+						ParagraphEllipsis(lines, setIsTruncated)
+					]
+				)
+			)
+		} else {
+			currentText = make(text);
+
+			TDynamicText(currentText, charStyle)
+			|> (\t ->
+				TConstruct(
+					[
+						\ -> fconnectSelect(availableWidth, currentText, \aw ->
+							if (aw >= fullWidth && strCountOf(text, "\n") < lines) {
+								setIsTruncated(false);
+								text;
+							} else {
+								truncatedText =
+									getSplittedAndTruncatedByWidthString(if (truncateFromStart) reverse(text) else text, aw, charStyle, lines)
+									|> if (truncateFromStart) reverse else idfn;
+								setIsTruncated(endsWith(truncatedText, threeDots));
+								truncatedText
+							}
+						)
+					],
+					t
+				)
+			)
+		})
 		|> (\f ->
 			if (isFConst(showTooltip0) && fgetValue(showTooltip0) == false)
 				f
@@ -156,31 +180,12 @@ MEllipsisText2T(manager : MaterialManager, parent : MFocusGroup, m : MEllipsisTe
 				)
 		)
 		|> (\f ->
-				if (strlen(text) > 1)
-					TGroup2(TSizeOf(TText(substring(text, 0, 1) + threeDots, charStyle)), f)
-				else
-					f
+			if (strlen(text) > 1)
+				TGroup2(TSizeOf(TText(substring(text, 0, 1) + threeDots, charStyle)), f)
+			else
+				f
 		)
 		|> (\t -> if (rightAlign) TCols2(TFillX(), t) else if (isFullWidth) TCols2(t, TFillX()) else t)
-		|> (\t ->
-			TConstruct(
-				[
-					\ -> fconnectSelect(availableWidth, currentText, \aw ->
-						if (aw >= fullWidth && strCountOf(text, "\n") < lines) {
-							setIsTruncated(false);
-							text;
-						} else {
-							truncatedText =
-								getSplittedAndTruncatedByWidthString(if (truncateFromStart) reverse(text) else text, aw, charStyle, lines)
-								|> if (truncateFromStart) reverse else idfn;
-							setIsTruncated(endsWith(truncatedText, threeDots));
-							truncatedText
-						}
-					)
-				],
-				t
-			)
-		)
 		|> (\t ->
 			TAttachWidth2(
 				if (isFullWidth) TFillX() else TMinimumGroup2(TFixed(fullWidth, 0.0), TFillX()),
