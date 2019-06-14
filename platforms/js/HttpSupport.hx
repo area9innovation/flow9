@@ -560,169 +560,101 @@ class HttpSupport {
 		#end
 	}
 
-	#if js
-	private static var JSFileInput : Dynamic = null;
-	private static var CurrentOnCancel : Void -> Void = null;
-	#end
-	public static function uploadFile(url: String, params: Array<Array<String>>, headers: Array<Array<String>>,
-			fileTypes: Array<String>,
+	public static function uploadNativeFile(
+			file : FlowFile,
+			url : String,
+			params: Array<Array<String>>,
+			headers: Array<Array<String>>,
 			onOpenFn: Void -> Void,
-			onSelectFn: String -> Int -> Bool,
 			onDataFn: String -> Void,
 			onErrorFn: String -> Void,
 			onProgressFn: Float -> Float -> Void,
-			onCancelFn: Void -> Void
-	) : Void -> Void {
+			onCancelFn: Void -> Void) : Void -> Void {
+
 		var cancelFn = function() {};
 
 		#if flash
 
-		var fileReference = new flash.net.FileReference();
 		cancelFn = function() {
-			fileReference.cancel();
+			file.cancel();
 		}
 
-		fileReference.addEventListener(flash.events.Event.SELECT, function(e) {
-			var continueUploading : Bool = onSelectFn(fileReference.name, Std.int(fileReference.size));
-
-			var selectedFile : flash.net.FileReference = e.target;
-
-			cancelFn = function() {
-				selectedFile.cancel();
-			}
-
-			selectedFile.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function(e) {
-				onErrorFn(e);
-			});
-
-			selectedFile.addEventListener(flash.events.Event.OPEN, function(e) {
-				onOpenFn();
-			});
-
-			selectedFile.addEventListener(flash.events.DataEvent.UPLOAD_COMPLETE_DATA, function(e: flash.events.DataEvent) {
-				onDataFn(e.data);
-			});
-
-			selectedFile.addEventListener(flash.events.ProgressEvent.PROGRESS, function(e: flash.events.ProgressEvent) {
-				onProgressFn(e.bytesLoaded, e.bytesTotal);
-			});
-
-			if (continueUploading) {
-				var request = new flash.net.URLRequest(url);
-				request.method = flash.net.URLRequestMethod.POST;
-				var vars = new flash.net.URLVariables();
-
-				var payloadName = "";
-
-				for (param in params) {
-					var key = param[0];
-					var value = param[1];
-					if (key != "uploadDataFieldName") {
-						Reflect.setField(vars, key, value);
-					} else {
-						payloadName = value;
-					}
-				}
-
-				request.data = vars;
-
-				if (payloadName == "") {
-					selectedFile.upload(request);
-				} else {
-					selectedFile.upload(request, payloadName);
-				}
-			}
+		file.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function(e) {
+			onErrorFn(e);
 		});
 
-		var fTypes = "";
-		for(fType in fileTypes) {
-			fTypes += fType + ";";
-		}
+		file.addEventListener(flash.events.Event.OPEN, function(e) {
+			onOpenFn();
+		});
 
-		fileReference.addEventListener(flash.events.Event.CANCEL, function(e) {
+		file.addEventListener(flash.events.DataEvent.UPLOAD_COMPLETE_DATA, function(e: flash.events.DataEvent) {
+			onDataFn(e.data);
+		});
+
+		file.addEventListener(flash.events.ProgressEvent.PROGRESS, function(e: flash.events.ProgressEvent) {
+			onProgressFn(e.bytesLoaded, e.bytesTotal);
+		});
+
+		file.addEventListener(flash.events.Event.CANCEL, function(e) {
 			onCancelFn();
 		});
 
-		fileReference.browse([new flash.net.FileFilter(fTypes, fTypes)]);
+		var request = new flash.net.URLRequest(url);
+		request.method = flash.net.URLRequestMethod.POST;
+		var vars = new flash.net.URLVariables();
+
+		var payloadName = "";
+
+		for (param in params) {
+			var key = param[0];
+			var value = param[1];
+			if (key != "uploadDataFieldName") {
+				Reflect.setField(vars, key, value);
+			} else {
+				payloadName = value;
+			}
+		}
+
+		request.data = vars;
+
+		if (payloadName == "") {
+			file.upload(request);
+		} else {
+			file.upload(request, payloadName);
+		}
 
 		#elseif (js && !flow_nodejs)
 
-		// Remove element before trying to create.
-		// If we don't do that, file open dialog opens only first time.
-		if (JSFileInput) {
-			js.Browser.document.body.removeChild(JSFileInput);
-			JSFileInput = null;
-		}
-		// Appending JSFileInput element to the DOM need only for Safari 5.1.7 & IE11 browsers.
-		// If we don't append it, calling function 'click()' failed on these browsers.
-		if (!JSFileInput) {
-			JSFileInput = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
- 			JSFileInput.type = "file";
-			JSFileInput.style.visibility = "hidden";
-			Browser.window.addEventListener("focus", function() {
-				haxe.Timer.delay(function() {
-					if (CurrentOnCancel != null && JSFileInput.value.length == 0 && Browser.document.hasFocus()) {
-						CurrentOnCancel(); CurrentOnCancel = null;
-					}
-				}, 1000); // Wait for input node is ready
-			});
-		}
+		onOpenFn();
 
-		JSFileInput.value = ""; // force onchange event for the same path
-		CurrentOnCancel = onCancelFn;
-
-		var fTypes = "";
-		for(fType in fileTypes) {
-			fTypes += fType + ",";
-		}
-		if (fTypes != "")
-			JSFileInput.accept = StringTools.replace(fTypes, "*", "");
-
-
-		JSFileInput.onchange = function(e : Dynamic) {
-			CurrentOnCancel = null;
-
-			var file : Dynamic = JSFileInput.files[0];
-
-			if ( !onSelectFn(file.name, file.size) ) return;
-
-			var xhr : Dynamic = untyped __js__ ("new XMLHttpRequest()");
-			xhr.onload = xhr.onerror = function() {
-				if (xhr.status < 200 || xhr.status >= 400) {
-					onErrorFn(xhr.responseText);
-				} else {
-					onDataFn(xhr.responseText);
-				}
-			};
-
-			xhr.upload.onprogress = function(event) {
-				onProgressFn(event.loaded, event.total);
-			};
-
-			xhr.open("POST", url, true);
-			onOpenFn();
-
-			var form_data : Dynamic = untyped __js__ ("new FormData()");
-			form_data.append("Filename", file.name);
-
-			var payloadName = "Filedata";
-			for (p in params) {
-				if (p[0] != "uploadDataFieldName") {
-					form_data.append(p[0], p[1]);
-				} else {
-					payloadName = p[1];
-				}
-			};
-			form_data.append(payloadName, file);
-
-			for (header in headers) {
-				xhr.setRequestHeader(header[0], header[1]);
-			}
-
-			xhr.send(form_data);
+		var xhr : Dynamic = untyped __js__ ("new XMLHttpRequest()");
+		xhr.onload = xhr.onerror = function() {
+			if(xhr.status != 200) { onErrorFn("" + xhr.status); } else { onDataFn(xhr.responseText); }
 		};
 
-		JSFileInput.click();
+		xhr.upload.onprogress = function(event) {
+			onProgressFn(event.loaded, event.total);
+		};
+
+		var form_data : Dynamic = untyped __js__ ("new FormData()");
+		form_data.append("Filename", file.name);
+
+		var payloadName = "Filedata";
+		for (p in params) {
+			if (p[0] != "uploadDataFieldName") {
+				form_data.append(p[0], p[1]);
+			} else {
+				payloadName = p[1];
+			}
+		};
+		form_data.append(payloadName, file);
+
+		for (header in headers) {
+			xhr.setRequestHeader(header[0], header[1]);
+		}
+
+		xhr.open("POST", url, true);
+		xhr.send(form_data);
 		#end
 
 		return cancelFn;
