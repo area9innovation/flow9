@@ -30,7 +30,6 @@ LOCAL_SRC_FILES := \
     core/Natives.cpp \
     core/Utf8.cpp \
     core/Utf32.cpp \
-    core/md5.cpp \
 
 include $(BUILD_STATIC_LIBRARY)
 
@@ -73,12 +72,15 @@ LOCAL_SRC_FILES += \
     utils/AbstractLocalyticsSupport.cpp \
     utils/AbstractInAppPurchase.cpp \
     utils/AbstractGeolocationSupport.cpp \
+    utils/flowfilestruct.cpp \
     utils/FileLocalStore.cpp \
     utils/FileSystemInterface.cpp \
     utils/MediaStreamSupport.cpp \
     utils/WebRTCSupport.cpp \
     utils/MediaRecorderSupport.cpp \
     utils/AbstractWebSocketSupport.cpp \
+    utils/md5.cpp \
+    utils/base64.cpp \
     font/TextFont.cpp
 
 LOCAL_STATIC_LIBRARIES := librunnercore $(MY_PROF_LIB) $(MY_GEN_LIB)

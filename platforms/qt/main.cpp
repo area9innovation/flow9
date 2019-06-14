@@ -577,8 +577,8 @@ int main(int argc, char *argv[])
     }
 
     QtSoundSupport Sounder(&FlowRunner);
-    QtHttpSupport HttpManager(&FlowRunner, Window);
-    QFileSystemInterface FileSystem(&FlowRunner, &HttpManager);
+    QtHttpSupport HttpManager(&FlowRunner);
+    QFileSystemInterface FileSystem(&FlowRunner, Window);
     QtNotificationsSupport NotificationsManager(&FlowRunner, cgi);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
     QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);

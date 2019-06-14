@@ -1548,7 +1548,7 @@ void QGLRenderSupport::dropEvent(QDropEvent *event)
             for (int i = 0; i < filesLimit; ++i) {
                 QString path = urlList.at(i).toLocalFile();
 
-                FlowFile *file = new FlowFile(RUNNER, new QFile(path));
+                FlowFile *file = new FlowFile(RUNNER, path.toStdString());
 
                 RUNNER->SetArraySlot(fileArray, i, RUNNER->AllocNative(file));
             }

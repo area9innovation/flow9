@@ -1,22 +1,18 @@
 package dk.area9.flowrunner;
 
 import java.io.BufferedReader;
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -350,6 +346,8 @@ public class FlowRunnerActivity extends FragmentActivity  {
         wrapper.setFlowMediaStreamSupport(flowMediaStreamSupport);
         FlowWebRTCSupport flowWebRTCSupport = new FlowWebRTCSupport(wrapper);
         wrapper.setFlowWebRTCSupport(flowWebRTCSupport);
+        FlowFileSystemInterface flowFileSystemInterface = new FlowFileSystemInterface(this, wrapper);
+        wrapper.setFlowFileSystemInterface(flowFileSystemInterface);
         if (Utils.isMediaRecorderSupported) {
             FlowMediaRecorderSupport flowMediaRecorderSupport = new FlowMediaRecorderSupport(wrapper);
             wrapper.setFlowMediaRecorderSupport(flowMediaRecorderSupport);
@@ -1300,20 +1298,22 @@ public class FlowRunnerActivity extends FragmentActivity  {
     }
     
     private void safeOnActivityResult(int requestCode, int resultCode, @Nullable final Intent data) {
-        if (resultCode != RESULT_OK) {
+        if (resultCode == RESULT_OK) {
+            if (requestCode == Utils.CAMERA_APP_PHOTO_MODE) {
+                handleImagePickerResult(Uri.fromFile(new File(FlowCameraAPI.cameraAppPhotoFilePath)), true);
+            } else if (requestCode == Utils.GALLERY_PHOTO_PICKER_MODE) {
+                handleImagePickerResult(data.getData(), false);
+            } else if (requestCode == Utils.CAMERA_APP_VIDEO_MODE) {
+                handleVideoPickerResult(Uri.fromFile(new File(FlowCameraAPI.cameraAppVideoFilePath)), true);
+            } else if (requestCode == Utils.GALLERY_VIDEO_PICKER_MODE) {
+                handleVideoPickerResult(data.getData(), false);
+            }
+        } else {
             // TODO: add some info about errors
-            return;
-        }        
-        String filePath = data == null ? "" : data.getStringExtra("FILE_SELECTED");
-        // on some devices data == null when we use MediaStore.EXTRA_OUTPUT
-        if (requestCode == FlowCameraAPI.CAMERA_APP_PHOTO_MODE) {
-            handleImagePickerResult(Uri.fromFile(new File(FlowCameraAPI.cameraAppPhotoFilePath)), true);
-        } else if (requestCode == FlowCameraAPI.GALLERY_PHOTO_PICKER_MODE) {
-            handleImagePickerResult(data.getData(), false);
-        } else if (requestCode == FlowCameraAPI.CAMERA_APP_VIDEO_MODE) {
-            handleVideoPickerResult(Uri.fromFile(new File(FlowCameraAPI.cameraAppVideoFilePath)), true);
-        } else if (requestCode == FlowCameraAPI.GALLERY_VIDEO_PICKER_MODE) {
-            handleVideoPickerResult(data.getData(), false);
+        }
+
+        if (requestCode == Utils.OPEN_FILE_DIALOG_MODE) {
+            wrapper.getFlowFileSystemInterface().handleOpenFileDialogResult(data);
         }
     }
     

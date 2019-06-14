@@ -426,7 +426,7 @@ static BOOL sheduledFailToRegisterForRemoteNotifications = NO;
     MediaStream = new iosMediaStreamSupport(Runner);
     WebRTC = new iosWebRTCSupport(Runner);
     MediaRecorder = new iosMediaRecorderSupport(Runner, WebSocketSupport);
-    FSInterface = new FileSystemInterface(Runner);
+    FSInterface = new iosFileSystemInterface(Runner, GLViewController);
    
     NSString * resources_path = [[[NSProcessInfo processInfo] environment] valueForKey:@"MEDIA_PATH"];
     if (!resources_path)

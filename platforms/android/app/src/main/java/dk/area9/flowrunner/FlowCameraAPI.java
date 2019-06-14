@@ -21,11 +21,6 @@ import java.util.List;
 @TargetApi(Build.VERSION_CODES.GINGERBREAD)
 public class FlowCameraAPI {
 
-    public static final int CAMERA_APP_PHOTO_MODE = 0;
-    public static final int CAMERA_APP_VIDEO_MODE = 1;
-    public static final int GALLERY_PHOTO_PICKER_MODE = 2;
-    public static final int GALLERY_VIDEO_PICKER_MODE = 3;
-
     public static final String CAMERA_PHOTO_PATH = "FLOW_CAMERA_PHOTO_PATH";
     public static final String CAMERA_VIDEO_PATH = "FLOW_CAMERA_VIDEO_PATH";
     public static final String CAMERA_APP_CALLBACK_ADDITIONAL_INFO = "FLOW_CAMERA_APP_CALLBACK_ADDITIONAL_INFO";
@@ -207,7 +202,7 @@ public class FlowCameraAPI {
         Intent intent = new Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
         intent.setType("image/*");
         cameraAppPhotoFilePath = "";
-        ((FlowRunnerActivity)context).startActivityForResult(Intent.createChooser(intent, "Select File"), GALLERY_PHOTO_PICKER_MODE);
+        ((FlowRunnerActivity)context).startActivityForResult(Intent.createChooser(intent, "Select File"), Utils.GALLERY_PHOTO_PICKER_MODE);
     }
 
     private void openVideoGalleryPicker(String additionalInfo, int duration, int size, int quality, String fileName) {
@@ -215,7 +210,7 @@ public class FlowCameraAPI {
         intent.setType("video/*");
 
         cameraAppVideoFilePath = "";
-        ((FlowRunnerActivity)context).startActivityForResult(Intent.createChooser(intent, "Select File"), GALLERY_VIDEO_PICKER_MODE);
+        ((FlowRunnerActivity)context).startActivityForResult(Intent.createChooser(intent, "Select File"), Utils.GALLERY_VIDEO_PICKER_MODE);
     }
 
     private void openCameraAppPhoto(int cameraId, String additionalInfo, int desiredWidth, int desiredHeight, int compressQuality, final String fileName) {
@@ -236,7 +231,7 @@ public class FlowCameraAPI {
                     takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, Utils.fileUriToContentUri(context, image));
                     takePictureIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
-                    ((FlowRunnerActivity) context).startActivityForResult(takePictureIntent, CAMERA_APP_PHOTO_MODE);
+                    ((FlowRunnerActivity) context).startActivityForResult(takePictureIntent, Utils.CAMERA_APP_PHOTO_MODE);
                 }
             }
         };
@@ -273,7 +268,7 @@ public class FlowCameraAPI {
                     takeVideoIntent.putExtra(MediaStore.EXTRA_OUTPUT, Utils.fileUriToContentUri(context, video));
                     takeVideoIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
-                    ((FlowRunnerActivity) context).startActivityForResult(takeVideoIntent, CAMERA_APP_VIDEO_MODE);
+                    ((FlowRunnerActivity) context).startActivityForResult(takeVideoIntent, Utils.CAMERA_APP_VIDEO_MODE);
                 }
             }
         };
