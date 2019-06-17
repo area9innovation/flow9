@@ -68,7 +68,53 @@ MDynamicMenu2T(manager : MaterialManager, parent : MFocusGroup, m : MDynamicMenu
 			f
 		)
 	)
+	|> MDynamicMenuHandleShortcuts(m.items, openMenu)
 }
+
+MDynamicMenuHandleShortcuts(items : Transform<[MMenuLine]>, openMenu : MOpenMenu) -> (Tropic) -> Tropic {
+	\t -> {
+		shortcuts = fmap(fgetShortcuts(items), \sh -> parseShortcut(toLowerCase(sh.shortcut)));
+
+		TInteractive(
+			[
+				KeyDown(\ke -> {
+					if (!getValue(openMenu.opened) && exists(fgetValue(shortcuts), \s -> matchShortcutKeyCode(ke, s))) {
+						next(openMenu.opened, true);
+
+						emitKeyEvent(getStage(), "keydown", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
+						emitKeyEvent(getStage(), "keyup", ke.utf, ke.ctrl, ke.shift, ke.alt, ke.meta, ke.keycode);
+
+						deferred(\ -> next(openMenu.opened, false));
+					}
+				})
+			],
+			t
+		);
+	}
+}
+
+fgetShortcuts(items : Transform<[MMenuLine]>) -> Transform<[MShortcut]> {
+	fsubmap(items, \it ->
+		switch (it : MMenuLine) {
+			MMenuSingleLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
+			MMenuCustomLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
+			MMenuGroupLine(__, style) : const(extractStructMany(style, MShortcut("shortcut")));
+			MSubMenu(__, subItems, style) :
+				fconcat(
+					const(extractStructMany(style, MShortcut("shortcut"))),
+					fgetShortcuts(const(subItems))
+				);
+			MSubMenuDynamic(__, subItems, style) :
+				fconcat(
+					const(extractStructMany(style, MShortcut("shortcut"))),
+					fgetShortcuts(subItems)
+				);
+			MSeparatorLine() : const([])
+		}
+	)
+	|> fconcatA
+}
+
 
 MMenuButton2T(manager : MaterialManager, parent : MFocusGroup, button : Material, m2t : (Material, MFocusGroup) -> Tropic, openMenu : MOpenMenu,
 	enabled : Transform<bool>, openOnClick : bool) -> Tropic {
@@ -601,6 +647,7 @@ MMultiSelectDropDown2T(manager : MaterialManager, parent : MFocusGroup, m : MMul
 	selectedBgColor = selectedStyle.bgColor;
 
 	addClear = contains(style, MAddClearButton());
+	showTooltip = extractStruct(style, MShowTooltip(const(true)));
 
 	opened = make(false);
 	onClick = \ -> nextDistinct(opened, true);
@@ -633,7 +680,7 @@ MMultiSelectDropDown2T(manager : MaterialManager, parent : MFocusGroup, m : MMul
 											)
 										else
 											nonSpec,
-										arrayPush(textStyle, MShowTooltip(const(true)))
+										arrayPush(textStyle, showTooltip)
 									)
 									|> MCenterY
 								}),
@@ -668,7 +715,7 @@ MMultiSelectDropDown2T(manager : MaterialManager, parent : MFocusGroup, m : MMul
 											MEllipsisText(
 												item,
 												ifArrayPush(textStyle, isSelected, selectedTextColor)
-												|> (\arr -> arrayPush(arr, MShowTooltip(const(true))))
+												|> (\arr -> arrayPush(arr, showTooltip))
 											)
 												|> MAlignStart
 										)

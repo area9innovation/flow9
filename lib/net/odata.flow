@@ -18,7 +18,7 @@ export {
 	DQuery ::= DSelectQuery, DInsertQuery, DUpdateQuery, DDeleteQuery, DCountQuery, DBatchQuery;
 		DSelectQuery(resource : DResource, parameters : [DParameter]);
 		DInsertQuery(resource : DCommonResourceU, entity : Json, parameters : [DParameter]);
-		DUpdateQuery(resource : DSpecificResource, value : Json);
+		DUpdateQuery(resource : DSpecificResource, entity : Json);
 		DDeleteQuery(resource : DSpecificResource);
 		DCountQuery(resource : DCommonResourceU, parameters : [DParameter]);
 		DBatchQuery(queries : [DQuery]);
@@ -69,17 +69,18 @@ export {
 					DApplyExpandFilter(resource : string, filter : DFilter, expands : [DApplyExpandU]);
 
 
-	DResourceValue ::= DInt, DString, DDouble, DBool, DDate, DDateTime, DNull;
+	DResourceValue ::= DInt, DString, DDouble, DBool, DDate, DDateTime, DDuration, DNull;
 		DInt(val : int);
 		DString(val : string);
 		DDouble(val : double);
 		DBool(val : bool);
 		DDate(val : Date);
 		DDateTime(val : Time);
+		DDuration(days : int, hours : int, minutes : int, seconds : double);
 		DNull();
 
-	DExpression ::= DResourceValue, DPropertyU, DBinaryExpression, DComparison, DLogicalExp, DBuiltIn, DCount, DFunction;
-
+	DExpression ::= DResourceValue, DBinaryExpression, DComparison, DLogicalExp, DBuiltIn, DCount, DPropertyOrFunction;
+		DPropertyOrFunction ::= DPropertyU, DFunction;
 		DPropertyU ::= DProperty, DProperty2;
 			DProperty(resource : string);
 			DProperty2(resource : string, parent : DPropertyU);
@@ -101,9 +102,6 @@ export {
 				DLt();
 				DLe();
 
-		DInValues ::= DResourceArray, DPropertyU;
-			DResourceArray(values : [DResourceValue]);
-
 		DLogicalExp ::= DAnd, DAnd2, DOr, DOr2, DNot, DHas, DIn, DAny, DAll;
 			DAnd(expressions : [DExpression]);
 			DAnd2(expr1 : DExpression, expr2 : DExpression);
@@ -112,13 +110,15 @@ export {
 			DNot(expression : DExpression);
 			DHas(resource : DPropertyU, val : DExpression);
 			DIn(resource : DPropertyU, values : DInValues);
-			DAny(resource : DPropertyU, alias : string, expression : DExpression);
-			DAll(resource : DPropertyU, alias : string, expression : DExpression);
+				DInValues ::= DResourceArray, DPropertyU;
+					DResourceArray(values : [DResourceValue]);
+			DAny(resource : DPropertyOrFunction, alias : string, expression : DExpression);
+			DAll(resource : DPropertyOrFunction, alias : string, expression : DExpression);
 
 		DBuiltIn ::=
 			DFContains, DFEndsWith, DFStartsWith, DFLength, DFIndexOf, DFSubstring, DFToLower, DFToUpper, DFTrim, DFConcat,
 			DFDay, DFMonth, DFYear, DFHour, DFMinute, DFSecond, /*DFFractionalSeconds,*/ DFDate, DFTime,
-			/*DFTotalOffsetMinutes,*/ DFNow, /*DFMinDateTime, DFMaxDateTime,*/ DFIntToDays,
+			/*DFTotalOffsetMinutes,*/ DFNow, /*DFMinDateTime, DFMaxDateTime,*/
 			DFRound, DFFloor, DFCeiling;
 
 				// String functions
@@ -147,7 +147,6 @@ export {
 				DFNow();
 				// DFMinDateTime();
 				// DFMaxDateTime();
-				DFIntToDays(days : DExpression);
 
 				// Math functions
 				DFRound(val : DExpression);
@@ -395,7 +394,7 @@ buildODataQuery(query : DQuery) -> ODataQuery {
 			res = resource2string(resource) + paramsStr;
 			ODataQuery(POST(), RequestPayload(json2string(entity)), res);
 		}
-		DUpdateQuery(resource, value): ODataQuery(PATCH(), RequestPayload(json2string(value)), resource2string(resource));
+		DUpdateQuery(resource, entity): ODataQuery(PATCH(), RequestPayload(json2string(entity)), resource2string(resource));
 		DDeleteQuery(resource): ODataQuery(DELETE(), RequestParameters([]), resource2string(resource));
 		DBatchQuery(queries): buildBatchQuery(queries);
 		DCountQuery(resource, parameters): {
@@ -453,11 +452,20 @@ resource2string(resource : DResource) -> string {
 resourceValue2string(value : DResourceValue) -> string {
 	switch (value : DResourceValue) {
 		DInt(val): i2s(val);
-		DString(val): "'" + urlEncode(val) + "'";
+		DString(val): "'" + urlEncode2(val) + "'";
 		DDouble(val): d2s(val);
 		DBool(val): b2s(val);
 		DDate(val): date2string(val);
 		DDateTime(val): dbDateTime2utc(time2db(val));
+		DDuration(days, hours, minutes, seconds): {
+			timePart = (if (hours > 0) i2s(hours) + "H" else "")
+					 + (if (minutes > 0) i2s(minutes) + "M" else "")
+					 + (if (seconds > 0.0) d2s(seconds) + "S" else "");
+			"duration'P"
+				+ (if (days > 0) i2s(days) + "D" else "")
+				+ (if (timePart != "") "T" + timePart else "")
+				+ "'"
+		}
 		DNull(): "null";
 	}
 }
@@ -477,7 +485,7 @@ applyExpression2string(applyExpression : DApplyExpression) -> string {
 			propertiesS = superglue(properties, expression2string, ",");
 			if (length(expressions) > 0) {
 				expressionsS = superglue(expressions, applyExpression2string, "/");
-				"groupby((" + propertiesS + "), " + expressionsS + ")";
+				"groupby((" + propertiesS + ")," + expressionsS + ")";
 			} else {
 				"groupby((" + propertiesS + "))";
 			}
@@ -617,7 +625,7 @@ logicalExpression2string(expression : DLogicalExp) -> string {
 		DNot(expr): "not (" + expression2string(expr) + ")";
 		DHas(resource, val): expression2string(resource) + " has " + expression2string(val);
 		DIn(resource, values): expression2string(resource) + " in " + dInValues2string(values);
-		DAny(resource, alias, expr): expression2string(resource) + "/any(" + alias + ":" + expression2string(expr) + ")";
+		DAny(expr1, alias, expr2): expression2string(expr1) + "/any(" + alias + ":" + expression2string(expr2) + ")";
 		DAll(resource, alias, expr): expression2string(resource) + "/all(" + alias + ":" + expression2string(expr) + ")";
 	}
 }
@@ -651,7 +659,6 @@ builtinFunction2string(function : DBuiltIn) -> string {
 		DFDate(dateTime): makeBuiltinFunction("date", [dateTime]);
 		DFTime(dateTime): makeBuiltinFunction("time", [dateTime]);
 		DFNow(): makeBuiltinFunction("now", []);
-		DFIntToDays(days): makeBuiltinFunction("int_to_days", [days]);
 
 		DFRound(val): makeBuiltinFunction("round", [val]);
 		DFFloor(val): makeBuiltinFunction("floor", [val]);

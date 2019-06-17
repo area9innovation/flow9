@@ -319,7 +319,6 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			)
 		}
 		TDynamicGroup2(stackChanges, currentStack, combiner) : {
-			updateMetrics = make(true);
 			fgroupChanges : DynamicBehaviour<[FGroupChange]> = make([]);
 			tropicItems : DynamicBehaviour<[TDynamicGroupItem]> = make([]);
 			verticalCombiner = if (combiner == TLinesCombiner()) FAddition() else FMax();
@@ -333,26 +332,30 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					));
 
 				tropic2Acc(
-					if (combiner == TLinesCombiner() || combiner == TColsCombiner() || combiner == TColsACombiner())
+					if (combiner == TGroupCombiner()) {
+						tropic
+					} else {
+						disp =
+							fconnect(
+								fsubselect(
+									previousItem,
+									FLift(\prevItem ->
+										positionTDynamicGroupItem(
+											prevItem,
+											combiner
+										)
+									)
+								),
+								itemPosition
+							);
+
 						TConstruct(
 							[
-								\ -> fconnect(
-									fsubselect(
-										previousItem,
-										FLift(\prevItem ->
-											positionTDynamicGroupItem(
-												prevItem,
-												combiner
-											)
-										)
-									),
-									itemPosition
-								)
+								\ -> disp
 							],
 							TTranslate(itemPosition, tropic)
-						)
-					else
-						tropic,
+						);
+					},
 					parent,
 					sheet,
 					metricsOnly
@@ -381,7 +384,20 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					\i, item -> next(item.index, i + z + 1)
 				);
 
-				newTAcc.form;
+				if (combiner == TGroupCombiner()) {
+					newTAcc.form;
+				} else {
+					FRenderable(
+						fboundsoverlap(
+							fapplytransform(
+								fwidthheight(newTAcc.metrics.width, newTAcc.metrics.height),
+								fworldtransform(parent.transformMatrix, fpoint2transform(itemPosition))
+							),
+							parent.viewBounds
+						),
+						newTAcc.form
+					);
+				}
 			}
 
 			handleDelete = \z -> {
@@ -419,7 +435,20 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						)
 					);
 
-					newTAcc.form;
+					if (combiner == TGroupCombiner()) {
+						newTAcc.form;
+					} else {
+						FRenderable(
+							fboundsoverlap(
+								fapplytransform(
+									fwidthheight(newTAcc.metrics.width, newTAcc.metrics.height),
+									fworldtransform(parent.transformMatrix, fpoint2transform(tropicItem.position))
+								),
+								parent.viewBounds
+							),
+							newTAcc.form
+						);
+					}
 				} else {
 					handleAdd(tropic, z);
 				}
@@ -444,56 +473,57 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			currentFStack : DynamicBehaviour<[FForm]> = make(mapi(^currentStack, \i, f -> handleAdd(f, i)));
 
-			handleChanges = \changes -> if (length(changes) > 0) {
-				// next(updateMetrics, false);
+			handleTChanges = \changes -> if (length(changes) > 0) {
 				next(stackChanges, []);
 
-				iter(changes, \change -> {
-					switch (change : TGroupChange) {
-						TGroupAdd(tropic, z) : if (z >= 0) {
-							newItem = handleAdd(tropic, min(z, length(getValue(tropicItems))));
-							currentStack := insertArray(^currentStack, z, tropic);
+				next(
+					fgroupChanges,
+					concat(
+						getValue(fgroupChanges),
+						filtermap(changes, \change -> {
+							switch (change : TGroupChange) {
+								TGroupAdd(tropic, z) : {
+									if (z >= 0) {
+										newItem = handleAdd(tropic, min(z, length(getValue(tropicItems))));
+										currentStack := insertArray(^currentStack, z, tropic);
 
-							dynArrayPush(
-								fgroupChanges,
-								FGroupAdd(newItem, z)
-							);
-						}
-						TGroupDelete(z) : if (z >= 0 && z < length(getValue(tropicItems))) {
-							handleDelete(z);
-							currentStack := removeIndex(^currentStack, z);
+										cast(Some(FGroupAdd(newItem, z)) : Some<FGroupChange> -> Maybe<FGroupChange>);
+									} else {
+										None();
+									}
+								}
+								TGroupDelete(z) : {
+									if (z >= 0 && z < length(getValue(tropicItems))) {
+										handleDelete(z);
+										currentStack := removeIndex(^currentStack, z);
 
-							dynArrayPush(
-								fgroupChanges,
-								FGroupDelete(z)
-							);
-						}
-						TGroupMove(from, to) : {
-							toFixed = forceRange(to, 0, length(^currentStack) - 1);
+										Some(FGroupDelete(z));
+									} else {
+										None();
+									}
+								}
+								TGroupMove(from, to) : {
+									toFixed = forceRange(to, 0, length(^currentStack) - 1);
 
-							if (existsIndex(^currentStack, from) && from != toFixed) {
-								handleMove(from, toFixed);
-								currentStack := moveElement(^currentStack, from, toFixed);
+									if (existsIndex(^currentStack, from) && from != toFixed) {
+										handleMove(from, toFixed);
+										currentStack := moveElement(^currentStack, from, toFixed);
 
-								dynArrayPush(
-									fgroupChanges,
-									FGroupMove(from, toFixed)
-								);
+										Some(FGroupMove(from, toFixed));
+									} else {
+										None();
+									}
+								}
+								TGroupReplace(form, z) : {
+									newItem = handleReplace(form, z);
+									currentStack := replace(^currentStack, z, form);
+
+									Some(FGroupReplace(newItem, z));
+								}
 							}
-						}
-						TGroupReplace(form, z) : {
-							newItem = handleReplace(form, z);
-							currentStack := replace(^currentStack, z, form);
-
-							dynArrayPush(
-								fgroupChanges,
-								FGroupReplace(newItem, z)
-							);
-						}
-					}
-				});
-
-				// next(updateMetrics, true);
+						})
+					)
+				);
 			};
 
 			TAcc(
@@ -502,19 +532,19 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				else
 					FConstructor(
 						FDynamicGroup2(fgroupChanges, currentFStack, captureCallstack()),
-						makeSubscribe(stackChanges, handleChanges)
+						makeSubscribe(stackChanges, handleTChanges)
 					),
 				TFormMetrics(
-					ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.metrics.width, horizontalCombiner, 0.0)),
-					ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0)),
-					ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0))
+					fsubselectFn(tropicItems, \item -> item.acc.metrics.width, horizontalCombiner, 0.0),
+					fsubselectFn(tropicItems, \item -> item.acc.metrics.height, verticalCombiner, 0.0),
+					fsubselectFn(tropicItems, \item -> item.acc.metrics.baseline, verticalCombiner, 0.0)
 				),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.minWidth, horizontalCombiner, 0.0)),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0)),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.maxWidth, horizontalCombiner, 0.0)),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0)),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.xFillers, horizontalCombiner, 0.0)),
-				ftransistor(updateMetrics, fsubselectFn(tropicItems, \item -> item.acc.yFillers, verticalCombiner, 0.0)),
+				fsubselectFn(tropicItems, \item -> item.acc.minWidth, horizontalCombiner, 0.0),
+				fsubselectFn(tropicItems, \item -> item.acc.minHeight, verticalCombiner, 0.0),
+				fsubselectFn(tropicItems, \item -> item.acc.maxWidth, horizontalCombiner, 0.0),
+				fsubselectFn(tropicItems, \item -> item.acc.maxHeight, verticalCombiner, 0.0),
+				fsubselectFn(tropicItems, \item -> item.acc.xFillers, horizontalCombiner, 0.0),
+				fsubselectFn(tropicItems, \item -> item.acc.yFillers, verticalCombiner, 0.0),
 				const(false),
 				false,
 				false,
@@ -2170,7 +2200,9 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				bf,
 				\ -> FConstructor(
 					bf.form,
-					\ -> map(cs, \fn -> fn()) |> (\ds -> \ -> applyall(ds))
+					\ ->
+						map(cs, \fn -> fn())
+						|> (\disp -> \ -> applyall(disp))
 				),
 				metricsOnly
 			)
@@ -2410,7 +2442,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 				if (metricsOnly)
 					FEmpty()
 				else
-					FText(t, charStyle),
+					FText(const(t), charStyle),
 				TFormMetrics(
 					const(wh.width),
 					const(wh.height),
@@ -2434,6 +2466,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 
 			parWidth = extractStruct(style, ParagraphWidth(const(-1.))).width;
 			parMargin = extractStruct(style, ParagraphMargin(0., 0.));
+			parEllipsis = tryExtractStruct(style, ParagraphEllipsis(0, nop1));
 			parInterlineSpacing = extractStruct(style, InterlineSpacing(0.));
 			parRightAlign = contains(style, RightAlign());
 			parCenterAlign = contains(style, CenterAlign());
@@ -2446,6 +2479,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						ParagraphMetrics(\met -> nextDistinct(metrics, met)),
 						parInterlineSpacing
 					]
+					|> (\s -> arrayPushMaybe(s, parEllipsis))
 				)
 				|> (\parStyle -> {
 					arrayPush(parStyle, commonAlignment2abs(extractCommonAlignmentFromTParagraphStyles(style)))
@@ -2470,19 +2504,16 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					fselect(metrics, FLift(\met -> met.baseline + parMargin.top))
 				),
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), zero, wd),
-				// fif(fselect(parWidth, FLift(\pw -> pw < 0.)), zero, hgt),
 				hgt,
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(^tropicFillersMax), wd),
-				// fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(^tropicFillersMax), hgt),
 				hgt,
 				fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(1.), zero),
-				// fif(fselect(parWidth, FLift(\pw -> pw < 0.)), const(1.), zero),
 				zero,
 				const(true),
 				false,
 				false,
-				// isFConst(parWidth) && fgetValue(parWidth) > 0.,
-				// isFConst(parWidth) && fgetValue(parWidth) > 0.,
+				// isFConst(text) && isFConst(parWidthB),
+				// isFConst(text) && isFConst(parWidthB),
 				[]
 			)
 		}
@@ -3261,7 +3292,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						parent.environment,
 						fif(fs, fselect(parent.transformMatrix, FLift(\tm -> TransformMatrix(tm with tx = 0., ty = 0.))), parent.transformMatrix),
 						parent.worldVisible,
-						fif(fs, fwh2bounds(whF), parent.viewBounds)
+						fif(fs, fwh2bounds(wh0), parent.viewBounds)
 					),
 					sheet,
 					metricsOnly
@@ -3289,7 +3320,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			returnTAcc(bf, \ -> FInspect([ITransformMatrix(setfn)], bf.form), metricsOnly)
 		}
 		TInspect(inspectors, tr) : {
-			bf = tropic2Acc(tr, parent, sheet, metricsOnly);
+			bf = tropic2Acc(tr, parent, sheet, metricsOnly || contains(inspectors, IMetricsOnly()));
 
 			avW = ref false;
 			avH = ref false;
@@ -3343,6 +3374,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						IMaxSize(wh) : {
 							fconnect(fwh(bf.maxWidth, bf.maxHeight), wh);
 						}
+						IMetricsOnly() : { nop; }
 					}
 				)
 				|> (\arr -> concat(arr, bf.disposers));
@@ -3379,7 +3411,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					tr,
 					TParentInfo(parent with maxX = fwidth(available), maxY = fheight(available)),
 					sheet,
-					metricsOnly
+					metricsOnly || contains(overriders, IMetricsOnly())
 				);
 
 			size =
@@ -3550,13 +3582,9 @@ fsubselectFn(
 	fn : FFn2<??, ??, ??>,
 	def : ??) -> Transform<??> {
 
-	fsubselect(
-		fselect(array, FLift(\a -> map(a, key))),
-		FLift(\v : [Transform<??>] ->
-			if (length(v) > 0)
-				fold(v, const(def), \acc : Transform<??>, v1 : Transform<??> -> fselect2(acc, v1, fn))
-			else
-				ConstBehaviour(def)
-		)
+	ffold(
+		fsubmap(array, key),
+		def,
+		instantiateFn2(fn)
 	);
 }

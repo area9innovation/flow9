@@ -84,7 +84,7 @@ export {
 
 	// MRequiredField, MLabel replace corresponding inner autocomplete styles
 	MDropDownOrAutoCompleteStyle ::= MDropDownStyles, MAutoCompleteStyles, MAutoCompleteState, MMultipleSelection,
-		MItemsLimit, MRequiredField, MLabel, MShowAnyItem;
+		MItemsLimit, MRequiredField, MLabel, MShowAnyItem, MChangeOnClick;
 
 		MDropDownStyles(style : [MDropDownStyle]);
 		MMultipleSelection(selected : DynamicBehaviour<[int]>, style : [MMultiSelectDropDownStyle]);
@@ -92,6 +92,14 @@ export {
 		MAutoCompleteState(state : [MTextInputState]);
 		MItemsLimit(limit : int);
 		MShowAnyItem(); // Adds "Any" option. Doesn`t work with multi-selection.
+		MChangeOnClick(); // Changes selected only when click on autocomplete item.
+
+	MCollapsingBox(
+		content : Material,
+		yTrans : Transform<double>,
+		expand : Transform<bool>,
+		absoluteOffsetMode : bool
+	) -> Material;
 }
 
 MRadios(index : DynamicBehaviour<int>, style : [MCheckableStyle], captions : [Material]) -> [Material] {
@@ -390,27 +398,26 @@ SampleStates(
 	isReady : [DynamicBehaviour<bool>]
 );
 
-MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Material {
+MMultiAudioPlayer(filenames : [string], mStyle : [MMultiAudioPlayerStyle]) -> Material {
  	amount = length(filenames);
 
  	if (amount > 0) {
-	  	style = filtermap(removeAllStructs(mstyle, FVideoTimeRange(const(0.), const(0.))), \st ->
+	  	fvStyle = filtermap(removeAllStructs(mStyle, FVideoTimeRange(const(0.), const(0.))), \st ->
 			switch (st) {
 				FVideoStyle() : {a : Maybe<FVideoStyle> = Some(st); a};
 				default : None()
 			}
 		);
 
-	  	// properties from external style
-	 	lenEx = extractStruct(style, FVideoLength(make(0.))).length;
-	 	posEx = extractStruct(style, FVideoPosition(make(0.))).position;
-	 	playEx = extractStruct(style, FVideoPlay(make(false))).play;
+	  	// FVideoStyle properties
+	 	lenEx = extractStruct(fvStyle, FVideoLength(make(0.))).length;
+	 	posEx = extractStruct(fvStyle, FVideoPosition(make(0.))).position;
+	 	playEx = extractStruct(fvStyle, FVideoPlay(make(false))).play;
+	 	loopEx = extractStruct(fvStyle, FVideoLoop(make(false))).loop;
+	 	synchrocallEx = extractStruct(fvStyle, SynchroCalls(nop, nop));
 
-	  	synchrocallEx = extractStruct(style, SynchroCalls(nop, nop));
-	 	loopEx = extractStruct(style, FVideoLoop(make(false))).loop;
-
-	  	// playing audio
-	 	currIndexB = extractStruct(style, IndexInPlaylist(make(0))).index;
+	  	// MMultiAudioPlayerStyle properties
+	 	currIndexB = extractStruct(mStyle, IndexInPlaylist(make(0))).index;
 
 	  	// init properties for each audio
 	 	states = SampleStates(
@@ -446,7 +453,7 @@ MMultiAudioPlayer(filenames : [string], mstyle : [MMultiAudioPlayerStyle]) -> Ma
 	 		TVideo(
 	 			url,
 	 			make(WidthHeight(-1., -1.)),		// not to draw
-	 			replaceStructMany(style,
+	 			replaceStructMany(fvStyle,
 	 				[
 	 					FVideoLength(states.length[i]),
 	 					FVideoPosition(states.position[i]),
@@ -670,6 +677,7 @@ MDropDownOrAutoComplete(
 	isRequired = contains(style, MRequiredField());
 	labelM = tryExtractStruct(style, MLabel(""));
 	multiSelection = tryExtractStruct(style, MMultipleSelection(make([]), []));
+	changeOnClick = contains(style, MChangeOnClick());
 
 	showAnyItem = contains(style, MShowAnyItem()) && isNone(multiSelection);
 	items = concat(if (showAnyItem) ["Any"] else [], items0);
@@ -703,7 +711,13 @@ MDropDownOrAutoComplete(
 			|> (\st -> eitherMap(labelM,
 				\labelStyle -> replaceStruct(st, MLabel(labelStyle.label)),
 				st
-			));
+			))
+			|> (\st -> ifArrayPush(st, changeOnClick, MCompletionFn(\com, isSelected, setWordFn ->
+					MGetManager(\manager -> MGetFocusGroup(\parent -> {
+						wrapSetWordFn = \sm -> {nextDistinct(selected, string2idxs(getValue(selectedStrB))); setWordFn(sm)};
+						defaultCompletionFn(manager, parent, st).fn(com, isSelected, wrapSetWordFn)
+					}))
+			)));
 		autoCompleteState =
 			extractStruct(style, MAutoCompleteState([])).state
 			|> (\st ->
@@ -718,7 +732,7 @@ MDropDownOrAutoComplete(
 			[\ -> 
 				eitherMap(multiSelection,
 					\ms -> bidirectionalLink(selectedStrB, ms.selected, string2idxsMulti, idxs2string),
-					bidirectionalLink(selectedStrB, selected, string2idxs, \idx -> idxs2string([idx]))
+					bidirectionalLink(selectedStrB, selected, \str -> if (changeOnClick) fgetValue(selected) else string2idxs(str), \idx -> idxs2string([idx]))
 				)
 			],
 			MAutoComplete(selectedStrB, items, autoCompleteStyle, autoCompleteState)
@@ -752,4 +766,10 @@ MDropDownOrAutoComplete(
 			)
 			else m
 		)
+}
+
+MCollapsingBox(content : Material, yTrans : Transform<double>, expand : Transform<bool>, absoluteOffsetMode : bool) -> Material {
+	MGetManager(\manager -> MGetFocusGroup(\p -> MGetMaterial2Tropic(\m2t ->
+		TCollapsingBox(manager, p, m2t(content, p), yTrans, expand, absoluteOffsetMode)
+	)))
 }

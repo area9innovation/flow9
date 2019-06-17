@@ -1122,6 +1122,8 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
     TRY_USE_OBJECT_METHOD(GLTextClip, getNumLines, 1);
     TRY_USE_OBJECT_METHOD(GLTextClip, setScrollV, 2);
 
+    TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldCharXPosition, 2);
+    TRY_USE_OBJECT_METHOD(GLTextClip, findTextFieldCharByPosition, 3)
     TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldWidth, 1);
     TRY_USE_OBJECT_METHOD(GLTextClip, getTextFieldHeight, 1);
     TRY_USE_OBJECT_METHOD(GLTextClip, setTextFieldWidth, 2);
@@ -1143,6 +1145,7 @@ NativeFunction *GLRenderSupport::MakeNativeFunction(const char *name, int num_ar
 
     // Video Clip
     TRY_USE_OBJECT_METHOD(GLVideoClip, playVideo, 3);
+    TRY_USE_OBJECT_METHOD(GLVideoClip, playVideoFromMediaStream, 3);
     TRY_USE_OBJECT_METHOD_NAME(GLVideoClip, playVideo2, "playVideo", 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, seekVideo, 2);
     TRY_USE_OBJECT_METHOD(GLVideoClip, pauseVideo, 1);

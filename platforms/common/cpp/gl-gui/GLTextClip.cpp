@@ -236,7 +236,7 @@ void GLTextClip::layoutTextWrapLines()
 
     text_char_index.clear();
 
-    int cur_char = 0;
+    size_t cur_char;
     bool prev_newline = false;
     T_index::iterator idx_it = text_lines.back().extent_index.begin();
     T_int_index::iterator cidx_it = text_char_index.begin();
@@ -258,22 +258,29 @@ void GLTextClip::layoutTextWrapLines()
 
         assert(extent->newline || !extent->text.empty() || (i == text_extents.size()-1));
 
-        extent->char_idx = cur_char;
-        extent->layout.reset();
-
-        // FIXME: memory consuming, maybe redo via iterators.
-        unicode_string ctext = GLTextLayout::getLigatured(extent->text);
+        unicode_string ctext = extent->text;
         GLFont::Ptr font = extent->format.font;
         if (!font) continue;
         float fsize = extent->format.size;
         float fspacing = extent->format.spacing;
         bool already_split = false;
+        shared_ptr<Utf32InputIterator> ctexti;
 
-        if (input_type == "password")
-            ctext = unicode_string(ctext.length(), 0x2022);
+        DecodeUtf16toUtf32 decoder(extent->text);
+
+        // TODO linkage to DecodeUtf16toUtf32 via shared_ptr to make it automatically disposable when all iterators gone.
+        shared_ptr<Utf32InputIterator> strBegin, strEnd;
+        strBegin = decoder.begin().clone();
+        strEnd = decoder.end().clone();
+        applyProcessing(input_type, *strBegin, *strEnd, &strBegin, &strEnd);
+        ctexti = strBegin->clone();
+        cur_char = extent->char_idx = ctexti->position();
+        extent->layout.reset();
 
         // Word-wrapping loop:
         do {
+            cur_char = ctexti->position();
+
             if (already_split || prev_newline) {
                 text_lines.push_back(Line());
                 idx_it = text_lines.back().extent_index.begin();
@@ -282,51 +289,49 @@ void GLTextClip::layoutTextWrapLines()
             Line &line = text_lines.back();
             float limit = ((wordwrap && (!is_input || multiline)) ? explicit_size.x - line.width : -1.0f);
 
-            GLTextLayout::Ptr layout = font->layoutTextLine(ctext, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
-            unicode_string layout_text = layout->getText();
+            GLTextLayout::Ptr layout = font->layoutTextLine(*ctexti, *strEnd, fsize, limit, fspacing, (!is_input || multiline) && crop_words, rtl);
 
             // Wrapping splits
-            if (layout_text.size() < ctext.size()) {
-                unsigned lsize = 0;
+            if (*layout->getEndPos() != *strEnd) {
+                shared_ptr<Utf32InputIterator> wpos = layout->getEndPos()->cloneReversed();
                 bool on_new_line = line.extents.empty();
 
                 already_split = true;
 
-                if (layout_text.size() > 0) {
-                    int wpos = layout_text.size()-1;
-                    for (; wpos >= 0; --wpos) {
-                        unicode_char c = layout_text[wpos];
+                if (*layout->getEndPos() != *ctexti) {
+                    ++*wpos;
+                    for (; *wpos != *ctexti; ++*wpos) {
+                        ucs4_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
                     }
+                    wpos = wpos->cloneReversed();
 
-                    if (wpos >= 0)
-                        lsize = wpos+1;
+                    if (*wpos != *ctexti)
+                    	++*wpos;
                     else if (on_new_line)
-                        lsize = layout_text.size();
+                    	wpos = layout->getEndPos();
                 } else if (on_new_line) {
-                    lsize = 1;
+                    wpos = ctexti->clone();
+                    ++*wpos;
                 }
 
                 // If doesn't fit && not immediately after a newline,
                 // then insert one and retry. Insertion is caused by
                 // setting already_split to true earlier.
-                if (!lsize)
+                if (*wpos == *strBegin)
                     continue;
 
-                unicode_string new_text = ctext.substr(0, lsize);
-                ctext = ctext.substr(lsize);
-
-                if (lsize != layout_text.size())
-                    layout = font->layoutTextLine(new_text, fsize, -1.0f, fspacing, (!is_input || multiline) && crop_words, rtl);
+                if (*ctexti != *wpos)
+                    layout = font->layoutTextLine(*ctexti, *wpos, fsize, -1.0f, fspacing, (!is_input || multiline) && crop_words, rtl);
+                ctexti = wpos;
             } else {
-                ctext.clear();
+                ctexti = strEnd;
             }
 
             Extent::Ptr real_extent = extent;
             if (already_split) {
                 real_extent = Extent::Ptr(new Extent(extent));
-                real_extent->text = layout->getText();
                 real_extent->newline = extent->newline && ctext.empty();
             }
 
@@ -353,9 +358,10 @@ void GLTextClip::layoutTextWrapLines()
             cidx_it = text_char_index.insert(cidx_it, char_ref);
 
             cur_char += real_extent->text.size() + (real_extent->newline ? 1 : 0);
-        } while (!ctext.empty());
+        } while (*ctexti != *strEnd);
 
         prev_newline = extent->newline;
+        cur_char = strEnd->position();
     }
 
     T_int_index::value_type char_ref(cur_char, text_real_extents.size());
@@ -456,6 +462,21 @@ void GLTextClip::layoutText()
         ui_size = text_size;
 
     layout_ready = true;
+}
+
+void GLTextClip::applyProcessing(
+    std::string input_type,
+    Utf32InputIterator &inputBegin, Utf32InputIterator &inputEnd,
+    shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
+) {
+    shared_ptr<Utf32InputIterator> processor;
+    if (input_type == "password")
+        processor.reset(new PasswordUtf32Iter(inputBegin, inputEnd));
+    else
+        processor.reset(new LigatureUtf32Iter(inputBegin, inputEnd));
+    *outputBegin = processor;
+    *outputEnd = processor->clone();
+    (*outputEnd)->seekEnd();
 }
 
 std::pair<GLTextClip::Extent::Ptr,float> GLTextClip::findExtentByPos(vec2 pos, bool nearest)
@@ -977,6 +998,55 @@ StackSlot GLTextClip::setScrollV(RUNNER_ARGS)
 }
 
 
+StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(idx);
+    RUNNER_CheckTag1(TInt, idx);
+    double pos = -1;
+    int i, idx_v = idx.GetInt();
+
+    layoutText();
+    Extent::Ptr extent;
+    for (i = text_real_extents.size()-1; i>=0; --i) {
+        extent = text_real_extents[i];
+        if (extent->char_idx <= idx_v) break;
+    }
+    return StackSlot::MakeDouble(extent? extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)] : -1);
+}
+
+StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(posx, posy);
+    RUNNER_CheckTag2(TDouble, posx, posy);
+    int char_idx = -1;
+
+    std::pair<GLTextClip::Extent::Ptr,float> ext = findExtentByPos(vec2(posx.GetDouble(), posy.GetDouble()), true);
+    if (ext.first) {
+        int eidx = ext.first->layout->findIndexByPos(ext.second, true);
+        if (eidx >= 0) {
+            const std::vector<float> &positions = ext.first->layout->getPositions();
+            const std::vector<size_t> &char_indices = ext.first->layout->getCharIndices();
+            int glyph_idx = ext.first->char_idx + eidx;
+
+            // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
+            int interp_dir = glyph_idx>0? -1 : 1;
+            if ((positions[glyph_idx]-ext.second)*(positions[glyph_idx+interp_dir]-ext.second) > 0) interp_dir = -interp_dir;
+
+            char_idx = char_indices[glyph_idx];
+            // Range check
+            if ((interp_dir>0 || glyph_idx>0) && (glyph_idx<positions.size()-1 || interp_dir<0)) {
+                int alt_char_idx = char_indices[glyph_idx+interp_dir];
+                int char_delta = alt_char_idx-char_idx;
+                if (abs(char_delta)>1) {
+                    double pos = positions[glyph_idx];
+                    double alt_pos = positions[glyph_idx+interp_dir];
+                    char_idx = floor(char_delta*(alt_pos-pos)/(ext.second-pos)+0.5);
+                }
+            }
+        }
+    }
+    return StackSlot::MakeInt(char_idx);
+}
 
 StackSlot GLTextClip::getTextFieldWidth(RUNNER_ARGS)
 {

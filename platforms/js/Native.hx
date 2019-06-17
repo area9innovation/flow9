@@ -30,7 +30,7 @@ class Native {
 	static var webModuleResponseText = "";
 #end
 	public static function println(arg : Dynamic) : Dynamic {
-		var s = toString(arg);
+		var s = toString(arg, true);
 		#if flash
 			try {
 				var qoute = StringTools.replace(s, '\\', '');
@@ -239,8 +239,8 @@ class Native {
 		return "";
 	}
 
-	public static inline function toString(value : Dynamic) : String {
-		return HaxeRuntime.toString(value);
+	public static inline function toString(value : Dynamic, ?keepStringEscapes : Bool = false) : String {
+		return HaxeRuntime.toString(value, keepStringEscapes);
 	}
 
 	public static inline function gc() : Void {

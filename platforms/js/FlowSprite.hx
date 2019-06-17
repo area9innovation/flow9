@@ -107,7 +107,7 @@ class FlowSprite extends Sprite {
 					svgXhr.overrideMimeType('image/svg+xml');
 
 				svgXhr.onload = function () {
-					url = "data:image/svg+xml;utf8," + svgXhr.response;
+					url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
 					loadTexture();
 				};
 
@@ -151,7 +151,7 @@ class FlowSprite extends Sprite {
 			texture = Texture.EMPTY;
 		}
 
-		invalidateStage();
+		RenderSupportJSPixi.InvalidateStage();
 	}
 
 	private function onError() : Void {
@@ -160,6 +160,11 @@ class FlowSprite extends Sprite {
 		loaded = false;
 
 		texture = Texture.EMPTY;
+
+		if (parent == null) {
+			return;
+		}
+
 		errorFn("Can not load " + url);
 	}
 
@@ -167,7 +172,7 @@ class FlowSprite extends Sprite {
 		try {
 			metricsFn(texture.width, texture.height);
 
-			invalidateStage();
+			RenderSupportJSPixi.InvalidateStage();
 
 			renderable = true;
 			loaded = true;
@@ -182,7 +187,7 @@ class FlowSprite extends Sprite {
 
 	private function loadTexture() : Void {
 		retries++;
-		texture = Texture.fromImage(url);
+		texture = Texture.fromImage(url, Util.determineCrossOrigin(url) != '');
 		pushTextureToCache(texture);
 
 		if (texture.baseTexture == null) {

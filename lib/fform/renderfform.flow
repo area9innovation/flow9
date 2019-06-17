@@ -12,7 +12,7 @@ export {
 	// Override to set custom stage wh
 	stageWidthHeight = make(None());
 	fAccessibilityEnabled = ref false;
-	fSvg2GraphicsEnabled = ref true;
+	fSvg2GraphicsEnabled = ref !js;
 }
 
 currentFFormCount = ref 0;
@@ -64,39 +64,6 @@ optimizeAndRenderFForm(parent : native, form : FForm, zorder : [int]) -> FRender
 optimizeAndRenderFFormAt(parent : native, form : FForm, zorder : [int], id : int) -> FRenderResult {
 	renderFForm(optimizeFForm(form), zorder)
 	|> (\r  -> attachFChildrenAt(parent, r.clips, r.disposers, r.capabilities, id))
-}
-
-addChildClip(parent : native, child : native, alive : ref bool) -> void {
-	if (!^alive) {
-		alive := true;
-		addChild(parent, child);
-	} else if (isUrlParameterTrue("dev")) {
-		println("Warning: Double construct");
-		printCallstack();
-		println("---");
-	}
-}
-
-addChildClipAt(parent : native, child : native, id : int, alive : ref bool) -> void {
-	if (!^alive) {
-		alive := true;
-		addChildAt(parent, child, id);
-	} else if (isUrlParameterTrue("dev")) {
-		println("Warning: Double construct");
-		printCallstack();
-		println("---");
-	}
-}
-
-removeChildClip(parent : native, child : native, alive : ref bool) -> void {
-	if (^alive) {
-		alive := false;
-		removeChild(parent, child);
-	} else if (isUrlParameterTrue("dev")) {
-		println("Warning: Double dispose");
-		printCallstack();
-		println("---");
-	}
 }
 
 attachFChildren(clip : native, children : [native], disposers : [() -> void], cap : FClipCapabilities) -> FRenderResult {
@@ -183,37 +150,19 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 		}
 		FText(text, style): {
 			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
-				renderFText(text |> escapeHtml, style);
+				renderFText(fselect(text, escapeHtml |> FLift), style);
 			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
-				texts = html2text(text, style);
-
-				if (length(texts) == 0) {
-					renderFText("", style);
-				} else if (length(texts) == 1) {
-					renderFText(texts[0].text, texts[0].style);
-				} else {
-					renderFTexts(texts);
-				}
+				renderFTexts(fselect(text, FLift(\t -> html2text(t, style))), style);
 			} else {
 				renderFText(text, style);
 			}
 		}
 		FParagraph(text, style): {
 			if (!js && extractStruct(style, EscapeHTML(false)).escape) {
-				renderFParagraph(text |> escapeHtml, style);
+				renderFParagraph(fselect(text, escapeHtml |> FLift), style);
 			} else if (js && !extractStruct(style, EscapeHTML(false)).escape) {
-				fstyle : [FontFamily] = extractStructMany(style, FontFamily(""));
-				texts : [Text] = html2text(text, fstyle);
-
-				if (length(texts) == 0) {
-					renderFParagraph("", style);
-				} else if (length(texts) == 1) {
-					textStyle : [CharacterStyle] = texts[0].style;
-					parStyle : [FParagraphStyle] = replaceStructMany(style, textStyle);
-					renderFParagraph(texts[0].text, parStyle);
-				} else {
-					renderFParagraphs(texts);
-				}
+				charStyle = style2characterStyle(style);
+				renderFParagraphs(fselect(text, FLift(\t -> html2text(t, charStyle))), style);
 			} else {
 				renderFParagraph(text, style);
 			}
@@ -284,8 +233,6 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 
 									^picErrorHandler(e);
 									decreaseFFilesCount();
-
-									println(e);
 								} else {
 									CachedPicturesSizes := removeFromTree(^CachedPicturesSizes, url);
 
@@ -315,11 +262,6 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 
 								^picErrorHandler(e);
 								decreaseFFilesCount();
-
-								if (e != "") {
-									println(e);
-								}
-
 							},
 							^onlydl
 						);
@@ -1113,6 +1055,7 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 			looping = tryExtractStruct(style, FVideoLoop(const(false)));
 			timeRange = tryExtractStruct(style, FVideoTimeRange(const(0.), const(0.)));
 			playbackRate = tryExtractStruct(style, FVideoPlaybackRate(make(0.)));
+			mediaStream = tryExtractStruct(style, MediaStream(makeClip()));
 			viewBounds = tryExtractStruct(style, ViewBounds(const(zeroBounds)));
 			getCurrentFrame = tryExtractStruct(style, FVideoGetCurrentFrame(ref \ -> ""));
 			additionalSources = extractStruct(style, FVideoAdditionalSources([])).sources;
@@ -1141,10 +1084,12 @@ renderFForm(rform : FForm, zorder : [int]) -> FRenderResult {
 						streamListenerResponse := false;
 					}
 				);
-
 			iter(additionalSources, \s -> addVideoSource(video, s.url, s.type));
-
-			playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing));
+			
+			eitherFn(mediaStream,
+				\ms -> playVideoFromMediaStream(video, ms.stream, !getValue(playing)), 
+				\ -> playVideo(video, addServerPathIfRelative(applyMediaPathMapping(filename)), !getValue(playing))
+			);
 
 			if (controls != []) setVideoControls(video, controls);
 

@@ -150,6 +150,9 @@ class FlowFileSystem {
 			#if sys
 			return sys.FileSystem.fullPath(dir);
 			#elseif (js && (flow_nodejs || nwjs))
+			if (StringTools.startsWith(dir, "~"))
+				return js.node.Os.homedir() + dir.substr(1);
+
 			return Fs.realpathSync(dir);
 			#else
 			return dir;
@@ -164,9 +167,6 @@ class FlowFileSystem {
 		return d;
 	}
 
-	#if js
-	private static var JSFileInput : Dynamic = null;
-	#end
 	public static function openFileDialog(maxFiles : Int, fileTypes : Array<String>, callback : Array<Dynamic> -> Void) : Void {
 		#if flash
 
@@ -187,20 +187,13 @@ class FlowFileSystem {
 
 		#elseif (js && !flow_nodejs)
 
-		// Remove element before trying to create.
-		// If we don't do that, file open dialog opens only first time.
-		if (JSFileInput) {
-			js.Browser.document.body.removeChild(JSFileInput);
-			JSFileInput = null;
-		}
 		// Appending JSFileInput element to the DOM need only for Safari 5.1.7 & IE11 browsers.
 		// If we don't append it, calling function 'click()' failed on these browsers.
-		if (!JSFileInput) {
-			JSFileInput = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
- 			JSFileInput.type = "file";
-			JSFileInput.style.visibility = "hidden";
-			if (maxFiles != 1)
-				JSFileInput.multiple = true;
+		var jsFileInput : Dynamic = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
+		jsFileInput.type = "file";
+		jsFileInput.style.visibility = "hidden";
+		if (maxFiles != 1) {
+			jsFileInput.multiple = true;
 		}
 
 
@@ -212,13 +205,13 @@ class FlowFileSystem {
 			fTypes += fType + ",";
 		}
 
-		JSFileInput.accept = fTypes;
-		JSFileInput.value = ""; // force onchange event for the same path
+		jsFileInput.accept = fTypes;
+		jsFileInput.value = ""; // force onchange event for the same path
 
-		JSFileInput.onchange = function(e : Dynamic) {
-			JSFileInput.onchange = null;
+		jsFileInput.onchange = function(e : Dynamic) {
+			jsFileInput.onchange = null;
 
-			var files : js.html.FileList = JSFileInput.files;
+			var files : js.html.FileList = jsFileInput.files;
 
 			var fls : Array<js.html.File> = [];
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
@@ -226,28 +219,29 @@ class FlowFileSystem {
 			}
 
 			callback(fls);
+			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
 		//workaround for case when cancel was pressed and onchange isn't fired
 		var onFocus : Dynamic = null;
-		onFocus = function(e : Dynamic) {			
+		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
 
-			//onfocus is fired before the change of JSFileInput value
+			//onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
-				JSFileInput.dispatchEvent(new js.html.Event("change"));
+				jsFileInput.dispatchEvent(new js.html.Event("change"));
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
 
-		JSFileInput.click();
+		jsFileInput.click();
 		#end
 	}
 
 	public static function uploadNativeFile(
-			file : FlowFile, 
-			url : String, 
-			params: Array<Array<String>>, 
+			file : FlowFile,
+			url : String,
+			params: Array<Array<String>>,
 			onOpenFn: Void -> Void,
 			onDataFn: String -> Void,
 			onErrorFn: String -> Void,
@@ -387,37 +381,74 @@ class FlowFileSystem {
 	}
 
 	public static function readFile(file : FlowFile, readAs : String, onData : String -> Void, onError : String -> Void) : Void {
-		#if flash
-		file.load();
+		readFileEnc(file, readAs, "UTF8", onData, onError);
+	}
 
-		file.addEventListener(flash.events.Event.COMPLETE, function (e : flash.events.Event) {
+	public static function readFileEnc(file : FlowFile, readAs : String, encoding: String, onData : String -> Void, onError : String -> Void) : Void {
+		if (readAs=="text" && encoding=="auto") {
+			var ENCODINGS: Array<String> = ["UTF8", "CP1252"];
+			var INVALID_CHARACTER: String = "�";
+			var aggD: Array<Array<String>> = [];
+			var aggE: Array<Array<String>> = [];
+			for (enc in ENCODINGS) {
+				function checkFinish() {
+					if (aggD.length + aggE.length == ENCODINGS.length) {
+						for (d in aggD) {
+							if (d[1].indexOf(INVALID_CHARACTER)==-1) {
+								onData(d[1]);
+								return;
+							}
+						}
+						if (aggE.length > 0) {
+							onError(aggE[0][1]);
+							return;
+						}
+						if (aggD.length > 0) {
+							onData(aggD[0][1]);
+							return;
+						}
+						onError("Something strange happened: no data nor error callbacks triggered.");
+					}
+				}
+				function onD(d: String) {aggD.push([enc, d]); checkFinish();}
+				function onE(e: String) {aggE.push([enc, e]); checkFinish();}
+				readFileEnc(file, readAs, enc, onD, onE);
+			}
+		} else {
+			#if flash
+			file.load();
+
+			file.addEventListener(flash.events.Event.COMPLETE, function (e : flash.events.Event) {
+				switch (readAs : String) {
+					case "data": onData(file.data.toString());
+					case "uri":  onData(file.data.toString()); // Data URI building is not supported in flash
+					
+					// TODO add support for other encodings for flash target if needed.
+					default: onData(file.data.readUTF());
+				}
+			});
+
+			#elseif (js && !flow_nodejs)
+			var reader : js.html.FileReader = new js.html.FileReader();
+
+			reader.onerror = function (e : js.html.ProgressEvent) {
+				if (e.type == "error")
+					onError("Cannot read given file: " + reader.error.name);
+			}
+
+			reader.onloadend = function () {
+				if (reader.result != null) {
+					onData(reader.result);
+				}
+			}
+
 			switch (readAs : String) {
-				case "data": onData(file.data.toString());
-				case "uri":  onData(file.data.toString()); // Data URI building is not supported in flash
-				default: onData(file.data.readUTF());
+				case "data": reader.readAsBinaryString(file);
+				case "uri":  reader.readAsDataURL(file);
+				default:     reader.readAsText(file, encoding);
 			}
-		});
-
-		#elseif (js && !flow_nodejs)
-		var reader : js.html.FileReader = new js.html.FileReader();
-
-		reader.onerror = function (e : js.html.ProgressEvent) {
-			if (e.type == "error")
-				onError("Cannot read given file: " + reader.error.name);
+			#end
 		}
-
-		reader.onloadend = function () {
-			if (reader.result != null) {
-				onData(reader.result);
-			}
-		}
-
-		switch (readAs : String) {
-			case "data": reader.readAsBinaryString(file);
-			case "uri":  reader.readAsDataURL(file);
-			default: 	 reader.readAsText(file);
-		}
-		#end
 	}
 
 	public static function saveFileClient(filename : String, data : Dynamic, type : String) {

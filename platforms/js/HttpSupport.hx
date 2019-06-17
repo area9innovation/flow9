@@ -101,11 +101,11 @@ class HttpSupport {
 			port = protocol == "https:" ? 443 : 80;
 		}
 
-		if (protocol == null) {
+		if (protocol == null && untyped request != undefined) {
 			protocol = untyped request.protocol + ":";
 		}
 
-		if (hostname == null) {
+		if (hostname == null && untyped request != undefined) {
 			hostname = untyped request.hostname;
 		}
 

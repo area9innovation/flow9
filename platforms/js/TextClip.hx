@@ -1,7 +1,7 @@
 import js.Browser;
 import js.html.MouseEvent;
 import js.html.Event;
-import pixi.core.text.Text;
+import pixi.core.text.Text in PixiCoreText;
 import pixi.core.text.TextMetrics;
 import pixi.core.text.TextStyle;
 import pixi.core.math.shapes.Rectangle;
@@ -11,8 +11,77 @@ import FlowFontStyle;
 
 using DisplayObjectHelper;
 
+class Text extends PixiCoreText {
+	public var charIdx : Int = 0;
+	public var orgCharIdxStart : Int = 0;
+	public var orgCharIdxEnd : Int = 0;
+	public var difPositionMapping : Array<Int>;
+}
+
+class TextMappedModification {
+	public var modified: String;
+	public var difPositionMapping : Array<Int>;
+	public function new(modified: String, difPositionMapping: Array<Int>) {
+		this.modified = modified;
+		this.difPositionMapping = difPositionMapping;
+	}
+}
+
+class UnicodeTranslation {
+	public var rangeStart : Int;
+	public var rangeContentFlags : Int;
+	static var map : Map<String, UnicodeTranslation> = new Map<String, UnicodeTranslation>();
+
+	public function new(rangeStart, rangeContentFlags) {
+		this.rangeStart = rangeStart;
+		this.rangeContentFlags = rangeContentFlags;
+	}
+
+	static public function getCharAvailableVariants(chr: String): Int {
+		var unit = map.get(chr);
+		if (unit == null) return 1;
+		return unit.rangeContentFlags;
+	}
+
+	static public function getCharVariant(chr: String, gv: Int): String {
+		var found = "";
+		for (found in map) break;
+		if (found != "") {
+			// Glyphs start here.
+			var rangeStart : Int = 0xFE81;
+			// Packed values, bit per character. How many glyphs
+			// present for a character, 4 if bit is set, else 2.
+			var flags : Int = 0x1FE1F50;
+			for (i in 0x622...0x63B) {
+				var is4range: Int = flags & 1;
+				flags = flags >> 1;
+				map[String.fromCharCode(i)] = new UnicodeTranslation(rangeStart, 3 + 12*is4range);
+				rangeStart += 2 + is4range*2;
+			}
+			flags = 0x27F; // As above.
+			for (i in 0x641...0x64B) {
+				var is4range: Int = flags & 1;
+				flags = flags >> 1;
+				map[String.fromCharCode(i)] = new UnicodeTranslation(rangeStart, 3 + 12*is4range);
+				rangeStart += 2 + is4range*2;
+			}
+			for (i in 0...4) {
+				map[String.fromCharCode(rangeStart)] = new UnicodeTranslation(rangeStart, 3);
+				rangeStart += 2;
+			}
+		}
+		var unit = map[chr];
+		if (unit == null) return chr;
+		var tr_gv = unit.rangeContentFlags;
+		if (0==((tr_gv >> gv) & 1)) gv &= -3;
+		if (0==((tr_gv >> gv) & 1)) gv &= -2;
+		return String.fromCharCode(unit.rangeStart + gv);
+	}
+}
+
 class TextClip extends NativeWidgetClip {
 	private var text : String = '';
+	public var charIdx : Int = 0;
 	private var backgroundColor : Int = 0;
 	private var backgroundOpacity : Float = 0.0;
 	private var cursorColor : Int = -1;
@@ -51,11 +120,137 @@ class TextClip extends NativeWidgetClip {
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
 
-	private static function getBulletsString(l : Int) : String {
-		var bullet = String.fromCharCode(8226);
-		var i = 0; var ret = '';
-		for (i in 0...l) ret += bullet;
-		return ret;
+	public static function isRtlChar(ch: String) {
+		var code = ch.charCodeAt(0);
+		return (code >= 0x590 && code < 0x900)    // Hebrew, arabic and some other RTL.
+			|| (code >= 0xFB1D && code < 0xFDD0)  // Hebrew, arabic and some other RTL (presentations).
+			|| (code >= 0xFDF0 && code < 0xFE00)  // Arabic ideographics.
+			|| (code >= 0xFE70 && code < 0xFF00)  // Arabic presentations.
+			// TODO treat also UCS-2 misencoded characters
+			/*|| (code >= 0x10800 && code < 0x11000)
+			|| (code >= 0x1E800 && code < 0x1F000)*/;
+	}
+
+	public static function isLtrChar(ch: String) {
+		var code = ch.charCodeAt(0);
+		return (code >= 0x30 && code < 0x3A)      // Decimals.
+			|| (code >= 0x41 && code < 0x5B)      // Capital basic latin.
+			|| (code >= 0x61 && code < 0x7B)      // Small basic latin.
+			|| (code >= 0xA0 && code < 0x590)     // Extended latin, diacritics, greeks, cyrillics, and other LTR alphabet letters, also symbols.
+			|| (code >= 0x700 && code < 0x2000)   // Extended latin and greek, other LTR alphabet letters, also symbols.
+			|| (code >= 0x2100 && code < 0x2190)  // Punctuation, subscripts and superscripts, letterlikes, numerics, diacritics.
+			|| (code >= 0x2460 && code < 0x2500)  // Enclosed alphanums.
+			|| (code >= 0x2800 && code < 0x2900)  // Braille's.
+			|| (code >= 0x2E80 && code < 0x3000)  // Hieroglyphs: CJK, Kangxi, etc.
+			|| (code >= 0x3040 && code < 0xD800)  // Hieroglyphs.
+			|| (code >= 0xF900 && code < 0xFB1D)  // Hieroglyphs, some latin ligatures.
+			|| (code >= 0xFE20 && code < 0xFE70)  // Combinings, CJK compats, small forms.
+			|| (code >= 0xFF00 && code < 0xFFF0)  // Halfwidth and fullwidth forms.
+			// TODO treat also UCS-2 misencoded characters
+			/*|| (code >= 0x1D300 && code < 0x1D800)
+			|| (code >= 0x20000 && code < 0x2FA20)*/;
+	}
+
+	public static function getStringDirection(s: String) {
+		for (i in 0...s.length) {
+			var c = s.charAt(i);
+			if (isRtlChar(c)) return "RTL";
+			if (isLtrChar(c)) return "LTR";
+		}
+		return "";
+	}
+
+	private static function isCharCombining(testChr : String, pos: Int) : Bool {
+		var chr = testChr.charCodeAt(pos);
+		return
+			(chr >= 0x300 && chr < 0x370) || (chr >= 0x483 && chr < 0x488) || (chr >= 0x591 && chr < 0x5C8) ||
+			(chr >= 0x610 && chr < 0x61B) || (chr >= 0x64B && chr < 0x660) || (chr == 0x670) ||
+			(chr >= 0x6D6 && chr < 0x6EE) || (chr == 0x711) || (chr >= 0x730 && chr < 0x7F4) ||
+			(chr >= 0x816 && chr < 0x82E) || (chr >= 0x859 && chr < 0x85C) || (chr >= 0x8D4 && chr < 0x903) ||
+			(chr >= 0x93A && chr < 0x93D) || (chr >= 0x941 && chr < 0x94E) || (chr >= 0x951 && chr < 0x958) ||
+			(chr >= 0x962 && chr < 0x964) || (chr == 0x981) || (chr == 0x9BC) || (chr >= 0x9C1 && chr < 0x9C5) ||
+			(chr == 0x9BC) || (chr >= 0x9E2 && chr < 0x9E3) || (chr >= 0xA01 && chr < 0xA03) || (chr == 0xA3C) ||
+			(chr >= 0xA41 && chr < 0xA43) || (chr >= 0xA47 && chr < 0xA49) || (chr >= 0xA4B && chr < 0xA4E) ||
+			(chr == 0xA51) || (chr >= 0xA70 && chr < 0xA72) || (chr == 0xA75) || (chr >= 0xA81 && chr < 0xA83) ||
+			(chr == 0xABC) || (chr >= 0xAC1 && chr < 0xACE) || (chr >= 0xAE2 && chr < 0xAE4) ||
+			(chr >= 0xAFA && chr < 0xB00) || (chr == 0xB01) || (chr == 0xB3C) || (chr == 0xB3F) ||
+			(chr >= 0xB41 && chr < 0xB45) || (chr == 0xB4D) || (chr == 0xB56) || (chr >= 0xB62 && chr < 0xB64) ||
+			(chr == 0xB82) || (chr == 0xBC0) || (chr == 0xBCD) || (chr == 0xC00) ||
+			(chr >= 0xC3E && chr < 0xC41) || (chr >= 0xC46 && chr < 0xC4E && chr != 0xC49) ||
+			(chr >= 0xC55 && chr < 0xC57) || (chr >= 0xC62 && chr < 0xC64) || (chr == 0xC81) || (chr == 0xCBC) ||
+			(chr == 0xCBF) || (chr == 0xCC6) || (chr >= 0xCCC && chr < 0xCCE) || (chr >= 0xCE2 && chr < 0xCE4) ||
+			// TODO add ranges from 0xD00..0x1AB0 from http://www.fileformat.info/info/unicode/category/Mn/list.htm
+			(chr >= 0x1AB0 && chr < 0x1B00);
+	}
+
+	private static function getBulletsString(t : String) : TextMappedModification {
+		// TODO analyze string for UTF-16 sequences to represent them with a single bullet instead of two.
+ 		var bullet = String.fromCharCode(8226);
+		var i = 0;
+		var ret = "";
+		var positionsDiff : Array<Int> = [];
+		for (i in 0...t.length) {
+			ret += bullet;
+			positionsDiff.push(0);
+		}
+		return new TextMappedModification(ret, positionsDiff);
+	}
+
+	private static var LIGATURES(default, never) : Map<String, String> = [
+		"لآ" => "ﻵ", "لأ" => "ﻷ", "لإ" => "ﻹ", "لا" => "ﻻ",
+	];
+
+	private static var LIGA_LENGTHS(default, never) = [2];
+
+	private static inline var GV_ISOLATED = 0;
+	private static inline var GV_FINAL = 1;
+	private static inline var GV_INITIAL = 2;
+	private static inline var GV_MEDIAL = 3;
+
+	private static function getActualGlyphsString(t : String) : TextMappedModification {
+		var positionsDiff : Array<Int> = [];
+		var lret = "";
+		var i : Int = 0;
+		while (i<t.length) {
+			var subst : String = null;
+			for (ll in LIGA_LENGTHS) {
+				var cand = t.substr(i, ll);
+				subst = LIGATURES.get(cand);
+				if (subst != null) {
+					positionsDiff.push(ll-1);
+					lret += subst;
+					i += ll;
+					break;
+				}
+			}
+			if (subst == null) {
+				lret += t.substr(i, 1);
+				positionsDiff.push(0);
+				i += 1;
+			}
+		}
+		var gv = GV_ISOLATED;
+		i = 0;
+		var ret = "";
+		var rightConnect = false;  // Assume only RTL ones have connections.
+		while (i<=lret.length) {
+			var j = i+1;
+			while (j<lret.length && isCharCombining(lret, j)) j += 1;
+			var conMask = UnicodeTranslation.getCharAvailableVariants(j >= lret.length? "" : lret.substr(j, 1));
+
+			// Simplified implementation due seems following character, if RTL, always support connection.
+			if ((conMask & 3) == 3) {
+				gv = rightConnect? GV_MEDIAL : GV_INITIAL;
+				rightConnect = true;
+			} else {
+				gv = rightConnect? GV_FINAL : GV_ISOLATED;
+				rightConnect = false;
+			}
+			if (i>0) ret += UnicodeTranslation.getCharVariant(lret.substr(i-1, 1), gv);
+			ret += lret.substr(i, j-i-1);
+			i = j;
+		}
+		return new TextMappedModification(ret, positionsDiff);
 	}
 
 	private static function checkTextLength(text : String) : Array<Array<String>> {
@@ -71,6 +266,33 @@ class TextClip extends NativeWidgetClip {
 	private static function splitString(text : String) : Array<String> {
 		return text.length > 1000 ? [text.substr(0, 1000)].concat(splitString(text.substr(1000))) :
 			text.length > 0 ? [text] : [];
+	}
+
+	public function getCharXPosition(charIdx: Int) : Float {
+		var pos = -1.0;
+
+		layoutText();
+
+		for (child in children) {
+			var c : Dynamic = child;
+			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
+				var text = "";
+				var chridx : Int = c.orgCharIdxStart;
+				for (i in 0...c.text.length) {
+					if (chridx >= charIdx) break;
+					chridx += 1 + Math.round(c.difPositionMapping[i]);
+					text += c.text.substr(i, 1);
+				}
+				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
+				var result = c.x + mtx.width;
+				if (TextClip.getStringDirection(c.text) == "RTL") {
+					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
+					return c.width - result;
+				}
+				return result;
+			}
+		}
+		return -1.0;
 	}
 
 	public override function updateNativeWidgetStyle() : Void {
@@ -229,19 +451,27 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var text = isInput && type == 'password' ? TextClip.getBulletsString(text.length) : this.text;
-			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var text = modification.modified;
+			var chrIdx: Int = 0;
+			var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
-				textClip = createTextClip(texts[0][0], style);
+				textClip = createTextClip(
+					new TextMappedModification(
+						texts[0][0],
+						modification.difPositionMapping.slice(0, texts[0][0].length)
+					),
+					chrIdx, style
+				);
+				textClip.orgCharIdxStart = chrIdx;
+				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
+				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
 			}
 
-			text = bidiDecorate(texts[0][0]);
-
-			textClip.text = text;
+			textClip.text = texts[0][0];
 			textClip.style = style;
-
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -259,13 +489,17 @@ class TextClip extends NativeWidgetClip {
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						text = bidiDecorate(txt);
-
 						if (txt == texts[0][0]) {
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
-							var newTextClip = createTextClip(text, style);
+							var newTextClip = createTextClip(
+								new TextMappedModification(
+									txt,
+									modification.difPositionMapping.slice(chrIdx, chrIdx+txt.length)
+								),
+								chrIdx, style
+							);
 
 							newTextClip.setClipX(currentWidth);
 							newTextClip.setClipY(currentHeight);
@@ -275,6 +509,7 @@ class TextClip extends NativeWidgetClip {
 							currentWidth += newTextClip.getLocalBounds().width;
 							lineHeight = Math.max(lineHeight, newTextClip.getLocalBounds().height);
 						}
+						chrIdx += txt.length;
 					}
 
 					currentHeight += lineHeight;
@@ -301,9 +536,10 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function createTextClip(text : String, style : Dynamic) : Text {
-		textClip = new Text(text, style);
-
+	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
+		textClip = new Text(textMod.modified, style);
+		textClip.charIdx = chrIdx;
+		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
 
 		return textClip;
@@ -395,6 +631,13 @@ class TextClip extends NativeWidgetClip {
 
 			invalidateStyle();
 		}
+	}
+
+	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
+		untyped this.style.truncate = lines;
+		untyped this.style.truncateCallback = cb;
+
+		invalidateMetrics();
 	}
 
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
@@ -670,6 +913,10 @@ class TextClip extends NativeWidgetClip {
 
 	public function getContent() : String {
 		return text;
+	}
+
+	public function getStyle() : TextStyle {
+		return style;
 	}
 
 	public function getCursorPosition() : Int {

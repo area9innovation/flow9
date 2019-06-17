@@ -1,0 +1,96 @@
+import server/http;
+import string;
+
+export {
+	/*
+
+	This module provides FastCGI server native.
+	Currently it only works in Java backend.
+
+	Suggested usage is something like this:
+
+	import server/fastcgi;
+	import string;
+
+	main() {
+		rn = fromCharCode(13) + fromCharCode(10);
+		runFastCGIServer (
+			9000,
+			\path : string, method : string, query : string, request_data : string, props : [string] -> {
+				"Status: 200" + rn +
+				"Content-Type: text/plain" + rn + rn +
+				"Path: " + path + rn +
+				"Method: " + method + rn +
+				"Query: " + query + rn +
+				"Data: " + request_data + rn;
+			},
+			\ -> {
+				"Status: 404" + rn +
+				"Content-Type: text/plain" + rn + rn + "error!";
+			}
+		);
+	}
+
+	FastCGI server expects two methods:
+	- callback, which returns full HTTP response (i.e. text, conforming HTTP standard).
+	- error response, returning full HTTP response as well.
+
+	(Things may change in the future and full response might not be required).
+
+	Implemented server is single threaded and function runFastCGIServer() normally never returns.
+
+	*/
+
+	createFastCGIServer(
+		port : int,
+		onOpen : () -> void,
+		onMessage : (HttpRequest, (HttpResponse) -> void) -> void
+	) -> void;
+
+	native runFastCGIServer : (
+		port : int,
+		onMessage : (path : string, method : string, query : string, request_data : string, props : [[string]]) -> string,
+		onError : () -> string
+	) -> void = FastCgi.runFastCGIServer;
+}
+
+fcRN = fromCharCode(13) + fromCharCode(10);
+
+createFastCGIServer(port, onOpen, onMessage) {
+	onRequest =
+		\path : string, method : string, query : string, request_data : string, props : [[string]] -> {
+			request : HttpRequest =
+				HttpRequest(
+					path,
+					request_data,
+					headersToKeyValues(props),
+					requestMethodFromString(method)
+				);
+
+			answer : ref string = ref "";
+
+			sendResponse : (HttpResponse) -> void =
+				\response -> {
+					rheaders = collectHeaders(response.headers);
+					contentType = if (lookupTree(rheaders, "Content-Type") == None()) "Content-Type: text/plain" else "";
+
+					answer := list2string(
+					Cons(response.body,
+					Cons(fcRN,Cons(fcRN,
+					Cons(contentType,
+					Cons(foldTree(rheaders, "", \k, v, acc -> {acc + k + ": " + strGlue(v, ",") + fcRN}), Cons(fcRN,
+					Cons("Status: " + i2s(response.status), EmptyList()))))))))
+				}
+
+			onMessage(request, sendResponse);
+			^answer;
+		}
+	onOpen();
+	runFastCGIServer (
+		port,
+		onRequest,
+		\ -> {
+			"Status: 404" + fcRN +
+			"Content-Type: text/plain" + fcRN + fcRN;
+		});
+}

@@ -10,6 +10,7 @@ import pixi.core.renderers.canvas.CanvasRenderer;
 import pixi.core.renderers.webgl.WebGLRenderer;
 import pixi.core.renderers.webgl.filters.Filter;
 import pixi.core.math.Point;
+import pixi.core.text.TextStyle;
 
 import pixi.loaders.Loader;
 
@@ -254,6 +255,7 @@ class RenderSupportJSPixi {
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
 		initBrowserWindowEventListeners();
+		initMessageListener();
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
@@ -280,7 +282,6 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('message', receiveWindowMessage); // Messages from crossdomaid iframes
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
 	}
 
@@ -309,6 +310,10 @@ class RenderSupportJSPixi {
 		Browser.document.addEventListener('paste', handler, false);
 	}
 
+	private static inline function initMessageListener() {
+		Browser.window.addEventListener('message', receiveWindowMessage, false);
+	}
+
 	private static inline function initFullScreenEventListeners() {
 		for (e in ['fullscreenchange', 'mozfullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
 			Browser.document.addEventListener(e, fullScreenTrigger, false);
@@ -316,6 +321,8 @@ class RenderSupportJSPixi {
 	}
 
 	private static function receiveWindowMessage(e : Dynamic) {
+		emit("message", e);
+
 		var hasNestedWindow : Dynamic = null;
 		hasNestedWindow = function(iframe : IFrameElement, win : js.html.Window) {
 			try {
@@ -783,9 +790,22 @@ class RenderSupportJSPixi {
 		return function() { off("paste", fn); };
 	}
 
+	public static function addMessageEventListener(fn : String -> String -> Void) : Void -> Void {
+		var handler = function(e) {
+			if (untyped __js__('typeof e.data == "string"'))
+				fn(e.data, e.origin);
+		};
+
+		on("message", handler);
+		return function() { off("message", handler); };
+	}
+
 	public static inline function InvalidateStage() : Void {
-		TransformChanged = true;
 		PixiStageChanged = true;
+	}
+
+	public static inline function InvalidateTransform() : Void {
+		TransformChanged = true;
 	}
 
 	public static function getPixelsPerCm() : Float {
@@ -919,6 +939,10 @@ class RenderSupportJSPixi {
 		vc.playVideo(filename, startPaused);
 	}
 
+	public static function playVideoFromMediaStream(vc : VideoClip, mediaStream : Dynamic, startPaused : Bool) : Void {
+		vc.playVideoFromMediaStream(mediaStream, startPaused);
+	}
+
 	public static function seekVideo(clip : VideoClip, seek : Float) : Void {
 		clip.setCurrentTime(seek);
 	}
@@ -941,6 +965,48 @@ class RenderSupportJSPixi {
 
 	public static function closeVideo(clip : VideoClip) : Void {
 		// NOP for this target
+	}
+
+	public static function getTextFieldCharXPosition(textclip : TextClip, charIdx: Int) : Float {
+		return textclip.getCharXPosition(charIdx);
+	}
+
+	public static function findTextFieldCharByPosition(textclip : TextClip, x: Float, y: Float) : Int {
+		/* Assuming exact glyph codes used to form each clip's text. */
+		var EPSILON = 0.1; // Why not, pixel precision assumed.
+		var clip = getClipAt(textclip, new Point(x, y));
+		var textclip = null;
+		try {
+			textclip = cast(clip, TextClip);
+		} catch(exc: String) {};
+		if (textclip == null) return -1;
+		var clipText : String = textclip.getContent();
+		var clipStyle : TextStyle = textclip.getStyle();
+		var leftVal: Float = 0;
+		var mtx: Dynamic = pixi.core.text.TextMetrics.measureText(clipText, clipStyle);
+		var rightVal: Float = mtx.width;
+		if (Math.abs(leftVal-rightVal) < EPSILON) return 0;
+		var org = clip.toGlobal(new Point(0.0, 0.0));
+		var localX = x - org.x;
+		if (TextClip.getStringDirection(clipText) == "RTL") localX = rightVal - localX;
+		var leftPos: Float = 0;
+		var rightPos: Float = clipText.length;
+		var midVal: Float = -1.0;
+		var midPos: Float = -1;
+		var oldPos: Float = rightPos;
+		while (Math.abs(localX-midVal) >= EPSILON && Math.round(midPos) != Math.round(oldPos)) {
+			oldPos = midPos;
+			midPos = leftPos + (rightPos - leftPos) * (localX - leftVal) / (rightVal-leftVal);
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.ceil(leftPos)), clipStyle);
+			midVal = leftVal - mtx.width * (leftPos - Math.floor(leftPos));
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(leftPos), Math.floor(midPos)-Math.floor(leftPos)), clipStyle);
+			midVal += mtx.width;
+			mtx = pixi.core.text.TextMetrics.measureText(clipText.substr(Math.floor(midPos), Math.ceil(midPos)), clipStyle);
+			midVal += mtx.width * (midPos - Math.floor(midPos));
+			leftPos = midPos;
+			leftVal = midVal;
+		}
+		return Math.round(midPos) + textclip.charIdx;
 	}
 
 	public static function getTextFieldWidth(clip : TextClip) : Float {
@@ -975,6 +1041,10 @@ class RenderSupportJSPixi {
 
 	public static function setTextFieldCursorWidth(clip : TextClip, width : Float) : Void {
 		clip.setCursorWidth(width);
+	}
+
+	public static function setTextEllipsis(clip : TextClip, lines : Int, cb : Bool -> Void) : Void {
+		clip.setEllipsis(lines, cb);
 	}
 
 	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
@@ -1708,7 +1778,6 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
-		clip.invalidateStage();
 		untyped clip.filterPadding = 0.0;
 		untyped clip.glShaders = false;
 
