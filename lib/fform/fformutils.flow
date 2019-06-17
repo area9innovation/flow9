@@ -1,7 +1,12 @@
 import fform/fform;
 import render;
+import fusion_utils;
 
 export {
+	addChildClip(parent : native, child : native, alive : ref bool) -> void;
+	addChildClipAt(parent : native, child : native, id : int, alive : ref bool) -> void;
+	removeChildClip(parent : native, child : native, alive : ref bool) -> void;
+
 	isConvertableForm(form : Form) -> bool;
 	fform2form(fform : FForm) -> Form;
 	form2fform(form : Form) -> FForm;
@@ -18,10 +23,10 @@ export {
 	style2characterStyle(s : [?]) -> [CharacterStyle];
 
 	renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderResult;
-	renderFText(text : string, style : [CharacterStyle]) -> FRenderResult;
-	renderFTexts(texts : [Text]) -> FRenderResult;
-	renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult;
-	renderFParagraphs(texts : [Text]) -> FRenderResult;
+	renderFText(text : Transform<string>, style : [CharacterStyle]) -> FRenderResult;
+	renderFTexts(texts : Transform<[Text]>, style : [CharacterStyle]) -> FRenderResult;
+	renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult;
+	renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRenderResult;
 
 	fform2s(rform : FForm, level : int) -> string;
 
@@ -33,6 +38,39 @@ export {
 
 	extractFAccessProperties(style : [flow]) -> [FAccessProperty];
 	addFAccessProperties(properties : [FAccessProperty], zorder : [int]) -> (native) -> () -> void;
+}
+
+addChildClip(parent : native, child : native, alive : ref bool) -> void {
+	if (!^alive) {
+		alive := true;
+		addChild(parent, child);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double construct");
+		printCallstack();
+		println("---");
+	}
+}
+
+addChildClipAt(parent : native, child : native, id : int, alive : ref bool) -> void {
+	if (!^alive) {
+		alive := true;
+		addChildAt(parent, child, id);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double construct");
+		printCallstack();
+		println("---");
+	}
+}
+
+removeChildClip(parent : native, child : native, alive : ref bool) -> void {
+	if (^alive) {
+		alive := false;
+		removeChild(parent, child);
+	} else if (isUrlParameterTrue("dev")) {
+		println("Warning: Double dispose");
+		printCallstack();
+		println("---");
+	}
 }
 
 switchTransform(tr : Transform<?>, fn : (b : Behaviour<?>) -> Form) -> Form {
@@ -75,7 +113,18 @@ isConvertableForm(form : Form) -> bool {
 
 fform2form(fform : FForm) -> Form {
 	switch (fform) {
-		FText(text, style) : Text(text, style);
+		FText(text, style) : {
+			if (isFConst(text)) {
+				Text(fgetValue(text), style);
+			} else {
+				form = make(Empty());
+
+				Constructor(
+					Mutable(form),
+					makeSubscribe(text, \t -> next(form, Text(t, style)))
+				);
+			}
+		}
 		FParagraph(__, __) : FParagraph2Form(fform);
 		FGraphics(path, style) : Graphics(path, style);
 		FTranslate(x, y, form) : switchTransform(x, \x0 -> switchTransform(y, \y0 -> Translate(x0, y0, fform2form(form))));
@@ -128,7 +177,7 @@ fform2form(fform : FForm) -> Form {
 
 form2fform(_form : Form) -> FForm {
 	switch (_form : Form) {
-		Text(text, style) : FText(text, style);
+		Text(text, style) : FText(const(text), style);
 		Graphics(path, style) : FGraphics(path, style);
 		Translate(x, y, form) : FTranslate(x, y, form2fform(form));
 		Scale(x, y, form) : FScale(x, y, form2fform(form));
@@ -737,7 +786,23 @@ FParagraph2Form(fParagraph : FParagraph) -> Form {
 	NativeForm(
 		fform,
 		met,
-		\ -> Size2(wh, Text(fParagraph.text, style2characterStyle(fParagraph.style))),
+		\ -> {
+			charStyle = style2characterStyle(fParagraph.style);
+
+			if (isFConst(fParagraph.text)) {
+				Text(fgetValue(fParagraph.text), charStyle);
+			} else {
+				form = make(Empty());
+
+				Size2(
+					wh,
+					Constructor(
+						Mutable(form),
+						makeSubscribe(fParagraph.text, \t -> next(form, Text(t, charStyle)))
+					)
+				);
+			}
+		},
 		\__, __, __ -> {
 			renderFParagraph(fform.text, fform.style)
 			|> (\f -> NativeRenderResult(f.clips, \ -> applyall(f.disposers)))
@@ -882,19 +947,40 @@ renderFGraphics(path : [StaticGraphicOp], style : [GraphicsStyle]) -> FRenderRes
 	}
 }
 
-renderFTexts(texts : [Text]) -> FRenderResult {
-	results = mapi(texts, \i, t -> renderFText(t.text, t.style));
+renderFTexts(texts : Transform<[Text]>, style : [CharacterStyle]) -> FRenderResult {
+	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
+		if (length(fgetValue(texts)) == 1) {
+			renderFText(const(fgetValue(texts)[0].text), style);
+		} else {
+			emptyFRenderResult;
+		}
+	} else {
+		clip = makeClip();
 
-	caps = FClipCapabilities(false, false, true, false, true);
-	clips = map(results, \r -> r.clips) |> concatA;
-	disposers = map(results, \r -> r.disposers) |> concatA;
+		FRenderResult(
+			[clip],
+			[
+				fiteriu(fmap(texts, \t -> renderFText(const(t.text), t.style)), \i, c -> {
+					alive = ref false;
 
-	FRenderResult(clips, disposers, caps);
+					concat(
+						[
+							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
+							\ -> removeChildClip(clip, c.clips[0], alive)
+						],
+						c.disposers
+					)
+				})
+			],
+			FClipCapabilities(false, false, true, false, true)
+		);
+	}
 }
 
-renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
+renderFText(text : Transform<string>, style : [CharacterStyle]) -> FRenderResult {
 	textfield = makeTextfield(getFontFamily(style));
-	defineTextStyle(textfield, text, style);
+	u = makeSubscribe(text, \t -> defineTextStyle(textfield, t, style))();
+
 	if (getDefaultRtl()) {
 		setTextDirection(textfield, "rtl");
 	} else {
@@ -902,6 +988,8 @@ renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
 	}
 
 	disposer = \ -> {
+		u();
+
 		// Flash is not very helpful: If a text has the focus, but dies, then we effectively lose focus
 		if (flash && getFocus(textfield)) {
 			setFocus(getStage(), true);
@@ -938,18 +1026,39 @@ renderFText(text : string, style : [CharacterStyle]) -> FRenderResult {
 	)
 }
 
-renderFParagraphs(texts : [Text]) -> FRenderResult {
-	results = mapi(texts, \i, t : Text -> renderFParagraph(t.text, t.style));
+renderFParagraphs(texts : Transform<[Text]>, style : [FParagraphStyle]) -> FRenderResult {
+	if (isFConst(texts) && length(fgetValue(texts)) < 2) {
+		if (length(fgetValue(texts)) == 1) {
+			renderFParagraph(const(fgetValue(texts)[0].text), style);
+		} else {
+			emptyFRenderResult;
+		}
+	} else {
+		clip = makeClip();
 
-	caps = FClipCapabilities(false, false, true, false, true);
-	clips = map(results, \r -> r.clips) |> concatA;
-	disposers = map(results, \r -> r.disposers) |> concatA;
+		FRenderResult(
+			[clip],
+			[
+				fiteriu(fmap(texts, \t -> renderFParagraph(const(t.text), replaceStructMany(style, t.style))), \i, c -> {
+					alive = ref false;
 
-	FRenderResult(clips, disposers, caps);
+					concat(
+						[
+							makeSubscribe(i, \v -> addChildClipAt(clip, c.clips[0], v, alive))(),
+							\ -> removeChildClip(clip, c.clips[0], alive)
+						],
+						c.disposers
+					)
+				})
+			],
+			FClipCapabilities(false, false, true, false, true)
+		);
+	}
 }
 
-renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
-	d = renderFText(text, style2characterStyle(style));
+renderFParagraph(text : Transform<string>, style : [FParagraphStyle]) -> FRenderResult {
+	charStyle = style2characterStyle(style);
+	d = renderFText(text, charStyle);
 	textfield = d.clips[length(d.clips) - 1];
 	disposers = ref [];
 
@@ -991,6 +1100,14 @@ renderFParagraph(text : string, style : [FParagraphStyle]) -> FRenderResult {
 		tryExtractStruct(style, ParagraphWidth(const(-1.))),
 		\width -> {
 			setWordWrap(textfield, true);
+
+			maybeApply(
+				tryExtractStruct(style, ParagraphEllipsis(0, nop1)),
+				\el -> {
+					setTextEllipsis(textfield, el.lines, el.fn);
+				}
+			);
+
 			refArrayPush(
 				disposers,
 				makeSubscribe(width.width, \wd -> {

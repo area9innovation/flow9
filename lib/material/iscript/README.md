@@ -19,9 +19,14 @@ without errors and 1 if errors occurred during the execution of the script.
 Scripts can be grouped in scenarios. Scenario will sequentially execute list of scripts.
 Scenario also can be launched with `playiscriptscenario=scenario_name` command-line parameter. In this case exit status will represent a number of failed scripts.
 
-There is possible to run script by passing it with JS messages. You can do this by calling `postMessage` with `{"iscript":"urlencoded script"}`. It can be obtained with corresponding save option. There are two parameters that can be used here: `callid` will be returned with response and `iscriptcheckerrors` for more checks during replay and more verbose errors in response.
-Full call will look like this: `window.postMessage('{"callid":"someid","iscriptcheckerrors":true,"iscript":"urlencoded script"}', "*")`.
-After replay iscript will send response with `postMessage`, so it can be recieved with `window.addEventListener("message", somefunction)`. Response has the following format: `{"callid":"someid", "status":"OK/ERROR", "errors":"array of errors, if any"}`.
+There is possible to run script by passing it with JS messages. You can do this by calling `postMessage` with `'{"iscript":decodeURIComponent("urlencoded script")}'`. It can be obtained with corresponding save option. Parameters that can be used here:
+* `callid` - string that will be returned with response
+* `iscriptcheckerrors` - for more checks during replay and more verbose errors in response (default false)
+* `speed` - sets speed of replay (default 1.0)
+* `showcomparedialog` - shows dialog with screenshoots comparasion in the end of replay (default false)
+
+Full call can look like this: `window.postMessage(JSON.stringify({ callid : "someid", iscriptcheckerrors : true, iscript : decodeURIComponent("urlencoded script")}), "*")`.
+After replay iscript will send response with `postMessage`, so it can be recieved with `window.addEventListener("message", console.log)`. Response has the following format: `{"callid":"someid", "status":"OK/ERROR", "errors":"array of errors, if any"}`.
 
 "Save" and "Open" actions work with any available directory. This option works on CPP target only.
 
@@ -35,16 +40,16 @@ or standard Material component name + behaviour name + hierarchy descriptor(i.e.
 section above. Next, after app is loaded, click on the "record" button on IScript panel. Now you're recording. Add some
 data to the table as usually. Stop recording. You get your script. Save it pushing the "save" button. Now it should be
 stored in "iscripts" folder. To replay it you'll need to manually load it with the aid of "load" button and push "play",
-or re-run the application from the command line with the corresponding key. In both cases you'll see that your app 
+or re-run the application from the command line with the corresponding key. In both cases you'll see that your app
 does necessary actions automatically.
 
 That was a simple usage scenario. Let's consider more complex example. Imagine, that we have a field, which is filled
-with some calculated data, after we push "Calculate" button. The calculation delay is equal 0.5s. Let's skip all trivial 
-actions, which are described in previous paragraph. We have a script and we want to change it so that we will have 
-calculated content be saved in file. 
+with some calculated data, after we push "Calculate" button. The calculation delay is equal 0.5s. Let's skip all trivial
+actions, which are described in previous paragraph. We have a script and we want to change it so that we will have
+calculated content be saved in file.
 
 Let's find out the moment when we push our button. For that, click "Show recording sidebar" icon. Switch to the "Current stack"
-tab on appeared sidebar panel. Type "Button" in "Search" field and see what happens. We need "click : true" event. Click 
+tab on appeared sidebar panel. Type "Button" in "Search" field and see what happens. We need "click : true" event. Click
 on "Edit" icon on the particular line. See, what is written in "Delay" field. Cancel the dialog.
 
 Push the "plus" button on IScript panel, then choose "Record interactive element" or "Record group of interactive elements".
@@ -61,14 +66,14 @@ second one). Next we click on field and see the dialog, which contains:
 5. Event/Input/Output behaviour name
 6. Alias for input or output(does not present in "event" case)
 
-Fill the delay with value obtained later + *0.5s* (we remember, that it is value delay). For more accurate result it will be better 
+Fill the delay with value obtained later + *0.5s* (we remember, that it is value delay). For more accurate result it will be better
 to have *0.6s* pause. Choose "Output" action type and "content" output value. Assign a unique name, i.e "Calculated_value".
-Push "ADD TO SCRIPT". We've done! 
+Push "ADD TO SCRIPT". We've done!
 
-Now it's time to check our script. Run it by pushing "play" button. Wait till the end of script execution. Open file manager 
+Now it's time to check our script. Run it by pushing "play" button. Wait till the end of script execution. Open file manager
 and go to the project root folder. Find "iscript_output.txt" file. If it's absent, something went wrong. Try to redo all steps.
-If it presents, open it. You should see something like "[Pair("Calculated_value", 1234.0)]. That's it. Now you can store this 
-file somewhere and compare it with the new one after any app changes. 
+If it presents, open it. You should see something like "[Pair("Calculated_value", 1234.0)]. That's it. Now you can store this
+file somewhere and compare it with the new one after any app changes.
 
 Don't forget to save modified script with "save" button!
 

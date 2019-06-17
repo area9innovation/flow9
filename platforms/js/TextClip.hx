@@ -454,7 +454,7 @@ class TextClip extends NativeWidgetClip {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
-			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
+			var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(
@@ -631,6 +631,13 @@ class TextClip extends NativeWidgetClip {
 
 			invalidateStyle();
 		}
+	}
+
+	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
+		untyped this.style.truncate = lines;
+		untyped this.style.truncateCallback = cb;
+
+		invalidateMetrics();
 	}
 
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
