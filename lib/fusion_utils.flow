@@ -112,6 +112,8 @@ export {
 	dispUnsM(uns : ref Maybe<() -> void>) -> void;
 }
 
+ARRAY_DIFF_TRESHOLD = 400;
+
 fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 	if (isFConst(a)) {
 		const(map(fgetValue(a), fn));
@@ -120,20 +122,26 @@ fmap(a : Transform<[??]>, fn : (??) -> ?) -> Transform<[?]> {
 		output = ref [];
 
 		fselect(a, FLift(\a0 -> {
-			iter(arrayDiff(^input, a0, false), \op ->
-				switch (op : ArrayOperation) {
-					ArrayNop(__, __): {}
-					ArrayInsert(x, __, v): {
-						output := insertArray(^output, x, fn(v));
+			if (length(a0) == 0) {
+				output := [];
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				iter(arrayDiff(^input, a0, false), \op ->
+					switch (op : ArrayOperation) {
+						ArrayNop(__, __): {}
+						ArrayInsert(x, __, v): {
+							output := insertArray(^output, x, fn(v));
+						}
+						ArrayReplace(x, __, v): {
+							output := replace(^output, x, fn(v));
+						}
+						ArrayRemove(x, __): {
+							output := removeIndex(^output, x);
+						}
 					}
-					ArrayReplace(x, __, v): {
-						output := replace(^output, x, fn(v));
-					}
-					ArrayRemove(x, __): {
-						output := removeIndex(^output, x);
-					}
-				}
-			);
+				);
+			} else {
+				output := map(a0, fn);
+			}
 
 			input := a0;
 			^output;
@@ -155,48 +163,62 @@ fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>
 				if (!^nested) {
 					nested := true;
 
-					// Call disposers before initializers
-					filtermap(arrayDiff(^input, a0, false), \op ->
-						switch (op : ArrayOperation) {
-							ArrayNop(x, y): {
-								None();
-							}
-							ArrayInsert(x, y, v): {
-								disposers := insertArray(^disposers, x, []);
+					if (length(a0) == 0) {
+						iter(^disposers, applyall);
 
-								Some(\ -> {
-									d = fn(v);
-
-									output := insertArray(^output, x, d.first);
-									disposers := replace(^disposers, y, d.second);
-								});
-							}
-							ArrayReplace(x, y, v): {
-								if (length(^disposers) > x) {
-									applyall(^disposers[x]);
+						output := [];
+						disposers := [];
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						// Call disposers before initializers
+						filtermap(arrayDiff(^input, a0, false), \op ->
+							switch (op : ArrayOperation) {
+								ArrayNop(x, y): {
+									None();
 								}
+								ArrayInsert(x, y, v): {
+									disposers := insertArray(^disposers, x, []);
 
-								Some(\ -> {
-									d = fn(v);
+									Some(\ -> {
+										d = fn(v);
 
-									output := replace(^output, x, d.first);
-									disposers := replace(^disposers, y, d.second);
-								});
-							}
-							ArrayRemove(x, y): {
-								if (length(^disposers) > x) {
-									applyall(^disposers[x]);
+										output := insertArray(^output, x, d.first);
+										disposers := replace(^disposers, y, d.second);
+									});
 								}
+								ArrayReplace(x, y, v): {
+									if (length(^disposers) > x) {
+										applyall(^disposers[x]);
+									}
 
-								disposers := removeIndex(^disposers, x);
+									Some(\ -> {
+										d = fn(v);
 
-								Some(\ -> {
-									output := removeIndex(^output, x);
-								});
+										output := replace(^output, x, d.first);
+										disposers := replace(^disposers, y, d.second);
+									});
+								}
+								ArrayRemove(x, y): {
+									if (length(^disposers) > x) {
+										applyall(^disposers[x]);
+									}
+
+									disposers := removeIndex(^disposers, x);
+
+									Some(\ -> {
+										output := removeIndex(^output, x);
+									});
+								}
 							}
-						}
-					)
-					|> applyall;
+						)
+						|> applyall;
+					} else {
+						iter(^disposers, applyall);
+
+						d = map(a0, fn);
+
+						output := map(d, firstOfPair);
+						disposers := map(d, secondOfPair);
+					}
 
 					input := a0;
 					nested := false;
@@ -206,7 +228,7 @@ fmapu(a : Transform<[??]>, fn : (??) -> Pair<?, [() -> void]>) -> Transform<[?]>
 			})),
 			\ -> {
 				nested := true;
-				map(^disposers, applyall);
+				iter(^disposers, applyall);
 
 				input := [];
 				output := [];
@@ -225,24 +247,30 @@ fmapi(a : Transform<[??]>, fn : (int, ??) -> ?) -> Transform<[?]> {
 		output = ref [];
 
 		fselect(a, FLift(\a0 -> {
-			iter(arrayDiff(^input, a0, true), \op -> {
-				switch (op : ArrayOperation) {
-					ArrayNop(x, y): {
-						if (x != y) {
-							output := replace(^output, x, fn(y, ^input[x]));
+			if (length(a0) == 0) {
+				output := [];
+			} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+				iter(arrayDiff(^input, a0, true), \op -> {
+					switch (op : ArrayOperation) {
+						ArrayNop(x, y): {
+							if (x != y) {
+								output := replace(^output, x, fn(y, ^input[x]));
+							}
+						}
+						ArrayInsert(x, y, v): {
+							output := insertArray(^output, x, fn(y, v));
+						}
+						ArrayReplace(x, y, v): {
+							output := replace(^output, x, fn(y, v));
+						}
+						ArrayRemove(x, y): {
+							output := removeIndex(^output, x);
 						}
 					}
-					ArrayInsert(x, y, v): {
-						output := insertArray(^output, x, fn(y, v));
-					}
-					ArrayReplace(x, y, v): {
-						output := replace(^output, x, fn(y, v));
-					}
-					ArrayRemove(x, y): {
-						output := removeIndex(^output, x);
-					}
-				}
-			});
+				});
+			} else {
+				output := mapi(a0, fn);
+			}
 
 			input := a0;
 			^output;
@@ -265,59 +293,79 @@ fmapiu(a : Transform<[??]>, fn : (Transform<int>, ??) -> Pair<?, [() -> void]>) 
 				if (!^nested) {
 					nested := true;
 
-					// Call disposers before initializers
-					filtermap(arrayDiff(^input, a0, true), \op ->
-						switch (op : ArrayOperation) {
-							ArrayNop(x, y): {
-								if (x != y) {
+					if (length(a0) == 0) {
+						iter(^disposers, applyall);
+
+						disposers := [];
+						output := [];
+						indexes := [];
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						// Call disposers before initializers
+						filtermap(arrayDiff(^input, a0, true), \op ->
+							switch (op : ArrayOperation) {
+								ArrayNop(x, y): {
+									if (x != y) {
+										Some(\ -> {
+											nextDistinct(^indexes[x], y);
+										});
+									} else {
+										None();
+									}
+								}
+								ArrayInsert(x, y, v): {
+									disposers := insertArray(^disposers, x, []);
+
 									Some(\ -> {
-										nextDistinct(^indexes[x], y);
+										index = make(y);
+										d = fn(index, v);
+
+										indexes := insertArray(^indexes, x, index);
+										output := insertArray(^output, x, d.first);
+										disposers := replace(^disposers, y, d.second);
 									});
-								} else {
-									None();
+								}
+								ArrayReplace(x, y, v): {
+									if (length(^disposers) > x) {
+										applyall(^disposers[x]);
+									}
+
+									Some(\ -> {
+										index = ^indexes[x];
+										nextDistinct(index, y);
+										d = fn(index, v);
+
+										output := replace(^output, x, d.first);
+										disposers := replace(^disposers, y, d.second);
+									});
+								}
+								ArrayRemove(x, y): {
+									if (length(^disposers) > x) {
+										applyall(^disposers[x]);
+									}
+
+									disposers := removeIndex(^disposers, x);
+
+									Some(\ -> {
+										indexes := removeIndex(^indexes, x);
+										output := removeIndex(^output, x);
+									});
 								}
 							}
-							ArrayInsert(x, y, v): {
-								disposers := insertArray(^disposers, x, []);
+						)
+						|> applyall;
+					} else {
+						iter(^disposers, applyall);
 
-								Some(\ -> {
-									index = make(y);
-									d = fn(index, v);
+						d = mapi(a0, \i, v -> {
+							index = make(i);
+							indexes := replace(^indexes, i, index);
 
-									indexes := insertArray(^indexes, x, index);
-									output := insertArray(^output, x, d.first);
-									disposers := replace(^disposers, y, d.second);
-								});
-							}
-							ArrayReplace(x, y, v): {
-								if (length(^disposers) > x) {
-									applyall(^disposers[x]);
-								}
+							fn(index, v);
+						});
 
-								Some(\ -> {
-									index = ^indexes[x];
-									nextDistinct(index, y);
-									d = fn(index, v);
-
-									output := replace(^output, x, d.first);
-									disposers := replace(^disposers, y, d.second);
-								});
-							}
-							ArrayRemove(x, y): {
-								if (length(^disposers) > x) {
-									applyall(^disposers[x]);
-								}
-
-								disposers := removeIndex(^disposers, x);
-
-								Some(\ -> {
-									indexes := removeIndex(^indexes, x);
-									output := removeIndex(^output, x);
-								});
-							}
-						}
-					)
-					|> applyall;
+						output := map(d, firstOfPair);
+						disposers := map(d, secondOfPair);
+					}
 
 					input := a0;
 					nested := false;
@@ -327,7 +375,7 @@ fmapiu(a : Transform<[??]>, fn : (Transform<int>, ??) -> Pair<?, [() -> void]>) 
 			})),
 			\ -> {
 				nested := true;
-				map(^disposers, applyall);
+				iter(^disposers, applyall);
 
 				input := [];
 				output := [];
@@ -360,69 +408,89 @@ fsubmap(a : Transform<[??]>, fn : (??) -> Transform<?>) -> Transform<[?]> {
 					nested := true;
 					newOutput = ref getValue(output);
 
-					// Call disposers before initializers
-					filtermap(arrayDiff(^input, a0, true), \op ->
-						switch (op : ArrayOperation) {
-							ArrayNop(x, y): {
-								if (x != y) {
+					if (length(a0) == 0) {
+						applyall(^disposers);
+
+						disposers := [];
+						indexes := [];
+						newOutput := [];
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						// Call disposers before initializers
+						filtermap(arrayDiff(^input, a0, true), \op ->
+							switch (op : ArrayOperation) {
+								ArrayNop(x, y): {
+									if (x != y) {
+										Some(\ -> {
+											nextDistinct(^indexes[x], y);
+										});
+									} else {
+										None();
+									}
+								}
+								ArrayInsert(x, y, v): {
+									disposers := insertArray(^disposers, x, nop);
+
 									Some(\ -> {
-										nextDistinct(^indexes[x], y);
+										index = make(y);
+										d = fn(v);
+
+										indexes := insertArray(^indexes, x, index);
+										disposers :=
+											replace(
+												^disposers,
+												y,
+												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+											);
+										newOutput := insertArray(^newOutput, x, fgetValue(d));
 									});
-								} else {
-									None();
+								}
+								ArrayReplace(x, y, v): {
+									if (length(^disposers) > x) {
+										^disposers[x]();
+									}
+
+									Some(\ -> {
+										index = ^indexes[x];
+										nextDistinct(index, y);
+										d = fn(v);
+
+										disposers :=
+											replace(
+												^disposers,
+												y,
+												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+											);
+										newOutput := replace(^newOutput, x, fgetValue(d));
+									});
+								}
+								ArrayRemove(x, y): {
+									if (length(^disposers) > x) {
+										^disposers[x]();
+									}
+
+									disposers := removeIndex(^disposers, x);
+
+									Some(\ -> {
+										indexes := removeIndex(^indexes, x);
+										newOutput := removeIndex(^newOutput, x);
+									});
 								}
 							}
-							ArrayInsert(x, y, v): {
-								disposers := insertArray(^disposers, x, nop);
+						)
+						|> applyall;
+					} else {
+						applyall(^disposers);
 
-								Some(\ -> {
-									index = make(y);
-									d = fn(v);
+						d = map(a0, fn);
 
-									indexes := insertArray(^indexes, x, index);
-									disposers :=
-										replace(
-											^disposers,
-											y,
-											makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
-										);
-									newOutput := insertArray(^newOutput, x, fgetValue(d));
-								});
-							}
-							ArrayReplace(x, y, v): {
-								if (length(^disposers) > x) {
-									^disposers[x]();
-								}
+						disposers := mapi(d, \i, v -> {
+							index = make(i);
+							indexes := replace(^indexes, i, index);
 
-								Some(\ -> {
-									index = ^indexes[x];
-									nextDistinct(index, y);
-									d = fn(v);
-
-									disposers :=
-										replace(
-											^disposers,
-											y,
-											makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
-										);
-									newOutput := replace(^newOutput, x, fgetValue(d));
-								});
-							}
-							ArrayRemove(x, y): {
-								if (length(^disposers) > x) {
-									^disposers[x]();
-								}
-
-								disposers := removeIndex(^disposers, x);
-
-								Some(\ -> {
-									indexes := removeIndex(^indexes, x);
-									newOutput := removeIndex(^newOutput, x);
-								});
-							}
-						}
-					)
-					|> applyall;
+							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+						});
+						newOutput := map(d, fgetValue);
+					}
 
 					next(output, ^newOutput);
 
@@ -463,69 +531,92 @@ fsubmapi(a : Transform<[??]>, fn : (Transform<int>, ??) -> Transform<?>) -> Tran
 					nested := true;
 					newOutput = ref getValue(output);
 
-					// Call disposers before initializers
-					filtermap(arrayDiff(^input, a0, true), \op ->
-						switch (op : ArrayOperation) {
-							ArrayNop(x, y): {
-								if (x != y) {
+					if (length(a0) == 0) {
+						applyall(^disposers);
+
+						disposers := [];
+						newOutput := [];
+						indexes := [];
+					} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+						// Call disposers before initializers
+						filtermap(arrayDiff(^input, a0, true), \op ->
+							switch (op : ArrayOperation) {
+								ArrayNop(x, y): {
+									if (x != y) {
+										Some(\ -> {
+											nextDistinct(^indexes[x], y);
+										});
+									} else {
+										None();
+									}
+								}
+								ArrayInsert(x, y, v): {
+									disposers := insertArray(^disposers, x, nop);
+
 									Some(\ -> {
-										nextDistinct(^indexes[x], y);
+										index = make(y);
+										d = fn(index, v);
+
+										indexes := insertArray(^indexes, x, index);
+										disposers :=
+											replace(
+												^disposers,
+												y,
+												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+											);
+										newOutput := insertArray(^newOutput, x, fgetValue(d));
 									});
-								} else {
-									None();
+								}
+								ArrayReplace(x, y, v): {
+									if (length(^disposers) > x) {
+										^disposers[x]();
+									}
+
+									Some(\ -> {
+										index = ^indexes[x];
+										nextDistinct(index, y);
+										d = fn(index, v);
+
+										disposers :=
+											replace(
+												^disposers,
+												y,
+												makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
+											);
+										newOutput := replace(^newOutput, x, fgetValue(d));
+									});
+								}
+								ArrayRemove(x, y): {
+									if (length(^disposers) > x) {
+										^disposers[x]();
+									}
+
+									disposers := removeIndex(^disposers, x);
+
+									Some(\ -> {
+										indexes := removeIndex(^indexes, x);
+										newOutput := removeIndex(^newOutput, x);
+									});
 								}
 							}
-							ArrayInsert(x, y, v): {
-								disposers := insertArray(^disposers, x, nop);
+						)
+						|> applyall;
+					} else {
+						applyall(^disposers);
 
-								Some(\ -> {
-									index = make(y);
-									d = fn(index, v);
+						d = mapi(a0, \i, v -> {
+							index = make(i);
+							indexes := replace(^indexes, i, index);
 
-									indexes := insertArray(^indexes, x, index);
-									disposers :=
-										replace(
-											^disposers,
-											y,
-											makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
-										);
-									newOutput := insertArray(^newOutput, x, fgetValue(d));
-								});
-							}
-							ArrayReplace(x, y, v): {
-								if (length(^disposers) > x) {
-									^disposers[x]();
-								}
+							fn(index, v);
+						});
 
-								Some(\ -> {
-									index = ^indexes[x];
-									nextDistinct(index, y);
-									d = fn(index, v);
-
-									disposers :=
-										replace(
-											^disposers,
-											y,
-											makeSubscribe2(d, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))()
-										);
-									newOutput := replace(^newOutput, x, fgetValue(d));
-								});
-							}
-							ArrayRemove(x, y): {
-								if (length(^disposers) > x) {
-									^disposers[x]();
-								}
-
-								disposers := removeIndex(^disposers, x);
-
-								Some(\ -> {
-									indexes := removeIndex(^indexes, x);
-									newOutput := removeIndex(^newOutput, x);
-								});
-							}
-						}
-					)
-					|> applyall;
+						disposers := mapi(d, \i, v -> {
+							index = ^indexes[i];
+							makeSubscribe2(v, \v0 -> next(output, replace(getValue(output), getValue(index), v0)))();
+						});
+						newOutput := map(d, fgetValue);
+					}
 
 					next(output, ^newOutput);
 
@@ -561,28 +652,38 @@ ffold(a : Transform<[??]>, def : ?, fn : (?, ??) -> ?) -> Transform<?> {
 			if (!^nested) {
 				nested := true;
 
-				// Call disposers before initializers
-				map(arrayDiff(^input, a0, true) |> reverseA, \op ->
-					switch (op : ArrayOperation) {
-						ArrayNop(x, y): {
-							acc = if (y > 0) (^output[y - 1]).second else def;
-							if (^output[y].first != acc) {
-								output := replace(^output, y, Pair(acc, fn(acc, a0[y])));
+				if (length(a0) == 0) {
+					output := [];
+				} else if (length(a0) < ARRAY_DIFF_TRESHOLD && length(^input) < ARRAY_DIFF_TRESHOLD) {
+					// Call disposers before initializers
+					iter(arrayDiff(^input, a0, true) |> reverseA, \op ->
+						switch (op : ArrayOperation) {
+							ArrayNop(x, y): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								if (^output[y].first != acc) {
+									output := replace(^output, y, Pair(acc, fn(acc, a0[y])));
+								}
+							}
+							ArrayInsert(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := insertArray(^output, y, Pair(acc, fn(acc, v)));
+							}
+							ArrayReplace(x, y, v): {
+								acc = if (y > 0) (^output[y - 1]).second else def;
+								output := replace(^output, y, Pair(acc, fn(acc, v)));
+							}
+							ArrayRemove(x, y): {
+								output := removeIndex(^output, y);
 							}
 						}
-						ArrayInsert(x, y, v): {
-							acc = if (y > 0) (^output[y - 1]).second else def;
-							output := insertArray(^output, y, Pair(acc, fn(acc, v)));
-						}
-						ArrayReplace(x, y, v): {
-							acc = if (y > 0) (^output[y - 1]).second else def;
-							output := replace(^output, y, Pair(acc, fn(acc, v)));
-						}
-						ArrayRemove(x, y): {
-							output := removeIndex(^output, y);
-						}
-					}
-				);
+					);
+				} else {
+					output :=
+						fold(a0, Pair(def, []), \acc, v -> {
+							newAcc = fn(acc.first, v);
+							Pair(newAcc, arrayPush(acc.second, Pair(acc.first, newAcc)));
+						}).second;
+				}
 
 				input := a0;
 				nested := false;
