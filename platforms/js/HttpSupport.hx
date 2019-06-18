@@ -561,7 +561,7 @@ class HttpSupport {
 	}
 
 	public static function uploadNativeFile(
-			file : FlowFile,
+			file : Dynamic,
 			url : String,
 			params: Array<Array<String>>,
 			headers: Array<Array<String>>,
