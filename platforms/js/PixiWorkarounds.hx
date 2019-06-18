@@ -751,29 +751,41 @@ class PixiWorkarounds {
 					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
 					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
 
+					const tempFontSize = this.style.fontSize;
+					const tempLetterSpacing = this.style.letterSpacing;
+					const tempLineHeight = this.style.lineHeight;
+					const tempWordWrapWidth = this.style.wordWrapWidth;
+
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
-				}
 
-				if (this.resolution !== renderer.resolution)
-				{
-					this.resolution = renderer.resolution;
-					this.dirty = true;
-				}
+					if (this.resolution !== renderer.resolution)
+					{
+						this.resolution = renderer.resolution;
+						this.dirty = true;
+					}
 
-				PIXI.Text.prototype.updateText.call(this, true);
-				PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
+					PIXI.Text.prototype.updateText.call(this, true);
+					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 
-				if (scaleText) {
-					this.style.fontSize = fontSize / scaleFactor;
-					this.style.letterSpacing = this.style.letterSpacing / scaleFactor;
-					this.style.lineHeight = this.style.lineHeight / scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth / scaleFactor;
+					this.style.fontSize = tempFontSize;
+					this.style.letterSpacing = tempLetterSpacing;
+					this.style.lineHeight = tempLineHeight;
+					this.style.wordWrapWidth = tempWordWrapWidth;
 
 					this.worldTransform.a = scaleX;
 					this.worldTransform.d = scaleY;
+				} else {
+					if (this.resolution !== renderer.resolution)
+					{
+						this.resolution = renderer.resolution;
+						this.dirty = true;
+					}
+
+					PIXI.Text.prototype.updateText.call(this, true);
+					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 				}
 			}
 
