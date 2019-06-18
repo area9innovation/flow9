@@ -176,6 +176,10 @@ export {
 	TSelect(value : Transform<?>, fn : (?) -> Tropic) -> Tropic;
 	TSelect2(v1 : Transform<?>, v2 : Transform<??>, fn : (?, ??) -> Tropic) -> Tropic;
 	TSelect3(v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, fn : (?, ??, ???) -> Tropic) -> Tropic;
+
+	TMutableMaybe(v : Transform<Maybe<Tropic>>) -> Tropic;
+	TSelectMaybe(v : Transform<Maybe<?>>, fn : (?) -> Tropic) -> Tropic;
+
 	// TSelect supporting fusion, which can help with managing disposing
 	TFSelect(value : Transform<?>, fn : FFn<?, Tropic>) -> Tropic;
 
@@ -284,7 +288,7 @@ export {
 
 	TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeight>) -> Tropic>], above : bool) -> Tropic;
 	// Helper for dynamic text
-	TDynamicText(text : Transform<string>, style : [TCharacterStyle]) -> Tropic;
+	TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic;
 
 	// TDebug that shows metrics on top of the tropic
 	TDebugMetrics(c : int, tr : Tropic) -> Tropic;
@@ -322,7 +326,7 @@ export {
 
 	TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -> bool, deltaY : (double) -> bool) -> Tropic;
 
-	T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> Tropic;
+	T3DStage(scene : F3DObject, camera : F3DObject, size : Tropic, style : [F3DStageStyle]) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -1118,6 +1122,24 @@ TSelect3(v1 : Transform<?>, v2 : Transform<??>, v3 : Transform<???>, fn : (?, ??
 	}
 }
 
+TMutableMaybe(v : Transform<Maybe<Tropic>>) -> Tropic {
+	if (isFConst(v)) {
+		// If we are constant, let's avoid the mutable altogether
+		either(fgetValue(v), TEmpty())
+	} else {
+		TMutable(feither(v, const(TEmpty())));
+	}
+}
+
+TSelectMaybe(v : Transform<Maybe<?>>, fn : (?) -> Tropic) -> Tropic {
+	if (isFConst(v)) {
+		// If we are constant, let's avoid the mutable altogether
+		eitherMap(fgetValue(v), fn, TEmpty())
+	} else {
+		TMutable(feitherMap(v, fn, const(TEmpty())));
+	}
+}
+
 TFixSize(tropic : Tropic, size : Tropic) -> Tropic {
 	TSize(size, tropic)
 }
@@ -1807,10 +1829,11 @@ TDecorator(tr : Tropic, decorators : [Pair<Transform<bool>, (Transform<WidthHeig
 	})
 }
 
-TDynamicText(text : Transform<string>, style : [TCharacterStyle]) -> Tropic {
-	TSelect(text, \txt ->
-		if (txt != "") TText(txt, style) else TEmpty()
-	)
+TDynamicText(text : Transform<string>, style : [TParagraphStyle]) -> Tropic {
+	if (text == const(""))
+		TEmpty()
+	else
+		TParagraph(text, style);
 }
 
 TDebugMetrics(c : int, tr : Tropic) -> Tropic {
@@ -1819,7 +1842,7 @@ TDebugMetrics(c : int, tr : Tropic) -> Tropic {
 
 		TAcc(b with form =
 			FGroup2(
-				FMutable(fselect2(b.metrics.width, b.metrics.height, FLift2(\wd, hgt -> FText(d2s(wd) + "x" + d2s(hgt), [])))),
+				FMutable(fselect2(b.metrics.width, b.metrics.height, FLift2(\wd, hgt -> FText(const(d2s(wd) + "x" + d2s(hgt)), [])))),
 				b.form,
 				false
 			)
@@ -2303,18 +2326,29 @@ TMouseWheelInteractive(manager : TManager, content : Tropic, deltaX : (double) -
 	}
 }
 
-T3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> Tropic {
-	TFForm(
-		F3DStage(
-			wh,
-			scene,
-			camera,
-			style
+T3DStage(scene : F3DObject, camera : F3DObject, size : Tropic, style : [F3DStageStyle]) -> Tropic {
+	wh = makeWH();
+
+	TGroup2(
+		TInspect(
+			[
+				ISize(wh),
+				IMetricsOnly()
+			],
+			size
 		),
-		TFormMetrics(
-			fwidth(wh),
-			fheight(wh),
-			fheight(wh)
+		TFForm(
+			F3DStage(
+				wh,
+				scene,
+				camera,
+				style
+			),
+			TFormMetrics(
+				fwidth(wh),
+				fheight(wh),
+				fheight(wh)
+			)
 		)
 	);
 }

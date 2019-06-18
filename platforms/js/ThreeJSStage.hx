@@ -27,8 +27,9 @@ class ThreeJSStage extends DisplayObject {
 	public var scene : Scene;
 	public var renderer : WebGLRenderer;
 	public var orbitControls : OrbitControls;
-	public var transformControls : TransformControls;
-	public var boxHelpers : Array<BoxHelper> = new Array<BoxHelper>();
+	public var transformControls : Dynamic;
+	public var boxHelpers : Array<Object3D> = new Array<Object3D>();
+	public var objectCache : Array<Object3D> = new Array<Object3D>();
 
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
@@ -62,12 +63,6 @@ class ThreeJSStage extends DisplayObject {
 
 		renderer.domElement.removeEventListener("mousemove", onMouseEvent);
 		renderer.domElement.addEventListener("mousemove", onMouseEvent);
-
-		renderer.domElement.removeEventListener("keydown", onKeyEvent);
-		renderer.domElement.addEventListener("keydown", onKeyEvent);
-
-		renderer.domElement.removeEventListener("keyup", onKeyEvent);
-		renderer.domElement.addEventListener("keyup", onKeyEvent);
 	}
 
 	private function createTransformControls() {
@@ -121,16 +116,19 @@ class ThreeJSStage extends DisplayObject {
 		}
 
 		this.scene = scene;
-		untyped this.scene.stage = this;
 
-		if (transformControls != null) {
-			untyped scene.transformControls = transformControls;
+		if (this.scene != null) {
+			untyped this.scene.stage = this;
+
+			if (transformControls != null) {
+				untyped scene.transformControls = transformControls;
+			}
+
+			// Chrome Inspect Three.js extension support
+			untyped __js__("window.scene = scene;");
+
+			invalidateStage();
 		}
-
-		// Chrome Inspect Three.js extension support
-		untyped __js__("window.scene = scene;");
-
-		invalidateStage();
 	}
 
 	public function renderCanvas(renderer : pixi.core.renderers.canvas.CanvasRenderer) {
@@ -235,90 +233,22 @@ class ThreeJSStage extends DisplayObject {
 		return rect;
 	}
 
-	public function onMouseEvent(event : Dynamic, ?object : Object3D, ?handledObjects : Array<Dynamic>) : Void {
+	public function onMouseEvent(event : Dynamic, ?object : Object3D) : Void {
 		if (orbitControls != null && !orbitControls.enabled) {
 			return;
 		}
 
-		if (object == null) {
-			if (scene == null) {
-				return;
-			}
-
-			object = scene;
-		};
-
-		if (handledObjects == null) {
-			handledObjects = new Array<Dynamic>();
-		};
+		var handledObjects = new Array<Dynamic>();
 
 		var raycaster = new Raycaster();
 		raycaster.setFromCamera(new Vector2((event.pageX / getWidth()) * 2.0 - 1.0, -(event.pageY / getHeight()) * 2.0 + 1.0), camera);
 
-		for (ob in raycaster.intersectObjects(object.children)) {
+		for (ob in raycaster.intersectObjects(scene.get3DObjectAllChildren())) {
 			var object = ob.object;
 
 			if (handledObjects.indexOf(object) == -1) {
 				handledObjects.push(object);
 				object.emitEvent(event.type);
-			}
-		};
-
-		for (child in object.children) {
-			onMouseEvent(event, child, handledObjects);
-		};
-	}
-
-	public function onKeyEvent(event : Dynamic) : Void {
-		if (transformControls == null) {
-			return;
-		};
-
-		if (event.type == "keydown") {
-			switch (event.keyCode) {
-				case 81: {// Q
-					transformControls.setSpace(untyped transformControls.space == "local" ? "world" : "local");
-				}
-				case 17: {// Ctrl
-					untyped transformControls.setTranslationSnap(100);
-					untyped transformControls.setRotationSnap(js.three.Math.degToRad(15));
-				}
-				case 87: {// W
-					transformControls.setMode("translate");
-				}
-				case 69: {// E
-					transformControls.setMode("rotate");
-				}
-				case 82: {// R
-					transformControls.setMode("scale");
-				}
-				// case 187: {}
-				case 107: {// +, =, num+
-					transformControls.setSize(untyped transformControls.size + 0.1);
-				}
-				// case 189: {}
-				case 109: {// -, _, num-
-					transformControls.setSize(Math.max(untyped transformControls.size - 0.1, 0.1));
-				}
-				case 88: {// X
-					untyped transformControls.showX = !transformControls.showX;
-				}
-				case 89: {// Y
-					untyped transformControls.showY = !transformControls.showY;
-				}
-				case 90: {// Z
-					untyped transformControls.showZ = !transformControls.showZ;
-				}
-				case 32: {// Spacebar
-					untyped transformControls.enabled = !transformControls.enabled;
-				}
-			}
-		} else {
-			switch (event.keyCode) {
-				case 17: {// Ctrl
-					untyped transformControls.setTranslationSnap(null);
-					untyped transformControls.setRotationSnap(null);
-				}
 			}
 		};
 	}

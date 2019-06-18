@@ -28,10 +28,12 @@ class DisplayObjectHelper {
 				Native.timer(100, function () {
 					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
 					RenderSupportJSPixi.InvalidateStage();
+					RenderSupportJSPixi.InvalidateTransform();
 				});
 			}
 
 			RenderSupportJSPixi.InvalidateStage();
+			RenderSupportJSPixi.InvalidateTransform();
 		}
 	}
 
