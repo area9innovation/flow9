@@ -9,13 +9,18 @@ class FlowContainer extends Container {
 	private var _visible : Bool = true;
 	private var clipVisible : Bool = false;
 	public var transformChanged : Bool = true;
+	public var stageChanged : Bool = true;
 	private var childrenChanged : Bool = true;
 
-	public function new(?worldVisible : Bool = false) {
+	private var stage : FlowContainer = null;
+	private var pixiStage : Bool = false;
+
+	public function new(?pixiStage : Bool = false) {
 		super();
 
-		visible = worldVisible;
-		clipVisible = worldVisible;
+		this.pixiStage = pixiStage;
+		visible = pixiStage;
+		clipVisible = pixiStage;
 		interactiveChildren = false;
 	}
 
@@ -23,6 +28,7 @@ class FlowContainer extends Container {
 		var newChild = super.addChild(child);
 
 		if (newChild != null) {
+			newChild.updateStage();
 			newChild.updateClipInteractive(interactiveChildren);
 
 			if (getClipVisible()) {
@@ -41,6 +47,7 @@ class FlowContainer extends Container {
 		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
 
 		if (newChild != null) {
+			newChild.updateStage();
 			newChild.updateClipInteractive(interactiveChildren);
 
 			if (getClipVisible()) {
@@ -59,14 +66,37 @@ class FlowContainer extends Container {
 		var oldChild = super.removeChild(child);
 
 		if (oldChild != null) {
+			if (untyped oldChild.stage == oldChild) {
+				for (c in children) {
+					c.invalidateStage(false);
+				}
+			}
+
+			oldChild.updateStage();
 			updateClipInteractive();
 
-			RenderSupportJSPixi.InvalidateStage();
+			invalidateStage(false);
 
 			childrenChanged = true;
 			emitEvent("childrenchanged");
 		}
 
 		return oldChild;
+	}
+
+	public function invalidateStage(?updateTransform : Bool = true) : Void {
+		if (stage != null) {
+			if (stage != this) {
+				stage.invalidateStage(updateTransform);
+			} else {
+				stageChanged = true;
+				RenderSupportJSPixi.InvalidateStage();
+
+				if (updateTransform) {
+					transformChanged = true;
+					RenderSupportJSPixi.InvalidateTransform();
+				}
+			}
+		}
 	}
 }

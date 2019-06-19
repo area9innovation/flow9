@@ -767,13 +767,15 @@ class RenderSupportJSPixi {
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
 			PixiStageChanged = false;
 
-			if (TransformChanged) {
-				TransformChanged = false;
+			for (c in PixiStage.children) {
+				if (untyped c.stageChanged) {
+					untyped c.stageChanged = false;
 
-				PixiRenderer.render(PixiStage, null, true, null, false);
-			} else {
-				PixiRenderer.render(PixiStage, null, true, null, true);
+					PixiRenderer.render(c, null, false, null, untyped !c.transformChanged && !TransformChanged);
+				}
 			}
+
+			untyped PixiRenderer._lastObjectRendered = PixiStage;
 
 			emit("stagechanged", timestamp);
 		}
@@ -1809,9 +1811,7 @@ class RenderSupportJSPixi {
 						f.uniforms.bounds = [bounds.x, bounds.y, bounds.width, bounds.height];
 					}
 
-					if (clip.getClipWorldVisible()) {
-						InvalidateStage();
-					}
+					clip.invalidateStage(false);
 				};
 
 				clip.onAdded(function () {

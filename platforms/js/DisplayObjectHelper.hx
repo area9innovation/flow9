@@ -5,8 +5,8 @@ import pixi.core.display.Bounds;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
 
-	public static inline function invalidateStage(clip : DisplayObject) : Void {
-		if (getClipWorldVisible(clip)) {
+	public static inline function invalidateStage(clip : DisplayObject, ?updateTransform : Bool = true) : Void {
+		if (getClipWorldVisible(clip) && untyped clip.stage != null) {
 			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
 				var updateGraphics = new FlowGraphics();
 
@@ -27,13 +27,49 @@ class DisplayObjectHelper {
 
 				Native.timer(100, function () {
 					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
-					RenderSupportJSPixi.InvalidateStage();
-					RenderSupportJSPixi.InvalidateTransform();
+					untyped clip.stage.invalidateStage();
+					untyped clip.stage.invalidateTransform();
 				});
-			}
 
-			RenderSupportJSPixi.InvalidateStage();
-			RenderSupportJSPixi.InvalidateTransform();
+				untyped clip.stage.invalidateStage(true);
+			} else {
+				untyped clip.stage.invalidateStage(updateTransform);
+			}
+		}
+	}
+
+	public static inline function updateStage(clip : DisplayObject, ?clear : Bool = false) : Void {
+		if (clip.parent != null) {
+			if (untyped clip.parent.stage != null && untyped clip.parent.stage != untyped clip.stage) {
+				untyped clip.stage = untyped clip.parent.stage;
+
+				var children : Array<DisplayObject> = untyped clip.children;
+
+				if (children != null) {
+					for (c in children) {
+						updateStage(c);
+					}
+				}
+			} else if (untyped clip.parent == RenderSupportJSPixi.PixiStage) {
+				untyped clip.stage = clip;
+
+				var children : Array<DisplayObject> = untyped clip.children;
+
+				if (children != null) {
+					for (c in children) {
+						updateStage(c);
+					}
+				}
+			}
+		} else {
+			untyped clip.stage = null;
+			var children : Array<DisplayObject> = untyped clip.children;
+
+			if (children != null) {
+				for (c in children) {
+					updateStage(c, true);
+				}
+			}
 		}
 	}
 
