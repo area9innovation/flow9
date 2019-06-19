@@ -72,19 +72,24 @@ void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size
     int bytes = 0;
     for (size_t i = 0; i < size; i++){
         unsigned char c = (unsigned char) str[i];
-        if (c <= 0x7f) { //first byte
-            bytes = 0;
-            out.push_back((uint32_t) c);
-        } else if (c <= 0xbf){//second/third/etc byte
-            if (bytes) {
+
+        if(bytes) {
+            if (c > 0x7f && c <= 0xbf) {//second/third/etc byte
                 w = ((w << 6)|(c & 0x3f));
                 bytes--;
                 if (bytes == 0) {
                     out.push_back(w);
                 }
+                continue;
             } else {
                 bytes = 0;
+                out.push_back((uint16_t)0xfffd);
             }
+        }
+
+        if (c <= 0x7f) { //first byte
+            bytes = 0;
+            out.push_back((uint32_t) c);
         }
         else if (c <= 0xdf){//2byte sequence start
             bytes = 1;
@@ -94,11 +99,12 @@ void Utf8Parser<C>::parse_range(unicode_string &out, const C &str, unsigned size
             bytes = 2;
             w = c & 0x0f;
         }
-        else if (c <= 0xf7){//3byte sequence start
+        else if (c <= 0xf7){//4byte sequence start
             bytes = 3;
             w = c & 0x07;
         } else {
             bytes = 0;
+            out.push_back((uint16_t)0xfffd);
         }
     }
 }

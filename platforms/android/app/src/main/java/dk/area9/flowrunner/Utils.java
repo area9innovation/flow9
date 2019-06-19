@@ -54,6 +54,14 @@ public class Utils {
     // if you want to make another tag for logging, please make it the same at the beginning, i.e. dk.area9.newtag
     // it will be easier to filter with adb or in Eclipse
     public static final String LOG_TAG = "dk.area9.flowrunner";
+
+    //request codes for Activity.startActivityForResult
+    static final int CAMERA_APP_PHOTO_MODE = 0;
+    static final int CAMERA_APP_VIDEO_MODE = 1;
+    static final int GALLERY_PHOTO_PICKER_MODE = 2;
+    static final int GALLERY_VIDEO_PICKER_MODE = 3;
+    static final int OPEN_FILE_DIALOG_MODE = 4;
+
     protected static boolean httpProfiling = false;
 
     public static final boolean isRequestPermissionsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;

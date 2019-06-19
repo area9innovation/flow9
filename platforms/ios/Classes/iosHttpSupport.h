@@ -27,8 +27,6 @@ class iosHttpSupport : public AbstractHttpSupport
 public:
     iosHttpSupport(ByteCodeRunner * owner, iosGLRenderSupport * RenderSupport, NSString * user_agent);
     ~iosHttpSupport();
-    void selectRejected();
-    void selectAccepted(NSString * path);
     void removeActiveConnection(NSURLConnection * c);
 protected:
     virtual void doRequest(HttpRequest &rq);
