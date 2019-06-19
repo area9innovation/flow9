@@ -42,6 +42,17 @@ export {
 	// Damerau-Levenshtein, see https://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance
 	ArrayOperationWithSwapp<?> ::= ArrayOperation<?>, ArraySwap<?>;
 		ArraySwap(oldindex : int, newindex : int, value : Pair<?, ?>);
+
+	// Simplified arrayDiff
+	// Prioritizes ArrayMoveSimple over ArrayRemoveSimple + ArrayInsertSimple ignoring move distance
+	// Returns operations in resulting array order
+	arrayDiffSimple(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperationSimple<?>];
+
+		ArrayOperationSimple<?> ::= ArrayRemoveSimple, ArrayMoveSimple, ArrayInsertSimple<?>, ArrayNopSimple;
+			ArrayRemoveSimple(from : int);
+			ArrayMoveSimple(from : int, to : int);
+			ArrayInsertSimple(to : int, v : ?);
+			ArrayNopSimple(from : int, to : int);
 }
 
 arrayDiff(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperation<?>] {
@@ -213,3 +224,81 @@ applyProtocolInvariant(source : [?], protocol : [ArrayOperationWithSwapp<?>]) ->
 		idfn
 	);
 }
+
+arrayDiffSimple(s : [?], t : [?], fullProtocol : bool) -> [ArrayOperationSimple<?>] {
+	iacc = ref 0;
+	skipIds = ref [];
+	removeAcc = ref 0;
+
+	concat(
+		foldi(t, Pair(foldi(s, makeTree(), \i, acc : Tree<?, [int]>, v : ? -> treePushToArrayValue(acc, v, i)), []),
+			\to, acc : Pair<Tree<?, [int]>, [ArrayOperationSimple<?>]>, v : ? -> {
+				eitherFn(
+					lookupTree(acc.first, v),
+					\ii -> {
+						from = to + ii[0] - length(filter(^skipIds, \id -> id <= ii[0]));
+						skipIds := arrayPush(^skipIds, ii[0]);
+
+						Pair(
+							treeRemoveFromArrayValue(acc.first, v, ii[0]),
+							if (from != to) {
+								arrayPush(acc.second, ArrayMoveSimple(from, to));
+							} else {
+								if (fullProtocol && ii[0] != to) {
+									arrayPush(acc.second, ArrayNopSimple(ii[0], to));
+								} else {
+									acc.second;
+								}
+							}
+						)
+					},
+					\ -> {
+						removeAcc := ^removeAcc + 1;
+
+						Pair(
+							acc.first,
+							arrayPush(acc.second, ArrayInsertSimple(to, v))
+						)
+					}
+				)
+			}
+		).second,
+		generate(length(t), length(s) + ^removeAcc, \i -> ArrayRemoveSimple(length(t)))
+	);
+}
+
+// main() {
+// 	randomMultiplier = 10000.0;
+
+// 	a = ref generate(0, floor(random() * randomMultiplier), \i -> floor(random() * randomMultiplier));
+// 	b = generate(0, floor(random() * randomMultiplier), \i -> floor(random() * randomMultiplier));
+
+// 	println(^a);
+
+// 	t = timestamp();
+// 	d = arrayDiffSimple(^a, b, false);
+// 	println("time took: " + toString(timestamp() - t));
+
+// 	iter(d, \ao -> {
+// 		switch (ao) {
+// 			ArrayMoveSimple(x, y): {
+// 				a := moveElement(^a, x, y);
+// 			}
+// 			ArrayInsertSimple(x, v): {
+// 				a := insertArray(^a, x, v);
+// 			}
+// 			ArrayRemoveSimple(x): {
+// 				a := removeIndex(^a, x);
+// 			}
+// 			ArrayNopSimple(x, y): {}
+// 		}
+
+// 	});
+
+// 	println("time took with apply: " + toString(timestamp() - t));
+
+// 	println(^a);
+// 	println(b);
+
+// 	assert(^a == b, "arrayDiffSimple");
+// }
