@@ -70,10 +70,6 @@ if (a === b) return true;
 
 	if (arrA != arrB) return false;
 
-	if (a.uuid && b.uuid) { // UUID support
-		return a.uuid == b.uuid;
-	}
-
 	var result = false;
 ");
 #if (readable)
@@ -184,18 +180,7 @@ if (a === b) return true;
 			return 0;
 		}
 
-		#if (js)
-			if (untyped __js__("typeof o1 === 'function' && typeof o2 === 'function'")) {
-				var o1s = untyped __js__("o1.toString()");
-				var o2s = untyped __js__("o2.toString()");
-
-				return untyped __js__("o1s < o2s ? -1 : o1s > o2s ? 1 : 0");
-			} else if (o1.uuid != null && o2.uuid != null) { // UUID support
-				return o1.uuid < o2.uuid ? -1 : o1.uuid > o2.uuid ? 1 : 0;
-			}
-		#end
-
-		return o1 < o2 ? -1 : 1;
+		return (o1 < o2 ? -1 : 1);
 	}
 
 	public static inline function isArray(o1 : Dynamic) : Bool {

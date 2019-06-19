@@ -324,58 +324,80 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 			verticalCombiner = if (combiner == TLinesCombiner()) FAddition() else FMax();
 			rtl = combiner == TColsACombiner() && getDefaultRtl();
 			horizontalCombiner = if (combiner == TColsCombiner() || combiner == TColsACombiner()) FAddition() else FMax();
-			updateLock = make(false);
 
-			createTDynamicGroupItem = \itemIndex, tropic -> {
-				if (combiner == TGroupCombiner()) {
-					TDynamicGroupItem(
-						tropic2Acc(tropic, parent, sheet, metricsOnly),
-						itemIndex,
-						const(zeroPoint)
-					)
-				} else {
-					itemPosition =
-						ftransistor(
-							fnot(updateLock),
-							positionTDynamicGroupItem(
-								felementAt(tropicItems, fadditioni(itemIndex, const(if (rtl) 1 else -1)), const(zeroTDynamicGroupItem)),
-								combiner
-							)
+			createNewTAcc = \itemIndex, itemPosition, tropic -> {
+				previousItem : Transform<TDynamicGroupItem> =
+					fselect2(tropicItems, itemIndex, FLift2(\ti, i ->
+						elementAt(ti, if (rtl) i + 1 else i - 1, zeroTDynamicGroupItem)
+					));
+
+				tropic2Acc(
+					if (combiner == TGroupCombiner()) {
+						tropic
+					} else {
+						disp =
+							fconnect(
+								fsubselect(
+									previousItem,
+									FLift(\prevItem ->
+										positionTDynamicGroupItem(
+											prevItem,
+											combiner
+										)
+									)
+								),
+								itemPosition
+							);
+
+						TConstruct(
+							[
+								\ -> disp
+							],
+							TTranslate(itemPosition, tropic)
 						);
-					tacc = tropic2Acc(TTranslate(itemPosition, tropic), parent, sheet, metricsOnly);
-
-					TDynamicGroupItem(
-						TAcc(
-							tacc with form =
-								FRenderable(
-									fboundsoverlap(
-										fapplytransform(
-											fwidthheight(tacc.metrics.width, tacc.metrics.height),
-											fworldtransform(parent.transformMatrix, fpoint2transform(itemPosition))
-										),
-										parent.viewBounds
-									),
-									tacc.form
-								)
-						),
-						itemIndex,
-						itemPosition
-					)
-				}
+					},
+					parent,
+					sheet,
+					metricsOnly
+				);
 			}
 
 			handleAdd = \tropic, z -> {
 				itemIndex : DynamicBehaviour<int> = make(z);
-				groupItem = createTDynamicGroupItem(itemIndex, tropic);
-
-				next(tropicItems, insertArray(getValue(tropicItems), z, groupItem));
+				itemPosition : DynamicBehaviour<Point> = make(Point(0.0, 0.0));
+				newTAcc : TAcc = createNewTAcc(itemIndex, itemPosition, tropic);
+				next(
+					tropicItems,
+					insertArray(
+						getValue(tropicItems),
+						z,
+						TDynamicGroupItem(
+							newTAcc,
+							itemIndex,
+							itemPosition
+						)
+					)
+				);
 
 				iteri(
 					tailFrom(getValue(tropicItems), z + 1),
 					\i, item -> next(item.index, i + z + 1)
 				);
 
-				groupItem.acc.form;
+				if (combiner == TGroupCombiner()) {
+					newTAcc.form;
+				} else {
+					FRenderable(
+						fboundsoverlap(
+							fapplytransform(
+								fwidthheight(newTAcc.metrics.width, newTAcc.metrics.height),
+								fworldtransform(parent.transformMatrix, fpoint2transform(itemPosition))
+							),
+							parent.viewBounds
+						),
+						newTAcc.form
+					);
+				}
 			}
 
 			handleDelete = \z -> {
@@ -386,39 +408,72 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					\i, item -> next(item.index, i + z)
 				);
 
-				next(tropicItems, removeIndex(getValue(tropicItems), z));
+				next(
+					tropicItems,
+					removeIndex(
+						getValue(tropicItems),
+						z
+					)
+				);
 			}
-
 			handleReplace = \tropic, z -> {
 				if (existsIndex(getValue(tropicItems), z)) {
 					tropicItem = getValue(tropicItems)[z];
 					applyall(tropicItem.acc.disposers);
 
-					groupItem = createTDynamicGroupItem(tropicItem.index, tropic);
+					newTAcc : TAcc = createNewTAcc(tropicItem.index, tropicItem.position, tropic);
+					next(
+						tropicItems,
+						replace(
+							getValue(tropicItems),
+							z,
+							TDynamicGroupItem(
+								newTAcc,
+								tropicItem.index,
+								tropicItem.position
+							)
+						)
+					);
 
-					next(tropicItems, replace(getValue(tropicItems), z, groupItem));
-
-					groupItem.acc.form;
+					if (combiner == TGroupCombiner()) {
+						newTAcc.form;
+					} else {
+						FRenderable(
+							fboundsoverlap(
+								fapplytransform(
+									fwidthheight(newTAcc.metrics.width, newTAcc.metrics.height),
+									fworldtransform(parent.transformMatrix, fpoint2transform(tropicItem.position))
+								),
+								parent.viewBounds
+							),
+							newTAcc.form
+						);
+					}
 				} else {
 					handleAdd(tropic, z);
 				}
 			}
 
 			handleMove = \from, to -> {
-				next(tropicItems, moveElement(getValue(tropicItems), from, to));
-
-				z = min(from, to);
+				next(
+					tropicItems,
+					moveElement(
+						getValue(tropicItems),
+						from,
+						to
+					)
+				);
 
 				iteri(
-					tailFrom(getValue(tropicItems), z),
-					\i, item -> next(item.index, i + z)
+					getValue(tropicItems),
+					\index, item ->
+						nextDistinct(item.index, index)
 				);
 			}
 
 			currentFStack : DynamicBehaviour<[FForm]> = make(mapi(^currentStack, \i, f -> handleAdd(f, i)));
 
 			handleTChanges = \changes -> if (length(changes) > 0) {
-				next(updateLock, true);
 				next(stackChanges, []);
 
 				next(
@@ -469,8 +524,6 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						})
 					)
 				);
-
-				next(updateLock, false);
 			};
 
 			TAcc(
@@ -1972,7 +2025,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 					tv.xConstant := bd.xConstant;
 					tv.yConstant := bd.yConstant;
 
-					form =
+					form = 
 						if (metricsOnly)
 							FEmpty()
 						else
@@ -2338,7 +2391,7 @@ tropic2Acc(b : Tropic, parent : TParentInfo, sheet : Stylesheet, metricsOnly : b
 						)()
 					];
 
-				TAcc(r with
+				TAcc(r with 
 					form = FGroup([
 						// How big is the child: Color given
 						FMutable(mform),
@@ -3494,18 +3547,18 @@ fpreventNanOrInf(b : Transform<double>) -> Transform<double> {
 TDynamicGroupItem : (
 	acc : TAcc,
 	index : DynamicBehaviour<int>,
-	position : Transform<Point>
+	position : DynamicBehaviour<Point>
 );
 
-zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), const(Point(0.0, 0.0)));
+zeroTDynamicGroupItem = TDynamicGroupItem(zeroTAcc, make(0), make(Point(0.0, 0.0)));
 
-positionTDynamicGroupItem(previousItem : Transform<TDynamicGroupItem>, combiner : TCombiner) -> Transform<Point> {
+positionTDynamicGroupItem(previousItem : TDynamicGroupItem, combiner : TCombiner) -> Transform<Point> {
 	fselect2(
-		fsubselect(previousItem, FLift(\pi -> pi.position)),
+		previousItem.position,
 		if (combiner == TLinesCombiner())
-			fsubselect(previousItem, FLift(\pi : TDynamicGroupItem -> ((pi.acc).metrics).height))
+			previousItem.acc.metrics.height
 		else
-			fsubselect(previousItem, FLift(\pi : TDynamicGroupItem -> ((pi.acc).metrics).width)),
+			previousItem.acc.metrics.width,
 		if (combiner == TLinesCombiner())
 			FLift2(\p : Point, metric : double ->
 				Point(
