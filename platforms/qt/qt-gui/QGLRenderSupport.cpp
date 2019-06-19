@@ -162,7 +162,7 @@ bool QGLRenderSupport::loadSystemGlyph(const FontHeader *header, GlyphHeader *in
     ushort scale = 3;
     unsigned render_size = header->tile_size * scale;
 
-    QRect rect = metrics.boundingRect(qchar);
+    QRect rect = metrics.boundingRect(qchar[0]);
 
     float coeff = 1.0f / header->render_em_size;
     int xoff = (header->tile_size - rect.width()) / 2;
