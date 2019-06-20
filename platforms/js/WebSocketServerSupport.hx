@@ -6,9 +6,8 @@ class WebSocketServerSupport {
 	public static function createWsServerNative(
 		port : Int,
 		isHttp : Bool,
-		key : String,
-		cert : String,
-		passphrase : String,
+		pfxPath : String,
+		pfxPassword : String,
 		onOpen : WebSocket -> Void) : Bool {
 
 		#if flow_nodejs
@@ -16,9 +15,8 @@ class WebSocketServerSupport {
 				HttpServerSupport.createHttpServerNative(
 					port,
 					isHttp,
-					key,
-					cert,
-					passphrase
+					pfxPath,
+					pfxPassword
 				);
 			var webSocketServer =
 				new WebSocketServer.Server({ server: server });
