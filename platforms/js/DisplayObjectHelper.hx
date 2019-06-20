@@ -5,7 +5,7 @@ import pixi.core.display.Bounds;
 class DisplayObjectHelper {
 	public static var Redraw : Bool = Util.getParameter("redraw") != null ? Util.getParameter("redraw") == "1" : false;
 
-	public static inline function invalidateStage(clip : DisplayObject, ?updateTransform : Bool = true) : Void {
+	public static inline function invalidateStage(clip : DisplayObject, ?updateTransform : Bool = false) : Void {
 		if (getClipWorldVisible(clip) && untyped clip.stage != null) {
 			if (DisplayObjectHelper.Redraw && (untyped clip.updateGraphics == null || untyped clip.updateGraphics.parent == null)) {
 				var updateGraphics = new FlowGraphics();
@@ -39,7 +39,7 @@ class DisplayObjectHelper {
 	}
 
 	public static inline function updateStage(clip : DisplayObject, ?clear : Bool = false) : Void {
-		if (clip.parent != null) {
+		if (!clear && clip.parent != null) {
 			if (untyped clip.parent.stage != null && untyped clip.parent.stage != untyped clip.stage) {
 				untyped clip.stage = untyped clip.parent.stage;
 
@@ -50,8 +50,9 @@ class DisplayObjectHelper {
 						updateStage(c);
 					}
 				}
-			} else if (untyped clip.parent == RenderSupportJSPixi.PixiStage) {
+			} else if (clip.parent == RenderSupportJSPixi.PixiStage) {
 				untyped clip.stage = clip;
+				untyped clip.createView(clip.parent.children.indexOf(clip));
 
 				var children : Array<DisplayObject> = untyped clip.children;
 
@@ -75,13 +76,13 @@ class DisplayObjectHelper {
 
 	public static inline function invalidateTransform(clip : DisplayObject) : Void {
 		untyped clip.transformChanged = true;
-		invalidateStage(clip);
+		invalidateStage(clip, true);
 	}
 
 	public static inline function invalidateTransformByParent(clip : DisplayObject) : Void {
 		untyped clip.transformChanged = true;
 		if (clip.parent != null) {
-			invalidateStage(clip.parent);
+			invalidateStage(clip.parent, true);
 		}
 	}
 

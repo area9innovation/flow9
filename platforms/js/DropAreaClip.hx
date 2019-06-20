@@ -44,7 +44,7 @@ class DropAreaClip extends NativeWidgetClip {
 
 	private function provideEvent(event : Dynamic) : Void {
 		event.preventDefault();
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 		RenderSupportJSPixi.provideEvent(event);
 	}
 

@@ -225,6 +225,12 @@ class RenderSupportJSPixi {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
+
+		if (RendererType == "canvas") {
+			// We don't render anything to PixiView
+			// Check FlowContainer.render for render process
+			PixiView.style.opacity = 0;
+		}
 	}
 
 	private static function initPixiRenderer() {
@@ -249,8 +255,8 @@ class RenderSupportJSPixi {
 
 		createPixiRenderer();
 
-		PixiRenderer.view.style.zIndex = AccessWidget.zIndexValues.canvas;
-		Browser.document.body.insertBefore(PixiRenderer.view, Browser.document.body.firstChild);
+		PixiView.style.zIndex = AccessWidget.zIndexValues.canvas;
+		Browser.document.body.insertBefore(PixiView, Browser.document.body.firstChild);
 
 		preventDefaultFileDrop();
 		initPixiStageEventListeners();
@@ -282,7 +288,7 @@ class RenderSupportJSPixi {
 	private static inline function initBrowserWindowEventListeners() {
 		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
-		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
+		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(true); requestAnimationFrame(); }, false);
 	}
 
 	private static inline function initClipboardListeners() {
@@ -390,7 +396,7 @@ class RenderSupportJSPixi {
 
 		PixiStage.broadcastEvent("resize", backingStoreRatio);
 		PixiStage.transformChanged = true;
-		PixiStage.invalidateStage();
+		PixiStage.invalidateStage(true);
 
 		// Render immediately - Avoid flickering on Safari and some other cases
 		render();
@@ -495,7 +501,7 @@ class RenderSupportJSPixi {
 				function(e : Dynamic) {
 					// Prevent default drop focus on canvas
 					// Works incorrectly in Edge
-					if (e.target == PixiRenderer.view)
+					if (e.target == PixiView)
 						e.preventDefault();
 
 					MousePos.x = e.pageX;
@@ -542,7 +548,7 @@ class RenderSupportJSPixi {
 			// To have drags over textinputs
 			Browser.document.body.addEventListener(event, cb);
 		else
-			PixiRenderer.view.addEventListener(event, cb);
+			PixiView.addEventListener(event, cb);
 	}
 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
@@ -619,9 +625,9 @@ class RenderSupportJSPixi {
 	public static function provideEvent(e : js.html.Event) {
 		try {
 			if (Platform.isIE) {
-				PixiRenderer.view.dispatchEvent(untyped __js__("new CustomEvent(e.type, e)"));
+				PixiView.dispatchEvent(untyped __js__("new CustomEvent(e.type, e)"));
 			} else {
-				PixiRenderer.view.dispatchEvent(untyped __js__("new e.constructor(e.type, e)"));
+				PixiView.dispatchEvent(untyped __js__("new e.constructor(e.type, e)"));
 			}
 		} catch (er : Dynamic) {
 			Errors.report("Error in provideEvent: " + er);
@@ -762,22 +768,39 @@ class RenderSupportJSPixi {
 	private static function animate(timestamp : Float) {
 		emit("drawframe", timestamp);
 
-		AccessWidget.updateAccessTree();
-
 		if (PixiStageChanged || VideoClip.NeedsDrawing()) {
 			PixiStageChanged = false;
 
-			for (c in PixiStage.children) {
-				if (untyped c.stageChanged) {
-					untyped c.stageChanged = false;
+			if (RendererType == "canvas") {
+				TransformChanged = false;
 
-					PixiRenderer.render(c, null, false, null, untyped !c.transformChanged && !TransformChanged);
+				for (child in PixiStage.children) {
+					untyped child.updateView();
+				}
+
+				AccessWidget.updateAccessTree();
+
+				for (child in PixiStage.children) {
+					untyped child.render(untyped PixiRenderer);
+				}
+
+				untyped PixiRenderer._lastObjectRendered = PixiStage;
+				untyped PixiRenderer.view = PixiView;
+			} else {
+				AccessWidget.updateAccessTree();
+
+				if (TransformChanged) {
+					TransformChanged = false;
+
+					PixiRenderer.render(PixiStage, null, true, null, false);
+				} else {
+					PixiRenderer.render(PixiStage, null, true, null, true);
 				}
 			}
 
-			untyped PixiRenderer._lastObjectRendered = PixiStage;
-
 			emit("stagechanged", timestamp);
+		} else {
+			AccessWidget.updateAccessTree();
 		}
 
 		requestAnimationFrame();
@@ -1453,7 +1476,7 @@ class RenderSupportJSPixi {
 			return function() { off(event, fn); }
 		} else if (event == "mouserightdown" || event == "mouserightup") {
 			// When we register a right-click handler, we turn off the browser context menu.
-			PixiRenderer.view.oncontextmenu = function () { return false; };
+			PixiView.oncontextmenu = function () { return false; };
 
 			on(event, fn);
 			return function() { off(event, fn); }
@@ -1764,11 +1787,11 @@ class RenderSupportJSPixi {
 				default: "default";
 			}
 
-		PixiRenderer.view.style.cursor = css_cursor;
+		PixiView.style.cursor = css_cursor;
 	}
 
 	public static function getCursor() : String {
-		return switch (PixiRenderer.view.style.cursor) {
+		return switch (PixiView.style.cursor) {
 			case "default": "arrow";
 			case "auto": "auto";
 			case "pointer": "finger";
@@ -1967,7 +1990,7 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			PixiStage.invalidateStage();
+			PixiStage.invalidateStage(true);
 
 			if (Platform.isIOS) {
 				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;
@@ -2051,9 +2074,9 @@ class RenderSupportJSPixi {
 	public static function toggleFullScreen(fs : Bool) : Void {
 		if (!Platform.isIOS) {
 			if (fs)
-				requestFullScreen(PixiRenderer.view);
+				requestFullScreen(PixiView);
 			else
-				exitFullScreen(PixiRenderer.view);
+				exitFullScreen(PixiView);
 		}
 	}
 
@@ -2121,7 +2144,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
-		var data = PixiRenderer.view.getContext2d().getImageData(x * backingStoreRatio, y * backingStoreRatio, 1, 1).data;
+		var data = PixiView.getContext2d().getImageData(x * backingStoreRatio, y * backingStoreRatio, 1, 1).data;
 
 		var rgb = data[0];
 		rgb = (rgb << 8) + data[1];

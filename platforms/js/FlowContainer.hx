@@ -1,6 +1,9 @@
 import js.Browser;
+import js.html.CanvasElement;
+
 import pixi.core.display.Container;
 import pixi.core.display.DisplayObject;
+import pixi.core.renderers.canvas.CanvasRenderer;
 
 using DisplayObjectHelper;
 
@@ -12,16 +15,71 @@ class FlowContainer extends Container {
 	public var stageChanged : Bool = true;
 	private var childrenChanged : Bool = true;
 
-	private var stage : FlowContainer = null;
-	private var pixiStage : Bool = false;
+	private var stage : FlowContainer;
+	private var view : CanvasElement;
+	private var context : Dynamic;
 
-	public function new(?pixiStage : Bool = false) {
+	public function new(?worldVisible : Bool = false) {
 		super();
 
-		this.pixiStage = pixiStage;
-		visible = pixiStage;
-		clipVisible = pixiStage;
+		visible = worldVisible;
+		clipVisible = worldVisible;
 		interactiveChildren = false;
+	}
+
+	public function createView(?zorder : Int) : Void {
+		if (zorder == null) {
+			zorder = parent.children.indexOf(this) + 1;
+		}
+
+		view = cast(Browser.document.createElement('canvas'), CanvasElement);
+
+		view.style.zIndex = AccessWidget.zIndexValues.canvas;
+		untyped view.style.pointerEvents = "none";
+
+		context = view.getContext("2d", { alpha : true });
+
+		updateView(zorder);
+		onResize();
+
+		RenderSupportJSPixi.on("resize", onResize);
+		on("removed", destroyView);
+	}
+
+	private function updateView(?zorder : Int) : Void {
+		if (zorder == null) {
+			zorder = parent.children.indexOf(this) + 1;
+		}
+
+		if (zorder > 0) {
+			if (Browser.document.body.children.length > zorder) {
+				if (Browser.document.body.children[zorder] != view) {
+					if (Browser.document.body.children.length > zorder + 1) {
+						Browser.document.body.insertBefore(view, Browser.document.body.children[zorder + 1]);
+					} else {
+						Browser.document.body.appendChild(view);
+					}
+				}
+			} else {
+				Browser.document.body.appendChild(view);
+			}
+		}
+	}
+
+	private function destroyView() : Void {
+		RenderSupportJSPixi.off("resize", onResize);
+
+		if (view.parentNode == Browser.document.body) {
+			Browser.document.body.removeChild(view);
+		}
+
+		view = null;
+		context = null;
+	}
+
+	private function onResize() : Void {
+		view.width = RenderSupportJSPixi.PixiView.width;
+		view.height = RenderSupportJSPixi.PixiView.height;
 	}
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
@@ -33,7 +91,7 @@ class FlowContainer extends Container {
 
 			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
-				newChild.invalidateStage();
+				newChild.invalidateStage(true);
 			}
 
 			childrenChanged = true;
@@ -52,7 +110,7 @@ class FlowContainer extends Container {
 
 			if (getClipVisible()) {
 				newChild.updateClipWorldVisible();
-				newChild.invalidateStage();
+				newChild.invalidateStage(true);
 			}
 
 			childrenChanged = true;
@@ -97,6 +155,19 @@ class FlowContainer extends Container {
 					RenderSupportJSPixi.InvalidateTransform();
 				}
 			}
+		}
+	}
+
+	public function render(renderer : CanvasRenderer) {
+		if (stageChanged && view != null) {
+			stageChanged = false;
+
+			renderer.view = view;
+			renderer.context = context;
+			untyped renderer.rootContext = context;
+			renderer.transparent = true;
+
+			renderer.render(this, null, true, null, false);
 		}
 	}
 }
