@@ -14,84 +14,83 @@ We could probably also do that while we are type-checking in general.
 */
 
 export {
-	isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool) -> bool;
+	isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool, checkNamed : bool) -> bool;
 
 	// Would we be able to find some super type to make these two types compatible?
 	fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : bool) -> bool;
 }
 
-isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool) -> bool {
+isFiSubType(env : FcGlobalNames, small : FiType, big : FiType, allowFlow : bool, checkNamed : bool) -> bool {
     flowok = \ -> {
         (allowFlow && small == FiTypeFlow()) || small == big;
     }
-	switch (big) {
-		FiTypeVoid(): small == big;
-		FiTypeBool(): flowok();
-		FiTypeInt(): flowok();
-		FiTypeDouble(): flowok();
-		FiTypeString(): flowok();
-		FiTypeArray(bt): switch (small) {
-			FiTypeArray(st): isFiSubType(env, st, bt, allowFlow); // We could do false here
-			default: flowok();
-		}
-		FiTypeFlow(): true;
-		FiTypeNative(): small == big;
-		FiTypeFunction(bargs, breturnType): {
-			switch (small) {
-				FiTypeFunction(sargs, sreturnType): {
-					isFiSubType(env, sreturnType, breturnType, allowFlow)
-					// Here, we reverse
-					&& areFiSubTypes(env, map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type), allowFlow)
+    switch (small) {
+		FiTypeParameter(__): true; // We just accept this
+		default: {
+			switch (big) {
+				FiTypeVoid(): small == big;
+				FiTypeBool(): flowok();
+				FiTypeInt(): flowok();
+				FiTypeDouble(): flowok();
+				FiTypeString(): flowok();
+				FiTypeArray(bt): switch (small) {
+					FiTypeArray(st): isFiSubType(env, st, bt, allowFlow, checkNamed); // We could do false here
+					default: flowok();
 				}
-				default: flowok();
-			}
-		}
-		FiTypeRef(bt): switch (small) {
-			FiTypeRef(st): {
-				isFiSubType(env, st, bt, false)
-			}
-			default: false;
-		}
-		FiTypeParameter(bn): {
-			switch (small) {
-				// We just accept this
-				FiTypeParameter(sn): true;
-				default: flowok();
-			}
-		}
-		FiTypeName(bname, btypeparameters): {
-			switch (small) {
-				FiTypeName(sname, stypeparameters): {
-					if (sname == bname) {
-                        // This is required for some cases, like switch, where we do not have typars
-                        // as well as for implicit polymorphism due to polymorphic unions
-                        stypeparameters == [] 
-                        || btypeparameters == [] 
-						|| areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow)
-					} else {
-						if (isUrlParameterTrue("subtyping")) {
-							polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
-							relation = getFiTypenameRelation(env, sname, bname);
-							switch (relation) {
-								FiRelationEqual(): true;
-								FiName2Supertype(): true;
-								FiName1Supertype(): false;	// !
-								FiCommonSupertype(): true;
-								FiNotRelated(): false;
-							} && polymorphicOK
-						} else true;
+				FiTypeFlow(): true;
+				FiTypeNative(): small == big;
+				FiTypeFunction(bargs, breturnType): {
+					switch (small) {
+						FiTypeFunction(sargs, sreturnType): {
+							isFiSubType(env, sreturnType, breturnType, allowFlow, checkNamed)
+							// Here, we reverse
+							&& areFiSubTypes(env, map(bargs, \ba -> ba.type), map(sargs, \sa -> sa.type), allowFlow, checkNamed)
+						}
+						default: flowok();
 					}
 				}
-				default: flowok();
+				FiTypeRef(bt): switch (small) {
+					FiTypeRef(st): {
+						isFiSubType(env, st, bt, false, checkNamed)
+					}
+					default: false;
+				}
+				FiTypeParameter(__): true; // We just accept this
+				FiTypeName(bname, btypeparameters): {
+					switch (small) {
+						FiTypeName(sname, stypeparameters): {
+							if (sname == bname) {
+								// This is required for some cases, like switch, where we do not have typars
+								// as well as for implicit polymorphism due to polymorphic unions
+								stypeparameters == []
+								|| btypeparameters == []
+								|| areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow, checkNamed)
+							} else {
+								if (checkNamed || isUrlParameterTrue("subtyping")) {
+									polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow, checkNamed);
+									relation = getFiTypenameRelation(env, sname, bname);
+									switch (relation) {
+										FiRelationEqual(): true;
+										FiName2Supertype(): true;
+										FiName1Supertype(): false;	// !
+										FiCommonSupertype(): true;
+										FiNotRelated(): false;
+									} && polymorphicOK;
+								} else true;
+							}
+						}
+						default: flowok();
+					}
+				}
 			}
-		} 
+		}
 	}
 }
 
-areFiSubTypes(env : FcGlobalNames, small : [FiType], big : [FiType], allowflow : bool) -> bool {
+areFiSubTypes(env : FcGlobalNames, small : [FiType], big : [FiType], allowflow : bool, checkNamed) -> bool {
 	length(small) == length(big)
 	&& foldi(small, true, \i, acc, sa -> {
-		acc && isFiSubType(env, sa, big[i], allowflow)
+		acc && isFiSubType(env, sa, big[i], allowflow, checkNamed)
 	})
 }
 
@@ -149,8 +148,7 @@ fiSuperTypeExists(env : FcGlobalNames, t1 : FiType, t2 : FiType, allowFlow : boo
 						|| fiSuperTypesExists(env, stypeparameters, btypeparameters, allowFlow)
 					} else {
 						if (isUrlParameterTrue("subtyping")) {
-							polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow);
-
+							polymorphicOK = areFiSubTypes(env, stypeparameters, btypeparameters, allowFlow, false);
 							relation = getFiTypenameRelation(env, sname, bname);
 							switch (relation) {
 								FiRelationEqual(): true;
