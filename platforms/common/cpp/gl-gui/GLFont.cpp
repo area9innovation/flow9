@@ -757,6 +757,7 @@ GLTextureImage::Ptr GLFont::getGlyphTile(GlyphInfo *info, vec2 *bearing, vec2 *t
 #endif
 
 int GLTextLayout::getCharGlyphPositionIdx(int charidx) {
+    if (charidx == char_to_glyph_index.size()) return charidx;
     typename std::map<size_t, size_t>::const_iterator it = char_to_glyph_index.find( charidx );
     if ( it == char_to_glyph_index.end() ) {
        return -1;
@@ -790,6 +791,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
         char_to_glyph_index.clear();
         glyphs.reserve(elemcount);
         positions.reserve(elemcount+1);
+        directions.reserve(elemcount);
     }
 
     GLFont::GlyphInfo *info = NULL, *prev = NULL;
@@ -823,6 +825,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
         size_t chrIdx;
         chrIdx = strIter->position();
         chr = **strIter;
+        CharDirection chdir;
         if (*strRevStart == *strEnd) {
             if (isReverse(chr)) {
                 strRevStart = leftPos;
@@ -830,8 +833,10 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
                 rightPos = strRevStart;
                 strRevStart = strIter->clone();
                 strRevEnd = strProc = strEnd;  // *strProc == *strEnd — no character processing
+                chdir = rtl? CharDirection::LTR : CharDirection::RTL;
             } else {
                 strProc = strIter;  // character processing goes on from strProc
+                chdir = rtl? CharDirection::RTL : CharDirection::LTR;
             }
         } else {
             #define IS_DIGIT(x) (x>=0x30 && x<0x3A)
@@ -928,6 +933,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             char_indices.push_back(chrIdx);
             glyphs.push_back(info);
             positions.push_back(pos);
+            directions.push_back(chdir);
 
             if (info) {
                 bbox |= vec2(pos,0) + info->bearing * size;

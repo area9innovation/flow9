@@ -1002,7 +1002,6 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(idx);
     RUNNER_CheckTag1(TInt, idx);
-    double pos = -1;
     int i, idx_v = idx.GetInt();
 
     layoutText();
@@ -1011,7 +1010,14 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
         extent = text_real_extents[i];
         if (extent->char_idx <= idx_v) break;
     }
-    return StackSlot::MakeDouble(extent? extent->layout->getPositions()[extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx)] : -1);
+    int glyphIdx = extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx);
+    double glyphStartOffset = 0.0;
+    extent->layout->getGlyphs()[glyphIdx]->advance;
+    if (glyphIdx < extent->layout->getDirections().size() && extent->layout->getDirections()[glyphIdx] == CharDirection::RTL)
+        glyphStartOffset = extent->layout->getGlyphs()[glyphIdx]->advance;
+    return StackSlot::MakeDouble(
+        extent? extent->layout->getPositions()[glyphIdx] + glyphStartOffset: -1.0
+    );
 }
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)

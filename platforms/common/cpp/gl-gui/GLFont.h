@@ -395,6 +395,8 @@ public:
     float getAscender() { return ascender; }
 };
 
+enum CharDirection {LTR = '\0', RTL = '\1'};
+
 class GLTextLayout {
     friend class GLFont;
 
@@ -408,6 +410,7 @@ protected:
     std::map<size_t, size_t> char_to_glyph_index;
     std::vector<GLFont::GlyphInfo*> glyphs;
     std::vector<float> positions;
+    std::vector<CharDirection> directions;
     shared_ptr<Utf32InputIterator> endpos;
 
     GLTextLayout(GLFont::Ptr font, float size);
@@ -465,6 +468,8 @@ public:
 
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
+    const std::vector<CharDirection> &getDirections() { return directions; }
+    const std::vector<GLFont::GlyphInfo*> &getGlyphs() { return glyphs; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
     int getCharGlyphPositionIdx(int charidx);
 
