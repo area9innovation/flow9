@@ -9,7 +9,6 @@
 AbstractHttpSupport::AbstractHttpSupport(ByteCodeRunner *owner) : NativeMethodHost(owner)
 {
     next_http_request = 1;
-    active_file_selection = -1;
 }
 
 HttpRequest *AbstractHttpSupport::getRequestById(int id)
@@ -20,11 +19,6 @@ HttpRequest *AbstractHttpSupport::getRequestById(int id)
 
 void AbstractHttpSupport::cancelRequest(int id)
 {
-    if (active_file_selection == id) {
-        doCancelSelect();
-        active_file_selection = -1;
-    }
-
     HttpRequest *rq = getRequestById(id);
     if (rq) {
         doCancelRequest(*rq);
@@ -49,8 +43,6 @@ void AbstractHttpSupport::deliverDataBytes(int id, const void *buffer, unsigned 
 
 void AbstractHttpSupport::deliverData(int id, const unicode_char *data, unsigned count)
 {
-    assert(id != active_file_selection);
-
     WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
 
     HttpRequest *rq = getRequestById(id);
@@ -73,8 +65,6 @@ void AbstractHttpSupport::deliverData(int id, const unicode_char *data, unsigned
 
 void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigned count, bool last)
 {
-    assert(id != active_file_selection);
-
     HttpRequest *rq = getRequestById(id);
     if (!rq) return;
 
@@ -161,8 +151,6 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
 
 void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count)
 {
-    assert(id != active_file_selection);
-
     WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
 
     HttpRequest *rq = getRequestById(id);
@@ -262,50 +250,11 @@ void AbstractHttpSupport::deliverProgress(int id, FlowDouble pos, FlowDouble tot
     getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
 }
 
-void AbstractHttpSupport::deliverSelectCancel(int id)
-{
-    assert(id == active_file_selection);
-    active_file_selection = -1;
-
-    WITH_RUNNER_LOCK_DEFERRED(getFlowRunner());
-
-    HttpRequest *rq = getRequestById(id);
-
-    if (rq && !rq->cancel_cb.IsVoid()) {
-        RUNNER_VAR = getFlowRunner();
-        RUNNER->EvalFunction(rq->cancel_cb, 0);
-    }
-
-    active_requests.erase(id);
-    getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
-}
-
-bool AbstractHttpSupport::deliverSelectOK(int id, unicode_string name, int size)
-{
-    bool continueUploading = false;
-    assert(id == active_file_selection);
-    active_file_selection = -1;
-
-    HttpRequest *rq = getRequestById(id);
-
-    if (rq && !rq->select_cb.IsVoid()) {
-        RUNNER_VAR = getFlowRunner();
-        StackSlot result = RUNNER->EvalFunction(rq->select_cb, 2,
-            RUNNER->AllocateString(name), StackSlot::MakeInt(size));
-        continueUploading = (result.IsBool() && result.GetBool());
-    }
-    return continueUploading;
-}
-
 void AbstractHttpSupport::OnRunnerReset(bool inDestructor)
 {
     NativeMethodHost::OnRunnerReset(inDestructor);
 
     active_requests.clear();
-
-    if (active_file_selection > 0)
-        doCancelSelect();
-    active_file_selection = -1;
 }
 
 void AbstractHttpSupport::flowGCObject(GarbageCollectorFn ref)
@@ -320,7 +269,7 @@ NativeFunction *AbstractHttpSupport::MakeNativeFunction(const char *name, int nu
 
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, httpRequest, 7);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, preloadMediaUrl, 3);
-    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, uploadFile, 10);
+    TRY_USE_NATIVE_METHOD(AbstractHttpSupport, uploadNativeFile, 8);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, downloadFile, 4);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, removeUrlFromCache, 1);
     TRY_USE_NATIVE_METHOD(AbstractHttpSupport, clearUrlCache, 0);
@@ -366,24 +315,18 @@ void AbstractHttpSupport::processAttachmentsAsMultipart(HttpRequest& rq) {
     }
 
     // loop for attachments
-    for (HttpRequest::T_SMap::iterator it = rq.attachments.begin(); it != rq.attachments.end(); ++it)
+    for (HttpRequest::T_FileMap::iterator it = rq.attachments.begin(); it != rq.attachments.end(); ++it)
     {
-        std::ifstream t(encodeUtf8(it->second).c_str());
-        std::string fileData;
-
-        if (t.peek() == std::ifstream::traits_type::eof())
+        FlowFile *flowFile = it->second;
+        if(!flowFile->open())
             continue;
-
-        t.seekg(0, std::ios::end);
-        fileData.reserve(t.tellg());
-        t.seekg(0, std::ios::beg);
-
-        fileData.assign((std::istreambuf_iterator<char>(t)),
-                   std::istreambuf_iterator<char>());
+        std::vector<uint8_t> fileContent = flowFile->readBytes();
+        std::cout<<fileContent.size()<<std::endl;
+        flowFile->close();
 
         body << boundaryDataLine;
-        body << "Content-Disposition: form-data; name=\"" << encodeUtf8(it->first) << "\";filename=\"" << encodeUtf8(it->second) << "\"\r\n\r\n";
-        body << fileData << "\r\n";
+        body << "Content-Disposition: form-data; name=\"" << encodeUtf8(it->first) << "\";filename=\"" << flowFile->getFilepath() << "\"\r\n\r\n";
+        body << std::string(fileContent.begin(), fileContent.end()) << "\r\n";
     }
 
     body << "--" + boundary + "--\r\n";
@@ -576,45 +519,45 @@ StackSlot AbstractHttpSupport::downloadFile(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot AbstractHttpSupport::uploadFile(RUNNER_ARGS)
+StackSlot AbstractHttpSupport::uploadNativeFile(RUNNER_ARGS)
 {
-    RUNNER_PopArgs10(url, params, headers, fileTypes, onOpen, onSelect, onData, onError, onProgress, onCancel);
-    RUNNER_CheckTag1(TString, url);
-    RUNNER_CheckTag3(TArray, params, headers, fileTypes);
+    RUNNER_PopArgs8(file, url, params, headers, onOpen, onDataFn, onErrorFn, onProgressFn);
+    RUNNER_CheckTag(TNative, file);
+    RUNNER_CheckTag(TString, url);
+    RUNNER_CheckTag2(TArray, headers, params);
+
+    FlowFile *flowFile = RUNNER->GetNative<FlowFile*>(file);
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
 
     int id = next_http_request++;
 
     HttpRequest &rq = active_requests[id];
     rq.req_id = id;
-
     rq.url = RUNNER->GetString(url);
     rq.method = parseUtf8("POST");
 
     rq.open_cb = onOpen;
-    rq.select_cb = onSelect;
-    rq.data_cb = onData;
-    rq.error_cb = onError;
-    rq.progress_cb = onProgress;
-    rq.cancel_cb = onCancel;
+    rq.data_cb = onDataFn;
+    rq.error_cb = onErrorFn;
+    rq.progress_cb = onProgressFn;
 
     decodeMap(RUNNER, &rq.headers, headers);
     decodeMap(RUNNER, &rq.params, params);
 
-    for (int i = 0; i < RUNNER->GetArraySize(fileTypes); i++) {
-        const StackSlot &item = RUNNER->GetArraySlot(fileTypes,i);
-        rq.file_types.push_back(RUNNER->GetString(item));
+    unicode_string filename = parseUtf8(flowFile->getFilename());
+
+    HttpRequest::T_SMap::iterator customNameField = rq.params.find(parseUtf8("uploadDataFieldName"));
+    if(customNameField != rq.params.end()) {
+        filename = customNameField->second;
+        rq.params.erase(customNameField);
     }
 
-    if (active_file_selection > 0) {
-        doCancelSelect();
-        deliverSelectCancel(active_file_selection);
-    }
+    rq.attachments[filename] = flowFile;
 
-    active_file_selection = id;
-    if (!doSelectFile(rq))
-        deliverSelectCancel(id);
+    processRequest(rq);
+    doRequest(rq);
 
-    return RUNNER->AllocateNativeClosure(cbCancel, "uploadFile$cancel", 0, this, 1, StackSlot::MakeInt(id));
+    return RUNNER->AllocateNativeClosure(cbCancel, "uploadNativeFile$cancel", 0, this, 1, StackSlot::MakeInt(id));
 }
 
 StackSlot AbstractHttpSupport::cbCancel(RUNNER_ARGS, void *ptr) {
@@ -664,7 +607,13 @@ StackSlot AbstractHttpSupport::sendHttpRequestWithAttachments(RUNNER_ARGS) {
 
     decodeMap(RUNNER, &rq.headers, headers);
     decodeMap(RUNNER, &rq.params, params);
-    decodeMap(RUNNER, &rq.attachments, attachments);
+
+    HttpRequest::T_SMap attachments_buffer;
+    decodeMap(RUNNER, &attachments_buffer, attachments);
+    for (HttpRequest::T_SMap::iterator it = attachments_buffer.begin(); it != attachments_buffer.end(); ++it)
+    {
+        rq.attachments[it->first] = new FlowFile(RUNNER, encodeUtf8(it->second));
+    }
 
     processRequest(rq);
     doRequest(rq);

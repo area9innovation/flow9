@@ -6,7 +6,7 @@
 #import "iosHttpSupport.h"
 #import "iosSoundSupport.h"
 #import "FileLocalStore.h"
-#import "FileSystemInterface.h"
+#import "iosFileSystemInterface.h"
 #import "iosLocalyticsSupport.h"
 #import "iosNotificationsSupport.h"
 #import "iosGeolocationSupport.h"
@@ -22,6 +22,7 @@
 #import "EAGLViewController.h"
 
 class iosGLRenderSupport;
+class iosFileSystemInterface;
 
 @interface iosAppDelegate : UIResponder <UIApplicationDelegate> {
 @private
@@ -45,7 +46,7 @@ class iosGLRenderSupport;
     iosMediaRecorderSupport * MediaRecorder;
 #endif
     FileLocalStore     * LocalStore;
-    FileSystemInterface * FSInterface;
+    iosFileSystemInterface * FSInterface;
     
     EAGLView * GLView;
     EAGLViewController * GLViewController;

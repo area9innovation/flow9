@@ -3,6 +3,7 @@
 import sys/target;
 import net/url;
 import ds/arrayutils;
+import fs/filesystem;
 
 export {
 	/*currentRequest : DynamicBehaviour<Quadruple<string, bool, [KeyValue], [KeyValue]>> = make(Quadruple("", false, [], []));
@@ -92,10 +93,28 @@ export {
 	// Access-Control-Allow-Origin header.
 	native enableCORSCredentials : (enabled : bool) -> void = HttpSupport.enableCORSCredentials;
 
-	// Deprecated: use filesystem.flow openFileDialog + uploadFileClient instead
-	// Returns function that can cancel an upload
-	// it won't cancel OS browse dialog though
-	// Default payload file name is Filedata.
+	native doUploadClientFile : (
+		file : native,
+		url: string,
+		params: [[string]],
+		headers: [[string]],
+		onOpen: () -> void,
+		onData: (string) -> void,
+		onError: (string) -> void,
+		onProgress: (double, double) -> void
+	) -> () -> void = HttpSupport.uploadNativeFile;
+
+	// Uploads native file(fs/filesystem.flow) to server
+	uploadClientFile : (
+		file : native,
+		url: string,
+		params: [KeyValue],
+		headers: [KeyValue],
+		eventListeners: [UploadOnlyEventListener]
+	) -> () -> void;
+
+	// Deprecated: use openFileDialog(fs/filesystem.flow) + uploadClientFile instead
+	// Default payload file name is name of selected file.
 	// To change it just add to params parameter with "uploadDataFieldName" as key and name of file as value
 	uploadFile : (
 		url : string,
@@ -103,19 +122,19 @@ export {
 		headers : [KeyValue],
 		fileTypes : [string], // array of "*.jpg" like strings
 		eventListeners : [UploadEventListener]
-	) -> () -> void;
+	) -> void;
 
 	//Returns and array without empry values of
 	removeEmptyURLValues(params: [KeyValue]) -> [KeyValue];
 
-	UploadEventListener ::= UploadSelect, UploadOnlyEventListener;
+	UploadEventListener ::= UploadSelect, UploadCancel, UploadOnlyEventListener;
 		// Here we get the filename and the size.
 		UploadSelect(onSelect: (name: string, size: int) -> bool);
+		// If the user cancels openFileDialog
+		UploadCancel(onCancel: () -> void);
 
 	// used in filesystem.flow
-	UploadOnlyEventListener ::= UploadCancel, UploadData, UploadProgress, UploadOpen, UploadError;
-		// If the user cancels the upload
-		UploadCancel(onCancel: () -> void);
+	UploadOnlyEventListener ::= UploadData, UploadProgress, UploadOpen, UploadError;
 		// Once the upload is done, here is the browser response
 		UploadData(onData: (data:string) -> void);
 		// During the upload, we get progress data
@@ -303,60 +322,51 @@ preloadMediaUrl(url : string, onSuccess : () -> void, onError : (string) -> void
 	}
 }
 
-native doUploadFile: io (
-			url : string,
-			params : [[string]],
-			headers : [[string]],
-			fileTypes : [string],
-			onOpen : () -> void,
-			onSelect : (string, int) -> bool,
-			onData : (string) -> void,
-			onError : (string) -> void,
-			onProgress : (double, double) -> void,
-			onCancel : () -> void
-) ->  (() -> void) = HttpSupport.uploadFile;
+uploadFile(url, params, headers, fileTypes, listeners) {
+	onData = extractStruct(listeners, UploadData(nop1));
+	onError = extractStruct(listeners, UploadError(nop1));
+	onOpen = extractStruct(listeners, UploadOpen(nop));
+	onProgress = extractStruct(listeners, UploadProgress(nop2));
+	onSelect = extractStruct(listeners, UploadSelect(\name, size -> {true}));
+	onCancel = extractStruct(listeners, UploadCancel(nop));
 
-removeEmptyURLValues(params: [KeyValue]) -> [KeyValue] {
-	filter(params, \p -> p.value != "")
+	openFileDialog(1, fileTypes, \files -> {
+		if (length(files) > 0) {
+			onSelect.onSelect(fileNameClient(files[0]), trunc(fileSizeClient(files[0])));
+			uploadClientFile(
+				files[0], 
+				url, 
+				params,
+				headers,
+				[onData, onError, onOpen, onProgress]
+			) |> ignore;
+		} else {
+			onCancel.onCancel();
+		}
+	});
 }
 
-uploadFile(url, params, headers, fileTypes, listeners) {
-	// all this stuff is here cause I don't want to export a function with 10 arguments
-	onData = ref nop1;
-	onError = ref nop1;
-	onSelect : ref (string, int) -> bool = ref \type, size -> {true};
-	onOpen = ref nop;
-	onProgress = ref nop2;
-	onCancel = ref nop;
-	iter(listeners,
-		\l ->
-		switch (l:UploadEventListener) {
-			UploadData(fn):
-				onData := fn;
-			UploadCancel(fn):
-				onCancel := fn;
-			UploadError(fn):
-				onError := fn;
-			UploadOpen(fn):
-				onOpen := fn;
-			UploadProgress(fn):
-				onProgress := fn;
-			UploadSelect(fn):
-				onSelect := fn;
-		});
+uploadClientFile(file, url, params, headers, listeners) {
+	onOpen = extractStruct(listeners, UploadOpen(nop));
+	onData = extractStruct(listeners, UploadData(nop1));
+	onError = extractStruct(listeners, UploadError(nop1));
+	onProgress = extractStruct(listeners, UploadProgress(nop2));
 
-	doUploadFile(
+	doUploadClientFile(
+		file,
 		url,
 		map(params, \param -> [param.key, param.value]),
 		map(headers, \header -> [header.key, header.value]),
-		fileTypes,
-		^onOpen,
-		^onSelect,
-		^onData,
-		^onError,
-		^onProgress,
-		^onCancel
+		onOpen.onOpen,
+		onData.onData,
+		onError.onError,
+		onProgress.onProgress
 	);
+}
+
+
+removeEmptyURLValues(params: [KeyValue]) -> [KeyValue] {
+	filter(params, \p -> p.value != "")
 }
 
 sendHttpRequestWithAttachments(

@@ -427,7 +427,7 @@ class TextClip extends NativeWidgetClip {
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
 		style.lineHeight = fontSize * 1.15 + interlineSpacing;
 		style.wordWrap = wordWrap;
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 
@@ -602,7 +602,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
