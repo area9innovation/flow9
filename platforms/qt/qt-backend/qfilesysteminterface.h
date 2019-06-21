@@ -2,7 +2,6 @@
 #define QFILESYSTEMINTERFACE_H
 
 #include "utils/FileSystemInterface.h"
-#include "qt-backend/HttpSupport.h"
 
 #include <QMimeDatabase>
 
@@ -12,32 +11,26 @@ class QFileSystemInterface : public QObject, public FileSystemInterface
 
 private:
     ByteCodeRunner *owner;
-    QtHttpSupport *http_manager;
 
     QMimeDatabase *mimeDatabase;
 
     int selectCallbackId;
     int maxSelectFiles;
 
+#ifdef QT_GUI_LIB
+    QWidget *window;
+#endif
+
 public:
-    QFileSystemInterface(ByteCodeRunner *owner, QtHttpSupport* http);
+#ifdef QT_GUI_LIB
+    QFileSystemInterface(ByteCodeRunner* runner, QWidget *window = NULL);
+#else
+    QFileSystemInterface(ByteCodeRunner* runner, QObject *parent = NULL);
+#endif
 
 protected:
-    StackSlot doGetFileByPath(std::string path);
     void doOpenFileDialog(int maxFilesCount, std::vector<std::string> fileTypes, StackSlot callback);
-
-    StackSlot doUploadNativeFile(
-            const StackSlot &file, std::string url, const StackSlot &params,
-            const StackSlot &onOpenFn, const StackSlot &onDataFn, const StackSlot &onErrorFn, const StackSlot &onProgressFn, const StackSlot &onCancelFn);
-
-    std::string doFileName(const StackSlot &file);
     std::string doFileType(const StackSlot &file);
-
-    double doFileSizeNative(const StackSlot &file);
-    double doFileModifiedNative(const StackSlot &file);
-
-    StackSlot doFileSlice(const StackSlot &file, int offset, int end);
-    void doFileRead(const StackSlot &file, std::string readAs, std::string readEncoding, const StackSlot &onData, const StackSlot &onError);
     char* doResolveRelativePath(std::string &filename, char* buffer);
 
 private slots:

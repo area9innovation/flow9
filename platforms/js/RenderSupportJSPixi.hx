@@ -1664,6 +1664,10 @@ class RenderSupportJSPixi {
 		return clip;
 	}
 
+	public static function clearGraphics(graphics : FlowGraphics) : Void {
+		graphics.clear();
+	}
+
 	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
 		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
