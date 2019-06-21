@@ -1012,9 +1012,8 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
     }
     int glyphIdx = extent->layout->getCharGlyphPositionIdx(idx_v-extent->char_idx);
     double glyphStartOffset = 0.0;
-    extent->layout->getGlyphs()[glyphIdx]->advance;
     if (glyphIdx < extent->layout->getDirections().size() && extent->layout->getDirections()[glyphIdx] == CharDirection::RTL)
-        glyphStartOffset = extent->layout->getGlyphs()[glyphIdx]->advance;
+        glyphStartOffset = extent->layout->getGlyphAdvance(glyphIdx);
     return StackSlot::MakeDouble(
         extent? extent->layout->getPositions()[glyphIdx] + glyphStartOffset: -1.0
     );
@@ -1033,10 +1032,16 @@ StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
             const std::vector<float> &positions = ext.first->layout->getPositions();
             const std::vector<size_t> &char_indices = ext.first->layout->getCharIndices();
             int glyph_idx = ext.first->char_idx + eidx;
+            double inGlyphPos = ext.second - positions[eidx];
+            double glyphAdv = ext.first->layout->getGlyphAdvance(glyph_idx);
+            if (glyph_idx+1 < positions.size() && inGlyphPos*2 > glyphAdv) {
+                ++glyph_idx;
+                inGlyphPos -= glyphAdv;
+            }
 
             // Hence there's UTF16 encoding having sometimes 2 words for 1 char and also ligatures, interpolation needed.
             int interp_dir = glyph_idx>0? -1 : 1;
-            if ((positions[glyph_idx]-ext.second)*(positions[glyph_idx+interp_dir]-ext.second) > 0) interp_dir = -interp_dir;
+            if (inGlyphPos * (ext.second-positions[glyph_idx+interp_dir]) > 0) interp_dir = -interp_dir;
 
             char_idx = char_indices[glyph_idx];
             // Range check

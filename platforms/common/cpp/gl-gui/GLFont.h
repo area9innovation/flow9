@@ -469,7 +469,7 @@ public:
     shared_ptr<Utf32InputIterator> getEndPos() { return endpos; }
     const std::vector<float> &getPositions() { return positions; }
     const std::vector<CharDirection> &getDirections() { return directions; }
-    const std::vector<GLFont::GlyphInfo*> &getGlyphs() { return glyphs; }
+    double getGlyphAdvance(int glyphIdx) { return glyphIdx<0 || glyphIdx>=glyphs.size()? 0.0 : glyphs[glyphIdx]->advance; }
     const std::vector<size_t> &getCharIndices() { return char_indices; }
     int getCharGlyphPositionIdx(int charidx);
 
