@@ -1,0 +1,105 @@
+import ds/treeutils;
+
+export {
+	// Create a sparse array. Provide a function which can produce a range of values
+	makeSparseArray(size : int, retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?>;
+
+	// If we have a complete, static array, we do not need a generating function
+	array2SpareArray(vals : [?]) -> SparseArray<?>;
+
+	// What are the values in this given range? Will call the function to generate values if we do
+	// not have them cached. Up to, but not including end.
+	getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?];
+}
+
+// A sparse array where we can retrieve values in a given range up to, but not including end
+SparseArray(
+	size : int, 
+	// This is a cache of the values in the array. Key is the index in the array, value
+	// is a range of values we have from that point on. We have to maintain the
+	// invariant that our ranges are continuous in the sense that it would be wrong
+	// to represent an array ["a", "b"] as {0: ["a"], 1: ["a"]}. Instead, we should
+	// combine and have {0: ["a", "b"]}
+	mutable ranges : Tree<int, [?]>, 
+	// The function which can generate/retrieve values at the given point.
+	retrieveRange : (start : int, end : int) -> [?]
+);
+
+makeSparseArray(size : int, retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?> {
+	SparseArray(size, makeTree(), retrieveRange);
+}
+
+array2SpareArray(vals : [?]) -> SparseArray<?> {
+	SparseArray(length(vals), makeTree1(0, vals), \__, __ -> []);
+}
+
+getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
+	// Do we have anything before we can reuse?
+	lb = findTreeLowerKey(s.ranges, start, -1);
+
+	// Maybe there is a part in the middle we can reuse?
+	ub = findTreeUpperKey(s.ranges, start, -1);
+
+	// What do we have below us?
+	lower0 = if (lb == -1) [] else {
+		lookupTreeDef(s.ranges, lb, [])
+	};
+	// Find how much of the end of what is below us we can reuse, and extract that
+	lowerReuse = if (lb == -1 || lb + length(lower0) < start) -1 else max(0, start - lb);
+	lower = if (lowerReuse == -1) [] else subrange(lower0, lowerReuse, end - lb);
+
+
+	// OK, there might be a part after the start, which we can use
+	upper0 = if (ub == -1) [] else {
+		lookupTreeDef(s.ranges, ub, [])
+	}
+
+	// Find out how much we can reuse
+	upperReuse = if (ub == -1 || ub >= end) -1 else max(0, end - ub);
+	upper = if (upperReuse == -1) [] else subrange(upper0, 0, upperReuse);
+
+	// We can push the start by reusing things from below
+	newStart = start + length(lower);
+
+	if (upper0 == []) {
+		rang = s.retrieveRange(newStart, end);
+		res = concat(lower, rang);
+		if (lb != -1 && lowerReuse + lb + length(lower) >= start) {
+			// We extend the previous one to have continuous ranges in our tree
+			s.ranges ::= setTree(s.ranges, lb, res);
+		} else {
+			// New entry
+			s.ranges ::= setTree(s.ranges, newStart, rang);
+		}
+		res;
+	} else {
+		beforeMid = s.retrieveRange(newStart, ub);
+
+		afterMid = ub + length(upper);
+		after = if (afterMid < end) {
+			s.retrieveRange(afterMid, end);
+		} else [];
+
+		println("TODO: Record the ranges we got.");
+		concatA([lower, beforeMid, upper, after]);
+	}
+}
+/*
+dumpSparseArray(s : SparseArray<?>) -> void {
+	traverseInOrder(s.ranges, \k, v -> {
+		println(toString(k) + ":" + i2s(length(v)))
+	});
+}
+
+main() {
+	a = makeSparseArray(100, \s, e -> generate(s, e, \i -> i));
+	v1 = getSpareArrayRange(a, 10, 15);
+	println(v1);
+	v2 = getSpareArrayRange(a, 8, 20);
+	println(v2);
+
+	dumpSparseArray(a);
+	quit(0);
+}
+
+*/
