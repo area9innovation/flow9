@@ -665,7 +665,8 @@ class RenderSupportJSPixi {
 				var selectionStart = untyped activeElement.selectionStart != null ? untyped activeElement.selectionStart : untyped activeElement.value.length;
 				var selectionEnd = untyped activeElement.selectionEnd != null ? untyped activeElement.selectionEnd : untyped activeElement.value.length;
 
-				activeElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
+
 				if (selectionStart == selectionEnd) {
 					untyped activeElement.value =
 						keyCode == 8 ? untyped activeElement.value.substr(0, selectionStart - 1) + untyped activeElement.value.substr(selectionStart) :
@@ -685,9 +686,10 @@ class RenderSupportJSPixi {
 					composed : true,
 					isTrusted : true
 				}");
-				activeElement.dispatchEvent(untyped __js__("new InputEvent('input', ie)"));
+
+				activeElement.dispatchEvent(Platform.isIE || Platform.isEdge ? untyped __js__("new CustomEvent('input', ie)") : untyped __js__("new InputEvent('input', ie)"));
 			} else {
-				activeElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
 			}
 		}
 	}
@@ -2118,10 +2120,16 @@ class RenderSupportJSPixi {
 		}
 
 		child.setScrollRect(0, 0, getStageWidth(), getStageHeight());
-		var img = PixiRenderer.plugins.extract.base64(PixiStage);
-		child.removeScrollRect();
+		try {
+			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			child.removeScrollRect();
 
-		return img;
+			return img;
+		} catch(e : Dynamic) {
+			child.removeScrollRect();
+
+			return 'error';
+		}
 	}
 
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
