@@ -48,7 +48,6 @@ getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
 	lowerReuse = if (lb == -1 || lb + length(lower0) < start) -1 else max(0, start - lb);
 	lower = if (lowerReuse == -1) [] else subrange(lower0, lowerReuse, end - lb);
 
-
 	// OK, there might be a part after the start, which we can use
 	upper0 = if (ub == -1) [] else {
 		lookupTreeDef(s.ranges, ub, [])
@@ -61,33 +60,63 @@ getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
 	// We can push the start by reusing things from below
 	newStart = start + length(lower);
 
+	// The part of the lower cache entry, which we want to preserve in the cache (up to start)
+	lowerPreserve = if (lb != -1 && lowerReuse != -1 && lowerReuse + lb + length(lower) >= start) {
+		// We extend the previous entry with the new stuff to have continuous ranges in our tree
+		subrange(lower0, 0, end - lb);
+	} else [];
+	preserveStart = if (lowerPreserve != []) lb else start;
+
 	if (upper0 == []) {
+		// We have something in the start we can reuse, so just retrieve the end bit
 		rang = s.retrieveRange(newStart, end);
 		res = concat(lower, rang);
-		if (lb != -1 && lowerReuse + lb + length(lower) >= start) {
-			// We extend the previous one to have continuous ranges in our tree
-			s.ranges ::= setTree(s.ranges, lb, res);
+
+		if (lowerPreserve != []) {
+			// We extend the previous entry with the new stuff to have continuous ranges in our tree
+			updateSpareArrayCache(s, preserveStart, concat(lowerPreserve, rang));
 		} else {
-			// New entry
+			// A completely new entry
 			s.ranges ::= setTree(s.ranges, newStart, rang);
 		}
 		res;
 	} else {
+		// OK, we have a middle part. First, let us get what is after the first part, but before the mid part
 		beforeMid = s.retrieveRange(newStart, ub);
 
 		afterMid = ub + length(upper);
 		after = if (afterMid < end) {
+			// We have to retrieve more at the end
 			s.retrieveRange(afterMid, end);
 		} else [];
 
-		println("TODO: Record the ranges we got.");
-		concatA([lower, beforeMid, upper, after]);
+		res = concatA([lower, beforeMid, upper, after]);
+		// Construct the new cache entry we should adopt
+		cacheRes = if (after == []) concatA([lowerPreserve, beforeMid, upper0]) else concatA([lowerPreserve, beforeMid, upper, after]);
+		updateSpareArrayCache(s, preserveStart, cacheRes);
+
+		res;
 	}
 }
+
+// OK, we have a new entry that has to go into the cache.
+// We have the invariant that we know this is not colliding with other entries
+updateSpareArrayCache(s : SparseArray<?>, start : int, values : [?]) -> void {
+	end = start + length(values);
+	// Filter out all entries which are dominated by this one
+	s.ranges ::= filterTree(s.ranges, \s2, v -> {
+		e2 = s2 + length(v);
+		if ((start <= s2) && end >= e2) {
+			false;
+		} else true;
+	});
+	s.ranges ::= setTree(s.ranges, start, values);
+}
 /*
+
 dumpSparseArray(s : SparseArray<?>) -> void {
 	traverseInOrder(s.ranges, \k, v -> {
-		println(toString(k) + ":" + i2s(length(v)))
+		println(toString(k) + ":" + toString(v))
 	});
 }
 
@@ -95,11 +124,10 @@ main() {
 	a = makeSparseArray(100, \s, e -> generate(s, e, \i -> i));
 	v1 = getSpareArrayRange(a, 10, 15);
 	println(v1);
-	v2 = getSpareArrayRange(a, 8, 20);
+	v2 = getSpareArrayRange(a, 8, 12);
 	println(v2);
 
 	dumpSparseArray(a);
 	quit(0);
 }
-
 */
