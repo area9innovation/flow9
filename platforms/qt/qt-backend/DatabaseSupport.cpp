@@ -158,7 +158,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
     RUNNER_CheckTag(TString, rawquery);
 
     QString queryString = RUNNER->GetQString(rawquery);
-    QSqlQuery *query = new QSqlQuery(queryString, db);
+    QSqlQuery *query = new QSqlQuery(db);
 
     // Tell last result it's not last anymore
     if (last_result)
@@ -168,7 +168,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
     results.insert(result);
     last_result = result;
 
-    query->exec();
+    query->exec(queryString);
     last_error = query->lastError().text().trimmed();
 
     return RUNNER->AllocNative(result);
