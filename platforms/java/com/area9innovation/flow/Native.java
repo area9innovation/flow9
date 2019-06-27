@@ -737,7 +737,7 @@ public class Native extends NativeHost {
 
 	public final Object timer(int ms, final Func0<Object> cb) {
 		if (timer_obj == null)
-			timer_obj = new Timer(true);
+			timer_obj = new Timer(false);
 
 		TimerTask task = new TimerTask() {
 			public void run() {
