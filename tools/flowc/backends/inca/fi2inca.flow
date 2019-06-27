@@ -1,6 +1,7 @@
 import tools/flowc/backends/common;
 import tools/flowc/incremental/fiprogram;
 import tools/flowc/incremental/fi_helpers;
+import tools/flowc/backends/inca/lift_types;
 
 export {
 	fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void;
@@ -8,9 +9,44 @@ export {
 
 fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void {
 	fcPrintln("Saving " + cfg.outputdir);
-	output = "";
-	saveFileContent(cfg.outputdir, output);
+
+	incaEnv = buildIncaEnv(program);
+
+	types = liftIncaTypes(incaEnv);
+	saveFileContent(cfg.outputdir + "/types.flow", types);
 
 	callback();
 }
 
+
+buildIncaEnv(program : FiProgram) -> IncaEnv {
+	// What files should we lift from?
+	parsed0 = getTreeKeys(program.modules);
+	incaFolder = dirName(program.config.flowfile);
+	parsed = filter(parsed0, \p -> startsWith(p, incaFolder));
+
+	env0 = IncaEnv(
+		program.config,
+		parsed,
+		makeTree(),
+		makeTree(),
+		makeTree(),
+	);
+	fold(parsed, env0, \acc, m -> addModuleToIncaEnv(program, acc, m));
+}
+
+
+addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaEnv {
+	m = lookupTree(program.modules, module);
+	switch (m) {
+		None(): acc;
+		Some(mo): {	
+			IncaEnv(
+				acc with
+				structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
+				unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
+				functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
+			)
+		}
+	}
+}
