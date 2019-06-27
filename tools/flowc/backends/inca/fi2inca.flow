@@ -47,12 +47,75 @@ addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaE
 	switch (m) {
 		None(): acc;
 		Some(mo): {	
-			IncaEnv(
-				acc with
-				structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
-				unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
-				functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
-			)
+			if (validIncaModule(mo)) {
+				IncaEnv(
+					acc with
+					structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
+					unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
+					functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
+				)
+			} else acc
 		}
 	}
 }
+
+validIncaModule(m : FiModule) -> bool {
+	// A bunch of rules apply to Inca files:
+	// No globals, no natives functions
+
+	check = \b, e -> {
+		if (!b) println(e);
+		b;
+	}
+
+	check(m.forbids == [], "no forbids")
+	&& check(m.globalVars == [], "no globals")
+	&& check(m.natives == [], "no natives")
+
+	// Until we have import working, disable this
+	// && check(m.errors == [], "no errors")
+
+	// Check that the structs and unions do not contain refs, mutable,
+	// nested arrays, natives, functions nor polymorphism
+	&& fold(m.structs, true, \acc, t -> acc && {
+		check(t.typars == [], "no type parameters for " + t.name)
+		&&
+		forall(t.args, \a -> {
+			check(validIncaType(a.type), "wrong struct type for " + t.name)
+		})
+	})
+	&& fold(m.unions, true, \acc, t -> acc && {
+		check(t.typeparameters == [], "no type parameters for " + t.name)
+		&&
+		forall(t.typenames, \a -> {
+			check(validIncaType(a), "wrong union type for " + t.name)
+		})
+	})
+}
+
+validIncaType(type : FiType) -> bool {
+	switch (type) {
+		FiTypeBool(): true;
+		FiTypeInt(): true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+
+		FiTypeFlow(): false;
+		FiTypeVoid(): false;
+
+		FiTypeNative(): false;
+
+		FiTypeArray(t): {
+			// No nested arrays
+			validIncaType(t) && switch (t) {
+				FiTypeArray(__): false;
+				default: true;
+			}
+		}
+		FiTypeFunction(args, returnType): false;
+		FiTypeRef(t): false;
+		FiTypeParameter(n): false;
+		FiTypeName(name, typeparameters): typeparameters == [];
+	}
+}
+
