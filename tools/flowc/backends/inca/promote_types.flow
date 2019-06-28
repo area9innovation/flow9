@@ -1,0 +1,84 @@
+import tools/flowc/backends/inca/env;
+import ds/simplegraph;
+
+export {
+	/*
+	Given
+		Form ::= Group, Empty;
+			Group(f : [Form]);
+	and then we define
+
+		Tropic ::= Form, Cols;
+			Cols(f : [Form]);
+
+	In this situation, we have to specialize Group into two different structs:
+		Group_in_Form(f : [Form]);
+		Group_in_Tropic(f : [Tropic]);
+	
+	This is what we do in this function.
+	*/
+	promoteIncaTypes(e : IncaEnv) -> IncaEnv;
+}
+
+promoteIncaTypes(e : IncaEnv) -> IncaEnv {
+	// A graph of unions that inherit other unions
+	graph = foldTree(e.unions, makeSimpleGraph(), \name : string, u : FiTypeUnion, acc : SimpleGraph<string, int> -> {
+		fold(u.typenames, acc, \acc2, tn -> {
+			if (containsKeyTree(e.unions, tn.name)) {
+				addSimpleEdge(acc2, name, tn.name, 0, 0)
+			} else acc2;
+		});
+	});
+
+	// A set of structs which are recursive
+	recStructs = foldTree(e.unions, makeTree(), \name, u : FiTypeUnion, acc : Tree<string, string> -> {
+		fold(u.typenames, acc, \acc2, tn -> {
+			unions = extractFiTypeUnions(makeSet(), e, tn);
+			foldSet(unions, acc2, \acc3, un -> {
+				if (tn.name != un) {
+					// TODO: Check if un is extended. We can do that with the graph above?
+
+					// println(tn.name + " is recursive in " + un);
+					setTree(acc2, tn.name, un)
+				} else acc2;
+			})
+		})
+	});
+
+	e;
+}
+
+
+extractFiTypeUnions(acc : Set<string>, e : IncaEnv, ty : FiType) -> Set<string> {
+	switch (ty) {
+		FiTypeArray(t): extractFiTypeUnions(acc, e, t);
+		FiTypeFunction(args, returnType): {
+			acc0 = extractFiTypeUnions(acc, e, returnType);
+			fold(args, acc0, \acc2, a -> extractFiTypeUnions(acc2, e, a.type));
+		}
+		FiTypeRef(t): extractFiTypeUnions(acc, e, t);
+		FiTypeParameter(n): acc;
+		FiTypeBool(): acc;
+		FiTypeInt(): acc;
+		FiTypeDouble(): acc;
+		FiTypeString(): acc;
+		FiTypeFlow(): acc;
+		FiTypeVoid(): acc;
+		FiTypeNative(): acc;
+		FiTypeName(name, typeparameters): {
+			if (containsKeyTree(e.unions, name)) {
+				insertSet(acc, name)
+			} else {
+				st = lookupTree(e.structs, name);
+				switch (st) {
+					None(): acc;
+					Some(sdef): {
+						fold(sdef.args, acc, \acc2, arg -> {
+							extractFiTypeUnions(acc2, e, arg.type)
+						})
+					}
+				}
+			}
+		}
+	}
+}

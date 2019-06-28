@@ -3,25 +3,35 @@
 
 #include "core/nativefunction.h"
 
-#include <QFile>
+#include <fstream>
 
 class FlowFile : public FlowNativeObject
 {
 private:
-    QFile* file;
-
-    qint64 _offset, _end;
+    std::ifstream file;
+    std::string _filepath;
+    std::streampos _offset, _end;
 public:
-    FlowFile(ByteCodeRunner *owner, QFile *file);
+    FlowFile(ByteCodeRunner *owner, std::string filepath);
 
-    DEFINE_FLOW_NATIVE_OBJECT(FlowFile, FlowNativeObject);
+    DEFINE_FLOW_NATIVE_OBJECT(FlowFile, FlowNativeObject)
 
-    QFile* getFile();
+    std::string getFilepath();
+    std::string getFilename();
+    std::streampos getFileSize();
+    double getFileLastModified();
+
+    std::streampos getSliceSize();
+
+    bool open();
+    std::vector<uint8_t> readBytes();
+    void close();
 
     void setSliceRange(int offset, int end);
-    qint64 size() { return _end - _offset; }
-    qint64 getOffset() { return _offset; }
-    qint64 getEnd() { return _end; }
+    void setSliceRange(std::streampos offset, std::streampos end);
+
+    static std::streampos getFileSize(std::string filepath);
+    static double getFileLastModified(std::string filepath);
 };
 
 #endif // FLOWFILESTRUCT_H

@@ -1,0 +1,151 @@
+import ds/array_diff;
+
+printInfo(title : string, arr : [?], inline : bool) -> void {
+	println(title + ":");
+	if (inline) {
+		println("  " + toString(arr));
+	} else {
+		iteri(arr, \i, a : ? -> println("  " + lpad(i2s(i), " ", 3) + " " + toString(a)));
+	}
+}
+
+main() {
+	fullProtocol = false;
+	println("Running ASSERT tests...");
+	assertTests : [Triple<[int], [int], [ArrayOperationWithSwapp]>] = [
+		Triple([], [], []),
+		Triple([0], [0], []),
+		Triple([0,1], [0,1], []),
+
+		Triple([], [0], [ArrayInsert(0,0,0)]),
+		Triple([], [0,1], [ArrayInsert(0,1,1), ArrayInsert(0,0,0)]),
+		Triple([], [0,1,2], [ArrayInsert(0,2,2), ArrayInsert(0,1,1), ArrayInsert(0,0,0)]),
+
+		Triple([0], [0,1,2], [ArrayInsert(1,2,2), ArrayInsert(1,1,1)]),
+		Triple([1], [0,1,2], [ArrayInsert(1,2,2), ArrayInsert(0,0,0)]),
+
+		Triple([0], [], [ArrayRemove(0,0)]),
+		Triple([0,1], [0], [ArrayRemove(1,1)]),
+		Triple([0,1], [1], [ArrayRemove(0,0)]),
+
+		Triple([0], [1], [ArrayReplace(0,0,1)]),
+		Triple([0,1,2], [2,1,0], [ArrayReplace(2,2,0), ArrayReplace(0,0,2)]),
+		Triple([0,1,2], [2,2,2], [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]),
+		Triple([0,1,2], [2,2,2], [ArrayReplace(1,1,2), ArrayReplace(0,0,2)]),
+
+		Triple([0,1,2,3], [0,2,4], [ArrayReplace(3,2,4), ArrayRemove(1,1)]),
+		Triple([0,1,2,3], [0,2,2,3,5], [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]),
+		Triple([0,1,2,3], [0,2,2,3,5], [ArrayInsert(4,4,5), ArrayReplace(1,1,2)]),
+		Triple([0,1,2,3,4], [1,2,3,5,6], [ArrayReplace(4,4,6), ArrayInsert(4,3,5), ArrayRemove(0,0)]),
+	];
+	iteri(assertTests, \i, t -> {
+		source = t.first;
+		target = t.second;
+		protocol = t.third;
+		assertEquals(arrayDiff(source, target, fullProtocol), protocol);
+	});
+	println("   PASSED");
+
+	a2s = \a -> map(a, toString);
+
+	testData : [Pair<[string], [string]>] = [
+		Pair(
+			["The", " ", "boy", " ", "walked", " ", "down", " ", "the", " ", "street", "." ],
+			["The", " ", "boy", " ", "is", " ", "walks", " ", "down", " ", "the", " ", "street", "." ]
+		),
+		Pair(
+			["The", " ", "boy walked", " ", "down", " ", "the", " ", "street", "."],
+			["The", " ", "boy is walks down", " ", "the", " ", "street", "."]
+		),
+		Pair(
+			[0, 1, 2, 1, 4,  1, 6,        1, 8, 1, 10, 11, 12] |> a2s,
+			[0, 1, 2, 1, 21, 1, 22, 1, 6, 1, 8, 1, 10, 11, 12] |> a2s
+		)
+	];
+
+	randomInt = \upto : int-> {
+		floor(random() * i2d(upto));
+	}
+
+	makeRandomData = \source, target -> {
+		Pair(
+			generate(0, source, \i -> i2s(randomInt(i))),
+			generate(0, target, \i -> i2s(randomInt(i)))
+		)
+	}
+
+	randomTestData : [Pair<[string], [string]>] =
+		generate(0, 1000, \__ -> {
+			minLength = 3;
+			maxLength = 100;
+			makeRandomData(
+				minLength + randomInt(maxLength),
+				minLength + randomInt(maxLength)
+			)
+		}
+	);
+
+	sizeTestData : [Pair<[string], [string]>] =
+		generate(1, 10, \i -> {
+			len = i * 200;
+			makeRandomData(len, len);
+		});
+
+	// tests1 = [
+	// 	Pair(
+	// 		["0", "0", "1", "2", "3", "4", "5", "1", "1", "4"],
+	// 		["0", "0", "0", "1", "3", "2", "4", "4", "4", "1"]
+	// 	)
+	// ];
+
+	processTest = \i, t, swap, reportTime -> {
+			source = t.first;
+			target = t.second;
+			protocol = ref [];
+
+			t1 = timeit(\-> {
+				protocol := if (swap) arrayDiffWithSwapp(source, target, false) else arrayDiff(source, target, false);
+			});
+
+			restoredTarget = ref [];
+			t2 = timeit(\ -> {
+				restoredTarget := applyProtocolInvariant(source, ^protocol);
+			})
+
+			if (target != ^restoredTarget) {
+				println("== " + i2s(i+1));
+				println("Target != restoredTarget");
+				printInfo("source", source, true);
+				printInfo("target", target, true);
+				printInfo("restoredTarget", ^restoredTarget, true);
+				printInfo("protocol", ^protocol, false);
+				fail("Test failed.");
+			}
+		if (reportTime) {
+			println("  [" + lpad(i2s(i + 1), " ", 2) + "] " + lpad(i2s(length(t.first)), " ", 4) + " -> " + lpad(i2s(round(t1)), " ", 6) + " / " + rpad(i2s(round(t2)), " ", 6));
+		}
+	}
+
+	processTests = \title, tests, reportTime -> {
+		t1 = timeit(\-> {
+			println(title + ": running NO SWAP " + i2s(length(tests)) + " tests...");
+			iteri(tests, \i, t -> processTest(i, t, false, reportTime));
+		})
+		println("   PASSED in " + i2s(round(t1)) + " ms");
+
+		t2 = timeit(\ -> {
+			println(title + ": running SWAP " + i2s(length(tests)) + " tests...");
+			iteri(tests, \i, t -> processTest(i, t, true, reportTime));
+		});
+		println("   PASSED in " + i2s(round(t2)) + " ms");
+	}
+
+	processTests("STATIC", testData, false);
+	processTests("RANDOM", randomTestData, false);
+	processTests("SIZE", sizeTestData, true);
+
+	println("");
+
+
+	quit(0);
+}

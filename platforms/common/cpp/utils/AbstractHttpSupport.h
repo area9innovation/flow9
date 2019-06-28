@@ -3,22 +3,24 @@
 
 #include "core/ByteCodeRunner.h"
 
+#include "utils/flowfilestruct.h"
+
 struct HttpRequest {
     typedef std::map<unicode_string,unicode_string> T_SMap;
+    typedef std::map<unicode_string,FlowFile*> T_FileMap;
 
     int req_id;
 
     unicode_string url;
     unicode_string method;
     std::vector<uint8_t> payload;
-    T_SMap headers, params, attachments;
+    T_SMap headers, params;
+    T_FileMap attachments;
 
     bool is_media_preload;
     StackSlot data_cb, error_cb, status_cb, done_cb, response_cb;
 
-    std::vector<unicode_string> file_types;
-
-    StackSlot cancel_cb, select_cb, open_cb, progress_cb;
+    StackSlot open_cb, progress_cb;
 
     bool is_utf;
     std::string tmp_filename;
@@ -32,7 +34,7 @@ struct HttpRequest {
         req_id = 0;
         is_media_preload = false;
         data_cb = error_cb = status_cb = done_cb = response_cb = StackSlot::MakeVoid();
-        cancel_cb = select_cb = open_cb = progress_cb = StackSlot::MakeVoid();
+        open_cb = progress_cb = StackSlot::MakeVoid();
         tmp_file = NULL;
         aux_data = NULL;
     }
@@ -47,26 +49,21 @@ struct HttpRequest {
 
 inline GarbageCollectorFn operator<<(GarbageCollectorFn ref, HttpRequest &rq) {
     ref << rq.data_cb << rq.error_cb << rq.status_cb << rq.response_cb << rq.done_cb;
-    ref << rq.cancel_cb << rq.select_cb << rq.open_cb << rq.progress_cb;
+    ref << rq.open_cb << rq.progress_cb;
     return ref;
 }
-
-class QFileSystemInterface;
 
 class AbstractHttpSupport : public NativeMethodHost {
     typedef STL_HASH_MAP<int, HttpRequest> T_active_requests;
 
     int next_http_request;
     T_active_requests active_requests; // ROOT
-    int active_file_selection;
 
     void decodeMap(ByteCodeRunner*, HttpRequest::T_SMap*, const StackSlot &marr);
     void cancelRequest(int id);
 
     unicode_string parseDataBytes(const void * buffer, size_t count);
     unicode_string urlencode(const unicode_string &url);
-
-    friend class QFileSystemInterface;
 
 public:
     typedef std::map<unicode_string, unicode_string> HeadersMap;
@@ -93,18 +90,12 @@ protected:
     void flowGCObject(GarbageCollectorFn ref);
 
     HttpRequest *getRequestById(int id);
-    int getActiveFileSelection() { return active_file_selection; }
-
-    void deliverSelectCancel(int id);
-    bool deliverSelectOK(int id, unicode_string name, int size);
 
     void processAttachmentsAsMultipart(HttpRequest& request);
     void processRequest(HttpRequest& request);
 
     virtual void doRequest(HttpRequest &rq) = 0;
-    virtual bool doSelectFile(HttpRequest &) { return false; }
 
-    virtual void doCancelSelect() {}
     virtual void doCancelRequest(HttpRequest &) {}
     
     virtual void doRemoveUrlFromCache(const unicode_string &/*url*/) {}
@@ -121,19 +112,19 @@ protected:
 private:
     static StackSlot cbCancel(ByteCodeRunner*, StackSlot*, void*);
 
-    DECLARE_NATIVE_METHOD(httpRequest);
-    DECLARE_NATIVE_METHOD(preloadMediaUrl);
-    DECLARE_NATIVE_METHOD(uploadFile);
-    DECLARE_NATIVE_METHOD(downloadFile);
-    DECLARE_NATIVE_METHOD(removeUrlFromCache);
-    DECLARE_NATIVE_METHOD(clearUrlCache);
-    DECLARE_NATIVE_METHOD(getAvailableCacheSpaceMb);
-    DECLARE_NATIVE_METHOD(systemDownloadFile);
-    DECLARE_NATIVE_METHOD(sendHttpRequestWithAttachments);
+    DECLARE_NATIVE_METHOD(httpRequest)
+    DECLARE_NATIVE_METHOD(preloadMediaUrl)
+    DECLARE_NATIVE_METHOD(uploadNativeFile)
+    DECLARE_NATIVE_METHOD(downloadFile)
+    DECLARE_NATIVE_METHOD(removeUrlFromCache)
+    DECLARE_NATIVE_METHOD(clearUrlCache)
+    DECLARE_NATIVE_METHOD(getAvailableCacheSpaceMb)
+    DECLARE_NATIVE_METHOD(systemDownloadFile)
+    DECLARE_NATIVE_METHOD(sendHttpRequestWithAttachments)
 
-    DECLARE_NATIVE_METHOD(httpCustomRequestNative);
+    DECLARE_NATIVE_METHOD(httpCustomRequestNative)
 
-    DECLARE_NATIVE_METHOD(deleteAppCookies);
+    DECLARE_NATIVE_METHOD(deleteAppCookies)
 };
 
 #endif

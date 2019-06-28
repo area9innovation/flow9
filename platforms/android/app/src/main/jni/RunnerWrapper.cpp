@@ -252,7 +252,9 @@ static jfieldID c_ptr_field = NULL;
 	CALLBACK(cbOpenWSClient, "(Ljava/lang/String;I)Lorg/java_websocket/client/WebSocketClient;") \
 	CALLBACK(cbHasBufferedDataWSClient, "(Lorg/java_websocket/client/WebSocketClient;)Z") \
 	CALLBACK(cbSendMessageWSClient, "(Lorg/java_websocket/client/WebSocketClient;Ljava/lang/String;)Z") \
-	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V")
+	CALLBACK(cbCloseWSClient, "(Lorg/java_websocket/client/WebSocketClient;ILjava/lang/String;)V") \
+	CALLBACK(cbOpenFileDialog, "(I[Ljava/lang/String;I)V") \
+	CALLBACK(cbGetFileType, "(Ljava/lang/String;)Ljava/lang/String;")
 
 
 #define CALLBACK(id, type) static jmethodID id = NULL;
@@ -893,10 +895,16 @@ NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverWebSocketOnOpen
     WRAPPER(getWebSockets()->deliverOnOpen(callbacksKey));
 }
 
+NATIVE(void) Java_dk_area9_flowrunner_FlowRunnerWrapper_nDeliverOpenFileDialogResult
+        (JNIEnv *env, jobject obj, jlong ptr, jint callbackRoot, jobjectArray filePaths)
+{
+    WRAPPER(getFSInterface()->deliverOpenFileDialogCallback(callbackRoot, filePaths));
+}
+
 AndroidRunnerWrapper::AndroidRunnerWrapper(JNIEnv *env, jobject owner_obj)
     : env(env), owner(owner_obj),
       runner(), renderer(this), http(this), sound(this), localytics(this), purchase(this), notifications(this), store(&runner),
-      geolocation(this), fsinterface(&runner), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
+      geolocation(this), fsinterface(this), mediaStream(this), webrtcSupport(this), mediaRecorder(this), websockets(this)
 {
     bytecode_ok = main_ok = false;
     flow_time_profiling_enabled = false;
@@ -2580,4 +2588,56 @@ void AndroidWebSocketSupport::doClose(StackSlot websocket, int code, unicode_str
     jstring reason_str = string2jni(env, reason);
     env->CallVoidMethod(owner->owner, cbCloseWSClient, websocketNative->websocket, code, reason_str);
     owner->eatExceptions();
+}
+
+AndroidFileSystemInterface::AndroidFileSystemInterface(AndroidRunnerWrapper *owner) : FileSystemInterface(&owner->runner), owner(owner)
+{
+
+}
+
+void AndroidFileSystemInterface::deliverOpenFileDialogCallback(jint callbackRoot, jobjectArray filePaths)
+{
+    RUNNER_VAR = owner->getRunner();
+    JNIEnv *env = owner->env;
+    RUNNER_DefSlots1(flowFilesArray);
+
+    int length = env->GetArrayLength(filePaths);
+    flowFilesArray = RUNNER->AllocateArray(length);
+
+    for (int i = 0; i < length; ++i) {
+        jstring path = (jstring)env->GetObjectArrayElement(filePaths, i);
+
+        FlowFile *file = new FlowFile(RUNNER, jni2string(env, path));
+        RUNNER->SetArraySlot(flowFilesArray, i, RUNNER->AllocNative(file));
+
+        env->DeleteLocalRef(path);
+    }
+
+    RUNNER->EvalFunction(RUNNER->LookupRoot(callbackRoot), 1, flowFilesArray);
+
+    RUNNER->ReleaseRoot(callbackRoot);
+}
+
+void AndroidFileSystemInterface::doOpenFileDialog(int maxFilesCount, std::vector<std::string> fileTypes, StackSlot callback)
+{
+    JNIEnv *env = owner->env;
+    jobjectArray types = string_array2jni(owner->env, fileTypes);
+    int callbackRoot = owner->getRunner()->RegisterRoot(callback);
+    env->CallVoidMethod(owner->owner, cbOpenFileDialog, maxFilesCount, types, callbackRoot);
+    owner->eatExceptions();
+}
+
+std::string AndroidFileSystemInterface::doFileType(const StackSlot &file)
+{
+    RUNNER_VAR = owner->getRunner();
+    JNIEnv *env = owner->env;
+    FlowFile *flowFile = RUNNER->GetNative<FlowFile*>(file);
+
+    jstring filepath = string2jni(env, flowFile->getFilepath());
+    jstring jmimetype = (jstring) env->CallObjectMethod(owner->owner, cbGetFileType, filepath);
+    owner->eatExceptions();
+    std::string mimetype = jni2string(env, jmimetype);
+    env->DeleteLocalRef(jmimetype);
+    env->DeleteLocalRef(filepath);
+    return mimetype;
 }

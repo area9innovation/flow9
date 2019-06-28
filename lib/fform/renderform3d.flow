@@ -1,18 +1,19 @@
 import rendersupport3d;
 import fform/fform;
+import fusion_utils;
 
 export {
 	F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, style : [F3DStageStyle]) -> FForm;
 		F3DStageStyle ::= F3DIgnoreMouseEvents, F3DExportScene, F3DTransformControlsEnabled, F3DAttachTransformControls;
 			F3DIgnoreMouseEvents();
-			F3DExportScene(fn : ref () -> string);
+			F3DExportScene(fn : ref Maybe<(includeCamera : bool) -> string>);
 			F3DTransformControlsEnabled(enabled : Transform<bool>); // const(false) by default, doesn't affect F3DTransformControls
 			F3DAttachTransformControls(fn : ref (clip : native, attach : bool) -> void);
 
-	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DPosition, F3DRotation, F3DScale, F3DLookAt,
+	F3DObject ::= F3DScene, F3DMutable, F3DVisible, F3DPosition, F3DRotation, F3DScale, F3DLookAt, F3DOnLoad,
 		F3DInspectRotation, F3DInspectPosition, F3DInspectScale, F3DInspectBoundingSphereCenter, F3DInspectBoundingSphereMin,
 		F3DInspectBoundingSphereMax, F3DCamera, F3DLight, F3DMesh, F3DTransformControls, F3DLoader, F3DGLTFLoader, F3DSceneLoader,
-		F3DChildren, F3DNative, F3DJsonObject, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
+		F3DChildren, F3DNative, F3DJsonObject, F3DObject2Json, F3DBoxHelper, F3DAxesHelper, F3DGridHelper, F3DInteractive;
 
 		F3DScene(objects : Transform<[F3DObject]>);
 		F3DMutable(object : Transform<F3DObject>);
@@ -22,6 +23,8 @@ export {
 		F3DRotation(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DScale(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>);
 		F3DLookAt(object : F3DObject, x : Transform<double>, y : Transform<double>, z : Transform<double>, update : DynamicBehaviour<bool>);
+
+		F3DOnLoad(object : F3DObject, onLoad : (native) -> void);
 
 		F3DInspectRotation(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
 		F3DInspectPosition(object : F3DObject, x : DynamicBehaviour<double>, y : DynamicBehaviour<double>, z : DynamicBehaviour<double>);
@@ -40,12 +43,14 @@ export {
 		F3DSceneLoader(url : string);
 		F3DChildren(object : F3DObject, fn : (F3DNative) -> F3DNative);
 
-		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable;
+		F3DNative ::= F3DNativeObject, F3DNativeScene, F3DNativeMutable, F3DNativeOnLoad;
 			F3DNativeObject(object : native);
 			F3DNativeScene(scene : native, objects : Transform<[F3DNative]>);
 			F3DNativeMutable(object : Transform<F3DNative>);
+			F3DNativeOnLoad(object : F3DNative, onLoad : (native) -> void);
 
 		F3DJsonObject(json : string);
+		F3DObject2Json(object : F3DObject, jsonFn : ref Maybe<(includeCamera : bool) -> string>);
 
 		F3DBoxHelper(object : F3DObject, enabled : DynamicBehaviour<bool>);
 		F3DAxesHelper(size : double);
@@ -70,10 +75,13 @@ export {
 				F3DCylinderGeometry(radiusTop : double, radiusBottom : double, height : double, radialSegments : int, heightSegments : int, openEnded : bool, thetaStart : double, thetaLength : double);
 				F3DNativeGeometry(geometry : native);
 
-			F3DMaterial ::= F3DMeshBasicMaterial, F3DTextureLoader, F3DNativeMaterials;
-				F3DMeshBasicMaterial(color : int, parameters : Tree<string, string>);
+			F3DMaterial ::= F3DMeshBasicMaterial, F3DMeshStandardMaterial, F3DTextureLoader, F3DNativeMaterials;
+				F3DMeshBasicMaterial(color : int, parameters : [KeyValue]);
+				F3DMeshStandardMaterial(color : int, parameters : [KeyValue]);
 				F3DTextureLoader(material : F3DMaterial, url : string);
 				F3DNativeMaterials(materials : native);
+
+					F3DMaterialParameter(name : string, value : string);
 }
 
 handled3DMouseDown : ref bool = ref false;
@@ -118,7 +126,9 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 								render3dform(scene, clip, transformControlsEnabled, \s -> {
 									set3DScene(clip, s);
 
-									maybeApply(tryExtractStruct(style, F3DExportScene(ref \ -> "")), \es -> es.fn := \ -> get3DObjectJSON(s));
+									maybeApply(tryExtractStruct(style, F3DExportScene(ref None())), \es ->
+										es.fn := Some(\includeCamera -> get3DObjectJSON(s, includeCamera))
+									);
 
 									addF3DMouseListeners(clip, s, transformControlsEnabled);
 								})
@@ -141,10 +151,10 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 												mi.x,
 												mi.y
 											);
-										}
 
-										if (!^handled3DMouseDown) {
-											clear3DTransformControls(clip);
+											if (!^handled3DMouseDown) {
+												clear3DTransformControls(clip);
+											}
 										}
 
 										false;
@@ -204,12 +214,14 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 										false;
 									}),
 									MouseMove(\mi -> {
-										emit3DMouseEvent(
-											clip,
-											"mousemove",
-											mi().x,
-											mi().y
-										);
+										if (mi().inside) {
+											emit3DMouseEvent(
+												clip,
+												"mousemove",
+												mi().x,
+												mi().y
+											);
+										}
 
 										false;
 									}),
@@ -271,29 +283,26 @@ F3DStage(wh : Transform<WidthHeight>, scene : F3DObject, camera : F3DObject, sty
 render3dform(object : F3DObject, stage : native, transformControlsEnabled : Transform<bool>, onLoad : (native) -> [() -> void]) -> [() -> void] {
 	switch (object : F3DObject) {
 		F3DScene(objects) : {
-			clip = make3DScene();
+			scene = make3DScene();
 
 			concat(
-				onLoad(clip),
+				onLoad(scene),
 				[
-					makeSubscribeUns(objects, \ob ->
-						map(ob, \o ->
-							render3dform(
-								o,
-								stage,
-								transformControlsEnabled,
-								\c -> {
-									add3DChild(clip, c);
-
-									arrayPush(
-										addF3DMouseListeners(stage, c, transformControlsEnabled),
-										\ -> remove3DChild(clip, c)
-									)
-								}
-							)
+					fiteriu(objects, \index, o -> {
+						render3dform(
+							o,
+							stage,
+							transformControlsEnabled,
+							\c ->
+								concat(
+									addF3DMouseListeners(stage, c, transformControlsEnabled),
+									[
+										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
+										\ -> remove3DChild(scene, c)
+									]
+								)
 						)
-						|> concatA
-					)()
+					})
 				]
 			)
 		}
@@ -320,6 +329,20 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 					)
 				)()
 			]
+		}
+		F3DNativeOnLoad(innerObject, innerOnLoad) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					d = onLoad(clip);
+					innerOnLoad(clip);
+					d;
+				}
+			);
+
+			r;
 		}
 		F3DVisible(innerObject, visible) : {
 			r = render3dform(
@@ -405,6 +428,20 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 							make4Subscribe(x, y, z, update, \v1, v2, v3, __ -> set3DObjectLookAt(clip, v1, v2, v3))()
 						]
 					)
+			);
+
+			r;
+		}
+		F3DOnLoad(innerObject, innerOnLoad) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					d = onLoad(clip);
+					innerOnLoad(clip);
+					d;
+				}
 			);
 
 			r;
@@ -653,33 +690,40 @@ render3dform(object : F3DObject, stage : native, transformControlsEnabled : Tran
 			concat(
 				onLoad(scene),
 				[
-					makeSubscribeUns(objects, \ob ->
-						map(ob, \o ->
-							render3dform(
-								o,
-								stage,
-								transformControlsEnabled,
-								\c -> {
-									if (!contains(get3DObjectChildren(scene), c)) {
-										add3DChild(scene, c);
-
-										arrayPush(
-											addF3DMouseListeners(stage, c, transformControlsEnabled),
-											\ -> remove3DChild(scene, c)
-										)
-									} else {
-										[]
-									}
-								}
-							)
+					fiteriu(objects, \index, o -> {
+						render3dform(
+							o,
+							stage,
+							transformControlsEnabled,
+							\c ->
+								concat(
+									addF3DMouseListeners(stage, c, transformControlsEnabled),
+									[
+										makeSubscribe(index, \i -> add3DChildAt(scene, c, i))(),
+										// \ -> remove3DChild(scene, c) TODO:
+									]
+								)
 						)
-						|> concatA
-					)()
+					})
 				]
 			)
 		}
 		F3DJsonObject(json) : {
 			onLoad(make3DObjectFromJSON(json));
+		}
+		F3DObject2Json(innerObject, jsonFn) : {
+			r = render3dform(
+				innerObject,
+				stage,
+				transformControlsEnabled,
+				\clip -> {
+					jsonFn := Some(\includeCamera -> get3DObjectJSON(clip, includeCamera));
+
+					onLoad(clip);
+				}
+			);
+
+			r;
 		}
 		F3DBoxHelper(innerObject, enabled) : {
 			r = render3dform(
@@ -806,7 +850,10 @@ renderF3DGeometry(geometry : F3DGeometry) -> native {
 renderF3DMaterial(material : F3DMaterial) -> native {
 	switch (material : F3DMaterial) {
 		F3DMeshBasicMaterial(color, parameters) : {
-			make3DMeshBasicMaterial(color, parameters |> tree2pairs |> (\p -> map(p, \v -> [v.first, v.second])));
+			make3DMeshBasicMaterial(color, map(parameters, \v -> [v.key, v.value]));
+		}
+		F3DMeshStandardMaterial(color, parameters) : {
+			make3DMeshStandardMaterial(color, map(parameters, \v -> [v.key, v.value]));
 		}
 		F3DTextureLoader(innerMaterial, url) : {
 			load3DTexture(renderF3DMaterial(innerMaterial), url);
@@ -819,32 +866,20 @@ renderF3DMaterial(material : F3DMaterial) -> native {
 
 parseF3DNativeObject(object : native) -> Pair<F3DNative, [() -> void]> {
 	children = make(get3DObjectChildren(object));
-	uns = ref [];
+	uns = ref nop;
 
 	Pair(
-		F3DNativeMutable(fselect(children, FLift(\ch -> {
-			dispUnsA(uns);
-
-			if (length(ch) > 0) {
-				parsedChildren =
-					fold(ch, Pair([], []), \acc, c -> {
-						cc = parseF3DNativeObject(c);
-
-						Pair(arrayPush(acc.first, cc.first), concat(acc.second, cc.second));
-					});
-
-				uns := parsedChildren.second;
-
-				F3DNativeScene(object, const(parsedChildren.first));
-			} else {
-				F3DNativeObject(object);
-			}
-		}))),
+		F3DNativeScene(object, fmapu(children, parseF3DNativeObject)),
 		[
 			add3DEventListener(object, "childrenchanged", \ -> {
-				next(children, get3DObjectChildren(object));
+				^uns();
+				newChildren = get3DObjectChildren(object);
+
+				if (map(getValue(children), get3DObjectId) != map(newChildren, get3DObjectId)) {
+					uns := interruptibleTimer(33, \ -> next(children, newChildren));
+				}
 			}),
-			\ -> dispUnsA(uns)
+			\ -> ^uns()
 		]
 	)
 }
