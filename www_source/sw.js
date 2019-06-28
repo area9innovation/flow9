@@ -30,6 +30,37 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
+  // Get rid of temporary url parameters which has no effect on caching
+  var fixRequestUrl = function(url) {
+    if (url === null || url === undefined) {
+      return url;
+    } else {
+      return (url.split("&").filter(function(a) {
+        return !a.startsWith("jwt=") && !a.startsWith("t=") && !a.startsWith("key=");
+      }).join("&"));
+    }
+  }
+
+  // Re-create request object with fixed Url to store in cache
+  var fixRequest = function(request) {
+    return (new Request(fixRequestUrl(event.request.url), {
+      method: request.method,
+      headers: request.header,
+      body: fixRequestUrl(request.body),
+      mode: request.mode,
+      credentials: request.credentials,
+      cache: request.cache,
+      redirect: request.redirect,
+      referrer: request.referrer,
+      integrity: request.integrity
+    }));
+  }
+
+  var chechCachedParameter = function(request) {
+    return request.url.includes("cached=1") ||
+      (request.body !== null && request.body !== undefined && request.body.includes("cached=1"));
+  }
+
   var sendMessageToClient = function(data) {
     if (!event.clientId) return;
 
@@ -58,7 +89,7 @@ self.addEventListener('fetch', function(event) {
   }
 
   var getResourceFromCache = function(ignoreSearch) {
-    return caches.match(event.request, { ignoreSearch: ignoreSearch })
+    return caches.match(fixRequest(event.request), { ignoreSearch: ignoreSearch })
       .then(function(response) {
         if (!response) return Promise.reject();
 
@@ -87,9 +118,9 @@ self.addEventListener('fetch', function(event) {
       if (CacheMode.CacheStaticContent && response.status == 200 && response.type == "basic") {
         var url = new URL(event.request.url);
 
-        // Let's cache all static resources here
+        // Let's cache all static resources here or resources with parameter cached=1
         return Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
-          if (!url.pathname.endsWith(resourceName)) {
+          if (!url.pathname.endsWith(resourceName) || chechCachedParameter(event.request)) {
             return Promise.resolve();
           } else {
             // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
@@ -105,7 +136,7 @@ self.addEventListener('fetch', function(event) {
           }
         })).then(function() {
           caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, response);
+            cache.put(fixRequest(event.request), response);
 
             sendMessageToClient({
               msg: "Cached resource:",
@@ -139,7 +170,7 @@ self.addEventListener('fetch', function(event) {
     return caches
       .open(rangeResourceCache)
       .then(function(cache) {
-        return cache.match(event.request.url);
+        return cache.match(fixRequestUrl(event.request.url));
       })
       .then(function(res) {
         if (!res) {
@@ -150,7 +181,7 @@ self.addEventListener('fetch', function(event) {
                 return caches
                   .open(rangeResourceCache)
                   .then(function(cache) {
-                    return cache.put(event.request, clonedRes);
+                    return cache.put(fixRequest(event.request), clonedRes);
                   })
                   .then(function() {
                     return res;
