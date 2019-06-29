@@ -278,6 +278,9 @@ void GLTextClip::layoutTextWrapLines()
         extent->layout.reset();
 
         // Word-wrapping loop:
+        if (rtl) {
+            wordwrap = false;
+        }
         do {
             cur_char = ctexti->position();
 

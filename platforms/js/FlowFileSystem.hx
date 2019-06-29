@@ -150,6 +150,9 @@ class FlowFileSystem {
 			#if sys
 			return sys.FileSystem.fullPath(dir);
 			#elseif (js && (flow_nodejs || nwjs))
+			if (StringTools.startsWith(dir, "~"))
+				return js.node.Os.homedir() + dir.substr(1);
+
 			return Fs.realpathSync(dir);
 			#else
 			return dir;
@@ -164,9 +167,6 @@ class FlowFileSystem {
 		return d;
 	}
 
-	#if js
-	private static var JSFileInput : Dynamic = null;
-	#end
 	public static function openFileDialog(maxFiles : Int, fileTypes : Array<String>, callback : Array<Dynamic> -> Void) : Void {
 		#if flash
 
@@ -187,20 +187,13 @@ class FlowFileSystem {
 
 		#elseif (js && !flow_nodejs)
 
-		// Remove element before trying to create.
-		// If we don't do that, file open dialog opens only first time.
-		if (JSFileInput) {
-			js.Browser.document.body.removeChild(JSFileInput);
-			JSFileInput = null;
-		}
 		// Appending JSFileInput element to the DOM need only for Safari 5.1.7 & IE11 browsers.
 		// If we don't append it, calling function 'click()' failed on these browsers.
-		if (!JSFileInput) {
-			JSFileInput = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
- 			JSFileInput.type = "file";
-			JSFileInput.style.visibility = "hidden";
-			if (maxFiles != 1)
-				JSFileInput.multiple = true;
+		var jsFileInput : Dynamic = js.Browser.document.body.appendChild(js.Browser.document.createElement("INPUT"));
+		jsFileInput.type = "file";
+		jsFileInput.style.visibility = "hidden";
+		if (maxFiles != 1) {
+			jsFileInput.multiple = true;
 		}
 
 
@@ -212,13 +205,13 @@ class FlowFileSystem {
 			fTypes += fType + ",";
 		}
 
-		JSFileInput.accept = fTypes;
-		JSFileInput.value = ""; // force onchange event for the same path
+		jsFileInput.accept = fTypes;
+		jsFileInput.value = ""; // force onchange event for the same path
 
-		JSFileInput.onchange = function(e : Dynamic) {
-			JSFileInput.onchange = null;
+		jsFileInput.onchange = function(e : Dynamic) {
+			jsFileInput.onchange = null;
 
-			var files : js.html.FileList = JSFileInput.files;
+			var files : js.html.FileList = jsFileInput.files;
 
 			var fls : Array<js.html.File> = [];
 			for (idx in 0...Math.floor(Math.min(files.length, maxFiles))) {
@@ -226,117 +219,23 @@ class FlowFileSystem {
 			}
 
 			callback(fls);
+			js.Browser.document.body.removeChild(jsFileInput);
 		};
 
 		//workaround for case when cancel was pressed and onchange isn't fired
 		var onFocus : Dynamic = null;
-		onFocus = function(e : Dynamic) {			
+		onFocus = function(e : Dynamic) {
 			js.Browser.window.removeEventListener("focus", onFocus);
 
-			//onfocus is fired before the change of JSFileInput value
+			//onfocus is fired before the change of jsFileInput value
 			haxe.Timer.delay(function() {
-				JSFileInput.dispatchEvent(new js.html.Event("change"));
+				jsFileInput.dispatchEvent(new js.html.Event("change"));
 			}, 500);
 		}
 		js.Browser.window.addEventListener("focus", onFocus);
 
-		JSFileInput.click();
+		jsFileInput.click();
 		#end
-	}
-
-	public static function uploadNativeFile(
-			file : FlowFile, 
-			url : String, 
-			params: Array<Array<String>>, 
-			onOpenFn: Void -> Void,
-			onDataFn: String -> Void,
-			onErrorFn: String -> Void,
-			onProgressFn: Float -> Float -> Void,
-			onCancelFn: Void -> Void) : Void -> Void {
-
-		var cancelFn = function() {};
-
-		#if flash
-
-		cancelFn = function() {
-			file.cancel();
-		}
-
-		file.addEventListener(flash.events.IOErrorEvent.IO_ERROR, function(e) {
-			onErrorFn(e);
-		});
-
-		file.addEventListener(flash.events.Event.OPEN, function(e) {
-			onOpenFn();
-		});
-
-		file.addEventListener(flash.events.DataEvent.UPLOAD_COMPLETE_DATA, function(e: flash.events.DataEvent) {
-			onDataFn(e.data);
-		});
-
-		file.addEventListener(flash.events.ProgressEvent.PROGRESS, function(e: flash.events.ProgressEvent) {
-			onProgressFn(e.bytesLoaded, e.bytesTotal);
-		});
-
-		file.addEventListener(flash.events.Event.CANCEL, function(e) {
-			onCancelFn();
-		});
-
-		var request = new flash.net.URLRequest(url);
-		request.method = flash.net.URLRequestMethod.POST;
-		var vars = new flash.net.URLVariables();
-
-		var payloadName = "";
-
-		for (param in params) {
-			var key = param[0];
-			var value = param[1];
-			if (key != "uploadDataFieldName") {
-				Reflect.setField(vars, key, value);
-			} else {
-				payloadName = value;
-			}
-		}
-
-		request.data = vars;
-
-		if (payloadName == "") {
-			file.upload(request);
-		} else {
-			file.upload(request, payloadName);
-		}
-
-		#elseif (js && !flow_nodejs)
-
-		onOpenFn();
-
-		var xhr : Dynamic = untyped __js__ ("new XMLHttpRequest()");
-		xhr.onload = xhr.onerror = function() {
-			if(xhr.status != 200) { onErrorFn("" + xhr.status); } else { onDataFn(xhr.responseText); }
-		};
-
-		xhr.upload.onprogress = function(event) {
-			onProgressFn(event.loaded, event.total);
-		};
-
-		var form_data : Dynamic = untyped __js__ ("new FormData()");
-		form_data.append("Filename", file.name);
-
-		var payloadName = "Filedata";
-		for (p in params) {
-			if (p[0] != "uploadDataFieldName") {
-				form_data.append(p[0], p[1]);
-			} else {
-				payloadName = p[1];
-			}
-		};
-		form_data.append(payloadName, file);
-
-		xhr.open("POST", url, true);
-		xhr.send(form_data);
-		#end
-
-		return cancelFn;
 	}
 
 	public static function fileName(file : FlowFile) : String {

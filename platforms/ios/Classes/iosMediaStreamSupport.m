@@ -1,3 +1,5 @@
+#ifdef FLOW_MEDIASTREAM
+
 #include "iosMediaStreamSupport.h"
 
 #include "RunnerMacros.h"
@@ -184,3 +186,5 @@ void iosMediaStreamSupport::stopStream(StackSlot mediaStream)
     RUNNER->ReleaseRoot(flowMediaStream->onErrorRoot);
     flowMediaStream->release();
 }
+
+#endif /* FLOW_MEDIASTREAM */

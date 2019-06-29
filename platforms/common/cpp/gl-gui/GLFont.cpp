@@ -1018,6 +1018,8 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
 }
 
 ucs4_char GLTextLayout::tryMirrorChar(ucs4_char code) {
+	// Does not mirror 0x3C and 0x3E hence they're supposed to be
+	// HTML tag delimiters and all our texts are HTML-encoded.
     #define PAIRS_COUNT 6
     ucs4_char chars[PAIRS_COUNT*2] = {0x28, 0x29, 0x5B, 0x5D, 0x7D, 0x7B, 0xBB, 0xAB, 0x2019, 0x2018, 0x201C, 0x201D};
     for (int i=0; i<PAIRS_COUNT*2; ++i) if (chars[i] == code) return chars[i^1];

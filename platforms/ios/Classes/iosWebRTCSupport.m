@@ -1,3 +1,5 @@
+#ifdef FLOW_MEDIASTREAM
+
 #include "iosWebRTCSupport.h"
 
 #include "RunnerMacros.h"
@@ -303,3 +305,4 @@ RTCConfiguration* iosWebRTCSupport::createRTCConfiguration(std::vector<unicode_s
     
     return configuration;
 }
+#endif /* FLOW_MEDIASTREAM */

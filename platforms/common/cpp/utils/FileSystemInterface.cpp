@@ -2,11 +2,14 @@
 
 #include "core/RunnerMacros.h"
 #include "utils/AbstractHttpSupport.h"
+#include "utils/flowfilestruct.h"
 
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+
+#include <utils/base64.h>
 
 #ifndef _MSC_VER
 	#include <dirent.h>
@@ -28,6 +31,38 @@
 
 #endif
 
+
+class TextCodec {
+    static const char *ENC_UTF8;
+    static const char *ENC_CP1252;
+public:
+    static const char *SUPPORTED_ENCODINGS[2];
+    static unicode_string decode(std::vector<uint8_t> blob, std::string encoding) {
+        unicode_string r;
+        if (encoding=="auto") {
+            for (signed char i=sizeof(SUPPORTED_ENCODINGS)/sizeof(SUPPORTED_ENCODINGS[0])-1; i>=0; --i) {
+                std::string enc(SUPPORTED_ENCODINGS[i]);
+                r = decode(blob, enc);
+                if (r.find(0xfffd) == std::string::npos) {
+                    return r;
+                }
+
+            }
+            return r;
+        }
+
+        // Put each decoding line to separate func and hash mapping when more encodings support added.
+        if (encoding==ENC_UTF8) return parseUtf8(std::string(blob.begin(), blob.end()));
+
+        if (encoding==ENC_CP1252) return unicode_string(blob.begin(), blob.end());
+
+        return r;
+    }
+};
+
+const char *TextCodec::ENC_UTF8 = "UTF8";
+const char *TextCodec::ENC_CP1252 = "CP1252";
+const char *TextCodec::SUPPORTED_ENCODINGS[2] = {TextCodec::ENC_CP1252, TextCodec::ENC_UTF8};
 
 FileSystemInterface::FileSystemInterface(ByteCodeRunner *owner)
     : NativeMethodHost(owner), owner(owner)
@@ -57,7 +92,6 @@ NativeFunction *FileSystemInterface::MakeNativeFunction(const char *name, int nu
 
     TRY_USE_NATIVE_METHOD(FileSystemInterface, getFileByPath, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, openFileDialog, 3);
-    TRY_USE_NATIVE_METHOD(FileSystemInterface, uploadNativeFile, 8);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileName, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileType, 1);
     TRY_USE_NATIVE_METHOD(FileSystemInterface, fileSizeNative, 1);
@@ -209,12 +243,7 @@ StackSlot FileSystemInterface::fileSize(RUNNER_ARGS)
     RUNNER_CheckTag1(TString, name_str);
 
     std::string filename = encodeUtf8(RUNNER->GetString(name_str));
-
-    struct stat info;
-    if (stat(filename.c_str(), &info) < 0)
-        return StackSlot::MakeDouble(0);
-
-    return StackSlot::MakeDouble(info.st_size);
+    return StackSlot::MakeDouble(FlowFile::getFileSize(filename));
 }
 
 StackSlot FileSystemInterface::fileModified(RUNNER_ARGS)
@@ -223,12 +252,7 @@ StackSlot FileSystemInterface::fileModified(RUNNER_ARGS)
     RUNNER_CheckTag1(TString, name_str);
 
     std::string filename = encodeUtf8(RUNNER->GetString(name_str));
-
-    struct stat info;
-    if (stat(filename.c_str(), &info) < 0)
-        return StackSlot::MakeDouble(0);
-
-    return StackSlot::MakeDouble(info.st_mtime * 1000.0);
+    return StackSlot::MakeDouble(FlowFile::getFileLastModified(filename));
 }
 
 #ifdef _MSC_VER
@@ -265,7 +289,7 @@ StackSlot FileSystemInterface::getFileByPath(RUNNER_ARGS)
 
     std::string path = encodeUtf8(RUNNER->GetString(path_str));
 
-    return doGetFileByPath(path);
+    return RUNNER->AllocNative(new FlowFile(owner, path));
 }
 
 StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
@@ -290,21 +314,18 @@ StackSlot FileSystemInterface::openFileDialog(RUNNER_ARGS)
     RETVOID;
 }
 
-StackSlot FileSystemInterface::uploadNativeFile(RUNNER_ARGS)
-{
-    RUNNER_PopArgs8(_file, _url, _params, onOpenFn, onDataFn, onErrorFn, onProgressFn, onCancelFn);
-    RUNNER_CheckTag(TNative, _file);
-    RUNNER_CheckTag(TString, _url);
-    RUNNER_CheckTag(TArray, _params);
-
-    return doUploadNativeFile(_file, encodeUtf8(RUNNER->GetString(_url)), _params, onOpenFn, onDataFn, onErrorFn, onProgressFn, onCancelFn);
-}
-
 StackSlot FileSystemInterface::fileName(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(file);
 
-    return RUNNER->AllocateString(doFileName(file).c_str());
+    FlowFile *flowFile = owner->GetNative<FlowFile*>(file);
+    std::string filepath = flowFile->getFilepath();
+
+    char buf[PATH_MAX];
+    if (doResolveRelativePath(filepath, buf) == NULL)
+        return RUNNER->AllocateString(filepath.c_str());
+
+    return RUNNER->AllocateString(buf);
 }
 
 StackSlot FileSystemInterface::fileType(RUNNER_ARGS)
@@ -318,14 +339,18 @@ StackSlot FileSystemInterface::fileSizeNative(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(file);
 
-    return StackSlot::MakeDouble(doFileSizeNative(file));
+    FlowFile *flowFile = owner->GetNative<FlowFile*>(file);
+
+    return StackSlot::MakeDouble(flowFile->getSliceSize());
 }
 
 StackSlot FileSystemInterface::fileModifiedNative(RUNNER_ARGS)
 {
     RUNNER_PopArgs1(file);
 
-    return StackSlot::MakeDouble(doFileModifiedNative(file));
+    FlowFile *flowFile = owner->GetNative<FlowFile*>(file);
+
+    return StackSlot::MakeDouble(flowFile->getFileLastModified());
 }
 
 StackSlot FileSystemInterface::fileSlice(RUNNER_ARGS)
@@ -333,7 +358,11 @@ StackSlot FileSystemInterface::fileSlice(RUNNER_ARGS)
     RUNNER_PopArgs3(file, offset, end);
     RUNNER_CheckTag2(TInt, offset, end);
 
-    return doFileSlice(file, offset.GetInt(), end.GetInt());
+    FlowFile *flowFile = RUNNER->GetNative<FlowFile*>(file);
+
+    FlowFile *chunkFlowFile = new FlowFile(owner, flowFile->getFilepath());
+    chunkFlowFile->setSliceRange(offset.GetInt(), end.GetInt());
+    return RUNNER->AllocNative(chunkFlowFile);
 }
 
 StackSlot FileSystemInterface::readFile(RUNNER_ARGS)
@@ -355,3 +384,39 @@ StackSlot FileSystemInterface::readFileEnc(RUNNER_ARGS)
 
     RETVOID;
 }
+
+void FileSystemInterface::doFileRead(const StackSlot &file, std::string readAs, std::string readEncoding, const StackSlot &onData, const StackSlot &onError)
+{
+    RUNNER_VAR = owner;
+    WITH_RUNNER_LOCK_DEFERRED(RUNNER);
+
+    FlowFile *flowFile = (FlowFile*)RUNNER->GetNative<FlowFile*>(file);
+
+    if (!flowFile->open()) {
+        RUNNER->EvalFunction(onError, 1, RUNNER->AllocateString("Cannot open file for reading!"));
+        return;
+    }
+
+    std::vector<uint8_t> blob = flowFile->readBytes();
+
+    if (readAs == "data") {
+        int n = blob.size();
+        unicode_char * unicode = new unicode_char[n];
+        for (int i = 0; i != n; ++i) {
+            unicode[i] = blob.at(i);
+        }
+        RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(unicode, n));
+    } else if (readAs == "uri") {
+        size_t base64_length = 0;
+        unsigned char *str = Base64::encode(&blob[0], blob.size(), &base64_length);
+
+        std::string dataUrl = "data:" + doFileType(file) + ";base64," + std::string(str, str+base64_length);
+
+        RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(parseUtf8(dataUrl)));
+    } else {
+        RUNNER->EvalFunction(onData, 1, RUNNER->AllocateString(TextCodec::decode(blob, readEncoding)));
+    }
+
+    flowFile->close();
+}
+

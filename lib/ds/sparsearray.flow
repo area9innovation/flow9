@@ -1,0 +1,144 @@
+import ds/treeutils;
+
+export {
+	// Create a sparse array. Provide a function which can produce a range of values
+	makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?>;
+
+	// If we have a complete, static array, we do not need a generating function
+	array2SpareArray(vals : [?]) -> SparseArray<?>;
+
+	// What are the values in this given range? Will call the function to generate values if we do
+	// not have them cached. Up to, but not including end.
+	getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?];
+}
+
+// A sparse array where we can retrieve values in a given range up to, but not including end
+SparseArray(
+	// This is a cache of the values in the array. Key is the index in the array, value
+	// is a range of values we have from that point on. We have to maintain the
+	// invariant that our ranges are continuous in the sense that it would be wrong
+	// to represent an array ["a", "b"] as {0: ["a"], 1: ["a"]}. Instead, we should
+	// combine and have {0: ["a", "b"]}
+	mutable ranges : Tree<int, [?]>, 
+	// The function which can generate/retrieve values at the given point.
+	retrieveRange : (start : int, end : int) -> [?]
+);
+
+makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?> {
+	SparseArray(makeTree(), retrieveRange);
+}
+
+array2SpareArray(vals : [?]) -> SparseArray<?> {
+	SparseArray(makeTree1(0, vals), \__, __ -> []);
+}
+
+/*
+TODO:
+- Add an option to define how many elements are worth caching. I.e.
+  if we have numbers 10-20 in cache, and request 0-100, maybe it is not worth
+  it to reuse the cache, coompared to retrieving all of the elements in one request
+  instead of 2.
+- If we have cached 10-20, 30-40, 50-60 and request 0-100, right now, we will
+  only use the cached values from 10-20. We have to rewrite this to use ranges
+  of numbers as a primary representation, and extract the ranges we need to get,
+  and then merge ranges to optimize the number of requests, and then do those.
+*/
+
+getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
+	// Do we have anything before we can reuse?
+	lb = findTreeLowerKey(s.ranges, start, -1);
+
+	// Maybe there is a part in the middle we can reuse?
+	ub = findTreeUpperKey(s.ranges, start, -1);
+
+	// What do we have below us?
+	lower0 = if (lb == -1) [] else {
+		lookupTreeDef(s.ranges, lb, [])
+	};
+	// Find how much of the end of what is below us we can reuse, and extract that
+	lowerReuse = if (lb == -1 || lb + length(lower0) < start) -1 else max(0, start - lb);
+	lower = if (lowerReuse == -1) [] else subrange(lower0, lowerReuse, end - lb);
+
+	// OK, there might be a part after the start, which we can use
+	upper0 = if (ub == -1) [] else {
+		lookupTreeDef(s.ranges, ub, [])
+	}
+
+	// Find out how much we can reuse
+	upperReuse = if (ub == -1 || ub >= end) -1 else max(0, end - ub);
+	upper = if (upperReuse == -1) [] else subrange(upper0, 0, upperReuse);
+
+	// We can push the start by reusing things from below
+	newStart = start + length(lower);
+
+	// The part of the lower cache entry, which we want to preserve in the cache (up to start)
+	lowerPreserve = if (lb != -1 && lowerReuse != -1 && lowerReuse + lb + length(lower) >= start) {
+		// We extend the previous entry with the new stuff to have continuous ranges in our tree
+		subrange(lower0, 0, end - lb);
+	} else [];
+	preserveStart = if (lowerPreserve != []) lb else start;
+
+	if (upper0 == []) {
+		// We have something in the start we can reuse, so just retrieve the end bit
+		rang = s.retrieveRange(newStart, end);
+		res = concat(lower, rang);
+
+		if (lowerPreserve != []) {
+			// We extend the previous entry with the new stuff to have continuous ranges in our tree
+			updateSpareArrayCache(s, preserveStart, concat(lowerPreserve, rang));
+		} else {
+			// A completely new entry
+			s.ranges ::= setTree(s.ranges, newStart, rang);
+		}
+		res;
+	} else {
+		// OK, we have a middle part. First, let us get what is after the first part, but before the mid part
+		beforeMid = s.retrieveRange(newStart, ub);
+
+		afterMid = ub + length(upper);
+		after = if (afterMid < end) {
+			// We have to retrieve more at the end
+			s.retrieveRange(afterMid, end);
+		} else [];
+
+		res = concatA([lower, beforeMid, upper, after]);
+		// Construct the new cache entry we should adopt
+		cacheRes = if (after == []) concatA([lowerPreserve, beforeMid, upper0]) else concatA([lowerPreserve, beforeMid, upper, after]);
+		updateSpareArrayCache(s, preserveStart, cacheRes);
+
+		res;
+	}
+}
+
+// OK, we have a new entry that has to go into the cache.
+// We have the invariant that we know this is not colliding with other entries
+updateSpareArrayCache(s : SparseArray<?>, start : int, values : [?]) -> void {
+	end = start + length(values);
+	// Filter out all entries which are dominated by this one
+	s.ranges ::= filterTree(s.ranges, \s2, v -> {
+		e2 = s2 + length(v);
+		if ((start <= s2) && end >= e2) {
+			false;
+		} else true;
+	});
+	s.ranges ::= setTree(s.ranges, start, values);
+}
+/*
+
+dumpSparseArray(s : SparseArray<?>) -> void {
+	traverseInOrder(s.ranges, \k, v -> {
+		println(toString(k) + ":" + toString(v))
+	});
+}
+
+main() {
+	a = makeSparseArray(\s, e -> generate(s, e, \i -> i));
+	v1 = getSpareArrayRange(a, 10, 15);
+	println(v1);
+	v2 = getSpareArrayRange(a, 8, 12);
+	println(v2);
+
+	dumpSparseArray(a);
+	quit(0);
+}
+*/

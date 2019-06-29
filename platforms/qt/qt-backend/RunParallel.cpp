@@ -8,6 +8,12 @@
 #include "qt-backend/NotificationsSupport.h"
 #include "qt-backend/QtGeolocationSupport.h"
 #include "qt-backend/qfilesysteminterface.h"
+#include "qt-backend/QWebSocketSupport.h"
+
+#ifdef FLOW_MEDIARECORDER
+#include "qt-backend/QMediaStreamSupport.h"
+#include "qt-backend/QMediaRecorderSupport.h"
+#endif
 
 #include <QSettings>
 #include <QCoreApplication>
@@ -54,6 +60,10 @@ void FlowRunnerThread::run()
     FileLocalStore LocalStore(&FlowRunner);
     DatabaseSupport DbManager(&FlowRunner);
     StartProcess ProcStarter(&FlowRunner);
+#ifdef FLOW_MEDIARECORDER
+    QMediaStreamSupport MediaStream(&FlowRunner, app->applicationDirPath());
+    QMediaRecorderSupport MediaRecorder(&FlowRunner, app->applicationDirPath());
+#endif
 
     QSettings ini(QSettings::IniFormat, QSettings::UserScope,
                   QCoreApplication::organizationName(),
@@ -63,10 +73,11 @@ void FlowRunnerThread::run()
 
     LocalStore.SetBasePath(encodeUtf8(qt2unicode(config_dir)) + "/flow-local-store/");
 
-    QtHttpSupport HttpManager(&FlowRunner, NULL);
-    QFileSystemInterface FileSystem(&FlowRunner, &HttpManager);
+    QtHttpSupport HttpManager(&FlowRunner);
+    QFileSystemInterface FileSystem(&FlowRunner, NULL);
     QtNotificationsSupport NotificationsManager(&FlowRunner, false);
     QtGeolocationSupport GeolocationManager(&FlowRunner);
+    QWebSocketSupport AbstractWebSocketSupport(&FlowRunner);
 
     RunParallelHost ParallelHost(&FlowRunner, this);
 

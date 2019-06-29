@@ -665,7 +665,8 @@ class RenderSupportJSPixi {
 				var selectionStart = untyped activeElement.selectionStart != null ? untyped activeElement.selectionStart : untyped activeElement.value.length;
 				var selectionEnd = untyped activeElement.selectionEnd != null ? untyped activeElement.selectionEnd : untyped activeElement.value.length;
 
-				activeElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
+
 				if (selectionStart == selectionEnd) {
 					untyped activeElement.value =
 						keyCode == 8 ? untyped activeElement.value.substr(0, selectionStart - 1) + untyped activeElement.value.substr(selectionStart) :
@@ -685,9 +686,10 @@ class RenderSupportJSPixi {
 					composed : true,
 					isTrusted : true
 				}");
-				activeElement.dispatchEvent(untyped __js__("new InputEvent('input', ie)"));
+
+				activeElement.dispatchEvent(Platform.isIE || Platform.isEdge ? untyped __js__("new CustomEvent('input', ie)") : untyped __js__("new InputEvent('input', ie)"));
 			} else {
-				activeElement.dispatchEvent(new js.html.KeyboardEvent(event, ke));
+				activeElement.dispatchEvent(Platform.isIE ? untyped __js__("new CustomEvent(event, ke)") : new js.html.KeyboardEvent(event, ke));
 			}
 		}
 	}
@@ -795,14 +797,17 @@ class RenderSupportJSPixi {
 			if (untyped __js__('typeof e.data == "string"'))
 				fn(e.data, e.origin);
 		};
-		
+
 		on("message", handler);
 		return function() { off("message", handler); };
 	}
 
 	public static inline function InvalidateStage() : Void {
-		TransformChanged = true;
 		PixiStageChanged = true;
+	}
+
+	public static inline function InvalidateTransform() : Void {
+		TransformChanged = true;
 	}
 
 	public static function getPixelsPerCm() : Float {
@@ -1038,6 +1043,10 @@ class RenderSupportJSPixi {
 
 	public static function setTextFieldCursorWidth(clip : TextClip, width : Float) : Void {
 		clip.setCursorWidth(width);
+	}
+
+	public static function setTextEllipsis(clip : TextClip, lines : Int, cb : Bool -> Void) : Void {
+		clip.setEllipsis(lines, cb);
 	}
 
 	public static function setTextFieldInterlineSpacing(clip : TextClip, spacing : Float) : Void {
@@ -1657,6 +1666,10 @@ class RenderSupportJSPixi {
 		return clip;
 	}
 
+	public static function clearGraphics(graphics : FlowGraphics) : Void {
+		graphics.clear();
+	}
+
 	public static function setLineStyle(graphics : FlowGraphics, width : Float, color : Int, opacity : Float) : Void {
 		graphics.lineStyle(width, removeAlphaChannel(color), opacity);
 	}
@@ -1771,7 +1784,6 @@ class RenderSupportJSPixi {
 
 	// native addFilters(native, [native]) -> void = RenderSupport.addFilters;
 	public static function addFilters(clip : DisplayObject, filters : Array<Filter>) : Void {
-		clip.invalidateStage();
 		untyped clip.filterPadding = 0.0;
 		untyped clip.glShaders = false;
 
@@ -2108,10 +2120,16 @@ class RenderSupportJSPixi {
 		}
 
 		child.setScrollRect(0, 0, getStageWidth(), getStageHeight());
-		var img = PixiRenderer.plugins.extract.base64(PixiStage);
-		child.removeScrollRect();
+		try {
+			var img = PixiRenderer.plugins.extract.base64(PixiStage);
+			child.removeScrollRect();
 
-		return img;
+			return img;
+		} catch(e : Dynamic) {
+			child.removeScrollRect();
+
+			return 'error';
+		}
 	}
 
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
