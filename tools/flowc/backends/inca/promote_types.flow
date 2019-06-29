@@ -1,4 +1,5 @@
 import tools/flowc/backends/inca/env;
+import tools/flowc/incremental/fiprettyprint;
 import ds/simplegraph;
 
 export {
@@ -16,6 +17,11 @@ export {
 		Group__Tropic(f : [Tropic]);
 	
 	This is what we do in this function.
+
+	Secondly, we have to expand union matches in switches to explicitly recurse through
+	the expanded unions.
+
+	Todo: We do not handle two extensions at the same time in the same struct.
 	*/
 	promoteIncaTypes(e : IncaEnv) -> IncaEnv;
 }
@@ -37,7 +43,7 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 		{}
 	}
 
-	// A set of structs, which are recursive in unions, which are extended
+	// A map from struct to the base union, where the structs is recursive in an extended union
 	recStructs = foldTree(e.unions, makeTree(), \name, u : FiTypeUnion, acc : Tree<string, string> -> {
 		fold(u.typenames, acc, \acc2, tn -> {
 			unions = extractFiTypeUnions(makeSet(), e, tn);
@@ -53,7 +59,7 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 		})
 	});
 
-	// A tree of what unions we have to promote this struct to
+	// A tree from struct to what unions we have to promote this struct to
 	promotions : Tree<string, [string]> = foldTree(recStructs, makeTree(), \struct, union1, acc -> {
 		supers = reachableClosureFromSimpleNode(graph, union1);
 		foldSet(supers, acc, \acc2, super -> {
@@ -61,7 +67,8 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 		})
 	});
 
-	promotedStructs = foldTree(e.structs, makeTree(), \name, struct, acc -> {
+	// Construct the promoted structs
+	promotedStructs : Tree<string, FiTypeStruct> = foldTree(e.structs, makeTree(), \name, struct, acc -> {
 		baseUnion = lookupTreeDef(recStructs, name, "");
 		proms = getTreeArrayValue(promotions, name);
 		fold(proms, acc, \acc2, prom : string -> {
@@ -81,10 +88,26 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 		});
 	});
 
+	// A tree of what unions have expanded structs
+	promotedUnions : Tree<string, [string]> = foldTree(promotions, makeTree(), \s, us, acc -> {
+		fold(us, acc, \acc2, u -> {
+			treePushToArrayValue(acc2, u, s)
+		})
+	});
+
+	// Expand union matches with promoted structs
+	promotedFunctions : Tree<string, FiFunctionDec> = mapTree(e.functions, \dec : FiFunctionDec -> {
+		FiFunctionDec(
+			dec with lambda = 
+				promoteIncaLambda(e, promotions, promotedUnions, dec.lambda)
+		)
+	});
+
 	IncaEnv(
 		e with
 		structs = mergeTree(e.structs, promotedStructs),
-		promotedStructs = promotedStructs
+		promotedStructs = promotedStructs,
+		functions = promotedFunctions
 	);
 }
 
@@ -138,5 +161,156 @@ replaceFiTypeUnion(e : IncaEnv, promotions : Tree<string, string>, ty : FiType) 
 		FiTypeName(n, tp): FiTypeName(lookupTreeDef(promotions, n, n), tp);
 
 		FiTypeFunction(args, returnType): ty;
+	}
+}
+
+promoteIncaLambda(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, l : FiLambda) -> FiLambda {
+	FiLambda(
+		l with body = promoteIncaExp(env, promotions, promotedUnions, l.body)
+	)
+}
+
+promoteIncaExp(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, ex : FiExp) -> FiExp {
+	rec = \ex0 -> {
+		promoteIncaExp(env, promotions, promotedUnions, ex0);
+	}
+	switch (ex) {
+		FiLambda(args, body, type, start): promoteIncaLambda(env, promotions, promotedUnions, ex);
+
+		FiCall(f, args, type, start): FiCall(ex with f = rec(f), args = map(args, rec));
+
+		FiVar(name, type, start): ex;
+		FiLet(name, type, e1, e2, type2, start): FiLet(ex with e1 = rec(e1), e2 = rec(e2));
+		FiIf(e1, e2, e3, type, start): FiIf(ex with e1 = rec(e1), e2 = rec(e2), e3 = rec(e3));
+		FiSwitch(x, switchType, cases, type, start): promoteIncaSwitch(env, promotions, promotedUnions, ex);
+		FiCast(e, tFrom, tTo, type, start): FiCast(ex with e = rec(e));
+		FiSeq(es, type, start): FiSeq(ex with es = map(es, rec));
+		FiCallPrim(op, es, type, start): FiCallPrim(ex with es = map(es, rec));
+
+		FiVoid(start): ex;
+		FiDouble(d, start): ex;
+		FiInt(i, start): ex;
+		FiString(s, start): ex;
+		FiBool(b, start): ex;
+
+		FiRequire(flowfile, e, type, start): FiRequire(ex with e = rec(e))
+		FiUnsafe(name, fallback, type, start): FiUnsafe(ex with fallback = rec(fallback))
+	}
+}
+
+promoteIncaSwitch(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, s : FiSwitch) -> FiSwitch {
+	union = switch (s.switchType) {
+		FiTypeName(n, __): n;
+		default: "";
+	};
+	structs = getTreeArrayValue(promotedUnions, union);
+
+	FiSwitch(s with
+		cases = fold(s.cases, [], \acc : [FiCase], case : FiCase -> {
+			if (contains(structs, case.struct) && switch (case.body) {
+				FiVar(bodyVar, __, __): bodyVar == s.x.name;
+				default: false;
+			}) {
+				// We have a case where we just return the in-bound name
+				normal = FiCase(
+					case with body = promoteIncaExp(env, promotions, promotedUnions, case.body);
+				);
+
+				mstructDef = lookupTree(env.structs, case.struct);
+				switch (mstructDef) {
+					None(): {
+						arrayPush(acc, normal);
+					}
+					Some(structdef): {
+						promoted = FiCase(
+							case with 
+							struct = case.struct + "__" + union,
+							body = FiCallPrim(
+								FcStructPrim(case.struct),
+								mapi(structdef.args, \i, a -> {
+									// TODO: Find the incoming type
+									inType = a.type;
+									makeRecursiveIncaStructArg(
+										FiCallPrim(
+											FcFieldPrim(a.name),
+											[s.x],
+											a.type,
+											case.start
+										),
+										a.name, inType, 
+										a.type, 
+										union + "2" + "orig", 	// TODO: Find the name of the converter fn
+										case.start
+									)
+								}),
+								s.type,
+								case.start
+							)
+						);
+						
+						if (true) {
+							println(
+								prettyFiExp(
+									FcPretty(true, true, makeTree(), makeTree()),
+									FiSwitch(s with cases = [promoted])
+								)
+							);
+						}
+						concat(acc, [normal, promoted]);
+					}
+				}
+			} else {
+				arrayPush(acc, FiCase(
+					case with body = promoteIncaExp(env, promotions, promotedUnions, case.body);
+				))
+			}
+		})
+	)
+}
+
+makeRecursiveIncaStructArg(arg : FiExp, argName : string, inType : FiType, resType : FiType, recfn : string, start : int) -> FiExp {
+	switch (inType) {
+		FiTypeArray(t): {
+			// Peel off the array of the res type as well
+			resArrayType = switch (resType) {
+				FiTypeArray(rt): rt;
+				default: resType;
+			}
+			FiCall(
+				FiVar("map", FiTypeFunction([FiFunArg(argName + "_", inType)], FiTypeArray(resType)), start), 
+				[
+					arg, 
+					FiLambda(
+						[FiFunArg(argName + "_", t)],
+						makeRecursiveIncaStructArg(
+							FiVar(argName + "_", resArrayType, start),
+							argName + "_", t, resArrayType, recfn, start
+						),
+						FiTypeFunction(
+							[FiFunArg(argName + "_", t)],
+							resType
+						),
+						start
+					)
+				], 
+				FiTypeArray(resType),
+				start
+			);
+		}
+		FiTypeName(tn, __): {
+			println(tn);
+			arg;
+		}
+		FiTypeParameter(n): arg;
+		FiTypeBool(): arg;
+		FiTypeInt(): arg;
+		FiTypeDouble(): arg;
+		FiTypeString(): arg;
+		FiTypeFlow(): arg;
+		FiTypeVoid(): arg;
+		FiTypeNative(): arg;
+
+		FiTypeFunction(args, returnType): arg;
+		FiTypeRef(t): arg;
 	}
 }
