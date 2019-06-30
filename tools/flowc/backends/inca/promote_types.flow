@@ -1,5 +1,6 @@
 import tools/flowc/backends/inca/env;
 import tools/flowc/incremental/fiprettyprint;
+import tools/flowc/incremental/fi_helpers;
 import ds/simplegraph;
 
 export {
@@ -31,7 +32,7 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 	graph = foldTree(e.unions, makeSimpleGraph(), \name : string, u : FiTypeUnion, acc : SimpleGraph<string, int> -> {
 		fold(u.typenames, acc, \acc2, tn -> {
 			if (containsKeyTree(e.unions, tn.name)) {
-				// From sub to super
+				// From sub union to super union
 				addSimpleEdge(acc2, tn.name, name, 0, 0)
 			} else acc2;
 		});
@@ -97,6 +98,24 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 
 	// Expand union matches with promoted structs
 	promotedFunctions : Tree<string, FiFunctionDec> = mapTree(e.functions, \dec : FiFunctionDec -> {
+		argTypes = filtermap(dec.type.args, \a -> {
+			argName = getFiTypeName(a.type);
+			if (argName == "") None() else Some(argName);
+		});
+		retType = getFiTypeName(dec.type.returnType);
+
+		if (length(argTypes) == 1 && retType != "") {
+			argType = argTypes[0];
+			// What types do we promote retType to?
+			supers = reachableClosureFromSimpleNode(graph, retType);
+			if (containsSet(supers, argType)) {
+				// OK, we have a converter from argType to retType
+				// Then construct a function which takes an FiExp of argType and returns the res type
+				// and insert it in the PromoteAcc to be used for the recursive calls
+				println("TODO: Build function to convert " + argType + " -> " + retType);
+			}
+		}
+
 		FiFunctionDec(
 			dec with lambda = 
 				promoteIncaLambda(PromoteAcc(e, promotions, promotedStructs, promotedUnions), dec.lambda)
@@ -236,10 +255,7 @@ promoteIncaLambda(acc : PromoteAcc, l : FiLambda) -> FiLambda {
 
 promoteIncaSwitch(acc : PromoteAcc, s : FiSwitch) -> FiSwitch {
 	// What union are we switching on?
-	union = switch (s.switchType) {
-		FiTypeName(n, __): n;
-		default: "";
-	};
+	union = getFiTypeName(s.switchType);
 	structs = getTreeArrayValue(acc.promotedUnions, union);
 
 	FiSwitch(s with
