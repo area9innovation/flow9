@@ -99,7 +99,7 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 	promotedFunctions : Tree<string, FiFunctionDec> = mapTree(e.functions, \dec : FiFunctionDec -> {
 		FiFunctionDec(
 			dec with lambda = 
-				promoteIncaLambda(e, promotions, promotedUnions, dec.lambda)
+				promoteIncaLambda(PromoteAcc(e, promotions, promotedStructs, promotedUnions), dec.lambda)
 		)
 	});
 
@@ -111,7 +111,7 @@ promoteIncaTypes(e : IncaEnv) -> IncaEnv {
 	);
 }
 
-
+// What unions occur in this type (including as arguments in structs)?
 extractFiTypeUnions(acc : Set<string>, e : IncaEnv, ty : FiType) -> Set<string> {
 	switch (ty) {
 		FiTypeArray(t): extractFiTypeUnions(acc, e, t);
@@ -146,6 +146,7 @@ extractFiTypeUnions(acc : Set<string>, e : IncaEnv, ty : FiType) -> Set<string> 
 	}
 }
 
+// Rename typenames according to the promotions map
 replaceFiTypeUnion(e : IncaEnv, promotions : Tree<string, string>, ty : FiType) -> FiType {
 	switch (ty) {
 		FiTypeParameter(n): ty;
@@ -164,25 +165,33 @@ replaceFiTypeUnion(e : IncaEnv, promotions : Tree<string, string>, ty : FiType) 
 	}
 }
 
-promoteIncaLambda(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, l : FiLambda) -> FiLambda {
-	FiLambda(
-		l with body = promoteIncaExp(env, promotions, promotedUnions, l.body)
-	)
-}
+//
+// Expand union-cases in switches, where one or more of the structs in the union is promoted
+//
 
-promoteIncaExp(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, ex : FiExp) -> FiExp {
+PromoteAcc(
+	env : IncaEnv,
+	// A tree from struct to what unions we have to promote this struct to
+	promotions : Tree<string, [string]>, 
+	// A tree from promoted struct to the promoted type
+	promotedStructs : Tree<string, FiTypeStruct>,
+	// A tree from union to promoted struct names
+	promotedUnions : Tree<string, [string]>,
+);
+
+promoteIncaExp(acc : PromoteAcc, ex : FiExp) -> FiExp {
 	rec = \ex0 -> {
-		promoteIncaExp(env, promotions, promotedUnions, ex0);
+		promoteIncaExp(acc, ex0);
 	}
 	switch (ex) {
-		FiLambda(args, body, type, start): promoteIncaLambda(env, promotions, promotedUnions, ex);
+		FiLambda(args, body, type, start): promoteIncaLambda(acc, ex);
 
 		FiCall(f, args, type, start): FiCall(ex with f = rec(f), args = map(args, rec));
 
 		FiVar(name, type, start): ex;
 		FiLet(name, type, e1, e2, type2, start): FiLet(ex with e1 = rec(e1), e2 = rec(e2));
 		FiIf(e1, e2, e3, type, start): FiIf(ex with e1 = rec(e1), e2 = rec(e2), e3 = rec(e3));
-		FiSwitch(x, switchType, cases, type, start): promoteIncaSwitch(env, promotions, promotedUnions, ex);
+		FiSwitch(x, switchType, cases, type, start): promoteIncaSwitch(acc, ex);
 		FiCast(e, tFrom, tTo, type, start): FiCast(ex with e = rec(e));
 		FiSeq(es, type, start): FiSeq(ex with es = map(es, rec));
 		FiCallPrim(op, es, type, start): FiCallPrim(ex with es = map(es, rec));
@@ -198,38 +207,70 @@ promoteIncaExp(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnion
 	}
 }
 
-promoteIncaSwitch(env : IncaEnv, promotions : Tree<string, [string]>, promotedUnions : Tree<string, [string]>, s : FiSwitch) -> FiSwitch {
+promoteIncaLambda(acc : PromoteAcc, l : FiLambda) -> FiLambda {
+	FiLambda(
+		l with body = promoteIncaExp(acc, l.body)
+	)
+}
+
+// Expand union-cases in switches, where one or more of the structs in the union is promoted
+/*
+	fn(tropic) -> {
+		switch (tropic) {
+			Form(): tropic;
+			Lines(): ...;
+		}
+	}
+
+	-> 
+
+	fn(tropic) -> {
+		switch (tropic) {
+			Form(): tropic;
+			Group__Tropic(c): map(c, fn);	// This is added!
+			Lines(): ...;
+		}
+	}
+
+*/
+
+promoteIncaSwitch(acc : PromoteAcc, s : FiSwitch) -> FiSwitch {
+	// What union are we switching on?
 	union = switch (s.switchType) {
 		FiTypeName(n, __): n;
 		default: "";
 	};
-	structs = getTreeArrayValue(promotedUnions, union);
+	structs = getTreeArrayValue(acc.promotedUnions, union);
 
 	FiSwitch(s with
-		cases = fold(s.cases, [], \acc : [FiCase], case : FiCase -> {
+		cases = fold(s.cases, [], \acc0 : [FiCase], case : FiCase -> {
 			if (contains(structs, case.struct) && switch (case.body) {
 				FiVar(bodyVar, __, __): bodyVar == s.x.name;
 				default: false;
 			}) {
 				// We have a case where we just return the in-bound name
 				normal = FiCase(
-					case with body = promoteIncaExp(env, promotions, promotedUnions, case.body);
+					case with body = promoteIncaExp(acc, case.body);
 				);
 
-				mstructDef = lookupTree(env.structs, case.struct);
+				mstructDef = lookupTree(acc.env.structs, case.struct);
 				switch (mstructDef) {
 					None(): {
-						arrayPush(acc, normal);
+						arrayPush(acc0, normal);
 					}
 					Some(structdef): {
+						promotedStruct = case.struct + "__" + union;
+						promotedStructDef = lookupTreeDef(acc.promotedStructs, promotedStruct, structdef);
+
 						promoted = FiCase(
 							case with 
-							struct = case.struct + "__" + union,
+							struct = promotedStruct,
 							body = FiCallPrim(
 								FcStructPrim(case.struct),
 								mapi(structdef.args, \i, a -> {
-									// TODO: Find the incoming type
-									inType = a.type;
+									// The incoming type of the argument of the promoted type
+									inType = promotedStructDef.args[i].type;
+
 									makeRecursiveIncaStructArg(
 										FiCallPrim(
 											FcFieldPrim(a.name),
@@ -256,18 +297,19 @@ promoteIncaSwitch(env : IncaEnv, promotions : Tree<string, [string]>, promotedUn
 								)
 							);
 						}
-						concat(acc, [normal, promoted]);
+						concat(acc0, [normal, promoted]);
 					}
 				}
 			} else {
-				arrayPush(acc, FiCase(
-					case with body = promoteIncaExp(env, promotions, promotedUnions, case.body);
+				arrayPush(acc0, FiCase(
+					case with body = promoteIncaExp(acc, case.body);
 				))
 			}
 		})
 	)
 }
 
+// Construct code for this argument in the inType, so that it becomes resType.
 makeRecursiveIncaStructArg(arg : FiExp, argName : string, inType : FiType, resType : FiType, recfn : string, start : int) -> FiExp {
 	switch (inType) {
 		FiTypeArray(t): {
