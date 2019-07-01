@@ -1714,4 +1714,29 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
     public synchronized void cbCloseWSClient(WebSocketClient webSocketClient, int code, String reason) {
         webSocketSupport.close(webSocketClient, code, reason);
     }
+
+    private FlowFileSystemInterface fileSystemInterface = null;
+
+    public void setFlowFileSystemInterface(FlowFileSystemInterface fileSystemInterface) {
+        this.fileSystemInterface = fileSystemInterface;
+    }
+
+    public FlowFileSystemInterface getFlowFileSystemInterface() {
+        return this.fileSystemInterface;
+    }
+
+    public synchronized void cbOpenFileDialog(int maxFilesCount, String[] fileTypes, int callbackRoot) {
+        fileSystemInterface.openFileDialog(maxFilesCount, fileTypes, callbackRoot);
+    }
+
+    public synchronized String cbGetFileType(String path) {
+        return fileSystemInterface.getFileMimeType(path);
+    }
+
+    public synchronized void deliverOpenFileDialogResult(int callbackRoot, String[] filePaths) {
+        nDeliverOpenFileDialogResult(cPtr(), callbackRoot, filePaths);
+    }
+
+    private native void nDeliverOpenFileDialogResult(long ptr, int callbackRoot, String[] filePaths);
+
 }

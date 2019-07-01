@@ -511,57 +511,246 @@ class PixiWorkarounds {
 				return properties;
 			};
 
-			PIXI.Text.prototype.drawLetterSpacing = function(text, x, y)
-			{
-				var isStroke = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
+			// PIXI.TextMetrics.wordWrap = function(text, style, canvas)
+			// {
+			// 	if (typeof canvas == 'undefined') {
+			// 		canvas = PIXI.TextMetrics._canvas;
+			// 	}
 
-				const style = this._style;
+			// 	const context = canvas.getContext('2d');
 
-				// letterSpacing of 0 means normal
-				// Skip directional chars
-				const letterSpacing = style.letterSpacing;
+			// 	var width = 0;
+			// 	var line = '';
+			// 	var lines = '';
 
-				if (letterSpacing === 0)
-				{
-					if (isStroke)
-					{
-						this.context.strokeText(text, x, y);
-					}
-					else
-					{
-						this.context.fillText(text, x, y);
-					}
+			// 	const cache = {};
+			// 	const letterSpacing = style.letterSpacing;
+			// 	const whiteSpace = style.whiteSpace;
+			// 	const truncate = style.truncate ? style.truncate : Number.MAX_SAFE_INTEGER;
 
-					return;
-				}
+			// 	// How to handle whitespaces
+			// 	const collapseSpaces = PIXI.TextMetrics.collapseSpaces(whiteSpace);
+			// 	const collapseNewlines = PIXI.TextMetrics.collapseNewlines(whiteSpace);
 
-				var currentPosition = x;
-				var allWidth = this.context.measureText(text).width;
-				var char, tailWidth, charWidth;
+			// 	// whether or not spaces may be added to the beginning of lines
+			// 	var canPrependSpaces = !collapseSpaces;
 
-				do {
-					char = text.substr(0, 1);
-					text = text.substr(1);
+			// 	// There is letterSpacing after every char except the last one
+			// 	// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!
+			// 	// so for convenience the above needs to be compared to width + 1 extra letterSpace
+			// 	// t_h_i_s_' '_i_s_' '_a_n_' '_e_x_a_m_p_l_e_' '_!_
+			// 	// ________________________________________________
+			// 	// And then the final space is simply no appended to each line
+			// 	const wordWrapWidth = style.wordWrapWidth + letterSpacing;
 
-					if (isStroke) {
-						this.context.strokeText(char, currentPosition, y);
-					} else {
-						this.context.fillText(char, currentPosition, y);
-					}
+			// 	// break text into words, spaces and newline chars
+			// 	const tokens = PIXI.TextMetrics.tokenize(text);
 
-					if (text == '')
-						tailWidth = 0;
-					else
-						tailWidth = this.context.measureText(text).width;
+			// 	var i = -1;
+			// 	var linesCount = 0;
+			// 	var token = '';
 
+			// 	var addLine = function(newLine)
+			// 	{
+			// 		if (typeof newLine == 'undefined') {
+			// 			newLine = true;
+			// 		}
 
-					charWidth = allWidth - tailWidth;
+			// 		if (linesCount == truncate - 1)
+			// 		{
+			// 			if (newLine) {
+			// 				line += token;
 
-					currentPosition += charWidth +
-						((char.charCodeAt(0) === 0x202A || char.charCodeAt(0) === 0x202B || char.charCodeAt(0) === 0x202C) ? 0.0 : letterSpacing);
-					allWidth = tailWidth;
-				} while (text != '');
-			}
+			// 				const threeDotWidth = PIXI.TextMetrics.getFromCache('…', letterSpacing, cache, context);
+			// 				var lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+
+			// 				while (line.length > 1 && (lineWidth + threeDotWidth > wordWrapWidth || PIXI.TextMetrics.isNewline(line[line.length - 1]) || line.endsWith('\\n')))
+			// 				{
+			// 					line = line.substring(0, line.length - 1);
+			// 					lineWidth = PIXI.TextMetrics.getFromCache(line, letterSpacing, cache, context);
+			// 				}
+
+			// 				line += '…';
+			// 			}
+
+			// 			if (style.truncateCallback) {
+			// 				style.truncateCallback(newLine);
+			// 			}
+
+			// 			lines += PIXI.TextMetrics.addLine(line, false);
+
+			// 			return true;
+			// 		}
+			// 		else
+			// 		{
+			// 			console.log(line);
+			// 			console.log(PIXI.TextMetrics.addLine(line, newLine));
+			// 			lines += PIXI.TextMetrics.addLine(line, newLine);
+
+			// 			if (newLine)
+			// 			{
+			// 				linesCount++;
+			// 			}
+
+			// 			line = '';
+			// 			width = 0;
+
+			// 			return false;
+			// 		}
+			// 	}
+
+			// 	while (i < tokens.length - 1 && linesCount < truncate)
+			// 	{
+			// 		i++;
+
+			// 		// get the word, space or newlineChar
+			// 		token = tokens[i];
+
+			// 		// if word is a new line
+			// 		if (PIXI.TextMetrics.isNewline(token))
+			// 		{
+			// 			// keep the new line
+			// 			if (!collapseNewlines)
+			// 			{
+			// 				if (addLine(true)) return lines;
+			// 				canPrependSpaces = !collapseSpaces;
+			// 				continue;
+			// 			}
+
+			// 			// if we should collapse new lines
+			// 			// we simply convert it into a space
+			// 			token = ' ';
+			// 		}
+
+			// 		// if we should collapse repeated whitespaces
+			// 		if (collapseSpaces)
+			// 		{
+			// 			// check both this and the last tokens for spaces
+			// 			const currIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(token);
+			// 			const lastIsBreakingSpace = PIXI.TextMetrics.isBreakingSpace(line[line.length - 1]);
+
+			// 			if (currIsBreakingSpace && lastIsBreakingSpace)
+			// 			{
+			// 				continue;
+			// 			}
+			// 		}
+
+			// 		// get word width from cache if possible
+			// 		var tokenWidth = PIXI.TextMetrics.getFromCache(token, letterSpacing, cache, context);
+
+			// 		// word is longer than desired bounds
+			// 		if (tokenWidth > wordWrapWidth)
+			// 		{
+			// 			// if we are not already at the beginning of a line
+			// 			if (line !== '')
+			// 			{
+			// 				// start newlines for overflow words
+			// 				if (addLine(true)) return lines;
+			// 			}
+
+			// 			// break large word over multiple lines
+			// 			if (PIXI.TextMetrics.canBreakWords(token, style.breakWords))
+			// 			{
+			// 				// break word into characters
+			// 				const characters = token.split('');
+
+			// 				// loop the characters
+			// 				for (var j = 0; j < characters.length; j++)
+			// 				{
+			// 					var char = characters[j];
+
+			// 					var k = 1;
+			// 					// we are not at the end of the token
+
+			// 					while (characters[j + k])
+			// 					{
+			// 						const nextChar = characters[j + k];
+			// 						const lastChar = char[char.length - 1];
+
+			// 						// should not split chars
+			// 						if (!PIXI.TextMetrics.canBreakChars(lastChar, nextChar, token, j, style.breakWords))
+			// 						{
+			// 							// combine chars & move forward one
+			// 							char += nextChar;
+			// 						}
+			// 						else
+			// 						{
+			// 							break;
+			// 						}
+
+			// 						k++;
+			// 					}
+
+			// 					j += char.length - 1;
+
+			// 					const characterWidth = PIXI.TextMetrics.getFromCache(char, letterSpacing, cache, context);
+
+			// 					if (characterWidth + width > wordWrapWidth)
+			// 					{
+			// 						if (addLine(true)) return lines;
+			// 						canPrependSpaces = false;
+			// 					}
+
+			// 					line += char;
+			// 					width += characterWidth;
+			// 				}
+			// 			}
+
+			// 			// run word out of the bounds
+			// 			else
+			// 			{
+			// 			   // if there are words in this line already
+			// 				// finish that line and start a new one
+			// 				if (line.length > 0)
+			// 				{
+			// 					if (addLine(true)) return lines;
+			// 				}
+
+			// 				const isLastToken = i === tokens.length - 1;
+
+			// 				line = token;
+			// 				// give it its own line if it's not the end
+			// 				if (addLine(!isLastToken)) return lines;
+			// 				canPrependSpaces = false;
+			// 			}
+			// 		}
+
+			// 		// word could fit
+			// 		else
+			// 		{
+			// 			// word won't fit because of existing words
+			// 			// start a new line
+			// 			if (tokenWidth + width > wordWrapWidth)
+			// 			{
+			// 				// if its a space we don't want it
+			// 				canPrependSpaces = false;
+
+			// 				// add a new line
+			// 				if (addLine()) return lines;
+			// 			}
+
+			// 			// don't add spaces to the beginning of lines
+			// 			if (line.length > 0 || !PIXI.TextMetrics.isBreakingSpace(token) || canPrependSpaces)
+			// 			{
+			// 				// add the word to the current line
+			// 				line += token;
+
+			// 				// update width counter
+			// 				width += tokenWidth;
+			// 			}
+			// 		}
+			// 	}
+
+			// 	addLine(false);
+
+			// 	if (style.truncateCallback) {
+			// 		style.truncateCallback(false);
+			// 	}
+
+			// 	console.log(lines);
+
+			// 	return lines;
+			// }
 
 			PIXI.Text.prototype._renderCanvas = function(renderer)
 			{
@@ -575,29 +764,41 @@ class PixiWorkarounds {
 					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
 					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
 
+					const tempFontSize = this.style.fontSize;
+					const tempLetterSpacing = this.style.letterSpacing;
+					const tempLineHeight = this.style.lineHeight;
+					const tempWordWrapWidth = this.style.wordWrapWidth;
+
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
-				}
 
-				if (this.resolution !== renderer.resolution)
-				{
-					this.resolution = renderer.resolution;
-					this.dirty = true;
-				}
+					if (this.resolution !== renderer.resolution)
+					{
+						this.resolution = renderer.resolution;
+						this.dirty = true;
+					}
 
-				PIXI.Text.prototype.updateText.call(this, true);
-				PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
+					PIXI.Text.prototype.updateText.call(this, true);
+					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 
-				if (scaleText) {
-					this.style.fontSize = fontSize / scaleFactor;
-					this.style.letterSpacing = this.style.letterSpacing / scaleFactor;
-					this.style.lineHeight = this.style.lineHeight / scaleFactor;
-					this.style.wordWrapWidth = this.style.wordWrapWidth / scaleFactor;
+					this.style.fontSize = tempFontSize;
+					this.style.letterSpacing = tempLetterSpacing;
+					this.style.lineHeight = tempLineHeight;
+					this.style.wordWrapWidth = tempWordWrapWidth;
 
 					this.worldTransform.a = scaleX;
 					this.worldTransform.d = scaleY;
+				} else {
+					if (this.resolution !== renderer.resolution)
+					{
+						this.resolution = renderer.resolution;
+						this.dirty = true;
+					}
+
+					PIXI.Text.prototype.updateText.call(this, true);
+					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 				}
 			}
 

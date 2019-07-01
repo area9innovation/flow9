@@ -1,6 +1,8 @@
 #ifndef iosMediaRecorderSupport_h
 #define iosMediaRecorderSupport_h
 
+#ifdef FLOW_MEDIASTREAM
+
 #include "ByteCodeRunner.h"
 #include "MediaRecorderSupport.h"
 #include "iosWebSocketSupport.h"
@@ -71,5 +73,7 @@ private:
     void addFileOutput(FlowNativeMediaRecorder *flowRecorder, NSURL *filePath);
     void addWebSocketOutput(FlowNativeMediaRecorder *flowRecorder, NSString *websocketUri, int cbOnWebsocketErrorRoot);
 };
+
+#endif /* FLOW_MEDIASTREAM */
 
 #endif /* iosMediaRecorderSupport_h */

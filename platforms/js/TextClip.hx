@@ -427,9 +427,10 @@ class TextClip extends NativeWidgetClip {
 		style.fontStyle = fontSlope != '' ? fontSlope : fontStyle.style;
 		style.lineHeight = fontSize * 1.15 + interlineSpacing;
 		style.wordWrap = wordWrap;
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
+		style.padding = style.fontStyle == 'italic' ? fontSize * 0.1 : 0;
 
 		fontMetrics = TextMetrics.measureFont(untyped style.toFontString());
 
@@ -454,7 +455,7 @@ class TextClip extends NativeWidgetClip {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
-			var texts = wordWrap || true ? [[text]] : checkTextLength(text);
+			var texts = wordWrap ? [[text]] : checkTextLength(text);
 
 			if (textClip == null) {
 				textClip = createTextClip(
@@ -602,7 +603,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	public override function setWidth(widgetWidth : Float) : Void {
-		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth : 2048;
+		style.wordWrapWidth = widgetWidth > 0 ? widgetWidth + 1.0 : 2048.0;
 		super.setWidth(widgetWidth);
 		invalidateMetrics();
 	}
@@ -631,6 +632,13 @@ class TextClip extends NativeWidgetClip {
 
 			invalidateStyle();
 		}
+	}
+
+	public function setEllipsis(lines : Int, cb : Bool -> Void) : Void {
+		untyped this.style.truncate = lines;
+		untyped this.style.truncateCallback = cb;
+
+		invalidateMetrics();
 	}
 
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {

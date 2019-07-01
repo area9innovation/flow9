@@ -362,6 +362,17 @@ protected:
     virtual void doClose(StackSlot websocket, int code, unicode_string reason);
 };
 
+class AndroidFileSystemInterface : public FileSystemInterface {
+    AndroidRunnerWrapper *owner;
+public:
+    AndroidFileSystemInterface(AndroidRunnerWrapper *owner);
+
+    void deliverOpenFileDialogCallback(jint callbackKey, jobjectArray filePaths);
+protected:
+    void doOpenFileDialog(int maxFilesCount, std::vector<std::string> fileTypes, StackSlot callback);
+    std::string doFileType(const StackSlot &file);
+};
+
 class AndroidRunnerWrapper {
     friend class AndroidRenderSupport;
     friend class AndroidHttpSupport;
@@ -375,6 +386,7 @@ class AndroidRunnerWrapper {
     friend class AndroidWebRTCSupport;
     friend class AndroidMediaRecorderSupport;
     friend class AndroidWebSocketSupport;
+    friend class AndroidFileSystemInterface;
 
     // These must be updated on every outermost java->c++ boundary
     JNIEnv *env;
@@ -396,7 +408,7 @@ class AndroidRunnerWrapper {
     AndroidMediaRecorderSupport mediaRecorder;
     AndroidWebSocketSupport websockets;
     FileLocalStore store;
-    FileSystemInterface fsinterface;
+    AndroidFileSystemInterface fsinterface;
 
     jboolean finishLoadBytecode();
 
@@ -427,6 +439,7 @@ public:
     AndroidWebRTCSupport *getWebRTCSupport() { return &webrtcSupport; }
     AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
     AndroidWebSocketSupport *getWebSockets() { return &websockets; }
+    AndroidFileSystemInterface *getFSInterface() { return &fsinterface; }
 
     void setStorePath(jstring fname);
     void setTmpPath(jstring fname);
