@@ -21,7 +21,7 @@ export {
 		filename : string,
 		width : double,
 		height : double,
-		imageOnlyZoomFn : Maybe<((Form) -> Pair<Form, Behaviour<WidthHeight>>) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
+		imageOnlyZoomFn : Maybe<((Form) ->Form) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
 		trustedSizes : bool,
 		decorations : [ImageDecoration],
 		makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
@@ -45,26 +45,22 @@ export {
 	// without decorations.
 	// [-TODO-] simplify
 	// #41879 Now Pair<zoomed form, transform to be applied after crop is returned>
-	makeZoomAdder(zoom : ZoomDescription) ->
-		((Form) -> Pair<Form, Behaviour<WidthHeight>>) ->
-			((Form) -> Form);
+	makeZoomAdder(zoom : ZoomDescription) -> ((Form) -> Form) -> ((Form) -> Form);
 
-	makeZoomAdder3(zoom : ZoomDescription, virtualScreenInfoM : Maybe<VirtualScreenInfo>) ->
-		((Form) -> Pair<Form, Behaviour<WidthHeight>>) ->
-			((Form) -> Pair<Form, (Form) -> Form>);
+	makeZoomAdder3(
+		zoom : ZoomDescription,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>
+	) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>);
 
 	// fn is given the image to generate small preview.
 	// only .mousezoom from ZoomDescription is checked.
-	makeZoomAdder2(zoom : ZoomDescription, fn : ((Behaviour<WidthHeight>, Form) -> Form), virtualScreenInfoM : Maybe<VirtualScreenInfo>,  backcolor : Maybe<Color>) ->
-		((Form) -> Pair<Form, Behaviour<WidthHeight>>) ->
-			((Form) -> Pair<Form, (Form) -> Form>);
+	makeZoomAdder2(
+		zoom : ZoomDescription,
+		fn : (Form) -> Form,
+		virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+		backcolor : Maybe<Color>
+	) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>);
 }
-
-SizeIndependentDecorationsData(
-	addDecorations : (Form) -> Form,
-	size : Behaviour<WidthHeight>,
-	connector : () -> () -> void
-);
 
 // Width and height are serialized on OK click in the image decorations editor. So, we have information about picture size until it is loaded.
 // But we also  have some legacy sources with width = height = 0. The reason is unclear. Probably it was a bug in the editor.
@@ -72,7 +68,7 @@ makeImageDecorated2(
 	filename : string,
 	_width : double,
 	_height : double,
-	imageOnlyZoomFn : Maybe<((Form) -> Pair<Form, Behaviour<WidthHeight>>) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
+	imageOnlyZoomFn : Maybe<((Form) ->Form) -> ((Form) -> Pair<Form, (Form) -> Form>)>,
 	trustedSizes : bool,
 	decorations : [ImageDecoration],
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
@@ -113,19 +109,17 @@ makeImageDecorated2(
 		scaledWH = makeWH();
 		scaledFixed = make(0.0);
 		addPostZoomDecorations = makePostZoomDecorationsAdder(scaledFixed, postZoomDecorations, postZoomCrop, noScalingDecorations, _width, _height);
-		sizeIndependentDecorationsData = makeSizeIndependentDecorationsAdder(sizeIndependentDecorations, makeParagraphElements, savedSize, zoom);
-		addSizeIndependentDecorations = sizeIndependentDecorationsData.addDecorations;
-		sizeIndependentDecorationsSize = sizeIndependentDecorationsData.size;
-		sizeConnector = sizeIndependentDecorationsData.connector;
-
-		form = Constructors(
-			[
-				\ -> scaleConnector(scaledWH, scaledFixed),
-				sizeConnector
-			],
-			Inspect([ISize(scaledWH)], image) |> addPostZoomDecorations |> addSizeIndependentDecorations
+		addSizeIndependentDecorations = makeSizeIndependentDecorationsAdder(
+			sizeIndependentDecorations,
+			makeParagraphElements,
+			savedSize,
+			zoom
 		);
-		Pair(form, sizeIndependentDecorationsSize)
+
+		Constructor(
+			Inspect([ISize(scaledWH)], image) |> addPostZoomDecorations |> addSizeIndependentDecorations,
+			\ -> scaleConnector(scaledWH, scaledFixed)
+		);
 	}
 
 	noScaleDecorationsFixUp = make(1.0);
@@ -154,7 +148,7 @@ makeImageDecorated2(
 	}
 
 	//Takes a function to add decorations to full size image and returns (Form) -> Pair<Form, (Form) -> Form). It takes full size image and returns downscaled one and then second of the pair is applied.
-	zoommer : ((Form) -> Pair<Form, Behaviour<WidthHeight>>) -> ((Form) -> Pair<Form, (Form) -> Form>) = either(imageOnlyZoomFn, \fn -> \form -> Pair(form, idfn));
+	zoommer : ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>) = either(imageOnlyZoomFn, \fn -> \form -> Pair(form, idfn));
 
 	useSavedSize = \f -> {
 		Size2(savedOrRealSize, f) |> NonZeroSize
@@ -233,7 +227,7 @@ makeImageDecorated2(
 		|> (\f -> if (preScaleCrop) applyCrop(f) else f)
 		|> addShadow
 		|> zoommer(addDecorations(fullSizeScaleConnector, true))
-		|> unpairC(\f, t -> f |> addDecorations(zoomedImageScaleConnector, false) |> firstOfPair |> t)
+		|> unpairC(\f, t -> f |> addDecorations(zoomedImageScaleConnector, false) |> t)
 		|> addPadding;
 
 	decoratedPicSize = makeWH();
@@ -429,7 +423,7 @@ makeZoomAdder(zoom) {
 makeZoomAdder3(zoom, virtualScreenInfoM : Maybe<VirtualScreenInfo>) {
 	fn = eitherMap(
 		zoom.percent,
-		\percent -> \extDecorationsSize, form -> Scale(const(percent), const(percent), form),
+		\percent -> \form -> Scale(const(percent), const(percent), form),
 		{
 			width = either(zoom.toWidth, 0.0);
 			height = either(zoom.toHeight, 0.0);
@@ -443,26 +437,28 @@ makeZoomAdder3(zoom, virtualScreenInfoM : Maybe<VirtualScreenInfo>) {
 					\form -> resizeTo(width, height, form)  //width and heigth are specified
 				]
 			];
-			applyZoom = resizeFunctions[b2i(isSome(zoom.toWidth))][b2i(isSome(zoom.toHeight))];
-			\extDecorationsSize, f -> applyZoom(f)
+			resizeFunctions[b2i(isSome(zoom.toWidth))][b2i(isSome(zoom.toHeight))];
 		}
 	);
 
 	makeZoomAdder2(zoom, fn, virtualScreenInfoM, None())
 }
 
-makeZoomAdder2(zoom: ZoomDescription, fn: ((Behaviour<WidthHeight>, Form) -> Form), virtualScreenInfoM : Maybe<VirtualScreenInfo>, backcolor : Maybe<Color>) ->
-	((Form) -> Pair<Form, Behaviour<WidthHeight>>) ->
-		((Form) -> Pair<Form, (Form) -> Form>)
+makeZoomAdder2(
+	zoom: ZoomDescription,
+	fn: (Form) -> Form,
+	virtualScreenInfoM : Maybe<VirtualScreenInfo>,
+	backcolor : Maybe<Color>
+) -> ((Form) -> Form) -> ((Form) -> Pair<Form, (Form) -> Form>)
 {
 	if (zoom.mouseZoom) {
 		\makeExtDecForm -> \form -> {
-			decoratedFormData = makeExtDecForm(form);// second Behaviour<WidthHeight> with height added by decorations outside the form borders. Ignored here
+			decoratedForm = makeExtDecForm(form);// second Behaviour<WidthHeight> with height added by decorations outside the form borders. Ignored here
 			sizeB = make(zoom.realSize);
-			embedded = Inspect([ISize(sizeB)], fn(decoratedFormData.second, form));
+			embedded = Inspect([ISize(sizeB)], fn(form));
 			validSize = zoom.realSize.width > 0.0 && zoom.realSize.height > 0.0;
 			magnifier = getHtmlPictureMagnifyWithCloseButton(
-				decoratedFormData.first,
+				decoratedForm,
 				embedded,
 				"",
 				TreeEmpty(),
@@ -486,11 +482,11 @@ makeZoomAdder2(zoom: ZoomDescription, fn: ((Behaviour<WidthHeight>, Form) -> For
 						magnifier.first;
 					}
 				}),
-				\f -> ^zoomFn(f)
+				^zoomFn
 			);
 		}
 	} else {
-		\__ -> \f -> Pair(fn(zeroSize, f), idfn)
+		\__ -> \f -> Pair(fn(f), idfn)
 	}
 }
 
@@ -663,7 +659,7 @@ makeSizeIndependentDecorationsAdder(
 	makeParagraphElements : (string, [CharacterStyle]) -> [ParagraphElement],
 	imgSize: WidthHeight,
 	zoom : bool
-	) -> SizeIndependentDecorationsData
+	) -> ((Form) -> Form)
 {
 	imageWH = makeWH();
 	paragraphSizer = \l, t, r, b -> \f -> {
@@ -726,7 +722,7 @@ makeSizeIndependentDecorationsAdder(
 				zoomFs = max(12.0, 12.0 * sqrt(imgSize.width * imgSize.width + imgSize.height * imgSize.height) / 1000.0);
 				newStyle = ifArrayPush(style, !containsStruct(style, Fill(0x525252)), Fill(0x525252));
 
-				needsHide = ! zoom && contains(decorations, ImageCopyrightHidable());
+				needsHide = !zoom && contains(decorations, ImageCopyrightHidable());
 				availableH = make(0.);
 				showCopyrightB = make(false);
 				Lines([
@@ -769,21 +765,10 @@ makeSizeIndependentDecorationsAdder(
 		default : None();
 	});
 	steps = [addBorder, addHeader, addFooter, addCopyright, addCaption, addAltText];
-	addDecorations = fold(map(steps, firstOfPair), addInspector(imageWH), \acc, fn -> \f : Form -> f |> acc |> fn);
 
-	decorationsSize = makeWH();
-
-	sizesConnector = \ -> {
-		sizes = mergeu(map(steps, secondOfPair));
-		uns = connectSelectDistinctu(sizes.first, decorationsSize, \a -> {
-			WidthHeight(0.0, fold(a, 0.0, \acc, wh -> acc + wh.height))
-		});
-
-		\ -> {
-			uns();
-			sizes.second();
-		}
-	};
-
-	SizeIndependentDecorationsData(addDecorations, decorationsSize, sizesConnector)
+	\f -> fold(
+		map(steps, firstOfPair),
+		Inspect([ISize(imageWH)], f),
+		\acc, fn -> fn(acc)
+	);
 }
