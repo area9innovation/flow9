@@ -1170,6 +1170,12 @@ class RenderSupportJSPixi {
 		parent.removeChild(child);
 	}
 
+	public static function removeChildren(parent : FlowContainer) : Void {
+		for (child in parent.children) {
+			parent.removeChild(child);
+		}
+	}
+
 	public static function makeClip() : FlowContainer {
 		return new FlowContainer();
 	}
