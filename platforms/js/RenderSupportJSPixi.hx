@@ -16,6 +16,7 @@ import pixi.loaders.Loader;
 
 import MacroUtils;
 import Platform;
+import ProgressiveWebTools;
 
 using DisplayObjectHelper;
 
@@ -350,7 +351,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && Platform.isChrome) {
+		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = Browser.window.matchMedia("(orientation: portrait)").matches;
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
