@@ -117,4 +117,8 @@ class ProgressiveWebTools {
 		#else
 		#end
 	}
+
+	public static function isRunningPWA() : Bool {
+		return !Browser.window.matchMedia("(display-mode: browser)").matches;
+	}
 }
