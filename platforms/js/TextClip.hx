@@ -32,21 +32,10 @@ class UnicodeTranslation {
 	public var rangeContentFlags : Int;
 	static var map : Map<String, UnicodeTranslation> = new Map<String, UnicodeTranslation>();
 
-	public function new(rangeStart, rangeContentFlags) {
-		this.rangeStart = rangeStart;
-		this.rangeContentFlags = rangeContentFlags;
-	}
-
-	static public function getCharAvailableVariants(chr: String): Int {
-		var unit = map.get(chr);
-		if (unit == null) return 1;
-		return unit.rangeContentFlags;
-	}
-
-	static public function getCharVariant(chr: String, gv: Int): String {
+	private static function initMap() {
 		var found = "";
 		for (found in map) break;
-		if (found != "") {
+		if (found == "") {
 			// Glyphs start here.
 			var rangeStart : Int = 0xFE81;
 			// Packed values, bit per character. How many glyphs
@@ -70,6 +59,22 @@ class UnicodeTranslation {
 				rangeStart += 2;
 			}
 		}
+	}
+
+	public function new(rangeStart, rangeContentFlags) {
+		this.rangeStart = rangeStart;
+		this.rangeContentFlags = rangeContentFlags;
+	}
+
+	static public function getCharAvailableVariants(chr: String): Int {
+		initMap();
+		var unit = map.get(chr);
+		if (unit == null) return 1;
+		return unit.rangeContentFlags;
+	}
+
+	static public function getCharVariant(chr: String, gv: Int): String {
+		initMap();
 		var unit = map[chr];
 		if (unit == null) return chr;
 		var tr_gv = unit.rangeContentFlags;
@@ -230,24 +235,23 @@ class TextClip extends NativeWidgetClip {
 			}
 		}
 		var gv = GV_ISOLATED;
-		i = 0;
+		i = -1;
 		var ret = "";
 		var rightConnect = false;  // Assume only RTL ones have connections.
 		while (i<=lret.length) {
 			var j = i+1;
 			while (j<lret.length && isCharCombining(lret, j)) j += 1;
 			var conMask = UnicodeTranslation.getCharAvailableVariants(j >= lret.length? "" : lret.substr(j, 1));
-
-			// Simplified implementation due seems following character, if RTL, always support connection.
-			if ((conMask & 3) == 3) {
+			if ((conMask & 3) != 3) gv &= 1;
+			var chr = i >=0 ? UnicodeTranslation.getCharVariant(lret.substr(i, 1), gv) : "";
+			if ((conMask & 12) != 0) {
 				gv = rightConnect? GV_MEDIAL : GV_INITIAL;
 				rightConnect = true;
 			} else {
 				gv = rightConnect? GV_FINAL : GV_ISOLATED;
 				rightConnect = false;
 			}
-			if (i>0) ret += UnicodeTranslation.getCharVariant(lret.substr(i-1, 1), gv);
-			ret += lret.substr(i, j-i-1);
+			ret += chr + lret.substr(i+1, j-i-1);
 			i = j;
 		}
 		return new TextMappedModification(ret, positionsDiff);
