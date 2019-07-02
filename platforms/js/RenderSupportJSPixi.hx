@@ -282,7 +282,6 @@ class RenderSupportJSPixi {
 	//	Browser window events
 	//
 	private static inline function initBrowserWindowEventListeners() {
-		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
 	}
@@ -377,6 +376,7 @@ class RenderSupportJSPixi {
 				// Assume that WindowTopHeight is equal for both landscape and portrait and
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
+				WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
 				win_width = screen_size.width + 1;
 				win_height = screen_size.height + 1 - cast WindowTopHeight;
 
