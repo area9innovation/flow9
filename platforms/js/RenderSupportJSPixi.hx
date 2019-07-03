@@ -16,6 +16,7 @@ import pixi.loaders.Loader;
 
 import MacroUtils;
 import Platform;
+import ProgressiveWebTools;
 
 using DisplayObjectHelper;
 
@@ -282,7 +283,6 @@ class RenderSupportJSPixi {
 	//	Browser window events
 	//
 	private static inline function initBrowserWindowEventListeners() {
-		WindowTopHeight = cast (getScreenSize().height - Browser.window.innerHeight);
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
 	}
@@ -351,7 +351,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function getScreenSize() {
-		if (Platform.isIOS && Platform.isChrome) {
+		if (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA())) {
 			var is_portrait = Browser.window.matchMedia("(orientation: portrait)").matches;
 			return is_portrait ?
 				{ width : Browser.window.screen.width, height : Browser.window.screen.height} :
@@ -377,6 +377,7 @@ class RenderSupportJSPixi {
 				// Assume that WindowTopHeight is equal for both landscape and portrait and
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
+				WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
 				win_width = screen_size.width + 1;
 				win_height = screen_size.height + 1 - cast WindowTopHeight;
 

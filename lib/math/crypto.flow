@@ -1,0 +1,122 @@
+import runtime;
+import math/bits;
+
+export {
+	encrypt(data : string, key : string, mode : Encrypt_Mode) -> string;
+	decrypt(encrypteddata : string, key : string, mode : Encrypt_Mode) -> string;
+
+	Encrypt_Mode ::= Encrypt_XOR, Encrypt_TEA;
+		Encrypt_XOR();
+		Encrypt_TEA();
+}
+
+// temp solution. transform key string into four int
+keystring2ints(key : string) -> [int] {
+	k_arr = arrayResize(pack_string_bytes(key), 4, 0);
+	k_arr;
+}
+
+encrypt(data : string, key : string, mode : Encrypt_Mode) -> string {
+	if (key == "") data else {
+		switch (mode) {
+			Encrypt_XOR(): {	
+				decryptencrypt_xor(data, key);		
+			}
+			Encrypt_TEA(): {	
+				encrypt_tea(data, key);		
+			}
+		}
+	}
+}
+
+decrypt(encrypteddata : string, key : string, mode : Encrypt_Mode) -> string {
+	if (key == "") encrypteddata else {
+		switch (mode) {
+			Encrypt_XOR(): {	
+				decryptencrypt_xor(encrypteddata, key);		
+			}
+			Encrypt_TEA(): {	
+				decrypt_tea(encrypteddata, key);		
+			}
+		}
+	}
+}
+
+// XOR
+decryptencrypt_xor(data : string, key : string) -> string {
+	keyLen = strlen(key);
+
+	stringFoldi(data, "", \i, acc, c -> {
+		ind = mod(i, keyLen);
+		acc + fromCharCode(bitXor(c, getCharCodeAt(key, ind)));
+	});
+}
+
+// a kind of Tiny Encryption Algorithm (https://en.wikipedia.org/wiki/Tiny_Encryption_Algorithm)
+tea_delta = 2654435769;
+
+// since we use UCS-2 format characters so pack each 2 character into one int (to save space)
+pack_string_bytes(data : string) -> [int] {
+	d_arr_tmp = s2a(data);
+	d_len_tmp = length(d_arr_tmp);
+
+	foldRange(0, (d_len_tmp + 1) / 2 - 1, [], \acc, i -> {
+		v0 = d_arr_tmp[i * 2];
+		v1 = if (i * 2 + 1 >= d_len_tmp) 0 else d_arr_tmp[i * 2 + 1];
+		arrayPush(acc, bitOr(bitShl(v1, 16), v0));
+	});
+}
+
+unpack_string_bytes(data : [int]) -> [int] {
+	fold(data, [], \acc, d -> {
+		v0 = bitAnd(d, 65535);
+		v1 = bitAnd(bitUshr(d, 16), 65535);
+		concat(acc, [v0, v1]);
+	});
+}
+
+encrypt_tea(data : string, key : string) -> string {
+	d_arr = pack_string_bytes(data);
+	d_len = length(d_arr);
+
+	k_arr = keystring2ints(key);
+
+	ret = foldRange(0, (d_len + 1) / 2 - 1, [if (odd(d_len)) 1 else 0], \acc, i -> {
+		v0 = d_arr[i * 2];
+		v1 = if (i * 2 + 1 >= d_len) 0 else d_arr[i * 2 + 1];
+		r = foldRange(0, 31, Pair([v0, v1], 0), \p, j -> {
+			_sum = p.second + tea_delta;
+			_v0 = p.first[0] + bitXor(bitXor((bitShl(p.first[1], 4) + k_arr[0]), (p.first[1] + _sum)), (bitUshr(p.first[1], 5) + k_arr[1]));
+			_v1 = p.first[1] + bitXor(bitXor((bitShl(_v0, 4) + k_arr[2]), (_v0 + _sum)), (bitUshr(_v0, 5) + k_arr[3]));
+			Pair([_v0, _v1], _sum);
+		});
+
+		concat(acc, r.first);
+	});
+
+	a2s2(unpack_string_bytes(ret), "", fromCharCode)
+}
+
+decrypt_tea(data : string, key : string) -> string {
+	d_arr = pack_string_bytes(data);
+	is_odd = d_arr[0];
+	d_len = length(d_arr) - 1;
+	k_arr = keystring2ints(key);
+
+	ret = foldRange(0, (d_len + 1) / 2 - 1, [], \acc, i -> {
+		v0 = d_arr[i * 2 + 1];
+		v1 = if (i * 2 + 1 >= d_len) 0 else d_arr[i * 2 + 2];
+
+		r = foldRange(0, 31, Pair([v0, v1], 32 * tea_delta), \p, j -> {
+			_v1 = p.first[1] - bitXor(bitXor((bitShl(p.first[0], 4) + k_arr[2]), (p.first[0] + p.second)), (bitUshr(p.first[0], 5) + k_arr[3]));
+			_v0 = p.first[0] - bitXor(bitXor((bitShl(_v1, 4) + k_arr[0]), (_v1 + p.second)), (bitUshr(_v1, 5) + k_arr[1]));
+			_sum = p.second - tea_delta;
+
+			Pair([_v0, _v1], _sum);
+		});
+
+		concat(acc, r.first);
+	});
+
+	a2s2(unpack_string_bytes(ret), "", fromCharCode);
+}
