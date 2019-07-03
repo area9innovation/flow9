@@ -370,7 +370,7 @@ class RenderSupportJSPixi {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
+			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
 				// Still send whole window size - without reducing by screen kbd
 				// for flow does not resize the stage. The stage will be
 				// scrolled by this renderer if needed or by the browser when it is supported.
