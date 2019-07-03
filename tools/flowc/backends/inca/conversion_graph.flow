@@ -1,0 +1,106 @@
+import tools/flowc/backends/inca/env;
+import ds/simplegraph;
+import tools/flowc/incremental/fi_helpers;
+
+export {
+	buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string>;
+}
+
+buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string> {
+	graph0 = foldTree(env.unions, makeSimpleGraph(), \name, union, acc -> {
+		fold(union.typenames, acc, \acc2, tn -> {
+			addSimpleEdge(acc2, name, getFiTypeName(tn), "", 0);
+		})
+	});
+
+	graph = foldTree(env.functions, graph0, \name, dec, acc -> {
+		addIncaFunctionToGraph(env, acc, dec)
+	});
+
+	if (false) {
+		dot = simpleGraph2dot(graph, "", [], \n -> {
+			concat(
+				[DotLabel(n)],
+				if (containsKeyTree(env.unions, n)) {
+					[DotFillColor("#ff0000"), DotShape("rectangle")]
+				} else {
+					[]
+				}
+
+			)
+		}, \e -> [DotLabel(e)]);
+		setFileContent("incagraph.dot", dot);
+		{}
+	}
+
+	graph;
+}
+
+addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, dec : FiFunctionDec) -> SimpleGraph<string, string> {
+	argTypes = filtermap(dec.type.args, \a -> {
+		argName = getFiTypeName(a.type);
+		if (argName == "") None() else Some(argName);
+	});
+	retType = getFiTypeName(dec.type.returnType);
+
+	if (length(argTypes) == 1 && retType != "") {
+		argType = argTypes[0];
+
+		println("\n" + argType + " -> " + retType);
+
+		acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
+		addSimpleEdge(acc2, argType, retType, dec.name, 2);
+	} else acc;
+}
+
+addIncaCasesToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, fn : string, ex : FiExp) -> SimpleGraph<string, string> {
+	todo = \ -> {
+		println("TODO: Handle conversion of " + ex.structname);
+		acc;
+	}
+	switch (ex) {
+		FiLambda(args, body, type, start): addIncaCasesToGraph(env, acc, fn, body);
+
+		FiCall(f, args, type, start): {
+			fold(args, acc, \acc2, e -> {
+				addIncaCasesToGraph(env, acc2, fn, e);
+			});
+		}
+		FiLet(name, type, e1, e2, type2, start): {
+			acc1 = addIncaCasesToGraph(env, acc, fn, e1);
+			addIncaCasesToGraph(env, acc1, fn, e2);
+		}
+		FiIf(e1, e2, e3, type, start): todo();
+		FiSwitch(x, switchType, cases, type, start): {
+			fold(cases, acc, \acc2, case : FiCase -> {
+				addIncaCaseToGraph(env, acc2, fn, case)
+			});
+		}
+		FiCast(e, tFrom, tTo, type, start): todo();
+		FiSeq(es, type, start): {
+			fold(es, acc, \acc2, e -> {
+				addIncaCasesToGraph(env, acc2, fn, e);
+			});
+		}
+		FiCallPrim(op, es, type, start): todo();
+
+		FiVar(name, type, start): acc;
+		FiVoid(start): acc;
+		FiDouble(d, start): acc;
+		FiInt(i, start): acc;
+		FiString(s, start): acc;
+		FiBool(b, start): acc;
+		FiRequire(flowfile, e, type, start): todo();
+		FiUnsafe(name, fallback, type, start): todo();
+	}
+}
+
+addIncaCaseToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, fn : string, case : FiCase) -> SimpleGraph<string, string> {
+	switch (case.body) {
+		FiVar(__, __, __): acc;
+		default: {
+			type = getFiTypeName(fiExpType(case.body));
+			addSimpleEdge(acc, case.struct, type, fn, 1);
+		}
+	}
+}
