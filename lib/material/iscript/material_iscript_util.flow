@@ -8,7 +8,7 @@ import net/http_request_util;
 import formats/base64;
 
 export {
-	replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
+	replayIScript(manager : MaterialManager, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void;
 
 	getBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, focusExists : bool, enabled : bool, focusable : bool, click : bool) -> Maybe<DynamicBehaviour<flow>>;
 	repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBehaviourDescriptor, value : flow) -> bool;
@@ -23,7 +23,7 @@ export {
 
 	onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplayResult]) -> void) -> ([IScriptReplayResult]) -> void;
 
-	handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void;
+	handleIScriptState(manager : MaterialManager) -> () -> void;
 
 	isIScriptUrlParamsSet() -> bool;
 }
@@ -32,9 +32,9 @@ stopIScriptReplay(manager : MaterialManager) -> void {
 	next(manager.iscript.state, IScriptStopped());
 }
 
-replayIScript(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
+replayIScript(manager : MaterialManager, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	iScriptInfo(manager, "Replay IScript", None());
-	replayIScript2(manager, getValue(manager.iscript.script), m2t, onFinished, handleInputOutput);
+	replayIScript2(manager, getValue(manager.iscript.script), onFinished, handleInputOutput);
 }
 
 ContiniousTimer(
@@ -145,7 +145,7 @@ continiousTimer(tree : Tree<double, [() -> bool]>, timeout : double, maxRepeats 
 	)
 }
 
-replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MFocusGroup) -> Tropic, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
+replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
 	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
 	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
@@ -154,7 +154,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 		setTree(
 			acc,
 			delay / getValue(manager.iscript.settings.replaySpeed),
-			map(records, \r -> \ -> replayIScriptRecord(manager, r, m2t, handleInputOutput))
+			map(records, \r -> \ -> replayIScriptRecord(manager, r, handleInputOutput))
 		)
 	)
 	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
@@ -171,7 +171,7 @@ replayIScript2(manager : MaterialManager, iScript : IScript, m2t : (Material, MF
 	})
 }
 
-replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, m2t : (Material, MFocusGroup) -> Tropic, handleInputOutput : bool) -> bool {
+replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInputOutput : bool) -> bool {
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
 			repeatBehaviourById(manager, descriptor, value) || descriptor.name == "focused"
@@ -921,7 +921,6 @@ startIScriptRecording(manager : MaterialManager, options : CaptureOptions, conti
 
 startIScriptReplaying(
 	manager : MaterialManager,
-	m2t : (Material, MFocusGroup) -> Tropic,
 	onFinish : ([IScriptReplayResult]) -> void
 ) -> [() -> void] {
 	if (!isIScriptEmpty(manager)) {
@@ -936,7 +935,6 @@ startIScriptReplaying(
 		[
 			replayIScript(
 				manager,
-				m2t,
 				\b -> {
 					onFinish(
 						[
@@ -963,7 +961,6 @@ startIScriptReplaying(
 
 startIScriptScenarioReplaying(
 	manager : MaterialManager,
-	m2t : (Material, MFocusGroup) -> Tropic,
 	onFinish : ([IScriptReplayResult]) -> void
 ) -> [() -> void] {
 	if (!isIScriptScenarioEmpty(manager)) {
@@ -1008,7 +1005,7 @@ startIScriptScenarioReplaying(
 
 								(manager.iscript).httpRequestDisposer ::= Some(substituteHttpRequest(manager));
 								[
-									replayIScript(manager, m2t,
+									replayIScript(manager,
 										\b -> {
 											hideIScriptReplayCursor(manager);
 
@@ -1095,7 +1092,7 @@ disposeIScriptScenarioHandler(manager : MaterialManager) -> void {
 	(manager.iscript).replayScenarioDisposer ::= None();
 }
 
-handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> Tropic) -> () -> void {
+handleIScriptState(manager : MaterialManager) -> () -> void {
 	makeSubscribe2Uns(manager.iscript.state, \state -> {
 		switch (state) {
 			IScriptRecording(options, continue): {
@@ -1107,7 +1104,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 			}
 			IScriptReplaying(onFinish): {
 				disposeIScriptHandler(manager);
-				startIScriptReplaying(manager, m2t, onFinish);
+				startIScriptReplaying(manager, onFinish);
 			}
 			IScriptReplayingPaused(): {
 				[]
@@ -1115,7 +1112,7 @@ handleIScriptState(manager : MaterialManager, m2t : (Material, MFocusGroup) -> T
 			IScriptScenarioReplaying(onFinish): {
 				disposeIScriptHandler(manager);
 				disposeIScriptScenarioHandler(manager);
-				startIScriptScenarioReplaying(manager, m2t, onFinish);
+				startIScriptScenarioReplaying(manager, onFinish);
 			}
 			IScriptScenarioReplayingPaused(): {
 				[]
@@ -1237,7 +1234,7 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 
 		if (getUrlParameter(UP_ISCRIPTGENERATESCREENSHOTS) != "") {
 			iter(b, \result -> writeIScriptScreenshot(
-				getIScriptScreenshotName(result.filepath, Some(getIScriptScenarioFileName(manager)), None()), 
+				getIScriptScreenshotName(result.filepath, Some(getIScriptScenarioFileName(manager)), None()),
 				result.afterReplayVisualScreenshot.screenshot
 			) |> ignore);
 		}
@@ -1247,7 +1244,7 @@ onIScriptReplayFinish(manager : MaterialManager, compareDialog : ([IScriptReplay
 			iScriptInfo(manager, "=== End Scenario ===", None());
 			if (getUrlParameter(UP_ISCRIPTGENERATESCENARIOHTMLREPORT) != "") {
 				writeIScriptReport(
-					getIScriptReportName(getIScriptScenarioFileName(manager)), 
+					getIScriptReportName(getIScriptScenarioFileName(manager)),
 					getIscriptReportResults(b)
 				) |> ignore;
 			}
@@ -1286,7 +1283,7 @@ getIScriptScreenshotName(scriptPath : string, scenarioNameM : Maybe<string>, ind
 
 writeIScriptScreenshot(path : string, content : string) -> bool {
 	setFileContentBytes(
-		path, 
+		path,
 		decodeBase64(
 			strRight(content, 22)
 		)
@@ -1304,9 +1301,9 @@ getIscriptReportResults(results : [IScriptReplayResult]) -> string {
 	strGlue(map(results, \result -> {
 		savedScreenshoot = eitherMap(result.iscriptVisualScreenshotM, \ivs -> ivs.screenshot, "");
 		formatString(
-			"<h2>%1 with result %2</h2><img src=\"%3\">%4", 
+			"<h2>%1 with result %2</h2><img src=\"%3\">%4",
 			[
-				result.filepath, 
+				result.filepath,
 				b2s(result.isReplaySuccessful),
 				result.afterReplayVisualScreenshot.screenshot,
 				if (!result.isReplaySuccessful && savedScreenshoot != "")
