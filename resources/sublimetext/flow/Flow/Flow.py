@@ -157,7 +157,7 @@ def basedir(view):
     dir_name = normalizePath(os.path.dirname(file))+'/'
     x1 = dir_name.find('/flow9/')
     if x1 > 0:
-        return dir_name[:x1+5]
+        return dir_name[:x1+6]
 
     # maybe there's a directory somewhere above us with a *.sublime-project file.
     # if so return that directory.
