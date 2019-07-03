@@ -370,23 +370,23 @@ class RenderSupportJSPixi {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
-				// Still send whole window size - without reducing by screen kbd
-				// for flow does not resize the stage. The stage will be
-				// scrolled by this renderer if needed or by the browser when it is supported.
-				// Assume that WindowTopHeight is equal for both landscape and portrait and
-				// browser window is fullscreen
-				var screen_size = getScreenSize();
-				WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
-				win_width = screen_size.width + 1;
-				win_height = screen_size.height + 1 - cast WindowTopHeight;
+			// if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+			// 	// Still send whole window size - without reducing by screen kbd
+			// 	// for flow does not resize the stage. The stage will be
+			// 	// scrolled by this renderer if needed or by the browser when it is supported.
+			// 	// Assume that WindowTopHeight is equal for both landscape and portrait and
+			// 	// browser window is fullscreen
+			// 	var screen_size = getScreenSize();
+			// 	WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
+			// 	win_width = screen_size.width + 1;
+			// 	win_height = screen_size.height + 1 - cast WindowTopHeight;
 
-				if (Platform.isAndroid) {
-					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
-					// Assume other mobile browsers do it theirselves
-					ensureCurrentInputVisible(); // Test overlap and shift if needed
-				}
-			}
+			// 	if (Platform.isAndroid) {
+			// 		PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
+			// 		// Assume other mobile browsers do it theirselves
+			// 		ensureCurrentInputVisible(); // Test overlap and shift if needed
+			// 	}
+			// }
 
 			PixiRenderer.resize(win_width, win_height);
 		}
