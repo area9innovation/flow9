@@ -439,8 +439,10 @@ class RenderSupportJSPixi {
 			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
 			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
 			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
-			setStagePointerHandler("mouseout", function () { emit("mouseup"); }); // Emulate mouseup to release scrollable for example
-			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); });
+			// Emulate mouseup to release scrollable for example
+			setStagePointerHandler("mouseout", function () { emit("mouseup"); });
+			// Emulate mousemove to update hovers and tooltips
+			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); forceRollOverRollOutUpdate(); emit("mousemove"); });
 			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
 			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
 		}
@@ -643,6 +645,10 @@ class RenderSupportJSPixi {
 		emulateEvent("mouseout", 600, clip);
 	}
 
+	private static function forceRollOverRollOutUpdate() : Void {
+		untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+	}
+
 	public static function emitMouseEvent(clip : DisplayObject, event : String, x : Float, y : Float) : Void {
 		MousePos.x = x;
 		MousePos.y = y;
@@ -653,6 +659,8 @@ class RenderSupportJSPixi {
 		} else {
 			clip.emit(event);
 		}
+
+		forceRollOverRollOutUpdate();
 	}
 
 	public static function emitKeyEvent(clip : DisplayObject, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
