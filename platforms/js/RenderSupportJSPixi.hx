@@ -1177,8 +1177,12 @@ class RenderSupportJSPixi {
 		parent.addChildAt(child, id);
 	}
 
-	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.removeChild(child);
+	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
+		if (parent.removeElementChild != null) {
+			parent.removeElementChild(child);
+		} else {
+			parent.removeChild(child);
+		}
 	}
 
 	public static function removeChildren(parent : FlowContainer) : Void {
@@ -2182,6 +2186,34 @@ class RenderSupportJSPixi {
 	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
 		clip.evalJS(code);
 		return null;
+	}
+
+	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {
+		return new HTMLStage(width, height);
+	}
+
+	public static function createElement(tagName : String) : Element {
+		return Browser.document.createElement(tagName);
+	}
+
+	public static function createTextNode(text : String) : js.html.Text {
+		return Browser.document.createTextNode(text);
+	}
+
+	public static function setAttribute(element : Element, name : String, value : String) : Void {
+		element.setAttribute(name, value);
+	}
+
+	public static function appendChild(element : Dynamic, child : Element) : Void {
+		element.appendChild(child);
+	}
+
+	public static function insertBefore(element : Dynamic, child : Element, reference : Element) : Void {
+		element.insertBefore(child, reference);
+	}
+
+	public static function removeElementChild(element : Dynamic, child : Element) : Void {
+		element.removeElementChild(child);
 	}
 
 	public static function getNumberOfCameras() : Int {
