@@ -47,9 +47,11 @@ class RenderSupportJSPixi {
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
 
-	// In fact that is needed only for android to have dimensions without
-	// screen keyboard
-	private static var WindowTopHeight : Int;
+	// In fact that is needed for android to have dimensions without screen keyboard
+	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
+	private static var WindowTopHeightPortrait : Int = -1;
+	private static var WindowTopHeightLandscape : Int = -1;
+	
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -283,8 +285,30 @@ class RenderSupportJSPixi {
 	//	Browser window events
 	//
 	private static inline function initBrowserWindowEventListeners() {
+		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
+	}
+
+	private static inline function calculateMobileTopHeight() {
+		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+
+		// Calculate top height only once for each orientation
+		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+			if (WindowTopHeightPortrait == -1)
+				WindowTopHeightPortrait = topHeight;
+		} else {
+			if (WindowTopHeightLandscape == -1)
+				WindowTopHeightLandscape = topHeight;
+		}
+	}
+
+	private static inline function getMobileTopHeight() {
+		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+			return WindowTopHeightPortrait;
+		} else {
+			return WindowTopHeightLandscape;
+		}
 	}
 
 	private static inline function initClipboardListeners() {
@@ -370,23 +394,24 @@ class RenderSupportJSPixi {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			// if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
-			// 	// Still send whole window size - without reducing by screen kbd
-			// 	// for flow does not resize the stage. The stage will be
-			// 	// scrolled by this renderer if needed or by the browser when it is supported.
-			// 	// Assume that WindowTopHeight is equal for both landscape and portrait and
-			// 	// browser window is fullscreen
-			// 	var screen_size = getScreenSize();
-			// 	WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
-			// 	win_width = screen_size.width + 1;
-			// 	win_height = screen_size.height + 1 - cast WindowTopHeight;
+			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+				calculateMobileTopHeight();
 
-			// 	if (Platform.isAndroid) {
-			// 		PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
-			// 		// Assume other mobile browsers do it theirselves
-			// 		ensureCurrentInputVisible(); // Test overlap and shift if needed
-			// 	}
-			// }
+				// Still send whole window size - without reducing by screen kbd
+				// for flow does not resize the stage. The stage will be
+				// scrolled by this renderer if needed or by the browser when it is supported.
+				// Assume that WindowTopHeight is equal for both landscape and portrait and
+				// browser window is fullscreen
+				var screen_size = getScreenSize();
+				win_width = screen_size.width;
+				win_height = screen_size.height - cast getMobileTopHeight();
+
+				if (Platform.isAndroid) {
+					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
+					// Assume other mobile browsers do it theirselves
+					ensureCurrentInputVisible(); // Test overlap and shift if needed
+				}
+			}
 
 			PixiRenderer.resize(win_width, win_height);
 		}
