@@ -370,23 +370,23 @@ class RenderSupportJSPixi {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
-				// Still send whole window size - without reducing by screen kbd
-				// for flow does not resize the stage. The stage will be
-				// scrolled by this renderer if needed or by the browser when it is supported.
-				// Assume that WindowTopHeight is equal for both landscape and portrait and
-				// browser window is fullscreen
-				var screen_size = getScreenSize();
-				WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
-				win_width = screen_size.width + 1;
-				win_height = screen_size.height + 1 - cast WindowTopHeight;
+			// if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+			// 	// Still send whole window size - without reducing by screen kbd
+			// 	// for flow does not resize the stage. The stage will be
+			// 	// scrolled by this renderer if needed or by the browser when it is supported.
+			// 	// Assume that WindowTopHeight is equal for both landscape and portrait and
+			// 	// browser window is fullscreen
+			// 	var screen_size = getScreenSize();
+			// 	WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
+			// 	win_width = screen_size.width + 1;
+			// 	win_height = screen_size.height + 1 - cast WindowTopHeight;
 
-				if (Platform.isAndroid) {
-					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
-					// Assume other mobile browsers do it theirselves
-					ensureCurrentInputVisible(); // Test overlap and shift if needed
-				}
-			}
+			// 	if (Platform.isAndroid) {
+			// 		PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
+			// 		// Assume other mobile browsers do it theirselves
+			// 		ensureCurrentInputVisible(); // Test overlap and shift if needed
+			// 	}
+			// }
 
 			PixiRenderer.resize(win_width, win_height);
 		}
@@ -439,8 +439,10 @@ class RenderSupportJSPixi {
 			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
 			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
 			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
-			setStagePointerHandler("mouseout", function () { emit("mouseup"); }); // Emulate mouseup to release scrollable for example
-			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); });
+			// Emulate mouseup to release scrollable for example
+			setStagePointerHandler("mouseout", function () { emit("mouseup"); });
+			// Emulate mousemove to update hovers and tooltips
+			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); forceRollOverRollOutUpdate(); emit("mousemove"); });
 			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
 			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
 		}
@@ -643,6 +645,10 @@ class RenderSupportJSPixi {
 		emulateEvent("mouseout", 600, clip);
 	}
 
+	private static function forceRollOverRollOutUpdate() : Void {
+		untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+	}
+
 	public static function emitMouseEvent(clip : DisplayObject, event : String, x : Float, y : Float) : Void {
 		MousePos.x = x;
 		MousePos.y = y;
@@ -653,6 +659,8 @@ class RenderSupportJSPixi {
 		} else {
 			clip.emit(event);
 		}
+
+		forceRollOverRollOutUpdate();
 	}
 
 	public static function emitKeyEvent(clip : DisplayObject, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
