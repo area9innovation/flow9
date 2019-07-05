@@ -33,7 +33,6 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
-  console.log("sw version 14.0");
   // Adding base url if the given url is relative (starts with ./)
   // As base url we use location of serverworker file itself (www folder of the app)
   var urlAddBaseLocation = function(url) {
@@ -70,19 +69,27 @@ self.addEventListener('fetch', function(event) {
     }
   }
 
-  // Removing ignoreParameters from the request url
-  var filterUrlParameters = function(url, ignoreParameters) {
+  var extractUrlParameters = function(url) {
     var urlSplitted = url.split("?");
     if (urlSplitted.length > 1) {
-      return urlSplitted[0] + "?" + urlSplitted.slice(1).join("?").split("&").filter(function(p) {
+      return { baseUrl : urlSplitted[0], parameters : urlSplitted.slice(1).join("?").split("&") };
+    } else {
+      return { baseUrl : url, parameters : [] };
+    }
+  }
+
+  // Removing ignoreParameters from the request url
+  var filterUrlParameters = function(url, ignoreParameters) {
+    var urlParameters = extractUrlParameters(url);
+    if (urlParameters.length == 0) {
+      return url;
+    } else {
+      return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
         var index = p.indexOf('=');
         if (index !== -1) p = p.substr(0, index);
         return !ignoreParameters.includes(p);
-      });
-    } else {
-      return url;
+      }).join("&");
     }
-    return url
   }
 
   // Searching the filter to which the request is match
@@ -98,7 +105,7 @@ self.addEventListener('fetch', function(event) {
       }
       if (el.method != "") resMethod = (method == el.method);
       if (el.cacheIfParametersMatch.length > 0) {
-        var urlParams = fixedUrl.split("&");
+        var urlParams = extractUrlParameters(fixedUrl).parameters.map(function(v) { return v.toLowerCase(); });
         
         resParameters = el.cacheIfParametersMatch.every(function(pair) {
           return urlParams.includes(pair[0] + "=" + pair[1]);
