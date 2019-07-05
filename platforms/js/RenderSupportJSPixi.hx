@@ -47,9 +47,11 @@ class RenderSupportJSPixi {
 	// NOTE: Pixi Text.resolution is readonly == renderer.resolution
 	public static var backingStoreRatio : Float = getBackingStoreRatio();
 
-	// In fact that is needed only for android to have dimensions without
-	// screen keyboard
-	private static var WindowTopHeight : Int;
+	// In fact that is needed for android to have dimensions without screen keyboard
+	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
+	private static var WindowTopHeightPortrait : Int = -1;
+	private static var WindowTopHeightLandscape : Int = -1;
+	
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -283,8 +285,30 @@ class RenderSupportJSPixi {
 	//	Browser window events
 	//
 	private static inline function initBrowserWindowEventListeners() {
+		calculateMobileTopHeight();
 		Browser.window.addEventListener('resize', onBrowserWindowResize, false);
 		Browser.window.addEventListener('focus', function () { PixiStage.invalidateStage(); requestAnimationFrame(); }, false);
+	}
+
+	private static inline function calculateMobileTopHeight() {
+		var topHeight = cast (getScreenSize().height - Browser.window.innerHeight);
+
+		// Calculate top height only once for each orientation
+		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+			if (WindowTopHeightPortrait == -1)
+				WindowTopHeightPortrait = topHeight;
+		} else {
+			if (WindowTopHeightLandscape == -1)
+				WindowTopHeightLandscape = topHeight;
+		}
+	}
+
+	private static inline function getMobileTopHeight() {
+		if (Browser.window.matchMedia("(orientation: portrait)").matches) {
+			return WindowTopHeightPortrait;
+		} else {
+			return WindowTopHeightLandscape;
+		}
 	}
 
 	private static inline function initClipboardListeners() {
@@ -370,16 +394,17 @@ class RenderSupportJSPixi {
 			var win_width = e.target.innerWidth;
 			var win_height = e.target.innerHeight;
 
-			if (Platform.isAndroid || (Platform.isIOS && Platform.isChrome)) {
+			if (Platform.isAndroid || (Platform.isIOS && (Platform.isChrome || ProgressiveWebTools.isRunningPWA()))) {
+				calculateMobileTopHeight();
+
 				// Still send whole window size - without reducing by screen kbd
 				// for flow does not resize the stage. The stage will be
 				// scrolled by this renderer if needed or by the browser when it is supported.
 				// Assume that WindowTopHeight is equal for both landscape and portrait and
 				// browser window is fullscreen
 				var screen_size = getScreenSize();
-				WindowTopHeight = cast (screen_size.height - Browser.window.innerHeight);
-				win_width = screen_size.width + 1;
-				win_height = screen_size.height + 1 - cast WindowTopHeight;
+				win_width = screen_size.width;
+				win_height = screen_size.height - cast getMobileTopHeight();
 
 				if (Platform.isAndroid) {
 					PixiStage.y = 0.0; // Layout emenets without shift to test overalap later
@@ -439,8 +464,10 @@ class RenderSupportJSPixi {
 			setStagePointerHandler("mousemiddledown", function () { emit("mousemiddledown"); });
 			setStagePointerHandler("mousemiddleup", function () { emit("mousemiddleup"); });
 			setStagePointerHandler("mousemove", function () { emit("mousemove"); });
-			setStagePointerHandler("mouseout", function () { emit("mouseup"); }); // Emulate mouseup to release scrollable for example
-			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); });
+			// Emulate mouseup to release scrollable for example
+			setStagePointerHandler("mouseout", function () { emit("mouseup"); });
+			// Emulate mousemove to update hovers and tooltips
+			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); forceRollOverRollOutUpdate(); emit("mousemove"); });
 			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
 			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
 		}
@@ -643,6 +670,10 @@ class RenderSupportJSPixi {
 		emulateEvent("mouseout", 600, clip);
 	}
 
+	private static function forceRollOverRollOutUpdate() : Void {
+		untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
+	}
+
 	public static function emitMouseEvent(clip : DisplayObject, event : String, x : Float, y : Float) : Void {
 		MousePos.x = x;
 		MousePos.y = y;
@@ -653,6 +684,8 @@ class RenderSupportJSPixi {
 		} else {
 			clip.emit(event);
 		}
+
+		forceRollOverRollOutUpdate();
 	}
 
 	public static function emitKeyEvent(clip : DisplayObject, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -1169,8 +1202,12 @@ class RenderSupportJSPixi {
 		parent.addChildAt(child, id);
 	}
 
-	public static function removeChild(parent : FlowContainer, child : Dynamic) : Void {
-		parent.removeChild(child);
+	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
+		if (parent.removeElementChild != null) {
+			parent.removeElementChild(child);
+		} else {
+			parent.removeChild(child);
+		}
 	}
 
 	public static function removeChildren(parent : FlowContainer) : Void {
@@ -2174,6 +2211,34 @@ class RenderSupportJSPixi {
 	public static function webClipEvalJS(clip : Dynamic, code : String) : Dynamic {
 		clip.evalJS(code);
 		return null;
+	}
+
+	public static function makeHTMLStage(width : Float, height : Float) : HTMLStage {
+		return new HTMLStage(width, height);
+	}
+
+	public static function createElement(tagName : String) : Element {
+		return Browser.document.createElement(tagName);
+	}
+
+	public static function createTextNode(text : String) : js.html.Text {
+		return Browser.document.createTextNode(text);
+	}
+
+	public static function setAttribute(element : Element, name : String, value : String) : Void {
+		element.setAttribute(name, value);
+	}
+
+	public static function appendChild(element : Dynamic, child : Element) : Void {
+		element.appendChild(child);
+	}
+
+	public static function insertBefore(element : Dynamic, child : Element, reference : Element) : Void {
+		element.insertBefore(child, reference);
+	}
+
+	public static function removeElementChild(element : Dynamic, child : Element) : Void {
+		element.removeElementChild(child);
 	}
 
 	public static function getNumberOfCameras() : Int {
