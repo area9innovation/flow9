@@ -278,9 +278,6 @@ void GLTextClip::layoutTextWrapLines()
         extent->layout.reset();
 
         // Word-wrapping loop:
-        if (rtl) {
-            wordwrap = false;
-        }
         do {
             cur_char = ctexti->position();
 
@@ -303,7 +300,7 @@ void GLTextClip::layoutTextWrapLines()
 
                 if (*layout->getEndPos() != *ctexti) {
                     ++*wpos;
-                    for (; *wpos != *ctexti; ++*wpos) {
+                    for (; *wpos != *ctexti && *wpos != *strEnd; ++*wpos) {
                         ucs4_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
