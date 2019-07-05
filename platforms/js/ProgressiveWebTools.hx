@@ -133,7 +133,7 @@ class ProgressiveWebTools {
 
 	public static function addRequestCacheFilterN(
 		cacheIfUrlMatch : String,
-		method : String,
+		cacheIfMethodMatch : String,
 		cacheIfParametersMatch : Array<Array<String>>,
 		ignoreParameterKeysOnCache : Array<String>,
 		onOK : Void -> Void,
@@ -147,7 +147,7 @@ class ProgressiveWebTools {
 				"action" : "requests_cache_filter",
 				"data" : {
 					"cacheIfUrlMatch" : cacheIfUrlMatch,
-					"method" : method,
+					"method" : cacheIfMethodMatch,
 					"cacheIfParametersMatch" : cacheIfParametersMatch,
 					"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
 				}
