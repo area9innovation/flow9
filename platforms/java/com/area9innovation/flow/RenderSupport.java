@@ -63,6 +63,27 @@ public class RenderSupport extends NativeHost {
 	public Object setWebClipDomains(Object clip, Object[] domains) {
 		return null;
 	}
+	public Object makeHTMLStage(double width, double height) {
+		return null;
+	}
+	public Object createElement(String tagName) {
+		return null;
+	}
+	public Object createTextNode(String text) {
+		return null;
+	}
+	public Object setAttribute(Object element, String name, String value) {
+		return null;
+	}
+	public Object appendChild(Object element, Object child) {
+		return null;
+	}
+	public Object insertBefore(Object element, Object child, Object reference) {
+		return null;
+	}
+	public Object removeElementChild(Object element, Object child) {
+		return null;
+	}
 	public Object addFilters(Object stg, Object[] filters) {
 		return null;
 	}
