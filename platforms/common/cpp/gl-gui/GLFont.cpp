@@ -788,50 +788,51 @@ bool GLTextLayout::processIfReverseRemains(
     bool condition,
     bool rtl,
     Utf32InputIterator &end,
+    shared_ptr<Utf32InputIterator> &strIter,
     shared_ptr<Utf32InputIterator> &strReverseRemains,
     shared_ptr<Utf32InputIterator> &strDirectAgain,
-    float cursorPreReverse,
-    size_t &reverseCount
+    float cursor,
+    int &reverseCount
 ) {
-    shared_ptr<Utf32InputIterator> strIter;
     size_t chrIdx;
     ucs4_char chr;
-    float cursor, pos;
+    float pos;
     GLFont::GlyphInfo *info = NULL, *prev = NULL;
 
     if (*strReverseRemains == *strDirectAgain) return false;
     if (condition) {  /* Reverse sequence finished, back to direct.*/
         /* TODO calculate postponed positions and add metrics.*/
-        cursor = cursorPreReverse;
         strIter = strDirectAgain->cloneReversed();
-        while (strIter != strReverseRemains) {
+        std::vector<GLFont::GlyphInfo*>::iterator glyphs_accessor = rtl? glyphs.begin()+reverseCount-1 : glyphs.end()-reverseCount;
+        while (*strIter != *strReverseRemains) {
             ++*strIter;
             chrIdx = strIter->position();
             chr = **strIter;
-            //MOVE_CURSOR();
-            pos = cursor + font->getKerning(prev, info) * size;
-            float new_cursor = pos + spacing * (*strIter != end);  /* We shouldn't add spacing after the last char in the string.*/
-            if (info) new_cursor += info->advance * size;
-            if (new_cursor<cursor) new_cursor = cursor;
 
-            //REGISTER_POSITION();
+            info = *glyphs_accessor;
+
+            // Move cursor
+            pos = cursor - font->getKerning(prev, info) * size;
+            float new_cursor = pos - spacing * (*strIter != end);  /* We shouldn't add spacing after the last char in the string.*/
+            if (info) new_cursor -= info->advance * size;
+            if (new_cursor>cursor) new_cursor = cursor;
+
+            // Register position
             if (rtl) {
-                positions.insert(positions.begin(), pos+new_cursor-cursor);
+                positions.insert(positions.begin(), pos);
             } else {
-                positions.push_back(pos);
+                positions.push_back(pos+new_cursor-cursor);
             }
 
             cursor = new_cursor;
+            if (rtl) --glyphs_accessor; else ++glyphs_accessor;
         }
         std::vector<size_t>::iterator char_indices_swapper = rtl? char_indices.begin() : char_indices.end()-reverseCount;
-        std::vector<GLFont::GlyphInfo*>::iterator glyphs_swapper = rtl? glyphs.begin() : glyphs.end()-reverseCount;
         --reverseCount;
         while (reverseCount > 0) {
             std::iter_swap(char_indices_swapper, char_indices_swapper+reverseCount);
-            std::iter_swap(glyphs_swapper, glyphs_swapper+reverseCount);
             reverseCount-=2;
             ++char_indices_swapper;
-            ++glyphs_swapper;
         }
         strIter = strDirectAgain->clone();
         strDirectAgain = end.clone();
@@ -842,42 +843,10 @@ bool GLTextLayout::processIfReverseRemains(
 }
 
 void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &end, float width_limit, float spacing, bool crop_long_words, bool rtl) {
-    #define SHUTTLE(checkdir) {\
-        for (strDirectAgain=strIter->clone(); *strDirectAgain != end && !checkdir(**strDirectAgain); ++*strDirectAgain);\
-        strDirectAgain = strDirectAgain->cloneReversed();\
-        ++*strDirectAgain;\
-    }
-    #define MOVE_CURSOR() {\
-        pos = cursor + font->getKerning(prev, info) * size;\
-        new_cursor = pos + spacing * (*strIter != end);  /* We shouldn't add spacing after the last char in the string.*/\
-        if (info) new_cursor += info->advance * size;\
-        if (new_cursor<cursor) new_cursor = cursor;\
-    }
-    #define REGISTER_GLYPH() {\
-        if (rtl) {\
-            char_indices.insert(char_indices.begin(), chrIdx);\
-            glyphs.insert(glyphs.begin(), info);\
-        } else {\
-            char_indices.push_back(chrIdx);\
-            glyphs.push_back(info);\
-        }\
-        if (info) {\
-            bbox |= vec2(pos,0) + info->bearing * size;\
-            bbox |= vec2(pos,0) + (info->bearing + info->size) * size;\
-        }\
-    }
-    #define REGISTER_POSITION() {\
-        if (rtl) {\
-            positions.insert(positions.begin(), pos+new_cursor-cursor);\
-        } else {\
-            positions.push_back(pos);\
-        }\
-    }
-
     float cursor = 0.0f;
     float new_cursor, pos;
     float cursorPreReverse = 0.0f;
-    size_t reverseCount = 0;
+    int reverseCount = 0;
 
     shared_ptr<Utf32InputIterator> strIter, strDirectAgain, strReverseRemains;
     strDirectAgain = end.clone();
@@ -918,16 +887,22 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             *strDirectAgain == *strIter,
             rtl,
             end,
+            strIter,
             strReverseRemains,
             strDirectAgain,
-            cursorPreReverse,
+            cursor,
             reverseCount
         )) if (isReverse(chr)) {  // Exploring and saving reverse fragment boundary.
             cursorPreReverse = cursor;
             strReverseRemains = strIter->clone();
+            strDirectAgain = strIter->clone();
             prev = NULL;  // No kerning between directions.
-            SHUTTLE(isDirect);
-            SHUTTLE(isReverse);
+            for (; *strDirectAgain != end && !isDirect(**strDirectAgain); ++*strDirectAgain);
+            strDirectAgain = strDirectAgain->cloneReversed();
+            ++*strDirectAgain;
+            for (; *strDirectAgain != end && !isReverse(**strDirectAgain); ++*strDirectAgain);
+            strDirectAgain = strDirectAgain->cloneReversed();
+            ++*strDirectAgain;
         } // Otherwise direction remains intact.
 
         // Convert all whitespace to ordinary space
@@ -941,17 +916,37 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
 
         info = font->getGlyphByChar(getCharVariant(chr, gv));
 
-        MOVE_CURSOR();
+        // Move cursor
+        pos = cursor + font->getKerning(prev, info) * size;
+        new_cursor = pos + spacing * (*strIter != end);  /* We shouldn't add spacing after the last char in the string.*/
+        if (info) new_cursor += info->advance * size;
+        if (new_cursor<cursor) new_cursor = cursor;
 
         // This quits layout cycle.
         if (width_limit > 0.0f && new_cursor > width_limit && (crop_long_words || chr == ' ')) break;
 
 
+        if (rtl) {
+            char_indices.insert(char_indices.begin(), chrIdx);
+            glyphs.insert(glyphs.begin(), info);
+        } else {
+            char_indices.push_back(chrIdx);
+            glyphs.push_back(info);
+        }
+        if (info) {
+            bbox |= vec2(pos,0) + info->bearing * size;
+            bbox |= vec2(pos,0) + (info->bearing + info->size) * size;
+        }
+
         if (*strReverseRemains != *strDirectAgain)
             ++reverseCount;
         else {
-            REGISTER_GLYPH();
-            REGISTER_POSITION();
+            // Register position
+            if (rtl) {
+                positions.insert(positions.begin(), pos+new_cursor-cursor);
+            } else {
+                positions.push_back(pos);
+            }
         }
         // Keep behind current iterator, stay until non-combining
         // character met to determine connection.
@@ -959,13 +954,15 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
         ++*strIter;
         cursor = new_cursor;
     }
+    strDirectAgain = strIter->clone();  // For cases layout is terminated due width limitation.
     processIfReverseRemains(
-        *strDirectAgain == *strIter,
+        reverseCount,
         rtl,
         end,
+        strIter,
         strReverseRemains,
         strDirectAgain,
-        cursorPreReverse,
+        cursor,
         reverseCount
     );
     positions.push_back(cursor);
@@ -983,11 +980,6 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
 
         bbox.roundOut();
     }
-    #undef PROCESS_IF_REVERSE_REMAINS
-    #undef REGISTER_POSITION
-    #undef REGISTER_GLYPH
-    #undef MOVE_CURSOR
-    #undef SHUTTLE
 }
 
 int GLTextLayout::findIndexByPos(float x, bool nearest)

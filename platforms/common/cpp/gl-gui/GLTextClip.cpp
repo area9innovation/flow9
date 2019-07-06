@@ -1016,6 +1016,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
 {
+    // TODO check glyphs order in layout object is correct (monotone) due GLTextLayout::buildLayout was rewritten.
     RUNNER_PopArgs2(posx, posy);
     RUNNER_CheckTag2(TDouble, posx, posy);
     int char_idx = -1;

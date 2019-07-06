@@ -416,10 +416,11 @@ protected:
         bool condition,
         bool rtl,
         Utf32InputIterator &end,
+        shared_ptr<Utf32InputIterator> &strIter,
         shared_ptr<Utf32InputIterator> &strReverseRemains,
         shared_ptr<Utf32InputIterator> &strDirectAgain,
-        float cursorPreReverse,
-        size_t &reverseCount
+        float cursor,
+        int &reverseCount
     );
     void buildLayout(Utf32InputIterator &strb, Utf32InputIterator &stre, float width_limit, float spacing, bool crop_long_words, bool rtl);
 
