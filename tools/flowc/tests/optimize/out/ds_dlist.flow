@@ -1,0 +1,420 @@
+// © Copyright 2011 Area9 Technologies.
+
+import flowstructs;
+
+export {
+	// A double-linked list
+	DList(mutable first : DNode<?>, mutable last : DNode<?>);
+		DNode<?> ::= DEnd, DLink<?>;
+	DEnd : ();
+
+	// Make an empty, double-linked list
+	makeDList() -> DList<?>;
+
+	// Insert at the end. Returns the node where this value is, to allow constant time removal. Constant time
+	pushDList(list : DList<?>, v : ?) -> DLink<?>;
+
+	// Insert at the front. Returns the node where this value is, to allow constant time removal. Constant time
+	unshiftDList(list : DList<?>, v : ?) -> DLink<?>;
+
+	// Inserts an element AFTER the node. Constant time.
+	insertDList(list : DList<?>, node : DNode<?>, v : ?) -> DLink<?>;
+
+	// Is this list empy?
+	emptyDList(list : DList<?>) -> bool;
+
+	// Take the first element out. Constant time
+	popFirstDListDef(list : DList<?>, def : ?) -> ?;
+
+	// Maybe take the first element out. Constant time
+	popFirstDList(list : DList<?>) -> Maybe<?>;
+
+	// Remove a node from a list. Constant time
+	removeDList(list : DList<?>, n : DLink<?>) -> void;
+
+	// Iterate a dlist
+	iterDList(list : DList<?>, fn : (?) -> void) -> void;
+
+	// Calls all elements of a DList with functions with a reference to a value.
+	// Very special, but used by behaviours and having this function avoids introducing closures
+	applyRefDList(list : DList< (?) -> void>, r : ref ?) -> void;
+
+	// Iterate a dlist in reverse
+	riterDList(list : DList<?>, fn : (?) -> void) -> void;
+
+	// How many elements in this list? Linear time
+	lengthDList(list : DList<?>) -> int;
+
+	// Move items from l2 to the end of the last element of l1.
+	// l2 is no longer valid after this function.
+	// Complexity O(1).
+	concatDList(l1 : DList<?>, l2 : DList<?>) -> void;
+
+	//fold with DList, do not change DList (in direct and reverse order)
+	foldDList(l : DList<?>, init : ??, fn : (??, ?) -> ??) -> ??;
+	rfoldDList(l : DList<?>, init : ??, fn : (??, ?) -> ??) -> ??;
+
+	// Transform DList to an array removing elements from DList - notice, it does this in DIRECT order!
+	// Initial DList will be empty as result (DEnd).
+	dList2array(list : DList<?>) -> [?];
+
+	// Transform DList to a list removing elements from DList - notice, it does this in REVERSE order!
+	// Initial DList will be empty as result (DEnd).
+	dList2list(dList : DList<?>) -> List<?>;
+}
+
+DLink(v : ?, mutable before : DNode<?>, mutable after : DNode<?>, mutable attached : bool);
+
+makeDList() {
+	DList(DEnd(), DEnd());
+}
+
+pushDList(list : DList<?>, v : ?) -> DLink<?> {
+	la = list.last;
+	switch (la : DNode) {
+		DEnd(): {
+			node = DLink(v, DEnd(), DEnd(), true);
+			list.first ::= node;
+			list.last ::= node;
+			node;
+		}
+		DLink(v2, before, after, l): {
+			node = DLink(v, la, DEnd(), l);
+			la.after ::= node;
+			list.last ::= node;
+			node;
+		}
+	}
+}
+
+unshiftDList(list : DList<?>, v : ?) -> DLink<?> {
+	la = list.first;
+	switch (la : DNode) {
+		DEnd(): {
+			node = DLink(v, DEnd(), DEnd(), true);
+			list.first ::= node;
+			list.last ::= node;
+			node;
+		}
+		DLink(v2, before, after, a): {
+			node = DLink(v, DEnd(), la, a);
+			la.before ::= node;
+			list.first ::= node;
+			node;
+		}
+	}
+}
+
+// Before:
+// before <- place -> after   place <- after -> ...
+// After:
+// before <- place -> node    place <- node -> after   node <- after -> ...
+ 
+insertDList(list : DList<?>, place : DNode<?>, v : ?) -> DLink<?> {
+	switch (place : DNode) {
+		DEnd() : unshiftDList(list, v);
+		DLink(v2, before, after, l): {
+
+			node = DLink(v, place, after, l);
+			switch (after : DNode) {
+				DEnd(): {}
+				DLink(v3, b2, a2, __): {
+					after.before ::= node;
+				}
+			}
+			place.after ::= node;
+			if (isSameObj(list.last, place)) {
+				list.last ::= node;
+			}
+			node;
+		}
+	}
+}
+
+emptyDList(list : DList<?>) -> bool {
+	list.first == DEnd();
+}
+
+
+// Take the first element out
+popFirstDListDef(list : DList<?>, def : ?) -> ? {
+	f = list.first;
+	switch (f : DNode) {
+		DEnd(): def;
+		DLink(v, __, __, __): {
+			removeDList(list, f);
+			v
+		}
+	}
+}
+
+// Maybe take the first element out
+popFirstDList(list : DList<?>) -> Maybe<?> {
+	f = list.first;
+	switch (f : DNode) {
+		DEnd(): None();
+		DLink(v, __, __, __): {
+			removeDList(list, f);
+			Some(v)
+		}
+	}
+}
+
+removeDList(list : DList<?>, n : DLink<?>) -> void {
+	if (isSameObj(list.first, n)) {
+		list.first ::= n.after;
+	}
+	if (isSameObj(list.last, n)) {
+		list.last ::= n.before;
+	}
+	prevv = n.before;
+	switch (prevv : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, l): {
+			prevv.after ::= n.after;
+		}
+	}
+	nextv = n.after;
+	switch (nextv : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, l): {
+			nextv.before ::= n.before;
+		}
+	}
+	n.before ::= DEnd();
+	n.after ::= DEnd();
+	n.attached ::= false;
+}
+
+iterDList(list : DList<?>, fn : (?) -> void) -> void {
+	iterDNode(list.first, fn);
+}
+
+iterDNode(node : DNode<?>, fn : (?) -> void) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, __): {
+			//n = ^after;
+			fn(v);
+			/*if (n != ^after) {
+				println("Subscriptions changed!");
+				println(v);
+				printCallstack();
+			}*/
+			/* It is imperative not to use just after, because we
+			   want the value as of now, not at the time of switch */
+			iterDNode(node.after, fn);
+		}
+	}
+}
+
+
+applyRefDList(list : DList<(?) -> void>, r : ref ?) -> void {
+	applyRefDNode(list.first, r);
+}
+
+applyRefDNode(node : DNode<(?) -> void>, r : ref ?) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(fn, before, after, attached): {
+			// node could be removed from the list in previous call, do nothing in this case.
+			if (attached) {
+				// Notice that we deference the value by purpose in each iteration, because a previous
+				// iteration might have changed the value when used in behaviours.
+				fn(^r);
+				// in case if fn(^r) changed the list by removing inself, we have to use saved 'after' node
+				nextNode : DNode<(?) -> void> =
+					if (isDEnd(node.after) && isDEnd(node.before) && !isDEnd(after)) {
+						after;
+					} else {
+						node.after;
+					}
+				applyRefDNode(nextNode, r)
+			}
+		}
+	}
+}
+
+isDEnd(node : DNode<?>) -> bool {
+	switch (node) {
+		DEnd() : true;
+		DLink(__, __, __, __) : false;
+	}
+}
+
+riterDList(list : DList<?>, fn : (?) -> void) -> void {
+	riterDNode(list.last, fn);
+}
+
+riterDNode(node : DNode<?>, fn : (?) -> void) -> void {
+	switch (node : DNode) {
+		DEnd(): {}
+		DLink(v, before, after, l): {
+			fn(v);
+			riterDNode(node.before, fn);
+		}
+	}
+}
+
+foldDNode(node : DNode<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
+	switch (node : DNode) {
+		DEnd(): init;
+		DLink(v, __, after, __): foldDNode(after, fn(init, v), fn);
+	}	
+}
+
+foldDList(l : DList<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
+	foldDNode(l.first, init, fn)
+}
+
+rfoldDNode(node : DNode<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
+	switch (node : DNode) {
+		DEnd(): init;
+		DLink(v, before, __, __): rfoldDNode(before, fn(init, v), fn);
+	}	
+}
+
+rfoldDList(l : DList<?>, init : ??, fn : (??, ?) -> ??) -> ?? {
+	rfoldDNode(l.last, init, fn)
+}
+
+
+lengthDList(list : DList<?>) -> int {
+	lengthDNode(list.first, 0);
+}
+
+lengthDNode(node : DNode<?>, count : int) -> int {
+	switch (node : DNode) {
+		DEnd(): count;
+		DLink(v, before, after, l): {
+			lengthDNode(after, count + 1);
+		}
+	}
+}
+
+concatDList(l1, l2) {
+	la = l1.last;
+
+	switch(la) {
+		DEnd(): {
+			l1.first ::= l2.first;
+			l1.last ::= l2.last;
+		}
+		DLink(v, before, after, l): {
+			switch(l2.first) {
+				DEnd(): {
+					// do nothing, l1 is already a result
+				}
+				DLink(v2, before2, after2, __) : {
+					cast(l2.first : DNode -> DLink).before ::= la;
+					la.after ::= l2.first;
+					l1.last ::= l2.last;
+				}
+			}
+		}
+	}
+}
+
+dList2array(dList : DList<?>) -> [?] {
+	dList |> dList2list |> list2array
+}
+
+dList2list(dList : DList<?>) -> List<?> {
+	doDList2list(dList, makeList())
+}
+
+doDList2list(dList : DList<?>, acc : List<?>) -> List<?> {
+	eitherMap(popFirstDList(dList), \v -> doDList2list(dList, Cons(v, acc)), acc)
+}
+
+----------
+
+concatDList = \l1:DList<?>, l2:DList<?> ->
+	la : DNode<?> = l1.last;
+	switch (la : DNode<?>) {
+		DEnd(): {
+			{
+				l1.first ::= l2.first;
+				l1.last ::= l2.last
+			}
+
+		}
+		DLink(__,__,__,__): {
+			{
+				la.before;
+				{
+					la.after;
+					{
+						la.attached;
+						gsymswitch0 : DNode<?> = l2.first;
+						switch (gsymswitch0 : DNode<?>) {
+							DEnd(): {
+								{}
+							}
+							DLink(__,__,__,__): {
+								{
+									gsymswitch0.before;
+									{
+										gsymswitch0.after;
+										{
+											gsymswitch0.attached;
+											{
+												cast(l2.first : DNode<?> -> DLink<?>).before ::= la;
+												la.after ::= l2.first;
+												l1.last ::= l2.last
+											}
+
+										}
+
+									}
+
+								}
+
+							}
+						}
+					}
+
+				}
+
+			}
+
+		}
+	}
+
+
+makeDList = \ ->
+	DList(DEnd(), DEnd())
+
+
+pushDList = \list:DList<?>, v:? ->
+	la : DNode<?> = list.last;
+	switch (la : DNode<?>) {
+		DEnd(): {
+			node : DLink<?> = DLink(v, DEnd(), DEnd(), true);
+			{
+				list.first ::= node;
+				list.last ::= node;
+				node
+			}
+
+		}
+		DLink(__,__,__,l): {
+			{
+				la.before;
+				{
+					la.after;
+					l : bool = la.attached;
+					node : DLink<?> = DLink(v, la, DEnd(), l);
+					{
+						la.after ::= node;
+						list.last ::= node;
+						node
+					}
+
+				}
+
+			}
+
+		}
+	}
+
