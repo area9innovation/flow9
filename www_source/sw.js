@@ -86,7 +86,7 @@ self.addEventListener('fetch', function(event) {
     } else {
       return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
         var index = p.indexOf('=');
-        if (index !== -1) p = p.substr(0, index);
+        if (index !== -1) p = p.substr(0, index).toLowerCase();
         return !ignoreParameters.includes(p);
       }).join("&");
     }
@@ -171,7 +171,8 @@ self.addEventListener('fetch', function(event) {
 
         sendMessageToClient({
           msg: "Responded with cache:",
-          url: requestData.originalRequest.url
+          url: requestData.originalRequest.url,
+          urlCached: requestData.urlNewToCache
         });
         
         return response;
@@ -216,7 +217,8 @@ self.addEventListener('fetch', function(event) {
 
             sendMessageToClient({
               msg: "Cached resource:",
-              url: requestData.originalRequest.url
+              url: requestData.originalRequest.url,
+              urlCached: requestData.urlNewToCache
             });
           });
 
