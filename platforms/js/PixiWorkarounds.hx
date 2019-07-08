@@ -759,14 +759,15 @@ class PixiWorkarounds {
 				const scaleFactor = Math.min(scaleX, scaleY);
 				const fontSize = scaleFactor * this.style.fontSize;
 				const scaleText = fontSize > 0.6 && scaleFactor != 1.0;
-				const tempRoundPixels = renderer.roundPixels;
 
 				if (this.resolution !== this.style.resolution || renderer.resolution)
 				{
 					this.resolution = this.style.resolution || renderer.resolution;
-					renderer.roundPixels = this.resolution === 1.0;
 					this.dirty = true;
 				}
+
+				const tempRoundPixels = renderer.roundPixels;
+				renderer.roundPixels = this.resolution === 1.0;
 
 				if (scaleText) {
 					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
