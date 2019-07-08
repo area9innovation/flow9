@@ -1,4 +1,5 @@
 import devmode;
+import net/http_types;
 
 export {
 	// A service worker is a script which your browser runs in the background, separate from a web page, opening the door to features that don't need a web page or user interaction.
@@ -39,6 +40,24 @@ export {
 	// IMPORTANT: Call it only after shortcut available listener fired
 	native installShortcut : io (callback : (bool) -> void) -> void = ProgressiveWebTools.installShortcut;
 
+	// Clean Service Worker cache immediately
+	native cleanServiceWorkerCache : io (callback : (bool) -> void) -> void = ProgressiveWebTools.cleanServiceWorkerCache;
+
+	// By default cached only static resources.
+	// This method allows to add filter to cache dynamic requests.
+	// The request will be cached if (concatinated by AND, None() or empty array - means any value):
+	// 1. if request Url will be match to the `cacheIfUrlMatchM` string (use absolute path)
+	// 2. if request Method equals to `methodM`
+	// 3. if request Parameters (for GET or POST method) contains given KeyValue pairs (case insensitive)
+	// If you request contains any variable/temporary parameters, which should be skipped (like time stamp) - send them in `ignoreParameterKeysOnCache`
+	addRequestCacheFilter(
+		cacheIfUrlMatchM : Maybe<string>,
+		methodM : Maybe<RequestMethodBase>,
+		cacheIfParametersMatchM : [KeyValue],
+		ignoreParameterKeysOnCache : [string],
+		onOK : () -> void,
+		onError : (string) -> void
+	) -> void;
 
 	// Check whether we run as standalone or fullscreen PWA
 	native isRunningPWA : io () -> bool = ProgressiveWebTools.isRunningPWA;
@@ -50,6 +69,7 @@ export {
 enableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
 disableServiceWorkerCaching(callback : (bool) -> void) { callback(false) }
 checkServiceWorkerCachingEnabled(callback : (bool) -> void) { callback(false) }
+cleanServiceWorkerCache(callback : (bool) -> void) { callback(false) }
 isRunningPWA() { false }
 
 addShortcutDialog() -> () -> void {
@@ -77,4 +97,32 @@ setServiceWorkerEnabled(enable : bool) -> void {
 		else if (enabled && !doEnable)
 			disableServiceWorkerCaching(\r -> devtrace(if (r) "Service Worker Disabled" else "Service Worker Error"));
 	});
+}
+
+native addRequestCacheFilterN : io (
+	cacheIfUrlMatch : string,
+	cacheIfMethodMatch : string,
+	cacheIfParametersMatch : [[string]],
+	ignoreParameterKeysOnCache : [string],
+	onOK : () -> void,
+	onError : (string) -> void
+) -> void = ProgressiveWebTools.addRequestCacheFilterN;
+
+addRequestCacheFilter(
+	cacheIfUrlMatchM : Maybe<string>,
+	cacheIfMethodMatchM : Maybe<RequestMethodBase>,
+	cacheIfParametersMatch : [KeyValue],
+	ignoreParameterKeysOnCache : [string],
+	onOK : () -> void,
+	onError : (string) -> void
+) -> void {
+	if (cacheIfUrlMatchM == Some(""))
+		onError("Parameter `cacheIfUrlMatchM` can't be empty");
+
+	cacheIfUrlMatch = either(cacheIfUrlMatchM, "");
+	cacheIfMethodMatch = eitherMap(cacheIfMethodMatchM, method2string, "");
+	cacheIfParametersMatchN = map(cacheIfParametersMatch, \p -> [toLowerCase(p.key), toLowerCase(p.value)]);
+	ignoreParameterKeysOnCacheN = map(ignoreParameterKeysOnCache, toLowerCase);
+
+	addRequestCacheFilterN(strReplace(cacheIfUrlMatch, "//", "/"), cacheIfMethodMatch, cacheIfParametersMatchN, ignoreParameterKeysOnCacheN, onOK, onError);
 }

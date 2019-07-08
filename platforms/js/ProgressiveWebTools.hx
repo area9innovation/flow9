@@ -118,6 +118,47 @@ class ProgressiveWebTools {
 		#end
 	}
 
+	public static function cleanServiceWorkerCache(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"});
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function addRequestCacheFilterN(
+		cacheIfUrlMatch : String,
+		cacheIfMethodMatch : String,
+		cacheIfParametersMatch : Array<Array<String>>,
+		ignoreParameterKeysOnCache : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			untyped navigator.serviceWorker.controller.postMessage({
+				"action" : "requests_cache_filter",
+				"data" : {
+					"cacheIfUrlMatch" : cacheIfUrlMatch,
+					"method" : cacheIfMethodMatch,
+					"cacheIfParametersMatch" : cacheIfParametersMatch,
+					"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
+				}
+			});
+			onOK();
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
 	public static function isRunningPWA() : Bool {
 		return !Browser.window.matchMedia("(display-mode: browser)").matches;
 	}
