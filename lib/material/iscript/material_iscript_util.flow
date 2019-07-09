@@ -37,21 +37,21 @@ replayIScript(manager : MaterialManager, onFinished : (bool) -> void, handleInpu
 	replayIScript2(manager, getValue(manager.iscript.script), onFinished, handleInputOutput);
 }
 
-ContiniousTimer(
+ContinuousTimer(
 	start : () -> void,
 	stop : () -> void,
 	pause : () -> void,
 	timeout : double,
 );
 
-continiousTimer(tree : Tree<double, [((bool) -> void) -> void]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContiniousTimer {
+continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, timeout : double, maxRepeats : int, onFinished : (bool) -> void) -> ContinuousTimer {
 	isFinished = ref true;
 	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
-	deferredFns = ref [];
+	deferredFns : ref [Pair<() -> bool, () -> bool>] = ref [];
 	deferredTime = ref 0.0;
 	currentRepeat = ref 0;
 
@@ -81,8 +81,48 @@ continiousTimer(tree : Tree<double, [((bool) -> void) -> void]>, timeout : doubl
 						dispUnsA(uns);
 					}
 
-					// check timeouted elements
+					offset = ts - ^started;
 					if (^deferredFns != []) {
+						deferredFns := mapConcat(^deferredFns, \fn -> if (fn.second() && fn.first()) [] else [fn]);
+					} else {
+						//foldWhile(^delays, offset, \t, d -> {
+							if (^delays[0].first < offset) {
+								eitherFn(
+									lookupTree(tree, ^delays[0].second),
+									\records -> {
+										result = foldWhile(records, [],
+											\acc, fn -> {
+												//println(^delays[0].second);
+												//println(offset);
+												if (fn.second()) { //can click
+													if (fn.first()) { //success check
+														Some(arrayPush(acc, fn))
+													} else {
+														None()
+													}
+												} else {
+													None()
+												}
+											}
+										);
+										if (result == records) {
+											delays := tail(^delays);
+											//Some(t)
+										} else {
+											deferredFns := subtractA(records, result);
+											//None()
+										}
+									},
+									\ -> delays := tail(^delays)//;Some(t)}
+								);
+							} //else {
+							//	None()
+							//}
+						//}) |> ignore
+					}
+
+					// check timeouted elements
+					/*if (^deferredFns != []) {
 						if (^currentRepeat > maxRepeats) {
 							deferredFns := [];
 							currentRepeat := 0;
@@ -90,10 +130,8 @@ continiousTimer(tree : Tree<double, [((bool) -> void) -> void]>, timeout : doubl
 						} else {
 							if (^deferredTime < ts - ^started) {
 								// repeat all fns
-								//deferredFns := mapConcat(^deferredFns, \fn -> if (!fn()) [fn] else []);
-								deferredFnsNew = ref [];
-								iter(^deferredFns, \fn -> fn(\result -> if (!result) refArrayPush(deferredFnsNew, fn)));
-								deferredFns := ^deferredFnsNew;
+								deferredFns := mapConcat(^deferredFns, \fn -> if (!fn.second() || !fn.first()) [fn] else []);
+
 								if (^deferredFns != []) {
 									// repeat was unsuccessful
 									currentRepeat := ^currentRepeat + 1;
@@ -112,24 +150,13 @@ continiousTimer(tree : Tree<double, [((bool) -> void) -> void]>, timeout : doubl
 								maybeApply(
 									lookupTree(tree, d.second),
 									\records -> iter(records,
-										\fn -> {
-											fn(\result -> {
-												if (!result) {
-													// Add to timeout elements
-													println("*** Timeout Fn");
-													deferredFns := arrayPush(^deferredFns, fn);
-													deferredTime := d.first + timeout;
-													currentRepeat := 1;
-												}
-											})
-										}
-										/*if (!fn()) {
+										\fn -> if (!fn.second() || !fn.first()) {
 											// Add to timeout elements
 											println("*** Timeout Fn");
 											deferredFns := arrayPush(^deferredFns, fn);
 											deferredTime := d.first + timeout;
 											currentRepeat := 1;
-										}*/
+										}
 									)
 								);
 								delays := subrange(^delays, 1, length(^delays));
@@ -139,12 +166,12 @@ continiousTimer(tree : Tree<double, [((bool) -> void) -> void]>, timeout : doubl
 							}
 						})
 						|> ignore
-					}
+					}*/
 				})()
 			];
 	}
 
-	ContiniousTimer(
+	ContinuousTimer(
 		\ -> {
 			if (^isFinished == true || length(^delays) == 0) {
 				initFn();
@@ -183,7 +210,6 @@ getFocusPaths(focus : MaterialFocus) -> Transform<Tree<List<IScriptIdentifier>, 
 }
 
 replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
-	stopDelay = either(maxA(getTreeKeys(iScript.stack)), 1.0);
 	defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
 	maxRepeats = getValue(manager.iscript.settings.replayRepeats);
 
@@ -193,10 +219,13 @@ replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool)
 		setTree(
 			acc,
 			delay / getValue(manager.iscript.settings.replaySpeed),
-			map(records, \r -> \onFinish -> replayIScriptRecord(manager, r, focusesB, handleInputOutput, onFinish))
+			map(records, \r -> Pair(
+				\ -> replayIScriptRecord(manager, r, handleInputOutput),
+				\ -> isClickValid(focusesB, r)
+			))
 		)
 	)
-	|> (\t -> continiousTimer(t, defaultTimeout, maxRepeats, onFinished))
+	|> (\t -> continuousTimer(t, defaultTimeout, maxRepeats, onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
 			startProfile(getValue(manager.iscript.currentFileNameB));
@@ -209,11 +238,14 @@ replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool)
 		}
 	})
 }
-replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB : Transform<Tree<List<IScriptIdentifier>, MFocus>>, handleInputOutput : bool, onFinished : (bool) -> void) -> void {
-	switch (record : IScriptRecord) {
-		IScriptBehaviourRecord(descriptor, value, type, callstack): {
-			playBehaviour = \ -> onFinished(repeatBehaviourById(manager, descriptor, value) || descriptor.name == "focused");
-			if (descriptor.component.id != makeList() && descriptor.name == "mousedown") {
+
+isClickValid(focusesB : Transform<Tree<List<IScriptIdentifier>, MFocus>>, record : IScriptRecord) -> bool {
+	descriptorM = getRecordDescriptor(record);
+
+	eitherMap(
+		descriptorM,
+		\descriptor -> {
+			if (descriptor.name == "mousedown") {
 				isHovering = \ -> eitherMap(
 					//getMaterialFocusByIScriptId(manager.focus, descriptor.component.id)
 					lookupTree(fgetValue(focusesB), descriptor.component.id),
@@ -225,11 +257,11 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 							getMouseX(getStage()) < fgetValue(f.position).pos.x + fgetValue(f.widthHeight).width  &&
 							fgetValue(f.position).pos.y < getMouseY(getStage()) &&
 							getMouseY(getStage()) <  fgetValue(f.position).pos.y + fgetValue(f.widthHeight).height + 48.
-							/*pprint("scale:")(fgetValue(f.position).scale) == zeroScale &&
-							pprint("xl:")(fgetValue(f.position).pos.x) < getMouseX(getStage()) &&
-							pprint("x:")(getMouseX(getStage())) < pprint("xr:")(fgetValue(f.position).pos.x + fgetValue(f.widthHeight).width)  &&
-							pprint("yl:")(fgetValue(f.position).pos.y) < getMouseY(getStage()) &&
-							pprint("y:")(getMouseY(getStage())) <  pprint("yr:")(fgetValue(f.position).pos.y + fgetValue(f.widthHeight).height + 48.)*/
+							//pprint("scale:")(fgetValue(f.position).scale) == zeroScale &&
+							//pprint("xl:")(fgetValue(f.position).pos.x) < getMouseX(getStage()) &&
+							//pprint("x:")(getMouseX(getStage())) < pprint("xr:")(fgetValue(f.position).pos.x + fgetValue(f.widthHeight).width)  &&
+							//pprint("yl:")(fgetValue(f.position).pos.y) < getMouseY(getStage()) &&
+							//pprint("y:")(getMouseY(getStage())) <  pprint("yr:")(fgetValue(f.position).pos.y + fgetValue(f.widthHeight).height + 48.)
 							//getValue(f.hover);
 						},
 						\f -> {
@@ -237,7 +269,8 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 						}
 					), false
 				);
-				if (contains(getTreeKeys(fgetValue(focusesB)), descriptor.component.id) && isHovering()) {
+				contains(getTreeKeys(fgetValue(focusesB)), descriptor.component.id) && isHovering()
+				/*if (contains(getTreeKeys(fgetValue(focusesB)), descriptor.component.id) && isHovering()) {
 					println("ok");
 					playBehaviour()
 				} else {
@@ -252,14 +285,27 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 						}
 					});
 					timer(10000, \ -> {dispUnsA(ref list2array(^uns)); onFinished(false)})
-				}
-			} else {
-				playBehaviour()
-			}
+				}*/
+			} else true
+		},
+		true
+	)
+}
 
+getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor> {
+	switch (record : IScriptRecord) {
+		IScriptBehaviourRecord(descriptor, __, __, __): if (descriptor.component.id != makeList()) Some(descriptor) else None()
+		default: None();
+	}
+}
+
+replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, /*focusesB : Transform<Tree<List<IScriptIdentifier>, MFocus>>, */handleInputOutput : bool/*, onFinished : (bool) -> void*/) ->/* void */ bool{
+	switch (record : IScriptRecord) {
+		IScriptBehaviourRecord(descriptor, value, type, callstack): {
+			repeatBehaviourById(manager, descriptor, value) || descriptor.name == "focused"
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
-			onFinished(if (handleInputOutput) {
+			if (handleInputOutput) {
 				inputValues = getValue(manager.iscript.input);
 				idx = findiDef(inputValues, \input -> input.name == name, -1);
 
@@ -280,7 +326,7 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 				);
 			} else {
 				true;
-			})
+			}
 		}
 		IScriptOutputRecord(descriptor, name) : {
 			if (handleInputOutput) {
@@ -296,13 +342,13 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 				next(manager.iscript.output, replace(outputValues, idx, IScriptOutputValue(name, true, value)));
 			}
 
-			onFinished(true);
+			true;
 		}
 		IScriptStageWidthHeight(wh): {
 			iScriptInfo(manager, "canvas width/height: " + toString(wh), None());
 			nextDistinct(stageWidthHeight, Some(wh));
 
-			onFinished(true);
+			true;
 		}
 		IScriptRequestRecord(url, post, headers, params, delay, response): {
 			requestCreated = timestamp();
@@ -327,10 +373,10 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 					];
 			}
 
-			onFinished(true);
+			true;
 		}
 		IScriptScreenshot(__, check): {
-			onFinished(if (!check) {
+			if (!check) {
 				applyIScriptScreenshot(manager, record);
 
 				true;
@@ -355,30 +401,30 @@ replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, focusesB 
 				} else {
 					true;
 				}
-			})
+			}
 		}
 		IScriptCheck(descriptor, checkFn, type): {
-			onFinished(checkBehaviourById(manager, descriptor, checkFn))
+			checkBehaviourById(manager, descriptor, checkFn)
 		}
 		IScriptNested(componentName, id, iScriptNested): {
 			// replayIScript2(manager, iScriptNested, m2t, false);
-			onFinished(true);
+			true;
 		}
 		IScript(recordingStarted, stack): {
 			// replayIScript2(manager, record, m2t, false);
-			onFinished(true);
+			true;
 		}
 		IScriptUrlRecord(url) : {
-			onFinished(if (url != loaderUrl()) {
+			if (url != loaderUrl()) {
 				getUrlN(url, "");
 
 				false;
 			} else {
 				true;
-			})
+			}
 		}
 		default: {
-			onFinished(true);
+			true;
 		}
 	}
 }
