@@ -364,14 +364,22 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
+	private static function bidiDecorate(text : String, dir : String) : String {
+		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
+		} else if (dir == 'rtl') {
 			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
 		} else {
 			return text;
 		}
+	}
+
+	private static function bidiUndecorate(text : String) : Array<String> {
+		if (text.charCodeAt(text.length-1) == 0x202C) {
+			if (text.charCodeAt(0) == 0x202A) return [text.substr(1, text.length-2), 'ltr'];
+			if (text.charCodeAt(0) == 0x202B) return [text.substr(1, text.length-2), 'rtl'];
+		}
+		return [text, ''];
 	}
 
 	private static inline function capitalize(s : String) : String {
@@ -438,7 +446,7 @@ class TextClip extends NativeWidgetClip {
 
 		measureFont();
 
-		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
+		this.text = bidiDecorate(StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text, textDirection);
 		this.backgroundColor = backgroundColor;
 		this.backgroundOpacity = backgroundOpacity;
 
@@ -706,6 +714,7 @@ class TextClip extends NativeWidgetClip {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
 
+			this.text = bidiDecorate(bidiUndecorate(text)[0], textDirection);
 			invalidateStyle();
 		}
 	}
