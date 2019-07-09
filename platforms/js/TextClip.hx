@@ -93,7 +93,7 @@ class TextClip extends NativeWidgetClip {
 	private var cursorOpacity : Float = -1.0;
 	private var cursorWidth : Float = 2;
 	private var textDirection : String = 'ltr';
-	private var style : TextStyle = new TextStyle();
+	private var style : Dynamic = new TextStyle();
 
 	private var type : String = 'text';
 	private var autocomplete : String = '';
@@ -112,7 +112,6 @@ class TextClip extends NativeWidgetClip {
 	private var background : FlowGraphics = null;
 
 	private var metrics : TextMetrics;
-	private var fontMetrics : Dynamic;
 	private var multiline : Bool = false;
 
 	private var TextInputFilters : Array<String -> String> = new Array();
@@ -310,7 +309,7 @@ class TextClip extends NativeWidgetClip {
 		nativeWidget.style.fontWeight = style.fontWeight;
 		nativeWidget.style.fontStyle = style.fontStyle;
 		nativeWidget.style.fontSize =  '${style.fontSize}px';
-		nativeWidget.style.lineHeight = '${cast(style.fontSize, Float) * 1.15 + interlineSpacing}px';
+		nativeWidget.style.lineHeight = '${style.fontSize * 1.15 + interlineSpacing}px';
 		nativeWidget.style.pointerEvents = readOnly ? 'none' : 'auto';
 		nativeWidget.readOnly = readOnly;
 		nativeWidget.style.backgroundColor = RenderSupportJSPixi.makeCSSColor(backgroundColor, backgroundOpacity);
@@ -365,14 +364,22 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
+	private static function bidiDecorate(text : String, dir : String) : String {
+		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
+		} else if (dir == 'rtl') {
 			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
 		} else {
 			return text;
 		}
+	}
+
+	private static function bidiUndecorate(text : String) : Array<String> {
+		if (text.charCodeAt(text.length-1) == 0x202C) {
+			if (text.charCodeAt(0) == 0x202A) return [text.substr(1, text.length-2), 'ltr'];
+			if (text.charCodeAt(0) == 0x202B) return [text.substr(1, text.length-2), 'rtl'];
+		}
+		return [text, ''];
 	}
 
 	private static inline function capitalize(s : String) : String {
@@ -435,8 +442,9 @@ class TextClip extends NativeWidgetClip {
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
+		style.resolution = 1.0;
 
-		fontMetrics = TextMetrics.measureFont(untyped style.toFontString());
+		measureFont();
 
 		this.text = StringTools.endsWith(text, '\n') ? text.substring(0, text.length - 1) : text;
 		this.backgroundColor = backgroundColor;
@@ -450,13 +458,61 @@ class TextClip extends NativeWidgetClip {
 		invalidateMetrics();
 	}
 
+	private function measureFont() : Void {
+		var tempFontSize = style.fontSize;
+		var tempLetterSpacing = style.letterSpacing;
+		var tempLineHeight = style.lineHeight;
+		var tempWordWrapWidth = style.wordWrapWidth;
+		var tempStrokeThickness = style.strokeThickness;
+		var tempDropShadowDistance = style.dropShadowDistance;
+		var tempLeading = style.leading;
+
+		var measureFactor = tempFontSize / 96.0;
+
+		style.fontSize = 96.0;
+		style.lineHeight = style.lineHeight / measureFactor;
+		style.letterSpacing = style.letterSpacing / measureFactor;
+		style.wordWrapWidth = style.wordWrapWidth / measureFactor;
+		style.strokeThickness = style.strokeThickness / measureFactor;
+		style.dropShadowDistance = style.dropShadowDistance / measureFactor;
+		style.leading = style.leading / measureFactor;
+		style.fontString = style.toFontString();
+
+		var fontProperties : Dynamic = TextMetrics.measureFont(style.fontString);
+
+		style.fontProperties = {
+			fontSize : fontProperties.fontSize * measureFactor,
+			ascent : fontProperties.ascent * measureFactor,
+			descent : fontProperties.descent * measureFactor
+		};
+
+		untyped __js__("
+			if (!PIXI.TextMetrics._fonts[this.style.fontString])
+			{
+				PIXI.TextMetrics._fonts[this.style.fontString] = {
+					fontSize : this.style.fontProperties.fontSize,
+					ascent : this.style.fontProperties.ascent,
+					descent : this.style.fontProperties.descent
+				};
+			}
+		");
+
+		style.fontSize = tempFontSize;
+		style.letterSpacing = tempLetterSpacing;
+		style.lineHeight = tempLineHeight;
+		style.wordWrapWidth = tempWordWrapWidth;
+		style.strokeThickness = tempStrokeThickness;
+		style.dropShadowDistance = tempDropShadowDistance;
+		style.leading = tempLeading;
+	}
+
 	private function layoutText() : Void {
 		if (isFocused || text == '') {
 			if (textClip != null) {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
@@ -475,7 +531,7 @@ class TextClip extends NativeWidgetClip {
 				addChild(textClip);
 			}
 
-			textClip.text = texts[0][0];
+			textClip.text = bidiDecorate(texts[0][0], textDirection);
 			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
@@ -542,7 +598,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(textMod.modified, style);
+		textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
@@ -648,7 +704,7 @@ class TextClip extends NativeWidgetClip {
 	public function setInterlineSpacing(interlineSpacing : Float) : Void {
 		if (this.interlineSpacing != interlineSpacing) {
 			this.interlineSpacing = interlineSpacing;
-			style.lineHeight = cast(style.fontSize, Float) * 1.15 + interlineSpacing;
+			style.lineHeight = style.fontSize * 1.15 + interlineSpacing;
 
 			invalidateMetrics();
 		}
@@ -657,6 +713,16 @@ class TextClip extends NativeWidgetClip {
 	public function setTextDirection(textDirection : String) : Void {
 		if (this.textDirection != textDirection) {
 			this.textDirection = textDirection.toLowerCase();
+
+			invalidateStyle();
+			invalidateMetrics();
+			layoutText();
+		}
+	}
+
+	public function setResolution(resolution : Float) : Void {
+		if (style.resolution != resolution) {
+			style.resolution = resolution;
 
 			invalidateStyle();
 		}
@@ -998,20 +1064,20 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function updateTextMetrics() : Void {
-		if (text != "" && cast(style.fontSize, Float) > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
+		if (text != "" && style.fontSize > 1.0 && (metrics == null || untyped metrics.text != text || untyped metrics.style != style)) {
 			metrics = TextMetrics.measureText(text, style);
 		}
 	}
 
 	public function getTextMetrics() : Array<Float> {
-		if (fontMetrics == null) {
-			var ascent = 0.9 * cast(style.fontSize, Float);
-			var descent = 0.1 * cast(style.fontSize, Float);
-			var leading = 0.15 * cast(style.fontSize, Float);
+		if (style.fontProperties == null) {
+			var ascent = 0.9 * style.fontSize;
+			var descent = 0.1 * style.fontSize;
+			var leading = 0.15 * style.fontSize;
 
 			return [ascent, descent, leading];
 		} else {
-			return [fontMetrics.ascent, fontMetrics.descent, fontMetrics.descent];
+			return [style.fontProperties.ascent, style.fontProperties.descent, style.fontProperties.descent];
 		}
 	}
 }

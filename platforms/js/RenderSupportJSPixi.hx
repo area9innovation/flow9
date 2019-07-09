@@ -1306,6 +1306,10 @@ class RenderSupportJSPixi {
 		clip.setHeight(height);
 	}
 
+	public static function setClipResolution(clip : TextClip, resolution : Float) : Void {
+		clip.setResolution(resolution);
+	}
+
 	public static function startProfile(name : String) : Void {
 		Browser.console.profile(name);
 	}
