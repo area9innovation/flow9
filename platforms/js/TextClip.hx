@@ -364,14 +364,22 @@ class TextClip extends NativeWidgetClip {
 		}
 	}
 
-	private function bidiDecorate(text : String) : String {
-		if (textDirection == 'ltr') {
+	private static function bidiDecorate(text : String, dir : String) : String {
+		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
-		} else if (textDirection == 'rtl') {
+		} else if (dir == 'rtl') {
 			return String.fromCharCode(0x202B) + text + String.fromCharCode(0x202C);
 		} else {
 			return text;
 		}
+	}
+
+	private static function bidiUndecorate(text : String) : Array<String> {
+		if (text.charCodeAt(text.length-1) == 0x202C) {
+			if (text.charCodeAt(0) == 0x202A) return [text.substr(1, text.length-2), 'ltr'];
+			if (text.charCodeAt(0) == 0x202B) return [text.substr(1, text.length-2), 'rtl'];
+		}
+		return [text, ''];
 	}
 
 	private static inline function capitalize(s : String) : String {
@@ -504,7 +512,7 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(text) : getActualGlyphsString(text));
+			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
@@ -523,7 +531,7 @@ class TextClip extends NativeWidgetClip {
 				addChild(textClip);
 			}
 
-			textClip.text = texts[0][0];
+			textClip.text = bidiDecorate(texts[0][0], textDirection);
 			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
@@ -590,7 +598,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(textMod.modified, style);
+		textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
@@ -707,6 +715,8 @@ class TextClip extends NativeWidgetClip {
 			this.textDirection = textDirection.toLowerCase();
 
 			invalidateStyle();
+			invalidateMetrics();
+			layoutText();
 		}
 	}
 
