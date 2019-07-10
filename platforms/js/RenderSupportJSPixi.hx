@@ -1205,7 +1205,7 @@ class RenderSupportJSPixi {
 	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
 		if (parent.removeElementChild != null) {
 			parent.removeElementChild(child);
-		} else {
+		} else if (child.parent == parent || child.parentElement == parent) {
 			parent.removeChild(child);
 		}
 	}
@@ -2229,8 +2229,16 @@ class RenderSupportJSPixi {
 		return Browser.document.createTextNode(text);
 	}
 
+	public static function changeNodeValue(element : Element, value : String) : Void {
+		element.nodeValue = value;
+	}
+
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
 		element.setAttribute(name, value);
+	}
+
+	public static function removeAttribute(element : Element, name : String) : Void {
+		element.removeAttribute(name);
 	}
 
 	public static function appendChild(element : Dynamic, child : Element) : Void {
@@ -2242,7 +2250,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function removeElementChild(element : Dynamic, child : Element) : Void {
-		element.removeElementChild(child);
+		removeChild(element, child);
 	}
 
 	public static function getNumberOfCameras() : Int {
