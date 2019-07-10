@@ -918,7 +918,7 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
 
         // Move cursor
         pos = cursor + font->getKerning(prev, info) * size;
-        new_cursor = pos + spacing * (*strIter != end);  /* We shouldn't add spacing after the last char in the string.*/
+        new_cursor = pos + spacing * (*strNextNC != end);  /* We shouldn't add spacing after the last char in the string.*/
         if (info) new_cursor += info->advance * size;
         if (new_cursor<cursor) new_cursor = cursor;
 
