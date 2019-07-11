@@ -1,5 +1,6 @@
 #if js
 import js.Browser;
+import js.html.MessageChannel;
 #end
 
 class ProgressiveWebTools {
@@ -115,6 +116,108 @@ class ProgressiveWebTools {
 			globalInstallPrompt = null;
 		});
 		#else
+		#end
+	}
+
+	public static function cleanServiceWorkerCache(callback : Bool -> Void) : Void {
+		#if flash
+		callback(false);
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					callback(false);
+				} else if (event.data.status == "OK") {
+					callback(true);
+				} else {
+					callback(false);
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({"action" : "clean_cache_storage"}, [messageChannel.port2]);
+			callback(true);
+		} else {
+			callback(false);
+		}
+		#end
+	}
+
+	public static function addRequestCacheFilterN(
+		cacheIfUrlMatch : String,
+		cacheIfMethodMatch : String,
+		cacheIfParametersMatch : Array<Array<String>>,
+		ignoreParameterKeysOnCache : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't to add request filter");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't to add request filter");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "requests_cache_filter",
+					"data" : {
+						"cacheIfUrlMatch" : cacheIfUrlMatch,
+						"method" : cacheIfMethodMatch,
+						"cacheIfParametersMatch" : cacheIfParametersMatch,
+						"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
+					}
+				},
+				[messageChannel.port2]
+			);
+			onOK();
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function loadAndCacheUrls(
+		urls : Array<String>,
+		ignoreParameterKeysOnCache : Array<String>,
+		onOK : Void -> Void,
+		onError : String -> Void
+	) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null) {
+					onError("ServiceWorker can't execute one or more requests");
+				} else if (event.data.status == "OK") {
+					onOK();
+				} else {
+					onError("ServiceWorker can't execute one or more requests");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "load_and_cache_urls",
+					"data" : {
+						"urls" : urls,
+						"ignoreParameterKeysOnCache" : ignoreParameterKeysOnCache
+					}
+				},
+				[messageChannel.port2]
+			);
+			//onOK();
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
 		#end
 	}
 
