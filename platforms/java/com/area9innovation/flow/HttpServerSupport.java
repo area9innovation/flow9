@@ -229,9 +229,9 @@ public class HttpServerSupport extends NativeHost
 					{
 						try
 						{
-							byte[] responseBytes = responseBody.getBytes();
+							byte[] responseBytes = responseBody.getBytes("UTF-8");
 							exchange.sendResponseHeaders(
-								responseStatusCode, 
+								responseStatusCode,
 								responseBytes.length
 							);
 							OutputStream os = exchange.getResponseBody();
@@ -261,7 +261,7 @@ public class HttpServerSupport extends NativeHost
 									.map(Object::toString)
 									.collect(Collectors.toList())
 							);
-						return null; 
+						return null;
 					}
 				};
 			}
