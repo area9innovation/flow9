@@ -2222,7 +2222,14 @@ class RenderSupportJSPixi {
 	}
 
 	public static function createElement(tagName : String) : Element {
-		return Browser.document.createElement(tagName);
+		return Browser.document.createElementNS(
+				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
+					"http://www.w3.org/2000/svg";
+				} else {
+					"http://www.w3.org/1999/xhtml";
+				},
+				tagName
+			);
 	}
 
 	public static function createTextNode(text : String) : js.html.Text {
