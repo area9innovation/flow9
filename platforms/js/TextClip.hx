@@ -544,13 +544,16 @@ class TextClip extends NativeWidgetClip {
 
 			if (texts.length > 1 || texts[0].length > 1) {
 				var currentHeight = 0.0;
+				var firstTextClip = true;
 
 				for (line in texts) {
 					var currentWidth = 0.0;
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						if (txt == texts[0][0]) {
+						if (firstTextClip) {
+							firstTextClip = false;
+
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
@@ -598,7 +601,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
+		var textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);
