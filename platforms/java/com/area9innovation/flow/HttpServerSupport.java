@@ -74,7 +74,7 @@ public class HttpServerSupport extends NativeHost
 		return null;
 	}
 
-	private static SSLContext setupSSLContext(
+	public static SSLContext setupSSLContext(
 		String pfxPath,
 		String pfxPassword) throws Exception
 	{
