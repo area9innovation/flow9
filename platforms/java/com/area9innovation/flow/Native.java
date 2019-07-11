@@ -38,8 +38,12 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.*;
 import java.util.Arrays;
-import java.text.SimpleDateFormat;
-import java.text.ParseException;
+import java.time.format.DateTimeFormatter;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 
 @SuppressWarnings("unchecked")
 public class Native extends NativeHost {
@@ -956,16 +960,17 @@ public class Native extends NativeHost {
 		return 0;
 	}
 
-	static private final SimpleDateFormat dateFormat = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
+	static private final DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyy-MM-dd HH:mm:ss");
 
 	public final String time2string(double time) {
-		return dateFormat.format(new Date((Double.valueOf(time)).longValue()));
+		long millis = Double.valueOf(time).longValue();
+		return LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).format(dateFormat);
 	}
 
 	public final double string2time(String tv) {
 		try {
-			return dateFormat.parse(tv).getTime();
-		} catch (ParseException e) {
+			return LocalDateTime.parse(tv, dateFormat).toInstant(ZoneOffset.ofHours(0)).toEpochMilli();
+		} catch (DateTimeParseException  e) {
 			System.err.println(e.toString());
 			return 0;
 		}
