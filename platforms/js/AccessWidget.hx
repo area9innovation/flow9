@@ -807,7 +807,6 @@ class AccessWidget extends EventEmitter {
 					} catch (e : Dynamic) {}
 				}
 
-				previousElement = accessWidget.element;
 				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, true);
 			} else {
 				updateAccessTree(child, parent, previousElement, true);
