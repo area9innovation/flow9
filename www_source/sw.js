@@ -25,6 +25,42 @@ function initializeCacheStorage() {
     });
 }
 
+var extractUrlParameters = function(url) {
+  var urlSplitted = url.split("?");
+  if (urlSplitted.length > 1) {
+    return { baseUrl : urlSplitted[0], parameters : urlSplitted.slice(1).join("?").split("&") };
+  } else {
+    return { baseUrl : url, parameters : [] };
+  }
+}
+
+// Removing ignoreParameters from the request url
+var filterUrlParameters = function(url, ignoreParameters) {
+  var urlParameters = extractUrlParameters(url);
+  if (urlParameters.length == 0) {
+    return url;
+  } else {
+    return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
+      var index = p.indexOf('=');
+      if (index !== -1) p = p.substr(0, index).toLowerCase();
+      return !ignoreParameters.includes(p);
+    }).join("&");
+  }
+};
+
+var sendMessageToClient = function(event, data) {
+  if (!event.clientId) return;
+
+  // Post message with delay
+  // Otherwise makes problem for caching
+  setTimeout(function() {
+    clients.get(event.clientId).then(function(client) {
+      client.postMessage(data);
+      //console.log(data);
+    });
+  }, 5);
+};
+
 self.addEventListener('install', function(event) {
   // Perform install steps
   event.waitUntil(
@@ -66,29 +102,6 @@ self.addEventListener('fetch', function(event) {
       });
     } else {
       return Promise.resolve({ urlNewFull : requestUrl, formDataText : undefined });
-    }
-  }
-
-  var extractUrlParameters = function(url) {
-    var urlSplitted = url.split("?");
-    if (urlSplitted.length > 1) {
-      return { baseUrl : urlSplitted[0], parameters : urlSplitted.slice(1).join("?").split("&") };
-    } else {
-      return { baseUrl : url, parameters : [] };
-    }
-  }
-
-  // Removing ignoreParameters from the request url
-  var filterUrlParameters = function(url, ignoreParameters) {
-    var urlParameters = extractUrlParameters(url);
-    if (urlParameters.length == 0) {
-      return url;
-    } else {
-      return urlParameters.baseUrl + "?" + urlParameters.parameters.filter(function(p) {
-        var index = p.indexOf('=');
-        if (index !== -1) p = p.substr(0, index).toLowerCase();
-        return !ignoreParameters.includes(p);
-      }).join("&");
     }
   }
 
@@ -136,18 +149,6 @@ self.addEventListener('fetch', function(event) {
     }
   }
 
-  var sendMessageToClient = function(data) {
-    if (!event.clientId) return;
-
-    // Post message with delay
-    // Otherwise makes problem for caching
-    setTimeout(function() {
-      clients.get(event.clientId).then(function(client) {
-        client.postMessage(data);
-      });
-    }, 5);
-  };
-
   var isStampForApplicationJsRequest = function() {
     if (!event.clientId) return Promise.reject();
     var url = new URL(event.request.url);
@@ -169,7 +170,7 @@ self.addEventListener('fetch', function(event) {
           return Promise.reject();
         }
 
-        sendMessageToClient({
+        sendMessageToClient(event, {
           msg: "Responded with cache:",
           url: requestData.originalRequest.url,
           urlCached: requestData.urlNewToCache
@@ -215,7 +216,7 @@ self.addEventListener('fetch', function(event) {
           caches.open(CACHE_NAME).then(function(cache) {
             cache.put(prepareRequestToCache(requestData), response.clone());
 
-            sendMessageToClient({
+            sendMessageToClient(event, {
               msg: "Cached resource:",
               url: requestData.originalRequest.url,
               urlCached: requestData.urlNewToCache
@@ -374,6 +375,29 @@ self.addEventListener('message', function(event) {
     });
   };
 
+  var fetchAndCacheByUrl = function(url, ignoreParameters) {
+    var request = new Request(url);
+    return fetch(request).then(function(response) {
+      // Automatically cache uncached resources
+      if (response.status == 200 && response.type == "basic") {
+        var requestToCache = new Request(filterUrlParameters(url, ignoreParameters));
+        caches.open(CACHE_NAME).then(function(cache) {
+          cache.put(requestToCache, response.clone());
+
+          sendMessageToClient(event, {
+            msg: "Cached resource:",
+            url: url,
+            urlCached: requestToCache.url
+          });
+        });
+      }
+
+      return true;
+    }).catch(function() {
+      return false;
+    });
+  };
+
   if (event.data.action == "get_cache_version") {
     respond({
       cache_version: SW_CACHE_VERSION
@@ -397,10 +421,15 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "remove_cache_storage") {
     respondWithStatus(caches.delete(event.data.action.name));
   } else if (event.data.action == "clean_cache_storage") {
-    cleanServiceWorkerCache();
-    //respond(true);
+    respondWithStatus(cleanServiceWorkerCache());
   } else if (event.data.action == "requests_cache_filter") {
     requestsCacheFilter.push(event.data.data);
-    //respond(true);
+    respond({status: "OK"});
+  } else if (event.data.action == "load_and_cache_urls") {
+    respondWithStatus(
+      Promise.all(event.data.data.urls.map(function(url) {
+        return fetchAndCacheByUrl(url, event.data.data.ignoreParameterKeysOnCache);
+      }))
+    );
   }
 });
