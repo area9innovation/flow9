@@ -785,6 +785,8 @@ class AccessWidget extends EventEmitter {
 			parent = Browser.document.body;
 		}
 
+		var nextElement = (previousElement != null) ? previousElement.nextSibling : null;
+
 		for (key in tree.children.keys()) {
 			var child = tree.children.get(key);
 
@@ -797,17 +799,11 @@ class AccessWidget extends EventEmitter {
 			if (accessWidget != null && accessWidget.element != null) {
 				if (child.changed) {
 					try {
-						if (previousElement != null && previousElement.nextSibling != null) {
-							parent.insertBefore(accessWidget.element, previousElement.nextSibling);
-						} else {
-							parent.appendChild(accessWidget.element);
-						}
-
+						parent.insertBefore(accessWidget.element, nextElement);
 						child.changed = false;
 					} catch (e : Dynamic) {}
 				}
 
-				previousElement = accessWidget.element;
 				updateAccessTree(child, accessWidget.element, accessWidget.element.firstElementChild, true);
 			} else {
 				updateAccessTree(child, parent, previousElement, true);
