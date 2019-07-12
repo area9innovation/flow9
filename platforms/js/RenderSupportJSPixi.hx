@@ -80,9 +80,8 @@ class RenderSupportJSPixi {
 
 	private static function getBackingStoreRatio() : Float {
 		var minRatio = 1.0;
-		var ratio = ((Util.getParameter("resolution") != null) ?
-			Std.parseFloat(Util.getParameter("resolution")) :
-			((Browser.window.devicePixelRatio != null)? Browser.window.devicePixelRatio : 1.0));
+		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
+			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
 
 		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
 			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
