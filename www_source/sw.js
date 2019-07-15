@@ -403,8 +403,6 @@ self.addEventListener('message', function(event) {
       return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
       .then(function(response) {
         if (response) {
-          console.log(url);
-          console.log(response);
           return url;
         } else return "";
       }).catch(function() { return ""; })
