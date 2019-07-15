@@ -857,10 +857,7 @@ class PixiWorkarounds {
 
 				if (transformChanged) {
 					if (this.child && !this.child.transformChanged) {
-						this.child.transformChanged = true;
-
-						RenderSupportJSPixi.PixiStageChanged = true;
-						RenderSupportJSPixi.TransformChanged = true;
+						DisplayObjectHelper.invalidateTransform(this.child);
 					}
 
 					if (this.accessWidget) {
