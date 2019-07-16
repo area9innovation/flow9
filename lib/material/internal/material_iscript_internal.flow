@@ -814,12 +814,44 @@ addIScriptRecordWithDelay(manager : MaterialManager, delay : double, record : IS
 	)
 }
 
-addIScriptBehaviourRecord(manager : MaterialManager, componentName : string, behaviourName : string, value : flow, id : List<IScriptIdentifier>,
-	type : IScriptRecordType, callstack : string) -> void {
+addIScriptBehaviourRecord(
+	manager : MaterialManager,
+	componentName : string,
+	behaviourName : string,
+	value : flow,
+	id : List<IScriptIdentifier>,
+	type : IScriptRecordType,
+	callstack : string
+) -> void {
 
 	if (!checkIsFn(serialize(value)) && checkIScriptRecordTypeCaptureOption(manager, behaviourName, type)) {
 		addIScriptRecord(
 			manager,
+			IScriptBehaviourRecord(
+				IScriptBehaviourDescriptor(IScriptComponentDescriptor(componentName, id), behaviourName),
+				value,
+				type,
+				callstack
+			)
+		)
+	}
+}
+
+addIScriptBehaviourRecordWithDelay(
+	manager : MaterialManager,
+	delay : double,
+	componentName : string,
+	behaviourName : string,
+	value : flow,
+	id : List<IScriptIdentifier>,
+	type : IScriptRecordType,
+	callstack : string
+) -> void {
+
+	if (!checkIsFn(serialize(value)) && checkIScriptRecordTypeCaptureOption(manager, behaviourName, type)) {
+		addIScriptRecordWithDelay(
+			manager,
+			delay,
 			IScriptBehaviourRecord(
 				IScriptBehaviourDescriptor(IScriptComponentDescriptor(componentName, id), behaviourName),
 				value,
@@ -990,6 +1022,9 @@ captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () ->
 	handled;
 }
 
+bufferedMouseDownUns : ref List<() -> void> = ref makeList();
+bufferedMouseDown = ref nop;
+
 captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool {
 	if (!handled && isIScriptEnabled(manager)) {
 		getPoint = \ -> {
@@ -998,16 +1033,32 @@ captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : M
 			Point(miFn.x + p.x, miFn.y + p.y - 48.);
 		};
 
+		delay = getIScriptDelay(manager);
+		addAndDispose = \ -> {
+			dispUns(bufferedMouseDown);
+			dispUnsA(ref list2array(^bufferedMouseDownUns));
+		}
+		addAndDispose();
 		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
-			addIScriptBehaviourRecord(
-				manager,
-				component,
-				"mousedown",
-				getPoint(),
-				eitherMap(getCurrentHoveredItem(manager.focus), getFullMFocusId, makeList()),
-				ISMouseEvent(),
-				getCallstackIfNeeded(manager)
-			)
+			bufferedMouseDownUns := fsubscribe(
+				getCurrentPressedItemBehaviour3(manager.focus),
+				\pressedM -> maybeApply(
+					pressedM,
+					\pressed -> {
+						bufferedMouseDown := \ -> addIScriptBehaviourRecordWithDelay(
+							manager,
+							delay,
+							component,
+							"mousedown",
+							getPoint(),
+							getFullMFocusId(pressed),
+							ISMouseEvent(),
+							getCallstackIfNeeded(manager)
+						)
+					}
+				)
+			);
+			timer(1000, addAndDispose)
 		} else if (isIScriptReplaying(manager) || isIScriptScenarioReplaying(manager)) {
 			iScriptInfo(manager, component + " mousedown: " + toString(getPoint()), None());
 		}
@@ -1016,18 +1067,20 @@ captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : M
 	handled;
 }
 
-getCurrentHoveredItem(parent : MFocusGroup) -> Maybe<MFocus> {
-	fold(
-		getTreeValues(fgetValue(parent.focusIds)), None(), \acc, foc ->
-		if (isSome(acc))
-			acc
-		else
-			switchMaterialFocus(
-				foc,
-				\f -> if (fgetValue(f.hover)) Some(f) else acc,
-				getCurrentHoveredItem
+getCurrentPressedItemBehaviour3(parent : MFocusGroup) -> Transform<Maybe<MFocus>> {
+	fsubselect(parent.focusIds, FLift(\fid ->
+		fold(getTreeValues(fid), const(None()), \acc, foc ->
+			fifsome(
+				acc,
+				acc,
+				switchMaterialFocus(
+					foc,
+					\f -> fif(f.down, const(Some(f)), acc),
+					\f -> getCurrentPressedItemBehaviour3(f)
+				)
 			)
-	)
+		)
+	))
 }
 
 clearIScriptAdditionalInfo(manager : MaterialManager) -> void {
