@@ -1,0 +1,119 @@
+import tools/flowc/backends/inca/inca_flow;
+import tools/flowc/backends/inca/env;
+
+export {
+	fi2incaflow(env : IncaEnv) -> IiProgram;
+}
+
+// A program is a set of functions, as well as the types of globals
+IiProgram(
+	functions : Tree<string, IiFunction>, 
+	// The type of global variables
+	globals : [IiType]
+);
+
+FiIncaEnv(
+	// Look up from name to global memory position
+	names : Tree<string, int>,
+	globals : int,
+	program : IiProgram,
+);
+
+FiIncaEnvExp(
+	env : FiIncaEnv,
+	exp : IiExp
+);
+
+fi2incaflow(env : IncaEnv) -> IiProgram {
+	env0 = FiIncaEnv(
+		makeTree(),
+		0,
+		IiProgram(makeTree(), []),
+	);
+	env1 = foldTree(env.functions, env0, \n, f, acc -> fifun2incaflow(acc, f));
+	env1.program
+}
+
+fifun2incaflow(env : FiIncaEnv, fi : FiFunctionDec) -> FiIncaEnv {
+	onError = \e -> {
+		println("Error in " + fi.name + ": " + e);
+	}
+	localEnv = fold(fi.lambda.args, env, \nacc, arg : FiFunArg -> {
+		addNameToFiIncaEnv(nacc, arg.name, fiType2i(arg.type, onError))
+	});
+
+	intoName = fi.name + "__returnValue";
+	intoEnv = addNameToFiIncaEnv(localEnv, intoName, fiType2i(fi.type.returnType, onError));
+	intoIndex = intoEnv.globals - 1;
+
+	bodyWithEnv = fiExp2i(localEnv, fi.lambda.body, IiName(intoIndex));
+
+	ifun = IiFunction(fi.name, 
+		map(fi.lambda.args, \a : FiFunArg -> {
+			lookupTreeDef(localEnv.names, a.name, -1);
+		}),
+		intoIndex,
+		bodyWithEnv.exp
+	);
+	
+	// OK, reverse the indexes of names in case they were shadowed
+	cleanEnv = fold(fi.lambda.args, bodyWithEnv.env, \nacc : FiIncaEnv, arg : FiFunArg -> {
+		oldIndex = lookupTree(env.names, arg.name);
+		nnames = switch (oldIndex) {
+			None(): removeFromTree(env.names, arg.name);
+			Some(i): setTree(env.names, arg.name, i);
+		};
+		FiIncaEnv(nacc with names = nnames)
+	});
+
+	// Next, enter the transformed function
+	FiIncaEnv(
+		cleanEnv
+		with
+		program = IiProgram(
+			cleanEnv.program
+			with functions = setTree(cleanEnv.program.functions, fi.name, ifun)
+		)
+	)
+}
+
+addNameToFiIncaEnv(acc : FiIncaEnv, name : string, type : IiType) -> FiIncaEnv {
+	nextId = acc.globals;
+	FiIncaEnv(
+		acc with
+		names = setTree(acc.names, name, nextId),
+		globals = nextId + 1,
+		program = IiProgram(acc.program with globals = arrayPush(acc.program.globals, type)),
+	);
+}
+
+fiType2i(i : FiType, onError : (string) -> void) -> IiType {
+	error = \e -> {
+		onError(e);
+		FiTypeVoid();
+	}
+	switch (i) {
+		FiTypeArray(t): IiTypeArray(fiType2i(t, onError));
+		FiTypeFunction(args, returnType): error("No first order functions");
+		FiTypeRef(t): error("No refs");
+		FiTypeParameter(n): error("No polymorphism");
+		FiTypeBool(): i;
+		FiTypeInt(): i;
+		FiTypeDouble(): i;
+		FiTypeString(): i;
+		FiTypeFlow(): error("No flow type");
+		FiTypeVoid(): i;
+		FiTypeNative(): i;
+		FiTypeName(name, typeparameters): {
+			if (typeparameters != []) error("No type pars")
+			else IiTypeName(name);
+		}
+	}
+}
+
+fiExp2i(env : FiIncaEnv, i : FiExp, into : IiName) -> FiIncaEnvExp {
+	FiIncaEnvExp(
+		env,
+		FiVoid(0)
+	)
+}
