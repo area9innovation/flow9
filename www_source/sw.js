@@ -335,13 +335,13 @@ self.addEventListener('fetch', function(event) {
   event.respondWith(makeResponse(event.request));
 });
 
-var cleanServiceWorkerCache = function() {
+var cleanServiceWorkerCache = function(fullClearing) {
   caches.delete(rangeResourceCache);
   console.log("cache cleared", rangeResourceCache);
 
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
-      if (CACHE_NAME != key) {
+      if (CACHE_NAME != key || fullClearing) {
         return caches.delete(key);
       }
     }));
@@ -350,7 +350,7 @@ var cleanServiceWorkerCache = function() {
 
 self.addEventListener('activate', function(event) {
   // this cache is only for session
-  cleanServiceWorkerCache();
+  cleanServiceWorkerCache(false);
 });
 
 // Currently not used
@@ -434,7 +434,7 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "remove_cache_storage") {
     respondWithStatus(caches.delete(event.data.action.name));
   } else if (event.data.action == "clean_cache_storage") {
-    respondWithStatus(cleanServiceWorkerCache());
+    respondWithStatus(cleanServiceWorkerCache(true));
   } else if (event.data.action == "requests_cache_filter") {
     requestsCacheFilter.push(event.data.data);
     respond({status: "OK"});
