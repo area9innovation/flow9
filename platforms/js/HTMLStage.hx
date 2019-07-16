@@ -22,6 +22,8 @@ class HTMLStage extends NativeWidgetClip {
 	}
 
 	public function removeElementChild(child : Element) : Void {
-		nativeWidget.removeChild(child);
+		if (child.parentElement == nativeWidget) {
+			nativeWidget.removeChild(child);
+		}
 	}
 }

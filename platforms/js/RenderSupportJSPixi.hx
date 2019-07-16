@@ -80,9 +80,8 @@ class RenderSupportJSPixi {
 
 	private static function getBackingStoreRatio() : Float {
 		var minRatio = 1.0;
-		var ratio = ((Util.getParameter("resolution") != null) ?
-			Std.parseFloat(Util.getParameter("resolution")) :
-			((Browser.window.devicePixelRatio != null)? Browser.window.devicePixelRatio : 1.0));
+		var ratio = (Browser.window.devicePixelRatio != null ? Browser.window.devicePixelRatio : 1.0) *
+			(Util.getParameter("resolution") != null ? Std.parseFloat(Util.getParameter("resolution")) : 1.0);
 
 		if (Platform.isSafari && !Platform.isMobile) { // outerWidth == 0 on mobile safari (and most other mobiles)
 			ratio *= Browser.window.outerWidth / Browser.window.innerWidth;
@@ -1205,7 +1204,7 @@ class RenderSupportJSPixi {
 	public static function removeChild(parent : Dynamic, child : Dynamic) : Void {
 		if (parent.removeElementChild != null) {
 			parent.removeElementChild(child);
-		} else {
+		} else if (child.parent == parent || child.parentElement == parent) {
 			parent.removeChild(child);
 		}
 	}
@@ -2222,15 +2221,30 @@ class RenderSupportJSPixi {
 	}
 
 	public static function createElement(tagName : String) : Element {
-		return Browser.document.createElement(tagName);
+		return Browser.document.createElementNS(
+				if (tagName.toLowerCase() == "svg" || tagName.toLowerCase() == "path" || tagName.toLowerCase() == "g") {
+					"http://www.w3.org/2000/svg";
+				} else {
+					"http://www.w3.org/1999/xhtml";
+				},
+				tagName
+			);
 	}
 
 	public static function createTextNode(text : String) : js.html.Text {
 		return Browser.document.createTextNode(text);
 	}
 
+	public static function changeNodeValue(element : Element, value : String) : Void {
+		element.nodeValue = value;
+	}
+
 	public static function setAttribute(element : Element, name : String, value : String) : Void {
 		element.setAttribute(name, value);
+	}
+
+	public static function removeAttribute(element : Element, name : String) : Void {
+		element.removeAttribute(name);
 	}
 
 	public static function appendChild(element : Dynamic, child : Element) : Void {
@@ -2242,7 +2256,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function removeElementChild(element : Dynamic, child : Element) : Void {
-		element.removeElementChild(child);
+		removeChild(element, child);
 	}
 
 	public static function getNumberOfCameras() : Int {
