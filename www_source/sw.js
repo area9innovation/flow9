@@ -25,6 +25,20 @@ function initializeCacheStorage() {
     });
 }
 
+// Adding base url if the given url is relative (starts with ./)
+// As base url we use location of serverworker file itself (www folder of the app)
+var urlAddBaseLocation = function(url) {
+  var baseUrl = self.location.href;
+  var i = baseUrl.lastIndexOf('/');
+  if (i != -1) baseUrl = baseUrl.substr(0, i + 1);
+
+  if (url.startsWith("./")) {
+    url = baseUrl + url.substr(1, url.length - 1);
+  }
+
+  return url.replace(/(^|[^:])[/]{2,}/, '$1/', url);
+}
+
 var extractUrlParameters = function(url) {
   var urlSplitted = url.split("?");
   if (urlSplitted.length > 1) {
@@ -69,20 +83,6 @@ self.addEventListener('install', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
-  // Adding base url if the given url is relative (starts with ./)
-  // As base url we use location of serverworker file itself (www folder of the app)
-  var urlAddBaseLocation = function(url) {
-    var baseUrl = self.location.href;
-    var i = baseUrl.lastIndexOf('/');
-    if (i != -1) baseUrl = baseUrl.substr(0, i + 1);
-
-    if (url.startsWith("./")) {
-      url = baseUrl + url.substr(1, url.length - 1);
-    }
-
-    return url.replace(/(^|[^:])[/]{2,}/, '$1/', url);
-  }
-
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
     var requestUrl = urlAddBaseLocation(request.url);
@@ -398,6 +398,19 @@ self.addEventListener('message', function(event) {
     });
   };
 
+  var checkUrlsInCache = function(urls) {
+    return Promise.all(urls.map(function(url) {
+      return caches.match(urlAddBaseLocation(url), { ignoreSearch: false })
+      .then(function(response) {
+        if (response) {
+          return url;
+        } else return "";
+      }).catch(function() { return ""; })
+    })).then(function(urls2) { return urls2.filter(function(url) { return url != ""; }); })
+    .then(function(urls2) { return { "urls" : urls2, status: "OK" }; })
+    .catch(function() { return { "urls" : [], status: "Failed" }; });
+  };
+
   if (event.data.action == "get_cache_version") {
     respond({
       cache_version: SW_CACHE_VERSION
@@ -431,5 +444,7 @@ self.addEventListener('message', function(event) {
         return fetchAndCacheByUrl(url, event.data.data.ignoreParameterKeysOnCache);
       }))
     );
+  } else if (event.data.action == "check_urls_in_cache") {
+    checkUrlsInCache(event.data.data.urls).then(respond);
   }
 });

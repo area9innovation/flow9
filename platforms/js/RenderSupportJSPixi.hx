@@ -17,6 +17,7 @@ import pixi.loaders.Loader;
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
+import BlurFilter;
 
 using DisplayObjectHelper;
 
@@ -1897,7 +1898,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function makeBlur(radius : Float, spread : Float) : Dynamic {
-		return new BlurFilter(spread);
+		return new BlurFilter(spread, 4, backingStoreRatio, 5);
 	}
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {

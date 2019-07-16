@@ -124,6 +124,12 @@ class TextClip extends NativeWidgetClip {
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
 
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		style.resolution = 1.0;
+	}
+
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
 		return (code >= 0x590 && code < 0x900)    // Hebrew, arabic and some other RTL.
@@ -442,7 +448,6 @@ class TextClip extends NativeWidgetClip {
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
-		style.resolution = 1.0;
 
 		measureFont();
 
