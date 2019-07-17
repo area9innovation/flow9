@@ -1,4 +1,5 @@
 var CACHE_NAME = 'flow-cache';
+var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
 // We gonna cache all resources except resources extensions below
@@ -192,28 +193,10 @@ self.addEventListener('fetch', function(event) {
   
   var fetchResource = function(requestData) {
     return fetch(requestData.cloneRequest()).then(function(response) {
-      // Automatically cache uncached resources
-      if (CacheMode.CacheStaticContent && response.status == 200 && response.type == "basic") {
-        var url = new URL(requestData.originalRequest.url);
-
-        // Let's cache all static resources here or resources with parameter cached=1
-        return Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
-          if (!url.pathname.endsWith(resourceName) || requestData.isCustomCaching) {
-            return Promise.resolve();
-          } else {
-            // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
-            return isStampForApplicationJsRequest().then(function() {
-              return caches.open(CACHE_NAME).then(function(cache) {
-                // Clean all previous stamp.php caches (sensitive to timestamp)
-                return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
-                  // Clean all previous application.js caches (sensitive to timestamp)
-                  return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
-                });
-              });
-            });
-          }
-        })).then(function() {
-          caches.open(CACHE_NAME).then(function(cache) {
+      if (response.status == 200 && response.type == "basic") {
+        // Cache the request if it's match any customized filter
+        if (requestData.isCustomCaching) {
+          caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
             cache.put(prepareRequestToCache(requestData), response.clone());
 
             sendMessageToClient(event, {
@@ -222,14 +205,40 @@ self.addEventListener('fetch', function(event) {
               urlCached: requestData.urlNewToCache
             });
           });
+        // Automatically cache uncached static resources
+        } else if (CacheMode.CacheStaticContent) {
+          var url = new URL(requestData.originalRequest.url);
 
-          return response.clone();
-        }).catch(function() {
-          return response.clone();
-        });
-      } else {
-        return response.clone();
+          Promise.all(dynamicResourcesExtensions.map(function(resourceName) {
+            if (!url.pathname.endsWith(resourceName)) {
+              return Promise.resolve();
+            } else {
+              // Cache /php/stamp.php?file=<APP_NAME>.js for offline loading
+              return isStampForApplicationJsRequest().then(function() {
+                return caches.open(CACHE_NAME).then(function(cache) {
+                  // Clean all previous stamp.php caches (sensitive to timestamp)
+                  return cache.delete(self.registration.scope + "php/stamp.php", { ignoreSearch: true }).then(function() {
+                    // Clean all previous application.js caches (sensitive to timestamp)
+                    return cache.delete(self.registration.scope + url.searchParams.get("file"), { ignoreSearch: true });
+                  });
+                });
+              });
+            }
+          })).then(function() {
+            caches.open(CACHE_NAME).then(function(cache) {
+              cache.put(requestData.cloneRequest(), response.clone());
+
+              sendMessageToClient(event, {
+                msg: "Cached resource:",
+                url: requestData.originalRequest.url,
+                urlCached: requestData.originalRequest.url
+              });
+            });
+          }).catch(function() { return null; })
+        }
       }
+
+      return response.clone();
     });
   }
 
@@ -342,6 +351,7 @@ var cleanServiceWorkerCache = function() {
   return caches.keys().then(function(keyList) {
     return Promise.all(keyList.map(function(key) {
       if (CACHE_NAME != key) {
+        console.log("cache cleared", key);
         return caches.delete(key);
       }
     }));
@@ -381,7 +391,7 @@ self.addEventListener('message', function(event) {
       // Automatically cache uncached resources
       if (response.status == 200 && response.type == "basic") {
         var requestToCache = new Request(filterUrlParameters(url, ignoreParameters));
-        caches.open(CACHE_NAME).then(function(cache) {
+        caches.open(CACHE_NAME_DYNAMIC).then(function(cache) {
           cache.put(requestToCache, response.clone());
 
           sendMessageToClient(event, {
