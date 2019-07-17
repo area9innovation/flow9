@@ -177,7 +177,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			onOK();
 		} else {
 			onError("ServiceWorker is not initialized");
 		}
