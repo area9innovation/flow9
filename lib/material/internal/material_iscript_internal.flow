@@ -1022,7 +1022,7 @@ captureIScriptMouseEvent(manager : MaterialManager, handled : bool, miFn : () ->
 	handled;
 }
 
-bufferedMouseDownUns : ref List<() -> void> = ref makeList();
+focusDownUns : ref List<() -> void> = ref makeList();
 bufferedMouseDown = ref nop;
 
 captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : MouseDownInfo, canvasPosition : () -> Point, component : string) -> bool {
@@ -1035,30 +1035,30 @@ captureIScriptMouseDownEvent(manager : MaterialManager, handled : bool, miFn : M
 
 		delay = getIScriptDelay(manager);
 		addAndDispose = \ -> {
-			dispUns(bufferedMouseDown);
-			dispUnsA(ref list2array(^bufferedMouseDownUns));
+			if (^bufferedMouseDown != nop || ^focusDownUns != makeList()) {
+				dispUns(bufferedMouseDown);
+				callList(^focusDownUns);
+				focusDownUns := makeList();
+			}
 		}
 		addAndDispose();
 		if (isIScriptRecording(manager) && checkIScriptCaptureOption(manager, IScriptCaptureMouseEvents())) {
-			bufferedMouseDownUns := fsubscribe(
+			focusDownUns := fsubscribe2(
 				getCurrentPressedItemBehaviour3(manager.focus),
-				\pressedM -> maybeApply(
-					pressedM,
-					\pressed -> {
-						bufferedMouseDown := \ -> addIScriptBehaviourRecordWithDelay(
-							manager,
-							delay,
-							component,
-							"mousedown",
-							getPoint(),
-							getFullMFocusId(pressed),
-							ISMouseEvent(),
-							getCallstackIfNeeded(manager)
-						)
-					}
-				)
+				\pressedM -> {
+					bufferedMouseDown := \ -> addIScriptBehaviourRecordWithDelay(
+						manager,
+						delay,
+						component,
+						"mousedown",
+						getPoint(),
+						eitherMap(pressedM, getFullMFocusId, makeList()),
+						ISMouseEvent(),
+						getCallstackIfNeeded(manager)
+					)
+				}
 			);
-			timer(1000, addAndDispose)
+			rlistPush(focusDownUns, interruptibleTimer(1000, addAndDispose))
 		} else if (isIScriptReplaying(manager) || isIScriptScenarioReplaying(manager)) {
 			iScriptInfo(manager, component + " mousedown: " + toString(getPoint()), None());
 		}
