@@ -80,6 +80,9 @@ class FlowContainer extends Container {
 	private function onResize() : Void {
 		view.width = RenderSupportJSPixi.PixiView.width;
 		view.height = RenderSupportJSPixi.PixiView.height;
+
+		view.style.width = view.width / RenderSupportJSPixi.backingStoreRatio + "px";
+		view.style.height = view.height / RenderSupportJSPixi.backingStoreRatio + "px";
 	}
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
