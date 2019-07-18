@@ -1,0 +1,210 @@
+import ds/treeutils;
+//import algorithms; // For tests only
+
+export {
+	// Create a sparse array. Provide a function which can produce a range of values
+	makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?>;
+
+	// If we have a complete, static array, we do not need a generating function
+	array2SpareArray(vals : [?]) -> SparseArray<?>;
+
+	// What are the values in this given range? Will call the function to generate values if we do
+	// not have them cached. Up to, but not including end.
+	getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?];
+}
+
+// A sparse array where we can retrieve values in a given range up to, but not including end
+SparseArray(
+	// This is a cache of the values in the array. Key is the index in the array, value
+	// is a range of values we have from that point on. We have to maintain the
+	// invariant that our ranges are continuous in the sense that it would be wrong
+	// to represent an array ["a", "b"] as {0: ["a"], 1: ["a"]}. Instead, we should
+	// combine and have {0: ["a", "b"]}
+	mutable ranges : Tree<int, [?]>,
+	// The function which can generate/retrieve values at the given point.
+	retrieveRange : (start : int, end : int) -> [?]
+);
+
+makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?> {
+	SparseArray(makeTree(), retrieveRange);
+}
+
+array2SpareArray(vals : [?]) -> SparseArray<?> {
+	SparseArray(makeTree1(0, vals), \__, __ -> []);
+}
+
+/*
+TODO:
+- Add an option to define how many elements are worth caching. I.e.
+  if we have numbers 10-20 in cache, and request 0-100, maybe it is not worth
+  it to reuse the cache, coompared to retrieving all of the elements in one request
+  instead of 2.
+*/
+
+getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
+	if (start < end) {
+		// Do we have anything before we can reuse?
+		lb = findTreeLowerKey(s.ranges, start, -1);
+
+		// Maybe there is a part in the middle we can reuse?
+		ub = findTreeUpperKey(s.ranges, start + 1, -1);
+
+		// What do we have below us?
+		lower0 = if (lb == -1) [] else lookupTreeDef(s.ranges, lb, []);
+		// Find how much of the end of what is below us we can reuse, and extract that
+		lowerReuse = if (lb == -1 || lb + length(lower0) < start) -1 else max(0, start - lb);
+		lower = if (lb == -1 || lowerReuse == -1) [] else subrange(lower0, lowerReuse, end - lowerReuse);
+
+		// OK, there might be a part after the start, which we can use
+		upper = if (ub == -1 || ub >= end) [] else subrange(lookupTreeDef(s.ranges, ub, []), 0, max(0, end - ub));
+
+		// We can push the start by reusing things from below
+		newStart = start + length(lower);
+
+		if (upper == []) {
+			// We have something in the start we can reuse, so just retrieve the end bit
+			// If newStart is bigger than end just subrange already retieved lower part
+			if (newStart >= end) {
+				subrange(lower, 0, end - start);
+			} else {
+				rang = s.retrieveRange(newStart, end);
+
+				res = concat(lower, rang);
+				updateSpareArrayCache(s, start, res);
+				res;
+			}
+		} else {
+			// OK, we have a middle part. First, let us get what is after the first part, but before the mid part
+			// If upper bound is bigger than end just retrieve missing range
+			if (ub > end) {
+				beforeMid = if (newStart >= end) [] else s.retrieveRange(newStart, end);
+
+				res = concatA([lower, beforeMid]);
+				updateSpareArrayCache(s, start, res);
+				res;
+			} else {
+				beforeMid = if (newStart >= ub) [] else s.retrieveRange(newStart, ub);
+
+				afterMid = ub + length(upper);
+				// Recursively check for other mid parts
+				after = if (afterMid >= end) [] else getSpareArrayRange(s, afterMid, end);
+
+				res = concatA([lower, beforeMid, upper, after]);
+				updateSpareArrayCache(s, start, res);
+				res;
+			}
+		}
+	} else {
+		[];
+	}
+}
+
+// OK, we have a new entry that has to go into the cache.
+// We have the invariant that we know this is not colliding with other entries
+updateSpareArrayCache(s : SparseArray<?>, start0 : int, values0 : [?]) -> void {
+	start = ref start0;
+	values = ref values0;
+
+	// Filter out all entries which are dominated by this one
+	// Concat intersecting parts tp values
+	s.ranges ::= filterTree(s.ranges, \s2, v -> {
+		end = ^start + length(^values);
+		e2 = s2 + length(v);
+
+		if (s2 >= ^start) {
+			if (e2 <= end) {
+				false;
+			} else if (s2 <= end) {
+				values := concat(^values, subrange(v, end - s2, length(v)));
+
+				false;
+			} else {
+				true;
+			}
+		} else if (e2 <= end) {
+			if (e2 >= ^start) {
+				values := concat(subrange(v, 0, length(v) + ^start - e2), ^values);
+				start := s2;
+
+				false;
+			} else {
+				true;
+			}
+		} else {
+			true;
+		}
+	});
+
+	s.ranges ::= setTree(s.ranges, ^start, ^values);
+}
+
+// TESTS
+
+/*
+dumpSparseArray(s : SparseArray<?>) -> void {
+	traverseInOrder(s.ranges, \k, v -> {
+		println(toString(k) + ":" + toString(v))
+	});
+}
+
+testSparseArrayRange(s : SparseArray<int>, from : int, to : int) -> void {
+	v = getSpareArrayRange(s, from, to);
+
+	assertEquals(v, enumFromTo(from, to - 1));
+}
+
+makeTestSparseArray() -> SparseArray<int> {
+	cache = ref [];
+
+	makeSparseArray(\s, e -> {
+		println("retrieving from " + i2s(s) + " to " + i2s(e));
+		r = generate(s, e, \i -> i);
+
+		assert(!exists(r, \v -> contains(^cache, v)), "already in cache: ");
+
+		println(r);
+
+		cache := uniq(concat(^cache, r));
+
+		r;
+	});
+}
+
+main() {
+	a = makeTestSparseArray();
+
+	testSparseArrayRange(a, 0, 10);
+	testSparseArrayRange(a, 30, 40);
+	testSparseArrayRange(a, 50, 60);
+	testSparseArrayRange(a, 0, 100);
+	testSparseArrayRange(a, 50, 60);
+	testSparseArrayRange(a, 30, 40);
+	testSparseArrayRange(a, 0, 1);
+	testSparseArrayRange(a, 50, 200);
+
+	// Randomized tests
+	generate(0, 1000, \__ -> {
+		b = makeTestSparseArray();
+
+		testSparseArrayRange(b, 0, 10);
+		testSparseArrayRange(b, 30, 40);
+		testSparseArrayRange(b, 50, 60);
+		testSparseArrayRange(b, 0, 100);
+		testSparseArrayRange(b, 50, 60);
+		testSparseArrayRange(b, 30, 40);
+		testSparseArrayRange(b, 0, 1);
+		testSparseArrayRange(b, 50, 200);
+
+		generate(0, 100, \__ -> {
+			from = round(random() * 100.0);
+			to = from + round(random() * 100.0);
+
+			testSparseArrayRange(b, from, to);
+		});
+	});
+
+	println("ALL TESTS PASSED");
+
+	quit(0);
+}
+*/

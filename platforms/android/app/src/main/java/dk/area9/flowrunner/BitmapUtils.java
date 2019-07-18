@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.support.annotation.NonNull;
 
 public class BitmapUtils {
@@ -151,11 +152,20 @@ public class BitmapUtils {
     }
     
     private static int getImageOrientation(@NonNull Context context, @NonNull Uri selectedImage) throws IOException {
-        String path = Utils.getPath(context, selectedImage);
-        if (path == null) {
-            return 0; // TODO: we can't give info about orientation, may be we should inform about that?
+
+        ExifInterface ei;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            InputStream imageStream = context.getContentResolver().openInputStream(selectedImage);
+            ei = new ExifInterface(imageStream);
+            imageStream.close();
+        } else {
+            String path = Utils.getPath(context, selectedImage);
+            if (path == null) {
+                return 0; // TODO: we can't give info about orientation, may be we should inform about that?
+            }
+            ei = new ExifInterface(path);
         }
-        ExifInterface ei = new ExifInterface(path);
+
         int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
 
         switch (orientation) {

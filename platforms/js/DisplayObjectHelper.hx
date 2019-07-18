@@ -86,6 +86,24 @@ class DisplayObjectHelper {
 		}
 	}
 
+	public static inline function updateTreeIds(clip : DisplayObject, ?clean : Bool = false) : Void {
+		if (clean) {
+			untyped clip.id = [-1];
+		} else if (clip.parent == null) {
+			untyped clip.id = [0];
+		} else {
+			untyped clip.id = Array.from(clip.parent.id);
+			untyped clip.id.push(clip.parent.children.indexOf(clip));
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (c in children) {
+				updateTreeIds(c, clean);
+			}
+		}
+	}
+
 	public static inline function setClipX(clip : DisplayObject, x : Float) : Void {
 		if (untyped clip.scrollRect != null) {
 			x = x - untyped clip.scrollRect.x;
@@ -343,12 +361,18 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
-			untyped clip.mask.child = clip;
+
+			if (maskContainer != clip.scrollRect) {
+				untyped clip.mask.child = clip;
+			}
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
 			untyped maskContainer.isMask = true;
-			untyped maskContainer.child = clip;
+
+			if (maskContainer != clip.scrollRect) {
+				untyped maskContainer.child = clip;
+			}
 		}
 
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });

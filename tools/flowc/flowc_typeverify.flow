@@ -17,7 +17,7 @@ export {
 
 TypeVerifyEnv(
 	module : TypeVerifyModuleEnv,
-	local : TypeVerifyLocalEnv
+	varNames : Set<string>
 );
 
 TypeVerifyModuleEnv(
@@ -28,12 +28,6 @@ TypeVerifyModuleEnv(
 	exprError : ref bool,
 	typeError : ref bool,
 	imports : Set<string>
-);
-
-TypeVerifyLocalEnv(
-	typarsInst : ref Tree<string, FiType>,
-	tyvarsInst : ref Tree<int, FiType>,
-	varNames : Set<string>
 );
 
 typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError) -> void) -> bool {
@@ -85,7 +79,7 @@ typeverifyFiModule(env : FcTypeEnvProgram, module : FiModule, onError : (FcError
 }
 
 typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, onError : (FcError) -> void) -> bool {
-	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	tenv = TypeVerifyEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameUnused(moduleEnv, struct.name, onError, struct.start) &&
 		fold(struct.typars, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, struct.start)) &&
@@ -97,7 +91,7 @@ typeverifyFiTypeStruct(moduleEnv : TypeVerifyModuleEnv, struct : FiTypeStruct, o
 }
 
 typeverifyFiTypeUnion(moduleEnv : TypeVerifyModuleEnv, union : FiTypeUnion, onError : (FcError) -> void) -> bool {
-	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	tenv = TypeVerifyEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameUnused(moduleEnv, union.name, onError, union.start) &&
 		fold(union.typeparameters, true, \ok, type -> ok && typeverifyFiType(tenv, type, onError, union.start));
@@ -168,10 +162,11 @@ verifyNameUnused(env : TypeVerifyModuleEnv, name : string, onError : (FcError) -
 }
 
 typeverifyFiFunctionDec(moduleEnv : TypeVerifyModuleEnv, func : FiFunctionDec, onError : (FcError) -> void) -> bool {
-	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	tenv = TypeVerifyEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameUnused(moduleEnv, func.name, onError, func.declStart) &&
 		typeverifyFiExp(tenv, func.lambda, onError) &&
+		isFiSubType(tenv.module.global.acc.names, fiExpType(func.lambda), func.type, true, true) &&
 		typeverifyFiType(tenv, func.type, onError, func.declStart);
 	if (!ret) {
 		onError(FcError("in function '" + func.name + "'", [FcPosition(moduleEnv.name, func.declStart, func.declStart)]));
@@ -180,10 +175,11 @@ typeverifyFiFunctionDec(moduleEnv : TypeVerifyModuleEnv, func : FiFunctionDec, o
 }
 
 typeverifyFiGlobalVar(moduleEnv : TypeVerifyModuleEnv, var : FiGlobalVar, onError : (FcError) -> void) -> bool {
-	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	tenv = TypeVerifyEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameUnused(moduleEnv, var.name, onError, var.declStart) &&
 		typeverifyFiExp(tenv, var.value, onError) &&
+		isFiSubType(tenv.module.global.acc.names, fiExpType(var.value), var.type, true, true) &&
 		typeverifyFiType(tenv, var.type, onError, var.declStart);
 	if (!ret) {
 		onError(FcError("in global variable '" + var.name + "'", [FcPosition(moduleEnv.name, var.declStart, var.declStart)]));
@@ -192,10 +188,16 @@ typeverifyFiGlobalVar(moduleEnv : TypeVerifyModuleEnv, var : FiGlobalVar, onErro
 }
 
 typeverifyFiNativeDec(moduleEnv : TypeVerifyModuleEnv, nat : FiNativeDec, onError : (FcError) -> void) -> bool {
-	tenv = TypeVerifyEnv(moduleEnv, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet()));
+	tenv = TypeVerifyEnv(moduleEnv, makeSet());
 	ret = 
 		verifyNameUnused(moduleEnv, nat.name, onError, nat.declStart) &&
 		typeverifyFiExp(tenv, nat.fallbackLambda, onError) &&
+		(
+			switch (nat.fallbackLambda) {
+				FiVoid(__): true;
+				default: isFiSubType(tenv.module.global.acc.names, fiExpType(nat.fallbackLambda), nat.type, true, true);
+			}
+		) &&
 		typeverifyFiType(tenv, nat.type, onError, nat.declStart);
 	if (!ret) {
 		onError(FcError("in native '" + nat.name + "'", [FcPosition(moduleEnv.name, nat.declStart, nat.declStart)]));
@@ -208,11 +210,7 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		FiLambda(args, body, type, __): {
 			newEnv = TypeVerifyEnv(
 				env.module,
-				TypeVerifyLocalEnv(
-					env.local.typarsInst, 
-					env.local.tyvarsInst,
-					fold(args, env.local.varNames, \acc, arg -> insertSet(acc, arg.name))
-				)
+				fold(args, env.varNames, \acc, arg -> insertSet(acc, arg.name))
 			);
 			typeverifyFiType(newEnv, type, onError, expr.start) && 
 			typeverifyFiExp(newEnv, body, onError) && 
@@ -221,13 +219,13 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 		FiCall(f, args, type, __): {
 			fnType = fiExpType(f);
 			callType = FiTypeFunction(map(args, \a -> FiFunArg("", fiExpType(a))), type);
-			// println("Check call super\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", sub\n\t"  + prettyFiType(dummyPretty, callType, makeSet()));
-			if (!isFiSubType(env.module.global.acc.names, fnType, callType, true)) {
+			//println("Check call super\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", sub\n\t"  + prettyFiType(dummyPretty, callType, makeSet()));
+			if (!isFiSubType(env.module.global.acc.names, fnType, callType, true, false)) {
 				onError(
 					FcError(
 						"Wrong type in call to '"
 						+ cutoffString(prettyFiExp(dummyPretty, f), 32) + "'"
-						+  ". Expected\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, callType, makeSet()),
+						+  ". Expected\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ",\ngot\n\t"  + prettyFiType(dummyPretty, callType, makeSet()),
 						[FcPosition(env.module.name, expr.start, expr.start)]
 					)
 				);
@@ -235,23 +233,33 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, f, onError) && 
-			fold(args, true, \ok, arg -> ok && typeverifyFiExp(env, arg, onError));
+			forall(args, \arg -> {
+					typeverifyFiExp(env, arg, onError)
+				}
+			);
 		}
 		FiVar(name, type, s):
 			typeverifyFiVar(env, expr, onError);
 		FiLet(x, tp, e1, e2, type, __): {
-			newEnv = TypeVerifyEnv(
-				env.module,
-				TypeVerifyLocalEnv(
-					env.local.typarsInst, 
-					env.local.tyvarsInst,
-					insertSet(env.local.varNames, x)
-				)
-			);
-			typeverifyFiType(newEnv, type, onError, expr.start) && 
-			typeverifyFiType(newEnv, tp, onError, expr.start) && 
-			typeverifyFiExp(newEnv, e1, onError) && 
-			typeverifyFiExp(newEnv, e2, onError);
+			subType = fiExpType(e1);
+			//println("Check let super\n\t" + prettyFiType(dummyPretty, tp, makeSet()) + ",\nsub\n\t"  + prettyFiType(dummyPretty, subType, makeSet()));
+			if (!isFiSubType(env.module.global.acc.names, subType, tp, true, true)) {
+				onError(
+					FcError(
+						"Wrong type in let statement '"
+						+ cutoffString(prettyFiExp(dummyPretty, expr), 32) + "'"
+						+  ". Expected\n\t" + prettyFiType(dummyPretty, tp, makeSet()) + ",\ngot\n\t"  + prettyFiType(dummyPretty, subType, makeSet()),
+						[FcPosition(env.module.name, expr.start, expr.start)]
+					)
+				);
+				false
+			} else {
+				newEnv = TypeVerifyEnv(env.module, insertSet(env.varNames, x));
+				typeverifyFiType(newEnv, type, onError, expr.start) && 
+				typeverifyFiType(newEnv, tp, onError, expr.start) && 
+				typeverifyFiExp(newEnv, e1, onError) && 
+				typeverifyFiExp(newEnv, e2, onError);
+			}
 		}
 		FiIf(e1, e2, e3, type, __):
 			typeverifyFiType(env, type, onError, expr.start) && 
@@ -360,7 +368,7 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 					argno = ref 0;
 					forall(es, \e -> {
 						argno := ^argno + 1;
-						if (!isFiSubType(env.module.global.acc.names, fiExpType(e), at, true)) {
+						if (!isFiSubType(env.module.global.acc.names, fiExpType(e), at, true, true)) {
 							onError(FcError(
 								"Wrong type in array element #" + i2s(^argno) 
 								+ ". Expected\n\t" + prettyFiType(dummyPretty, at, makeSet()) + ", got\n\t"  + prettyFiType(dummyPretty, fiExpType(e), makeSet())
@@ -411,13 +419,22 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 					]
 				));
 			}
+			typarInst = ref makeTree();
 			length(struct.args) == length(es) &&
 			forall(
 				zipWith(struct.args, es, \a, e -> Pair(a, e)),
 				\p -> {
-                    consistentInstantiationOfFcTypeWithFiType(
-                        TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())),
-                        fiExpType(p.second), p.first.type, onError, start
+                    consistentInstantiation(
+                        TypeVerifyEnv(env.module, makeSet()),
+                        TypeInst(
+							fctypeTofi(p.first.type),
+							\t1, t2 -> resolveOrMatchTypeParameter(env.module.global.acc.names, typarInst, t1, t2)
+						),
+                        TypeInst(
+							fiExpType(p.second),
+							\t1, __ -> Some(t1)
+						),
+                        onError, start
                     )
                 }
 			);
@@ -443,7 +460,7 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 								\p -> {
 									argType = p.first.type;
 									expType = fiExpType(p.second);
-									argType == expType || isFiSubType(env.module.global.acc.names, argType, expType, false)
+									argType == expType || isFiSubType(env.module.global.acc.names, argType, expType, false, true)
 								}
 							)
 						}
@@ -457,13 +474,16 @@ typeverifyFcStructPrim(env : TypeVerifyEnv, name : string, es : [FiExp], onError
 }
 
 typeverifyFiVar(env : TypeVerifyEnv, var : FiVar, onError : (FcError) -> void) -> bool {
+	typarInst = ref makeTree();
 	typeverifyFiType(env, var.type, onError, var.start) &&
 	switch (lookupTree(env.module.global.types, var.name)) {
 		Some(tp): {
-			consistentInstantiationOfFcTypeWithFiType(
-				TypeVerifyEnv(env.module, TypeVerifyLocalEnv(ref makeTree(), ref makeTree(), makeSet())), 
-				var.type, tp, onError, var.start
-			);
+			consistentInstantiation(
+				TypeVerifyEnv(env.module, makeSet()), 
+				TypeInst(var.type, \t1, __ -> Some(t1)),
+				TypeInst(fctypeTofi(tp), \t1, t2 -> resolveOrMatchTypeParameter(env.module.global.acc.names, typarInst, t1, t2)), 
+				onError, var.start
+			)
 		}
 		None(): true;
 	}
@@ -485,8 +505,15 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 
 	// Look in the global environment
 	subtypes = buildSet(getTreeKeys(typeVerifyName2structs(env, switchTypeName, makeTree())));
-	   
-	caseTypesCoincide = (switchTypeName == "" || containsSet(switchCaseTypes, "default") || equalSet(switchCaseTypes, subtypes));
+	caseTypesCoincide = (
+		switchTypeName == "" ||
+		(containsSet(switchCaseTypes, "default") &&
+			foldSet(switchCaseTypes, true,
+				\ok, caseType -> caseType == "default" || containsSet(subtypes, caseType)
+			)
+		) ||
+		equalSet(switchCaseTypes, subtypes)
+	);
 	if (!caseTypesCoincide) {
 		diff_set = \s1, s2 -> foldSet(s1, makeSet(), \acc, x -> if (containsSet(s2, x)) acc else insertSet(acc, x));
 		diff_1 = diff_set(subtypes, switchCaseTypes);
@@ -511,11 +538,7 @@ typeverifyFiSwitch(env : TypeVerifyEnv, sw : FiSwitch, onError : (FcError) -> vo
 		\ok, c -> {
 			newEnv = TypeVerifyEnv(
 				env.module,
-				TypeVerifyLocalEnv(
-					env.local.typarsInst, 
-					env.local.tyvarsInst,
-					fold(c.argNames, env.local.varNames, \acc, argname -> insertSet(env.local.varNames, argname))
-				)
+				fold(c.argNames, env.varNames, \acc, argname -> insertSet(acc, argname))
 			);
 			argsNumIsOk = (
 				c.struct == "default" ||
@@ -678,77 +701,139 @@ typeverifyNumberOfStructArgs(env : TypeVerifyEnv, typename : string) -> int {
 	}
 }
 
-consistentInstantiationOfFcTypeWithFiType(env : TypeVerifyEnv, t1 : FiType, t2 : FcType, onError : (FcError) -> void, start : int) -> bool {
-	t2i = fctype2fi(initFcTypeEnvLocal(), \__,__ -> {}, t2);
-	consistentInstantiationOfFiTypeWithFiType(env, t1, t2i, onError, start);
+// Type with typars instantiation function
+TypeInst(
+	type : FiType,
+	inst: (TypeInst, TypeInst) -> Maybe<TypeInst>, // matches and instantiates type parameters (maybe)
+);
+
+fctypeTofi(t : FcType) -> FiType {
+	fctype2fi(initFcTypeEnvLocal(), \__,__ -> {}, t)
 }
 
-consistentInstantiationOfFiTypeWithFiType(env : TypeVerifyEnv, t1 : FiType, t2 : FiType, onError : (FcError) -> void, start : int) -> bool {
-	ret = switch (t2) {
-		FiTypeParameter(n): {
-			switch (lookupTree(^(env.local.typarsInst), n)) {
-				Some(t2_inst): {
-					switch (t2_inst) {
-						FiTypeParameter(n2_inst):
-							switch (t1) {
-								FiTypeFlow(): true;
-								FiTypeParameter(n1): n2_inst == n1;
-								default: {
-									env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1);
-									true;
-								}
-							}
-						default:
-							if (t1 == FiTypeFlow()) true else t1 == t2_inst;
+consistentInstantiation(env : TypeVerifyEnv, t1 : TypeInst, t2 : TypeInst, onError : (FcError) -> void, start : int) -> bool {
+	switch (t1.inst(t1, t2)) {
+		Some(t1_inst):
+			switch (t2.inst(t2, t1_inst)) {
+				Some(t2_inst):
+					consistentInstantiationResolved(
+						env, 
+						t1_inst, 
+						t2_inst, 
+						onError, start
+					);
+				None(): false;
+			}
+		None(): false;
+	}
+}
+
+// If t1 is a type parameter, then there are two possiboilities:
+// a) either it is already resolved, then return the resolved value
+// b) or it is not yet resolved. Then match it with the second type.
+resolveOrMatchTypeParameter(names : FcGlobalNames, inst : ref Tree<string, TypeInst>, t1 : TypeInst, t2 : TypeInst) -> Maybe<TypeInst> {
+	switch (t1.type) {
+		FiTypeParameter(n1): {
+			switch (lookupTree(^inst, n1)) {
+				Some(t1_inst): {
+					if (isFiSubType(names, t2.type, t1_inst.type, true, true)) {
+						Some(t1_inst);
+					} else if (isFiSubType(names, t1_inst.type, t2.type, true, true)) {
+						inst := setTree(^inst, n1, t2); 
+						Some(t2);
+					} else {
+						None();
 					}
 				}
 				None(): {
-					env.local.typarsInst := setTree(^(env.local.typarsInst), n, t1); 
-					true; 
+					inst := setTree(^inst, n1, t2); 
+					Some(t2);
 				}
 			}
 		}
-		FiTypeArray(t2_arr):
-			switch (t1) {
+		default: Some(t1);
+	}
+}
+
+// t2 is a subtype of t1, so s1 var may be substituted with t2 value
+consistentInstantiationResolved(env : TypeVerifyEnv, t1 : TypeInst, t2 : TypeInst, onError : (FcError) -> void, start : int) -> bool {
+	ret = switch (t2.type) {
+		FiTypeParameter(n2):
+			switch (t1.type) {
 				FiTypeFlow(): true;
-				FiTypeArray(t1_arr): consistentInstantiationOfFiTypeWithFiType(env, t1_arr, t2_arr, onError, start);
+				FiTypeParameter(n1): n2 == n1;
+				default: false;
+			}
+		FiTypeArray(t2_arr):
+			switch (t1.type) {
+				FiTypeFlow(): true;
+				FiTypeArray(t1_arr):
+					consistentInstantiation(env,
+						TypeInst(t1_arr, t1.inst),
+						TypeInst(t2_arr, t2.inst),
+						onError, start
+					);
 				default: false;
 			}
 		FiTypeRef(t2_ref):
-			switch (t1) {
+			switch (t1.type) {
 				FiTypeFlow(): true;
-				FiTypeRef(t1_ref): consistentInstantiationOfFiTypeWithFiType(env, t1_ref, t2_ref, onError, start);
+				FiTypeRef(t1_ref): 
+					consistentInstantiation(env,
+						TypeInst(t1_ref, t1.inst),
+						TypeInst(t2_ref, t2.inst),
+						onError, start
+					);
 				default: false;
 			}
 		FiTypeFunction(t2_at, t2_rt):
-			switch (t1) {
+			switch (t1.type) {
 				FiTypeFlow(): true;
 				FiTypeFunction(t1_at, t1_rt):
-					consistentInstantiationOfFiTypeWithFiType(env, t1_rt, t2_rt, onError, start) &&
+					consistentInstantiation(env, 
+						TypeInst(t1_rt, t1.inst),
+						TypeInst(t2_rt, t2.inst),
+						onError, start
+					) &&
 					length(t1_at) == length(t2_at) &&
-					foldi(t1_at, true, \i, ok, a -> ok && consistentInstantiationOfFiTypeWithFiType(env, a.type, t2_at[i].type, onError, start));
+					foldi(t1_at, true, 
+						\i, ok, a -> ok && 
+							consistentInstantiation(env,
+								TypeInst(t2_at[i].type, t2.inst),
+								TypeInst(a.type, t1.inst),
+								onError, start
+							)
+					);
 				default: false;
 			}
-		FiTypeBool():        switch (t1) { FiTypeFlow(): true; FiTypeBool():   true; default: false; }
-		FiTypeInt():         switch (t1) { FiTypeFlow(): true; FiTypeInt():    true; default: false; }
-		FiTypeDouble():      switch (t1) { FiTypeFlow(): true; FiTypeDouble(): true; default: false; }
-		FiTypeString():      switch (t1) { FiTypeFlow(): true; FiTypeString(): true; default: false; }
+		FiTypeBool():        switch (t1.type) { FiTypeFlow(): true; FiTypeBool(): true;   default: false; }
+		FiTypeInt():         switch (t1.type) { FiTypeFlow(): true; FiTypeInt():  true;   default: false; }
+		FiTypeDouble():      switch (t1.type) { FiTypeFlow(): true; FiTypeDouble(): true; default: false; }
+		FiTypeString():      switch (t1.type) { FiTypeFlow(): true; FiTypeString(): true; default: false; }
 		FiTypeFlow():        true;
-		FiTypeVoid():        switch (t1) { FiTypeFlow(): true; FiTypeVoid():   true; default: false; }
-		FiTypeNative():      switch (t1) { FiTypeFlow(): true; FiTypeNative(): true; default: false; }
+		FiTypeVoid():        switch (t1.type) { FiTypeFlow(): true; FiTypeVoid():   true; default: false; }
+		FiTypeNative():      switch (t1.type) { FiTypeFlow(): true; FiTypeNative(): true; default: false; }
 		FiTypeName(n2, typars2):
-			switch (t1) {
+			switch (t1.type) {
 				FiTypeFlow(): true; 
-				FiTypeName(n1, typars1):
-					(n1 == n2 || isFiSubType(env.module.global.acc.names, t2, t1, true)) &&
+				FiTypeName(n1, typars1): {
+					(n1 == n2 || isFiSubType(env.module.global.acc.names, t2.type, t1.type, true, true)) && // !!! isFiSubType !!!
 					length(typars1) == length(typars2) &&
-					foldi(typars1, true, \i, ok, tp1 -> ok && consistentInstantiationOfFiTypeWithFiType(env, tp1, typars2[i], onError, start));
+					foldi(typars1, true, 
+						\i, ok, tp1 -> 
+							ok && consistentInstantiation(env, 
+								TypeInst(tp1, t1.inst), 
+								TypeInst(typars2[i], t2.inst), 
+								onError, start
+							)
+					);
+				}
 				default: false;
 			}
 	}
 	if (!ret) {
 		onError(FcError(
-			"type '" + prettyFiType(dummyPretty, t2, makeSet()) + "' cannot be substituted with '" + prettyFiType(dummyPretty, t1, makeSet()) + "'", 
+			"type '" + prettyFiType(dummyPretty, t2.type, makeSet()) + "' cannot be substituted with '" + prettyFiType(dummyPretty, t1.type, makeSet()) + "'", 
 			[FcPosition(env.module.name, start, start)]
 		));
 	}

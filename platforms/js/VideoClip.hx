@@ -279,7 +279,8 @@ class VideoClip extends FlowContainer {
 		if (!nativeWidget.autoplay) nativeWidget.pause();
 
 		if (textField != null) {
-			swapChildren(videoSprite, textField);
+			if (getChildIndex(videoSprite) > getChildIndex(textField))
+				swapChildren(videoSprite, textField);
 			updateSubtitlesClip();
 		};
 

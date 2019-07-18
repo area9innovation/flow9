@@ -756,28 +756,42 @@ class PixiWorkarounds {
 			{
 				const scaleX = this.worldTransform.a;
 				const scaleY = this.worldTransform.d;
-				const scaleFactor = Math.min(scaleX, scaleY);
+				const scaleFactor = Math.min(scaleX, scaleY) * renderer.resolution * this.style.resolution;
 				const fontSize = scaleFactor * this.style.fontSize;
-				const scaleText = fontSize > 0.6;
+				const scaleText = fontSize > 0.6 && scaleFactor != 1.0;
+
+				const tempRoundPixels = renderer.roundPixels;
+				renderer.roundPixels = renderer.resolution === this.style.resolution;
 
 				if (scaleText) {
-					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
-					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
+					this.worldTransform.a = scaleX / scaleFactor;
+					this.worldTransform.d = scaleY / scaleFactor;
 
 					const tempFontSize = this.style.fontSize;
 					const tempLetterSpacing = this.style.letterSpacing;
 					const tempLineHeight = this.style.lineHeight;
 					const tempWordWrapWidth = this.style.wordWrapWidth;
+					const tempStrokeThickness = this.style.strokeThickness;
+					const tempDropShadowDistance = this.style.dropShadowDistance;
+					const tempLeading = this.style.leading;
 
+					this.style.scaleFactor = scaleFactor;
 					this.style.fontSize = fontSize;
 					this.style.letterSpacing = this.style.letterSpacing * scaleFactor;
 					this.style.lineHeight = this.style.lineHeight * scaleFactor;
 					this.style.wordWrapWidth = this.style.wordWrapWidth * scaleFactor;
+					this.style.strokeThickness = this.style.strokeThickness * scaleFactor;
+					this.style.dropShadowDistance = this.style.dropShadowDistance * scaleFactor;
+					this.style.leading = this.style.leading * scaleFactor;
+					this.style.fontString = this.style.toFontString();
 
-					if (this.resolution !== renderer.resolution)
+					if (!PIXI.TextMetrics._fonts[this.style.fontString])
 					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
+						PIXI.TextMetrics._fonts[this.style.fontString] = {
+							fontSize : this.style.fontProperties.fontSize * scaleFactor,
+							ascent : this.style.fontProperties.ascent * scaleFactor,
+							descent : this.style.fontProperties.descent * scaleFactor
+						};
 					}
 
 					PIXI.Text.prototype.updateText.call(this, true);
@@ -787,19 +801,18 @@ class PixiWorkarounds {
 					this.style.letterSpacing = tempLetterSpacing;
 					this.style.lineHeight = tempLineHeight;
 					this.style.wordWrapWidth = tempWordWrapWidth;
+					this.style.strokeThickness = tempStrokeThickness;
+					this.style.dropShadowDistance = tempDropShadowDistance;
+					this.style.leading = tempLeading;
 
 					this.worldTransform.a = scaleX;
 					this.worldTransform.d = scaleY;
 				} else {
-					if (this.resolution !== renderer.resolution)
-					{
-						this.resolution = renderer.resolution;
-						this.dirty = true;
-					}
-
 					PIXI.Text.prototype.updateText.call(this, true);
 					PIXI.Sprite.prototype._renderCanvas.call(this, renderer);
 				}
+
+				renderer.roundPixels = tempRoundPixels;
 			}
 
 			Object.defineProperty(PIXI.DisplayObject.prototype, 'parent', {
@@ -844,10 +857,7 @@ class PixiWorkarounds {
 
 				if (transformChanged) {
 					if (this.child && !this.child.transformChanged) {
-						this.child.transformChanged = true;
-
-						RenderSupportJSPixi.PixiStageChanged = true;
-						RenderSupportJSPixi.TransformChanged = true;
+						DisplayObjectHelper.invalidateTransform(this.child);
 					}
 
 					if (this.accessWidget) {

@@ -1,0 +1,211 @@
+import tools/flowc/backends/common;
+import tools/flowc/incremental/fiprogram;
+import tools/flowc/incremental/fi_helpers;
+import tools/flowc/backends/inca/promote_types;
+import tools/flowc/backends/inca/lift_types;
+import tools/flowc/backends/inca/lift_functions;
+import tools/flowc/backends/inca/conversion_graph;
+import tools/flowc/backends/inca/fi2incaflow;
+import tools/flowc/manipulation/lambda_lifting;
+
+export {
+	fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void;
+}
+
+fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void {
+	incaEnv0 = buildIncaEnv(program);
+	incaEnv = promoteIncaTypes(incaEnv0);
+
+	if (false) {
+		// OK, new code path for the stack-based flow
+		// TODO: We should not use the normal lambda lifting, but our own
+		// so any local variables of function type are also optimized out.
+		p0 = lift_lambdas(program);
+		i1 = buildIncaEnv(p0);
+		i2 = promoteIncaTypes(i1);
+		incaFlow = fi2incaflow(i2);
+	}
+
+	conversionGraph = buildIncaConversionGraph(incaEnv);
+
+	fcPrintln("Saving " + cfg.outputdir + "/types.flow");
+	types = liftIncaTypes(incaEnv);
+	saveFileContent(cfg.outputdir + "/types.flow", types);
+
+	fcPrintln("Saving " + cfg.outputdir + "/functions.flow");
+	functions = liftIncaFunctions(incaEnv);
+	saveFileContent(cfg.outputdir + "/functions.flow", functions);
+
+	callback();
+}
+
+
+buildIncaEnv(program : FiProgram) -> IncaEnv {
+	// What files should we lift from?
+	parsed0 = getTreeKeys(program.modules);
+	incaFolder = dirName(program.config.flowfile);
+	parsed = filter(parsed0, \p -> startsWith(p, incaFolder));
+
+	env0 = IncaEnv(
+		program.config,
+		parsed,
+		makeTree(),
+		makeTree(),
+		makeTree(),
+		makeTree(),
+	);
+	fold(parsed, env0, \acc, m -> addModuleToIncaEnv(program, acc, m));
+}
+
+
+addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaEnv {
+	m = lookupTree(program.modules, module);
+	switch (m) {
+		None(): acc;
+		Some(mo): {	
+			if (validIncaModule(mo)) {
+				IncaEnv(
+					acc with
+					structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
+					unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
+					functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
+				)
+			} else {
+				println("Error in " + mo.fileinfo.flowfile);
+				acc
+			}
+		}
+	}
+}
+
+
+/*
+Todo:
+- Better error reporting in checks
+
+- Implement linear typing, or automatic insert of copy.
+
+- Implement lambda lifting, and check for closures
+
+- Implement overloading of unions
+
+- Implement duplication of structs in overloaded unions
+
+- Implement "exploding" switches into top-level functions
+*/
+
+validIncaModule(m : FiModule) -> bool {
+	// A bunch of rules apply to Inca files:
+	// No globals, no natives functions
+
+	check = \b, e -> {
+		if (!b) println(e);
+		b;
+	}
+
+	check(m.forbids == [], "no forbids")
+	&& check(m.globalVars == [], "no globals")
+	&& check(m.natives == [], "no natives")
+
+
+
+	// Check that the structs and unions do not contain refs, mutable,
+	// nested arrays, natives, functions nor polymorphism
+	&& fold(m.structs, true, \acc, t -> acc && {
+		check(t.typars == [], "no type parameters for " + t.name)
+		&&
+		forall(t.args, \a -> {
+			check(validIncaType(a.type), "wrong struct type for " + t.name)
+		})
+	})
+	&& fold(m.unions, true, \acc, t -> acc && {
+		check(t.typeparameters == [], "no type parameters for " + t.name)
+		&&
+		forall(t.typenames, \a -> {
+			check(validIncaType(a), "wrong union type for " + t.name)
+		})
+	})
+
+	&& fold(m.functions, true, \acc, f -> acc &&
+		validIncaExp(f.lambda)
+	)
+}
+
+validIncaType(type : FiType) -> bool {
+	switch (type) {
+		FiTypeBool(): true;
+		FiTypeInt(): true;
+		FiTypeDouble(): true;
+		FiTypeString(): true;
+
+		FiTypeFlow(): false;
+		FiTypeVoid(): false;
+
+		FiTypeNative(): false;
+
+		FiTypeArray(t): {
+			// No nested arrays
+			validIncaType(t) && switch (t) {
+				FiTypeArray(__): false;
+				default: true;
+			}
+		}
+		FiTypeFunction(args, returnType): false;
+		FiTypeRef(t): false;
+		FiTypeParameter(n): false;
+		FiTypeName(name, typeparameters): typeparameters == [];
+	}
+}
+
+validIncaExp(in : FiExp) -> bool {
+	switch (in) {
+		FiLambda(args, body, type, start): true; // For now. TODO: Check no closures
+		FiSwitch(x, switchType, cases, type, start): true; // For now. TODO
+
+		FiCall(f, args, type, start): validIncaExp(f) && validIncaType(type);
+		FiVar(name, type, start): validIncaType(type);
+		FiLet(name, type, e1, e2, type2, start): validIncaExp(e1) && validIncaExp(e2) && validIncaType(type) && validIncaType(type2);
+
+		FiIf(e1, e2, e3, type, start): validIncaExp(e1) && validIncaExp(e2) && validIncaExp(e3) && validIncaType(type);
+		FiSeq(es, type, start): forall(es, validIncaExp);
+		FiCallPrim(op, es, type, start): switch (op) {
+			FcOrPrim(): true;
+			FcAndPrim(): true;
+			FcNotPrim(): true;
+			FcEqPrim(): true;
+			FcNePrim(): true;
+			FcLePrim(): true;
+			FcGePrim(): true;
+			FcLtPrim(): true;
+			FcGtPrim(): true;
+			FcPlusPrim(): true;
+			FcMinusPrim(): true;
+			FcMulPrim(): true;
+			FcDivPrim(): true;
+			FcModPrim(): true;
+			FcNegPrim(): true;
+			FcArrayPrim(): true;
+			FcIndexPrim(): true;
+			FcDerefPrim(): false;
+			FcAssignPrim(): false;
+			FcRefPrim(): false;
+			FcStructPrim(struct_name): true;
+			FcFieldPrim(name): true;
+			FcSetMutablePrim(name): false;
+			FcCreateClosurePrim(structName, functionName): false;
+			FcQuote(): false;
+			FcUnquote(): false;
+		 } && validIncaType(type) && forall(es, validIncaExp);
+
+		FiVoid(start): true;
+		FiDouble(d, start): true;
+		FiInt(i, start): true;
+		FiString(s, start): true;
+		FiBool(b, start): true;
+
+		FiCast(e, tFrom, tTo, type, start): false;
+
+		FiRequire(flowfile, e, type, start): false;
+		FiUnsafe(name, fallback, type, start): false;
+	}
+}
