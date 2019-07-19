@@ -225,7 +225,7 @@ class NotificationsSupport {
                         }, function(e) {});
                     }
                 }, function(e){});
-            }, function(e) {});       
+            }, function(e) {});
         }
     #end
     }
@@ -239,14 +239,14 @@ class NotificationsSupport {
         };
     }
 
-	public static function onRefreshFBToken(listener : String->Void) : Void->Void {
+    public static function onRefreshFBToken(listener : String->Void) : Void->Void {
         onTokenResreshFBListeners.push(listener);
         return function() {
             onTokenResreshFBListeners.remove(listener);
         };
     }
 
-	public static function getFBToken(callback : String->Void) : Void {
+    public static function getFBToken(callback : String->Void) : Void {
     #if (js && !flow_nodejs)
         messaging.getToken().then(callback, function(err){});
     #end
@@ -271,13 +271,13 @@ class NotificationsSupport {
     #end
     }
 
-	public static function subscribeToFBTopic(name : String) : Void {
+    public static function subscribeToFBTopic(name : String) : Void {
     #if (js && !flow_nodejs)
         callFirebaseServiceSubscription(true, name);
     #end
     }
 
-	public static function unsubscribeFromFBTopic(name : String) : Void {
+    public static function unsubscribeFromFBTopic(name : String) : Void {
     #if (js && !flow_nodejs)
         callFirebaseServiceSubscription(false, name);
     #end
