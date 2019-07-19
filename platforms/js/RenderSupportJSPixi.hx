@@ -2195,6 +2195,31 @@ class RenderSupportJSPixi {
 		}
 	}
 
+	public static function compareImages(image1 : String, image2 : String, cb : String -> Void) : Void {
+		if (untyped __js__("typeof resemble === 'undefined'")) {
+			var head = Browser.document.getElementsByTagName('head')[0];
+			var node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/resemble.js');
+			node.onload = function() {
+				compareImages(image1, image2, cb);
+			};
+			head.appendChild(node);
+		} else {
+			untyped __js__("
+				resemble(image1)
+				.compareTo(image2)
+				.ignoreAntialiasing()
+				.outputSettings({
+					errorType: 'movementDifferenceIntensity',
+				})
+				.onComplete(function(data) {
+					cb(JSON.stringify(data));
+				});
+			");
+		}
+	}
+
 	public static function getScreenPixelColor(x : Int, y : Int) : Int {
 		var data = PixiRenderer.view.getContext2d().getImageData(x * backingStoreRatio, y * backingStoreRatio, 1, 1).data;
 

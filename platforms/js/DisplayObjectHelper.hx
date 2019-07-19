@@ -324,17 +324,9 @@ class DisplayObjectHelper {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
 
-			if (maskContainer != clip.scrollRect) {
-				untyped clip.mask.child = clip;
-			}
-
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
 			untyped maskContainer.isMask = true;
-
-			if (maskContainer != clip.scrollRect) {
-				untyped maskContainer.child = clip;
-			}
 		}
 
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
@@ -354,6 +346,10 @@ class DisplayObjectHelper {
 		var parentBounds = clip.parent != null ? getMaskedBounds(clip.parent) : null;
 
 		if (untyped clip._mask != null) {
+			if (untyped clip._mask != untyped clip.scrollRect) {
+				untyped clip._mask.child = clip;
+			}
+
 			untyped clip._mask.renderable = true;
 			var maskBounds = untyped clip._mask.getBounds(true);
 
