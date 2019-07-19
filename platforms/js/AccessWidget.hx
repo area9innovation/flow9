@@ -440,6 +440,9 @@ class AccessWidget extends EventEmitter {
 
 				RenderSupportJSPixi.PixiStage.on("childrenchanged", function() {
 					var localStage : FlowContainer = untyped this.clip.stage;
+					if (localStage == null)
+						return;
+					
 					var zIndex = 1000 * localStage.parent.children.indexOf(localStage) + AccessWidget.zIndexValues.accessButton;
 
 					if (this.element.style.zIndex == null || this.element.style.zIndex == "") {

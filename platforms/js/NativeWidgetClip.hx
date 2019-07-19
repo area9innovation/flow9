@@ -81,6 +81,9 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.position = 'fixed';
 
 		RenderSupportJSPixi.PixiStage.on("childrenchanged", function() {
+			if (this.stage == null)
+				return;
+			
 			nativeWidget.style.zIndex = Std.parseInt(this.stage.view.style.zIndex) + AccessWidget.zIndexValues.nativeWidget + "";
 		});
 
