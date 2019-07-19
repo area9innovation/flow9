@@ -34,10 +34,10 @@ class FlowContainer extends Container {
 
 		view = cast(Browser.document.createElement('canvas'), CanvasElement);
 
-		view.style.zIndex = 1000 * zorder + AccessWidget.zIndexValues.canvas + "";
+		view.style.zIndex = 1000 * (zorder - 1) + AccessWidget.zIndexValues.canvas + "";
 		untyped view.style.pointerEvents = "none";
 
-		context = view.getContext("2d", { alpha : zorder != 0 });
+		context = view.getContext("2d", { alpha : zorder != 1 });
 
 		updateView(zorder);
 		onResize();
@@ -54,8 +54,8 @@ class FlowContainer extends Container {
 		if (zorder > 0) {
 			if (Browser.document.body.children.length > zorder) {
 				if (Browser.document.body.children[zorder] != view) {
-					if (Browser.document.body.children.length > zorder + 1) {
-						Browser.document.body.insertBefore(view, Browser.document.body.children[zorder + 1]);
+					if (Browser.document.body.children.length > zorder) {
+						Browser.document.body.insertBefore(view, Browser.document.body.children[zorder]);
 					} else {
 						Browser.document.body.appendChild(view);
 					}
@@ -168,7 +168,7 @@ class FlowContainer extends Container {
 			renderer.view = view;
 			renderer.context = context;
 			untyped renderer.rootContext = context;
-			renderer.transparent = true;
+			renderer.transparent = parent.children.indexOf(this) != 0;
 
 			renderer.render(this, null, true, null, false);
 		}

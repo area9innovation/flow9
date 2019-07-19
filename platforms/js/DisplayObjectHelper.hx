@@ -52,7 +52,7 @@ class DisplayObjectHelper {
 				}
 			} else if (clip.parent == RenderSupportJSPixi.PixiStage) {
 				untyped clip.stage = clip;
-				untyped clip.createView(clip.parent.children.indexOf(clip));
+				untyped clip.createView(clip.parent.children.indexOf(clip) + 1);
 
 				var children : Array<DisplayObject> = untyped clip.children;
 
