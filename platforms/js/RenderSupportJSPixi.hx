@@ -685,7 +685,7 @@ class RenderSupportJSPixi {
 				clientY : Std.int(y),
 			};
 
-			var e = Platform.isIE
+			var e = Platform.isIE || Platform.isSafari
 				? untyped __js__("new CustomEvent('pointermove', me)")
 				: new js.html.PointerEvent("pointermove", me);
 
