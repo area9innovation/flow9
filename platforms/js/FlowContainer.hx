@@ -37,7 +37,7 @@ class FlowContainer extends Container {
 		view.style.zIndex = 1000 * zorder + AccessWidget.zIndexValues.canvas + "";
 		untyped view.style.pointerEvents = "none";
 
-		context = view.getContext("2d", { alpha : true });
+		context = view.getContext("2d", { alpha : zorder != 0 });
 
 		updateView(zorder);
 		onResize();
