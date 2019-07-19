@@ -86,15 +86,22 @@ self.addEventListener('install', function(event) {
 self.addEventListener('fetch', function(event) {
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
-    var requestUrl = urlAddBaseLocation(request.url);
+    var urlSplitted = extractUrlParameters(urlAddBaseLocation(request.url));
+    var requestUrl = urlSplitted.baseUrl;
+    var glueSymb = "?";
 
     if (request.method == "POST") {
+      if (urlSplitted.parameters.length != 0) {
+        requestUrl += glueSymb + urlSplitted.parameters.join("&");
+        glueSymb = "&";
+      }
+
       return request.clone().text().then(function(reqParamsText) {
         var formDataText = undefined;
         // We add form data (POST parameters) into GET request url string
         if (reqParamsText !== null && reqParamsText !== undefined && reqParamsText != "") {
           formDataText = reqParamsText;
-          requestUrl += "?" + reqParamsText;
+          requestUrl += glueSymb + reqParamsText;
         }
 
         return { urlNewFull : requestUrl, formDataText : formDataText };
@@ -446,7 +453,8 @@ self.addEventListener('message', function(event) {
   } else if (event.data.action == "clean_cache_storage") {
     respondWithStatus(cleanServiceWorkerCache());
   } else if (event.data.action == "requests_cache_filter") {
-    requestsCacheFilter.push(event.data.data);
+    if (!requestsCacheFilter.includes(event.data.data))
+      requestsCacheFilter.push(event.data.data);
     respond({status: "OK"});
   } else if (event.data.action == "load_and_cache_urls") {
     respondWithStatus(
