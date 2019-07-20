@@ -17,6 +17,7 @@ import pixi.loaders.Loader;
 import MacroUtils;
 import Platform;
 import ProgressiveWebTools;
+import BlurFilter;
 
 using DisplayObjectHelper;
 
@@ -51,7 +52,7 @@ class RenderSupportJSPixi {
 	// Also it covers iOS Chrome and PWA issue with innerWidth|Height
 	private static var WindowTopHeightPortrait : Int = -1;
 	private static var WindowTopHeightLandscape : Int = -1;
-	
+
 	private static var RenderSupportJSPixiInitialised : Bool = init();
 
 	@:overload(function(event : String, fn : Dynamic -> Void, ?context : Dynamic) : Void {})
@@ -466,7 +467,7 @@ class RenderSupportJSPixi {
 			// Emulate mouseup to release scrollable for example
 			setStagePointerHandler("mouseout", function () { emit("mouseup"); });
 			// Emulate mousemove to update hovers and tooltips
-			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); forceRollOverRollOutUpdate(); emit("mousemove"); });
+			setStageWheelHandler(function (p : Point) { emit("mousewheel", p); emitMouseEvent(PixiStage, "mousemove", MousePos.x, MousePos.y); });
 			Browser.document.body.addEventListener("keydown", function (e) { emit("keydown", parseKeyEvent(e)); });
 			Browser.document.body.addEventListener("keyup", function (e) { emit("keyup", parseKeyEvent(e)); });
 		}
@@ -670,6 +671,7 @@ class RenderSupportJSPixi {
 	}
 
 	private static function forceRollOverRollOutUpdate() : Void {
+		untyped PixiRenderer.plugins.interaction.mouseOverRenderer = true;
 		untyped PixiRenderer.plugins.interaction.update(Browser.window.performance.now());
 	}
 
@@ -677,14 +679,26 @@ class RenderSupportJSPixi {
 		MousePos.x = x;
 		MousePos.y = y;
 
+		if (event == "mousemove") {
+			var me = {
+				clientX : Std.int(x),
+				clientY : Std.int(y),
+			};
+
+			var e = Platform.isIE || Platform.isSafari
+				? untyped __js__("new CustomEvent('pointermove', me)")
+				: new js.html.PointerEvent("pointermove", me);
+
+			Browser.window.document.dispatchEvent(e);
+			forceRollOverRollOutUpdate();
+		}
+
 		if (event == "mousemove" || event == "mousedown" || event == "mouseup" || event == "mouserightdown" || event == "mouserightup" ||
 			event == "mousemiddledown" || event == "mousemiddleup") {
 			emit(event);
 		} else {
 			clip.emit(event);
 		}
-
-		forceRollOverRollOutUpdate();
 	}
 
 	public static function emitKeyEvent(clip : DisplayObject, event : String, key : String, ctrl : Bool, shift : Bool, alt : Bool, meta : Bool, keyCode : Int) : Void {
@@ -1897,7 +1911,7 @@ class RenderSupportJSPixi {
 	}
 
 	public static function makeBlur(radius : Float, spread : Float) : Dynamic {
-		return new BlurFilter(spread);
+		return new BlurFilter(spread, 4, backingStoreRatio, 5);
 	}
 
 	public static function makeDropShadow(angle : Float, distance : Float, radius : Float, spread : Float,color : Int, alpha : Float, inside : Bool) : Dynamic {
@@ -2178,6 +2192,31 @@ class RenderSupportJSPixi {
 			child.removeScrollRect();
 
 			return 'error';
+		}
+	}
+
+	public static function compareImages(image1 : String, image2 : String, cb : String -> Void) : Void {
+		if (untyped __js__("typeof resemble === 'undefined'")) {
+			var head = Browser.document.getElementsByTagName('head')[0];
+			var node = Browser.document.createElement('script');
+			node.setAttribute("type","text/javascript");
+			node.setAttribute("src", 'js/resemble.js');
+			node.onload = function() {
+				compareImages(image1, image2, cb);
+			};
+			head.appendChild(node);
+		} else {
+			untyped __js__("
+				resemble(image1)
+				.compareTo(image2)
+				.ignoreAntialiasing()
+				.outputSettings({
+					errorType: 'movementDifferenceIntensity',
+				})
+				.onComplete(function(data) {
+					cb(JSON.stringify(data));
+				});
+			");
 		}
 	}
 
