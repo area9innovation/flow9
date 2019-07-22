@@ -38,6 +38,7 @@ NativeFunction * DatabaseSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_OBJECT_METHOD(DatabaseConnection, escapeDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 2);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbMulti, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, lastInsertIdDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, startTransactionDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, commitDb, 1);
@@ -188,6 +189,47 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
     return RUNNER->AllocateString(msg);
 }
 
+StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
+    RUNNER_PopArgs1(rawqueries);
+    RUNNER_CheckTag(TArray, rawqueries);
+    RUNNER_DefSlots2(resultArr, requestResults);
+
+    std::vector<StackSlot> result;
+
+    int nqueries= RUNNER->GetArraySize(rawqueries);
+    for (int i = 0; i < nqueries; i++) {
+        StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
+        QString queryString = RUNNER->GetQString(querySlot);
+
+        QSqlQuery *query = new QSqlQuery(db);
+
+        DatabaseResult *databaseResult = new DatabaseResult(this, query);
+        query->exec(queryString);
+
+        last_error = query->lastError().text().trimmed();
+
+        std::vector<StackSlot> resultSets;
+
+        do {
+            int nresults = query->size();
+            requestResults = RUNNER->AllocateArray(nresults);
+            for (int j = 0; j < nresults; j++) {
+                query->next();
+                StackSlot requestResult = databaseResult->getRecord(RUNNER);
+                RUNNER->SetArraySlot(requestResults, j, requestResult);
+            }
+            result.push_back(requestResults);
+        } while (query->nextResult());
+    }
+
+    int nresults = result.size();
+    resultArr = RUNNER->AllocateArray(nresults);
+    for (int i = 0; i < nresults; i++) {
+        RUNNER->SetArraySlot(resultArr, i, result[i]);
+    }
+    return resultArr;
+}
+
 StackSlot DatabaseConnection::lastInsertIdDb(RUNNER_ARGS) {
     IGNORE_RUNNER_ARGS;
     QSqlQuery *query = last_result ? last_result->query : NULL;
@@ -269,13 +311,23 @@ StackSlot DatabaseResult::hasNextResultDb(RUNNER_ARGS) {
 // Get all fields and values of the next result as an array
 StackSlot DatabaseResult::nextResultDb(RUNNER_ARGS) {
     IGNORE_RUNNER_ARGS;
-    RUNNER_DefSlots3(result, value, element);
 
     if (!query) {
         return RUNNER->AllocateArray(0);
     }
 
     query->next();
+    StackSlot result = getRecord(RUNNER);
+
+
+    if (++index >= query->size())
+        destroy();
+
+    return result;
+}
+
+StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
+    RUNNER_DefSlots3(result, value, element);
 
     QSqlRecord record = query->record();
     result = RUNNER->AllocateArray(record.count());
@@ -329,9 +381,6 @@ StackSlot DatabaseResult::nextResultDb(RUNNER_ARGS) {
         RUNNER->SetStructSlot(element, 0, RUNNER->AllocateString(field.name()));
         RUNNER->SetArraySlot(result, i, element);
     }
-
-    if (++index >= query->size())
-        destroy();
 
     return result;
 }
