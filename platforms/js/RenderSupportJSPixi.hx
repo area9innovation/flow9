@@ -1272,9 +1272,17 @@ class RenderSupportJSPixi {
 		once("drawframe", fn);
 	}
 
-	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
+	public static function interruptibleDeferUntilRender(fn0 : Void -> Void) : Void -> Void {
+		var alive = true;
+		var fn = function() {
+			if (alive) {
+				fn0();
+			}
+		}
+
 		once("drawframe", fn);
 		return function() {
+			alive = false;
 			off("drawframe", fn);
 		};
 	}
