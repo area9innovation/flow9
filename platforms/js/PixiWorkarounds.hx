@@ -756,22 +756,16 @@ class PixiWorkarounds {
 			{
 				const scaleX = this.worldTransform.a;
 				const scaleY = this.worldTransform.d;
-				const scaleFactor = Math.min(scaleX, scaleY);
+				const scaleFactor = Math.min(scaleX, scaleY) * renderer.resolution * this.style.resolution;
 				const fontSize = scaleFactor * this.style.fontSize;
 				const scaleText = fontSize > 0.6 && scaleFactor != 1.0;
 
-				if (this.resolution !== renderer.resolution * this.style.resolution)
-				{
-					this.resolution = renderer.resolution * this.style.resolution;
-					this.dirty = true;
-				}
-
 				const tempRoundPixels = renderer.roundPixels;
-				renderer.roundPixels = this.resolution === renderer.resolution;
+				renderer.roundPixels = renderer.resolution === this.style.resolution;
 
 				if (scaleText) {
-					this.worldTransform.a = scaleFactor < scaleX ? scaleX / scaleFactor : 1.0;
-					this.worldTransform.d = scaleFactor < scaleY ? scaleY / scaleFactor : 1.0;
+					this.worldTransform.a = scaleX / scaleFactor;
+					this.worldTransform.d = scaleY / scaleFactor;
 
 					const tempFontSize = this.style.fontSize;
 					const tempLetterSpacing = this.style.letterSpacing;
@@ -863,10 +857,7 @@ class PixiWorkarounds {
 
 				if (transformChanged) {
 					if (this.child && !this.child.transformChanged) {
-						this.child.transformChanged = true;
-
-						RenderSupportJSPixi.PixiStageChanged = true;
-						RenderSupportJSPixi.TransformChanged = true;
+						DisplayObjectHelper.invalidateTransform(this.child);
 					}
 
 					if (this.accessWidget) {
