@@ -541,14 +541,16 @@ class TextClip extends NativeWidgetClip {
 				}
 			}
 
-			var anchorX = switch (autoAlign) {
-				case 'AutoAlignLeft' : 0;
-				case 'AutoAlignRight' : 1;
-				case 'AutoAlignCenter' : 0.5;
-				default : textDirection == 'rtl' ? 1 : 0;
-			};
+			if (textDirection == 'ltr' || autoAlign == 'AutoAlignCenter') {
+				var anchorX = switch (autoAlign) {
+					case 'AutoAlignLeft' : 0;
+					case 'AutoAlignRight' : 1;
+					case 'AutoAlignCenter' : 0.5;
+					default : textDirection == 'rtl' ? 1 : 0;
+				};
 
-			textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+				textClip.setClipX(anchorX * Math.max(0, widgetWidth - getClipWidth()));
+			}
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
