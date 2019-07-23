@@ -28,7 +28,6 @@ class DisplayObjectHelper {
 				Native.timer(100, function () {
 					untyped __js__("if ({0}.parent) PIXI.Container.prototype.removeChild.call({0}.parent, {0})", updateGraphics);
 					RenderSupportJSPixi.InvalidateStage();
-					RenderSupportJSPixi.InvalidateTransform();
 				});
 			}
 
@@ -46,6 +45,24 @@ class DisplayObjectHelper {
 		untyped clip.transformChanged = true;
 		if (clip.parent != null) {
 			invalidateStage(clip.parent);
+		}
+	}
+
+	public static inline function updateTreeIds(clip : DisplayObject, ?clean : Bool = false) : Void {
+		if (clean) {
+			untyped clip.id = [-1];
+		} else if (clip.parent == null) {
+			untyped clip.id = [0];
+		} else {
+			untyped clip.id = Array.from(clip.parent.id);
+			untyped clip.id.push(clip.parent.children.indexOf(clip));
+		}
+
+		var children : Array<Dynamic> = untyped clip.children;
+		if (children != null) {
+			for (c in children) {
+				updateTreeIds(c, clean);
+			}
 		}
 	}
 
@@ -306,12 +323,10 @@ class DisplayObjectHelper {
 		if (clip.mask != null) {
 			untyped maskContainer.isMask = true;
 			untyped clip.mask.isMask = true;
-			untyped clip.mask.child = clip;
 
 			clip.mask.once("removed", function () { clip.mask = null; });
 		} else if (untyped clip.alphaMask != null) {
 			untyped maskContainer.isMask = true;
-			untyped maskContainer.child = clip;
 		}
 
 		maskContainer.once("childrenchanged", function () { setClipMask(clip, maskContainer); });
@@ -331,6 +346,10 @@ class DisplayObjectHelper {
 		var parentBounds = clip.parent != null ? getMaskedBounds(clip.parent) : null;
 
 		if (untyped clip._mask != null) {
+			if (untyped clip._mask != untyped clip.scrollRect) {
+				untyped clip._mask.child = clip;
+			}
+
 			untyped clip._mask.renderable = true;
 			var maskBounds = untyped clip._mask.getBounds(true);
 

@@ -124,6 +124,12 @@ class TextClip extends NativeWidgetClip {
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
 
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		style.resolution = 1.0;
+	}
+
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
 		return (code >= 0x590 && code < 0x900)    // Hebrew, arabic and some other RTL.
@@ -442,7 +448,6 @@ class TextClip extends NativeWidgetClip {
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
-		style.resolution = 1.0;
 
 		measureFont();
 
@@ -459,51 +464,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function measureFont() : Void {
-		var tempFontSize = style.fontSize;
-		var tempLetterSpacing = style.letterSpacing;
-		var tempLineHeight = style.lineHeight;
-		var tempWordWrapWidth = style.wordWrapWidth;
-		var tempStrokeThickness = style.strokeThickness;
-		var tempDropShadowDistance = style.dropShadowDistance;
-		var tempLeading = style.leading;
-
-		var measureFactor = tempFontSize / 96.0;
-
-		style.fontSize = 96.0;
-		style.lineHeight = style.lineHeight / measureFactor;
-		style.letterSpacing = style.letterSpacing / measureFactor;
-		style.wordWrapWidth = style.wordWrapWidth / measureFactor;
-		style.strokeThickness = style.strokeThickness / measureFactor;
-		style.dropShadowDistance = style.dropShadowDistance / measureFactor;
-		style.leading = style.leading / measureFactor;
-		style.fontString = style.toFontString();
-
-		var fontProperties : Dynamic = TextMetrics.measureFont(style.fontString);
-
-		style.fontProperties = {
-			fontSize : fontProperties.fontSize * measureFactor,
-			ascent : fontProperties.ascent * measureFactor,
-			descent : fontProperties.descent * measureFactor
-		};
-
-		untyped __js__("
-			if (!PIXI.TextMetrics._fonts[this.style.fontString])
-			{
-				PIXI.TextMetrics._fonts[this.style.fontString] = {
-					fontSize : this.style.fontProperties.fontSize,
-					ascent : this.style.fontProperties.ascent,
-					descent : this.style.fontProperties.descent
-				};
-			}
-		");
-
-		style.fontSize = tempFontSize;
-		style.letterSpacing = tempLetterSpacing;
-		style.lineHeight = tempLineHeight;
-		style.wordWrapWidth = tempWordWrapWidth;
-		style.strokeThickness = tempStrokeThickness;
-		style.dropShadowDistance = tempDropShadowDistance;
-		style.leading = tempLeading;
+		style.fontProperties = TextMetrics.measureFont(style.toFontString());
 	}
 
 	private function layoutText() : Void {
@@ -544,13 +505,16 @@ class TextClip extends NativeWidgetClip {
 
 			if (texts.length > 1 || texts[0].length > 1) {
 				var currentHeight = 0.0;
+				var firstTextClip = true;
 
 				for (line in texts) {
 					var currentWidth = 0.0;
 					var lineHeight = 0.0;
 
 					for (txt in line) {
-						if (txt == texts[0][0]) {
+						if (firstTextClip) {
+							firstTextClip = false;
+
 							currentWidth = textClip.getLocalBounds().width;
 							lineHeight = textClip.getLocalBounds().height;
 						} else {
@@ -598,7 +562,7 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private function createTextClip(textMod : TextMappedModification, chrIdx : Int, style : Dynamic) : Text {
-		textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
+		var textClip = new Text(bidiDecorate(textMod.modified, textDirection), style);
 		textClip.charIdx = chrIdx;
 		textClip.difPositionMapping = textMod.difPositionMapping;
 		textClip.setClipVisible(true);

@@ -177,7 +177,6 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			onOK();
 		} else {
 			onError("ServiceWorker is not initialized");
 		}
@@ -214,7 +213,34 @@ class ProgressiveWebTools {
 				},
 				[messageChannel.port2]
 			);
-			//onOK();
+		} else {
+			onError("ServiceWorker is not initialized");
+		}
+		#end
+	}
+
+	public static function checkUrlsInServiceWorkerCache(urls : Array<String>, onOK : Array<String> -> Void, onError : String -> Void) : Void {
+		#if flash
+		onError("Works only for JS target");
+		#elseif js
+		if (untyped navigator.serviceWorker && untyped navigator.serviceWorker.controller) {
+			var messageChannel = new MessageChannel();
+			messageChannel.port1.onmessage = function(event) {
+				if (event.data.error || event.data.status == null || event.data.urls == null) {
+					onError("ServiceWorker can't return the cache state");
+				} else if (event.data.status == "OK") {
+					onOK(event.data.urls);
+				} else {
+					onError("ServiceWorker can't return the cache state");
+				}
+			};
+
+			untyped navigator.serviceWorker.controller.postMessage({
+					"action" : "check_urls_in_cache",
+					"data" : { "urls" : urls }
+				},
+				[messageChannel.port2]
+			);
 		} else {
 			onError("ServiceWorker is not initialized");
 		}
