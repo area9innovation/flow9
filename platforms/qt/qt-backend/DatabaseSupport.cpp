@@ -349,12 +349,6 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
             case QVariant::UInt:
                 value = StackSlot::MakeInt(field.value().toUInt());
                 break;
-            case QVariant::LongLong:
-                value = StackSlot::MakeInt(field.value().toLongLong());
-                break;
-            case QVariant::ULongLong:
-                value = StackSlot::MakeInt(field.value().toULongLong());
-                break;
             case QVariant::Double:
                 value = StackSlot::MakeDouble(field.value().toDouble());
                 break;
