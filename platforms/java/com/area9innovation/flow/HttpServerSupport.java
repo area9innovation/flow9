@@ -5,8 +5,9 @@ import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.io.*;
-import java.security.*;
+import java.security.KeyStore;
 import javax.net.ssl.*;
+import java.util.concurrent.Executors;
 
 public class HttpServerSupport extends NativeHost
 {
@@ -34,6 +35,7 @@ public class HttpServerSupport extends NativeHost
 			if (isHttps)
 			{
 				HttpsServer server = HttpsServer.create();
+				server.setExecutor(Executors.newCachedThreadPool());
 				SSLContext sslContext = setupSSLContext(pfxPath, pfxPassword);
 				configureHttpsServer(server, sslContext);
 
@@ -50,6 +52,7 @@ public class HttpServerSupport extends NativeHost
 			{
 				HttpServer server = HttpServer.create();
 				server.bind(new InetSocketAddress(port), 0);
+				server.setExecutor(Executors.newCachedThreadPool());
 
 				HttpContext context =
 					server.createContext("/", new EchoHandler(onMessage));
