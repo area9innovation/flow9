@@ -311,9 +311,10 @@ class RenderSupportJSPixi {
 	}
 
 	private static inline function initCanvasStackInteractions() {
-		Browser.document.addEventListener('mousemove', function(e) {
+		var onmove = function(e) {
 			var localStages = PixiStage.children;
 			var currentInteractiveLayerZorder = 0;
+			
 			var i = localStages.length - 1;
 			while(i > 0) {
 				if (untyped localStages[i].view.style.pointerEvents == "all") {
@@ -326,13 +327,21 @@ class RenderSupportJSPixi {
 			if (currentInteractiveLayerZorder == 0)
 				return;
 
+			var pos = Util.getPointerEventPosition(e);
+
 			i = localStages.length - 1;
 			while(i > currentInteractiveLayerZorder) {
-				if (hittest(localStages[i], e.clientX, e.clientY)) {
+				if (hittest(localStages[i], pos.x, pos.y) && untyped localStages[i].view.style.pointerEvents != "all") {
 					untyped localStages[i].view.style.pointerEvents = "all";
 					untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
-
+					
 					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+
+					if (e.type == "touchstart") {
+						emitMouseEvent(PixiStage, "mousedown", pos.x, pos.y);
+						emitMouseEvent(PixiStage, "mouseup", pos.x, pos.y);
+					}
+
 					return;
 				}
 
@@ -342,7 +351,11 @@ class RenderSupportJSPixi {
 			if (!hittest(localStages[currentInteractiveLayerZorder], e.clientX, e.clientY)) {
 				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 			}
-		}, false);
+		};
+
+		Browser.document.addEventListener('mousemove', onmove, false);
+		if (Native.isTouchScreen())
+			Browser.document.addEventListener('touchstart', onmove, false);
 	}
 
 	private static inline function getMobileTopHeight() {
@@ -609,19 +622,13 @@ class RenderSupportJSPixi {
 		}
 
 
-		if (isMouseEventName(event))
+		if (Util.isMouseEventName(event))
 
 			// We should prevent mouseup from being called inside document area
 			// To have drags over textinputs
 			Browser.document.body.addEventListener(event, cb);
 		else
 			PixiView.addEventListener(event, cb);
-	}
-
-	private static function isMouseEventName(event : String) : Bool {
-		return event == "mouseout" || event == "mousedown" || event == "mousemove" || 
-			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" || 
-			   event == "mousemiddledown" || event == "mousemiddleup";
 	}
  
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
@@ -742,7 +749,7 @@ class RenderSupportJSPixi {
 			forceRollOverRollOutUpdate();
 		}
 
-		if (isMouseEventName(event)) {
+		if (Util.isMouseEventName(event)) {
 			emit(event);
 		} else {
 			clip.emit(event);

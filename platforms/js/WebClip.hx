@@ -86,6 +86,8 @@ class WebClip extends NativeWidgetClip {
 			try {
 				var iframeDocument = iframe.contentWindow.document;
 				iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+				if (Native.isTouchScreen())
+					iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
 
 				if (shrinkToFit) {
 					try {
@@ -152,16 +154,24 @@ class WebClip extends NativeWidgetClip {
 	}
 
 	private function onContentMouseMove(e : Dynamic) {
-		var iframeZorder : Int = Math.floor(Std.parseInt(iframe.style.zIndex) / 1000);
+		var iframeZorder : Int = Math.floor(Std.parseInt(nativeWidget.style.zIndex) / 1000);
 		var localStages = RenderSupportJSPixi.PixiStage.children;
 		var i = localStages.length - 1;
 
 		while (i >= iframeZorder) {
-			untyped localStages[i].view.style.pointerEvents = "none";
+
+			var pos = Util.getPointerEventPosition(e);
 			
-			if (RenderSupportJSPixi.hittest(localStages[i], e.clientX, e.clientY)) {
+			if (RenderSupportJSPixi.hittest(localStages[i], pos.x, pos.y)) {
 				untyped localStages[i].view.style.pointerEvents = "all";
+				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
+
 				untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+
+				if (e.type == "touchstart") {
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mousedown", pos.x, pos.y);
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mouseup", pos.x, pos.y);
+				}
 
 				return;
 			}
