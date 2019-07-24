@@ -64,7 +64,14 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	mRowsPerPage = tryExtractStruct(style, MRowsPerPage(make(0)));
 
 	widthByContent = contains(style, MWidthByContent());
-	innerScroll = contains(style, MDataTableInnerScroll());
+	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode()));
+	isInnerScroll = isSome(innerScroll);
+	scrollVisible = make(false);
+	innerScrollPosition = makePoint();
+
+	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
+	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
+
 	columns0 = m.columns
 		|> (\arr -> if (widthByContent) map(arr, \col -> MColumnDynamic(col.header, col.tooltip, col.width, arrayPush(col.style, MWidthByContent()))) else arr)
 		|> (\arr -> if (showRowNumbers) concat([MColumn("#", "Row number", 80, [MWidthByContent()])], arr) else arr);
@@ -194,7 +201,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			const(0.)
 		else
 			fselect2(fmerge(columnWidths), expRow, FLift2(\colWs : [double], er : int ->
-				dsum(mapSplitWidths(colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
+				dsum(mapSplitWidths(if (lifted) tail(colWs) else colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
 			));
 
 	prevER = ref 1;
@@ -227,7 +234,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	tableHeight = make(0.);
 
 	countRowHeight = \er : int ->
-		rowHeight * i2d(er) + separatorsHeight;
+		rowHeight * i2d(er) * (if (lifted) 2. else 1.) + separatorsHeight;
 
 	minimumRowsDef = 3;
 	minTableHeightDef = i2d(minimumRowsDef + b2i(!replaceHeader)) * countRowHeight(1) + footerHeight;
@@ -239,6 +246,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		ceil((minTableHeight - footerHeight) / countRowHeight(er)) - b2i(!replaceHeader),
 		fgetValue(rowsCountB)
 	);
+
+	rowsAvailableHeight =
+		fselect4(rowsPerPage, rowsCountB, showFixedRow, expandRow, \rpp, rc, fr, er ->
+			i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
+		);
 
 	// Helpers
 
@@ -282,7 +294,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 	// Header
 
-	tableHeader = \p -> if (replaceHeader) TEmpty() else
+	headerTitles = \p ->
 		mapi(columns0, \i0, c : MColumnDynamic -> {
 			rightAlign = changeBoolIfRTL(contains(c.style, RightAlign()));
 			sortStyle = if (isSome(reorderList)) None() else tryExtractStruct(c.style, MSort(\__, __ -> 0));
@@ -360,10 +372,10 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					MTooltip2T(manager, p, MTooltip(f2, MDynamicText(c.tooltip, [MTooltipDesktop(), sameLightMColor(p)]), []), m2t)
 			)
 			|> alignCellContent(c.style, cellBox(i0 + b2i(isSome(checkboxSelection)), true))
-		})
-		|> (\headers : [Tropic] -> {
+		});
 
-			addCheckbox = \colHeaders : Tropic ->
+	tableHeader = \p -> if (replaceHeader) TEmpty() else {
+		addCheckbox = \colHeaders : Tropic ->
 				eitherMap(
 					checkboxSelection,
 					\__ -> {
@@ -416,26 +428,86 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					colHeaders
 				);
 
-			TSelect(expandRow, \er ->
-				expandContent(headers, er)
-				|> TColsA
-			)
-			|> addCheckbox
-			|> (\f2 -> TBorderA(externalBorder, 0., externalBorder + reorderIconSpace, 0., f2))
-		})
-		|> (\f ->
+		headers0 = headerTitles(p);
+		headers =
+			if (lifted) tail(headers0)
+			else if (glued) concat([TShow(fnot(scrollVisible), firstElement(headers0, TEmpty()))], tail(headers0))
+			else headers0;
+	
+		TSelect(expandRow, \er ->
+			expandContent(headers, er)
+			|> TColsA
+		)
+		|> addCheckbox
+		|> (\t -> TBorderA(externalBorder, 0., externalBorder + reorderIconSpace, 0., t))
+		|> (\t ->
 			eitherMap(
 				headerStyle,
 				\hs ->
 					TCopySize(
-						f,
+						t,
 						\tr ->
 							TRounded(2., 2., 0., 0., hs.background, tr),
 						false
 					),
-				f
+				t
 			)
-		);
+		)
+	}
+
+	addSeparatedFirstColumn = \p -> \table ->
+		if (glued || lifted) {
+			firstColumnHeader =
+				if (lifted) TFixed(0., rowHeight)
+				else firstElement(headerTitles(p), TEmpty()) |> TBorderLeft(externalBorder);
+
+			firstColumn =
+				MSelect2T(manager, p, "", [], sortingResult, \sortRes, p2 -> {
+					rws = fgetValue(rows);
+					map(sortRes, \i -> {
+						row = rws[i];
+						colStyle = columns[0].style;
+						box = cellBox(0, false);
+
+						MCellContent2T(manager, p2,	firstElement(row, TEmpty()), rowHeight,	box, crop, m2t)
+						|> alignCellContent(colStyle, box)
+						|> (\t ->
+							if (lifted)
+								TAlpha(fselect(innerScrollPosition, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
+								|> TBorderBottom(rowHeight)
+							else t
+						)
+						|> TBorderLeft(externalBorder)
+						|> (\t -> if (separators && glued) TLines2(t, MSeparator2T(manager, p, true)) else t)
+					})
+					|> TLines
+				})
+				|> (\t -> MScroll2T(manager, p, MScroll(t, TFillXHT(rowsAvailableHeight), [
+						TScrollEnabled(const(false)),
+						MScrollbars(
+							TScrollbarStyle(getMaterialScrollBar().x with visible = const(false)),
+							TScrollbarStyle(getMaterialScrollBar().y with visible = const(false))
+						),
+						scrollPosition,
+						MScrollBound(const(false), const(false))
+					]), m2t))
+				|> (\t -> if (separators && glued) TLines2(MSeparator2T(manager, p, true), t) else t)
+				|> (\t -> TAvailable(t, TSizedWidth(columnWidths[0], 0.)))
+				|> (\t -> TLines2(firstColumnHeader, t))
+				|> (\t ->
+						if (glued)
+							TShow(scrollVisible,
+								TCols2(t, TAvailableHeight(MSeparator2T(manager, p, false) |> TBorderLeft(-externalBorder), faddition(rowsAvailableHeight, const(rowHeight))))
+							)
+						else t
+				);
+
+			TGroup2(
+				if (glued) TBorderT(fdelay(fif(scrollVisible, columnWidths[0], zero), 0), zero, zero, zero, table) else table,
+				firstColumn
+			)
+			
+		} else table;
 
 	addHeaderActions = \p -> \t : Tropic ->
 		if (headerActions.actions != TEmpty())
@@ -618,9 +690,15 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							}
 						})
 							|> (\cells -> expandContent(cells, er))
+							|> (\cells ->
+								if (lifted) tail(cells)
+								else if (glued) concat([TShow(fnot(scrollVisible), firstElement(cells, TEmpty()))], tail(cells))
+								else cells
+							)
 							|> TColsA
 							|> addCheckbox(p3)
 							|> TBorderLeftRight(externalBorder)
+							|> (if (lifted) TBorderTop(rowHeight) else idfn)
 							|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
 							|> (\t -> eitherMap(rowBackgroundStyle, \rb ->
 										TIfLazy2(
@@ -736,15 +814,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					)
 				)
 			)
-			|> (\f2 ->
-				TAvailableHeight(
-					f2,
-					fselect3(rowsPerPage, rowsCountB, showFixedRow, \rpp, rc, fr ->
-						i2d(min(rpp, rc) + b2i(fr)) * countRowHeight(er)
-					)
-				)
-			)
 		)
+		|> (\f -> TAvailableHeight(f, rowsAvailableHeight))
 		|> (\f -> TConstruct(
 				concat(
 					if (isEmptyPagination) [
@@ -848,16 +919,22 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> (\t -> if (separators) TLines2(m2t(MSeparator(true), p), t) else t)
 		// Header
 		|> (\f -> TLines2(tableHeader(p), f))
-		|> (\t -> if (innerScroll) {
+		|> (\t -> if (isInnerScroll) {
+				scrollStyle = [
+					TScrollInspectShowScrolling(scrollVisible),
+					MScrollPosition(innerScrollPosition),
+					MScrollDisableOutOfBounds(const(true))
+				];
 				scroll =
-					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillXY(), [MScrollCropByContent()])
+					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillXY(), arrayPush(scrollStyle, MScrollCropByContent()))
 					else {
 						contentHeight = make(0.);
-						MScroll(MAttachHeight(t, contentHeight), TFillXHT(contentHeight), [])
+						MScroll(MAttachHeight(t, contentHeight), TFillXHT(contentHeight), scrollStyle)
 					}
 
 				MScroll2T(manager, p, scroll, m2t)
 			} else t)
+		|> addSeparatedFirstColumn(p)
 		|> addHeaderActions(p)
 		// Bottom bar
 		|> (\f : Tropic -> TLines2(f, footer(p)))
@@ -952,10 +1029,10 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				f
 			)
 		)
-		|> (\t -> TAvailableWidth(t, if (innerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
+		|> (\t -> TAvailableWidth(t, if (isInnerScroll) fmin(screenW, tableWidth(expandRow)) else tableWidth(expandRow)))
 		|> (\t -> if (fullWidthAdvanced) TTweak([TSnapSize(8., -1., false)], t, TEmpty()) else t)
 		|> (if (!anyTypePagination && isFConst(m.rows) && !fgetValue(scrollEnabled)) makeTropicConstantHeight(None()) else idfn)
-		|> (if (fullWidth || isAnyWidthByContent || innerScroll) idfn else makeTropicConstantWidth(None()))
+		|> (if (fullWidth || isAnyWidthByContent || isInnerScroll) idfn else makeTropicConstantWidth(None()))
 		|> (\t ->
 			if (fullWidth) {
 				table = if (autoPagination || fgetValue(scrollEnabled)) t else TAttachHeight(t, tableHeight);
@@ -976,7 +1053,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		)
 	)
 	|> (\t ->
-		if (innerScroll || !(isFConst(expandRowEnabled) && !fgetValue(expandRowEnabled))) TAttachAvailableWidth(t, screenW)
+		if (isInnerScroll || !(isFConst(expandRowEnabled) && !fgetValue(expandRowEnabled))) TAttachAvailableWidth(t, screenW)
 		else if (fullWidth) TAttachWidth2(TFillX(), screenW, t)
 		else t
 	)
