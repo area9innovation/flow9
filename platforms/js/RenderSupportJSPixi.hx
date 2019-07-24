@@ -270,6 +270,7 @@ class RenderSupportJSPixi {
 		initFullScreenEventListeners();
 		FontLoader.loadWebFonts(StartFlowMain);
 		initClipboardListeners();
+		initCanvasStackInteractions();
 
 		printOptionValues();
 
@@ -307,6 +308,41 @@ class RenderSupportJSPixi {
 			if (WindowTopHeightLandscape == -1)
 				WindowTopHeightLandscape = topHeight;
 		}
+	}
+
+	private static inline function initCanvasStackInteractions() {
+		Browser.document.addEventListener('mousemove', function(e) {
+			var localStages = PixiStage.children;
+			var currentInteractiveLayerZorder = 0;
+			var i = localStages.length - 1;
+			while(i > 0) {
+				if (untyped localStages[i].view.style.pointerEvents == "all") {
+					currentInteractiveLayerZorder = i;
+				}
+
+				i--;
+			}
+
+			if (currentInteractiveLayerZorder == 0)
+				return;
+
+			i = localStages.length - 1;
+			while(i > currentInteractiveLayerZorder) {
+				if (hittest(localStages[i], e.clientX, e.clientY)) {
+					untyped localStages[i].view.style.pointerEvents = "all";
+					untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+
+					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+					return;
+				}
+
+				i--;
+			}
+
+			if (!hittest(localStages[currentInteractiveLayerZorder], e.clientX, e.clientY)) {
+				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+			}
+		}, false);
 	}
 
 	private static inline function getMobileTopHeight() {
@@ -573,7 +609,8 @@ class RenderSupportJSPixi {
 		}
 
 
-		if (event == "mouseout")
+		if (isMouseEventName(event))
+
 			// We should prevent mouseup from being called inside document area
 			// To have drags over textinputs
 			Browser.document.body.addEventListener(event, cb);
@@ -581,6 +618,12 @@ class RenderSupportJSPixi {
 			PixiView.addEventListener(event, cb);
 	}
 
+	private static function isMouseEventName(event : String) : Bool {
+		return event == "mouseout" || event == "mousedown" || event == "mousemove" || 
+			   event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup" || 
+			   event == "mousemiddledown" || event == "mousemiddleup";
+	}
+ 
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
 		var event_name = untyped __js__("'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
 			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
@@ -699,8 +742,7 @@ class RenderSupportJSPixi {
 			forceRollOverRollOutUpdate();
 		}
 
-		if (event == "mousemove" || event == "mousedown" || event == "mouseup" || event == "mouserightdown" || event == "mouserightup" ||
-			event == "mousemiddledown" || event == "mousemiddleup") {
+		if (isMouseEventName(event)) {
 			emit(event);
 		} else {
 			clip.emit(event);
@@ -836,7 +878,6 @@ class RenderSupportJSPixi {
 				}
 
 				untyped PixiRenderer._lastObjectRendered = PixiStage;
-				untyped PixiRenderer.view = PixiView;
 			} else {
 				AccessWidget.updateAccessTree();
 
@@ -1856,11 +1897,11 @@ class RenderSupportJSPixi {
 				default: "default";
 			}
 
-		PixiView.style.cursor = css_cursor;
+		Browser.document.body.style.cursor = css_cursor;
 	}
 
 	public static function getCursor() : String {
-		return switch (PixiView.style.cursor) {
+		return switch (Browser.document.body.style.cursor) {
 			case "default": "arrow";
 			case "auto": "auto";
 			case "pointer": "finger";

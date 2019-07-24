@@ -84,10 +84,13 @@ class WebClip extends NativeWidgetClip {
 
 		iframe.onload = function() {
 			try {
+				var iframeDocument = iframe.contentWindow.document;
+				iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+
 				if (shrinkToFit) {
 					try {
-						this.htmlPageWidth = iframe.contentWindow.document.body.scrollWidth;
-						this.htmlPageHeight = iframe.contentWindow.document.body.scrollHeight;
+						this.htmlPageWidth = iframeDocument.body.scrollWidth;
+						this.htmlPageHeight = iframeDocument.body.scrollHeight;
 						applyShrinkToFit();
 					} catch(e : Dynamic) {
 						// if we can't get the size of the html page, we can't do shrink so disable it
@@ -145,6 +148,25 @@ class WebClip extends NativeWidgetClip {
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
 			iframe.style.visibility = "visible";
+		}
+	}
+
+	private function onContentMouseMove(e : Dynamic) {
+		var iframeZorder : Int = Math.floor(Std.parseInt(iframe.style.zIndex) / 1000);
+		var localStages = RenderSupportJSPixi.PixiStage.children;
+		var i = localStages.length - 1;
+
+		while (i >= iframeZorder) {
+			untyped localStages[i].view.style.pointerEvents = "none";
+			
+			if (RenderSupportJSPixi.hittest(localStages[i], e.clientX, e.clientY)) {
+				untyped localStages[i].view.style.pointerEvents = "all";
+				untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+
+				return;
+			}
+
+			i--;
 		}
 	}
 
