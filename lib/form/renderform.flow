@@ -48,7 +48,7 @@ export {
 	downloadPictures = !isUrlParameterFalse("download_pictures");
 	showRedraw = !js && isUrlParameterTrue("redraw");
 
-	makeGlobalCursorListeners(shape : CursorShape2, zorder : [int]) -> Pair<[EventHandler], () -> void>;
+	makeGlobalCursorListeners(shape : CursorShape2, zorder : Transform<[int]>) -> Pair<[EventHandler], () -> void>;
 
 	getCursorShapeName(cursorShape : CursorShape) -> string;
 
@@ -1246,7 +1246,7 @@ renderForm(rform : Form, available : Behaviour<WidthHeight>, zorder : [int], tab
 		clip = makeClip();
 		setClipDebugInfo(clip, "form", rform);
 
-		cursorListeners = makeGlobalCursorListeners(shape, zorder);
+		cursorListeners = makeGlobalCursorListeners(shape, const(zorder));
 
 		d = renderForm(
 			Interactive(
@@ -2516,7 +2516,7 @@ globalCursorOrder : ref Tree<[int], Pair<int, string>> = ref makeTree();
 globalCursorId : ref int = ref 0;
 globalCursorPoint : ref Point = ref Point(-1., -1.);
 
-applyGlobalTopCursor() {
+applyGlobalTopCursor() -> void {
 	switch (popmax(^globalCursorOrder)) {
 		PopResult(k, v, rest): {
 			setCursor(v.second);
@@ -2527,30 +2527,40 @@ applyGlobalTopCursor() {
 	}
 }
 
-filterGlobalCursorOrderByCursorId(curId)
-	globalCursorOrder := foldTree(^globalCursorOrder, makeTree(), \k, v, acc -> {
-		if (v.first == curId)
-			acc
-		else
-			setTree(acc, k, v)
-	});
-
 makeGlobalCursorListeners(
 	shape : CursorShape2,
-	zorder : [int]) -> Pair<[EventHandler], () -> void> {
-
+	zorder : Transform<[int]>
+) -> Pair<[EventHandler], () -> void> {
 	curInside = ref false;
 	curId = ^globalCursorId;
 	globalCursorId := curId + 1;
 	shapeName = ref "auto";
+	uns = ref nop;
+
+	addCursorToTree = \ -> {
+		^uns();
+		uns := makeSubscribeUns(zorder, \z -> {
+			globalCursorOrder := setTree(^globalCursorOrder, z, Pair(curId, ^shapeName));
+
+			[
+				\ -> if (eitherMap(lookupTree(^globalCursorOrder, z), \c -> c.first == curId, false)) {
+					globalCursorOrder := removeFromTree(^globalCursorOrder, z);
+				}
+			]
+		})();
+	}
+
+	removeCursorFromTree = \ -> {
+		^uns();
+		uns := nop;
+	}
 
 	// Deferred so the rolledOver is called after the rolledOut
 	rolledOver = \ -> if (!^curInside) {
 		curInside := true;
 
 		if (^shapeName != "") {
-			globalCursorOrder := setTree(^globalCursorOrder, zorder, Pair(curId, ^shapeName));
-
+			addCursorToTree();
 			applyGlobalTopCursor();
 		}
 	};
@@ -2559,7 +2569,7 @@ makeGlobalCursorListeners(
 		curInside := false;
 
 		if (^shapeName != "") {
-			filterGlobalCursorOrderByCursorId(curId);
+			removeCursorFromTree();
 			applyGlobalTopCursor();
 		}
 	};
@@ -2622,10 +2632,9 @@ makeGlobalCursorListeners(
 
 						if (^curInside) {
 							if (prevShapeName == "" && ^shapeName != "") {
-								globalCursorOrder :=
-									setTree(^globalCursorOrder, zorder, Pair(curId, ^shapeName));
+								addCursorToTree();
 							} else if (^shapeName == "") {
-								filterGlobalCursorOrderByCursorId(curId);
+								removeCursorFromTree();
 							} else {
 								globalCursorOrder :=
 									mapTree2(

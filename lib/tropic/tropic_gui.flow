@@ -329,6 +329,10 @@ export {
 	T3DStage(scene : F3DObject, camera : F3DObject, size : Tropic, style : [F3DStageStyle]) -> Tropic;
 
 	THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> void) -> Tropic;
+
+	// Helper to move already rendered clip from one spot to another
+	// Automatically dettaches and reattaches to original clip if tropic passed to 'fn' is rendered anywhere
+	TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic;
 }
 
 TFixed(width : double, height : double) -> Tropic {
@@ -2198,6 +2202,8 @@ disableInteractivesBelow(content : Tropic) -> Tropic {
 			TInteractive(
 				[
 					MouseDown(\mi -> mi.inside()),
+					MouseRightDown(\mi -> mi.inside()),
+					MouseMiddleDown(\mi -> mi.inside()),
 					MouseUp(\mi -> mi().inside),
 					MouseMove(\mi -> mi().inside),
 					RollOver(nop1),
@@ -2349,4 +2355,51 @@ THTMLStage(wh : Transform<WidthHeight>, constructor : (stage : native) -> () -> 
 			fheight(wh)
 		)
 	)
+}
+
+TMoveClip(t : Tropic, fn : (Tropic) -> void) -> Tropic {
+	TransformTAcc2(\t2a -> {
+		b = t2a(t);
+
+		TAcc(b with
+			form = FNativeForm(
+				t,
+				const(FormMetrics(0., 0., 0., 0.)),
+				\ -> b.form,
+				\__, z, __ -> {
+					zorder = make(z);
+					rr = renderFForm(b.form, zorder);
+					originalParent = makeClip();
+					alive = ref true;
+					iter(rr.clips, \c -> addChild(originalParent, c));
+
+					fn(
+						TFForm(
+							FNativeForm(
+								t,
+								const(FormMetrics(0., 0., 0., 0.)),
+								\ -> b.form,
+								\__, z2, __ -> {
+									parent = makeClip();
+									iter(rr.clips, \c -> addChild(parent, c));
+									nextDistinct(zorder, z2);
+
+									NativeRenderResult(
+										[parent],
+										\ -> {
+											nextDistinct(zorder, z);
+											iter(rr.clips, \c -> if (^alive) addChild(originalParent, c) else removeChild(parent, c));
+										}
+									)
+								}
+							),
+							b.metrics
+						)
+					);
+
+					NativeRenderResult([originalParent], \ -> { alive := false; applyall(rr.disposers); } )
+				}
+			)
+		)
+	})
 }
