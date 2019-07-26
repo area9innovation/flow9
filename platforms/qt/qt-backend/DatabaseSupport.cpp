@@ -192,11 +192,16 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
 StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     RUNNER_PopArgs1(rawqueries);
     RUNNER_CheckTag(TArray, rawqueries);
-    RUNNER_DefSlots2(resultArr, requestResults);
+    RUNNER_DefSlots4(
+        resultArr,          // the filal result
+        queriesResults,     // (array of arrays) the results for each query (query can include several sqls and results)
+        queryResults,       // the results of a sigle query
+        resultRows          // result of a single sql from a query
+    );
 
-    std::vector<StackSlot> result;
-
-    int nqueries= RUNNER->GetArraySize(rawqueries);
+    int nqueries = RUNNER->GetArraySize(rawqueries);
+    queriesResults = RUNNER->AllocateArray(nqueries);
+    int nresults = 0;
     for (int i = 0; i < nqueries; i++) {
         StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
         QString queryString = RUNNER->GetQString(querySlot);
@@ -206,27 +211,40 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         DatabaseResult *databaseResult = new DatabaseResult(this, query);
         query->exec(queryString);
 
-        last_error = query->lastError().text().trimmed();
+        QString err_msg = query->lastError().text().trimmed();
+        if (err_msg.length()) {
+            last_error = err_msg;
+        }
 
         std::vector<StackSlot> resultSets;
 
+        std::vector<StackSlot> results;
         do {
-            int nresults = query->size();
-            nresults = nresults == 0 ? 1 : nresults;
-            requestResults = RUNNER->AllocateArray(nresults);
-            for (int j = 0; j < nresults; j++) {
+            int nRows = query->size();
+            nRows = nRows == 0 ? 1 : nRows;
+            resultRows = RUNNER->AllocateArray(nRows);
+            for (int j = 0; j < nRows; j++) {
                 query->next();
                 StackSlot requestResult = databaseResult->getRecord(RUNNER);
-                RUNNER->SetArraySlot(requestResults, j, requestResult);
+                RUNNER->SetArraySlot(resultRows, j, requestResult);
             }
-            result.push_back(requestResults);
+            results.push_back(resultRows);
         } while (query->nextResult());
+        int resultsCnt = results.size();
+        queryResults = RUNNER->AllocateArray(resultsCnt);
+        for (int j = 0; j < resultsCnt; j++) {
+            RUNNER->SetArraySlot(queryResults , j, results[j]);
+        }
+        nresults += resultsCnt;
+        RUNNER->SetArraySlot(queriesResults, i, queryResults);
     }
 
-    int nresults = result.size();
     resultArr = RUNNER->AllocateArray(nresults);
-    for (int i = 0; i < nresults; i++) {
-        RUNNER->SetArraySlot(resultArr, i, result[i]);
+    for (int i = 0, n = 0; i < nqueries; i++) {
+        StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
+        for (int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
+            RUNNER->SetArraySlot(resultArr, n, RUNNER->GetArraySlot(qResults, c));
+        }
     }
     return resultArr;
 }
