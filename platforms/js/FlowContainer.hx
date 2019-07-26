@@ -78,6 +78,9 @@ class FlowContainer extends Container {
 	}
 
 	private function onResize() : Void {
+		if (view == RenderSupportJSPixi.PixiRenderer.view)
+			return;
+		
 		view.width = RenderSupportJSPixi.PixiView.width;
 		view.height = RenderSupportJSPixi.PixiView.height;
 

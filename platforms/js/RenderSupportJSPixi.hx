@@ -468,6 +468,12 @@ class RenderSupportJSPixi {
 				}
 			}
 
+			PixiView.width = win_width * backingStoreRatio;
+			PixiView.height = win_height * backingStoreRatio;
+
+			PixiView.style.width = win_width;
+			PixiView.style.height = win_height;
+
 			PixiRenderer.resize(win_width, win_height);
 		}
 
