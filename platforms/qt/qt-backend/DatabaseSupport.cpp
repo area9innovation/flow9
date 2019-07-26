@@ -216,8 +216,6 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
             last_error = err_msg;
         }
 
-        std::vector<StackSlot> resultSets;
-
         std::vector<StackSlot> results;
         do {
             int nRows = query->size();
