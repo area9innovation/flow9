@@ -67,8 +67,6 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 	widthByContent = contains(style, MWidthByContent());
 	innerScroll = tryExtractStruct(style, MDataTableInnerScroll(MStandardMode()));
 	isInnerScroll = isSome(innerScroll);
-	scrollVisible = make(false);
-	innerScrollPosition = makePoint();
 
 	glued = eitherMap(innerScroll, \is -> is.mode == MGluedFirstColumnMode(), false);
 	lifted = eitherMap(innerScroll, \is -> is.mode == MLiftedFirstColumnMode(), false);
@@ -216,6 +214,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			^prevER) |> (\f -> {prevER := f; f});
 
 	minWidthsSum = if (isAnyWidthByContent) tableWidth(const(1)) else const(dsum(minWidths));
+	
+	innerScrollEnabled = if (fullWidth) fless(screenW, faddition(minWidthsSum, const(2. * externalBorder))) else const(true);
+	innerScrollVisible0 = make(false);
+	innerScrollVisible = fand(innerScrollEnabled, innerScrollVisible0);
+	innerScrollPosition = makePoint();
 
 	expandRow =
 		fif(
@@ -435,7 +438,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			expandContent(headers0, er)
 			|> (\headers ->
 				if (lifted) tail(headers)
-				else if (glued) concat([TShow(fthrottle(fnot(scrollVisible), 1), firstElement(headers, TEmpty()))], tail(headers))
+				else if (glued) concat([TShow(fthrottle(fnot(innerScrollVisible), 1), firstElement(headers, TEmpty()))], tail(headers))
 				else headers
 			)
 			|> TColsA
@@ -535,7 +538,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				|> (\t -> TLines2(firstColumnHeader, t))
 				|> (\t ->
 						if (glued)
-							TShow(scrollVisible,
+							TShow(innerScrollVisible,
 								TCols2(t, TAvailableHeight(
 									MSeparator2T(manager, p, false) |> TBorderLeft(-externalBorder),
 									faddition(rowsAvailableHeight, fselect(expandRow, FLift(countRowHeight)))
@@ -545,7 +548,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				);
 
 			TGroup2(
-				if (glued) TBorderT(fdelay(fif(scrollVisible, columnWidths[0], zero), 0), zero, zero, zero, table) else table,
+				if (glued) TBorderT(fdelay(fif(innerScrollVisible, columnWidths[0], zero), 0), zero, zero, zero, table) else table,
 				firstColumn
 			)
 			
@@ -736,7 +739,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 							|> (\cells -> expandContent(cells, er))
 							|> (\cells ->
 								if (lifted) tail(cells)
-								else if (glued) concat([TShow(fnot(scrollVisible), firstElement(cells, TEmpty()))], tail(cells))
+								else if (glued) concat([TShow(fnot(innerScrollVisible), firstElement(cells, TEmpty()))], tail(cells))
 								else cells
 							)
 							|> TColsA
@@ -900,6 +903,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 
 					if (fullWidth && !widthByContent && length(columnWidths) > 0) [
 						make3Subscribe(screenW, expandRow, fmerge(columnWidths), \width, er, colWs -> {
+							cutFirstColumn = \arr : [flow] -> if (lifted || glued) tail(arr) else arr;
+
 							miw =
 								mapi(columns, \i, c -> {
 									if (contains(c.style, MWidthByContent()))
@@ -911,7 +916,8 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									mapSplitWidths(arr, er,
 										\r -> either(maxA(r), -1.)
 									)
-								);
+								)
+								|> cutFirstColumn;
 
 							maw =
 								mapi(columns, \i, c -> {
@@ -932,17 +938,18 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 									mapSplitWidths(arr, er,
 										\r -> if (contains(r, -1.)) -1. else either(maxA(r), -1.)
 									)
-								);
+								)
+								|> cutFirstColumn;
 
 							newSizes =
 								distributeSizesEvenly(
 									miw,
 									maw,
-									max(width - externalBorder * 2. - reorderIconSpace, getValue(footerMinWidth))
+									max(width - externalBorder * 2. - reorderIconSpace, getValue(footerMinWidth)) - if (glued) fgetValue(columnWidths[0]) else 0.
 								);
 
 							iteri(
-								splitWidths(columnWidths, er),
+								splitWidths(columnWidths, er) |> cutFirstColumn,
 								\i, r -> iter(r, \r0 : Transform<double> ->
 									switch (r0) {
 										DynamicBehaviour(__, __):
@@ -965,9 +972,14 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		|> (\f -> TLines2(tableHeader(p, headers0), f))
 		|> (\t -> if (isInnerScroll) {
 				scrollStyle = [
-					TScrollInspectShowScrolling(scrollVisible),
+					TScrollInspectShowScrolling(innerScrollVisible0),
 					MScrollPosition(innerScrollPosition),
-					MScrollDisableOutOfBounds(const(true))
+					MScrollDisableOutOfBounds(const(true)),
+					TScrollEnabled(innerScrollEnabled),
+					MScrollbars(
+						TScrollbarStyle(getMaterialScrollBar().x with visible = innerScrollEnabled),
+						TScrollbarStyle(getMaterialScrollBar().y with visible = innerScrollEnabled)
+					),
 				];
 				scroll =
 					if (autoPagination || fgetValue(scrollEnabled)) MScroll(t, TFillMin(0., minTableHeight - footerHeight), arrayPush(scrollStyle, MScrollCropByContent()))
