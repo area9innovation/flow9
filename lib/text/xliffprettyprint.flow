@@ -3,18 +3,28 @@ import date;
 
 export {
 	xliffNode2string(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string;
+	xliffNode2WigiLightString(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string;
 
 	makeXliffContent(nodes : [XmlNode], productName : string) -> string;
+	makeXliffWigiLightContent(nodes : [XmlNode], productName : string) -> string;
 }
 
 // These namespaces are required: they specify that some custom elements (that are out of xliff specs)
 // used in our xliff by intention.
 xliff_header_attrs = "version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"urn:oasis:names:tc:xliff:document:1.2 xliff-core-1.2-transitional.xsd\"";
 
-makeXliffContent(nodes : [XmlNode], productName : string) {
+makeXliffContent(nodes : [XmlNode], productName : string) -> string {
+	makeXliffContent2(nodes, productName, xliffNode2string);
+}
 
+//TODO: refactor using wigi_light api
+makeXliffWigiLightContent(nodes : [XmlNode], productName : string) -> string {
+	makeXliffContent2(nodes, productName, xliffNode2WigiLightString);
+}
+
+makeXliffContent2(nodes : [XmlNode], productName : string, xliff2string : (node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string) {
 	bodyIndent = 2;
-	body = concatStrings(map(nodes, \n -> { /*println(n);*/ xliffNode2string(n, bodyIndent + 1, None()); }));
+	body = concatStrings(map(nodes, \n -> { /*println(n);*/ xliff2string(n, bodyIndent + 1, None()); }));
 
 	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 	"<xliff " + xliff_header_attrs + ">\n"
@@ -83,6 +93,24 @@ xliffNode2string(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) {
 				}
 			)
 		}
+	}
+}
+
+xliffNode2WigiLightString(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string {
+	space = makeXliffIndent(level);
+	restore = \t -> t |> restoreApos |> restoreQuote;
+	switch(node) {
+		XmlElement(tag, attributes, children): {
+			nl = if (tag != "g" && tag != "mrk" && tag != "bpt" && tag != "ept" && tag != "ph") "\n" + space else "";
+			atts = fold(uniq(attributes), "", \acc, a ->
+				acc + " " + (a.key + "=\"" + xmlEscape(xliffDequote(a.value)) + "\"")  // a.value may be quoted already, in this case make sure to not quote it second time
+			);
+
+			(nl + "<" + tag + atts + ">")
+				+ concatStrings(map(children, \c -> xliffNode2WigiLightString(c, level + 1, Some(node)))) +
+			("</" + tag + ">")
+		}
+		XmlText(text): restore(text);
 	}
 }
 
