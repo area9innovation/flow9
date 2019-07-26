@@ -212,6 +212,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
 
         do {
             int nresults = query->size();
+            nresults = nresults == 0 ? 1 : nresults;
             requestResults = RUNNER->AllocateArray(nresults);
             for (int j = 0; j < nresults; j++) {
                 query->next();
