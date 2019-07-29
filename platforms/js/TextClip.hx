@@ -556,10 +556,6 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-
 			textClip.setClipRenderable(true);
 			textClipChanged = false;
 		}
@@ -572,6 +568,14 @@ class TextClip extends NativeWidgetClip {
 		textClip.setClipVisible(true);
 
 		return textClip;
+	}
+
+	public override function invalidateStyle() : Void {
+		if (isInput) {
+			setScrollRect(0, 0, getWidth(), getHeight());
+		}
+
+		super.invalidateStyle();
 	}
 
 	public function invalidateMetrics() : Void {
