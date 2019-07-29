@@ -218,8 +218,8 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         }
 
         int resultsCnt = 0;
-        int realSize = 1;
-        queryResults = RUNNER->AllocateArray(realSize);
+        int realCapacity = 1;
+        queryResults = RUNNER->AllocateArray(realCapacity);
         do {
             int nRows = query->size();
             nRows = nRows == 0 ? 1 : nRows;
@@ -230,17 +230,17 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
                 RUNNER->SetArraySlot(resultRows, j, requestResult);
             }
             resultsCnt++;
-            if (realSize == resultsCnt) {
-                queryResults2 = RUNNER->AllocateArray(realSize * 2);
-                for (int k = 0; k < realSize; k++ ) {
+            if (realCapacity == resultsCnt) {
+                queryResults2 = RUNNER->AllocateArray(realCapacity * 2);
+                for (int k = 0; k < realCapacity; k++ ) {
                     RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
                 }
                 queryResults = queryResults2;
-                realSize *= 2;
+                realCapacity *= 2;
             }
             RUNNER->SetArraySlot(queryResults , resultsCnt - 1, resultRows);
         } while (query->nextResult());
-        if (resultsCnt < realSize) {
+        if (resultsCnt < realCapacity) {
             queryResults2 = RUNNER->AllocateArray(resultsCnt);
             for (int k = 0; k < resultsCnt; k++ ) {
                 RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
