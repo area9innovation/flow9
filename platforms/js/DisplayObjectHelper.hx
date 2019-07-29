@@ -164,7 +164,9 @@ class DisplayObjectHelper {
 				updateClipWorldVisible(clip);
 			}
 
-			invalidateTransformByParent(clip);
+			if (renderable) {
+				invalidateTransformByParent(clip);
+			}
 		}
 	}
 
