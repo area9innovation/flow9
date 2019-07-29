@@ -119,7 +119,6 @@ class TextClip extends NativeWidgetClip {
 	private var TextInputKeyUpFilters : Array<String -> Bool -> Bool -> Bool -> Bool -> Int -> Bool> = new Array();
 
 	private var textClip : Text = null;
-	private var textClipChanged : Bool = false;
 
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
@@ -476,7 +475,7 @@ class TextClip extends NativeWidgetClip {
 			if (textClip != null) {
 				textClip.setClipRenderable(false);
 			}
-		} else if (textClipChanged) {
+		} else if (!cacheAsBitmap) {
 			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 			var text = modification.modified;
 			var chrIdx: Int = 0;
@@ -558,7 +557,7 @@ class TextClip extends NativeWidgetClip {
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
 			textClip.setClipRenderable(true);
-			textClipChanged = false;
+			cacheAsBitmap = true;
 		}
 	}
 
@@ -581,7 +580,7 @@ class TextClip extends NativeWidgetClip {
 
 	public function invalidateMetrics() : Void {
 		metrics = null;
-		textClipChanged = true;
+		cacheAsBitmap = false;
 		invalidateStyle();
 	}
 
