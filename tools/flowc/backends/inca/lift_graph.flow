@@ -1,17 +1,44 @@
 import tools/flowc/backends/inca/env;
 import text/blueprint;
 import ds/simplegraph;
+import tools/flowc/backends/inca/conversion_graph;
 
 export {
-	liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string;
+	liftIncaGraph(env : IncaEnv) -> string;
 }
 
-liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
+liftIncaGraph(env : IncaEnv) -> string {
+	// First, find what types we should generate converters for
+	smallgraph = buildIncaConversionGraph(env, false);
+	smallrev = reverseSimpleGraph(smallgraph);
+
+	unions = foldTree(env.unions, makeSet(), \name, __, acc -> insertSet(acc, name));
+	structsAndUnions = foldTree(env.structs, unions, \name, __, acc -> insertSet(acc, name));
+
+	// This is a collection of the types that have more than one "upflow" source
+	convertable = foldSet(structsAndUnions, makeSet1("void"), \acc, name -> {
+		pre = getSimpleAdjacentNodes(smallrev, name);
+		if (length(pre) >= 1) {
+			insertSet(acc, name);
+		} else {
+			acc;
+		}
+	});
+	// println("These are targets: " + toString(set2array(convertable)));
+
+	// OK, build the graph for all structs so we can find the best path for conversion
+	fullgraph = buildIncaConversionGraph(env, true);
+	rev = reverseSimpleGraph(fullgraph);
+
 	// OK, we have to find all structures that lead to "void"
-	rev = reverseSimpleGraph(graph);
-	performable : Set<string> = reachableClosureFromSimpleNode(rev, "void");
+	buildIncaConverterFunction(env, "void", fullgraph, rev);
+}
+
+buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGraph<string, string>, rev : SimpleGraph<string, string>) -> string {
+	performable : Set<string> = reachableClosureFromSimpleNode(rev, targetType);
 
 	structs = filterSet(performable, \name -> {
+		// We ignore unions
 		!containsKeyTree(env.unions, name)
 	});
 
@@ -26,12 +53,12 @@ liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
 			}
 		", 
 		[
-			"dispatcher", buildIncaDispatcher(env, graph, structs)
+			"dispatcher", buildIncaDispatcher(env, targetType, graph, structs)
 		]
 	);
 }
 
-buildIncaDispatcher(env : IncaEnv, graph : SimpleGraph<string, string>, performable : Set<string>) -> string {
+buildIncaDispatcher(env : IncaEnv, targetType : string, graph : SimpleGraph<string, string>, performable : Set<string>) -> string {
 	superglue(set2array(performable), \name -> {
 		edges = getSimpleAdjacentEdges(graph, name);
 
@@ -54,7 +81,7 @@ buildIncaDispatcher(env : IncaEnv, graph : SimpleGraph<string, string>, performa
 				targets = getSimpleAdjacentNodes(graph, name);
 				fncall = edges[0] + "_lifted(manager, value)";
 
-				call = if (targets[0] == "void") {
+				call = if (targets[0] == targetType) {
 					// OK, this is good
 					fncall + "; {}"
 				} else {
