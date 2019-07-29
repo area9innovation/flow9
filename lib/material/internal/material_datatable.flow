@@ -195,12 +195,15 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				const(minWidths[i])
 		);
 
+	colsHead = \arr : [flow] -> {idx = 1 + b2i(showRowNumbers); take(arr, idx)}
+	colsTail = \arr : [flow] -> {idx = 1 + b2i(showRowNumbers); tailFrom(arr, idx)}
+
 	tableWidth : (Transform<int>) -> Transform<double> = \expRow ->
 		if (columnsCount == 0)
 			const(0.)
 		else
 			fselect2(fmerge(columnWidths), expRow, FLift2(\colWs : [double], er : int ->
-				dsum(mapSplitWidths(if (lifted) tail(colWs) else colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
+				dsum(mapSplitWidths(if (lifted) colsTail(colWs) else colWs, er, \ws -> either(maxA(ws), 0.))) + 2. * externalBorder
 			));
 
 	prevER = ref 1;
@@ -437,8 +440,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		TSelect(expandRow, \er ->
 			expandContent(headers0, er)
 			|> (\headers ->
-				if (lifted) tail(headers)
-				else if (glued) concat([TShow(fthrottle(fnot(innerScrollVisible), 1), firstElement(headers, TEmpty()))], tail(headers))
+				if (lifted) colsTail(headers)
+				else if (glued) {
+					idx = 1 + b2i(showRowNumbers);
+					concat([TShow(fthrottle(fnot(innerScrollVisible), 1), take(headers, idx) |> TCols)], tailFrom(headers, idx))
+				}
 				else headers
 			)
 			|> TColsA
@@ -466,10 +472,12 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 			implementExpandRow =
 				\t -> TBorderT(zero, zero, zero, fselect(expandRow, FLift(\er -> rowHeight * (i2d(er - 1)))), t);
 
+			firstColumnWidth = colsHead(columnWidths) |> fsum;
+
 			firstColumnHeader =
 				(
 					if (lifted) TFixed(0., rowHeight)
-					else firstElement(headers0, TEmpty()) |> TBorderLeft(externalBorder)
+					else colsHead(headers0) |> TCols |> TBorderLeft(externalBorder)
 				)
 				|> implementExpandRow;
 
@@ -481,10 +489,18 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					map(sortRes, \i -> elementAt(rws, i, []))
 					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
 					|> (\arr -> mapi(arr, \i, row -> {
-						box = cellBox(0, false);
+						cells = [
+							if (showRowNumbers) [MText(i2s(i + 1), [])] else [],
+							[firstElement(row, TEmpty())]
+						] |> concatA;
 
-						MCellContent2T(manager, p, firstElement(row, TEmpty()), rowHeight, box, crop, m2t)
-						|> alignCellContent(colStyle, box)
+						mapi(cells, \j, cellContent -> {
+							box = if (showRowNumbers && j == 0) TFixed(24., rowHeight) else cellBox(j, false); // TODO : fix harcoded number column width
+
+							MCellContent2T(manager, p, cellContent, rowHeight, box, crop, m2t)
+							|> alignCellContent(colStyle, box)
+						})
+						|> TCols
 						|> (\t -> if (glued)
 								eitherMap(rowBackgroundStyle, \rb ->
 									TIfLazy2(
@@ -526,7 +542,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 								default : None()
 							});
 
-						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
+						TSelect(cells, \cells0 -> colsHead(cells0) |> TCols)
 						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
 						|> (\t2 -> TCropSize(TFillXH(countRowHeight(1)), t2))
 						|> (\t2 -> TShow(fr.show, t2))
@@ -534,7 +550,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					}, t))
 				|> (\t -> TAvailableHeight(t, rowsAvailableHeight))
 				|> (\t -> if (separators && glued) TLines2(MSeparator2T(manager, p, true), t) else t)
-				|> (\t -> TAvailableWidth(t, columnWidths[0]))
+				|> (\t -> TAvailableWidth(t, firstColumnWidth))
 				|> (\t -> TLines2(firstColumnHeader, t))
 				|> (\t ->
 						if (glued)
@@ -548,10 +564,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				);
 
 			TGroup2(
-				if (glued) TBorderT(fdelay(fif(innerScrollVisible, columnWidths[0], zero), 0), zero, zero, zero, table) else table,
+				if (glued) TBorderT(fdelay(fif(innerScrollVisible, firstColumnWidth, zero), 0), zero, zero, zero, table) else table,
 				firstColumn
 			)
-			
 		} else table;
 
 	addHeaderActions = \p -> \t : Tropic ->
@@ -738,8 +753,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						})
 							|> (\cells -> expandContent(cells, er))
 							|> (\cells ->
-								if (lifted) tail(cells)
-								else if (glued) concat([TShow(fnot(innerScrollVisible), firstElement(cells, TEmpty()))], tail(cells))
+								if (lifted) colsTail(cells)
+								else if (glued) {
+									idx = 1 + b2i(showRowNumbers);
+									concat([TShow(fnot(innerScrollVisible), take(cells, idx) |> TCols)], tailFrom(cells, idx))
+								}
 								else cells
 							)
 							|> TColsA
