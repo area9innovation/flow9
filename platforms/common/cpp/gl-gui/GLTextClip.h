@@ -116,7 +116,7 @@ protected:
         shared_ptr<Utf32InputIterator> *outputBegin, shared_ptr<Utf32InputIterator> *outputEnd
     );
     void layoutText();
-    void layoutTextWrapLines();
+    void layoutTextWrapLines(bool rtl);
     void layoutTextSpaceLines();
 
     std::pair<Extent::Ptr,float> findExtentByPos(vec2 pos, bool nearest = false);
