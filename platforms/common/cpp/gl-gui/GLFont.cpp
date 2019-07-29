@@ -897,12 +897,23 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
             strReverseRemains = strIter->clone();
             strDirectAgain = strIter->clone();
             prev = NULL;  // No kerning between directions.
-            for (; *strDirectAgain != end && !isDirect(**strDirectAgain); ++*strDirectAgain);
-            strDirectAgain = strDirectAgain->cloneReversed();
-            ++*strDirectAgain;
-            for (; *strDirectAgain != end && !isReverse(**strDirectAgain); ++*strDirectAgain);
-            strDirectAgain = strDirectAgain->cloneReversed();
-            ++*strDirectAgain;
+            if (isWeakChar(chr)) {
+                for (; *strDirectAgain != end && isWeakChar(**strDirectAgain); ++*strDirectAgain)
+                    chr = **strDirectAgain;
+                if (!isReverse(chr)) {  // For cases of punctuation after punctuation-separated numbers.
+                    strDirectAgain = strDirectAgain->cloneReversed();
+                    ++*strDirectAgain;
+                    strDirectAgain = strDirectAgain->cloneReversed();
+                }
+                chr = **strIter;
+            } else {
+                for (; *strDirectAgain != end && !isDirect(**strDirectAgain); ++*strDirectAgain);
+                strDirectAgain = strDirectAgain->cloneReversed();
+                ++*strDirectAgain;
+                for (; *strDirectAgain != end && !isReverse(**strDirectAgain); ++*strDirectAgain);
+                strDirectAgain = strDirectAgain->cloneReversed();
+                ++*strDirectAgain;
+            }
         } // Otherwise direction remains intact.
 
         // Convert all whitespace to ordinary space
@@ -1021,6 +1032,14 @@ void GLTextLayout::renderPasses(GLRenderer *renderer, const T_passes &passes, ve
     glDisableVertexAttribArray(GLRenderer::AttrVertexTexCoord);
 }
 
+bool GLTextLayout::isDigit(ucs4_char code) {
+    return (code >= 0x30 && code < 0x3A);
+}
+
+bool GLTextLayout::isWeakChar(ucs4_char code) {
+    return isDigit(code) || code == 0x2E;  // Maybe more.
+}
+
 bool GLTextLayout::isRtlChar(ucs4_char code) {
     return (code >= 0x590 && code < 0x900)
         || (code >= 0xFB1D && code < 0xFDD0)
@@ -1051,8 +1070,8 @@ bool GLTextLayout::isLtrChar(ucs4_char code) {
 ucs4_char GLTextLayout::tryMirrorChar(ucs4_char code) {
 	// Does not mirror 0x3C and 0x3E hence they're supposed to be
 	// HTML tag delimiters and all our texts are HTML-encoded.
-    #define PAIRS_COUNT 6
-    ucs4_char chars[PAIRS_COUNT*2] = {0x28, 0x29, 0x5B, 0x5D, 0x7D, 0x7B, 0xBB, 0xAB, 0x2019, 0x2018, 0x201C, 0x201D};
+    #define PAIRS_COUNT 8
+    ucs4_char chars[PAIRS_COUNT*2] = {0x3C, 0x3E, 0x28, 0x29, 0x5B, 0x5D, 0x7B, 0x7D, 0xBB, 0xAB, 0x2019, 0x2018, 0x201C, 0x201D};
     for (int i=0; i<PAIRS_COUNT*2; ++i) if (chars[i] == code) return chars[i^1];
     return code;
     #undef PAIRS_COUNT

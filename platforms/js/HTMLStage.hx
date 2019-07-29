@@ -11,6 +11,8 @@ class HTMLStage extends NativeWidgetClip {
 		setHeight(height);
 
 		createNativeWidget("div");
+
+		untyped nativeWidget.style['pointer-events'] = 'auto';
 	}
 
 	public function appendChild(child : Element) : Void {

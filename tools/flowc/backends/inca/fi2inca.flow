@@ -4,6 +4,7 @@ import tools/flowc/incremental/fi_helpers;
 import tools/flowc/backends/inca/promote_types;
 import tools/flowc/backends/inca/lift_types;
 import tools/flowc/backends/inca/lift_functions;
+import tools/flowc/backends/inca/lift_globals;
 import tools/flowc/backends/inca/conversion_graph;
 import tools/flowc/backends/inca/fi2incaflow;
 import tools/flowc/manipulation/lambda_lifting;
@@ -13,8 +14,17 @@ export {
 }
 
 fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void {
+	timePhases = isUrlParameterTrue("timephases");
+	repTime = \phase, t0 -> {
+		now = timestamp();
+		if (timePhases) println(phase + " " + d2s((now - t0) / 1000.0) + "s");
+		now
+	}
+	time0 = timestamp();
 	incaEnv0 = buildIncaEnv(program);
 	incaEnv = promoteIncaTypes(incaEnv0);
+
+	time1 = repTime("Build inca env", time0);
 
 	if (false) {
 		// OK, new code path for the stack-based flow
@@ -26,15 +36,44 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 		incaFlow = fi2incaflow(i2);
 	}
 
-	conversionGraph = buildIncaConversionGraph(incaEnv);
+	if (true) {
+		details = isUrlParameterTrue("details");
+		graph = buildIncaConversionGraph(incaEnv, details);
+		dot = simpleGraph2dot(graph, "", [], \n -> {
+			concat(
+				[DotLabel(n)],
+				if (containsKeyTree(incaEnv.unions, n)) {
+					[DotFillColor("#ff0000"), DotShape("rectangle")]
+				} else {
+					[]
+				}
+
+			)
+		}, \e -> [DotLabel(e)]);
+		setFileContent("incagraph.dot", dot);
+		{}
+	}
+	time2 = repTime("Build dot", time1);
+
 
 	fcPrintln("Saving " + cfg.outputdir + "/types.flow");
 	types = liftIncaTypes(incaEnv);
 	saveFileContent(cfg.outputdir + "/types.flow", types);
 
+	time3 = repTime("Lift types", time2);
+
+	conversionGraph = buildIncaConversionGraph(incaEnv, true);
 	fcPrintln("Saving " + cfg.outputdir + "/functions.flow");
-	functions = liftIncaFunctions(incaEnv);
+	functions = liftIncaFunctions(incaEnv, conversionGraph);
 	saveFileContent(cfg.outputdir + "/functions.flow", functions);
+
+	time4 = repTime("Lift functions", time3);
+
+	fcPrintln("Saving " + cfg.outputdir + "/globals.flow");
+	globals = liftIncaGlobals(incaEnv);
+	saveFileContent(cfg.outputdir + "/globals.flow", globals);
+
+	time5 = repTime("Lift globals", time4);
 
 	callback();
 }
@@ -43,12 +82,13 @@ fi2inca(program : FiProgram, cfg : FcIncaConfig, callback : () -> void) -> void 
 buildIncaEnv(program : FiProgram) -> IncaEnv {
 	// What files should we lift from?
 	parsed0 = getTreeKeys(program.modules);
-	incaFolder = dirName(program.config.flowfile);
-	parsed = filter(parsed0, \p -> startsWith(p, incaFolder));
+	// All those ending with _i.flow
+	parsed = filter(parsed0, \p -> endsWith(p, "_i"));
 
 	env0 = IncaEnv(
 		program.config,
 		parsed,
+		makeTree(),
 		makeTree(),
 		makeTree(),
 		makeTree(),
@@ -69,6 +109,7 @@ addModuleToIncaEnv(program : FiProgram, acc : IncaEnv, module : string) -> IncaE
 					structs = fold(mo.structs, acc.structs, \acc0, s -> setTree(acc0, s.name, s)),
 					unions = fold(mo.unions, acc.unions, \acc0, u -> setTree(acc0, u.name, u)),
 					functions = fold(mo.functions, acc.functions, \acc0, f -> setTree(acc0, f.name, f)),
+					globals = fold(mo.globalVars, acc.globals, \acc0, g -> setTree(acc0, g.name, g))
 				)
 			} else {
 				println("Error in " + mo.fileinfo.flowfile);
@@ -96,7 +137,7 @@ Todo:
 
 validIncaModule(m : FiModule) -> bool {
 	// A bunch of rules apply to Inca files:
-	// No globals, no natives functions
+	// No natives functions
 
 	check = \b, e -> {
 		if (!b) println(e);
@@ -104,10 +145,7 @@ validIncaModule(m : FiModule) -> bool {
 	}
 
 	check(m.forbids == [], "no forbids")
-	&& check(m.globalVars == [], "no globals")
 	&& check(m.natives == [], "no natives")
-
-
 
 	// Check that the structs and unions do not contain refs, mutable,
 	// nested arrays, natives, functions nor polymorphism

@@ -1515,8 +1515,11 @@ class RenderSupportJSPixi {
 		clip.addVideoSource(src, type);
 	}
 
-	public static function addEventListener(clip : DisplayObject, event : String, fn : Void -> Void) : Void -> Void {
-		if (event == "resize") {
+	public static function addEventListener(clip : Dynamic, event : String, fn : Void -> Void) : Void -> Void {
+		if (untyped __instanceof__(clip, Element)) {
+			clip.addEventListener(event, fn);
+			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else if (event == "resize") {
 			on("resize", fn);
 			return function() { off("resize", fn); }
 		} else if (event == "mousedown" || event == "mousemove" || event == "mouseup" || event == "mousemiddledown" || event == "mousemiddleup") {
@@ -1529,31 +1532,31 @@ class RenderSupportJSPixi {
 			on(event, fn);
 			return function() { off(event, fn); }
 		} else if (event == "rollover") {
-			clip.on("pointerover", fn);
-			clip.updateClipInteractive();
+			cast(clip, DisplayObject).on("pointerover", fn);
+			cast(clip, DisplayObject).updateClipInteractive();
 			return function() {
-				clip.off("pointerover", fn);
-				clip.updateClipInteractive();
+				cast(clip, DisplayObject).off("pointerover", fn);
+				cast(clip, DisplayObject).updateClipInteractive();
 			};
 		} else if (event == "rollout") {
-			clip.on("pointerout", fn);
-			clip.updateClipInteractive();
+			cast(clip, DisplayObject).on("pointerout", fn);
+			cast(clip, DisplayObject).updateClipInteractive();
 			return function() {
-				clip.off("pointerout", fn);
-				clip.updateClipInteractive();
+				cast(clip, DisplayObject).off("pointerout", fn);
+				cast(clip, DisplayObject).updateClipInteractive();
 			};
 		} else if (event == "scroll") {
-			clip.on("scroll", fn);
-			return function() { clip.off("scroll", fn); };
+			cast(clip, DisplayObject).on("scroll", fn);
+			return function() { cast(clip, DisplayObject).off("scroll", fn); };
 		} else if (event == "change") {
-			clip.on("input", fn);
-			return function() { clip.off("input", fn); };
+			cast(clip, DisplayObject).on("input", fn);
+			return function() { cast(clip, DisplayObject).off("input", fn); };
 		} else if (event == "focusin") {
-			clip.on("focus", fn);
-			return function() { clip.off("focus", fn); };
+			cast(clip, DisplayObject).on("focus", fn);
+			return function() { cast(clip, DisplayObject).off("focus", fn); };
 		} else if (event == "focusout") {
-			clip.on("blur", fn);
-			return function() { clip.off("blur", fn); };
+			cast(clip, DisplayObject).on("blur", fn);
+			return function() { cast(clip, DisplayObject).off("blur", fn); };
 		} else {
 			Errors.report("Unknown event: " + event);
 			return function() {};
