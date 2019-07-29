@@ -31,8 +31,8 @@ class NativeWidgetClip extends FlowContainer {
 	public function updateNativeWidget() : Void {
 		var transform = getTransform();
 
-		var tx = getClipWorldVisible() ? transform.tx : -widgetWidth;
-		var ty = getClipWorldVisible() ? transform.ty : -widgetHeight;
+		var tx = Math.ceil(getClipWorldVisible() ? transform.tx : -widgetWidth);
+		var ty = Math.ceil(getClipWorldVisible() ? transform.ty : -widgetHeight);
 
 		if (Platform.isIE) {
 			nativeWidget.style.transform = 'matrix(${transform.a}, ${transform.b}, ${transform.c}, ${transform.d}, 0, 0)';
