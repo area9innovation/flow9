@@ -331,11 +331,14 @@ class RenderSupportJSPixi {
 
 			i = localStages.length - 1;
 			while(i > currentInteractiveLayerZorder) {
-				if (hittest(localStages[i], pos.x, pos.y) && untyped localStages[i].view.style.pointerEvents != "all") {
+				if (getClipAt(localStages[i], pos, true, true) != null && 
+					untyped localStages[i].view.style.pointerEvents != "all") {
+
 					untyped localStages[i].view.style.pointerEvents = "all";
+					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
+
 					untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
 					
-					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 
 					if (e.type == "touchstart") {
 						emitMouseEvent(PixiStage, "mousedown", pos.x, pos.y);
@@ -348,7 +351,7 @@ class RenderSupportJSPixi {
 				i--;
 			}
 
-			if (!hittest(localStages[currentInteractiveLayerZorder], e.clientX, e.clientY)) {
+			if (getClipAt(localStages[currentInteractiveLayerZorder], pos, true, true) == null) {
 				untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 			}
 		};

@@ -162,7 +162,7 @@ class WebClip extends NativeWidgetClip {
 
 			var pos = Util.getPointerEventPosition(e);
 			
-			if (RenderSupportJSPixi.hittest(localStages[i], pos.x, pos.y)) {
+			if (RenderSupportJSPixi.getClipAt(localStages[i], pos, true, true) != null) {
 				untyped localStages[i].view.style.pointerEvents = "all";
 				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
 
