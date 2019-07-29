@@ -192,10 +192,11 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
 StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     RUNNER_PopArgs1(rawqueries);
     RUNNER_CheckTag(TArray, rawqueries);
-    RUNNER_DefSlots4(
+    RUNNER_DefSlots5(
         resultArr,          // the filal result
         queriesResults,     // (array of arrays) the results for each query (query can include several sqls and results)
         queryResults,       // the results of a sigle query
+        queryResults2,      // it's used for resizing queryResults
         resultRows          // result of a single sql from a query
     );
 
@@ -216,7 +217,9 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
             last_error = err_msg;
         }
 
-        std::vector<StackSlot> results;
+        int resultsCnt = 0;
+        int realSize = 1;
+        queryResults = RUNNER->AllocateArray(realSize);
         do {
             int nRows = query->size();
             nRows = nRows == 0 ? 1 : nRows;
@@ -226,12 +229,23 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
                 StackSlot requestResult = databaseResult->getRecord(RUNNER);
                 RUNNER->SetArraySlot(resultRows, j, requestResult);
             }
-            results.push_back(resultRows);
+            resultsCnt++;
+            if (realSize == resultsCnt) {
+                queryResults2 = RUNNER->AllocateArray(realSize * 2);
+                for (int k = 0; k < realSize; k++ ) {
+                    RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+                }
+                queryResults = queryResults2;
+                realSize *= 2;
+            }
+            RUNNER->SetArraySlot(queryResults , resultsCnt - 1, resultRows);
         } while (query->nextResult());
-        int resultsCnt = results.size();
-        queryResults = RUNNER->AllocateArray(resultsCnt);
-        for (int j = 0; j < resultsCnt; j++) {
-            RUNNER->SetArraySlot(queryResults , j, results[j]);
+        if (resultsCnt < realSize) {
+            queryResults2 = RUNNER->AllocateArray(resultsCnt);
+            for (int k = 0; k < resultsCnt; k++ ) {
+                RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+            }
+            queryResults = queryResults2;
         }
         nresults += resultsCnt;
         RUNNER->SetArraySlot(queriesResults, i, queryResults);
