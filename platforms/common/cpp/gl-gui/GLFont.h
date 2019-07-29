@@ -480,6 +480,8 @@ public:
 
     const GLBoundingBox &getBoundingBox() { return bbox; }
 
+    static bool isDigit(ucs4_char c);  // Defined to work with 32 bits characters.
+    static bool isWeakChar(ucs4_char c);
     static bool isRtlChar(ucs4_char c);
     static bool isLtrChar(ucs4_char c);
     static ucs4_char tryMirrorChar(ucs4_char code);

@@ -371,6 +371,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private static function bidiDecorate(text : String, dir : String) : String {
+		// I do not know how comes this workaround is needed.
+		// But without it, paragraph has &lt; and &gt; displayed wrong.
+		if (text == "<" || text == ">") return text;
+
 		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
 		} else if (dir == 'rtl') {
@@ -552,10 +556,6 @@ class TextClip extends NativeWidgetClip {
 
 			setTextBackground(new Rectangle(0, 0, getWidth(), getHeight()));
 
-			if (isInput) {
-				setScrollRect(0, 0, getWidth(), getHeight());
-			}
-
 			textClip.setClipRenderable(true);
 			textClipChanged = false;
 		}
@@ -568,6 +568,14 @@ class TextClip extends NativeWidgetClip {
 		textClip.setClipVisible(true);
 
 		return textClip;
+	}
+
+	public override function invalidateStyle() : Void {
+		if (isInput) {
+			setScrollRect(0, 0, getWidth(), getHeight());
+		}
+
+		super.invalidateStyle();
 	}
 
 	public function invalidateMetrics() : Void {
