@@ -124,6 +124,12 @@ class TextClip extends NativeWidgetClip {
 	private var isInput : Bool = false;
 	private var isFocused : Bool = false;
 
+	public function new(?worldVisible : Bool = false) {
+		super(worldVisible);
+
+		style.resolution = 1.0;
+	}
+
 	public static function isRtlChar(ch: String) {
 		var code = ch.charCodeAt(0);
 		return (code >= 0x590 && code < 0x900)    // Hebrew, arabic and some other RTL.
@@ -365,6 +371,10 @@ class TextClip extends NativeWidgetClip {
 	}
 
 	private static function bidiDecorate(text : String, dir : String) : String {
+		// I do not know how comes this workaround is needed.
+		// But without it, paragraph has &lt; and &gt; displayed wrong.
+		if (text == "<" || text == ">") return text;
+
 		if (dir == 'ltr') {
 			return String.fromCharCode(0x202A) + text + String.fromCharCode(0x202C);
 		} else if (dir == 'rtl') {
@@ -442,7 +452,6 @@ class TextClip extends NativeWidgetClip {
 		style.breakWords = cropWords;
 		style.align = autoAlign == 'AutoAlignRight' ? 'right' : autoAlign == 'AutoAlignCenter' ? 'center' : 'left';
 		style.padding = Math.ceil(fontSize * 0.2);
-		style.resolution = 1.0;
 
 		measureFont();
 

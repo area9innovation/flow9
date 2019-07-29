@@ -3,52 +3,38 @@ import ds/simplegraph;
 import tools/flowc/incremental/fi_helpers;
 
 export {
-	buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string>;
+	buildIncaConversionGraph(env : IncaEnv, details : bool) -> SimpleGraph<string, string>;
 }
 
-buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string> {
-	graph0 = foldTree(env.unions, makeSimpleGraph(), \name, union, acc -> {
+buildIncaConversionGraph(env : IncaEnv, details : bool) -> SimpleGraph<string, string> {
+	// Whether we should include details in the graph or not
+	graph0 = if (details) foldTree(env.unions, makeSimpleGraph(), \name, union, acc -> {
 		fold(union.typenames, acc, \acc2, tn -> {
 			addSimpleEdge(acc2, name, getFiTypeName(tn), "", 0);
 		})
-	});
+	}) else makeSimpleGraph();
 
 	graph = foldTree(env.functions, graph0, \name, dec, acc -> {
-		addIncaFunctionToGraph(env, acc, dec)
+		addIncaFunctionToGraph(env, acc, details, dec)
 	});
-
-	if (true) {
-		dot = simpleGraph2dot(graph, "", [], \n -> {
-			concat(
-				[DotLabel(n)],
-				if (containsKeyTree(env.unions, n)) {
-					[DotFillColor("#ff0000"), DotShape("rectangle")]
-				} else {
-					[]
-				}
-
-			)
-		}, \e -> [DotLabel(e)]);
-		setFileContent("incagraph.dot", dot);
-		{}
-	}
 
 	graph;
 }
 
-addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, dec : FiFunctionDec) -> SimpleGraph<string, string> {
+addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, details : bool, dec : FiFunctionDec) -> SimpleGraph<string, string> {
+	// Extract the named function arguments
 	argTypes = filtermap(dec.type.args, \a -> {
 		argName = getFiTypeName(a.type);
 		if (argName == "") None() else Some(argName);
 	});
-	retType = getFiTypeName(dec.type.returnType);
+	retType = getIncaTypeNameOrVoid(dec.type.returnType);
 
 	if (length(argTypes) == 1 && retType != "") {
 		argType = argTypes[0];
 
 		println("\n" + argType + " -> " + retType);
 
-		acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
+		acc2 = if (details) addIncaCasesToGraph(env, acc, dec.name, dec.lambda) else acc;
 		addSimpleEdge(acc2, argType, retType, dec.name, 2);
 	} else acc;
 }
@@ -103,8 +89,13 @@ addIncaCaseToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, fn : string
 	switch (case.body) {
 		FiVar(__, __, __): acc;
 		default: {
-			type = getFiTypeName(fiExpType(case.body));
+			type = getIncaTypeNameOrVoid(fiExpType(case.body));
+
 			addSimpleEdge(acc, case.struct, type, fn, 1);
 		}
 	}
+}
+
+getIncaTypeNameOrVoid(t : FiType) -> string {
+	if (t == FiTypeVoid()) "void" else getFiTypeName(t);
 }

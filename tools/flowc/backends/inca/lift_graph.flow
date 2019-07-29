@@ -1,0 +1,78 @@
+import tools/flowc/backends/inca/env;
+import text/blueprint;
+import ds/simplegraph;
+
+export {
+	liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string;
+}
+
+liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
+	// OK, we have to find all structures that lead to "void"
+	rev = reverseSimpleGraph(graph);
+	performable : Set<string> = reachableClosureFromSimpleNode(rev, "void");
+
+	structs = filterSet(performable, \name -> {
+		!containsKeyTree(env.unions, name)
+	});
+
+	blueprint("
+			performIncaEffect_lifted(value : IncaValue) -> void {
+				id = IncaStructId(value);
+
+				%dispatcher%
+				else {
+					println_lifted(value) |> ignore;
+				}
+			}
+		", 
+		[
+			"dispatcher", buildIncaDispatcher(env, graph, structs)
+		]
+	);
+}
+
+buildIncaDispatcher(env : IncaEnv, graph : SimpleGraph<string, string>, performable : Set<string>) -> string {
+	superglue(set2array(performable), \name -> {
+		edges = getSimpleAdjacentEdges(graph, name);
+
+		if (edges == []) {
+			""
+		} else {
+			fn = if (length(edges) ==1) {
+				edges[0]
+			} else {
+				println("TODO: find the shortest path to void for " + name);
+				edges[0];
+			}
+
+			mfndef = lookupTree(env.functions, fn);
+			ok = switch (mfndef) {
+				None(): false;
+				Some(fndef): length(fndef.type.args) == 1;
+			}
+			if (ok) {
+				targets = getSimpleAdjacentNodes(graph, name);
+				fncall = edges[0] + "_lifted(value)";
+
+				call = if (targets[0] == "void") {
+					// OK, this is good
+					fncall + "; {}"
+				} else {
+					// OK, convert and the recurse
+					"performIncaEffect_lifted(" + fncall + ")";
+				}
+
+				blueprint("
+					if (id == %name%_ID) {
+						%call%
+					}", ["name", name,
+					"call", call
+				])
+			} else {
+				// Requires more than one parameter, so we can not do it
+				"";
+			}
+		}
+
+	}, " else ");
+}
