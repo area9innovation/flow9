@@ -1,22 +1,81 @@
 import tools/flowc/backends/inca/env;
 import text/blueprint;
 import ds/simplegraph;
+import tools/flowc/backends/inca/conversion_graph;
 
 export {
-	liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string;
+	liftIncaGraph(env : IncaEnv) -> Pair<string, string>;
 }
 
-liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
-	// OK, we have to find all structures that lead to "void"
-	rev = reverseSimpleGraph(graph);
-	performable : Set<string> = reachableClosureFromSimpleNode(rev, "void");
+liftIncaGraph(env : IncaEnv) -> Pair<string, string> {
+	// First, find what types we should generate converters for
+	smallgraph = buildIncaConversionGraph(env, false);
+	smallrev = reverseSimpleGraph(smallgraph);
 
-	structs = filterSet(performable, \name -> {
-		!containsKeyTree(env.unions, name)
+	unions = foldTree(env.unions, makeSet(), \name, __, acc -> insertSet(acc, name));
+	structsAndUnions = foldTree(env.structs, unions, \name, __, acc -> insertSet(acc, name));
+
+	// This is a collection of the types that have more than one "upflow" source
+	convertable = foldSet(structsAndUnions, makeSet1("void"), \acc, name -> {
+		pre = getSimpleAdjacentNodes(smallrev, name);
+		if (length(pre) >= 1) {
+			insertSet(acc, name);
+		} else {
+			acc;
+		}
+	});
+	// println("These are targets: " + toString(set2array(convertable)));
+
+	// OK, build the graph for all structs so we can find the best path for conversion
+	fullgraph = buildIncaConversionGraph(env, true);
+	rev = reverseSimpleGraph(fullgraph);
+	
+	if (true) {
+		// OK, we have to find all structures that lead to our targets
+		foldSet(convertable, Pair("", ""), \acc, target -> {
+			p = buildIncaConverterFunction(env, target, fullgraph, rev);
+			Pair(
+				acc.first + p.first,
+				acc.second + p.second,
+			)
+		})
+	} else {
+		buildIncaConverterFunction(env, "void", fullgraph, rev);
+	}
+}
+
+buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGraph<string, string>, rev : SimpleGraph<string, string>) -> Pair<string, string> {
+	name = if (targetType == "void") "performIncaEffect" else "convertInca2" + targetType;
+
+	dijkstra = getSimpleDijkstra(rev, targetType);
+	dg = simpleDijkstraToGraph(dijkstra);
+
+	if (true) {
+		dot = simpleGraph2dot(dg, "", [], \n -> {
+			concat(
+				[DotLabel(n)],
+				if (containsKeyTree(env.unions, n)) {
+					[DotFillColor("#ff0000"), DotShape("rectangle")]
+				} else {
+					[]
+				}
+
+			)
+		}, \e -> [DotLabel(e)]);
+		setFileContent(targetType + ".dot", dot);
+		{}
+	}
+
+	performable : Set<string> = reachableClosureFromSimpleNode(rev, targetType);
+
+	structs = foldSet(performable, makeSet(), \acc, tname -> {
+		mergeSets(acc, incaFiName2structs(env, tname))
 	});
 
-	blueprint("
-			performIncaEffect_lifted(manager : IncaManager, value : IncaValue) -> void {
+	println("To " + targetType + " we can go from " + toString(set2array(structs)));
+
+	def = blueprint("
+			%name%_lifted(manager : IncaManager, value : IncaValue) -> void {
 				id = IncaStructId(value);
 
 				%dispatcher%
@@ -26,25 +85,55 @@ liftIncaGraph(env : IncaEnv, graph : SimpleGraph<string, string>) -> string {
 			}
 		", 
 		[
-			"dispatcher", buildIncaDispatcher(env, graph, structs)
+			"name", name,
+			"dispatcher", buildIncaDispatcher(env, targetType, name, graph, dijkstra, structs)
 		]
+	);
+
+	// OK, we have to find all structures that lead to "void"
+	Pair(
+		name + "_lifted(manager : IncaManager, v : IncaValue) -> " + (if (targetType == "void") "void" else "IncaValue") + ";\n",
+		def
 	);
 }
 
-buildIncaDispatcher(env : IncaEnv, graph : SimpleGraph<string, string>, performable : Set<string>) -> string {
+incaFiName2structs(env : IncaEnv, tname : string) -> Set<string> {
+	mudef = lookupTree(env.unions, tname);
+	switch (mudef) {
+		None(): makeSet1(tname);
+		Some(udef): {
+			fold(udef.typenames, makeSet(), \acc, tn -> {
+				mergeSets(acc, incaFiName2structs(env, tn.name))
+			})
+		}
+	}
+}
+
+buildIncaDispatcher(env : IncaEnv, targetType : string, fnname : string, graph : SimpleGraph<string, string>, 
+		dijkstra : SimpleDijkstra<string, string>, performable : Set<string>) -> string {
 	superglue(set2array(performable), \name -> {
+		medge = lookupTree(dijkstra.spTree, name);
 		edges = getSimpleAdjacentEdges(graph, name);
 
-		if (edges == []) {
+		fn = if (false && length(edges) == 1) {
+			edges[0]
+		} else {
+			switch (medge) {
+				None(): {
+					// OK, let us find out what union this guy is in, so we can find that
+					
+					println("TODO: find the shortest path to " + targetType + " for " + name + " from " + strGlue(edges, ", "));
+					"";
+				}
+				Some(sedge): {
+					sedge.target;
+				}
+			}
+		}
+
+		if (fn == "") {
 			""
 		} else {
-			fn = if (length(edges) ==1) {
-				edges[0]
-			} else {
-				println("TODO: find the shortest path to void for " + name);
-				edges[0];
-			}
-
 			mfndef = lookupTree(env.functions, fn);
 			ok = switch (mfndef) {
 				None(): false;
@@ -54,12 +143,12 @@ buildIncaDispatcher(env : IncaEnv, graph : SimpleGraph<string, string>, performa
 				targets = getSimpleAdjacentNodes(graph, name);
 				fncall = edges[0] + "_lifted(manager, value)";
 
-				call = if (targets[0] == "void") {
+				call = if (targets[0] == targetType) {
 					// OK, this is good
 					fncall + "; {}"
 				} else {
 					// OK, convert and the recurse
-					"performIncaEffect_lifted(manager, " + fncall + ")";
+					fnname + "_lifted(manager, " + fncall + ")";
 				}
 
 				blueprint("
