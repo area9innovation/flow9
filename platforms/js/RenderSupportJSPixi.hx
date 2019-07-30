@@ -1008,6 +1008,10 @@ class RenderSupportJSPixi {
 		return PixiStage;
 	}
 
+	public static function mainRenderClip() : DisplayObject {
+		return PixiStage.children[0];
+	}
+
 	public static function enableResize() : Void {
 		// The first flow render call. Hide loading progress indicator.
 		Browser.document.body.style.backgroundImage = "none";
