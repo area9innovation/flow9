@@ -28,30 +28,35 @@ liftIncaGraph(env : IncaEnv) -> Pair<string, string> {
 
 	// OK, build the graph for all structs so we can find the best path for conversion
 	fullgraph = buildIncaConversionGraph(env, true);
-	rev = reverseSimpleGraph(fullgraph);
 	
 	if (true) {
 		// OK, we have to find all structures that lead to our targets
 		foldSet(convertable, Pair("", ""), \acc, target -> {
-			p = buildIncaConverterFunction(env, target, fullgraph, rev);
+			p = buildIncaConverterFunction(env, target, fullgraph);
 			Pair(
 				acc.first + p.first,
 				acc.second + p.second,
 			)
 		})
 	} else {
-		buildIncaConverterFunction(env, "void", fullgraph, rev);
+		buildIncaConverterFunction(env, "void", fullgraph);
 	}
 }
 
-buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGraph<string, string>, rev : SimpleGraph<string, string>) -> Pair<string, string> {
+buildIncaConverterFunction(env : IncaEnv, targetType : string, graph0 : SimpleGraph<string, string>) -> Pair<string, string> {
 	name = if (targetType == "void") "performIncaEffect" else "convertInca2" + targetType;
 
-	dijkstra = getSimpleDijkstra(rev, targetType);
-	dg = simpleDijkstraToGraph(dijkstra);
+	graph = addExpandedIncaTarget(env, graph0, targetType);
 
-	if (true) {
-		dot = simpleGraph2dot(dg, "", [], \n -> {
+	// TODO: Instead of reversing the entire graph again, we could have one global reversed
+	// and then add the target to both this and the graph0.
+	rev = reverseSimpleGraph(graph);
+
+	dijkstra = getSimpleDijkstra(rev, targetType);
+
+	if (false) {
+		dg = simpleDijkstraToGraph(dijkstra);
+		dot = simpleGraph2dot(if (false) rev else dg, "", [], \n -> {
 			concat(
 				[DotLabel(n)],
 				if (containsKeyTree(env.unions, n)) {
@@ -68,14 +73,10 @@ buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGra
 
 	performable : Set<string> = reachableClosureFromSimpleNode(rev, targetType);
 
-	structs = foldSet(performable, makeSet(), \acc, tname -> {
-		mergeSets(acc, incaFiName2structs(env, tname))
-	});
-
-	println("To " + targetType + " we can go from " + toString(set2array(structs)));
+	retType = (if (targetType == "void") "void" else "IncaValue");
 
 	def = blueprint("
-			%name%_lifted(manager : IncaManager, value : IncaValue) -> void {
+			%name%_lifted(manager : IncaManager, value : IncaValue) -> %ret% {
 				id = IncaStructId(value);
 
 				%dispatcher%
@@ -83,16 +84,18 @@ buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGra
 					println_lifted(value) |> ignore;
 				}
 			}
+
 		", 
 		[
 			"name", name,
-			"dispatcher", buildIncaDispatcher(env, targetType, name, graph, dijkstra, structs)
+			"ret", retType,
+			"dispatcher", buildIncaDispatcher(env, targetType, name, graph, dijkstra, performable)
 		]
 	);
 
 	// OK, we have to find all structures that lead to "void"
 	Pair(
-		name + "_lifted(manager : IncaManager, v : IncaValue) -> " + (if (targetType == "void") "void" else "IncaValue") + ";\n",
+		name + "_lifted(manager : IncaManager, v : IncaValue) -> " + retType + ";\n",
 		def
 	);
 }
@@ -100,36 +103,22 @@ buildIncaConverterFunction(env : IncaEnv, targetType : string, graph : SimpleGra
 buildIncaDispatcher(env : IncaEnv, targetType : string, fnname : string, graph : SimpleGraph<string, string>, 
 		dijkstra : SimpleDijkstra<string, string>, performable : Set<string>) -> string {
 	superglue(set2array(performable), \name -> {
-		medge = lookupTree(dijkstra.spTree, name);
-		edges = getSimpleAdjacentEdges(graph, name);
-
-		fn = if (false && length(edges) == 1) {
-			edges[0]
-		} else {
-			switch (medge) {
-				None(): {
-					// OK, let us find out what union this guy is in, so we can find that
-					
-					println("TODO: find the shortest path to " + targetType + " for " + name + " from " + strGlue(edges, ", "));
-					"";
-				}
-				Some(sedge): {
-					sedge.target;
-				}
-			}
-		}
+		fn = findIncaEdgeFunction(dijkstra, name);
 
 		if (fn == "") {
 			""
 		} else {
 			mfndef = lookupTree(env.functions, fn);
 			ok = switch (mfndef) {
-				None(): false;
+				None(): {
+					println("Invariation broken: Could not find fn " + fn);
+					false;
+				}
 				Some(fndef): length(fndef.type.args) == 1;
 			}
 			if (ok) {
 				targets = getSimpleAdjacentNodes(graph, name);
-				fncall = edges[0] + "_lifted(manager, value)";
+				fncall = fn + "_lifted(manager, value)";
 
 				call = if (targets[0] == targetType) {
 					// OK, this is good
@@ -152,4 +141,16 @@ buildIncaDispatcher(env : IncaEnv, targetType : string, fnname : string, graph :
 		}
 
 	}, " else ");
+}
+
+findIncaEdgeFunction(dijkstra : SimpleDijkstra<string, string>, name : string) -> string {
+	medge = lookupTree(dijkstra.spTree, name);
+	switch (medge) {
+		None(): "";
+		Some(edge): {
+			if (edge.data == "") {
+				findIncaEdgeFunction(dijkstra, edge.target)
+			} else edge.data;
+		}
+	}
 }
