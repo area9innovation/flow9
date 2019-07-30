@@ -856,6 +856,9 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
+		if (nativeWidget == null)
+			return;
+
 		if (newValue != nativeWidget.value) {
 			if (e != null && e.data != null && e.data.length != null) {
 				var newCursorPosition : Int = untyped cursorPosition + newValue.length - nativeWidget.value.length + e.data.length;
