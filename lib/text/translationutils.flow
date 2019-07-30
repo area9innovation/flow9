@@ -1,11 +1,9 @@
-import string;
 import text/languages;
-import text/translation_fixup;
-import text/translationapi; // ContentUnit
 import fs/filesystem; // fileNameOnly
 import formats/json/json;
-import math/stringmath;
+import text/translationapi; // ContentUnit
 import ui/fontmapping; // getLang
+import formats/xml;
 
 export {
 	// Returns a language name for given two language letters: de -> German
@@ -39,8 +37,9 @@ export {
 	// Converts int to string in th-format: 1st, 2nd, 3rd, 4th, etc.
 	i2sTh(value : int) -> string;
 
-	// a flag to fix some specific bugs in old flow apps
-	keepXlfInnerTagsUnescaped = ref true;
+	// Common texts2XliffContent fn for simple_string and wigi_light translations api
+	extendedTexts2XliffContent(texts : [GeneralContentUnit], productName : string, language : string, escapedText : bool) -> string;
+	fakeTranslationSupport(doNormalTranslation : (string) -> string) -> void;
 }
 
 isValidSourceText(text : string) -> bool {
@@ -115,9 +114,7 @@ extractTranslationsFromJson(content : string, translationTree : ref Tree<string,
 		JsonObject(members): {
 			iter(members, \m : Pair<string, Json> ->
 				switch(m.second : Json) {
-					JsonString(v): {
-						translationTree := setTree(^translationTree, fixupTranslations(m.first), fixupTranslations(v));
-					}
+					JsonString(v): translationTree := setTree(^translationTree, m.first, v);
 					default: {}
 				}
 			)
@@ -185,5 +182,81 @@ i2sTh(value : int) -> string {
 		strLeft(strValue, strlen(strValue) - 1) + i2sThSuffixes[lastDigit]
 	} else {
 		strValue + i2sThSuffixes[0]
+	}
+}
+
+extendedTexts2XliffContent(texts : [GeneralContentUnit], productName : string, language : string, escapedText : bool) -> string {
+	devtrace("texts2XliffContent total texts: " + toString(length(texts)));
+	prefiltered = filterSources(texts);
+	devtrace("texts2XliffContent filtered texts: " + toString(length(prefiltered)));
+
+	header_attrs = "version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"urn:oasis:names:tc:xliff:document:1.2 xliff-core-1.2-transitional.xsd\"";
+
+	id : ref int = ref round(random() * 1000.0);
+	getId = \ -> { id := ^id + 1; i2s(^id); }
+
+	addAttr = \unit -> switch (unit : GeneralContentUnit) {
+		ContentUnit(__, __, __): "";
+		ContentUnitCustom(__, __, __, attrs): {
+			strGlue(map(attrs, \a -> {
+				switch (a : ContentUnitAttributes) {
+					ContentUnitExtradata(val): formatString("extradata=\"%1\"", [val]); // val is xml-escaped string
+				}
+			}), " ");
+		};
+	}
+
+	body =
+		concatStrings(map(prefiltered, \t -> {
+			text = if (escapedText) xmlEscapeText(t.text) else t.text;
+			"   <trans-unit id=\"" + getId() + "\" " + addAttr(t) + ">\n"
+			"    <source>" +  text + "</source>\n"
+			"    <target>" +  text + "</target></trans-unit>\n"
+		}));
+
+	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+	"<xliff " + header_attrs + ">\n"
+	" <file source-language=\"" + language + "\" product-name=\"" + productName + "\" original=\"" + productName + "\" datatype=\"plaintext\">\n"
+	"  <header>\n"
+	"   <phase-group>\n"
+	"    <phase phase-name=\"extraction\" process-name=\"extraction\"></phase>\n"
+	"   </phase-group>\n"
+	"  </header>\n"
+	"  <body>" + (if (startsWith(body, "\n")) "" else "\n")
+	   + body +
+	(if (body == "" || endsWith(body, "\n")) "" else "\n") +
+	"  </body>\n"
+	" </file>\n"
+	"</xliff>\n"
+}
+
+fakeTranslationSupport(doNormalTranslation : (string) -> string) -> void {
+	faked = getUrlParameter("faketranslation");
+	if (faked != "") {
+		initGetTranslation(
+			// OK, we replace everything with dots except for the first char
+			if (faked == ".") {
+				\s -> {
+					if (s == "") s
+					else {
+						first = getCharAt(s, 0);
+						rest = strRepeat(". ", strlen(s) * 2);
+						first + rest;
+					}
+				}
+			} else if (faked == "reverse") {
+				reverse
+			} else if (faked == "upper") {
+				toUpperCase
+			} else if (faked == "lower") {
+				toLowerCase
+			} else if (faked == "double" || faked == "doubled") {
+				\s -> s + " " + toUpperCase(s)
+			} else {
+				\s -> s + faked
+			}
+		);
+	} else {
+		initGetTranslation(doNormalTranslation);
 	}
 }
