@@ -635,7 +635,14 @@ class AccessWidget extends EventEmitter {
 			switch (key) {
 				case "role" : role = attributes.get(key);
 				case "description" : description = attributes.get(key);
-				case "zorder" : zorder = Std.parseInt(attributes.get(key));
+				case "zorder" : {
+					if (zorder != null) {
+						zorder = Std.parseInt(attributes.get(key));
+						updateZorder();
+					} else {
+						zorder = Std.parseInt(attributes.get(key));
+					}
+				}
 				case "id" : id = attributes.get(key);
 				case "enabled" : enabled = attributes.get(key) == "true";
 				case "nodeindex" : nodeindex = parseNodeIndex(attributes.get(key));
@@ -797,7 +804,7 @@ class AccessWidget extends EventEmitter {
 			if (accessWidget != null && accessWidget.element != null) {
 				if (child.changed) {
 					try {
-						if (previousElement != null && previousElement.nextSibling != null) {
+						if (previousElement != null && previousElement.nextSibling != null && previousElement.parentNode == parent) {
 							parent.insertBefore(accessWidget.element, previousElement.nextSibling);
 						} else {
 							parent.appendChild(accessWidget.element);

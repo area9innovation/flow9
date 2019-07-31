@@ -166,6 +166,7 @@ typeverifyFiFunctionDec(moduleEnv : TypeVerifyModuleEnv, func : FiFunctionDec, o
 	ret = 
 		verifyNameUnused(moduleEnv, func.name, onError, func.declStart) &&
 		typeverifyFiExp(tenv, func.lambda, onError) &&
+		isFiSubType(tenv.module.global.acc.names, fiExpType(func.lambda), func.type, true, true) &&
 		typeverifyFiType(tenv, func.type, onError, func.declStart);
 	if (!ret) {
 		onError(FcError("in function '" + func.name + "'", [FcPosition(moduleEnv.name, func.declStart, func.declStart)]));
@@ -178,6 +179,7 @@ typeverifyFiGlobalVar(moduleEnv : TypeVerifyModuleEnv, var : FiGlobalVar, onErro
 	ret = 
 		verifyNameUnused(moduleEnv, var.name, onError, var.declStart) &&
 		typeverifyFiExp(tenv, var.value, onError) &&
+		isFiSubType(tenv.module.global.acc.names, fiExpType(var.value), var.type, true, true) &&
 		typeverifyFiType(tenv, var.type, onError, var.declStart);
 	if (!ret) {
 		onError(FcError("in global variable '" + var.name + "'", [FcPosition(moduleEnv.name, var.declStart, var.declStart)]));
@@ -190,6 +192,12 @@ typeverifyFiNativeDec(moduleEnv : TypeVerifyModuleEnv, nat : FiNativeDec, onErro
 	ret = 
 		verifyNameUnused(moduleEnv, nat.name, onError, nat.declStart) &&
 		typeverifyFiExp(tenv, nat.fallbackLambda, onError) &&
+		(
+			switch (nat.fallbackLambda) {
+				FiVoid(__): true;
+				default: isFiSubType(tenv.module.global.acc.names, fiExpType(nat.fallbackLambda), nat.type, true, true);
+			}
+		) &&
 		typeverifyFiType(tenv, nat.type, onError, nat.declStart);
 	if (!ret) {
 		onError(FcError("in native '" + nat.name + "'", [FcPosition(moduleEnv.name, nat.declStart, nat.declStart)]));
@@ -212,7 +220,8 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 			fnType = fiExpType(f);
 			callType = FiTypeFunction(map(args, \a -> FiFunArg("", fiExpType(a))), type);
 			//println("Check call super\n\t" + prettyFiType(dummyPretty, fnType, makeSet()) + ", sub\n\t"  + prettyFiType(dummyPretty, callType, makeSet()));
-			if (!isFiSubType(env.module.global.acc.names, fnType, callType, true, false)) {
+			callTypeIsOk = isFiSubType(env.module.global.acc.names, fnType, callType, true, true);
+			if (!callTypeIsOk) {
 				onError(
 					FcError(
 						"Wrong type in call to '"
@@ -222,7 +231,7 @@ typeverifyFiExp(env : TypeVerifyEnv, expr : FiExp, onError : (FcError) -> void) 
 					)
 				);
 			}
-			
+			callTypeIsOk &&
 			typeverifyFiType(env, type, onError, expr.start) && 
 			typeverifyFiExp(env, f, onError) && 
 			forall(args, \arg -> {

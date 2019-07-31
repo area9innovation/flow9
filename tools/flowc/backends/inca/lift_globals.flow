@@ -1,0 +1,50 @@
+import tools/flowc/backends/inca/lift_exp;
+import text/blueprint;
+
+export {
+	// Lift our code to lifted, mutable versions
+	liftIncaGlobals(env : IncaEnv) -> string;
+}
+
+
+liftIncaGlobals(env : IncaEnv) -> string {
+	blueprint("
+		import inca/manager;
+		import out/types;
+
+		export {
+			makeIncaManager() -> IncaManager;
+		}
+
+		%manager%
+	", [
+		"manager", buildIncaManagerCode(env),
+	]);
+}
+
+buildIncaManagerCode(env : IncaEnv) -> string {
+	// We clear the environment so we can initialize correctly
+	cleanEnv = IncaEnv(env with globals = makeTree());
+	blueprint("
+		makeIncaManager() -> IncaManager {
+			%vars%
+			IncaManager(
+				pairs2tree([
+					%globals%])
+			);
+		}
+	", [
+		"vars", fold(env.globalsOrder, "", \acc, name -> {
+			mgl = lookupTree(env.globals, name);
+			switch (mgl) {
+				None(): acc;
+				Some(gl): {
+					acc + name + "_lifted = " + liftIncaExp(cleanEnv, gl.value, 0) + ";\n"
+				}
+			}
+		}),
+		"globals", foldTree(env.globals, "", \name, gl : FiGlobalVar, acc -> {
+			acc + "Pair(\"" + name + "\", " + name + "_lifted),\n"
+		})
+	])
+}

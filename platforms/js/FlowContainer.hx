@@ -20,6 +20,18 @@ class FlowContainer extends Container {
 	}
 
 	public override function addChild<T:DisplayObject>(child : T) : T {
+		if (child.parent != null) {
+			child.parent.children.remove(child);
+
+			child.parent.updateClipInteractive();
+
+			RenderSupportJSPixi.InvalidateStage();
+
+			untyped child.parent.childrenChanged = true;
+			child.parent.emitEvent("childrenchanged");
+			child.parent = null;
+		}
+
 		var newChild = super.addChild(child);
 
 		if (newChild != null) {
@@ -38,6 +50,18 @@ class FlowContainer extends Container {
 	}
 
 	public override function addChildAt<T:DisplayObject>(child : T, index : Int) : T {
+		if (child.parent != null) {
+			child.parent.children.remove(child);
+
+			child.parent.updateClipInteractive();
+
+			RenderSupportJSPixi.InvalidateStage();
+
+			untyped child.parent.childrenChanged = true;
+			child.parent.emitEvent("childrenchanged");
+			child.parent = null;
+		}
+
 		var newChild = super.addChildAt(child, index > children.length ? children.length : index);
 
 		if (newChild != null) {

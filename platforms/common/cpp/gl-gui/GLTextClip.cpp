@@ -225,7 +225,7 @@ void GLTextClip::setPlainText(const unicode_string &str)
     endBuildExtents();
 }
 
-void GLTextClip::layoutTextWrapLines()
+void GLTextClip::layoutTextWrapLines(bool rtl)
 {
     text_lines.clear();
     text_lines.reserve(text_extents.size());
@@ -240,19 +240,6 @@ void GLTextClip::layoutTextWrapLines()
     bool prev_newline = false;
     T_index::iterator idx_it = text_lines.back().extent_index.begin();
     T_int_index::iterator cidx_it = text_char_index.begin();
-    bool rtl = false;
-    for (unsigned i = 0; i < text_extents.size(); i++) {
-        Extent::Ptr extent = text_extents[i];
-        DecodeUtf16toUtf32 decoder(extent->text);
-        shared_ptr<Utf32InputIterator> strIter(decoder.begin().clone());
-        shared_ptr<Utf32InputIterator> strEnd(decoder.end().clone());
-        for (*strIter; *strIter != *strEnd; ++*strIter) {
-            if (GLTextLayout::isRtlChar(**strIter)) {rtl = true; break;};
-            if (GLTextLayout::isLtrChar(**strIter)) break;
-        }
-        if (*strIter != *strEnd) break;
-    }
-
     for (unsigned i = 0; i < text_extents.size(); i++) {
         Extent::Ptr extent = text_extents[i];
 
@@ -300,7 +287,7 @@ void GLTextClip::layoutTextWrapLines()
 
                 if (*layout->getEndPos() != *ctexti) {
                     ++*wpos;
-                    for (; *wpos != *ctexti; ++*wpos) {
+                    for (; *wpos != *ctexti && *wpos != *strEnd; ++*wpos) {
                         ucs4_char c = **wpos;
                         if (isspace(c) || c == '-')
                             break;
@@ -453,7 +440,7 @@ void GLTextClip::layoutText()
 {
     if (layout_ready) return;
 
-    layoutTextWrapLines();
+    layoutTextWrapLines(textDirection == RTL);
     layoutTextSpaceLines();
 
     if (is_input && explicit_size != vec2(0.0f))
@@ -907,7 +894,9 @@ StackSlot GLTextClip::setTextDirection(RUNNER_ARGS)
     else
         RUNNER->ReportError(InvalidArgument, "Unknown TextDirection type: %s", val.c_str());
 
+    invalidateLayout();
     stateChanged();
+    layoutText();
     RETVOID;
 }
 
@@ -1021,6 +1010,7 @@ StackSlot GLTextClip::getTextFieldCharXPosition(RUNNER_ARGS)
 
 StackSlot GLTextClip::findTextFieldCharByPosition(RUNNER_ARGS)
 {
+    // TODO check glyphs order in layout object is correct (monotone) due GLTextLayout::buildLayout was rewritten.
     RUNNER_PopArgs2(posx, posy);
     RUNNER_CheckTag2(TDouble, posx, posy);
     int char_idx = -1;

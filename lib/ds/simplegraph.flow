@@ -1,4 +1,4 @@
-import ds/easygraph;
+import ds/easygraph_utils;
 
 export {
 	// A simple graph builder where nodes are identified by the data itself
@@ -13,6 +13,29 @@ export {
 
 	hasSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?) -> bool;
 	addSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?, data : ??, weight : int) -> SimpleGraph<?, ??>;
+	getSimpleAdjacentNodes(g : SimpleGraph<?, ??>, from : ?) -> [?];
+	getSimpleAdjacentEdges(g : SimpleGraph<?, ??>, from : ?) -> [??];
+
+	reverseSimpleGraph(g : SimpleGraph<?, ??>) -> SimpleGraph<?, ??>;
+
+	reachableClosureFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<?>;
+
+	// Get distances from the specified node to all reachable nodes in the graph
+	getSimpleDijkstra(g : SimpleGraph<?, ??>, from : ?) -> SimpleDijkstra<?, ??>;
+
+		SimpleDijkstra(
+			// The link from this node that will give the shortest path out
+			spTree : Tree<?, SimpleEdge<?, ??>>, 
+			// The cost for this node out
+			distanceMap : Tree<?, int>, 
+		);
+		SimpleEdge(
+			target : ?,
+			data : ??,
+			weight : int,
+		);
+
+	simpleDijkstraToGraph(dijkstra : SimpleDijkstra<?, ??>) -> SimpleGraph<?, ??>;
 
 	SimpleGraph(nodes : Tree<?, int>, nnodes : int, graph : EasyGraph<?, ??>);
 
@@ -91,6 +114,139 @@ hasSimpleEdge(g : SimpleGraph<?, ??>, from : ?, to : ?) -> bool {
 			exists(succs, \edge -> edge.to == toId);
 		}
 	}
+}
+
+getSimpleAdjacentNodes(g : SimpleGraph<?, ??>, from : ?) -> [?] {
+	succs : [GEdge] = lookupTreeDef(g.graph.edges, getSimpleNodeId(g, from), []);
+
+	filtermap(succs, \edge -> {
+		node = lookupTree(g.graph.nodes, edge.to);
+		maybeMap(node, \n : GNode<?> -> n.data);
+	})
+}
+
+getSimpleAdjacentEdges(g : SimpleGraph<?, ??>, from : ?) -> [??] {
+	succs : [GEdge] = lookupTreeDef(g.graph.edges, getSimpleNodeId(g, from), []);
+	map(succs, \edge -> {
+		edge.data;
+	})
+}
+
+
+reverseSimpleGraph(g : SimpleGraph<?, ??>) -> SimpleGraph<?, ??> {
+	SimpleGraph(g with graph = reverseEasyGraph(g.graph))
+}
+
+reachableClosureFromSimpleNode(g : SimpleGraph<?, ??>, from : ?) -> Set<?> {
+	rc = reachableClosureFromNode(g.graph, getSimpleNodeId(g, from));
+
+	foldSet(rc, makeSet(), \acc, nodeid -> {
+		node = lookupTree(g.graph.nodes, nodeid);
+		switch (node) {
+			None(): acc;
+			Some(n): insertSet(acc, n.data);
+		}
+	})
+}
+
+SimpleDijkstraState(
+	// The cost for this node out
+	distanceMap : Tree<?, int>, 
+	// Renaming nodes to visit
+	nodesQueue : Set<Pair<?, int>>, 
+	// The shortest link from this node
+	spTree : Tree<?, SimpleEdge<?, ??> >, 
+	// What nodes have we visited?
+	visited : Set<?>, 
+	// What nodes remain to be visited?
+	targetsLeft : Set<?>
+);
+
+getSimpleDijkstra(g : SimpleGraph<?, ??>, from : ?) -> SimpleDijkstra<?, ??> {
+	state = SimpleDijkstraState(
+		makeTree1(from, 0), 
+		makeSet1(Pair(from, 0)),
+		makeTree(),
+		makeSet(),
+		foldTree(g.nodes, makeSet(), \node, id, acc -> insertSet(acc, node))
+	);
+
+	st = findSimpleDistance(g, state);
+	SimpleDijkstra(
+		st.spTree,
+		st.distanceMap
+	);
+}
+
+findSimpleDistance(g : SimpleGraph<?, ??>, state : SimpleDijkstraState<?, ??>) -> SimpleDijkstraState<?, ??> {
+	popm = popMinSet(state.nodesQueue);
+
+	switch (popm) {
+		None(): state;
+		Some(pop): {
+			node = pop.value.first;
+			distance = pop.value.second;
+			if (distance == intMax) {
+				state;
+			} else {
+				targetsLeft = removeSet(state.targetsLeft, node);
+				if (isEmptySet(targetsLeft)) {
+					state;
+				} else {
+					edges : [GEdge] = lookupTreeDef(g.graph.edges, getSimpleNodeId(g, node), []);
+					newState0 = SimpleDijkstraState(state with 
+						nodesQueue = pop.rest,
+						visited = insertSet(state.visited, node),
+						targetsLeft = targetsLeft
+					);
+					newState = fold(edges, newState0, \acc, edge -> {
+						mnode = lookupTree(g.graph.nodes, edge.to);
+						nod : Maybe<?> = maybeMap(mnode, \n : GNode<?> -> n.data);
+						switch (nod) {
+							None(): acc;
+							Some(n): {
+								updateSimpleDistance(acc, n, node, distance, edge)
+							}
+						}
+					});
+
+					findSimpleDistance(g, newState);
+				}
+			}
+		}
+	}
+}
+
+updateSimpleDistance(state : SimpleDijkstraState<?, ??>, node : ?, parent : ?, distance : int, edge : GEdge<??>) -> SimpleDijkstraState<?, ??> {
+	weight = edge.weight;
+	if (containsSet(state.visited, node)) {
+		state;
+	} else {
+		dist = lookupTreeDef(state.distanceMap, node, intMax);
+		key = Pair(node, dist);
+		newDistance = distance + weight;
+		if (newDistance < dist) {
+			newKey = Pair(node, newDistance);
+			distanceMap = setTree(state.distanceMap, node, newDistance);
+			nodesQueue = updateSet(state.nodesQueue, key, newKey);
+			simpleEdge = SimpleEdge(parent, edge.data, edge.weight);
+			spTree = setTree(state.spTree, node, simpleEdge);
+			SimpleDijkstraState(
+				state with
+				distanceMap = distanceMap,
+				nodesQueue = nodesQueue,
+				spTree = spTree
+			);
+		} else {
+			state;
+		}
+	}
+}
+
+simpleDijkstraToGraph(dijkstra : SimpleDijkstra<?, ??>) -> SimpleGraph<?, ??> {
+	foldTree(dijkstra.spTree, makeSimpleGraph(), \node, edge, acc : SimpleGraph<?, ??> -> {
+		addSimpleEdge(acc, node, edge.target, edge.data, edge.weight)
+	});
 }
 
 simpleGraph2dot(
