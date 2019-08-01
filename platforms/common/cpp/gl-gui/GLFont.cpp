@@ -942,9 +942,11 @@ void GLTextLayout::buildLayout(Utf32InputIterator &begin, Utf32InputIterator &en
         if (rtl) {
             char_indices.insert(char_indices.begin(), chrIdx);
             glyphs.insert(glyphs.begin(), info);
+            directions.insert(directions.begin(), CharDirection::RTL);
         } else {
             char_indices.push_back(chrIdx);
             glyphs.push_back(info);
+            directions.push_back(CharDirection::LTR);
         }
         if (info) {
             bbox |= vec2(pos,0) + info->bearing * size;
