@@ -54,10 +54,8 @@ export {
 		position : DynamicBehaviour<int>,
 		selection : DynamicBehaviour<int>,
 		cursorShape : DynamicBehaviour<CursorShape>,
-		mTextStyle : [MTextStyle],
-		textStyle : [CharacterStyle],
-		mTextStyleDisabled : [MTextStyle],
-		tTextMetrics : FormMetrics,
+		textStyle : Transform<[MTextStyle]>,
+		tTextMetrics : Transform<FormMetrics>,
 		smallEdit : bool,
 		label : string,
 		dynamicSize : bool,
@@ -333,18 +331,9 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 			|> (\f2 -> if (thirdOfTriple(f)) f2 else arrayPush(f2, MTextDisabled()))
 		);
 
-	textStyle : [CharacterStyle] = MTextStyle2CharacterStyle(parent, mTextStyle);
+	textStyle = extractStruct(style, MDynamicTextStyle(const(mTextStyle))).style;
 
-	mTextStyleDisabled =
-		extractMTextStyleDef(
-			extractStruct(style, MCustomTextStyle([])).style,
-			Triple(getTextColor(parent), if (condensed) MBody2() else MSubtitle1(), false)
-		)
-		|> (\f : Triple<MColor, MFontStyle, bool> ->
-			[firstOfTriple(f), secondOfTriple(f), MTextDisabled()]
-		);
-
-	tTextMetrics = getTWordMetrics(TText(" ", textStyle), makeTree());
+	tTextMetrics = fselect(textStyle, FLift(\ts -> getTWordMetrics(TText(" ", MTextStyle2CharacterStyle(parent, ts)), makeTree())));
 
 	prev = ref getValue(content);
 
@@ -1035,11 +1024,11 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		if (hasFloatingLabel && dynamicSize)
 			fif(
 				fOr(mfocus.focused, fneq(content, "")),
-				const(tTextMetrics.baseline + inputBorders.top + if (condensed) 8. else 12.),
-				const(tTextMetrics.baseline + inputBorders.top)
+				fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top + if (condensed) 8. else 12.)),
+				fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top))
 			)
 		else
-			const(tTextMetrics.baseline + inputBorders.top);
+			fselect(tTextMetrics, FLift(\tm -> tm.baseline + inputBorders.top));
 
 	MInputState(
 		manager,
@@ -1052,9 +1041,7 @@ makeMInputState(manager : MaterialManager, style : [MAutoCompleteStyle], state :
 		position,
 		selection,
 		textInputCursorShape,
-		mTextStyle,
 		textStyle,
-		mTextStyleDisabled,
 		tTextMetrics,
 		smallEdit,
 		label,
@@ -1264,7 +1251,7 @@ makeMTextEditorState(inputState : MInputState) -> MTextEditorState {
 	linesCount = inputState.linesCount;
 	maxChars = inputState.maxChars;
 	numeric = inputState.numeric;
-	textStyle = inputState.textStyle;
+	textStyle = MTextStyle2CharacterStyle(inputState.parent, fgetValue(inputState.textStyle)); // TODO:
 	textHeight = getTextSize(".", textStyle).height;
 
 	scrollStyle =
@@ -2080,13 +2067,13 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 	editorState = makeMTextEditorState(inputState);
 
 	makeInputBox = \en : bool ->
-		TSelect2(editorState.lines, editorState.width, \lns, wd ->
+		TSelect3(editorState.lines, editorState.width, inputState.textStyle, \lns, wd, ts ->
 			TLines(
 				map(lns, \l ->
 					MText2T(
 						inputState.parent,
 						l.visibleText,
-						if (en) inputState.mTextStyle else inputState.mTextStyleDisabled
+						if (en) ts else arrayPush(ts, MTextDisabled())
 					)
 					|> TFixHeight(TFixed(0., editorState.textHeight))
 				)
@@ -2191,11 +2178,16 @@ makeMTextEditorView(manager : MaterialManager, inputState : MInputState, m2t : (
 }
 
 makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [MTextInputState], inputState : MInputState, m2t : (Material, MFocusGroup) -> Tropic) -> Tropic {
-	interlineSpacing = if (inputState.multiline) {
-		charStyle = MTextStyle2CharacterStyle(parent, inputState.mTextStyle);
-		fontSize = extractStruct(charStyle, FontSize(0.)).size;
-		fontSize * 1.2 - getTextSize("M", charStyle).height;
-	} else 0.;
+	interlineSpacing =
+		if (inputState.multiline) {
+			\ts ->  {
+				charStyle = MTextStyle2CharacterStyle(parent, ts);
+				fontSize = extractStruct(charStyle, FontSize(0.)).size;
+				fontSize * 1.2 - getTextSize("M", charStyle).height;
+			}
+		} else {
+			\__ -> 0.0
+		};
 
 	inputFlexibleSize =
 		if (mobile && ios())
@@ -2216,16 +2208,18 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 	inputFixedSize = \lines ->
 		THeight(
-			MParagraph2T(
-				inputState.parent,
-				generate(0, lines, \i -> "M\n") |> concatStrings,
-				concat(
-					inputState.mTextStyle,
-					[
-						MWidth(400.),
-						InterlineSpacing(interlineSpacing),
-						ParagraphMargin(0., 0.)
-					]
+			TSelect(inputState.textStyle, \ts : [MTextStyle] ->
+				MParagraph2T(
+					inputState.parent,
+					generate(0, lines, \i -> "M\n") |> concatStrings,
+					concat(
+						ts,
+						[
+							MWidth(400.),
+							InterlineSpacing(interlineSpacing(ts)),
+							ParagraphMargin(0., 0.)
+						]
+					)
 				)
 			)
 		);
@@ -2248,7 +2242,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 					);
 				}
 			} else {
-				THeight(TText("m", inputState.textStyle))
+				THeight(TSelect(inputState.textStyle, \ts -> TText("m", MTextStyle2CharacterStyle(inputState.parent, ts))))
 			}
 		);
 
@@ -2262,7 +2256,6 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						inputState.content,
 						inpWH,
 						concatA([
-							cast(inputState.textStyle : [CharacterStyle] -> [FTextInputStyle]),
 							[
 								FWordWrap(const(inputState.wordWrap)),
 								FMultiline(const(inputState.multiline)),
@@ -2306,7 +2299,8 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 
 									filterKey;
 								}),
-								ViewBounds(fboundsapplytransform(pi.viewBounds, finverttransform(pi.transformMatrix)))
+								ViewBounds(fboundsapplytransform(pi.viewBounds, finverttransform(pi.transformMatrix))),
+								FCharacterStyle(fselect(inputState.textStyle, FLift(\ts -> MTextStyle2CharacterStyle(parent, ts))))
 							],
 							eitherMap(
 								inputState.autoCompleteType,
@@ -2424,7 +2418,7 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 	|> (\f ->
 		TLet(
 			"MTextInputText",
-			(\c0, en, sp -> {
+			(\c0, en, sp, ts : [MTextStyle] -> {
 				eol = getCharCodeAt("\n", 0);
 				c =
 					(if (sp)
@@ -2449,22 +2443,22 @@ makeNativeEditorView(manager : MaterialManager, parent : MFocusGroup, state : [M
 						inputState.parent,
 						c,
 						concat(
-							if (en) inputState.mTextStyle else inputState.mTextStyleDisabled,
+							if (en) ts else arrayPush(ts, MTextDisabled()),
 							[
 								MWidth(-1.),
-								InterlineSpacing(interlineSpacing),
+								InterlineSpacing(interlineSpacing(ts)),
 								ParagraphMargin(0., 0.)
 							]
 						)
 					)
 				else
-					MText2T(inputState.parent, c, if (en) inputState.mTextStyle else inputState.mTextStyleDisabled)
+					MText2T(inputState.parent, c, if (en) ts else arrayPush(ts, MTextDisabled()))
 			})
 			|> (\f2 ->
 				eitherMap(
 					inputState.password,
-					\pw -> TSelect3(inputState.content, inputState.mfocus.enabled, pw.showPassword, f2),
-					TSelect2(inputState.content, inputState.mfocus.enabled, \c, en -> f2(c, en, true))
+					\pw -> TSelect4(inputState.content, inputState.mfocus.enabled, pw.showPassword, inputState.textStyle, f2),
+					TSelect3(inputState.content, inputState.mfocus.enabled, inputState.textStyle, \c, en, ts -> f2(c, en, true, ts))
 				)
 			)
 			|> (\t -> TAttachWidth(t, inputState.textWidth)),
@@ -2549,9 +2543,9 @@ addMAutocompleteSuggestionInLine(inputState : MInputState) -> (Tropic) -> Tropic
 	\t ->
 		eitherMap(inputState.autocomplete, \ac ->
 			eitherMap(ac.inLine, \inline ->
-				TSelect(inline.bestSuggestion, \best ->
+				TSelect2(inline.bestSuggestion, inputState.textStyle, \best, ts ->
 					eitherMap(best,	\sg ->
-						MText2T(inputState.parent, sg.second, inputState.mTextStyleDisabled)
+						MText2T(inputState.parent, sg.second, arrayPush(ts, MTextDisabled()))
 						|> (\t2 -> TTranslate(fselect(inputState.textWidth, FLift(\tw -> Point(tw, dh))), t2)),
 						TEmpty()
 					)
