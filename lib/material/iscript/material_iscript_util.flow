@@ -67,6 +67,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 	initFn = \ -> {
 		isFinished := false;
 		delays := map(getTreeKeys(tree), \v -> Pair(v, v)); // Pair(current replaying time with timeouts, recorded time)
+		startNext = ref 0;
 
 		uns :=
 			[
@@ -87,7 +88,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 							if (fn.second() && vd) [] else [fn]
 						});
 						if (^deferredFns == [])
-							delays := map(tail(^delays), \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
+							delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
 						if (offset > ^deferredTime + 10000.) {
 							println("IScript timeout");
 							dispUnsA(uns);
@@ -98,10 +99,12 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 								eitherFn(
 									lookupTree(tree, ^delays[0].second),
 									\records -> {
-										result = foldWhile(records, [],
+
+										tailedRecords = tailFrom(records, ^startNext);
+										result = foldWhile(tailedRecords, [],
 											\acc, fn -> {
-												//println(^delays[0].second);
-												//println(offset);
+												println(^delays[0].second);
+												println(offset);
 												vd = fn.first();
 												if (fn.second()) { //can click
 													if (vd) { //success check
@@ -114,11 +117,18 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 												}
 											}
 										);
-										if (result == records) {
+										if (result == tailedRecords) {
 											delays := tail(^delays);
+											startNext := 0;
 											Some(t)
 										} else {
-											deferredFns := subtractA(records, result);
+											deferredFns := subtractA(tailedRecords, result);
+											startNext := length(result) + 1;
+											if (length(result) + 1 == length(tailedRecords)) {
+												delays := tail(^delays);
+												startNext := 0;
+											}
+											deferredFns := [^deferredFns[0]];
 											deferredTime := offset;
 											None()
 										}
@@ -252,7 +262,7 @@ getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor>
 replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInputOutput : bool) -> bool {
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
-			repeatBehaviourById(manager, descriptor, value) || descriptor.name == "focused"
+			repeatBehaviourById(manager, descriptor, value)// || descriptor.name == "focused"
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
