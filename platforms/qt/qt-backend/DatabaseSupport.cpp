@@ -37,7 +37,8 @@ NativeFunction * DatabaseSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_OBJECT_METHOD(DatabaseConnection, closeDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, escapeDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDb, 2);
-    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 2);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 1);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbMulti, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, lastInsertIdDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, startTransactionDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, commitDb, 1);
@@ -175,8 +176,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
 }
 
 StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
-    RUNNER_PopArgs1(result);
-    RUNNER_CheckTag(TNative, result);
+    IGNORE_RUNNER_ARGS;
 
     QString msg;
     if (last_error.length()) {
@@ -186,6 +186,78 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
     }
 
     return RUNNER->AllocateString(msg);
+}
+
+StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
+    RUNNER_PopArgs1(rawqueries);
+    RUNNER_CheckTag(TArray, rawqueries);
+    RUNNER_DefSlots5(
+        resultArr,          // the filal result
+        queriesResults,     // (array of arrays) the results for each query (query can include several sqls and results)
+        queryResults,       // the results of a sigle query
+        queryResults2,      // it's used for resizing queryResults
+        resultRows          // result of a single sql from a query
+    );
+
+    int nqueries = RUNNER->GetArraySize(rawqueries);
+    queriesResults = RUNNER->AllocateArray(nqueries);
+    int nresults = 0;
+    for (int i = 0; i < nqueries; i++) {
+        StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
+        QString queryString = RUNNER->GetQString(querySlot);
+
+        QSqlQuery *query = new QSqlQuery(db);
+
+        DatabaseResult *databaseResult = new DatabaseResult(this, query);
+        query->exec(queryString);
+
+        QString err_msg = query->lastError().text().trimmed();
+        if (err_msg.length()) {
+            last_error = err_msg;
+        }
+
+        int resultsCnt = 0;
+        int realCapacity = 1;
+        queryResults = RUNNER->AllocateArray(realCapacity);
+        do {
+            int nRows = query->size();
+            nRows = nRows == 0 ? 1 : nRows;
+            resultRows = RUNNER->AllocateArray(nRows);
+            for (int j = 0; j < nRows; j++) {
+                query->next();
+                StackSlot requestResult = databaseResult->getRecord(RUNNER);
+                RUNNER->SetArraySlot(resultRows, j, requestResult);
+            }
+            resultsCnt++;
+            if (realCapacity == resultsCnt) {
+                queryResults2 = RUNNER->AllocateArray(realCapacity * 2);
+                for (int k = 0; k < realCapacity; k++ ) {
+                    RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+                }
+                queryResults = queryResults2;
+                realCapacity *= 2;
+            }
+            RUNNER->SetArraySlot(queryResults , resultsCnt - 1, resultRows);
+        } while (query->nextResult());
+        if (resultsCnt < realCapacity) {
+            queryResults2 = RUNNER->AllocateArray(resultsCnt);
+            for (int k = 0; k < resultsCnt; k++ ) {
+                RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+            }
+            queryResults = queryResults2;
+        }
+        nresults += resultsCnt;
+        RUNNER->SetArraySlot(queriesResults, i, queryResults);
+    }
+
+    resultArr = RUNNER->AllocateArray(nresults);
+    for (int i = 0, n = 0; i < nqueries; i++) {
+        StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
+        for (int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
+            RUNNER->SetArraySlot(resultArr, n, RUNNER->GetArraySlot(qResults, c));
+        }
+    }
+    return resultArr;
 }
 
 StackSlot DatabaseConnection::lastInsertIdDb(RUNNER_ARGS) {
@@ -269,13 +341,23 @@ StackSlot DatabaseResult::hasNextResultDb(RUNNER_ARGS) {
 // Get all fields and values of the next result as an array
 StackSlot DatabaseResult::nextResultDb(RUNNER_ARGS) {
     IGNORE_RUNNER_ARGS;
-    RUNNER_DefSlots3(result, value, element);
 
     if (!query) {
         return RUNNER->AllocateArray(0);
     }
 
     query->next();
+    StackSlot result = getRecord(RUNNER);
+
+
+    if (++index >= query->size())
+        destroy();
+
+    return result;
+}
+
+StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
+    RUNNER_DefSlots3(result, value, element);
 
     QSqlRecord record = query->record();
     result = RUNNER->AllocateArray(record.count());
@@ -296,12 +378,6 @@ StackSlot DatabaseResult::nextResultDb(RUNNER_ARGS) {
                 break;
             case QVariant::UInt:
                 value = StackSlot::MakeInt(field.value().toUInt());
-                break;
-            case QVariant::LongLong:
-                value = StackSlot::MakeInt(field.value().toLongLong());
-                break;
-            case QVariant::ULongLong:
-                value = StackSlot::MakeInt(field.value().toULongLong());
                 break;
             case QVariant::Double:
                 value = StackSlot::MakeDouble(field.value().toDouble());
@@ -329,9 +405,6 @@ StackSlot DatabaseResult::nextResultDb(RUNNER_ARGS) {
         RUNNER->SetStructSlot(element, 0, RUNNER->AllocateString(field.name()));
         RUNNER->SetArraySlot(result, i, element);
     }
-
-    if (++index >= query->size())
-        destroy();
 
     return result;
 }

@@ -3,53 +3,57 @@ import ds/simplegraph;
 import tools/flowc/incremental/fi_helpers;
 
 export {
-	buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string>;
+	// If details is true, we only include structs in the graph. 
+	// Otherwise, we present whatever the functions take and give.
+	buildIncaConversionGraph(env : IncaEnv, details : bool) -> SimpleGraph<string, string>;
+
+	// Add this type with links to the individual structs
+	addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target : string) -> SimpleGraph<string, string>;
+
+	incaFiName2structs(env : IncaEnv, tname : string) -> Set<string>;
 }
 
-buildIncaConversionGraph(env : IncaEnv) -> SimpleGraph<string, string> {
-	graph0 = foldTree(env.unions, makeSimpleGraph(), \name, union, acc -> {
-		fold(union.typenames, acc, \acc2, tn -> {
-			addSimpleEdge(acc2, name, getFiTypeName(tn), "", 0);
-		})
-	});
-
+buildIncaConversionGraph(env : IncaEnv, details : bool) -> SimpleGraph<string, string> {
+	graph0 = makeSimpleGraph();
 	graph = foldTree(env.functions, graph0, \name, dec, acc -> {
-		addIncaFunctionToGraph(env, acc, dec)
+		addIncaFunctionToGraph(env, acc, details, dec)
 	});
-
-	if (true) {
-		dot = simpleGraph2dot(graph, "", [], \n -> {
-			concat(
-				[DotLabel(n)],
-				if (containsKeyTree(env.unions, n)) {
-					[DotFillColor("#ff0000"), DotShape("rectangle")]
-				} else {
-					[]
-				}
-
-			)
-		}, \e -> [DotLabel(e)]);
-		setFileContent("incagraph.dot", dot);
-		{}
-	}
 
 	graph;
 }
 
-addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, dec : FiFunctionDec) -> SimpleGraph<string, string> {
+addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target : string) -> SimpleGraph<string, string> {
+	expanded = incaFiName2structs(env, target);
+	foldSet(expanded, graph, \acc, ex -> {
+		if (ex != target) {
+			addSimpleEdge(acc, ex, target, "", 0);
+		} else acc;
+	})
+}
+
+addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, details : bool, dec : FiFunctionDec) -> SimpleGraph<string, string> {
+	// Extract the named function arguments
 	argTypes = filtermap(dec.type.args, \a -> {
 		argName = getFiTypeName(a.type);
 		if (argName == "") None() else Some(argName);
 	});
-	retType = getFiTypeName(dec.type.returnType);
+	retType = getIncaTypeNameOrVoid(dec.type.returnType);
 
 	if (length(argTypes) == 1 && retType != "") {
 		argType = argTypes[0];
 
-		println("\n" + argType + " -> " + retType);
-
-		acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
-		addSimpleEdge(acc2, argType, retType, dec.name, 2);
+		if (details) {
+			acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
+			if (acc2 == acc) {
+				// Hm, we could not find any cases, so let us do it at the top level
+				addIncaEdge(env, acc2, argType, retType, dec.name, 2)
+			} else {
+				acc2;
+			}
+		} else {
+			println("\n" + argType + " -> " + retType);
+			addSimpleEdge(acc, argType, retType, dec.name, 2);
+		}
 	} else acc;
 }
 
@@ -103,8 +107,38 @@ addIncaCaseToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, fn : string
 	switch (case.body) {
 		FiVar(__, __, __): acc;
 		default: {
-			type = getFiTypeName(fiExpType(case.body));
-			addSimpleEdge(acc, case.struct, type, fn, 1);
+			type = getIncaTypeNameOrVoid(fiExpType(case.body));
+
+			addIncaEdge(env, acc, case.struct, type, fn, 1);
+		}
+	}
+}
+
+getIncaTypeNameOrVoid(t : FiType) -> string {
+	if (t == FiTypeVoid()) "void" else getFiTypeName(t);
+}
+
+addIncaEdge(env : IncaEnv, g : SimpleGraph<string, string>, from : string, to : string, fn : string, cost : int) -> SimpleGraph<string, string> {
+	fromExpanded = incaFiName2structs(env, from);
+	toExpanded = incaFiName2structs(env, to);
+	// println("from: " + from + " is " + toString(set2array(fromExpanded)));
+	// println("to: " + to + " is " + toString(set2array(toExpanded)));
+	acc0 = if (false) addSimpleEdge(g, from, to, fn, cost) else g;
+	foldSet(fromExpanded, acc0, \acc1, fr -> {
+		foldSet(toExpanded, acc1, \acc2, t -> {
+			addSimpleEdge(acc2, fr, t, fn, cost)
+		})
+	})
+}
+
+incaFiName2structs(env : IncaEnv, tname : string) -> Set<string> {
+	mudef = lookupTree(env.unions, tname);
+	switch (mudef) {
+		None(): makeSet1(tname);
+		Some(udef): {
+			fold(udef.typenames, makeSet(), \acc, tn -> {
+				mergeSets(acc, incaFiName2structs(env, tn.name))
+			})
 		}
 	}
 }
