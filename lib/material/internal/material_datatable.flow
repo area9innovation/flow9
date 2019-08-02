@@ -456,25 +456,24 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 		);
 
 	makeCells : (MFocusGroup, int, [Material]) -> [Tropic] = \p, j, row -> {
-		checkbox = eitherMap(checkboxSelection, \__ -> {
-			j0 = j - b2i(isSome(fixedRow));
-			if (j0 >= 0) {
-				selRow = make(contains(getValue(selection.selected), j0));
+		checkbox = eitherMap(checkboxSelection, \__ ->
+			if (j >= 0) {
+				selRow = make(contains(getValue(selection.selected), j));
 				makeChkbox(p, selRow,
 					fsubselect(selectionEnabled.enabled, FLift(\en ->
-						fand(selection.enabled, elementAt(en, j0, const(true))),
+						fand(selection.enabled, elementAt(en, j, const(true))),
 					)),
 					\ -> {
 						sel = getValue(selection.selected);
 
 						if (selection.multiple) {
 							if (!getValue(selRow))
-								nextDistinct(selection.selected, removeAll(sel, j0))
-							else if (!contains(sel, j0))
-								nextDistinct(selection.selected, arrayPush(sel, j0))
+								nextDistinct(selection.selected, removeAll(sel, j))
+							else if (!contains(sel, j))
+								nextDistinct(selection.selected, arrayPush(sel, j))
 						} else {
 							if (getValue(selRow))
-								nextDistinct(selection.selected, [j0])
+								nextDistinct(selection.selected, [j])
 							else if (selection.toggle)
 								nextDistinct(selection.selected, [])
 						}
@@ -482,16 +481,17 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					false
 				)
 				|> (\t -> TConstruct(
-					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j0))], t
+					[\ -> fconnectSelect(selection.selected, selRow, \s -> contains(s, j))], t
 				))
 				|> v2a
 			}
-			else [TFixed(checkboxColumnWidth, 0.)]
-		}, []);
+			else [TFixed(checkboxColumnWidth, 0.)],
+			[]
+		);
 
 		fullRow = [
 			checkbox,
-			if (showRowNumbers) [MText(i2s(j + b2i(isNone(fixedRow))), [])] else [],
+			if (showRowNumbers) [MText(i2s(j + 1), [])] else [],
 			row
 		] |> concatA;
 
@@ -538,20 +538,11 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 					rws = fgetValue(rows);
 					map(sortRes, \i -> elementAt(rws, i, []))
 					|> (\arr -> eitherMap(fixedRow, \fr -> concat([fr.cols], arr), arr))
-					|> (\arr -> mapi(arr, \i, row ->
+					|> (\arr -> mapi(arr, \i0, row -> {
+						i = i0 - b2i(isSome(fixedRow));
 						makeCells(p, i, row)
 						|> colsHead
 						|> TCols
-						|> (\t -> if (glued)
-								eitherMap(rowBackgroundStyle, \rb ->
-									TIfLazy2(
-										fselect(selection.selected, FLift(\arr2 -> contains(arr2, i))),
-										\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(sortRes[i]), t),
-										false
-									), t
-								)
-							else t
-						)
 						|> (\t ->
 							if (lifted)
 								TAlpha(fselect(innerScrollPosition, FLift(\isp -> max(0.5, 1. - abs(isp.x) / 100.))), t)
@@ -560,12 +551,23 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						)
 						|> implementExpandRow(false)
 						|> TBorderLeft(externalBorder)
+						|> (\t -> if (glued)
+								eitherMap(rowBackgroundStyle, \rb -> if (i == -1) t else
+									TIfLazy2(
+										fselect(selection.selected, FLift(\arr2 -> contains(arr2, sortRes[i]))),
+										\v -> if (v && isSome(selectedBgStyle)) TFrame(0., 0., eitherMap(selectedBgStyle, \sbs -> sbs.style, []), t)
+											else TFrame(0., 0., rb.fn(sortRes[i]), t),
+										false
+									), t
+								)
+							else t
+						)
 						|> (\t -> if (separators && glued) TLines2(t, MSeparator2T(manager, p, true)) else t)
-					))
+					}))
 				}));
 
 			firstColumn =
-				TSelect(eitherMap(fixedRow, \__ -> fselect(cells, FLift(tail)), cells), \cells0 -> TLines(cells0))
+				TSelect(eitherMap(fixedRow, \__ -> fselect(cells, FLift(tail)), cells), TLines)
 				|> (\t -> MScroll2T(manager, p, MScroll(t, TFillXY(), [
 						MScrollCropByContent(),
 						TScrollEnabled(const(false)),
@@ -583,7 +585,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 								default : None()
 							});
 
-						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()) )
+						TSelect(cells, \cells0 -> firstElement(cells0, TEmpty()))
 						|> (\t2 -> TCopySize(t2, \tr -> TRounded(2., 2., 0., 0., bStyle, tr), false))
 						|> (\t2 -> TShow(fr.show, t2))
 						|> (\t2 -> TLines2(t2, t))
@@ -732,7 +734,9 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 				\fr -> fconcat(const([fr.cols]), rows),
 				rows
 			)
-			|> (\rc -> fmapi(rc, \j, row -> {
+			|> (\rc -> fmapi(rc, \j0, row -> {
+
+					j = j0 - b2i(isSome(fixedRow));
 					
 					makeLineContent = \p3 : MFocusGroup ->
 						makeCells(p3, j, row)
@@ -749,7 +753,7 @@ MDynamicDataTable2T(manager : MaterialManager, parent : MFocusGroup, m : MDynami
 						)
 						|> (if (lifted) TBorderTop(rowHeight) else idfn)
 						|> (\t -> TFixSize(t, TFillXH(countRowHeight(er) - separatorsHeight)))
-						|> (\t -> eitherMap(rowBackgroundStyle, \rb ->
+						|> (\t -> eitherMap(rowBackgroundStyle, \rb -> if (j == -1) t else
 									TIfLazy2(
 										fselect(selection.selected, FLift(\arr -> contains(arr, j))),
 										\v -> if (v && isSome(selectedBgStyle)) t else TFrame(0., 0., rb.fn(j), t),
