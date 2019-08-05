@@ -228,12 +228,6 @@ class RenderSupportJSPixi {
 			PixiView.style.position = "absolute";
 			PixiView.style.top = "0px";
 		}
-
-		if (RendererType == "canvas") {
-			// We don't render anything to PixiView
-			// Check FlowContainer.render for render process
-			PixiView.style.opacity = 0;
-		}
 	}
 
 	private static function initPixiRenderer() {

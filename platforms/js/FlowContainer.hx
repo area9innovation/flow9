@@ -32,12 +32,18 @@ class FlowContainer extends Container {
 			zorder = parent.children.indexOf(this) + 1;
 		}
 
+		if (zorder == 1) {
+			view = RenderSupportJSPixi.PixiView;
+			context = view.getContext("2d", { alpha: false });
+			return;
+		}
+
 		view = cast(Browser.document.createElement('canvas'), CanvasElement);
 
 		view.style.zIndex = 1000 * (zorder - 1) + AccessWidget.zIndexValues.canvas + "";
 		untyped view.style.pointerEvents = "none";
 
-		context = view.getContext("2d", { alpha : zorder != 1 });
+		context = view.getContext("2d", { alpha : true });
 
 		updateView(zorder);
 		onResize();
@@ -53,7 +59,7 @@ class FlowContainer extends Container {
 
 		if (zorder > 0) {
 			if (Browser.document.body.children.length > zorder) {
-				if (Browser.document.body.children[zorder] != view) {
+				if (Browser.document.body.children[zorder - 1] != view) { // - 1 because first layer renders to PixiView
 					if (Browser.document.body.children.length > zorder) {
 						Browser.document.body.insertBefore(view, Browser.document.body.children[zorder]);
 					} else {
