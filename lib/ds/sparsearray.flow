@@ -1,16 +1,44 @@
 import ds/treeutils;
-//import algorithms; // For tests only
+// import algorithms; // For tests only
 
 export {
 	// Create a sparse array. Provide a function which can produce a range of values
-	makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?>;
+	makeSparseArray(
+		retrieveRange : (start : int, end : int, cb : ([?]) -> void) -> void,
+		retrieveLength : (cb : (int) -> void) -> void
+	)-> SparseArray<?>;
 
 	// If we have a complete, static array, we do not need a generating function
-	array2SpareArray(vals : [?]) -> SparseArray<?>;
+	array2SparseArray(vals : [?]) -> SparseArray<?>;
+	sparseArray2array(s : SparseArray<?>, cb : ([?]) -> void) -> void;
+
+	// This only works if the array is fully instantiated
+	instantiatedSparseArray2array(s : SparseArray<?>) -> [?];
+	instantiateSparseArray(s : SparseArray<?>, onDone : (SparseArray<?>) -> void) -> void;
+
 
 	// What are the values in this given range? Will call the function to generate values if we do
 	// not have them cached. Up to, but not including end.
-	getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?];
+	getSparseArrayRange(s : SparseArray<?>, start : int, end : int, cb : ([?]) -> void) -> void;
+	getSparseArrayLength(s : SparseArray<?>, cb : (int) -> void) -> void;
+	getSparseArrayIndex(s : SparseArray<?>, index : int, cb : (?) -> void) -> void;
+
+	removeSparseArray(s : SparseArray<?>, index : int, len : int) -> SparseArray<?>;
+	insertSparseArray(s1 : SparseArray<?>, index : int, s2 : SparseArray<?>) -> SparseArray<?>;
+	removeSparseArrayIndex(s : SparseArray<?>, index : int) -> SparseArray<?>;
+	insertSparseArrayIndex(s : SparseArray<?>, index : int, value : ?) -> SparseArray<?>;
+
+	iterSparseArray(s : SparseArray<?>, fn : (?) -> void) -> void;
+	mapSparseArray(s : SparseArray<?>, fn : (?) -> ??) -> SparseArray<??>;
+	mapiSparseArray(s : SparseArray<?>, fn : (int, ?) -> ??) -> SparseArray<??>;
+	mapWithPreviousSparseArray(s : SparseArray<?>, first : (?) -> ??, rest : (?, ?) -> ??) -> SparseArray<??>;
+	subrangeSparseArray(s : SparseArray<?>, from : int, len : int) -> SparseArray<?>;
+	concatSparseArray(s1 : SparseArray<?>, s2 : SparseArray<?>) -> SparseArray<?>;
+	reverseSparseArray(s : SparseArray<?>) -> SparseArray<?>;
+
+	sparseArray2string(s : SparseArray<?>, value2string : (v : ?, level : int) -> string, level : int) -> string;
+
+	emptySparseArray = array2SparseArray([]);
 }
 
 // A sparse array where we can retrieve values in a given range up to, but not including end
@@ -20,18 +48,55 @@ SparseArray(
 	// invariant that our ranges are continuous in the sense that it would be wrong
 	// to represent an array ["a", "b"] as {0: ["a"], 1: ["a"]}. Instead, we should
 	// combine and have {0: ["a", "b"]}
-	mutable ranges : Tree<int, [?]>,
+	mutable ranges : Tree<int, SparseRange<?>>,
 	// The function which can generate/retrieve values at the given point.
-	retrieveRange : (start : int, end : int) -> [?]
+	retrieveRange : (start : int, end : int, cb : ([?]) -> void) -> void,
+	// The function which can generate/retrieve array length at the given point.
+	retrieveLength : (cb : (int) -> void) -> void
 );
 
-makeSparseArray(retrieveRange : (start : int, end : int) -> [?]) -> SparseArray<?> {
-	SparseArray(makeTree(), retrieveRange);
+	SparseRange<?> ::= SparseArrayRange<?>, SparseArrayRangeRequest;
+
+		SparseArrayRange(start : int, end : int, range : [?]);
+		SparseArrayRangeRequest(start : int, end : int, mutable cb : [() -> void]);
+
+makeSparseArray(
+	retrieveRange : (start : int, end : int, cb : ([?]) -> void) -> void,
+	retrieveLength : (cb : (int) -> void) -> void
+) -> SparseArray<?> {
+	SparseArray(makeTree(), retrieveRange, retrieveLength);
 }
 
-array2SpareArray(vals : [?]) -> SparseArray<?> {
-	SparseArray(makeTree1(0, vals), \__, __ -> []);
+array2SparseArray(vals : [?]) -> SparseArray<?> {
+	SparseArray(
+		makeTree1(0, SparseArrayRange(0, length(vals), vals)),
+		\f, t, cb ->
+			// timer(round(5.0 + random() * 10.0), \ -> cb(subrange(vals, f, t - f))), // Fake retrieve delay for testing
+			cb(subrange(vals, f, t - f)),
+		\cb ->
+			// timer(round(5.0 + random() * 10.0), \ -> cb(length(vals))) // Fake retrieve delay for testing
+			cb(length(vals))
+	);
 }
+
+sparseArray2array(s : SparseArray<?>, cb : ([?]) -> void) -> void {
+	getSparseArrayLength(s, \l -> getSparseArrayRange(s, 0, l, \r -> cb(r)))
+}
+
+instantiatedSparseArray2array(s : SparseArray<?>) -> [?] {
+	// This is only correct if it is fully instantiated
+	foldTree(s.ranges, [], \index, range, acc -> {
+		switch (range) {
+			SparseArrayRange(__, __, r): concat(acc, r);
+			SparseArrayRangeRequest(__, __, __): acc;
+		}
+	})
+}
+
+instantiateSparseArray(s : SparseArray<?>, onDone : (SparseArray<?>) -> void) -> void {
+	sparseArray2array(s, \vals : [?] -> onDone(array2SparseArray(vals)))
+}
+
 
 /*
 TODO:
@@ -41,8 +106,10 @@ TODO:
   instead of 2.
 */
 
-getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
-	if (start < end) {
+emptySparseArrayRange = SparseArrayRange(0, 0, []);
+
+getSparseArrayRange(s : SparseArray<?>, start : int, end : int, cb : ([?]) -> void) -> void {
+	if (start < end && start >= 0) {
 		// Do we have anything before we can reuse?
 		lb = findTreeLowerKey(s.ranges, start, -1);
 
@@ -50,93 +117,263 @@ getSpareArrayRange(s : SparseArray<?>, start : int, end : int) -> [?] {
 		ub = findTreeUpperKey(s.ranges, start + 1, -1);
 
 		// What do we have below us?
-		lower0 = if (lb == -1) [] else lookupTreeDef(s.ranges, lb, []);
-		// Find how much of the end of what is below us we can reuse, and extract that
-		lowerReuse = if (lb == -1 || lb + length(lower0) < start) -1 else max(0, start - lb);
-		lower = if (lb == -1 || lowerReuse == -1) [] else subrange(lower0, lowerReuse, end - lowerReuse);
+		lower0 = if (lb == -1) emptySparseArrayRange else lookupTreeDef(s.ranges, lb, emptySparseArrayRange);
 
-		// OK, there might be a part after the start, which we can use
-		upper = if (ub == -1 || ub >= end) [] else subrange(lookupTreeDef(s.ranges, ub, []), 0, max(0, end - ub));
+		switch (lower0 : SparseRange) {
+			SparseArrayRange(__, __, lower1): {
+				// Find how much of the end of what is below us we can reuse, and extract that
+				lowerReuse = if (lb == -1 || lb + length(lower1) < start) -1 else max(0, start - lb);
+				lower = if (lb == -1 || lowerReuse == -1) [] else subrange(lower1, lowerReuse, end - lowerReuse);
 
-		// We can push the start by reusing things from below
-		newStart = start + length(lower);
+				// OK, there might be a part after the start, which we can use
+				upper0 = if (ub == -1 || ub >= end) emptySparseArrayRange else lookupTreeDef(s.ranges, ub, emptySparseArrayRange);
 
-		if (upper == []) {
-			// We have something in the start we can reuse, so just retrieve the end bit
-			// If newStart is bigger than end just subrange already retieved lower part
-			if (newStart >= end) {
-				subrange(lower, 0, end - start);
-			} else {
-				rang = s.retrieveRange(newStart, end);
+				switch (upper0 : SparseRange) {
+					SparseArrayRange(__, __, upper1): {
+						upper = subrange(upper1, 0, max(0, end - ub));
+						// We can push the start by reusing things from below
+						newStart = start + length(lower);
 
-				res = concat(lower, rang);
-				updateSpareArrayCache(s, start, res);
-				res;
+						if (upper == []) {
+							// We have something in the start we can reuse, so just retrieve the end bit
+							// If newStart is bigger than end just subrange already retieved lower part
+							if (newStart >= end) {
+								cb(subrange(lower, 0, end - start));
+							} else {
+								s.ranges ::= setTree(s.ranges, newStart, SparseArrayRangeRequest(newStart, end, []));
+
+								s.retrieveRange(newStart, end, \rang -> {
+									res = concat(lower, rang);
+									cb(res);
+									updateSparseArrayCache(s, start, res);
+								});
+							}
+						} else {
+							// OK, we have a middle part. First, let us get what is after the first part, but before the mid part
+							// If upper bound is bigger than end just retrieve missing range
+							if (ub > end) {
+								if (newStart >= end) {
+									cb(lower)
+								} else {
+									s.ranges ::= setTree(s.ranges, newStart, SparseArrayRangeRequest(newStart, end, []));
+
+									s.retrieveRange(newStart, end, \beforeMid -> {
+										res = concat(lower, beforeMid);
+										cb(res);
+										updateSparseArrayCache(s, start, res);
+									})
+								}
+							} else {
+								afterMid = ub + length(upper);
+
+								if (newStart >= ub) {
+									if (afterMid >= end) {
+										res = concat(lower, upper);
+										cb(res);
+										updateSparseArrayCache(s, start, res);
+									} else {
+										// Recursively check for other mid parts
+										getSparseArrayRange(s, afterMid, end, \after -> {
+											res = concat3(lower, upper, after);
+											cb(res);
+											updateSparseArrayCache(s, start, res);
+										});
+									}
+								} else {
+									s.ranges ::= setTree(s.ranges, newStart, SparseArrayRangeRequest(newStart, ub, []));
+
+									s.retrieveRange(newStart, ub, \beforeMid -> {
+										if (afterMid >= end) {
+											res = concat3(lower, beforeMid, upper);
+											cb(res);
+											updateSparseArrayCache(s, start, res);
+										} else {
+											// Recursively check for other mid parts
+											getSparseArrayRange(s, afterMid, end, \after -> {
+												res = concatA([lower, beforeMid, upper, after]);
+												cb(res);
+												updateSparseArrayCache(s, start, res);
+											});
+										}
+									})
+								}
+							}
+						}
+					}
+					SparseArrayRangeRequest(__, __, __): {
+						upper0.cb ::= arrayPush(upper0.cb, \ -> getSparseArrayRange(s, start, end, cb));
+					}
+				}
 			}
-		} else {
-			// OK, we have a middle part. First, let us get what is after the first part, but before the mid part
-			// If upper bound is bigger than end just retrieve missing range
-			if (ub > end) {
-				beforeMid = if (newStart >= end) [] else s.retrieveRange(newStart, end);
-
-				res = concatA([lower, beforeMid]);
-				updateSpareArrayCache(s, start, res);
-				res;
-			} else {
-				beforeMid = if (newStart >= ub) [] else s.retrieveRange(newStart, ub);
-
-				afterMid = ub + length(upper);
-				// Recursively check for other mid parts
-				after = if (afterMid >= end) [] else getSpareArrayRange(s, afterMid, end);
-
-				res = concatA([lower, beforeMid, upper, after]);
-				updateSpareArrayCache(s, start, res);
-				res;
+			SparseArrayRangeRequest(__, __, __): {
+				lower0.cb ::= arrayPush(lower0.cb, \ -> getSparseArrayRange(s, start, end, cb));
 			}
 		}
 	} else {
-		[];
+		cb([]);
 	}
+}
+
+getSparseArrayLength(s : SparseArray<?>, cb : (int) -> void) -> void {
+	s.retrieveLength(cb);
+}
+
+getSparseArrayIndex(s : SparseArray<?>, index : int, cb : (?) -> void) -> void {
+	getSparseArrayRange(s, index, index + 1, \v -> if (length(v) > 0) cb(v[0]));
 }
 
 // OK, we have a new entry that has to go into the cache.
 // We have the invariant that we know this is not colliding with other entries
-updateSpareArrayCache(s : SparseArray<?>, start0 : int, values0 : [?]) -> void {
+updateSparseArrayCache(s : SparseArray<?>, start0 : int, values0 : [?]) -> void {
 	start = ref start0;
 	values = ref values0;
+	cbs = ref [];
+
+	// println("updateSparseArrayCache: " + toString(start0) + " " + toString(length(values0)));
+	// println(s.ranges);
 
 	// Filter out all entries which are dominated by this one
 	// Concat intersecting parts tp values
 	s.ranges ::= filterTree(s.ranges, \s2, v -> {
 		end = ^start + length(^values);
-		e2 = s2 + length(v);
+		e2 = v.end;
 
-		if (s2 >= ^start) {
-			if (e2 <= end) {
-				false;
-			} else if (s2 <= end) {
-				values := concat(^values, subrange(v, end - s2, length(v)));
-
-				false;
-			} else {
-				true;
+		if (s2 >= ^start && s2 <= end) {
+			switch (v : SparseRange) {
+				SparseArrayRange(__, __, rang): {
+					values := concat(^values, subrange(rang, end - s2, v.end - v.start));
+				}
+				SparseArrayRangeRequest(__, __, cb): {
+					cbs := concat(^cbs, cb);
+				}
 			}
-		} else if (e2 <= end) {
-			if (e2 >= ^start) {
-				values := concat(subrange(v, 0, length(v) + ^start - e2), ^values);
-				start := s2;
 
-				false;
-			} else {
-				true;
+			false;
+		} else if (e2 >= ^start && e2 <= end) {
+			switch (v : SparseRange) {
+				SparseArrayRange(__, __, rang): {
+					values := concat(subrange(rang, 0, v.end - v.start + ^start - e2), ^values);
+					start := s2;
+				}
+				SparseArrayRangeRequest(__, __, cb): {
+					cbs := concat(^cbs, cb);
+				}
 			}
+
+			false;
 		} else {
 			true;
 		}
 	});
 
-	s.ranges ::= setTree(s.ranges, ^start, ^values);
+	s.ranges ::= setTree(s.ranges, ^start, SparseArrayRange(^start, ^start + length(^values), ^values));
+
+	applyall(^cbs);
+
+	// println("finish updateSparseArrayCache: " + toString(start0) + " " + toString(length(values0)));
+	// println(s.ranges);
 }
+
+removeSparseArray(s : SparseArray<?>, index : int, len : int) -> SparseArray<?> {
+	concatSparseArray(subrangeSparseArray(s, 0, index), subrangeSparseArray(s, index + len, -1))
+}
+
+insertSparseArray(s1 : SparseArray<?>, index : int, s2 : SparseArray<?>) -> SparseArray<?> {
+	concatSparseArray(concatSparseArray(subrangeSparseArray(s1, 0, index), s2), subrangeSparseArray(s1, index, -1))
+}
+
+removeSparseArrayIndex(s : SparseArray<?>, index : int) -> SparseArray<?> {
+	removeSparseArray(s, index, 1);
+}
+
+insertSparseArrayIndex(s : SparseArray<?>, index : int, value : ?) -> SparseArray<?> {
+	insertSparseArray(s, index, array2SparseArray([value]))
+}
+
+iterSparseArray(s : SparseArray<?>, fn : (?) -> void) -> void {
+	getSparseArrayLength(s, \l -> getSparseArrayRange(s, 0, l, \v -> iter(v, fn)));
+}
+
+mapSparseArray(s : SparseArray<?>, fn : (?) -> ??) -> SparseArray<??> {
+	makeSparseArray(
+		\f, t, cb ->
+			getSparseArrayRange(s, f, t, \r -> cb(map(r, fn))),
+		\cb ->
+			getSparseArrayLength(s, cb)
+	)
+}
+
+mapiSparseArray(s : SparseArray<?>, fn : (int, ?) -> ??) -> SparseArray<??> {
+	makeSparseArray(
+		\f, t, cb ->
+			getSparseArrayRange(s, f, t, \r -> cb(mapi(r, \i, v -> fn(i + f, v)))),
+		\cb ->
+			getSparseArrayLength(s, cb)
+	)
+}
+
+mapWithPreviousSparseArray(s : SparseArray<?>, first : (?) -> ??, rest : (?, ?) -> ??) -> SparseArray<??> {
+	makeSparseArray(
+		\f, t, cb ->
+			if (f > 0)
+				getSparseArrayRange(s, f - 1, t, \r -> cb(mapWithPrevious(tail(r), \v -> rest(r[0], v), rest)))
+			else
+				getSparseArrayRange(s, f, t, \r -> cb(mapWithPrevious(r, first, rest))),
+		\cb ->
+			getSparseArrayLength(s, cb)
+	)
+}
+
+subrangeSparseArray(s : SparseArray<?>, from : int, len : int) -> SparseArray<?> {
+	makeSparseArray(
+		\f, t, cb ->
+			getSparseArrayRange(s, f + from, (if (len >= 0) min(t, len) else t) + from, cb),
+		\cb ->
+			getSparseArrayLength(s, \l -> cb(if (len >= 0) min(l - from, len) else l - from))
+	)
+}
+
+concatSparseArray(s1 : SparseArray<?>, s2 : SparseArray<?>) -> SparseArray<?> {
+	makeSparseArray(
+		\f, t, cb ->
+			getSparseArrayLength(s1, \l1 ->
+				if (t < l1)
+					getSparseArrayRange(s1, f, t, cb)
+				else if (f >= l1)
+					getSparseArrayRange(s2, f - l1, t - l1, cb)
+				else
+					getSparseArrayRange(s1, f, t, \r1 -> getSparseArrayRange(s2, max(f - l1, 0), t - l1, \r2 -> cb(concat(r1, r2))))
+			),
+		\cb ->
+			getSparseArrayLength(s1, \l1 -> getSparseArrayLength(s2, \l2 -> cb(l1 + l2)))
+	)
+}
+
+reverseSparseArray(s : SparseArray<?>) -> SparseArray<?> {
+	makeSparseArray(
+		\f, t, cb ->
+			getSparseArrayLength(s, \l -> getSparseArrayRange(s, l - t, l - f, \v -> cb(reverseA(v)))),
+		\cb ->
+			getSparseArrayLength(s, cb)
+	)
+}
+
+sparseArray2string(s : SparseArray<?>, value2string : (v : ?, level : int) -> string, level : int) -> string {
+	strGlue(
+		map(tree2pairs(s.ranges), \v ->
+			switch (v.second : SparseRange) {
+				SparseArrayRange(__, __, rang): {
+					strRepeat("\t", level) + toString(v.first) + ": [\n" + concatStrings(map(rang, \vv -> value2string(vv, level + 1) + "\n"))
+				}
+				SparseArrayRangeRequest(__, __, __): {
+					strRepeat("\t", level) + toString(v.first) + ": RangeRequest"
+				}
+			}
+		),
+		"]\n"
+	)
+}
+
 
 // TESTS
 
@@ -148,26 +385,35 @@ dumpSparseArray(s : SparseArray<?>) -> void {
 }
 
 testSparseArrayRange(s : SparseArray<int>, from : int, to : int) -> void {
-	v = getSpareArrayRange(s, from, to);
-
-	assertEquals(v, enumFromTo(from, to - 1));
+	getSparseArrayRange(s, from, to, \v -> assertEquals(v, enumFromTo(from, to - 1)));
 }
 
 makeTestSparseArray() -> SparseArray<int> {
 	cache = ref [];
 
-	makeSparseArray(\s, e -> {
-		println("retrieving from " + i2s(s) + " to " + i2s(e));
-		r = generate(s, e, \i -> i);
+	makeSparseArray(
+		\s, e, cb -> {
+			// println("range locked: " + toString(s) + " " + toString(e));
 
-		assert(!exists(r, \v -> contains(^cache, v)), "already in cache: ");
+			timer(round(random() * 5.0), \ -> {
+				println("retrieving from " + i2s(s) + " to " + i2s(e));
+				r = generate(s, e, \i -> i);
 
-		println(r);
+				assert(!exists(r, \v -> contains(^cache, v)), "already in cache: " + toString(r) + " " + toString(^cache));
 
-		cache := uniq(concat(^cache, r));
+				println(r);
 
-		r;
-	});
+				// println("updating cache: " + toString(r) + " " + toString(^cache));
+				cache := uniq(concat(^cache, r));
+
+				cb(r);
+
+				// println("range unlocked: " + toString(s) + " " + toString(e));
+			})
+		},
+		\cb ->
+			timer(round(random() * 5.0), \ -> cb(500))
+	);
 }
 
 main() {

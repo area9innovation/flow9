@@ -34,6 +34,8 @@ liftIncaTypes(env : IncaEnv) -> string {
 
 			%structnames%
 
+			SuperUnion2IncaValue(v : ?) -> IncaValue;
+
 			%liftUnions2incaDec%
 
 			%liftStructs2incaDec%
@@ -42,6 +44,8 @@ liftIncaTypes(env : IncaEnv) -> string {
 
 			%liftIncaFieldDec%
 		}
+
+		%superunion%
 
 		%liftUnions2incaDef%
 
@@ -59,17 +63,20 @@ liftIncaTypes(env : IncaEnv) -> string {
 			acc + name + "_ID = " + i2s(i) + ";\n"
 		}),
 		"structnames", "INCA_STRUCT_NAMES = [" + superglue(structs, \s -> toString(s), ", ") + "]",
+		"superunion", makeSuperUnion(env.structs),
 		"liftUnions2incaDec", foldTree(env.unions, "", \name, union, acc -> {
 			acc + name + "2IncaValue(v : " + name + ") -> IncaValue;\n"
 		}),
 		"liftStructs2incaDec", foldTree(env.structs, "", \name, struct, acc -> {
-			acc + name + "2IncaValue(v : " + name + ") -> IncaValue;\n"
+			par = if (struct.typars != []) "<?>" else "";
+			acc + name + "2IncaValue(v : " + name + par + ") -> IncaValue;\n"
 		}),
 		"liftUnions2incaDef", foldTree(env.unions, "", \name, union, acc -> {
 			acc + liftUnion2IncaStruct(name, union, nStructArgs)
 		}),
-		"liftStructs2incaDef", foldTree(env.structs, "", \name, struct, acc -> {
-			acc + liftStruct2IncaStruct(name, struct)
+		"liftStructs2incaDef", foldTree(env.structs, "", \name, struct : FiTypeStruct, acc -> {
+			par = if (struct.typars != []) "<?>" else "";
+			acc + liftStruct2IncaStruct(name, par, struct)
 		}),
 		"liftIncaStructDec", foldTree(env.structs, "", \name, struct, acc -> {
 			acc + "incaStruct" + name + "(" + superglue(struct.args, \s -> "IncaValue", ",") + ") -> IncaValue;\n"
@@ -83,6 +90,22 @@ liftIncaTypes(env : IncaEnv) -> string {
 		"liftIncaFieldDef", foldTree(fields, "", \field, sts, acc -> {
 			acc + liftIncaFieldDef(field, sts)
 		}),
+	])
+}
+
+makeSuperUnion(structs : Tree<string, FiTypeStruct>) -> string {
+	blueprint("
+		SuperUnion2IncaValue(v : ?) -> IncaValue {
+			fv = flow(v);
+			switch (fv) {
+				%structs%
+			}
+		}
+
+	", [
+		"structs", foldTree(structs, "", \name, st, acc -> {
+			acc + name + "(" + strGlue(generate(0, length(st.args), \__ -> "__"), ",") + "): " + name + "2IncaValue(fv);\n"
+		})
 	])
 }
 
@@ -108,18 +131,23 @@ liftUnion2IncaStruct(name : string, u : FiTypeUnion, nargs : Tree<string, int>) 
 	);
 }
 
-liftStruct2IncaStruct(name : string, s : FiTypeStruct) -> string {
+liftStruct2IncaStruct(name : string, par : string, s : FiTypeStruct) -> string {
 	blueprint("
-		%name%2IncaValue(v : %name%) -> IncaValue {
+		%name%2IncaValue(v : %namep%) -> IncaValue {
 			makeIncaStruct(%name%_ID, [
 				%fields%
 			])
 		}
 	", [
 		"name", name,
+		"namep", name + par,
 		"fields", superglue(s.args, \arg : FiStructArg -> {
-			liftIncaField("v." + arg.name, arg.type)
-		}, ",\n")
+				if (name == "IUnlifted") {
+					"makeIncaUnlifted(v.val)"
+				} else {
+					liftIncaField("v." + arg.name, arg.type)
+				}
+			}, ",\n")
 	]
 	);
 }
@@ -133,14 +161,18 @@ liftIncaField(field : string, type : FiType) -> string {
 		FiTypeInt(): wrap("Int");
 		FiTypeDouble(): wrap("Double");
 		FiTypeString(): wrap("String");
-		FiTypeArray(t): "makeIncaArray(map(" + field + ", \\av -> {"
-			+ liftIncaField("av", t) +
+		FiTypeArray(t): "makeIncaArray(map(" + field + ", \\av" + i2s(strlen(field)) + " -> {"
+			+ liftIncaField("av" + i2s(strlen(field)), t) +
 		"}))";
 		FiTypeName(n, __): n + "2IncaValue(" + field + ")";
 		//((FiTypeStruct(name, typars, args, info): name + "2IncaValue(" + field + ")";
 		//FiTypeUnion(name, typeparameters, typenames, info): name + "2IncaValue(" + field + ")";
 		FiTypeNative(): wrap("Native");
-		default: "NOT SUPPORTED!";
+
+		FiTypeFunction(args, returnType): "NOT SUPPORTED!";
+		FiTypeRef(t): "NOT SUPPORTED!";
+		FiTypeParameter(n): "SuperUnion2IncaValue(" + field + ")";
+		FiTypeFlow(): "NOT SUPPORTED!";
 	}
 }
 
@@ -156,7 +188,12 @@ liftIncaType(type : FiType) -> string {
 		//FiTypeStruct(name, typars, args, info): "IncaStruct"; // name + "_ID";
 		//FiTypeUnion(name, typeparameters, typenames, info): "IncaStruct"; // name + "_ID";
 		FiTypeNative(): "native";
-		default: "NOT SUPPORTED!";
+
+		FiTypeParameter(n): "IncaValue";
+
+		FiTypeFunction(args, returnType): "NOT SUPPORTED!";
+		FiTypeRef(t): "NOT SUPPORTED!";
+		FiTypeFlow(): "NOT SUPPORTED!";
 	}
 }
 
@@ -182,7 +219,7 @@ liftIncaStruct(name : string, s : FiTypeStruct) -> string {
 liftIncaFieldDef(field : string, structs : Set<FiTypeStruct>) -> string {
 	blueprint("
 		incaField_%name%(v : IncaValue) -> IncaValue {
-			switch (getIncaCoreValue(v)) {
+			switch (getIncaCoreBasicValue(v)) {
 				IncaStruct(id, fields): {
 					%structs%
 					else makeIncaVoid();
