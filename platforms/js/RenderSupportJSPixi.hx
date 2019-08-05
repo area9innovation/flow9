@@ -332,7 +332,6 @@ class RenderSupportJSPixi {
 					untyped localStages[currentInteractiveLayerZorder].view.style.pointerEvents = "none";
 
 					untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
-					
 
 					if (e.type == "touchstart") {
 						emitMouseEvent(PixiStage, "mousedown", pos.x, pos.y);
@@ -2117,8 +2116,6 @@ class RenderSupportJSPixi {
 	public static var IsFullWindow : Bool = false;
 	public static function toggleFullWindow(fw : Bool) : Void {
 		if (FullWindowTargetClip != null && IsFullWindow != fw) {
-			PixiStage.invalidateStage(true);
-
 			if (Platform.isIOS) {
 				FullWindowTargetClip = untyped getFirstVideoWidget(untyped FullWindowTargetClip) || FullWindowTargetClip;
 				if (untyped __instanceof__(FullWindowTargetClip, VideoClip)) {
@@ -2131,15 +2128,19 @@ class RenderSupportJSPixi {
 				}
 			}
 
-			PixiStage.renderable = false;
+
+			var mainStage : FlowContainer = cast(untyped PixiStage.children[0], FlowContainer);
+			mainStage.invalidateStage(true);
+			
+			mainStage.renderable = false;
 
 			if (fw) {
-				regularStageChildren = PixiStage.children;
+				regularStageChildren = mainStage.children;
 				setShouldPreventFromBlur(FullWindowTargetClip);
-				PixiStage.children = [];
+				mainStage.children = [];
 
 				regularFullScreenClipParent = FullWindowTargetClip.parent;
-				PixiStage.addChild(FullWindowTargetClip);
+				mainStage.addChild(FullWindowTargetClip);
 
 				var _clip_visible = untyped FullWindowTargetClip._visible;
 
@@ -2157,12 +2158,12 @@ class RenderSupportJSPixi {
 						child.setClipVisible(untyped child._flow_visible);
 					}
 
-					PixiStage.children = regularStageChildren;
+					mainStage.children = regularStageChildren;
 					regularFullScreenClipParent.addChild(FullWindowTargetClip);
 				}
 			}
 
-			PixiStage.renderable = true;
+			mainStage.renderable = true;
 
 			fullWindowTrigger(fw);
 		}
