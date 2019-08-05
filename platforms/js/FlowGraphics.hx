@@ -61,7 +61,7 @@ class FlowGraphics extends Graphics {
 		pen.y = y;
 		localBounds.addPoint(pen);
 
-		return super.lineTo(x, y);
+		return newGraphics;
 	}
 
 	public override function quadraticCurveTo(cx : Float, cy : Float, x : Float, y : Float) : Graphics {
@@ -128,6 +128,10 @@ class FlowGraphics extends Graphics {
 
 			addChild(sprite.mask);
 			addChild(sprite);
+		}
+
+		if (parent != null) {
+			invalidateStage();
 		}
 
 		return newGraphics;
@@ -248,7 +252,12 @@ class FlowGraphics extends Graphics {
 	public override function clear() : Graphics {
 		pen = new Point();
 		localBounds = new Bounds();
+		var newGraphics = super.clear();
 
-		return super.clear();
+		if (parent != null) {
+			invalidateStage();
+		}
+
+		return newGraphics;
 	};
 }
