@@ -284,17 +284,19 @@ class TextClip extends NativeWidgetClip {
 
 		for (child in children) {
 			var c : Dynamic = child;
+			var ctext = bidiUndecorate(c.text);
 			if (c.orgCharIdxStart <= charIdx && c.orgCharIdxEnd > charIdx) {
 				var text = "";
 				var chridx : Int = c.orgCharIdxStart;
-				for (i in 0...c.text.length) {
+				for (i in 0...ctext[0].length) {
 					if (chridx >= charIdx) break;
 					chridx += 1 + Math.round(c.difPositionMapping[i]);
-					text += c.text.substr(i, 1);
+					text += ctext[0].substr(i, 1);
 				}
 				var mtx : Dynamic = pixi.core.text.TextMetrics.measureText(text, c.style);
-				var result = c.x + mtx.width;
-				if (TextClip.getStringDirection(c.text) == "RTL") {
+				var mtxPrev : Dynamic = pixi.core.text.TextMetrics.measureText(text.substr(0, text.length-1), c.style);
+				var result = c.x + (mtxPrev.width*(chridx-charIdx) + mtx.width) / (1 + chridx-charIdx);
+				if (ctext[1] == "rtl") {
 					mtx = pixi.core.text.TextMetrics.measureText(c.text, c.style);
 					return c.width - result;
 				}
@@ -477,7 +479,7 @@ class TextClip extends NativeWidgetClip {
 				textClip.setClipRenderable(false);
 			}
 		} else if (textClipChanged) {
-			var modification : TextMappedModification = (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
+			var modification : TextMappedModification = getContentGlyphs();
 			var text = modification.modified;
 			var chrIdx: Int = 0;
 			var texts = wordWrap ? [[text]] : checkTextLength(text);
@@ -959,6 +961,10 @@ class TextClip extends NativeWidgetClip {
 
 	public function getContent() : String {
 		return text;
+	}
+
+	public function getContentGlyphs() : TextMappedModification {
+		return (isInput && type == "password" ? getBulletsString(this.text) : getActualGlyphsString(this.text));
 	}
 
 	public function getStyle() : TextStyle {
