@@ -43,14 +43,14 @@ ContinuousTimer(
 	pause : () -> void,
 );
 
-continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : double, onFinished : (bool) -> void) -> ContinuousTimer {
+continuousTimer(tree : Tree<double, [() -> bool]>, speed : double, onFinished : (bool) -> void) -> ContinuousTimer {
 	isFinished = ref true;
 	delays : ref [Pair<double, double>] = ref [];
 	r = repeatable2(1, false);
 	started = ref 0.0;
 	uns = ref [];
 
-	deferredFns : ref [Pair<() -> bool, () -> bool>] = ref [];
+	deferredFns : ref [() -> bool] = ref [];
 	deferredTime = ref 0.0;
 	currentRepeat = ref 0;
 
@@ -84,16 +84,16 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 					offset = ts - ^started;
 					if (^deferredFns != []) {
 						deferredFns := mapConcat(^deferredFns, \fn -> {
-							if (fn.first() && fn.second()) [] else [fn]
+							if (fn()) [] else [fn]
 						});
 						if (^deferredFns == [])
 							delays := map(^delays, \v -> Pair(v.first + (offset - ^deferredTime) / speed, v.second));
 						if (offset > ^deferredTime + 10000.) {
 							println("IScript timeout");
-							dispUnsA(uns);
+							stopFn();
 						}
 					} else {
-						foldWhile(^delays, offset, \t, d -> {
+						foldWhile(^delays, offset, \t, d -> { // TODO: break on mousedown
 							if (^delays[0].first < offset) {
 								eitherFn(
 									lookupTree(tree, ^delays[0].second),
@@ -104,7 +104,7 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 											\acc, fn -> {
 												//println(^delays[0].second);
 												//println(offset);
-												if (fn.first() && fn.second()) {
+												if (fn()) {
 													Some(arrayPush(acc, fn))
 												} else {
 													None()
@@ -171,6 +171,27 @@ continuousTimer(tree : Tree<double, [Pair<() -> bool, () -> bool>]>, speed : dou
 	)
 }*/
 
+fixIScriptTree(tree : Tree<double, [Triple<() -> bool, () -> bool, bool>]>) -> Tree<double, [() -> bool]> {
+	println(tree);
+	tree1 = foldTree(
+		tree,
+		Pair(makeTree(), 0.),
+		\k, v, acc -> {
+			offset = i2d(countA(v, thirdOfTriple) * 100) + acc.second;
+			Pair(
+				setTree(
+					acc.first,
+					k + acc.second,
+					map(v, \vv -> \ -> vv.first() && vv.second())
+				),
+				offset
+			)
+		}
+	).first;
+	println(tree1);
+	tree1
+}
+
 replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool) -> void, handleInputOutput : bool) -> () -> void {
 	//defaultTimeout = getValue(manager.iscript.settings.replayTimeout) / getValue(manager.iscript.settings.replaySpeed);
 	//maxRepeats = getValue(manager.iscript.settings.replayRepeats);
@@ -181,12 +202,14 @@ replayIScript2(manager : MaterialManager, iScript : IScript, onFinished : (bool)
 		setTree(
 			acc,
 			delay / getValue(manager.iscript.settings.replaySpeed),
-			map(records, \r -> Pair(
+			map(records, \r -> Triple(
 				\ -> replayIScriptRecord(manager, r, handleInputOutput),
-				\ -> isClickValid(manager, r)
+				\ -> isClickValid(manager, r),
+				isMouseDownEvent(r)
 			))
 		)
 	)
+	|> fixIScriptTree
 	|> (\t -> continuousTimer(t, getValue(manager.iscript.settings.replaySpeed), onFinished))
 	|> (\t -> {
 		if (getValue(manager.iscript.settings.replayProfile)) {
@@ -245,6 +268,14 @@ isClickValid(manager : MaterialManager, record : IScriptRecord) -> bool {
 	)
 }
 
+isMouseDownEvent(record : IScriptRecord) -> bool {
+	eitherMap(
+		getRecordDescriptor(record),
+		\descriptor -> descriptor.name == "mousedown" || descriptor.name =="focused",
+		false
+	)
+}
+
 getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor> {
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, __, __, __): if (descriptor.component.id != makeList()) Some(descriptor) else None();
@@ -255,7 +286,7 @@ getRecordDescriptor(record : IScriptRecord) -> Maybe<IScriptBehaviourDescriptor>
 replayIScriptRecord(manager : MaterialManager, record : IScriptRecord, handleInputOutput : bool) -> bool {
 	switch (record : IScriptRecord) {
 		IScriptBehaviourRecord(descriptor, value, type, callstack): {
-			repeatBehaviourById(manager, descriptor, value)// || descriptor.name == "focused"
+			repeatBehaviourById(manager, descriptor, value)
 		}
 		IScriptInputRecord(descriptor, name, possibleValues, __) : {
 			if (handleInputOutput) {
@@ -500,18 +531,23 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 			eitherFn(
 				delayKey,
 				\dk -> {
-					if (getValue(dk))
-						//emitKey()
-						timer(10, emitKey)
-					else {
-						disp = ref nop;
+					if (getValue(dk)) {
+						emitKey();
+						//timer(10, emitKey);
+						true
+					} else {
+						false
+						/*disp = ref nop;
 						disp := subscribe2(dk, \d -> if (d) {
 							timer(10, emitKey);
 							^disp();
-						});
+						});*/
 					}
 				},
-				emitKey
+				\ -> {
+					emitKey();
+					true
+				}
 			)
 			/*if (delayKey)
 				timer(100, \ -> {
@@ -520,7 +556,7 @@ repeatBehaviourById(manager : MaterialManager, behaviourDescriptor : IScriptBeha
 				})
 			else*/
 				//emitKey();
-			true
+			//true
 		} else {
 			replayBehaviour = contains(getValue(manager.iscript.settings.replayReplayBehaviours), name);
 			checkEnabled = replayBehaviour;
