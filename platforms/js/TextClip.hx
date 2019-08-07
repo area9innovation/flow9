@@ -800,7 +800,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
 		RenderSupportJSPixi.provideEvent(e);
 	}
