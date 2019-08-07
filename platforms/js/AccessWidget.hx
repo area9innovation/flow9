@@ -438,7 +438,7 @@ class AccessWidget extends EventEmitter {
 					clip.emit("blur");
 				});
 
-				RenderSupportJSPixi.PixiStage.on("childrenchanged", function() {
+				var updateZIndex = function() {
 					var localStage : FlowContainer = untyped this.clip.stage;
 					if (localStage == null)
 						return;
@@ -448,6 +448,11 @@ class AccessWidget extends EventEmitter {
 					if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
 						this.element.style.zIndex = zIndex + "";
 					}
+				};
+
+				RenderSupportJSPixi.PixiStage.on("childrenchanged", updateZIndex);
+				on("removed", function() {
+					RenderSupportJSPixi.PixiStage.off("childrenchanged", updateZIndex);
 				});
 
 				if (tagName == "button") {
