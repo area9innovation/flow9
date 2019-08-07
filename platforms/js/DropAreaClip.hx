@@ -41,6 +41,9 @@ class DropAreaClip extends NativeWidgetClip {
 		nativeWidget.ondrop = onDrop;
 		
 		RenderSupportJSPixi.PixiStage.on("childrenchanged", function() {
+			if (this.stage == null)
+				return;
+			
 			nativeWidget.style.zIndex = Std.parseInt(this.stage.view.style.zIndex) + AccessWidget.zIndexValues.droparea + "";
 		});
 	}
