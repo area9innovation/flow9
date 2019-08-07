@@ -28,12 +28,18 @@ class DropAreaClip extends NativeWidgetClip {
 		super.updateNativeWidget();
 	}
 
+	private override function updateWidgetZIndex() {
+		if (this.stage == null)
+			return;
+		
+		nativeWidget.style.zIndex = Std.parseInt(this.stage.view.style.zIndex) + AccessWidget.zIndexValues.droparea + "";
+	}
+
 	private override function createNativeWidget(node_name : String) : Void {
 		super.createNativeWidget(node_name);
 
 		accessWidget.nodeindex = [-AccessWidget.tree.childrenSize];
 		nativeWidget.className = "droparea";
-		nativeWidget.style.zIndex = AccessWidget.zIndexValues.droparea;
 		nativeWidget.onmousemove = provideEvent;
 		nativeWidget.onmousedown = provideEvent;
 		nativeWidget.onmouseup = provideEvent;
@@ -44,7 +50,7 @@ class DropAreaClip extends NativeWidgetClip {
 
 	private function provideEvent(event : Dynamic) : Void {
 		event.preventDefault();
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 		RenderSupportJSPixi.provideEvent(event);
 	}
 

@@ -346,10 +346,10 @@ class AccessWidget extends EventEmitter {
 	];
 
 	public static var zIndexValues = {
-		"canvas" : "0",
-		"accessButton" : "2",
-		"droparea" : "1",
-		"nativeWidget" : "2"
+		"canvas" : 0,
+		"accessButton" : 2,
+		"droparea" : 1,
+		"nativeWidget" : 2
 	};
 
 	public static var tree : AccessWidgetTree = new AccessWidgetTree(0);
@@ -438,9 +438,22 @@ class AccessWidget extends EventEmitter {
 					clip.emit("blur");
 				});
 
-				if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
-					this.element.style.zIndex = AccessWidget.zIndexValues.accessButton;
-				}
+				var updateWidgetZIndex = function() {
+					var localStage : FlowContainer = untyped this.clip.stage;
+					if (localStage == null)
+						return;
+					
+					var zIndex = 1000 * localStage.parent.children.indexOf(localStage) + AccessWidget.zIndexValues.accessButton;
+
+					if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
+						this.element.style.zIndex = zIndex + "";
+					}
+				};
+
+				RenderSupportJSPixi.PixiStage.on("childrenchanged", updateWidgetZIndex);
+				on("removed", function() {
+					RenderSupportJSPixi.PixiStage.off("childrenchanged", updateWidgetZIndex);
+				});
 
 				if (tagName == "button") {
 					this.element.classList.add("accessButton");
