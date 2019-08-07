@@ -2252,19 +2252,47 @@ class RenderSupportJSPixi {
 	}
 
 	public static function takeSnapshot(path : String) : Void {
-		// Empty for these targets
-		trace("takeSnapshot isn't implemented in js");
-		trace("use getSnapshot instead");
+		takeSnapshotBox(path, 0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+	}
+
+	public static function takeSnapshotBox(path : String, x : Int, y : Int, w : Int, h : Int) : Void {
+		try {
+			var base64 = getSnapshotBox(x, y, w, h).split(",")[1];
+			var base64bytes = [];
+
+			untyped __js__("
+				const sliceSize = 512;
+				const byteCharacters = atob(base64);
+
+				for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+					const slice = byteCharacters.slice(offset, offset + sliceSize);
+
+					const byteNumbers = new Array(slice.length);
+					for (let i = 0; i < slice.length; i++) {
+						byteNumbers[i] = slice.charCodeAt(i);
+					}
+
+					const byteArray = new Uint8Array(byteNumbers);
+					base64bytes.push(byteArray);
+				}
+			");
+
+			FlowFileSystem.saveFileClient(path, base64bytes, "image/png");
+		} catch(e : Dynamic) {}
 	}
 
 	public static function getSnapshot() : String {
+		return getSnapshotBox(0, 0, Std.int(getStageWidth()), Std.int(getStageHeight()));
+	}
+
+	public static function getSnapshotBox(x : Int, y : Int, w : Int, h : Int) : String {
 		var child : FlowContainer = untyped PixiStage.children[0];
 
 		if (child == null) {
 			return "";
 		}
 
-		child.setScrollRect(0, 0, getStageWidth(), getStageHeight());
+		child.setScrollRect(x, y, w, h);
 		try {
 			var img = PixiRenderer.plugins.extract.base64(PixiStage);
 			child.removeScrollRect();
