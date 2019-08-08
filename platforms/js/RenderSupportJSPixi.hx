@@ -185,6 +185,9 @@ class RenderSupportJSPixi {
 		}
 
 		if (RendererType == "canvas") {
+			untyped PixiRenderer.context.fillStyle = "white";
+			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+
 			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
 					transparent : true,
 					autoResize : false,
@@ -1354,9 +1357,17 @@ class RenderSupportJSPixi {
 		once("drawframe", fn);
 	}
 
-	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
+	public static function interruptibleDeferUntilRender(fn0 : Void -> Void) : Void -> Void {
+		var alive = true;
+		var fn = function() {
+			if (alive) {
+				fn0();
+			}
+		}
+
 		once("drawframe", fn);
 		return function() {
+			alive = false;
 			off("drawframe", fn);
 		};
 	}

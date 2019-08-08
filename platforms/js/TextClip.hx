@@ -494,10 +494,11 @@ class TextClip extends NativeWidgetClip {
 				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.style = style;
 			}
 
-			textClip.text = bidiDecorate(texts[0][0], textDirection);
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
