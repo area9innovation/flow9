@@ -185,6 +185,9 @@ class RenderSupportJSPixi {
 		}
 
 		if (RendererType == "canvas") {
+			untyped PixiRenderer.context.fillStyle = "white";
+			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+
 			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
 					transparent : true,
 					autoResize : false,
