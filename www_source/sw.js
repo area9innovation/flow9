@@ -2,6 +2,8 @@ var CACHE_NAME = 'flow-cache';
 var CACHE_NAME_DYNAMIC = 'flow-dynamic-cache';
 var rangeResourceCache = 'flow-range-cache';
 
+var SHARED_DATA_ENDPOINT = "share/pwa/data";
+
 // We gonna cache all resources except resources extensions below
 var dynamicResourcesExtensions = [
   ".php",
@@ -348,7 +350,32 @@ self.addEventListener('fetch', function(event) {
     });
   }
 
-  event.respondWith(makeResponse(event.request));
+  const {
+    request,
+    request: {
+      url,
+      method,
+    },
+  } = event;
+
+  if (url.match(SHARED_DATA_ENDPOINT)) {
+    event.respondWith(
+      caches.open(SHARED_DATA_ENDPOINT).then(cache => {
+        if (method == "POST") {
+          return request.text().then(body => {
+            cache.put(SHARED_DATA_ENDPOINT, new Response(body));
+            return new Response("OK");
+          });
+        } else {
+          return cache.match(SHARED_DATA_ENDPOINT).then(response => {
+            return response || new Response("");
+          }) || new Response("");
+        }
+      })
+    );
+  } else {
+    event.respondWith(makeResponse(event.request));
+  }
 });
 
 var cleanServiceWorkerCache = function() {
@@ -368,6 +395,8 @@ var cleanServiceWorkerCache = function() {
 self.addEventListener('activate', function(event) {
   // this cache is only for session
   cleanServiceWorkerCache();
+
+  event.waitUntil(clients.claim());
 });
 
 // Currently not used

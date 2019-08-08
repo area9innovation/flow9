@@ -10,19 +10,14 @@ export {
 	// Add this type with links to the individual structs
 	addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target : string) -> SimpleGraph<string, string>;
 
+	// Extract what types this fn converts to/from. Pair("", "") is not a lowering
+	getIncaFnLoweringTypes(f : FiFunctionDec) -> Pair<string, string>;
+
 	incaFiName2structs(env : IncaEnv, tname : string) -> Set<string>;
 }
 
 buildIncaConversionGraph(env : IncaEnv, details : bool) -> SimpleGraph<string, string> {
-	// Whether we should include details in the graph or not
-	graph0 = if (details && false) {
-		foldTree(env.unions, makeSimpleGraph(), \name, union, acc -> {
-			fold(union.typenames, acc, \acc2, tn -> {
-				addSimpleEdge(acc2, name, getFiTypeName(tn), "", 0);
-			})
-		}) 
-	} else makeSimpleGraph();
-
+	graph0 = makeSimpleGraph();
 	graph = foldTree(env.functions, graph0, \name, dec, acc -> {
 		addIncaFunctionToGraph(env, acc, details, dec)
 	});
@@ -40,26 +35,23 @@ addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target
 }
 
 addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, details : bool, dec : FiFunctionDec) -> SimpleGraph<string, string> {
-	// Extract the named function arguments
-	argTypes = filtermap(dec.type.args, \a -> {
-		argName = getFiTypeName(a.type);
-		if (argName == "") None() else Some(argName);
-	});
-	retType = getIncaTypeNameOrVoid(dec.type.returnType);
+	toFrom = getIncaFnLoweringTypes(dec);
 
-	if (length(argTypes) == 1 && retType != "") {
-		argType = argTypes[0];
+	if (toFrom.first != "" && toFrom.second != "") {
+		argType = toFrom.first;
+		retType = toFrom.second;
 
-		// println("\n" + argType + " -> " + retType);
-
-		acc2 = if (details) addIncaCasesToGraph(env, acc, dec.name, dec.lambda) else acc;
-		if (!details) addSimpleEdge(acc2, argType, retType, dec.name, 2) else {
+		if (details) {
+			acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
 			if (acc2 == acc) {
 				// Hm, we could not find any cases, so let us do it at the top level
 				addIncaEdge(env, acc2, argType, retType, dec.name, 2)
 			} else {
 				acc2;
 			}
+		} else {
+			println("\n" + argType + " -> " + retType);
+			addSimpleEdge(acc, argType, retType, dec.name, 2);
 		}
 	} else acc;
 }
@@ -125,7 +117,6 @@ getIncaTypeNameOrVoid(t : FiType) -> string {
 	if (t == FiTypeVoid()) "void" else getFiTypeName(t);
 }
 
-
 addIncaEdge(env : IncaEnv, g : SimpleGraph<string, string>, from : string, to : string, fn : string, cost : int) -> SimpleGraph<string, string> {
 	fromExpanded = incaFiName2structs(env, from);
 	toExpanded = incaFiName2structs(env, to);
@@ -149,4 +140,26 @@ incaFiName2structs(env : IncaEnv, tname : string) -> Set<string> {
 			})
 		}
 	}
+}
+
+getIncaFnLoweringTypes(dec : FiFunctionDec) -> Pair<string, string> {
+	// Extract the named function arguments
+	argTypes = filtermap(dec.type.args, \a -> {
+		argName = getFiTypeName(a.type);
+		if (argName == "") None() else Some(argName);
+	});
+	hasManager = contains(argTypes, "IncaManager");
+
+	retType = getIncaTypeNameOrVoid(dec.type.returnType);
+
+	if (length(dec.type.args) == 1 + b2i(hasManager) && retType != "") {
+		withoutManager = filter(argTypes, \t -> t != "IncaManager");
+		if (withoutManager == []) {
+			println(dec.name);
+			Pair("", "")
+		} else {
+			argType = withoutManager[0];
+			Pair(argType, retType)
+		}
+	} else Pair("", "")
 }

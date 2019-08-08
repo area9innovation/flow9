@@ -37,7 +37,7 @@ NativeFunction * DatabaseSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_OBJECT_METHOD(DatabaseConnection, closeDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, escapeDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDb, 2);
-    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 2);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbMulti, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, lastInsertIdDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, startTransactionDb, 1);
@@ -176,8 +176,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
 }
 
 StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
-    RUNNER_PopArgs1(result);
-    RUNNER_CheckTag(TNative, result);
+    IGNORE_RUNNER_ARGS;
 
     QString msg;
     if (last_error.length()) {
@@ -375,6 +374,9 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
                 value = StackSlot::MakeInt(field.value().toBool() ? 1 : 0);
                 break;
             case QVariant::Int:
+                value = StackSlot::MakeInt(field.value().toInt());
+                break;
+            case QMetaType::Char:    // it's tinyint
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
             case QVariant::UInt:
