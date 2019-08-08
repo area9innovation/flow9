@@ -79,6 +79,12 @@ class DisplayObjectHelper {
 		invalidateStage(clip, true);
 	}
 
+	public static inline function invalidateStageByParent(clip : DisplayObject) : Void {
+		if (clip.parent != null) {
+			invalidateStage(clip.parent, false);
+		}
+	}
+
 	public static inline function invalidateTransformByParent(clip : DisplayObject) : Void {
 		untyped clip.transformChanged = true;
 		if (clip.parent != null) {
@@ -162,7 +168,7 @@ class DisplayObjectHelper {
 				updateClipWorldVisible(clip);
 			}
 
-			invalidateTransformByParent(clip);
+			invalidateStageByParent(clip);
 		}
 	}
 
@@ -202,9 +208,7 @@ class DisplayObjectHelper {
 				updateClipWorldVisible(clip);
 			}
 
-			if (renderable) {
-				invalidateTransformByParent(clip);
-			}
+			invalidateStageByParent(clip);
 		}
 	}
 

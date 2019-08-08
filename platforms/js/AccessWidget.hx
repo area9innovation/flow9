@@ -216,6 +216,16 @@ class AccessWidgetTree extends EventEmitter {
 			var clip : DisplayObject = accessWidget.clip;
 
 			if (nativeWidget != null) {
+				if (nativeWidget.style.zIndex == null || nativeWidget.style.zIndex == "") {
+					var localStage : FlowContainer = untyped clip.stage;
+
+					if (localStage != null) {
+						var zIndex = 1000 * localStage.parent.children.indexOf(localStage) +
+							nativeWidget.className == "droparea" ? AccessWidget.zIndexValues.droparea : AccessWidget.zIndexValues.nativeWidget;
+						nativeWidget.style.zIndex = Std.string(zIndex);
+					}
+				}
+
 				if (DebugAccessOrder) {
 					nativeWidget.setAttribute("worldTransform", 'matrix(${clip.worldTransform.a}, ${clip.worldTransform.b}, ${clip.worldTransform.c}, ${clip.worldTransform.d}, ${clip.worldTransform.tx}, ${clip.worldTransform.ty})');
 					nativeWidget.setAttribute("zorder", '${zorder}');
@@ -347,7 +357,6 @@ class AccessWidget extends EventEmitter {
 
 	public static var zIndexValues = {
 		"canvas" : 0,
-		"accessButton" : 2,
 		"droparea" : 1,
 		"nativeWidget" : 2
 	};
@@ -436,23 +445,6 @@ class AccessWidget extends EventEmitter {
 				// Add blur notification. Used for focus control
 				this.element.addEventListener("blur", function () {
 					clip.emit("blur");
-				});
-
-				var updateWidgetZIndex = function() {
-					var localStage : FlowContainer = untyped this.clip.stage;
-					if (localStage == null)
-						return;
-					
-					var zIndex = 1000 * localStage.parent.children.indexOf(localStage) + AccessWidget.zIndexValues.accessButton;
-
-					if (this.element.style.zIndex == null || this.element.style.zIndex == "") {
-						this.element.style.zIndex = zIndex + "";
-					}
-				};
-
-				RenderSupportJSPixi.PixiStage.on("childrenchanged", updateWidgetZIndex);
-				on("removed", function() {
-					RenderSupportJSPixi.PixiStage.off("childrenchanged", updateWidgetZIndex);
 				});
 
 				if (tagName == "button") {
