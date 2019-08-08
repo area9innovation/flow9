@@ -835,12 +835,20 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null) {
+			return;
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
+
+		if (nativeWidget == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -856,8 +864,9 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
-		if (nativeWidget == null)
+		if (nativeWidget == null) {
 			return;
+		}
 
 		if (newValue != nativeWidget.value) {
 			if (e != null && e.data != null && e.data.length != null) {

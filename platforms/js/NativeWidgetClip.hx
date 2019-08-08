@@ -80,8 +80,6 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
 
-		RenderSupportJSPixi.PixiStage.on("childrenchanged", updateWidgetZIndex);
-
 		if (accessWidget == null) {
 			accessWidget = new AccessWidget(this, nativeWidget);
 		} else {
@@ -101,19 +99,10 @@ class NativeWidgetClip extends FlowContainer {
 		}
 	}
 
-	private function updateWidgetZIndex() : Void {
-		if (this.stage == null)
-			return;
-		
-		nativeWidget.style.zIndex = Std.parseInt(this.stage.view.style.zIndex) + AccessWidget.zIndexValues.nativeWidget + "";
-	}
-
 	private function deleteNativeWidget() : Void {
 		if (accessWidget != null) {
 			AccessWidget.removeAccessWidget(accessWidget);
 		}
-
-		RenderSupportJSPixi.PixiStage.off("childrenchanged", updateWidgetZIndex);
 
 		nativeWidget = null;
 	}
