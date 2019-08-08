@@ -253,12 +253,12 @@ sudo apt install libpulse-dev libglu1-mesa-dev qtchooser -y
 qtchooser -install qt512 ~/Qt/5.12.0/5.12.0/gcc_64/bin/qmake
 echo "export QT_SELECT=qt512" >> ~/.env && source ~/.env
 ```
-Clone asmjit repo:
+Clone Area9's fork of asmjit repo:
 ```bash
 cd $FLOW/platforms/common/cpp
 git clone ssh://git@github.com/area9innovation/asmjit.git
 cd asmjit
-git checkout oldstable
+git checkout next
 ```
 Build QtByteRunner:
 ```bash
