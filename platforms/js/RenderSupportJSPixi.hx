@@ -1002,7 +1002,12 @@ class RenderSupportJSPixi {
 	}
 
 	public static function mainRenderClip() : DisplayObject {
-		return PixiStage.children[0];
+		var stage = PixiStage.children[0];
+		if (stage == null) {
+			stage = new FlowContainer();
+			addChild(PixiStage, stage);
+		}
+		return stage;
 	}
 
 	public static function enableResize() : Void {
