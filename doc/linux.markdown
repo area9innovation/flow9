@@ -258,7 +258,7 @@ Clone asmjit repo:
 cd $FLOW/platforms/common/cpp
 git clone ssh://git@github.com/area9innovation/asmjit.git
 cd asmjit
-git checkout next
+git checkout oldstable
 ```
 Build QtByteRunner:
 ```bash
