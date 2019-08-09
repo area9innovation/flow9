@@ -75,10 +75,12 @@ StackSlot CgiSupport::quit(RUNNER_ARGS)
     RUNNER_PopArgs1(rawcode);
     RUNNER_CheckTag(TInt, rawcode);
 
-    QCoreApplication::exit(rawcode.GetInt());
+	if (!quitPending) {
+		quitPending = true;
+		quitCode = rawcode.GetInt();
+		QCoreApplication::exit(quitCode);
+	}
 
-    quitPending = true;
-    quitCode = rawcode.GetInt();
     RETVOID;
 }
 
