@@ -2,6 +2,8 @@ import js.three.Object3D;
 import js.three.Box3;
 import js.three.Camera;
 
+using DisplayObjectHelper;
+
 class Object3DHelper {
 	public static inline function invalidateStage(object : Object3D) : Void {
 		if (untyped object.updateProjectionMatrix != null) {
@@ -9,7 +11,9 @@ class Object3DHelper {
 		}
 
 		if (getClipWorldVisible(object)) {
-			RenderSupportJSPixi.InvalidateStage();
+			for (stage in getStage(object)) {
+				stage.invalidateStage(false);
+			}
 		}
 	}
 

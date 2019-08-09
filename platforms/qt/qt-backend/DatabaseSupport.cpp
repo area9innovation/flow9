@@ -37,7 +37,7 @@ NativeFunction * DatabaseSupport::MakeNativeFunction(const char *name, int num_a
     TRY_USE_OBJECT_METHOD(DatabaseConnection, closeDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, escapeDb, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDb, 2);
-    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 2);
+    TRY_USE_OBJECT_METHOD(DatabaseConnection, requestExceptionDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, requestDbMulti, 2);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, lastInsertIdDb, 1);
     TRY_USE_OBJECT_METHOD(DatabaseConnection, startTransactionDb, 1);
@@ -176,8 +176,7 @@ StackSlot DatabaseConnection::requestDb(RUNNER_ARGS) {
 }
 
 StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
-    RUNNER_PopArgs1(result);
-    RUNNER_CheckTag(TNative, result);
+    IGNORE_RUNNER_ARGS;
 
     QString msg;
     if (last_error.length()) {
@@ -192,11 +191,17 @@ StackSlot DatabaseConnection::requestExceptionDb(RUNNER_ARGS) {
 StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     RUNNER_PopArgs1(rawqueries);
     RUNNER_CheckTag(TArray, rawqueries);
-    RUNNER_DefSlots2(resultArr, requestResults);
+    RUNNER_DefSlots5(
+        resultArr,          // the filal result
+        queriesResults,     // (array of arrays) the results for each query (query can include several sqls and results)
+        queryResults,       // the results of a sigle query
+        queryResults2,      // it's used for resizing queryResults
+        resultRows          // result of a single sql from a query
+    );
 
-    std::vector<StackSlot> result;
-
-    int nqueries= RUNNER->GetArraySize(rawqueries);
+    int nqueries = RUNNER->GetArraySize(rawqueries);
+    queriesResults = RUNNER->AllocateArray(nqueries);
+    int nresults = 0;
     for (int i = 0; i < nqueries; i++) {
         StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
         QString queryString = RUNNER->GetQString(querySlot);
@@ -206,27 +211,51 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         DatabaseResult *databaseResult = new DatabaseResult(this, query);
         query->exec(queryString);
 
-        last_error = query->lastError().text().trimmed();
+        QString err_msg = query->lastError().text().trimmed();
+        if (err_msg.length()) {
+            last_error = err_msg;
+        }
 
-        std::vector<StackSlot> resultSets;
-
+        int resultsCnt = 0;
+        int realCapacity = 1;
+        queryResults = RUNNER->AllocateArray(realCapacity);
         do {
-            int nresults = query->size();
-            nresults = nresults == 0 ? 1 : nresults;
-            requestResults = RUNNER->AllocateArray(nresults);
-            for (int j = 0; j < nresults; j++) {
+            int nRows = query->size();
+            nRows = nRows == 0 ? 1 : nRows;
+            resultRows = RUNNER->AllocateArray(nRows);
+            for (int j = 0; j < nRows; j++) {
                 query->next();
                 StackSlot requestResult = databaseResult->getRecord(RUNNER);
-                RUNNER->SetArraySlot(requestResults, j, requestResult);
+                RUNNER->SetArraySlot(resultRows, j, requestResult);
             }
-            result.push_back(requestResults);
+            resultsCnt++;
+            if (realCapacity == resultsCnt) {
+                queryResults2 = RUNNER->AllocateArray(realCapacity * 2);
+                for (int k = 0; k < realCapacity; k++ ) {
+                    RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+                }
+                queryResults = queryResults2;
+                realCapacity *= 2;
+            }
+            RUNNER->SetArraySlot(queryResults , resultsCnt - 1, resultRows);
         } while (query->nextResult());
+        if (resultsCnt < realCapacity) {
+            queryResults2 = RUNNER->AllocateArray(resultsCnt);
+            for (int k = 0; k < resultsCnt; k++ ) {
+                RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
+            }
+            queryResults = queryResults2;
+        }
+        nresults += resultsCnt;
+        RUNNER->SetArraySlot(queriesResults, i, queryResults);
     }
 
-    int nresults = result.size();
     resultArr = RUNNER->AllocateArray(nresults);
-    for (int i = 0; i < nresults; i++) {
-        RUNNER->SetArraySlot(resultArr, i, result[i]);
+    for (int i = 0, n = 0; i < nqueries; i++) {
+        StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
+        for (int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
+            RUNNER->SetArraySlot(resultArr, n, RUNNER->GetArraySlot(qResults, c));
+        }
     }
     return resultArr;
 }
@@ -345,6 +374,9 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
                 value = StackSlot::MakeInt(field.value().toBool() ? 1 : 0);
                 break;
             case QVariant::Int:
+                value = StackSlot::MakeInt(field.value().toInt());
+                break;
+            case QMetaType::Char:    // it's tinyint
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
             case QVariant::UInt:

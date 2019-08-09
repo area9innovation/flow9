@@ -84,10 +84,15 @@ class WebClip extends NativeWidgetClip {
 
 		iframe.onload = function() {
 			try {
+				var iframeDocument = iframe.contentWindow.document;
+				iframeDocument.addEventListener('mousemove', onContentMouseMove, false);
+				if (Native.isTouchScreen())
+					iframeDocument.addEventListener('touchstart', onContentMouseMove, false);
+
 				if (shrinkToFit) {
 					try {
-						this.htmlPageWidth = iframe.contentWindow.document.body.scrollWidth;
-						this.htmlPageHeight = iframe.contentWindow.document.body.scrollHeight;
+						this.htmlPageWidth = iframeDocument.body.scrollWidth;
+						this.htmlPageHeight = iframeDocument.body.scrollHeight;
 						applyShrinkToFit();
 					} catch(e : Dynamic) {
 						// if we can't get the size of the html page, we can't do shrink so disable it
@@ -145,6 +150,33 @@ class WebClip extends NativeWidgetClip {
 			iframe.style.width = nativeWidget.style.width;
 			iframe.style.height = nativeWidget.style.height;
 			iframe.style.visibility = "visible";
+		}
+	}
+
+	private function onContentMouseMove(e : Dynamic) {
+		var iframeZorder : Int = Math.floor(Std.parseInt(nativeWidget.style.zIndex) / 1000);
+		var localStages = RenderSupportJSPixi.PixiStage.children;
+		var i = localStages.length - 1;
+
+		while (i > iframeZorder) {
+
+			var pos = Util.getPointerEventPosition(e);
+			
+			if (RenderSupportJSPixi.getClipAt(localStages[i], pos, true, true) != null) {
+				untyped localStages[i].view.style.pointerEvents = "all";
+				untyped localStages[iframeZorder].view.style.pointerEvents = "none";
+
+				untyped RenderSupportJSPixi.PixiRenderer.view = untyped localStages[i].view;
+
+				if (e.type == "touchstart") {
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mousedown", pos.x, pos.y);
+					RenderSupportJSPixi.emitMouseEvent(RenderSupportJSPixi.PixiStage, "mouseup", pos.x, pos.y);
+				}
+
+				return;
+			}
+
+			i--;
 		}
 	}
 

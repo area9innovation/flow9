@@ -1920,6 +1920,7 @@ StackSlot GLRenderSupport::interruptibleDeferUntilRender(RUNNER_ARGS)
     RUNNER_PopArgs1(fn);
     int cb_root = RUNNER->RegisterRoot(fn);
     RenderDeferredFunctions.push_back(cb_root);
+    doRequestRedraw();
 
     return RUNNER->AllocateNativeClosure(ByteCodeRunner::RemoveDeferredAction, "InterruptibleTimer$disposer", 0, this, 1, cb_root);
 }

@@ -5,16 +5,24 @@ export {
 	xliffNode2string(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string;
 
 	makeXliffContent(nodes : [XmlNode], productName : string) -> string;
+	makeXliffContent2(nodes : [XmlNode], productName : string, xliff2string : (node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string) -> string;
+
+	makeXliffIndent(level : int) -> string;
+	restoreAposAndQuote(text : string) -> string;
+	xliffDequote(s : string) -> string;
 }
 
 // These namespaces are required: they specify that some custom elements (that are out of xliff specs)
 // used in our xliff by intention.
 xliff_header_attrs = "version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"urn:oasis:names:tc:xliff:document:1.2 xliff-core-1.2-transitional.xsd\"";
 
-makeXliffContent(nodes : [XmlNode], productName : string) {
+makeXliffContent(nodes : [XmlNode], productName : string) -> string {
+	makeXliffContent2(nodes, productName, xliffNode2string);
+}
 
+makeXliffContent2(nodes : [XmlNode], productName : string, xliff2string : (node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) -> string) -> string {
 	bodyIndent = 2;
-	body = concatStrings(map(nodes, \n -> { /*println(n);*/ xliffNode2string(n, bodyIndent + 1, None()); }));
+	body = concatStrings(map(nodes, \n -> { /*println(n);*/ xliff2string(n, bodyIndent + 1, None()); }));
 
 	"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
 	"<xliff " + xliff_header_attrs + ">\n"
@@ -35,12 +43,12 @@ makeXliffContent(nodes : [XmlNode], productName : string) {
 }
 
 xliffIndentCache = generate(0, 16, \l -> concatStrings(generate(0, l, \i -> " ")));
-makeXliffIndent(level) {
+makeXliffIndent(level : int) -> string {
 	if (level < 16) xliffIndentCache[level]
 	else makeXliffIndent(level / 2) + makeXliffIndent(level - level / 2)
 }
 
-xliffDequote(s) {
+xliffDequote(s : string) -> string {
 	l = strlen(s);
 	if (l >= 2 && getCharAt(s, 0) == "\"" && getCharAt(s, l-1) == "\"")
 		substring(s, 1, l - 2)
@@ -51,7 +59,7 @@ xliffDequote(s) {
 // Modified version of xml2string() function
 xliffNode2string(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) {
 	space = makeXliffIndent(level);
-	restore = \t -> t |> restoreApos |> restoreQuote;
+
 	switch(node) {
 		XmlElement(tag, attributes, children): {
 			nl = if (tag != "g" && tag != "mrk" && tag != "bpt" && tag != "ept" && tag != "ph") "\n" + space else "";
@@ -63,23 +71,23 @@ xliffNode2string(node : XmlNode, level : int, maybeParent : Maybe<XmlNode>) {
 				+ concatStrings(map(children, \c -> xliffNode2string(c, level + 1, Some(node)))) +
 			("</" + tag + ">")
 		}
-		XmlText(text): { // plain text with "g" and "x" tags
+		XmlText(text): {
 			eitherFn(maybeParent,
 				\p -> {
 					switch(p) {
 						XmlElement(tag, a, ch):
 							if (exists(a, \atr -> atr == XmlAttribute("source-type", "wigi")))
-								text
+								text |> xmlEscapeText
 							else if (tag != "wiki-source")
-								hideConcatenator(restore(text)) |> if(!^keepXlfInnerTagsUnescaped) xmlEscapeText else idfn
+								hideConcatenator(restoreAposAndQuote(text) |> xmlEscapeText)
 							else
-								restore(text);
+								restoreAposAndQuote(text) |> xmlEscapeText;
 						default:
-							restore(text)
+							restoreAposAndQuote(text) |> xmlEscapeText;
 					}
 				},
-				\ -> {
-					restore(text)
+				\-> {
+					restoreAposAndQuote(text) |> xmlEscapeText
 				}
 			)
 		}
@@ -99,4 +107,8 @@ restoreApos(text : string) -> string {
 restoreQuote(text : string) -> string {
 	strReplace(text, "&amp;quot;", "\"")
 	|> \t -> strReplace(t, "&quot;", "\"")
+}
+
+restoreAposAndQuote(text : string) -> string {
+	text |> restoreApos |> restoreQuote;
 }
