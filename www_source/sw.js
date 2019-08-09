@@ -88,7 +88,8 @@ self.addEventListener('install', function(event) {
 self.addEventListener('fetch', function(event) {
   // Creation Promise, which `converts` POST request into GET request
   var getFixedRequestUrl = function(request) {
-    var urlSplitted = extractUrlParameters(urlAddBaseLocation(request.url));
+    var fixedUrl = urlAddBaseLocation(request.url);
+    var urlSplitted = extractUrlParameters(fixedUrl);
     var requestUrl = urlSplitted.baseUrl;
     var glueSymb = "?";
 
@@ -108,10 +109,10 @@ self.addEventListener('fetch', function(event) {
 
         return { urlNewFull : requestUrl, formDataText : formDataText };
       }).catch(function() {
-        return { urlNewFull : requestUrl, formDataText : undefined };
+        return { urlNewFull : fixedUrl, formDataText : undefined };
       });
     } else {
-      return Promise.resolve({ urlNewFull : requestUrl, formDataText : undefined });
+      return Promise.resolve({ urlNewFull : fixedUrl, formDataText : undefined });
     }
   }
 
