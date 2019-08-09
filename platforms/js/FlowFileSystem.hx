@@ -359,11 +359,12 @@ class FlowFileSystem {
 	public static function saveFileClient(filename : String, data : Dynamic, type : String) {
 		#if (js && !flow_nodejs)
 			untyped __js__("
-				var file = new Blob([data], {type: type});
+				var file = new Blob(Array.isArray(data) ? data : [data], {type: type});
 
-				if (window.navigator.msSaveOrOpenBlob) // IE10+
+				if (window.navigator.msSaveOrOpenBlob) {
+					// IE10+
 					window.navigator.msSaveOrOpenBlob(file, filename);
-				else { // Others
+				} else { // Others
 					var a = document.createElement('a'),
 							url = URL.createObjectURL(file);
 					a.href = url;

@@ -214,7 +214,9 @@ private:
     DECLARE_NATIVE_METHOD(setFavIcon)
     DECLARE_NATIVE_METHOD(quit)
     DECLARE_NATIVE_METHOD(takeSnapshot)
+    DECLARE_NATIVE_METHOD(takeSnapshotBox)
     DECLARE_NATIVE_METHOD(getSnapshot)
+    DECLARE_NATIVE_METHOD(getSnapshotBox)
     DECLARE_NATIVE_METHOD(getScreenPixelColor)
     DECLARE_NATIVE_METHOD(setNativeTabEnabled)
 

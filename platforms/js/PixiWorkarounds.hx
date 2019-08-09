@@ -840,6 +840,7 @@ class PixiWorkarounds {
 
 					this._boundsID++;
 					this.transform.updateTransform(this.parent.transform);
+					this.emit('transformchanged');
 
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
@@ -874,8 +875,8 @@ class PixiWorkarounds {
 					this.transformChanged = false;
 
 					this._boundsID++;
-
 					this.transform.updateTransform(this.parent.transform);
+					this.emit('transformchanged');
 
 					// TODO: check render flags, how to process stuff here
 					this.worldAlpha = this.alpha * this.parent.worldAlpha;
