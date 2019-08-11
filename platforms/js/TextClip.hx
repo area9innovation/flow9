@@ -494,10 +494,11 @@ class TextClip extends NativeWidgetClip {
 				textClip.orgCharIdxEnd = chrIdx + texts[0][0].length;
 				for (difPos in modification.difPositionMapping) textClip.orgCharIdxEnd += difPos;
 				addChild(textClip);
+			} else {
+				textClip.text = bidiDecorate(texts[0][0], textDirection);
+				textClip.style = style;
 			}
 
-			textClip.text = bidiDecorate(texts[0][0], textDirection);
-			textClip.style = style;
 			var child = textClip.children.length > 0 ? textClip.children[0] : null;
 
 			while (child != null) {
@@ -800,7 +801,7 @@ class TextClip extends NativeWidgetClip {
 			checkPositionSelection();
 		}
 
-		nativeWidget.style.cursor = RenderSupportJSPixi.PixiRenderer.view.style.cursor;
+		nativeWidget.style.cursor = RenderSupportJSPixi.PixiView.style.cursor;
 
 		RenderSupportJSPixi.provideEvent(e);
 	}
@@ -835,12 +836,20 @@ class TextClip extends NativeWidgetClip {
 			parent.emitEvent('childfocused', this);
 		}
 
+		if (nativeWidget == null) {
+			return;
+		}
+
 		invalidateMetrics();
 	}
 
 	private function onBlur(e : Event) : Void {
 		isFocused = false;
 		emit('blur');
+
+		if (nativeWidget == null) {
+			return;
+		}
 
 		invalidateMetrics();
 	}
@@ -856,8 +865,9 @@ class TextClip extends NativeWidgetClip {
 			newValue = f(newValue);
 		}
 
-		if (nativeWidget == null)
+		if (nativeWidget == null) {
 			return;
+		}
 
 		if (newValue != nativeWidget.value) {
 			if (e != null && e.data != null && e.data.length != null) {

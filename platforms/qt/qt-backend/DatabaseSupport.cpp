@@ -376,6 +376,9 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
             case QVariant::Int:
                 value = StackSlot::MakeInt(field.value().toInt());
                 break;
+            case QMetaType::Char:    // it's tinyint
+                value = StackSlot::MakeInt(field.value().toInt());
+                break;
             case QVariant::UInt:
                 value = StackSlot::MakeInt(field.value().toUInt());
                 break;

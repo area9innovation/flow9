@@ -10,6 +10,9 @@ export {
 	// Add this type with links to the individual structs
 	addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target : string) -> SimpleGraph<string, string>;
 
+	// Extract what types this fn converts to/from. Pair("", "") is not a lowering
+	getIncaFnLoweringTypes(f : FiFunctionDec) -> Pair<string, string>;
+
 	incaFiName2structs(env : IncaEnv, tname : string) -> Set<string>;
 }
 
@@ -32,15 +35,11 @@ addExpandedIncaTarget(env : IncaEnv, graph : SimpleGraph<string, string>, target
 }
 
 addIncaFunctionToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, details : bool, dec : FiFunctionDec) -> SimpleGraph<string, string> {
-	// Extract the named function arguments
-	argTypes = filtermap(dec.type.args, \a -> {
-		argName = getFiTypeName(a.type);
-		if (argName == "") None() else Some(argName);
-	});
-	retType = getIncaTypeNameOrVoid(dec.type.returnType);
+	toFrom = getIncaFnLoweringTypes(dec);
 
-	if (length(argTypes) == 1 && retType != "") {
-		argType = argTypes[0];
+	if (toFrom.first != "" && toFrom.second != "") {
+		argType = toFrom.first;
+		retType = toFrom.second;
 
 		if (details) {
 			acc2 = addIncaCasesToGraph(env, acc, dec.name, dec.lambda);
@@ -74,7 +73,11 @@ addIncaCasesToGraph(env : IncaEnv, acc : SimpleGraph<string, string>, fn : strin
 			acc1 = addIncaCasesToGraph(env, acc, fn, e1);
 			addIncaCasesToGraph(env, acc1, fn, e2);
 		}
-		FiIf(e1, e2, e3, type, start): todo();
+		FiIf(e1, e2, e3, type, start): {
+			acc1 = addIncaCasesToGraph(env, acc, fn, e1);
+			acc2 = addIncaCasesToGraph(env, acc1, fn, e2);
+			addIncaCasesToGraph(env, acc2, fn, e3);
+		} 
 		FiSwitch(x, switchType, cases, type, start): {
 			fold(cases, acc, \acc2, case : FiCase -> {
 				addIncaCaseToGraph(env, acc2, fn, case)
@@ -141,4 +144,26 @@ incaFiName2structs(env : IncaEnv, tname : string) -> Set<string> {
 			})
 		}
 	}
+}
+
+getIncaFnLoweringTypes(dec : FiFunctionDec) -> Pair<string, string> {
+	// Extract the named function arguments
+	argTypes = filtermap(dec.type.args, \a -> {
+		argName = getFiTypeName(a.type);
+		if (argName == "") None() else Some(argName);
+	});
+	hasManager = contains(argTypes, "IncaManager");
+
+	retType = getIncaTypeNameOrVoid(dec.type.returnType);
+
+	if (length(dec.type.args) == 1 + b2i(hasManager) && retType != "") {
+		withoutManager = filter(argTypes, \t -> t != "IncaManager");
+		if (withoutManager == []) {
+			println(dec.name);
+			Pair("", "")
+		} else {
+			argType = withoutManager[0];
+			Pair(argType, retType)
+		}
+	} else Pair("", "")
 }

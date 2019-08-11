@@ -79,7 +79,6 @@ class NativeWidgetClip extends FlowContainer {
 		nativeWidget = Browser.document.createElement(node_name);
 		nativeWidget.style.transformOrigin = 'top left';
 		nativeWidget.style.position = 'fixed';
-		nativeWidget.style.zIndex = AccessWidget.zIndexValues.nativeWidget;
 
 		if (accessWidget == null) {
 			accessWidget = new AccessWidget(this, nativeWidget);
