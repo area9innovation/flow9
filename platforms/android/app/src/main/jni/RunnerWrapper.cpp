@@ -20,6 +20,7 @@
 #include <sstream>
 
 #include <sys/vfs.h>
+#include <pthread.h>
 
 #ifdef ANDROID_GPROF
 #include "prof.h"
@@ -971,6 +972,14 @@ jboolean AndroidRunnerWrapper::finishLoadBytecode()
     return (jboolean) (bytecode_ok = true);
 }
 
+void* pthread_runner_executor(void* wrapper) {
+    cout << "ready to start execution of runner" << endl;
+    static_cast<AndroidRunnerWrapper*>(wrapper)->runner.RunMain();
+    cout << "ready to stop execution of runner" << endl;
+    pthread_exit(0);
+    return nullptr;
+}
+
 jboolean AndroidRunnerWrapper::runMain()
 {
     if (runner.IsErrorReported())
@@ -985,8 +994,32 @@ jboolean AndroidRunnerWrapper::runMain()
     STL_HASH_MAP<unicode_string, unicode_string> & params = runner.getUrlParameterMap();
     //params[parseUtf8("source")] = parseUtf8("nejm_knowledge");
     //params[parseUtf8("prod")] = parseUtf8("IM");
-    runner.RunMain();
 
+    pthread_attr_t attr;
+    int retval = 0;
+    retval = pthread_attr_init(&attr);
+    if (retval != 0) {
+        cerr << "Error at pthread_attr_init, reval: " << retval << endl;
+        return (jboolean) false;
+    }
+    size_t stack_size = 0xFFFFFF; //0x7FFFFF8 0xFFFFFF  0x7FFFFF
+    retval = pthread_attr_setstacksize(&attr, stack_size);
+    if (retval != 0) {
+        cerr << "Could not set a stack size: " << stack_size << ", reval: " << retval << endl;
+        return (jboolean) false;
+    }
+    pthread_t runner_pthread;
+    retval = pthread_create(&runner_pthread, &attr, pthread_runner_executor, this);
+    if (retval != 0) {
+        cerr << "Could not start a thread, retval: " << retval << endl;
+        return (jboolean) false;
+    }
+    retval = pthread_join(runner_pthread, nullptr);
+    if (retval != 0) {
+        cerr << "Error at pthread_join, retval: " << retval << endl;
+        return (jboolean) false;
+    }
+    //runner.RunMain();
     return (jboolean) (main_ok = !runner.IsErrorReported());
 }
 
