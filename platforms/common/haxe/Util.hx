@@ -15,7 +15,9 @@ import nw.Gui;
 
 #if (js && !flow_nodejs)
 import js.Browser;
+#if pixijs
 import pixi.core.math.Point;
+#end
 #end
 
 class Util
@@ -208,6 +210,7 @@ class Util
 			   event == "touchstart" || event == "touchmove" || event == "touchend";
 	}
 
+#if pixijs
 	public static function getPointerEventPosition(e : Dynamic) : Point {
 		if (e.type == "touchstart" || e.type == "touchend" || e.type == "touchmove")
 			return new Point(e.touches[0].pageX, e.touches[0].pageY);
@@ -216,5 +219,6 @@ class Util
 		else
 			return new Point(null, null);
 	}
+#end
 #end
 }

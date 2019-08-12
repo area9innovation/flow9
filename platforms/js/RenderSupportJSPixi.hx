@@ -185,6 +185,9 @@ class RenderSupportJSPixi {
 		}
 
 		if (RendererType == "canvas") {
+			untyped PixiRenderer.context.fillStyle = "white";
+			untyped PixiRenderer.context.fillRect(0, 0, PixiRenderer.view.width, PixiRenderer.view.height);
+
 			untyped PixiRenderer.gl = new WebGLRenderer(0, 0, {
 					transparent : true,
 					autoResize : false,
@@ -308,7 +311,7 @@ class RenderSupportJSPixi {
 		var onmove = function(e) {
 			var localStages = PixiStage.children;
 			var currentInteractiveLayerZorder = 0;
-			
+
 			var i = localStages.length - 1;
 			while(i > 0) {
 				if (untyped localStages[i].view.style.pointerEvents == "all") {
@@ -325,7 +328,7 @@ class RenderSupportJSPixi {
 
 			i = localStages.length - 1;
 			while(i > currentInteractiveLayerZorder) {
-				if (getClipAt(localStages[i], pos, true, true) != null && 
+				if (getClipAt(localStages[i], pos, true, true) != null &&
 					untyped localStages[i].view.style.pointerEvents != "all") {
 
 					untyped localStages[i].view.style.pointerEvents = "all";
@@ -632,7 +635,7 @@ class RenderSupportJSPixi {
 		else
 			PixiView.addEventListener(event, cb);
 	}
- 
+
 	private static function setStageWheelHandler(listener : Point -> Void) : Void {
 		var event_name = untyped __js__("'onwheel' in document.createElement('div') ? 'wheel' : // Modern browsers support 'wheel'
 			document.onmousewheel !== undefined ? 'mousewheel' : // Webkit and IE support at least 'mousewheel'
@@ -1002,7 +1005,12 @@ class RenderSupportJSPixi {
 	}
 
 	public static function mainRenderClip() : DisplayObject {
-		return PixiStage.children[0];
+		var stage = PixiStage.children[0];
+		if (stage == null) {
+			stage = new FlowContainer();
+			addChild(PixiStage, stage);
+		}
+		return stage;
 	}
 
 	public static function enableResize() : Void {
@@ -1338,8 +1346,6 @@ class RenderSupportJSPixi {
 
 	public static function getGlobalTransform(clip : DisplayObject) : Array<Float> {
 		if (clip.parent != null) {
-			updateTransform();
-
 			var a = clip.worldTransform;
 			return [a.a, a.b, a.c, a.d, a.tx, a.ty];
 		} else {
@@ -1351,9 +1357,17 @@ class RenderSupportJSPixi {
 		once("drawframe", fn);
 	}
 
-	public static function interruptibleDeferUntilRender(fn : Void -> Void) : Void -> Void {
+	public static function interruptibleDeferUntilRender(fn0 : Void -> Void) : Void -> Void {
+		var alive = true;
+		var fn = function() {
+			if (alive) {
+				fn0();
+			}
+		}
+
 		once("drawframe", fn);
 		return function() {
+			alive = false;
 			off("drawframe", fn);
 		};
 	}
@@ -1590,6 +1604,9 @@ class RenderSupportJSPixi {
 		if (untyped __instanceof__(clip, Element)) {
 			clip.addEventListener(event, fn);
 			return function() { if (clip != null) clip.removeEventListener(event, fn); }
+		} else if (event == "transformchanged") {
+			clip.on("transformchanged", fn);
+			return function() { clip.off("transformchanged", fn); }
 		} else if (event == "resize") {
 			on("resize", fn);
 			return function() { off("resize", fn); }
@@ -2131,7 +2148,7 @@ class RenderSupportJSPixi {
 
 			var mainStage : FlowContainer = cast(untyped PixiStage.children[0], FlowContainer);
 			mainStage.invalidateStage(true);
-			
+
 			mainStage.renderable = false;
 
 			if (fw) {

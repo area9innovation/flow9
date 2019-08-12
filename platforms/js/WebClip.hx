@@ -158,7 +158,7 @@ class WebClip extends NativeWidgetClip {
 		var localStages = RenderSupportJSPixi.PixiStage.children;
 		var i = localStages.length - 1;
 
-		while (i >= iframeZorder) {
+		while (i > iframeZorder) {
 
 			var pos = Util.getPointerEventPosition(e);
 			
